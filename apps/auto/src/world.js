@@ -1175,6 +1175,8 @@ export class World {
     // An underpass cut (citygen) is 10-20 m wide too, so its cells need the
     // same re-tessellation as a portal trench or the 40 m grid hides the dip.
     if (this.city.underpassCell && this.city.underpassCell(cx, cz, S)) return true;
+    // ...and so is a railway cutting (freight.js), 11 m wide at its floor
+    if (G.railCarveCell && G.railCarveCell(cx + S / 2, cz + S / 2)) return true;
     if (!this.portalCuts().length) return false;
     // No cutting filed under any grid cell this terrain cell touches: every
     // sample below would find an empty list and answer null. (422k cells x 9

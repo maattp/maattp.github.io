@@ -49,6 +49,8 @@ src/hoops.js                basketball courts in the parks + the free-throw game
 src/stunts.js               stunt-jump ramps (geometry + height query) and their scoring
 src/monorail.js             the Seattle Center Monorail: beams, stations, both trains
 src/link.js                 Link light rail's 1 Line: tracks, guideway, bores, stations, the trains
+src/freight.js              BNSF's main line: the bed and its carve, crossings and gates, the freights, driving
+src/railcars.js             freight rolling stock: BNSF / CN locomotives, hoppers, coal, tank cars, boxcars, lettering
 src/bikes.js                bike paths drawn and ridden, AI cyclists, bike-share docks
 src/piers.js                every other pier OSM maps, as a deck on piles; decks under sheds in the sea
 src/islands.js              the islands across the Sound: Easter eggs, the Sasquatch, Blake's deer
@@ -70,6 +72,7 @@ tools/build_lots.py         car parks, plazas, yards -> lots.png
 tools/build_monorail.py     the monorail's beams, stations, platforms -> monorail.json
 tools/extract_rail.py       every rail way and stop in the box -> tools/data/raw_rail.json
 tools/build_link.py         Link's two 1 Line tracks and its stations -> link.json
+tools/build_freight.py      BNSF's two main tracks, Balmer Yard and its tracks -> freight.json
 tools/build_bikepaths.py    cycleways and designated bike paths -> bikepaths.json
 tools/build_piers.py        OSM's piers -> piers.json
 tools/build_beaches.py      OSM beaches (from raw_green.json) -> beaches.json
@@ -4240,6 +4243,93 @@ verify's "the islands" section: the docks and their craft, no site in the
 water, every egg found and paid, the Sasquatch fleeing, the dig, standing on
 the court and a game to its end. `docs/islands/`.
 
+## Freight: BNSF's main line (v160)
+
+**Freights run the BNSF main line across the map and you can drive one**
+(`src/freight.js`, rolling stock in `src/railcars.js`): the Scenic
+Subdivision down from Golden Gardens along Shilshole, over Salmon Bay on the
+bascule bridge, through Balmer Yard at Interbay, along the waterfront past
+Broad St, under downtown in the Great Northern Tunnel (1.57 km) and the
+Seattle Subdivision south through SODO to the map's edge. Both mains where
+the line has two; single track at the two ends.
+
+- **The route is OSM's** (`tools/build_freight.py`, from `raw_rail.json`):
+  every railway=rail way as a NODE graph (freight switches sit mid-way),
+  main line cheapest (crossovers 1.5x, yards and spurs 4x); the first track
+  is the shortest path north end -> south end, the second the same with the
+  first's ways six times dearer, so it takes the other main where there is
+  one. Balmer Yard's stop is the western main's point nearest the yard
+  tracks' middle; those tracks are drawn too.
+- **The bed follows the ground's AVERAGE, and the ground is cut to it.**
+  Link's profile rides over the ground's bumps (dilate, smooth). At a
+  freight's 2.2 % ruling grade that put the line on 5-10 m of fill through
+  flat Interbay, where the 40 m DEM zigzags 13-22 m every 25 m.
+  `setHeights` takes `P.follow = 'mean'` (link.js, Link unchanged); a level
+  crossing is pinned to the raw ground there. `carveDepth` cuts the raw
+  ground above the formation (1 m under the rail head, flat to 5.5 m either
+  side, then a 1:1 bank; a crossing's formation is the road's) through
+  `G.setRailCarve`, the portal carve's twin: every consumer of
+  `terrainHeight` sees it (roads crossing the line meet the rails), and
+  `world.cellCut` re-tessellates the cells it touches. It is settled in the
+  constructor, BEFORE citygen -- so the crossings come from the raw road
+  graph (`_rawCrossings`), and the bridge's water from `G.drawnWaterLevel`.
+  Where the ground is lower, an embankment (earth at 1:1.5). Only a bridge
+  OSM maps is drawn as one. The ballast shoulders stop at 3.6 m, 4 m terrain
+  quads over the formation cannot poke through them, and a shallow ditch is
+  left beside the line.
+- **Single track is taken one train at a time** (`sections`, `reserve`): a
+  train reserves the section it will enter within 700 m, or stops 40 m short
+  (a signal); back in from off the map it waits for its section. The
+  readout shows the signal. Two trains are never in one (verify).
+- **Level crossings**: 30, each with two gates (mast, lights, crossbuck, a
+  striped arm to the centreline on the right of each approach), active from
+  25 s before a train to its tail clearing: lights and bell 3 s, then the
+  arms come down over 7 s. The arms and lamps are one InstancedMesh each.
+  Cars stop at the arm (`blocks`, traffic's scan). **The Salmon Bay Bridge**
+  has its Strauss tower and counterweight over the channel.
+- **The cars** (`railcars.js`, each cites its data sheet): BNSF ES44C4 (H3:
+  orange, black top, yellow stripe, the nose's wings) and CN ES44AC (black
+  over red, white stripe, the CN logo); three-bay covered hoppers (BNSF, CN),
+  loaded aluminum coal gondolas, DOT-117 tank cars (UTLX, TILX, GATX; UN 1267
+  / 1987 placards), 50 ft plate F boxcars (BNSF, CN). Built in car-local
+  metres into body / trim / decal builders; the lettering is one canvas
+  atlas (`railDecals`, 2048 x 1536 -- **every cell must fit**: at 1024 tall
+  the last dozen, the nose's wings among them, fell off the canvas and drew
+  nothing). A train is one SkinnedMesh per material, a bone per car (vertices
+  in the car's own frame, the bone between its trucks): 3 draws, ~57k
+  triangles. Two trains of 20 (2 locomotives + 18), ~360 m and ~2,450 t.
+  Cuts stand on Balmer Yard's tracks (merged, solid).
+- **Service**: 50 mph, 30 in the tunnel, 25 past the yard, curves at 0.7
+  m/s2 unbalanced; a crew change at Balmer Yard (75 s, held while you walk
+  up), off the map at an end and back on the other main. They sound the
+  crossing pattern (long, long, short, long, the last held into the
+  crossing) and ring the bell, and blow short urgent blasts for anyone on the
+  track ahead, braking once inside their stopping distance -- which is long.
+- **Driving** (ENTER at the lead cab, stopped; or ENTER at the yard to call
+  one in -- it is moved up the line to 900 m out if the track is clear):
+  hold POWER to notch up (8 notches), BRAKE drops the notch then applies the
+  air (graduated release when you let go), a double tap of BRAKE is the
+  emergency; BRAKE held at a stand flips the reverser; POWER at a stand at the
+  map's edge changes ends. Tractive effort per unit is the lesser of adhesion
+  and power (x1.7 arcade), gravity is averaged along the whole train. 0-40
+  mph in ~70 s, 50 mph top; 38 s to stop from 49 mph. The horn button is
+  held (a K5LA), and sounding it before a crossing pays $15. In the tunnel
+  the camera goes into the cab.
+- **Sound** (audio.js): the `gevo` profile (a GEVO-12: firing rate, turbo
+  whine with load, rpm follows the notch over seconds), an `AirHorn` voice
+  (five bells D#4 F#4 G#4 B4 D#5 through a reed spectrum and a formant, the
+  valve's scoop up to pitch and sag down), the rail clack loop (`rail_roll`,
+  four axles over a joint per car, at speed / 15 m/s), the crossing and
+  locomotive bells, the brake release and the emergency dump. The nearest two
+  AI freights get the engine and horn at the lead unit and the wheels where
+  the train is nearest you; the horn carries 2 km.
+
+verify's "freight" section: the route, grades, ground never over the
+ballast, the crossings and sections, fifteen minutes of service, the drive
+from the yard, calling a train, a car held at the gates, a train warning
+you. Cost near the line: +25 draws at Balmer Yard with two trains and the
+cuts in view, +220k triangles.
+
 ## Bicycles and the bike paths (v147)
 
 **Seattle's bike paths are drawn and ridden** (`src/bikes.js`).
@@ -4401,7 +4491,7 @@ and out at the street; a train stopping short of you on the track; a car
 held at a crossing. Cost near the line: +10-22 draws (trains 2 each, a few
 chunk meshes); tunnel geometry only in the tunnel. `docs/link/` has shots.
 Not built: the 2 Line across I-90 (it joins south of International
-District in OSM), the freight main line (in `raw_rail.json`).
+District in OSM). The freight main line is freight.js (v160).
 
 ## The hot air balloon
 

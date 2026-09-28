@@ -183,10 +183,12 @@ export class Player {
         // A monorail at the platform beside you (or at Westlake's street
         // door) before any car: see monorail.js boardable.
         const m = (this.monorail && this.monorail.boardable(this.x, this.y, this.z))
-          || (this.link && this.link.boardable(this.x, this.y, this.z));
+          || (this.link && this.link.boardable(this.x, this.y, this.z))
+          || (this.freight && this.freight.boardable(this.x, this.y, this.z));
         const v = m || traffic.nearestEnterable(this.x, this.z, 5.0);
         if (v) this.enterVehicle(v);
         else if (this.link && this.link.onWait(this.x, this.z)) { /* told when the next trains are due */ }
+        else if (this.freight && this.freight.onWait(this.x, this.z)) { /* a freight is called into the yard */ }
         else if (this.monorail && this.game.onMonorailWait) this.game.onMonorailWait(this.x, this.y, this.z);
       } else this.exitVehicle();
     }
@@ -651,6 +653,12 @@ export class Player {
         dist = 4.4 + clamp(sp * 0.08, 0, 1.2);
         height = 1.9;
         lookH = 1.15;
+      } else if (v.spec.freight) {
+        // over the lead locomotive, looking up the line: 360 m of train
+        // behind the cab, and a locomotive 4.8 m tall
+        dist = 21 + clamp(sp * 0.18, 0, 5);
+        height = 8.6;
+        lookH = 3.4;
       } else if (v.spec.link) {
         // over the lead car's roof, looking down the line: 118 m of train
         // behind the cab

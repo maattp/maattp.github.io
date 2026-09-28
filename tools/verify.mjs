@@ -2047,6 +2047,132 @@ async function main() {
     console.log(`  beside a train on the platform (${lb.besideDist} m from the entrance): boards ${lb.beside}; at Capitol Hill with none in: called, boarded ${lb.call.boarded} after ${lb.call.secs} s at ${lb.call.at}`);
     if (!lb.beside || lb.boardableBefore || !lb.call.boarded || !(lb.call.secs < 40) || lb.call.at !== 'Capitol Hill') { console.error('FAIL: Link: getting on'); process.exitCode = 1; }
 
+    // --- freight: BNSF's main line --------------------------------------------------------
+    //
+    // freight.js: both mains across the map, within a freight's grade, the
+    // ground cut to the bed at grade (never over the ballast), the tunnel
+    // buried, no building on the line; the level crossings found with their
+    // gates, and the single-track sections; fifteen minutes of service (never
+    // two trains on single track at once, gates coming down, nothing over the
+    // limit); boarding at Balmer Yard and a drive (notched up to speed, braked
+    // to a stand without an emergency, the horn, climbing down beside the
+    // track); calling a train in to the yard; a car held at a crossing.
+    const fr = await session.eval(`(() => {
+      const d = window.__dbg, F = d.freight, C = d.city, G = d.G, P = d.player, T = d.traffic;
+      const out = { tracks: {}, crossings: F.crossings.length, gated: F.crossings.filter((c) => c.road && c.gates && c.gates.length === 2).length, sections: F.sections.length };
+      for (const k of ['sb', 'nb']) {
+        const tr = F.tracks[k];
+        let grade = 0, buried = 0, exposed = 0, bldg = 0;
+        for (let i = 10; i < tr.n - 15; i += 5) {
+          grade = Math.max(grade, Math.abs(tr.Y[i + 5] - tr.Y[i]) / 5);
+          const kd = tr.KD[i];
+          // at grade: the ground may not stand over the ballast's top
+          if ((kd === 4 || kd === 5) && G.terrainHeight(tr.X[i], tr.Z[i]) > tr.Y[i] - 0.3) buried++;
+          if (kd === 1 && tr.Y[i] + 6 > tr.GR[i]) exposed++;
+          if (kd !== 1 && i % 20 === 0) {
+            for (const b of C.buildingsNear(tr.X[i], tr.Z[i], 12)) {
+              const c = Math.cos(-b.rot), sn = Math.sin(-b.rot), dx = tr.X[i] - b.x, dz = tr.Z[i] - b.z;
+              if (Math.abs(dx * c - dz * sn) < b.w / 2 && Math.abs(dx * sn + dz * c) < b.d / 2 && b.y + b.h > tr.Y[i] - 2) { bldg++; break; }
+            }
+          }
+        }
+        out.tracks[k] = { len: Math.round(tr.len), grade: +grade.toFixed(4), buried, exposed, bldg };
+      }
+      if (P.vehicle) P.exitVehicle(true);
+      const px = P.x, pz = P.z;
+      P.x = -6000; P.z = 9000;
+      // service
+      const s0 = F.trains.map((t) => t.s);
+      let both = 0, vmax = 0, gates = 0, moved = 0;
+      const gw = F.crossings.map(() => false);
+      for (let i = 0; i < 10 * 900; i++) {
+        for (const t of F.trains) t.service(0.1);
+        F._crossingsUpdate(0.1, 0, 0);
+        for (const t of F.trains) if (t.state !== 'off') vmax = Math.max(vmax, Math.abs(t.u) / Math.max(1, t.limitAt(t.lead) / 22.4));
+        F.crossings.forEach((c, k) => { if (c.active && !gw[k]) gates++; gw[k] = c.active; });
+        for (const sc of F.sections) {
+          const n = F.trains.filter((t) => { if (t.state === 'off') return false; const k = t.track.key, lo = Math.min(t.lead, t.tail), hi = Math.max(t.lead, t.tail); return hi >= sc[k][0] && lo <= sc[k][1]; }).length;
+          if (n > 1) both++;
+        }
+      }
+      for (const t of F.trains) moved += 1;
+      out.service = { both, vmax: +vmax.toFixed(1), gates, over: F.trains.filter((t) => t.state !== 'off' && Math.abs(t.u) > t.limitAt(t.lead) + 2.5).length };
+      // board at the yard and drive
+      const t = F.trains[0];
+      for (const o of F.trains) if (o !== t && o.track === t.track) { o.state = 'off'; o.offT = 1e9; }
+      t.place(F.yardStopS(t), t.track.dir); t.state = 'dwell'; t.timer = 60; t.atYard = true; t.yardDone = true; t.u = 0;
+      const ex = F.exitSpot(t);
+      P.x = ex.x; P.z = ex.z; P.y = ex.y;
+      out.boardable = F.boardable(P.x, P.y, P.z) === t;
+      P.enterVehicle(t);
+      out.boarded = P.vehicle === t;
+      const sa = t.s;
+      for (let i = 0; i < 30 * 100; i++) P.updateDrive(1 / 30, { gas: true, x: 0, y: 0 }, T, d.peds);
+      out.mph = Math.round(Math.abs(t.u) * 2.237);
+      t.blow(); out.horn = t.hornOn;
+      let secs = 0;
+      for (let i = 0; i < 30 * 150 && Math.abs(t.u) > 0.02; i++) { P.updateDrive(1 / 30, { brake: true, x: 0, y: 0 }, T, d.peds); secs += 1 / 30; }
+      out.stop = { secs: +secs.toFixed(0), emerg: t.emerg, run: Math.round(Math.abs(t.s - sa)) };
+      out.readout = t.readout();
+      for (let i = 0; i < 90; i++) P.updateDrive(1 / 30, { x: 0, y: 0 }, T, d.peds);
+      const spot = F.exitSpot(t);
+      P.exitVehicle();
+      out.out = P.onFoot && !!spot && Math.abs(P.y - G.terrainHeight(P.x, P.z)) < 1.5 && !F.tracks.sb.nearest(P.x, P.z, 1.8) && !F.tracks.nb.nearest(P.x, P.z, 1.8);
+      // call a train in: none near the yard
+      for (const o of F.trains) { o.driver = null; o.state = 'off'; o.offT = 1e9; o.group.visible = false; }
+      P.x = F.yard.x + 8; P.z = F.yard.z; P.y = G.terrainHeight(P.x, P.z);
+      const sw = F.say; let said = ''; F.say = (m) => { said = m; };
+      const called = F.onWait(P.x, P.z);
+      let arrived = null;
+      for (let i = 0; i < 10 * 240; i++) { for (const o of F.trains) o.service(0.1); if (F.trains.some((o) => o.state === 'dwell' && o.atYard)) { arrived = i / 10; break; } }
+      F.say = sw;
+      out.call = { called, said: !!said, arrived };
+      // a crossing, a train on it: a car is held at its gates, and not 60 m off
+      const c = F.crossings[Math.floor(F.crossings.length / 2)], k = c.s.sb !== undefined ? 'sb' : 'nb';
+      const q = F.trains[0];
+      q.track = F.tracks[k]; q.dir = q.track.dir; q.place(c.s[k], q.dir); q.state = 'dwell'; q.timer = 1e9; q.atYard = false;
+      F._crossingsUpdate(0.1, c.x, c.z);
+      const rx = c.road.dx, rz = c.road.dz;
+      out.gate = { active: c.active, held: F.blocks(c.x + rx * (c.spread / 2 + 3), c.z + rz * (c.spread / 2 + 3), 0), clear: !F.blocks(c.x + rx * 60, c.z + rz * 60, 0) };
+      q.timer = 1;
+      // you on the track ahead of a freight: it sounds its horn for you
+      const tr = F.tracks.sb;
+      let sP = 0;
+      for (let s = 12000; s < 26000; s += 10) if (tr.kind(s) === 4 && !F.sectionAt('sb', s)) { sP = s; break; }
+      q.track = tr; q.dir = 1; q.place(sP - 540, 1); q.state = 'run'; q.u = 12; q.yardDone = true; q.horn.seq = null;
+      P.x = tr.x(sP); P.z = tr.z(sP); P.y = tr.y(sP); P.health = 100;
+      let horn = false;
+      for (let i = 0; i < 10 * 30; i++) { F._guard(0.1, P); q.service(0.1); horn = horn || q.hornOn; }
+      out.warned = { horn, braking: q.brakeCmd > 0.5 || q.emerg };
+      P.x = px; P.z = pz;
+      return out;
+    })()`, true);
+    console.log('\n--- freight ------------------------------------------------');
+    for (const k of ['sb', 'nb']) { const q = fr.tracks[k]; console.log(`  ${k}: ${q.len} m, steepest ${(q.grade * 100).toFixed(1)} %, ground over the ballast ${q.buried}, tunnel out of the ground ${q.exposed}, buildings on the line ${q.bldg}`); }
+    console.log(`  ${fr.crossings} level crossings (${fr.gated} gated), ${fr.sections} single-track sections`);
+    console.log(`  15 min of service: two trains on single track ${fr.service.both} times, gates down ${fr.service.gates} times, over the limit ${fr.service.over}`);
+    console.log(`  Balmer Yard: boardable ${fr.boardable}, boarded ${fr.boarded}; 100 s notched up: ${fr.mph} mph; braked to a stand in ${fr.stop.secs} s (emergency ${fr.stop.emerg}); horn ${fr.horn}; down beside the track ${fr.out}`);
+    console.log(`  called to the yard: ${fr.call.called}, in after ${fr.call.arrived} s; a crossing: active ${fr.gate.active}, car held ${fr.gate.held}, 60 m off clear ${fr.gate.clear}; you on the track: horn ${fr.warned.horn}, braking ${fr.warned.braking}`);
+    {
+      const bad = [];
+      for (const k of ['sb', 'nb']) {
+        const q = fr.tracks[k];
+        if (q.len < 25000) bad.push(`${k} length`);
+        if (q.grade > 0.026) bad.push(`${k} grade`);
+        if (q.buried) bad.push(`${k} ground over the ballast`);
+        if (q.exposed) bad.push(`${k} tunnel out of the ground`);
+        if (q.bldg > 2) bad.push(`${k} buildings on the line`);
+      }
+      if (fr.crossings < 20 || fr.gated < fr.crossings) bad.push('crossings');
+      if (fr.sections !== 2) bad.push('single-track sections');
+      if (fr.service.both || fr.service.gates < 10 || fr.service.over) bad.push('service');
+      if (!fr.boardable || !fr.boarded || fr.mph < 30 || fr.stop.emerg || !fr.horn || !fr.out) bad.push('the drive');
+      if (!fr.call.called || fr.call.arrived === null) bad.push('calling a train');
+      if (!fr.gate.active || !fr.gate.held || !fr.gate.clear) bad.push('the crossing gates');
+      if (!fr.warned.horn) bad.push('a train sounding for you');
+      if (bad.length) { console.error(`FAIL: freight: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- bicycles and the bike paths ----------------------------------------------------
     //
     // bikes.js: the network drawn, the docks stocked, a dock bike ridden at

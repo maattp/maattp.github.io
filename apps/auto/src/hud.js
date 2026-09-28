@@ -13,7 +13,7 @@ const SCALE = MAP_PX / (G.MAP_HALF * 2);
  */
 function placeIcon(ctx, kind, x, y, r) {
   ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f'
-    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : kind === 'coffee' ? '#6a4a32' : kind === 'hydro' ? '#d8242c' : kind === 'link' ? '#3a9a44' : kind === 'bike' ? '#57b83a' : kind === 'pickle' ? '#c8a21a' : '#e0782e';
+    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : kind === 'coffee' ? '#6a4a32' : kind === 'hydro' ? '#d8242c' : kind === 'link' ? '#3a9a44' : kind === 'freight' ? '#b8501c' : kind === 'bike' ? '#57b83a' : kind === 'pickle' ? '#c8a21a' : '#e0782e';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = r * 0.22;
   ctx.beginPath();
@@ -96,6 +96,15 @@ function placeIcon(ctx, kind, x, y, r) {
     ctx.fillRect(x - r * 0.22, y + r * 0.2, r * 0.1, r * 0.08); ctx.fillRect(x + r * 0.12, y + r * 0.2, r * 0.1, r * 0.08);
     ctx.strokeStyle = '#ffffff'; ctx.lineWidth = r * 0.1;
     ctx.beginPath(); ctx.moveTo(x - r * 0.2, y - r * 0.3); ctx.lineTo(x + r * 0.1, y - r * 0.55); ctx.lineTo(x - r * 0.1, y - r * 0.62); ctx.stroke();
+  } else if (kind === 'freight') {
+    // a road diesel side-on: the cab, the long hood, the trucks under it
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x + r * 0.16, y - r * 0.42, r * 0.3, r * 0.5);
+    ctx.fillRect(x - r * 0.5, y - r * 0.2, r * 0.7, r * 0.28);
+    ctx.fillRect(x - r * 0.56, y + r * 0.08, r * 1.08, r * 0.1);
+    for (const sx of [-0.34, 0.3]) { ctx.beginPath(); ctx.arc(x + sx * r, y + r * 0.3, r * 0.1, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = '#b8501c';
+    ctx.fillRect(x + r * 0.22, y - r * 0.34, r * 0.18, r * 0.14);
   } else if (kind === 'hydro') {
     // a hydroplane's planform, nose up, and its rooster tail
     ctx.fillStyle = '#ffffff';
@@ -392,6 +401,28 @@ export class Hud {
     ctx.stroke();
   }
 
+  /** BNSF's main line: rail brown, one line for both mains. */
+  drawFreight(ctx, to, w, near = null) {
+    if (!this._frPts) {
+      const tr = this.freight.tracks.sb, n = Math.floor(tr.len / 20) + 1, P = new Float32Array(n * 2);
+      for (let i = 0; i < n; i++) { P[i * 2] = tr.x(i * 20); P[i * 2 + 1] = tr.z(i * 20); }
+      this._frPts = P;
+    }
+    const P = this._frPts, n = P.length / 2, r2 = near ? near.r * near.r : Infinity;
+    ctx.strokeStyle = '#7a4a2c';
+    ctx.lineWidth = w;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    let pen = false;
+    for (let i = 0; i < n; i++) {
+      const x = P[i * 2], z = P[i * 2 + 1];
+      if (near && (x - near.x) ** 2 + (z - near.z) ** 2 > r2) { pen = false; continue; }
+      const [cx, cy] = to(x, z);
+      if (pen) ctx.lineTo(cx, cy); else { ctx.moveTo(cx, cy); pen = true; }
+    }
+    ctx.stroke();
+  }
+
   /** The monorail's two beams as one teal line, through `to(x, z)` -> canvas. */
   drawMonorail(ctx, to, w) {
     const tr = this.monorail.tracks.west;
@@ -479,6 +510,7 @@ export class Hud {
       ctx.fill();
     }
     // The monorail's line, teal, under the markers
+    if (this.freight) this.drawFreight(ctx, toMap, 2.2 / zoom, { x: p.x, z: p.z, r: S / (zoom * SCALE) + 60 });
     if (this.link) this.drawLink(ctx, toMap, 2.6 / zoom, { x: p.x, z: p.z, r: S / (zoom * SCALE) + 60 });
     if (this.monorail) this.drawMonorail(ctx, toMap, 2.2 / zoom);
     // Marked places (the seaplane dock, the quads), upright whatever the
@@ -638,13 +670,14 @@ export class Hud {
       ctx.fillStyle = 'rgba(255,255,255,0.55)';
       ctx.fillText(l.name, lx, lz - size * 0.008);
     }
+    if (this.freight) this.drawFreight(ctx, toC, Math.max(1.5, size * 0.002));
     if (this.link) this.drawLink(ctx, toC, Math.max(1.8, size * 0.0026));
     if (this.monorail) this.drawMonorail(ctx, toC, Math.max(1.5, size * 0.0022));
     for (const pl of (this.places || [])) {
       const [qx, qz] = toC(pl.x, pl.z);
       placeIcon(ctx, pl.kind, qx, qz, size * (pl.kind === 'dock' ? 0.011 : 0.008));
       // named, quads too: an unlabelled orange dot was a quad nobody found
-      if (pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle' || pl.kind === 'kayak' || pl.kind === 'wheel' || pl.kind === 'golf' || pl.kind === 'arcade' || pl.kind === 'pinball' || pl.kind === 'hockey' || pl.kind === 'tower' || pl.kind === 'duck' || pl.kind === 'coffee' || pl.kind === 'hydro' || pl.kind === 'link' || pl.kind === 'bike' || pl.kind === 'pickle') {
+      if (pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle' || pl.kind === 'kayak' || pl.kind === 'wheel' || pl.kind === 'golf' || pl.kind === 'arcade' || pl.kind === 'pinball' || pl.kind === 'hockey' || pl.kind === 'tower' || pl.kind === 'duck' || pl.kind === 'coffee' || pl.kind === 'hydro' || pl.kind === 'link' || pl.kind === 'freight' || pl.kind === 'bike' || pl.kind === 'pickle') {
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.fillText(pl.name, qx, qz - size * 0.016);
       }

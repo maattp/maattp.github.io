@@ -253,12 +253,22 @@ export function masks() {
 let carve = null;
 export function setCarve(fn) { carve = fn; }
 
+// ...and a RAILWAY BED is cut the same way (freight.js carveDepth): the
+// freight line follows the ground's average, and the ground above its
+// formation is dug down to it. Set before the city exists; `railCarveCell`
+// tells world.js which 40 m cells to re-tessellate.
+let railCarve = null;
+export let railCarveCell = null;
+export function setRailCarve(fn, cellFn) { railCarve = fn; railCarveCell = cellFn; }
+
 /** The ground before any portal cut. Only the carve itself may use this. */
 export function terrainRaw(x, z) { return sampleHF(x, z); }
 
 export function terrainHeight(x, z) {
   const h = sampleHF(x, z);
-  return carve ? h - carve(x, z) : h;
+  if (!carve && !railCarve) return h;
+  const c = carve ? carve(x, z) : 0, r = railCarve ? railCarve(x, z) : 0;
+  return h - (c > r ? c : r);
 }
 
 function sampleHF(x, z) {
