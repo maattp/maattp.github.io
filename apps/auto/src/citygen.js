@@ -535,6 +535,11 @@ function gradeRoads(nodes, edges) {
   }
   const couple = [];
   const coupled = new Uint8Array(N);
+  const parallelTo = (i, j) => {
+    let par = false;
+    edgesOf(i, (e) => { edgesOf(j, (q) => { if (Math.abs(e.dx * q.dx + e.dz * q.dz) > 0.8) par = true; }); });
+    return par;
+  };
   {
     const SC = 16, sgrid = new Map();
     for (let i = 0; i < N; i++) {
@@ -558,6 +563,11 @@ function gradeRoads(nodes, edges) {
           // squared: millions of pairs, and hypot is slow
           const ddx = SX[i] - SX[j], ddz = SZ[i] - SZ[j], rr = hwOf[i] + hwOf[j] - 0.5;
           if (rr <= 0 || ddx * ddx + ddz * ddz >= rr * rr || Math.abs(levelOf[i] - levelOf[j]) > 2) continue;
+          // Side by side, not across: a deck crossing over a freeway reads
+          // "level" off its imported node chord, then solves 6 m higher for
+          // clearance, and the blend below averaged the freeway up toward it
+          // -- 4-5 m humps at 20 % on I-5 under S Holgate St.
+          if (!parallelTo(i, j)) continue;
           // Not its own carriageway: anything within 30 m along the graph is
           // the same road carrying on, and coupling to it would ratchet the
           // whole chain up to its highest sample.
@@ -832,7 +842,15 @@ function gradeRoads(nodes, edges) {
   // not end in a step of its own.
   if (couple.length) {
     const acc = new Float64Array(N), cnt = new Uint16Array(N);
-    for (let q = 0; q < couple.length; q += 2) { acc[couple[q]] += H[couple[q + 1]]; cnt[couple[q]]++; }
+    // Only pairs the solve left close: the blend settles ~0.2 m. A partner
+    // solved metres away is a split-level pair (trimmed below) or a deck
+    // climbing over for clearance, and averaging toward it made a hump --
+    // I-5 rose 5 m at 24 % beside the I-90 ramps.
+    for (let q = 0; q < couple.length; q += 2) {
+      const i = couple[q], j = couple[q + 1];
+      if (Math.abs(H[j] - H[i]) > 1) continue;
+      acc[i] += H[j]; cnt[i]++;
+    }
     const Hb = new Float64Array(H);
     const near = new Uint8Array(N);
     // Bounded like the solve itself: never over the climb out of the nearest
@@ -2352,6 +2370,45 @@ export function* cityGenerator(md, cache = {}) {
         if (!l) bGrid.set(k, (l = []));
         l.push(bi);
       }
+  }
+
+  // --- 5b. Nothing stands up through a deck --------------------------------
+  //
+  // roadFit clears buildings off carriageways at ground level and leaves
+  // bridges alone -- a bridge passes over. But a box under a viaduct can be
+  // taller than the gap: the SODO warehouse under SR-99 at (-58, 3846) had its
+  // roof 10 cm over the deck, and a car driving the viaduct hit a wall across
+  // the lane. After grading (the decks' final heights), every building a deck
+  // passes over is brought under its soffit. Runs on every load, cached or
+  // not, so the boot cache's building list needs no new entry.
+  {
+    let capped = 0;
+    const touched = new Set();
+    for (let ei = 0; ei < g.edges.length; ei++) {
+      const e = g.edges[ei];
+      if (!e.elev || e.tunnel) continue;
+      const a = g.nodes[e.a], b = g.nodes[e.b];
+      const px = -e.dz, pz = e.dx;
+      for (let s = 0; s <= e.len; s += 4) {
+        const t = e.len ? s / e.len : 0;
+        const P = e.prof ? profAt(e, t) : null;
+        const deck = P ? P.h : a.y + (b.y - a.y) * t;
+        for (const o of [-e.hw, 0, e.hw]) {
+          const x = a.x + e.dx * s + px * o, z = a.z + e.dz * s + pz * o;
+          const l = bGrid.get(skey(Math.floor(x / bCell), Math.floor(z / bCell)));
+          if (!l) continue;
+          for (const bi of l) {
+            const bd = buildings[bi];
+            if (bd.y > deck - 2.5 || bd.y + bd.h <= deck - 1.4) continue;
+            const c = Math.cos(-bd.rot), sn = Math.sin(-bd.rot), dx = x - bd.x, dz = z - bd.z;
+            if (Math.abs(dx * c - dz * sn) > bd.w / 2 + 0.5 || Math.abs(dx * sn + dz * c) > bd.d / 2 + 0.5) continue;
+            bd.h = Math.max(1.1, deck - 1.4 - bd.y);
+            if (!touched.has(bi)) { touched.add(bi); capped++; }
+          }
+        }
+      }
+    }
+    cityStats.buildingsUnderDecks = capped;
   }
 
   // --- 6. Node spatial index for AI ---------------------------------------

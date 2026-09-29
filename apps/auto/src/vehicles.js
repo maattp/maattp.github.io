@@ -7067,6 +7067,7 @@ export class Vehicle {
     this.radius = Math.max(t.spec.len, t.spec.wid) * 0.42;
     this.halfLen = t.spec.len / 2;
     this.halfWid = t.spec.wid / 2;
+    this.dodge = 0; this.dodgeT = 0;   // traffic.js: steering round a car in the lane
     this.mass = t.spec.mass;
     // EVERY FIELD ANYONE SETS, DECLARED HERE. traffic.js, player.js and main.js
     // used to add these as they went, so vehicles ended up with a dozen
@@ -7216,7 +7217,8 @@ export class Vehicle {
     // its downhill end is buried -- the sunken cars on Queen Anne.
     const f = this.forward;
     const rx = f.z, rz = -f.x;
-    const at = (dx, dz) => this.city.groundAt(this.x + dx, this.z + dz, this.y + 1.5, this.lift);
+    // (from the wheels, as update() does: see REF there)
+    const at = (dx, dz) => this.city.groundAt(this.x + dx, this.z + dz, this.y + 0.45, this.lift);
     const fh = at(f.x * this.halfLen, f.z * this.halfLen);
     const bh = at(-f.x * this.halfLen, -f.z * this.halfLen);
     // Two contact patches for a bike, four for a car -- see update() for why
@@ -7271,9 +7273,9 @@ export class Vehicle {
     const F = this.forward;
     this.x = hx - F.x * ARTIC.hitchR; this.z = hz - F.z * ARTIC.hitchR;
     this.lift = city.roadLift(this.x, this.z);
-    const hy = city.groundAt(hx, hz, lead.y + 1.5, city.roadLift(hx, hz));
+    const hy = city.groundAt(hx, hz, lead.y + 0.45, city.roadLift(hx, hz));
     const axx = this.x + F.x * ARTIC.axleR, axz = this.z + F.z * ARTIC.axleR;
-    const ay = city.groundAt(axx, axz, lead.y + 1.5, city.roadLift(axx, axz));
+    const ay = city.groundAt(axx, axz, lead.y + 0.45, city.roadLift(axx, axz));
     const span = ARTIC.hitchR - ARTIC.axleR;
     this.pitch = Math.atan2(ay - hy, span);
     this.y = ay + (hy - ay) * (-ARTIC.axleR / span);
@@ -8392,13 +8394,21 @@ export class Vehicle {
     // and the wheels hang; in a dip it reads low and they sink.
     const f2 = this.forward;
     const rx2 = f2.z, rz2 = -f2.x;
-    const gAt = (ox, oz) => this.city.groundAt(this.x + ox, this.z + oz, this.y + 1.5, this.lift);
+    // THE REFERENCE IS THE WHEELS, not a point 1.5 m over them. groundAt
+    // takes the surface nearest its reference within DECK_REACH (0.9 m) above
+    // it -- "a deck may only pick you up if it is at your wheels" -- and from
+    // y + 1.5 that let any deck up to 2.4 m over the lane win: a ramp running
+    // beside the freeway 1.5 m higher, or a low overpass, captured cars on
+    // the carriageway under it and dropped them off its end (v162: I-5 under
+    // NE 45th St, SR-99 and Aurora beside their ramps, the 520 diverge).
+    const REF = 0.45;
+    const gAt = (ox, oz) => this.city.groundAt(this.x + ox, this.z + oz, this.y + REF, this.lift);
     // A DISTANT AI car rides its centre sample. traffic.js sets lowDetail on a
     // phone for cars past 60 m, where a level body on a slope is centimetres
     // off at each end -- invisible -- and the four wheel queries were most of
     // what traffic cost there (3.3 ms a frame on an iPhone 17 Pro, 58 cars).
     const low = this.lowDetail;
-    const cg = low ? this.city.groundAt(this.x, this.z, this.y + 1.5, this.lift) : 0;
+    const cg = low ? this.city.groundAt(this.x, this.z, this.y + REF, this.lift) : 0;
     const fh = low ? cg : gAt(f2.x * this.halfLen, f2.z * this.halfLen);
     const bh = low ? cg : gAt(-f2.x * this.halfLen, -f2.z * this.halfLen);
     // A bike has TWO contact patches, both on the centreline. Sampling out to

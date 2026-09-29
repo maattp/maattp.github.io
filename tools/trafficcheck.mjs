@@ -222,7 +222,7 @@ function pageInit() {
           if (!pol && lat < 2) m.headOn++;
           if (H.oppList.length < 10) {
             const tag = (v) => ({ mode: v.mode, edge: v.edge, sign: v.dirSign, flow: T.flow && v.edge != null ? T.flow[v.edge] : null,
-              cls: v.edge != null ? c.edges[v.edge].cls : null, spd: +v.vLong.toFixed(1), panic: +(v.panic || 0).toFixed(1) });
+              cls: v.edge != null && c.edges[v.edge] ? c.edges[v.edge].cls : null, spd: +v.vLong.toFixed(1), panic: +(v.panic || 0).toFixed(1) });
             H.oppList.push({ x: Math.round(A.x), z: Math.round(A.z), y: +A.y.toFixed(1), lat: +lat.toFixed(1), ow, A: tag(A), B: tag(B) });
           }
         }

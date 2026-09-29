@@ -397,13 +397,14 @@ export class Monorail {
       const d = Math.hypot(x - (a.x + (b.x - a.x) * t), z - (a.z + (b.z - a.z) * t));
       if (d > e.hw + r + 1) continue;
       // the lanes as traffic.js lays them (laneLat): a one-way edge's across
-      // its width less parking or shoulder, 4.2 m apart; a two-way edge's
+      // its width less parking or shoulder, LANE_W (3.6 m) apart -- keep it
+      // equal to traffic.js's; a two-way edge's
       // at 0.48 hw each side. A car's body is ~1 m either side of its lane.
       let lanes;
       if (e.oneway || e.onewayRev) {
         const inset = e.elev || e.cls === 'hwy' || e.cls === 'ramp' ? 0.8 : 2.2;
         const lo = -e.hw + inset, hi = e.hw - inset;
-        const n = hi > lo ? Math.max(1, Math.floor((hi - lo) / 4.2)) : 1;
+        const n = hi > lo ? Math.max(1, Math.floor((hi - lo) / 3.6)) : 1;
         lanes = [];
         for (let i = 0; i < n; i++) lanes.push(hi > lo ? lo + ((i + 0.5) * (hi - lo)) / n : 0);
       } else lanes = [e.hw * 0.48, -e.hw * 0.48];

@@ -207,15 +207,37 @@ function directedComponents(city, flow) {
 // Spawns only go on components at least this big: a few-node loop is a car
 // circling one block forever.
 const MIN_COMPONENT = 60;
-// Lanes on a one-way street are at least 4.2 m apart. A real lane is 3.6 m, but
-// resolveCarCollisions tests CIRCLES of radius 0.42 x length -- 2.0 m for a
-// sedan -- so two cars abreast in 3.6 m lanes overlap and shove each other
-// sideways the whole way down the street. A one-way street with parking keeps
-// 2.2 m clear at each kerb for the parked cars (they sit at hw - 1.15, see
-// updateParked); anything else keeps a 0.8 m shoulder.
-const LANE_W = 4.2, PARK_EDGE = 2.2, SHOULDER = 0.8;
+// Lanes on a one-way street are 3.6 m, a real lane. (They were 4.2 m while
+// resolveCarCollisions tested circles of 0.42 x length, 2.0 m for a sedan,
+// which touched across 3.6 m; it tests the bodies' rectangles now.) A one-way
+// street with parking keeps 2.2 m clear at each kerb for the parked cars
+// (they sit at hw - 1.15, see updateParked); anything else keeps a 0.8 m
+// shoulder.
+const LANE_W = 3.6, PARK_EDGE = 2.2, SHOULDER = 0.8;
 
 const byX = (a, b) => a.x - b.x;
+
+// A vehicle's body for car-car collision: its footprint rectangle.
+const bodyR = (v) => Math.hypot(v.halfLen, v.halfWid);
+const _hit = { nx: 0, nz: 0, pen: 0 };
+/** Overlap of a's and b's footprints (d = b - a): the separating normal from
+ *  a to b and the depth along it, or null. 2D SAT on the four body axes. */
+function boxOverlap(a, b, dx, dz) {
+  const fa = a.forward, fb = b.forward;
+  const ax = [fa.x, fa.z, fa.z, -fa.x, fb.x, fb.z, fb.z, -fb.x];
+  let best = Infinity, bx = 0, bz = 0;
+  for (let k = 0; k < 8; k += 2) {
+    const ux = ax[k], uz = ax[k + 1];
+    const ra = a.halfLen * Math.abs(fa.x * ux + fa.z * uz) + a.halfWid * Math.abs(fa.z * ux - fa.x * uz);
+    const rb = b.halfLen * Math.abs(fb.x * ux + fb.z * uz) + b.halfWid * Math.abs(fb.z * ux - fb.x * uz);
+    const dd = dx * ux + dz * uz;
+    const o = ra + rb - Math.abs(dd);
+    if (o <= 0) return null;
+    if (o < best) { best = o; bx = dd < 0 ? -ux : ux; bz = dd < 0 ? -uz : uz; }
+  }
+  _hit.nx = bx; _hit.nz = bz; _hit.pen = best;
+  return _hit;
+}
 
 export class TrafficSystem {
   constructor(scene, city, game) {
@@ -268,7 +290,7 @@ export class TrafficSystem {
    * always has. A one-way street has no centreline: its lanes are laid across
    * the whole carriageway (less parking or shoulder), and each car keeps the
    * lane fraction it was spawned with, so a car holds its lane down a freeway
-   * (lanes 4.2 m apart: see LANE_W, so a 3-lane carriageway runs 2 AI lanes).
+   * (lanes 3.6 m apart, see LANE_W).
    */
   laneLat(ei, sign, v) {
     const e = this.city.edges[ei];
@@ -1006,6 +1028,9 @@ export class TrafficSystem {
       const lim = Math.max(0, ee.hw + 0.4 - (v.radius * 0.7 + 1.1));
       off = clamp(off, -lim, lim);
     }
+    // steering round a car standing in the lane (the scan below sets it)
+    const laneOff = off;
+    if (v.dodgeT > 0) { off += v.dodge; v.dodgeT -= dt; } else v.dodge = 0;
     const aimAhead = clamp(6 + Math.abs(v.vLong) * 0.75, 6, 24);
     const p = ((v.x - na.x) * fx + (v.z - na.z) * fz);
     const ap = clamp(p + aimAhead, 0, nlen);
@@ -1030,9 +1055,23 @@ export class TrafficSystem {
       if (Math.abs(o.y - v.y) > 3) continue;
       const rx = o.x - v.x, rz = o.z - v.z;
       const fwd = rx * f.x + rz * f.z;
-      if (fwd < 0.5 || fwd > scanLen) continue;
-      const lat = Math.abs(rx * f.z - rz * f.x);
-      if (lat > 2.2) continue;
+      if (fwd < 0.5 || fwd > Math.max(scanLen, 25)) continue;
+      // + = to the right of this car
+      const rl = rz * f.x - rx * f.z;
+      // AN UNATTENDED CAR STANDING IN THE LANE is driven round, not queued
+      // behind: a parked car knocked out of its slot, one you got out of.
+      // Car-car collision used to shove it along (circles pushing circles);
+      // with the bodies' boxes a queue sat behind it for good.
+      // Laterals in the edge's frame (+ right), where the lane offset is.
+      const need = v.halfWid + o.halfWid + 0.7;
+      const oLat = (o.x - na.x) * -fz + (o.z - na.z) * fx;
+      if (Math.abs(oLat - laneOff) < need && (o.mode === 'free' || o.mode === 'parked') && o !== player.vehicle && Math.abs(o.vLong) < 0.5) {
+        v.dodge = clamp((oLat >= laneOff ? oLat - need : oLat + need) - laneOff, -LANE_W, LANE_W);
+        v.dodgeT = 1.2;
+        if (fwd < v.halfLen + o.halfLen + 1.5 && Math.abs(rl) < need - 0.4) brake = Math.max(brake, 1);
+        continue;
+      }
+      if (fwd > scanLen || Math.abs(rl) > 2.2) continue;
       brake = Math.max(brake, clamp(1.4 - fwd / scanLen, 0.35, 1));
     }
     // A Link train on (or coming to) the level crossing ahead: wait for it.
@@ -1178,11 +1217,11 @@ export class TrafficSystem {
     const n = this.cars.length, all = this._colOrd || (this._colOrd = []);
     all.length = n;
     let rMax = 0;
-    for (let k = 0; k < n; k++) { const v = this.cars[k]; all[k] = v; if (v.radius > rMax) rMax = v.radius; }
+    for (let k = 0; k < n; k++) { const v = this.cars[k]; all[k] = v; const r = bodyR(v); if (r > rMax) rMax = r; }
     all.sort(byX);
     const still = (v) => v !== player.vehicle && (v.mode === 'parked' || (v.mode === 'apron' && v._still >= 3));
     for (let i = 0; i < n; i++) {
-      const a = all[i], sa = still(a), reach = a.x + a.radius + rMax;
+      const a = all[i], sa = still(a), reach = a.x + bodyR(a) + rMax;
       for (let j = i + 1; j < n; j++) {
         const b = all[j];
         if (b.x > reach) break;
@@ -1196,12 +1235,17 @@ export class TrafficSystem {
         // an articulated bus's two sections are one vehicle
         if (a.leader === b || b.leader === a) continue;
         const dx = b.x - a.x, dz = b.z - a.z;
-        const rr = a.radius + b.radius;
+        const rr = bodyR(a) + bodyR(b);
         const d2 = dx * dx + dz * dz;
         if (d2 > rr * rr || d2 < 1e-6) continue;
-        const d = Math.sqrt(d2);
-        const nx = dx / d, nz = dz / d;
-        const pen = rr - d;
+        // THE BODIES, NOT CIRCLES: two oriented rectangles, separated along
+        // the axis of least overlap. Circles of 0.42 x length (2 m for a
+        // sedan) touched two cars abreast in 3.6 m lanes and shoved them
+        // apart the whole way, which is why lanes used to be 4.2 m and a
+        // 3-lane freeway carried 2.
+        const hit = boxOverlap(a, b, dx, dz);
+        if (!hit) continue;
+        const nx = hit.nx, nz = hit.nz, pen = hit.pen;
         // a rear section is placed by its front, so it does not give way
         const ma = a.mode === 'trailer' ? 1e6 : a.mass, mb = b.mode === 'trailer' ? 1e6 : b.mass;
         const total = ma + mb;
