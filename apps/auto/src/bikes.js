@@ -20,7 +20,7 @@
 
 import * as THREE from './three.js';
 import * as G from './geo.js';
-import { Builder, ChunkBuilder } from './build.js';
+import { Builder, ChunkBuilder, dropAfterUpload } from './build.js';
 import { clamp, angleWrap } from './util.js';
 
 const ON_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
@@ -129,8 +129,7 @@ export class BikeNet {
    * vertex takes the terrain's own height at its point (and the long pieces
    * are cut to ~4 m), so the ribbon lies on the ground it is drawn over.
    */
-  build(scene, city, renderer = null) {
-    this.renderer = renderer;
+  build(scene, city) {
     this.city = city;
     this.mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0, envMapIntensity: 0.45,
       polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
@@ -186,11 +185,12 @@ export class BikeNet {
     this.chunks = [];
     for (const [key, c] of chunks) if (c.segs.length) this.chunks.push({ key, segs: c.segs, m: null, x: c.x, z: c.z });
     scene.add(this.group);
-    // on a phone the arrays go once uploaded (see _build), so a lost context
-    // drops the meshes and they are built again when next in range
-    if (ON_PHONE && this.renderer) this.renderer.domElement.addEventListener('webglcontextlost', () => {
-      for (const c of this.chunks) if (c.m) { this.group.remove(c.m); c.m.geometry.dispose(); c.m = null; }
-    });
+  }
+
+  /** A lost WebGL context: on a phone the meshes' arrays are gone (see
+   *  _build), so they go, and are built again when next in range. */
+  contextLost() {
+    for (const c of this.chunks) if (c.m) { this.group.remove(c.m); c.m.geometry.dispose(); c.m = null; }
   }
 
   /** One ~4 m piece of path i..i+1: the ribbon, and on paved paths a dashed
@@ -214,17 +214,13 @@ export class BikeNet {
   _build(c) {
     const b = new ChunkBuilder(false, 1024);
     const S = c.segs;
+    // (segs are kept -- a few references into each path's points -- so a
+    // chunk dropped on a lost context can be built again)
     for (let k = 0; k < S.length; k += 4) this._drawSeg(b, S[k], S[k + 1], S[k + 2], S[k + 3]);
-    c.segs = null;
-    if (b.empty) return;
+    if (b.empty) { c.segs = null; return; }
     const m = new THREE.Mesh(b.build(ON_PHONE), this.mat);
     m.name = `bikepaths:${c.key}`; m.receiveShadow = true;
-    if (ON_PHONE) {
-      const g = m.geometry, drop = function () { this.array = null; };
-      for (const k in g.attributes) g.attributes[k].onUpload(drop);
-      g.index.onUpload(drop);
-      m.raycast = () => {};
-    }
+    if (ON_PHONE) dropAfterUpload(m);
     this.group.add(m);
     c.m = m;
   }

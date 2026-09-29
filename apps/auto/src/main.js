@@ -806,10 +806,11 @@ function installShadowFade() {
   // the line's structure after the landmarks, whose solids and platforms it adds to
   link.build(scene, world);
   freight.build(scene, world);
-  bikeNet.build(scene, city, renderer);
+  bikeNet.build(scene, city);
   // every other pier OSM maps, after everything that builds its own decks
   piers = new Piers(md.piers, { scene, city, dropArrays: ON_PHONE, waterAt: (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; } });
-  if (ON_PHONE) renderer.domElement.addEventListener('webglcontextlost', () => piers.contextLost());
+  // on a phone their arrays go once uploaded: a lost context rebuilds them
+  if (ON_PHONE) renderer.domElement.addEventListener('webglcontextlost', () => { piers.contextLost(); bikeNet.contextLost(); });
   // Washington State Ferries' Seattle-Bainbridge run (ferry.js)
   ferry = new Ferry(md.ferry, { scene, city, world, renderer });
   freezeStatic(link.group); freezeStatic(link.tunGroup);

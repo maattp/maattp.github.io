@@ -2533,6 +2533,12 @@ async function main() {
         const N = d.bikeNet, ch = N.chunks.find((c) => !c.m && c.segs), bc = ch ? { position: { x: ch.x, y: 0, z: ch.z } } : null;
         if (bc) for (let i = 0; i < 16; i++) N.update(bc);
         out.lazy.bike = ch ? !!(ch.m && ch.m.geometry.index.count > 0) : null;
+        // a lost context (the phone's path drops the arrays after upload):
+        // both drop their meshes and build them again when next in range
+        P.contextLost(); N.contextLost();
+        for (let i = 0; i < 8 * 40 && !(mine && mine.m); i++) P.update(cam);
+        if (bc) for (let i = 0; i < 8 * 40 && !ch.m; i++) N.update(bc);
+        out.lazy.relost = !!(mine && mine.m) && (!ch || !!(ch.m && ch.m.geometry.index.count > 0));
       }
       // Pier 90's sheds: every big building standing in the sea at Smith Cove has a deck
       out.smithCove = C.buildings.filter((b) => b.x > -3300 && b.x < -3050 && b.z > -2150 && b.z < -1750 && b.w * b.d > 150)
@@ -2547,8 +2553,8 @@ async function main() {
     })()`, true);
     console.log('\n--- piers and doors ----------------------------------------');
     console.log(`  ${pr.built} OSM piers and ${pr.sheds} sea sheds decked; standing on them off the drawn deck ${pr.off} of ${pr.checked}; Pier 90 sheds on a deck ${pr.smithCove.filter(Boolean).length}/${pr.smithCove.length}; doors: Link standing ${pr.doors.linkDwell}, running ${pr.doors.linkRun}, monorail ${pr.doors.mono}`);
-    console.log(`  built when in range: pier chunks ${pr.lazy.before} -> ${pr.lazy.after}, the deck drawn ${pr.lazy.deck} m from its platform; a far bike-path chunk built ${pr.lazy.bike}`);
-    if (!(pr.lazy.after > pr.lazy.before) || pr.lazy.deck === null || Math.abs(pr.lazy.deck) > 0.05 || pr.lazy.bike !== true) {
+    console.log(`  built when in range: pier chunks ${pr.lazy.before} -> ${pr.lazy.after}, the deck drawn ${pr.lazy.deck} m from its platform; a far bike-path chunk built ${pr.lazy.bike}; built again after a lost context ${pr.lazy.relost}`);
+    if (!(pr.lazy.after > pr.lazy.before) || pr.lazy.deck === null || Math.abs(pr.lazy.deck) > 0.05 || pr.lazy.bike !== true || pr.lazy.relost !== true) {
       console.error('FAIL: piers / bike paths not built when in range'); process.exitCode = 1;
     }
     if (pr.built < 800 || pr.off > pr.checked * 0.02 || !pr.smithCove.length || pr.smithCove.some((x) => !x)
