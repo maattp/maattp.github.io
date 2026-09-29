@@ -2746,6 +2746,17 @@ async function main() {
     // sea, and a boat is called to a terminal with none in.
     const fy = await session.eval(`(() => { const d = window.__dbg, F = d.ferry, P = d.player, T = d.traffic, C = d.city, G = d.G, cam = d.camera;
       const out = { len: Math.round(F.route.len) };
+      // the route as built (tools/build_ferry.py): its tightest bend
+      { const R = F.route, n = R.X.length; let minR = Infinity;
+        // over 20 m either side: the points are stored to the centimetre, and
+        // 5 m apart that rounding alone reads as a 350 m bend
+        const k = 4;
+        for (let i = k; i < n - k; i++) {
+          const h1 = Math.atan2(R.Z[i] - R.Z[i - k], R.X[i] - R.X[i - k]), h2 = Math.atan2(R.Z[i + k] - R.Z[i], R.X[i + k] - R.X[i]);
+          const dh = Math.abs(((h2 - h1 + 3 * Math.PI) % (2 * Math.PI)) - Math.PI);
+          if (dh > 1e-6) minR = Math.min(minR, Math.hypot(R.X[i + k] - R.X[i - k], R.Z[i + k] - R.Z[i - k]) / 2 / dh);
+        }
+        out.minR = Math.round(minR); }
       // the slips
       out.slips = Object.entries(F.slips).map(([k, s]) => {
         let worst = 0, y0 = null;
@@ -2829,12 +2840,13 @@ async function main() {
       return out;
     })()`, true);
     console.log('\n--- the ferry --------------------------------------------');
-    console.log(`  route ${fy.len} m; slips: ${fy.slips.map((q) => q.k + ' end ' + q.end + ' m off the car deck, worst step ' + q.step + ' m').join('; ')}`);
+    console.log(`  route ${fy.len} m, tightest bend ${fy.minR} m radius; slips: ${fy.slips.map((q) => q.k + ' end ' + q.end + ' m off the car deck, worst step ' + q.step + ' m').join('; ')}`);
     console.log(`  hull points on land: ${fy.aground} of ${fy.samples} ${JSON.stringify(fy.where)}; boats pass ${fy.passClear} m apart; a crossing ${fy.crossMin} min`);
     console.log(`  driven on ${fy.on}, aboard ${fy.aboard}, sailed ${fy.sailed} m sliding ${fy.slid} m at ${fy.onDeckY} m; ARRIVE ${fy.skip}; off at Winslow ${fy.off} onto land ${fy.offLand} (${fy.offY} m)`);
     console.log(`  walked ${fy.walk.reached}/${fy.walk.of} to the sun deck at ${fy.walk.top} m; a boat called to Winslow: ${fy.called} m out`);
     {
       const bad = [];
+      if (fy.len < 12500 || fy.len > 14500 || fy.minR < 400) bad.push('the route');
       if (fy.slips.some((q) => Math.abs(q.end) > 0.1 || q.step > 0.3)) bad.push('slips');
       if (fy.aground) bad.push('aground');
       if (fy.passClear < 80) bad.push('passing');

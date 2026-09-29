@@ -361,7 +361,11 @@ export class Ferry {
 
   /** where the ferries dock, for the maps and hellos */
   places() {
-    return Object.entries(this.slips).map(([k, s]) => ({ x: s.x - s.dx * 60, z: s.z - s.dz * 60, key: k, name: `Ferry · ${s.name}` }));
+    return Object.entries(this.slips).map(([k, s]) => {
+      const other = this.slips[k === 'sea' ? 'bi' : 'sea'];
+      return { x: s.x - s.dx * 60, z: s.z - s.dz * 60, key: k, name: `Ferry · ${s.name}`,
+        hello: `${k === 'sea' ? 'Colman Dock' : 'Winslow'} — the ${other.short} ferry loads here. Drive aboard; on board, ARRIVE (F) takes you straight across` };
+    });
   }
 
   _place(b) {

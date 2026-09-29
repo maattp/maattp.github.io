@@ -813,6 +813,7 @@ function installShadowFade() {
   if (ON_PHONE) renderer.domElement.addEventListener('webglcontextlost', () => { piers.contextLost(); bikeNet.contextLost(); });
   // Washington State Ferries' Seattle-Bainbridge run (ferry.js)
   ferry = new Ferry(md.ferry, { scene, city, world, renderer });
+  freezeStatic(ferry.terminals);
   freezeStatic(link.group); freezeStatic(link.tunGroup);
   freezeStatic(freight.group); freezeStatic(freight.tunGroup);
   // the balloon's launch field: no park trees on it
@@ -1113,10 +1114,9 @@ function installShadowFade() {
     // Link light rail: every station's street entrance
     ...link.stations.map((st) => ({ x: st.ent.x, z: st.ent.z, kind: st.lines.includes(1) ? 'link' : 'link2', name: `Link · ${st.name}`, near: false,
       hello: `${st.full} Station — Link light rail's ${st.lines.map((l) => `${l} Line`).join(' and ')}. Tap ENTER here${st.under ? '' : ' or on the platform'} to catch the next train and drive it` })),
+    // the ferry terminals: where you drive aboard
+    ...ferry.places().map((f) => ({ x: f.x, z: f.z, kind: 'ferry', name: f.name, near: false, hello: f.hello })),
     // BNSF's crew-change stop: where you take a freight
-    ...ferry.places().map((f) => ({ x: f.x, z: f.z, kind: 'ferry', name: f.name, near: false,
-      hello: f.key === 'sea' ? 'Colman Dock — the Bainbridge ferry loads here. Drive aboard; on board, ARRIVE (F) takes you straight across'
-        : 'Winslow — the Seattle ferry loads here. Drive aboard; on board, ARRIVE (F) takes you straight across' })),
     { x: freight.yard.x, z: freight.yard.z, kind: 'freight', name: 'Freight · Balmer Yard', near: false,
       hello: 'Balmer Yard — BNSF freights stop here for a crew change. Climb up at the lead locomotive (ENTER), or tap ENTER to call the next one in' },
     ...(lmRoot.userData.marinas || []).map((mr) => ({ x: mr.x, z: mr.z, kind: 'dock', name: mr.name, near: false,
