@@ -162,10 +162,12 @@ export async function loadMapData(onStep) {
   const bikepaths = await (await fetch(new URL('bikepaths.json', BASE))).json();
   // OSM's piers (tools/build_piers.py): piers.js builds the ones nothing else does
   const piers = await (await fetch(new URL('piers.json', BASE))).json();
+  // WSF's Seattle-Bainbridge route and its slips (tools/build_ferry.py)
+  const ferry = await (await fetch(new URL('ferry.json', BASE))).json();
 
   return {
     height, hfN: hp.w,
     water, green, maskN: sp.w, lot, lotN: lp.w,
-    roads, buildings, places, lakes, monorail, link, freight, beaches, parkprops, bikepaths, piers,
+    roads, buildings, places, lakes, monorail, link, freight, beaches, parkprops, bikepaths, piers, ferry,
   };
 }

@@ -261,11 +261,26 @@ let railCarve = null;
 export let railCarveCell = null;
 export function setRailCarve(fn, cellFn) { railCarve = fn; railCarveCell = cellFn; }
 
+// ...and GROUND RAISED where the DEM reads a pier as the sea: Colman Dock is
+// dry land in the water mask (OSM's coastline takes in the dock) but 0-0.5 m
+// in the DEM, where the real deck is ~4.5 m (ferry.js fixTerminals). `fill`
+// answers the raised height or -Infinity; only ever raises. `fillCell`
+// tells world.js which 40 m cells to re-tessellate, so the dock's edge is a
+// face and not a 40 m slope.
+let fill = null;
+export let fillCell = null;
+export function setFill(fn, cellFn) { fill = fn; fillCell = cellFn; }
+
 /** The ground before any portal cut. Only the carve itself may use this. */
-export function terrainRaw(x, z) { return sampleHF(x, z); }
+export function terrainRaw(x, z) {
+  const h = sampleHF(x, z);
+  if (!fill) return h;
+  const f = fill(x, z);
+  return f > h ? f : h;
+}
 
 export function terrainHeight(x, z) {
-  const h = sampleHF(x, z);
+  const h = terrainRaw(x, z);
   if (!carve && !railCarve) return h;
   const c = carve ? carve(x, z) : 0, r = railCarve ? railCarve(x, z) : 0;
   return h - (c > r ? c : r);

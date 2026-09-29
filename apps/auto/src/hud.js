@@ -13,7 +13,7 @@ const SCALE = MAP_PX / (G.MAP_HALF * 2);
  */
 function placeIcon(ctx, kind, x, y, r) {
   ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f'
-    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : kind === 'coffee' ? '#6a4a32' : kind === 'hydro' ? '#d8242c' : kind === 'link' ? '#3a9a44' : kind === 'link2' ? '#0082ca' : kind === 'freight' ? '#b8501c' : kind === 'bike' ? '#57b83a' : kind === 'pickle' ? '#c8a21a' : '#e0782e';
+    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : kind === 'coffee' ? '#6a4a32' : kind === 'hydro' ? '#d8242c' : kind === 'link' ? '#3a9a44' : kind === 'link2' ? '#0082ca' : kind === 'freight' ? '#b8501c' : kind === 'ferry' ? '#0b6e4f' : kind === 'bike' ? '#57b83a' : kind === 'pickle' ? '#c8a21a' : '#e0782e';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = r * 0.22;
   ctx.beginPath();
@@ -96,6 +96,12 @@ function placeIcon(ctx, kind, x, y, r) {
     ctx.fillRect(x - r * 0.22, y + r * 0.2, r * 0.1, r * 0.08); ctx.fillRect(x + r * 0.12, y + r * 0.2, r * 0.1, r * 0.08);
     ctx.strokeStyle = '#ffffff'; ctx.lineWidth = r * 0.1;
     ctx.beginPath(); ctx.moveTo(x - r * 0.2, y - r * 0.3); ctx.lineTo(x + r * 0.1, y - r * 0.55); ctx.lineTo(x - r * 0.1, y - r * 0.62); ctx.stroke();
+  } else if (kind === 'ferry') {
+    // a ferry side-on: the hull, the cabin, the stacks
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.moveTo(x - r * 0.56, y); ctx.lineTo(x + r * 0.56, y); ctx.lineTo(x + r * 0.42, y + r * 0.26); ctx.lineTo(x - r * 0.42, y + r * 0.26); ctx.closePath(); ctx.fill();
+    ctx.fillRect(x - r * 0.36, y - r * 0.2, r * 0.72, r * 0.18);
+    ctx.fillRect(x - r * 0.14, y - r * 0.44, r * 0.1, r * 0.24); ctx.fillRect(x + r * 0.04, y - r * 0.44, r * 0.1, r * 0.24);
   } else if (kind === 'freight') {
     // a road diesel side-on: the cab, the long hood, the trucks under it
     ctx.fillStyle = '#ffffff';
@@ -406,6 +412,28 @@ export class Hud {
     ctx.stroke();
   }
 
+  /** The ferry route, dashed as a chart draws one, and each boat on it. */
+  drawFerry(ctx, to, w, boatR) {
+    const P = this.ferry.mapPoints(), n = P.length / 2;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+    ctx.lineWidth = w;
+    ctx.setLineDash([w * 4, w * 3]);
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) { const [cx, cy] = to(P[i * 2], P[i * 2 + 1]); if (i) ctx.lineTo(cx, cy); else ctx.moveTo(cx, cy); }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    for (const b of this.ferry.boats) {
+      const [cx, cy] = to(b.x, b.z), [fx, fy] = to(b.x + Math.sin(b.h) * 70, b.z + Math.cos(b.h) * 70);
+      const ang = Math.atan2(fy - cy, fx - cx);
+      ctx.translate(cx, cy); ctx.rotate(ang);
+      ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#0b6e4f'; ctx.lineWidth = boatR * 0.3;
+      ctx.beginPath(); ctx.ellipse(0, 0, boatR * 1.9, boatR * 0.7, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.rotate(-ang); ctx.translate(-cx, -cy);
+    }
+    ctx.restore();
+  }
+
   /** BNSF's main line: rail brown, one line for both mains. */
   drawFreight(ctx, to, w, near = null) {
     if (!this._frPts) {
@@ -515,6 +543,7 @@ export class Hud {
       ctx.fill();
     }
     // The monorail's line, teal, under the markers
+    if (this.ferry) this.drawFerry(ctx, toMap, 2.0 / zoom, 5 / zoom);
     if (this.freight) this.drawFreight(ctx, toMap, 2.2 / zoom, { x: p.x, z: p.z, r: S / (zoom * SCALE) + 60 });
     if (this.link) this.drawLink(ctx, toMap, 2.6 / zoom, { x: p.x, z: p.z, r: S / (zoom * SCALE) + 60 });
     if (this.monorail) this.drawMonorail(ctx, toMap, 2.2 / zoom);
@@ -675,6 +704,7 @@ export class Hud {
       ctx.fillStyle = 'rgba(255,255,255,0.55)';
       ctx.fillText(l.name, lx, lz - size * 0.008);
     }
+    if (this.ferry) this.drawFerry(ctx, toC, Math.max(1.4, size * 0.0018), size * 0.006);
     if (this.freight) this.drawFreight(ctx, toC, Math.max(1.5, size * 0.002));
     if (this.link) this.drawLink(ctx, toC, Math.max(1.8, size * 0.0026));
     if (this.monorail) this.drawMonorail(ctx, toC, Math.max(1.5, size * 0.0022));
@@ -682,7 +712,7 @@ export class Hud {
       const [qx, qz] = toC(pl.x, pl.z);
       placeIcon(ctx, pl.kind, qx, qz, size * (pl.kind === 'dock' ? 0.011 : 0.008));
       // named, quads too: an unlabelled orange dot was a quad nobody found
-      if (pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle' || pl.kind === 'kayak' || pl.kind === 'wheel' || pl.kind === 'golf' || pl.kind === 'arcade' || pl.kind === 'pinball' || pl.kind === 'hockey' || pl.kind === 'tower' || pl.kind === 'duck' || pl.kind === 'coffee' || pl.kind === 'hydro' || pl.kind === 'link' || pl.kind === 'link2' || pl.kind === 'freight' || pl.kind === 'bike' || pl.kind === 'pickle') {
+      if (pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle' || pl.kind === 'kayak' || pl.kind === 'wheel' || pl.kind === 'golf' || pl.kind === 'arcade' || pl.kind === 'pinball' || pl.kind === 'hockey' || pl.kind === 'tower' || pl.kind === 'duck' || pl.kind === 'coffee' || pl.kind === 'hydro' || pl.kind === 'link' || pl.kind === 'link2' || pl.kind === 'freight' || pl.kind === 'ferry' || pl.kind === 'bike' || pl.kind === 'pickle') {
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.fillText(pl.name, qx, qz - size * 0.016);
       }

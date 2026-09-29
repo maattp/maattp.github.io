@@ -331,6 +331,10 @@ function makeUnderpassDepth(underpasses) {
   return underpassDepth;
 }
 
+// Nodes whose decks keep the heights they were given (ferry.js: the slips'
+// trestles), set by cityGenerator from md.ferryFix.
+let LOCK_NODES = null;
+
 function gradeRoads(nodes, edges) {
   const T = G.terrainHeight;
   const portals = [];
@@ -355,7 +359,9 @@ function gradeRoads(nodes, edges) {
     if (!e.elev && near) continue;
     e.prof = true;
     // A deck beside a portal keeps its imported heights exactly.
-    e.lock = near;
+    // ...and so does a ferry slip's trestle, re-seated on its ramp down to
+    // the car deck before the city (ferry.js fixTerminals)
+    e.lock = near || !!(LOCK_NODES && LOCK_NODES.has(e.a) && LOCK_NODES.has(e.b));
   }
 
   // --- the sample graph ---
@@ -1478,6 +1484,7 @@ function stackBores(g) {
 }
 
 export function* cityGenerator(md, cache = {}) {
+  LOCK_NODES = md.ferryFix && md.ferryFix.lock ? md.ferryFix.lock : null;
   yield { p: 0.02, msg: 'Unpacking the street graph' };
 
   // --- 1. Road graph ------------------------------------------------------
@@ -3305,6 +3312,15 @@ export function* cityGenerator(md, cache = {}) {
         if (py !== null && (curY == null ? py > terr
           : py <= curY + DECK_REACH && Math.abs(py - curY) < Math.abs(terr - curY))) terr = py;
       }
+      // A MOVING DECK -- a ferry's (ferry.js deckAt) -- by the same rule: its
+      // decks are answered in the boat's own frame, turned through its pose.
+      if (this.movers) {
+        for (let m = 0; m < this.movers.length; m++) {
+          const my = this.movers[m].deckAt(x, z, curY);
+          if (my !== null && (curY == null ? my > terr
+            : my <= curY + DECK_REACH && Math.abs(my - curY) < Math.abs(terr - curY))) terr = my;
+        }
+      }
       // A STUNT RAMP is the top surface wherever it stands (stunts.js keeps
       // them clear of decks), so it only has to be above the ground and in
       // reach of the wheels -- the same reach a deck gets.
@@ -3596,6 +3612,8 @@ export function* cityGenerator(md, cache = {}) {
     // seaplaneDock), which is what keeps "the one height surface" true on it.
     /** Top of any drawn slab at (x, z) or null (the airfield; main.js installs it). */
     slabQuery: null,
+    // moving decks (ferry.js): each has deckAt(x, z, curY)
+    movers: null,
     platforms: null,
     platGrid: null,
     setPlatforms(list) {

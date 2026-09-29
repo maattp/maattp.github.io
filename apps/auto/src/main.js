@@ -11,6 +11,7 @@ import { ShadowCache } from './shadowcache.js';
 import { Monorail } from './monorail.js';
 import { Link } from './link.js';
 import { Freight } from './freight.js';
+import { Ferry, fixTerminals } from './ferry.js';
 import { BikeNet, Cyclists } from './bikes.js';
 import { Islands } from './islands.js';
 import { Piers } from './piers.js';
@@ -98,7 +99,7 @@ let pinball = null;  // the pinball museum in the International District (pinbal
 let hockey = null;   // hockey night at Climate Pledge Arena (hockey.js)
 let tower = null;    // Boeing Field's control tower and FINAL APPROACH (atc.js)
 let duckTour = null; // the Duck Tour: kiosk, ducks, ramp and the tour (ducktour.js)
-let islands = null, pickle = null, piers = null;   // the islands across the Sound (islands.js), pickleball on Bainbridge (pickleball.js)
+let islands = null, pickle = null, piers = null, ferry = null, ferryPrev = null;   // the islands across the Sound (islands.js), pickleball on Bainbridge (pickleball.js)
 let coffee = null;   // First Cup Coffee at 1912 Pike Place and MORNING RUSH (barista.js)
 let seafair = null;  // hydroplane racing on Lake Washington (hydrorace.js)
 let golf = null;   // three holes at Interbay (golf.js)
@@ -561,6 +562,8 @@ async function boot() {
   md.freightClear = freight.clearZones();
   // Seattle's bike paths, from their data: the scatter keeps off them
   bikeNet = new BikeNet(md.bikepaths);
+  // the ferry slips' roads, before the city reads them (ferry.js)
+  md.ferryFix = fixTerminals(md);
   const gen = cityGenerator(md, bootCache);
   let r = gen.next();
   while (!r.done) {
@@ -807,6 +810,8 @@ function installShadowFade() {
   // every other pier OSM maps, after everything that builds its own decks
   piers = new Piers(md.piers, { scene, city, dropArrays: ON_PHONE, waterAt: (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; } });
   if (ON_PHONE) renderer.domElement.addEventListener('webglcontextlost', () => piers.contextLost());
+  // Washington State Ferries' Seattle-Bainbridge run (ferry.js)
+  ferry = new Ferry(md.ferry, { scene, city, world, renderer });
   freezeStatic(link.group); freezeStatic(link.tunGroup);
   freezeStatic(freight.group); freezeStatic(freight.tunGroup);
   // the balloon's launch field: no park trees on it
@@ -1108,6 +1113,9 @@ function installShadowFade() {
     ...link.stations.map((st) => ({ x: st.ent.x, z: st.ent.z, kind: st.lines.includes(1) ? 'link' : 'link2', name: `Link · ${st.name}`, near: false,
       hello: `${st.full} Station — Link light rail's ${st.lines.map((l) => `${l} Line`).join(' and ')}. Tap ENTER here${st.under ? '' : ' or on the platform'} to catch the next train and drive it` })),
     // BNSF's crew-change stop: where you take a freight
+    ...ferry.places().map((f) => ({ x: f.x, z: f.z, kind: 'ferry', name: f.name, near: false,
+      hello: f.key === 'sea' ? 'Colman Dock — the Bainbridge ferry loads here. Drive aboard; on board, ARRIVE (F) takes you straight across'
+        : 'Winslow — the Seattle ferry loads here. Drive aboard; on board, ARRIVE (F) takes you straight across' })),
     { x: freight.yard.x, z: freight.yard.z, kind: 'freight', name: 'Freight · Balmer Yard', near: false,
       hello: 'Balmer Yard — BNSF freights stop here for a crew change. Climb up at the lead locomotive (ENTER), or tap ENTER to call the next one in' },
     ...(lmRoot.userData.marinas || []).map((mr) => ({ x: mr.x, z: mr.z, kind: 'dock', name: mr.name, near: false,
@@ -1129,6 +1137,9 @@ function installShadowFade() {
   hud.monorail = monorail;
   hud.link = link;
   hud.freight = freight;
+  hud.ferry = ferry;
+  ferry.hud = hud;
+  ferry.player = player;
   monorail.bind({ game, hud, audio, player });
   link.bind({ game, hud, audio, player });
   freight.bind({ game, hud, audio, player });
@@ -1203,7 +1214,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, bikeNet, cyclists, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1977,6 +1988,8 @@ function frame(now) {
   // and out, and it is off before touchdown). The whole sim slows together.
   if (stunts && stunts.timeScale < 1) dt *= stunts.timeScale;
 
+  // the ferries sail, carrying whatever stands on one, before you move
+  ferry.update(dt, player, traffic, camera);
   if (game.dead) {
     game.deathT += dt;
     controls.takeTap();
@@ -1990,6 +2003,8 @@ function frame(now) {
     // on the Needle's deck the boom is short: it is 2.4 m wide
     player.camShort = needleTop && player.onFoot && needleTop.onDeck(player) ? 2.6 : 0;
     player.update(dt, input, look, controls, traffic, peds);
+    ferry.constrain(player, camera, ferryPrev);
+    ferryPrev = ferry.snapshot(player);
   }
   monorail.update(dt);
   link.update(dt, camera);
@@ -2138,7 +2153,7 @@ function frame(now) {
     scene.fog.density = baseFogDensity * (1 + Math.min(2.2, alt / 220));
   }
 
-  if (!(needleTop && needleTop.busy) && !(wheelRide && wheelRide.busy)) player.applyCamera(camera);
+  if (!(needleTop && needleTop.busy) && !(wheelRide && wheelRide.busy)) { player.applyCamera(camera); ferry.clampCamera(player, camera); }
   placeSun(p.x, p.y, p.z);
   if (prof) lap('camera');
 
@@ -2235,6 +2250,7 @@ function audioState(dt, input, p, camDir, buried) {
     listener,
     cars: withTrains(traffic.cars),
     freight: freight ? freight.trains : null,
+    ferry: ferry ? ferry.boats : null,
     heli: hp,
   };
 }

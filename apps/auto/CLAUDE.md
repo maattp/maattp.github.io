@@ -51,6 +51,7 @@ src/monorail.js             the Seattle Center Monorail: beams, stations, both t
 src/link.js                 Link light rail's 1 Line: tracks, guideway, bores, stations, the trains
 src/freight.js              BNSF's main line: the bed and its carve, crossings and gates, the freights, driving
 src/railcars.js             freight rolling stock: BNSF / CN locomotives, hoppers, coal, tank cars, boxcars, lettering
+src/ferry.js                WSF's Seattle-Bainbridge ferries: the boats, their decks as a moving surface, the terminals' roads
 src/bikes.js                bike paths drawn and ridden, AI cyclists, bike-share docks
 src/piers.js                every other pier OSM maps, as a deck on piles; decks under sheds in the sea
 src/islands.js              the islands across the Sound: Easter eggs, the Sasquatch, Blake's deer
@@ -73,6 +74,8 @@ tools/build_monorail.py     the monorail's beams, stations, platforms -> monorai
 tools/extract_rail.py       every rail way and stop in the box -> tools/data/raw_rail.json
 tools/build_link.py         Link's two 1 Line tracks and its stations -> link.json
 tools/build_freight.py      BNSF's two main tracks, Balmer Yard and its tracks -> freight.json
+tools/extract_ferry.py      ferry routes, terminals, slip dolphins -> tools/data/raw_ferry.json
+tools/build_ferry.py        WSF's Seattle-Bainbridge route and its two slips -> ferry.json
 tools/build_bikepaths.py    cycleways and designated bike paths -> bikepaths.json
 tools/build_piers.py        OSM's piers -> piers.json
 tools/build_beaches.py      OSM beaches (from raw_green.json) -> beaches.json
@@ -4430,6 +4433,83 @@ ballast, the crossings and sections, fifteen minutes of service, the drive
 from the yard, calling a train, a car held at the gates, a train warning
 you. Cost near the line: +25 draws at Balmer Yard with two trains and the
 cuts in view, +220k triangles.
+
+## The Seattle-Bainbridge ferry (v164)
+
+**Two Jumbo Mark II ferries, M/V Wenatchee and M/V Tacoma, sail WSF's
+Seattle-Bainbridge run in real time** (`src/ferry.js`): Colman Dock's slip 3 to
+Winslow's slip 2, ~34 minutes a crossing (OSM says 35), 15 at each dock.
+Drive aboard while one is loading and it takes you across; get out and walk
+the decks; or press ARRIVE (the button, or F) and you are docked on the other
+side, ready to drive off. On board at the dock, the same button reads SAIL and
+leaves now. Waiting at a terminal with no boat in, one is called: the one
+that would reach you first is moved up the route to ~2 km out.
+
+- **The route is OSM's** (`tools/extract_ferry.py` -> `raw_ferry.json`,
+  `tools/build_ferry.py` -> `data/ferry.json`): way 332476322 into slip 2,
+  each slip's axis from its own road's last segment, straight for 350 m out
+  of each slip, the corners between rounded by ~600 m tangent arcs (fillets;
+  smoothing the samples instead converged to straight lines between the
+  pinned straights and kinked at each), tightest bend 460 m. The path is the
+  BOAT'S CENTRE: half a hull out of each slip. Mid-Sound each boat keeps 60 m
+  to its own starboard, so the two pass port to port 120 m apart.
+- **The vessel, to WSF's vessel data**: 140.3 m, 27.4 m beam, 5.26 m draft,
+  18 knots, double-ended -- it never turns: the Seattle end (local -z) leads
+  out of Winslow. Car deck 3.6 m over the water, passenger deck 9.0, sun
+  deck 12.3 (est., from photographs against the beam). Lofted hull with the
+  WSF bands, car deck with lanes, the engine casing and an enclosure of
+  openings, a cabin of booths behind see-through glass, the promenade, the sun
+  deck with rafts and benches, a pilothouse on a crew block at each end, twin
+  stacks; lettering on one canvas. 3 draws a boat (body, glass, lettering),
+  drawn within 7 km; each slip's towers, wingwalls and OSM dolphins 1 draw,
+  within 2.5 km.
+- **A boat is its own frame, and its decks are a moving surface.** `SURF`
+  is the decks as rectangles in that frame (stairs slope along z), answered
+  to `city.groundAt` through `city.movers` by the nearest-surface rule every
+  deck follows. Each frame BEFORE the player moves, `update` sails the boats
+  and carries whatever stood on one (you, your car, a car left on the deck,
+  the chase camera's position): world -> local with last frame's pose, local ->
+  world with this one's. AFTER, `constrain` keeps a car on the car lanes (an
+  end opens only while docked there) and a walker on a deck at its level, out
+  of `WALLS`; and after main.js applies the camera, `clampCamera` keeps it
+  under the passenger deck and inside the cabin. (Clamped before
+  `applyCamera`, it was simply overwritten.)
+- **The terminals were broken, and are fixed before the city**
+  (`fixTerminals`, in md.roads, like `stackBores` for SR-99):
+  - *Colman Dock is raised to its deck.* The water mask has the dock as land
+    (the coastline takes it in), the DEM has it at 0-0.5 m, and its roads were
+    imported as bridges at 9.5 m: a 7 m cliff at the terminal building. The
+    dock's footprint (a box, wet or dry: its south apron stands over water)
+    is raised to 4.2 m through `geo.setFill` -- the carve's mirror: only
+    raises, `terrainRaw` includes it, and `fillCell` makes world.js
+    re-tessellate its cells, so the dock's edge is a face and not a 40 m
+    slope -- and every road wholly on it loses its bridge and tunnel flags.
+    That includes the road through the terminal building
+    (`tunnel=building_passage`), whose portal cutting dug the dock 5 m down.
+    **Only the dock's**: a first version cleared every tunnel within 260 m of
+    the slip, which took in four pieces of SR-99's bore under Alaskan Way
+    (jank's freeway sites moved; that is how it showed).
+  - *The trestles come down to the boat.* Every node on an elevated road
+    within reach of a slip is re-seated on a smoothstep ramp by distance: the
+    car deck's height at the slip's end, rising to the nearest real land
+    (ground over 3 m). Winslow's terminal is a network of piers the importer
+    had anywhere from 1.6 to 12.1 m. Those edges are LOCKED
+    (citygen `LOCK_NODES`, from `md.ferryFix.lock`): graded, the free dead
+    end rose 0.3-0.7 m above the deck.
+- The old Colman Dock landmark carried a box model of a ferry; it is gone.
+- **Sound** (audio.js): a ship's horn built from `AirHorn` with `SHIP_HORN`
+  (G2, D3 and G3 reeds, low formants) -- one prolonged blast leaving each
+  slip, heard ~6 km -- and `ferry_rumble` in the bank (the diesels' throb and
+  the wash), loudest aboard. `audiorender.mjs --only scene-ferry`.
+- The maps draw the route dashed and each boat on it; each terminal is a place
+  with a hello.
+
+verify's "the ferry": the slips meet the car deck (within 0.1 m, no step over
+0.3 m), no hull point over land anywhere on the route either way or docked
+(16k samples), the boats pass 120 m apart, a crossing takes 30-38 minutes, a
+car driven on at Colman Dock rides 60 s of sailing without sliding, ARRIVE
+docks it at Winslow and it drives off onto land, a walker at sea climbs from
+the car deck to the sun deck, and a boat is called to a terminal with none.
 
 ## Bicycles and the bike paths (v147)
 

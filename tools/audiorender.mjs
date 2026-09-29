@@ -209,6 +209,12 @@ window.R = (async () => {
       if (at(7.2)) au.ui('start'); if (at(7.7)) au.ui('tick'); if (at(8.0)) au.ui('go');
       if (at(8.7)) au.ui('check'); if (at(9.0)) au.ui('ring'); if (at(9.3)) au.ui('fail');
     }],
+    // a ferry passing 90 m off at 18 knots with its prolonged blast, then the
+    // rumble from its deck
+    'ferry': [14, (t, dt, st) => {
+      const aboard = t > 9;
+      st.ferry = [{ x: aboard ? 0 : -420 + t * 9.26, y: 0, z: aboard ? 0 : 90, h: Math.PI / 2, v: 9.26, hornOn: t > 1.5 && t < 7 }];
+    }],
     'shots-far': [5, (t, dt, st, au) => {
       if (Math.abs(t - 0.3) < 0.009) au.gunshot();
       if (Math.abs(t - 1.3) < 0.009) au.gunshot(-30, -40);

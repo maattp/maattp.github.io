@@ -2732,6 +2732,114 @@ async function main() {
       process.exitCode = 1;
     }
 
+    // --- the ferry (v164) --------------------------------------------------
+    // WSF's Seattle-Bainbridge run: the slips meet the car deck, no hull on
+    // land anywhere on the route, the two boats pass clear, a crossing takes
+    // about the real 35 minutes, a car drives on at Colman Dock and off at
+    // Winslow onto land, a walker climbs from the car deck to the sun deck at
+    // sea, and a boat is called to a terminal with none in.
+    const fy = await session.eval(`(() => { const d = window.__dbg, F = d.ferry, P = d.player, T = d.traffic, C = d.city, G = d.G, cam = d.camera;
+      const out = { len: Math.round(F.route.len) };
+      // the slips
+      out.slips = Object.entries(F.slips).map(([k, s]) => {
+        let worst = 0, y0 = null;
+        for (let u = -30; u <= -1; u += 3) { const y = C.groundAt(s.x + s.dx * u, s.z + s.dz * u, y0 === null ? 5 : y0 + 0.45); if (y0 !== null) worst = Math.max(worst, Math.abs(y - y0)); y0 = y; }
+        return { k, end: +(y0 - 3.6).toFixed(2), step: +worst.toFixed(2) };
+      });
+      // aground: hull points over land, sailing each way and docked
+      const [A, B] = F.boats, save = F.boats.map((b) => ({ s: b.s, at: b.at, state: b.state, t: b.t, v: b.v }));
+      let aground = 0, samples = 0; const where = [];
+      for (const at of ['sea', 'bi']) for (const st of ['sail', 'dock']) {
+        A.at = at; A.state = st;
+        for (let s = st === 'dock' ? (at === 'sea' ? 0 : F.route.len) : 25; st === 'dock' ? samples < 1e9 : s < F.route.len - 25; s += 25) {
+          A.s = s; A.pose();
+          for (const lx of [-13, 0, 13]) for (const lz of [-66, -33, 0, 33, 66]) {
+            const [x, z] = A.world(lx, lz); samples++;
+            if (G.terrainHeight(x, z) > -1) { aground++; if (where.length < 6) where.push([at, st, Math.round(s), lx, lz]); }
+          }
+          if (st === 'dock') break;
+        }
+      }
+      out.aground = aground; out.samples = samples; out.where = where;
+      // passing: both sailing toward each other
+      A.at = 'sea'; A.state = 'sail'; A.s = 0; B.at = 'bi'; B.state = 'sail'; B.s = F.route.len;
+      let minD = Infinity;
+      for (let i = 0; i < 2600 * 2; i++) { A.s = Math.min(F.route.len, A.s + 2.6); B.s = Math.max(0, B.s - 2.6); A.pose(); B.pose(); minD = Math.min(minD, Math.hypot(A.x - B.x, A.z - B.z)); if (A.s >= F.route.len) break; }
+      out.passClear = Math.round(minD);
+      // a crossing's time
+      A.at = 'sea'; A.state = 'dock'; A.s = 0; A.v = 0; A.depart(); let t = 0;
+      while (A.state === 'sail' && t < 4000) { A.step(1 / 20); t += 1 / 20; }
+      out.crossMin = +(t / 60).toFixed(1);
+      F.boats.forEach((b, i) => Object.assign(b, save[i]));
+      for (const b of F.boats) F._place(b);
+      // drive on at Colman Dock
+      if (P.vehicle) P.exitVehicle(true);
+      const W = F.boats.find((b) => b.state === 'dock' && b.at === 'sea') || A;
+      if (W.state !== 'dock' || W.at !== 'sea') { W.at = 'sea'; W.state = 'dock'; W.s = 0; W.v = 0; F._place(W); }
+      W.t = 900;
+      const v = T.spawnAt(-40, 930, -Math.PI / 2, 'sedan', 0x335577, 'free');
+      v.x = -40; v.z = 930; v.heading = -Math.PI / 2; v.y = C.groundAt(-40, 930, 5);
+      P.x = v.x; P.z = v.z; P.enterVehicle(v);
+      let prev = null;
+      const step = (inp) => { F.update(1 / 60, P, T, cam); if (P.vehicle) P.updateDrive(1 / 60, inp, T, d.peds); else P.updateFoot(1 / 60, inp, T, d.peds); F.constrain(P, cam, prev); prev = F.snapshot(P); };
+      const drive = (wps, maxF, spd) => { let wi = 0; for (let i = 0; i < maxF && wi < wps.length; i++) { const [tx, tz] = wps[wi]; if (Math.hypot(tx - v.x, tz - v.z) < 4) { wi++; continue; } v.heading = Math.atan2(tx - v.x, tz - v.z); step({ x: 0, y: 0, gasAmt: v.vLong < spd ? 0.6 : 0, brakeAmt: v.vLong > spd + 1 ? 0.5 : 0 }); } return wi >= wps.length; };
+      const stop = () => { for (let i = 0; i < 300 && Math.abs(v.vLong) > 0.05; i++) step({ x: 0, y: 0, gasAmt: 0, brakeAmt: v.vLong > 0 ? 0.8 : 0 }); for (let i = 0; i < 30; i++) step({ x: 0, y: 0, gasAmt: 0, brakeAmt: 0 }); };
+      const [wx, wz] = W.world(0, -30);
+      out.on = drive([[-98, 934], [-109, 939], [-146, 939], [wx, wz]], 60 * 60, 8); stop();
+      out.aboard = !!F.boatAt(v.x, v.y, v.z);
+      const l0 = W.local(v.x, v.z);
+      W.t = 0.1;
+      for (let i = 0; i < 60 * 60; i++) step({ x: 0, y: 0, gasAmt: 0, brakeAmt: 0 });
+      const l1 = W.local(v.x, v.z);
+      out.sailed = Math.round(W.s); out.slid = +Math.hypot(l1[0] - l0[0], l1[1] - l0[1]).toFixed(2); out.onDeckY = +(v.y - W.y).toFixed(2);
+      out.skip = F.skip(P) && W.state === 'dock' && W.at === 'bi';
+      for (let i = 0; i < 20; i++) step({ x: 0, y: 0, gasAmt: 0, brakeAmt: 0 });
+      const [ex, ez] = W.world(0, 60), sb = F.slips.bi;
+      out.off = drive([[ex, ez], [sb.x, sb.z], [sb.x - sb.dx * 36, sb.z - sb.dz * 36], [-12948, -1217], [-12960, -1245], [-12980, -1258], [-13006, -1295], [-13030, -1306]], 60 * 90, 7);
+      out.offY = +v.y.toFixed(2); out.offLand = G.terrainHeight(v.x, v.z) > 3;
+      // a walk at sea: car deck, stairs, cabin, bow, sun deck
+      P.exitVehicle(true);
+      W.depart(); W.s = 3000; W.v = 9; F._place(W);
+      const [px, pz] = W.world(8, -20); P.x = px; P.z = pz; P.y = W.y + 3.6; prev = null;
+      const wps = [[12, -26], [12, -30], [12, -45], [12, -34], [5, -34], [0, -20], [0, 0], [12.2, 0], [12.2, 50], [12.2, 55.8], [0, 55.8], [-12, 55.8], [-12, 49], [-12, 37], [-5, 30], [0, 10]];
+      let wi = 0; const levels = [];
+      for (let i = 0; i < 60 * 240 && wi < wps.length; i++) {
+        const [lx, lz] = W.local(P.x, P.z);
+        if (Math.hypot(lx - wps[wi][0], lz - wps[wi][1]) < 0.7) { levels.push(+(P.y - W.y).toFixed(1)); wi++; continue; }
+        const [tx, tz] = W.world(wps[wi][0], wps[wi][1]);
+        P.camYaw = Math.atan2(tx - P.x, tz - P.z) - Math.PI;
+        step({ x: 0, y: -1, sprint: false });
+      }
+      out.walk = { reached: wi, of: wps.length, top: levels[levels.length - 1] };
+      // calling a boat to Winslow with none there
+      for (const b of F.boats) { b.at = 'sea'; b.state = 'dock'; b.s = 0; b.t = 900; F._place(b); }
+      P.x = F.slips.bi.x - F.slips.bi.dx * 80; P.z = F.slips.bi.z - F.slips.bi.dz * 80; P.y = C.groundAt(P.x, P.z, null);
+      F._callT = 0;
+      for (let i = 0; i < 60 * 8; i++) F.update(1 / 60, P, T, cam);
+      const coming = F.boats.find((b) => b.state === 'sail' && b.to === 'bi');
+      out.called = coming ? Math.round(F.route.len - coming.s) : null;
+      F.boats.forEach((b, i) => Object.assign(b, save[i]));
+      for (const b of F.boats) F._place(b);
+      return out;
+    })()`, true);
+    console.log('\n--- the ferry --------------------------------------------');
+    console.log(`  route ${fy.len} m; slips: ${fy.slips.map((q) => q.k + ' end ' + q.end + ' m off the car deck, worst step ' + q.step + ' m').join('; ')}`);
+    console.log(`  hull points on land: ${fy.aground} of ${fy.samples} ${JSON.stringify(fy.where)}; boats pass ${fy.passClear} m apart; a crossing ${fy.crossMin} min`);
+    console.log(`  driven on ${fy.on}, aboard ${fy.aboard}, sailed ${fy.sailed} m sliding ${fy.slid} m at ${fy.onDeckY} m; ARRIVE ${fy.skip}; off at Winslow ${fy.off} onto land ${fy.offLand} (${fy.offY} m)`);
+    console.log(`  walked ${fy.walk.reached}/${fy.walk.of} to the sun deck at ${fy.walk.top} m; a boat called to Winslow: ${fy.called} m out`);
+    {
+      const bad = [];
+      if (fy.slips.some((q) => Math.abs(q.end) > 0.1 || q.step > 0.3)) bad.push('slips');
+      if (fy.aground) bad.push('aground');
+      if (fy.passClear < 80) bad.push('passing');
+      if (fy.crossMin < 30 || fy.crossMin > 38) bad.push('crossing time');
+      if (!fy.on || !fy.aboard || fy.sailed < 50 || fy.slid > 0.5 || Math.abs(fy.onDeckY - 3.6) > 0.05) bad.push('the ride');
+      if (!fy.skip || !fy.off || !fy.offLand) bad.push('arriving');
+      if (fy.walk.reached < fy.walk.of || Math.abs(fy.walk.top - 12.3) > 0.1) bad.push('the walk');
+      if (fy.called === null || fy.called > 2100) bad.push('calling a boat');
+      if (bad.length) { console.error('FAIL: ferry: ' + bad.join(', ')); process.exitCode = 1; }
+    }
+
     // --- freeways (v162) --------------------------------------------------
     // Nothing stands up through a deck; the grading does not average a
     // freeway up toward a deck crossing over it; the Dexter Way underpass
