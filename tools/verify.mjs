@@ -364,7 +364,12 @@ async function main() {
     // ramps) and shore streets under a lake's 40 m drawn margin -- see "Known
     // gaps" in apps/auto/CLAUDE.md. Lower these when one is fixed.
     // v153: lakes drawn over their own water, not their boxes: 50 -> 36, 313 -> 168
-    const SUBMERGED_MAJOR_MAX = 36, SUBMERGED_STREETS_MAX = 168;
+    // v163: 168 -> 183 streets, all Point Monroe Drive (39 -> 51 samples): the
+    // spit the DEM has below sea level, whose road the old edge used to cut
+    const SUBMERGED_MAJOR_MAX = 36, SUBMERGED_STREETS_MAX = 183;
+    // v163: the 800 m strip the map grew by (Bainbridge's Manitou Beach Drive
+    // and SE Cornell Road, Point Monroe's spit), counted apart
+    const SUBMERGED_OUTER_MAJOR_MAX = 15, SUBMERGED_OUTER_STREETS_MAX = 26;
     const sub = await session.eval(`(() => {
       const d = window.__dbg, c = d.city, w = d.world, G = d.G, THREE = d.THREE;
       // The water DRAWN at a point, worked out here rather than asked of the
@@ -391,7 +396,7 @@ async function main() {
         rc.set(new THREE.Vector3(x, y + 0.6, z), up); rc.far = Math.max(0.1, lv - y - 0.6);
         return rc.intersectObjects(covers, false).length > 0;                 // a lid or deck over it
       };
-      const out = { samples: 0, corridor: [], major: [], majors: 0, streets: 0, streetWhere: {}, floating: {} };
+      const out = { samples: 0, corridor: [], major: [], majors: 0, streets: 0, majorsOuter: 0, streetsOuter: 0, streetWhere: {}, floating: {} };
       const FLOAT = /Evergreen Point Floating|Lacey V. Murrow|Homer M. Hadley/;
       const CORRIDOR = /Evergreen Point Floating|Lacey V. Murrow|Homer M. Hadley|^WA 520$|^I 90$/;
       c.edges.forEach((e, ei) => {
@@ -412,6 +417,12 @@ async function main() {
           }
           if (y >= lv - 0.05 || hidden(x, y, z, lv)) continue;
           const at = ' @' + x.toFixed(0) + ',' + z.toFixed(0) + ' ' + (lv - y).toFixed(2) + ' m under';
+          // the strip the map grew by in v163 is held to its own count, so
+          // the old 26 km box keeps the ceilings it had
+          if (!CORRIDOR.test(e.name || '') && Math.max(Math.abs(x), Math.abs(z)) > 13000) {
+            if (e.elev || e.cls === 'hwy' || e.cls === 'ramp') out.majorsOuter++; else out.streetsOuter++;
+            continue;
+          }
           if (CORRIDOR.test(e.name || '')) {
             out.corridor.push(e.name + at);
           } else if (e.elev || e.cls === 'hwy' || e.cls === 'ramp') {
@@ -430,12 +441,14 @@ async function main() {
     console.log('\n--- roads under the water -------------------------------');
     console.log(`  ${sub.samples} samples near water; 520/I-90 under it: ${sub.corridor.length},`
       + ` other decks/freeways/ramps: ${sub.majors} (max ${SUBMERGED_MAJOR_MAX}),`
-      + ` streets: ${sub.streets} (max ${SUBMERGED_STREETS_MAX})`);
+      + ` streets: ${sub.streets} (max ${SUBMERGED_STREETS_MAX});`
+      + ` in the outer strip ${sub.majorsOuter} (max ${SUBMERGED_OUTER_MAJOR_MAX}) and ${sub.streetsOuter} (max ${SUBMERGED_OUTER_STREETS_MAX})`);
     for (const [name, f] of Object.entries(sub.floating)) console.log(`  ${name}: lowest deck ${f.min.toFixed(2)} m over the lake`);
     if (sub.streets) console.log('  streets: ' + sub.streetWhere.join('; '));
     const lowFloat = Object.entries(sub.floating).filter(([, f]) => f.min < 3);
     if (sub.corridor.length || lowFloat.length || Object.keys(sub.floating).length < 3
-      || sub.majors > SUBMERGED_MAJOR_MAX || sub.streets > SUBMERGED_STREETS_MAX) {
+      || sub.majors > SUBMERGED_MAJOR_MAX || sub.streets > SUBMERGED_STREETS_MAX
+      || sub.majorsOuter > SUBMERGED_OUTER_MAJOR_MAX || sub.streetsOuter > SUBMERGED_OUTER_STREETS_MAX) {
       for (const m of [...sub.corridor.slice(0, 12), ...sub.major]) console.error('  ' + m);
       console.error(`FAIL: roads under the water drawn over them (${sub.corridor.length} on the 520/I-90,`
         + ` ${lowFloat.length} floating bridges under 3 m, ${Object.keys(sub.floating).length}/3 floating bridges found,`
@@ -1999,7 +2012,7 @@ async function main() {
     console.log(`  a train for you on the track: closest ${lk.obstruct.closest} m, stopped ${lk.obstruct.stopped}, hurt ${lk.obstruct.hurt}; a crossing at s ${lk.crossing.at}: held ${lk.crossing.held}, clear 40 m off ${lk.crossing.clear}`);
     {
       const bad = [];
-      if (lk.stations !== 23) bad.push('stations');
+      if (lk.stations !== 24) bad.push('stations');   // 16 on the 1 Line, 8 on the 2 Line (BelRed since v163)
       for (const k of ['sb', 'nb']) {
         const q = lk.tracks[k];
         if (q.grade > 0.062) bad.push(`${k} grade`);
@@ -2137,7 +2150,7 @@ async function main() {
     console.log(`  a forced merge: one held ${l2.merge.held}, together ${l2.merge.overlap}, both through ${l2.merge.through}; Mercer Island -> South Bellevue: boarded ${l2.boarded}, ${l2.drive.err} m from the mark ("${l2.drive.said}")`);
     {
       const bad = [];
-      if (l2.own.length !== 7) bad.push('stations');
+      if (l2.own.length !== 8) bad.push('stations');
       for (const k of ['sb2', 'nb2']) { const q = l2.tracks[k]; if (q.grade > 0.062 || q.under || q.exposed || q.wet || q.overWater < 1500) bad.push(k); }
       if (l2.service.arrivals < 15 || l2.service.own < 4 || l2.service.overlap) bad.push('service');
       if (!l2.merge.held || l2.merge.overlap || !l2.merge.through) bad.push('the merge');
@@ -2506,6 +2519,21 @@ async function main() {
         const q = P.plats[i]; out.checked++;
         if (Math.abs(C.groundAt(q.x, q.z, q.y0 + 0.5) - q.y0) > 0.1) out.off++;
       }
+      // Built when first in range (v163): a camera beside a pier far from here
+      // builds its chunk, and the drawn deck is where the platform says
+      {
+        const q = P.plats[Math.floor(P.plats.length / 2)], cam = { position: { x: q.x, y: q.y0 + 2, z: q.z } };
+        const before = P.chunks.filter((c) => c.m).length;
+        const mine = P.chunks.find((c) => Math.floor(c.x / 1000) === Math.floor(q.x / 1000) && Math.floor(c.z / 1000) === Math.floor(q.z / 1000));
+        for (let i = 0; i < 8 * 40 && !(mine && mine.m); i++) P.update(cam);
+        d.scene.updateMatrixWorld(true);
+        const rc = new d.THREE.Raycaster(new d.THREE.Vector3(q.x, q.y0 + 5, q.z), new d.THREE.Vector3(0, -1, 0));
+        const h = rc.intersectObject(P.group, true)[0];
+        out.lazy = { before, after: P.chunks.filter((c) => c.m).length, deck: h ? +(h.point.y - q.y0).toFixed(2) : null };
+        const N = d.bikeNet, ch = N.chunks.find((c) => !c.m && c.segs), bc = ch ? { position: { x: ch.x, y: 0, z: ch.z } } : null;
+        if (bc) for (let i = 0; i < 16; i++) N.update(bc);
+        out.lazy.bike = ch ? !!(ch.m && ch.m.geometry.index.count > 0) : null;
+      }
       // Pier 90's sheds: every big building standing in the sea at Smith Cove has a deck
       out.smithCove = C.buildings.filter((b) => b.x > -3300 && b.x < -3050 && b.z > -2150 && b.z < -1750 && b.w * b.d > 150)
         .map((b) => C.platformAt(b.x, b.z) !== null);
@@ -2519,6 +2547,10 @@ async function main() {
     })()`, true);
     console.log('\n--- piers and doors ----------------------------------------');
     console.log(`  ${pr.built} OSM piers and ${pr.sheds} sea sheds decked; standing on them off the drawn deck ${pr.off} of ${pr.checked}; Pier 90 sheds on a deck ${pr.smithCove.filter(Boolean).length}/${pr.smithCove.length}; doors: Link standing ${pr.doors.linkDwell}, running ${pr.doors.linkRun}, monorail ${pr.doors.mono}`);
+    console.log(`  built when in range: pier chunks ${pr.lazy.before} -> ${pr.lazy.after}, the deck drawn ${pr.lazy.deck} m from its platform; a far bike-path chunk built ${pr.lazy.bike}`);
+    if (!(pr.lazy.after > pr.lazy.before) || pr.lazy.deck === null || Math.abs(pr.lazy.deck) > 0.05 || pr.lazy.bike !== true) {
+      console.error('FAIL: piers / bike paths not built when in range'); process.exitCode = 1;
+    }
     if (pr.built < 800 || pr.off > pr.checked * 0.02 || !pr.smithCove.length || pr.smithCove.some((x) => !x)
       || pr.doors.linkDwell !== true || pr.doors.linkRun !== false || pr.doors.mono.some((x) => !x)) { console.error('FAIL: piers and doors'); process.exitCode = 1; }
 

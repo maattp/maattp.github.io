@@ -23,11 +23,15 @@ import heapq
 import json
 import math
 import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from proj import MAP_HALF  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RAW = os.path.join(HERE, "data", "raw_rail.json")
 OUT = os.environ.get("AUTO_DATA_OUT") or os.path.join(HERE, "..", "apps", "auto", "data")
-EDGE = 12900.0
+EDGE = MAP_HALF - 100.0
 # Balmer Yard, Interbay: the densest cluster of yard tracks on the line
 YARD_BOX = (-3700.0, -5500.0, -2700.0, -2800.0)      # x0, z0, x1, z1
 

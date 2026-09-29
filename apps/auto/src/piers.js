@@ -19,7 +19,7 @@
 
 import * as THREE from './three.js';
 import * as G from './geo.js';
-import { Builder } from './build.js';
+import { Builder, ChunkBuilder } from './build.js';
 
 const CHUNK = 1000;
 const DECK = [0.42, 0.37, 0.31], DECK_CON = [0.56, 0.55, 0.52], FASCIA = [0.3, 0.26, 0.21], PILE = [0.22, 0.19, 0.16], RAIL = [0.36, 0.3, 0.24];
@@ -37,15 +37,17 @@ function inPoly(x, z, p) {
 export class Piers {
   /** waterAt(x, z): the drawn water surface or null. Call after the landmarks
    *  (their decks are platforms by then). */
-  constructor(data, { scene, city, waterAt }) {
+  constructor(data, { scene, city, waterAt, dropArrays = false }) {
     this.city = city;
+    // on a phone, mesh arrays go once they are on the GPU (see _build)
+    this.dropArrays = dropArrays;
     this.built = [];
     const skipped = { small: 0, land: 0, dup: 0, road: 0 };
     const chunks = new Map();
     const chunk = (x, z) => {
       const k = `${Math.floor(x / CHUNK)},${Math.floor(z / CHUNK)}`;
       let c = chunks.get(k);
-      if (!c) chunks.set(k, (c = { b: new Builder(false), x: (Math.floor(x / CHUNK) + 0.5) * CHUNK, z: (Math.floor(z / CHUNK) + 0.5) * CHUNK }));
+      if (!c) chunks.set(k, (c = { ops: [], x: (Math.floor(x / CHUNK) + 0.5) * CHUNK, z: (Math.floor(z / CHUNK) + 0.5) * CHUNK }));
       return c;
     };
     const plats = [];
@@ -81,9 +83,26 @@ export class Piers {
       const big = q.closed && area(p) > 2000;
       const top = Math.min(wl + 4, Math.max(wl + (big ? 2.4 : 0.5), shore === -Infinity ? wl + (big ? 2.4 : 0.6) : shore + 0.15));
       const cx = samples.reduce((a, s) => a + s[0], 0) / samples.length, cz = samples.reduce((a, s) => a + s[1], 0) / samples.length;
-      const c = chunk(cx, cz), b = c.b;
+      const c = chunk(cx, cz);
       const col = big ? DECK_CON : DECK;
       const bottom = wl - 0.3;
+      // walkable, now: 6 m squares over a deck, a platform per walkway piece
+      if (q.closed) {
+        let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+        for (const [x, z] of p) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+        for (let x = x0 + 3; x < x1; x += 6) for (let z = z0 + 3; z < z1; z += 6) if (inPoly(x, z, p)) plats.push({ x, z, hw: 3.05, hd: 3.05, rot: 0, y0: top, y1: top });
+      } else {
+        const hw = Math.max(1, Math.min(8, q.w / 2));
+        for (let i = 0; i < p.length - 1; i++) {
+          const [ax, az] = p[i], [bx, bz] = p[i + 1];
+          const L = Math.hypot(bx - ax, bz - az);
+          if (L < 0.1) continue;
+          const ux = (bx - ax) / L, uz = (bz - az) / L;
+          plats.push({ x: ax + ux * L / 2, z: az + uz * L / 2, hw, hd: L / 2 + 0.05, rot: Math.atan2(ux, -uz), y0: top, y1: top });   // local x across the walkway
+        }
+      }
+      // the geometry, when its chunk first comes into range (update)
+      c.ops.push((b) => {
       if (q.closed) {
         // the top, triangulated
         const V = p.map(([x, z]) => new THREE.Vector2(x, z));
@@ -104,10 +123,6 @@ export class Piers {
             b.box(px, bottom - 1, pz, 0.36, top - 0.6 - (bottom - 1), 0.36, 0, PILE);
           }
         }
-        // walkable: 6 m squares over the outline
-        let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
-        for (const [x, z] of p) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
-        for (let x = x0 + 3; x < x1; x += 6) for (let z = z0 + 3; z < z1; z += 6) if (inPoly(x, z, p)) plats.push({ x, z, hw: 3.05, hd: 3.05, rot: 0, y0: top, y1: top });
       } else {
         const hw = Math.max(1, Math.min(8, q.w / 2));
         for (let i = 0; i < p.length - 1; i++) {
@@ -131,9 +146,9 @@ export class Piers {
               for (let t = 0; t <= L; t += 2.5) b.box(ax + ux * t + lx * s * (hw - 0.05), top, az + uz * t + lz * s * (hw - 0.05), 0.08, 1.0, 0.08, 0, RAIL);
             }
           }
-          plats.push({ x: ax + ux * L / 2, z: az + uz * L / 2, hw, hd: L / 2 + e, rot: Math.atan2(ux, -uz), y0: top, y1: top });   // local x across the walkway
         }
       }
+      });
       this.built.push({ name: q.name, x: cx, z: cz, top, wl, closed: q.closed });
     }
     // SHEDS STANDING IN THE SEA. Some piers are not mapped as piers at all
@@ -147,14 +162,15 @@ export class Piers {
       if (wl !== 0 || G.terrainHeight(bd.x, bd.z) > -0.3) continue;
       if (city.platformAt && city.platformAt(bd.x, bd.z) !== null) continue;
       const top = wl + 2.4, hw = bd.w / 2 + 4, hd = bd.d / 2 + 4;
-      const c = chunk(bd.x, bd.z), b2 = c.b;
-      // Builder.box turns the other way from the building's rot (build.js)
-      b2.box(bd.x, top - 0.6, bd.z, hw * 2, 0.6, hd * 2, bd.rot, DECK_CON);
-      const cr = Math.cos(bd.rot), sr = Math.sin(bd.rot);
-      for (let u = -hw + 1; u <= hw - 1; u += 6) for (const v of [-hd + 1, hd - 1]) {
-        const px = bd.x + u * cr - v * sr, pz = bd.z + u * sr + v * cr;
-        b2.box(px, wl - 1.3, pz, 0.4, top - 0.6 - (wl - 1.3), 0.4, 0, PILE);
-      }
+      chunk(bd.x, bd.z).ops.push((b2) => {
+        // Builder.box turns the other way from the building's rot (build.js)
+        b2.box(bd.x, top - 0.6, bd.z, hw * 2, 0.6, hd * 2, bd.rot, DECK_CON);
+        const cr = Math.cos(bd.rot), sr = Math.sin(bd.rot);
+        for (let u = -hw + 1; u <= hw - 1; u += 6) for (const v of [-hd + 1, hd - 1]) {
+          const px = bd.x + u * cr - v * sr, pz = bd.z + u * sr + v * cr;
+          b2.box(px, wl - 1.3, pz, 0.4, top - 0.6 - (wl - 1.3), 0.4, 0, PILE);
+        }
+      });
       plats.push({ x: bd.x, z: bd.z, hw, hd, rot: bd.rot, y0: top, y1: top });
       sheds++;
     }
@@ -162,26 +178,54 @@ export class Piers {
     this.skipped = skipped;
     this.group = new THREE.Group();
     this.group.name = 'piers';
+    // BUILT WHEN FIRST IN RANGE (update), not at boot: 1288 piers across the
+    // map were ~1 s of every phone launch and 43 MB of arrays, nearly all of
+    // it kilometres away and never drawn.
     this.chunks = [];
-    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0, envMapIntensity: 0.5 });
-    for (const [key, c] of chunks) {
-      if (c.b.empty) continue;
-      const m = new THREE.Mesh(c.b.build(), mat);
-      m.name = `piers:${key}`; m.castShadow = true; m.receiveShadow = true;
-      m.geometry.computeBoundingSphere();
-      this.group.add(m);
-      this.chunks.push({ m, x: c.x, z: c.z });
-    }
+    this.mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0, envMapIntensity: 0.5 });
+    for (const [key, c] of chunks) if (c.ops.length) this.chunks.push({ key, ops: c.ops, m: null, x: c.x, z: c.z });
     scene.add(this.group);
+
     // walkable (a platform's local x, its hw, runs along (cos rot, sin rot))
     if (city.setPlatforms && plats.length) city.setPlatforms([...(city.platforms || []), ...plats]);
     this.platformCount = plats.length;
     this.plats = plats;
   }
 
+  /** A chunk's mesh, built from its ops (1 km of piers: a few ms). */
+  _build(c) {
+    const b = new ChunkBuilder(false, 256);
+    for (const op of c.ops) op(b);
+    if (b.empty) { c.ops = []; return; }
+    const m = new THREE.Mesh(b.build(this.dropArrays), this.mat);
+    m.name = `piers:${c.key}`; m.castShadow = true; m.receiveShadow = true;
+    if (this.dropArrays) {
+      const g = m.geometry, drop = function () { this.array = null; };
+      for (const k in g.attributes) g.attributes[k].onUpload(drop);
+      g.index.onUpload(drop);
+      m.raycast = () => {};
+    }
+    this.group.add(m);
+    c.m = m;
+  }
+
+  /** A lost WebGL context: meshes whose arrays were dropped cannot be
+   *  re-uploaded, so they go, and are built again when next in range. */
+  contextLost() {
+    for (const c of this.chunks) if (c.m) { this.group.remove(c.m); c.m.geometry.dispose(); c.m = null; }
+  }
+
   update(camera) {
-    if ((this._t = (this._t || 0) + 1) & 7) return;
     const x = camera.position.x, z = camera.position.z, R = 800 + CHUNK * 0.71;
-    for (const c of this.chunks) c.m.visible = Math.hypot(c.x - x, c.z - z) < R;
+    // first call builds everything in range; after that one chunk a call,
+    // every 8th frame
+    const first = !this._t;
+    if ((this._t = (this._t || 0) + 1) & 7 && !first) return;
+    let budget = first ? Infinity : 1;
+    for (const c of this.chunks) {
+      const near = Math.hypot(c.x - x, c.z - z) < R;
+      if (near && !c.m && c.ops.length && budget > 0) { this._build(c); budget--; }
+      if (c.m) c.m.visible = near;
+    }
   }
 }

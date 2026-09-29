@@ -1,6 +1,6 @@
 # Auto
 
-An open-world driving/on-foot game set in a 26 km x 26 km Seattle (`MAP_HALF` 13000), built from
+An open-world driving/on-foot game set in a 27.6 km x 27.6 km Seattle (`MAP_HALF` 13800), built from
 real map data. Landscape iPhone PWA: left thumb stick, right-side buttons, drag
 the right half to look.
 
@@ -93,20 +93,21 @@ the AWS terrain tiles. Nothing about the city's shape is authored here any more.
 
 ```
 tools/data/washington-latest.osm.pbf   Geofabrik extract (350 MB, gitignored)
-tools/data/dem/*.png                   132 terrarium tiles, z14 (~6.4 m/px)
+tools/data/dem/*.png                   361 terrarium tiles, z14 (~6.4 m/px)
         |  python tools/osm_extract.py            (~3 min, one full scan)
 tools/data/raw_*.json                  projected + clipped intermediates
         |  build_raster / build_roads / build_buildings / build_places
-apps/auto/data/height.png     651x651 @ 40 m   h = ((R<<8)|G)/10 - 100
-apps/auto/data/surface.png   2601x2601 @ 10 m  R = water, G = green
-apps/auto/data/lots.png      1801x1801 @ 14.4 m  G = lot code, R = coverage
-apps/auto/data/roads.bin      64k nodes, 70k edges          1.95 MB
-apps/auto/data/buildings.bin  125k oriented boxes, chunked  1.51 MB
+apps/auto/data/height.png     691x691 @ 40 m   h = ((R<<8)|G)/10 - 100
+apps/auto/data/surface.png   2761x2761 @ 10 m  R = water, G = green
+apps/auto/data/lots.png      1918x1918 @ 14.4 m  G = lot code, R = coverage
+apps/auto/data/roads.bin      156k nodes, 167k edges        4.67 MB
+apps/auto/data/buildings.bin  291k oriented boxes, chunked  3.51 MB
 apps/auto/data/places.json    22 landmarks (Smith Tower last), neighbourhoods
 apps/auto/data/water.json     lake surface levels
 ```
 
-About 3.8 MB, ~2.2 MB over the wire. **Licence: OpenStreetMap is ODbL**, so the
+With the rail, bike-path, pier and park files, about 10 MB, ~5.6 MB over
+the wire (v163). **Licence: OpenStreetMap is ODbL**, so the
 attribution on the launch screen and in the pause menu is required, not
 decorative. Don't remove it.
 
@@ -541,6 +542,61 @@ the footprint area packed into each 400 m chunk, so the edge of the city follows
 the city instead of a rectangle. The query point is still pushed around by smooth
 noise and sampled three times, because the chunk grid is 400 m and a straight
 lookup draws its staircase on the ground.
+
+## The map grew to 27.6 km (v163)
+
+**`MAP_HALF` is 13800**, up from 13000, so that the Bainbridge ferry lands in
+a town: the old west edge ran ~50 m behind Winslow's ferry dock, and
+downtown Winslow, SR-305 and the dock's own exit road were 250-800 m past it
+-- an arriving boat faced the island sliced off in a straight cliff. 13800 is
+a multiple of the 400 m chunk, the 40 m heightfield and the 10 m mask, and
+takes in Winslow's Madison Ave (x -13767). Every edge moved 800 m.
+
+- **Change `tools/proj.py` and `geo.js` together**, then the whole import:
+  `fetch_dem.py` (361 tiles), `osm_extract.py` and `--lots`,
+  `extract_rail.py`, then every build_*.py. **The extract must be re-run**:
+  it keeps only what reaches `MAP_HALF + 3000`, and with the raster's
+  3000 m pad now past that, coastline between the two was missing and the
+  flood fill drowned east Bainbridge. Inside the old box the rebuilt water
+  and green masks are identical and the heights differ only in 48 cells at
+  the old rim (which the old data clamped).
+- **Derived, not hard-coded**: the lot grid (`LOT_N`, 14.4 m), the rail and
+  bike-path crops (`EDGE = MAP_HALF - ...`), pickleball's edge. The monorail
+  and landmarks were unaffected (the origin did not move).
+- BelRed station is on the map now (Link: 24 stations, 8 on the 2 Line).
+- verify's "roads under the water" counts the new strip apart from the old
+  box (15 decks, 26 street samples: Manitou Beach Drive, SE Cornell Road);
+  the old box's streets went 168 -> 183, all Point Monroe Drive, which the old
+  edge used to cut short.
+
+**It was paid for.** The cached launch at the 8x phone profile went 20.5-21.0 s
+(v162) -> 18.5-18.7 s, and the JS heap 1.09 GB -> ~0.70 GB, on the bigger map:
+
+- `ChunkBuilder` (typed arrays, bbox kept as it builds) for Link's, freight's,
+  the piers' and the bike paths' per-chunk builders, and the plain
+  `Builder.build()` takes its bounding sphere from one pass over its bbox
+  instead of three's two passes through the attribute accessors (~0.9 s of
+  a phone boot).
+- **Link kept every chunk builder alive** (`this._chunk`, assigned and never
+  read): ~130 MB of heap.
+- **Piers and bike paths build a 1 km chunk when you first come within
+  range**, not at boot (`_build`, one chunk per update after the first):
+  ~2 s of every phone launch and ~75 MB of arrays, nearly all of it
+  kilometres away and never drawn. Their platforms, `km`, and each
+  segment's `drawn` flag (cyclists ride by it) are still worked out at boot.
+  On a phone a chunk's arrays go once uploaded and a lost context drops the
+  meshes to be built again. verify builds one far chunk of each and raycasts
+  the deck.
+- Frame CPU is unchanged (perfcpu drive-dt / foot-dt within noise); a
+  street-level view draws ~6 % more terrain triangles (the six tiles are
+  bigger), which the phone's GPU has room for.
+
+Not done: Link's (77 MB with its bores) and freight's (25 MB) geometry is
+still built at boot -- their track loops carry per-segment state and make the
+station platforms and column solids, so deferring them is a bigger change --
+and Link's profile solve (~1.5 s at 8x) could go in the boot cache.
+`boottime.mjs --twice --prof` now profiles the cached launch only;
+`BOOT_TOP=N` lists more functions.
 
 ## The spawn and the touch zones (v158)
 
@@ -1766,7 +1822,7 @@ ribbons across the suburbs.
 **Coverage, not nearest code, and not a distance field.** A 10 m nearest-code
 raster (the first version, in surface.png's blue byte) drew its staircase
 along every big lot edge from the air. `build_lots.py` paints at 3.33 m, then
-samples a 1801² grid (14.4 m) with two bytes a sample: G = the code, R = the
+samples a 1918² grid (14.4 m) with two bytes a sample: G = the code, R = the
 share of that sample's cell that has it. Per candidate code the shader sums
 `w * (tap has it ? a - 0.5 : 0.5 - a)` over the four taps and takes the best,
 and the zero contour of bilinear box-filtered coverage is straight where the
@@ -2053,7 +2109,7 @@ from `terrainHeight` directly and only uses node `y` for its bow/grade
 subdivision heuristics. It is a correctness fix for the invariant above, not a
 fix for anything visible, and shipping it as the latter would have been a lie.
 
-`height.png` is 651x651 at 40 m (26 km / 40 m, +1). **That spacing is not free to change**: it is
+`height.png` is 691x691 at 40 m (27.6 km / 40 m, +1). **That spacing is not free to change**: it is
 also the terrain mesh's vertex spacing, and the two have to agree. A finer query
 grid floats roads over bulges the mesh doesn't resolve; and at 20 m the mesh
 would cost ~3.4 M triangles across the 26 km map, several times the whole frame budget.
@@ -4544,7 +4600,7 @@ edge) on the 1 Line's rails through downtown to the junction just south of
 International District, then its own branch east -- Judkins Park, the
 Mount Baker tunnel, the I-90 floating bridge, Mercer Island, the East
 Channel, South Bellevue, East Main, Bellevue Downtown, Wilburton and Spring
-District, off the map's east edge (BelRed stands on it and is left out).
+District and BelRed, off the map's east edge.
 
 - **Four tracks, two of them half shared.** `build_link.py` walks each
   track component north -> south (the 1 Line, unchanged byte for byte) AND
@@ -4571,7 +4627,7 @@ District, off the map's east edge (BelRed stands on it and is left out).
 - The map draws the branch in 2 Line blue, and its own stations with a blue
   icon; the readout and toasts say which line and where to.
 
-verify's "Link: the 2 Line": its seven stations; grade, nothing at grade
+verify's "Link: the 2 Line": its eight stations; grade, nothing at grade
 under the ground, bores buried, the floating bridge clear of the lake; ten
 minutes of service (its own stations served, never overlapping a 1 Line
 train); a merge forced at the junction (one holds, both get through, never

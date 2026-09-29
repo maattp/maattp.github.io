@@ -22,7 +22,7 @@
 
 import * as THREE from './three.js';
 import * as G from './geo.js';
-import { Builder } from './build.js';
+import { Builder, ChunkBuilder } from './build.js';
 import { LinkTrack, KIND } from './link.js';
 import { vehicleAssets, tagGlass } from './vehicles.js';
 import { railCar, railDecals, RAIL_COLOURS } from './railcars.js';
@@ -482,7 +482,7 @@ export class Freight {
     const chunk = (x, z) => {
       const k = `${Math.floor(x / CHUNK)},${Math.floor(z / CHUNK)}`;
       let c = chunks.get(k);
-      if (!c) chunks.set(k, (c = { bed: new Builder(true), flat: new Builder(false), near: new Builder(false), tun: new Builder(false), card: new Builder(false), dec: new Builder(true), x: (Math.floor(x / CHUNK) + 0.5) * CHUNK, z: (Math.floor(z / CHUNK) + 0.5) * CHUNK }));
+      if (!c) chunks.set(k, (c = { bed: new ChunkBuilder(true, 64), flat: new ChunkBuilder(false, 64), near: new ChunkBuilder(false, 64), tun: new ChunkBuilder(false, 64), card: new ChunkBuilder(false, 64), dec: new ChunkBuilder(true, 64), x: (Math.floor(x / CHUNK) + 0.5) * CHUNK, z: (Math.floor(z / CHUNK) + 0.5) * CHUNK }));
       return c;
     };
     // the eastern track is not drawn where it IS the western (single track)
@@ -497,7 +497,6 @@ export class Freight {
       if (b.empty) return null;
       const m = new THREE.Mesh(b.build(), mat);
       m.name = name; m.castShadow = shadow; m.receiveShadow = shadow;
-      m.geometry.computeBoundingSphere();
       return m;
     };
     for (const [key, c] of chunks) {

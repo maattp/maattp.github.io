@@ -22,13 +22,13 @@ import sys
 import osmium
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from proj import to_world  # noqa: E402
+from proj import to_world, MAP_HALF  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PBF = os.path.join(HERE, "data", "washington-latest.osm.pbf")
 OUT = os.environ.get("AUTO_DATA_OUT") or os.path.join(HERE, "..", "apps", "auto", "data")
 S, N, W, E = 47.490, 47.732, -122.515, -122.160
-EDGE = 12950.0
+EDGE = MAP_HALF - 50.0
 PATHS = {"path", "footway", "track", "bridleway", "pedestrian"}
 UNPAVED = {"unpaved", "gravel", "fine_gravel", "dirt", "ground", "compacted", "grass", "sand", "wood", "mud"}
 
