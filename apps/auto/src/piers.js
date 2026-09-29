@@ -19,9 +19,11 @@
 
 import * as THREE from './three.js';
 import * as G from './geo.js';
-import { Builder, ChunkBuilder } from './build.js';
+import { ChunkBuilder, dropAfterUpload } from './build.js';
 
 const CHUNK = 1000;
+// a walkway piece overlaps the next: no gap to fall through at a bend
+const OVERLAP = 0.05;
 const DECK = [0.42, 0.37, 0.31], DECK_CON = [0.56, 0.55, 0.52], FASCIA = [0.3, 0.26, 0.21], PILE = [0.22, 0.19, 0.16], RAIL = [0.36, 0.3, 0.24];
 
 const area = (p) => Math.abs(p.reduce((a, q, i) => { const r = p[(i + 1) % p.length]; return a + q[0] * r[1] - r[0] * q[1]; }, 0)) / 2;
@@ -98,56 +100,56 @@ export class Piers {
           const L = Math.hypot(bx - ax, bz - az);
           if (L < 0.1) continue;
           const ux = (bx - ax) / L, uz = (bz - az) / L;
-          plats.push({ x: ax + ux * L / 2, z: az + uz * L / 2, hw, hd: L / 2 + 0.05, rot: Math.atan2(ux, -uz), y0: top, y1: top });   // local x across the walkway
+          plats.push({ x: ax + ux * L / 2, z: az + uz * L / 2, hw, hd: L / 2 + OVERLAP, rot: Math.atan2(ux, -uz), y0: top, y1: top });   // local x across the walkway
         }
       }
       // the geometry, when its chunk first comes into range (update)
       c.ops.push((b) => {
-      if (q.closed) {
-        // the top, triangulated
-        const V = p.map(([x, z]) => new THREE.Vector2(x, z));
-        let tris;
-        try { tris = THREE.ShapeUtils.triangulateShape(V, []); } catch (e) { tris = []; }
-        for (const [i0, i1, i2] of tris) b.tri([p[i0][0], top, p[i0][1]], [p[i1][0], top, p[i1][1]], [p[i2][0], top, p[i2][1]], [0, 1, 0], col);
-        // fascia round the edge, piles along it
-        const cw = area(p) > 0 && p.reduce((a, q2, i) => { const r = p[(i + 1) % p.length]; return a + q2[0] * r[1] - r[0] * q2[1]; }, 0) > 0 ? 1 : -1;
-        for (let i = 0; i < p.length; i++) {
-          const [ax, az] = p[i], [bx, bz] = p[(i + 1) % p.length];
-          const L = Math.hypot(bx - ax, bz - az);
-          if (L < 0.1) continue;
-          const nx = (bz - az) / L * cw, nz = -(bx - ax) / L * cw;
-          b.quad([ax, top, az], [bx, top, bz], [bx, top - 0.6, bz], [ax, top - 0.6, az], [nx, 0, nz], [0, 0, 1, 0, 1, 1, 0, 1], FASCIA);
-          for (let t = 0; t < L; t += 6) {
-            const px = ax + (bx - ax) * t / L - nx * 0.3, pz = az + (bz - az) * t / L - nz * 0.3;
-            if (waterAt(px, pz) === null) continue;
-            b.box(px, bottom - 1, pz, 0.36, top - 0.6 - (bottom - 1), 0.36, 0, PILE);
-          }
-        }
-      } else {
-        const hw = Math.max(1, Math.min(8, q.w / 2));
-        for (let i = 0; i < p.length - 1; i++) {
-          const [ax, az] = p[i], [bx, bz] = p[i + 1];
-          const L = Math.hypot(bx - ax, bz - az);
-          if (L < 0.1) continue;
-          const ux = (bx - ax) / L, uz = (bz - az) / L, lx = -uz, lz = ux;
-          const e = 0.05;   // overlap the next piece: no gap to fall through at a bend
-          const P = (t, o, y) => [ax + ux * t + lx * o, y, az + uz * t + lz * o];
-          b.quad(P(-e, -hw, top), P(-e, hw, top), P(L + e, hw, top), P(L + e, -hw, top), [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], col);
-          for (const s of [-1, 1]) {
-            b.quad(P(0, s * hw, top), P(L, s * hw, top), P(L, s * hw, top - 0.4), P(0, s * hw, top - 0.4), [lx * s, 0, lz * s], [0, 0, 1, 0, 1, 1, 0, 1], FASCIA);
-            for (let t = 0; t <= L; t += 4) {
-              const px = ax + ux * t + lx * s * (hw - 0.2), pz = az + uz * t + lz * s * (hw - 0.2);
+        if (q.closed) {
+          // the top, triangulated
+          const V = p.map(([x, z]) => new THREE.Vector2(x, z));
+          let tris;
+          try { tris = THREE.ShapeUtils.triangulateShape(V, []); } catch (e) { tris = []; }
+          for (const [i0, i1, i2] of tris) b.tri([p[i0][0], top, p[i0][1]], [p[i1][0], top, p[i1][1]], [p[i2][0], top, p[i2][1]], [0, 1, 0], col);
+          // fascia round the edge, piles along it
+          const cw = area(p) > 0 && p.reduce((a, q2, i) => { const r = p[(i + 1) % p.length]; return a + q2[0] * r[1] - r[0] * q2[1]; }, 0) > 0 ? 1 : -1;
+          for (let i = 0; i < p.length; i++) {
+            const [ax, az] = p[i], [bx, bz] = p[(i + 1) % p.length];
+            const L = Math.hypot(bx - ax, bz - az);
+            if (L < 0.1) continue;
+            const nx = (bz - az) / L * cw, nz = -(bx - ax) / L * cw;
+            b.quad([ax, top, az], [bx, top, bz], [bx, top - 0.6, bz], [ax, top - 0.6, az], [nx, 0, nz], [0, 0, 1, 0, 1, 1, 0, 1], FASCIA);
+            for (let t = 0; t < L; t += 6) {
+              const px = ax + (bx - ax) * t / L - nx * 0.3, pz = az + (bz - az) * t / L - nz * 0.3;
               if (waterAt(px, pz) === null) continue;
-              b.box(px, bottom - 1, pz, 0.26, top - 0.4 - (bottom - 1), 0.26, 0, PILE);
+              b.box(px, bottom - 1, pz, 0.36, top - 0.6 - (bottom - 1), 0.36, 0, PILE);
             }
-            // a low timber rail on the walkways that stand high over the water
-            if (top - wl > 1.5) {
-              b.quad(P(0, s * hw, top + 1.0), P(L, s * hw, top + 1.0), P(L, s * hw, top + 0.9), P(0, s * hw, top + 0.9), [lx * s, 0, lz * s], [0, 0, 1, 0, 1, 1, 0, 1], RAIL);
-              for (let t = 0; t <= L; t += 2.5) b.box(ax + ux * t + lx * s * (hw - 0.05), top, az + uz * t + lz * s * (hw - 0.05), 0.08, 1.0, 0.08, 0, RAIL);
+          }
+        } else {
+          const hw = Math.max(1, Math.min(8, q.w / 2));
+          for (let i = 0; i < p.length - 1; i++) {
+            const [ax, az] = p[i], [bx, bz] = p[i + 1];
+            const L = Math.hypot(bx - ax, bz - az);
+            if (L < 0.1) continue;
+            const ux = (bx - ax) / L, uz = (bz - az) / L, lx = -uz, lz = ux;
+            const e = OVERLAP;
+            const P = (t, o, y) => [ax + ux * t + lx * o, y, az + uz * t + lz * o];
+            b.quad(P(-e, -hw, top), P(-e, hw, top), P(L + e, hw, top), P(L + e, -hw, top), [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], col);
+            for (const s of [-1, 1]) {
+              b.quad(P(0, s * hw, top), P(L, s * hw, top), P(L, s * hw, top - 0.4), P(0, s * hw, top - 0.4), [lx * s, 0, lz * s], [0, 0, 1, 0, 1, 1, 0, 1], FASCIA);
+              for (let t = 0; t <= L; t += 4) {
+                const px = ax + ux * t + lx * s * (hw - 0.2), pz = az + uz * t + lz * s * (hw - 0.2);
+                if (waterAt(px, pz) === null) continue;
+                b.box(px, bottom - 1, pz, 0.26, top - 0.4 - (bottom - 1), 0.26, 0, PILE);
+              }
+              // a low timber rail on the walkways that stand high over the water
+              if (top - wl > 1.5) {
+                b.quad(P(0, s * hw, top + 1.0), P(L, s * hw, top + 1.0), P(L, s * hw, top + 0.9), P(0, s * hw, top + 0.9), [lx * s, 0, lz * s], [0, 0, 1, 0, 1, 1, 0, 1], RAIL);
+                for (let t = 0; t <= L; t += 2.5) b.box(ax + ux * t + lx * s * (hw - 0.05), top, az + uz * t + lz * s * (hw - 0.05), 0.08, 1.0, 0.08, 0, RAIL);
+              }
             }
           }
         }
-      }
       });
       this.built.push({ name: q.name, x: cx, z: cz, top, wl, closed: q.closed });
     }
@@ -199,12 +201,7 @@ export class Piers {
     if (b.empty) { c.ops = []; return; }
     const m = new THREE.Mesh(b.build(this.dropArrays), this.mat);
     m.name = `piers:${c.key}`; m.castShadow = true; m.receiveShadow = true;
-    if (this.dropArrays) {
-      const g = m.geometry, drop = function () { this.array = null; };
-      for (const k in g.attributes) g.attributes[k].onUpload(drop);
-      g.index.onUpload(drop);
-      m.raycast = () => {};
-    }
+    if (this.dropArrays) dropAfterUpload(m);
     this.group.add(m);
     c.m = m;
   }

@@ -76,6 +76,19 @@ export function freezeStatic(root) {
   root.matrixWorldAutoUpdate = false;
 }
 
+/**
+ * A static mesh whose JS copy of its arrays goes once they are on the GPU (the
+ * phone path; see world.js buildChunkStep). Nothing may raycast it after, and
+ * a lost context cannot re-upload it: its owner rebuilds instead.
+ */
+export function dropAfterUpload(m) {
+  const g = m.geometry, drop = function () { this.array = null; };
+  for (const k in g.attributes) g.attributes[k].onUpload(drop);
+  if (g.index) g.index.onUpload(drop);
+  m.raycast = () => {};
+  return m;
+}
+
 export class Builder {
   constructor(useUV = true) {
     this.useUV = useUV;
