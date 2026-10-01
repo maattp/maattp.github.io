@@ -503,7 +503,20 @@ export class Hud {
     const sx = (p.x + G.MAP_HALF) * SCALE;
     const sz = (p.z + G.MAP_HALF) * SCALE;
     const half = S / (2 * zoom);
-    ctx.drawImage(this.mapCanvas, sx - half, sz - half, half * 2, half * 2, -half, -half, half * 2, half * 2);
+    // The source rectangle is CLAMPED to the canvas, and the destination with
+    // it. The window spans ~750 m of world either way, so within that of the
+    // map's edge (Winslow and the whole west of Bainbridge) it runs off the
+    // canvas, and WebKit stretches what is left of an out-of-bounds
+    // source over the whole destination instead of clipping it: on the
+    // iPhone the map slid out from under you toward every edge, with your
+    // road beside the road you were on. Chrome clips, so it never showed there.
+    {
+      const x0 = Math.max(0, sx - half), z0 = Math.max(0, sz - half);
+      const x1 = Math.min(MAP_PX, sx + half), z1 = Math.min(MAP_PX, sz + half);
+      if (x1 > x0 && z1 > z0) {
+        ctx.drawImage(this.mapCanvas, x0, z0, x1 - x0, z1 - z0, x0 - sx, z0 - sz, x1 - x0, z1 - z0);
+      }
+    }
 
     const toMap = (x, z) => [((x - p.x) * SCALE), ((z - p.z) * SCALE)];
     // blips

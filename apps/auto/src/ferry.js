@@ -48,48 +48,57 @@ const FILL = { seattle: { x0: -112, x1: 15, z0: 918, z1: 1090, y: 4.2, ease: -5 
 
 // The decks, in the boat's frame. y0 at z0, y1 at z1 (stairs slope along z).
 // `car`: cars drive here; every rect is walkable.
+// The cabin fills the passenger deck nearly from side to side, as a Jumbo
+// Mark II's does (its windows stand straight over the car deck's openings);
+// open deck at each end, round the crew block under each pilothouse; the sun
+// deck on the cabin roof, reached by an outside stair at each end.
+// (the sun deck runs 0.3 m past the cabin's end walls, so its stairs land
+// outside the cabin and clear the wall's top)
+const CAB_X = 12.8, CAB_Z = 46, SUN_Z = 46.3;
 const SURF = [
   { x0: -12.3, x1: 12.3, z0: -HL, z1: HL, y0: DECK, y1: DECK, car: true, lvl: 'car' },
-  // four stairs from the car deck's side walkways up to the promenade
+  // four stairs from the car deck's side walkways up into the cabin
   ...[1, -1].flatMap((sx) => [1, -1].map((sz) => ({
-    x0: sx > 0 ? 11.2 : -12.8, x1: sx > 0 ? 12.8 : -11.2,
+    x0: sx > 0 ? 11.2 : -12.6, x1: sx > 0 ? 12.6 : -11.2,
     z0: sz > 0 ? 30 : -44, z1: sz > 0 ? 44 : -30,
     y0: sz > 0 ? DECK : PAX, y1: sz > 0 ? PAX : DECK, lvl: 'stair' }))),
-  // the passenger deck: the cabin and the promenade round it, the open ends
-  { x0: -13.1, x1: 13.1, z0: -57.5, z1: 57.5, y0: PAX, y1: PAX, lvl: 'pax' },
-  // port-side stairs from the promenade to the sun deck, at each end
-  { x0: -12.8, x1: -11.3, z0: 38, z1: 48, y0: SUN, y1: PAX, lvl: 'stair' },
-  { x0: -12.8, x1: -11.3, z0: -48, z1: -38, y0: PAX, y1: SUN, lvl: 'stair' },
-  { x0: -12.8, x1: 12.8, z0: -38, z1: 38, y0: SUN, y1: SUN, lvl: 'sun' },
+  // the passenger deck -- in pieces, with the four stairwells LEFT OUT. One
+  // rectangle over the whole deck covered the openings the car-deck stairs
+  // come up through, so you walked over them on an invisible floor, and
+  // climbing a stair the deck above came within the 0.9 m reach before the
+  // top step and snatched you up to it: the hop.
+  { x0: -11.2, x1: 11.2, z0: -57.5, z1: 57.5, y0: PAX, y1: PAX, lvl: 'pax' },
+  ...[1, -1].flatMap((sx) => [[-57.5, -44], [-30, 30], [44, 57.5]].map(([z0, z1]) => ({
+    x0: sx > 0 ? 11.2 : -13.1, x1: sx > 0 ? 13.1 : -11.2, z0, z1, y0: PAX, y1: PAX, lvl: 'pax' }))),
+  // the sun deck's stairs, outside on the end decks: starboard at the
+  // Bainbridge end, port at the Seattle end
+  { x0: 11.4, x1: 12.9, z0: SUN_Z, z1: 55, y0: SUN, y1: PAX, lvl: 'stair' },
+  { x0: -12.9, x1: -11.4, z0: -55, z1: -SUN_Z, y0: PAX, y1: SUN, lvl: 'stair' },
+  { x0: -12.6, x1: 12.6, z0: -SUN_Z, z1: SUN_Z, y0: SUN, y1: SUN, lvl: 'sun' },
 ];
 // Solid in the frame, [x0, x1, z0, z1, y0, y1]: the engine casing down the
-// car deck's middle, the cabin's walls (with their doors left open), the
-// stacks and the sun deck's stair heads.
+// car deck's middle, the cabin's walls (its end doors left open), the crew
+// blocks and the stacks.
 const WALLS = [
   [-2.4, 2.4, -26, 26, DECK - 1, PAX],
 ];
-for (const sx of [-1, 1]) {
-  // the cabin's side walls, doors at z -34, 0, 34
-  const x = sx * 11;
-  let z = -46;
-  for (const [d0, d1] of [[-36, -32], [-2, 2], [32, 36], [46, 46]]) {
-    WALLS.push([x - 0.15, x + 0.15, z, d0, PAX - 0.5, SUN]);
-    z = d1;
-  }
-}
+for (const sx of [-1, 1]) WALLS.push([sx * CAB_X - 0.15, sx * CAB_X + 0.15, -CAB_Z, CAB_Z, PAX - 0.5, SUN - 0.4]);
+// the cabin's end walls: a door each side of the crew block
+const DOORS = [[-11.0, -9.4], [9.4, 11.0]];
 for (const sz of [-1, 1]) {
-  // the cabin's end walls, doors at x -10 and 10 (out past the crew block)
-  const z = sz * 46;
-  let x = -11;
-  for (const [d0, d1] of [[-10.7, -9.1], [9.1, 10.7], [11, 11]]) {
-    WALLS.push([x, d0, z - 0.15, z + 0.15, PAX - 0.5, SUN]);
+  const z = sz * CAB_Z;
+  let x = -CAB_X;
+  for (const [d0, d1] of [...DOORS, [CAB_X, CAB_X]]) {
+    WALLS.push([x, d0, z - 0.15, z + 0.15, PAX - 0.5, SUN - 0.4]);
     x = d1;
   }
 }
 // the crew block under each pilothouse, on the passenger deck
-for (const sz of [-1, 1]) WALLS.push([-8.8, 8.8, sz > 0 ? 46.2 : -54, sz > 0 ? 54 : -46.2, PAX - 0.5, SUN]);
+for (const sz of [-1, 1]) WALLS.push([-8.8, 8.8, sz > 0 ? 46.2 : -54, sz > 0 ? 54 : -46.2, PAX - 0.5, SUN - 0.4]);
 // the stacks, on the sun deck
 for (const sx of [-1, 1]) WALLS.push([sx * 5.5 - 1.7, sx * 5.5 + 1.7, -2.8, 2.8, SUN - 0.5, SUN + 12]);
+// the windbreaks down the sun deck's middle
+for (const sz of [-1, 1]) WALLS.push([-0.1, 0.1, sz * 20 - 7, sz * 20 + 7, SUN - 0.5, SUN + 1.6]);
 // the car lanes: a car's CENTRE stays inside, less its half-width
 const CAR = { x: 10.2, z: HL - 0.6 };
 
@@ -391,6 +400,7 @@ export class Ferry {
         // the car deck's apron runs to the slip where that end is open
         if (r.car) { if (b.gateOpen(-1)) z0 -= 0.7; if (b.gateOpen(1)) z1 += 0.7; }
         if (lx < r.x0 || lx > r.x1 || lz < z0 || lz > z1) continue;
+        if (r.car && Math.abs(lx) > breadth(lz) - 0.45 && Math.abs(lz) <= HL) continue;
         const y = b.y + r.y0 + (r.y1 - r.y0) * Math.max(0, Math.min(1, (lz - r.z0) / (r.z1 - r.z0)));
         if (curY == null) { if (best === null || y > best) best = y; continue; }
         if (y > curY + reach) continue;
@@ -420,6 +430,7 @@ export class Ferry {
    * its boat moved.
    */
   update(dt, player, traffic, camera) {
+    this.traffic = traffic;
     const ents = [];
     const add = (o, isPlayer) => {
       const b = this.boatAt(o.x, o.y, o.z);
@@ -506,7 +517,10 @@ export class Ferry {
         return;
       }
       if (ly < DECK - 1.2 || ly > DECK + 2.5) return;
-      const hx = CAR.x - (v.halfWid || 1), hzF = CAR.z - (v.halfLen || 2.4);
+      // the lanes narrow with the hull toward each end (it rounds in to 7.2 m)
+      const hzF = CAR.z - (v.halfLen || 2.4);
+      // (at the car's outer end, so its corner cannot reach into the hull)
+      const hx = Math.min(CAR.x, breadth(Math.min(HL, Math.abs(lz) + (v.halfLen || 2.4))) - 1.4) - (v.halfWid || 1);
       const openLo = b.gateOpen(-1), openHi = b.gateOpen(1);
       let cx = Math.max(-hx, Math.min(hx, lx)), cz = lz;
       if (!openLo && cz < -hzF) cz = -hzF;
@@ -525,6 +539,7 @@ export class Ferry {
           let z0 = r.z0, z1 = r.z1;
           if (r.car) { if (b.gateOpen(-1)) z0 -= 3; if (b.gateOpen(1)) z1 += 3; }
           if (x < r.x0 || x > r.x1 || z < z0 || z > z1) continue;
+          if (r.car && Math.abs(z) <= HL && Math.abs(x) > breadth(z) - 0.9) continue;
           const ry = r.y0 + (r.y1 - r.y0) * Math.max(0, Math.min(1, (z - r.z0) / (r.z1 - r.z0)));
           if (Math.abs(ry - y) < 1.3) return true;
         }
@@ -572,12 +587,18 @@ export class Ferry {
     let cy = camera.position.y - b.y;
     let X = cx, Z = cz, Y = cy;
     if (ty < PAX - 1 && Math.abs(tz) < 57) {
-      X = Math.max(-12.6, Math.min(12.6, X));
+      const bw = breadth(Math.min(HL, Math.abs(Z))) - 0.7;
+      X = Math.max(-bw, Math.min(bw, X));
       if (Math.abs(Z) < 57.5) Y = Math.min(Y, PAX - 0.75);
       Y = Math.max(Y, DECK + 0.6);
     } else if (ty > PAX - 0.5 && ty < SUN - 0.5 && Math.abs(tx) < 10.9 && Math.abs(tz) < 45.9) {
       X = Math.max(-10.6, Math.min(10.6, X)); Z = Math.max(-45.6, Math.min(45.6, Z));
       Y = Math.min(Y, PAX + 2.7);
+    } else if (ty > PAX - 0.5 && ty < SUN - 0.5 && Math.abs(X) < 11.2 && Math.abs(Z) < 46.2 && Y < SUN) {
+      // on the promenade, outside: the camera stays outside the cabin too
+      // (inside, it looked at you through its walls)
+      if (Math.abs(tx) >= 10.9) X = Math.sign(tx) * 11.35;
+      else Z = Math.sign(tz) * 46.35;
     } else return;
     if (X === cx && Z === cz && Y === cy) return;
     const [x, z] = b.world(X, Z);
@@ -604,11 +625,19 @@ export class Ferry {
       if (b.t > 3) b.t = 3;
       return true;
     }
+    // EVERYTHING ON THIS BOAT goes with it: you, the car you are in, and any
+    // car left on its deck. Only you used to: get out to walk the decks,
+    // press ARRIVE, and your car was left in mid-Sound with no deck under it.
     const snap = [];
-    const o = player.vehicle || player;
-    const take = (e) => { const [lx, lz] = b.local(e.x, e.z); snap.push({ e, lx, lz, dh: e === player ? 0 : 0 }); };
-    take(o);
-    if (!player.vehicle) take(player);
+    const take = (e, isPlayer) => {
+      if (snap.some((q) => q.e === e)) return;
+      const [lx, lz] = b.local(e.x, e.z);
+      snap.push({ e, lx, lz, ly: e.y - b.y, isPlayer });
+    };
+    if (this.boatAt(player.x, player.y, player.z) === b) take(player, true);
+    if (player.vehicle) take(player.vehicle, false);
+    const traffic = this.traffic;
+    if (traffic) for (const v of traffic.cars) if (v !== player.vehicle && this.boatAt(v.x, v.y, v.z) === b) take(v, false);
     const h0 = b.h;
     b.s = b.at === 'sea' ? b.route.len : 0;
     b.arrive();
@@ -617,11 +646,12 @@ export class Ferry {
     const dh = b.h - h0;
     for (const q of snap) {
       const [x, z] = b.world(q.lx, q.lz);
-      q.e.x = x; q.e.z = z;
-      if (q.e === player) { if (player.heading !== undefined) player.heading += dh; if (player.camYaw !== undefined) player.camYaw += dh; }
+      q.e.x = x; q.e.z = z; q.e.y = b.y + q.ly;
+      if (q.isPlayer) { if (player.heading !== undefined) player.heading += dh; if (player.camYaw !== undefined) player.camYaw += dh; }
       else { q.e.heading += dh; if (q.e.sync) q.e.sync(); }
     }
-    if (player.camPos) { const [lx, lz] = [0, 0]; void lx; void lz; player.camPos.x = o.x; player.camPos.z = o.z; }
+    const o = player.vehicle || player;
+    if (player.camPos) { player.camPos.x = o.x - Math.sin(player.camYaw || 0) * 4; player.camPos.z = o.z - Math.cos(player.camYaw || 0) * 4; }
     this.stats.skips++;
     this.say(`${b.name} — ${this.slips[b.at].name}. Drive off at the ${b.at === 'sea' ? 'Seattle' : 'Bainbridge'} end`, 4200);
     return true;
@@ -704,18 +734,25 @@ export class Ferry {
     }
   }
 
+  /**
+   * ARRIVE / SAIL: a pill of its own on the right edge, between the money
+   * and speed readout and the driving pad. It used to sit in the top button
+   * bar, which runs into the objective line at the top centre -- where this
+   * same ferry writes its timetable -- and covered the text it went with.
+   */
   _button(renderer) {
     if (typeof document === 'undefined') return;
-    const bar = document.getElementById('topBtns');
-    if (!bar) return;
+    const host = document.getElementById('hud') || document.body;
     const el = document.createElement('button');
-    el.className = 'mini';
     el.id = 'ferryBtn';
-    el.style.cssText = 'width:auto;padding:0 12px;font-weight:700;letter-spacing:0.04em;display:none';
+    el.style.cssText = 'position:absolute;right:calc(16px + var(--safe-r, 0px));top:40%;z-index:7;display:none;'
+      + 'height:46px;padding:0 20px;border-radius:23px;border:1px solid rgba(255,255,255,0.35);'
+      + 'background:rgba(11,94,58,0.88);color:#fff;font:800 15px/1 system-ui,-apple-system,sans-serif;letter-spacing:0.06em;'
+      + 'box-shadow:0 4px 14px rgba(0,0,0,0.35);pointer-events:auto;-webkit-tap-highlight-color:transparent';
     el.textContent = 'ARRIVE ▸';
     el.addEventListener('pointerup', (e) => { e.stopPropagation(); if (this.player) this.skip(this.player); });
     el.addEventListener('pointerdown', (e) => e.stopPropagation());
-    bar.insertBefore(el, bar.firstChild);
+    host.appendChild(el);
     this.btn = el;
     window.addEventListener('keydown', (e) => { if ((e.key === 'f' || e.key === 'F') && this.player && this.riding(this.player)) this.skip(this.player); });
     void renderer;
@@ -875,7 +912,7 @@ function buildVessel(mats, cells, name) {
   // the slab's edge, the deck's outer face
   for (const sz of [-1, 1]) Q([-13.2, wallTop, sz * 57.5], [13.2, wallTop, sz * 57.5], [13.2, PAX, sz * 57.5], [-13.2, PAX, sz * 57.5], [0, 0, sz], C.white);
   for (const sx of [-1, 1]) Q([sx * 13.2, wallTop, -57.5], [sx * 13.2, wallTop, 57.5], [sx * 13.2, PAX, 57.5], [sx * 13.2, PAX, -57.5], [sx, 0, 0], C.white);
-  // railings round the promenade and the open ends
+  // railings round the open end decks
   const rail = (x0, z0, x1, z1, y, B = b) => {
     const L = Math.hypot(x1 - x0, z1 - z0), n = Math.max(1, Math.round(L / 1.6));
     const nx = (z1 - z0) / L, nz = -(x1 - x0) / L;
@@ -883,60 +920,84 @@ function buildVessel(mats, cells, name) {
     B.quad([x0, y + 0.55, z0], [x1, y + 0.55, z1], [x1, y + 0.5, z1], [x0, y + 0.5, z0], [nx, 0, nz], [0, 0, 1, 0, 1, 1, 0, 1], C.white);
     for (let k = 0; k <= n; k++) { const t = k / n; B.box(x0 + (x1 - x0) * t, y, z0 + (z1 - z0) * t, 0.06, 1.05, 0.06, 0, C.white); }
   };
-  for (const sx of [-1, 1]) rail(sx * 13.1, -57.4, sx * 13.1, 57.4, PAX);
-  for (const sz of [-1, 1]) rail(-13.1, sz * 57.4, 13.1, sz * 57.4, PAX);
-  // the cabin: walls with a band of windows, doors, a roof
-  const cabH = SUN - 0.3 - PAX;
-  for (const sx of [-1, 1]) {
-    const x = sx * 11;
-    Q([x, PAX, -46], [x, PAX, 46], [x, PAX + 0.95, 46], [x, PAX + 0.95, -46], [sx, 0, 0], C.white);
-    Q([x, PAX + 2.45, -46], [x, PAX + 2.45, 46], [x, PAX + cabH, 46], [x, PAX + cabH, -46], [sx, 0, 0], C.white);
-    Q([x + sx * 0.01, PAX + 0.95, -46], [x + sx * 0.01, PAX + 0.95, 46], [x + sx * 0.01, PAX + 2.45, 46], [x + sx * 0.01, PAX + 2.45, -46], [sx, 0, 0], C.glass, gl);
-    for (let z = -46; z <= 46; z += 2) b.box(x + sx * 0.03, PAX + 0.95, z, 0.08, 1.5, 0.12, 0, C.white);
-    for (const dz of [-34, 0, 34]) b.box(x + sx * 0.02, PAX, dz, 0.06, 2.2, 1.9, 0, C.green);
-  }
-  // ...and their inside faces, below and above the windows
-  for (const sx of [-1, 1]) {
-    const x = sx * 10.97;
-    Q([x, PAX, -46], [x, PAX, 46], [x, PAX + 0.95, 46], [x, PAX + 0.95, -46], [-sx, 0, 0], C.ceil);
-    Q([x, PAX + 2.45, -46], [x, PAX + 2.45, 46], [x, PAX + cabH, 46], [x, PAX + cabH, -46], [-sx, 0, 0], C.ceil);
-  }
   for (const sz of [-1, 1]) {
-    const z = sz * 45.97;
-    Q([-11, PAX, z], [11, PAX, z], [11, PAX + 0.95, z], [-11, PAX + 0.95, z], [0, 0, -sz], C.ceil);
-    Q([-11, PAX + 2.45, z], [11, PAX + 2.45, z], [11, PAX + cabH, z], [-11, PAX + cabH, z], [0, 0, -sz], C.ceil);
+    for (const sx of [-1, 1]) rail(sx * 13.1, sz * CAB_Z, sx * 13.1, sz * 57.4, PAX);
+    rail(-13.1, sz * 57.4, 13.1, sz * 57.4, PAX);
   }
+  // the cabin: nearly full width, a deep band of windows over a white
+  // spandrel with the green line, the sun deck's overhang above
+  const cabH = SUN - 0.3 - PAX, wLo = PAX + 0.85, wHi = PAX + 2.55;
+  for (const sx of [-1, 1]) {
+    const x = sx * CAB_X;
+    Q([x, PAX, -CAB_Z], [x, PAX, CAB_Z], [x, wLo, CAB_Z], [x, wLo, -CAB_Z], [sx, 0, 0], C.white);
+    Q([x, wHi, -CAB_Z], [x, wHi, CAB_Z], [x, PAX + cabH, CAB_Z], [x, PAX + cabH, -CAB_Z], [sx, 0, 0], C.white);
+    Q([x + sx * 0.012, PAX + 0.42, -CAB_Z], [x + sx * 0.012, PAX + 0.42, CAB_Z], [x + sx * 0.012, PAX + 0.6, CAB_Z], [x + sx * 0.012, PAX + 0.6, -CAB_Z], [sx, 0, 0], C.green);
+    Q([x + sx * 0.01, wLo, -CAB_Z], [x + sx * 0.01, wLo, CAB_Z], [x + sx * 0.01, wHi, CAB_Z], [x + sx * 0.01, wHi, -CAB_Z], [sx, 0, 0], C.glass, gl);
+    for (let z = -CAB_Z; z <= CAB_Z + 1e-6; z += 1.84) b.box(x + sx * 0.03, wLo, z, 0.1, wHi - wLo, 0.16, 0, C.whiteD);
+    // inside faces
+    const xi = sx * (CAB_X - 0.03);
+    Q([xi, PAX, -CAB_Z], [xi, PAX, CAB_Z], [xi, wLo, CAB_Z], [xi, wLo, -CAB_Z], [-sx, 0, 0], C.ceil);
+    Q([xi, wHi, -CAB_Z], [xi, wHi, CAB_Z], [xi, PAX + cabH, CAB_Z], [xi, PAX + cabH, -CAB_Z], [-sx, 0, 0], C.ceil);
+  }
+  // the end walls, with their two doorways open
   for (const sz of [-1, 1]) {
-    const z = sz * 46;
-    Q([-11, PAX, z], [11, PAX, z], [11, PAX + 0.95, z], [-11, PAX + 0.95, z], [0, 0, sz], C.white);
-    Q([-11, PAX + 2.45, z], [11, PAX + 2.45, z], [11, PAX + cabH, z], [-11, PAX + cabH, z], [0, 0, sz], C.white);
-    Q([-11, PAX + 0.95, z + sz * 0.01], [11, PAX + 0.95, z + sz * 0.01], [11, PAX + 2.45, z + sz * 0.01], [-11, PAX + 2.45, z + sz * 0.01], [0, 0, sz], C.glass, gl);
-    for (let x = -11; x <= 11; x += 2) b.box(x, PAX + 0.95, z + sz * 0.03, 0.12, 1.5, 0.08, 0, C.white);
+    const z = sz * CAB_Z;
+    let x = -CAB_X;
+    for (const [d0, d1] of [...DOORS, [CAB_X, CAB_X]]) {
+      if (d0 - x > 0.05) {
+        for (const [zz, nz, col, B] of [[z, sz, C.white, b], [z - sz * 0.03, -sz, C.ceil, b]]) {
+          Q([x, PAX, zz], [d0, PAX, zz], [d0, wLo, zz], [x, wLo, zz], [0, 0, nz], col, B);
+          Q([x, wHi, zz], [d0, wHi, zz], [d0, PAX + cabH, zz], [x, PAX + cabH, zz], [0, 0, nz], col, B);
+        }
+        Q([x, wLo, z + sz * 0.01], [d0, wLo, z + sz * 0.01], [d0, wHi, z + sz * 0.01], [x, wHi, z + sz * 0.01], [0, 0, sz], C.glass, gl);
+      }
+      if (d1 < CAB_X) {
+        // the doorway's head and frame
+        Q([d0, PAX + 2.2, z], [d1, PAX + 2.2, z], [d1, PAX + cabH, z], [d0, PAX + cabH, z], [0, 0, sz], C.white);
+        for (const xx of [d0, d1]) b.box(xx, PAX, z, 0.14, 2.2, 0.24, 0, C.green);
+      }
+      x = d1;
+    }
   }
   // inside: booths down both sides and across the middle, a galley counter
   for (let z = -43; z <= 43; z += 3.2) {
     if (Math.abs(z) < 3) continue;
-    for (const x of [-9.2, -5.4, 5.4, 9.2]) {
+    for (const x of [-9.6, -5.6, 5.6, 9.6]) {
+      if (Math.abs(x) > 9 && Math.abs(z) > 28 && Math.abs(z) < 46) continue;   // clear of the stairwells
       b.box(x, PAX, z, 1.9, 0.45, 1.1, 0, C.seat);
       b.box(x, PAX, z - 0.5, 1.9, 1.05, 0.2, 0, C.seat);
       b.box(x, PAX, z + 0.9, 1.1, 0.72, 0.7, 0, C.wood);
     }
   }
   b.box(0, PAX, 0, 6, 1.05, 2.2, 0, C.wood);
+  // the stairwells' balustrades, inside the cabin
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const x = sx * 11.15;
+    b.box(x, PAX, sz * 37, 0.08, 1.0, 14, 0, C.green);
+  }
   // the ceiling, seen from inside
-  b.quad([-11, PAX + cabH - 0.02, -46], [-11, PAX + cabH - 0.02, 46], [11, PAX + cabH - 0.02, 46], [11, PAX + cabH - 0.02, -46], [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], C.ceil);
-  // the cabin roof beyond the sun deck (not walkable), and the sun deck
-  for (const [z0, z1] of [[-46, -38], [38, 46]]) b.quad([-11.2, SUN - 0.3, z0], [11.2, SUN - 0.3, z0], [11.2, SUN - 0.3, z1], [-11.2, SUN - 0.3, z1], up, [0, 0, 1, 0, 1, 1, 0, 1], C.white);
-  b.box(0, SUN - 0.3, 0, 25.6, 0.3, 76, 0, C.whiteD);
-  b.quad([-12.8, SUN + 0.005, -38], [12.8, SUN + 0.005, -38], [12.8, SUN + 0.005, 38], [-12.8, SUN + 0.005, 38], up, [0, 0, 1, 0, 1, 1, 0, 1], [0.34, 0.36, 0.34]);
-  for (const sx of [-1, 1]) rail(sx * 12.75, -38, sx * 12.75, 38, SUN);
-  for (const sz of [-1, 1]) rail(-12.75, sz * 38, -11.3, sz * 38, SUN), rail(-9.5, sz * 38, 12.75, sz * 38, SUN);
-  // benches and life-raft canisters on the sun deck
-  for (let z = -32; z <= 32; z += 8) for (const sx of [-1, 1]) b.box(sx * 9.5, SUN, z, 0.7, 0.45, 3.2, 0, C.wood);
-  for (let z = -36; z <= 36; z += 2.4) for (const sx of [-1, 1]) {
+  b.quad([-CAB_X, PAX + cabH - 0.02, -CAB_Z], [-CAB_X, PAX + cabH - 0.02, CAB_Z], [CAB_X, PAX + cabH - 0.02, CAB_Z], [CAB_X, PAX + cabH - 0.02, -CAB_Z], [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], C.ceil);
+  // the cabin roof, and the sun deck on it
+  b.box(0, SUN - 0.3, 0, 2 * CAB_X + 0.6, 0.3, 2 * SUN_Z, 0, C.whiteD);
+  b.quad([-12.6, SUN + 0.005, -SUN_Z], [12.6, SUN + 0.005, -SUN_Z], [12.6, SUN + 0.005, SUN_Z], [-12.6, SUN + 0.005, SUN_Z], up, [0, 0, 1, 0, 1, 1, 0, 1], [0.3, 0.32, 0.31]);
+  for (const sx of [-1, 1]) rail(sx * 12.75, -SUN_Z, sx * 12.75, SUN_Z, SUN);
+  // the ends, open at each stair's head
+  rail(-12.75, SUN_Z, 11.3, SUN_Z, SUN);
+  rail(-11.3, -SUN_Z, 12.75, -SUN_Z, SUN);
+  // benches, life-raft canisters, and the windbreak panels down the middle
+  for (let z = -40; z <= 40; z += 8) for (const sx of [-1, 1]) b.box(sx * 9.4, SUN, z, 0.7, 0.45, 3.2, 0, C.wood);
+  for (let z = -43; z <= 43; z += 2.4) for (const sx of [-1, 1]) {
     if (Math.abs(z) < 5) continue;
-    b.box(sx * 12.1, SUN, z, 0.95, 0.6, 1.8, 0, C.white);
-    b.box(sx * 12.1, SUN + 0.25, z, 0.97, 0.08, 1.82, 0, C.orange);
+    b.box(sx * 12.0, SUN, z, 0.95, 0.6, 1.8, 0, C.white);
+    b.box(sx * 12.0, SUN + 0.25, z, 0.97, 0.08, 1.82, 0, C.orange);
+  }
+  // (glazed in a white frame: a solid dark board read as a slab from the deck)
+  for (const sz of [-1, 1]) {
+    const z0 = sz * 20 - 7, z1 = sz * 20 + 7;
+    b.box(0, SUN, sz * 20, 0.14, 0.3, 14, 0, C.white);
+    b.box(0, SUN + 1.52, sz * 20, 0.14, 0.08, 14, 0, C.white);
+    for (let z = z0; z <= z1 + 1e-6; z += 3.5) b.box(0, SUN, z, 0.14, 1.6, 0.1, 0, C.white);
+    for (const sx of [-1, 1]) Q([sx * 0.02, SUN + 0.3, z0], [sx * 0.02, SUN + 0.3, z1], [sx * 0.02, SUN + 1.52, z1], [sx * 0.02, SUN + 1.52, z0], [sx, 0, 0], C.glass, gl);
   }
   // the stairs: stringers and treads
   const stair = (x0, x1, z0, z1, y0, y1) => {

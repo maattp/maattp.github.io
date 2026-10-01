@@ -126,13 +126,16 @@ const ROAD_TILE = 9;
 // given a fixed tile long ago for exactly this reason; the pavement never was.
 const WALK_TILE = 4;
 
-// Massing-box wall tints by building style; see the massing branch in
-// buildChunkStep. Module scope alongside the other style tables.
-const MASS_TINT = {
-  house: [0.66, 0.61, 0.54], brick: [0.55, 0.42, 0.36],
-  lowrise: [0.58, 0.58, 0.60], midrise: [0.56, 0.57, 0.60],
-  industrial: [0.50, 0.52, 0.55], campus: [0.58, 0.55, 0.50],
-  tower: [0.52, 0.55, 0.60],
+// The mean linear albedo of each facade atlas cell (and of the curtain-wall
+// texture), measured off the atlas textures.js draws. A massing box or the far
+// skyline takes the colour its textured building AVERAGES to -- family colour
+// x the building's own tint x its cell's mean -- so the city does not turn to
+// pale boxes at the 800 m ring. (The style tints they used were 0.55-0.66
+// linear: two to three times the textured walls they stand in for.)
+// Re-measure if a facade surface's drawing changes.
+const CELL_MEAN = {
+  masonry: [0.403, 0.41, 0.399], brick: [0.412, 0.399, 0.38], industrial: [0.29, 0.316, 0.333],
+  house: [0.608, 0.579, 0.522], glass: [0.26, 0.31, 0.36],
 };
 // Paint sits just proud of the asphalt; any less and it z-fights at distance.
 const MARK_Y = ROAD_LIFT + 0.012;
@@ -178,6 +181,9 @@ const GRASS = [0.42, 0.62, 0.28];
 const SUBURB = [0.47, 0.53, 0.38];
 const URBAN = [0.56, 0.56, 0.55];
 const BLEND_TAPS = [[0, 0], [-85, 55], [70, -75]];
+// The ground map's mean linear value (measured; textures.js groundSurface):
+// the terrain draws its vertex tint times this on average.
+const GROUND_MEAN = 0.407;
 
 /**
  * Smooth value noise on a 210 m lattice, in [0,1].
@@ -1072,44 +1078,11 @@ export class World {
             // than a rectangle. The query point is still pushed around by smooth
             // noise and sampled three times, because the chunk grid is 400 m and
             // a straight lookup would draw its staircase on the ground.
-            let c;
-            if (y < 1.2) c = [0.94, 0.86, 0.66];
-            else if (G.inPark(x, z)) c = [0.42, 0.66, 0.3];
-            else {
-              const jx = (vnoise(x, z) - 0.5) * 190;
-              const jz = (vnoise(x + 3137, z - 2711) - 0.5) * 190;
-              let dense = 0;
-              for (const [ox, oz] of BLEND_TAPS) {
-                dense += this.city.builtAt(x + jx + ox, z + jz + oz);
-              }
-              dense /= BLEND_TAPS.length;
-              // `builtAt` is footprint + tarmac area per chunk. Anything with a
-              // street grid on it is developed ground, so this saturates early:
-              // a normal residential chunk runs ~0.25 and should read as a
-              // neighbourhood, not as a meadow with houses dropped on it.
-              const cover = clamp(dense / 0.16, 0, 1);
-              const built = dense > 0.6 ? URBAN : SUBURB;
-              const t = cover * cover * (3 - 2 * cover);
-              c = [
-                GRASS[0] + (built[0] - GRASS[0]) * t,
-                GRASS[1] + (built[1] - GRASS[1]) * t,
-                GRASS[2] + (built[2] - GRASS[2]) * t,
-              ];
-            }
-            // Two grass tones, in patches.
-            //
-            // Per-vertex hash noise alone is high-frequency speckle: at 40 m
-            // spacing it varies faster than the eye groups it, so a park read
-            // as one flat saturated carpet however much jitter was on it. A
-            // smooth low-frequency field on top gives patches you can actually
-            // see -- lush against dry, which is what a real park looks like
-            // from any distance.
-            const patch = vnoise(x * 0.35 + 811, z * 0.35 - 553);
-            const dry = (patch - 0.42) * 0.55;
+            const c = this.groundTint(x, z, y);
             const n = hash2(gi, gj) * 0.14 + 0.93;
-            col[k] = c[0] * n * (1 + dry * 0.34);
-            col[k + 1] = c[1] * n * (1 - dry * 0.16);
-            col[k + 2] = c[2] * n * (1 - dry * 0.30);
+            col[k] = c[0] * n;
+            col[k + 1] = c[1] * n;
+            col[k + 2] = c[2] * n;
           }
         }
         // CELLS OVER A PORTAL TRENCH ARE NOT DRAWN AT 40 M. The heightfield's
@@ -2966,10 +2939,7 @@ export class World {
       // see. 4032 buildings pass; the sub-30 additions take the plain-box path
       // (plant and crown are height-gated) at ~12 triangles each.
       if (bd.h < 16 && bd.w * bd.d < 1400) continue;
-      const v = 0.86 + hash2(bd.seed, 17) * 0.26;
-      const col = bd.style === 'tower'
-        ? [0.54 * v, 0.58 * v, 0.63 * v]
-        : [0.60 * v, 0.56 * v, 0.51 * v];
+      const col = this.massColour(bd);
       const s = 0.985;
       // A tower is read almost entirely by its top. Extruded to full height
       // and capped flat, every building in the skyline is the same rectangle
@@ -3176,9 +3146,8 @@ export class World {
       A += a;
       top += (bd.y + bd.h) * a;
       base = Math.min(base, bd.y);
-      const c = MASS_TINT[bd.style] || MASS_TINT.lowrise;
-      const t = (0.86 + hash2(bd.seed, 3) * 0.28) * a;
-      tr += c[0] * t; tg += c[1] * t; tb += c[2] * t;
+      const c = this.massColour(bd);
+      tr += c[0] * a; tg += c[1] * a; tb += c[2] * a;
     }
     const cr = Math.cos(big.rot), sr = Math.sin(big.rot);
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
@@ -4136,12 +4105,11 @@ float frLine(float o, float fw, float c, float w) {
       for (const bi of ch.buildings) {
         const bd = city.buildings[bi];
         if (bd.h >= 16 || bd.w * bd.d >= 1400) continue;   // skyline draws these
-        const base = MASS_TINT[bd.style] || MASS_TINT.lowrise;
-        const t = 0.86 + hash2(bd.seed, 3) * 0.28;
-        const wall = [base[0] * t, base[1] * t, base[2] * t];
+        const wall = this.massColour(bd);
         flat.box(bd.x, bd.y - 0.5, bd.z, bd.w, bd.h + 0.5, bd.d, bd.rot, wall, { ao: 0.35, top: false });
-        flat.box(bd.x, bd.y + bd.h, bd.z, bd.w * 0.96, 0.24, bd.d * 0.96, bd.rot,
-          [wall[0] * 0.45, wall[1] * 0.45, wall[2] * 0.47]);
+        // the roof: membrane grey for a flat top, shingle for a house's
+        const roof = bd.style === 'house' ? [0.07, 0.065, 0.06] : [0.16, 0.16, 0.155];
+        flat.box(bd.x, bd.y + bd.h, bd.z, bd.w * 0.96, 0.24, bd.d * 0.96, bd.rot, roof);
         if (performance.now() - this._yt > this._yb) { yield; this._yt = performance.now(); }
       }
       yield; this._yt = performance.now();
@@ -6077,6 +6045,51 @@ float frLine(float o, float fw, float c, float w) {
   }
 
   /**
+   * The terrain's vertex tint at (x, z): sand by the water, park green, or
+   * grass blending to developed ground with the real built-up density, in
+   * lush and dry patches. The terrain mesh multiplies it by the ground map
+   * (GROUND_MEAN on average); anything drawn flat beside the ground -- a
+   * pavement's verge -- takes tint x GROUND_MEAN to meet it.
+   */
+  groundTint(x, z, y) {
+    let c;
+    if (y < 1.2) c = [0.94, 0.86, 0.66];
+    else if (G.inPark(x, z)) c = [0.42, 0.66, 0.3];
+    else {
+      const jx = (vnoise(x, z) - 0.5) * 190;
+      const jz = (vnoise(x + 3137, z - 2711) - 0.5) * 190;
+      let dense = 0;
+      for (const [ox, oz] of BLEND_TAPS) {
+        dense += this.city.builtAt(x + jx + ox, z + jz + oz);
+      }
+      dense /= BLEND_TAPS.length;
+      // `builtAt` is footprint + tarmac area per chunk. Anything with a
+      // street grid on it is developed ground, so this saturates early:
+      // a normal residential chunk runs ~0.25 and should read as a
+      // neighbourhood, not as a meadow with houses dropped on it.
+      const cover = clamp(dense / 0.16, 0, 1);
+      const built = dense > 0.6 ? URBAN : SUBURB;
+      const t = cover * cover * (3 - 2 * cover);
+      c = [
+        GRASS[0] + (built[0] - GRASS[0]) * t,
+        GRASS[1] + (built[1] - GRASS[1]) * t,
+        GRASS[2] + (built[2] - GRASS[2]) * t,
+      ];
+    }
+    // Two grass tones, in patches.
+    //
+    // Per-vertex hash noise alone is high-frequency speckle: at 40 m
+    // spacing it varies faster than the eye groups it, so a park read
+    // as one flat saturated carpet however much jitter was on it. A
+    // smooth low-frequency field on top gives patches you can actually
+    // see -- lush against dry, which is what a real park looks like
+    // from any distance.
+    const patch = vnoise(x * 0.35 + 811, z * 0.35 - 553);
+    const dry = (patch - 0.42) * 0.55;
+    return [c[0] * (1 + dry * 0.34), c[1] * (1 - dry * 0.16), c[2] * (1 - dry * 0.30)];
+  }
+
+  /**
    * The verge outside a pavement's outer edge: a short slope from the slab's
    * top (terrain + WALK_Y) down to the ground across VERGE, outward (ox, oz).
    *
@@ -6096,9 +6109,13 @@ float frLine(float o, float fw, float c, float w) {
     if (this.city.onRoad(mx, mz, 0, false) || this.city.onRoad(hx, hz, 0, false)) return;
     if (!G.isBuildable(hx, hz) || this.inCut(mx, mz)) return;
     const T = G.terrainHeight;
-    // Pavement grey at the lip, the developed-ground verge tint at the toe --
-    // the batter family (meshGraded), toned toward the slab.
-    const lip = [0.38, 0.38, 0.36], toe = [0.3, 0.36, 0.22];
+    // Pavement at the lip, the GROUND at the toe -- each the value the textured
+    // surface beside it actually draws (tint x its map's mean). The old fixed
+    // toe, [0.3, 0.36, 0.22], was ~1.6x the grass it met: a pale plastic band
+    // along every pavement in the city.
+    const lip = [0.29, 0.28, 0.25];
+    const toeAt = (x, z) => { const g = this.groundTint(x, z, T(x, z)); return [g[0] * GROUND_MEAN, g[1] * GROUND_MEAN, g[2] * GROUND_MEAN]; };
+    const toe = toeAt(hx, hz);
     // Split along: the slab's pieces are up to 24 m, and a slope drawn as one
     // chord over that is the grass-through-the-road problem again. The lip
     // stays on the slab's own edge (its chord), so the two cannot part.
@@ -6815,6 +6832,19 @@ float frLine(float o, float fw, float c, float w) {
       if (pick <= acc) return FAMS[i];
     }
     return FAMS[0];
+  }
+
+  /** The colour a building's textured walls average to (see CELL_MEAN): what
+   *  its massing box and far-skyline box are drawn in. */
+  massColour(bd) {
+    const seed = bd.seed;
+    const fam = (bd.style === 'tower' || bd.style === 'midrise' || bd.style === 'brick'
+      || bd.style === 'lowrise' || bd.style === 'campus') ? this.buildingFamily(bd) : null;
+    let col, mean;
+    if (fam) { col = tint(seed, fam.c, 0.26); mean = CELL_MEAN[fam.m]; }
+    else if (bd.style === 'industrial') { col = tint(seed, [0.84, 0.86, 0.86], 0.3); mean = CELL_MEAN.industrial; }
+    else { col = paintTint(seed, pickW(HOUSE_PAINT, hash2(seed, 131)), 140); mean = CELL_MEAN.house; }
+    return [col[0] * mean[0], col[1] * mean[1], col[2] * mean[2]];
   }
 
   meshBuilding(bl, flat, glow, bd) {
