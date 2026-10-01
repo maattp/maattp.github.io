@@ -2006,7 +2006,11 @@ function frame(now) {
     needleTop.update(dt, input, look);
   } else {
     // on the Needle's deck the boom is short: it is 2.4 m wide
-    player.camShort = needleTop && player.onFoot && needleTop.onDeck(player) ? 2.6 : 0;
+    // and aboard a ferry it is shorter too: stairwells, the cabin and the
+    // promenade are a few metres across, and a 4.6 m boom lived in the walls
+    player.camShort = !player.onFoot ? 0
+      : needleTop && needleTop.onDeck(player) ? 2.6
+      : ferry.riding(player) ? 3.3 : 0;
     player.update(dt, input, look, controls, traffic, peds);
     ferry.constrain(player, camera, ferryPrev);
     ferryPrev = ferry.snapshot(player);

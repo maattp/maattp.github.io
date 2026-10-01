@@ -228,6 +228,7 @@ async function main() {
       .map(([k, v]) => `${k}(${v.x | 0},${v.z | 0})`).join(' '));
 
     for (const V of VIEWS) {
+      if (process.env.BEAUTY_ONLY && !process.env.BEAUTY_ONLY.split(',').includes(V.name)) continue;
       const t = picks[V.pick];
       // Stand back along a fixed bearing so two runs frame the same thing, and
       // push the look-at past the subject for the street shot so the frame has
@@ -317,6 +318,10 @@ async function main() {
         return JSON.stringify({ cars, people });
       })()`);
       await sleep(9000);
+      // BEAUTY_PROBE='<expr>': evaluated with the view posed (camera, sun,
+      // city settled), its result printed -- e.g. raycast a pixel of the shot
+      // to name what drew it. BEAUTY_ONLY=a,b limits the views.
+      if (process.env.BEAUTY_PROBE) console.log(`  probe ${V.name}: ` + await evaluate(`(() => { const d = window.__dbg; return JSON.stringify(${process.env.BEAUTY_PROBE}); })()`));
       const { result } = await send('Page.captureScreenshot', { format: 'png' });
       writeFileSync(`${OUT}/${V.name}.png`, Buffer.from(result.data, 'base64'));
       const c = JSON.parse(counts);

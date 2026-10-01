@@ -2818,16 +2818,33 @@ async function main() {
       P.exitVehicle(true);
       W.depart(); W.s = 3000; W.v = 9; F._place(W);
       const [px, pz] = W.world(8, -20); P.x = px; P.z = pz; P.y = W.y + 3.6; prev = null;
-      const wps = [[12, -26], [12, -30], [12, -45], [12, -34], [5, -34], [0, -20], [0, 0], [12.2, 0], [12.2, 50], [12.2, 55.8], [0, 55.8], [-12, 55.8], [-12, 49], [-12, 37], [-5, 30], [0, 10]];
-      let wi = 0; const levels = [];
+      // car deck -> starboard stair -> into the cabin -> out of its Seattle-end
+      // door -> round the crew block on the end deck -> port stair -> sun deck
+      const wps = [[12, -26], [11.9, -30], [11.9, -45.2], [10.2, -45.2], [5, -40], [0, -20], [0, 0], [0, -40], [10.2, -44.5], [10.2, -48], [10.2, -56], [-12.15, -56], [-12.15, -55], [-12.15, -45.5], [-5, -30], [0, -10]];
+      let wi = 0; const levels = []; let hop = 0, py = P.y - W.y;
       for (let i = 0; i < 60 * 240 && wi < wps.length; i++) {
+        const ny = P.y - W.y; hop = Math.max(hop, Math.abs(ny - py)); py = ny;
         const [lx, lz] = W.local(P.x, P.z);
         if (Math.hypot(lx - wps[wi][0], lz - wps[wi][1]) < 0.7) { levels.push(+(P.y - W.y).toFixed(1)); wi++; continue; }
         const [tx, tz] = W.world(wps[wi][0], wps[wi][1]);
         P.camYaw = Math.atan2(tx - P.x, tz - P.z) - Math.PI;
         step({ x: 0, y: -1, sprint: false });
       }
-      out.walk = { reached: wi, of: wps.length, top: levels[levels.length - 1] };
+      // a stair climbs ~0.03 m a frame at a walk: anything bigger is a hop
+      out.walk = { reached: wi, of: wps.length, top: levels[levels.length - 1], hop: +hop.toFixed(2) };
+      // ARRIVE on foot at sea, the car left on the car deck: it comes too
+      {
+        const [cx, cz] = W.world(-4, 30);
+        v.x = cx; v.z = cz; v.y = W.y + 3.6; v.vLong = 0;
+        const c0 = W.local(v.x, v.z), p0 = W.local(P.x, P.z), to = W.to, x0 = W.x;
+        const ok = F.skip(P);
+        const c1 = W.local(v.x, v.z), p1 = W.local(P.x, P.z);
+        out.carried = {
+          docked: ok && W.state === 'dock' && W.at === to && Math.abs(W.x - x0) > 1000,
+          car: +Math.hypot(c1[0] - c0[0], c1[1] - c0[1], v.y - W.y - 3.6).toFixed(2),
+          you: +Math.hypot(p1[0] - p0[0], p1[1] - p0[1]).toFixed(2),
+        };
+      }
       // calling a boat to Winslow with none there
       for (const b of F.boats) { b.at = 'sea'; b.state = 'dock'; b.s = 0; b.t = 900; F._place(b); }
       P.x = F.slips.bi.x - F.slips.bi.dx * 80; P.z = F.slips.bi.z - F.slips.bi.dz * 80; P.y = C.groundAt(P.x, P.z, null);
@@ -2843,7 +2860,8 @@ async function main() {
     console.log(`  route ${fy.len} m, tightest bend ${fy.minR} m radius; slips: ${fy.slips.map((q) => q.k + ' end ' + q.end + ' m off the car deck, worst step ' + q.step + ' m').join('; ')}`);
     console.log(`  hull points on land: ${fy.aground} of ${fy.samples} ${JSON.stringify(fy.where)}; boats pass ${fy.passClear} m apart; a crossing ${fy.crossMin} min`);
     console.log(`  driven on ${fy.on}, aboard ${fy.aboard}, sailed ${fy.sailed} m sliding ${fy.slid} m at ${fy.onDeckY} m; ARRIVE ${fy.skip}; off at Winslow ${fy.off} onto land ${fy.offLand} (${fy.offY} m)`);
-    console.log(`  walked ${fy.walk.reached}/${fy.walk.of} to the sun deck at ${fy.walk.top} m; a boat called to Winslow: ${fy.called} m out`);
+    console.log(`  walked ${fy.walk.reached}/${fy.walk.of} to the sun deck at ${fy.walk.top} m, worst step in a frame ${fy.walk.hop} m; a boat called to Winslow: ${fy.called} m out`);
+    console.log(`  ARRIVE on foot: docked ${fy.carried.docked}, the car on deck moved ${fy.carried.car} m in the boat's frame, you ${fy.carried.you} m`);
     {
       const bad = [];
       if (fy.len < 12500 || fy.len > 14500 || fy.minR < 400) bad.push('the route');
@@ -2853,8 +2871,9 @@ async function main() {
       if (fy.crossMin < 30 || fy.crossMin > 38) bad.push('crossing time');
       if (!fy.on || !fy.aboard || fy.sailed < 50 || fy.slid > 0.5 || Math.abs(fy.onDeckY - 3.6) > 0.05) bad.push('the ride');
       if (!fy.skip || !fy.off || !fy.offLand) bad.push('arriving');
-      if (fy.walk.reached < fy.walk.of || Math.abs(fy.walk.top - 12.3) > 0.1) bad.push('the walk');
+      if (fy.walk.reached < fy.walk.of || Math.abs(fy.walk.top - 12.3) > 0.1 || fy.walk.hop > 0.25) bad.push('the walk');
       if (fy.called === null || fy.called > 2100) bad.push('calling a boat');
+      if (!fy.carried.docked || fy.carried.car > 0.05 || fy.carried.you > 0.05) bad.push('ARRIVE on foot');
       if (bad.length) { console.error('FAIL: ferry: ' + bad.join(', ')); process.exitCode = 1; }
     }
 

@@ -4537,6 +4537,63 @@ car driven on at Colman Dock rides 60 s of sailing without sliding, ARRIVE
 docks it at Winslow and it drives off onto land, a walker at sea climbs from
 the car deck to the sun deck, and a boat is called to a terminal with none.
 
+### The ferry, polished (v166)
+
+- **The passenger deck has holes where its stairs are.** It was one rectangle
+  over the whole hull, so a walker climbing a car-deck stair met the passenger
+  deck's surface overhead inside `DECK_REACH` and was lifted onto it -- a 2 m
+  hop up the stairwell -- and could stand on the floor over the next stair's
+  well. `SURF`'s PAX deck is now pieces with each stairwell left out; the sun
+  deck's stairs are outside the cabin (`SUN_Z` 46.3), one at each end on
+  opposite sides. verify's walk (car deck -> passenger deck -> through the
+  cabin -> sun deck and down) fails on any per-frame height jump over 0.25 m:
+  2.07 m before, 0.03 now.
+- **Walls are walls**: the cabin's side walls run the hull's breadth with a
+  window band, its end walls are solid except two doorways (`DOORS`), the crew
+  blocks, stacks and the sun deck's glazed windbreaks are in `WALLS`; the car constraint and the walker's deck
+  test keep inside the hull's breadth at their z (the old rectangle let both
+  stand over the flare at the ends). The camera stays out of the cabin from
+  the promenade, and the on-foot boom aboard is 3.3 m (`camShort`).
+- **ARRIVE carries everything on the boat**: `skip()` snapshots you, your car
+  and every traffic car on that boat in its frame, moves the boat, and puts
+  each back. It used to move only the player: on foot at sea you arrived and
+  the car was left mid-Sound.
+- **The button is a pill on the right edge** (`_button`, in `#hud`), not in
+  `#topBtns`, where it ran into the objective text.
+
+## The minimap at the map's edge (v166)
+
+**WebKit stretches a `drawImage` whose source rect runs outside the image**,
+where Chrome clips it. The minimap draws a window of the map canvas round you;
+it spans ~750 m of world either way, so within that of the edge (Winslow and
+the west of Bainbridge) that window ran off the canvas and on the iPhone the whole map was stretched -- roads drawn
+metres from where you were driving. hud.js clamps the source rect to the
+canvas and offsets the destination by the same amount. Chrome never shows it.
+
+## Far buildings take their real colour (v166)
+
+**Massing boxes and the far skyline were two to three times brighter than the
+buildings they stand in for.** They used per-style tints of 0.55-0.66 linear,
+while a textured wall is its family colour x its tint x its atlas cell, and the
+cells average ~0.4 (house siding 0.6, industrial 0.3, glass 0.3). So at the
+800 m ring the city turned into pale boxes. `massColour(bd)` computes what a
+building's textured walls average to (`buildingFamily` -> `tint` x
+`CELL_MEAN[cell]`; houses through `paintTint` and `HOUSE_PAINT` like the near
+mesher), and the mid-ring massing, the far massing layer (area-weighted per
+merged cell) and the skyline all use it. Mid-ring roofs are membrane grey or
+house shingle, not a darkened wall. **`CELL_MEAN` is measured off the atlas;
+re-measure it if a facade surface's drawing changes.**
+
+**The pavement verge's toe is the ground's colour.** It was a fixed grass
+tint, ~1.6x the terrain beside it, which drew a pale line along every
+pavement. `groundTint(x, z, y)` is the terrain's own vertex tint (extracted
+from `buildTerrain`), and the toe takes it x `GROUND_MEAN` (the ground map's
+measured mean), so verge and ground meet.
+
+`tools/beauty.mjs` takes `BEAUTY_ONLY=a,b` (just those views) and
+`BEAUTY_PROBE='<expr>'` (evaluated after each view is posed, with `d = __dbg`).
+`docs/gfx166/` has before | after shots of this and of the ferry.
+
 ## Bicycles and the bike paths (v147)
 
 **Seattle's bike paths are drawn and ridden** (`src/bikes.js`).
