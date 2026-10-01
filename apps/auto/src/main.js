@@ -515,7 +515,7 @@ async function boot() {
   // that is deterministic in the data and the code and slow on a phone.
   // Each piece falls back to computing on its own, and whatever was computed
   // is kept at the end of the boot for the next launch.
-  const BC_KEYS = ['textures', 'map', 'buildings', 'grade', 'portal', 'vehicles'];
+  const BC_KEYS = ['textures', 'map', 'buildings', 'grade', 'portal', 'vehicles', 'link', 'freight'];
   const bc = {};
   blog('main started, ' + (navigator.userAgent.match(/OS [\d_]+|Chrome\/\d+|Version\/[\d.]+/g) || []).join(' '));
   if (cacheGuardTripped()) {
@@ -555,10 +555,10 @@ async function boot() {
   monorail = new Monorail(md.monorail);
   md.monorailClear = monorail.clearZones();
   // ...and Link light rail's 1 Line, from its data alone for the same reason
-  link = new Link(md.link, md);
+  link = new Link(md.link, md, bc.link);
   md.linkClear = link.clearZones();
   // ...and BNSF's main line, likewise
-  freight = new Freight(md.freight, md);
+  freight = new Freight(md.freight, md, bc.freight);
   md.freightClear = freight.clearZones();
   // Seattle's bike paths, from their data: the scatter keeps off them
   bikeNet = new BikeNet(md.bikepaths);
@@ -1189,6 +1189,8 @@ function installShadowFade() {
   if (bootCache.gradeOut) toKeep.push(['grade', () => bootCache.gradeOut]);
   if (world.bootCache.portalOut) toKeep.push(['portal', () => world.bootCache.portalOut]);
   if (bootCache.buildingsOut) toKeep.push(['buildings', () => bootCache.buildingsOut]);
+  if (link.cacheOut && link.cacheOut.pre && link.cacheOut.post) toKeep.push(['link', () => link.cacheOut]);
+  if (freight.cacheOut) toKeep.push(['freight', () => freight.cacheOut]);
   if (!bc.vehicles) toKeep.push(['vehicles', () => vehicleSnapshot()]);
   if (bcOut.texPlan) toKeep.push(['textures', () => encodeTextures(bcOut.texPlan)]);
   if (bcOut.mapCanvas) toKeep.push(['map', () => canvasToBlob(bcOut.mapCanvas)]);
@@ -1203,6 +1205,7 @@ function installShadowFade() {
   }
   bootCache.gradeOut = bootCache.buildingsOut = null;
   world.bootCache = null;
+  link.cacheOut = link.cache = freight.cacheOut = null;
   await step(0.94, 'Opening the roads');
   for (let i = 0; i < 90; i++) {
     const left = world.update(player.x, player.z, 6);

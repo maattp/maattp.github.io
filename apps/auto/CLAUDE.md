@@ -1,6 +1,6 @@
 # Auto
 
-An open-world driving/on-foot game set in a 27.6 km x 27.6 km Seattle (`MAP_HALF` 13800), built from
+An open-world driving/on-foot game set in a 31.2 km x 31.2 km Seattle (`MAP_HALF` 15600), built from
 real map data. Landscape iPhone PWA: left thumb stick, right-side buttons, drag
 the right half to look.
 
@@ -100,11 +100,11 @@ tools/data/dem/*.png                   361 terrarium tiles, z14 (~6.4 m/px)
         |  python tools/osm_extract.py            (~3 min, one full scan)
 tools/data/raw_*.json                  projected + clipped intermediates
         |  build_raster / build_roads / build_buildings / build_places
-apps/auto/data/height.png     691x691 @ 40 m   h = ((R<<8)|G)/10 - 100
-apps/auto/data/surface.png   2761x2761 @ 10 m  R = water, G = green
-apps/auto/data/lots.png      1918x1918 @ 14.4 m  G = lot code, R = coverage
-apps/auto/data/roads.bin      156k nodes, 167k edges        4.67 MB
-apps/auto/data/buildings.bin  291k oriented boxes, chunked  3.51 MB
+apps/auto/data/height.png     781x781 @ 40 m   h = ((R<<8)|G)/10 - 100
+apps/auto/data/surface.png   3121x3121 @ 10 m  R = water, G = green
+apps/auto/data/lots.png      2168x2168 @ 14.4 m  G = lot code, R = coverage
+apps/auto/data/roads.bin      192k nodes, 205k edges        5.74 MB
+apps/auto/data/buildings.bin  342k oriented boxes, chunked  4.13 MB
 apps/auto/data/places.json    22 landmarks (Smith Tower last), neighbourhoods
 apps/auto/data/water.json     lake surface levels
 ```
@@ -596,10 +596,47 @@ takes in Winslow's Madison Ave (x -13767). Every edge moved 800 m.
 
 Not done: Link's (77 MB with its bores) and freight's (25 MB) geometry is
 still built at boot -- their track loops carry per-segment state and make the
-station platforms and column solids, so deferring them is a bigger change --
-and Link's profile solve (~1.5 s at 8x) could go in the boot cache.
+station platforms and column solids, so deferring them is a bigger change.
+(Link's profile solve went into the boot cache in v167.)
 `boottime.mjs --twice --prof` now profiles the cached launch only;
 `BOOT_TOP=N` lists more functions.
+
+## The map grew to 31.2 km (v167)
+
+**`MAP_HALF` is 15600**, up from 13800, so that Bainbridge is one road
+network. In the 27.6 km box it was three -- Winslow and the ferry, Rockaway /
+Bill Point, Manitou and the north -- because the roads that join them (Wyatt
+Way and Eagle Harbor Drive round the head of Eagle Harbor, New Brooklyn Road,
+SR-305 north) run past x -13800: driving between them meant going off-road.
+The size was measured, not guessed: a union-find over `raw_roads.json`
+clipped to each candidate box joins Winslow and Manitou at 14200 and Rockaway
+only at 15200, through a road 20 m inside that edge; 15600 is the next
+multiple of 400 m and leaves ~400 m past it. In the game, `findPath` goes
+Winslow -> Rockaway in 7.6 km (Winslow Way, Wyatt Way, Eagle Harbor Drive,
+Bill Point) and Winslow -> Manitou in 5.9 km (SR-305, Valley Road).
+
+- **Three tools had their own lat/lon box** (`extract_rail.py`,
+  `build_piers.py`, `build_bikepaths.py`, 47.490-47.732 N, 122.515-122.160 W,
+  from an older map) and silently kept the old extent; they take
+  `proj.bbox(500)` now. Check for that before believing a re-import grew
+  everything.
+- What came in: Link's Shoreline South/148th, Overlake Village and Redmond
+  Technology (27 stations, 10 on the 2 Line); both of BNSF's mains end to
+  end (no single-track sections left); 342k buildings (+17 %), 192k road
+  nodes (+23 %), 386 km of bike paths (+110 km), 2916 piers.
+- verify's outer strip (past 13000) holds 31 streets under drawn water, up
+  from 26: Skogen Lane and Southworth Drive, the same shore-street class.
+- **Paid for with two boot-cache entries**: the bigger box made the cached
+  8x phone launch 20.9-21.9 s (v166: 18.8-18.9). `link` keeps Link's two
+  profile solves (`_snapshot` / `_restore`: Y, KD, GR, the crossing flags and
+  station levels per track) and `freight` keeps the freight profile and its
+  raw-road crossings. Cached launch 18.8-19.3 s against v166's 18.4-19.0 in
+  the same session; a hash of every track's arrays and 4000 terrain samples
+  is identical on a computed and a cached launch. Frame CPU at 8x is
+  unchanged (perfcpu drive-dt / foot-dt 12.0-12.6 ms, v166 12.2-13.0); a
+  street view draws ~7 % more triangles (bigger terrain tiles).
+- `docs/mapgrow2/` has before | after aerials of Eagle Harbor and west
+  Bainbridge.
 
 ## The spawn and the touch zones (v158)
 
@@ -2112,7 +2149,7 @@ from `terrainHeight` directly and only uses node `y` for its bow/grade
 subdivision heuristics. It is a correctness fix for the invariant above, not a
 fix for anything visible, and shipping it as the latter would have been a lie.
 
-`height.png` is 691x691 at 40 m (27.6 km / 40 m, +1). **That spacing is not free to change**: it is
+`height.png` is 781x781 at 40 m (31.2 km / 40 m, +1). **That spacing is not free to change**: it is
 also the terrain mesh's vertex spacing, and the two have to agree. A finer query
 grid floats roads over bulges the mesh doesn't resolve; and at 20 m the mesh
 would cost ~3.4 M triangles across the 26 km map, several times the whole frame budget.
@@ -2411,6 +2448,8 @@ start of the boot. What is kept, and where each is made and restored:
 | `grade` | citygen `gradeSnapshot` / `applyGrade` | |
 | `portal` | world `_computePortalCuts` / `_applyPortalSnap` (used only with a cached grade) | 6 MB |
 | `vehicles` | vehicles `vehicleSnapshot` / `setVehicleCache` (geometry; far LODs on a phone) | 19 MB |
+| `link` | link.js `_snapshot` / `_restore`: both profile solves per track (v167) | ~6 MB |
+| `freight` | freight.js constructor: the profile and raw-road crossings per track (v167) | ~1.4 MB |
 
 Whatever a launch computed is written on the loading screen ("Remembering the
 city"), and writing one build's entries deletes every other build's. **So the
@@ -4340,7 +4379,7 @@ file`.
 
 **You can fly to Bainbridge, Blake and Vashon, and get back.** Four more
 `MARINAS` (landmarks.js): Bainbridge's Rockaway and Manitou beaches (Eagle
-Harbor is just past the map's west edge), Blake Island's marina and Vashon's
+Harbor is on the map since v167), Blake Island's marina and Vashon's
 north end, each with floatplanes, boats and a jet ski, sited from the drawn
 shore like the rest. Their map hellos hint at what is there.
 
@@ -4381,7 +4420,9 @@ Subdivision down from Golden Gardens along Shilshole, over Salmon Bay on the
 bascule bridge, through Balmer Yard at Interbay, along the waterfront past
 Broad St, under downtown in the Great Northern Tunnel (1.57 km) and the
 Seattle Subdivision south through SODO to the map's edge. Both mains where
-the line has two; single track at the two ends.
+the line has two -- since v167 that is the whole line across the box (the
+27.6 km box ended on single track at both ends, which the section logic below
+still handles).
 
 - **The route is OSM's** (`tools/build_freight.py`, from `raw_rail.json`):
   every railway=rail way as a NODE graph (freight switches sit mid-way),
@@ -4664,7 +4705,7 @@ UW under the Montlake Cut, Capitol Hill, and the downtown transit tunnel's
 Westlake, Symphony and Pioneer Square), out at International District, down
 the SODO busway, into Beacon Hill, over Mount Baker, down the middle of MLK
 Jr Way (Columbia City, Othello, Rainier Beach) and up onto the guideway to
-the south edge. Sixteen stations; 28 four-car trains in service.
+the south edge. Seventeen stations (Shoreline South/148th since v167); 28 four-car trains in service.
 
 - **The route is OSM's.** `tools/extract_rail.py` (one ~75 s scan) writes
   every rail way and stop in the box to `tools/data/raw_rail.json` (the
@@ -4763,7 +4804,8 @@ edge) on the 1 Line's rails through downtown to the junction just south of
 International District, then its own branch east -- Judkins Park, the
 Mount Baker tunnel, the I-90 floating bridge, Mercer Island, the East
 Channel, South Bellevue, East Main, Bellevue Downtown, Wilburton and Spring
-District and BelRed, off the map's east edge.
+District, BelRed, and (since v167) Overlake Village and Redmond Technology,
+off the map's east edge.
 
 - **Four tracks, two of them half shared.** `build_link.py` walks each
   track component north -> south (the 1 Line, unchanged byte for byte) AND
@@ -4790,7 +4832,7 @@ District and BelRed, off the map's east edge.
 - The map draws the branch in 2 Line blue, and its own stations with a blue
   icon; the readout and toasts say which line and where to.
 
-verify's "Link: the 2 Line": its eight stations; grade, nothing at grade
+verify's "Link: the 2 Line": its ten stations; grade, nothing at grade
 under the ground, bores buried, the floating bridge clear of the lake; ten
 minutes of service (its own stations served, never overlapping a 1 Line
 train); a merge forced at the junction (one holds, both get through, never
@@ -5544,7 +5586,7 @@ is the page half; load it into any booted page to re-install edited jumps
   walkable** beyond Seattle Center's platforms and ramp. (Its doors, and
   Link's, show open while a train stands at a platform: v155.)
 - **No Kenmore Air Harbor.** The real floatplane base at the north end of Lake
-  Washington (47.756 N) is ~3.1 km past the map's north edge (47.728 N).
+  Washington (47.756 N) is ~0.5 km past the map's north edge (47.752 N).
 
 - **Freeway over freeway at interchanges stays as imported.** 110 of the 154
   refused overpasses; see "Don't dip a graded freeway under a ramp". They are

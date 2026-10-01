@@ -397,8 +397,13 @@ const CHUNK = 500;
 export class Link {
   /** From the map data alone, right after the map loads: citygen needs
    *  clearZones() (buildings off the line) before the city exists. */
-  constructor(data, md) {
+  constructor(data, md, cache = null) {
     this.data = data;
+    // The profile's two solves (from the map alone, then over the city) are
+    // deterministic for a build, so a later launch restores them from the
+    // boot cache (`cache` = { pre, post }); `cacheOut` is what this one made.
+    this.cache = cache;
+    this.cacheOut = cache && cache.pre && cache.post ? null : {};
     // A bridge over water clears it: the 2 Line's deck on the I-90 floating
     // bridge rides just over Lake Washington, not 8.5 m over its bed
     const lakes = md ? md.lakes : null;
@@ -467,7 +472,8 @@ export class Link {
       }
     }
     // the profile from the map alone (see _profile)
-    this._profile(null);
+    if (!this._restore('pre')) this._profile(null);
+    if (this.cacheOut) this.cacheOut.pre = this._snapshot();
     this.trains = [];
     this.city = null;
     this.camUnder = false;
@@ -560,6 +566,38 @@ export class Link {
     this._joinShared();
   }
 
+  /** Everything _profile leaves on the tracks, for the boot cache. */
+  _snapshot() {
+    const out = {};
+    for (const [k, tr] of Object.entries(this.tracks)) {
+      out[k] = { Y: tr.Y.slice(), KD: tr.KD.slice(), GR: tr.GR.slice(), X: tr._X.slice(), XW: tr._XW.slice(),
+        zones: tr.zones.map((z) => [z.level === undefined ? null : z.level, z.length > 2 ? z[2] : null]) };
+    }
+    return out;
+  }
+
+  /** _profile's results from the boot cache, if they fit these tracks. */
+  _restore(which) {
+    const snap = this.cache && this.cache[which];
+    if (!snap) return false;
+    const ok = Object.entries(this.tracks).every(([k, tr]) => snap[k] && snap[k].Y.length === tr.n && snap[k].zones.length === tr.zones.length);
+    if (!ok) {
+      this.cacheOut = this.cacheOut || {};
+      if (which === 'post' && this.cache.pre) this.cacheOut.pre = this.cache.pre;
+      return false;
+    }
+    for (const [k, tr] of Object.entries(this.tracks)) {
+      const q = snap[k];
+      tr.Y = q.Y; tr.KD = q.KD; tr.GR = q.GR; tr._X = q.X; tr._XW = q.XW;
+      tr.zones.forEach((z, i) => {
+        z.length = 2; delete z.level;
+        if (q.zones[i][1] !== null) z[2] = q.zones[i][1];
+        if (q.zones[i][0] !== null) z.level = q.zones[i][0];
+      });
+    }
+    return true;
+  }
+
   /** The 2 Line's shared rails ARE the 1 Line's: the same profile and kinds
    *  as far as the junction, eased back to its own over 250 m past it. */
   _joinShared() {
@@ -612,7 +650,8 @@ export class Link {
       }
       return Math.max(wl + LINK.floatDeck, deck + 0.25);
     };
-    this._profile(city);
+    if (!this._restore('post')) this._profile(city);
+    if (this.cacheOut) this.cacheOut.post = this._snapshot();
     for (const tr of Object.values(this.tracks)) {
       const n = tr.n, KD = tr.KD, LIM = new Float32Array(n);
       // Speed limits: 35 mph where the track runs in a street (a road within

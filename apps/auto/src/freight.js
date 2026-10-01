@@ -134,7 +134,7 @@ export class Freight {
    * anything reads it -- so the profile, the level crossings (from the raw
    * road graph) and the carve are all settled here.
    */
-  constructor(data, md) {
+  constructor(data, md, cache = null) {
     this.data = data;
     const lakes = md ? md.lakes : null;
     const P = { ...FREIGHT, follow: 'mean', meanR: 45, seaFloor: 1.4 };
@@ -154,13 +154,28 @@ export class Freight {
       const q = this.tracks[k].nearest(y.x, y.z, 200);
       this.yard.s[k] = q ? q.s : this.tracks[k].len / 2;
     }
-    this._rawCrossings(md ? md.roads : null);
-    for (const tr of Object.values(this.tracks)) {
-      tr.setHeights(tr.zones, tr._XW);
-      tr.KD = new Uint8Array(tr.n);
+    // The crossings and the profile are deterministic for a build: a later
+    // launch restores them from the boot cache; `cacheOut` is this one's.
+    this.cacheOut = null;
+    const fits = cache && Object.entries(this.tracks).every(([k, tr]) => cache[k] && cache[k].Y.length === tr.n);
+    if (fits) {
+      for (const [k, tr] of Object.entries(this.tracks)) {
+        const q = cache[k];
+        tr.Y = q.Y; tr.GR = q.GR; tr.KD = q.KD; tr._X = q.X; tr._XW = q.XW;
+      }
+    } else {
+      this._rawCrossings(md ? md.roads : null);
+      for (const tr of Object.values(this.tracks)) {
+        tr.setHeights(tr.zones, tr._XW);
+        tr.KD = new Uint8Array(tr.n);
+      }
+      this._joinShared();
+      for (const tr of Object.values(this.tracks)) this._kinds(tr);
+      this.cacheOut = {};
+      for (const [k, tr] of Object.entries(this.tracks)) {
+        this.cacheOut[k] = { Y: tr.Y.slice(), GR: tr.GR.slice(), KD: tr.KD.slice(), X: tr._X.slice(), XW: tr._XW.slice() };
+      }
     }
-    this._joinShared();
-    for (const tr of Object.values(this.tracks)) this._kinds(tr);
     this._carveGrid();
     G.setRailCarve((x, z) => this.carveDepth(x, z), (cx, cz) => this.cvBig.has(Math.floor(cx / 40) * 100003 + Math.floor(cz / 40)));
     this.corrCells = new Set();

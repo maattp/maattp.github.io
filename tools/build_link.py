@@ -149,7 +149,7 @@ def main():
                 st["s_" + k] = round(sk, 1)
         if not any("s_" + k in st for k in KEYS):
             continue
-        # BelRed stands on the map's edge: no room for its platforms
+        # a station on the map's edge has no room for its platforms
         if max(abs(x), abs(z)) > EDGE - 70:
             continue
         stations.append(st)
