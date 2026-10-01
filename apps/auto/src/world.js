@@ -1177,6 +1177,8 @@ export class World {
     if (this.city.underpassCell && this.city.underpassCell(cx, cz, S)) return true;
     // ...and so is a railway cutting (freight.js), 11 m wide at its floor
     if (G.railCarveCell && G.railCarveCell(cx + S / 2, cz + S / 2)) return true;
+    // ...and a raised dock's edge (geo setFill)
+    if (G.fillCell && G.fillCell(cx, cz)) return true;
     if (!this.portalCuts().length) return false;
     // No cutting filed under any grid cell this terrain cell touches: every
     // sample below would find an empty list and answer null. (422k cells x 9

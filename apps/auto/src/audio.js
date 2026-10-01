@@ -786,6 +786,14 @@ const SOUNDS = {
       k.ping(out, ti, 900 + R() * 300, 0.06, 0.03);
     }
   } },
+  // a ferry underway: the diesels' slow throb and the wash along the hull
+  ferry_rumble: { dur: 2.0, loop: 0.1, build(k, out, t, R) {
+    const g = k.gain(0.7);
+    k.noise('brown', t, 2.0, R).connect(k.filt('lowpass', 95, 0.7)).connect(g).connect(out);
+    const w = k.gain(0.14);
+    k.noise('pink', t, 2.0, R).connect(k.filt('bandpass', 650, 0.5)).connect(w).connect(out);
+    for (let i = 0; i < 8; i++) k.thump(out, t + i * 0.25, 52, 34, 0.18, 0.3, 0.06);
+  } },
   tram_bell: { dur: 1.6, build(k, out, t, R) {
     for (const t0 of [t, t + 0.34]) {
       METAL.slice(0, 5).forEach((r, i) => k.ping(out, t0, 1046 * r, 0.32 / (1 + i * 0.8), 0.55 / (1 + i * 0.5), 0.0015));
@@ -1397,13 +1405,16 @@ class Tap {
 // horn from an organ. When the valve opens the bells scoop up to pitch as
 // the pressure builds, and they sag as it closes.
 const K5LA = [311.1, 370.0, 415.3, 493.9, 622.3];
+// A ferry's horn: two deep reeds a fifth apart (G2, D3), the formants low --
+// the prolonged blast a Washington State Ferry sounds leaving its slip.
+const SHIP_HORN = { freqs: [98.0, 146.8, 196.0], levels: [1, 0.8, 0.35], f1: 360, f2: 900, lp: 2600, body: 420, pre: 0.42 };
 
-function hornWave(c, f0) {
+function hornWave(c, f0, f1 = 1400, f2 = 3000) {
   const N = 40, re = new Float32Array(N + 1), im = new Float32Array(N + 1);
   for (let n = 1; n <= N; n++) {
     const f = n * f0;
     // reed pulse (~1/n^0.75), a formant round 1.4 kHz and a second near 3 kHz
-    const form = 1 + 2.2 * Math.exp(-(((f - 1400) / 700) ** 2)) + 0.9 * Math.exp(-(((f - 3000) / 900) ** 2));
+    const form = 1 + 2.2 * Math.exp(-(((f - f1) / (f1 / 2)) ** 2)) + 0.9 * Math.exp(-(((f - f2) / (f2 * 0.3)) ** 2));
     const a = Math.pow(n, -0.75) * form * (f > 7000 ? Math.exp(-(f - 7000) / 1500) : 1);
     im[n] = a * (n % 2 ? 1 : 0.8);
   }
@@ -1412,24 +1423,27 @@ function hornWave(c, f0) {
 
 /** One horn: five bells, a breath of air, an envelope with the scoop and sag. */
 class AirHorn {
-  constructor(c, dest, verbIn) {
+  // opts: the bells' pitches and levels and the formants (a locomotive's K5LA
+  // by default; a ship's horn is two deep reeds -- see SHIP_HORN)
+  constructor(c, dest, verbIn, opts = {}) {
+    const freqs = opts.freqs || K5LA, levels = opts.levels || [0.95, 1, 0.9, 0.85, 0.7];
     this.c = c;
-    this.pre = c.createGain(); this.pre.gain.value = 0.34;
+    this.pre = c.createGain(); this.pre.gain.value = opts.pre || 0.34;
     this.shaper = c.createWaveShaper(); this.shaper.curve = tanhCurve(1.6);
-    this.lp = c.createBiquadFilter(); this.lp.type = 'lowpass'; this.lp.frequency.value = 9000; this.lp.Q.value = 0.5;
-    this.body = c.createBiquadFilter(); this.body.type = 'peaking'; this.body.frequency.value = 1300; this.body.Q.value = 0.9; this.body.gain.value = 4;
+    this.lp = c.createBiquadFilter(); this.lp.type = 'lowpass'; this.lp.frequency.value = opts.lp || 9000; this.lp.Q.value = 0.5;
+    this.body = c.createBiquadFilter(); this.body.type = 'peaking'; this.body.frequency.value = opts.body || 1300; this.body.Q.value = 0.9; this.body.gain.value = 4;
     this.out = c.createGain(); this.out.gain.value = 0;
     this.pan = c.createStereoPanner ? c.createStereoPanner() : c.createGain();
     this.send = c.createGain(); this.send.gain.value = 0.35;
     this.pre.connect(this.shaper).connect(this.body).connect(this.lp).connect(this.out).connect(this.pan);
     this.out.connect(this.send);
-    this.bells = K5LA.map((f, i) => {
+    this.bells = freqs.map((f, i) => {
       const o = c.createOscillator();
-      o.setPeriodicWave(hornWave(c, f));
+      o.setPeriodicWave(hornWave(c, f, opts.f1, opts.f2));
       const det = (i * 37 % 7 - 3) * 1.5;            // a few cents apart: they beat
       o.frequency.value = f;
       o.detune.value = det;
-      const g = c.createGain(); g.gain.value = [0.95, 1, 0.9, 0.85, 0.7][i];
+      const g = c.createGain(); g.gain.value = levels[i] !== undefined ? levels[i] : 0.8;
       o.connect(g).connect(this.pre);
       o.start(c.currentTime);
       return { o, f, det };
@@ -2464,6 +2478,8 @@ export class Audio {
 
     // --- freights ------------------------------------------------------------------
     if (s.freight) this._freights(dt, t, s, L);
+    // --- the ferries: their horns carry across the Sound, the rumble aboard ---
+    if (s.ferry) this._ferries(dt, t, s, L);
 
     // --- the police helicopter -----------------------------------------------------
     const h = s.heli;
@@ -2490,6 +2506,31 @@ export class Audio {
    * engine and horn, and the wheels where the train is nearest you. A freight
    * is heard a long way off -- the horn over a kilometre and a half.
    */
+  /** The nearer ferry's horn (heard for kilometres) and the rumble of the
+   *  nearest one, loudest aboard. */
+  _ferries(dt, t, s, L) {
+    const c = this.ctx;
+    if (!this.fyHorn) {
+      this.fyHorn = new AirHorn(c, this.sfxBus, this.verbIn, SHIP_HORN);
+      this.fyHorn.setNoise(this.pinkNoise);
+      this.fyPan = c.createStereoPanner ? c.createStereoPanner() : c.createGain();
+      this.fyPan.connect(this.sfxBus);
+    }
+    if (!this.fyRumble && this.bank && this.bank.ferry_rumble) this.fyRumble = new Tap(c, this.bank.ferry_rumble[0], this.fyPan);
+    let best = null, bd = Infinity;
+    for (const b of s.ferry) { const d = Math.hypot(b.x - L.x, b.z - L.z); if (d < bd) { bd = d; best = b; } }
+    if (!best) return;
+    const vx = Math.sin(best.h) * best.v, vz = Math.cos(best.h) * best.v;
+    const hs = spatial(L, best.x, best.y + 21, best.z, vx, vz, 90, 6000);
+    this.fyHorn.set(t, !!(best.hornOn && hs), hs ? Math.min(0.85, hs.gain * 1.1) : 0, hs ? hs.pan : 0, hs ? hs.dop : 1, hs ? hs.d : 6000);
+    if (this.fyRumble) {
+      const rs = spatial(L, best.x, best.y + 2, best.z, vx, vz, 40, 700);
+      const load = 0.35 + 0.65 * Math.min(1, Math.abs(best.v) / 9.26);
+      if (rs && this.fyPan.pan) setp(this.fyPan.pan, rs.pan * 0.5, t, 0.2);
+      this.fyRumble.set(rs ? Math.min(0.5, rs.gain * 0.9 * load) : 0, t, 0.3, 0.9 + 0.2 * load);
+    }
+  }
+
   _freights(dt, t, s, L) {
     const c = this.ctx;
     const near = [];

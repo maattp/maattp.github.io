@@ -1513,15 +1513,7 @@ function ferryTerminal() {
   const s = sign('WASHINGTON STATE FERRIES', 30, 3.2, '#0d3b2e', '#ffffff');
   s.position.set(0, 11, 20.3);
   g.add(s);
-  const boat = new THREE.Group();
-  boat.add(box(24, 6, 78, mat.white, 0, -1.5, 0));
-  boat.add(box(22, 5, 60, mat.wsfGreen, 0, 4.5, 0));
-  boat.add(box(16, 4, 26, mat.white, 0, 9.5, 0));
-  boat.add(box(8, 3.5, 10, mat.white, 0, 13.5, 0));
-  boat.add(cyl(1.6, 1.6, 8, mat.wsfGreen, 0, 17, -6, 10));
-  boat.position.set(-52, 0, 10);
-  boat.rotation.y = 0.1;
-  g.add(boat);
+  // (the ferries themselves sail: ferry.js)
   solidBox(g, 0, 0, 35, 20, 0, 8);
   return g;
 }
