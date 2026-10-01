@@ -369,7 +369,7 @@ async function main() {
     const SUBMERGED_MAJOR_MAX = 36, SUBMERGED_STREETS_MAX = 183;
     // v163: the 800 m strip the map grew by (Bainbridge's Manitou Beach Drive
     // and SE Cornell Road, Point Monroe's spit), counted apart
-    const SUBMERGED_OUTER_MAJOR_MAX = 15, SUBMERGED_OUTER_STREETS_MAX = 26;
+    const SUBMERGED_OUTER_MAJOR_MAX = 15, SUBMERGED_OUTER_STREETS_MAX = 31;
     const sub = await session.eval(`(() => {
       const d = window.__dbg, c = d.city, w = d.world, G = d.G, THREE = d.THREE;
       // The water DRAWN at a point, worked out here rather than asked of the
@@ -396,7 +396,7 @@ async function main() {
         rc.set(new THREE.Vector3(x, y + 0.6, z), up); rc.far = Math.max(0.1, lv - y - 0.6);
         return rc.intersectObjects(covers, false).length > 0;                 // a lid or deck over it
       };
-      const out = { samples: 0, corridor: [], major: [], majors: 0, streets: 0, majorsOuter: 0, streetsOuter: 0, streetWhere: {}, floating: {} };
+      const out = { samples: 0, corridor: [], major: [], majors: 0, streets: 0, majorsOuter: 0, streetsOuter: 0, streetWhere: {}, outerWhere: {}, floating: {} };
       const FLOAT = /Evergreen Point Floating|Lacey V. Murrow|Homer M. Hadley/;
       const CORRIDOR = /Evergreen Point Floating|Lacey V. Murrow|Homer M. Hadley|^WA 520$|^I 90$/;
       c.edges.forEach((e, ei) => {
@@ -421,6 +421,8 @@ async function main() {
           // the old 26 km box keeps the ceilings it had
           if (!CORRIDOR.test(e.name || '') && Math.max(Math.abs(x), Math.abs(z)) > 13000) {
             if (e.elev || e.cls === 'hwy' || e.cls === 'ramp') out.majorsOuter++; else out.streetsOuter++;
+            const key = (e.name || e.cls) + ' @' + Math.round(x / 500) * 500 + ',' + Math.round(z / 500) * 500;
+            out.outerWhere[key] = (out.outerWhere[key] || 0) + 1;
             continue;
           }
           if (CORRIDOR.test(e.name || '')) {
@@ -436,6 +438,7 @@ async function main() {
         }
       });
       out.streetWhere = Object.entries(out.streetWhere).sort((p, q) => q[1] - p[1]).slice(0, 8).map(([k, v]) => k + ' x' + v);
+      out.outerWhere = Object.entries(out.outerWhere).sort((p, q) => q[1] - p[1]).slice(0, 10).map(([k, v]) => k + ' x' + v);
       return out;
     })()`, true);
     console.log('\n--- roads under the water -------------------------------');
@@ -445,6 +448,7 @@ async function main() {
       + ` in the outer strip ${sub.majorsOuter} (max ${SUBMERGED_OUTER_MAJOR_MAX}) and ${sub.streetsOuter} (max ${SUBMERGED_OUTER_STREETS_MAX})`);
     for (const [name, f] of Object.entries(sub.floating)) console.log(`  ${name}: lowest deck ${f.min.toFixed(2)} m over the lake`);
     if (sub.streets) console.log('  streets: ' + sub.streetWhere.join('; '));
+    if (sub.streetsOuter + sub.majorsOuter) console.log('  outer strip: ' + sub.outerWhere.join('; '));
     const lowFloat = Object.entries(sub.floating).filter(([, f]) => f.min < 3);
     if (sub.corridor.length || lowFloat.length || Object.keys(sub.floating).length < 3
       || sub.majors > SUBMERGED_MAJOR_MAX || sub.streets > SUBMERGED_STREETS_MAX
@@ -2012,7 +2016,7 @@ async function main() {
     console.log(`  a train for you on the track: closest ${lk.obstruct.closest} m, stopped ${lk.obstruct.stopped}, hurt ${lk.obstruct.hurt}; a crossing at s ${lk.crossing.at}: held ${lk.crossing.held}, clear 40 m off ${lk.crossing.clear}`);
     {
       const bad = [];
-      if (lk.stations !== 24) bad.push('stations');   // 16 on the 1 Line, 8 on the 2 Line (BelRed since v163)
+      if (lk.stations !== 27) bad.push('stations');   // 17 on the 1 Line, 10 on the 2 Line (v167: Shoreline South, Overlake Village, Redmond Technology)
       for (const k of ['sb', 'nb']) {
         const q = lk.tracks[k];
         if (q.grade > 0.062) bad.push(`${k} grade`);
@@ -2150,7 +2154,7 @@ async function main() {
     console.log(`  a forced merge: one held ${l2.merge.held}, together ${l2.merge.overlap}, both through ${l2.merge.through}; Mercer Island -> South Bellevue: boarded ${l2.boarded}, ${l2.drive.err} m from the mark ("${l2.drive.said}")`);
     {
       const bad = [];
-      if (l2.own.length !== 8) bad.push('stations');
+      if (l2.own.length !== 10) bad.push('stations');
       for (const k of ['sb2', 'nb2']) { const q = l2.tracks[k]; if (q.grade > 0.062 || q.under || q.exposed || q.wet || q.overWater < 1500) bad.push(k); }
       if (l2.service.arrivals < 15 || l2.service.own < 4 || l2.service.overlap) bad.push('service');
       if (!l2.merge.held || l2.merge.overlap || !l2.merge.through) bad.push('the merge');
@@ -2275,7 +2279,9 @@ async function main() {
         if (q.bldg > 2) bad.push(`${k} buildings on the line`);
       }
       if (fr.crossings < 20 || fr.gated < fr.crossings) bad.push('crossings');
-      if (fr.sections !== 2) bad.push('single-track sections');
+      // OSM has both mains end to end across the 31.2 km box (v167); the
+      // 27.6 km box ended on single track at both ends (2 sections)
+      if (fr.sections !== 0) bad.push('single-track sections');
       if (fr.service.both || fr.service.gates < 10 || fr.service.over) bad.push('service');
       if (!fr.boardable || !fr.boarded || fr.mph < 30 || fr.stop.emerg || !fr.horn || !fr.out) bad.push('the drive');
       if (!fr.call.called || fr.call.arrived === null) bad.push('calling a train');

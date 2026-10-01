@@ -17,12 +17,13 @@ import sys
 import osmium
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from proj import to_world  # noqa: E402
+from proj import to_world, bbox  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PBF = os.path.join(HERE, "data", "washington-latest.osm.pbf")
 OUT = os.environ.get("AUTO_DATA_OUT") or os.path.join(HERE, "..", "apps", "auto", "data")
-S, N, W, E = 47.490, 47.732, -122.515, -122.160
+# the map box and a little more (the crops below are against MAP_HALF)
+S, W, N, E = bbox(500)
 
 
 class Grab(osmium.SimpleHandler):
