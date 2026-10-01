@@ -2567,6 +2567,32 @@ caught (3.8 s streamed -> 0.1 s): a late prime re-muted and paused a stream
 already loading. It now returns if the stream is loading or playing, and a
 token lets `startLive` supersede a priming play still in flight.
 
+**Starting reliably on the iPhone** (v165). Sound sometimes started only
+after a later tap, or not at all, and none of it reproduces in Chrome
+(`tools/audiounlock.mjs` unlocks on the first touch's lift there every time),
+so what is in place is every known WebKit cause closed off, and a log:
+
+- **The radio's unlock plays a silent clip, not a station.** `primeLive`
+  pointed the media element at a live stream on the first tap: every launch
+  opened a radio stream on foot, its `play()` settled only once the stream
+  had buffered (13 s and more for some stations, never for a dead one), and on
+  iOS a media element starting up shares the audio session with Web Audio.
+  `SILENT_WAV` (0.1 s, in memory) unlocks the element the same, at once.
+- **The context is resumed last in the gesture**, after the radio's element
+  (`startAudio` in main.js), and a one-sample silent buffer is started in
+  the gesture (`kick`): some iOS versions keep a resumed context's output
+  muted until a source starts inside a gesture.
+- **A context that stops while the page is visible asks to start again**
+  (`onstatechange` -> `_heal`, at 0.3, 1, 2.5, 5 and 10 s): iOS lets an
+  interrupted context resume without a gesture once the interruption ends.
+  The gesture listeners stay as the fallback.
+- **The Debug readout shows the audio's story** (`audio.log`, `_log`): its
+  state, each change, what resumed it or refused to, the radio's unlock. If
+  it happens again, a screenshot of that panel says why.
+- `_log`, not `note`: the synth radio already has a `note()` (it plays one);
+  a second method of that name replaced it and threw in `init()`, which left
+  the whole bank unrendered -- audiounlock.mjs caught it.
+
 **Footsteps are a heel knock and a sole roll under ~1.5 kHz, at a quarter of
 their old level.** They were a white-noise click at 2.2-3.6 kHz with an
 instant attack (centroid 3-6 kHz), and the footsteps scene measured -28.6 dB

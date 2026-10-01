@@ -79,7 +79,7 @@ try {
   const tb = Date.now();
   for (let i = 0; i < 120 && !(await ev('!!(window.__dbg.audio.bank && Object.keys(window.__dbg.audio.bank).length)')); i++) await sleep(250);
   rows.push(await state(`bank wait ${((Date.now() - tb) / 1000).toFixed(1)} s after release`));
-  rows[rows.length - 1] = rows[rows.length - 1].replace('}', `,"steps":${await ev('!!window.__dbg.audio.bank.step_hard')}}`);
+  rows[rows.length - 1] = rows[rows.length - 1].replace('}', `,"steps":${JSON.stringify(await ev('!!(window.__dbg.audio.bank && window.__dbg.audio.bank.step_hard)'))}}`);
   rows.push(await ev(`JSON.stringify({ step: 'bank', ms: window.__dbg.audio.bankMs })`));
   for (const r of rows) console.log('  ' + r);
   const atRelease = JSON.parse(rows[2]), last = JSON.parse(rows[3]);

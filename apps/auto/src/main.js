@@ -1750,13 +1750,17 @@ function wireUi() {
   // first ran, so when iOS stopped it later (the home screen, a call, Siri)
   // no tap could ever start it again and the game went silent for good. A
   // running context makes this a single state check.
-  const startAudio = () => {
+  const startAudio = (e) => {
     if (audio.ctx && audio.ctx.state === 'running' && audio._livePrimed) return;
     audio.init();
-    audio.resume();
-    // Same gesture, so Safari counts the stream as user-initiated. Getting into
-    // a car happens in the frame loop and would be rejected on its own.
+    // The radio's element first, then the context: on iOS a media element
+    // starting up can interrupt Web Audio, so the context is resumed LAST in
+    // the gesture, after anything that could knock it over. (Same gesture, so
+    // Safari counts the radio as user-initiated: getting into a car happens
+    // in the frame loop and would be rejected on its own.)
     audio.primeLive();
+    audio.resume(e && e.type);
+    audio.kick();
   };
   for (const ev of UNLOCK) window.addEventListener(ev, startAudio, true);
 
@@ -2340,7 +2344,9 @@ function updateDebug(dt) {
     + `${sceneStats.calls} draws  ${(sceneStats.tris / 1000).toFixed(0)}k tris\n`
     + `${w}x${h} @ ${dpr}x  ${q}\n`
     + `${cars} vehicles  ${people} peds`
-    + perfLine();
+    + perfLine()
+    // the audio's story so far (audio.js _log): state, gestures, the radio
+    + `\naudio: ${audio.ctx ? audio.ctx.state : 'none'}${audio.log.length ? '\n  ' + audio.log.slice(-6).join('\n  ') : ''}`;
   fpsMin = fps;
 }
 

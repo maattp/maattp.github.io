@@ -1405,6 +1405,22 @@ class Tap {
 // horn from an organ. When the valve opens the bells scoop up to pitch as
 // the pressure builds, and they sag as it closes.
 const K5LA = [311.1, 370.0, 415.3, 493.9, 622.3];
+// A tenth of a second of silence (8 kHz mono WAV): what primeLive plays to
+// unlock the radio's media element without opening a stream.
+const SILENT_WAV = (() => {
+  const n = 800, buf = new Uint8Array(44 + n);
+  const dv = new DataView(buf.buffer);
+  const w = (o, str) => { for (let i = 0; i < str.length; i++) buf[o + i] = str.charCodeAt(i); };
+  w(0, 'RIFF'); dv.setUint32(4, 36 + n, true); w(8, 'WAVE'); w(12, 'fmt ');
+  dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, 8000, true); dv.setUint32(28, 8000, true); dv.setUint16(32, 1, true); dv.setUint16(34, 8, true);
+  w(36, 'data'); dv.setUint32(40, n, true);
+  buf.fill(128, 44);
+  let bin = '';
+  for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
+  return 'data:audio/wav;base64,' + (typeof btoa !== 'undefined' ? btoa(bin) : '');
+})();
+
 // A ferry's horn: two deep reeds a fifth apart (G2, D3), the formants low --
 // the prolonged blast a Washington State Ferry sounds leaving its slip.
 const SHIP_HORN = { freqs: [98.0, 146.8, 196.0], levels: [1, 0.8, 0.35], f1: 360, f2: 900, lp: 2600, body: 420, pre: 0.42 };
@@ -1551,6 +1567,12 @@ export class Audio {
     this._liveWanted = false;
     this._nowPlaying = null;
     this._nowPlayingAt = 0;
+    // What the audio did and when, for the Debug readout: state changes, the
+    // gestures that tried to start it, the radio's unlock. "The sound starts
+    // after 30 seconds, sometimes never" is unreadable without it.
+    this.log = [];
+    this._t0 = typeof performance !== 'undefined' ? performance.now() : 0;
+    this._healT = 0;
     this._duck = 1;
     this.onTrack = null; // set by main.js to toast the track
     if (typeof window !== 'undefined') {
@@ -1579,6 +1601,17 @@ export class Audio {
     }
     this.ctx = ctx;
     const c = ctx;
+    if (!ctxOverride) {
+      this._log('created: ' + c.state);
+      // A context that stops while you are looking at the game -- iOS's
+      // 'interrupted' when another audio session (the radio's media element,
+      // a call) takes the hardware -- is asked to start again on its own,
+      // not left until some later tap happens to count as a gesture.
+      c.onstatechange = () => {
+        this._log('state: ' + c.state);
+        if (c.state !== 'running' && c.state !== 'closed') this._heal();
+      };
+    }
 
     // --- the mix: every bus into one limiter, then the volume control -------
     this.master = c.createGain();
@@ -1866,10 +1899,19 @@ export class Audio {
       if (tok !== this._primeTok) return;
       this._priming = false;
       try { el.pause(); } catch (e) { /* gone */ }
+      this._log('radio unlocked');
+      // ...and if starting it knocked the context over, start that again
+      if (this.ctx && this.ctx.state !== 'running') this.resume('after the radio unlock');
     };
     try {
+      // A SILENT CLIP, not the stream. Priming used to point the element at a
+      // live station: every launch opened a radio stream on foot, and play()
+      // only resolved once it had buffered -- 13 s and more for some
+      // stations, never for one that did not answer -- and on iOS a media
+      // element starting up shares the audio session with Web Audio. A clip
+      // in memory unlocks the element just the same, at once, with no network.
       el.muted = true;
-      el.src = this._stream();
+      el.src = SILENT_WAV;
       el.volume = 0;
       const p = el.play();
       // Rejected for want of a gesture the browser accepts: not primed after
@@ -1880,6 +1922,7 @@ export class Audio {
           if (tok !== this._primeTok) return;
           this._priming = false;
           if (err && err.name === 'NotAllowedError') this._livePrimed = false;
+          if (err && err.name !== 'AbortError') this._log('radio unlock: ' + err.name);
         });
       }
       else done();
@@ -1962,12 +2005,50 @@ export class Audio {
     } catch (e) { /* the music keeps playing without a title */ }
   }
 
-  resume() {
+  /** A line in the audio log (Debug readout), seconds since boot. (Not
+   *  `note`: that is the synth radio's, and plays one.) */
+  _log(msg) {
+    const t = typeof performance !== 'undefined' ? (performance.now() - this._t0) / 1000 : 0;
+    this.log.push(`${t.toFixed(1)} ${msg}`);
+    if (this.log.length > 14) this.log.shift();
+  }
+
+  /** Keep asking a stopped context to start while the page is visible: at
+   *  0.3, 1, 2.5, 5 and 10 s. iOS lets a context it interrupted start again
+   *  without a gesture once the interruption is over; the gesture listeners
+   *  stay as the fallback. */
+  _heal() {
+    const tok = this._healT = (this._healT || 0) + 1;
+    for (const s of [0.3, 1, 2.5, 5, 10]) {
+      setTimeout(() => {
+        if (tok !== this._healT || !this.ctx || this.ctx.state === 'running' || this.ctx.state === 'closed') return;
+        if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+        this.ctx.resume().then(() => this._log(`healed (${s} s)`)).catch((e) => this._log('heal: ' + (e && e.name)));
+      }, s * 1000);
+    }
+  }
+
+  /** In a gesture: start a one-sample silent buffer. Some iOS versions report
+   *  a resumed context as 'running' and keep its output muted until a source
+   *  is started inside a gesture -- the standard WebKit unlock. */
+  kick() {
+    const c = this.ctx;
+    if (!c || c.state === 'closed' || this._kicked) return;
+    try {
+      const b = c.createBuffer(1, 1, c.sampleRate), s = c.createBufferSource();
+      s.buffer = b; s.connect(c.destination); s.start(0);
+      if (c.state === 'running') this._kicked = true;
+    } catch (e) { /* nothing to start yet */ }
+  }
+
+  resume(why = '') {
     // Anything but 'running': iOS reports 'interrupted' after the app comes
     // back from the background (or a call, or Siri), and a context left there
     // because it was not 'suspended' stayed silent for the rest of the session.
     if (this.ctx && this.ctx.state !== 'running' && this.ctx.state !== 'closed' && this.ctx.resume) {
-      this.ctx.resume().catch(() => {});
+      const st = this.ctx.state;
+      this.ctx.resume().then(() => this._log(`resumed from ${st}${why ? ' (' + why + ')' : ''}`))
+        .catch((e) => this._log(`resume refused (${why || st}): ${e && e.name}`));
     }
     // iOS pauses media on the way to the background and does not resume it --
     // but only a radio that is wanted (in a car) comes back.
