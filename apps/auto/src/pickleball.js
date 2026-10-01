@@ -71,7 +71,7 @@ export class PickleballCourt {
       for (let k = 0; k < Math.max(1, Math.round(r / 6)); k++) {
         const a = (k / Math.max(1, Math.round(r / 6))) * Math.PI * 2;
         const x = SITE.x + Math.cos(a) * r, z = SITE.z + Math.sin(a) * r;
-        if (Math.abs(x) > 12900) continue;
+        if (Math.abs(x) > G.MAP_HALF - 100) continue;
         for (const h of [0, Math.PI / 4, Math.PI / 2, 3 * Math.PI / 4]) {
           const fx = Math.sin(h), fz = Math.cos(h), lx = Math.cos(h), lz = -Math.sin(h);
           let lo = Infinity, hi = -Infinity, ok = true;

@@ -33,7 +33,7 @@
 
 import * as THREE from './three.js';
 import * as G from './geo.js';
-import { Builder } from './build.js';
+import { Builder, ChunkBuilder } from './build.js';
 import { GLASS, tagGlass, vehicleAssets } from './vehicles.js';
 import { clamp, angleWrap } from './util.js';
 
@@ -690,10 +690,9 @@ export class Link {
     const chunk = (x, z) => {
       const k = `${Math.floor(x / CHUNK)},${Math.floor(z / CHUNK)}`;
       let c = chunks.get(k);
-      if (!c) chunks.set(k, (c = { bed: new Builder(true), flat: new Builder(false), near: new Builder(false), tun: new Builder(false), card: new Builder(false), sign: new Builder(true), x: (Math.floor(x / CHUNK) + 0.5) * CHUNK, z: (Math.floor(z / CHUNK) + 0.5) * CHUNK }));
+      if (!c) chunks.set(k, (c = { bed: new ChunkBuilder(true, 64), flat: new ChunkBuilder(false, 64), near: new ChunkBuilder(false, 64), tun: new ChunkBuilder(false, 64), card: new ChunkBuilder(false, 64), sign: new ChunkBuilder(true, 64), x: (Math.floor(x / CHUNK) + 0.5) * CHUNK, z: (Math.floor(z / CHUNK) + 0.5) * CHUNK }));
       return c;
     };
-    this._chunk = chunk;
     for (const tr of Object.values(this.tracks)) this._buildTrack(tr, chunk);
     // each track's half of each station it serves -- a shared station once,
     // by the 1 Line's tracks
@@ -712,7 +711,6 @@ export class Link {
       if (b.empty) return null;
       const m = new THREE.Mesh(b.build(), mat);
       m.name = name; m.castShadow = shadow; m.receiveShadow = shadow;
-      m.geometry.computeBoundingSphere();
       return m;
     };
     for (const [key, c] of chunks) {

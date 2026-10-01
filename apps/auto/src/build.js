@@ -76,6 +76,19 @@ export function freezeStatic(root) {
   root.matrixWorldAutoUpdate = false;
 }
 
+/**
+ * A static mesh whose JS copy of its arrays goes once they are on the GPU (the
+ * phone path; see world.js buildChunkStep). Nothing may raycast it after, and
+ * a lost context cannot re-upload it: its owner rebuilds instead.
+ */
+export function dropAfterUpload(m) {
+  const g = m.geometry, drop = function () { this.array = null; };
+  for (const k in g.attributes) g.attributes[k].onUpload(drop);
+  if (g.index) g.index.onUpload(drop);
+  m.raycast = () => {};
+  return m;
+}
+
 export class Builder {
   constructor(useUV = true) {
     this.useUV = useUV;
@@ -511,7 +524,21 @@ export class Builder {
     if (this.useUV) geo.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
     geo.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
     geo.setIndex(this.idx);
-    geo.computeBoundingSphere();
+    // The sphere round the bbox, in one pass over the plain array: three's
+    // computeBoundingSphere walks every vertex twice through the attribute's
+    // accessors, which was ~0.9 s of a phone boot across the builders.
+    const P = this.pos;
+    let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+    for (let i = 0; i < P.length; i += 3) {
+      const x = P[i], y = P[i + 1], z = P[i + 2];
+      if (x < x0) x0 = x; if (x > x1) x1 = x;
+      if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (z < z0) z0 = z; if (z > z1) z1 = z;
+    }
+    if (P.length) {
+      const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, cz = (z0 + z1) / 2;
+      geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(cx, cy, cz), Math.hypot(x1 - cx, y1 - cy, z1 - cz));
+    } else geo.computeBoundingSphere();
     return geo;
   }
 }
@@ -527,9 +554,11 @@ export class Builder {
  * they keep the plain Builder.
  */
 export class ChunkBuilder extends Builder {
-  constructor(useUV = true) {
+  // `cap`: starting capacity in vertices; it doubles as needed. Many small
+  // builders (a system's per-chunk meshes) want a small start.
+  constructor(useUV = true, cap = 1024) {
     super(useUV);
-    this.cap = 1024;
+    this.cap = cap;
     this.nv = 0;
     this.ni = 0;
     this.P = new Float32Array(this.cap * 3);

@@ -805,7 +805,9 @@ function installShadowFade() {
   freight.build(scene, world);
   bikeNet.build(scene, city);
   // every other pier OSM maps, after everything that builds its own decks
-  piers = new Piers(md.piers, { scene, city, waterAt: (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; } });
+  piers = new Piers(md.piers, { scene, city, dropArrays: ON_PHONE, waterAt: (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; } });
+  // on a phone their arrays go once uploaded: a lost context rebuilds them
+  if (ON_PHONE) renderer.domElement.addEventListener('webglcontextlost', () => { piers.contextLost(); bikeNet.contextLost(); });
   freezeStatic(link.group); freezeStatic(link.tunGroup);
   freezeStatic(freight.group); freezeStatic(freight.tunGroup);
   // the balloon's launch field: no park trees on it

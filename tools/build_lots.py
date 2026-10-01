@@ -59,7 +59,7 @@ STEP = MASK_STEP / 3
 N = (MASK_N - 1) * 3 + 1                   # 7801
 # The shipped grid: 1801^2 samples, 14.4 m apart, two bytes each (coverage,
 # code) -- 6.5 MB on the GPU against the 6.8 MB the 10 m code texture was.
-LOT_N = 1801
+LOT_N = round(MAP_HALF * 2 / 14.4) + 1   # 14.4 m apart (1918 for the 27.6 km box)
 LOT_STEP = MAP_HALF * 2 / (LOT_N - 1)
 COVER_LEVELS = 32   # coverage is quantised: 0.45 m of edge position, and it compresses
 

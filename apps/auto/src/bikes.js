@@ -20,7 +20,7 @@
 
 import * as THREE from './three.js';
 import * as G from './geo.js';
-import { Builder } from './build.js';
+import { Builder, ChunkBuilder, dropAfterUpload } from './build.js';
 import { clamp, angleWrap } from './util.js';
 
 const ON_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
@@ -137,7 +137,7 @@ export class BikeNet {
     const chunk = (x, z) => {
       const k = `${Math.floor(x / CHUNK)},${Math.floor(z / CHUNK)}`;
       let c = chunks.get(k);
-      if (!c) chunks.set(k, (c = { b: new Builder(false), x: (Math.floor(x / CHUNK) + 0.5) * CHUNK, z: (Math.floor(z / CHUNK) + 0.5) * CHUNK }));
+      if (!c) chunks.set(k, (c = { segs: [], x: (Math.floor(x / CHUNK) + 0.5) * CHUNK, z: (Math.floor(z / CHUNK) + 0.5) * CHUNK }));
       return c;
     };
     const inBld = (x, z) => city.buildingsNear(x, z, 12).some((b) => {
@@ -170,44 +170,74 @@ export class BikeNet {
         const ok = !G.isWater(mx, mz) && !city.onRoad(mx, mz, 0.2, false, false) && !inBld(mx, mz);
         drawn.push(ok);
         if (!ok) continue;
-        const c = chunk(mx, mz), b = c.b;
-        const V = (i2, o) => {
-          const x = pts[i2][0] + L[i2][0] * o, z = pts[i2][1] + L[i2][1] * o;
-          return [x, G.terrainHeight(x, z) + LIFT, z];
-        };
-        const col = P.gravel ? GRAVEL : ASPHALT;
-        const n = [0, 1, 0], uv = [0, 0, 1, 0, 1, 1, 0, 1];
-        for (const [o0, o1] of [[-hw, 0], [0, hw]]) b.quad(V(i, o0), V(i, o1), V(i + 1, o1), V(i + 1, o0), n, uv, col);
+        // drawn when its chunk first comes into range (see _drawSeg)
+        chunk(mx, mz).segs.push(pts, L, i, P);
         km += (pts[i + 1][2] - pts[i][2]) / 1000;
-        if (P.gravel) continue;
-        // a dashed yellow centre line (3 m on, 3 m off) and white edges
-        const lift = (p, dy) => [p[0], p[1] + dy, p[2]];
-        if (Math.floor(pts[i][2] / 3) % 2 === 0) b.quad(lift(V(i, -0.06), 0.004), lift(V(i, 0.06), 0.004), lift(V(i + 1, 0.06), 0.004), lift(V(i + 1, -0.06), 0.004), n, uv, LINE);
-        for (const sg of [-1, 1]) b.quad(lift(V(i, sg * (hw - 0.2)), 0.004), lift(V(i, sg * (hw - 0.1)), 0.004), lift(V(i + 1, sg * (hw - 0.1)), 0.004), lift(V(i + 1, sg * (hw - 0.2)), 0.004), n, uv, EDGE);
       }
       P.drawn = drawn;
     }
     this.km = km;
     this.group = new THREE.Group();
     this.group.name = 'bikepaths';
+    // BUILT WHEN FIRST IN RANGE (update), not at boot: ~190 km of ribbons
+    // were ~1 s of every phone launch and 33 MB of arrays, almost all of it
+    // out of the 1 km (600 m) it is drawn within.
     this.chunks = [];
-    for (const [key, c] of chunks) {
-      if (c.b.empty) continue;
-      const m = new THREE.Mesh(c.b.build(), this.mat);
-      m.name = `bikepaths:${key}`; m.receiveShadow = true;
-      m.geometry.computeBoundingSphere();
-      this.group.add(m);
-      this.chunks.push({ m, x: c.x, z: c.z });
-    }
+    for (const [key, c] of chunks) if (c.segs.length) this.chunks.push({ key, segs: c.segs, m: null, x: c.x, z: c.z });
     scene.add(this.group);
+  }
+
+  /** A lost WebGL context: on a phone the meshes' arrays are gone (see
+   *  _build), so they go, and are built again when next in range. */
+  contextLost() {
+    for (const c of this.chunks) if (c.m) { this.group.remove(c.m); c.m.geometry.dispose(); c.m = null; }
+  }
+
+  /** One ~4 m piece of path i..i+1: the ribbon, and on paved paths a dashed
+   *  centre line and edge lines. */
+  _drawSeg(b, pts, L, i, P) {
+    const hw = P.gravel ? HW_GRAVEL : HW;
+    const V = (i2, o) => {
+      const x = pts[i2][0] + L[i2][0] * o, z = pts[i2][1] + L[i2][1] * o;
+      return [x, G.terrainHeight(x, z) + LIFT, z];
+    };
+    const col = P.gravel ? GRAVEL : ASPHALT;
+    const n = [0, 1, 0], uv = [0, 0, 1, 0, 1, 1, 0, 1];
+    for (const [o0, o1] of [[-hw, 0], [0, hw]]) b.quad(V(i, o0), V(i, o1), V(i + 1, o1), V(i + 1, o0), n, uv, col);
+    if (P.gravel) return;
+    // a dashed yellow centre line (3 m on, 3 m off) and white edges
+    const lift = (p, dy) => [p[0], p[1] + dy, p[2]];
+    if (Math.floor(pts[i][2] / 3) % 2 === 0) b.quad(lift(V(i, -0.06), 0.004), lift(V(i, 0.06), 0.004), lift(V(i + 1, 0.06), 0.004), lift(V(i + 1, -0.06), 0.004), n, uv, LINE);
+    for (const sg of [-1, 1]) b.quad(lift(V(i, sg * (hw - 0.2)), 0.004), lift(V(i, sg * (hw - 0.1)), 0.004), lift(V(i + 1, sg * (hw - 0.1)), 0.004), lift(V(i + 1, sg * (hw - 0.2)), 0.004), n, uv, EDGE);
+  }
+
+  _build(c) {
+    const b = new ChunkBuilder(false, 1024);
+    const S = c.segs;
+    // (segs are kept -- a few references into each path's points -- so a
+    // chunk dropped on a lost context can be built again)
+    for (let k = 0; k < S.length; k += 4) this._drawSeg(b, S[k], S[k + 1], S[k + 2], S[k + 3]);
+    if (b.empty) { c.segs = null; return; }
+    const m = new THREE.Mesh(b.build(ON_PHONE), this.mat);
+    m.name = `bikepaths:${c.key}`; m.receiveShadow = true;
+    if (ON_PHONE) dropAfterUpload(m);
+    this.group.add(m);
+    c.m = m;
   }
 
   update(camera) {
     if (!this.chunks) return;
-    // a 1 km chunk's visibility changes rarely: look every eighth frame
-    if ((this._tick = (this._tick || 0) + 1) & 7) return;
+    // a 1 km chunk's visibility changes rarely: look every eighth frame (the
+    // first call builds everything in range, later ones one chunk each)
+    const first = !this._tick;
+    if ((this._tick = (this._tick || 0) + 1) & 7 && !first) return;
     const R = (ON_PHONE ? 600 : 1000) + CHUNK * 0.71, x = camera.position.x, z = camera.position.z;
-    for (const c of this.chunks) c.m.visible = Math.hypot(c.x - x, c.z - z) < R;
+    let budget = first ? Infinity : 1;
+    for (const c of this.chunks) {
+      const near = Math.hypot(c.x - x, c.z - z) < R;
+      if (near && !c.m && c.segs && budget > 0) { this._build(c); budget--; }
+      if (c.m) c.m.visible = near;
+    }
   }
 }
 

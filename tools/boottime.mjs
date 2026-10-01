@@ -8,7 +8,8 @@
 // speed. Service worker bypassed and cache disabled, so every run downloads
 // the map data like a first launch on a cold cache -- from localhost, so the
 // network part is near zero; on a phone it is not (see the Downloading line).
-// --prof adds a CPU profile of the boot (it runs no rAF loop to hang on).
+// --prof adds a CPU profile of the boot (it runs no rAF loop to hang on); with
+// --twice, of the cached launch only.
 import { setTimeout as sleep } from 'node:timers/promises';
 import { launchChrome, assertRenderer } from './chrome.mjs';
 
@@ -59,7 +60,10 @@ try {
   // simulate a platform failure -- a decode that never resolves, a dead IDB).
   if (process.env.BOOT_INJECT) await send('Page.addScriptToEvaluateOnNewDocument', { source: process.env.BOOT_INJECT });
   if (THROTTLE > 1) await send('Emulation.setCPUThrottlingRate', { rate: THROTTLE });
-  if (PROF) { await send('Profiler.enable'); await send('Profiler.setSamplingInterval', { interval: 500 }); await send('Profiler.start'); }
+  const startProf = async () => { await send('Profiler.enable'); await send('Profiler.setSamplingInterval', { interval: 500 }); await send('Profiler.start'); };
+  // with --twice, only the cached launch is profiled: it is the one a player
+  // sees every time
+  if (PROF && !TWICE) await startProf();
   if (TWICE) {
     await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
     for (let i = 0; i < 1200; i++) { await sleep(250); if (await ev('window.__dbg && window.__dbg.sceneStats && window.__dbg.sceneStats.calls > 0')) break; }
@@ -68,6 +72,7 @@ try {
     if (process.env.BOOT_SHOT) { const r = await send('Page.captureScreenshot', { format: 'png' }); (await import('node:fs')).writeFileSync(process.env.BOOT_SHOT.replace(/\.png$/, '-1.png'), Buffer.from(r.result.data, 'base64')); }
     if (process.env.BOOT_PROBE) console.log('  probe 1: ' + await ev(`(() => { const d = window.__dbg; return String(${process.env.BOOT_PROBE}); })()`));
   }
+  if (PROF && TWICE) await startProf();
   await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
   let done = 0;
   for (let i = 0; i < 1200; i++) {
@@ -90,7 +95,7 @@ try {
       const seen = new Set();
       for (let nid = leaf; nid !== undefined; nid = parent.get(nid)) { const k = key(byId.get(nid)); if (!seen.has(k)) { seen.add(k); incl.set(k, (incl.get(k) || 0) + us); } }
     }
-    const show = (m, lbl) => { console.log(`  ${lbl}:`); for (const [k, us] of [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30)) console.log(`    ${(us / 1000).toFixed(0).padStart(6)} ms ${(us / total * 100).toFixed(1).padStart(5)}%  ${k}`); };
+    const show = (m, lbl) => { console.log(`  ${lbl}:`); for (const [k, us] of [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, +process.env.BOOT_TOP || 30)) console.log(`    ${(us / 1000).toFixed(0).padStart(6)} ms ${(us / total * 100).toFixed(1).padStart(5)}%  ${k}`); };
     show(self, 'self time'); show(incl, 'inclusive');
   }
   if (TWICE) console.log('  second launch gradeCached=' + await ev('window.__dbg.cityStats.gradeCached'));
