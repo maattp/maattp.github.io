@@ -811,6 +811,9 @@ function installShadowFade() {
   piers = new Piers(md.piers, { scene, city, dropArrays: ON_PHONE, waterAt: (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; } });
   // on a phone their arrays go once uploaded: a lost context rebuilds them
   if (ON_PHONE) renderer.domElement.addEventListener('webglcontextlost', () => { piers.contextLost(); bikeNet.contextLost(); });
+  // the flight recorder hears about the GPU going away (index.html)
+  renderer.domElement.addEventListener('webglcontextlost', () => flight('WEBGL CONTEXT LOST', true));
+  renderer.domElement.addEventListener('webglcontextrestored', () => flight('webgl context restored', true));
   // Washington State Ferries' Seattle-Bainbridge run (ferry.js)
   ferry = new Ferry(md.ferry, { scene, city, world, renderer });
   freezeStatic(ferry.terminals);
@@ -1305,6 +1308,12 @@ function installShadowFade() {
   requestAnimationFrame(() => requestAnimationFrame(() => cacheGuardSet(false)));
   blog('running');
   if (window.__bootOk) window.__bootOk();
+  const prev = window.__flight && window.__flight.prev;
+  if (prev && prev.crashed) {
+    setTimeout(() => hud.showToast('The last session ended unexpectedly. Its log is in the pause menu.', 6000), 1500);
+    const lab = document.getElementById('flightLabel');
+    if (lab) lab.textContent = 'Last session log (it ended unexpectedly)';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1708,6 +1717,29 @@ function wireUi() {
   bind('setSound', 'sound', (v) => { audio.enabled = v; });
   bind('setDebug', 'debug', (v) => { debugEl.classList.toggle('on', v); });
   bind('setPost', 'post', (v) => { postfx.setPostEnabled(v); });
+  // the flight recorder's last session: read it, copy it into a message
+  const fShow = document.getElementById('flightShow');
+  if (fShow) fShow.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(8,12,18,0.96);color:#dfe7ee;display:flex;flex-direction:column;'
+      + 'padding:calc(12px + env(safe-area-inset-top,0px)) calc(12px + env(safe-area-inset-right,0px)) calc(12px + env(safe-area-inset-bottom,0px)) calc(12px + env(safe-area-inset-left,0px));gap:10px';
+    const pre = document.createElement('pre');
+    pre.style.cssText = 'flex:1;overflow:auto;margin:0;font:11px/1.35 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-all;-webkit-user-select:text;user-select:text';
+    pre.textContent = flightText();
+    const bar = document.createElement('div');
+    bar.style.cssText = 'display:flex;gap:10px';
+    const mk = (label, fn) => { const b = document.createElement('button'); b.className = 'segbtn'; b.textContent = label; b.style.cssText = 'flex:1;height:42px'; b.addEventListener('click', (ev) => { ev.stopPropagation(); fn(b); }); bar.appendChild(b); };
+    mk('Copy', (b) => {
+      const done = () => { b.textContent = 'Copied'; };
+      try { navigator.clipboard.writeText(pre.textContent).then(done, () => { selectAll(); b.textContent = 'Selected: copy it'; }); } catch (x) { selectAll(); }
+    });
+    mk('Close', () => box.remove());
+    const selectAll = () => { const r = document.createRange(); r.selectNodeContents(pre); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); };
+    box.append(pre, bar);
+    for (const t of ['pointerdown', 'pointerup', 'touchstart', 'touchend']) box.addEventListener(t, (ev) => ev.stopPropagation());
+    document.body.appendChild(box);
+  });
 
   // Per-pass switches. `scene.fog` is nulled rather than zeroed because the fog
   // term is compiled into every material -- setting density to 0 still pays for
@@ -2183,6 +2215,7 @@ function frame(now) {
   if (prof) lap('render');
 
   updateDebug(dt);
+  flightTick(dt);
 }
 
 // What the sound needs from the frame. The surface under the player is a road,
@@ -2304,6 +2337,54 @@ const perfRender = { shadowMs: 0, shadowCalls: 0, sceneMs: 0, postMs: 0, frames:
 const debugEl = document.getElementById('debugStats');
 let debugAcc = 0;
 let fpsMin = 999;
+
+// THE FLIGHT RECORDER (index.html keeps and saves it). Once a second, what the
+// game is doing and what it is holding; and an event whenever what you are
+// doing changes, so the last lines before a crash say how you got there.
+const flight = (m, now) => { try { if (window.__flight) window.__flight.ev(m, now); } catch (e) { /* log only */ } };
+let flightAcc = 0, flightMode = '', flightFlying = null, flightFar = null;
+function flightModeNow() {
+  if (player.sky) return 'sky:' + player.sky.state;
+  if (player.onFoot) return 'foot';
+  const v = player.vehicle;
+  return v ? (v.type || (v.spec && v.spec.hand) || 'vehicle') + (v.airborne ? ':air' : '') : '?';
+}
+function flightTick(dt) {
+  if (!window.__flight) return;
+  flightAcc += dt;
+  if (flightAcc < 1) return;
+  flightAcc = 0;
+  try {
+    const o = player.vehicle || player;
+    const m = flightModeNow();
+    const ground = cityRef ? cityRef.groundAt(o.x, o.z, null) : 0;
+    if (m !== flightMode) { flight(`mode ${flightMode || '-'} -> ${m} at ${Math.round(o.x)},${Math.round(o.z)} ${Math.round(o.y - ground)} m up`); flightMode = m; }
+    if (world.playerFlying !== flightFlying) { flight(`flying ${world.playerFlying}`); flightFlying = world.playerFlying; }
+    const far = !!world.farMass;
+    if (far !== flightFar) { flight(`far layers ${far ? 'on' : 'off'}`); flightFar = far; }
+    const mi = renderer.info.memory, pm = performance.memory;
+    let built = 0;
+    for (const c of world.chunks.values()) if (c.lod >= 0) built++;
+    window.__flight.snap({
+      t: Math.round(performance.now() / 100) / 10, fps: Math.round(fps), q: game.settings.quality, m,
+      p: [Math.round(o.x), Math.round(o.z), Math.round(o.y)], agl: Math.round(o.y - ground),
+      v: Math.round(Math.abs(player.vehicle ? player.vehicle.vLong : player.sky ? Math.hypot(player.sky.vx, player.sky.vy, player.sky.vz) : player.speed || 0)),
+      draws: sceneStats.calls, ktris: Math.round(sceneStats.tris / 1000), geo: mi.geometries, tex: mi.textures, prog: renderer.info.programs ? renderer.info.programs.length : 0,
+      chunks: built + '/' + world.chunks.size, cars: traffic.cars.length, peds: peds.peds.length,
+      heapMB: pm ? Math.round(pm.usedJSHeapSize / 1e6) : undefined, paused: game.paused || undefined,
+    });
+  } catch (e) { flight('recorder: ' + e.message); }
+}
+
+/** The kept record of the LAST session, as text to read or copy. */
+function flightText() {
+  const r = window.__flight && window.__flight.prev;
+  if (!r) return 'No earlier session has been recorded yet.';
+  const lines = [`build ${r.build}  ${r.ua}`, `started ${r.start}  last saved ${r.saved}`,
+    `ended: ${r.crashed ? 'UNEXPECTEDLY (on screen)' : r.state}`, '', 'events:', ...r.events.map((e) => '  ' + e), '', 'snapshots (1 s apart, oldest first):'];
+  for (const q of r.snaps) lines.push('  ' + JSON.stringify(q));
+  return lines.join('\n');
+}
 
 /**
  * On-device performance readout.
