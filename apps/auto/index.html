@@ -456,6 +456,7 @@
       <div class="row"><span>Sound effects</span><div class="toggle" id="setSound"></div></div>
       <div class="row"><span>Camera speed</span><input type="range" id="setSens" min="0.4" max="2.2" step="0.1" value="1"></div>
       <div class="row"><span>Debug stats</span><div class="toggle" id="setDebug"></div></div>
+      <div class="row"><span id="flightLabel">Last session log</span><button class="segbtn" id="flightShow">Show</button></div>
       <!-- One switch per screen-space pass. A single "post on/off" cannot answer
            "which of these is hazing the picture", and that is the question that
            actually gets asked. -->
@@ -496,7 +497,7 @@
     <pre id="bootLog"></pre>
     <div id="loadRotate">Turn sideways to play once it has loaded</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v167</div>
+    <div id="build">v168</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation USGS 3DEP</div>
   </div>
   <script>
@@ -511,11 +512,53 @@
         if (lines.length > 22) lines.shift();
         if (el) { el.textContent = lines.join('\n'); el.scrollTop = el.scrollHeight; }
       }
-      window.__bootLog = log;
+      window.__bootLog = function (m) { log(m); if (window.__flight) window.__flight.ev(m); };
+
+      // THE FLIGHT RECORDER. A crash on the phone cannot be reproduced from
+      // here (WebKit ending the page for memory leaves no error behind), so
+      // the game keeps a small record of what it was doing in localStorage,
+      // saved every 2 s and at once on an error: recent events, and rolling
+      // snapshots from main.js (__flight.snap). A record left 'visible' at the
+      // next launch means the page ended while it was on screen, which is a
+      // crash; it is kept as 'auto-flight-prev' and shown in the pause menu.
+      (function () {
+        var KEY = 'auto-flight', PREV = 'auto-flight-prev';
+        var b = document.getElementById('build');
+        var rec = { build: b ? b.textContent.trim() : '?', start: new Date().toISOString(),
+          ua: (navigator.userAgent.match(/iPhone OS [\d_]+|OS [\d_]+|Chrome\/\d+|Version\/[\d.]+/g) || []).join(' '),
+          state: 'visible', events: [], snaps: [] };
+        var prev = null;
+        try {
+          var old = JSON.parse(localStorage.getItem(KEY) || 'null');
+          if (old) {
+            old.crashed = old.state === 'visible';
+            prev = old;
+            localStorage.setItem(PREV, JSON.stringify(old));
+          } else prev = JSON.parse(localStorage.getItem(PREV) || 'null');
+        } catch (x) { /* no storage */ }
+        function save() { rec.saved = new Date().toISOString(); try { localStorage.setItem(KEY, JSON.stringify(rec)); } catch (x) { /* full or blocked */ } }
+        function ev(m) {
+          rec.events.push((performance.now() / 1000).toFixed(1) + 's ' + String(m).slice(0, 300));
+          if (rec.events.length > 60) rec.events.shift();
+        }
+        window.__flight = {
+          prev: prev, rec: rec, save: save,
+          ev: function (m, now) { ev(m); if (now) save(); },
+          snap: function (o) { rec.snaps.push(o); if (rec.snaps.length > 12) rec.snaps.shift(); },
+        };
+        document.addEventListener('visibilitychange', function () {
+          rec.state = document.visibilityState === 'hidden' ? 'hidden' : 'visible';
+          ev('page ' + rec.state); save();
+        });
+        window.addEventListener('pagehide', function () { rec.state = 'closed'; ev('pagehide'); save(); });
+        window.addEventListener('pageshow', function () { if (rec.state === 'closed') { rec.state = 'visible'; save(); } });
+        setInterval(save, 2000);
+        save();
+      })();
       var msg = document.getElementById('loadMsg');
       if (msg && window.MutationObserver) {
         var lastMsg = '';
-        new MutationObserver(function () { if (msg.textContent !== lastMsg) { lastMsg = msg.textContent; log(lastMsg); } })
+        new MutationObserver(function () { if (msg.textContent !== lastMsg) { lastMsg = msg.textContent; window.__bootLog(lastMsg); } })
           .observe(msg, { childList: true, characterData: true, subtree: true });
       }
       // FILES FROM TWO VERSIONS. A module importing a name its neighbour does
@@ -532,12 +575,15 @@
       }
       window.addEventListener('error', function (e) {
         var m = e.message || '';
-        log('ERROR ' + (m || (e.target && e.target.src) || e) + (e.filename ? ' @' + e.filename.split('/').pop() + ':' + e.lineno : ''));
+        window.__bootLog('ERROR ' + (m || (e.target && e.target.src) || e) + (e.filename ? ' @' + e.filename.split('/').pop() + ':' + e.lineno : '')
+          + (e.error && e.error.stack ? ' | ' + String(e.error.stack).split('\n').slice(0, 4).join(' | ') : ''));
+        if (window.__flight) window.__flight.save();
         if (/Importing binding name|does not provide an export|not found in module/.test(m)
           || (e.target && e.target.tagName === 'SCRIPT' && e.target.type === 'module')) staleReload();
       }, true);
       window.addEventListener('unhandledrejection', function (e) {
-        var r = e.reason; log('REJECTED ' + (r && (r.stack || r.message) || r));
+        var r = e.reason; window.__bootLog('REJECTED ' + (r && (r.stack || r.message) || r));
+        if (window.__flight) window.__flight.save();
       });
       setTimeout(function () { if (!started) log('game code has not started after 8 s (a module failed to load?)'); }, 8000);
       // A launch that got as far as the game clears the one-reload allowance.

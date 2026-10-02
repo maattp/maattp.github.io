@@ -2428,6 +2428,31 @@ downtown six were in the frustum 1-10 km away. They show to 80 lengths
 (about 10 px on a phone), never closer than a parked car: 8-10 fewer draws a
 frame downtown (166 -> 157 driving, 159-163 -> 151 on foot).
 
+## The flight recorder (v168)
+
+**A crash on the iPhone leaves nothing behind**: WebKit ending the page for
+memory, or its GPU process going away, throws no error a harness could see,
+and desktop Chrome does not reproduce it (a 1500 m jump from the 747 ran
+clean headless, flat heap, no exceptions). So the game keeps a record:
+
+- `index.html`'s first classic script owns it (`window.__flight`), so it runs
+  even when a module never loads: the boot log's lines, every error (with the
+  top of its stack) and rejection, page visibility, `pagehide`. Saved to
+  localStorage (`auto-flight`) every 2 s and at once on an error.
+- main.js `flightTick` adds a snapshot a second (the last 12 are kept): mode
+  (`foot`, `sky:free`, `jumbo:air`...), position and height over the ground,
+  speed, fps, quality, draws, triangles, geometries, textures, programs,
+  chunks built, cars, peds, the JS heap where the browser reports one (not
+  Safari); and an event whenever the mode, `world.playerFlying` or the far
+  layers change, and on WebGL context loss and restore.
+- At launch the previous record moves to `auto-flight-prev`; if it was left
+  `visible` (not hidden, not closed) the page ended while on screen, which is
+  a crash: a toast says so, and **Pause -> Last session log -> Show** prints
+  it with a Copy button, for pasting into a bug report.
+
+Tested with CDP `Page.crash` mid-skydive: the next launch flagged the session
+and its last events were the climb in the 747 and the jump.
+
 ## Boot time and the boot cache
 
 **`tools/boottime.mjs [--throttle=8] [--twice] [--prof]`** times every loading
