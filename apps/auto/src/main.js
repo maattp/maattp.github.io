@@ -16,7 +16,7 @@ import { BikeNet, Cyclists } from './bikes.js';
 import { Islands } from './islands.js';
 import { Piers } from './piers.js';
 import { PickleballCourt } from './pickleball.js';
-import { freezeStatic, Builder } from './build.js';
+import { freezeStatic, skipHiddenMatrices, Builder } from './build.js';
 import { Fishing } from './fishing.js';
 import { Hoops } from './hoops.js';
 import { NeedleTop } from './needletop.js';
@@ -871,6 +871,7 @@ function installShadowFade() {
   // object in the world for a world-matrix multiply each frame. Static
   // subtrees are frozen; see freezeStatic.
   scene.matrixAutoUpdate = false;
+  skipHiddenMatrices(scene);
   if (lmRoot) freezeStatic(lmRoot);
   // the two trains (skinned: they pose their own bones each frame)
   monorail.makeTrains(scene);

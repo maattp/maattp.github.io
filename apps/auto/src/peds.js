@@ -2880,7 +2880,10 @@ export class PedSystem {
       B2.count = n + 1;
     };
     put(x, z, y + 0.02, heading, 0.62 * sc, 0.52 * sc, 0.30);
-    for (const fb of [h.bones[B.footL], h.bones[B.footR]]) {
+    // hidden at the last render, its feet are wherever it was last drawn
+    // (build.js skipHiddenMatrices): the player getting out of a car
+    const sk = this.scene.userData.matrixSkipped;
+    if (!(sk && sk.has(h.group))) for (const fb of [h.bones[B.footL], h.bones[B.footR]]) {
       const e = fb.matrixWorld.elements;
       if (e[15] !== 1 || (e[12] === 0 && e[14] === 0)) continue;   // never rendered yet
       // ankle height over the ground, less its standing height
