@@ -278,7 +278,7 @@ function unpackBuildings(c) {
 // list the carve is built from, and its stats.
 const GRADE_EDGE_FIELDS = ['lock', 'pk', 'ps', 'ph', 'pg', 'tw', 'tlo', 'tnb', 'pe', 'pwall', 'pbw'];
 const GRADE_STATS = ['refusedCrossings', 'underpasses', 'underpassNoRoom', 'underpassGraded', 'splitLevelTrimmedM',
-  'gradedSamples', 'overpassesRaised', 'overpassesRefused', 'fillMean', 'fillWorst', 'fwyDips', 'fwyDipNoRoom'];
+  'gradedSamples', 'overpassesRaised', 'overpassesRefused', 'fillMean', 'fillWorst', 'fwyDips', 'fwyDipNoRoom', 'levelledSamples'];
 function gradeSnapshot(nodes, edges, grading) {
   const E = [], N = [];
   for (let ei = 0; ei < edges.length; ei++) {
@@ -1095,7 +1095,7 @@ function gradeRoads(nodes, edges) {
   const dipOf = new Float64Array(N);
   const fwyDips = [];
   let dipNoRoom = 0;
-  const dipWhy = { max: 0, anchor: 0, deck: 0, water: 0, street: 0 };
+  const dipWhy = { max: 0, anchor: 0, deck: 0, water: 0, street: 0, steep: 0 };
   const evals = [];
   const dipProtect = new Set();
   const eStamp = new Int32Array(edges.length);
