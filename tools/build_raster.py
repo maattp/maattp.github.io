@@ -525,9 +525,7 @@ def carve_lakes(h, wet):
     # grade_streets keeps the water under its surface: the level every
     # vertex's water stands at (sea 0, a lake its own, else the DEM's), and
     # how wet the 50 m round it is.
-    carve_lakes.level = level
-    carve_lakes.frac = frac
-    return h
+    return h, level, frac
 
 
 LANDMARK_KEEP = 160.0   # metres round each landmark grade_streets leaves alone
@@ -545,7 +543,13 @@ def near_landmarks():
     p = os.path.join(HERE, "..", "apps", "auto", "data", "places.json")
     xs = -MAP_HALF + np.arange(HF_N) * HF_STEP
     X, Z = np.meshgrid(xs, xs)
-    for l in json.load(open(p))["landmarks"]:
+    if not os.path.exists(p):
+        sys.exit("build_raster: %s is missing. grade_streets keeps clear of the "
+                 "landmarks in the SHIPPED places.json; on a fresh import run "
+                 "build_places.py once first, then this." % os.path.normpath(p))
+    with open(p) as f:
+        landmarks = json.load(f)["landmarks"]
+    for l in landmarks:
         out |= np.hypot(X - l["x"], Z - l["z"]) <= LANDMARK_KEEP
     return out
 
@@ -563,7 +567,7 @@ if __name__ == "__main__":
     h, hires = build_height()
     wet = build_masks()
     h0 = h.copy()
-    h = carve_lakes(h, wet)
+    h, lake_level, frac = carve_lakes(h, wet)
     ha = grade_airfield(h)
     air = ha != h
     h = ha
@@ -571,11 +575,10 @@ if __name__ == "__main__":
     # round a vertex is wet), and the ground under the landmarks, which were
     # modelled on the DEM as it was. A shore vertex may move for a street on
     # the land beside it, but grade_streets keeps the water over the bed.
-    frac = carve_lakes.frac
     hard = air | (frac >= 0.5) | near_landmarks()
     soft = (frac > 0) & ~hard
     from grade_streets import grade_streets
-    h = grade_streets(h, hard, soft, wet, carve_lakes.level, hires, MAP_HALF, HF_STEP)
+    h = grade_streets(h, hard, soft, wet, lake_level, hires, MAP_HALF, HF_STEP)
     save_height(h)
     ok = probe(h, wet)
     for fn in ("height.png", "surface.png"):
