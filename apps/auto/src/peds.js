@@ -8,9 +8,10 @@ import { clamp, lerp, angleWrap, hash2, rng, dist2 } from './util.js';
 import * as G from './geo.js';
 
 // Linear albedo. The two lightest were 0.95 and 0.99 red -- whiter than a
-// white shirt -- and under the noon sun both faces came out chalk, the doll
-// read on every pale pedestrian. Real pale skin is ~0.6-0.75 linear red.
-const SKINS = [[0.86, 0.66, 0.52], [0.78, 0.57, 0.42], [0.55, 0.38, 0.27], [0.36, 0.24, 0.17], [0.90, 0.71, 0.58]];
+// white shirt -- and under the noon sun both faces and hands came out chalk,
+// the doll read on every pale pedestrian (0.86-0.90 still did). Pale skin is
+// pinker, not just lighter: less green and blue for its red.
+const SKINS = [[0.80, 0.59, 0.47], [0.70, 0.50, 0.36], [0.55, 0.38, 0.27], [0.36, 0.24, 0.17], [0.84, 0.64, 0.53]];
 // Street clothes, not toy brights: every tone pulled toward grey and down in
 // value. A crowd wearing saturated primaries under one matte material is a bin
 // of plastic figures -- muting the palette is half of what stops that reading.
@@ -157,7 +158,11 @@ const faceRect = (i) => [1024 + (i % 2) * FACE_W, Math.floor(i / 2) * FACE_H];
 const CELLS = {
   shirt: 5, jacket: 6, pants: 7, shoe: 8, hair: 9, hand: 10, skin: 11,
   hoodie: 12, skirt: 13, curly: 14, uniform: 15,
+  // Index 16 lives in grid square 0: the faces moved to the right half, so
+  // squares 0-4 of the left grid were empty (indices 0-4 still mean faces).
+  sleeve: 16,
 };
+const cellPos = (cell) => (cell === CELLS.sleeve ? 0 : cell);
 // The face cell wraps +-100 deg of the head (it was +-112), and runs from just
 // under the chin to just over the hairline (it ran to the crown). Everything
 // outside is hair, the ear's back or plain skin at the cell edge; the skull
@@ -173,7 +178,7 @@ function atlasUV(cell, t, s) {
     const [fx, fy] = faceRect(cell);
     return [(fx + FPAD + t * FCW) / ATLAS_W, 1 - (fy + FPAD + (1 - s) * FCH) / ATLAS_H];
   }
-  const cx = (cell % 4) * CELL, cy = Math.floor(cell / 4) * CELL;
+  const q = cellPos(cell), cx = (q % 4) * CELL, cy = Math.floor(q / 4) * CELL;
   return [(cx + PAD + t * CW) / ATLAS_W, 1 - (cy + PAD + (1 - s) * CW) / ATLAS_H];
 }
 /** Cylindrical projection of a part around a vertical axis through (cx, cz). */
@@ -201,6 +206,7 @@ function drawAtlas() {
   const Q = (s) => PAD + (1 - s) * CW;
   const inCell = (i, fn) => {
     g.save();
+    i = cellPos(i);
     g.translate((i % 4) * CELL, Math.floor(i / 4) * CELL);
     g.beginPath(); g.rect(0, 0, CELL, CELL); g.clip();
     fn();
@@ -238,6 +244,18 @@ function drawAtlas() {
     g.fillStyle = grey(v, 0.85);
     for (const t of [0.25, 0.75]) g.fillRect(P(t) - 1.5, 0, 3, CELL);
   };
+  // A FOLD: a soft valley of shade along a curve, with the cloth's lit ridge
+  // beside it. Cloth reads as cloth by where it creases -- tension folds
+  // from the armpit, bunching at the waist, the elbow and the knee -- and a
+  // garment with none is a coat of paint on a mannequin. Soft-edged (three
+  // passes, wide to narrow), so at twenty pixels it is form, not a line.
+  const fold = (t0, s0, t1, s1, tc, sc2, w = 7, v = 0.62, a = 0.45) => {
+    const path = () => { g.beginPath(); g.moveTo(P(t0), Q(s0)); g.quadraticCurveTo(P(tc), Q(sc2), P(t1), Q(s1)); };
+    g.lineCap = 'round';
+    for (const [k, al] of [[2.2, 0.35], [1.4, 0.55], [0.7, 1]]) {
+      g.strokeStyle = grey(v, a * al); g.lineWidth = w * k; path(); g.stroke();
+    }
+  };
 
   // --- detail cells: multiplied into the vertex colour --------------------
   // Torso cells are mapped J.hip - 0.06 .. J.shoulder + 0.07, so s 0.04 is the
@@ -253,6 +271,10 @@ function drawAtlas() {
     // drape: the cloth gathers above the waist at the sides and under the chest
     for (const t of [0.20, 0.80]) blob(P(t), Q(0.20), 46, [0.62, 0.62, 0.62], 0.5);
     blob(P(0.5), Q(0.52), 60, [0.80, 0.80, 0.80], 0.35);
+    // tension folds from under each arm toward the waist, front and back
+    for (const [a, b] of [[0.31, 0.42], [0.69, 0.58], [0.06, 0.16], [0.94, 0.84]]) fold(a, 0.80, b, 0.40, (a + b) / 2 + (b - a) * 0.3, 0.62, 5, 0.70, 0.40);
+    // the cloth gathering just over the hem
+    for (const t of [0.12, 0.38, 0.55, 0.86]) fold(t - 0.07, 0.15, t + 0.07, 0.13, t, 0.19, 4, 0.70, 0.35);
   });
   inCell(CELLS.jacket, () => {
     g.fillStyle = grey(0.95); g.fillRect(0, 0, CELL, CELL);
@@ -262,6 +284,7 @@ function drawAtlas() {
     seams(0.48);
     rib(0.0, 0.07, 0.50);
     for (const t of [0.20, 0.80]) blob(P(t), Q(0.22), 46, [0.62, 0.62, 0.62], 0.5);
+    for (const [a, b] of [[0.30, 0.40], [0.70, 0.60], [0.06, 0.15], [0.94, 0.85]]) fold(a, 0.82, b, 0.45, (a + b) / 2 + (b - a) * 0.3, 0.66, 5, 0.66, 0.40);
     // zip placket up the centre line
     g.fillStyle = grey(0.52, 0.95); g.fillRect(P(0.478), Q(0.97), P(0.522) - P(0.478), Q(0.05) - Q(0.97));
     g.fillStyle = grey(0.32, 0.95); g.fillRect(P(0.5) - 1, Q(0.97), 2, Q(0.05) - Q(0.97));
@@ -278,6 +301,9 @@ function drawAtlas() {
     seams(0.55);
     rib(0.0, 0.08, 0.55);
     for (const t of [0.20, 0.80]) blob(P(t), Q(0.24), 50, [0.62, 0.62, 0.62], 0.5);
+    for (const [a, b] of [[0.31, 0.40], [0.69, 0.60], [0.06, 0.15], [0.94, 0.85]]) fold(a, 0.82, b, 0.46, (a + b) / 2 + (b - a) * 0.3, 0.66, 6, 0.68, 0.40);
+    // the heavy cloth bags over the ribbed hem
+    for (const t of [0.08, 0.30, 0.70, 0.92]) fold(t - 0.08, 0.13, t + 0.08, 0.12, t, 0.17, 5, 0.66, 0.40);
     // kangaroo pocket: the thing that says "hoodie" from across the street
     g.fillStyle = grey(0.70, 0.9);
     g.beginPath();
@@ -322,6 +348,14 @@ function drawAtlas() {
     // behind the knee, where trousers crease
     blob(P(0.02), Q(0.40), 30, [0.55, 0.55, 0.55], 0.6);
     blob(P(0.98), Q(0.40), 30, [0.55, 0.55, 0.55], 0.6);
+    // creases where the knee bends (the back of the leg is t 0 / 1) and where
+    // the hem breaks on the shoe
+    for (const [s0, dt] of [[0.38, 0.05], [0.44, -0.04], [0.50, 0.04]]) {
+      fold(0.0, s0, 0.16, s0 + dt, 0.08, s0 + dt * 0.4 - 0.02, 4, 0.62, 0.45);
+      fold(1.0, s0, 0.84, s0 + dt, 0.92, s0 + dt * 0.4 - 0.02, 4, 0.62, 0.45);
+    }
+    for (const [t, ds] of [[0.36, 0.01], [0.50, -0.01], [0.64, 0.012]]) fold(t - 0.09, 0.40 + ds, t + 0.09, 0.42 - ds, t, 0.45, 3, 0.74, 0.35);
+    for (const [s0, dt] of [[0.09, 0.03], [0.14, -0.02]]) fold(0.30, s0, 0.70, s0 + dt, 0.5, s0 + 0.035, 4, 0.68, 0.40);
     seams(0.52);
     g.fillStyle = grey(1.0, 0.8);
     for (const t of [0.25, 0.75]) for (let y = 0; y < CELL; y += 6) { g.fillRect(P(t) - 5, y, 1, 3); g.fillRect(P(t) + 4, y, 1, 3); }
@@ -361,10 +395,11 @@ function drawAtlas() {
     gr.addColorStop(0.30, grey(1.00)); gr.addColorStop(0.40, grey(0.92));
     gr.addColorStop(0.62, grey(0.82)); gr.addColorStop(1.00, grey(0.70));
     g.fillStyle = gr; g.fillRect(0, 0, CELL, CELL);
-    for (let k = 0; k < 2600; k++) {
-      const x = R.n() * CELL, y = -40 + R.n() * (CELL + 40), len = 18 + R.n() * 46;
+    // Low contrast per stroke: long strokes at 30 % still read as wood grain.
+    for (let k = 0; k < 3400; k++) {
+      const x = R.n() * CELL, y = -40 + R.n() * (CELL + 40), len = 14 + R.n() * 34;
       const dark = R.n() < 0.62;
-      g.strokeStyle = dark ? grey(0.50 + R.n() * 0.2, 0.30) : grey(1.0, 0.30);
+      g.strokeStyle = dark ? grey(0.55 + R.n() * 0.2, 0.18) : grey(1.0, 0.22);
       g.lineWidth = 0.5 + R.n() * 0.7;
       g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + (R.n() - 0.5) * 5, y + len * 0.5, x + (R.n() - 0.5) * 8, y + len); g.stroke();
     }
@@ -393,6 +428,24 @@ function drawAtlas() {
   inCell(CELLS.skin, () => {
     g.fillStyle = grey(1.0); g.fillRect(0, 0, CELL, CELL);
     speckle(500, 0.92, 1.0, 0.25);
+  });
+  // LONG SLEEVES: mapped wrist .. shoulder (s 0 .. 1), front of the arm at
+  // t 0.5. The inside of the elbow (s ~0.44) gathers in a fan of creases, the
+  // cuff end bunches, and a seam rings the shoulder. Short sleeves keep the
+  // plain skin cell, or the bare forearm below them would wear the creases.
+  inCell(CELLS.sleeve, () => {
+    g.fillStyle = grey(0.97); g.fillRect(0, 0, CELL, CELL);
+    speckle(1400, 0.82, 1.0, 0.3);
+    for (const [s0, dt, w] of [[0.38, 0.05, 5], [0.44, -0.03, 6], [0.50, 0.04, 5], [0.41, 0.0, 4]]) {
+      fold(0.28, s0, 0.72, s0 + dt, 0.5, s0 + dt * 0.5 + 0.035, w, 0.62, 0.45);
+    }
+    // the point of the elbow, behind: a lit stretch, and two short creases
+    for (const s0 of [0.40, 0.48]) {
+      fold(0.0, s0, 0.10, s0 + 0.02, 0.05, s0 + 0.03, 3, 0.70, 0.35);
+      fold(1.0, s0, 0.90, s0 + 0.02, 0.95, s0 + 0.03, 3, 0.70, 0.35);
+    }
+    for (const [s0, dt] of [[0.10, 0.02], [0.16, -0.02], [0.21, 0.015]]) fold(0.05, s0, 0.95, s0 + dt, 0.5, s0 + 0.02, 4, 0.72, 0.35);
+    g.fillStyle = grey(0.60, 0.8); g.fillRect(0, Q(0.93), CELL, 2.5);
   });
 
   // --- faces, one per skin tone -------------------------------------------
@@ -601,8 +654,8 @@ pedMat.onBeforeCompile = (sh) => {
 // skin carries a soft sheen, hair a tighter one, shoes and belts a little.
 // Anything not listed is cloth, except vertices painted the skin colour (bare
 // arms and legs share a builder with their sleeves).
-const GLOSS = { head: 0.33, neck: 0.33, hand: 0.33, fingers: 0.33, hair: 0.40, foot: 0.22, hat: 0.12 };
-const GLOSS_SKIN = 0.33;
+const GLOSS = { head: 0.26, neck: 0.26, hand: 0.26, fingers: 0.26, hair: 0.40, foot: 0.22, hat: 0.12 };
+const GLOSS_SKIN = 0.26;
 
 class SkinAcc {
   constructor(skin = null) {
@@ -1768,7 +1821,7 @@ export function buildCharacter(opts = {}) {
     // Sleeves take the plain cell, not the garment's: a torso cell carries
     // pockets, zips and a kangaroo pocket, and mapped round an arm they landed
     // on the sleeves as stray rectangles.
-    }, cylUV(CELLS.skin, X, 0, J.wrist, J.shoulder + 0.01), 'arm');
+    }, cylUV(shortSleeve ? CELLS.skin : CELLS.sleeve, X, 0, J.wrist, J.shoulder + 0.01), 'arm');
     buildHand(acc, side, X, skin);
   }
 
@@ -2475,9 +2528,19 @@ export function animateWalk(h, amp, dt, speed) {
   // the solve below goes through the pelvis's inverse anyway. Lean put on
   // the spine and chest alone bent a runner at the waist over an upright
   // pelvis -- the bolt-upright "plank" over folding knees.
-  const tilt = 0.02 + 0.07 * runBlend + 0.05 * clamp((spd - 4) / 3.5, 0, 1);
+  const tilt = 0.02 + 0.08 * runBlend + 0.06 * clamp((spd - 4) / 3.5, 0, 1);
+  // A WALK'S TWIST AND LIST ARE DRAWN LARGER THAN LIFE. The real ~4 deg of
+  // pelvic yaw and ~1.5 of list are there in the numbers and invisible at
+  // twenty pixels from the chase camera: the walk read as a plank on legs.
+  // Walking adds ~2.3 deg of yaw (the chest adds its own counter-twist,
+  // below) and ~1.7 of list, the swing side dropping. The list lifts the
+  // stance-side socket, so the hips come down by that much or the planted
+  // leg is asked for more than REACH_PLANT's 3 mm margin and the sole lifts.
+  const walkW = settle * (1 - runBlend);
+  const xList = 0.03 * walkW * s;
+  hipY -= HIP_X * Math.abs(Math.sin(xList));
   b[B.hips].position.set(-s * A * (0.11 - 0.08 * runBlend), hipY, 0);
-  b[B.hips].rotation.set(tilt, -s * A * 0.30, -s * A * 0.11);
+  b[B.hips].rotation.set(tilt, -s * (A * 0.30 + 0.04 * walkW), -s * A * 0.11 - xList);
   b[B.hips].updateMatrix();
   _inv.copy(b[B.hips].quaternion).invert();
 
@@ -2560,7 +2623,12 @@ export function animateWalk(h, amp, dt, speed) {
   // is a yaw about the ankle, so the sole's heel and toe stay on its line to
   // within a millimetre and the roll model above is unchanged.
   const toeOut = 0.09 - 0.05 * runBlend;
-  b[B.footL].rotation.y = -toeOut; b[B.footR].rotation.y = toeOut;
+  // And the pelvis's yaw is taken back out at the ankle: a planted foot
+  // does not turn with the hips (the thigh rotates in its socket instead).
+  // Riding the pelvis, the toe 16 cm out swung sideways through every
+  // stance -- the planted foot visibly twisting on the pavement.
+  const py = b[B.hips].rotation.y;
+  b[B.footL].rotation.y = -toeOut - py; b[B.footR].rotation.y = toeOut - py;
 
   // Arms. A walk has a loose 30-40 deg swing from a nearly straight arm; a run
   // has an 80-90 deg elbow driving hard. Both the amplitude and the elbow have
@@ -2578,7 +2646,7 @@ export function animateWalk(h, amp, dt, speed) {
   // chest on every stride. +x swings backward, so the forward half is the
   // negative one and is cut back as the pace rises -- and comes back as a
   // sprint pumps the hand up toward the chin.
-  const fwd = (0.70 + 0.30 * runBlend) * (1 - 0.5 * runBlend) + 0.25 * drive;
+  const fwd = (0.70 + 0.30 * runBlend) * (1 - 0.5 * runBlend) + 0.15 * drive;
   // A walker's arm swings further BACK than forward (about 25 deg behind the
   // hip, 10-15 ahead of it); symmetric, the backswing never cleared the hip.
   const bk = 0.95 * (1.15 - 0.15 * runBlend);
@@ -2642,11 +2710,14 @@ export function animateWalk(h, amp, dt, speed) {
   // 0.24 at a run, not 0.19: with the stance window balanced behind the hips
   // the legs work further back, and an upright trunk over them read as leaning
   // away from the direction of travel.
-  const lean = h.lean + 0.02 + 0.24 * runBlend;
+  // 0.14 at a run, not 0.24, now the pelvis tilts too: on the spine and
+  // chest alone the lean was a hunch at the waist and shoulders over a pelvis
+  // left behind ("sitting back"), 20 deg in all against a runner's ~10-15.
+  const lean = h.lean + 0.02 + 0.14 * runBlend;
   // Pelvis was posed above, before the legs were solved against it.
   b[B.spine].rotation.y = s * A * 0.16;
   b[B.spine].rotation.x = lean * 0.45;
-  b[B.chest].rotation.y = s * A * 0.45;
+  b[B.chest].rotation.y = s * (A * 0.45 + 0.07 * walkW);
   b[B.chest].rotation.x = lean * 0.55 + A * 0.06;
   b[B.chest].rotation.z = -c * A * 0.05;
 
