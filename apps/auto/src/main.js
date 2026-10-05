@@ -675,7 +675,13 @@ function installHeightFog() {
     + `\tvec3 fogCol = fogColor * mix( vec3( ${enc(HAZE_SUN.away)} ), vec3( ${enc(HAZE_SUN.toward)} ), fogHs * fogHs );\n`
     + '\tgl_FragColor.rgb = mix( gl_FragColor.rgb, fogCol, fogFactor );'
   );
-  if (!C.fog_fragment.includes('fogCol')) console.warn('sun-side fog: three chunk changed, not patched');
+  if (!C.fog_fragment.includes('fogCol')) {
+    // three's chunk text changed: plain fog, but keep `fogCol` declared, or
+    // the far layers' fades and the vehicle glass (which mix toward it) stop
+    // compiling and every fogged material with them.
+    console.warn('sun-side fog: three chunk changed, not patched');
+    C.fog_fragment += '\n#ifdef USE_FOG\n\tvec3 fogCol = fogColor;\n#endif';
+  }
 }
 
 /**
