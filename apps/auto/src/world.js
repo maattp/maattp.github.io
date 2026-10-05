@@ -1866,12 +1866,24 @@ export class World {
           for (let j = 0; j < subN; j++) {
             const s0 = t0 + ((t1 - t0) * j) / subN, s1 = t0 + ((t1 - t0) * (j + 1)) / subN;
             const sm = (s0 + s1) / 2;
-            if (this.inOtherBore(a.x + (b.x - a.x) * sm + qx * w * sd,
-              a.z + (b.z - a.z) * sm + qz * w * sd, a.y + (b.y - a.y) * sm, ei)) continue;
+            const wx = a.x + (b.x - a.x) * sm + qx * w * sd, wz = a.z + (b.z - a.z) * sm + qz * w * sd;
+            const myDeck = a.y + (b.y - a.y) * sm;
+            if (this.inOtherBore(wx, wz, myDeck, ei)) continue;
+            // NOT ACROSS ANOTHER BORE'S TRAFFIC AT ANOTHER LEVEL EITHER. Under
+            // the convention centre I-5's mainline, express lanes and ramps run
+            // as overlapping bores 2-5 m apart in level: too far apart for the
+            // twin rule above, so each kept a wall band from 1.5 m under its
+            // own deck to its roof -- straight through the lanes of the bore
+            // above or below. AI cars wedged on them (most of trafficcheck's
+            // stuck cars). The band is cut back to clear the other bore's
+            // traffic (its deck to 2.6 m over it); this bore's own cars, 1.6 m+
+            // away in level, stay inside what is left.
+            const [lo, hi] = this.bandClear(wx, wz, myDeck, ei, y0, y1);
+            if (hi - lo < 1.0) continue;
             bsegs.push(
               a.x + (b.x - a.x) * s0 + qx * w * sd, a.z + (b.z - a.z) * s0 + qz * w * sd,
               a.x + (b.x - a.x) * s1 + qx * w * sd, a.z + (b.z - a.z) * s1 + qz * w * sd,
-              y0, y1);
+              lo, hi);
           }
         }
       }
@@ -2245,6 +2257,21 @@ export class World {
       best = Math.max(best, roof);
     }
     return best;
+  }
+
+  /** A bore wall's collision band [y0, y1] at (x, z), cut back off every
+   *  other bore whose lanes hold the point (see the walls in portalCuts). */
+  bandClear(x, z, myDeck, ei, y0, y1, pad = 0.2) {
+    let lo = y0, hi = y1;
+    for (const q of this._tunNear(x, z)) {
+      if (q.k === ei || x < q.x0 || x > q.x1 || z < q.z0 || z > q.z1) continue;
+      const r = distToSeg(x, z, q.a.x, q.a.z, q.b.x, q.b.z);
+      if (r.d > q.hw + pad) continue;
+      const od = q.a.y + (q.b.y - q.a.y) * r.t;
+      if (od > myDeck) hi = Math.min(hi, od - 0.3);
+      else lo = Math.max(lo, od + 2.6);
+    }
+    return [lo, hi];
   }
 
   inOtherBore(x, z, y, ei, pad = 0.2, dy = 1.6) {
@@ -5009,14 +5036,19 @@ float frLine(float o, float fw, float c, float w) {
           for (let j = 0; j < subN; j++) {
             const s0 = t0 + ((t1 - t0) * j) / subN, s1 = t0 + ((t1 - t0) * (j + 1)) / subN;
             const [mwx, mwz] = P((s0 + s1) / 2, (hw + 0.4) * sd);
-            if (this.inOtherBore(mwx, mwz, lerp(a.y, b.y, (s0 + s1) / 2), ei)) continue;
+            const dm = lerp(a.y, b.y, (s0 + s1) / 2);
+            if (this.inOtherBore(mwx, mwz, dm, ei)) continue;
+            // ...and no taller than the bore above whose lanes it stands in
+            // (bandClear, the collision band's own rule)
+            const wallH = Math.min(WALL, this.bandClear(mwx, mwz, dm, ei, dm, dm + WALL)[1] - dm);
+            if (wallH < 1.0) continue;
             const [v0x, v0z] = P(s0, hw * sd), [v1x, v1z] = P(s1, hw * sd);
             const m0 = pool(s0) * dark(s0), m1 = pool(s1) * dark(s1);
             const c0 = [0.42 * m0, 0.43 * m0, 0.45 * m0], c1 = [0.42 * m1, 0.43 * m1, 0.45 * m1];
             // heights at the mitred points, so the wall foot meets the deck
             const y0 = Ym(v0x, v0z), y1 = Ym(v1x, v1z);
             glow.quad([v0x, y0, v0z], [v1x, y1, v1z],
-              [v1x, y1 + WALL, v1z], [v0x, y0 + WALL, v0z],
+              [v1x, y1 + wallH, v1z], [v0x, y0 + wallH, v0z],
               [-px * sd, 0, -pz * sd], ZERO_UV, [c0, c1, c1, c0]);
           }
         } else if (false) {
