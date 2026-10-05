@@ -967,18 +967,22 @@ function gradeRoads(nodes, edges) {
         }
       }
       if (!cand.length) continue;
-      for (let i = 1; i < e.pk; i++) {
+      // ...node samples too (shared by the edges meeting there): left out,
+      // the raise reached a node only through its neighbours' smoothing
+      for (let i = 0; i <= e.pk; i++) {
         const v = e.ps[i];
         if (fixed[v]) continue;
         const x = SX[v], z = SZ[v];
         for (const o of cand) {
+          if (o.ps.includes(v)) continue;
           const oa = nodes[o.a];
           const u = ((x - oa.x) * o.dx + (z - oa.z) * o.dz) / o.len;
           if (u <= 0 || u >= 1) continue;
           const lat = (x - oa.x) * -o.dz + (z - oa.z) * o.dx;
-          // o's lanes must hold this road's centre, and o must not be this
-          // road carrying on (a centreline under 0.5 m away)
-          if (Math.abs(lat) > o.hw - 0.3 || Math.abs(lat) < 0.5) continue;
+          // o must reach this road's centre as groundAt catches it (its
+          // lanes, plus the 1.5 m a deck catches past its edge), and must not
+          // be this road carrying on (a centreline under 0.5 m away)
+          if (Math.abs(lat) > o.hw + (o.elev ? 1.5 : 0.4) || Math.abs(lat) < 0.5) continue;
           const dh = surfOf(o, u, lat) - H0[v];
           if (dh > 0.02 && dh < 0.4 && dh > up[v]) up[v] = dh;
         }
