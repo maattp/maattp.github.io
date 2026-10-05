@@ -1099,6 +1099,16 @@ function gradeRoads(nodes, edges) {
   const evals = [];
   const dipProtect = new Set();
   const eStamp = new Int32Array(edges.length);
+  // The carriageways that overlap a sample (the levelling's pairs, any level).
+  let partnerMap = null;
+  const partners = (j) => {
+    if (!partnerMap) {
+      partnerMap = new Map();
+      const add = (a, b) => { let l = partnerMap.get(a); if (!l) partnerMap.set(a, (l = [])); if (!l.includes(b)) l.push(b); };
+      for (let q = 0; q < lvPairs.length; q += 2) { add(lvPairs[q], lvPairs[q + 1]); add(lvPairs[q + 1], lvPairs[q]); }
+    }
+    return partnerMap.get(j) || [];
+  };
   let stampQ = 0;
   {
     const isDeckEdge = (i) => { let d = false; edgesOf(i, (e) => { if (e.elev) d = true; }); return d; };
@@ -1138,10 +1148,15 @@ function gradeRoads(nodes, edges) {
       const d0 = new Map();
       let ok = true, lowest = Infinity;
       const prot = new Set();
-      for (const [j, r] of used) {
-        d0.set(j, need - r);
-        lowest = Math.min(lowest, H[j] - (need - r));
+      for (const [j, r] of used) d0.set(j, need - r);
+      // ...and every carriageway overlapping the dipped one goes down with
+      // it. Dipped alone, a ramp sharing I-90's pavement at Eastgate ran 3 m
+      // under the lanes it overlaps: a car on it was carried by I-90 and
+      // dropped off the end of the overlap (+120 on that site's score).
+      for (const [j, dj] of [...d0]) {
+        for (const q of partners(j)) if (!(d0.get(q) >= dj)) d0.set(q, dj);
       }
+      for (const [j, dj] of d0) lowest = Math.min(lowest, H[j] - dj);
       const support = new Set();
       for (const j of d0.keys()) for (const q of around(j, PROF_R * 2)) support.add(q);
       for (const j of support) {
