@@ -125,7 +125,10 @@ tools/.venv/bin/python tools/build_lots.py      # after build_raster, 4 s
 ```
 
 `build_roads.py` reads `height.png`, so **the raster step has to run first** or
-every road node gets its height from the previous terrain. `build_lots.py`
+every road node gets its height from the previous terrain. The raster step
+also fits the ground to the streets (`tools/grade_streets.py`, ~2 min), from
+`raw_roads.json` and the DEM tiles, keeping clear of the landmarks in the
+shipped `places.json` (see "Street grading"). `build_lots.py`
 reads `surface.png`'s water channel, so it runs after the raster step too.
 `osm_extract.py --lots` rescans the .pbf for the lot layer alone (~4 min) and
 leaves every other `raw_*.json` untouched.
@@ -2254,7 +2257,7 @@ from `terrainHeight` directly and only uses node `y` for its bow/grade
 subdivision heuristics. It is a correctness fix for the invariant above, not a
 fix for anything visible, and shipping it as the latter would have been a lie.
 
-`height.png` is 781x781 at 40 m (31.2 km / 40 m, +1). **That spacing is not free to change**: it is
+`height.png` is 781x781 at 40 m (31.2 km / 40 m, +1), with the vertices near streets fitted to the streets (see "Street grading"). **That spacing is not free to change**: it is
 also the terrain mesh's vertex spacing, and the two have to agree. A finer query
 grid floats roads over bulges the mesh doesn't resolve; and at 20 m the mesh
 would cost ~3.4 M triangles across the 26 km map, several times the whole frame budget.
@@ -3033,6 +3036,7 @@ The purpose-built harnesses, each a fixed-dt, paused-game driver:
 | `tools/shadowcheck.mjs` | the phone's shadow cache against three's own pass: live shadow map read back both ways at seven boxes, depths compared texel by texel, draws counted (see "Heat") |
 | `tools/audiorender.mjs [--only a,b] [--showcase]` | renders the sound offline to `docs/audio/*.wav`: peak/RMS/centroid/silence per file, fails on clipping; `--showcase` refreshes `apps/auto/docs/audio/` (see "Sound") |
 | `tools/perfcpu.mjs --audio` | lets the AudioContext run and counts the rendered Web Audio nodes per run, persistent and one-shot, and the bank's build time (see "Sound") |
+| `tools/ridesurvey.mjs [--tag T] [--at x,z;.. --range M] [--shots DIR]` | every road chain in the city ridden at a class speed through Vehicle.update's vertical follow: frames over 30/60 m/s2, humps, grade breaks, deck captures, per kind and per ranked 60 m site; `--at` traces a site row by row (see "Street grading") |
 
 **A walker needs a seed, and the seed is the edge's own surface.** Seeded with
 no reference height, `groundAt` takes the highest deck, so every freeway edge
@@ -3316,6 +3320,175 @@ graded ground comes from `groundAt`'s per-sample deck query.
 Note the "long thin triangle" probe is *not* diagnostic here: a pier is
 legitimately 30 m tall and 2.4 m wide, so it trips any aspect-ratio filter. Judge
 deck geometry from a close render alongside and down the deck.
+
+## Street grading: the ground fitted to the streets
+
+**"The roads are really bumpy and go up and down" was the heightfield, not
+the road code.** Every street that is not a deck or a graded freeway is drawn
+ON the terrain mesh, and the mesh is the 40 m grid split into triangles. A
+street running ALONG a hillside crosses that triangulation diagonally, and on
+a curved slope -- a bluff edge, a hillside bench -- the triangles it crosses
+alternate between the upper and the lower row of vertices. The road saws:
+Magnolia Boulevard West rode 43 -> 39 -> 48 -> 37 -> 50 m in 60 m, Bronson
+Way in Renton 17 -> 26 -> 17 -> 26 m. The vertices are exact readings of the
+DEM; a 40 m lattice of them simply cannot describe the bench the street is cut
+into. Measured on the grid along every ground street: 22.8 k grade breaks over
+8 % and 6.2 k crests or dips over 1 m, where the street's own line read from
+the full-resolution DEM has 0.25 k and 1.7 k.
+
+**The fix is at the raster** (`tools/grade_streets.py`, called by
+`build_raster.py` after the lake carve and the airfield, before `height.png`
+is written). The DEM tiles are ~6.4 m/px, so sampling them ALONG a centreline
+reads the bench. Every 4 m of every ground-level way the road import keeps is
+a sample, and the vertices near streets move, in least squares, so that:
+
+| row | per | asks |
+|---|---|---|
+| absolute (`W_ABS` 1) | sample | the mesh under it = the street's DEM line (smoothed 8 m along the way) |
+| curvature (`W_CURV` 12) | sample | the mesh's 2nd difference along the way = the DEM line's |
+| stay (`W_STAY` 0.05) | vertex | no change |
+| shape (`W_SHAPE` 0.2) | vertex | no change in the 4-neighbour Laplacian, so a pulled vertex is not a pyramid |
+
+`_tri_weights` interpolates exactly as `geo.terrainHeight()` and the mesh do
+(split along tx + tz = 1). Solved by CGLS in plain numpy (the import venv has
+no scipy), ~200 iterations; no vertex moves more than `D_MAX` 8 m (one past it
+is pinned there and the rest re-solve round it). **Nothing at runtime
+changes**: every consumer -- mesh, strips, junctions, buildings, peds, graded
+freeway floors -- already reads `terrainHeight()`, so the one-height-surface
+law holds by construction and the game pays nothing for it. Re-run:
+`build_raster.py` then `build_roads.py` (node heights) then `build_lots.py`.
+
+The curvature row is what does it. Fitting heights alone (abs + stay +
+shape) could not get below rms 0.47 m and barely moved the humps (6.2 k ->
+5.8 k) however weak the regularisers: the lattice cannot pass through every
+sample, and least squares spread the miss as a fresh wobble. Asking the mesh
+to BEND like the street does trades a little height for smoothness:
+
+| `W_CURV` | breaks > 8 % | humps > 1 m | rms to the DEM line | vertices moved, mean / p99 |
+|---|---|---|---|---|
+| 0 | 22.8 k -> 23.1 k | 6.2 k -> 5.8 k | 0.79 -> 0.47 m | 0.38 / 2.4 m |
+| 4 | 14.2 k | 3.5 k | -- | 0.59 / 4.2 m |
+| 10 | 6.6 k | 2.1 k | 0.45 m | 0.70 / 5.1 m |
+| **12** | **5.6 k** | **1.9 k** | 0.47 m | 0.73 / 5.3 m |
+| 25 | 3.0 k | 1.3 k (below the DEM line's own: flattening real crests) | 0.65 m | 0.92 / 7.7 m |
+
+**What it leaves alone, each learned from a site ridesurvey ranked worse than
+master:**
+
+- **Freeways, ramps and the ground under them** (every vertex of a triangle
+  they cross, and the ring round it). They are graded at load on the terrain
+  as their floor. Fitted alongside at half weight they fought the streets: I-5
+  downtown runs in a trench 10 m under the streets on its rim, the vertices
+  between belong to both, and the deck streets crossing it (Seneca, Spring,
+  Pike) lost their anchors. Left out but free, the streets beside them pulled
+  crests up under them (graded freeway acc>30 +27 %).
+- **The landmarks** (160 m round each in places.json): they were modelled on
+  the DEM as it was. MoPOP sank 1 m into the monorail's passage (verify), the
+  Central Library rose 5 m on its block.
+- **Bridge and tunnel ends** (50 m): the DEM is bare earth, with no abutment
+  fill, and the street mapped as ground runs on over what it reads as the
+  bank. Pulled to it, Roosevelt Way fell 19 m at 55 % into the University
+  Bridge.
+- **Open water** (vertices with half their 50 m wet) and the airfield never
+  move. **A shore vertex may**, for the street on the land beside it, but
+  every 10 m water cell in a triangle it makes is held (an active set, rounds
+  of re-solving) under its water's level - 0.4 m, or no higher than it stood:
+  forcing the cells the 40 m grid already stood over their water under it
+  dragged the banks down with them.
+
+**And two bugs in the import the survey found on the way**, both fixed at
+source:
+
+- **`grade_airfield` graded Beacon Hill.** Its 520 x 1680 m rectangle reaches
+  up the hill east of the runway, and its south-east corner set 70 m of
+  hillside to the field's 5.2 m: a 65-70 m pit under 38th, 39th and Cecil
+  Avenues South and Beacon Avenue, its streets at 40-50 %. It was the worst
+  site in the city (304 frames over 30 m/s2 in one 60 m cell). Ground more
+  than 25 m over the field is now graded less, and from 40 m not at all.
+- **A deck over a creek stood 9.5 m over its pit.** `build_roads.set_heights`
+  floored every deck over water at bed + 7 m + 2.5 m, but the bed is only dug
+  7 m x the water's share of the 50 m round a vertex: over a creek a few
+  metres wide that put the deck ~7 m over the banks its anchors stand on 25 m
+  away, a 30-40 % ski jump (NE 145th St, Southworth Drive). The floor now
+  scales by the same share (`wet_frac`).
+
+Measured with `tools/ridesurvey.mjs` (6546 km, 25005 chains, 35 M frames),
+master against this:
+
+| | master | now |
+|---|---|---|
+| streets (art/st/res): frames over 30 / 60 m/s2 | 13 065 / 5 057 | **10 165 / 3 505** |
+| streets: humps over 1 m in 30 m | 5 738 | **2 139** |
+| streets: 3 m grade breaks over 8 % | 13 574 | **4 767** |
+| street decks: frames over 30 / 60 m/s2 | 1 764 / 1 088 | **1 352 / 780** |
+| street decks: deck captures (jumps) | 64 | **35** |
+| freeways, ramps and their decks | 5 817 / 2 761 | 5 820 / 2 760 (untouched) |
+| whole city: over 30 / 60, humps, breaks over 8 % | 20 646 / 8 906, 6 238, 14 906 | **17 337 / 7 045, 2 629, 6 106** |
+| whole city: 60 m sites worse / better by 20+ | | 65 / 1 254 |
+
+verify: 0 of 36302 viaduct samples fell, 0 of 1082 approaches failed; streets
+under drawn water 180 -> 130 (verify's ceiling is 183; master and this booted
+the same way). tunneldrive and all six tunnelride rides match master to the
+centimetre; jank `sink` 86 -> 58, the rest within one or two; perfguard no
+regression; boot at 8x 48.1 s against master's 47.8 s. No runtime or boot cost: the change is
+`height.png` (0.52 -> 0.51 MB) and `roads.bin`'s deck node heights.
+
+Before / after, `docs/roads/` (ridesurvey `--shots`, AUTO_GPU=1):
+`magnolia.jpg` (the bluff sawtooth), `bronson.jpg` (Renton's roller coaster),
+`beacon38th.jpg` (the airfield's pit), `ne145deck.jpg` (the creek ski jump).
+
+### Reading the ride survey
+
+`tools/ridesurvey.mjs [--tag T] [--top N] [--cls a,b]` rides the centreline of
+every chain (the straightest same-class continuation through each node,
+never a tunnel) at 28 / 18 / 15 / 12 / 10 m/s for hwy / ramp / art / st / res
+and dt 1/60, following the ground EXACTLY as `Vehicle.update` does: four
+wheel samples through `groundAt` from y + 0.45 with the centre's `roadLift`,
+the bore spike guard, the 18/s follow and the 22 m/s2 fall off a crest. **If
+vehicles.js changes how a car follows the ground, change `ride()` with it.**
+A rider is seeded on the edge's own surface. The whole city takes ~60 s after
+boot. It writes `tools/data/ridesurvey-<tag>.json`; compare two by 60 m site
+to see what got worse, not just the totals -- a totals win hid 157 sites
+worse than master, which is how every rule above was found.
+
+- `--at x,z;x,z --range M` prints every chain through those points, one row
+  per 3 m: terrain, lift, ground, the wheel-average target, the car, its
+  acceleration and AIR. **Read `terr` against `ground` first**: equal means
+  draped (a raster problem), a lift of 0 means a deck (a grading problem).
+- `--shots DIR --names a,b` (with `--at`) a driver's eye and a raised view
+  along the road; run it against master's server too for a pair.
+- `RIDE_PROFDEBUG=1` boots with `__profDebug` (gradeRoads' per-sample
+  intermediates on `e.pdbg`); `RIDE_PROBE='<expr>'` evaluates after the ride.
+- `--carry` is a what-if, not the game: see below.
+
+**What is left, by class** (worst sites in the json):
+
+- **A car hops down a steep street.** The follow never sets `vy`, so leaving
+  the ground on a 25 %+ descent starts the fall from rest: air, land, lerp,
+  air. Carrying the descent into the fall (`--carry`) measured acc>30 -6 %,
+  acc>60 -13 % city-wide. Not shipped: it changes the vehicle follow, which
+  the tunnel guards depend on (re-run tunneldrive if you take it).
+- **Ferry terminals and shore decks** (Winslow Way E, Southworth, Manitou
+  Beach Drive): deck ends and the streets meeting them on ground the lake
+  carve dug as bed, the class in "Known gaps". An anchor in the dug bed pins
+  a causeway's deck 9 m down into the Sound and back up.
+- **A portal cutting through a street**: NE 28th St in Bellevue drops 14 m in
+  3 m into `cutDepth`'s trench (26 deck jumps in one site).
+- **Draped freeway beside portals** (`hwy` / `ramp` kinds, 22 + 32 km) still
+  ride at 23 / 13 frames over 30 m/s2 per 1000, ten times graded freeway.
+- **Downtown deck streets over I-5** (Union, Seneca, Pike): clearance humps
+  and deck-to-street steps at the trench rim.
+- **junctions.mjs: Queen Anne's hill junction (`15-hillQA`) went from 0 to
+  9 tarmac samples stacked within 1 cm**, the steeper fitted ground meeting
+  the strip run-on; `09-tee` sink 8 -> 25 and `12-artres` 16 -> 0 (totals
+  stack 11 -> 20, sink 73 -> 74). Not chased.
+- **SW Admiral Way's deck ends 6 m under the street it lands on** (-3290,
+  3355), an underpass trench edge: the bore spike guard holds the car there.
+  In master too.
+- The deck-floor cone (cap a street deck's imported height by a 15 % climb
+  from its anchors) was measured and NOT done: only 434 of 27943 deck
+  samples exceed it, and they are real overpasses (NE 45th St, S Holgate St
+  over I-5) that need the height.
 
 ## Parked cars sit on the slope
 

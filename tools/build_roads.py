@@ -96,6 +96,15 @@ def is_water(wet, x, z):
     return bool(wet[j, i])
 
 
+def wet_frac(wet, x, z):
+    """Share of water in the 50 m (5 x 5 mask cells) round (x, z): the same
+    window build_raster.carve_lakes digs a vertex's bed by (7 m x this)."""
+    i = int(round((x + MAP_HALF) / MASK_STEP))
+    j = int(round((z + MAP_HALF) / MASK_STEP))
+    win = wet[max(0, j - 2):j + 3, max(0, i - 2):i + 3]
+    return float(win.mean()) if win.size else 0.0
+
+
 # ---------------------------------------------------------------------------
 # Geometry helpers
 # ---------------------------------------------------------------------------
@@ -370,12 +379,18 @@ def set_heights(b, adj, height, wet):
     # surface is about terrain+7 -- and the lakes are not at sea level anyway
     # (Lake Union sits at 5 m, Green Lake at 50), so a fixed 5.5 m floor would
     # put a deck under the water it is supposed to cross.
+    #
+    # The bed is dug 7 m x the water's share of the 50 m round a vertex, so the
+    # surface is that far over the ground here, not a flat 7 m: a deck over a
+    # creek a few metres wide sat 9.5 m over its pit, 7 m above the banks its
+    # anchors stand on 25 m away -- a 30-40 % hump over every small bridge
+    # (NE 145th St, Southworth Drive). A wide channel still reads the full 7.
     BED, CLEAR = 7.0, 2.5
     floor = {}
     for i in deck:
         x, z = b.nodes[i][0], b.nodes[i][1]
         g = terrain_at(height, x, z)
-        floor[i] = g + BED + CLEAR if is_water(wet, x, z) else g + 0.6
+        floor[i] = g + BED * wet_frac(wet, x, z) + CLEAR if is_water(wet, x, z) else g + 0.6
         b.nodes[i][2] = floor[i]
     for _ in range(400):
         moved = 0.0

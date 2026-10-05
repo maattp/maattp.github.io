@@ -108,7 +108,20 @@ def build_height():
           f"({deep} samples clamped up to the -25 m sea-bed floor)")
     # The PNG is written after carve_lakes(), not here: the bed under standing
     # water has to be dug out before this is the surface anything stands on.
-    return h
+
+    def hires(x, z):
+        """The full-resolution mosaic at world (x, z), bilinear (vectorised)."""
+        xt2, _ = deg2tile_f(np.full_like(x, LAT0), LON0 + x / M_LON, ZOOM)
+        _, yt2 = deg2tile_f(LAT0 - z / M_LAT, np.full_like(z, LON0), ZOOM)
+        qx = xt2 * 256.0 - x0 * 256.0
+        qy = yt2 * 256.0 - y0 * 256.0
+        xi = np.clip(np.floor(qx).astype(int), 0, W - 2)
+        yi = np.clip(np.floor(qy).astype(int), 0, H - 2)
+        ax = np.clip(qx - xi, 0, 1)
+        ay = np.clip(qy - yi, 0, 1)
+        return (mosaic[yi, xi] * (1 - ax) * (1 - ay) + mosaic[yi, xi + 1] * ax * (1 - ay)
+                + mosaic[yi + 1, xi] * (1 - ax) * ay + mosaic[yi + 1, xi + 1] * ax * ay)
+    return h, hires
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +306,7 @@ def grade_airfield(h):
     import numpy as np
     AX, AZ, RY = 2707.0, 9055.0, -0.52
     HW, HL, FIELD, BLEND = 520.0, 1680.0, 5.2, 120.0
+    HILL, HILL_RAMP = 40.0, 15.0   # graded fully to 25 m over the field, not at all from 40
     c, sn = math.cos(RY), math.sin(RY)
     n = h.shape[0]
     step = (2 * MAP_HALF) / (n - 1)
@@ -305,6 +319,15 @@ def grade_airfield(h):
     dzo = np.maximum(np.abs(lz) - HL, 0)
     d = np.hypot(dxo, dzo)
     w = np.clip(1 - d / BLEND, 0, 1)
+    # ...and only the FIELD. The rectangle's east side runs up onto the hill
+    # behind the hangars, and its south-east corner took Beacon Hill's 70 m
+    # slope down to the runway: a 65-70 m pit under 38th, 39th and Cecil
+    # Avenues South and Beacon Avenue, its streets at 40-50 % grades (the
+    # worst site in tools/ridesurvey.mjs). The smear this exists for is the
+    # north bluff, ~20 m over the field; ground standing well above that is
+    # hillside, and is left alone.
+    over = h - FIELD
+    w = w * np.clip((HILL - over) / HILL_RAMP, 0, 1)
     graded = np.where(w > 0, h * (1 - w) + FIELD * w, h)
     inside = w >= 1
     print(f"  airfield graded: {int(inside.sum())} cells set to {FIELD} m, "
@@ -499,7 +522,36 @@ def carve_lakes(h, wet):
     for l in lakes[:6]:
         print(f"    level {l['level']:6.1f} m  {l['area']/1e6:6.2f} km2  "
               f"x {l['x0']:7.0f}..{l['x1']:7.0f}  z {l['z0']:7.0f}..{l['z1']:7.0f}")
-    return h
+    # grade_streets keeps the water under its surface: the level every
+    # vertex's water stands at (sea 0, a lake its own, else the DEM's), and
+    # how wet the 50 m round it is.
+    return h, level, frac
+
+
+LANDMARK_KEEP = 160.0   # metres round each landmark grade_streets leaves alone
+
+
+def near_landmarks():
+    """Vertices within LANDMARK_KEEP of a landmark in places.json.
+
+    Read from the shipped data, not rebuilt: build_places.py runs after this
+    step and its landmark positions come from OSM alone, not the terrain.
+    Moving the ground under a landmark moves the landmark and nothing it was
+    modelled against: MoPOP sank 1 m into the monorail's passage, the
+    Central Library rose 5 m on its block."""
+    out = np.zeros((HF_N, HF_N), dtype=bool)
+    p = os.path.join(HERE, "..", "apps", "auto", "data", "places.json")
+    xs = -MAP_HALF + np.arange(HF_N) * HF_STEP
+    X, Z = np.meshgrid(xs, xs)
+    if not os.path.exists(p):
+        sys.exit("build_raster: %s is missing. grade_streets keeps clear of the "
+                 "landmarks in the SHIPPED places.json; on a fresh import run "
+                 "build_places.py once first, then this." % os.path.normpath(p))
+    with open(p) as f:
+        landmarks = json.load(f)["landmarks"]
+    for l in landmarks:
+        out |= np.hypot(X - l["x"], Z - l["z"]) <= LANDMARK_KEEP
+    return out
 
 
 def save_height(h):
@@ -512,10 +564,21 @@ def save_height(h):
 
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
-    h = build_height()
+    h, hires = build_height()
     wet = build_masks()
-    h = carve_lakes(h, wet)
-    h = grade_airfield(h)
+    h0 = h.copy()
+    h, lake_level, frac = carve_lakes(h, wet)
+    ha = grade_airfield(h)
+    air = ha != h
+    h = ha
+    # Streets last. Never moved: the airfield, open water (over half the 50 m
+    # round a vertex is wet), and the ground under the landmarks, which were
+    # modelled on the DEM as it was. A shore vertex may move for a street on
+    # the land beside it, but grade_streets keeps the water over the bed.
+    hard = air | (frac >= 0.5) | near_landmarks()
+    soft = (frac > 0) & ~hard
+    from grade_streets import grade_streets
+    h = grade_streets(h, hard, soft, wet, lake_level, hires, MAP_HALF, HF_STEP)
     save_height(h)
     ok = probe(h, wet)
     for fn in ("height.png", "surface.png"):
