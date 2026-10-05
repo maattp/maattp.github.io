@@ -2307,15 +2307,23 @@ function marinaDock(spec, wl, idx) {
   // real land, not a DEM pixel or a breakwater standing out of the water:
   // dry 25 m out in most directions too
   const dry = (x, z) => G.terrainHeight(x, z) > lvl0 + 0.5 && !G.isWater(x, z);
-  const D = nearest(spec.x, spec.z, 320, (x, z) => {
-    if (!dry(x, z)) return false;
-    let n = 0;
-    for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; if (dry(x + Math.cos(a) * 25, z + Math.sin(a) * 25)) n++; }
-    return n >= 4;
-  });
-  if (!D) return null;
-  const W = nearest(D[0], D[1], 240, (x, z) => depth(x, z) >= 2.0);
-  if (!W) return null;
+  // (the two searches are kept by the boot cache, bootcache.js memo: [D, W],
+  // or as much of it as was found)
+  const DW = memo(`marina:${idx}`, () => {
+    const D = nearest(spec.x, spec.z, 320, (x, z) => {
+      if (!dry(x, z)) return false;
+      let n = 0;
+      for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; if (dry(x + Math.cos(a) * 25, z + Math.sin(a) * 25)) n++; }
+      return n >= 4;
+    });
+    if (!D) return new Float64Array(0);
+    const W = nearest(D[0], D[1], 240, (x, z) => depth(x, z) >= 2.0);
+    return Float64Array.from(W ? [...D, ...W] : D);
+  }, (v) => v instanceof Float64Array);
+  if (DW.length < 2) return null;
+  const D = [DW[0], DW[1]];
+  if (DW.length < 4) return null;
+  const W = [DW[2], DW[3]];
   let nx = W[0] - D[0], nz = W[1] - D[1];
   const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;
   let S = D;

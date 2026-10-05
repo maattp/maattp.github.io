@@ -1141,7 +1141,6 @@ export class World {
         if (i1 <= i0 || j1 <= j0) continue;
         const w = i1 - i0 + 1, d = j1 - j0 + 1;
         const pos = new Float32Array(w * d * 3);
-        const col = new Float32Array(w * d * 3);
         const uv = new Float32Array(w * d * 2);
         for (let j = 0; j < d; j++) {
           for (let i = 0; i < w; i++) {
@@ -1152,18 +1151,28 @@ export class World {
             pos[k] = x; pos[k + 1] = y; pos[k + 2] = z;
             uv[(j * w + i) * 2] = x / 13;
             uv[(j * w + i) * 2 + 1] = z / 13;
-            // How built-up the ground is comes from the real footprint area in
-            // each 400 m chunk, so the edge of the city follows the city rather
-            // than a rectangle. The query point is still pushed around by smooth
-            // noise and sampled three times, because the chunk grid is 400 m and
-            // a straight lookup would draw its staircase on the ground.
-            const c = this.groundTint(x, z, y);
-            const n = hash2(gi, gj) * 0.14 + 0.93;
-            col[k] = c[0] * n;
-            col[k + 1] = c[1] * n;
-            col[k + 2] = c[2] * n;
           }
         }
+        // How built-up the ground is comes from the real footprint area in
+        // each 400 m chunk, so the edge of the city follows the city rather
+        // than a rectangle. The query point is still pushed around by smooth
+        // noise and sampled three times, because the chunk grid is 400 m and
+        // a straight lookup would draw its staircase on the ground.
+        // (Kept by the boot cache, bootcache.js memo, as the cut cells are.)
+        const col = memo(`terrain:tint:${tx},${tz}`, () => {
+          const out = new Float32Array(w * d * 3);
+          for (let j = 0; j < d; j++) {
+            for (let i = 0; i < w; i++) {
+              const gi = i0 + i, gj = j0 + j, k = (j * w + i) * 3;
+              const c = this.groundTint(-H + gi * S, -H + gj * S, hf[gj * N + gi]);
+              const n = hash2(gi, gj) * 0.14 + 0.93;
+              out[k] = c[0] * n;
+              out[k + 1] = c[1] * n;
+              out[k + 2] = c[2] * n;
+            }
+          }
+          return out;
+        }, (v) => v instanceof Float32Array && v.length === w * d * 3);
         // CELLS OVER A PORTAL TRENCH ARE NOT DRAWN AT 40 M. The heightfield's
         // vertex spacing is 40 m and a road cut is 14 m wide, so the hole
         // cannot be expressed on this grid at all -- which is exactly why
@@ -1219,7 +1228,13 @@ export class World {
           });
           geo = appendGeometry(geo, pb.build(true));
         }
-        geo.boundingSphere = boundingSphere(geo.attributes.position.array);
+        {
+          const sp = memo(`terrain:sphere:${tx},${tz}`, () => {
+            const b = boundingSphere(geo.attributes.position.array);
+            return Float64Array.of(b.center.x, b.center.y, b.center.z, b.radius);
+          }, (v) => v instanceof Float64Array && v.length === 4);
+          geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(sp[0], sp[1], sp[2]), sp[3]);
+        }
         const m = new THREE.Mesh(geo, mat);
         m.receiveShadow = this.shadows;
         this.terrainGroup.add(m);
