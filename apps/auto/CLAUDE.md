@@ -5283,6 +5283,54 @@ measured mean), so verge and ground meet.
 `BEAUTY_PROBE='<expr>'` (evaluated after each view is posed, with `d = __dbg`).
 `docs/gfx166/` has before | after shots of this and of the ferry.
 
+## A phone-neutral graphics pass (docs/gfx169)
+
+The brief was "look better, cost the iPhone nothing". Everything landed
+inside existing shaders, textures and vertex data; the details are under
+"Rendering pipeline" (fog colour, sun-side haze, clouds) and "Surfaces"
+(water, foliage, paint). What was measured:
+
+- **Draws and triangles are identical.** The full `beauty.mjs` set's last
+  view reads 424 draws / 1,788,519 triangles before and after; perfguard
+  downtown 216-220 steady draws on both (traffic spawn is the spread).
+  No new render targets, passes or uniforms.
+- **The phone path's extra work is ALU only**: per fogged fragment a
+  normalize, a dot and a mix (sun-side haze), one more cloud texture tap per
+  sky pixel, and the water's (same-cost) material. The phone keeps the
+  one-layer car paint; only a desktop UA gets the clearcoat lobe.
+- **CPU at the 8x throttle is unchanged within noise** (perfcpu,
+  phone profile, interleaved runs on a machine shared with other agents):
+  render 9.95-10.33 ms master against 8.31-10.78 ms branch over two pairs;
+  every system moved together between runs, i.e. it was the machine.
+- **Boot:** the water map is computed now instead of painted, ~20 ms on a
+  desktop (Node, same V8). The whole of `buildTextures()` timed in-page read
+  270-430 ms on both builds -- the difference is under the noise -- and it is
+  first launch of a build only, since the boot cache keeps the PNG.
+
+`values.py` moved where intended and nowhere else: waterfront median
+0.121 -> 0.076 (dark troughs; its "shadow ratio" is now the water's, not a
+shade), park median 0.213 -> 0.194 and saturation 0.398 -> 0.331, skyline p95
+0.364 -> 0.438 (the haze reaching the sky's value); street, shopfront,
+facade, residential and downtown within 0.01.
+
+A fixed-rubric judge (1-10 against a modern open-world city, same rubric and
+the same eight views, scored before, mid and after) put the mean at 4.1 ->
+4.5 / 4.3: water 4 -> 5-5.5, sky 4.5 -> 5, lighting 4 -> 4.5, grade 4 ->
+4.5; roads, facades and building variety did not move, and vegetation stayed
+at 3 -- smooth-shaded low-poly crowns are better, but the judge's ceiling
+there is alpha-card foliage, which is overdraw and a new material the phone
+should not take. Its other repeated asks (SSAO-style contact darkening at
+street level, road wear, window depth) are the next candidates; SSAO
+already runs at `high`, gated to 0.7-1.2 m occluders, which is why it cannot
+darken kerbs.
+
+**Harness notes from the pass.** A variant harness that boots once and
+shoots N live settings per view (camera, materials, a recompiled shader via
+`material.fragmentShader = ...; needsUpdate = true`) made every choice here a
+same-boot A/B; settings carry over from one view to the next unless each
+variant resets them. Two harnesses on one CDP port hijack each other's page
+(the second navigates the first's tab mid-run): one port per run.
+
 ## Bicycles and the bike paths (v147)
 
 **Seattle's bike paths are drawn and ridden** (`src/bikes.js`).
