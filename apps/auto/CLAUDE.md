@@ -58,6 +58,7 @@ src/islands.js              the islands across the Sound: Easter eggs, the Sasqu
 src/pickleball.js           the pickleball court on Bainbridge and its screen
 src/pickleballgame.js       PICKLEBALL itself: singles, the two-bounce rule, the kitchen (no DOM)
 src/shadowcache.js          phones: the city's shadows drawn once, only movers per frame
+src/chunkcull.js            the city's chunk groups frustum-culled whole before the scene pass
 src/effects.js              particles + tracers
 src/audio.js                all sound, synthesised: engine models, one-shot bank,
                             positional traffic/sirens, radio (see "Sound")
@@ -2552,10 +2553,18 @@ calls and GL calls are expensive there in a way Chrome hides.
   slices and charges the pause to whatever is running, so a 7 ms
   world.update on a frame that built nothing is an artifact. Judge stalls
   unthrottled, by the longest build step (`rendercpu --builds`).
+  `--profile` adds a sampling CPU profile of each run (it used to never
+  return: its pass waited on frames that only the timing pass records).
 - **Count draws and GL calls, which are device-independent**: the
   `cats.js`-style frustum breakdown and a wrapped-GL call counter found most
   of what mattered. v76 -> v80 took Yesler Terrace from 338 to 171 draws and
-  ~1070 to ~700 GL calls a frame.
+  ~1070 to ~700 GL calls a frame. perfcpu prints `GL calls/frame` for every
+  run (all passes; the counting pass shadows the context's methods).
+- **One harness at a time, interleaved with the base.** Two perfcpu runs at
+  once on this machine are not a comparison: whichever Chrome loses the
+  scheduling reads ~45 % slower (a master that measured 12-13 ms alone read
+  19.8 ms beside a branch run). Alternate master and branch, sequentially,
+  and compare means over two or more rounds.
 - **Watch for per-frame program lookups**: a transparent DoubleSide material
   renders in two passes and sets needsUpdate twice a frame; use
   `forceSinglePass`. Wrap `customProgramCacheKey` to catch any other.
@@ -2725,6 +2734,121 @@ downtown six were in the frustum 1-10 km away. They show to 80 lengths
 (about 10 px on a phone), never closer than a parked car: 8-10 fewer draws a
 frame downtown (166 -> 157 driving, 159-163 -> 151 on foot).
 
+### The scene graph's own cost: hidden objects, Euler writes, chunk bounds
+
+**three recomposed ~3,600 objects' matrices every frame, and ~3,200 of them
+were hidden.** `scene.updateMatrixWorld` walks everything under the scene,
+visible or not: the 45 bike-share bikes, each with a rider's 25 bones (29
+objects), 25 more apron vehicles with riders, the parked aircraft and boats,
+the Link and freight trains out of range (16-24 bones each), the islands'
+deer. At the 8x throttle `updateMatrixWorld` + `multiplyMatrices` +
+`setFromEuler` were ~4.5 ms of a ~20 ms downtown frame, the top of the
+profile. Now:
+
+- **`skipHiddenMatrices(scene)`** (build.js) replaces the scene's own
+  `updateMatrixWorld`: a direct child that is hidden is skipped. 3,600 ->
+  330-480 objects a frame. **Only the scene's direct children**, because
+  their parent never moves (`scene.matrixAutoUpdate` is off): one shown again
+  recomposes itself and forces its subtree, exactly what the skipped frames
+  would have left. A deeper hidden child cannot be skipped this way -- one
+  with `matrixAutoUpdate` off keeps its world matrix only because a moving
+  parent forces it. **Anything that reads a hidden top-level object's
+  `matrixWorld` must update it itself** (`getWorldPosition` does, so do the
+  bellows and the IK). The one reader that didn't, the contact shadow reading
+  the player's feet on the frame he gets out of a car, checks
+  `scene.userData.matrixSkipped` (what the last update skipped).
+- **Euler writes only when the angle changed.** Every write to
+  `rotation.x/y/z` (and `.order`) recomputes the quaternion, and
+  `Vehicle.sync` runs for every vehicle in the list every frame, parked and
+  settled ones too, plus each bicycle's spin meshes. `sync`, `_pedal` and a
+  pedestrian's group compare first. Nothing writes those quaternions
+  directly, so a skipped write leaves exactly what the write would have.
+- **The city's chunk groups are culled whole** (`chunkcull.js`) before three
+  tests their meshes: 32-57 of the ~81 groups are outside the view at any
+  heading. Each group's bounds (the union of its meshes' spheres) are
+  computed once; a group wholly outside the frustum is hidden for the scene
+  pass and shown again after -- and shown for the shadow pass inside it (its
+  wrapper sits outside shadowcache.js's, so the cache's re-renders see them
+  too). Exact: the same draws and triangles and **zero differing pixels**
+  against the unculled render at six headings at downtown, Yesler Terrace and
+  I-5 (phone profile, shadow cache on). A group holding anything three does
+  not cull by its geometry's sphere (instanced, skinned, `frustumCulled`
+  off) is left alone. Small: ~2.5 % of the scene pass.
+
+**Traffic and the crowd** (all exact: `aidrive.mjs` and `trafficcheck.mjs`
+print identical results before and after):
+
+- **Kerbside parking slots are per edge, worked out once** (`kerbSlots`).
+  `updateParked` reran every slot's hash and the water, buildable and
+  jump-clear tests for every edge within 105 m every frame -- mostly for
+  slots that fail them. 0.4-0.5 -> ~0.1 ms/frame at 8x. The cache is cleared
+  past 3,000 edges.
+- **The car-ahead scan's path segments are computed once per car**, not a
+  `Math.hypot` per segment for every car projected onto them (three more for
+  a crossing car). The scan, the IDM and the route planner (the "How the AI
+  drives" review's concern) measured 0.7 ms/frame downtown and 1.5 ms on I-5
+  at 8x with ~55 driven cars, wrappers included, before this: real (half of
+  traffic's time on I-5), but not the frame's problem.
+- `Vehicle.bodyR` is kept (it was three `Math.hypot`s a pair in the sweep);
+  unattended vehicles share two read-only input objects; the vehicles that
+  can knock a pedestrian over are found once a frame, not per pedestrian.
+
+**The HUD writes a readout only when it changes**: money, speed and the
+health bar were set every frame, and a `textContent` write replaces the text
+node even with the same string.
+
+Measured, perfcpu `--throttle=8`, 400 frames, master and branch alternated
+sequentially, mean of two rounds each (draws and GL calls unchanged within
+spawn noise):
+
+| 8x, CPU/frame mean; frames over 20 ms of 400 | before | after |
+|---|---|---|
+| drive-dt (downtown) | 13.7 ms, 66 | **9.0 ms, 7** |
+| foot-dt | 12.9 ms, 26 | **8.8 ms, 2** |
+| drive-qa (Queen Anne) | 10.9 ms, 8 | **6.3 ms, 0** |
+| foot-yt (Yesler Terrace) | 14.0 ms, 49 | **10.3 ms, 13** |
+| drive-i5 | 12.9 ms, 40 | **9.4 ms, 10** |
+| render system, drive-dt / foot-yt | 8.8 / 9.6 ms | 5.4 / 6.8 ms |
+| traffic system, drive-dt / drive-i5 | 2.0 / 2.2 ms | 1.2 / 1.2 ms |
+
+The scene pass alone, on one frozen frame scissored to one pixel (so the
+GPU does nothing and submission is what is timed), 8x, the changes switched
+in and out on the same scene:
+
+| scene pass CPU, 8x | none | + hidden-object skip | + chunk cull |
+|---|---|---|---|
+| downtown | 6.6 ms | 4.4 ms | 4.3 ms |
+| Yesler Terrace | 6.5 ms | 4.3 ms | 4.3 ms |
+| I-5 | 5.1 ms | 2.9 ms | 2.8 ms |
+
+Boot is unchanged (8x, first frame: first launch 44.3 / 43.9 s before, 44.2
+/ 43.4 s after; cached 20.7 / 19.6 s before, 20.4 / 19.7 s after). gait.mjs
+prints the same, shadowcheck.mjs passes with the same texels, perfguard's
+draw and triangle counts hold (its `holes` figure is wall-clock streaming:
+master re-checked against its own record read 58 -> 63).
+
+What is left in the profile is per draw: `projectObject`,
+`renderBufferDirect`, `setProgram`, the VAO binding checks -- ~200 draws and
+~1,250-1,500 GL calls a frame (~6.3 a draw: a VAO bind, the model-view
+matrix and the draw each time, texture binds and material uniforms at each
+of ~50 material switches, and per posed pedestrian a bone-texture upload of
+~10 calls). Not taken, and why:
+
+- **Merging the Link/freight chunk meshes** (~28 of Yesler Terrace's draws
+  are rail chunks): each chunk's bed, rails and signs are range-toggled on
+  their own, so merged pieces would appear and vanish at other distances.
+- **Off-screen traffic at a quarter rate past ~150 m**: invisible, but a
+  phone-only path the deterministic traffic harnesses cannot exercise
+  (they run the desktop profile), and it changes how those cars drive.
+- **An x-sorted broad phase for the car-ahead scan**: exact only if the
+  candidates are visited in list order, and cars move during the loop; ~0.3
+  ms at 8x was not worth the bookkeeping.
+- **Sharing a paint material between cars of one colour** would cut the
+  uniform churn between car draws, but every car's `bodyMat` is its own
+  (damage, disposal), and paint is being reworked separately.
+- **Minimap icons as pre-rendered sprites**: drawImage resamples where the
+  vector path does not; not pixel-identical.
+
 ## The flight recorder (v168)
 
 **A crash on the iPhone leaves nothing behind**: WebKit ending the page for
@@ -2787,6 +2911,13 @@ judge the cached path with `boottime.mjs --twice` and a `BOOT_PROBE` hash
 |---|---|---|
 | first launch of a build | 31.3 s | ~22 s (incl. 1.6 s writing the cache) |
 | later launches (cached) | 31.3 s | ~8 s |
+
+**It has grown back since.** At v172, `boottime.mjs --throttle=8` reads
+~44 s for a first launch and ~20 s cached. The cached launch's biggest
+steps are not in the cache at all: Placing the landmarks ~6.1 s, Waking the
+city 3.7-4.3 s, Raising the terrain ~3.6 s (first launch: landmarks 9.3,
+waking 7.4, terrain 7.3, grading the freeways 6.5). The landmarks are the
+next thing worth a cache entry.
 
 ## Draw-call budget
 
