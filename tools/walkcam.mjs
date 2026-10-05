@@ -39,6 +39,7 @@ try {
       if ('${MODE}' === 'walk') { inp.y = -0.28; }
       for (let i = 0; i < n; i++) { P.update(dt, inp, { x: 0, y: 0 }, d.controls, d.traffic, d.peds); d.world.update(P.x, P.z, 2); }
       P.applyCamera(d.camera);
+      if (d.peds.addContactShadow) { P.h.group.updateMatrixWorld(true); d.peds.clearContactShadows(); d.peds.addContactShadow(P.h, P.x, P.y, P.z, P.heading); }
       if (side) { const h = P.heading, sx = Math.cos(h), sz = -Math.sin(h);
         d.camera.position.set(P.x + sx * 3.2, P.y + 1.0, P.z + sz * 3.2); d.camera.lookAt(P.x, P.y + 0.9, P.z); }
       d.camera.updateMatrixWorld(true);
