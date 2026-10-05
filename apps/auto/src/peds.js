@@ -529,10 +529,13 @@ function drawAtlas() {
     const cg = g.createLinearGradient(0, Q(1), 0, Q(0.80));
     cg.addColorStop(0, grey(0.70)); cg.addColorStop(1, grey(0.80));
     g.fillStyle = cg; g.fillRect(0, 0, CELL, Q(0.80));
-    const NL = 40;
+    // (52 wide locks, most ending in the tip band: with 40 narrower ones
+    // ending anywhere, the dark shell between them ran down the hair in thin
+    // wavy streaks -- "dripping paint")
+    const NL = 52;
     for (let k = 0; k < NL; k++) {
-      const x = P((k + R.n()) / NL), w = 10 + R.n() * 12;
-      const sEnd = R.n() < 0.25 ? 0.25 + R.n() * 0.35 : R.n() * 0.18;
+      const x = P((k + R.n()) / NL), w = 12 + R.n() * 10;
+      const sEnd = R.n() < 0.12 ? 0.18 + R.n() * 0.22 : R.n() * 0.10;
       const yTop = Q(1) - 4, yEnd = Q(sEnd), dx = (R.n() - 0.5) * 16;
       const v0 = 0.80 + R.n() * 0.18;
       // Each lock ends in three or four WISPS of different lengths: one
@@ -561,7 +564,7 @@ function drawAtlas() {
         // dark down its two sides, where it lies over its neighbours -- soft,
         // and not round the tip, or every lock is outlined like a cartoon
         for (const sd of [-1, 1]) {
-          g.strokeStyle = grey(0.50, 0.22); g.lineWidth = 3.5;
+          g.strokeStyle = grey(0.55, 0.12); g.lineWidth = 3.5;
           g.beginPath(); g.moveTo(xx + sd * w / 2, yTop);
           g.quadraticCurveTo(xx + sd * w / 2, yTop + (yEnd - yTop) * 0.45, xx + sd * w * 0.3 + dx * 0.3, yTop + (yEnd - yTop) * 0.7);
           g.stroke();
@@ -589,15 +592,18 @@ function drawAtlas() {
   inCell(CELLS.stubble, () => {
     const yT = Q(TIP_S);
     g.fillStyle = grey(0.90); g.fillRect(0, 0, CELL, yT + 2);
+    // Every mark is UPRIGHT in the cell: it is ~2.2 mm a pixel round the head
+    // and ~0.4 up it, so a square dot is a horizontal dash on the head, and
+    // the pale gaps between dashes drew a scratched white line at the edge.
     for (let k = 0; k < 9000; k++) {
       g.fillStyle = grey(0.35 + R.n() * 0.3, 0.35);
-      g.fillRect(R.n() * CELL, R.n() * (yT + 2), 1 + R.n(), 1.5 + R.n());
+      g.fillRect(R.n() * CELL, R.n() * (yT + 2), 0.6 + R.n() * 0.5, 3 + R.n() * 4);
     }
     g.clearRect(0, yT, CELL, CELL - yT);
-    for (let k = 0; k < 1400; k++) {
-      const y = yT + Math.pow(R.n(), 1.8) * (CELL - yT);
-      g.fillStyle = grey(0.80 + R.n() * 0.1);
-      g.fillRect(R.n() * CELL, y - 1, 2.5, 3);
+    for (let k = 0; k < 2600; k++) {
+      const y = yT + Math.pow(R.n(), 1.6) * (CELL - yT);
+      g.fillStyle = grey(0.70 + R.n() * 0.2);
+      g.fillRect(R.n() * CELL, y - 4, 1.2, 5 + R.n() * 6);
     }
   });
   // The palm and back of the hand (fingers are geometry now, on the plain
@@ -735,11 +741,11 @@ function drawAtlas() {
         g.quadraticCurveTo(bx + sx * bw * 0.04, by + 1.6 * my_, bx - sx * bw * 0.50, by + 8.4 * my_);
         g.closePath(); g.fill();
         // and broken into hairs at its edges, so it is not a stroke of paint
-        g.strokeStyle = rgba(brow, 0.45); g.lineWidth = 0.8 * my_;
+        g.strokeStyle = rgba(brow, 0.30); g.lineWidth = 0.8 * my_;
         for (let q = 0; q < 14; q++) {
-          const f = q / 13, x0 = bx + sx * bw * (-0.48 + 1.0 * f);
-          const y0 = by + lerp(5.5, 1.5, f) * my_ + (R.n() - 0.5) * 3 * my_;
-          g.beginPath(); g.moveTo(x0, y0); g.lineTo(x0 + sx * 4 * mx_, y0 - (2.5 - f) * my_); g.stroke();
+          const f = 0.08 + 0.84 * q / 13, x0 = bx + sx * bw * (-0.48 + 1.0 * f);
+          const y0 = by + lerp(5.0, 1.8, f) * my_ + (R.n() - 0.5) * 2 * my_;
+          g.beginPath(); g.moveTo(x0, y0); g.lineTo(x0 + sx * 2.5 * mx_, y0 - (1.6 - f) * my_); g.stroke();
         }
         // nostrils: two small darks on the underside, crisp-edged
         const [qx, qy] = hp(sx * 0.0078, J.eye - 0.047, 0.101);
@@ -1483,7 +1489,7 @@ function buildHair(style, seed, hair, grid, body) {
   // Under a layer of locks the shell is the shadowed hair between them.
   // (0.86, not 0.72: darker, the shell's band under the locks' ends read as
   // a second helmet under the first)
-  const shellCol = layered ? [hair[0] * 0.86, hair[1] * 0.86, hair[2] * 0.86] : hair;
+  const shellCol = layered ? [hair[0] * 0.92, hair[1] * 0.92, hair[2] * 0.92] : hair;
   let v0 = nv();
   hb.patch(rows, shellCol, [0, 1, 0]);
   mapUV(v0, (u, v) => [colU(Math.round(u * K)), sG[Math.round(v * (NR - 1))][Math.round(u * K)]]);
