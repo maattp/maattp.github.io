@@ -36,7 +36,7 @@
 // RIDE_PROBE='<expr>' evaluates an expression after the survey (same boot).
 //
 // Usage:  python3 -m http.server 8000; node tools/ridesurvey.mjs --tag base
-import { launchChrome } from './chrome.mjs';
+import { launchChrome, GPU } from './chrome.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -55,6 +55,42 @@ const CARRY = args.includes('--carry');
 // one row per ~3 m, +-RANGE m around the point (--range, default 150)
 const AT = argVal('--at') ? argVal('--at').split(';').map((p) => p.split(',').map(Number)) : null;
 const RANGE = +(argVal('--range') || 150);
+// --shots DIR (with --at): per point, a driver's eye and a raised view along
+// the road, after the chunks there have streamed in. Names from
+// --names a,b,...; AUTO_GPU=1 for the Mac's GPU (see tools/chrome.mjs).
+const SHOTS = argVal('--shots');
+const NAMES = (argVal('--names') || '').split(',');
+
+// Pose the camera on (x, z)'s nearest drivable edge, looking along it.
+const POSE = (x, z, view) => `(() => {
+  const d = window.__dbg, c = d.city, w = d.world;
+  const pending = () => [...w.chunks.values()].filter((k) => k.lod !== k.wantLod).length;
+  for (let i = 0; i < 20000 && (i === 0 || pending() > 0); i++) w.update(${x}, ${z}, 9);
+  let best = null, bd = 1e9;
+  for (const ei of c.edgesNear(${x}, ${z}, 40)) {
+    const e = c.edges[ei];
+    if (e.tunnel) continue;
+    const a = c.nodes[e.a];
+    const t = Math.max(0, Math.min(1, ((${x} - a.x) * e.dx + (${z} - a.z) * e.dz) / e.len));
+    const dd = Math.hypot(${x} - a.x - e.dx * e.len * t, ${z} - a.z - e.dz * e.len * t);
+    if (dd < bd) { bd = dd; best = e; }
+  }
+  const ux = best ? best.dx : 1, uz = best ? best.dz : 0;
+  const gy = c.groundAt(${x}, ${z}, null);
+  const cam = d.camera;
+  cam.up.set(0, 1, 0);
+  // both look ALONG the road at the point: 'eye' from 2 m over the
+  // carriageway 45 m back, 'raised' from 12 m up 80 m back
+  const back = ${JSON.stringify(view)} === 'eye' ? 45 : 80, up = ${JSON.stringify(view)} === 'eye' ? 2 : 12;
+  const px = ${x} - ux * back, pz = ${z} - uz * back;
+  cam.position.set(px, c.groundAt(px, pz, null) + up, pz);
+  cam.lookAt(${x}, gy + 1, ${z});
+  d.sun.position.set(${x} - 150, gy + 230, ${z} - 110);
+  d.sun.target.position.set(${x}, gy, ${z}); d.sun.target.updateMatrixWorld();
+  cam.updateMatrixWorld(true);
+  d.scene.updateMatrixWorld(true);
+  return true;
+})()`;
 const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
 const PORT = +process.env.AUTO_CDP_PORT || 9251;
 
@@ -331,7 +367,7 @@ function survey(opts) {
 
 // ---- node side --------------------------------------------------------------
 async function main() {
-  const chrome = launchChrome({ port: PORT, profile: `/tmp/auto-ridesurvey-${PORT}`, width: 640, height: 400 });
+  const chrome = launchChrome({ port: PORT, profile: `/tmp/auto-ridesurvey-${PORT}`, width: SHOTS ? 960 : 640, height: SHOTS ? 540 : 400 });
   try {
     let page;
     for (let i = 0; i < 90 && !page; i++) {
@@ -376,6 +412,21 @@ async function main() {
         }
       }
       if (process.env.RIDE_PROBE) console.log(JSON.stringify(await evaluate(process.env.RIDE_PROBE), null, 2));
+      if (SHOTS) {
+        mkdirSync(SHOTS, { recursive: true });
+        await evaluate(`(() => { for (const id of ['hud', 'pad', 'stickZone', 'lookZone', 'objective', 'toast', 'rotate', 'topBtns']) { const el = document.getElementById(id); if (el) el.style.display = 'none'; } return 1; })()`);
+        for (let k = 0; k < AT.length; k++) {
+          const [x, z] = AT[k];
+          for (const view of ['eye', 'raised']) {
+            await evaluate(POSE(x, z, view));
+            await sleep(GPU ? 1500 : 8000);
+            const r = await send('Page.captureScreenshot', { format: 'jpeg', quality: 72 });
+            const f = `${SHOTS}/${NAMES[k] || x + '_' + z}-${view}.jpg`;
+            writeFileSync(f, Buffer.from(r.result.data, 'base64'));
+            console.log('wrote', f);
+          }
+        }
+      }
       return;
     }
     console.log(`surveyed ${res.km} km in ${res.chains} chains in ${((Date.now() - t1) / 1000).toFixed(0)} s\n`);
