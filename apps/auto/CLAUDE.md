@@ -3427,7 +3427,10 @@ master against this:
 | whole city: 60 m sites worse / better by 20+ | | 65 / 1 254 |
 
 verify: 0 of 36302 viaduct samples fell, 0 of 1082 approaches failed; streets
-under drawn water 145 -> 130. No runtime or boot cost: the change is
+under drawn water 180 -> 130 (verify's ceiling is 183; master and this booted
+the same way). tunneldrive and all six tunnelride rides match master to the
+centimetre; jank `sink` 86 -> 58, the rest within one or two; perfguard no
+regression; boot at 8x 48.1 s against master's 47.8 s. No runtime or boot cost: the change is
 `height.png` (0.52 -> 0.51 MB) and `roads.bin`'s deck node heights.
 
 Before / after, `docs/roads/` (ridesurvey `--shots`, AUTO_GPU=1):
@@ -3475,6 +3478,13 @@ worse than master, which is how every rule above was found.
   ride at 23 / 13 frames over 30 m/s2 per 1000, ten times graded freeway.
 - **Downtown deck streets over I-5** (Union, Seneca, Pike): clearance humps
   and deck-to-street steps at the trench rim.
+- **junctions.mjs: Queen Anne's hill junction (`15-hillQA`) went from 0 to
+  9 tarmac samples stacked within 1 cm**, the steeper fitted ground meeting
+  the strip run-on; `09-tee` sink 8 -> 25 and `12-artres` 16 -> 0 (totals
+  stack 11 -> 20, sink 73 -> 74). Not chased.
+- **SW Admiral Way's deck ends 6 m under the street it lands on** (-3290,
+  3355), an underpass trench edge: the bore spike guard holds the car there.
+  In master too.
 - The deck-floor cone (cap a street deck's imported height by a 15 % climb
   from its anchors) was measured and NOT done: only 434 of 27943 deck
   samples exceed it, and they are real overpasses (NE 45th St, S Holgate St
