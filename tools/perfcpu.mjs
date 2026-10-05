@@ -385,13 +385,31 @@ function pageInstall() {
   };
   S.count = async (n) => {
     S.counts = {}; S.frames = []; S.countOn = true;
+    // WebGL calls a frame, every pass (shadow, scene, post), counted by
+    // shadowing the context's methods on the instance for this pass only: on
+    // the phone each one is a message to WebKit's GPU process.
+    const gl = d.renderer.getContext(), glN = { calls: 0, draws: 0 }, own = [];
+    for (let o = Object.getPrototypeOf(gl); o && o !== Object.prototype; o = Object.getPrototypeOf(o)) {
+      for (const k of Object.getOwnPropertyNames(o)) {
+        if (own.includes(k)) continue;
+        const desc = Object.getOwnPropertyDescriptor(o, k);
+        if (!desc || typeof desc.value !== 'function' || k === 'constructor') continue;
+        own.push(k);
+        const f = desc.value, draw = /^draw/.test(k);
+        gl[k] = function () { glN.calls++; if (draw) glN.draws++; return f.apply(this, arguments); };
+      }
+    }
     while (S.frames.length < n) await S.nextFrames(5);
     S.countOn = false;
+    for (const k of own) delete gl[k];
     const out = {};
     for (const [k, v] of Object.entries(S.counts)) out[k] = { perFrame: +(v.n / S.frames.length).toFixed(1), us: +(v.ms / v.n * 1000).toFixed(2), msFrame: +(v.ms / S.frames.length).toFixed(3) };
+    out.gl = { perFrame: +(glN.calls / S.frames.length).toFixed(1), draws: +(glN.draws / S.frames.length).toFixed(1) };
     return out;
   };
-  S.run = async (n) => { S.frames = []; while (S.frames.length < n) await S.nextFrames(5); return S.frames.length; };
+  // (frames are only recorded while timing or counting, so `--profile`'s pass
+  // counts them itself: waiting on S.frames here never returned)
+  S.run = async (n) => { await S.nextFrames(n); return n; };
   return { phone: /iPhone/.test(navigator.userAgent) };
 }
 
@@ -500,7 +518,8 @@ try {
     console.log(`  slow quarter spends extra: ${T.slowQ}`);
     if (AU) console.log(`  audio (${AU.state}): rendered nodes mean ${AU.total} (max ${AU.totalMax}) = persistent ${AU.persist} (max ${AU.persistMax}) + one-shots ${AU.shot} (max ${AU.shotMax}); created ${AU.createdPerS}/s; bank ${AU.bank ? JSON.stringify(AU.bank) : 'n/a'}`);
     for (const w of T.worst) console.log(`    ${w}`);
-    console.log('  queries/frame: ' + Object.entries(C).sort((a, b) => b[1].msFrame - a[1].msFrame)
+    if (C.gl) console.log(`  GL calls/frame ${C.gl.perFrame} (draw calls ${C.gl.draws}, all passes)`);
+    console.log('  queries/frame: ' + Object.entries(C).filter(([k]) => k !== 'gl').sort((a, b) => b[1].msFrame - a[1].msFrame)
       .map(([k, v]) => `${k} ${v.perFrame}x ${v.us}us = ${v.msFrame}ms`).join('  '));
     if (PROFILE) {
       await send('Profiler.start');

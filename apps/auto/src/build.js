@@ -77,6 +77,49 @@ export function freezeStatic(root) {
 }
 
 /**
+ * Skip the matrices of the scene's HIDDEN top-level objects. three walks every
+ * object under the scene each render, visible or not, and on a phone ~3,000 of
+ * the ~3,600 it recomposed a frame were hidden: bike-share bikes with their
+ * riders' 25 bones (29 objects each), apron vehicles, the Link and freight
+ * trains out of range, the islands' deer. Nothing draws them, and nothing
+ * reads their world matrices while they are hidden (getWorldPosition and the
+ * IK update their own; peds.js reads feet only of a visible body).
+ *
+ * Only the scene's direct children are skipped, because their parent never
+ * moves (scene.matrixAutoUpdate is off): when one is shown again, its own
+ * update recomposes it and forces its subtree, which is exactly what the
+ * skipped frames would have left there. A deeper hidden child could not be
+ * skipped this way -- one with matrixAutoUpdate off keeps its world matrix
+ * only because a moving parent forces it.
+ */
+export function skipHiddenMatrices(scene) {
+  // what the last update skipped: their world matrices are older than the
+  // frame (peds.js reads the player's feet, and must not on the frame he is
+  // shown again)
+  const skipped = scene.userData.matrixSkipped = new Set();
+  // three r160's signature (force only; updateWorldMatrix is separate).
+  // Re-check on a three bump: a newer updateMatrixWorld would be shadowed.
+  scene.updateMatrixWorld = function (force) {
+    skipped.clear();
+    if (this.matrixAutoUpdate) this.updateMatrix();
+    if (this.matrixWorldNeedsUpdate || force) {
+      this.matrixWorld.copy(this.matrix);
+      this.matrixWorldNeedsUpdate = false;
+      force = true;
+    }
+    const ch = this.children;
+    for (let i = 0, n = ch.length; i < n; i++) {
+      const c = ch[i];
+      if (force) c.updateMatrixWorld(true);
+      else if (c.matrixWorldAutoUpdate === true) {
+        if (c.visible) c.updateMatrixWorld(false);
+        else skipped.add(c);
+      }
+    }
+  };
+}
+
+/**
  * A static mesh whose JS copy of its arrays goes once they are on the GPU (the
  * phone path; see world.js buildChunkStep). Nothing may raycast it after, and
  * a lost context cannot re-upload it: its owner rebuilds instead.

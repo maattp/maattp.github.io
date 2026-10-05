@@ -7086,6 +7086,7 @@ export class Vehicle {
     this.radius = Math.max(t.spec.len, t.spec.wid) * 0.42;
     this.halfLen = t.spec.len / 2;
     this.halfWid = t.spec.wid / 2;
+    this.bodyR = Math.hypot(this.halfLen, this.halfWid);   // traffic.js car-car broad phase
     this.dodge = 0; this.dodgeT = 0;   // traffic.js: steering round a car in the lane
     this.mass = t.spec.mass;
     // EVERY FIELD ANYONE SETS, DECLARED HERE. traffic.js, player.js and main.js
@@ -8694,7 +8695,7 @@ export class Vehicle {
     const d = this.wheelSpin - this._spinWas;
     this._spinWas = this.wheelSpin;
     if (this.pedaling && Math.abs(d) < 1) this.crank += d / 2.4;
-    for (const m of this.spinMeshes) m.rotation.x = this.crank;
+    for (const m of this.spinMeshes) if (m.rotation.x !== this.crank) m.rotation.x = this.crank;   // (see sync)
     const h = this.rider;
     // the limbs are solved only where someone could see them (bikes.js sets
     // _ikFar past 45 m): four two-bone solves and a matrix update a rider
@@ -8724,16 +8725,21 @@ export class Vehicle {
     // lifted so the back wheel stays on the ground.
     const wl = this.wheelie ? (this.spec.wheelbase || 1.3) * 0.5 * Math.sin(this.wheelie) : 0;
     this.group.position.set(this.x, this.y + this.yVis + wl, this.z);
-    this.group.rotation.y = this.heading;
-    this.tilt.rotation.x = this.pitch - this.wheelie;
+    // Each Euler write recomputes the quaternion (six trig calls), and every
+    // vehicle in the list is synced every frame, parked and settled ones too:
+    // write only what changed. Nothing sets these quaternions directly, so a
+    // skipped write leaves exactly what the write would have.
+    const gr = this.group.rotation, tr = this.tilt.rotation, tx = this.pitch - this.wheelie;
+    if (gr.y !== this.heading) gr.y = this.heading;
+    if (tr.x !== tx) tr.x = tx;
     if (this.shadowTilt) {
       const st = this.shadowTilt;
       st.position.y = this.tilt.position.y - wl;
-      st.rotation.x = this.pitch;
-      st.rotation.z = this.roll;
+      if (st.rotation.x !== this.pitch) st.rotation.x = this.pitch;
+      if (st.rotation.z !== this.roll) st.rotation.z = this.roll;
       st.visible = this.onGround && !this.stunt;
     }
-    this.tilt.rotation.z = this.roll;
+    if (tr.z !== this.roll) tr.z = this.roll;
     if (this.detailedWheels) {
       for (const m of this.wheelMeshes) {
         // Steer OUTSIDE the spin. Euler order matters here: the default 'XYZ'
@@ -8741,7 +8747,7 @@ export class Vehicle {
         // car's X axis rather than the wheel's own axle -- so a turned front
         // wheel tumbles instead of rolling, which is the visible wobble.
         // 'YXZ' gives Ry*Rx: roll on the axle first, then steer the whole thing.
-        m.rotation.order = 'YXZ';
+        if (m.rotation.order !== 'YXZ') m.rotation.order = 'YXZ';
         m.rotation.x = this.wheelSpin;
         m.rotation.y = m.userData.front ? this.steer : 0;
       }

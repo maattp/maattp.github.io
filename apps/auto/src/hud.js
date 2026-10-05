@@ -356,6 +356,23 @@ export class Hud {
     this.miniSize = this.mini.width;
   }
 
+  /** el.textContent = text, skipped when it already says that (cached under
+   *  `key`, so nothing is read back from the DOM). */
+  _put(el, key, text) {
+    const c = this._shown || (this._shown = {});
+    if (c[key] === text) return;
+    c[key] = text;
+    el.textContent = text;
+  }
+
+  /** el.style[prop] = val, skipped when unchanged. */
+  _css(el, prop, val) {
+    const c = this._shown || (this._shown = {}), key = 'css:' + prop;
+    if (c[key] === val) return;
+    c[key] = val;
+    el.style[prop] = val;
+  }
+
   showToast(text, ms = 2600) {
     this.toast.textContent = text;
     this.toast.classList.add('show');
@@ -640,25 +657,28 @@ export class Hud {
 
     }
 
-    // readouts
-    this.money.textContent = formatMoney(game.money);
-    this.healthFill.style.width = `${clamp(player.health, 0, 100)}%`;
-    this.healthFill.style.background = player.health > 45 ? '#4fd07a' : player.health > 20 ? '#f0b429' : '#e5484d';
+    // readouts. Written only when they CHANGE: a textContent write replaces
+    // the text node even with the same string, and every one dirtied style and
+    // layout for the frame -- six of them, 60 times a second, for numbers that
+    // mostly stand still.
+    this._put(this.money, 'money', formatMoney(game.money));
+    this._css(this.healthFill, 'width', `${clamp(player.health, 0, 100)}%`);
+    this._css(this.healthFill, 'background', player.health > 45 ? '#4fd07a' : player.health > 20 ? '#f0b429' : '#e5484d');
     const kph = player.onFoot ? player.speed * 3.6 : Math.abs(player.vehicle ? player.vehicle.vLong : 0) * 3.6;
     // A balloon's instrument is its altimeter, not a speedometer.
     const alt = !player.onFoot && player.vehicle && player.vehicle.spec.balloon;
-    this.speedVal.textContent = Math.round(alt ? player.vehicle.y : kph);
-    if (this.speedUnit && this.speedUnit.textContent !== (alt ? 'm' : 'km/h')) this.speedUnit.textContent = alt ? 'm' : 'km/h';
+    this._put(this.speedVal, 'speed', String(Math.round(alt ? player.vehicle.y : kph)));
+    if (this.speedUnit) this._put(this.speedUnit, 'unit', alt ? 'm' : 'km/h');
     // Flying anything, the altitude over sea level under the speed (a
     // balloon's is already the main readout)
     const fl = !player.onFoot && player.vehicle && player.vehicle.spec.plane && !player.vehicle.spec.balloon;
     if (this.altRow) {
       this.altRow.classList.toggle('hidden', !fl);
-      if (fl) this.altVal.textContent = Math.max(0, Math.round(player.vehicle.y));
+      if (fl) this._put(this.altVal, 'alt', String(Math.max(0, Math.round(player.vehicle.y))));
     }
     this.armourRow.classList.toggle('hidden', player.onFoot);
     this.ammoEl.classList.toggle('hidden', !(player.onFoot && player.armed));
-    if (player.armed) this.ammoEl.textContent = `⌖ ${player.ammo}`;
+    if (player.armed) this._put(this.ammoEl, 'ammo', `⌖ ${player.ammo}`);
 
     const stars = game.wanted;
     if (this.stars.dataset.n !== String(stars)) {
