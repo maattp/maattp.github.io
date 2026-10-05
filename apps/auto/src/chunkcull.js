@@ -27,6 +27,10 @@ export function installChunkCull(renderer, root) {
   const boundOf = (g) => {
     let s = bounds.get(g);
     if (s !== undefined) return s;
+    // Chunk meshes are built in world coordinates under groups at the origin,
+    // but measure from fresh matrices anyway: a group first met here, before
+    // any render has updated it, must not have its bounds cached from stale ones.
+    g.updateWorldMatrix(true, true);
     let ok = g.children.length > 0, pending = false;
     const sph = new THREE.Sphere();
     let first = true;

@@ -97,6 +97,8 @@ export function skipHiddenMatrices(scene) {
   // frame (peds.js reads the player's feet, and must not on the frame he is
   // shown again)
   const skipped = scene.userData.matrixSkipped = new Set();
+  // three r160's signature (force only; updateWorldMatrix is separate).
+  // Re-check on a three bump: a newer updateMatrixWorld would be shadowed.
   scene.updateMatrixWorld = function (force) {
     skipped.clear();
     if (this.matrixAutoUpdate) this.updateMatrix();
