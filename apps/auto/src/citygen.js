@@ -165,12 +165,16 @@ function gridMemo(key, build, getExtra = null, setExtra = null) {
     live = build();
     let n = 0;
     for (const l of live.values()) n += l.length;
-    const keys = new Float64Array(live.size), off = new Int32Array(live.size + 1), ids = new Int32Array(n);
+    // (skey's cells fit 32 bits on any map this size; Float64 if one doesn't)
+    let keys = new Int32Array(live.size);
+    const off = new Int32Array(live.size + 1), ids = new Int32Array(n);
     let i = 0, o = 0;
     for (const [k, l] of live) { keys[i] = k; off[i] = o; ids.set(l, o); o += l.length; i++; }
     off[i] = o;
+    i = 0;
+    for (const k of live.keys()) if (keys[i++] !== k) { keys = Float64Array.from(live.keys()); break; }
     return { keys, off, ids, extra: getExtra ? getExtra() : 0 };
-  }, (v) => v && v.keys instanceof Float64Array && v.off instanceof Int32Array && v.ids instanceof Int32Array
+  }, (v) => v && (v.keys instanceof Int32Array || v.keys instanceof Float64Array) && v.off instanceof Int32Array && v.ids instanceof Int32Array
     && v.off.length === v.keys.length + 1 && v.off[v.keys.length] === v.ids.length);
   if (live) return live;
   const grid = new Map();

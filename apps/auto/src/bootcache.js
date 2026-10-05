@@ -134,5 +134,13 @@ export function memoPut(key, v) {
 export function memoTake() {
   const out = MEMO_OUT && Object.keys(MEMO_OUT).length ? { ...(MEMO_IN || {}), ...MEMO_OUT } : null;
   MEMO_IN = MEMO_OUT = null;
+  // its size, for the boot log (typed arrays only: the rest is small)
+  const size = (v) => (ArrayBuffer.isView(v) ? v.byteLength : v && typeof v === 'object' ? Object.values(v).reduce((a, x) => a + size(x), 0) : 8);
+  memoStats.bytes = out ? size(out) : 0;
+  memoStats.sizes = {};
+  for (const [k, v] of Object.entries(out || {})) {
+    const g = k.replace(/[:,]?-?\d+(,-?\d+)?$/, '');
+    memoStats.sizes[g] = (memoStats.sizes[g] || 0) + size(v);
+  }
   return out;
 }

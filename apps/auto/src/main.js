@@ -1252,7 +1252,7 @@ function installShadowFade() {
   if (bcOut.mapCanvas) toKeep.push(['map', () => canvasToBlob(bcOut.mapCanvas)]);
   {
     const m = memoTake();
-    blog(`memo: ${memoStats.hit} kept, ${memoStats.miss} computed`);
+    blog(`memo: ${memoStats.hit} kept, ${memoStats.miss} computed${m ? `, ${(memoStats.bytes / 1048576).toFixed(1)} MB` : ''}`);
     if (m) toKeep.push(['memo', () => m]);
   }
   if (toKeep.length) {
