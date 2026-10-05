@@ -9,6 +9,7 @@ import * as G from './geo.js';
 const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, MOUTH_RAMP, mouthRamp, cityStats } from './citygen.js';
 import { Builder, ChunkBuilder, freezeStatic } from './build.js';
+import { memo } from './bootcache.js';
 import { hash2, clamp, lerp, distToSeg, segDist } from './util.js';
 
 // The bore's cross-section, shared by the mesher and by the trench that has to
@@ -535,6 +536,57 @@ function appendGeometry(a, b) {
   for (let i = 0; i < ib.length; i++) I[ia.length + i] = ib[i] + na;
   out.setIndex(new THREE.BufferAttribute(I, 1));
   return out;
+}
+
+/**
+ * BufferGeometry.computeVertexNormals for an indexed triangle list, on the
+ * plain arrays: the same sums in the same order, rounded to float32 at the
+ * same steps, so the same normals to the bit (three's per-vertex accessors
+ * were ~0.4 s of a phone's boot for the terrain alone).
+ */
+function vertexNormals(P, I) {
+  const N = new Float32Array(P.length);
+  for (let t = 0; t < I.length; t += 3) {
+    const a = I[t] * 3, b = I[t + 1] * 3, c = I[t + 2] * 3;
+    const bx = P[b], by = P[b + 1], bz = P[b + 2];
+    const cbx = P[c] - bx, cby = P[c + 1] - by, cbz = P[c + 2] - bz;
+    const abx = P[a] - bx, aby = P[a + 1] - by, abz = P[a + 2] - bz;
+    const nx = cby * abz - cbz * aby, ny = cbz * abx - cbx * abz, nz = cbx * aby - cby * abx;
+    // all three read before any is written, as three does
+    const ax = N[a] + nx, ay = N[a + 1] + ny, az = N[a + 2] + nz;
+    const bx2 = N[b] + nx, by2 = N[b + 1] + ny, bz2 = N[b + 2] + nz;
+    const cx = N[c] + nx, cy = N[c + 1] + ny, cz = N[c + 2] + nz;
+    N[a] = ax; N[a + 1] = ay; N[a + 2] = az;
+    N[b] = bx2; N[b + 1] = by2; N[b + 2] = bz2;
+    N[c] = cx; N[c + 1] = cy; N[c + 2] = cz;
+  }
+  for (let i = 0; i < N.length; i += 3) {
+    const x = N[i], y = N[i + 1], z = N[i + 2];
+    const s = 1 / (Math.sqrt(x * x + y * y + z * z) || 1);
+    N[i] = x * s; N[i + 1] = y * s; N[i + 2] = z * s;
+  }
+  return N;
+}
+
+/** BufferGeometry.computeBoundingSphere on a plain position array: the same
+ *  box, centre and farthest point, so the same sphere (a signed zero aside:
+ *  three's Math.min keeps -0 over 0, a compare keeps the first). */
+function boundingSphere(P) {
+  let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+  for (let i = 0; i < P.length; i += 3) {
+    const x = P[i], y = P[i + 1], z = P[i + 2];
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+    if (z < z0) z0 = z; if (z > z1) z1 = z;
+  }
+  const c = P.length ? new THREE.Vector3((x0 + x1) * 0.5, (y0 + y1) * 0.5, (z0 + z1) * 0.5) : new THREE.Vector3();
+  let r2 = 0;
+  for (let i = 0; i < P.length; i += 3) {
+    const dx = c.x - P[i], dy = c.y - P[i + 1], dz = c.z - P[i + 2];
+    const q = dx * dx + dy * dy + dz * dz;
+    if (q > r2) r2 = q;
+  }
+  return new THREE.Sphere(c, Math.sqrt(r2));
 }
 
 export class World {
@@ -1118,32 +1170,56 @@ export class World {
         // every earlier attempt at an open cut failed. Such a cell is dropped
         // here and re-tessellated at ~4 m in `patchCell`, with the sub-quads
         // over the corridor left out. Only cells near a portal pay for it.
-        const idx = [];
+        // Which cells are cut, and the heights each cut cell's patch is drawn
+        // at, are kept by the boot cache (bootcache.js memo): both read the
+        // carve through terrainHeight, ~1.2 s of a phone's boot.
+        const PSUB = 11 * 11;   // patchCell's lattice: (SUB + 1)^2
+        const cut = memo(`terrain:${tx},${tz}`, () => {
+          const flags = new Uint8Array((w - 1) * (d - 1)), hs = [];
+          for (let j = 0; j < d - 1; j++) {
+            for (let i = 0; i < w - 1; i++) {
+              const cx = -H + (i0 + i) * S, cz = -H + (j0 + j) * S;
+              if (!this.cellCut(cx, cz, S)) continue;
+              flags[j * (w - 1) + i] = 1;
+              hs.push(this.patchHeights(cx, cz, S));
+            }
+          }
+          const ys = new Float64Array(hs.length * PSUB);
+          hs.forEach((h, k) => ys.set(h, k * PSUB));
+          return { flags, ys };
+        }, (v) => v && v.flags && v.flags.length === (w - 1) * (d - 1) && v.ys && v.ys.length === v.flags.reduce((n, f) => n + f, 0) * PSUB);
+        // (cellCut's first call made the portal cuts and the tunnel water
+        // mask: made here instead when the answer was kept)
+        this.portalCuts();
+        // A typed index, not a pushed array (~0.4 s of a phone's boot).
+        const nIdx = ((w - 1) * (d - 1) - cut.ys.length / PSUB) * 6;
+        const idx = w * d - 1 >= 65535 ? new Uint32Array(nIdx) : new Uint16Array(nIdx);
         const patch = [];
+        let ni = 0;
         for (let j = 0; j < d - 1; j++) {
           for (let i = 0; i < w - 1; i++) {
             const a = j * w + i, b = a + 1, c2 = a + w, e = c2 + 1;
-            const cx = -H + (i0 + i) * S, cz = -H + (j0 + j) * S;
-            if (this.cellCut(cx, cz, S)) { patch.push([cx, cz, a]); continue; }
-            idx.push(a, c2, b, b, c2, e);
+            if (cut.flags[j * (w - 1) + i]) { patch.push([-H + (i0 + i) * S, -H + (j0 + j) * S, a]); continue; }
+            idx[ni++] = a; idx[ni++] = c2; idx[ni++] = b;
+            idx[ni++] = b; idx[ni++] = c2; idx[ni++] = e;
           }
         }
         let geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
         geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
         geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-        geo.setIndex(idx);
-        geo.computeVertexNormals();
+        geo.setIndex(new THREE.BufferAttribute(idx, 1));
+        geo.setAttribute('normal', new THREE.BufferAttribute(vertexNormals(pos, idx), 3));
         if (patch.length) {
           // The re-tessellated cells go INTO the tile's own geometry: same
           // material, so a separate mesh was only an extra draw call.
-          const pb = new Builder();
-          for (const [cx, cz, a] of patch) {
-            this.patchCell(pb, cx, cz, S, [col[a * 3], col[a * 3 + 1], col[a * 3 + 2]]);
-          }
-          geo = appendGeometry(geo, pb.build());
+          const pb = new ChunkBuilder(true, 4096);
+          patch.forEach(([cx, cz, a], k) => {
+            this.patchCell(pb, cx, cz, S, [col[a * 3], col[a * 3 + 1], col[a * 3 + 2]], cut.ys.subarray(k * PSUB, (k + 1) * PSUB));
+          });
+          geo = appendGeometry(geo, pb.build(true));
         }
-        geo.computeBoundingSphere();
+        geo.boundingSphere = boundingSphere(geo.attributes.position.array);
         const m = new THREE.Mesh(geo, mat);
         m.receiveShadow = this.shadows;
         this.terrainGroup.add(m);
@@ -1206,7 +1282,15 @@ export class World {
    * mesh is triangulated -- so the patch meets the surrounding 40 m grid along
    * its edges by construction rather than by luck.
    */
-  patchCell(b, cx, cz, S, colour) {
+  /** patchCell's heights: its (SUB + 1)^2 lattice, row by row, carve included. */
+  patchHeights(cx, cz, S) {
+    const SUB = 10, q = S / SUB;
+    const ys = new Float64Array((SUB + 1) * (SUB + 1));
+    for (let j = 0; j <= SUB; j++) for (let i = 0; i <= SUB; i++) ys[j * (SUB + 1) + i] = G.terrainHeight(cx + i * q, cz + j * q);
+    return ys;
+  }
+
+  patchCell(b, cx, cz, S, colour, ys) {
     // The quad size is bound to the carve profile: CUT_OVER must be at least
     // one of these quads, so that any quad crossing the wall plane has both
     // corners on the trench floor and every earth face the bank draws stands
@@ -1222,9 +1306,9 @@ export class World {
     // One height per lattice point, shared by the four quads that meet there
     // (it was sampled four times over, through the carve, at boot). Shared
     // points also mean neighbouring quads meet exactly.
-    const xs = new Float64Array(SUB + 1), zs = new Float64Array(SUB + 1), ys = new Float64Array((SUB + 1) * (SUB + 1));
+    // (`ys`: patchHeights, the same lattice)
+    const xs = new Float64Array(SUB + 1), zs = new Float64Array(SUB + 1);
     for (let i = 0; i <= SUB; i++) { xs[i] = cx + i * q; zs[i] = cz + i * q; }
-    for (let j = 0; j <= SUB; j++) for (let i = 0; i <= SUB; i++) ys[j * (SUB + 1) + i] = G.terrainHeight(xs[i], zs[j]);
     const Y = (i, j) => ys[j * (SUB + 1) + i];
     // NO GROUND INSIDE A STREET-ENDED MOUTH'S BORE. Such a cut is dug to the
     // street's kerb line and stops, so the ground climbs from the trench floor

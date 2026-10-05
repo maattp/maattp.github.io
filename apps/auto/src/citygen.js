@@ -13,6 +13,7 @@ import * as G from './geo.js';
 import { CLS_NAME, F_ELEV, F_TUNNEL, F_ONEWAY, F_ONEWAY_REV } from './mapdata.js';
 import { LANDMARK_CLEAR } from './landmarks.js';
 import { distToSeg, segDist, clamp, hash2 } from './util.js';
+import { memo } from './bootcache.js';
 
 export const CHUNK = 400;
 
@@ -150,6 +151,33 @@ export const cityStats = {
 };
 
 const skey = (cx, cz) => cx * 100003 + cz;
+
+// THE QUERY GRIDS ARE KEPT by the boot cache (bootcache.js memo): building
+// the lift and onRoad grids -- a segment-distance test per cell per edge,
+// over every edge in the city -- was ~1.3 s of a phone's boot. Kept as
+// columns (each cell's key, where its list starts, the edge ids); a cached
+// launch's lists are views of the one id array, read the same way (`length`
+// and index, never changed once built). `extra`: what the build also leaves
+// (onRoad's widest reach).
+function gridMemo(key, build, getExtra = null, setExtra = null) {
+  let live = null;
+  const packed = memo(key, () => {
+    live = build();
+    let n = 0;
+    for (const l of live.values()) n += l.length;
+    const keys = new Float64Array(live.size), off = new Int32Array(live.size + 1), ids = new Int32Array(n);
+    let i = 0, o = 0;
+    for (const [k, l] of live) { keys[i] = k; off[i] = o; ids.set(l, o); o += l.length; i++; }
+    off[i] = o;
+    return { keys, off, ids, extra: getExtra ? getExtra() : 0 };
+  }, (v) => v && v.keys instanceof Float64Array && v.off instanceof Int32Array && v.ids instanceof Int32Array
+    && v.off.length === v.keys.length + 1 && v.off[v.keys.length] === v.ids.length);
+  if (live) return live;
+  const grid = new Map();
+  for (let i = 0; i < packed.keys.length; i++) grid.set(packed.keys[i], packed.ids.subarray(packed.off[i], packed.off[i + 1]));
+  if (setExtra) setExtra(packed.extra);
+  return grid;
+}
 
 // ---------------------------------------------------------------------------
 // Grading: the vertical profile of every road that is not simply draped.
@@ -1830,7 +1858,11 @@ export function* cityGenerator(md, cache = {}) {
         }
       }
     }
-    cache.buildingsOut = packBuildings(buildings, built,
+    // `built` is copied: the tarmac pass below adds to it in place, and the
+    // array itself, packed, came back on a cached launch with the tarmac
+    // already in -- added again, every later launch's ground tint read more
+    // built-up than the first launch's.
+    cache.buildingsOut = packBuildings(buildings, built.slice(),
       { shrunk: cityStats.buildingsShrunk, dropped: cityStats.buildingsDropped, cleared: cityStats.landmarkCleared });
   }
 
@@ -2443,8 +2475,8 @@ export function* cityGenerator(md, cache = {}) {
   const LIFT_CELL = 32;
   let liftGrid = null;
   const liftCell = (x, z) => {
-    if (!liftGrid) {
-      liftGrid = new Map();
+    if (!liftGrid) liftGrid = gridMemo('grid:lift', () => {
+      const grid = new Map();
       for (let ei = 0; ei < g.edges.length; ei++) {
         const e = g.edges[ei];
         // A tunnel draws no surface and a deck lifts nothing here (both answer
@@ -2461,13 +2493,14 @@ export function* cityGenerator(md, cache = {}) {
           for (let cz = z0; cz <= z1; cz++) {
             if (segDist((cx + 0.5) * LIFT_CELL, (cz + 0.5) * LIFT_CELL, a.x, a.z, b.x, b.z) > lim) continue;
             const k = skey(cx, cz);
-            let l = liftGrid.get(k);
-            if (!l) liftGrid.set(k, (l = []));
+            let l = grid.get(k);
+            if (!l) grid.set(k, (l = []));
             l.push(ei);
           }
         }
       }
-    }
+      return grid;
+    });
     return liftGrid.get(skey(Math.floor(x / LIFT_CELL), Math.floor(z / LIFT_CELL)));
   };
   // onRoad's grid: EVERY edge (tunnels and decks too, as the chunk scan had),
@@ -2475,8 +2508,8 @@ export function* cityGenerator(md, cache = {}) {
   const ROAD_PAD_MAX = 2.5;
   let roadGrid = null, roadReachMax = 0;
   const roadCell = (x, z) => {
-    if (!roadGrid) {
-      roadGrid = new Map();
+    if (!roadGrid) roadGrid = gridMemo('grid:road', () => {
+      const grid = new Map();
       for (let ei = 0; ei < g.edges.length; ei++) {
         const e = g.edges[ei];
         const reach = e.hw + (e.pbw || 0) + ROAD_PAD_MAX + 0.01;
@@ -2496,13 +2529,14 @@ export function* cityGenerator(md, cache = {}) {
           for (let cz = z0; cz <= z1; cz++) {
             if (segDist((cx + 0.5) * LIFT_CELL, (cz + 0.5) * LIFT_CELL, a.x, a.z, b.x, b.z) > lim) continue;
             const k = skey(cx, cz);
-            let l = roadGrid.get(k);
-            if (!l) roadGrid.set(k, (l = []));
+            let l = grid.get(k);
+            if (!l) grid.set(k, (l = []));
             l.push(ei);
           }
         }
       }
-    }
+      return grid;
+    }, () => roadReachMax, (v) => { roadReachMax = v; });
     return roadGrid.get(skey(Math.floor(x / LIFT_CELL), Math.floor(z / LIFT_CELL)));
   };
   // --- Junction shapes ------------------------------------------------------

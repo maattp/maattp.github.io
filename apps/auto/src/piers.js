@@ -20,12 +20,16 @@
 import * as THREE from './three.js';
 import * as G from './geo.js';
 import { ChunkBuilder, dropAfterUpload } from './build.js';
+import { memo, memoPeek, memoPut } from './bootcache.js';
 
 const CHUNK = 1000;
 // a walkway piece overlaps the next: no gap to fall through at a bend
 const OVERLAP = 0.05;
 const DECK = [0.42, 0.37, 0.31], DECK_CON = [0.56, 0.55, 0.52], FASCIA = [0.3, 0.26, 0.21], PILE = [0.22, 0.19, 0.16], RAIL = [0.36, 0.3, 0.24];
 
+// a pier's verdict (Piers' `judge`), as kept in the boot cache
+const JUDGE = { small: 0, land: 1, dup: 2, road: 3, built: 4 };
+const JUDGE_NAME = ['small', 'land', 'dup', 'road'];
 const area = (p) => Math.abs(p.reduce((a, q, i) => { const r = p[(i + 1) % p.length]; return a + q[0] * r[1] - r[0] * q[1]; }, 0)) / 2;
 function inPoly(x, z, p) {
   let c = false;
@@ -53,11 +57,15 @@ export class Piers {
       return c;
     };
     const plats = [];
-    for (const q of data.piers) {
+    // Which piers are built, and at what height: [verdict, top, wl, cx, cz]
+    // per pier (JUDGE), from samples over each through the water, the roads
+    // and the platforms already standing. Kept by the boot cache (bootcache.js
+    // memo): it was ~0.4 s of a phone's boot.
+    const judge = (q) => {
       let p = q.p.slice();
       if (q.closed) p = p.slice(0, -1);
       const len = q.closed ? 0 : p.reduce((a, r, i) => (i ? a + Math.hypot(r[0] - p[i - 1][0], r[1] - p[i - 1][1]) : 0), 0);
-      if (q.closed ? area(p) < 150 : len < 25) { skipped.small++; continue; }
+      if (q.closed ? area(p) < 150 : len < 25) return [JUDGE.small];
       // sample the pier: points along it (open) or inside it (closed)
       const samples = [];
       if (q.closed) {
@@ -76,23 +84,46 @@ export class Piers {
         if (city.onRoad(x, z, 0, true, false)) road++;
         if (city.platformAt && city.platformAt(x, z) !== null) dup++;
       }
-      if (wet < samples.length * 0.3 || wl === null) { skipped.land++; continue; }
-      if (dup > samples.length * 0.15) { skipped.dup++; continue; }
-      if (road > samples.length * 0.15) { skipped.road++; continue; }
+      if (wet < samples.length * 0.3 || wl === null) return [JUDGE.land];
+      if (dup > samples.length * 0.15) return [JUDGE.dup];
+      if (road > samples.length * 0.15) return [JUDGE.road];
       // the deck: level with the shore it leaves
       let shore = -Infinity;
       for (const [x, z] of p) { const w = waterAt(x, z); if (w === null || w <= G.terrainHeight(x, z)) shore = Math.max(shore, G.terrainHeight(x, z)); }
       const big = q.closed && area(p) > 2000;
       const top = Math.min(wl + 4, Math.max(wl + (big ? 2.4 : 0.5), shore === -Infinity ? wl + (big ? 2.4 : 0.6) : shore + 0.15));
       const cx = samples.reduce((a, s) => a + s[0], 0) / samples.length, cz = samples.reduce((a, s) => a + s[1], 0) / samples.length;
+      return [JUDGE.built, top, wl, cx, cz];
+    };
+    const NP = data.piers.length;
+    // The platforms -- 6 m squares over each deck, tested against its outline,
+    // and the sheds' decks -- as [x, z, hw, hd, rot, y] rows, kept likewise.
+    const platsKept = memoPeek('piers:plats', (v) => v instanceof Float64Array && v.length % 6 === 0);
+    const platRows = [];
+    const plat = (x, z, hw, hd, rot, y) => { if (!platsKept) platRows.push(x, z, hw, hd, rot, y); };
+    const verdicts = memo('piers', () => {
+      const v = new Float64Array(NP * 5);
+      data.piers.forEach((q, qi) => v.set(judge(q), qi * 5));
+      return v;
+    }, (v) => v instanceof Float64Array && v.length === NP * 5);
+    for (let qi = 0; qi < NP; qi++) {
+      const q = data.piers[qi];
+      let p = q.p.slice();
+      if (q.closed) p = p.slice(0, -1);
+      const verdict = verdicts[qi * 5];
+      if (verdict !== JUDGE.built) { skipped[JUDGE_NAME[verdict]]++; continue; }
+      const top = verdicts[qi * 5 + 1], wl = verdicts[qi * 5 + 2], cx = verdicts[qi * 5 + 3], cz = verdicts[qi * 5 + 4];
+      const big = q.closed && area(p) > 2000;
       const c = chunk(cx, cz);
       const col = big ? DECK_CON : DECK;
       const bottom = wl - 0.3;
       // walkable, now: 6 m squares over a deck, a platform per walkway piece
-      if (q.closed) {
+      if (platsKept) {
+        // (kept: see platsKept)
+      } else if (q.closed) {
         let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
         for (const [x, z] of p) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
-        for (let x = x0 + 3; x < x1; x += 6) for (let z = z0 + 3; z < z1; z += 6) if (inPoly(x, z, p)) plats.push({ x, z, hw: 3.05, hd: 3.05, rot: 0, y0: top, y1: top });
+        for (let x = x0 + 3; x < x1; x += 6) for (let z = z0 + 3; z < z1; z += 6) if (inPoly(x, z, p)) plat(x, z, 3.05, 3.05, 0, top);
       } else {
         const hw = Math.max(1, Math.min(8, q.w / 2));
         for (let i = 0; i < p.length - 1; i++) {
@@ -100,7 +131,7 @@ export class Piers {
           const L = Math.hypot(bx - ax, bz - az);
           if (L < 0.1) continue;
           const ux = (bx - ax) / L, uz = (bz - az) / L;
-          plats.push({ x: ax + ux * L / 2, z: az + uz * L / 2, hw, hd: L / 2 + OVERLAP, rot: Math.atan2(ux, -uz), y0: top, y1: top });   // local x across the walkway
+          plat(ax + ux * L / 2, az + uz * L / 2, hw, L / 2 + OVERLAP, Math.atan2(ux, -uz), top);   // local x across the walkway
         }
       }
       // the geometry, when its chunk first comes into range (update)
@@ -157,12 +188,25 @@ export class Piers {
     // -- Smith Cove's Pier 90 is only its sheds, over open water in both the
     // mask and the terrain -- so a building over salt water (not a lake: a
     // houseboat floats) gets a deck under it, 4 m wider all round, on piles.
+    // (which buildings those are is kept with the piers: one water query per
+    // big building in the city was most of the rest of this constructor)
     let sheds = 0;
-    for (const bd of city.buildings || []) {
-      if (bd.w * bd.d < 150) continue;
-      const wl = waterAt(bd.x, bd.z);
-      if (wl !== 0 || G.terrainHeight(bd.x, bd.z) > -0.3) continue;
-      if (city.platformAt && city.platformAt(bd.x, bd.z) !== null) continue;
+    const bds = city.buildings || [];
+    const shedList = memo('piers:sheds', () => {
+      const out = [];
+      for (let bi = 0; bi < bds.length; bi++) {
+        const bd = bds[bi];
+        if (bd.w * bd.d < 150) continue;
+        const wl = waterAt(bd.x, bd.z);
+        if (wl !== 0 || G.terrainHeight(bd.x, bd.z) > -0.3) continue;
+        if (city.platformAt && city.platformAt(bd.x, bd.z) !== null) continue;
+        out.push(bi);
+      }
+      return Int32Array.from(out);
+    }, (v) => v instanceof Int32Array && v.every((bi) => bi < bds.length));
+    for (const bi of shedList) {
+      const bd = bds[bi];
+      const wl = 0;   // salt water: the test above
       const top = wl + 2.4, hw = bd.w / 2 + 4, hd = bd.d / 2 + 4;
       chunk(bd.x, bd.z).ops.push((b2) => {
         // Builder.box turns the other way from the building's rot (build.js)
@@ -173,8 +217,12 @@ export class Piers {
           b2.box(px, wl - 1.3, pz, 0.4, top - 0.6 - (wl - 1.3), 0.4, 0, PILE);
         }
       });
-      plats.push({ x: bd.x, z: bd.z, hw, hd, rot: bd.rot, y0: top, y1: top });
+      plat(bd.x, bd.z, hw, hd, bd.rot, top);
       sheds++;
+    }
+    {
+      const P = platsKept || memoPut('piers:plats', Float64Array.from(platRows));
+      for (let i = 0; i < P.length; i += 6) plats.push({ x: P[i], z: P[i + 1], hw: P[i + 2], hd: P[i + 3], rot: P[i + 4], y0: P[i + 5], y1: P[i + 5] });
     }
     this.sheds = sheds;
     this.skipped = skipped;

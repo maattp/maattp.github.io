@@ -89,3 +89,50 @@ export async function cacheClear() {
     try { const tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).clear(); tx.oncomplete = () => res(); tx.onerror = () => res(); } catch (e) { res(); }
   }));
 }
+
+// THE MEMO: many smaller deterministic results in ONE entry ('memo'), for
+// boot work too scattered to deserve an entry each -- the terrain's cut
+// cells, where a beach's props may stand, which piers are built.
+// `memo(key, make)` answers what an earlier launch of this build kept under
+// `key`, else calls make() and keeps its answer for main.js to write with the
+// rest at the end of the boot.
+//
+// A memoised value must be plain data (typed arrays, numbers, plain arrays and
+// objects of them -- what IndexedDB clones exactly; never a Blob) that NOTHING
+// mutates after it is returned: the computed value is written at the end of
+// the boot, and an edit made in between would be read back by the next launch
+// as if it had been computed. `ok(v)` may refuse a cached value that does not
+// fit (the caller then computes, as on a first launch).
+let MEMO_IN = null, MEMO_OUT = null;
+export const memoStats = { hit: 0, miss: 0, keys: [] };
+export function memoStart(cached) {
+  MEMO_IN = cached && typeof cached === 'object' ? cached : null;
+  MEMO_OUT = {};
+}
+export function memo(key, make, ok = null) {
+  if (MEMO_IN && Object.prototype.hasOwnProperty.call(MEMO_IN, key)) {
+    const v = MEMO_IN[key];
+    if (!ok || ok(v)) { memoStats.hit++; return v; }
+  }
+  memoStats.miss++;
+  const v = make();
+  if (MEMO_OUT) { MEMO_OUT[key] = v; memoStats.keys.push(key); }
+  return v;
+}
+/** memo() in two halves, for a result made piecemeal inside a loop that has
+ *  other work to do: the kept value (or null), and keeping a computed one. */
+export function memoPeek(key, ok = null) {
+  if (MEMO_IN && Object.prototype.hasOwnProperty.call(MEMO_IN, key) && (!ok || ok(MEMO_IN[key]))) { memoStats.hit++; return MEMO_IN[key]; }
+  memoStats.miss++;
+  return null;
+}
+export function memoPut(key, v) {
+  if (MEMO_OUT) { MEMO_OUT[key] = v; memoStats.keys.push(key); }
+  return v;
+}
+/** What to keep: what was read plus what was computed, or null if nothing new. */
+export function memoTake() {
+  const out = MEMO_OUT && Object.keys(MEMO_OUT).length ? { ...(MEMO_IN || {}), ...MEMO_OUT } : null;
+  MEMO_IN = MEMO_OUT = null;
+  return out;
+}

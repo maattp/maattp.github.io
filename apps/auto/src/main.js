@@ -32,7 +32,7 @@ import { DuckTour } from './ducktour.js';
 import { CoffeeShop } from './barista.js';
 import { Seafair } from './hydrorace.js';
 import { BONES } from './peds.js';
-import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear } from './bootcache.js';
+import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
 import { TYPES as VEHICLE_TYPES, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial } from './vehicles.js';
 
@@ -528,7 +528,7 @@ async function boot() {
   // that is deterministic in the data and the code and slow on a phone.
   // Each piece falls back to computing on its own, and whatever was computed
   // is kept at the end of the boot for the next launch.
-  const BC_KEYS = ['textures', 'map', 'buildings', 'grade', 'portal', 'vehicles', 'link', 'freight'];
+  const BC_KEYS = ['textures', 'map', 'buildings', 'grade', 'portal', 'vehicles', 'link', 'freight', 'memo'];
   const bc = {};
   blog('main started, ' + (navigator.userAgent.match(/OS [\d_]+|Chrome\/\d+|Version\/[\d.]+/g) || []).join(' '));
   if (cacheGuardTripped()) {
@@ -541,6 +541,8 @@ async function boot() {
     blog(`cache read ${((performance.now() - t0) / 1000).toFixed(1)}s: ` + BC_KEYS.map((k) => k + (bc[k] ? '+' : '-')).join(' '));
   }
   if (Object.values(bc).some(Boolean)) cacheGuardSet(true);
+  // the smaller results, kept together (bootcache.js memo)
+  memoStart(bc.memo);
   const bcOut = {};
   let tx = null;
   if (bc.textures) {
@@ -1248,6 +1250,11 @@ function installShadowFade() {
   if (!bc.vehicles) toKeep.push(['vehicles', () => vehicleSnapshot()]);
   if (bcOut.texPlan) toKeep.push(['textures', () => encodeTextures(bcOut.texPlan)]);
   if (bcOut.mapCanvas) toKeep.push(['map', () => canvasToBlob(bcOut.mapCanvas)]);
+  {
+    const m = memoTake();
+    blog(`memo: ${memoStats.hit} kept, ${memoStats.miss} computed`);
+    if (m) toKeep.push(['memo', () => m]);
+  }
   if (toKeep.length) {
     await step(0.93, 'Remembering the city');
     for (const [k, make] of toKeep) {
@@ -1272,7 +1279,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1394,7 +1401,8 @@ function buildPickups(scene, city) {
   // one of these sits well out in Puget Sound, and no search radius that stays
   // in the right neighbourhood will ever find land. A road node is guaranteed
   // to be somewhere you could stand.
-  const spots = anchors.map(([ax, az], i) => {
+  // (where they landed is kept by the boot cache: bootcache.js memo)
+  const at = memo('pickups', () => Float64Array.from(anchors.flatMap(([ax, az], i) => {
     let nd = null, bestD = Infinity;
     for (const n of city.nodes) {
       if (n.elev) continue;
@@ -1406,11 +1414,12 @@ function buildPickups(scene, city) {
       for (let a = 0; a < 16; a++) {
         const th = (a / 16) * Math.PI * 2 + i;
         const x = cx0 + Math.cos(th) * r, z = cz0 + Math.sin(th) * r;
-        if (usable(x, z)) return { x, z, kind: i % 2 ? 'health' : 'gun' };
+        if (usable(x, z)) return [x, z];
       }
     }
-    return { x: cx0, z: cz0, kind: i % 2 ? 'health' : 'gun' };
-  });
+    return [cx0, cz0];
+  })), (v) => v instanceof Float64Array && v.length === anchors.length * 2);
+  const spots = anchors.map((_, i) => ({ x: at[i * 2], z: at[i * 2 + 1], kind: i % 2 ? 'health' : 'gun' }));
   for (const s of spots) {
     const y = city.groundAt(s.x, s.z, null) + 1.1;
     const g = new THREE.Group();
