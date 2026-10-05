@@ -2629,6 +2629,8 @@ export function animateWalk(h, amp, dt, speed) {
   // does not turn with the hips (the thigh rotates in its socket instead).
   // Riding the pelvis, the toe 16 cm out swung sideways through every
   // stance -- the planted foot visibly twisting on the pavement.
+  // Exact only while the thigh and shin carry no yaw of their own
+  // (solveLeg sets x and z only): give them yaw and subtract it here too.
   const py = b[B.hips].rotation.y;
   b[B.footL].rotation.y = -toeOut - py; b[B.footR].rotation.y = toeOut - py;
 
@@ -2854,15 +2856,15 @@ export class PedSystem {
     scene.add(this.blobs);
   }
 
+  /** Empty the contact-shadow list (update() does this every frame). */
+  clearContactShadows() { this.blobs.count = 0; }
+
   /**
    * Contact blobs for one figure: a wide faint one under the body, and one
    * under each foot that shrinks and fades as the foot lifts. Feet are read
    * off the foot bones' world matrices from the last render -- free, and a
    * planted foot has not moved since; a lifted one is fading anyway.
    */
-  /** Empty the contact-shadow list (update() does this every frame). */
-  clearContactShadows() { this.blobs.count = 0; }
-
   addContactShadow(h, x, y, z, heading) {
     const B2 = this.blobs, mA = B2.instanceMatrix.array, cA = B2.instanceColor.array;
     const sc = h.scale || 1;
