@@ -236,8 +236,12 @@ const A_LAT = 3.0, B_PLAN = 2.0, JR_RIGHT = 7, JR_LEFT = 11, CURVE_RMAX = 400;
 const IDM_T = 1.2, IDM_S0 = 2.2, IDM_B = 2.5;
 
 // A vehicle's body for car-car collision: its footprint rectangle.
-const bodyR = (v) => Math.hypot(v.halfLen, v.halfWid);
+// (Vehicle keeps it: Math.hypot three times a pair was a profile line of its own)
+const bodyR = (v) => v.bodyR || Math.hypot(v.halfLen, v.halfWid);
 const _hit = { nx: 0, nz: 0, pen: 0 };
+// nobody at the wheel (traffic.update): read-only inputs, not one per car a frame
+const COAST_IN = { throttle: 0, brake: 0.12, steer: 0 };
+const PARK_IN = { throttle: 0, brake: 0, steer: 0, park: true };
 /** Overlap of a's and b's footprints (d = b - a): the separating normal from
  *  a to b and the depth along it, or null. 2D SAT on the four body axes. */
 function boxOverlap(a, b, dx, dz) {
@@ -296,6 +300,7 @@ export class TrafficSystem {
     this.stats = { deadEnd: 0, deadEndDespawn: 0, fallbackTurn: 0, stuckRecycled: 0 };
     this._P = { x: 0, z: 0 };
     this._ps = new Float64Array(24);   // driveTraffic's path samples
+    this._pseg = new Float64Array(36); // ...and its segments: dx, dz, length
     this._prio = 0;
   }
 
@@ -447,13 +452,50 @@ export class TrafficSystem {
   updateParked(px, pz) {
     const city = this.city;
     const eids = city.edgesNear(px, pz, PARKED_RADIUS);
-    const seen = new Set();
+    const R2 = PARKED_RADIUS * PARKED_RADIUS;
     for (const ei of eids) {
+      const sl = this.kerbSlots(ei);
+      if (!sl.length) continue;
       const e = city.edges[ei];
-      if (e.elev || e.cls === 'hwy' || e.cls === 'ramp' || e.noTraffic) continue;
       const a = city.nodes[e.a], b = city.nodes[e.b];
-      const mid = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
-      if (dist2(mid.x, mid.z, px, pz) > PARKED_RADIUS * PARKED_RADIUS) continue;
+      if (dist2((a.x + b.x) / 2, (a.z + b.z) / 2, px, pz) > R2) continue;
+      for (const k of sl) {
+        if (this.reservedSlots.has(k.key) || this.parkedSlots.has(k.key)) continue;
+        if (dist2(k.x, k.z, px, pz) > R2) continue;
+        const v = this.spawnAt(k.x, k.z, k.heading, k.tn, randomCarColor(k.col), 'parked');
+        // A parked car sits against a kerb with buildings behind it, so its
+        // shadow lands almost entirely on ground that is already shaded -- and
+        // it is three more meshes through the shadow pass. Measured, the parked
+        // cars in one downtown frame were 10 draws and 19k triangles of it.
+        v.group.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+        v.slot = k.key;
+        this.parkedSlots.add(k.key);
+      }
+    }
+    this.updateLotParked(px, pz);
+    // despawn parked cars that drifted out of range
+    for (let i = this.cars.length - 1; i >= 0; i--) {
+      const v = this.cars[i];
+      if (v.mode !== 'parked') continue;
+      if (dist2(v.x, v.z, px, pz) > (PARKED_RADIUS + 60) * (PARKED_RADIUS + 60)) this.remove(v);
+    }
+  }
+
+  /**
+   * The kerbside parking slots of edge ei that can hold a car: where, which
+   * way, what type. Everything here is fixed by the edge and the map, so it is
+   * worked out once per edge (updateParked used to rerun every hash and the
+   * water, buildable and jump-clear tests for every slot in 105 m, every
+   * frame, mostly for slots that fail them).
+   */
+  kerbSlots(ei) {
+    const cache = this._kerb || (this._kerb = new Map());
+    let out = cache.get(ei);
+    if (out) return out;
+    out = [];
+    const city = this.city, e = city.edges[ei];
+    if (!(e.elev || e.cls === 'hwy' || e.cls === 'ramp' || e.noTraffic)) {
+      const a = city.nodes[e.a], b = city.nodes[e.b];
       const slots = Math.floor(e.len / 13);
       for (let s = 1; s < slots; s++) {
         const h = hash2(ei * 31 + s, 7);
@@ -467,37 +509,21 @@ export class TrafficSystem {
         // alive at once and the fleet was over half the frame's draw calls.
         // 0.30 still reads as a lived-in street.
         if (h > 0.30) continue;
-        const key = ei * 64 + s;
-        if (this.reservedSlots.has(key)) continue;
-        seen.add(key);
-        if (this.parkedSlots.has(key)) continue;
         const t = s / slots;
         const side = h < 0.24 ? 1 : -1;
         const off = e.hw - 1.15;
         const x = lerp(a.x, b.x, t) - e.dz * off * side;
         const z = lerp(a.z, b.z, t) + e.dx * off * side;
-        if (dist2(x, z, px, pz) > PARKED_RADIUS * PARKED_RADIUS) continue;
         if (!G.isBuildable(x, z) || city.jumpClear(x, z) || this.wet(x, z)) continue;
-        const heading = Math.atan2(e.dx, e.dz) + (side > 0 ? 0 : Math.PI);
         const tn = CIVILIAN_TYPES[Math.floor(hash2(ei + s * 7, 11) * CIVILIAN_TYPES.length)];
         if (tn === 'bus' || tn === 'artic' || tn === 'garbage') continue;
-        const v = this.spawnAt(x, z, heading, tn, randomCarColor(ei * 13 + s), 'parked');
-        // A parked car sits against a kerb with buildings behind it, so its
-        // shadow lands almost entirely on ground that is already shaded -- and
-        // it is three more meshes through the shadow pass. Measured, the parked
-        // cars in one downtown frame were 10 draws and 19k triangles of it.
-        v.group.traverse((o) => { if (o.isMesh) o.castShadow = false; });
-        v.slot = key;
-        this.parkedSlots.add(key);
+        out.push({ key: ei * 64 + s, x, z, heading: Math.atan2(e.dx, e.dz) + (side > 0 ? 0 : Math.PI), tn, col: ei * 13 + s });
       }
     }
-    this.updateLotParked(px, pz);
-    // despawn parked cars that drifted out of range
-    for (let i = this.cars.length - 1; i >= 0; i--) {
-      const v = this.cars[i];
-      if (v.mode !== 'parked') continue;
-      if (dist2(v.x, v.z, px, pz) > (PARKED_RADIUS + 60) * (PARKED_RADIUS + 60)) this.remove(v);
-    }
+    // (the water test needs main.js's waterAt: nothing is kept before it is
+    // set; and the cache is only the neighbourhood's, not every street driven)
+    if (this.waterAt) { if (cache.size > 3000) cache.clear(); cache.set(ei, out); }
+    return out;
   }
 
   /**
@@ -970,7 +996,7 @@ export class TrafficSystem {
       vdt = Math.min(v._acc, 0.1);
       v._acc = 0;
 
-      let input = { throttle: 0, brake: 0, steer: 0, handbrake: 0 };
+      let input;
       if (v.mode === 'traffic') {
         input = this.driveTraffic(v, vdt, px, pz, player);
         if (v.recycle) { this.remove(v); continue; }
@@ -978,7 +1004,8 @@ export class TrafficSystem {
       else if (v.mode === 'police') input = this.drivePolice(v, vdt, px, pz, player);
       // shunted, abandoned or parked on an apron: nobody at the wheel, so the
       // parking brake (Vehicle.update `park`); aircraft and boats keep their old coast
-      else input = v.spec.plane || v.spec.boat ? { throttle: 0, brake: 0.12, steer: 0 } : { throttle: 0, brake: 0, steer: 0, park: true };
+      // (shared: Vehicle.update only reads its input)
+      else input = v.spec.plane || v.spec.boat ? COAST_IN : PARK_IN;
 
       v.update(vdt, input);
       collideWithBuildings(v, city, null, true);
@@ -1292,6 +1319,14 @@ export class TrafficSystem {
       this.pathAhead(v, s0, D, P);
       ps[2 * np] = P.x; ps[2 * np + 1] = P.z;
     }
+    // The sampled path's segments, once: every car near enough is projected
+    // onto all of them (three more times if it is crossing), and this was a
+    // Math.hypot per segment per car looked at.
+    const sg = this._pseg;
+    for (let k = 0; k < np - 1; k++) {
+      const sx = ps[2 * k + 2] - ps[2 * k], sz = ps[2 * k + 3] - ps[2 * k + 1];
+      sg[3 * k] = sx; sg[3 * k + 1] = sz; sg[3 * k + 2] = Math.hypot(sx, sz) || 1e-3;
+    }
     let gap = Infinity, vLead = 0, lead = null;
     let stopAt = Infinity;   // distance to stop short of something that is not a car in the lane
     const reach2 = (scanLen + 8) * (scanLen + 8);
@@ -1314,8 +1349,7 @@ export class TrafficSystem {
       // nearest point of the sampled path: how far along it, how far off it
       let best = Infinity, along = 0, acc = 0, sdx = f.x, sdz = f.z, sax = v.x, saz = v.z;
       for (let k = 0; k < np - 1; k++) {
-        const ax = ps[2 * k], az = ps[2 * k + 1], sx = ps[2 * k + 2] - ax, sz = ps[2 * k + 3] - az;
-        const l = Math.hypot(sx, sz) || 1e-3;
+        const ax = ps[2 * k], az = ps[2 * k + 1], sx = sg[3 * k], sz = sg[3 * k + 1], l = sg[3 * k + 2];
         let t = ((o.x - ax) * sx + (o.z - az) * sz) / (l * l);
         t = t < 0 ? 0 : t > 1 ? 1 : t;
         const ex = o.x - ax - sx * t, ez = o.z - az - sz * t, dd = ex * ex + ez * ez;
@@ -1336,8 +1370,7 @@ export class TrafficSystem {
             const qx = o.x + fo.x * o.vLong * tt, qz = o.z + fo.z * o.vLong * tt;
             let bq = Infinity, aq = 0, ac = 0;
             for (let k = 0; k < np - 1; k++) {
-              const ax = ps[2 * k], az = ps[2 * k + 1], sx = ps[2 * k + 2] - ax, sz = ps[2 * k + 3] - az;
-              const l = Math.hypot(sx, sz) || 1e-3;
+              const ax = ps[2 * k], az = ps[2 * k + 1], sx = sg[3 * k], sz = sg[3 * k + 1], l = sg[3 * k + 2];
               let t = ((qx - ax) * sx + (qz - az) * sz) / (l * l);
               t = t < 0 ? 0 : t > 1 ? 1 : t;
               const ex = qx - ax - sx * t, ez = qz - az - sz * t, dd = ex * ex + ez * ez;

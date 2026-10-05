@@ -2981,6 +2981,12 @@ export class PedSystem {
       this.addContactShadow(player.h, player.x, player.y, player.z, player.heading);
     }
 
+    // What can knock a pedestrian over: the vehicles moving faster than a
+    // walk, found once (nothing below moves them) rather than for every ped.
+    const movers = this._movers || (this._movers = []);
+    movers.length = 0;
+    for (const v of traffic.cars) if (v.mode !== 'parked' && Math.abs(v.vLong) >= 2.2) movers.push(v);
+
     for (let i = this.peds.length - 1; i >= 0; i--) {
       const p = this.peds[i];
       const d2p = dist2(p.x, p.z, px, pz);
@@ -3062,8 +3068,9 @@ export class PedSystem {
       // world positions, and solving against last frame's root puts every
       // planted foot a frame (~2 cm at a stroll) behind.
       p.h.group.position.set(p.x, p.y, p.z);
-      p.h.group.rotation.y = p.heading;
-      p.h.group.rotation.z = 0;
+      // (an Euler write is a quaternion recompute: only what changed)
+      if (p.h.group.rotation.y !== p.heading) p.h.group.rotation.y = p.heading;
+      if (p.h.group.rotation.z !== 0) p.h.group.rotation.z = 0;
       // ANIMATION LOD. A pedestrian is 24 scene objects and a bone texture
       // upload a frame, and skinned meshes are never frustum-culled (their
       // bounds are the bind pose), so all of them were posed, multiplied out,
@@ -3093,10 +3100,8 @@ export class PedSystem {
       if (show && d2p < 70 * 70) this.addContactShadow(p.h, p.x, p.y, p.z, p.heading);
 
       // knocked over by traffic
-      for (const v of traffic.cars) {
-        if (v.mode === 'parked') continue;
+      for (const v of movers) {
         const sp = Math.abs(v.vLong);
-        if (sp < 2.2) continue;
         const rr = v.halfLen + 1.2;
         if (dist2(v.x, v.z, p.x, p.z) > rr * rr) continue;
         const n = v.nearest(p.x, p.z);
