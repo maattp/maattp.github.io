@@ -1430,6 +1430,41 @@ noise. Overdraw is the glazed area only.
   brightest thing on the pavement.
 - **Cops have their own pool** (`copVariants`, `makeHumanoid({ cop: true })`):
   pooled characters ignore opts, so cops used to be civilians in random shirts.
+- **One material, several surfaces: the `gloss` attribute.** Roughness is
+  `pedMat.roughness` (0.88, cloth) minus a per-vertex `gloss` (`GLOSS` by part
+  name: skin 0.26, hair 0.22, shoes 0.22; vertices painted the skin colour get
+  skin's; hair at 0.40 was one hotspot on the crown, varnished wood). At one 0.78 for everything, skin, hair, cotton and leather were one
+  plastic. Applied in `pedMat.onBeforeCompile` on the EXPANDED
+  `roughnessmap_fragment` chunk -- at that point the shader still holds the
+  `#include`, so replacing the chunk's own text is a silent no-op. A geometry
+  without the attribute reads 0: cloth, never a mirror.
+- **Skin albedo is linear and was too light.** The two palest tones were
+  0.95 and 0.99 red, whiter than a white shirt, and under the sun those faces
+  and hands came out chalk (0.86-0.90 still did). Pale skin is pinker, not
+  just lighter: `SKINS` now tops out at 0.84 / 0.64 / 0.53.
+- **Folds are painted, soft, in pairs of shade** (`fold()` in drawAtlas):
+  tension folds from the armpits, cloth gathering over the hem, creases behind
+  and over the knee, the hem breaking on the shoe. A garment with none read as
+  a coat of paint. Long sleeves have their own cell (`CELLS.sleeve`, index 16,
+  in grid square 0, which the faces left empty when they moved right) with an
+  elbow fan and a cuff bunch; short sleeves keep the plain cell, or the bare
+  forearm below them would wear the creases.
+- **Two body shapes** (`fem` in buildCharacter, cued like the face's `soft`
+  by skirt, dress, long hair or bun): shoulders x0.90, joint x0.915
+  (`geometry.userData.shoulderX`, which makeHumanoid builds the skeleton
+  with -- the arms move in with the torso), waist x0.92, hips x1.05, arms
+  x0.88, and 0.95 of the height. One torso under twelve outfits read as one
+  mannequin in twelve costumes.
+- **Hair is value structure, not grain.** The cell has a sheen band at s ~0.7,
+  darkens into the nape and the long curtain (which samples its bottom row),
+  and is broken by thousands of LOW-contrast strands; long strokes at 30 %
+  read as wood grain.
+- **The long curtain TUCKS into the shell**: its top row 4-5 mm inside the
+  shell, the next ~6 mm lower 3 mm outside, a steep dive. Started level with
+  the shell (or under it, coming out at the shell's thin edge) the two crossed
+  at a grazing angle -- raycast: 0.2 mm apart along the whole row -- and drew
+  a torn, z-fighting ledge round the back of the head. No edge jitter on long
+  hair for the same reason.
 - **Feet stay 12-sided.** At 10 the ring has no vertex at +-z, the heel and toe
   move ~5 mm in, and that breaks `SOLE / HEEL_Z / TOE_Z` (see the gait).
 
@@ -1510,6 +1545,26 @@ Three ovals behind the neck was a pillow. The long curtain starts UNDER the
 shell and comes out from beneath its edge (started on top it made a shelf),
 keeps 10 mm off the body (`bodyAt`), ends on the shoulders, and rides the chest
 below the jaw — at 40 % head it went into a runner's upper back.
+
+Finger and thumb ends are ROUNDED (one more ring at 68 % before the point;
+four triangles straight to a point were a pyramid on every finger), +80
+triangles a character. The thumb's base is buried in the heel of the hand:
+at 9 mm off the palm's centre its base ring stood 2.5 mm out of the palm, open
+end and all -- a floating prism with a dark hole.
+
+**Contact shadows** (`makeBlobs`, `PedSystem.addContactShadow`): a soft blob
+under each foot, shrinking and fading as it lifts (read off the foot bone's
+world matrix from the last render -- free, and a planted foot has not moved),
+and a fainter wide one under the body. One InstancedMesh for the whole crowd
+and the player: one draw. A phone ped casts no shadow at all and a desktop
+one's foot shadow is a 0.25 m texel smear, so every figure stood on the
+pavement like a figurine on a board. The blob texture is OPAQUE grey: an
+`alphaMap` reads green, and white over transparent was a hard black disc.
+Paused harnesses must write them themselves (charshots, crowdshots and
+walkcam do, guarded so they still run against an older build). Measured with
+`perfcpu.mjs --runs=foot-dt --throttle=8`, two runs each interleaved with the
+base: `peds` 1.47 / 1.37 ms a frame before, 1.25 / 1.44 after -- inside the
+noise, so the blobs and the extra gait terms cost nothing that shows.
 
 Cost: a pooled look is **3,869 triangles mean** (v119; 3,389 before the
 denser head), head 1,094, hair 483, hands 392. Still one
@@ -1594,6 +1649,52 @@ The laws:
   switching at `A < 0.05` was the pop on every stop. A runner's arms drive back
   and come forward only to the ribs.
 
+**Seen from the chase camera, every band passing still looked like a toy**
+(the round after v168): a wide-legged walk with arms glued to the sides, a
+plank of a torso, feet twisting on the pavement. None of it was in a band. The
+laws from that round, each judged on `walkcam.mjs` chase/side sheets against a
+fixed rubric and then held to `gait.mjs` (an agent judge, same rubric every
+round, 1-10 against a modern open-world pedestrian: walking 4.0 -> 4.9, looks
+3.1 -> 4.0; hair, the head and the hands are still the lowest items, at 3-4).
+`docs/characters/` has the before | after lineup, walk strip, walkcam frames
+and hair profile:
+
+- **Feet land near the midline** (`footX` in animateWalk): 5.5 cm either side
+  at a walk, 4.3 at a run, the hip width (8.5) only standing still. Planted
+  under the sockets, 17 cm apart at every pace, it was a cowboy gait and from
+  behind two parallel posts. The swing foot bows out 1.4 cm as it passes the
+  planted ankle.
+- **The leg solve is exact in 3-D.** The thigh's Euler order is XYZ, so its
+  adduction acts on the BENT leg first: lateral = (thigh + shin's vertical
+  share) x sin(z), so z = asin(dx / P). The old `atan2(dx, |dy, dz|)` was right
+  only for a straight leg, and with the feet brought in its error moved with
+  the knee and the planted foot crept sideways. Capped at +-0.3 rad: with the
+  heel at the backside P is a few cm and the exact answer flares the knee.
+- **The pelvis's yaw is taken back out at the ankle**, and the toes turn out
+  (0.09 rad at a walk, 0.04 running). A planted foot riding the pelvis's yaw
+  swung its toe, 16 cm out, sideways through every stance: that one term was
+  most of the world skate at every speed (table: 2.9-6.0 % to 1.8-3.4 %).
+- **The pelvis tilts forward with pace** (`tilt`, 0.02 standing to 0.16 at a
+  sprint), and the trunk's own lean came DOWN to 0.14 at a run (was 0.24).
+  On the spine and chest alone the lean was a hunch at the waist over a pelvis
+  left behind -- "sitting back". The pitch is free for the legs (the sockets
+  are level with the hips bone and the solve goes through its inverse), but
+  **the foot's `level` must include `hips.rotation.x`**, or every sole tips by
+  the tilt: the rig read a 1.0-1.5 cm stance gap at a run until it did.
+- **A walk's twist and list are drawn larger than life.** The real ~4 deg of
+  pelvic yaw and ~1.5 of list were in the numbers and invisible at twenty
+  pixels. Walking adds 2.3 deg of yaw, 4 of chest counter-twist and 1.7 of
+  list (`walkW`). The list lifts the stance socket, so the hips come down by
+  `HIP_X sin(list)`, or REACH_PLANT's 3 mm margin is gone and the sole lifts.
+  Sway is 2.5 cm (0.11 A) now the feet are under the body.
+- **Arms**: a walker's swing is biased BACK (x1.15 back, x0.70 forward) with a
+  0.32 rad elbow and the wrist a little flexed (straight, the curled fingers
+  were a tray). Past 4 m/s `drive` grows the swing to 84 deg at a sprint (it
+  was 55, the same as a jog, and from behind the arms hung by the sides) with
+  less elbow fold per radian, or the leading elbow passes 100 deg again.
+- **Swing lift is 0.072 at a walk** (was 0.085): the toe has its own clearance
+  floor, and the extra height kicked the heel up to calf height -- a prance.
+
 **Every band passed while the whole stance was spent in a crouch** (v118):
 the planted knee never went under 25 deg and averaged 36 at a walk, against a
 real 5 at heel strike and 10-20 through loading -- a Groucho walk, which is
@@ -1625,11 +1726,15 @@ Current figures, all inside their bands:
 
 | | cadence | step | duty | bob | knee swing | hip height | stance knee (mean) | skate (world) | mid-swing clearance |
 |---|---|---|---|---|---|---|---|---|---|
-| walk 1.4 | 113 | 0.74 m | 0.61 | 4.1 cm | 71 deg | 97.5 % | 10 deg; was 30 | 2.9 % | 6.7 cm |
-| brisk 2.2 | 140 | 0.94 m | 0.52 | 4.7 cm | 72 deg | 96.6 % | 9; was 33 | 3.2 % | 6.8 cm |
-| jog 3.5 | 161 | 1.31 m | 0.40 | 7.8 cm | 101 deg | 91.9 % | 39; was 52 | 5.0 % | 18.7 cm |
-| run 5.5 | 183 | 1.80 m | 0.32 | 7.9 cm | 114 deg | 91.3 % | 43; was 56 | 6.0 % | 23.5 cm |
-| sprint 7.5 | 196 | 2.29 m | 0.26 | 9.6 cm | 123 deg | 91.8 % | 43; was 57 | 4.9 % | 28.1 cm |
+| walk 1.4 | 113 | 0.74 m | 0.61 | 4.0 cm | 69 deg | 97.3 % | 9 deg; was 30 | 2.4 %; was 2.9 | 6.0 cm |
+| brisk 2.2 | 140 | 0.94 m | 0.52 | 4.8 cm | 71 deg | 96.4 % | 8; was 33 | 1.8 %; was 3.2 | 6.1 cm |
+| jog 3.5 | 161 | 1.31 m | 0.40 | 7.8 cm | 101 deg | 91.9 % | 37; was 52 | 2.2 %; was 5.0 | 18.9 cm |
+| run 5.5 | 183 | 1.80 m | 0.32 | 7.9 cm | 114 deg | 91.3 % | 41; was 56 | 3.4 %; was 6.0 | 23.5 cm |
+| sprint 7.5 | 196 | 2.29 m | 0.26 | 9.6 cm | 123 deg | 91.8 % | 42; was 57 | 3.1 %; was 4.9 | 28.0 cm |
+
+(Skate "was" is v168, before the round below; the other "was" columns are v118.)
+Shoulder swing range (the rig's `arm`): walk 36 deg (was 28), brisk 45 (37),
+run 67 (55), sprint 84 (55).
 
 Ankle on its limit 8-32 % of a cycle. Speed ramp: worst ankle pop 9.8 cm/frame
 (touchdown at a 7.2 m/s sprint); worst planted slip 8.1 cm/frame (was 4.2), a
@@ -2539,6 +2644,8 @@ Where the budget goes, and the rules that keep it there:
   `dispose()` that no-ops unless the character was built `unique`, and
   `PedSystem.remove` must go through it. Disposing it directly yanks the GPU
   buffers out from under every other pedestrian wearing that look.
+  Their contact shadows are ONE more draw for the whole crowd and the player
+  (an InstancedMesh, see "Characters: head, hands, hood").
 - every tall building in the whole city is one static "far skyline" mesh.
 - **terrain is 12 x 12 tiles.** Tile size trades draw calls against wasted
   triangles, and on a phone the draw calls are what hurt. 20 x 20 put 132 terrain

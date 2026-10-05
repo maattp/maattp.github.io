@@ -654,7 +654,9 @@ pedMat.onBeforeCompile = (sh) => {
 // skin carries a soft sheen, hair a tighter one, shoes and belts a little.
 // Anything not listed is cloth, except vertices painted the skin colour (bare
 // arms and legs share a builder with their sleeves).
-const GLOSS = { head: 0.26, neck: 0.26, hand: 0.26, fingers: 0.26, hair: 0.40, foot: 0.22, hat: 0.12 };
+// Hair 0.22, not 0.40: tighter, it was one specular hotspot on the crown and
+// the shell read as varnished wood.
+const GLOSS = { head: 0.26, neck: 0.26, hand: 0.26, fingers: 0.26, hair: 0.22, foot: 0.22, hat: 0.12 };
 const GLOSS_SKIN = 0.26;
 
 class SkinAcc {
