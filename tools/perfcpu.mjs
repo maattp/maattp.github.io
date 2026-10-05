@@ -29,6 +29,15 @@
 //
 // A phone's JS is roughly 2-4x slower than an M-series Mac's; read these as
 // ratios between builds and between systems, not as the phone's milliseconds.
+//
+// `--audio` lets the AudioContext run (autoplay allowed: headless never gets
+// the gesture, so audio.update() otherwise returns at once and costs nothing)
+// and counts the Web Audio graph while each run plays: nodes RENDERED (those
+// with a path to the destination -- a disconnected voice is not rendered),
+// split into the persistent graph and the one-shots sounding, plus how many
+// nodes were created per second. The counter hooks every create*/connect/
+// disconnect from before the page loads (AUDIO_HOOK below). "Rendered" =
+// on a path from a source still playing to the destination.
 
 import { writeFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -53,6 +62,70 @@ const WRAP = arg('wrap', '');
 // --throttle=N slows the page's CPU N-fold (CDP) AFTER boot: the Mac stand-in
 // for the phone. 8 matches the per-system ms an iPhone 17 Pro reports in Debug.
 const THROTTLE = +arg('throttle', 1);
+const AUDIO = process.argv.includes('--audio');
+// Installed before any page script: tracks the live AudioContext's graph.
+const AUDIO_HOOK = `(() => {
+  const P = BaseAudioContext.prototype, OAC = window.OfflineAudioContext;
+  const nodes = new Set(), edges = new Map(), owner = new WeakMap(), ended = new WeakSet();
+  const A = window.__an = { created: 0, grp: null, groups: [] };
+  for (const k of Object.getOwnPropertyNames(P)) {
+    if (!/^create/.test(k) || k === 'createBuffer' || k === 'createPeriodicWave') continue;
+    const f = Object.getOwnPropertyDescriptor(P, k).value;
+    if (typeof f !== 'function') continue;
+    P[k] = function (...a) {
+      const n = f.apply(this, a);
+      if (n instanceof AudioNode && !(OAC && this instanceof OAC)) {
+        A.created++;
+        nodes.add(n);
+        for (const pk in n) { try { const v = n[pk]; if (v instanceof AudioParam) owner.set(v, n); } catch (e) {} }
+        if (n instanceof AudioScheduledSourceNode) n.addEventListener('ended', () => { ended.add(n); nodes.delete(n); edges.delete(n); });
+        if (A.grp) A.grp.push(n);
+      }
+      return n;
+    };
+  }
+  const C = AudioNode.prototype.connect, D = AudioNode.prototype.disconnect;
+  AudioNode.prototype.connect = function (t, ...r) {
+    const x = C.call(this, t, ...r);
+    if (!(OAC && this.context instanceof OAC)) {
+      const tn = t instanceof AudioParam ? owner.get(t) : t;
+      if (tn) { let s = edges.get(this); if (!s) edges.set(this, s = new Set()); s.add(tn); }
+    }
+    return x;
+  };
+  AudioNode.prototype.disconnect = function (...a) {
+    const x = D.apply(this, a);
+    if (!a.length) edges.delete(this);
+    else { const s = edges.get(this); if (s) s.delete(a[0] instanceof AudioParam ? owner.get(a[0]) : a[0]); }
+    return x;
+  };
+  // rendered = has a path to the destination; one-shot groups (every node a
+  // play() call made) count while their source has not ended
+  A.count = () => {
+    const rev = new Map();
+    for (const [a, s] of edges) for (const b of s) { let r = rev.get(b); if (!r) rev.set(b, r = []); r.push(a); }
+    const seen = new Set(), st = [];
+    for (const b of rev.keys()) if (b instanceof AudioDestinationNode && !(OAC && b.context instanceof OAC)) st.push(b);
+    while (st.length) { const n = st.pop(); for (const u of rev.get(n) || []) if (!seen.has(u) && !ended.has(u)) { seen.add(u); st.push(u); } }
+    // ...and fed: downstream of a source still playing. A chain whose source
+    // has ended (the synth radio's notes) lingers in the map until GC but
+    // renders nothing.
+    const fed = new Set(), fs = [];
+    for (const n of seen) if (n instanceof AudioScheduledSourceNode || n instanceof MediaElementAudioSourceNode) { fed.add(n); fs.push(n); }
+    while (fs.length) { const n = fs.pop(); for (const v of edges.get(n) || []) if (!fed.has(v) && seen.has(v)) { fed.add(v); fs.push(v); } }
+    for (const n of [...seen]) if (!fed.has(n)) seen.delete(n);
+    A.groups = A.groups.filter((g) => !ended.has(g[0]));
+    let shot = 0; const inShot = new Set();
+    for (const g of A.groups) for (const n of g) { inShot.add(n); if (seen.has(n)) shot++; }
+    let persist = 0; for (const n of seen) if (!inShot.has(n)) persist++;
+    return { persist, shot, total: persist + shot };
+  };
+  A.wrapPlay = (au) => {
+    if (au.__anWrapped) return; au.__anWrapped = true;
+    const pl = au.play;
+    au.play = function (...x) { A.grp = []; try { return pl.apply(this, x); } finally { if (A.grp.length) A.groups.push(A.grp); A.grp = null; } };
+  };
+})();`;
 const IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 '
   + '(KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1';
 const VIEW = DESKTOP
@@ -324,7 +397,8 @@ function pageInstall() {
 
 // ---- node side ------------------------------------------------------------
 const chrome = launchChrome({ port: PORT, profile: `/tmp/auto-perfcpu-${PORT}`, gpu: true, headed: false,
-  width: VIEW.width, height: VIEW.height, vsyncOff: !VSYNC });
+  width: VIEW.width, height: VIEW.height, vsyncOff: !VSYNC,
+  extra: AUDIO ? ['--autoplay-policy=no-user-gesture-required'] : [] });
 let code = 0;
 try {
   let page;
@@ -356,6 +430,7 @@ try {
     await send('Emulation.setUserAgentOverride', { userAgent: IPHONE_UA, platform: 'iPhone' });
     await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
   }
+  if (AUDIO) await send('Page.addScriptToEvaluateOnNewDocument', { source: AUDIO_HOOK });
   await send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__noAutoQuality = true;${process.argv.includes('--no-shadow-cache') ? ' window.__noShadowCache = true;' : ''}
     try { localStorage.setItem('auto-quality', ${JSON.stringify(QUALITY)}); } catch (e) {}` });
   await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
@@ -369,6 +444,9 @@ try {
     for (const k of ['pad','stickZone','lookZone','rotate'])
       { const e = document.getElementById(k); if (e) e.style.display = 'none'; } })()`);
   await ev(`window.__pcWrap = ${JSON.stringify(WRAP)}; (${pageInstall.toString()})()`);
+  // The radio is a random station per car (a live stream or the synth, whose
+  // notes are nodes): off, so builds compare like for like.
+  if (AUDIO) await ev('(() => { const a = window.__dbg.audio; a.musicOn = false; if (a.stopLive) a.stopLive(); })()');
   const build = (/id="build">([^<]*)</.exec(await (await fetch(`http://localhost:${HTTP_PORT}/apps/auto/index.html`)).text()) || [])[1];
   console.log(`perfcpu ${LABEL} build ${build}  ${DESKTOP ? 'desktop' : 'iPhone 17 Pro landscape'}  quality ${QUALITY}  frames ${FRAMES}`);
   const out = { label: LABEL, build, renderer: rend, runs: {} };
@@ -396,7 +474,21 @@ try {
         res({ calls: +(c / n).toFixed(1), ms: +(ms / n).toFixed(2), sceneCalls: +(tot / n).toFixed(1), by }); } };
       requestAnimationFrame(f); })`);
     SH.cacheRedraws = await ev('window.__dbg.shadowCache ? window.__dbg.shadowCache.renders : null');
-    const O = { setup: st, time: T, counts: C, shadow: SH };
+    let AU = null;
+    if (AUDIO) {
+      // the graph while this run plays: sampled every 10th frame for 300 frames
+      AU = await ev(`new Promise((res) => { const A = window.__an, au = window.__dbg.audio; A.wrapPlay(au);
+        const c0 = A.created, t0 = performance.now(); let n = 0, k = 0; const ps = [], ss = [], ts = [];
+        const f = () => { if (++n % 10 === 0) { const q = A.count(); ps.push(q.persist); ss.push(q.shot); ts.push(q.total); }
+          if (n < 300) requestAnimationFrame(f);
+          else { const m = (a) => +(a.reduce((x, y) => x + y, 0) / a.length).toFixed(1);
+            res({ state: au.ctx && au.ctx.state, persist: m(ps), persistMax: Math.max(...ps), shot: m(ss), shotMax: Math.max(...ss),
+              total: m(ts), totalMax: Math.max(...ts), createdPerS: +((A.created - c0) / ((performance.now() - t0) / 1000)).toFixed(1),
+              bankBuildMs: null }); } };
+        requestAnimationFrame(f); })`);
+      try { AU.bank = await ev(`import('./src/audio.js').then((m) => m.bankStats ? { ...m.bankStats, buildMs: +m.bankStats.buildMs.toFixed(1), buildMax: +m.bankStats.buildMax.toFixed(1) } : null)`); } catch { AU.bank = null; }
+    }
+    const O = { setup: st, time: T, counts: C, shadow: SH, audio: AU };
     out.runs[run] = O;
     const sys = Object.entries(T.sys).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v.toFixed(2)}`).join('  ');
     console.log(`\n[${run}] settled in ${(st.settle / 1000).toFixed(0)} s  route ${st.route} m  moved ${T.moved} m  resets ${T.resets}  ${T.cars} cars ${T.peds} peds  ${T.draws} draws (mean)  ${T.trisK}k tris`);
@@ -406,6 +498,7 @@ try {
     console.log(`  frames over 20 ms: ${T.miss} of ${T.n} (over 36 ms: ${T.miss2})`);
     console.log(`  shadow pass: ${SH.calls} of ${SH.sceneCalls} scene-pass draws, ${SH.ms} ms/frame  (${Object.entries(SH.by).map(([k, v]) => k + ' ' + v).join(', ')})  cache redraws so far ${SH.cacheRedraws}`);
     console.log(`  slow quarter spends extra: ${T.slowQ}`);
+    if (AU) console.log(`  audio (${AU.state}): rendered nodes mean ${AU.total} (max ${AU.totalMax}) = persistent ${AU.persist} (max ${AU.persistMax}) + one-shots ${AU.shot} (max ${AU.shotMax}); created ${AU.createdPerS}/s; bank ${AU.bank ? JSON.stringify(AU.bank) : 'n/a'}`);
     for (const w of T.worst) console.log(`    ${w}`);
     console.log('  queries/frame: ' + Object.entries(C).sort((a, b) => b[1].msFrame - a[1].msFrame)
       .map(([k, v]) => `${k} ${v.perFrame}x ${v.us}us = ${v.msFrame}ms`).join('  '));

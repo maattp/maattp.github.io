@@ -2989,8 +2989,16 @@ async function main() {
     const radioOn = await session.eval(`(async () => {
       const d = window.__dbg;
       d.audio.init(); d.audio.resume(); d.audio.primeLive();
+      // On a street by Westlake, in a car of its own. Run where the sections
+      // before leave you (the Aurora Bridge's deck, among moving traffic, or
+      // Winslow's dock), "the nearest car" was sometimes none, or one you did
+      // not stay in: one station "seen", and the offline half read SILENT.
+      const sp = d.city.respawnPointNear(0, 0);
+      d.player.respawn(sp.x, sp.z);
+      await new Promise(r => setTimeout(r, 1500));
       const p = d.player.position;
-      const v = d.traffic.nearestEnterable(p.x, p.z, 600);
+      const v = d.traffic.spawnAt(p.x + 2, p.z, 0, 'sedan', 0x3366aa, 'free');
+      window.__radioCar = v;
       // Getting in tunes a random station: five cars, how many stations?
       const seen = new Set();
       for (let k = 0; k < 5; k++) {
@@ -3030,17 +3038,17 @@ async function main() {
       await new Promise(r => setTimeout(r, 1200));
       d.audio._liveFailed = false;               // as if this drive were the first
       const p = d.player.position;
-      const v = d.traffic.nearestEnterable(p.x, p.z, 600);
+      const v = window.__radioCar;
       if (v) d.player.enterVehicle(v);
       await new Promise(r => setTimeout(r, 7000));
       return { live: d.audio.liveOn, synthGain: d.audio.musicBus.gain.value,
-               failed: d.audio._liveFailed };
+               failed: d.audio._liveFailed, inCar: !d.player.onFoot };
     })()`, true);
     await session.send('Network.emulateNetworkConditions', {
       offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1,
     });
     const synthCovers = !radioOff.live && radioOff.synthGain > 0.01;
-    console.log(`  offline: live=${radioOff.live} synthGain=${radioOff.synthGain.toFixed(2)} `
+    console.log(`  offline: inCar=${radioOff.inCar} live=${radioOff.live} synthGain=${radioOff.synthGain.toFixed(2)} `
       + `-> ${synthCovers ? 'synth radio covers' : 'SILENT -- BUG'}`);
     if (!synthCovers) process.exitCode = 1;
 
