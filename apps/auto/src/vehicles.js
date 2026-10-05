@@ -7078,6 +7078,15 @@ export class Vehicle {
     this._mode = null;
     this.edge = -1; this.dirSign = 0; this.laneU = null;
     this.panic = 0; this.stuckT = 0; this.recycle = false;
+    // traffic.js's driver (see "How the AI drives" in CLAUDE.md): the planned
+    // route (entries of RT_F numbers, allocated the first time the car is
+    // driven), this driver's pace against the limit, the input it reuses every
+    // frame, and whether it is holding at a standstill.
+    this.rt = null; this.rtN = 0; this.drvK = 1; this.aiIn = null; this.held = false; this.wantGo = false;
+    this.lead = null; this.prio = 0; this.restT = 0;   // the car it is following; spawn order (gridlock: the older goes)
+    // The grade's pull along the car last frame, m/s^2 (Vehicle.update): the
+    // AI's feed-forward on hills. 0 for a lowDetail car, which ignores grade.
+    this.gradeA = 0;
     this.path = null; this.pathT = 0; this.repath = 0; this.rammed = 0; this.siren = 0;
     this.lightL = null; this.lightR = null; this.extra = null;
     this.slot = null; this.wasParked = false; this.exploded = false;
@@ -8189,6 +8198,43 @@ export class Vehicle {
     void pw;
   }
 
+  /** The steering lock (rad) at road speed `sp`: the radius the tyres can
+   *  hold, r = v^2 / a, floored at the class's tightest turn. The derivation
+   *  is in update(), which is its main caller. */
+  steerLock(sp) {
+    const spec = this.spec;
+    const wheelbase = spec.wheelbase || spec.len * 0.62;
+    const agility = clamp(spec.latG / 0.88, 0.70, 1.32);
+    const turnR = Math.max((spec.minTurnR || 4.5) / agility, (sp * sp) / (spec.latA * ARCADE_GRIP * STEER_BITE));
+    return Math.min(0.62, Math.atan(wheelbase / turnR));
+  }
+
+  /** The AI's steering input for a path curvature `kappa` (1/m, + = left):
+   *  the wheel angle the bicycle model needs, as a share of the lock. */
+  aiSteer(kappa) {
+    const wheelbase = this.spec.wheelbase || this.spec.len * 0.62;
+    return clamp(Math.atan(wheelbase * kappa) / Math.max(1e-3, this.steerLock(Math.abs(this.vLong))), -1, 1);
+  }
+
+  /**
+   * The AI's pedals for a wanted acceleration `a` (m/s^2), the inverse of the
+   * longitudinal model in update(): throttle or brake (never neither while
+   * moving -- that is engine braking, a fixed 2.4 m/s^2 step the AI cannot
+   * modulate), with the grade's pull fed forward. Writes out.throttle/brake.
+   */
+  aiPedals(a, out) {
+    const spec = this.spec, v = this.vLong;
+    const need = a - this.gradeA + v * Math.abs(v) * DRAG + v * ROLL;
+    if (need >= 0) {
+      const fade = 1 - clamp(v / spec.fadeTop, 0, 1);
+      out.throttle = clamp(need / Math.max(0.1, spec.acc * (spec.ev ? Math.sqrt(fade) : fade)), 0.002, 1);
+      out.brake = 0;
+    } else {
+      out.throttle = 0;
+      out.brake = clamp(-need / spec.brakeA, 0.002, 1);
+    }
+  }
+
   update(dt, input) {
     const spec = this.spec;
     if (this.hitCd > 0) this.hitCd -= dt;
@@ -8238,7 +8284,7 @@ export class Vehicle {
     // never reached the steering lock -- it and a muscle car came out the same,
     // which the bench caught as a class-order failure. Wide enough now that the
     // table means something at both ends.
-    const agility = clamp(spec.latG / 0.88, 0.70, 1.32);
+    // (agility: see steerLock)
     // Think in TURN RADIUS, not steering angle.
     //
     // A fixed angle means the yaw it produces scales with 1/wheelbase, and a
@@ -8267,8 +8313,7 @@ export class Vehicle {
     // class differs by its own latG rather than by a fudge. The low-speed floor
     // is unchanged, so parking-lot lock is exactly as tight as before -- below
     // about 34 km/h the floor is what applies.
-    const turnR = Math.max((spec.minTurnR || 4.5) / agility, (sp * sp) / (spec.latA * ARCADE_GRIP * STEER_BITE));
-    const lock = Math.min(0.62, Math.atan(wheelbase / turnR))
+    const lock = this.steerLock(sp)
       * (hand > 0.5 ? 1.25 : 1)
       * (brake > 0 && this.vLong > 0.4 ? 0.92 : 1);
     // How fast the wheel reaches where you asked for it. At 11 the time
@@ -8303,13 +8348,15 @@ export class Vehicle {
     // queries a frame.
     // Off pavement, a road car bogs down; the quad does not.
     let rough = 0;
+    this.gradeA = 0;
     if (!this.lowDetail) {
       const fw = this.forward;
       const gy = this.city.groundAt(this.x, this.z, this.y + 0.6, this.lift);
       const ahead = this.city.groundAt(this.x + fw.x * 3, this.z + fw.z * 3, this.y + 2.5, this.lift);
       // Low gearing and four driven knobblies: a quad climbs what stalls a
       // sedan, so it pays half the grade.
-      acc -= clamp((ahead - gy) / 3, -0.7, 0.7) * 9.0 * (spec.offroad ? 0.5 : 1);
+      this.gradeA = -clamp((ahead - gy) / 3, -0.7, 0.7) * 9.0 * (spec.offroad ? 0.5 : 1);
+      acc += this.gradeA;
       // GRASS. Only for a vehicle nobody's AI is driving (the player's, or one
       // coasting after being left): traffic keeps to the roads. "Paved" is a
       // road's lift, a deck or lid (the ground there is not the terrain), or

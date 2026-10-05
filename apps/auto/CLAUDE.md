@@ -2229,6 +2229,109 @@ carriageway under it allows its heading. Deterministic, so two builds compare
 like for like. `--dump FILE` writes data for a top-down render, `--shot DIR`
 the in-game frames with every moving AI car ringed green or red.
 
+### How the AI drives
+
+The driver used to aim at a point 6-24 m down its CURRENT edge, clamped at
+the edge's end, steer `heading error x 1.5`, hold the edge's limit with a
+P-controller, and brake 0.35-1 (7-20 m/s^2) for anything within `5 + 1.1 v`
+m in a straight 2.2 m corridor. `tools/aidrive.mjs` (below) measured what
+that looks like: **junction turns taken at 12 m/s (43 km/h) pulling 21 m/s^2
+(2.2 g)**, the aim point jumping sideways at every node (the next edge's lane,
+or a different lane count), so a car landed 2-9 m off its lane after a turn
+and hunted back; brake/throttle switching 24 times a car-minute behind
+another car; and at a standstill the brake is reverse gear, so a queued car
+rocked back and forth.
+
+Now a car carries a **planned route** (`v.rt`, up to 10 entries): its edge
+and the next few it will take, each with the lane it will hold there. Three
+laws:
+
+- **The path is the lanes' centre lines, filleted.** Between two entries the
+  two lane lines meet at a vertex, and the corner is a circular arc tangent to
+  both (`routeExtend`). Its radius is what the segments leave room for (a bend
+  of short OSM segments comes out at the road's own radius), capped at a
+  junction at 7 m turning right and 11 m turning left (a left swings wide,
+  across the junction). Near-parallel lines join with a jog. **Straight on,
+  a car takes the nearest lane, not the same fraction of the width**:
+  `laneU` kept a 3-lane fraction onto a 6-lane edge and the car swerved
+  3.8 m at the node.
+- **Steering is pure pursuit along that path**: the point `3.5 + 0.5 v` m
+  ahead (5-20 m), the curvature `2 sin(alpha) / d` that reaches it, turned
+  into a wheel angle by the vehicle's own bicycle model (`Vehicle.aiSteer`,
+  which shares `steerLock` with the player's steering), so one path is the
+  same path for a hatchback and a bus at any speed. A car switches to the
+  next entry at the vertex (mid-corner), not at 94 % of the edge.
+- **Speed is one wanted acceleration**, the least of: every arc ahead
+  (`sqrt(A_LAT x R)`, A_LAT = 3 m/s^2) and every slower street (a ramp off the
+  freeway) as the constant deceleration that arrives there at its speed
+  (`roadAccel`, out to the stopping horizon, extending the route as it goes);
+  the car ahead by the Intelligent Driver Model (1.2 s headway, 2.2 m
+  standstill gap, 2 m/s^2 up, 1.3 for a bus or truck); a stop short of a
+  Link train, a freight gate or you on foot. `Vehicle.aiPedals` inverts the
+  longitudinal model -- drag, rolling, the grade (`v.gradeA`, fed forward
+  from last frame) -- into throttle OR brake, never neither while moving
+  (that is a fixed 2.4 m/s^2 of engine braking the AI could not modulate).
+  **A stopped car holds on the parking brake** (`v.held`) until it wants
+  0.4 m/s^2, never on the brake, which is reverse at a standstill.
+
+**The car ahead is found along the path**, sampled every `max(4, scan/10)` m
+out to the stopping distance: the straight corridor saw across every
+junction a car was about to turn at and waited on whatever stood there, and
+on a bend took the next lane's cars. **Cross traffic yields by arrival**:
+a moving car crossing the path (more than 60 deg off it; a merge is
+left to the car-following) is projected
+along its heading 0.8 / 1.6 / 2.4 s; if it will be in the path before this
+car gets there (by 0.4 s, or the older car on a tie) this car stops short of
+that point. Without it two cars met mid-junction at walking pace, since
+neither was in the other's path until both were. Standing things (kerbside
+cars, apron vehicles) are only looked at inside 25 m: they are most of the
+list, and walking the path for each was most of the scan's cost. An
+unattended car in the path is dodged on the side away from it (`v.dodge`,
+as before). Two cars waiting on
+each other (`v.lead`) resolve by spawn order (`v.prio`, the older goes).
+A car that wants to go and has not moved for a second floors it -- a gentle
+2 m/s^2 loses to a post's contact response every frame. And out of sight
+(120 m+), a car at rest for 20 s is recycled whatever it waits on: there
+are no signals to wait at, so that long at rest is a queue behind a wedge
+or a gridlock of three or more.
+
+Every driver keeps a pace of `0.92-1.08 x` the limit (`v.drvK`): a whole
+street at exactly the limit drove in formation.
+
+Measured, `tools/aidrive.mjs`, 5 sites x 90 s, car-time weighted:
+
+| | before | after |
+|---|---|---|
+| speed through 50+ deg turns | 11.9 m/s | 4.6 m/s |
+| peak lateral accel in those turns | 21.2 m/s^2 | 3.1 m/s^2 |
+| lateral accel, 95th pct | 4.7 m/s^2 | 2.1 m/s^2 |
+| lane error mid-edge, 95th pct | 1.37 m | 0.18 m |
+| steering reversals / car-min | 6.5 | 3.5 |
+| yaw jerk RMS | 1.12 rad/s^2 | 0.30 rad/s^2 |
+| brake <-> throttle switches / car-min | 24.1 | 3.6 |
+| frames braking over 4.5 m/s^2 | 0.65 % | 0.15 % |
+| abs(accel), 99th pct | 7.1 m/s^2 | 2.1 m/s^2 |
+| left of centre on a two-way street | 1.6 % | 0.23 % |
+| off every carriageway | 1.97 % | 1.92 % |
+| car bodies touching / min (all sites) | 0.67 | 0.53 |
+
+trafficcheck (7 sites x 1 min) is level-ish: against the flow 0.10 -> 0.20 %
+of samples (cars on two-way edges at junctions near (400, 250) and
+(-200, 75) judged over a neighbouring one-way), contacts 3.3 -> 4.0 a minute
+(its circle rule: oncoming passes on narrow two-way streets are most of
+it), stuck 3 -> 7 of ~180 cars, mostly on I-5 under the convention centre
+lid (below). At the 8x phone stand-in, traffic's mean ms/frame over three
+alternating passes is within run-to-run noise: drive-dt 2.39 -> 2.50,
+foot-dt 2.57 -> 2.49.
+
+Failed alternative: pinching the lane span to the walls found by probing
+`barrierHit` along each freeway/tunnel edge (for the cars wedged on I-5
+under the convention centre lid). The walls there stand inside the
+carriageway at heights off the node chord, the probe missed most of them,
+and lane counts changing edge to edge made lane error worse. The wedges are
+walls across the roadway (a ramp's centreline runs into one at (519, 6)),
+a road-data fix, not a lane one.
+
 ## The one height surface
 
 The heightfield is now **imported** rather than baked from polygon distance
@@ -3028,6 +3131,7 @@ The purpose-built harnesses, each a fixed-dt, paused-game driver:
 | `tools/bldshots.mjs <dir> [--scan] [--shots=a,b] [--n=6] [--from=index.json]` + `tools/bldsheet.py <dir> [out] [--pair=<dir>]` | the building outlier scan and per-category contact sheets, eye level off the long (downhill) face plus an aerial; `--from` re-shoots another run's buildings by position for a before/after (see "Buildings: the outlier scan"). GPU by default (`AUTO_GPU=0` for SwiftShader) |
 | `tools/stuntjumps.mjs [ids] [--caps] [--shots DIR]` | every stunt jump: corridor check, then the player's car driven off it at fixed dt per speed cap (see "Stunt jumps") |
 | `tools/trafficcheck.mjs [--dump FILE] [--shot DIR] [--sites a,b]` | share of cars against the flow, oncoming contacts, stuck cars and jams over 7 sites at fixed dt, the last a police pursuit (see "One-way traffic") |
+| `tools/aidrive.mjs [--sites a,b] [--json FILE]` | how the AI drives, per car per frame at 5 sites (downtown, an arterial, I-5, Queen Anne, Capitol Hill): lane error, weaving, yaw jerk, hard braking, pedal switching, lateral g, speed through turns, off road / left of centre, tailgating, circle contacts vs real body hits, street-object contact and the cars wedged there. `AD_PROBE='<expr>'` / `AD_PROBE_FILE` runs a diagnostic after each site (see "How the AI drives") |
 | `tools/flycam.mjs [--jitter]` | a scripted flight: camera measured RELATIVE TO THE PLANE and the plane's on-screen motion, since absolute camera movement at 116 m/s is ~2 m a frame regardless. The autopilot holds 45 m over the terrain under AND 400 m ahead, or the bay dive flies into Queen Anne. Also counts building and road pop-ins, and flies `i5high` (see "flycam: road pop-ins") |
 | `tools/camtunnel.mjs` | camera height at stations through bores — nothing through the roof |
 | `tools/aircraftshots.mjs [dir] [types] [--stage] [--field] [--flight] [--takeoff]` | aircraft on a plain stage (incl. a `close` cockpit view), on their Boeing Field spots, the helicopter flown through spool/lift/hover/yaw/forward/turn/stop/land under the game's chase camera, and fixed-wing take-off numbers (see "The hangar"). `AIR_PROBE='view:x,y'` raycasts stage pixels |
