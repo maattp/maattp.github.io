@@ -341,6 +341,14 @@ function makeUnderpassDepth(underpasses) {
     const list = upGrid.get(skey(Math.floor(x / UP_CELL), Math.floor(z / UP_CELL))) || UP_NONE;
     for (const up of list) {
       if (x < up.x0 || x > up.x1 || z < up.z0 || z > up.z1) continue;
+      // a street beside a freeway's dip keeps its ground (gradeRoads)
+      if (up.prot && up.prot.length) {
+        let on = false;
+        for (let k = 0; k < up.prot.length; k += 5) {
+          if (segDist(x, z, up.prot[k], up.prot[k + 1], up.prot[k + 2], up.prot[k + 3]) < up.prot[k + 4]) { on = true; break; }
+        }
+        if (on) continue;
+      }
       for (let i = 0; i < up.pts.length - 1; i++) {
         const p = up.pts[i], q = up.pts[i + 1];
         const r = distToSeg(x, z, p.x, p.z, q.x, q.z);
@@ -907,6 +915,96 @@ function gradeRoads(nodes, edges) {
     }
   }
 
+  // --- overlapping carriageways a little out of level: one top surface ---
+  // After the solve and the blend, side-by-side carriageways that overlap in
+  // plan were still up to SPLIT_LO (0.4 m) apart in height: pairs the
+  // coupling never saw (decks whose imported levels differ by more than 2 m
+  // and solved together), the two branches of a diverge still overlapping
+  // past their joint, and coupled pairs that the blend's smoothing along each
+  // chain pulled apart again. Too close to trim (split levels, below), so
+  // both were drawn and the higher was the top surface -- and groundAt, asked
+  // from the wheels, rightly answers the higher one: a car on the lower lane
+  // was picked up onto its neighbour, a few centimetres to 0.4 m, wherever
+  // their pieces overlapped, and dropped where they stopped. That was 68 % of
+  // the graded and deck freeway frames over 30 m/s2 (the centre of the car on
+  // its own lane, the ground answered from a parallel neighbour).
+  //
+  // So in the overlap the LOWER one is raised to the higher -- the surface
+  // already drawn on top, so nothing a car could see moves -- and the raise
+  // is eased along its own chain by dilate-then-average over PROF_R, which is
+  // never below the raise it smooths (the clearance trick again). Raising
+  // only, from the heights before this pass (taking a partner's raised height
+  // ratcheted whole clusters up, see the coupling), and never past the climb
+  // out of the nearest anchor.
+  let levelled = 0;
+  {
+    const H0 = new Float64Array(H), up = new Float64Array(N);
+    // The surface of graded edge o at parameter u, `lat` metres to its left:
+    // the profile plus, on the ground, the camber the publish step gives it.
+    const surfOf = (o, u, lat) => {
+      const v = o.ps[Math.round(u * o.pk)];
+      const x = u * o.pk, i0 = Math.min(o.pk - 1, Math.floor(x)), fr = x - i0;
+      const h = H0[o.ps[i0]] * (1 - fr) + H0[o.ps[i0 + 1]] * fr;
+      if (o.elev || isDeck[v] || coupled[v]) return h;
+      return h + clamp(gx[v] * -o.dz + gz[v] * o.dx, -CAMBER_MAX, CAMBER_MAX) * lat;
+    };
+    for (let ei = 0; ei < edges.length; ei++) {
+      const e = edges[ei];
+      if (!e.prof) continue;
+      const a = nodes[e.a], b = nodes[e.b];
+      // near-parallel graded neighbours whose bounds reach this edge
+      const cand = [];
+      for (let gx0 = Math.floor((Math.min(a.x, b.x) - 20) / CELL); gx0 <= Math.floor((Math.max(a.x, b.x) + 20) / CELL); gx0++) {
+        for (let gz0 = Math.floor((Math.min(a.z, b.z) - 20) / CELL); gz0 <= Math.floor((Math.max(a.z, b.z) + 20) / CELL); gz0++) {
+          const l = grid.get(skey(gx0, gz0));
+          if (!l) continue;
+          for (const oi of l) {
+            const o = edges[oi];
+            if (oi === ei || !o.prof || cand.includes(o)) continue;
+            if (Math.abs(e.dx * o.dx + e.dz * o.dz) < 0.8) continue;
+            cand.push(o);
+          }
+        }
+      }
+      if (!cand.length) continue;
+      for (let i = 1; i < e.pk; i++) {
+        const v = e.ps[i];
+        if (fixed[v]) continue;
+        const x = SX[v], z = SZ[v];
+        for (const o of cand) {
+          const oa = nodes[o.a];
+          const u = ((x - oa.x) * o.dx + (z - oa.z) * o.dz) / o.len;
+          if (u <= 0 || u >= 1) continue;
+          const lat = (x - oa.x) * -o.dz + (z - oa.z) * o.dx;
+          // o's lanes must hold this road's centre, and o must not be this
+          // road carrying on (a centreline under 0.5 m away)
+          if (Math.abs(lat) > o.hw - 0.3 || Math.abs(lat) < 0.5) continue;
+          const dh = surfOf(o, u, lat) - H0[v];
+          if (dh > 0.02 && dh < 0.4 && dh > up[v]) up[v] = dh;
+        }
+      }
+    }
+    const sup = new Set();
+    for (let i = 0; i < N; i++) if (up[i] > 0) { levelled++; for (const q of aroundC(i, PROF_R * 2)) sup.add(q); }
+    const Dl = new Float64Array(N);
+    for (const i of sup) {
+      let m = up[i];
+      for (const j of aroundC(i, PROF_R)) if (up[j] > m) m = up[j];
+      Dl[i] = m;
+    }
+    for (const i of sup) {
+      if (fixed[i]) continue;
+      let s2 = 0, sw = 0;
+      for (const j of aroundC(i, PROF_R)) { s2 += Dl[j] * W[j]; sw += W[j]; }
+      const r = sw > 0 ? s2 / sw : Dl[i];
+      // The anchor cap only where an anchor is near: on a deck the imported
+      // floor already stands over the cap's cone, and capped there the raise
+      // did nothing at all (the Ship Canal Bridge's ramps).
+      if (r > 0.005) H[i] = Math.max(H[i], Math.min(H0[i] + r, dFix[i] > 60 ? Infinity : capFix[i]));
+    }
+  }
+  cityStats.levelledSamples = levelled;
+
   // Dev-only: the solver's intermediates per sample, for diagnosing a profile
   // (set globalThis.__profDebug before boot). Shipping builds carry nothing.
   if (globalThis.__profDebug) {
@@ -955,6 +1053,8 @@ function gradeRoads(nodes, edges) {
   const fwyDips = [];
   let dipNoRoom = 0;
   const dipWhy = { max: 0, anchor: 0, deck: 0, water: 0, street: 0 };
+  const evals = [];
+  const dipProtect = new Set();
   {
     const isDeckEdge = (i) => { let d = false; edgesOf(i, (e) => { if (e.elev) d = true; }); return d; };
     for (const c of refusedList) {
@@ -975,7 +1075,7 @@ function gradeRoads(nodes, edges) {
       let need = 0;
       for (const j of foot) need = Math.max(need, H[j] - ceil0);
       if (need <= 0.2) continue;
-      if (need > DIP_MAX) { dipNoRoom++; dipWhy.max++; continue; }
+      if (need > DIP_MAX) { dipWhy.max++; evals.push({ c, A, ok: false }); continue; }
       const used = new Map();
       const st = [];
       for (const j of foot) { used.set(j, 0); st.push(j); }
@@ -992,6 +1092,7 @@ function gradeRoads(nodes, edges) {
       // the raw dip, and everything its smoothing can reach
       const d0 = new Map();
       let ok = true, lowest = Infinity;
+      const prot = new Set();
       for (const [j, r] of used) {
         d0.set(j, need - r);
         lowest = Math.min(lowest, H[j] - (need - r));
@@ -1025,15 +1126,42 @@ function gradeRoads(nodes, edges) {
                 const o = edges[oi];
                 if (o.prof || o.tunnel || o.elev) continue;
                 const oa = nodes[o.a], ob = nodes[o.b];
-                if (distToSeg(x, z, oa.x, oa.z, ob.x, ob.z).d < hwOf[j] + o.hw + walkWidth(o.cls) + 2) { ok = false; dipWhy.street++; break; }
+                const dd = distToSeg(x, z, oa.x, oa.z, ob.x, ob.z).d - hwOf[j] - o.hw - walkWidth(o.cls);
+                // Over the freeway's own lanes: nothing can be done. Beside
+                // them, on the trench's bank (the crossing street running on
+                // past a deck that ends at the kerb, mostly), the carve is
+                // kept off it instead (`prot`, makeUnderpassDepth).
+                if (dd < 0.3) { ok = false; dipWhy.street++; break; }
+                if (dd < 2.2) prot.add(oi);
               }
             }
           }
         }
       }
-      if (!ok) { dipNoRoom++; continue; }
-      for (const [j, d] of d0) if (d > dipOf[j]) dipOf[j] = d;
-      fwyDips.push({ x: Math.round(c.x), z: Math.round(c.z), need: +need.toFixed(2) });
+      evals.push({ c, A, ok, d0, need, prot });
+    }
+    // ALL OR NOTHING UNDER ONE STREET. A street deck crosses every
+    // carriageway of the freeway, and each crossing is judged on its own;
+    // dipping some and not others put I-405 under Juanita-Woodinville Way in a
+    // trench beside a carriageway still running through the deck. Crossings
+    // under the same street within 80 m go together.
+    const grp = evals.map((_, k) => k);
+    const root = (k) => { while (grp[k] !== k) k = grp[k] = grp[grp[k]]; return k; };
+    for (let p = 0; p < evals.length; p++) {
+      for (let q = p + 1; q < evals.length; q++) {
+        const P = evals[p], Q = evals[q];
+        const same = P.A === Q.A || (P.A.name && P.A.name === Q.A.name);
+        if (same && Math.hypot(P.c.x - Q.c.x, P.c.z - Q.c.z) < 80) grp[root(p)] = root(q);
+      }
+    }
+    const bad = new Set();
+    for (let k = 0; k < evals.length; k++) if (!evals[k].ok) bad.add(root(k));
+    for (let k = 0; k < evals.length; k++) {
+      const ev = evals[k];
+      if (bad.has(root(k))) { dipNoRoom++; continue; }
+      for (const [j, d] of ev.d0) if (d > dipOf[j]) dipOf[j] = d;
+      for (const oi of ev.prot) dipProtect.add(oi);
+      fwyDips.push({ x: Math.round(ev.c.x), z: Math.round(ev.c.z), need: +ev.need.toFixed(2) });
     }
     if (fwyDips.length) {
       // dilate, then average: never less than the raw dip, corners rounded
@@ -1204,9 +1332,17 @@ function gradeRoads(nodes, edges) {
       }
       if (deepest <= 0.05) continue;
       const hw = e.hw + 0.3;
-      underpasses.push({ pts, pd: true, hw, dip: deepest, bi: -1, fwy: true,
-        x0: Math.min(...pts.map((p) => p.x)) - hw - 2, x1: Math.max(...pts.map((p) => p.x)) + hw + 2,
-        z0: Math.min(...pts.map((p) => p.z)) - hw - 2, z1: Math.max(...pts.map((p) => p.z)) + hw + 2 });
+      const x0 = Math.min(...pts.map((p) => p.x)) - hw - 2, x1 = Math.max(...pts.map((p) => p.x)) + hw + 2;
+      const z0 = Math.min(...pts.map((p) => p.z)) - hw - 2, z1 = Math.max(...pts.map((p) => p.z)) + hw + 2;
+      const prot = [];
+      for (const oi of dipProtect) {
+        const o = edges[oi], oa = nodes[o.a], ob = nodes[o.b];
+        const r = o.hw + walkWidth(o.cls) + 0.3;
+        if (Math.max(oa.x, ob.x) + r < x0 || Math.min(oa.x, ob.x) - r > x1) continue;
+        if (Math.max(oa.z, ob.z) + r < z0 || Math.min(oa.z, ob.z) - r > z1) continue;
+        prot.push(oa.x, oa.z, ob.x, ob.z, r);
+      }
+      underpasses.push({ pts, pd: true, hw, dip: deepest, bi: -1, fwy: true, prot, x0, x1, z0, z1 });
     }
   }
   const underpassDepth = makeUnderpassDepth(underpasses);
