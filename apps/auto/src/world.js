@@ -1290,13 +1290,6 @@ export class World {
     return false;
   }
 
-  /**
-   * One dropped terrain cell, redrawn at SUB x SUB with the trench left out.
-   *
-   * Heights come from `G.terrainHeight`, which interpolates the way the terrain
-   * mesh is triangulated -- so the patch meets the surrounding 40 m grid along
-   * its edges by construction rather than by luck.
-   */
   /** patchCell's heights: its (SUB + 1)^2 lattice, row by row, carve included. */
   patchHeights(cx, cz, S) {
     const SUB = 10, q = S / SUB;
@@ -1305,6 +1298,13 @@ export class World {
     return ys;
   }
 
+  /**
+   * One dropped terrain cell, redrawn at SUB x SUB with the trench left out.
+   *
+   * Heights come from `G.terrainHeight`, which interpolates the way the terrain
+   * mesh is triangulated -- so the patch meets the surrounding 40 m grid along
+   * its edges by construction rather than by luck.
+   */
   patchCell(b, cx, cz, S, colour, ys) {
     // The quad size is bound to the carve profile: CUT_OVER must be at least
     // one of these quads, so that any quad crossing the wall plane has both
