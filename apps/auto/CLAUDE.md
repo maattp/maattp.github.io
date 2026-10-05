@@ -1545,10 +1545,11 @@ noise. Overdraw is the glazed area only.
   with -- the arms move in with the torso), waist x0.92, hips x1.05, arms
   x0.88, and 0.95 of the height. One torso under twelve outfits read as one
   mannequin in twelve costumes.
-- **Hair is value structure, not grain.** The cell has a sheen band at s ~0.7,
-  darkens into the nape and the long curtain (which samples its bottom row),
-  and is broken by thousands of LOW-contrast strands; long strokes at 30 %
-  read as wood grain.
+- **Hair is value structure, not grain**: clumps with a broken sheen, darker
+  at the crown and underneath, broken by LOW-contrast strands (long strokes at
+  30 % read as wood grain). Since the round after v175 the hair cell is mapped
+  by the hair's own rows and ends in cut-out tips: see "Characters: hair in
+  locks, and the head's second pass".
 - **The long curtain TUCKS into the shell**: its top row 4-5 mm inside the
   shell, the next ~6 mm lower 3 mm outside, a steep dive. Started level with
   the shell (or under it, coming out at the shell's thin edge) the two crossed
@@ -1663,6 +1664,158 @@ triangles more a crowded frame, ~1.7 % of perfguard's 1.18 M, and perfguard is
 unchanged within noise. Building the 12 looks takes 41 ms in Node. Phones cast
 no ped shadows, so there it is one pass. `tools/gait.mjs` output was
 byte-identical across the head, hand and hood work.
+
+### Characters: hair in locks, and the head's second pass
+
+The round after v170 took the three lowest items of the character judge --
+hair, the head and the hands -- and spent itself on the first two. Same
+method: a fixed rubric (B1 silhouette, B2 head & face, B3 hair, B4 clothing,
+B5 hands & shoes, B6 variety, B7 overall), an agent judge reading the
+same sheets every round (six looks at face / face34 / profilehead / head,
+on their POOLED seeds so colour and skin vary, plus the lineup, two crowd
+frames and a walkcam crop). `docs/characters2/` has the before | after
+images. Scores are at the end of this section.
+
+**The atlas is alpha-tested.** `pedMat.alphaTest = 0.5`, the atlas uploads
+`premultiplyAlpha` and `onBeforeCompile` divides the colour back out after
+the test (`diffuseColor.rgb /= max(a, 0.5)`): straight alpha carried the
+transparent texels' black into every cut-out edge, a dark rim on each lock.
+Everything is opaque except the hair cells' tip bands and the locks cell,
+because **drawAtlas fills the whole canvas first** -- an unpainted texel (an
+empty grid square, a cell's padding) would otherwise be a hole wherever a
+mip or a stray UV reached it. Cells are 256-aligned, so no mip level a
+character is ever drawn at mixes two cells. One discard test, no draw, no
+texture memory (still 2048 x 1024 RGBA, 10.7 MiB with mips); the shadow
+pass's depth material copies `map` and `alphaTest` by itself. The divide
+is a string replace on `#include <alphatest_fragment>` (a silent no-op if
+that chunk is renamed on a three bump: every tip would go dark-rimmed). The
+sRGB decode runs on the premultiplied value, so a half-covered texel decodes
+a little dark; it only shows at the 0.5 threshold, as a slightly darker tip.
+
+- **Hair is mapped by its own rows and columns, not by height.** buildHair
+  builds with `Builder(true)` and records `hb.hairUV[vertex] = [t, s, cell?]`;
+  the uvFn in buildCharacter reads it by vertex index (SkinAcc passes the
+  index as a 4th argument, and takes a CELL PER VERTEX now -- it used to
+  take the last vertex's cell for the whole part). t is the column's ANGLE,
+  from the back round to the back (by index, the locks were crushed at the
+  nose's 3 deg columns and stretched over the back's 26). s is the row: the
+  edge is `TIP_S` (0.22), the crown 1.
+- **Every edge is strand tips, not where a shell stops.** The shell hangs
+  two rows below its edge (`NX`), 4-16 mm by `extTable` (least over a short
+  style's ear and under a curtain, most at the nape), mapped to the tip band
+  below `TIP_S`: transparent but for tapering locks that end in two or three
+  wisps. The face cells shade the skin under every hairline (14 mm, the
+  hair's shadow), so the tips blend into a darker scalp rather than being
+  cut out of a clean forehead. **The forehead is only 19 mm from brow to
+  hairline**: a 10 mm band there is a fringe, so the short styles keep 6 mm.
+- **Crop, side, long, bob and curly have an OUTER LAYER** (`over` in
+  buildHair): the shell's own rows from the tip band's middle row to the
+  crown, 0.7 mm off at the edge and 3-8 mm higher up, swelling and dipping
+  lock by lock, on `CELLS.locks` (grid square 1): 52 overlapping locks,
+  closed into one surface near the crown, most ending in the tip band, each
+  in four or five wisps that keep their width to their last ~24 px. The shell
+  under it is the hair x 0.86 -- at 0.72 the band of shell between the locks'
+  ends read as a second helmet under the first. The crown fan sits on the
+  outer layer (the shell's would be in a hole in it). Curly's outer layer is
+  the curly cell, lumpier (4-13 mm off) so its edge is two rows of coils.
+- **One tapered shape per lock read as torn paper** (judge, three times):
+  wide triangular tips with a crisp alpha edge are a sawtooth, and a lock
+  that tapers over its WHOLE length parts from its neighbours halfway down,
+  so the darker shell between ran down the hair as "drips of paint". Locks
+  keep their width and end in short wisps; many fine tips read as strands.
+  A dark stroke round each lock outlined it like a cartoon; darken only down
+  its sides, faintly.
+- **Paint for the cell's aspect.** The hair cells are ~2.2 mm a pixel round
+  the head and 0.4-0.8 mm up it. Locks running up the cell tolerate it;
+  round coils came out as horizontal smears ("wavy striations"), so curls
+  are upright ellipses (x 0.36), and their tips are coils hung from the
+  edge, not bars with round ends (battlements); coils centred deeper in the
+  band floated on the forehead as blobs. The stubble cell's marks are
+  upright too: square dots were horizontal dashes, and the skin between them
+  drew a scratched white line along every buzz cut's hairline (raycast said
+  "hair, tip band"; switching off the sun and the gloss did not remove it).
+- **The long curtain is on the locks cell** (closed near the head, separate
+  locks at the ends, the inner face showing through the gaps) with a ripple
+  across it that grows as it falls; it gained a row at t 0.86 for the tips.
+  A **bob** is the same curtain ending at the jaw with a third of the flare.
+- **New cuts replace one of each duplicated pair** (`LOOKS`): a ponytail (a
+  tapered smooth patch on a bezier from a tie at the back of the head to
+  under the jaw, tips at its end; the hood is skipped under it), a bob, and
+  a shaved head (scalp colour under `CELLS.stubble`, grid square 2: a
+  stipple that thins out through the tip band, so its hairline is a fade).
+  **The buzz cut is the stubble cell in the hair colour** -- as painted hair
+  it was a skullcap with a fringe -- and both close cuts clip the sideburn
+  to eye - 12 mm (a long point there read as Spock). **A cop's cap covers a
+  buzz cut**, not the crop: the crop's locks stand up to 8 mm off the head,
+  through the cap. `pickStyle` (unique builds: the player, riders) is
+  unchanged.
+- **The bun is a smooth patch** with its strands wound to the back:
+  `Builder.spheroid` is per-facet, a cut gem stuck on the head.
+- **Facial hair is vertex colour** (`LOOKS[i][3]`, 'stubble' or 'beard'): the
+  face cells are per skin tone, and the head's rows are dense round the
+  mouth and jaw, so a shade multiplied in under the cheek line, fading at the
+  sideburn and under the chin and kept off the lips, follows the jaw. It is
+  tinted TOWARD THE HAIR COLOUR (0.35 + 0.9 x hair), so dark hair darkens and
+  fair hair warms; a plain dark multiply on fair skin was dirt. Full strength
+  (0.8) still read as a dirty face; 0.58 beard, 0.34 stubble.
+- **The short styles clear the ear by 6-8 mm more** (edgeTable over and
+  behind the ear): the locks stand off the head, and the ear's rim came
+  through them.
+
+The head's second pass, judged in clay on the buzz cut first:
+
+- **Eyes are judged at 2-9 m**, where an eye is a few pixels: what carries
+  is the socket's dark and the lash line, not the iris. A cool orbital shade
+  round the eye, a deeper lid crease, an under-eye shadow, an almond 29 x 11.5
+  mm and a 2.9 mm lash line; brows twice as thick at the inner end and broken
+  into hairs at their edges.
+- **A side light drew a hard dark streak down every nose** and a sunken dent
+  between cheek and mouth. The nose's plateau has a softer shoulder
+  (`1 / (1 + nq^1.5 x 1.2)`, was `1 / (1 + nq^2)`), the hollow under the
+  cheekbone is a third as deep with a fullness beside the nose over it, the
+  muzzle is wider, the front plane turns away less, and the sockets and
+  brow ridge are ~15 % deeper. The chin and jaw-angle rings are 3 mm wider:
+  the narrowed chin had become a point.
+- **The ears are their own part** (`'ear'`), skin-coloured on the plain skin
+  cell: on the face cell they sat at its clamped edge and came out paler and
+  pinker than the face.
+
+What the judge still marks down (left for a next round): the hands (paddles
+at 9 m), the shoes (one shape recoloured), the head shared by every look
+(only `faceParams` varies it), the ears' shape, and skin showing through
+skirts and dresses at the hip and the jagged neckline where the collar meets
+the neck -- both of those were there before this round.
+
+Cost: a pooled look is **4,396 triangles mean** against 3,959 before (+11 %): hair 493 -> 931 (the tip rows, the outer layer, the ponytail and the smooth bun), the head 1,094 -> 1,024 with the ears (70) now their own part. Still one draw a character and
+still pooled; building the 12 looks in Node took ~110 ms, against ~85.
+The atlas is the same 2048 x 1024 (10.7 MiB with mips): the locks and
+the stubble went into grid squares 1 and 2, which were empty. One more
+`discard` test in the character shader, and no new draw: perfcpu
+`--runs=foot-dt --throttle=8`, four rounds interleaved with master served
+side by side (24 pedestrians, 182 draws both): `peds` 0.40 / 0.38 / 0.52 /
+0.54 ms a frame on master, 0.51 / 0.70 / 0.55 / 0.54 here; the last two
+rounds, run with nothing else on the machine, are level, and nothing in
+`peds.update` changed (the pose is the same skeleton; only the shared
+geometry grew). Frame CPU 8.2-8.7 ms master, 8.4-9.7 ms branch, render and
+traffic moving most between runs. gait.mjs prints the same table as before
+(it reads bones, not the mesh); verify passes.
+
+| judge, fixed rubric (1-10) | B1 | B2 face | B3 hair | B4 | B5 | B6 | B7 | mean |
+|---|---|---|---|---|---|---|---|---|
+| master, run 1 | 4 | 3 | 2.5 | 3.5 | 3 | 4.5 | 3 | 3.4 |
+| master, run 2 (pooled seeds) | 4 | 3.5 | 3 | 4 | 3.5 | 4.5 | 3.5 | 3.7 |
+| mid-round (A-D) | 4.5-5 | 3.5 | 3-3.5 | 3.5-4 | 3-4 | 5 | 3.5-4 | 3.7-4.0 |
+| final | 4.5 | 3.5 | 3 | 4 | 3 | 4.5 | 3.5 | 3.7 |
+
+**The absolute judge cannot see a change this size**: master scored 3.4
+and 3.7 on two runs of the same images, and this round's builds 3.7-4.0.
+A PAIRED judge (master and the round side by side, which is better on
+each item and by how much) is the honest instrument for a round like
+this one: it gave hair +1, variety +1 and overall +1, every other item
+the same, and listed what still read wrong (the edge of the crop and
+side fringes as torn paper -- fixed after it, see the locks' width --
+floating coils on the curly forehead, a white line on the buzz, both fixed).
+Use both next time, and the paired one to decide.
 
 ### The gait plants feet, it doesn't swing legs
 
@@ -3038,7 +3191,7 @@ Where the budget goes, and the rules that keep it there:
   their own bounds: 100 draws and 68k triangles for all of them, but only the
   clusters in view are paid for.
 - **characters are 1 draw each.** They're `SkinnedMesh`es over a pool of 12
-  shared geometries (`variants()`) plus 4 for cops (`copVariants()`), ~3.4k
+  shared geometries (`variants()`) plus 4 for cops (`copVariants()`), ~4.4k
   triangles each, so per-instance cost is a skeleton, not a buffer. **Never
   dispose a pooled geometry** — `makeHumanoid` returns a
   `dispose()` that no-ops unless the character was built `unique`, and
