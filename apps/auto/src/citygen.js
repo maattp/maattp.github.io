@@ -278,7 +278,7 @@ function unpackBuildings(c) {
 // list the carve is built from, and its stats.
 const GRADE_EDGE_FIELDS = ['lock', 'pk', 'ps', 'ph', 'pg', 'tw', 'tlo', 'tnb', 'pe', 'pwall', 'pbw'];
 const GRADE_STATS = ['refusedCrossings', 'underpasses', 'underpassNoRoom', 'underpassGraded', 'splitLevelTrimmedM',
-  'gradedSamples', 'overpassesRaised', 'overpassesRefused', 'fillMean', 'fillWorst'];
+  'gradedSamples', 'overpassesRaised', 'overpassesRefused', 'fillMean', 'fillWorst', 'fwyDips', 'fwyDipNoRoom'];
 function gradeSnapshot(nodes, edges, grading) {
   const E = [], N = [];
   for (let ei = 0; ei < edges.length; ei++) {
@@ -345,7 +345,7 @@ function makeUnderpassDepth(underpasses) {
         const p = up.pts[i], q = up.pts[i + 1];
         const r = distToSeg(x, z, p.x, p.z, q.x, q.z);
         if (r.d > up.hw + 1.5) continue;
-        const dd = depthAlong(up, p.s + (q.s - p.s) * r.t);
+        const dd = up.pd ? p.d + (q.d - p.d) * r.t : depthAlong(up, p.s + (q.s - p.s) * r.t);
         const v = r.d <= up.hw ? dd : dd * (1 - (r.d - up.hw) / 1.5);
         if (v > best) best = v;
       }
@@ -924,6 +924,140 @@ function gradeRoads(nodes, edges) {
     }
   }
 
+  // --- freeway dips under street overpasses ---
+  // A street deck over a graded freeway that the clearance pass refused (the
+  // street cannot climb 6 m over the freeway inside MAX_CLIMB of its anchors)
+  // was left lying ON the freeway: 137 crossings, NE 50th and NE 80th over
+  // I-5, Juanita-Woodinville Way over I-405, most under 2 m apart and some
+  // under the freeway's tarmac. The slab stood across the lanes, and a car
+  // within DECK_REACH of it rode up onto the street and dropped off its side.
+  // Seattle does it the other way round: the freeway runs in a trench under
+  // the street. So, after the solve, the freeway's profile is lowered to
+  // OVER_CLEAR under the deck and eased back out along the graph:
+  //
+  //   ceiling   deck - OVER_CLEAR over the crossing's footprint (c.ext either
+  //             side along the freeway), rising at DIP_GRADE per metre of graph
+  //             distance from it, so a ramp diverging inside the dip climbs out
+  //             of it at a ramp's grade along its own path;
+  //   dip       max(0, H - ceiling), dilated and box-averaged over PROF_R like
+  //             the profile itself: average(dilate(d)) >= d, so the smoothing
+  //             can never give clearance back, and the corners are rounded
+  //             over 40 m instead of breaking grade at the foot of each cone.
+  //
+  // A crossing is refused (left as it was) if its smoothed dip would reach a
+  // fixed sample (an at-grade anchor or a locked deck), a deck (it was raised
+  // for whatever is under IT), a draped road beside the trench (it would be
+  // dug), water, or needs more than DIP_MAX. Only street decks: dipping a
+  // freeway under a RAMP was tried three ways in the interchanges and each
+  // was worse (see "Don't dip a graded freeway under a ramp").
+  const DIP_MAX = 8, DIP_GRADE = { hwy: 0.05, ramp: 0.07 };
+  const dipOf = new Float64Array(N);
+  const fwyDips = [];
+  let dipNoRoom = 0;
+  const dipWhy = { max: 0, anchor: 0, deck: 0, water: 0, street: 0 };
+  {
+    const isDeckEdge = (i) => { let d = false; edgesOf(i, (e) => { if (e.elev) d = true; }); return d; };
+    for (const c of refusedList) {
+      const A = edges[c.ai], B = edges[c.bi];
+      if (!B.prof || B.elev || !(A.cls === 'art' || A.cls === 'st' || A.cls === 'res')) continue;
+      const pa = nodes[A.a];
+      const tA = clamp(((c.x - pa.x) * A.dx + (c.z - pa.z) * A.dz) / A.len, 0, 1);
+      const ceil0 = hAt(A, tA) - OVER_CLEAR;
+      const sc = B.ps[Math.round(c.u * B.pk)];
+      const sin = Math.abs(A.dx * B.dz - A.dz * B.dx) || 1;
+      const ext = Math.min(45, A.hw / sin + 3);
+      // The dip is a fixed shape in graph distance: the whole footprint
+      // lowered by the most it needs anywhere under the deck, eased out at
+      // DIP_GRADE. Shaped as a ceiling (deck - clearance, rising along the
+      // graph) it followed the freeway's own grade, and on a climb steeper
+      // than the cone it never eased out at all.
+      const foot = around(sc, ext).slice();
+      let need = 0;
+      for (const j of foot) need = Math.max(need, H[j] - ceil0);
+      if (need <= 0.2) continue;
+      if (need > DIP_MAX) { dipNoRoom++; dipWhy.max++; continue; }
+      const used = new Map();
+      const st = [];
+      for (const j of foot) { used.set(j, 0); st.push(j); }
+      while (st.length) {
+        const u = st.pop(), l = adj[u], ru = used.get(u);
+        for (let q = 0; q < l.length; q += 3) {
+          const j = l[q];
+          const cand = ru + l[q + 1] * (l[q + 2] > 0.07 ? DIP_GRADE.ramp : DIP_GRADE.hwy);
+          if (cand >= need) continue;
+          const old = used.get(j);
+          if (old === undefined || cand < old - 1e-6) { used.set(j, cand); st.push(j); }
+        }
+      }
+      // the raw dip, and everything its smoothing can reach
+      const d0 = new Map();
+      let ok = true, lowest = Infinity;
+      for (const [j, r] of used) {
+        d0.set(j, need - r);
+        lowest = Math.min(lowest, H[j] - (need - r));
+      }
+      const support = new Set();
+      for (const j of d0.keys()) for (const q of aroundC(j, PROF_R * 2)) support.add(q);
+      for (const j of support) {
+        if (fixed[j]) { ok = false; dipWhy.anchor++; break; }
+        if (isDeckEdge(j)) { ok = false; dipWhy.deck++; break; }
+      }
+      // Water: Lake Washington and the lakes stand ~6 m, the Sound at 0.
+      if (ok && (lowest < 9 || G.isWater(c.x, c.z))) { ok = false; dipWhy.water++; }
+      if (ok) {
+        // A draped road beside the trench would be dug with it.
+        for (const j of d0.keys()) {
+          if (!ok) break;
+          const x = SX[j], z = SZ[j];
+          // only where the lowered road is IN the ground (a fill just gets
+          // lower; nothing is dug under it)
+          let tMax = -Infinity;
+          edgesOf(j, (e) => {
+            const px = -e.dz, pz = e.dx;
+            for (const o of [-e.hw, 0, e.hw]) tMax = Math.max(tMax, T(x + px * o, z + pz * o));
+          });
+          if (tMax - (H[j] - d0.get(j) - ROAD_LIFT) < 0.4) continue;
+          for (let gx0 = Math.floor((x - 30) / CELL); gx0 <= Math.floor((x + 30) / CELL) && ok; gx0++) {
+            for (let gz0 = Math.floor((z - 30) / CELL); gz0 <= Math.floor((z + 30) / CELL) && ok; gz0++) {
+              const l = grid.get(skey(gx0, gz0));
+              if (!l) continue;
+              for (const oi of l) {
+                const o = edges[oi];
+                if (o.prof || o.tunnel || o.elev) continue;
+                const oa = nodes[o.a], ob = nodes[o.b];
+                if (distToSeg(x, z, oa.x, oa.z, ob.x, ob.z).d < hwOf[j] + o.hw + walkWidth(o.cls) + 2) { ok = false; dipWhy.street++; break; }
+              }
+            }
+          }
+        }
+      }
+      if (!ok) { dipNoRoom++; continue; }
+      for (const [j, d] of d0) if (d > dipOf[j]) dipOf[j] = d;
+      fwyDips.push({ x: Math.round(c.x), z: Math.round(c.z), need: +need.toFixed(2) });
+    }
+    if (fwyDips.length) {
+      // dilate, then average: never less than the raw dip, corners rounded
+      const sup = new Set();
+      for (let i = 0; i < N; i++) if (dipOf[i] > 0) for (const q of aroundC(i, PROF_R * 2)) sup.add(q);
+      const Dd = new Float64Array(N);
+      for (const i of sup) {
+        let m = dipOf[i];
+        for (const j of aroundC(i, PROF_R)) if (dipOf[j] > m) m = dipOf[j];
+        Dd[i] = m;
+      }
+      for (const i of sup) {
+        if (fixed[i]) continue;
+        let s = 0, sw = 0;
+        for (const j of aroundC(i, PROF_R)) { s += Dd[j] * W[j]; sw += W[j]; }
+        const d = sw > 0 ? s / sw : Dd[i];
+        if (d > 0.005) { H[i] -= d; dipOf[i] = d; } else dipOf[i] = 0;
+      }
+    }
+  }
+  cityStats.fwyDips = fwyDips.length; cityStats.fwyDipList = fwyDips;
+  cityStats.fwyDipNoRoom = dipNoRoom;
+  cityStats.fwyDipWhy = dipWhy;
+
   // --- underpasses ---
   // An overpass the deck cannot climb to without a ski-jump (refused above)
   // is how real Seattle does it the other way round: the road underneath dips
@@ -1040,10 +1174,45 @@ function gradeRoads(nodes, edges) {
       z0: Math.min(...pts.map((p) => p.z)) - hw - 2, z1: Math.max(...pts.map((p) => p.z)) + hw + 2 };
     underpasses.push(up);
   }
+  // The freeway dips (above) need their ground dug too: the terrain under a
+  // lowered carriageway is carved to just under its tarmac, across the whole
+  // cambered width, through the same carve hook (and meshTrenchWalls stands
+  // the trench's walls, as it does along a dipped street). Depth is per
+  // sample (`pd`), not the cosine of a street's cut: the profile decides it.
+  if (fwyDips.length) {
+    for (const e of edges) {
+      if (!e.prof || e.elev) continue;
+      const k = e.pk, a = nodes[e.a];
+      let any = false;
+      for (let i = 0; i <= k; i++) if (dipOf[e.ps[i]] > 0) { any = true; break; }
+      if (!any) continue;
+      const px = -e.dz, pz = e.dx;
+      const pts = [];
+      let deepest = 0;
+      for (let i = 0; i <= k; i++) {
+        const v = e.ps[i];
+        const x = a.x + (e.dx * e.len * i) / k, z = a.z + (e.dz * e.len * i) / k;
+        let d = 0;
+        if (dipOf[v] > 0) {
+          const s = clamp(gx[v] * px + gz[v] * pz, -CAMBER_MAX, CAMBER_MAX);
+          for (const o of [-e.hw, -e.hw / 2, 0, e.hw / 2, e.hw]) {
+            d = Math.max(d, T(x + px * o, z + pz * o) - (H[v] + s * o) + ROAD_LIFT + 0.05);
+          }
+        }
+        pts.push({ x, z, s: (e.len * i) / k, d: Math.max(0, d) });
+        deepest = Math.max(deepest, d);
+      }
+      if (deepest <= 0.05) continue;
+      const hw = e.hw + 0.3;
+      underpasses.push({ pts, pd: true, hw, dip: deepest, bi: -1, fwy: true,
+        x0: Math.min(...pts.map((p) => p.x)) - hw - 2, x1: Math.max(...pts.map((p) => p.x)) + hw + 2,
+        z0: Math.min(...pts.map((p) => p.z)) - hw - 2, z1: Math.max(...pts.map((p) => p.z)) + hw + 2 });
+    }
+  }
   const underpassDepth = makeUnderpassDepth(underpasses);
   // Every cut is under a draped street, which follows the carved ground by
   // itself -- nothing graded is lowered.
-  cityStats.underpasses = underpasses.length;
+  cityStats.underpasses = underpasses.filter((u) => !u.fwy).length;
   cityStats.underpassNoRoom = upNoRoom;
   cityStats.underpassGraded = upGraded;
 
