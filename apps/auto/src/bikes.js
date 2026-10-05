@@ -22,6 +22,7 @@ import * as THREE from './three.js';
 import * as G from './geo.js';
 import { Builder, ChunkBuilder, dropAfterUpload } from './build.js';
 import { clamp, angleWrap } from './util.js';
+import { memoPeek, memoPut } from './bootcache.js';
 
 const ON_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 const CELL = 40, CHUNK = 1000;
@@ -145,6 +146,17 @@ export class BikeNet {
       return Math.abs(dx * c - dz * s) < b.w / 2 && Math.abs(dx * s + dz * c) < b.d / 2;
     });
     let km = 0;
+    // Which pieces are drawn, path by path, is kept by the boot cache
+    // (bootcache.js memo): the water, road and building tests over ~100k
+    // pieces were ~0.2 s of a phone's boot.
+    let pieces = 0;
+    for (const P of this.paths) {
+      if (P.bridge || P.tunnel) continue;
+      for (let k = 0; k < P.p.length - 1; k++) pieces += Math.max(1, Math.ceil(Math.hypot(P.p[k + 1][0] - P.p[k][0], P.p[k + 1][1] - P.p[k][1]) / 4));
+    }
+    const kept = memoPeek('bikes:drawn', (v) => v instanceof Uint8Array && v.length === pieces);
+    const flags = [];
+    let fi = 0;
     for (const P of this.paths) {
       P.ride = !P.bridge && !P.tunnel && P.len > 4;
       if (P.bridge || P.tunnel) continue;
@@ -167,7 +179,8 @@ export class BikeNet {
       const drawn = [];
       for (let i = 0; i < pts.length - 1; i++) {
         const mx = (pts[i][0] + pts[i + 1][0]) / 2, mz = (pts[i][1] + pts[i + 1][1]) / 2;
-        const ok = !G.isWater(mx, mz) && !city.onRoad(mx, mz, 0.2, false, false) && !inBld(mx, mz);
+        const ok = kept ? kept[fi++] === 1 : !G.isWater(mx, mz) && !city.onRoad(mx, mz, 0.2, false, false) && !inBld(mx, mz);
+        if (!kept) flags.push(ok ? 1 : 0);
         drawn.push(ok);
         if (!ok) continue;
         // drawn when its chunk first comes into range (see _drawSeg)
@@ -176,6 +189,7 @@ export class BikeNet {
       }
       P.drawn = drawn;
     }
+    if (!kept) memoPut('bikes:drawn', Uint8Array.from(flags));
     this.km = km;
     this.group = new THREE.Group();
     this.group.name = 'bikepaths';

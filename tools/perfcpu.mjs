@@ -2,7 +2,7 @@
 //
 //   python3 -m http.server 8000 &
 //   node tools/perfcpu.mjs [--runs=drive-i5,drive-dt,foot-dt] [--frames=600]
-//        [--profile] [--top=15] [--json=FILE] [--label=X]
+//        [--profile] [--top=15] [--json=FILE] [--label=X] [--cached]
 //
 // Runs on the Mac's GPU (tools/chrome.mjs, gpu: true, vsync off), so the
 // renderer is not eating the CPU the way SwiftShader does, at the iPhone 17
@@ -453,6 +453,16 @@ try {
     try { localStorage.setItem('auto-quality', ${JSON.stringify(QUALITY)}); } catch (e) {}` });
   await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
   for (let i = 0; i < 600; i++) { await sleep(500); try { if (await ev('!!window.__dbg')) break; } catch {} }
+  if (process.argv.includes('--cached')) {
+    // --cached: time a launch from the boot cache (bootcache.js) -- boot once
+    // to fill it, then again in the same profile
+    for (let i = 0; i < 240; i++) { if (await ev('window.__dbg.sceneStats.calls > 0')) break; await sleep(500); }
+    await sleep(3000);   // the cache is written on the loading screen; let the IDB commit land
+    await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
+    await sleep(1000);
+    for (let i = 0; i < 600; i++) { await sleep(500); try { if (await ev('!!window.__dbg')) break; } catch {} }
+    console.log('  launched from the boot cache: grade ' + await ev('window.__dbg.cityStats.gradeCached') + ', memo ' + await ev('window.__dbg.memoStats ? window.__dbg.memoStats.hit : "-"'));
+  }
   const rend = await assertRenderer(ev, console.log, true);
   for (let i = 0; i < 240; i++) {
     if (await ev('window.__dbg.sceneStats.calls > 0 && window.__dbg.traffic.cars.length > 0')) break;
