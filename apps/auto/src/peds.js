@@ -163,8 +163,10 @@ const CELLS = {
   sleeve: 16,
   // grid square 1: the outer layer of LOCKS laid over the hair shell
   locks: 17,
+  // grid square 2: a shaved head's stubble
+  stubble: 18,
 };
-const cellPos = (cell) => (cell === CELLS.sleeve ? 0 : cell === CELLS.locks ? 1 : cell);
+const cellPos = (cell) => (cell === CELLS.sleeve ? 0 : cell === CELLS.locks ? 1 : cell === CELLS.stubble ? 2 : cell);
 // The face cell wraps +-100 deg of the head (it was +-112), and runs from just
 // under the chin to just over the hairline (it ran to the crown). Everything
 // outside is hair, the ear's back or plain skin at the cell edge; the skull
@@ -552,6 +554,23 @@ function drawAtlas() {
     }
   });
   inCell(CELLS.curly, () => paintHair(true));
+  // STUBBLE: a shaved head is scalp seen through a stipple of short dark
+  // hairs. Dense over the body of the cell; in the tip band only the dots
+  // remain, thinning out, so the hairline is a fade, not a line.
+  inCell(CELLS.stubble, () => {
+    const yT = Q(TIP_S);
+    g.fillStyle = grey(0.90); g.fillRect(0, 0, CELL, yT + 2);
+    for (let k = 0; k < 9000; k++) {
+      g.fillStyle = grey(0.35 + R.n() * 0.3, 0.35);
+      g.fillRect(R.n() * CELL, R.n() * (yT + 2), 1 + R.n(), 1.5 + R.n());
+    }
+    g.clearRect(0, yT, CELL, CELL - yT);
+    for (let k = 0; k < 1400; k++) {
+      const y = yT + Math.pow(R.n(), 1.8) * (CELL - yT);
+      g.fillStyle = grey(0.80 + R.n() * 0.1);
+      g.fillRect(R.n() * CELL, y - 1, 2.5, 3);
+    }
+  });
   // The palm and back of the hand (fingers are geometry now, on the plain
   // skin cell): mapped wrist + 15 mm .. wrist - 100 mm, so the knuckle line
   // is s ~ 0.16. Only soft value: the finger lines and nails painted for the
@@ -640,8 +659,15 @@ function drawAtlas() {
         blob(cx, cy, 20 * mx_, mul(skin, [1.03, 0.86, 0.84]), 0.22);
         // the lid crease and a little depth over the eye, tight to it
         const [ex, ey] = hp(sx * 0.034, J.eye + 0.001, 0.085);
-        blob(ex, ey - 3.0 * my_, 14 * mx_, mul(skin, 0.82), 0.30);
-        const w = 27 * mx_, hh = 10.5 * my_;
+        // ROUND FOUR: the eye has to read at 2-9 m, where it is a few pixels.
+        // What carries there is the dark of the socket and the lash line,
+        // not the iris: a soft, cool orbital shade round the whole eye, the
+        // lid crease deeper, a shadow under the lower lid, a bigger almond
+        // and a heavier upper lash line. Painted flat, the eyes were decals.
+        blob(ex - sx * 2 * mx_, ey - 1.5 * my_, 24 * mx_, mul(skin, [0.80, 0.78, 0.80]), 0.30);
+        blob(ex, ey - 3.5 * my_, 15 * mx_, mul(skin, 0.76), 0.36);
+        blob(ex + sx * 1 * mx_, ey + 6.5 * my_, 13 * mx_, mul(skin, [0.86, 0.82, 0.86]), 0.30);
+        const w = 29 * mx_, hh = 11.5 * my_;
         const inner = ex - sx * w / 2, outer = ex + sx * w / 2;
         const almond = () => {
           g.beginPath();
@@ -660,7 +686,7 @@ function drawAtlas() {
         g.restore();
         g.fillStyle = 'rgba(255,255,255,0.85)'; disc(ex - hh * 0.20, ey - hh * 0.40, 1.5 * mx_);
         // lash line, heavier toward the outer corner
-        g.strokeStyle = rgba([0.035, 0.03, 0.025], 0.95); g.lineWidth = 2.2 * my_;
+        g.strokeStyle = rgba([0.035, 0.03, 0.025], 0.95); g.lineWidth = 2.9 * my_;
         g.beginPath(); g.moveTo(inner, ey); g.quadraticCurveTo(ex, ey - hh * 1.12, outer + sx * 1.5 * mx_, ey - hh * 0.30); g.stroke();
         g.strokeStyle = rgba(mul(skin, 0.60), 0.45); g.lineWidth = 1.1 * my_;
         g.beginPath(); g.moveTo(inner + sx * mx_, ey - hh * 0.6); g.quadraticCurveTo(ex, ey - hh * 1.9, outer, ey - hh * 0.95); g.stroke();
@@ -671,10 +697,18 @@ function drawAtlas() {
         const bw = 42 * mx_;
         g.fillStyle = rgba(brow, 0.85);
         g.beginPath();
-        g.moveTo(bx - sx * bw * 0.50, by + 2.6 * my_);
-        g.quadraticCurveTo(bx + sx * bw * 0.02, by - 4.2 * my_, bx + sx * bw * 0.55, by + 1.6 * my_);
-        g.quadraticCurveTo(bx + sx * bw * 0.02, by - 0.2 * my_, bx - sx * bw * 0.50, by + 6.3 * my_);
+        // (thicker than round three's: a 4 mm line vanished past 3 m)
+        g.moveTo(bx - sx * bw * 0.50, by + 2.0 * my_);
+        g.quadraticCurveTo(bx + sx * bw * 0.02, by - 5.6 * my_, bx + sx * bw * 0.56, by + 1.8 * my_);
+        g.quadraticCurveTo(bx + sx * bw * 0.04, by + 1.6 * my_, bx - sx * bw * 0.50, by + 8.4 * my_);
         g.closePath(); g.fill();
+        // and broken into hairs at its edges, so it is not a stroke of paint
+        g.strokeStyle = rgba(brow, 0.45); g.lineWidth = 0.8 * my_;
+        for (let q = 0; q < 14; q++) {
+          const f = q / 13, x0 = bx + sx * bw * (-0.48 + 1.0 * f);
+          const y0 = by + lerp(5.5, 1.5, f) * my_ + (R.n() - 0.5) * 3 * my_;
+          g.beginPath(); g.moveTo(x0, y0); g.lineTo(x0 + sx * 4 * mx_, y0 - (2.5 - f) * my_); g.stroke();
+        }
         // nostrils: two small darks on the underside, crisp-edged
         const [qx, qy] = hp(sx * 0.0078, J.eye - 0.047, 0.101);
         g.fillStyle = rgba(mul(skin, 0.38), 0.75);
@@ -687,6 +721,8 @@ function drawAtlas() {
       {
         const [tx, ty] = hp(0, J.eye - 0.041, 0.115);
         blob(tx, ty, 7 * mx_, mul(skin, 1.12), 0.50);
+        // and a little colour in it, as the cheeks have
+        blob(tx, ty + 2 * my_, 9 * mx_, mul(skin, [1.03, 0.90, 0.88]), 0.22);
         const [bx0, by0] = hp(0, J.eye - 0.004, 0.100), [, by1] = hp(0, J.eye - 0.034, 0.110);
         const bw2 = 3.5 * mx_;
         const gr2 = g.createLinearGradient(bx0 - bw2, 0, bx0 + bw2, 0);
@@ -806,7 +842,7 @@ pedMat.onBeforeCompile = (sh) => {
 // arms and legs share a builder with their sleeves).
 // Hair 0.22, not 0.40: tighter, it was one specular hotspot on the crown and
 // the shell read as varnished wood.
-const GLOSS = { head: 0.26, neck: 0.26, hand: 0.26, fingers: 0.26, hair: 0.22, foot: 0.22, hat: 0.12 };
+const GLOSS = { head: 0.26, neck: 0.26, ear: 0.20, hand: 0.26, fingers: 0.26, hair: 0.22, foot: 0.22, hat: 0.12 };
 const GLOSS_SKIN = 0.26;
 
 class SkinAcc {
@@ -1216,7 +1252,7 @@ function buildEar(b, side, xs, col) {
   }
   // the bowl (concha), sunk toward the ear canal
   const c = [side * (xs + 0.0035), yc - 0.004, zc + 0.002];
-  const bowl = [col[0] * 0.78, col[1] * 0.78, col[2] * 0.78];
+  const bowl = [col[0] * 0.80, col[1] * 0.72, col[2] * 0.70];
   for (let i = 0; i < n; i++) b.tri(c, R[3][i], R[3][(i + 1) % n], [side, 0, 0], bowl);
 }
 
@@ -1271,9 +1307,10 @@ function buildHair(style, seed, hair, grid, body) {
   // locks, not where a shell stops.
   const NX = 2;
   const NR = NX + 4 + tops.length;
-  const vol = { crop: 0.006, side: 0.011, long: 0.010, bun: 0.005, curly: 0.024, buzz: 0.0035 }[style];
-  const covers = style === 'long' || style === 'curly' || style === 'side';
-  const napeY = style === 'crop' || style === 'bun' || style === 'buzz' ? J.chin + 0.050 : J.chin + 0.020;
+  const vol = { crop: 0.006, side: 0.011, long: 0.010, bun: 0.005, curly: 0.024, buzz: 0.0035, pony: 0.005, bob: 0.010, shaved: 0.0022 }[style];
+  const curtain = style === 'long' || style === 'bob';
+  const covers = curtain || style === 'curly' || style === 'side';
+  const napeY = style === 'crop' || style === 'bun' || style === 'buzz' || style === 'pony' || style === 'shaved' ? J.chin + 0.050 : J.chin + 0.020;
   // Edge height against the angle round the head: phi = +pi/2 at the front,
   // 0 at the ear, -pi/2 at the back.
   const edgeTable = [
@@ -1310,7 +1347,7 @@ function buildHair(style, seed, hair, grid, body) {
   const extTable = [
     [Math.PI / 2, 0.011], [0.62, 0.010], [0.30, 0.008],
     [0.10, covers ? 0.010 : 0.004], [-0.30, covers ? 0.010 : 0.004],
-    [-0.70, style === 'long' ? 0.004 : 0.014], [-Math.PI / 2, style === 'long' ? 0.004 : 0.016],
+    [-0.70, curtain ? 0.004 : 0.014], [-Math.PI / 2, curtain ? 0.004 : 0.016],
   ];
   const extOf = (phi) => {
     for (let i = 1; i < extTable.length; i++) {
@@ -1323,7 +1360,7 @@ function buildHair(style, seed, hair, grid, body) {
   };
   // Clumps: the shell's thickness swells and dips round the head and up it,
   // so the silhouette is a run of locks, not a dome.
-  const cA = { crop: 0.45, side: 0.30, long: 0.22, bun: 0.15, curly: 0, buzz: 0 }[style];
+  const cA = { crop: 0.45, side: 0.30, long: 0.22, bob: 0.22, bun: 0.15, pony: 0.12 }[style] || 0;
   const cp1 = hash2(seed, 71) * 6.28, cp2 = hash2(seed, 72) * 6.28;
   const clump = (th, i) => 1 + cA * (0.6 * Math.sin(9 * th + cp1 + i * 0.7) + 0.4 * Math.sin(17 * th + cp2 - i * 1.3));
   // a side part's line, on the far side from the sweep
@@ -1332,7 +1369,7 @@ function buildHair(style, seed, hair, grid, body) {
   const rows = [], sG = [];
   // The outer layer of locks (CELLS.locks), on the styles that have length
   // to lie in locks; its rows are the shell's from the edge up to the crown.
-  const layered = style === 'crop' || style === 'side' || style === 'long';
+  const layered = style === 'crop' || style === 'side' || curtain;
   const over = [], sO = [];
   const op1 = hash2(seed, 74) * 6.28, op2 = hash2(seed, 75) * 6.28;
   for (let i0 = 0; i0 < NR; i0++) {
@@ -1364,7 +1401,8 @@ function buildHair(style, seed, hair, grid, body) {
       // triangulation and the two fought (raycast: 0.2 mm apart, then -0.6).
       let th2 = lerp(0.0016, Math.max(0.0016, vol * face), smoothT(clamp(v / 0.24, 0, 1)));
       if (style === 'side') th2 += 0.006 * smoothT(clamp(v / 0.4, 0, 1)) * Math.max(0, ca) * (1 - Math.abs(sa) * 0.5);
-      if (style === 'curly' && i >= 2) th2 *= 0.82 + 0.36 * hash2(jj * 31 + i * 7, seed + 11);
+      // curls are lumps a few centimetres across, in and out by a third
+      if (style === 'curly' && i >= 2) th2 *= 0.66 + 0.68 * hash2(jj * 31 + i * 7, seed + 11);
       if (i >= 1) th2 = 0.0016 + (th2 - 0.0016) * clump(th, i);
       if (style === 'side' && i >= 2) th2 = 0.0016 + (th2 - 0.0016) * (1 - 0.75 * gss(th - partTh, 0.07));
       // out along the head's normal
@@ -1427,7 +1465,9 @@ function buildHair(style, seed, hair, grid, body) {
     }
   }
 
-  if (style === 'long') {
+  if (curtain) {
+    // (A BOB is the same curtain ending at the jaw: shorter, less flare.)
+    const bob = style === 'bob';
     // Long hair continues the SHELL down the back of the head and past the
     // nape, following the skull and flaring as it falls, longest at the centre
     // with an uneven end. The first attempt was a separate half-tube with a
@@ -1453,7 +1493,10 @@ function buildHair(style, seed, hair, grid, body) {
     // and side of the head, the worst of the "helmet" read.
     // (0.86: the last row down is the tip band -- the ends are locks.)
     const TS = [0, 0.06, 0.25, 0.5, 0.75, 0.86, 1];
-    const SC = [0.97, 0.92, 0.74, 0.56, 0.40, TIP_S, 0];
+    // On the LOCKS cell: closed near the head, parting into separate
+    // tapering locks toward the ends (the inner face shows through the gaps,
+    // as the strands of real long hair separate).
+    const SC = [0.98, 0.95, 0.88, 0.76, 0.60, 0.34, 0.06];
     const cr = [], inner = [];
     const cx = 0, cz = -0.010;
     for (let i = 0; i < TS.length; i++) {
@@ -1475,11 +1518,12 @@ function buildHair(style, seed, hair, grid, body) {
         const yTop = J.eye + 0.015;
         // ends higher at the sides: out over the shoulder the deltoid swings
         // with the arm and came up through it on a runner
-        const yBot = J.shoulder + 0.034 - 0.046 * back + 0.028 * (1 - back) + (hash2(j * 13 + 5, seed + 3) - 0.5) * 0.012;
+        const yBot = bob ? J.chin - 0.004 - 0.010 * back + (hash2(j * 13 + 5, seed + 3) - 0.5) * 0.008
+          : J.shoulder + 0.034 - 0.046 * back + 0.028 * (1 - back) + (hash2(j * 13 + 5, seed + 3) - 0.5) * 0.012;
         const y = lerp(yTop, yBot, smoothT(t) * 0.6 + t * 0.4);
         const k = skullAt(Math.max(y, SKULL[3].y));
         const flare = (i === 0 ? vol * 0.55 : lerp(vol + 0.003, vol + 0.005, smoothT(clamp(t / 0.25, 0, 1))))
-          + 0.028 * t * t * (0.15 + 0.85 * e)
+          + (bob ? 0.010 : 0.028) * t * t * (0.15 + 0.85 * e)
           // lying in locks, not one sheet: a ripple across it that grows as it falls
           + 0.0045 * t * e * Math.sin(j * 2.3 + hash2(seed, 73) * 6.28);
         let p = [ca * (k.rx + flare), y, k.oz - 0.012 * t + sa * (k.rz + flare)];
@@ -1500,16 +1544,65 @@ function buildHair(style, seed, hair, grid, body) {
     const cv0 = nv();
     hb.patch(cr, hair, [0, 0, -1]);
     hb.patch(inner, [hair[0] * 0.82, hair[1] * 0.82, hair[2] * 0.82], [0, 0, 1]);
-    mapUV(cv0, (u, v) => [0.02 + 0.96 * u, SC[Math.round(v * (TS.length - 1))]]);
+    mapUV(cv0, (u, v) => [0.02 + 0.96 * u, SC[Math.round(v * (TS.length - 1))], CELLS.locks]);
     // close the two side edges between the faces
     for (const j of [0, CK]) {
       const ev0 = nv();
       hb.patch(cr.map((r, i) => [r[j], inner[i][j]]), [hair[0] * 0.8, hair[1] * 0.8, hair[2] * 0.8], [j === 0 ? -1 : 1, 0, 0.6]);
-      mapUV(ev0, (u, v) => [j === 0 ? 0.02 : 0.98, SC[Math.round(v * (TS.length - 1))]]);
+      mapUV(ev0, (u, v) => [j === 0 ? 0.02 : 0.98, SC[Math.round(v * (TS.length - 1))], CELLS.locks]);
     }
   }
+  if (style === 'pony') {
+    // A PONYTAIL: a tapering lock hung from a tie at the back of the head,
+    // out and down to below the jaw, its end cut into the tip band.
+    const C = [[0, J.eye + 0.030, -0.094], [0, J.eye + 0.000, -0.122], [0, J.eye - 0.060, -0.128], [0, J.chin - 0.034, -0.116]];
+    const bez = (t) => {
+      const u = 1 - t, w = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t];
+      return [0, 1, 2].map((c) => w[0] * C[0][c] + w[1] * C[1][c] + w[2] * C[2][c] + w[3] * C[3][c]);
+    };
+    const PT = [0, 0.06, 0.22, 0.42, 0.62, 0.80, 0.92, 1];
+    const PR = [0.016, 0.024, 0.029, 0.028, 0.024, 0.018, 0.012, 0.006];
+    const PS = [0.97, 0.90, 0.75, 0.58, 0.42, TIP_S + 0.08, TIP_S, 0];
+    const NS = 8;
+    const prow = PT.map((t, i) => {
+      const p = bez(t), q = bez(Math.min(1, t + 0.01)), o = bez(Math.max(0, t - 0.01));
+      let ty = q[1] - o[1], tz = q[2] - o[2];
+      const l = Math.hypot(ty, tz) || 1; ty /= l; tz /= l;
+      // ring axes: x, and the normal in the y-z plane
+      const r = PR[i] * (1 + 0.10 * Math.sin(i * 2.1 + seed));
+      const row = [];
+      for (let k = 0; k <= NS; k++) {
+        const a = (k / NS) * Math.PI * 2;
+        const cx = Math.cos(a) * r, cn = Math.sin(a) * r * 0.85;
+        row.push([p[0] + cx, p[1] + cn * -tz, p[2] + cn * ty]);
+      }
+      return row;
+    });
+    const pv0 = nv();
+    hb.patch(prow, hair, false);
+    // outward normals: flip the patch if it came out facing in
+    {
+      let dot = 0;
+      for (let k = pv0; k < nv(); k++) {
+        const t = clamp((hb.pos[3 * k + 1] - C[0][1]) / (C[3][1] - C[0][1]), 0, 1), c = bez(t);
+        dot += hb.nor[3 * k] * (hb.pos[3 * k] - c[0]) + hb.nor[3 * k + 2] * (hb.pos[3 * k + 2] - c[2]);
+      }
+      if (dot < 0) {
+        hb.pos.length = pv0 * 3; hb.nor.length = pv0 * 3; hb.uv.length = pv0 * 2; hb.col.length = pv0 * 3;
+        hb.idx = hb.idx.filter((ix) => ix < pv0);
+        hb.patch(prow, hair, true);
+      }
+    }
+    mapUV(pv0, (u, v) => [0.30 + 0.40 * u, PS[Math.round(v * (PT.length - 1))]]);
+    // the tie
+    const tp = bez(0.03);
+    hb.loftY([
+      { y: tp[1] - 0.007, pts: oval(0.018, 0.016, 10, 0, tp[2]) },
+      { y: tp[1] + 0.007, pts: oval(0.018, 0.016, 10, 0, tp[2] + 0.004) },
+    ], [hair[0] * 0.4, hair[1] * 0.4, hair[2] * 0.4], {});
+  }
   if (style === 'bun') {
-    hb.spheroid(0, J.eye + 0.036, -0.108, 0.036, 12, 7, hair, 0.85);
+    hb.spheroid(0, J.eye + 0.036, -0.108, 0.036, 16, 9, hair, 0.85);
     hb.loftY([
       { y: J.eye + 0.030, pts: oval(0.020, 0.010, 10, 0, -0.098) },
       { y: J.eye + 0.040, pts: oval(0.022, 0.012, 10, 0, -0.100) },
@@ -1666,11 +1759,15 @@ export function gripHands(h, k = 1) {
 // side-parts. So pooled look i takes its outfit and style from this table
 // (every style twice; two dresses, two skirts, two shorts), and colours, skin,
 // build and shoes still come from the seed. Unique builds keep the hash path.
+// The fourth entry is facial hair (stubble or a short beard, painted in
+// vertex colour on the lower face). Round two of the hair: one of each pair
+// of long, bun and buzz became a ponytail, a bob and a shaved head, so the
+// twelve read as nine haircuts, not six.
 const LOOKS = [
-  ['hoodie', 'jeans', 'crop'], ['tee', 'skirt', 'long'], ['jacket', 'trousers', 'buzz'],
-  ['tee', 'dress', 'bun'], ['tee', 'shorts', 'curly'], ['jacket', 'jeans', 'side'],
-  ['hoodie', 'skirt', 'long'], ['longsleeve', 'trousers', 'crop'], ['tee', 'dress', 'curly'],
-  ['jacket', 'jeans', 'bun'], ['longsleeve', 'jeans', 'side'], ['longsleeve', 'shorts', 'buzz'],
+  ['hoodie', 'jeans', 'crop'], ['tee', 'skirt', 'long'], ['jacket', 'trousers', 'buzz', 'beard'],
+  ['tee', 'dress', 'bun'], ['tee', 'shorts', 'curly', 'stubble'], ['jacket', 'jeans', 'side', 'stubble'],
+  ['hoodie', 'skirt', 'pony'], ['longsleeve', 'trousers', 'crop', 'stubble'], ['tee', 'dress', 'curly'],
+  ['jacket', 'jeans', 'bob'], ['longsleeve', 'jeans', 'side'], ['longsleeve', 'shorts', 'shaved', 'stubble'],
 ];
 
 export function buildCharacter(opts = {}) {
@@ -1728,7 +1825,7 @@ export function buildCharacter(opts = {}) {
   // same cue). The shoulder JOINT moves in too (geometry.userData.shoulderX,
   // read by makeHumanoid), or the narrower torso would leave the arms hung
   // off its edge.
-  const fem = !uniformed && (bottom === 'skirt' || bottom === 'dress' || style === 'long' || style === 'bun');
+  const fem = !uniformed && (bottom === 'skirt' || bottom === 'dress' || style === 'long' || style === 'bun' || style === 'pony' || style === 'bob');
   const SX = SHOULDER_X * (fem ? 0.915 : 1.0);
   const fs = fem ? 0.90 : 1.0, fwst = fem ? 0.92 : 1.0, fhip = fem ? 1.05 : 1.0, farm = fem ? 0.88 : 1.0;
   // half-breadths. Shoulders 0.152 (was 0.140) and a narrower waist: at the
@@ -1891,7 +1988,7 @@ export function buildCharacter(opts = {}) {
   };
   // the body under a point at height y: the torso up to its neckline, else the neck
   const bodyAt = (y) => (y <= TP[TP.length - 1].y ? lerpPar(TP, y) : y < NP[NP.length - 1].y ? lerpPar(NP, y) : null);
-  if (top === 'hoodie' && style !== 'long') {
+  if (top === 'hoodie' && style !== 'long' && style !== 'pony') {
     // rows: y, the surface under it, thickness down the middle, half-width
     // (radians either side of the spine) at which it has dived back in
     const S = J.shoulder;
@@ -1977,30 +2074,62 @@ export function buildCharacter(opts = {}) {
   // The sculpted head (see faceRelief): nose, lips, brow, jaw and all are the
   // one loft now, so there is no seam where a peg nose met a smooth face.
   // Rows from HEAD_HAIR_ROW up are hair-coloured under the painted skin.
-  const soft = bottom === 'skirt' || bottom === 'dress' || style === 'long' || style === 'bun';
+  const soft = bottom === 'skirt' || bottom === 'dress' || style === 'long' || style === 'bun' || style === 'pony' || style === 'bob';
   const grid = headGrid(faceParams(seed, soft));
   // Drawn only up to the hairline ring: above it every style's shell (the
   // buzz cut's too) and every hat covers the skull, so its two top bands were
   // ~100 triangles nobody could see. The grid still carries them, for the
   // hair to grow over.
+  // A shaved head is scalp with a shadow of hair on it, not a hair colour.
+  const hairC = style === 'shaved'
+    ? [lerp(skin[0], hair[0], 0.30) * 0.92, lerp(skin[1], hair[1], 0.30) * 0.92, lerp(skin[2], hair[2], 0.30) * 0.96]
+    : hair;
   const shown = grid.rings.slice(0, HEAD_HAIR_ROW + 1);
-  head.loftY(shown, shown.map((r, i) => (i < HEAD_HAIR_ROW ? WHITE : hair)),
+  head.loftY(shown, shown.map((r, i) => (i < HEAD_HAIR_ROW ? WHITE : hairC)),
     { capStart: true, capEnd: true });
+  // FACIAL HAIR is vertex colour over the painted face: the face cells are
+  // one per skin tone, and the head's own rows are dense round the mouth and
+  // jaw, so a shade multiplied in there is stubble (or a short beard) that
+  // follows the jaw, the chin and the upper lip and leaves the lips clear.
+  // A cool shade, weaker under fair hair.
+  const fh = look && look[3];
+  if (fh) {
+    // toward the hair's own colour: dark hair darkens, fair hair warms
+    const k = fh === 'beard' ? 0.80 : 0.42;
+    const tint = [0.35 + 0.9 * hair[0], 0.35 + 0.9 * hair[1], 0.37 + 0.9 * hair[2]];
+    for (let q = 0; q < head.pos.length; q += 3) {
+      const x = head.pos[q], y = head.pos[q + 1], z = head.pos[q + 2];
+      const th = Math.abs(Math.atan2(x, z - HEAD_Z)), a = th * 0.095;
+      // the cheek line: under the nose in front, rising to the sideburn
+      const yc = lerp(J.eye - 0.048, J.eye - 0.022, smoothT(clamp((th - 0.35) / 0.9, 0, 1)));
+      let w = smoothT(clamp((yc - y) / 0.012, 0, 1))
+        * smoothT(clamp((1.50 - th) / 0.22, 0, 1))
+        * smoothT(clamp((y - (J.chin - 0.016)) / 0.012, 0, 1));
+      w *= 1 - 0.9 * gss(a, 0.019) * gss(y - (J.chin + 0.044), 0.0075);   // the lips
+      if (w <= 0) continue;
+      for (let c = 0; c < 3; c++) head.col[q + c] *= lerp(1, Math.min(1, tint[c]), k * w);
+    }
+  }
   creaseNoseBase(head, shown.length, HEAD_COLS.length);
   // Ears, unless the hair falls over them: a long or curly shell over the
   // side of the head would have them standing out through it.
-  const covers = style === 'long' || style === 'curly' || style === 'side';
+  const covers = style === 'long' || style === 'bob' || style === 'curly' || style === 'side';
+  // The ears are their own part, skin-coloured on the plain skin cell like
+  // the neck: on the face cell they sat at its clamped edge and came out a
+  // paler, pinker tone than the face they hang on.
+  const earB = new Builder(false);
   if (!covers) {
     const xs = skullRay(Math.PI / 2 + 0.12, J.eye - 0.017) * Math.sin(Math.PI / 2 + 0.12);
-    for (const sx of [-1, 1]) buildEar(head, sx, xs, WHITE);
+    for (const sx of [-1, 1]) buildEar(earB, sx, xs, skin);
   }
   const headW = (x, y) => {
     if (y < J.neck) return across(J.neck - 0.06, 0.09, B.neck, B.chest)(x, y);
     return across(J.head - 0.03, 0.04, B.head, B.neck)(x, y);
   };
   acc.add(head, headW, cylUV(face, 0, HEAD_Z, HY0, HY1, HEAD_SPAN), 'head');
+  if (!earB.empty) acc.add(earB, headW, cylUV(CELLS.skin, 0, 0, J.eye - 0.05, J.eye + 0.02), 'ear');
 
-  const hairB = buildHair(style, seed, hair, grid, bodyAt);
+  const hairB = buildHair(style, seed, hairC, grid, bodyAt);
   if (hairB) {
     // Long hair below the jaw rides the chest, not the head, or it swings
     // through the back when the head turns.
@@ -2013,7 +2142,7 @@ export function buildCharacter(opts = {}) {
     // Shell and curtain carry their own (t, s) (hairUV, by row and column, so
     // the tip band is the rows below the edge); anything else (the bun) maps
     // round the head as before, kept out of the cut-out tip band.
-    const hcell = style === 'curly' ? CELLS.curly : CELLS.hair;
+    const hcell = style === 'curly' ? CELLS.curly : style === 'shaved' ? CELLS.stubble : CELLS.hair;
     const hcyl = cylUV(hcell, 0, -0.01, J.eye - 0.08, J.crown + 0.03), huv = hairB.hairUV || [];
     acc.add(hairB, hw, (x, y, z, k) => {
       const m = huv[k];
