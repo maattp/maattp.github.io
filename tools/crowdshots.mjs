@@ -181,6 +181,11 @@ async function main() {
         d.sun.target.updateMatrixWorld();
         const pm = document.getElementById('pauseMenu'); if (pm) pm.style.display = 'none';
         d.scene.updateMatrixWorld(true);
+        // contact shadows: PedSystem.update writes them, and the game is paused
+        if (d.peds.addContactShadow) {
+          d.peds.clearContactShadows();
+          for (const h of window.__crowd) d.peds.addContactShadow(h, h.group.position.x, h.__at.y, h.group.position.z, h.group.rotation.y);
+        }
       })()`);
       await sleep(9000);
       await evaluate(`(() => { const pm = document.getElementById('pauseMenu'); if (pm) pm.style.display = 'none'; })()`);

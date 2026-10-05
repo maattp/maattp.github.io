@@ -165,6 +165,7 @@ async function main() {
           h.group.rotation.y = 0.30;
           m.animateWalk(h, 0, 0, 0);
         });
+        window.__all = all;
         d.camera.fov = 30; d.camera.updateProjectionMatrix();
         // 9 m at 30 deg vertical: in a 1600x640 frame that is ~12 m across,
         // room for thirteen people at 0.64 m and ~230 px each. At 16.5 m they
@@ -179,6 +180,12 @@ async function main() {
         d.sun.target.position.set(0, 1, 0);
         d.sun.target.updateMatrixWorld();
         d.scene.updateMatrixWorld(true);
+        // contact shadows (PedSystem.update writes them; the game is paused
+        // and every scene object was hidden above)
+        if (d.peds && d.peds.addContactShadow) {
+          d.peds.blobs.visible = true; d.peds.clearContactShadows();
+          for (const q of (window.__all || [h])) if (q.group.visible) d.peds.addContactShadow(q, q.group.position.x, 0, q.group.position.z, q.group.rotation.y);
+        }
         window.__lineup = true;
       })()`);
       for (let i = 0; i < 30; i++) { await sleep(300); if (await evaluate('!!window.__lineup')) break; }
@@ -224,6 +231,12 @@ async function main() {
         d.sun.target.position.set(0, 1, 0);
         d.sun.target.updateMatrixWorld();
         d.scene.updateMatrixWorld(true);
+        // contact shadows (PedSystem.update writes them; the game is paused
+        // and every scene object was hidden above)
+        if (d.peds && d.peds.addContactShadow) {
+          d.peds.blobs.visible = true; d.peds.clearContactShadows();
+          for (const q of (window.__all || [h])) if (q.group.visible) d.peds.addContactShadow(q, q.group.position.x, 0, q.group.position.z, q.group.rotation.y);
+        }
       })()`);
       await sleep(5000);
       // headless pages can fire visibilitychange, which opens the pause card
