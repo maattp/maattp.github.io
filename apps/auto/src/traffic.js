@@ -217,6 +217,24 @@ const LANE_W = 3.6, PARK_EDGE = 2.2, SHOULDER = 0.8;
 
 const byX = (a, b) => a.x - b.x;
 
+// THE AI'S ROUTE (see "How the AI drives"): RT_MAX entries of RT_F numbers in
+// v.rt. An entry is an edge, its direction and lane, and its lane's centre
+// line (start Q, direction U, length); the V_ fields are the VERTEX between
+// it and the entry before: kind (0 none, 1 an arc, 2 a jog), where it is on
+// the old line (A) and the new (B), the arc's tangent length T, radius R and
+// angle TH, its centre O, the unit N from its first tangent point to O, and
+// the old line's direction P.
+const R_EI = 0, R_SG = 1, R_OFF = 2, R_U = 3, R_QX = 4, R_QZ = 5, R_UX = 6, R_UZ = 7, R_LEN = 8, R_SPD = 9, R_END = 10;
+const V_K = 11, V_A = 12, V_B = 13, V_T = 14, V_R = 15, V_TH = 16, V_OX = 17, V_OZ = 18, V_NX = 19, V_NZ = 20, V_PX = 21, V_PZ = 22;
+const RT_F = 23, RT_MAX = 10;
+// Comfortable lateral acceleration through a corner (m/s^2), the deceleration
+// speed is planned with, and a junction's corner radius turning right / left.
+// A bend in the road has no cap but the room its segments leave.
+const A_LAT = 3.0, B_PLAN = 2.0, JR_RIGHT = 7, JR_LEFT = 11, CURVE_RMAX = 400;
+// Car following (the Intelligent Driver Model): time headway, standstill gap,
+// comfortable deceleration. The acceleration is per class (driveTraffic).
+const IDM_T = 1.2, IDM_S0 = 2.2, IDM_B = 2.5;
+
 // A vehicle's body for car-car collision: its footprint rectangle.
 const bodyR = (v) => Math.hypot(v.halfLen, v.halfWid);
 const _hit = { nx: 0, nz: 0, pen: 0 };
@@ -276,6 +294,9 @@ export class TrafficSystem {
     // Counters for tools/trafficcheck.mjs: dead ends a car still reached, and
     // turns that had to fall back past the normal choice.
     this.stats = { deadEnd: 0, deadEndDespawn: 0, fallbackTurn: 0, stuckRecycled: 0 };
+    this._P = { x: 0, z: 0 };
+    this._ps = new Float64Array(24);   // driveTraffic's path samples
+    this._prio = 0;
   }
 
   /** May a car drive edge ei in direction `sign` (+1 = a -> b)? */
@@ -293,6 +314,12 @@ export class TrafficSystem {
    * (lanes 3.6 m apart, see LANE_W).
    */
   laneLat(ei, sign, v) {
+    return this.laneLatU(ei, sign, v && v.laneU != null ? v.laneU : 0.5);
+  }
+
+  /** laneLat for a lane fraction `u` in [0, 1): lane floor(u * n) of the n,
+   *  counted from the left of a -> b. */
+  laneLatU(ei, sign, u) {
     const e = this.city.edges[ei];
     if (this.flow[ei] === 0) return e.hw * 0.48;
     const L = this.lanes, k = ei * 3;
@@ -348,7 +375,7 @@ export class TrafficSystem {
       L[k + 2] = n;
     }
     const n = L[k + 2];
-    const i = Math.min(n - 1, Math.floor((v && v.laneU != null ? v.laneU : 0.5) * n));
+    const i = Math.min(n - 1, Math.floor(u * n));
     const c = L[k] + ((i + 0.5) * (L[k + 1] - L[k])) / n;
     // c is measured to the right of a -> b; travelling b -> a, right is -c.
     return c * sign;
@@ -600,6 +627,11 @@ export class TrafficSystem {
       v.laneU = laneU;
       v.vLong = 6 + this.R.n() * 6;
       v.panic = 0;
+      // Every driver keeps a pace of their own, +-8 % on the limit: a whole
+      // street at exactly the limit drives in formation.
+      v.drvK = 0.92 + 0.16 * hash2(ei, (x * 7) | 0);
+      v.prio = ++this._prio;
+      this.routeInit(v);
       return v;
     }
     return null;
@@ -983,40 +1015,24 @@ export class TrafficSystem {
     }
   }
 
-  driveTraffic(v, dt, px, pz, player) {
-    const city = this.city;
-    let e = city.edges[v.edge];
-    if (!e) { v.mode = 'free'; return { throttle: 0, brake: 1, steer: 0 }; }
-    const a = city.nodes[v.dirSign > 0 ? e.a : e.b];
-    const b = city.nodes[v.dirSign > 0 ? e.b : e.a];
-    const dx = b.x - a.x, dz = b.z - a.z;
-    const len = Math.hypot(dx, dz) || 1;
-    const ux = dx / len, uz = dz / len;
-    // progress along the edge
-    const proj = ((v.x - a.x) * ux + (v.z - a.z) * uz) / len;
-    if (proj > 0.94) {
-      const next = this.pickNextEdge(v, e, v.dirSign > 0 ? e.b : e.a);
-      if (next) { v.edge = next.ei; v.dirSign = next.sign; }
-      else if (this.allowed(v.edge, -v.dirSign)) v.dirSign = -v.dirSign; // two-way dead end: U-turn
-      else {
-        // The end of a one-way chain with no legal way on. Spawns and turns
-        // keep to directed components so this should not happen; if it does,
-        // a car out of the player's sight is recycled (the population refills
-        // legally) rather than turned round into the oncoming lane.
-        this.stats.deadEnd++;
-        const seen = dist2(v.x, v.z, px, pz) < 120 * 120;
-        if (!seen) { this.stats.deadEndDespawn++; v.recycle = true; return { throttle: 0, brake: 1, steer: 0 }; }
-        v.dirSign = -v.dirSign;
-      }
-      e = city.edges[v.edge];
-    }
-    const ee = city.edges[v.edge];
-    const na = city.nodes[v.dirSign > 0 ? ee.a : ee.b];
-    const nb = city.nodes[v.dirSign > 0 ? ee.b : ee.a];
-    const ndx = nb.x - na.x, ndz = nb.z - na.z;
-    const nlen = Math.hypot(ndx, ndz) || 1;
-    const fx = ndx / nlen, fz = ndz / nlen;
-    let off = this.laneLat(v.edge, v.dirSign, v);
+  // --- how the AI drives ----------------------------------------------------
+  //
+  // See "How the AI drives" in CLAUDE.md. A car carries a short planned ROUTE
+  // (v.rt, RT_MAX entries of RT_F numbers): the edge it is on, then the next
+  // few it will take, each with the lane it will hold there. Between two
+  // entries is a VERTEX: where the two lanes' centre lines meet, rounded off
+  // by a circular arc (a fillet) whose radius is what the corner allows. The
+  // car steers by pure pursuit along that path and plans its speed along it:
+  // every arc and every slower street ahead is a speed it must be down to by
+  // the time it gets there, and the car ahead is an IDM leader. Nothing here
+  // is per-frame state but the route; it is rebuilt one entry at a time as
+  // the car moves on.
+
+  /** Fill route entry `o` (an offset into v.rt) with edge ei driven `sign`,
+   *  in lane fraction `u`. */
+  routeEntry(v, o, ei, sign, u) {
+    const rt = v.rt, e = this.city.edges[ei];
+    let off = this.laneLatU(ei, sign, u);
     // A BORE'S WALLS ARE SOLID (hw + 0.4), and a vehicle collides as a
     // circle: 0.7 x radius plus the barrier's 0.8 m, 4.3 m for a bus. In a
     // tube's right lane (+3.1 m) a bus was permanently in contact with the
@@ -1024,27 +1040,261 @@ export class TrafficSystem {
     // along the stacked SR-99 decks at 6 m/s with the traffic behind it (the
     // side-by-side twins had no shared walls there, so it never showed).
     // Long vehicles hold their lane a hand's breadth clear of the wall.
-    if (ee.tunnel && !ee.elev) {
-      const lim = Math.max(0, ee.hw + 0.4 - (v.radius * 0.7 + 1.1));
+    if (e.tunnel && !e.elev) {
+      const lim = Math.max(0, e.hw + 0.4 - (v.radius * 0.7 + 1.1));
       off = clamp(off, -lim, lim);
     }
+    const na = this.city.nodes[sign > 0 ? e.a : e.b];
+    const ux = e.dx * sign, uz = e.dz * sign;
+    rt[o + R_EI] = ei; rt[o + R_SG] = sign; rt[o + R_OFF] = off; rt[o + R_U] = u;
+    // the lane's centre line starts at the start node, `off` to the right
+    // (travelling (ux, uz), right is (-uz, ux))
+    rt[o + R_QX] = na.x - uz * off; rt[o + R_QZ] = na.z + ux * off;
+    rt[o + R_UX] = ux; rt[o + R_UZ] = uz;
+    rt[o + R_LEN] = e.len; rt[o + R_SPD] = e.spd; rt[o + R_END] = 0;
+    rt[o + V_K] = 0; rt[o + V_A] = 0; rt[o + V_B] = 0; rt[o + V_T] = 0; rt[o + V_R] = Infinity; rt[o + V_TH] = 0;
+  }
+
+  /** Start a car's route afresh on (v.edge, v.dirSign), lane v.laneU. */
+  routeInit(v) {
+    if (!v.rt) v.rt = new Float64Array(RT_F * RT_MAX);
+    if (!v.aiIn) v.aiIn = { throttle: 0, brake: 0, steer: 0, handbrake: 0, park: false };
+    this.routeEntry(v, 0, v.edge, v.dirSign, v.laneU != null ? v.laneU : 0.5);
+    v.rtN = 1;
+  }
+
+  /** The lane fraction on one-way edge ei (driven `sign`) whose lane is
+   *  nearest lateral offset `off`: a car carries on in ITS lane where the
+   *  number of lanes changes, instead of keeping a fraction of the width. */
+  nearestLaneU(ei, sign, off) {
+    this.laneLatU(ei, sign, 0.5);          // fills the lane cache
+    const L = this.lanes, k = ei * 3, n = L[k + 2];
+    const w = (L[k + 1] - L[k]) / n;
+    if (!(w > 0)) return 0.5;
+    const i = clamp(Math.floor((off * sign - L[k]) / w), 0, n - 1);
+    return (i + 0.5) / n;
+  }
+
+  /** Plan one more entry onto the end of v's route. False at a dead end. */
+  routeExtend(v) {
+    const rt = v.rt, city = this.city, o = (v.rtN - 1) * RT_F;
+    if (rt[o + R_END] || v.rtN >= RT_MAX) return false;
+    const ei = rt[o + R_EI], sign = rt[o + R_SG], e = city.edges[ei];
+    const node = sign > 0 ? e.b : e.a;
+    const nx = this.pickNextEdge(v, ei, sign, node);
+    if (!nx) { rt[o + R_END] = 1; return false; }
+    const ne = city.edges[nx.ei];
+    const pux = rt[o + R_UX], puz = rt[o + R_UZ], nux = ne.dx * nx.sign, nuz = ne.dz * nx.sign;
+    const cos = pux * nux + puz * nuz, crs = pux * nuz - puz * nux;
+    // Straight on: the nearest lane. A turn: the same share of the width.
+    let u = rt[o + R_U];
+    if (cos > 0.94 && this.flow[nx.ei] !== 0) u = this.nearestLaneU(nx.ei, nx.sign, rt[o + R_OFF]);
+    const q = o + RT_F;
+    this.routeEntry(v, q, nx.ei, nx.sign, u);
+    // THE VERTEX: where the two lanes' centre lines cross (a on the old line,
+    // b on the new), rounded by an arc of radius R that touches both lines t
+    // either side of it. A junction's corner is at most JR_RIGHT / JR_LEFT
+    // (a left turn swings wide, across the junction); a bend in a street is
+    // whatever its segments leave room for.
+    const plen = rt[o + R_LEN], nlen = rt[q + R_LEN];
+    const th = Math.acos(clamp(cos, -1, 1));
+    rt[q + V_K] = 2; rt[q + V_A] = plen; rt[q + V_B] = 0;
+    // A jog (near-parallel lines, a lane shift, a hairpin): no arc. Its speed
+    // is still the bend's, from the radius its segments allow.
+    rt[q + V_R] = th < 0.035 ? Infinity : (0.5 * Math.min(plen, nlen)) / Math.tan(Math.min(th, 2.8) / 2);
+    if (Math.abs(crs) > 0.035 && cos > -0.9) {
+      const dx = rt[q + R_QX] - rt[o + R_QX], dz = rt[q + R_QZ] - rt[o + R_QZ];
+      const a = (dx * nuz - dz * nux) / crs, b = (dx * puz - dz * pux) / crs;
+      const pStart = rt[o + V_K] === 1 ? rt[o + V_B] + rt[o + V_T] : 0;
+      if (a > pStart - 2 && a < plen + 25 && b > -25 && b < nlen) {
+        const tanH = Math.tan(th / 2);
+        const jn = city.nodes[node].e.length >= 3;
+        const rCap = jn ? (crs > 0 ? JR_RIGHT : JR_LEFT) : CURVE_RMAX;
+        const t = Math.min(rCap * tanH, 0.45 * Math.max(0, a - pStart), 0.45 * Math.max(0, nlen - b));
+        if (t > 0.25) {
+          const R = t / tanH, side = crs > 0 ? 1 : -1;
+          // n0: from the arc's first tangent point towards its centre
+          const n0x = -puz * side, n0z = pux * side;
+          const cx = rt[o + R_QX] + pux * a, cz = rt[o + R_QZ] + puz * a;
+          rt[q + V_K] = 1; rt[q + V_A] = a; rt[q + V_B] = b; rt[q + V_T] = t; rt[q + V_R] = R; rt[q + V_TH] = th;
+          rt[q + V_OX] = cx - pux * t + n0x * R; rt[q + V_OZ] = cz - puz * t + n0z * R;
+          rt[q + V_NX] = n0x; rt[q + V_NZ] = n0z; rt[q + V_PX] = pux; rt[q + V_PZ] = puz;
+        }
+      }
+    }
+    v.rtN++;
+    return true;
+  }
+
+  /** Where entry j's straight ends (the next arc's first tangent point, or
+   *  its end node), in its own along-line distance. */
+  lineEnd(rt, rtN, j) {
+    if (j + 1 < rtN) { const q = (j + 1) * RT_F; return rt[q + V_A] - rt[q + V_T]; }
+    return rt[j * RT_F + R_END] ? rt[j * RT_F + R_LEN] : Infinity;
+  }
+
+  /** The point `d` along vertex q's arc from its first tangent point. */
+  arcPoint(rt, q, d, out) {
+    const R = rt[q + V_R], ph = clamp(d / R, 0, rt[q + V_TH]);
+    const c = Math.cos(ph), s = Math.sin(ph);
+    out.x = rt[q + V_OX] + R * (-rt[q + V_NX] * c + rt[q + V_PX] * s);
+    out.z = rt[q + V_OZ] + R * (-rt[q + V_NZ] * c + rt[q + V_PZ] * s);
+  }
+
+  /** The point `L` ahead of along-distance s0 on entry 0, along the path. */
+  pathAhead(v, s0, L, out) {
+    const rt = v.rt, rtN = v.rtN;
+    let s = s0, rem = L;
+    // still in the second half of the arc behind (the corner just turned)
+    if (rt[V_K] === 1) {
+      const t2 = rt[V_B] + rt[V_T];
+      if (s < t2) {
+        const left = t2 - s, alen = rt[V_R] * rt[V_TH];
+        if (rem < left) { this.arcPoint(rt, 0, alen - Math.min(alen, left - rem), out); return; }
+        rem -= left; s = t2;
+      }
+    }
+    for (let j = 0; ; j++) {
+      const o = j * RT_F, end = this.lineEnd(rt, rtN, j);
+      if (s + rem <= end || j + 1 >= rtN) {
+        const a = Math.min(s + rem, end === Infinity ? s + rem : end);
+        out.x = rt[o + R_QX] + rt[o + R_UX] * a;
+        out.z = rt[o + R_QZ] + rt[o + R_UZ] * a;
+        return;
+      }
+      // (s past `end` is a car already into the arc's first half: the
+      // overshoot is its progress round it)
+      rem -= end - s;
+      const q = o + RT_F;
+      if (rt[q + V_K] === 1) {
+        const alen = rt[q + V_R] * rt[q + V_TH];
+        if (rem <= alen) { this.arcPoint(rt, q, rem, out); return; }
+        rem -= alen;
+        s = rt[q + V_B] + rt[q + V_T];
+      } else s = rt[q + V_B];
+    }
+  }
+
+  /**
+   * The acceleration the road ahead asks for at speed `vel`: for every
+   * corner, every slower street and a dead end along the planned route, the
+   * constant deceleration that arrives there at its speed (or Infinity: no
+   * constraint). The route is extended as far as the stopping horizon.
+   */
+  roadAccel(v, s0, vel) {
+    const rt = v.rt;
+    const horizon = (vel * vel) / (2 * B_PLAN) + 30;
+    let aMin = Infinity, d = 0;
+    const cons = (vk, dist) => {
+      if (vel <= vk) return;
+      const a = (vk * vk - vel * vel) / (2 * Math.max(dist, 1.5));
+      if (a < aMin) aMin = a;
+    };
+    // the corner being turned
+    if (rt[V_K] === 1 && s0 < rt[V_B] + rt[V_T]) cons(Math.sqrt(A_LAT * rt[V_R]), 0);
+    for (let j = 0; ; j++) {
+      const o = j * RT_F;
+      const start = j === 0 ? s0 : rt[o + V_K] === 1 ? rt[o + V_B] + rt[o + V_T] : rt[o + V_B];
+      // plan further while the route is shorter than the horizon
+      if (j + 1 >= v.rtN && d + rt[o + R_LEN] - start < horizon + 10) this.routeExtend(v);
+      const end = this.lineEnd(rt, v.rtN, j);
+      if (end === Infinity) break;
+      d += Math.max(0, end - start);
+      if (j + 1 >= v.rtN) {
+        // the end of the line: a dead end, turned at a crawl (or recycled)
+        if (rt[o + R_END]) cons(2.5, d - 2);
+        break;
+      }
+      if (d > horizon) break;
+      const q = o + RT_F;
+      if (rt[q + V_R] < 1e5) cons(Math.sqrt(A_LAT * rt[q + V_R]), d);
+      cons(rt[q + R_SPD] * v.drvK, d);
+      if (rt[q + V_K] === 1) d += rt[q + V_R] * rt[q + V_TH];
+    }
+    return aMin;
+  }
+
+  /** Move v onto its route's next entry. */
+  routeAdvance(v) {
+    const rt = v.rt;
+    rt.copyWithin(0, RT_F, v.rtN * RT_F);
+    v.rtN--;
+    v.edge = rt[R_EI]; v.dirSign = rt[R_SG]; v.laneU = rt[R_U];
+  }
+
+  driveTraffic(v, dt, px, pz, player) {
+    const city = this.city;
+    if (!city.edges[v.edge]) { v.mode = 'free'; return { throttle: 0, brake: 1, steer: 0 }; }
+    if (!v.rt || v.rtN === 0) this.routeInit(v);
+    const rt = v.rt, inp = v.aiIn;
+    inp.throttle = 0; inp.brake = 0; inp.steer = 0; inp.handbrake = 0; inp.park = false;
+    // where the car is along its edge's lane line, and onto the next entry
+    // once it is past the vertex (the middle of the corner)
+    let s0 = (v.x - rt[R_QX]) * rt[R_UX] + (v.z - rt[R_QZ]) * rt[R_UZ];
+    for (let guard = 0; guard < 3; guard++) {
+      if (v.rtN < 2 && !this.routeExtend(v)) break;
+      const q = RT_F;
+      if (s0 < (rt[q + V_K] === 1 ? rt[q + V_A] : rt[R_LEN])) break;
+      this.routeAdvance(v);
+      s0 = (v.x - rt[R_QX]) * rt[R_UX] + (v.z - rt[R_QZ]) * rt[R_UZ];
+    }
+    if (v.rtN < 2 && s0 > rt[R_LEN] - 2) {
+      // The end of the route with nowhere legal to go on.
+      if (this.allowed(v.edge, -v.dirSign)) {
+        // two-way dead end: U-turn into the other lane
+        v.dirSign = -v.dirSign; this.routeInit(v);
+      } else {
+        // The end of a one-way chain with no legal way on. Spawns and turns
+        // keep to directed components so this should not happen; if it does,
+        // a car out of the player's sight is recycled (the population refills
+        // legally) rather than turned round into the oncoming lane.
+        this.stats.deadEnd++;
+        const seen = dist2(v.x, v.z, px, pz) < 120 * 120;
+        if (!seen) { this.stats.deadEndDespawn++; v.recycle = true; inp.brake = 1; return inp; }
+        v.dirSign = -v.dirSign; this.routeInit(v);
+      }
+      s0 = (v.x - rt[R_QX]) * rt[R_UX] + (v.z - rt[R_QZ]) * rt[R_UZ];
+    }
+    const sp = Math.max(0, v.vLong);
+    // (first: it extends the route as far as the car can see)
+    const aRoad = this.roadAccel(v, s0, sp);
+
+    // STEERING: pure pursuit of the point L along the path. The curvature
+    // that reaches it, 2 sin(alpha) / distance, is turned into a wheel angle
+    // by the vehicle's own bicycle model (aiSteer), so the same path is the
+    // same path for a hatchback and a bus, at any speed.
+    const L = clamp(3.5 + 0.5 * sp, 5, 20);
+    const P = this._P;
+    this.pathAhead(v, s0, L, P);
     // steering round a car standing in the lane (the scan below sets it)
-    const laneOff = off;
-    if (v.dodgeT > 0) { off += v.dodge; v.dodgeT -= dt; } else v.dodge = 0;
-    const aimAhead = clamp(6 + Math.abs(v.vLong) * 0.75, 6, 24);
-    const p = ((v.x - na.x) * fx + (v.z - na.z) * fz);
-    const ap = clamp(p + aimAhead, 0, nlen);
-    const tx = na.x + fx * ap - fz * off;
-    const tz = na.z + fz * ap + fx * off;
+    if (v.dodgeT > 0) { P.x -= rt[R_UZ] * v.dodge; P.z += rt[R_UX] * v.dodge; v.dodgeT -= dt; } else v.dodge = 0;
+    const ddx = P.x - v.x, ddz = P.z - v.z, ld = Math.hypot(ddx, ddz) || 1;
+    const alpha = angleWrap(Math.atan2(ddx, ddz) - v.heading);
+    // Far off the path's heading (a U-turn, a car shunted round): full lock.
+    inp.steer = Math.abs(alpha) > 1.3 ? Math.sign(alpha) : v.aiSteer((2 * Math.sin(alpha)) / ld);
 
-    const desired = Math.atan2(tx - v.x, tz - v.z);
-    const err = angleWrap(desired - v.heading);
-    const steer = clamp(err * 1.5, -1, 1);
-
-    // obstacle scan
-    let brake = 0;
+    // SPEED: the road ahead (corners, slower streets) and the car ahead (IDM),
+    // whichever asks for less, as one wanted acceleration.
+    const v0 = rt[R_SPD] * v.drvK * (v.panic > 0 ? 1.5 : 1);
+    let aWant = Math.min(aRoad, Math.abs(alpha) > 1.3 ? (9 - sp * sp) / 6 : Infinity);
+    const heavy = v.spec.bus || v.spec.cargo;
+    const aMax = heavy ? 1.3 : 2.0;
+    // THE CAR AHEAD, judged along the PATH: the planned route sampled every
+    // few metres out to the scan length. A straight corridor along the bonnet
+    // saw the far side of every junction a car was about to turn at (and
+    // waited on whatever stood there), and on a bend the next lane's cars.
     const f = v.forward;
-    const scanLen = 5 + Math.abs(v.vLong) * 1.1;
+    const scanLen = Math.max(30, (sp * sp) / (2 * IDM_B) + sp * IDM_T + 15);
+    const step = Math.max(4, scanLen / 10), ps = this._ps;
+    ps[0] = v.x; ps[1] = v.z;
+    let np = 1;
+    for (let D = step; np < 12 && D < scanLen + step; D += step, np++) {
+      this.pathAhead(v, s0, D, P);
+      ps[2 * np] = P.x; ps[2 * np + 1] = P.z;
+    }
+    let gap = Infinity, vLead = 0, lead = null;
+    let stopAt = Infinity;   // distance to stop short of something that is not a car in the lane
+    const reach2 = (scanLen + 8) * (scanLen + 8);
     for (const o of this.cars) {
       if (o === v) continue;
       // A car on another deck is not ahead of you. In SR-99's stacked bore the
@@ -1054,47 +1304,101 @@ export class TrafficSystem {
       // collision uses.
       if (Math.abs(o.y - v.y) > 3) continue;
       const rx = o.x - v.x, rz = o.z - v.z;
+      if (rx * rx + rz * rz > reach2) continue;
       const fwd = rx * f.x + rz * f.z;
-      if (fwd < 0.5 || fwd > Math.max(scanLen, 25)) continue;
-      // + = to the right of this car
-      const rl = rz * f.x - rx * f.z;
-      // AN UNATTENDED CAR STANDING IN THE LANE is driven round, not queued
-      // behind: a parked car knocked out of its slot, one you got out of.
-      // Car-car collision used to shove it along (circles pushing circles);
-      // with the bodies' boxes a queue sat behind it for good.
-      // Laterals in the edge's frame (+ right), where the lane offset is.
-      const need = v.halfWid + o.halfWid + 0.7;
-      const oLat = (o.x - na.x) * -fz + (o.z - na.z) * fx;
-      if (Math.abs(oLat - laneOff) < need && (o.mode === 'free' || o.mode === 'parked') && o !== player.vehicle && Math.abs(o.vLong) < 0.5) {
-        v.dodge = clamp((oLat >= laneOff ? oLat - need : oLat + need) - laneOff, -LANE_W, LANE_W);
-        v.dodgeT = 1.2;
-        if (fwd < v.halfLen + o.halfLen + 1.5 && Math.abs(rl) < need - 0.4) brake = Math.max(brake, 1);
+      if (fwd < -2) continue;
+      // Something standing still (a kerbside car, a settled apron vehicle)
+      // only matters close in, to be dodged: most of the list is parked
+      // cars, and walking the path for each one was the cost of this scan.
+      if (fwd > 25 && (o.mode === 'parked' || o.mode === 'apron' || (o.mode === 'free' && Math.abs(o.vLong) < 0.5))) continue;
+      // nearest point of the sampled path: how far along it, how far off it
+      let best = Infinity, along = 0, acc = 0, sdx = f.x, sdz = f.z, sax = v.x, saz = v.z;
+      for (let k = 0; k < np - 1; k++) {
+        const ax = ps[2 * k], az = ps[2 * k + 1], sx = ps[2 * k + 2] - ax, sz = ps[2 * k + 3] - az;
+        const l = Math.hypot(sx, sz) || 1e-3;
+        let t = ((o.x - ax) * sx + (o.z - az) * sz) / (l * l);
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const ex = o.x - ax - sx * t, ez = o.z - az - sz * t, dd = ex * ex + ez * ez;
+        if (dd < best) { best = dd; along = acc + t * l; sdx = sx / l; sdz = sz / l; sax = ax; saz = az; }
+        acc += l;
+      }
+      if (along < 0.5) continue;
+      const fo = o.forward, co = fo.x * sdx + fo.z * sdz, so = Math.abs(fo.x * sdz - fo.z * sdx);
+      // its half-extent across my path, and along it
+      const ext = o.halfWid * Math.abs(co) + o.halfLen * so;
+      const wid = v.halfWid + ext + 0.35;
+      if (best > wid * wid) {
+        // CROSS TRAFFIC: a driven car crossing my path that will be where I
+        // am going when I get there. Whoever gets there first goes; on a tie
+        // the older car. Predicted along its heading at 0.8 / 1.6 / 2.4 s.
+        if (Math.abs(co) < 0.5 && Math.abs(o.vLong) > 1.5 && (o.mode === 'traffic' || o.mode === 'police' || o === player.vehicle)) {
+          for (let tt = 0.8; tt < 2.5; tt += 0.8) {
+            const qx = o.x + fo.x * o.vLong * tt, qz = o.z + fo.z * o.vLong * tt;
+            let bq = Infinity, aq = 0, ac = 0;
+            for (let k = 0; k < np - 1; k++) {
+              const ax = ps[2 * k], az = ps[2 * k + 1], sx = ps[2 * k + 2] - ax, sz = ps[2 * k + 3] - az;
+              const l = Math.hypot(sx, sz) || 1e-3;
+              let t = ((qx - ax) * sx + (qz - az) * sz) / (l * l);
+              t = t < 0 ? 0 : t > 1 ? 1 : t;
+              const ex = qx - ax - sx * t, ez = qz - az - sz * t, dd = ex * ex + ez * ez;
+              if (dd < bq) { bq = dd; aq = ac + t * l; }
+              ac += l;
+            }
+            if (bq > wid * wid || aq < v.halfLen) continue;
+            const tMe = aq / Math.max(sp, 1);
+            if (tt < tMe - 0.4 || (tt <= tMe + 0.4 && o.prio < v.prio)) {
+              const g = aq - v.halfLen - o.halfWid - 1.5;
+              if (g < gap) { gap = g; vLead = 0; lead = o; }
+            }
+            break;
+          }
+        }
         continue;
       }
-      if (fwd > scanLen || Math.abs(rl) > 2.2) continue;
-      brake = Math.max(brake, clamp(1.4 - fwd / scanLen, 0.35, 1));
+      // AN UNATTENDED CAR STANDING IN THE PATH is driven round, not queued
+      // behind: a parked car knocked out of its slot, one you got out of.
+      // Car-car collision used to shove it along (circles pushing circles);
+      // with the bodies' boxes a queue sat behind it for good. The dodge is
+      // an offset from the lane, away from the side the car stands on, held
+      // for 1.2 s after it was last seen.
+      if ((o.mode === 'free' || o.mode === 'parked') && o !== player.vehicle && Math.abs(o.vLong) < 0.5 && along < 25) {
+        const lat = (o.x - sax) * -sdz + (o.z - saz) * sdx;   // + = right of the path
+        const need = wid + 0.35, dl = lat >= 0 ? lat - need : lat + need;
+        if (Math.abs(dl) > Math.abs(v.dodge) || v.dodgeT <= 0) v.dodge = clamp(dl, -LANE_W, LANE_W);
+        v.dodgeT = 1.2;
+        // too close to get round: stop
+        if (along < v.halfLen + o.halfLen + 1.5 && Math.abs(lat - v.dodge) < wid - 0.4) stopAt = 0;
+        continue;
+      }
+      // GRIDLOCK: two cars each waiting on the other (crossing at a junction,
+      // nosing into the same gap) would wait for ever. The older one goes.
+      if (o.lead === v && o.prio > v.prio && Math.abs(o.vLong) < 1) continue;
+      const g = along - v.halfLen - (o.halfLen * Math.abs(co) + o.halfWid * so);
+      if (g < gap) { gap = g; vLead = o.vLong * co; lead = o; }
     }
+    v.lead = lead;
     // A Link train on (or coming to) the level crossing ahead: wait for it.
     const lk = this.link;
+    const look = Math.max(scanLen * 0.5, 20);
     if (lk && lk.onGradeCorridor(v.x, v.z)) {
-      for (let d = 3; d <= scanLen + 5; d += 3) {
-        if (lk.blocks(v.x + f.x * d, v.z + f.z * d, v.y)) { brake = Math.max(brake, clamp(1.3 - d / (scanLen + 5), 0.5, 1)); break; }
+      for (let d = 3; d <= look; d += 3) {
+        if (lk.blocks(v.x + f.x * d, v.z + f.z * d, v.y)) { stopAt = Math.min(stopAt, d - 4); break; }
       }
     }
     // A freight crossing's gates coming down ahead: stop at the arm.
     const fr = this.freight;
     if (fr && fr.crossCells) {
-      for (let d = 3; d <= scanLen + 6; d += 3) {
-        if (fr.blocks(v.x + f.x * d, v.z + f.z * d, v.y)) { brake = Math.max(brake, clamp(1.35 - d / (scanLen + 6), 0.55, 1)); break; }
+      for (let d = 3; d <= look + 6; d += 3) {
+        if (fr.blocks(v.x + f.x * d, v.z + f.z * d, v.y)) { stopAt = Math.min(stopAt, d - 4); break; }
       }
     }
     // YOU, ON FOOT. It used to look 10 m ahead, which at 15 m/s is well
     // inside its stopping distance, and only at where you were: a car saw you
     // step off the kerb once it was too late to stop. Now it looks as far as
     // it needs to stop (plus a margin), at where you will be by the time it
-    // gets there, and brakes hard when you are inside that.
+    // gets there, and stops short of you when you are inside that.
+    let urgent = false;
     if (player.onFoot && Math.abs(player.y - v.y) < 3) {
-      const sp = Math.max(0, v.vLong);
       const reach = Math.max(10, sp * sp / 12 + sp * 0.6 + 6);
       const rx = player.x - v.x, rz = player.z - v.z;
       const fwd = rx * f.x + rz * f.z;
@@ -1104,30 +1408,55 @@ export class TrafficSystem {
         const qx = rx + Math.sin(ph) * pv * t, qz = rz + Math.cos(ph) * pv * t;
         const lat = Math.min(Math.abs(rx * f.z - rz * f.x), Math.abs(qx * f.z - qz * f.x));
         if (lat < v.halfWid + 1.3) {
-          const stopD = sp * sp / 12 + 3;
-          brake = Math.max(brake, fwd < stopD + 4 ? 1 : 0.6);
+          stopAt = Math.min(stopAt, fwd - v.halfLen - 1.5);
+          if (fwd < sp * sp / 12 + 7) urgent = true;
         }
       }
     }
-    const targetSpeed = Math.min(ee.spd, 8 + ee.spd) * (v.panic > 0 ? 1.5 : 1);
-    const throttle = brake > 0.2 ? 0 : clamp((targetSpeed - v.vLong) * 0.4, 0, 1);
+    // IDM: free-road term plus the interaction with the leader.
+    const vr = sp / Math.max(0.5, v0);
+    let aIdm = aMax * (1 - vr * vr * vr * vr);
+    if (gap < Infinity) {
+      const ss = IDM_S0 + Math.max(0, sp * IDM_T + (sp * (sp - vLead)) / (2 * Math.sqrt(aMax * IDM_B)));
+      const r = ss / Math.max(gap, 0.1);
+      aIdm -= aMax * r * r;
+    }
+    aWant = Math.min(aWant, aIdm);
+    if (stopAt < Infinity) aWant = Math.min(aWant, stopAt <= 0.3 ? -9 : -(sp * sp) / (2 * stopAt));
+    if (urgent) aWant = Math.min(aWant, -v.spec.brakeA);
+    aWant = Math.max(aWant, -v.spec.brakeA);
+    // At a standstill the brake is reverse gear: a stopped car HOLDS (the
+    // parking brake) until it wants to go again, with a little hysteresis.
+    if (v.held ? aWant < 0.4 : (sp < 0.8 && aWant < 0)) { v.held = true; inp.park = true; }
+    else { v.held = false; v.aiPedals(aWant, inp); }
+    v.wantGo = aWant > 0.5 && stopAt === Infinity;
+    // Wanting to go and not moving for a second: pressed against a post or a
+    // wall, where a gentle throttle loses to the contact every frame. Floor it.
+    if (v.wantGo && v.stuckT > 1) { inp.throttle = 1; inp.brake = 0; }
     if (v.panic > 0) v.panic -= dt;
-    // Wedged: full throttle, nothing ahead to wait for, and not moving -- a
+    // Wedged: wanting to go, nothing ahead to wait for, and not moving -- a
     // bus against a lamp post on a lidded ramp, a car shunted onto a kerb
     // tree. The collision response takes most of its speed every frame, so it
     // never frees itself, and every car behind it queues. Out of the player's
     // sight it is recycled like a dead-end car; in sight it keeps trying.
-    if (throttle > 0.5 && Math.abs(v.vLong) < 0.5) v.stuckT = (v.stuckT || 0) + dt;
+    if (v.wantGo && Math.abs(v.vLong) < 0.5) v.stuckT += dt;
     else v.stuckT = 0;
-    if (v.stuckT > 8 && dist2(v.x, v.z, px, pz) > 120 * 120) { this.stats.stuckRecycled++; v.recycle = true; }
-    return { throttle, brake, steer, handbrake: 0 };
+    // ...and anything standing for 20 s out of sight, whatever it waits on:
+    // there are no signals to wait at, so a car that long at rest is queued
+    // behind a wedge or a gridlock of three or more, and the queue goes with it.
+    if (Math.abs(v.vLong) < 0.5) v.restT += dt; else v.restT = 0;
+    if ((v.stuckT > 8 || v.restT > 20) && dist2(v.x, v.z, px, pz) > 120 * 120) { this.stats.stuckRecycled++; v.recycle = true; }
+    return inp;
   }
 
-  pickNextEdge(v, e, nodeId) {
+  /** The way on from nodeId for a car arriving along edge fromEi (driven
+   *  fromSign), or null to turn round. */
+  pickNextEdge(v, fromEi, fromSign, nodeId) {
     const city = this.city;
     const node = city.nodes[nodeId];
     if (!node) return null;
-    const f = v.forward;
+    const fe = city.edges[fromEi];
+    const fx = fe.dx * fromSign, fz = fe.dz * fromSign;
     // Only legal exits, and only ones that stay in this car's directed
     // component (so it can never be led into a one-way dead end). A turn
     // sharper than ~120 deg is still refused while anything else is on offer;
@@ -1136,14 +1465,14 @@ export class TrafficSystem {
     const comp = this.comp[nodeId];
     let best = null, bestScore = -Infinity, sharp = null, sharpScore = -Infinity;
     for (const ei of node.e) {
-      if (ei === v.edge) continue;
+      if (ei === fromEi) continue;
       const ne = city.edges[ei];
       if (ne.noTraffic) continue;          // a stunt ramp's block
       const sign = ne.a === nodeId ? 1 : -1;
       if (!this.allowed(ei, sign)) continue;
       if (this.comp[sign > 0 ? ne.b : ne.a] !== comp) continue;
       const dx = ne.dx * sign, dz = ne.dz * sign;
-      const dot = dx * f.x + dz * f.z;
+      const dot = dx * fx + dz * fz;
       const score = dot * 2 + hash2(ei, (v.x * 3) | 0) * 1.1 + (ne.cls === 'res' ? -0.6 : 0);
       if (dot < -0.5) {
         if (score > sharpScore) { sharpScore = score; sharp = { ei, sign }; }
@@ -1155,7 +1484,7 @@ export class TrafficSystem {
     // On a two-way street, null turns the car round (driveTraffic flips
     // dirSign), exactly as before. On a one-way street that would be driving
     // into the oncoming flow, so the hairpin is taken instead.
-    if (this.allowed(v.edge, -v.dirSign)) return null;
+    if (this.allowed(fromEi, -fromSign)) return null;
     if (sharp) this.stats.fallbackTurn++;
     return sharp;
   }
