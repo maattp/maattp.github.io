@@ -1048,7 +1048,7 @@ function gradeRoads(nodes, edges) {
   // dug), water, or needs more than DIP_MAX. Only street decks: dipping a
   // freeway under a RAMP was tried three ways in the interchanges and each
   // was worse (see "Don't dip a graded freeway under a ramp").
-  const DIP_MAX = 8, DIP_GRADE = { hwy: 0.05, ramp: 0.07 };
+  const DIP_MAX = 8, DIP_GRADE = { hwy: 0.025, ramp: 0.05 };
   const dipOf = new Float64Array(N);
   const fwyDips = [];
   let dipNoRoom = 0;
@@ -1103,6 +1103,22 @@ function gradeRoads(nodes, edges) {
         if (fixed[j]) { ok = false; dipWhy.anchor++; break; }
         if (isDeckEdge(j)) { ok = false; dipWhy.deck++; break; }
       }
+      // No steeper than 8 % (a ramp 10 %) where it was not already: the dip's run-out
+      // adds DIP_GRADE to whatever the freeway was doing, and on I-5's 5-6 %
+      // descents south of downtown that made 8-10 % pitches (verify holds
+      // I-5's samples over 8 % under 40).
+      if (ok) {
+        for (const [j, dj] of d0) {
+          const l = adj[j];
+          for (let q = 0; q < l.length; q += 3) {
+            const k = l[q], dl = l[q + 1];
+            const was = (H[k] - H[j]) / dl, now = (H[k] - (d0.get(k) || 0) - H[j] + dj) / dl;
+            const lim = l[q + 2] > 0.07 ? 0.1 : 0.08;   // a ramp may pitch to 10 %
+            if (Math.abs(now) > lim && Math.abs(now) > Math.abs(was) + 0.003) { ok = false; break; }
+          }
+          if (!ok) { dipWhy.steep = (dipWhy.steep || 0) + 1; break; }
+        }
+      }
       // Water: Lake Washington and the lakes stand ~6 m, the Sound at 0.
       if (ok && (lowest < 9 || G.isWater(c.x, c.z))) { ok = false; dipWhy.water++; }
       if (ok) {
@@ -1140,25 +1156,11 @@ function gradeRoads(nodes, edges) {
       }
       evals.push({ c, A, ok, d0, need, prot });
     }
-    // ALL OR NOTHING UNDER ONE STREET. A street deck crosses every
-    // carriageway of the freeway, and each crossing is judged on its own;
-    // dipping some and not others put I-405 under Juanita-Woodinville Way in a
-    // trench beside a carriageway still running through the deck. Crossings
-    // under the same street within 80 m go together.
-    const grp = evals.map((_, k) => k);
-    const root = (k) => { while (grp[k] !== k) k = grp[k] = grp[grp[k]]; return k; };
-    for (let p = 0; p < evals.length; p++) {
-      for (let q = p + 1; q < evals.length; q++) {
-        const P = evals[p], Q = evals[q];
-        const same = P.A === Q.A || (P.A.name && P.A.name === Q.A.name);
-        if (same && Math.hypot(P.c.x - Q.c.x, P.c.z - Q.c.z) < 80) grp[root(p)] = root(q);
-      }
-    }
-    const bad = new Set();
-    for (let k = 0; k < evals.length; k++) if (!evals[k].ok) bad.add(root(k));
-    for (let k = 0; k < evals.length; k++) {
-      const ev = evals[k];
-      if (bad.has(root(k))) { dipNoRoom++; continue; }
+    // Each crossing on its own. Refusing every carriageway under a street
+    // when one of them could not dip (all or nothing, for a tidy trench)
+    // halved the dips, 63 -> 30, and the ride and the clashes with them.
+    for (const ev of evals) {
+      if (!ev.ok) { dipNoRoom++; continue; }
       for (const [j, d] of ev.d0) if (d > dipOf[j]) dipOf[j] = d;
       for (const oi of ev.prot) dipProtect.add(oi);
       fwyDips.push({ x: Math.round(ev.c.x), z: Math.round(ev.c.z), need: +ev.need.toFixed(2) });
