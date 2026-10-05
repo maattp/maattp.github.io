@@ -167,7 +167,9 @@ const FR_FAR = [FAR_R, 5600, 4300, 3500];
 const FR_FADE = 600;
 
 // Ground tints, and the taps used to soften a district's edge into them.
-const GRASS = [0.42, 0.62, 0.28];
+// [0.42, 0.62, 0.28] read as a mown-lawn emerald in every park; a touch less
+// green and less chroma (still well clear of SUBURB) is a lived-in Seattle lawn.
+const GRASS = [0.40, 0.57, 0.29];
 // SUBURB used to be [0.48, 0.60, 0.37], which is the same colour as GRASS to
 // within a rounding error -- so ground that had blended all the way to "fully
 // developed" still rendered as a bright meadow, and the I-5 trench through
@@ -437,6 +439,13 @@ const AWNING = [
 // what keeps the check from being a tautology.
 export const WET_FLOOR = 0.35;
 
+// The horizon haze takes the sun's side. Multipliers on the haze colour
+// (linear), looking toward the sun and away from it, blended by
+// (0.5 + 0.5 cos(angle to the sun))^2. The sky dome applies them to its
+// horizon band here, and main.js's fog applies the same blend to the fog
+// colour -- the two have to agree or distance meets the sky at a seam.
+export const HAZE_SUN = { toward: [1.13, 1.06, 0.93], away: [0.95, 0.98, 1.04] };
+
 /**
  * The flat material, also drawing a chunk's glow (lamp heads, lit signs):
  * vertices flagged `glow` = 1 come out as their own vertex colour, unlit and
@@ -667,13 +676,15 @@ export class World {
     const uniforms = {
       tCloud: { value: this.tx.clouds },
       sunDir: { value: sd },
-      zenith: { value: lin(0x2d5e97) },
-      mid: { value: lin(0x6793c0) },
+      // A little less cyan than the first pass (0x2d5e97 / 0x6793c0), which
+      // after the grade's saturation was the most saturated thing on screen.
+      zenith: { value: lin(0x33609a) },
+      mid: { value: lin(0x7398c2) },
       horizon: { value: lin(0xb9cbd9) },
       haze: { value: lin(0xb9c3cf) },
       sunCol: { value: lin(0xfff2dc) },
       cloudLit: { value: lin(0xf7f5ee) },
-      cloudDark: { value: lin(0x8e9aa8) },
+      cloudDark: { value: lin(0x7f8b9b) },
       // Below the horizon the IBL sees the city, not haze: the old equirect's
       // lower half ran #8b979f to #5a6469, and every material's shaded side
       // was tuned against that bounce. The dome itself never draws it.
@@ -686,6 +697,8 @@ export class World {
       // 0.023). The IBL pass alone is lifted to put that ambient back; what you
       // see in the sky is untouched.
       iblGain: { value: 1.35 },
+      hazeToward: { value: new THREE.Vector3(...HAZE_SUN.toward) },
+      hazeAway: { value: new THREE.Vector3(...HAZE_SUN.away) },
       time: { value: 0 },
     };
     // ONE sky function for what you see and for what things reflect.
@@ -697,7 +710,12 @@ export class World {
         uniform sampler2D tCloud;
         uniform vec3 sunDir, zenith, mid, horizon, haze, sunCol, cloudLit, cloudDark, groundHi, groundLo;
         uniform float time, iblGain;
+        uniform vec3 hazeToward, hazeAway;
         vec3 skyColor(vec3 d, float forIbl) {
+          // Haze is brighter and warmer toward the sun (forward scattering)
+          // and cooler away from it; main.js's fog takes the same blend.
+          float hs = 0.5 + 0.5 * dot(d, sunDir);
+          vec3 hz = haze * mix(hazeAway, hazeToward, hs * hs);
           float h = d.y;
           float e = max(h, 0.0);
           vec3 col = mix(horizon, mid, smoothstep(0.0, 0.28, e));
@@ -713,12 +731,21 @@ export class World {
             vec2 uv = d.xz / (h + 0.08) * 0.19 + vec2(time * 0.0009, time * 0.0004);
             float big = texture2D(tCloud, uv).r;
             float fine = texture2D(tCloud, uv * 3.1 + 0.37).r;
-            float dens = big * 0.78 + fine * 0.22;
-            float cover = smoothstep(0.50, 0.74, dens);
+            // A third, finer tap ERODES the edge: it moves density by a few
+            // percent, so it only matters where the cover threshold is being
+            // crossed. With the old 0.50-0.74 ramp every cloud was a soft
+            // airbrushed smear; 0.53-0.69 over an eroded field gives cumulus
+            // a defined, broken edge. One more tap per sky pixel.
+            float ero = texture2D(tCloud, uv * 9.7 + 0.71).r;
+            float dens = big * 0.78 + fine * 0.22 + (ero - 0.5) * 0.09;
+            float cover = smoothstep(0.53, 0.69, dens);
             // Denser toward the sun means more cloud in front of the light:
             // the far side of a bank is the lit one.
             float toward = texture2D(tCloud, uv + sunDir.xz * 0.012).r * 0.78 + fine * 0.22;
-            float lit = clamp(0.62 + (dens - toward) * 7.0 - (dens - 0.62) * 0.9, 0.0, 1.0);
+            // Thick cores go grey underneath (the 1.6), and the sunward
+            // gradient is steeper (10): a bank reads as a volume with a lit
+            // side and a shaded base, not a flat white decal.
+            float lit = clamp(0.62 + (dens - toward) * 10.0 - (dens - 0.62) * 1.6, 0.0, 1.0);
             vec3 cc = mix(cloudDark, cloudLit, lit);
             cc += sunCol * pow(mu, 12.0) * 0.25 * (1.0 - cover);
             // Thin toward the horizon, where the layer is seen through haze.
@@ -728,9 +755,9 @@ export class World {
           // Horizon haze band, matched to scene.fog so distance resolves into
           // the sky instead of meeting it at a seam; below the horizon it is
           // the fog colour outright.
-          col = mix(col, haze, (1.0 - smoothstep(0.0, 0.07, abs(h))) * 0.55);
+          col = mix(col, hz, (1.0 - smoothstep(0.0, 0.07, abs(h))) * 0.55);
           if (h < 0.0) {
-            col = mix(col, haze, smoothstep(0.0, 0.05, -h));
+            col = mix(col, hz, smoothstep(0.0, 0.05, -h));
             vec3 ground = mix(groundHi, groundLo, smoothstep(0.0, 0.6, -h));
             col = mix(col, ground, forIbl * smoothstep(0.0, 0.08, -h));
           }
@@ -2790,8 +2817,17 @@ export class World {
       // metalness to near zero gives F0 = 0.04 with a real grazing-angle
       // ramp, which is what puts the sky into the water and produces the
       // shore-to-horizon gradient without a reflection pass.
-      color: 0x33556e, normalMap: n, roughness: 0.10, metalness: 0.02,
-      envMapIntensity: 1.4, normalScale: new THREE.Vector2(0.36, 0.36),
+      //
+      // The body colour is nearly black, on purpose. Sea water scatters
+      // almost nothing back, so all a lit surface shows is its reflection. At
+      // 0x33556e the "body" was a Lambertian blue lit by a 4.3 sun, which was
+      // most of what the near water showed: every wavelet shaded like a lump
+      // of blue plastic. Dark body + more env (2.0) puts the sky in the crests
+      // and the dark between them, which is what reads as water.
+      // normalScale 0.24 against the new chop map (textures.js waterSurface),
+      // which carries ~1.5x the old map's slope where it matters.
+      color: 0x0a1d22, normalMap: n, roughness: 0.12, metalness: 0.02,
+      envMapIntensity: 2.0, normalScale: new THREE.Vector2(0.24, 0.24),
     });
     // Two scales of swell from the one normal map.
     //
@@ -3247,7 +3283,7 @@ varying vec3 vFarTint;`)
         // gate, the distant city emerges from the fog colour over ~1.5 s.
         .replace('#include <fog_fragment>', `#include <fog_fragment>
 #ifdef USE_FOG
-  gl_FragColor.rgb = mix(fogColor, gl_FragColor.rgb, farFade);
+  gl_FragColor.rgb = mix(fogCol, gl_FragColor.rgb, farFade);
 #endif`);
     };
     return mat;
@@ -3716,7 +3752,7 @@ float frLine(float o, float fw, float c, float w) {
   }`)
         .replace('#include <fog_fragment>', `#include <fog_fragment>
 #ifdef USE_FOG
-  gl_FragColor.rgb = mix(fogColor, gl_FragColor.rgb, frFade);
+  gl_FragColor.rgb = mix(fogCol, gl_FragColor.rgb, frFade);
 #endif`);
     };
     mat.customProgramCacheKey = () => 'farRoads';
@@ -6054,7 +6090,7 @@ float frLine(float o, float fw, float c, float w) {
   groundTint(x, z, y) {
     let c;
     if (y < 1.2) c = [0.94, 0.86, 0.66];
-    else if (G.inPark(x, z)) c = [0.42, 0.66, 0.3];
+    else if (G.inPark(x, z)) c = [0.40, 0.60, 0.31];   // was [0.42, 0.66, 0.3]: see GRASS
     else {
       const jx = (vnoise(x, z) - 0.5) * 190;
       const jz = (vnoise(x + 3137, z - 2711) - 0.5) * 190;
@@ -7963,7 +7999,7 @@ float frLine(float o, float fw, float c, float w) {
           ? [gd[0] + (g[0] - gd[0]) * t * 2, gd[1] + (g[1] - gd[1]) * t * 2, gd[2] + (g[2] - gd[2]) * t * 2]
           : [g[0] + (lit[0] - g[0]) * (t - 0.5), g[1] + (lit[1] - g[1]) * (t - 0.5), g[2] + (lit[2] - g[2]) * (t - 0.5)];
         const r = r0 * (1 - t * 0.8) * (0.92 + wob(i) * 0.16);
-        flat.cone(x, y0 + span * t, z, r, th * (0.30 - t * 0.06), 8, col);
+        flat.cone(x, y0 + span * t, z, r, th * (0.30 - t * 0.06), 8, col, 0.38);
       }
     } else if (kind === 1) {
       // Broadleaf: a dark core with four lobes clustered around and over it.
@@ -7973,7 +8009,8 @@ float frLine(float o, float fw, float c, float w) {
       // keep a street of them from being stamped.
       const cr = 2.0 + h * 1.7;
       const cy = gy + th * 0.64;
-      flat.spheroid(x, cy, z, cr * 0.9, 7, 3, gd, 0.78, 0.3);
+      const fc = [x, cy + cr * 0.15, z];
+      flat.foliage(x, cy, z, cr * 0.9, 7, 3, gd, 0.78, 0.3, 0.42, fc);
       const rot0 = wob(1) * Math.PI * 2;
       for (let k = 0; k < 4; k++) {
         const a = rot0 + (k * Math.PI) / 2 + (wob(k + 2) - 0.5) * 0.7;
@@ -7981,16 +8018,17 @@ float frLine(float o, float fw, float c, float w) {
         const sunward = ox * SX + oz * SZ;
         const lr = cr * (0.56 + wob(k + 6) * 0.16);
         const col = sunward > 0.2 ? lit : g;
-        flat.spheroid(x + ox * cr * 0.55, cy + cr * (0.08 + wob(k + 10) * 0.25), z + oz * cr * 0.55,
-          lr, 6, 3, col, 0.82, 0.32);
+        flat.foliage(x + ox * cr * 0.55, cy + cr * (0.08 + wob(k + 10) * 0.25), z + oz * cr * 0.55,
+          lr, 6, 3, col, 0.82, 0.32, 0.36, fc);
       }
       // crown, nudged toward the light
-      flat.spheroid(x + SX * cr * 0.18, cy + cr * 0.52, z + SZ * cr * 0.18, cr * 0.58, 6, 3, lit, 0.85, 0.3);
+      flat.foliage(x + SX * cr * 0.18, cy + cr * 0.52, z + SZ * cr * 0.18, cr * 0.58, 6, 3, lit, 0.85, 0.3, 0.22, fc);
     } else {
       // Scrub: low and wide, two lobes, the sunward one lit.
       const cr = 1.5 + h * 1.1;
-      flat.spheroid(x, gy + th * 0.34, z, cr, 6, 3, gd, 0.7, 0.34);
-      flat.spheroid(x + SX * cr * 0.35, gy + th * 0.34 + cr * 0.3, z + SZ * cr * 0.35, cr * 0.62, 6, 3, lit, 0.8, 0.3);
+      const fc = [x, gy + th * 0.34 + cr * 0.1, z];
+      flat.foliage(x, gy + th * 0.34, z, cr, 6, 3, gd, 0.7, 0.34, 0.42, fc);
+      flat.foliage(x + SX * cr * 0.35, gy + th * 0.34 + cr * 0.3, z + SZ * cr * 0.35, cr * 0.62, 6, 3, lit, 0.8, 0.3, 0.26, fc);
     }
   }
 }

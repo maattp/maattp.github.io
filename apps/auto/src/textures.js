@@ -752,24 +752,93 @@ function groundSurface() {
   return { map: tex(a.c), normalMap: normalFrom(hgt.c, 1.4) };
 }
 
+/**
+ * Wind chop as a tiling normal map: ridged, domain-warped value-noise fBm.
+ *
+ * It used to be 900 ellipses 30-180 px long and 2-7 px tall, all within
+ * +/-0.2 rad of horizontal. Every one was a streak in the same direction, so
+ * the bay read as brushed metal -- long parallel scratches, magnified 3.4x
+ * again by the second, larger tap in world.js. A sum of sine trains was tried
+ * next and is worse: with integer wavevectors (needed to tile) the low ones
+ * can only point a few ways, and 20-64 of them weave into plaid.
+ *
+ * Here each octave is periodic value noise (every lattice divides the tile, so
+ * it wraps), folded into a ridge (sharp crests, broad troughs: how wind chop
+ * actually stands up), and the whole thing is sampled through a low-frequency
+ * warp, which bends the crests into the irregular cells open water shows. The
+ * normal is a central difference of the height, wrapped. ~20 ms on a desktop,
+ * once per build (the boot cache keeps the PNG).
+ */
 function waterSurface() {
   const S = 512;
-  const hgt = canvas(S, S);
-  hgt.g.fillStyle = grey(0.5); hgt.g.fillRect(0, 0, S, S);
   const r = mulberry32(67);
-  // overlapping long swells + chop
-  for (let i = 0; i < 900; i++) {
-    const x = r() * S, y = r() * S, w = 30 + r() * 150, h = 2 + r() * 5;
-    const g1 = hgt.g.createLinearGradient(0, y - h, 0, y + h);
-    g1.addColorStop(0, grey(0.5));
-    g1.addColorStop(0.5, grey(0.5 + (r() - 0.5) * 0.55));
-    g1.addColorStop(1, grey(0.5));
-    hgt.g.fillStyle = g1;
-    hgt.g.beginPath();
-    hgt.g.ellipse(x, y, w, h, (r() - 0.5) * 0.4, 0, Math.PI * 2);
-    hgt.g.fill();
+  const lattice = (p) => { const a = new Float32Array(p * p); for (let i = 0; i < a.length; i++) a[i] = r(); return { p, a }; };
+  // Smoothstep-interpolated, wrapped. (u, v) in lattice cells.
+  const val = (L, x, y) => {
+    const p = L.p, a = L.a;
+    x -= Math.floor(x / p) * p; y -= Math.floor(y / p) * p;
+    const xi = x | 0, yi = y | 0, fx = x - xi, fy = y - yi;
+    const x1 = xi + 1 === p ? 0 : xi + 1, y1 = (yi + 1 === p ? 0 : yi + 1) * p, y0 = yi * p;
+    const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+    const t = a[y0 + xi] + (a[y0 + x1] - a[y0 + xi]) * sx;
+    const b = a[y1 + xi] + (a[y1 + x1] - a[y1 + xi]) * sx;
+    return t + (b - t) * sy;
+  };
+  const OCT = [6, 12, 24, 48].map(lattice);
+  const WX = [4, 8].map(lattice), WY = [4, 8].map(lattice);
+  const WARP = 0.12, RIDGE = 0.6;
+  // The warp is smooth (periods of a quarter and an eighth of the tile), so it
+  // is evaluated on a 64 x 64 grid and upsampled bilinearly: half the cost of
+  // evaluating it per texel, and within 2 % of it.
+  const W = 64, warpU = new Float32Array(W * W), warpV = new Float32Array(W * W);
+  for (let j = 0; j < W; j++) {
+    for (let i = 0; i < W; i++) {
+      const u = i / W, v = j / W;
+      warpU[j * W + i] = (val(WX[0], u * 4, v * 4) * 0.67 + val(WX[1], u * 8, v * 8) * 0.33 - 0.5) * WARP;
+      warpV[j * W + i] = (val(WY[0], u * 4, v * 4) * 0.67 + val(WY[1], u * 8, v * 8) * 0.33 - 0.5) * WARP;
+    }
   }
-  return { normalMap: normalFrom(hgt.c, 1.5) };
+  const hgt = new Float32Array(S * S);
+  const kw = W / S;
+  for (let y = 0; y < S; y++) {
+    const v = y / S, gy = y * kw, j0 = gy | 0, ty = gy - j0, ja = j0 * W, jb = ((j0 + 1) % W) * W;
+    for (let x = 0; x < S; x++) {
+      const u = x / S, gx = x * kw, i0 = gx | 0, tx = gx - i0, ib = (i0 + 1) % W;
+      const a0 = warpU[ja + i0] + (warpU[ja + ib] - warpU[ja + i0]) * tx;
+      const a1 = warpU[jb + i0] + (warpU[jb + ib] - warpU[jb + i0]) * tx;
+      const b0 = warpV[ja + i0] + (warpV[ja + ib] - warpV[ja + i0]) * tx;
+      const b1 = warpV[jb + i0] + (warpV[jb + ib] - warpV[jb + i0]) * tx;
+      const wu = u + a0 + (a1 - a0) * ty, wv = v + b0 + (b1 - b0) * ty;
+      let h = 0, amp = 1;
+      for (let o = 0; o < OCT.length; o++) {
+        const L = OCT[o], n = val(L, wu * L.p, wv * L.p);
+        const rd = 1 - Math.abs(n * 2 - 1);
+        h += amp * (n * (1 - RIDGE) + rd * rd * RIDGE);
+        amp *= 0.55;
+      }
+      hgt[y * S + x] = h;
+    }
+  }
+  const { c, g } = canvas(S, S);
+  const img = g.createImageData(S, S);
+  const d = img.data;
+  const K = 0.42 * S / 16;   // slope gain: ~the old map's mean tilt
+  for (let y = 0; y < S; y++) {
+    const rU = ((y + S - 1) % S) * S, r0 = y * S, rD = ((y + 1) % S) * S;
+    for (let x = 0; x < S; x++) {
+      const xl = x === 0 ? S - 1 : x - 1, xr = x === S - 1 ? 0 : x + 1;
+      const nx = -(hgt[r0 + xr] - hgt[r0 + xl]) * K;
+      const ny = (hgt[rD + x] - hgt[rU + x]) * K;
+      const l = Math.sqrt(nx * nx + ny * ny + 1);
+      const i = (r0 + x) * 4;
+      d[i] = ((nx / l) * 0.5 + 0.5) * 255;
+      d[i + 1] = ((ny / l) * 0.5 + 0.5) * 255;
+      d[i + 2] = ((1 / l) * 0.5 + 0.5) * 255;
+      d[i + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  return { normalMap: tex(c, { srgb: false }) };
 }
 
 // ---------------------------------------------------------------------------
