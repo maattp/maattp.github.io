@@ -491,7 +491,8 @@ function drawAtlas() {
         if (curly) {
           // a coil hanging from the edge: round in the world, so an upright
           // ellipse in the cell (bars with round ends were battlements)
-          const ry = 8 + R.n() * 8, cy = yT - 2 + Math.pow(R.n(), 1.4) * (yB - yT - ry * 0.6);
+          // (hung from the edge: a coil centred deeper floated on the skin)
+          const ry = 6 + R.n() * 10, cy = yT - 2 + ry * (0.3 + 0.5 * R.n());
           g.ellipse(xx, cy, ry * 0.36, ry, 0, 0, Math.PI * 2);
           g.closePath();
         } else {
@@ -544,16 +545,22 @@ function drawAtlas() {
       const subs = [];
       for (let q = 0; q < nw; q++) {
         const f = nw === 1 ? 0 : q / (nw - 1) - 0.5;
-        subs.push({ o: f * w * 0.70, ww: w * 0.32, e: yEnd - R.n() * 0.30 * (yEnd - yTop) * (q === 1 ? 0.2 : 1), d: dx + f * 6 + (R.n() - 0.5) * 4 });
+        subs.push({ o: f * w * 0.70, ww: w * 0.36, e: yEnd - R.n() * 18, d: dx * 0.3 + f * 5 + (R.n() - 0.5) * 4 });
       }
       wrap(x, (xx) => {
         const shape = () => {
           g.beginPath();
           for (const u of subs) {
             const x0 = xx + u.o;
+            // Full width down to the last ~24 px, then the point: a lock that
+            // tapers over its whole length parts from its neighbours halfway
+            // down, and the darker shell between ran down as "drips".
+            const k = u.e - 24;
             g.moveTo(x0 - u.ww / 2, yTop);
-            g.bezierCurveTo(x0 - u.ww / 2, (yTop + u.e) * 0.5, x0 - u.ww * 0.15 + u.d * 0.6, u.e - 14, x0 + u.d, u.e);
-            g.bezierCurveTo(x0 + u.ww * 0.15 + u.d * 0.6, u.e - 14, x0 + u.ww / 2, (yTop + u.e) * 0.5, x0 + u.ww / 2, yTop);
+            g.lineTo(x0 - u.ww / 2 + u.d * 0.3, k);
+            g.quadraticCurveTo(x0 - u.ww * 0.25 + u.d * 0.7, u.e - 8, x0 + u.d, u.e);
+            g.quadraticCurveTo(x0 + u.ww * 0.25 + u.d * 0.7, u.e - 8, x0 + u.ww / 2 + u.d * 0.3, k);
+            g.lineTo(x0 + u.ww / 2, yTop);
             g.closePath();
           }
         };
@@ -1894,7 +1901,9 @@ export function buildCharacter(opts = {}) {
   const shortSleeve = top === 'tee' || bottom === 'dress';
   const shoeI = uniformed ? 0 : Math.floor(hash2(seed, 17) * SHOES.length);
   const shoeCol = SHOES[shoeI], soleCol = SOLES[shoeI];
-  const style = opts.hat ? 'crop' : look ? look[2] : pickStyle(hash2(seed, 16));
+  // Under a cap the hair is close-cut: the crop's outer layer of locks stands
+  // up to 8 mm off the head, through the cap's sides.
+  const style = opts.hat ? 'buzz' : look ? look[2] : pickStyle(hash2(seed, 16));
 
   const acc = new SkinAcc(skin);
   // TWO BODY SHAPES, not one. Every look was the same torso, so the pool read
