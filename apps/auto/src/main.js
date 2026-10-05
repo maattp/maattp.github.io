@@ -17,6 +17,7 @@ import { Islands } from './islands.js';
 import { Piers } from './piers.js';
 import { PickleballCourt } from './pickleball.js';
 import { freezeStatic, skipHiddenMatrices, Builder } from './build.js';
+import { installChunkCull } from './chunkcull.js';
 import { Fishing } from './fishing.js';
 import { Hoops } from './hoops.js';
 import { NeedleTop } from './needletop.js';
@@ -446,6 +447,7 @@ class Game {
 
 // ---------------------------------------------------------------------------
 
+let chunkCull = null;   // chunkcull.js
 let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts, stunts, monorail, link, freight, bikeNet, cyclists, lmRoot, shadowCache = null;
 let pickups = [];
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
@@ -889,6 +891,8 @@ function installShadowFade() {
     } catch (e) { blog(`shadow cache: ${e.message}`); shadowCache = null; }
   }
   if (world.terrainGroup) freezeStatic(world.terrainGroup);
+  // after the shadow cache: its wrapper on shadowMap.render goes inside ours
+  chunkCull = installChunkCull(renderer, world.group);
 
   await step(0.9, 'Waking the city');
   game = new Game();
@@ -1268,7 +1272,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -2409,7 +2413,8 @@ function draw(now) {
   const t0 = prof ? performance.now() : 0;
   if (lmRoot && updateLandmarkRange(lmRoot, camera.position) && shadowCache) shadowCache.invalidate();
   renderer.setRenderTarget(postfx.target);
-  renderer.render(scene, camera);
+  if (chunkCull) chunkCull.cull(camera);
+  try { renderer.render(scene, camera); } finally { if (chunkCull) chunkCull.restore(); }
   // capture before the post passes reset the counters
   sceneStats.calls = renderer.info.render.calls;
   sceneStats.tris = renderer.info.render.triangles;
