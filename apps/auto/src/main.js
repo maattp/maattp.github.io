@@ -2257,6 +2257,11 @@ function surfaceAt(x, y, z) {
       const wl = world.waterLevelAt(x, z);
       if (wl !== null && y - wl < 6) return 'wood';
     }
+    // Joints only on a real bridge. Graded freeway on fill stands metres
+    // over the terrain too, and is tarmac on an embankment: asked by height
+    // alone, 35 % of ground-level I-5 clattered like a viaduct.
+    const ei = cityRef.carriagewayAt(x, z, y);
+    if (ei && !cityRef.edges[ei - 1].elev) return 'hard';
     return 'deck';
   }
   if (cityRef.onRoad(x, z, 2.5)) return 'hard';

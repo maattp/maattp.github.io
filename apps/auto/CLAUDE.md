@@ -2622,13 +2622,13 @@ the pause menu lists them all.
   (ICY), which a media element hides.
 - verify tunes every live station in a car and reports how long each takes to
   sound (reported, not failed: they are other people's servers), and fails if
-  five cars in a row get the same station. **That check gets in the nearest
-  enterable vehicle within 600 m of wherever the ferry test left you -- the
-  Winslow terminal on Bainbridge.** When traffic happens to leave none there,
-  you never get in: one station, every stream "no sound", and the offline
-  check "SILENT -- BUG", all at once. That pattern is the harness, not the
-  radio (seen twice in four runs; the other two picked four stations each);
-  run it again before chasing it.
+  five cars in a row get the same station. **That check used to get in the nearest
+  enterable vehicle within 600 m of wherever the sections before left you --
+  the Aurora Bridge's deck among moving traffic, or Winslow's dock -- and
+  sometimes there was none, or one you did not stay in: one station "seen",
+  every stream "no sound", and the offline half "SILENT -- BUG" (v168 failed
+  it in most runs). Since v169 it respawns you on the street node nearest
+  Westlake and spawns its own sedan beside you.
 
 **Resume from anything but `running`, on every gesture, for the whole
 session (v120).** iOS stops the context behind the page's back (the home
@@ -2744,19 +2744,15 @@ two read the inputs, which is what the player is doing anyway.
   sounds like, and why a stop is quiet. A `Gate`: disconnected when still.
 - Grass has its own loop (`grass_roll`: swish, stalks, the thump of uneven
   ground); gravel keeps the crunch.
-- **`surfaceAt` knows decks and piers.** Over 1.5 m above the terrain is
-  `deck` (a bridge, a viaduct, a roof), and over the water within 6 m of it
-  `wood` (a pier, a dock, a low floating bridge). On either a car's tyres hit
-  an expansion joint every ~32 m (`joint`, front axle then rear,
-  wheelbase / speed apart, the deck's hollow boom under the clack), and on
-  foot `wood` is a hollow board knock (`step_wood`). Measured over every
-  fifth road edge (verify `AUTO_PROBE`): elevated highways and ramps read
-  `deck` at 92-94 %, elevated streets 37-75 % (some `wood`: low bridges over
-  water), surface streets under 0.2 %, and graded freeway 35 % -- the grading
-  carries those pieces on its deck profile (see "Freeway grading"), so I-5
-  clacks over its joints where it is built up, as the real one does.
-  Measuring from terrain + `roadLift` instead changed nothing (434 vs 435 of
-  1223): the height is a deck's, not a fill's.
+- **`surfaceAt` knows decks and piers.** Over 1.5 m above the terrain over
+  the water within 6 m of it is `wood` (a pier, a dock, a low floating
+  bridge); otherwise it is `deck` (a bridge, a viaduct, a roof) **unless the
+  carriageway there is not a bridge** (`carriagewayAt` -> `!e.elev`): graded
+  freeway on fill stands metres over the terrain too, and asked by height
+  alone 35 % of ground-level I-5 clattered like a viaduct. On a deck or
+  `wood` a car's tyres hit an expansion joint every ~32 m (`joint`, front
+  axle then rear, wheelbase / speed apart, the deck's hollow boom under the
+  clack), and on foot `wood` is a hollow board knock (`step_wood`).
 - **Wheels on the ground is read from the spec, not only the profile.** An
   engineless vehicle (kayak, bicycle, balloon) keeps the last car's engine
   profile, and a kayak over the water reads `wood`: by `p.kind` alone it got
