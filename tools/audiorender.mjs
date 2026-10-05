@@ -17,7 +17,17 @@
 //   scene-*.wav                traffic pass-by with doppler, siren pass-by,
 //                              police helicopter fly-over, crashes over the
 //                              radio (ducking + limiter), footsteps on every
-//                              surface, horns, water, a tunnel
+//                              surface, horns, water, a tunnel; the engine
+//                              classes back to back, the turbo hatch's shifts,
+//                              tyres (wheelspin, slide, lock-up, grass, gravel,
+//                              expansion joints), every crash tier, a scrape,
+//                              and the ambience downtown, in a park, on a
+//                              pier and up high
+//
+// Scenes run with a seeded Math.random, so a render is the same every time.
+// `--showcase` renders only SHOWCASE (below) and writes them as 22.05 kHz
+// mono WAVs to apps/auto/docs/audio/ -- the short set committed for a human to
+// listen to (the full render is ~30 MB and is not).
 //
 // It exits non-zero when any file clips (|x| >= 0.999) or a file that should
 // make noise is silent.
@@ -30,7 +40,10 @@ const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
 const PORT = +process.env.AUTO_CDP_PORT || 9230;
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i >= 0 ? process.argv[i + 1] : d; };
 const OUT = arg('--out', 'docs/audio');
-const ONLY = arg('--only', null);
+const SHOWCASE_MODE = process.argv.includes('--showcase');
+const SHOWCASE = ['engine-classes', 'turbo-shifts', 'tyres', 'crash-tiers', 'scrape',
+  'amb-downtown', 'amb-park', 'amb-shore', 'amb-rooftop'];
+const ONLY = SHOWCASE_MODE ? SHOWCASE.map((k) => 'scene-' + k).join(',') : arg('--only', null);
 const SR = 44100;
 
 class Session {
@@ -81,7 +94,7 @@ window.R = (async () => {
     const u8 = new Uint8Array(i16.buffer);
     let s = '';
     for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
-    return { b64: btoa(s), channels: c, clip };
+    return { b64: btoa(s), channels: c, clip, sr: SR };
   };
   const bank = await A.renderBank(SR);
   const fake = {
@@ -91,11 +104,26 @@ window.R = (async () => {
     turboprop: { plane: true, turboprop: true, topKph: 520, len: 14 },
     // the monorail's trains are not a vehicle type (monorail.js); its spec
     monorail: { monorail: true, engine: 'traction', topKph: 96, len: 14 },
+    // a freight's lead unit (freight.js drives it by notch, not as a car)
+    freight: { engine: 'gevo', topKph: 80, len: 22 },
   };
+  // which vehicle demonstrates each engine profile
+  const ENGINE_DEMO = { i4: 'sedan', i4t: 'hatch', i3: 'compact', v6: 'suv', v8: 'muscle', flat6: 'sports', diesel: 'bus', vtwin: 'cruiser',
+    sportbike: 'sportbike', single: 'atv', ev: 'ev', piston: 'plane', turboprop: 'turboprop', heli: 'heli', outboard: 'boat',
+    traction: 'monorail', turbine: 'hydro', gevo: 'freight' };
   const specOf = (k) => fake[k] || V.TYPES[k];
 
   // A scripted run through the live Audio class, rendered offline.
+  // Seeded Math.random while a scene is scripted, so the ambience's Poisson
+  // timing, the variant picks and the jitter are the same on every render.
+  const mulberry = (a) => () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
   async function scene(dur, script, opts = {}) {
+    const rnd = Math.random;
+    Math.random = mulberry(opts.seed || 12345);
+    try { return await sceneRun(dur, script, opts); } finally { Math.random = rnd; }
+  }
+  async function sceneRun(dur, script, opts) {
     const ctx = new OfflineAudioContext(2, Math.ceil(dur * SR), SR);
     const au = new A.Audio();
     au.musicOn = !!opts.music;
@@ -215,6 +243,118 @@ window.R = (async () => {
       const aboard = t > 9;
       st.ferry = [{ x: aboard ? 0 : -420 + t * 9.26, y: 0, z: aboard ? 0 : 90, h: Math.PI / 2, v: 9.26, hornOn: t > 1.5 && t < 7 }];
     }],
+    // One of each engine class back to back: idle, a blip, a short pull, a
+    // lift -- the i3's thrum, the i4, the turbo hatch, the V6, the pickup's V8,
+    // the flat-six, the bus's diesel.
+    'engine-classes': [17.5, (() => {
+      const order = ['compact', 'sedan', 'hatch', 'suv', 'pickup', 'sports', 'bus'];
+      let cur = -1, v = 0;
+      return (t, dt, st, au) => {
+        const i = Math.min(order.length - 1, Math.floor(t / 2.5)), u = t - i * 2.5;
+        // no doors: a spec change is picked up as a running engine (_updateVehicle)
+        if (i !== cur) { cur = i; v = 0; st.inCar = true; st.onFoot = false; st.spec = V.TYPES[order[i]]; }
+        const thr = u < 0.5 ? 0 : u < 0.8 ? 0.6 : u < 1.0 ? 0 : u < 2.1 ? 1 : 0;
+        v = Math.max(0, v + (u > 1 ? thr * 6 - 0.8 : 0) * dt);
+        st.speed = v; st.throttle = thr; st.brake = 0;
+      };
+    })()],
+    // TYRES: a launch with wheelspin, a slide, a hard stop, then grass,
+    // gravel, and a viaduct's expansion joints
+    'tyres': [17, (() => {
+      let v = 0;
+      return (t, dt, st, au) => {
+        if (t === 0) { st.inCar = true; st.onFoot = false; st.spec = V.TYPES.sports; au.enterVehicle(V.TYPES.sports, true); }
+        let thr = 0, brake = 0, skid = 0, surf = 'hard';
+        if (t < 0.5) thr = 0;
+        else if (t < 3.2) thr = 1;                              // launch: wheelspin
+        else if (t < 5.2) { thr = 0.6; skid = 0.75; }             // a slide
+        else if (t < 7.2) { thr = 0; brake = 1; }                 // the hard stop
+        else if (t < 9.5) { thr = 0.5; surf = 'grass'; }
+        else if (t < 11.5) { thr = 0.5; surf = 'gravel'; }
+        else { thr = 0.75; surf = 'deck'; }
+        const acc = thr * 7 * (1 - v / 60) - brake * 10 - (thr ? 0 : 0.8);
+        v = Math.max(0, v + acc * dt);
+        if (surf !== 'hard') v = Math.min(v, surf === 'deck' ? 26 : 14);
+        st.speed = v; st.throttle = thr; st.brake = brake; st.skid = skid; st.surface = surf;
+      };
+    })()],
+    // every severity, in a sedan; then the same big hit in a bus and on a bike
+    'crash-tiers': [13, (t, dt, st, au) => {
+      const at = (x) => t <= x && t + dt > x;
+      const ride = (k) => { st.inCar = true; st.onFoot = false; st.spec = V.TYPES[k]; au._spec = V.TYPES[k]; };
+      if (t === 0) { ride('sedan'); au.enterVehicle(V.TYPES.sedan, true); }
+      st.speed = 6; st.throttle = 0.2;
+      if (at(0.8)) au.crash(2);
+      if (at(2)) au.crash(5.5);
+      if (at(3.4)) au.crash(11);
+      if (at(5)) au.crash(20);
+      if (at(7)) au.crash(36);
+      if (at(9.4)) { ride('bus'); au.crash(36); }
+      if (at(11.4)) { ride('sportbike'); au.crash(20); }
+    }],
+    'scrape': [6, (t, dt, st, au) => {
+      if (t === 0) { st.inCar = true; st.onFoot = false; st.spec = V.TYPES.sedan; au.enterVehicle(V.TYPES.sedan, true); }
+      st.speed = 14 - t; st.throttle = 0.5;
+      if (Math.abs(t - 1) < 0.009) au.crash(9);
+      st.scrape = t > 1 && t < 4.5 ? Math.max(0.3, Math.min(1, st.speed / 10)) : 0;
+    }],
+    // turbo and gearbox up close: the hot hatch, flat out through three gears,
+    // a lift (blow-off), then braking down through them (blips)
+    'turbo-shifts': [11, (() => {
+      let v = 0;
+      return (t, dt, st, au) => {
+        if (t === 0) { st.inCar = true; st.onFoot = false; st.spec = V.TYPES.hatch; au.enterVehicle(V.TYPES.hatch, true); }
+        let thr = 0, brake = 0;
+        if (t < 0.6) thr = 0;
+        else if (t < 6) thr = 1;
+        else if (t < 7.2) thr = 0;
+        else if (t < 10.2) brake = 0.5;
+        v = Math.max(0, v + (thr * 6 * (1 - v / 60) - brake * 7 - (thr ? 0 : 0.6)) * dt);
+        st.speed = v; st.throttle = thr; st.brake = brake;
+      };
+    })()],
+    // AMBIENCE. Context as main.js samples it (shares of water/park/road on
+    // two rings, height), with traffic counted round you.
+    'amb-downtown': [14, (() => {
+      const cars = [];
+      for (let i = 0; i < 14; i++) {
+        const a = i / 14 * Math.PI * 2;
+        cars.push({ x: Math.cos(a) * (60 + (i % 4) * 25), y: 0, z: Math.sin(a) * (60 + (i % 4) * 25), vLong: 4 + (i % 3) * 3,
+          mode: 'traffic', spec: V.TYPES[['sedan', 'bus', 'hatch', 'suv', 'compact', 'taxi', 'boxtruck'][i % 7]],
+          forward: { x: Math.sign(Math.cos(a * 3)) || 1, z: 0 }, dead: false });
+      }
+      const pass = { x: -120, y: 0, z: -7, vLong: 15, mode: 'traffic', spec: V.TYPES.van, forward: { x: 1, z: 0 }, dead: false };
+      return (t, dt, st) => {
+        st.amb = { water: 0, green: 0.04, road: 0.42, alt: 0 };
+        st.cars = cars.concat([pass]);
+        for (const k of st.cars) k.x += k.forward.x * k.vLong * dt;
+      };
+    })()],
+    'amb-park': [14, (() => {
+      let ph = 0;
+      return (t, dt, st) => {
+        st.amb = { water: 0, green: 0.78, road: 0.06, alt: 0 };
+        st.surface = 'grass';
+        const walk = t > 7;
+        st.footSpeed = walk ? 1.4 : 0;
+        ph += dt * 1.75;
+        const u = ph % 1;
+        st.footL = !walk || u < 0.5; st.footR = !walk || u >= 0.5;
+      };
+    })()],
+    'amb-shore': [14, (() => {
+      let ph = 0;
+      return (t, dt, st) => {
+        st.amb = { water: 0.55, green: 0.08, road: 0.12, alt: 2 };
+        st.surface = 'wood';
+        const walk = t > 6;
+        st.footSpeed = walk ? 1.4 : 0;
+        ph += dt * 1.75;
+        const u = ph % 1;
+        st.footL = !walk || u < 0.5; st.footR = !walk || u >= 0.5;
+      };
+    })()],
+    'amb-rooftop': [10, (t, dt, st) => { st.amb = { water: 0.15, green: 0.05, road: 0.4, alt: 140 }; }],
     'shots-far': [5, (t, dt, st, au) => {
       if (Math.abs(t - 0.3) < 0.009) au.gunshot();
       if (Math.abs(t - 1.3) < 0.009) au.gunshot(-30, -40);
@@ -225,12 +365,10 @@ window.R = (async () => {
 
   return {
     bankList: Object.entries(bank).map(([k, v]) => [k, v.length]),
-    bankClip: (name, i) => pcm([bank[name][i].getChannelData(0)]),
+    bankClip: (name, i) => ({ ...pcm([bank[name][i].getChannelData(0)]), sr: bank[name][i].sampleRate }),
     engines: Object.keys(A.ENGINES),
-    engineFor: (profile) => ({ i4: 'hatch', v6: 'suv', v8: 'muscle', flat6: 'sports', diesel: 'bus', vtwin: 'cruiser',
-      sportbike: 'sportbike', single: 'atv', ev: 'ev', piston: 'plane', turboprop: 'turboprop', heli: 'heli', outboard: 'boat', traction: 'monorail' })[profile],
-    engine: (profile) => scene(17, driveScript(({ i4: 'hatch', v6: 'suv', v8: 'muscle', flat6: 'sports', diesel: 'bus', vtwin: 'cruiser',
-      sportbike: 'sportbike', single: 'atv', ev: 'ev', piston: 'plane', turboprop: 'turboprop', heli: 'heli', outboard: 'boat', traction: 'monorail' })[profile])),
+    engineFor: (profile) => ENGINE_DEMO[profile],
+    engine: (profile) => scene(17, driveScript(ENGINE_DEMO[profile])),
     scenes: Object.keys(scenes),
     scene: (k) => scene(scenes[k][0], scenes[k][1], scenes[k][2]),
     select: Object.fromEntries(Object.entries(V.TYPES).map(([k, s]) => [k, A.selectEngine(s)])),
@@ -240,12 +378,12 @@ window.R = (async () => {
 
 // --- node side: WAV + analysis -------------------------------------------------------
 
-function wav(path, b64, channels) {
+function wav(path, b64, channels, sr = SR) {
   const pcm = Buffer.from(b64, 'base64');
   const h = Buffer.alloc(44);
   h.write('RIFF', 0); h.writeUInt32LE(36 + pcm.length, 4); h.write('WAVE', 8);
   h.write('fmt ', 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(channels, 22);
-  h.writeUInt32LE(SR, 24); h.writeUInt32LE(SR * channels * 2, 28); h.writeUInt16LE(channels * 2, 32);
+  h.writeUInt32LE(sr, 24); h.writeUInt32LE(sr * channels * 2, 28); h.writeUInt16LE(channels * 2, 32);
   h.writeUInt16LE(16, 34); h.write('data', 36); h.writeUInt32LE(pcm.length, 40);
   writeFileSync(path, Buffer.concat([h, pcm]));
   return pcm;
@@ -276,7 +414,7 @@ function fftMag(re) {
   return m;
 }
 
-function analyse(pcm, channels) {
+function analyse(pcm, channels, sr = SR) {
   const n = pcm.length / 2 / channels;
   const mono = new Float64Array(n);
   let peak = 0, sq = 0;
@@ -302,15 +440,46 @@ function analyse(pcm, channels) {
     if (Math.sqrt(e / N) < 0.001) { silent++; continue; }
     const m = fftMag(f);
     let num = 0, den = 0;
-    for (let k = 1; k < m.length; k++) { num += k * SR / N * m[k]; den += m[k]; }
+    for (let k = 1; k < m.length; k++) { num += k * sr / N * m[k]; den += m[k]; }
     if (den > 0) { cw += (num / den) * e; ce += e; }
   }
   const db = (x) => (x > 0 ? 20 * Math.log10(x) : -Infinity).toFixed(1);
-  return { peak, peakDb: db(peak), rmsDb: db(rms), centroid: ce ? Math.round(cw / ce) : 0, silent: frames ? silent / frames : 1, secs: n / SR };
+  return { peak, peakDb: db(peak), rmsDb: db(rms), centroid: ce ? Math.round(cw / ce) : 0, silent: frames ? silent / frames : 1, secs: n / sr };
+}
+
+// 2:1 decimation to mono through a windowed-sinc low-pass (cut at 10 kHz):
+// a showcase file is a quarter the size of the render.
+function decimateMono(b64, channels) {
+  const pcm = Buffer.from(b64, 'base64');
+  const n = pcm.length / 2 / channels, x = new Float64Array(n);
+  for (let i = 0; i < n; i++) { let s = 0; for (let c = 0; c < channels; c++) s += pcm.readInt16LE((i * channels + c) * 2); x[i] = s / channels; }
+  const T = 31, h = [], fc = 10000 / SR;
+  for (let k = -T; k <= T; k++) {
+    const sinc = k === 0 ? 2 * fc : Math.sin(2 * Math.PI * fc * k) / (Math.PI * k);
+    h.push(sinc * (0.54 + 0.46 * Math.cos(Math.PI * k / T)));
+  }
+  const m = Math.floor(n / 2), out = Buffer.alloc(m * 2);
+  for (let j = 0; j < m; j++) {
+    let acc = 0;
+    for (let k = -T; k <= T; k++) { const i = 2 * j + k; if (i >= 0 && i < n) acc += x[i] * h[k + T]; }
+    out.writeInt16LE(Math.max(-32767, Math.min(32767, Math.round(acc))), j * 2);
+  }
+  return out;
+}
+
+function wavMono22(path, pcm) {
+  const h = Buffer.alloc(44), sr = SR / 2;
+  h.write('RIFF', 0); h.writeUInt32LE(36 + pcm.length, 4); h.write('WAVE', 8);
+  h.write('fmt ', 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22);
+  h.writeUInt32LE(sr, 24); h.writeUInt32LE(sr * 2, 28); h.writeUInt16LE(2, 32);
+  h.writeUInt16LE(16, 34); h.write('data', 36); h.writeUInt32LE(pcm.length, 40);
+  writeFileSync(path, Buffer.concat([h, pcm]));
 }
 
 async function main() {
   mkdirSync(`${OUT}/sfx`, { recursive: true });
+  const SHOW_DIR = 'apps/auto/docs/audio';
+  if (SHOWCASE_MODE) mkdirSync(SHOW_DIR, { recursive: true });
   const chrome = launchChrome({ port: PORT, profile: `/tmp/auto-audio-profile-${PORT}`, width: 400, height: 300,
     extra: ['--autoplay-policy=no-user-gesture-required'] });
   let bad = 0;
@@ -338,8 +507,9 @@ async function main() {
     const rows = [];
     const out = async (file, expr, expectSound = true) => {
       const r = await s.eval(`R.then(r => ${expr})`);
-      const pcm = wav(`${OUT}/${file}`, r.b64, r.channels);
-      const a = analyse(pcm, r.channels);
+      const pcm = wav(`${OUT}/${file}`, r.b64, r.channels, r.sr);
+      if (SHOWCASE_MODE) wavMono22(`${SHOW_DIR}/${file.replace(/^scene-/, '')}`, decimateMono(r.b64, r.channels));
+      const a = analyse(pcm, r.channels, r.sr);
       const fail = r.clip > 0 || (expectSound && a.silent > 0.97);
       if (fail) bad++;
       rows.push([file, a.secs.toFixed(2), a.peakDb, a.rmsDb, a.centroid, (a.silent * 100).toFixed(0) + '%', r.clip, fail ? 'FAIL' : '']);

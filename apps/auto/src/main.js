@@ -2221,11 +2221,44 @@ function frame(now) {
 // What the sound needs from the frame. The surface under the player is a road,
 // lot and park lookup, so it is refreshed five times a second, not per frame.
 let surfT = 0, surfNow = 'hard';
+// What is around you, for the ambience (audio.js _ambience): the share of
+// water, park and road on two rings round the camera, and its height over
+// the ground (or the water). Mask lookups, 24 points, twice a second.
+const ambient = { water: 0, green: 0, road: 0, alt: 0 };
+let ambT = 0;
+function sampleAmbient(x, y, z) {
+  let w = 0, g = 0, r = 0, n = 0;
+  for (let ring = 0; ring < 2; ring++) {
+    const rad = ring ? 140 : 45, wt = ring ? 1 : 1.4;
+    for (let i = 0; i < 12; i++) {
+      const a = (i + ring * 0.5) / 12 * Math.PI * 2;
+      const px = x + Math.cos(a) * rad, pz = z + Math.sin(a) * rad;
+      n += wt;
+      if (G.isWater(px, pz)) { w += wt; continue; }
+      if (G.inPark(px, pz)) g += wt;
+      if (cityRef.onRoad(px, pz, 3, true, false)) r += wt;
+    }
+  }
+  ambient.water = w / n; ambient.green = g / n; ambient.road = r / n;
+  let ground = G.terrainHeight(x, z);
+  if (G.isWater(x, z)) { const wl = world.waterLevelAt(x, z); if (wl !== null) ground = Math.max(ground, wl); }
+  ambient.alt = Math.max(0, y - ground);
+}
 const listener = { x: 0, y: 0, z: 0, fx: 0, fz: -1, vx: 0, vz: 0 };
 function surfaceAt(x, y, z) {
   const terr = G.terrainHeight(x, z);
-  // on a deck, a bridge or in a bore it is concrete whatever is below
-  if (y - terr > 1.5 || terr - y > 2) return 'hard';
+  // in a bore it is concrete whatever is above
+  if (terr - y > 2) return 'hard';
+  // Off the ground: a pier's boards just over the water, else a deck -- a
+  // bridge, a viaduct, a roof (audio.js: hollow footsteps on the boards,
+  // expansion joints under a car's tyres on either).
+  if (y - terr > 1.5) {
+    if (G.isWater(x, z)) {
+      const wl = world.waterLevelAt(x, z);
+      if (wl !== null && y - wl < 6) return 'wood';
+    }
+    return 'deck';
+  }
   if (cityRef.onRoad(x, z, 2.5)) return 'hard';
   const lot = G.lotAt(x, z);
   // ballast and beach sand crunch; every other lot is paved
@@ -2247,6 +2280,10 @@ function audioState(dt, input, p, camDir, buried) {
   if ((surfT -= dt) <= 0) {
     surfT = 0.2;
     surfNow = surfaceAt(p.x, p.y, p.z);
+  }
+  if ((ambT -= dt) <= 0) {
+    ambT = 0.5;
+    sampleAmbient(camera.position.x, camera.position.y, camera.position.z);
   }
   const wl = world.waterLevelAt(p.x, p.z);
   const wetMask = wl !== null && G.isWater(p.x, p.z);
@@ -2292,6 +2329,7 @@ function audioState(dt, input, p, camDir, buried) {
     falling: player.onFoot && !player.grounded,
     fallSpeed: player.onFoot ? player.vy : 0,
     enclosed: buried,
+    amb: ambient,
     listener,
     cars: withTrains(traffic.cars),
     freight: freight ? freight.trains : null,
