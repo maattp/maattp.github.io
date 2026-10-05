@@ -522,17 +522,31 @@ def carve_lakes(h, wet):
     for l in lakes[:6]:
         print(f"    level {l['level']:6.1f} m  {l['area']/1e6:6.2f} km2  "
               f"x {l['x0']:7.0f}..{l['x1']:7.0f}  z {l['z0']:7.0f}..{l['z1']:7.0f}")
+    # grade_streets keeps the water under its surface: the level every
+    # vertex's water stands at (sea 0, a lake its own, else the DEM's), and
+    # how wet the 50 m round it is.
+    carve_lakes.level = level
+    carve_lakes.frac = frac
     return h
 
 
-def wet_near_vertex(wet):
-    """Vertices with any water within 20 m (the 5 x 5 mask cells round them)."""
-    k = HF_STEP // MASK_STEP
+LANDMARK_KEEP = 160.0   # metres round each landmark grade_streets leaves alone
+
+
+def near_landmarks():
+    """Vertices within LANDMARK_KEEP of a landmark in places.json.
+
+    Read from the shipped data, not rebuilt: build_places.py runs after this
+    step and its landmark positions come from OSM alone, not the terrain.
+    Moving the ground under a landmark moves the landmark and nothing it was
+    modelled against: MoPOP sank 1 m into the monorail's passage, the
+    Central Library rose 5 m on its block."""
     out = np.zeros((HF_N, HF_N), dtype=bool)
-    pad = np.pad(wet, 2)
-    for dj in range(5):
-        for di in range(5):
-            out |= pad[dj:dj + (HF_N - 1) * k + 1:k, di:di + (HF_N - 1) * k + 1:k]
+    p = os.path.join(HERE, "..", "apps", "auto", "data", "places.json")
+    xs = -MAP_HALF + np.arange(HF_N) * HF_STEP
+    X, Z = np.meshgrid(xs, xs)
+    for l in json.load(open(p))["landmarks"]:
+        out |= np.hypot(X - l["x"], Z - l["z"]) <= LANDMARK_KEEP
     return out
 
 
@@ -550,12 +564,18 @@ if __name__ == "__main__":
     wet = build_masks()
     h0 = h.copy()
     h = carve_lakes(h, wet)
-    h = grade_airfield(h)
-    # Streets last: nothing the lake carve or the airfield set may move, nor
-    # any vertex whose 40 m cell touches water (the shore is the water's).
-    keep = (h != h0) | wet_near_vertex(wet)
+    ha = grade_airfield(h)
+    air = ha != h
+    h = ha
+    # Streets last. Never moved: the airfield, open water (over half the 50 m
+    # round a vertex is wet), and the ground under the landmarks, which were
+    # modelled on the DEM as it was. A shore vertex may move for a street on
+    # the land beside it, but grade_streets keeps the water over the bed.
+    frac = carve_lakes.frac
+    hard = air | (frac >= 0.5) | near_landmarks()
+    soft = (frac > 0) & ~hard
     from grade_streets import grade_streets
-    h = grade_streets(h, keep, hires, MAP_HALF, HF_STEP)
+    h = grade_streets(h, hard, soft, wet, carve_lakes.level, hires, MAP_HALF, HF_STEP)
     save_height(h)
     ok = probe(h, wet)
     for fn in ("height.png", "surface.png"):

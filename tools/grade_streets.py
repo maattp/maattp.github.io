@@ -55,11 +55,17 @@ W_CURV = 12.0     # per sample: ...and bending the way the street does (2nd diff
 W_STAY = 0.05     # per vertex: stay where the DEM put you
 W_SHAPE = 0.2     # per vertex: keep the DEM's local shape (Laplacian of the change)
 D_MAX = 8.0       # no vertex moves further than this
-# Freeways and their ramps are graded at load (citygen gradeRoads) with the
-# terrain as their FLOOR, so ground that reads too high under one is a crest
-# the profile has to ride; too low only costs fill. They pull the ground
-# toward the real road less hard than a street, which draws ON it.
-W_CLASS = {"hwy": 0.5, "ramp": 0.5}
+W_WET = 3.0       # per water cell the solve lifted: back under its level
+WET_UNDER = 0.4   # ...by this much (the lake carve leaves its bed 1.2 m under)
+MAX_ROUNDS = 6
+# Freeways and their ramps are left out, AND the ground under them is left
+# alone. They are graded at load (citygen gradeRoads) on the terrain as their
+# floor. Fitted alongside the streets (at half weight) they fought them -- I-5
+# downtown runs in a trench 10 m under the streets on its rim and the vertices
+# between belong to both -- and left out but free, the streets beside them
+# pulled crests up under them (graded freeway acc>30 +27 %).
+W_CLASS = {"hwy": 0.0, "ramp": 0.0}
+ABUT_R = 50.0     # metres round a bridge or tunnel end where a street asks nothing
 CG_ITERS = 600
 
 
@@ -87,8 +93,9 @@ def _tri_weights(x, z, map_half, step, n):
     return idx, w
 
 
-def _ways(map_half):
-    """Ground-level road ways the import keeps, as (cls, [[x, z], ...]) runs."""
+def _ways(map_half, ends=None):
+    """Ground-level road ways the import keeps, as (cls, [[x, z], ...]) runs.
+    `ends`, a list, collects the end points of every bridge and tunnel way."""
     from build_roads import CLS, clip_runs
     ways = json.load(open(os.path.join(DATA, "raw_roads.json")))["roads"]
     out = []
@@ -96,12 +103,33 @@ def _ways(map_half):
         cls = CLS.get(w["cls"])
         if cls is None or str(w.get("acc", "")).lower() in ("private", "no"):
             continue
-        if str(w.get("br", "no")).lower() not in ("no", ""):
-            continue
-        if str(w.get("tn", "no")).lower() not in ("no", ""):
+        if (str(w.get("br", "no")).lower() not in ("no", "")
+                or str(w.get("tn", "no")).lower() not in ("no", "")):
+            if ends is not None:
+                ends.append(w["p"][0])
+                ends.append(w["p"][-1])
             continue
         for run in clip_runs([tuple(p) for p in w["p"]]):
             out.append((cls, np.asarray(run, dtype=np.float64)))
+    return out
+
+
+def _near_ends(ends, map_half, r):
+    """A 10 m grid marking everything within ~r of a bridge or tunnel end."""
+    n = int(2 * map_half / 10) + 1
+    g = np.zeros((n, n), dtype=bool)
+    for x, z in ends:
+        i, j = int(round((x + map_half) / 10)), int(round((z + map_half) / 10))
+        if 0 <= i < n and 0 <= j < n:
+            g[j, i] = True
+    k = int(round(r / 10))
+    out = g.copy()
+    for dj in range(-k, k + 1):
+        for di in range(-k, k + 1):
+            if di * di + dj * dj > k * k:
+                continue
+            sh = np.roll(np.roll(g, dj, 0), di, 1)
+            out |= sh
     return out
 
 
@@ -206,18 +234,31 @@ def _cgls(R, C, V, b, nf, iters):
     return x, it + 1
 
 
-def grade_streets(h, keep, hires, map_half, step):
+def grade_streets(h, keep, soft, wet, level, hires, map_half, step):
     """Return h with the vertices near streets fitted to the streets' real
     profile. `keep` (bool, same shape) marks vertices that must not move;
-    `hires(x, z)` samples the full-resolution DEM (vectorised)."""
+    `soft` the shore vertices, which may, so long as every water cell
+    (`wet`, the 10 m mask) in a triangle they make stays WET_UNDER below its
+    water's `level` (per vertex); `hires(x, z)` samples the full-resolution
+    DEM (vectorised)."""
     n = h.shape[0]
     H0 = h.astype(np.float64).ravel()
-    runs = _ways(map_half)
+    ends = []
+    runs = _ways(map_half, ends)
+    # The DEM is bare earth: a bridge's deck is removed from it and so is the
+    # fill its abutment stands on, and the street mapped as ground runs on for
+    # tens of metres over what the DEM reads as the bank or the ravine below.
+    # Pulled to that, Roosevelt Way fell 19 m at 55 % into the north end of
+    # the University Bridge. Near a bridge or tunnel end the street does not
+    # ask for anything; the ground there keeps its own shape.
+    abut = _near_ends(ends, map_half, ABUT_R)
 
     # --- road samples ---
     P_idx, P_w, P_rhs, P_wt, P_run = [], [], [], [], []
     all_runs, all_targets = [], []
     for cls, pts in runs:
+        if W_CLASS.get(cls, 1.0) <= 0:
+            continue
         q, ss = _resample(pts)
         if q is None:
             continue
@@ -228,14 +269,31 @@ def grade_streets(h, keep, hires, map_half, step):
         P_idx.append(idx)
         P_w.append(w)
         P_rhs.append(target)
-        P_wt.append(np.full(len(q), W_CLASS.get(cls, 1.0)))
+        ai = np.clip(np.round((q[:, 0] + map_half) / 10).astype(np.int64), 0, abut.shape[0] - 1)
+        aj = np.clip(np.round((q[:, 1] + map_half) / 10).astype(np.int64), 0, abut.shape[0] - 1)
+        P_wt.append(np.where(abut[aj, ai], 0.0, W_CLASS.get(cls, 1.0)))
         P_run.append(np.full(len(q), len(all_runs)))
     P_idx = np.concatenate(P_idx)
     P_w = np.concatenate(P_w)
     P_rhs = np.concatenate(P_rhs)
     P_wt = np.concatenate(P_wt)
     P_run = np.concatenate(P_run)
-    keepf = keep.ravel()
+    # every vertex of a triangle a freeway or ramp crosses, and the ring round it
+    fw = np.zeros(n * n, dtype=bool)
+    for cls, pts in runs:
+        if W_CLASS.get(cls, 1.0) > 0:
+            continue
+        q, ss = _resample(pts)
+        if q is None:
+            continue
+        fw[_tri_weights(q[:, 0], q[:, 1], map_half, step, n)[0].ravel()] = True
+    f2 = fw.reshape(n, n)
+    g2 = f2.copy()
+    g2[1:, :] |= f2[:-1, :]
+    g2[:-1, :] |= f2[1:, :]
+    g2[:, 1:] |= f2[:, :-1]
+    g2[:, :-1] |= f2[:, 1:]
+    keepf = keep.ravel() | g2.ravel()
     ns = len(P_idx)
     mesh0 = (H0[P_idx] * P_w).sum(1)
     resid0 = P_rhs - mesh0
@@ -255,7 +313,24 @@ def grade_streets(h, keep, hires, map_half, step):
     pinned = np.zeros(n * n)          # clamped changes, held fixed (see below)
     fixed = ~free0
 
-    for rnd in range(4):
+    # --- the water stays wet ---
+    # Every water cell in a triangle with a free vertex is a candidate; one
+    # that a solve lifts above WET_UNDER under its water's level is held
+    # there from then on (an active set: rounds below).
+    ms = 10.0
+    wj, wi = np.nonzero(wet)
+    wx, wz = wi * ms - map_half, wj * ms - map_half
+    widx, ww = _tri_weights(wx, wz, map_half, step, n)
+    near_free = free0[widx].any(1)
+    widx, ww = widx[near_free], ww[near_free]
+    # ...or, where the 40 m grid already stood it over its water, no higher
+    # than it stood: forcing those under dragged the banks down with them
+    # (Roosevelt Way fell 19 m into the University Bridge's north end).
+    wlev = np.maximum(level.ravel()[widx].min(1) - WET_UNDER, (H0[widx] * ww).sum(1))
+    held = np.zeros(len(widx), dtype=bool)
+    soft_n = int((soft.ravel() & free0).sum())
+
+    for rnd in range(MAX_ROUNDS):
         free = free0 & ~fixed if rnd else free0
         col = np.full(n * n, -1, dtype=np.int64)
         col[free] = np.arange(int(free.sum()))
@@ -316,6 +391,16 @@ def grade_streets(h, keep, hires, map_half, step):
         vals.append(cnt * W_SHAPE)
         rhs.append(lap_rhs)
         r0 += nf
+        # water held under its level
+        hi = np.nonzero(held)[0]
+        if len(hi):
+            pc = col[widx[hi]]
+            m = pc >= 0
+            rows.append(np.repeat(np.arange(len(hi))[:, None], 3, 1)[m] + r0)
+            cols.append(pc[m])
+            vals.append((ww[hi] * W_WET)[m])
+            rhs.append((wlev[hi] - (base[widx[hi]] * ww[hi]).sum(1)) * W_WET)
+            r0 += len(hi)
         R = np.concatenate(rows)
         C = np.concatenate(cols)
         V = np.concatenate(vals)
@@ -326,10 +411,13 @@ def grade_streets(h, keep, hires, map_half, step):
         # Nothing moves further than D_MAX: past it the vertex is pinned there
         # and the rest solve again around it.
         over = free & (np.abs(d) > D_MAX)
-        if not over.any():
+        wy = ((H0 + d)[widx] * ww).sum(1)
+        dry = (wy > wlev + 0.02) & ~held
+        if not over.any() and not dry.any():
             break
         pinned[over] = np.clip(d[over], -D_MAX, D_MAX)
         fixed |= over
+        held |= dry
 
     H1 = H0 + d
     mesh1 = (H1[P_idx] * P_w).sum(1)
@@ -342,6 +430,10 @@ def grade_streets(h, keep, hires, map_half, step):
     ad = np.abs(d[free0])
     print(f"  streets graded: {len(all_runs)} runs, {ns} samples, {int(free0.sum())} vertices free, "
           f"{rnd + 1} rounds, CG {iters} iters, {int((np.abs(d) >= D_MAX - 1e-9).sum())} held at {D_MAX} m")
+    wy = ((H0 + d)[widx] * ww).sum(1)
+    wy0 = (H0[widx] * ww).sum(1)
+    print(f"    shore: {soft_n} vertices free, {int(held.sum())} water cells held; of {len(widx)} near a free "
+          f"vertex, raised over their water: {int((wy > np.maximum(wlev, wy0) + 0.05).sum())}")
     print(f"    road vs its DEM line: rms {np.sqrt((resid0 ** 2).mean()):.2f} -> {np.sqrt((resid1 ** 2).mean()):.2f} m, "
           f"over 1 m {int((np.abs(resid0) > 1).sum())} -> {int((np.abs(resid1) > 1).sum())}")
     print(f"    vertices moved: mean {ad.mean():.2f} m, p99 {np.percentile(ad, 99):.2f} m, max {ad.max():.2f} m; "
