@@ -5,7 +5,7 @@ import * as G from './geo.js';
 import { cityGenerator, cityStats } from './citygen.js';
 import { loadMapData } from './mapdata.js';
 import { buildTextures, planTextures, encodeTextures, restoreTextures, canvasToBlob, blobToCanvas, within } from './textures.js';
-import { World, WET_FLOOR } from './world.js';
+import { World, WET_FLOOR, HAZE_SUN } from './world.js';
 import { buildLandmarks, updateLandmarkRange, SEAPLANE_DOCK, airportSurface } from './landmarks.js';
 import { ShadowCache } from './shadowcache.js';
 import { Monorail } from './monorail.js';
@@ -453,6 +453,17 @@ const LOOK_AHEAD = new THREE.Vector3();
 
 // The sun's offset from the point it lights: ~38 deg elevation, fixed azimuth.
 const SUN_OFFSET = new THREE.Vector3(-215, 200, -150);
+
+// The haze. Its colour reaches the shader through syncFogColour, never
+// directly: see the note where scene.fog is made.
+const FOG_HEX = 0xb9c3cf;
+function syncFogColour() {
+  if (!scene || !scene.fog) return;
+  if (postfx && postfx.enabled) {
+    scene.fog.color.setRGB(((FOG_HEX >> 16) & 255) / 255, ((FOG_HEX >> 8) & 255) / 255, (FOG_HEX & 255) / 255,
+      THREE.LinearSRGBColorSpace);
+  } else scene.fog.color.set(FOG_HEX);
+}
 // The shadow camera's own axes. It looks along -SUN_OFFSET with world up, so
 // these are exactly the basis three's lookAt builds for it every frame.
 const SUN_R = new THREE.Vector3(), SUN_U = new THREE.Vector3(), SUN_F = new THREE.Vector3();
@@ -629,9 +640,12 @@ function installHeightFog() {
   const C = THREE.ShaderChunk;
   if (C.__heightFog) return;
   C.__heightFog = true;
-  C.fog_pars_vertex = `${C.fog_pars_vertex}\n#ifdef USE_FOG\n  varying float vFogWorldY;\n#endif`;
-  C.fog_vertex = `${C.fog_vertex}\n#ifdef USE_FOG\n  vFogWorldY = (modelMatrix * vec4(transformed, 1.0)).y;\n#endif`;
-  C.fog_pars_fragment = `${C.fog_pars_fragment}\n#ifdef USE_FOG\n  varying float vFogWorldY;\n#endif`;
+  // The ray from the camera, in world space: its y + the camera's is the
+  // fragment's height, and its direction picks the sun-side haze tint. It is
+  // linear in position, so the interpolated varying is exact per fragment.
+  C.fog_pars_vertex = `${C.fog_pars_vertex}\n#ifdef USE_FOG\n  varying vec3 vFogRay;\n#endif`;
+  C.fog_vertex = `${C.fog_vertex}\n#ifdef USE_FOG\n  vFogRay = (modelMatrix * vec4(transformed, 1.0)).xyz - cameraPosition;\n#endif`;
+  C.fog_pars_fragment = `${C.fog_pars_fragment}\n#ifdef USE_FOG\n  varying vec3 vFogRay;\n#endif`;
   // Scale the density by the fragment's height above sea level. At a scale
   // height of 130 m a street is fully hazed and a 200 m crown keeps about a
   // fifth of the density, which is the separation the skyline needs.
@@ -640,12 +654,28 @@ function installHeightFog() {
   // COPIES UniformsLib.fog when three's module is evaluated, so a key added to
   // UniformsLib afterwards never reaches the program and the shader compiles
   // against an undeclared name.
+  //
+  // Then the sun side: the sky dome's horizon haze is brighter and warmer
+  // toward the sun and cooler away (HAZE_SUN, world.js), and the fog takes the
+  // same blend so distance still dissolves INTO the sky behind it. `fogCol`
+  // is that colour; the far layers' fades (world.js) mix toward it too. The
+  // dome tints in linear light and this mixes in output (sRGB-encoded) space,
+  // so the multipliers go in raised to 1/2.2. One normalize, a dot and a mix
+  // per fogged fragment; no uniform (UniformsLib, as above), the sun is fixed.
+  const sd = SUN_OFFSET.clone().normalize();
+  const enc = (v) => v.map((k) => Math.pow(k, 1 / 2.2).toFixed(4)).join(', ');
   C.fog_fragment = C.fog_fragment.replace(
     'float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );',
-    'float heightScale = exp( - max( vFogWorldY, 0.0 ) / 130.0 );\n'
+    'float heightScale = exp( - max( vFogRay.y + cameraPosition.y, 0.0 ) / 130.0 );\n'
     + '\tfloat hDensity = fogDensity * heightScale;\n'
     + '\tfloat fogFactor = 1.0 - exp( - hDensity * hDensity * vFogDepth * vFogDepth );'
+  ).replace(
+    'gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );',
+    `float fogHs = 0.5 + 0.5 * dot( normalize( vFogRay ), vec3( ${sd.x.toFixed(5)}, ${sd.y.toFixed(5)}, ${sd.z.toFixed(5)} ) );\n`
+    + `\tvec3 fogCol = fogColor * mix( vec3( ${enc(HAZE_SUN.away)} ), vec3( ${enc(HAZE_SUN.toward)} ), fogHs * fogHs );\n`
+    + '\tgl_FragColor.rgb = mix( gl_FragColor.rgb, fogCol, fogFactor );'
   );
+  if (!C.fog_fragment.includes('fogCol')) console.warn('sun-side fog: three chunk changed, not patched');
 }
 
 /**
@@ -685,7 +715,17 @@ function installShadowFade() {
   // than giving it depth. Aerial perspective should separate planes, not erase
   // them, and the fog is tinted slightly cooler than the horizon so towers
   // still read against it.
-  scene.fog = new THREE.FogExp2(0xb9c3cf, 0.00026);
+  scene.fog = new THREE.FogExp2(FOG_HEX, 0.00026);
+  // three r160 mixes fog AFTER <colorspace_fragment>, in the target's sRGB
+  // encoding, but uploads fogColor as the linear value of the hex. So 0xb9c3cf
+  // landed on screen as ~#7a8a9e -- slate, a stop darker than the sky's
+  // horizon (the dome encodes its own colour, so it shows #b9c3cf) -- and
+  // instead of dissolving into the sky, distance went dark and met the
+  // horizon at a band. Give the shader the ENCODED value: on screen the fog is
+  // now exactly the haze it was always meant to be. (syncFogColour: only
+  // while the scene renders into postfx's target; straight to the canvas,
+  // three converts the colour itself.)
+  syncFogColour();
   baseFogDensity = scene.fog.density;
   installHeightFog();
   camera = new THREE.PerspectiveCamera(62, viewW() / viewH(), 0.5, 9000);
@@ -1716,7 +1756,7 @@ function wireUi() {
   });
   bind('setSound', 'sound', (v) => { audio.enabled = v; });
   bind('setDebug', 'debug', (v) => { debugEl.classList.toggle('on', v); });
-  bind('setPost', 'post', (v) => { postfx.setPostEnabled(v); });
+  bind('setPost', 'post', (v) => { postfx.setPostEnabled(v); syncFogColour(); });
   // the flight recorder's last session: read it, copy it into a message
   const fShow = document.getElementById('flightShow');
   if (fShow) fShow.addEventListener('click', (e) => {
@@ -2507,6 +2547,7 @@ function applyQuality(q, manual) {
   game.settings.quality = q;
   idleRedraw = true;
   postfx.setQuality(q, ON_PHONE);
+  syncFogColour();
   renderer.shadowMap.enabled = q !== 'low' && game.settings.shadows;
   // Pixel ratio is the single biggest fill-rate dial there is: 2.0 against
   // 1.45 is 1.9x the pixels through every one of the post chain's fullscreen

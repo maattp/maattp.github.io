@@ -303,13 +303,23 @@ export class Builder {
   }
 
   tri(a, b, c, n, col) {
+    // Like quad: `n` and `col` may each be one triple or three (per corner).
+    // The winding test uses the corners' mean normal.
+    const pn = Array.isArray(n[0]), pc = Array.isArray(col[0]);
+    let n0 = pn ? n[0] : n, n1 = pn ? n[1] : n, n2 = pn ? n[2] : n;
+    let c0 = pc ? col[0] : col, c1 = pc ? col[1] : col, c2 = pc ? col[2] : col;
     const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
     const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
     const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-    if (nx * n[0] + ny * n[1] + nz * n[2] < 0) { const t = b; b = c; c = t; }
-    const i0 = this.vert(a[0], a[1], a[2], n[0], n[1], n[2], 0, 0, col[0], col[1], col[2]);
-    const i1 = this.vert(b[0], b[1], b[2], n[0], n[1], n[2], 1, 0, col[0], col[1], col[2]);
-    const i2 = this.vert(c[0], c[1], c[2], n[0], n[1], n[2], 0.5, 1, col[0], col[1], col[2]);
+    const ax = n0[0] + n1[0] + n2[0], ay = n0[1] + n1[1] + n2[1], az = n0[2] + n1[2] + n2[2];
+    if (nx * ax + ny * ay + nz * az < 0) {
+      let t = b; b = c; c = t;
+      t = n1; n1 = n2; n2 = t;
+      t = c1; c1 = c2; c2 = t;
+    }
+    const i0 = this.vert(a[0], a[1], a[2], n0[0], n0[1], n0[2], 0, 0, c0[0], c0[1], c0[2]);
+    const i1 = this.vert(b[0], b[1], b[2], n1[0], n1[1], n1[2], 1, 0, c1[0], c1[1], c1[2]);
+    const i2 = this.vert(c[0], c[1], c[2], n2[0], n2[1], n2[2], 0.5, 1, c2[0], c2[1], c2[2]);
     this.face3(i0, i1, i2);
   }
 
@@ -412,14 +422,32 @@ export class Builder {
     }
   }
 
-  cone(cx, by, cz, r, h, sides, col) {
+  /**
+   * `shade` >= 0 makes it a FOLIAGE cone (see `spheroid`): normals smooth
+   * round the lathe instead of one per facet, and the rim darkened by `shade`
+   * against the tip -- the skirt's underside, which the sky cannot see.
+   */
+  cone(cx, by, cz, r, h, sides, col, shade = -1) {
+    const sm = shade >= 0;
+    const ny = r / Math.hypot(r, h);   // slope normal's vertical part
+    const nh = h / Math.hypot(r, h);
+    const rim = sm ? [col[0] * (1 - shade), col[1] * (1 - shade), col[2] * (1 - shade)] : col;
     for (let i = 0; i < sides; i++) {
       const a0 = (i / sides) * Math.PI * 2;
       const a1 = ((i + 1) / sides) * Math.PI * 2;
-      const x0 = cx + Math.cos(a0) * r, z0 = cz + Math.sin(a0) * r;
-      const x1 = cx + Math.cos(a1) * r, z1 = cz + Math.sin(a1) * r;
+      const c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
+      const x0 = cx + c0 * r, z0 = cz + s0 * r;
+      const x1 = cx + c1 * r, z1 = cz + s1 * r;
       const mx = Math.cos((a0 + a1) / 2), mz = Math.sin((a0 + a1) / 2);
-      this.tri([x0, by, z0], [x1, by, z1], [cx, by + h, cz], [mx, 0.45, mz], col);
+      if (!sm) this.tri([x0, by, z0], [x1, by, z1], [cx, by + h, cz], [mx, 0.45, mz], col);
+      else {
+        // rim corners mottled +/-16 % like `foliage`, seeded by position
+        const mo = (k) => 0.84 + 0.32 * hash2(Math.round(cx * 7) + (k % sides) * 5, Math.round(by * 7) + Math.round(cz * 7));
+        const m0 = mo(i), m1 = mo(i + 1);
+        this.tri([x0, by, z0], [x1, by, z1], [cx, by + h, cz],
+          [[c0 * nh, ny, s0 * nh], [c1 * nh, ny, s1 * nh], [mx * nh, ny, mz * nh]],
+          [[rim[0] * m0, rim[1] * m0, rim[2] * m0], [rim[0] * m1, rim[1] * m1, rim[2] * m1], col]);
+      }
     }
   }
 
@@ -463,6 +491,68 @@ export class Builder {
         if (si === 0) this.tri(b, a, d, n, col);
         else if (si === stacks - 1) this.tri(a, b, c, n, col);
         else this.quad(a, b, c, d, n, [0, 0, 1, 0, 1, 1, 0, 1], col);
+      }
+    }
+  }
+
+  /**
+   * A spheroid for FOLIAGE: same lathe and wobble as `spheroid`, shaded as a
+   * soft volume instead of a cut gem.
+   *
+   * - Normals are smooth, per corner, and bent toward the normal of the WHOLE
+   *   crown (from `centre`, the tree's own middle): each lobe keeps a little of
+   *   its own roundness but the tree shades as one mass, lit on the sun side
+   *   and dark under, the way a canopy of leaves does. Per-facet normals made
+   *   every lobe a faceted ball with a hard terminator across it -- the "low
+   *   poly lollipop" -- however good its colours were.
+   * - The colour is darkened toward the bottom of the lobe by `shade` (0..1):
+   *   baked self-occlusion, since the underside of a crown sees no sky.
+   * - The bottom cap is a real fan. `spheroid`'s first ring passes the two
+   *   pole corners, a sliver, so its bottom is open.
+   */
+  foliage(cx, cy, cz, r, sides, stacks, col, squash, jitter, shade, centre, bend = 0.55) {
+    const ry = r * squash;
+    const fx = centre ? centre[0] : cx, fy = centre ? centre[1] : cy, fz = centre ? centre[2] : cz;
+    const P = [], N = [], C = [];
+    for (let si = 0; si <= stacks; si++) {
+      const t = si / stacks;
+      const lat = (t - 0.5) * Math.PI;
+      const k = 1 - shade * Math.pow(1 - t, 1.6);
+      const pr = [], nr = [], cr = [];
+      for (let i = 0; i < sides; i++) {
+        // Mottle: each corner +/-16 % in value, hashed from its POSITION so
+        // neighbouring trees differ. Interpolated across the smooth lobe it
+        // reads as clumps of leaves catching more or less light.
+        const m = k * (0.84 + 0.32 * hash2(Math.round(cx * 7) + si * 13 + i * 5, Math.round(cz * 7) + i * 3));
+        cr.push([col[0] * m, col[1] * m, col[2] * m]);
+        const wob = jitter ? 1 + (hash2(si * 31 + i * 7, 3) - 0.5) * jitter : 1;
+        const ang = (i / sides) * Math.PI * 2;
+        const ca = Math.cos(ang), sa = Math.sin(ang), cl = Math.cos(lat), sl = Math.sin(lat);
+        const p = [cx + ca * cl * r * wob, cy + sl * ry * wob, cz + sa * cl * r * wob];
+        // the lobe's own (ellipsoid) normal, then toward the crown's
+        let nx = (ca * cl) / r, ny = sl / ry, nz = (sa * cl) / r;
+        let l = Math.hypot(nx, ny, nz) || 1;
+        nx /= l; ny /= l; nz /= l;
+        let gx = p[0] - fx, gy = p[1] - fy, gz = p[2] - fz;
+        l = Math.hypot(gx, gy, gz) || 1;
+        nx += (gx / l - nx) * bend; ny += (gy / l - ny) * bend; nz += (gz / l - nz) * bend;
+        l = Math.hypot(nx, ny, nz) || 1;
+        pr.push(p); nr.push([nx / l, ny / l, nz / l]);
+      }
+      P.push(pr); N.push(nr); C.push(cr);
+    }
+    const UV = [0, 0, 1, 0, 1, 1, 0, 1];
+    for (let si = 0; si < stacks; si++) {
+      for (let i = 0; i < sides; i++) {
+        const j = (i + 1) % sides;
+        if (si === 0) {
+          this.tri(P[0][i], P[1][j], P[1][i], [N[0][i], N[1][j], N[1][i]], [C[0][i], C[1][j], C[1][i]]);
+        } else if (si === stacks - 1) {
+          this.tri(P[si][i], P[si][j], P[si + 1][i], [N[si][i], N[si][j], N[si + 1][i]], [C[si][i], C[si][j], C[si + 1][i]]);
+        } else {
+          this.quad(P[si][i], P[si][j], P[si + 1][j], P[si + 1][i],
+            [N[si][i], N[si][j], N[si + 1][j], N[si + 1][i]], UV, [C[si][i], C[si][j], C[si + 1][j], C[si + 1][i]]);
+        }
       }
     }
   }

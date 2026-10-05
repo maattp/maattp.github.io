@@ -6695,11 +6695,11 @@ function glassShader(sh) {
 		diffuseColor.a = gA;
 	}
 	#include <opaque_fragment>`)
-    // Fog mixes toward fogColor at full strength, but a premultiplied pane
+    // Fog mixes toward fogCol (main.js) at full strength, but a premultiplied pane
     // only covers `a` of what is behind it -- and that is fogged already.
     .replace('#include <fog_fragment>', `#include <fog_fragment>
 	#ifdef USE_FOG
-		gl_FragColor.rgb -= fogColor * fogFactor * ( 1.0 - gl_FragColor.a );
+		gl_FragColor.rgb -= fogCol * fogFactor * ( 1.0 - gl_FragColor.a );
 	#endif
 	// the contact shadow: darken what is under it, premultiplied, fading with the fog
 	if ( vShade > 0.5 ) {
@@ -6869,7 +6869,26 @@ export function vehicleAssets() {
   return CACHE;
 }
 
+// Same test as main.js's ON_PHONE (navigator is absent when this module is
+// imported in Node to count triangles).
+const PAINT_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '');
+
+/**
+ * Car paint. On a desktop it is CLEARCOATED: a softer, less metallic base
+ * (metalness 0.35, roughness 0.42) under a mirror-smooth lacquer
+ * (clearcoatRoughness 0.06), which is what car paint actually is -- the sky
+ * lies across the panels as a sharp band over a colour that stays saturated,
+ * where one 0.26-rough semi-metal gives a single blurred sheen. It costs a
+ * second specular lobe per paint pixel, so a phone keeps the one-layer
+ * material (and its far LOD's per-vertex copy, FAR_PARTS). Same three draws.
+ */
 export function paintMaterial(color) {
+  if (!PAINT_PHONE) {
+    return new THREE.MeshPhysicalMaterial({
+      color, metalness: 0.35, roughness: 0.42, envMapIntensity: 1.5,
+      clearcoat: 1, clearcoatRoughness: 0.06,
+    });
+  }
   return new THREE.MeshStandardMaterial({
     color, metalness: 0.5, roughness: 0.26, envMapIntensity: 1.5,
   });

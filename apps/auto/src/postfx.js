@@ -172,7 +172,9 @@ void main() {
   // came out as pale sage. Every engine shipping ACES puts a boost after it
   // for the same reason; this is not a look choice, it is paying the curve
   // back what it took.
-  c = mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), c, 1.45);
+  // 1.45 at first; 1.32 alongside the sun-side haze and the darker water
+  // -- at 1.45 the sky, lawns and paint all sat at one shouting intensity.
+  c = mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), c, 1.32);
   // Split toning: warm the lit side, cool the shade.
   //
   // The old grade lifted blue across the WHOLE range and then warmed the whole

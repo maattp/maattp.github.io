@@ -909,6 +909,47 @@ Physically-shaded, image-based-lit, tone-mapped, with a hand-rolled post chain.
   sightline; atmosphere hides them honestly. Past that, the far massing layer
   (see "Flying") stands in for every building the rings have not delivered,
   and the far roads for every road — supertile layers, not wider rings.
+- **The fog was a stop darker than the sky it dissolves into.** three r160
+  mixes fog AFTER `<colorspace_fragment>`, i.e. in the target's sRGB
+  encoding, but when rendering into a render target it uploads `fogColor` as
+  the LINEAR value of the hex (`getUnlitUniformColorSpace` converts only for
+  the canvas). So `0xb9c3cf` reached the screen as ~`#7a8a9e`: slate, while the
+  dome (which encodes its own output) shows the horizon as `#b9c3cf`. Distance
+  went dark and met the sky at a band. Proof is one render: fog density 0.01
+  turns the ground a flat slate under a pale horizon. `syncFogColour()` in
+  main.js hands the shader the ENCODED value while postfx is on, and the plain
+  hex when the scene draws straight to the canvas (`low`, or post switched
+  off), where three converts it itself. **Call it after anything that turns
+  postfx on or off.** Zero cost. On a three bump, check whether fog still
+  comes after the colour-space conversion.
+- **The haze takes the sun's side.** `HAZE_SUN` (world.js) multiplies the
+  haze toward the sun (1.13, 1.06, 0.93: brighter, warmer, forward
+  scattering) and away from it (0.95, 0.98, 1.04), blended by
+  `(0.5 + 0.5 cos θ)²`. The sky dome applies it to its horizon band; the fog
+  chunk (`installHeightFog`) applies the same blend to the fog colour, so a
+  distant hill toward the sun dissolves into the bright side of the sky and
+  one away from it into the blue side. The dome blends in linear light and
+  the fog in encoded space, so the fog's multipliers go in raised to 1/2.2.
+  The sun is fixed, so its direction is a shader constant, not a uniform
+  (`UniformsLib` is copied too early to extend, see the height fog). The
+  vertex varying is now the world-space ray from the camera (`vFogRay`); it
+  is linear in position, so the interpolated value is exact per fragment.
+  The fog chunk declares `fogCol`; anything mixing toward the fog after
+  `<fog_fragment>` (the far massing and far roads fades, the vehicle glass's
+  premultiplied correction) must use `fogCol`, not `fogColor`, or it leaves a
+  seam on the sun side. Cost: a normalize, a dot and a mix per fogged
+  fragment, no draws, no uniforms.
+- **Clouds have edges.** The cover ramp was `smoothstep(0.50, 0.74)` over two
+  taps, which made every cloud an airbrushed smear. A third, finer tap
+  (`uv * 9.7`) erodes the density by +/-4.5 %, which only matters where the
+  threshold is being crossed, and the ramp is 0.53-0.69: cumulus with a broken,
+  defined edge. Thick cores go grey underneath (`(dens - 0.62) * 1.6`, steeper
+  sunward gradient 10, `cloudDark` 0x7f8b9b), so a bank has a lit side and a
+  shaded base. The zenith/mid stops are a little less cyan (0x33609a /
+  0x7398c2), and the grade's ACES saturation payback is 1.32, down from
+  1.45: at 1.45 the sky, the lawns and the paint all sat at one shouting
+  intensity. One more texture tap per sky pixel; the IBL is rendered from the
+  same function once at boot.
 
 ## Shadows: snap the box, fade its edge
 
@@ -994,7 +1035,52 @@ map's mean (0.44 linear) so the average value does not move. `SUBURB` is
 khaki dirt after ACES and the grade. It must stay distinct from GRASS (see the
 I-5 trench fix). Water takes a second normal tap at -0.29x the scale drifting
 the other way, blended in tangent space, which breaks the 16 m tile weave into
-longer swell.
+longer swell. `GRASS` is `[0.40, 0.57, 0.29]` and park lawn `[0.40, 0.60,
+0.31]` (were `[0.42, 0.62, 0.28]` / `[0.42, 0.66, 0.3]`, which read as an
+emerald putting green in every park).
+
+**Water is a dark body under a chop map.** The normal map was 900 ellipses
+30-180 px long and 2-7 px tall, all within +/-0.2 rad of horizontal: every one
+a streak the same way, magnified 3.4x again by the second tap, so the bay read
+as brushed metal. `waterSurface()` is now ridged, domain-warped value-noise
+fBm (lattices 6/12/24/48 per tile, all wrapping; ridge `1 - |2n - 1|` squared
+for sharp crests and broad troughs; the warp evaluated on a 64² grid and
+upsampled), normal by wrapped central difference: irregular wind chop, ~20 ms
+on a desktop, once per build (the boot cache keeps the PNG). **A sum of sine
+trains was tried first and is worse**: to tile, the wavevectors must be
+integers, so the long ones can only point a few ways, and 20-64 of them weave
+into plaid. The body colour went from `0x33556e` to `0x0a1d22` with env 1.4 ->
+2.0 and normalScale 0.36 -> 0.24: sea water scatters almost nothing back, and
+the old blue body, lit like Lambertian plastic by the 4.3 sun, was most of
+what the near water showed. Now the crests carry the sky and the troughs go
+dark. (Darkening the body alone, with the old map, changed almost nothing
+visible: the streaks were the problem.) The lakes and the canal clone the sea
+material, so they follow.
+
+**Foliage is shaded as a volume.** `Builder.foliage()` (crowns) and
+`cone(..., shade)` (fir tiers) replace `spheroid`/`cone` in `meshCanopy`:
+normals are smooth per corner and bent 55 % toward the normal of the WHOLE
+crown (from its centre), so a tree shades as one mass with a lit shoulder and
+a dark underside instead of five faceted balls with a hard terminator across
+each; colour is darkened toward each lobe's bottom (`shade` 0.22-0.42, baked
+self-occlusion) and mottled +/-16 % per corner, hashed from position, which
+interpolates into clumps. **`spheroid`'s bottom cap is open**: its first ring
+passes the two pole corners (`tri(b, a, d)` with a, b both at the pole), a
+zero-area sliver, so from underneath every canopy showed the backfaces of its
+top -- the dark "spikes" in `docs/gfx169/tree-close.jpg`'s before. `foliage`
+builds a real fan. `spheroid` itself is unchanged (vehicles, characters and
+props use it and their geometry is cached); fix it there separately if
+anything else is seen from below. Same triangle count, 0 draws; `Builder.tri`
+now takes per-corner normals and colours like `quad`.
+
+**Car paint is clearcoated on a desktop only.** `paintMaterial` returns a
+`MeshPhysicalMaterial` (metalness 0.35, roughness 0.42 under clearcoat 1,
+clearcoatRoughness 0.06) unless the user agent is a phone: the sky lies across
+the panels as a sharp band over a colour that stays saturated, where the one
+0.26-rough semi-metal gave a single blurred sheen. It is a second specular
+lobe per paint pixel, so the phone keeps the one-layer material (and the far
+LOD's `FAR_PARTS` copy of it). Same three draws; the warm-up's sedan compiles
+the physical program on a desktop.
 
 ## Judging how it looks
 
