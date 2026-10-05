@@ -2878,9 +2878,11 @@ and its last events were the climb in the 747 and the jump.
 
 **`tools/boottime.mjs [--throttle=8] [--twice] [--prof]`** times every loading
 message on the phone profile, with the CPU throttled from before navigation.
-`--twice` reloads in the same browser profile and times the second launch;
-`BOOT_PROBE='<expr>'` evaluates after each launch (hash the city there to prove
-a cached launch builds the same city as a computed one).
+`--twice` reloads in the same browser profile and times the second launch
+(and prints the first launch's phases too); `BOOT_PROBE='<expr>'` evaluates
+after each launch (hash the city there to prove a cached launch builds the
+same city as a computed one); `BOOT_PROF_OUT=<file>` keeps `--prof`'s raw
+profile, which DevTools opens.
 
 **`src/bootcache.js` keeps deterministic boot results in IndexedDB, keyed by
 the build number** (`#build`), and main.js loads them all in parallel at the
@@ -2896,6 +2898,7 @@ start of the boot. What is kept, and where each is made and restored:
 | `vehicles` | vehicles `vehicleSnapshot` / `setVehicleCache` (geometry; far LODs on a phone) | 19 MB |
 | `link` | link.js `_snapshot` / `_restore`: both profile solves per track (v167) | ~6 MB |
 | `freight` | freight.js constructor: the profile and raw-road crossings per track (v167) | ~1.4 MB |
+| `memo` | `memo(key, make)` everywhere: many smaller results in one entry (below) | ~23 MB |
 
 Whatever a launch computed is written on the loading screen ("Remembering the
 city"), and writing one build's entries deletes every other build's. **So the
@@ -2918,6 +2921,80 @@ steps are not in the cache at all: Placing the landmarks ~6.1 s, Waking the
 city 3.7-4.3 s, Raising the terrain ~3.6 s (first launch: landmarks 9.3,
 waking 7.4, terrain 7.3, grading the freeways 6.5). The landmarks are the
 next thing worth a cache entry.
+
+### The boot memo: the scattered work, kept in one entry
+
+**Most of what was left was not one big solve but a dozen searches and
+indexes**, each 0.1-1.3 s at 8x, none worth an entry of its own. bootcache.js's
+`memo(key, make, ok)` answers what an earlier launch of the build kept under
+`key`, else runs `make()` and keeps its answer; main.js writes them all as
+one `memo` entry with the rest ("Remembering the city", ~0.6 s more on a
+first launch). `memoPeek` / `memoPut` are the two halves, for a result made
+piecemeal inside a loop that has other work to do. What is kept:
+
+| keys | what | MB |
+|---|---|---|
+| `terrain:<tx>,<tz>` | each terrain tile's cut cells (`cellCut`) and every cut cell's 11 x 11 patch heights (`patchHeights`): both read the carve | 2.9 |
+| `terrain:tint:*`, `terrain:sphere:*` | the tile's vertex colours (`groundTint`), its bounding sphere | 7.1 |
+| `grid:lift`, `grid:road` | citygen's roadLift / onRoad query grids, as columns (`gridMemo`: cell key, list start, edge ids) | 10.3 |
+| `beach:<i>` | each beach's candidate prop points: dry sand, level, off roads and buildings, with the shore distance | 0.5 |
+| `piers`, `piers:plats`, `piers:sheds` | each pier's verdict and deck height, the walkable squares, the sheds standing in salt water | 0.6 |
+| `traffic:components` | traffic's directed components (`directedComponents`) | 0.8 |
+| `marina:<i>`, `pickups`, `freight:ground:<k>`, `bikes:drawn` | the marinas' shore/deep-water searches, the pickup spots, the freight profile's carved ground, which bike-path pieces are drawn | 0.7 |
+
+**A memoised value is plain data that nothing mutates after `memo` returns
+it**: the computed value is written at the END of the boot, so an edit made
+in between is read back by the next launch as if it had been computed.
+`ok(v)` checks its shape (a refusal computes, as on a first launch); a cached
+launch's grid lists are `Int32Array` views of one id array, which every
+consumer reads the way it read the arrays (`length` and index).
+
+**The `buildings` entry had exactly that bug**:
+`packBuildings` kept citygen's per-chunk cover array (`built`) by reference,
+the tarmac pass then added each chunk's paved area to it, and a cached
+launch unpacked that and added the tarmac again. Every cached launch tinted
+the ground more built-up than the first launch of its build (the terrain's
+vertex colours hashed differently; nothing else did). It packs a copy now.
+
+Also: the terrain's index is a typed array (pushing ~3.6 M indices onto a
+plain array was ~0.4 s at 8x), its normals and bounding spheres are three's
+own `computeVertexNormals` / `computeBoundingSphere` arithmetic on the plain
+arrays (`vertexNormals`, `boundingSphere`: the same values to the bit), the
+patches go through a `ChunkBuilder`, and two basketball courts' stored spots
+are current again (see "Basketball in the parks").
+
+**Proof**: a `BOOT_PROBE` hash of every terrain tile's attributes, index and
+sphere, the landmark root, the tunnel water mask, the city's platforms,
+solids and clear circles, the hoops, pickups and piers, 4000 terrain samples,
+20000 onRoad / groundAt / roadsNear queries, every Link and freight track
+array, the bike paths' drawn flags and traffic's components is identical on
+a computed and a cached launch, and identical to master's computed launch
+(whose cached launch differs only in the terrain colours, the bug above).
+`perfcpu --cached` times frames on a cached launch (its grid lists are the
+views): unchanged against master's cached launch.
+
+| 8x-throttled, first frame (3 rounds, master and branch alternated) | before | after |
+|---|---|---|
+| first launch of a build | 49.2-52.7 s | 44.8-54.4 s (noisy machine; writing the cache 2.0-2.5 -> 2.5-3.3 s) |
+| later launches (cached) | 21.0-22.9 s | **16.0-18.3 s** |
+| cached: Placing the landmarks | 6.5-6.7 s | 4.4-4.9 s |
+| cached: Waking the city | 3.6-4.0 s | 2.0-2.5 s |
+| cached: Raising the terrain | 3.6-4.0 s | 1.3-1.7 s |
+
+Two more pairs on a machine at load 20 read the same gap: cached 25.1 / 26.6
+s -> 19.2 / 17.4 s, first launch 53.4 / 60.8 s -> 54.8 / 53.9 s. A first
+launch is no slower: writing the memo (~0.6-0.8 s) is paid back by the two
+hoops courts no longer searching.
+
+**What is left in a cached launch** (8x profile): Link's and freight's
+geometry, ~2.1 s together, is the biggest single item -- still built at boot
+(see v163: each track's loop carries per-segment state, places the columns
+and platforms, and a chunk's geometry comes from segments all along the
+line, so building it by distance means splitting the loop into a state pass
+and a geometry pass). Then the first warm frames and shader programs
+(~1.5 s, GPU: see "Hitches", not to be front-loaded further), the first
+chunks (~1 s), the landmark meshes (~1 s), the street graph's own objects,
+and Link's four-minute service settle (`makeTrains`, ~0.45 s).
 
 ## Draw-call budget
 
@@ -6193,8 +6270,12 @@ series advancing, back to the pits. `docs/seafair/` has shots.
 within 150 m of the site (park or lot, off roads, buildings and water, under
 0.6 m of fall across it; 8 headings tried). The search costs ~30 ms a site on
 the Mac, so its answer is stored with the site (`at`) and boot only re-checks
-it (0.1 ms for all four), searching again if the city under it changed. A
-court is a slab at the
+it (0.1 ms for all four), searching again if the city under it changed.
+**That fallback is silent and costs every launch**: Judkins' and Green Lake's
+stored spots had stopped passing (the map and the grading moved under them),
+and both searched on every boot, ~0.5 s at the 8x phone stand-in. When a
+regrade moves a court, the console's `hoops: <site> at [x, z, heading]` line
+is the new `at`; copy it in. A court is a slab at the
 highest corner with concrete skirts down to the ground, registered as a city
 platform (so you stand on what is drawn) and kept clear of trees
 (`city.clearCircles`). Regulation size: 50 x 47 ft, the key 16 ft, the board

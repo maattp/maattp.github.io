@@ -54,6 +54,7 @@ import * as THREE from './three.js';
 import * as G from './geo.js';
 import { mergeByMaterial } from './build.js';
 import { spaceNeedle, NEEDLE_MATS, needleSolids, needleDecks } from './needle.js';
+import { memo } from './bootcache.js';
 
 // --- materials -----------------------------------------------------------------
 //
@@ -2146,16 +2147,23 @@ export function beachProps(beaches, city, wl) {
         const c = Math.cos(-bd.rot), sn = Math.sin(-bd.rot), dx = x - bd.x, dz = z - bd.z;
         return Math.abs(dx * c - dz * sn) < bd.w / 2 + 1.5 && Math.abs(dx * sn + dz * c) < bd.d / 2 + 1.5;
       }));
-    // candidate points: a 2.5 m grid over the beach's box and its 10 m band
-    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
-    for (const [x, z] of b.o) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+    // candidate points: a 2.5 m grid over the beach's box and its 10 m band,
+    // as (x, z, shore distance) -- kept by the boot cache (bootcache.js memo):
+    // the dry-sand test over every beach was ~0.8 s of a phone's boot
+    const cand = memo(`beach:${bi}`, () => {
+      let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+      for (const [x, z] of b.o) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+      const out = [];
+      for (let z = z0 - 10; z <= z1 + 10; z += 2.5) for (let x = x0 - 10; x <= x1 + 10; x += 2.5) {
+        if (!dry(x, z)) continue;
+        const sd = G.shoreDist(x, z);
+        if (sd <= 0 || sd > 58) continue;
+        out.push(x, z, sd);
+      }
+      return Float64Array.from(out);
+    }, (v) => v instanceof Float64Array && v.length % 3 === 0);
     const pts = [];
-    for (let z = z0 - 10; z <= z1 + 10; z += 2.5) for (let x = x0 - 10; x <= x1 + 10; x += 2.5) {
-      if (!dry(x, z)) continue;
-      const sd = G.shoreDist(x, z);
-      if (sd <= 0 || sd > 58) continue;
-      pts.push([x, z, sd]);
-    }
+    for (let k = 0; k < cand.length; k += 3) pts.push([cand[k], cand[k + 1], cand[k + 2]]);
     if (pts.length < 6) return;
     const g = new THREE.Group();
     // which way is the water: down the shore-distance gradient
@@ -2299,15 +2307,23 @@ function marinaDock(spec, wl, idx) {
   // real land, not a DEM pixel or a breakwater standing out of the water:
   // dry 25 m out in most directions too
   const dry = (x, z) => G.terrainHeight(x, z) > lvl0 + 0.5 && !G.isWater(x, z);
-  const D = nearest(spec.x, spec.z, 320, (x, z) => {
-    if (!dry(x, z)) return false;
-    let n = 0;
-    for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; if (dry(x + Math.cos(a) * 25, z + Math.sin(a) * 25)) n++; }
-    return n >= 4;
-  });
-  if (!D) return null;
-  const W = nearest(D[0], D[1], 240, (x, z) => depth(x, z) >= 2.0);
-  if (!W) return null;
+  // (the two searches are kept by the boot cache, bootcache.js memo: [D, W],
+  // or as much of it as was found)
+  const DW = memo(`marina:${idx}`, () => {
+    const D = nearest(spec.x, spec.z, 320, (x, z) => {
+      if (!dry(x, z)) return false;
+      let n = 0;
+      for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; if (dry(x + Math.cos(a) * 25, z + Math.sin(a) * 25)) n++; }
+      return n >= 4;
+    });
+    if (!D) return new Float64Array(0);
+    const W = nearest(D[0], D[1], 240, (x, z) => depth(x, z) >= 2.0);
+    return Float64Array.from(W ? [...D, ...W] : D);
+  }, (v) => v instanceof Float64Array);
+  if (DW.length < 2) return null;
+  const D = [DW[0], DW[1]];
+  if (DW.length < 4) return null;
+  const W = [DW[2], DW[3]];
   let nx = W[0] - D[0], nz = W[1] - D[1];
   const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;
   let S = D;

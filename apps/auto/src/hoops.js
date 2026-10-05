@@ -19,8 +19,8 @@ import { clamp } from './util.js';
 // boot, and searched for again only if it no longer passes
 export const HOOP_SITES = [
   { name: 'Cal Anderson Park', x: 1404, z: -633, at: [1452, -687, 0] },
-  { name: 'Judkins Park', x: 2537, z: 1899, at: [2537, 1791, 0] },
-  { name: 'Green Lake', x: 835, z: -7634, at: [901, -7604, 0] },
+  { name: 'Judkins Park', x: 2537, z: 1899, at: [2573, 1899, Math.PI / 4] },
+  { name: 'Green Lake', x: 835, z: -7634, at: [829, -7640, -Math.PI / 4] },
   { name: 'Jefferson Park', x: 2215, z: 4532, at: [2143, 4532, -Math.PI / 4] },
 ];
 

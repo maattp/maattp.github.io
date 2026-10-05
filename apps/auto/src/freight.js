@@ -27,6 +27,7 @@ import { LinkTrack, KIND } from './link.js';
 import { vehicleAssets, tagGlass } from './vehicles.js';
 import { railCar, railDecals, RAIL_COLOURS } from './railcars.js';
 import { clamp, angleWrap } from './util.js';
+import { memo } from './bootcache.js';
 
 const { TUN, BOX, DECK, FILL, CROSS } = KIND;
 
@@ -394,8 +395,13 @@ export class Freight {
     this.waterAt = waterAt;
     // the profile stands (the ground was cut to it); what each metre is, over
     // the carved ground
-    for (const tr of Object.values(this.tracks)) {
-      for (let i = 0; i < tr.n; i++) tr.GR[i] = G.terrainHeight(tr.X[i], tr.Z[i]);
+    // (kept by the boot cache, bootcache.js memo: copied in, never aliased)
+    for (const [k, tr] of Object.entries(this.tracks)) {
+      tr.GR.set(memo(`freight:ground:${k}`, () => {
+        const gr = new Float64Array(tr.n);
+        for (let i = 0; i < tr.n; i++) gr[i] = G.terrainHeight(tr.X[i], tr.Z[i]);
+        return gr;
+      }, (v) => v instanceof Float64Array && v.length === tr.n));
       this._kinds(tr);
     }
     const P = this.P;

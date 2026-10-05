@@ -4,6 +4,7 @@ import * as THREE from './three.js';
 import { Vehicle, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, makeBellows } from './vehicles.js';
 import { clamp, lerp, angleWrap, hash2, rng, dist2 } from './util.js';
 import * as G from './geo.js';
+import { memo } from './bootcache.js';
 
 const TRAFFIC_TARGET = 26;
 // Parked cars only exist within this radius, and each is 3 draw calls, so this
@@ -289,7 +290,9 @@ export class TrafficSystem {
     const E = city.edges;
     this.flow = new Int8Array(E.length);
     for (let i = 0; i < E.length; i++) this.flow[i] = edgeFlow(E[i]);
-    const cc = directedComponents(city, this.flow);
+    // (kept by the boot cache, bootcache.js memo; read-only once made)
+    const cc = memo('traffic:components', () => directedComponents(city, this.flow),
+      (v) => v && v.comp instanceof Int32Array && v.comp.length === city.nodes.length && Array.isArray(v.sizes));
     this.comp = cc.comp;
     this.compSize = cc.sizes;
     // Lane span per one-way edge, lazily: [lo, hi, lanes] in the edge's own

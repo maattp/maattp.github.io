@@ -38,6 +38,24 @@ try {
   ws.addEventListener('message', (e) => { const m = JSON.parse(e.data); if (m.id && pend.has(m.id)) { pend.get(m.id)(m); pend.delete(m.id); } });
   const send = (m, p = {}) => new Promise((res) => { ws.send(JSON.stringify({ id: ++id, method: m, params: p })); pend.set(id, res); });
   const ev = async (e) => { const r = await send('Runtime.evaluate', { expression: e, returnByValue: true, awaitPromise: true }); return r.result?.result?.value; };
+  const phaseReport = async (label, done) => {
+    const rows = JSON.parse(await ev('JSON.stringify(window.__boot)') || '[]');
+    const build = (/id="build">([^<]*)</.exec(await (await fetch(`http://localhost:${HTTP_PORT}/apps/auto/index.html`)).text()) || [])[1];
+    console.log(`${label}boot ${build} ${DESKTOP ? 'desktop' : 'phone'} throttle ${THROTTLE}x: first frame at ${(done / 1000).toFixed(1)} s`);
+    // Collapse consecutive repeats; print each message with its time on screen.
+    const phases = [];
+    for (const [t, m] of rows) {
+      if (phases.length && phases[phases.length - 1].m === m) continue;
+      phases.push({ t, m });
+    }
+    const agg = new Map();
+    for (let i = 0; i < phases.length; i++) {
+      const end = i + 1 < phases.length ? phases[i + 1].t : done;
+      const k = phases[i].m.replace(/[0-9.]+ ?(MB|%|of \d+)/g, '#');
+      agg.set(k, (agg.get(k) || 0) + (end - phases[i].t));
+    }
+    for (const [m, ms] of [...agg.entries()].sort((a, b) => b[1] - a[1])) console.log(`  ${(ms / 1000).toFixed(2).padStart(7)} s  ${m}`);
+  };
   await send('Runtime.enable'); await send('Page.enable'); await send('Network.enable');
   await send('Network.setBypassServiceWorker', { bypass: true });
   await send('Network.setCacheDisabled', { cacheDisabled: true });
@@ -66,8 +84,11 @@ try {
   if (PROF && !TWICE) await startProf();
   if (TWICE) {
     await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
-    for (let i = 0; i < 1200; i++) { await sleep(250); if (await ev('window.__dbg && window.__dbg.sceneStats && window.__dbg.sceneStats.calls > 0')) break; }
+    let done1 = 0;
+    for (let i = 0; i < 1200; i++) { await sleep(250); if ((done1 = await ev('window.__dbg && window.__dbg.sceneStats && window.__dbg.sceneStats.calls > 0 ? performance.now() : 0'))) break; }
     console.log('  first launch done (cached for the next): gradeCached=' + await ev('window.__dbg.cityStats.gradeCached'));
+    // the first launch's phases too (the boot log is per page: read it before the reload)
+    await phaseReport('first launch: ', done1);
     if (process.env.BOOT_WAIT) await sleep(+process.env.BOOT_WAIT);
     if (process.env.BOOT_SHOT) { const r = await send('Page.captureScreenshot', { format: 'png' }); (await import('node:fs')).writeFileSync(process.env.BOOT_SHOT.replace(/\.png$/, '-1.png'), Buffer.from(r.result.data, 'base64')); }
     if (process.env.BOOT_PROBE) console.log('  probe 1: ' + await ev(`(() => { const d = window.__dbg; return String(${process.env.BOOT_PROBE}); })()`));
@@ -82,6 +103,8 @@ try {
   }
   if (PROF) {
     const prof = (await send('Profiler.stop')).result.profile;
+    // BOOT_PROF_OUT=<file.cpuprofile>: keep the raw profile (DevTools opens it)
+    if (process.env.BOOT_PROF_OUT) (await import('node:fs')).writeFileSync(process.env.BOOT_PROF_OUT, JSON.stringify(prof));
     const byId = new Map(prof.nodes.map((n) => [n.id, n]));
     const parent = new Map(); for (const n of prof.nodes) for (const c of (n.children || [])) parent.set(c, n.id);
     const self = new Map(), incl = new Map(); let total = 0;
@@ -102,23 +125,7 @@ try {
   if (process.env.BOOT_WAIT) await sleep(+process.env.BOOT_WAIT);
   if (process.env.BOOT_SHOT) { const r = await send('Page.captureScreenshot', { format: 'png' }); (await import('node:fs')).writeFileSync(process.env.BOOT_SHOT.replace(/\.png$/, '-2.png'), Buffer.from(r.result.data, 'base64')); }
   if (process.env.BOOT_PROBE) console.log('  probe 2: ' + await ev(`(() => { const d = window.__dbg; return String(${process.env.BOOT_PROBE}); })()`));
-  const log = await ev('JSON.stringify(window.__boot)');
-  const rows = JSON.parse(log || '[]');
-  const build = (/id="build">([^<]*)</.exec(await (await fetch(`http://localhost:${HTTP_PORT}/apps/auto/index.html`)).text()) || [])[1];
-  console.log(`boot ${build} ${DESKTOP ? 'desktop' : 'phone'} throttle ${THROTTLE}x: first frame at ${(done / 1000).toFixed(1)} s`);
-  // Collapse consecutive repeats; print each message with its time on screen.
-  const phases = [];
-  for (const [t, m] of rows) {
-    if (phases.length && phases[phases.length - 1].m === m) continue;
-    phases.push({ t, m });
-  }
-  const agg = new Map();
-  for (let i = 0; i < phases.length; i++) {
-    const end = i + 1 < phases.length ? phases[i + 1].t : done;
-    const k = phases[i].m.replace(/[0-9.]+ ?(MB|%|of \d+)/g, '#');
-    agg.set(k, (agg.get(k) || 0) + (end - phases[i].t));
-  }
-  for (const [m, ms] of [...agg.entries()].sort((a, b) => b[1] - a[1])) console.log(`  ${(ms / 1000).toFixed(2).padStart(7)} s  ${m}`);
+  await phaseReport(TWICE ? 'cached launch: ' : '', done);
 } finally {
   chrome.kill('SIGKILL');
 }
