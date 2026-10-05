@@ -3873,7 +3873,9 @@ worse than master, which is how every rule above was found.
 - **A portal cutting through a street**: NE 28th St in Bellevue drops 14 m in
   3 m into `cutDepth`'s trench (26 deck jumps in one site).
 - **Draped freeway beside portals** (`hwy` / `ramp` kinds, 22 + 32 km) still
-  ride at 23 / 13 frames over 30 m/s2 per 1000, ten times graded freeway.
+  ride at 26 / 15 frames over 30 m/s2 per 1000, ten times graded freeway, and
+  are now half of every freeway frame over 30. It is the portal machinery,
+  not the raster: see "What is left on the freeways" for the two fixes tried.
 - **Downtown deck streets over I-5** (Union, Seneca, Pike): clearance humps
   and deck-to-street steps at the trench rim.
 - **junctions.mjs: Queen Anne's hill junction (`15-hillQA`) went from 0 to
@@ -4153,6 +4155,172 @@ freeway, left as imported), where the probe's ray from y + 1.2 hits the deck
 above the car, plus a few junction-square and anchor cases at locked decks.
 **Answer "which surface is groundAt standing on" with the knockout, not a
 render**: one run names the surface.
+
+### Overpasses: the freeway goes under the street
+
+**A street deck the clearance pass refuses was left lying ON the freeway.**
+137 crossings of a street deck over a graded freeway or ramp are refused
+(the street cannot climb 6 m in MAX_CLIMB of its anchors), and 117 of them
+cleared the lanes by under 4.5 m, 73 by under 2 m, a few by less than
+nothing: NE 50th and NE 80th over I-5, Juanita-Woodinville Way over I-405,
+Yesler Way. From the driver's seat the deck was a grey slab across the
+carriageway at bumper height, and a car within DECK_REACH of it was picked
+up onto the street and dropped off its far side (most of the graded
+freeway's "crossing-deck" captures). Seattle builds these the other way
+round -- I-5 runs in a trench under 45th, 50th and 80th -- so that is what
+gradeRoads does after the solve (`fwyDips`):
+
+- **The dip is a fixed shape in graph distance**, not a ceiling: the whole
+  footprint under the deck (`c.ext` along the freeway) is lowered by the
+  most it needs anywhere there (deck - OVER_CLEAR), eased out at
+  `DIP_GRADE` (2.5 % freeway, 5 % ramp) of graph distance, then
+  dilated and box-averaged over PROF_R like the profile (never less than
+  the raw dip, corners rounded over 40 m). Shaped as a ceiling cone it
+  followed the freeway's own grade and on a climb steeper than the cone
+  never eased out at all.
+- **Each crossing on its own, but a carriageway overlapping a dipped one
+  goes down with it** (the levelling's pairs, below). Dipped alone, a ramp
+  sharing I-90's pavement at Eastgate ran 3 m under the lanes it overlaps;
+  a car on it was carried by I-90 and dropped off the end (+120 on that
+  site's score). All-or-nothing per street was tried and halved the dips.
+- **Refused** (left as before, `fwyDipWhy`) where the smoothed dip would
+  reach an at-grade anchor or a locked deck, or a deck (it was raised for
+  whatever is under it); where it needs more than `DIP_MAX` 8 m; where the
+  road would end under 9 m or the crossing is over water; where it would
+  pitch a freeway past 8 % or a ramp past 10 % that was not already (at
+  5 % run-out the I-5 descents south of downtown went to 8-10 %, and
+  verify's "I-5 ground profile steps over 8 %" from 37 to 57); and where a
+  draped road lies over the freeway's own lanes (the crossing street
+  running on as ground past a deck too short for the freeway, the commonest
+  refusal before the steep one).
+- **The ground is dug to match**: one `pd` record per dipped edge in the
+  underpass list (per-sample depth, so the profile decides it, across the
+  whole cambered width), carved by the same hook as a street's underpass,
+  and `meshTrenchWalls` stands the walls. A draped street on the trench's
+  BANK (not over its lanes) is kept out of the carve (`prot`); over the
+  carriageway it is dug regardless, or a neighbouring carriageway's lanes
+  stayed buried a metre deep. **The terrain cells are found analytically**
+  (`underpassDepth.fwyIn`): a ramp's trench is ~10 m wide, the 3 x 3
+  samples a 40 m cell is tested at fell either side of it, the cell was not
+  re-tessellated and drew raw ground 1 m over the ramp (jank road-poke 1 ->
+  3, back to 1).
+
+`cityStats.fwyDips` 32 of the 137 (`fwyDipNoRoom` the rest). Street-over-
+freeway crossings under 4.5 m: 117 -> 91 (the dip-less rest are mostly the
+refusals for a draped street over the lanes and the steep guard).
+Before / after, `docs/overpasses/`: `ne50.jpg`, `ne80.jpg`, `ne145.jpg`,
+`yesler.jpg` (driver's eye on the freeway, 70 m back). NE 80th's express
+lanes are a narrow cut whose far bank shows as the terrain's steep-slope
+tint with no wall on one side; it reads as a cutting, not as a defect, but
+it is the weakest of them.
+
+### Overlapping carriageways: one top surface
+
+**68 % of the graded and deck freeway frames over 30 m/s2 were a car on its
+own lane answered by a neighbour's surface.** Side-by-side carriageways that
+overlap in plan (lane-count widths) were still up to 0.4 m apart after the
+solve and blend: pairs the coupling never saw (decks whose IMPORTED levels
+differ by more than 2 m and solve together -- the Ship Canal Bridge's
+express ramps), the two branches of a diverge still overlapping past their
+joint, and coupled pairs the blend's smoothing along each chain pulled
+apart again. Too close in level to trim (split levels start at SPLIT_LO),
+both are drawn and the higher is the top surface -- and groundAt, asked
+from the wheels (curY = y + 0.45), rightly answers the higher one. So a car
+was picked up a few centimetres to 0.4 m wherever the pieces overlapped and
+dropped where they stopped. Classified per ride frame in a scratch copy of
+ridesurvey (the 20 frames before each spike: centre ground off its own
+profile, a wheel off, or neither): "centre off" was 600 of 923 graded hwy,
+972 of 1374 graded ramp, 100 of 228 hwy deck and 343 of 439 ramp deck spikes.
+
+After the solve, every graded sample whose centre lies inside a parallel
+neighbour's CATCH (its lanes, plus the 1.5 m a deck catches past its edge),
+with the neighbour 0.02-0.4 m higher at that point (camber included), is
+raised to it -- the surface already drawn on top, so nothing visible moves
+-- and the raise is eased along its own chain by dilate-then-average over
+PROF_R. Raising only, from the heights before the pass (taking a partner's
+raised height ratchets, see the coupling), and capped by the anchor cone
+only within 60 m of an anchor: on a deck the imported floor already stands
+over the cone, and capped there the raise did nothing. Testing only the
+neighbour's lanes (not its catch) and skipping node samples each left
+half the Ship Canal pairs as they were. The pass reuses the coupling scan's
+pairs (`lvPairs`) and the solve's cached windows: its first version scanned
+the 100 m edge grid per edge and built 40 m windows, 0.3 s of a desktop
+boot. Graded freeway samples where groundAt answers more than 10 cm off the
+edge's own profile: 4167 -> 2372 (over 30 cm 1029 -> 782).
+
+### Bore walls are cut back off another bore's traffic
+
+**Under the convention centre the AI wedged on walls standing in I-5's
+lanes** (~3,800 car-frames of wall contact a minute at x 520-540, z -150-6,
+one across an express ramp's centreline). I-5's mainline, express lanes and
+ramps run there as overlapping bores 2-5 m apart in level: too far apart
+for the twin rule (`inOtherBore`, decks within 1.6 m), so each bore kept a
+collision band from 1.5 m under its deck to its roof, straight through the
+lanes of the bore above or below. `world.bandClear` cuts each wall piece's
+band back off every other bore whose lanes hold it (top under the deck
+above, bottom over the traffic below, 2.6 m), and the drawn wall is clipped
+to the same top. This bore's own cars, 1.6 m+ away in level, stay inside
+what is left. Measured with a fixed-dt traffic run parked at (530, -60),
+traffic cars touching a barrier: 3804 -> 470 car-frames a minute (the rest
+is one car queued against a wall at (488, 34), touching, not inside).
+tunnelride's six rides are identical to master.
+
+### Freeway grading measured
+
+ridesurvey, master against this (6546 km, 25005 chains):
+
+| | master | now |
+|---|---|---|
+| freeway, ramps and decks: frames over 30 / 60 m/s2 | 5 820 / 2 760 | **5 529 / 2 595** |
+| graded and deck freeway: over 30 / 60 | 3 037 / 1 518 | **2 746 / 1 357** |
+| draped freeway beside portals: over 30 / 60 | 2 783 / 1 242 | 2 783 / 1 238 (untouched) |
+| streets: over 30 / 60, humps | 10 165 / 3 505, 2 139 | 10 188 / 3 516, 2 139 |
+| street decks: over 30 / 60 | 1 352 / 780 | 1 339 / 776 |
+| 60 m sites worse / better by 20+ | | 7 / 16 |
+| jank fwy-bump (over 8 %) | 736 (339) | **716 (314)** |
+| jank barrier-on-road | 520 / 52798 | **456** / 52808 |
+| jank crossing-clash (30 of 104 sites) | 150 / 739 | **123** / 739 |
+
+The worst of the seven: an I-405 ramp at NE 10th (11280, -840) 0 -> 44 and
+NE Campus Parkway by the University Bridge 127 -> 159. verify: 0 of 36302
+viaduct samples fell, 0 of 1082 approaches failed, I-5 steps over 8 % 37
+-> 35; tunnelride identical to master on all six rides; perfguard no
+regression (triangles +0.4 % steady, the trench walls); boot at 8x 46.4 /
+47.1 s against master's best 47.7 s (master's other two runs on the same
+machine were 59 s: it is busy, so take the best of each).
+
+### What is left on the freeways
+
+- **Draped freeway beside portals is half of every spike** (2 783 of 5 529
+  frames over 30). `PORTAL_KEEP` drapes anything within 200 m of ANY
+  portal node, and most of the city's portals are short ramp or street
+  underpasses tagged as tunnels at the interchanges (I-405 at NE 8th,
+  I-90/I-405, I-5/SR 520, the I-90 lids). Its spike sites, classified: 41 %
+  inside a portal cut's dig, 31 % on a lid, 26 % neither. Two fixes were
+  measured and reverted:
+  - **Drape only what a cut can reach** (graph distance under 200 m from a
+    portal, or within a corridor's dig of a bore near one): 54 -> 28 km
+    draped, but the newly graded freeway met its new anchors and the cuts
+    beside it badly (ramp-graded over 30 1 374 -> 1 750), net -2.5 %.
+  - **Fit the raster to the draped freeway** as `grade_streets.py` fits
+    streets (samples within 200 m of a tunnel end, weight 1): humps on
+    draped hwy 66 -> 44, ramps 119 -> 75, but frames over 30 rose (hwy 1 249
+    -> 1 315) and deck jumps doubled -- the spikes are the cut and lid
+    machinery's steps (dug roads dropping into another bore's trench, lid
+    ends), not the 40 m lattice. That needs the portal code, with
+    tunneldrive in the loop.
+- **Street decks that still lie on the freeway**: 91 crossings under 4.5 m.
+  Most are a draped piece of the crossing street over the freeway's lanes
+  (the OSM bridge is shorter than lane-count widths make the freeway); the
+  deck would have to be extended over the lanes before the freeway can dip.
+- **Diverging branches still overlapping past their joint by more than
+  0.4 m** (centrelines under 0.5 m apart are treated as the same road and
+  skipped), and decks still apart in level: 888 graded and 826 deck
+  samples whose groundAt answers a parallel neighbour (2 758 and 1 389
+  before the levelling).
+- **Ramps pinned to clearance floors near anchors** keep their crest corners
+  (758 profile samples breaking grade by more than 5 %, nearly all within
+  60 m of an anchor): unavoidable while the floor binds at MAX_CLIMB.
 
 ## Flying
 
