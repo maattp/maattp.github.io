@@ -454,13 +454,22 @@ function drawAtlas() {
     } else {
       // curls: tight coils at many sizes, each with a lit upper edge and a
       // shadowed lower one, so the surface is bumpy rather than scribbled
-      for (let k = 0; k < 1300; k++) {
-        const x = R.n() * CELL, y = R.n() * (yT + 4), r = 2.5 + R.n() * 4.5;
+      // (shaded coils, lit above and dark in their own shadow below: thin
+      // rings on a flat field read as a printed pattern on a swim cap)
+      g.fillStyle = grey(0.62); g.fillRect(0, 0, CELL, yT + 3);
+      // Drawn as UPRIGHT ellipses: the hair cell is mapped ~2.2 mm a pixel
+      // round the head and 0.4-0.8 mm up it, so a round coil painted round
+      // came out a horizontal smear ("wavy striations").
+      for (let k = 0; k < 1800; k++) {
+        const x = R.n() * CELL, y = R.n() * (yT + 4), r = 4 + R.n() * 7;
+        const cg2 = g.createRadialGradient(x - r * 0.3, y - r * 0.35, 0, x, y, r);
+        cg2.addColorStop(0, grey(1.0)); cg2.addColorStop(0.6, grey(0.80)); cg2.addColorStop(1, grey(0.45, 0));
         wrap(x, (xx) => {
-          g.strokeStyle = grey(0.40 + R.n() * 0.15, 0.40); g.lineWidth = 1.4;
-          g.beginPath(); g.arc(xx, y, r, 0.2, Math.PI - 0.2); g.stroke();
-          g.strokeStyle = grey(1.0, 0.30); g.lineWidth = 1.1;
-          g.beginPath(); g.arc(xx, y, r, Math.PI + 0.4, 2 * Math.PI - 0.4); g.stroke();
+          g.save(); g.translate(xx, y); g.scale(0.36, 1); g.translate(-x, -y);
+          g.fillStyle = cg2; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+          g.strokeStyle = grey(0.40, 0.45); g.lineWidth = 1.2;
+          g.beginPath(); g.arc(x, y, r * 0.8, 0.3, Math.PI - 0.3); g.stroke();
+          g.restore();
         });
       }
     }
@@ -469,8 +478,8 @@ function drawAtlas() {
     // ragged and never a line.
     g.clearRect(0, yT, CELL, CELL - yT);
     const yB = Q(0);
-    for (let k = 0; k < (curly ? 70 : 110); k++) {
-      const x = R.n() * CELL, w = curly ? 7 + R.n() * 7 : 3 + R.n() * 6;
+    for (let k = 0; k < (curly ? 260 : 190); k++) {
+      const x = R.n() * CELL, w = curly ? 3 + R.n() * 3 : 2.5 + R.n() * 3.5;
       const len = (curly ? 0.30 + R.n() * 0.55 : 0.25 + R.n() * 0.75) * (yB - yT);
       const dx = (R.n() - 0.5) * (curly ? 3 : 7);
       const v0 = curly ? 0.66 : 0.70 + R.n() * 0.10;
@@ -480,10 +489,10 @@ function drawAtlas() {
         g.fillStyle = tg;
         g.beginPath();
         if (curly) {
-          g.moveTo(xx - w / 2, yT - 2);
-          g.lineTo(xx - w / 2, yT + len - w / 2);
-          g.arc(xx, yT + len - w / 2, w / 2, Math.PI, 0, true);
-          g.lineTo(xx + w / 2, yT - 2);
+          // a coil hanging from the edge: round in the world, so an upright
+          // ellipse in the cell (bars with round ends were battlements)
+          const ry = 8 + R.n() * 8, cy = yT - 2 + Math.pow(R.n(), 1.4) * (yB - yT - ry * 0.6);
+          g.ellipse(xx, cy, ry * 0.36, ry, 0, 0, Math.PI * 2);
           g.closePath();
         } else {
           // two or three wisps, not one sawtooth
@@ -528,11 +537,11 @@ function drawAtlas() {
       const v0 = 0.80 + R.n() * 0.18;
       // Each lock ends in three or four WISPS of different lengths: one
       // tapered shape per lock was a torn-paper sawtooth at every edge.
-      const nw = 3 + (R.n() < 0.4 ? 1 : 0);
+      const nw = 4 + (R.n() < 0.5 ? 1 : 0);
       const subs = [];
       for (let q = 0; q < nw; q++) {
         const f = nw === 1 ? 0 : q / (nw - 1) - 0.5;
-        subs.push({ o: f * w * 0.62, ww: w * (0.55 - 0.05 * nw), e: yEnd - R.n() * 0.30 * (yEnd - yTop) * (q === 1 ? 0.2 : 1), d: dx + f * 6 + (R.n() - 0.5) * 4 });
+        subs.push({ o: f * w * 0.70, ww: w * 0.32, e: yEnd - R.n() * 0.30 * (yEnd - yTop) * (q === 1 ? 0.2 : 1), d: dx + f * 6 + (R.n() - 0.5) * 4 });
       }
       wrap(x, (xx) => {
         const shape = () => {
@@ -977,8 +986,10 @@ const SKULL = [
   // that read as "not human" in every portrait. The jaw's plan is a U that
   // narrows to the front, not an egg: see the lower-face terms in faceRelief.
   { y: J.chin - 0.012, rx: 0.032, rz: 0.058, oz: 0.020 },   // under the chin
-  { y: J.chin - 0.002, rx: 0.036, rz: 0.075, oz: 0.014 },   // chin
-  { y: J.chin + 0.010, rx: 0.047, rz: 0.083, oz: 0.010 },   // jaw angle
+  // (Round four: 3 mm wider at the chin and jaw angle -- seen from the
+  // front the narrowed chin had become a point, the jaw long and gaunt.)
+  { y: J.chin - 0.002, rx: 0.039, rz: 0.075, oz: 0.014 },   // chin
+  { y: J.chin + 0.010, rx: 0.050, rz: 0.083, oz: 0.010 },   // jaw angle
   { y: J.chin + 0.024, rx: 0.054, rz: 0.089, oz: 0.007 },   // jawline
   { y: J.chin + 0.060, rx: 0.066, rz: 0.095, oz: 0.004 },   // cheeks
   { y: J.eye - 0.020, rx: 0.075, rz: 0.095, oz: 0.001 },    // cheekbone
@@ -1112,8 +1123,8 @@ function faceRelief(th, y, F) {
   // the wings of the nose, either side of the tip
   d += 0.0062 * gss(a - 0.0205, 0.0066) * gss(y - (E - 0.044), 0.0065);
   // Eye sockets, deepest at the painted eye, and the brow ridge over them.
-  d -= 0.0100 * gss(a - 0.0345, 0.0165) * gss(y - (E + 0.002), 0.0110);
-  d += 0.0062 * F.brow * gss(y - (E + 0.019), 0.0078) * gss(Math.max(0, a - 0.028), 0.030);
+  d -= 0.0115 * gss(a - 0.0345, 0.0165) * gss(y - (E + 0.002), 0.0110);
+  d += 0.0070 * F.brow * gss(y - (E + 0.019), 0.0078) * gss(Math.max(0, a - 0.028), 0.030);
   // glabella: the brows meet over the bridge
   d += 0.0015 * F.brow * gss(a, 0.012) * gss(y - (E + 0.012), 0.008);
   // Cheekbones, and the soft hollow under them.
@@ -1359,8 +1370,9 @@ function buildHair(style, seed, hair, grid, body) {
     [0.24, close ? J.eye - 0.012 : J.eye - 0.030],   // sideburn, in front of the ear
     // Over the ear, and behind it: short hair clears the top of the ear
     // (which reaches brow height now it is modelled), long hair covers it.
-    [0.07, covers ? J.eye - 0.030 : J.eye + 0.020],
-    [-0.18, covers ? J.eye - 0.034 : J.eye + 0.014],
+    // (6-8 mm higher than round three: the locks over it stand off the head)
+    [0.07, covers ? J.eye - 0.030 : J.eye + 0.026],
+    [-0.18, covers ? J.eye - 0.034 : J.eye + 0.022],
     [-0.60, J.eye - 0.052],
     [-Math.PI / 2, napeY],
   ];
@@ -1404,7 +1416,10 @@ function buildHair(style, seed, hair, grid, body) {
   const rows = [], sG = [];
   // The outer layer of locks (CELLS.locks), on the styles that have length
   // to lie in locks; its rows are the shell's from the edge up to the crown.
-  const layered = style === 'crop' || style === 'side' || curtain;
+  const layered = style === 'crop' || style === 'side' || curtain || style === 'curly';
+  // Curls lie in a second layer of the curly cell, further out and lumpier,
+  // so the edge is two rows of scallops and the outline is bumps, not a cap.
+  const oCell = style === 'curly' ? CELLS.curly : CELLS.locks;
   const over = [], sO = [];
   const op1 = hash2(seed, 74) * 6.28, op2 = hash2(seed, 75) * 6.28;
   for (let i0 = 0; i0 < NR; i0++) {
@@ -1451,10 +1466,11 @@ function buildHair(style, seed, hair, grid, body) {
         // (from the tip band's middle row: the locks' ends fall over the
         // shell's own ragged edge, not above it)
         let o = i === -1 ? 0.0007 : i === 0 ? 0.0012 : i === 1 ? 0.0024 : 0.0030 + 0.0050 * n * (sa > 0.5 ? 0.6 : 1);
+        if (style === 'curly' && i >= 1) o = 0.004 + 0.009 * hash2(jj * 13 + i * 5, seed + 21);
         if (style === 'side') o *= 1 - 0.8 * gss(th - partTh, 0.07);
         const t2 = th2 + o;
         orow.push([p[0] + p[2] * t2, y + p[3] * t2, p[1] + p[4] * t2]);
-        sorow.push(i === -1 ? 0 : 0.10 + 0.90 * Math.pow(clamp(v, 0, 1), 0.8));
+        sorow.push(i === -1 ? 0 : style === 'curly' ? TIP_S + (1 - TIP_S) * v : 0.10 + 0.90 * Math.pow(clamp(v, 0, 1), 0.8));
       }
     }
     rows.push(row); sG.push(srow);
@@ -1476,7 +1492,7 @@ function buildHair(style, seed, hair, grid, body) {
     hb.patch(over, hair, [0, 1, 0]);
     hb.lockV0 = v0;
     const R2 = over.length;
-    mapUV(v0, (u, v) => [colU(Math.round(u * K)), sO[Math.round(v * (R2 - 1))][Math.round(u * K)], CELLS.locks]);
+    mapUV(v0, (u, v) => [colU(Math.round(u * K)), sO[Math.round(v * (R2 - 1))][Math.round(u * K)], oCell]);
     hb.lockV1 = nv();
   }
   // Close the crown. The last row is a ring the width of the skull's top, and
@@ -1495,7 +1511,7 @@ function buildHair(style, seed, hair, grid, body) {
       const um = (colU(j) + colU(j + 1)) / 2;
       mapUV(v0, (u, v, k) => {
         const x = hb.pos[3 * k], z = hb.pos[3 * k + 2];
-        if (layered) return [um, 1, CELLS.locks];
+        if (layered) return [um, 1, oCell];
         if (x === c[0] && z === c[2]) return [um, 1];
         return [x === last[j][0] && z === last[j][2] ? colU(j) : colU(j + 1), 1];
       });
