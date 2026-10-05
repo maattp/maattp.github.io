@@ -341,24 +341,50 @@ function makeUnderpassDepth(underpasses) {
     const list = upGrid.get(skey(Math.floor(x / UP_CELL), Math.floor(z / UP_CELL))) || UP_NONE;
     for (const up of list) {
       if (x < up.x0 || x > up.x1 || z < up.z0 || z > up.z1) continue;
-      // a street beside a freeway's dip keeps its ground (gradeRoads)
-      if (up.prot && up.prot.length) {
-        let on = false;
-        for (let k = 0; k < up.prot.length; k += 5) {
-          if (segDist(x, z, up.prot[k], up.prot[k + 1], up.prot[k + 2], up.prot[k + 3]) < up.prot[k + 4]) { on = true; break; }
-        }
-        if (on) continue;
-      }
+      // A street beside a freeway's dip keeps its ground (gradeRoads) -- on
+      // the trench's bank only: over the carriageway itself the road must be
+      // dug whatever runs beside it (on the street side of a neighbouring
+      // carriageway's dip, the protection left 1 m of ground over its lanes).
+      let prot = -1;
       for (let i = 0; i < up.pts.length - 1; i++) {
         const p = up.pts[i], q = up.pts[i + 1];
         const r = distToSeg(x, z, p.x, p.z, q.x, q.z);
         if (r.d > up.hw + 1.5) continue;
+        if (r.d > up.hw - 0.3 && up.prot && up.prot.length) {
+          if (prot < 0) {
+            prot = 0;
+            for (let k = 0; k < up.prot.length; k += 5) {
+              if (segDist(x, z, up.prot[k], up.prot[k + 1], up.prot[k + 2], up.prot[k + 3]) < up.prot[k + 4]) { prot = 1; break; }
+            }
+          }
+          if (prot) continue;
+        }
         const dd = up.pd ? p.d + (q.d - p.d) * r.t : depthAlong(up, p.s + (q.s - p.s) * r.t);
         const v = r.d <= up.hw ? dd : dd * (1 - (r.d - up.hw) / 1.5);
         if (v > best) best = v;
       }
     }
     return best;
+  };
+  // Does a freeway dip's carve reach into this box? Analytic, per segment: a
+  // ramp's trench is ~10 m wide, and the 3 x 3 samples a 40 m cell is tested
+  // at (underpassCell) fell either side of it, so the cell was not
+  // re-tessellated and drew its corners' raw ground 1 m over the ramp.
+  underpassDepth.fwyIn = (x0, z0, x1, z1) => {
+    const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, half = Math.hypot(x1 - x0, z1 - z0) / 2;
+    for (let gx = Math.floor(x0 / UP_CELL); gx <= Math.floor(x1 / UP_CELL); gx++) {
+      for (let gz = Math.floor(z0 / UP_CELL); gz <= Math.floor(z1 / UP_CELL); gz++) {
+        for (const up of upGrid.get(skey(gx, gz)) || UP_NONE) {
+          if (!up.pd || up.x1 < x0 || up.x0 > x1 || up.z1 < z0 || up.z0 > z1) continue;
+          for (let i = 0; i < up.pts.length - 1; i++) {
+            const p = up.pts[i], q = up.pts[i + 1];
+            if (Math.max(p.d, q.d) <= 0.05) continue;
+            if (segDist(cx, cz, p.x, p.z, q.x, q.z) < half + up.hw + 1.5) return true;
+          }
+        }
+      }
+    }
+    return false;
   };
   // Does any underpass lie filed under the grid cells a box touches? (lets the
   // terrain skip its per-cell sampling almost everywhere)
@@ -561,6 +587,28 @@ function gradeRoads(nodes, edges) {
   };
   const W = new Float64Array(N);
   for (let i = 0; i < N; i++) { const l = adj[i]; for (let q = 1; q < l.length; q += 3) W[i] += l[q] / 2; }
+  // average_R(dilate_R(v)) of a field that is zero almost everywhere, on the
+  // cached PROF_R windows and only where it can be non-zero: the samples
+  // within PROF_R of a non-zero one (dilate), then within PROF_R of those
+  // (average). Returns [samples, values]. Never below v, as in the solve.
+  const smoothUp = (v) => {
+    const s1 = new Set(), s2 = new Set();
+    for (let i = 0; i < N; i++) if (v[i] > 0) for (const j of aroundC(i, PROF_R)) s1.add(j);
+    const D = new Map();
+    for (const i of s1) {
+      let m = v[i];
+      for (const j of aroundC(i, PROF_R)) if (v[j] > m) m = v[j];
+      D.set(i, m);
+      for (const j of aroundC(i, PROF_R)) s2.add(j);
+    }
+    const out = [];
+    for (const i of s2) {
+      let a = 0, sw = 0;
+      for (const j of aroundC(i, PROF_R)) { a += (D.get(j) || 0) * W[j]; sw += W[j]; }
+      out.push(i, sw > 0 ? a / sw : D.get(i) || 0);
+    }
+    return out;
+  };
 
   // --- carriageways that overlap at the same level ---
   // Real carriageways run shoulder to shoulder, and widths from lane counts
@@ -581,6 +629,7 @@ function gradeRoads(nodes, edges) {
   }
   const couple = [];
   const coupled = new Uint8Array(N);
+  const lvPairs = [];
   const parallelTo = (i, j) => {
     let par = false;
     edgesOf(i, (e) => { edgesOf(j, (q) => { if (Math.abs(e.dx * q.dx + e.dz * q.dz) > 0.8) par = true; }); });
@@ -607,13 +656,20 @@ function gradeRoads(nodes, edges) {
         for (const j of l) {
           if (j === i || fixed[j]) continue;
           // squared: millions of pairs, and hypot is slow
-          const ddx = SX[i] - SX[j], ddz = SZ[i] - SZ[j], rr = hwOf[i] + hwOf[j] - 0.5;
-          if (rr <= 0 || ddx * ddx + ddz * ddz >= rr * rr || Math.abs(levelOf[i] - levelOf[j]) > 2) continue;
+          const ddx = SX[i] - SX[j], ddz = SZ[i] - SZ[j], rr = hwOf[i] + hwOf[j] - 0.5, d2 = ddx * ddx + ddz * ddz;
+          const cpl = rr > 0 && d2 < rr * rr && Math.abs(levelOf[i] - levelOf[j]) <= 2;
+          // ...and, at any level, every neighbour sample whose road could
+          // catch this one's centre: the candidates the levelling pass after
+          // the solve tests (it reuses this scan rather than making its own).
+          const lv = d2 < (hwOf[j] + 2) * (hwOf[j] + 2) + 9;
+          if (!cpl && !lv) continue;
           // Side by side, not across: a deck crossing over a freeway reads
           // "level" off its imported node chord, then solves 6 m higher for
           // clearance, and the blend below averaged the freeway up toward it
           // -- 4-5 m humps at 20 % on I-5 under S Holgate St.
           if (!parallelTo(i, j)) continue;
+          if (lv) lvPairs.push(i, j);
+          if (!cpl) continue;
           // Not its own carriageway: anything within 30 m along the graph is
           // the same road carrying on, and coupling to it would ratchet the
           // whole chain up to its highest sample.
@@ -948,63 +1004,46 @@ function gradeRoads(nodes, edges) {
       if (o.elev || isDeck[v] || coupled[v]) return h;
       return h + clamp(gx[v] * -o.dz + gz[v] * o.dx, -CAMBER_MAX, CAMBER_MAX) * lat;
     };
-    for (let ei = 0; ei < edges.length; ei++) {
-      const e = edges[ei];
-      if (!e.prof) continue;
-      const a = nodes[e.a], b = nodes[e.b];
-      // near-parallel graded neighbours whose bounds reach this edge
-      const cand = [];
-      for (let gx0 = Math.floor((Math.min(a.x, b.x) - 20) / CELL); gx0 <= Math.floor((Math.max(a.x, b.x) + 20) / CELL); gx0++) {
-        for (let gz0 = Math.floor((Math.min(a.z, b.z) - 20) / CELL); gz0 <= Math.floor((Math.max(a.z, b.z) + 20) / CELL); gz0++) {
-          const l = grid.get(skey(gx0, gz0));
-          if (!l) continue;
-          for (const oi of l) {
-            const o = edges[oi];
-            if (oi === ei || !o.prof || cand.includes(o)) continue;
-            if (Math.abs(e.dx * o.dx + e.dz * o.dz) < 0.8) continue;
-            cand.push(o);
-          }
-        }
+    // (pairs come sample by sample, so one road's many samples near this one
+    // are tested once: `seenBy`)
+    const seenBy = new Map(), lastV = new Int32Array(edges.length);
+    for (let q = 0; q < lvPairs.length; q += 2) {
+      const v = lvPairs[q], j = lvPairs[q + 1];
+      if (ED[j] >= 0) {
+        if (lastV[ED[j]] === v + 1) continue;
+        lastV[ED[j]] = v + 1;
       }
-      if (!cand.length) continue;
-      // ...node samples too (shared by the edges meeting there): left out,
-      // the raise reached a node only through its neighbours' smoothing
-      for (let i = 0; i <= e.pk; i++) {
-        const v = e.ps[i];
-        if (fixed[v]) continue;
-        const x = SX[v], z = SZ[v];
-        for (const o of cand) {
-          if (o.ps.includes(v)) continue;
-          const oa = nodes[o.a];
-          const u = ((x - oa.x) * o.dx + (z - oa.z) * o.dz) / o.len;
-          if (u <= 0 || u >= 1) continue;
-          const lat = (x - oa.x) * -o.dz + (z - oa.z) * o.dx;
-          // o must reach this road's centre as groundAt catches it (its
-          // lanes, plus the 1.5 m a deck catches past its edge), and must not
-          // be this road carrying on (a centreline under 0.5 m away)
-          if (Math.abs(lat) > o.hw + (o.elev ? 1.5 : 0.4) || Math.abs(lat) < 0.5) continue;
-          const dh = surfOf(o, u, lat) - H0[v];
-          if (dh > 0.02 && dh < 0.4 && dh > up[v]) up[v] = dh;
-        }
+      const x = SX[v], z = SZ[v], nv = NV[v], own = ED[v] >= 0 ? edges[ED[v]] : null;
+      edgesOf(j, (o) => {
+        if (o === own || (nv >= 0 && (o.a === nv || o.b === nv))) return;   // its own road
+        if (seenBy.get(o) === v) return;
+        seenBy.set(o, v);
+        const oa = nodes[o.a];
+        const u = ((x - oa.x) * o.dx + (z - oa.z) * o.dz) / o.len;
+        if (u <= 0 || u >= 1) return;
+        const lat = (x - oa.x) * -o.dz + (z - oa.z) * o.dx;
+        // o must reach this road's centre as groundAt catches it (its
+        // lanes, plus the 1.5 m a deck catches past its edge), and must not
+        // be this road carrying on (a centreline under 0.5 m away)
+        if (Math.abs(lat) > o.hw + (o.elev ? 1.5 : 0.4) || Math.abs(lat) < 0.5) return;
+        const dh = surfOf(o, u, lat) - H0[v];
+        if (dh > 0.02 && dh < 0.4 && dh > up[v]) up[v] = dh;
+      });
+    }
+    // Dilate, then average, over every sample: the windows are the solve's
+    // own cached lists. (Collecting a 40 m support set per raised sample
+    // first built a new neighbour cache and cost far more than both passes.)
+    for (let i = 0; i < N; i++) if (up[i] > 0) levelled++;
+    if (levelled) {
+      const sm = smoothUp(up);
+      for (let q = 0; q < sm.length; q += 2) {
+        const i = sm[q], r = sm[q + 1];
+        if (fixed[i]) continue;
+        // The anchor cap only where an anchor is near: on a deck the imported
+        // floor already stands over the cap's cone, and capped there the raise
+        // did nothing at all (the Ship Canal Bridge's ramps).
+        if (r > 0.005) H[i] = Math.max(H[i], Math.min(H0[i] + r, dFix[i] > 60 ? Infinity : capFix[i]));
       }
-    }
-    const sup = new Set();
-    for (let i = 0; i < N; i++) if (up[i] > 0) { levelled++; for (const q of aroundC(i, PROF_R * 2)) sup.add(q); }
-    const Dl = new Float64Array(N);
-    for (const i of sup) {
-      let m = up[i];
-      for (const j of aroundC(i, PROF_R)) if (up[j] > m) m = up[j];
-      Dl[i] = m;
-    }
-    for (const i of sup) {
-      if (fixed[i]) continue;
-      let s2 = 0, sw = 0;
-      for (const j of aroundC(i, PROF_R)) { s2 += Dl[j] * W[j]; sw += W[j]; }
-      const r = sw > 0 ? s2 / sw : Dl[i];
-      // The anchor cap only where an anchor is near: on a deck the imported
-      // floor already stands over the cap's cone, and capped there the raise
-      // did nothing at all (the Ship Canal Bridge's ramps).
-      if (r > 0.005) H[i] = Math.max(H[i], Math.min(H0[i] + r, dFix[i] > 60 ? Infinity : capFix[i]));
     }
   }
   cityStats.levelledSamples = levelled;
@@ -1059,6 +1098,8 @@ function gradeRoads(nodes, edges) {
   const dipWhy = { max: 0, anchor: 0, deck: 0, water: 0, street: 0 };
   const evals = [];
   const dipProtect = new Set();
+  const eStamp = new Int32Array(edges.length);
+  let stampQ = 0;
   {
     const isDeckEdge = (i) => { let d = false; edgesOf(i, (e) => { if (e.elev) d = true; }); return d; };
     for (const c of refusedList) {
@@ -1102,7 +1143,7 @@ function gradeRoads(nodes, edges) {
         lowest = Math.min(lowest, H[j] - (need - r));
       }
       const support = new Set();
-      for (const j of d0.keys()) for (const q of aroundC(j, PROF_R * 2)) support.add(q);
+      for (const j of d0.keys()) for (const q of around(j, PROF_R * 2)) support.add(q);
       for (const j of support) {
         if (fixed[j]) { ok = false; dipWhy.anchor++; break; }
         if (isDeckEdge(j)) { ok = false; dipWhy.deck++; break; }
@@ -1126,34 +1167,51 @@ function gradeRoads(nodes, edges) {
       // Water: Lake Washington and the lakes stand ~6 m, the Sound at 0.
       if (ok && (lowest < 9 || G.isWater(c.x, c.z))) { ok = false; dipWhy.water++; }
       if (ok) {
-        // A draped road beside the trench would be dug with it.
-        for (const j of d0.keys()) {
-          if (!ok) break;
+        // A draped road beside the trench would be dug with it. The samples
+        // the carve digs (the lowered road IN the ground, not on a fill),
+        // then the draped roads near their bounds, then the distances.
+        const digs = [];
+        let qx0 = Infinity, qx1 = -Infinity, qz0 = Infinity, qz1 = -Infinity;
+        for (const [j, dj] of d0) {
+          if (dj < 0.4) continue;   // the carve is never deeper than the dip
           const x = SX[j], z = SZ[j];
-          // only where the lowered road is IN the ground (a fill just gets
-          // lower; nothing is dug under it)
           let tMax = -Infinity;
           edgesOf(j, (e) => {
             const px = -e.dz, pz = e.dx;
             for (const o of [-e.hw, 0, e.hw]) tMax = Math.max(tMax, T(x + px * o, z + pz * o));
           });
-          if (tMax - (H[j] - d0.get(j) - ROAD_LIFT) < 0.4) continue;
-          for (let gx0 = Math.floor((x - 30) / CELL); gx0 <= Math.floor((x + 30) / CELL) && ok; gx0++) {
-            for (let gz0 = Math.floor((z - 30) / CELL); gz0 <= Math.floor((z + 30) / CELL) && ok; gz0++) {
-              const l = grid.get(skey(gx0, gz0));
-              if (!l) continue;
-              for (const oi of l) {
+          if (tMax - (H[j] - dj - ROAD_LIFT) < 0.4) continue;
+          digs.push(j);
+          qx0 = Math.min(qx0, x); qx1 = Math.max(qx1, x); qz0 = Math.min(qz0, z); qz1 = Math.max(qz1, z);
+        }
+        if (digs.length) {
+          const cand = [];
+          stampQ++;
+          for (let gx0 = Math.floor((qx0 - 30) / CELL); gx0 <= Math.floor((qx1 + 30) / CELL); gx0++) {
+            for (let gz0 = Math.floor((qz0 - 30) / CELL); gz0 <= Math.floor((qz1 + 30) / CELL); gz0++) {
+              for (const oi of grid.get(skey(gx0, gz0)) || []) {
+                if (eStamp[oi] === stampQ) continue;
+                eStamp[oi] = stampQ;
                 const o = edges[oi];
                 if (o.prof || o.tunnel || o.elev) continue;
                 const oa = nodes[o.a], ob = nodes[o.b];
-                const dd = distToSeg(x, z, oa.x, oa.z, ob.x, ob.z).d - hwOf[j] - o.hw - walkWidth(o.cls);
-                // Over the freeway's own lanes: nothing can be done. Beside
-                // them, on the trench's bank (the crossing street running on
-                // past a deck that ends at the kerb, mostly), the carve is
-                // kept off it instead (`prot`, makeUnderpassDepth).
-                if (dd < 0.3) { ok = false; dipWhy.street++; break; }
-                if (dd < 2.2) prot.add(oi);
+                if (Math.max(oa.x, ob.x) < qx0 - 40 || Math.min(oa.x, ob.x) > qx1 + 40) continue;
+                if (Math.max(oa.z, ob.z) < qz0 - 40 || Math.min(oa.z, ob.z) > qz1 + 40) continue;
+                cand.push(oi);
               }
+            }
+          }
+          for (const j of digs) {
+            if (!ok) break;
+            for (const oi of cand) {
+              const o = edges[oi], oa = nodes[o.a], ob = nodes[o.b];
+              const dd = segDist(SX[j], SZ[j], oa.x, oa.z, ob.x, ob.z) - hwOf[j] - o.hw - walkWidth(o.cls);
+              // Over the freeway's own lanes: nothing can be done. Beside
+              // them, on the trench's bank (the crossing street running on
+              // past a deck that ends at the kerb, mostly), the carve is
+              // kept off it instead (`prot`, makeUnderpassDepth).
+              if (dd < 0.3) { ok = false; dipWhy.street++; break; }
+              if (dd < 2.2) prot.add(oi);
             }
           }
         }
@@ -1171,24 +1229,17 @@ function gradeRoads(nodes, edges) {
     }
     if (fwyDips.length) {
       // dilate, then average: never less than the raw dip, corners rounded
-      const sup = new Set();
-      for (let i = 0; i < N; i++) if (dipOf[i] > 0) for (const q of aroundC(i, PROF_R * 2)) sup.add(q);
-      const Dd = new Float64Array(N);
-      for (const i of sup) {
-        let m = dipOf[i];
-        for (const j of aroundC(i, PROF_R)) if (dipOf[j] > m) m = dipOf[j];
-        Dd[i] = m;
-      }
-      for (const i of sup) {
+      // (over every sample, on the solve's cached windows)
+      const sm = smoothUp(dipOf);
+      dipOf.fill(0);
+      for (let q = 0; q < sm.length; q += 2) {
+        const i = sm[q], d = sm[q + 1];
         if (fixed[i]) continue;
-        let s = 0, sw = 0;
-        for (const j of aroundC(i, PROF_R)) { s += Dd[j] * W[j]; sw += W[j]; }
-        const d = sw > 0 ? s / sw : Dd[i];
-        if (d > 0.005) { H[i] -= d; dipOf[i] = d; } else dipOf[i] = 0;
+        if (d > 0.005) { H[i] -= d; dipOf[i] = d; }
       }
     }
   }
-  cityStats.fwyDips = fwyDips.length; cityStats.fwyDipList = fwyDips;
+  cityStats.fwyDips = fwyDips.length;
   cityStats.fwyDipNoRoom = dipNoRoom;
   cityStats.fwyDipWhy = dipWhy;
 
@@ -3335,6 +3386,7 @@ export function* cityGenerator(md, cache = {}) {
     underpassCell(cx, cz, S) {
       if (!grading.underpasses.length) return false;
       if (!grading.underpassDepth.near(cx, cz, cx + S, cz + S)) return false;
+      if (grading.underpassDepth.fwyIn && grading.underpassDepth.fwyIn(cx, cz, cx + S, cz + S)) return true;
       for (let j = 0; j <= 2; j++) {
         for (let i = 0; i <= 2; i++) {
           if (grading.underpassDepth(cx + (i * S) / 2, cz + (j * S) / 2) > 0.05) return true;
