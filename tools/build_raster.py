@@ -108,7 +108,20 @@ def build_height():
           f"({deep} samples clamped up to the -25 m sea-bed floor)")
     # The PNG is written after carve_lakes(), not here: the bed under standing
     # water has to be dug out before this is the surface anything stands on.
-    return h
+
+    def hires(x, z):
+        """The full-resolution mosaic at world (x, z), bilinear (vectorised)."""
+        xt2, _ = deg2tile_f(np.full_like(x, LAT0), LON0 + x / M_LON, ZOOM)
+        _, yt2 = deg2tile_f(LAT0 - z / M_LAT, np.full_like(z, LON0), ZOOM)
+        qx = xt2 * 256.0 - x0 * 256.0
+        qy = yt2 * 256.0 - y0 * 256.0
+        xi = np.clip(np.floor(qx).astype(int), 0, W - 2)
+        yi = np.clip(np.floor(qy).astype(int), 0, H - 2)
+        ax = np.clip(qx - xi, 0, 1)
+        ay = np.clip(qy - yi, 0, 1)
+        return (mosaic[yi, xi] * (1 - ax) * (1 - ay) + mosaic[yi, xi + 1] * ax * (1 - ay)
+                + mosaic[yi + 1, xi] * (1 - ax) * ay + mosaic[yi + 1, xi + 1] * ax * ay)
+    return h, hires
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +306,7 @@ def grade_airfield(h):
     import numpy as np
     AX, AZ, RY = 2707.0, 9055.0, -0.52
     HW, HL, FIELD, BLEND = 520.0, 1680.0, 5.2, 120.0
+    HILL, HILL_RAMP = 40.0, 15.0   # graded fully to 25 m over the field, not at all from 40
     c, sn = math.cos(RY), math.sin(RY)
     n = h.shape[0]
     step = (2 * MAP_HALF) / (n - 1)
@@ -305,6 +319,15 @@ def grade_airfield(h):
     dzo = np.maximum(np.abs(lz) - HL, 0)
     d = np.hypot(dxo, dzo)
     w = np.clip(1 - d / BLEND, 0, 1)
+    # ...and only the FIELD. The rectangle's east side runs up onto the hill
+    # behind the hangars, and its south-east corner took Beacon Hill's 70 m
+    # slope down to the runway: a 65-70 m pit under 38th, 39th and Cecil
+    # Avenues South and Beacon Avenue, its streets at 40-50 % grades (the
+    # worst site in tools/ridesurvey.mjs). The smear this exists for is the
+    # north bluff, ~20 m over the field; ground standing well above that is
+    # hillside, and is left alone.
+    over = h - FIELD
+    w = w * np.clip((HILL - over) / HILL_RAMP, 0, 1)
     graded = np.where(w > 0, h * (1 - w) + FIELD * w, h)
     inside = w >= 1
     print(f"  airfield graded: {int(inside.sum())} cells set to {FIELD} m, "
@@ -502,6 +525,17 @@ def carve_lakes(h, wet):
     return h
 
 
+def wet_near_vertex(wet):
+    """Vertices with any water within 20 m (the 5 x 5 mask cells round them)."""
+    k = HF_STEP // MASK_STEP
+    out = np.zeros((HF_N, HF_N), dtype=bool)
+    pad = np.pad(wet, 2)
+    for dj in range(5):
+        for di in range(5):
+            out |= pad[dj:dj + (HF_N - 1) * k + 1:k, di:di + (HF_N - 1) * k + 1:k]
+    return out
+
+
 def save_height(h):
     q = np.clip(np.rint((h + 100.0) * 10.0), 0, 65535).astype(np.uint32)
     img = np.zeros((HF_N, HF_N, 3), dtype=np.uint8)
@@ -512,10 +546,16 @@ def save_height(h):
 
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
-    h = build_height()
+    h, hires = build_height()
     wet = build_masks()
+    h0 = h.copy()
     h = carve_lakes(h, wet)
     h = grade_airfield(h)
+    # Streets last: nothing the lake carve or the airfield set may move, nor
+    # any vertex whose 40 m cell touches water (the shore is the water's).
+    keep = (h != h0) | wet_near_vertex(wet)
+    from grade_streets import grade_streets
+    h = grade_streets(h, keep, hires, MAP_HALF, HF_STEP)
     save_height(h)
     ok = probe(h, wet)
     for fn in ("height.png", "surface.png"):
