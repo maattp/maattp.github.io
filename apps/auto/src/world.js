@@ -911,6 +911,14 @@ export class World {
     }
   }
 
+  /** The mid ring's road and pavement tints, read off the texture canvases --
+   *  which a phone lets go once uploaded (memory.js), so main.js primes this
+   *  before it does. */
+  primeMidTint() {
+    if (!this._midTint) this._midTint = { road: meanLinear(this.tx.road.map), walk: meanLinear(this.tx.sidewalk.map) };
+    return this._midTint;
+  }
+
   *buildTerrain() {
     // Before a single terrain vertex is generated: the portal trenches become
     // part of the height surface, so this mesh and every road drawn on it
@@ -4287,7 +4295,7 @@ float frLine(float o, float fw, float c, float w) {
     // albedo: a mid chunk is one draw instead of three, and draw calls are
     // what an iPhone runs out of first.
     if (lod === 0) {
-      if (!this._midTint) this._midTint = { road: meanLinear(this.tx.road.map), walk: meanLinear(this.tx.sidewalk.map) };
+      this.primeMidTint();
       flat.appendTinted(road, this._midTint.road);
       flat.appendTinted(walk, this._midTint.walk);
       road.nv = road.ni = 0;

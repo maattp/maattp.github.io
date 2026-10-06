@@ -17,6 +17,7 @@ import { Islands } from './islands.js';
 import { Piers } from './piers.js';
 import { PickleballCourt } from './pickleball.js';
 import { freezeStatic, skipHiddenMatrices, Builder, dropStaticArrays } from './build.js';
+import { releaseTextureSources } from './memory.js';
 import { installChunkCull } from './chunkcull.js';
 import { Fishing } from './fishing.js';
 import { Hoops } from './hoops.js';
@@ -1307,6 +1308,16 @@ function installShadowFade() {
   bootCache.grade = bootCache.buildings = null;
   bcOut.texPlan = bcOut.mapCanvas = null;
   toKeep.length = 0;
+  // ...and on a phone every texture's canvas goes once the GPU has it
+  // (memory.js), after the cache has encoded them and the mid ring has read
+  // its tints off two of them.
+  if (ON_PHONE && !window.__keepArrays) {
+    world.primeMidTint();
+    try {
+      const r = releaseTextureSources(renderer, scene);
+      blog(`texture sources: ${r.released} let go (${(r.bytes / 1048576).toFixed(0)} MB), ${r.pending} after their first upload`);
+    } catch (e) { blog('texture sources: ' + e.message); }
+  }
   await step(0.94, 'Opening the roads');
   for (let i = 0; i < 90; i++) {
     const left = world.update(player.x, player.z, 6);

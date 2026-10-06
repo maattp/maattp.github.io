@@ -163,7 +163,7 @@ const TEX_EXPR = `(() => {
   // CPU-side sources still held by three textures (canvas backing stores and
   // decoded bitmaps live outside the JS heap in both engines)
   let src = 0; const kinds = {};
-  for (const t of names.keys()) { const im = t.image; if (!im || !im.width) continue; const k = im.constructor ? im.constructor.name : '?'; const b = im.width * im.height * 4 * (im.depth || 1); src += b; kinds[k] = (kinds[k] || 0) + b; }
+  for (const t of names.keys()) { const im = t.image; if (!im || !im.width || im.__released) continue; const k = im.constructor ? im.constructor.name : '?'; const b = im.width * im.height * 4 * (im.depth || 1); src += b; kinds[k] = (kinds[k] || 0) + b; }
   rows.srcLine = ('texture sources held: ' + (src / 1e6).toFixed(1) + ' MB ' + JSON.stringify(Object.fromEntries(Object.entries(kinds).map(([k, v]) => [k, +(v / 1e6).toFixed(1)]))));
   rows.sort((a, b) => b[0] - a[0]);
   let unnamed = 0; for (const r of rows) if (r[1][0] === '(') unnamed += r[0];
