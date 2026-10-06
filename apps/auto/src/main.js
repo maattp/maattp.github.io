@@ -16,7 +16,7 @@ import { BikeNet, Cyclists } from './bikes.js';
 import { Islands } from './islands.js';
 import { Piers } from './piers.js';
 import { PickleballCourt } from './pickleball.js';
-import { freezeStatic, skipHiddenMatrices, Builder } from './build.js';
+import { freezeStatic, skipHiddenMatrices, Builder, dropStaticArrays } from './build.js';
 import { installChunkCull } from './chunkcull.js';
 import { Fishing } from './fishing.js';
 import { Hoops } from './hoops.js';
@@ -861,6 +861,26 @@ function installShadowFade() {
   piers = new Piers(md.piers, { scene, city, dropArrays: ON_PHONE, waterAt: (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; } });
   // on a phone their arrays go once uploaded: a lost context rebuilds them
   if (ON_PHONE) renderer.domElement.addEventListener('webglcontextlost', () => { piers.contextLost(); bikeNet.contextLost(); });
+  // A lost context cannot be re-uploaded on a phone: the static city keeps no
+  // JS copy of what the GPU holds (dropStaticArrays, below). A context lost on
+  // an iPhone is the GPU process going away under memory pressure, and the
+  // way back is a fresh page -- once: a second loss inside a minute of the
+  // last reload is left alone rather than looped.
+  if (ON_PHONE) {
+    let reloading = false;
+    const reload = () => {
+      if (reloading) return;
+      let last = 0;
+      try { last = +sessionStorage.getItem('auto-ctx-reload') || 0; } catch (e) { /* no storage */ }
+      if (Date.now() - last < 60000) return;
+      reloading = true;
+      try { sessionStorage.setItem('auto-ctx-reload', String(Date.now())); } catch (e) { /* no storage */ }
+      flight('reloading after the lost context', true);
+      location.reload();
+    };
+    renderer.domElement.addEventListener('webglcontextlost', () => setTimeout(reload, 1500));
+    renderer.domElement.addEventListener('webglcontextrestored', reload);
+  }
   // the flight recorder hears about the GPU going away (index.html)
   renderer.domElement.addEventListener('webglcontextlost', () => flight('WEBGL CONTEXT LOST', true));
   renderer.domElement.addEventListener('webglcontextrestored', () => flight('webgl context restored', true));
@@ -895,6 +915,17 @@ function installShadowFade() {
   if (world.terrainGroup) freezeStatic(world.terrainGroup);
   // after the shadow cache: its wrapper on shadowMap.render goes inside ours
   chunkCull = installChunkCull(renderer, world.group);
+  // ON A PHONE THE STATIC CITY KEEPS ONE COPY, NOT TWO (CLAUDE.md "Memory"):
+  // the terrain, the skyline, the landmarks, Link's and the freight line's
+  // structure and trains drop their JS arrays once the GPU has them. Before
+  // the first frame, so nothing has been uploaded yet. `__keepArrays` keeps
+  // them (a harness that wants to raycast on the phone profile).
+  if (ON_PHONE && !window.__keepArrays) {
+    let b = 0;
+    for (const r of [world.terrainGroup, world.skyline, lmRoot, link.group, link.tunGroup, freight.group, freight.tunGroup, freight.yardGroup]) if (r) b += dropStaticArrays(r);
+    for (const t of [...link.trains, ...freight.trains, ...Object.values(monorail.trains || {})]) for (const m of t.meshes || []) b += dropStaticArrays(m);
+    blog(`static geometry: ${(b / 1048576).toFixed(0)} MB of arrays go once uploaded`);
+  }
 
   await step(0.9, 'Waking the city');
   game = new Game();

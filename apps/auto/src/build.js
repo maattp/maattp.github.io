@@ -132,6 +132,39 @@ export function dropAfterUpload(m) {
   return m;
 }
 
+/**
+ * dropAfterUpload for a whole static subtree (phones; see CLAUDE.md "Memory").
+ * Every geometry under `root` keeps its arrays until it is first drawn, then
+ * keeps only the GPU's copy: what you never go near stays one copy in JS, what
+ * you have seen is one copy on the GPU, and nothing is both. Bounds are taken
+ * first (three computes them lazily, from the arrays). A mesh that rewrites its
+ * geometry later is marked `userData.keepArrays`; a skinned mesh without its
+ * own bounding sphere keeps its arrays (three bounds it from the vertices).
+ * A lost context cannot re-upload any of it: main.js reloads the page.
+ * Returns the bytes that will go.
+ */
+export function dropStaticArrays(root) {
+  let bytes = 0;
+  const drop = function () { this.array = null; };
+  root.traverse((o) => {
+    const g = o.geometry;
+    if (!g || o.userData.keepArrays || (o.isSkinnedMesh && !o.boundingSphere)) return;
+    if (g.userData.dropArrays || g.morphAttributes.position) return;
+    g.userData.dropArrays = true;
+    if (!g.boundingSphere) g.computeBoundingSphere();
+    if (!g.boundingBox) g.computeBoundingBox();
+    const one = (a) => {
+      if (!a || a.isInterleavedBufferAttribute || !a.array) return;
+      bytes += a.array.byteLength;
+      a.onUpload(drop);
+    };
+    for (const k in g.attributes) one(g.attributes[k]);
+    one(g.index);
+    o.raycast = () => {};
+  });
+  return bytes;
+}
+
 export class Builder {
   constructor(useUV = true) {
     this.useUV = useUV;
