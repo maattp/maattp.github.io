@@ -1329,6 +1329,9 @@ function installShadowFade() {
     // ...and the vehicle types' geometry once uploaded (the snapshot above
     // has been written, and traffic made every far LOD at boot)
     try { blog(`vehicle geometry: ${(dropVehicleArrays() / 1048576).toFixed(0)} MB of arrays go once uploaded`); } catch (e) { blog('vehicle geometry: ' + e.message); }
+    // ...and the last static pieces made after the city's: the golf course,
+    // the ferries and their terminals
+    for (const r of [golf && golf.courseMesh, ferry && ferry.group, ferry && ferry.terminals]) if (r) dropStaticArrays(r);
   }
   await step(0.94, 'Opening the roads');
   for (let i = 0; i < 90; i++) {
