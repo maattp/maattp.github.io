@@ -877,7 +877,22 @@ function installShadowFade() {
       if (reloading) return;
       let last = 0;
       try { last = +sessionStorage.getItem('auto-ctx-reload') || 0; } catch (e) { /* no storage */ }
-      if (Date.now() - last < 60000) return;
+      if (Date.now() - last < 60000) {
+        // A second loss within a minute of a reload: not looped, but never a
+        // silent broken city either (the static arrays are gone, nothing can
+        // re-upload them). Ask, and reload on the tap.
+        if (!document.getElementById('ctxLost')) {
+          const d = document.createElement('div');
+          d.id = 'ctxLost';
+          d.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;'
+            + 'background:rgba(10,14,22,0.88);color:#fff;font:600 18px system-ui,sans-serif;text-align:center;padding:24px';
+          d.textContent = 'The graphics were reset. Tap to reload.';
+          d.addEventListener('pointerup', () => location.reload());
+          document.body.appendChild(d);
+          flight('context lost again within a minute: asked to reload', true);
+        }
+        return;
+      }
       reloading = true;
       try { sessionStorage.setItem('auto-ctx-reload', String(Date.now())); } catch (e) { /* no storage */ }
       flight('reloading after the lost context', true);

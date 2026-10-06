@@ -97,19 +97,31 @@ export function installGpuLedger(gl) {
   const BPP = { 0x8229: 1, 0x1909: 1, 0x822B: 2, 0x8D62: 2, 0x822D: 2, 0x81A5: 2, 0x8051: 3, 0x8C41: 3, 0x1907: 3, 0x881A: 8, 0x8814: 16, 0x822F: 4, 0x8230: 8 };
   const bpp = (f) => BPP[f] || 4;
   const total = () => { const t = L.buf + L.tex + L.rb; if (t > L.peak) L.peak = t; };
-  // Only allocations and deletes are wrapped -- never the binds, which run
-  // hundreds of times a frame: what is bound is asked of the context, whose
-  // binding queries WebKit and Chrome answer from their own client-side state.
+  // What is bound is TRACKED here, never queried from the context: on the
+  // iPhone WebKit forwards GL calls to its GPU process, and a binding query
+  // per upload could be a synchronous round-trip on exactly the device this
+  // is for. The bind wrappers are a compare and a store (no allocation); three
+  // binds a buffer immediately before every bufferData, so the last bind is it.
   const wrap = (name, f) => { const o = gl[name]; if (typeof o !== 'function') return; gl[name] = function () { try { f.apply(null, arguments); } catch (e) { /* the ledger never breaks a call */ } return o.apply(gl, arguments); }; };
-  const BIND = { 0x8892: 0x8894, 0x8893: 0x8895, 0x8A11: 0x8A28, 0x88EB: 0x88ED, 0x88EC: 0x88EF, 0x8F36: 0x8F36, 0x8F37: 0x8F37, 0x8C8E: 0x8C8F };
+  const bindRaw = (name, f) => { const o = gl[name]; if (typeof o !== 'function') return; gl[name] = function (a, b) { f(a, b); return o.call(gl, a, b); }; };
+  const boundBuf = new Map();   // target -> buffer
+  let boundRb = null, unit = 0;
+  const texUnits = [];          // unit -> [2D, cube, 3D, 2D array]
+  const TI = { 0x0DE1: 0, 0x8513: 1, 0x806F: 2, 0x8C1A: 3 };
+  bindRaw('bindBuffer', (t, b) => { boundBuf.set(t, b); });
+  // a vertex array carries its own element-array binding: forget ours
+  bindRaw('bindVertexArray', () => { boundBuf.delete(0x8893); });
+  bindRaw('activeTexture', (u) => { unit = u - 0x84C0; });
+  bindRaw('bindTexture', (t, x) => { const i = TI[t]; if (i === undefined) return; const u = texUnits[unit] || (texUnits[unit] = [null, null, null, null]); u[i] = x; });
+  bindRaw('bindRenderbuffer', (t, r) => { boundRb = r; });
   wrap('bufferData', (t, d, u, off, len) => {
-    const b = BIND[t] && BIND[t] !== t ? gl.getParameter(BIND[t]) : null; if (!b) return;
+    const b = boundBuf.get(t); if (!b) return;
     const n = typeof d === 'number' ? d : d ? (len ? len * (d.BYTES_PER_ELEMENT || 1) : d.byteLength - (off || 0) * (d.BYTES_PER_ELEMENT || 1)) : 0;
     L.buf += n - (bufs.get(b) || 0); bufs.set(b, n); total();
   });
   wrap('deleteBuffer', (b) => { if (bufs.has(b)) { L.buf -= bufs.get(b); bufs.delete(b); } });
   // the texture bound to the active unit for a target (cube faces: the cube)
-  const cur = (t) => gl.getParameter(t === 0x0DE1 ? 0x8069 : t === 0x806F ? 0x806A : t === 0x8C1A ? 0x8C1D : 0x8514);
+  const cur = (t) => { const u = texUnits[unit]; if (!u) return null; const i = t >= 0x8515 && t <= 0x851A ? 1 : TI[t]; return i === undefined ? null : u[i]; };
   const lvl = (x, key, n) => {
     if (!x) return;
     let m = texs.get(x); if (!m) texs.set(x, (m = new Map()));
@@ -136,7 +148,7 @@ export function installGpuLedger(gl) {
     lvl(x, 'mips', Math.round(base / 3));
   });
   wrap('deleteTexture', (x) => { const m = texs.get(x); if (m) { for (const v of m.values()) L.tex -= v; texs.delete(x); } });
-  const rbSet = (n) => { const r = gl.getParameter(0x8CA7); if (!r) return; L.rb += n - (rbs.get(r) || 0); rbs.set(r, n); total(); };
+  const rbSet = (n) => { const r = boundRb; if (!r) return; L.rb += n - (rbs.get(r) || 0); rbs.set(r, n); total(); };
   wrap('renderbufferStorage', (t, f, w, h) => rbSet(w * h * bpp(f)));
   wrap('renderbufferStorageMultisample', (t, s, f, w, h) => rbSet(w * h * bpp(f) * Math.max(1, s)));
   wrap('deleteRenderbuffer', (r) => { if (rbs.has(r)) { L.rb -= rbs.get(r); rbs.delete(r); } });
