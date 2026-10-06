@@ -7691,6 +7691,18 @@ float frLine(float o, float fw, float c, float w) {
     return G.isWater(x, z) ? 0 : null;
   }
 
+  /**
+   * Is this ground under a lake's (or the canal's) surface where the lake is
+   * drawn? A lake's dug bed reaches up to a 40 m cell past the water mask, so
+   * the water mask alone left park trees, benches and tables, street trees and
+   * lamp posts standing in the drawn lake -- solid to a boat -- round the
+   * small lakes' shores.
+   */
+  inDrawnLake(x, z) {
+    const lw = this.waterLevelAt(x, z);
+    return !!lw && G.terrainHeight(x, z) < lw + 0.05;
+  }
+
   /** The ship canal at lake level (geo.js shipCanal), or null. */
   _findCanal() {
     this.canal = G.shipCanal(this.lakeSpecs || []);
@@ -7764,6 +7776,7 @@ float frLine(float o, float fw, float c, float w) {
         const ox = x + px * sg * (e.hw + 1.4);
         const oz = z + pz * sg * (e.hw + 1.4);
         if (!G.isBuildable(ox, oz)) continue;
+        if (this.inDrawnLake(ox, oz)) { cityStats.propsInLake = (cityStats.propsInLake || 0) + 1; continue; }
         if (onCorner(ei, t, sg)) continue;
         // Offsetting sideways off THIS road can land on a different one -- a
         // ramp beside a freeway puts its lamp posts and trees on the freeway,
@@ -7842,6 +7855,7 @@ float frLine(float o, float fw, float c, float w) {
           const ox = x + px * sg * (e.hw + 0.85);
           const oz = z + pz * sg * (e.hw + 0.85);
           if (!G.isBuildable(ox, oz)) continue;
+          if (this.inDrawnLake(ox, oz)) { cityStats.propsInLake = (cityStats.propsInLake || 0) + 1; continue; }
           if (onCorner(ei, t, sg)) continue;
           if (city.onRoad(ox, oz, 0.4)) { cityStats.propsSkipped++; continue; }
           if (inPit(ox, oz)) { cityStats.propsInPit++; continue; }
@@ -7963,12 +7977,16 @@ float frLine(float o, float fw, float c, float w) {
       // The water mask is the authority on what is wet; WET_FLOOR only catches
       // the shoreline band where the two rasters disagree.
       //
-      // Do NOT reach for waterLevelAt here. It answers over a lake's
-      // axis-aligned BOUNDING BOX, so it reports "Green Lake, 50.3 m" for the
-      // whole park ringing it -- and testing terrain against that level deleted
-      // 105 of Green Lake's 717 trees and 251 around Lake Union. Measured, both
-      // times, which is the only reason it did not ship.
+      // waterLevelAt once answered over a lake's axis-aligned BOUNDING BOX
+      // ("Green Lake, 50.3 m" for the whole park ringing it) and testing
+      // terrain against it deleted 105 of Green Lake's 717 trees. It now
+      // answers over the lake's own drawn water (G.inLake), which is what the
+      // lake plane is masked to -- and a lake's dug bed runs up to a 40 m cell
+      // past the water mask, so trees stood in the drawn lake, solid to boats,
+      // in front of the small lakes' docks. Ground under a lake's (or the
+      // canal's) surface where it is drawn is in the water.
       if (G.isWater(x, z) || G.terrainHeight(x, z) < WET_FLOOR) { treeSkip++; continue; }
+      if (this.inDrawnLake(x, z)) { treeSkip++; cityStats.treesInLake = (cityStats.treesInLake || 0) + 1; continue; }
       if (inPit(x, z)) { cityStats.propsInPit++; continue; }
       const h = hash2(Math.round(x), Math.round(z));
       const gy = G.terrainHeight(x, z);
@@ -8026,7 +8044,7 @@ float frLine(float o, float fw, float c, float w) {
     if (!list) return out;
     const wood = [0.42, 0.29, 0.18], woodD = [0.3, 0.21, 0.13], iron = [0.16, 0.18, 0.17];
     const standOn = (x, z, pad) => {
-      if (G.isWater(x, z) || city.onRoad(x, z, pad)) return null;
+      if (G.isWater(x, z) || this.inDrawnLake(x, z) || city.onRoad(x, z, pad)) return null;
       if (this.inBuilding(x, z, 0.2) || inPit(x, z) || city.jumpClear(x, z)) return null;
       return G.terrainHeight(x, z) + city.roadLift(x, z);
     };
