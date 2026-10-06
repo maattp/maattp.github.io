@@ -1232,7 +1232,8 @@ function installShadowFade() {
     { x: freight.yard.x, z: freight.yard.z, kind: 'freight', name: 'Freight · Balmer Yard', near: false,
       hello: 'Balmer Yard — BNSF freights stop here for a crew change. Climb up at the lead locomotive (ENTER), or tap ENTER to call the next one in' },
     ...(lmRoot.userData.marinas || []).map((mr) => ({ x: mr.x, z: mr.z, kind: 'dock', name: mr.name, near: false,
-      hello: /Blake/.test(mr.name) ? `${mr.name} — they say something's buried under an X on the island's west beach. Floatplanes and boats on the float`
+      hello: mr.hello ? mr.hello
+        : /Blake/.test(mr.name) ? `${mr.name} — they say something's buried under an X on the island's west beach. Floatplanes and boats on the float`
         : /Vashon/.test(mr.name) ? `${mr.name} — keep to the path in the woods up there. People have seen things`
         : mr.seaplanes ? `${mr.name} — floatplanes on the float. Walk out and climb in`
         : `${mr.name} — boats and jet skis. Walk out on the float and take one` })),
