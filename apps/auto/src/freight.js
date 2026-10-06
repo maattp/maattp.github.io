@@ -22,7 +22,7 @@
 
 import * as THREE from './three.js';
 import * as G from './geo.js';
-import { Builder, ChunkBuilder } from './build.js';
+import { Builder, ChunkBuilder, SinkBuilder, LazyChunks, dropStaticArrays, dropGeometryArrays } from './build.js';
 import { LinkTrack, KIND } from './link.js';
 import { vehicleAssets, tagGlass } from './vehicles.js';
 import { railCar, railDecals, RAIL_COLOURS } from './railcars.js';
@@ -499,38 +499,24 @@ export class Freight {
     this.scene = scene;
     this.bedMat = new THREE.MeshStandardMaterial({ map: bedTexture(), vertexColors: true, roughness: 0.95, metalness: 0, envMapIntensity: 0.5 });
     this.cardMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
-    const chunks = new Map();
-    const chunk = (x, z) => {
-      const k = `${Math.floor(x / CHUNK)},${Math.floor(z / CHUNK)}`;
-      let c = chunks.get(k);
-      if (!c) chunks.set(k, (c = { bed: new ChunkBuilder(true, 64), flat: new ChunkBuilder(false, 64), near: new ChunkBuilder(false, 64), tun: new ChunkBuilder(false, 64), card: new ChunkBuilder(false, 64), dec: new ChunkBuilder(true, 64), x: (Math.floor(x / CHUNK) + 0.5) * CHUNK, z: (Math.floor(z / CHUNK) + 0.5) * CHUNK }));
-      return c;
-    };
+    // LAZY, as Link's (build.js LazyChunks): the pass records, update builds.
+    const L = this.lazy = new LazyChunks(CHUNK, (sink) => {
+      const mk = (uv) => (sink ? new SinkBuilder() : new ChunkBuilder(uv, 64));
+      return { bed: mk(true), flat: mk(false), near: mk(false), tun: mk(false), card: mk(false), dec: mk(true) };
+    });
+    const chunk = L.record;
     // the eastern track is not drawn where it IS the western (single track)
-    for (const [k, tr] of Object.entries(this.tracks)) this._buildTrack(tr, chunk, k === 'nb');
+    for (const [k, tr] of Object.entries(this.tracks)) this._buildTrack(tr, chunk, k === 'nb', null, L);
+    L.op({ yard: true });
     this._buildYard(chunk);
+    L.op({ bascule: true });
     this._buildBascule(chunk);
-    for (const c of this.crossings) this._buildCrossing(c, chunk);
+    this.crossings.forEach((c, ci) => { L.op({ cross: ci }); this._buildCrossing(c, chunk); });
+    L.op(null);
     this.group = new THREE.Group(); this.group.name = 'freight';
     this.tunGroup = new THREE.Group(); this.tunGroup.name = 'freight:bores'; this.tunGroup.visible = false;
-    const dec = railDecals();
-    const mk = (b, mat, name, shadow) => {
-      if (b.empty) return null;
-      const m = new THREE.Mesh(b.build(), mat);
-      m.name = name; m.castShadow = shadow; m.receiveShadow = shadow;
-      return m;
-    };
-    for (const [key, c] of chunks) {
-      const e = { x: c.x, z: c.z,
-        bed: mk(c.bed, this.bedMat, `freight:bed:${key}`, false),
-        flat: mk(c.flat, world.mats.flat, `freight:${key}`, true),
-        near: mk(c.near, world.mats.flat, `freight:near:${key}`, false),
-        tun: mk(c.tun, world.mats.glow, `freight:bore:${key}`, false),
-        card: mk(c.card, this.cardMat, `freight:mouth:${key}`, false),
-        dec: mk(c.dec, dec.mat, `freight:signs:${key}`, false) };
-      if (e.bed) e.bed.receiveShadow = true;
-      for (const m of [e.bed, e.flat, e.near, e.card, e.dec]) if (m) this.group.add(m);
-      if (e.tun) this.tunGroup.add(e.tun);
+    for (const e of L.chunks) {
+      e.bed = e.flat = e.near = e.tun = e.card = e.dec = null;
       this.chunks.push(e);
     }
     scene.add(this.group);
@@ -541,19 +527,84 @@ export class Freight {
     }
   }
 
-  _buildTrack(tr, chunk, skipShared) {
+  /** What LazyChunks.stream drives (see link.js). The pass's other output --
+   *  solids, the yard's slots, the bascule, each crossing's gates -- was kept
+   *  at boot; the replay's is thrown away. */
+  _lazySys() {
+    if (this._sys) return this._sys;
+    const parts = ['bed', 'flat', 'near', 'tun', 'card', 'dec'];
+    this._sys = {
+      run: (o, fn) => {
+        const keep = [this.solids, this.yardSlots, this.bascule];
+        this.solids = [];
+        try {
+          if (o.seg) this._buildTrack(this.tracks[o.t], fn, o.t === 'nb', o);
+          else if (o.yard) this._buildYard(fn);
+          else if (o.bascule) this._buildBascule(fn);
+          else if (o.cross !== undefined) {
+            const c = this.crossings[o.cross], gates = c.gates;
+            try { this._buildCrossing(c, fn); } finally { c.gates = gates; }
+          }
+        } finally { this.solids = keep[0]; this.yardSlots = keep[1]; this.bascule = keep[2]; }
+      },
+      finish: (e, B) => {
+        const key = e.key, mats = this.world.mats, dec = railDecals();
+        const mk = (b, mat, name, shadow, grp) => {
+          if (b.empty) return null;
+          const m = new THREE.Mesh(b.build(), mat);
+          m.name = name; m.castShadow = shadow; m.receiveShadow = shadow;
+          m.matrixAutoUpdate = false;
+          if (this.dropArrays) dropStaticArrays(m);
+          grp.add(m);
+          return m;
+        };
+        e.bed = mk(B.bed, this.bedMat, `freight:bed:${key}`, false, this.group);
+        e.flat = mk(B.flat, mats.flat, `freight:${key}`, true, this.group);
+        e.near = mk(B.near, mats.flat, `freight:near:${key}`, false, this.group);
+        e.tun = mk(B.tun, mats.glow, `freight:bore:${key}`, false, this.tunGroup);
+        e.card = mk(B.card, this.cardMat, `freight:mouth:${key}`, false, this.group);
+        e.dec = mk(B.dec, dec.mat, `freight:signs:${key}`, false, this.group);
+        if (e.bed) e.bed.receiveShadow = true;
+        if (this.onChunkChange) this.onChunkChange(e.x, e.z, CHUNK * 0.71);
+      },
+      drop: (e) => {
+        for (const k of parts) {
+          const m = e[k];
+          if (!m) continue;
+          m.parent.remove(m);
+          m.geometry.dispose();
+          e[k] = null;
+        }
+        if (this.onChunkChange) this.onChunkChange(e.x, e.z, CHUNK * 0.71);
+      },
+      visible: (e, d) => {
+        const tm = this.tunnelMode;
+        if (e.bed) e.bed.visible = !tm && d < RANGE.bed;
+        if (e.flat) e.flat.visible = d < (tm ? 300 : RANGE.flat);
+        if (e.near) e.near.visible = !tm && d < RANGE.near;
+        if (e.card) e.card.visible = !tm && d < RANGE.flat;
+        if (e.dec) e.dec.visible = !tm && d < RANGE.gate + 200;
+        if (e.tun) e.tun.visible = d < 900;
+      },
+    };
+    return this._sys;
+  }
+
+  /** Every chunk built now (harnesses: geometry hashes). */
+  buildAllChunks() { for (const e of this.chunks) if (!e.built) this.lazy.now(e, this._lazySys()); }
+
+  _buildTrack(tr, chunk, skipShared, only = null, L = null) {
     const P = this.P, DS = 4;
     const gauge = P.gauge / 2 + 0.035;
     const segs = Math.ceil(tr.len / DS);
-    let F0 = frame(tr, 0);
     let pierNext = 0;
-    for (let k = 0; k < segs; k++) {
+    const seg = (k, F0) => {
       const s0 = k * DS, s1 = Math.min(tr.len, s0 + DS), sm = (s0 + s1) / 2;
       const F1 = frame(tr, s1);
       const A = F0, B = F1;
-      F0 = F1;
-      if (skipShared && this.sectionAt('nb', sm)) continue;
+      if (skipShared && this.sectionAt('nb', sm)) return F1;
       const kind = tr.kind(sm);
+      if (L) L.segment(tr.key, k, pierNext);
       const c = chunk(tr.x(sm), tr.z(sm));
       const bedB = kind === TUN ? c.tun : c.bed;
       const railB = kind === TUN ? c.tun : c.near;
@@ -677,7 +728,14 @@ export class Freight {
       if (kind === BOX && open(kNext)) this._portal(tr, s1, c, -1);
       if (kind === BOX && kNext === TUN) this._card(tr, s1, c, 1);
       if (kind === BOX && kPrev === TUN) this._card(tr, s0, c, -1);
+      return F1;
+    };
+    if (only) {
+      for (let i = 0; i < only.k.length; i++) { pierNext = only.st[i]; seg(only.k[i], frame(tr, only.k[i] * DS)); }
+      return;
     }
+    let F0 = frame(tr, 0);
+    for (let k = 0; k < segs; k++) F0 = seg(k, F0);
   }
 
   /** The Great Northern Tunnel's portal: a stone face round an arched mouth. */
@@ -1025,22 +1083,18 @@ export class Freight {
     if (!driving) this.camUnder = false;
     this.tunGroup.visible = this.tunnelMode;
     const cx = camera.position.x, cz = camera.position.z;
-    const pad = CHUNK * 0.71, tm = this.tunnelMode;
-    for (const e of this.chunks) {
-      const d = Math.hypot(e.x - cx, e.z - cz) - pad;
-      if (e.bed) e.bed.visible = !tm && d < RANGE.bed;
-      if (e.flat) e.flat.visible = d < (tm ? 300 : RANGE.flat);
-      if (e.near) e.near.visible = !tm && d < RANGE.near;
-      if (e.card) e.card.visible = !tm && d < RANGE.flat;
-      if (e.dec) e.dec.visible = !tm && d < RANGE.gate + 200;
-      if (e.tun) e.tun.visible = d < 900;
-    }
+    const tm = this.tunnelMode;
+    // the structure streams, as Link's (build.js LazyChunks)
+    const BUILD_R = Math.max(RANGE.flat, 900) + 300;
+    this.lazy.stream(cx, cz, RANGE.near + 200, BUILD_R, BUILD_R + 700, CHUNK * 0.71, ON_PHONE ? 1.5 : 3, this._lazySys());
     if (this.yardGroup) this.yardGroup.visible = !tm && Math.hypot(this.yard.x - cx, this.yard.z - cz) < RANGE.yard + 400;
     for (const t of this.trains) {
       const d = t.distTo(cx, cz);
       const vis = t.state !== 'off' && (t.driver === 'player' || (d < RANGE.train && (tm ? d < 900 : !t.buried())));
       t.group.visible = vis;
-      if (vis) t.pose();
+      if (vis) { t.ensureGeometry(); t.pose(); }
+      // its geometry is made a slice a frame on the way in (see _build)
+      else if (!t._geoReady && d < RANGE.train + 1500) t.stepGeometry(ON_PHONE ? 1.5 : 3);
     }
     this._crossingsUpdate(dt, cx, cz);
     const pd = this.pending;
@@ -1321,7 +1375,10 @@ export class FreightTrain {
 
   _build() {
     const sys = this.sys;
-    const geo = assembleTrain(this.consist);
+    // The whole train's geometry (~8 MB a train) is made the first time it is
+    // drawn (ensureGeometry): till then each mesh holds an empty stand-in.
+    const geo = { body: new THREE.BufferGeometry(), trim: new THREE.BufferGeometry(), decal: new THREE.BufferGeometry() };
+    this._geoReady = false;
     this.bones = this.cars.map(() => new THREE.Bone());
     this.group = new THREE.Group();
     this.group.name = `freight:train${this.id}`;
@@ -1340,6 +1397,31 @@ export class FreightTrain {
     });
     this._m = new THREE.Matrix4();
     this._x = new THREE.Vector3(); this._y = new THREE.Vector3(); this._z = new THREE.Vector3();
+  }
+
+  /** The train's geometry, built on its first showing (see _build). */
+  ensureGeometry() {
+    if (this._geoReady) return;
+    let geo;
+    if (this._geoJob) { let r = this._geoJob.next(); while (!r.done) r = this._geoJob.next(); geo = r.value; this._geoJob = null; }
+    else geo = assembleTrain(this.consist);
+    this._setGeometry(geo);
+  }
+  /** ...or a slice of it a frame while it comes nearer (Freight.update). */
+  stepGeometry(sliceMs) {
+    if (this._geoReady) return;
+    if (!this._geoJob) this._geoJob = assembleTrainSteps(this.consist, sliceMs);
+    const r = this._geoJob.next();
+    if (r.done) { this._geoJob = null; this._setGeometry(r.value); }
+  }
+  _setGeometry(geo) {
+    this._geoReady = true;
+    ['body', 'trim', 'decal'].forEach((k, i) => {
+      const m = this.meshes[i], old = m.geometry;
+      m.geometry = geo[k];
+      old.dispose();
+      if (this.sys.dropArrays) dropGeometryArrays(geo[k]);
+    });
   }
 
   get lead() { return this.s + this.dir * this.len / 2; }
@@ -1832,7 +1914,15 @@ export class FreightTrain {
 // bone per car (the car's own frame: vertices stay in car-local metres).
 
 function assembleTrain(consist) {
+  const it = assembleTrainSteps(consist, Infinity);
+  let r = it.next();
+  while (!r.done) r = it.next();
+  return r.value;
+}
+/** assembleTrain a slice at a time: yields whenever `sliceMs` is used up. */
+function* assembleTrainSteps(consist, sliceMs) {
   const out = {};
+  let t0 = performance.now();
   for (const key of ['body', 'trim', 'decal']) {
     const parts = consist.map((t) => railCar(t)[key]);
     let nv = 0, ni = 0;
@@ -1842,15 +1932,16 @@ function assembleTrain(consist) {
     const idx = new Uint32Array(ni);
     const si = new Uint16Array(nv * 4), sw = new Float32Array(nv * 4);
     let v = 0, q = 0;
-    parts.forEach((g, ci) => {
-      const n = g.attributes.position.count;
+    for (let ci = 0; ci < parts.length; ci++) {
+      const g = parts[ci], n = g.attributes.position.count;
       pos.set(g.attributes.position.array, v * 3); nor.set(g.attributes.normal.array, v * 3); col.set(g.attributes.color.array, v * 3);
       if (uv) uv.set(g.attributes.uv.array, v * 2);
       for (let i = 0; i < n; i++) { si[(v + i) * 4] = ci; sw[(v + i) * 4] = 1; }
       const I = g.index.array;
       for (let i = 0; i < I.length; i++) idx[q + i] = I[i] + v;
       v += n; q += I.length;
-    });
+      if (performance.now() - t0 > sliceMs) { yield; t0 = performance.now(); }
+    }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));

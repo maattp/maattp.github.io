@@ -598,9 +598,9 @@ takes in Winslow's Madison Ave (x -13767). Every edge moved 800 m.
   street-level view draws ~6 % more terrain triangles (the six tiles are
   bigger), which the phone's GPU has room for.
 
-Not done: Link's (77 MB with its bores) and freight's (25 MB) geometry is
-still built at boot -- their track loops carry per-segment state and make the
-station platforms and column solids, so deferring them is a bigger change.
+Link's and freight's geometry, left built at boot here because their track
+loops carry per-segment state, now streams by chunk: the loop's state is
+recorded at boot and replayed per chunk (`LazyChunks`, see "Memory").
 (Link's profile solve went into the boot cache in v167.)
 `boottime.mjs --twice --prof` now profiles the cached launch only;
 `BOOT_TOP=N` lists more functions.
@@ -2726,8 +2726,9 @@ calls and GL calls are expensive there in a way Chrome hides.
   per heading; don't hold it across a heading change.
 - Phone-only paths (all keyed on `ON_PHONE`): far traffic instanced
   (`FAR_LOD`), off-screen traffic past 80 m at half rate, pedestrian animation
-  LOD and CPU culling, chunk JS arrays dropped after upload (a lost context
-  rebuilds the chunks), 2 ms streaming slice while driving.
+  LOD and CPU culling, JS arrays dropped after upload -- chunks, the static
+  city, vehicles -- and texture canvases let go (see "Memory"; a lost context
+  reloads the page), 2 ms streaming slice while driving.
 
 | 8x-throttled, mean frame CPU | v76 | v80 |
 |---|---|---|
@@ -3002,6 +3003,128 @@ of ~50 material switches, and per posed pedestrian a bone-texture upload of
 - **Minimap icons as pre-rendered sprites**: drawImage resamples where the
   vector path does not; not pixel-identical.
 
+### Memory: one copy, nothing kept from boot, no cache that grows as you fly
+
+**The iPhone ended the page while flying** -- the floatplane low over Fremont
+and Green Lake at ~90 m/s, ~45 s after the far layers came on; a week before,
+a skydive -- with no JS error: WebKit ending the web process for memory
+(Safari reports no JS heap, so the flight recorder could not show it). The
+budget the page runs against is everything at once: the JS heap, typed-array
+backing stores, canvas backing stores (outside the JS heap in both engines)
+and, on WebKit, the GPU process's allocations made for the page.
+
+**Measure it with `tools/memprobe.mjs`** (phone UA and viewport, so every
+`ON_PHONE` path is the one measured; Mac GPU; fresh profile):
+
+    AUTO_HTTP_PORT=8000 node tools/memprobe.mjs [--twice] [--fly=S] [--sky]
+         [--census] [--tex] [--alloc] [--views=DIR] [--snapshot=FILE]
+
+- heap `gc` is `Runtime.getHeapUsage` after two forced collections, **objects
+  plus `backingStorageSize`** (array buffers live outside the V8 heap and
+  `usedSize` / `performance.memory` leave them out); `raw` is the same
+  uncollected, which is what an OS limit sees at that moment. flycam's
+  `heapBootMB` is `performance.memory` (objects only, desktop UA).
+- GPU is a ledger of every WebGL allocation call, wrapped before the page
+  runs (buffers, texture levels, renderbuffers, minus deletes) plus the
+  drawing buffer. `--tex` lists the textures by size and the canvas / bitmap
+  sources still held; `--census` the geometry arrays the scene still holds,
+  by top-level group, split into held-and-uploaded (pure waste) and held
+  only (not drawn yet).
+- `--fly=S` is S seconds of real-time flight at >= 90 m/s, 70 m over the
+  ground, Fremont -> Green Lake -> Northgate -> Lake City -> the U District ->
+  Ballard -> Magnolia; `--sky` 10 s at 1500 m over downtown, then out of the
+  door to the ground. `--alloc` samples where the flight's allocations come
+  from. `--views=DIR` screenshots beside Link, the freight line and the yard,
+  to compare builds by eye where arrays and canvases are let go.
+- `tools/heapsnap.mjs FILE` streams a heap snapshot (~1 GB here) and prints
+  self size by constructor, retained sizes (dominator tree) and **owners**:
+  every node's bytes charged to its first hops from the window, arrays
+  folded, objects named by their `name`. `--json` / `--diff` compare two
+  snapshots (memprobe `--snapshot-boot=` and `--snapshot=`): what grew.
+
+| phone profile | before | after |
+|---|---|---|
+| GC'd JS heap incl. array buffers, first launch | 793 MB (447 buffers) | **506 MB** (241) |
+| ... cached launch | 817 MB (494) | **494 MB** (238) |
+| ... after 120 s of low flight | 862 MB | **485 MB** |
+| ... after the skydive | 911 MB | **549 MB** |
+| raw JS peak in the 120 s flight / the skydive | 991 / 979 MB | **623 / 603 MB** |
+| canvas backing stores held by textures | 96 MB | 42 MB (those never drawn yet) |
+| GPU at boot / peak in flight | 428 / 536 MB | 410 / 509 MB |
+
+What held it, and what was done (each its own commit):
+
+- **The static city was held twice on a phone**: chunks already dropped
+  their arrays once uploaded, nothing else did. `dropStaticArrays` /
+  `dropGeometryArrays` (build.js) now do it for the terrain, the skyline, the
+  landmarks, Link's and freight's structure and trains, the golf course, the
+  ferries, and every vehicle type's geometry and far LOD (`dropVehicleArrays`,
+  after the boot cache's snapshot; traffic builds every far LOD at boot on a
+  phone). Bounds are computed first. **A lost context reloads the page on a
+  phone** (once a minute at most): nothing can be re-uploaded, and on an
+  iPhone a lost context is the GPU process going away under pressure anyway.
+  Nothing in the game raycasts; a mesh that rewrites its geometry later
+  (the monorail's signal lamps, golf flags) is not in these sets.
+- **Every texture kept its canvas** (~95 MB). `releaseTextureSources`
+  (memory.js), at the end of the boot after the cache has encoded them: each
+  canvas / bitmap / data texture becomes a size-only stub once uploaded and
+  current, and its canvas is cut to 0 x 0. Safe because nothing redraws or
+  clones a texture after it is made (grep `needsUpdate` before adding one
+  that does: it must keep its source). The mid ring's road tints are read
+  off two of those canvases, so `world.primeMidTint()` runs first.
+- **Link's and freight's structure, ~120 MB of arrays, was built at boot**
+  for the whole 300 km while a phone draws 1.9 km. `LazyChunks` (build.js):
+  the boot runs the same pass into `SinkBuilder`s and files, per 500 m chunk,
+  what drew there -- a run of one track's segments with the loop state at its
+  start (`pole` / `colNext`, `pierNext`), a station, an entrance, a crossing,
+  the yard, the bascule; `stream` replays a chunk in that order with every
+  other chunk sunk, 1.5 ms a frame (all of it at once within the near range,
+  so a teleport lands with its rails), and lets chunks 700 m past the build
+  range go. Solids, platforms, yard slots and gates come from the boot pass;
+  a replay's go to throwaway lists. `tools/railgeomhash.js` (all chunks
+  built) is identical to the eager pass: 732 meshes, 130 MB, `56fbab29`.
+  The freights' whole-train geometry (~8 MB each) is likewise assembled a
+  slice a frame on its way into view (`stepGeometry` / `ensureGeometry`).
+- **The query grids were a Map of arrays per cell** (~30 MB each for the
+  lift and road grids, ~14 MB for the buildings'). `CellGrid` (citygen.js):
+  a dense offset array over the occupied box and one id array, walked as
+  `ids[off[c] .. off[c + 1])`. `tools/cityqueryhash.js` hashes 68.6k query
+  answers: identical to master, computed and cached.
+- **The boot-cache read lived for the whole session** (65 MB on a cached
+  launch): `bc` sits in boot()'s closure context, which every listener made
+  in boot keeps alive. Its entries are nulled once written; so is the
+  vehicles' cached snapshot (`PRE`) on a phone. The 2048x1024 equirect that
+  fed the PMREM is disposed (8.4 MB of GPU).
+- **Two caches grew without bound while flying**: citygen's `junction()`
+  and `world.junctionFor` kept every junction asked for (~1.3 KB each, 28k
+  after three minutes of low flight, +36 MB, heading for the whole map's).
+  Both are Maps trimmed to the newest half at 16k (`trimOldest`); a junction
+  is a pure function of the graph. Three minutes of flight: +4 MB.
+  `heapsnap --diff` of boot against a 180 s flight finds nothing else growing.
+
+**The flight recorder carries a memory figure** now: `installGpuLedger`
+(memory.js) wraps the context's allocation and delete calls -- never the
+binds, which run hundreds of times a frame; what is bound is asked of the
+context, which answers from client-side state -- and each snapshot carries
+`gpuMB`, `bufMB`, `texMB` and `gpuPeakMB` (MiB, as asked; drivers round up).
+Matches memprobe's ledger to the MB.
+
+**What is left** (phone, first launch, by heapsnap owners): the city's own
+objects (~220 MB in V8: edges, buildings, graded surfaces, nodes -- V8
+boxes every double field, JavaScriptCore does not, so less on the phone),
+the 10 m masks (`G`: water, green, lots, ~32 MB, all queried at runtime),
+the junction cache (bounded), the sound bank (~15 MB of decoded PCM), the
+characters' skinned variants (~11 MB), and chunk / terrain arrays not drawn
+yet. On the GPU: textures ~182 MB with mips (the PMREM alone is 25 MB of
+RGBA16F, sized by the 2048 equirect; a 1024 one would be 6 MB but blurs the
+sharpest reflections), chunk geometry ~110-140 MB, the terrain ~90 MB once
+all of it has been seen. Quantising normals and colours to 16-bit would cut
+vertex buffers ~20 % with no visible change, but Metal wants 4-byte vertex
+strides (a 6-byte normal would be converted by ANGLE's Metal backend, not
+measured here), and 8-bit colours band in the darks. A flight allocates ~54 MB/s (chunk meshing's
+array literals, builder growth): V8 collects it in step; nothing here
+measures JavaScriptCore's collector.
+
 ## The flight recorder (v168)
 
 **A crash on the iPhone leaves nothing behind**: WebKit ending the page for
@@ -3017,7 +3140,9 @@ clean headless, flat heap, no exceptions). So the game keeps a record:
   (`foot`, `sky:free`, `jumbo:air`...), position and height over the ground,
   speed, fps, quality, draws, triangles, geometries, textures, programs,
   chunks built, cars, peds, the JS heap where the browser reports one (not
-  Safari); and an event whenever the mode, `world.playerFlying` or the far
+  Safari), and what the GPU holds (`gpuMB` / `bufMB` / `texMB` /
+  `gpuPeakMB`, from memory.js's ledger -- Safari's only memory figure; see
+  "Memory"); and an event whenever the mode, `world.playerFlying` or the far
   layers change, and on WebGL context loss and restore.
 - At launch the previous record moves to `auto-flight-prev`; if it was left
   `visible` (not hidden, not closed) the page ended while on screen, which is
@@ -3140,11 +3265,9 @@ launch is no slower: writing the memo (~0.6-0.8 s) is paid back by the two
 hoops courts no longer searching.
 
 **What is left in a cached launch** (8x profile): Link's and freight's
-geometry, ~2.1 s together, is the biggest single item -- still built at boot
-(see v163: each track's loop carries per-segment state, places the columns
-and platforms, and a chunk's geometry comes from segments all along the
-line, so building it by distance means splitting the loop into a state pass
-and a geometry pass). Then the first warm frames and shader programs
+geometry, ~2.1 s together, was the biggest single item; it now streams by
+chunk (`LazyChunks`, "Memory": the boot keeps only the recording pass, and
+the cached 8x launch went 14.0 -> 13.3 s). Then the first warm frames and shader programs
 (~1.5 s, GPU: see "Hitches", not to be front-loaded further), the first
 chunks (~1 s), the landmark meshes (~1 s), the street graph's own objects,
 and Link's four-minute service settle (`makeTrains`, ~0.45 s).
@@ -3548,6 +3671,14 @@ Ten wall-clock seconds of walking is only a few metres; don't read that as stuck
 `if (this._stickId === null && ...) this.releaseStick()`, the anti-latch guard
 from the stuck-stick fix, so a stick set without a live pointer is zeroed on the
 very next frame. This silently reads as "the player can't move."
+
+**`AUTO_PHONE=1 node tools/verify.mjs` boots as the iPhone** (memprobe's UA and
+viewport), so the ON_PHONE paths run: arrays dropped after upload, released
+texture canvases, far LODs. A desktop run never exercises them, and since v179
+the phone drops far more (see "Memory"). Expected on master too: "piers / bike
+paths not built when in range" fails, because the deck ray finds nothing once a
+pier chunk's arrays are gone (`the deck drawn null m`). Anything else failing
+only under AUTO_PHONE is a phone-only bug.
 
 **Every harness takes `AUTO_HTTP_PORT` and `AUTO_CDP_PORT`.** Serve master from a
 second checkout on another port (`:8001`) and run the same harness against both
@@ -4687,8 +4818,9 @@ all during take-off before the layer's gate.
   `attribute.count`, and `raycast` is a no-op — CPU rays would hit boxes the GPU
   has collapsed, and "raycast the pixel" is this repo's standard diagnostic.
 - **Context loss has nothing to re-upload from**, so `webglcontextlost` calls
-  `resetFarMass()` and the lazy builder makes them again. main.js has no
-  context-loss handling of its own.
+  `resetFarMass()` and the lazy builder makes them again. On a phone main.js
+  now reloads the page on a lost context (the static city keeps no JS copy
+  either; see "Memory").
 - Flat shading with no normal attribute (8 shared vertices, 10 triangles a box);
   roof darkening is done in the fragment shader by facing.
 

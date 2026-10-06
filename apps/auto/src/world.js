@@ -7,7 +7,7 @@ import * as G from './geo.js';
 // Kept in step with main.js. Shadow-caster policy differs by platform, and the
 // difference is worth roughly 40 draw calls a frame.
 const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, MOUTH_RAMP, mouthRamp, cityStats } from './citygen.js';
+import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, MOUTH_RAMP, mouthRamp, cityStats, trimOldest } from './citygen.js';
 import { Builder, ChunkBuilder, freezeStatic } from './build.js';
 import { memo } from './bootcache.js';
 import { hash2, clamp, lerp, distToSeg, segDist } from './util.js';
@@ -899,12 +899,24 @@ export class World {
       this.scene.environment = this.envRT.texture;
       this.envPrefiltered = true;
       pmrem.dispose();
+      // the equirect was only the PMREM's input: 8.4 MB of GPU texture that
+      // nothing samples once the prefiltered map exists
+      envTarget.dispose();
+      this.envEquirect = null;
     } else {
       // Raw equirect as the env map: no prefiltered roughness mips, so rough
       // surfaces reflect too sharply, but the city stays lit.
       this.scene.environment = envTarget.texture;
       this.envPrefiltered = false;
     }
+  }
+
+  /** The mid ring's road and pavement tints, read off the texture canvases --
+   *  which a phone lets go once uploaded (memory.js), so main.js primes this
+   *  before it does. */
+  primeMidTint() {
+    if (!this._midTint) this._midTint = { road: meanLinear(this.tx.road.map), walk: meanLinear(this.tx.sidewalk.map) };
+    return this._midTint;
   }
 
   *buildTerrain() {
@@ -4283,7 +4295,7 @@ float frLine(float o, float fw, float c, float w) {
     // albedo: a mid chunk is one draw instead of three, and draw calls are
     // what an iPhone runs out of first.
     if (lod === 0) {
-      if (!this._midTint) this._midTint = { road: meanLinear(this.tx.road.map), walk: meanLinear(this.tx.sidewalk.map) };
+      this.primeMidTint();
       flat.appendTinted(road, this._midTint.road);
       flat.appendTinted(walk, this._midTint.walk);
       road.nv = road.ni = 0;
@@ -6332,6 +6344,8 @@ float frLine(float o, float fw, float c, float w) {
         if (this.cutFloor(n.x + ox, n.z + oz)) { J = null; break; }
       }
     }
+    // bounded like citygen's junction cache, whose objects these are
+    if (this._jf.size >= 16000) trimOldest(this._jf, 8000);
     this._jf.set(ni, J);
     return J;
   }

@@ -16,7 +16,8 @@ import { BikeNet, Cyclists } from './bikes.js';
 import { Islands } from './islands.js';
 import { Piers } from './piers.js';
 import { PickleballCourt } from './pickleball.js';
-import { freezeStatic, skipHiddenMatrices, Builder } from './build.js';
+import { freezeStatic, skipHiddenMatrices, Builder, dropStaticArrays } from './build.js';
+import { releaseTextureSources, installGpuLedger } from './memory.js';
 import { installChunkCull } from './chunkcull.js';
 import { Fishing } from './fishing.js';
 import { Hoops } from './hoops.js';
@@ -34,7 +35,7 @@ import { Seafair } from './hydrorace.js';
 import { BONES } from './peds.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
-import { TYPES as VEHICLE_TYPES, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial } from './vehicles.js';
+import { TYPES as VEHICLE_TYPES, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial, dropVehicleArrays } from './vehicles.js';
 
 // Aircraft come in their own colours, parked at Boeing Field or delivered.
 const AIRCRAFT_PAINT = {
@@ -448,6 +449,7 @@ class Game {
 // ---------------------------------------------------------------------------
 
 let chunkCull = null;   // chunkcull.js
+let gpuLedger = null;
 let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts, stunts, monorail, link, freight, bikeNet, cyclists, lmRoot, shadowCache = null;
 let pickups = [];
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
@@ -599,6 +601,9 @@ async function boot() {
   // Antialiasing comes from FXAA in the post chain, so the context never needs
   // MSAA -- which also means the scene can render into a target for free.
   renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+  // what the GPU holds, for the flight recorder (memory.js): Safari reports
+  // no JS heap, and an iPhone ends the page for memory without a word
+  try { gpuLedger = installGpuLedger(renderer.getContext()); } catch (e) { gpuLedger = null; }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 2 : 1.6));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   // EXPOSURE, not ambient, is the lever on a scene sitting in the ACES toe.
@@ -861,6 +866,41 @@ function installShadowFade() {
   piers = new Piers(md.piers, { scene, city, dropArrays: ON_PHONE, waterAt: (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; } });
   // on a phone their arrays go once uploaded: a lost context rebuilds them
   if (ON_PHONE) renderer.domElement.addEventListener('webglcontextlost', () => { piers.contextLost(); bikeNet.contextLost(); });
+  // A lost context cannot be re-uploaded on a phone: the static city keeps no
+  // JS copy of what the GPU holds (dropStaticArrays, below). A context lost on
+  // an iPhone is the GPU process going away under memory pressure, and the
+  // way back is a fresh page -- once: a second loss inside a minute of the
+  // last reload is left alone rather than looped.
+  if (ON_PHONE) {
+    let reloading = false;
+    const reload = () => {
+      if (reloading) return;
+      let last = 0;
+      try { last = +sessionStorage.getItem('auto-ctx-reload') || 0; } catch (e) { /* no storage */ }
+      if (Date.now() - last < 60000) {
+        // A second loss within a minute of a reload: not looped, but never a
+        // silent broken city either (the static arrays are gone, nothing can
+        // re-upload them). Ask, and reload on the tap.
+        if (!document.getElementById('ctxLost')) {
+          const d = document.createElement('div');
+          d.id = 'ctxLost';
+          d.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;'
+            + 'background:rgba(10,14,22,0.88);color:#fff;font:600 18px system-ui,sans-serif;text-align:center;padding:24px';
+          d.textContent = 'The graphics were reset. Tap to reload.';
+          d.addEventListener('pointerup', () => location.reload());
+          document.body.appendChild(d);
+          flight('context lost again within a minute: asked to reload', true);
+        }
+        return;
+      }
+      reloading = true;
+      try { sessionStorage.setItem('auto-ctx-reload', String(Date.now())); } catch (e) { /* no storage */ }
+      flight('reloading after the lost context', true);
+      location.reload();
+    };
+    renderer.domElement.addEventListener('webglcontextlost', () => setTimeout(reload, 1500));
+    renderer.domElement.addEventListener('webglcontextrestored', reload);
+  }
   // the flight recorder hears about the GPU going away (index.html)
   renderer.domElement.addEventListener('webglcontextlost', () => flight('WEBGL CONTEXT LOST', true));
   renderer.domElement.addEventListener('webglcontextrestored', () => flight('webgl context restored', true));
@@ -890,11 +930,27 @@ function installShadowFade() {
       const ramps = scene.getObjectByName('stuntRamps');
       shadowCache = new ShadowCache(renderer, sun, { margin: 60, statics: () => [world.group, lmRoot, ramps, link.group, freight.group, freight.yardGroup], keep: () => [] });
       world.onChunkChange = (x, z, r) => shadowCache.chunkChanged(x, z, r);
+      // Link's and the freight line's chunks come and go too (LazyChunks)
+      link.onChunkChange = freight.onChunkChange = (x, z, r) => shadowCache.chunkChanged(x, z, r);
     } catch (e) { blog(`shadow cache: ${e.message}`); shadowCache = null; }
   }
   if (world.terrainGroup) freezeStatic(world.terrainGroup);
   // after the shadow cache: its wrapper on shadowMap.render goes inside ours
   chunkCull = installChunkCull(renderer, world.group);
+  // ON A PHONE THE STATIC CITY KEEPS ONE COPY, NOT TWO (CLAUDE.md "Memory"):
+  // the terrain, the skyline, the landmarks, Link's and the freight line's
+  // structure and trains drop their JS arrays once the GPU has them. Before
+  // the first frame, so nothing has been uploaded yet. `__keepArrays` keeps
+  // them (a harness that wants to raycast on the phone profile).
+  if (ON_PHONE && !window.__keepArrays) {
+    // (Link's and freight's chunks are built as you come near: each drops
+    // its arrays the same way when it is made)
+    link.dropArrays = freight.dropArrays = true;
+    let b = 0;
+    for (const r of [world.terrainGroup, world.skyline, lmRoot, link.group, link.tunGroup, freight.group, freight.tunGroup, freight.yardGroup]) if (r) b += dropStaticArrays(r);
+    for (const t of [...link.trains, ...freight.trains, ...Object.values(monorail.trains || {})]) for (const m of t.meshes || []) b += dropStaticArrays(m);
+    blog(`static geometry: ${(b / 1048576).toFixed(0)} MB of arrays go once uploaded`);
+  }
 
   await step(0.9, 'Waking the city');
   game = new Game();
@@ -1267,6 +1323,31 @@ function installShadowFade() {
   bootCache.gradeOut = bootCache.buildingsOut = null;
   world.bootCache = null;
   link.cacheOut = link.cache = freight.cacheOut = null;
+  // What the cache handed in is spent, and so is what went out: `bc` lives in
+  // boot()'s closure context, which every listener made in here keeps alive
+  // for the whole session -- on a cached launch that was the IndexedDB read
+  // itself, ~65 MB (the packed buildings, the memo, the vehicle snapshot)
+  // held to the end. See CLAUDE.md "Memory".
+  for (const k of BC_KEYS) bc[k] = null;
+  bootCache.grade = bootCache.buildings = null;
+  bcOut.texPlan = bcOut.mapCanvas = null;
+  toKeep.length = 0;
+  // ...and on a phone every texture's canvas goes once the GPU has it
+  // (memory.js), after the cache has encoded them and the mid ring has read
+  // its tints off two of them.
+  if (ON_PHONE && !window.__keepArrays) {
+    world.primeMidTint();
+    try {
+      const r = releaseTextureSources(renderer, scene, [link.bedMat, link.signMat, link.cardMat, freight.bedMat, freight.cardMat, freight.decMat]);
+      blog(`texture sources: ${r.released} let go (${(r.bytes / 1048576).toFixed(0)} MB), ${r.pending} after their first upload`);
+    } catch (e) { blog('texture sources: ' + e.message); }
+    // ...and the vehicle types' geometry once uploaded (the snapshot above
+    // has been written, and traffic made every far LOD at boot)
+    try { blog(`vehicle geometry: ${(dropVehicleArrays() / 1048576).toFixed(0)} MB of arrays go once uploaded`); } catch (e) { blog('vehicle geometry: ' + e.message); }
+    // ...and the last static pieces made after the city's: the golf course,
+    // the ferries and their terminals
+    for (const r of [golf && golf.courseMesh, ferry && ferry.group, ferry && ferry.terminals]) if (r) dropStaticArrays(r);
+  }
   await step(0.94, 'Opening the roads');
   for (let i = 0; i < 90; i++) {
     const left = world.update(player.x, player.z, 6);
@@ -1279,7 +1360,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -2476,6 +2557,7 @@ function flightTick(dt) {
       draws: sceneStats.calls, ktris: Math.round(sceneStats.tris / 1000), geo: mi.geometries, tex: mi.textures, prog: renderer.info.programs ? renderer.info.programs.length : 0,
       chunks: built + '/' + world.chunks.size, cars: traffic.cars.length, peds: peds.peds.length,
       heapMB: pm ? Math.round(pm.usedJSHeapSize / 1e6) : undefined, paused: game.paused || undefined,
+      ...(gpuLedger ? gpuLedger.read() : null),
     });
   } catch (e) { flight('recorder: ' + e.message); }
 }

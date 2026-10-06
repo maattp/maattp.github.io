@@ -33,7 +33,7 @@
 
 import * as THREE from './three.js';
 import * as G from './geo.js';
-import { Builder, ChunkBuilder } from './build.js';
+import { Builder, ChunkBuilder, SinkBuilder, LazyChunks, dropStaticArrays } from './build.js';
 import { GLASS, tagGlass, vehicleAssets } from './vehicles.js';
 import { clamp, angleWrap } from './util.js';
 
@@ -725,44 +725,32 @@ export class Link {
     this.cardMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
     const sign = signAtlas(this.stations.map((s) => s.name));
     this.signMat = sign.mat; this.signCells = sign.cells;
-    const chunks = new Map();
-    const chunk = (x, z) => {
-      const k = `${Math.floor(x / CHUNK)},${Math.floor(z / CHUNK)}`;
-      let c = chunks.get(k);
-      if (!c) chunks.set(k, (c = { bed: new ChunkBuilder(true, 64), flat: new ChunkBuilder(false, 64), near: new ChunkBuilder(false, 64), tun: new ChunkBuilder(false, 64), card: new ChunkBuilder(false, 64), sign: new ChunkBuilder(true, 64), x: (Math.floor(x / CHUNK) + 0.5) * CHUNK, z: (Math.floor(z / CHUNK) + 0.5) * CHUNK }));
-      return c;
-    };
-    for (const tr of Object.values(this.tracks)) this._buildTrack(tr, chunk);
+    // LAZY: the pass below draws into builders that keep nothing and files
+    // what drew where (build.js LazyChunks); a chunk's geometry is made when
+    // you come within range of it (update -> _buildChunk) and let go past it.
+    const L = this.lazy = new LazyChunks(CHUNK, (sink) => {
+      const mk = (uv) => (sink ? new SinkBuilder() : new ChunkBuilder(uv, 64));
+      return { bed: mk(true), flat: mk(false), near: mk(false), tun: mk(false), card: mk(false), sign: mk(true) };
+    });
+    const chunk = L.record;
+    for (const tr of Object.values(this.tracks)) this._buildTrack(tr, chunk, null, L);
     // each track's half of each station it serves -- a shared station once,
     // by the 1 Line's tracks
-    for (const st of this.stations) {
+    this.stations.forEach((st, si) => {
       for (const k of this.keys) {
         const tr = this.tracks[k];
         if (st.s[k] === undefined || (tr.share && st.s[k] < tr.share.end + 70)) continue;
+        L.op({ st: si, t: k });
         this._buildStation(st, tr, chunk);
       }
-    }
-    for (const st of this.stations) this._buildEntrance(st, chunk);
+    });
+    this.stations.forEach((st, si) => { L.op({ ent: si }); this._buildEntrance(st, chunk); });
+    L.op(null);
     // meshes
     this.group = new THREE.Group(); this.group.name = 'link';
     this.tunGroup = new THREE.Group(); this.tunGroup.name = 'link:bores'; this.tunGroup.visible = false;
-    const mk = (b, mat, name, shadow) => {
-      if (b.empty) return null;
-      const m = new THREE.Mesh(b.build(), mat);
-      m.name = name; m.castShadow = shadow; m.receiveShadow = shadow;
-      return m;
-    };
-    for (const [key, c] of chunks) {
-      const e = { x: c.x, z: c.z,
-        bed: mk(c.bed, this.bedMat, `link:bed:${key}`, false),
-        flat: mk(c.flat, world.mats.flat, `link:${key}`, true),
-        near: mk(c.near, world.mats.flat, `link:near:${key}`, false),
-        tun: mk(c.tun, world.mats.glow, `link:bore:${key}`, false),
-        card: mk(c.card, this.cardMat, `link:mouth:${key}`, false),
-        sign: mk(c.sign, this.signMat, `link:sign:${key}`, false) };
-      if (e.bed) e.bed.receiveShadow = true;
-      for (const m of [e.bed, e.flat, e.near, e.card, e.sign]) if (m) this.group.add(m);
-      if (e.tun) this.tunGroup.add(e.tun);
+    for (const e of L.chunks) {
+      e.bed = e.flat = e.near = e.tun = e.card = e.sign = null;
       this.chunks.push(e);
     }
     scene.add(this.group);
@@ -775,22 +763,85 @@ export class Link {
     }
   }
 
-  _buildTrack(tr, chunk) {
+  /** What LazyChunks.stream drives: replay an op (the pass's other output --
+   *  solids, platforms -- was kept at boot, so the replay's is thrown away),
+   *  make and let go of a chunk's meshes, and set what of it is drawn. */
+  _lazySys() {
+    if (this._sys) return this._sys;
+    const parts = ['bed', 'flat', 'near', 'tun', 'card', 'sign'];
+    this._sys = {
+      run: (o, fn) => {
+        const keep = [this.solids, this.platforms];
+        this.solids = []; this.platforms = [];
+        try {
+          if (o.seg) this._buildTrack(this.tracks[o.t], fn, o);
+          else if (o.st !== undefined) this._buildStation(this.stations[o.st], this.tracks[o.t], fn);
+          else if (o.ent !== undefined) this._buildEntrance(this.stations[o.ent], fn);
+        } finally { this.solids = keep[0]; this.platforms = keep[1]; }
+      },
+      finish: (e, B) => {
+        const key = e.key, mats = this.world.mats;
+        const mk = (b, mat, name, shadow, grp) => {
+          if (b.empty) return null;
+          const m = new THREE.Mesh(b.build(), mat);
+          m.name = name; m.castShadow = shadow; m.receiveShadow = shadow;
+          m.matrixAutoUpdate = false;
+          if (this.dropArrays) dropStaticArrays(m);
+          grp.add(m);
+          return m;
+        };
+        e.bed = mk(B.bed, this.bedMat, `link:bed:${key}`, false, this.group);
+        e.flat = mk(B.flat, mats.flat, `link:${key}`, true, this.group);
+        e.near = mk(B.near, mats.flat, `link:near:${key}`, false, this.group);
+        e.tun = mk(B.tun, mats.glow, `link:bore:${key}`, false, this.tunGroup);
+        e.card = mk(B.card, this.cardMat, `link:mouth:${key}`, false, this.group);
+        e.sign = mk(B.sign, this.signMat, `link:sign:${key}`, false, this.group);
+        if (e.bed) e.bed.receiveShadow = true;
+        if (this.onChunkChange) this.onChunkChange(e.x, e.z, CHUNK * 0.71);
+      },
+      drop: (e) => {
+        for (const k of parts) {
+          const m = e[k];
+          if (!m) continue;
+          m.parent.remove(m);
+          m.geometry.dispose();
+          e[k] = null;
+        }
+        if (this.onChunkChange) this.onChunkChange(e.x, e.z, CHUNK * 0.71);
+      },
+      visible: (e, d) => {
+        const R = RANGE, tm = this.tunnelMode;
+        if (e.bed) e.bed.visible = !tm && d < R.bed;
+        if (e.flat) e.flat.visible = d < (tm ? 300 : R.flat);
+        if (e.near) e.near.visible = !tm && d < R.near;
+        if (e.sign) e.sign.visible = d < R.sign;
+        if (e.card) e.card.visible = !tm && d < R.flat;
+        if (e.tun) e.tun.visible = d < 900;
+      },
+    };
+    return this._sys;
+  }
+
+  /** Every chunk built now (harnesses: geometry hashes). */
+  buildAllChunks() { for (const e of this.chunks) if (!e.built) this.lazy.now(e, this._lazySys()); }
+
+  /** The whole pass (`only` null, recording into `L`), or one chunk's
+   *  recorded segments of this track (`only`: { k, st } from LazyChunks). */
+  _buildTrack(tr, chunk, only = null, L = null) {
     const other = tr.other, DS = 4;
     const gauge = LINK.gauge / 2 + 0.035;
     const outer = []; // per station: which side is away from the other track
     const segs = Math.ceil(tr.len / DS);
-    let F0 = frame(tr, 0);
     let pole = 25;
     let colNext = 18;
-    for (let k = 0; k < segs; k++) {
+    const seg = (k, F0) => {
       const s0 = k * DS, s1 = Math.min(tr.len, s0 + DS), sm = (s0 + s1) / 2;
       const F1 = frame(tr, s1);
       const A = F0, B = F1;
-      F0 = F1;
       // the 2 Line's shared rails are the 1 Line's, drawn once
-      if (tr.share && s1 < tr.share.end - 1) continue;
+      if (tr.share && s1 < tr.share.end - 1) return F1;
       const kind = tr.kind(sm);
+      if (L) L.segment(tr.key, k, pole, colNext);
       const c = chunk(tr.x(sm), tr.z(sm));
       const q = other.nearest(tr.x(sm), tr.z(sm), 40);
       const otherD = q ? q.d : 99, towardOther = q ? (() => {
@@ -980,7 +1031,17 @@ export class Link {
         band(c.near, A, B, -0.02, LINK.wire, 0.02, LINK.wire, UP, C.wire);
         band(c.near, A, B, 0.28, 5.72, 0.31, 5.72, DOWN, C.wire);
       }
+      return F1;
+    };
+    if (only) {
+      for (let i = 0; i < only.k.length; i++) {
+        pole = only.st[i * 2]; colNext = only.st[i * 2 + 1];
+        seg(only.k[i], frame(tr, only.k[i] * DS));
+      }
+      return;
     }
+    let F0 = frame(tr, 0);
+    for (let k = 0; k < segs; k++) F0 = seg(k, F0);
   }
 
   _headwall(tr, s, c, dirIn) {
@@ -1326,16 +1387,10 @@ export class Link {
     this.tunGroup.visible = this.tunnelMode;
     const cx = camera.position.x, cz = camera.position.z;
     // (a chunk's centre is up to 0.71 of its side from anything in it)
-    const R = RANGE, pad = CHUNK * 0.71, tm = this.tunnelMode;
-    for (const e of this.chunks) {
-      const d = Math.hypot(e.x - cx, e.z - cz) - pad;
-      if (e.bed) e.bed.visible = !tm && d < R.bed;
-      if (e.flat) e.flat.visible = d < (tm ? 300 : R.flat);
-      if (e.near) e.near.visible = !tm && d < R.near;
-      if (e.sign) e.sign.visible = d < R.sign;
-      if (e.card) e.card.visible = !tm && d < R.flat;
-      if (e.tun) e.tun.visible = d < 900;
-    }
+    // The structure streams (build.js LazyChunks): within the near detail's
+    // range at once, out to the flat range a slice a frame, let go 700 m past.
+    const R = RANGE, pad = CHUNK * 0.71, BUILD_R = Math.max(R.flat, 900) + 300;
+    this.lazy.stream(cx, cz, R.near + 200, BUILD_R, BUILD_R + 700, pad, ON_PHONE ? 1.5 : 3, this._lazySys());
     for (const t of this.trains) {
       const d = Math.hypot(t.cx - cx, t.cz - cz);
       const buried = t.buried();

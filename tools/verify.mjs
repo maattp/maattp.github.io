@@ -136,6 +136,13 @@ async function main() {
     // still hand back the previous build's modules, which reads exactly like a
     // change that didn't land.
     await session.send('Network.setCacheDisabled', { cacheDisabled: true });
+    // AUTO_PHONE=1: boot as the iPhone (memprobe's UA and viewport), so every
+    // ON_PHONE path runs -- arrays dropped after upload, released texture
+    // canvases, far LODs. A desktop run never exercises them.
+    if (process.env.AUTO_PHONE === '1') {
+      await session.send('Emulation.setDeviceMetricsOverride', { width: 874, height: 402, deviceScaleFactor: 3, mobile: true, screenWidth: 874, screenHeight: 402, screenOrientation: { type: 'landscapePrimary', angle: 90 } });
+      await session.send('Emulation.setUserAgentOverride', { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1', platform: 'iPhone' });
+    }
     await session.send('Page.addScriptToEvaluateOnNewDocument', {
       source: 'window.__noAutoQuality = true;',
     });
