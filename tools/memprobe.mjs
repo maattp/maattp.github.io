@@ -317,7 +317,23 @@ try {
       return v.type;
     })()`);
     await ev(autopilot([{ x: 600, z: -7400 }, { x: 900, z: -10500 }, { x: 4000, z: -11500 }, { x: 2500, z: -5500 }, { x: -3500, z: -5800 }, { x: -4500, z: -3000 }, { x: -700, z: -4300 }], 70, 90));
+    // --alloc: where the flight's allocations come from (sampling heap
+    // profiler, collected objects included): what makes the garbage
+    const ALLOC = process.argv.includes('--alloc');
+    if (ALLOC) await send('HeapProfiler.startSampling', { samplingInterval: 16384, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true });
     out.fly = await sample(FLY, `flight ${FLY} s`);
+    if (ALLOC) {
+      const prof = (await send('HeapProfiler.stopSampling')).result.profile;
+      const self = new Map(); let tot = 0;
+      const walk = (n, stack) => {
+        const cf = n.callFrame, k = `${cf.functionName || '(anon)'} ${cf.url.replace(/^.*\/apps\/auto\//, '')}:${cf.lineNumber + 1}`;
+        if (n.selfSize) { self.set(k, (self.get(k) || 0) + n.selfSize); tot += n.selfSize; }
+        for (const c of n.children || []) walk(c, stack);
+      };
+      walk(prof.head, []);
+      console.log(`allocated in flight (sampled): ${(tot / 1e6).toFixed(0)} MB, ${(tot / 1e6 / FLY).toFixed(1)} MB/s; top sites:`);
+      for (const [k, v] of [...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, +(process.env.MEM_ALLOC_TOP || 30))) console.log(`  ${(v / 1e6).toFixed(1).padStart(8)} MB  ${k}`);
+    }
     out.flyEnd = await report('after the flight');
   }
   if (SKY) {

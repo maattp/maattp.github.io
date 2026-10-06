@@ -17,7 +17,7 @@ import { Islands } from './islands.js';
 import { Piers } from './piers.js';
 import { PickleballCourt } from './pickleball.js';
 import { freezeStatic, skipHiddenMatrices, Builder, dropStaticArrays } from './build.js';
-import { releaseTextureSources } from './memory.js';
+import { releaseTextureSources, installGpuLedger } from './memory.js';
 import { installChunkCull } from './chunkcull.js';
 import { Fishing } from './fishing.js';
 import { Hoops } from './hoops.js';
@@ -449,6 +449,7 @@ class Game {
 // ---------------------------------------------------------------------------
 
 let chunkCull = null;   // chunkcull.js
+let gpuLedger = null;
 let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts, stunts, monorail, link, freight, bikeNet, cyclists, lmRoot, shadowCache = null;
 let pickups = [];
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
@@ -600,6 +601,9 @@ async function boot() {
   // Antialiasing comes from FXAA in the post chain, so the context never needs
   // MSAA -- which also means the scene can render into a target for free.
   renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+  // what the GPU holds, for the flight recorder (memory.js): Safari reports
+  // no JS heap, and an iPhone ends the page for memory without a word
+  try { gpuLedger = installGpuLedger(renderer.getContext()); } catch (e) { gpuLedger = null; }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 2 : 1.6));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   // EXPOSURE, not ambient, is the lever on a scene sitting in the ACES toe.
@@ -911,6 +915,8 @@ function installShadowFade() {
       const ramps = scene.getObjectByName('stuntRamps');
       shadowCache = new ShadowCache(renderer, sun, { margin: 60, statics: () => [world.group, lmRoot, ramps, link.group, freight.group, freight.yardGroup], keep: () => [] });
       world.onChunkChange = (x, z, r) => shadowCache.chunkChanged(x, z, r);
+      // Link's and the freight line's chunks come and go too (LazyChunks)
+      link.onChunkChange = freight.onChunkChange = (x, z, r) => shadowCache.chunkChanged(x, z, r);
     } catch (e) { blog(`shadow cache: ${e.message}`); shadowCache = null; }
   }
   if (world.terrainGroup) freezeStatic(world.terrainGroup);
@@ -922,6 +928,9 @@ function installShadowFade() {
   // the first frame, so nothing has been uploaded yet. `__keepArrays` keeps
   // them (a harness that wants to raycast on the phone profile).
   if (ON_PHONE && !window.__keepArrays) {
+    // (Link's and freight's chunks are built as you come near: each drops
+    // its arrays the same way when it is made)
+    link.dropArrays = freight.dropArrays = true;
     let b = 0;
     for (const r of [world.terrainGroup, world.skyline, lmRoot, link.group, link.tunGroup, freight.group, freight.tunGroup, freight.yardGroup]) if (r) b += dropStaticArrays(r);
     for (const t of [...link.trains, ...freight.trains, ...Object.values(monorail.trains || {})]) for (const m of t.meshes || []) b += dropStaticArrays(m);
@@ -1330,7 +1339,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -2527,6 +2536,7 @@ function flightTick(dt) {
       draws: sceneStats.calls, ktris: Math.round(sceneStats.tris / 1000), geo: mi.geometries, tex: mi.textures, prog: renderer.info.programs ? renderer.info.programs.length : 0,
       chunks: built + '/' + world.chunks.size, cars: traffic.cars.length, peds: peds.peds.length,
       heapMB: pm ? Math.round(pm.usedJSHeapSize / 1e6) : undefined, paused: game.paused || undefined,
+      ...(gpuLedger ? gpuLedger.read() : null),
     });
   } catch (e) { flight('recorder: ' + e.message); }
 }

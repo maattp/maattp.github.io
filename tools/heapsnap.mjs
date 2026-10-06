@@ -246,7 +246,7 @@ for (const n of cand) {
   const q = new Uint32Array(N); let h = 0, t = 0;
   const seen = new Uint8Array(N);
   for (let n = 1; n < N; n++) if (typeOf(n) === 'object' && /^Window/.test(String(nameOf(n)))) { q[t++] = n; seen[n] = 1; keyOf[n] = 0; }
-  q[t++] = 0; keyOf[0] = 0; seen[0] = 1;
+  q[t++] = 0; keyOf[0] = kid('root'); seen[0] = 1;   // the rest, by its path from the root
   while (h < t) {
     const n = q[h++];
     const inWin = keyOf[n] > 0 || /^Window/.test(String(label(n)));
