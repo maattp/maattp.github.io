@@ -5176,7 +5176,8 @@ and Luther Burbank. Each is laid out from its real site by `marinaDock()`:
 a pier off the bank, a gangway, a floating walkway (a T-head only at the
 seaplane bases), piles, curbs as solids, and every top a platform. Its
 moorings spawn in main.js as 'apron' (skipped past 300 m), and each is a map
-place that says hello.
+place that says hello (its own `hello`, if the spec gives one). The islands'
+four and the small lakes' five (below) came later.
 
 - **Site from the DRAWN shore, not the water mask.** The mask's edge and the
   terrain's crossing of the water level disagree by tens of metres on a 40 m
@@ -5189,10 +5190,84 @@ place that says hello.
   bed. Each piece is 6 cm longer at both ends.
 - **No T-head across moored bows**: craft lie bow-out along the walkway, and
   a head's fender pinned every one of them to the float.
+- **Nothing solid in the path of a craft driven off bow-out.** A mooring sits
+  its collision circle (0.7 x radius: 1.67 m a runabout, 0.94 m a jet ski)
+  clear of the float's curb (1.3 + 0.15 out), the walkway's two guide piles
+  stand at its inner end, behind every mooring, and a plain head's two go
+  through its deck. Touching the curb, every craft scraped it all the way
+  off; midway along the walk, a pile stood in front of the craft behind it;
+  just off the head's corners, two more in front of every craft. "Without a
+  shore contact" had been measured, crashes had not: jet skis made 18 m in
+  3 s at full throttle, with a crash, at every Lake Washington and Elliott
+  Bay marina. Now 54 m (boats 25), nothing touched. At the seaplane bases a
+  jet ski moored along the walk still meets the 30 m T-head if driven
+  straight off: steer.
 
 Walked from 12 m inland out onto every float (groundAt from the ground):
 worst step 0.53 m, the kerb up onto the pier. Every moored boat and jet ski
 drives off at full throttle without a shore contact.
+
+### Docks on the small lakes
+
+**Every lake with its own water plane has a dock** besides Lake Washington
+and Lake Union (`MARINAS`, `lake: true`), each off a park on its real
+shore: Green Lake Boat Rentals by the boathouse (east shore; 2 boats, 2 jet
+skis), Bitter Lake Playfield (south end), Haller Lake's N 125th St street
+end (west shore), Lake Boren Park (Newcastle, south-west shore) and Big
+Finn Hill Park's beaver pond (Kirkland; unnamed in OSM -- a wetland pond,
+`natural=wetland` + `water=pond`, 47.722 N 122.232 W -- west shore), a boat
+and a jet ski each. They are 50-133 m up, so everything about them is the
+LOCAL water level: `waterQuery` already is.
+
+- **`lake` docks measure depth against the lake as DRAWN** (the lake's own
+  mask, `waterLevelAt`), the hulls' rule. The water mask stops short of a
+  shelving bed the 40 m dig left drawn under the lake: sited on the mask,
+  Green Lake's float stood 36 m out past drawn water already 1.4 m deep, and
+  its walkway ended short of the last mooring.
+- **Sized to the lake**: `float` caps the walkway (12 m; Green Lake 20), and
+  the pier stands 0.9 m over the water, not 1.3: there is no tide, and at
+  1.3 the landing was a 0.77 m step up off a low bank.
+- **Mind what the drawn lake already holds.** The first Green Lake site put
+  the boats alongside the Greenlake Boathouse, which stands in the drawn
+  lake (below), and its footprint stopped a runabout 5 m off its mooring;
+  the first Bitter Lake site's pier began against a building's corner. Both
+  were moved along the shore (check `world.inBuilding` along a candidate
+  shore before choosing).
+- **No prop in the drawn lake** (`world.inDrawnLake`): park trees, benches,
+  tables and street furniture used to test the water mask only, so 173 park
+  trees in one session's chunks (and Haller Lake's street-end park's tables)
+  stood in drawn water, solid to a boat. `waterLevelAt` is the lake's own
+  mask now, not its box, so the old warning against it (it deleted 105 of
+  Green Lake's park trees when it answered over the box) no longer applies.
+
+verify's "the small lakes' docks", per dock: the landing dry; each craft
+over >= 1 m of water at the lake's level; each driven off at full throttle
+3 s (54 m a jet ski, 25 m a runabout, no shore contact, no crash); stepping
+off onto the float; the walk from 12 m inland onto it (worst step 0.37 m);
+over the side mid-lake into a swim; **a runabout lap of the lake** at fixed
+dt, the heading written each frame along a distance field 12 m (Green Lake
+25 m) off everything it cannot float in or must steer round (depth under
+its 0.3 m, docks and rafts, buildings standing in the lake, the box edge),
+so a shore contact there is an invisible wall: 0 on all five (Green Lake
+4.6 km, the others 1.1-1.4 km); and no prop in the drawn lake. Exploring
+before that: 16 spokes per craft from each lake's middle to the shore at
+full throttle stopped at most 5.5 m (runabout) / 2.5 m (jet ski) short of
+the drawn shoreline, never with deep water behind; the lake reachable from
+each dock is 100 % of the water deep enough for the hull. Cost: a dock is
+2 draws and 0.6-1k triangles, each moored craft 3 draws (apron craft are
+skipped past 300 m). As the phone (AUTO_PHONE GPU harness, from the bank
+behind each dock, median of 60 frames, master -> this): Green Lake 107 ->
+125 draws (four craft), Bitter 90 -> 99, Haller 96 -> 105, Boren 94 -> 97,
+the Finn Hill pond 74 -> 81; triangles within noise; GPU ledger +2-4 MB.
+`docs/lakes/dock-*.jpg`.
+
+Known, left as imported: the small lakes are drawn ~2.5x their real area
+(Bitter Lake 37,300 m2 in `water.json`, ~96,000 m2 deep enough to float a
+jet ski), so OSM buildings on the real shore stand in the drawn water --
+the Greenlake Boathouse, five round Bitter Lake, one at Lake Boren -- and a
+craft stops against them; and where the dug bed runs past a lake's box its
+plane stops at the box, a straight edge over a 1-2 m step (78 m of Green
+Lake's east edge by the boathouse, 100 m of the Finn Hill pond's).
 
 **The jet ski** (`jetski` in TYPES, `buildJetski`) is `boat: true` -- the
 boat's float, shore and lock rules, wake and exit -- on a 3.2 m hull with the
