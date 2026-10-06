@@ -35,7 +35,7 @@ import { Seafair } from './hydrorace.js';
 import { BONES } from './peds.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
-import { TYPES as VEHICLE_TYPES, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial } from './vehicles.js';
+import { TYPES as VEHICLE_TYPES, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial, dropVehicleArrays } from './vehicles.js';
 
 // Aircraft come in their own colours, parked at Boeing Field or delivered.
 const AIRCRAFT_PAINT = {
@@ -1326,6 +1326,9 @@ function installShadowFade() {
       const r = releaseTextureSources(renderer, scene);
       blog(`texture sources: ${r.released} let go (${(r.bytes / 1048576).toFixed(0)} MB), ${r.pending} after their first upload`);
     } catch (e) { blog('texture sources: ' + e.message); }
+    // ...and the vehicle types' geometry once uploaded (the snapshot above
+    // has been written, and traffic made every far LOD at boot)
+    try { blog(`vehicle geometry: ${(dropVehicleArrays() / 1048576).toFixed(0)} MB of arrays go once uploaded`); } catch (e) { blog('vehicle geometry: ' + e.message); }
   }
   await step(0.94, 'Opening the roads');
   for (let i = 0; i < 90; i++) {

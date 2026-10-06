@@ -145,25 +145,34 @@ export function dropAfterUpload(m) {
  */
 export function dropStaticArrays(root) {
   let bytes = 0;
-  const drop = function () { this.array = null; };
   root.traverse((o) => {
     const g = o.geometry;
     if (!g || o.userData.keepArrays || (o.isSkinnedMesh && !o.boundingSphere)) return;
-    if (g.userData.dropArrays || g.morphAttributes.position) return;
-    g.userData.dropArrays = true;
-    if (!g.boundingSphere) g.computeBoundingSphere();
-    if (!g.boundingBox) g.computeBoundingBox();
-    const one = (a) => {
-      if (!a || a.isInterleavedBufferAttribute || !a.array) return;
-      bytes += a.array.byteLength;
-      a.onUpload(drop);
-    };
-    for (const k in g.attributes) one(g.attributes[k]);
-    one(g.index);
+    if (g.userData.dropArrays) return;
+    bytes += dropGeometryArrays(g);
     o.raycast = () => {};
   });
   return bytes;
 }
+
+/** dropStaticArrays for one geometry (shared ones: vehicles.js). Bounds first;
+ *  a morph target or an interleaved buffer keeps its arrays. */
+export function dropGeometryArrays(g) {
+  if (!g || g.userData.dropArrays || (g.morphAttributes && g.morphAttributes.position)) return 0;
+  g.userData.dropArrays = true;
+  if (!g.boundingSphere) g.computeBoundingSphere();
+  if (!g.boundingBox) g.computeBoundingBox();
+  let bytes = 0;
+  const one = (a) => {
+    if (!a || a.isInterleavedBufferAttribute || !a.array) return;
+    bytes += a.array.byteLength;
+    a.onUpload(dropArray);
+  };
+  for (const k in g.attributes) one(g.attributes[k]);
+  one(g.index);
+  return bytes;
+}
+const dropArray = function () { this.array = null; };
 
 export class Builder {
   constructor(useUV = true) {

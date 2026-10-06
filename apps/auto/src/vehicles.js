@@ -9,7 +9,7 @@
 //   matte  - tyres, bumper rubber, plastic, wheel arches (rough, dielectric)
 
 import * as THREE from './three.js';
-import { Builder } from './build.js';
+import { Builder, dropGeometryArrays } from './build.js';
 import { makeHumanoid, buildCharacter, BONES, gripHands } from './peds.js';
 import { clamp, lerp, hash2, damp } from './util.js';
 import * as G from './geo.js';
@@ -6995,6 +6995,32 @@ function farShader(sh) {
 	metalnessFactor = vLodA.y;
 	roughnessFactor = vLodA.z;`);
   sh.fragmentShader = fs;
+}
+
+/**
+ * Phones: every vehicle type's geometry -- body, trim, glass, wheels, spinning
+ * parts and far LOD, ~23 MB -- keeps no JS copy once it is on the GPU (CLAUDE.md
+ * "Memory"). Call after the boot cache has its snapshot and after the far
+ * LODs, which are made from these arrays, exist (traffic.js builds every
+ * type's far LOD at boot on a phone; a type without one keeps its arrays).
+ */
+export function dropVehicleArrays() {
+  const A = vehicleAssets();
+  let bytes = 0;
+  for (const [name, t] of Object.entries(A.types)) {
+    const farReady = FAR && FAR.geos.has(name);
+    const far = new Set([t.paintGeo, t.trimGeoW, t.matteGeoWE]);
+    const geos = [t.paintGeo, t.trimGeo, t.matteGeo, t.trimGeoW, t.matteGeoW, t.matteGeoWE, t.shadowGeo];
+    for (const w of t.wheelGeos || []) geos.push(w.trim, w.matte);
+    for (const sp of t.spins || []) geos.push(sp.geo);
+    for (const g of geos) if (g && (farReady || !far.has(g))) bytes += dropGeometryArrays(g);
+  }
+  if (FAR) for (const g of FAR.geos.values()) bytes += dropGeometryArrays(g);
+  // a cached launch's geometry is views of the boot cache's snapshot: let it
+  // go too (every far LOD it could still give is built by now, or is built
+  // from the types' own arrays, which a type without one keeps)
+  PRE = null;
+  return bytes;
 }
 
 let FAR = null;
