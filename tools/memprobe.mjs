@@ -32,7 +32,7 @@
 // run streams less city per second than a phone does while the GPU work is
 // the same). Service worker bypassed; fresh profile every run.
 import { setTimeout as sleep } from 'node:timers/promises';
-import { writeFileSync, createWriteStream } from 'node:fs';
+import { writeFileSync, createWriteStream, readFileSync } from 'node:fs';
 import { launchChrome, assertRenderer } from './chrome.mjs';
 
 const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
@@ -213,6 +213,9 @@ try {
     console.log(`${label}: heap gc ${gc} MB (of which array buffers ${backing}; raw ${raw}), gpu ${gpu}, ${info}`);
     if (CENSUS) console.log('  ' + await ev(CENSUS_EXPR));
     if (process.argv.includes('--tex')) console.log('  ' + await ev(TEX_EXPR));
+    // MEM_PROBE_FILE=<file>: an expression evaluated after each measurement
+    // (tools/cityqueryhash.js: the city's query answers, hashed)
+    if (process.env.MEM_PROBE_FILE) console.log('  probe: ' + await ev(readFileSync(process.env.MEM_PROBE_FILE, 'utf8')));
     return { raw, gc, backing, gpu: JSON.parse(gpu) };
   };
 

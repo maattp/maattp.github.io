@@ -160,27 +160,64 @@ const skey = (cx, cz) => cx * 100003 + cz;
 // and index, never changed once built). `extra`: what the build also leaves
 // (onRoad's widest reach).
 function gridMemo(key, build, getExtra = null, setExtra = null) {
-  let live = null;
-  const packed = memo(key, () => {
-    live = build();
-    let n = 0;
-    for (const l of live.values()) n += l.length;
-    // (skey's cells fit 32 bits on any map this size; Float64 if one doesn't)
-    let keys = new Int32Array(live.size);
-    const off = new Int32Array(live.size + 1), ids = new Int32Array(n);
-    let i = 0, o = 0;
-    for (const [k, l] of live) { keys[i] = k; off[i] = o; ids.set(l, o); o += l.length; i++; }
-    off[i] = o;
-    i = 0;
-    for (const k of live.keys()) if (keys[i++] !== k) { keys = Float64Array.from(live.keys()); break; }
-    return { keys, off, ids, extra: getExtra ? getExtra() : 0 };
-  }, (v) => v && (v.keys instanceof Int32Array || v.keys instanceof Float64Array) && v.off instanceof Int32Array && v.ids instanceof Int32Array
+  const packed = memo(key, () => packGrid(build(), getExtra ? getExtra() : 0),
+    (v) => v && (v.keys instanceof Int32Array || v.keys instanceof Float64Array) && v.off instanceof Int32Array && v.ids instanceof Int32Array
     && v.off.length === v.keys.length + 1 && v.off[v.keys.length] === v.ids.length);
-  if (live) return live;
-  const grid = new Map();
-  for (let i = 0; i < packed.keys.length; i++) grid.set(packed.keys[i], packed.ids.subarray(packed.off[i], packed.off[i + 1]));
   if (setExtra) setExtra(packed.extra);
-  return grid;
+  return new CellGrid(packed.keys, packed.off, packed.ids);
+}
+/** A Map of skey -> id list as columns: the memo's form. */
+function packGrid(live, extra = 0) {
+  let n = 0;
+  for (const l of live.values()) n += l.length;
+  // (skey's cells fit 32 bits on any map this size; Float64 if one doesn't)
+  let keys = new Int32Array(live.size);
+  const off = new Int32Array(live.size + 1), ids = new Int32Array(n);
+  let i = 0, o = 0;
+  for (const [k, l] of live) { keys[i] = k; off[i] = o; ids.set(l, o); o += l.length; i++; }
+  off[i] = o;
+  i = 0;
+  for (const k of live.keys()) if (keys[i++] !== k) { keys = Float64Array.from(live.keys()); break; }
+  return { keys, off, ids, extra };
+}
+/**
+ * A cell index as two typed arrays: `off` has a slot for every cell of the box
+ * the occupied cells span (plus an empty one, `N`, for any cell outside it),
+ * and cell c's ids are ids[off[c] .. off[c + 1]), in the order they were filed.
+ * The Map of arrays it replaces held a JS array (or a typed-array view, on a
+ * cached launch) per cell: ~30 MB each for the lift and road grids. `cell(cx,
+ * cz)` is the lookup; see CLAUDE.md "Memory".
+ */
+export class CellGrid {
+  constructor(keys, off, ids) {
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    const n = keys.length, cxs = new Int32Array(n), czs = new Int32Array(n);
+    for (let i = 0; i < n; i++) {
+      const cx = Math.round(keys[i] / 100003), cz = keys[i] - cx * 100003;
+      cxs[i] = cx; czs[i] = cz;
+      if (cx < x0) x0 = cx;
+      if (cx > x1) x1 = cx;
+      if (cz < z0) z0 = cz;
+      if (cz > z1) z1 = cz;
+    }
+    if (!n) { x0 = z0 = 0; x1 = z1 = -1; }
+    this.x0 = x0; this.z0 = z0; this.nx = x1 - x0 + 1; this.nz = z1 - z0 + 1;
+    const N = this.N = this.nx * this.nz;
+    const start = new Int32Array(N + 2);
+    for (let i = 0; i < n; i++) start[(cxs[i] - x0) * this.nz + (czs[i] - z0) + 1] = off[i + 1] - off[i];
+    for (let c = 0; c < N; c++) start[c + 1] += start[c];
+    start[N + 1] = start[N];
+    const out = new Int32Array(ids.length);
+    for (let i = 0; i < n; i++) out.set(ids.subarray(off[i], off[i + 1]), start[(cxs[i] - x0) * this.nz + (czs[i] - z0)]);
+    this.off = start; this.ids = out;
+  }
+  /** Cell (cx, cz)'s slot in `off` (the empty slot when outside the box). */
+  cell(cx, cz) {
+    const ix = cx - this.x0, iz = cz - this.z0;
+    return ix >= 0 && ix < this.nx && iz >= 0 && iz < this.nz ? ix * this.nz + iz : this.N;
+  }
+  /** A Map of skey -> id list, the same way. */
+  static fromMap(live) { const p = packGrid(live); return new CellGrid(p.keys, p.off, p.ids); }
 }
 
 // ---------------------------------------------------------------------------
@@ -2777,7 +2814,7 @@ export function* cityGenerator(md, cache = {}) {
 
   // --- 5. Building collision index ----------------------------------------
   const bCell = 60;
-  const bGrid = new Map();
+  let bGrid = new Map();
   for (let bi = 0; bi < buildings.length; bi++) {
     const bd = buildings[bi];
     const r = Math.max(bd.w, bd.d) * 0.75;
@@ -2791,6 +2828,7 @@ export function* cityGenerator(md, cache = {}) {
         l.push(bi);
       }
   }
+  bGrid = CellGrid.fromMap(bGrid);
 
   // --- 5b. Nothing stands up through a deck --------------------------------
   //
@@ -2815,10 +2853,9 @@ export function* cityGenerator(md, cache = {}) {
         const deck = P ? P.h : a.y + (b.y - a.y) * t;
         for (const o of [-e.hw, 0, e.hw]) {
           const x = a.x + e.dx * s + px * o, z = a.z + e.dz * s + pz * o;
-          const l = bGrid.get(skey(Math.floor(x / bCell), Math.floor(z / bCell)));
-          if (!l) continue;
-          for (const bi of l) {
-            const bd = buildings[bi];
+          const bc = bGrid.cell(Math.floor(x / bCell), Math.floor(z / bCell));
+          for (let q = bGrid.off[bc], qe = bGrid.off[bc + 1]; q < qe; q++) {
+            const bi = bGrid.ids[q], bd = buildings[bi];
             if (bd.y > deck - 2.5 || bd.y + bd.h <= deck - 1.4) continue;
             const c = Math.cos(-bd.rot), sn = Math.sin(-bd.rot), dx = x - bd.x, dz = z - bd.z;
             if (Math.abs(dx * c - dz * sn) > bd.w / 2 + 0.5 || Math.abs(dx * sn + dz * c) > bd.d / 2 + 0.5) continue;
@@ -2834,7 +2871,7 @@ export function* cityGenerator(md, cache = {}) {
   // --- 6. Node spatial index for AI ---------------------------------------
   const nCell = 150;
   const NS_CELL = 16, nsCache = new Map();   // nodeSurface's candidates
-  const nGrid = new Map();
+  let nGrid = new Map();
   for (let ni = 0; ni < g.nodes.length; ni++) {
     const n = g.nodes[ni];
     const k = skey(Math.floor(n.x / nCell), Math.floor(n.z / nCell));
@@ -2842,6 +2879,7 @@ export function* cityGenerator(md, cache = {}) {
     if (!l) nGrid.set(k, (l = []));
     l.push(ni);
   }
+  nGrid = CellGrid.fromMap(nGrid);
 
   const drivable = [];
   for (let ei = 0; ei < g.edges.length; ei++) if (g.edges[ei].len > 15) drivable.push(ei);
@@ -2882,7 +2920,7 @@ export function* cityGenerator(md, cache = {}) {
       }
       return grid;
     });
-    return liftGrid.get(skey(Math.floor(x / LIFT_CELL), Math.floor(z / LIFT_CELL)));
+    return liftGrid.cell(Math.floor(x / LIFT_CELL), Math.floor(z / LIFT_CELL));
   };
   // onRoad's grid: EVERY edge (tunnels and decks too, as the chunk scan had),
   // under its bbox grown by the farthest onRoad can answer true for it.
@@ -2918,7 +2956,7 @@ export function* cityGenerator(md, cache = {}) {
       }
       return grid;
     }, () => roadReachMax, (v) => { roadReachMax = v; });
-    return roadGrid.get(skey(Math.floor(x / LIFT_CELL), Math.floor(z / LIFT_CELL)));
+    return roadGrid.cell(Math.floor(x / LIFT_CELL), Math.floor(z / LIFT_CELL));
   };
   // --- Junction shapes ------------------------------------------------------
   //
@@ -2972,9 +3010,9 @@ export function* cityGenerator(md, cache = {}) {
   // count only along their interior: past an end the clamped distance is a
   // round cap, which covers corner pavement next to a wider arm.
   const onOtherRoad = (x, z, own) => {
-    const cand = roadCell(x, z);
-    if (!cand) return false;
-    for (let q = 0; q < cand.length; q++) {
+    const rc = roadCell(x, z), cand = roadGrid.ids, qe = roadGrid.off[rc + 1];
+    if (roadGrid.off[rc] === qe) return false;
+    for (let q = roadGrid.off[rc]; q < qe; q++) {
       const ei = cand[q], e = g.edges[ei];
       if (e.elev) continue;
       const a = g.nodes[e.a], b = g.nodes[e.b];
@@ -3303,9 +3341,9 @@ export function* cityGenerator(md, cache = {}) {
   // onRoad(x, z, 0, false), for the verge test above (the method lives on the
   // returned object).
   const onRoadNoElev = (x, z) => {
-    const cand = roadCell(x, z);
-    if (!cand) return false;
-    for (let q = 0; q < cand.length; q++) {
+    const rc = roadCell(x, z), cand = roadGrid.ids, qe = roadGrid.off[rc + 1];
+    if (roadGrid.off[rc] === qe) return false;
+    for (let q = roadGrid.off[rc]; q < qe; q++) {
       const e = g.edges[cand[q]];
       if (e.elev) continue;
       const a = g.nodes[e.a], b = g.nodes[e.b];
@@ -3443,11 +3481,11 @@ export function* cityGenerator(md, cache = {}) {
       // (x,z) where the point is within its own hw + 0.5 of it, far inside the
       // grid's reach, so the answer is the old 3x3-chunk scan's -- which was
       // 30 % of a downtown chunk build after onRoad moved to the grid.
-      const cand = roadCell(x, z);
-      if (!cand) return false;
+      const rc = roadCell(x, z), cand = roadGrid.ids, qe = roadGrid.off[rc + 1];
+      if (roadGrid.off[rc] === qe) return false;
       {
         {
-          for (let q = 0; q < cand.length; q++) {
+          for (let q = roadGrid.off[rc]; q < qe; q++) {
             const oi = cand[q];
             if (oi === ei) continue;
             const o = g.edges[oi];
@@ -3506,10 +3544,10 @@ export function* cityGenerator(md, cache = {}) {
       // carriageway + batter), touches the cell, so every edge that can lift
       // (x,z) is a candidate and the answer is identical. Tunnels (no surface
       // drawn) and decks (groundAt's job) are never in it, as before.
-      const cand = liftCell(x, z);
-      if (cand) {
+      const lc = liftCell(x, z), cand = liftGrid.ids, qe = liftGrid.off[lc + 1];
+      {
         {
-          for (let q = 0; q < cand.length; q++) {
+          for (let q = liftGrid.off[lc]; q < qe; q++) {
             const e = g.edges[cand[q]];
             const a = g.nodes[e.a], b = g.nodes[e.b];
             // distToSeg inline: no object per edge in the hottest loop.
@@ -3628,10 +3666,9 @@ export function* cityGenerator(md, cache = {}) {
         l = [];
         for (let cx = c0; cx <= c1; cx++) {
           for (let cz = d0; cz <= d1; cz++) {
-            const cl = nGrid.get(skey(cx, cz));
-            if (!cl) continue;
-            for (const ni of cl) {
-              const n = g.nodes[ni];
+            const nc = nGrid.cell(cx, cz);
+            for (let q = nGrid.off[nc], qe = nGrid.off[nc + 1]; q < qe; q++) {
+              const ni = nGrid.ids[q], n = g.nodes[ni];
               // nearest point of the cell to the node, against its bound
               const qx = n.x < fx0 ? fx0 : n.x > fx0 + NS_CELL ? fx0 + NS_CELL : n.x;
               const qz = n.z < fz0 ? fz0 : n.z > fz0 + NS_CELL ? fz0 + NS_CELL : n.z;
@@ -4434,9 +4471,9 @@ export function* cityGenerator(md, cache = {}) {
       const seen = new Set();
       for (let cx = c0; cx <= c1; cx++)
         for (let cz = d0; cz <= d1; cz++) {
-          const l = bGrid.get(skey(cx, cz));
-          if (!l) continue;
-          for (const bi of l) {
+          const bc = bGrid.cell(cx, cz);
+          for (let q = bGrid.off[bc], qe = bGrid.off[bc + 1]; q < qe; q++) {
+            const bi = bGrid.ids[q];
             if (seen.has(bi)) continue;
             seen.add(bi);
             out.push(buildings[bi]);
@@ -4467,9 +4504,9 @@ export function* cityGenerator(md, cache = {}) {
       // edge under its bbox grown by hw + batter + ROAD_PAD_MAX, so every edge
       // that can answer true is a candidate and the answer is identical.
       if (pad <= ROAD_PAD_MAX) {
-        const cand = roadCell(x, z);
-        if (!cand) return false;
-        for (let q = 0; q < cand.length; q++) {
+        const rc = roadCell(x, z), cand = roadGrid.ids, qe = roadGrid.off[rc + 1];
+        if (roadGrid.off[rc] === qe) return false;
+        for (let q = roadGrid.off[rc]; q < qe; q++) {
           const e = g.edges[cand[q]];
           if (e.elev && !includeElev) continue;
           if (e.tunnel && !includeTunnel) continue;
@@ -4527,9 +4564,8 @@ export function* cityGenerator(md, cache = {}) {
       const seen = new Set();
       for (let cx = c0; cx <= c1; cx++) {
         for (let cz = d0; cz <= d1; cz++) {
-          const l = roadGrid.get(skey(cx, cz));
-          if (!l) continue;
-          for (let q = 0; q < l.length; q++) {
+          const rc = roadGrid.cell(cx, cz), l = roadGrid.ids;
+          for (let q = roadGrid.off[rc], qe = roadGrid.off[rc + 1]; q < qe; q++) {
             const ei = l[q];
             if (seen.has(ei)) continue;
             seen.add(ei);
@@ -4578,10 +4614,9 @@ export function* cityGenerator(md, cache = {}) {
       // Candidates from onRoad's grid, which holds every edge under a bbox far
       // wider than hw. The chunk scan below decides which road is returned when
       // more than one qualifies, so ties still go the way they always went.
-      const l = roadCell(x, z);
-      if (!l) return 0;
+      const rc = roadCell(x, z), l = roadGrid.ids;
       let hit = 0;
-      for (let k = 0; k < l.length; k++) {
+      for (let k = roadGrid.off[rc], ke = roadGrid.off[rc + 1]; k < ke; k++) {
         const ei = l[k];
         if (ei === skip || !cwHit(ei, x, z, y, tol)) continue;
         if (hit) return cwScan(x, z, y, skip, tol);
@@ -4608,10 +4643,9 @@ export function* cityGenerator(md, cache = {}) {
       const d0 = Math.floor((z - maxR) / nCell), d1 = Math.floor((z + maxR) / nCell);
       for (let cx = c0; cx <= c1; cx++) {
         for (let cz = d0; cz <= d1; cz++) {
-          const l = nGrid.get(skey(cx, cz));
-          if (!l) continue;
-          for (const ni of l) {
-            const n = g.nodes[ni];
+          const nc = nGrid.cell(cx, cz);
+          for (let q = nGrid.off[nc], qe = nGrid.off[nc + 1]; q < qe; q++) {
+            const ni = nGrid.ids[q], n = g.nodes[ni];
             if (!n.e.length) continue;
             const dd = (n.x - x) * (n.x - x) + (n.z - z) * (n.z - z);
             if (dd < anyBd) { anyBd = dd; anyBest = ni; }
@@ -4632,10 +4666,9 @@ export function* cityGenerator(md, cache = {}) {
       const d0 = Math.floor((z - maxR) / nCell), d1 = Math.floor((z + maxR) / nCell);
       for (let cx = c0; cx <= c1; cx++)
         for (let cz = d0; cz <= d1; cz++) {
-          const l = nGrid.get(skey(cx, cz));
-          if (!l) continue;
-          for (const ni of l) {
-            const n = g.nodes[ni];
+          const nc = nGrid.cell(cx, cz);
+          for (let q = nGrid.off[nc], qe = nGrid.off[nc + 1]; q < qe; q++) {
+            const ni = nGrid.ids[q], n = g.nodes[ni];
             const dd = (n.x - x) * (n.x - x) + (n.z - z) * (n.z - z);
             if (dd < bd) { bd = dd; best = ni; }
           }
