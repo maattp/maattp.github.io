@@ -2270,6 +2270,21 @@ export const MARINAS = [
   { name: 'Bainbridge Island · Manitou Beach', x: -12488, z: -3631, fleet: ['boat', 'floatplane', 'jetski'], seaplanes: true },
   { name: 'Blake Island Marina', x: -11255, z: 7565, fleet: ['boat', 'floatplane', 'jetski', 'boat'], seaplanes: true },
   { name: 'Vashon Island · North End', x: -9481, z: 11212, fleet: ['floatplane', 'boat', 'jetski'], seaplanes: true },
+  // The smaller lakes, each with its own water plane high above the Sound
+  // (water.json: Green Lake 50 m, Bitter 133, Haller 116, Boren 116, the
+  // beaver pond 109). A short pier and float sized to the lake (`float` caps
+  // the walkway), off a park on each one's shore; `lake` measures depth
+  // against the lake as drawn (marinaDock).
+  { name: 'Green Lake Boat Rentals', x: 682, z: -7748, fleet: ['jetski', 'boat', 'jetski', 'boat'], lake: true, float: 20,
+    hello: 'Green Lake Boat Rentals, by the boathouse — boats and jet skis. Walk out on the float and take one' },
+  { name: 'Bitter Lake Playfield', x: -925, z: -12590, fleet: ['jetski', 'boat'], lake: true, float: 12,
+    hello: 'Bitter Lake — a boat and a jet ski on the float. Walk out and take one' },
+  { name: 'Haller Lake · N 125th St', x: 134, z: -12032, fleet: ['jetski', 'boat'], lake: true, float: 12,
+    hello: "Haller Lake's street-end dock — a boat and a jet ski. Walk out and take one" },
+  { name: 'Lake Boren Park', x: 13000, z: 9000, fleet: ['jetski', 'boat'], lake: true, float: 12,
+    hello: 'Lake Boren, Newcastle — a boat and a jet ski on the float. Walk out and take one' },
+  { name: 'Big Finn Hill Park · Beaver Pond', x: 7830, z: -12380, fleet: ['jetski', 'boat'], lake: true, float: 12,
+    hello: "Big Finn Hill Park's beaver pond — a boat and a jet ski. Mind the beavers" },
 ];
 const BOAT_PAINT = [0xf2f2ee, 0x1f3f6a, 0xb8352a, 0xe8e2d0, 0x2d5a45, 0x3c4450];
 const SKI_PAINT = [0xf2c21a, 0x1e7fd0, 0xd8322a, 0x21b3a0, 0xf07a1c, 0x7a3fc2];
@@ -2279,8 +2294,12 @@ const SKI_PAINT = [0xf2c21a, 0x1e7fd0, 0xd8322a, 0x21b3a0, 0xf07a1c, 0x7a3fc2];
  * null. Returns null when no shore with deep enough water is in reach.
  */
 function marinaDock(spec, wl, idx) {
+  // On a small lake the water is where the lake is DRAWN (its own mask, which
+  // reaches past the 10 m water mask over a shelving bed): the hulls' rule.
+  // Asked of the water mask, Green Lake's float stood 36 m out past drawn water
+  // 1.4 m deep, and the walkway ended short of its last mooring.
   const depth = (x, z) => {
-    const w = G.isWater(x, z) ? wl(x, z) : null;
+    const w = spec.lake || G.isWater(x, z) ? wl(x, z) : null;
     return w === null ? -1 : w - G.terrainHeight(x, z);
   };
   // THE SHORE IS WHERE THE DRAWN GROUND MEETS THE WATER, not the water
@@ -2339,10 +2358,12 @@ function marinaDock(spec, wl, idx) {
   while (t0 < 40 && depth(...at(t0)) < 1.4) t0 += 2;
   if (depth(...at(t0)) < 1.4) return null;
   let len = 10;
-  while (len < 44 && depth(...at(t0 + len + 2)) >= 1.4 && depth(...at(t0 + len + 2, 10)) >= 1.0) len += 2;
+  while (len < (spec.float || 44) && depth(...at(t0 + len + 2)) >= 1.4 && depth(...at(t0 + len + 2, 10)) >= 1.0) len += 2;
   const FY = level + 0.45;
   const land = at(-5);
-  const LY = Math.max(G.terrainHeight(land[0], land[1]) + 0.3, level + 1.3);
+  // the pier stands 1.3 m over the water, a lake's 0.9 (no tide; a lower bank,
+  // and at 1.3 its landing was a 0.77 m step up off the grass)
+  const LY = Math.max(G.terrainHeight(land[0], land[1]) + 0.3, level + (spec.lake ? 0.9 : 1.3));
   // the pier runs from the bank to where the gangway starts down
   const gl = Math.max(5, Math.min(12, (LY - FY) / 0.22));
   const tp = Math.max(-1, t0 - gl);
@@ -2401,8 +2422,13 @@ function marinaDock(spec, wl, idx) {
   strip(t0 + len, t0 + len + 2.6, -head / 2, head / 2, FY, FY, 0.22, true);
   for (const o of [-1.3, 1.3]) edge(t0 + 0.2, t0 + len, o, FY - 0.3, FY + 0.9);
   solids.push({ ...(() => { const [cx, cz] = at(t0 + len + 2.6, 0); return { x: cx, z: cz }; })(), hw: head / 2, hd: 0.15, rot: -yaw, y0: FY - 0.3, y1: FY + 0.9 });
-  // guide piles at the corners of the head and along the walkway
-  for (const [t, o] of [[t0 + len + 1.3, -head / 2 - 0.3], [t0 + len + 1.3, head / 2 + 0.3], [t0 + len / 2, -1.6], [t0 + len / 2, 1.6]].filter(([, o]) => spec.seaplanes || Math.abs(o) < 2)) {
+  // guide piles at the corners of the head, and the walkway's at its inner
+  // end: behind every mooring, so nothing driven off bow-out meets one. Midway
+  // along the walkway, each stood in the path of the craft moored behind it;
+  // and a plain head's two stood just off its corners, in the path of every
+  // craft along the walk -- they go through the deck instead.
+  const hp = spec.seaplanes ? head / 2 + 0.3 : 0.95;
+  for (const [t, o] of [[t0 + len + 1.3, -hp], [t0 + len + 1.3, hp], [t0 + 0.8, -1.6], [t0 + 0.8, 1.6]].filter(([, o]) => spec.seaplanes || Math.abs(o) < 2)) {
     const [x, z] = at(t, o), bed = G.terrainHeight(x, z) - 0.4;
     g.add(cyl(0.2, 0.22, FY + 1.6 - bed, pile, x, bed, z, 8));
     solids.push({ x, z, r: 0.25, y0: bed + 1.5, y1: FY + 1.7 });
@@ -2432,7 +2458,10 @@ function marinaDock(spec, wl, idx) {
       return;
     }
     const side = k % 2 ? 1 : -1;
-    const off = ty === 'jetski' ? 1.3 + 1.1 : 1.3 + 1.6;
+    // the hull's collision circle (0.7 x its radius: 1.67 m a runabout,
+    // 0.94 m a jet ski) clear of the float's curb (1.3 + 0.15 out): touching
+    // it, every craft scraped the curb all the way off its mooring
+    const off = ty === 'jetski' ? 1.45 + 0.94 + 0.11 : 1.45 + 1.67 + 0.13;
     const [x, z] = at(t, side * off);
     if (depth(x, z) >= 1.0) moor.push([ty, x, z, yaw, colour(ty, k)]);
     if (k % 2) t += ty === 'jetski' ? 4.5 : 7.5;
@@ -3281,7 +3310,7 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
       platforms.push(...d.plat);
       addTo(`marina${i}`, d.g);
       marinas.push({ name: m.name, x: d.x, z: d.z, level: d.level, moorings: d.moor, seaplanes: !!m.seaplanes,
-        land: d.land, n: d.n, t0: d.t0, tp: d.tp });
+        land: d.land, n: d.n, t0: d.t0, tp: d.tp, hello: m.hello || null });
     });
   }
   // the beaches' props (beachProps), each beach its own cluster
