@@ -3672,6 +3672,14 @@ Ten wall-clock seconds of walking is only a few metres; don't read that as stuck
 from the stuck-stick fix, so a stick set without a live pointer is zeroed on the
 very next frame. This silently reads as "the player can't move."
 
+**`AUTO_PHONE=1 node tools/verify.mjs` boots as the iPhone** (memprobe's UA and
+viewport), so the ON_PHONE paths run: arrays dropped after upload, released
+texture canvases, far LODs. A desktop run never exercises them, and since v179
+the phone drops far more (see "Memory"). Expected on master too: "piers / bike
+paths not built when in range" fails, because the deck ray finds nothing once a
+pier chunk's arrays are gone (`the deck drawn null m`). Anything else failing
+only under AUTO_PHONE is a phone-only bug.
+
 **Every harness takes `AUTO_HTTP_PORT` and `AUTO_CDP_PORT`.** Serve master from a
 second checkout on another port (`:8001`) and run the same harness against both
 for a real before/after; several agents' Chromes can then share one machine.
