@@ -1267,6 +1267,15 @@ function installShadowFade() {
   bootCache.gradeOut = bootCache.buildingsOut = null;
   world.bootCache = null;
   link.cacheOut = link.cache = freight.cacheOut = null;
+  // What the cache handed in is spent, and so is what went out: `bc` lives in
+  // boot()'s closure context, which every listener made in here keeps alive
+  // for the whole session -- on a cached launch that was the IndexedDB read
+  // itself, ~65 MB (the packed buildings, the memo, the vehicle snapshot)
+  // held to the end. See CLAUDE.md "Memory".
+  for (const k of BC_KEYS) bc[k] = null;
+  bootCache.grade = bootCache.buildings = null;
+  bcOut.texPlan = bcOut.mapCanvas = null;
+  toKeep.length = 0;
   await step(0.94, 'Opening the roads');
   for (let i = 0; i < 90; i++) {
     const left = world.update(player.x, player.z, 6);

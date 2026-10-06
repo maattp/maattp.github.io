@@ -899,6 +899,10 @@ export class World {
       this.scene.environment = this.envRT.texture;
       this.envPrefiltered = true;
       pmrem.dispose();
+      // the equirect was only the PMREM's input: 8.4 MB of GPU texture that
+      // nothing samples once the prefiltered map exists
+      envTarget.dispose();
+      this.envEquirect = null;
     } else {
       // Raw equirect as the env map: no prefiltered roughness mips, so rough
       // surfaces reflect too sharply, but the city stays lit.
