@@ -1921,6 +1921,183 @@ async function main() {
     console.log(`  a jet ski through the old invisible walls: ${jwl.join(' / ')} m in 3 s`);
     if (jwl.some((m) => m < 40)) { console.error('FAIL: elliott bay: an invisible wall stops the jet ski'); process.exitCode = 1; }
 
+    // --- the small lakes' docks --------------------------------------------------------------
+    // Green, Bitter and Haller Lakes, Lake Boren and Big Finn Hill Park's pond
+    // each have their own water plane, 50-133 m up (landmarks.js MARINAS, `lake`).
+    // Every dock: its landing on dry ground, its craft over the lake's water and
+    // floating at the lake's OWN level; each craft driven off at full throttle
+    // without touching anything; the walk from 12 m inland out onto the float;
+    // stepping off a craft onto the float, and over the side mid-lake into a
+    // swim. Then the runabout (the deepest draught) driven a lap of each lake,
+    // 12 m (Green Lake 25 m) off its own shore, steered along a distance field
+    // from everything it cannot float in or must steer round (docks, rafts,
+    // buildings standing in the drawn lake, the box edge): a shore contact on
+    // that line is an invisible wall. And no park tree stands in a lake.
+    const sld = await session.eval(`(() => {
+      const d = window.__dbg, G = d.G, W = d.world, T = d.traffic, P = d.player, city = d.city, DT = 1 / 60;
+      const crashes = [], oc = d.game.onCrash, od = d.game.damagePlayer;
+      d.game.onCrash = (i) => crashes.push(i); d.game.damagePlayer = () => {};
+      const settle = (x, z) => {
+        const pending = () => [...W.chunks.values()].filter((c) => c.lod !== c.wantLod).length;
+        W.update(x, z, 60);
+        for (let i = 0; i < 3000 && pending() > 0; i++) W.update(x, z, 60);
+      };
+      const docks = (d.lmRoot.userData.marinas || []).filter((m) => m.level > 40);
+      const out = [];
+      try {
+        for (const m of docks) {
+          const L = W.lakeSpecs.find((l) => Math.abs(l.level - m.level) < 0.01);
+          settle(m.x, m.z);
+          const r = { name: m.name, level: m.level, bad: [] };
+          const depth = (x, z) => { const w = W.waterLevelAt(x, z); return w === null || Math.abs(w - m.level) > 0.5 ? -1 : w - G.terrainHeight(x, z); };
+          r.landDry = G.terrainHeight(m.land[0], m.land[1]) > m.level + 0.3 && depth(m.land[0], m.land[1]) <= 0;
+          const crafts = T.cars.filter((v) => v.mode === 'apron' && v.spec.boat && Math.hypot(v.x - m.x, v.z - m.z) < 90);
+          r.fleet = crafts.map((v) => v.typeName);
+          r.craft = [];
+          for (const v of crafts) {
+            const home = { x: v.x, z: v.z, h: v.heading, y: v.y };
+            const c = { ty: v.typeName, dy: +(v.y - m.level).toFixed(3), depth: +depth(v.x, v.z).toFixed(2) };
+            if (P.vehicle) P.exitVehicle(true);
+            P.x = v.x; P.z = v.z; P.enterVehicle(v);
+            crashes.length = 0; let shore = 0;
+            for (let i = 0; i < 180; i++) { P.updateDrive(DT, { x: 0, y: 0, gasAmt: 1, brakeAmt: 0 }, T, d.peds); if (v.shoreHit > 0) shore++; }
+            c.off = { m: Math.round(Math.hypot(v.x - home.x, v.z - home.z)), shore, crashes: crashes.length };
+            // back on the mooring: step off onto the float
+            P.exitVehicle(true);
+            v.x = home.x; v.z = home.z; v.heading = home.h; v.vLong = 0; v.vLat = 0; v.y = home.y;
+            P.x = v.x; P.z = v.z; P.enterVehicle(v);
+            P.health = 100;
+            c.exit = P.exitVehicle() && city.platformAt(P.x, P.z) !== null && !P.swimming;
+            v.mode = 'apron';
+            r.craft.push(c);
+          }
+          // walk out from 12 m inland along the pier onto the float
+          {
+            if (P.vehicle) P.exitVehicle(true);
+            P.clearSwim();
+            const [nx, nz] = m.n, h = Math.atan2(nx, nz);
+            P.x = m.x - nx * 12; P.z = m.z - nz * 12; P.y = city.groundAt(P.x, P.z, null); P.heading = h; P.speed = 0; P.vy = 0; P.grounded = true;
+            let worst = 0, py = P.y, onFloat = false, swam = false;
+            for (let i = 0; i < 60 * 12 && !onFloat; i++) {
+              P.camYaw = h - Math.PI;
+              P.updateFoot(DT, { x: 0, y: -1 }, T, d.peds);
+              worst = Math.max(worst, Math.abs(P.y - py)); py = P.y;
+              if (P.swimming) swam = true;
+              const along = (P.x - m.x) * nx + (P.z - m.z) * nz;
+              if (along > m.t0 + 2 && Math.abs(P.y - (m.level + 0.45)) < 0.1) onFloat = true;
+            }
+            r.walk = { onFloat, swam, worstStep: +worst.toFixed(2) };
+          }
+          // over the side in the middle of the lake
+          {
+            const b = T.spawnAt((L.x0 + L.x1) / 2, (L.z0 + L.z1) / 2, 0, 'jetski', 0xffffff, 'free');
+            let mx = b.x, mz = b.z, best = -1;
+            for (let z = L.z0; z <= L.z1; z += 10) for (let x = L.x0; x <= L.x1; x += 10) { const dp = depth(x, z); if (dp > best) { best = dp; mx = x; mz = z; } }
+            b.x = mx; b.z = mz;
+            P.x = b.x; P.z = b.z; P.enterVehicle(b);
+            for (let i = 0; i < 5; i++) P.updateDrive(DT, { x: 0, y: 0, gasAmt: 0, brakeAmt: 0 }, T, d.peds);
+            r.floatsAt = +(b.y - m.level).toFixed(3);
+            const ok = P.exitVehicle();
+            for (let i = 0; i < 30; i++) P.updateFoot(DT, { x: 0, y: 0 }, T, d.peds);
+            r.overSide = ok && P.swimming;
+            P.clearSwim();
+            T.remove(b);
+          }
+          // a lap in a runabout along a distance field from what it cannot float in
+          {
+            settle((L.x0 + L.x1) / 2, (L.z0 + L.z1) / 2);
+            const S = 4, nx = Math.ceil((L.x1 - L.x0) / S) + 1, nz = Math.ceil((L.z1 - L.z0) / S) + 1;
+            const dist = new Float32Array(nx * nz).fill(1e9), q = [];
+            for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
+              const x = L.x0 + i * S, z = L.z0 + j * S, k = j * nx + i;
+              if (i === 0 || j === 0 || i === nx - 1 || j === nz - 1 || depth(x, z) < 0.3
+                || city.landmarkHit(x, z, 2.5, m.level) || W.inBuilding(x, z, 2.5) || city.obstacleHit(x, z, 2.5, m.level)) { dist[k] = 0; q.push(k); }
+            }
+            for (let hh = 0; hh < q.length; hh++) {
+              const c = q[hh], i = c % nx, j = (c / nx) | 0;
+              for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                const ii = i + a, jj = j + b, k = jj * nx + ii;
+                if (ii >= 0 && jj >= 0 && ii < nx && jj < nz && dist[k] > dist[c] + S) { dist[k] = dist[c] + S; q.push(k); }
+              }
+            }
+            for (let it = 0; it < 2; it++) for (let j = 1; j < nz - 1; j++) for (let i = 1; i < nx - 1; i++) {
+              const k = j * nx + i;
+              for (const [a, b] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) { const n2 = dist[(j + b) * nx + i + a] + S * 1.414; if (n2 < dist[k]) dist[k] = n2; }
+            }
+            const field = (x, z) => {
+              const fi = (x - L.x0) / S, fj = (z - L.z0) / S, i = Math.floor(fi), j = Math.floor(fj);
+              if (i < 0 || j < 0 || i >= nx - 1 || j >= nz - 1) return 0;
+              const u = fi - i, w = fj - j, k = j * nx + i;
+              return (dist[k] * (1 - u) + dist[k + 1] * u) * (1 - w) + (dist[k + nx] * (1 - u) + dist[k + nx + 1] * u) * w;
+            };
+            const D = L.area > 3e5 ? 25 : 12;
+            const home = crafts.find((v) => v.typeName === 'boat');
+            const v = T.spawnAt(home.x, home.z, home.heading, 'boat', 0xffffff, 'free');
+            let sx = v.x, sz = v.z, bd = 1e9;
+            for (let c = 0; c < nx * nz; c++) if (Math.abs(dist[c] - D) < 3) { const x = L.x0 + (c % nx) * S, z = L.z0 + ((c / nx) | 0) * S, dd = Math.hypot(x - v.x, z - v.z); if (dd < bd) { bd = dd; sx = x; sz = z; } }
+            v.x = sx; v.z = sz;
+            P.x = v.x; P.z = v.z; P.enterVehicle(v);
+            crashes.length = 0;
+            let shore = 0, frames = 0, dl = 0, lx = v.x, lz = v.z, done = false, stuck = 0, yErr = 0;
+            const x0 = v.x, z0 = v.z;
+            while (frames < 60 * 600 && !done && stuck < 600) {
+              const e = 2, f0 = field(v.x, v.z);
+              const gx = (field(v.x + e, v.z) - field(v.x - e, v.z)) / (2 * e), gz = (field(v.x, v.z + e) - field(v.x, v.z - e)) / (2 * e);
+              const gl = Math.hypot(gx, gz) || 1, ux = gx / gl, uz = gz / gl;
+              const err = Math.max(0, Math.min(1, (D - f0) / 15)) - Math.max(0, Math.min(1, (f0 - D) / 15));
+              v.heading = Math.atan2(uz + ux * err * 1.2, -ux + uz * err * 1.2);
+              P.updateDrive(DT, { x: 0, y: 0, gasAmt: 0.7, brakeAmt: 0 }, T, d.peds);
+              frames++;
+              const st = Math.hypot(v.x - lx, v.z - lz); dl += st; lx = v.x; lz = v.z;
+              stuck = st < 0.02 ? stuck + 1 : 0;
+              if (v.shoreHit > 0) shore++;
+              yErr = Math.max(yErr, Math.abs(v.y - m.level));
+              if (dl > 300 && Math.hypot(v.x - x0, v.z - z0) < 20) done = true;
+            }
+            r.lap = { done, km: +(dl / 1000).toFixed(2), secs: Math.round(frames * DT), shore, crashes: crashes.length, yErr: +yErr.toFixed(2) };
+            P.exitVehicle(true);
+            T.remove(v);
+          }
+          // no park tree in the drawn lake (obstacles of the chunks settled round it)
+          let trees = 0;
+          for (const [, l] of city.obstacles) for (let i = 0; i < l.length; i += 3) {
+            const x = l[i], z = l[i + 1];
+            if (x < L.x0 || x > L.x1 || z < L.z0 || z > L.z1) continue;
+            const w = W.waterLevelAt(x, z);
+            if (w && G.terrainHeight(x, z) < w) trees++;
+          }
+          r.treesInLake = trees;
+          out.push(r);
+        }
+      } finally { d.game.onCrash = oc; d.game.damagePlayer = od; P.health = 100; d.game.dead = false; }
+      return out;
+    })()`, true);
+    console.log("\n--- the small lakes' docks -----------------------------------");
+    {
+      const bad = [];
+      const want = ['Green Lake', 'Bitter Lake', 'Haller Lake', 'Lake Boren', 'Finn Hill'];
+      for (const w of want) if (!sld.some((r) => r.name.includes(w))) bad.push(`no dock at ${w}`);
+      for (const r of sld) {
+        console.log(`  ${r.name} (${r.level} m): ${r.fleet.join(', ')}; landing dry ${r.landDry}; walk out ${r.walk.onFloat ? 'onto the float' : 'FAILED'} (worst step ${r.walk.worstStep} m${r.walk.swam ? ', SWAM' : ''}); over the side swims ${r.overSide}; trees in the lake ${r.treesInLake}`);
+        console.log(`    moored ${r.craft.map((c) => `${c.ty} ${c.depth} m deep, dy ${c.dy}`).join('; ')}`);
+        console.log(`    off at full throttle ${r.craft.map((c) => `${c.ty} ${c.off.m} m/${c.off.shore} shore/${c.off.crashes} crash`).join('; ')}; step off onto the float ${r.craft.every((c) => c.exit)}`);
+        console.log(`    runabout lap ${r.lap.done ? 'done' : 'NOT DONE'}: ${r.lap.km} km in ${r.lap.secs} s, ${r.lap.shore} shore frames, ${r.lap.crashes} crashes, worst |y - level| ${r.lap.yErr} m`);
+        const n = r.name;
+        if (!r.fleet.includes('boat') || !r.fleet.includes('jetski')) bad.push(`${n}: fleet`);
+        if (!r.landDry) bad.push(`${n}: landing in the water`);
+        for (const c of r.craft) {
+          if (c.depth < 1 || Math.abs(c.dy) > 0.15) bad.push(`${n}: ${c.ty} moored at ${c.depth} m, dy ${c.dy}`);
+          if (c.off.m < 20 || c.off.shore || c.off.crashes) bad.push(`${n}: ${c.ty} cannot drive off`);
+          if (!c.exit) bad.push(`${n}: ${c.ty} exit onto the float`);
+        }
+        if (!r.walk.onFloat || r.walk.swam || r.walk.worstStep > 0.6) bad.push(`${n}: walk out`);
+        if (!r.overSide || Math.abs(r.floatsAt) > 0.15) bad.push(`${n}: mid-lake`);
+        if (!r.lap.done || r.lap.shore || r.lap.crashes || r.lap.yErr > 0.3) bad.push(`${n}: lap`);
+        if (r.treesInLake) bad.push(`${n}: ${r.treesInLake} trees in the lake`);
+      }
+      if (bad.length) { console.error(`FAIL: small lakes: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- Link light rail ----------------------------------------------------------------
     //
     // The 1 Line (link.js): both tracks and all sixteen stations; the profile
