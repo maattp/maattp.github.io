@@ -1323,7 +1323,7 @@ function installShadowFade() {
   if (ON_PHONE && !window.__keepArrays) {
     world.primeMidTint();
     try {
-      const r = releaseTextureSources(renderer, scene);
+      const r = releaseTextureSources(renderer, scene, [link.bedMat, link.signMat, link.cardMat, freight.bedMat, freight.cardMat, freight.decMat]);
       blog(`texture sources: ${r.released} let go (${(r.bytes / 1048576).toFixed(0)} MB), ${r.pending} after their first upload`);
     } catch (e) { blog('texture sources: ' + e.message); }
     // ...and the vehicle types' geometry once uploaded (the snapshot above

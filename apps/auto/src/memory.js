@@ -19,18 +19,22 @@
  *
  * Returns { pending, released, bytes } -- live counts, for the boot log.
  */
-export function releaseTextureSources(renderer, scene) {
+export function releaseTextureSources(renderer, scene, extraMaterials = []) {
   const props = renderer.properties;
   const stat = { pending: 0, released: 0, bytes: 0 };
   const texs = new Set();
   const note = (t) => { if (t && t.isTexture && !t.isRenderTargetTexture && !t.isVideoTexture) texs.add(t); };
+  const fromMat = (m) => {
+    if (!m) return;
+    for (const k in m) { const v = m[k]; if (v && v.isTexture) note(v); }
+    if (m.uniforms) for (const k in m.uniforms) { const u = m.uniforms[k]; if (u && u.value && u.value.isTexture) note(u.value); }
+  };
   scene.traverse((o) => {
     const ms = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
-    for (const m of ms) {
-      for (const k in m) { const v = m[k]; if (v && v.isTexture) note(v); }
-      if (m.uniforms) for (const k in m.uniforms) { const u = m.uniforms[k]; if (u && u.value && u.value.isTexture) note(u.value); }
-    }
+    for (const m of ms) fromMat(m);
   });
+  // materials whose meshes are made later (Link's and freight's streamed chunks)
+  for (const m of extraMaterials) fromMat(m);
   if (scene.environment) note(scene.environment);
   if (scene.background && scene.background.isTexture) note(scene.background);
   // a canvas is cut only when every texture drawn from it has gone
