@@ -22,7 +22,7 @@
 
 import * as THREE from './three.js';
 import * as G from './geo.js';
-import { Builder, ChunkBuilder, SinkBuilder, LazyChunks, dropStaticArrays } from './build.js';
+import { Builder, ChunkBuilder, SinkBuilder, LazyChunks, dropStaticArrays, dropGeometryArrays } from './build.js';
 import { LinkTrack, KIND } from './link.js';
 import { vehicleAssets, tagGlass } from './vehicles.js';
 import { railCar, railDecals, RAIL_COLOURS } from './railcars.js';
@@ -1092,7 +1092,9 @@ export class Freight {
       const d = t.distTo(cx, cz);
       const vis = t.state !== 'off' && (t.driver === 'player' || (d < RANGE.train && (tm ? d < 900 : !t.buried())));
       t.group.visible = vis;
-      if (vis) t.pose();
+      if (vis) { t.ensureGeometry(); t.pose(); }
+      // its geometry is made a slice a frame on the way in (see _build)
+      else if (!t._geoReady && d < RANGE.train + 1500) t.stepGeometry(ON_PHONE ? 1.5 : 3);
     }
     this._crossingsUpdate(dt, cx, cz);
     const pd = this.pending;
@@ -1373,7 +1375,10 @@ export class FreightTrain {
 
   _build() {
     const sys = this.sys;
-    const geo = assembleTrain(this.consist);
+    // The whole train's geometry (~8 MB a train) is made the first time it is
+    // drawn (ensureGeometry): till then each mesh holds an empty stand-in.
+    const geo = { body: new THREE.BufferGeometry(), trim: new THREE.BufferGeometry(), decal: new THREE.BufferGeometry() };
+    this._geoReady = false;
     this.bones = this.cars.map(() => new THREE.Bone());
     this.group = new THREE.Group();
     this.group.name = `freight:train${this.id}`;
@@ -1392,6 +1397,31 @@ export class FreightTrain {
     });
     this._m = new THREE.Matrix4();
     this._x = new THREE.Vector3(); this._y = new THREE.Vector3(); this._z = new THREE.Vector3();
+  }
+
+  /** The train's geometry, built on its first showing (see _build). */
+  ensureGeometry() {
+    if (this._geoReady) return;
+    let geo;
+    if (this._geoJob) { let r = this._geoJob.next(); while (!r.done) r = this._geoJob.next(); geo = r.value; this._geoJob = null; }
+    else geo = assembleTrain(this.consist);
+    this._setGeometry(geo);
+  }
+  /** ...or a slice of it a frame while it comes nearer (Freight.update). */
+  stepGeometry(sliceMs) {
+    if (this._geoReady) return;
+    if (!this._geoJob) this._geoJob = assembleTrainSteps(this.consist, sliceMs);
+    const r = this._geoJob.next();
+    if (r.done) { this._geoJob = null; this._setGeometry(r.value); }
+  }
+  _setGeometry(geo) {
+    this._geoReady = true;
+    ['body', 'trim', 'decal'].forEach((k, i) => {
+      const m = this.meshes[i], old = m.geometry;
+      m.geometry = geo[k];
+      old.dispose();
+      if (this.sys.dropArrays) dropGeometryArrays(geo[k]);
+    });
   }
 
   get lead() { return this.s + this.dir * this.len / 2; }
@@ -1884,7 +1914,15 @@ export class FreightTrain {
 // bone per car (the car's own frame: vertices stay in car-local metres).
 
 function assembleTrain(consist) {
+  const it = assembleTrainSteps(consist, Infinity);
+  let r = it.next();
+  while (!r.done) r = it.next();
+  return r.value;
+}
+/** assembleTrain a slice at a time: yields whenever `sliceMs` is used up. */
+function* assembleTrainSteps(consist, sliceMs) {
   const out = {};
+  let t0 = performance.now();
   for (const key of ['body', 'trim', 'decal']) {
     const parts = consist.map((t) => railCar(t)[key]);
     let nv = 0, ni = 0;
@@ -1894,15 +1932,16 @@ function assembleTrain(consist) {
     const idx = new Uint32Array(ni);
     const si = new Uint16Array(nv * 4), sw = new Float32Array(nv * 4);
     let v = 0, q = 0;
-    parts.forEach((g, ci) => {
-      const n = g.attributes.position.count;
+    for (let ci = 0; ci < parts.length; ci++) {
+      const g = parts[ci], n = g.attributes.position.count;
       pos.set(g.attributes.position.array, v * 3); nor.set(g.attributes.normal.array, v * 3); col.set(g.attributes.color.array, v * 3);
       if (uv) uv.set(g.attributes.uv.array, v * 2);
       for (let i = 0; i < n; i++) { si[(v + i) * 4] = ci; sw[(v + i) * 4] = 1; }
       const I = g.index.array;
       for (let i = 0; i < I.length; i++) idx[q + i] = I[i] + v;
       v += n; q += I.length;
-    });
+      if (performance.now() - t0 > sliceMs) { yield; t0 = performance.now(); }
+    }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
