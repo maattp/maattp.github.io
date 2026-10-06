@@ -304,6 +304,53 @@ try {
     return { maxRaw, maxGpu };
   };
 
+  // --views=DIR: phone-profile screenshots at fixed places (a Link station,
+  // an elevated stretch of Link, Balmer Yard, the ferry terminal, the spawn),
+  // standing there long enough for everything to stream in -- for comparing
+  // builds by eye where arrays and texture sources are let go.
+  const VIEWS = arg('views', '');
+  if (VIEWS) {
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(VIEWS, { recursive: true });
+    await ev(flyPrep);
+    const places = JSON.parse(await ev(`JSON.stringify((() => {
+      const d = window.__dbg, L = d.link, F = d.freight, st = (n) => L.stations.find((q) => q.name.includes(n));
+      // beside a track: the middle of its longest run of a kind, 30 m off to
+      // the side, looking at it (a camera looks along camYaw + PI)
+      const beside = (tr, kind, side) => {
+        let best = null, run = null;
+        for (let i = 0; i < tr.n; i++) {
+          if (tr.KD[i] === kind) { if (!run) run = [i, i]; else run[1] = i; }
+          else if (run) { if (!best || run[1] - run[0] > best[1] - best[0]) best = run; run = null; }
+        }
+        const i = best ? (best[0] + best[1]) >> 1 : tr.n >> 1;
+        const dx = tr.X[Math.min(tr.n - 1, i + 5)] - tr.X[i], dz = tr.Z[Math.min(tr.n - 1, i + 5)] - tr.Z[i], l = Math.hypot(dx, dz) || 1;
+        const px = -dz / l * side, pz = dx / l * side;
+        return [{ x: tr.X[i] + px * 30, z: tr.Z[i] + pz * 30 }, Math.atan2(-px, -pz) + Math.PI];
+      };
+      const [ld, ly] = beside(L.tracks.sb, 3, 1), [lf, lfy] = beside(L.tracks.sb, 4, 1), [fd, fy] = beside(F.tracks.sb, 4, 1);
+      return [
+        ['westlake', st('Westlake') || L.stations[0], 0.6],
+        ['linkdeck', ld, ly],
+        ['linkfill', lf, lfy],
+        ['freight', fd, fy],
+        ['yard', { x: F.yard.x + 60, z: F.yard.z + 30 }, 4.4],
+      ].map(([n, p, yaw]) => ({ n, x: p.x, z: p.z, yaw }));
+    })())`));
+    for (const v of places) {
+      await ev(`(() => { const d = window.__dbg, p = d.player, G = d.G;
+        if (!p.onFoot && p.exitVehicle) p.exitVehicle(true);
+        p.x = ${v.x}; p.z = ${v.z}; p.y = d.city.groundAt(p.x, p.z, null); p.camYaw = ${v.yaw}; p.camPitch = 0.12;
+        d.game.paused = false; return true; })()`);
+      await sleep(6000);
+      await ev('window.__dbg.game.paused = true; true');
+      await sleep(600);
+      const shot = await send('Page.captureScreenshot', { format: 'png' });
+      writeFileSync(`${VIEWS}/${v.n}.png`, Buffer.from(shot.result.data, 'base64'));
+      console.log(`view ${v.n} at ${Math.round(v.x)},${Math.round(v.z)}`);
+    }
+    await ev('window.__dbg.game.paused = false; true');
+  }
   if (FLY > 0 || SKY) await ev(flyPrep);
   if (FLY > 0) {
     // Fremont, in the floatplane at 70 m, nose north for Green Lake.
