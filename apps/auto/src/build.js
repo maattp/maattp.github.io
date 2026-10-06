@@ -873,3 +873,121 @@ export class ChunkBuilder extends Builder {
     return geo;
   }
 }
+
+/** A builder that keeps nothing: what a lazy system's recording pass draws into. */
+export class SinkBuilder extends ChunkBuilder {
+  constructor() { super(false, 1); }
+  vert() { return 0; }
+  face6() {}
+  face3() {}
+  quad() {}
+  tri() {}
+  box() {}
+  tube() {}
+}
+
+/**
+ * LAZY CHUNKS: Link's and the freight line's structure, built where you are.
+ *
+ * Both draw a whole line in one pass whose loop carries state from segment to
+ * segment (the next pole, column or pier), so their geometry -- ~120 MB of
+ * typed arrays for 300 km of track, bores and stations -- was all built at
+ * boot and held, though a phone draws 1.9 km of it. Now the boot runs the same
+ * pass into builders that keep nothing (`sink`), and `record` files what drew
+ * into each chunk: a track's segment with the loop state at its start, or a
+ * station, an entrance, a crossing. `build(e, run)` replays one chunk's ops
+ * into real builders with every other chunk's output sunk, in the order the
+ * full pass made them, so the arrays are the ones the full pass made; `stream`
+ * does that as you move, a slice a frame, and lets far chunks go.
+ *
+ *   `size`     the chunk side (m)
+ *   `makeSet`  (sink) -> the system's set of builders for one chunk
+ *
+ * A system calls `segment(t, k, ...state)` before a segment draws and `op(o)`
+ * before anything else draws; `chunks` lists { key, x, z, ops } in first-drawn
+ * order. See CLAUDE.md "Memory".
+ */
+export class LazyChunks {
+  constructor(size, makeSet) {
+    this.size = size;
+    this.makeSet = makeSet;
+    this.sink = makeSet(true);
+    this.chunks = [];
+    this.byKey = new Map();
+    this.cur = null;
+    this.record = (x, z) => {
+      const k = this.key(x, z);
+      let e = this.byKey.get(k);
+      if (!e) {
+        e = { key: k, x: (Math.floor(x / size) + 0.5) * size, z: (Math.floor(z / size) + 0.5) * size, ops: [], built: false };
+        this.byKey.set(k, e); this.chunks.push(e);
+      }
+      const o = this.cur, L = e.ops, last = L[L.length - 1];
+      if (o && o.seg) {
+        // (a run of one track's segments is one op, up to 24: the step a
+        // streaming build may stop after)
+        if (last && last.seg && last.t === o.t && last.k.length < 24) { last.k.push(o.k); for (const v of o.st) last.st.push(v); }
+        else L.push({ seg: true, t: o.t, k: [o.k], st: o.st.slice() });
+      } else if (o && last !== o) L.push(o);
+      return this.sink;
+    };
+    this._seg = { seg: true, t: null, k: 0, st: [] };
+    this.pend = null;   // the chunk being built a slice at a time: { e, it }
+  }
+  key(x, z) { return `${Math.floor(x / this.size)},${Math.floor(z / this.size)}`; }
+  /** The recording pass is about to draw segment k of track t, with this loop state. */
+  segment(t, k, ...st) { const o = this._seg; o.t = t; o.k = k; o.st = st; this.cur = o; }
+  /** ...or something else, replayed by the system's `run` as the object given. */
+  op(o) { this.cur = o; }
+  /** One chunk's builders, replayed: run(op, chunkFn) for each op in order. */
+  /** Chunk `e`'s builders, replayed an op at a time: yields whenever a slice
+   *  of `sliceMs` is used up, returns the builders. */
+  *steps(e, run, sliceMs = Infinity) {
+    const B = this.makeSet(false), K = e.key, sink = this.sink;
+    const fn = (x, z) => (this.key(x, z) === K ? B : sink);
+    let t0 = performance.now();
+    for (const o of e.ops) {
+      run(o, fn);
+      if (performance.now() - t0 > sliceMs) { yield; t0 = performance.now(); }
+    }
+    return B;
+  }
+  /** Chunk `e` built now (finishing it if it was the one in progress). */
+  now(e, sys) {
+    let it;
+    if (this.pend && this.pend.e === e) { it = this.pend.it; this.pend = null; } else it = this.steps(e, sys.run);
+    let r = it.next();
+    while (!r.done) r = it.next();
+    sys.finish(e, r.value);
+    e.built = true;
+  }
+  /**
+   * One frame of streaming round (cx, cz), distances to a chunk's centre less
+   * `pad`. Within `near` a chunk is built at once (a teleport lands with its
+   * rails); within `build` one at a time, a `sliceMs` slice a frame; past
+   * `drop` a built one is let go. `sys`: { run(op, chunkFn), finish(e,
+   * builders), drop(e), visible(e, d) }.
+   */
+  stream(cx, cz, near, build, drop, pad, sliceMs, sys) {
+    let want = null, wantD = Infinity;
+    for (const e of this.chunks) {
+      const d = Math.hypot(e.x - cx, e.z - cz) - pad;
+      if (!e.built) {
+        if (d <= near) this.now(e, sys);
+        else if (!this.pend && d <= build && d < wantD) { want = e; wantD = d; }
+      } else if (d > drop) { sys.drop(e); e.built = false; }
+      if (e.built) sys.visible(e, d);
+    }
+    if (!this.pend && want) this.pend = { e: want, it: this.steps(want, sys.run, sliceMs) };
+    if (this.pend) {
+      const r = this.pend.it.next();
+      if (r.done) {
+        const e = this.pend.e;
+        this.pend = null;
+        sys.finish(e, r.value);
+        e.built = true;
+        sys.visible(e, Math.hypot(e.x - cx, e.z - cz) - pad);
+      }
+    }
+  }
+}
