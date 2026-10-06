@@ -227,6 +227,14 @@ try {
   await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.__noAutoQuality = true;' + GL_LEDGER });
   if (THROTTLE > 1) await send('Emulation.setCPUThrottlingRate', { rate: THROTTLE });
 
+  const snapshot = async (file) => {
+    await send('HeapProfiler.collectGarbage');
+    snapOut = createWriteStream(file);
+    await send('HeapProfiler.takeHeapSnapshot', { reportProgress: false, captureNumericValue: false });
+    await new Promise((r) => snapOut.end(r));
+    snapOut = null;
+    console.log(`snapshot -> ${file}`);
+  };
   const boot = async () => {
     await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
     const t0 = Date.now();
@@ -242,6 +250,10 @@ try {
   let s = await boot();
   await assertRenderer(ev);
   out.boot1 = await report(`first launch (${s} s)`);
+  // --snapshot-boot=FILE: a snapshot of the first launch as well (to diff
+  // against the end one: heapsnap.mjs --diff=BOOT)
+  const SNAP_BOOT = arg('snapshot-boot', '');
+  if (SNAP_BOOT) await snapshot(SNAP_BOOT);
   if (TWICE) {
     s = await boot();
     out.boot2 = await report(`cached launch (${s} s)`);
@@ -324,14 +336,7 @@ try {
     out.sky = { maxRaw: Math.max(a.maxRaw, b.maxRaw), maxGpu: Math.max(a.maxGpu, b.maxGpu) };
     out.skyEnd = await report('after the skydive');
   }
-  if (SNAP) {
-    await send('HeapProfiler.collectGarbage');
-    snapOut = createWriteStream(SNAP);
-    await send('HeapProfiler.takeHeapSnapshot', { reportProgress: false, captureNumericValue: false });
-    await new Promise((r) => snapOut.end(r));
-    snapOut = null;
-    console.log(`snapshot -> ${SNAP}`);
-  }
+  if (SNAP) await snapshot(SNAP);
   console.log(`exceptions: ${errs.length}${errs.length ? '\n  ' + errs.slice(0, 5).join('\n  ') : ''}`);
   console.log('MEMPROBE ' + JSON.stringify(out));
 } finally { closing = true; chrome.kill('SIGKILL'); }

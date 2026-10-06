@@ -159,6 +159,11 @@ const skey = (cx, cz) => cx * 100003 + cz;
 // launch's lists are views of the one id array, read the same way (`length`
 // and index, never changed once built). `extra`: what the build also leaves
 // (onRoad's widest reach).
+/** Drop a Map's oldest entries (insertion order) until `keep` are left. */
+export function trimOldest(map, keep) {
+  let n = map.size - keep;
+  for (const k of map.keys()) { if (n-- <= 0) break; map.delete(k); }
+}
 function gridMemo(key, build, getExtra = null, setExtra = null) {
   const packed = memo(key, () => packGrid(build(), getExtra ? getExtra() : 0),
     (v) => v && (v.keys instanceof Int32Array || v.keys instanceof Float64Array) && v.off instanceof Int32Array && v.ids instanceof Int32Array
@@ -3315,10 +3320,21 @@ export function* cityGenerator(md, cache = {}) {
     J.pieces = pieces;
     return pieces;
   };
+  // BOUNDED: every junction a query or a chunk asked for used to stay, ~1.3 KB
+  // each with its polygon and pieces -- 28k of them after three minutes of
+  // low flight, and the whole map's worth on a long enough session. The
+  // oldest half goes when the cap is reached; a junction is a pure function of
+  // the graph, so one asked for again is rebuilt identically. CLAUDE.md
+  // "Memory".
+  const JUNC_CAP = 16000;
   const junction = (ni) => {
-    if (!juncCache) juncCache = new Array(g.nodes.length);
-    let J = juncCache[ni];
-    if (J === undefined) J = juncCache[ni] = buildJunction(ni);
+    if (!juncCache) juncCache = new Map();
+    let J = juncCache.get(ni);
+    if (J === undefined) {
+      J = buildJunction(ni);
+      if (juncCache.size >= JUNC_CAP) trimOldest(juncCache, JUNC_CAP >> 1);
+      juncCache.set(ni, J);
+    }
     return J;
   };
   // Each edge's mouth distance at both ends (0 where no fitted junction

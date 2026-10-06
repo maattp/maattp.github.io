@@ -13,7 +13,7 @@
 //
 // ArrayBuffer backing stores are in the snapshot as "system / JSArrayBufferData"
 // nodes under their buffer, so typed arrays count where they are held.
-import { createReadStream } from 'node:fs';
+import { createReadStream, writeFileSync, readFileSync } from 'node:fs';
 
 const FILE = process.argv[2];
 const arg = (k, d) => { const a = process.argv.find((x) => x.startsWith(`--${k}=`)); return a ? +a.slice(k.length + 3) : d; };
@@ -241,8 +241,12 @@ for (const n of cand) {
     }
     return '';
   };
-  const q = new Uint32Array(N); let h = 0, t = 0; q[t++] = 0; keyOf[0] = 0;
-  const seen = new Uint8Array(N); seen[0] = 1;
+  // the window's own objects first, so a subsystem reached both from the
+  // window and from a module scope is charged to its window path
+  const q = new Uint32Array(N); let h = 0, t = 0;
+  const seen = new Uint8Array(N);
+  for (let n = 1; n < N; n++) if (typeOf(n) === 'object' && /^Window/.test(String(nameOf(n)))) { q[t++] = n; seen[n] = 1; keyOf[n] = 0; }
+  q[t++] = 0; keyOf[0] = 0; seen[0] = 1;
   while (h < t) {
     const n = q[h++];
     const inWin = keyOf[n] > 0 || /^Window/.test(String(label(n)));
@@ -281,6 +285,17 @@ for (const n of cand) {
       if (i <= 0) break;
       p = p.slice(0, i);
     }
+  }
+  // --json=FILE keeps this rollup; --diff=FILE prints the change from one kept
+  // earlier (a boot snapshot against one after a flight: what grew)
+  const sarg = (k) => { const a = process.argv.find((x) => x.startsWith(`--${k}=`)); return a ? a.slice(k.length + 3) : ''; };
+  if (sarg('json')) writeFileSync(sarg('json'), JSON.stringify(Object.fromEntries(roll)));
+  if (sarg('diff')) {
+    const before = JSON.parse(readFileSync(sarg('diff'), 'utf8'));
+    const keys = new Set([...Object.keys(before), ...roll.keys()]);
+    const d = [...keys].map((k) => [k, (roll.get(k) || 0) - (before[k] || 0)]).filter(([, v]) => Math.abs(v) > 0.5e6);
+    console.log(`\ngrowth since ${sarg('diff')} (MB, rolled up):`);
+    for (const [k, v] of d.sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, OWN)) console.log(`  ${(v / 1e6).toFixed(1).padStart(8)}  ${k.slice(0, 120)}`);
   }
   console.log(`\nowners (self size rolled up the first ${D} hops from the window; ab = array buffer bytes):`);
   for (const [k, s] of [...roll.entries()].sort((a, b) => b[1] - a[1]).slice(0, OWN))
