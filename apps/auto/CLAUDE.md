@@ -4846,8 +4846,96 @@ The camera follows the surface, not your feet.
 - The parachute's water landing still has a boat fish you out.
 
 verify's "swimming": a fall into Lake Union swum to the seaplane float and
-out onto it, unhurt; off a boat in open water; a car into deep water.
-`docs/swim/`.
+out onto it, unhurt; off a boat in open water; a car into deep water; and
+the stroke itself at three headings (below). `docs/swim/` is v154,
+`docs/swim2/` the stroke's rebuild, before | after.
+
+### The stroke is driven by the hand (swim.js)
+
+**The v154 crawl was wrong twice over, and neither showed in its one
+screenshot** (taken heading north, the one direction where the first bug
+vanishes):
+
+- **The pitch was about world x.** The group's Euler order was three's
+  default XYZ, so `rotation.x` turned the body about the WORLD x axis after
+  the yaw, not about its own left-right axis. Heading north (+z) it lay prone;
+  heading west it lay ON ITS SIDE across its own path, heading south on its
+  back, feet first. The player's group is now `rotation.order = 'YXZ'` (yaw
+  outermost); with x and z at 0 the two orders are the same matrix, so walking
+  is untouched. The skydive's free fall (parachute.js, the same `rotation.x`
+  on the same group) had the same bug and is fixed by the same line.
+- **The arm ran the circle backwards.** `shoulder.rotation.x = -phase` swings
+  the arm forward through the front of the body -- prone, that is DOWN -- so
+  the hand pulled FORWARD under the water and recovered BACKWARD over it:
+  `tools/swimcam.mjs` measured, heading north, 35-44 frames in 90 of the hand
+  moving forward relative to the body under water and none moving back, and
+  41-50 frames moving back over it. That is "he moves his arm in the opposite
+  direction". The abduction sign was mirrored too (`s * ...` with s = +1 on
+  the L bone adducts it, toward the midline), the head was craned 57 deg up as in breaststroke, the pose
+  switched from treading to crawling in one frame at 0.35 m/s, and the splash
+  fired at the body's centre.
+
+The laws now:
+
+- **A hand path, not a spinning shoulder.** Each wrist follows `CRAWL`, a
+  closed path in the WATER's frame (forward of the shoulders, height over the
+  surface, out from the midline): entry in front of the head at the surface,
+  reach, catch under a high elbow, pull under the chest toward the midline,
+  push to the thigh, exit, and a recovery low over the water. It is a C1
+  Hermite through timed keys. Under water 0-0.67 of the cycle, backward past
+  the body through the whole pull (0.93 m); the arms half a cycle apart.
+  `armIK` puts the arm on it.
+- **The IK sets the whole upper arm, twist included**: its hinge (local x) is
+  the normal of the shoulder-elbow-wrist plane, so the elbow is a pure hinge
+  and the palm faces back through the pull. solveArm's `setFromUnitVectors`
+  leaves twist to chance and is degenerate with the arm straight overhead,
+  which the crawl is twice a cycle. Allocation-free.
+- **The pole must never point near the wrist.** The arm's plane is pole x
+  (shoulder -> wrist); as they align it spins, and the palm flipped 79 deg in
+  one frame at mid-recovery with a pole straight up and out. The pole is up
+  and out through the pull, forward as the hand leaves the water (the elbow
+  leads it), then up; the recovery path stays 0.4-0.5 m out from the midline
+  so the wrist is never folded onto the shoulder. swimcam's probe prints the
+  palm's largest turn in a frame (now ~20 deg at the stroke's quickest point;
+  watch it after any change to `CRAWL` or the pole).
+- **Roll and breath**: the shoulders roll 34 deg toward the recovering arm
+  (spine and chest), the hips a little over half that (hips bone). The face
+  is DOWN in the prone body's neutral -- prone, +z is down -- looking a little
+  ahead; it turns to breathe toward the R arm's side as that arm recovers,
+  the same side the roll lifts (sign checked by the face normal in the probe).
+- **Flutter kick**: six beats a cycle from the hips (0.13 rad), the knee
+  bending on the up-beat, toes pointed; hip-flexed a little so the feet stay
+  under. Kicking from 0 the soles broke the surface behind the body and read
+  as detached shoes.
+- **Height**: feet 0.18 m down (`SWIM_FEET`) at pitch 1.47 puts the back and
+  the back of the head at the surface. At 0.3 / 1.45 the water (opaque) hid
+  everything but an arm. Treading: feet 1.30 m down (`SWIM_TREAD`), the
+  surface across the upper chest, the hands sculling just under it -- deeper,
+  a treading swimmer was a man standing still.
+- **Crawl and tread blend** on `swimSt.w` (speed 0.2-0.7 m/s, damped): the
+  pitch, the depth, the hand targets and poles, the legs (eggbeater when
+  treading) all interpolate. A fall carries you under (`plunge`, the fall
+  speed decaying) instead of starting at swimming depth.
+- **Into and out of the water cross-fade** (`PoseBlend`, 0.3 s): the bones
+  slerp from a snapshot. The walk reads some of its last pose back (`mix`),
+  so its unblended pose is kept aside and restored before it runs, and the
+  group's pitch is 0 while it runs (its locks read the group matrix). **The
+  walk writes only some axes of some bones** (an elbow's x only, a thigh's x
+  and z), so leaving the water zeroes every bone (`clearSwim`) or the last
+  stroke's twist stays in the walk.
+- The splash is at the entering hand, 12 cm ahead of the wrist, when its
+  phase crosses 0.
+- The chase rig is closer and lower while swimming (4.0 m, look 0.9 m over the
+  feet): the walker's looked 1.3 m over the surface and left a smudge at the
+  bottom of the frame.
+
+**Verify**: verify's swimming section swims 100 frames at headings 0, -pi/2
+and 2.5 and requires the body (hips -> head) along the heading (dot > 0.9;
+0.987) and the R hand, against the shoulders, moving back under the water
+(39 frames) and never back over it. `tools/swimcam.mjs <dir> swim|sprint|
+tread|in|out [chase,side,above,front]` shoots it (AUTO_GPU=1);
+`SWIM_PROBE=1` prints the per-frame hand table, the tally, the palm turn and
+where each splash fired. gait.mjs is byte-identical.
 
 ## The seaplane dock, the boat and the quad
 

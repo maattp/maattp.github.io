@@ -3,14 +3,18 @@
 import { Skydive } from './parachute.js';
 import * as THREE from './three.js';
 import { makeHumanoid, animateWalk, BONES } from './peds.js';
+import { poseSwim, PoseBlend, PRONE, UPRIGHT } from './swim.js';
 import { collideWithBuildings } from './traffic.js';
-import { clamp, lerp, angleWrap, damp, dist2 } from './util.js';
+import { clamp, lerp, angleWrap, damp, dist2, smooth } from './util.js';
 import * as G from './geo.js';
 import { TUNNEL_H } from './citygen.js';
 
 // Swimming: water deeper than this (from surface to ground) takes you off
 // your feet; while swimming your feet ride this far under the surface.
-const SWIM_DEPTH = 1.3, SWIM_FEET = 0.3;
+const SWIM_DEPTH = 1.3, SWIM_FEET = 0.18;
+// Treading water, upright: the feet this far down puts the surface across the
+// upper chest, the shoulders and sculling forearms at it.
+const SWIM_TREAD = 1.30;
 
 export class Player {
   constructor(scene, city, game, world) {
@@ -21,6 +25,12 @@ export class Player {
     // the lakes are not at sea level.
     this.world = world;
     this.h = makeHumanoid({ seed: 1, unique: true, shirt: [0.16, 0.2, 0.3], pants: [0.12, 0.13, 0.17], hair: [0.1, 0.08, 0.07], scale: 1.03 });
+    // Yaw outermost: the swimmer's and the skydiver's pitch is about the
+    // body's own left-right axis whatever the heading. In the default XYZ
+    // order the pitch came first, about WORLD x, and a swimmer heading west
+    // lay on his side, one heading south on his back (see CLAUDE.md,
+    // "Swimming"). With x and z at 0 the two orders are the same matrix.
+    this.h.group.rotation.order = 'YXZ';
     scene.add(this.h.group);
     this.x = G.SPAWN.x;
     this.z = G.SPAWN.z;
@@ -43,7 +53,11 @@ export class Player {
     this.scrapeT = 0; // seconds of wall contact left, for the scrape sound
     this.fellFrom = 0; // height a fall started at, for landing damage
     this.sky = null;   // a parachute jump in progress (parachute.js)
-    this.swimming = false; this.swimPhase = 0;   // in deep water (updateSwim)
+    this.swimming = false;   // in deep water (updateSwim)
+    // the stroke's phase (cycles), sculling's, crawl 0..1 against treading,
+    // the body's pitch, and the bind height of the hips (swim.js poseSwim)
+    this.swimSt = { u: 0, tu: 0, w: 0, pitch: 0, plunge: 0, hipY: this.h.bones[BONES.hips].position.y };
+    this.poseBlend = new PoseBlend(this.h.bones.length);   // into and out of the water
     this.hitCd = 0;    // seconds before a car can hurt you again (updateFoot)
 
     this.camYaw = this.heading + Math.PI;
@@ -67,7 +81,7 @@ export class Player {
     // ever wrote `wasParked`, so taking a parked car has never added heat.
     v.wasParked = v.mode === 'parked';
     const wasMode = v.mode;
-    if (this.swimming) { this.swimming = false; this.h.group.rotation.x = 0; this.h.locks = null; }
+    if (this.swimming) this.clearSwim();
     v.mode = 'free';
     v.setDetailed(true);
     this.onFoot = false;
@@ -302,7 +316,12 @@ export class Player {
     // Root first: animateWalk locks planted feet in world space (see peds.js).
     this.h.group.position.set(this.x, this.y, this.z);
     this.h.group.rotation.y = this.heading;
+    // Just out of the water: the walk poses upright and unblended (its locks
+    // read the group's matrix), then the cross-fade from the swim goes on top.
+    const blending = this.poseBlend.active;
+    if (blending) { this.poseBlend.restore(this.h); this.h.group.rotation.x = 0; }
     animateWalk(this.h, clamp(this.speed * 0.16, 0, 0.85), dt, this.speed);
+    if (blending) this.poseBlend.apply(this.h, dt, 0);
 
     // Run over by a car: ONCE per hit, and thrown clear to the side. It was
     // damage every frame of the overlap, with a push straight back along the
@@ -336,8 +355,13 @@ export class Player {
 
   startSwim(wl, splash) {
     this.swimming = true;
-    this.swimPhase = 0;
-    this.y = wl - SWIM_FEET;
+    const st = this.swimSt;
+    st.u = 0.6; st.tu = 0; st.w = 0; st.pitch = this.h.group.rotation.x;
+    this.poseBlend.snap(this.h, 0.3);
+    // where you went in, not snapped to the swimming depth (standing on the
+    // water for the first frames); a fall carries you under (st.plunge)
+    this.y = Math.min(this.y, wl - SWIM_FEET);
+    st.plunge = Math.max(-8, Math.min(0, this.vy));
     this.vy = 0; this.grounded = true; this.fellFrom = 0;
     this.speed = Math.min(this.speed, 1.5);
     this.h.locks = null;
@@ -384,57 +408,49 @@ export class Player {
         if (gl > wl - 0.3 && gl <= wl + 1.3 && !this.blocked(lx, lz)) { this.x = lx; this.z = lz; return this.endSwim(gl); }
       }
     }
-    // lying along the surface to swim, upright with the head out to tread
-    const tread = this.speed < 0.35;
-    this.y = damp(this.y, wl - (tread ? 1.22 : SWIM_FEET), 4, dt);
+    // lying along the surface to swim, upright with the head out to tread;
+    // `w` blends the two (it switched in one frame at 0.35 m/s)
+    const st = this.swimSt;
+    st.w = damp(st.w, smooth(clamp((this.speed - 0.2) / 0.5, 0, 1)), 3, dt);
+    st.plunge = damp(st.plunge || 0, 0, 6, dt);
+    this.y = damp(this.y + st.plunge * dt, wl - lerp(SWIM_TREAD, SWIM_FEET, st.w), 4, dt);
     this.vy = 0; this.grounded = true;
-    // the camera follows the surface, not your feet (1.2 m down, treading)
+    // the camera follows the surface, not your feet (1.3 m down, treading)
     this.camFootY = this.camFootY == null ? wl - SWIM_FEET : damp(this.camFootY, wl - SWIM_FEET, 10, dt);
-    // the crawl
-    const g = this.h.group, b = this.h.bones;
+    const g = this.h.group;
     g.position.set(this.x, this.y, this.z);
     g.rotation.y = this.heading;
-    g.rotation.x = damp(g.rotation.x, tread ? 0.18 : 1.32, 4, dt);
-    const was = this.swimPhase;
-    this.swimPhase += dt * (2.2 + this.speed * 1.4);
-    const ph = this.swimPhase, still = tread ? 1 : 0;
-    b[BONES.spine].rotation.set(0, Math.sin(ph) * 0.18, 0);
-    b[BONES.chest].rotation.set(0, Math.sin(ph) * 0.12, 0);
-    b[BONES.neck].rotation.set(still ? 0 : -0.55, 0, 0);
-    b[BONES.head].rotation.set(still ? -0.05 : -0.45, Math.sin(ph) * 0.35 * (1 - still), 0);
-    if (still) {
-      // treading water: arms sculling out to the sides, legs cycling
-      for (const [s, sh, el, th, kn] of [[1, BONES.shoulderL, BONES.elbowL, BONES.thighL, BONES.kneeL], [-1, BONES.shoulderR, BONES.elbowR, BONES.thighR, BONES.kneeR]]) {
-        b[sh].rotation.set(-0.9 + Math.sin(ph * 1.5 + s) * 0.25, 0, s * 0.9);
-        b[el].rotation.set(-0.4, 0, 0);
-        b[th].rotation.set(-0.5 + Math.sin(ph * 1.5 + (s > 0 ? 0 : Math.PI)) * 0.4, 0, s * 0.15);
-        b[kn].rotation.set(0.8, 0, 0);
-      }
-    } else {
-      for (const [s, sh, el, th, kn, off] of [[1, BONES.shoulderL, BONES.elbowL, BONES.thighL, BONES.kneeL, 0], [-1, BONES.shoulderR, BONES.elbowR, BONES.thighR, BONES.kneeR, Math.PI]]) {
-        const a = ph + off;
-        // the arm windmills: reach overhead, pull down under the body to the
-        // hip, recover over the water
-        b[sh].rotation.set(-a, 0, s * (0.15 + 0.25 * Math.max(0, Math.sin(a))));
-        b[el].rotation.set(-0.25 - 0.55 * Math.max(0, -Math.cos(a)), 0, 0);
-        // a flutter kick from the hips
-        b[th].rotation.set(Math.sin(ph * 3 + off) * 0.28, 0, s * 0.06);
-        b[kn].rotation.set(0.15 + 0.2 * Math.max(0, Math.sin(ph * 3 + off)), 0, 0);
-      }
-    }
-    // a splash at each hand's entry
-    if (!still && Math.floor(was / Math.PI) !== Math.floor(this.swimPhase / Math.PI) && this.game.onSwimStroke) this.game.onSwimStroke(this.x, wl, this.z);
+    st.pitch = damp(st.pitch, lerp(UPRIGHT, PRONE, st.w), 4, dt);
+    g.rotation.x = st.pitch;
+    poseSwim(this.h, st, dt, wl, this.speed, this._onStroke || (this._onStroke = (x, z) => {
+      if (this.game.onSwimStroke) this.game.onSwimStroke(x, this.waterAt(x, z) ?? this.y, z);
+    }));
+    if (this.poseBlend.active) this.poseBlend.apply(this.h, dt, st.pitch);
     return true;
   }
 
   endSwim(ground) {
-    this.swimming = false;
+    this.poseBlend.snap(this.h, 0.3);
+    this.clearSwim(false);
     this.y = ground; this.vy = 0; this.grounded = true;
-    this.h.group.rotation.x = 0;
-    this.h.locks = null;
     this.speed = Math.min(this.speed, 1.2);
     if (this.game.onSwim) this.game.onSwim(false);
     return false;
+  }
+
+  /**
+   * Off the swim pose: upright, and every bone's rotation zeroed, because the
+   * walk does not write every axis of every bone (an elbow's twist, a
+   * thigh's) and would otherwise keep the last stroke's. `cancelBlend` drops
+   * any cross-fade too (into a vehicle, a respawn).
+   */
+  clearSwim(cancelBlend = true) {
+    this.swimming = false;
+    this.h.group.rotation.x = 0;
+    this.h.locks = null;
+    for (const bone of this.h.bones) bone.rotation.set(0, 0, 0);
+    this.h.bones[BONES.hips].position.set(0, this.swimSt.hipY, 0);
+    if (cancelBlend) this.poseBlend.t = this.poseBlend.dur;
   }
 
   blocked(x, z) {
@@ -622,6 +638,10 @@ export class Player {
       dist = this.camShort || 4.6;
       height = this.sky ? 4 : 1.55;
       lookH = 1.45;
+      // Swimming, the body is a few centimetres proud of the water: a
+      // walker's rig looked 1.3 m over the surface and left the swimmer a
+      // smudge at the bottom of the frame. Closer, lower, looking at him.
+      if (this.swimming) { dist = this.camShort || 4.0; height = 1.5; lookH = 0.9; }
     } else {
       const v = this.vehicle;
       target.set(v.x, v.y, v.z);
@@ -860,7 +880,7 @@ export class Player {
     }
     this.onFoot = true;
     this.h.group.visible = true;
-    this.swimming = false; this.h.group.rotation.x = 0;
+    if (this.swimming) this.clearSwim();
     this.x = x;
     this.z = z;
     this.y = this.city.groundAt(x, z, null);

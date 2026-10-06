@@ -2496,7 +2496,7 @@ async function main() {
       out.boat = { left: ok, swimming: P.swimming, health: P.health };
       T.remove(b);
       // a car off the end of a Lake Union pier, into deep water
-      P.swimming = false; P.h.group.rotation.x = 0;
+      P.clearSwim();
       const c = T.spawnAt(300, -2600, 0, 'sedan', 0x335577, 'free');
       P.x = c.x; P.z = c.z; P.enterVehicle(c);
       let sank = false;
@@ -2504,13 +2504,46 @@ async function main() {
       for (let i = 0; i < 60; i++) if (P.onFoot) P.updateFoot(1 / 60, { x: 0, y: 0 }, T, d.peds);
       out.car = { out: sank, swimming: P.swimming, health: P.health };
       T.remove(c);
-      if (P.swimming) { P.swimming = false; P.h.group.rotation.x = 0; }
+      // The stroke itself, at three headings (the pose used to depend on it:
+      // heading west the swimmer lay on his side). After a second and a half
+      // to settle, 100 frames: the body (hips -> head) must lie along the
+      // heading, and the R hand, relative to the shoulders, must pull BACK
+      // under the water and come FORWARD over it -- the old crawl did both
+      // the other way round.
+      out.stroke = [];
+      const _v = new d.THREE.Vector3();
+      const at = (i) => { P.h.bones[i].getWorldPosition(_v); return [_v.x, _v.y, _v.z]; };
+      for (const hd of [0, -Math.PI / 2, 2.5]) {
+        P.clearSwim();
+        P.x = 300; P.z = -2600; P.heading = hd; P.camYaw = hd + Math.PI; P.speed = 1.8;
+        const wl0 = P.waterAt(P.x, P.z); P.y = wl0 - 0.5; P.startSwim(wl0, false);
+        const r = { hd, prone: 1, pullBack: 0, pullFwd: 0, recBack: 0, recFwd: 0 };
+        let prev = null;
+        for (let i = 0; i < 190; i++) {
+          P.updateFoot(1 / 60, { x: 0, y: -1 }, T, d.peds);
+          if (i < 90) continue;
+          P.h.group.updateMatrixWorld(true);
+          const fx = Math.sin(P.heading), fz = Math.cos(P.heading), wl = P.waterAt(P.x, P.z);
+          // bones: 1 hips, 5 head, 6/9 shoulders, 11 the R wrist
+          const hip = at(1), head = at(5), sL = at(6), sR = at(9), hand = at(11);
+          const lx = head[0] - hip[0], ly = head[1] - hip[1], lz = head[2] - hip[2];
+          r.prone = Math.min(r.prone, (lx * fx + lz * fz) / Math.hypot(lx, ly, lz));
+          const f = (hand[0] - (sL[0] + sR[0]) / 2) * fx + (hand[2] - (sL[2] + sR[2]) / 2) * fz;
+          if (prev !== null && Math.abs(f - prev) * 60 > 0.15) r[(hand[1] < wl ? 'pull' : 'rec') + (f < prev ? 'Back' : 'Fwd')]++;
+          prev = f;
+        }
+        r.prone = +r.prone.toFixed(3);
+        out.stroke.push(r);
+      }
+      P.clearSwim();
       return out;
     })()`, true);
     console.log('\n--- swimming -----------------------------------------------');
     if (sw.fall.out === null) console.log('  stuck: ' + JSON.stringify(sw.fall));
     console.log(`  into the lake: swimming at ${sw.fall.swam} s, out on the float at ${sw.fall.out} s (${sw.fall.onFloat}), health ${sw.fall.health}; off a boat: ${sw.boat.swimming}; a car into deep water: out ${sw.car.out}, swimming ${sw.car.swimming}, health ${sw.car.health}`);
-    if (sw.fall.swam === null || sw.fall.out === null || !sw.fall.onFloat || sw.fall.health < 100 || !sw.boat.left || !sw.boat.swimming || !sw.car.out || !sw.car.swimming || sw.car.health <= 0) {
+    console.log('  the stroke (100 frames; R hand vs the shoulders, frames moving > 0.15 m/s): ' + sw.stroke.map((r) => `heading ${r.hd.toFixed(2)}: prone ${r.prone}, under water back ${r.pullBack} / fwd ${r.pullFwd}, over it fwd ${r.recFwd} / back ${r.recBack}`).join('; '));
+    const strokeOk = sw.stroke.every((r) => r.prone > 0.9 && r.recBack === 0 && r.recFwd >= 10 && r.pullBack >= 25 && r.pullFwd * 2 <= r.pullBack);
+    if (sw.fall.swam === null || sw.fall.out === null || !sw.fall.onFloat || sw.fall.health < 100 || !sw.boat.left || !sw.boat.swimming || !sw.car.out || !sw.car.swimming || sw.car.health <= 0 || !strokeOk) {
       console.error('FAIL: swimming'); process.exitCode = 1;
     }
 
