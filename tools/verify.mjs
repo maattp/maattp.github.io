@@ -3824,6 +3824,242 @@ async function main() {
       if (!r.inBoat || !(r.lo >= 0.39)) { console.error('FAIL: the camera goes under the water'); process.exitCode = 1; }
     }
 
+    // --- wanted levels -----------------------------------------------------------
+    // police.js: each level sends what its row says (the helicopter from 3,
+    // SWAT vans and their tactical officers from 4, two helicopters at 5),
+    // never more than its caps; out of sight the stars go one at a time, and
+    // under the helicopter in the open they do not; standing still at one
+    // star you are BUSTED and released at police headquarters. Paused game,
+    // stepped here at 1/30 s; you are kept alive and (except in the bust
+    // test) out of cuffs.
+    const wl = await session.eval(`(() => {
+      const d = window.__dbg, P = d.player, T = d.traffic, pol = d.police, game = d.game;
+      const STAR = [0, 30, 90, 190, 340, 560];
+      game.paused = true;
+      let st = null, bd = Infinity;
+      for (const ei of d.city.edgesNear(200, 300, 400)) {
+        const e = d.city.edges[ei];
+        if (e.cls === 'res' || e.cls === 'hwy' || e.cls === 'ramp' || e.elev || e.tunnel) continue;
+        const a = d.city.nodes[e.a], dd = (a.x - 200) ** 2 + (a.z - 300) ** 2;
+        if (dd < bd) { bd = dd; st = { x: a.x, z: a.z }; }
+      }
+      const reset = () => {
+        game.dead = false; game.busted = false;
+        document.getElementById('wasted').classList.remove('show');
+        pol.clear();
+        if (P.vehicle) P.exitVehicle(true);
+        for (const v of [...T.cars]) if (v.unit || v.mode === 'police') T.remove(v);
+        game.wanted = 0; game.points = 0;
+        P.respawn(st.x, st.z); P.health = 100;
+        for (let i = 0; i < 10; i++) d.world.update(st.x, st.z, 2);
+      };
+      const step = (dt) => {
+        const p = P.position;
+        T.update(dt, p.x, p.z, { x: 0, z: 1 }, P);
+        d.peds.update(dt, p.x, p.z, P, T);
+        pol.update(dt, P, d.G.terrainHeight(p.x, p.z) - p.y > 3);
+        d.fx.update(dt);
+        if (d.missions) d.missions.update(dt, P);
+      };
+      const out = { levels: [] };
+      for (const L of [1, 2, 3, 4, 5]) {
+        reset();
+        game.setWanted(L);
+        const lv = pol.level(), cap = lv.cars + lv.vans + lv.foot + lv.swat + lv.helis + (lv.block || 0);
+        const r = { L, cap, peak: 0, maxCars: 0, maxVans: 0, maxCops: 0, maxSwat: 0, maxHelis: 0, shots: 0 };
+        const secs = L >= 4 ? 60 : 40;
+        pol.stats.shots = 0;
+        for (let i = 0; i < secs * 30; i++) {
+          game.wanted = L; game.points = STAR[L]; P.health = 100; game.dead = false; pol.bustT = 0; pol.unseenT = 0;
+          step(1 / 30);
+          const n = pol.n;
+          r.peak = Math.max(r.peak, n.cars + n.vans + n.foot + n.swat + n.helis);
+          r.maxCars = Math.max(r.maxCars, n.cars); r.maxVans = Math.max(r.maxVans, n.vans);
+          r.maxCops = Math.max(r.maxCops, n.foot); r.maxSwat = Math.max(r.maxSwat, n.swat);
+          r.maxHelis = Math.max(r.maxHelis, pol.helis.filter((h) => !h.leaving).length);
+          // (long enough for the units to arrive and, from two stars, to fire)
+          if (L < 4 && i > 25 * 30 && (L === 1 || pol.stats.shots > 0)) break;
+          if (L >= 4 && r.maxSwat > 0 && r.maxHelis >= lv.helis && i > 25 * 30) break;
+        }
+        r.shots = pol.stats.shots;
+        out.levels.push(r);
+      }
+      // hidden: 2.2 km from the units at two stars
+      reset();
+      game.setWanted(2);
+      for (let i = 0; i < 15 * 30; i++) { game.wanted = 2; game.points = STAR[2]; P.health = 100; game.dead = false; pol.bustT = 0; step(1 / 30); }
+      const far = d.city.respawnPointNear(st.x + 1600, st.z - 1500);
+      P.respawn(far.x, far.z);
+      pol.unseenT = 0; pol.trackLeft = 0;
+      const drops = [];
+      let flashed = false;
+      for (let i = 0; i < 45 * 30 && game.wanted > 0; i++) {
+        if (pol.unseenT > 6 + game.wanted * 3) { pol.unseenT = 0; game.points = STAR[game.wanted - 1]; game.wanted--; drops.push(+(i / 30).toFixed(1)); }
+        step(1 / 30);
+        if (i === 150) { d.hud.update(1 / 30, game, P, T); flashed = document.getElementById('stars').classList.contains('search'); }
+      }
+      out.hidden = { drops, end: game.wanted, flashed };
+      // three stars in the open, under the helicopter: no cooling
+      reset();
+      game.setWanted(3);
+      let seen = 0;
+      for (let i = 0; i < 40 * 30; i++) {
+        if (pol.unseenT > 6 + game.wanted * 3) { pol.unseenT = 0; game.points = STAR[game.wanted - 1]; game.wanted--; }
+        P.health = 100; game.dead = false; pol.bustT = 0;
+        step(1 / 30);
+        if (pol.helis.some((h) => h.sees)) seen++;
+      }
+      out.open = { end: game.wanted, heliSeen: +(seen / 30).toFixed(1) };
+      // busted at one star, standing still, and released at headquarters
+      reset();
+      game.setWanted(1);
+      let bustAt = null;
+      for (let i = 0; i < 70 * 30 && !game.dead; i++) { game.wanted = 1; game.points = STAR[1]; pol.unseenT = 0; step(1 / 30); if (game.dead) bustAt = +(i / 30).toFixed(1); }
+      out.bust = { at: bustAt, busted: game.busted, card: document.querySelector('#wasted span').textContent };
+      const money0 = game.money;
+      d.doRespawn();
+      const [hx, hz] = d.G.toWorld(47.6043, -122.3296);
+      out.bust.after = { wanted: game.wanted, units: T.cars.filter((v) => v.unit && v.mode === 'police').length, cops: d.peds.peds.filter((c) => c.cop).length,
+        helis: pol.helis.length, fromHQ: Math.round(Math.hypot(P.x - hx, P.z - hz)), fined: money0 - game.money, dead: game.dead };
+      reset();
+      return out;
+    })()`);
+    console.log('\n--- wanted levels ------------------------------------------');
+    for (const r of wl.levels) console.log(`  ${r.L} star${r.L > 1 ? 's' : ' '}: cars ${r.maxCars}, vans ${r.maxVans}, cops on foot ${r.maxCops}, SWAT ${r.maxSwat}, helicopters ${r.maxHelis}; peak ${r.peak} of cap ${r.cap}; ${r.shots} shots`);
+    console.log(`  hidden at 2 stars: stars went at ${wl.hidden.drops.join(', ')} s, ends at ${wl.hidden.end}, stars flashing ${wl.hidden.flashed}; 3 stars in the open: ends at ${wl.open.end}, the helicopter had you ${wl.open.heliSeen} s of 40`);
+    console.log(`  standing still at 1 star: ${wl.bust.card} at ${wl.bust.at} s; released ${wl.bust.after.fromHQ} m from the Justice Center, fined $${wl.bust.after.fined}, wanted ${wl.bust.after.wanted}, units left ${wl.bust.after.units}/${wl.bust.after.cops}/${wl.bust.after.helis}`);
+    {
+      const bad = [];
+      for (const r of wl.levels) {
+        if (r.peak > r.cap) bad.push(`${r.L} stars: ${r.peak} units over the cap ${r.cap}`);
+        if (r.maxCars < 1) bad.push(`${r.L} stars: no police car`);
+        if ((r.maxHelis > 0) !== (r.L >= 3)) bad.push(`${r.L} stars: ${r.maxHelis} helicopters`);
+        if (r.L === 5 && r.maxHelis < 2) bad.push('5 stars: not two helicopters');
+        if ((r.maxVans > 0) !== (r.L >= 4)) bad.push(`${r.L} stars: ${r.maxVans} SWAT vans`);
+        if (r.L >= 4 && r.maxSwat < 1) bad.push(`${r.L} stars: no tactical officers out`);
+        if (r.L < 4 && r.maxSwat > 0) bad.push(`${r.L} stars: tactical officers below 4 stars`);
+        if (r.L >= 2 && r.shots < 1) bad.push(`${r.L} stars: nobody fired`);
+        if (r.L === 1 && r.shots > 0) bad.push('1 star: shots fired');
+      }
+      if (wl.hidden.end !== 0 || wl.hidden.drops.length !== 2 || wl.hidden.drops[1] > 30) bad.push('hidden at 2 stars, the heat did not go in ~21 s');
+      if (!wl.hidden.flashed) bad.push('the stars did not flash while hidden');
+      if (wl.open.end !== 3) bad.push('three stars in the open under the helicopter cooled down');
+      if (!wl.bust.busted || wl.bust.card !== 'BUSTED') bad.push('standing still at one star was never BUSTED');
+      if (wl.bust.after.wanted !== 0 || wl.bust.after.units || wl.bust.after.cops || wl.bust.after.helis || wl.bust.after.fromHQ > 400 || wl.bust.after.dead) bad.push('the bust did not release you clean at headquarters');
+      for (const b of bad) console.error('FAIL: ' + b);
+      if (bad.length) process.exitCode = 1;
+    }
+
+    // --- police missions ------------------------------------------------------------
+    // MISSION shows in a police vehicle and nowhere else; a mission dispatches
+    // a fleeing suspect that drives away; wrecking it pays and the next level
+    // follows with a time limit; one pulled over counts; MISSION again quits,
+    // and leaving the car ends it.
+    const pm = await session.eval(`(async () => {
+      const d = window.__dbg, P = d.player, T = d.traffic, M = d.missions, game = d.game;
+      game.dead = false; game.wanted = 0; game.points = 0;
+      // (the pad's police-only buttons follow the vehicle in main.js
+      // updateSiren, in the frame loop: a few real frames after each door)
+      game.paused = false;
+      const frames = () => new Promise((r) => setTimeout(r, 400));
+      d.police.clear();
+      if (P.vehicle) P.exitVehicle(true);
+      const sp = d.city.respawnPointNear(200, 300);
+      P.respawn(sp.x, sp.z);
+      for (let i = 0; i < 10; i++) d.world.update(sp.x, sp.z, 2);
+      const btn = document.querySelector('[data-btn="policemission"]');
+      const shown = () => getComputedStyle(btn).display !== 'none';
+      const out = {};
+      await frames(); out.onFoot = shown();
+      const sedan = T.spawnAt(sp.x + 3, sp.z, 0, 'sedan', 0x445566, 'free');
+      P.enterVehicle(sedan); await frames(); out.sedan = shown(); P.exitVehicle(true); T.remove(sedan);
+      const van = T.spawnAt(sp.x + 3, sp.z, 0, 'swat', 0, 'free');
+      P.enterVehicle(van); await frames(); out.swatVan = shown(); P.exitVehicle(true); T.remove(van);
+      if (d.TYPES.fireengine) {
+        const rig = T.spawnAt(sp.x + 3, sp.z, 0, 'fireengine', 0xb01818, 'free');
+        P.enterVehicle(rig); await frames(); out.rig = shown(); P.exitVehicle(true); T.remove(rig);
+      }
+      const car = T.spawnAt(sp.x + 3, sp.z, 0, 'police', 0xf2f4f6, 'free');
+      P.enterVehicle(car); await frames(); out.police = shown();
+      game.paused = true;
+      const step = (dt) => { const p = P.position; T.update(dt, p.x, p.z, { x: 0, z: 1 }, P); d.police.update(dt, P, false); M.update(dt, P); };
+      // level 1: dispatched, flees, wrecked -> paid, level 2 comes with a clock
+      const money0 = game.money;
+      M.toggle(P);
+      const run = M.run;
+      out.started = !!run;
+      if (!run) return out;
+      const s0 = run.suspects[0];
+      out.l1 = { count: run.suspects.length, mode: s0.mode, time: run.S.time, place: run.place, objective: '',
+        dist0: Math.round(Math.hypot(s0.x - car.x, s0.z - car.z)), marker: !!(s0.suspect && s0.suspect.mark) };
+      const x0 = s0.x, z0 = s0.z;
+      let maxD = 0;
+      // (driven, not displaced: a getaway round a block ends near where it began)
+      let lx = s0.x, lz = s0.z;
+      for (let i = 0; i < 8 * 30; i++) { step(1 / 30); maxD += Math.hypot(s0.x - lx, s0.z - lz); lx = s0.x; lz = s0.z; }
+      out.l1.objective = d.hud.objective.textContent;
+      out.l1.fled = Math.round(maxD);
+      out.l1.speed = +Math.abs(s0.vLong).toFixed(1);
+      s0.damage(1000, true);
+      game.onCarDestroyed(s0);
+      step(1 / 30);
+      out.l1.paid = game.money - money0;
+      out.l1.wanted = game.wanted;
+      out.l1.level = M.level;
+      for (let i = 0; i < 5 * 30 && !M.run; i++) step(1 / 30);
+      const r2 = M.run;
+      out.l2 = r2 ? { level: r2.S.level, time: r2.S.time, count: r2.suspects.length } : null;
+      // pulled over: you beside it, it stopped
+      if (r2) {
+        const s = r2.suspects[0];
+        let i = 0;
+        for (; i < 6 * 30 && M.run === r2; i++) {
+          s.vLong = 0; s.x = car.x + 8; s.z = car.z; s.sync();
+          step(1 / 30);
+        }
+        out.l2.apprehendedIn = M.run === r2 ? null : +(i / 30).toFixed(1);
+        out.l2.levelAfter = M.level;
+      }
+      // quit with MISSION, then leaving the car ends the next
+      for (let i = 0; i < 5 * 30 && !M.run; i++) step(1 / 30);
+      out.quit = { before: !!M.run || M.nextT > 0 };
+      M.toggle(P);
+      out.quit.after = !!M.run || M.nextT > 0;
+      M.toggle(P);
+      P.exitVehicle(true);
+      step(1 / 30);
+      out.leave = !!M.run;
+      game.paused = false; await frames(); game.paused = true;
+      out.btnOff = shown();
+      for (const v of [...T.cars]) if (v === car || v.typeName === 'police') T.remove(v);
+      return out;
+    })()`, true);
+    console.log('\n--- police missions -----------------------------------------');
+    console.log(`  MISSION shown: on foot ${pm.onFoot}, in a sedan ${pm.sedan}, in a fire engine ${pm.rig}, in a cruiser ${pm.police}, in a SWAT van ${pm.swatVan}`);
+    if (pm.l1) {
+      console.log(`  level 1: ${pm.l1.count} suspect ${pm.l1.mode} ${pm.l1.dist0} m off near ${pm.l1.place}, marker ${pm.l1.marker}; drove ${pm.l1.fled} m in 8 s (${pm.l1.speed} m/s); wrecked: paid $${pm.l1.paid}, wanted ${pm.l1.wanted}, next level ${pm.l1.level}`);
+      console.log(`  objective: "${pm.l1.objective}"`);
+      console.log(`  level 2: ${pm.l2 ? `${pm.l2.count} suspect(s), ${pm.l2.time} s clock; pulled over in ${pm.l2.apprehendedIn} s, then level ${pm.l2.levelAfter}` : 'never dispatched'}`);
+      console.log(`  MISSION again quits: ${pm.quit.before} -> ${pm.quit.after}; leaving the car ends it: ${!pm.leave}; button gone on foot: ${!pm.btnOff}`);
+    }
+    {
+      const bad = [];
+      if (pm.onFoot || pm.sedan || pm.rig || !pm.police || !pm.swatVan) bad.push('MISSION shown in the wrong vehicles');
+      if (!pm.started || !pm.l1) bad.push('no mission started');
+      else {
+        if (pm.l1.mode !== 'suspect' || !pm.l1.marker) bad.push('no fleeing suspect with a marker');
+        if (pm.l1.fled < 80) bad.push(`the suspect did not flee (${pm.l1.fled} m driven in 8 s)`);
+        if (pm.l1.paid < 300 || pm.l1.wanted !== 0 || pm.l1.level !== 2) bad.push('wrecking the suspect did not pay cleanly and move on');
+        if (!pm.l2 || !pm.l2.time) bad.push('level 2 not dispatched with a time limit');
+        else if (pm.l2.apprehendedIn === null || pm.l2.levelAfter !== 3) bad.push('pulling the suspect over did not clear the level');
+        if (!pm.quit.before || pm.quit.after) bad.push('MISSION did not quit');
+        if (pm.leave || pm.btnOff) bad.push('leaving the car did not end it');
+      }
+      for (const b of bad) console.error('FAIL: ' + b);
+      if (bad.length) process.exitCode = 1;
+    }
+    await session.eval('window.__dbg.game.paused = false');
+
     // --- radio: live when online, synth when not --------------------------
     // The offline half is the one that matters. This is an offline-first PWA and
     // the radio must not go silent (or throw) on a plane.

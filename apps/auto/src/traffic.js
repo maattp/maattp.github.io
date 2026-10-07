@@ -232,6 +232,8 @@ const RT_F = 23, RT_MAX = 10;
 // speed is planned with, and a junction's corner radius turning right / left.
 // A bend in the road has no cap but the room its segments leave.
 const A_LAT = 3.0, B_PLAN = 2.0, JR_RIGHT = 7, JR_LEFT = 11, CURVE_RMAX = 400;
+// A police unit in pursuit corners at this (driveTraffic via drivePolice).
+const A_LAT_POLICE = 9, BRAKE_POLICE = 5;
 // Car following (the Intelligent Driver Model): time headway, standstill gap,
 // comfortable deceleration. The acceleration is per class (driveTraffic).
 const IDM_T = 1.2, IDM_S0 = 2.2, IDM_B = 2.5;
@@ -262,6 +264,14 @@ function boxOverlap(a, b, dx, dz) {
   return _hit;
 }
 
+/** Warm-up stand-ins for the light bar's materials (main.js, Hitches): the
+ *  lenses' unlit material compiled the first time a cop appeared. */
+export function warmLightBar() {
+  const fake = { spec: { roof: 0 }, tilt: new THREE.Group(), lightL: null, lightR: null, extra: null };
+  TrafficSystem.prototype.lightBar.call(null, fake);
+  return fake.tilt;
+}
+
 export class TrafficSystem {
   constructor(scene, city, game) {
     this.scene = scene;
@@ -283,7 +293,8 @@ export class TrafficSystem {
     // ground kept free of lot parking for good: [x, z, r] (tank.js: the tank's apron)
     this.keepClear = [];
     this.R = rng(99);
-    this.heli = null;
+    this.police = null;   // police.js, set by main.js
+    this.suspectDriver = null;   // policemissions.js drives mode 'suspect'
     this.spawnTimer = 0;
     this.copTimer = 0;
     vehicleAssets();
@@ -420,7 +431,7 @@ export class TrafficSystem {
     this.scene.remove(v.group);
     if (v.slot != null) this.parkedSlots.delete(v.slot);
     v.bodyMat.dispose();
-    if (v.extra) { disposeTree(v.extra); v.extra = null; }
+    if (v.extra) { if (!v.extra.userData.shared) disposeTree(v.extra); v.extra = null; }
   }
 
   /**
@@ -679,28 +690,59 @@ export class TrafficSystem {
 
   // --- police --------------------------------------------------------------
 
-  spawnPolice(px, pz) {
+  /** A unit 90-320 m off on a non-residential surface street: 'car' (a
+   *  cruiser) or 'swat' (the tactical van, police.js level 4+). */
+  spawnPolice(px, pz, unit = 'car', avoid = null, near = false) {
     const city = this.city;
     const pool = city.edgesNear(px, pz, 340);
     if (!pool.length) return null;
-    for (let attempt = 0; attempt < 30; attempt++) {
+    for (let attempt = 0; attempt < 60; attempt++) {
       const ei = pool[Math.floor(this.R.n() * pool.length)];
       const e = city.edges[ei];
       // (not in a bore either: spawned at a node's plan position, a unit
       // would appear on the street over it -- see spawnTraffic)
       if (e.cls === 'res' || e.elev || e.tunnel) continue;
+      // Not on a freeway or a ramp unless nothing else will do: a unit put on
+      // I-5 beside you is 240 nodes from you (the next exit and back), and
+      // drove off half a kilometre before it turned.
+      if ((e.cls === 'hwy' || e.cls === 'ramp') && attempt < 45) continue;
+      // the near band first; where it has no street, the usual one
+      const nr = near && attempt < 30;
       // Rolled out the way the street runs: from its tail node, facing along it.
       const sign = this.flow[ei] || 1;
       const a = city.nodes[sign > 0 ? e.a : e.b];
       const d = Math.hypot(a.x - px, a.z - pz);
-      if (d < 90 || d > 320) continue;
-      const v = this.spawnAt(a.x, a.z, Math.atan2(e.dx * sign, e.dz * sign), 'police', 0xf2f4f6, 'police');
+      // (to a target standing still, the nearer half: 320 m out at downtown
+      // pursuit speeds was half a minute before anyone came)
+      if (d < (nr ? 70 : 90) || d > (nr ? 190 : 320)) continue;
+      // (searching: dispatched to where you were last seen, never in sight of
+      // where you are now -- and not past the despawn ring either, or it is
+      // removed the frame it appears and replaced 1.4 s later, 34 cruisers a
+      // minute at one star)
+      if (avoid) {
+        const da = Math.hypot(a.x - avoid.x, a.z - avoid.z);
+        if (da < 140 || da > DESPAWN - 80) continue;
+      }
+      return this.spawnUnitAt(a.x, a.z, Math.atan2(e.dx * sign, e.dz * sign), unit);
+    }
+    return null;
+  }
+
+  /** A police unit ('car' | 'swat') at (x, z), heading h, driving. */
+  spawnUnitAt(x, z, h, unit) {
+    {
+      const swat = unit === 'swat';
+      const v = this.spawnAt(x, z, h, swat ? 'swat' : 'police', 0xf2f4f6, 'police');
+      v.unit = swat ? 'swat' : 'car';
+      v.crew = 0;
       v.siren = 0;
       v.path = null;
       v.pathT = 0;
       v.repath = 0;
       v.rammed = 0;
       this.lightBar(v);
+      v.vLong = 12;
+      if (this.police) this.police.stats.spawned[swat ? 'swat' : 'car']++;
       return v;
     }
     return null;
@@ -715,6 +757,8 @@ export class TrafficSystem {
     if (v.lightL) return;
     const bar = new THREE.Group();
     const y = v.spec.roof + 0.09;
+    // the SWAT van's sits on the front of its box, and is wider
+    if (v.spec.swat) { bar.position.set(0, 2.92 + 0.09 - y, 0.40); bar.scale.set(1.37, 1, 1); }
     const housing = new THREE.Mesh(
       new THREE.BoxGeometry(1.24, 0.1, 0.34),
       new THREE.MeshStandardMaterial({ color: 0x15181c, roughness: 0.6, metalness: 0.1 })
@@ -757,55 +801,6 @@ export class TrafficSystem {
     if (L.material.color.getHex() !== L.userData[want]) {
       L.material.color.setHex(L.userData[want]);
       R.material.color.setHex(R.userData[want]);
-    }
-  }
-
-  ensureHeli(active, px, pz) {
-    // main.js sets heliBlind while the player is under the ground: in a bore
-    // the air unit has no line of sight, which is what makes a tunnel worth
-    // driving into with the police behind you.
-    if (this.heliBlind) active = false;
-    if (active && !this.heli) {
-      const g = new THREE.Group();
-      const mat = new THREE.MeshLambertMaterial({ color: 0x1b2733 });
-      const body = new THREE.Mesh(new THREE.CapsuleGeometry(1.3, 3.2, 6, 10), mat);
-      body.rotation.x = Math.PI / 2;
-      g.add(body);
-      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.5, 5.2), mat);
-      tail.position.set(0, 0.3, -4);
-      g.add(tail);
-      const fin = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.6, 1.0), mat);
-      fin.position.set(0, 1.1, -6.2);
-      g.add(fin);
-      const rotor = new THREE.Group();
-      for (let i = 0; i < 4; i++) {
-        const b = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.08, 8.5), new THREE.MeshLambertMaterial({ color: 0x2c3a48 }));
-        b.rotation.y = (i / 4) * Math.PI * 2;
-        rotor.add(b);
-      }
-      rotor.position.y = 1.6;
-      g.add(rotor);
-      const tr = new THREE.Group();
-      for (let i = 0; i < 3; i++) {
-        const b = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.2, 0.2), new THREE.MeshLambertMaterial({ color: 0x2c3a48 }));
-        b.rotation.z = (i / 3) * Math.PI * 2;
-        tr.add(b);
-      }
-      tr.position.set(0.35, 0.8, -6.2);
-      g.add(tr);
-      const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.22, 6, 6), new THREE.MeshBasicMaterial({ color: 0xff3b30 }));
-      beacon.position.set(0, -1.2, 1.5);
-      g.add(beacon);
-      g.position.set(px, 120, pz);
-      this.scene.add(g);
-      this.heli = { g, rotor, tr, beacon, a: 0, ang: 0 };
-    } else if (!active && this.heli) {
-      this.scene.remove(this.heli.g);
-      // Nothing in the helicopter is shared, and it is rebuilt from scratch
-      // every time the wanted level crosses four -- so without this an entire
-      // airframe leaked on each transition, in both directions.
-      disposeTree(this.heli.g);
-      this.heli = null;
     }
   }
 
@@ -964,13 +959,26 @@ export class TrafficSystem {
       this.spawnTimer = 0.25;
       if (trafficCount < TRAFFIC_TARGET) this.spawnTraffic(px, pz, camDir);
     }
-    const wantPolice = game.wanted === 0 ? 0 : Math.min(9, 1 + game.wanted * 2);
+    // Units by the wanted level's table (police.js LEVELS): cruisers first,
+    // then the SWAT vans. police.n counts what is out (a unit whose crew is
+    // on foot nearby still counts) -- last frame's, which is close enough
+    // for a spawn that comes 1.4 s apart. While they are SEARCHING, new
+    // units are sent to where you were last seen and never spawn within
+    // 140 m of you: a fresh unit appearing beside you would find you every
+    // time.
     this.copTimer -= dt;
-    if (this.copTimer <= 0 && policeCount < wantPolice) {
-      this.copTimer = 1.4;
-      this.spawnPolice(px, pz);
+    if (game.wanted > 0 && this.copTimer <= 0) {
+      const pol = this.police, lv = pol ? pol.level() : null;
+      const nCars = pol ? pol.n.cars : policeCount, nVans = pol ? pol.n.vans : 0;
+      const want = lv ? lv.cars : Math.min(9, 1 + game.wanted * 2);
+      const srch = pol && pol.searching;
+      const cx = srch ? pol.lastX : px, cz = srch ? pol.lastZ : pz, avoid = srch ? { x: px, z: pz } : null;
+      const near = !srch && pol && pol.playerSlow;
+      // (the vans go out after the first cruiser, not after the last: they
+      // are what four stars is)
+      if (lv && nVans < lv.vans && (nCars >= 1 || nCars >= want)) { this.copTimer = 1.4; this.spawnPolice(cx, cz, 'swat', avoid, near); pol.n.vans++; }
+      else if (nCars < want) { this.copTimer = 1.4; this.spawnPolice(cx, cz, 'car', avoid, near); if (pol) pol.n.cars++; }
     }
-    this.ensureHeli(game.wanted >= 4, px, pz);
 
     // Last frame's camera frustum, for the far LOD and the half-rate AI below
     // (the camera moves after traffic; the tests carry a margin for it).
@@ -993,7 +1001,8 @@ export class TrafficSystem {
       // 'race': the hydroplane race's boats (hydrorace.js drives them)
       // 'path': a cyclist on the bike paths (bikes.js rides them)
       if (v.mode === 'race' || v.mode === 'path') continue;
-      if (d2 > DESPAWN * DESPAWN && v.mode !== 'parked' && v.mode !== 'apron') { this.remove(v); continue; }
+      // (a police mission's suspect is policemissions.js's to end)
+      if (d2 > DESPAWN * DESPAWN && v.mode !== 'parked' && v.mode !== 'apron' && v.mode !== 'suspect') { this.remove(v); continue; }
       if (v.mode === 'police' && game.wanted === 0 && d2 > 140 * 140) { this.remove(v); continue; }
 
       if (v.mode === 'parked') {
@@ -1043,7 +1052,8 @@ export class TrafficSystem {
       // run every frame; the moment it is on screen it is back to every frame.
       let vdt = dt;
       v._acc += dt;
-      if (ON_PHONE && cam && v.mode === 'traffic' && d2 > 80 * 80) {
+      // (a police unit too, 120 m+ off: it drives the same driver now)
+      if (ON_PHONE && cam && (v.mode === 'traffic' || (v.unit && v.mode === 'police' && d2 > 120 * 120)) && d2 > 80 * 80) {
         sph.center.set(v.x, v.y + 1, v.z);
         sph.radius = v.halfLen + 8;
         if (!fr.intersectsSphere(sph) && ((this._tick + i) & 1)) continue;
@@ -1057,6 +1067,8 @@ export class TrafficSystem {
         if (v.recycle) { this.remove(v); continue; }
       }
       else if (v.mode === 'police') input = this.drivePolice(v, vdt, px, pz, player);
+      // a police mission's fleeing suspect (policemissions.js)
+      else if (v.mode === 'suspect' && this.suspectDriver) input = this.suspectDriver(v, vdt, px, pz, player);
       // shunted, abandoned or parked on an apron: nobody at the wheel, so the
       // parking brake (Vehicle.update `park`); aircraft and boats keep their old coast
       // (shared: Vehicle.update only reads its input)
@@ -1080,23 +1092,6 @@ export class TrafficSystem {
     for (const v of this.cars) if (v !== player.vehicle) v.sync();
     this.updateFarLod(px, pz, player);
 
-    if (this.heli) {
-      const h = this.heli;
-      h.a += dt;
-      h.ang += dt * 0.45;
-      const r = 70;
-      const tx = px + Math.cos(h.ang) * r;
-      const tz = pz + Math.sin(h.ang) * r;
-      const ty = Math.max(city.groundAt(tx, tz, null) + 95, 110);
-      h.g.position.x = lerp(h.g.position.x, tx, 1 - Math.exp(-1.2 * dt));
-      h.g.position.z = lerp(h.g.position.z, tz, 1 - Math.exp(-1.2 * dt));
-      h.g.position.y = lerp(h.g.position.y, ty, 1 - Math.exp(-1.0 * dt));
-      h.g.rotation.y = Math.atan2(px - h.g.position.x, pz - h.g.position.z);
-      h.g.rotation.z = -0.18;
-      h.rotor.rotation.y += dt * 26;
-      h.tr.rotation.x += dt * 34;
-      h.beacon.visible = Math.sin(h.a * 9) > 0;
-    }
   }
 
   // --- how the AI drives ----------------------------------------------------
@@ -1165,7 +1160,8 @@ export class TrafficSystem {
     if (rt[o + R_END] || v.rtN >= RT_MAX) return false;
     const ei = rt[o + R_EI], sign = rt[o + R_SG], e = city.edges[ei];
     const node = sign > 0 ? e.b : e.a;
-    const nx = this.pickNextEdge(v, ei, sign, node);
+    // (a police unit in pursuit takes its A* path's turns)
+    const nx = v.unit && v.mode === 'police' ? this.pursuitEdge(v, ei, sign, node) : this.pickNextEdge(v, ei, sign, node);
     if (!nx) { rt[o + R_END] = 1; return false; }
     const ne = city.edges[nx.ei];
     const pux = rt[o + R_UX], puz = rt[o + R_UZ], nux = ne.dx * nx.sign, nuz = ne.dz * nx.sign;
@@ -1267,15 +1263,22 @@ export class TrafficSystem {
    */
   roadAccel(v, s0, vel) {
     const rt = v.rt;
+    // a unit in pursuit corners harder, and holds its own pace whatever the
+    // street's limit (its corners still bind)
+    const aLat = v.unit ? A_LAT_POLICE : A_LAT, unit = !!v.unit;
     const horizon = (vel * vel) / (2 * B_PLAN) + 30;
     let aMin = Infinity, d = 0;
     const cons = (vk, dist) => {
       if (vel <= vk) return;
       const a = (vk * vk - vel * vel) / (2 * Math.max(dist, 1.5));
+      // (a unit in pursuit brakes late and hard: traffic starts easing off
+      // for a corner the moment it is inside the horizon, which held a
+      // cruiser to ~10 m/s on a downtown grid)
+      if (unit && a > -BRAKE_POLICE) return;
       if (a < aMin) aMin = a;
     };
     // the corner being turned
-    if (rt[V_K] === 1 && s0 < rt[V_B] + rt[V_T]) cons(Math.sqrt(A_LAT * rt[V_R]), 0);
+    if (rt[V_K] === 1 && s0 < rt[V_B] + rt[V_T]) cons(Math.sqrt(aLat * rt[V_R]), 0);
     for (let j = 0; ; j++) {
       const o = j * RT_F;
       const start = j === 0 ? s0 : rt[o + V_K] === 1 ? rt[o + V_B] + rt[o + V_T] : rt[o + V_B];
@@ -1291,8 +1294,8 @@ export class TrafficSystem {
       }
       if (d > horizon) break;
       const q = o + RT_F;
-      if (rt[q + V_R] < 1e5) cons(Math.sqrt(A_LAT * rt[q + V_R]), d);
-      cons(rt[q + R_SPD] * v.drvK, d);
+      if (rt[q + V_R] < 1e5) cons(Math.sqrt(aLat * rt[q + V_R]), d);
+      if (!unit) cons(rt[q + R_SPD] * v.drvK, d);
       if (rt[q + V_K] === 1) d += rt[q + V_R] * rt[q + V_TH];
     }
     return aMin;
@@ -1364,7 +1367,7 @@ export class TrafficSystem {
     // right (the dodge's offset, + = right) so it can get by.
     let yieldK = 1;
     const sf = this.sirenFrom;
-    if (sf && sf !== v) {
+    if (sf && sf !== v && !v.unit) {
       const bx = v.x - sf.x, bz = v.z - sf.z, sw = sf.forward, vf = v.forward;
       const ahead = bx * sw.x + bz * sw.z;
       if (ahead > 0 && ahead < 70 && Math.abs(bx * sw.z - bz * sw.x) < 9
@@ -1374,10 +1377,10 @@ export class TrafficSystem {
         if (v.dodgeT <= 0 && city.edges[v.edge].cls !== 'res') { v.dodge = 0.7; v.dodgeT = 0.3; }
       }
     }
-    const v0 = rt[R_SPD] * v.drvK * (v.panic > 0 ? 1.5 : 1) * yieldK;
+    const v0 = v.unit ? v.pursuitV : rt[R_SPD] * v.drvK * (v.panic > 0 ? 1.5 : 1) * yieldK;
     let aWant = Math.min(aRoad, Math.abs(alpha) > 1.3 ? (9 - sp * sp) / 6 : Infinity);
     const heavy = v.spec.bus || v.spec.cargo;
-    const aMax = heavy ? 1.3 : 2.0;
+    const aMax = v.unit ? 4.5 : heavy ? 1.3 : 2.0;   // (a unit in pursuit puts its foot down)
     // THE CAR AHEAD, judged along the PATH: the planned route sampled every
     // few metres out to the scan length. A straight corridor along the bonnet
     // saw the far side of every junction a car was about to turn at (and
@@ -1437,7 +1440,8 @@ export class TrafficSystem {
         // CROSS TRAFFIC: a driven car crossing my path that will be where I
         // am going when I get there. Whoever gets there first goes; on a tie
         // the older car. Predicted along its heading at 0.8 / 1.6 / 2.4 s.
-        if (Math.abs(co) < 0.5 && Math.abs(o.vLong) > 1.5 && (o.mode === 'traffic' || o.mode === 'police' || o === player.vehicle)) {
+        // (a unit with its lights on yields to nobody)
+        if (!v.unit && Math.abs(co) < 0.5 && Math.abs(o.vLong) > 1.5 && (o.mode === 'traffic' || o.mode === 'police' || o === player.vehicle)) {
           for (let tt = 0.8; tt < 2.5; tt += 0.8) {
             const qx = o.x + fo.x * o.vLong * tt, qz = o.z + fo.z * o.vLong * tt;
             let bq = Infinity, aq = 0, ac = 0;
@@ -1466,7 +1470,10 @@ export class TrafficSystem {
       // with the bodies' boxes a queue sat behind it for good. The dodge is
       // an offset from the lane, away from the side the car stands on, held
       // for 1.2 s after it was last seen.
-      if ((o.mode === 'free' || o.mode === 'parked') && o !== player.vehicle && Math.abs(o.vLong) < 0.5 && along < 25) {
+      // (a unit in pursuit drives round slow traffic the same way: there are
+      // no signals, and a queue behind a wedge is a chase that never comes)
+      if ((((o.mode === 'free' || o.mode === 'parked') && Math.abs(o.vLong) < 0.5)
+        || (v.unit && (o.mode === 'traffic' || o.mode === 'suspect') && Math.abs(o.vLong) < v.pursuitV * 0.6)) && o !== player.vehicle && along < 25) {
         const lat = (o.x - sax) * -sdz + (o.z - saz) * sdx;   // + = right of the path
         const need = wid + 0.35, dl = lat >= 0 ? lat - need : lat + need;
         if (Math.abs(dl) > Math.abs(v.dodge) || v.dodgeT <= 0) v.dodge = clamp(dl, -LANE_W, LANE_W);
@@ -1594,50 +1601,224 @@ export class TrafficSystem {
     return sharp;
   }
 
+  /**
+   * A police unit's driving (police.js units). FAR from its target it drives
+   * the planned-path driver traffic uses (driveTraffic: lanes, filleted
+   * corners, pure pursuit, the IDM), with the route's turns taken off an A*
+   * path to the target (pickNextEdge, `v.path`) instead of at random, at a
+   * pursuit pace (`v.pursuitV`), cornering harder than traffic, driving round
+   * slow traffic and yielding to nobody. The old driver aimed straight at
+   * the next node of its A* path with `heading error x 1.7` and braked for
+   * anything 10 m ahead: it cut corners into kerbs and walls, the 6.6 m SWAT
+   * van wedged, and a cruiser queued behind traffic for good -- two-star
+   * units that never reached a man standing still. CLOSE (60 m), and off
+   * the road graph, it still drives straight at you to ram or stop beside you.
+   */
   drivePolice(v, dt, px, pz, player) {
-    const city = this.city;
-    this.policeLights(v, dt, true);
-
-    const d = Math.hypot(px - v.x, pz - v.z);
-    let tx = px, tz = pz;
-    v.repath -= dt;
-    if (d > 55) {
-      if (!v.path || v.repath <= 0) {
-        const from = city.nearestNode(v.x, v.z);
-        const to = city.nearestNode(px, pz);
-        v.path = this.findPath(from, to, 1400);
-        v.pathT = 0;
-        v.repath = 2.2;
-      }
-      if (v.path && v.path.length) {
-        while (v.pathT < v.path.length) {
-          const n = city.nodes[v.path[v.pathT]];
-          if (Math.hypot(n.x - v.x, n.z - v.z) < 16) v.pathT++;
-          else break;
-        }
-        const idx = Math.min(v.pathT, v.path.length - 1);
-        const n = city.nodes[v.path[idx]];
-        tx = n.x; tz = n.z;
-      }
+    const pol = this.police;
+    if (!pol) this.policeLights(v, dt, true);
+    // police.js: the search point (or, heat gone, away) instead of you
+    const ord = pol ? pol.carTarget(v, px, pz, dt) : null;
+    const tx = ord ? ord.x : px, tz = ord ? ord.z : pz;
+    const d = Math.hypot(tx - v.x, tz - v.z);
+    // backing out of a wedge (below), wheel reversed: at a standstill the
+    // brake is reverse
+    if (v.backT > 0) {
+      v.backT -= dt;
+      if (v.backT <= 0) v.rtN = 0;   // and a fresh route from where it ends up
+      const inp = v.aiIn || (v.aiIn = { throttle: 0, brake: 0, steer: 0, handbrake: 0, park: false });
+      inp.throttle = 0; inp.brake = 1; inp.handbrake = 0; inp.park = false;
+      inp.steer = -clamp(angleWrap(Math.atan2(tx - v.x, tz - v.z) - v.heading) * 1.7, -1, 1);
+      return inp;
     }
+    // Not getting anywhere for 5 s, whatever the reason (nose in a wall, a
+    // queue it could not get round): back out for 1.6 s and plan again.
+    if (Math.abs(v.vLong) < 1) v.polStuckT += dt; else v.polStuckT = 0;
+    if (v.polStuckT > 5 && !(d < 20 && pol && pol.playerSlow)) {
+      v.polStuckT = 0; v.backT = 1.6;
+      if (pol) pol.stats.wedged[v.unit === 'swat' ? 'swat' : 'car']++;   // (wantedcheck counts them)
+    }
+    const lv = pol ? pol.level() : null;
+    const swat = v.unit === 'swat';
+    // (no A* path at all and within 160 m -- you are on a piece of the
+    // graph it cannot drive to, a plaza, a pier -- it comes straight)
+    if (v.noPath && (v.repath -= dt) <= 0) v.noPath = false;   // (ask again)
+    if ((d > 60 && !(d < 160 && v.noPath)) || ord) {
+      const pace = ord ? ord.speed : swat ? 27 : 31;
+      const inp = this.pursue(v, dt, tx, tz, pace, px, pz, player);
+      if (inp) return inp;
+    }
+    // CLOSE: straight at the target. Inside 18 m: ram at the level's speed
+    // (a van harder), or stop beside a target that is not getting away, so
+    // the crew can get out.
+    v.rtN = 0;   // (the route is planned afresh when it next needs one)
     const desired = Math.atan2(tx - v.x, tz - v.z);
     const err = angleWrap(desired - v.heading);
-    const steer = clamp(err * 1.7, -1, 1);
     const f = v.forward;
-
     let brake = 0;
     for (const o of this.cars) {
       if (o === v || o.mode === 'police' || Math.abs(o.y - v.y) > 3) continue;
       const rx = o.x - v.x, rz = o.z - v.z;
       const fwd = rx * f.x + rz * f.z;
-      if (fwd < 0.5 || fwd > 10) continue;
+      if (fwd < 0.5 || fwd > 8) continue;
       if (Math.abs(rx * f.z - rz * f.x) > 2.0) continue;
+      if (o === player.vehicle) continue;   // that one it rams
       brake = 0.7;
     }
-    const targetSpeed = d < 18 ? 12 : 34;
-    let throttle = brake > 0.2 ? 0 : clamp((targetSpeed - v.vLong) * 0.5, 0, 1);
+    const slow = pol && pol.playerSlow;
+    const targetSpeed = ord ? (d < 12 ? 6 : ord.speed)
+      : d < 18 ? (slow ? (d < 9 ? 0 : 4) : (lv ? lv.ram : 12) + (swat ? 4 : 0))
+      // (to a target standing still, a speed it can stop from in time)
+      : slow ? Math.min(swat ? 22 : 26, 4 + (d - 9) * 0.55) : swat ? 22 : 26;
+    const inp = v.aiIn || (v.aiIn = { throttle: 0, brake: 0, steer: 0, handbrake: 0, park: false });
+    inp.steer = clamp(err * 1.7, -1, 1);
+    inp.handbrake = 0; inp.park = false;
+    inp.throttle = brake > 0.2 ? 0 : clamp((targetSpeed - v.vLong) * 0.5, 0, 1);
+    if (targetSpeed < v.vLong - 2) brake = Math.max(brake, clamp((v.vLong - targetSpeed) * 0.15, 0, 1));
     if (Math.abs(err) > 1.4 && v.vLong > 10) brake = Math.max(brake, 0.5);
-    return { throttle, brake, steer, handbrake: 0 };
+    // stopped beside a slow target: hold, don't creep back (brake = reverse)
+    if (targetSpeed === 0 && Math.abs(v.vLong) < 0.8) { inp.throttle = 0; brake = 0; inp.park = true; }
+    inp.brake = brake;
+    return inp;
+  }
+
+  /**
+   * The far half of drivePolice: a route along an A* path to (tx, tz),
+   * driven by driveTraffic. Null when the unit is off the road graph (it
+   * then drives straight at the target).
+   */
+  pursue(v, dt, tx, tz, pace, px, pz, player) {
+    const city = this.city;
+    // on its route's lane line? (after a ram, a spin, a back-out: plan anew)
+    if (v.rt && v.rtN > 0) {
+      const rt = v.rt;
+      const lat = Math.abs((v.x - rt[R_QX]) * rt[R_UZ] - (v.z - rt[R_QZ]) * rt[R_UX]);
+      const s0 = (v.x - rt[R_QX]) * rt[R_UX] + (v.z - rt[R_QZ]) * rt[R_UZ];
+      if (lat > 7 || s0 < -15 || s0 > rt[R_LEN] + 25) v.rtN = 0;
+    }
+    if (!v.rt || v.rtN === 0) { if (!this.snapRoute(v)) return null; v.repath = 0; }
+    // Getting no closer for 10 s (round and round a block, a path into a
+    // corner the A* cannot see): a fresh route and a fresh path -- or, within
+    // 160 m, 6 s straight at the target.
+    const dTo = Math.hypot(tx - v.x, tz - v.z);
+    if (dTo < v.progD - 10) { v.progD = dTo; v.progT = 0; }
+    else if ((v.progT += dt) > 10) {
+      v.progD = dTo; v.progT = 0; v.path = null; v.rtN = 1; v.rt[R_END] = 0; v.repath = 0;
+      // ...and if it is close, straight at you for 6 s (drivePolice)
+      if (dTo < 160) { v.noPath = true; v.repath = 6; }
+    }
+    // the A* path, from the end of the route's next entry; replanned every
+    // 2.5 s (you move), and the route beyond that entry with it
+    v.repath -= dt;
+    if (v.repath <= 0 || !v.path) {
+      v.repath = 2.5;
+      const to = city.nearestNode(tx, tz, 250);
+      const j = Math.min(1, v.rtN - 1), o = j * RT_F, e = city.edges[v.rt[o + R_EI]];
+      const from = v.rt[o + R_SG] > 0 ? e.b : e.a;
+      // the A* is the costly part (up to 1400 nodes): a path that still ends
+      // within 60 m of the target and still runs through where the route is
+      // going is kept
+      const P = v.path;
+      const pe = P && P.length ? city.nodes[P[P.length - 1]] : null;
+      if (!(pe && to >= 0 && Math.hypot(pe.x - tx, pe.z - tz) < 60 && P.indexOf(from) >= 0)) {
+        v.path = to >= 0 ? this.findPath(from, to, 1400) : null;
+        v.offGraph = !v.path;
+        // No path to the nearest node (a freeway's, say, which cannot be
+        // driven into against its flow from here): the nearest surface
+        // street's instead -- with no path at all a unit wandered by
+        // compass from node to node, and could take a minute.
+        if (!v.path) {
+          const alt = this.surfaceNodeNear(tx, tz, this.comp[from]);
+          if (alt >= 0 && alt !== to) v.path = this.findPath(from, alt, 1400);
+        }
+        v.noPath = !v.path;
+        if (v.noPath) v.repath = 4;
+        if (v.rtN > j + 1) { v.rtN = j + 1; v.rt[o + R_END] = 0; }
+      }
+    }
+    v.pursuitTX = tx; v.pursuitTZ = tz;
+    v.pursuitV = pace;
+    return this.driveTraffic(v, dt, px, pz, player);
+  }
+
+  /** The nearest node of a surface street (not a freeway, ramp, deck or
+   *  bore) within 150 m of (x, z) in directed component `comp` (one the unit
+   *  can drive to), or -1. */
+  surfaceNodeNear(x, z, comp) {
+    const city = this.city;
+    let best = -1, bd = 150 * 150;
+    for (const ei of city.edgesNear(x, z, 150)) {
+      const e = city.edges[ei];
+      if (e.cls === 'hwy' || e.cls === 'ramp' || e.elev || e.tunnel || e.noTraffic) continue;
+      for (const ni of [e.a, e.b]) {
+        if (comp !== undefined && this.comp[ni] !== comp) continue;
+        const n = city.nodes[ni], dd = (n.x - x) ** 2 + (n.z - z) ** 2;
+        if (dd < bd) { bd = dd; best = ni; }
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Put a unit on the road graph where it stands: the nearest drivable edge
+   * at its height, driven the way it faces (a surface one-way either way, a
+   * freeway or a ramp only with its flow). False off the graph.
+   */
+  snapRoute(v) {
+    const city = this.city, f = v.forward;
+    let best = -1, bs = Infinity, bsign = 1, bt = 0;
+    for (const ei of city.edgesNear(v.x, v.z, 120)) {
+      const e = city.edges[ei];
+      if (e.noTraffic) continue;
+      const a = city.nodes[e.a], b = city.nodes[e.b];
+      const t = clamp(((v.x - a.x) * e.dx + (v.z - a.z) * e.dz) / e.len, 0, 1);
+      const qx = a.x + e.dx * e.len * t, qz = a.z + e.dz * e.len * t;
+      const dd = Math.hypot(v.x - qx, v.z - qz);
+      if (dd > Math.max(12, e.hw + 6)) continue;
+      if (!e.tunnel && Math.abs(lerp(a.y, b.y, t) - v.y) > 4) continue;
+      const dot = e.dx * f.x + e.dz * f.z;
+      let sign = dot >= 0 ? 1 : -1;
+      if ((e.cls === 'hwy' || e.cls === 'ramp') && !this.allowed(ei, sign)) sign = -sign;
+      const sc = dd + (1 - Math.abs(dot)) * 6 + (dot * sign < 0 ? 8 : 0);
+      if (sc < bs) { bs = sc; best = ei; bsign = sign; bt = t; }
+    }
+    if (best < 0) return false;
+    v.edge = best; v.dirSign = bsign;
+    v.laneU = this.flow[best] !== 0 ? this.nearestLaneU(best, bsign, 0) : 0.5;
+    this.routeInit(v);
+    return true;
+  }
+
+  /** pickNextEdge for a unit in pursuit: the next node of its A* path, or
+   *  (off it) the exit heading most toward its target. */
+  pursuitEdge(v, fromEi, fromSign, nodeId) {
+    const city = this.city, node = city.nodes[nodeId];
+    const P = v.path;
+    if (P) {
+      const i = P.indexOf(nodeId);
+      if (i >= 0 && i + 1 < P.length) {
+        const nn = P[i + 1];
+        for (const ei of node.e) {
+          const ne = city.edges[ei];
+          if (ne.noTraffic) continue;
+          if ((ne.a === nodeId ? ne.b : ne.a) === nn) return { ei, sign: ne.a === nodeId ? 1 : -1 };
+        }
+      }
+      if (i < 0) v.repath = Math.min(v.repath, 0.3);   // off the path: plan again soon
+    }
+    const tx = v.pursuitTX - node.x, tz = v.pursuitTZ - node.z, tl = Math.hypot(tx, tz) || 1;
+    let best = null, bs = -Infinity;
+    for (const ei of node.e) {
+      const ne = city.edges[ei];
+      if (ne.noTraffic) continue;
+      const sign = ne.a === nodeId ? 1 : -1;
+      if ((ne.cls === 'hwy' || ne.cls === 'ramp') && !this.allowed(ei, sign)) continue;
+      // (back the way it came only when everything else leads away: a unit
+      // that had passed the target's corner drove on round the block)
+      const sc = (ne.dx * sign * tx + ne.dz * sign * tz) / tl + (this.allowed(ei, sign) ? 0.2 : 0) - (ei === fromEi ? 0.9 : 0);
+      if (sc > bs) { bs = sc; best = { ei, sign }; }
+    }
+    return best;
   }
 
   resolveCarCollisions(dt, player) {
@@ -1710,7 +1891,7 @@ export class TrafficSystem {
             if (b.mode === 'traffic') b.panic = 4;
             if (a.mode === 'traffic') a.panic = 4;
             if (a === player.vehicle || b === player.vehicle) {
-              this.game.onCrash(impact, b.mode === 'police' || a.mode === 'police');
+              this.game.onCrash(impact, b.mode === 'police' || a.mode === 'police', a === player.vehicle ? b : a);
             } else if (impact > 6 && this.game.onTrafficCrash) {
               this.game.onTrafficCrash(impact, (a.x + b.x) / 2, (a.z + b.z) / 2);
             }

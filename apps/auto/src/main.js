@@ -36,7 +36,9 @@ import { Seafair } from './hydrorace.js';
 import { FireService, placeStations } from './firecalls.js';
 import { BONES } from './peds.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
-import { TrafficSystem, collideWithBuildings } from './traffic.js';
+import { TrafficSystem, collideWithBuildings, warmLightBar } from './traffic.js';
+import { Police } from './police.js';
+import { PoliceMissions } from './policemissions.js';
 import { TYPES as VEHICLE_TYPES, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial, dropVehicleArrays } from './vehicles.js';
 
 // Aircraft come in their own colours, parked at Boeing Field or delivered.
@@ -139,6 +141,16 @@ const RESPAWN_SITES = [
 let respawns = [];   // [{ name, x, z, node }] (buildRespawns)
 let fire = null, fireStations = [];   // Seattle Fire: the stations' rigs, the water cannon, fire calls (firecalls.js)
 
+/** The WASTED / BUSTED card. */
+function showEnd(text, sub) {
+  const el = document.getElementById('wasted');
+  const sp = el.querySelector('span');
+  if (sp) sp.textContent = text;
+  const to = document.getElementById('wastedTo');
+  if (to && sub !== undefined) to.textContent = sub;
+  el.classList.add('show');
+}
+
 class Game {
   constructor() {
     this.wanted = 0;
@@ -152,6 +164,7 @@ class Game {
     this.dead = false;
     this.deathT = 0;
     this.respawnAt = null;   // the hospital WASTED is taking you to (damagePlayer)
+    this.busted = false;
     this.paused = false;
     this.mapOpen = false;
     this.sirenLevel = 0;
@@ -166,11 +179,19 @@ class Game {
     };
   }
 
+  /** Raise the wanted level to exactly `n` stars if it is lower (an activity's heat). */
+  setWanted(n) {
+    const need = STAR_POINTS[clamp(n, 0, 5)];
+    if (this.points < need) this.addHeat(need - this.points);
+  }
+
   addHeat(n) {
     if (this.dead) return;
     const before = this.wanted;
     this.points += n;
     this.cool = 0;
+    // a crime the police know about: they know where you are
+    if (police && player) police.spotted(player.position.x, player.position.z);
     let stars = 0;
     for (let i = 1; i < STAR_POINTS.length; i++) if (this.points >= STAR_POINTS[i]) stars = i;
     this.wanted = Math.min(5, stars);
@@ -182,11 +203,18 @@ class Game {
 
   // --- callbacks used by the simulation ------------------------------------
 
-  onCrash(impact, isPolice) {
+  onCrash(impact, isPolice, other) {
     audio.crash(impact);
     const p = player.position;
     fx.sparks(p.x, p.y + 0.8, p.z, Math.min(14, Math.round(impact)));
-    if (isPolice) this.addHeat(18);
+    // A police mission's suspect is yours to ram.
+    if (other && other.suspect) return;
+    // Ramming a unit is a crime; being rammed BY one is not. (Every police
+    // contact used to add 18 points, so the units ramming you at 3+ stars
+    // drove your own wanted level up.)
+    const pv = player.vehicle;
+    const mine = !other || !pv || Math.abs(pv.vLong) >= Math.abs(other.vLong) - 1;
+    if (isPolice) { if (mine) this.addHeat(18); }
     else if (impact > 12) this.addHeat(3);
   }
 
@@ -208,14 +236,17 @@ class Game {
     if (isPlayer) this.addHeat(ped.cop ? 60 : 30);
   }
 
-  onCopShot(cop) {
-    audio.gunshot(cop.x, cop.z);
-    const p = player.position;
-    fx.tracer(cop.x, cop.y + 1.35, cop.z, p.x, p.y + 1.2, p.z);
-    fx.sparks(cop.x + Math.sin(cop.heading), cop.y + 1.35, cop.z + Math.cos(cop.heading), 3);
-    // inside an armoured vehicle (spec.armor, the Wedge) a round has plate to get through
-    const arm = (player.vehicle && player.vehicle.spec.armor) || 1;
-    if (Math.random() < 0.55) this.damagePlayer((6 + Math.random() * 6) * arm, 'gun');
+  // (police fire goes through police.js `fire` now: every weapon, the
+  // hit chance, and what reaches you through a car's body)
+
+  /** Arrested (police.js): BUSTED, and a fine at police headquarters. */
+  onBusted() {
+    if (this.dead) return;
+    this.dead = true;
+    this.deathT = 0;
+    this.busted = true;
+    showEnd('BUSTED', 'Taking you to the Justice Center');
+    if (audio) audio.ui('fail');
   }
 
   onGunshot(x, y, z, dir) {
@@ -223,7 +254,8 @@ class Game {
     fx.tracer(x, y, z, x + dir.x * 55, y - 1.5, z + dir.z * 55);
     fx.sparks(x + dir.x * 0.7, y, z + dir.z * 0.7, 4);
     peds.scare(x, z, 45);
-    this.addHeat(10);
+    // a police mission's gunfire is police work
+    if (!(missions && missions.run)) this.addHeat(10);
   }
 
   onShotVehicle(v, x, z) {
@@ -436,7 +468,7 @@ class Game {
       this.damagePlayer(70, 'explosion');
       player.exitVehicle(true);
     }
-    this.addHeat(14);
+    if (!v.suspect) this.addHeat(14);
     setTimeout(() => traffic.remove(v), 60);
   }
 
@@ -454,7 +486,7 @@ class Game {
       this.respawnAt = nearestRespawn(p.x, p.z);
       const to = document.getElementById('wastedTo');
       if (to) to.textContent = this.respawnAt ? `Taking you to ${this.respawnAt.name}` : '';
-      document.getElementById('wasted').classList.add('show');
+      showEnd('WASTED');
     }
   }
 
@@ -493,6 +525,7 @@ class Game {
 // ---------------------------------------------------------------------------
 
 let chunkCull = null;   // chunkcull.js
+let police = null, missions = null;   // the wanted levels (police.js) and police missions (policemissions.js)
 let nearShadow = null;  // nearshadow.js
 // Who casts into the near map this frame: the player on foot, or the vehicle
 // he drives on the ground or the water. An aircraft keeps the sun's map (its
@@ -1388,6 +1421,12 @@ function installShadowFade() {
   tanks = new TankSystem({ scene, city, world, traffic, peds, fx, audio, hud, game, player, camera, root: document.getElementById('app') });
   tanks.spawnHome();
   acts.stunts = stunts;
+  // the law (police.js) and the police missions (policemissions.js)
+  police = new Police({ scene, city, game, traffic, peds, fx, audio, hud });
+  traffic.police = police;
+  game.police = police;
+  missions = new PoliceMissions({ scene, city, game, traffic, police, hud, audio });
+  game.setSiren = (v, on) => { traffic.lightBar(v); setSiren(v, on); };
 
   // delivery marker
   const mg = new THREE.CylinderGeometry(6, 6, 26, 18, 1, true);
@@ -1465,7 +1504,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { police, missions, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1524,6 +1563,14 @@ function installShadowFade() {
       for (const m of lazy.meshes) warm.add(m);
       // the fire service's particles, beacon and lights (drawn first in a fire call)
       if (fire) { fireWarm = fire.warmMeshes(player); for (const m of fireWarm.meshes) warm.add(m); }
+      // The police's lazily-made materials: the units' light bar, the
+      // helicopter's searchlight cone, a mission suspect's marker -- and the
+      // tracer lines, hidden until the first shot, which compiled their
+      // program mid-firefight.
+      warm.add(warmLightBar());
+      for (const m of police.warmMeshes()) warm.add(m);
+      for (const m of missions.warmMeshes()) warm.add(m);
+      if (fx.lines) { fx.lines.visible = true; lazy.linesWere = true; }
       if (fx.wakeMesh) fx.wakeMesh.visible = true;
       scene.add(warm);
       placeSun(player.x, player.y, player.z);
@@ -1540,6 +1587,7 @@ function installShadowFade() {
       scene.remove(warm);
       if (fx.wakeMesh) fx.wakeMesh.visible = wakeWas;
       if (fireWarm) fireWarm.restore();
+      if (fx.lines) fx.lines.visible = false;
       try { if (lazy) lazy.dispose(); } catch (e) { /* nothing to free */ }
     }
     const gl = renderer.getContext();
@@ -1958,6 +2006,7 @@ function warpTo(x, z) {
   player.respawn(snap.x, snap.z);
   controls.setMode('foot');
   game.dead = false;
+  game.busted = false;
   document.getElementById('wasted').classList.remove('show');
   world.update(snap.x, snap.z, 40);
   hud.showToast(`Dropped in — ${G.placeNameAt(snap.x, snap.z)}`);
@@ -2062,6 +2111,13 @@ function wireUi() {
   });
   // RADIO on the driving pad: the next station. pointerdown, like every pad
   // button (the pad's own handler stops propagation, not this listener).
+  // MISSION, in a police vehicle: start the police missions, or quit them
+  // (policemissions.js). N on a keyboard.
+  const missionPad = document.querySelector('[data-btn="policemission"]');
+  if (missionPad) missionPad.addEventListener('pointerdown', () => { if (missions && !game.paused && !game.dead) missions.toggle(player); });
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyN' && !e.repeat && missions && !game.paused && !game.dead && (missions.run || missions.nextT > 0 || missions.available(player))) missions.toggle(player);
+  });
   const radioPad = document.querySelector('[data-btn="radio"]');
   if (radioPad) radioPad.addEventListener('pointerdown', () => {
     audio.init();
@@ -2223,12 +2279,34 @@ function wireUi() {
   });
 }
 
+// Seattle Police headquarters, the Justice Center at 5th and Cherry: where
+// you are released after a bust.
+const POLICE_HQ = [47.6043, -122.3296];
+
 function doRespawn() {
+  const busted = game.busted, stars = game.wanted;
   game.dead = false;
+  game.busted = false;
   game.wanted = 0;
   game.points = 0;
-  game.money = Math.max(0, game.money - 200);
+  game.cool = 0;
   document.getElementById('wasted').classList.remove('show');
+  if (police) police.clear();
+  if (player.vehicle) player.exitVehicle(true);
+  if (busted) {
+    // a fine by the stars you had, and your gun confiscated
+    const fine = Math.min(game.money, 100 + 100 * stars);
+    game.money -= fine;
+    const had = player.armed;
+    player.armed = false; player.ammo = 0;
+    const [hx, hz] = G.toWorld(POLICE_HQ[0], POLICE_HQ[1]);
+    const sp = cityRef.respawnPointNear(hx, hz) || HOSPITAL;
+    player.respawn(sp.x, sp.z);
+    controls.setMode('foot');
+    hud.showToast(`Released from the Justice Center — ${formatMoney(fine)} fine${had ? ', weapon confiscated' : ''}`, 3600);
+    return;
+  }
+  game.money = Math.max(0, game.money - 200);
   // where WASTED said (damagePlayer), or, from the menu, the nearest from here
   const p = player.position;
   const r = game.respawnAt || nearestRespawn(p.x, p.z);
@@ -2248,6 +2326,7 @@ function doRespawn() {
  * eases off and keeps right for it (traffic.sirenFrom).
  */
 let copCar = null;
+// (police missions switch it on for a run: game.setSiren)
 function setSiren(v, on) {
   v.sirenOn = on;
   v.siren = 0;
@@ -2266,6 +2345,9 @@ function updateSiren(dt) {
     if (v && v.spec.police) traffic.lightBar(v);
     if (v) setSiren(v, false);
     controls.root.dataset.police = v ? '1' : '';
+    // the police MISSION (policemissions.js) is a police vehicle's only; a
+    // fire rig has its own (firecalls.js, data-fire)
+    controls.root.dataset.cop = v && v.spec.police ? '1' : '';
   }
   if (controls.takeSiren() % 2 && v) {
     setSiren(v, !v.sirenOn);
@@ -2511,6 +2593,7 @@ function frame(now) {
   if (stunts) stunts.update(dt, player);
   if (tanks) tanks.update(dt);
   if (acts) acts.update(dt, player);
+  if (missions) missions.update(dt, player);
   // Say hello once per approach to anything the map marks (the dock, the
   // quads): the map is how you find them, this is how you know you have.
   // One at a time, in list order, so the dock is never talked over by the
@@ -2540,13 +2623,15 @@ function frame(now) {
   {
     const terr = G.terrainHeight(p.x, p.z);
     buried = terr - p.y > 3;
-    traffic.heliBlind = buried;
-    if (buried && game.wanted > 0 && !hud.__toldTunnel) {
+    if (buried && game.wanted > 0 && police.helis.length && !hud.__toldTunnel) {
       hud.__toldTunnel = true;
       hud.showToast('Off the radar — the chopper has lost you');
     }
     if (!buried) hud.__toldTunnel = false;
   }
+  // the units, the helicopters, who can see you, arrests (police.js)
+  police.update(dt, player, buried);
+  if (prof) lap('police');
   updatePickups(dt);
   updateSiren(dt);
   if (duckTour) duckTour.update(dt);
@@ -2583,22 +2668,18 @@ function frame(now) {
     }
   }
 
-  // wanted cool-down: stay clear of the law and the heat drops
+  // Wanted cool-down: unseen by every unit and the helicopter (police.js
+  // keeps the clock, and the stars flash while it runs), a star goes every
+  // 6 + 3 x stars seconds. Seen again, the clock restarts.
   if (game.wanted > 0) {
-    let nearCop = false;
-    for (const c of traffic.cars) {
-      if (c.mode === 'police' && dist2(c.x, c.z, p.x, p.z) < 110 * 110) { nearCop = true; break; }
+    const need = 6 + game.wanted * 3;
+    if (police.unseenT > need) {
+      police.unseenT = 0;
+      game.cool = 0;
+      game.points = STAR_POINTS[Math.max(0, game.wanted - 1)];
+      game.wanted = Math.max(0, game.wanted - 1);
+      if (game.wanted === 0) hud.showToast('You lost the cops');
     }
-    if (!nearCop) {
-      game.cool += dt;
-      const need = 7 + game.wanted * 3;
-      if (game.cool > need) {
-        game.cool = 0;
-        game.points = STAR_POINTS[Math.max(0, game.wanted - 1)];
-        game.wanted = Math.max(0, game.wanted - 1);
-        if (game.wanted === 0) hud.showToast('You lost the cops');
-      }
-    } else game.cool = 0;
   } else {
     game.points = Math.max(0, game.points - dt * 6);
   }
@@ -2749,7 +2830,7 @@ function audioState(dt, input, p, camDir, buried) {
     listener.vz = Math.cos(player.heading) * player.speed;
   }
   const h = player.h;
-  const hp = traffic.heli ? traffic.heli.g.position : null;
+  const hp = police ? police.nearestHeli(camera.position.x, camera.position.z) : null;
   return {
     inCar: !player.onFoot,
     onFoot: player.onFoot,

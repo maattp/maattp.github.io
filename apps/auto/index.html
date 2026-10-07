@@ -89,6 +89,12 @@
   .b-atk { background: rgba(150,90,30,0.42); border-color: rgba(255,205,140,0.45); }
 
   #app[data-mode="drive"] .foot-only { display: none; }
+  /* MISSION (police missions): a police vehicle's own button, in a top row
+     of its own over EXIT, so the thumb positions under it never move */
+  /* (a police vehicle only: data-cop; data-police shows SIREN in a fire rig too) */
+  #app:not([data-cop="1"]) .cop-only { display: none; }
+  .b-mission { grid-column: 3; font-size: 10px; background: rgba(30,60,140,0.5); border-color: rgba(150,180,255,0.55); }
+  .b-mission.on { background: rgba(200,40,40,0.55); border-color: rgba(255,170,170,0.7); }
   #app:not([data-mode="drive"]) .car-only { display: none; }
   #app:not([data-police="1"]) .police-only { display: none; }
   .b-siren { position: absolute; left: 0; bottom: calc(100% + 10px); }
@@ -158,6 +164,9 @@
   .star { color: rgba(255,255,255,0.16); }
   .star.on { color: #ffd24a; text-shadow: 0 0 10px rgba(255,190,60,0.8); animation: starPulse 1.1s infinite; }
   @keyframes starPulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+  /* out of sight, the police are searching: the stars flash grey and gold */
+  #stars.search .star.on { animation: starSearch .7s steps(1) infinite; }
+  @keyframes starSearch { 0% { color: #ffd24a; } 50% { color: rgba(255,255,255,0.32); text-shadow: none; } }
   #speedo { display: flex; align-items: baseline; gap: 3px; text-shadow: 0 2px 8px rgba(0,0,0,0.7); }
   #speedVal { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }
   #speedo .u { font-size: 11px; opacity: .7; }
@@ -408,6 +417,8 @@
     <!-- driving -->
     <!-- a police car or a fire rig only (main.js updateSiren): over HORN, out of the grid -->
     <div class="btn b-sm car-only police-only b-siren" data-btn="siren">SIREN</div>
+    <!-- police missions: only in a police vehicle, in a row of its own over EXIT -->
+    <div class="btn b-sm car-only cop-only b-mission" data-btn="policemission">MIS&shy;SION</div>
     <div class="btn b-sm car-only" data-btn="horn">HORN</div>
     <div class="btn b-md car-only" data-btn="hand">HAND<br>BRAKE</div>
     <div class="btn b-sm car-only" data-btn="enter" data-tap="1">EXIT</div>
@@ -528,7 +539,7 @@
     <pre id="bootLog"></pre>
     <div id="loadRotate">Turn sideways to play once it has loaded</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v190</div>
+    <div id="build">v191</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation USGS 3DEP</div>
   </div>
   <script>

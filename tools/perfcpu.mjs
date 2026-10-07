@@ -172,6 +172,7 @@ function pageInstall() {
   wrap(d.audio, 'update', 'audio');
   if (d.acts) wrap(d.acts, 'update', 'activities');
   if (d.fire) wrap(d.fire, 'update', 'fire');
+  if (d.police) wrap(d.police, 'update', 'police');
   wrap(d.renderer, 'render', 'render');
   // City queries: counted (and timed) only in the counting pass.
   for (const k of ['groundAt', 'roadLift', 'lidAt', 'obstacleHit', 'barrierHit', 'buildingsNear', 'edgesNear', 'onRoad']) {
@@ -254,6 +255,14 @@ function pageInstall() {
     'drive-i5': { speed: 27, route: () => buildRoute(1050, 1500, (e) => e.cls === 'hwy' && I5.test(e.name || ''), 6000) },
     'drive-dt': { speed: 14, route: () => buildRoute(0, 0, (e) => e.cls !== 'hwy' && e.cls !== 'ramp' && e.cls !== 'res' && !e.elev, 3000) },
     'foot-dt': { foot: [305, -278] },
+    // a five-star chase on the drive-dt route: the wanted level held at 5
+    // (and you kept alive and out of cuffs), every unit the level sends
+    'chase5-dt': { speed: 14, wanted: 5, route: () => buildRoute(0, 0, (e) => e.cls !== 'hwy' && e.cls !== 'ramp' && e.cls !== 'res' && !e.elev, 3000) },
+    // the same, ON RAILS: the car is put on the route at 14 m/s every frame,
+    // whatever hits it, so two builds cover the same ground with the same
+    // camera (in chase5-dt master's officers boxed the car in by the start
+    // and it covered half the distance)
+    'chase5-rail': { speed: 14, wanted: 5, rail: true, route: () => buildRoute(0, 0, (e) => e.cls !== 'hwy' && e.cls !== 'ramp' && e.cls !== 'res' && !e.elev, 3000) },
     'drive-qa': { speed: 13, route: () => buildRoute(-1717, -3128, (e) => e.cls !== 'hwy' && e.cls !== 'ramp' && !e.elev, 3000) },
     'foot-yt': { foot: [1409, 1120] },
     // the tank on the same streets, firing: the main gun whenever it is
@@ -300,6 +309,18 @@ function pageInstall() {
   };
   const drive = (input, dt) => {
     const v = p.vehicle; if (!v || !R || !R.route) return;
+    if (R.rail) {
+      // on rails: where the route says, at its speed, every frame
+      const tot = R.route[R.route.length - 1].s;
+      R.sq = (R.sq || 40) + R.speed * dt;
+      if (R.sq > tot - 60) R.sq = 40;
+      const q = pointAt(R.sq);
+      v.x = q.x; v.z = q.z; v.heading = q.h; v.y = c.groundAt(q.x, q.z, q.y + 1.5);
+      v.vy = 0; v.vLong = R.speed; v.vLat = 0; v.health = 100;
+      p.camYaw = q.h + Math.PI;
+      input.x = 0; input.gas = false; input.gasAmt = 0; input.brake = false; input.brakeAmt = 0; input.y = 0; input.hand = false; input.attack = false;
+      return;
+    }
     const pr = project(v.x, v.z);
     const tot = R.route[R.route.length - 1].s;
     R.t = (R.t || 0) + dt;
@@ -331,6 +352,11 @@ function pageInstall() {
   };
   const pu = p.update;
   p.update = function (dt, input, ...rest) {
+    if (R && R.wanted) {
+      d.game.wanted = R.wanted; d.game.points = [0, 30, 90, 190, 340, 560][R.wanted];
+      d.game.dead = false; p.health = 100;
+      if (d.police) d.police.bustT = 0;
+    }
     if (R && R.route && p.vehicle) drive(input, dt);
     if (!S.on) return pu.call(this, dt, input, ...rest);
     const t0 = performance.now();
@@ -391,7 +417,7 @@ function pageInstall() {
     } else {
       const route = cfg.route();
       if (!route || route.length < 3) return { error: 'no route' };
-      R = { route, speed: cfg.speed, seg: 0, hist: [], t: 0, resets: 0, fire: !!cfg.fire, calm: !!cfg.calm };
+      R = { route, speed: cfg.speed, seg: 0, hist: [], t: 0, resets: 0, fire: !!cfg.fire, calm: !!cfg.calm, wanted: cfg.wanted || 0, rail: !!cfg.rail, sq: 40 };
       if (!p.onFoot && p.exitVehicle) p.exitVehicle();
       const q0 = pointAt(0);
       p.respawn(q0.x, q0.z);
@@ -436,6 +462,7 @@ function pageInstall() {
     const out = { slowQ, n: F.length, cpu: +q(F, 0.5).toFixed(3), cpuMean: +(F.reduce((a, b) => a + b, 0) / F.length).toFixed(3),
       cpu90: +q(F, 0.9).toFixed(3), cpu99: +q(F, 0.99).toFixed(3), cpuMax: +Math.max(...F).toFixed(2),
       raf: +q(I, 0.5).toFixed(3), fps: +(1000 * I.length / I.reduce((a, b) => a + b, 0)).toFixed(1), raf90: +q(I, 0.9).toFixed(1), raf99: +q(I, 0.99).toFixed(1), sys: {}, cars: d.traffic.cars.length, peds: d.peds.peds.length,
+      units: d.traffic.cars.filter((v) => v.mode === 'police' || v.unit).length, cops: d.peds.peds.filter((q) => q.cop).length, helis: d.police ? d.police.helis.length : (d.traffic.heli ? 1 : 0),
       moved: Math.round(dist), resets: R ? R.resets : 0, draws: Math.round(S.frames.reduce((a, f) => a + (f[3] || 0), 0) / S.frames.length),
       trisK: Math.round(S.frames.reduce((a, f) => a + (f[4] || 0), 0) / S.frames.length / 1000), miss, miss2, worst };
     let sum = 0;
@@ -585,7 +612,7 @@ try {
     const O = { setup: st, time: T, counts: C, shadow: SH, audio: AU };
     out.runs[run] = O;
     const sys = Object.entries(T.sys).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v.toFixed(2)}`).join('  ');
-    console.log(`\n[${run}] settled in ${(st.settle / 1000).toFixed(0)} s  route ${st.route} m  moved ${T.moved} m  resets ${T.resets}  ${T.cars} cars ${T.peds} peds  ${T.draws} draws (mean)  ${T.trisK}k tris`);
+    console.log(`\n[${run}] settled in ${(st.settle / 1000).toFixed(0)} s  route ${st.route} m  moved ${T.moved} m  resets ${T.resets}  ${T.cars} cars ${T.peds} peds (police: ${T.units} units, ${T.cops} on foot, ${T.helis} helis)  ${T.draws} draws (mean)  ${T.trisK}k tris`);
     console.log(`  cpu/frame  median ${T.cpu.toFixed(2)}  mean ${T.cpuMean.toFixed(2)}  p90 ${T.cpu90.toFixed(2)}  p99 ${T.cpu99.toFixed(2)}  max ${T.cpuMax}  (raf ${T.raf.toFixed(2)})`);
     console.log(`  fps ${T.fps}  frame interval median ${T.raf.toFixed(1)}  p90 ${T.raf90}  p99 ${T.raf99}`);
     console.log(`  by system (mean ms/frame): ${sys}`);

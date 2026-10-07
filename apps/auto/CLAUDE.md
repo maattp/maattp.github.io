@@ -23,8 +23,10 @@ src/textures.js             every texture, drawn into canvases at boot
 src/world.js                terrain, water, sky, streamed chunks, far skyline
 src/landmarks.js            landmarks to published dimensions, + their solids
 src/vehicles.js             vehicle models + the arcade driving model
-src/traffic.js              traffic AI, parked cars, police, helicopter, A*
-src/peds.js                 humanoid builder + pedestrian/cop crowd
+src/traffic.js              traffic AI, parked cars, police units' driving, A*
+src/police.js               the wanted levels: what each sends, guns, the helicopters, search, busted
+src/policemissions.js       police missions (MISSION in a police vehicle): the suspects and their getaway
+src/peds.js                 humanoid builder + pedestrian/cop/SWAT crowd
 src/player.js               on-foot/driving state machine + chase camera
 src/controls.js             touch stick/buttons + keyboard fallback
 src/hud.js                  minimap, full map, readouts
@@ -1457,7 +1459,7 @@ built rather than blocked out:
   and "Vehicle glass is see-through" below.
 - **Characters** (`peds.js`) are `SkinnedMesh`es: one draw call each, but with a
   22-bone skeleton (`BONE_COUNT`), so elbows, knees and fingers actually bend.
-  Geometry comes from a pool of 12 designed looks plus 4 cop looks
+  Geometry comes from a pool of 12 designed looks plus 4 cop looks and 3 SWAT
   (per-instance variety is skeleton, scale, colours and gait), with a sculpted
   head, textured from one atlas, and `animateWalk` is a procedural cycle —
   counter-rotating chest, level head, breathing idle, and the legs described
@@ -1624,6 +1626,8 @@ noise. Overdraw is the glazed area only.
   brightest thing on the pavement.
 - **Cops have their own pool** (`copVariants`, `makeHumanoid({ cop: true })`):
   pooled characters ignore opts, so cops used to be civilians in random shirts.
+  Tactical officers likewise (`swatVariants`, `{ swat: true }`: helmet, plate
+  carrier, a carbine skinned to the hand; see "Wanted levels").
 - **One material, several surfaces: the `gloss` attribute.** Roughness is
   `pedMat.roughness` (0.88, cloth) minus a per-vertex `gloss` (`GLOSS` by part
   name: skin 0.26, hair 0.22, shoes 0.22; vertices painted the skin colour get
@@ -3907,6 +3911,7 @@ The purpose-built harnesses, each a fixed-dt, paused-game driver:
 | `tools/lotshots.mjs <dir> [--probe]` | lot views; `--probe` prints the grass share per region (see "Lots, plazas and yards") |
 | `tools/bldshots.mjs <dir> [--scan] [--shots=a,b] [--n=6] [--from=index.json]` + `tools/bldsheet.py <dir> [out] [--pair=<dir>]` | the building outlier scan and per-category contact sheets, eye level off the long (downhill) face plus an aerial; `--from` re-shoots another run's buildings by position for a before/after (see "Buildings: the outlier scan"). GPU by default (`AUTO_GPU=0` for SwiftShader) |
 | `tools/stuntjumps.mjs [ids] [--caps] [--shots DIR]` | every stunt jump: corridor check, then the player's car driven off it at fixed dt per speed cap (see "Stunt jumps") |
+| `tools/wantedcheck.mjs [--secs 60] [--levels 1,2] [--shots DIR --only van,officer,chase,deploy]` | the wanted levels at fixed dt: a getaway in a sports car at each level held (how long the car lasts, units spawned, peak active against the cap, the helicopter's share, shots and hits), standing still on foot (busted or wasted, when), the cool-down hidden and under the helicopter; `--shots` the SWAT van, the officers, a helicopter chase and a deployed SWAT team (see "Wanted levels") |
 | `tools/trafficcheck.mjs [--dump FILE] [--shot DIR] [--sites a,b]` | share of cars against the flow, oncoming contacts, stuck cars and jams over 7 sites at fixed dt, the last a police pursuit (see "One-way traffic") |
 | `tools/aidrive.mjs [--sites a,b] [--json FILE]` | how the AI drives, per car per frame at 5 sites (downtown, an arterial, I-5, Queen Anne, Capitol Hill): lane error, weaving, yaw jerk, hard braking, pedal switching, lateral g, speed through turns, off road / left of centre, tailgating, circle contacts vs real body hits, street-object contact and the cars wedged there. `AD_PROBE='<expr>'` / `AD_PROBE_FILE` runs a diagnostic after each site (see "How the AI drives") |
 | `tools/flycam.mjs [--jitter]` | a scripted flight: camera measured RELATIVE TO THE PLANE and the plane's on-screen motion, since absolute camera movement at 116 m/s is ~2 m a frame regardless. The autopilot holds 45 m over the terrain under AND 400 m ahead, or the bay dive flies into Queen Anne. Also counts building and road pop-ins, and flies `i5high` (see "flycam: road pop-ins") |
@@ -7397,6 +7402,290 @@ Vashon's; SIREN hidden on foot and in a sedan, shown in a police car, dark
 when taken, a tap strobes it and starts the voice, G stops it, leaving
 stops it, traffic ahead yields, an SPD unit still strobes; every pickup on
 the maps, none in the water or the road, every hospital marked.
+## Wanted levels (police.js)
+
+The five stars used to be one ramp: more of the same cruisers (up to nine),
+cops on foot from three, and a helicopter from four that circled you and did
+nothing. Now each level sends something new, and `LEVELS` in `police.js` is
+the whole table (caps on what is ACTIVE near you: a unit whose crew is out on
+foot still counts as its unit, and its officers as officers):
+
+| stars | cruisers | SWAT vans | cops on foot | SWAT officers | helicopters | who shoots |
+|---|---|---|---|---|---|---|
+| 1 | 2 | - | 2 | - | - | nobody: they arrest |
+| 2 | 3 | - | 3 | - | - | pistols, on foot and out of a stopped car's window |
+| 3 | 4 | - | 4 | - | 1 | + the helicopter's marksman (single shots) |
+| 4 | 3 | 2 | 3 | 4 | 1 | + carbines (3-round bursts, tracers), a door gunner; vans ram |
+| 5 | 4 + 2 | 3 | 3 | 6 | 2 | everything x1.25; roadblocks |
+
+Master at five stars was 9 cars + 6 cops + 1 harmless helicopter = 16; five
+stars here is capped at 20 and measured peaking at 12-17. The "+ 2" is the
+ROADBLOCK (`block`): every ~28 s while you drive at speed and they can see
+you, two cruisers parked nose to nose across a surface junction 140-260 m
+ahead, an officer behind each, who get back in and chase once you are past.
+
+**How they fight.** Every police round goes through `Police.fire`: a hit
+chance from the weapon's `acc`, falling to half at its range and with your
+speed (`1 / (1 + v/14)`); a miss draws its tracer a metre or three past you.
+In a car the BODY takes 0.6 of a hit and you 0.22 -- the car is your armour
+until it burns (`onCarDestroyed`: 70 damage and out). `WEAPONS` holds the
+pistol, the SWAT carbine, the marksman, the door gunner and a mission
+suspect's pistol; `tickGun` runs a shooter's trigger (`shootCd`, `burst`,
+declared on Vehicle and on every pedestrian). Rifles and the helicopter draw
+`fx.streak` (a 7 m tracer travelling at 420 m/s), pistols the old flash
+line; both come from one pooled ring of 32 (`effects.js _shot`), where every
+shot used to allocate two objects.
+
+**How they move: the pursuit is the planned-path driver.** traffic.js drives
+the units (`drivePolice`), asking `police.carTarget` for the target: you
+while they see you, spots round where they last saw you while they search, a
+point 200 m ahead of themselves once the heat is gone. FARTHER than 60 m a
+unit drives traffic's own driver (`driveTraffic`, "How the AI drives": lane
+lines, filleted corners, pure pursuit, the IDM), through `pursue`:
+
+- **its turns come off an A* path** to the target (`findPath`, from the end
+  of the route's next entry, replanned every 2.5 s, with the route beyond
+  that entry): `routeExtend` asks `pursuitEdge` instead of `pickNextEdge`,
+  which takes the path's next node, or off the path the exit heading most
+  toward the target (and replans soon). A surface one-way may be run the
+  wrong way (findPath's 3x cost); a freeway or ramp never.
+- **at a pursuit pace** (`v.pursuitV`: 31 m/s a cruiser, 27 a van, the
+  search's 20), ignoring the streets' limits, cornering at `A_LAT_POLICE`
+  9 m/s^2 against traffic's 3, accelerating at 4.5;
+- **yielding to nobody** (no cross-traffic wait) and **driving round** slow
+  traffic (under 0.6 x its pace) the way traffic drives round a parked car
+  (`v.dodge`), so it does not queue;
+- **put back on the graph** (`snapRoute`: the nearest drivable edge at its
+  height, the way it faces) when it has no route or is more than 7 m off its
+  lane line -- after a ram, a spin, a back-out -- and **backing out** for
+  1.6 s when it has gone nowhere for 5 s (`polStuckT`, counted in
+  `police.stats.wedged`);
+- **braking late** (`BRAKE_POLICE`, 5 m/s^2): traffic's `roadAccel` eases off
+  for a corner the moment it is inside the horizon, which held a cruiser to
+  ~10 m/s on a downtown grid; a unit ignores any corner that does not yet
+  need that much;
+- **when the graph will not take it there**: no A* path to the target's node
+  (`offGraph` -- a waterfront promenade, a plaza, a node on a piece of the
+  graph its directed component cannot reach) it routes to the nearest node it
+  can reach (`surfaceNodeNear`), and its crew finish it on foot from up to
+  160 m; with no path at all (`noPath`), or getting no closer for 10 s
+  (`progD`/`progT`: round a block, into a corner), it drives straight at the
+  target from within 160 m for a while and then asks again;
+- **spawned off the freeways** where it can be: a unit put on I-5 beside you
+  is 240 nodes from you, and drove off half a kilometre before it turned.
+
+Reaching a man standing still (an officer at his side; at four stars a
+tactical team out too), five spots across the city at one, two and four stars
+(`WC_PROBE_FILE` over wantedcheck): every one of the fifteen inside 60 s,
+medians 15 / 25 / 36 s. Without the last four rules: two of the fifteen
+never in 60 s. (With the old straight-at-the-node driver, verify's standing
+test at two stars sometimes never saw a shot.)
+
+The old driver aimed straight at the next node of its A* path (`heading
+error x 1.7`) and braked for anything 10 m ahead: it cut corners into kerbs
+and walls, the 6.6 m van wedged, a cruiser queued behind traffic for good,
+and at two stars the units sometimes never reached a man standing still.
+CLOSE (60 m, or off the road graph) it drives straight at the target: inside
+18 m it rams at the level's `ram` speed (a van +4 m/s), or -- if you are not
+getting away (`playerSlow`: on foot under 2.6 m/s, in a car under 3) -- slows
+to a speed it can stop from and stops beside you, parking-braked, and its
+crew get out (`deploy`: two officers from a cruiser, four from a van, as the
+level's caps allow). To a target standing still units spawn 70-190 m out
+instead of 90-320, and at four stars the vans go out after the first
+cruiser. Officers (`peds.spawnOfficer`, walked by `police.footOrders`)
+chase, close to arrest at 1-2 stars or hold a stand-off (`hold`, 7-12 m) and
+shoot from it at 3+; when you drive off they run back to the car and it
+leaves with them (`crew`, counted down in `peds.remove`) -- and stays in for
+15 s (`deployCd`, shooting from the window meanwhile): a target crawling away
+and stopping again was out, in, out, and a stuck Wedge at five stars had 76
+tactical officers spawned round it in a minute (17 in 90 s now, with the car
+moved 45 m every 8 s). A van deploys too
+when it is held up within 45 m of a slow target for 4 s, and after 7 s on you
+even if you are moving. Street cops (`street`) are walked in from the
+pavement only to a target on foot or stopped: walked in toward a car at
+30 m/s they were left behind and replaced, 53 spawns a minute.
+
+**Seen, tracked, searched.** A unit sees you within 110 m (car), 45 m (on
+foot); a helicopter within 95 m of its own ground point, 140 m while it is
+following you, or wherever its searchlight's spot passes within 30 m -- and
+never while you are under something (`covered`: the highest surface over
+your feet is a deck or a bore's roof). Losing sight, they still know where
+you went for 2.5 s (`TRACK`: the radio) -- 10 s after a crime (`DISPATCH`: the
+call), or units spawned out of sight searched instead of coming, and two
+stars took 20 s to find a man standing still -- then the SEARCH starts at the last
+point: units drive to spots round it, officers walk to it, the helicopter
+sweeps its beam over it, no new unit spawns beside you (it would find you
+every time), and the HUD stars flash grey (`#stars.search`). main.js takes a
+star every `6 + 3 x stars` seconds of the search (two stars: 12 s then 9 s;
+four: 18, 15, 12, 9). Seen again, the clock restarts. In the open under the
+helicopter nothing cools.
+
+**Busted.** An officer on foot within 1.5 m of you while you are slow, for
+0.7 s; in a stopped car, one at the door (3.4 m) for 1.6 s. BUSTED (the
+WASTED card's text, `showEnd`), and `doRespawn` releases you at the Justice
+Center (5th and Cherry) fined $100 + $100 a star, your gun confiscated, every
+unit cleared (`police.clear`). WASTED is unchanged (Harborview, $200) and
+clears them too.
+
+**Rammed is not ramming.** Every police contact added 18 heat, so the units
+ramming you at three stars drove your own wanted level up. `onCrash` adds it
+only when your car was the faster one into the contact. And a getaway
+activity's "3 stars" was `3 x 130 = 390` points, four stars: it sets exactly
+the stars it names now (`game.setWanted`).
+
+**The helicopter** is the hangar's Bell 407 (`Vehicle('heli')`, navy,
+`setDetailed(true)` for the live rotors, no shadow) flown by police.js, not
+by `updateHeli` and not in `traffic.cars`: nothing collides with it. It
+arrives from 260 m, flies at up to 42 m/s (a fast car on a freeway outruns
+it), orbits 36-50 m off you at ~64 m over the ground with a lead on your
+velocity -- the two at five stars on opposite sides -- nose to its beam,
+banked into its acceleration, and climbs away when the level drops. The
+searchlight is one additive open-ended cone (shared geometry and material,
+vertex colours fading toward the ground, opacity 0.11) from the nose,
+scaled to the beam: one draw. Under a deck it lights the deck (the highest
+surface over you), not you through it; sweeping, it lands on the top surface
+too. Four draws a helicopter (its tail rotor hidden) plus the cone. The old
+one (traffic.js `ensureHeli`) was capsules and boxes in new Lambert
+materials, rebuilt every time the level crossed four.
+
+**The SWAT van** (`swat`, `buildSwat`) is built like the ambulance: bonneted
+cab, armoured box, navy-black livery, a ram bar standing 30 cm off the nose,
+gun ports, running boards, roof rails, a ladder on the rear doors, grille
+strobes. SWAT and POLICE are stencilled in GEOMETRY (`stencil`: block
+capitals on a 5 x 7 grid, a few quads a letter, in `matte`), because vehicle
+parts are vertex-coloured and carry no texture. **A panel's text must run
+along the viewer's RIGHT seen from outside**: -z on the +x flank, +z on the
+-x flank, -x on the rear, +x on the nose. Mass 3.2, so its rams shove you;
+`police: true` gives it the cruiser's V8 and the MISSION button.
+**Tactical officers** have their own look pool (`swatVariants`, built in
+`warmLooks`): a helmet over the ears with goggles, a plate carrier with
+pouches and a pale patch on the back, and a carbine skinned to the right
+hand MUZZLE DOWN along the arm -- the walk carries it at the low ready, and
+`aimPose` (right arm straight out, left hand to the handguard) then points it
+where he faces. Cops aim one-handed. Shots in `docs/wanted/`.
+
+**The light bar** is the SIREN's (`traffic.lightBar`, strobed by
+`traffic.policeLights`, which police.update calls for every unit with its
+crew, dark once the heat is gone); the SWAT van's sits on the front of its
+box, 1.37x wide. Its lens material compiled the first time a cop appeared:
+`warmLightBar` builds one for the warm-up frames.
+
+**Hitches.** The warm-up frames also draw the light bar, the searchlight
+cone, a mission suspect's marker and the tracer lines -- which are hidden
+until the first shot, and compiled their program mid-firefight on master
+too. Nothing else is new to the GPU: the van and the helicopter are vehicle
+programs, the officers `pedMat`.
+
+**Measured** with `node tools/wantedcheck.mjs`: a sports car driven by the
+getaway driver (`getaway.js`) fleeing the nearest unit from downtown, the
+level held, 1/30 s steps, three runs a level (the traffic makes every run
+different). The car starts rolling, 12 m short of a node on the street that
+leads to it: spawned on the node facing north it began with a U-turn into the
+kerb, and a third of the one- and two-star runs were BUSTED there in 6 s.
+
+| stars | the car (three 60 s runs) | car health / yours at the end | units spawned a run | peak active (cap) | the helicopter had you | shots / hits a run | backed out of a wedge (cruisers / vans) |
+|---|---|---|---|---|---|---|---|
+| 1 | 60 s+ x3 | 100 / 100 | 7-9 cruisers | 2 (4) | - | 0 | 0-1 / 0 |
+| 2 | 60 s+, 44 s (BUSTED), 60 s+ | 47-100 / 98-100 | 7-9 cruisers | 3-5 (6) | - | 0-2 / 0-1 | 0-1 / 0 |
+| 3 | 60 s+ x3 | 52-94 / 95-100 | 5-15 cruisers | 5-7 (9) | 68-86 % | 14-20 / 0-2 | 0-2 / 0 |
+| 4 | 60 s+, 60 s+, 36 s (BUSTED) | 66-90 / 93-96 | 3-5 cruisers, 2-5 vans | 6-9 (13) | 81-95 % | 48-90 / 2-4 | 0-1 / 0-4 |
+| 5 | 45 s (wrecked, BUSTED), 60 s+, 60 s+ | 0-48 / 15-81 | 7-11 cruisers, 5-6 vans, 2 roadblocks | 12-14 (20) | 91-96 % | 135-162 / 7-10 | 1-3 / 1-2 |
+
+(The BUSTED runs are the getaway driver wedging mid-chase with units on it.)
+No program compiled during the fifteen chases (the harness diffs
+`renderer.info.programs` from before them). Standing still on foot you are
+BUSTED or WASTED at every level, in 12-38 s; the SWAT team is out at four
+and five stars. Hidden 2.2 km away, two stars go at 12 and 21 s, four at 18,
+33, 45 and 54 s; three stars in the open under the helicopter: seen 35.7 of
+40 s (the rest is its arrival), no star goes. In the Wedge (`spec.armor`) at
+five stars the car ends a minute at 184-225 of its 250, you at 81-94; in the
+tank, which the getaway driver barely moves, four stars leave it at 29 and
+five wreck it in 55 s (507 rounds, 135 hits, the rams doing most of it).
+
+**Phone cost: none measurable.** perfcpu `chase5-rail` puts the car ON RAILS
+along the drive-dt route at 14 m/s with five stars held, so both builds cover
+the same ground with the same camera (in `chase5-dt` master's officers on foot
+boxed the car in by the start and it drove half as far, which made the
+comparison meaningless). 8x throttle, each branch run side by side with a
+master (v190) run, the planned-path pursuit in place:
+
+| | branch | master |
+|---|---|---|
+| CPU/frame median, three runs (ms) | 16.4 17.6 17.5 (avg 17.2) | 16.0 17.8 18.5 (avg 17.4) |
+| CPU/frame mean, three runs (ms) | 17.1 17.7 17.7 (avg 17.5) | 16.4 18.1 18.6 (avg 17.7) |
+| `render` / `traffic.update`, mean (ms) | 9.6 / 4.1 | 10.0 / 4.0 |
+| `police.update` | 0.16-0.23 ms | - |
+| scene-pass draws | 205-240 | 201-248 |
+| police on the street | 8 units, 0 on foot, 2 helicopters | 9 units, 6 on foot, 1 helicopter |
+
+**The searchlight is one pass** (`forceSinglePass`): three draws a
+double-sided transparent material twice (back faces, then front), so the two
+cones were four draws. The pair just before the fix measured the branch
++2.8 ms (17.8 vs 15.0 median), +1.7 ms of it in the render submission; the
+pair after it, parity (above). Additive light has no order to get right.
+
+Counted directly (`WC_PROBE_FILE`, after a five-star chase) a unit is 5 draws
+(three parts, the bar's housing and its lit lens; about 6.4k triangles for a
+van and 7.1k for a cruiser), a helicopter 4 (the tail rotor is hidden) + its
+cone, an officer 1. The pursuit is driveTraffic per unit, so on a phone a unit
+120 m+ off and out of view drives at half rate as far traffic does, and a
+unit's A* is kept while it still ends at the target's node and runs through
+where the route is going (it was rerun every 2.5 s).
+
+verify's "wanted levels" section steps each level (units by kind against the
+table and the caps, tactical officers out at four and at five stars, shots
+from two stars and none at one), the cool-down
+hidden at two stars (and the stars flashing), three stars in the open under
+the helicopter, and a bust at one star through `doRespawn`.
+
+## Police missions (policemissions.js)
+
+GTA's "vigilante". **MISSION** is on the driving pad only in a police vehicle
+(`spec.police`: the cruiser and the SWAT van), in a row of its own at column
+3 over EXIT, so no thumb position under it moves (SIREN floats over the
+pad's top-left corner); `#app[data-police]` is set by main.js `updateSiren`. It is a plain pointerdown listener,
+not `data-tap` (player.update takes and drops every tap that is not ENTER);
+N on a keyboard. It is lit red while a run is on.
+
+A press (with no wanted level) dispatches level 1: a suspect car spawned on
+a street 260-480 m off (no freeway, ramp, deck, bore or water; a residential
+one only where there is nothing else; rolling at 12 m/s toward a junction,
+not a dead end -- started into a cul-de-sac it spent its first seconds
+turning round, and verify once saw one flee 48 m in 8 s), mode
+`'suspect'`, driven by `PoliceMissions.drive` (traffic.js calls it for that
+mode, and never despawns one): node to node over the street graph, each turn
+the one leading furthest from you plus some randomness and never straight
+back, flat out on the straights and braking for the turn waiting at the next
+node, backing out when wedged, limping at half speed under 30 health; one-ways
+either way, never a freeway or a ramp against its flow. A red arrowhead hangs
+over it (scaled with distance, so it reads from a block away), a blinking red
+diamond sits on the minimap's edge and on the full map, and the objective
+line says the level, the clock and the distance.
+
+It is taken down WRECKED (rams or gunfire; its health is the level's, and a
+ram costs it 0.7 x the closing speed, so a level-1 car takes four or five
+hard ones; under 40 % it limps at half speed) or PULLED OVER (under 1.2 m/s
+within 22 m of you for 2.2 s: boxed in, or spun out; near you it does not
+back out of a wedge). Ramming a suspect,
+wrecking one and a mission's gunfire add no heat. Cleared, it pays, and the
+next call comes in 4 s; MISSION again, leaving the vehicle or WASTED ends the
+run. `missionSpec(n)`:
+
+| level | suspects | shoots back | clock | top speed | health | pay |
+|---|---|---|---|---|---|---|
+| 1 | 1 (sedan, hatch, compact) | no | none | 21.5 m/s | 38 | $600 |
+| 2-3 | 1 (sedan, SUV, muscle, pickup) | from 3 | 160 s | 24-26.5 m/s | 46-54 | $850-1100 |
+| 4+ | 2 (muscle, sports, SUV, EV) | yes | 200 s | 29 m/s up to 34 | 62 up to 110 | $1350 + $250 a level |
+
+plus up to 30 % for time left. A suspect more than 650 m from you for 12 s got
+away. The best level is kept in localStorage (`auto-vigilante-best`). If the
+run switches the SIREN on (`game.setSiren`, main.js `setSiren`: `sirenOn`,
+the light bar strobing, traffic ahead yielding); MISSION leaves it as it is.
+
+verify's "police missions" section: MISSION's visibility on foot, in a sedan,
+a cruiser and a van; a run started and its suspect fleeing; wrecked -> paid,
+then level 2 with a clock; level 2 pulled over -> level 3; MISSION quits;
+leaving the car ends it.
 
 ## The tank
 
