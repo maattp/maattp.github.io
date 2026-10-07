@@ -7477,9 +7477,11 @@ do not slide). **No handbrake: the HAND BRAKE button is the gun.**
 | full lock at full throttle | settles at 52.7 km/h on a 38 m radius |
 | 65-0 | 8.4 m |
 
-`armor` 0.12 scales every `damage()` (a round striking it still kills it; one
-landing 5 m off costs it ~8 %); your crash damage in it is x0.06 of a car's, and a cop's pistol
-sparks off it. Destroyed, it goes up like any car (`onCarDestroyed`).
+**Armour is the Wedge's `spec.armor`, one mechanism for both**: 0.12 here
+(0.5 on the Wedge) scales every `damage()` (a round striking it still kills
+it; one landing 5 m off costs it ~8 %), the crash damage you take in it
+(x0.5 x armor: 0.06 of the bare 1.0) and a cop's pistol round. Destroyed, it
+goes up like any car (`onCarDestroyed`).
 
 ### What it drives through
 
