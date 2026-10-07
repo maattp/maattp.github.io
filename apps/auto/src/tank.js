@@ -484,7 +484,7 @@ export class TankSystem {
    * landmark solid, the water, or the ground (deck or terrain), marched at
    * 2.5 m and bisected. Returns this.hit, reused.
    */
-  cast(ox, oy, oz, dx, dy, dz, maxT, ignore, landmarks) {
+  cast(ox, oy, oz, dx, dy, dz, maxT, ignore, landmarks, step = 2.5) {
     const H = this._hit || (this._hit = { t: 0, kind: null, car: null, ped: null });
     let best = maxT, kind = null, car = null, ped = null;
     for (const c of this.traffic.cars) {
@@ -511,15 +511,18 @@ export class TankSystem {
     }
     const under = G.terrainRaw(ox, oz) - oy > 2.5;
     if (!under) {
-      const mx = ox + dx * best * 0.5, mz = oz + dz * best * 0.5;
-      for (const b of this.city.buildingsNear(mx, mz, best * 0.5 + 8)) {
-        const t = rayBuilding(b, ox, oy, oz, dx, dy, dz, best);
-        if (t !== null && t < best) { best = t; kind = 'building'; car = null; ped = null; }
+      // in 80 m pieces from the muzzle out, stopping at the first that is
+      // struck: one query 600 m round downtown is thousands of boxes
+      for (let s0 = 0; s0 < best; s0 += 80) {
+        const s1 = Math.min(best, s0 + 80), sm = (s0 + s1) / 2;
+        for (const b of this.city.buildingsNear(ox + dx * sm, oz + dz * sm, (s1 - s0) * 0.5 + 8)) {
+          const t = rayBuilding(b, ox, oy, oz, dx, dy, dz, best);
+          if (t !== null && t < best) { best = t; kind = 'building'; car = null; ped = null; }
+        }
       }
     }
     // the ground, decks, water and landmark solids, marched
     const city = this.city, world = this.world;
-    const step = 2.5;
     let tPrev = 0;
     for (let t = step; t < best + step; t += step) {
       const tt = Math.min(t, best);
@@ -592,8 +595,9 @@ export class TankSystem {
     const v = this.player.vehicle;
     if (v && v.spec.tank && v.tank.gun && !this.game.paused) {
       if ((this.aimN = (this.aimN + 1) % 3) === 0 && this.muzzle(v)) {
-        const h = this.cast(_m.x, _m.y, _m.z, _d.x, _d.y, _d.z, 600, v, false);
-        const t = h.kind ? h.t : 600;
+        // (a coarser march: the crosshair is a few pixels, and this is 1 frame in 3)
+        const h = this.cast(_m.x, _m.y, _m.z, _d.x, _d.y, _d.z, 400, v, false, 5);
+        const t = h.kind ? h.t : 400;
         this.aim.x = _m.x + _d.x * t; this.aim.y = _m.y + _d.y * t; this.aim.z = _m.z + _d.z * t;
         this.aim.ok = true;
       }
@@ -643,23 +647,28 @@ function obbOverlap(a, b, grow) {
 }
 
 /** Slab test of a ray against a vehicle's body box (yawed, on its base). */
+// scratch for the slab tests: a cast allocates nothing
+const SO = [0, 0, 0], SD = [0, 0, 0], SN = [0, 0, 0], SX = [0, 0, 0];
 function rayCar(c, ox, oy, oz, dx, dy, dz, maxT) {
   const f = c.forward, rx = f.z, rz = -f.x;
   const px = ox - c.x, pz = oz - c.z;
-  const lo = [px * rx + pz * rz, oy - c.y, px * f.x + pz * f.z];
-  const ld = [dx * rx + dz * rz, dy, dx * f.x + dz * f.z];
-  const h = (c.spec.roof || 1.5) * (c.crushed ? 0.4 : 1);
-  const mn = [-c.halfWid, c.wreck ? -0.5 : 0, -c.halfLen], mx = [c.halfWid, h + (c.wreck ? 0.5 : 0), c.halfLen];
-  return slab(lo, ld, mn, mx, maxT);
+  SO[0] = px * rx + pz * rz; SO[1] = oy - c.y; SO[2] = px * f.x + pz * f.z;
+  SD[0] = dx * rx + dz * rz; SD[1] = dy; SD[2] = dx * f.x + dz * f.z;
+  const h = (c.spec.roof || 1.5) * (c.crushed ? 0.4 : 1), w = c.wreck ? 0.5 : 0;
+  SN[0] = -c.halfWid; SN[1] = -w; SN[2] = -c.halfLen;
+  SX[0] = c.halfWid; SX[1] = h + w; SX[2] = c.halfLen;
+  return slab(SO, SD, SN, SX, maxT);
 }
 
 /** Slab test of a ray against a building's box (footprint rotated by b.rot). */
 function rayBuilding(b, ox, oy, oz, dx, dy, dz, maxT) {
   const c = Math.cos(-b.rot), s = Math.sin(-b.rot);
   const px = ox - b.x, pz = oz - b.z;
-  const lo = [px * c - pz * s, oy, px * s + pz * c];
-  const ld = [dx * c - dz * s, dy, dx * s + dz * c];
-  return slab(lo, ld, [-b.w / 2, b.y - 3, -b.d / 2], [b.w / 2, b.y + b.h, b.d / 2], maxT);
+  SO[0] = px * c - pz * s; SO[1] = oy; SO[2] = px * s + pz * c;
+  SD[0] = dx * c - dz * s; SD[1] = dy; SD[2] = dx * s + dz * c;
+  SN[0] = -b.w / 2; SN[1] = b.y - 3; SN[2] = -b.d / 2;
+  SX[0] = b.w / 2; SX[1] = b.y + b.h; SX[2] = b.d / 2;
+  return slab(SO, SD, SN, SX, maxT);
 }
 
 function slab(o, d, mn, mx, maxT) {
