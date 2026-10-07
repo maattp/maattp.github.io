@@ -943,6 +943,13 @@ export class Freight {
     b.place(clamp(b.track.len * 0.3, b.len, b.track.len - b.len), b.track.dir);
     b.state = 'run';
     for (const t of this.trains) t.group.visible = false;
+    // the beacon over a cab you are sent to (flagDown): one draw, while shown
+    this.beacon = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.4, 20, 16, 1, true), new THREE.MeshBasicMaterial({
+      color: 0xff8a2a, transparent: true, opacity: 0.32, side: THREE.DoubleSide, forceSinglePass: true, depthWrite: false,
+    }));
+    this.beacon.name = 'freight:beacon';
+    this.beacon.visible = false;
+    scene.add(this.beacon);
     this._buildYardCuts(scene);
     return this.trains;
   }
@@ -1102,10 +1109,30 @@ export class Freight {
       if (!p.onFoot || Math.hypot(p.position.x - this.yard.x, p.position.z - this.yard.z) > 120 || performance.now() - pd.at > 300000) this.pending = null;
     }
     if (p) this._guard(dt, p);
+    if (p) this._flagged(dt, p);
     if (driving && this.hud) {
       this._hudT = (this._hudT || 0) - dt;
       if (this._hudT <= 0) { this._hudT = 0.25; this.hud.setObjective(pv.readout()); }
     }
+  }
+
+  /** A flagged train standing with its cab beside you: you climb up. The beacon. */
+  _flagged(dt, p) {
+    const px = p.position.x, pz = p.position.z;
+    for (const t of this.trains) {
+      if (!t.flag || t.driver || !p.onFoot || Math.abs(t.u) > 0.05) continue;
+      const cab = t.cabPoint();
+      if (Math.hypot(cab.x - px, cab.z - pz) < 11 && Math.abs(cab.y - p.y) < 4) { p.enterVehicle(t); break; }
+    }
+    this.beaconT = (this.beaconT || 0) - dt;
+    const b = this.beacon, t = this.beaconFor;
+    const on = !!(b && t && !t.driver && t.state !== 'off' && (this.beaconT > 0 || t.flag));
+    if (b) b.visible = on;
+    if (!on) { this.beaconFor = null; return; }
+    const cab = t.cabPoint();
+    b.position.set(cab.x, cab.y + 9, cab.z);
+    b.rotation.y += dt * 0.7;
+    b.material.opacity = 0.28 + Math.sin(performance.now() * 0.005) * 0.1;
   }
 
   /** Gates down for any train near: arms, lamps, the bell. */
@@ -1122,7 +1149,11 @@ export class Freight {
         const ahead = (s - t.lead) * t.dir;           // metres in front of its nose
         const behindTail = (s - t.tail) * t.dir;
         const sp = Math.abs(t.u);
-        if (ahead > -2 && ahead < Math.max(120, sp * 25)) { act = true; break; }
+        // a train that has stood 15 s short of the crossing lets the gates up
+        // (a real circuit times out too): a crew change, a signal, a train
+        // flagged down for you 25 m short of one
+        const reach = sp < 0.05 && t.standT > 15 ? 15 : Math.max(120, sp * 25);
+        if (ahead > -2 && ahead < reach) { act = true; break; }
         if (ahead <= 0 && behindTail >= -6) { act = true; break; }
       }
       c.active = act;
@@ -1253,8 +1284,81 @@ export class Freight {
     return null;
   }
 
+  /**
+   * ENTER on foot beside a freight you cannot climb into yet (player.js asks
+   * boardable first, then onWait, which asks this). Beside its lead cab, or by
+   * the line ahead of it, the engineer stops for you; beside any other car you
+   * are told the cab is where you climb up -- and a train still running stops
+   * for you either way, or you could never reach its cab. The cab gets a
+   * beacon. True when the press was taken.
+   */
+  flagDown(x, y, z) {
+    const p = this.player;
+    if (p && !p.onFoot) return false;
+    let best = null;
+    for (const t of this.trains) {
+      if (t.driver || t.state === 'off') continue;
+      const tr = t.track, q = tr.nearest(x, z, 16);
+      if (!q || Math.abs(tr.y(q.s) - y) > 4) continue;          // not from a bridge over it
+      const ahead = (q.s - t.lead) * t.dir, behindTail = (q.s - t.tail) * t.dir;
+      const cab = t.cabPoint(), dCab = Math.hypot(cab.x - x, cab.z - z);
+      let kind = null;
+      if (dCab < 15) kind = 'cab';
+      else if (behindTail > -6 && ahead < 2 && q.d < 9.5) kind = 'car';
+      else if (t.u * t.dir > 0.15 && ahead > 0 && ahead < 600 && q.d < 15) kind = 'ahead';
+      if (!kind) continue;
+      const rank = (kind === 'car' ? 1000 : 0) + (kind === 'ahead' ? ahead : dCab);
+      if (!best || rank < best.rank) best = { t, kind, q, ahead, rank };
+    }
+    if (!best) return false;
+    const { t, kind, q, ahead } = best;
+    // on the track in front of it: it is already blowing for you (_guard)
+    if (kind !== 'car' && ahead > -4 && q.d < 2.6) {
+      this.say('Get off the track! Stand beside it and flag the train down (ENTER)');
+      return true;
+    }
+    const where = 'Climb up at the lead locomotive\'s cab — the front of the train';
+    this.showCab(t, 8);
+    if (t.state === 'dwell' || t.flag) {
+      const moving = Math.abs(t.u) > 0.05;
+      this.say(kind === 'car' ? where : moving ? 'The engineer is stopping for you — climb up at the cab' : 'Climb up at the cab (ENTER)', 4200);
+      return true;
+    }
+    // planned at full service (the brakes give 0.55), or the emergency's 1 m/s2 when slow
+    t.flag = { t: 0, phase: 'stop', stillT: 0, standT: 0, lead: t.lead, b: Math.abs(t.u) < 8 ? 0.8 : 0.45 };
+    this.say(kind === 'car' ? `${where}. The engineer is stopping for you` : 'The engineer is stopping for you — climb up at the cab', 4800);
+    return true;
+  }
+
+  /** Point at `t`'s cab: a beacon over it for `secs` (and while it is flagged). */
+  showCab(t, secs) {
+    this.beaconFor = t;
+    this.beaconT = secs;
+  }
+
+  /**
+   * Where a flagged train brings its lead for you at `sP` (your nearest point
+   * on its track): the cab beside you -- but never standing ON a level
+   * crossing, so short of it (25 m: a standing train lets the gates up, see
+   * _crossingsUpdate) or clear past it, whichever is nearer.
+   */
+  _flagLead(t, sP) {
+    const tr = t.track, k = tr.key, dir = t.dir;
+    const a0 = (sP + dir * 4.2) * dir;                // the lead, as s * dir (grows forward)
+    const xs = [];
+    for (const c of this.crossings) if (c.s[k] !== undefined) xs.push(c.s[k] * dir);
+    const covered = (a) => xs.filter((x) => x > a - t.len - 8 && x < a + 3);
+    let before = a0, past = a0;
+    for (let i = 0; i < 6; i++) { const cv = covered(before); if (!cv.length) break; before = Math.min(...cv) - 25; }
+    for (let i = 0; i < 6; i++) { const cv = covered(past); if (!cv.length) break; past = Math.max(...cv) + t.len + 10; }
+    const s = (a0 - before <= past - a0 ? before : past) * dir;
+    return dir > 0 ? clamp(s, t.len + 5, tr.len - 5) : clamp(s, 5, tr.len - t.len - 5);
+  }
+
   /** ENTER at Balmer Yard with no train in: bring the next one in. */
   onWait(x, z) {
+    // a freight beside you, or coming: flag it down (player.js has no y here)
+    if (this.flagDown(x, this.player ? this.player.y : 0, z)) return true;
     if (Math.hypot(x - this.yard.x, z - this.yard.z) > 45) return false;
     let best = null;
     for (const t of this.trains) {
@@ -1307,6 +1411,7 @@ export class Freight {
     t.notch = 0;
     t.warned = 0;
     t.hornedFor = new Set();
+    t.flag = null; t.rev = false;
     this.pending = null;
     this._objBefore = this.hud ? this.hud.objective.textContent : '';
     const to = t.dir > 0 ? 'south to SODO and Tukwila' : 'north to Ballard and Everett';
@@ -1368,6 +1473,7 @@ export class FreightTrain {
     this.state = 'run'; this.timer = 0; this.offT = 0; this.held = 0;
     this.yardDone = false; this.atYard = false; this.wantSec = null;
     this.obstructAt = Infinity; this.warned = 0; this._notchT = 0; this._brkT = 0; this._revT = 0;
+    this.flag = null; this.standT = 0;   // flagged down for you (FreightSys.flagDown); seconds at a stand
     this.horn = { seq: null, t: 0, on: false, forS: null };
     this.hornOn = false; this.bellOn = false; this.bellT = 0;
     this._build();
@@ -1539,6 +1645,7 @@ export class FreightTrain {
     else vn -= Math.sign(vn) * stop;
     this.accLong = (vn - v) / Math.max(dt, 1e-4);
     this.u = vn * this.dir;
+    this.standT = Math.abs(vn) < 0.05 ? this.standT + dt : 0;
     this.s += this.u * dt;
     const tr = this.track, ev = {};
     const lo = this.len / 2 + 0.5, hi = tr.len - this.len / 2 - 0.5;
@@ -1605,6 +1712,94 @@ export class FreightTrain {
     return best;
   }
 
+  /**
+   * Flagged down for you (FreightSys.flagDown). Phases: 'stop' -- the plan
+   * brakes to `flag.lead`, your cab spot, kept up to date as you walk;
+   * 'back' -- it ran past, so it sets back to you at walking pace (never onto
+   * a crossing behind it, into another section or up to the train behind);
+   * 'stand' -- it waits, and you climb up (FreightSys._flagged boards you).
+   * Walk 40 m from the line, take something else, or keep the crew waiting
+   * 90 s and it carries on. True when this step was taken here.
+   */
+  _flagStep(dt) {
+    const sys = this.sys, fl = this.flag, p = sys.player, tr = this.track;
+    fl.t += dt;
+    const q = p && p.onFoot ? tr.nearest(p.position.x, p.position.z, 40) : null;
+    if (!q || fl.t > 420 || fl.standT > 90) {
+      this.flag = null; this.rev = false;
+      if (p && p.onFoot && this.distTo(p.position.x, p.position.z) < 400) sys.say('The freight carries on');
+      return false;
+    }
+    fl.lead = sys._flagLead(this, q.s);
+    const left = (fl.lead - this.lead) * this.dir;        // + the spot is still ahead
+    const standing = Math.abs(this.u) < 0.05;
+    const toStand = () => {
+      fl.phase = 'stand'; this.rev = false;
+      const cab = this.cabPoint();
+      if (Math.hypot(cab.x - p.position.x, cab.z - p.position.z) > 11) {
+        sys.say('The freight has stopped — climb up at the cab', 4200);
+        sys.showCab(this, 8);
+      }
+    };
+    if (fl.phase === 'stop') {
+      fl.stillT = standing ? fl.stillT + dt : 0;
+      if (!standing) return false;
+      if (left < -3 && this._backRoom() > 3) {
+        fl.phase = 'back';
+        sys.say('It ran past you — the engineer is backing up to you', 4200);
+      } else if (left < 3 || fl.stillT > 8) toStand();   // there, or held short (a signal, a train)
+      else return false;
+    }
+    this.emerg = false;
+    if (fl.phase === 'back') {
+      const togo = Math.min(-left, this._backRoom());
+      const vr = -this.u * this.dir;                      // backing speed
+      const want = Math.min(4.5, Math.sqrt(Math.max(0, 2 * 0.25 * (togo - 1))));
+      this.rev = true;
+      this._notchT -= dt;
+      if (togo < 1) {
+        this.notch = 0; this.brakeCmd = 1;
+        if (standing) toStand();
+      } else if (vr < want - 0.4) {
+        this.brakeCmd = Math.max(0, this.brakeCmd - dt * 0.8);
+        if (this._notchT <= 0 && this.notch < 4) { this.notch++; this._notchT = 0.9; }
+      } else if (vr > want + 0.2) {
+        this.notch = 0;
+        this.brakeCmd = clamp(0.3 + (vr - want) * 0.8, 0, 1);
+      } else this.brakeCmd = Math.max(0, this.brakeCmd - dt * 0.5);
+    }
+    if (fl.phase === 'stand') {
+      this.notch = 0; this.brakeCmd = 1;
+      fl.standT += dt;
+    }
+    this.step(dt);
+    this._sounds(dt);
+    return true;
+  }
+
+  /** How far the tail may set back: not off the map, onto a level crossing
+   *  behind it, into another section, or within 60 m of the train behind. */
+  _backRoom() {
+    const sys = this.sys, tr = this.track, k = tr.key, dir = this.dir, tail = this.tail;
+    let room = dir > 0 ? tail - 3 : tr.len - 3 - tail;
+    for (const o of sys.trains) {
+      if (o === this || o.state === 'off' || o.track !== tr) continue;
+      const g = (tail - o.lead) * dir;
+      if (g > 0) room = Math.min(room, g - 60);
+    }
+    for (const c of sys.crossings) {
+      const cs = c.s[k];
+      if (cs === undefined) continue;
+      const d = (tail - cs) * dir;                        // > 6: behind the tail, not under it
+      if (d > 6) room = Math.min(room, d - 12);
+    }
+    const sc0 = sys.sectionAt(k, tail);
+    for (let x = 0; x < Math.min(room, 800); x += 10) {
+      if (sys.sectionAt(k, tail - dir * x) !== sc0) { room = Math.min(room, x - 10); break; }
+    }
+    return Math.max(0, room);
+  }
+
   service(dt) {
     const sys = this.sys, tr = this.track, P = FREIGHT;
     if (this.state === 'off') {
@@ -1654,7 +1849,15 @@ export class FreightTrain {
         if (stopLead === null || (sig - stopLead) * this.dir < 0) stopLead = sig;
       }
     }
-    let vAllow = this.allowed(stopLead, 0.26);
+    // flagged down for you: the cab to you, at full service (firmer when slow)
+    let bPlan = 0.26;
+    if (this.flag) {
+      if (this._flagStep(dt)) return;
+      const fl = this.flag;
+      if (fl && (stopLead === null || (fl.lead - stopLead) * this.dir < 0)) stopLead = fl.lead;
+      if (fl) bPlan = fl.b;
+    }
+    let vAllow = this.allowed(stopLead, bPlan);
     const o = sys.ahead(this);
     if (o) {
       const gap = (o.tail - this.lead) * this.dir - 120;
@@ -1688,17 +1891,20 @@ export class FreightTrain {
     const left = stopLead === null ? Infinity : (stopLead - this.lead) * this.dir;
     if (left < 0.5 || emerg) { this.notch = 0; this.brakeCmd = 1; }
     else if (left < 6 && v < 1.2) { this.notch = Math.max(this.notch, 2); this.brakeCmd = 0; }
+    // a slow train stops for you with the emergency application (1 m/s2)
+    if (this.flag && this.flag.b > 0.6 && v > vAllow + 0.5) { emerg = true; this.notch = 0; this.brakeCmd = 1; }
     this.emerg = emerg && v > 2;
     const ev = this.step(dt);
     if (ev.collide && this.sys.player && this.sys.player.vehicle && this.sys.player.vehicle.spec.freight) this.sys.onCollide(this, ev.collide);
     // stopped at the yard: a crew change
     if (!this.yardDone && Math.abs(this.u) < 0.05 && left < 2.5) {
       this.u = 0; this.state = 'dwell'; this.timer = P.dwell; this.held = 0; this.yardDone = true; this.atYard = true;
+      this.flag = null;   // the crew change waits for you anyway
       if (sys.audio && sys.audio.ready) sys.audio.play('airbrake', { gain: 0.8, x: this.x, y: this.y + 2, z: this.z, ref: 14 });
     }
     // off the end of the map
     if ((this.dir > 0 && this.lead > tr.len - 2) || (this.dir < 0 && this.lead < 2)) {
-      this.state = 'off'; this.offT = 50 + this.id * 20; this.u = 0;
+      this.state = 'off'; this.offT = 50 + this.id * 20; this.u = 0; this.flag = null;
       this.group.visible = false;
       for (const sc of sys.sections) if (sc.owner === this) sc.owner = null;
     }
@@ -1743,6 +1949,7 @@ export class FreightTrain {
 
   resume() {
     this.driver = null;
+    this.flag = null;
     this.mode = 'service';
     this.rev = false;
     this.emerg = false;

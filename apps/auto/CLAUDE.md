@@ -6158,6 +6158,29 @@ still handles).
   mph in ~70 s, 50 mph top; 38 s to stop from 49 mph. The horn button is
   held (a K5LA), and sounding it before a crossing pays $15. In the tunnel
   the camera goes into the cab.
+- **Flagging one down** (`flagDown`, reached through `onWait`, so player.js
+  is untouched): a freight is almost always found moving, and ENTER beside a
+  moving one used to do nothing at all. Now, on foot, ENTER within 15 m of
+  the lead cab, beside the line up to 600 m ahead of it, or within ~8 m of
+  any car's side stops it for you ("The engineer is stopping for you", or,
+  beside a car, "Climb up at the lead locomotive's cab — the front of the
+  train"), and an orange beacon stands over the cab. Standing ON the track
+  ahead only gets "Get off the track!" (it is already blowing for you,
+  `_guard`). The stop (`FreightTrain._flagStep`, `flag.phase`): `stop` plans
+  the cab to your spot at full service (0.45 planned, or the emergency's 1
+  m/s2 if it was under 8 m/s) and still obeys the signals, the yard and the
+  train ahead; at 45 mph that is ~370 m past you, so `back` sets it back to
+  you at <= 10 mph -- never onto a crossing behind its tail, into another
+  section, or within 60 m of the train behind (`_backRoom`; where it cannot,
+  it stands and you walk to the beacon); `stand` waits. Standing with its cab
+  within 11 m of you, you are put in it (`_flagged`). Walk 40 m off the line,
+  get into anything else, keep it standing 90 s (or 7 min in all) and it
+  carries on. **The spot is never on a level crossing** (`_flagLead`): if the
+  train would stand across one, it stops 25 m short of it or with its tail
+  10 m past, whichever puts the cab nearer you. And any train that has stood
+  15 s short of a crossing lets its gates up (`standT`; a real circuit times
+  out too), so a train waiting there no longer holds them down: they come
+  down again the moment it moves. Driving past one in a car changes nothing.
 - **Sound** (audio.js): the `gevo` profile (a GEVO-12: firing rate, turbo
   whine with load, rpm follows the notch over seconds), an `AirHorn` voice
   (five bells D#4 F#4 G#4 B4 D#5 through a reed spectrum and a formant, the
@@ -6170,7 +6193,10 @@ still handles).
 verify's "freight" section: the route, grades, ground never over the
 ballast, the crossings and sections, fifteen minutes of service, the drive
 from the yard, calling a train, a car held at the gates, a train warning
-you. Cost near the line: +25 draws at Balmer Yard with two trains and the
+you, and flagging one down: ENTER beside the lead cab at 45 mph (it stops
+within 520 m, sets back and you end up driving it), beside a hopper mid-train
+(the hint and the beacon), and at a crossing (it stands short of it, the
+gates go up, you climb in at the cab). Cost near the line: +25 draws at Balmer Yard with two trains and the
 cuts in view, +220k triangles.
 
 ## The Seattle-Bainbridge ferry (v164)
