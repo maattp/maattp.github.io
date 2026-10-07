@@ -191,7 +191,10 @@ export class TankSystem {
    * the hull is taken out of the store -- moved to infinity, so the chunk's
    * spatial index stays valid -- with splinters or sparks and a crunch.
    * Walls, landmarks and buildings are another store and still stop it.
-   * The prop's mesh stays standing: it is merged into its chunk's geometry.
+   * The prop goes from the picture too: it is part of its chunk's one merged
+   * flat mesh, and world.js records each one's run of triangles there, so
+   * its indices are zeroed (`hideRange`). It comes back, with its collision,
+   * if the chunk is ever rebuilt.
    */
   fell(v) {
     const city = this.city, f = v.forward, rx = f.z, rz = -f.x;
@@ -200,7 +203,8 @@ export class TankSystem {
     const d0 = Math.floor((v.z - reach) / CHUNK), d1 = Math.floor((v.z + reach) / CHUNK);
     for (let cx = c0; cx <= c1; cx++) {
       for (let cz = d0; cz <= d1; cz++) {
-        const l = city.obstacles.get(cx * 100003 + cz);
+        const ck = city.chunkKey(cx, cz);
+        const l = city.obstacles.get(ck);
         if (!l) continue;
         for (let i = 0; i < l.length; i += 3) {
           const ox = l[i], oz = l[i + 1], r = l[i + 2];
@@ -211,6 +215,13 @@ export class TankSystem {
           // the store's underground rule: a post on the street over a bore
           if (G.terrainHeight(ox, oz) - v.y > 2.5) continue;
           l[i] = 1e9; l[i + 1] = 1e9;
+          const ch = this.world.chunks && this.world.chunks.get(ck);
+          const F = ch && ch.group && ch.group.userData.fell;
+          if (F) {
+            for (let k = 0; k < F.list.length; k += 4) {
+              if (F.list[k] === ox && F.list[k + 1] === oz) { hideRange(F.mesh.geometry, F.list[k + 2], F.list[k + 3]); break; }
+            }
+          }
           this.stats.felled++;
           const gy = G.terrainHeight(ox, oz);
           if (r <= 0.4) {
@@ -585,6 +596,27 @@ export class TankSystem {
       this.showHud(false);
     }
   }
+}
+
+/**
+ * Zero a run of a merged mesh's indices, so those triangles collapse to a
+ * point. On a phone the index array is gone once uploaded (CLAUDE.md
+ * "Memory"): three's update range then reads only [i0, i1) of whatever array
+ * it is handed, so it gets a shared, all-zero one, dropped again on upload.
+ */
+let ZERO = null;
+function hideRange(geo, i0, i1) {
+  const idx = geo.index;
+  if (!idx || i1 <= i0) return;
+  if (idx.array) idx.array.fill(0, i0, i1);
+  else {
+    const wide = geo.attributes.position.count > 65535;
+    const bytes = i1 * (wide ? 4 : 2);
+    if (!ZERO || ZERO.byteLength < bytes) ZERO = new ArrayBuffer(Math.max(bytes, 1 << 16));
+    idx.array = wide ? new Uint32Array(ZERO, 0, i1) : new Uint16Array(ZERO, 0, i1);
+  }
+  idx.addUpdateRange(i0, i1 - i0);
+  idx.needsUpdate = true;
 }
 
 /** Two vehicles' body rectangles overlap (2D SAT); `grow` pads the first's nose. */

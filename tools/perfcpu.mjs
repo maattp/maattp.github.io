@@ -13,6 +13,7 @@
 //   drive-i5   the player's car on I-5's mainline at ~27 m/s, with traffic
 //   drive-dt   the player's car on downtown's street grid at ~14 m/s
 //   foot-dt    on foot, standing downtown (traffic and crowds around)
+//   tank-dt    the tank on drive-dt's streets at ~12 m/s, firing both guns
 //
 // The car is steered by an autopilot hooked in front of player.update (the
 // same input a stick produces, as tunnelride.mjs does), along a route walked
@@ -250,6 +251,9 @@ function pageInstall() {
     'foot-dt': { foot: [305, -278] },
     'drive-qa': { speed: 13, route: () => buildRoute(-1717, -3128, (e) => e.cls !== 'hwy' && e.cls !== 'ramp' && !e.elev, 3000) },
     'foot-yt': { foot: [1409, 1120] },
+    // the tank on the same streets, firing: the main gun whenever it is
+    // loaded, the machine gun in bursts (tank.js: shells, blasts, wrecks)
+    'tank-dt': { speed: 12, vehicle: 'tank', fire: true, route: () => buildRoute(0, 0, (e) => e.cls !== 'hwy' && e.cls !== 'ramp' && e.cls !== 'res' && !e.elev, 3000) },
   };
 
   let R = null;
@@ -310,6 +314,7 @@ function pageInstall() {
     input.gas = sp < vt; input.gasAmt = sp < vt ? 1 : 0;
     input.brake = sp > vt + 4; input.brakeAmt = sp > vt + 4 ? 1 : 0;
     input.y = 0; input.hand = false; input.attack = false;
+    if (R.fire) { input.hand = (R.t % 2.2) < 0.1; input.horn = (R.t % 3.1) > 2.3; }
     if (v.health < 60) v.health = 100;
   };
   const pu = p.update;
@@ -331,11 +336,11 @@ function pageInstall() {
     } else {
       const route = cfg.route();
       if (!route || route.length < 3) return { error: 'no route' };
-      R = { route, speed: cfg.speed, seg: 0, hist: [], t: 0, resets: 0 };
+      R = { route, speed: cfg.speed, seg: 0, hist: [], t: 0, resets: 0, fire: !!cfg.fire };
       if (!p.onFoot && p.exitVehicle) p.exitVehicle();
       const q0 = pointAt(0);
       p.respawn(q0.x, q0.z);
-      const car = d.traffic.spawnAt(q0.x, q0.z, q0.h, 'sedan', 0x3366aa, 'free');
+      const car = d.traffic.spawnAt(q0.x, q0.z, q0.h, cfg.vehicle || 'sedan', 0x3366aa, 'free');
       p.enterVehicle(car);
       placeCar(40, cfg.speed * 0.8);
       d.world.update(q0.x, q0.z, 40);

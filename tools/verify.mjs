@@ -3739,6 +3739,32 @@ async function main() {
         }
         out.fell = { felled: at >= 0, kept: before ? +(after / before).toFixed(2) : null };
       }
+      // a real one, drawn in its chunk's merged mesh: out of the collision
+      // store and out of the picture (its index range rewritten)
+      home();
+      {
+        let best = null;
+        for (const [ck, l] of city.obstacles) {
+          const ch = d.world.chunks.get(ck), F = ch && ch.group && ch.group.userData.fell;
+          if (!F) continue;
+          for (let j = 0; j < F.list.length; j += 4) {
+            const x = F.list[j], z = F.list[j + 1], dd = Math.hypot(x - v.x, z - v.z);
+            if (dd < 20 || dd > 260 || (best && dd > best.dd)) continue;
+            let has = false;
+            for (let i = 0; i < l.length; i += 3) if (l[i] === x && l[i + 1] === z) { has = true; break; }
+            if (has) best = { x, z, dd, F, l };
+          }
+        }
+        if (best) {
+          const h = Math.atan2(best.x - v.x, best.z - v.z);
+          v.place(best.x - Math.sin(h) * 12, best.z - Math.cos(h) * 12, h); v.vLong = 0; P.camYaw = h + Math.PI;
+          const idx = best.F.mesh.geometry.index, ver = idx.version, f0 = K.stats.felled;
+          step(150, { gas: true, gasAmt: 1 });
+          let still = false;
+          for (let i = 0; i < best.l.length; i += 3) if (best.l[i] === best.x && best.l[i + 1] === best.z) still = true;
+          out.fellReal = { felled: K.stats.felled - f0, gone: !still, hidden: idx.version > ver };
+        }
+      }
       // the main gun at a car 60 m off
       home();
       {
@@ -3812,6 +3838,7 @@ async function main() {
       console.log(`  0-50 ${tank.t50} s, top ${tank.top} km/h, full turn at speed ${tank.turnKph} km/h on ${tank.turnR} m, pivot ${tank.pivot} deg/s (drift ${tank.pivotDrift} m), 65-0 in ${tank.brake} m`);
       console.log(`  turret ${tank.traverse} deg/s, onto the camera within ${tank.turretErr} rad`);
       console.log(`  crushed a parked car at ${tank.crush.kph} km/h: ${tank.crush.crushed}, speed kept ${tank.crush.kept}; felled a tree ${tank.fell.felled}, kept ${tank.fell.kept}`);
+      console.log(`  a real street object: ${tank.fellReal ? `felled ${tank.fellReal.felled}, out of the store ${tank.fellReal.gone}, its triangles hidden ${tank.fellReal.hidden}` : 'none in reach'}`);
       console.log(`  main gun at ${tank.gun.dist} m: struck ${tank.gun.struck} (${tank.gun.kind}), destroyed ${tank.gun.dead}, wrecked ${tank.gun.wreck}, thrown ${tank.gun.thrown} m, landed ${tank.gun.landed}, ${tank.gun.particles} particles, ${tank.gun.programs} programs compiled; recoil ${tank.recoil} m, reload ${tank.reload} s`);
       console.log(`  machine gun: ${tank.mg.rounds} rounds in 1 s, the SUV at ${tank.mg.health} health, dead after 2 s ${tank.mg.dead}`);
       console.log(`  into a building: ${tank.wall ? `${tank.wall.inside} frames inside it, ${tank.wall.kph} km/h at the wall` : 'none near'}`);
@@ -3824,6 +3851,7 @@ async function main() {
       if (!(tank.traverse > 40 && tank.traverse < 80) || tank.turretErr > 0.02) bad.push('the turret does not follow the camera');
       if (!tank.crush.crushed || !(tank.crush.kept > 0.7)) bad.push('cars are not crushed under it');
       if (!tank.fell.felled || !(tank.fell.kept > 0.7)) bad.push('trees stop it');
+      if (!tank.fellReal || !tank.fellReal.gone || !tank.fellReal.hidden) bad.push('a felled street object stays standing');
       if (!tank.gun.struck || !tank.gun.dead || !tank.gun.wreck || tank.gun.particles < 80) bad.push('the main gun does not wreck a car at 60 m');
       if (!(tank.gun.thrown > 1) || !tank.gun.landed) bad.push('the wreck is not thrown');
       if (tank.gun.programs !== 0) bad.push('firing compiled a program mid-play');
