@@ -441,10 +441,10 @@ function pageInstall() {
     let sum = 0;
     for (const [k, v] of Object.entries(S.sys)) { out.sys[k] = +(v / F.length).toFixed(3); sum += v / F.length; }
     out.sys.other = +(out.cpuMean - sum).toFixed(3);
-    // per-system MEDIAN ms/frame too: a system's own cost, which the whole
-    // frame's median buries under render and traffic noise
     // a fire run: is the gun actually on a flame (the measurement is worthless if not)
     if (FC && d.fire) { const F = d.fire; out.fireState = { spraying: F.spraying, lock: !!F.aim.lock, hit: F.aim.hit, water: F.water.alive, flames: F.flame.alive, smoke: F.smoke.alive }; }
+    // per-system MEDIAN ms/frame too: a system's own cost, which the whole
+    // frame's median buries under render and traffic noise
     out.sysMed = {};
     for (const k of Object.keys(S.sys)) out.sysMed[k] = +q(S.frames.map((f) => f[2][k] || 0), 0.5).toFixed(3);
     return out;
