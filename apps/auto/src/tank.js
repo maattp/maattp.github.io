@@ -277,6 +277,9 @@ export class TankSystem {
     c.tilt.scale.set(1.1, 0.4, 1.04);
     c.roll = (Math.random() - 0.5) * 0.08; c.pitch = (Math.random() - 0.5) * 0.05;
     c.bodyMat.color.multiplyScalar(0.62);
+    // an articulated bus goes flat in both halves
+    if (c.trailer && !c.trailer.crushed) this.flatten(c.trailer, null);
+    if (c.leader && !c.leader.crushed) this.flatten(c.leader, null);
     c.color = c.bodyMat.color.getHex(); c._farCol = null;
     if (c.rider) c.rider.group.visible = false;
     this.stats.crushed++;
