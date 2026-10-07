@@ -294,6 +294,7 @@ export class TrafficSystem {
     this.keepClear = [];
     this.R = rng(99);
     this.police = null;   // police.js, set by main.js
+    this.suspectDriver = null;   // policemissions.js drives mode 'suspect'
     this.spawnTimer = 0;
     this.copTimer = 0;
     vehicleAssets();
@@ -1000,7 +1001,8 @@ export class TrafficSystem {
       // 'race': the hydroplane race's boats (hydrorace.js drives them)
       // 'path': a cyclist on the bike paths (bikes.js rides them)
       if (v.mode === 'race' || v.mode === 'path') continue;
-      if (d2 > DESPAWN * DESPAWN && v.mode !== 'parked' && v.mode !== 'apron') { this.remove(v); continue; }
+      // (a police mission's suspect is policemissions.js's to end)
+      if (d2 > DESPAWN * DESPAWN && v.mode !== 'parked' && v.mode !== 'apron' && v.mode !== 'suspect') { this.remove(v); continue; }
       if (v.mode === 'police' && game.wanted === 0 && d2 > 140 * 140) { this.remove(v); continue; }
 
       if (v.mode === 'parked') {
@@ -1065,6 +1067,8 @@ export class TrafficSystem {
         if (v.recycle) { this.remove(v); continue; }
       }
       else if (v.mode === 'police') input = this.drivePolice(v, vdt, px, pz, player);
+      // a police mission's fleeing suspect (policemissions.js)
+      else if (v.mode === 'suspect' && this.suspectDriver) input = this.suspectDriver(v, vdt, px, pz, player);
       // shunted, abandoned or parked on an apron: nobody at the wheel, so the
       // parking brake (Vehicle.update `park`); aircraft and boats keep their old coast
       // (shared: Vehicle.update only reads its input)
@@ -1469,7 +1473,7 @@ export class TrafficSystem {
       // (a unit in pursuit drives round slow traffic the same way: there are
       // no signals, and a queue behind a wedge is a chase that never comes)
       if ((((o.mode === 'free' || o.mode === 'parked') && Math.abs(o.vLong) < 0.5)
-        || (v.unit && o.mode === 'traffic' && Math.abs(o.vLong) < v.pursuitV * 0.6)) && o !== player.vehicle && along < 25) {
+        || (v.unit && (o.mode === 'traffic' || o.mode === 'suspect') && Math.abs(o.vLong) < v.pursuitV * 0.6)) && o !== player.vehicle && along < 25) {
         const lat = (o.x - sax) * -sdz + (o.z - saz) * sdx;   // + = right of the path
         const need = wid + 0.35, dl = lat >= 0 ? lat - need : lat + need;
         if (Math.abs(dl) > Math.abs(v.dodge) || v.dodgeT <= 0) v.dodge = clamp(dl, -LANE_W, LANE_W);

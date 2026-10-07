@@ -3859,6 +3859,7 @@ async function main() {
         d.peds.update(dt, p.x, p.z, P, T);
         pol.update(dt, P, d.G.terrainHeight(p.x, p.z) - p.y > 3);
         d.fx.update(dt);
+        if (d.missions) d.missions.update(dt, P);
       };
       const out = { levels: [] };
       for (const L of [1, 2, 3, 4, 5]) {
@@ -3949,6 +3950,114 @@ async function main() {
       if (bad.length) process.exitCode = 1;
     }
 
+    // --- police missions ------------------------------------------------------------
+    // MISSION shows in a police vehicle and nowhere else; a mission dispatches
+    // a fleeing suspect that drives away; wrecking it pays and the next level
+    // follows with a time limit; one pulled over counts; MISSION again quits,
+    // and leaving the car ends it.
+    const pm = await session.eval(`(async () => {
+      const d = window.__dbg, P = d.player, T = d.traffic, M = d.missions, game = d.game;
+      game.dead = false; game.wanted = 0; game.points = 0;
+      // (the pad's police-only buttons follow the vehicle in main.js
+      // updateSiren, in the frame loop: a few real frames after each door)
+      game.paused = false;
+      const frames = () => new Promise((r) => setTimeout(r, 400));
+      d.police.clear();
+      if (P.vehicle) P.exitVehicle(true);
+      const sp = d.city.respawnPointNear(200, 300);
+      P.respawn(sp.x, sp.z);
+      for (let i = 0; i < 10; i++) d.world.update(sp.x, sp.z, 2);
+      const btn = document.querySelector('[data-btn="policemission"]');
+      const shown = () => getComputedStyle(btn).display !== 'none';
+      const out = {};
+      await frames(); out.onFoot = shown();
+      const sedan = T.spawnAt(sp.x + 3, sp.z, 0, 'sedan', 0x445566, 'free');
+      P.enterVehicle(sedan); await frames(); out.sedan = shown(); P.exitVehicle(true); T.remove(sedan);
+      const van = T.spawnAt(sp.x + 3, sp.z, 0, 'swat', 0, 'free');
+      P.enterVehicle(van); await frames(); out.swatVan = shown(); P.exitVehicle(true); T.remove(van);
+      if (d.TYPES.fireengine) {
+        const rig = T.spawnAt(sp.x + 3, sp.z, 0, 'fireengine', 0xb01818, 'free');
+        P.enterVehicle(rig); await frames(); out.rig = shown(); P.exitVehicle(true); T.remove(rig);
+      }
+      const car = T.spawnAt(sp.x + 3, sp.z, 0, 'police', 0xf2f4f6, 'free');
+      P.enterVehicle(car); await frames(); out.police = shown();
+      game.paused = true;
+      const step = (dt) => { const p = P.position; T.update(dt, p.x, p.z, { x: 0, z: 1 }, P); d.police.update(dt, P, false); M.update(dt, P); };
+      // level 1: dispatched, flees, wrecked -> paid, level 2 comes with a clock
+      const money0 = game.money;
+      M.toggle(P);
+      const run = M.run;
+      out.started = !!run;
+      if (!run) return out;
+      const s0 = run.suspects[0];
+      out.l1 = { count: run.suspects.length, mode: s0.mode, time: run.S.time, place: run.place, objective: '',
+        dist0: Math.round(Math.hypot(s0.x - car.x, s0.z - car.z)), marker: !!(s0.suspect && s0.suspect.mark) };
+      const x0 = s0.x, z0 = s0.z;
+      let maxD = 0;
+      // (driven, not displaced: a getaway round a block ends near where it began)
+      let lx = s0.x, lz = s0.z;
+      for (let i = 0; i < 8 * 30; i++) { step(1 / 30); maxD += Math.hypot(s0.x - lx, s0.z - lz); lx = s0.x; lz = s0.z; }
+      out.l1.objective = d.hud.objective.textContent;
+      out.l1.fled = Math.round(maxD);
+      out.l1.speed = +Math.abs(s0.vLong).toFixed(1);
+      s0.damage(1000, true);
+      game.onCarDestroyed(s0);
+      step(1 / 30);
+      out.l1.paid = game.money - money0;
+      out.l1.wanted = game.wanted;
+      out.l1.level = M.level;
+      for (let i = 0; i < 5 * 30 && !M.run; i++) step(1 / 30);
+      const r2 = M.run;
+      out.l2 = r2 ? { level: r2.S.level, time: r2.S.time, count: r2.suspects.length } : null;
+      // pulled over: you beside it, it stopped
+      if (r2) {
+        const s = r2.suspects[0];
+        let i = 0;
+        for (; i < 6 * 30 && M.run === r2; i++) {
+          s.vLong = 0; s.x = car.x + 8; s.z = car.z; s.sync();
+          step(1 / 30);
+        }
+        out.l2.apprehendedIn = M.run === r2 ? null : +(i / 30).toFixed(1);
+        out.l2.levelAfter = M.level;
+      }
+      // quit with MISSION, then leaving the car ends the next
+      for (let i = 0; i < 5 * 30 && !M.run; i++) step(1 / 30);
+      out.quit = { before: !!M.run || M.nextT > 0 };
+      M.toggle(P);
+      out.quit.after = !!M.run || M.nextT > 0;
+      M.toggle(P);
+      P.exitVehicle(true);
+      step(1 / 30);
+      out.leave = !!M.run;
+      game.paused = false; await frames(); game.paused = true;
+      out.btnOff = shown();
+      for (const v of [...T.cars]) if (v === car || v.typeName === 'police') T.remove(v);
+      return out;
+    })()`, true);
+    console.log('\n--- police missions -----------------------------------------');
+    console.log(`  MISSION shown: on foot ${pm.onFoot}, in a sedan ${pm.sedan}, in a fire engine ${pm.rig}, in a cruiser ${pm.police}, in a SWAT van ${pm.swatVan}`);
+    if (pm.l1) {
+      console.log(`  level 1: ${pm.l1.count} suspect ${pm.l1.mode} ${pm.l1.dist0} m off near ${pm.l1.place}, marker ${pm.l1.marker}; drove ${pm.l1.fled} m in 8 s (${pm.l1.speed} m/s); wrecked: paid $${pm.l1.paid}, wanted ${pm.l1.wanted}, next level ${pm.l1.level}`);
+      console.log(`  objective: "${pm.l1.objective}"`);
+      console.log(`  level 2: ${pm.l2 ? `${pm.l2.count} suspect(s), ${pm.l2.time} s clock; pulled over in ${pm.l2.apprehendedIn} s, then level ${pm.l2.levelAfter}` : 'never dispatched'}`);
+      console.log(`  MISSION again quits: ${pm.quit.before} -> ${pm.quit.after}; leaving the car ends it: ${!pm.leave}; button gone on foot: ${!pm.btnOff}`);
+    }
+    {
+      const bad = [];
+      if (pm.onFoot || pm.sedan || pm.rig || !pm.police || !pm.swatVan) bad.push('MISSION shown in the wrong vehicles');
+      if (!pm.started || !pm.l1) bad.push('no mission started');
+      else {
+        if (pm.l1.mode !== 'suspect' || !pm.l1.marker) bad.push('no fleeing suspect with a marker');
+        if (pm.l1.fled < 80) bad.push(`the suspect did not flee (${pm.l1.fled} m driven in 8 s)`);
+        if (pm.l1.paid < 300 || pm.l1.wanted !== 0 || pm.l1.level !== 2) bad.push('wrecking the suspect did not pay cleanly and move on');
+        if (!pm.l2 || !pm.l2.time) bad.push('level 2 not dispatched with a time limit');
+        else if (pm.l2.apprehendedIn === null || pm.l2.levelAfter !== 3) bad.push('pulling the suspect over did not clear the level');
+        if (!pm.quit.before || pm.quit.after) bad.push('MISSION did not quit');
+        if (pm.leave || pm.btnOff) bad.push('leaving the car did not end it');
+      }
+      for (const b of bad) console.error('FAIL: ' + b);
+      if (bad.length) process.exitCode = 1;
+    }
     await session.eval('window.__dbg.game.paused = false');
 
     // --- radio: live when online, synth when not --------------------------

@@ -38,6 +38,7 @@ import { BONES } from './peds.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings, warmLightBar } from './traffic.js';
 import { Police } from './police.js';
+import { PoliceMissions } from './policemissions.js';
 import { TYPES as VEHICLE_TYPES, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial, dropVehicleArrays } from './vehicles.js';
 
 // Aircraft come in their own colours, parked at Boeing Field or delivered.
@@ -206,6 +207,8 @@ class Game {
     audio.crash(impact);
     const p = player.position;
     fx.sparks(p.x, p.y + 0.8, p.z, Math.min(14, Math.round(impact)));
+    // A police mission's suspect is yours to ram.
+    if (other && other.suspect) return;
     // Ramming a unit is a crime; being rammed BY one is not. (Every police
     // contact used to add 18 points, so the units ramming you at 3+ stars
     // drove your own wanted level up.)
@@ -251,7 +254,8 @@ class Game {
     fx.tracer(x, y, z, x + dir.x * 55, y - 1.5, z + dir.z * 55);
     fx.sparks(x + dir.x * 0.7, y, z + dir.z * 0.7, 4);
     peds.scare(x, z, 45);
-    this.addHeat(10);
+    // a police mission's gunfire is police work
+    if (!(missions && missions.run)) this.addHeat(10);
   }
 
   onShotVehicle(v, x, z) {
@@ -464,7 +468,7 @@ class Game {
       this.damagePlayer(70, 'explosion');
       player.exitVehicle(true);
     }
-    this.addHeat(14);
+    if (!v.suspect) this.addHeat(14);
     setTimeout(() => traffic.remove(v), 60);
   }
 
@@ -521,7 +525,7 @@ class Game {
 // ---------------------------------------------------------------------------
 
 let chunkCull = null;   // chunkcull.js
-let police = null;   // the wanted levels (police.js)
+let police = null, missions = null;   // the wanted levels (police.js) and police missions (policemissions.js)
 let nearShadow = null;  // nearshadow.js
 // Who casts into the near map this frame: the player on foot, or the vehicle
 // he drives on the ground or the water. An aircraft keeps the sun's map (its
@@ -1417,10 +1421,12 @@ function installShadowFade() {
   tanks = new TankSystem({ scene, city, world, traffic, peds, fx, audio, hud, game, player, camera, root: document.getElementById('app') });
   tanks.spawnHome();
   acts.stunts = stunts;
-  // the law (police.js)
+  // the law (police.js) and the police missions (policemissions.js)
   police = new Police({ scene, city, game, traffic, peds, fx, audio, hud });
   traffic.police = police;
   game.police = police;
+  missions = new PoliceMissions({ scene, city, game, traffic, police, hud, audio });
+  game.setSiren = (v, on) => { traffic.lightBar(v); setSiren(v, on); };
 
   // delivery marker
   const mg = new THREE.CylinderGeometry(6, 6, 26, 18, 1, true);
@@ -1498,7 +1504,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { police, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { police, missions, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1558,11 +1564,12 @@ function installShadowFade() {
       // the fire service's particles, beacon and lights (drawn first in a fire call)
       if (fire) { fireWarm = fire.warmMeshes(player); for (const m of fireWarm.meshes) warm.add(m); }
       // The police's lazily-made materials: the units' light bar, the
-      // helicopter's searchlight cone -- and the
+      // helicopter's searchlight cone, a mission suspect's marker -- and the
       // tracer lines, hidden until the first shot, which compiled their
       // program mid-firefight.
       warm.add(warmLightBar());
       for (const m of police.warmMeshes()) warm.add(m);
+      for (const m of missions.warmMeshes()) warm.add(m);
       if (fx.lines) { fx.lines.visible = true; lazy.linesWere = true; }
       if (fx.wakeMesh) fx.wakeMesh.visible = true;
       scene.add(warm);
@@ -2104,6 +2111,13 @@ function wireUi() {
   });
   // RADIO on the driving pad: the next station. pointerdown, like every pad
   // button (the pad's own handler stops propagation, not this listener).
+  // MISSION, in a police vehicle: start the police missions, or quit them
+  // (policemissions.js). N on a keyboard.
+  const missionPad = document.querySelector('[data-btn="policemission"]');
+  if (missionPad) missionPad.addEventListener('pointerdown', () => { if (missions && !game.paused && !game.dead) missions.toggle(player); });
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyN' && !e.repeat && missions && !game.paused && !game.dead && (missions.run || missions.nextT > 0 || missions.available(player))) missions.toggle(player);
+  });
   const radioPad = document.querySelector('[data-btn="radio"]');
   if (radioPad) radioPad.addEventListener('pointerdown', () => {
     audio.init();
@@ -2312,6 +2326,7 @@ function doRespawn() {
  * eases off and keeps right for it (traffic.sirenFrom).
  */
 let copCar = null;
+// (police missions switch it on for a run: game.setSiren)
 function setSiren(v, on) {
   v.sirenOn = on;
   v.siren = 0;
@@ -2330,6 +2345,9 @@ function updateSiren(dt) {
     if (v && v.spec.police) traffic.lightBar(v);
     if (v) setSiren(v, false);
     controls.root.dataset.police = v ? '1' : '';
+    // the police MISSION (policemissions.js) is a police vehicle's only; a
+    // fire rig has its own (firecalls.js, data-fire)
+    controls.root.dataset.cop = v && v.spec.police ? '1' : '';
   }
   if (controls.takeSiren() % 2 && v) {
     setSiren(v, !v.sirenOn);
@@ -2575,6 +2593,7 @@ function frame(now) {
   if (stunts) stunts.update(dt, player);
   if (tanks) tanks.update(dt);
   if (acts) acts.update(dt, player);
+  if (missions) missions.update(dt, player);
   // Say hello once per approach to anything the map marks (the dock, the
   // quads): the map is how you find them, this is how you know you have.
   // One at a time, in list order, so the dock is never talked over by the

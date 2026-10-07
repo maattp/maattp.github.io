@@ -1,6 +1,6 @@
-// A getaway driver: a car fleeing a point over the street graph.
-// tools/wantedcheck.mjs's player drives this way, fleeing the police at each
-// wanted level.
+// A getaway driver: a car fleeing a point over the street graph. Police
+// missions' suspects drive this way (policemissions.js), and so does
+// tools/wantedcheck.mjs's player, fleeing the police at each wanted level.
 //
 // Node to node: at each node the next is the one leading furthest from the
 // pursuer, plus some randomness, never straight back; flat out on the
@@ -40,8 +40,8 @@ function pick(city, T, from, prev, px, pz) {
 
 /**
  * This frame's pedals for car v (state s) fleeing (px, pz): the AI input
- * Vehicle.update takes, s.inp, reused. `s.stopT` > 0 (a caller's "stopped
- * by the pursuer" clock) suspends the wedge detection, so a car you have stopped does
+ * Vehicle.update takes, s.inp, reused. `s.stopT` > 0 (a mission's "pulled
+ * over" clock) suspends the wedge detection, so a car you have stopped does
  * not reverse away from you.
  */
 export function getaway(city, T, v, s, dt, px, pz) {

@@ -579,12 +579,26 @@ export class Hud {
       ctx.arc(bx, bz, 3.4 / zoom, 0, Math.PI * 2);
       ctx.fill();
     }
-    // police helicopters
+    // police helicopters, and a police mission's suspects: on the dial's
+    // edge when they are off it, so you can see which way to go
     for (const h of (this.policeHelis || [])) {
       const [bx, bz] = toMap(h.x, h.z);
       ctx.fillStyle = '#ff6b6b'; ctx.strokeStyle = '#2a0b0b'; ctx.lineWidth = 1 / zoom;
       ctx.beginPath(); ctx.arc(bx, bz, 4.2 / zoom, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
       ctx.fillStyle = '#2a0b0b'; ctx.fillRect(bx - 3 / zoom, bz - 0.6 / zoom, 6 / zoom, 1.2 / zoom);
+    }
+    if (this.suspects && this.suspects.length) {
+      const lim = S / (2 * zoom) - 6 / zoom;
+      const on = (this._blink = ((this._blink || 0) + 1) % 30) < 20;
+      for (const v of this.suspects) {
+        let [bx, bz] = toMap(v.x, v.z);
+        const l = Math.hypot(bx, bz);
+        if (l > lim) { bx *= lim / l; bz *= lim / l; }
+        ctx.fillStyle = on ? '#ff2d2d' : '#ffb0b0'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.4 / zoom;
+        const r = 5.5 / zoom;
+        ctx.beginPath(); ctx.moveTo(bx, bz - r); ctx.lineTo(bx + r, bz); ctx.lineTo(bx, bz + r); ctx.lineTo(bx - r, bz); ctx.closePath();
+        ctx.fill(); ctx.stroke();
+      }
     }
     if (game.target) {
       const [bx, bz] = toMap(game.target.x, game.target.z);
@@ -829,6 +843,13 @@ export class Hud {
       ctx.fillStyle = '#ff3b1e'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(1.5, size * 0.002);
       ctx.beginPath();
       ctx.arc(tx, tz, size * 0.012, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+    }
+    // a police mission's suspects, as red diamonds
+    for (const v of (this.suspects || [])) {
+      const [tx, tz] = toC(v.x, v.z), r = size * 0.011;
+      ctx.fillStyle = '#ff2d2d'; ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(1, size * 0.002);
+      ctx.beginPath(); ctx.moveTo(tx, tz - r); ctx.lineTo(tx + r, tz); ctx.lineTo(tx, tz + r); ctx.lineTo(tx - r, tz); ctx.closePath();
       ctx.fill(); ctx.stroke();
     }
     if (game.tourTarget) {

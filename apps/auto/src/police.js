@@ -60,6 +60,8 @@ export const WEAPONS = {
   rifle: { burst: 3, gap: 0.11, cd: [1.3, 1.9], range: 48, acc: 0.36, dmg: [7, 10], streak: true },
   marksman: { burst: 1, gap: 0, cd: [2.4, 3.2], range: 140, acc: 0.42, dmg: [9, 13], streak: true },
   gunner: { burst: 5, gap: 0.09, cd: [2.4, 3.2], range: 140, acc: 0.18, dmg: [6, 9], streak: true },
+  // a fleeing suspect's driver (police missions), out of his window
+  suspect: { burst: 1, gap: 0, cd: [1.3, 2.3], range: 32, acc: 0.38, dmg: [4, 8], streak: false },
 };
 
 // sight ranges: how the police know where you are. Out of every unit's
@@ -475,7 +477,7 @@ export class Police {
     s.shootCd = s.burst > 0 ? W.gap : W.cd[0] + Math.random() * (W.cd[1] - W.cd[0]);
   }
 
-  /** One round from (x, y, z) at the player. */
+  /** One round from (x, y, z) at the player. Police and suspects alike. */
   fire(x, y, z, W, from = null) {
     const game = this.game, P = this.player;
     if (!P || game.dead) return false;
@@ -504,7 +506,7 @@ export class Police {
     }
     if (!hit) return false;
     this.stats.hits++;
-    const dmg = (W.dmg[0] + Math.random() * (W.dmg[1] - W.dmg[0])) * L.dmg;
+    const dmg = (W.dmg[0] + Math.random() * (W.dmg[1] - W.dmg[0])) * (from && from.suspect ? 1 : L.dmg);
     if (v) {
       // the body takes most of it; what comes through the glass is yours
       if (this.fx) this.fx.sparks(ex, ey, ez, 3);
@@ -544,7 +546,7 @@ class Heli {
     this.yaw = Math.atan2(p.x - this.x, p.z - this.z);
     this.ang = a + Math.PI * (i % 2);
     this.leaving = false; this.gone = false; this.sees = false;
-    this.shootCd = 3 + Math.random() * 2; this.burst = 0;
+    this.shootCd = 3 + Math.random() * 2; this.burst = 0; this.suspect = false;
     this.sweep = Math.random() * 6;
     this.aimX = p.x; this.aimZ = p.z; this.aimY = p.y;
     this.cone = new THREE.Mesh(pol.coneGeo, pol.coneMat);

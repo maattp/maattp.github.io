@@ -224,6 +224,35 @@ async function shots(S) {
     // the crowd's animation LOD culls against the camera: pose them for this one
     if (c.peds) { const P = d.player.position; d.peds.update(1e-4, P.x, P.z, d.player, d.traffic); d.peds.update(1e-4, P.x, P.z, d.player, d.traffic); }
     return 1; })()`);
+  if (want('pad') && (await S.eval('!!window.__dbg.missions'))) {
+    // a police mission from the cruiser: the pad with MISSION lit, the
+    // objective line, the suspect's diamond on the minimap, its marker ahead
+    const r = await S.eval(`(() => { const d = window.__dbg, H = window.__wc; H.startAt(200, 300); H.reset();
+      for (const id of ['hud','pad','objective','toast','topBtns']) { const e = document.getElementById(id); if (e) e.style.display = ''; }
+      const P = d.player, st = H.start, e = d.city.edges[d.city.nodes[st.node].e[0]];
+      const car = d.traffic.spawnAt(st.x, st.z, Math.atan2(e.dx, e.dz), 'police', 0xf2f4f6, 'free');
+      P.enterVehicle(car);
+      d.controls.root.dataset.police = "1"; d.controls.root.dataset.cop = "1";   // (main.js updateSiren does this in the frame loop; the game is paused)
+      d.missions.toggle(P);
+      const run = d.missions.run;
+      if (!run) return { none: true };
+      const s = run.suspects[0];
+      // put the suspect 45 m ahead of the cruiser, as a chase would
+      const f = car.forward;
+      s.x = car.x + f.x * 45; s.z = car.z + f.z * 45; s.heading = car.heading; s.y = d.city.groundAt(s.x, s.z, car.y + 2); s.sync();
+      for (let i = 0; i < 20; i++) { H.step(1 / 30); d.hud.update(1 / 30, d.game, P, d.traffic); }
+      s.x = car.x + f.x * 45; s.z = car.z + f.z * 45; s.heading = car.heading; s.sync();
+      d.missions.update(1e-3, P);
+      P.updateCamera(1 / 30, { x: 0, y: 0 });
+      for (let i = 0; i < 30; i++) P.updateCamera(1 / 30, { x: 0, y: 0 });
+      P.applyCamera(d.camera);
+      d.hud.update(1 / 30, d.game, P, d.traffic);
+      return { x: car.x, z: car.z }; })()`);
+    if (!r.none) await snap('mission-pad', 5000);
+    await S.eval(`(() => { const d = window.__dbg; d.missions.toggle(d.player);
+      for (const id of ['hud','pad','stickZone','lookZone','objective','toast','rotate','topBtns']) { const e = document.getElementById(id); if (e) e.style.display = 'none'; }
+      return 1; })()`);
+  }
   if (want('van')) {
     const v = await S.eval(`(() => {
       const d = window.__dbg, H = window.__wc; H.reset();

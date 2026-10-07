@@ -252,7 +252,7 @@ export const TYPES = {
   ambulance: deriveSpec({ wheelbase: 3.9,len: 6.3, wid: 2.28, wheelR: 0.42, sill: 0.56, belt: 1.42, roof: 2.35, cab: [0.16, 0.46], cargo: 2.25, hand: 'ambulance', livery: 0xf4f4f0, boxy: 2, emergency: true, mass: 2.4, acc: 3.2, topKph: 155, brakeM: 48, latG: 0.72 }),
   // The police tactical van (wanted 4+, traffic.js spawnPolice 'swat'): heavy,
   // so its rams shove you, and quick enough to keep up on surface streets.
-  // `police` gives it the cruiser's V8.
+  // `police` gives it the cruiser's V8 and the MISSION button (police missions).
   swat: deriveSpec({ wheelbase: 3.9, len: 6.6, wid: 2.40, wheelR: 0.45, sill: 0.58, belt: 1.46, roof: 2.45, cab: [0.16, 0.46], cargo: 2.3, hand: 'swat', livery: 0x1b2331, boxy: 2, police: true, swat: true, mass: 3.2, acc: 3.9, topKph: 160, brakeM: 48, latG: 0.76 }),
   garbage: deriveSpec({ wheelbase: 4.6,len: 8.1, wid: 2.48, wheelR: 0.50, sill: 0.66, belt: 1.62, roof: 2.6, cab: [0.20, 0.46], cargo: 2.5, hand: 'garbage', livery: 0x2e6a3f, boxy: 2, mass: 4.0, acc: 1.45, topKph: 90, brakeM: 55, latG: 0.61 }),
   // Fire apparatus (buildFireEngine / buildTiller): Seattle Fire's red. `fire`
@@ -8586,9 +8586,10 @@ export class Vehicle {
     this.sirenOn = false; this.cannon = null;   // fire apparatus: the player's siren, the water cannon (firecalls.js)
     // police.js: which kind of unit ('car' | 'swat', null for everyone else),
     // how many of its crew are out on foot, its search point, the passenger's
-    // trigger (shootCd / burst).
+    // trigger (shootCd / burst); `suspect` is a police mission's quarry
+    // (policemissions.js), which drives and shoots on its own.
     this.unit = null; this.crew = 0; this.searchX = 0; this.searchZ = 0; this.searchT = 0;
-    this.shootCd = 0; this.burst = 0; this.backT = 0;
+    this.shootCd = 0; this.burst = 0; this.suspect = null; this.backT = 0;
     // drivePolice's pursuit: its pace, its target, how long it has gone nowhere
     this.pursuitV = 0; this.pursuitTX = 0; this.pursuitTZ = 0; this.polStuckT = 0;
     this.deployCd = 0;   // police.js: s before a crew that got back in may get out again
