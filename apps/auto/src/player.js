@@ -611,6 +611,8 @@ export class Player {
   }
 
   updateCamera(dt, input) {
+    // the shake decays by time, not by frame (applyCamera draws it)
+    if (this.shake) this.shake *= Math.pow(0.86, dt * 60);
     // A vehicle with a rig of its own takes the camera when it wants it (a
     // Link train in a bore: link.js camRig).
     if (!this.onFoot && this.vehicle && this.vehicle.camRig && this.vehicle.camRig(this, dt)) return;
@@ -907,7 +909,6 @@ export class Player {
       camera.position.x += (Math.random() - 0.5) * k;
       camera.position.y += (Math.random() - 0.5) * k;
       camera.position.z += (Math.random() - 0.5) * k;
-      this.shake *= 0.86;
     } else this.shake = 0;
     if (this.camUp) camera.up.copy(this.camUp); else camera.up.set(0, 1, 0);
     camera.lookAt(this.camLook);

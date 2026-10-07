@@ -4208,6 +4208,9 @@ float frLine(float o, float fw, float c, float w) {
     // Each street object's run of triangles in the flat mesh, [x, z, i0, i1]
     // per object: what a tank knocks down is hidden by its index range
     // (tank.js `fell`), the mesh being one merged draw.
+    // Live only from here to the flat mesh's add below: meshProps (the one
+    // caller of the unguarded pushes) runs inside this step, and chunk builds
+    // run one at a time, as this._ck already assumes.
     this._fell = [];
     const road = new ChunkBuilder(true);
     const flat = new ChunkBuilder(false);
