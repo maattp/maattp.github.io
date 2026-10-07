@@ -7690,6 +7690,20 @@ shows its own flashing heads (two boxes alternately, one draw) while
 call switched on. G was WATER before the toggle; WATER is V now. Map: `game.fireTarget`, a pulsing
 red dot; in the world a 160 m beacon until 90 m off, and the smoke.
 
+**What the water costs: about 0.1 ms a frame on the phone stand-in.**
+`tools/perfcpu.mjs --runs=fire-spray,fire-call --throttle=8` parks Station
+10's engine at a seeded burning building (flames held alight, the camera put
+back on the nearest one every frame) with the gun on or off. With
+`--wrap=fire.cannon,fire.march`, `cannon()` -- the aim assist's solve, the
+64-step `march`, the hit tests and the stream's emission -- measured 0.08-0.14
+ms mean a frame at 8x, `march` 0.03-0.08; the whole `fire.update` 0.34-0.38
+spraying against 0.27-0.39 not (two alternating runs each: the gun is lost in
+the noise between runs, and whole-frame medians, 13-18 ms either way, are
+render and traffic). So the march is left as it is: no arc cache. perfcpu
+prints per-system MEDIANS too now, and a fire run's state (`spraying`,
+`lock`, what the stream hits), so a run with the gun not actually on a flame
+cannot pass for a measurement.
+
 **Particles are three Points draws, only while alive** (`Pool`: per-particle
 size and alpha in a ShaderMaterial, `uScale` from the camera's fov and the
 drawing buffer): water (340, phone 220), flames additive (520 / 300, a glow

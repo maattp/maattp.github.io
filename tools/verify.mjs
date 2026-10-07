@@ -3095,7 +3095,12 @@ async function main() {
         }
       }
       out.aprons = { stations: F.stations.filter((s) => s.spots.length).length, rigs: rigs.length, tillers: rigs.filter((v) => v.trailer).length, onRoad, inB, parted,
-        places: d.hud.places.filter((p) => p.kind === 'fire').length };
+        places: d.hud.places.filter((p) => p.kind === 'fire').length,
+        // every station that got an apron got ALL its rigs, of the right types
+        // (FIRE_STATIONS' rigs); the ones with no room at all are named
+        short: F.stations.filter((s) => s.spots.length && (s.spots.map((q) => q.type).join() !== s.rigs.join()
+          || (s.rigVs || []).length !== s.rigs.length || (s.rigVs || []).some((q, i) => q.typeName !== s.rigs[i]))).map((s) => s.name),
+        empty: F.stations.filter((s) => !s.spots.length).map((s) => s.name) };
       // draws: three meshes a body
       const meshes = (v) => { let n = 0; v.group.traverse((o) => { if (o.isMesh) n++; }); return n; };
       const t0 = rigs.find((v) => v.trailer), e0 = rigs.find((v) => !v.trailer);
@@ -3275,12 +3280,15 @@ async function main() {
     else {
       const A = fire.aprons, Ti = fire.tiller, N = fire.noTillerman, S = fire.steal, K = fire.call;
       console.log(`  ${A.stations} stations, ${A.rigs} rigs (${A.tillers} tillers), ${A.places} on the map; on the carriageway ${A.onRoad}, in a building ${A.inB}, trailer off its hitch ${A.parted}`);
+      console.log(`  stations short of their rigs: ${A.short.length ? A.short.join(', ') : 'none'}; with no apron at all: ${A.empty.join(', ') || 'none'}`);
       console.log(`  draws: engine ${fire.draws.engine}, tiller tractor ${fire.draws.tractor} + trailer ${fire.draws.trailer}`);
       console.log(`  tiller: straight ${Ti.straight} deg off line; a 90 deg corner, articulation up to ${Ti.fwdA} deg (stop ${Ti.stop}), rear axle off the tractor's line ${Ti.offtrack} m (${N.offtrack} m with no tillerman); reversing ${Ti.revA} deg; hitch joined within ${Ti.hitch} m; entering the trailer enters the tractor ${Ti.enterRear}; left as one ${Ti.leftAsOne}`);
       console.log(`  stolen from ${S.station}: nearest ${S.nearest}, on its apron ${S.wasApron}, driving ${S.driving}, fire buttons ${S.buttons}, left ${S.after}; SIREN shown ${S.sirenShown}, a tap lights it ${S.sirenOn}, WATER (V) keeps it ${S.waterKeepsSiren}, G stops it ${S.gOff}`);
       console.log(`  fire call: ${K.dist} m off, ${K.call ? K.call.nFl : '?'} flames, ${K.call ? K.call.T : '?'} s; siren and lights ${K.lights}; out after ${(K.frames / 60).toFixed(1)} s of spray (aim locked ${K.locked} of ${K.frames / 10} checks), paid $${K.paid}; stood down cleanly ${K.stoodDown}`);
       const bad = [];
       if (A.stations < 10 || A.tillers < 5 || A.places < 10) bad.push('too few stations or rigs');
+      // (Station 5's apron on Alaskan Way has no room: the only one allowed empty)
+      if (A.short.length || A.empty.some((n) => !/Station 5\b/.test(n))) bad.push('a station without its rigs');
       if (A.onRoad || A.inB || A.parted) bad.push('a rig on the carriageway, in a building or off its hitch');
       if (fire.draws.engine !== 3 || fire.draws.tractor !== 3 || fire.draws.trailer !== 3) bad.push('draws per body');
       if (Ti.straight > 1 || Ti.fwdA > Ti.stop + 0.1 || Ti.fwdA < 10 || Ti.hitch > 0.01 || Ti.bad) bad.push("the tiller's trailer");
