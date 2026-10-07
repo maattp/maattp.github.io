@@ -53,7 +53,12 @@ const RIG = {
  */
 export function placeStations(city, world, waterAt) {
   const out = [];
-  const wet = (x, z) => G.isWater(x, z) || (waterAt && (() => { const w = waterAt(x, z); return w !== null && w > G.terrainHeight(x, z) + 0.05; })());
+  const wet = (x, z) => {
+    if (G.isWater(x, z)) return true;
+    if (!waterAt) return false;
+    const w = waterAt(x, z);
+    return w !== null && w > G.terrainHeight(x, z) + 0.05;
+  };
   for (const st of FIRE_STATIONS) {
     const bl = city.buildingsNear(st.x, st.z, 140);
     const inB = (x, z, pad) => {
@@ -184,21 +189,20 @@ class Pool {
     this.mesh.frustumCulled = false;
     this.mesh.visible = false;
     this.mesh.renderOrder = additive ? 8 : 7;
-    // per particle: x y z vx vy vz life max s0 s1 r g b a0 a1 grav drag
+    // per particle: x y z vx vy vz life max s0 s1 r g b a0 a1 grav (drag is per pool: update())
     this.S = 16;
     this.d = new Float32Array(n * this.S);
     this.head = 0;
     this.alive = 0;
     this.fresh = false;   // emitted since the last update
   }
-  emit(x, y, z, vx, vy, vz, life, s0, s1, r, g, b, a0, a1, grav, drag) {
+  emit(x, y, z, vx, vy, vz, life, s0, s1, r, g, b, a0, a1, grav) {
     const k = this.head * this.S, d = this.d;
     this.head = (this.head + 1) % this.n;
     this.fresh = true;
     d[k] = x; d[k + 1] = y; d[k + 2] = z; d[k + 3] = vx; d[k + 4] = vy; d[k + 5] = vz;
     d[k + 6] = life; d[k + 7] = life; d[k + 8] = s0; d[k + 9] = s1;
     d[k + 10] = r; d[k + 11] = g; d[k + 12] = b; d[k + 13] = a0; d[k + 14] = a1; d[k + 15] = grav;
-    void drag;   // (drag is per pool: update())
   }
   update(dt, drag = 0) {
     // nothing alive and nothing new: nothing to step (and no upload)
@@ -478,10 +482,10 @@ export class FireService {
       const j = 0.9 + Math.random() * 0.2, sp = 0.6;
       W.emit(mz.x + dirx * 0.5, mz.y + diry * 0.5, mz.z + dirz * 0.5,
         vx * j + (Math.random() - 0.5) * sp, vy * j + (Math.random() - 0.5) * sp, vz * j + (Math.random() - 0.5) * sp,
-        Math.max(0.15, tHit * (0.92 + Math.random() * 0.1)), 0.32, 1.25, 0.82, 0.9, 1.0, 0.8, 0.35, -GRAV, 0);
+        Math.max(0.15, tHit * (0.92 + Math.random() * 0.1)), 0.32, 1.25, 0.82, 0.9, 1.0, 0.8, 0.35, -GRAV);
       if (hitKind !== 'air' && Math.random() < 0.45) {
         W.emit(hx, hy + 0.2, hz, (Math.random() - 0.5) * 4, 1.5 + Math.random() * 2.5, (Math.random() - 0.5) * 4,
-          0.7 + Math.random() * 0.5, 0.8, 2.6, 0.9, 0.94, 0.98, 0.55, 0, -6, 0);
+          0.7 + Math.random() * 0.5, 0.8, 2.6, 0.9, 0.94, 0.98, 0.55, 0, -6);
       }
     }
     this.stats.sprayed += dt;
@@ -629,14 +633,14 @@ export class FireService {
           // a dead flame steams for a while
           if (fl.steam > 0) {
             fl.steam -= dt;
-            if (Math.random() < dt * 6) S.emit(fl.x, fl.y, fl.z, fl.nx, 1.6, fl.nz, 2.6, 1.6, 6, 0.86, 0.87, 0.88, 0.5, 0, 0.6, 0);
+            if (Math.random() < dt * 6) S.emit(fl.x, fl.y, fl.z, fl.nx, 1.6, fl.nz, 2.6, 1.6, 6, 0.86, 0.87, 0.88, 0.5, 0, 0.6);
           }
           continue;
         }
         if (fl.wet > 0) {
           fl.wet -= dt;
           fl.hp -= dt * 0.42;
-          if (Math.random() < dt * 10) S.emit(fl.x, fl.y + 0.5, fl.z, fl.nx, 1.8, fl.nz, 1.6, 1.4, 4.5, 0.88, 0.89, 0.9, 0.55, 0, 0.8, 0);
+          if (Math.random() < dt * 10) S.emit(fl.x, fl.y + 0.5, fl.z, fl.nx, 1.8, fl.nz, 1.6, 1.4, 4.5, 0.88, 0.89, 0.9, 0.55, 0, 0.8);
           if (fl.hp <= 0) { fl.hp = 0; fl.steam = 3; this.stats.flamesOut++; continue; }
         } else fl.hp = Math.min(1, fl.hp + dt * 0.035);
         lit++;
@@ -652,13 +656,13 @@ export class FireService {
             fl.nx * 0.9 + (Math.random() - 0.5) * 1.0, (glow ? 0.8 : 3.2) + Math.random() * 2.8, fl.nz * 0.9 + (Math.random() - 0.5) * 1.0,
             glow ? 0.9 : 0.6 + Math.random() * 0.55,
             (glow ? 7.5 : 3.0 + Math.random() * 1.8) * (0.55 + 0.45 * k), glow ? 8 : 0.9,
-            1.0, glow ? 0.38 : 0.42 + hot * 0.42, glow ? 0.08 : 0.10 + hot * 0.16, glow ? 0.28 : 1.0, 0.0, glow ? 0.4 : 2.2, 0);
+            1.0, glow ? 0.38 : 0.42 + hot * 0.42, glow ? 0.08 : 0.10 + hot * 0.16, glow ? 0.28 : 1.0, 0.0, glow ? 0.4 : 2.2);
         }
         // smoke: thick, dark and rising high -- it is the beacon from across town
         if (Math.random() < dt * (phone ? 3.2 : 5) * k) {
           const g = 0.07 + Math.random() * 0.10;
           S.emit(fl.x + fl.nx * 1.2, fl.y + 2.2, fl.z + fl.nz * 1.2, fl.nx * 0.8 + (Math.random() - 0.5) * 1.4, 4.0 + Math.random() * 2.0, fl.nz * 0.8 + (Math.random() - 0.5) * 1.4,
-            7 + Math.random() * 5, 3.5, 17, g, g, g * 1.05, 0.78, 0, 0.3, 0);
+            7 + Math.random() * 5, 3.5, 17, g, g, g * 1.05, 0.78, 0, 0.3);
         }
       }
       fire.lit = lit;

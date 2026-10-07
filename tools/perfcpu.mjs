@@ -14,6 +14,10 @@
 //   drive-dt   the player's car on downtown's street grid at ~14 m/s
 //   foot-dt    on foot, standing downtown (traffic and crowds around)
 //   tank-dt    the tank on drive-dt's streets at ~12 m/s, firing both guns
+//   fire-call  Station 10's engine parked at a burning building (a seeded fire
+//              call, its flames held alight), the gun off
+//   fire-spray the same, the deck gun on the nearest flame every frame: the
+//              difference is what the water costs
 //
 // The car is steered by an autopilot hooked in front of player.update (the
 // same input a stick produces, as tunnelride.mjs does), along a route walked
@@ -167,6 +171,7 @@ function pageInstall() {
   wrap(d.hud, 'update', 'hud');
   wrap(d.audio, 'update', 'audio');
   if (d.acts) wrap(d.acts, 'update', 'activities');
+  if (d.fire) wrap(d.fire, 'update', 'fire');
   wrap(d.renderer, 'render', 'render');
   // City queries: counted (and timed) only in the counting pass.
   for (const k of ['groundAt', 'roadLift', 'lidAt', 'obstacleHit', 'barrierHit', 'buildingsNear', 'edgesNear', 'onRoad']) {
@@ -257,6 +262,9 @@ function pageInstall() {
     // ...with the heat held at zero: the tank's own cost, without the pursuit
     // its gunfire brings (police routing is the pursuit's, not the tank's)
     'tank-calm': { speed: 12, vehicle: 'tank', fire: true, calm: true, route: () => buildRoute(0, 0, (e) => e.cls !== 'hwy' && e.cls !== 'ramp' && e.cls !== 'res' && !e.elev, 3000) },
+    // a fire call, parked at the building: the gun off, then on (firecalls.js)
+    'fire-call': { firecall: true, spray: false },
+    'fire-spray': { firecall: true, spray: true },
   };
 
   let R = null;
@@ -329,10 +337,53 @@ function pageInstall() {
     try { return pu.call(this, dt, input, ...rest); } finally { S.sys.player = (S.sys.player || 0) + performance.now() - t0; }
   };
 
+  // A fire call held burning: every frame the flames are topped back up and
+  // the camera is put back on the nearest one, so a run sprays the same fire
+  // for as long as it lasts (it would be out in ~10 s otherwise).
+  let FC = null;
+  if (d.fire) {
+    const fu = d.fire.update;
+    d.fire.update = function (...a) {
+      if (FC) {
+        const F = d.fire, v = FC.v;
+        F.forceSpray = FC.spray;
+        for (const f of F.fires) for (const q of f.flames) { q.hp = 1; q.wet = 0; }
+        if (F.call) F.call.t = F.call.T;
+        const m = F.muzzle(v, {});
+        let fl = null, bd = Infinity;
+        for (const f of F.fires) for (const q of f.flames) { const dd = Math.hypot(q.x - m.x, q.z - m.z); if (dd < bd) { bd = dd; fl = q; } }
+        if (fl) p.camYaw = Math.atan2(fl.x - m.x, fl.z - m.z) - Math.PI + 0.08;
+      }
+      return fu.apply(this, a);
+    };
+  }
+
   S.setup = async (name) => {
     const cfg = S.runs[name];
     d.game.paused = false;
-    if (cfg.foot) {
+    FC = null;
+    if (cfg.firecall) {
+      R = null;
+      const F = d.fire;
+      if (!F) return { error: 'no fire service' };
+      if (!p.onFoot && p.exitVehicle) p.exitVehicle();
+      F.standDown();
+      const st = F.stations.find((q) => /Station 10/.test(q.name));
+      const v = st.rigVs.find((q) => !q.trailer);
+      // the same building every run (firecalls.js pickBuilding takes a seeded rnd)
+      let sd = 1871;
+      const rnd = () => { sd = (sd + 0x6D2B79F5) >>> 0; let t = sd; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+      const pick = F.pickBuilding(v.x, v.z, 300, 1500, 4, rnd);
+      if (!pick) return { error: 'no building' };
+      const e = c.edges[pick.road.ei];
+      p.respawn(pick.road.x, pick.road.z);
+      p.enterVehicle(v);
+      F.dispatch(pick);
+      v.place(pick.road.x - e.dx * 5, pick.road.z - e.dz * 5, Math.atan2(e.dx, e.dz));
+      v.vLong = 0; v.vLat = 0;
+      d.world.update(v.x, v.z, 40);
+      FC = { v, spray: !!cfg.spray };
+    } else if (cfg.foot) {
       R = null;
       if (!p.onFoot && p.exitVehicle) p.exitVehicle();
       p.respawn(cfg.foot[0], cfg.foot[1]);
@@ -390,6 +441,12 @@ function pageInstall() {
     let sum = 0;
     for (const [k, v] of Object.entries(S.sys)) { out.sys[k] = +(v / F.length).toFixed(3); sum += v / F.length; }
     out.sys.other = +(out.cpuMean - sum).toFixed(3);
+    // per-system MEDIAN ms/frame too: a system's own cost, which the whole
+    // frame's median buries under render and traffic noise
+    // a fire run: is the gun actually on a flame (the measurement is worthless if not)
+    if (FC && d.fire) { const F = d.fire; out.fireState = { spraying: F.spraying, lock: !!F.aim.lock, hit: F.aim.hit, water: F.water.alive, flames: F.flame.alive, smoke: F.smoke.alive }; }
+    out.sysMed = {};
+    for (const k of Object.keys(S.sys)) out.sysMed[k] = +q(S.frames.map((f) => f[2][k] || 0), 0.5).toFixed(3);
     return out;
   };
   S.count = async (n) => {
@@ -532,6 +589,8 @@ try {
     console.log(`  cpu/frame  median ${T.cpu.toFixed(2)}  mean ${T.cpuMean.toFixed(2)}  p90 ${T.cpu90.toFixed(2)}  p99 ${T.cpu99.toFixed(2)}  max ${T.cpuMax}  (raf ${T.raf.toFixed(2)})`);
     console.log(`  fps ${T.fps}  frame interval median ${T.raf.toFixed(1)}  p90 ${T.raf90}  p99 ${T.raf99}`);
     console.log(`  by system (mean ms/frame): ${sys}`);
+    if (T.fireState) console.log(`  fire: ${JSON.stringify(T.fireState)}`);
+    if (T.sysMed) console.log(`  by system (median ms/frame): ${Object.entries(T.sysMed).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v.toFixed(2)}`).join('  ')}`);
     console.log(`  frames over 20 ms: ${T.miss} of ${T.n} (over 36 ms: ${T.miss2})`);
     console.log(`  shadow pass: ${SH.calls} of ${SH.sceneCalls} scene-pass draws, ${SH.ms} ms/frame  (${Object.entries(SH.by).map(([k, v]) => k + ' ' + v).join(', ')})  cache redraws so far ${SH.cacheRedraws}`);
     console.log(`  slow quarter spends extra: ${T.slowQ}`);
