@@ -13,11 +13,20 @@ export class Effects {
     this.size = new Float32Array(MAX);
     geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(this.col, 3));
-    geo.setAttribute('size', new THREE.BufferAttribute(this.size, 1));
+    // Per-particle size. PointsMaterial has no size attribute of its own:
+    // this one (it was named `size`, the uniform's name) was written every
+    // frame and never read, so every spark, droplet, blood drop and puff of
+    // smoke was the same 1.2 m disc -- a pistol's muzzle flash a yellow ball
+    // the size of the player's chest. The shader now multiplies it in; the
+    // sizes in emit()'s callers are what they always said.
+    geo.setAttribute('psize', new THREE.BufferAttribute(this.size, 1));
     const mat = new THREE.PointsMaterial({
-      size: 1.2, map: tx.particle, vertexColors: true, transparent: true,
+      size: 1, map: tx.particle, vertexColors: true, transparent: true,
       depthWrite: false, sizeAttenuation: true, blending: THREE.NormalBlending,
     });
+    mat.onBeforeCompile = (sh) => {
+      sh.vertexShader = 'attribute float psize;\n' + sh.vertexShader.replace('gl_PointSize = size;', 'gl_PointSize = size * psize;');
+    };
     this.points = new THREE.Points(geo, mat);
     this.points.frustumCulled = false;
     scene.add(this.points);
@@ -166,6 +175,18 @@ export class Effects {
     this.emit(x, y, z, 8, { r: 0.6, g: 0.08, b: 0.08, size: 0.3, life: 0.5, spread: 2.2, vy: 1.6, grav: -9 });
   }
 
+  /** A pistol's muzzle flash at (x, y, z) along `dir`, and the spent case
+   *  thrown out to the right. Points in the shared particle draw. */
+  muzzle(x, y, z, dir) {
+    // a short hot cone out of the barrel and a white core, gone in 3 frames
+    this.emit(x + dir.x * 0.08, y, z + dir.z * 0.08, 4, { r: 1, g: 0.82, b: 0.4, size: 0.2, life: 0.05, spread: 0.3, vy: 0, grav: 0, drag: 0.5, jitter: 0.03, vx: dir.x * 3, vz: dir.z * 3 });
+    this.emit(x + dir.x * 0.03, y, z + dir.z * 0.03, 1, { r: 1, g: 0.97, b: 0.85, size: 0.14, life: 0.04, spread: 0.05, vy: 0, grav: 0, jitter: 0.005 });
+    // a few sparks thrown forward, not up
+    this.emit(x + dir.x * 0.1, y, z + dir.z * 0.1, 3, { r: 1, g: 0.75, b: 0.3, size: 0.06, life: 0.18, spread: 1.5, vy: 0.3, grav: -6, drag: 0.85, jitter: 0.02, vx: dir.x * 6, vz: dir.z * 6 });
+    // the case: out of the ejection port, up and to the right
+    this.emit(x - dir.x * 0.12, y + 0.03, z - dir.z * 0.12, 1, { r: 0.85, g: 0.66, b: 0.25, size: 0.06, life: 0.7, spread: 0.3, vy: 2.0, grav: -9.8, drag: 0.98, jitter: 0.01, vx: -dir.z * 1.6, vz: dir.x * 1.6 });
+  }
+
   /**
    * A gunshot's flash line, muzzle to impact, for 0.09 s. Pooled: the slots
    * are made once and reused round a ring (a five-star firefight fires a few
@@ -218,6 +239,7 @@ export class Effects {
     }
     this.geo.attributes.position.needsUpdate = true;
     this.geo.attributes.color.needsUpdate = true;
+    this.geo.attributes.psize.needsUpdate = true;
 
     let n = 0;
     const L = this.lpos;

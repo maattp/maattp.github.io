@@ -79,7 +79,7 @@ export function crawlPath(u, out = _key) {
  * straight overhead is not a degenerate case. Writes the wrist into `wrist`.
  * Lengths are world (the group's scale applied); allocation-free.
  */
-function armIK(sh, el, target, pole, L1, L2, wrist) {
+export function armIK(sh, el, target, pole, L1, L2, wrist) {
   sh.getWorldPosition(_S);
   _d.subVectors(target, _S);
   let d = _d.length();

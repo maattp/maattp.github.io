@@ -462,6 +462,28 @@ const SOUNDS = {
     k.burst(out, 'white', ti, 'bandpass', 2000 + R() * 800, 1.2, 0.55, 0.006, R);
   } },
 
+  // A punch, split at its contact for the on-foot combo (player.landPunch):
+  // the swing through the air on a miss, the contact alone on a hit -- the
+  // hit frame IS the contact, so `punch`'s 85 ms of whoosh would land late.
+  whoosh: { dur: 0.2, variants: 3, build(k, out, t, R) {
+    const f0 = 420 + R() * 120;
+    const wf = k.filt('bandpass', f0, 1.3);
+    wf.frequency.setValueAtTime(f0, t);
+    wf.frequency.exponentialRampToValueAtTime(1700 + R() * 400, t + 0.07);
+    wf.frequency.exponentialRampToValueAtTime(700, t + 0.16);
+    const wg = k.gain(0);
+    k.noise('white', t, 0.18, R).connect(wf).connect(wg).connect(out);
+    wg.gain.setValueAtTime(0, t);
+    wg.gain.linearRampToValueAtTime(0.30, t + 0.05);
+    wg.gain.exponentialRampToValueAtTime(0.001, t + 0.17);
+  } },
+
+  smack: { dur: 0.3, variants: 3, build(k, out, t, R) {
+    k.thump(out, t, 125 + R() * 25, 52, 0.07, 1, 0.032);
+    k.burst(out, 'pink', t, 'lowpass', 650, 0.7, 0.9, 0.022, R);
+    k.burst(out, 'white', t, 'bandpass', 2000 + R() * 800, 1.2, 0.55, 0.006, R);
+  } },
+
   pedhit: { dur: 0.6, build(k, out, t, R) {
     k.thump(out, t, 90, 42, 0.12, 1, 0.06);
     k.burst(out, 'pink', t, 'lowpass', 500, 0.7, 1, 0.05, R);
@@ -1132,7 +1154,7 @@ const SOUNDS = {
 // reads 20-40 s -- every batch waits for a ~0.5 s frame -- which measures the
 // harness, not the audio: use tools/audiounlock.mjs --bench with AUTO_GPU=1.)
 const BANK_FIRST = ['step_hard', 'step_grass', 'step_gravel', 'step_water', 'door_open', 'door_close', 'seat',
-  'starter', 'bump', 'land', 'punch', 'pedhit', 'thunk', 'crunch', 'glass', 'gun', 'splash', 'squeal', 'gravel', 'slosh'];
+  'starter', 'bump', 'land', 'punch', 'whoosh', 'smack', 'pedhit', 'thunk', 'crunch', 'glass', 'gun', 'splash', 'squeal', 'gravel', 'slosh'];
 
 /**
  * Render every recipe into AudioBuffers, into `bank` as each batch finishes
@@ -2683,6 +2705,8 @@ export class Audio {
   }
 
   punch() { this.play('punch', { gain: 0.7, send: 0.05 }); }
+  whoosh() { this.play('whoosh', { gain: 0.55, send: 0.04 }); }
+  smack() { this.play('smack', { gain: 0.8, send: 0.05 }); }
   pedHit() { this.play('pedhit', { gain: 0.8, send: 0.08 }); }
   land(drop) { this.play('land', { gain: clamp(0.35 + drop * 0.12, 0.35, 0.95), send: 0.05 }); }
 

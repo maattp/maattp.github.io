@@ -249,10 +249,11 @@ class Game {
     if (audio) audio.ui('fail');
   }
 
+  // (x, y, z) is the pistol's muzzle (player.attack)
   onGunshot(x, y, z, dir) {
     audio.gunshot();
-    fx.tracer(x, y, z, x + dir.x * 55, y - 1.5, z + dir.z * 55);
-    fx.sparks(x + dir.x * 0.7, y, z + dir.z * 0.7, 4);
+    fx.tracer(x + dir.x * 0.1, y, z + dir.z * 0.1, x + dir.x * 55, y - 1.5, z + dir.z * 55);
+    fx.muzzle(x, y, z, dir);
     peds.scare(x, z, 45);
     // a police mission's gunfire is police work
     if (!(missions && missions.run)) this.addHeat(10);
@@ -263,8 +264,12 @@ class Game {
     if (v.dead) this.onCarDestroyed(v);
   }
 
-  onPunch() {
-    audio.punch();
+  // a punch's hit frame (player.landPunch): `hit` is the pedestrian it
+  // landed on, or null -- a whoosh through the air
+  onPunch(hit, x, y, z) {
+    if (!hit) { audio.whoosh(); return; }
+    audio.smack();
+    peds.scare(hit.x, hit.z, 12);
   }
 
   onHorn() {
@@ -1543,6 +1548,9 @@ function installShadowFade() {
     const tw = performance.now();
     const warm = new THREE.Group();
     const wakeWas = fx.wakeMesh ? fx.wakeMesh.visible : false;
+    // the pistol in the player's hand is hidden until a pickup: compile it now
+    const gun = player.fighter ? player.fighter.gun : null, gunWas = gun ? gun.visible : false;
+    if (gun) gun.visible = true;
     let lazy = null, fireWarm = null;
     try {
       // Traffic has not spawned yet, so the stand-ins come from the asset
@@ -1588,6 +1596,7 @@ function installShadowFade() {
       if (fx.wakeMesh) fx.wakeMesh.visible = wakeWas;
       if (fireWarm) fireWarm.restore();
       if (fx.lines) fx.lines.visible = false;
+      if (gun) gun.visible = gunWas;
       try { if (lazy) lazy.dispose(); } catch (e) { /* nothing to free */ }
     }
     const gl = renderer.getContext();

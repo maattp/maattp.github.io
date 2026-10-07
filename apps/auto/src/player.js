@@ -4,6 +4,7 @@ import { Skydive } from './parachute.js';
 import * as THREE from './three.js';
 import { makeHumanoid, animateWalk, BONES } from './peds.js';
 import { poseSwim, PoseBlend, PRONE, UPRIGHT } from './swim.js';
+import { Fighter } from './melee.js';
 import { collideWithBuildings } from './traffic.js';
 import { clamp, lerp, angleWrap, damp, dist2, smooth } from './util.js';
 import * as G from './geo.js';
@@ -61,6 +62,10 @@ export class Player {
     this.hitCd = 0;    // seconds before a car can hurt you again (updateFoot)
     this.lookT = 99;   // seconds since the look stick or drag last moved (a tank's camera stays put)
     this.shake = 0;    // camera shake, decaying (a tank's gun, a blast)
+    // Punches and the pistol's aim, an overlay on the walk (melee.js), and
+    // the camera's flick when one lands
+    this.fighter = new Fighter(this.h);
+    this.camKick = 0;
 
     this.camYaw = this.heading + Math.PI;
     this.camPitch = 0.1;
@@ -84,6 +89,7 @@ export class Player {
     v.wasParked = v.mode === 'parked';
     const wasMode = v.mode;
     if (this.swimming) this.clearSwim();
+    this.fighter.reset();
     v.mode = 'free';
     v.setDetailed(true);
     this.onFoot = false;
@@ -183,6 +189,11 @@ export class Player {
   update(dt, input, look, controls, traffic, peds) {
     this.attackCd -= dt;
     this.enterCd -= dt;
+    // the pistol is in the right hand while you have rounds for it, on foot
+    const F = this.fighter;
+    F.gun.visible = this.onFoot && this.armed && this.ammo > 0 && !this.swimming && !this.sky;
+    // a raised gun follows the camera
+    if (F.aimT > 0) F.aimYaw = this.camYaw + Math.PI;
 
     this.camYaw -= look.x;
     this.camPitch = clamp(this.camPitch + look.y, -0.5, 1.15);
@@ -195,7 +206,9 @@ export class Player {
     if (tap === 'enter' && this.enterCd <= 0) {
       this.enterCd = 0.45;
       if (this.onFoot && this.game.tryInteract && this.game.tryInteract(this)) {
-        // something on foot took the press (a fishing rod on a pier)
+        // something on foot took the press (a fishing rod on a pier); it
+        // poses the arms itself, with empty hands
+        F.reset(); F.gun.visible = false;
       } else if (this.onFoot) {
         // A monorail at the platform beside you (or at Westlake's street
         // door) before any car: see monorail.js boardable.
@@ -237,17 +250,37 @@ export class Player {
     // this kind sits.
     const run = input.sprint ? 7.2 : 5.0;
     let target = 0;
+    // A punch turns you to the pedestrian it locked on to before it lands
+    // (melee.js); until then the stick moves you but does not steer.
+    const F = this.fighter;
+    const lockTurn = !!(F.cur && F.target && F.t < F.cur.hit);
     if (mag > 0.12) {
       // Stick is camera-relative. Note HEADING_SENSE: heading is three.js
       // rotation.y, so a LARGER heading turns anticlockwise = left on screen.
       // Pushing the stick right therefore has to subtract from the heading.
       const ang = Math.atan2(-input.x, -input.y) + this.camYaw + Math.PI;
-      this.heading += clamp(angleWrap(ang - this.heading), -10 * dt, 10 * dt);
+      if (!lockTurn) this.heading += clamp(angleWrap(ang - this.heading), -10 * dt, 10 * dt);
       target = run * clamp(mag, 0, 1);
     }
+    let lx = 0, lz = 0;
+    if (lockTurn) {
+      const tx = F.target.x - this.x, tz = F.target.z - this.z;
+      const want = Math.atan2(tx, tz);
+      this.heading += clamp(angleWrap(want - this.heading), -20 * dt, 20 * dt);
+      // ...and steps in to them: a pedestrian knocked back by the last punch
+      // is out of reach of the next
+      const d = Math.hypot(tx, tz) || 1, step = clamp((d - 1.05) / Math.max(0.05, F.cur.hit - F.t), 0, 3.5) * dt;
+      lx = tx / d * step; lz = tz / d * step;
+    } else if (F.aimT > 0) {
+      // Aiming: standing, the body turns to the gun's line; moving, the trunk
+      // twists to it and the body follows only past 1.1 rad.
+      const rel = angleWrap(F.aimYaw - this.heading);
+      if (this.speed < 0.6) this.heading += clamp(rel, -14 * dt, 14 * dt);
+      else if (Math.abs(rel) > 1.1) this.heading += rel - Math.sign(rel) * 1.1;
+    }
     this.speed = damp(this.speed, target, 9, dt);
-    const nx = this.x + Math.sin(this.heading) * this.speed * dt;
-    const nz = this.z + Math.cos(this.heading) * this.speed * dt;
+    const nx = this.x + Math.sin(this.heading) * this.speed * dt + lx;
+    const nz = this.z + Math.cos(this.heading) * this.speed * dt + lz;
     // If we're already standing inside geometry -- put down in it, dumped out
     // of a car into it, knocked into it -- then refusing to move traps the
     // player permanently, walking on the spot with every direction blocked.
@@ -322,9 +355,13 @@ export class Player {
     // Just out of the water: the walk poses upright and unblended (its locks
     // read the group's matrix), then the cross-fade from the swim goes on top.
     const blending = this.poseBlend.active;
+    F.restore();
     if (blending) { this.poseBlend.restore(this.h); this.h.group.rotation.x = 0; }
     animateWalk(this.h, clamp(this.speed * 0.16, 0, 0.85), dt, this.speed);
     if (blending) this.poseBlend.apply(this.h, dt, 0);
+    // fists and the gun over the walk; the punch lands on its hit frame
+    F.apply(dt, this.speed, this.heading);
+    if (F.hitDue) this.landPunch(peds);
 
     // Run over by a car: ONCE per hit, and thrown clear to the side. It was
     // damage every frame of the overlap, with a push straight back along the
@@ -369,6 +406,8 @@ export class Player {
     const st = this.swimSt;
     st.u = 0.6; st.tu = 0; st.w = 0; st.pitch = this.h.group.rotation.x;
     this.poseBlend.snap(this.h, 0.3);
+    // (after the snap: the blend starts from the pose you saw)
+    this.fighter.reset(); this.fighter.gun.visible = false;
     // where you went in, not snapped to the swimming depth (standing on the
     // water for the first frames); a fall carries you under (st.plunge)
     this.y = Math.min(this.y, wl - SWIM_FEET);
@@ -575,18 +614,33 @@ export class Player {
     if (v.dead) this.game.onCarDestroyed(v);
   }
 
+  /**
+   * ATTACK. Armed, a shot along the camera's line from the barrel, the gun
+   * raised two-handed (melee.js). Unarmed, the next punch of the combo --
+   * jab, cross, hook -- soft-locked onto the nearest pedestrian within
+   * 2.2 m in front of the camera; the hit is dealt on the punch's hit frame
+   * (landPunch), not here. Nothing in the water or under a parachute.
+   */
   attack(traffic, peds) {
     if (this.onFoot) {
+      if (this.swimming || this.sky) { this.attackCd = 0.3; return; }
+      const F = this.fighter;
       if (this.armed && this.ammo > 0) {
         this.attackCd = 0.22;
         this.ammo--;
-        const dir = { x: -Math.sin(this.camYaw), z: -Math.cos(this.camYaw) };
-        this.heading = this.camYaw + Math.PI;
-        this.game.onGunshot(this.x, this.y + 1.4, this.z, dir);
-        // hitscan against peds and cars
-        for (let t = 2; t < 60; t += 1.2) {
-          const hx = this.x + dir.x * t, hz = this.z + dir.z * t;
-          const p = peds.hitAt(hx, hz, 0.9, 34, true);
+        const aim = this.camYaw + Math.PI;
+        const dir = { x: Math.sin(aim), z: Math.cos(aim) };
+        F.fire(aim);
+        // From the barrel once the gun is up; on the press that raises it,
+        // from where the barrel is going (shoulder height, an arm out).
+        const m = F.aimW > 0.85 && F.gun.visible ? F.muzzle(this._muz || (this._muz = new THREE.Vector3()))
+          : (this._muz || (this._muz = new THREE.Vector3())).set(this.x + dir.x * 0.75, this.y + 1.45 * this.h.scale, this.z + dir.z * 0.75);
+        this.game.onGunshot(m.x, m.y, m.z, dir);
+        this.camKick = Math.max(this.camKick, 0.3);
+        // hitscan against peds and cars, from the barrel
+        for (let t = 0.6; t < 60; t += 1.2) {
+          const hx = m.x + dir.x * t, hz = m.z + dir.z * t;
+          const p = peds.hitAt(hx, hz, 0.9, 34, true, this.x, this.z);
           if (p) return;
           for (const v of traffic.cars) {
             if (dist2(v.x, v.z, hx, hz) < v.radius * v.radius) {
@@ -597,11 +651,7 @@ export class Player {
           }
         }
       } else {
-        this.attackCd = 0.5;
-        this.game.onPunch();
-        const fx = this.x + Math.sin(this.heading) * 1.2;
-        const fz = this.z + Math.cos(this.heading) * 1.2;
-        peds.hitAt(fx, fz, 1.1, 18, true);
+        this.attackCd = F.punch(this.meleeTarget(peds));
       }
     } else {
       this.attackCd = 0.4;
@@ -610,9 +660,42 @@ export class Player {
     }
   }
 
+  /** The punch's soft lock: the nearest pedestrian (or cop) on your feet's
+   *  level within 2.2 m, inside 60 deg either side of the camera's line. */
+  meleeTarget(peds) {
+    const cx = Math.sin(this.camYaw + Math.PI), cz = Math.cos(this.camYaw + Math.PI);
+    let best = null, bd = 2.2;
+    for (const p of peds.peds) {
+      if (p.state === 'down' || Math.abs(p.y - this.y) > 1.3) continue;
+      const dx = p.x - this.x, dz = p.z - this.z, d = Math.hypot(dx, dz);
+      if (d >= bd || d < 1e-3 || dx * cx + dz * cz < 0.5 * d) continue;
+      best = p; bd = d;
+    }
+    return best;
+  }
+
+  /** The hit frame: the locked pedestrian if the turn brought them in front
+   *  and in reach, else whoever is in front of the fist. */
+  landPunch(peds) {
+    const F = this.fighter, P = F.hitPunch;
+    const fx = Math.sin(this.heading), fz = Math.cos(this.heading);
+    let hit = null;
+    const t = F.target;
+    if (t && t.state !== 'down' && peds.peds.includes(t) && Math.abs(t.y - this.y) < 1.3) {
+      const dx = t.x - this.x, dz = t.z - this.z, d = Math.hypot(dx, dz);
+      if (d < 1.9 && dx * fx + dz * fz > 0.55 * d) hit = peds.strike(t, P.dmg, true, this.x, this.z);
+    }
+    if (!hit) hit = peds.hitAt(this.x + fx * 0.95, this.z + fz * 0.95, 0.75, P.dmg, true, this.x, this.z);
+    const fist = this.h.bones[P.arm > 0 ? BONES.handR : BONES.handL].getWorldPosition(this._fist || (this._fist = new THREE.Vector3()));
+    if (hit) this.camKick = Math.max(this.camKick, 0.6);
+    this.lastPunch = { name: P.name, hit, x: fist.x, y: fist.y, z: fist.z };
+    if (this.game.onPunch) this.game.onPunch(hit, fist.x, fist.y, fist.z);
+  }
+
   updateCamera(dt, input) {
     // the shake decays by time, not by frame (applyCamera draws it)
     if (this.shake) this.shake *= Math.pow(0.86, dt * 60);
+    this.camKick *= Math.exp(-9 * dt);
     // A vehicle with a rig of its own takes the camera when it wants it (a
     // Link train in a bore: link.js camRig).
     if (!this.onFoot && this.vehicle && this.vehicle.camRig && this.vehicle.camRig(this, dt)) return;
@@ -913,7 +996,14 @@ export class Player {
       camera.position.z += (Math.random() - 0.5) * k;
     } else this.shake = 0;
     if (this.camUp) camera.up.copy(this.camUp); else camera.up.set(0, 1, 0);
-    camera.lookAt(this.camLook);
+    // a punch landing (or a shot) flicks the view up and in a touch
+    const k = this.camKick * this.camKick;
+    if (k > 1e-4) {
+      const l = this._kickLook || (this._kickLook = new THREE.Vector3());
+      l.copy(this.camLook); l.y += 0.10 * k;
+      camera.position.lerp(this.camLook, 0.03 * k);
+      camera.lookAt(l);
+    } else camera.lookAt(this.camLook);
   }
 
   respawn(x, z) {
@@ -924,6 +1014,7 @@ export class Player {
     this.onFoot = true;
     this.h.group.visible = true;
     if (this.swimming) this.clearSwim();
+    this.fighter.reset();
     this.x = x;
     this.z = z;
     this.y = this.city.groundAt(x, z, null);
