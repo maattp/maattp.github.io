@@ -87,11 +87,14 @@ const BANDS = {
   boxtruck: { name: 'box truck', accel: [14, 22], top: [110, 140], brake: [45, 58], lat: [0.60, 0.72] },
   ambulance: { name: 'ambulance', accel: [9, 14], top: [140, 170], brake: [42, 54], lat: [0.65, 0.78] },
   garbage: { name: 'refuse truck', accel: [24, 42], top: [80, 100], brake: [48, 62], lat: [0.55, 0.68] },
+  // A main battle tank, timed 0-50 (it is governed near 65): an Abrams makes
+  // 0-32 in about 7 s, 0-50 in about a dozen. Braked hard on its tracks.
+  tank: { name: 'main battle tank', accel: [9, 16], top: [60, 72], brake: [40, 55], lat: [0.4, 0.7] },
 };
 
 function launch() {
   return spawn(CHROME, [
-    `--remote-debugging-port=${PORT}`, '--headless=new', '--use-gl=swiftshader',
+    `--remote-debugging-port=${PORT}`, '--headless=new', '--disable-gpu-sandbox', '--use-gl=swiftshader',
     '--enable-unsafe-swiftshader', '--window-size=900,640', '--no-first-run',
     `--user-data-dir=/tmp/auto-veh-profile-${PORT}`, 'about:blank',
   ], { stdio: 'ignore' });
@@ -125,7 +128,7 @@ const BENCH = `(() => {
       // Standing acceleration. A city bus and a refuse truck top out below
       // 100 km/h in life as well as here, so timing them to 100 measures
       // nothing -- they get the 0-80 the trade press actually quotes for them.
-      const mark = spec.topKph < 110 ? 80 : 100;
+      const mark = spec.topKph < 70 ? 50 : spec.topKph < 110 ? 80 : 100;
       let v = fresh();
       let t = 0, accel = null;
       for (let i = 0; i < 60 * 120 && accel === null; i++) {
@@ -256,7 +259,8 @@ async function main() {
     const MOTO = new Set(['cruiser', 'sportbike']);
     const HEAVY = new Set(['bus', 'boxtruck', 'garbage', 'ambulance', 'van']);
     // The quad is its own class: four wheels, but a bike's mass and a rider.
-    const group = (n) => (MOTO.has(n) ? 'moto' : HEAVY.has(n) ? 'heavy' : n === 'atv' ? 'atv' : 'car');
+    // ...and so is the tank: it steers by yaw rate, not a wheel angle.
+    const group = (n) => (MOTO.has(n) ? 'moto' : HEAVY.has(n) ? 'heavy' : n === 'atv' ? 'atv' : n === 'tank' ? 'tank' : 'car');
     const rows = Object.entries(res).filter(([n]) => BANDS[n]);
     const wrong = [];
     for (const [na, ra] of rows) {

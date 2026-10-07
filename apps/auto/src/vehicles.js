@@ -239,6 +239,14 @@ export const TYPES = {
   hydro: deriveSpec({ wheelbase: 6.0, len: 9.6, wid: 4.4, wheelR: 0.3, sill: 0.2, belt: 0.6, roof: 1.3, cab: [0.1, 0.35], hand: 'hydro', boat: true, hydro: true, engine: 'turbine', mass: 3.0, acc: 12, topKph: 250, brakeM: 60, latG: 1.6 }),
   // the Duck Tour's amphibious DUKW: a truck on land, a boat in the water (updateDuck)
   duck: deriveSpec({ wheelbase: 5.2, len: 9.5, wid: 2.52, wheelR: 0.56, sill: 0.62, belt: 2.05, roof: 3.4, cab: [-0.42, 0.26], hand: 'duck', livery: 0xf2c230, amphib: true, diesel: true, mass: 6.5, acc: 1.35, topKph: 80, brakeM: 55, latG: 0.55 }),
+  // A modern main battle tank, M1A2 proportions: 7.93 m hull (the gun takes
+  // it to 9.8), 3.66 m over the skirts, 2.44 m to the turret roof, ~62 t.
+  // `tank` sends the yaw to skid steering (Vehicle._tankYaw: it pivots on
+  // the spot) and the model to buildTank (tracks, turret and gun are live
+  // parts on the player's tank); `armor` scales the damage it takes. Governed
+  // at ~65 km/h, slow off the line; `offroad` because tracks do not bog down.
+  // `len` is the HULL: the gun overhangs nothing it collides with.
+  tank: deriveSpec({ wheelbase: 4.6, len: 7.93, wid: 3.66, wheelR: 0.32, sill: 0.48, belt: 1.42, roof: 2.44, cab: [0, 0.3], hand: 'tank', tank: true, offroad: true, engine: 'tank', livery: 0xb9a27a, armor: 0.12, mass: 40, acc: 2.0, topKph: 65, brakeM: 45, latG: 0.6 }),
   bus: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', livery: 0xeceae3, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
   boxtruck: deriveSpec({ wheelbase: 4.3,len: 7.5, wid: 2.38, wheelR: 0.46, sill: 0.62, belt: 1.55, roof: 2.55, cab: [0.14, 0.46], cargo: 2.55, hand: 'boxtruck', boxy: 2, mass: 3.0, acc: 2.5, topKph: 125, brakeM: 51, latG: 0.66 }),
   ambulance: deriveSpec({ wheelbase: 3.9,len: 6.3, wid: 2.28, wheelR: 0.42, sill: 0.56, belt: 1.42, roof: 2.35, cab: [0.16, 0.46], cargo: 2.25, hand: 'ambulance', livery: 0xf4f4f0, boxy: 2, emergency: true, mass: 2.4, acc: 3.2, topKph: 155, brakeM: 48, latG: 0.72 }),
@@ -6894,6 +6902,458 @@ function balloonFlame() {
   return g;
 }
 
+// --- the tank ------------------------------------------------------------------
+//
+// A modern main battle tank on M1A2 lines (generic markings). Everything is in
+// the shared MATTE material with vertex colours -- a tank is flat paint, and
+// the per-car clearcoated `paint` would make it a toy -- so the hull can carry
+// its shading and the turret needs no material of its own. Three parts live
+// on the player's tank (setDetailed) and are baked into everyone else's:
+//
+//   turret  turns about the ring (turretAt), one draw
+//   gun     elevates about its trunnions (gunAt, in the turret's frame), one draw
+//   track   one side's belt, road wheels, sprocket and idler, drawn twice (the
+//           right side mirrored, scale.x = -1). It is built at TANK.phases
+//           offsets along the belt, and the live mesh swaps between them as
+//           the belt moves: every link steps forward pitch/phases, round the
+//           sprocket and idler and back along the ground, and the wheels turn
+//           1/11 of a revolution per pitch (11 bolts, 11 sprocket teeth), so the
+//           cycle closes on itself. No material, no shader: a geometry swap.
+//
+// So the player's tank is paint/trim/matte + shadow + 4 = 8 draws (a car with
+// articulated wheels is 12), and a parked one is the usual 3.
+export const TANK = {
+  pitch: 0.1828, phases: 4,
+  trackX: 1.51, trackW: 0.62, trackT: 0.08,
+  wheelR: 0.32, wheelY: 0.40, wheelZ: [-2.46, -1.64, -0.82, 0, 0.82, 1.64, 2.46],
+  sprocket: [-3.30, 0.66, 0.32], idler: [3.25, 0.62, 0.32],
+  turretAt: [0, 1.42, 0.35], gunAt: [0, 0.47, 1.70], muzzle: 4.55,
+  coax: [0.19, 0.05, 0.63],
+  // turret traverse and gun elevation (rad/s), the gun's limits (rad)
+  traverse: 1.05, elevRate: 0.55, elevMin: -0.16, elevMax: 0.35,
+  // skid steering: yaw at a standstill (rad/s), and how it falls with speed
+  pivot: 0.9, pivotFade: 11,
+};
+const TAN = [0.40, 0.335, 0.215];     // CARC tan
+const TAN_D = [0.30, 0.25, 0.165];     // underside, recesses
+const TAN_S = [0.37, 0.31, 0.2];       // the skirts, a different batch of paint
+const TRACK_C = [0.05, 0.05, 0.052];   // rubber pads
+const TRACK_PIN = [0.15, 0.148, 0.14]; // end connectors
+const TYRE_C = [0.035, 0.035, 0.038];
+const WHEEL_C = [0.30, 0.245, 0.14];   // road wheel discs, painted
+const GUNMETAL = [0.085, 0.09, 0.095];
+const OPTIC = [0.025, 0.04, 0.06];
+const GRILLE = [0.06, 0.058, 0.05];
+const STOW = [0.22, 0.21, 0.13];       // tarps and packs in the bustle rack
+
+/** Newell's normal of a polygon of [x,y,z]. */
+function polyNormal(pts) {
+  let nx = 0, ny = 0, nz = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    nx += (a[1] - b[1]) * (a[2] + b[2]);
+    ny += (a[2] - b[2]) * (a[0] + b[0]);
+    nz += (a[0] - b[0]) * (a[1] + b[1]);
+  }
+  const l = Math.hypot(nx, ny, nz) || 1;
+  return [nx / l, ny / l, nz / l];
+}
+
+/**
+ * A faceted solid between two rings of [x,y,z] (same count, same order):
+ * flat-shaded faces, normals turned away from the solid's centre, both ends
+ * capped. Armour is planes, and a smoothed loft rounds every edge off it.
+ * `col` is a colour, or (normal) => colour.
+ */
+function facet(b, A, B, col, caps = true) {
+  const K = A.length;
+  let cx = 0, cy = 0, cz = 0;
+  for (const p of A) { cx += p[0]; cy += p[1]; cz += p[2]; }
+  for (const p of B) { cx += p[0]; cy += p[1]; cz += p[2]; }
+  cx /= 2 * K; cy /= 2 * K; cz /= 2 * K;
+  const C = typeof col === 'function' ? col : () => col;
+  const out = (pts) => {
+    const n = polyNormal(pts);
+    let mx = 0, my = 0, mz = 0;
+    for (const p of pts) { mx += p[0]; my += p[1]; mz += p[2]; }
+    mx /= pts.length; my /= pts.length; mz /= pts.length;
+    if (n[0] * (mx - cx) + n[1] * (my - cy) + n[2] * (mz - cz) < 0) { n[0] = -n[0]; n[1] = -n[1]; n[2] = -n[2]; }
+    return [n, [mx, my, mz]];
+  };
+  for (let k = 0; k < K; k++) {
+    const k2 = (k + 1) % K;
+    const q = [A[k], A[k2], B[k2], B[k]];
+    const [n] = out(q);
+    b.quad(q[0], q[1], q[2], q[3], n, [0, 0, 1, 0, 1, 1, 0, 1], C(n));
+  }
+  if (!caps) return;
+  for (const R of [A, B]) {
+    const [n, m] = out(R);
+    for (let k = 0; k < K; k++) b.tri(m, R[k], R[(k + 1) % K], n, C(n));
+  }
+}
+const atX = (x, prof) => prof.map(([z, y]) => [x, y, z]);
+const atY = (y, plan) => plan.map(([x, z]) => [x, y, z]);
+const tankCol = (top, side, bottom) => (n) => (n[1] > 0.6 ? top : n[1] < -0.6 ? bottom : side);
+
+/** A closed cylinder standing on (cx, by, cz). */
+function tankCyl(b, cx, by, cz, r, h, sides, col, topCol = col) {
+  const lo = [], hi = [];
+  for (let i = 0; i < sides; i++) {
+    const a = (i / sides) * Math.PI * 2;
+    lo.push([cx + Math.cos(a) * r, by, cz + Math.sin(a) * r]);
+    hi.push([cx + Math.cos(a) * r, by + h, cz + Math.sin(a) * r]);
+  }
+  facet(b, lo, hi, (n) => (n[1] > 0.6 ? topCol : col));
+}
+
+/** A box tilted about X by `pitch` (nose down positive), centred at (cx, cy, cz). */
+function tankBoxX(b, cx, cy, cz, w, h, d, pitch, col) {
+  const c = Math.cos(pitch), s = Math.sin(pitch);
+  const P = (x, y, z) => [cx + x, cy + y * c - z * s, cz + y * s + z * c];
+  const ring = (z) => [P(-w / 2, -h / 2, z), P(w / 2, -h / 2, z), P(w / 2, h / 2, z), P(-w / 2, h / 2, z)];
+  facet(b, ring(-d / 2), ring(d / 2), col);
+}
+
+/**
+ * The belt's centre line in the side plane (z, y): the convex hull of the
+ * sprocket's pitch circle, the idler, and the end road wheels, traversed the
+ * way the belt moves when the tank drives forward -- along the top toward the
+ * idler, round it and down, back along the ground, up round the sprocket.
+ * `at(s)` gives the point, the direction of travel and the outward normal.
+ */
+let BELT = null;
+function tankBelt() {
+  if (BELT) return BELT;
+  const T = TANK, half = T.trackT / 2, rw = T.wheelR + half;
+  const C = [
+    [T.sprocket[0], T.sprocket[1], T.sprocket[2]],
+    [T.idler[0], T.idler[1], T.idler[2] + half],
+    [T.wheelZ[T.wheelZ.length - 1], T.wheelY, rw],
+    [T.wheelZ[0], T.wheelY, rw],
+  ];
+  // outer tangents, interior on the right of travel (clockwise in z-y)
+  const tan = [];
+  for (let i = 0; i < 4; i++) {
+    const A = C[i], B = C[(i + 1) % 4];
+    const dz = B[0] - A[0], dy = B[1] - A[1], L = Math.hypot(dz, dy);
+    const d = [dz / L, dy / L], left = [-d[1], d[0]];
+    const c = (A[2] - B[2]) / L, s = Math.sqrt(1 - c * c);
+    const n = [d[0] * c + left[0] * s, d[1] * c + left[1] * s];
+    tan.push({ a: [A[0] + A[2] * n[0], A[1] + A[2] * n[1]], b: [B[0] + B[2] * n[0], B[1] + B[2] * n[1]] });
+  }
+  const segs = [];
+  let L = 0;
+  for (let i = 0; i < 4; i++) {
+    const t = tan[i];
+    const len = Math.hypot(t.b[0] - t.a[0], t.b[1] - t.a[1]);
+    segs.push({ line: true, a: t.a, b: t.b, len, s0: L });
+    L += len;
+    const c = C[(i + 1) % 4], nx = tan[(i + 1) % 4].a;
+    const aIn = Math.atan2(t.b[1] - c[1], t.b[0] - c[0]);
+    const aOut = Math.atan2(nx[1] - c[1], nx[0] - c[0]);
+    let da = aIn - aOut;
+    while (da < 0) da += Math.PI * 2;
+    while (da >= Math.PI * 2) da -= Math.PI * 2;
+    segs.push({ line: false, c, aIn, da, len: c[2] * da, s0: L });
+    L += c[2] * da;
+  }
+  const at = (s) => {
+    s = ((s % L) + L) % L;
+    let g = segs[segs.length - 1];
+    for (const q of segs) if (s < q.s0 + q.len) { g = q; break; }
+    const u = s - g.s0;
+    if (g.line) {
+      const tz = (g.b[0] - g.a[0]) / g.len, ty = (g.b[1] - g.a[1]) / g.len;
+      return { p: [g.a[0] + tz * u, g.a[1] + ty * u], t: [tz, ty], n: [-ty, tz] };
+    }
+    const a = g.aIn - u / g.c[2];
+    const ca = Math.cos(a), sa = Math.sin(a);
+    return { p: [g.c[0] + g.c[2] * ca, g.c[1] + g.c[2] * sa], t: [sa, -ca], n: [ca, sa] };
+  };
+  const N = Math.round(L / T.pitch);
+  BELT = { L, at, N, pitch: L / N };
+  return BELT;
+}
+
+/**
+ * A lathe about the X axis through (cy, cz): `prof` is [[x, r, col], ...];
+ * each band is shaded smoothly round and flat along. `ang` turns its start.
+ */
+function tankLathe(b, cy, cz, prof, segs, ang = 0) {
+  for (let j = 0; j < prof.length - 1; j++) {
+    const [xa, ra, col] = prof[j], [xb, rb] = prof[j + 1];
+    const dx = xb - xa, dr = rb - ra, l = Math.hypot(dx, dr) || 1;
+    const nx = -dr / l, nr = dx / l;
+    for (let k = 0; k < segs; k++) {
+      const t0 = ang + (k / segs) * Math.PI * 2, t1 = ang + ((k + 1) / segs) * Math.PI * 2;
+      const P = (x, r, t) => [x, cy + r * Math.sin(t), cz + r * Math.cos(t)];
+      const N = (t) => [nx, nr * Math.sin(t), nr * Math.cos(t)];
+      b.quad(P(xa, ra, t0), P(xa, ra, t1), P(xb, rb, t1), P(xb, rb, t0), [N(t0), N(t1), N(t1), N(t0)],
+        [0, 0, 1, 0, 1, 1, 0, 1], col);
+    }
+  }
+}
+
+/** Small flat hexagon on the plane x = const, facing +x (bolt heads, holes). */
+function tankSpot(b, x, cy, cz, r, col) {
+  const pts = [];
+  for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; pts.push([x, cy + r * Math.sin(a), cz + r * Math.cos(a)]); }
+  for (let i = 1; i < 5; i++) b.tri(pts[0], pts[i], pts[i + 1], [1, 0, 0], col);
+}
+
+/**
+ * One side's running gear, the +x (left) side, at phase `k` of TANK.phases:
+ * the belt's links, seven road wheels, the sprocket and the idler. The return
+ * rollers are in the hull (they are plain, so their turning cannot be seen).
+ */
+function tankRunningGear(b, k) {
+  const T = TANK, B = tankBelt();
+  const x0 = T.trackX - T.trackW / 2, x1 = T.trackX + T.trackW / 2;
+  const off = (k / T.phases) * B.pitch;
+  const hl = B.pitch * 0.43, hc = B.pitch * 0.22, th = T.trackT / 2;
+  const P3 = (x, zy) => [x, zy[1], zy[0]];
+  const shift = (q, n, d) => [q[0] + n[0] * d, q[1] + n[1] * d];
+  for (let i = 0; i < B.N; i++) {
+    const s = i * B.pitch + off;
+    const m = B.at(s), a = B.at(s - hl), c = B.at(s + hl);
+    const n = m.n;
+    // the rubber pad: outer face, both ends, both sides (the inner face is
+    // never seen: the wheels and the hull are on that side)
+    const o0 = shift(a.p, n, th), o1 = shift(c.p, n, th), i0 = shift(a.p, n, -th), i1 = shift(c.p, n, -th);
+    const xa = x0 + 0.05, xb = x1 - 0.07;
+    const n3 = [0, n[1], n[0]], t3 = [0, m.t[1], m.t[0]];
+    b.quad(P3(xa, o0), P3(xb, o0), P3(xb, o1), P3(xa, o1), n3, [0, 0, 1, 0, 1, 1, 0, 1], TRACK_C);
+    b.quad(P3(xa, o0), P3(xb, o0), P3(xb, i0), P3(xa, i0), [0, -t3[1], -t3[2]], [0, 0, 1, 0, 1, 1, 0, 1], TRACK_C);
+    b.quad(P3(xa, o1), P3(xb, o1), P3(xb, i1), P3(xa, i1), t3, [0, 0, 1, 0, 1, 1, 0, 1], TRACK_C);
+    b.quad(P3(xb, o0), P3(xb, o1), P3(xb, i1), P3(xb, i0), [1, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], TRACK_C);
+    b.quad(P3(xa, o0), P3(xa, o1), P3(xa, i1), P3(xa, i0), [-1, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], TRACK_C);
+    // the outboard end connector, steel, proud of the pad: what reads as a
+    // track from the side
+    const ca = B.at(s - hc).p, cc = B.at(s + hc).p, cth = th + 0.012;
+    const q0 = shift(ca, n, cth), q1 = shift(cc, n, cth), r0 = shift(ca, n, -cth), r1 = shift(cc, n, -cth);
+    const xc = x1 + 0.012;
+    b.quad(P3(xb, q0), P3(xc, q0), P3(xc, q1), P3(xb, q1), n3, [0, 0, 1, 0, 1, 1, 0, 1], TRACK_PIN);
+    b.quad(P3(xc, q0), P3(xc, q1), P3(xc, r1), P3(xc, r0), [1, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], TRACK_PIN);
+    b.quad(P3(xb, q0), P3(xc, q0), P3(xc, r0), P3(xb, r0), [0, -t3[1], -t3[2]], [0, 0, 1, 0, 1, 1, 0, 1], TRACK_PIN);
+    b.quad(P3(xb, q1), P3(xc, q1), P3(xc, r1), P3(xb, r1), t3, [0, 0, 1, 0, 1, 1, 0, 1], TRACK_PIN);
+  }
+  // Wheels turn 1/11 of a revolution per pitch of belt, so the phases close.
+  const ang = -((k / T.phases) * (Math.PI * 2)) / 11;
+  const xo = x1 - 0.03, xi = x0 + 0.04;
+  const wheel = (cy, cz, r, bolts, col = WHEEL_C, segs = 16) => {
+    tankLathe(b, cy, cz, [
+      [xi, r, TYRE_C], [xo, r, TYRE_C], [xo, r - 0.055, TYRE_C], [xo - 0.025, r - 0.06, col],
+      [xo - 0.025, 0.14, col], [xo + 0.015, 0.125, GUNMETAL], [xo + 0.015, 0, GUNMETAL],
+    ], segs, ang);
+    for (let j = 0; j < bolts; j++) {
+      const a = ang + (j / bolts) * Math.PI * 2;
+      tankSpot(b, xo - 0.021, cy + Math.sin(a) * 0.19, cz + Math.cos(a) * 0.19, 0.03, [0.06, 0.055, 0.04]);
+    }
+  };
+  for (const z of T.wheelZ) wheel(T.wheelY, z, T.wheelR, 11);
+  wheel(T.idler[1], T.idler[0], T.idler[2], 11);
+  // the sprocket: a toothed ring inside the belt, a dished hub outboard
+  {
+    const [sz, sy, sr] = T.sprocket;
+    tankLathe(b, sy, sz, [[xi + 0.1, sr - 0.04, GUNMETAL], [xo - 0.02, sr - 0.04, GUNMETAL], [xo - 0.02, 0.16, WHEEL_C],
+      [xo + 0.03, 0.15, GUNMETAL], [xo + 0.03, 0, GUNMETAL]], 16, ang);
+    for (let j = 0; j < 11; j++) {
+      const a = ang + (j / 11) * Math.PI * 2 + Math.PI / 11;
+      const cy = sy + Math.sin(a) * (sr - 0.01), cz = sz + Math.cos(a) * (sr - 0.01);
+      tankBoxX(b, xo - 0.05, cy, cz, 0.06, 0.07, 0.07, Math.PI / 2 - a, GUNMETAL);
+      tankSpot(b, xo - 0.016, sy + Math.sin(a) * 0.22, sz + Math.cos(a) * 0.22, 0.026, [0.05, 0.05, 0.05]);
+    }
+  }
+}
+
+/** Mirror everything a builder holds into another across x = 0. */
+function mirrorInto(dst, src) {
+  const base = dst.pos.length / 3;
+  for (let i = 0; i < src.pos.length; i += 3) {
+    dst.pos.push(-src.pos[i], src.pos[i + 1], src.pos[i + 2]);
+    dst.nor.push(-src.nor[i], src.nor[i + 1], src.nor[i + 2]);
+  }
+  dst.col.push(...src.col);
+  for (let i = 0; i < src.idx.length; i += 3) dst.idx.push(src.idx[i] + base, src.idx[i + 2] + base, src.idx[i + 1] + base);
+}
+
+/** Append a builder into another, moved by `at`. */
+function appendAt(dst, src, at) {
+  const base = dst.pos.length / 3;
+  for (let i = 0; i < src.pos.length; i += 3) dst.pos.push(src.pos[i] + at[0], src.pos[i + 1] + at[1], src.pos[i + 2] + at[2]);
+  dst.nor.push(...src.nor); dst.col.push(...src.col);
+  for (const i of src.idx) dst.idx.push(i + base);
+}
+
+function buildTank(spec, paint, trim, matte) {
+  const T = TANK;
+  const hull = tankCol(TAN, TAN, TAN_D);
+
+  // --- hull ------------------------------------------------------------------
+  // Lower hull between the tracks, 0.48 m clearance, the lower front plate
+  // raked back under the glacis.
+  const lower = [[-3.70, 0.50], [3.30, 0.50], [3.98, 1.04], [-3.82, 1.04]];
+  facet(matte, atX(-1.17, lower), atX(1.17, lower), hull);
+  // Upper hull out over the tracks (the sponsons), with the long shallow
+  // glacis an M1 is recognised by and the flat engine deck behind the ring.
+  const upper = [[-3.86, 1.04], [3.98, 1.04], [3.98, 1.13], [2.70, 1.42], [-3.86, 1.42]];
+  facet(matte, atX(-1.83, upper), atX(1.83, upper), hull);
+  // driver's hatch and his three periscopes, on the glacis below the gun
+  {
+    const g0 = [2.70, 1.42], g1 = [3.98, 1.13];
+    const gl = (u) => [g0[0] + (g1[0] - g0[0]) * u, g0[1] + (g1[1] - g0[1]) * u];
+    const pitch = Math.atan2(g0[1] - g1[1], g1[0] - g0[0]);
+    const [hz, hy] = gl(0.16);
+    tankBoxX(matte, 0, hy + 0.03, hz, 0.78, 0.05, 0.55, pitch, TAN);
+    for (const x of [-0.28, 0, 0.28]) {
+      const [pz, py] = gl(0.38);
+      tankBoxX(matte, x, py + 0.05, pz, 0.2, 0.09, 0.09, pitch, GUNMETAL);
+      tankBoxX(trim, x, py + 0.06, pz + 0.05, 0.16, 0.05, 0.012, pitch - 0.9, GLASS);
+    }
+    // the glacis' joint with the turret ring area, and the front tow points
+    for (const sx of [-1, 1]) {
+      tankBoxX(paint, sx * 0.85, 0.80, 3.62, 0.16, 0.18, 0.16, -0.66, WHITE);
+      // headlamp clusters on the sponson fronts, behind guards
+      matte.box(sx * 1.52, 1.10, 3.86, 0.34, 0.2, 0.16, 0, GUNMETAL);
+      trim.box(sx * 1.44, 1.14, 3.945, 0.12, 0.1, 0.01, 0, LAMP);
+      trim.box(sx * 1.62, 1.14, 3.945, 0.08, 0.07, 0.01, 0, AMBER);
+      for (const gx of [-0.17, 0.17]) matte.tube([sx * 1.52 + gx, 1.06, 3.96], [sx * 1.52 + gx, 1.32, 3.96], 0.015, 4, GUNMETAL, true);
+    }
+  }
+  // turret ring, standing a little proud of the deck
+  tankCyl(matte, 0, 1.40, T.turretAt[2], 1.18, 0.06, 20, TAN_D, TAN_D);
+  // Engine deck: grille panels with their slats, the turbine's intake.
+  matte.box(0, 1.42, -2.55, 2.5, 0.012, 2.2, 0, GRILLE);
+  for (let i = 0; i < 12; i++) matte.box(0, 1.43, -3.55 + i * 0.18, 2.4, 0.03, 0.05, 0, TAN_D);
+  for (const sx of [-1, 1]) matte.box(sx * 1.45, 1.42, -2.0, 0.55, 0.05, 1.6, 0, TAN);
+  // Rear plate: the exhaust grille, tail lamps, the tow pintle.
+  matte.box(0, 1.0, -3.875, 2.2, 0.38, 0.03, 0, GRILLE);
+  for (let i = 0; i < 6; i++) matte.box(0, 1.03 + i * 0.06, -3.9, 2.1, 0.02, 0.03, 0, TAN_D);
+  matte.box(0, 0.62, -3.82, 0.3, 0.16, 0.16, 0, GUNMETAL);
+  for (const sx of [-1, 1]) {
+    matte.box(sx * 1.55, 1.18, -3.89, 0.3, 0.16, 0.05, 0, GUNMETAL);
+    trim.box(sx * 1.55, 1.2, -3.918, 0.18, 0.08, 0.01, 0, TAILC);
+    tankBoxX(paint, sx * 0.85, 0.72, -3.80, 0.16, 0.16, 0.14, 0.2, WHITE);
+    // mud flaps behind the sprockets
+    matte.box(sx * 1.52, 0.42, -3.92, 0.6, 0.5, 0.02, 0, TYRE_C);
+  }
+  // Side skirts: armoured panels hung from the sponson over the top of the
+  // road wheels, thicker over the front three; their seams.
+  for (const sx of [-1, 1]) {
+    const rear = [[-3.78, 0.45], [1.25, 0.45], [1.25, 1.06], [-3.78, 1.06]];
+    const front = [[1.25, 0.40], [3.0, 0.40], [3.62, 0.72], [3.62, 1.06], [1.25, 1.06]];
+    facet(matte, atX(sx * 1.84, rear), atX(sx * 1.90, rear), tankCol(TAN_S, TAN_S, TAN_D));
+    facet(matte, atX(sx * 1.84, front), atX(sx * 1.96, front), tankCol(TAN_S, TAN_S, TAN_D));
+    for (const z of [-2.55, -1.3, 0.0]) matte.box(sx * 1.905, 0.47, z, 0.012, 0.57, 0.03, 0, TAN_D);
+    for (const z of [1.9, 2.6]) matte.box(sx * 1.965, 0.43, z, 0.012, 0.6, 0.03, 0, TAN_D);
+    // fender lip over the idler and the tow cables along the sponson
+    matte.box(sx * 1.52, 1.04, 3.75, 0.66, 0.04, 0.5, 0, TAN);
+    matte.tube([sx * 1.7, 1.45, -3.6], [sx * 1.7, 1.45, 0.9], 0.03, 5, [0.12, 0.12, 0.11], true);
+    // return rollers under the top run of the belt (behind the skirt)
+    for (const z of [-1.2, 1.1]) {
+      tankLathe(matte, 0.84, z, [[sx * (T.trackX - 0.25), 0.11, GUNMETAL], [sx * (T.trackX + 0.25), 0.11, GUNMETAL], [sx * (T.trackX + 0.25), 0, GUNMETAL]], 10);
+    }
+  }
+
+  // --- turret (its own frame: origin on the ring centre at deck height) -----
+  const tur = new Builder(false);
+  const turretC = tankCol(TAN, TAN, TAN_D);
+  // The plan: a wedge of frontal armour to a narrow face round the gun, flat
+  // cheeks, sides leaning in toward the roof, the bustle narrowing behind.
+  const lo = [[0.55, 2.25], [1.80, 1.00], [1.80, -1.50], [1.60, -2.70], [-1.60, -2.70], [-1.80, -1.50], [-1.80, 1.00], [-0.55, 2.25]];
+  const hi = [[0.45, 2.02], [1.60, 0.95], [1.64, -1.50], [1.44, -2.60], [-1.44, -2.60], [-1.64, -1.50], [-1.60, 0.95], [-0.45, 2.02]];
+  facet(tur, atY(0.03, lo), atY(0.88, hi), turretC);
+  // roof panel lines
+  for (const z of [-1.6, -0.5, 0.6]) tur.box(0, 0.882, z, 3.3, 0.008, 0.03, 0, TAN_D);
+  // Commander's cupola on the right (-x) with his .50 cal on a remote mount.
+  tankCyl(tur, -0.62, 0.88, -0.25, 0.46, 0.14, 14, TAN, TAN);
+  tankCyl(tur, -0.62, 1.02, -0.25, 0.38, 0.05, 14, TAN_D, TAN);
+  tur.box(-0.62, 1.07, -0.05, 0.24, 0.24, 0.62, 0, GUNMETAL);                  // receiver
+  tur.box(-0.47, 1.05, -0.12, 0.12, 0.2, 0.3, 0, [0.16, 0.17, 0.12]);           // ammo can
+  tur.tube([-0.62, 1.19, 0.26], [-0.62, 1.19, 1.62], 0.028, 6, GUNMETAL, true);
+  tur.tube([-0.62, 1.19, 1.42], [-0.62, 1.19, 1.66], 0.04, 6, GUNMETAL, true);   // flash hider
+  tur.box(-0.62, 1.32, 0.05, 0.3, 0.18, 0.3, 0, TAN);                           // sight head
+  tur.box(-0.62, 1.32, 0.205, 0.22, 0.1, 0.012, 0, OPTIC);
+  // Loader's hatch on the left with his M240 behind a pair of shields.
+  tur.box(0.62, 0.88, -0.15, 0.75, 0.07, 0.8, 0, TAN);
+  tur.tube([0.62, 1.12, 0.1], [0.62, 1.12, 1.0], 0.018, 5, GUNMETAL, true);
+  tur.box(0.62, 1.08, 0.08, 0.12, 0.14, 0.4, 0, GUNMETAL);
+  for (const sx of [-1, 1]) tur.box(0.62 + sx * 0.32, 0.92, 0.28, 0.03, 0.42, 0.55, 0, TAN);
+  tur.box(0.62, 0.92, 0.56, 0.6, 0.36, 0.03, 0, TAN);
+  // Gunner's primary sight (right front) and the commander's independent
+  // viewer (left front), the windows dark.
+  tur.box(-0.98, 0.88, 1.2, 0.48, 0.26, 0.62, 0, TAN);
+  tur.box(-0.98, 0.96, 1.515, 0.38, 0.13, 0.012, 0, OPTIC);
+  tankCyl(tur, 0.75, 0.88, 0.75, 0.13, 0.36, 8, TAN_D);
+  tur.box(0.75, 1.24, 0.75, 0.46, 0.34, 0.42, 0, TAN);
+  tur.box(0.75, 1.32, 0.965, 0.3, 0.14, 0.012, 0, OPTIC);
+  // Wind sensor and the two whip antennas at the rear corners.
+  tur.tube([0, 0.88, -2.0], [0, 1.38, -2.0], 0.025, 5, GUNMETAL, true);
+  tur.tube([-0.14, 1.38, -2.0], [0.14, 1.38, -2.0], 0.02, 5, GUNMETAL, true);
+  for (const sx of [-1, 1]) {
+    tankCyl(tur, sx * 1.22, 0.88, -2.25, 0.07, 0.14, 6, GUNMETAL);
+    tur.tube([sx * 1.22, 1.0, -2.25], [sx * 1.3, 3.5, -2.45], 0.009, 3, [0.05, 0.05, 0.05], true);
+    // smoke grenade launchers at the cheek corners: a block of six tubes
+    tur.box(sx * 1.80, 0.46, 0.98, 0.34, 0.32, 0.26, 0, TAN_D);
+    for (let i = 0; i < 2; i++) for (let j = 0; j < 3; j++) {
+      const x = sx * (1.70 + j * 0.1), y = 0.54 + i * 0.13;
+      tur.box(x, y - 0.04, 1.2, 0.085, 0.085, 0.16, 0, GUNMETAL);
+    }
+    // stowage boxes along the turret sides
+    tur.box(sx * 1.87, 0.22, -0.55, 0.16, 0.5, 1.6, 0, TAN);
+    tur.box(sx * 1.95, 0.48, -0.55, 0.012, 0.03, 1.5, 0, TAN_D);
+  }
+  // A plain star on each stowage box: the only marking.
+  for (const sx of [-1, 1]) {
+    const cx = sx * 1.954, cy = 0.48 - 0.1, cz = -0.6;
+    const pts = [];
+    for (let i = 0; i < 10; i++) {
+      const a = Math.PI / 2 + (i / 10) * Math.PI * 2, r = i % 2 ? 0.07 : 0.17;
+      pts.push([cx, cy - 0.12 + r * Math.sin(a), cz + sx * r * Math.cos(a)]);
+    }
+    const c = [cx, cy - 0.12, cz];
+    for (let i = 0; i < 10; i++) tur.tri(c, pts[i], pts[(i + 1) % 10], [sx, 0, 0], [0.04, 0.04, 0.035]);
+  }
+  // The bustle rack: a cage of rails round the turret's back, with packs.
+  {
+    const ys = [0.42, 0.86];
+    const rim = [[1.74, -1.4], [1.78, -2.5], [1.56, -3.05], [-1.56, -3.05], [-1.78, -2.5], [-1.74, -1.4]];
+    for (const y of ys) for (let i = 0; i < rim.length - 1; i++) {
+      tur.tube([rim[i][0], y, rim[i][1]], [rim[i + 1][0], y, rim[i + 1][1]], 0.025, 4, GUNMETAL, true);
+    }
+    for (const [x, z] of rim) tur.tube([x, 0.3, z], [x, 0.88, z], 0.022, 4, GUNMETAL, true);
+    for (let i = -2; i <= 2; i++) tur.tube([i * 0.6, 0.3, -3.05], [i * 0.6, 0.88, -3.05], 0.02, 4, GUNMETAL, true);
+    tur.box(0.7, 0.36, -2.82, 0.9, 0.42, 0.36, 0, STOW);
+    tur.box(-0.5, 0.36, -2.84, 1.1, 0.34, 0.34, 0, [0.16, 0.18, 0.12]);
+    tur.box(-1.45, 0.36, -2.0, 0.28, 0.36, 0.9, 0, STOW);
+  }
+
+  // --- the main gun (its own frame: origin on the trunnions) ---------------
+  const gun = new Builder(false);
+  gun.box(0, -0.22, 0.36, 0.56, 0.44, 0.52, 0, TAN);                 // mantlet
+  gun.box(TANK.coax[0], TANK.coax[1] - 0.05, TANK.coax[2], 0.1, 0.1, 0.04, 0, GUNMETAL);   // coax port
+  gun.tube([0, 0, 0.6], [0, 0, 2.35], 0.112, 12, TAN, false);          // thermal sleeve
+  gun.tube([0, 0, 2.35], [0, 0, 2.55], 0.13, 12, TAN, false);          // bore evacuator
+  gun.tube([0, 0, 2.55], [0, 0, 2.9], 0.142, 12, TAN, false);
+  gun.tube([0, 0, 2.9], [0, 0, 3.05], 0.122, 12, TAN, false);
+  gun.tube([0, 0, 3.05], [0, 0, T.muzzle], 0.1, 12, TAN, false);
+  for (const z of [1.1, 1.75, 3.6, 4.1]) gun.tube([0, 0, z], [0, 0, z + 0.035], 0.118 - (z > 3 ? 0.012 : 0), 12, TAN_D, false);
+  gun.tube([0, 0, T.muzzle - 0.01], [0, 0, T.muzzle], 0.1, 12, GUNMETAL, true);
+  gun.tube([0, 0, T.muzzle - 0.002], [0, 0, T.muzzle + 0.001], 0.06, 10, [0.01, 0.01, 0.01], true);   // the bore
+  gun.box(0, 0.1, T.muzzle - 0.12, 0.07, 0.06, 0.12, 0, GUNMETAL);   // muzzle reference sensor
+
+  // --- the running gear ------------------------------------------------------
+  const phases = [];
+  for (let k = 0; k < T.phases; k++) {
+    const g = new Builder(false);
+    tankRunningGear(g, k);
+    phases.push(g);
+  }
+  matte.tank = { turret: tur, gun, phases };
+  return [];
+}
+
 /** Types with their own authored builder, keyed by `spec.hand`. */
 const HAND_BUILT = {
   plane: buildPlane, twin: buildTwin, jet: buildJet, biplane: buildBiplane, heli: buildHeli, fighter: buildFighter, jumbo: buildJumbo,
@@ -6907,6 +7367,7 @@ const HAND_BUILT = {
   garbage: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.garbage),
   convertible: buildConvertible, cruiser: buildCruiser, sportbike: buildSportbike,
   atv: buildAtv, bicycle: buildBicycle, boat: buildBoat, duck: buildDuck, hydro: buildHydro, jetski: buildJetski, kayak: buildKayak, artic: buildArticFront, articRear: buildArticRear, balloon: buildBalloon,
+  tank: buildTank,
 };
 
 /**
@@ -7079,6 +7540,19 @@ function buildType(spec) {
     for (const i of b.idx) matteW.idx.push(i + base);
     return { geo: b.build(), at, axis };
   });
+  // A tank's live parts (buildTank): baked into the traffic/parked geometry
+  // at rest -- turret ahead, gun level, the belt at phase 0 on both sides --
+  // and kept apart for the player's tank (setDetailed).
+  let tank = null;
+  if (matte.tank) {
+    const { turret, gun, phases } = matte.tank;
+    const ta = TANK.turretAt, ga = TANK.gunAt;
+    appendAt(matteW, turret, ta);
+    appendAt(matteW, gun, [ta[0] + ga[0], ta[1] + ga[1], ta[2] + ga[2]]);
+    appendAt(matteW, phases[0], [0, 0, 0]);
+    mirrorInto(matteW, phases[0]);
+    tank = { turretGeo: turret.build(), gunGeo: gun.build(), phaseGeos: phases.map((b) => b.build()) };
+  }
   // A wheel may declare its own outboard side; a bike's are on the centreline,
   // where `Math.sign(ax)` says nothing.
   const outOf = ([ax, , , , , o]) => (o !== undefined ? o : (Math.sign(ax) || 1));
@@ -7127,6 +7601,7 @@ function buildType(spec) {
     wheelGeos,
     wheels: placed,
     spins,
+    tank,
     spec,
     wheelR: spec.wheelR,
   };
@@ -7154,7 +7629,8 @@ export function vehicleSnapshot() {
   for (const [k, t] of Object.entries(A.types)) {
     const r = { wheels: t.wheels, wheelR: t.wheelR, mwShared: t.matteGeoW === t.matteGeoWE,
       wheelGeos: t.wheelGeos.map((w) => ({ trim: packGeo(w.trim), matte: packGeo(w.matte) })),
-      spins: t.spins.map((s) => ({ geo: packGeo(s.geo), at: s.at, axis: s.axis })) };
+      spins: t.spins.map((s) => ({ geo: packGeo(s.geo), at: s.at, axis: s.axis })),
+      tank: t.tank ? { turret: packGeo(t.tank.turretGeo), gun: packGeo(t.tank.gunGeo), phases: t.tank.phaseGeos.map(packGeo) } : null };
     for (const g of GEO_KEYS) if (t[g] && !(g === 'matteGeoW' && r.mwShared)) r[g] = packGeo(t[g]);
     types[k] = r;
   }
@@ -7165,7 +7641,8 @@ export function vehicleSnapshot() {
 function restoreType(r, spec) {
   const t = { spec, wheels: r.wheels, wheelR: r.wheelR,
     wheelGeos: r.wheelGeos.map((w) => ({ trim: unpackGeo(w.trim), matte: unpackGeo(w.matte) })),
-    spins: (r.spins || []).map((s) => ({ geo: unpackGeo(s.geo), at: s.at, axis: s.axis })) };
+    spins: (r.spins || []).map((s) => ({ geo: unpackGeo(s.geo), at: s.at, axis: s.axis })),
+    tank: r.tank ? { turretGeo: unpackGeo(r.tank.turret), gunGeo: unpackGeo(r.tank.gun), phaseGeos: r.tank.phases.map(unpackGeo) } : null };
   for (const g of GEO_KEYS) if (r[g]) t[g] = unpackGeo(r[g]);
   if (r.mwShared) t.matteGeoW = t.matteGeoWE;
   return t;
@@ -7354,6 +7831,7 @@ export function dropVehicleArrays() {
     const geos = [t.paintGeo, t.trimGeo, t.matteGeo, t.trimGeoW, t.matteGeoW, t.matteGeoWE, t.shadowGeo];
     for (const w of t.wheelGeos || []) geos.push(w.trim, w.matte);
     for (const sp of t.spins || []) geos.push(sp.geo);
+    if (t.tank) geos.push(t.tank.turretGeo, t.tank.gunGeo, ...t.tank.phaseGeos);
     for (const g of geos) if (g && (farReady || !far.has(g))) bytes += dropGeometryArrays(g);
   }
   if (FAR) for (const g of FAR.geos.values()) bytes += dropGeometryArrays(g);
@@ -7503,6 +7981,18 @@ export class Vehicle {
     this._t = 0; this.shoreHit = 0; this._surf = NaN;   // boats: wave clock, last grounding impact, eased surface
     this.afloat = false; this.splashed = false; this._waterSpec = null;   // the Duck Tour's DUKW (updateDuck)
     this._bob = (typeName.length * 1.37 + (color & 0xff) * 0.021) % 6.28;
+    // A tank's turret, gun and belts (see buildTank / tank.js): where the
+    // turret and gun point and where they are asked to (`aimT` counts down;
+    // unaimed, they stow), the gun's recoil, the hull's rock from a shot, and
+    // each belt's travel. The live meshes exist only while it is detailed.
+    this.tank = t.spec.tank ? {
+      yaw: 0, elev: 0, yawWant: 0, elevWant: 0, aimT: 0, recoil: 0, rock: 0, rockYaw: 0, bump: 0,
+      sL: 0, sR: 0, sL0: 0, sR0: 0, dL: 0, dR: 0, turret: null, gun: null, trackL: null, trackR: null, stow: false,
+    } : null;
+    // Flattened under a tank, and the burnt-out, thrown hulk a shell leaves
+    // (updateWreck): no longer a car anyone drives or collides with as one.
+    this.crushed = false;
+    this.wreck = null;
   }
 
   // `mode` decides whether anyone is at the wheel. Traffic and police are
@@ -7525,6 +8015,14 @@ export class Vehicle {
 
   /** The player's own car gets steerable, spinning wheel meshes; traffic doesn't. */
   setDetailed(on) {
+    const T = this.tank;
+    if (T && on) T.stow = false;
+    // Out of a tank with the turret turned: it stays detailed while the
+    // turret swings home (_tankParts), then bakes -- no snap.
+    if (T && !on && this.detailedWheels && !this.dead && (Math.abs(T.yaw) > 0.01 || Math.abs(T.elev) > 0.01 || T.recoil > 0.01)) {
+      T.stow = true;
+      return;
+    }
     if (this.detailedWheels === on) return;
     this.detailedWheels = on;
     const A = vehicleAssets();
@@ -7578,6 +8076,20 @@ export class Vehicle {
         this.shadowTilt.add(sm);
         this.group.add(this.shadowTilt);
       }
+      if (T && this.assets.tank) {
+        const k = this.assets.tank, ta = TANK.turretAt, ga = TANK.gunAt;
+        T.turret = new THREE.Mesh(k.turretGeo, A.matteMat);
+        T.turret.position.set(ta[0], ta[1] - this.pivotY, ta[2]);
+        T.gun = new THREE.Mesh(k.gunGeo, A.matteMat);
+        T.gun.position.set(ga[0], ga[1], ga[2]);
+        T.gun.rotation.order = 'YXZ';
+        T.turret.add(T.gun);
+        T.trackL = new THREE.Mesh(k.phaseGeos[0], A.matteMat);
+        T.trackR = new THREE.Mesh(k.phaseGeos[0], A.matteMat);
+        T.trackR.scale.x = -1;   // the right side is the left, mirrored
+        for (const m of [T.turret, T.gun, T.trackL, T.trackR]) m.castShadow = true;
+        this.tilt.add(T.turret, T.trackL, T.trackR);
+      }
       for (const s of this.assets.spins) {
         const m = new THREE.Mesh(s.geo, A.matteMat);
         m.castShadow = true;
@@ -7605,6 +8117,12 @@ export class Vehicle {
       this.wheelMeshes.length = 0;
       for (const m of this.spinMeshes) this.tilt.remove(m);
       this.spinMeshes.length = 0;
+      if (T && T.turret) {
+        this.tilt.remove(T.turret, T.trackL, T.trackR);
+        T.turret = T.gun = T.trackL = T.trackR = null;
+        T.yaw = T.elev = T.recoil = 0;
+        T.stow = false;
+      }
       if (this.shadowTilt) { this.group.remove(this.shadowTilt); this.shadowTilt = null; }
       if (this.glow) { this.tilt.remove(this.glow); this.glow = null; }
     }
@@ -8653,6 +9171,8 @@ export class Vehicle {
   update(dt, input) {
     const spec = this.spec;
     if (this.hitCd > 0) this.hitCd -= dt;
+    if (this.wreck) { this.updateWreck(dt); return STILL; }
+    if (this.crushed) { this.vLong = 0; this.vLat = 0; return STILL; }
     if (spec.balloon) { this.updateBalloon(dt, input); return; }
     if (spec.heli) { this.updateHeli(dt, input); return; }
     if (spec.fighter) { this.updateFighter(dt, input); return; }
@@ -8664,7 +9184,7 @@ export class Vehicle {
     const throttle = input.throttle || 0;
     this.pedaling = throttle > 0.05;
     const brake = input.brake || 0;
-    const hand = input.handbrake || 0;
+    const hand = spec.tank ? 0 : input.handbrake || 0;   // (a tank's HAND BRAKE button is its gun)
     // PULL BACK TO WHEELIE (bikes and quads), as in GTA: the stick's other
     // axis, which cars ignore and planes climb with. With the front wheel in
     // the air there is less to steer with.
@@ -8810,7 +9330,7 @@ export class Vehicle {
     // from the authored builders' real axle centres -- `len * 0.62` was a guess
     // made before any vehicle had a wheelbase to read, and it put the bus's
     // axles 7.4 m apart against a real 6.
-    const yawRate = (this.vLong / wheelbase) * Math.tan(this.steer);
+    const yawRate = spec.tank ? this._tankYaw(dt, steerIn) : (this.vLong / wheelbase) * Math.tan(this.steer);
     this.heading += yawRate * dt;
 
     // The battery floor puts the mass under the axle line, so it holds on
@@ -8823,7 +9343,8 @@ export class Vehicle {
     // rather than crabbing. With the grip clamp gone the yaw is much larger, so
     // without scrubbing the slip off harder all of that extra rotation would
     // come out as slide.
-    const gripBase = spec.moto ? 30 : spec.bus || spec.cargo ? 18 : spec.ev ? 26 : 24;
+    // (tracks do not slide: a tank goes where its hull points)
+    const gripBase = spec.tank ? 40 : spec.moto ? 30 : spec.bus || spec.cargo ? 18 : spec.ev ? 26 : 24;
     const grip = hand > 0.5 ? 1.5 : gripBase;
     this.vLat += -yawRate * this.vLong * dt;
     const before = this.vLat;
@@ -9007,8 +9528,97 @@ export class Vehicle {
     this.roll = lerp(this.roll, tgtRoll, 1 - Math.exp(-(two ? 17 : 10) * dt));
 
     this.wheelSpin += (this.vLong / (this.assets.wheelR || 0.34)) * dt;
+    if (this.tank) this._tankParts(dt, yawRate);
     this.sync();
     return { dx, dz };
+  }
+
+  /**
+   * SKID STEERING. A tank turns by driving one track faster than the other,
+   * so the stick asks for a YAW RATE, not a wheel angle: the full rate at a
+   * standstill (it pivots on the spot), falling with speed, reversed in
+   * reverse like a car's. The turn is slow to build (62 t of it), and the
+   * scrubbing tracks take speed off it: a hard turn at speed slows you down.
+   */
+  _tankYaw(dt, steerIn) {
+    const sp = Math.abs(this.vLong);
+    const want = steerIn * TANK.pivot / (1 + sp / TANK.pivotFade) * (this.vLong < -0.5 ? -1 : 1);
+    this.yawRate = lerp(this.yawRate, want, 1 - Math.exp(-4.5 * dt));
+    if (sp > 0.2) {
+      const scrub = Math.min(sp, Math.abs(this.yawRate) * sp * 0.22 * dt);
+      this.vLong -= Math.sign(this.vLong) * scrub;
+    }
+    return this.yawRate;
+  }
+
+  /**
+   * The turret and gun slew toward where they are asked to point (tank.js
+   * sets yawWant/elevWant and aimT each frame it aims; unaimed, they stow
+   * ahead), the gun runs out after recoil, the hull settles from a shot, and
+   * the belts move: each side's travel is the hull's speed less (left) or
+   * plus (right) the turn. Out of a tank, the turret's homecoming ends with
+   * the live parts baked back in (setDetailed).
+   */
+  _tankParts(dt, yawRate) {
+    const T = this.tank;
+    T.aimT -= dt;
+    const yW = T.aimT > 0 ? T.yawWant : 0, eW = T.aimT > 0 ? T.elevWant : 0;
+    const dy = Math.atan2(Math.sin(yW - T.yaw), Math.cos(yW - T.yaw));
+    T.yaw += clamp(dy, -TANK.traverse * dt, TANK.traverse * dt);
+    T.yaw = Math.atan2(Math.sin(T.yaw), Math.cos(T.yaw));
+    T.elev += clamp(eW - T.elev, -TANK.elevRate * dt, TANK.elevRate * dt);
+    T.recoil = Math.max(0, T.recoil - dt * (T.recoil > 0.25 ? 2.2 : 1.1));
+    T.rock *= Math.exp(-5 * dt);
+    T.bump *= Math.exp(-7 * dt);
+    T.sL += (this.vLong - yawRate * TANK.trackX) * dt;
+    T.sR += (this.vLong + yawRate * TANK.trackX) * dt;
+    if (T.stow && Math.abs(T.yaw) < 0.01 && Math.abs(T.elev) < 0.01 && T.recoil < 0.01) {
+      T.yaw = T.elev = T.recoil = 0;
+      T.stow = false;
+      this.setDetailed(false);
+    }
+  }
+
+  /**
+   * A hulk: thrown by the blast that made it, tumbling about its long axis,
+   * bouncing once, and coming to rest on its wheels or its roof. Burnt black
+   * (tank.js). It never drives again; traffic.js removes it like any other
+   * abandoned car once you are far away.
+   */
+  updateWreck(dt) {
+    const W = this.wreck;
+    W.t += dt;
+    this.vLong = 0; this.vLat = 0;
+    this.lift = this.city.roadLift(this.x, this.z);
+    const g = this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift);
+    const hw = this.halfWid, roof = this.spec.roof || 1.5;
+    // how far the base must stand off the ground at a roll: 0 upright, the
+    // half-width on its side, the roof's height upside down
+    const off = (rr) => { const sn = Math.abs(Math.sin(rr)), cs = Math.cos(rr); return sn * hw + (1 - cs) * 0.5 * roof * (1 - sn * 0.5); };
+    if (!W.rest) {
+      W.vy -= 15 * dt;
+      this.y += W.vy * dt;
+      this.x = G.clampToMap(this.x + W.vx * dt);
+      this.z = G.clampToMap(this.z + W.vz * dt);
+      this.roll += W.spin * dt;
+      this.pitch += W.spin * 0.12 * dt;
+      const floor = g + off(this.roll);
+      if (this.y <= floor && W.vy < 0) {
+        this.y = floor;
+        if (W.vy < -4) { W.vy *= -0.3; W.spin *= 0.55; W.vx *= 0.5; W.vz *= 0.5; }
+        else {
+          W.rest = true;
+          const rr = Math.atan2(Math.sin(this.roll), Math.cos(this.roll));
+          W.rollEnd = Math.abs(rr) > Math.PI / 2 ? Math.sign(rr) * Math.PI : 0;
+          this.roll = rr;
+        }
+      }
+    } else {
+      this.roll = damp(this.roll, W.rollEnd, 6, dt);
+      this.pitch = damp(this.pitch, 0, 6, dt);
+      this.y = damp(this.y, g + off(this.roll), 10, dt);
+    }
+    this.sync();
   }
 
   /**
@@ -9116,6 +9726,7 @@ export class Vehicle {
 
   sync() {
     if (this.spec.bicycle) this._pedal();
+    const T = this.tank;
     // A wheelie turns the body about the rear axle: nose up, and the centre
     // lifted so the back wheel stays on the ground.
     const wl = this.wheelie ? (this.spec.wheelbase || 1.3) * 0.5 * Math.sin(this.wheelie) : 0;
@@ -9124,7 +9735,10 @@ export class Vehicle {
     // vehicle in the list is synced every frame, parked and settled ones too:
     // write only what changed. Nothing sets these quaternions directly, so a
     // skipped write leaves exactly what the write would have.
-    const gr = this.group.rotation, tr = this.tilt.rotation, tx = this.pitch - this.wheelie;
+    const gr = this.group.rotation, tr = this.tilt.rotation;
+    // a shot rocks the hull away from the gun; a crushed car bumps it
+    const tx = this.pitch - this.wheelie + (T ? -T.rock * Math.cos(T.rockYaw) * 0.035 - T.bump * 0.03 : 0);
+    const tz = this.roll + (T ? T.rock * Math.sin(T.rockYaw) * 0.035 : 0);
     if (gr.y !== this.heading) gr.y = this.heading;
     if (tr.x !== tx) tr.x = tx;
     if (this.shadowTilt) {
@@ -9134,7 +9748,23 @@ export class Vehicle {
       if (st.rotation.z !== this.roll) st.rotation.z = this.roll;
       st.visible = this.onGround && !this.stunt;
     }
-    if (tr.z !== this.roll) tr.z = this.roll;
+    if (tr.z !== tz) tr.z = tz;
+    if (T && T.turret) {
+      T.turret.rotation.y = T.yaw;
+      T.gun.rotation.x = -T.elev;
+      T.gun.position.z = TANK.gunAt[2] - T.recoil;
+      // The belts: the phase each side's travel is at. Past ~half a pitch a
+      // frame the true phase strobes (the wagon wheel), so the drawn travel
+      // is capped: still visibly running, and in the right direction.
+      const geos = this.assets.tank.phaseGeos, P = geos.length, step = tankBelt().pitch / P;
+      const cap = step * 1.8;
+      T.dL += clamp(T.sL - T.sL0, -cap, cap); T.sL0 = T.sL;
+      T.dR += clamp(T.sR - T.sR0, -cap, cap); T.sR0 = T.sR;
+      const ph = (d) => ((Math.floor(d / step) % P) + P) % P;
+      const gL = geos[ph(T.dL)], gR = geos[ph(T.dR)];
+      if (T.trackL.geometry !== gL) T.trackL.geometry = gL;
+      if (T.trackR.geometry !== gR) T.trackR.geometry = gR;
+    }
     if (this.detailedWheels) {
       for (const m of this.wheelMeshes) {
         // Steer OUTSIDE the spin. Euler order matters here: the default 'XYZ'

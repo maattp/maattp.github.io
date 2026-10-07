@@ -50,6 +50,7 @@ import { Hud, buildMapCanvas } from './hud.js';
 import { Activities } from './activities.js';
 import { installRamps, buildRampMesh, StuntJumps } from './stunts.js';
 import { Effects } from './effects.js';
+import { TankSystem, TANK_SITE } from './tank.js';
 import { Audio, STATION_NAMES } from './audio.js';
 import { PostFX } from './postfx.js';
 import { clamp, lerp, rng, dist2, formatMoney } from './util.js';
@@ -243,8 +244,12 @@ class Game {
     peds.scare(player.position.x, player.position.z, 14);
   }
 
+  /** The tank you are in, each frame after it drives (player.updateDrive). */
+  onTankStep(v, dt, input) { if (tanks) tanks.step(v, dt, input); }
+
   onEnterVehicle(v, wasMode) {
     controls.setMode('drive');
+    if (tanks) tanks.onEnter(v);
     if (v.spec.rail) {
       // a freight's engines are already running: you climb into a live cab
       audio.enterVehicle(v.spec, !!v.spec.freight);
@@ -373,6 +378,7 @@ class Game {
 
   onExitVehicle(v) {
     controls.setMode('foot');
+    if (tanks) tanks.onExit();
     if (v) audio.exitVehicle(v.spec, v.dead);
     if (v && v.spec.rail) v.sys.onLeave(v);
   }
@@ -498,6 +504,7 @@ function nearShadowFocus() {
   if (!v || !v.group || !v.group.visible || v.spec.rail || v.spec.plane || v.spec.heli || v.spec.balloon) return null;
   return { x: v.x, y: v.y + 1, z: v.z, half: Math.max(4, v.halfLen + 2.5), roots: [v.group] };
 }
+let tanks = null;       // the tank at Sand Point and its guns (tank.js)
 let gpuLedger = null;
 let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts, stunts, monorail, link, freight, bikeNet, cyclists, lmRoot, shadowCache = null;
 let pickups = [];
@@ -1255,6 +1262,8 @@ function installShadowFade() {
     ...ATV_SPOTS.map(([x, z]) => ({ x, z, kind: 'atv', name: 'Quad bike', near: false, hello: 'A quad bike — made for the grass' })),
     ...(wedgeAt ? [{ x: wedgeAt.x, z: wedgeAt.z, kind: 'wedge', name: 'The Wedge', near: false,
       hello: 'The Wedge — stainless, electric, quick, and very hard to dent. Walk up and press ENTER' }] : []),
+    { x: TANK_SITE.x, z: TANK_SITE.z, kind: 'tank', name: 'Tank', near: false,
+      hello: 'A main battle tank on the old Naval Air Station apron. Climb in: FIRE is the main gun, MG the machine gun' },
     ...fishSpots.map((sp) => ({ x: sp.x, z: sp.z, kind: 'fish', name: `Fishing — ${sp.name}`, near: false,
       hello: 'A fishing rod on the pier. Press ENTER to cast' })),
     ...(wheelRide ? [{ x: wheelRide.hub.x + 4, z: wheelRide.hub.z, kind: 'wheel', name: 'Great Wheel', near: false,
@@ -1365,6 +1374,8 @@ function installShadowFade() {
   // after the HUD: Activities writes its readout and map icons through it
   acts = new Activities(scene, city, world, game, hud, audio, traffic);
   stunts = new StuntJumps(city, game, hud, audio);
+  tanks = new TankSystem({ scene, city, world, traffic, peds, fx, audio, hud, game, player, camera, root: document.getElementById('app') });
+  tanks.spawnHome();
   acts.stunts = stunts;
 
   // delivery marker
@@ -1443,7 +1454,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -2480,6 +2491,7 @@ function frame(now) {
   peds.update(dt, p.x, p.z, player, traffic);
   if (prof) lap('peds');
   if (stunts) stunts.update(dt, player);
+  if (tanks) tanks.update(dt);
   if (acts) acts.update(dt, player);
   // Say hello once per approach to anything the map marks (the dock, the
   // quads): the map is how you find them, this is how you know you have.
@@ -2731,7 +2743,11 @@ function audioState(dt, input, p, camDir, buried) {
     // A helicopter's turbine runs at governed speed whatever the collective
     // is doing: the note follows the rotor spool, not the UP button.
     throttle: !v ? 0 : v.spec.freight ? v.notch / 8 : v.spec.heli ? 0.6 * (v.spool || 0) + (input.gas ? 0.4 : 0)
+      // a tank's turbine works for a pivot turn as much as for the throttle
+      : v.spec.tank ? Math.max(input.gasAmt != null ? input.gasAmt : input.gas ? 1 : 0, Math.abs(input.x || 0) * 0.65, input.brake ? 0.5 : 0)
       : input.gasAmt != null ? input.gasAmt : input.gas ? 1 : 0,
+    // the belts: their speed over the ground and the pivot's scrub
+    tracks: v && v.spec.tank ? Math.abs(v.vLong) + Math.abs(v.yawRate) * 2.2 : 0,
     brake: v ? (input.brakeAmt != null ? input.brakeAmt : input.brake ? 1 : 0) : 0,
     skid: v ? v.skid : 0,
     airborne: !!(v && v.airborne),

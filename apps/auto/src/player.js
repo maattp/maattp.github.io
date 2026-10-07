@@ -59,6 +59,8 @@ export class Player {
     this.swimSt = { u: 0, tu: 0, w: 0, pitch: 0, plunge: 0, hipY: this.h.bones[BONES.hips].position.y };
     this.poseBlend = new PoseBlend(this.h.bones.length);   // into and out of the water
     this.hitCd = 0;    // seconds before a car can hurt you again (updateFoot)
+    this.lookT = 99;   // seconds since the look stick or drag last moved (a tank's camera stays put)
+    this.shake = 0;    // camera shake, decaying (a tank's gun, a blast)
 
     this.camYaw = this.heading + Math.PI;
     this.camPitch = 0.1;
@@ -184,6 +186,7 @@ export class Player {
 
     this.camYaw -= look.x;
     this.camPitch = clamp(this.camPitch + look.y, -0.5, 1.15);
+    this.lookT = look.x || look.y ? 0 : this.lookT + dt;
 
     if (this.onFoot) this.updateFoot(dt, input, traffic, peds);
     else this.updateDrive(dt, input, traffic, peds);
@@ -528,6 +531,9 @@ export class Player {
       pilot: true,
     });
     if (v.wheelieDone) { if (this.game.onWheelie) this.game.onWheelie(v.wheelieDone); v.wheelieDone = 0; }
+    // A tank aims, fires, and flattens what it has driven into, before the
+    // buildings push back (tank.js).
+    if (v.spec.tank && this.game.onTankStep) this.game.onTankStep(v, dt, input);
     if (wading) {
       v.vLong -= v.vLong * Math.min(1, 2.6 * dt);
       v.vLat -= v.vLat * Math.min(1, 2.6 * dt);
@@ -599,11 +605,14 @@ export class Player {
       }
     } else {
       this.attackCd = 0.4;
-      this.game.onHorn();
+      // in a tank ATTACK is the main gun (tank.js reads it)
+      if (!this.vehicle || !this.vehicle.spec.tank) this.game.onHorn();
     }
   }
 
   updateCamera(dt, input) {
+    // the shake decays by time, not by frame (applyCamera draws it)
+    if (this.shake) this.shake *= Math.pow(0.86, dt * 60);
     // A vehicle with a rig of its own takes the camera when it wants it (a
     // Link train in a bore: link.js camRig).
     if (!this.onFoot && this.vehicle && this.vehicle.camRig && this.vehicle.camRig(this, dt)) return;
@@ -703,6 +712,12 @@ export class Player {
         dist = 12 + clamp(sp * 0.12, 0, 3.5);
         height = 6.2;
         lookH = 2.6;
+      } else if (v.spec.tank) {
+        // high and well back: you aim over the turret, and the crosshair
+        // must not sit behind it
+        dist = 12.5 + clamp(sp * 0.1, 0, 2);
+        height = 4.6;
+        lookH = 2.5;
       } else if (v.spec.plane) {
         // further back and higher, and the camera rides the CLIMB: keep some
         // of the vertical velocity in the look target so pulling up reads as
@@ -724,8 +739,9 @@ export class Player {
         // at the hover (a turn reads as a turn), tighter with speed.
         const d = angleWrap(v.heading + Math.PI - this.camYaw);
         this.camYaw += d * clamp(dt * (1.1 + 1.4 * clamp(sp / 20, 0, 1)), 0, 0.25);
-      } else if (v.vLong > 3) {
-        // ease the camera behind the car when driving forward
+      } else if (v.vLong > 3 && !(v.spec.tank && this.lookT < 3)) {
+        // ease the camera behind the car when driving forward (in a tank,
+        // only once you have stopped aiming: the turret follows the camera)
         const want = v.heading + Math.PI;
         const d = angleWrap(want - this.camYaw);
         this.camYaw += d * clamp(dt * 1.5 * clamp(sp / 12, 0, 1), 0, 0.25);
@@ -888,6 +904,12 @@ export class Player {
 
   applyCamera(camera) {
     camera.position.copy(this.camPos);
+    if (this.shake > 0.002) {
+      const k = this.shake * 0.35;
+      camera.position.x += (Math.random() - 0.5) * k;
+      camera.position.y += (Math.random() - 0.5) * k;
+      camera.position.z += (Math.random() - 0.5) * k;
+    } else this.shake = 0;
     if (this.camUp) camera.up.copy(this.camUp); else camera.up.set(0, 1, 0);
     camera.lookAt(this.camLook);
   }

@@ -4205,6 +4205,13 @@ float frLine(float o, float fw, float c, float w) {
     const ch = city.chunks.get(ck);
     if (!ch) return null;
     this._ck = ck;
+    // Each street object's run of triangles in the flat mesh, [x, z, i0, i1]
+    // per object: what a tank knocks down is hidden by its index range
+    // (tank.js `fell`), the mesh being one merged draw.
+    // Live only from here to the flat mesh's add below: meshProps (the one
+    // caller of the unguarded pushes) runs inside this step, and chunk builds
+    // run one at a time, as this._ck already assumes.
+    this._fell = [];
     const road = new ChunkBuilder(true);
     const flat = new ChunkBuilder(false);
     // A near chunk's pavement is written straight into its road mesh, and
@@ -4302,7 +4309,7 @@ float frLine(float o, float fw, float c, float w) {
     }
     const grp = new THREE.Group();
     const add = (bld, mat, cast, recv) => {
-      if (bld.empty) return;
+      if (bld.empty) return null;
       const m = new THREE.Mesh(bld.build(ON_PHONE), mat);
       // ON A PHONE THE JS COPY GOES ONCE IT IS ON THE GPU: the ring's chunk
       // geometry is ~140 MB of typed arrays that nothing reads after upload
@@ -4326,6 +4333,7 @@ float frLine(float o, float fw, float c, float w) {
       m.castShadow = cast && this.shadows && !(ON_PHONE && (mat === this.mats.flat || mat === this.mats.flatGlow));
       m.receiveShadow = recv && this.shadows;
       grp.add(m);
+      return m;
     };
     // One builder per step: turning ~100k vertices of JS arrays into typed
     // buffers is itself several ms per builder on a phone.
@@ -4334,7 +4342,10 @@ float frLine(float o, float fw, float c, float w) {
     add(road, lod === 1 && !walk.empty ? this.mats.roadWalk : this.mats.road, false, true); yield;
     // The glow draws in the flat mesh (flatGlow: unlit, untonemapped where
     // flagged) -- one draw instead of two a chunk.
-    add(flat, glow.empty ? this.mats.flat : this.mats.flatGlow, true, true); yield;
+    const flatMesh = add(flat, glow.empty ? this.mats.flat : this.mats.flatGlow, true, true);
+    if (flatMesh && this._fell.length) grp.userData.fell = { mesh: flatMesh, list: this._fell };
+    this._fell = null;
+    yield;
     add(bl.glass, this.mats.glass, true, true); yield;
     add(bl.facade, this.mats.facade, true, true);
     return grp.children.length ? grp : null;
@@ -7787,6 +7798,7 @@ float frLine(float o, float fw, float c, float w) {
         if (city.jumpClear(ox, oz)) continue;
         const gy = G.terrainHeight(ox, oz) + WALK_Y;
         const armRot = Math.atan2(-px * sg, -pz * sg);
+        const f0 = flat.ni;
         if (h < 0.42) {
           // street light: base, tapered mast, cranked arm, lit lens
           flat.box(ox, gy, oz, 0.42, 0.22, 0.42, armRot, [0.24, 0.25, 0.27]);
@@ -7796,6 +7808,7 @@ float frLine(float o, float fw, float c, float w) {
           flat.box(ox - px * sg * 1.0, gy + 7.4, oz - pz * sg * 1.0, 1.9, 0.16, 0.16, armRot, poleCol);
           flat.box(ox - px * sg * 1.85, gy + 7.15, oz - pz * sg * 1.85, 0.85, 0.26, 0.42, armRot, [0.3, 0.31, 0.33]);
           glow.box(ox - px * sg * 1.85, gy + 7.06, oz - pz * sg * 1.85, 0.7, 0.1, 0.34, armRot, lampCol);
+          this._fell.push(ox, oz, f0, flat.ni);
         } else if (h < 0.84) {
           // street tree in a grate, three canopy layers
           const th = 4.5 + h * 5;
@@ -7811,6 +7824,7 @@ float frLine(float o, float fw, float c, float w) {
           // the giveaway that one asset is doing all the work.
           this.meshCanopy(flat, ox, gy, oz, th, 1, h, g, gd);
           this.city.addObstacle(this._ck, ox, oz, 0.5);
+          this._fell.push(ox, oz, f0, flat.ni);
         } else if (h < 0.88) {
           flat.prism(ox, gy, oz, 0.2, 0.55, 8, [0.72, 0.16, 0.12]);
           flat.prism(ox, gy + 0.55, oz, 0.15, 0.24, 8, [0.72, 0.16, 0.12]);
@@ -8000,6 +8014,7 @@ float frLine(float o, float fw, float c, float w) {
       const h2 = hash2(Math.round(x * 3), Math.round(z * 3));
       const th = 6 + h * 8;
       const kind = h2 < 0.42 ? 0 : h2 < 0.78 ? 1 : 2;   // conifer, broadleaf, scrub
+      const f0 = flat.ni;
       flat.prism(x, gy, z, 0.28 + h * 0.18, th * (kind === 1 ? 0.52 : 0.4), 6, trunk);
       // Hue drifts a little yellow-to-blue between individuals; value does most
       // of the work, exactly as with the building palette.
@@ -8028,6 +8043,7 @@ float frLine(float o, float fw, float c, float w) {
       // drive under a canopy, and blocking its full spread would make a park
       // impassable.
       this.city.addObstacle(this._ck, x, z, 0.45 + h * 0.25);
+      this._fell.push(x, z, f0, flat.ni);
     }
     cityStats.treesSkipped += treeSkip;
   }
@@ -8066,6 +8082,7 @@ float frLine(float o, float fw, float c, float w) {
         const rot = hr * Math.PI * 2, c = Math.cos(rot), sn = Math.sin(rot);
         const L = (lz) => [p.x - lz * sn, p.z + lz * c];
         const col = hr < 0.75 ? wood : [0.24, 0.32, 0.24];
+        const f0 = flat.ni;
         flat.box(p.x, gy + 0.72, p.z, 1.8, 0.05, 0.76, rot, col);
         for (const s2 of [-0.62, 0.62]) { const [x, z] = L(s2); flat.box(x, gy + 0.42, z, 1.8, 0.05, 0.26, rot, col); }
         for (const lx of [-0.65, 0.65]) {
@@ -8073,6 +8090,7 @@ float frLine(float o, float fw, float c, float w) {
           flat.box(x, gy, z, 0.07, 0.72, 1.5, rot, woodD);
         }
         city.addObstacle(this._ck, p.x, p.z, 0.7);
+        if (this._fell) this._fell.push(p.x, p.z, f0, flat.ni);
       } else if (p.k === 'fountain') {
         const gy = standOn(p.x, p.z, 0.3);
         if (gy === null) continue;

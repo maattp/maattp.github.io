@@ -415,6 +415,8 @@ export class Controls {
         || (!driving && (!!p.sprint || !!p.sprintAlt)),
       attack: this.btn.attack || this.key('KeyJ') || this.key('ControlLeft') || !!p.attack,
       horn: this.btn.horn || this.key('KeyH') || (driving && !!p.horn),
+      // a tank's machine gun: K, or RB on a pad (the pad's horn, L3, too)
+      mg: this.key('KeyK') || (driving && !!p.sprintAlt),
       jump: this.btn.jump || (!driving && !!p.jump),
     };
   }
