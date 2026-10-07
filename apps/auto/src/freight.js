@@ -47,6 +47,9 @@ export const FREIGHT = {
   // traction: per locomotive, times the arcade factor
   teMax: 680e3, power: 3.28e6, arcade: 1.7,
   brakeService: 0.55, brakeEmerg: 1.0,     // m/s2 at full application (arcade)
+  // flagged down for you (flagDown), arcade: the stop's emergency rate, and
+  // the set-back's top speed, acceleration and braking
+  flagStop: 1.3, flagBack: 9, flagBackAcc: 1.2, flagBackDec: 1.2,
   applyRate: 0.45, releaseRate: 0.22,      // brake cylinder, per second
 };
 
@@ -1324,8 +1327,8 @@ export class Freight {
       this.say(kind === 'car' ? where : moving ? 'The engineer is stopping for you — climb up at the cab' : 'Climb up at the cab (ENTER)', 4200);
       return true;
     }
-    // planned at full service (the brakes give 0.55), or the emergency's 1 m/s2 when slow
-    t.flag = { t: 0, phase: 'stop', stillT: 0, standT: 0, lead: t.lead, b: Math.abs(t.u) < 8 ? 0.8 : 0.45 };
+    // planned at 1.1 m/s2 on an emergency application of FREIGHT.flagStop (arcade)
+    t.flag = { t: 0, phase: 'stop', stillT: 0, standT: 0, lead: t.lead, b: 1.1 };
     this.say(kind === 'car' ? `${where}. The engineer is stopping for you` : 'The engineer is stopping for you — climb up at the cab', 4800);
     return true;
   }
@@ -1635,7 +1638,8 @@ export class FreightTrain {
     const want = this.emerg ? 1.3 : this.brakeCmd;
     const rate = want > this.brakeCyl ? (this.emerg ? 2.4 : P.applyRate) : P.releaseRate;
     this.brakeCyl += clamp(want - this.brakeCyl, -rate * dt, rate * dt);
-    const bDec = this.brakeCyl >= 1.05 ? P.brakeEmerg * (this.brakeCyl / 1.3) : P.brakeService * Math.min(1, this.brakeCyl);
+    const bE = this.flag ? P.flagStop : P.brakeEmerg;     // stopping for you: arcade-hard
+    const bDec = this.brakeCyl >= 1.05 ? bE * (this.brakeCyl / 1.3) : P.brakeService * Math.min(1, this.brakeCyl);
     // resistance: rolling (Davis A and B) and air (C)
     const res = 0.010 + 0.0006 * Math.abs(v) + (0.85 * v * v) / (m / 1000);
     const a = F / m + this._gradeAcc();
@@ -1752,21 +1756,25 @@ export class FreightTrain {
     }
     this.emerg = false;
     if (fl.phase === 'back') {
+      // ARCADE: the set-back is kinematic -- up to FREIGHT.flagBack, easing
+      // in over the last metres -- not the air brakes' minute-long release.
+      // `togo` follows you, so walking toward the cab ends it sooner.
+      const P = FREIGHT;
       const togo = Math.min(-left, this._backRoom());
-      const vr = -this.u * this.dir;                      // backing speed
-      const want = Math.min(4.5, Math.sqrt(Math.max(0, 2 * 0.25 * (togo - 1))));
-      this.rev = true;
-      this._notchT -= dt;
-      if (togo < 1) {
-        this.notch = 0; this.brakeCmd = 1;
-        if (standing) toStand();
-      } else if (vr < want - 0.4) {
-        this.brakeCmd = Math.max(0, this.brakeCmd - dt * 0.8);
-        if (this._notchT <= 0 && this.notch < 4) { this.notch++; this._notchT = 0.9; }
-      } else if (vr > want + 0.2) {
-        this.notch = 0;
-        this.brakeCmd = clamp(0.3 + (vr - want) * 0.8, 0, 1);
-      } else this.brakeCmd = Math.max(0, this.brakeCmd - dt * 0.5);
+      let vr = Math.max(0, -this.u * this.dir);            // backing speed
+      const want = Math.min(P.flagBack, Math.sqrt(Math.max(0, 2 * P.flagBackDec * (togo - 0.3))));
+      vr = vr < want ? Math.min(want, vr + P.flagBackAcc * dt) : Math.max(want, vr - P.flagBackDec * 1.5 * dt);
+      if (togo < 0.5 && vr < 0.3) vr = 0;
+      this.rev = true; this.brakeCmd = 0; this.brakeCyl = Math.min(this.brakeCyl, 0.2);
+      this.notch = vr > 0 && vr < want - 0.2 ? 4 : vr > 0 ? 1 : 0;
+      this.accLong = 0;
+      this.u = -vr * this.dir;
+      this.s += this.u * dt;
+      this.standT = vr === 0 ? this.standT + dt : 0;
+      this._point();
+      if (vr === 0) toStand();
+      this._sounds(dt);
+      return true;
     }
     if (fl.phase === 'stand') {
       this.notch = 0; this.brakeCmd = 1;
@@ -1892,8 +1900,9 @@ export class FreightTrain {
     if (left < 0.5 || emerg) { this.notch = 0; this.brakeCmd = 1; }
     else if (left < 6 && v < 1.2) { this.notch = Math.max(this.notch, 2); this.brakeCmd = 0; }
     // a slow train stops for you with the emergency application (1 m/s2)
-    if (this.flag && this.flag.b > 0.6 && v > vAllow + 0.5) { emerg = true; this.notch = 0; this.brakeCmd = 1; }
-    this.emerg = emerg && v > 2;
+    // stopping for you: the emergency application, held to the stand
+    if (this.flag && v > vAllow + 0.5) { emerg = true; this.notch = 0; this.brakeCmd = 1; }
+    this.emerg = emerg && (v > 2 || (this.flag && v > 0.02));
     const ev = this.step(dt);
     if (ev.collide && this.sys.player && this.sys.player.vehicle && this.sys.player.vehicle.spec.freight) this.sys.onCollide(this, ev.collide);
     // stopped at the yard: a crew change

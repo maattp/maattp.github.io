@@ -2606,19 +2606,26 @@ async function main() {
       }
       let msg = '';
       F.say = (m) => { msg = m; };
-      // 1) beside the lead cab of a freight at 45 mph
-      go(sF + 4 - q.len / 2, 20);
-      beside(sF, 5);
-      const fl = { took: !!press(), said: msg, flagged: !!q.flag, past: 0, backed: false, secs: null };
-      for (let i = 0; i < 10 * 400 && P.vehicle !== q; i++) {
-        q.service(0.1); F._flagged(0.1, P); F._crossingsUpdate(0.1, P.x, P.z);
-        fl.past = Math.max(fl.past, q.lead - 4.2 - sF);
-        if (q.flag && q.flag.phase === 'back') fl.backed = true;
-        if (P.vehicle === q) fl.secs = Math.round(i / 10);
-      }
-      fl.boarded = P.vehicle === q; fl.past = Math.round(fl.past);
-      if (P.vehicle) P.exitVehicle(true);
-      out.flag = fl;
+      // 1) beside the lead cab of a freight at 45 mph: standing still, then
+      // jogging (5 m/s) after the cab once it has passed -- which must be sooner
+      const flagRun = (jog) => {
+        go(sF + 4 - q.len / 2, 20);
+        let sW = sF; msg = '';
+        beside(sW, 5);
+        const r = { took: !!press(), said: msg, flagged: !!q.flag, past: 0, backed: false, secs: null };
+        for (let i = 0; i < 10 * 400 && P.vehicle !== q; i++) {
+          q.service(0.1); F._flagged(0.1, P); F._crossingsUpdate(0.1, P.x, P.z);
+          r.past = Math.max(r.past, q.lead - 4.2 - sF);
+          if (q.flag && q.flag.phase === 'back') r.backed = true;
+          if (P.vehicle === q) r.secs = +((i + 1) / 10).toFixed(1);
+          else if (jog && q.lead - 4.2 - sW > 3) { sW += 0.5; beside(sW, 5); }
+        }
+        r.boarded = P.vehicle === q; r.past = Math.round(r.past);
+        if (P.vehicle) P.exitVehicle(true);
+        return r;
+      };
+      out.flag = flagRun(false);
+      out.flagJog = flagRun(true);
       // 2) beside a hopper mid-train: told where the cab is, and it stops for you
       go(sF + 200 - q.len / 2, 15);
       msg = '';
@@ -2664,7 +2671,7 @@ async function main() {
     console.log(`  15 min of service: two trains on single track ${fr.service.both} times, gates down ${fr.service.gates} times, over the limit ${fr.service.over}`);
     console.log(`  Balmer Yard: boardable ${fr.boardable}, boarded ${fr.boarded}; 100 s notched up: ${fr.mph} mph; braked to a stand in ${fr.stop.secs} s (emergency ${fr.stop.emerg}); horn ${fr.horn}; down beside the track ${fr.out}`);
     console.log(`  called to the yard: ${fr.call.called}, in after ${fr.call.arrived} s; a crossing: active ${fr.gate.active}, car held ${fr.gate.held}, 60 m off clear ${fr.gate.clear}; you on the track: horn ${fr.warned.horn}, braking ${fr.warned.braking}`);
-    console.log(`  flagged at the cab (45 mph): "${fr.flag.said}"; ran ${fr.flag.past} m past you, set back ${fr.flag.backed}; you climbed up ${fr.flag.boarded} after ${fr.flag.secs} s`);
+    console.log(`  flagged at the cab (45 mph): "${fr.flag.said}"; ran ${fr.flag.past} m past you, set back ${fr.flag.backed}; you climbed up ${fr.flag.boarded} after ${fr.flag.secs} s standing still, ${fr.flagJog.secs} s jogging after it`);
     console.log(`  beside a hopper: "${fr.hint.said}" (beacon ${fr.hint.beacon}, stopping ${fr.hint.flagged}); at a crossing: stood ${fr.xing.gap} m short (across it ${fr.xing.under} steps), gates up ${fr.xing.up}, climbed up ${fr.xing.boarded}; in a car: ${fr.inCar}`);
     {
       const bad = [];
@@ -2685,7 +2692,7 @@ async function main() {
       if (!fr.call.called || fr.call.arrived === null) bad.push('calling a train');
       if (!fr.gate.active || !fr.gate.held || !fr.gate.clear) bad.push('the crossing gates');
       if (!fr.warned.horn) bad.push('a train sounding for you');
-      if (!fr.flag.took || !/stopping for you/.test(fr.flag.said) || !fr.flag.boarded || fr.flag.past > 520 || fr.flag.secs > 240) bad.push('flagging a freight down at its cab');
+      if (!fr.flag.took || !/stopping for you/.test(fr.flag.said) || !fr.flag.boarded || fr.flag.past > 220 || !(fr.flag.secs <= 46) || !fr.flagJog.boarded || !(fr.flagJog.secs < fr.flag.secs - 3)) bad.push('flagging a freight down at its cab');
       if (!fr.hint.took || !/lead locomotive's cab/.test(fr.hint.said) || !fr.hint.beacon) bad.push('the hint beside a hopper');
       if (!fr.xing.took || fr.xing.under || fr.xing.gap < 3 || !fr.xing.up || !fr.xing.boarded) bad.push('a flagged stop at a crossing');
       if (fr.inCar) bad.push('a car beside a freight flagged it');
