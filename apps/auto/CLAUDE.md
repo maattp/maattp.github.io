@@ -7571,7 +7571,15 @@ it is still accelerating), a synthetic tree and a real street object felled
 and out with the turret at 70 deg (home and baked in 87 frames).
 `tools/vehicles.mjs` times it 0-50 against its own band (its own class for
 the cornering order). `tools/perfcpu.mjs --runs=tank-dt` drives it downtown
-firing both guns (see the numbers in the PR).
+firing both guns (the pursuit it brings included); `tank-calm` holds the heat
+at zero, the tank's own cost. At 8x the two tank runs measure within the
+run-to-run spread of `drive-dt` (CPU median 12-21 ms against 17-20; worst
+frame 27-130 ms against 61-65 in the same sessions): no stall. The line of
+fire was the one cost found -- one `buildingsNear` 600 m round downtown and a
+2.5 m ground march for the crosshair every frame (`groundAt` 143 a frame) --
+so buildings are cast in 80 m pieces and the crosshair marches at 5 m to
+400 m, one frame in three (`groundAt` 84). `tools/audiorender.mjs --only
+cannon,mg,tracks,engine-tank` renders the sounds (no clipping).
 
 Gaps: a felled prop vanishes rather than toppling; hulks come only from the
 tank's guns (the pistol still blows a car up and removes it, as before).
