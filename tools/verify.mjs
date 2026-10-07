@@ -3743,17 +3743,22 @@ async function main() {
       // store and out of the picture (its index range rewritten)
       home();
       {
+        // (the near chunks round Sand Point may still be building on a slow
+        // renderer: the game's loop streams them while this waits)
         let best = null;
-        for (const [ck, l] of city.obstacles) {
-          const ch = d.world.chunks.get(ck), F = ch && ch.group && ch.group.userData.fell;
-          if (!F) continue;
-          for (let j = 0; j < F.list.length; j += 4) {
-            const x = F.list[j], z = F.list[j + 1], dd = Math.hypot(x - v.x, z - v.z);
-            if (dd < 20 || dd > 260 || (best && dd > best.dd)) continue;
-            let has = false;
-            for (let i = 0; i < l.length; i += 3) if (l[i] === x && l[i + 1] === z) { has = true; break; }
-            if (has) best = { x, z, dd, F, l };
+        for (let w = 0; w < 120 && !best; w++) {
+          for (const [ck, l] of city.obstacles) {
+            const ch = d.world.chunks.get(ck), F = ch && ch.group && ch.group.userData.fell;
+            if (!F) continue;
+            for (let j = 0; j < F.list.length; j += 4) {
+              const x = F.list[j], z = F.list[j + 1], dd = Math.hypot(x - v.x, z - v.z);
+              if (dd < 20 || dd > 300 || (best && dd > best.dd)) continue;
+              let has = false;
+              for (let i = 0; i < l.length; i += 3) if (l[i] === x && l[i + 1] === z) { has = true; break; }
+              if (has) best = { x, z, dd, F, l };
+            }
           }
+          if (!best) { await new Promise((r) => setTimeout(r, 1000)); home(); }
         }
         if (best) {
           const h = Math.atan2(best.x - v.x, best.z - v.z);
