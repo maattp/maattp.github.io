@@ -84,6 +84,8 @@ export class TankSystem {
     this.ring = el.querySelector('.rl');
     this.label = el.querySelector('.tl');
     this._hudX = -1; this._hudY = -1; this._hudR = -1; this._hudShow = false; this._hudTxt = '';
+    this._rootRect = null;
+    window.addEventListener('resize', () => { this._rootRect = null; });
   }
 
   showHud(on) {
@@ -100,8 +102,8 @@ export class TankSystem {
     _v.set(this.aim.x, this.aim.y, this.aim.z).project(cam);
     if (_v.z > 1 || _v.z < -1) { this.showHud(false); return; }
     this.showHud(true);
-    const r = this.el.parentNode.getBoundingClientRect ? this._rootRect || (this._rootRect = this.el.parentNode.getBoundingClientRect()) : null;
-    const w = r ? r.width : window.innerWidth, h = r ? r.height : window.innerHeight;
+    const r = this._rootRect || (this._rootRect = this.el.parentNode.getBoundingClientRect());
+    const w = r.width || window.innerWidth, h = r.height || window.innerHeight;
     const x = Math.round((_v.x * 0.5 + 0.5) * w), y = Math.round((-_v.y * 0.5 + 0.5) * h);
     if (x !== this._hudX || y !== this._hudY) {
       this._hudX = x; this._hudY = y;
@@ -247,7 +249,7 @@ export class TankSystem {
 
   /**
    * DRIVE OVER A CAR AND IT IS FLAT. Any road vehicle under the hull while the
-   * tank is moving or turning is crushed: squashed to 42 % of its height,
+   * tank is moving or turning is crushed: squashed to 40 % of its height,
    * dead, out of the collision pairs (traffic.js skips `crushed`), and the
    * tank loses 4 % of its speed and rocks over it. Standing still against a
    * car it pushes like any vehicle (it weighs forty of them).
@@ -271,7 +273,9 @@ export class TankSystem {
     c.health = 0; c.dead = true; c.exploded = true;
     c.vLong = 0; c.vLat = 0;
     if (c.mode !== 'trailer') c.mode = 'free';
-    c.tilt.scale.y = 0.42;
+    // flattened and spread, sitting a little askew
+    c.tilt.scale.set(1.1, 0.4, 1.04);
+    c.roll = (Math.random() - 0.5) * 0.08; c.pitch = (Math.random() - 0.5) * 0.05;
     c.bodyMat.color.multiplyScalar(0.62);
     c.color = c.bodyMat.color.getHex(); c._farCol = null;
     if (c.rider) c.rider.group.visible = false;
@@ -639,7 +643,7 @@ function rayCar(c, ox, oy, oz, dx, dy, dz, maxT) {
   const px = ox - c.x, pz = oz - c.z;
   const lo = [px * rx + pz * rz, oy - c.y, px * f.x + pz * f.z];
   const ld = [dx * rx + dz * rz, dy, dx * f.x + dz * f.z];
-  const h = (c.spec.roof || 1.5) * (c.crushed ? 0.42 : 1);
+  const h = (c.spec.roof || 1.5) * (c.crushed ? 0.4 : 1);
   const mn = [-c.halfWid, c.wreck ? -0.5 : 0, -c.halfLen], mx = [c.halfWid, h + (c.wreck ? 0.5 : 0), c.halfLen];
   return slab(lo, ld, mn, mx, maxT);
 }

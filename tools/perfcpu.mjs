@@ -254,6 +254,9 @@ function pageInstall() {
     // the tank on the same streets, firing: the main gun whenever it is
     // loaded, the machine gun in bursts (tank.js: shells, blasts, wrecks)
     'tank-dt': { speed: 12, vehicle: 'tank', fire: true, route: () => buildRoute(0, 0, (e) => e.cls !== 'hwy' && e.cls !== 'ramp' && e.cls !== 'res' && !e.elev, 3000) },
+    // ...with the heat held at zero: the tank's own cost, without the pursuit
+    // its gunfire brings (police routing is the pursuit's, not the tank's)
+    'tank-calm': { speed: 12, vehicle: 'tank', fire: true, calm: true, route: () => buildRoute(0, 0, (e) => e.cls !== 'hwy' && e.cls !== 'ramp' && e.cls !== 'res' && !e.elev, 3000) },
   };
 
   let R = null;
@@ -315,6 +318,7 @@ function pageInstall() {
     input.brake = sp > vt + 4; input.brakeAmt = sp > vt + 4 ? 1 : 0;
     input.y = 0; input.hand = false; input.attack = false;
     if (R.fire) { input.hand = (R.t % 2.2) < 0.1; input.horn = (R.t % 3.1) > 2.3; }
+    if (R.calm) { d.game.points = 0; d.game.wanted = 0; }
     if (v.health < 60) v.health = 100;
   };
   const pu = p.update;
@@ -336,7 +340,7 @@ function pageInstall() {
     } else {
       const route = cfg.route();
       if (!route || route.length < 3) return { error: 'no route' };
-      R = { route, speed: cfg.speed, seg: 0, hist: [], t: 0, resets: 0, fire: !!cfg.fire };
+      R = { route, speed: cfg.speed, seg: 0, hist: [], t: 0, resets: 0, fire: !!cfg.fire, calm: !!cfg.calm };
       if (!p.onFoot && p.exitVehicle) p.exitVehicle();
       const q0 = pointAt(0);
       p.respawn(q0.x, q0.z);

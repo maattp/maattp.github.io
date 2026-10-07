@@ -7298,7 +7298,7 @@ function buildTank(spec, paint, trim, matte) {
     tur.box(sx * 1.80, 0.46, 0.98, 0.34, 0.32, 0.26, 0, TAN_D);
     for (let i = 0; i < 2; i++) for (let j = 0; j < 3; j++) {
       const x = sx * (1.70 + j * 0.1), y = 0.54 + i * 0.13;
-      tur.tube([x, y, 1.1], [x, y + 0.03, 1.26], 0.042, 6, GUNMETAL, true);
+      tur.box(x, y - 0.04, 1.2, 0.085, 0.085, 0.16, 0, GUNMETAL);
     }
     // stowage boxes along the turret sides
     tur.box(sx * 1.87, 0.22, -0.55, 0.16, 0.5, 1.6, 0, TAN);

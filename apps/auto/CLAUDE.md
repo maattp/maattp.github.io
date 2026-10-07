@@ -7398,6 +7398,184 @@ when taken, a tap strobes it and starts the voice, G stops it, leaving
 stops it, traffic ahead yields, an SPD unit still strobes; every pickup on
 the maps, none in the water or the road, every hospital marked.
 
+## The tank
+
+**A modern main battle tank on M1A2 lines (generic markings), parked on the
+old Naval Air Station apron at Sand Point** -- Magnuson Park, in front of the
+hangars (`TANK_SITE` in tank.js, ~(6255, -8170)), nose out to the field. It is
+an 'apron' vehicle (never despawned), marked "Tank" on the full map and the
+minimap, says hello within 55 m, $25000 from the delivery menu, and kept clear
+of the lot's parking (`traffic.keepClear`: the apron is mapped as a car park).
+**There is always one there**: every 5 s, with no live tank within 60 m of the
+site and you more than 400 m away, `TankSystem.update` parks a new one (the
+balloon's rule). Traffic never spawns one. `docs/tank/` has shots.
+
+vehicles.js has the model and the driving; **tank.js** (`TankSystem`) has the
+rest: `step(v, dt, input)` runs inside `player.updateDrive` for the tank you
+are in -- AFTER the drive and BEFORE `collideWithBuildings`, so it can fell the
+street objects and flatten the cars it has driven into before anything pushes
+back -- and aims and fires; `update(dt)` runs once a frame for the rounds in
+flight, the burning hulks, the crosshair and the home at Sand Point.
+
+### The model: one material, live parts, a belt that is a geometry swap
+
+- **Everything is in the shared MATTE material with vertex colours** (CARC tan,
+  darker undersides, a different batch of paint on the skirts, black rubber,
+  steel connectors). A tank is flat paint; the per-car clearcoated `paint`
+  would make it a toy, and a matte variant of it would be a new program to
+  warm. `paint` holds only the four tow eyes. `trim` holds the lamps and the
+  driver's periscopes (real glass).
+- `buildTank` uses `facet()`: a flat-shaded solid between two rings of points
+  (armour is planes; a smoothed loft rounds every edge off it). Hull and
+  sponsons are side profiles extruded across x; the turret is a plan wedge
+  extruded up with its sides leaning in; skirts are thin profiles, thicker
+  over the front three wheels.
+- **Three live parts on the player's tank, baked into everyone else's**
+  (`buildType` appends them into the `W` geometries at rest: turret ahead, gun
+  level, belt at phase 0 both sides): the turret (`TANK.turretAt`, turns about
+  the ring), the gun (a child of the turret at its trunnions, `TANK.gunAt`,
+  elevates and recoils), and **one side's running gear drawn twice, the right
+  side as the left with `scale.x = -1`** (three flips the winding for a
+  negative determinant).
+- **The belt moves by swapping geometry, not by a shader.** The running gear
+  (85 links on the convex hull of the sprocket's pitch circle, the idler and
+  the end road wheels -- `tankBelt()` -- plus seven road wheels, the sprocket
+  and the idler) is built at `TANK.phases` (4) offsets along the belt: every
+  link a quarter-pitch further round, round the sprocket and idler and back
+  along the ground, and the wheels turned 1/11 of a revolution per pitch (11
+  bolt heads, 11 sprocket teeth), so the cycle closes on itself. `sync()`
+  picks each side's phase from its belt travel (`vLong -/+ yawRate x 1.51`, so
+  a pivot runs the belts opposite ways). **Past ~half a pitch a frame the true
+  phase strobes** (the wagon wheel), so the drawn travel is capped at 1.8
+  phase steps a frame: still running, the right way. No new program, no new
+  material; the four phase geometries are 3.7k triangles each.
+- **Draws: 8 on the player's tank** (paint/trim/matte, the contact shadow,
+  turret, gun, two belts) against 12 for a car with articulated wheels; 3 for a
+  parked one. Triangles: 10.2k parked (a sedan is 6.8k), ~10k drawn detailed.
+- **Out of the tank, the turret swings home before it bakes**: `setDetailed
+  (false)` with the turret off-centre sets `tank.stow` and keeps the live
+  parts; `_tankParts` slews them back (unaimed for 0.3 s, the wants are zero)
+  and bakes when they arrive (~1.5 s from 70 deg). No snap. An 'apron' tank
+  settles like a quad (`settles` in traffic.update).
+
+### Driving: skid steering
+
+`spec.tank` sends the yaw to `Vehicle._tankYaw`: **the stick asks for a YAW
+RATE, not a wheel angle** -- `TANK.pivot` 0.9 rad/s at a standstill, falling as
+`1 / (1 + v / 11)` -- built with a 4.5/s lag (62 t), reversed in reverse like a
+car's, and the scrubbing tracks take `|yaw| x v x 0.22` m/s2 off the speed:
+a hard turn at speed slows you. Everything else is the car's model: the
+longitudinal (acc 2.0, top 65 km/h, 100-0 table 45 m), the grade (`offroad`:
+half of it, no grass drag), the ground follow, ramps. Lateral grip 40 (tracks
+do not slide). **No handbrake: the HAND BRAKE button is the gun.**
+
+| fixed dt, flat | |
+|---|---|
+| 0-50 km/h | 5.45 s |
+| top | 65.0 km/h |
+| pivot on the spot | 51.6 deg/s (360 in 7 s), 0 m drift |
+| full lock at full throttle | settles at 52.7 km/h on a 38 m radius |
+| 65-0 | 8.4 m |
+
+`armor` 0.12 scales every `damage()` (a round striking it still kills it; one
+landing 5 m off costs it ~8 %); your crash damage in it is x0.06 of a car's, and a cop's pistol
+sparks off it. Destroyed, it goes up like any car (`onCarDestroyed`).
+
+### What it drives through
+
+- **Cars: flattened.** `crush()`: any road vehicle lighter than mass 8 (all
+  but the 747) whose body rectangle overlaps the tank's (SAT, nose padded
+  0.25 m) while the tank moves (|v| > 0.8 m/s or turning) is `crushed`:
+  squashed to 40 % of its height and spread askew, darkened, dead, 'free',
+  and **out of the collision pairs** (`resolveCarCollisions` skips `crushed`),
+  so the tank drives over it, losing 4 % of its speed and rocking its hull.
+  Heat: 6, a police car 30. Standing still against a car it pushes like any
+  vehicle (mass 40).
+- **Trees, lamp posts, picnic tables: knocked flat, out of the picture.**
+  `fell()` takes every street object in the per-chunk store
+  (`city.obstacles`) under the hull out of it -- moved to 1e9, so the chunk's
+  8 m index stays valid -- with splinters or sparks and a crunch. **And the
+  prop disappears**: it is part of its chunk's one merged flat mesh, so
+  world.js records each one's run of indices there as it builds
+  (`this._fell`: [x, z, i0, i1], kept on the chunk group's
+  `userData.fell`), and `hideRange` zeroes that run (degenerate triangles,
+  shadow and all). **On a phone the index array is gone after upload**, so
+  three gets a shared all-zero array of the run's length; its update range
+  uploads only [i0, i1), and the array is dropped again on upload. A felled
+  prop comes back with its collision if the chunk is ever rebuilt.
+- **Walls, landmarks and buildings stop it** (barriers and landmark solids are
+  other stores; `collideWithBuildings` as for any car).
+
+### The turret, the guns, the crosshair
+
+- **The turret follows the camera** (`step`): its want is the camera's yaw,
+  slewed at `TANK.traverse` (measured 57 deg/s); the gun's elevation is the
+  camera's pitch (`(0.17 - camPitch) x 0.7`, -9 to +20 deg), corrected for
+  the hull's pitch and roll. Driving forward, the chase camera eases behind
+  the hull only once you have not touched the look for 3 s (`player.lookT`):
+  aiming is not fought. The tank's boom is 12.5 m back and 4.6 m up.
+- **The crosshair is honest**: where the bore's line meets something,
+  re-cast every third frame (`cast`) and projected; a ring round it runs out
+  as the gun reloads (READY / LOADING). DOM, `#tankHud`, made by tank.js.
+- **`cast(o, d, maxT)`**: vehicles (their body box, yawed: a 3D slab test),
+  people (0.45 m upright cylinders), buildings (their boxes, skipped in a
+  bore), then the ground (deck or terrain), water and landmark solids marched
+  at 2.5 m and bisected. One reused result object.
+- **Main gun** (FIRE): 2 s reload; the round is near-hitscan -- the blast
+  lands `t / 900` s later where the cast ended -- with a tracer streak, the
+  gun recoiling 0.42 m, the hull rocking away from it, camera shake, a flash
+  and smoke ring and dust off the ground. **The blast**: every vehicle within
+  10 m takes `150 (1 - d/10)^1.4` (the one it struck, or anything within
+  1.2 m, 1000) and a dead one becomes a **hulk** (`wreck`: burnt black,
+  `Vehicle.updateWreck` throws it up to ~4 m tumbling about its long axis,
+  bounces once, lands on its wheels or its roof, and it burns for 25 s); the
+  living are shoved. People within 12 m are thrown down, killed inside 7 m;
+  you on foot are hurt inside 12 m; your own tank, caught by its own round,
+  takes half through its armour. On water, a plume instead.
+- **Machine gun** (MG, coaxial, so the crosshair serves both): 11 rounds a
+  second, 7 a round to a vehicle (an SUV dies in ~1.5 s, and becomes a hulk),
+  people dropped in a few rounds, a tracer every second round.
+- **Heat**: 8 a main-gun round, 2 per five MG rounds, 12 a wreck (45 a police
+  car), 20 more a police car caught in a blast; people killed as usual.
+- **Nothing is made after boot**: flash, blast, smoke and fire are the shared
+  particle pool (effects.js), the streak its tracer lines. verify counts
+  `renderer.info.programs` across a shot and its blast: 0 compiled.
+
+### Controls
+
+Touch: the HAND BRAKE button becomes **FIRE** (and the attack colour), HORN
+becomes **MG** (`TankSystem.onEnter`, restored on the next vehicle).
+Keyboard: J / Ctrl / Space fire, H / K the machine gun. Pad: X or A fire, L3
+or RB the machine gun (`controls.read().mg`). ATTACK in a car is the horn; in
+a tank it does not honk.
+
+### Sound
+
+`spec.engine 'tank'`: a gas turbine (the Abrams' AGT1500) -- the hydroplane's
+turbine pitched down and heavier, spooling over a second or two; a pivot turn
+loads it like the throttle (`audioState`). `tracks`: a looped bank recipe of
+link slap, road-wheel grind and steel squeal, rate and level from the belts'
+speed (`tracks` in the audio state). `cannon`: crack, a chest-deep thump, the
+boom rolling for seconds (reverb send 0.7) and the breech's clank. `mg`: one
+round, three variants. No tyre lock-up squeal and no plane's wind in a tank.
+
+### Verifying
+
+verify.mjs **"tank"** drives it through `player.update` at a fixed dt: the
+bench on flat ground (0-50, top, pivot and drift, a turn at speed, 65-0), the
+turret onto the camera, a parked car crushed in its path (speed kept 1.06:
+it is still accelerating), a synthetic tree and a real street object felled
+(out of the store, its index range rewritten), the main gun at a car 60 m off
+(struck, wrecked, thrown 4.2 m, landed; 0 programs compiled), a 1 s MG burst
+(10 rounds, SUV 100 -> 30, dead at 2 s), a building it cannot drive through,
+and out with the turret at 70 deg (home and baked in 87 frames).
+`tools/vehicles.mjs` times it 0-50 against its own band (its own class for
+the cornering order). `tools/perfcpu.mjs --runs=tank-dt` drives it downtown
+firing both guns (see the numbers in the PR).
+
+Gaps: a felled prop vanishes rather than toppling; hulks come only from the
+tank's guns (the pistol still blows a car up and removes it, as before).
+
 ## Known gaps
 
 - **Roads still under the water drawn over them: 36 deck/freeway samples and

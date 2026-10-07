@@ -94,7 +94,7 @@ const BANDS = {
 
 function launch() {
   return spawn(CHROME, [
-    `--remote-debugging-port=${PORT}`, '--headless=new', '--use-gl=swiftshader',
+    `--remote-debugging-port=${PORT}`, '--headless=new', '--disable-gpu-sandbox', '--use-gl=swiftshader',
     '--enable-unsafe-swiftshader', '--window-size=900,640', '--no-first-run',
     `--user-data-dir=/tmp/auto-veh-profile-${PORT}`, 'about:blank',
   ], { stdio: 'ignore' });
