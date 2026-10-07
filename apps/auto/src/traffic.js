@@ -1,7 +1,7 @@
 // Traffic, parked cars and the police response.
 
 import * as THREE from './three.js';
-import { Vehicle, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, makeBellows } from './vehicles.js';
+import { Vehicle, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, makeBellows, HITCH } from './vehicles.js';
 import { clamp, lerp, angleWrap, hash2, rng, dist2 } from './util.js';
 import * as G from './geo.js';
 import { memo } from './bootcache.js';
@@ -439,15 +439,17 @@ export class TrafficSystem {
     const v = new Vehicle(this.city, typeName, color);
     v.place(x, z, heading);
     this.add(v, mode);
-    if (v.spec.artic) {
-      // the rear section, straight behind, and the bellows between
-      const r = new Vehicle(this.city, 'articRear', color);
-      const f = v.forward, back = 6.35 + 3.85;
+    if (v.spec.towed) {
+      // the rear section or trailer, straight behind (and an artic's bellows between)
+      const r = new Vehicle(this.city, v.spec.towed, color);
+      const f = v.forward, H = HITCH[v.spec.towed], back = H.hitchF + H.hitchR;
       r.place(x - f.x * back, z - f.z * back, heading);
       r.leader = v; v.trailer = r;
       this.add(r, 'trailer');
-      v.bellows = makeBellows();
-      this.scene.add(v.bellows);
+      if (v.spec.artic) {
+        v.bellows = makeBellows();
+        this.scene.add(v.bellows);
+      }
       r.follow(v);
     }
     return v;
@@ -1009,13 +1011,16 @@ export class TrafficSystem {
       // draws each, and all nineteen were culled every frame. They show out
       // to 80 lengths, about 10 px on a phone -- a jet to 1.2 km, a boat to
       // 460 m, a quad to 160 m -- and never closer than a parked car does.
-      const show = v.mode !== 'apron' || d2 < Math.max(PARKED_SHOW, v.spec.len * 80, v.spec.seeFar || 0) ** 2;
+      // (`showR` caps it: a fire rig is three draws, six with its trailer, and a
+      // dozen stations' aprons would otherwise draw from 800 m)
+      const show = v.mode !== 'apron' || d2 < (v.spec.showR || Math.max(PARKED_SHOW, v.spec.len * 80, v.spec.seeFar || 0)) ** 2;
       // ...and so, once settled, is anything else standing on an apron: the
       // bike-share bikes, the airfield's aircraft, a moored boat (except one
       // within 120 m, which bobs). 114 of the 158 vehicles in the list are
       // apron vehicles since the docks, and within 300 m each ran the whole
       // driving model every frame to stand still.
-      const settles = v.spec.atv || v.spec.tank || v.spec.bicycle || (v.spec.plane && !v.airborne) || (v.spec.boat && d2 > 120 * 120);
+      // (a fire rig on its station apron too: its trailer is placed by follow below)
+      const settles = v.spec.atv || v.spec.tank || v.spec.bicycle || v.spec.fire || (v.spec.plane && !v.airborne) || (v.spec.boat && d2 > 120 * 120);
       if (v.mode === 'apron' && settles && d2 < 300 * 300 && Math.abs(v.vLong) < 0.05 && Math.abs(v.vLat) < 0.05) {
         v.group.visible = show;
         if (v._still < 3) v._still++;
@@ -1066,7 +1071,9 @@ export class TrafficSystem {
     for (const v of this.cars) {
       if (!v.trailer) continue;
       if (v.bellows) v.bellows.visible = v.group.visible && dist2(v.x, v.z, px, pz) < 150 * 150;
-      v.trailer.follow(v);
+      // (a rig standing on its apron has not moved its trailer either)
+      const k = v.x * 7.3 + v.z * 3.1 + v.heading * 11 + v.y;
+      if (v._mode !== 'apron' || v === player.vehicle || k !== v._followK) { v._followK = k; v.trailer.follow(v); }
       v.trailer.group.visible = v.group.visible;
     }
     // collision resolution edits transforms directly, so re-sync every body.

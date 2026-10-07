@@ -33,6 +33,7 @@ import { TowerGame } from './atc.js';
 import { DuckTour } from './ducktour.js';
 import { CoffeeShop } from './barista.js';
 import { Seafair } from './hydrorace.js';
+import { FireService, placeStations } from './firecalls.js';
 import { BONES } from './peds.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
@@ -136,6 +137,7 @@ const RESPAWN_SITES = [
   { name: 'Vashon Island Clinic', ll: [47.5030, -122.4620] },
 ];
 let respawns = [];   // [{ name, x, z, node }] (buildRespawns)
+let fire = null, fireStations = [];   // Seattle Fire: the stations' rigs, the water cannon, fire calls (firecalls.js)
 
 class Game {
   constructor() {
@@ -144,6 +146,7 @@ class Game {
     this.money = 250;
     this.target = null;
     this.tourTarget = null;   // the Duck Tour's next stop (ducktour.js)
+    this.fireTarget = null;   // a fire call's burning building (firecalls.js)
     this.deliveryValue = 0;
     this.cool = 0;
     this.dead = false;
@@ -276,7 +279,8 @@ class Game {
       setTimeout(() => hud.showToast('The wind turns with height: climb or sink to change course'), 6500);
     }
     if (v.mode === 'parked' || v.wasParked) this.addHeat(8);
-    hud.showToast(v.typeName === 'police' ? 'Police cruiser commandeered — SIREN switches the lights and siren' : 'Vehicle acquired');
+    hud.showToast(v.typeName === 'police' ? 'Police cruiser commandeered — SIREN switches the lights and siren'
+      : v.spec.fire ? `Seattle Fire ${v.spec.towed ? 'tiller ladder truck' : 'engine'} — SIREN for the lights, WATER runs the ${v.spec.towed ? 'ladder pipe' : 'deck gun'}, MISSION takes a fire call` : 'Vehicle acquired', v.spec.fire ? 4200 : undefined);
     // The radio comes on with the ignition, on a random station (every car
     // its own, as in GTA); RADIO on the pad tunes the next one. audio.update()
     // starts the stream on the next frame; this is only the announcement.
@@ -976,6 +980,8 @@ function installShadowFade() {
   freezeStatic(freight.group); freezeStatic(freight.tunGroup);
   // the balloon's launch field: no park trees on it
   if (city.clearCircles) city.clearCircles.push([BALLOON_SITE.x, BALLOON_SITE.z, 26]);
+  // the fire stations' aprons: where each rig stands, kept clear before any chunk is scattered
+  try { fireStations = placeStations(city, world, (x, z) => world.waterLevelAt(x, z)); } catch (e) { blog(`fire stations: ${e.message}`); fireStations = []; }
   // The scene root never moves, and its own matrixAutoUpdate re-flagged EVERY
   // object in the world for a world-matrix multiply each frame. Static
   // subtrees are frozen; see freezeStatic.
@@ -1327,6 +1333,11 @@ function installShadowFade() {
   if (!mapCanvas) { mapCanvas = buildMapCanvas(city); bcOut.mapCanvas = mapCanvas; }
   hud = new Hud(document.getElementById('app'), city, mapCanvas);
   hud.places = mapPlaces;
+  // Seattle Fire: a rig or two on every station's apron, and the calls
+  fire = new FireService({ scene, city, world, traffic, peds, game, hud, audio, fx, controls, tex: tx.particle, renderer, phone: ON_PHONE,
+    get player() { return player; }, get camera() { return camera; }, setSiren: (v, on) => setSiren(v, on) });
+  fire.spawnRigs(fireStations);
+  hud.places.push(...fire.places());
   if (needleTop) needleTop.o.hud = hud;
   if (wheelRide) wheelRide.o.hud = hud;
   hud.monorail = monorail;
@@ -1454,7 +1465,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1493,7 +1504,7 @@ function installShadowFade() {
     const tw = performance.now();
     const warm = new THREE.Group();
     const wakeWas = fx.wakeMesh ? fx.wakeMesh.visible : false;
-    let lazy = null;
+    let lazy = null, fireWarm = null;
     try {
       // Traffic has not spawned yet, so the stand-ins come from the asset
       // table. (paint is never disposed: that would release the program just
@@ -1511,6 +1522,8 @@ function installShadowFade() {
       // the boat wake, hidden until then -- three compiles nothing it skips.
       lazy = world.warmMeshes();
       for (const m of lazy.meshes) warm.add(m);
+      // the fire service's particles, beacon and lights (drawn first in a fire call)
+      if (fire) { fireWarm = fire.warmMeshes(player); for (const m of fireWarm.meshes) warm.add(m); }
       if (fx.wakeMesh) fx.wakeMesh.visible = true;
       scene.add(warm);
       placeSun(player.x, player.y, player.z);
@@ -1526,6 +1539,7 @@ function installShadowFade() {
     } finally {
       scene.remove(warm);
       if (fx.wakeMesh) fx.wakeMesh.visible = wakeWas;
+      if (fireWarm) fireWarm.restore();
       try { if (lazy) lazy.dispose(); } catch (e) { /* nothing to free */ }
     }
     const gl = renderer.getContext();
@@ -2243,11 +2257,14 @@ function setSiren(v, on) {
 }
 function updateSiren(dt) {
   const pv = player.vehicle;
-  const v = pv && pv.spec.police && !pv.dead ? pv : null;
+  // a police car, or a fire rig (its own flashing heads: firecalls.js shows
+  // them while `sirenOn`; `data-police` shows SIREN for both)
+  const v = pv && (pv.spec.police || pv.spec.fire) && !pv.dead ? pv : null;
   if (v !== copCar) {
     if (copCar) setSiren(copCar, false);
     copCar = v;
-    if (v) { traffic.lightBar(v); setSiren(v, false); }
+    if (v && v.spec.police) traffic.lightBar(v);
+    if (v) setSiren(v, false);
     controls.root.dataset.police = v ? '1' : '';
   }
   if (controls.takeSiren() % 2 && v) {
@@ -2490,6 +2507,7 @@ function frame(now) {
   if (prof) lap('traffic');
   peds.update(dt, p.x, p.z, player, traffic);
   if (prof) lap('peds');
+  if (fire) fire.update(dt);
   if (stunts) stunts.update(dt, player);
   if (tanks) tanks.update(dt);
   if (acts) acts.update(dt, player);

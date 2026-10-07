@@ -1958,12 +1958,15 @@ const HORNS = {
   car: { f: [415, 523], wave: 'square', bp: 1900, q: 1.4, gain: 0.42 },
   truck: { f: [185, 233, 277], wave: 'sawtooth', bp: 900, q: 1, gain: 0.5 },
   moto: { f: [560], wave: 'square', bp: 2200, q: 1.8, gain: 0.36 },
+  // a fire rig's air horns: three deep trumpets, a minor chord, loud
+  air: { f: [139, 165, 208], wave: 'sawtooth', bp: 620, q: 0.8, gain: 0.62 },
   none: null,
 };
 function hornFor(spec) {
   if (!spec) return 'car';
   if (spec.plane || spec.heli) return 'none';
   if (spec.moto || spec.atv) return 'moto';
+  if (spec.fire) return 'air';
   if (spec.bus || spec.cargo || spec.diesel || spec.boat || spec.rail) return 'truck';
   return 'car';
 }
@@ -2704,6 +2707,51 @@ export class Audio {
     }
   }
 
+  /**
+   * A fire rig's water cannon and the fire it is aimed at (firecalls.js), both
+   * 0..1: the stream is a hiss over a low rush, the fire a dark roar with a
+   * crackle in it. One looped noise source, built the first time a rig sprays
+   * or a building burns, and linked to the bus only while either is heard.
+   */
+  fireSound(spray, roar) {
+    if (!this.ready || !this.enabled) return;
+    const c = this.ctx, t = this.now();
+    let S = this._fire;
+    if (!S) {
+      if (spray <= 0 && roar <= 0) return;
+      const src = c.createBufferSource();
+      src.buffer = this.pinkNoise; src.loop = true;
+      const hi = c.createBiquadFilter(); hi.type = 'bandpass'; hi.frequency.value = 2400; hi.Q.value = 0.5;
+      const lo = c.createBiquadFilter(); lo.type = 'lowpass'; lo.frequency.value = 420;
+      const sg = c.createGain(), lg = c.createGain(), out = c.createGain();
+      sg.gain.value = 0; lg.gain.value = 0; out.gain.value = 1;
+      const roarLp = c.createBiquadFilter(); roarLp.type = 'lowpass'; roarLp.frequency.value = 260;
+      const rg = c.createGain(); rg.gain.value = 0;
+      // the crackle: the roar's own noise, gated by a fast square LFO
+      const crack = c.createBiquadFilter(); crack.type = 'highpass'; crack.frequency.value = 1800;
+      const cg = c.createGain(); cg.gain.value = 0;
+      const lfo = c.createOscillator(); lfo.type = 'square'; lfo.frequency.value = 7.3;
+      const lfoG = c.createGain(); lfoG.gain.value = 0;
+      lfo.connect(lfoG).connect(cg.gain);
+      src.connect(hi).connect(sg).connect(out);
+      src.connect(lo).connect(lg).connect(out);
+      src.connect(roarLp).connect(rg).connect(out);
+      src.connect(crack).connect(cg).connect(out);
+      src.start(); lfo.start();
+      S = this._fire = { out, sg, lg, rg, lfoG, lfo, on: false, quiet: 0 };
+    }
+    const want = spray > 0 || roar > 0.01;
+    if (want && !S.on) { S.on = true; S.out.connect(this.sfxBus); }
+    setp(S.sg.gain, spray * 0.22, t, spray > 0 ? 0.04 : 0.12);
+    setp(S.lg.gain, spray * 0.38, t, spray > 0 ? 0.06 : 0.15);
+    setp(S.rg.gain, roar * roar * 0.55, t, 0.3);
+    setp(S.lfoG.gain, roar * roar * 0.05, t, 0.3);
+    S.lfo.frequency.setValueAtTime(5 + Math.random() * 9, t);
+    if (!want && S.on) {
+      if (++S.quiet > 60 && !keepLinked) { S.on = false; S.out.disconnect(); }
+    } else S.quiet = 0;
+  }
+
   pickup(kind) { this.play(kind === 'gun' ? 'weapon' : 'pickup', { gain: 0.55, send: 0.05 }); }
   cash() { this.play('cash', { gain: 0.6, send: 0.05, duck: 0.3, duckHold: 0.4 }); }
   wanted(level = 1) {
@@ -2747,13 +2795,13 @@ export class Audio {
       if (!running) this.play('starter', { ...g, at: 0.25, rate: 1.3, gain: 0.4 });
       catchAt = 0.7;
     } else {
-      if (spec && spec.bus) this.play('airbrake', { gain: 0.4 });
+      if (spec && (spec.bus || spec.fire)) this.play('airbrake', { gain: 0.4 });
       else this.play('door_open', g);
       this.play('seat', { ...g, at: 0.2, gain: 0.4 });
       this.play('door_close', { ...g, at: 0.42 });
       if (kind === 'ev') this.play('ev_on', { at: 0.6, gain: 0.35, send: 0.02 });
       else if (kind === 'heli') catchAt = 0.7;
-      else if (!running) this.play('starter', { ...g, at: 0.52, rate: spec && (spec.bus || spec.cargo) ? 0.78 : spec && spec.plane ? 0.85 : 1, gain: 0.42 });
+      else if (!running) this.play('starter', { ...g, at: 0.52, rate: spec && (spec.bus || spec.cargo || spec.fire) ? 0.78 : spec && spec.plane ? 0.85 : 1, gain: 0.42 });
       catchAt = kind === 'ev' ? 0.6 : running ? 0.45 : 1.25;
     }
     if (running && kind !== 'heli' && kind !== 'plane') this.engModel.start(true);
@@ -3071,7 +3119,8 @@ export class Audio {
       const cops = this._cops || (this._cops = []);
       cops.length = 0;
       for (const v of cars) {
-        if ((v.mode !== 'police' && !v.sirenOn) || v.dead) continue;   // (sirenOn: your police car, SIREN on)
+        // (sirenOn: your police car with SIREN on, or a fire rig's -- firecalls.js)
+        if ((v.mode !== 'police' && !v.sirenOn) || v.dead) continue;
         const d2 = (v.x - L.x) ** 2 + (v.z - L.z) ** 2;
         if (d2 < 260 * 260) cops.push(d2, v);
       }

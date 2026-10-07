@@ -143,14 +143,17 @@ async function main() {
       })()`);
       for (const [view, az, elev] of VIEWS) {
         await evaluate(`(() => {
-          const d = window.__dbg, v = window.__veh, s = d.TYPES['${name}'];
+          const d = window.__dbg, v = window.__veh, s0 = d.TYPES['${name}'];
           // Frame by the vehicle's own size so every type fills the frame
           // equally -- otherwise this compares length, not craftsmanship.
+          // A tractor and its trailer (the tiller) are framed as the whole rig.
+          const tr = v.trailer, mz = tr ? (s0.len / 2 + tr.z - tr.spec.len / 2) / 2 : 0;
+          const s = tr ? { len: s0.len / 2 - (tr.z - tr.spec.len / 2), roof: Math.max(s0.roof, tr.spec.roof) } : s0;
           const r = s.len * 0.92;
-          const cx = Math.sin(${az}) * r, cz = Math.cos(${az}) * r;
+          const cx = Math.sin(${az}) * r, cz = Math.cos(${az}) * r + mz;
           const cy = s.roof * 0.62 + s.len * ${elev} * 0.55;
           d.camera.position.set(cx, cy, cz);
-          d.camera.lookAt(0, s.roof * 0.42, 0);
+          d.camera.lookAt(0, s.roof * 0.42, mz);
           d.camera.updateMatrixWorld(true);
           d.sun.position.set(cx * 0.5 - s.len, s.len * 2.2, cz * 0.5 - s.len * 0.7);
           d.sun.target.position.set(0, 0, 0);
@@ -180,8 +183,9 @@ async function street(evaluate, send) {
   const NEAR = process.env.VEH_NEAR ? process.env.VEH_NEAR.split(',')
     : ['sedan', 'hatch', 'taxi', 'suv', 'compact', 'police', 'pickup', 'ev'];
   // VEH_STREET_ADD=tank,... parks more types at the end of the far lane
-  // (a type that is not traffic, such as the tank, next to the ones that are)
-  const FAR = ['van', 'bus', 'boxtruck', 'ambulance', 'garbage', ...(process.env.VEH_STREET_ADD ? process.env.VEH_STREET_ADD.split(',') : [])];
+  // (a type that is not traffic, such as the tank, next to the ones that are);
+  // VEH_FAR=a,b replaces the far lane (VEH_FAR=fireengine,tiller: the fire rigs in the street)
+  const FAR = [...(process.env.VEH_FAR ? process.env.VEH_FAR.split(',') : ['van', 'bus', 'boxtruck', 'ambulance', 'garbage']), ...(process.env.VEH_STREET_ADD ? process.env.VEH_STREET_ADD.split(',') : [])];
   const COLS = [0x9fa4a9, 0x102b52, 0xe6e8ea, 0x6d0f14, 0x1b1d20, 0xf2f4f6, 0x14472f, 0x7a5a22,
     0x2f3a44, 0xe6e8ea, 0x0d5b66, 0xbcc2c8, 0x7d2418];
   const setup = await evaluate(`(() => {
@@ -226,15 +230,17 @@ async function street(evaluate, send) {
     const lane = (list, sign, c0) => {
       let s = 14;
       list.forEach((name, i) => {
-        const len = d.TYPES ? d.TYPES[name].len : 5;
-        s += len / 2;
+        const T = d.TYPES ? d.TYPES[name] : null, len = T ? T.len : 5;
+        // a towed rig (the tiller) takes its trailer's length too, behind it
+        const comb = T && T.towed ? len + d.TYPES[T.towed].len - 2 : len;
+        const c = s + (sign > 0 ? comb - len / 2 : len / 2);
         const off = e.hw * 0.48 * sign;
-        const x = a.x + e.dx * s - e.dz * off, z = a.z + e.dz * s + e.dx * off;
+        const x = a.x + e.dx * c - e.dz * off, z = a.z + e.dz * c + e.dx * off;
         // 'traffic', so the cars are occupied as driven ones are (the game is
         // paused, so none of them moves).
         const v = d.traffic.spawnAt(x, z, Math.atan2(e.dx * sign, e.dz * sign), name, COLS[(c0 + i) % COLS.length], 'traffic');
         for (let k = 0; k < 3; k++) v.update(1 / 60, { throttle: 0, brake: 0, steer: 0, handbrake: 0 });
-        s += len / 2 + 2.6;
+        s += comb + 2.6;
       });
       return s;
     };

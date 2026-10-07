@@ -90,6 +90,11 @@ const BANDS = {
   // A main battle tank, timed 0-50 (it is governed near 65): an Abrams makes
   // 0-32 in about 7 s, 0-50 in about a dozen. Braked hard on its tracks.
   tank: { name: 'main battle tank', accel: [9, 16], top: [60, 72], brake: [40, 55], lat: [0.4, 0.7] },
+  // Fire apparatus: a custom-cab pumper (0-100 in about half a minute, governed
+  // near 110) and a tiller ladder truck's tractor (timed to 80, as a bus is).
+  // Air brakes on a loaded rig; cornering just over a bus's.
+  fireengine: { name: 'fire engine (pumper)', accel: [22, 40], top: [100, 120], brake: [44, 58], lat: [0.58, 0.70] },
+  tiller: { name: 'tiller ladder truck', accel: [22, 40], top: [95, 112], brake: [48, 62], lat: [0.55, 0.68] },
 };
 
 function launch() {
@@ -257,7 +262,7 @@ async function main() {
     // cross-category pair is not a grip comparison at all -- it just produces
     // noise on vehicles that are behaving correctly.
     const MOTO = new Set(['cruiser', 'sportbike']);
-    const HEAVY = new Set(['bus', 'boxtruck', 'garbage', 'ambulance', 'van']);
+    const HEAVY = new Set(['bus', 'boxtruck', 'garbage', 'ambulance', 'van', 'fireengine', 'tiller']);
     // The quad is its own class: four wheels, but a bike's mass and a rider.
     // ...and so is the tank: it steers by yaw rate, not a wheel angle.
     const group = (n) => (MOTO.has(n) ? 'moto' : HEAVY.has(n) ? 'heavy' : n === 'atv' ? 'atv' : n === 'tank' ? 'tank' : 'car');

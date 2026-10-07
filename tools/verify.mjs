@@ -3058,6 +3058,244 @@ async function main() {
       if (bad.length) { console.error(`FAIL: articulated bus: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- fire apparatus: the stations, the tiller, a fire call ------------------
+    //
+    // Every station's rigs stand off the carriageway and out of the buildings;
+    // a tiller driven at fixed dt on Boeing Field's runway keeps its trailer on
+    // the hitch, within its stop, and its tillerman cuts the corner's
+    // offtracking; reversing it with a little lock does not jackknife; taking a
+    // rig from its apron works and leaving it frees it; and a scripted fire
+    // call (dispatch, drive there, spray with the camera's aim) is put out and
+    // paid. Three draws a vehicle, the trailer three more.
+    const fire = await session.eval(`(async () => {
+      const d = window.__dbg, P = d.player, T = d.traffic, C = d.city, F = d.fire;
+      if (!F) return null;
+      if (P.vehicle) P.exitVehicle(true);
+      const VM = await import('./src/vehicles.js');
+      const H = VM.HITCH.tillerRear;
+      const out = {};
+      // the aprons
+      const rigs = [];
+      for (const st of F.stations) for (const v of (st.rigVs || [])) rigs.push(v);
+      let onRoad = 0, inB = 0, parted = 0;
+      for (const v of rigs) {
+        const parts = [v, ...(v.trailer ? [v.trailer] : [])];
+        for (const q of parts) {
+          const f = q.forward, rx = f.z, rz = -f.x;
+          for (const [u, w] of [[0, 0], [q.halfLen - 0.3, q.halfWid - 0.2], [q.halfLen - 0.3, -q.halfWid + 0.2], [-q.halfLen + 0.3, q.halfWid - 0.2], [-q.halfLen + 0.3, -q.halfWid + 0.2]]) {
+            const x = q.x + f.x * u + rx * w, z = q.z + f.z * u + rz * w;
+            if (C.onRoad(x, z, 0, true, false)) onRoad++;
+            if (d.world.inBuilding(x, z, 0)) inB++;
+          }
+        }
+        if (v.trailer) {
+          v.trailer.follow(v);
+          const e = Math.hypot(v.x - v.forward.x * H.hitchF - (v.trailer.x + v.trailer.forward.x * H.hitchR), v.z - v.forward.z * H.hitchF - (v.trailer.z + v.trailer.forward.z * H.hitchR));
+          if (e > 0.01) parted++;
+        }
+      }
+      out.aprons = { stations: F.stations.filter((s) => s.spots.length).length, rigs: rigs.length, tillers: rigs.filter((v) => v.trailer).length, onRoad, inB, parted,
+        places: d.hud.places.filter((p) => p.kind === 'fire').length };
+      // draws: three meshes a body
+      const meshes = (v) => { let n = 0; v.group.traverse((o) => { if (o.isMesh) n++; }); return n; };
+      const t0 = rigs.find((v) => v.trailer), e0 = rigs.find((v) => !v.trailer);
+      out.draws = { engine: e0 ? meshes(e0) : null, tractor: t0 ? meshes(t0) : null, trailer: t0 ? meshes(t0.trailer) : null };
+      // the tiller on the runway: straight, a 90 deg corner with and without the tillerman, reverse
+      const ap = d.G.LANDMARKS.find((l) => l.kind === 'airport');
+      const AL = [Math.sin(0.52), Math.cos(0.52)];
+      const inp = (gas, steer, brake = 0) => ({ x: steer, y: 0, gas: gas > 0, brake: brake > 0, gasAmt: gas, brakeAmt: brake, hand: false, sprint: false, attack: false, horn: false, jump: false });
+      const drive = (gain) => {
+        const keep = H.rearSteer;
+        H.rearSteer = gain;
+        const sx = ap.x - 600 * AL[0], sz = ap.z - 600 * AL[1];
+        P.x = sx; P.z = sz;
+        for (let i = 0; i < 30; i++) d.world.update(sx, sz, 40);
+        const v = T.spawnAt(sx, sz, 0.52, 'tiller', 0xb3121b, 'free'), r = v.trailer;
+        P.enterVehicle(v);
+        let fwdA = 0, revA = 0, hitch = 0, bad = 0;
+        const path = [], off = [];
+        const rel = () => Math.abs(Math.atan2(Math.sin(r.heading - v.heading), Math.cos(r.heading - v.heading)));
+        const step = (n, i, mode) => { for (let q = 0; q < n; q++) {
+          P.update(1 / 60, i, { x: 0, y: 0 }, d.controls, T, d.peds); T.update(1 / 60, P.x, P.z, { x: 0, z: 1 }, P);
+          if (mode === 'rev') revA = Math.max(revA, rel()); else fwdA = Math.max(fwdA, rel());
+          hitch = Math.max(hitch, Math.hypot(v.x - v.forward.x * H.hitchF - (r.x + r.forward.x * H.hitchR), v.z - v.forward.z * H.hitchF - (r.z + r.forward.z * H.hitchR)));
+          if (!isFinite(r.x + r.y + r.z + r.heading)) bad++;
+          if (mode === 'path' || mode === 'turn') {
+            path.push([v.x + v.forward.x * 1.95, v.z + v.forward.z * 1.95]);
+            if (mode === 'turn') {
+              const ax = r.x + r.forward.x * H.axleR, az = r.z + r.forward.z * H.axleR;
+              let m = Infinity;
+              for (const [px, pz] of path) m = Math.min(m, Math.hypot(px - ax, pz - az));
+              off.push(m);
+            }
+          } } };
+        step(240, inp(1, 0), 'path');
+        const straight = rel();
+        step(60, inp(0, 0, 0.5), 'path');
+        const h0 = v.heading;
+        for (let q = 0; q < 1500 && Math.abs(Math.atan2(Math.sin(v.heading - h0), Math.cos(v.heading - h0))) < Math.PI / 2; q++) step(1, inp(0.35, 0.45), 'turn');
+        step(400, inp(0.35, 0), 'turn');
+        step(240, inp(0, 0, 1));
+        step(300, inp(0, 0.12, 1), 'rev');
+        const res = { straight: +(straight * 57.3).toFixed(2), fwdA: +(fwdA * 57.3).toFixed(1), revA: +(revA * 57.3).toFixed(1), stop: +(H.maxAngle * 57.3).toFixed(1),
+          hitch: +hitch.toFixed(3), bad, offtrack: +Math.max(...off.slice(30)).toFixed(2),
+          enterRear: T.nearestEnterable(r.x - r.forward.x * 4, r.z - r.forward.z * 4, 6) === v };
+        P.exitVehicle(true);
+        T.remove(v);
+        res.leftAsOne = !T.cars.includes(r);
+        H.rearSteer = keep;
+        return res;
+      };
+      out.tiller = drive(H.rearSteer);
+      out.noTillerman = drive(0);
+      // steal one from its apron: walk up, get in, get out
+      {
+        const st = F.stations.find((s) => s.rigVs && s.rigVs.some((v) => !v.trailer));
+        const v = st.rigVs.find((q) => !q.trailer);
+        const f = v.forward;
+        P.x = v.x + f.z * 2.6; P.z = v.z - f.x * 2.6;
+        T.update(1 / 60, P.x, P.z, { x: 0, z: 1 }, P);
+        const got = T.nearestEnterable(P.x, P.z, 4.5);
+        out.steal = { station: st.name, nearest: got === v, wasApron: v.mode === 'apron' };
+        P.enterVehicle(v);
+        out.steal.driving = P.vehicle === v && !P.onFoot;
+        F.update(1 / 60);
+        out.steal.buttons = document.getElementById('app').dataset.fire === '1';
+        // SIREN works in a rig as in a police car (main.js updateSiren): shown,
+        // a tap lights the rig's heads and starts the voice, G stops it; V is
+        // WATER and leaves the siren alone
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const sb = document.querySelector('[data-btn="siren"]');
+        await wait(700);
+        out.steal.sirenShown = getComputedStyle(sb).display !== 'none';
+        d.controls.sirenTaps++; await wait(700);
+        // (the voice picks up within a few frames: SwiftShader's are slow)
+        for (let i = 0; i < 20 && d.audio.ready && !d.audio.sirens.some((q) => q.on); i++) await wait(200);
+        out.steal.sirenOn = !!v.sirenOn && !!v._fireLights && (!d.audio.ready || d.audio.sirens.some((q) => q.on));
+        out.steal.sirenWhy = { on: !!v.sirenOn, heads: !!v._fireLights, ready: !!d.audio.ready, voice: d.audio.sirens.some((q) => q.on), paused: !!d.game.paused, inRig: P.vehicle === v };
+        window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyV', key: 'v' }));
+        await wait(300);
+        out.steal.waterKeepsSiren = !!v.sirenOn;
+        window.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyV', key: 'v' }));
+        window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyG', key: 'g' }));
+        window.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyG', key: 'g' }));
+        await wait(700);
+        out.steal.gOff = !v.sirenOn && !v._fireLights;
+        P.exitVehicle(true);
+        await wait(300);
+        out.steal.after = v.mode;
+      }
+      // A SEEDED pick: which building a call burns decides whether it can be
+      // won (a flame inside a neighbour's box could not), so the test must
+      // pick the same one every run.
+      const seeded = (seed) => { let s = seed >>> 0; return () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
+      // a fire call: dispatched from the station, driven to, sprayed out, paid
+      {
+        const st = F.stations.find((s) => /Station 10/.test(s.name)) || F.stations[0];
+        const v = st.rigVs.find((q) => !q.trailer) || st.rigVs[0];
+        P.x = v.x; P.z = v.z;
+        P.enterVehicle(v);
+        const money0 = d.game.money;
+        let pick = null;
+        const rnd = seeded(1871);
+        for (let i = 0; i < 6 && !pick; i++) pick = F.pickBuilding(v.x, v.z, 300, 1500, 4, rnd);
+        const okPick = !!pick;
+        const dist = pick ? Math.hypot(pick.b.x - v.x, pick.b.z - v.z) : null;
+        F.dispatch(pick);
+        const call = F.call ? { k: F.call.k, T: F.call.T, nFl: F.call.nFl, target: !!d.game.fireTarget } : null;
+        const e = C.edges[pick.road.ei];
+        // pulled up a few metres short of the building, on its street
+        v.place(pick.road.x - e.dx * 5, pick.road.z - e.dz * 5, Math.atan2(e.dx, e.dz));
+        v.vLong = 0; P.x = v.x; P.z = v.z;
+        for (let i = 0; i < 40; i++) d.world.update(v.x, v.z, 40);
+        const idle = inp(0, 0);
+        const step = (n) => { for (let q = 0; q < n; q++) { P.update(1 / 60, idle, { x: 0, y: 0 }, d.controls, T, d.peds); T.update(1 / 60, P.x, P.z, { x: 0, z: 1 }, P); F.update(1 / 60); } };
+        step(30);
+        const lights = !!v.sirenOn && !!v._fireLights;
+        F.forceSpray = true;
+        let frames = 0, locked = 0;
+        for (; frames < 60 * 120 && F.call; frames += 10) {
+          const m = F.muzzle(v, {});
+          let fl = null, bd = Infinity;
+          for (const f of F.fires) for (const q of f.flames) if (q.hp > 0) { const dd = Math.hypot(q.x - m.x, q.z - m.z); if (dd < bd) { bd = dd; fl = q; } }
+          if (fl) P.camYaw = Math.atan2(fl.x - m.x, fl.z - m.z) - Math.PI + 0.08;
+          step(10);
+          if (F.aim.lock) locked++;
+        }
+        const pools = { water: F.water.alive, flame: F.flame.alive, smoke: F.smoke.alive };
+        F.forceSpray = false;
+        out.call = { okPick, dist: dist && Math.round(dist), call, lights, frames, locked, out: !F.call && F._nextT > 0, paid: d.game.money - money0, pools };
+        F.standDown();
+        step(2);
+        out.call.stoodDown = !F.call && F._nextT === 0 && !d.game.fireTarget && !v.sirenOn && !v._fireLights;
+        // EVERY fire can be put out from its street: 60 seeded picks round the
+        // stations (4 flames, engines and tillers, the rig 5 m either side of
+        // the street point), each sprayed with the camera on the nearest flame
+        const sw = { n: 0, out: 0, worst: 0, fails: [] };
+        const til = F.stations.flatMap((q) => q.rigVs || []).find((q) => q.trailer);
+        const origins = F.stations.filter((q) => q.spots.length).map((q) => [q.x, q.z]);
+        const rs = seeded(4242);
+        d.game.paused = true;
+        for (let k = 0; k < 60; k++) {
+          const rig = k % 3 === 2 && til ? til : v;
+          if (P.vehicle !== rig) { if (P.vehicle) P.exitVehicle(true); P.x = rig.x; P.z = rig.z; P.enterVehicle(rig); }
+          const [ox, oz] = origins[k % origins.length];
+          const pk = F.pickBuilding(ox, oz, 300, 1500, 4, rs);
+          sw.n++;
+          if (!pk) { sw.fails.push({ k, why: 'no building' }); continue; }
+          F.clearFires();
+          const fireK = F.ignite(pk.b, pk.road.x, pk.road.z, 4, pk.spots);
+          const ek = C.edges[pk.road.ei], off = k % 2 ? 5 : -5;
+          rig.place(pk.road.x + ek.dx * off, pk.road.z + ek.dz * off, Math.atan2(ek.dx, ek.dz));
+          rig.vLong = 0; rig.vLat = 0;
+          if (rig.trailer) rig.trailer.follow(rig);
+          F.forceSpray = true;
+          let t = 0;
+          for (; t < 60 && fireK.flames.some((q) => q.hp > 0); t += 5 / 30) {
+            const m = F.muzzle(rig, {});
+            let fl = null, bd = Infinity;
+            for (const q of fireK.flames) if (q.hp > 0) { const dd = Math.hypot(q.x - m.x, q.z - m.z); if (dd < bd) { bd = dd; fl = q; } }
+            P.camYaw = Math.atan2(fl.x - m.x, fl.z - m.z) - Math.PI + 0.08;
+            for (let i = 0; i < 5; i++) F.update(1 / 30);
+          }
+          F.forceSpray = false;
+          if (fireK.flames.every((q) => q.hp <= 0)) { sw.out++; sw.worst = Math.max(sw.worst, t); }
+          else sw.fails.push({ k, b: [Math.round(pk.b.x), Math.round(pk.b.z)], left: fireK.flames.filter((q) => q.hp > 0).length, hit: F.aim.hit });
+        }
+        F.clearFires();
+        d.game.paused = false;
+        sw.worst = +sw.worst.toFixed(1);
+        out.call.sweep = sw;
+        P.exitVehicle(true);
+      }
+      return out;
+    })()`, true);
+    console.log('\n--- fire apparatus ------------------------------------------');
+    if (!fire) { console.error('FAIL: no fire service'); process.exitCode = 1; }
+    else {
+      const A = fire.aprons, Ti = fire.tiller, N = fire.noTillerman, S = fire.steal, K = fire.call;
+      console.log(`  ${A.stations} stations, ${A.rigs} rigs (${A.tillers} tillers), ${A.places} on the map; on the carriageway ${A.onRoad}, in a building ${A.inB}, trailer off its hitch ${A.parted}`);
+      console.log(`  draws: engine ${fire.draws.engine}, tiller tractor ${fire.draws.tractor} + trailer ${fire.draws.trailer}`);
+      console.log(`  tiller: straight ${Ti.straight} deg off line; a 90 deg corner, articulation up to ${Ti.fwdA} deg (stop ${Ti.stop}), rear axle off the tractor's line ${Ti.offtrack} m (${N.offtrack} m with no tillerman); reversing ${Ti.revA} deg; hitch joined within ${Ti.hitch} m; entering the trailer enters the tractor ${Ti.enterRear}; left as one ${Ti.leftAsOne}`);
+      console.log(`  stolen from ${S.station}: nearest ${S.nearest}, on its apron ${S.wasApron}, driving ${S.driving}, fire buttons ${S.buttons}, left ${S.after}; SIREN shown ${S.sirenShown}, a tap lights it ${S.sirenOn}, WATER (V) keeps it ${S.waterKeepsSiren}, G stops it ${S.gOff}`);
+      console.log(`  fire call: ${K.dist} m off, ${K.call ? K.call.nFl : '?'} flames, ${K.call ? K.call.T : '?'} s; siren and lights ${K.lights}; out after ${(K.frames / 60).toFixed(1)} s of spray (aim locked ${K.locked} of ${K.frames / 10} checks), paid $${K.paid}; stood down cleanly ${K.stoodDown}`);
+      const bad = [];
+      if (A.stations < 10 || A.tillers < 5 || A.places < 10) bad.push('too few stations or rigs');
+      if (A.onRoad || A.inB || A.parted) bad.push('a rig on the carriageway, in a building or off its hitch');
+      if (fire.draws.engine !== 3 || fire.draws.tractor !== 3 || fire.draws.trailer !== 3) bad.push('draws per body');
+      if (Ti.straight > 1 || Ti.fwdA > Ti.stop + 0.1 || Ti.fwdA < 10 || Ti.hitch > 0.01 || Ti.bad) bad.push("the tiller's trailer");
+      if (!(Ti.offtrack < N.offtrack * 0.6) || Ti.offtrack > 1.5) bad.push('the tillerman does not cut the offtracking');
+      if (Ti.revA > 30) bad.push('it jackknifes in reverse');
+      if (!Ti.enterRear || !Ti.leftAsOne) bad.push('entering or removing the tiller');
+      if (!S.nearest || !S.wasApron || !S.driving || !S.buttons || S.after !== 'free') bad.push('stealing a rig');
+      if (!S.sirenShown || !S.sirenOn || !S.waterKeepsSiren || !S.gOff) { bad.push("a rig's SIREN"); console.log('  ' + JSON.stringify(S.sirenWhy)); }
+      if (!K.okPick || !K.call || !K.call.target || !K.lights || !K.out || K.paid <= 0 || !K.stoodDown || !K.locked) bad.push('the fire call');
+      const W = K.sweep;
+      console.log(`  every fire can be fought from its street: ${W.out} of ${W.n} seeded calls put out (slowest ${W.worst} s)${W.fails.length ? ' -- ' + JSON.stringify(W.fails.slice(0, 4)) : ''}`);
+      if (W.out !== W.n || W.n < 60) bad.push('a fire that cannot be put out');
+      if (bad.length) { console.error(`FAIL: fire apparatus: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- no lake in the boat's cockpit ------------------------------------
     //
     // The runabout's cockpit floor is 12 cm over its waterline and the lake is

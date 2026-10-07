@@ -94,6 +94,17 @@
   .b-siren { position: absolute; left: 0; bottom: calc(100% + 10px); }
   .b-siren.on { background: linear-gradient(90deg, rgba(50,90,240,0.62), rgba(235,45,45,0.62)); border-color: rgba(255,255,255,0.62); }
 
+  /* A fire rig's own two (firecalls.js sets data-fire): beside the pad, not in
+     it, so every other vehicle's layout is untouched. */
+  #fireBtns {
+    position: absolute; right: calc(270px + var(--safe-r)); bottom: calc(14px + var(--safe-b));
+    z-index: 6; display: none; gap: 10px; align-items: end;
+  }
+  #app[data-fire="1"][data-mode="drive"] #fireBtns { display: flex; }
+  #app[data-pad="1"] #fireBtns { display: none !important; }
+  .b-water { background: rgba(40,110,170,0.48); border-color: rgba(150,210,255,0.55); }
+  .b-fire { background: rgba(170,30,30,0.48); border-color: rgba(255,160,150,0.55); }
+
   /* A pad takes the thumb controls off the screen -- they cover a third of it
      and nothing is going to press them. The look zone stays: it costs nothing
      and a phone on a stand is still a touchscreen. */
@@ -395,7 +406,7 @@
 
   <div id="pad">
     <!-- driving -->
-    <!-- a police car only (main.js updateSiren): over HORN, out of the grid -->
+    <!-- a police car or a fire rig only (main.js updateSiren): over HORN, out of the grid -->
     <div class="btn b-sm car-only police-only b-siren" data-btn="siren">SIREN</div>
     <div class="btn b-sm car-only" data-btn="horn">HORN</div>
     <div class="btn b-md car-only" data-btn="hand">HAND<br>BRAKE</div>
@@ -411,6 +422,11 @@
     <div class="btn b-sm foot-only" style="visibility:hidden"></div>
     <div class="btn b-sm foot-only" style="visibility:hidden"></div>
     <div class="btn b-lg b-atk foot-only" data-btn="attack">ATTACK</div>
+  </div>
+
+  <div id="fireBtns">
+    <div class="btn b-sm b-fire" data-btn="mission">MISSION</div>
+    <div class="btn b-md b-water" data-btn="water">WATER</div>
   </div>
 
   <div id="wasted"><span>WASTED</span><div id="wastedTo"></div></div>
