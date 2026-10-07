@@ -7135,6 +7135,7 @@ export class Vehicle {
     // AI's feed-forward on hills. 0 for a lowDetail car, which ignores grade.
     this.gradeA = 0;
     this.path = null; this.pathT = 0; this.repath = 0; this.rammed = 0; this.siren = 0;
+    this.sirenOn = false;   // a police car you drive: SIREN switched on (main.js updateSiren)
     this.lightL = null; this.lightR = null; this.extra = null;
     this.slot = null; this.wasParked = false; this.exploded = false;
     this.airborne = false; this.lowDetail = false;

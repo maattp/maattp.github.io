@@ -2995,7 +2995,7 @@ export class Audio {
       const cops = this._cops || (this._cops = []);
       cops.length = 0;
       for (const v of cars) {
-        if (v.mode !== 'police' || v.dead) continue;
+        if ((v.mode !== 'police' && !v.sirenOn) || v.dead) continue;   // (sirenOn: your police car, SIREN on)
         const d2 = (v.x - L.x) ** 2 + (v.z - L.z) ** 2;
         if (d2 < 260 * 260) cops.push(d2, v);
       }
@@ -3267,7 +3267,7 @@ export class Audio {
     if (!sv.on) { sv.on = true; sv.out.connect(this.sfxBus); }
     sv.quiet = 0;
     // wail at a distance, yelp when it is on top of you
-    const yelp = sp.d < 45;
+    const yelp = !car.sirenOn && sp.d < 45;   // your own car's siren wails: it is always within 45 m
     if (yelp !== sv.yelp) {
       sv.yelp = yelp;
       sv.lfo.type = yelp ? 'triangle' : 'sine';
@@ -3276,7 +3276,7 @@ export class Audio {
     const centre = (yelp ? 1050 : 1000) * sp.dop;
     setp(sv.o.frequency, centre, t, 0.05);
     setp(sv.depth.gain, (yelp ? 420 : 380) * sp.dop, t, 0.05);
-    const lvl = (car.legacy != null ? car.legacy : 1) * 0.11 * sp.gain;
+    const lvl = (car.legacy != null ? car.legacy : 1) * (car.sirenOn ? 0.075 : 0.11) * sp.gain;   // yours is heard from inside
     setp(sv.g.gain, lvl, t, 0.1);
     if (sv.pan) setp(sv.pan.pan, sp.pan, t, 0.06);
   }

@@ -3342,7 +3342,7 @@ piecemeal inside a loop that has other work to do. What is kept:
 | `beach:<i>` | each beach's candidate prop points: dry sand, level, off roads and buildings, with the shore distance | 0.5 |
 | `piers`, `piers:plats`, `piers:sheds` | each pier's verdict and deck height, the walkable squares, the sheds standing in salt water | 0.6 |
 | `traffic:components` | traffic's directed components (`directedComponents`) | 0.8 |
-| `marina:<i>`, `pickups`, `freight:ground:<k>`, `bikes:drawn` | the marinas' shore/deep-water searches, the pickup spots, the freight profile's carved ground, which bike-path pieces are drawn | 0.7 |
+| `marina:<i>`, `pickups`, `respawns`, `freight:ground:<k>`, `bikes:drawn` | the marinas' shore/deep-water searches, the pickup spots, the hospitals' verges and street nodes, the freight profile's carved ground, which bike-path pieces are drawn | 0.7 |
 
 **A memoised value is plain data that nothing mutates after `memo` returns
 it**: the computed value is written at the END of the boot, so an edit made
@@ -3605,7 +3605,9 @@ with +/-15 % per-step gain and pitch variation.
   `i4`). A new vehicle type needs only a flag.
 - **Positional voices are pooled**: 3 traffic engines (nearest cars in 70 m,
   kept on the car they have), 2 sirens (LFO on the carrier, so the sweep is
-  smooth at any frame rate; wail far, yelp inside 45 m), the police helicopter
+  smooth at any frame rate; wail far, yelp inside 45 m; a police car you
+  drive with SIREN on takes one too, always wailing, a little quieter: you
+  hear it from inside), the police helicopter
   (built on first sight). Pan, distance and doppler come from `spatial()`
   against the camera (`listener` in main.js).
 - **Mix**: every bus into one DynamicsCompressor limiter, then the volume
@@ -7219,6 +7221,82 @@ player's car at each speed cap through `player.update`. It fails a jump that
 does not launch or land, or is wrecked at 32 m/s. `tools/stuntjumps-page.js`
 is the page half; load it into any booted page to re-install edited jumps
 (`__sj.install(defs)`) and re-drive them without a reboot.
+
+## WASTED, the siren, and finding a gun
+
+**WASTED takes you to the nearest hospital your roads reach**, not always
+Harborview (`RESPAWN_SITES` in main.js): Harborview (places.json's
+respawn, kept clear by citygen), UW, Northwest, Swedish Ballard, the VA,
+EvergreenHealth and Overlake at their real sites, and clinics standing in
+where the real one is off the map or there is none in reach: West Seattle,
+Burien, Rainier Beach, Renton, Newcastle, Winslow (Bainbridge, off SR-305
+at High School Rd) and Vashon's north end. Nowhere on a road network is
+more than ~7 km from one (Port Madison, at Bainbridge's north tip, is the
+farthest).
+
+- **Reachable by road is a union-find over the edges** (`roadComponents`,
+  made at the first death, ~12 ms on the Mac): Seattle and the Eastside are
+  one network (177k nodes), Bainbridge (6.3k), Vashon (1.1k) and the Kitsap
+  shore at Southworth (1k) are each their own. `nearestRespawn` takes the
+  nearest street node on a network that HAS a hospital -- where you fell,
+  or, where no road reaches (Blake Island, mid-Sound, a pocket of private
+  drives), the nearest shore that does -- then the nearest hospital on that
+  network as the crow flies. One pass over the nodes, ~4 ms a call on the
+  Mac, once a death.
+- **It is decided where you fell** (`damagePlayer` sets `game.respawnAt`),
+  so the WASTED screen says where you are being taken (`#wastedTo`), and
+  `doRespawn` goes there. The pause menu's respawn takes the nearest from
+  where you stand.
+- **Each site is put down like a pickup, stricter** (`vergeSpots`, shared
+  with the pickups): the nearest node with a street on it (no freeway, ramp,
+  deck or bore), then a spiral out to the first point 2 m clear of every
+  carriageway (decks too), 2.4 m of every building, off the water mask and
+  every drawn lake, on ground level within 1 m over 2 m. Memoised as
+  `respawns` (x, z, node). A clinic sign (post, panel, red cross; 4 draws)
+  stands 1.6 m behind each, facing the street, drawn within 400 m; both maps
+  mark and name them.
+
+**SIREN** (index.html `.b-siren`, over HORN and out of the grid; G; a pad's
+R3) appears only in a police car (`#app[data-police]`, set by
+`updateSiren` from `player.vehicle.spec.police`) and switches its siren and
+light bar. Presses are COUNTED (`controls.takeSiren`), not read as a held
+button: a tap shorter than a frame still counts.
+
+- **Off when you take one**: a commandeered unit's strobes go dark
+  (`traffic.policeLights(v, dt, false)`: the lenses shown, in their `cold`
+  colours); and off again whenever you leave it, by any door (out, wrecked,
+  respawned, warped), because `updateSiren` watches `player.vehicle` change.
+  A cruiser bought from the delivery menu gets the same light bar
+  (`traffic.lightBar`, which `spawnPolice` builds every unit's with).
+- **The sound is traffic's siren voice**: audio.js picks any car with
+  `sirenOn` alongside the SPD's (`v.sirenOn` is declared in the Vehicle
+  constructor: one hidden class).
+- **Traffic yields**: with your siren on, a driven car up to 70 m ahead of
+  you, within 9 m of your line and going your way eases off to 40 % of its
+  pace and, off residential streets, keeps 0.7 m right through the dodge
+  offset (`traffic.sirenFrom`, `stats.yielded`). Not more: shoved right on
+  a residential street it met the parked cars at the kerb.
+- The SPD's units are unchanged: they strobe (`policeLights(v, dt, true)`
+  in `drivePolice`) and wail / yelp as before.
+
+**Pistols are on the maps now** ("how do I get a weapon? I can't find them
+anywhere": they were drawn only within 300 m and on no map). 30 pickups: the
+fifteen round central Seattle as before, and fifteen more reaching Bainbridge,
+Vashon, Bellevue, Kirkland, Mercer Island, Alki, White Center, Northgate,
+Lake City, Ballard, Georgetown, Rainier Beach and Columbia City. Each is a
+`places` entry (a blue pistol or a green cross, unlabelled on the full map --
+thirty labels would bury it), off the maps while it respawns (`off`), and
+says hello on foot (`foot`). The pause menu's help says where they are, and
+DELIVERY sells a pistol ($300, straight into your pocket).
+
+verify's "WASTED", "the siren" and "pickups on the map": dying in Winslow
+wakes you at the Bainbridge clinic and downtown at Harborview (WASTED said
+so, alive, on foot, standing on the ground, dry, off the road), every site
+on a dry verge, Bainbridge's on its own network, Blake and Vashon to
+Vashon's; SIREN hidden on foot and in a sedan, shown in a police car, dark
+when taken, a tap strobes it and starts the voice, G stops it, leaving
+stops it, traffic ahead yields, an SPD unit still strobes; every pickup on
+the maps, none in the water or the road, every hospital marked.
 
 ## Known gaps
 
