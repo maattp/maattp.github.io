@@ -179,7 +179,9 @@ async function street(evaluate, send) {
   // VEH_NEAR=a,b,... replaces the near lane (a new type next to its neighbours).
   const NEAR = process.env.VEH_NEAR ? process.env.VEH_NEAR.split(',')
     : ['sedan', 'hatch', 'taxi', 'suv', 'compact', 'police', 'pickup', 'ev'];
-  const FAR = ['van', 'bus', 'boxtruck', 'ambulance', 'garbage'];
+  // VEH_STREET_ADD=tank,... parks more types at the end of the far lane
+  // (a type that is not traffic, such as the tank, next to the ones that are)
+  const FAR = ['van', 'bus', 'boxtruck', 'ambulance', 'garbage', ...(process.env.VEH_STREET_ADD ? process.env.VEH_STREET_ADD.split(',') : [])];
   const COLS = [0x9fa4a9, 0x102b52, 0xe6e8ea, 0x6d0f14, 0x1b1d20, 0xf2f4f6, 0x14472f, 0x7a5a22,
     0x2f3a44, 0xe6e8ea, 0x0d5b66, 0xbcc2c8, 0x7d2418];
   const setup = await evaluate(`(() => {

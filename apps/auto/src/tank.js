@@ -617,10 +617,12 @@ function hideRange(geo, i0, i1) {
   if (!idx || i1 <= i0) return;
   if (idx.array) idx.array.fill(0, i0, i1);
   else {
+    // (three refuses an array of any other byte length than the buffer's:
+    // the view is the whole index's length, of which only [i0, i1) is sent)
     const wide = geo.attributes.position.count > 65535;
-    const bytes = i1 * (wide ? 4 : 2);
+    const bytes = idx.count * (wide ? 4 : 2);
     if (!ZERO || ZERO.byteLength < bytes) ZERO = new ArrayBuffer(Math.max(bytes, 1 << 16));
-    idx.array = wide ? new Uint32Array(ZERO, 0, i1) : new Uint16Array(ZERO, 0, i1);
+    idx.array = wide ? new Uint32Array(ZERO, 0, idx.count) : new Uint16Array(ZERO, 0, idx.count);
   }
   idx.addUpdateRange(i0, i1 - i0);
   idx.needsUpdate = true;

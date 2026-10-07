@@ -7500,7 +7500,7 @@ sparks off it. Destroyed, it goes up like any car (`onCarDestroyed`).
   (`this._fell`: [x, z, i0, i1], kept on the chunk group's
   `userData.fell`), and `hideRange` zeroes that run (degenerate triangles,
   shadow and all). **On a phone the index array is gone after upload**, so
-  three gets a shared all-zero array of the run's length; its update range
+  three gets a shared all-zero array of the whole index's length (it refuses any other size); its update range
   uploads only [i0, i1), and the array is dropped again on upload. A felled
   prop comes back with its collision if the chunk is ever rebuilt.
 - **Walls, landmarks and buildings stop it** (barriers and landmark solids are
