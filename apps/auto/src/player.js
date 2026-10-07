@@ -672,6 +672,8 @@ export class Player {
       // an articulated bus's rear section reaches 13.5 m behind the front's
       // centre: the boom clears it
       if (v.spec.artic) { dist += 8; height += 1.2; }
+      // and a tiller's trailer 17 m behind its tractor's nose
+      else if (v.spec.towed) { dist += 10; height += 1.6; }
       if (v.spec.balloon) {
         // Far enough back to see the whole balloon -- 22 m of it over the
         // basket -- and looking at the middle of it, so the basket sits low

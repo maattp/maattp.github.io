@@ -14,7 +14,7 @@ const SCALE = MAP_PX / (G.MAP_HALF * 2);
 function placeIcon(ctx, kind, x, y, r) {
   ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f'
     : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : kind === 'coffee' ? '#6a4a32' : kind === 'hydro' ? '#d8242c' : kind === 'link' ? '#3a9a44' : kind === 'link2' ? '#0082ca' : kind === 'freight' ? '#b8501c' : kind === 'ferry' ? '#0b6e4f' : kind === 'bike' ? '#57b83a' : kind === 'pickle' ? '#c8a21a'
-    : kind === 'gun' ? '#2f6fb8' : kind === 'health' ? '#2e9a56' : kind === 'clinic' ? '#d8343a' : kind === 'wedge' ? '#7f8b96' : kind === 'tank' ? '#5f6b3a' : '#e0782e';
+    : kind === 'gun' ? '#2f6fb8' : kind === 'health' ? '#2e9a56' : kind === 'clinic' ? '#d8343a' : kind === 'wedge' ? '#7f8b96' : kind === 'tank' ? '#5f6b3a' : kind === 'fire' ? '#c4141c' : '#e0782e';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = r * 0.22;
   ctx.beginPath();
@@ -99,6 +99,16 @@ function placeIcon(ctx, kind, x, y, r) {
     ctx.fillRect(-r * 0.07, 0, r * 0.14, r * 0.85); ctx.fillRect(-r * 0.07, r * 0.75, r * 0.42, r * 0.14);
     ctx.restore();
     ctx.fillRect(x + r * 0.08, y + r * 0.3, r * 0.34, r * 0.16);
+  } else if (kind === 'fire') {
+    // a flame
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(x, y - r * 0.62);
+    ctx.quadraticCurveTo(x + r * 0.5, y - r * 0.1, x + r * 0.34, y + r * 0.34);
+    ctx.quadraticCurveTo(x, y + r * 0.62, x - r * 0.34, y + r * 0.34);
+    ctx.quadraticCurveTo(x - r * 0.46, y - r * 0.02, x - r * 0.12, y - r * 0.2);
+    ctx.quadraticCurveTo(x - r * 0.02, y - r * 0.38, x, y - r * 0.62);
+    ctx.fill();
   } else if (kind === 'pickle') {
     // a paddle and its ball
     ctx.fillStyle = '#ffffff';
@@ -576,6 +586,15 @@ export class Hud {
       ctx.arc(bx, bz, 4.5 / zoom, 0, Math.PI * 2);
       ctx.fill();
     }
+    if (game.fireTarget) {
+      // a fire call's building: a pulsing red ring
+      const [bx, bz] = toMap(game.fireTarget.x, game.fireTarget.z);
+      const pulse = 1 + 0.25 * Math.sin(performance.now() * 0.008);
+      ctx.fillStyle = '#ff3b1e'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5 / zoom;
+      ctx.beginPath();
+      ctx.arc(bx, bz, (6 * pulse) / zoom, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+    }
     if (game.tourTarget) {
       const [bx, bz] = toMap(game.tourTarget.x, game.tourTarget.z);
       ctx.fillStyle = '#4ae8ff'; ctx.strokeStyle = '#003a4a'; ctx.lineWidth = 1.5 / zoom;
@@ -773,7 +792,7 @@ export class Hud {
       // named, quads too: an unlabelled orange dot was a quad nobody found.
       // (Pistols and first aid are not: thirty labels would bury the map, and
       // the icons say what they are.)
-      if (pl.kind === 'clinic' || pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle' || pl.kind === 'kayak' || pl.kind === 'wheel' || pl.kind === 'golf' || pl.kind === 'arcade' || pl.kind === 'pinball' || pl.kind === 'hockey' || pl.kind === 'tower' || pl.kind === 'duck' || pl.kind === 'coffee' || pl.kind === 'hydro' || pl.kind === 'link' || pl.kind === 'link2' || pl.kind === 'freight' || pl.kind === 'ferry' || pl.kind === 'bike' || pl.kind === 'pickle' || pl.kind === 'wedge' || pl.kind === 'tank') {
+      if (pl.kind === 'clinic' || pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle' || pl.kind === 'kayak' || pl.kind === 'wheel' || pl.kind === 'golf' || pl.kind === 'arcade' || pl.kind === 'pinball' || pl.kind === 'hockey' || pl.kind === 'tower' || pl.kind === 'duck' || pl.kind === 'coffee' || pl.kind === 'hydro' || pl.kind === 'link' || pl.kind === 'link2' || pl.kind === 'freight' || pl.kind === 'ferry' || pl.kind === 'bike' || pl.kind === 'pickle' || pl.kind === 'wedge' || pl.kind === 'tank' || pl.kind === 'fire') {
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.fillText(pl.name, qx, qz - size * 0.016);
       }
@@ -794,6 +813,13 @@ export class Hud {
       ctx.beginPath();
       ctx.arc(tx, tz, size * 0.008, 0, Math.PI * 2);
       ctx.fill();
+    }
+    if (game.fireTarget) {
+      const [tx, tz] = toC(game.fireTarget.x, game.fireTarget.z);
+      ctx.fillStyle = '#ff3b1e'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(1.5, size * 0.002);
+      ctx.beginPath();
+      ctx.arc(tx, tz, size * 0.012, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
     }
     if (game.tourTarget) {
       const [tx, tz] = toC(game.tourTarget.x, game.tourTarget.z);

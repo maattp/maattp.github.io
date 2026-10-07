@@ -7586,6 +7586,131 @@ cannon,mg,tracks,engine-tank` renders the sounds (no clipping).
 Gaps: a felled prop vanishes rather than toppling; hulks come only from the
 tank's guns (the pistol still blows a car up and removes it, as before).
 
+## Fire apparatus and fire calls
+
+**Seattle Fire's rigs stand on the aprons of eleven real stations** (OSM
+`amenity=fire_station`, `FIRE_STATIONS` in `src/firecalls.js`; Station 5's
+apron on Alaskan Way has no room and stays empty -- fireboats are out of
+scope). Every station has a pumper (`fireengine`), six have a tiller ladder
+truck (`tiller` + `tillerRear`). They are `'apron'` vehicles, taken like any
+parked car, marked on the full map (`kind: 'fire'`, a flame), and replaced
+when one has been taken and the player is 350 m away (`refill`).
+
+**The models** (`buildFireEngine`, `buildTiller`, `buildTillerRear`, sharing
+`fireCab`): a custom cab-forward crew cab with the front axle under the front
+doors, flat face, big screen, chrome grille and extended bumper with a Q2B,
+light bar; roll-up aluminium compartment doors (`rollDoor`), pump panel with
+gauges and discharges, hose bed with the supply line folded in it, ground
+ladders racked on the kerb side, chevrons on the back. The white cab roof, the
+reflective band and the gold lettering are **matte, not paint**: paint is
+tinted by its material, so nothing painted can be white on a red truck. The
+lettering is a squared stroke font of 4-sided tubes (`GLYPHS`, `letter()`),
+"SEATTLE FIRE" on the bodies and the unit (E10, L10) on the doors.
+Triangles (traffic geometry): engine 8.2k, tiller tractor 6.3k, trailer 5.8k
+-- in the bus's range. **3 draws a body, the trailer 3 more**, like the artic.
+
+**The tiller is two vehicles, as the articulated bus is** (see "The
+articulated bus (v134)"): the tractor's spec names its trailer (`towed:
+'tillerRear'`; the artic's is `'articRear'`), `traffic.spawnAt` makes it,
+`Vehicle.follow` places it from the per-trailer `HITCH` table (`ARTIC`,
+`TILLER`), the bellows are the artic's alone. The fifth wheel is 0.6 m ahead
+of the tractor's drive axle, the trailer's gooseneck overhangs it by 0.95 m
+and clears the cab back at full articulation (63 deg stop). The ladder is
+bedded the full length over the tillerman's glass cab, its tip 0.75 m past the
+tail: 17.3 m bumper to bumper, 18 m to the tip.
+
+- **The tillerman steers the rear axle.** A plain trailer's axle is dragged
+  toward the hitch and cuts inside the tractor's path: through a 90 deg corner
+  at half lock the trailer's axle ran 2.9 m inside the tractor's line. In
+  `follow` the axle moves along its WHEELS, steered `rearSteer` (0.7) x the
+  hitch angle and capped at `rearLock` (0.55 rad), kept at its span from the
+  hitch (the small root of |H - (A + s d)| = span): 0.73 m. The sign was found
+  by measurement, both ways round -- the wrong one makes it worse (7.8 vs 7.6 m
+  at full lock).
+- **Reversing, he counter-steers** (`rearSteerRev` -1.5): a dragged trailer
+  pushed backwards is unstable and went to the 63 deg stop within five seconds
+  of reverse with a little lock on; with the counter-steer it held 13 deg.
+- An apron tiller's trailer is not re-placed while its tractor has not moved
+  (traffic.js `_followK`); apron rigs settle like the quads (`spec.fire`).
+- `spec.showR` (340 m) caps an apron rig's draw distance: the 80-lengths rule
+  would draw a dozen stations' rigs, 3-6 draws each, from 800 m.
+
+**Driving.** `diesel` gives the heavy diesel and its air-brake hiss at a stop
+(and the enter/exit air); `fire` gives the air horns (`HORNS.air`, three deep
+sawtooth trumpets). Bench (`tools/vehicles.mjs`, arcade): engine 0-100 13.8 s
+(~33 s real), 112 km/h, 100-0 23.1 m; tiller 0-80 9.9 s, 105 km/h, 25.4 m;
+lateral 1.8 / 1.7 g, between the bus and the box truck. `minTurnR` 6.0 / 5.2
+m. The chase boom is 10 m longer and 1.6 m higher in a tiller.
+
+**WATER** (V, pad RB; a button beside the pad, `#fireBtns`, shown only in a
+rig) runs the deck gun on the pump house (`FIRE_MONITOR.fireengine`), or the
+waterway at the aerial's heel on a tiller (on its TRAILER,
+`FIRE_MONITOR.tillerRear`). It aims where the camera looks: yaw from
+`camYaw`, elevation from `camPitch`. A burning flame within 95 m and 0.32 rad
+of that aim takes it (`ASSIST`): the pitch is solved for a 32 m/s stream
+(`solvePitch`, the low arc; if `march` finds the low arc blocked short of the
+flame, the high one). The stream is marched at 50 ms steps against the terrain
+and the building footprints; flames within 3.4 m of the arc or 4.5 m of where
+it lands are wetted. Where it lands it knocks pedestrians over (`knockDown`,
++3 heat the first time) and shoves cars under 2.6 t.
+
+**MISSION** (M) dispatches a fire call: `pickBuilding` takes a 6-45 m
+building 300-1500 m off with a street traffic can reach in front of it
+(`inComponent`), and `ignite` puts flames up the face toward that street and
+over the roof of a low one. Call k: 3+k flames (max 7), a second building
+from call 3 and a third from call 5, a clock of `50 + d/10 + 11 per flame`
+seconds scaled down 7 % a call (to 62 %). Wetting takes a flame's hp down at
+0.42/s; dry, it creeps back at 0.035/s. Every flame out pays `250 + 125k + 30
+per flame + 1 per second left` and the next call comes 5 s later; the clock
+running out ends the run; MISSION again stands down.
+
+**Every flame is placed where the street can put it out** (`flameSpots`).
+Building boxes abut and overlap along a block, and a flame set 0.6 m in front
+of the facade could sit inside a neighbour's box: every stream hit the
+neighbour's wall first and the call could not be won -- 2 of 60 swept
+buildings, and verify once ran its 120 s with the aim locked throughout,
+paid $0. A spot now has to be outside every other building and reachable, by
+the same wetting test `cannon()` applies (`reaches`: the impact within 4.5 m,
+or the arc within 3.4 m, low arc or high), from a muzzle 3.3 m over the
+street point AND 6 m either way along the street (a rig never stops on the
+exact spot; a 1 m offset alone failed one in 80). Spots across the face and
+up it fill in for refused ones; a building with fewer than min(n, 3) is
+passed over by `pickBuilding` (which takes a seeded `rnd`). The cannon picks
+the high arc by the same `reaches` test, so placement and play agree. Swept
+800 calls (engines and tillers, 4-7 flames, the rig 0-5 m off the point):
+all put out.
+
+**SIREN works in a rig as in a police car** (see "WASTED, the siren, and
+finding a gun"): `updateSiren` takes `spec.fire` as well as `spec.police`, so
+the button shows (`data-police`), G and pad R3 toggle `sirenOn`, traffic
+yields and audio voices it. A rig has no `traffic.lightBar`: firecalls.js
+shows its own flashing heads (two boxes alternately, one draw) while
+`sirenOn`. Dispatching a call switches the siren on through main.js's
+`setSiren` (so the button lights), and standing down switches off the one the
+call switched on. G was WATER before the toggle; WATER is V now. Map: `game.fireTarget`, a pulsing
+red dot; in the world a 160 m beacon until 90 m off, and the smoke.
+
+**Particles are three Points draws, only while alive** (`Pool`: per-particle
+size and alpha in a ShaderMaterial, `uScale` from the camera's fov and the
+drawing buffer): water (340, phone 220), flames additive (520 / 300, a glow
+particle in six), smoke (300 / 180). `fireSound` is one looped noise source
+(spray hiss and rush, the fire's roar and a gated crackle), linked only while
+heard. **Nothing compiles mid-play**: `warmMeshes` puts the pools, the beacon
+and the lights into main.js's warm-up frames; `renderer.info.programs` was 60
+before and after a call with the stream, the flames and the lights all drawn.
+
+verify's "fire apparatus" section: the aprons (off the carriageway, out of
+buildings, trailers on the hitch), draws a body, the tiller on Boeing Field's
+runway with and without the tillerman (offtracking, articulation, reverse,
+hitch, entering the trailer, removing it), stealing a rig from its apron (and its SIREN: shown, on, kept by V, off by G), and
+a scripted call on a SEEDED building (dispatch, drive there, spray by the
+camera's aim, out, paid, stood down), and 60 seeded calls round the stations,
+engines and tillers 5 m either side of the street point, every one put out. `tools/vehshots.mjs` frames a towed rig whole, and `VEH_FAR=
+fireengine,tiller ... --street` puts them in the street lineup. Shots in
+`docs/firetrucks/`.
+
+Not done: the ladder does not raise; no rigs in traffic.
+
 ## Known gaps
 
 - **Roads still under the water drawn over them: 36 deck/freeway samples and

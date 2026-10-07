@@ -233,7 +233,7 @@ export const TYPES = {
   taxi: deriveSpec({ wheelbase: 2.98,len: 4.76, wid: 1.85, wheelR: 0.33, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', taxi: true, livery: 0xf0b40c, mass: 1.0, acc: 3.8, topKph: 195, brakeM: 41, latG: 0.85 }),
   police: deriveSpec({ wheelbase: 2.95,len: 4.98, wid: 1.92, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', police: true, livery: 0xf2f4f6, mass: 1.1, acc: 5.6, topKph: 230, brakeM: 37, latG: 0.93 }),
   // the articulated bus: the front section and the trailing rear (buildArticFront)
-  artic: deriveSpec({ wheelbase: 6.7, len: 11.4, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'artic', livery: 0xc41a24, bus: true, artic: true, boxy: 3, mass: 6.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
+  artic: deriveSpec({ wheelbase: 6.7, len: 11.4, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'artic', livery: 0xc41a24, bus: true, artic: true, towed: 'articRear', boxy: 3, mass: 6.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
   articRear: deriveSpec({ wheelbase: 5.3, len: 6.5, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'articRear', livery: 0xc41a24, bus: true, trailer: true, boxy: 3, mass: 3.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
   // an unlimited hydroplane: a turbine three-pointer that runs on its sponsons (updateHydro)
   hydro: deriveSpec({ wheelbase: 6.0, len: 9.6, wid: 4.4, wheelR: 0.3, sill: 0.2, belt: 0.6, roof: 1.3, cab: [0.1, 0.35], hand: 'hydro', boat: true, hydro: true, engine: 'turbine', mass: 3.0, acc: 12, topKph: 250, brakeM: 60, latG: 1.6 }),
@@ -251,6 +251,16 @@ export const TYPES = {
   boxtruck: deriveSpec({ wheelbase: 4.3,len: 7.5, wid: 2.38, wheelR: 0.46, sill: 0.62, belt: 1.55, roof: 2.55, cab: [0.14, 0.46], cargo: 2.55, hand: 'boxtruck', boxy: 2, mass: 3.0, acc: 2.5, topKph: 125, brakeM: 51, latG: 0.66 }),
   ambulance: deriveSpec({ wheelbase: 3.9,len: 6.3, wid: 2.28, wheelR: 0.42, sill: 0.56, belt: 1.42, roof: 2.35, cab: [0.16, 0.46], cargo: 2.25, hand: 'ambulance', livery: 0xf4f4f0, boxy: 2, emergency: true, mass: 2.4, acc: 3.2, topKph: 155, brakeM: 48, latG: 0.72 }),
   garbage: deriveSpec({ wheelbase: 4.6,len: 8.1, wid: 2.48, wheelR: 0.50, sill: 0.66, belt: 1.62, roof: 2.6, cab: [0.20, 0.46], cargo: 2.5, hand: 'garbage', livery: 0x2e6a3f, boxy: 2, mass: 4.0, acc: 1.45, topKph: 90, brakeM: 55, latG: 0.61 }),
+  // Fire apparatus (buildFireEngine / buildTiller): Seattle Fire's red. `fire`
+  // marks them for the water cannon, the station aprons and the fire calls
+  // (firecalls.js); `diesel` gives them the heavy diesel and its air brakes.
+  // Heavy, slow off the line, governed near 110, and a big turning circle
+  // (minTurnR). The tiller is two vehicles like the artic: the tractor
+  // (`towed` names its trailer) and the trailer, which Vehicle.follow places
+  // and its tillerman steers (TILLER.rearSteer).
+  fireengine: deriveSpec({ wheelbase: 5.1, len: 10.0, wid: 2.50, wheelR: 0.52, sill: 0.62, belt: 1.70, roof: 3.05, cab: [0.17, 0.50], hand: 'fireengine', livery: 0xb3121b, diesel: true, fire: true, showR: 340, boxy: 2, mass: 5.5, acc: 2.0, topKph: 112, brakeM: 50, latG: 0.64, minTurnR: 6.0 }),
+  tiller: deriveSpec({ wheelbase: 4.3, len: 6.9, wid: 2.50, wheelR: 0.52, sill: 0.62, belt: 1.70, roof: 3.05, cab: [0.17, 0.50], hand: 'tiller', livery: 0xb3121b, diesel: true, fire: true, showR: 340, towed: 'tillerRear', boxy: 2, mass: 5.0, acc: 1.7, topKph: 105, brakeM: 55, latG: 0.62, minTurnR: 5.2 }),
+  tillerRear: deriveSpec({ wheelbase: 4.0, len: 13.0, wid: 2.50, wheelR: 0.52, sill: 0.66, belt: 1.70, roof: 3.58, cab: [-0.48, -0.36], hand: 'tillerRear', livery: 0xb3121b, diesel: true, fire: true, trailer: true, boxy: 2, mass: 6.0, acc: 1.7, topKph: 105, brakeM: 55, latG: 0.62 }),
 };
 
 /**
@@ -6281,6 +6291,470 @@ function buildArticRear(spec, paint, trim, matte) {
   return buildBus(spec, paint, trim, matte, { zF: 1.0, zR: ARTIC.axleR, doors: [[0.55, 1.65]], frontEnd: false, pod: -0.6, noFrontAxle: true });
 }
 
+// ---------------------------------------------------------------------------
+// FIRE APPARATUS: a pumper (`fireengine`) and a tiller aerial ladder truck
+// (`tiller` + `tillerRear`, two vehicles like the articulated bus). Seattle
+// Fire runs custom-cab Pierce rigs: a flat cab-forward face, a raised-roof
+// four-door crew cab with the front axle under the front doors, roll-up
+// aluminium compartment doors, a pump panel behind the cab, a hose bed on top
+// and ground ladders racked on the side. Red paint; the white cab roof, the
+// reflective band and the gold lettering are matte (paint is tinted by its
+// material, so nothing painted can be white on a red truck).
+// ---------------------------------------------------------------------------
+const FIRE_WHITE = [0.92, 0.92, 0.9];
+const FIRE_GOLD = [0.86, 0.66, 0.22];
+const FIRE_DIAMOND = [0.62, 0.63, 0.65];
+const FIRE_RED_LENS = [1.0, 0.08, 0.06];
+
+// A squared stroke font for lettering, in a unit cell (x right, y up). Every
+// stroke is a 4-sided tube, so diagonals cost the same as anything else.
+const GLYPHS = {
+  S: [[[1, 1], [0, 1], [0, 0.5], [1, 0.5], [1, 0], [0, 0]]],
+  E: [[[1, 1], [0, 1], [0, 0], [1, 0]], [[0, 0.5], [0.75, 0.5]]],
+  A: [[[0, 0], [0.5, 1], [1, 0]], [[0.25, 0.45], [0.75, 0.45]]],
+  T: [[[0, 1], [1, 1]], [[0.5, 1], [0.5, 0]]],
+  L: [[[0, 1], [0, 0], [1, 0]]],
+  F: [[[1, 1], [0, 1], [0, 0]], [[0, 0.5], [0.75, 0.5]]],
+  I: [[[0.5, 1], [0.5, 0]]],
+  R: [[[0, 0], [0, 1], [1, 1], [1, 0.5], [0, 0.5]], [[0.4, 0.5], [1, 0]]],
+  D: [[[0, 0], [0, 1], [0.65, 1], [1, 0.7], [1, 0.3], [0.65, 0], [0, 0]]],
+  N: [[[0, 0], [0, 1], [1, 0], [1, 1]]],
+  G: [[[1, 1], [0, 1], [0, 0], [1, 0], [1, 0.45], [0.5, 0.45]]],
+  K: [[[0, 0], [0, 1]], [[1, 1], [0, 0.5], [1, 0]]],
+  U: [[[0, 1], [0, 0], [1, 0], [1, 1]]],
+  M: [[[0, 0], [0, 1], [0.5, 0.5], [1, 1], [1, 0]]],
+  O: [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
+  0: [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
+  1: [[[0.25, 0.8], [0.5, 1], [0.5, 0]]],
+  2: [[[0, 1], [1, 1], [1, 0.5], [0, 0.5], [0, 0], [1, 0]]],
+  3: [[[0, 1], [1, 1], [1, 0], [0, 0]], [[0.2, 0.5], [1, 0.5]]],
+  4: [[[0, 1], [0, 0.5], [1, 0.5]], [[1, 1], [1, 0]]],
+  5: [[[1, 1], [0, 1], [0, 0.5], [1, 0.5], [1, 0], [0, 0]]],
+  6: [[[1, 1], [0, 1], [0, 0], [1, 0], [1, 0.5], [0, 0.5]]],
+  7: [[[0, 1], [1, 1], [0.4, 0]]],
+  8: [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]], [[0, 0.5], [1, 0.5]]],
+  9: [[[1, 0.5], [0, 0.5], [0, 1], [1, 1], [1, 0], [0, 0]]],
+};
+/**
+ * Letter `text` on a vehicle's flank: side `sx`, face at |x| = `x`, centred on
+ * `zc`, baseline `y`, cap height `h`. Reads left to right from outside on
+ * either side (on +x the reading direction is -z, on -x it is +z).
+ */
+function letter(b, text, sx, x, y, zc, h, col) {
+  const w = h * 0.62, gap = h * 0.30, r = Math.max(0.011, h * 0.075);
+  const adv = (ch) => (ch === ' ' ? w * 0.8 : (ch === 'I' || ch === '1' ? w * 0.45 : w)) + gap;
+  let total = -gap;
+  for (const ch of text) total += adv(ch);
+  const dir = sx > 0 ? -1 : 1;
+  let u = -total / 2;
+  const px = sx * (x + r * 0.6);
+  for (const ch of text) {
+    const g = GLYPHS[ch];
+    const cw = ch === 'I' || ch === '1' ? w * 0.45 : w;
+    if (g) {
+      for (const line of g) {
+        for (let i = 0; i < line.length - 1; i++) {
+          const [ax, ay] = line[i], [bx, by] = line[i + 1];
+          b.tube([px, y + ay * h, zc + dir * (u + ax * cw)], [px, y + by * h, zc + dir * (u + bx * cw)], r, 4, col, false);
+        }
+      }
+    }
+    u += adv(ch);
+  }
+}
+
+/** A roll-up aluminium compartment door on a flank, with its slats and lift bar. */
+function rollDoor(trim, matte, sx, x, y0, y1, za, zb) {
+  const zc = (za + zb) / 2, len = Math.abs(zb - za);
+  trim.box(sx * (x + 0.006), y0, zc, 0.012, y1 - y0, len, 0, ALU);
+  for (let yy = y0 + 0.12; yy < y1 - 0.06; yy += 0.12) {
+    const xx = sx * (x + 0.0135);
+    matte.quad([xx, yy, za + 0.02], [xx, yy, zb - 0.02], [xx, yy + 0.012, zb - 0.02], [xx, yy + 0.012, za + 0.02],
+      [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], [0.30, 0.31, 0.33]);
+  }
+  trim.box(sx * (x + 0.02), y0 + 0.10, zc, 0.03, 0.035, len * 0.7, 0, CHROME);
+}
+
+/** A roof light bar: alternating red and white lenses in a black base. */
+function lightBar(trim, matte, y, z, w, d = 0.30) {
+  matte.box(0, y, z, w, 0.06, d, 0, PLASTIC);
+  const n = 6, seg = w / n;
+  for (let i = 0; i < n; i++) {
+    const x = -w / 2 + seg * (i + 0.5);
+    trim.box(x, y + 0.06, z, seg * 0.92, 0.12, d * 0.9, 0, i === 2 || i === 3 ? LAMP : FIRE_RED_LENS);
+  }
+}
+
+/** A side-mounted ground ladder: two rails and the rungs, lying on its side. */
+function sideLadder(trim, sx, x, y0, y1, za, zb) {
+  for (const y of [y0, y1]) trim.tube([sx * x, y, za], [sx * x, y, zb], 0.028, 4, ALU, true);
+  const n = Math.max(2, Math.round(Math.abs(zb - za) / 0.30));
+  for (let i = 1; i < n; i++) {
+    const z = za + ((zb - za) * i) / n;
+    trim.tube([sx * x, y0, z], [sx * x, y1, z], 0.014, 4, ALU, false);
+  }
+}
+
+/**
+ * The cab both rigs share: a custom cab-forward crew cab, the front axle
+ * under the front doors, a flat face with a big screen, a white roof, a light
+ * bar, chrome bumper and grille. `o`: z0/nose, zF, roofY, W. Returns the shell.
+ */
+function fireCab(spec, paint, trim, matte, o) {
+  const { z0, nose, zF, roofY, W, unit } = o;
+  const wr = spec.wheelR, archR = wr + 0.18;
+  const winBot = 1.78;
+  const windows = [];
+  for (const sx of [-1, 1]) {
+    windows.push({ sx, zA: zF - 0.28, zB: nose - 0.34, yBot: winBot, yTopMax: (sec) => sec(nose).side - 0.07 });
+    windows.push({ sx, zA: z0 + 0.22, zB: zF - 0.62, yBot: winBot, yTopMax: (sec) => sec(nose).side - 0.07 });
+  }
+  const { shell: cab } = truckCab(paint, matte, { z0, z1: nose, W, roofY, zF, wr, archR, sill: 0.66, windows });
+  const cs = cab.sec(nose);
+  // --- face -------------------------------------------------------------------
+  const GRILLE = [0, 1.02, cs.w0 * 0.52, 0.30], LAMP_A = [cs.w0 * 0.74, 0.86, 0.17, 0.085];
+  const fw = cs.w0 - 0.12, zs = nose + 0.008, scrTop = cs.side - 0.06, scrBot = 1.62;
+  const SCR = [0, (scrBot + scrTop) / 2, fw, (scrTop - scrBot) / 2];
+  endFace(paint, nose, 1, cab.prof(nose), [GRILLE, LAMP_A, SCR], WHITE);
+  const gp = pocket(paint, matte, 0, GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.12, 1, { rim: 0.035, rimCol: CHROME });
+  for (let i = 0; i < 7; i++) trim.box(0, GRILLE[1] - GRILLE[3] + 0.05 + i * 0.08, gp.z + 0.02, gp.hw * 1.95, 0.022, 0.04, 0, CHROME);
+  for (const sx of [-1, 1]) {
+    pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.08, 1, { rim: 0.02, rimCol: CHROME });
+    trim.box(sx * (LAMP_A[0] - 0.08), LAMP_A[1] - 0.055, nose - 0.026, 0.13, 0.11, 0.022, 0, LAMP);
+    trim.box(sx * (LAMP_A[0] + 0.08), LAMP_A[1] - 0.055, nose - 0.026, 0.13, 0.11, 0.022, 0, LAMP);
+    // red warning heads on the face, above the lamps and at the cab's top corners
+    trim.box(sx * LAMP_A[0], 1.24, nose + 0.012, 0.24, 0.09, 0.03, 0, FIRE_RED_LENS);
+    trim.box(sx * (cs.w0 - 0.16), cs.side - 0.02, nose - 0.02, 0.20, 0.12, 0.06, 0, FIRE_RED_LENS);
+  }
+  trim.patch([[[-fw, scrBot, zs], [0, scrBot, zs], [fw, scrBot, zs]],
+    [[-fw, scrTop, zs], [0, scrTop, zs], [fw, scrTop, zs]]], GLASS, [0, 0, 1]);
+  matte.box(0, scrBot - 0.04, nose + 0.004, fw * 2 + 0.06, 0.04, 0.02, 0, PLASTIC);
+  for (const x of [-0.62, 0.22]) matte.tube([x, scrBot + 0.05, nose + 0.024], [x + 0.46, scrBot + 0.16, nose + 0.024], 0.011, 4, PLASTIC, true);
+  // the extended chrome bumper, its hose well and the tow eyes
+  trim.box(0, 0.38, nose + 0.26, W * 2.02, 0.32, 0.50, 0, CHROME);
+  matte.box(0, 0.69, nose + 0.26, W * 1.2, 0.012, 0.42, 0, FIRE_DIAMOND);
+  matte.box(0, 0.70, nose + 0.26, W * 0.9, 0.06, 0.32, 0, [0.82, 0.70, 0.18]);   // a yellow trash line, folded
+  trim.box(0, 0.47, nose + 0.515, 0.40, 0.12, 0.02, 0, PLATE);
+  // a Q2B: the mechanical siren on the bumper deck, chrome bell
+  trim.prism(-0.62, 0.70, nose + 0.32, 0.12, 0.24, 10, CHROME);
+  // the white cab roof (matte: paint cannot be white on a red truck)
+  const rs = cab.sec((z0 + nose) / 2);
+  matte.box(0, roofY - 0.012, (z0 + nose - 0.42) / 2, (rs.wT - rs.r) * 2 + 0.02, 0.065, nose - 0.42 - z0 - 0.02, 0, FIRE_WHITE);
+  lightBar(trim, matte, roofY + 0.05, nose - 0.55, W * 1.55);
+  // --- cab sides ---------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    sideGlass(trim, cab, sx, zF - 0.28, nose - 0.34, winBot, cs.side - 0.07);
+    sideGlass(trim, cab, sx, z0 + 0.22, zF - 0.62, winBot, cs.side - 0.07);
+    const g = cab.sec(zF - 0.45);
+    for (const zc of [zF - 0.45, z0 + 0.10]) {
+      matte.box(sx * (cab.sec(zc).w0 + 0.004), 0.95, zc, 0.010, g.side - 1.0, 0.016, 0, [0.13, 0.14, 0.15]);
+    }
+    trim.box(sx * (g.w0 + 0.01), 1.56, zF - 0.10, 0.02, 0.03, 0.18, 0, CHROME);   // door handles
+    trim.box(sx * (g.w0 + 0.01), 1.56, z0 + 0.40, 0.02, 0.03, 0.18, 0, CHROME);
+    // chrome grab rails and the two steps up into the cab
+    trim.tube([sx * (g.w0 + 0.04), 1.05, zF - 0.30], [sx * (g.w0 + 0.04), 1.70, zF - 0.30], 0.018, 6, CHROME, true);
+    matte.box(sx * (g.w0 - 0.08), 0.52, zF - 0.70, 0.24, 0.035, 0.55, 0, FIRE_DIAMOND);
+    // the reflective band and the unit number on the doors
+    matte.quad([sx * (g.w0 + 0.006), 1.08, z0 + 0.04], [sx * (g.w0 + 0.006), 1.08, nose - 0.06], [sx * (g.w0 + 0.006), 1.20, nose - 0.06],
+      [sx * (g.w0 + 0.006), 1.20, z0 + 0.04], [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], FIRE_WHITE);
+    if (unit) letter(matte, unit, sx, g.w0, 1.30, (zF + nose) / 2 - 0.12, 0.26, FIRE_GOLD);
+    truckMirror(trim, matte, sx, cs.w0 - 0.02, cs.side - 0.08, nose - 0.12);
+    // side warning lights, front and back of the cab
+    trim.box(sx * (cab.sec(nose - 0.2).w0 + 0.01), 1.32, nose - 0.20, 0.03, 0.10, 0.16, 0, FIRE_RED_LENS);
+    trim.box(sx * (cab.sec(z0 + 0.15).w0 + 0.01), cs.side - 0.16, z0 + 0.15, 0.03, 0.10, 0.16, 0, FIRE_RED_LENS);
+  }
+  boxCabin(matte, { y: 1.30, sit: 1.62, x: cs.w0 - 0.10, zR: z0 + 0.06, zF: nose - 0.06, top: roofY - 0.10,
+    rows: [zF - 0.02, z0 + 0.55], wheelDz: 0.72 });
+  return { cab, archR };
+}
+
+/**
+ * The pumper: Engine 10's type of rig. 10 m, a single rear axle on duals.
+ * The deck gun (FIRE_MONITOR) is on top of the pump house behind the cab.
+ */
+// (the tiller's is on its trailer: the waterway at the aerial's heel)
+export const FIRE_MONITOR = { fireengine: [0, 3.30, 0.95], tillerRear: [0, 3.78, 3.30] };
+function buildFireEngine(spec, paint, trim, matte) {
+  const wr = spec.wheelR, W = spec.wid / 2;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = nose - 1.55, zR = zF - spec.wheelbase;
+  const z0 = nose - 3.30, roofY = spec.roof;
+  fireCab(spec, paint, trim, matte, { z0, nose, zF, roofY, W: W * 0.97, unit: 'E10' });
+  // --- body: pump house, compartments, hose bed --------------------------------
+  const bz1 = z0 - 0.06, bodyTop = 2.42, sill = 0.62;
+  const archTopR = wr * 2 + 0.10, archRR = wr + 0.20;
+  const liftR = archCut([zR], archRR, archTopR, 3.0);
+  const body = boxShell(paint, {
+    z0: tail, z1: bz1, stations: 26, rr: 0.07, tumble: 0.01, crown: 0.012,
+    wAt: () => W, y0At: (z) => Math.max(sill, liftR(z)), y1At: () => bodyTop,
+  });
+  shellArch(matte, body, zR, wr, archRR, archTopR, sill);
+  endFace(paint, bz1, 1, body.prof(bz1), [], WHITE);
+  // pump panels behind the cab: brushed panel, gauges, discharges with caps
+  const pz0 = bz1 - 0.08, pz1 = bz1 - 1.05;
+  for (const sx of [-1, 1]) {
+    trim.box(sx * (W + 0.006), 0.80, (pz0 + pz1) / 2, 0.012, 1.45, pz0 - pz1, 0, ALU);
+    for (let i = 0; i < 4; i++) {
+      matte.box(sx * (W + 0.016), 1.78, pz1 + 0.16 + i * 0.22, 0.012, 0.12, 0.12, 0, [0.06, 0.06, 0.07]);
+      trim.box(sx * (W + 0.022), 1.80, pz1 + 0.16 + i * 0.22, 0.006, 0.08, 0.08, 0, WHITE);
+    }
+    for (const [zz, yy] of [[pz1 + 0.25, 1.05], [pz1 + 0.70, 1.05], [pz1 + 0.47, 1.40]]) {
+      trim.tube([sx * W, yy, zz], [sx * (W + 0.12), yy, zz], 0.055, 8, CHROME, true);
+      trim.tube([sx * (W + 0.12), yy, zz], [sx * (W + 0.16), yy, zz], 0.07, 8, [0.80, 0.62, 0.18], true);
+    }
+    matte.box(sx * (W - 0.12), 0.50, (pz0 + pz1) / 2, 0.26, 0.035, pz0 - pz1, 0, FIRE_DIAMOND);   // running board
+    // compartments: ahead of the axle, over it, and behind it to the tail
+    rollDoor(trim, matte, sx, W, 0.78, bodyTop - 0.16, pz1 - 0.08, zR + archRR + 0.06);
+    rollDoor(trim, matte, sx, W, archTopR + 0.10, bodyTop - 0.16, zR + archRR - 0.04, zR - archRR + 0.04);
+    rollDoor(trim, matte, sx, W, 0.78, bodyTop - 0.16, zR - archRR - 0.06, (zR - archRR + tail) / 2 + 0.02);
+    rollDoor(trim, matte, sx, W, 0.78, bodyTop - 0.16, (zR - archRR + tail) / 2 - 0.02, tail + 0.10);
+    // the band and the lettering
+    matte.quad([sx * (W + 0.02), 0.66, tail + 0.02], [sx * (W + 0.02), 0.66, bz1], [sx * (W + 0.02), 0.76, bz1],
+      [sx * (W + 0.02), 0.76, tail + 0.02], [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], FIRE_WHITE);
+    matte.box(sx * (W + 0.004), bodyTop - 0.14, (tail + bz1) / 2, 0.012, 0.12, bz1 - tail - 0.04, 0, FIRE_WHITE);
+    // warning lights high at the rear corners and over the axle
+    trim.box(sx * (W - 0.10), bodyTop + 0.02, tail + 0.12, 0.18, 0.16, 0.12, 0, FIRE_RED_LENS);
+    trim.box(sx * (W + 0.01), 0.90, zR, 0.03, 0.10, 0.20, 0, AMBER);
+    // the ground ladders on the kerb side, and the pike poles on the street side
+    if (sx < 0) {
+      sideLadder(trim, sx, W + 0.12, bodyTop - 0.08, bodyTop + 0.30, pz1 - 0.15, tail + 0.40);
+      for (const zz of [pz1 - 0.3, tail + 0.6]) matte.box(sx * (W + 0.06), bodyTop - 0.12, zz, 0.12, 0.46, 0.06, 0, PLASTIC);
+    } else {
+      for (let k = 0; k < 2; k++) trim.tube([sx * (W + 0.04), bodyTop + 0.04 + k * 0.07, pz1 - 0.3], [sx * (W + 0.04), bodyTop + 0.04 + k * 0.07, tail + 0.6], 0.018, 5, [0.85, 0.75, 0.30], true);
+    }
+  }
+  letter(matte, 'SEATTLE FIRE', 1, W + 0.012, 1.54, (pz1 + tail) / 2 + 0.2, 0.26, FIRE_GOLD);
+  letter(matte, 'SEATTLE FIRE', -1, W + 0.012, 1.54, (pz1 + tail) / 2 + 0.2, 0.26, FIRE_GOLD);
+  // pump house top: a raised box behind the cab, the deck gun on it
+  paint.box(0, bodyTop, (pz0 + pz1) / 2, W * 1.9, 0.38, pz0 - pz1, 0, WHITE);
+  const [mx, my, mz] = FIRE_MONITOR.fireengine;
+  trim.prism(mx, bodyTop + 0.38, mz, 0.11, my - bodyTop - 0.38 - 0.08, 10, CHROME);
+  trim.tube([mx, my - 0.08, mz], [mx, my + 0.02, mz + 0.30], 0.07, 8, [0.80, 0.80, 0.82], true);
+  trim.tube([mx, my + 0.02, mz + 0.30], [mx, my + 0.08, mz + 0.62], 0.05, 8, CHROME, true);
+  // hose bed: walls, the folded supply line in two colours and the preconnects
+  const hz0 = tail + 0.06, hz1 = pz1 - 0.04;
+  for (const sx of [-1, 1]) paint.box(sx * (W - 0.03), bodyTop, (hz0 + hz1) / 2, 0.06, 0.34, hz1 - hz0, 0, WHITE);
+  trim.tube([-(W - 0.03), bodyTop + 0.36, hz0], [-(W - 0.03), bodyTop + 0.36, hz1], 0.02, 5, CHROME, true);
+  trim.tube([W - 0.03, bodyTop + 0.36, hz0], [W - 0.03, bodyTop + 0.36, hz1], 0.02, 5, CHROME, true);
+  const HOSE = [[0.86, 0.80, 0.70], [0.78, 0.66, 0.16], [0.70, 0.12, 0.10]];
+  for (let k = 0; k < 4; k++) {
+    matte.box(0, bodyTop + 0.02 + k * 0.075, (hz0 + hz1) / 2, W * 1.78, 0.07, hz1 - hz0 - 0.10, 0, HOSE[k % 3]);
+  }
+  for (const yy of [bodyTop + 0.06, bodyTop + 0.15, bodyTop + 0.24]) {
+    matte.box(0, yy, tail + 0.02, W * 1.72, 0.008, 0.008, 0, [0.20, 0.20, 0.21]);   // fold lines on the end
+  }
+  // --- rear -----------------------------------------------------------------------
+  const TL = [W - 0.18, 1.05, 0.10, 0.22];
+  endFace(paint, tail, -1, body.prof(tail), [TL], WHITE);
+  for (const sx of [-1, 1]) {
+    const tp = pocket(paint, matte, sx * TL[0], TL[1], tail, TL[2], TL[3], 0.04, -1, { rim: 0.018, rimCol: CHROME });
+    trim.box(sx * TL[0], TL[1] - tp.hh * 0.95, tail + 0.014, tp.hw * 1.9, tp.hh * 0.62, 0.020, 0, TAILC);
+    trim.box(sx * TL[0], TL[1] - tp.hh * 0.30, tail + 0.014, tp.hw * 1.9, tp.hh * 0.6, 0.020, 0, AMBER);
+    trim.box(sx * TL[0], TL[1] + tp.hh * 0.32, tail + 0.014, tp.hw * 1.9, tp.hh * 0.6, 0.020, 0, LAMP);
+    trim.tube([sx * 0.55, 0.90, tail - 0.08], [sx * 0.55, 2.10, tail - 0.08], 0.018, 6, CHROME, true);   // grab rails
+  }
+  // chevrons on the back, as every US rig now carries (red / gold stripes)
+  for (let i = -4; i <= 4; i++) {
+    matte.quad([i * 0.24 - 0.06, 1.40, tail - 0.004], [i * 0.24 + 0.06, 1.40, tail - 0.004], [i * 0.24 + 0.18, 2.20, tail - 0.004],
+      [i * 0.24 + 0.06, 2.20, tail - 0.004], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], i % 2 ? FIRE_GOLD : [0.75, 0.10, 0.10]);
+  }
+  matte.box(0, 0.46, tail - 0.18, W * 1.9, 0.07, 0.40, 0, FIRE_DIAMOND);       // tailboard step
+  trim.box(0, 0.62, tail - 0.012, 0.40, 0.12, 0.02, 0, PLATE);
+  // --- chassis ------------------------------------------------------------------
+  matte.box(0, 0.62, (tail + nose) / 2 - 0.4, 0.98, 0.26, spec.len - 1.6, 0, PLASTIC);
+  for (const sx of [-1, 1]) matte.box(sx * (W - 0.24), wr * 2 + 0.04, zR, 0.52, 0.04, wr * 2.3, 0, PLASTIC);
+  const twF = 0.34, twR = 0.50;
+  const wxF = W * 0.97 - 0.19, wxR = W - 0.28;
+  return [[-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF], [-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR]];
+}
+
+/**
+ * The tiller: an aerial ladder truck in two halves. The tractor is the crew
+ * cab on a short wheelbase with the fifth wheel ahead of its drive axle; the
+ * trailer carries the turntable and a 100 ft ladder bedded the full length,
+ * the compartments down both sides, and the tillerman's glass cab over the
+ * rear axle, which he steers. TILLER is the hitch: `hitchF` back from the
+ * tractor's centre to the fifth wheel, `hitchR` forward from the trailer's
+ * centre to its kingpin, `axleR` the trailer's axle, `maxAngle` the
+ * articulation stop, `rearSteer` the tillerman's gain (Vehicle.follow).
+ */
+const TILLER = { hitchF: 1.75, hitchR: 5.55, axleR: -4.85, maxAngle: 1.10, rearSteer: 0.7, rearSteerRev: -1.5, rearLock: 0.55 };
+const LADDER_Y = 3.06;   // the bedded aerial's bottom chord, clear of the tiller cab's roof
+// Every trailer's hitch, by the trailer's type (Vehicle.follow, traffic.spawnAt).
+export const HITCH = { articRear: { ...ARTIC, rearSteer: 0, rearLock: 0 }, tillerRear: TILLER };
+function buildTiller(spec, paint, trim, matte) {
+  const wr = spec.wheelR, W = spec.wid / 2;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = nose - 1.50, zR = zF - spec.wheelbase;
+  const z0 = nose - 3.25, roofY = spec.roof;
+  fireCab(spec, paint, trim, matte, { z0, nose, zF, roofY, W: W * 0.97, unit: 'L10' });
+  const bz1 = z0 - 0.06, sill = 0.62, top = 1.50;
+  const archTopR = wr * 2 + 0.10, archRR = wr + 0.20;
+  const liftR = archCut([zR], archRR, archTopR, 3.0);
+  // low compartment boxes either side of the fifth wheel, the rear fenders in them
+  for (const sx of [-1, 1]) {
+    // boxShell builds about the centreline: what it adds is moved out to the side
+    const mark = paint.pos.length;
+    boxShell(paint, {
+      z0: tail + 0.05, z1: bz1, stations: 14, rr: 0.05, tumble: 0.006, crown: 0.006, capStart: true, capEnd: true,
+      wAt: () => 0.32, y0At: (z) => Math.max(sill, liftR(z)), y1At: () => top,
+    });
+    for (let i = mark; i < paint.pos.length; i += 3) paint.pos[i] += sx * (W - 0.32);
+    rollDoor(trim, matte, sx, W, 0.70, top - 0.10, bz1 - 0.12, zR + archRR + 0.08);
+    matte.box(sx * (W - 0.32), top, (tail + bz1) / 2, 0.66, 0.02, bz1 - tail - 0.12, 0, FIRE_DIAMOND);
+    trim.box(sx * (W - 0.10), top + 0.02, tail + 0.20, 0.16, 0.14, 0.10, 0, FIRE_RED_LENS);
+    trim.box(sx * (W + 0.01), 0.95, zR - archRR - 0.10, 0.03, 0.12, 0.18, 0, TAILC);
+  }
+  shellArchAt(matte, W, zR, wr, archRR, archTopR, sill);
+  // the fifth wheel on the frame, between the boxes
+  matte.box(0, 0.60, (tail + bz1) / 2, 0.98, 0.50, bz1 - tail - 0.1, 0, PLASTIC);
+  matte.prism(0, 1.10, -TILLER.hitchF, 0.62, 0.16, 16, [0.16, 0.16, 0.17]);
+  matte.box(0, 1.26, -TILLER.hitchF - 0.1, 0.9, 0.012, 0.8, 0, [0.30, 0.30, 0.31]);
+  trim.box(0, 0.48, tail + 0.02, W * 1.6, 0.14, 0.06, 0, CHROME);
+  for (const sx of [-1, 1]) trim.box(sx * 0.72, 0.62, tail - 0.012, 0.16, 0.08, 0.02, 0, TAILC);
+  // air lines to the trailer (red and blue glad hands' hoses, coiled)
+  matte.tube([0.25, 1.35, bz1 - 0.05], [0.25, 1.40, -TILLER.hitchF + 0.5], 0.02, 5, [0.75, 0.12, 0.10], false);
+  matte.tube([-0.25, 1.35, bz1 - 0.05], [-0.25, 1.40, -TILLER.hitchF + 0.5], 0.02, 5, [0.12, 0.25, 0.75], false);
+  const twF = 0.34, twR = 0.50;
+  const wxF = W * 0.97 - 0.19, wxR = W - 0.28;
+  return [[-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF], [-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR]];
+}
+/** `shellArch` for a body whose flank is at ±W rather than on a single shell. */
+function shellArchAt(matte, W, zc, wr, archR, archTop, floor) {
+  for (const sx of [-1, 1]) {
+    matte.box(sx * (W - 0.17), wr * 0.85, zc, 0.30, archTop - wr * 0.85 - 0.012, archR * 1.85, 0, CAVITY);
+    const lipA = [], lipB = [];
+    for (let i = 0; i <= 12; i++) {
+      const th = 0.12 + ((Math.PI - 0.24) * i) / 12, z = zc + Math.cos(th) * archR * 0.995;
+      const y = Math.max(floor, archTop * (1 - Math.abs(Math.cos(th)) ** 3) ** (1 / 3));
+      lipA.push([sx * (W + 0.002), y, z]);
+      lipB.push([sx * (W + 0.045), y - 0.018, z]);
+    }
+    matte.patch([lipA, lipB], PLASTIC, [sx, -0.3, 0]);
+  }
+}
+
+/** One section of the aerial: two trusses (top and bottom chords, lacing) and the rungs. */
+function ladderSection(b, hw, y0, depth, za, zb, col) {
+  const len = Math.abs(zb - za), dz = zb > za ? 1 : -1;
+  for (const sx of [-1, 1]) {
+    b.tube([sx * hw, y0, za], [sx * hw, y0, zb], 0.035, 4, col, true);
+    b.tube([sx * hw, y0 + depth, za], [sx * hw, y0 + depth, zb], 0.03, 4, col, true);
+    const n = Math.max(2, Math.round(len / 0.55));
+    for (let i = 0; i < n; i++) {
+      const a = za + (dz * len * i) / n, c = za + (dz * len * (i + 1)) / n;
+      b.tube([sx * hw, i % 2 ? y0 + depth : y0, a], [sx * hw, i % 2 ? y0 : y0 + depth, c], 0.016, 4, col, false);
+    }
+  }
+  const r = Math.max(2, Math.round(len / 0.36));
+  for (let i = 1; i < r; i++) {
+    const z = za + (dz * len * i) / r;
+    b.tube([-hw, y0 + 0.02, z], [hw, y0 + 0.02, z], 0.017, 4, col, false);
+  }
+}
+
+function buildTillerRear(spec, paint, trim, matte) {
+  const wr = spec.wheelR, W = spec.wid / 2;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const kp = TILLER.hitchR, zR = TILLER.axleR;
+  const top = 2.05, sill = 0.66, neckZ = kp - 1.15;
+  const archTopR = wr * 2 + 0.10, archRR = wr + 0.20;
+  const liftR = archCut([zR], archRR, archTopR, 3.0);
+  // the gooseneck over the fifth wheel: narrower, its nose rounded off
+  const neck = boxShell(paint, {
+    z0: neckZ - 0.2, z1: nose, stations: 12, rr: 0.12, tumble: 0.02, crown: 0.01, capEnd: true,
+    wAt: curve([[neckZ - 0.2, 1.0], [nose - 0.5, 1.0], [nose, 0.82]]), y0At: () => 1.32, y1At: () => 1.92,
+  });
+  matte.box(0, 1.31, (neckZ + nose) / 2, 1.9, 0.02, nose - neckZ - 0.1, 0, PLASTIC);
+  void neck;
+  // the main body: compartments full height down both sides to the tiller cab
+  const bz1 = neckZ, bz0 = tail + 1.95;
+  const body = boxShell(paint, {
+    z0: bz0, z1: bz1, stations: 24, rr: 0.07, tumble: 0.01, crown: 0.01,
+    wAt: () => W, y0At: (z) => Math.max(sill, liftR(z)), y1At: () => top,
+  });
+  shellArch(matte, body, zR, wr, archRR, archTopR, sill);
+  endFace(paint, bz1, 1, body.prof(bz1), [], WHITE);
+  // under the tiller cab: a lower, shorter body over the axle to the tail
+  const tb = boxShell(paint, {
+    z0: tail, z1: bz0 + 0.02, stations: 10, rr: 0.06, tumble: 0.01, crown: 0.01,
+    wAt: () => W, y0At: (z) => Math.max(sill, liftR(z)), y1At: () => 1.30,
+  });
+  endFace(paint, tail, -1, tb.prof(tail), [], WHITE);
+  endFace(paint, bz0, -1, body.prof(bz0), [], WHITE);
+  for (const sx of [-1, 1]) {
+    rollDoor(trim, matte, sx, W, 0.80, top - 0.16, bz1 - 0.10, (bz1 + zR + archRR) / 2 + 0.03);
+    rollDoor(trim, matte, sx, W, 0.80, top - 0.16, (bz1 + zR + archRR) / 2 - 0.03, zR + archRR + 0.08);
+    matte.quad([sx * (W + 0.02), 0.70, tail + 0.02], [sx * (W + 0.02), 0.70, bz1], [sx * (W + 0.02), 0.78, bz1],
+      [sx * (W + 0.02), 0.78, tail + 0.02], [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], FIRE_WHITE);
+    matte.box(sx * (W + 0.004), top - 0.13, (bz0 + bz1) / 2, 0.012, 0.11, bz1 - bz0 - 0.04, 0, FIRE_WHITE);
+    trim.box(sx * (W - 0.10), top + 0.01, bz1 - 0.10, 0.18, 0.15, 0.12, 0, FIRE_RED_LENS);
+    trim.box(sx * (W + 0.01), 1.05, (bz1 + zR) / 2, 0.03, 0.10, 0.20, 0, AMBER);
+    trim.box(sx * (W - 0.12), 0.95, tail - 0.012, 0.16, 0.24, 0.02, 0, TAILC);
+    trim.box(sx * (W - 0.34), 0.95, tail - 0.012, 0.16, 0.12, 0.02, 0, AMBER);
+    // outriggers (the jacks) stowed behind the turntable
+    matte.box(sx * (W - 0.10), 0.36, neckZ - 0.45, 0.22, 0.34, 0.28, 0, [0.16, 0.16, 0.17]);
+    trim.box(sx * (W + 0.005), 0.70, neckZ - 0.45, 0.012, 0.9, 0.24, 0, [0.85, 0.75, 0.25]);
+  }
+  letter(matte, 'SEATTLE FIRE', 1, W + 0.012, 1.40, (bz1 + zR + archRR) / 2, 0.28, FIRE_GOLD);
+  letter(matte, 'SEATTLE FIRE', -1, W + 0.012, 1.40, (bz1 + zR + archRR) / 2, 0.28, FIRE_GOLD);
+  // ground ladders racked in the torque box: their butts show at the tail
+  for (let k = 0; k < 3; k++) {
+    for (const x of [-0.35, 0.35]) trim.box(x, 0.86 + k * 0.12, tail - 0.01, 0.07, 0.07, 0.02, 0, ALU);
+  }
+  matte.box(0, 0.80, tail - 0.006, 0.86, 0.40, 0.012, 0, [0.07, 0.07, 0.08]);
+  trim.box(0, 0.50, tail + 0.02, W * 1.6, 0.14, 0.06, 0, CHROME);
+  trim.box(0, 0.62, tail - 0.04, 0.40, 0.12, 0.02, 0, PLATE);
+  for (let i = -4; i <= 4; i++) {
+    matte.quad([i * 0.24 - 0.06, 0.66, tail - 0.012], [i * 0.24 + 0.06, 0.66, tail - 0.012], [i * 0.24 + 0.14, 1.26, tail - 0.012],
+      [i * 0.24 + 0.02, 1.26, tail - 0.012], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], i % 2 ? FIRE_GOLD : [0.75, 0.10, 0.10]);
+  }
+  // --- the tiller cab: a glass box over the axle, the tillerman in it ----------
+  const cz0 = tail + 0.10, cz1 = bz0 - 0.08, cw = 0.72, cy0 = 1.30, cy1 = 2.92;
+  const tcab = boxShell(paint, {
+    z0: cz0, z1: cz1, stations: 6, rr: 0.10, tumble: 0.02, crown: 0.02,
+    wAt: () => cw, y0At: () => cy0, y1At: () => cy1,
+    windows: [-1, 1].map((sx) => ({ sx, zA: cz0 + 0.12, zB: cz1 - 0.12, yBot: 1.95, yTopMax: cy1 - 0.12, cols: 2 })),
+  });
+  const TS = [0, (1.85 + cy1 - 0.14) / 2, cw - 0.10, (cy1 - 0.14 - 1.85) / 2];
+  endFace(paint, cz1, 1, tcab.prof(cz1), [TS], WHITE);
+  endFace(paint, cz0, -1, tcab.prof(cz0), [TS], WHITE);
+  for (const [z, d] of [[cz1 + 0.008, 1], [cz0 - 0.008, -1]]) {
+    trim.patch([[[-(cw - 0.10), 1.85, z], [cw - 0.10, 1.85, z]], [[-(cw - 0.10), cy1 - 0.14, z], [cw - 0.10, cy1 - 0.14, z]]], GLASS, [0, 0, d]);
+  }
+  for (const sx of [-1, 1]) sideGlass(trim, tcab, sx, cz0 + 0.12, cz1 - 0.12, 1.95, cy1 - 0.12, 0.007, 2);
+  matte.box(0, cy1 - 0.01, (cz0 + cz1) / 2, cw * 1.7, 0.05, cz1 - cz0 - 0.16, 0, FIRE_WHITE);
+  for (const sx of [-1, 1]) for (const z of [cz0 + 0.06, cz1 - 0.06]) trim.box(sx * (cw - 0.08), cy1 - 0.16, z, 0.12, 0.10, 0.04, 0, FIRE_RED_LENS);
+  boxCabin(matte, { y: 1.40, sit: 1.70, x: cw - 0.08, zR: cz0 + 0.06, zF: cz1 - 0.06, top: cy1 - 0.08,
+    rows: [cz0 + 0.62], wheelDz: 0.62, bulkhead: false, driverX: 0, benches: 'bench' });
+  // --- turntable and the aerial, bedded nose to tail over the tiller cab ---------
+  const ttZ = neckZ - 1.05;
+  matte.prism(0, top, ttZ, 1.02, 0.10, 18, [0.14, 0.14, 0.15]);
+  paint.prism(0, top + 0.10, ttZ, 0.92, 0.30, 18, WHITE);
+  // the control pedestal and the lift cylinders under the heel
+  paint.box(-0.62, top + 0.40, ttZ + 0.05, 0.30, 0.55, 0.40, 0, WHITE);
+  trim.box(-0.62, top + 0.62, ttZ + 0.26, 0.24, 0.20, 0.02, 0, [0.30, 0.32, 0.35]);
+  for (const sx of [-1, 1]) {
+    paint.box(sx * 0.62, top + 0.40, ttZ - 0.15, 0.16, 0.70, 0.36, 0, WHITE);
+    trim.tube([sx * 0.45, top + 0.42, ttZ - 0.20], [sx * 0.45, LADDER_Y - 0.02, ttZ - 1.70], 0.075, 8, CHROME, true);
+  }
+  const zTip = tail - 0.75, zHeel = ttZ + 0.25;
+  ladderSection(trim, 0.78, LADDER_Y, 0.52, zHeel, zTip + 2.4, ALU);
+  ladderSection(trim, 0.64, LADDER_Y + 0.05, 0.44, zHeel - 1.4, zTip + 1.2, [0.80, 0.81, 0.83]);
+  ladderSection(trim, 0.50, LADDER_Y + 0.10, 0.36, zHeel - 2.6, zTip, ALU);
+  // the heel pins, the tip's waterway nozzle, and the cradle the tip rests in
+  trim.tube([-0.82, LADDER_Y + 0.15, zHeel], [0.82, LADDER_Y + 0.15, zHeel], 0.06, 8, CHROME, true);
+  trim.tube([0, LADDER_Y + 0.18, zTip + 0.2], [0, LADDER_Y + 0.10, zTip - 0.10], 0.05, 8, CHROME, true);
+  for (const sx of [-1, 1]) paint.box(sx * 0.70, top, cz1 + 0.18, 0.12, LADDER_Y - top, 0.14, 0, WHITE);
+  matte.box(0, LADDER_Y - 0.06, cz1 + 0.18, 1.60, 0.06, 0.20, 0, PLASTIC);
+  // chassis rails
+  matte.box(0, 0.62, (tail + bz1) / 2, 0.98, 0.30, bz1 - tail - 0.3, 0, PLASTIC);
+  // the kingpin plate under the neck
+  matte.box(0, 1.24, kp, 0.9, 0.08, 0.9, 0, [0.20, 0.20, 0.21]);
+  const twR = 0.50, wxR = W - 0.28;
+  return [[-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR]];
+}
+
 
 // Paddling: a stroke's length in s, the share of it the blade is in the
 // water, peak push m/s2, the push's yaw (the wiggle) and the turn's, drag
@@ -7368,6 +7842,7 @@ const HAND_BUILT = {
   convertible: buildConvertible, cruiser: buildCruiser, sportbike: buildSportbike,
   atv: buildAtv, bicycle: buildBicycle, boat: buildBoat, duck: buildDuck, hydro: buildHydro, jetski: buildJetski, kayak: buildKayak, artic: buildArticFront, articRear: buildArticRear, balloon: buildBalloon,
   tank: buildTank,
+  fireengine: buildFireEngine, tiller: buildTiller, tillerRear: buildTillerRear,
 };
 
 /**
@@ -7958,6 +8433,8 @@ export class Vehicle {
     this.path = null; this.pathT = 0; this.repath = 0; this.rammed = 0; this.siren = 0;
     this.sirenOn = false;   // a police car you drive: SIREN switched on (main.js updateSiren)
     this.lightL = null; this.lightR = null; this.extra = null;
+    this.rearSteer = 0; this._followK = NaN;   // a tiller trailer's rear wheels (Vehicle.follow); traffic.js's last follow
+    this.sirenOn = false; this.cannon = null;   // fire apparatus: the player's siren, the water cannon (firecalls.js)
     this.slot = null; this.wasParked = false; this.exploded = false;
     this.airborne = false; this.lowDetail = false;
     // Flight state (updatePlane / updateHeli). `yVis` is how far the drawn
@@ -8203,26 +8680,54 @@ export class Vehicle {
    * the bellows are stretched between the two.
    */
   follow(lead) {
-    const city = this.city, f = lead.forward;
-    const hx = lead.x - f.x * ARTIC.hitchF, hz = lead.z - f.z * ARTIC.hitchF;
+    const city = this.city, f = lead.forward, H = HITCH[this.typeName] || HITCH.articRear;
+    const hx = lead.x - f.x * H.hitchF, hz = lead.z - f.z * H.hitchF;
     const g = this.forward;
-    const ax0 = this.x + g.x * ARTIC.axleR, az0 = this.z + g.z * ARTIC.axleR;
-    let h = Math.atan2(hx - ax0, hz - az0);
+    const ax0 = this.x + g.x * H.axleR, az0 = this.z + g.z * H.axleR;
+    let h;
+    // THE TILLERMAN. A trailer's axle is dragged toward the hitch, which cuts
+    // inside the tractor's path round a corner -- 3 m inside on a 17 m tiller,
+    // through the kerb and the lamp posts. Steering the rear axle against the
+    // articulation swings the tail out onto the tractor's line, which is the
+    // tillerman's whole job: here the axle moves along its wheels, steered
+    // `rearSteer` x the hitch angle (capped at `rearLock`), and is kept at its
+    // span from the hitch (the small root of |H - (A + s d)| = span). Only
+    // going forward: reversing, he centres the wheel.
+    const span = H.hitchR - H.axleR;
+    const rel0 = Math.atan2(Math.sin(this.heading - lead.heading), Math.cos(this.heading - lead.heading));
+    const gain = lead.vLong > 0.05 ? H.rearSteer : lead.vLong < -0.05 ? H.rearSteerRev || 0 : 0;
+    const delta = gain ? clamp(rel0 * gain, -H.rearLock, H.rearLock) : 0;
+    if (delta) {
+      const dx = Math.sin(this.heading + delta), dz = Math.cos(this.heading + delta);
+      const Dx = hx - ax0, Dz = hz - az0;
+      const bb = dx * Dx + dz * Dz, cc = Dx * Dx + Dz * Dz - span * span, disc = bb * bb - cc;
+      if (disc >= 0 && Math.abs(bb) > 1e-6) {
+        const sStep = cc / (bb + Math.sign(bb) * Math.sqrt(disc));
+        h = Math.atan2(hx - (ax0 + dx * sStep), hz - (az0 + dz * sStep));
+      }
+    }
+    this.rearSteer = delta;
+    if (h === undefined) h = Math.atan2(hx - ax0, hz - az0);
     let rel = Math.atan2(Math.sin(h - lead.heading), Math.cos(h - lead.heading));
-    rel = clamp(rel, -ARTIC.maxAngle, ARTIC.maxAngle);
+    rel = clamp(rel, -H.maxAngle, H.maxAngle);
     h = lead.heading + rel;
     this.heading = h;
     const F = this.forward;
-    this.x = hx - F.x * ARTIC.hitchR; this.z = hz - F.z * ARTIC.hitchR;
+    this.x = hx - F.x * H.hitchR; this.z = hz - F.z * H.hitchR;
     this.lift = city.roadLift(this.x, this.z);
     const hy = city.groundAt(hx, hz, lead.y + 0.45, city.roadLift(hx, hz));
-    const axx = this.x + F.x * ARTIC.axleR, axz = this.z + F.z * ARTIC.axleR;
+    const axx = this.x + F.x * H.axleR, axz = this.z + F.z * H.axleR;
     const ay = city.groundAt(axx, axz, lead.y + 0.45, city.roadLift(axx, axz));
-    const span = ARTIC.hitchR - ARTIC.axleR;
     this.pitch = Math.atan2(ay - hy, span);
-    this.y = ay + (hy - ay) * (-ARTIC.axleR / span);
+    this.y = ay + (hy - ay) * (-H.axleR / span);
     this.roll = lead.roll * 0.6;
     this.vLong = lead.vLong;
+    // whoever is in the lead is in the trailer too: the tillerman rides with the driver
+    if (this.matteMesh && this.assets.matteGeoW !== this.assets.matteGeoWE) {
+      const m = lead._mode, empty = (m === 'parked' || m === 'free' || m === 'apron') && !lead.detailedWheels;
+      const want = empty ? this.assets.matteGeoWE : this.assets.matteGeoW;
+      if (this.matteMesh.geometry !== want) this.matteMesh.geometry = want;
+    }
     this.sync();
     if (lead.bellows && lead.bellows.visible) updateBellows(lead.bellows, lead, this);
   }
