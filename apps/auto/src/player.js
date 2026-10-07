@@ -348,6 +348,14 @@ export class Player {
 
   /** Where water is drawn at (x, z): its surface, or null. The boats' rule --
    *  ground under the sea's plane is sea whatever the 10 m mask says. */
+  /** The lowest the camera may go over the water at its own point, or null
+   *  when there is no water there or the player is under the surface. */
+  camWaterFloor(targetY) {
+    const wl = this.waterAt(this.camPos.x, this.camPos.z);
+    if (wl === null || (!this.swimming && targetY < wl - 0.5)) return null;
+    return wl + 0.4;
+  }
+
   waterAt(x, z) {
     const wl = this.world.waterLevelAt(x, z);
     return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null;
@@ -617,6 +625,8 @@ export class Player {
       this.camYaw = Math.atan2(this.camRel.x, this.camRel.z);
       const floor = this.city.groundAt(this.camPos.x, this.camPos.z, null, 0) + 1.5;
       if (this.camPos.y < floor) this.camPos.y = floor;
+      const wf = this.camWaterFloor(v.y);
+      if (wf !== null && this.camPos.y < wf) this.camPos.y = wf;
       this.camLookRel = null;
       return;
     }
@@ -775,6 +785,14 @@ export class Player {
     const rawFloor = this.city.groundAt(this.camPos.x, this.camPos.z, target.y, 0) + 1.1;
     this.camFloor = this.camFloor == null ? rawFloor : damp(this.camFloor, rawFloor, 8, dt);
     if (this.camPos.y < this.camFloor) { this.camPos.y = this.camFloor; this.camClamp = 'floor'; }
+    // AND OVER THE WATER. The water planes are drawn from above only, so a boom
+    // dragged under the surface showed sky where the lake was and the boat
+    // flying through the air. While the player is at or over the surface (a
+    // boat, a swim, a floatplane, a bridge) the camera keeps over the water at
+    // the CAMERA's point; in a bore under the water the player is below it and
+    // nothing changes.
+    const camWater = this.camWaterFloor(target.y);
+    if (camWater !== null && this.camPos.y < camWater) { this.camPos.y = camWater; this.camClamp = 'water'; }
     // AND UNDER THE CEILING. Nothing else stops it: clearCamDist only tests
     // buildings, so a bore's walls and roof are invisible to the boom, and the
     // rig rides 3.2 + roof*0.42 above the car plus sin(pitch)*dist -- looking
