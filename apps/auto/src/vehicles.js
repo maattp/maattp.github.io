@@ -7071,6 +7071,7 @@ export class Vehicle {
     this.trimMesh = new THREE.Mesh(t.trimGeoW, A.trimMat);
     this.matteMesh = new THREE.Mesh(t.matteGeoW, A.matteMat);
     paintMesh.castShadow = this.trimMesh.castShadow = this.matteMesh.castShadow = true;
+    this.paintMesh = paintMesh;
     this.tilt = new THREE.Group();
     this.tilt.add(paintMesh, this.trimMesh, this.matteMesh);
     this.group.add(this.tilt);
@@ -7185,6 +7186,12 @@ export class Vehicle {
     const A = vehicleAssets();
     this.trimMesh.geometry = on ? this.assets.trimGeo : this.assets.trimGeoW;
     this.matteMesh.geometry = on ? this.assets.matteGeo : this.assets.matteGeoW;
+    // Your own car always casts. A parked car has its body's casting switched
+    // off (traffic.js: its shadow lands on shaded kerbside ground), and
+    // traffic's per-car loop, which switches it by distance on a phone, skips
+    // the player's vehicle -- so a car taken from the kerb drove off casting
+    // only its four detailed wheels.
+    if (on) this.paintMesh.castShadow = this.trimMesh.castShadow = this.matteMesh.castShadow = true;
     if (!on) this.mode = this._mode;
     if (this.rider && (this.spec.atv || this.spec.bicycle || this.spec.jetski || this.spec.kayak || this.spec.balloon)) this.rider.group.visible = on || this._mode === 'traffic' || this._mode === 'path';
     // the kayak's paddle, in the paddler's hands (updateKayak)
