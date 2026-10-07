@@ -2956,6 +2956,107 @@ async function main() {
       console.error('FAIL: swimming'); process.exitCode = 1;
     }
 
+    // --- fighting on foot (melee.js) --------------------------------------------------------
+    // A punch at a pedestrian 1.5 m away beside you (inside the camera's
+    // cone, 90 deg off your heading): you turn to them, and the damage lands
+    // on the hit frame, not on the press, with the fist out at shoulder
+    // height. Armed: the pistol is in the hand, the aim raises it to the
+    // shoulders along the camera's line, and the shots still hit. The gun is
+    // gone in a car; a punch in the water does nothing.
+    const fo = await session.eval(`(() => {
+      const d = window.__dbg, P = d.player, T = d.traffic, PS = d.peds, F = P.fighter;
+      if (!F) return { missing: true };
+      if (P.vehicle) P.exitVehicle(true);
+      if (P.swimming) P.clearSwim();
+      P.respawn(d.G.SPAWN.x, d.G.SPAWN.z);
+      const wanted0 = d.game.wanted, shot0 = d.game.onCopShot, timer0 = PS.timer;
+      d.game.wanted = 1; d.game.onCopShot = () => {}; PS.timer = 1e9;
+      const out = {};
+      const step = (inp) => { P.update(1 / 60, inp, { x: 0, y: 0 }, d.controls, T, PS); PS.update(1 / 60, P.x, P.z, P, T); };
+      const idle = (attack = false) => ({ x: 0, y: 0, sprint: false, jump: false, attack });
+      for (let i = 0; i < 20; i++) step(idle());
+      const stand = (dist, ang, hp) => {
+        let p = null;
+        for (let k = 0; k < 60 && !p; k++) p = PS.spawn(P.x, P.z, false);
+        if (!p) return null;
+        p.x = P.x + Math.sin(ang) * dist; p.z = P.z + Math.cos(ang) * dist; p.y = d.city.groundAt(p.x, p.z, P.y + 1);
+        // flagged a cop: it stands and faces you (and its shots are stubbed)
+        p.cop = true; p.shootCd = 1e9; p.hp = hp; p.speed = 0; p.heading = Math.atan2(P.x - p.x, P.z - p.z);
+        return p;
+      };
+      const v = new d.THREE.Vector3(), b = P.h.bones;
+      const rel = (i) => { b[i].getWorldPosition(v); const h = P.heading;
+        b[6].getWorldPosition(d.__vs || (d.__vs = new d.THREE.Vector3())); const sL = d.__vs.clone(); b[9].getWorldPosition(d.__vs); const sR = d.__vs;
+        const mx = (sL.x + sR.x) / 2, my = (sL.y + sR.y) / 2, mz = (sL.z + sR.z) / 2;
+        return { fwd: (v.x - mx) * Math.sin(h) + (v.z - mz) * Math.cos(h), up: v.y - my }; };
+      // the punch
+      const H = 0.3;
+      P.heading = H; P.camYaw = H + 1.0 + Math.PI; P.speed = 0;
+      for (let i = 0; i < 10; i++) step(idle());
+      P.heading = H;
+      const tp = stand(1.5, H + Math.PI / 2, 100);
+      if (!tp) return { noPed: true };
+      const g0 = d.game.onPunch; let hitF = null, hitOn = null;
+      let f = 0;
+      d.game.onPunch = (hit, x, y, z) => { if (hitF === null) { hitF = f; hitOn = hit; } };
+      const r = { hp: [], fist: [] };
+      for (f = 0; f < 30; f++) {
+        step(idle(f === 0));
+        r.hp.push(tp.hp);
+        r.fist.push(rel(11));
+      }
+      d.game.onPunch = g0;
+      const toPed = Math.atan2(tp.x - P.x, tp.z - P.z);
+      out.punch = { hitF, onTarget: hitOn === tp, hpBefore: hitF > 0 ? r.hp[hitF - 1] : null, hpAt: hitF !== null ? r.hp[hitF] : null,
+        turnErr: +Math.abs(Math.atan2(Math.sin(toPed - P.heading), Math.cos(toPed - P.heading))).toFixed(3),
+        fistAtHit: hitF !== null ? { fwd: +r.fist[hitF].fwd.toFixed(3), up: +r.fist[hitF].up.toFixed(3) } : null,
+        fistStart: { fwd: +r.fist[0].fwd.toFixed(3) }, fistEnd: { fwd: +r.fist[29].fwd.toFixed(3) },
+        staggered: tp.stag > 0 || Math.hypot(tp.x - P.x, tp.z - P.z) > 1.55 };
+      PS.remove(tp);
+      for (let i = 0; i < 40; i++) step(idle());
+      // armed: the body faces 1.2 rad off the camera; a pedestrian 8 m down the camera's line
+      P.armed = true; P.ammo = 45;
+      P.heading = H; P.camYaw = H + 1.2 + Math.PI;
+      const aim = H + 1.2;
+      const gp = stand(8, aim, 200);
+      let gunSeen = false;
+      for (f = 0; f < 24; f++) { step(idle(f === 0 || f === 14)); if (F.gun.visible) gunSeen = true; }
+      P.h.group.updateMatrixWorld(true);
+      const m = F.muzzle(new d.THREE.Vector3()), bd = F.barrel(new d.THREE.Vector3());
+      b[6].getWorldPosition(v); const shY = v.y; b[9].getWorldPosition(v); const shY2 = (shY + v.y) / 2;
+      const gh = new d.THREE.Vector3(); b[8].getWorldPosition(gh);
+      out.gun = { seen: gunSeen, onHand: F.gun.parent === b[8], ammo: P.ammo,
+        handUp: +(gh.y - shY2).toFixed(3),
+        handFwd: +((gh.x - P.x) * Math.sin(aim) + (gh.z - P.z) * Math.cos(aim)).toFixed(3),
+        barrelDot: +(bd.x * Math.sin(aim) + bd.z * Math.cos(aim)).toFixed(3),
+        muzzleUp: +(m.y - shY2).toFixed(3),
+        headingErr: +Math.abs(Math.atan2(Math.sin(aim - P.heading), Math.cos(aim - P.heading))).toFixed(3),
+        hpLeft: gp ? gp.hp : null };
+      if (gp) PS.remove(gp);
+      // in a car the gun is gone; in the water a press throws nothing
+      const car = T.spawnAt(P.x + 3, P.z, 0, 'sedan', 0x335577, 'free');
+      P.enterVehicle(car); P.update(1 / 60, idle(), { x: 0, y: 0 }, d.controls, T, PS);
+      out.gun.inCar = F.gun.visible;
+      P.exitVehicle(true); T.remove(car);
+      P.armed = false; P.ammo = 0;
+      P.x = 300; P.z = -2600; const wl = P.waterAt(P.x, P.z); P.y = wl - 0.5; P.startSwim(wl, false);
+      P.attackCd = 0; P.update(1 / 60, idle(true), { x: 0, y: 0 }, d.controls, T, PS);
+      out.swimPunch = !!F.cur;
+      P.clearSwim();
+      P.respawn(d.G.SPAWN.x, d.G.SPAWN.z);
+      d.game.wanted = wanted0; d.game.onCopShot = shot0; PS.timer = timer0;
+      return out;
+    })()`, true);
+    console.log('\n--- fighting on foot ----------------------------------------');
+    console.log('  ' + JSON.stringify(fo));
+    const punchOk = fo.punch && fo.punch.hitF >= 4 && fo.punch.hitF <= 9 && fo.punch.onTarget && fo.punch.hpBefore === 100 && fo.punch.hpAt < 100
+      && fo.punch.turnErr < 0.25 && fo.punch.fistAtHit.fwd > 0.45 && Math.abs(fo.punch.fistAtHit.up) < 0.15
+      && fo.punch.fistStart.fwd < 0.3 && fo.punch.fistEnd.fwd < 0.35 && fo.punch.staggered;
+    const gunOk = fo.gun && fo.gun.seen && fo.gun.onHand && Math.abs(fo.gun.handUp) < 0.12 && fo.gun.handFwd > 0.35
+      && fo.gun.barrelDot > 0.9 && fo.gun.headingErr < 0.2 && fo.gun.hpLeft !== null && fo.gun.hpLeft < 200 && !fo.gun.inCar && !fo.swimPunch;
+    if (!punchOk) { console.error('FAIL: a punch turns to the pedestrian beside you and lands on its hit frame'); process.exitCode = 1; }
+    if (!gunOk) { console.error('FAIL: the pistol is in the hand, raised along the camera, and hits'); process.exitCode = 1; }
+
     // --- piers, and trains' doors -------------------------------------------------------
     // OSM's piers built as decks you stand on at the height drawn; Pier 90's
     // sheds (not mapped as a pier) on a deck; a train standing at a platform

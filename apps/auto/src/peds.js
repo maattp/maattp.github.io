@@ -3402,6 +3402,39 @@ export function aimPose(h, k, twoHand) {
   }
 }
 
+// A hit's stagger (s): the head snaps back and the trunk rocks back over the
+// hips, the arms come up, and it all eases out as the push dies away. Over
+// the walk's pose, on axes it writes every frame, so nothing is left behind.
+const STAG = 0.55;
+function recoil(h, left) {
+  const a = STAG - left, e = Math.min(1, a / 0.05) * Math.pow(left / STAG, 1.3);
+  const b = h.bones;
+  b[B.spine].rotation.x -= 0.30 * e;
+  b[B.chest].rotation.x -= 0.22 * e;
+  b[B.neck].rotation.x -= 0.15 * e;
+  b[B.head].rotation.x -= 0.40 * e;
+  // the arms fly out to the sides and a little up, elbows loose (forward,
+  // they reached out like a sleepwalker's)
+  b[B.shoulderL].rotation.x -= 0.25 * e; b[B.shoulderR].rotation.x -= 0.25 * e;
+  b[B.shoulderL].rotation.z -= 0.55 * e; b[B.shoulderR].rotation.z += 0.55 * e;
+  b[B.elbowL].rotation.x -= 0.45 * e; b[B.elbowR].rotation.x -= 0.45 * e;
+}
+
+// Floored backwards: arms flung up past the head, the knees giving (a body
+// that goes over straight-legged reads as a plank tipping), chin tucked.
+// Eased toward over the fall (k a frame).
+function sprawl(h, k) {
+  const b = h.bones;
+  const to = (bone, ax, v) => { bone.rotation[ax] += (v - bone.rotation[ax]) * k; };
+  to(b[B.shoulderL], 'x', -2.3); to(b[B.shoulderR], 'x', -2.1);
+  to(b[B.shoulderL], 'z', -0.55); to(b[B.shoulderR], 'z', 0.45);
+  to(b[B.elbowL], 'x', -0.5); to(b[B.elbowR], 'x', -0.7);
+  to(b[B.spine], 'x', 0); to(b[B.chest], 'x', 0);
+  to(b[B.thighL], 'x', -0.75); to(b[B.thighR], 'x', -0.35);
+  to(b[B.kneeL], 'x', 1.1); to(b[B.kneeR], 'x', 0.6);
+  to(b[B.head], 'x', 0.25);
+}
+
 export class PedSystem {
   constructor(scene, city, game) {
     this.scene = scene;
@@ -3491,6 +3524,8 @@ export class PedSystem {
         // officers (police.js footOrders): which kind, the trigger's burst,
         // the unit they came out of, how raised the gun is, the search point
         kind: cop ? 'cop' : 'civ', burst: 0, car: null, aim: 0, leaveT: 0, searchX: 0, searchZ: 0,
+        // a punch or a shot that did not floor them: knocked back (stagger)
+        stag: 0, stagX: 0, stagZ: 0, fallBack: false,
       };
       this.scene.add(h.group);
       this.peds.push(p);
@@ -3593,8 +3628,24 @@ export class PedSystem {
         p.h.group.matrixWorldAutoUpdate = true;
         p.h.mesh.skeleton.frozen = false;
         p.down += dt;
-        p.h.group.rotation.z = lerp(p.h.group.rotation.z, Math.PI / 2 * p.fallDir, 1 - Math.exp(-8 * dt));
-        p.h.group.position.set(p.x, p.y, p.z);
+        let lift = 0;
+        if (p.fallBack) {
+          // floored by a punch or a shot: over backwards, away from it,
+          // arms thrown up (the group pivots on the soles, so it is lifted by
+          // the back's depth as it goes over or half the body is underground)
+          const k = 1 - Math.exp(-7 * dt), g = p.h.group;
+          g.rotation.x = lerp(g.rotation.x, -Math.PI / 2 * 0.97, k);
+          if (p.down < 0.45) {
+            const push = 2.6 * (1 - p.down / 0.45) ** 2 * dt;
+            if (!city.obstacleHit(p.x + p.stagX * push, p.z + p.stagZ * push, 0.3, p.y)) {
+              p.x += p.stagX * push; p.z += p.stagZ * push;
+              p.y = city.groundAt(p.x, p.z, p.y + 1, city.roadLift(p.x, p.z));
+            }
+          }
+          lift = 0.12 * Math.sin(-g.rotation.x);
+          if (p.down < 1) sprawl(p.h, k);
+        } else p.h.group.rotation.z = lerp(p.h.group.rotation.z, Math.PI / 2 * p.fallDir, 1 - Math.exp(-8 * dt));
+        p.h.group.position.set(p.x, p.y + lift, p.z);
         if (p.down > 9) this.remove(p);
         continue;
       }
@@ -3648,6 +3699,15 @@ export class PedSystem {
         targetSpeed = 1.25 + hash2(i, 3) * 0.5;
       }
 
+      if (p.stag > 0) {
+        // knocked back from a hit: facing whoever threw it, driven back
+        // ~0.4 m on a decaying push (the feet step after the body)
+        p.stag = Math.max(0, p.stag - dt);
+        desired = Math.atan2(-p.stagX, -p.stagZ);
+        targetSpeed = 0;
+        const k = p.stag / STAG, push = 2.4 * k * k * dt;
+        if (!city.obstacleHit(p.x + p.stagX * push, p.z + p.stagZ * push, 0.3, p.y)) { p.x += p.stagX * push; p.z += p.stagZ * push; }
+      }
       p.heading += clamp(angleWrap(desired - p.heading), -7 * dt, 7 * dt);
       p.speed = lerp(p.speed, targetSpeed, 1 - Math.exp(-7 * dt));
       p.x += Math.sin(p.heading) * p.speed * dt;
@@ -3690,6 +3750,7 @@ export class PedSystem {
         animateWalk(p.h, clamp(p.speed * 0.20, 0, 0.8), Math.min(p.animDt, 0.1), p.speed);
         p.animDt = 0;
         if (p.aim > 0.02) aimPose(p.h, p.aim, p.kind === 'swat');
+        if (p.stag > 0) recoil(p.h, p.stag);
       }
       if (show && d2p < 70 * 70) this.addContactShadow(p.h, p.x, p.y, p.z, p.heading);
 
@@ -3709,34 +3770,54 @@ export class PedSystem {
   }
 
   knockDown(p, dir, force) {
+    if (p.fallBack) {
+      // over backwards needs the pitch about the body's own axis: yaw
+      // outermost (with x at 0 the two orders are the same matrix)
+      p.h.group.rotation.order = 'YXZ';
+      p.h.group.rotation.y = p.heading;
+    }
     p.state = 'down';
     p.down = 0;
     p.fallDir = Math.random() < 0.5 ? 1 : -1;
     p.x += dir.x * clamp(force * 0.12, 0.4, 3);
     p.z += dir.z * clamp(force * 0.12, 0.4, 3);
     p.y = this.city.groundAt(p.x, p.z, p.y + 1, this.city.roadLift(p.x, p.z));
-    p.h.group.position.set(p.x, p.y + 0.3, p.z);
+    p.h.group.position.set(p.x, p.y + (p.fallBack ? 0 : 0.3), p.z);
   }
 
-  hitAt(x, z, radius, damage, isPlayer) {
-    let hit = null;
+  /**
+   * The first pedestrian within `radius` of (x, z) takes `damage`. With the
+   * attacker's position (fromX, fromZ) a survivor is knocked back from it
+   * (stagger) and one it floors goes over backwards, away from it.
+   */
+  hitAt(x, z, radius, damage, isPlayer, fromX, fromZ) {
     for (const p of this.peds) {
       if (p.state === 'down') continue;
-      if (dist2(p.x, p.z, x, z) < radius * radius) {
-        p.hp -= damage;
-        if (p.hp <= 0) {
-          this.knockDown(p, { x: 0, z: 0 }, 0);
-          this.game.onPedKilled(p, isPlayer);
-        } else {
-          p.state = 'flee';
-          p.timer = 5;
-          p.fleeX = p.x - x;
-          p.fleeZ = p.z - z;
-        }
-        hit = p;
-        break;
-      }
+      if (dist2(p.x, p.z, x, z) < radius * radius) return this.strike(p, damage, isPlayer, fromX != null ? fromX : null, fromZ != null ? fromZ : null, x, z);
     }
-    return hit;
+    return null;
+  }
+
+  /** `p` takes a hit (hitAt; a punch's soft lock names its pedestrian). */
+  strike(p, damage, isPlayer, fromX = null, fromZ = null, x = p.x, z = p.z) {
+    p.hp -= damage;
+    let dx = 0, dz = 0;
+    if (fromX !== null) {
+      dx = p.x - fromX; dz = p.z - fromZ;
+      const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+    }
+    if (p.hp <= 0) {
+      // (carried back over the fall in update, not moved here in one frame)
+      if (fromX !== null) { p.fallBack = true; p.heading = Math.atan2(-dx, -dz); p.stagX = dx; p.stagZ = dz; }
+      this.knockDown(p, { x: 0, z: 0 }, 0);
+      this.game.onPedKilled(p, isPlayer);
+    } else {
+      p.state = 'flee';
+      p.timer = 5;
+      p.fleeX = p.x - x;
+      p.fleeZ = p.z - z;
+      if (fromX !== null) { p.stag = STAG; p.stagX = dx; p.stagZ = dz; }
+    }
+    return p;
   }
 }

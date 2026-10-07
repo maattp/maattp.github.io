@@ -3923,6 +3923,7 @@ The purpose-built harnesses, each a fixed-dt, paused-game driver:
 | `tools/shadowshots.mjs <dir> [--desktop]` | close-ups of the walking player's shadow, his car's, and building shadows on streets, on the game's own sun; `SHOTS_EVAL` / `SHOTS_PROBE` / `SHOTS_ONLY` (see "Smooth edges, and the player's own map") |
 | `tools/audiorender.mjs [--only a,b] [--showcase]` | renders the sound offline to `docs/audio/*.wav`: peak/RMS/centroid/silence per file, fails on clipping; `--showcase` refreshes `apps/auto/docs/audio/` (see "Sound") |
 | `tools/perfcpu.mjs --audio` | lets the AudioContext run and counts the rendered Web Audio nodes per run, persistent and one-shot, and the bank's build time (see "Sound") |
+| `tools/meleecam.mjs <dir> [combo\|walkcombo\|aim\|walkaim] [side,chase,front]` | the punch combo / the pistol's aim at fixed 1/60 against a pedestrian standing beside you; `MELEE_PROBE=1` prints the wrists in the body frame per frame and each hit frame (see "Fighting on foot") |
 | `tools/ridesurvey.mjs [--tag T] [--at x,z;.. --range M] [--shots DIR]` | every road chain in the city ridden at a class speed through Vehicle.update's vertical follow: frames over 30/60 m/s2, humps, grade breaks, deck captures, per kind and per ranked 60 m site; `--at` traces a site row by row (see "Street grading") |
 
 **A walker needs a seed, and the seed is the edge's own surface.** Seeded with
@@ -5273,6 +5274,97 @@ and 2.5 and requires the body (hips -> head) along the heading (dot > 0.9;
 tread|in|out [chase,side,above,front]` shoots it (AUTO_GPU=1);
 `SWIM_PROBE=1` prints the per-frame hand table, the tally, the palm turn and
 where each splash fired. gait.mjs is byte-identical.
+
+## Fighting on foot
+
+**ATTACK on foot used to do its damage with the body standing still**: a
+`peds.hitAt` 1.2 m along the current heading on the press, a sound, and no
+pose at all ("it does something, but I don't see a punch"). Armed, the shot
+snapped the heading to the camera with the arms still swinging at the sides
+and no gun anywhere. `melee.js` (`Fighter`, one per player) is the fix.
+
+- **An overlay on the walk, not a replacement for it.** `animateWalk` poses
+  the whole body; `Fighter.apply` then turns the trunk (hips -- only standing,
+  their yaw would swing the planted feet -- spine, chest; the head counters it
+  to stay on the target) and puts each wrist on a hand path with swim.js's
+  `armIK` (exported for it), slerped over the walk's arm by a weight that
+  rises in 0.06 s and falls in 0.22. The legs keep walking underneath.
+  **The walk's own pose is saved before the overlay and put back before the
+  next walk** (`restore`, like PoseBlend's), so the walk never reads it; with
+  nothing to show `apply` returns before touching a bone, and `gait.mjs` is
+  byte-identical. Note `q.slerpQuaternions(a, q, k)` copies `a` over `q`
+  first -- the blend-in was a no-op until the IK result was slerped from a copy.
+- **The combo**: jab (lead hand, the R bone -- the L bones are the character's
+  RIGHT), cross (rear hand, 0.58 rad of trunk in it, the lean), and a lead
+  hook (elbow out and up, 0.52 rad) on a third press inside 0.3 s of the last
+  punch ending. 0.28 / 0.32 / 0.38 s, each a chamber, a strike segment eased
+  `smooth(t^1.6)` (it peaks late and still arrives at rest -- the snap), a
+  hold and a recovery to the guard (fists at the chin, held 0.35 s after the
+  last punch). Keys are `PUNCHES[].path` `[u, out, up, fwd, pron, pole]` in
+  the body's frame; the third key IS the hit frame (set from `hit / dur`).
+  Hand path, `meleecam.mjs` probe, standing: the jab's wrist goes 0.22 ->
+  0.61 m ahead of the shoulders in 4 frames at 1.48 m (shoulders 1.43) and
+  comes back to 0.22; the cross 0.15 -> 0.62 at 1.46; the hook arrives 0.37
+  ahead and 0.08 PAST the midline at 1.49 -- round, not straight.
+- **Damage on the hit frame, not the press** (`hitDue` -> `player.landPunch`):
+  14 / 18 / 26. A civilian (30) survives the jab and goes down to the cross;
+  the probe's 40-hp sparring partner takes all three.
+- **Soft lock**: on the press, the nearest pedestrian or cop within 2.2 m
+  inside 60 deg either side of the CAMERA's line (`meleeTarget`). Until the
+  hit frame the body turns to them at 20 rad/s (the stick still moves you but
+  does not steer) and steps in to 1.05 m -- a pedestrian knocked back by the
+  last punch is otherwise out of reach of the next (the hook missed in the
+  first probe). At the hit frame the locked target is hit if in front and
+  within 1.9 m, else whoever is 0.95 m in front of you.
+- **The victim**: `peds.strike` (hitAt goes through it). Given the
+  attacker's position a survivor STAGGERS (0.55 s: driven back ~0.4 m,
+  turned to face you, head snapped back, trunk rocked, arms out -- forward
+  they reached like a sleepwalker's) before fleeing; one it floors goes over
+  BACKWARDS away from you (`fallBack`: the group's order becomes YXZ so the
+  pitch is about the body's own axis, lifted by the back's depth as it goes
+  over, carried ~0.4 m over the fall instead of moved in one frame, knees
+  giving and arms flung up -- straight-legged it was a plank tipping).
+  Traffic knockdowns are unchanged (sideways). Gunshots stagger and floor the
+  same way.
+- **Feedback**: `smack` on contact, `whoosh` on a miss (audio.js: `punch`
+  split at its contact, whose 85 ms of whoosh would have landed late), a
+  camera flick (`camKick`, look point up 10 cm and in, squared, decays at 9/s).
+- **Armed**: `Fighter.gun`, five boxes in one vertex-coloured geometry (one
+  draw, no shadow) parented to the L (right) hand bone; visible on foot with
+  rounds, not in water or under a parachute, hidden in a vehicle with the
+  body and for activities that pose the hands (`tryInteract`). Firing raises
+  a two-handed aim for 1 s after the last shot (rises in 0.09 s): the gun
+  hand at the midline, 0.54 m out, at shoulder height along the camera's
+  line, the other hand cupping it; the trunk takes 0.85 of the aim's yaw
+  (clamped 1.1 rad), standing the body turns to it, moving it follows past
+  1.1 rad. **The gun hand is turned so the barrel lies along the aim**, level
+  -- on the forearm alone it rode 25 deg high, because the forearm rises from
+  an elbow below the shoulder. Recoil kicks the muzzle 0.5 rad up and the hand
+  5 cm up and 7 cm back, decaying at 16/s. Probe: wrist 1.45 (shoulders 1.46),
+  barrel along the aim to 0.01 vertical before a shot, 0.37 after it.
+  **The hitscan starts at the muzzle** (on the press that raises the gun, at
+  where the barrel is going: an arm out at shoulder height), from 0.6 m,
+  so a pedestrian at arm's length is no longer skipped.
+- **Particles had one size.** `PointsMaterial` has no size attribute; the
+  effects' `size` attribute was written and never read, so every spark,
+  blood drop and smoke puff was the same 1.2 m disc (the first muzzle flash
+  was a yellow ball the size of the chest). `effects.js` patches the vertex
+  shader to multiply in `psize`; callers' sizes now mean what they say.
+  The muzzle flash is points in that one draw, plus a spent case.
+- Swimming, a press does nothing. The pistol is in boot's shader warm-up.
+
+**Verify**: verify's "fighting on foot" stands a pedestrian 1.5 m beside you
+(90 deg off the heading, 30 deg off the camera): the hit must land on frame
+4-9, not before, on that pedestrian, with the heading turned to within 0.25
+rad, the fist >= 0.45 m ahead at shoulder height (+-0.15) and back inside
+0.35 m by frame 29, and the target staggered. Armed, the body 1.2 rad off the
+camera: the gun seen on the hand bone, the hand within 0.12 m of shoulder
+height and 0.35 m out along the aim, the barrel along it (dot > 0.9), the body
+turned to it, a pedestrian 8 m down the line hit; none in a car; no punch in
+the water. `tools/meleecam.mjs <dir> combo|walkcombo|aim|walkaim
+[side,chase,front]` shoots the combo or the shots at fixed 1/60 (MELEE_SIDE,
+MELEE_DIST, MELEE_HP; `MELEE_PROBE=1` prints the per-frame wrist table and
+the hit frames). `docs/melee/` has before | after strips.
 
 ## The seaplane dock, the boat and the quad
 
