@@ -280,6 +280,8 @@ export class TrafficSystem {
     this.parkedSlots = new Set();
     // kerb slots given to something else for good (main.js: the car by the spawn)
     this.reservedSlots = new Set();
+    // ground kept free of lot parking for good: [x, z, r] (tank.js: the tank's apron)
+    this.keepClear = [];
     this.R = rng(99);
     this.heli = null;
     this.spawnTimer = 0;
@@ -573,6 +575,7 @@ export class TrafficSystem {
         // The seaplane dock's car park runs to the shore, and its landing deck
         // is inside the lot's coverage: a bay there parked a car on the pier.
         if (city.platformAt && city.platformAt(wx, wz) !== null) continue;
+        if (this.keepClear.some(([kx, kz, kr]) => dist2(wx, wz, kx, kz) < kr * kr)) continue;
         cand.push({ key, wx, wz, d: dist2(wx, wz, px, pz),
           // Nose into the bay: the car's length runs across the row, along
           // the lot's short axis (-uz, ux); the two rows face each other.
@@ -1012,7 +1015,7 @@ export class TrafficSystem {
       // within 120 m, which bobs). 114 of the 158 vehicles in the list are
       // apron vehicles since the docks, and within 300 m each ran the whole
       // driving model every frame to stand still.
-      const settles = v.spec.atv || v.spec.bicycle || (v.spec.plane && !v.airborne) || (v.spec.boat && d2 > 120 * 120);
+      const settles = v.spec.atv || v.spec.tank || v.spec.bicycle || (v.spec.plane && !v.airborne) || (v.spec.boat && d2 > 120 * 120);
       if (v.mode === 'apron' && settles && d2 < 300 * 300 && Math.abs(v.vLong) < 0.05 && Math.abs(v.vLat) < 0.05) {
         v.group.visible = show;
         if (v._still < 3) v._still++;
@@ -1656,6 +1659,8 @@ export class TrafficSystem {
         if (a.mode === 'parked' && b.mode === 'parked') continue;
         // an articulated bus's two sections are one vehicle
         if (a.leader === b || b.leader === a) continue;
+        // a car flattened by a tank is driven over, not shunted (tank.js)
+        if (a.crushed || b.crushed) continue;
         const dx = b.x - a.x, dz = b.z - a.z;
         const rr = bodyR(a) + bodyR(b);
         const d2 = dx * dx + dz * dz;

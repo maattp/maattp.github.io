@@ -400,6 +400,53 @@ const SOUNDS = {
     k.burst(out, 'white', t + 0.1 + R() * 0.01, 'bandpass', 2900, 4, 0.14, 0.004, R);
   } },
 
+  // A tank's 120 mm: the crack of the round leaving, a chest-deep thump under
+  // it, the boom rolling off the buildings for seconds (played with a big
+  // reverb send), and the breech's clank as it runs out.
+  cannon: { dur: 3.2, build(k, out, t, R) {
+    const bus = k.gain(1);
+    bus.connect(k.shaper(2.6)).connect(out);
+    k.burst(bus, 'white', t, 'highpass', 1800, 0.6, 1.6, 0.006, R, 0.0003);
+    k.burst(bus, 'pink', t, 'bandpass', 700, 0.7, 1.4, 0.05, R, 0.0005);
+    k.thump(bus, t, 70, 22, 0.5, 1.5, 0.22);
+    k.thump(bus, t + 0.01, 140, 40, 0.12, 0.7, 0.07);
+    const lp = k.filt('lowpass', 900, 0.8);
+    lp.frequency.setValueAtTime(900, t);
+    lp.frequency.exponentialRampToValueAtTime(90, t + 2.6);
+    const rg = k.gain(0);
+    k.noise('brown', t, 3.2, R).connect(lp).connect(rg).connect(bus);
+    k.hit(rg.gain, t + 0.02, 1.3, 0.7, 0.01);
+    for (let i = 0; i < 4; i++) k.burst(bus, 'pink', t + 0.18 + i * 0.21 + R() * 0.08, 'lowpass', 500, 0.7, 0.35 / (1 + i), 0.18, R);
+    // the breech, metal on metal
+    METAL.slice(0, 4).forEach((r, i) => k.ping(out, t + 0.55, 310 * r, 0.12 / (1 + i), 0.08 / (1 + i * 0.4)));
+    k.burst(out, 'white', t + 0.55, 'bandpass', 2600, 3, 0.25, 0.01, R);
+  } },
+  // A coaxial machine gun's round: sharper and lower than the pistol, no slide.
+  mg: { dur: 0.32, variants: 3, build(k, out, t, R) {
+    const bus = k.gain(1);
+    bus.connect(k.shaper(3)).connect(out);
+    k.burst(bus, 'white', t, 'highpass', 2200, 0.7, 1.2, 0.003, R, 0.0003);
+    k.burst(bus, 'white', t, 'bandpass', 900 + R() * 300, 0.8, 1.0, 0.025, R, 0.0005);
+    k.burst(bus, 'pink', t, 'lowpass', 900, 0.7, 0.7, 0.05, R, 0.0008);
+    k.thump(bus, t, 150 + R() * 20, 50, 0.05, 0.9, 0.035);
+  } },
+  // A tank's tracks: the links slapping round the sprocket and idler, the
+  // grind of the road wheels, the squeal of steel; looped and pitched with
+  // the belt's speed.
+  tracks: { dur: 1.2, loop: 0.08, build(k, out, t, R) {
+    const rg = k.gain(0.5);
+    k.noise('brown', t, 1.2, R).connect(k.filt('lowpass', 220, 0.8)).connect(rg).connect(out);
+    const sq = k.gain(0);
+    k.noise('pink', t, 1.2, R).connect(k.filt('bandpass', 2300, 6)).connect(sq).connect(out);
+    k.wander(sq.gain, t, 1.2, 0.12, 0.1, R, 20);
+    for (let i = 0; i < 24; i++) {
+      const ti = t + i * 0.05 + R() * 0.012;
+      k.burst(out, 'white', ti, 'bandpass', 1100 + R() * 900, 2.2, 0.22 + R() * 0.2, 0.008 + R() * 0.01, R);
+      if (i % 3 === 0) k.thump(out, ti, 110, 60, 0.03, 0.25, 0.02);
+      if (i % 4 === 1) k.ping(out, ti, 700 + R() * 500, 0.05, 0.02);
+    }
+  } },
+
   punch: { dur: 0.36, variants: 3, build(k, out, t, R) {
     const wf = k.filt('bandpass', 500, 1.5);
     wf.frequency.setValueAtTime(500, t);
@@ -1297,6 +1344,12 @@ export const ENGINES = {
     idle: 1100, redline: 2600, gears: [1], spool: 0.5,
     lp: [900, 3400, 1600], ex: [240, 1.4, 4], noise: { ratio: 80, q: 0.5, gain: 0.7, pulse: 0.12, order: 4 },
     buzz: { ratio: 10, gain: 0.08 }, whine: { hz0: 2800, hz1: 8800, gain: 0.15, load: 0.4 }, drive: 1.6, level: 0.72, jitter: 0.02 },
+  // A tank's gas turbine (the Abrams' AGT1500): a jet's whine, pitched down
+  // and heavy, over a roar and a low drone, spooling up over a second or two.
+  tank: { kind: 'plane', stroke: 2, fire: [0, 0.25, 0.5, 0.75], amps: [1, 1, 1, 1], pw: 0.1,
+    idle: 900, redline: 2300, gears: [1], spool: 0.45,
+    lp: [600, 2600, 1300], ex: [110, 1.5, 6], noise: { ratio: 60, q: 0.5, gain: 0.65, pulse: 0.15, order: 4 },
+    buzz: { ratio: 6, gain: 0.1 }, whine: { hz0: 1500, hz1: 5200, gain: 0.14, load: 0.45 }, drive: 1.8, level: 0.78, jitter: 0.03 },
   heli: { kind: 'heli', stroke: 2, fire: [0, 0.5], amps: [1, 0.93], pw: 0.012,
     idle: 0, redline: 400, gears: [1], spool: 0.22,
     lp: [260, 900, 1200], ex: [70, 2, 9], noise: { ratio: 70, q: 0.6, gain: 0.8, pulse: 0.95, order: 2 },
@@ -2194,6 +2247,7 @@ export class Audio {
         grass: new Tap(c, b.grass_roll[0], this.sfxBus),
         city: new Tap(c, b.amb_city[0], this.ambBus),
         water: new Tap(c, b.amb_water[0], this.ambBus),
+        tracks: b.tracks ? new Tap(c, b.tracks[0], this.sfxBus) : null,
       };
     };
     const t0 = performance.now();
@@ -2611,6 +2665,15 @@ export class Audio {
     this.play('glass', { ...pos, gain: 0.35, at: 0.04 });
   }
 
+  /** A tank's main gun, yours: the bank's boom, a big reverb send, the radio ducked. */
+  cannon() {
+    this.play('cannon', { gain: 1, send: 0.7, duck: 0.9, duckHold: 1.2, jitter: false });
+    this.play('debris', { gain: 0.2, at: 0.08 });
+  }
+
+  /** One round from a tank's machine gun. */
+  mg() { this.play('mg', { gain: 0.55, send: 0.3, duck: 0.25, duckHold: 0.1 }); }
+
   gunshot(x, z) {
     if (x != null) this.play('gun', { x, z, ref: 12, maxD: 500, gain: 0.8, send: 0.35 });
     else this.play('gun', { gain: 0.72, send: 0.4, duck: 0.35, duckHold: 0.15 });
@@ -2837,7 +2900,7 @@ export class Audio {
     const heavy = !!(spec && (spec.mass || 1) > 2.5);
     this.tread.set(onGround && !offroad ? Math.pow(clamp(sp / 32, 0, 1.2), 1.5) * (heavy ? 0.05 : 0.035) : 0, t, 0.1);
     if (this.tread.on) setp(this.treadBp.frequency, (heavy ? 550 : 750) + sp * 22, t, 0.2);
-    const air = inCar ? (p.kind === 'plane' || p.kind === 'heli' ? 1.6 : spec && spec.moto ? 1.5 : 1) : (s.falling ? 1.2 : 0);
+    const air = inCar ? ((p.kind === 'plane' && !(spec && spec.tank)) || p.kind === 'heli' ? 1.6 : spec && spec.moto ? 1.5 : 1) : (s.falling ? 1.2 : 0);
     const wsp = inCar ? sp : Math.abs(s.fallSpeed || 0);
     // the rush of air, mixed with the weather's wind in _ambience
     this._windSpeed = clamp(wsp / 55, 0, 1.2) ** 2 * 0.09 * air;
@@ -2862,7 +2925,7 @@ export class Audio {
       const skid = onGround ? clamp(s.skid || 0, 0, 1) : 0;
       const lat = offroad ? 0 : skid * clamp(sp / 6, 0, 1);
       const brk = s.brake || 0;
-      const lock = onGround && !offroad && speed > 4 && brk > 0.55 && p.kind !== 'boat'
+      const lock = onGround && !offroad && speed > 4 && brk > 0.55 && p.kind !== 'boat' && !(spec && spec.tank)
         ? clamp((brk - 0.55) / 0.45, 0, 1) * clamp((sp - 4) / 16, 0, 1) * 0.8 : 0;
       const grunt = spec ? spec.acc || 3 : 3;
       const spin = onGround && !offroad && speed > -0.5 && sp < 11 && thr > 0.8 && grunt >= 5.5 && (p.kind === 'car' || p.kind === 'ev')
@@ -2877,6 +2940,11 @@ export class Audio {
       this.loops.grass.set(grs, t, 0.1, 0.75 + clamp(sp / 30, 0, 0.6));
       // a balloon's burner, lit
       this.loops.burner.set(inCar && s.burner ? 0.55 : 0, t, s.burner ? 0.05 : 0.12);
+      // a tank's tracks: louder and quicker with the belts' speed
+      if (this.loops.tracks) {
+        const tr = inCar && spec && spec.tank ? s.tracks || 0 : 0;
+        this.loops.tracks.set(tr > 0.05 ? clamp(0.12 + tr / 9, 0, 1) * 0.5 : 0, t, 0.08, clamp(0.55 + tr / 10, 0.55, 2.2));
+      }
       const scr = inCar ? clamp(s.scrape || 0, 0, 1) : 0;
       this.loops.scrape.set(scr * 0.3, t, 0.03, 0.8 + clamp(sp / 25, 0, 0.5));
       // water: a boat's hull, a floatplane on the lake, a car in a ford, or

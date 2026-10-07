@@ -3648,6 +3648,191 @@ async function main() {
       + `-> ${synthCovers ? 'synth radio covers' : 'SILENT -- BUG'}`);
     if (!synthCovers) process.exitCode = 1;
 
+    // --- the tank ------------------------------------------------------------------
+    //
+    // The tank at Sand Point, through player.update at a fixed dt (the game's
+    // own loop cannot interleave a synchronous run): the drive on flat ground
+    // (0-50, governed top, the pivot on the spot, a turn at speed, braking),
+    // the turret following the camera, a parked car crushed in its path with
+    // the tank keeping its speed, a tree felled, the main gun at a car 60 m
+    // off (struck, wrecked, thrown) with no program compiled by any of it, a
+    // machine-gun burst, a building that stops it, and out: the turret swings
+    // home and the live parts bake back in. See "The tank" in CLAUDE.md.
+    const tank = await session.eval(`(async () => {
+      const d = window.__dbg, P = d.player, T = d.traffic, K = d.tanks, city = d.city;
+      if (!K) return null;
+      const DT = 1 / 60, out = {};
+      out.place = !!d.hud.places.find((q) => q.kind === 'tank');
+      let v = T.cars.find((c) => c.spec.tank && !c.dead);
+      out.parked = !!v;
+      if (!v) v = K.spawnHome();
+      if (P.vehicle) P.exitVehicle(true);
+      P.respawn(v.x + 5, v.z + 5);
+      await new Promise((r) => setTimeout(r, 4000));
+      P.enterVehicle(v);
+      out.entered = P.vehicle === v && !!v.tank.turret;
+      const NONE = { x: 0, y: 0, gas: false, brake: false, hand: false, horn: false, attack: false };
+      const step = (n, inp = {}) => { for (let i = 0; i < n; i++) { P.update(DT, Object.assign({}, NONE, inp), { x: 0, y: 0 }, d.controls, T, d.peds); K.update(DT); } };
+      const site = { x: v.x, z: v.z, h: v.heading };
+      const home = () => { v.place(site.x, site.z, site.h); v.vLong = 0; v.vLat = 0; v.yawRate = 0; P.camYaw = v.heading + Math.PI; P.camPitch = 0.17; step(40); };
+      const ahead = (m, side = 0) => { const f = v.forward; return [v.x + f.x * m + f.z * side, v.z + f.z * m - f.x * side]; };
+      // the drive, on flat ground (Seattle's grades would measure the hill)
+      {
+        const gA = city.groundAt, rL = city.roadLift;
+        city.groundAt = () => 0; city.roadLift = () => 0;
+        try {
+          const b = T.spawnAt(0, 0, 0, 'tank', 0xb9a27a, 'free');
+          b.y = 0;
+          let t = 0, t50 = null;
+          for (let i = 0; i < 60 * 90; i++) { b.update(DT, { throttle: 1 }); t += DT; if (t50 === null && b.vLong * 3.6 >= 50) t50 = t; }
+          out.t50 = t50 === null ? null : +t50.toFixed(2); out.top = +(b.vLong * 3.6).toFixed(1);
+          for (let i = 0; i < 60 * 5; i++) b.update(DT, { throttle: 1, steer: 1 });
+          out.turnKph = +(b.vLong * 3.6).toFixed(1); out.turnR = +(Math.abs(b.vLong / (b.yawRate || 1e-6))).toFixed(1);
+          b.vLong = 0; b.vLat = 0; b.yawRate = 0;
+          for (let i = 0; i < 120; i++) b.update(DT, { throttle: 0 });
+          const x0 = b.x, z0 = b.z;
+          for (let i = 0; i < 60 * 4; i++) b.update(DT, { steer: 1 });
+          const h1 = b.heading;
+          for (let i = 0; i < 60; i++) b.update(DT, { steer: 1 });
+          out.pivot = +((b.heading - h1) * 180 / Math.PI).toFixed(1);
+          out.pivotDrift = +Math.hypot(b.x - x0, b.z - z0).toFixed(2);
+          b.vLong = 65 / 3.6; let dist = 0;
+          for (let i = 0; i < 600 && b.vLong > 0.05; i++) { const v0 = b.vLong; b.update(DT, { brake: 1 }); dist += (v0 + Math.max(0, b.vLong)) / 2 * DT; }
+          out.brake = +dist.toFixed(1);
+          T.remove(b);
+        } finally { city.groundAt = gA; city.roadLift = rL; }
+      }
+      // the turret follows the camera
+      home();
+      P.camYaw = v.heading + Math.PI + 1.0;
+      { const y0 = v.tank.yaw; step(20); out.traverse = +((v.tank.yaw - y0) / (20 * DT) * 180 / Math.PI).toFixed(1); }
+      step(100);
+      out.turretErr = +Math.abs(v.tank.yaw - 1.0).toFixed(3);
+      // a parked car in its path
+      home();
+      {
+        const [cx, cz] = ahead(26);
+        const c = T.spawnAt(cx, cz, v.heading + 1.3, 'sedan', 0x3366aa, 'parked');
+        let before = null, after = null, at = -1;
+        for (let i = 0; i < 60 * 8; i++) {
+          const sp = v.vLong;
+          step(1, { gas: true, gasAmt: 1 });
+          if (c.crushed && at < 0) { at = i; before = sp; }
+          if (at >= 0 && i === at + 30) { after = v.vLong; break; }
+        }
+        out.crush = { crushed: c.crushed, kph: before && +(before * 3.6).toFixed(1), kept: before ? +(after / before).toFixed(2) : null, flat: c.tilt.scale.y };
+        T.remove(c);
+      }
+      // a tree in its path
+      home();
+      {
+        const [ox, oz] = ahead(22);
+        const ck = Math.floor(ox / 400) * 100003 + Math.floor(oz / 400);
+        city.addObstacle(ck, ox, oz, 0.5);
+        const l = city.obstacles.get(ck), idx = l.length - 3;
+        let before = null, after = null, at = -1;
+        for (let i = 0; i < 60 * 8; i++) {
+          const sp = v.vLong;
+          step(1, { gas: true, gasAmt: 1 });
+          if (at < 0 && l[idx] > 1e8) { at = i; before = sp; }
+          if (at >= 0 && i === at + 30) { after = v.vLong; break; }
+        }
+        out.fell = { felled: at >= 0, kept: before ? +(after / before).toFixed(2) : null };
+      }
+      // the main gun at a car 60 m off
+      home();
+      {
+        const [cx, cz] = ahead(60, 6);
+        const c = T.spawnAt(cx, cz, v.heading + 1.57, 'sedan', 0xaa3333, 'parked');
+        c.group.visible = true;
+        K.aimAt(v, c.x, c.y + 0.8, c.z); step(60);
+        K.aimAt(v, c.x, c.y + 0.8, c.z); step(40);
+        await new Promise((r) => setTimeout(r, 300));
+        const progs = d.renderer.info.programs.length;
+        const live = () => d.fx.p.reduce((n, q) => n + (q.life > 0 ? 1 : 0), 0);
+        const p0 = live(), w0 = K.stats.wrecked;
+        step(1, { hand: true });
+        const shot = K.lastShot;
+        out.recoil = +v.tank.recoil.toFixed(2);
+        step(10);
+        out.gun = { dist: +Math.hypot(c.x - v.x, c.z - v.z).toFixed(1), struck: shot && shot.car === c, kind: shot && shot.kind, dead: c.dead, wreck: !!c.wreck, particles: live() - p0, wrecked: K.stats.wrecked - w0 };
+        const y0 = c.y; let top = 0;
+        for (let i = 0; i < 120; i++) { c.update(DT, {}); top = Math.max(top, c.y - y0); }
+        out.gun.thrown = +top.toFixed(1); out.gun.landed = !!(c.wreck && c.wreck.rest);
+        await new Promise((r) => setTimeout(r, 600));
+        out.gun.programs = d.renderer.info.programs.length - progs;
+        out.reload = +K.cool.toFixed(2);
+      }
+      // the machine gun at a car 35 m off
+      home();
+      {
+        const [cx, cz] = ahead(35, -4);
+        const c = T.spawnAt(cx, cz, v.heading + 1.57, 'suv', 0x33aa55, 'parked');
+        c.group.visible = true;
+        K.aimAt(v, c.x, c.y + 0.9, c.z); step(60);
+        K.aimAt(v, c.x, c.y + 0.9, c.z); step(40);
+        const n0 = K.stats.mg;
+        step(60, { horn: true });
+        out.mg = { rounds: K.stats.mg - n0, health: Math.round(c.health) };
+        step(60, { horn: true });
+        out.mg.dead = c.dead;
+      }
+      // a building stops it
+      home();
+      {
+        let bd = null;
+        for (const b of city.buildingsNear(v.x, v.z, 250)) if (b.h > 4 && (!bd || Math.hypot(b.x - v.x, b.z - v.z) < Math.hypot(bd.x - v.x, bd.z - v.z))) bd = b;
+        if (bd) {
+          v.heading = Math.atan2(bd.x - v.x, bd.z - v.z); P.camYaw = v.heading + Math.PI;
+          let inside = 0;
+          for (let i = 0; i < 60 * 25; i++) {
+            step(1, { gas: true, gasAmt: 1 });
+            const c = Math.cos(-bd.rot), s = Math.sin(-bd.rot), dx = v.x - bd.x, dz = v.z - bd.z;
+            if (Math.abs(dx * c - dz * s) < bd.w / 2 && Math.abs(dx * s + dz * c) < bd.d / 2) inside++;
+          }
+          out.wall = { inside, kph: +(v.vLong * 3.6).toFixed(1) };
+        }
+      }
+      // out, with the turret turned: it swings home, then bakes back in
+      home();
+      P.camYaw = v.heading + Math.PI + 1.2; step(90);
+      P.exitVehicle();
+      const stowedFrom = +v.tank.yaw.toFixed(2);
+      let n = 0;
+      while (v.detailedWheels && n < 600) { v.update(DT, { park: true }); n++; }
+      out.stow = { from: stowedFrom, frames: n, baked: !v.detailedWheels && !v.tank.turret };
+      out.health = Math.round(v.health); out.player = Math.round(P.health);
+      v.place(site.x, site.z, site.h); v.mode = 'apron';
+      return out;
+    })()`, true);
+    console.log('\n--- tank ---------------------------------------------------');
+    if (!tank) { console.error('FAIL: no tank system'); process.exitCode = 1; }
+    else {
+      console.log(`  parked at Sand Point ${tank.parked}, on the map ${tank.place}, entered with live parts ${tank.entered}`);
+      console.log(`  0-50 ${tank.t50} s, top ${tank.top} km/h, full turn at speed ${tank.turnKph} km/h on ${tank.turnR} m, pivot ${tank.pivot} deg/s (drift ${tank.pivotDrift} m), 65-0 in ${tank.brake} m`);
+      console.log(`  turret ${tank.traverse} deg/s, onto the camera within ${tank.turretErr} rad`);
+      console.log(`  crushed a parked car at ${tank.crush.kph} km/h: ${tank.crush.crushed}, speed kept ${tank.crush.kept}; felled a tree ${tank.fell.felled}, kept ${tank.fell.kept}`);
+      console.log(`  main gun at ${tank.gun.dist} m: struck ${tank.gun.struck} (${tank.gun.kind}), destroyed ${tank.gun.dead}, wrecked ${tank.gun.wreck}, thrown ${tank.gun.thrown} m, landed ${tank.gun.landed}, ${tank.gun.particles} particles, ${tank.gun.programs} programs compiled; recoil ${tank.recoil} m, reload ${tank.reload} s`);
+      console.log(`  machine gun: ${tank.mg.rounds} rounds in 1 s, the SUV at ${tank.mg.health} health, dead after 2 s ${tank.mg.dead}`);
+      console.log(`  into a building: ${tank.wall ? `${tank.wall.inside} frames inside it, ${tank.wall.kph} km/h at the wall` : 'none near'}`);
+      console.log(`  out with the turret at ${tank.stow.from} rad: home in ${tank.stow.frames} frames, baked ${tank.stow.baked}; tank ${tank.health} health, you ${tank.player}`);
+      const bad = [];
+      if (!tank.parked || !tank.place || !tank.entered) bad.push('the parked tank, its map mark or getting in');
+      if (!(tank.top > 60 && tank.top < 70)) bad.push('top speed not ~65 km/h');
+      if (!(tank.t50 > 3 && tank.t50 < 8)) bad.push('0-50 out of 3-8 s');
+      if (!(tank.pivot > 35 && tank.pivot < 75) || tank.pivotDrift > 0.3) bad.push('it does not pivot on the spot');
+      if (!(tank.traverse > 40 && tank.traverse < 80) || tank.turretErr > 0.02) bad.push('the turret does not follow the camera');
+      if (!tank.crush.crushed || !(tank.crush.kept > 0.7)) bad.push('cars are not crushed under it');
+      if (!tank.fell.felled || !(tank.fell.kept > 0.7)) bad.push('trees stop it');
+      if (!tank.gun.struck || !tank.gun.dead || !tank.gun.wreck || tank.gun.particles < 80) bad.push('the main gun does not wreck a car at 60 m');
+      if (!(tank.gun.thrown > 1) || !tank.gun.landed) bad.push('the wreck is not thrown');
+      if (tank.gun.programs !== 0) bad.push('firing compiled a program mid-play');
+      if (!(tank.mg.rounds >= 8 && tank.mg.rounds <= 13) || !(tank.mg.health < 60) || !tank.mg.dead) bad.push('the machine gun');
+      if (tank.wall && (tank.wall.inside > 0 || Math.abs(tank.wall.kph) > 5)) bad.push('it drives through a building');
+      if (!tank.stow.baked) bad.push('the turret does not stow and bake after you get out');
+      if (bad.length) { console.error(`FAIL: tank: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // AUTO_PROBE lets a one-off diagnostic ride the same proven boot path
     // rather than maintaining a second, subtly different CDP harness.
     if (process.env.AUTO_PROBE) {
