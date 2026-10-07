@@ -2911,6 +2911,26 @@ profile. Now:
   bellows and the IK). The one reader that didn't, the contact shadow reading
   the player's feet on the frame he gets out of a car, checks
   `scene.userData.matrixSkipped` (what the last update skipped).
+- **Freezing keeps the world matrices an object HAS: compose them as you
+  freeze.** `updateFarLod` turns off `matrixWorldAutoUpdate` for far cars and
+  settled parked / apron vehicles, and a parked car never thaws. A kerbside
+  car spawns at 105 m, hidden on a phone (`PARKED_SHOW` 80 m), and settles
+  (`_still` 3) in three frames -- frames the hidden-object skip no longer
+  composes it in -- so it froze at identity; a car spawned inside the far
+  band (60-80 m, most lot cars) froze on its first frame, before any render.
+  Both were drawn right while they were far-LOD instances (built from
+  `group.matrix`, composed there), and **at the 60 m handover their own
+  meshes were drawn at the origin: the car vanished as you drove up to it.**
+  On the phone profile 2,723 of the 2,742 near parked cars in view in
+  verify's drive (v174-v181; v173: 133, all cars spawned inside the band, a
+  latent bug since v78). Desktop never saw it: it shows parked cars to 140 m
+  and has no far LOD. The freeze now runs `group.updateMatrixWorld(true)` on
+  the frame it freezes (once per car, not per frame). **Anything that turns
+  off `matrixWorldAutoUpdate` or `matrixAutoUpdate` must compose first**, and
+  a mover of a frozen object (the ferry carries 'free' cars, which never
+  freeze while near) must thaw it. verify's "parked cars stay drawn" drives
+  four streets and checks every parked car in view within 140 m, each step,
+  is drawn whole at its position or by an instance at its position.
 - **Euler writes only when the angle changed.** Every write to
   `rotation.x/y/z` (and `.order`) recomputes the quaternion, and
   `Vehicle.sync` runs for every vehicle in the list every frame, parked and
@@ -3309,7 +3329,11 @@ Where the budget goes, and the rules that keep it there:
   per car on the CPU, because an InstancedMesh culls as one object. Desktop
   (`FAR_LOD` Infinity) is unchanged, and nothing that casts a shadow
   (`SHADOW_NEAR` 45 m) is ever instanced. Judge it at telephoto against the
-  full meshes in one frame: from 60 m they are near-identical.
+  full meshes in one frame: from 60 m they are near-identical. **The
+  handover back is where a car vanishes** if its own world matrices were
+  never composed (a frozen parked car; see "The scene graph's own cost"):
+  judge it with verify under `AUTO_PHONE=1`, never on desktop, which has no
+  handover.
 - **landmarks are clusters**, merged by material within ~1.2 km and culled on
   their own bounds: 100 draws and 68k triangles for all of them, but only the
   clusters in view are paid for.
@@ -3328,8 +3352,9 @@ Where the budget goes, and the rules that keep it there:
   meshes on screen at once -- a third of the entire budget -- for ground that is
   mostly behind buildings; 8 x 8 makes each tile 3.3 km wide on the 26 km map and the
   frustum never culls one.
-- parked cars only exist within `PARKED_RADIUS` and hide past 140 m. Lot
-  parking adds at most 6 cars (+18 draws), only inside a lot.
+- parked cars only exist within `PARKED_RADIUS` and hide past 140 m (80 m on
+  a phone, `PARKED_SHOW`). Lot parking adds at most 6 cars (+18 draws), only
+  inside a lot.
 - lots are drawn by the terrain shader: 0 draws, 0 triangles.
 
 `roadLift()` is a 3×3-chunk edge scan, so **anything that samples the ground

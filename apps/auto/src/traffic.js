@@ -848,7 +848,17 @@ export class TrafficSystem {
       // move: neither needs three to recompute its five matrices every frame.
       // (A shunt makes a parked car 'free', which thaws it.)
       const frozen = v !== player.vehicle && (far || ((v.mode === 'parked' || v.mode === 'apron') && v._still >= 3));
-      if (v.group.matrixWorldAutoUpdate === frozen) v.group.matrixWorldAutoUpdate = !frozen;
+      if (v.group.matrixWorldAutoUpdate === frozen) {
+        v.group.matrixWorldAutoUpdate = !frozen;
+        // FREEZE WHAT IS THERE NOW. A frozen car keeps the world matrices it
+        // has, and three may never have composed them: a parked car spawned
+        // hidden past PARKED_SHOW (the scene skips hidden objects,
+        // skipHiddenMatrices) or straight into the far band (instanced, its
+        // own meshes never drawn) froze at identity, and a parked car never
+        // thaws -- so where the far LOD handed it back, at 60 m, its meshes
+        // were drawn at the origin and the car vanished.
+        if (frozen) v.group.updateMatrixWorld(true);
+      }
       if (!far) continue;
       if (cam) {
         sph.center.set(v.x, v.y + 1, v.z);
