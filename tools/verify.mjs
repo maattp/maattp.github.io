@@ -238,6 +238,18 @@ async function main() {
     console.log(`  scene pass: ${report.calls} draws, ${report.tris} triangles`
       + (report.pendingChunks ? `  (mid-stream: ${report.pendingChunks} chunks outstanding)` : ''));
 
+    // The player stands on the pavement from the first frame of play: v178's
+    // swim pose blend was born active and faded him up out of the ground
+    // from an all-zero pose for a second after every spawn.
+    {
+      const st = await session.eval(`(() => { const d = window.__dbg, p = d.player, V = new d.THREE.Vector3();
+        p.h.group.updateMatrixWorld(true); let lo = Infinity;
+        for (const b of p.h.bones) { b.getWorldPosition(V); if (V.y < lo) lo = V.y; }
+        return { blend: !!(p.poseBlend && p.poseBlend.active), low: +(lo - d.city.groundAt(p.x, p.z, p.y + 0.5)).toFixed(3) }; })()`);
+      console.log(`  standing at spawn: pose blend ${st.blend ? 'ACTIVE' : 'off'}, lowest bone ${st.low} m from the ground`);
+      if (st.blend || st.low < -0.1) { console.error('FAIL: the player is not standing on the ground at spawn'); process.exitCode = 1; }
+    }
+
     console.log('\n--- landmark accuracy vs real lat/lon --------------------');
     let worst = 0;
     for (const l of report.landmarks) {

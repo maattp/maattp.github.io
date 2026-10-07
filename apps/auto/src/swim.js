@@ -212,7 +212,10 @@ export class PoseBlend {
     this.from = []; this.pure = [];
     for (let i = 0; i < n; i++) { this.from.push(new THREE.Quaternion()); this.pure.push(new THREE.Quaternion()); }
     this.hipFrom = new THREE.Vector3(); this.hipPure = new THREE.Vector3();
-    this.pitchFrom = 0; this.t = 0; this.dur = 1; this.live = false;
+    // Born finished: an active blend at construction faded the player in at
+    // spawn from this all-zero pose -- hips at the feet, legs through the
+    // pavement, rising for a second. Only snap() starts one.
+    this.pitchFrom = 0; this.t = 0; this.dur = 0; this.live = false;
   }
   /** Start a blend of `dur` seconds from the current pose. */
   snap(h, dur) {
