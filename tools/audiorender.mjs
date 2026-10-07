@@ -110,7 +110,7 @@ window.R = (async () => {
   // which vehicle demonstrates each engine profile
   const ENGINE_DEMO = { i4: 'sedan', i4t: 'hatch', i3: 'compact', v6: 'suv', v8: 'muscle', flat6: 'sports', diesel: 'bus', vtwin: 'cruiser',
     sportbike: 'sportbike', single: 'atv', ev: 'ev', piston: 'plane', turboprop: 'turboprop', heli: 'heli', outboard: 'boat',
-    traction: 'monorail', turbine: 'hydro', gevo: 'freight' };
+    traction: 'monorail', turbine: 'hydro', gevo: 'freight', evtruck: 'wedge' };
   const specOf = (k) => fake[k] || V.TYPES[k];
 
   // A scripted run through the live Audio class, rendered offline.

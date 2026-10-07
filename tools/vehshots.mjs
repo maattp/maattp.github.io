@@ -19,12 +19,11 @@
 // learned the hard way: the shadow camera follows the player and a stale shadow
 // map paints dark blotches that look exactly like the bug being hunted.
 
-import { spawn } from 'node:child_process';
+import { launchChrome } from './chrome.mjs';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const PORT = +process.env.AUTO_CDP_PORT || 9232;
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
 const ARGS = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const STREET = process.argv.includes('--street');
@@ -38,12 +37,11 @@ const VIEWS = [
   ...(process.env.VEH_BEHIND ? [['behind', Math.PI - 0.18, 0.22], ['above', Math.PI - 0.12, 0.55]] : []),
 ];
 
+// Launch flags live in tools/chrome.mjs: AUTO_GPU=1 shoots on the Mac's GPU
+// (a minute instead of ten), and the profile is a fresh one, removed on exit.
 function launch() {
-  return spawn(CHROME, [
-    `--remote-debugging-port=${PORT}`, '--headless=new', '--use-gl=swiftshader',
-    '--enable-unsafe-swiftshader', STREET ? '--window-size=1280,720' : '--window-size=900,600', '--no-first-run',
-    `--user-data-dir=/tmp/auto-vshot-profile-${PORT}`, 'about:blank',
-  ], { stdio: 'ignore' });
+  return launchChrome({ port: PORT, profile: `/tmp/auto-vshot-profile-${PORT}`,
+    width: STREET ? 1280 : 900, height: STREET ? 720 : 600 });
 }
 
 async function main() {
@@ -178,7 +176,9 @@ async function street(evaluate, send) {
   mkdirSync(OUTS, { recursive: true });
   // Near lane: what a player passes constantly. Far lane, facing the other
   // way: the big boxes, so they are seen nose-on.
-  const NEAR = ['sedan', 'hatch', 'taxi', 'suv', 'compact', 'police', 'pickup', 'ev'];
+  // VEH_NEAR=a,b,... replaces the near lane (a new type next to its neighbours).
+  const NEAR = process.env.VEH_NEAR ? process.env.VEH_NEAR.split(',')
+    : ['sedan', 'hatch', 'taxi', 'suv', 'compact', 'police', 'pickup', 'ev'];
   const FAR = ['van', 'bus', 'boxtruck', 'ambulance', 'garbage'];
   const COLS = [0x9fa4a9, 0x102b52, 0xe6e8ea, 0x6d0f14, 0x1b1d20, 0xf2f4f6, 0x14472f, 0x7a5a22,
     0x2f3a44, 0xe6e8ea, 0x0d5b66, 0xbcc2c8, 0x7d2418];
