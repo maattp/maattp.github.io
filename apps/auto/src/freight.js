@@ -1899,10 +1899,9 @@ export class FreightTrain {
     const left = stopLead === null ? Infinity : (stopLead - this.lead) * this.dir;
     if (left < 0.5 || emerg) { this.notch = 0; this.brakeCmd = 1; }
     else if (left < 6 && v < 1.2) { this.notch = Math.max(this.notch, 2); this.brakeCmd = 0; }
-    // a slow train stops for you with the emergency application (1 m/s2)
     // stopping for you: the emergency application, held to the stand
     if (this.flag && v > vAllow + 0.5) { emerg = true; this.notch = 0; this.brakeCmd = 1; }
-    this.emerg = emerg && (v > 2 || (this.flag && v > 0.02));
+    this.emerg = !!(emerg && (v > 2 || (this.flag && v > 0.02)));
     const ev = this.step(dt);
     if (ev.collide && this.sys.player && this.sys.player.vehicle && this.sys.player.vehicle.spec.freight) this.sys.onCollide(this, ev.collide);
     // stopped at the yard: a crew change
