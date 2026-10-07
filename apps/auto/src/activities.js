@@ -440,7 +440,9 @@ export class Activities {
 
   start(a) {
     this.active = { a, phase: 'countdown', t: COUNTDOWN, elapsed: 0, idx: 0, trail: [] };
-    if (a.kind === 'getaway') this.game.addHeat(a.stars * 130);
+    // exactly the stars it says: `stars * 130` points made a "3 stars" run a
+    // four-star one, which is SWAT and a door gunner since the wanted levels
+    if (a.kind === 'getaway') { if (this.game.setWanted) this.game.setWanted(a.stars); else this.game.addHeat(a.stars * 130); }
     this.hud.showToast(`${a.name} — get ready`);
     if (this.audio) this.audio.ui('start');
   }

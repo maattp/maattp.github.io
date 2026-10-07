@@ -579,6 +579,13 @@ export class Hud {
       ctx.arc(bx, bz, 3.4 / zoom, 0, Math.PI * 2);
       ctx.fill();
     }
+    // police helicopters
+    for (const h of (this.policeHelis || [])) {
+      const [bx, bz] = toMap(h.x, h.z);
+      ctx.fillStyle = '#ff6b6b'; ctx.strokeStyle = '#2a0b0b'; ctx.lineWidth = 1 / zoom;
+      ctx.beginPath(); ctx.arc(bx, bz, 4.2 / zoom, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#2a0b0b'; ctx.fillRect(bx - 3 / zoom, bz - 0.6 / zoom, 6 / zoom, 1.2 / zoom);
+    }
     if (game.target) {
       const [bx, bz] = toMap(game.target.x, game.target.z);
       ctx.fillStyle = '#ffd24a';
@@ -725,6 +732,9 @@ export class Hud {
     if (player.armed) this._put(this.ammoEl, 'ammo', `⌖ ${player.ammo}`);
 
     const stars = game.wanted;
+    // police.js: out of their sight, the stars flash while they search
+    const search = !!this.searching && stars > 0;
+    if (this._search !== search) { this._search = search; this.stars.classList.toggle('search', search); }
     if (this.stars.dataset.n !== String(stars)) {
       this.stars.dataset.n = String(stars);
       this.stars.innerHTML = '';

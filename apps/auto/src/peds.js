@@ -887,7 +887,7 @@ pedMat.onBeforeCompile = (sh) => {
 // arms and legs share a builder with their sleeves).
 // Hair 0.22, not 0.40: tighter, it was one specular hotspot on the crown and
 // the shell read as varnished wood.
-const GLOSS = { head: 0.26, neck: 0.26, ear: 0.20, hand: 0.26, fingers: 0.26, hair: 0.22, foot: 0.22, hat: 0.12 };
+const GLOSS = { head: 0.26, neck: 0.26, ear: 0.20, hand: 0.26, fingers: 0.26, hair: 0.22, foot: 0.22, hat: 0.12, gun: 0.30 };
 const GLOSS_SKIN = 0.26;
 
 class SkinAcc {
@@ -1903,7 +1903,7 @@ export function buildCharacter(opts = {}) {
   const shoeCol = SHOES[shoeI], soleCol = SOLES[shoeI];
   // Under a cap the hair is close-cut: the crop's outer layer of locks stands
   // up to 8 mm off the head, through the cap's sides.
-  const style = opts.hat ? 'buzz' : look ? look[2] : pickStyle(hash2(seed, 16));
+  const style = opts.hat || opts.swat ? 'buzz' : look ? look[2] : pickStyle(hash2(seed, 16));
 
   const acc = new SkinAcc(skin);
   // TWO BODY SHAPES, not one. Every look was the same torso, so the pool read
@@ -2031,6 +2031,25 @@ export function buildCharacter(opts = {}) {
       { y: J.chest + 0.06, pts: oval(cw * 1.03 * outer, cd * 1.05 * outer, ST) },
       { y: J.shoulder - 0.04, pts: oval(sw * 0.98 * outer, sd * 1.02 * outer, ST) },
     ], opts.vest, {});
+  }
+  if (opts.swat) {
+    // A tactical officer's plate carrier: a slab front and back, wider and
+    // squarer than the body it rides on, with a row of magazine pouches on
+    // the front and a radio on the left shoulder strap. The silhouette is
+    // what says SWAT from across the street -- a boxy chest under a helmet.
+    const pc = [0.075, 0.082, 0.088], pouch = [0.10, 0.11, 0.105];
+    torso.loftY([
+      { y: J.hip + 0.11, pts: oval(bw * 1.06 * outer, bd * 1.16 * outer, ST) },
+      { y: 1.075, pts: oval(ww * 1.20 * outer, wd * 1.30 * outer, ST, 0, 0.004) },
+      { y: J.chest, pts: oval(cw * 1.13 * outer, cd * 1.24 * outer, ST, 0, 0.014) },
+      { y: J.shoulder - 0.05, pts: oval(sw * 1.04 * outer, sd * 1.18 * outer, ST, 0, 0.004) },
+      { y: J.shoulder + 0.01, pts: oval(sw * 0.74 * outer, sd * 0.98 * outer, ST, 0, -0.006) },
+    ], pc, {});
+    const fz = cd * 1.24 * outer + 0.012;
+    for (const px of [-0.075, 0, 0.075]) torso.box(px, 1.10, fz - 0.03, 0.062, 0.115, 0.05, 0, pouch);
+    torso.box(-0.10, J.chest + 0.07, fz - 0.035, 0.045, 0.09, 0.04, 0, [0.04, 0.04, 0.045]);
+    // the POLICE patch across the back, as a pale band
+    torso.box(0, J.chest + 0.02, -(cd * 1.24 * outer) - 0.004, 0.20, 0.05, 0.012, 0, [0.80, 0.80, 0.76]);
   }
   if (opts.bib) {
     // Rubber bib overalls (a fishmonger's): hips to just over the chest line,
@@ -2255,6 +2274,20 @@ export function buildCharacter(opts = {}) {
     hat.box(0, J.eye + 0.014, 0.086, 0.166, 0.018, 0.11, 0, opts.hat);
     acc.add(hat, headW, cylUV(CELLS.jacket, 0, 0, J.eye, J.crown), 'hat');
   }
+  if (opts.swat) {
+    // Ballistic helmet: a dome over the ears with a flat brim at the brow, and
+    // a pair of goggles riding on its front.
+    const hel = new Builder(false), HC = [0.07, 0.075, 0.08];
+    hel.loftY([
+      { y: J.eye - 0.035, pts: oval(0.094, 0.112, ST, 0, -0.016) },
+      { y: J.eye + 0.016, pts: oval(0.104, 0.124, ST, 0, -0.008) },
+      { y: J.eye + 0.075, pts: oval(0.103, 0.122, ST, 0, -0.010) },
+      { y: J.crown - 0.004, pts: oval(0.082, 0.098, ST, 0, -0.012) },
+      { y: J.crown + 0.030, pts: oval(0.038, 0.046, ST, 0, -0.012) },
+    ], HC, { capEnd: true });
+    hel.box(0, J.eye + 0.040, 0.100, 0.13, 0.036, 0.03, 0, [0.03, 0.03, 0.035]);
+    acc.add(hel, headW, cylUV(CELLS.jacket, 0, 0, J.eye, J.crown), 'hat');
+  }
 
   // --- arms ----------------------------------------------------------------
   for (const side of [-1, 1]) {
@@ -2303,6 +2336,20 @@ export function buildCharacter(opts = {}) {
     // on the sleeves as stray rectangles.
     }, cylUV(shortSleeve ? CELLS.skin : CELLS.sleeve, X, 0, J.wrist, J.shoulder + 0.01), 'arm');
     buildHand(acc, side, X, skin);
+  }
+  if (opts.swat) {
+    // A compact carbine in the right hand, muzzle DOWN along the arm's axis:
+    // carried at the low ready while walking, and pointing straight at the
+    // target when the arm comes up to aim (peds.js aimPose), because the
+    // hand's down axis is then the arm's forward one. Skinned to the hand.
+    const gun = new Builder(false), GC = [0.05, 0.05, 0.055], x = SX + 0.012;
+    gun.box(x, 0.60, 0.075, 0.046, 0.25, 0.074, 0, GC);           // receiver
+    gun.box(x, 0.47, 0.085, 0.042, 0.14, 0.052, 0, GC);           // handguard
+    gun.box(x, 0.34, 0.085, 0.022, 0.14, 0.022, 0, GC);           // barrel
+    gun.box(x, 0.85, 0.068, 0.036, 0.15, 0.050, 0, GC);           // stock
+    gun.box(x, 0.66, 0.005, 0.034, 0.10, 0.075, 0, GC);           // magazine
+    gun.box(x, 0.74, 0.020, 0.030, 0.07, 0.040, 0, GC);           // grip
+    acc.add(gun, () => [B.handR, 1, 0, 0], cylUV(CELLS.sleeve, x, 0, 0.3, 1.0), 'gun');
   }
 
   // --- legs ----------------------------------------------------------------
@@ -2403,6 +2450,22 @@ function copVariants() {
   return COP_VARIANTS;
 }
 
+// The tactical officers (wanted 4+, police.js): their own pool, as cops have
+// theirs -- helmet, plate carrier, carbine (buildCharacter opts.swat).
+let SWAT_VARIANTS = null;
+function swatVariants() {
+  if (!SWAT_VARIANTS) {
+    SWAT_VARIANTS = [];
+    for (let i = 0; i < 3; i++) {
+      SWAT_VARIANTS.push(buildCharacter({
+        seed: i * 4111 + 29,
+        shirt: [0.11, 0.12, 0.14], pants: [0.10, 0.11, 0.13], vest: [0.07, 0.08, 0.085], swat: true,
+      }));
+    }
+  }
+  return SWAT_VARIANTS;
+}
+
 /**
  * Build both look pools now. They are built lazily on first use, and the
  * first use is the first frame of play (the crowd spawns at once): measured
@@ -2413,6 +2476,7 @@ function copVariants() {
 export function warmLooks() {
   variants();
   copVariants();
+  swatVariants();
 }
 
 export function makeHumanoid(opts = {}) {
@@ -2420,6 +2484,7 @@ export function makeHumanoid(opts = {}) {
   const pooled = !opts.geometry && !opts.unique;
   const geo = opts.geometry
     || (opts.unique ? buildCharacter(opts)
+      : opts.swat ? swatVariants()[Math.floor(hash2(seed, 9) * 3) % 3]
       : opts.cop ? copVariants()[Math.floor(hash2(seed, 9) * 4) % 4]
         : variants()[Math.floor(hash2(seed, 9) * 12) % 12]);
   const bones = makeSkeletonBones(geo.userData.shoulderX);
@@ -3318,6 +3383,25 @@ function makeBlobs() {
   return m;
 }
 
+/**
+ * An officer bringing his gun up, blended over the walk by `k` (0..1): the
+ * right arm straight out at shoulder height -- the carbine is modelled muzzle
+ * down along the arm, so it then points where he faces -- and, with a long
+ * gun, the left hand coming across to the handguard.
+ */
+export function aimPose(h, k, twoHand) {
+  const b = h.bones;
+  const mix = (bone, ax, v) => { bone.rotation[ax] += (v - bone.rotation[ax]) * k; };
+  mix(b[B.shoulderR], 'x', -1.45);
+  mix(b[B.shoulderR], 'z', 0.06);
+  mix(b[B.elbowR], 'x', -0.08);
+  if (twoHand) {
+    mix(b[B.shoulderL], 'x', -1.25);
+    mix(b[B.shoulderL], 'z', -0.42);
+    mix(b[B.elbowL], 'x', -0.55);
+  }
+}
+
 export class PedSystem {
   constructor(scene, city, game) {
     this.scene = scene;
@@ -3404,17 +3488,47 @@ export class PedSystem {
         cop: !!cop, shootCd: 1 + this.R.n(), down: 0, hp: cop ? 60 : 30,
         // set later; declared so every pedestrian keeps one hidden class
         fleeX: 0, fleeZ: 0, fallDir: 0, animDt: 0,
+        // officers (police.js footOrders): which kind, the trigger's burst,
+        // the unit they came out of, how raised the gun is, the search point
+        kind: cop ? 'cop' : 'civ', burst: 0, car: null, aim: 0, leaveT: 0, searchX: 0, searchZ: 0,
       };
       this.scene.add(h.group);
       this.peds.push(p);
+      if (cop && this.game.police) this.game.police.stats.spawned.cop++;
       return p;
     }
     return null;
   }
 
+  /**
+   * An officer out of a unit's door at (x, z) (police.js deploy): 'cop' or
+   * 'swat'. Seeded at the car's own height -- a unit can stop on a deck or in
+   * a bore, where the highest surface is the wrong one.
+   */
+  spawnOfficer(x, z, kind, car) {
+    const city = this.city;
+    const seed = (this.R.n() * 1e6) | 0;
+    const swat = kind === 'swat';
+    const h = makeHumanoid({ seed, cop: !swat, swat });
+    const lift = city.roadLift(x, z);
+    const p = {
+      h, x, z, y: city.groundAt(x, z, (car ? car.y : 0) + 1, lift), lift, heading: car ? car.heading : 0,
+      edge: car && car.edge >= 0 ? car.edge : 0, side: 1, t: 0, dirSign: 1,
+      speed: 0, state: 'walk', timer: 0,
+      cop: true, shootCd: 0.6 + this.R.n(), down: 0, hp: swat ? 95 : 60,
+      fleeX: 0, fleeZ: 0, fallDir: 0, animDt: 0,
+      kind, burst: 0, car: car || null, aim: 0, leaveT: 0, searchX: 0, searchZ: 0,
+    };
+    this.scene.add(h.group);
+    this.peds.push(p);
+    return p;
+  }
+
   remove(p) {
     const i = this.peds.indexOf(p);
     if (i >= 0) this.peds.splice(i, 1);
+    // an officer out of a unit: one fewer of its crew (police.js)
+    if (p.car) { p.car.crew = Math.max(0, p.car.crew - 1); p.car = null; }
     this.scene.remove(p.h.group);
     p.h.dispose();
   }
@@ -3435,14 +3549,18 @@ export class PedSystem {
     const city = this.city;
     const game = this.game;
     this.timer -= dt;
-    const wantCops = game.wanted >= 3 ? Math.min(6, (game.wanted - 2) * 2) : 0;
-    let copCount = 0;
-    for (const p of this.peds) if (p.cop) copCount++;
+    // Officers walked in from the pavement (police.js LEVELS `street`); the
+    // rest get out of the units' cars. Neither past the level's foot cap.
+    const lv = game.police ? game.police.level() : null;
+    let copCount = 0, streetCops = 0;
+    for (const p of this.peds) if (p.cop) { copCount++; if (!p.car) streetCops++; }
 
     if (this.timer <= 0) {
       this.timer = 0.2;
       if (this.peds.length - copCount < MAX_PEDS) this.spawn(px, pz, false);
-      if (copCount < wantCops) this.spawn(px, pz, true);
+      // (only to a target on foot or stopped: walked in toward a car going
+      // by at 30 m/s they were left behind and replaced, 53 spawns a minute)
+      if (lv && game.wanted > 0 && streetCops < lv.street && copCount < lv.foot + lv.swat && game.police.playerSlow && !game.police.searching) this.spawn(px, pz, true);
     }
 
     // Frustum for the animation LOD below: last frame's camera, which moves
@@ -3469,7 +3587,6 @@ export class PedSystem {
       const p = this.peds[i];
       const d2p = dist2(p.x, p.z, px, pz);
       if (d2p > (PED_RADIUS + 90) * (PED_RADIUS + 90)) { this.remove(p); continue; }
-      if (p.cop && game.wanted === 0) { this.remove(p); continue; }
 
       if (p.state === 'down') {
         p.h.mesh.visible = true;
@@ -3486,14 +3603,12 @@ export class PedSystem {
       let desired = p.heading;
 
       if (p.cop) {
-        const d = Math.sqrt(d2p);
-        desired = Math.atan2(px - p.x, pz - p.z);
-        targetSpeed = d > 9 ? 4.6 : 0;
-        p.shootCd -= dt;
-        if (d < 34 && p.shootCd <= 0) {
-          p.shootCd = 1.1 + this.R.n() * 0.9;
-          game.onCopShot(p);
-        }
+        // police.js decides: chase, search, arrest, shoot, get back in the car
+        const o = game.police ? game.police.footOrders(p, dt, px, pz, player)
+          : (game.wanted === 0 ? { remove: true } : { heading: Math.atan2(px - p.x, pz - p.z), speed: d2p > 81 ? 4.6 : 0, remove: false });
+        if (o.remove) { this.remove(p); continue; }
+        desired = o.heading;
+        targetSpeed = o.speed;
       } else if (p.state === 'flee') {
         p.timer -= dt;
         const l = Math.hypot(p.fleeX, p.fleeZ) || 1;
@@ -3574,6 +3689,7 @@ export class PedSystem {
       if (pose) {
         animateWalk(p.h, clamp(p.speed * 0.20, 0, 0.8), Math.min(p.animDt, 0.1), p.speed);
         p.animDt = 0;
+        if (p.aim > 0.02) aimPose(p.h, p.aim, p.kind === 'swat');
       }
       if (show && d2p < 70 * 70) this.addContactShadow(p.h, p.x, p.y, p.z, p.heading);
 

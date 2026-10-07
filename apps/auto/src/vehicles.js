@@ -250,6 +250,10 @@ export const TYPES = {
   bus: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', livery: 0xeceae3, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
   boxtruck: deriveSpec({ wheelbase: 4.3,len: 7.5, wid: 2.38, wheelR: 0.46, sill: 0.62, belt: 1.55, roof: 2.55, cab: [0.14, 0.46], cargo: 2.55, hand: 'boxtruck', boxy: 2, mass: 3.0, acc: 2.5, topKph: 125, brakeM: 51, latG: 0.66 }),
   ambulance: deriveSpec({ wheelbase: 3.9,len: 6.3, wid: 2.28, wheelR: 0.42, sill: 0.56, belt: 1.42, roof: 2.35, cab: [0.16, 0.46], cargo: 2.25, hand: 'ambulance', livery: 0xf4f4f0, boxy: 2, emergency: true, mass: 2.4, acc: 3.2, topKph: 155, brakeM: 48, latG: 0.72 }),
+  // The police tactical van (wanted 4+, traffic.js spawnPolice 'swat'): heavy,
+  // so its rams shove you, and quick enough to keep up on surface streets.
+  // `police` gives it the cruiser's V8.
+  swat: deriveSpec({ wheelbase: 3.9, len: 6.6, wid: 2.40, wheelR: 0.45, sill: 0.58, belt: 1.46, roof: 2.45, cab: [0.16, 0.46], cargo: 2.3, hand: 'swat', livery: 0x1b2331, boxy: 2, police: true, swat: true, mass: 3.2, acc: 3.9, topKph: 160, brakeM: 48, latG: 0.76 }),
   garbage: deriveSpec({ wheelbase: 4.6,len: 8.1, wid: 2.48, wheelR: 0.50, sill: 0.66, belt: 1.62, roof: 2.6, cab: [0.20, 0.46], cargo: 2.5, hand: 'garbage', livery: 0x2e6a3f, boxy: 2, mass: 4.0, acc: 1.45, topKph: 90, brakeM: 55, latG: 0.61 }),
   // Fire apparatus (buildFireEngine / buildTiller): Seattle Fire's red. `fire`
   // marks them for the water cannon, the station aprons and the fire calls
@@ -6065,6 +6069,150 @@ function buildAmbulance(spec, paint, trim, matte) {
 }
 
 /**
+ * Block capitals for stencilled lettering ("SWAT", "POLICE"): each glyph is a
+ * few rectangles on a 5 x 7 grid, [c0, r0, c1, r1], rows counted from the
+ * bottom. Geometry, not a texture: the vehicle parts are vertex-coloured and
+ * carry no map, and a dozen quads a letter is nothing.
+ */
+const STENCIL = {
+  S: [[0, 6, 5, 7], [0, 3, 1, 7], [0, 3, 5, 4], [4, 0, 5, 4], [0, 0, 5, 1]],
+  W: [[0, 0, 1, 7], [4, 0, 5, 7], [2, 0, 3, 4], [0, 0, 5, 1]],
+  A: [[0, 0, 1, 7], [4, 0, 5, 7], [0, 6, 5, 7], [0, 3, 5, 4]],
+  T: [[0, 6, 5, 7], [2, 0, 3, 6]],
+  P: [[0, 0, 1, 7], [0, 6, 5, 7], [4, 3, 5, 7], [0, 3, 5, 4]],
+  O: [[0, 0, 1, 7], [4, 0, 5, 7], [0, 6, 5, 7], [0, 0, 5, 1]],
+  L: [[0, 0, 1, 7], [0, 0, 5, 1]],
+  I: [[2, 0, 3, 7], [1, 6, 4, 7], [1, 0, 4, 1]],
+  C: [[0, 0, 1, 7], [0, 6, 5, 7], [0, 0, 5, 1]],
+  E: [[0, 0, 1, 7], [0, 6, 5, 7], [0, 3, 4, 4], [0, 0, 5, 1]],
+};
+
+/**
+ * Lay `text` flat on a plane: centred on (cx, cy, cz), reading along the
+ * horizontal unit vector (ux, uz) -- which must be the viewer's RIGHT as they
+ * face the panel from outside along -n -- `h` tall, outward normal `n`.
+ */
+function stencil(into, text, cx, cy, cz, ux, uz, h, n, col) {
+  const cell = h / 7, adv = cell * 6.4, w = adv * text.length - cell * 1.4;
+  let s0 = -w / 2;
+  for (const ch of text) {
+    for (const [c0, r0, c1, r1] of STENCIL[ch] || []) {
+      const a = s0 + c0 * cell, b = s0 + c1 * cell, y0 = cy - h / 2 + r0 * cell, y1 = cy - h / 2 + r1 * cell;
+      const P = (s, y) => [cx + ux * s, y, cz + uz * s];
+      into.quad(P(a, y0), P(b, y0), P(b, y1), P(a, y1), n, [0, 0, 1, 0, 1, 1, 0, 1], col);
+    }
+    s0 += adv;
+  }
+}
+
+/**
+ * The police tactical van (wanted level 4+): a bonneted cab with an armoured
+ * box behind it, Lenco/"Bearcat"-sized but square, in navy-black with SWAT
+ * stencilled on both flanks and the rear doors. What reads at fifty metres is
+ * the silhouette -- taller and squarer than the ambulance it is built like --
+ * the ram bar standing off the nose, the white lettering and the roof rails;
+ * the gun ports and steps are for the close look. The roof light bar is the
+ * spawner's (traffic.js), because it strobes.
+ */
+function buildSwat(spec, paint, trim, matte) {
+  const wr = spec.wheelR, W = spec.wid / 2;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = nose - 1.10, zR = zF - spec.wheelbase;
+  const cabW = 1.04, modTop = 2.92, modZ1 = 0.70;
+  const BLK = [0.06, 0.065, 0.07], STEN = [0.90, 0.91, 0.90];
+  const { shell: cab } = truckCab(paint, matte, {
+    z0: 0.66, z1: nose, W: cabW, roofY: spec.roof, zF, wr, archR: wr + 0.16, sill: 0.56,
+    bonnet: { scrTopZ: 1.36, cowlZ: 2.02, cowlY: 1.36, noseY: 1.16 },
+    windows: [-1, 1].map((sx) => ({ sx, zA: 0.90, zB: 1.90, yBot: 1.46, yTopMax: spec.roof - 0.24 })),
+    slope: { zA: 1.96, zB: 1.40 },
+  });
+  slopeGlass(trim, cab, 1.96, 1.40);
+  boxCabin(matte, { y: 1.34, sit: 1.56, x: cab.sec(1.2).w0 - 0.07, zR: 0.74, zF: 1.90, top: spec.roof - 0.08,
+    hzF: 1.36, rows: [0.96], wheelDz: 0.60 });
+  const cs = cab.sec(nose);
+  const GRILLE = [0, 0.88, 0.40, 0.15], LAMP_A = [cs.w0 * 0.76, 0.98, 0.13, 0.055];
+  endFace(paint, nose, 1, cab.prof(nose), [GRILLE, LAMP_A], WHITE);
+  const gp = pocket(paint, matte, 0, GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.12, 1, { rim: 0.026, rimCol: PLASTIC });
+  for (let i = 0; i < 4; i++) trim.box(0, GRILLE[1] - 0.12 + i * 0.07, gp.z + 0.02, gp.hw * 1.92, 0.022, 0.04, 0, [0.16, 0.17, 0.18]);
+  for (const sx of [-1, 1]) {
+    const hp = pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.08, 1, { rim: 0.018, rimCol: PLASTIC });
+    trim.box(sx * LAMP_A[0], LAMP_A[1] - 0.042, nose - 0.026, hp.hw * 1.9, 0.084, 0.022, 0, LAMP);
+    // grille strobes, one red, one blue
+    trim.box(sx * 0.22, 0.70, nose + 0.012, 0.12, 0.05, 0.02, 0, sx < 0 ? [0.12, 0.25, 0.95] : TAILC);
+  }
+  // Steel bumper and the ram bar: two uprights, two cross tubes and a skid
+  // plate, standing 25 cm proud of the face.
+  matte.box(0, 0.36, nose + 0.06, cabW * 2.04, 0.30, 0.20, 0, BLK);
+  trim.box(0, 0.44, nose + 0.165, 0.40, 0.12, 0.02, 0, PLATE);
+  const rz = nose + 0.30;
+  for (const sx of [-1, 1]) {
+    matte.tube([sx * 0.52, 0.34, rz], [sx * 0.52, 1.20, rz - 0.04], 0.050, 8, BLK, true);
+    matte.tube([sx * 0.52, 0.52, nose + 0.12], [sx * 0.52, 0.52, rz], 0.045, 8, BLK, true);
+    matte.tube([sx * 0.52, 1.02, nose + 0.02], [sx * 0.52, 1.02, rz - 0.03], 0.040, 8, BLK, true);
+  }
+  matte.tube([-0.70, 0.60, rz + 0.02], [0.70, 0.60, rz + 0.02], 0.050, 8, BLK, true);
+  matte.tube([-0.62, 1.00, rz - 0.02], [0.62, 1.00, rz - 0.02], 0.045, 8, BLK, true);
+  matte.box(0, 0.22, rz - 0.20, 1.10, 0.06, 0.40, 0, BLK);
+  for (const sx of [-1, 1]) {
+    sideGlass(trim, cab, sx, 0.90, 1.90, 1.46, spec.roof - 0.24);
+    truckMirror(trim, matte, sx, cab.sec(1.94).w0 - 0.02, 1.70, 1.84);
+    // A-pillar spotlight
+    trim.tube([sx * (cab.sec(1.9).w0 + 0.06), 1.86, 1.80], [sx * (cab.sec(1.9).w0 + 0.06), 1.86, 1.96], 0.06, 8, CHROME, true);
+    trim.tube([sx * (cab.sec(1.9).w0 + 0.06), 1.86, 1.96], [sx * (cab.sec(1.9).w0 + 0.06), 1.86, 1.97], 0.05, 8, LAMP, true);
+  }
+
+  // --- the armoured box ------------------------------------------------------------
+  const archTopR = wr * 2 + 0.08, archRR = wr + 0.16;
+  const liftR = archCut([zR], archRR, archTopR, 3.0);
+  const mod = boxShell(paint, {
+    z0: tail, z1: modZ1, stations: 22, rr: 0.10, tumble: 0.02, crown: 0.02,
+    wAt: () => W, y0At: (z) => Math.max(0.62, liftR(z)), y1At: () => modTop,
+  });
+  shellArch(matte, mod, zR, wr, archRR, archTopR, 0.62);
+  endFace(paint, modZ1, 1, mod.prof(modZ1), [], WHITE);
+  const TL = [W - 0.15, 1.20, 0.065, 0.17];
+  endFace(paint, tail, -1, mod.prof(tail), [TL], WHITE);
+  const midZ = (tail + modZ1) / 2;
+  for (const sx of [-1, 1]) {
+    const x = sx * (W + 0.006);
+    // SWAT, big, reading front to back on the right flank and back to front
+    // on the left (each from outside); POLICE under it.
+    stencil(matte, 'SWAT', x, 2.02, midZ - 0.10, 0, -sx, 0.56, [sx, 0, 0], STEN);
+    stencil(matte, 'POLICE', x, 1.48, midZ - 0.10, 0, -sx, 0.20, [sx, 0, 0], STEN);
+    // a dark band at the sill and two gun ports high up front and back
+    matte.quad([x, 0.98, tail + 0.06], [x, 0.98, modZ1 - 0.06], [x, 1.10, modZ1 - 0.06], [x, 1.10, tail + 0.06], [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], BLK);
+    for (const zc of [modZ1 - 0.42, tail + 0.46]) {
+      matte.box(sx * (W - 0.01), 2.36, zc, 0.04, 0.22, 0.42, 0, BLK);
+      matte.box(sx * (W + 0.012), 2.42, zc, 0.03, 0.06, 0.26, 0, [0.02, 0.02, 0.025]);
+    }
+    // running board the officers ride on, with its brackets, and a grab rail
+    matte.box(sx * (W + 0.12), 0.56, midZ + 0.10, 0.26, 0.05, 1.70, 0, BLK);
+    for (const zc of [midZ - 0.6, midZ + 0.8]) matte.box(sx * (W + 0.05), 0.46, zc, 0.12, 0.10, 0.08, 0, BLK);
+    matte.tube([sx * (W + 0.06), 2.48, midZ - 0.80], [sx * (W + 0.06), 2.48, midZ + 0.95], 0.025, 6, BLK, true);
+    // roof rails
+    matte.tube([sx * (W - 0.10), modTop + 0.10, tail + 0.10], [sx * (W - 0.10), modTop + 0.10, modZ1 - 0.10], 0.030, 6, BLK, true);
+    for (const zc of [tail + 0.15, midZ, modZ1 - 0.15]) matte.box(sx * (W - 0.10), modTop, zc, 0.04, 0.12, 0.04, 0, BLK);
+    // tail lamp in its pocket, corner beacons
+    const tp = pocket(paint, matte, sx * TL[0], TL[1], tail, TL[2], TL[3], 0.04, -1, { rim: 0.016, rimCol: PLASTIC });
+    trim.box(sx * TL[0], TL[1] - tp.hh * 0.95, tail + 0.014, tp.hw * 1.9, tp.hh * 1.9, 0.020, 0, TAILC);
+    trim.box(sx * (W - 0.12), modTop - 0.16, tail + 0.12, 0.20, 0.13, 0.09, 0, sx < 0 ? [0.12, 0.25, 0.95] : TAILC);
+  }
+  // rear doors: the split, SWAT across them, hinges, a ladder up the right door
+  matte.box(0, 0.66, tail - 0.004, 0.016, modTop - 0.80, 0.012, 0, BLK);
+  stencil(matte, 'SWAT', 0, 2.10, tail - 0.006, -1, 0, 0.36, [0, 0, -1], STEN);
+  for (const sx of [-1, 1]) for (const y of [1.0, 2.3]) matte.box(sx * (W - 0.04), y, tail - 0.02, 0.06, 0.16, 0.04, 0, BLK);
+  for (const lx of [0.42, 0.84]) matte.tube([lx, 0.72, tail - 0.08], [lx, modTop + 0.08, tail - 0.08], 0.022, 6, BLK, true);
+  for (let y = 0.95; y < modTop; y += 0.32) matte.tube([0.42, y, tail - 0.08], [0.84, y, tail - 0.08], 0.018, 6, BLK, true);
+  matte.box(0, 0.42, tail + 0.06, W * 1.86, 0.20, 0.24, 0, BLK);                                      // step bumper
+  trim.box(-0.5, 0.72, tail - 0.024, 0.40, 0.12, 0.02, 0, PLATE);
+  matte.box(0, 0.62, (0.62 + nose - 1.6) / 2, 0.9, 0.22, 1.2, 0, PLASTIC);                           // chassis under the cab
+
+  const twF = 0.30, twR = 0.40;
+  const wxF = cab.sec(zF).w0 - 0.16, wxR = W - 0.24;
+  return [[-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF], [-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR]];
+}
+
+/**
  * The low-floor city bus. What it replaced was the generic tube at twelve
  * metres with glass boxes standing off its sides and its windscreen mirrors
  * as two slabs sticking out of the roof corners.
@@ -7837,6 +7985,7 @@ const HAND_BUILT = {
   compact: (s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.compact),
   ev: buildEv, service: buildServiceSedan, van: buildVan, bus: buildBus, ambulance: buildAmbulance,
   wedge: buildWedge,
+  swat: buildSwat,
   boxtruck: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.boxtruck),
   garbage: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.garbage),
   convertible: buildConvertible, cruiser: buildCruiser, sportbike: buildSportbike,
@@ -8435,6 +8584,17 @@ export class Vehicle {
     this.lightL = null; this.lightR = null; this.extra = null;
     this.rearSteer = 0; this._followK = NaN;   // a tiller trailer's rear wheels (Vehicle.follow); traffic.js's last follow
     this.sirenOn = false; this.cannon = null;   // fire apparatus: the player's siren, the water cannon (firecalls.js)
+    // police.js: which kind of unit ('car' | 'swat', null for everyone else),
+    // how many of its crew are out on foot, its search point, the passenger's
+    // trigger (shootCd / burst).
+    this.unit = null; this.crew = 0; this.searchX = 0; this.searchZ = 0; this.searchT = 0;
+    this.shootCd = 0; this.burst = 0; this.backT = 0;
+    // drivePolice's pursuit: its pace, its target, how long it has gone nowhere
+    this.pursuitV = 0; this.pursuitTX = 0; this.pursuitTZ = 0; this.polStuckT = 0;
+    this.deployCd = 0;   // police.js: s before a crew that got back in may get out again
+    this.progD = Infinity; this.progT = 0;   // drivePolice: the closest it has got, and since when
+    this.noPath = false;   // drivePolice: no A* path to the target (it comes straight, and asks again in 4 s)
+    this.offGraph = false;   // ...and none to the target's own node: the crew finish it on foot (police.js)
     this.slot = null; this.wasParked = false; this.exploded = false;
     this.airborne = false; this.lowDetail = false;
     // Flight state (updatePlane / updateHeli). `yVis` is how far the drawn

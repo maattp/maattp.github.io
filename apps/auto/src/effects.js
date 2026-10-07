@@ -166,9 +166,35 @@ export class Effects {
     this.emit(x, y, z, 8, { r: 0.6, g: 0.08, b: 0.08, size: 0.3, life: 0.5, spread: 2.2, vy: 1.6, grav: -9 });
   }
 
-  tracer(x0, y0, z0, x1, y1, z1) {
-    this.tracers.push({ p: [x0, y0, z0, x1, y1, z1], life: 0.09 });
-    if (this.tracers.length > 32) this.tracers.shift();
+  /**
+   * A gunshot's flash line, muzzle to impact, for 0.09 s. Pooled: the slots
+   * are made once and reused round a ring (a five-star firefight fires a few
+   * dozen rounds a second, and every one used to allocate two objects).
+   */
+  tracer(x0, y0, z0, x1, y1, z1) { this._shot(x0, y0, z0, x1, y1, z1, 0.09, 0); }
+
+  /**
+   * A tracer round: a 7 m streak that TRAVELS from the muzzle to the impact
+   * at ~420 m/s -- the rifles' and the helicopter's, which have to read as
+   * automatic fire from across the street, where a 0.09 s flash line is a
+   * pixel-wide flicker.
+   */
+  streak(x0, y0, z0, x1, y1, z1) {
+    const d = Math.hypot(x1 - x0, y1 - y0, z1 - z0);
+    this._shot(x0, y0, z0, x1, y1, z1, Math.max(0.06, d / 420), 1);
+  }
+
+  _shot(x0, y0, z0, x1, y1, z1, life, streak) {
+    if (!this._pool) {
+      this._pool = [];
+      for (let i = 0; i < 32; i++) this._pool.push({ p: new Float32Array(6), life: 0, max: 1, streak: 0 });
+      this._next = 0;
+    }
+    const t = this._pool[this._next];
+    this._next = (this._next + 1) % 32;
+    t.p[0] = x0; t.p[1] = y0; t.p[2] = z0; t.p[3] = x1; t.p[4] = y1; t.p[5] = z1;
+    t.life = life; t.max = life; t.streak = streak;
+    if (!this.tracers.includes(t)) this.tracers.push(t);
   }
 
   update(dt) {
@@ -194,16 +220,26 @@ export class Effects {
     this.geo.attributes.color.needsUpdate = true;
 
     let n = 0;
+    const L = this.lpos;
     for (let i = this.tracers.length - 1; i >= 0; i--) {
       const t = this.tracers[i];
       t.life -= dt;
       if (t.life <= 0) { this.tracers.splice(i, 1); continue; }
       if (n < 32) {
-        this.lpos.set(t.p, n * 6);
+        const o = n * 6, q = t.p;
+        if (t.streak) {
+          // the head runs muzzle -> impact over the round's life; the tail
+          // trails it by 7 m
+          const dx = q[3] - q[0], dy = q[4] - q[1], dz = q[5] - q[2];
+          const len = Math.hypot(dx, dy, dz) || 1;
+          const h = 1 - t.life / t.max, tl = Math.max(0, h - 7 / len);
+          L[o] = q[0] + dx * tl; L[o + 1] = q[1] + dy * tl; L[o + 2] = q[2] + dz * tl;
+          L[o + 3] = q[0] + dx * h; L[o + 4] = q[1] + dy * h; L[o + 5] = q[2] + dz * h;
+        } else for (let k = 0; k < 6; k++) L[o + k] = q[k];
         n++;
       }
     }
-    for (let i = n; i < 32; i++) this.lpos.set([0, -9999, 0, 0, -9999, 0], i * 6);
+    for (let i = n; i < 32; i++) { const o = i * 6; L[o] = 0; L[o + 1] = -9999; L[o + 2] = 0; L[o + 3] = 0; L[o + 4] = -9999; L[o + 5] = 0; }
     this.lines.geometry.attributes.position.needsUpdate = true;
     this.lines.visible = n > 0;
   }
