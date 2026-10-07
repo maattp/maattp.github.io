@@ -192,10 +192,10 @@ export class Player {
     // the pistol is in the right hand while you have rounds for it, on foot
     const F = this.fighter;
     F.gun.visible = this.onFoot && this.armed && this.ammo > 0 && !this.swimming && !this.sky;
-    // a raised gun follows the camera
-    if (F.aimT > 0) F.aimYaw = this.camYaw + Math.PI;
 
     this.camYaw -= look.x;
+    // a raised gun follows the camera (after this frame's look, not a frame behind)
+    if (F.aimT > 0) F.aimYaw = this.camYaw + Math.PI;
     this.camPitch = clamp(this.camPitch + look.y, -0.5, 1.15);
     this.lookT = look.x || look.y ? 0 : this.lookT + dt;
 

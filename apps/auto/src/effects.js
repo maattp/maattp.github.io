@@ -25,6 +25,8 @@ export class Effects {
       depthWrite: false, sizeAttenuation: true, blending: THREE.NormalBlending,
     });
     mat.onBeforeCompile = (sh) => {
+      // pinned to three r160's points_vert: say so if that line ever changes
+      if (!sh.vertexShader.includes('gl_PointSize = size;')) console.warn('particles: three changed points_vert, per-particle size not applied');
       sh.vertexShader = 'attribute float psize;\n' + sh.vertexShader.replace('gl_PointSize = size;', 'gl_PointSize = size * psize;');
     };
     this.points = new THREE.Points(geo, mat);
