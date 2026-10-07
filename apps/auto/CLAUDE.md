@@ -59,6 +59,7 @@ src/pickleball.js           the pickleball court on Bainbridge and its screen
 src/pickleballgame.js       PICKLEBALL itself: singles, the two-bounce rule, the kitchen (no DOM)
 src/shadowcache.js          phones: the city's shadows drawn once, only movers per frame
 src/chunkcull.js            the city's chunk groups frustum-culled whole before the scene pass
+src/nearshadow.js           the player's own shadow map, folded into the sun's in every lit material
 src/effects.js              particles + tracers
 src/audio.js                all sound, synthesised: engine models, one-shot bank,
                             positional traffic/sirens, radio (see "Sound")
@@ -986,6 +987,109 @@ slid across the street as you turned, because the box follows the view.
 the last 7 % of the box (~36 m at desktop's 260 m half-width, ~27 m at the
 phone's 190 m). It is a string replace pinned to r160: it warns and leaves the
 chunk alone if the text changes, so **re-check it on a three bump**.
+
+### Smooth edges, and the player's own map
+
+**"When you're walking, the shadow is not a solid shadow, it has weird lines
+in it."** Not a regression: three long-standing things, all visible in
+`docs/shadows/`:
+
+- **The phone filtered with plain PCF.** Chosen as "a fraction of the cost"
+  of PCFSoft, which is not what three r160 does: PCF is 17 compares at
+  nearest-texel offsets of 0, +-0.5 and +-1 texel, PCFSoft 16 compares
+  weighted bilinearly by the sub-texel position. Same fetches. What PCF buys
+  is a fixed tap pattern, so every shadow edge is a stair of nested
+  rectangles one texel a step -- 0.37 m at the phone's 1024 map over a 190 m
+  box -- and a small caster is a stack of concentric boxes. Every device now
+  uses PCFSoft.
+- **A person is one texel wide in the sun's map.** The body is ~0.45 m
+  across, a leg ~0.12 m, the texel 0.37 m (0.25 m on a desktop). No filter
+  can draw a caster smaller than its texel: the walking player's shadow was a
+  blocky smudge whose legs came and went as they crossed texel centres. So
+  **the player has a map of his own** (`src/nearshadow.js`): the same sun
+  direction, a box 4 m either side of him (more for a long vehicle: half its
+  length + 2.5 m), 512 texels -- 1.6 cm a texel on foot. The box only has to
+  hold the CASTER: every ray through a shadowed receiver passes through it,
+  so in the light's xy the whole shadow lies inside the caster's outline; its
+  depth runs 40 m up-sun to 200 m down-sun, so a jump or a fall off a pier
+  still lands its shadow. Casters: the player on foot, or the vehicle he
+  drives on the ground or water (not an aircraft, the balloon or a train,
+  whose shadows land far from them; those keep the sun's map).
+- **Your own car cast only its wheels.** A parked car's body has its casting
+  switched off (traffic.js: its shadow lands on shaded kerbside ground), and
+  traffic's per-car loop, which switches casting by distance on a phone,
+  skips the player's vehicle; so a car taken from the kerb drove off casting
+  only the four detailed wheels `setDetailed` adds, on every device.
+  `setDetailed(true)` now switches its body's casting on: +3 shadow draws
+  while you drive a car taken from the kerb, the body's three parts.
+
+How it is wired, and the laws that come with it:
+
+- **The casters leave the sun's map for the frame** (hidden for the inner
+  `shadowMap.render`), and every lit material takes `min(sun, near)`: the
+  darker of the two, never the product, so the player's shadow falling into a
+  building's adds nothing, as a real one would not.
+- **three sees a second shadow-casting DirectionalLight**: that is the only
+  way the map, its matrix and the shadow coordinate reach every built-in
+  program (`UniformsLib` is copied too early to extend, see the height fog).
+  `installNearShadowChunk` patches `lights_fragment_begin`'s directional loop
+  to light with index 0 only (the sun) and fold index 1's shadow into it; the
+  near light's colour is 0 anyway and it never lights anything. **Light
+  order is the scene's**: the near light is added straight after the sun,
+  both cast, neither has a map, and three's sort is stable. **There is one
+  sun**: the patch compiles out every directional light past index 0, so a
+  second real directional light would silently go dark -- change the patch
+  first. It is a string replace pinned to r160 and refuses (warns, adds no
+  light, the player keeps the sun's map) if the chunk changed: **re-check it
+  on a three bump**. `window.__noNearShadow` boots without it.
+- **The map is drawn by three's own shadow pass**, called with the near light
+  alone and a stand-in root holding only the casters: 1 draw on foot, a car's
+  three parts and its wheels in one, no walk of the scene. It wraps
+  `shadowMap.render` OUTSIDE shadowcache.js and chunkcull.js (installed
+  after both), so they see only the sun, exactly as before; a render of any other scene (one without the near light) passes
+  straight through. With nothing to cast it renders one empty map and parks
+  the light 100 km under the world, so every receiver falls outside its box
+  and `getShadow` skips its taps.
+- **Biases are for the near map's own scale**: ~5 cm along the ray and one
+  texel along the normal (a car's curved panels must not shadow themselves
+  in a 2-4 cm map). The sun's -0.0006 is ~0.6 m at its 960 m depth range,
+  which is why cars never shadowed themselves there. A pedestrian's material
+  still lifts its lookup 0.6 m toward the sun in BOTH maps (peds.js), so the
+  player still does not self-shadow.
+
+Cost, phone profile (iPhone UA and viewport, Mac GPU): one more pass (the
+casters' own draws, moved out of the sun's) into a 512 x 512 map (~2 MB of GPU: RGBA + depth), every lit program
+built for two directional shadow maps (one more `mat4` and varying per
+vertex, one more sampler, one more `getShadow` whose taps run only inside
+the player's 8 m box), PCFSoft's mixes instead of PCF's 17th tap.
+Measured on the phone profile, in one boot where it could be (the near map
+switched off and on, or the light's casting off and the filter switched):
+
+| | before | after |
+|---|---|---|
+| near pass, CPU (Mac, unthrottled) | -- | 0.024 ms a frame, 1 draw on foot |
+| GL calls a frame, frozen frame | 1137 | 1144 |
+| shadow-pass draws (perfcpu foot-dt / drive-dt) | 7-10 / 13 | 4-10 / 13-14 (the player's draw moves, it is not added) |
+| scene + shadow GPU, chase view, median of 80 (2 rounds) | PCF 3.38 / 3.19 ms | PCFSoft 3.35 / 3.72, + own map 3.67 / 3.11 ms |
+| GPU memory | | + ~2 MB (512 x 512 RGBA + depth) |
+
+The GPU medians are inside each other's spread: PCFSoft against PCF and the
+extra map do not show on the Mac at the phone's 1267 x 582. perfcpu at 8x
+on this machine (another agent's load, 4-5) moved every system together
+between runs, base and branch alike (render 10.8-21.3 ms base, 11.1-28.8
+branch over two alternated rounds), so it can say no more than that nothing
+large moved; the near pass's own 0.024 ms is about 0.2 ms at 8x.
+
+`docs/shadows/`: `walk-side-steps.jpg` (PCF, PCFSoft alone, PCFSoft and the
+player's map: the filter smooths the stair, only the map gives the shape),
+`walk-side.jpg`, `walk-top.jpg`, `walk-side-full.jpg`, `car-side.jpg`,
+`car-chase.jpg`, before | after.
+
+`tools/shadowshots.mjs` shoots the walking player's shadow (chase, low side,
+from above, with crops), the player's car, and building shadows across two
+streets downtown and two among houses, phone profile by default
+(`--desktop`), the game's own sun (`placeSun`); `SHOTS_EVAL` switches an
+experiment on in the same boot (`d.nearShadow.on = false`).
 
 ## Surfaces: glass, windows, roofs, trees, ground
 
@@ -3741,6 +3845,7 @@ The purpose-built harnesses, each a fixed-dt, paused-game driver:
 | `tools/jank.mjs` | `fwy-bump`, `crossing-clash`, `barrier-on-road` added for the grading (see "Freeway grading") |
 | `tools/junctions.mjs [tag] [--only=cat] [--noshots]` | 19 junctions picked by kind; per junction a raycast classification map, hole / stacked tarmac / crossing paint / kerb gap / sink counts, and oblique, top and eye shots (GPU by default; `JUNC_PROBE='<expr>'`, `JUNC_AT=x,z`). See "Junctions, dead ends, bridges" |
 | `tools/shadowcheck.mjs` | the phone's shadow cache against three's own pass: live shadow map read back both ways at seven boxes, depths compared texel by texel, draws counted (see "Heat") |
+| `tools/shadowshots.mjs <dir> [--desktop]` | close-ups of the walking player's shadow, his car's, and building shadows on streets, on the game's own sun; `SHOTS_EVAL` / `SHOTS_PROBE` / `SHOTS_ONLY` (see "Smooth edges, and the player's own map") |
 | `tools/audiorender.mjs [--only a,b] [--showcase]` | renders the sound offline to `docs/audio/*.wav`: peak/RMS/centroid/silence per file, fails on clipping; `--showcase` refreshes `apps/auto/docs/audio/` (see "Sound") |
 | `tools/perfcpu.mjs --audio` | lets the AudioContext run and counts the rendered Web Audio nodes per run, persistent and one-shot, and the bank's build time (see "Sound") |
 | `tools/ridesurvey.mjs [--tag T] [--at x,z;.. --range M] [--shots DIR]` | every road chain in the city ridden at a class speed through Vehicle.update's vertical follow: frames over 30/60 m/s2, humps, grade breaks, deck captures, per kind and per ranked 60 m site; `--at` traces a site row by row (see "Street grading") |

@@ -9,7 +9,7 @@
 // emulates an iPhone 17 Pro held landscape -- 874 x 402 CSS px, DPR 3,
 // mobile, an iPhone user agent -- so the game's ON_PHONE is true and every
 // phone-tier cap (pixel ratio 1.45 at high, 8 SSAO taps, 1024 shadow map,
-// PCF, peds casting no shadow) applies. `--desktop` measures the desktop tier
+// peds casting no shadow) applies. `--desktop` measures the desktop tier
 // at 1280 x 720 instead.
 //
 // At each spot the camera is FROZEN (game paused, streaming settled by hand,

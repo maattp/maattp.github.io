@@ -250,6 +250,15 @@ async function main() {
       if (st.blend || st.low < -0.1) { console.error('FAIL: the player is not standing on the ground at spawn'); process.exitCode = 1; }
     }
 
+    // The player's own shadow map (nearshadow.js) is a chunk patch pinned to
+    // r160 that refuses quietly if three changes; on foot it must be drawing.
+    {
+      const ns = await session.eval(`(() => { const n = window.__dbg.nearShadow;
+        return n ? { active: n.active, draws: n.draws } : null; })()`);
+      console.log(`  player's own shadow map: ${ns ? `active ${ns.active}, ${ns.draws} draw` : 'MISSING'}`);
+      if (!ns || !ns.active || !(ns.draws > 0)) { console.error("FAIL: the player's own shadow map is not drawing"); process.exitCode = 1; }
+    }
+
     console.log('\n--- landmark accuracy vs real lat/lon --------------------');
     let worst = 0;
     for (const l of report.landmarks) {
