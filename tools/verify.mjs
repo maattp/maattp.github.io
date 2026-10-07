@@ -2583,6 +2583,85 @@ async function main() {
       let horn = false;
       for (let i = 0; i < 10 * 30; i++) { F._guard(0.1, P); q.service(0.1); horn = horn || q.hornOn; }
       out.warned = { horn, braking: q.brakeCmd > 0.5 || q.emerg };
+      // flagging a moving freight down (flagDown): ENTER as player.js sends it
+      // -- boardable first, then onWait -- and the auto-board in _flagged
+      const press = () => F.boardable(P.x, P.y, P.z) || F.onWait(P.x, P.z);
+      const go = (s, u) => {
+        q.track = tr; q.dir = 1; q.place(s, 1); q.state = 'run'; q.u = u; q.yardDone = true; q.flag = null; q.driver = null;
+        q.notch = 6; q.brakeCmd = 0; q.brakeCyl = 0; q.rev = false; q.emerg = false; q.horn.seq = null; q.standT = 0;
+      };
+      const beside = (s, off) => {
+        const h = tr.H[tr.idx(s)], lx = Math.cos(h), lz = -Math.sin(h);
+        // the side away from the other main
+        const o = tr.other.nearest(tr.x(s) + lx * 6, tr.z(s) + lz * 6, 30);
+        const sg = o && o.d < 6 ? -1 : 1;
+        P.x = tr.x(s) + lx * off * sg; P.z = tr.z(s) + lz * off * sg; P.y = G.terrainHeight(P.x, P.z);
+      };
+      const xsb = F.crossings.filter((c) => c.s.sb !== undefined).map((c) => c.s.sb);
+      let sF = 0;
+      for (let s = 9000; s < tr.len - 2000; s += 20) {
+        let ok = !xsb.some((x) => x > s - 900 && x < s + 700);
+        for (let e = s - 800; ok && e < s + 600; e += 10) if (tr.kind(e) !== 4) ok = false;
+        if (ok) { sF = s; break; }
+      }
+      let msg = '';
+      F.say = (m) => { msg = m; };
+      // 1) beside the lead cab of a freight at 45 mph: standing still, then
+      // jogging (5 m/s) after the cab once it has passed -- which must be sooner
+      const flagRun = (jog) => {
+        go(sF + 4 - q.len / 2, 20);
+        let sW = sF; msg = '';
+        beside(sW, 5);
+        const r = { took: !!press(), said: msg, flagged: !!q.flag, past: 0, backed: false, secs: null };
+        for (let i = 0; i < 10 * 400 && P.vehicle !== q; i++) {
+          q.service(0.1); F._flagged(0.1, P); F._crossingsUpdate(0.1, P.x, P.z);
+          r.past = Math.max(r.past, q.lead - 4.2 - sF);
+          if (q.flag && q.flag.phase === 'back') r.backed = true;
+          if (P.vehicle === q) r.secs = +((i + 1) / 10).toFixed(1);
+          else if (jog && q.lead - 4.2 - sW > 3) { sW += 0.5; beside(sW, 5); }
+        }
+        r.boarded = P.vehicle === q; r.past = Math.round(r.past);
+        if (P.vehicle) P.exitVehicle(true);
+        return r;
+      };
+      out.flag = flagRun(false);
+      out.flagJog = flagRun(true);
+      // 2) beside a hopper mid-train: told where the cab is, and it stops for you
+      go(sF + 200 - q.len / 2, 15);
+      msg = '';
+      beside(sF + 200 - q.cars[10].off, 4);
+      out.hint = { took: !!press(), said: msg, beacon: F.beaconFor === q, flagged: !!q.flag };
+      q.flag = null; F.beaconT = 0;
+      // 3) at a level crossing, the train coming: it stands short of the
+      // crossing, not across it, and the gates go up while it waits
+      // (one the road crosses at grade, with track at grade for 400 m before it)
+      const xc = F.crossings.find((x) => {
+        const s = x.s.sb;
+        if (s === undefined || s < 9000 || s > tr.len - 2000 || tr.kind(s) !== 5) return false;
+        for (let e = s - 400; e < s; e += 10) if (tr.kind(e) !== 4 && tr.kind(e) !== 5) return false;
+        return true;
+      });
+      go(xc.s.sb - 260 - q.len / 2, 12);
+      beside(xc.s.sb, 6);
+      msg = '';
+      const xg = { took: !!press(), said: msg, under: 0, up: false, boarded: false };
+      for (let i = 0; i < 10 * 120; i++) {
+        q.service(0.1); F._flagged(0.1, P); F._crossingsUpdate(0.1, P.x, P.z);
+        const a = (xc.s.sb - q.lead) * q.dir, b = (xc.s.sb - q.tail) * q.dir;
+        if (q.flag && q.flag.phase === 'stand' && a <= 0 && b >= -6) xg.under++;
+        if (q.flag && q.flag.phase === 'stand' && q.standT > 20) { xg.up = !xc.active; break; }
+      }
+      xg.gap = Math.round((xc.s.sb - q.lead) * q.dir);
+      // walk up to the cab: you climb in
+      beside(q.lead - 4.2, 5);
+      for (let i = 0; i < 10 && P.vehicle !== q; i++) { q.service(0.1); F._flagged(0.1, P); }
+      xg.boarded = P.vehicle === q;
+      if (P.vehicle) P.exitVehicle(true);
+      out.xing = xg;
+      // 4) in a car beside one: nothing
+      P.onFoot = false; out.inCar = F.flagDown(P.x, P.y, P.z); P.onFoot = true;
+      F.say = sw;
+      q.flag = null;
       P.x = px; P.z = pz;
       return out;
     })()`, true);
@@ -2592,6 +2671,8 @@ async function main() {
     console.log(`  15 min of service: two trains on single track ${fr.service.both} times, gates down ${fr.service.gates} times, over the limit ${fr.service.over}`);
     console.log(`  Balmer Yard: boardable ${fr.boardable}, boarded ${fr.boarded}; 100 s notched up: ${fr.mph} mph; braked to a stand in ${fr.stop.secs} s (emergency ${fr.stop.emerg}); horn ${fr.horn}; down beside the track ${fr.out}`);
     console.log(`  called to the yard: ${fr.call.called}, in after ${fr.call.arrived} s; a crossing: active ${fr.gate.active}, car held ${fr.gate.held}, 60 m off clear ${fr.gate.clear}; you on the track: horn ${fr.warned.horn}, braking ${fr.warned.braking}`);
+    console.log(`  flagged at the cab (45 mph): "${fr.flag.said}"; ran ${fr.flag.past} m past you, set back ${fr.flag.backed}; you climbed up ${fr.flag.boarded} after ${fr.flag.secs} s standing still, ${fr.flagJog.secs} s jogging after it`);
+    console.log(`  beside a hopper: "${fr.hint.said}" (beacon ${fr.hint.beacon}, stopping ${fr.hint.flagged}); at a crossing: stood ${fr.xing.gap} m short (across it ${fr.xing.under} steps), gates up ${fr.xing.up}, climbed up ${fr.xing.boarded}; in a car: ${fr.inCar}`);
     {
       const bad = [];
       for (const k of ['sb', 'nb']) {
@@ -2611,6 +2692,10 @@ async function main() {
       if (!fr.call.called || fr.call.arrived === null) bad.push('calling a train');
       if (!fr.gate.active || !fr.gate.held || !fr.gate.clear) bad.push('the crossing gates');
       if (!fr.warned.horn) bad.push('a train sounding for you');
+      if (!fr.flag.took || !/stopping for you/.test(fr.flag.said) || !fr.flag.boarded || fr.flag.past > 220 || !(fr.flag.secs <= 46) || !fr.flagJog.boarded || !(fr.flagJog.secs < fr.flag.secs - 3)) bad.push('flagging a freight down at its cab');
+      if (!fr.hint.took || !/lead locomotive's cab/.test(fr.hint.said) || !fr.hint.beacon) bad.push('the hint beside a hopper');
+      if (!fr.xing.took || fr.xing.under || fr.xing.gap < 3 || !fr.xing.up || !fr.xing.boarded) bad.push('a flagged stop at a crossing');
+      if (fr.inCar) bad.push('a car beside a freight flagged it');
       if (bad.length) { console.error(`FAIL: freight: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
