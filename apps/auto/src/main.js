@@ -19,6 +19,7 @@ import { PickleballCourt } from './pickleball.js';
 import { freezeStatic, skipHiddenMatrices, Builder, dropStaticArrays } from './build.js';
 import { releaseTextureSources, installGpuLedger } from './memory.js';
 import { installChunkCull } from './chunkcull.js';
+import { NearShadow, installNearShadowChunk } from './nearshadow.js';
 import { Fishing } from './fishing.js';
 import { Hoops } from './hoops.js';
 import { NeedleTop } from './needletop.js';
@@ -449,6 +450,21 @@ class Game {
 // ---------------------------------------------------------------------------
 
 let chunkCull = null;   // chunkcull.js
+let nearShadow = null;  // nearshadow.js
+// Who casts into the near map this frame: the player on foot, or the vehicle
+// he drives on the ground or the water. An aircraft keeps the sun's map (its
+// shadow lands far from it, and the box is a few metres across).
+function nearShadowFocus() {
+  const P = player;
+  if (!P) return null;
+  if (P.onFoot) {
+    const g = P.h.group;
+    return g.visible ? { x: P.x, y: P.y + 0.9, z: P.z, half: 4, roots: [g] } : null;
+  }
+  const v = P.vehicle;
+  if (!v || !v.group || !v.group.visible || v.spec.rail || v.spec.plane || v.spec.heli || v.spec.balloon) return null;
+  return { x: v.x, y: v.y + 1, z: v.z, half: Math.max(4, v.halfLen + 2.5), roots: [v.group] };
+}
 let gpuLedger = null;
 let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts, stunts, monorail, link, freight, bikeNet, cyclists, lmRoot, shadowCache = null;
 let pickups = [];
@@ -618,11 +634,14 @@ async function boot() {
   const viewH = () => canvas.clientHeight || window.innerHeight;
   renderer.setSize(viewW(), viewH(), false);
   renderer.shadowMap.enabled = true;
-  // PCFSoft is the most expensive filter three offers and it is a fill-rate
-  // cost paid on every shadowed pixel. On a phone that is not where the budget
-  // should go; plain PCF is a fraction of the cost and the difference at this
-  // resolution is a slightly harder shadow edge.
-  renderer.shadowMap.type = ON_PHONE ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+  // PCFSoft on every device. The phone used plain PCF on the belief that it
+  // was "a fraction of the cost"; in three r160 it is 17 nearest-texel taps
+  // against PCFSoft's 16 (bilinearly weighted), so it saved nothing, and its
+  // taps land on a fixed sub-texel pattern: every shadow edge in the city was
+  // a stair of nested rectangles, 0.37 m a step at the phone's 1024 map --
+  // the "lines in the shadow" (CLAUDE.md "Shadows: smooth edges, and the
+  // player's own map").
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 /**
@@ -822,6 +841,12 @@ function installShadowFade() {
   installShadowFade();
   scene.add(sun);
   scene.add(sun.target);
+  // The player's own shadow, from a map of its own (nearshadow.js). Added
+  // straight after the sun, before any material compiles: its light is the
+  // second directional light every lit program is built for.
+  if (!window.__noNearShadow && installNearShadowChunk()) {
+    nearShadow = new NearShadow(renderer, scene, sun, { half: 4, size: 512, focus: nearShadowFocus });
+  }
 
   postfx = new PostFX(renderer);
   postfx.setSize(viewW(), viewH(), renderer.getPixelRatio());
@@ -937,6 +962,8 @@ function installShadowFade() {
   if (world.terrainGroup) freezeStatic(world.terrainGroup);
   // after the shadow cache: its wrapper on shadowMap.render goes inside ours
   chunkCull = installChunkCull(renderer, world.group);
+  // outermost: the cache and the cull below it see only the sun
+  if (nearShadow) nearShadow.install();
   // ON A PHONE THE STATIC CITY KEEPS ONE COPY, NOT TWO (CLAUDE.md "Memory"):
   // the terrain, the skyline, the landmarks, Link's and the freight line's
   // structure and trains drop their JS arrays once the GPU has them. Before
@@ -1361,7 +1388,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
