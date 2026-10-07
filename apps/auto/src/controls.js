@@ -20,6 +20,7 @@ const PAD = {
   map: 8,         // Back/Share
   pause: 9,       // Start/Options
   horn: 10,       // L3 -- GTA puts the horn on the left stick click
+  siren: 11,      // R3 -- a police car's siren and lights, on and off
   sprint: 10,     // ...and on foot the same click is hold-to-sprint
   radioPrev: 14,  // dpad left
   radioNext: 15,  // dpad right
@@ -42,6 +43,7 @@ export class Controls {
     this._stickId = null;
     this._lookId = null;
     this.sensitivity = 1;
+    this.sirenTaps = 0;   // SIREN presses (button, G, R3) since takeSiren()
 
     // --- gamepad ---
     this.hasPad = false;
@@ -102,6 +104,7 @@ export class Controls {
         this._pointers.set(e.pointerId, { kind: 'btn', el: b });
         b.classList.add('down');
         if (b.dataset.tap) this.tapped = b.dataset.btn;
+        if (b.dataset.btn === 'siren') this.sirenTaps++;
       }, opts);
       const up = (e) => {
         if (!this._pointers.has(e.pointerId)) return;
@@ -133,6 +136,7 @@ export class Controls {
       if (e.code === 'KeyF' || e.code === 'KeyE') this.tapped = 'enter';
       if (e.code === 'Space') this.tapped = 'jump';
       if (e.code === 'KeyR' && this._ui) this._ui.radio = 1;   // the next station
+      if (e.code === 'KeyG') this.sirenTaps++;
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
@@ -204,6 +208,7 @@ export class Controls {
     if (edge(PAD.jump) && this.mode !== 'drive') this.tapped = 'jump';
     if (edge(PAD.pause)) this._ui.pause = true;
     if (edge(PAD.map)) this._ui.map = true;
+    if (edge(PAD.siren)) this.sirenTaps++;
     if (edge(PAD.radioNext)) this._ui.radio = 1;
     if (edge(PAD.radioPrev)) this._ui.radio = -1;
     if (edge(PAD.jump)) this._ui.confirm = true;
@@ -347,6 +352,13 @@ export class Controls {
     this.camDX = 0;
     this.camDY = 0;
     return d;
+  }
+
+  /** Consume the SIREN presses: a count, not a held state, so a tap shorter than a frame still counts. */
+  takeSiren() {
+    const n = this.sirenTaps;
+    this.sirenTaps = 0;
+    return n;
   }
 
   takeTap() {

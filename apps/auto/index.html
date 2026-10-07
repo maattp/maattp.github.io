@@ -90,6 +90,9 @@
 
   #app[data-mode="drive"] .foot-only { display: none; }
   #app:not([data-mode="drive"]) .car-only { display: none; }
+  #app:not([data-police="1"]) .police-only { display: none; }
+  .b-siren { position: absolute; left: 0; bottom: calc(100% + 10px); }
+  .b-siren.on { background: linear-gradient(90deg, rgba(50,90,240,0.62), rgba(235,45,45,0.62)); border-color: rgba(255,255,255,0.62); }
 
   /* A pad takes the thumb controls off the screen -- they cover a third of it
      and nothing is going to press them. The look zone stays: it costs nothing
@@ -188,6 +191,8 @@
   #wasted.show { display: flex; animation: fadeIn .5s; }
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
   #wasted span { font-size: 52px; font-weight: 900; letter-spacing: .14em; color: #e8cfa0; text-shadow: 0 6px 24px #000; }
+  #wasted { flex-direction: column; gap: 10px; }
+  #wastedTo { font-size: 15px; font-weight: 600; color: #f2e6d0; text-shadow: 0 2px 10px #000; }
 
   /* ---------- overlays ---------- */
   #mapOverlay, #pauseMenu {
@@ -390,6 +395,8 @@
 
   <div id="pad">
     <!-- driving -->
+    <!-- a police car only (main.js updateSiren): over HORN, out of the grid -->
+    <div class="btn b-sm car-only police-only b-siren" data-btn="siren">SIREN</div>
     <div class="btn b-sm car-only" data-btn="horn">HORN</div>
     <div class="btn b-md car-only" data-btn="hand">HAND<br>BRAKE</div>
     <div class="btn b-sm car-only" data-btn="enter" data-tap="1">EXIT</div>
@@ -406,7 +413,7 @@
     <div class="btn b-lg b-atk foot-only" data-btn="attack">ATTACK</div>
   </div>
 
-  <div id="wasted"><span>WASTED</span></div>
+  <div id="wasted"><span>WASTED</span><div id="wastedTo"></div></div>
 
   <div id="mapOverlay">
     <canvas id="bigMap"></canvas>
@@ -431,6 +438,7 @@
         <div id="jobsList"></div>
         <div class="rowHead">DELIVERY <span id="jobsMoney"></span></div>
         <div id="buyRow">
+          <button class="buy" data-buy="pistol" data-cost="300">Pistol $300</button>
           <button class="buy" data-buy="sports" data-cost="900">Sports $900</button>
           <button class="buy" data-buy="muscle" data-cost="900">Muscle $900</button>
           <button class="buy" data-buy="police" data-cost="1500">Police $1500</button>
@@ -444,7 +452,7 @@
           <button class="buy" data-buy="jet" data-cost="14000">Business jet $14000</button>
         </div>
       </div>
-      <button class="cta ghost" id="respawnBtn">Respawn at Harborview</button>
+      <button class="cta ghost" id="respawnBtn">Respawn at the nearest hospital</button>
       <div class="row" id="rowQuality"><span>Graphics</span><div class="seg">
         <button class="segbtn" data-quality="high">High</button>
         <button class="segbtn" data-quality="medium">Med</button>
@@ -475,8 +483,13 @@
         Left thumb steers and walks. Right side: drag to look, buttons to drive.
         Walk up to any car and hit ENTER to take it. Deliveries pay — the gold ring
         on the minimap is your drop-off. Hurt someone and the SPD will notice.
+        <br><br>Pistols lie on the pavement all over the map: the blue gun marks on
+        the minimap and the map. Walk over one (or buy one above) and ATTACK fires
+        it. Green crosses are first aid. If you are wasted, you wake at the nearest
+        hospital or clinic (red crosses) your roads reach. In a police car, SIREN
+        (or G) switches the siren and lights on and off.
         <br><br>Keyboard: WASD / arrows, F enter-exit, Space handbrake &amp; jump, R radio,
-        Shift run, J attack, H horn.
+        Shift run, J attack, H horn, G siren.
         <br><br>Streets, shoreline and buildings are real: map data ©
         OpenStreetMap contributors, licensed ODbL. Elevation from USGS 3DEP.
       </p>
@@ -497,7 +510,7 @@
     <pre id="bootLog"></pre>
     <div id="loadRotate">Turn sideways to play once it has loaded</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v184</div>
+    <div id="build">v185</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation USGS 3DEP</div>
   </div>
   <script>

@@ -3287,6 +3287,144 @@ async function main() {
       console.error('FAIL: freeways'); process.exitCode = 1;
     }
 
+    // --- WASTED: the nearest hospital your roads reach -----------------------
+    // Dying in Winslow used to put you back at Harborview, across the Sound.
+    // Each death is real (damagePlayer), and so is the respawn (doRespawn):
+    // where WASTED said, on dry ground beside a street, standing on it.
+    const rsp = await session.eval(`(async () => {
+      const d = window.__dbg, city = d.city, G = d.G, P = d.player, game = d.game;
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      if (P.vehicle) P.exitVehicle(true);
+      game.paused = false;
+      const comp = d.roadComponents();
+      const sites = d.respawns.map((r) => {
+        const n = city.nodes[r.node];
+        return { name: r.name, comp: comp[r.node], nodeD: n ? Math.hypot(n.x - r.x, n.z - r.z) : Infinity,
+          wet: G.isWater(r.x, r.z) || d.world.waterLevelAt(r.x, r.z) !== null, onRoad: city.onRoad(r.x, r.z, 1.5, true),
+          inB: d.world.inBuilding(r.x, r.z, 1.5) };
+      });
+      const die = async (lat, lon) => {
+        const [ax, az] = G.toWorld(lat, lon);
+        const n = city.nodes[city.nearestNode(ax, az, 400)];
+        P.respawn(n.x, n.z);
+        d.world.update(n.x, n.z, 40);
+        await wait(300);
+        game.damagePlayer(500, 'verify');
+        const said = document.getElementById('wastedTo').textContent;
+        const shown = document.getElementById('wasted').classList.contains('show');
+        d.doRespawn();
+        await wait(1200);
+        const q = P.position, low = city.groundAt(q.x, q.z, q.y + 0.5);
+        return { from: G.placeNameAt(n.x, n.z), said, shown, x: q.x, z: q.z, to: G.placeNameAt(q.x, q.z),
+          wet: G.isWater(q.x, q.z) || d.world.waterLevelAt(q.x, q.z) !== null, onRoad: city.onRoad(q.x, q.z, 0.5, true),
+          stand: +(q.y - low).toFixed(3), terr: +(q.y - G.terrainHeight(q.x, q.z)).toFixed(3), alive: !game.dead && P.onFoot && P.health === 100,
+          gone: !document.getElementById('wasted').classList.contains('show') };
+      };
+      return { sites, bain: await die(47.6246, -122.5190), down: await die(47.6100, -122.3360),
+        islands: [d.nearestRespawn(...G.toWorld(47.541, -122.49)).name, d.nearestRespawn(...G.toWorld(47.508, -122.465)).name] };
+    })()`, true);
+    console.log('\n--- WASTED: the nearest hospital ------------------------');
+    {
+      const bad = [];
+      const near = (o, name) => o.said === `Taking you to ${name}` && o.shown && o.gone && o.alive && !o.wet && !o.onRoad
+        && Math.abs(o.stand) < 0.05 && Math.abs(o.terr) < 0.6;
+      const site = (n) => rsp.sites.find((s) => s.name === n);
+      for (const [k, o] of [['Winslow', rsp.bain], ['downtown', rsp.down]]) {
+        console.log(`  died in ${o.from}: "${o.said}" -> on foot in ${o.to} (${o.x.toFixed(0)}, ${o.z.toFixed(0)}), ${o.stand} m over the ground, ${o.terr} m over the terrain${o.wet ? ', IN THE WATER' : ''}${o.onRoad ? ', ON THE ROAD' : ''}`);
+      }
+      if (!near(rsp.bain, 'Bainbridge Island Clinic')) bad.push('dying in Winslow');
+      if (!near(rsp.down, 'Harborview Medical Center')) bad.push('dying downtown');
+      const bi = site('Bainbridge Island Clinic'), hv = site('Harborview Medical Center');
+      if (!bi || !hv || bi.comp === hv.comp) bad.push('the Bainbridge clinic is not on its own road network');
+      const off = rsp.sites.filter((s) => s.wet || s.onRoad || s.inB || s.nodeD > 95);
+      console.log(`  ${rsp.sites.length} sites, ${off.length} off a dry verge${off.length ? ': ' + off.map((s) => s.name).join(', ') : ''}; Blake Island -> ${rsp.islands[0]}, Vashon -> ${rsp.islands[1]}`);
+      if (off.length) bad.push('a site off a dry verge');
+      if (rsp.islands[1] !== 'Vashon Island Clinic') bad.push('Vashon');
+      if (bad.length) { console.error(`FAIL: WASTED: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
+    // --- the siren: police cars only, sound and lights ------------------------
+    const sir = await session.eval(`(async () => {
+      const d = window.__dbg, city = d.city, P = d.player, T = d.traffic;
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const btn = document.querySelector('[data-btn="siren"]');
+      const shown = () => getComputedStyle(btn).display !== 'none';
+      const q = P.position;
+      const mk = (type) => { const v = T.spawnAt(q.x + 6, q.z, 0, type, 0xf2f4f6, 'free'); v.y = city.groundAt(v.x, v.z, null); v.sync(); return v; };
+      const out = {};
+      out.onFoot = shown();
+      const sedan = mk('sedan');
+      P.enterVehicle(sedan); await wait(700);
+      out.sedan = shown();
+      P.exitVehicle(true); T.remove(sedan); await wait(400);
+      const cop = mk('police');
+      P.enterVehicle(cop); await wait(700);
+      const st = () => ({ on: cop.sirenOn, lens: cop.lightL ? cop.lightL.material.color.getHex() : null, hot: cop.lightL && cop.lightL.userData.hot,
+        both: !!cop.lightL && cop.lightL.visible && cop.lightR.visible, lit: btn.classList.contains('on'), voice: d.audio.sirens.some((s) => s.on) });
+      out.cop = shown(); out.before = st();
+      // a tap shorter than a frame still counts
+      btn.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 91, bubbles: true, pointerType: 'touch' }));
+      btn.dispatchEvent(new PointerEvent('pointerup', { pointerId: 91, bubbles: true, pointerType: 'touch' }));
+      const seen = new Set();
+      for (let i = 0; i < 16; i++) { await wait(100); seen.add(cop.lightL.visible ? 'L' : 'R'); }
+      out.on = st(); out.strobe = seen.size;
+      // traffic ahead of it eases off and keeps right (traffic.sirenFrom)
+      const tc = T.cars.find((v) => v.mode === 'traffic' && v.vLong > 4 && !v.spec.bus && !v.spec.cargo);
+      if (tc) {
+        const f = tc.forward;
+        cop.x = tc.x - f.x * 22; cop.z = tc.z - f.z * 22; cop.heading = tc.heading; cop.vLong = 0;
+        cop.y = city.groundAt(cop.x, cop.z, tc.y + 1); cop.sync();
+        const y0 = T.stats.yielded;
+        await wait(1500);
+        out.yielded = T.stats.yielded - y0;
+      }
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyG', key: 'g' }));
+      window.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyG', key: 'g' }));
+      await wait(700);
+      out.off = st();
+      // on again, then out of the car: off
+      d.controls.sirenTaps++; await wait(500);
+      P.exitVehicle(true); await wait(500);
+      out.left = { on: cop.sirenOn, shown: shown() };
+      T.remove(cop);
+      // the SPD's own units still strobe
+      d.game.addHeat(200);
+      let unit = null;
+      for (let i = 0; i < 40 && !unit; i++) { await wait(250); unit = T.cars.find((v) => v.mode === 'police' && v.lightL); }
+      if (unit) { const s = new Set(); for (let i = 0; i < 10; i++) { await wait(100); s.add(unit.lightL.visible ? 'L' : 'R'); }
+        out.unit = { strobe: s.size, hot: unit.lightL.material.color.getHex() === unit.lightL.userData.hot }; }
+      d.game.wanted = 0;
+      return out;
+    })()`, true);
+    console.log('\n--- the siren --------------------------------------------');
+    console.log(`  SIREN shown: on foot ${sir.onFoot}, in a sedan ${sir.sedan}, in a police car ${sir.cop}`);
+    console.log(`  taken: siren ${sir.before.on}, lenses dark ${sir.before.lens !== sir.before.hot && sir.before.both}; tapped: siren ${sir.on.on}, button lit ${sir.on.lit}, strobing ${sir.strobe > 1 ? 'yes' : 'NO'}, voice ${sir.on.voice}; G: siren ${sir.off.on}, dark ${sir.off.lens !== sir.off.hot}; left the car: ${sir.left.on}`);
+    console.log(`  traffic ahead yielding to it: ${sir.yielded === undefined ? 'no moving car to try' : `${sir.yielded} car-frames`}`);
+    console.log(`  an SPD unit: ${sir.unit ? `strobing ${sir.unit.strobe > 1}, lit ${sir.unit.hot}` : 'NONE SPAWNED'}`);
+    {
+      const ok = !sir.onFoot && !sir.sedan && sir.cop && !sir.before.on && sir.before.both && sir.before.lens !== sir.before.hot
+        && sir.on.on && sir.on.lit && sir.strobe > 1 && sir.on.voice && !sir.off.on && sir.off.lens !== sir.off.hot && !sir.left.on && !sir.left.shown
+        && sir.unit && sir.unit.strobe > 1 && sir.unit.hot && (sir.yielded === undefined || sir.yielded > 0);
+      if (!ok) { console.error('FAIL: the siren'); process.exitCode = 1; }
+    }
+
+    // --- pickups on the map ------------------------------------------------------
+    // "How do I get a weapon?": every pistol and first-aid kit is on both maps,
+    // off the map while it respawns, and none stands in the water or the road.
+    const pkm = await session.eval(`(() => {
+      const d = window.__dbg, G = d.G, city = d.city;
+      const pl = d.hud.places;
+      const marked = d.pickups.filter((p) => pl.includes(p.place) && p.place.kind === p.kind && p.place.x === p.x).length;
+      const bad = d.pickups.filter((p) => G.isWater(p.x, p.z) || city.onRoad(p.x, p.z, 0.5, false)).length;
+      const clinics = pl.filter((p) => p.kind === 'clinic').length;
+      d.hud.drawBigMap(d.player, d.game);
+      return { n: d.pickups.length, guns: d.pickups.filter((p) => p.kind === 'gun').length, marked, bad, clinics, sites: d.respawns.length,
+        island: d.pickups.filter((p) => p.x < -8000).length };
+    })()`);
+    console.log('\n--- pickups on the map ------------------------------------');
+    console.log(`  ${pkm.n} pickups (${pkm.guns} pistols, ${pkm.island} across the Sound), ${pkm.marked} on the maps, ${pkm.bad} in the water or the road; ${pkm.clinics} of ${pkm.sites} hospitals marked`);
+    if (pkm.marked !== pkm.n || pkm.bad || pkm.clinics !== pkm.sites || pkm.island < 3) { console.error('FAIL: pickups on the map'); process.exitCode = 1; }
+
     if (SHOTS) {
       mkdirSync(OUT, { recursive: true });
       const views = [

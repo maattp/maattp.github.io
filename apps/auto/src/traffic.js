@@ -300,7 +300,8 @@ export class TrafficSystem {
     this.lanes = new Float32Array(E.length * 3).fill(NaN);
     // Counters for tools/trafficcheck.mjs: dead ends a car still reached, and
     // turns that had to fall back past the normal choice.
-    this.stats = { deadEnd: 0, deadEndDespawn: 0, fallbackTurn: 0, stuckRecycled: 0 };
+    this.stats = { deadEnd: 0, deadEndDespawn: 0, fallbackTurn: 0, stuckRecycled: 0, yielded: 0 };
+    this.sirenFrom = null;   // your police car, siren on (main.js): traffic ahead yields to it
     this._P = { x: 0, z: 0 };
     this._ps = new Float64Array(24);   // driveTraffic's path samples
     this._pseg = new Float64Array(36); // ...and its segments: dx, dz, length
@@ -689,36 +690,64 @@ export class TrafficSystem {
       v.pathT = 0;
       v.repath = 0;
       v.rammed = 0;
-      // roof light bar: a dark housing with two strobing lenses
-      const bar = new THREE.Group();
-      const y = v.spec.roof + 0.09;
-      const housing = new THREE.Mesh(
-        new THREE.BoxGeometry(1.24, 0.1, 0.34),
-        new THREE.MeshStandardMaterial({ color: 0x15181c, roughness: 0.6, metalness: 0.1 })
-      );
-      housing.position.set(0, y - 0.03, 0.05);
-      bar.add(housing);
-      const mkL = (c, x) => {
-        const m = new THREE.Mesh(
-          new THREE.BoxGeometry(0.52, 0.15, 0.3),
-          new THREE.MeshBasicMaterial({ color: c, toneMapped: false })
-        );
-        m.position.set(x, y + 0.07, 0.05);
-        bar.add(m);
-        return m;
-      };
-      v.lightL = mkL(0x3355ff, -0.31);
-      v.lightR = mkL(0xff2a2a, 0.31);
-      v.tilt.add(bar);
-      // Remember the light bar so `remove` can free it. A vehicle SHARES its
-      // trim and matte geometry and materials with every other instance, so
-      // nothing may traverse-and-dispose a car -- only the per-instance extras
-      // built here. Cops churn continuously during a chase, and this was three
-      // geometries and three materials leaked every time one despawned.
-      v.extra = bar;
+      this.lightBar(v);
       return v;
     }
     return null;
+  }
+
+  /**
+   * A police car's roof light bar: a dark housing with two strobing lenses.
+   * Every unit gets one at spawn; a cruiser bought from the delivery menu
+   * gets one when you first drive it (main.js updateSiren). Idempotent.
+   */
+  lightBar(v) {
+    if (v.lightL) return;
+    const bar = new THREE.Group();
+    const y = v.spec.roof + 0.09;
+    const housing = new THREE.Mesh(
+      new THREE.BoxGeometry(1.24, 0.1, 0.34),
+      new THREE.MeshStandardMaterial({ color: 0x15181c, roughness: 0.6, metalness: 0.1 })
+    );
+    housing.position.set(0, y - 0.03, 0.05);
+    bar.add(housing);
+    // `hot` lit, `cold` the lens with the lights off (policeLights)
+    const mkL = (hot, cold, x) => {
+      const m = new THREE.Mesh(
+        new THREE.BoxGeometry(0.52, 0.15, 0.3),
+        new THREE.MeshBasicMaterial({ color: hot, toneMapped: false })
+      );
+      m.userData.hot = hot;
+      m.userData.cold = cold;
+      m.position.set(x, y + 0.07, 0.05);
+      bar.add(m);
+      return m;
+    };
+    v.lightL = mkL(0x3355ff, 0x1a2338, -0.31);
+    v.lightR = mkL(0xff2a2a, 0x3a1a1c, 0.31);
+    v.tilt.add(bar);
+    // Remember the light bar so `remove` can free it. A vehicle SHARES its
+    // trim and matte geometry and materials with every other instance, so
+    // nothing may traverse-and-dispose a car -- only the per-instance extras
+    // built here. Cops churn continuously during a chase, and this was three
+    // geometries and three materials leaked every time one despawned.
+    v.extra = bar;
+  }
+
+  /** Strobe a light bar's lenses (`on`), or show them dark. */
+  policeLights(v, dt, on) {
+    if (!v.lightL) return;
+    const L = v.lightL, R = v.lightR;
+    if (on) {
+      v.siren = (v.siren || 0) + dt;
+      const blink = Math.sin(v.siren * 11) > 0;
+      if (L.visible !== blink) { L.visible = blink; R.visible = !blink; }
+    } else if (!L.visible || !R.visible) { L.visible = R.visible = true; }
+    const want = on ? 'hot' : 'cold';
+    if (L.material.color.getHex() !== L.userData[want]) {
+      L.material.color.setHex(L.userData[want]);
+      R.material.color.setHex(R.userData[want]);
+    }
   }
 
   ensureHeli(active, px, pz) {
@@ -1315,7 +1344,22 @@ export class TrafficSystem {
 
     // SPEED: the road ahead (corners, slower streets) and the car ahead (IDM),
     // whichever asks for less, as one wanted acceleration.
-    const v0 = rt[R_SPD] * v.drvK * (v.panic > 0 ? 1.5 : 1);
+    // A SIREN COMING UP BEHIND (your police car with its siren on: main.js
+    // sets sirenFrom): ease off to 40 % and, off residential streets, keep
+    // right (the dodge's offset, + = right) so it can get by.
+    let yieldK = 1;
+    const sf = this.sirenFrom;
+    if (sf && sf !== v) {
+      const bx = v.x - sf.x, bz = v.z - sf.z, sw = sf.forward, vf = v.forward;
+      const ahead = bx * sw.x + bz * sw.z;
+      if (ahead > 0 && ahead < 70 && Math.abs(bx * sw.z - bz * sw.x) < 9
+        && vf.x * sw.x + vf.z * sw.z > 0.5 && Math.abs(v.y - sf.y) < 3) {
+        yieldK = 0.4;
+        this.stats.yielded++;
+        if (v.dodgeT <= 0 && city.edges[v.edge].cls !== 'res') { v.dodge = 0.7; v.dodgeT = 0.3; }
+      }
+    }
+    const v0 = rt[R_SPD] * v.drvK * (v.panic > 0 ? 1.5 : 1) * yieldK;
     let aWant = Math.min(aRoad, Math.abs(alpha) > 1.3 ? (9 - sp * sp) / 6 : Infinity);
     const heavy = v.spec.bus || v.spec.cargo;
     const aMax = heavy ? 1.3 : 2.0;
@@ -1537,9 +1581,7 @@ export class TrafficSystem {
 
   drivePolice(v, dt, px, pz, player) {
     const city = this.city;
-    v.siren = (v.siren || 0) + dt;
-    const blink = Math.sin(v.siren * 11) > 0;
-    if (v.lightL) { v.lightL.visible = blink; v.lightR.visible = !blink; }
+    this.policeLights(v, dt, true);
 
     const d = Math.hypot(px - v.x, pz - v.z);
     let tx = px, tz = pz;

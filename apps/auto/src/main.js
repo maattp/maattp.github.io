@@ -109,7 +109,32 @@ let golf = null;   // three holes at Interbay (golf.js)
 let wheelRide = null;   // the Great Wheel, turning, and its ride (wheelride.js)
 let fishToss = null;   // the flying fish at Pike Place Market (fishtoss.js)
 let needleTop = null;   // the Space Needle's elevator, deck and viewers (needletop.js)
-const HOSPITAL = G.RESPAWN; // kept clear of buildings by citygen, via G.KEEP_CLEAR
+// WASTED takes you to the nearest of these that the roads where you fell reach
+// (nearestRespawn): Bainbridge and Vashon are only joined to Seattle by ferry,
+// so dying in Winslow wakes you in Winslow, not at Harborview across the Sound.
+// Harborview is places.json's respawn, kept clear of buildings by citygen (via
+// G.KEEP_CLEAR); the rest are their real sites, put down on a dry verge
+// beside the nearest street at boot (buildRespawns). Where the real one is
+// off the map (Vashon's is in Vashon town, Highline's in Burien, Valley's in
+// south Renton) a clinic stands in for it inside the box, so nowhere on a
+// road network is more than ~7 km from one.
+const RESPAWN_SITES = [
+  { name: 'Harborview Medical Center' },
+  { name: 'UW Medical Center', ll: [47.6497, -122.3080] },
+  { name: 'Northwest Hospital', ll: [47.7196, -122.3355] },
+  { name: 'Swedish Ballard', ll: [47.6676, -122.3790] },
+  { name: 'West Seattle Clinic', ll: [47.5613, -122.3868] },
+  { name: 'VA Medical Center', ll: [47.5627, -122.3087] },
+  { name: 'Burien Clinic', ll: [47.4760, -122.3420] },
+  { name: 'Rainier Beach Clinic', ll: [47.5226, -122.2680] },
+  { name: 'Renton Clinic', ll: [47.4811, -122.2091] },
+  { name: 'Newcastle Clinic', ll: [47.5300, -122.1590] },
+  { name: 'Overlake Medical Center', ll: [47.6195, -122.1885] },
+  { name: 'EvergreenHealth Kirkland', ll: [47.7155, -122.1795] },
+  { name: 'Bainbridge Island Clinic', ll: [47.6352, -122.5185] },
+  { name: 'Vashon Island Clinic', ll: [47.5030, -122.4620] },
+];
+let respawns = [];   // [{ name, x, z, node }] (buildRespawns)
 
 class Game {
   constructor() {
@@ -122,6 +147,7 @@ class Game {
     this.cool = 0;
     this.dead = false;
     this.deathT = 0;
+    this.respawnAt = null;   // the hospital WASTED is taking you to (damagePlayer)
     this.paused = false;
     this.mapOpen = false;
     this.sirenLevel = 0;
@@ -243,7 +269,7 @@ class Game {
       setTimeout(() => hud.showToast('The wind turns with height: climb or sink to change course'), 6500);
     }
     if (v.mode === 'parked' || v.wasParked) this.addHeat(8);
-    hud.showToast(v.typeName === 'police' ? 'Police cruiser commandeered' : 'Vehicle acquired');
+    hud.showToast(v.typeName === 'police' ? 'Police cruiser commandeered — SIREN switches the lights and siren' : 'Vehicle acquired');
     // The radio comes on with the ignition, on a random station (every car
     // its own, as in GTA); RADIO on the pad tunes the next one. audio.update()
     // starts the stream on the next frame; this is only the announcement.
@@ -411,6 +437,11 @@ class Game {
       player.health = 0;
       this.dead = true;
       this.deathT = 0;
+      // where the ambulance goes is decided where you fell, and said
+      const p = player.position;
+      this.respawnAt = nearestRespawn(p.x, p.z);
+      const to = document.getElementById('wastedTo');
+      if (to) to.textContent = this.respawnAt ? `Taking you to ${this.respawnAt.name}` : '';
       document.getElementById('wasted').classList.add('show');
     }
   }
@@ -1297,6 +1328,15 @@ function installShadowFade() {
         const cost = +b.dataset.cost, type = b.dataset.buy;
         if (game.money < cost) { hud.showToast('Not enough money'); return; }
         game.money -= cost;
+        if (type === 'pistol') {
+          // not a vehicle: straight into your pocket
+          player.armed = true;
+          player.ammo += 45;
+          audio.pickup('gun');
+          hud.showToast(`Pistol delivered — 45 rounds, $${cost}`);
+          if (setPausedRef) setPausedRef(false);
+          return;
+        }
         const p = player.position;
         const f = { x: Math.sin(player.camYaw + Math.PI), z: Math.cos(player.camYaw + Math.PI) };
         const dx = p.x + f.x * 12, dz = p.z + f.z * 12;
@@ -1322,6 +1362,7 @@ function installShadowFade() {
   scene.add(marker);
 
   buildPickups(scene, city);
+  buildRespawns(scene, city);
 
   // Keep this launch's grading for the next one. Writing clones a few MB, so
   // it happens here on the loading screen rather than during play.
@@ -1388,7 +1429,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1485,6 +1526,43 @@ function installShadowFade() {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Snap `anchors` ([x, z] each) to a street, then step off the carriageway onto
+ * the verge: the nearest street node `nodeOk` accepts, then a spiral out from
+ * it to the first point `usable` accepts. Spiralling out from the raw anchor
+ * is not enough on its own -- an anchor can sit well out in Puget Sound, and
+ * no search radius that stays in the right neighbourhood will ever find land.
+ * A road node is guaranteed to be somewhere you could stand. Returns
+ * [x, z, node, ...] (node -1: none was found, and the anchor is kept).
+ */
+function vergeSpots(city, anchors, nodeOk, usable, rMax = 60) {
+  const K = anchors.length, best = new Float64Array(K).fill(Infinity), nd = new Int32Array(K).fill(-1);
+  const N = city.nodes;
+  for (let ni = 0; ni < N.length; ni++) {
+    const n = N[ni];
+    if (n.elev) continue;
+    for (let k = 0; k < K; k++) {
+      const d2 = (n.x - anchors[k][0]) ** 2 + (n.z - anchors[k][1]) ** 2;
+      if (d2 < best[k] && nodeOk(ni)) { best[k] = d2; nd[k] = ni; }
+    }
+  }
+  const out = [];
+  for (let k = 0; k < K; k++) {
+    const n = nd[k] >= 0 ? N[nd[k]] : null;
+    const cx0 = n ? n.x : anchors[k][0], cz0 = n ? n.z : anchors[k][1];
+    let spot = null;
+    for (let r = 6; r <= rMax && !spot; r += 6) {
+      for (let a = 0; a < 16; a++) {
+        const th = (a / 16) * Math.PI * 2 + k;
+        const x = cx0 + Math.cos(th) * r, z = cz0 + Math.sin(th) * r;
+        if (usable(x, z)) { spot = [x, z]; break; }
+      }
+    }
+    out.push(...(spot || [cx0, cz0]), nd[k]);
+  }
+  return out;
+}
+
 function buildPickups(scene, city) {
   // Pickup sites are found in the map, not written down.
   //
@@ -1497,38 +1575,33 @@ function buildPickups(scene, city) {
   //
   // Anchored to real places so they stay spread across the map and stay put
   // between sessions, then nudged to the nearest spot that is dry land, off the
-  // carriageway and not inside a building.
+  // carriageway and not inside a building. The first fifteen alternate pistol /
+  // first aid round the middle of Seattle; the rest reach the parts of the map
+  // it grew into (lat, lon, kind).
+  const FAR = [
+    [47.6246, -122.5190, 'gun'], [47.6062, -122.5370, 'health'],   // Winslow; Lynwood Center (Bainbridge)
+    [47.5070, -122.4650, 'gun'],                                   // Vashon's north end
+    [47.6150, -122.2010, 'gun'], [47.5770, -122.1700, 'health'],   // downtown Bellevue; Factoria
+    [47.6770, -122.2060, 'gun'], [47.5710, -122.2240, 'health'],   // Kirkland; Mercer Island
+    [47.5790, -122.4100, 'gun'], [47.5170, -122.3550, 'health'],   // Alki; White Center
+    [47.7060, -122.3260, 'gun'], [47.7190, -122.2960, 'health'],   // Northgate; Lake City
+    [47.6680, -122.3850, 'gun'],                                   // Ballard
+    [47.5480, -122.3220, 'gun'], [47.5220, -122.2700, 'gun'],      // Georgetown; Rainier Beach
+    [47.5600, -122.2870, 'health'],                                // Columbia City
+  ];
   const anchors = [
     [-1150, -900], [240, 1400], [-2200, 1100], [900, -1400], [1500, -2400],
     [-960, -3760], [-300, 700], [-3400, -4000], [300, 1900], [2000, 600],
     [-1300, -1500], [1250, 2500], [-2600, 3600], [620, -4200], [-1800, -2600],
+    ...FAR.map(([lat, lon]) => G.toWorld(lat, lon)),
   ];
+  const kinds = anchors.map((_, i) => (i < 15 ? (i % 2 ? 'health' : 'gun') : FAR[i - 15][2]));
   const usable = (x, z) => !G.isWater(x, z) && G.terrainHeight(x, z) > 1.2
     && !city.onRoad(x, z, 1.5, false) && !world.inBuilding(x, z, 1.5);
-  // Snap each anchor to the nearest street, then step off the carriageway onto
-  // the verge. Spiralling out from the raw anchor is not enough on its own --
-  // one of these sits well out in Puget Sound, and no search radius that stays
-  // in the right neighbourhood will ever find land. A road node is guaranteed
-  // to be somewhere you could stand.
   // (where they landed is kept by the boot cache: bootcache.js memo)
-  const at = memo('pickups', () => Float64Array.from(anchors.flatMap(([ax, az], i) => {
-    let nd = null, bestD = Infinity;
-    for (const n of city.nodes) {
-      if (n.elev) continue;
-      const d2 = (n.x - ax) ** 2 + (n.z - az) ** 2;
-      if (d2 < bestD) { bestD = d2; nd = n; }
-    }
-    const cx0 = nd ? nd.x : ax, cz0 = nd ? nd.z : az;
-    for (let r = 6; r <= 60; r += 6) {
-      for (let a = 0; a < 16; a++) {
-        const th = (a / 16) * Math.PI * 2 + i;
-        const x = cx0 + Math.cos(th) * r, z = cz0 + Math.sin(th) * r;
-        if (usable(x, z)) return [x, z];
-      }
-    }
-    return [cx0, cz0];
-  })), (v) => v instanceof Float64Array && v.length === anchors.length * 2);
-  const spots = anchors.map((_, i) => ({ x: at[i * 2], z: at[i * 2 + 1], kind: i % 2 ? 'health' : 'gun' }));
+  const at = memo('pickups', () => Float64Array.from(vergeSpots(city, anchors, () => true, usable)),
+    (v) => v instanceof Float64Array && v.length === anchors.length * 3);
+  const spots = anchors.map((_, i) => ({ x: at[i * 3], z: at[i * 3 + 1], kind: kinds[i] }));
   for (const s of spots) {
     const y = city.groundAt(s.x, s.z, null) + 1.1;
     const g = new THREE.Group();
@@ -1551,8 +1624,117 @@ function buildPickups(scene, city) {
     g.add(halo);
     g.position.set(s.x, y, s.z);
     scene.add(g);
-    pickups.push({ ...s, y, g, taken: 0 });
+    // On both maps: a pickup that could only be seen from 300 m was a pickup
+    // nobody found ("how do I get a weapon?"). Off the map while it respawns.
+    const place = { x: s.x, z: s.z, kind: s.kind, name: s.kind === 'gun' ? 'Pistol' : 'First aid', near: false, off: false, foot: true,
+      hello: s.kind === 'gun' ? 'A pistol — walk over it to pick it up, then ATTACK (J) fires'
+        : 'A first-aid kit — walk over it to patch yourself up' };
+    hud.places.push(place);
+    pickups.push({ ...s, y, g, taken: 0, place });
   }
+}
+
+/**
+ * Where WASTED takes you: RESPAWN_SITES on a dry verge beside a street (the
+ * pickups' snap, stricter: a street that is not a freeway, ramp, deck or
+ * bore; two metres clear of every carriageway, building and lake; level
+ * ground), each with a clinic sign and a mark on both maps.
+ */
+function buildRespawns(scene, city) {
+  const anchors = RESPAWN_SITES.map((s) => (s.ll ? G.toWorld(s.ll[0], s.ll[1]) : [G.RESPAWN.x, G.RESPAWN.z]));
+  const nodeOk = (ni) => {
+    let street = false;
+    for (const ei of city.nodes[ni].e) {
+      const e = city.edges[ei];
+      if (e.tunnel || e.elev) return false;
+      if (e.cls !== 'hwy' && e.cls !== 'ramp') street = true;
+    }
+    return street;
+  };
+  const level = (x, z) => {
+    const h = G.terrainHeight(x, z);
+    return Math.abs(G.terrainHeight(x + 2, z) - h) < 1 && Math.abs(G.terrainHeight(x - 2, z) - h) < 1
+      && Math.abs(G.terrainHeight(x, z + 2) - h) < 1 && Math.abs(G.terrainHeight(x, z - 2) - h) < 1;
+  };
+  const usable = (x, z) => !G.isWater(x, z) && G.terrainHeight(x, z) > 1.2 && world.waterLevelAt(x, z) === null
+    && !city.onRoad(x, z, 2, true) && !world.inBuilding(x, z, 2.4) && level(x, z);
+  // (kept by the boot cache, bootcache.js memo: x, z and the street node each)
+  const at = memo('respawns', () => {
+    const out = vergeSpots(city, anchors.slice(1), nodeOk, usable, 90);
+    // Harborview is the measured spot citygen keeps clear: only its node is found
+    return Float64Array.from([G.RESPAWN.x, G.RESPAWN.z, city.nearestNode(G.RESPAWN.x, G.RESPAWN.z, 400), ...out]);
+  }, (v) => v instanceof Float64Array && v.length === RESPAWN_SITES.length * 3);
+  // the sign: a white panel with a red cross on a post, facing the street
+  const post = new THREE.BoxGeometry(0.12, 2.6, 0.12), panel = new THREE.BoxGeometry(1.1, 1.1, 0.08);
+  const barH = new THREE.BoxGeometry(0.7, 0.22, 0.12), barV = new THREE.BoxGeometry(0.22, 0.7, 0.12);
+  const grey = new THREE.MeshLambertMaterial({ color: 0x8a9096 }), white = new THREE.MeshLambertMaterial({ color: 0xf4f4f2 });
+  const red = new THREE.MeshBasicMaterial({ color: 0xd8343a });
+  respawns = RESPAWN_SITES.map((s, i) => {
+    const x = at[i * 3], z = at[i * 3 + 1], node = at[i * 3 + 2];
+    const n = node >= 0 ? city.nodes[node] : null;
+    let dx = n ? x - n.x : 1, dz = n ? z - n.z : 0;
+    const dl = Math.hypot(dx, dz) || 1;
+    dx /= dl; dz /= dl;
+    let sx = x + dx * 1.6, sz = z + dz * 1.6;
+    if (world.inBuilding(sx, sz, 0.3)) { sx = x - dz * 1.6; sz = z + dx * 1.6; }
+    const g = new THREE.Group();
+    const p = new THREE.Mesh(post, grey);
+    p.position.y = 1.3;
+    const b = new THREE.Mesh(panel, white);
+    b.position.y = 2.6;
+    const c1 = new THREE.Mesh(barH, red), c2 = new THREE.Mesh(barV, red);
+    c1.position.y = c2.position.y = 2.6;
+    g.add(p, b, c1, c2);
+    g.position.set(sx, G.terrainHeight(sx, sz), sz);
+    g.rotation.y = Math.atan2(dx, dz);
+    g.visible = false;
+    scene.add(g);
+    hud.places.push({ x, z, kind: 'clinic', name: s.name, near: false, hello: null });
+    return { name: s.name, x, z, node, g };
+  });
+}
+
+// The road network each street node is on: an undirected union-find over the
+// edges, made the first time someone dies (~12 ms on the Mac). Bainbridge,
+// Vashon and the Kitsap shore at Southworth are each their own; Seattle and
+// the Eastside are one, joined by the bridges.
+let roadComp = null;
+function roadComponents() {
+  if (roadComp) return roadComp;
+  const city = cityRef, N = city.nodes.length, par = new Int32Array(N);
+  for (let i = 0; i < N; i++) par[i] = i;
+  const find = (i) => { while (par[i] !== i) { par[i] = par[par[i]]; i = par[i]; } return i; };
+  for (const e of city.edges) { const a = find(e.a), b = find(e.b); if (a !== b) par[a] = b; }
+  for (let i = 0; i < N; i++) par[i] = find(i);
+  return (roadComp = par);
+}
+
+/**
+ * The hospital WASTED takes you to from (x, z): the nearest street node on a
+ * network that has one (where you fell; or, where no road reaches -- Blake
+ * Island, mid-Sound, a pocket of private drives -- the nearest shore that
+ * does), then the nearest respawn on that network as the crow flies. So
+ * Winslow wakes in Winslow, not across the Sound at Harborview.
+ */
+function nearestRespawn(x, z) {
+  if (!respawns.length) return { name: 'Harborview Medical Center', x: G.RESPAWN.x, z: G.RESPAWN.z };
+  const comp = roadComponents(), N = cityRef.nodes;
+  const has = new Uint8Array(N.length);   // by component root (a node index)
+  for (const r of respawns) if (r.node >= 0) has[comp[r.node]] = 1;
+  let bi = -1, bd = Infinity;
+  for (let i = 0; i < N.length; i++) {
+    const n = N[i], d = (n.x - x) * (n.x - x) + (n.z - z) * (n.z - z);
+    if (d < bd && has[comp[i]]) { bd = d; bi = i; }
+  }
+  const c = bi >= 0 ? comp[bi] : -1;
+  let best = null;
+  bd = Infinity;
+  for (const r of respawns) {
+    if (c >= 0 && (r.node < 0 || comp[r.node] !== c)) continue;
+    const d = dist2(x, z, r.x, r.z);
+    if (d < bd) { bd = d; best = r; }
+  }
+  return best || respawns[0];
 }
 
 function updatePickups(dt) {
@@ -1560,6 +1742,7 @@ function updatePickups(dt) {
   for (const pk of pickups) {
     if (pk.taken > 0) {
       pk.taken -= dt;
+      pk.place.off = pk.taken > 0;
       continue;
     }
     // 3-4 draws each, and a metre-wide box past 300 m is a few pixels: they
@@ -1571,6 +1754,7 @@ function updatePickups(dt) {
     pk.g.position.y = pk.y + Math.sin(performance.now() * 0.003) * 0.14;
     if (player.onFoot && dist2(p.x, p.z, pk.x, pk.z) < 4) {
       pk.taken = 30;
+      pk.place.off = true;
       pk.g.visible = false;
       audio.pickup(pk.kind);
       if (pk.kind === 'gun') {
@@ -1582,6 +1766,11 @@ function updatePickups(dt) {
         hud.showToast('Health restored');
       }
     }
+  }
+  // the clinic signs, 4 draws each: within 400 m
+  for (const r of respawns) {
+    const near = dist2(p.x, p.z, r.x, r.z) < 400 * 400;
+    if (r.g.visible !== near) r.g.visible = near;
   }
 }
 
@@ -2001,9 +2190,47 @@ function doRespawn() {
   game.points = 0;
   game.money = Math.max(0, game.money - 200);
   document.getElementById('wasted').classList.remove('show');
-  player.respawn(HOSPITAL.x, HOSPITAL.z);
+  // where WASTED said (damagePlayer), or, from the menu, the nearest from here
+  const p = player.position;
+  const r = game.respawnAt || nearestRespawn(p.x, p.z);
+  game.respawnAt = null;
+  player.respawn(r.x, r.z);
   controls.setMode('foot');
-  hud.showToast('Harborview Medical Center');
+  hud.showToast(r.name);
+}
+
+/**
+ * The police car you are driving: SIREN (the pad's button, G, a pad's R3)
+ * switches its siren and its light bar on and off. Off whenever you take one
+ * (a commandeered unit's strobes go dark), off again when you leave it by
+ * any door (out, wrecked, respawned, warped). A cruiser bought from the
+ * delivery menu gets its light bar here. The siren is traffic's positional
+ * siren voice (audio.js picks any car with `sirenOn`), and traffic ahead
+ * eases off and keeps right for it (traffic.sirenFrom).
+ */
+let copCar = null;
+function setSiren(v, on) {
+  v.sirenOn = on;
+  v.siren = 0;
+  traffic.policeLights(v, 0, on);
+  const b = document.querySelector('[data-btn="siren"]');
+  if (b) b.classList.toggle('on', on);
+}
+function updateSiren(dt) {
+  const pv = player.vehicle;
+  const v = pv && pv.spec.police && !pv.dead ? pv : null;
+  if (v !== copCar) {
+    if (copCar) setSiren(copCar, false);
+    copCar = v;
+    if (v) { traffic.lightBar(v); setSiren(v, false); }
+    controls.root.dataset.police = v ? '1' : '';
+  }
+  if (controls.takeSiren() % 2 && v) {
+    setSiren(v, !v.sirenOn);
+    hud.showToast(v.sirenOn ? 'Siren on' : 'Siren off', 1200);
+  }
+  if (v) traffic.policeLights(v, dt, v.sirenOn);
+  traffic.sirenFrom = v && v.sirenOn ? v : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -2252,6 +2479,8 @@ function frame(now) {
     if (!traffic.cars.some((v) => v.spec.balloon) && dist2(p.x, p.z, BALLOON_SITE.x, BALLOON_SITE.z) > 400 * 400) spawnBalloon();
   }
   for (const pl of hud.places) {
+    // (a pickup says hello on foot only, and not while it is gone)
+    if (pl.off || (pl.foot && !player.onFoot)) continue;
     const d2 = dist2(pl.x, pl.z, p.x, p.z);
     if (pl.near) { if (d2 > 110 * 110) pl.near = false; continue; }
     if (d2 < 55 * 55 && helloCd <= 0) {
@@ -2275,6 +2504,7 @@ function frame(now) {
     if (!buried) hud.__toldTunnel = false;
   }
   updatePickups(dt);
+  updateSiren(dt);
   if (duckTour) duckTour.update(dt);
   if (seafair) seafair.update(dt);
   if (!player.vehicle || !(player.vehicle.spec.boat || player.vehicle.afloat)) fx.wake(dt, null);
