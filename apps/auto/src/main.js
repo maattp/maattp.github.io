@@ -639,8 +639,8 @@ async function boot() {
   // against PCFSoft's 16 (bilinearly weighted), so it saved nothing, and its
   // taps land on a fixed sub-texel pattern: every shadow edge in the city was
   // a stair of nested rectangles, 0.37 m a step at the phone's 1024 map --
-  // the "lines in the shadow" (CLAUDE.md "Shadows: smooth edges, and the
-  // player's own map").
+  // the "lines in the shadow" (CLAUDE.md "Smooth edges, and the player's own
+  // map").
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 

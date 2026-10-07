@@ -115,6 +115,15 @@ export class NearShadow {
       const i = lights.indexOf(this.light);
       // a render of some other scene (a probe, a harness's stage): not ours
       if (i < 0) return inner.call(sm, lights, scene, camera);
+      // The chunk patch reads the sun as directional light 0 and this map as
+      // 1, and compiles out every directional light past 0. Say so, once, if
+      // the scene stops matching that.
+      if (!this._checked) {
+        this._checked = true;
+        const dl = [];
+        scene.traverse((o) => { if (o.isDirectionalLight) dl.push(o); });
+        if (dl.length !== 2 || dl[0] !== this.sun || dl[1] !== this.light) console.warn('near shadow: the sun must be directional light 0 and this map 1, and there must be no other', dl.map((o) => o.name || o.type));
+      }
       const rest = lights.filter((x) => x !== this.light);
       const f = this.on ? this.focus() : null;
       if (!f || !f.roots.length) {
@@ -126,7 +135,8 @@ export class NearShadow {
       const hid = [];
       for (const o of f.roots) if (o.visible) { o.visible = false; hid.push(o); }
       try { inner.call(sm, rest, scene, camera); } finally { for (const o of hid) o.visible = true; }
-      const l = this.light, d = this.dir, D = this.dist;
+      // the sun's direction as it is now (placeSun may re-aim it)
+      const l = this.light, d = this.dir.copy(this.sun.position).sub(this.sun.target.position).normalize(), D = this.dist;
       this._fit(f.half || this.half);
       l.target.position.set(f.x, f.y, f.z);
       l.position.set(f.x + d.x * D, f.y + d.y * D, f.z + d.z * D);

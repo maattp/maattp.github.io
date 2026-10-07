@@ -7192,6 +7192,9 @@ export class Vehicle {
     // the player's vehicle -- so a car taken from the kerb drove off casting
     // only its four detailed wheels.
     if (on) this.paintMesh.castShadow = this.trimMesh.castShadow = this.matteMesh.castShadow = true;
+    // and traffic's phone distance switch (which caches what it last set)
+    // re-applies its own rule once you leave the car
+    if (on) this._cast = undefined;
     if (!on) this.mode = this._mode;
     if (this.rider && (this.spec.atv || this.spec.bicycle || this.spec.jetski || this.spec.kayak || this.spec.balloon)) this.rider.group.visible = on || this._mode === 'traffic' || this._mode === 'path';
     // the kayak's paddle, in the paddler's hands (updateKayak)
