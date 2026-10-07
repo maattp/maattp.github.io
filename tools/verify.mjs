@@ -3211,6 +3211,22 @@ async function main() {
       await session.eval('window.__dbg.game.paused = false');
     }
 
+    // --- the camera stays over the water (v182) ---------------------------
+    // Water planes are drawn from above only: a boom dragged under the surface
+    // showed sky and a boat flying. In a runabout with the camera pitched
+    // fully down it must stay 0.4 m over the water.
+    {
+      const r = await session.eval(`(() => { const d = window.__dbg, p = d.player;
+        p.respawn(-128, -1975); const b = d.traffic.spawnAt(-100, -2030, 0, 'boat', 0x3366aa, 'free'); p.enterVehicle(b);
+        const pitch = p.camPitch; p.camPitch = -0.5; let lo = Infinity;
+        for (let i = 0; i < 120; i++) { p.updateCamera(1 / 60, null); const w = p.waterAt(p.camPos.x, p.camPos.z); if (w !== null) lo = Math.min(lo, p.camPos.y - w); }
+        p.camPitch = pitch; p.exitVehicle(true);
+        return { inBoat: !!(b && b.spec.boat), lo: +lo.toFixed(2) }; })()`);
+      console.log('\n--- camera over the water ---------------------------------');
+      console.log(`  runabout, camera pitched fully down: lowest ${r.lo} m over the water`);
+      if (!r.inBoat || !(r.lo >= 0.39)) { console.error('FAIL: the camera goes under the water'); process.exitCode = 1; }
+    }
+
     // --- radio: live when online, synth when not --------------------------
     // The offline half is the one that matters. This is an offline-first PWA and
     // the radio must not go silent (or throw) on a plane.

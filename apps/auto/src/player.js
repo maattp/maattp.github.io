@@ -348,17 +348,17 @@ export class Player {
 
   /** Where water is drawn at (x, z): its surface, or null. The boats' rule --
    *  ground under the sea's plane is sea whatever the 10 m mask says. */
+  waterAt(x, z) {
+    const wl = this.world.waterLevelAt(x, z);
+    return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null;
+  }
+
   /** The lowest the camera may go over the water at its own point, or null
    *  when there is no water there or the player is under the surface. */
   camWaterFloor(targetY) {
     const wl = this.waterAt(this.camPos.x, this.camPos.z);
     if (wl === null || (!this.swimming && targetY < wl - 0.5)) return null;
     return wl + 0.4;
-  }
-
-  waterAt(x, z) {
-    const wl = this.world.waterLevelAt(x, z);
-    return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null;
   }
 
   startSwim(wl, splash) {
