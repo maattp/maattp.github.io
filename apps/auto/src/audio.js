@@ -1178,6 +1178,7 @@ export async function renderBank(sampleRate, onlyNames = null, bank = {}, onBatc
 //   spec.boat        'outboard'   2-stroke outboard (+ hull slosh by speed)
 //   spec.plane       'turboprop' if spec.turboprop or spec.jet, else 'piston'
 //   spec.ev          'ev'         motor + inverter whine, no gears
+//                    (the Wedge sets `engine: 'evtruck'`: the same, deeper)
 //   spec.moto        'vtwin' if spec.vtwin or hand 'cruiser', else 'sportbike'
 //   spec.atv         'single'     buzzy single-cylinder quad
 //   spec.bus / spec.cargo / spec.diesel   'diesel' (turbo, clatter, air brake)
@@ -1276,6 +1277,13 @@ export const ENGINES = {
     idle: 0, redline: 36000, gears: [1],
     lp: [2500, 5000, 1500], ex: [1800, 1.5, 3], noise: { ratio: 0, q: 1, gain: 0, pulse: 0, order: 1 },
     whine: { hz0: 380, hz1: 7800, gain: 0.05, load: 0.6 }, drive: 1.0, level: 0.3, jitter: 0 },
+  // The Wedge (`engine: 'evtruck'`): the EV's motor, an octave and more
+  // lower and richer in harmonics -- three big motors and a 3 t truck, not a
+  // hatch -- with the inverter whine starting lower and rising slower.
+  evtruck: { kind: 'ev', stroke: 2, fire: [0], amps: [1], pw: 0.6, harm: [1, 0.42, 0.36, 0.18, 0.12, 0.06],
+    idle: 0, redline: 15000, gears: [1],
+    lp: [900, 2600, 1500], ex: [520, 1.4, 5], noise: { ratio: 0, q: 1, gain: 0, pulse: 0, order: 1 },
+    whine: { hz0: 170, hz1: 4600, gain: 0.06, load: 0.7 }, drive: 1.35, level: 0.4, jitter: 0 },
   piston: { kind: 'plane', stroke: 4, fire: [0, 0.25, 0.5, 0.75], amps: [1, 0.94, 1.05, 0.92], pw: 0.03,
     idle: 750, redline: 2700, gears: [1],
     lp: [500, 1800, 2200], ex: [140, 1.8, 6], noise: { ratio: 30, q: 0.6, gain: 0.4, pulse: 0.55, order: 4 },

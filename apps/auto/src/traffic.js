@@ -640,6 +640,11 @@ export class TrafficSystem {
       const heading = Math.atan2(e.dx * sign, e.dz * sign);
       let tn = CIVILIAN_TYPES[Math.floor(this.R.n() * CIVILIAN_TYPES.length)];
       if (e.cls === 'res' && (tn === 'bus' || tn === 'artic' || tn === 'boxtruck' || tn === 'garbage')) tn = 'sedan';
+      // The Wedge drives past now and then: a quarter of the EVs, ~1.5 % of
+      // traffic. Not a CIVILIAN_TYPES slot: that array is hashed for kerbside
+      // parking, and appending would move every parked car in the city. A
+      // hash, not this.R, so the spawn stream after it is unchanged.
+      if (tn === 'ev' && hash2(ei, this._prio) < 0.25) tn = 'wedge';
       const v = this.spawnAt(x + lo.x, z + lo.z, heading, tn, randomCarColor((this.R.n() * 1e6) | 0), 'traffic');
       if (e.tunnel) {
         // IN the bore, not on the street over it. place() seeds groundAt with

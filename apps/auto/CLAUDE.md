@@ -2489,6 +2489,74 @@ tilts off horizontal by `asin(sin(steer)·sin(spin))`, about 30° at half lock.
 That is the wheel wobble. `rotation.order = 'YXZ'` gives `Ry·Rx`: roll on the
 axle, then steer the lot.
 
+### The Wedge: fast, tough, stainless
+
+**An angular stainless electric pickup** (`wedge`, `buildWedge`), original
+and unbranded: one straight roofline from the nose over the cabin to a
+slatted bed cover, flat steel facets meeting at sharp creases, flush glass,
+a full-width light bar at each end, angular black-flared arches over chunky
+tyres with flat aero covers (`addWheel`'s `kind` 'aero'). `docs/wedge/` has
+shots.
+
+- **Built facet by facet, not lofted.** `bodyCore`'s smooth normals would
+  round off every crease, which is the whole shape. `wFacet` emits one planar
+  polygon with its own Newell normal. The body hangs off four straight lines
+  -- the roofline `top(z)`, a horizontal `BELT` crease, the section `xs(y)`
+  (lower sides lean out to the belt, upper sides lean in to the roof edge)
+  and `sill(z)` -- and each flank is ONE plane (x depends on y alone), so any
+  quad with corners on it is planar wherever the stations fall. The roof is
+  narrowest at the apex and widens to the full body at both ends without a
+  single extra station. 2.8k triangles a traffic instance, under half a
+  sedan's; 3 draws, glass in `trim` as everywhere.
+- **Paint ignores vertex colour** (`paintMaterial` has no `vertexColors`), so
+  tones per facet do nothing; the facets read from their normals alone.
+  `spec.finish: 'steel'` gives brushed stainless (metalness 0.92, roughness
+  0.30, clearcoat 0.12). The clearcoat stays above zero on purpose: it is a
+  define, so the steel compiles the same program as every painted car and
+  the first Wedge round a corner is no hitch. `livery` keeps it stainless.
+- **The back of a panel is culled**, and with see-through glass on both sides
+  and a glass roof, a B-pillar seen across the cabin through the far window
+  was a hole. `wFacet`'s `liner` adds an inward copy in `matte` for the panels
+  beside the cabin.
+- **Tough is two spec fields.** `hp` is its health (250; every other vehicle
+  starts at 100) and `armor` (0.5) scales every hit in `Vehicle.damage` --
+  collisions, gunfire, landings -- and the wall-crash and police-gunfire
+  damage to whoever is inside (player.js, main.js `onCopShot`). The smoke
+  threshold is 45 % of `hp`, not 45. `mass` 2.6 shoves traffic aside.
+  Measured at fixed dt (flat ground, the real `Vehicle.update` +
+  `resolveCarCollisions`):
+
+  | | sedan | Wedge |
+  |---|---|---|
+  | side-on rams into a stopped bus at 90 km/h to wreck | 5 (21 a hit) | 19 (13 of 250 a hit) |
+  | head-on with a sedan, both at 54 km/h | 27 % of its health | 6 % (the sedan takes 30) |
+  | pistol rounds to wreck | 12 | 56 |
+  | rear-ending a stopped sedan at 50 km/h, the pair after | 21 km/h | 27 km/h |
+
+- **Fast is the EV flag** (square-root torque, regen, battery-floor grip)
+  with `acc` 11: tools/vehicles.mjs's `electric super-pickup` band, 0-100 in
+  1.27 s (3.05 s on the spec sheet, before `ARCADE_PUNCH`),
+  200 km/h, 100-0 in 17.5 m, 2.55 g -- quicker off the line than
+  the performance EV, a 3 t truck that drives like a fast car. The sound is
+  `engine: 'evtruck'` in audio.js: the EV motor an octave lower and richer in
+  harmonics, its inverter whine starting lower (`audiorender.mjs --only
+  engine-evtruck,engine-ev`: spectral centroid 702 Hz against 975, no clipping).
+- **The light bars light up when you get in.** `spec.lightbar` (each bar's
+  height and width) makes `setDetailed(true)` add two unlit boxes over the
+  lamp strips, the player's car only (+2 draws, like its articulated
+  wheels); `sync` sweeps them out from the centre in 0.4 s at a flash and
+  settles to a glow the bloom picks up. `{ color, toneMapped: false }` is the
+  police strobes' and the Needle beacon's parameter set: an already-compiled
+  program. There is no day/night cycle, so nothing brightens "at night".
+- **Where:** parked for good ('apron') on the spawn's kerb, 7.8 m behind or
+  ahead of the red sports car -- whichever clears the junction mouths by
+  11 m -- with a map mark and a hello; $2500 from the pause menu's delivery
+  row; and in traffic now and then: a quarter of the EVs drawn for moving
+  traffic become Wedges (~1.5 %), by `hash2`, so the spawn stream is
+  unchanged. **It is not a `CIVILIAN_TYPES` slot**: that array is hashed for
+  kerbside parking, and adding one would move every parked car in the city
+  (see "The articulated bus").
+
 ## One-way traffic
 
 **What the flags mean.** An edge's a -> b is the OSM way's own node order;
@@ -3834,7 +3902,7 @@ The purpose-built harnesses, each a fixed-dt, paused-game driver:
 | `CHAR_VIEWS=a,b` / `CHAR_OPTS='{json}'` / `CHAR_EVAL='<js>'` | limit the views / merge into `makeHumanoid`'s options (a cop, the lightest skin, which no pooled look deals) / run an experiment on the posed subject first (switch off shadows, AO, map) |
 | `CHAR_PROBE='face:x,y;x,y\|profile:x,y'` | raycasts pixels back to the part (`geometry.userData.parts`, recorded by `SkinAcc.add(..., name)`) and the BIND-pose point that drew them. The posed idle stands lower than bind, so don't compare posed y |
 | `tools/crowdshots.mjs [tag]` | 12 pedestrians, one seed per POOLED LOOK, posed at dt = 0 on a real pavement; seeds `1000 + k*7919` landed on one look and photographed the harness. `CROWD_PROBE=1` prints each person's screen position, placed height, terrain, `roadLift` and what a ray straight down hits — a sunk figure is a disagreement between the ground query and the geometry |
-| `tools/vehshots.mjs <tag> [types] [--street]` | `--street` parks a fixed lineup on the densest commercial street, shot at eye height and raised — a before/after random traffic can't give. The lineup spawns occupied, with a `chase` view on the first near-lane car |
+| `tools/vehshots.mjs <tag> [types] [--street]` | `--street` parks a fixed lineup on the densest commercial street, shot at eye height and raised — a before/after random traffic can't give. The lineup spawns occupied, with a `chase` view on the first near-lane car; `VEH_NEAR=a,b,..` replaces the near lane (put a new type first to get its chase view). Launches through tools/chrome.mjs, so `AUTO_GPU=1` works |
 | `tools/landmarkshots.mjs <dir> [views] [--collide]` | world-framed landmark views, per-landmark cost built alone, and the collision drive/walk (see "Landmarks"); `LM_PROBE` |
 | `tools/lotshots.mjs <dir> [--probe]` | lot views; `--probe` prints the grass share per region (see "Lots, plazas and yards") |
 | `tools/bldshots.mjs <dir> [--scan] [--shots=a,b] [--n=6] [--from=index.json]` + `tools/bldsheet.py <dir> [out] [--pair=<dir>]` | the building outlier scan and per-category contact sheets, eye level off the long (downhill) face plus an aerial; `--from` re-shoots another run's buildings by position for a before/after (see "Buildings: the outlier scan"). GPU by default (`AUTO_GPU=0` for SwiftShader) |

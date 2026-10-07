@@ -209,7 +209,9 @@ class Game {
     const p = player.position;
     fx.tracer(cop.x, cop.y + 1.35, cop.z, p.x, p.y + 1.2, p.z);
     fx.sparks(cop.x + Math.sin(cop.heading), cop.y + 1.35, cop.z + Math.cos(cop.heading), 3);
-    if (Math.random() < 0.55) this.damagePlayer(6 + Math.random() * 6, 'gun');
+    // inside an armoured vehicle (spec.armor, the Wedge) a round has plate to get through
+    const arm = (player.vehicle && player.vehicle.spec.armor) || 1;
+    if (Math.random() < 0.55) this.damagePlayer((6 + Math.random() * 6) * arm, 'gun');
   }
 
   onGunshot(x, y, z, dir) {
@@ -1195,6 +1197,7 @@ function installShadowFade() {
   // opening frame. A red sports coupe is parked for good (apron: never
   // despawned, like the quads) at the right-hand kerb ~14 m ahead, facing up
   // the street, and any kerbside car in that spot gives up its slot.
+  let wedgeAt = null;   // and the Wedge beside it (mapPlaces says hello)
   {
     traffic.updateParked(G.SPAWN.x, G.SPAWN.z);
     const fx = Math.sin(G.SPAWN_HEADING), fz = Math.cos(G.SPAWN_HEADING);
@@ -1214,15 +1217,24 @@ function installShadowFade() {
       const x = cx - dz * (e.hw - 1.15), z = cz + dx * (e.hw - 1.15);
       // the outermost right-hand kerb (a divided street has a median kerb too)
       const right = (x - G.SPAWN.x) * -fz + (z - G.SPAWN.z) * fx;
-      if (!spot || right > spot.right) spot = { x, z, heading: Math.atan2(dx, dz), right };
+      if (!spot || right > spot.right) spot = { x, z, heading: Math.atan2(dx, dz), right, t, len: e.len, es: sg };
     }
     if (spot) {
+      // The Wedge stands behind it on the same kerb, or ahead of it, wherever
+      // it clears the junction mouths: the two cars the street offers first.
+      // `t` runs along the edge, which may point against the view (`es`).
+      const fh = Math.sin(spot.heading), fzh = Math.cos(spot.heading);
+      const gap = 7.8, fits = (s) => { const t2 = spot.t + s * gap * spot.es; return t2 > 11 && t2 < spot.len - 11; };
+      const sg = fits(-1) ? -1 : fits(1) ? 1 : 0;
+      const wedge = sg ? { x: spot.x + fh * gap * sg, z: spot.z + fzh * gap * sg } : null;
       for (const v of [...traffic.cars]) {
-        if (v.mode !== 'parked' || Math.hypot(v.x - spot.x, v.z - spot.z) > 8) continue;
+        if (v.mode !== 'parked') continue;
+        if (Math.hypot(v.x - spot.x, v.z - spot.z) > 8 && !(wedge && Math.hypot(v.x - wedge.x, v.z - wedge.z) < 9)) continue;
         if (typeof v.slot === 'number') traffic.reservedSlots.add(v.slot);
         traffic.remove(v);
       }
       traffic.spawnAt(spot.x, spot.z, spot.heading, 'sports', 0xc4161c, 'apron').vLong = 0;
+      if (wedge) { traffic.spawnAt(wedge.x, wedge.z, spot.heading, 'wedge', 0xb9bdc1, 'apron').vLong = 0; wedgeAt = wedge; }
     }
   }
   // What the map marks, and what says hello when you get near (the HUD is
@@ -1241,6 +1253,8 @@ function installShadowFade() {
         hello: 'A 747-8, the biggest thing Boeing ever built. She needs the whole runway: rotate at 150 knots' }];
     })(),
     ...ATV_SPOTS.map(([x, z]) => ({ x, z, kind: 'atv', name: 'Quad bike', near: false, hello: 'A quad bike — made for the grass' })),
+    ...(wedgeAt ? [{ x: wedgeAt.x, z: wedgeAt.z, kind: 'wedge', name: 'The Wedge', near: false,
+      hello: 'The Wedge — stainless, electric, quick, and very hard to dent. Walk up and press ENTER' }] : []),
     ...fishSpots.map((sp) => ({ x: sp.x, z: sp.z, kind: 'fish', name: `Fishing — ${sp.name}`, near: false,
       hello: 'A fishing rod on the pier. Press ENTER to cast' })),
     ...(wheelRide ? [{ x: wheelRide.hub.x + 4, z: wheelRide.hub.z, kind: 'wheel', name: 'Great Wheel', near: false,
@@ -2522,7 +2536,7 @@ function frame(now) {
     if (v.skid > 0.35 && Math.random() < 0.5) {
       fx.smoke(v.x - v.forward.x * v.halfLen, v.y + 0.15, v.z - v.forward.z * v.halfLen, 1);
     }
-    if (v.health < 45 && Math.random() < 0.35) {
+    if (v.health < 0.45 * (v.spec.hp || 100) && Math.random() < 0.35) {
       fx.smoke(v.x + v.forward.x * v.halfLen, v.y + 0.9, v.z + v.forward.z * v.halfLen, 1);
     }
     // A boat leaves a wake: a foam ribbon from the transom (one draw, only

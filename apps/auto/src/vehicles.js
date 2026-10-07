@@ -176,6 +176,15 @@ export const TYPES = {
   // shape a floor full of batteries gives you. Heavier than the sports car and
   // quicker anyway, because the torque is all there from a standstill.
   ev: deriveSpec({ wheelbase: 2.96,len: 4.62, wid: 1.98, wheelR: 0.36, sill: 0.23, belt: 0.90, roof: 1.40, cab: [-0.28, 0.09], hand: 'ev', ev: true, mass: 1.2, acc: 9.0, topKph: 235, brakeM: 35, latG: 0.96 }),
+  // The Wedge: an angular stainless electric pickup, one straight roofline
+  // from the nose over the cabin to the covered bed. Fast (the EV's
+  // square-root torque, tuned to ~3 s to 100 on the spec sheet), and TOUGH:
+  // `hp` is its health (every other vehicle has 100), `armor` scales every
+  // hit it takes -- collisions, gunfire, landings -- and the crash and gunfire
+  // damage to whoever is inside. `mass` 2.6 shoves a 1.0 sedan aside.
+  // `finish: 'steel'` is the brushed-metal paint material; the livery keeps it
+  // stainless whatever colour the spawner drew. `engine` is the deeper motor.
+  wedge: deriveSpec({ wheelbase: 3.66, len: 5.68, wid: 2.06, wheelR: 0.445, sill: 0.40, belt: 1.22, roof: 1.88, cab: [-0.16, 0.35], hand: 'wedge', ev: true, engine: 'evtruck', finish: 'steel', livery: 0xb9bdc1, lightbar: [[1.010, 1.94], [1.260, 1.95]], hp: 250, armor: 0.5, mass: 2.6, acc: 11.0, topKph: 200, brakeM: 38, latG: 0.94 }),
   muscle: deriveSpec({ wheelbase: 2.95,len: 5.02, wid: 1.98, wheelR: 0.35, sill: 0.26, belt: 1.02, roof: 1.40, cab: [-0.24, 0.13], hand: 'muscle', mass: 1.15, acc: 7.0, topKph: 265, brakeM: 36, latG: 0.94 }),
   // Roofless muscle. `roof` is the top of the windscreen frame, 16 cm under the
   // coupe's, and there is no greenhouse above the beltline at all -- which is
@@ -422,7 +431,26 @@ function addWheel(trim, matte, cx, cy, cz, r, w, out = 1, knobby = false, kind =
     disc(trim, spokeX, hubR, r * 0.05, o, HUB);
     disc(trim, spokeX + o * 0.012, r * 0.09, 0.001, o, CHROME);
   };
-  if (out === 0) { dress(1); dress(-1); } else dress(out);
+  // `kind` 'aero' (the Wedge): a flat-faceted cover over the whole rim instead
+  // of spokes -- a shallow twelve-sided pyramid in two greys, so it reads as a
+  // cover and still shows the wheel turning.
+  const aero = (o) => {
+    const face = o * hw * 0.55, N = 12, r0 = bead * 0.93, r1 = r * 0.13, bulge = o * 0.03;
+    disc(trim, face, bead * 0.99, r0, o, RIM);
+    for (let s = 0; s < N; s++) {
+      const a0 = (s / N) * Math.PI * 2, a1 = ((s + 1) / N) * Math.PI * 2;
+      const at = (a, rr, x) => [cx + x, cy + Math.cos(a) * rr, cz + Math.sin(a) * rr];
+      const A = at(a0, r0, face), B = at(a1, r0, face), C = at(a1, r1, face + bulge), D = at(a0, r1, face + bulge);
+      const ux = B[0] - A[0], uy = B[1] - A[1], uz = B[2] - A[2], vx = D[0] - A[0], vy = D[1] - A[1], vz = D[2] - A[2];
+      let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const l = Math.hypot(nx, ny, nz) || 1;
+      if (nx * o < 0) { nx = -nx; ny = -ny; nz = -nz; }
+      trim.quad(A, B, C, D, [nx / l, ny / l, nz / l], [0, 0, 1, 0, 1, 1, 0, 1], s % 2 ? AERO_A : AERO_B);
+    }
+    disc(trim, face + bulge, r1, 0.001, o, AERO_A);
+  };
+  const finish = kind === 'aero' ? aero : dress;
+  if (out === 0) { finish(1); finish(-1); } else finish(out);
 }
 
 /**
@@ -5068,6 +5096,304 @@ function buildEv(spec, paint, trim, matte) {
   return wheels;
 }
 
+// ---------------------------------------------------------------------------
+// The Wedge: an angular stainless electric pickup.
+//
+// Every other body here is LOFTED -- smooth sections, smooth normals, because
+// a car is curves. This one is the opposite brief: flat stainless sheets
+// meeting at sharp creases, so it is built facet by facet, each a planar quad
+// with its own flat normal (`wFacet`). Smooth normals across a crease would
+// round off the one thing the shape is about.
+//
+// The whole body hangs off four lines, all straight:
+//   top(z)  the single roofline: nose 1.06 m up to the apex (z -0.10, `roof`)
+//           and down again to the tail at 1.30 -- bonnet, screen, glass roof
+//           and the bed's cover are all on it
+//   BELT    a horizontal crease at 1.22 m, the widest point of the body
+//   xs(y)   the section: the lower sides lean OUT from the sill to the belt,
+//           the upper sides lean IN from the belt to the roof edge, so the
+//           roof is narrowest at the apex and widens to the full body at
+//           both ends -- which is what makes it read as a wedge from any side
+//   sill(z) the bottom of the flanks, rising into the chin and rear bumper
+// Each flank is ONE plane (x is a function of y alone), so any quad whose
+// corners are on it is planar however the stations fall.
+// ---------------------------------------------------------------------------
+const WEDGE_SEAM = [0.05, 0.055, 0.06];
+const WEDGE_CLAD = [0.075, 0.078, 0.082];   // arch flares, chin, rear bumper: grained black plastic
+const WEDGE_VAULT = [0.13, 0.135, 0.14];    // the bed cover's slats
+const WEDGE_GLOSS = [0.022, 0.025, 0.03];   // light-bar housings (trim, so gloss black)
+const WEDGE_LINER = [0.15, 0.15, 0.16];
+const AERO_A = [0.15, 0.155, 0.165], AERO_B = [0.27, 0.28, 0.30];
+
+/**
+ * A flat polygon (3 or 4 corners), normal from its own corners (Newell),
+ * turned to agree with `hint`. `col` is one rgb or one per corner. With
+ * `liner`, an inward-facing copy goes into that builder `ld` metres inside:
+ * the back of a painted panel is culled, so a pillar seen across the cabin
+ * through the far window would otherwise be a hole.
+ */
+function wFacet(b, pts, col, hint, liner = null, ld = 0.012) {
+  let nx = 0, ny = 0, nz = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i], q = pts[(i + 1) % pts.length];
+    nx += (p[1] - q[1]) * (p[2] + q[2]);
+    ny += (p[2] - q[2]) * (p[0] + q[0]);
+    nz += (p[0] - q[0]) * (p[1] + q[1]);
+  }
+  const l = Math.hypot(nx, ny, nz);
+  if (l < 1e-9) return;
+  if (nx * hint[0] + ny * hint[1] + nz * hint[2] < 0) { nx = -nx; ny = -ny; nz = -nz; }
+  const n = [nx / l, ny / l, nz / l];
+  if (pts.length === 3) b.tri(pts[0], pts[1], pts[2], n, col);
+  else b.quad(pts[0], pts[1], pts[2], pts[3], n, [0, 0, 1, 0, 1, 1, 0, 1], col);
+  if (liner) {
+    const inner = pts.map((p) => [p[0] - n[0] * ld, p[1] - n[1] * ld, p[2] - n[2] * ld]);
+    wFacet(liner, inner, WEDGE_LINER, [-n[0], -n[1], -n[2]]);
+  }
+}
+
+/**
+ * The lit light bars on the player's Wedge (Vehicle.setDetailed / sync): one
+ * box scaled to each bar's width, two shared unlit materials. `{ color,
+ * toneMapped: false }` is the police strobes' and the Needle beacon's exact
+ * parameter set, so it is a program the city has already compiled -- no
+ * hitch the first time you get in. Made once, never disposed.
+ */
+let LIGHTBAR = null;
+function lightbarParts() {
+  if (!LIGHTBAR) {
+    LIGHTBAR = {
+      geo: new THREE.BoxGeometry(1, 0.022, 0.008),
+      front: new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }),
+      rear: new THREE.MeshBasicMaterial({ color: 0xff2a1a, toneMapped: false }),
+    };
+  }
+  return LIGHTBAR;
+}
+
+function buildWedge(spec, paint, trim, matte) {
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const wr = spec.wheelR, tw = 0.315;
+  const zF = 1.86, zR = -1.80;                       // 3.66 m wheelbase
+  const SILL = spec.sill, BELT = spec.belt;
+  const W = 1.00, WS = 0.955, ROOFW = 0.70;          // half-widths: belt, sill, roof at the apex
+  const TN = 1.06, ZA = -0.10, YA = spec.roof, TT = 1.30;
+  const K = (W - ROOFW) / (YA - BELT);               // the upper sides' lean
+  const top = (z) => (z >= ZA ? YA + ((TN - YA) * (z - ZA)) / (nose - ZA) : YA + ((TT - YA) * (ZA - z)) / (ZA - tail));
+  const xs = (y) => (y <= BELT ? WS + ((W - WS) * (y - SILL)) / (BELT - SILL) : W - (y - BELT) * K);
+  // Where the bonnet rises through the beltline: forward of it, no upper side.
+  const zHB = ZA + ((nose - ZA) * (YA - BELT)) / (YA - TN);
+  const NOSE_LO = 0.66, TAIL_LO = 0.62, CHIN = 2.56, BUMP = -2.52;
+  const sill = (z) => (z > CHIN ? SILL + ((NOSE_LO - SILL) * (z - CHIN)) / (nose - CHIN)
+    : z < BUMP ? SILL + ((TAIL_LO - SILL) * (BUMP - z)) / (BUMP - tail) : SILL);
+  // Wheel arches: angular, a flat top over chamfered shoulders.
+  const AB = 0.68, AS = 0.60, AT = 0.36, YS = 0.78, YT = 1.00;
+  const archAt = (z) => {
+    for (const zc of [zF, zR]) {
+      const d = Math.abs(z - zc);
+      if (d > AB) continue;
+      if (d <= AT) return YT;
+      if (d <= AS) return YT + ((YS - YT) * (d - AT)) / (AS - AT);
+      return YS + ((SILL - YS) * (d - AS)) / (AB - AS);
+    }
+    return null;
+  };
+  const bottom = (z) => { const a = archAt(z); return a === null ? sill(z) : a; };
+  const P = (sx, y, z, d = 0) => [sx * (xs(y) + d), y, z];
+
+  // Windows on the upper sides, and the stations along the roofline.
+  const COWL = 1.98, WF = 1.62, WB = 0.20, BP = 0.10, RW = -0.92, RX = -1.00, LIP = tail + 0.05;
+  const CAB = [RW - 0.06, WF];                       // what you can see into: liners here
+
+  // --- the flanks: lower sheet, sill to belt, arches cut out ------------------
+  const SL = [...new Set([nose, CHIN, zHB, zF + AB, zF + AS, zF + AT, zF - AT, zF - AS, zF - AB,
+    zR + AB, zR + AS, zR + AT, zR - AT, zR - AS, zR - AB, BUMP, tail].map((z) => +z.toFixed(5)))].sort((a, b) => b - a);
+  for (const sx of [-1, 1]) {
+    for (let i = 0; i < SL.length - 1; i++) {
+      const z0 = SL[i], z1 = SL[i + 1];
+      // sample just inside the interval: an arch's end station is on the sill
+      const b0 = bottom(z0 - 1e-6), b1 = bottom(z1 + 1e-6);
+      const t0 = Math.min(BELT, top(z0)), t1 = Math.min(BELT, top(z1));
+      wFacet(paint, [P(sx, b0, z0), P(sx, b1, z1), P(sx, t1, z1), P(sx, t0, z0)],
+        WHITE, [sx, 0, 0]);
+    }
+    // --- upper sides: belt to roof edge, with the side glass flush in them ---
+    const SU = [zHB, WF, WB, BP, ZA, RW, tail];
+    const glazed = (i) => i === 1 || i === 3 || i === 4;
+    for (let i = 0; i < SU.length - 1; i++) {
+      const z0 = SU[i], z1 = SU[i + 1];
+      const inCab = z0 <= CAB[1] + 1e-6 && z1 >= CAB[0] - 1e-6;
+      const lin = inCab ? matte : null;
+      if (!glazed(i)) {
+        // the sail runs to the tail: line only the part beside the cabin
+        if (z1 < CAB[0]) {
+          wFacet(paint, [P(sx, BELT, z0), P(sx, BELT, CAB[0]), P(sx, top(CAB[0]), CAB[0]), P(sx, top(z0), z0)], WHITE, [sx, 0.5, 0], matte);
+          wFacet(paint, [P(sx, BELT, CAB[0]), P(sx, BELT, z1), P(sx, top(z1), z1), P(sx, top(CAB[0]), CAB[0])], WHITE, [sx, 0.5, 0]);
+        } else {
+          wFacet(paint, [P(sx, BELT, z0), P(sx, BELT, z1), P(sx, top(z1), z1), P(sx, top(z0), z0)], WHITE, [sx, 0.5, 0], lin);
+        }
+        continue;
+      }
+      const g0 = BELT + 0.025, gT = (z) => top(z) - 0.055;
+      wFacet(paint, [P(sx, BELT, z0), P(sx, BELT, z1), P(sx, g0, z1), P(sx, g0, z0)], WHITE, [sx, 0.5, 0], lin);
+      wFacet(trim, [P(sx, g0, z0), P(sx, g0, z1), P(sx, gT(z1), z1), P(sx, gT(z0), z0)], GLASS, [sx, 0.5, 0]);
+      wFacet(paint, [P(sx, gT(z0), z0), P(sx, gT(z1), z1), P(sx, top(z1), z1), P(sx, top(z0), z0)], WHITE, [sx, 0.5, 0], lin);
+    }
+  }
+
+  // --- the roofline: bonnet, screen, glass roof, crossbar, bed cover -----------
+  const edge = (z) => xs(top(z));
+  const across = (b, z0, z1, x0, x1, col, lin = null) => {
+    // a strip between |x| x0(z)..x1(z) on both sides, or across the middle when x0 is null
+    if (x0 === null) {
+      wFacet(b, [[-x1(z0), top(z0), z0], [x1(z0), top(z0), z0], [x1(z1), top(z1), z1], [-x1(z1), top(z1), z1]], col, [0, 1, 0], lin);
+      return;
+    }
+    for (const sx of [-1, 1]) {
+      wFacet(b, [[sx * x0(z0), top(z0), z0], [sx * x1(z0), top(z0), z0], [sx * x1(z1), top(z1), z1], [sx * x0(z1), top(z1), z1]], col, [0, 1, 0], lin);
+    }
+  };
+  const inset = (s) => (z) => edge(z) - s;
+  across(paint, nose, zHB, null, edge, WHITE);
+  across(paint, zHB, COWL, null, edge, WHITE);
+  across(paint, COWL, ZA, inset(0.06), edge, WHITE, matte);         // A-pillars
+  across(trim, COWL, ZA, null, inset(0.06), GLASS);                   // the screen
+  across(paint, ZA, RW, inset(0.07), edge, WHITE, matte);
+  across(trim, ZA, RW, null, inset(0.07), GLASS);                     // glass roof
+  across(paint, RW, RX, null, edge, WHITE, matte);                    // crossbar over the rear window
+  across(paint, RX, LIP, inset(0.07), edge, WHITE);
+  across(paint, LIP, tail, null, edge, WHITE);
+  // The bed's cover: a roll of slats, on the same line as the roof.
+  {
+    const n = 15, step = (RX - LIP) / n;
+    for (let i = 0; i < n; i++) {
+      const za = RX - i * step, zb = za - step;
+      across(matte, za, zb + 0.012, null, inset(0.07), WEDGE_VAULT);
+      across(matte, zb + 0.012, zb, null, inset(0.07), WEDGE_SEAM);
+    }
+  }
+  // Seam where the bonnet meets the screen.
+  {
+    const z0 = COWL + 0.004, z1 = COWL + 0.020, x0 = inset(0.06)(z0), x1 = inset(0.06)(z1);
+    matte.quad([-x0, top(z0) + 0.002, z0], [x0, top(z0) + 0.002, z0], [x1, top(z1) + 0.002, z1], [-x1, top(z1) + 0.002, z1],
+      [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], WEDGE_SEAM);
+  }
+
+  // --- nose: a flat face under the leading edge, the light bar across it ------
+  const endFace = (b, z, y0, y1, col, dir) => wFacet(b, [[-xs(y0), y0, z], [xs(y0), y0, z], [xs(y1), y1, z], [-xs(y1), y1, z]], col, [0, 0, dir]);
+  endFace(paint, nose, NOSE_LO, 0.985, WHITE, 1);
+  endFace(trim, nose, 0.985, 1.035, WEDGE_GLOSS, 1);
+  endFace(paint, nose, 1.035, TN, WHITE, 1);
+  {
+    const x = xs(1.01) - 0.03, z = nose + 0.004;
+    trim.quad([-x, 0.998, z], [x, 0.998, z], [x, 1.022, z], [-x, 1.022, z], [0, 0, 1], [0, 0, 1, 0, 1, 1, 0, 1], LAMP);
+  }
+  wFacet(matte, [[-xs(NOSE_LO), NOSE_LO, nose], [xs(NOSE_LO), NOSE_LO, nose], [xs(SILL), SILL, CHIN], [-xs(SILL), SILL, CHIN]], WEDGE_CLAD, [0, -0.5, 1]);
+
+  // --- tail: the tailgate face, the red bar along its top edge ---------------
+  endFace(paint, tail, TAIL_LO, BELT, WHITE, -1);
+  endFace(paint, tail, BELT, 1.235, WHITE, -1);
+  endFace(trim, tail, 1.235, 1.285, WEDGE_GLOSS, -1);
+  endFace(paint, tail, 1.285, TT, WHITE, -1);
+  {
+    const x = xs(1.26) - 0.03, z = tail - 0.004;
+    trim.quad([-x, 1.247, z], [x, 1.247, z], [x, 1.273, z], [-x, 1.273, z], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], TAILC);
+    // the tailgate's bottom shut line
+    const xl = xs(0.70);
+    matte.quad([-xl, 0.69, tail - 0.002], [xl, 0.69, tail - 0.002], [xl, 0.70, tail - 0.002], [-xl, 0.70, tail - 0.002],
+      [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], WEDGE_SEAM);
+  }
+  trim.box(0, 0.78, tail - 0.006, 0.31, 0.155, 0.012, 0, PLATE);
+  wFacet(matte, [[-xs(TAIL_LO), TAIL_LO, tail], [xs(TAIL_LO), TAIL_LO, tail], [xs(SILL), SILL, BUMP], [-xs(SILL), SILL, BUMP]], WEDGE_CLAD, [0, -0.5, -1]);
+
+  // --- underside, out to the wheel wells ---------------------------------------
+  const WELL = 0.52;
+  const under = (x0, x1, z0, z1) => wFacet(matte, [[x0, SILL, z0], [x1, SILL, z0], [x1, SILL, z1], [x0, SILL, z1]], CAVITY, [0, -1, 0]);
+  under(-WELL, WELL, CHIN, BUMP);
+  for (const sx of [-1, 1]) under(sx * WELL, sx * xs(SILL), zF - AB, zR + AB);
+
+  // --- arches: a proud black flare round each, and a dark well inside ---------
+  for (const zc of [zF, zR]) {
+    const O = [[zc + AB, SILL], [zc + AS, YS], [zc + AT, YT], [zc - AT, YT], [zc - AS, YS], [zc - AB, SILL]];
+    // outward normals per segment, in (z, y), away from the axle line
+    const segN = [];
+    for (let k = 0; k < O.length - 1; k++) {
+      const dz = O[k + 1][0] - O[k][0], dy = O[k + 1][1] - O[k][1], l = Math.hypot(dz, dy);
+      let n = [dy / l, -dz / l];
+      const mz = (O[k][0] + O[k + 1][0]) / 2 - zc, my = (O[k][1] + O[k + 1][1]) / 2 - SILL;
+      if (n[0] * mz + n[1] * my < 0) n = [-n[0], -n[1]];
+      segN.push(n);
+    }
+    // the flare's outer edge, D out from the opening, mitred at the corners
+    // and slid along the sill at the ends
+    const D = 0.075;
+    const off = O.map((p, k) => {
+      if (k === 0 || k === O.length - 1) {
+        const n = segN[k === 0 ? 0 : k - 1];
+        return [p[0] + (Math.sign(n[0]) * D) / Math.max(0.3, Math.abs(n[0])), p[1]];
+      }
+      const a = segN[k - 1], b = segN[k];
+      let mz = a[0] + b[0], my = a[1] + b[1];
+      const ml = Math.hypot(mz, my); mz /= ml; my /= ml;
+      const s = D / Math.max(0.4, mz * a[0] + my * a[1]);
+      return [p[0] + mz * s, p[1] + my * s];
+    });
+    for (const sx of [-1, 1]) {
+      for (let k = 0; k < O.length - 1; k++) {
+        const [z0, y0] = O[k], [z1, y1] = O[k + 1], [w0, v0] = off[k], [w1, v1] = off[k + 1];
+        const n = segN[k];
+        // the flare's face: proud at the opening, meeting the sheet at its edge
+        wFacet(matte, [P(sx, y0, z0, 0.035), P(sx, y1, z1, 0.035), P(sx, v1, w1, 0.006), P(sx, v0, w0, 0.006)], WEDGE_CLAD, [sx, 0, 0]);
+        // its lip, turning in toward the tyre
+        wFacet(matte, [P(sx, y0, z0, 0.035), P(sx, y1, z1, 0.035), P(sx, y1, z1, -0.07), P(sx, y0, z0, -0.07)], WEDGE_CLAD, [0, -n[1], -n[0]]);
+        // and the well behind it, back to the inner wall
+        wFacet(matte, [P(sx, y0, z0, -0.07), P(sx, y1, z1, -0.07), [sx * WELL, y1, z1], [sx * WELL, y0, z0]], CAVITY, [0, -n[1], -n[0]]);
+        wFacet(matte, [[sx * WELL, SILL, zc], [sx * WELL, y0, z0], [sx * WELL, y1, z1]], CAVITY, [sx, 0, 0]);
+      }
+    }
+  }
+
+  // --- seams, mirrors -----------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    const seam = (z, y0, y1) => {
+      wFacet(matte, [P(sx, y0, z + 0.007, 0.003), P(sx, y0, z - 0.007, 0.003), P(sx, y1, z - 0.007, 0.003), P(sx, y1, z + 0.007, 0.003)],
+        WEDGE_SEAM, [sx, 0, 0]);
+    };
+    for (const z of [1.10, 0.15, -0.95]) seam(z, bottom(z) + 0.03, BELT - 0.004);
+    // ... and up the upper side, at the B-pillar and behind the rear door
+    for (const z of [0.15, -0.95]) seam(z, BELT + 0.004, top(z) - 0.004);
+    // Door mirror: a flat-faced pod on a short stalk off the front door.
+    const mz = 1.46, my = 1.31, mx = sx * 1.10;
+    paint.tube([sx * (xs(1.29) - 0.01), 1.29, mz + 0.02], [mx - sx * 0.03, my + 0.02, mz], 0.018, 5, WHITE, true);
+    paint.box(mx, my, mz, 0.075, 0.105, 0.16, 0, WHITE);
+    wFacet(paint, [[mx - 0.0375, my, mz - 0.08], [mx + 0.0375, my, mz - 0.08], [mx + 0.0375, my, mz + 0.08], [mx - 0.0375, my, mz + 0.08]], WHITE, [0, -1, 0]);
+    trim.box(mx, my + 0.01, mz - 0.083, 0.062, 0.085, 0.006, 0, MIRROR);
+  }
+
+  // --- the cabin, seen through the screen, the side glass and the glass roof --
+  {
+    const fy = BELT - 0.004, fx = W - 0.06;
+    matte.quad([-fx, fy, RX + 0.03], [fx, fy, RX + 0.03], [fx, fy, 1.20], [-fx, fy, 1.20], [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAB_FLOOR);
+    // bulkhead behind the rear seats: the cabin's back wall
+    const zb = RX + 0.03, tb = top(zb) - 0.01;
+    wFacet(matte, [[-xs(BELT) + 0.02, BELT, zb], [xs(BELT) - 0.02, BELT, zb], [xs(tb) - 0.02, tb, zb], [-xs(tb) + 0.02, tb, zb]], CAB_FLOOR, [0, 0, 1]);
+    matte.box(0, BELT - 0.01, 1.56, 1.80, 0.14, 0.84, 0, CAB_DASH);                 // dash, a flat slab
+    trim.box(0, 1.33, 1.08, 0.40, 0.20, 0.022, 0, [0.02, 0.025, 0.035]);           // the big screen
+    const H = 0.52;
+    for (const s of [-1, 1]) seat(matte, s * 0.42, BELT, 0.30, 0.50, H, false, 0.30);
+    seat(matte, 0, BELT, -0.66, 1.55, H, true, 0.30);
+    const wheel = [0.42, BELT - 0.02, 0.85];
+    wheelRim(matte, wheel[0], wheel[1], wheel[2], 0.18);
+    if (matte.crew) occupant(matte.crew, 0.42, BELT, 0.30, H, wheel);
+  }
+
+  // Chunky tyres under flat aero covers (addWheel's 'aero'). Knobbly blocks
+  // (knobs) read as a tractor's at this size, not an all-terrain pickup's.
+  const wx = 0.80;
+  return [[-wx, wr, zF, wr, tw, undefined, false, 'aero'], [wx, wr, zF, wr, tw, undefined, false, 'aero'],
+    [-wx, wr, zR, wr, tw, undefined, false, 'aero'], [wx, wr, zR, wr, tw, undefined, false, 'aero']];
+}
+
 /**
  * Build a hand-built type at another type's size. The sedan's builder is
  * authored in absolute stations for a 5.06 x 1.90 m car; a taxi and a police
@@ -6576,6 +6902,7 @@ const HAND_BUILT = {
   hatch: (s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.hatch),
   compact: (s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.compact),
   ev: buildEv, service: buildServiceSedan, van: buildVan, bus: buildBus, ambulance: buildAmbulance,
+  wedge: buildWedge,
   boxtruck: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.boxtruck),
   garbage: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.garbage),
   convertible: buildConvertible, cruiser: buildCruiser, sportbike: buildSportbike,
@@ -6882,7 +7209,21 @@ const PAINT_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Androi
  * second specular lobe per paint pixel, so a phone keeps the one-layer
  * material (and its far LOD's per-vertex copy, FAR_PARTS). Same three draws.
  */
-export function paintMaterial(color) {
+export function paintMaterial(color, finish = null) {
+  // Bare brushed stainless (the Wedge): a metal, not a lacquer -- near-full
+  // metalness, a satin roughness, and only a whisper of clearcoat. The
+  // clearcoat stays above zero on purpose: it is a define, so a stainless
+  // body compiles the SAME program as every painted one (no hitch the first
+  // time one comes round a corner); the values are only uniforms.
+  if (finish === 'steel') {
+    if (!PAINT_PHONE) {
+      return new THREE.MeshPhysicalMaterial({
+        color, metalness: 0.92, roughness: 0.30, envMapIntensity: 1.35,
+        clearcoat: 0.12, clearcoatRoughness: 0.32,
+      });
+    }
+    return new THREE.MeshStandardMaterial({ color, metalness: 0.9, roughness: 0.30, envMapIntensity: 1.4 });
+  }
   if (!PAINT_PHONE) {
     return new THREE.MeshPhysicalMaterial({
       color, metalness: 0.35, roughness: 0.42, envMapIntensity: 1.5,
@@ -7066,7 +7407,7 @@ export class Vehicle {
     this.detailedWheels = false;
 
     this.group = new THREE.Group();
-    this.bodyMat = paintMaterial(this.color);
+    this.bodyMat = paintMaterial(this.color, t.spec.finish);
     const paintMesh = new THREE.Mesh(t.paintGeo, this.bodyMat);
     this.trimMesh = new THREE.Mesh(t.trimGeoW, A.trimMat);
     this.matteMesh = new THREE.Mesh(t.matteGeoW, A.matteMat);
@@ -7092,15 +7433,17 @@ export class Vehicle {
     if (this.rider) this.tilt.add(this.rider.group);
     this.wheelMeshes = [];
     this.shadowTilt = null;   // the player's contact shadow (setDetailed)
+    this.glow = null; this.glowT0 = 0;   // the Wedge's lit light bars (setDetailed)
 
     this.x = 0; this.y = 0; this.z = 0;
     this.heading = 0;
     this.vLong = 0; this.vLat = 0;
     this.steer = 0;
     this.pitch = 0; this.roll = 0;
-    this.health = 100;
+    // `spec.hp` for an armoured type (the Wedge); every other vehicle has 100.
+    this.health = t.spec.hp || 100;
     this.dead = false;
-    this.latAcc = 0;       // lateral acceleration, which is what a bike leans to
+    this.latAcc = 0;      // lateral acceleration, which is what a bike leans to
     // Seconds before this vehicle can take collision damage again. One crash
     // spans many frames -- see damage().
     this.hitCd = 0;
@@ -7243,12 +7586,27 @@ export class Vehicle {
         this.tilt.add(m);
         this.spinMeshes.push(m);
       }
+      // The Wedge's light bars, lit: a dash of light sweeps out from the
+      // middle of both bars as you get in, then they hold a steady glow
+      // (see sync). The player's car only, like the articulated wheels.
+      if (this.spec.lightbar) {
+        const L = lightbarParts();
+        this.glow = new THREE.Group();
+        const [[fy, fw], [ry, rw]] = this.spec.lightbar, hl = this.spec.len / 2 + 0.0065;
+        const f = new THREE.Mesh(L.geo, L.front), r = new THREE.Mesh(L.geo, L.rear);
+        f.position.set(0, fy - this.pivotY, hl); f.userData.w = fw;
+        r.position.set(0, ry - this.pivotY, -hl); r.userData.w = rw;
+        this.glow.add(f, r);
+        this.tilt.add(this.glow);
+        this.glowT0 = performance.now();
+      }
     } else {
       for (const m of this.wheelMeshes) this.tilt.remove(m);
       this.wheelMeshes.length = 0;
       for (const m of this.spinMeshes) this.tilt.remove(m);
       this.spinMeshes.length = 0;
       if (this.shadowTilt) { this.group.remove(this.shadowTilt); this.shadowTilt = null; }
+      if (this.glow) { this.tilt.remove(this.glow); this.glow = null; }
     }
   }
 
@@ -8788,6 +9146,19 @@ export class Vehicle {
         m.rotation.x = this.wheelSpin;
         m.rotation.y = m.userData.front ? this.steer : 0;
       }
+      if (this.glow) {
+        // 0.4 s sweep out from the centre at a flash, settling to a glow
+        // bright enough for the bloom to pick up.
+        const k = (performance.now() - this.glowT0) / 1000;
+        if (k < 2) {
+          const s = 1 - (1 - clamp(k / 0.4, 0, 1)) ** 3;
+          for (const m of this.glow.children) m.scale.x = Math.max(0.01, s) * m.userData.w;
+          const g = k < 0.4 ? 3.2 : 1.3 + 1.9 * Math.exp(-(k - 0.4) * 3.5);
+          const L = lightbarParts();
+          L.front.color.setRGB(g, g, g * 0.94);
+          L.rear.color.setRGB(g, g * 0.08, g * 0.05);
+        }
+      }
     }
   }
 
@@ -8806,7 +9177,9 @@ export class Vehicle {
       if (this.hitCd > 0) return false;
       this.hitCd = 0.4;
     }
-    this.health -= n;
+    // `spec.armor` scales every hit, scripted or not: a crash, a bullet, a
+    // hard landing all dent stainless plate less.
+    this.health -= n * (this.spec.armor || 1);
     if (this.health <= 0 && !this.dead) {
       this.health = 0;
       this.dead = true;

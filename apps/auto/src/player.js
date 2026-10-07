@@ -551,7 +551,8 @@ export class Player {
       if (this.crashCd > 0) return;
       this.crashCd = 0.4;
       this.game.onCrash(imp, false);
-      if (imp > 8) this.game.damagePlayer(imp * 0.5, 'crash');
+      // an armoured body (spec.armor, the Wedge) takes the hit for you too
+      if (imp > 8) this.game.damagePlayer(imp * 0.5 * (v.spec.armor || 1), 'crash');
     });
     // A boat's shore is its wall: updateBoat refuses the move and leaves the
     // impact, which is a crash like any other.
