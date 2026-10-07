@@ -1838,6 +1838,125 @@ async function main() {
       if (bad.length) { console.error(`FAIL: parked cars: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- parked cars stay drawn as you drive up to them -------------------------------
+    //
+    // Drive (fixed steps, the traffic update, then the scene's own matrix
+    // update, as a render does) along straight streets toward the kerbside and
+    // lot parking they spawn, and every step, for every parked car the game
+    // shows within 140 m and in the frustum: is it drawn by its own meshes,
+    // at its own position, or by a far-LOD instance at its position (phone,
+    // past 60 m)? Neither is a car that vanished. A parked car freezes its
+    // matrices once settled, and one that froze before three ever composed
+    // them (spawned hidden past PARKED_SHOW, or straight into the far band)
+    // was drawn at the origin from the far-LOD handover in: on the phone
+    // profile 98 % of the near parked cars in view.
+    const pvis = await session.eval(`(() => {
+      const d = window.__dbg, T = d.traffic, P = d.player, C = d.city, cam = d.camera, scene = d.scene, THREE = d.THREE;
+      if (P.vehicle) P.exitVehicle(true);
+      const was = { x: P.x, z: P.z, paused: d.game.paused, cp: cam.position.clone(), cq: cam.quaternion.clone() };
+      d.game.paused = true;
+      const fr = new THREE.Frustum(), M = new THREE.Matrix4(), S = new THREE.Sphere(), V = new THREE.Vector3();
+      // straight runs: from a street near each centre, the best-aligned next edge, 350 m+
+      const routes = [];
+      for (const [cx, cz] of [[-985, -807], [0, 0], [-1500, -2600], [1200, 900]]) {
+        const eids = C.edgesNear(cx, cz, 400).filter((ei) => { const e = C.edges[ei]; return !e.elev && e.cls !== 'hwy' && e.cls !== 'ramp' && e.len > 40; });
+        let got = null;
+        for (let t = 0; t < Math.min(eids.length, 60) && !got; t++) {
+          const e0 = C.edges[eids[(t * 7919) % eids.length]];
+          for (const n0 of [e0.a, e0.b]) {
+            let n = n0, dir = null, len = 0, prevE = -1;
+            const pts = [[C.nodes[n].x, C.nodes[n].z]];
+            for (let k = 0; k < 30 && len < 450; k++) {
+              const node = C.nodes[n];
+              let best = null;
+              for (const ei of node.e) {
+                const e = C.edges[ei];
+                if (ei === prevE || e.elev || e.cls === 'hwy' || e.cls === 'ramp') continue;
+                const o = C.nodes[e.a === n ? e.b : e.a], dx = o.x - node.x, dz = o.z - node.z, L = Math.hypot(dx, dz);
+                if (L < 1) continue;
+                const dot = dir ? (dx * dir[0] + dz * dir[1]) / L : 1;
+                if (!best || dot > best.dot) best = { ei, m: e.a === n ? e.b : e.a, dot, dx: dx / L, dz: dz / L, L };
+              }
+              if (!best || best.dot < 0.9) break;
+              dir = [best.dx, best.dz]; prevE = best.ei; n = best.m; len += best.L;
+              pts.push([C.nodes[n].x, C.nodes[n].z]);
+            }
+            if (len > 350) { got = pts; break; }
+          }
+        }
+        if (got) routes.push(got);
+      }
+      const out = { routes: routes.length, frames: 0, checks: 0, lot: 0, full: 0, inst: 0, neither: 0, examples: [] };
+      for (const pts of routes) {
+        // arrive as a driver does: nothing parked yet, the cars spawn at the range's edge
+        for (const v of [...T.cars]) if (v.mode === 'parked') T.remove(v);
+        T._lotKey = null;
+        let dist = 0;
+        for (let i = 1; i < pts.length; i++) {
+          const [ax, az] = pts[i - 1], [bx, bz] = pts[i], L = Math.hypot(bx - ax, bz - az);
+          const ux = (bx - ax) / L, uz = (bz - az) / L;
+          for (let s = 0; s < L; s += 0.75, dist += 0.75) {
+            const x = ax + ux * s, z = az + uz * s;
+            P.x = x; P.z = z;
+            T.update(1 / 30, x, z, { x: ux, z: uz }, P);
+            const gy = C.groundAt(x, z, null);
+            cam.position.set(x - ux * 6, gy + 3, z - uz * 6);
+            cam.lookAt(x + ux * 30, gy + 1, z + uz * 30);
+            cam.updateMatrixWorld();
+            scene.updateMatrixWorld();   // what renderer.render does first
+            if (dist < 150) continue;   // past the first spawn ring
+            out.frames++;
+            M.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+            fr.setFromProjectionMatrix(M);
+            const inst = new Map();
+            for (const [tn, e] of T.farMeshes) {
+              if (!e.mesh || !e.mesh.visible) continue;
+              const a = [];
+              for (let k = 0; k < e.mesh.count; k++) { e.mesh.getMatrixAt(k, M); V.setFromMatrixPosition(M); a.push(V.x, V.z); }
+              inst.set(tn, a);
+            }
+            for (const v of T.cars) {
+              if (v.mode !== 'parked' || !v.group.visible) continue;
+              const dd = Math.hypot(v.x - cam.position.x, v.z - cam.position.z);
+              if (dd > 140) continue;
+              S.center.set(v.x, v.y + 1, v.z); S.radius = v.halfLen;
+              if (!fr.intersectsSphere(S)) continue;
+              out.checks++;
+              if (typeof v.slot === 'string') out.lot++;
+              let full = v.tilt.visible;
+              if (full) v.tilt.traverse((o) => {
+                if (!o.isMesh || !o.visible) return;
+                V.setFromMatrixPosition(o.matrixWorld);
+                if (Math.hypot(V.x - v.x, V.z - v.z) > 4 || Math.abs(V.y - v.y) > 4) full = false;
+              });
+              const a = inst.get(v.typeName) || [];
+              let isInst = false;
+              for (let k = 0; k < a.length && !isInst; k += 2) isInst = Math.hypot(a[k] - v.x, a[k + 1] - v.z) < 1;
+              if (full) out.full++;
+              else if (isInst) out.inst++;
+              else {
+                out.neither++;
+                V.setFromMatrixPosition(v.group.matrixWorld);
+                if (out.examples.length < 4) out.examples.push(v.typeName + ' at ' + dd.toFixed(0) + ' m drawn at (' + V.x.toFixed(0) + ', ' + V.z.toFixed(0) + ') not (' + v.x.toFixed(0) + ', ' + v.z.toFixed(0) + ')');
+              }
+            }
+          }
+        }
+      }
+      for (const v of [...T.cars]) if (v.mode === 'parked') T.remove(v);
+      T._lotKey = null;
+      P.x = was.x; P.z = was.z;
+      cam.position.copy(was.cp); cam.quaternion.copy(was.cq); cam.updateMatrixWorld();
+      T.update(1 / 60, P.x, P.z, { x: 0, z: -1 }, P);
+      d.game.paused = was.paused;
+      return out;
+    })()`);
+    console.log(`  driving up to them: ${pvis.routes} streets, ${pvis.frames} frames, ${pvis.checks} parked cars in view within 140 m (${pvis.lot} in lots): ${pvis.full} drawn whole, ${pvis.inst} far-LOD instances, ${pvis.neither} drawn by neither ${pvis.examples.join('; ')}`);
+    if (pvis.neither || pvis.routes < 3 || pvis.checks < 500 || !pvis.lot) {
+      console.error(`FAIL: parked cars vanish as you drive up to them (${pvis.neither} drawn by neither${pvis.routes < 3 || pvis.checks < 500 || !pvis.lot ? '; or the drive found too few to judge' : ''})`);
+      process.exitCode = 1;
+    }
+
     // --- the 747-8 at Boeing Field ----------------------------------------------------
     const jum = await session.eval(`(() => {
       const d = window.__dbg, T = d.traffic, P = d.player;
