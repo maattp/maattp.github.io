@@ -8659,6 +8659,7 @@ export class Vehicle {
     }
     if (this.detailedWheels === on) return;
     this.detailedWheels = on;
+    if (!on) this.rearSteer = 0;
     const A = vehicleAssets();
     this.trimMesh.geometry = on ? this.assets.trimGeo : this.assets.trimGeoW;
     this.matteMesh.geometry = on ? this.assets.matteGeo : this.assets.matteGeoW;
@@ -10003,6 +10004,7 @@ export class Vehicle {
     // from the authored builders' real axle centres -- `len * 0.62` was a guess
     // made before any vehicle had a wheelbase to read, and it put the bus's
     // axles 7.4 m apart against a real 6.
+    // rear steer: only AGAINST the fronts adds yaw (with them is drawn only: see above)
     const rsAgainst = this.rearSteer * this.steer < 0 ? this.rearSteer : 0;
     const yawRate = spec.tank ? this._tankYaw(dt, steerIn) : (this.vLong / wheelbase) * (Math.tan(this.steer) - Math.tan(rsAgainst));
     this.heading += yawRate * dt;

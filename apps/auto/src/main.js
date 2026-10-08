@@ -1568,10 +1568,9 @@ function installShadowFade() {
       for (const m of lazy.meshes) warm.add(m);
       // the fire service's particles, beacon and lights (drawn first in a fire call)
       if (fire) { fireWarm = fire.warmMeshes(player); for (const m of fireWarm.meshes) warm.add(m); }
-      // The police's lazily-made materials: the units' light bar, the
-      // a mission suspect's marker -- and the
-      // tracer lines, hidden until the first shot, which compiled their
-      // program mid-firefight.
+      // The police's lazily-made materials: the units' light bar, a mission
+      // suspect's marker -- and the tracer lines, hidden until the first
+      // shot, which compiled their program mid-firefight.
       warm.add(warmLightBar());
       for (const m of police.warmMeshes()) warm.add(m);
       for (const m of missions.warmMeshes()) warm.add(m);
