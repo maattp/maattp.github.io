@@ -4231,6 +4231,30 @@ async function main() {
       + `-> ${synthCovers ? 'synth radio covers' : 'SILENT -- BUG'}`);
     if (!synthCovers) process.exitCode = 1;
 
+    // --- the Wedge's rear-wheel steer (v193) -------------------------------------
+    // Your own Wedge's rear wheels turn against the fronts at parking speed
+    // (a tighter turn) and a touch with them on the highway (the same radius).
+    {
+      const r = await session.eval(`(() => { const d = window.__dbg, T = d.traffic, p = d.player.position, out = {};
+        for (const [det, kmh] of [[false, 15], [true, 15], [false, 90], [true, 90]]) {
+          const v = T.spawnAt(p.x + 40, p.z + 40, 0, 'wedge', 0xb9bdc1, 'free'); v.setDetailed(det); v.vLong = kmh / 3.6;
+          let h0 = 0, dist = 0;
+          for (let i = 0; i < 240; i++) {
+            const tgt = kmh / 3.6;
+            v.update(1 / 60, { throttle: v.vLong < tgt ? 0.5 : 0, brake: v.vLong > tgt + 0.4 ? 0.3 : 0, steer: 1 });
+            if (i === 90) h0 = v.heading; if (i > 90) dist += Math.abs(v.vLong) / 60;
+          }
+          const rear = v.wheelMeshes.filter((m) => !m.userData.front);
+          out[(det ? 'rs' : 'plain') + kmh] = { R: dist / Math.abs(v.heading - h0), rear: v.rearSteer, mesh: rear.length ? rear[0].rotation.y : 0 };
+          v.setDetailed(false); T.remove(v);
+        }
+        return out; })()`);
+      console.log('\n--- the Wedge: rear-wheel steer ----------------------------');
+      console.log(`  15 km/h full lock: radius ${r.plain15.R.toFixed(2)} m -> ${r.rs15.R.toFixed(2)} m, rear ${(r.rs15.rear * 57.3).toFixed(1)} deg (wheel ${(r.rs15.mesh * 57.3).toFixed(1)}); 90 km/h: ${r.plain90.R.toFixed(1)} m -> ${r.rs90.R.toFixed(1)} m, rear ${(r.rs90.rear * 57.3).toFixed(1)} deg`);
+      if (!(r.rs15.rear < -0.15 && Math.abs(r.rs15.mesh - r.rs15.rear) < 1e-6 && r.rs15.R < r.plain15.R * 0.9
+        && r.rs90.rear > 0 && Math.abs(r.rs90.R - r.plain90.R) < 0.5)) { console.error("FAIL: the Wedge's rear wheels do not steer as they should"); process.exitCode = 1; }
+    }
+
     // --- the tank ------------------------------------------------------------------
     //
     // The tank at Sand Point, through player.update at a fixed dt (the game's

@@ -1248,7 +1248,6 @@ function installShadowFade() {
   // opening frame. A red sports coupe is parked for good (apron: never
   // despawned, like the quads) at the right-hand kerb ~14 m ahead, facing up
   // the street, and any kerbside car in that spot gives up its slot.
-  let wedgeAt = null;   // and the Wedge beside it (mapPlaces says hello)
   {
     traffic.updateParked(G.SPAWN.x, G.SPAWN.z);
     const fx = Math.sin(G.SPAWN_HEADING), fz = Math.cos(G.SPAWN_HEADING);
@@ -1285,7 +1284,7 @@ function installShadowFade() {
         traffic.remove(v);
       }
       traffic.spawnAt(spot.x, spot.z, spot.heading, 'sports', 0xc4161c, 'apron').vLong = 0;
-      if (wedge) { traffic.spawnAt(wedge.x, wedge.z, spot.heading, 'wedge', 0xb9bdc1, 'apron').vLong = 0; wedgeAt = wedge; }
+      if (wedge) traffic.spawnAt(wedge.x, wedge.z, spot.heading, 'wedge', 0xb9bdc1, 'apron').vLong = 0;
     }
   }
   // What the map marks, and what says hello when you get near (the HUD is
@@ -1304,8 +1303,6 @@ function installShadowFade() {
         hello: 'A 747-8, the biggest thing Boeing ever built. She needs the whole runway: rotate at 150 knots' }];
     })(),
     ...ATV_SPOTS.map(([x, z]) => ({ x, z, kind: 'atv', name: 'Quad bike', near: false, hello: 'A quad bike — made for the grass' })),
-    ...(wedgeAt ? [{ x: wedgeAt.x, z: wedgeAt.z, kind: 'wedge', name: 'The Wedge', near: false,
-      hello: 'The Wedge — stainless, electric, quick, and very hard to dent. Walk up and press ENTER' }] : []),
     { x: TANK_SITE.x, z: TANK_SITE.z, kind: 'tank', name: 'Tank', near: false,
       hello: 'A main battle tank on the old Naval Air Station apron. Climb in: FIRE is the main gun, MG the machine gun' },
     ...fishSpots.map((sp) => ({ x: sp.x, z: sp.z, kind: 'fish', name: `Fishing — ${sp.name}`, near: false,
@@ -1571,10 +1568,9 @@ function installShadowFade() {
       for (const m of lazy.meshes) warm.add(m);
       // the fire service's particles, beacon and lights (drawn first in a fire call)
       if (fire) { fireWarm = fire.warmMeshes(player); for (const m of fireWarm.meshes) warm.add(m); }
-      // The police's lazily-made materials: the units' light bar, the
-      // helicopter's searchlight cone, a mission suspect's marker -- and the
-      // tracer lines, hidden until the first shot, which compiled their
-      // program mid-firefight.
+      // The police's lazily-made materials: the units' light bar, a mission
+      // suspect's marker -- and the tracer lines, hidden until the first
+      // shot, which compiled their program mid-firefight.
       warm.add(warmLightBar());
       for (const m of police.warmMeshes()) warm.add(m);
       for (const m of missions.warmMeshes()) warm.add(m);

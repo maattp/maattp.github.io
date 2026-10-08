@@ -12,7 +12,7 @@
 //   1  two patrol cars; officers who stop by you get out and ARREST -- no
 //      shooting. Stopped, on foot or in a car with a cop at the door: BUSTED.
 //   2  three cars; officers shoot pistols, from a stopped car too.
-//   3  four cars and the helicopter: it follows you with a searchlight and a
+//   3  four cars and the helicopter: it follows you, watching, with a
 //      marksman, and while it sees you the heat does not cool.
 //   4  SWAT: two armoured vans that ram, then stop and put four tactical
 //      officers on the street with carbines (3-round bursts, tracers).
@@ -20,7 +20,8 @@
 //
 // LOSING THEM is GTA's search: the police know where they last SAW you
 // (a unit within sight range -- 70 m for a car, 40 m on foot, the helicopter
-// while you are in its beam and not under a deck or in a bore). Out of sight,
+// while its search point is on you and you are not under a deck or in a
+// bore -- no beam is drawn: it is always daytime). Out of sight,
 // they drive to that point and search around it, the stars flash, and after
 // 6 + 3 x stars seconds unseen one star goes. Seen again, the clock restarts.
 
@@ -75,7 +76,6 @@ const DISPATCH = 15;
 const HELI_SPEED = 42, HELI_ACC = 11, HELI_AGL = 64;
 const BUST_FOOT = 0.7, BUST_CAR = 1.6;
 
-const _v = new THREE.Vector3(), _q = new THREE.Quaternion(), DOWN = new THREE.Vector3(0, -1, 0);
 const ORD = { heading: 0, speed: 0, remove: false };
 
 export class Police {
@@ -96,32 +96,15 @@ export class Police {
     this._wasWanted = 0;
     this._drop = null;
     this.blockT = 8;     // s to the next roadblock (5 stars)
-    // The searchlight: one additive cone per helicopter, sharing this
-    // geometry and material. Apex at the origin, opening down -y to radius 1
-    // at y = -1; scaled to the beam's length and its footprint.
-    // Brightest at the lamp, fading to a third at the ground (vertex
-    // colours, additive), so in daylight it reads as a beam, not a wedge.
-    const cg = new THREE.ConeGeometry(1, 1, 18, 1, true);
-    cg.translate(0, -0.5, 0);
-    const cp = cg.attributes.position, cc = new Float32Array(cp.count * 3);
-    for (let i = 0; i < cp.count; i++) { const k = 1 + cp.getY(i) * 0.7; cc[i * 3] = k; cc[i * 3 + 1] = k * 0.95; cc[i * 3 + 2] = k * 0.8; }
-    cg.setAttribute('color', new THREE.BufferAttribute(cc, 3));
-    this.coneGeo = cg;
-    this.coneMat = new THREE.MeshBasicMaterial({
-      color: 0xffffff, vertexColors: true, transparent: true, opacity: 0.11, blending: THREE.AdditiveBlending,
-      depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true,   // (additive: no order to get right, so one pass, not three's two for a double-sided transparent)
-    });
+    // No searchlight is drawn (v193). The game is always in daylight, and a
+    // lit cone from the nose to the ground read as a strange glowing wedge.
+    // The helicopter still aims a search point (aimX/Z) and sees you by it.
   }
 
   level() { return LEVELS[clamp(this.game.wanted | 0, 0, 5)]; }
 
-  /** Meshes made lazily in play, for main.js's warm-up frames (Hitches). */
-  warmMeshes() {
-    const m = new THREE.Mesh(this.coneGeo, this.coneMat);
-    m.frustumCulled = false;
-    m.scale.set(4, 30, 4);
-    return [m];
-  }
+  /** Meshes made lazily in play, for main.js's warm-up frames (Hitches): none now. */
+  warmMeshes() { return []; }
 
   /** A crime was seen where you are (game.addHeat). */
   spotted(x, z) {
@@ -523,9 +506,9 @@ export class Police {
 /**
  * A police helicopter: the hangar's Bell 407 (vehicles.js `heli`) in navy,
  * flown here rather than by updateHeli -- it circles you at ~64 m, turns its
- * nose to you, lights you with its searchlight, and from three stars a
+ * nose to you, keeps its search point on you, and from three stars a
  * marksman (five a door gunner) shoots from it. It is not in traffic.cars:
- * nothing collides with it, and it costs its five draws and the cone.
+ * nothing collides with it, and it costs its five draws.
  */
 class Heli {
   constructor(pol, i) {
@@ -549,10 +532,6 @@ class Heli {
     this.shootCd = 3 + Math.random() * 2; this.burst = 0; this.suspect = false;
     this.sweep = Math.random() * 6;
     this.aimX = p.x; this.aimZ = p.z; this.aimY = p.y;
-    this.cone = new THREE.Mesh(pol.coneGeo, pol.coneMat);
-    this.cone.frustumCulled = false;
-    this.cone.renderOrder = 5;
-    pol.scene.add(this.cone);
   }
 
   update(dt, pol, L, player, v0) {
@@ -612,17 +591,6 @@ class Heli {
     v.roll = lerp(v.roll, clamp(-aR * 0.025, -0.3, 0.3), 1 - Math.exp(-3 * dt));
     v.sync();
     v.spinParts(dt, 0, 34, 70);
-    // the searchlight's cone, from the nose to the ground at the aim point
-    const sx = this.x + fx * 1.6, sy = this.y + 0.6, sz = this.z + fz * 1.6;
-    _v.set(this.aimX - sx, this.aimY - sy, this.aimZ - sz);
-    const len = _v.length();
-    const c = this.cone;
-    c.visible = !this.leaving;
-    c.position.set(sx, sy, sz);
-    _q.setFromUnitVectors(DOWN, _v.multiplyScalar(1 / Math.max(len, 1e-3)));
-    c.quaternion.copy(_q);
-    const r = 3.2 + len * 0.03;
-    c.scale.set(r, len, r);
     // the marksman or the door gunner
     if (L.heliGun && this.sees && !this.leaving) {
       pol.tickGun(this, WEAPONS[L.heliGun], dt, this.x + fz * 1.2, this.y - 0.3, this.z - fx * 1.2, true);
@@ -631,7 +599,6 @@ class Heli {
 
   dispose(scene) {
     scene.remove(this.v.group);
-    scene.remove(this.cone);
     this.v.bodyMat.dispose();
   }
 }

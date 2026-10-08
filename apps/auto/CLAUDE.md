@@ -2497,7 +2497,7 @@ axle, then steer the lot.
 
 **An angular stainless electric pickup** (`wedge`, `buildWedge`), original
 and unbranded: one straight roofline from the nose over the cabin to a
-slatted bed cover, flat steel facets meeting at sharp creases, flush glass,
+matte bed cover, flat steel facets meeting at sharp creases, flush glass,
 a full-width light bar at each end, angular black-flared arches over chunky
 tyres with flat aero covers (`addWheel`'s `kind` 'aero'). `docs/wedge/` has
 shots.
@@ -2542,9 +2542,24 @@ shots.
   1.27 s (3.05 s on the spec sheet, before `ARCADE_PUNCH`),
   200 km/h, 100-0 in 17.5 m, 2.55 g -- quicker off the line than
   the performance EV, a 3 t truck that drives like a fast car. The sound is
-  `engine: 'evtruck'` in audio.js: the EV motor an octave lower and richer in
-  harmonics, its inverter whine starting lower (`audiorender.mjs --only
-  engine-evtruck,engine-ev`: spectral centroid 702 Hz against 975, no clipping).
+  `engine: 'evtruck'` in audio.js: the EV motor a quarter lower and no more
+  (`audiorender.mjs --only engine-evtruck,engine-ev`: spectral centroid 870 Hz
+  against 975, no clipping). **v193: it first went an octave down with rich
+  harmonics, a 520 Hz resonance and the saturator driven (702 Hz), and it
+  sounded like a gas engine** -- a low buzzy fundamental is what a cylinder
+  firing sounds like. A motor of any size is a near-pure tone plus the
+  inverter's whine; keep `harm` sparse and `drive` at 1.
+- **Rear-wheel steer (v193), like the truck it is after.** `spec.rearSteer`
+  (0.175 rad, 10 deg): against the fronts at parking speed, fading out by
+  ~45 km/h (yaw = v/L (tan front - tan rear), so the turn tightens: 5.1 m ->
+  4.1 m at full lock), and a touch with them from ~65 km/h -- drawn only, as
+  the lock already holds the grip limit (90 km/h radius unchanged). Your own
+  vehicle only (`detailedWheels`): the AI steers by the plain bicycle model
+  inverted (`aiSteer`), which a tighter turn would fight. verify: "the Wedge:
+  rear-wheel steer".
+- **The bed cover is one matte panel (v193).** It was fifteen slats with a
+  1.2 cm dark seam each: far under a pixel from the chase camera, so they
+  crawled and shimmered on the move. No sub-pixel stripes on a car body.
 - **The light bars light up when you get in.** `spec.lightbar` (each bar's
   height and width) makes `setDetailed(true)` add two unlit boxes over the
   lamp strips, the player's car only (+2 draws, like its articulated
@@ -2554,7 +2569,8 @@ shots.
   program. There is no day/night cycle, so nothing brightens "at night".
 - **Where:** parked for good ('apron') on the spawn's kerb, 7.8 m behind or
   ahead of the red sports car -- whichever clears the junction mouths by
-  11 m -- with a map mark and a hello; $2500 from the pause menu's delivery
+  11 m (no map mark or hello since v193: it is right beside you at spawn,
+  and the toast read as stray text); $2500 from the pause menu's delivery
   row; and in traffic now and then: a quarter of the EVs drawn for moving
   traffic become Wedges (~1.5 %), by `hash2`, so the spawn stream is
   unchanged. **It is not a `CIVILIAN_TYPES` slot**: that array is hashed for
@@ -7631,12 +7647,13 @@ by `updateHeli` and not in `traffic.cars`: nothing collides with it. It
 arrives from 260 m, flies at up to 42 m/s (a fast car on a freeway outruns
 it), orbits 36-50 m off you at ~64 m over the ground with a lead on your
 velocity -- the two at five stars on opposite sides -- nose to its beam,
-banked into its acceleration, and climbs away when the level drops. The
-searchlight is one additive open-ended cone (shared geometry and material,
-vertex colours fading toward the ground, opacity 0.11) from the nose,
-scaled to the beam: one draw. Under a deck it lights the deck (the highest
-surface over you), not you through it; sweeping, it lands on the top surface
-too. Four draws a helicopter (its tail rotor hidden) plus the cone. The old
+banked into its acceleration, and climbs away when the level drops. Its
+search point (aimX/Z) is on you while it sees you and sweeps round the last
+sighting while searching; under a deck it lands on the deck (the highest
+surface over you), not you through it. **No searchlight is drawn (v193):**
+it was an additive cone from the nose to the ground, and in this game's
+permanent daylight it read as a strange glowing wedge. Four draws a
+helicopter (its tail rotor hidden). The old
 one (traffic.js `ensureHeli`) was capsules and boxes in new Lambert
 materials, rebuilt every time the level crossed four.
 
@@ -7662,8 +7679,8 @@ crew, dark once the heat is gone); the SWAT van's sits on the front of its
 box, 1.37x wide. Its lens material compiled the first time a cop appeared:
 `warmLightBar` builds one for the warm-up frames.
 
-**Hitches.** The warm-up frames also draw the light bar, the searchlight
-cone, a mission suspect's marker and the tracer lines -- which are hidden
+**Hitches.** The warm-up frames also draw the light bar, a mission
+suspect's marker and the tracer lines -- which are hidden
 until the first shot, and compiled their program mid-firefight on master
 too. Nothing else is new to the GPU: the van and the helicopter are vehicle
 programs, the officers `pedMat`.
@@ -7710,7 +7727,8 @@ master (v190) run, the planned-path pursuit in place:
 | scene-pass draws | 205-240 | 201-248 |
 | police on the street | 8 units, 0 on foot, 2 helicopters | 9 units, 6 on foot, 1 helicopter |
 
-**The searchlight is one pass** (`forceSinglePass`): three draws a
+**The searchlight was one pass** (`forceSinglePass`; the cone itself is gone
+since v193): three draws a
 double-sided transparent material twice (back faces, then front), so the two
 cones were four draws. The pair just before the fix measured the branch
 +2.8 ms (17.8 vs 15.0 median), +1.7 ms of it in the render submission; the
