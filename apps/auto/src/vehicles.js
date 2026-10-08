@@ -184,7 +184,7 @@ export const TYPES = {
   // damage to whoever is inside. `mass` 2.6 shoves a 1.0 sedan aside.
   // `finish: 'steel'` is the brushed-metal paint material; the livery keeps it
   // stainless whatever colour the spawner drew. `engine` is the deeper motor.
-  wedge: deriveSpec({ wheelbase: 3.66, len: 5.68, wid: 2.06, wheelR: 0.445, sill: 0.40, belt: 1.22, roof: 1.88, cab: [-0.16, 0.35], hand: 'wedge', ev: true, engine: 'evtruck', finish: 'steel', livery: 0xb9bdc1, lightbar: [[1.010, 1.94], [1.260, 1.95]], hp: 250, armor: 0.5, mass: 2.6, acc: 11.0, topKph: 200, brakeM: 38, latG: 0.94 }),
+  wedge: deriveSpec({ wheelbase: 3.66, len: 5.68, wid: 2.06, wheelR: 0.445, sill: 0.40, belt: 1.22, roof: 1.88, cab: [-0.16, 0.35], hand: 'wedge', ev: true, engine: 'evtruck', finish: 'steel', livery: 0xb9bdc1, lightbar: [[1.010, 1.94], [1.260, 1.95]], hp: 250, armor: 0.5, mass: 2.6, acc: 11.0, topKph: 200, brakeM: 38, latG: 0.94, rearSteer: 0.175 }),
   muscle: deriveSpec({ wheelbase: 2.95,len: 5.02, wid: 1.98, wheelR: 0.35, sill: 0.26, belt: 1.02, roof: 1.40, cab: [-0.24, 0.13], hand: 'muscle', mass: 1.15, acc: 7.0, topKph: 265, brakeM: 36, latG: 0.94 }),
   // Roofless muscle. `roof` is the top of the windscreen frame, 16 cm under the
   // coupe's, and there is no greenhouse above the beltline at all -- which is
@@ -5285,15 +5285,10 @@ function buildWedge(spec, paint, trim, matte) {
   across(paint, RW, RX, null, edge, WHITE, matte);                    // crossbar over the rear window
   across(paint, RX, LIP, inset(0.07), edge, WHITE);
   across(paint, LIP, tail, null, edge, WHITE);
-  // The bed's cover: a roll of slats, on the same line as the roof.
-  {
-    const n = 15, step = (RX - LIP) / n;
-    for (let i = 0; i < n; i++) {
-      const za = RX - i * step, zb = za - step;
-      across(matte, za, zb + 0.012, null, inset(0.07), WEDGE_VAULT);
-      across(matte, zb + 0.012, zb, null, inset(0.07), WEDGE_SEAM);
-    }
-  }
+  // The bed's cover, on the same line as the roof: one matte panel. It was
+  // fifteen slats with a 1.2 cm dark seam each -- far thinner than a pixel
+  // from the chase camera, so on the move they crawled and shimmered.
+  across(matte, RX, LIP, null, inset(0.07), WEDGE_VAULT);
   // Seam where the bonnet meets the screen.
   {
     const z0 = COWL + 0.004, z1 = COWL + 0.020, x0 = inset(0.06)(z0), x1 = inset(0.06)(z1);
@@ -8541,6 +8536,7 @@ export class Vehicle {
     this.heading = 0;
     this.vLong = 0; this.vLat = 0;
     this.steer = 0;
+    this.rearSteer = 0;   // the rear wheels' angle (spec.rearSteer), + = with the fronts
     this.pitch = 0; this.roll = 0;
     // `spec.hp` for an armoured type (the Wedge); every other vehicle has 100.
     this.health = t.spec.hp || 100;
@@ -9922,6 +9918,17 @@ export class Vehicle {
     // which is the "sloppy" -- the car was still winding on lock a fifth of a
     // second after the input. 20 puts it near 115 ms.
     this.steer = lerp(this.steer, steerIn * lock, 1 - Math.exp(-20 * dt));
+    // REAR-WHEEL STEER (spec.rearSteer, the Wedge's 10 deg, like the truck
+    // it is after): the rear wheels turn AGAINST the fronts at parking speed,
+    // fading out by ~45 km/h, and a touch WITH them from ~65 km/h. Against,
+    // it tightens the turn (the yaw below); with, it is the same yaw from a
+    // steadier car -- the lock above already holds the grip limit, so it is
+    // drawn, not added. Your own vehicle only: the AI steers by the plain
+    // bicycle model inverted (aiSteer), which a tighter turn would fight.
+    if (spec.rearSteer && this.detailedWheels) {
+      const against = clamp(1 - (sp - 6) / 6.5, 0, 1), along = clamp((sp - 18) / 8, 0, 1);
+      this.rearSteer = clamp(this.steer * (0.25 * along - 0.45 * against), -spec.rearSteer, spec.rearSteer);
+    } else this.rearSteer = 0;
 
     const top = spec.fadeTop;
     let acc = 0;
@@ -9996,7 +10003,8 @@ export class Vehicle {
     // from the authored builders' real axle centres -- `len * 0.62` was a guess
     // made before any vehicle had a wheelbase to read, and it put the bus's
     // axles 7.4 m apart against a real 6.
-    const yawRate = spec.tank ? this._tankYaw(dt, steerIn) : (this.vLong / wheelbase) * Math.tan(this.steer);
+    const rsAgainst = this.rearSteer * this.steer < 0 ? this.rearSteer : 0;
+    const yawRate = spec.tank ? this._tankYaw(dt, steerIn) : (this.vLong / wheelbase) * (Math.tan(this.steer) - Math.tan(rsAgainst));
     this.heading += yawRate * dt;
 
     // The battery floor puts the mass under the axle line, so it holds on
@@ -10440,7 +10448,7 @@ export class Vehicle {
         // 'YXZ' gives Ry*Rx: roll on the axle first, then steer the whole thing.
         if (m.rotation.order !== 'YXZ') m.rotation.order = 'YXZ';
         m.rotation.x = this.wheelSpin;
-        m.rotation.y = m.userData.front ? this.steer : 0;
+        m.rotation.y = m.userData.front ? this.steer : this.rearSteer;
       }
       if (this.glow) {
         // 0.4 s sweep out from the centre at a flash, settling to a glow
