@@ -1470,6 +1470,7 @@ function installShadowFade() {
   missions = new PoliceMissions({ scene, city, game, traffic, police, hud, audio });
   game.setSiren = (v, on) => { traffic.lightBar(v); setSiren(v, on); };
   taxi = new TaxiFares({ scene, city, game, traffic, peds, hud, audio, root: controls.root });
+  taxi.warm();
 
   // delivery marker
   const mg = new THREE.CylinderGeometry(6, 6, 26, 18, 1, true);
@@ -2192,7 +2193,7 @@ function wireUi() {
   const farePad = document.querySelector('[data-btn="taxifare"]');
   if (farePad) farePad.addEventListener('pointerdown', () => { if (taxi && !game.paused && !game.dead) taxi.toggle(player); });
   window.addEventListener('keydown', (e) => {
-    if (e.code === 'KeyT' && !e.repeat && taxi && !game.paused && !game.dead && (taxi.on || taxi.available(player))) taxi.toggle(player);
+    if (e.code === 'KeyT' && !e.repeat && !/^(INPUT|TEXTAREA|SELECT)$/.test(e.target && e.target.tagName) && taxi && !game.paused && !game.dead && (taxi.on || taxi.available(player))) taxi.toggle(player);
   });
   window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyN' && !e.repeat && missions && !game.paused && !game.dead && (missions.run || missions.nextT > 0 || missions.available(player))) missions.toggle(player);

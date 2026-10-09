@@ -3622,6 +3622,17 @@ export class PedSystem {
     return null;
   }
 
+  /** A fare getting out of the taxi: a civilian at (x, z), walking to (fx, fz)
+   *  (`fare` 2) -- placed by hand, no search, so it cannot fail. */
+  spawnFareAt(x, z, seedY, fx, fz) {
+    const y = this.city.groundAt(x, z, seedY, this.city.roadLift(x, z));
+    const p = this._add(x, z, false, -1, 1, 1, 0, y);
+    p.fare = 2; p.fx = fx; p.fz = fz;
+    p.heading = Math.atan2(fx - x, fz - z);
+    p.h.group.position.set(x, y, z);
+    return p;
+  }
+
   /** The old civilian rule, for officers walking in: any pavement 20-150 m out. */
   spawnCop(px, pz) {
     const city = this.city;

@@ -132,6 +132,7 @@ tools/fetch_dem.py          downloads the USGS terrain tiles
 tools/build_mountains.py    DEM -> the Olympics/Cascades skyline and Rainier's baked face -> mountains.bin
 tools/render_map.py         draws the whole graph top-down, for eyeballing
 tools/taxicheck.mjs         the taxi fares job end to end, and every way it ends
+tools/taxihitch.mjs         the worst single call of finding a fare at 8x CPU throttle (before/after for a search change)
 tools/verify.mjs            headless CDP boot + assertions + screenshots
 tools/jank.mjs, perfguard.mjs, beauty.mjs, survey.mjs, gait.mjs, flycam.mjs,
   crowdshots.mjs, charshots.mjs, vehshots.mjs, landmarkshots.mjs, bldshots.mjs,

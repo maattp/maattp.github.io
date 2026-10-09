@@ -82,6 +82,95 @@ const PAY_CAP = 1.6;
 const HAIL_DETOUR = 2;
 const GIVE_UP = 3;   // fares that cannot be made in a row: the shift ends
 
+const STEP_BUDGET = 220;   // A* expansions a frame (traffic.findPath's one-shot costs 60-160 ms a search at the phone's 8x)
+
+/**
+ * A* over the street graph that can be PUT DOWN and picked up next frame:
+ * `step(n)` does at most n expansions and answers 'run', 'found' (`path`, the
+ * node ids) or 'fail'. The same rules as `traffic.findPath` with `strict` (no
+ * wrong-way edge, no stunt ramp, residential 1.4x, freeway 0.7x, straight-line
+ * heuristic), but a binary heap rather than a scan of the open list, so an
+ * expansion is cheap, and with its scratch arrays shared (`sh`: one search at a
+ * time). A failing search explores to its limit, which is what made a hail and
+ * a destination a hitch when they were run to the end in one frame.
+ */
+class PathJob {
+  constructor(sh, T, city, from, to, limit) {
+    this.sh = sh; this.T = T; this.city = city; this.to = to; this.limit = limit;
+    this.goal = city.nodes[to];
+    this.count = 0; this.path = null;
+    this.hn = []; this.hf = [];
+    sh.gen++;
+    this.gen = sh.gen;
+    sh.seen[from] = this.gen; sh.g[from] = 0; sh.came[from] = -1;
+    this.push(from, 0);
+  }
+
+  push(n, f) {
+    const hn = this.hn, hf = this.hf;
+    let i = hn.length;
+    hn.push(n); hf.push(f);
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (hf[p] <= f) break;
+      hn[i] = hn[p]; hf[i] = hf[p]; i = p;
+    }
+    hn[i] = n; hf[i] = f;
+  }
+
+  pop() {
+    const hn = this.hn, hf = this.hf, top = hn[0], n = hn.pop(), f = hf.pop();
+    const len = hn.length;
+    if (len) {
+      let i = 0;
+      for (;;) {
+        let c = 2 * i + 1;
+        if (c >= len) break;
+        if (c + 1 < len && hf[c + 1] < hf[c]) c++;
+        if (hf[c] >= f) break;
+        hn[i] = hn[c]; hf[i] = hf[c]; i = c;
+      }
+      hn[i] = n; hf[i] = f;
+    }
+    return top;
+  }
+
+  step(budget) {
+    const { sh, T, city, goal, gen } = this;
+    const g = sh.g, came = sh.came, seen = sh.seen;
+    let done = 0;
+    while (this.hn.length && done++ < budget) {
+      const cur = this.pop();
+      if (sh.done[cur] === gen) continue;   // (a stale heap entry: it was reached cheaper since)
+      sh.done[cur] = gen;
+      if (cur === this.to) {
+        const path = [];
+        for (let n = cur; n !== -1; n = came[n]) path.push(n);
+        this.path = path.reverse();
+        return 'found';
+      }
+      if (++this.count > this.limit) return 'fail';
+      const node = city.nodes[cur];
+      for (const ei of node.e) {
+        const e = city.edges[ei];
+        const nb = e.a === cur ? e.b : e.a;
+        if (e.noTraffic) continue;
+        if (!T.allowed(ei, e.a === cur ? 1 : -1)) continue;
+        const mul = e.cls === 'res' ? 1.4 : e.cls === 'hwy' ? 0.7 : 1;
+        const cost = g[cur] + e.len * mul;
+        if (seen[nb] === gen && g[nb] <= cost) continue;
+        seen[nb] = gen; g[nb] = cost; came[nb] = cur;
+        const nn = city.nodes[nb];
+        this.push(nb, cost + Math.hypot(nn.x - goal.x, nn.z - goal.z));
+      }
+    }
+    return this.hn.length ? 'run' : 'fail';
+  }
+
+  /** Run to the end (a probe, or a search known to be short). */
+  finish() { let r; while ((r = this.step(1e9)) === 'run'); return r === 'found' ? this.path : null; }
+}
+
 export class TaxiFares {
   constructor({ scene, city, game, traffic, peds, hud, audio, root }) {
     this.scene = scene; this.city = city; this.game = game; this.traffic = traffic;
@@ -94,6 +183,8 @@ export class TaxiFares {
     this.veh = null;          // the taxi the shift started in
     this.stats = { fares: 0, earned: 0, bestStreak: 0 };
     try { Object.assign(this.stats, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { /* private mode */ }
+    this.search = null;       // the hail being looked for, a candidate a frame (searchStep)
+    this._sh = null;          // PathJob's scratch arrays, made at the first search
     this.leavers = [];        // passengers walking away from a drop-off
     this._objTxt = '';
     this._objCd = 0; this._objStage = null;
@@ -107,6 +198,15 @@ export class TaxiFares {
     this.mark.visible = false;
     this.mark.frustumCulled = false;
     scene.add(this.mark);
+  }
+
+  /** The one-time work -- the networks' union-find and the search's scratch
+   *  arrays (192k nodes' worth) -- on the loading screen, not in the first
+   *  frame of the first fare. */
+  warm() {
+    this.comps();
+    if (!this._sh) { const N = this.city.nodes.length; this._sh = { g: new Float32Array(N), came: new Int32Array(N), seen: new Uint32Array(N), done: new Uint32Array(N), gen: 0 }; }
+    this.destinations();
   }
 
   /** Stand-in for the warm-up frames (main.js): the pillar's material. */
@@ -135,25 +235,47 @@ export class TaxiFares {
 
   // --- the hail ------------------------------------------------------------
 
+  /** Start looking for a hail. The looking is `searchStep`, ONE candidate (a
+   *  pedestrian and one A*) a frame: eight of them at once, each exploring to
+   *  its limit when the answer is no, was a visible hitch on the phone. */
   hail(player) {
-    const p = player.position;
-    // somebody the taxi can reach: by road (strict A*, no wrong-way street) under
-    // HAIL_DETOUR x the straight line, not just near as the crow flies
-    let ped = null;
-    for (let k = 0; k < 8 && !ped; k++) {
+    this.search = { k: 0 };
+    this.nextT = 0;
+    this.setObj('Taxi · looking for a fare…');
+    this.setBtn(true);
+  }
+
+  searchStep(player) {
+    const s = this.search, p = player.position;
+    if (!s.job) {
+      // the next candidate: somebody the taxi can reach by road (strict A*, no
+      // wrong-way street) under HAIL_DETOUR x the straight line, not just near
+      // as the crow flies
+      const k = s.k++;
       const c = this.peds.spawnFare(p.x, p.z, k < 5 ? HAIL_MIN : 40, k < 5 ? HAIL_MAX : 300);
-      if (!c) continue;
-      if (this.reachable(p, c)) ped = c; else this.peds.remove(c);
+      if (c) {
+        const job = this.reachJob(p, c);
+        if (job === true) { this.search = null; this.startHail(c, p); return; }
+        if (job) { s.c = c; s.job = job; } else this.peds.remove(c);
+      }
     }
-    if (!ped) {
-      this.noFare(player, 'No fares about — try somewhere busier');
-      return;
+    if (s.job) {
+      const r = s.job.step(STEP_BUDGET);
+      if (r === 'run') return;
+      const job = s.job, c = s.c;
+      s.job = null; s.c = null;
+      if (r === 'found' && this.detourOK(job.path, p, c)) { this.search = null; this.startHail(c, p); return; }
+      this.peds.remove(c);
     }
+    if (s.k >= 8 && !s.job) { this.search = null; this.noFare(player, 'No fares about — try somewhere busier'); }
+  }
+
+  startHail(ped, p) {
     this.run = {
       stage: 'hail', ped, t: 0, stopT: 0, walkT: 0,
       place: G.placeNameAt(ped.x, ped.z), dest: null, route: null, m: 0, fare: 0, par: 0, limit: 0,
       ride: 0, smooth: 1, crashes: 0, bumps: 0, near: 0, drove: 0, lastX: p.x, lastZ: p.z,
-      sayT: 0, lateSaid: false, nmT: 0, cd: 0, pedCd: 0,
+      sayT: 0, lateSaid: false, nmT: 0, cd: 0, pedCd: 0, cdNear: 0, think: null,
     };
     this.nextT = 0;
     this.hud.fare = { hail: { x: ped.x, z: ped.z }, dest: null, route: null };
@@ -201,15 +323,32 @@ export class TaxiFares {
     return bd < r + 400 ? best : -1;
   }
 
-  /** Can the taxi at `p` get to ped `c` by road without a long way round? */
-  reachable(p, c) {
+  /** A job for "can the taxi at `p` get to ped `c` by road?": `true` when they
+   *  are on the same node, null when no network node is near, else the PathJob. */
+  reachJob(p, c) {
     const from = this.mainNode(p.x, p.z, 250), to = this.mainNode(c.x, c.z, 80);
-    if (from < 0 || to < 0) return false;
+    if (from < 0 || to < 0) return null;
     if (from === to) return true;
-    const path = this.traffic.findPath(from, to, 2500, true);
-    if (!path) return false;
-    const r = this.routeOf(path, p.x, p.z);
-    return r.m <= HAIL_DETOUR * Math.hypot(c.x - p.x, c.z - p.z) + 60;
+    return this.pathJob(from, to, 2500);
+  }
+
+  pathJob(from, to, limit) {
+    this.warm();
+    return new PathJob(this._sh, this.traffic, this.city, from, to, limit);
+  }
+
+  /** Not a long way round: under HAIL_DETOUR x the straight line (+ a little). */
+  detourOK(path, p, c) {
+    return this.routeOf(path, p.x, p.z).m <= HAIL_DETOUR * Math.hypot(c.x - p.x, c.z - p.z) + 60;
+  }
+
+  /** The same, run to the end in one go (a probe). */
+  reachable(p, c) {
+    const job = this.reachJob(p, c);
+    if (!job) return false;
+    if (job === true) return true;
+    const path = job.finish();
+    return !!path && this.detourOK(path, p, c);
   }
 
   /** A node path as a polyline from (x, z), and its length. The first node is
@@ -247,59 +386,92 @@ export class TaxiFares {
   }
 
   /** Pick where they are going from where the car is: a recognisable place
-   *  700-6000 m off whose route the A* finds. Returns the run's route fields. */
+   *  700-6000 m off whose route the A* finds. Returns the run's route fields.
+   *  (The game does it a candidate a frame -- `chooseBegin` / `chooseStep` --
+   *  and this is the same thing in one go, for a probe.) */
   choose(x, z) {
-    const city = this.city, T = this.traffic;
+    const st = this.chooseBegin(x, z);
+    let r;
+    while ((r = this.chooseStep(st, 1e9)) === undefined);
+    return r;
+  }
+
+  chooseBegin(x, z) {
     const from = this.mainNode(x, z, 250);
-    if (from < 0) return null;
-    const { par } = this.comps();
+    const st = { x, z, from, i: 0, tries: [] };
+    if (from < 0) return st;
     const cand = this.destinations().filter((d) => { const l = Math.hypot(d.x - x, d.z - z); return l > 700 && l < 6000; });
     // (shuffled; any left over for a nameless corner, by the delivery rule)
     for (let i = cand.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [cand[i], cand[j]] = [cand[j], cand[i]]; }
-    const tries = cand.slice(0, 5);
+    st.tries = cand.slice(0, 5);
     for (let k = 0; k < 8; k++) {
       const a = Math.random() * Math.PI * 2, r = 900 + Math.random() * 2200;
-      tries.push({ name: null, x: x + Math.cos(a) * r, z: z + Math.sin(a) * r });
+      st.tries.push({ name: null, x: x + Math.cos(a) * r, z: z + Math.sin(a) * r });
     }
-    for (const c of tries) {
-      const sp = city.respawnPointNear(c.x, c.z, 450);
-      if (!sp || sp.elev) continue;
-      const to = this.mainNode(sp.x, sp.z, 60);
-      if (to < 0 || to === from || city.nodes[to].elev || par[to] !== par[from]) continue;
-      const path = T.findPath(from, to, 3200, true);
-      if (!path || path.length < 3) continue;
-      const { pts, m } = this.routeOf(path, x, z);
-      if (m < 500) continue;
-      const nd = city.nodes[to];
-      const straight = Math.hypot(nd.x - x, nd.z - z);
-      return {
-        dest: { x: nd.x, z: nd.z, y: city.groundAt(nd.x, nd.z, null), name: c.name || G.placeNameAt(nd.x, nd.z) },
-        // (a pickup whose way round is wild does not inflate the fare: it is paid
-        // on the route capped at PAY_CAP x the crow flight, and costs the time)
-        route: Float32Array.from(pts), path, m, payM: Math.min(m, PAY_CAP * straight),
-      };
-    }
-    return null;
+    return st;
   }
 
+  /** A little of one candidate: the pick, or undefined (still working, or try the
+   *  next), or null (none left). `budget` expansions of A* a call. */
+  chooseStep(st, budget = STEP_BUDGET) {
+    const city = this.city, { par } = this.comps(), { x, z, from } = st;
+    if (!st.job) {
+      if (st.i >= st.tries.length) return null;
+      const c = st.tries[st.i++];
+      const sp = city.respawnPointNear(c.x, c.z, 450);
+      if (!sp || sp.elev) return undefined;
+      const to = this.mainNode(sp.x, sp.z, 60);
+      if (to < 0 || to === from || city.nodes[to].elev || par[to] !== par[from]) return undefined;
+      st.job = this.pathJob(from, to, 3200); st.c = c; st.to = to;
+    }
+    const r = st.job.step(budget);
+    if (r === 'run') return undefined;
+    const path = r === 'found' ? st.job.path : null, c = st.c, to = st.to;
+    st.job = null;
+    if (!path || path.length < 3) return undefined;
+    const { pts, m } = this.routeOf(path, x, z);
+    if (m < 500) return undefined;
+    const nd = city.nodes[to];
+    const straight = Math.hypot(nd.x - x, nd.z - z);
+    return {
+      dest: { x: nd.x, z: nd.z, y: city.groundAt(nd.x, nd.z, null), name: c.name || G.placeNameAt(nd.x, nd.z) },
+      // (a pickup whose way round is wild does not inflate the fare: it is paid
+      // on the route capped at PAY_CAP x the crow flight, and costs the time)
+      route: Float32Array.from(pts), path, m, payM: Math.min(m, PAY_CAP * straight),
+    };
+  }
+
+  /** They are in: the passenger is off the pavement and "Where to?" begins --
+   *  `thinkStep`, a candidate destination a frame. */
   board(player) {
-    const run = this.run, v = player.vehicle, ped = run.ped;
-    const pick = this.choose(v.x, v.z);
+    const run = this.run, v = player.vehicle;
+    this.peds.remove(run.ped);
+    run.ped = null;
+    run.stage = 'think';
+    run.think = this.chooseBegin(v.x, v.z);
+    this.hud.fare = null;
+    this.mark.visible = false;
+    if (this.audio && this.audio.ready) this.audio.play('door_close', { gain: 0.45 });
+    this.setObj('Taxi · passenger aboard — where to?');
+  }
+
+  thinkStep(player) {
+    const run = this.run, v = player.vehicle;
+    const pick = this.chooseStep(run.think);
+    if (pick === undefined) return;
     if (!pick) {
-      this.release(ped);
-      this.run = null; this.hud.fare = null; this.mark.visible = false;
+      this.run = null;
       this.noFare(player, 'They changed their mind — the fare walks off');
       return;
     }
     this.fails = 0;
-    this.peds.remove(ped);
-    run.ped = null;
+    run.think = null;
     Object.assign(run, pick, fareFor(pick.m, pick.payM));
     run.stage = 'ride'; run.t = 0; run.ride = 0; run.lastX = v.x; run.lastZ = v.z; run.drove = 0;
     this.hud.fare = { hail: null, dest: pick.dest, route: pick.route };
     this.placeMark(pick.dest.x, pick.dest.y, pick.dest.z, false);
     this.hud.showToast(`Take me to ${pick.dest.name} — ${this.dist(pick.m)}, ${formatMoney(run.fare)} on the meter`, 3600);
-    if (this.audio && this.audio.ready) { this.audio.play('door_close', { gain: 0.45 }); this.audio.ui('start'); }
+    if (this.audio && this.audio.ready) this.audio.ui('start');
   }
 
   // --- the end of a fare ---------------------------------------------------
@@ -321,7 +493,9 @@ export class TaxiFares {
     }
     for (const l of this.leavers) this.release(l.p, false);
     this.leavers.length = 0;
+    if (this.search && this.search.c) this.peds.remove(this.search.c);   // (a candidate being checked)
     this.run = null;
+    this.search = null;
     this.on = false;
     this.nextT = 0;
     this.streak = 0;
@@ -331,7 +505,7 @@ export class TaxiFares {
     // the line goes back only if it is still ours -- and to the delivery that is
     // current NOW (one delivered during the shift has already replaced the one
     // that was up when it began)
-    if (this._objTxt === '' || (this.hud.objective && this.hud.objective.textContent === this._objTxt)) {
+    if (this._objTxt && this.hud.objective && this.hud.objective.textContent === this._objTxt) {
       const t = this.game.target;
       this.hud.setObjective(t ? `Deliver to ${G.placeNameAt(t.x, t.z)} — ${formatMoney(this.game.deliveryValue)}` : '');
     }
@@ -359,13 +533,8 @@ export class TaxiFares {
     // out of the door nearer the kerb, and off down the pavement
     const side = this.doorSide(v, run.dest.x, run.dest.z);
     const ex = v.x + side.x * (v.halfWid + 0.7), ez = v.z + side.z * (v.halfWid + 0.7);
-    const ped = this.peds.spawnFare(ex, ez, 0, 400);   // (any pavement: placed by hand below)
-    if (ped) {
-      ped.x = ex; ped.z = ez; ped.y = this.city.groundAt(ex, ez, v.y + 1, this.city.roadLift(ex, ez));
-      ped.fare = 2; ped.fx = ex + side.x * 14; ped.fz = ez + side.z * 14;
-      ped.h.group.position.set(ped.x, ped.y, ped.z);
-      this.leavers.push({ p: ped, t: 0 });
-    }
+    const ped = this.peds.spawnFareAt(ex, ez, v.y + 1, ex + side.x * 14, ez + side.z * 14);
+    this.leavers.push({ p: ped, t: 0 });
     this.mark.visible = false;
     this.hud.fare = null;
     const tipTxt = tip > 0 ? ` + ${formatMoney(tip)} tip` : ' (no tip)';
@@ -440,6 +609,7 @@ export class TaxiFares {
     if (game.wanted >= 3) { this.end(false, 'Police on your tail — the passenger bails'); return; }
     const v = player.vehicle, p = player.position;
     if (!this.run) {
+      if (this.search) { this.searchStep(player); return; }
       this.nextT -= dt;
       if (this.nextT <= 0) this.hail(player);
       return;
@@ -448,6 +618,7 @@ export class TaxiFares {
     run.t += dt;
     run.sayT -= dt; run.cd -= dt; run.pedCd -= dt; this._objCd -= dt;
     if (run.stage === 'hail') this.updateHail(dt, player, v);
+    else if (run.stage === 'think') this.thinkStep(player);
     else this.updateRide(dt, player, v);
     if (this.mark.visible) {
       this.mark.rotation.y += dt * 0.7;
@@ -514,7 +685,8 @@ export class TaxiFares {
 
   /** A traffic car passing within a metre or so of the taxi's flank, fast. */
   nearMiss(run, a) {
-    if (run.cdNear > 0 || Math.abs(a.vLong) < 10 || run.near >= 3) { run.cdNear = (run.cdNear || 0) - 0.2; return; }
+    run.cdNear = Math.max(0, run.cdNear - 0.2);   // (called at 5 Hz)
+    if (run.cdNear > 0 || Math.abs(a.vLong) < 10 || run.near >= 3) return;
     const fx = a.forward.x, fz = a.forward.z, rx = fz, rz = -fx;
     for (const o of this.traffic.cars) {
       if (o === a || o.mode === 'parked' || o.dead || !o.forward) continue;

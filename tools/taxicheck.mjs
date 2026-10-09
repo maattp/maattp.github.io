@@ -140,7 +140,7 @@ try {
   const money0 = await ev('__dbg.game.money', false);
   const fares0 = await ev('__dbg.taxi.stats.fares', false);
   let objBefore = await ev('__dbg.hud.objective.textContent', false);
-  await ev(`(__dbg.taxi.toggle(__dbg.player), __tx.step(3), true)`, false);
+  await ev(`(__dbg.taxi.toggle(__dbg.player), __tx.step(14), true)`, false);
   const h = await ev(`(() => {
     const X = __dbg.taxi, r = X.run, v = __dbg.player.vehicle;
     const ped = r && r.ped;
@@ -228,7 +228,7 @@ try {
   check(l2.had && l2.left === 0 && (!l2.inList || l2.fare === 0), `the very passenger who got out was let go into the crowd (claim ${l2.fare}, still in list ${l2.inList}, leavers left ${l2.left})`);
 
   // ---- the shift goes on: the next fare hails; a crash cuts its tip -------------
-  const nx = await ev('(__tx.step(1), __dbg.taxi.run && __dbg.taxi.run.stage)', false);
+  const nx = await ev('(__tx.step(14), __dbg.taxi.run && __dbg.taxi.run.stage)', false);
   check(nx === 'hail', `the next fare hails by itself (stage ${nx})`);
   await ev(`(() => { const r = __dbg.taxi.run, p = r.ped, e = __dbg.city.edges[p.edge], v = __dbg.player.vehicle; __tx.place(v, p.fx, p.fz, Math.atan2(e.dx, e.dz)); return true; })()`, false);
   await ev('__tx.step(330)', false);
@@ -283,7 +283,7 @@ try {
   const begin = async () => {
     await startTaxi();
     objBefore = await ev('__dbg.hud.objective.textContent', false);
-    await ev(`(__dbg.game.money = 1000, __dbg.game.dead = false, __dbg.game.wanted = 0, __dbg.taxi.toggle(__dbg.player), __tx.step(3), true)`, false);
+    await ev(`(__dbg.game.money = 1000, __dbg.game.dead = false, __dbg.game.wanted = 0, __dbg.taxi.toggle(__dbg.player), __tx.step(14), true)`, false);
   };
 
   // leaving the taxi mid-fare
@@ -327,7 +327,7 @@ try {
   // FARE again hands the shift in
   await begin();
   check((await boardNow()) === 'ride', 'boarded (ending: FARE pressed again)');
-  await ev('(__dbg.taxi.toggle(__dbg.player), __tx.step(3), true)', false);
+  await ev('(__dbg.taxi.toggle(__dbg.player), __tx.step(14), true)', false);
   await clean('pressing FARE again');
 
   // a hail nobody pulls up for gives up
@@ -377,7 +377,7 @@ try {
   let hOK = 0, hGaveUp = 0;
   for (const [hx, hz] of sitesH) {
     await startTaxi(hx, hz);
-    await ev(`(__dbg.game.dead = false, __dbg.game.wanted = 0, __dbg.taxi.toggle(__dbg.player), __tx.step(2), true)`, false);
+    await ev(`(__dbg.game.dead = false, __dbg.game.wanted = 0, __dbg.taxi.toggle(__dbg.player), __tx.step(14), true)`, false);
     const r = await ev(`(() => { const X = __dbg.taxi, r = X.run; return r && r.ped ? { ok: X.reachable(__dbg.player.position, r.ped) } : null; })()`, false);
     if (r && r.ok) hOK++; else if (!r) hGaveUp++;
     await ev('(__dbg.taxi.end(false), true)', false);
@@ -386,7 +386,7 @@ try {
 
   // (4) Washington Park: it either makes a fare or ends the shift with a message -- never loops
   await startTaxi(2973, -1991);
-  await ev(`(__dbg.game.dead = false, __dbg.game.wanted = 0, __dbg.taxi.toggle(__dbg.player), __tx.step(3), true)`, false);
+  await ev(`(__dbg.game.dead = false, __dbg.game.wanted = 0, __dbg.taxi.toggle(__dbg.player), __tx.step(14), true)`, false);
   const wp = await ev(`(() => { const v = __dbg.player.vehicle, c = __dbg.taxi.choose(v.x, v.z); return { found: !!c, dest: c && c.dest.name, m: c && Math.round(c.m) }; })()`, false);
   console.log(`     (Washington Park: choose() ${wp.found ? 'found ' + wp.dest + ' at ' + wp.m + ' m' : 'finds nothing'})`);
   let wpEnd = null;
@@ -401,10 +401,10 @@ try {
 
   // (4b) a shift that cannot make a fare ends after three tries, not every 4 s for ever
   await begin();
-  await ev('(__dbg.taxi.choose = () => null, true)', false);
+  await ev('(__dbg.taxi.chooseStep = () => null, true)', false);
   for (let k = 0; k < 4 && (await ev('__dbg.taxi.on', false)); k++) { if (await ev('__dbg.taxi.run && __dbg.taxi.run.stage === "hail"', false)) await boardNow(); await ev('__tx.step(240)', false); }
   check(!(await ev('__dbg.taxi.on', false)), 'three routeless fares in a row end the shift');
-  await ev('(delete __dbg.taxi.choose, true)', false);
+  await ev('(delete __dbg.taxi.chooseStep, true)', false);
 
   // (5) the pedestrian penalty is one per 2 s, however many you hit at once
   await begin();
@@ -433,6 +433,42 @@ try {
   await ev(`(() => { const v = __dbg.player.vehicle, w = __dbg.traffic.spawnAt(v.x + 6, v.z, v.heading, 'taxi', 0xf0b40c, 'free'); __dbg.player.enterVehicle(w); __tx.step(3); return true; })()`, false);
   await clean('carjacking another taxi mid-fare');
   await ev('(__dbg.hud.setObjective(""), true)', false);
+
+  // ---- review fixes: the search is spread over frames; another system's line is not clobbered ----
+  // (a) FARE returns at once, the hail is looked for a candidate a frame
+  await startTaxi();
+  await ev(`(__dbg.game.dead = false, __dbg.game.wanted = 0, __dbg.game.paused = true, true)`, false);
+  const sp0 = await ev(`(() => { const X = __dbg.taxi; const t0 = performance.now(); X.toggle(__dbg.player); return { ms: performance.now() - t0, run: !!X.run, search: !!X.search, on: X.on }; })()`, false);
+  check(sp0.on && !sp0.run && sp0.search, `FARE itself does no searching (${sp0.ms.toFixed(1)} ms): the hail is looked for a candidate a frame`);
+  const steps = await ev(`(() => { let n = 0; while (n < 20 && !__dbg.taxi.run) { __tx.step(1); n++; } return { n, run: !!__dbg.taxi.run }; })()`, false);
+  check(steps.run && steps.n <= 9, `the hail is found within ${steps.n} frames (the old way: all in one)`);
+  // the destination is also a candidate a frame: "where to?" shows between boarding and the fare
+  await boardNow();
+  await ev('(__dbg.taxi.end(false), true)', false);
+  await begin();
+  await ev(`(() => { const r = __dbg.taxi.run, p = r.ped, e = __dbg.city.edges[p.edge], v = __dbg.player.vehicle; __tx.place(v, p.fx, p.fz, Math.atan2(e.dx, e.dz)); return true; })()`, false);
+  let sawThink = false;
+  for (let k = 0; k < 400 && !sawThink; k++) { await ev('__tx.step(1)', false); if ((await ev('__dbg.taxi.run && __dbg.taxi.run.stage', false)) === 'think') sawThink = true; }
+  const obThink = await ev('__dbg.hud.objective.textContent', false);
+  check(sawThink && /where to/i.test(obThink), `boarded: "where to?" is its own stage ("${obThink}")`);
+  await ev('__tx.step(30)', false);
+  check((await ev('__dbg.taxi.run && __dbg.taxi.run.stage', false)) === 'ride', 'and a destination is picked within 30 frames');
+  // (b) near-miss cooldown never goes negative; (c) another system's objective line survives the end
+  await ev('__tx.step(60)', false);
+  check((await ev('__dbg.taxi.run.cdNear', false)) === 0, 'the near-miss cooldown rests at zero');
+  await ev('(__dbg.hud.setObjective("Police L2: take down the suspect"), true)', false);
+  await ev('(__dbg.taxi.end(false), true)', false);
+  check((await ev('__dbg.hud.objective.textContent', false)) === 'Police L2: take down the suspect', 'ending a shift leaves another system\'s objective line alone');
+  await ev('(__dbg.hud.setObjective(""), true)', false);
+  // (d) T from a text field is not FARE
+  const kt = await ev(`(() => { const d = __dbg, X = d.taxi; d.game.paused = false;
+    const inp = document.createElement('input'); document.body.appendChild(inp);
+    inp.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyT', bubbles: true }));
+    const fromInput = X.on;
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyT', bubbles: true }));
+    const fromBody = X.on; X.end(false); inp.remove(); d.game.paused = true;
+    return { fromInput, fromBody }; })()`, false);
+  check(!kt.fromInput && kt.fromBody, `T typed into a text field does not start a shift (field ${kt.fromInput}, body ${kt.fromBody})`);
 
   check(logs.length === 0, 'no page exceptions' + (logs.length ? ': ' + logs.slice(0, 3).join(' | ') : ''));
 } catch (e) {

@@ -668,6 +668,17 @@ T on a keyboard), lights red while on shift, and pressing it again goes off.
   always let go (`release`: `fare = 0` + `reanchor`, or `remove` when far).
   A thin yellow pillar floats over their head (above, not round them: a beam
   they stand in hides them) and a `!` pin is on both maps (`hud.fare`).
+- **Searching is spread across frames** (`PathJob`, `searchStep`, `thinkStep`):
+  FARE returns at once; each frame spawns ONE hail candidate and gives its A*
+  220 expansions (a resumable, binary-heap A* with the strict one-way rules --
+  `traffic.findPath` scans its open list and a *failing* search runs to its
+  limit). The same for the destination ("Where to?" is a stage between boarding
+  and the ride). Run to the end in one frame, a hail was up to 8 searches and a
+  destination up to 13 more: at the phone's 8x, the worst single call of a whole
+  fare went from 96-172 ms to 15-60 ms (`node tools/taxihitch.mjs`, 12 sites; the
+  spread is contention on a shared machine). The union-find over the nodes and
+  the search arrays are built by `warm()` at boot (~180 ms at 8x, on the loading
+  screen): in the first frame of the first fare they were the biggest spike left.
 - **Boarding**: stopped (< 1.6 m/s) within 14 m for 0.5 s and they walk to the
   nearer door (it follows a car that creeps), 7 s at most, then are removed from
   the crowd (in the back seat, unseen). Nobody pulls up for 150 s: they find
@@ -689,6 +700,7 @@ T on a keyboard), lights red while on shift, and pressing it again goes off.
   walk 14 m off (`leavers`, released into the crowd after 5 s), `audio.cash()`,
   the money (which `career.js` saves) and the count (`localStorage 'auto-taxi'`,
   read by the Passport's text line "Taxi fares n").
+- **The objective line** is put back only if it is still the taxi's own text, and to the delivery that is current at that moment; another system's line (a police mission, a stunt) is never touched.
 - **Ending leaves nothing**: leaving the taxi, WASTED, a respawn, 3+ stars, the
   fare clock, or FARE again all `end()`: pillar, map marks, objective line (put
   back only if it is still ours), the passenger and any leaver.
