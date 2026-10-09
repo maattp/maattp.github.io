@@ -565,7 +565,8 @@ that boot, not the build). Steady draws fell from ~220 when the landmarks were
 split into culled clusters (see "Landmarks"). Triangles are up on the
 pre-import city because the building density is real; draw calls are not.
 Flying adds 10-20 draws for the far massing layer and 6-9 for the far roads
-(see "Flying").
+(see "Flying"). The mountain band is one more, always (see "Mountains on the
+horizon").
 `__dbg.sceneStats` reports the scene pass specifically — read `renderer.info`
 yourself and you'll get the post chain's fullscreen quad instead, because the
 counters reset on every `render()`.
@@ -629,6 +630,63 @@ Where the budget goes, and the rules that keep it there:
 more than once a frame computes the lift once and passes it in**: vehicles take
 seven samples, the player two, pedestrians one. Calling `groundAt(x, z, y)`
 without the 4th argument silently re-runs the scan.
+
+## Mountains on the horizon
+
+Seattle's signature views -- the Olympics over the Sound, Rainier over the
+south end of downtown, the Cascades behind Lake Washington -- were a flat haze
+line. `src/mountains.js` is **one draw**: a 720 x 2 cylinder band around the
+camera, built in `buildSky` right after the dome.
+
+- **It is a sky element, on purpose.** Same vertex trick as the dome
+  (`mat3(viewMatrix)`, `z = w`), so it never parallaxes, never meets the far
+  plane, and a plane at any altitude sees it infinitely far. It sits at
+  `renderOrder -999` with depth test and write off, so every building, hill,
+  island and wave paints over it and the SSAO sky test still sees depth 1.0.
+  **Not `transparent`**: that would sort it after the whole opaque scene and
+  paint it over the city. `CustomBlending` (src alpha) keeps it in the opaque
+  list; its destination alpha is left alone so the target keeps the dome's 1.
+- **The silhouette is a table, built at boot** (`buildProfile`, ~3 ms
+  desktop): 8192 columns of bearing from the map's origin (0.044 deg, ~1 px on
+  a phone), each holding the height and distance of whatever stands highest on
+  the sky there -- the named peaks (`PEAKS`: real lat/lon from Wikipedia/GNIS
+  through `geo.toWorld`, published summit heights) over two ridged-noise crest
+  lines (`RANGES`: the Olympics' east front, 60-110 km out; the Cascade crest,
+  60-140 km). Heights are `(H - d^2 / 2R_eff) * EXAG`: curvature with standard
+  refraction (k = 0.13), then **1.3x** -- the brief's ceiling -- because at sea
+  level the honest 1-2 deg Olympics barely read. Rainier lands 2.3 deg true,
+  **3.0 deg** drawn, at bearing 152.8 deg / 95 km; the Brothers 2.3 deg at 271.
+  `node -e "import('./apps/auto/src/mountains.js').then(m=>console.table(m.peakTable()))"`
+  prints every peak as built. Row 1 of the texture says how far a column is
+  from its summit and which range it is (snow line, rock).
+- **Camera altitude is a uniform, not a mesh.** The fragment shader compares
+  the pixel's elevation with `(Hvis - camAlt) / dist`, so from 1.5 km the
+  range sinks toward the horizon the way it should. `hm`, the line of sight's
+  height at the range's distance, drives the look: forest to bare rock to snow
+  by true height, haze with distance (`1 - exp(-d / 115 km)`, so Rainier sits
+  at 56 %) and thicker toward the foot. The foot is faded to the sky's own
+  horizon colour over `120 + 0.3 * camAlt` m, so there is no base line and no
+  gap from a plane: a hard bottom edge read as a floating strip at 1.5 km.
+  The "air" colour is the dome's horizon/haze blend, from the same uniform
+  objects (`haze`, `hazeToward`, `hazeAway`), so the sun's side stays one
+  colour with the fog.
+- **Weathering has to follow the mountain.** Noise in screen space made
+  Rainier a smooth white cone. On a peak the streaks are keyed to
+  `column offset / silhouette offset at this height` -- a ridge is a scaled
+  copy of the silhouette -- so they radiate from the summit; faces are lit with
+  a real normal (toward the viewer, tilted by the silhouette's slope) against
+  the sun, which is why the Olympics (toward the sun) are dark and Rainier
+  (sun behind you) is bright.
+- **No parallax, deliberately.** Bearings are from the origin. At the map's far
+  edge the Brothers are off by up to ~17 deg; downtown, Kerry Park and Alki are
+  within 2 deg. Real parallax would need per-pixel peak maths or a table per
+  move, for views nobody can compare.
+- **Cost:** +1 draw (294 vs 293 at Kerry Park), 1440 triangles, a 64 KB
+  RGBA8 texture, no render target. Fragment work is only where the band is on
+  screen and only below the ridge (above it: two taps and a `discard`).
+  Judge it with `tools/viewshots.mjs` (`mt-*` views: Alki west, Lake Washington
+  and Kerry Park for Rainier, east, and 1.5-2 km altitude shots) -- and **look
+  at the shots**, the numbers do not tell you if Rainier reads as Rainier.
 
 ## Far buildings take their real colour (v166)
 
