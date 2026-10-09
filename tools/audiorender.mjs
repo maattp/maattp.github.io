@@ -368,7 +368,8 @@ window.R = (async () => {
     bankClip: (name, i) => ({ ...pcm([bank[name][i].getChannelData(0)]), sr: bank[name][i].sampleRate }),
     engines: Object.keys(A.ENGINES),
     engineFor: (profile) => ENGINE_DEMO[profile],
-    engine: (profile) => scene(17, driveScript(ENGINE_DEMO[profile])),
+    engine: (profile) => scene(17, driveScript(ENGINE_DEMO[profile] || profile)),   // (a vehicle key also works: 'artic')
+    A,
     scenes: Object.keys(scenes),
     scene: (k) => scene(scenes[k][0], scenes[k][1], scenes[k][2]),
     select: Object.fromEntries(Object.entries(V.TYPES).map(([k, s]) => [k, A.selectEngine(s)])),
@@ -429,6 +430,9 @@ function analyse(pcm, channels, sr = SR) {
     sq += mono[i] * mono[i];
   }
   const rms = Math.sqrt(sq / n);
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum += mono[i];
+  const dcMv = sum / n * 1000;   // mean of the file, in mV of full scale
   // centroid over 2048-sample frames, energy-weighted; silence = frames under -60 dBFS
   const N = 2048;
   let cw = 0, ce = 0, frames = 0, silent = 0;
@@ -444,7 +448,7 @@ function analyse(pcm, channels, sr = SR) {
     if (den > 0) { cw += (num / den) * e; ce += e; }
   }
   const db = (x) => (x > 0 ? 20 * Math.log10(x) : -Infinity).toFixed(1);
-  return { peak, peakDb: db(peak), rmsDb: db(rms), centroid: ce ? Math.round(cw / ce) : 0, silent: frames ? silent / frames : 1, secs: n / sr };
+  return { peak, peakDb: db(peak), rmsDb: db(rms), dcMv, centroid: ce ? Math.round(cw / ce) : 0, silent: frames ? silent / frames : 1, secs: n / sr };
 }
 
 // 2:1 decimation to mono through a windowed-sinc low-pass (cut at 10 kHz):
@@ -510,18 +514,24 @@ async function main() {
       const pcm = wav(`${OUT}/${file}`, r.b64, r.channels, r.sr);
       if (SHOWCASE_MODE) wavMono22(`${SHOW_DIR}/${file.replace(/^scene-/, '')}`, decimateMono(r.b64, r.channels));
       const a = analyse(pcm, r.channels, r.sr);
-      const fail = r.clip > 0 || (expectSound && a.silent > 0.97);
+      // an engine render carries no DC: the mix's 25 Hz high-pass  -- it was -16..-52 mV
+      const dcBad = /^engine-/.test(file) && Math.abs(a.dcMv) >= 5;
+      const fail = r.clip > 0 || (expectSound && a.silent > 0.97) || dcBad;
       if (fail) bad++;
-      rows.push([file, a.secs.toFixed(2), a.peakDb, a.rmsDb, a.centroid, (a.silent * 100).toFixed(0) + '%', r.clip, fail ? 'FAIL' : '']);
+      rows.push([file, a.secs.toFixed(2), a.peakDb, a.rmsDb, a.centroid, (a.silent * 100).toFixed(0) + '%', r.clip, fail ? 'FAIL' : '', a.dcMv.toFixed(1)]);
     };
     for (const [name, n] of info.bank) {
       for (let i = 0; i < n; i++) if (want(name)) await out(`sfx/${name}-${i}.wav`, `r.bankClip(${JSON.stringify(name)}, ${i})`);
     }
-    for (const e of info.engines) if (want('engine-' + e)) await out(`engine-${e}.wav`, `r.engine(${JSON.stringify(e)})`);
+    // --set 'r.A.ENGINES.tank.level = 0.4' : a one-off tweak before rendering (r = the page's toolkit)
+    const pre = arg('--set', null);
+    if (pre) await s.eval(`R.then(r => { ${pre}; return true; })`);
+    // 'artic' is a vehicle, not a profile (it drives the diesel): rendered for comparison
+    for (const e of [...info.engines, 'artic']) if (want('engine-' + e)) await out(`engine-${e}.wav`, `r.engine(${JSON.stringify(e)})`);
     for (const k of info.scenes) if (want('scene-' + k)) await out(`scene-${k}.wav`, `r.scene(${JSON.stringify(k)})`);
-    console.log('\nfile                               secs  peak dB  rms dB  centroid Hz  silent  clipped');
+    console.log('\nfile                               secs  peak dB  rms dB  centroid Hz  silent  clipped  DC mV');
     for (const r of rows) {
-      console.log(`${r[0].padEnd(34)} ${r[1].padStart(5)} ${String(r[2]).padStart(8)} ${String(r[3]).padStart(7)} ${String(r[4]).padStart(12)} ${r[5].padStart(7)} ${String(r[6]).padStart(8)} ${r[7]}`);
+      console.log(`${r[0].padEnd(34)} ${r[1].padStart(5)} ${String(r[2]).padStart(8)} ${String(r[3]).padStart(7)} ${String(r[4]).padStart(12)} ${r[5].padStart(7)} ${String(r[6]).padStart(8)} ${r[8].padStart(6)} ${r[7]}`);
     }
     const ex = s.logs.filter((l) => /EXCEPTION/.test(l));
     if (ex.length) { console.log(ex.join('\n')); bad++; }
