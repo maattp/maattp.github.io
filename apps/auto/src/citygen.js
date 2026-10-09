@@ -4499,6 +4499,28 @@ export function* cityGenerator(md, cache = {}) {
     },
 
     /**
+     * Is the point (x, z) inside a building's footprint grown by `pad`, for
+     * something standing at height `y`? Player.blocked's test, without its
+     * allocations (a list and a Set a call): the crowd asks once per walker per
+     * frame. One 60 m cell is enough -- a building is filed under every cell
+     * its 0.75-of-its-long-side circle touches, which holds its whole footprint.
+     * Below the base and above the roof are not inside (a bore under downtown).
+     */
+    insideBuilding(x, z, y, pad) {
+      const bc = bGrid.cell(Math.floor(x / bCell), Math.floor(z / bCell));
+      for (let q = bGrid.off[bc], qe = bGrid.off[bc + 1]; q < qe; q++) {
+        const b = buildings[bGrid.ids[q]];
+        const dx = x - b.x, dz = z - b.z;
+        const hr = Math.sqrt(b.w * b.w + b.d * b.d) * 0.5 + pad;
+        if (dx * dx + dz * dz > hr * hr) continue;
+        const c = Math.cos(-b.rot), s = Math.sin(-b.rot);
+        if (Math.abs(dx * c - dz * s) < b.w / 2 + pad && Math.abs(dx * s + dz * c) < b.d / 2 + pad
+          && y < b.y + b.h - 0.5 && G.terrainRaw(x, z) - y < 2.5) return true;
+      }
+      return false;
+    },
+
+    /**
      * Is (x,z) on (or within `pad` of) a paved carriageway?
      *
      * For anything scattered over the ground -- trees, and whatever comes next.

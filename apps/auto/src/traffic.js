@@ -313,6 +313,9 @@ export class TrafficSystem {
     this.lanes = new Float32Array(E.length * 3).fill(NaN);
     // Counters for tools/trafficcheck.mjs: dead ends a car still reached, and
     // turns that had to fall back past the normal choice.
+    // where people are crossing a carriageway (peds.js writes these each frame)
+    this.crossN = 0;
+    this.crossXZ = null;
     this.stats = { deadEnd: 0, deadEndDespawn: 0, fallbackTurn: 0, stuckRecycled: 0, yielded: 0 };
     this.sirenFrom = null;   // your police car, siren on (main.js): traffic ahead yields to it
     this._P = { x: 0, z: 0 };
@@ -1523,6 +1526,37 @@ export class TrafficSystem {
           stopAt = Math.min(stopAt, fwd - v.halfLen - 1.5);
           if (fwd < sp * sp / 12 + 7) urgent = true;
         }
+      }
+    }
+    // PEOPLE CROSSING THE ROAD (peds.js planNode): stop short of one in the
+    // lane ahead. Only those actually in the carriageway count -- one waiting
+    // at the kerb waits for the cars -- so a queue is held for the seconds a
+    // crossing takes, not for ever.
+    if (this.crossN > 0) {
+      const reach = Math.max(10, sp * sp / 12 + sp * 0.6 + 5), xz = this.crossXZ;
+      for (let q = 0; q < this.crossN; q++) {
+        const cx = xz[q * 3], cz = xz[q * 3 + 1];
+        // (on the level he is on: a viaduct over the crossing does not stop for him)
+        if (Math.abs(xz[q * 3 + 2] - v.y) > 3 || Math.abs(cx - v.x) > reach + 4 || Math.abs(cz - v.z) > reach + 4) continue;
+        // along the PLANNED PATH, not the bonnet's line: a car turning at the
+        // junction is not yet pointing at the crossing it will sweep across
+        let best = Infinity, along = 0, acc = 0;
+        for (let k = 0; k < np - 1; k++) {
+          const ax = ps[2 * k], az = ps[2 * k + 1], sx = sg[3 * k], sz = sg[3 * k + 1], l = sg[3 * k + 2];
+          let t = ((cx - ax) * sx + (cz - az) * sz) / (l * l);
+          t = t < 0 ? 0 : t > 1 ? 1 : t;
+          const ex = cx - ax - sx * t, ez = cz - az - sz * t, dd = ex * ex + ez * ez;
+          if (dd < best) { best = dd; along = acc + t * l; }
+          acc += l;
+        }
+        const wid = v.halfWid + 1.2;
+        const rx = cx - v.x, rz = cz - v.z, fwd = rx * f.x + rz * f.z;
+        // (and at the nose, wider, whatever the path says)
+        const nose = fwd > -0.5 && fwd < v.halfLen + 3.5 && Math.abs(rx * f.z - rz * f.x) < v.halfWid + 2.4;
+        if (!nose && (best > wid * wid || along > reach)) continue;
+        const g = nose ? Math.max(fwd, 0) : along;
+        stopAt = Math.min(stopAt, g - v.halfLen - 1.2);
+        if (g < sp * sp / 12 + 4) urgent = true;
       }
     }
     // IDM: free-road term plus the interaction with the leader.

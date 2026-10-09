@@ -3334,7 +3334,28 @@ export function animateWalk(h, amp, dt, speed) {
 // cheapest population in the game -- so this is the least expensive density
 // there is to buy.
 const MAX_PEDS = 24;
-const PED_RADIUS = 150;
+const PED_RADIUS = 150;   // where an officer may walk in from (cops only)
+
+// THE CROWD IS WHERE YOU ARE. 24 people spread over a 150 m radius left the
+// stretch of street you were standing on empty: measured at 30 sim-s, none
+// within 30 m of the player downtown or on Pike St, 1-2 within 40 m at Pike
+// Place and Westlake, none at Pioneer Square. A civilian now appears in a ring
+// round the player and is recycled when the player has left him behind, and
+// the spots in the ring are weighted: dense blocks (by the buildings round
+// them), plazas, parks and pier decks over empty suburb and long residential
+// streets. One more of the 24 already-built skinned figures, in a better place.
+const PLAN_AT = 13;                    // choose the way through a junction this far from it
+const RING_MIN = 15, RING_MAX = 60;   // appear no nearer than a stranger would (and not in view nearer than 45 m)
+const CULL_R = 90;                    // recycled beyond this
+const OPEN_SHARE = 0.25;              // of spawn attempts that look for a plaza / park / pier first
+const PAVE = 1.4;                     // the walking line: this far beyond the kerb
+// facade styles (citygen styleFor) as foot traffic: a tower's block is full, a
+// house's is not
+const STYLE_FOOT = { tower: 1.2, midrise: 1.0, brick: 0.9, lowrise: 0.7, campus: 0.4, house: 0.15, industrial: 0.1 };
+// planNode's scratch: the arms of the junction being walked through, and their
+// order round it (no allocation per junction)
+const ARMS = Array.from({ length: 8 }, () => ({ ei: 0, atA: false, ux: 0, uz: 0, hw: 0, ang: 0, d: 0 }));
+const ORD = new Int8Array(8);
 
 // CONTACT SHADOWS. On a phone a pedestrian casts no shadow at all (see
 // makeHumanoid), and on desktop the sun's 0.25 m texel smears a foot's shadow
@@ -3435,6 +3456,25 @@ function sprawl(h, k) {
   to(b[B.head], 'x', 0.25);
 }
 
+/** What only the crowd's walkers use, on every pedestrian's record (one hidden class). */
+function crowdState(R, x, z) {
+  return {
+    pace: 1.25 + R.n() * 0.5,                          // his stroll, m/s
+    // the path through a junction (planNode): waypoints, the one he is
+    // walking to, a bit per leg for "this leg crosses a carriageway", and
+    // the seconds spent on it
+    path: new Float32Array(16), pn: 0, pi: 0, pcr: 0, pt: 0, ptMax: 45,
+    // crossing now / seconds waiting at the kerb / the gap check's timer /
+    // hurrying (a car coming)
+    cross: 0, wait: 0, gapT: 0, hurry: 0,
+    // seconds held by a wall or the water; a wanderer's heading and timer,
+    // standing about, and the spot he drifts round
+    blocked: 0, wanderT: 0, wanderH: 0, idle: false, hx: x, hz: z,
+    slideT: 0, slideS: 1,                              // an officer held by a wall: going along it, which way
+    near: true,                                        // within 50 m of the player: trunks and poles are tested for him
+  };
+}
+
 export class PedSystem {
   constructor(scene, city, game) {
     this.scene = scene;
@@ -3444,6 +3484,16 @@ export class PedSystem {
     this.R = rng(4242);
     this.timer = 0;
     this.camera = null;   // set by main.js; drives the animation LOD
+    this.waterAt = null;  // set by main.js: the drawn water surface at (x, z) or null
+    this.simT = 0;
+    this._sp = { x: 0, z: 0, y: 0, edge: -1, side: 1, dirSign: 1, t: 0 };
+    this._ring = { x: 1e9, z: 1e9, t: -9, list: [] };
+    this._frOK = false;
+    this._fill = false;
+    // where people are crossing a carriageway, for the cars to stop short of
+    // (read by traffic.js; x, z, y triples)
+    this.crossXZ = new Float32Array(48);
+    this.crossN = 0;
     this._m = new THREE.Matrix4();
     this._fr = new THREE.Frustum();
     this._s = new THREE.Sphere();
@@ -3492,7 +3542,45 @@ export class PedSystem {
     B2.instanceColor.needsUpdate = true;
   }
 
-  spawn(px, pz, cop) {
+  /**
+   * A new person. Civilians go to a weighted spot in the ring round (px, pz)
+   * (`_spot`; `avoidView` keeps them from appearing on screen nearer than
+   * 45 m). An officer keeps the old rule -- any pavement 20-150 m out --
+   * since he is meant to walk in from afar.
+   */
+  spawn(px, pz, cop, avoidView = false) {
+    if (cop) return this.spawnCop(px, pz);
+    const s = this._spot(px, pz, avoidView);
+    return s ? this._add(s.x, s.z, false, s.edge, s.side, s.dirSign, s.t, s.y) : null;
+  }
+
+  /** The record every pedestrian shares (one hidden class). */
+  _add(x, z, cop, edge, side, dirSign, t, y = this.city.groundAt(x, z, null)) {
+    const R = this.R;
+    const seed = (R.n() * 1e6) | 0;
+    const h = makeHumanoid({ seed, cop: !!cop });
+    const p = {
+      h, x, z, y, lift: 0, heading: R.n() * TAU,
+      edge, side, t, dirSign,
+      speed: 0, state: 'walk', timer: 0,
+      cop: !!cop, shootCd: 1 + R.n(), down: 0, hp: cop ? 60 : 30,
+      // set later; declared so every pedestrian keeps one hidden class
+      fleeX: 0, fleeZ: 0, fallDir: 0, animDt: 0,
+      // officers (police.js footOrders): which kind, the trigger's burst,
+      // the unit they came out of, how raised the gun is, the search point
+      kind: cop ? 'cop' : 'civ', burst: 0, car: null, aim: 0, leaveT: 0, searchX: 0, searchZ: 0,
+      // a punch or a shot that did not floor them: knocked back (stagger)
+      stag: 0, stagX: 0, stagZ: 0, fallBack: false,
+      ...crowdState(R, x, z),
+    };
+    this.scene.add(h.group);
+    this.peds.push(p);
+    if (cop && this.game.police) this.game.police.stats.spawned.cop++;
+    return p;
+  }
+
+  /** The old civilian rule, for officers walking in: any pavement 20-150 m out. */
+  spawnCop(px, pz) {
     const city = this.city;
     for (let attempt = 0; attempt < 12; attempt++) {
       const eids = city.edgesNear(px, pz, PED_RADIUS);
@@ -3503,36 +3591,348 @@ export class PedSystem {
       const a = city.nodes[e.a], b = city.nodes[e.b];
       const t = 0.15 + this.R.n() * 0.7;
       const side = this.R.n() < 0.5 ? 1 : -1;
-      const off = e.hw + 1.4;
+      const off = e.hw + PAVE;
       const x = lerp(a.x, b.x, t) - e.dz * off * side;
       const z = lerp(a.z, b.z, t) + e.dx * off * side;
       const d = Math.hypot(x - px, z - pz);
-      // Don't spawn on top of the player, but 26 m was far enough that the
-      // pavement directly in front of you was permanently empty -- which is
-      // the stretch of pavement you spend the whole game looking at.
-      if (d < (cop ? 20 : 15) || d > PED_RADIUS) continue;
-      if (!G.isBuildable(x, z)) continue;
-      const seed = (this.R.n() * 1e6) | 0;
-      const h = makeHumanoid({ seed, cop: !!cop });
-      const p = {
-        h, x, z, y: city.groundAt(x, z, null), lift: 0, heading: this.R.n() * Math.PI * 2,
-        edge: ei, side, t, dirSign: this.R.n() < 0.5 ? 1 : -1,
-        speed: 0, state: 'walk', timer: 0,
-        cop: !!cop, shootCd: 1 + this.R.n(), down: 0, hp: cop ? 60 : 30,
-        // set later; declared so every pedestrian keeps one hidden class
-        fleeX: 0, fleeZ: 0, fallDir: 0, animDt: 0,
-        // officers (police.js footOrders): which kind, the trigger's burst,
-        // the unit they came out of, how raised the gun is, the search point
-        kind: cop ? 'cop' : 'civ', burst: 0, car: null, aim: 0, leaveT: 0, searchX: 0, searchZ: 0,
-        // a punch or a shot that did not floor them: knocked back (stagger)
-        stag: 0, stagX: 0, stagZ: 0, fallBack: false,
-      };
-      this.scene.add(h.group);
-      this.peds.push(p);
-      if (cop && this.game.police) this.game.police.stats.spawned.cop++;
-      return p;
+      if (d < 20 || d > PED_RADIUS) continue;
+      if (!G.isBuildable(x, z) || city.insideBuilding(x, z, city.groundAt(x, z, null), 0.4)) continue;
+      return this._add(x, z, true, ei, side, this.R.n() < 0.5 ? 1 : -1, t);
     }
     return null;
+  }
+
+  /**
+   * Where the next civilian goes: a spot in the ring RING_MIN..RING_MAX round
+   * (px, pz), kept or thrown back by how much foot traffic it is (`_footWeight`
+   * for a pavement, `_openWeight` for a plaza / park / pier deck, which are
+   * tried first on OPEN_SHARE of attempts). Returns the shared scratch record
+   * (x, z, y, edge -- -1 on open ground --, side, dirSign, t) or null.
+   */
+  _spot(px, pz, avoidView) {
+    const city = this.city, R = this.R, s = this._sp;
+    for (let k = 0; k < 14; k++) {
+      let x, z, edge = -1, side = 1, dirSign = 1, t = 0, y0 = null;
+      if (R.n() < OPEN_SHARE) {
+        const a = R.n() * TAU, r = Math.sqrt(RING_MIN * RING_MIN + R.n() * (RING_MAX * RING_MAX - RING_MIN * RING_MIN));
+        x = px + Math.cos(a) * r; z = pz + Math.sin(a) * r;
+        const w = this._openWeight(x, z);
+        if (w <= 0 || R.n() > w || city.onRoad(x, z, 1.5, false, false)) continue;
+      } else {
+        const list = this._ringEdges(px, pz);
+        if (!list.length) continue;
+        const ei = list[Math.floor(R.n() * list.length)];
+        const e = city.edges[ei], a = city.nodes[e.a], b = city.nodes[e.b];
+        t = 0.1 + R.n() * 0.8;
+        side = R.n() < 0.5 ? 1 : -1;
+        dirSign = R.n() < 0.5 ? 1 : -1;
+        // room to walk before the next junction: planNode wants the corner ahead
+        if ((dirSign > 0 ? 1 - t : t) * e.len < Math.min(e.len * 0.5, 12)) dirSign = -dirSign;
+        const off = e.hw + PAVE;
+        // (the walking code's side is across the way he GOES: a ped facing
+        // against the edge's own direction stands on the opposite side)
+        x = lerp(a.x, b.x, t) - e.dz * off * side * dirSign;
+        z = lerp(a.z, b.z, t) + e.dx * off * side * dirSign;
+        if (R.n() > this._footWeight(x, z) || !G.isBuildable(x, z)) continue;
+        edge = ei;
+        y0 = lerp(a.y, b.y, t) + 1;   // the street's own surface, not a viaduct over it
+      }
+      const d = Math.hypot(x - px, z - pz);
+      if (d < RING_MIN || d > RING_MAX) continue;
+      // the nearer half of the ring a little more often than the far
+      if (R.n() > 1.15 - ((d - RING_MIN) / (RING_MAX - RING_MIN)) * 0.6) continue;
+      const y = y0 === null ? city.groundAt(x, z, null) : city.groundAt(x, z, y0, city.roadLift(x, z));
+      if (city.insideBuilding(x, z, y, 0.5)) continue;
+      if (edge < 0) { const wl = this.waterAt ? this.waterAt(x, z) : null; if (wl !== null && y < wl - 0.2) continue; }
+      if (avoidView && d < 45 && this._seen(x, y, z)) continue;
+      s.x = x; s.z = z; s.y = y; s.edge = edge; s.side = side; s.dirSign = dirSign; s.t = t;
+      return s;
+    }
+    return null;
+  }
+
+  /** On screen at the last render? (the animation LOD's frustum) */
+  _seen(x, y, z) {
+    if (!this.camera || !this._frOK) return false;
+    this._s.center.set(x, y + 0.9, z);
+    this._s.radius = 2.5;
+    return this._fr.intersectsSphere(this._s);
+  }
+
+  /** The streets a civilian may appear on: ground-level, with a pavement, in
+   *  reach of the ring. Refreshed every 2 s or 20 m. */
+  _ringEdges(px, pz) {
+    const c = this._ring;
+    if (c.t > this.simT - 2 && Math.abs(px - c.x) + Math.abs(pz - c.z) < 20) return c.list;
+    c.x = px; c.z = pz; c.t = this.simT;
+    const out = c.list, city = this.city;
+    out.length = 0;
+    const near = city.roadsNear(px, pz, RING_MAX + 12, false);
+    for (let i = 0; i < near.length; i++) {
+      const e = city.edges[near[i]];
+      if (e.cls === 'hwy' || e.cls === 'ramp' || e.tunnel || e.len < 6) continue;
+      out.push(near[i]);
+    }
+    return out;
+  }
+
+  /** Foot traffic of the pavement at (x, z), 0.12-1: the buildings round it
+   *  by what they are -- a tower's block is full, a house's is not. */
+  _footWeight(x, z) {
+    const near = this.city.buildingsNear(x, z, 30);
+    let s = 0;
+    for (let i = 0; i < near.length; i++) {
+      const b = near[i], dx = b.x - x, dz = b.z - z, r = 36 + Math.max(b.w, b.d) * 0.5;
+      if (dx * dx + dz * dz < r * r) s += STYLE_FOOT[b.style] || 0.3;
+    }
+    return 0.12 + 0.88 * Math.min(1, s / 6);
+  }
+
+  /** A plaza, a park or a pier deck: somewhere people stand about. 0 = no. */
+  _openWeight(x, z) {
+    const pl = this.city.platformAt(x, z);
+    if (pl !== null) return pl - G.terrainHeight(x, z) < 6 ? 1 : 0;   // (not a landmark's high deck)
+    if (G.lotAt(x, z) === 2) return 1;
+    return G.inPark(x, z) ? 0.5 : 0;
+  }
+
+  /**
+   * He has finished with the street he was on (a scare, a knock-back) and
+   * must be put back on a pavement: the walking line nearest him, going the
+   * way he faces. Further than 12 m from any, he is on open ground and
+   * wanders there.
+   */
+  reanchor(p) {
+    const city = this.city;
+    p.pn = 0; p.cross = 0; p.wait = 0; p.pt = 0;
+    const list = city.roadsNear(p.x, p.z, 30, false);
+    let best = -1, bd = 12;
+    for (let i = 0; i < list.length; i++) {
+      const e = city.edges[list[i]];
+      if (e.cls === 'hwy' || e.cls === 'ramp' || e.tunnel || e.len < 6) continue;
+      const a = city.nodes[e.a];
+      const t = clamp(((p.x - a.x) * e.dx + (p.z - a.z) * e.dz) / e.len, 0, 1);
+      const d = Math.abs(Math.hypot(a.x + e.dx * t * e.len - p.x, a.z + e.dz * t * e.len - p.z) - (e.hw + PAVE));
+      if (d < bd) { bd = d; best = list[i]; }
+    }
+    if (best < 0) { p.edge = -1; p.hx = p.x; p.hz = p.z; p.wanderT = 0; return; }
+    const e = city.edges[best], a = city.nodes[e.a];
+    const t = clamp(((p.x - a.x) * e.dx + (p.z - a.z) * e.dz) / e.len, 0, 1);
+    p.edge = best;
+    p.dirSign = Math.sin(p.heading) * e.dx + Math.cos(p.heading) * e.dz >= 0 ? 1 : -1;
+    // which side of the centreline, as the walking code counts it:
+    // perp = (-fz, fx) * side along the way he goes
+    const cx = p.x - (a.x + e.dx * t * e.len), cz = p.z - (a.z + e.dz * t * e.len);
+    p.side = (cx * -e.dz + cz * e.dx) * p.dirSign >= 0 ? 1 : -1;
+  }
+
+  /**
+   * He is within PLAN_AT of the end of his street (node `nodeId`): choose where
+   * he goes next and how, as a short path (p.path, p.pn waypoints, p.pcr a bit
+   * per waypoint for "this leg crosses a carriageway"). The junction is the
+   * node and the arms of the streets that meet there. He keeps to his side:
+   * the next arm round the node on that side is the corner he turns, along the
+   * pavement, where his walking line meets that arm's (`C`); or he CROSSES that
+   * arm, straight across at its mouth beside the corner, to the pavement on its
+   * far side, and then turns the next corner or carries on out along the arm.
+   * Pedestrians cut diagonally across the junction squares before this: 29 % of
+   * every sample, and with a random side picked at each node, half of all
+   * junctions took them across a whole carriageway and back.
+   *
+   * With `r` = which way round the node his side faces (+1 counter-clockwise
+   * in x/z), an arm's facing line is N + u a + n o with n = r (-uz, ux): the
+   * line he walks on. Arm B's line on the side that faces him is the other
+   * sign. Two lines meet at a = (-Rx Bz + Bx Rz) / det, b = (Ax Rz - Az Rx) /
+   * det, as citygen's `meet` has it.
+   */
+  planNode(p, nodeId) {
+    const city = this.city, R = this.R, node = city.nodes[nodeId];
+    let n = 0, self = -1;
+    for (let k = 0; k < node.e.length && n < ARMS.length; k++) {
+      const ei = node.e[k], e = city.edges[ei], mine = ei === p.edge;
+      if (!mine && (e.elev || e.tunnel || e.cls === 'hwy' || e.cls === 'ramp' || e.len < 4 || e.a === e.b)) continue;
+      const A = ARMS[n], atA = e.a === nodeId;
+      A.ei = ei; A.atA = atA; A.hw = e.hw;
+      A.ux = atA ? e.dx : -e.dx; A.uz = atA ? e.dz : -e.dz;
+      A.ang = Math.atan2(A.uz, A.ux);
+      if (mine) self = n;
+      n++;
+    }
+    if (self < 0) { this.reanchor(p); return; }
+    const A1 = ARMS[self], r = -p.side, path = p.path;
+    // the others in the order met going round on his side
+    let m = 0;
+    for (let k = 0; k < n; k++) {
+      if (k === self) continue;
+      let d = (ARMS[k].ang - A1.ang) * r;
+      d -= Math.floor(d / TAU) * TAU;
+      if (d < 0.2 || d > TAU - 0.2) continue;   // beside his own street: the same road twice
+      ARMS[k].d = d;
+      let j = m++;
+      while (j > 0 && ARMS[ORD[j - 1]].d > d) { ORD[j] = ORD[j - 1]; j--; }
+      ORD[j] = k;
+    }
+    let pn = 0, pcr = 0;
+    // (a waypoint inside a building -- a dead end's far side against a
+    // wall -- is dropped, and a crossing's flag passes to the next one)
+    let pend = false;
+    const put = (x, z, cross) => {
+      if (city.insideBuilding(x, z, p.y, 0.3)) { pend = pend || cross; return; }
+      path[pn * 2] = x; path[pn * 2 + 1] = z;
+      if (cross || pend) pcr |= 1 << pn;
+      pend = false; pn++;
+    };
+    const nx = node.x, nz = node.z;
+    if (m === 0) {
+      // a dead end: across the end of the street to the other pavement and back
+      const o = A1.hw + PAVE, nax = r * -A1.uz, naz = r * A1.ux;
+      put(nx + A1.ux * 1.5 + nax * o, nz + A1.uz * 1.5 + naz * o, false);
+      put(nx + A1.ux * 1.5 - nax * o, nz + A1.uz * 1.5 - naz * o, true);
+      p.dirSign = -p.dirSign;
+    } else {
+      // `from`'s facing line: the arm he is on, then each arm he crosses
+      let fu = A1.ux, fz = A1.uz, fo = A1.hw + PAVE;
+      let fin = -1, finSide = 0;
+      for (let h = 0; h < m; h++) {
+        const B = ARMS[ORD[h]], ob = B.hw + PAVE;
+        const fnx = r * -fz, fnz = r * fu;           // from's facing normal
+        const bnx = r * B.uz, bnz = r * -B.ux;       // B's line on the side facing him
+        const Rx = bnx * ob - fnx * fo, Rz = bnz * ob - fnz * fo;
+        const det = -fu * B.uz + B.ux * fz;
+        let a = 0, b = 0;
+        const ok = Math.abs(det) > 0.17;
+        if (ok) { a = (-Rx * B.uz + B.ux * Rz) / det; b = (fu * Rz - fz * Rx) / det; }
+        if (!ok) {
+          // straight on (the far side of a T, a road going through): the
+          // pavement runs on, shifting to the next street's width
+          put(nx + B.ux * 2 + bnx * ob, nz + B.uz * 2 + bnz * ob, false);
+        } else if (Math.abs(a) > 14 || Math.abs(b) > 14) {
+          // a corner too sharp to meet on the pavement: keep to the two lines
+          put(nx + fu * clamp(a, -14, 14) + fnx * fo, nz + fz * clamp(a, -14, 14) + fnz * fo, false);
+          put(nx + B.ux * clamp(b, -14, 14) + bnx * ob, nz + B.uz * clamp(b, -14, 14) + bnz * ob, false);
+        } else put(nx + fu * a + fnx * fo, nz + fz * a + fnz * fo, false);
+        const last = h === m - 1 || h >= 2;
+        if (last || !ok || b < 1.5 || B.hw > 16 || R.n() > (h === 0 ? 0.4 : 0.3)) { fin = ORD[h]; finSide = -r; break; }
+        // across B at its mouth, to the pavement on its far side
+        put(nx + B.ux * b - bnx * ob, nz + B.uz * b - bnz * ob, true);
+        fu = B.ux; fz = B.uz; fo = ob;
+        if (R.n() < 0.25) {
+          // ...and out along B on that side
+          put(nx + B.ux * (b + 3) - bnx * ob, nz + B.uz * (b + 3) - bnz * ob, false);
+          fin = ORD[h]; finSide = r; break;
+        }
+      }
+      const F = ARMS[fin];
+      p.edge = F.ei;
+      p.dirSign = F.atA ? 1 : -1;
+      p.side = finSide;
+    }
+    // the longest it may take: twice the walk, and a kerb wait per crossing
+    let walk = 0, cx = p.x, cz = p.z, nc = 0;
+    for (let k = 0; k < pn; k++) { walk += Math.hypot(path[k * 2] - cx, path[k * 2 + 1] - cz); cx = path[k * 2]; cz = path[k * 2 + 1]; nc += (pcr >> k) & 1; }
+    p.pn = pn; p.pi = 0; p.pcr = pcr; p.pt = 0; p.ptMax = walk * 1.5 + nc * 7 + 4; p.cross = 0; p.wait = 0; p.gapT = 0;
+  }
+
+  /**
+   * Is the strip from the pedestrian to (ex, ez) clear of moving cars for as
+   * long as it takes to cross it? Each car runs on at its speed along its
+   * heading; the pedestrian walks the strip at 1.9 m/s and then stands at its
+   * end. Both are straight lines in time, so the closest approach is solved,
+   * not sampled (a sampled step is longer than a car's reach at 15 m/s and
+   * steps over him) -- twice, for the walk and for the standing.
+   */
+  _crossClear(p, ex, ez, traffic) {
+    const L = Math.hypot(ex - p.x, ez - p.z) || 1, ux = (ex - p.x) / L, uz = (ez - p.z) / L;
+    const tL = L / 1.9, T = tL + 1;
+    const cars = traffic.cars;
+    for (let i = 0; i < cars.length; i++) {
+      const v = cars[i];
+      if (v.mode === 'parked' || v.mode === 'apron') continue;
+      if (dist2(v.x, v.z, p.x, p.z) > 80 * 80 || Math.abs(v.y - p.y) > 3) continue;
+      // (one standing in the way is waited out too -- it may go the moment he steps off)
+      const rr = v.halfLen + 1.5, fx = v.forward.x * v.vLong, fz = v.forward.z * v.vLong;
+      // walking: the car relative to him
+      const vx = fx - ux * 1.9, vz = fz - uz * 1.9, rx = v.x - p.x, rz = v.z - p.z, vv = vx * vx + vz * vz;
+      let t = vv > 1e-6 ? clamp(-(rx * vx + rz * vz) / vv, 0, tL) : 0;
+      if (dist2(rx + vx * t, rz + vz * t, 0, 0) < rr * rr) return false;
+      // standing at the far end
+      const sx = rx + vx * tL, sz = rz + vz * tL, ff = fx * fx + fz * fz;
+      t = ff > 1e-6 ? clamp(-(sx * fx + sz * fz) / ff, 0, T - tL) : 0;
+      if (dist2(sx + fx * t, sz + fz * t, 0, 0) < rr * rr) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Open ground -- a plaza, a park, a pier deck: stroll, stop, turn. Never
+   * onto a carriageway (looked for 2.4 m ahead, 4 times a second); the walls,
+   * the water's edge and the trunks are `_move`'s. Returns the speed; the
+   * heading wanted is p.wanderH.
+   */
+  _wander(p, dt) {
+    const city = this.city, R = this.R;
+    p.wanderT -= dt;
+    p.gapT -= dt;
+    if (p.blocked > 0.15) { p.wanderH = p.heading + Math.PI + (R.n() - 0.5) * 1.4; p.blocked = 0; p.wanderT = 2 + R.n() * 3; p.idle = false; }
+    if (p.wanderT <= 0) {
+      if (R.n() < 0.3) { p.idle = true; p.wanderT = 2 + R.n() * 4; }
+      else {
+        p.idle = false; p.wanderT = 3 + R.n() * 5;
+        // drifts about its spot: pulled home from 30 m
+        p.wanderH = Math.hypot(p.hx - p.x, p.hz - p.z) > 30 ? Math.atan2(p.hx - p.x, p.hz - p.z) + (R.n() - 0.5) * 0.8
+          : p.heading + (R.n() - 0.5) * 1.8;
+      }
+    }
+    if (p.idle) return 0;
+    if (p.gapT <= 0) {
+      p.gapT = 0.25;
+      if (city.onRoad(p.x + Math.sin(p.wanderH) * 2.4, p.z + Math.cos(p.wanderH) * 2.4, 0.6, false, false)) {
+        p.wanderH += (R.n() < 0.5 ? 1 : -1) * (2.2 + R.n() * 0.8);
+        p.wanderT = 2 + R.n() * 3;
+      }
+    }
+    return p.pace * 0.75;
+  }
+
+  /**
+   * One step along the heading, the way the player's own step is checked
+   * (Player.blocked, with the sliding): not into a building, not off into deep
+   * water or over a drop, trunks and poles pushed out of rather than stopped
+   * at. Tries the whole step, then each axis alone; with none free he is held
+   * (p.blocked counts how long) -- unless he already stands inside a building,
+   * when anything is better than staying. A stationary pedestrian costs
+   * nothing; one being driven back is re-grounded where he lands.
+   */
+  _move(p, dt) {
+    const s = p.speed * dt;
+    const nx = G.clampToMap(p.x + Math.sin(p.heading) * s), nz = G.clampToMap(p.z + Math.cos(p.heading) * s);
+    // (a slide along an axis the heading has no component on "succeeds" and
+    // moves nobody: it only counts if he went somewhere)
+    const ox = p.x, oz = p.z, eps = Math.min(1e-3, s * 0.2);
+    if (this._place(p, nx, nz, true) && Math.abs(p.x - ox) + Math.abs(p.z - oz) >= eps) { p.blocked = 0; return; }
+    if (this._place(p, nx, oz, true) && Math.abs(p.x - ox) >= eps) { p.blocked = 0; return; }
+    if (this._place(p, ox, nz, true) && Math.abs(p.z - oz) >= eps) { p.blocked = 0; return; }
+    p.x = ox; p.z = oz;
+    if (this.city.insideBuilding(p.x, p.z, p.y, 0.3)) { this._place(p, nx, nz, false); return; }
+    p.blocked += dt;
+    p.speed *= 0.6;
+  }
+
+  _place(p, x, z, walls) {
+    const city = this.city;
+    // (trunks and poles only where somebody can see him walk through one)
+    const o = p.near ? city.obstacleHit(x, z, 0.3, p.y) : null;
+    if (o) { x += o.nx * o.pen; z += o.nz * o.pen; }
+    if (walls && city.insideBuilding(x, z, p.y, 0.3)) return false;
+    const lift = city.roadLift(x, z);
+    const y = city.groundAt(x, z, p.y + 1, lift);
+    if (walls) {
+      if (y < p.y - 1.4 || y > p.y + 1.0) return false;   // a sea wall, a bluff, a wall of earth
+      const wl = this.waterAt ? this.waterAt(x, z) : null;
+      if (wl !== null && y < wl - 0.2) return false;
+    }
+    p.x = x; p.z = z; p.lift = lift; p.y = y;
+    return true;
   }
 
   /**
@@ -3553,6 +3953,8 @@ export class PedSystem {
       cop: true, shootCd: 0.6 + this.R.n(), down: 0, hp: swat ? 95 : 60,
       fleeX: 0, fleeZ: 0, fallDir: 0, animDt: 0,
       kind, burst: 0, car: car || null, aim: 0, leaveT: 0, searchX: 0, searchZ: 0,
+      stag: 0, stagX: 0, stagZ: 0, fallBack: false,
+      ...crowdState(this.R, x, z),
     };
     this.scene.add(h.group);
     this.peds.push(p);
@@ -3576,6 +3978,7 @@ export class PedSystem {
         p.timer = 4 + this.R.n() * 3;
         p.fleeX = p.x - x;
         p.fleeZ = p.z - z;
+        p.pn = 0; p.cross = 0; p.wait = 0;   // off his path: running
       }
     }
   }
@@ -3589,10 +3992,17 @@ export class PedSystem {
     const lv = game.police ? game.police.level() : null;
     let copCount = 0, streetCops = 0;
     for (const p of this.peds) if (p.cop) { copCount++; if (!p.car) streetCops++; }
+    this.simT += dt;
 
     if (this.timer <= 0) {
-      this.timer = 0.2;
-      if (this.peds.length - copCount < MAX_PEDS) this.spawn(px, pz, false);
+      // (a long way short of full: fill quickly, and anywhere, not out of
+      // sight -- the player has just arrived. Past 12 m/s the crowd is a
+      // blur and a recycled figure a spawn's cost: slowly)
+      const civ = this.peds.length - copCount;
+      const pv = player && player.vehicle ? Math.abs(player.vehicle.vLong) : 0;
+      this._fill = civ < MAX_PEDS - 8;
+      this.timer = pv > 12 ? 0.5 : this._fill ? 0.12 : 0.2;
+      if (civ < MAX_PEDS) this.spawn(px, pz, false, !this._fill);
       // (only to a target on foot or stopped: walked in toward a car going
       // by at 30 m/s they were left behind and replaced, 53 spawns a minute)
       if (lv && game.wanted > 0 && streetCops < lv.street && copCount < lv.foot + lv.swat && game.police.playerSlow && !game.police.searching) this.spawn(px, pz, true);
@@ -3605,6 +4015,7 @@ export class PedSystem {
       cam.updateMatrixWorld();
       this._m.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
       this._fr.setFromProjectionMatrix(this._m);
+      this._frOK = true;
     }
     this._frame = (this._frame || 0) + 1;
     this.blobs.count = 0;
@@ -3618,10 +4029,12 @@ export class PedSystem {
     movers.length = 0;
     for (const v of traffic.cars) if (v.mode !== 'parked' && Math.abs(v.vLong) >= 2.2) movers.push(v);
 
+    this.crossN = 0;
     for (let i = this.peds.length - 1; i >= 0; i--) {
       const p = this.peds[i];
       const d2p = dist2(p.x, p.z, px, pz);
-      if (d2p > (PED_RADIUS + 90) * (PED_RADIUS + 90)) { this.remove(p); continue; }
+      // (a civilian left behind is recycled into the ring; an officer is not)
+      if (d2p > (p.cop ? (PED_RADIUS + 90) * (PED_RADIUS + 90) : CULL_R * CULL_R)) { this.remove(p); continue; }
 
       if (p.state === 'down') {
         p.h.mesh.visible = true;
@@ -3652,6 +4065,8 @@ export class PedSystem {
 
       let targetSpeed = 1.35;
       let desired = p.heading;
+      if (p.hurry > 0) p.hurry -= dt;
+      p.near = d2p < 2500;
 
       if (p.cop) {
         // police.js decides: chase, search, arrest, shoot, get back in the car
@@ -3659,44 +4074,71 @@ export class PedSystem {
           : (game.wanted === 0 ? { remove: true } : { heading: Math.atan2(px - p.x, pz - p.z), speed: d2p > 81 ? 4.6 : 0, remove: false });
         if (o.remove) { this.remove(p); continue; }
         desired = o.heading;
+        // held by a wall for half a second: along it, toward whichever side
+        // runs on, for a second and a quarter (footOrders steers straight at
+        // the player and knows no walls)
+        if (p.slideT > 0) { p.slideT -= dt; desired += p.slideS * 1.2; }
+        else if (p.blocked > 0.5) { p.slideT = 1.25; p.slideS = this.R.n() < 0.5 ? 1 : -1; p.blocked = 0; }
         targetSpeed = o.speed;
       } else if (p.state === 'flee') {
         p.timer -= dt;
+        // held by a wall: along it, not into it (the wall is _move's)
+        if (p.blocked > 0.25) {
+          const c = Math.cos(1.3), s = (this.R.n() < 0.5 ? 1 : -1) * Math.sin(1.3);
+          const fx = p.fleeX * c - p.fleeZ * s, fz = p.fleeX * s + p.fleeZ * c;
+          p.fleeX = fx; p.fleeZ = fz; p.blocked = 0;
+        }
         const l = Math.hypot(p.fleeX, p.fleeZ) || 1;
         desired = Math.atan2(p.fleeX / l, p.fleeZ / l);
         targetSpeed = 5.2;
-        if (p.timer <= 0) p.state = 'walk';
+        if (p.timer <= 0) { p.state = 'walk'; this.reanchor(p); }
+      } else if (p.edge < 0) {
+        // open ground: a plaza, a park, a pier deck
+        targetSpeed = this._wander(p, dt);
+        desired = p.wanderH;
       } else {
-        // walk the sidewalk
+        // walk the pavement
         const e = city.edges[p.edge];
         if (!e) { this.remove(p); continue; }
-        const a = city.nodes[p.dirSign > 0 ? e.a : e.b];
-        const b = city.nodes[p.dirSign > 0 ? e.b : e.a];
-        const dx = b.x - a.x, dz = b.z - a.z;
-        const len = Math.hypot(dx, dz) || 1;
-        const fx = dx / len, fz = dz / len;
-        const prog = (p.x - a.x) * fx + (p.z - a.z) * fz;
-        if (prog > len - 3) {
-          const nodeId = p.dirSign > 0 ? e.b : e.a;
-          const node = city.nodes[nodeId];
-          const opts = node.e.filter((ei) => {
-            const ne = city.edges[ei];
-            return !ne.elev && ne.cls !== 'hwy' && ne.cls !== 'ramp';
-          });
-          if (opts.length) {
-            const nei = opts[Math.floor(this.R.n() * opts.length)];
-            p.edge = nei;
-            p.dirSign = city.edges[nei].a === nodeId ? 1 : -1;
-            p.side = this.R.n() < 0.5 ? 1 : -1;
-          } else p.dirSign = -p.dirSign;
-        } else {
-          const off = e.hw + 1.4;
-          const ap = clamp(prog + 4, 0, len);
-          const tx = a.x + fx * ap - fz * off * p.side;
-          const tz = a.z + fz * ap + fx * off * p.side;
-          desired = Math.atan2(tx - p.x, tz - p.z);
+        targetSpeed = p.pace;
+        if (p.pn === 0) {
+          const a = city.nodes[p.dirSign > 0 ? e.a : e.b];
+          const b = city.nodes[p.dirSign > 0 ? e.b : e.a];
+          const dx = b.x - a.x, dz = b.z - a.z;
+          const len = Math.hypot(dx, dz) || 1;
+          const fx = dx / len, fz = dz / len;
+          const prog = (p.x - a.x) * fx + (p.z - a.z) * fz;
+          if (len - prog < PLAN_AT) this.planNode(p, p.dirSign > 0 ? e.b : e.a);
+          else {
+            const off = e.hw + PAVE;
+            const ap = clamp(prog + 4, 0, len);
+            const tx = a.x + fx * ap - fz * off * p.side;
+            const tz = a.z + fz * ap + fx * off * p.side;
+            desired = Math.atan2(tx - p.x, tz - p.z);
+          }
         }
-        targetSpeed = 1.25 + hash2(i, 3) * 0.5;
+        if (p.pn > 0) {
+          // a path through the junction: the corner, and any crossing
+          p.pt += dt;
+          const wx = p.path[p.pi * 2], wz = p.path[p.pi * 2 + 1];
+          const leg = (p.pcr >> p.pi) & 1;
+          desired = Math.atan2(wx - p.x, wz - p.z);
+          if (leg && !p.cross) {
+            // at the kerb: wait for a gap (6 s at most -- the cars stop for a
+            // person in the road, and a stream of them would hold him for ever)
+            p.wait += dt;
+            p.gapT -= dt;
+            if (p.gapT <= 0) { p.gapT = 0.25; if (p.wait > 6 || this._crossClear(p, wx, wz, traffic)) p.cross = 1; }
+            if (!p.cross) targetSpeed = 0;
+          }
+          if (p.cross) targetSpeed = p.hurry > 0 ? 3.8 : 1.9;
+          if (dist2(p.x, p.z, wx, wz) < (p.cross ? 0.36 : 0.64) || p.pt > p.ptMax) {
+            if (leg) { p.cross = 0; p.wait = 0; }
+            if (++p.pi >= p.pn || p.pt > p.ptMax) { p.pn = 0; p.pt = 0; p.cross = 0; p.wait = 0; }
+          }
+        }
+        // held by something for good (a wall of earth on a street): another place
+        if (p.blocked > 3) { this.remove(p); continue; }
       }
 
       if (p.stag > 0) {
@@ -3710,12 +4152,8 @@ export class PedSystem {
       }
       p.heading += clamp(angleWrap(desired - p.heading), -7 * dt, 7 * dt);
       p.speed = lerp(p.speed, targetSpeed, 1 - Math.exp(-7 * dt));
-      p.x += Math.sin(p.heading) * p.speed * dt;
-      p.z += Math.cos(p.heading) * p.speed * dt;
-      p.x = G.clampToMap(p.x);
-      p.z = G.clampToMap(p.z);
-      p.lift = city.roadLift(p.x, p.z);
-      p.y = city.groundAt(p.x, p.z, p.y + 1, p.lift);
+      // (one standing still stays where he stands: no ground query for him)
+      if (p.speed > 0.03 || p.stag > 0) this._move(p, dt);
 
       // Place the body BEFORE animating it: animateWalk locks planted feet to
       // world positions, and solving against last frame's root puts every
@@ -3754,11 +4192,17 @@ export class PedSystem {
       }
       if (show && d2p < 70 * 70) this.addContactShadow(p.h, p.x, p.y, p.z, p.heading);
 
+      // in the road: the cars stop short of him (traffic.js), and he hurries
+      // when one is coming at him anyway
+      if (p.cross && this.crossN < 16) { const o = this.crossN * 3; this.crossXZ[o] = p.x; this.crossXZ[o + 1] = p.z; this.crossXZ[o + 2] = p.y; this.crossN++; }
+
       // knocked over by traffic
       for (const v of movers) {
         const sp = Math.abs(v.vLong);
         const rr = v.halfLen + 1.2;
-        if (dist2(v.x, v.z, p.x, p.z) > rr * rr) continue;
+        const dd = dist2(v.x, v.z, p.x, p.z);
+        if (p.cross && dd < 22 * 22 && ((p.x - v.x) * v.forward.x + (p.z - v.z) * v.forward.z) * v.vLong > 0) p.hurry = 0.8;
+        if (dd > rr * rr) continue;
         const n = v.nearest(p.x, p.z);
         if (dist2(n.x, n.z, p.x, p.z) < 0.65) {
           this.knockDown(p, v.forward, sp);
@@ -3767,6 +4211,8 @@ export class PedSystem {
         }
       }
     }
+    traffic.crossN = this.crossN;
+    traffic.crossXZ = this.crossXZ;
   }
 
   knockDown(p, dir, force) {
@@ -3820,6 +4266,7 @@ export class PedSystem {
       p.timer = 5;
       p.fleeX = p.x - x;
       p.fleeZ = p.z - z;
+      p.pn = 0; p.cross = 0; p.wait = 0;
       if (fromX !== null) { p.stag = STAG; p.stagX = dx; p.stagZ = dz; }
     }
     return p;

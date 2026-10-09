@@ -1389,6 +1389,7 @@ function installShadowFade() {
   ];
   peds = new PedSystem(scene, city, game);
   peds.camera = camera;   // animation LOD culls against it
+  peds.waterAt = (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; };   // the boats' rule (Player.waterAt)
   fx = new Effects(scene, tx);
   let mapCanvas = null;
   if (bc.map) { try { mapCanvas = await blobToCanvas(bc.map); } catch (e) { mapCanvas = null; blog('map: restore failed ' + e.message); } }
