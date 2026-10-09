@@ -55,6 +55,7 @@ import * as G from './geo.js';
 import { mergeByMaterial } from './build.js';
 import { spaceNeedle, NEEDLE_MATS, needleSolids, needleDecks } from './needle.js';
 import { memo } from './bootcache.js';
+import { makeDowntown } from './lmdowntown.js';
 
 // --- materials -----------------------------------------------------------------
 //
@@ -1421,28 +1422,6 @@ function smith() {
 // ---------------------------------------------------------------------------
 // The smaller landmarks, as they were, on physically shaded materials.
 
-function library() {
-  const g = new THREE.Group();
-  const glass = mat.glassSolid;
-  const parts = [
-    [56, 14, 46, 0, 0, 0], [44, 12, 38, 8, 14, 4], [62, 18, 50, -6, 26, -3],
-    [40, 14, 34, 10, 44, 6], [50, 10, 42, -2, 58, 0],
-  ];
-  const fr = P(0x2b4a52, 0.6, 0.4, 0.6);
-  for (const [w, h, d, x, y, z] of parts) {
-    g.add(box(w, h, d, glass, x, y, z, 0.06 * y));
-    // the diagrid, as edges
-    for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
-      const b = box(0.5, h, 0.5, fr, sx * w / 2, y, sz * d / 2);
-      const c = Math.cos(0.06 * y), s = Math.sin(0.06 * y);
-      b.position.set(x + (sx * w / 2) * c + (sz * d / 2) * s, y + h / 2, z - (sx * w / 2) * s + (sz * d / 2) * c);
-      g.add(b);
-    }
-  }
-  solidBox(g, 0, 0, 28, 23, 0, 14);
-  return g;
-}
-
 // The Fremont Troll (1990): an 18 ft = 5.5 m concrete troll coming up out of
 // the ground under the Aurora Bridge, a hubcap for an eye, crushing a real VW
 // Beetle in his left hand (Fremont Arts Council; Wikipedia "Fremont Troll").
@@ -1497,28 +1476,6 @@ function troll() {
   return g;
 }
 
-function locks() {
-  const g = new THREE.Group();
-  g.add(box(140, 5, 26, mat.concrete, 0, -2, 0));
-  g.add(box(140, 3, 8, mat.concrete, 0, 3, -14));
-  g.add(box(140, 3, 8, mat.concrete, 0, 3, 14));
-  for (let i = -2; i <= 2; i++) g.add(box(3, 8, 26, mat.darkSteel, i * 30, 3, 0));
-  return g;
-}
-
-function ferryTerminal() {
-  const g = new THREE.Group();
-  g.add(box(70, 8, 40, M(0xcfd6d9), 0, 0, 0));
-  g.add(box(74, 1.4, 44, mat.dark, 0, 8, 0));
-  g.add(box(30, 5, 24, M(0xdde3e6), 12, 9.4, 0));
-  const s = sign('WASHINGTON STATE FERRIES', 30, 3.2, '#0d3b2e', '#ffffff');
-  s.position.set(0, 11, 20.3);
-  g.add(s);
-  // (the ferries themselves sail: ferry.js)
-  solidBox(g, 0, 0, 35, 20, 0, 8);
-  return g;
-}
-
 function pier() {
   const g = new THREE.Group();
   g.userData.baseY = 2.4;
@@ -1530,41 +1487,6 @@ function pier() {
   for (let i = -2; i <= 2; i++)
     for (let j = -3; j <= 3; j++) g.add(cyl(0.7, 0.7, 12, mat.wood, i * 10, -13, j * 13, 6));
   solidBox(g, 0, 0, 15, 30, 0, 10);
-  return g;
-}
-
-function kerryPark() {
-  const g = new THREE.Group();
-  g.add(box(50, 1, 16, mat.concrete, 0, -0.5, 0));
-  for (let i = -5; i <= 5; i++) g.add(cyl(0.16, 0.16, 1.1, mat.darkSteel, i * 4.5, 0.5, 7, 6));
-  g.add(box(46, 0.2, 0.2, mat.darkSteel, 0, 1.6, 7));
-  // (its sculpture, Changing Form, is a landmark of its own now)
-  return g;
-}
-
-function convention() {
-  const g = new THREE.Group();
-  const glass = mat.glassSolid;
-  g.add(box(120, 26, 70, glass, 0, 0, 0));
-  const vault = new THREE.Mesh(new THREE.CylinderGeometry(36, 36, 118, 16, 1, false, 0, Math.PI), glass);
-  vault.rotation.z = Math.PI / 2;
-  vault.position.set(0, 26, 0);
-  g.add(vault);
-  solidBox(g, 0, 0, 60, 35, 0, 26);
-  return g;
-}
-
-function aquarium() {
-  const g = new THREE.Group();
-  g.userData.baseY = 2.4;
-  g.add(box(40, 2, 60, mat.wood, 0, -2, 0));
-  g.userData.decks = [{ x: 0, z: 0, hw: 20, hd: 30, top: 0 }];
-  g.add(box(30, 9, 44, M(0x4b6f86), 0, 0, 0));
-  g.add(box(34, 1.2, 48, mat.white, 0, 9, 0));
-  const s = sign('SEATTLE AQUARIUM', 22, 3, '#0f3d55', '#ffffff');
-  s.position.set(0, 11, 24.2);
-  g.add(s);
-  solidBox(g, 0, 0, 15, 22, 0, 9);
   return g;
 }
 
@@ -2474,12 +2396,12 @@ export const LANDMARK_CLEAR = {
   // The Main Arcade's two OSM ways, which the model replaces; the Market's
   // own node is 220 m up the bluff from its sign.
   market: [[96.5, 99.5, 6], [143.5, 154.9, 6], [152.5, 141, 10], [122.5, 114.7, 10], [94.9, 85.5, 8]],
-  aquarium: 48, ferry: 72, library: 48, pier: 52, troll: 18,
+  aquarium: [[0, 0, 48], [45, -42, 40]], ferry: 72, library: 48, pier: 52, troll: 18,
   // the park, and the Play Barn and picnic shelter's own OSM boxes, which the
   // model replaces (they stand ~110 m east of the park's point)
   gasworks: [[0, 0, 95], [101, -24, 30], [93, -45, 28]],
   // the Statue of Liberty stands 1.1 km from Alki Beach Park's point
-  locks: 75, kerry: 30, ferriswheelPier: [[-818.8, 759.8, 5]], convention: 62,
+  locks: [[0, 60, 70], [-50, 130, 45]], kerry: 30, ferriswheelPier: [[-818.8, 759.8, 5]], convention: 62,
   stadiumF: 135, stadiumB: 128, stadiumH: 122, smith: 6,
   // the tower/apron cluster only -- the runway lies over real open ground and
   // the hangars beside it are real buildings that must stay
@@ -3157,11 +3079,14 @@ function daybreak() {
   return g;
 }
 
+// the downtown landmarks rebuilt from their OSM plans (lmdowntown.js)
+const DT = makeDowntown({ P, M, mat, sign, solidBox, canvasTex, panelMat, box, cyl, strut, beam, solid });
+
 const BUILDERS = {
   spaceNeedle: () => { const g = spaceNeedle(); for (const s of needleSolids()) solid(g, s); g.userData.decks = needleDecks(); return g; },
-  mopop, arena, spheres, market, wheel, library, aquarium, gasworks, troll, locks,
-  ferry: ferryTerminal, pier, kerry: kerryPark, ferriswheelPier: statueLiberty,
-  convention, airport, stadiumF: lumen, stadiumB: tmobile, stadiumH: husky, smith,
+  mopop, arena, spheres, market, wheel, library: DT.library, aquarium: DT.aquarium, gasworks, troll, locks: DT.locks,
+  ferry: DT.ferryTerminal, pier, kerry: DT.kerryPark, ferriswheelPier: statueLiberty,
+  convention: DT.convention, airport, stadiumF: lumen, stadiumB: tmobile, stadiumH: husky, smith,
   bellevueDT,
   westPoint, alkiPoint, rocket, lenin, hammeringMan, eagle, echo, eraser, waterTower, blackSun,
   conservatory, pergola, totem, changingForm, daybreak,
@@ -3223,6 +3148,7 @@ function worldSolid(s, px, py, pz, t) {
   const o = { x: px + s.x * c + s.z * sn, z: pz - s.x * sn + s.z * c, y0: py + s.y0, y1: py + s.y1 };
   if (s.r !== undefined) o.r = s.r;
   else { o.hw = s.hw; o.hd = s.hd; o.rot = s.rot - t; }
+  if (s.surfaceOnly) o.surfaceOnly = true;
   return o;
 }
 
@@ -3240,7 +3166,8 @@ function onRoad(city, s) {
       pts.push([s.x + u * c - v * sn, s.z + u * sn + v * c]);
     }
   }
-  return pts.some(([x, z]) => city.onRoad(x, z, 0.3, false));
+  // (`surfaceOnly`: a road in a tunnel under the solid is no reason to drop it)
+  return pts.some(([x, z]) => city.onRoad(x, z, 0.3, false, !s.surfaceOnly));
 }
 
 /**
@@ -3356,7 +3283,8 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
     // own frame (a box, the solid convention); they become city platforms
     // exactly as the seaplane dock's are.
     for (const dk of g.userData.decks || []) {
-      const w = worldSolid({ x: dk.x, z: dk.z, hw: dk.hw, hd: dk.hd, rot: dk.rot || 0, y0: dk.top, y1: dk.top }, x, y, z, t);
+      // (`top1` slopes it: y0 at its -v end, y1 at its +v end -- Kerry Park's terrace)
+      const w = worldSolid({ x: dk.x, z: dk.z, hw: dk.hw, hd: dk.hd, rot: dk.rot || 0, y0: dk.top, y1: dk.top1 !== undefined ? dk.top1 : dk.top }, x, y, z, t);
       platforms.push({ x: w.x, z: w.z, hw: w.hw, hd: w.hd, rot: w.rot, y0: w.y0, y1: w.y1 });
       if (dk.land) {
         const gw = gangway(dk.land, x, y + dk.top, z, t, platforms);
