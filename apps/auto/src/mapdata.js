@@ -123,7 +123,11 @@ export async function loadMapData(onStep) {
   const green = new Uint8Array(sp.w * sp.h);
   for (let i = 0, p = 0; i < water.length; i++, p += 4) {
     water[i] = sp.data[p] > 127 ? 1 : 0;
-    green[i] = sp.data[p + 1] > 127 ? 1 : 0;
+    // Green is non-zero; WHICH green rides in the value, from the blue
+    // channel (tools/build_wood.py): 1 lawn, 2 wood, 3 scrub, 4 kept open.
+    // Everything that only asks "is it green" tests for non-zero.
+    const b = sp.data[p + 2];
+    green[i] = sp.data[p + 1] > 127 ? (b > 212 ? 2 : b > 127 ? 3 : b > 42 ? 4 : 1) : 0;
   }
 
   // The lot layer: R = coverage of the sample's own cell by its code, G = the
