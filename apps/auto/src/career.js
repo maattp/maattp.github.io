@@ -61,7 +61,7 @@ export class Career {
     const s = read();
     this.saved = savedMoney();
     game.money = this.saved;
-    this.rank = typeof s.rank === 'number' ? s.rank : 0;
+    this.rank = Number.isInteger(s.rank) ? Math.max(0, Math.min(RANKS.length - 1, s.rank)) : 0;   // a hand-edited 99 would silence every toast
     this.hud = null;
     this.armed = false;     // false until the world is up: no toast for a rank earned last session
     this._timer = null;
