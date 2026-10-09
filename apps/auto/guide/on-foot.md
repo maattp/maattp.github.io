@@ -191,6 +191,14 @@ and no gun anywhere. `melee.js` (`Fighter`, one per player) is the fix.
   was a yellow ball the size of the chest). `effects.js` patches the vertex
   shader to multiply in `psize`; callers' sizes now mean what they say.
   The muzzle flash is points in that one draw, plus a spent case.
+- **Walls stop the shot, and so do floors.** The hitscan marches 60 m, but
+  only as far as `Player.wallDist` finds a building box (the slab test the
+  tank's cast uses, at the barrel's height) or a landmark solid; `hitAt` takes
+  the shot's height, so a pedestrian on another deck or a roof is not in the
+  line, and a car is hit only between its wheels and its roof. It used to be
+  2D and unobstructed: a ped behind a building went down. Probe:
+  `node tools/bugrepro/wo6.mjs pistol`. (Terrain and bridge decks do not stop
+  it: a shot is level, and the ground rarely rises across 60 m of street.)
 - Swimming, a press does nothing. The pistol is in boot's shader warm-up.
 
 **Verify**: verify's "fighting on foot" stands a pedestrian 1.5 m beside you

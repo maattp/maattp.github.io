@@ -348,6 +348,10 @@ under it). `player.sky` has the frame while you are in the air:
 - **The camera** follows a skydiver rigidly, as it does a plane (player.js
   `plane` / `airPlane` include `this.sky`): the on-foot rig damps height at
   4.5, which at 55 m/s trailed the body by 10 m and out of the frame.
+- **A jump ends without landing** (`Player.endSky` -> `Skydive.cancel`) when
+  you take a vehicle under the canopy or respawn: the canopy, HUD and boom go
+  back, no fall damage. Otherwise `sky` outlived `enterVehicle` and kept the
+  plane camera and the canopy on a car.
 
 verify's "parachutes" section: terminal speed, the auto-opener, an early
 opening flown down, a water landing put ashore -- unhurt each time.

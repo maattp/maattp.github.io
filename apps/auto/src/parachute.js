@@ -192,6 +192,14 @@ export class Skydive {
     }
   }
 
+  /** Cut short without landing (a vehicle taken in the air, a respawn): the canopy, the HUD and the camera boom go back as _done leaves them, no fall damage. */
+  cancel(p) {
+    canopy.visible = false;
+    if (hud) hud.classList.remove('show');
+    p.h.group.rotation.x = 0;
+    p.camShort = this.prevCam;
+  }
+
   _done(p, impact) {
     canopy.visible = false;
     if (hud) hud.classList.remove('show');
