@@ -871,4 +871,5 @@ views (capitol/magnolia/discovery/greenlake/arboretum/seward/alki-air,
 residential and downtown streets found from the city, perfcpu's standing
 spots) and with `--stats` prints the scene pass's draws and triangles and a
 frustum breakdown by category; `GREEN_PROBE` / `GREEN_PROBE_SHOT` run a
-one-off diagnostic on the same boot. `docs/green/` has before | after pairs.
+one-off diagnostic on the same boot. The budget it was held to is in
+performance.md, "The trees' budget".

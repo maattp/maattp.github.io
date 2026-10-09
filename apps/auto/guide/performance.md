@@ -539,6 +539,49 @@ measured here), and 8-bit colours band in the darks. A flight allocates ~54 MB/s
 array literals, builder growth): V8 collects it in step; nothing here
 measures JavaScriptCore's collector.
 
+### The trees' budget (a green Seattle)
+
+The trees (rendering.md, "A green Seattle") were held to a phone budget set
+before they were built: at most ~+6 scene draws in a downtown or residential
+view, at most +400k triangles in any view, at most +40 MB of GPU at the 90 s
+flight's peak, at most +1.5 s on a cached 8x boot. Measured on the phone
+profile against master in the same session (`greenshots.mjs --stats`,
+`memprobe.mjs --twice --fly=90 --sky`, `boottime.mjs --throttle=8 --twice`);
+draws and triangles exclude traffic and pedestrians, which the harness
+spawns at random:
+
+| phone profile | master | trees |
+|---|---|---|
+| scene draws, city views (capitol/magnolia air, two residential streets, an arterial, foot-dt, foot-yt) | 71-124 | +2 to +4 |
+| scene draws, Discovery and Seward from the air | 24-43 | +7 (road-less forest chunks are built now) |
+| scene draws, Blake Island from the air | 5 | 26 (the island was never built) |
+| triangles, city views | 1.17-1.49 M | +43k to +118k |
+| triangles, forest views | 0.15-0.73 M | -35k to +166k (Blake) |
+| GPU at boot, first / cached | 402 / 398 MB | 404 / 391 MB |
+| GPU peak, 90 s low flight | 511 MB | 514 MB |
+| raw JS heap peak in that flight | 631 MB | 635 MB |
+| cached boot at 8x (two rounds, alternated) | 22.7 / 24.7 s | 23.9 / 22.9 s |
+
+- **The caps**: a near chunk holds at most `NEAR_CAP` 1,600 trees, a mid
+  one `MID_CAP` 650; the mid ring keeps 35 % of forest and 60 % of the rest.
+  A far crown is ~550 bytes of GPU and 9-15 triangles. A forested near chunk
+  reaches ~1,550 trees, a dense residential one ~900.
+- **Near-ring chunks build no slower** (desktop, 25 chunks, median of 3:
+  capitol 19.9 -> 18.5 ms, downtown 24.4 -> 19.2, discovery 10.7 -> 6.9,
+  wallingford 25.6 -> 26.6): the old trees' 300-vertex canopies are gone and
+  most candidates ask the 2 m raster. **Mid-ring chunks build ~1-5 ms
+  slower** on the Mac (4-9 ms before): the planting is in the streamer's
+  fixed slice, so it costs fill rate in flight, not frame time.
+- **The refresh** (`TreeSystem.update`) is 0.1-0.3 ms on the Mac when it
+  runs (10 m moved or 9 degrees turned) and does not appear in the top 40
+  of an 8x profile. The planting does (`plantTrees` 1.4-2.5 %, `occupancy`
+  0.7 % of busy time while chunks stream).
+- **Shadow pass**: +1-2 draws a frame on a phone (the near crowns, movers).
+- perfcpu's milliseconds moved 2x between runs of the SAME build on this
+  machine (other agents' load); its draw and GL-call counts did not: scene
+  draws +3-6 (drive-dt 185 -> 190, foot-dt 201 -> 205, drive-qa 149 -> 155),
+  GL calls +20-80 a frame.
+
 ## The flight recorder (v168)
 
 **A crash on the iPhone leaves nothing behind**: WebKit ending the page for
