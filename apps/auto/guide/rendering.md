@@ -852,7 +852,12 @@ a kind of tree goes missing.
 
 **A chunk with no road or building has no entry in the city** and was never
 built at all: the middle of Seward Park, an island's woods. `buildChunkStep`
-builds those too now (`NO_CITY_CHUNK`), trees only.
+builds those too now (`NO_CITY_CHUNK`), trees only -- and **their far crowns
+go to a shared pool, not a flat mesh of their own** (`TreeSystem.far`: one
+`InstancedMesh` per species, each chunk a contiguous block written when it
+arrives and zeroed when it goes), because a flat mesh per road-less chunk was
+a draw each: 21 of them over Blake Island. 2 draws for all of them, never
+culled, ~13k instances (~170k triangles) over Blake.
 
 **The mid ring plants a fixed 60 %** of the near build's trees, skipped
 before any test (`thin`): at 0.8-1.8 km the canopy reads the same, and the

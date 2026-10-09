@@ -550,17 +550,17 @@ profile against master in the same session (`greenshots.mjs --stats`,
 draws and triangles exclude traffic and pedestrians, which the harness
 spawns at random:
 
-| phone profile | master | trees |
+| phone profile | before (v196) | trees |
 |---|---|---|
-| scene draws, city views (capitol/magnolia air, two residential streets, an arterial, foot-dt, foot-yt) | 71-124 | +2 to +4 |
-| scene draws, Discovery and Seward from the air | 24-43 | +7 (road-less forest chunks are built now) |
-| scene draws, Blake Island from the air | 5 | 26 (the island was never built) |
-| triangles, city views | 1.17-1.49 M | +43k to +118k |
-| triangles, forest views | 0.15-0.73 M | -35k to +166k (Blake) |
-| GPU at boot, first / cached | 402 / 398 MB | 404 / 391 MB |
-| GPU peak, 90 s low flight | 511 MB | 514 MB |
-| raw JS heap peak in that flight | 631 MB | 635 MB |
-| cached boot at 8x (two rounds, alternated) | 22.7 / 24.7 s | 23.9 / 22.9 s |
+| scene draws, city views (capitol/magnolia air, a residential street, foot-dt) | 70-95 | +2 to +4 |
+| scene draws, forest from the air (Discovery, Seward, Blake Island) | 4-41 | +4 to +7 |
+| scene draws, on foot in Discovery Park (tricats) | 68 | +7 (6 tree tiers) |
+| triangles, city views | 0.70-0.95 M | +44k to +118k |
+| triangles, forest views | 0.05-0.29 M | -35k to +169k (Blake) |
+| GPU at boot, first / cached | 370 / 369 MB | 366 / 365 MB |
+| GPU peak, 90 s low flight | 469 MB | 475 MB |
+| raw JS heap peak in that flight | 624 MB | 652 MB (mean 568 -> 581) |
+| cached boot at 8x (against v193, two rounds alternated) | 22.7 / 24.7 s | 23.9 / 22.9 s |
 
 - **The caps**: a near chunk holds at most `NEAR_CAP` 1,600 trees, a mid
   one `MID_CAP` 650; the mid ring keeps 35 % of forest and 60 % of the rest.
