@@ -169,7 +169,8 @@ export function dropGeometryArrays(g) {
     a.onUpload(dropArray);
   };
   for (const k in g.attributes) one(g.attributes[k]);
-  one(g.index);
+  // (a geometry that rewrites its own index, world.js terrain LOD, keeps it)
+  if (!g.userData.keepIndex) one(g.index);
   return bytes;
 }
 const dropArray = function () { this.array = null; };

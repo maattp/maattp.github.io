@@ -2928,6 +2928,7 @@ function draw(now) {
   const t0 = prof ? performance.now() : 0;
   if (lmRoot && updateLandmarkRange(lmRoot, camera.position) && shadowCache) shadowCache.invalidate();
   renderer.setRenderTarget(postfx.target);
+  if (world) { world.updateTerrainLod(camera.position); world.cullTerrain(camera); }
   if (chunkCull) chunkCull.cull(camera);
   try { renderer.render(scene, camera); } finally { if (chunkCull) chunkCull.restore(); }
   // capture before the post passes reset the counters

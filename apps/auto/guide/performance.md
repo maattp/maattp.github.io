@@ -337,6 +337,86 @@ of ~50 material switches, and per posed pedestrian a bone-texture upload of
 - **Minimap icons as pre-rendered sprites**: drawImage resamples where the
   vector path does not; not pixel-identical.
 
+### Far terrain is drawn coarse: blocks, strides, stitched edges, one index per tile
+
+**The ground was the biggest thing on screen and nobody could see most of
+it.** Six 5.3 km tiles at the full 40 m grid, each drawn whole when any of it
+was in the frustum: 793k of the downtown frame's ~1.67 M triangles (48 %) in
+14 draws, much of it 8-18 km away under FogExp2, and 145k of the heaviest
+tile's 163k vertices were the cut cells' 4 m patches (four vertices to a quad).
+
+`world.js` `updateTerrainLod` / `_composeTerrain` / `cullTerrain`:
+
+- **Blocks of 12 x 12 cells (480 m), a stride per block**: 1 (40 m) out to
+  2.5 km, 2 (80 m) to 5 km, 4 (160 m) beyond (`LOD_AT`), by the 3-D distance
+  from the CAMERA to the block's box (so a plane high over the city coarsens
+  what is below it, as the fog does). `LOD_HYST` 150 m of slack either way,
+  re-evaluated every 24 m of camera travel (`LOD_STEP`): 0.05 ms a call.
+  Normals and colours stay the fine vertices' own, so a coarse block shades
+  as it did; only the silhouette and the 40 m facets go.
+- **The vertices never change; each tile's INDEX is composed from the levels**
+  just before the tile draws (`mesh.onBeforeRender`, which three runs right
+  before the upload): fine cells, or every 2nd / 4th vertex, or nothing. A
+  block beside a FINER one fans its border cells through that neighbour's
+  vertices (the polygon is the cell's outline plus the neighbour's points on
+  that side, fanned from a corner), so the edge is the same line from both
+  sides: no cracks, no skirts. (Any stride ratio stitches; neighbours are
+  within one level anyway while the `LOD_AT` gaps, 2.5 km, dwarf a block,
+  480 m, plus the hysteresis.)
+  `tools/terrainseams.mjs` composes every visible tile at 44 camera spots and
+  looks for T-junctions (a long boundary edge overlapped by shorter ones): 0;
+  with stitching turned off (`SEAMS_BREAK=1`) 38,275, so it does bite.
+- **The index lives in ONE shared scratch array** (`terrainLod.s16`, 0.66 MB),
+  each tile's attribute a view of its front: the GPU buffer is allocated at
+  the tile's full size on its first draw and the compose rewrites the front
+  (`addUpdateRange`). The JS side keeps no index per tile -- the old one was
+  dropped after upload on a phone and has to stay droppable -- so a compose is
+  regenerated from the cut-cell flags and each cut cell's quad mask, never
+  from a stored copy. `dropGeometryArrays` leaves `userData.keepIndex`
+  geometries' index alone. Composing is safe to share because the upload
+  follows in the same call; **never compose a tile outside `onBeforeRender`
+  (or a harness that does not draw) and expect the GPU to have it.**
+- **Cut cells (portal trenches, rail cuttings, docks) draw only at stride 1.**
+  Their 4 m lattice is 121 shared vertices a cell (it was 400); a quad is
+  indices, `pMask` records the ones a tunnel deck removes. Terrain vertices
+  fell from 162k to 64k on the heaviest tile, and its index went from 32-bit
+  to 16-bit. A vertex whose four cells are all cut has no normal from the
+  grid minus the cuts, so it takes the full grid's (coarse blocks use it).
+- **`cullTerrain` (before the scene pass) draws a tile only if a LIVE block of
+  it is in the frustum**, blocks tested by their own spheres: three's test
+  is the tile's 3.7 km sphere, which kept ~13 tiles. A block past 16 km (the
+  far plane is 9 km DEEP, ~16 km at a landscape frame's corners) is not drawn.
+  **Fog is not a reason to hide ground**: with the hide at 7.5 km the far
+  houses, which stay until 9 km, floated.
+- `terrainHeight()` / `groundAt` read the heightfield, never this mesh, and
+  nothing raycasts it, so gameplay is unchanged by construction.
+
+| phone profile, downtown (305, -278) | before | after |
+|---|---|---|
+| terrain triangles / draws | 795k / 14 | **164k / 12** |
+| whole frame | 1.67 M | **1.04 M** |
+| the same, 450 m up looking south | 1.57 M (terrain 702k) | 1.03 M (terrain 160k) |
+| every terrain vertex, all 36 tiles / all triangles at full detail | 1.75 M / 1,777,110 | **0.96 M** / 1,777,110 (the same) |
+| terrain on the GPU, after 90 s low flight + a skydive | 88 MB | **45 MB** |
+| GPU peak in that flight (ledger) | 512 MB | **471 MB** |
+| terrain JS arrays at the end of boot | 32 MB | 45 MB (fewer tiles uploaded yet; JS + GPU 95 -> 76 MB) |
+| boot, 8x throttle: "Raising the terrain" (first / cached) | 11.4 / 2.5 s | 9.2 / 2.1 s |
+
+`tools/tricats.mjs` is the table (`TERRAIN_LOD=off` draws every block at full
+detail, the old terrain, from the same build); `tools/terrainlod.mjs` shoots
+off / on from the same camera (1.5, 3, 6 km up, the 2.5 km and 5 km bands, a
+street, Alki across Elliott Bay). A compose of the busiest tile costs 0.2 ms
+on the Mac, and ~7 tiles go dirty per 24 m of camera travel, so the worst
+hitch is a few composes in one frame, each uploading a 100-300 KB range.
+
+**Not done: far tiles still upload their whole fine vertex buffer** when first
+drawn (the coarse blocks index into it), so a long flight still walks the GPU
+total up to ~45 MB of terrain, not the ~12 MB the coarse meshes alone would
+take. Fixing it needs a separate small vertex set per tile for the all-coarse
+case, and the fine buffer re-uploadable when the tile comes near: the arrays
+are dropped after upload on a phone, so that means keeping them (or
+regenerating a tile on demand from the heightfield and the memo).
+
 ### Memory: one copy, nothing kept from boot, no cache that grows as you fly
 
 **The iPhone ended the page while flying** -- the floatplane low over Fremont
@@ -451,8 +531,8 @@ the junction cache (bounded), the sound bank (~15 MB of decoded PCM), the
 characters' skinned variants (~11 MB), and chunk / terrain arrays not drawn
 yet. On the GPU: textures ~182 MB with mips (the PMREM alone is 25 MB of
 RGBA16F, sized by the 2048 equirect; a 1024 one would be 6 MB but blurs the
-sharpest reflections), chunk geometry ~110-140 MB, the terrain ~90 MB once
-all of it has been seen. Quantising normals and colours to 16-bit would cut
+sharpest reflections), chunk geometry ~110-140 MB, the terrain ~45 MB once
+all of it has been seen (~90 before the terrain LOD: its cut cells' vertices). Quantising normals and colours to 16-bit would cut
 vertex buffers ~20 % with no visible change, but Metal wants 4-byte vertex
 strides (a 6-byte normal would be converted by ANGLE's Metal backend, not
 measured here), and 8-bit colours band in the darks. A flight allocates ~54 MB/s (chunk meshing's
@@ -569,7 +649,8 @@ the ground more built-up than the first launch of its build (the terrain's
 vertex colours hashed differently; nothing else did). It packs a copy now.
 
 Also: the terrain's index is a typed array (pushing ~3.6 M indices onto a
-plain array was ~0.4 s at 8x), its normals and bounding spheres are three's
+plain array was ~0.4 s at 8x; since the terrain LOD that one only feeds the
+normals, and what is drawn is composed per frame), its normals and bounding spheres are three's
 own `computeVertexNormals` / `computeBoundingSphere` arithmetic on the plain
 arrays (`vertexNormals`, `boundingSphere`: the same values to the bit), the
 patches go through a `ChunkBuilder`, and two basketball courts' stored spots

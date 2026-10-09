@@ -23,6 +23,18 @@ const EMPTY_LIST = Object.freeze([]);
 // to 30 fps driving downtown at any quality tier. Measured on the Mac, the
 // longest step per chunk was a median 3.7 ms and worst 16.3 ms before.
 const YIELD_MS = 1.0;
+// Terrain LOD (updateTerrainLod): blocks of LOD_BLOCK cells, a block's stride in
+// cells by level, the camera distance each level lasts to (past the last, the
+// block is not drawn: the far plane is 9000 m DEEP, which at the corners of a
+// wide landscape frame is ~16 km away, and fog alone is NOT a reason to hide
+// ground -- the far houses it carries are still seen at 7-9 km and would
+// float), the slack a block needs to change level, and how far the camera
+// moves between checks.
+const LOD_BLOCK = 12;
+const LOD_STRIDE = [1, 2, 4];
+const LOD_AT = [2500, 5000, 16000];
+const LOD_HYST = 150;
+const LOD_STEP = 24;
 const TUN_WALL = TUNNEL_H, TUN_DECK = 0.3;
 // How far past the carriageway the trench is cut. The retaining wall stands on
 // this line, so it is also the width of the hole in the terrain.
@@ -589,6 +601,12 @@ function boundingSphere(P) {
   return new THREE.Sphere(c, Math.sqrt(r2));
 }
 
+/** A terrain tile's draw hook, made here so its closure holds only the world
+ * and the tile record (see buildTerrain). */
+function terrainHook(world, T) {
+  return () => { if (T.dirty) world._composeTerrain(T); };
+}
+
 export class World {
   constructor(scene, city, tx, opts = {}) {
     this.scene = scene;
@@ -936,13 +954,16 @@ export class World {
     // a third of the entire draw budget, for ground that is mostly behind
     // buildings anyway. 12 x 12 is a ~1.3 km tile, which is about what the
     // 10.4 km map used to have.
-    // 6 x 6 now (4.3 km tiles). Measured on the phone profile, the 12 x 12 grid
+    // 6 x 6 now (5.3 km tiles). Measured on the phone profile, the 12 x 12 grid
     // put 40-46 terrain draws in a street-level view -- a fifth of the frame's
     // draw calls -- and draw calls, each a round trip into WebKit's GPU process,
     // are what binds an iPhone here. Bigger tiles cull worse (~500k triangles
     // on screen against ~280k), which the GPU has room for; the CPU did not.
+    // (Far blocks of a tile are drawn coarse now: updateTerrainLod.)
     const TILES = 6;
-    const per = Math.ceil((N - 1) / TILES);
+    // (whole LOD blocks to a tile: see updateTerrainLod)
+    const NB = Math.ceil((N - 1) / LOD_BLOCK);
+    const per = Math.ceil(NB / TILES) * LOD_BLOCK;
     const mat = new THREE.MeshStandardMaterial({
       map: this.tx.ground.map, normalMap: this.tx.ground.normalMap,
       vertexColors: true, roughness: 0.94, metalness: 0, envMapIntensity: 1.0,
@@ -1146,45 +1167,22 @@ export class World {
     mat.customProgramCacheKey = () => (lotTex ? 'terrain3scale-lots' : 'terrain3scale');
     this.terrainGroup = new THREE.Group();
     this.scene.add(this.terrainGroup);
+    const lod = this.terrainLod = {
+      NB, perB: per / LOD_BLOCK, off: (N - 1) % LOD_BLOCK !== 0, tiles: [], lv: new Uint8Array(NB * NB),
+      bx0: new Float32Array(NB * NB), bz0: new Float32Array(NB * NB),
+      ymin: new Float32Array(NB * NB), ymax: new Float32Array(NB * NB),
+      cx: NaN, cy: NaN, cz: NaN, stats: [0, 0, 0, 0], composes: 0, s16: null, s32: null,
+      poly: new Int32Array(64), cn: new Int32Array(4),
+      // the stitch ratio on a side: how many of the neighbour's cells make one of ours, if it is finer
+      ratio: (lv, lev, ok, g2) => (ok && lv[g2] < lev ? LOD_STRIDE[lev] / LOD_STRIDE[lv[g2]] : 1),
+    };
+    const PSUB = 11 * 11;   // patchCell's lattice: (SUB + 1)^2
     for (let tz = 0; tz < TILES; tz++) {
       for (let tx = 0; tx < TILES; tx++) {
         const i0 = tx * per, j0 = tz * per;
         const i1 = Math.min(N - 1, i0 + per), j1 = Math.min(N - 1, j0 + per);
         if (i1 <= i0 || j1 <= j0) continue;
         const w = i1 - i0 + 1, d = j1 - j0 + 1;
-        const pos = new Float32Array(w * d * 3);
-        const uv = new Float32Array(w * d * 2);
-        for (let j = 0; j < d; j++) {
-          for (let i = 0; i < w; i++) {
-            const gi = i0 + i, gj = j0 + j;
-            const x = -H + gi * S, z = -H + gj * S;
-            const y = hf[gj * N + gi];
-            const k = (j * w + i) * 3;
-            pos[k] = x; pos[k + 1] = y; pos[k + 2] = z;
-            uv[(j * w + i) * 2] = x / 13;
-            uv[(j * w + i) * 2 + 1] = z / 13;
-          }
-        }
-        // How built-up the ground is comes from the real footprint area in
-        // each 400 m chunk, so the edge of the city follows the city rather
-        // than a rectangle. The query point is still pushed around by smooth
-        // noise and sampled three times, because the chunk grid is 400 m and
-        // a straight lookup would draw its staircase on the ground.
-        // (Kept by the boot cache, bootcache.js memo, as the cut cells are.)
-        const col = memo(`terrain:tint:${tx},${tz}`, () => {
-          const out = new Float32Array(w * d * 3);
-          for (let j = 0; j < d; j++) {
-            for (let i = 0; i < w; i++) {
-              const gi = i0 + i, gj = j0 + j, k = (j * w + i) * 3;
-              const c = this.groundTint(-H + gi * S, -H + gj * S, hf[gj * N + gi]);
-              const n = hash2(gi, gj) * 0.14 + 0.93;
-              out[k] = c[0] * n;
-              out[k + 1] = c[1] * n;
-              out[k + 2] = c[2] * n;
-            }
-          }
-          return out;
-        }, (v) => v instanceof Float32Array && v.length === w * d * 3);
         // CELLS OVER A PORTAL TRENCH ARE NOT DRAWN AT 40 M. The heightfield's
         // vertex spacing is 40 m and a road cut is 14 m wide, so the hole
         // cannot be expressed on this grid at all -- which is exactly why
@@ -1194,7 +1192,6 @@ export class World {
         // Which cells are cut, and the heights each cut cell's patch is drawn
         // at, are kept by the boot cache (bootcache.js memo): both read the
         // carve through terrainHeight, ~1.2 s of a phone's boot.
-        const PSUB = 11 * 11;   // patchCell's lattice: (SUB + 1)^2
         const cut = memo(`terrain:${tx},${tz}`, () => {
           const flags = new Uint8Array((w - 1) * (d - 1)), hs = [];
           for (let j = 0; j < d - 1; j++) {
@@ -1212,9 +1209,46 @@ export class World {
         // (cellCut's first call made the portal cuts and the tunnel water
         // mask: made here instead when the answer was kept)
         this.portalCuts();
-        // A typed index, not a pushed array (~0.4 s of a phone's boot).
-        const nIdx = ((w - 1) * (d - 1) - cut.ys.length / PSUB) * 6;
-        const idx = w * d - 1 >= 65535 ? new Uint32Array(nIdx) : new Uint16Array(nIdx);
+        const nPatch = cut.ys.length / PSUB, nGrid = w * d, nVert = nGrid + nPatch * PSUB;
+        // How built-up the ground is comes from the real footprint area in
+        // each 400 m chunk, so the edge of the city follows the city rather
+        // than a rectangle. The query point is still pushed around by smooth
+        // noise and sampled three times, because the chunk grid is 400 m and
+        // a straight lookup would draw its staircase on the ground.
+        // (Kept by the boot cache, bootcache.js memo, as the cut cells are. It
+        // is the tile's colour attribute itself, with room at the end for the
+        // cut cells' lattices, which patchCell fills: the same on every launch.)
+        const col = memo(`terrain:tint:${tx},${tz}`, () => {
+          const out = new Float32Array(nVert * 3);
+          for (let j = 0; j < d; j++) {
+            for (let i = 0; i < w; i++) {
+              const gi = i0 + i, gj = j0 + j, k = (j * w + i) * 3;
+              const c = this.groundTint(-H + gi * S, -H + gj * S, hf[gj * N + gi]);
+              const n = hash2(gi, gj) * 0.14 + 0.93;
+              out[k] = c[0] * n;
+              out[k + 1] = c[1] * n;
+              out[k + 2] = c[2] * n;
+            }
+          }
+          return out;
+        }, (v) => v instanceof Float32Array && v.length === nVert * 3);
+        // One vertex buffer per tile: the grid, then each cut cell's lattice.
+        const pos = new Float32Array(nVert * 3), uv = new Float32Array(nVert * 2);
+        const nor = new Float32Array(nVert * 3);
+        for (let j = 0; j < d; j++) {
+          for (let i = 0; i < w; i++) {
+            const gi = i0 + i, gj = j0 + j;
+            const x = -H + gi * S, z = -H + gj * S;
+            const y = hf[gj * N + gi];
+            const k = (j * w + i) * 3;
+            pos[k] = x; pos[k + 1] = y; pos[k + 2] = z;
+            uv[(j * w + i) * 2] = x / 13;
+            uv[(j * w + i) * 2 + 1] = z / 13;
+          }
+        }
+        // The grid's normals come from the full 40 m triangulation (this
+        // index is only for them; what is drawn is composed per LOD, below).
+        const idx = new Uint32Array(((w - 1) * (d - 1) - nPatch) * 6);
         const patch = [];
         let ni = 0;
         for (let j = 0; j < d - 1; j++) {
@@ -1225,34 +1259,286 @@ export class World {
             idx[ni++] = b; idx[ni++] = c2; idx[ni++] = e;
           }
         }
-        let geo = new THREE.BufferGeometry();
+        nor.set(vertexNormals(pos.subarray(0, nGrid * 3), idx));
+        // A vertex whose four cells are ALL cut has no normal from that (it was
+        // never drawn); a coarse block draws it, so it takes the normal the
+        // whole grid gives it.
+        if (nPatch) {
+          const all = new Uint32Array((w - 1) * (d - 1) * 6);
+          let na = 0;
+          for (let j = 0; j < d - 1; j++) {
+            for (let i = 0; i < w - 1; i++) {
+              const a = j * w + i, c2 = a + w;
+              all[na++] = a; all[na++] = c2; all[na++] = a + 1;
+              all[na++] = a + 1; all[na++] = c2; all[na++] = c2 + 1;
+            }
+          }
+          const full = vertexNormals(pos.subarray(0, nGrid * 3), all);
+          for (let v = 0; v < nGrid; v++) {
+            if (nor[v * 3] === 0 && nor[v * 3 + 1] === 0 && nor[v * 3 + 2] === 0) {
+              nor[v * 3] = full[v * 3]; nor[v * 3 + 1] = full[v * 3 + 1]; nor[v * 3 + 2] = full[v * 3 + 2];
+            }
+          }
+        }
+        // The re-tessellated cells: each cell's own 11 x 11 lattice, shared
+        // by its 100 quads (it was 400 vertices a cell, four to a quad).
+        const pMask = new Uint8Array(nPatch * 13);
+        patch.forEach(([cx, cz, a], k) => {
+          this.patchCell(pos, nor, uv, col, nGrid + k * PSUB, pMask.subarray(k * 13, (k + 1) * 13),
+            cx, cz, S, [col[a * 3], col[a * 3 + 1], col[a * 3 + 2]], cut.ys.subarray(k * PSUB, (k + 1) * PSUB));
+        });
+        const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
         geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
         geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-        geo.setIndex(new THREE.BufferAttribute(idx, 1));
-        geo.setAttribute('normal', new THREE.BufferAttribute(vertexNormals(pos, idx), 3));
-        if (patch.length) {
-          // The re-tessellated cells go INTO the tile's own geometry: same
-          // material, so a separate mesh was only an extra draw call.
-          const pb = new ChunkBuilder(true, 4096);
-          patch.forEach(([cx, cz, a], k) => {
-            this.patchCell(pb, cx, cz, S, [col[a * 3], col[a * 3 + 1], col[a * 3 + 2]], cut.ys.subarray(k * PSUB, (k + 1) * PSUB));
-          });
-          geo = appendGeometry(geo, pb.build(true));
-        }
+        geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
         {
           const sp = memo(`terrain:sphere:${tx},${tz}`, () => {
-            const b = boundingSphere(geo.attributes.position.array);
+            const b = boundingSphere(pos);
             return Float64Array.of(b.center.x, b.center.y, b.center.z, b.radius);
           }, (v) => v instanceof Float64Array && v.length === 4);
           geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(sp[0], sp[1], sp[2]), sp[3]);
         }
+        // THE TILE'S LOD (updateTerrainLod): blocks of LOD_BLOCK cells, each
+        // drawn at the stride its distance asks for. A cut cell belongs to its
+        // block and is drawn only where the block is at full detail.
+        const bw = Math.ceil((w - 1) / LOD_BLOCK), bd = Math.ceil((d - 1) / LOD_BLOCK);
+        const pOff = new Int32Array(bw * bd + 1), pOrder = new Int32Array(nPatch);
+        const blockOf = (k) => { const a = patch[k][2]; return Math.floor(Math.floor(a / w) / LOD_BLOCK) * bw + Math.floor((a % w) / LOD_BLOCK); };
+        for (let k = 0; k < nPatch; k++) pOff[blockOf(k) + 1]++;
+        for (let b = 0; b < bw * bd; b++) pOff[b + 1] += pOff[b];
+        { const at = pOff.slice(0, bw * bd); for (let k = 0; k < nPatch; k++) pOrder[at[blockOf(k)]++] = k; }
+        const gbx0 = i0 / LOD_BLOCK, gbz0 = j0 / LOD_BLOCK;
+        for (let bz = 0; bz < bd; bz++) {
+          for (let bx = 0; bx < bw; bx++) {
+            const g = (gbz0 + bz) * NB + gbx0 + bx;
+            let y0 = Infinity, y1 = -Infinity;
+            const ia = bx * LOD_BLOCK, ja = bz * LOD_BLOCK;
+            for (let j = ja; j <= Math.min(d - 1, ja + LOD_BLOCK); j++) {
+              for (let i = ia; i <= Math.min(w - 1, ia + LOD_BLOCK); i++) {
+                const y = hf[(j0 + j) * N + i0 + i];
+                if (y < y0) y0 = y; if (y > y1) y1 = y;
+              }
+            }
+            lod.bx0[g] = -H + (i0 + ia) * S; lod.bz0[g] = -H + (j0 + ja) * S;
+            lod.ymin[g] = y0; lod.ymax[g] = y1;
+          }
+        }
+        const T = {
+          w, d, bw, bd, gbx0, gbz0, nGrid, cutFlags: cut.flags, pOff, pOrder, pMask,
+          wide: nVert > 65535, cap: ((w - 1) * (d - 1) - nPatch) * 6 + nPatch * 600,
+          dirty: true, live: bw * bd, mesh: null, geo,
+        };
+        geo.userData.keepIndex = true;
         const m = new THREE.Mesh(geo, mat);
         m.receiveShadow = this.shadows;
+        // The index is composed when the tile is about to be drawn (three
+        // uploads it right after this call), from the levels as they stand.
+        // Built OUTSIDE this loop: an arrow here shares the block's closure
+        // context, which holds pos/nor/uv/col for the patch forEach, so the
+        // live hook would pin every tile's vertex arrays in the JS heap after
+        // upload (+20 MB at boot, +35 MB after a flight on the phone).
+        m.onBeforeRender = terrainHook(this, T);
+        T.mesh = m;
+        lod.tiles.push(T);
         this.terrainGroup.add(m);
       }
       yield (tz + 1) / TILES;
     }
+    // Every tile's index is a view of ONE shared scratch array (so the JS side
+    // holds one tile's worth, not the map's); the GPU buffer is allocated at
+    // the tile's full size on its first draw, and each compose rewrites the
+    // front of it. Uploaded straight after composing, so sharing is safe.
+    lod.s16 = new Uint16Array(Math.max(1, ...lod.tiles.filter((t) => !t.wide).map((t) => t.cap)));
+    lod.s32 = new Uint32Array(Math.max(1, ...lod.tiles.filter((t) => t.wide).map((t) => t.cap)));
+    for (const T of lod.tiles) {
+      T.geo.setIndex(new THREE.BufferAttribute((T.wide ? lod.s32 : lod.s16).subarray(0, T.cap), 1));
+      T.geo.setDrawRange(0, 0);
+    }
+    // A restored context re-uploads each index from its array, which is the
+    // scratch as the LAST tile left it: compose them all again first.
+    if (this.renderer) this.renderer.domElement.addEventListener('webglcontextrestored', () => { for (const T of lod.tiles) T.dirty = true; });
+    lod.tileAt = new Map(lod.tiles.map((T) => [T.gbz0 * 4096 + T.gbx0, T]));
+    this.updateTerrainLod({ x: 0, y: 150, z: 0 });   // (draw() does the real one)
+    lod.cx = NaN; lod.started = false;   // so the first real pass sets levels without hysteresis
+  }
+
+  /**
+   * TERRAIN LOD. The ground is drawn in blocks of LOD_BLOCK cells (480 m); a
+   * block's stride (1, 2, 4 cells: 40, 80, 160 m) is the one its distance from
+   * the CAMERA asks for (LOD_AT), 3-D to the block's box so a plane high over
+   * the city coarsens what is below it as the fog already does. Past the last
+   * distance (past the far plane) a block is not drawn. Levels change with
+   * LOD_HYST of slack either way, so a block on a boundary does not flip.
+   *
+   * The vertices never change: a coarse block indexes every 2nd / 4th vertex
+   * of the same grid, and a block beside a FINER one fans its border cells
+   * through that neighbour's vertices, so the edge is the same line on both
+   * sides (no cracks, no skirts). Cut cells (portal trenches) are drawn only
+   * at full detail. Each tile's index is composed from the levels just before
+   * the tile draws (`_composeTerrain`), so nothing here costs a frame it is
+   * not seen in. Gameplay never reads the mesh: terrainHeight() is the
+   * heightfield.
+   */
+  updateTerrainLod(cam) {
+    const L = this.terrainLod;
+    if (!L || L.off) return;
+    const dx0 = cam.x - L.cx, dy0 = cam.y - L.cy, dz0 = cam.z - L.cz;
+    if (dx0 * dx0 + dy0 * dy0 + dz0 * dz0 < LOD_STEP * LOD_STEP) return;   // (NaN: the first call)
+    L.cx = cam.x; L.cy = cam.y; L.cz = cam.z;
+    const NB = L.NB, lv = L.lv, S = LOD_BLOCK * G.HF_STEP, first = !L.started;
+    L.started = true;
+    const tiles = L.tiles, perB = L.perB, tileAt = L.tileAt;
+    const touch = (bx, bz) => {
+      if (bx < 0 || bz < 0 || bx >= NB || bz >= NB) return;
+      const T = tileAt.get(Math.floor(bz / perB) * perB * 4096 + Math.floor(bx / perB) * perB);
+      if (T) T.dirty = true;
+    };
+    const st = L.stats; st[0] = st[1] = st[2] = st[3] = 0;
+    for (let bz = 0; bz < NB; bz++) {
+      for (let bx = 0; bx < NB; bx++) {
+        const g = bz * NB + bx;
+        const x0 = L.bx0[g], z0 = L.bz0[g];
+        const ex = Math.max(x0 - cam.x, 0, cam.x - (x0 + S));
+        const ez = Math.max(z0 - cam.z, 0, cam.z - (z0 + S));
+        const ey = Math.max(L.ymin[g] - cam.y, 0, cam.y - L.ymax[g]);
+        const dist = Math.sqrt(ex * ex + ey * ey + ez * ez);
+        const was = lv[g];
+        let now = first ? 0 : was;
+        while (now < LOD_AT.length && dist > LOD_AT[now] + (first ? 0 : LOD_HYST)) now++;
+        while (now > 0 && dist < LOD_AT[now - 1] - (first ? 0 : LOD_HYST)) now--;
+        st[now]++;
+        if (now !== was || first) {
+          lv[g] = now;
+          touch(bx, bz); touch(bx - 1, bz); touch(bx + 1, bz); touch(bx, bz - 1); touch(bx, bz + 1);
+        }
+      }
+    }
+    for (const T of tiles) {
+      let live = 0;
+      for (let bz = 0; bz < T.bd; bz++) for (let bx = 0; bx < T.bw; bx++) if (lv[(T.gbz0 + bz) * NB + T.gbx0 + bx] < LOD_AT.length) live++;
+      T.live = live;
+    }
+  }
+
+  /**
+   * Before the scene pass: a tile is drawn only if one of its LIVE blocks is in
+   * the camera's frustum. A tile is 5 km across, so three's test (the tile's
+   * sphere) kept ~13 of them -- one draw each -- in a street-level view, most
+   * holding only far coarse ground that is behind or beside the camera.
+   * Blocks are tested by their own spheres (480 m, plus their height range).
+   */
+  cullTerrain(camera) {
+    const L = this.terrainLod;
+    if (!L || L.noCull) return;   // (noCull: a harness's full-detail baseline)
+    camera.updateMatrixWorld();
+    const fr = L.frustum || (L.frustum = new THREE.Frustum()), m = L.cullM || (L.cullM = new THREE.Matrix4());
+    fr.setFromProjectionMatrix(m.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+    const pl = fr.planes, lv = L.lv, NB = L.NB, h = LOD_BLOCK * G.HF_STEP / 2;
+    for (const T of L.tiles) {
+      let vis = false;
+      if (T.live > 0 && fr.intersectsSphere(T.geo.boundingSphere)) {
+        scan: for (let bz = 0; bz < T.bd; bz++) {
+          for (let bx = 0; bx < T.bw; bx++) {
+            const g = (T.gbz0 + bz) * NB + T.gbx0 + bx;
+            if (lv[g] >= LOD_AT.length) continue;
+            const cx = L.bx0[g] + h, cz = L.bz0[g] + h, cy = (L.ymin[g] + L.ymax[g]) / 2;
+            const r = Math.hypot(h * 1.4143, (L.ymax[g] - L.ymin[g]) / 2);
+            let inside = true;
+            for (let k = 0; k < 6; k++) {
+              const p = pl[k];
+              if (p.normal.x * cx + p.normal.y * cy + p.normal.z * cz + p.constant < -r) { inside = false; break; }
+            }
+            if (inside) { vis = true; break scan; }
+          }
+        }
+      }
+      T.mesh.visible = vis;
+    }
+  }
+
+  /** Rewrite one tile's index for the levels as they stand (see updateTerrainLod). */
+  _composeTerrain(T) {
+    const L = this.terrainLod, lv = L.lv, NB = L.NB;
+    const out = T.wide ? L.s32 : L.s16, w = T.w, W1 = T.w - 1, D1 = T.d - 1;
+    const pb = T.nGrid, flags = T.cutFlags, mask = T.pMask;
+    const poly = L.poly, ratio = L.ratio;
+    let n = 0;
+    T.dirty = false;
+    L.composes++;
+    for (let bz = 0; bz < T.bd; bz++) {
+      for (let bx = 0; bx < T.bw; bx++) {
+        const gb = (T.gbz0 + bz) * NB + T.gbx0 + bx, lev = lv[gb];
+        if (lev >= LOD_AT.length) continue;
+        const ci0 = bx * LOD_BLOCK, cj0 = bz * LOD_BLOCK;
+        const ci1 = Math.min(ci0 + LOD_BLOCK, W1), cj1 = Math.min(cj0 + LOD_BLOCK, D1);
+        if (lev === 0) {
+          for (let j = cj0; j < cj1; j++) {
+            for (let i = ci0; i < ci1; i++) {
+              if (flags[j * W1 + i]) continue;
+              const a = j * w + i, c2 = a + w;
+              out[n++] = a; out[n++] = c2; out[n++] = a + 1;
+              out[n++] = a + 1; out[n++] = c2; out[n++] = c2 + 1;
+            }
+          }
+          const b = bz * T.bw + bx;
+          for (let q = T.pOff[b]; q < T.pOff[b + 1]; q++) {
+            const k = T.pOrder[q], base = pb + k * 121, mk = k * 13;
+            for (let qj = 0; qj < 10; qj++) {
+              for (let qi = 0; qi < 10; qi++) {
+                const bit = qj * 10 + qi;
+                if (mask[mk + (bit >> 3)] & (1 << (bit & 7))) continue;
+                const v0 = base + qj * 11 + qi;
+                out[n++] = v0; out[n++] = v0 + 11; out[n++] = v0 + 12;
+                out[n++] = v0; out[n++] = v0 + 12; out[n++] = v0 + 1;
+              }
+            }
+          }
+          continue;
+        }
+        // a coarse block: stride s, each side stitched to a finer neighbour
+        const s = LOD_STRIDE[lev], nb = LOD_BLOCK / s;
+        const gbx = T.gbx0 + bx, gbz = T.gbz0 + bz;
+        const rW = ratio(lv, lev, gbx > 0, gb - 1), rE = ratio(lv, lev, gbx < NB - 1, gb + 1);
+        const rN = ratio(lv, lev, gbz > 0, gb - NB), rS = ratio(lv, lev, gbz < NB - 1, gb + NB);
+        for (let cj = 0; cj < nb; cj++) {
+          for (let ci = 0; ci < nb; ci++) {
+            const a = (cj0 + cj * s) * w + ci0 + ci * s, b = a + s, c2 = a + s * w, e = c2 + s;
+            const fW = ci === 0 && rW > 1, fE = ci === nb - 1 && rE > 1;
+            const fN = cj === 0 && rN > 1, fS = cj === nb - 1 && rS > 1;
+            if (!(fW || fE || fN || fS)) {
+              out[n++] = a; out[n++] = c2; out[n++] = b;
+              out[n++] = b; out[n++] = c2; out[n++] = e;
+              continue;
+            }
+            // The cell's outline, corner to corner (a, c2, e, b) with the
+            // neighbour's vertices along each side it is finer on, fanned
+            // from a corner that is not on such a side.
+            let np = 0;
+            const cn = L.cn;
+            cn[0] = np; poly[np++] = a;
+            if (fW) { const st = s / rW; for (let k = 1; k < rW; k++) poly[np++] = a + k * st * w; }
+            cn[1] = np; poly[np++] = c2;
+            if (fS) { const st = s / rS; for (let k = 1; k < rS; k++) poly[np++] = c2 + k * st; }
+            cn[2] = np; poly[np++] = e;
+            if (fE) { const st = s / rE; for (let k = 1; k < rE; k++) poly[np++] = e - k * st * w; }
+            cn[3] = np; poly[np++] = b;
+            if (fN) { const st = s / rN; for (let k = 1; k < rN; k++) poly[np++] = b - k * st; }
+            // corner a touches W and N, c2 W and S, e S and E, b E and N
+            const free = !(fW || fN) ? 0 : !(fW || fS) ? 1 : !(fS || fE) ? 2 : !(fE || fN) ? 3 : 0;
+            const p0 = cn[free];
+            for (let t = 1; t < np - 1; t++) {
+              out[n++] = poly[p0]; out[n++] = poly[(p0 + t) % np]; out[n++] = poly[(p0 + t + 1) % np];
+            }
+          }
+        }
+      }
+    }
+    T.geo.setDrawRange(0, n);
+    const ix = T.geo.index;
+    ix.clearUpdateRanges();
+    ix.addUpdateRange(0, n);
+    ix.needsUpdate = true;
   }
 
   /**
@@ -1317,7 +1603,7 @@ export class World {
    * mesh is triangulated -- so the patch meets the surrounding 40 m grid along
    * its edges by construction rather than by luck.
    */
-  patchCell(b, cx, cz, S, colour, ys) {
+  patchCell(pos, nor, uv, col, v0, mask, cx, cz, S, colour, ys) {
     // The quad size is bound to the carve profile: CUT_OVER must be at least
     // one of these quads, so that any quad crossing the wall plane has both
     // corners on the trench floor and every earth face the bank draws stands
@@ -1349,25 +1635,30 @@ export class World {
     const nearZone = zones.some((z0) => Math.hypot(cx + S / 2 - z0.x, cz + S / 2 - z0.z) < S * 0.71 + 24);
     // No excavation tint. The cutting is faced in concrete by the retaining
     // walls; the ground above it is the same ground as everywhere else.
+    // The lattice goes into the tile's vertex arrays at `v0`, one vertex a
+    // point (flat normal, the cell's colour, the ground map's UV); the quads
+    // between them are indices, composed by _composeTerrain, and `mask` has a
+    // bit set (j * 10 + i) for each quad that is left out.
+    for (let j = 0; j <= SUB; j++) {
+      for (let i = 0; i <= SUB; i++) {
+        const v = v0 + j * (SUB + 1) + i, k = v * 3;
+        pos[k] = xs[i]; pos[k + 1] = Y(i, j); pos[k + 2] = zs[j];
+        nor[k + 1] = 1;
+        uv[v * 2] = xs[i] / 13; uv[v * 2 + 1] = zs[j] / 13;
+        col[k] = colour[0]; col[k + 1] = colour[1]; col[k + 2] = colour[2];
+      }
+    }
     for (let j = 0; j < SUB; j++) {
       for (let i = 0; i < SUB; i++) {
-        const x = xs[i], z = zs[j], x1 = xs[i + 1], z1 = zs[j + 1];
+        const x = xs[i], z = zs[j];
         if (nearZone && zones.some((z0) => Math.hypot(x + q / 2 - z0.x, z + q / 2 - z0.z) < 24)) {
           const td = this._tunDeckUnder(x + q / 2, z + q / 2, 0);
           if (td !== null) {
             const y0 = Math.min(Y(i, j), Y(i, j + 1), Y(i + 1, j + 1), Y(i + 1, j));
             const y1 = Math.max(Y(i, j), Y(i, j + 1), Y(i + 1, j + 1), Y(i + 1, j));
-            if (y1 > td + 0.1 && y0 < td + TUNNEL_H - 0.1) continue;
+            if (y1 > td + 0.1 && y0 < td + TUNNEL_H - 0.1) mask[(j * SUB + i) >> 3] |= 1 << ((j * SUB + i) & 7);
           }
         }
-        b.quad(
-          [x, Y(i, j), z],
-          [x, Y(i, j + 1), z1],
-          [x1, Y(i + 1, j + 1), z1],
-          [x1, Y(i + 1, j), z],
-          [0, 1, 0], [x / 13, z / 13, x / 13, z1 / 13,
-            x1 / 13, z1 / 13, x1 / 13, z / 13],
-          colour);
       }
     }
   }
