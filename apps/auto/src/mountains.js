@@ -91,7 +91,7 @@ const FRAG = `
     float u = vB * N - 0.5;
     float i0 = floor(u), f = u - i0;
     vec4 c0 = tap(i0), c1 = tap(i0 + 1.0);
-    float dist = mix(c0.b, c1.b, f) * 255.0 * 600.0;
+    float dist = max(mix(c0.b, c1.b, f) * 255.0 * 600.0, 1000.0);   // never 0: camAlt / dist below
     // the skyline's true angle, stretched, then lowered by the camera's own height
     float tanTop = mix(decT(c0), decT(c1), f) * EXAG - camAlt / dist;
     float fw = fwidth(vT);
