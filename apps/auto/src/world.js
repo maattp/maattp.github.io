@@ -10,6 +10,7 @@ const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, MOUTH_RAMP, mouthRamp, cityStats, trimOldest } from './citygen.js';
 import { Builder, ChunkBuilder, freezeStatic } from './build.js';
 import { memo } from './bootcache.js';
+import { buildMountains } from './mountains.js';
 import { hash2, clamp, lerp, distToSeg, segDist } from './util.js';
 
 // The bore's cross-section, shared by the mesher and by the trench that has to
@@ -860,6 +861,9 @@ export class World {
     dome.renderOrder = -1000;
     this.scene.add(dome);
     this.skyDome = dome;
+    // The range on the horizon: one more sky-layer draw, straight behind the
+    // city (see mountains.js).
+    this.mountains = this.mountainData ? buildMountains(this.scene, uniforms, this.mountainData) : null;
 
     // Render the same sky into an 8-bit equirect for the IBL.
     //

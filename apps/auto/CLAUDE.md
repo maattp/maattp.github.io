@@ -20,7 +20,7 @@ When code or an old note cites `CLAUDE.md "Some Heading"`, find it with
 - **`guide/roads.md`** (86 KB) -- junctions, bridges, street and freeway grading, SR-99, one-way traffic, shimmer and jolt.
   Sections: "One-way traffic"; "Shimmer and jolt: two things that read as "janky""; "Junctions, dead ends, bridges"; "Street grading: the ground fitted to the streets"; "Parked cars sit on the slope"; "Freeway grading: decks and freeway chains are one profile"; "SR-99: ride it the way a player does".
 - **`guide/rendering.md`** (44 KB) -- pipeline, shadows, surfaces, judging screenshots, draw-call budget, the gfx169 pass.
-  Sections: "Rendering pipeline"; "Shadows: snap the box, fade its edge"; "Surfaces: glass, windows, roofs, trees, ground"; "Judging how it looks"; "Draw-call budget"; "Far buildings take their real colour (v166)"; "A phone-neutral graphics pass (docs/gfx169)".
+  Sections: "Rendering pipeline"; "Shadows: snap the box, fade its edge"; "Surfaces: glass, windows, roofs, trees, ground"; "Judging how it looks"; "Draw-call budget"; "Mountains on the horizon"; "Far buildings take their real colour (v166)"; "A phone-neutral graphics pass (docs/gfx169)".
 - **`guide/city.md`** (23 KB) -- building variety and outliers, street objects, landmarks, parks, lots/plazas/yards.
   Sections: "Buildings: variety"; "Houses: dormers, garages, and modern townhomes (v156)"; "Buildings: the outlier scan"; "Solid street objects"; "Landmarks"; "Parks"; "Lots, plazas and yards".
 - **`guide/models.md`** (45 KB) -- vehicle, character and prop models: how they are built and judged.
@@ -59,6 +59,7 @@ src/citygen.js              decodes the road graph and footprints, indexes them,
 src/build.js                Builder (merged geometry) + mergeByMaterial
 src/textures.js             every texture, drawn into canvases at boot
 src/world.js                terrain, water, sky, streamed chunks, far skyline
+src/mountains.js            the Olympics, Rainier and the Cascades: one sky-layer draw (see "Mountains on the horizon")
 src/landmarks.js            landmarks to published dimensions, + their solids
 src/vehicles.js             vehicle models + the arcade driving model
 src/traffic.js              traffic AI, parked cars, police units' driving, A*
@@ -124,6 +125,7 @@ tools/build_piers.py        OSM's piers -> piers.json
 tools/build_beaches.py      OSM beaches (from raw_green.json) -> beaches.json
 tools/build_parkprops.py    benches, picnic tables, playgrounds, fountains -> parkprops.json
 tools/fetch_dem.py          downloads the USGS terrain tiles
+tools/build_mountains.py    DEM -> the Olympics/Cascades skyline and Rainier's baked face -> mountains.bin
 tools/render_map.py         draws the whole graph top-down, for eyeballing
 tools/verify.mjs            headless CDP boot + assertions + screenshots
 tools/jank.mjs, perfguard.mjs, beauty.mjs, survey.mjs, gait.mjs, flycam.mjs,
@@ -220,6 +222,7 @@ The purpose-built harnesses, each a fixed-dt, paused-game driver:
 | `CHAR_PROBE='face:x,y;x,y\|profile:x,y'` | raycasts pixels back to the part (`geometry.userData.parts`, recorded by `SkinAcc.add(..., name)`) and the BIND-pose point that drew them. The posed idle stands lower than bind, so don't compare posed y |
 | `tools/crowdshots.mjs [tag]` | 12 pedestrians, one seed per POOLED LOOK, posed at dt = 0 on a real pavement; seeds `1000 + k*7919` landed on one look and photographed the harness. `CROWD_PROBE=1` prints each person's screen position, placed height, terrain, `roadLift` and what a ray straight down hits — a sunk figure is a disagreement between the ground query and the geometry |
 | `tools/vehshots.mjs <tag> [types] [--street]` | `--street` parks a fixed lineup on the densest commercial street, shot at eye height and raised — a before/after random traffic can't give. The lineup spawns occupied, with a `chase` view on the first near-lane car; `VEH_NEAR=a,b,..` replaces the near lane (put a new type first to get its chase view). Launches through tools/chrome.mjs, so `AUTO_GPU=1` works |
+| `tools/viewshots.mjs <dir> [names]` | fixed camera views by bearing/pitch/altitude (`at`/`bearing`/`pitch`/`alt`, or look-at `t`/`c`); defaults are the mountain views; prints the scene pass's draw count; `VIEW_PROBE='<js>'` evaluates once (see "Mountains on the horizon") |
 | `tools/landmarkshots.mjs <dir> [views] [--collide]` | world-framed landmark views, per-landmark cost built alone, and the collision drive/walk (see "Landmarks"); `LM_PROBE` |
 | `tools/lotshots.mjs <dir> [--probe]` | lot views; `--probe` prints the grass share per region (see "Lots, plazas and yards") |
 | `tools/bldshots.mjs <dir> [--scan] [--shots=a,b] [--n=6] [--from=index.json]` + `tools/bldsheet.py <dir> [out] [--pair=<dir>]` | the building outlier scan and per-category contact sheets, eye level off the long (downhill) face plus an aerial; `--from` re-shoots another run's buildings by position for a before/after (see "Buildings: the outlier scan"). GPU by default (`AUTO_GPU=0` for SwiftShader) |
