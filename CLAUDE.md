@@ -105,7 +105,7 @@ Link's 1 and 2 Lines: `tools/extract_rail.py` + `tools/build_link.py`, `src/link
 main line: `tools/build_freight.py`, `src/freight.js`; the Seattle-Bainbridge
 ferry: `tools/extract_ferry.py` + `tools/build_ferry.py`, `src/ferry.js`). **OSM is ODbL, so the
 attribution on the launch screen and in the pause menu is a licence condition —
-don't remove it.** See `apps/auto/CLAUDE.md` for how to re-run the import.
+don't remove it.** See `apps/auto/guide/map-import.md` for how to re-run the import.
 
 ## Claw App
 
