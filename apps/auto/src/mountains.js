@@ -61,7 +61,6 @@ export const PEAKS = [
   ['Mt Skokomish', 47.5911, -123.2941, 1961, 4.5, 1.1, 0.2, 0],
   ['Mt Ellinor', 47.5216, -123.2607, 1944, 4, 1.1, 0.2, 0],
   ['Mt Rainier', 46.8517, -121.7603, 4392, 19, 1.3, 0.06, 2],
-  ['Liberty Cap', 46.8665, -121.7690, 4301, 3, 1.5, 0.02, 2],
   ['Little Tahoma', 46.8496, -121.7123, 3395, 4.5, 1.15, 0.12, 2],
   ['Mt Baker', 48.7766, -121.8145, 3286, 14, 1.35, 0.04, 2],
   ['Glacier Peak', 48.1119, -121.1142, 3213, 11, 1.2, 0.1, 2],
@@ -247,7 +246,8 @@ const FRAG = `
     float peak = step(m.r, 0.999);
     float sH = 1.0 - pow(clamp(ht / max(hTop / EXAG + dist * dist * INV2R, 1.0), 0.0, 1.0), 0.77) * (1.0 - lat);
     float fr = lat / max(sH, 0.02);
-    float side = dH > 0.0 ? -1.0 : 1.0;
+    // which flank, smoothed so the summit has no seam
+    float side = clamp(-dH * 40.0, -1.0, 1.0);
     vec2 rq = mix(vec2(s / 240.0, ht / 700.0), vec2(side * fr * 7.0 + kind * 3.7, ht / 2600.0), peak);
     float rid = 1.0 - abs(2.0 * fbm(rq) - 1.0);
     vec2 q = vec2(s / 330.0, ht / 230.0);
@@ -255,19 +255,19 @@ const FRAG = `
     float gx = fbm(q + vec2(0.07, 0.0)) - n0;
     float gy = fbm(q + vec2(0.0, 0.07)) - n0;
     vec3 face = normalize(-d * 0.8 + vec3(0.0, 0.35, 0.0)
-                          + tang * clamp(-dH * 1.1 + gx * 5.0 + (rid - 0.5) * 0.5 * side * peak, -0.9, 0.9)
+                          + tang * clamp((-dH * 1.1 + (rid - 0.5) * 0.3 * side * peak) * mix(1.0, smoothstep(1200.0, 2800.0, ht), peak) + gx * 5.0, -0.9, 0.9)
                           + vec3(0.0, clamp(gy * 3.0, -0.4, 0.4), 0.0));
     float lit = clamp(dot(face, sunDir), 0.0, 1.0);
 
     // forest -> bare rock -> snow
     float snowLine = (kind > 1.5 ? 1750.0 : kind > 0.5 ? 2000.0 : 1650.0) + (n0 - 0.5) * 700.0 - (rid - 0.5) * 500.0 * peak;
-    float snow = smoothstep(snowLine, snowLine + 240.0, ht) * (0.6 + 0.6 * rid);
+    float snow = smoothstep(snowLine, snowLine + 240.0, ht) * (0.72 + 0.4 * rid);
     snow = clamp(snow + smoothstep(snowLine + 600.0, snowLine + 1000.0, ht), 0.0, 1.0);
     vec3 forest = vec3(0.05, 0.09, 0.075);
     vec3 rock = vec3(0.2, 0.19, 0.2);
     vec3 col = mix(forest, rock, smoothstep(950.0, 1550.0, ht + (n0 - 0.5) * 500.0));
     col = mix(col, vec3(0.86, 0.9, 0.97), snow);
-    col *= 0.8 + 0.5 * (rid - 0.5) * (0.4 + 0.6 * peak);
+    col *= 0.9 + 0.3 * (rid - 0.5) * (0.4 + 0.6 * peak);
     vec3 sunLit = vec3(1.0, 0.95, 0.86);
     vec3 skyFill = vec3(0.3, 0.38, 0.52);
     col *= skyFill * 0.85 + sunLit * lit * 0.85;
