@@ -153,6 +153,46 @@ with +/-15 % per-step gain and pitch variation.
   convolver with a generated street IR takes sends from one-shots and, in a
   bore (`enclosed`), from the engine.
 
+**The mix, as a pause, a cannon and two sirens find it** (`tools/audioprobe.mjs`
+asserts all of it; `audiorender` prints the DC column).
+
+- **The world has its own bus, and a pause shuts it.** `worldBus` -> `sfxBus` ->
+  a 25 Hz high-pass -> `pre` -> limiter. The engine, traffic, sirens, tyre/
+  wind/ambience beds, horns, the loop taps, the freights and ferries connect to
+  `worldBus`; `play()` one-shots and UI cues stay on `sfxBus`, the radio on
+  `musicBus`, and the mini-games' own sound (pinball, arcade, hockey, fishing,
+  the tower...) wires to `audio.master`, so none of those moves. main.js's frame
+  returns before `audio.update()` while `game.paused || game.mapOpen`, so every
+  continuous voice used to hold its last note behind the menu (-11.0 dBFS paused
+  against -11.8 driving). The frame now calls `audio.holdWorld(paused || mapOpen)`
+  BEFORE that return, every frame (idempotent): `worldBus` and the world's
+  reverb send (`verbWorld`; a stuck note's echo is a drone too) ramp to 0 in
+  ~0.15 s and back in ~0.1 s. Measured offline, radio off: driving -16.5 dBFS,
+  paused -102, 0.2-0.5 s after resume -16.4. **A new continuous voice goes on
+  `worldBus` (and its reverb send on `verbWorld`)**, or it will drone through
+  the pause menu; a new one-shot caller needs nothing.
+- **The cannon (and a near explosion) ducks the engine bus** (`duckEngine`,
+  `engBus.gain` to 0.5 for 0.4 s), as well as the radio. The tank's turbine was
+  ~5 dB hotter than any car and the cannon only ~1 dB over it, so `ENGINES.tank`
+  `level` went 0.78 -> 0.28 and its tracks tap 0.5 -> 0.36. **The limiter hides
+  level changes**: 0.78 -> 0.49 moved the engine render by 1.6 dB, 0.49 -> 0.28
+  by 5. Render, don't compute. Now the engine render is -17.2 dB (a sedan's
+  -17.3) and the cannon window is +6.7 dB over the engine window before it.
+- **Sirens are decorrelated.** Two voices started in phase at init and sounded
+  like one car. An oscillator cannot be seeked, so the LFO is a `PeriodicWave`
+  with the phase baked in (`lfoWave`), one per kind per voice; voice 1 starts
+  about a quarter-turn off voice 0 (where two equal sweeps are uncorrelated;
+  half a turn is *anti*correlated, which is no better) and sweeps 35 % faster.
+  `SIREN_KINDS`: the wail (sine 0.24 Hz), the police yelp inside 45 m
+  (triangle 3.3 Hz), a fire rig's hi-lo (`spec.fire`: a square LFO, 0.8 Hz,
+  860/1140 Hz, always) and SWAT's rapid yelp (`spec.swat`: triangle 6.5 Hz,
+  always). Two cars, hard-panned, instantaneous frequency by zero crossings:
+  zero-lag |r| 0.15 for wails and 0.02 for yelps over five seeds (any lag
+  within 0.5 s: 0.30).
+- **DC.** The engines' waveshapers are asymmetric and left -16..-52 mV in the
+  renders (v8 -51.8 mV). One 25 Hz high-pass between `sfxBus` and `pre` takes
+  every engine render under 1 mV; it costs one biquad and no per-frame work.
+
 ### Gearbox, turbo, tyres, impacts, ambience
 
 **The gearbox is heard, one change at a time.**
