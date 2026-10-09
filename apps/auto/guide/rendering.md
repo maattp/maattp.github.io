@@ -612,11 +612,14 @@ Where the budget goes, and the rules that keep it there:
   Their contact shadows are ONE more draw for the whole crowd and the player
   (an InstancedMesh, see "Characters: head, hands, hood").
 - every tall building in the whole city is one static "far skyline" mesh.
-- **terrain is 12 x 12 tiles.** Tile size trades draw calls against wasted
-  triangles, and on a phone the draw calls are what hurt. 20 x 20 put 132 terrain
-  meshes on screen at once -- a third of the entire budget -- for ground that is
-  mostly behind buildings; 8 x 8 makes each tile 3.3 km wide on the 26 km map and the
-  frustum never culls one.
+- **terrain is 6 x 6 tiles (one draw each) and far blocks are coarse.** Tile
+  size trades draw calls against wasted triangles, and on a phone the draw calls
+  are what hurt: 20 x 20 put 132 terrain meshes on screen at once, 12 x 12 still
+  40-46 in a street view. Big tiles cull badly, which the LOD pays for: each
+  tile draws 480 m blocks at stride 1 / 2 / 4 by camera distance, only blocks in
+  the frustum keep a tile drawn, and the downtown frame went from 795k terrain
+  triangles in 14 draws to 164k in 12. See "Far terrain is drawn coarse" in
+  `performance.md`.
 - parked cars only exist within `PARKED_RADIUS` and hide past 140 m (80 m on
   a phone, `PARKED_SHOW`). Lot parking adds at most 6 cars (+18 draws), only
   inside a lot.
