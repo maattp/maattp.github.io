@@ -1,28 +1,36 @@
-// Officers on foot walk through buildings too, on master: police.js footOrders steers them straight at the
-// player and nothing between them tests a wall. Wanted level on, 10 officers walked in from 20-150 m round
-// the player at each site for 40 sim-s (the car and the helicopters not simulated: only the walk), counting
-// the officers seen inside a building footprint and how many reached the player.
-// Accept: none inside a building.
+// Foot officers: seconds until BUSTED at five sites (STARS=, SECS=), minD, and samples where an officer walked but did not move.
+// Officers now respect walls and slide along them, so a bust takes longer where a building lies between them and you
+// (master 18-27 s at Pike St / Pioneer Sq against about twice that before the slide); watch stuckSamples.
 export default async ({ evaluate }) => {
-  return await evaluate(`(() => { const d = window.__dbg, P = d.player, city = d.city;
-    d.game.paused = true;
+  const SECS = +process.env.SECS || 70, STARS = +process.env.STARS || 1;
+  return await evaluate(`(() => { const d = window.__dbg, P = d.player, city = d.city, g = d.game;
+    g.paused = true;
     const res = [];
-    const inB = (p) => { for (const b of city.buildingsNear(p.x, p.z, 6)) { const c = Math.cos(-b.rot), s = Math.sin(-b.rot); const dx = p.x - b.x, dz = p.z - b.z; const lx = dx * c - dz * s, lz = dx * s + dz * c; if (Math.abs(lx) < b.w / 2 && Math.abs(lz) < b.d / 2 && p.y < b.y + b.h - 0.5) return true; } return false; };
-    for (const [sx, sz] of [[0, 0], [300, -100], [1500, -200], [-2601, -4885], [3993, 3378]]) {
+    for (const [sx, sz] of [[0, 0], [300, -100], [1500, -200], [-346, 182], [278, 1094]]) {
       let best = null, bd = 1e12;
       for (const e of city.edgesNear(sx, sz, 400)) { const E = city.edges[e]; if (E.elev || E.cls === 'hwy' || E.cls === 'ramp') continue; const n = city.nodes[E.a]; const dd = (n.x - sx) ** 2 + (n.z - sz) ** 2; if (dd < bd) { bd = dd; best = n; } }
       for (const p of [...d.peds.peds]) d.peds.remove(p);
-      P.vehicle = null; P.onFoot = true; P.x = best.x + 3; P.z = best.z + 3; P.y = city.groundAt(P.x, P.z, null);
-      d.game.addHeat(400);
-      const cops = []; for (let i = 0; i < 10; i++) { const c = d.peds.spawn(P.x, P.z, true); if (c) cops.push(c); }
-      const ever = new Set(); let near = 0;
-      for (let i = 0; i < 20 * 40; i++) {
-        d.peds.update(1 / 20, P.x, P.z, P, d.traffic);
-        for (const c of cops) if (inB(c)) ever.add(c);
+      for (const v of [...d.traffic.cars]) if (v.mode !== 'apron') d.traffic.remove(v);
+      g.dead = false; g.points = 0; g.wanted = 0; g.cool = 0; if (g.police) g.police.clear();
+      P.vehicle = null; P.onFoot = true;
+      const E = city.edges[best.e.find((k) => { const q = city.edges[k]; return !q.elev && q.cls !== 'hwy' && q.cls !== 'ramp' && q.len > 22; }) ?? best.e[0]]; const atA = city.nodes[E.a] === best; const ux = atA ? E.dx : -E.dx, uz = atA ? E.dz : -E.dz;
+      P.x = best.x + ux * 18 - uz * (E.hw + 1.4); P.z = best.z + uz * 18 + ux * (E.hw + 1.4); P.y = city.groundAt(P.x, P.z, null);
+      d.world.update(P.x, P.z, 2);
+      for (let i = 0; i < 60; i++) { d.traffic.update(1 / 20, P.x, P.z, { x: 0, z: -1 }, P); d.peds.update(1 / 20, P.x, P.z, P, d.traffic); }
+      g.setWanted(${STARS});
+      let bustAt = null, maxCops = 0, wl = g.wanted; const orig = g.onBusted; g.onBusted = () => { if (bustAt === null) bustAt = t / 20; };
+      let t = 0; let minD = 1e9; const cops = new Set(); let stuckSamples = 0, copSamples = 0;
+      const lastPos = new Map();
+      for (; t < 20 * ${SECS}; t++) {
+        d.traffic.update(1 / 20, P.x, P.z, { x: 0, z: -1 }, P); d.peds.update(1 / 20, P.x, P.z, P, d.traffic);
+        g.police.update(1 / 20, P, false);
+        if (bustAt !== null || g.dead) break;
+        let c = 0; for (const p of d.peds.peds) if (p.cop) { c++; cops.add(p); const dd = Math.hypot(p.x - P.x, p.z - P.z); if (dd < minD) minD = dd;
+          if (t % 20 === 0) { const lp = lastPos.get(p); if (lp && dd > 3 && Math.hypot(p.x - lp[0], p.z - lp[1]) < 1.0 && p.speed > 0.5 && !g.police.searching) stuckSamples++; if (dd > 3) copSamples++; lastPos.set(p, [p.x, p.z]); } }
+        if (c > maxCops) maxCops = c;
       }
-      for (const c of cops) if (d.peds.peds.includes(c) && Math.hypot(c.x - P.x, c.z - P.z) < 6) near++;
-      res.push({ site: [sx, sz], cops: cops.length, insideABuilding: ever.size, reachedPlayer: near });
-      d.game.wanted = 0; for (const c of cops) if (d.peds.peds.includes(c)) d.peds.remove(c);
+      g.onBusted = orig;
+      res.push({ site: [sx, sz], wanted: wl, dead: g.dead, bustAtS: bustAt, totalCops: cops.size, maxCops, minD: +minD.toFixed(1), stuckSamples, copSamples });
     }
     return res; })()`);
 };

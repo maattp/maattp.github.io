@@ -439,7 +439,8 @@ walk / flee loop tested nothing but knock-back.
   corner or carries on out along the arm. A path is up to 8 waypoints in
   `p.path`, a bit per leg for "this leg crosses" (`p.pcr`). Sharp corners
   (|a|, |b| > 14 m) keep to the two lines; straight-on arms shift the line to
-  the next street's width; a dead end is crossed at its end. Two roads close
+  the next street's width; a dead end is crossed at its end (a waypoint that stands in a building -- a dead end against a wall -- is dropped and
+  its crossing flag passes on; a path may take at most 1.5x its walk and 7 s a crossing, `p.ptMax`). Two roads close
   enough that one's pavement line lies in the other's carriageway (a Y, an
   offset junction: 2 % of samples) are not helped by this -- it only sees the
   node's own arms.
@@ -453,15 +454,23 @@ walk / flee loop tested nothing but knock-back.
   side), stops short of him, like for the player on foot. Only people actually
   in the carriageway count: one waiting at the kerb waits for the cars. A
   pedestrian with a car coming hurries (3.8 m/s). `behav.mjs`, 120 sim-s at
-  three sites: AI knockdowns 21 -> 0, cars still for over 15 s unchanged.
+  three sites: AI knockdowns 21 -> 0-1 (about 0-3 a site over 150 s on other runs: this roughly
+  halves it at worst and mostly removes it -- the harness is not deterministic; what is left is a
+  fast car arriving as he steps out), cars still for over 15 s unchanged. Cars read his LEVEL too
+  (`crossXZ` carries y; skipped past 3 m): without it a viaduct's cars stood 17-88 s over a person
+  crossing the street under it.
 - **The walk obeys what the player's step obeys** (`_move` / `_place`; for
   walkers, runners and officers alike): not into a building (`city.insideBuilding`,
   Player.blocked's test without its allocations), not off a drop or into deep
   water (the ground under the next step 1.4 m below or 1 m above him, or under
   the drawn water -- `peds.waterAt` is the boats' rule), trunks and poles pushed
   out of rather than stopped at (within 50 m only: nobody sees him walk through
-  one further out), the whole step then each axis alone. Held by a wall a
-  fleeing pedestrian turns 75 deg along it; a walker held 3 s is recycled.
+  one further out), the whole step then each axis alone (a slide counts only if it
+  moved him: along an axis the heading has no part in it "succeeds" and moved nobody, so
+  a walker facing a wall was never `blocked` and stood for ever). Held by a wall a
+  fleeing pedestrian turns 75 deg along it, a foot officer held 0.5 s goes 1.2 rad off his
+  line to the player for 1.25 s (police.js `footOrders` steers straight at you and knows no
+  walls: time to BUSTED at 1 star is back to master's, 18-35 s, `cops.mjs`); a walker held 3 s is recycled.
   A pedestrian standing inside a building walks out of it, as the player does.
   A stationary pedestrian makes no ground query at all.
 - **When he stops running** (`reanchor`) he is put back on the nearest walking
@@ -473,8 +482,10 @@ walk / flee loop tested nothing but knock-back.
 **Verify**: `tools/pedcheck/` (harness.mjs drives a scenario module; each
 prints numbers with a `pass` where there is a bar). `density.mjs` (>= 6 within
 40 m at Pike Place, Westlake, Pioneer Square; total <= 24), `road.mjs` (< 8 %
-in a carriageway, crossings counted apart), `behav.mjs` (AI knockdowns 0, cars
-still), `flee.mjs` (0 through a building, 0 in the water), `cops.mjs`,
+in a carriageway, crossings counted apart), `behav.mjs` (AI knockdowns ~0, cars
+still), `flee.mjs` (0 through a building, 0 in the water), `cops.mjs` (seconds to
+BUSTED at 1 star, officers that walked and did not move), `stall.mjs` (nobody stuck on a
+junction path), `overpass.mjs` (cars on a viaduct are not held by a person below),
 `look.mjs` / `crossing.mjs` (shots: LOOK at them). Run as
 `AUTO_HTTP_PORT=8000 node tools/pedcheck/harness.mjs tools/pedcheck/road.mjs`.
 v193 -> this change: within 40 m at Pike Place / Westlake / Pioneer Sq 1 / 2 / 0 ->

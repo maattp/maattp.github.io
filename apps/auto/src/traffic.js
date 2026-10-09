@@ -1535,8 +1535,9 @@ export class TrafficSystem {
     if (this.crossN > 0) {
       const reach = Math.max(10, sp * sp / 12 + sp * 0.6 + 5), xz = this.crossXZ;
       for (let q = 0; q < this.crossN; q++) {
-        const cx = xz[q * 2], cz = xz[q * 2 + 1];
-        if (Math.abs(cx - v.x) > reach + 4 || Math.abs(cz - v.z) > reach + 4) continue;
+        const cx = xz[q * 3], cz = xz[q * 3 + 1];
+        // (on the level he is on: a viaduct over the crossing does not stop for him)
+        if (Math.abs(xz[q * 3 + 2] - v.y) > 3 || Math.abs(cx - v.x) > reach + 4 || Math.abs(cz - v.z) > reach + 4) continue;
         // along the PLANNED PATH, not the bonnet's line: a car turning at the
         // junction is not yet pointing at the crossing it will sweep across
         let best = Infinity, along = 0, acc = 0;

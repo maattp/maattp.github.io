@@ -3463,13 +3463,14 @@ function crowdState(R, x, z) {
     // the path through a junction (planNode): waypoints, the one he is
     // walking to, a bit per leg for "this leg crosses a carriageway", and
     // the seconds spent on it
-    path: new Float32Array(16), pn: 0, pi: 0, pcr: 0, pt: 0,
+    path: new Float32Array(16), pn: 0, pi: 0, pcr: 0, pt: 0, ptMax: 45,
     // crossing now / seconds waiting at the kerb / the gap check's timer /
     // hurrying (a car coming)
     cross: 0, wait: 0, gapT: 0, hurry: 0,
     // seconds held by a wall or the water; a wanderer's heading and timer,
     // standing about, and the spot he drifts round
     blocked: 0, wanderT: 0, wanderH: 0, idle: false, hx: x, hz: z,
+    slideT: 0, slideS: 1,                              // an officer held by a wall: going along it, which way
     near: true,                                        // within 50 m of the player: trunks and poles are tested for him
   };
 }
@@ -3490,8 +3491,8 @@ export class PedSystem {
     this._frOK = false;
     this._fill = false;
     // where people are crossing a carriageway, for the cars to stop short of
-    // (read by traffic.js; x, z pairs)
-    this.crossXZ = new Float32Array(32);
+    // (read by traffic.js; x, z, y triples)
+    this.crossXZ = new Float32Array(48);
     this.crossN = 0;
     this._m = new THREE.Matrix4();
     this._fr = new THREE.Frustum();
@@ -3772,7 +3773,15 @@ export class PedSystem {
       ORD[j] = k;
     }
     let pn = 0, pcr = 0;
-    const put = (x, z, cross) => { path[pn * 2] = x; path[pn * 2 + 1] = z; if (cross) pcr |= 1 << pn; pn++; };
+    // (a waypoint inside a building -- a dead end's far side against a
+    // wall -- is dropped, and a crossing's flag passes to the next one)
+    let pend = false;
+    const put = (x, z, cross) => {
+      if (city.insideBuilding(x, z, p.y, 0.3)) { pend = pend || cross; return; }
+      path[pn * 2] = x; path[pn * 2 + 1] = z;
+      if (cross || pend) pcr |= 1 << pn;
+      pend = false; pn++;
+    };
     const nx = node.x, nz = node.z;
     if (m === 0) {
       // a dead end: across the end of the street to the other pavement and back
@@ -3818,7 +3827,10 @@ export class PedSystem {
       p.dirSign = F.atA ? 1 : -1;
       p.side = finSide;
     }
-    p.pn = pn; p.pi = 0; p.pcr = pcr; p.pt = 0; p.cross = 0; p.wait = 0; p.gapT = 0;
+    // the longest it may take: twice the walk, and a kerb wait per crossing
+    let walk = 0, cx = p.x, cz = p.z, nc = 0;
+    for (let k = 0; k < pn; k++) { walk += Math.hypot(path[k * 2] - cx, path[k * 2 + 1] - cz); cx = path[k * 2]; cz = path[k * 2 + 1]; nc += (pcr >> k) & 1; }
+    p.pn = pn; p.pi = 0; p.pcr = pcr; p.pt = 0; p.ptMax = walk * 1.5 + nc * 7 + 4; p.cross = 0; p.wait = 0; p.gapT = 0;
   }
 
   /**
@@ -3894,7 +3906,13 @@ export class PedSystem {
   _move(p, dt) {
     const s = p.speed * dt;
     const nx = G.clampToMap(p.x + Math.sin(p.heading) * s), nz = G.clampToMap(p.z + Math.cos(p.heading) * s);
-    if (this._place(p, nx, nz, true) || this._place(p, nx, p.z, true) || this._place(p, p.x, nz, true)) { p.blocked = 0; return; }
+    // (a slide along an axis the heading has no component on "succeeds" and
+    // moves nobody: it only counts if he went somewhere)
+    const ox = p.x, oz = p.z, eps = Math.min(1e-3, s * 0.2);
+    if (this._place(p, nx, nz, true) && Math.abs(p.x - ox) + Math.abs(p.z - oz) >= eps) { p.blocked = 0; return; }
+    if (this._place(p, nx, oz, true) && Math.abs(p.x - ox) >= eps) { p.blocked = 0; return; }
+    if (this._place(p, ox, nz, true) && Math.abs(p.z - oz) >= eps) { p.blocked = 0; return; }
+    p.x = ox; p.z = oz;
     if (this.city.insideBuilding(p.x, p.z, p.y, 0.3)) { this._place(p, nx, nz, false); return; }
     p.blocked += dt;
     p.speed *= 0.6;
@@ -4056,6 +4074,11 @@ export class PedSystem {
           : (game.wanted === 0 ? { remove: true } : { heading: Math.atan2(px - p.x, pz - p.z), speed: d2p > 81 ? 4.6 : 0, remove: false });
         if (o.remove) { this.remove(p); continue; }
         desired = o.heading;
+        // held by a wall for half a second: along it, toward whichever side
+        // runs on, for a second and a quarter (footOrders steers straight at
+        // the player and knows no walls)
+        if (p.slideT > 0) { p.slideT -= dt; desired += p.slideS * 1.2; }
+        else if (p.blocked > 0.5) { p.slideT = 1.25; p.slideS = this.R.n() < 0.5 ? 1 : -1; p.blocked = 0; }
         targetSpeed = o.speed;
       } else if (p.state === 'flee') {
         p.timer -= dt;
@@ -4109,9 +4132,9 @@ export class PedSystem {
             if (!p.cross) targetSpeed = 0;
           }
           if (p.cross) targetSpeed = p.hurry > 0 ? 3.8 : 1.9;
-          if (dist2(p.x, p.z, wx, wz) < (p.cross ? 0.36 : 0.64) || p.pt > 45) {
+          if (dist2(p.x, p.z, wx, wz) < (p.cross ? 0.36 : 0.64) || p.pt > p.ptMax) {
             if (leg) { p.cross = 0; p.wait = 0; }
-            if (++p.pi >= p.pn || p.pt > 45) { p.pn = 0; p.pt = 0; p.cross = 0; }
+            if (++p.pi >= p.pn || p.pt > p.ptMax) { p.pn = 0; p.pt = 0; p.cross = 0; p.wait = 0; }
           }
         }
         // held by something for good (a wall of earth on a street): another place
@@ -4171,7 +4194,7 @@ export class PedSystem {
 
       // in the road: the cars stop short of him (traffic.js), and he hurries
       // when one is coming at him anyway
-      if (p.cross && this.crossN < 16) { this.crossXZ[this.crossN * 2] = p.x; this.crossXZ[this.crossN * 2 + 1] = p.z; this.crossN++; }
+      if (p.cross && this.crossN < 16) { const o = this.crossN * 3; this.crossXZ[o] = p.x; this.crossXZ[o + 1] = p.z; this.crossXZ[o + 2] = p.y; this.crossN++; }
 
       // knocked over by traffic
       for (const v of movers) {
