@@ -36,6 +36,8 @@ const VIEWS = process.env.VIEWS ? JSON.parse(readFileSync(process.env.VIEWS, 'ut
   { name: 'mt-rainier-tele', at: [-1650, -2010, 90], bearing: 153, pitch: 2.6, fov: 14 },
   { name: 'mt-rainier-close', at: [-1650, -2010, 90], bearing: 152.5, pitch: 2.3, fov: 7 },
   { name: 'mt-rainier-alki', at: [-5200, 2700, 60], bearing: 135, pitch: 2.4, fov: 55 },
+  { name: 'mt-air-si', at: [0, 0, 0], alt: 1500, bearing: 105, pitch: -2, fov: 45 },
+  { name: 'mt-air-pilchuck', at: [0, 0, 0], alt: 1500, bearing: 40, pitch: -2, fov: 45 },
   { name: 'mt-east-tele', at: [3000, -300, 80], bearing: 95, pitch: 1.5, fov: 30 },
   { name: 'mt-west-wide', at: [-4600, 2800, 2], bearing: 285, pitch: 4, fov: 90 },
   { name: 'mt-rainier-lake', at: [6000, 2500, 2], bearing: 152, pitch: 4, fov: 62 },
@@ -94,7 +96,7 @@ async function main() {
     await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
     for (let i = 0; i < 400; i++) {
       await sleep(500);
-      if (await evaluate('!!window.__dbg')) break;
+      if (await evaluate('!!(window.__dbg && window.__dbg.world && window.__dbg.applyQuality)')) break;
     }
     await sleep(3000);
     await evaluate(`(() => {
