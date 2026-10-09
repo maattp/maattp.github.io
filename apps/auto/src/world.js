@@ -4492,7 +4492,7 @@ float frLine(float o, float fw, float c, float w) {
       c.group = step.value || null;
       c.lod = this._buildLod;
       if (c.group) { this.group.add(c.group); freezeStatic(c.group); }
-      if (this.trees) this.trees.setChunk(c.key, c.cx, c.cz, c.group && c.group.userData.trees, c.key);
+      if (this.trees) this.trees.setChunk(c.key, c.cx, c.cz, c.group && c.group.userData.trees, c.key, c.group && c.group.userData.treesPooled);
       // the phone's shadow cache holds this chunk's shadows (shadowcache.js)
       if (this.onChunkChange) this.onChunkChange((c.cx + 0.5) * CHUNK, (c.cz + 0.5) * CHUNK, CHUNK);
       if (old) {
@@ -4608,7 +4608,7 @@ float frLine(float o, float fw, float c, float w) {
       yield; this._yt = performance.now();
       yield* this.meshProps(flat, glow, ch, cx, cz);
       yield; this._yt = performance.now();
-      yield* plantTrees(this, flat, ch, cx, cz, 1);
+      yield* plantTrees(this, flat, ch, cx, cz, 1, ch === NO_CITY_CHUNK);
       yield; this._yt = performance.now();
     } else {
       // Mid-ring massing: every building the far skyline skips, as one merged
@@ -4643,7 +4643,7 @@ float frLine(float o, float fw, float c, float w) {
       // The same trees as the near build, drawn only (no trunks to hit): the
       // housing stock had no canopy past the 1 km ring, which from the air
       // was the top half of every frame.
-      yield* plantTrees(this, flat, ch, cx, cz, 0);
+      yield* plantTrees(this, flat, ch, cx, cz, 0, ch === NO_CITY_CHUNK);
       yield; this._yt = performance.now();
     }
 
@@ -4698,11 +4698,14 @@ float frLine(float o, float fw, float c, float w) {
     this._fell = null;
     // the trees' records, for the instanced crowns (trees.js TreeSystem)
     grp.userData.trees = this._treeRecs;
+    // a road-less chunk's far crowns are in the trees' shared pool, not its
+    // own flat mesh: an empty group still carries its records
+    grp.userData.treesPooled = ch === NO_CITY_CHUNK;
     this._treeRecs = null;
     yield;
     add(bl.glass, this.mats.glass, true, true); yield;
     add(bl.facade, this.mats.facade, true, true);
-    return grp.children.length ? grp : null;
+    return grp.children.length || grp.userData.trees ? grp : null;
   }
 
   // --- road surfaces --------------------------------------------------------

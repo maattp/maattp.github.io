@@ -378,7 +378,36 @@ function buildShapes() {
     limb(ib, [0, -0.3, 0], [0, 0.45 * H, 0], 0.1 * Rc, 0.06 * Rc, 6);
     out.nearCon = ib;
   }
+  // far crowns for the pool (road-less chunks): writeFarTree's shapes, in
+  // reference metres -- bipyramid and trunk spike (15 tris), cone and spike (9)
+  {
+    const ib = new IB(), cy = CY, ry = RY, Rr = 0.78 * R;
+    const top = ib.v(0, cy + 0.92 * ry, 0, 0, 1, 0, [1.06, 1.06, 1.06], 1);
+    const bot = ib.v(0, cy - 0.8 * ry, 0, 0, -1, 0, [0.5, 0.5, 0.5], 1);
+    const ring = [];
+    for (let k = 0; k < 6; k++) { const a = (k * Math.PI) / 3, c = Math.cos(a), s = Math.sin(a); ring.push(ib.v(c * Rr, cy + 0.1 * ry, s * Rr, c, 0.3, s, [0.86, 0.86, 0.86], 1)); }
+    for (let k = 0; k < 6; k++) { ib.t(ring[k], top, ring[(k + 1) % 6]); ib.t(ring[(k + 1) % 6], bot, ring[k]); }
+    spike(ib, cy, Math.max(0.13, 0.062 * R));
+    out.farBroad = ib;
+  }
+  {
+    const ib = new IB(), H = C_TH, y0 = C_BASE * H, Rr = 0.8 * C_CR, slope = Rr / (H - y0);
+    const apex = ib.v(0, H, 0, 0, 1, 0, [1.08, 1.08, 1.08], 1);
+    const ring = [];
+    for (let k = 0; k < 6; k++) { const a = (k * Math.PI) / 3, c = Math.cos(a), s = Math.sin(a); ring.push(ib.v(c * Rr, y0, s * Rr, c, slope * 1.4, s, [0.6, 0.6, 0.6], 1)); }
+    for (let k = 0; k < 6; k++) ib.t(ring[k], apex, ring[(k + 1) % 6]);
+    spike(ib, y0 + (H - y0) * 0.3, Math.max(0.16, 0.09 * C_CR));
+    out.farCon = ib;
+  }
   return out;
+}
+
+/** writeFarTree's three-sided trunk spike, from below the ground to `top`. */
+function spike(ib, top, r) {
+  const bc = [BARK[0] * 0.8, BARK[1] * 0.8, BARK[2] * 0.8];
+  const ap = ib.v(0, top, 0, 0, 1, 0, bc, 0), base = [];
+  for (let k = 0; k < 3; k++) { const a = (k * 2 * Math.PI) / 3, c = Math.cos(a), s = Math.sin(a); base.push(ib.v(c * r, -0.3, s * r, c, 0, s, bc, 0)); }
+  for (let k = 0; k < 3; k++) ib.t(base[k], ap, base[(k + 1) % 3]);
 }
 
 // --- the instanced material -------------------------------------------------
@@ -461,6 +490,18 @@ export class TreeSystem {
     // re-chosen as you move, cannot join -- they are movers, drawn each frame.
     this.mid = [make(shapes.midCon, capMid, 'trees:mid:conifer', shadows && !ON_PHONE), make(shapes.midBroad, capMid, 'trees:mid:broadleaf', shadows && !ON_PHONE)];
     this.near = [make(shapes.nearCon, capNear, 'trees:near:conifer', shadows), make(shapes.nearBroad, capNear, 'trees:near:broadleaf', shadows)];
+    // THE FAR POOL: a chunk with no road or building (a forest's middle, an
+    // island) would be a flat mesh -- a draw -- holding nothing but far
+    // crowns; Blake Island alone was 21 of them. Their far crowns live here
+    // instead, two draws for all of them, each chunk a contiguous block of
+    // instances written once when it arrives and zeroed when it goes (so a
+    // hole is a degenerate instance until the block is reused). Not culled:
+    // the whole pool is drawn, like the flat meshes it replaces mostly were.
+    this.farCap = ON_PHONE ? 16000 : 24000;
+    this.far = [make(shapes.farCon, this.farCap, 'trees:far:conifer', shadows && !ON_PHONE), make(shapes.farBroad, this.farCap, 'trees:far:broadleaf', shadows && !ON_PHONE)];
+    this.farBlocks = [[], []];   // per species, sorted [start, len, key]
+    for (const M of this.far) M.visible = false;
+    this.tris.farBroad = shapes.farBroad.tris; this.tris.farCon = shapes.farCon.tris;
     scene.add(this.group);
     this.chunks = new Map();
     this.city = null;
@@ -476,7 +517,8 @@ export class TreeSystem {
    * visits only the cells near the camera. `ck` is its obstacle-list key, to
    * see the trunks a tank has felled.
    */
-  setChunk(key, cx, cz, recs, ck) {
+  setChunk(key, cx, cz, recs, ck, pooled) {
+    this._unpool(key);
     if (!recs || !recs.length) { this.chunks.delete(key); this.dirty = true; return; }
     const n = recs.length / REC, x0 = cx * CHUNK, z0 = cz * CHUNK;
     const cellOf = new Uint8Array(n), cnt = new Int32Array(CELLS * CELLS + 1);
@@ -500,16 +542,76 @@ export class TreeSystem {
       if (gy < yLo[c]) yLo[c] = gy;
       if (top > yHi[c]) yHi[c] = top;
     }
-    this.chunks.set(key, { cx, cz, x0, z0, ord, alb, off, yLo, yHi, ck, n });
+    const C = { cx, cz, x0, z0, ord, alb, off, yLo, yHi, ck, n, pooled: !!pooled };
+    this.chunks.set(key, C);
+    if (pooled) this._pool(key, C);
     this.dirty = true;
   }
 
   dropChunk(key) {
+    this._unpool(key);
     if (this.chunks.delete(key)) this.dirty = true;
   }
 
   /** Something changed that a refresh must see (a felled trunk). */
-  invalidate() { this.dirty = true; }
+  invalidate() {
+    this.dirty = true;
+    // a felled tree's pooled far crown goes too: rewrite the pooled blocks
+    for (const [key, C] of this.chunks) if (C.pooled) { this._unpool(key); this._pool(key, C); }
+  }
+
+  /** Write a pooled chunk's far crowns into a free block of each species' pool. */
+  _pool(key, C) {
+    const ol = this.city ? this.city.obstacles.get(C.ck) : null;
+    for (let sp = 0; sp < 2; sp++) {
+      let n = 0;
+      for (let i = 0; i < C.n; i++) if ((C.ord[i * REC + 5] === CONIFER ? 0 : 1) === sp) n++;
+      if (!n) continue;
+      const M = this.far[sp], B = this.farBlocks[sp];
+      // first fit between the blocks, else at the end
+      let start = 0, at = 0;
+      for (; at < B.length; at++) { if (B[at][0] - start >= n) break; start = B[at][0] + B[at][1]; }
+      if (start + n > this.farCap) continue;   // full: these draw no far crown
+      B.splice(at, 0, [start, n, key]);
+      const m = M.instanceMatrix.array, ca = M.instanceColor.array;
+      let k = start;
+      for (let i = 0; i < C.n; i++) {
+        const o = i * REC, kind = C.ord[o + 5];
+        if ((kind === CONIFER ? 0 : 1) !== sp) continue;
+        const ob = C.ord[o + 8], q = k * 16;
+        if (ob >= 0 && ol && ol[ob * 3] > 1e8) { m.fill(0, q, q + 16); k++; continue; }
+        const th = C.ord[o + 3], cr = C.ord[o + 4], seed = C.ord[o + 6];
+        const sx = sp ? cr / B_CR : cr / C_CR, sy = sp ? th / B_TH : th / C_TH;
+        const a = seed * 43.98, cs = Math.cos(a), sn = Math.sin(a);
+        m[q] = cs * sx; m[q + 1] = 0; m[q + 2] = -sn * sx; m[q + 3] = 0;
+        m[q + 4] = 0; m[q + 5] = sy; m[q + 6] = 0; m[q + 7] = 0;
+        m[q + 8] = sn * sx; m[q + 9] = 0; m[q + 10] = cs * sx; m[q + 11] = 0;
+        m[q + 12] = C.ord[o]; m[q + 13] = C.ord[o + 1]; m[q + 14] = C.ord[o + 2]; m[q + 15] = 1;
+        ca[k * 3] = C.alb[i * 3]; ca[k * 3 + 1] = C.alb[i * 3 + 1]; ca[k * 3 + 2] = C.alb[i * 3 + 2];
+        k++;
+      }
+      this._farTouch(sp, start, n);
+    }
+  }
+
+  _unpool(key) {
+    for (let sp = 0; sp < 2; sp++) {
+      const B = this.farBlocks[sp], at = B.findIndex((b) => b[2] === key);
+      if (at < 0) continue;
+      const [start, n] = B[at];
+      B.splice(at, 1);
+      this.far[sp].instanceMatrix.array.fill(0, start * 16, (start + n) * 16);
+      this._farTouch(sp, start, n);
+    }
+  }
+
+  _farTouch(sp, start, n) {
+    const M = this.far[sp], B = this.farBlocks[sp];
+    M.count = B.length ? B[B.length - 1][0] + B[B.length - 1][1] : 0;
+    M.visible = M.count > 0;
+    M.instanceMatrix.addUpdateRange(start * 16, n * 16); M.instanceMatrix.needsUpdate = true;
+    M.instanceColor.addUpdateRange(start * 3, n * 3); M.instanceColor.needsUpdate = true;
+  }
 
   /**
    * Choose the mid and near sets for this camera, if it has moved or turned
@@ -605,8 +707,9 @@ export class TreeSystem {
     const t = this.tris;
     return {
       chunks: this.chunks.size, trees: recs,
-      mid: mc.count + mb.count, near: nc.count + nb.count,
-      instTris: mc.count * t.midCon + mb.count * t.midBroad + nc.count * t.nearCon + nb.count * t.nearBroad,
+      mid: mc.count + mb.count, near: nc.count + nb.count, farPool: this.far[0].count + this.far[1].count,
+      instTris: mc.count * t.midCon + mb.count * t.midBroad + nc.count * t.nearCon + nb.count * t.nearBroad
+        + this.far[0].count * t.farCon + this.far[1].count * t.farBroad,
       shapeTris: t, refreshes: this.refreshes, refreshMs: +this.refreshMs.toFixed(2),
     };
   }
@@ -719,7 +822,7 @@ const STREET_SPACING = { res: 10, st: 11, art: 12 };
  * same trees in both, so a chunk promoting from one to the other keeps them.
  * Returns the records (Float32Array, REC each) in world._treeRecs.
  */
-export function* plantTrees(world, flat, ch, cx, cz, lod) {
+export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
   const city = world.city;
   const ck = world._ck;
   const solid = lod === 1;
@@ -787,13 +890,14 @@ export function* plantTrees(world, flat, ch, cx, cz, lod) {
     const seed = hash2(Math.round(x * 4) + 101, Math.round(z * 4) - 77);
     let obs = -1;
     const f0 = flat.ni;
-    writeFarTree(flat, x, gy, z, th, cr, kind, seed, tone);
+    // a road-less chunk's far crowns go to the TreeSystem's pool instead
+    if (!pooled) writeFarTree(flat, x, gy, z, th, cr, kind, seed, tone);
     if (solid) {
       const r = kind === SHRUB ? 0.5 : clamp((kind === CONIFER ? 0.09 : 0.075) * cr + 0.12, 0.3, 0.6);
       const l = city.obstacles.get(ck);
       obs = l ? l.length / 3 : 0;
       city.addObstacle(ck, x, z, r);
-      if (world._fell) world._fell.push(x, z, f0, flat.ni);
+      if (world._fell && !pooled) world._fell.push(x, z, f0, flat.ni);
     }
     recs.push(x, gy, z, th, cr, kind, seed, tone, obs);
     st.treesPlanted++;

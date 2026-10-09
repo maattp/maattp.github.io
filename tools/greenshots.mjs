@@ -52,6 +52,10 @@ const VIEWS = [
   // the worst case for the trees: woods to the horizon (Blake Island, Bainbridge)
   { name: 'blake-air', t: [-11669, 8198, 0], c: [-11200, 7700, 0], cy: 160 },
   { name: 'bainbridge-air', t: [-13800, -2500, 0], c: [-13300, -2000, 0], cy: 150 },
+  // forests far off (3-6 km), where the far terrain is drawn coarse and only
+  // the terrain's canopy and the mid ring's crowns can say "forest"
+  { name: 'discovery-far', t: [-5834, -5521, 0], c: [-3100, -3900, 0], cy: 160 },
+  { name: 'blake-far', t: [-11669, 8198, 0], c: [-6400, 4600, 0], cy: 180 },
   { name: 'discovery-ground', t: [-5834, -5521, 2], c: [-5780, -5470, 1.7] },
   { name: 'greenlake-shore', t: [500, -7600, 1], c: [640, -7560, 1.7] },
   { name: 'residential-street', t: [1180, -1400, 3], c: [1200, -1450, 1.7] },
