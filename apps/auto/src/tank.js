@@ -224,6 +224,8 @@ export class TankSystem {
               if (F.list[k] === ox && F.list[k + 1] === oz) { hideRange(F.mesh.geometry, F.list[k + 2], F.list[k + 3]); break; }
             }
           }
+          // a tree's instanced crown goes too (trees.js skips a felled trunk)
+          if (this.world.trees) this.world.trees.invalidate();
           this.stats.felled++;
           const gy = G.terrainHeight(ox, oz);
           if (r <= 0.4) {

@@ -8,6 +8,7 @@ import { buildTextures, planTextures, encodeTextures, restoreTextures, canvasToB
 import { World, WET_FLOOR, HAZE_SUN } from './world.js';
 import { buildLandmarks, updateLandmarkRange, SEAPLANE_DOCK, airportSurface } from './landmarks.js';
 import { ShadowCache } from './shadowcache.js';
+import { TreeSystem } from './trees.js';
 import { Monorail } from './monorail.js';
 import { Link } from './link.js';
 import { Freight } from './freight.js';
@@ -773,7 +774,10 @@ function installHeightFog() {
   // fragment's height, and its direction picks the sun-side haze tint. It is
   // linear in position, so the interpolated varying is exact per fragment.
   C.fog_pars_vertex = `${C.fog_pars_vertex}\n#ifdef USE_FOG\n  varying vec3 vFogRay;\n#endif`;
-  C.fog_vertex = `${C.fog_vertex}\n#ifdef USE_FOG\n  vFogRay = (modelMatrix * vec4(transformed, 1.0)).xyz - cameraPosition;\n#endif`;
+  // An instanced mesh's vertex is placed by instanceMatrix before the model
+  // matrix: without it every instance was fogged as if it stood at the map's
+  // origin (the trees' crowns, the phone's far traffic).
+  C.fog_vertex = `${C.fog_vertex}\n#ifdef USE_FOG\n  #ifdef USE_INSTANCING\n  vFogRay = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz - cameraPosition;\n  #else\n  vFogRay = (modelMatrix * vec4(transformed, 1.0)).xyz - cameraPosition;\n  #endif\n#endif`;
   C.fog_pars_fragment = `${C.fog_pars_fragment}\n#ifdef USE_FOG\n  varying vec3 vFogRay;\n#endif`;
   // Scale the density by the fragment's height above sea level. At a scale
   // height of 130 m a street is fully hazed and a 200 m crown keeps about a
@@ -953,6 +957,10 @@ function installShadowFade() {
   postfx.setSize(viewW(), viewH(), renderer.getPixelRatio());
 
   world = new World(scene, city, tx, { shadows: true, renderer, lakes: md.lakes });
+  // The trees' mid and near crowns (trees.js): chosen from the chunks'
+  // records against the camera before each scene pass.
+  world.trees = new TreeSystem(scene, world.shadows);
+  world.trees.city = city;
   // ...and its portal cuts, barriers and lids (the terrain's carve needs them).
   // Only with a cached grading: the lids were computed on those profiles.
   world.bootCache = { portal: bootCache.grade ? bc.portal : null };
@@ -1605,6 +1613,9 @@ function installShadowFade() {
       for (const m of missions.warmMeshes()) warm.add(m);
       if (fx.lines) { fx.lines.visible = true; lazy.linesWere = true; }
       if (fx.wakeMesh) fx.wakeMesh.visible = true;
+      // the trees' instanced crowns: at least one instance each, so their
+      // program compiles here (trees.js)
+      if (world.trees) world.trees.warm = true;
       scene.add(warm);
       placeSun(player.x, player.y, player.z);
       player.updateCamera(1 / 60, null);   // look where the first frame will
@@ -1618,6 +1629,7 @@ function installShadowFade() {
       blog(`warm shaders: ${e.message}`);
     } finally {
       scene.remove(warm);
+      if (world.trees) { world.trees.warm = false; world.trees.invalidate(); }
       if (fx.wakeMesh) fx.wakeMesh.visible = wakeWas;
       if (fireWarm) fireWarm.restore();
       if (fx.lines) fx.lines.visible = false;
@@ -2974,6 +2986,7 @@ function draw(now) {
   if (lmRoot && updateLandmarkRange(lmRoot, camera.position) && shadowCache) shadowCache.invalidate();
   renderer.setRenderTarget(postfx.target);
   if (world) { world.updateTerrainLod(camera.position); world.cullTerrain(camera); }
+  if (world && world.trees) world.trees.update(camera);
   if (chunkCull) chunkCull.cull(camera);
   try { renderer.render(scene, camera); } finally { if (chunkCull) chunkCull.restore(); }
   // capture before the post passes reset the counters

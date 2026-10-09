@@ -11,6 +11,7 @@ import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, MOUTH_RAMP, mo
 import { Builder, ChunkBuilder, freezeStatic } from './build.js';
 import { memo } from './bootcache.js';
 import { buildMountains } from './mountains.js';
+import { plantTrees } from './trees.js';
 import { hash2, clamp, lerp, distToSeg, segDist } from './util.js';
 
 // The bore's cross-section, shared by the mesher and by the trench that has to
@@ -996,8 +997,19 @@ export class World {
     const lotTex = this.lotTexture();
     const LN = G.LOT_N.toFixed(1), LH = G.MAP_HALF.toFixed(1), LS = G.LOT_STEP.toFixed(4);
     const LA = G.LOT_ANG.toFixed(1);
+    // WOODLAND IS DRAWN AS CANOPY BY THE TERRAIN where no tree is built: past
+    // the streamed rings a forest has no trees at all, and from the air a
+    // wood read as the same mown green as a lawn. A 20 m coverage texture of
+    // the wood mask (geo.woodCover, linear and mipmapped, ~3 MB): under it the
+    // ground is dark, mottled forest -- the floor under the near trees and
+    // the canopy itself from afar. 0 draws, 0 triangles. (A property of the
+    // material too, so memory.js can let its bytes go once uploaded.)
+    const wood = this.woodTexture();
+    mat.woodMap = wood.tex;
+    const WN = (wood.n * 20).toFixed(1);
     mat.onBeforeCompile = (sh) => {
       if (lotTex) {
+        sh.uniforms.woodTex = { value: wood.tex };
         sh.uniforms.lotTex = { value: lotTex };
         sh.uniforms.lotRoad = { value: this.tx.road.map };
         sh.uniforms.lotWalk = { value: this.tx.sidewalk.map };
@@ -1017,6 +1029,7 @@ export class World {
       if (!lotTex) return;
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', `#include <common>
+          uniform sampler2D woodTex;
           uniform sampler2D lotTex;
           uniform sampler2D lotRoad;
           uniform sampler2D lotWalk;
@@ -1037,6 +1050,25 @@ export class World {
           }`)
         .replace('#include <color_fragment>', `#include <color_fragment>
           float lotCover = 0.0;
+          {
+            // Woodland: texel i of the 20 m coverage is centred at
+            // -MAP_HALF + 20 i + 5 (geo.woodCover). Crown-sized clumps from
+            // two scales of the cloud noise, dark gaps between them; the
+            // floor under the near trees is the same dark, as a forest's is.
+            float wc = texture2D( woodTex, ( vLotXZ + ${LH} + 5.0 ) / ${WN} ).r;
+            float wk = smoothstep( 0.28, 0.72, wc );
+            if ( wk > 0.0 ) {
+              // two scales, one turned 37 deg: aligned, the periodic noise
+              // tiled into a waffle grid at crown size
+              vec2 wq = vec2( vLotXZ.x * 0.8 + vLotXZ.y * 0.6, vLotXZ.y * 0.8 - vLotXZ.x * 0.6 );
+              float c1 = texture2D( lotNoise, wq / 67.0 + vec2( 0.17, 0.61 ) ).r;
+              float c2 = texture2D( lotNoise, vLotXZ / 29.0 + vec2( 0.53, 0.29 ) ).r;
+              float crown = smoothstep( 0.36, 0.62, c1 * 0.55 + c2 * 0.45 );
+              vec3 canopy = mix( vec3( 0.030, 0.052, 0.024 ), vec3( 0.068, 0.112, 0.046 ), crown );
+              canopy *= 0.85 + 0.3 * macroT.g;
+              diffuseColor.rgb = mix( diffuseColor.rgb, canopy, wk );
+            }
+          }
           {
             // THE EDGE IS RECONSTRUCTED, NOT SNAPPED. Each candidate code gets
             // a signed field from its four neighbours -- +(a - 0.5) where a tap
@@ -1168,7 +1200,7 @@ export class World {
         .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
           roughnessFactor = mix( roughnessFactor, 0.8, lotCover );`);
     };
-    mat.customProgramCacheKey = () => (lotTex ? 'terrain3scale-lots' : 'terrain3scale');
+    mat.customProgramCacheKey = () => (lotTex ? 'terrain3scale-lots-wood' : 'terrain3scale');
     this.terrainGroup = new THREE.Group();
     this.scene.add(this.terrainGroup);
     const lod = this.terrainLod = {
@@ -1550,6 +1582,19 @@ export class World {
    * memory -- under the 6.8 MB the 10 m R8 code texture it replaced took. No
    * mips (a code can't be averaged). Null if the data carries no lot layer.
    */
+  /** The wood mask as a 20 m coverage texture (geo.woodCover): R8, linear, mipmapped. */
+  woodTexture() {
+    const w = G.woodCover();
+    const t = new THREE.DataTexture(w.data, w.n, w.n, THREE.RedFormat, THREE.UnsignedByteType);
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.generateMipmaps = true;
+    t.unpackAlignment = 1;
+    t.colorSpace = THREE.NoColorSpace;
+    t.needsUpdate = true;
+    return { tex: t, n: w.n };
+  }
+
   lotTexture() {
     const lot = G.lotCodes();
     if (!lot) return null;
@@ -4447,6 +4492,7 @@ float frLine(float o, float fw, float c, float w) {
       c.group = step.value || null;
       c.lod = this._buildLod;
       if (c.group) { this.group.add(c.group); freezeStatic(c.group); }
+      if (this.trees) this.trees.setChunk(c.key, c.cx, c.cz, c.group && c.group.userData.trees, c.key);
       // the phone's shadow cache holds this chunk's shadows (shadowcache.js)
       if (this.onChunkChange) this.onChunkChange((c.cx + 0.5) * CHUNK, (c.cz + 0.5) * CHUNK, CHUNK);
       if (old) {
@@ -4466,6 +4512,7 @@ float frLine(float o, float fw, float c, float w) {
     // Solid street objects belong to the chunk that drew them, so they go when
     // it does. Leaving them behind means invisible trees you keep hitting.
     this.city.clearObstacles(this.city.chunkKey(c.cx, c.cz));
+    if (this.trees) this.trees.dropChunk(c.key);
     if (!c.group) return;
     c.group.traverse((o) => {
       if (o.geometry) o.geometry.dispose();
@@ -4559,6 +4606,8 @@ float frLine(float o, float fw, float c, float w) {
       yield; this._yt = performance.now();
       yield* this.meshProps(flat, glow, ch, cx, cz);
       yield; this._yt = performance.now();
+      yield* plantTrees(this, flat, ch, cx, cz, 1);
+      yield; this._yt = performance.now();
     } else {
       // Mid-ring massing: every building the far skyline skips, as one merged
       // box mesh per chunk. From the air the old mid ring was bare ground, so
@@ -4588,6 +4637,11 @@ float frLine(float o, float fw, float c, float w) {
         flat.box(bd.x, bd.y + bd.h, bd.z, bd.w * 0.96, 0.24, bd.d * 0.96, bd.rot, roof);
         if (performance.now() - this._yt > this._yb) { yield; this._yt = performance.now(); }
       }
+      yield; this._yt = performance.now();
+      // The same trees as the near build, drawn only (no trunks to hit): the
+      // housing stock had no canopy past the 1 km ring, which from the air
+      // was the top half of every frame.
+      yield* plantTrees(this, flat, ch, cx, cz, 0);
       yield; this._yt = performance.now();
     }
 
@@ -4640,6 +4694,9 @@ float frLine(float o, float fw, float c, float w) {
     const flatMesh = add(flat, glow.empty ? this.mats.flat : this.mats.flatGlow, true, true);
     if (flatMesh && this._fell.length) grp.userData.fell = { mesh: flatMesh, list: this._fell };
     this._fell = null;
+    // the trees' records, for the instanced crowns (trees.js TreeSystem)
+    grp.userData.trees = this._treeRecs;
+    this._treeRecs = null;
     yield;
     add(bl.glass, this.mats.glass, true, true); yield;
     add(bl.facade, this.mats.facade, true, true);
@@ -8037,7 +8094,6 @@ float frLine(float o, float fw, float c, float w) {
     const own = (x, z) => Math.floor(x / CHUNK) === cx && Math.floor(z / CHUNK) === cz;
     const poleCol = [0.28, 0.3, 0.32];
     const lampCol = [1.0, 0.94, 0.76];
-    const trunk = [0.32, 0.25, 0.18];
     // NOTHING IS PLANTED IN A PORTAL PIT. The carve digs hw + 7.6 m either
     // side of a cutting, and a road carried over it on a lid keeps its grade
     // while its kerbside does not: street trees, lamp posts and clutter set at
@@ -8105,21 +8161,10 @@ float frLine(float o, float fw, float c, float w) {
           glow.box(ox - px * sg * 1.85, gy + 7.06, oz - pz * sg * 1.85, 0.7, 0.1, 0.34, armRot, lampCol);
           this._fell.push(ox, oz, f0, flat.ni);
         } else if (h < 0.84) {
-          // street tree in a grate, three canopy layers
-          const th = 4.5 + h * 5;
-          flat.box(ox, gy - 0.02, oz, 1.5, 0.06, 1.5, armRot, [0.3, 0.3, 0.31]);
-          flat.prism(ox, gy, oz, 0.26 + h * 0.1, th * 0.5, 6, trunk);
-          flat.prism(ox, gy + th * 0.42, oz, 0.16, th * 0.28, 5, trunk);
-          // Same muted range as the park canopies, or a street of trees reads
-          // brighter than the buildings behind them.
-          const vw = 0.72 + h * 0.44;
-          const g = [0.165 * vw, 0.315 * vw, 0.14 * vw];
-          const gd = [g[0] * 0.64, g[1] * 0.64, g[2] * 0.70];
-          // Street trees are broadleaf: a row of conifers down a city block is
-          // the giveaway that one asset is doing all the work.
-          this.meshCanopy(flat, ox, gy, oz, th, 1, h, g, gd);
-          this.city.addObstacle(this._ck, ox, oz, 0.5);
-          this._fell.push(ox, oz, f0, flat.ni);
+          // The street tree's old slot, left empty on purpose: trees.js plants
+          // both kerbs every 11-13 m now and keeps off every slot here, so a
+          // tree in this one would stand on its own lamp's line. (Removing
+          // the branch would hand its hash band to the hydrants below.)
         } else if (h < 0.88) {
           flat.prism(ox, gy, oz, 0.2, 0.55, 8, [0.72, 0.16, 0.12]);
           flat.prism(ox, gy + 0.55, oz, 0.15, 0.24, 8, [0.72, 0.16, 0.12]);
@@ -8238,115 +8283,15 @@ float frLine(float o, float fw, float c, float w) {
     // Park furniture, where OSM maps it (tools/build_parkprops.py): benches,
     // picnic tables, playgrounds, fountains. A park that was lawn and trees
     // had nothing in it at the scale you walk at.
-    const playgrounds = this.meshParkFurniture(flat, cx, cz, inPit);
-
-    // Park trees. The count is candidates over the whole chunk, of which only
-    // the ones landing in a park survive -- at 46 a chunk-sized park got one
-    // tree per 60 m and read as an empty green rectangle, which is most of why
-    // the parks looked unfinished.
-    const x0 = cx * CHUNK, z0 = cz * CHUNK;
-    let treeSkip = 0;
-    for (let i = 0; i < 230; i++) {
-      if (performance.now() - this._yt > this._yb) { yield; this._yt = performance.now(); }
-      const hx = hash2(cx * 71 + i, cz * 131 + 7);
-      const hz = hash2(cx * 37 + i, cz * 53 + 13);
-      const x = x0 + hx * CHUNK, z = z0 + hz * CHUNK;
-      if (!G.inPark(x, z)) continue;
-      // Parks are a raster of OSM greenspace and real roads run straight
-      // through them -- Aurora crosses Woodland Park, Lake Washington Blvd runs
-      // the length of its parks. 6.4% of sampled carriageway centres sit inside
-      // the green mask, which is exactly where a tree would be planted in the
-      // middle of the road. Nothing else filters this: `inPark` knows about
-      // grass, not about tarmac.
-      if (this.city.onRoad(x, z, 2.5)) { treeSkip++; continue; }
-      if (this.inAirfield(x, z)) { treeSkip++; continue; }
-      // ...nor across a stunt jump's run-up or landing (stunts.js).
-      if (this.city.jumpClear(x, z)) { treeSkip++; continue; }
-      // ...nor on a car park or court. The lot layer may pave over the park
-      // mask (a park's own car park is real tarmac), and the terrain draws it
-      // paved, so a tree there stands in the middle of the bays. A paved
-      // SQUARE keeps a third of its trees: Occidental is paving under planes.
-      const lk = G.lotAt(x, z);
-      if (lk >= 0 && (lk !== LOT_PLAZA || hash2(cx * 17 + i, cz * 29 + 3) > 0.33)) { treeSkip++; continue; }
-      // ...nor inside a building. Parks and footprints come from two different
-      // OSM layers and they overlap: greenspace is mapped right up to and over
-      // the museum, pavilion or house standing in it, so `inPark` happily says
-      // yes in the middle of a building. Measured, 9.3 % of surviving park
-      // candidates stood inside a footprint -- trees growing through roofs.
-      if (this.inBuilding(x, z, 0.8)) { treeSkip++; continue; }
-      // ...nor on a playground's equipment.
-      if (playgrounds.some((p) => Math.hypot(p[0] - x, p[1] - z) < p[2])) { treeSkip++; continue; }
-      // ...nor in the water. The green mask and the water mask are separate
-      // rasters and their shorelines do not agree to the metre, so inPark says
-      // yes on cells that are under Puget Sound or below the tide line. 63
-      // trunks across the map were standing in the sea -- counted off the trees
-      // that actually get planted, not off the raster candidates, which is a
-      // number that cannot move and reported 16 either way.
-      //
-      // The water mask is the authority on what is wet; WET_FLOOR only catches
-      // the shoreline band where the two rasters disagree.
-      //
-      // waterLevelAt once answered over a lake's axis-aligned BOUNDING BOX
-      // ("Green Lake, 50.3 m" for the whole park ringing it) and testing
-      // terrain against it deleted 105 of Green Lake's 717 trees. It now
-      // answers over the lake's own drawn water (G.inLake), which is what the
-      // lake plane is masked to -- and a lake's dug bed runs up to a 40 m cell
-      // past the water mask, so trees stood in the drawn lake, solid to boats,
-      // in front of the small lakes' docks. Ground under a lake's (or the
-      // canal's) surface where it is drawn is in the water.
-      if (G.isWater(x, z) || G.terrainHeight(x, z) < WET_FLOOR) { treeSkip++; continue; }
-      if (this.inDrawnLake(x, z)) { treeSkip++; cityStats.treesInLake = (cityStats.treesInLake || 0) + 1; continue; }
-      if (inPit(x, z)) { cityStats.propsInPit++; continue; }
-      const h = hash2(Math.round(x), Math.round(z));
-      const gy = G.terrainHeight(x, z);
-      // Foliage that isn't one emerald cone.
-      //
-      // A single saturated green was the most out-of-gamut thing in every frame
-      // -- once the rest of the palette was pulled toward grey it stopped
-      // reading as a tree and started reading as a marker. Real canopies are
-      // desaturated, vary between individuals, and are darker underneath than
-      // on top. Three silhouettes keep a stand from looking stamped.
-      const h2 = hash2(Math.round(x * 3), Math.round(z * 3));
-      const th = 6 + h * 8;
-      const kind = h2 < 0.42 ? 0 : h2 < 0.78 ? 1 : 2;   // conifer, broadleaf, scrub
-      const f0 = flat.ni;
-      flat.prism(x, gy, z, 0.28 + h * 0.18, th * (kind === 1 ? 0.52 : 0.4), 6, trunk);
-      // Hue drifts a little yellow-to-blue between individuals; value does most
-      // of the work, exactly as with the building palette.
-      // Canopies were pulled toward grey back when the emerald cone was the
-      // most out-of-gamut thing in every frame -- but that was tuned with no
-      // tone curve in front of it. With ACES running and its saturation paid
-      // back, the same values leave a tree paler than the lawn it stands on.
-      // Foliage carries more chroma than grass and sits darker, which is also
-      // what a conifer against a mown park actually looks like.
-      const warm = (h2 - 0.5) * 0.06;
-      const v = 0.70 + h * 0.48;
-      const g = [(0.155 + warm) * v, (0.305 + h * 0.05) * v, (0.13 - warm * 0.5) * v];
-      // A conifer is not a green tree, it is a DARK one.
-      //
-      // Sharing one foliage colour across all three silhouettes left the
-      // Douglas firs the same value as the lawn they stand on, which is the
-      // one thing a Pacific Northwest park never looks like. Deep forest green
-      // is darker and cooler than broadleaf, not merely a shade of it -- so
-      // red comes down hardest and blue is held up.
-      if (kind === 0) {
-        g[0] *= 0.60; g[1] *= 0.76; g[2] *= 0.82;
-      }
-      const gd = [g[0] * 0.62, g[1] * 0.62, g[2] * 0.68];
-      this.meshCanopy(flat, x, gy, z, th, kind, h, g, gd);
-      // A tree is solid. Radius is the trunk, not the canopy: you walk and
-      // drive under a canopy, and blocking its full spread would make a park
-      // impassable.
-      this.city.addObstacle(this._ck, x, z, 0.45 + h * 0.25);
-      this._fell.push(x, z, f0, flat.ni);
-    }
-    cityStats.treesSkipped += treeSkip;
+    // Park trees, street trees and the rest are planted after this
+    // (plantTrees, trees.js), from the same build step.
+    this.meshParkFurniture(flat, cx, cz, inPit);
   }
 
   /**
    * The chunk's own benches, picnic tables, playgrounds and fountains, into
-   * the flat mesh (no draws). Returns the playgrounds' [x, z, clear radius],
-   * which the park-tree scatter keeps off. Tables and play structures are
+   * the flat mesh (no draws). Returns the playgrounds' [x, z, clear radius];
+   * trees.js keeps its trees off the same circles (playgroundsOf). Tables and play structures are
    * solid; a bench is not, since you sit, not collide.
    */
   meshParkFurniture(flat, cx, cz, inPit) {
@@ -8439,72 +8384,5 @@ float frLine(float o, float fw, float c, float w) {
       }
     }
     return out;
-  }
-
-  /**
-   * One tree crown. Shared by park scatter and street trees so the two can't
-   * drift apart -- a street of one species beside a park of another was how the
-   * old duplicated code read.
-   *
-   * `prism` is open at both ends: a squashed one seen from eye level is a
-   * single band of vertical wall with no top and no bottom, which is why the
-   * broadleaf canopy rendered as a flat green slab on a stick. Crowns are
-   * closed spheroids now.
-   */
-  meshCanopy(flat, x, gy, z, th, kind, h, g, gd) {
-    // Sunlit foliage is a different COLOUR from shaded foliage, not just a
-    // darker shade: the lit outer leaves go yellow-green. Baking that into the
-    // lobes on the sun's side, and the dark into the lobes underneath, is what
-    // makes a crown read as a volume of leaves rather than one tinted ball --
-    // the key light alone cannot do it, because every lobe faces every way.
-    const lit = [g[0] * 1.3, g[1] * 1.2, g[2] * 1.02];
-    // Toward the sun: main.js SUN_OFFSET (-215, 200, -150), normalised in xz.
-    const SX = -0.82, SZ = -0.57;
-    const wob = (k) => hash2(Math.round(x * 5) + k * 17, Math.round(z * 5) + k * 29);
-    if (kind === 0) {
-      // Conifer: five narrowing skirts instead of three cones. The pitch
-      // between tiers is under a skirt's own height, so each one overlaps the
-      // next and the silhouette steps in like a fir, and the tiers brighten
-      // toward the leader, where the light actually lands. 8 triangles a tier.
-      const TIERS = 5;
-      const r0 = 2.0 + h * 1.7;
-      const y0 = gy + th * 0.2, span = th * 0.62;
-      for (let i = 0; i < TIERS; i++) {
-        const t = i / (TIERS - 1);
-        const col = t < 0.5
-          ? [gd[0] + (g[0] - gd[0]) * t * 2, gd[1] + (g[1] - gd[1]) * t * 2, gd[2] + (g[2] - gd[2]) * t * 2]
-          : [g[0] + (lit[0] - g[0]) * (t - 0.5), g[1] + (lit[1] - g[1]) * (t - 0.5), g[2] + (lit[2] - g[2]) * (t - 0.5)];
-        const r = r0 * (1 - t * 0.8) * (0.92 + wob(i) * 0.16);
-        flat.cone(x, y0 + span * t, z, r, th * (0.30 - t * 0.06), 8, col, 0.38);
-      }
-    } else if (kind === 1) {
-      // Broadleaf: a dark core with four lobes clustered around and over it.
-      // The lobes on the sun side and on top take the lit colour, the ones
-      // away from the sun keep the mid, so the crown has a bright shoulder and
-      // a shaded underside at any heading. Per-tree rotation and size jitter
-      // keep a street of them from being stamped.
-      const cr = 2.0 + h * 1.7;
-      const cy = gy + th * 0.64;
-      const fc = [x, cy + cr * 0.15, z];
-      flat.foliage(x, cy, z, cr * 0.9, 7, 3, gd, 0.78, 0.3, 0.42, fc);
-      const rot0 = wob(1) * Math.PI * 2;
-      for (let k = 0; k < 4; k++) {
-        const a = rot0 + (k * Math.PI) / 2 + (wob(k + 2) - 0.5) * 0.7;
-        const ox = Math.cos(a), oz = Math.sin(a);
-        const sunward = ox * SX + oz * SZ;
-        const lr = cr * (0.56 + wob(k + 6) * 0.16);
-        const col = sunward > 0.2 ? lit : g;
-        flat.foliage(x + ox * cr * 0.55, cy + cr * (0.08 + wob(k + 10) * 0.25), z + oz * cr * 0.55,
-          lr, 6, 3, col, 0.82, 0.32, 0.36, fc);
-      }
-      // crown, nudged toward the light
-      flat.foliage(x + SX * cr * 0.18, cy + cr * 0.52, z + SZ * cr * 0.18, cr * 0.58, 6, 3, lit, 0.85, 0.3, 0.22, fc);
-    } else {
-      // Scrub: low and wide, two lobes, the sunward one lit.
-      const cr = 1.5 + h * 1.1;
-      const fc = [x, gy + th * 0.34 + cr * 0.1, z];
-      flat.foliage(x, gy + th * 0.34, z, cr, 6, 3, gd, 0.7, 0.34, 0.42, fc);
-      flat.foliage(x + SX * cr * 0.35, gy + th * 0.34 + cr * 0.3, z + SZ * cr * 0.35, cr * 0.62, 6, 3, lit, 0.8, 0.3, 0.26, fc);
-    }
   }
 }

@@ -506,6 +506,36 @@ export function inPark(x, z) {
   return maskAt(GRN, x, z) !== 0;
 }
 
+// WHICH GREEN (tools/build_wood.py, surface.png's blue): the mask's value.
+// A forest and a mown lawn were one raster, so Discovery Park was planted
+// like a golf course; OSM tags which is which.
+export const GREEN_LAWN = 1, GREEN_WOOD = 2, GREEN_SCRUB = 3, GREEN_OPEN = 4;
+/** 0 not green, else GREEN_LAWN / _WOOD / _SCRUB / _OPEN (a pitch, a beach). */
+export function greenKind(x, z) {
+  return maskAt(GRN, x, z);
+}
+
+/**
+ * Woodland as a coverage texture's bytes: each 2 x 2 block of the 10 m mask
+ * averaged into one 20 m texel (n x n, 0..255; texel i covers mask cells 2i
+ * and 2i + 1, so its centre is at -MAP_HALF + 20 i + 5). For the terrain
+ * shader, which draws woodland as canopy where no tree is built. Linear-
+ * filtered on the GPU, so a wood's edge is soft at 20 m, as a real one is.
+ */
+export function woodCover() {
+  const n = Math.floor(MASK_N / 2), out = new Uint8Array(n * n);
+  if (!GRN) return { data: out, n };
+  for (let j = 0; j < n; j++) {
+    const r0 = 2 * j * MASK_N, r1 = r0 + MASK_N;
+    for (let i = 0, o = j * n; i < n; i++, o++) {
+      const c = 2 * i;
+      out[o] = ((GRN[r0 + c] === GREEN_WOOD) + (GRN[r0 + c + 1] === GREEN_WOOD)
+        + (GRN[r1 + c] === GREEN_WOOD) + (GRN[r1 + c + 1] === GREEN_WOOD)) * 63.75;
+    }
+  }
+  return { data: out, n };
+}
+
 // THE LOT LAYER: paved ground that is not a building -- car parks, plazas,
 // yards, commercial hardstanding. data/lots.png, LOT_N^2 samples LOT_STEP
 // apart, two bytes each: the share of the sample's own cell that has its code,
