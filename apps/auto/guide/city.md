@@ -153,13 +153,20 @@ is `rot - t`**, because three's `rotation.y = t` maps local (x, z) to
 - **A wall is a row of short solids, never one long one** (`outline` in
   `lmdowntown.js`: pieces of ~12 m). The Convention Center's 130 m Pike Street
   face was ONE solid, and one street crossing its end dropped all of it -- a
-  car drove through the whole front. **A solid with `surfaceOnly` is dropped
-  only by a road on the surface** (`onRoad(..., includeTunnel = false)`): I-5
-  runs in a tunnel under the Arch, and a tunnel under a wall is no reason to
-  drop it. That also needs the solid's `y0` at the GROUND where the wall
-  stands (a function of the piece's midpoint), so a car in the tunnel is more
-  than the 2.5 m below `y0` that a solid reaches and is not hit by the wall
-  above it.
+  car drove through the whole front. **A solid with `surfaceOnly` is dropped by
+  any road at its own level, tunnel flag or not** (`landmarks.js onRoad`: every
+  edge near its footprint is sampled and dropped if its height is within
+  `y0 - 2.5 .. y1`). The first cut asked `onRoad(..., includeTunnel = false)`
+  and ignored the tunnel-flagged roads, but **a `tunnel` edge runs at grade
+  where it enters or leaves a portal**: I-5, its Express lanes, the Pike ramp
+  and Convention Place's end all met the Arch's walls at road level and a car
+  stopped dead from 25 m/s against nothing visible (35 hit samples; master has
+  none because it had no convention solids). Roads deep under the wall are past
+  the 2.5 m a solid reaches below `y0` (the ground at the wall) and pass.
+  **`landmarkshots --roads`** samples every road edge within 330 m of every
+  landmark against `landmarkHit` and **`--drive`** drives I-5, the Express
+  lanes, the ramp and Convention Place both ways at fixed dt through
+  `player.update`: both must be clean, for any landmark that adds solids.
 - **A deck you can walk onto needs a solid that ends 0.3 m under it.** The
   Locks' walls are platforms (`userData.decks`) and solids: with the solid's
   `y1` at the deck's own height, a walker standing on it is *at* `y1` and

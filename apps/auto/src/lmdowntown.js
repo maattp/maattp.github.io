@@ -834,6 +834,7 @@ export function makeDowntown(h) {
     const g = new THREE.Group();
     K = new Kit();
     g.userData.worldAligned = true;
+    g.userData.clearAt = [[0, -3, 31], [12, 14, 36]];     // no tree grows through the terrace or stands in the view over it
     const o = origin(l, 0);
     const X0 = -27, X1 = 27, Z0 = -14.2, Z1 = 8.0;
     // the terrace's surface passes 0.1 m over the sculpture's own ground and falls 4 % to the south
@@ -925,6 +926,7 @@ export function makeDowntown(h) {
     const g = new THREE.Group();
     K = new Kit();
     g.userData.worldAligned = true;
+    g.userData.clearAt = [[-60, 75, 75], [60, 75, 75], [-50, 135, 45]];   // none on the walls and the dam
     const o = origin(l, 0);
     const TOP = -0.5, BOT = -13;
     const conc = P(0xb9b6ae, 0.9, 0, 0.5), concD = P(0x8d8a82, 0.92, 0, 0.45);

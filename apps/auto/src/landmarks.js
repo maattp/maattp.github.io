@@ -3216,6 +3216,7 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
   const clusters = new Map();
   const solids = [];
   const dropped = [];
+  const clearAt = [];
   const addTo = (key, obj) => {
     let c = clusters.get(key);
     if (!c) clusters.set(key, (c = new THREE.Group()));
@@ -3321,6 +3322,8 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
         if (gw) addTo(l.kind === 'airport' ? 'airport' : `${Math.round(x / 1200)},${Math.round(z / 1200)}`, gw);
       }
     }
+    // open ground the scatter must keep off (circles [dx, dz, r] from the group's point, world axes)
+    for (const [dx, dz, r] of g.userData.clearAt || []) clearAt.push([x + dx, z + dz, r]);
     addTo(l.kind === 'airport' ? 'airport' : `${Math.round(x / 1200)},${Math.round(z / 1200)}`, g);
   }
   atlas.tex.needsUpdate = true;
@@ -3364,7 +3367,7 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
   // Bellevue Downtown Park's lawn and promenade are open ground: the builder
   // plants the promenade's own trees, so the scatter keeps out (citygen
   // jumpClear)
-  if (city) city.clearCircles = [[BDP.x, BDP.z, 121], ...(mono ? mono.clear : [])];
+  if (city) city.clearCircles = [[BDP.x, BDP.z, 121], ...(mono ? mono.clear : []), ...clearAt];
   root.userData.platforms = platforms.length;
   root.userData.marinas = marinas;
   root.userData.beaches = beaches;

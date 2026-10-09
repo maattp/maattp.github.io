@@ -29,8 +29,10 @@ Part of the Auto guide; the index and the laws every change needs are in
   buildings fix the stack, not the chambers). The Locks' chambers are the
   10 m water mask, so a boat can be taken into the large lock and the
   intermediate gate stands across its middle at the fresh/salt step. The
-  Arch's tunnel roads (I-5, Convention Place's passages) pass under its solid
-  walls by the ground rule, but the building has no passage drawn for them.
+  Arch has no wall pieces where I-5, its ramps and Convention Place's
+  passages meet its footprint at road level (they are dropped so a car is not
+  stopped by nothing), and no portal or passage is drawn there: you drive into
+  a plain facade line that simply has a gap in its collision.
 - **No Kenmore Air Harbor.** The real floatplane base at the north end of Lake
   Washington (47.756 N) is ~0.5 km past the map's north edge (47.752 N).
 
