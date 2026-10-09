@@ -816,9 +816,10 @@ export class TrafficSystem {
    * freeway or a ramp against its flow (that is the head-on on SR-99), but it
    * will run a block of a one-way SURFACE street the wrong way to cut a
    * suspect off, lights on -- so that is allowed at 3x the cost, and chosen
-   * only when it saves a real detour.
+   * only when it saves a real detour. `strict` (a taxi's fare) forbids it:
+   * no wrong-way edge at all.
    */
-  findPath(fromNode, toNode, limit = 2500) {
+  findPath(fromNode, toNode, limit = 2500, strict = false) {
     const city = this.city;
     if (fromNode < 0 || toNode < 0) return null;
     const open = [fromNode];
@@ -847,7 +848,8 @@ export class TrafficSystem {
         if (e.noTraffic) continue;         // a stunt ramp stands on it
         let mul = e.cls === 'res' ? 1.4 : e.cls === 'hwy' ? 0.7 : 1;
         if (!this.allowed(ei, e.a === cur ? 1 : -1)) {
-          if (e.cls === 'hwy' || e.cls === 'ramp') continue;
+          // (a taxi's route, strict, never goes the wrong way: taxi.js)
+          if (strict || e.cls === 'hwy' || e.cls === 'ramp') continue;
           mul *= 3;
         }
         const cost = gScore.get(cur) + e.len * mul;

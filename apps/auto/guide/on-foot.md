@@ -425,6 +425,7 @@ walk / flee loop tested nothing but knock-back.
   edge are `_move`'s. Not in view nearer than 45 m unless the crowd is a long
   way short (`_fill`: just arrived or warped: 0.12 s a spawn, anywhere), and
   half as often past 12 m/s in a car, where a spawn is all it is.
+- **A taxi fare is not the crowd's** (`p.fare`, taxi.js): not recycled past `CULL_R`, not scared, driven by the taxi's own `fx, fz`; the taxi hands them back with `fare = 0` + `reanchor`.
 - **A pedestrian's side is across the way he GOES.** The walking line is
   `perp = (-fz, fx) * side` along his travel direction, but a spawn put him at
   `-dz, dx` of the EDGE's own direction: a pedestrian spawned facing against it

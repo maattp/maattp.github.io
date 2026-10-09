@@ -600,6 +600,36 @@ export class Hud {
         ctx.fill(); ctx.stroke();
       }
     }
+    // a taxi fare (taxi.js): the route in yellow, the person hailing, the drop-off.
+    // Both pins stay on the dial's edge when they are off it, so you know which way
+    if (this.fare) {
+      ctx.save();
+      const F = this.fare, lim = S / (2 * zoom) - 6 / zoom;
+      if (F.route && F.route.length > 3) {
+        // magenta on a dark casing: the map's roads are yellow and white, and the
+        // arterials and freeways swallowed a yellow route
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        ctx.beginPath();
+        for (let i = 0; i < F.route.length; i += 2) {
+          const [rx, rz] = toMap(F.route[i], F.route[i + 1]);
+          if (i) ctx.lineTo(rx, rz); else ctx.moveTo(rx, rz);
+        }
+        ctx.strokeStyle = 'rgba(20,0,24,0.9)'; ctx.lineWidth = 5 / zoom; ctx.stroke();
+        ctx.strokeStyle = '#ff35d6'; ctx.lineWidth = 2.6 / zoom; ctx.stroke();
+      }
+      for (const [pt, ring] of [[F.hail, true], [F.dest, false]]) {
+        if (!pt) continue;
+        let [bx, bz] = toMap(pt.x, pt.z);
+        const l = Math.hypot(bx, bz);
+        if (l > lim) { bx *= lim / l; bz *= lim / l; }
+        const pulse = 1 + 0.2 * Math.sin(performance.now() * 0.008);
+        ctx.fillStyle = '#ffd24a'; ctx.strokeStyle = '#2a1f00'; ctx.lineWidth = 1.5 / zoom;
+        ctx.beginPath(); ctx.arc(bx, bz, (ring ? 5.5 * pulse : 6.5) / zoom, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#2a1f00'; ctx.font = `bold ${8 / zoom}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(ring ? '!' : '$', bx, bz + 0.5 / zoom);
+      }
+      ctx.restore();
+    }
     if (game.target) {
       const [bx, bz] = toMap(game.target.x, game.target.z);
       ctx.fillStyle = '#ffd24a';
@@ -844,6 +874,31 @@ export class Hud {
       ctx.beginPath();
       ctx.arc(tx, tz, size * 0.012, 0, Math.PI * 2);
       ctx.fill(); ctx.stroke();
+    }
+    // a taxi fare (taxi.js): the route and its two pins
+    if (this.fare) {
+      ctx.save();
+      const F = this.fare;
+      if (F.route && F.route.length > 3) {
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        ctx.beginPath();
+        for (let i = 0; i < F.route.length; i += 2) {
+          const [rx, rz] = toC(F.route[i], F.route[i + 1]);
+          if (i) ctx.lineTo(rx, rz); else ctx.moveTo(rx, rz);
+        }
+        const w = Math.max(2.5, size * 0.004);
+        ctx.strokeStyle = 'rgba(20,0,24,0.9)'; ctx.lineWidth = w * 1.9; ctx.stroke();
+        ctx.strokeStyle = '#ff35d6'; ctx.lineWidth = w; ctx.stroke();
+      }
+      for (const [pt, ring] of [[F.hail, true], [F.dest, false]]) {
+        if (!pt) continue;
+        const [tx, tz] = toC(pt.x, pt.z), r = size * (ring ? 0.011 : 0.013);
+        ctx.fillStyle = '#ffd24a'; ctx.strokeStyle = '#2a1f00'; ctx.lineWidth = Math.max(1.5, size * 0.002);
+        ctx.beginPath(); ctx.arc(tx, tz, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#2a1f00'; ctx.font = `bold ${r * 1.4}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(ring ? '!' : '$', tx, tz + r * 0.08);
+      }
+      ctx.restore();
     }
     // a police mission's suspects, as red diamonds
     for (const v of (this.suspects || [])) {

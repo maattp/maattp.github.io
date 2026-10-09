@@ -652,3 +652,60 @@ JOBS.
   rank, the toast, and that the panel sits in the card above the OpenStreetMap
   credit (the credit paragraph is the pause menu's end; do not remove it). Look
   at `tools/data/careershots/pause-top.png`.
+
+## Taxi fares (`src/taxi.js`)
+
+**FARE in a taxi (`spec.taxi`) goes on shift**, the way MISSION does in a police
+car: the button sits in MISSION's slot (`data-taxi`, set by `TaxiFares.update`;
+T on a keyboard), lights red while on shift, and pressing it again goes off.
+`__dbg.taxi` (also `__dbg.jobs`).
+
+- **The hail.** `peds.spawnFare` puts a civilian on the pavement of a surface
+  street 90-240 m off (not a freeway, ramp, bore or `noTraffic` edge), facing the
+  road with an arm up (`hailPose`, set after `animateWalk`). `p.fare` is the
+  taxi's claim on a ped: 1 hailing, 2 walking to `(fx, fz)`; a claimed ped is
+  never recycled by the 90 m cull and never scared (`scare`), so the taxi must
+  always let go (`release`: `fare = 0` + `reanchor`, or `remove` when far).
+  A thin yellow pillar floats over their head (above, not round them: a beam
+  they stand in hides them) and a `!` pin is on both maps (`hud.fare`).
+- **Searching is spread across frames** (`PathJob`, `searchStep`, `thinkStep`):
+  FARE returns at once; each frame spawns ONE hail candidate and gives its A*
+  220 expansions (a resumable, binary-heap A* with the strict one-way rules --
+  `traffic.findPath` scans its open list and a *failing* search runs to its
+  limit). The same for the destination ("Where to?" is a stage between boarding
+  and the ride). Run to the end in one frame, a hail was up to 8 searches and a
+  destination up to 13 more: at the phone's 8x, the worst single call of a whole
+  fare went from 96-172 ms to 15-60 ms (`node tools/taxihitch.mjs`, 12 sites; the
+  spread is contention on a shared machine). The union-find over the nodes and
+  the search arrays are built by `warm()` at boot (~180 ms at 8x, on the loading
+  screen): in the first frame of the first fare they were the biggest spike left.
+- **Boarding**: stopped (< 1.6 m/s) within 14 m for 0.5 s and they walk to the
+  nearer door (it follows a car that creeps), 7 s at most, then are removed from
+  the crowd (in the back seat, unseen). Nobody pulls up for 150 s: they find
+  another cab.
+- **The destination** is a real name (`WANT`: landmarks by mapped name or
+  neighbourhoods; ones the map lacks are skipped), 700-6000 m off, whose route
+  `traffic.findPath` finds (>= 500 m), else a random corner named by
+  `placeNameAt`. The drop-off is `respawnPointNear` (ground, not a deck); the
+  route is drawn on both maps in yellow.
+- **The money**: fare = $70 + $210/km of ROUTE (a detour earns nothing and costs
+  time; `fareFor`). The tip is up to half the fare, x a speed score (1 at the
+  par of 12 m/s + 20 s, 0 at the limit of 6.5 m/s + 60 s, which is also the fare
+  clock) x smoothness (starts 1; `onCrash` impact >= 9 costs 0.3 and the streak,
+  >= 4 costs 0.1, a pedestrian hit 0.4; a close pass over 14 m/s closing at under
+  1.2 m gives 0.05 back, three at most). The passenger says so in a toast. A
+  streak of fares without a crash adds $25 x (n-1), capped at 6 steps; the next
+  fare hails 5 s after the drop-off unless you press FARE.
+- **Drop-off**: within 15 m, stopped 0.4 s: they step out the kerb side and
+  walk 14 m off (`leavers`, released into the crowd after 5 s), `audio.cash()`,
+  the money (which `career.js` saves) and the count (`localStorage 'auto-taxi'`,
+  read by the Passport's text line "Taxi fares n").
+- **The objective line** is put back only if it is still the taxi's own text, and to the delivery that is current at that moment; another system's line (a police mission, a stunt) is never touched.
+- **Ending leaves nothing**: leaving the taxi, WASTED, a respawn, 3+ stars, the
+  fare clock, or FARE again all `end()`: pillar, map marks, objective line (put
+  back only if it is still ours), the passenger and any leaver.
+- **Verify**: `AUTO_HTTP_PORT=8000 node tools/taxicheck.mjs [--desktop] [--shots DIR]`
+  runs the whole job at fixed dt with the game paused (the probe steps traffic,
+  peds and the taxi itself) and every ending above; `--shots` writes `hail.png`
+  and `dropoff.png` (camera forced behind the car with `updateCamera`, or it is
+  still flying in from the last teleport).
