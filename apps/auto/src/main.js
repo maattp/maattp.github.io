@@ -41,6 +41,7 @@ import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo,
 import { TrafficSystem, collideWithBuildings, warmLightBar } from './traffic.js';
 import { Police } from './police.js';
 import { PoliceMissions } from './policemissions.js';
+import { TaxiFares } from './taxi.js';
 import { TYPES as VEHICLE_TYPES, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial, dropVehicleArrays } from './vehicles.js';
 
 // Aircraft come in their own colours, parked at Boeing Field or delivered.
@@ -225,6 +226,7 @@ class Game {
 
   onCrash(impact, isPolice, other) {
     audio.crash(impact);
+    if (taxi) taxi.onCrash(impact);
     const p = player.position;
     fx.sparks(p.x, p.y + 0.8, p.z, Math.min(14, Math.round(impact)));
     // A police mission's suspect is yours to ram.
@@ -245,6 +247,7 @@ class Game {
 
   onPedHit(byPlayer, ped) {
     audio.pedHit();
+    if (taxi) taxi.onPedHit(byPlayer);
     fx.blood(ped.x, ped.y + 1, ped.z);
     peds.scare(ped.x, ped.z, 30);
     if (byPlayer) this.addHeat(22);
@@ -551,6 +554,7 @@ class Game {
 
 let chunkCull = null;   // chunkcull.js
 let police = null, missions = null;   // the wanted levels (police.js) and police missions (policemissions.js)
+let taxi = null;                      // taxi fares (taxi.js)
 let nearShadow = null;  // nearshadow.js
 // Who casts into the near map this frame: the player on foot, or the vehicle
 // he drives on the ground or the water. An aircraft keeps the sun's map (its
@@ -1095,7 +1099,7 @@ function installShadowFade() {
   game = new Game();
   // the wallet comes back from the last launch (career.js); the passport reads the rest
   career = new Career(game, () => ({
-    acts, stunts, islands, missions, seafair, arcade,
+    acts, stunts, islands, missions, seafair, arcade, taxi,
     // a best on the board = played (golf's is a stroke count, so lower is better; any is a round)
     games: [['fishing', fishing], ['fishtoss', fishToss], ['hoops', hoops], ['pinball', pinball], ['tower', tower], ['coffee', coffee], ['pickle', pickle], ['golf', golf]]
       .map(([id, g]) => ({ id, best: g ? +(g.best || g.hi || 0) : 0 })),
@@ -1465,6 +1469,7 @@ function installShadowFade() {
   game.police = police;
   missions = new PoliceMissions({ scene, city, game, traffic, police, hud, audio });
   game.setSiren = (v, on) => { traffic.lightBar(v); setSiren(v, on); };
+  taxi = new TaxiFares({ scene, city, game, traffic, peds, hud, audio, root: controls.root });
 
   // delivery marker
   const mg = new THREE.CylinderGeometry(6, 6, 26, 18, 1, true);
@@ -1542,7 +1547,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { career, police, missions, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   wireUi();
   career.start(hud);
   game.newTarget();
@@ -1611,6 +1616,7 @@ function installShadowFade() {
       warm.add(warmLightBar());
       for (const m of police.warmMeshes()) warm.add(m);
       for (const m of missions.warmMeshes()) warm.add(m);
+      for (const m of taxi.warmMeshes()) warm.add(m);
       if (fx.lines) { fx.lines.visible = true; lazy.linesWere = true; }
       if (fx.wakeMesh) fx.wakeMesh.visible = true;
       // the trees' instanced crowns: at least one instance each, so their
@@ -2182,6 +2188,12 @@ function wireUi() {
   // (policemissions.js). N on a keyboard.
   const missionPad = document.querySelector('[data-btn="policemission"]');
   if (missionPad) missionPad.addEventListener('pointerdown', () => { if (missions && !game.paused && !game.dead) missions.toggle(player); });
+  // FARE, in a taxi: go on shift, or off it (taxi.js). T on a keyboard.
+  const farePad = document.querySelector('[data-btn="taxifare"]');
+  if (farePad) farePad.addEventListener('pointerdown', () => { if (taxi && !game.paused && !game.dead) taxi.toggle(player); });
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyT' && !e.repeat && taxi && !game.paused && !game.dead && (taxi.on || taxi.available(player))) taxi.toggle(player);
+  });
   window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyN' && !e.repeat && missions && !game.paused && !game.dead && (missions.run || missions.nextT > 0 || missions.available(player))) missions.toggle(player);
   });
@@ -2689,6 +2701,7 @@ function frame(now) {
   if (tanks) tanks.update(dt);
   if (acts) acts.update(dt, player);
   if (missions) missions.update(dt, player);
+  if (taxi) taxi.update(dt, player);
   // Say hello once per approach to anything the map marks (the dock, the
   // quads): the map is how you find them, this is how you know you have.
   // One at a time, in list order, so the dock is never talked over by the

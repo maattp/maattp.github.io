@@ -54,7 +54,7 @@ export function savedMoney() {
 }
 
 export class Career {
-  /** sources: () => { acts, stunts, islands, missions, seafair, games: [{ id, best }], arcade } -- all optional */
+  /** sources: () => { acts, stunts, islands, missions, seafair, taxi, games: [{ id, best }], arcade } -- all optional */
   constructor(game, sources) {
     this.game = game;
     this.sources = sources || (() => ({}));
@@ -110,7 +110,7 @@ export class Career {
     const s = this.sources();
     const rows = [];
     const add = (id, label, done, total) => { if (total > 0) rows.push({ id, label, done: Math.min(done, total), total }); };
-    const { acts, stunts, islands, missions, seafair, arcade } = s;
+    const { acts, stunts, islands, missions, seafair, arcade, taxi } = s;
     if (acts) {
       add('coins', 'Landmark coins', acts.found.size, acts.coins.length);
       add('tech', 'Tech Tour badges', acts.techFound.size, acts.tech.length);
@@ -127,6 +127,7 @@ export class Career {
     const next = RANKS[rankIdx + 1] || null;
     const extra = [];
     if (missions && missions.best) extra.push(`Vigilante level ${missions.best}`);
+    if (taxi && taxi.stats.fares) extra.push(`Taxi fares ${taxi.stats.fares}`);
     if (seafair && seafair.series && seafair.series.cups) extra.push(`Seafair cups ${seafair.series.cups}`);
     return {
       money: Math.floor(this.game.money), rows, frac, pct: Math.floor(frac * 100),

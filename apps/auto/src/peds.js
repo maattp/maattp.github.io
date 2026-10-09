@@ -3456,6 +3456,15 @@ function sprawl(h, k) {
   to(b[B.head], 'x', 0.25);
 }
 
+// A fare hailing: the right arm up and waving at the wrist (eased in by the
+// walk pose's own reset every posed frame, so this is set, not added).
+function hailPose(h, t) {
+  const b = h.bones, w = Math.sin(t * 7);
+  b[B.shoulderR].rotation.x = -2.55;
+  b[B.shoulderR].rotation.z = 0.25 + 0.12 * w;
+  b[B.elbowR].rotation.x = -0.5 - 0.35 * w;
+}
+
 /** What only the crowd's walkers use, on every pedestrian's record (one hidden class). */
 function crowdState(R, x, z) {
   return {
@@ -3472,6 +3481,9 @@ function crowdState(R, x, z) {
     blocked: 0, wanderT: 0, wanderH: 0, idle: false, hx: x, hz: z,
     slideT: 0, slideS: 1,                              // an officer held by a wall: going along it, which way
     near: true,                                        // within 50 m of the player: trunks and poles are tested for him
+    // a taxi fare (taxi.js): 0 not one, 1 hailing (stands, one arm up, faces
+    // the road), 2 walking to (fx, fz); the recycler and the scare leave him alone
+    fare: 0, fx: 0, fz: 0,
   };
 }
 
@@ -3577,6 +3589,37 @@ export class PedSystem {
     this.peds.push(p);
     if (cop && this.game.police) this.game.police.stats.spawned.cop++;
     return p;
+  }
+
+  /**
+   * A taxi fare (taxi.js): a civilian on the pavement of a street 'minD'-'maxD'
+   * from (px, pz), facing the road with an arm up (`fare` 1). Not recycled,
+   * not scared; the taxi owns him until it lets go (`fare` 0 + reanchor).
+   * Streets the taxi can take only: ground level, not a freeway, ramp or bore.
+   */
+  spawnFare(px, pz, minD, maxD) {
+    const city = this.city, R = this.R;
+    const pool = city.edgesNear(px, pz, maxD + 40);
+    for (let k = 0; k < 80 && pool.length; k++) {
+      const ei = pool[Math.floor(R.n() * pool.length)], e = city.edges[ei];
+      if (!e || e.elev || e.tunnel || e.cls === 'hwy' || e.cls === 'ramp' || e.noTraffic || e.len < 24) continue;
+      const a = city.nodes[e.a], b = city.nodes[e.b];
+      const t = 0.3 + R.n() * 0.4, side = R.n() < 0.5 ? 1 : -1, off = e.hw + PAVE;
+      const cx = lerp(a.x, b.x, t), cz = lerp(a.z, b.z, t);
+      const x = cx - e.dz * off * side, z = cz + e.dx * off * side;
+      const d = Math.hypot(x - px, z - pz);
+      if (d < minD || d > maxD || !G.isBuildable(x, z)) continue;
+      const y = city.groundAt(x, z, lerp(a.y, b.y, t) + 1, city.roadLift(x, z));
+      if (city.insideBuilding(x, z, y, 0.6) || city.obstacleHit(x, z, 0.5, y)) continue;
+      const wl = this.waterAt ? this.waterAt(x, z) : null;
+      if (wl !== null && y < wl - 0.2) continue;
+      const p = this._add(x, z, false, ei, side, 1, t, y);
+      p.fare = 1; p.fx = cx; p.fz = cz;
+      p.heading = Math.atan2(cx - x, cz - z);
+      p.state = 'walk';
+      return p;
+    }
+    return null;
   }
 
   /** The old civilian rule, for officers walking in: any pavement 20-150 m out. */
@@ -3972,7 +4015,7 @@ export class PedSystem {
 
   scare(x, z, radius) {
     for (const p of this.peds) {
-      if (p.cop || p.state === 'down') continue;
+      if (p.cop || p.fare || p.state === 'down') continue;
       if (dist2(p.x, p.z, x, z) < radius * radius) {
         p.state = 'flee';
         p.timer = 4 + this.R.n() * 3;
@@ -4034,7 +4077,7 @@ export class PedSystem {
       const p = this.peds[i];
       const d2p = dist2(p.x, p.z, px, pz);
       // (a civilian left behind is recycled into the ring; an officer is not)
-      if (d2p > (p.cop ? (PED_RADIUS + 90) * (PED_RADIUS + 90) : CULL_R * CULL_R)) { this.remove(p); continue; }
+      if (!p.fare && d2p > (p.cop ? (PED_RADIUS + 90) * (PED_RADIUS + 90) : CULL_R * CULL_R)) { this.remove(p); continue; }
 
       if (p.state === 'down') {
         p.h.mesh.visible = true;
@@ -4080,6 +4123,10 @@ export class PedSystem {
         if (p.slideT > 0) { p.slideT -= dt; desired += p.slideS * 1.2; }
         else if (p.blocked > 0.5) { p.slideT = 1.25; p.slideS = this.R.n() < 0.5 ? 1 : -1; p.blocked = 0; }
         targetSpeed = o.speed;
+      } else if (p.fare) {
+        // a taxi's fare: stands facing the road, or walks to (fx, fz) (taxi.js)
+        desired = Math.atan2(p.fx - p.x, p.fz - p.z);
+        targetSpeed = p.fare === 2 ? 2.3 : 0;
       } else if (p.state === 'flee') {
         p.timer -= dt;
         // held by a wall: along it, not into it (the wall is _move's)
@@ -4188,6 +4235,7 @@ export class PedSystem {
         animateWalk(p.h, clamp(p.speed * 0.20, 0, 0.8), Math.min(p.animDt, 0.1), p.speed);
         p.animDt = 0;
         if (p.aim > 0.02) aimPose(p.h, p.aim, p.kind === 'swat');
+        if (p.fare === 1) hailPose(p.h, this.simT);
         if (p.stag > 0) recoil(p.h, p.stag);
       }
       if (show && d2p < 70 * 70) this.addContactShadow(p.h, p.x, p.y, p.z, p.heading);

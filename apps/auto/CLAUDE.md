@@ -35,8 +35,8 @@ When code or an old note cites `CLAUDE.md "Some Heading"`, find it with
   Sections: "Swimming (v154)"; "Fighting on foot"; "Stunt jumps"; "WASTED, the siren, and finding a gun"; "The crowd: living streets".
 - **`guide/transit.md`** (31 KB) -- Monorail, Link light rail, BNSF freight, the Bainbridge ferry.
   Sections: "The Monorail"; "Freight: BNSF's main line (v160)"; "The Seattle-Bainbridge ferry (v164)"; "Link light rail (v146)".
-- **`guide/activities.md`** (36 KB) -- fishing, fish toss, Great Wheel, golf, arcade, pinball, hockey, ATC, Duck Tour, coffee, Seafair, hoops, Needle, Tech Tour.
-  Sections: "The wallet and the Seattle Passport (v194)"; "Fishing off the piers (an Easter egg)"; "The flying fish at Pike Place (v129)"; "The Great Wheel turns, and you can ride it (v131)"; "Golf at Interbay (v132)"; "The Belltown arcade (v133)"; "The pinball museum (v136)"; "Hockey night at Climate Pledge Arena (v137)"; "Boeing Field's control tower and FINAL APPROACH (v138)"; "The Duck Tour (v139)"; "First Cup Coffee at Pike Place (v140)"; "Seafair: unlimited hydroplanes on Lake Washington (v141)"; "Basketball in the parks"; "Up the Space Needle"; "The Tech Tour".
+- **`guide/activities.md`** (36 KB) -- fishing, fish toss, Great Wheel, golf, arcade, pinball, hockey, ATC, Duck Tour, coffee, Seafair, hoops, Needle, Tech Tour, taxi fares.
+  Sections: "The wallet and the Seattle Passport (v194)"; "Fishing off the piers (an Easter egg)"; "The flying fish at Pike Place (v129)"; "The Great Wheel turns, and you can ride it (v131)"; "Golf at Interbay (v132)"; "The Belltown arcade (v133)"; "The pinball museum (v136)"; "Hockey night at Climate Pledge Arena (v137)"; "Boeing Field's control tower and FINAL APPROACH (v138)"; "The Duck Tour (v139)"; "First Cup Coffee at Pike Place (v140)"; "Seafair: unlimited hydroplanes on Lake Washington (v141)"; "Basketball in the parks"; "Up the Space Needle"; "The Tech Tour"; "Taxi fares".
 - **`guide/police-fire.md`** (38 KB) -- wanted levels, police missions, the tank, fire apparatus and calls.
   Sections: "Wanted levels (police.js)"; "Police missions (policemissions.js)"; "The tank"; "Fire apparatus and fire calls".
 - **`guide/known-gaps.md`** (7 KB) -- what is knowingly unfinished or wrong, with the reasons.
@@ -67,6 +67,7 @@ src/vehicles.js             vehicle models + the arcade driving model
 src/traffic.js              traffic AI, parked cars, police units' driving, A*
 src/police.js               the wanted levels: what each sends, guns, the helicopters, search, busted
 src/policemissions.js       police missions (MISSION in a police vehicle): the suspects and their getaway
+src/taxi.js                 taxi fares (FARE in a taxi): the hail, the ride, the meter and tip, the drop-off
 src/peds.js                 humanoid builder + pedestrian/cop/SWAT crowd
 src/player.js               on-foot/driving state machine + chase camera
 src/controls.js             touch stick/buttons + keyboard fallback
@@ -130,6 +131,7 @@ tools/build_parkprops.py    benches, picnic tables, playgrounds, fountains -> pa
 tools/fetch_dem.py          downloads the USGS terrain tiles
 tools/build_mountains.py    DEM -> the Olympics/Cascades skyline and Rainier's baked face -> mountains.bin
 tools/render_map.py         draws the whole graph top-down, for eyeballing
+tools/taxicheck.mjs         the taxi fares job end to end, and every way it ends
 tools/verify.mjs            headless CDP boot + assertions + screenshots
 tools/jank.mjs, perfguard.mjs, beauty.mjs, survey.mjs, gait.mjs, flycam.mjs,
   crowdshots.mjs, charshots.mjs, vehshots.mjs, landmarkshots.mjs, bldshots.mjs,
