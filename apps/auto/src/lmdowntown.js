@@ -459,16 +459,23 @@ export function makeDowntown(h) {
     // ledge and roofs
     const slab = new Acc(P(0x8a877e, 0.92, 0, 0.5));
     cap(slab, CONV_PLAN, PODIUM, true, 10);
-    const roof = new Acc(P(0x6c6a64, 0.95, 0, 0.45));
+    const roof = new Acc(P(0xbdbab0, 0.9, 0, 0.55));          // a light membrane
     cap(roof, upper, EAVE + 0.5, true, 10);
     const trim = new Acc(P(0xcbc7bb, 0.8, 0, 0.6));
     walls(trim, CONV_PLAN, PODIUM - 0.25, PODIUM + 0.5, 6, 1);   // the parapet's edge
     walls(trim, upper, EAVE, EAVE + 0.5, 6, 1);
     // pale pavers along the roof's service lanes
+    const lane = new Acc(P(0x86837b, 0.95, 0, 0.5));
     for (const [zz, x0, x1] of [[-62, -100, 110], [-3, -80, 90], [30, -70, -10]]) {
-      trim.quad([x0, EAVE + 0.53, zz - 0.8], [x1, EAVE + 0.53, zz - 0.8], [x1, EAVE + 0.53, zz + 0.8], [x0, EAVE + 0.53, zz + 0.8], 0, 1, 0);
+      lane.quad([x0, EAVE + 0.53, zz - 0.8], [x1, EAVE + 0.53, zz - 0.8], [x1, EAVE + 0.53, zz + 0.8], [x0, EAVE + 0.53, zz + 0.8], 0, 1, 0);
     }
-    g.add(slab.mesh(), roof.mesh(), trim.mesh());
+    // planted roof: sedum beds between the vaults, two greens
+    const bed = [new Acc(P(0x7d9a63, 0.95, 0, 0.5)), new Acc(P(0x6b8a57, 0.95, 0, 0.5))];
+    [[-52, -30, 20, 14, 0], [-30, -12, 14, 10, 1], [20, 14, 22, 10, 0], [28, -10, 16, 16, 1], [70, -22, 14, 16, 0], [-86, -30, 12, 14, 1], [10, -52, 30, 10, 1], [-70, -47, 24, 10, 0]].forEach(([bx, bz, bw, bd, q]) => {
+      const y = EAVE + 0.56;
+      bed[q].quad([bx - bw / 2, y, bz - bd / 2], [bx + bw / 2, y, bz - bd / 2], [bx + bw / 2, y, bz + bd / 2], [bx - bw / 2, y, bz + bd / 2], 0, 1, 0);
+    });
+    g.add(slab.mesh(), roof.mesh(), trim.mesh(), lane.mesh(), bed[0].mesh(), bed[1].mesh());
     // the arched roofs: three skylit barrel vaults across the block, steel ribs
     const rib = P(0xc9ced0, 0.4, 0.6, 0.75);
     const vglass = P(0x86b7c4, 0.12, 0.55, 1.0);
@@ -508,6 +515,12 @@ export function makeDowntown(h) {
     const pent = P(0x8c8f8f, 0.7, 0.3, 0.55);
     for (const [x, z, w, d] of [[-40, -40, 14, 10], [20, 0, 18, 12], [60, -20, 12, 14], [-100, -55, 10, 8], [0, 20, 10, 8]])
       box(w, 3.4, d, pent, x, EAVE + 0.5, z);
+    // plant: cooling units, louvred boxes and stacks scattered over the flat roof
+    for (const [x, z, w, d, hh] of [[-20, -62, 8, 5, 2.2], [30, -62, 10, 6, 2.6], [78, -50, 7, 7, 2.0], [-95, -20, 8, 6, 2.4], [-60, 14, 9, 5, 2.0], [50, 10, 8, 8, 2.6], [20, -30, 6, 6, 1.8], [-5, -45, 7, 4, 1.6], [84, -22, 6, 6, 2.2], [66, 2, 7, 5, 2.0]]) {
+      box(w, hh, d, pent, x, EAVE + 0.5, z);
+      box(w - 1, 0.25, d - 1, rib, x, EAVE + 0.5 + hh, z);
+    }
+    for (const [x, z] of [[-30, -58], [36, -48], [-84, -42], [58, -6], [-48, 18]]) cyl(0.5, 0.5, 6, rib, x, EAVE + 0.5, z, 6);
     // the name, on the Pike Street parapet
     const s = sign('WASHINGTON STATE CONVENTION CENTER', 46, 2.6, null, '#f4f4f0', { stroke: '#243f47', px: 18 });
     s.position.set(40, PODIUM + 12.5, -77.9);
@@ -698,7 +711,16 @@ export function makeDowntown(h) {
       // the water end carries a planted roof: one half of the plan by a line across its long axis
       const side = (x, z) => (x - 50) * -0.5 + (z + 45) * -0.86;
       const rg = clipPoly(rp, (x, z) => side(x, z) - 4), rs = clipPoly(rp, (x, z) => 4 - side(x, z));
-      if (rg.length > 2) cap(grn, rg, py, true, 6);
+      if (rg.length > 2) {
+        // sedum in bands across the long axis, three greens, with a path of pavers between
+        const greens = [grn, new Acc(P(0x6d8d58, 0.95, 0, 0.5)), new Acc(P(0x8aa56f, 0.95, 0, 0.5))];
+        for (let k = 0; k < 9; k++) {
+          const b0 = 4 + k * 3, b1 = b0 + 3;
+          const band = clipPoly(clipPoly(rg, (x, z) => side(x, z) - b0), (x, z) => b1 - side(x, z));
+          if (band.length > 2) cap(greens[k % 3], band, (x, z) => py(x, z) + 0.01, true, 6);
+        }
+        for (const a of greens.slice(1)) g.add(a.mesh());
+      }
       if (rs.length > 2) cap(pr, rs, py, true, 6);
       walls(pr, rp, (x, z) => py(x, z) - 0.7, py, 6, 1);
       cap(pr, rp, (x, z) => py(x, z) - 0.7, false, 6);
@@ -725,8 +747,8 @@ export function makeDowntown(h) {
     const ROT = 0.553, c = Math.cos(ROT), s = Math.sin(ROT);
     g.userData.rot = ROT;
     const CX = -2.0, CZ = -12.75, HW = 8.0, HL = 45.0;     // the slab, in the group's frame
-    const glassD = P(0x23454e, 0.1, 0.65, 1.0);            // concourse
-    const glassL = P(0x4f7f8c, 0.1, 0.6, 1.0);            // upper floors
+    const glassD = P(0x34504f, 0.12, 0.6, 0.9);            // concourse
+    const glassL = P(0x6c8c88, 0.12, 0.55, 0.9);            // upper floors
     const steel = P(0xb9c0c2, 0.4, 0.6, 0.75);
     const green = mat.wsfGreen;
     const slab = P(0xa9a79f, 0.9, 0, 0.5);
@@ -751,7 +773,7 @@ export function makeDowntown(h) {
     // the canopy toward the slips (west): one glass plane on steel ribs
     {
       const x0 = CX - HW - 0.3, x1 = CX - HW - 7.2;
-      const cn = new Acc(P(0x9ec6d0, 0.12, 0.4, 1.0));
+      const cn = new Acc(P(0xaec6c2, 0.15, 0.4, 0.9));
       const zA = CZ - HL + 6, zB = CZ + HL - 6;
       const tl = [x0, 11.4, zA], tr = [x0, 11.4, zB], bl = [x1, 8.7, zA], br = [x1, 8.7, zB];
       cn.quad(tl, tr, br, bl, -0.37, 0.93, 0);
@@ -877,7 +899,8 @@ export function makeDowntown(h) {
     cyl(2.6, 2.7, 0.14, P(0x8f8c83, 0.9, 0, 0.5), -0.68, tY(-7.7) - 0.1, -7.7, 14);
     // collision: the parapet and the two end walls, from just under the terrace to its top
     solidBox(g, 0, Z1 - 0.2, (X1 - X0) / 2 + 0.3, 0.45, 0, tY(Z1) + PH + 0.3, tY(Z1) - 1.5);
-    for (const sx of [-1, 1]) solidBox(g, sx * (X1 - 0.2), (Z0 + Z1) / 2, 0.45, (Z1 - Z0) / 2, 0, tY(Z1) + PH + 0.3, tY(Z1) - 1.5);
+    // (the ends' walls stand only where the terrace stands over the hill, the south 9 m: the north end is the bank and the Highland Dr pavement)
+    for (const sx of [-1, 1]) solidBox(g, sx * (X1 - 0.2), Z1 - 4.5, 0.45, 4.5, 0, tY(Z1) + PH + 0.3, tY(Z1) - 1.5);
     // the shelf is ground: a platform laid to the same plane (north edge high, south low)
     g.userData.decks = [{ x: 0, z: (Z0 + Z1) / 2, hw: (X1 - X0) / 2 - 0.6, hd: (Z1 - Z0) / 2 - 0.5, top: tY(Z0 + 0.5), top1: tY(Z1 - 0.5) }];
     K.flush(g);

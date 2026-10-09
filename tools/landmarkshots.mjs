@@ -180,6 +180,111 @@ async function main() {
       return;
     }
 
+    // --- --roads: NO LANDMARK SOLID ON ANY ROAD A CAR DRIVES. For each landmark, every road edge
+    // within 330 m is sampled every 1.5 m and asked landmarkHit at a car's radius (1.0 m) and the surface
+    // height + 0.4 m; a hit is a wall a car would stop at. Tunnels count: I-5 is flagged tunnel and still
+    // runs at grade where it enters the Arch. Fails (exit 1) on any hit for the downtown landmarks.
+    if (process.argv.includes('--roads')) {
+      const r = await evaluate(`(() => {
+        const d = window.__dbg, c = d.city, G = d.G;
+        const out = {};
+        const R = 330;
+        for (const L of G.LANDMARKS) {
+          const sols = (c.landmarkSolids || []).filter((s) => Math.hypot(s.x - L.x, s.z - L.z) < R);
+          if (!sols.length) continue;
+          const res = out[L.kind] || (out[L.kind] = { hits: {}, nEdges: 0 });
+          for (const e of c.edges) {
+            const a = c.nodes[e.a], b = c.nodes[e.b];
+            if (Math.hypot(a.x - L.x, a.z - L.z) > R && Math.hypot(b.x - L.x, b.z - L.z) > R) continue;
+            res.nEdges++;
+            const len = Math.hypot(b.x - a.x, b.z - a.z), n = Math.max(1, Math.ceil(len / 1.5));
+            for (let i = 0; i <= n; i++) {
+              const t = i / n, x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t, y = a.y + (b.y - a.y) * t;
+              if (Math.hypot(x - L.x, z - L.z) > 200) continue;   // a neighbour's solid is that landmark's own business
+              const h = c.landmarkHit(x, z, 1.0, y + 0.4, false);
+              if (!h) continue;
+              const key = e.cls + (e.tunnel ? '/tunnel' : '') + (e.elev ? '/elev' : '') + (e.name ? ' ' + e.name : '');
+              const o = res.hits[key] || (res.hits[key] = { n: 0, at: [] });
+              o.n++; if (o.at.length < 3) o.at.push([Math.round(x), Math.round(z), +y.toFixed(1)]);
+            }
+          }
+        }
+        return JSON.stringify(out, null, 1);
+      })()`);
+      const o = JSON.parse(r);
+      const MINE = ['convention', 'library', 'aquarium', 'ferry', 'kerry', 'locks'];
+      let bad = 0;
+      for (const [k, v] of Object.entries(o)) {
+        const n = Object.values(v.hits).reduce((s, h) => s + h.n, 0);
+        console.log(`  ${k.padEnd(16)} ${String(v.nEdges).padStart(5)} edges  ${n} hit samples${n ? '  ' + JSON.stringify(v.hits) : ''}`);
+        if (MINE.includes(k)) bad += n;
+      }
+      console.log(bad ? `FAIL: ${bad} road samples blocked by the downtown landmarks` : 'OK: no downtown landmark solid on any road');
+      console.log(`  exceptions: ${errs.length}`);
+      if (bad) process.exitCode = 1;
+      return;
+    }
+
+    // --- --drive: a real player.update drive (fixed dt, 15 m/s start, half throttle) through each point in
+    // both directions along the nearest road; a car that loses > 2 m/s in a frame to a landmark solid
+    // is a hit. Default points are where I-5 and its ramps enter and leave the Arch.
+    if (process.argv.includes('--drive')) {
+      const pts = process.env.LM_DRIVE ? JSON.parse(process.env.LM_DRIVE) : [[539, -134, 'I5 NE'], [557, -139, 'I5 Express'], [572, -133, 'I5 E'], [535, 19, 'I5 SE'], [564, -144, 'ramp NE'], [470, 40, 'Convention Place'], [489, 17, '8th']];
+      const r = await evaluate(`(() => {
+        const d = window.__dbg, p = d.player, c = d.city;
+        const settle = (x, z) => {
+          const pending = () => [...d.world.chunks.values()].filter((k) => k.lod !== k.wantLod).length;
+          d.world.update(x, z, 60);
+          for (let i = 0; i < 2000 && pending() > 0; i++) d.world.update(x, z, 60);
+        };
+        const look = { x: 0, y: 0 }, ctl = { takeTap: () => null };
+        const res = [];
+        for (const [x, z, label] of ${JSON.stringify(pts)}) {
+          let best = null, bd = 1e9;
+          for (const ei of c.edgesNear(x, z, 30)) {
+            const e = c.edges[ei], a = c.nodes[e.a], b = c.nodes[e.b];
+            const t = Math.max(0, Math.min(1, ((x - a.x) * e.dx + (z - a.z) * e.dz) / e.len));
+            const dd = Math.hypot(x - (a.x + e.dx * e.len * t), z - (a.z + e.dz * e.len * t));
+            if (dd < bd) { bd = dd; best = { e, a, b, t }; }
+          }
+          const { e, a, b } = best, h = Math.atan2(e.dx, e.dz);
+          for (const dir of [1, -1]) {
+            const hh = dir > 0 ? h : h + Math.PI, gx = Math.sin(hh), gz = Math.cos(hh);
+            const x0 = x - gx * 60, z0 = z - gz * 60;
+            settle(x0, z0);
+            if (!p.onFoot) p.exitVehicle();
+            const car = d.traffic.spawnAt(x0, z0, hh, 'sedan', 0x3366aa, 'free');
+            p.enterVehicle(car);
+            const tt = Math.max(0, Math.min(1, best.t - dir * 60 / e.len));
+            car.x = x0; car.z = z0; car.heading = hh; car.y = a.y + (b.y - a.y) * tt + 0.3; car.vLong = 15; car.vLat = 0; car.vy = 0;
+            const input = { x: 0, y: 0, gas: true, gasAmt: 0.5, brake: false, brakeAmt: 0, hand: false, attack: false };
+            let vmax = 0, hitF = null, what = null, hitAt = null;
+            for (let f = 0; f < 420; f++) {
+              const before = Math.abs(car.vLong);
+              p.update(1 / 60, input, look, ctl, d.traffic, d.peds);
+              const v = p.vehicle || car;
+              vmax = Math.max(vmax, Math.abs(v.vLong));
+              if (hitF === null && Math.abs(v.vLong) < before - 2) {
+                hitF = f; hitAt = [+v.x.toFixed(0), +v.z.toFixed(0)];
+                what = c.landmarkHit(v.x, v.z, v.radius * 0.7 + 0.3, v.y) ? 'landmark' : c.obstacleHit(v.x, v.z, v.radius * 0.7 + 0.3, v.y) ? 'street obstacle' : 'other';
+              }
+            }
+            res.push({ label, dir, road: e.cls + (e.tunnel ? '/T' : '') + ' ' + (e.name || ''), vmax: +vmax.toFixed(1), hitF, hitAt, what });
+            p.exitVehicle();
+            d.traffic.remove && d.traffic.remove(car);
+          }
+        }
+        return JSON.stringify(res);
+      })()`, true);
+      const rows = JSON.parse(r);
+      for (const q of rows) console.log(`  ${q.label.padEnd(18)} ${q.dir > 0 ? 'fwd' : 'rev'}  ${q.road.padEnd(26)} vmax ${String(q.vmax).padStart(5)}  ${q.hitF === null ? 'clear' : 'HIT ' + q.what + ' at ' + q.hitAt}`);
+      const bad = rows.filter((q) => q.what === 'landmark').length;
+      console.log(bad ? `FAIL: ${bad} drives stopped by a landmark solid` : 'OK: no drive stopped by a landmark solid');
+      console.log(`  exceptions: ${errs.length}`);
+      if (bad) process.exitCode = 1;
+      return;
+    }
+
     // --- Kerry Park: --kerry stands at the park's centre at eye height (1.7 m
     // over what groundAt answers, the terrace if there is one) and casts rays at
     // the Needle (base to top) and along a fan of the skyline. A ray is clear if

@@ -3172,8 +3172,32 @@ function onRoad(city, s) {
       pts.push([s.x + u * c - v * sn, s.z + u * sn + v * c]);
     }
   }
-  // (`surfaceOnly`: a road in a tunnel under the solid is no reason to drop it)
-  return pts.some(([x, z]) => city.onRoad(x, z, 0.3, false, !s.surfaceOnly));
+  if (!s.surfaceOnly) return pts.some(([x, z]) => city.onRoad(x, z, 0.3, false));
+  // `surfaceOnly` (the downtown landmarks' walls): a road DEEP in a tunnel under the solid is no reason to
+  // drop it, but a road at the solid's own level is -- and a tunnel's flag says nothing about where it is:
+  // I-5 and its ramps are `tunnel` and still run at grade where they enter the Arch. So: any edge (elevated
+  // decks too high to touch it aside) that passes within a car's reach of the solid's footprint, at a
+  // height the solid's band reaches (y0 - 2.5 up to its top), drops it.
+  const c = Math.cos(s.rot || 0), sn = Math.sin(s.rot || 0);
+  const hw = (s.r !== undefined ? s.r : s.hw) + 1.8, hd = (s.r !== undefined ? s.r : s.hd) + 1.8;
+  const reach = Math.hypot(hw, hd);
+  for (const ei of city.edgesNear(s.x, s.z, 0)) {
+    const e = city.edges[ei], a = city.nodes[e.a], b = city.nodes[e.b];
+    const len = Math.hypot(b.x - a.x, b.z - a.z);
+    if (len < 0.1) continue;
+    const mx = (a.x + b.x) / 2 - s.x, mz = (a.z + b.z) / 2 - s.z;
+    if (Math.hypot(mx, mz) > len / 2 + reach + e.hw + 2) continue;
+    const n = Math.max(1, Math.ceil(len / 1.5));
+    for (let i = 0; i <= n; i++) {
+      const t = i / n, x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t, y = a.y + (b.y - a.y) * t;
+      if (y < s.y0 - 2.5 || y > s.y1) continue;
+      const dx = x - s.x, dz = z - s.z;
+      const u = dx * c + dz * sn, v = -dx * sn + dz * c;
+      const m = Math.min(e.hw, 3);
+      if (Math.abs(u) <= hw + m && Math.abs(v) <= hd + m) return true;
+    }
+  }
+  return false;
 }
 
 /**
