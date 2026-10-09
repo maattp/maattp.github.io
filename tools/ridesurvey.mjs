@@ -9,9 +9,15 @@
 // Vehicle.update's vertical follow does -- four wheel samples (a sedan's
 // 2.3 m half-length, 0.95 m half-width) through `city.groundAt` from the
 // wheels (y + 0.45) with the centre's `roadLift`, averaged, the bore spike
-// guard, an 18/s follow and the 22 m/s^2 fall over a crest. Vertical
-// acceleration is the second difference of that height. If vehicles.js
-// changes how a car follows the ground, change `ride()` below with it.
+// guard, an 18/s follow (fed forward with a steady descent) and the 22 m/s^2
+// fall over a crest. Vertical acceleration is the second difference of that
+// height. It is a REPLICA of the follow's arithmetic only: the real update
+// also has collisions, ramps, lowDetail, a wheel-sample reference of its own
+// and the car's real speed, and on hwy / ramp chains its air counts differ from
+// the real Vehicle.update (graded ramps: 611 here, 42 there, measured with a
+// checker that ran the real thing) -- trust it for acc30 / acc60 and the site
+// ranking, tools/hillride.mjs for the real vehicle. If vehicles.js changes how
+// a car follows the ground, change `ride()` below with it.
 //
 // A chain is the straightest same-class continuation through each node
 // (within 45 deg), never through a tunnel; every non-tunnel edge is in exactly
@@ -46,13 +52,11 @@ const TAG = argVal('--tag') || 'run';
 const TOP = +(argVal('--top') || 30);
 const ONLY_CLS = argVal('--cls') || '';
 const MAX_KM = +(argVal('--max-km') || 0);
-// --legacy: the vertical follow as it was before v200 (a fall always started
+// --legacy: the vertical follow as it was before v201 (a fall always started
 // from vy = 0, so a steady 20 %+ descent hopped: air, land, lerp, air). The
 // default is what vehicles.js does now; --legacy is for before/after.
 const LEGACY = args.includes('--legacy');
-// --upk K: how much of the climb a car arrives at a crest with counts toward
-// its take-off (vehicles.js: 0.25); for tuning only
-const UPK = +(argVal('--upk') ?? 0.25);
+const NOFF = args.includes('--noff');   // experiment: no feed-forward
 // --at x,z[;x,z...]  trace every chain passing within 25 m of each point:
 // one row per ~3 m, +-RANGE m around the point (--range, default 150)
 const AT = argVal('--at') ? argVal('--at').split(';').map((p) => p.split(',').map(Number)) : null;
@@ -224,7 +228,7 @@ function survey(opts) {
       return { x: p.x + (q.x - p.x) * t, z: p.z + (q.z - p.z) * t, fx: (q.x - p.x) / L, fz: (q.z - p.z) / L, ei: q.ei };
     };
     let y = surfaceSeed(e0, seq[0][1]), vy = 0, onGround = true;
-    let carVy = 0, airGap = 0, airVy = 0, floorVy = 0;
+    let carVy = 0, floorVy = 0, floorOk = false;
     let yPrev = y, vPrev = 0, tPrev = null;
     const ch = { cls: e0.cls, name: e0.name || '', len: Math.round(len), x0: Math.round(P[0].x), z0: Math.round(P[0].z),
       acc30: 0, acc60: 0, maxAcc: 0, maxAt: null, humps: 0, maxHump: 0, humpAt: null, break8: 0, jump: 0 };
@@ -241,37 +245,31 @@ function survey(opts) {
       if (target - y > 3 && G.terrainRaw(p.x, p.z) - y > 2.5) target = y;
       const cg = c.groundAt(p.x, p.z, y + REF, lift);
       prof.push(s, cg, p.ei);
-      // Vehicle.update's vertical follow (no stunt ramps), v200: the floor's
-      // descent is fed forward and a fall starts from the car's own velocity
-      // (see "The ground's own descent is not a fall" in vehicles.js)
-      const wasGround = onGround;
+      // Vehicle.update's vertical follow (no stunt ramps), v201: the floor's
+      // steady descent is fed forward and a fall leaves with it (see "THE
+      // GROUND'S OWN DESCENT IS NOT A FALL" in vehicles.js)
       const dT = tPrev === null ? 0 : target - tPrev;
-      const slope = !opts.legacy && Math.abs(dT) < 0.25;
-      const yStart = y;
-      floorVy = slope ? floorVy + (dT / DT - floorVy) * (1 - Math.exp(-DT / 0.12)) : 0;
-      let gap = 0;
-      if (wasGround && slope) {
-        const cv = carVy, vb = airGap > 0 ? airVy : cv > 0 ? cv * opts.upk : cv;
-        gap = Math.max(0, airGap + vb * DT - 11 * DT * DT - dT);
-        airVy = vb - 22 * DT;
-      }
-      airGap = gap;
+      const slope = !opts.legacy && tPrev !== null && Math.abs(dT) < 0.25;
+      let ffVy = 0;
+      if (slope) {
+        const raw = dT / DT;
+        const before = floorOk ? floorVy : Math.max(-20, Math.min(0, raw));
+        floorVy = floorOk ? before + (raw - before) * (1 - Math.exp(-DT / 0.12)) : before;
+        ffVy = opts.noff ? 0 : Math.min(0, floorVy + 1.5) * Math.max(0, Math.min(1, (3 - Math.abs(raw - before)) / 2));
+      } else floorVy = 0;
+      floorOk = slope;
       let landed = false;
-      if (y > target + 0.25 || gap > 0.25) {
-        if (wasGround && !opts.legacy) {
-          if (gap > 0.25) { vy = airVy + 22 * DT; y = Math.max(y, target + gap); }
-          else if (vy <= 0) vy = Math.min(0, carVy);
-        }
-        vy -= 22 * DT; y += vy * DT; onGround = false; airGap = 0;
+      if (y > target + 0.25) {
+        if (onGround && vy <= 0 && !opts.legacy) vy = carVy;
+        vy -= 22 * DT; y += vy * DT; onGround = false;
         if (y <= target) { y = target; vy = 0; onGround = true; landed = true; }
       } else {
         const rise = target - y;
         if (rise > 0.6 && sp > 6) vy = Math.min(6, rise * 4);
-        const ff = Math.min(0, floorVy) * DT;
-        y = (y + ff) + (target + gap - (y + ff)) * (1 - Math.exp(-18 * DT));
+        y = (y + ffVy * DT) + (target - (y + ffVy * DT)) * (1 - Math.exp(-18 * DT));
         onGround = true;
       }
-      carVy = !onGround ? vy : landed ? (slope ? dT / DT : 0) : Math.max(-20, Math.min(20, (y - yStart) / DT));
+      carVy = onGround ? ffVy : vy;
       const K = kind(kindOf(e));
       K.frames++;
       if (!onGround) K.air++;
@@ -421,7 +419,7 @@ async function main() {
     for (let i = 0; i < 600; i++) { await sleep(500); if (await evaluate('!!(window.__dbg && window.__dbg.city)')) break; }
     console.log(`booted in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
     const t1 = Date.now();
-    const res = JSON.parse(await evaluate(`(${survey.toString()})(${JSON.stringify({ onlyCls: ONLY_CLS, maxKm: MAX_KM, at: AT, range: RANGE, legacy: LEGACY, upk: UPK })})`));
+    const res = JSON.parse(await evaluate(`(${survey.toString()})(${JSON.stringify({ onlyCls: ONLY_CLS, maxKm: MAX_KM, at: AT, range: RANGE, legacy: LEGACY, noff: NOFF })})`));
     if (AT) {
       for (const t of res.traces) {
         console.log(`\n== near (${t.at}) ${t.d} m off: ${t.name || '(unnamed)'} [${t.cls}] chain ${t.len} m`);
