@@ -1360,7 +1360,7 @@ export class World {
     if (this.renderer) this.renderer.domElement.addEventListener('webglcontextrestored', () => { for (const T of lod.tiles) T.dirty = true; });
     lod.tileAt = new Map(lod.tiles.map((T) => [T.gbz0 * 4096 + T.gbx0, T]));
     this.updateTerrainLod({ x: 0, y: 150, z: 0 });   // (draw() does the real one)
-    lod.cx = NaN;
+    lod.cx = NaN; lod.started = false;   // so the first real pass sets levels without hysteresis
   }
 
   /**
