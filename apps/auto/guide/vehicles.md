@@ -33,6 +33,89 @@ deck, its 4.3 m collision circle touching the bore wall, stopped dead with a
 column queued behind it. The loss now scales with the angle: `glance =
 clamp(-along / 0.3, 0, 1)`, `vLong *= 1 - 0.8 * glance`. Head-on (~17 deg or
 more into it) keeps the full loss, a pure side contact keeps all its speed.
+(That branch now also takes a hit's spin from the impulse below; a building
+under your car takes the impulse whole, which keeps a side contact's speed by
+construction.)
+
+**A crash spins and slides** (traffic.js `pairImpulse` / `wallImpulse`).
+Every hit -- car on car in `resolveCarCollisions`, car on building or street
+object in `collideWithBuildings` -- is two rigid bodies in the plane: a contact
+point, a normal, an impulse `J` along it with restitution (0.2 car-car, 0.15 a
+wall, 0.1 a post) and friction along the face bounded by `mu J`, applied to
+both bodies' velocity, along AND across each, and to each yaw through the
+lever arm, `(r x J) / I`, `I` from the footprint and `mass`. It replaced a rule
+that changed only `vLong` projected on each car's own heading, which is why
+nothing ever spun: on v199 a sedan into a stationary one's door at 20 m/s
+stopped dead, moved it 0.6 m and turned neither car at all (`tools/crashcheck.mjs`).
+The parts, each of which was measured wrong first:
+
+- **The contact point is clipped, not guessed** (`pairContact`): the incident
+  face, clipped to the reference face and to the part of it that is inside,
+  and the middle of what is left. A square T-bone touches mid-door, an offset
+  shunt in the middle of the bumpers' overlap -- which is what turns both cars.
+  A wall's is the body's deepest corner, or the middle of a face square to it.
+- **The centre of mass is 6 % of the length ahead of the middle** (`CG_FWD`):
+  the engine is in the front. Through the middle of the box a square T-bone
+  only slides the car it hits; real ones spin it, and this is why.
+- **The yaw lives in `Vehicle.spin`**, on top of the steering's yaw, decaying
+  (`SPIN_DAMP`, `SPIN_FRIC`), and the body-frame velocity is turned back by
+  the spin each frame, so the car rotates over the line it was knocked along
+  rather than carrying its speed round with its nose. **The decay is up to six
+  times harder near rest** (`SPIN_SLOW`): a sliding tyre barely resists the
+  turn, a nearly stopped car does, and without it a car stopped dead by a
+  corner hit on a wall pirouetted 140 deg on the spot.
+- **A hard hit lets the tyres go** (`Vehicle.slide`, 1.1 s): the 24/s lateral
+  scrub is CAPPED at a sliding tyre's 7.5 m/s^2, the cap lifting as they bite
+  again. Blending the exponential instead let it back in long before the slide
+  was over and the victim stopped in 3 m.
+- **A touch is not a spin, and a scrape is not a crash** (`TOUCH_FROM` /
+  `TOUCH_SPAN`): closing under 1 m/s only stops the closing -- no yaw, no
+  friction -- both fading in to 4 m/s. Without the yaw gate every AI car
+  brushing I-5's walls was turned a little each frame and steered back
+  (aidrive's weave there 4 -> 11 reversals a car-minute).
+- **Two AI drivers touching is not a crash until 4 m/s** (`AI_TOUCH`, full at
+  10): their bumps are the yielding's imperfections, mostly at junctions, and
+  spinning them left a sedan across both lanes of 1st Ave S holding a knot of
+  eight (trafficcheck stuck 4 -> 7 at one warm-up). Your car, a police unit, a
+  suspect or a shunted car use `TOUCH_FROM`.
+- **An AI driver's routine contact with a building keeps the old rule**
+  (28 % of vLong kept, vLat x 0.2), unless the car is still sliding from a
+  hit. The test is the centre against the footprint grown by 0.8 x radius --
+  4 m for a bus that is 1.3 m half-wide -- so a bus turning at a corner
+  building "hit" it, and under the impulse stopped dead from 17.7 m/s and
+  queued East Pike. A **street object** (`obstacleHit`'s circle, 3.5 m for a
+  bus) keeps its angle rule for speed for everyone and takes only the spin
+  from the impulse, for the same reason: the leftover speed is what scrapes a
+  long vehicle round a post its body is clear of.
+- Aircraft, hulls, the tank, trains, an articulated rear, a hulk and a stunt
+  flight take the impulse's velocity but never spin (`canSpin`).
+- **A deck's parapet is solid where it is drawn** (world.js `railKinds` /
+  `deckRailSegs`, traffic.js `deckRailHit`). Nothing but its own steering ever
+  kept a car on an elevated deck -- the parapets were geometry only -- so once
+  a hit could spin a car, a PIT on the Magnolia Bridge put the suspect over the
+  side (crashcheck `CRASH_NORAILS=1`: off the deck, 9 m past the rail).
+  `meshGradedDeck` and the collision now read ONE per-piece decision (open at
+  a merge or beside a same-level deck, a low median, or a parapet), so a wall
+  cannot be solid where none is drawn or missing where one is. It answers
+  you, a car nobody drives, a suspect and anything sliding from a hit; a
+  traffic or police driver in its lane is left as it was. Into the rail at 20
+  m/s and 25 deg: deflected, 14 m/s after, still on the deck.
+- **AI cars recover**: a spun or shunted car that cannot drive on backs out
+  and re-snaps its route (see "How the AI drives" in `guide/roads.md`).
+  Measured before/after over trafficcheck's 7 sites at four warm-ups (15, 20,
+  25, 30 s), stuck 4/4/3/3 on both builds; aidrive's stuck 2 -> 1.
+
+Measured (`node tools/crashcheck.mjs`, v199 -> now): T-bone victim moved 0.6 ->
+5.6 m and turned 0 -> 0.55 rad, the striker 0.1 -> 7.0 m/s a quarter second
+after; offset rear-end yaw 0 -> 0.81 / 0.89 rad (striker / struck); a cruiser's
+PIT turns the car it hits 0.66 rad; 30 deg into a wall at 20 m/s, 0 -> 12.9 m/s
+after, the body turned from 30 deg into the wall to 10 deg out of it; a bus
+T-boning a sedan moves it 1.7 -> 9.1 m, a sedan into a bus 0.2. A shunted AI
+car spins and re-takes its lane (`aiRecover`). The wall case is a real building
+face with clear paved ground before it (the probe searches for one and checks
+the first thing touched is that wall); `recover` hits your car hard enough to
+spin it (2.8 rad/s), takes the other car away, and the spin is gone in 1.3 s
+with nothing touched.
 
 **A car follows the ground DOWN a hill; it does not fall down it** (v202). The
 vertical follow is an 18/s exponential toward the four-wheel average, and a
@@ -214,7 +297,8 @@ shots.
   damage to whoever is inside (player.js, main.js `onCopShot`). The smoke
   threshold is 45 % of `hp`, not 45. `mass` 2.6 shoves traffic aside.
   Measured at fixed dt (flat ground, the real `Vehicle.update` +
-  `resolveCarCollisions`):
+  `resolveCarCollisions`; before "A crash spins and slides", which changed
+  every shove in it):
 
   | | sedan | Wedge |
   |---|---|---|

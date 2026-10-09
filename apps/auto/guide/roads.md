@@ -147,8 +147,21 @@ list, and walking the path for each was most of the scan's cost. An
 unattended car in the path is dodged on the side away from it (`v.dodge`,
 as before). Two cars waiting on
 each other (`v.lead`) resolve by spawn order (`v.prio`, the older goes).
+**So does a ring of them** (`waitsOn`): after a crash at a junction the
+waiting ran A on B, B on C, C on A, which the pair test never saw, and eight
+cars sat on 1st Ave S for good; if a car's lead's leads come back to it
+through cars all younger and stopped, it is the oldest and goes.
 A car that wants to go and has not moved for a second floors it -- a gentle
-2 m/s^2 loses to a post's contact response every frame. And out of sight
+2 m/s^2 loses to a post's contact response every frame. **At three seconds
+it backs out** (`v.backT`, 1.2 s, wheel reversed so the nose comes round to
+the path, as the police units do) and is put back on the graph where it now
+stands, the way it faces (`reroute`: `snapRoute`, turned round if that is
+against a one-way). Since a crash can spin a car, a car nose-in to another
+or to a building at an angle no throttle gets past is no longer only freed by
+being recycled out of sight. Re-planning from its OLD edge instead (`rtN = 0`)
+sent one that had turned into a junction back toward a lane it could not
+reach, and it lapped Stewart St eight times. Not with a section or a
+trailer behind: reversing an artic only jackknifes it. And out of sight
 (120 m+), a car at rest for 20 s is recycled whatever it waits on: there
 are no signals to wait at, so that long at rest is a queue behind a wedge
 or a gridlock of three or more.
