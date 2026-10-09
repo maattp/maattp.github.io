@@ -606,13 +606,16 @@ export class Hud {
       ctx.save();
       const F = this.fare, lim = S / (2 * zoom) - 6 / zoom;
       if (F.route && F.route.length > 3) {
-        ctx.strokeStyle = 'rgba(255,210,74,0.85)'; ctx.lineWidth = 2.2 / zoom; ctx.lineJoin = 'round';
+        // magenta on a dark casing: the map's roads are yellow and white, and the
+        // arterials and freeways swallowed a yellow route
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
         ctx.beginPath();
         for (let i = 0; i < F.route.length; i += 2) {
           const [rx, rz] = toMap(F.route[i], F.route[i + 1]);
           if (i) ctx.lineTo(rx, rz); else ctx.moveTo(rx, rz);
         }
-        ctx.stroke();
+        ctx.strokeStyle = 'rgba(20,0,24,0.9)'; ctx.lineWidth = 5 / zoom; ctx.stroke();
+        ctx.strokeStyle = '#ff35d6'; ctx.lineWidth = 2.6 / zoom; ctx.stroke();
       }
       for (const [pt, ring] of [[F.hail, true], [F.dest, false]]) {
         if (!pt) continue;
@@ -877,13 +880,15 @@ export class Hud {
       ctx.save();
       const F = this.fare;
       if (F.route && F.route.length > 3) {
-        ctx.strokeStyle = 'rgba(255,210,74,0.9)'; ctx.lineWidth = Math.max(2, size * 0.003); ctx.lineJoin = 'round';
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
         ctx.beginPath();
         for (let i = 0; i < F.route.length; i += 2) {
           const [rx, rz] = toC(F.route[i], F.route[i + 1]);
           if (i) ctx.lineTo(rx, rz); else ctx.moveTo(rx, rz);
         }
-        ctx.stroke();
+        const w = Math.max(2.5, size * 0.004);
+        ctx.strokeStyle = 'rgba(20,0,24,0.9)'; ctx.lineWidth = w * 1.9; ctx.stroke();
+        ctx.strokeStyle = '#ff35d6'; ctx.lineWidth = w; ctx.stroke();
       }
       for (const [pt, ring] of [[F.hail, true], [F.dest, false]]) {
         if (!pt) continue;

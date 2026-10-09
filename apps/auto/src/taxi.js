@@ -68,11 +68,19 @@ const SAY = {
   smooth: ['Smooth ride, thanks.'],
 };
 
-/** What a fare of `m` route metres pays and how long it is given: pure, for the probe. */
-export function fareFor(m) {
-  const fare = Math.round(BASE + PER_KM * m / 1000);
+/** What a fare of `m` route metres pays and how long it is given: pure, for
+ *  the probe. `payM` is the distance PAID for (the route, capped near the crow
+ *  flight: see `choose`); the clock is the route's own. */
+export function fareFor(m, payM = m) {
+  const fare = Math.round(BASE + PER_KM * payM / 1000);
   return { fare, par: m / PAR_V + 20, limit: m / LIMIT_V + 60 };
 }
+
+/** The route's flight-to-road allowance: paid distance is at most this x the straight line. */
+const PAY_CAP = 1.6;
+/** A hail further by road than this x the straight line is not offered. */
+const HAIL_DETOUR = 2;
+const GIVE_UP = 3;   // fares that cannot be made in a row: the shift ends
 
 export class TaxiFares {
   constructor({ scene, city, game, traffic, peds, hud, audio, root }) {
@@ -82,11 +90,12 @@ export class TaxiFares {
     this.nextT = 0;           // seconds until the next one hails (the shift goes on)
     this.on = false;          // on shift (a fare, or between fares)
     this.streak = 0;
+    this.fails = 0;           // hails / routes that came to nothing in a row
+    this.veh = null;          // the taxi the shift started in
     this.stats = { fares: 0, earned: 0, bestStreak: 0 };
     try { Object.assign(this.stats, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { /* private mode */ }
     this.leavers = [];        // passengers walking away from a drop-off
     this._objTxt = '';
-    this._objWas = undefined;
     this._objCd = 0; this._objStage = null;
     this._dests = null;
     this._btn = typeof document !== 'undefined' ? document.querySelector('[data-btn="taxifare"]') : null;
@@ -116,6 +125,8 @@ export class TaxiFares {
     if (this.game.wanted >= 3) { this.hud.showToast('Lose the police first'); return; }
     this.on = true;
     this.streak = 0;
+    this.fails = 0;
+    this.veh = player.vehicle;
     this.hail(player);
   }
 
@@ -126,18 +137,23 @@ export class TaxiFares {
 
   hail(player) {
     const p = player.position;
-    const ped = this.peds.spawnFare(p.x, p.z, HAIL_MIN, HAIL_MAX) || this.peds.spawnFare(p.x, p.z, 40, 300);
+    // somebody the taxi can reach: by road (strict A*, no wrong-way street) under
+    // HAIL_DETOUR x the straight line, not just near as the crow flies
+    let ped = null;
+    for (let k = 0; k < 8 && !ped; k++) {
+      const c = this.peds.spawnFare(p.x, p.z, k < 5 ? HAIL_MIN : 40, k < 5 ? HAIL_MAX : 300);
+      if (!c) continue;
+      if (this.reachable(p, c)) ped = c; else this.peds.remove(c);
+    }
     if (!ped) {
-      this.hud.showToast('No fares about — try somewhere busier');
-      if (this.on && !this.run) { this.nextT = 6; this.setObj('Taxi · looking for a fare…'); }
+      this.noFare(player, 'No fares about — try somewhere busier');
       return;
     }
-    if (this._objWas === undefined) this._objWas = this.hud.objective ? this.hud.objective.textContent : '';
     this.run = {
       stage: 'hail', ped, t: 0, stopT: 0, walkT: 0,
       place: G.placeNameAt(ped.x, ped.z), dest: null, route: null, m: 0, fare: 0, par: 0, limit: 0,
       ride: 0, smooth: 1, crashes: 0, bumps: 0, near: 0, drove: 0, lastX: p.x, lastZ: p.z,
-      sayT: 0, lateSaid: false, nmT: 0, cd: 0,
+      sayT: 0, lateSaid: false, nmT: 0, cd: 0, pedCd: 0,
     };
     this.nextT = 0;
     this.hud.fare = { hail: { x: ped.x, z: ped.z }, dest: null, route: null };
@@ -145,6 +161,75 @@ export class TaxiFares {
     this.hud.showToast(`Fare waiting in ${this.run.place} — ${this.dist(Math.hypot(ped.x - p.x, ped.z - p.z))} away`, 3200);
     if (this.audio && this.audio.ready) this.audio.ui('ring');
     this.setBtn(true);
+  }
+
+  /** A hail that came to nothing: try again shortly, or after GIVE_UP in a row end the shift. */
+  noFare(player, msg) {
+    if (++this.fails >= GIVE_UP) { this.end(false, 'No fares can be reached from here — try another neighbourhood'); return true; }
+    this.hud.showToast(msg);
+    if (this.on && !this.run) { this.nextT = 5; this.setObj('Taxi · looking for a fare…'); }
+    return false;
+  }
+
+  /** The road network each node is on (an undirected union-find, once): a
+   *  private drive is a pocket of a dozen nodes that nothing else reaches. */
+  comps() {
+    if (this._comp) return this._comp;
+    const city = this.city, N = city.nodes.length, par = new Int32Array(N);
+    for (let i = 0; i < N; i++) par[i] = i;
+    const find = (i) => { while (par[i] !== i) { par[i] = par[par[i]]; i = par[i]; } return i; };
+    for (const e of city.edges) { const a = find(e.a), b = find(e.b); if (a !== b) par[a] = b; }
+    const size = new Int32Array(N);
+    for (let i = 0; i < N; i++) { par[i] = find(i); size[par[i]]++; }
+    return (this._comp = { par, size });
+  }
+
+  /** The nearest street node within `r` of (x, z) on a real network (not a
+   *  pocket), ground level first. -1 if none. */
+  mainNode(x, z, r) {
+    const city = this.city, { par, size } = this.comps();
+    let best = -1, bd = Infinity;
+    for (const ei of city.edgesNear(x, z, r)) {
+      const e = city.edges[ei];
+      for (const ni of [e.a, e.b]) {
+        const n = city.nodes[ni];
+        if (size[par[ni]] < 300) continue;
+        const d = Math.hypot(n.x - x, n.z - z) + (n.elev ? 400 : 0);
+        if (d < bd) { bd = d; best = ni; }
+      }
+    }
+    return bd < r + 400 ? best : -1;
+  }
+
+  /** Can the taxi at `p` get to ped `c` by road without a long way round? */
+  reachable(p, c) {
+    const from = this.mainNode(p.x, p.z, 250), to = this.mainNode(c.x, c.z, 80);
+    if (from < 0 || to < 0) return false;
+    if (from === to) return true;
+    const path = this.traffic.findPath(from, to, 2500, true);
+    if (!path) return false;
+    const r = this.routeOf(path, p.x, p.z);
+    return r.m <= HAIL_DETOUR * Math.hypot(c.x - p.x, c.z - p.z) + 60;
+  }
+
+  /** A node path as a polyline from (x, z), and its length. The first node is
+   *  dropped when it is behind the start (the car is already past it toward the
+   *  next), so the line does not begin with a spur back to it. */
+  routeOf(path, x, z) {
+    const city = this.city;
+    let i0 = 0;
+    if (path.length > 1) {
+      const a = city.nodes[path[0]], b = city.nodes[path[1]];
+      if ((x - a.x) * (b.x - a.x) + (z - a.z) * (b.z - a.z) > 0) i0 = 1;
+    }
+    let m = 0;
+    const pts = [x, z];
+    for (let i = i0; i < path.length; i++) {
+      const n = city.nodes[path[i]];
+      m += Math.hypot(n.x - pts[pts.length - 2], n.z - pts[pts.length - 1]);
+      pts.push(n.x, n.z);
+    }
+    return { pts, m };
   }
 
   // --- the destination -----------------------------------------------------
@@ -165,8 +250,9 @@ export class TaxiFares {
    *  700-6000 m off whose route the A* finds. Returns the run's route fields. */
   choose(x, z) {
     const city = this.city, T = this.traffic;
-    const from = city.nearestNode(x, z, 200);
+    const from = this.mainNode(x, z, 250);
     if (from < 0) return null;
+    const { par } = this.comps();
     const cand = this.destinations().filter((d) => { const l = Math.hypot(d.x - x, d.z - z); return l > 700 && l < 6000; });
     // (shuffled; any left over for a nameless corner, by the delivery rule)
     for (let i = cand.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [cand[i], cand[j]] = [cand[j], cand[i]]; }
@@ -178,22 +264,19 @@ export class TaxiFares {
     for (const c of tries) {
       const sp = city.respawnPointNear(c.x, c.z, 450);
       if (!sp || sp.elev) continue;
-      const to = city.nearestNode(sp.x, sp.z, 40);
-      if (to < 0 || to === from || city.nodes[to].elev) continue;
-      const path = T.findPath(from, to, 3200);
-      if (!path || path.length < 4) continue;
-      let m = 0, pts = [x, z];
-      for (let i = 0; i < path.length; i++) {
-        const n = city.nodes[path[i]];
-        const px = i ? pts[pts.length - 2] : x, pz = i ? pts[pts.length - 1] : z;
-        m += Math.hypot(n.x - px, n.z - pz);
-        pts.push(n.x, n.z);
-      }
+      const to = this.mainNode(sp.x, sp.z, 60);
+      if (to < 0 || to === from || city.nodes[to].elev || par[to] !== par[from]) continue;
+      const path = T.findPath(from, to, 3200, true);
+      if (!path || path.length < 3) continue;
+      const { pts, m } = this.routeOf(path, x, z);
       if (m < 500) continue;
       const nd = city.nodes[to];
+      const straight = Math.hypot(nd.x - x, nd.z - z);
       return {
         dest: { x: nd.x, z: nd.z, y: city.groundAt(nd.x, nd.z, null), name: c.name || G.placeNameAt(nd.x, nd.z) },
-        route: Float32Array.from(pts), m,
+        // (a pickup whose way round is wild does not inflate the fare: it is paid
+        // on the route capped at PAY_CAP x the crow flight, and costs the time)
+        route: Float32Array.from(pts), path, m, payM: Math.min(m, PAY_CAP * straight),
       };
     }
     return null;
@@ -204,14 +287,14 @@ export class TaxiFares {
     const pick = this.choose(v.x, v.z);
     if (!pick) {
       this.release(ped);
-      this.hud.showToast('They changed their mind — the fare walks off');
       this.run = null; this.hud.fare = null; this.mark.visible = false;
-      this.nextT = 4; this.setObj('Taxi · looking for a fare…');
+      this.noFare(player, 'They changed their mind — the fare walks off');
       return;
     }
+    this.fails = 0;
     this.peds.remove(ped);
     run.ped = null;
-    Object.assign(run, pick, fareFor(pick.m));
+    Object.assign(run, pick, fareFor(pick.m, pick.payM));
     run.stage = 'ride'; run.t = 0; run.ride = 0; run.lastX = v.x; run.lastZ = v.z; run.drove = 0;
     this.hud.fare = { hail: null, dest: pick.dest, route: pick.route };
     this.placeMark(pick.dest.x, pick.dest.y, pick.dest.z, false);
@@ -245,8 +328,13 @@ export class TaxiFares {
     this.mark.visible = false;
     this.hud.fare = null;
     this.setBtn(false);
-    if (this._objTxt === '' || (this.hud.objective && this.hud.objective.textContent === this._objTxt)) this.hud.setObjective(this._objWas || '');
-    this._objWas = undefined;
+    // the line goes back only if it is still ours -- and to the delivery that is
+    // current NOW (one delivered during the shift has already replaced the one
+    // that was up when it began)
+    if (this._objTxt === '' || (this.hud.objective && this.hud.objective.textContent === this._objTxt)) {
+      const t = this.game.target;
+      this.hud.setObjective(t ? `Deliver to ${G.placeNameAt(t.x, t.z)} — ${formatMoney(this.game.deliveryValue)}` : '');
+    }
     this._objTxt = '';
     if (msg) this.hud.showToast(msg, 3200);
     if (!ok && run && this.audio && this.audio.ready) this.audio.ui('fail');
@@ -324,7 +412,8 @@ export class TaxiFares {
   /** game.onPedHit: running somebody down is the worst of it. */
   onPedHit(byPlayer) {
     const run = this.run;
-    if (!byPlayer || !run || run.stage !== 'ride') return;
+    if (!byPlayer || !run || run.stage !== 'ride' || run.pedCd > 0) return;
+    run.pedCd = 2;   // (a pile-up is one penalty, not one a pedestrian)
     run.crashes++; run.smooth = Math.max(0, run.smooth - 0.4); this.streak = 0;
     this.say('hit', true);
   }
@@ -347,6 +436,7 @@ export class TaxiFares {
     const game = this.game;
     if (game.dead) { this.end(false, 'Fare over'); return; }
     if (!taxi) { this.end(false, 'You left the taxi — fare over'); return; }
+    if (player.vehicle !== this.veh) { this.end(false, 'You changed cabs — fare over'); return; }
     if (game.wanted >= 3) { this.end(false, 'Police on your tail — the passenger bails'); return; }
     const v = player.vehicle, p = player.position;
     if (!this.run) {
@@ -356,7 +446,7 @@ export class TaxiFares {
     }
     const run = this.run;
     run.t += dt;
-    run.sayT -= dt; run.cd -= dt; this._objCd -= dt;
+    run.sayT -= dt; run.cd -= dt; run.pedCd -= dt; this._objCd -= dt;
     if (run.stage === 'hail') this.updateHail(dt, player, v);
     else this.updateRide(dt, player, v);
     if (this.mark.visible) {
@@ -460,7 +550,6 @@ export class TaxiFares {
 
   setObj(t) {
     if (t === this._objTxt) return;
-    if (this._objWas === undefined) this._objWas = this.hud.objective ? this.hud.objective.textContent : '';
     this._objTxt = t;
     this.hud.setObjective(t);
   }

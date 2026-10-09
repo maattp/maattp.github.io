@@ -174,13 +174,25 @@ try {
   await ev('__tx.step(300)', false);
   const b = await ev(`(() => { const X = __dbg.taxi, r = X.run; return r ? { stage: r.stage, dest: r.dest && r.dest.name, m: r.m, fare: r.fare, par: r.par, limit: r.limit,
     ped: r.ped, flags: __dbg.peds.peds.filter((p) => p.fare).length, route: __dbg.hud.fare && __dbg.hud.fare.route && __dbg.hud.fare.route.length / 2,
-    destPin: !!(__dbg.hud.fare && __dbg.hud.fare.dest), mark: X.mark.visible, obj: __dbg.hud.objective.textContent, named: r.dest && /\\w{3}/.test(r.dest.name) } : null; })()`, false);
+    payM: r.payM, dx: r.dest.x - __dbg.player.vehicle.x, dz: r.dest.z - __dbg.player.vehicle.z, destPin: !!(__dbg.hud.fare && __dbg.hud.fare.dest), mark: X.mark.visible, obj: __dbg.hud.objective.textContent, named: r.dest && /\\w{3}/.test(r.dest.name) } : null; })()`, false);
   check(b && b.stage === 'ride' && b.ped === null && b.flags === 0, `they boarded (stage ${b && b.stage}) and left the crowd (${b && b.flags} fare peds)`);
   check(b && b.m >= 500 && b.route >= 4, `the destination "${b && b.dest}" is ${Math.round(b && b.m)} m of route (${b && b.route} nodes)`);
-  const exp = await ev(`(async () => { const T = await import('/apps/auto/src/taxi.js'); return T.fareFor(${b ? b.m : 0}); })()`);
-  check(b && b.fare === exp.fare && b.fare >= 70 + 210 * b.m / 1000 - 1, `the fare is base + per-km of the route: $${b && b.fare} (par ${Math.round(b && b.par)} s, limit ${Math.round(b && b.limit)} s)`);
+  const exp = await ev(`(async () => { const T = await import('/apps/auto/src/taxi.js'); return T.fareFor(${b ? b.m : 0}, ${b ? b.payM : 0}); })()`);
+  check(b && b.fare === exp.fare && b.fare >= 70 + 210 * b.payM / 1000 - 1 && b.payM <= 1.6 * Math.hypot(b.dx, b.dz) + 1, `the fare is base + per-km of the route: $${b && b.fare} (par ${Math.round(b && b.par)} s, limit ${Math.round(b && b.limit)} s)`);
   check(b && b.destPin && b.mark, 'the destination has a pillar and a map pin, and the route is drawn');
   check(b && /Taxi/.test(b.obj), `the objective follows the ride: "${b && b.obj}"`);
+
+  if (SHOTS) {
+    // the route on the minimap (the car 40 m along it), then on the full map
+    await ev(`(() => { const r = __dbg.taxi.run, v = __dbg.player.vehicle; const q = r.route; const k = Math.min(q.length / 2 - 1, 6) * 2; __tx.place(v, q[k], q[k + 1], v.heading); __dbg.game.paused = false; return true; })()`, false);
+    await sleep(2500);
+    await ev(`(() => { __dbg.game.paused = true; return true; })()`, false);
+    await shot('ride-minimap');
+    await ev(`(() => { document.getElementById('mapOverlay').classList.add('show'); __dbg.game.mapOpen = true; __dbg.hud.drawBigMap(__dbg.player, __dbg.game); return true; })()`, false);
+    await sleep(600);
+    await shot('ride-bigmap');
+    await ev(`(() => { document.getElementById('mapOverlay').classList.remove('show'); __dbg.game.mapOpen = false; return true; })()`, false);
+  }
 
   // ---- a clean ride pays fare + tip -----------------------------------------
   const pickTip = await ev('__dbg.taxi.tipNow(__dbg.taxi.run)', false);
@@ -210,9 +222,10 @@ try {
     await sleep(600);
     await shot('dropoff');
   }
+  await ev('(window.__leaver = __dbg.taxi.leavers[0] && __dbg.taxi.leavers[0].p, true)', false);
   await ev('__tx.step(240)', false);
-  const l2 = await ev('__dbg.peds.peds.filter((p) => p.fare).length', false);
-  check(l2 === 0 || await ev('__dbg.taxi.run && __dbg.taxi.run.ped !== null', false), `the passenger joins the crowd after a few seconds (${l2} fare peds besides the next hail)`);
+  const l2 = await ev('({ had: !!window.__leaver, fare: window.__leaver ? window.__leaver.fare : -1, inList: window.__leaver ? __dbg.peds.peds.includes(window.__leaver) : false, left: __dbg.taxi.leavers.length })', false);
+  check(l2.had && l2.left === 0 && (!l2.inList || l2.fare === 0), `the very passenger who got out was let go into the crowd (claim ${l2.fare}, still in list ${l2.inList}, leavers left ${l2.left})`);
 
   // ---- the shift goes on: the next fare hails; a crash cuts its tip -------------
   const nx = await ev('(__tx.step(1), __dbg.taxi.run && __dbg.taxi.run.stage)', false);
@@ -329,6 +342,97 @@ try {
   check(!hurt.run, 'a hailing person knocked down ends that hail (the shift goes on: ' + hurt.on + ')');
   await ev('(__dbg.taxi.end(false), true)', false);
   await clean('ending the shift after a knocked-down hail');
+
+  // ---- nit fixes: one-way routes, hails by road, the objective, penalties ----------------
+  // (1) strict routes never go the wrong way; the pursuit router does, so this is not vacuous
+  const ow = await ev(`(() => {
+    const d = __dbg, T = d.traffic, C = d.city, X = d.taxi;
+    const wrong = (path) => { let n = 0; for (let i = 0; i + 1 < path.length; i++) { const a = path[i], b = path[i + 1];
+      const ei = C.nodes[a].e.find((q) => { const e = C.edges[q]; return (e.a === a && e.b === b) || (e.a === b && e.b === a); });
+      if (ei === undefined) continue; const e = C.edges[ei]; if (!T.allowed(ei, e.a === a ? 1 : -1)) n++; } return n; };
+    let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const sites = [[-560, -210], [1861, -5554], [-3633, -7246], [590, 6939], [-3655, 4493], [1468, -1389], [-36, -1314], [2101, 3753]];
+    let strictWrong = 0, looseWrong = 0, routes = 0, chose = 0, chooseWrong = 0, payOver = 0;
+    for (let k = 0; k < 40; k++) {
+      const [sx, sz] = sites[k % sites.length], a = C.nearestNode(sx + (rnd() - 0.5) * 600, sz + (rnd() - 0.5) * 600, 300);
+      const ang = rnd() * 6.28, r = 700 + rnd() * 2500, b = C.nearestNode(sx + Math.cos(ang) * r, sz + Math.sin(ang) * r, 300);
+      if (a < 0 || b < 0 || a === b) continue;
+      const ps = T.findPath(a, b, 3200, true); if (ps) { routes++; strictWrong += wrong(ps); }
+      const pl = T.findPath(a, b, 3200, false); if (pl) looseWrong += wrong(pl) ? 1 : 0;
+      if (k % 4 === 0) { const n = C.nodes[a], pick = X.choose(n.x, n.z); if (pick) { chose++; chooseWrong += wrong(pick.path); if (pick.payM > pick.m + 0.5) payOver++; } }
+    }
+    return { routes, strictWrong, looseRoutesWithWrong: looseWrong, chose, chooseWrong, payOver };
+  })()`, false);
+  check(ow.routes >= 25 && ow.strictWrong === 0, `strict routes: 0 wrong-way edges over ${ow.routes} routes (the pursuit router had ${ow.looseRoutesWithWrong} routes with one)`);
+  check(ow.chose >= 5 && ow.chooseWrong === 0, `chosen fares' routes: 0 wrong-way edges over ${ow.chose}`);
+  check(ow.payOver === 0, 'the paid distance never exceeds the route');
+
+  // (2) pay is capped near the crow flight: an engineered wild route pays on 1.6 x straight
+  const cap = await ev(`(async () => { const T = await import('/apps/auto/src/taxi.js'); const a = T.fareFor(3600, 1.6 * 846), b = T.fareFor(3600);
+    return { capped: a.fare, plain: b.fare, par: a.par === b.par }; })()`);
+  check(cap.capped < cap.plain && cap.par, `a 3600 m route for an 846 m flight pays $${cap.capped}, not $${cap.plain}, on the same clock`);
+
+  // (3) hails are by road: every hail the taxi gets is reachable under 2x the flight, over six sites
+  const sitesH = [[-560, -210], [1861, -5554], [-3633, -7246], [590, 6939], [-3655, 4493], [2973, -1991]];
+  let hOK = 0, hGaveUp = 0;
+  for (const [hx, hz] of sitesH) {
+    await startTaxi(hx, hz);
+    await ev(`(__dbg.game.dead = false, __dbg.game.wanted = 0, __dbg.taxi.toggle(__dbg.player), __tx.step(2), true)`, false);
+    const r = await ev(`(() => { const X = __dbg.taxi, r = X.run; return r && r.ped ? { ok: X.reachable(__dbg.player.position, r.ped) } : null; })()`, false);
+    if (r && r.ok) hOK++; else if (!r) hGaveUp++;
+    await ev('(__dbg.taxi.end(false), true)', false);
+  }
+  check(hOK + hGaveUp === sitesH.length && hOK >= 4, `hails by road: ${hOK} of ${sitesH.length} sites got a reachable hailer, ${hGaveUp} found none (no unreachable one offered)`);
+
+  // (4) Washington Park: it either makes a fare or ends the shift with a message -- never loops
+  await startTaxi(2973, -1991);
+  await ev(`(__dbg.game.dead = false, __dbg.game.wanted = 0, __dbg.taxi.toggle(__dbg.player), __tx.step(3), true)`, false);
+  const wp = await ev(`(() => { const v = __dbg.player.vehicle, c = __dbg.taxi.choose(v.x, v.z); return { found: !!c, dest: c && c.dest.name, m: c && Math.round(c.m) }; })()`, false);
+  console.log(`     (Washington Park: choose() ${wp.found ? 'found ' + wp.dest + ' at ' + wp.m + ' m' : 'finds nothing'})`);
+  let wpEnd = null;
+  for (let k = 0; k < 6 && !wpEnd; k++) {
+    if (await ev('!__dbg.taxi.on', false)) { wpEnd = 'ended'; break; }
+    const stg = await ev('__dbg.taxi.run && __dbg.taxi.run.stage', false);
+    if (stg === 'hail') { await boardNow(); if (await ev('!!__dbg.taxi.run && __dbg.taxi.run.stage === "ride"', false)) { wpEnd = 'rode'; break; } }
+    await ev('__tx.step(200)', false);
+  }
+  check(wp.found ? wpEnd === 'rode' : wpEnd === 'ended', `Washington Park ${wpEnd === 'rode' ? 'now makes a fare' : 'ends the shift after a few failures'} (${wpEnd})`);
+  await ev('(__dbg.taxi.end(false), true)', false);
+
+  // (4b) a shift that cannot make a fare ends after three tries, not every 4 s for ever
+  await begin();
+  await ev('(__dbg.taxi.choose = () => null, true)', false);
+  for (let k = 0; k < 4 && (await ev('__dbg.taxi.on', false)); k++) { if (await ev('__dbg.taxi.run && __dbg.taxi.run.stage === "hail"', false)) await boardNow(); await ev('__tx.step(240)', false); }
+  check(!(await ev('__dbg.taxi.on', false)), 'three routeless fares in a row end the shift');
+  await ev('(delete __dbg.taxi.choose, true)', false);
+
+  // (5) the pedestrian penalty is one per 2 s, however many you hit at once
+  await begin();
+  check((await boardNow()) === 'ride', 'boarded (penalty cooldown)');
+  const s0 = await ev('__dbg.taxi.run.smooth', false);
+  await ev('(__dbg.taxi.onPedHit(true), __dbg.taxi.onPedHit(true), __dbg.taxi.onPedHit(true), true)', false);
+  const s1 = await ev('__dbg.taxi.run.smooth', false);
+  await ev('(__tx.step(80), __dbg.taxi.onPedHit(true), true)', false);
+  const s2 = await ev('__dbg.taxi.run.smooth', false);
+  check(Math.abs((s0 - s1) - 0.4) < 1e-6 && s2 < s1, `three pedestrians at once cost one penalty (${s0.toFixed(2)} -> ${s1.toFixed(2)}), the next after 2 s another (${s2.toFixed(2)})`);
+  await ev('(__dbg.taxi.end(false), true)', false);
+
+  // (6) a delivery during the shift: the line that comes back is the CURRENT one
+  await begin();
+  check((await boardNow()) === 'ride', 'boarded (objective)');
+  await ev('(__dbg.game.target = { x: 100, z: 200, y: 0 }, __dbg.game.deliveryValue = 777, true)', false);
+  await ev('(__dbg.taxi.end(false), true)', false);
+  const ob = await ev('__dbg.hud.objective.textContent', false);
+  const nm = await ev('__dbg.G.placeNameAt(100, 200)', false);
+  check(ob === `Deliver to ${nm} — $777`, `after the shift the objective is the current delivery, not the old one: "${ob}"`);
+  await ev('(__dbg.game.target = null, __dbg.hud.setObjective(""), true)', false);
+
+  // (7) taking another cab ends the fare
+  await begin();
+  check((await boardNow()) === 'ride', 'boarded (cab change)');
+  await ev(`(() => { const v = __dbg.player.vehicle, w = __dbg.traffic.spawnAt(v.x + 6, v.z, v.heading, 'taxi', 0xf0b40c, 'free'); __dbg.player.enterVehicle(w); __tx.step(3); return true; })()`, false);
+  await clean('carjacking another taxi mid-fare');
+  await ev('(__dbg.hud.setObjective(""), true)', false);
 
   check(logs.length === 0, 'no page exceptions' + (logs.length ? ': ' + logs.slice(0, 3).join(' | ') : ''));
 } catch (e) {
