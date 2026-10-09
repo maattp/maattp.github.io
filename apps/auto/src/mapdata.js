@@ -9,6 +9,8 @@
 // worker in the same lazy tier as the Three.js build (never in SHELL -- a slow
 // install pins iOS players to a stale worker forever).
 
+import { decodeMountains } from './mountains.js';
+
 const BASE = new URL('../data/', import.meta.url);
 
 async function bytes(name, onProgress) {
@@ -164,10 +166,14 @@ export async function loadMapData(onStep) {
   const piers = await (await fetch(new URL('piers.json', BASE))).json();
   // WSF's Seattle-Bainbridge route and its slips (tools/build_ferry.py)
   const ferry = await (await fetch(new URL('ferry.json', BASE))).json();
+  // The Olympics, Rainier and the Cascades as seen from here (tools/build_mountains.py).
+  // Scenery only: a failed fetch costs the view, never the boot.
+  let mountains = null;
+  try { mountains = decodeMountains(await bytes('mountains.bin')); } catch (e) { console.warn('mountains:', e.message); }
 
   return {
     height, hfN: hp.w,
     water, green, maskN: sp.w, lot, lotN: lp.w,
-    roads, buildings, places, lakes, monorail, link, freight, beaches, parkprops, bikepaths, piers, ferry,
+    roads, buildings, places, lakes, monorail, link, freight, beaches, parkprops, bikepaths, piers, ferry, mountains,
   };
 }

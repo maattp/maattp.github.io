@@ -636,7 +636,10 @@ without the 4th argument silently re-runs the scan.
 Seattle's signature views -- the Olympics over the Sound, Rainier over the
 south end of downtown, the Cascades behind Lake Washington -- were a flat haze
 line. `src/mountains.js` is **one draw**: a 720 x 2 cylinder band around the
-camera, built in `buildSky` right after the dome.
+camera, built in `buildSky` right after the dome, painted from
+`data/mountains.bin` (**real USGS 3DEP elevation**, public domain, through the
+terrarium tiles `fetch_dem.py` already uses; `tools/build_mountains.py`
+re-bakes it, 193 KB, tiles cached in `tools/data/dem/`).
 
 - **It is a sky element, on purpose.** Same vertex trick as the dome
   (`mat3(viewMatrix)`, `z = w`), so it never parallaxes, never meets the far
@@ -646,47 +649,50 @@ camera, built in `buildSky` right after the dome.
   **Not `transparent`**: that would sort it after the whole opaque scene and
   paint it over the city. `CustomBlending` (src alpha) keeps it in the opaque
   list; its destination alpha is left alone so the target keeps the dome's 1.
-- **The silhouette is a table, built at boot** (`buildProfile`, ~3 ms
-  desktop): 8192 columns of bearing from the map's origin (0.044 deg, ~1 px on
-  a phone), each holding the height and distance of whatever stands highest on
-  the sky there -- the named peaks (`PEAKS`: real lat/lon from Wikipedia/GNIS
-  through `geo.toWorld`, published summit heights) over two ridged-noise crest
-  lines (`RANGES`: the Olympics' east front, 60-110 km out; the Cascade crest,
-  60-140 km). Heights are `(H - d^2 / 2R_eff) * EXAG`: curvature with standard
-  refraction (k = 0.13), then **1.3x** -- the brief's ceiling -- because at sea
-  level the honest 1-2 deg Olympics barely read. Rainier lands 2.3 deg true,
-  **3.0 deg** drawn, at bearing 152.8 deg / 95 km; the Brothers 2.3 deg at 271.
-  `node -e "import('./apps/auto/src/mountains.js').then(m=>console.table(m.peakTable()))"`
-  prints every peak as built. Row 1 of the texture says how far a column is
-  from its summit and which range it is (snow line, rock).
-- **Camera altitude is a uniform, not a mesh.** The fragment shader compares
-  the pixel's elevation with `(Hvis - camAlt) / dist`, so from 1.5 km the
-  range sinks toward the horizon the way it should. `hm`, the line of sight's
-  height at the range's distance, drives the look: forest to bare rock to snow
-  by true height, haze with distance (`1 - exp(-d / 115 km)`, so Rainier sits
-  at 56 %) and thicker toward the foot. The foot is faded to the sky's own
-  horizon colour over `120 + 0.3 * camAlt` m, so there is no base line and no
-  gap from a plane: a hard bottom edge read as a floating strip at 1.5 km.
-  The "air" colour is the dome's horizon/haze blend, from the same uniform
-  objects (`haze`, `hazeToward`, `hazeAway`), so the sun's side stays one
-  colour with the fog.
-- **Weathering has to follow the mountain.** Noise in screen space made
-  Rainier a smooth white cone. On a peak the streaks are keyed to
-  `column offset / silhouette offset at this height` -- a ridge is a scaled
-  copy of the silhouette -- so they radiate from the summit; faces are lit with
-  a real normal (toward the viewer, tilted by the silhouette's slope) against
-  the sun, which is why the Olympics (toward the sun) are dark and Rainier
-  (sun behind you) is bright.
-- **No parallax, deliberately.** Bearings are from the origin. At the map's far
-  edge the Brothers are off by up to ~17 deg; downtown, Kerry Park and Alki are
-  within 2 deg. Real parallax would need per-pixel peak maths or a table per
-  move, for views nobody can compare.
-- **Cost:** +1 draw (294 vs 293 at Kerry Park), 1440 triangles, a 64 KB
-  RGBA8 texture, no render target. Fragment work is only where the band is on
-  screen and only below the ridge (above it: two taps and a `discard`).
-  Judge it with `tools/viewshots.mjs` (`mt-*` views: Alki west, Lake Washington
-  and Kerry Park for Rainier, east, and 1.5-2 km altitude shots) -- and **look
-  at the shots**, the numbers do not tell you if Rainier reads as Rainier.
+- **The silhouette is the real skyline.** The tool marches a ray for each of
+  8192 bearings (0.044 deg) from the origin (Westlake), 16-150 km out through
+  the 104 m DEM (Rainier's sector again through the 26 m one), keeping the
+  highest thing on the sky: its angle with the earth's curvature off (k = 0.13
+  refraction), and a smoothed distance. The shader stretches angles by
+  `EXAG` = 1.2 (Rainier 2.3 deg true, 2.7 drawn) and lowers the skyline by
+  `camAlt / dist`, so from 1.5 km the range sinks toward the horizon.
+  **The distance is smoothed on purpose**: the true one jumps between near
+  hills and far ridges column to column, and everything below the skyline is
+  shaded from it (height, haze), which made vertical bars. The angle itself is
+  exact.
+- **Rainier is a baked view, not a cone and not a mesh.** Seen from a fixed
+  point (no parallax) a mesh and a picture of the mountain are the same thing,
+  and a picture can hold what a few thousand triangles cannot: a 400 x 100
+  RGBA texture where each texel is a ray cast at that bearing and elevation
+  against the 26 m DEM until it hits ground, storing height, slope, **sunlit
+  factor** (lambert against the game's fixed sun, with cast shadows) and
+  distance. Foothills in front hide the lower slopes, Little Tahoma stands to
+  the left of the summit dome, the Emmons and Willis Wall faces are in their
+  right places -- none of it authored. Rows are in the same stretched-angle
+  units as the skyline, so altitude is a texture-coordinate shift
+  (`camAlt / rdist`). The window fades out at its edges into the procedural
+  look, which is also what the rest of the range uses.
+- **The look is derived, not painted.** Forest to bare rock to snow by true
+  height, with **snow only where the ground is gentle enough to hold it** (slope
+  < ~45-60 deg, noise-broken), so steep rock ribs stay dark; faces are lit by
+  the baked factor on Rainier and by a normal tilted by the silhouette's slope
+  elsewhere (tilt fades with depth under the skyline, or a column sharing one
+  tilt reads as a bar). Olympic snow line 1450 m, the rest 1900. Haze is the
+  dome's own horizon colour (same `haze`, `hazeToward`, `hazeAway` objects),
+  `1 - exp(-d / 115 km)`, thicker toward the foot, and the foot is faded to
+  that colour over `120 + 0.3 * camAlt` m: no base line and no gap from a
+  plane (a hard bottom edge read as a floating strip at 1.5 km).
+- **No parallax, deliberately.** Bearings are from the origin. Downtown,
+  Kerry Park and Alki are within a couple of degrees; the map's far edge is off
+  by up to ~17 deg for the nearest Olympic peaks. East of the map the real hills
+  at 17-35 km (Cougar, Tiger) are in the skyline too, because the game's terrain
+  stops at 15.6 km.
+- **Cost:** +1 draw, 1440 triangles, a 32 KB and a 160 KB RGBA8 texture, no
+  render target, nothing per frame but one uniform. Fragment work is only where
+  the band is on screen and only below the ridge (above it: two taps and a
+  `discard`). Judge it with `tools/viewshots.mjs` (`mt-*` views) and **look at
+  the shots** against a photograph: dome summit, Little Tahoma on its left
+  shoulder, the long right-hand slope.
 
 ## Far buildings take their real colour (v166)
 

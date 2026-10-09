@@ -863,7 +863,7 @@ export class World {
     this.skyDome = dome;
     // The range on the horizon: one more sky-layer draw, straight behind the
     // city (see mountains.js).
-    this.mountains = buildMountains(this.scene, uniforms);
+    this.mountains = this.mountainData ? buildMountains(this.scene, uniforms, this.mountainData) : null;
 
     // Render the same sky into an 8-bit equirect for the IBL.
     //

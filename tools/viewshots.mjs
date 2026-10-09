@@ -34,6 +34,8 @@ const VIEWS = process.env.VIEWS ? JSON.parse(readFileSync(process.env.VIEWS, 'ut
   { name: 'mt-west', at: [-4600, 2800, 2], bearing: 275, pitch: 3, fov: 70 },
   { name: 'mt-west-tele', at: [-4600, 2800, 2], bearing: 278, pitch: 1.2, fov: 28 },
   { name: 'mt-rainier-tele', at: [-1650, -2010, 90], bearing: 153, pitch: 2.6, fov: 14 },
+  { name: 'mt-rainier-close', at: [-1650, -2010, 90], bearing: 152.5, pitch: 2.3, fov: 7 },
+  { name: 'mt-rainier-alki', at: [-5200, 2700, 60], bearing: 135, pitch: 2.4, fov: 55 },
   { name: 'mt-east-tele', at: [3000, -300, 80], bearing: 95, pitch: 1.5, fov: 30 },
   { name: 'mt-west-wide', at: [-4600, 2800, 2], bearing: 285, pitch: 4, fov: 90 },
   { name: 'mt-rainier-lake', at: [6000, 2500, 2], bearing: 152, pitch: 4, fov: 62 },

@@ -125,6 +125,7 @@ tools/build_piers.py        OSM's piers -> piers.json
 tools/build_beaches.py      OSM beaches (from raw_green.json) -> beaches.json
 tools/build_parkprops.py    benches, picnic tables, playgrounds, fountains -> parkprops.json
 tools/fetch_dem.py          downloads the USGS terrain tiles
+tools/build_mountains.py    DEM -> the Olympics/Cascades skyline and Rainier's baked face -> mountains.bin
 tools/render_map.py         draws the whole graph top-down, for eyeballing
 tools/verify.mjs            headless CDP boot + assertions + screenshots
 tools/jank.mjs, perfguard.mjs, beauty.mjs, survey.mjs, gait.mjs, flycam.mjs,

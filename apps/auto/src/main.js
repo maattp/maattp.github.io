@@ -956,6 +956,7 @@ function installShadowFade() {
   // ...and its portal cuts, barriers and lids (the terrain's carve needs them).
   // Only with a cached grading: the lids were computed on those profiles.
   world.bootCache = { portal: bootCache.grade ? bc.portal : null };
+  world.mountainData = md.mountains;
   world.buildSky(SUN_OFFSET);
   const terrGen = world.buildTerrain();
   let tr = terrGen.next();
