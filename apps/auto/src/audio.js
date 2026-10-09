@@ -1370,10 +1370,12 @@ export const ENGINES = {
     buzz: { ratio: 10, gain: 0.08 }, whine: { hz0: 2800, hz1: 8800, gain: 0.15, load: 0.4 }, drive: 1.6, level: 0.72, jitter: 0.02 },
   // A tank's gas turbine (the Abrams' AGT1500): a jet's whine, pitched down
   // and heavy, over a roar and a low drone, spooling up over a second or two.
+  // (level 0.28: at 0.78 the cruise was ~5 dB hotter than any car and buried
+  // its own cannon; cannon() also ducks the engine bus.)
   tank: { kind: 'plane', stroke: 2, fire: [0, 0.25, 0.5, 0.75], amps: [1, 1, 1, 1], pw: 0.1,
     idle: 900, redline: 2300, gears: [1], spool: 0.45,
     lp: [600, 2600, 1300], ex: [110, 1.5, 6], noise: { ratio: 60, q: 0.5, gain: 0.65, pulse: 0.15, order: 4 },
-    buzz: { ratio: 6, gain: 0.1 }, whine: { hz0: 1500, hz1: 5200, gain: 0.14, load: 0.45 }, drive: 1.8, level: 0.78, jitter: 0.03 },
+    buzz: { ratio: 6, gain: 0.1 }, whine: { hz0: 1500, hz1: 5200, gain: 0.14, load: 0.45 }, drive: 1.8, level: 0.28, jitter: 0.03 },
   heli: { kind: 'heli', stroke: 2, fire: [0, 0.5], amps: [1, 0.93], pw: 0.012,
     idle: 0, redline: 400, gears: [1], spool: 0.22,
     lp: [260, 900, 1200], ex: [70, 2, 9], noise: { ratio: 70, q: 0.6, gain: 0.8, pulse: 0.95, order: 2 },
@@ -1997,6 +1999,28 @@ function hornFor(spec) {
 
 const TRAFFIC_VOICES = 3;
 const SIREN_VOICES = 2;
+// What a siren voice can sing: [LFO wave, LFO Hz, centre Hz, sweep +-Hz].
+// The wail at a distance, the yelp when a police car is on top of you, a fire
+// rig's hi-lo two-tone (a square LFO: two held notes), SWAT's rapid yelp.
+const SIREN_KINDS = [
+  ['sine', 0.24, 1000, 380],
+  ['triangle', 3.3, 1050, 420],
+  ['square', 0.8, 1000, 150],
+  ['triangle', 6.5, 1050, 300],
+];
+/** One cycle of an LFO shape starting `ph` (0..1) of the way round. An
+ *  oscillator can't be seeked, so a siren's random phase is baked in here. */
+function lfoWave(c, shape, ph) {
+  const N = 31, re = new Float32Array(N + 1), im = new Float32Array(N + 1);
+  for (let n = 1; n <= N; n++) {
+    const a = shape === 'sine' ? (n === 1 ? 1 : 0)
+      : n % 2 === 0 ? 0
+      : shape === 'square' ? 1 / n : (n % 4 === 1 ? 1 : -1) / (n * n);
+    re[n] = a * Math.sin(2 * Math.PI * n * ph);
+    im[n] = a * Math.cos(2 * Math.PI * n * ph);
+  }
+  return c.createPeriodicWave(re, im);
+}
 const MAX_SHOTS = 18;
 
 export class Audio {
@@ -2078,8 +2102,22 @@ export class Audio {
     this.pre.gain.value = 0.9;
     this.pre.connect(this.limiter).connect(this.master).connect(c.destination);
 
+    // Everything synthesised passes one ~25 Hz high-pass on its way to the
+    // limiter: the engines' waveshapers are not symmetric, and the offset they
+    // leave (up to -52 mV) wastes headroom and thumps on every gate.
+    this.dcHp = c.createBiquadFilter();
+    this.dcHp.type = 'highpass';
+    this.dcHp.frequency.value = 25;
+    this.dcHp.Q.value = 0.707;
+    this.dcHp.connect(this.pre);
     this.sfxBus = c.createGain();
-    this.sfxBus.connect(this.pre);
+    this.sfxBus.connect(this.dcHp);
+    // The WORLD -- engines, traffic, sirens, tyres, wind, ambience -- reaches
+    // sfxBus through its own gain, so a pause can shut it without touching the
+    // UI cues (which play on sfxBus) or the mini-games (which wire to master).
+    this.worldBus = c.createGain();
+    this.worldBus.connect(this.sfxBus);
+    this._held = false;
     this.musicBus = c.createGain();
     this.musicBus.gain.value = 0.22;
     this.musicDuck = c.createGain();
@@ -2093,16 +2131,20 @@ export class Audio {
     this.verbOut = c.createGain();
     this.verbOut.gain.value = 0.55;
     this.verbIn.connect(this.verb).connect(this.verbOut).connect(this.sfxBus);
+    // what the WORLD sends to the reverb (the engine, the horns), on its own
+    // gain so holdWorld() can shut it: a stuck note's echo is a drone too
+    this.verbWorld = c.createGain();
+    this.verbWorld.connect(this.verbIn);
 
     this.noise = noiseBuffer(c, 2, 'white', 3);
     this.pinkNoise = noiseBuffer(c, 2, 'pink', 4);
 
     // --- the player's engine --------------------------------------------------
     this.engBus = c.createGain();
-    this.engBus.connect(this.sfxBus);
+    this.engBus.connect(this.worldBus);
     this.engSend = c.createGain();
     this.engSend.gain.value = 0;
-    this.engBus.connect(this.engSend).connect(this.verbIn);
+    this.engBus.connect(this.engSend).connect(this.verbWorld);
     this.eng = new EngineVoice(c, this.pinkNoise, this.engBus);
     this.eng.setProfile('i4');
     this.engModel = new EngineModel();
@@ -2124,8 +2166,8 @@ export class Audio {
     this.windBp.frequency.value = 500;
     this.windG = c.createGain();
     this.windG.gain.value = 0;
-    this.bed.connect(this.roadLp).connect(this.roadG).connect(this.sfxBus);
-    this.bed.connect(this.windBp).connect(this.windG).connect(this.sfxBus);
+    this.bed.connect(this.roadLp).connect(this.roadG).connect(this.worldBus);
+    this.bed.connect(this.windBp).connect(this.windG).connect(this.worldBus);
     // the tread's hiss over the rumble: a band that climbs with speed
     this.treadBp = c.createBiquadFilter();
     this.treadBp.type = 'bandpass';
@@ -2134,7 +2176,7 @@ export class Audio {
     this.treadG = c.createGain();
     this.treadG.gain.value = 0;
     this.bed.connect(this.treadBp).connect(this.treadG);
-    this.tread = new Gate(this.treadG, this.sfxBus);
+    this.tread = new Gate(this.treadG, this.worldBus);
     this.bed.start(c.currentTime);
     this._jointD = 0;
     this._windSpeed = 0;
@@ -2142,7 +2184,7 @@ export class Audio {
 
     // --- ambience: the city, the water, the birds (see _ambience) -------------
     this.ambBus = c.createGain();
-    this.ambBus.connect(this.sfxBus);
+    this.ambBus.connect(this.worldBus);
     this._amb = null;
     this._nearCars = 0;
 
@@ -2174,12 +2216,22 @@ export class Audio {
       for (let n = 1; n <= N; n += 2) im[n] = 1 / n;
       return c.createPeriodicWave(re, im);
     })();
+    let sirenPh0 = 0;
     for (let i = 0; i < SIREN_VOICES; i++) {
       const o = c.createOscillator();
       o.setPeriodicWave(sq);
       o.frequency.value = 1000;
+      // Two cars' sirens used to be phase-locked (both LFOs started at init,
+      // in step) and sounded like one. Each voice starts at its own random
+      // phase (the second about a quarter-turn off the first, which is where
+      // two equal sweeps are uncorrelated) and sweeps 35 % faster than the
+      // first, so they drift apart for good rather than coming back into step.
       const lfo = c.createOscillator();
       lfo.frequency.value = 0.24;
+      const ph0 = i === 0 ? Math.random() : (sirenPh0 + (Math.random() < 0.5 ? 0.25 : 0.75) + (Math.random() - 0.5) * 0.1) % 1;
+      sirenPh0 = ph0;
+      const waves = SIREN_KINDS.map((k) => lfoWave(c, k[0], ph0));
+      lfo.setPeriodicWave(waves[0]);
       const depth = c.createGain();
       depth.gain.value = 380;
       lfo.connect(depth).connect(o.frequency);
@@ -2200,13 +2252,13 @@ export class Audio {
       if (pan) g.connect(pan);
       o.start(c.currentTime);
       lfo.start(c.currentTime);
-      this.sirens.push({ o, lfo, depth, g, pan, out: pan || g, on: false, car: null, yelp: null, quiet: 0 });
+      this.sirens.push({ o, lfo, depth, g, pan, out: pan || g, on: false, car: null, kind: -1, waves, rate: 1 + 0.35 * i, quiet: 0 });
     }
 
     // --- traffic: a few nearest engines, panned ---------------------------------
     this.trafficBus = c.createGain();
     this.trafficBus.gain.value = 0.9;
-    this.trafficBus.connect(this.sfxBus);
+    this.trafficBus.connect(this.worldBus);
     this.tvoices = [];
     for (let i = 0; i < TRAFFIC_VOICES; i++) {
       const o = c.createOscillator();
@@ -2233,7 +2285,7 @@ export class Audio {
 
     // --- the police helicopter ---------------------------------------------------
     this.heliPan = c.createStereoPanner ? c.createStereoPanner() : c.createGain();
-    this.heliPan.connect(this.sfxBus);
+    this.heliPan.connect(this.worldBus);
     this.heliVoice = null;   // built on first sight: most sessions never see it
     this.heliModel = new EngineModel();
     this._heliPrev = null;
@@ -2265,16 +2317,16 @@ export class Audio {
         || !b.grass_roll || !b.amb_city || !b.amb_water) return;
       const lp = (f) => { const x = c.createBiquadFilter(); x.type = 'lowpass'; x.frequency.value = f; return x; };
       this.loops = {
-        squeal: new Tap(c, b.squeal[0], this.sfxBus),
-        gravel: new Tap(c, b.gravel[0], this.sfxBus),
-        scrape: new Tap(c, b.scrape[0], this.sfxBus),
-        slosh: new Tap(c, b.slosh[0], this.sfxBus, lp(2400)),
-        burner: new Tap(c, b.burner[0], this.sfxBus),
-        roll: new Tap(c, b.rail_roll[0], this.sfxBus, lp(3200)),
-        grass: new Tap(c, b.grass_roll[0], this.sfxBus),
+        squeal: new Tap(c, b.squeal[0], this.worldBus),
+        gravel: new Tap(c, b.gravel[0], this.worldBus),
+        scrape: new Tap(c, b.scrape[0], this.worldBus),
+        slosh: new Tap(c, b.slosh[0], this.worldBus, lp(2400)),
+        burner: new Tap(c, b.burner[0], this.worldBus),
+        roll: new Tap(c, b.rail_roll[0], this.worldBus, lp(3200)),
+        grass: new Tap(c, b.grass_roll[0], this.worldBus),
         city: new Tap(c, b.amb_city[0], this.ambBus),
         water: new Tap(c, b.amb_water[0], this.ambBus),
-        tracks: b.tracks ? new Tap(c, b.tracks[0], this.sfxBus) : null,
+        tracks: b.tracks ? new Tap(c, b.tracks[0], this.worldBus) : null,
       };
     };
     const t0 = performance.now();
@@ -2619,6 +2671,33 @@ export class Audio {
     return src;
   }
 
+  /**
+   * Freeze or thaw the world's sound. main.js's frame returns before
+   * audio.update() while the game is paused or the map is open, so every
+   * continuous voice (engine, traffic, sirens, tyres, wind, ambience, horns)
+   * held its last note and droned behind the menu. Called every frame, it
+   * ramps the world bus to 0 in ~0.15 s and back up on resume. The radio
+   * (musicBus), UI cues (play() -> sfxBus) and the mini-games' own sound
+   * (wired to master) do not pass through it.
+   */
+  holdWorld(on) {
+    if (!this.ready || on === this._held) return;
+    this._held = on;
+    const t = this.now();
+    setp(this.worldBus.gain, on ? 0 : 1, t, on ? 0.04 : 0.03);
+    setp(this.verbWorld.gain, on ? 0 : 1, t, 0.04);
+  }
+
+  /** Pull the engine bus down under a big bang (the cannon, an explosion), then let it back. */
+  duckEngine(amount = 0.5, hold = 0.4) {
+    if (!this.ready) return;
+    const t = this.now();
+    const g = this.engBus.gain;
+    g.cancelScheduledValues(t);
+    g.setTargetAtTime(1 - amount, t, 0.02);
+    g.setTargetAtTime(1, t + hold, 0.12);
+  }
+
   /** Pull the radio down under a big sound, then let it back up. */
   duck(amount, hold = 0.5) {
     if (!this.ready) return;
@@ -2689,12 +2768,15 @@ export class Audio {
   explosion(x, z) {
     const pos = x != null ? { x, z, ref: 25, maxD: 900 } : {};
     this.play('explosion', { ...pos, gain: 1, send: 0.45, duck: 0.8, duckHold: 1.6 });
+    // your engine gives way to a bang that is near (all but the far ones)
+    if (x == null || !this.L || Math.hypot(x - this.L.x, z - this.L.z) < 120) this.duckEngine(0.5, 0.4);
     this.play('glass', { ...pos, gain: 0.35, at: 0.04 });
   }
 
   /** A tank's main gun, yours: the bank's boom, a big reverb send, the radio ducked. */
   cannon() {
     this.play('cannon', { gain: 1, send: 0.7, duck: 0.9, duckHold: 1.2, jitter: false });
+    this.duckEngine(0.5, 0.4);
     this.play('debris', { gain: 0.2, at: 0.08 });
   }
 
@@ -2767,7 +2849,7 @@ export class Audio {
       S = this._fire = { out, sg, lg, rg, lfoG, lfo, on: false, quiet: 0 };
     }
     const want = spray > 0 || roar > 0.01;
-    if (want && !S.on) { S.on = true; S.out.connect(this.sfxBus); }
+    if (want && !S.on) { S.on = true; S.out.connect(this.worldBus); }
     setp(S.sg.gain, spray * 0.22, t, spray > 0 ? 0.04 : 0.12);
     setp(S.lg.gain, spray * 0.38, t, spray > 0 ? 0.06 : 0.15);
     setp(S.rg.gain, roar * roar * 0.55, t, 0.3);
@@ -3017,7 +3099,7 @@ export class Audio {
       // a tank's tracks: louder and quicker with the belts' speed
       if (this.loops.tracks) {
         const tr = inCar && spec && spec.tank ? s.tracks || 0 : 0;
-        this.loops.tracks.set(tr > 0.05 ? clamp(0.12 + tr / 9, 0, 1) * 0.5 : 0, t, 0.08, clamp(0.55 + tr / 10, 0.55, 2.2));
+        this.loops.tracks.set(tr > 0.05 ? clamp(0.12 + tr / 9, 0, 1) * 0.36 : 0, t, 0.08, clamp(0.55 + tr / 10, 0.55, 2.2));
       }
       const scr = inCar ? clamp(s.scrape || 0, 0, 1) : 0;
       this.loops.scrape.set(scr * 0.3, t, 0.03, 0.8 + clamp(sp / 25, 0, 0.5));
@@ -3048,7 +3130,7 @@ export class Audio {
     // a freight you are driving: its air horn, its bell, its wheels
     const fv = inCar && spec && spec.freight ? s.vehicle : null;
     if (fv || this.frHorn) {
-      if (!this.frHorn) { this.frHorn = new AirHorn(this.ctx, this.sfxBus, this.verbIn); this.frHorn.setNoise(this.pinkNoise); }
+      if (!this.frHorn) { this.frHorn = new AirHorn(this.ctx, this.worldBus, this.verbWorld); this.frHorn.setNoise(this.pinkNoise); }
       // over the cab roof, a little behind you: loud, but not in your ear
       this.frHorn.set(t, !!(fv && fv.hornOn), 0.78, 0, 1, 40);
     }
@@ -3064,7 +3146,7 @@ export class Audio {
     // horn
     if (this.hornT > 0) this.hornT -= dt;
     const hornWant = this.hornT > 0 && inCar;
-    if (hornWant && !this.hornOn) { this.hornOn = true; this.hornG.connect(this.sfxBus); }
+    if (hornWant && !this.hornOn) { this.hornOn = true; this.hornG.connect(this.worldBus); }
     if (this.hornOn) {
       const h = HORNS[this.hornKind] || HORNS.car;
       setp(this.hornG.gain, hornWant ? h.gain : 0, t, hornWant ? 0.008 : 0.03);
@@ -3290,10 +3372,10 @@ export class Audio {
   _ferries(dt, t, s, L) {
     const c = this.ctx;
     if (!this.fyHorn) {
-      this.fyHorn = new AirHorn(c, this.sfxBus, this.verbIn, SHIP_HORN);
+      this.fyHorn = new AirHorn(c, this.worldBus, this.verbWorld, SHIP_HORN);
       this.fyHorn.setNoise(this.pinkNoise);
       this.fyPan = c.createStereoPanner ? c.createStereoPanner() : c.createGain();
-      this.fyPan.connect(this.sfxBus);
+      this.fyPan.connect(this.worldBus);
     }
     if (!this.fyRumble && this.bank && this.bank.ferry_rumble) this.fyRumble = new Tap(c, this.bank.ferry_rumble[0], this.fyPan);
     let best = null, bd = Infinity;
@@ -3321,16 +3403,16 @@ export class Audio {
     near.sort((p, q) => p[0] - q[0]);
     while (this.frVoices.length < Math.min(2, near.length)) {
       const pan = c.createStereoPanner ? c.createStereoPanner() : c.createGain();
-      pan.connect(this.sfxBus);
+      pan.connect(this.worldBus);
       const eng = new EngineVoice(c, this.pinkNoise, pan);
       eng.setProfile('gevo');
       const model = new EngineModel();
       model.setProfile(ENGINES.gevo, { topKph: 80 });
       model.start(true);
-      const horn = new AirHorn(c, this.sfxBus, this.verbIn);
+      const horn = new AirHorn(c, this.worldBus, this.verbWorld);
       horn.setNoise(this.pinkNoise);
       const rpan = c.createStereoPanner ? c.createStereoPanner() : c.createGain();
-      rpan.connect(this.sfxBus);
+      rpan.connect(this.worldBus);
       const roll = this.bank && this.bank.rail_roll ? new Tap(c, this.bank.rail_roll[0], rpan) : null;
       this.frVoices.push({ pan, eng, model, horn, rpan, roll, train: null, bellT: 0 });
     }
@@ -3415,18 +3497,21 @@ export class Audio {
     const f = car.forward;
     const sp = spatial(L, car.x, car.y + 1.5, car.z, f.x * car.vLong, f.z * car.vLong, 14, 260);
     if (!sp) { this._siren(sv, null, t, L); return; }
-    if (!sv.on) { sv.on = true; sv.out.connect(this.sfxBus); }
+    if (!sv.on) { sv.on = true; sv.out.connect(this.worldBus); }
     sv.quiet = 0;
     // wail at a distance, yelp when it is on top of you
-    const yelp = !car.sirenOn && sp.d < 45;   // your own car's siren wails: it is always within 45 m
-    if (yelp !== sv.yelp) {
-      sv.yelp = yelp;
-      sv.lfo.type = yelp ? 'triangle' : 'sine';
-      setp(sv.lfo.frequency, yelp ? 3.3 : 0.24, t, 0.05);
+    // (a fire rig sings hi-lo and SWAT yelps fast whatever the distance)
+    const sp2 = car.spec;
+    const kind = sp2 && sp2.fire ? 2 : sp2 && sp2.swat ? 3
+      : !car.sirenOn && sp.d < 45 ? 1 : 0;   // your own car's siren wails: it is always within 45 m
+    const K = SIREN_KINDS[kind];
+    if (kind !== sv.kind) {
+      sv.kind = kind;
+      sv.lfo.setPeriodicWave(sv.waves[kind]);
+      setp(sv.lfo.frequency, K[1] * sv.rate, t, 0.05);
     }
-    const centre = (yelp ? 1050 : 1000) * sp.dop;
-    setp(sv.o.frequency, centre, t, 0.05);
-    setp(sv.depth.gain, (yelp ? 420 : 380) * sp.dop, t, 0.05);
+    setp(sv.o.frequency, K[2] * sp.dop, t, 0.05);
+    setp(sv.depth.gain, K[3] * sp.dop, t, 0.05);
     const lvl = (car.legacy != null ? car.legacy : 1) * (car.sirenOn ? 0.075 : 0.11) * sp.gain;   // yours is heard from inside
     setp(sv.g.gain, lvl, t, 0.1);
     if (sv.pan) setp(sv.pan.pan, sp.pan, t, 0.06);

@@ -2557,6 +2557,10 @@ function frame(now) {
   if (islands) islands.update(dt);
   if (fishToss) { if (fishToss.active) fishToss.update(dt); fishToss.updateWorld(dt, camera.position.x, camera.position.z); }
   if (hoops) hoops.updateVisibility(camera.position.x, camera.position.z);
+  // The paused branch below returns before audio.update(): the engine, traffic
+  // and sirens would hold their last note behind the menu. This ramps the world
+  // bus down (and back up on resume); the radio and the UI cues stay.
+  audio.holdWorld(game.paused || game.mapOpen);
   if (game.paused || game.mapOpen) {
     controls.takeLook();
     // NOTHING MOVES BEHIND THE MENU OR THE MAP, so stop drawing it. The whole
