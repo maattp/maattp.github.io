@@ -738,7 +738,7 @@ export class FireService {
     o.game.fireTarget = this.call.at;
     this.beacon.position.set(first.b.x, first.b.y, first.b.z);
     this.beacon.visible = true;
-    if (!this._objSaved) { this._objBefore = o.hud.objective ? o.hud.objective.textContent : ''; this._objSaved = true; }
+    if (!this._objSaved) { this._objBefore = o.hud.objective ? o.hud.objective.textContent : ''; this._objSaved = true; this._objTxt = null; }
     o.hud.showToast(`FIRE CALL ${k}: ${nb > 1 ? `${nb} buildings` : 'a building'} alight in ${name} — ${Math.round(dist)} m`, 3600);
     if (o.audio && o.audio.ready) o.audio.ui('start');
     this.stats.calls++;
@@ -759,12 +759,30 @@ export class FireService {
     this.clearFires();
     o.game.fireTarget = null;
     this.beacon.visible = false;
-    if (this._objSaved) { o.hud.setObjective(this._objBefore || ''); this._objSaved = false; }
+    // (only if the line is still ours: a delivery, a police run or a tour may
+    // have written its own since, and restoring over it would bring back a
+    // dead objective)
+    if (this._objSaved) {
+      if (!this._objTxt || (o.hud.objective && o.hud.objective.textContent === this._objTxt)) o.hud.setObjective(this._objBefore || '');
+      this._objSaved = false;
+    }
     if (msg) o.hud.showToast(msg);
+  }
+
+  /** The call's line on the HUD, remembering what it wrote (see standDown). */
+  setObj(t) {
+    this._objTxt = t;
+    this.o.hud.setObjective(t);
   }
 
   mission(dt, rig, inRig) {
     const o = this.o, C = this.call;
+    // a call lives in the rig, like a police mission in its cruiser: dying,
+    // respawning or climbing out ends it (flames, beacon, target, objective)
+    if (C || this._nextT > 0) {
+      if (o.game.dead) { this.standDown(); return; }
+      if (!inRig) { this.standDown('You left the rig — fire call over'); return; }
+    }
     if (this._nextT > 0) {
       this._nextT -= dt;
       if (this._nextT <= 0) {
@@ -783,7 +801,7 @@ export class FireService {
     if ((this._hudT -= dt) <= 0) {
       this._hudT = 0.25;
       const mm = Math.floor(Math.max(0, C.t) / 60), ss = Math.floor(Math.max(0, C.t) % 60);
-      o.hud.setObjective(`FIRE CALL ${C.k} · ${C.name} · ${d > 1000 ? (d / 1000).toFixed(1) + ' km' : Math.round(d) + ' m'} · ${lit} of ${C.nFl} burning · ${mm}:${String(ss).padStart(2, '0')}`);
+      this.setObj(`FIRE CALL ${C.k} · ${C.name} · ${d > 1000 ? (d / 1000).toFixed(1) + ' km' : Math.round(d) + ' m'} · ${lit} of ${C.nFl} burning · ${mm}:${String(ss).padStart(2, '0')}`);
     }
     if (lit === 0) {
       const pay = C.reward + Math.round(Math.max(0, C.t));
@@ -791,7 +809,7 @@ export class FireService {
       this.stats.paid += pay;
       if (o.audio && o.audio.ready) o.audio.cash();
       o.hud.showToast(`Fire out — ${formatMoney(pay)}. Next call coming in...`, 3200);
-      o.hud.setObjective(`FIRE CALL ${C.k} · out · ${formatMoney(pay)} · stand by for the next call (MISSION to stand down)`);
+      this.setObj(`FIRE CALL ${C.k} · out · ${formatMoney(pay)} · stand by for the next call (MISSION to stand down)`);
       this.call = null;
       o.game.fireTarget = null;
       this.beacon.visible = false;

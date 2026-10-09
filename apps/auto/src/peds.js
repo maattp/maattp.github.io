@@ -3788,11 +3788,15 @@ export class PedSystem {
   /**
    * The first pedestrian within `radius` of (x, z) takes `damage`. With the
    * attacker's position (fromX, fromZ) a survivor is knocked back from it
-   * (stagger) and one it floors goes over backwards, away from it.
+   * (stagger) and one it floors goes over backwards, away from it. A shot
+   * passes `y`, where a pedestrian's feet should be along its line (the ground
+   * under that point, plus how high the shooter stands): one more than 1.2 m
+   * off, on another floor or a roof, is not hit.
    */
-  hitAt(x, z, radius, damage, isPlayer, fromX, fromZ) {
+  hitAt(x, z, radius, damage, isPlayer, fromX, fromZ, y) {
     for (const p of this.peds) {
       if (p.state === 'down') continue;
+      if (y !== undefined && Math.abs(p.y - y) > 1.2) continue;
       if (dist2(p.x, p.z, x, z) < radius * radius) return this.strike(p, damage, isPlayer, fromX != null ? fromX : null, fromZ != null ? fromZ : null, x, z);
     }
     return null;

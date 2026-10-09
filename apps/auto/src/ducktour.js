@@ -289,7 +289,7 @@ export class DuckTour {
     this.beacon.visible = true;
     this.beacon.rotation.y += dt * 0.6;
     const dd = Math.hypot(v.x - n.x, v.z - n.z);
-    hud.setObjective(`Duck Tour ${t.i + 1}/${this.route.length}: ${n.name} — ${dd > 1000 ? (dd / 1000).toFixed(1) + ' km' : Math.round(dd) + ' m'} · tips $${t.tips}`);
+    hud.setObjective(this._objTxt = `Duck Tour ${t.i + 1}/${this.route.length}: ${n.name} — ${dd > 1000 ? (dd / 1000).toFixed(1) + ' km' : Math.round(dd) + ' m'} · tips $${t.tips}`);
   }
 
   _end(done) {
@@ -297,7 +297,9 @@ export class DuckTour {
     this.tour = null;
     this.beacon.visible = false;
     game.tourTarget = null;
-    hud.setObjective(this.prevObjective || '');
+    // (only if the line is still ours: a delivery may have written its own since)
+    if (!this._objTxt || (hud.objective && hud.objective.textContent === this._objTxt)) hud.setObjective(this.prevObjective || '');
+    this._objTxt = '';
     if (done) {
       this.say('home');
       const pay = 150 + (t.splashed ? 25 : 0) + t.tips;

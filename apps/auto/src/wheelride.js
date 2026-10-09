@@ -296,6 +296,29 @@ export class WheelRide {
     if (this.o.hud) this.o.hud.showToast('Round the Great Wheel — 175 ft over Elliott Bay', 3500);
   }
 
+  /**
+   * Whatever ends the ride other than the ride itself -- WASTED, BUSTED, the
+   * pause menu's Respawn. Unlike _alight() it leaves the player where the
+   * caller put them (doRespawn has already chosen the place); it only gives
+   * back what the ride took: the gondola, the rider's body, the fov, the UI.
+   */
+  abort() {
+    if (!this.mode) return;
+    this.mode = null;
+    if (this.ridden) {
+      this.o.scene.remove(this.ridden);
+      this.ridden.traverse((m) => { if (m.geometry) m.geometry.dispose(); });
+      this.ridden = null;
+    }
+    this.seat = -1;
+    this.o.player.h.group.visible = true;
+    const cam = this.o.camera;
+    if (this.fov0) { cam.fov = this.fov0; cam.updateProjectionMatrix(); }
+    this.el.classList.remove('show');
+    document.body.classList.remove('wheelOn');
+    this._fade(false, true);
+  }
+
   _camera(dt, input, look) {
     const cam = this.o.camera;
     // drag or the stick looks round

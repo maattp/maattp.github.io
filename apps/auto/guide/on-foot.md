@@ -191,6 +191,19 @@ and no gun anywhere. `melee.js` (`Fighter`, one per player) is the fix.
   was a yellow ball the size of the chest). `effects.js` patches the vertex
   shader to multiply in `psize`; callers' sizes now mean what they say.
   The muzzle flash is points in that one draw, plus a spent case.
+- **Walls stop the shot, and so do floors.** The hitscan marches 60 m, but
+  only as far as `Player.wallDist` finds a building box (the slab test the
+  tank's cast uses, at the barrel's height over the terrain, so a slope does
+  not change what a building blocks) or a landmark solid. **The height test
+  follows the ground, not the barrel**: a ped (`hitAt`'s `y`) or car counts when
+  its feet are within 1.2 m (cars 1.5) of `groundAt` under that point plus how
+  high you stand above your own ground. A level test at the barrel's height
+  missed anything >1 m lower or >1.5 m higher, i.e. every grade of 6 % or more
+  at 10 m -- Capitol Hill was unshootable. A ped on another floor, a deck over
+  you or a roof is still out of the line. It used to be 2D and unobstructed:
+  a ped behind a building went down. Probe: `node tools/bugrepro/wo6.mjs
+  pistol` (+-6/11/18 % at 10/25/40 m, ped and car). Terrain does not stop a
+  shot.
 - Swimming, a press does nothing. The pistol is in boot's shader warm-up.
 
 **Verify**: verify's "fighting on foot" stands a pedestrian 1.5 m beside you

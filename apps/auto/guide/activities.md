@@ -3,6 +3,24 @@
 Part of the Auto guide; the index and the laws every change needs are in
 `apps/auto/CLAUDE.md`. Sections moved here verbatim from that file.
 
+**An activity holds the world frozen with `game.hold('name')` and lets go with
+`game.release('name')` -- never `game.paused = true`.** `paused` is the world's
+"stand still" flag, but it is now two things: the pause MENU (`paused = v`,
+what Resume, the pad's Start and `visibilitychange` flip, and what the
+harnesses set to pose a shot) and the activities' holds (a `Set` of names). The
+two were once one boolean, so coming back from the home screen inside the
+arcade opened the menu over it and Resume cleared the activity's freeze: the
+traffic and the police ran behind the screen. Now `setPaused(true)` refuses
+while `game.held`, `visibilitychange` opens no menu over an activity, and Resume
+cannot end a hold (only the activity's own `onEnd` / `_close` does). Seafair
+holds `'seafair'` for its office and results panel, and releases it when the
+race starts or it leaves. A new activity: `hold` in `tryInteract`, `release` in
+its `onEnd`, and add it to `reapHolds` (main.js): a hold whose activity is no
+longer `active` (its `start()` threw after the hold) is let go each frame, and
+`doRespawn` clears them all -- Resume cannot, by design, so without that a
+throw would freeze the world for good. Both record the name in `game.leaks`,
+which the probes assert stays empty.
+
 ## Fishing off the piers (an Easter egg)
 
 **A rod stands at the far end of four real piers and floats** -- Pier 66,
@@ -131,6 +149,13 @@ phone they are movers in the shadow pass (not the cache's statics).
 
 verify's "Great Wheel" section checks it turns, rides once round (time,
 height, stepping off) and the quick way down. `docs/wheel/` has shots.
+
+**Dying, or Respawn from the menu, on the wheel or in the Needle's lift** calls
+`wheelRide.abort()` / `needleTop.abort()` from `doRespawn` (they give back
+the body, the fov, the UI and `body.wheelOn` / `needleOn`, and leave the player
+where `doRespawn` put them). Without it `wheelRide.mode` stayed `'ride'` and
+`_rideStep` dragged the respawned player back to the gondola every frame.
+Probe: `node tools/bugrepro/wo6.mjs ride`.
 
 ## Golf at Interbay (v132)
 
@@ -479,6 +504,12 @@ verify's "seafair" section: the course all on deep water, the pits on land,
 the boat's top speed / hook / held turn / blowover / nose control, a jump
 start not counting, a buoy cut penalised, a whole heat to the flag with the
 series advancing, back to the pits. `docs/seafair/` has shots.
+
+**A race ended by WASTED or BUSTED** (`_raceStep` sees `game.dead`) is called
+off (`_abandon`): the boats go, no results panel (it would hold the world over
+the hospital respawn) and no teleport to the pits. The player's own boat is
+taken off the lake once the respawn has got them out of it (`_orphan`). Leaving the boat alive for
+8 s still ends in DID NOT FINISH and the pits, as designed.
 
 ## Basketball in the parks
 

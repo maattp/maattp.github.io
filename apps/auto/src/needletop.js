@@ -319,6 +319,26 @@ export class NeedleTop {
     }
   }
 
+  /**
+   * Whatever ends the ride or the view other than the ride itself (WASTED,
+   * BUSTED, the pause menu's Respawn): give back the rider's body, the fov,
+   * the head and the UI, and send the car home. The caller places the player.
+   */
+  abort() {
+    if (!this.mode) return;
+    const cam = this.o.camera;
+    if (this.mode === 'view') { cam.fov = this.fov0; cam.updateProjectionMatrix(); }
+    this.mode = null;
+    this.o.player.h.group.visible = true;
+    this.props.visible = true;
+    this.cab.position.y = this.Y + CAB_BASE;
+    this.cab.updateMatrixWorld(true);
+    this.el.classList.remove('show', 'ride', 'view');
+    document.body.classList.remove('needleOn');
+    this.zoomIn = this.zoomOut = false;
+    this._fade(false, true);
+  }
+
   _snapCam(h) {
     const P = this.o.player;
     P.camYaw = h + Math.PI;

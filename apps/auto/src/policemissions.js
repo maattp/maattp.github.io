@@ -130,6 +130,9 @@ export class PoliceMissions {
     if (this._objWas === undefined) this._objWas = this.hud.objective ? this.hud.objective.textContent : '';
     this.hud.showToast(`${S.count > 1 ? 'Two suspects' : 'Suspect'} fleeing near ${this.run.place} — ram ${S.count > 1 ? 'them' : 'it'} off the road`, 3600);
     if (this.audio) this.audio.ui('start');
+    // (the run turns the siren on only if it was off, and turns it off again at the end)
+    const sv = player.vehicle;
+    if (sv && !sv.sirenOn && !this._sirenV) this._sirenV = sv;
     this.setSiren(player, true);
     this.setBtn(true);
   }
@@ -157,7 +160,11 @@ export class PoliceMissions {
     this.nextT = 0;
     this.setBtn(false);
     this.hud.suspects = null;
-    this.hud.setObjective(this._objWas || '');
+    const sv = this._sirenV;
+    this._sirenV = null;
+    if (sv && sv.sirenOn) { if (this.game.setSiren) this.game.setSiren(sv, false); else sv.sirenOn = false; }
+    // the line goes back only if it is still ours (a delivery may have written its own since)
+    if (this._objTxt === undefined || this._objTxt === '' || (this.hud.objective && this.hud.objective.textContent === this._objTxt)) this.hud.setObjective(this._objWas || '');
     this._objWas = undefined;
     this._objTxt = '';
     if (msg) this.hud.showToast(msg, 3200);

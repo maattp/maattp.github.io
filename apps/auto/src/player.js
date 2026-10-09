@@ -79,8 +79,16 @@ export class Player {
     return this.onFoot ? { x: this.x, y: this.y, z: this.z } : { x: this.vehicle.x, y: this.vehicle.y, z: this.vehicle.z };
   }
 
+  /** A parachute jump ends without landing (a vehicle taken, a respawn). */
+  endSky() {
+    if (!this.sky) return;
+    this.sky.cancel(this);
+    this.sky = null;
+  }
+
   enterVehicle(v) {
     if (!v || v.dead) return false;
+    this.endSky();   // (the canopy is not a thing you carry into a seat)
     this.vehicle = v;
     // Remember it was parked BEFORE the mode is overwritten. `game.onEnterVehicle`
     // tests `v.mode === 'parked' || v.wasParked` to decide whether this is theft
@@ -215,7 +223,11 @@ export class Player {
         const m = (this.monorail && this.monorail.boardable(this.x, this.y, this.z))
           || (this.link && this.link.boardable(this.x, this.y, this.z))
           || (this.freight && this.freight.boardable(this.x, this.y, this.z));
-        const v = m || traffic.nearestEnterable(this.x, this.z, 5.0);
+        let v = m || traffic.nearestEnterable(this.x, this.z, 5.0);
+        // (nearestEnterable is flat: under a canopy only a vehicle at about
+        // your height counts, or free fall over a road car would seat you in it
+        // and skip the fall)
+        if (v && this.sky && Math.abs(v.y - this.y) > 6) v = null;
         if (v) this.enterVehicle(v);
         else if (this.link && this.link.onWait(this.x, this.z)) { /* told when the next trains are due */ }
         else if (this.freight && this.freight.onWait(this.x, this.z)) { /* a freight is called into the yard */ }
@@ -637,13 +649,23 @@ export class Player {
           : (this._muz || (this._muz = new THREE.Vector3())).set(this.x + dir.x * 0.75, this.y + 1.45 * this.h.scale, this.z + dir.z * 0.75);
         this.game.onGunshot(m.x, m.y, m.z, dir);
         this.camKick = Math.max(this.camKick, 0.3);
-        // hitscan against peds and cars, from the barrel
-        for (let t = 0.6; t < 60; t += 1.2) {
+        // hitscan against peds and cars, from the barrel -- as far as the
+        // first wall. The height test FOLLOWS THE GROUND: a target counts when
+        // its feet are within 1.2 m of the ground under it plus the height you
+        // stand above yours (a roof, a platform), so a hill street is
+        // shootable up and down it while a ped on another floor, a deck over
+        // you or a roof is not in the line. (A level test at the barrel's
+        // height missed anything more than ~1 m lower or 1.5 m higher: every
+        // slope of 6 % or more at 10 m.)
+        const reach = this.wallDist(m, dir, 60);
+        const city = this.city, stand = this.y - city.groundAt(this.x, this.z, this.y + 1);
+        for (let t = 0.6; t < reach; t += 1.2) {
           const hx = m.x + dir.x * t, hz = m.z + dir.z * t;
-          const p = peds.hitAt(hx, hz, 0.9, 34, true, this.x, this.z);
+          const yRef = city.groundAt(hx, hz, m.y) + stand;
+          const p = peds.hitAt(hx, hz, 0.9, 34, true, this.x, this.z, yRef);
           if (p) return;
           for (const v of traffic.cars) {
-            if (dist2(v.x, v.z, hx, hz) < v.radius * v.radius) {
+            if (dist2(v.x, v.z, hx, hz) < v.radius * v.radius && Math.abs(v.y - yRef) < 1.5) {
               v.damage(9, true);
               this.game.onShotVehicle(v, hx, hz);
               return;
@@ -658,6 +680,44 @@ export class Player {
       // in a tank ATTACK is the main gun (tank.js reads it)
       if (!this.vehicle || !this.vehicle.spec.tank) this.game.onHorn();
     }
+  }
+
+  /**
+   * How far a level shot from `m` along `dir` (unit, horizontal) gets before
+   * a building or a landmark's solid stops it, up to `max` metres. The
+   * buildings are the footprint boxes the tank's cast uses (tank.js
+   * rayBuilding): the slab test in each one's own frame, at the shot's height.
+   */
+  wallDist(m, dir, max) {
+    const city = this.city;
+    let best = max;
+    // the barrel's height over the terrain, so a building on a slope blocks
+    // at the same height of itself as one on the flat (only a shooter above
+    // the roofline, on a deck or a roof, fires over it)
+    const hs = m.y - G.terrainHeight(m.x, m.z);
+    for (const b of city.buildingsNear(m.x + dir.x * max * 0.5, m.z + dir.z * max * 0.5, max * 0.5 + 8)) {
+      if (hs > b.h) continue;
+      const c = Math.cos(-b.rot), s = Math.sin(-b.rot), px = m.x - b.x, pz = m.z - b.z;
+      const ox = px * c - pz * s, oz = px * s + pz * c, dx = dir.x * c - dir.z * s, dz = dir.x * s + dir.z * c;
+      let t0 = 0, t1 = best, hit = true;
+      for (let i = 0; i < 2 && hit; i++) {
+        const o = i ? oz : ox, d = i ? dz : dx, h = (i ? b.d : b.w) / 2;
+        if (Math.abs(d) < 1e-9) { if (o < -h || o > h) hit = false; continue; }
+        let a = (-h - o) / d, e = (h - o) / d;
+        if (a > e) { const q = a; a = e; e = q; }
+        if (a > t0) t0 = a;
+        if (e < t1) t1 = e;
+        if (t0 > t1) hit = false;
+      }
+      if (hit && t0 < best) best = t0;
+    }
+    if (city.landmarkHit) {
+      for (let t = 1; t < best; t += 1.5) {
+        const x = m.x + dir.x * t, z = m.z + dir.z * t;
+        if (city.landmarkHit(x, z, 0.15, G.terrainHeight(x, z) + hs)) { best = t; break; }
+      }
+    }
+    return best;
   }
 
   /** The punch's soft lock: the nearest pedestrian (or cop) on your feet's
@@ -1013,6 +1073,7 @@ export class Player {
     }
     this.onFoot = true;
     this.h.group.visible = true;
+    this.endSky();
     if (this.swimming) this.clearSwim();
     this.fighter.reset();
     this.x = x;
