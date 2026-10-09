@@ -601,6 +601,12 @@ function boundingSphere(P) {
   return new THREE.Sphere(c, Math.sqrt(r2));
 }
 
+/** A terrain tile's draw hook, made here so its closure holds only the world
+ * and the tile record (see buildTerrain). */
+function terrainHook(world, T) {
+  return () => { if (T.dirty) world._composeTerrain(T); };
+}
+
 export class World {
   constructor(scene, city, tx, opts = {}) {
     this.scene = scene;
@@ -1328,7 +1334,11 @@ export class World {
         m.receiveShadow = this.shadows;
         // The index is composed when the tile is about to be drawn (three
         // uploads it right after this call), from the levels as they stand.
-        m.onBeforeRender = () => { if (T.dirty) this._composeTerrain(T); };
+        // Built OUTSIDE this loop: an arrow here shares the block's closure
+        // context, which holds pos/nor/uv/col for the patch forEach, so the
+        // live hook would pin every tile's vertex arrays in the JS heap after
+        // upload (+20 MB at boot, +35 MB after a flight on the phone).
+        m.onBeforeRender = terrainHook(this, T);
         T.mesh = m;
         lod.tiles.push(T);
         this.terrainGroup.add(m);
