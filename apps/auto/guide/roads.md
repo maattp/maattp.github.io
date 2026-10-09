@@ -526,7 +526,7 @@ read 611 here against 42 for the real Vehicle.update; trust it for acc>30 / acc>
 and the site ranking, `tools/hillride.mjs` for the vehicle): four
 wheel samples through `groundAt` from y + 0.45 with the centre's `roadLift`,
 the bore spike guard, the 18/s follow (fed forward with the floor's steady descent) and
-the 22 m/s2 fall over a crest (v201, "A car follows the ground DOWN a
+the 22 m/s2 fall over a crest (v202, "A car follows the ground DOWN a
 hill" in `guide/vehicles.md`). **If vehicles.js changes how a car follows the
 ground, change `ride()` with it.**
 A rider is seeded on the edge's own surface. The whole city takes ~60 s after
@@ -542,7 +542,7 @@ worse than master, which is how every rule above was found.
   along the road; run it against master's server too for a pair.
 - `RIDE_PROFDEBUG=1` boots with `__profDebug` (gradeRoads' per-sample
   intermediates on `e.pdbg`); `RIDE_PROBE='<expr>'` evaluates after the ride.
-- `--legacy` rides the pre-v201 follow (a fall began from rest), for a before/after;
+- `--legacy` rides the pre-v202 follow (a fall began from rest), for a before/after;
   `--upk K` is the tuning knob for how much of a climb counts at a crest.
 
 **What is left, by class** (worst sites in the json):

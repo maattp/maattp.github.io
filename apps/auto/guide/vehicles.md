@@ -34,7 +34,7 @@ column queued behind it. The loss now scales with the angle: `glance =
 clamp(-along / 0.3, 0, 1)`, `vLong *= 1 - 0.8 * glance`. Head-on (~17 deg or
 more into it) keeps the full loss, a pure side contact keeps all its speed.
 
-**A car follows the ground DOWN a hill; it does not fall down it** (v201). The
+**A car follows the ground DOWN a hill; it does not fall down it** (v202). The
 vertical follow is an 18/s exponential toward the four-wheel average, and a
 body more than 0.25 m over that average is airborne. Going down a 20 % street
 at 24 m/s the floor drops 5 m/s, the exponential lags it by 5/18 = 0.3 m, and
