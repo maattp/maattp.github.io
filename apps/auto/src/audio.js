@@ -1368,14 +1368,18 @@ export const ENGINES = {
     idle: 1100, redline: 2600, gears: [1], spool: 0.5,
     lp: [900, 3400, 1600], ex: [240, 1.4, 4], noise: { ratio: 80, q: 0.5, gain: 0.7, pulse: 0.12, order: 4 },
     buzz: { ratio: 10, gain: 0.08 }, whine: { hz0: 2800, hz1: 8800, gain: 0.15, load: 0.4 }, drive: 1.6, level: 0.72, jitter: 0.02 },
-  // A tank's gas turbine (the Abrams' AGT1500): a jet's whine, pitched down
-  // and heavy, over a roar and a low drone, spooling up over a second or two.
-  // (level 0.28: at 0.78 the cruise was ~5 dB hotter than any car and buried
-  // its own cannon; cannon() also ducks the engine bus.)
+  // A tank's gas turbine (the Abrams' AGT1500), written for MASS: sixty tonnes
+  // should be the biggest thing on the road, and a jet's 1.5-5 kHz whine made it
+  // read as small (centroid 2177 Hz against a bus's 594). The low-pass opens
+  // little, the intake roar sits at 250-600 Hz (ratio 16 on a 15-38 Hz cycle), the
+  // whine is a faint 500-1400 Hz thread; the tracks' squeal (a bank loop) stays as
+  // texture. Level 0.355: the limiter flattens level changes (0.78 -> 0.49 moved the
+  // render 1.6 dB), so it is set from renders -- RMS at the bus's, and ~5 dB
+  // under the cannon's window (tools/audioprobe.mjs).
   tank: { kind: 'plane', stroke: 2, fire: [0, 0.25, 0.5, 0.75], amps: [1, 1, 1, 1], pw: 0.1,
     idle: 900, redline: 2300, gears: [1], spool: 0.45,
-    lp: [600, 2600, 1300], ex: [110, 1.5, 6], noise: { ratio: 60, q: 0.5, gain: 0.65, pulse: 0.15, order: 4 },
-    buzz: { ratio: 6, gain: 0.1 }, whine: { hz0: 1500, hz1: 5200, gain: 0.14, load: 0.45 }, drive: 1.8, level: 0.28, jitter: 0.03 },
+    lp: [220, 700, 500], ex: [110, 1.5, 6], noise: { ratio: 16, q: 0.5, gain: 0.65, pulse: 0.15, order: 4 },
+    buzz: { ratio: 6, gain: 0.1 }, whine: { hz0: 500, hz1: 1400, gain: 0.04, load: 0.45 }, drive: 1.8, level: 0.355, jitter: 0.03 },
   heli: { kind: 'heli', stroke: 2, fire: [0, 0.5], amps: [1, 0.93], pw: 0.012,
     idle: 0, redline: 400, gears: [1], spool: 0.22,
     lp: [260, 900, 1200], ex: [70, 2, 9], noise: { ratio: 70, q: 0.6, gain: 0.8, pulse: 0.95, order: 2 },
@@ -2102,9 +2106,11 @@ export class Audio {
     this.pre.gain.value = 0.9;
     this.pre.connect(this.limiter).connect(this.master).connect(c.destination);
 
-    // Everything synthesised passes one ~25 Hz high-pass on its way to the
-    // limiter: the engines' waveshapers are not symmetric, and the offset they
-    // leave (up to -52 mV) wastes headroom and thumps on every gate.
+    // Everything on sfxBus (the world and the one-shots) passes one ~25 Hz
+    // high-pass on its way to the limiter: the engines' waveshapers are not
+    // symmetric, and the offset they leave (up to -52 mV) wastes headroom and
+    // thumps on every gate. The radio (musicBus) and the mini-games' own sound
+    // (wired to master) bypass it.
     this.dcHp = c.createBiquadFilter();
     this.dcHp.type = 'highpass';
     this.dcHp.frequency.value = 25;
@@ -2775,7 +2781,7 @@ export class Audio {
 
   /** A tank's main gun, yours: the bank's boom, a big reverb send, the radio ducked. */
   cannon() {
-    this.play('cannon', { gain: 1, send: 0.7, duck: 0.9, duckHold: 1.2, jitter: false });
+    this.play('cannon', { gain: 1.6, send: 0.7, duck: 0.9, duckHold: 1.2, jitter: false });
     this.duckEngine(0.5, 0.4);
     this.play('debris', { gain: 0.2, at: 0.08 });
   }
@@ -2951,9 +2957,25 @@ export class Audio {
     this._updateWorld(dt, t, state, L);
     this._ambience(dt, t, state, L);
 
+    this._inCar = !!state.inCar;
+    this._updateRadio(t, this._inCar);
+  }
+
+  /**
+   * The radio keeps running behind the pause menu: the frame returns before
+   * update() while paused, so without this the synth stations went silent
+   * ~0.4 s into a pause (scheduleMusic only ran from update()) and retuning in
+   * the menu did nothing until you resumed.
+   */
+  tickRadio() {
+    if (!this.ready || !this.live || !this.enabled) return;
+    this._updateRadio(this.now(), !!this._inCar);
+  }
+
+  _updateRadio(t, inCar) {
     // Radio. The live stream is a car radio: it runs while you are in a car and
     // stops when you get out, which is also what keeps a background tab quiet.
-    const wantLive = !!state.inCar && this.musicOn && this.enabled
+    const wantLive = !!inCar && this.musicOn && this.enabled
       && !!STATIONS[this.station].stream;
     if (wantLive !== this._liveWanted) {
       this._liveWanted = wantLive;
@@ -2974,7 +2996,7 @@ export class Audio {
       this._pollNowPlaying();
       // The synth station and the real one must never play together.
       setp(this.musicBus.gain, 0, t, 0.3);
-    } else if (this.musicOn && state.inCar) {
+    } else if (this.musicOn && inCar) {
       // The SYNTH stations are the car radio too. Only the live stream was
       // gated on being in a car, so on foot the synthesised KEXP played on --
       // walking around town scored like a menu screen. One radio, one rule:
@@ -3099,7 +3121,7 @@ export class Audio {
       // a tank's tracks: louder and quicker with the belts' speed
       if (this.loops.tracks) {
         const tr = inCar && spec && spec.tank ? s.tracks || 0 : 0;
-        this.loops.tracks.set(tr > 0.05 ? clamp(0.12 + tr / 9, 0, 1) * 0.36 : 0, t, 0.08, clamp(0.55 + tr / 10, 0.55, 2.2));
+        this.loops.tracks.set(tr > 0.05 ? clamp(0.12 + tr / 9, 0, 1) * 0.3 : 0, t, 0.08, clamp(0.55 + tr / 10, 0.55, 2.2));
       }
       const scr = inCar ? clamp(s.scrape || 0, 0, 1) : 0;
       this.loops.scrape.set(scr * 0.3, t, 0.03, 0.8 + clamp(sp / 25, 0, 0.5));
@@ -3232,14 +3254,30 @@ export class Audio {
         const d2 = (v.x - L.x) ** 2 + (v.z - L.z) ** 2;
         if (d2 < 260 * 260) cops.push(d2, v);
       }
-      const pick = [];
+      const pick = this._sirenPick || (this._sirenPick = []);
+      pick.length = 0;
       for (let k = 0; k < SIREN_VOICES; k++) {
         let bi = -1, bd = Infinity;
         for (let i = 0; i < cops.length; i += 2) if (cops[i] < bd && !pick.includes(cops[i + 1])) { bd = cops[i]; bi = i; }
         if (bi < 0) break;
         pick.push(cops[bi + 1]);
       }
-      this.sirens.forEach((sv, i) => this._siren(sv, pick[i] || null, t, L));
+      // STICKY: a car keeps its voice while it stays among the nearest two, and
+      // only a newcomer takes a freed one. Handing voices out by rank made two
+      // cars passing each other swap voices, and the voices differ now (phase,
+      // sweep rate): each car's siren jumped.
+      const slot = this._sirenSlot || (this._sirenSlot = new Array(SIREN_VOICES).fill(null));
+      for (let i = 0; i < SIREN_VOICES; i++) slot[i] = pick.includes(this.sirens[i].car) ? this.sirens[i].car : null;
+      for (const c of pick) {
+        if (slot.includes(c)) continue;
+        const free = slot.indexOf(null);
+        if (free >= 0) slot[free] = c;
+      }
+      for (let i = 0; i < SIREN_VOICES; i++) {
+        const sv = this.sirens[i];
+        sv.car = slot[i];
+        this._siren(sv, slot[i], t, L);
+      }
     } else if (s.siren > 0) {
       // legacy: a level with no position
       this._siren(this.sirens[0], { x: L.x, y: L.y, z: L.z + 20, vLong: 0, forward: { x: 0, z: 1 }, siren: t, legacy: s.siren }, t, L);
@@ -3523,6 +3561,10 @@ export class Audio {
     const spb = 60 / st.tempo;
     const now = this.now();
     setp(this.musicBus.gain, 0.2, now, 0.4);
+    // Beats missed while the context was suspended (or the scheduler not
+    // called) are SKIPPED, not played at once: the loop below puts every beat
+    // it catches up on at now + 0.02, a burst of the whole backlog.
+    if (this.nextBeat < now - 0.1) this.nextBeat = now;
     while (this.nextBeat < now + 0.4) {
       const t = Math.max(this.nextBeat, now + 0.02);
       const b = this.beat;

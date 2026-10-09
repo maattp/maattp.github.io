@@ -163,8 +163,8 @@ asserts all of it; `audiorender` prints the DC column).
   `musicBus`, and the mini-games' own sound (pinball, arcade, hockey, fishing,
   the tower...) wires to `audio.master`, so none of those moves. main.js's frame
   returns before `audio.update()` while `game.paused || game.mapOpen`, so every
-  continuous voice used to hold its last note behind the menu (-11.0 dBFS paused
-  against -11.8 driving). The frame now calls `audio.holdWorld(paused || mapOpen)`
+  continuous voice used to hold its last note behind the menu (on master the probe
+  reads -16.3 dBFS paused against -16.4 driving). The frame now calls `audio.holdWorld(paused || mapOpen)`
   BEFORE that return, every frame (idempotent): `worldBus` and the world's
   reverb send (`verbWorld`; a stuck note's echo is a drone too) ramp to 0 in
   ~0.15 s and back in ~0.1 s. Measured offline, radio off: driving -16.5 dBFS,
@@ -172,12 +172,23 @@ asserts all of it; `audiorender` prints the DC column).
   `worldBus` (and its reverb send on `verbWorld`)**, or it will drone through
   the pause menu; a new one-shot caller needs nothing.
 - **The cannon (and a near explosion) ducks the engine bus** (`duckEngine`,
-  `engBus.gain` to 0.5 for 0.4 s), as well as the radio. The tank's turbine was
-  ~5 dB hotter than any car and the cannon only ~1 dB over it, so `ENGINES.tank`
-  `level` went 0.78 -> 0.28 and its tracks tap 0.5 -> 0.36. **The limiter hides
-  level changes**: 0.78 -> 0.49 moved the engine render by 1.6 dB, 0.49 -> 0.28
-  by 5. Render, don't compute. Now the engine render is -17.2 dB (a sedan's
-  -17.3) and the cannon window is +6.7 dB over the engine window before it.
+  `engBus.gain` to 0.5 for 0.4 s), as well as the radio, and `cannon()` plays
+  at gain 1.6 (the limiter eats most of it: 2.2 bought only +0.4 dB more). The
+  tank's turbine was ~5 dB hotter than any car and the cannon only ~1 dB over
+  it. **The limiter hides level changes**: 0.78 -> 0.49 moved the engine render
+  by 1.6 dB, 0.49 -> 0.28 by 5. Render, don't compute.
+- **The tank is built for mass, not whine.** Turned down alone it read as a
+  small, quiet jet (centroid 2177 Hz against a bus's 594; quieter than a
+  sedan). `ENGINES.tank` now has the low-pass nearly shut (220 + 700 rpm + 500
+  load Hz), the intake roar at 250-600 Hz (noise ratio 16, not 60), a faint
+  500-1400 Hz whine, and `level` 0.355; the tracks' squeal tap is 0.3. Engine
+  renders (RMS dB / peak dB / centroid Hz): sedan -17.3 / -2.5 / 1105, bus
+  -15.1 / -2.6 / 594, artic -15.0 / -2.5 / 588, tank before -17.2 / -4.9 /
+  2177, **tank now -15.1 / -4.6 / 699**. The cannon window is +5.1 dB over the
+  engine window before it (`audioprobe`); the engine cannot be much louder
+  than that or the contrast goes, because the cannon's window is limiter-bound
+  at about -8 dBFS. A turbine is steady, so its peak stays the lowest of any
+  engine.
 - **Sirens are decorrelated.** Two voices started in phase at init and sounded
   like one car. An oscillator cannot be seeked, so the LFO is a `PeriodicWave`
   with the phase baked in (`lfoWave`), one per kind per voice; voice 1 starts
@@ -188,7 +199,20 @@ asserts all of it; `audiorender` prints the DC column).
   860/1140 Hz, always) and SWAT's rapid yelp (`spec.swat`: triangle 6.5 Hz,
   always). Two cars, hard-panned, instantaneous frequency by zero crossings:
   zero-lag |r| 0.15 for wails and 0.02 for yelps over five seeds (any lag
-  within 0.5 s: 0.30).
+  within 0.5 s: 0.30). **Voices are STICKY**: a car keeps its voice while it
+  stays among the nearest two and only a newcomer takes a freed one. Handing
+  them out by distance rank made two cars passing each other swap voices, and
+  now that the voices differ each car's sweep jumped (rms 491 Hz against a
+  no-swap control; 40 Hz sticky).
+- **The synth radio plays behind the pause.** `update()` does not run while
+  paused, so the synth stations used to go silent ~0.4 s in (the next notes
+  are scheduled from `scheduleMusic()`, which only `update()` called) and
+  retuning in the menu did nothing until you resumed. The radio part of
+  `update()` is `_updateRadio()`; main.js's paused branch calls
+  `audio.tickRadio()`, which runs it with the last `inCar`. `scheduleMusic()`
+  also SKIPS beats it missed (a suspended context, a hidden tab) instead of
+  catching up: the loop put every missed beat at now + 0.02 (14 notes in the
+  first 0.1 s after a 3 s pause).
 - **DC.** The engines' waveshapers are asymmetric and left -16..-52 mV in the
   renders (v8 -51.8 mV). One 25 Hz high-pass between `sfxBus` and `pre` takes
   every engine render under 1 mV; it costs one biquad and no per-frame work.

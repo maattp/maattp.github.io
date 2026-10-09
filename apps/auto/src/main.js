@@ -2563,6 +2563,7 @@ function frame(now) {
   audio.holdWorld(game.paused || game.mapOpen);
   if (game.paused || game.mapOpen) {
     controls.takeLook();
+    audio.tickRadio();            // the radio plays on (and retunes) behind the menu
     // NOTHING MOVES BEHIND THE MENU OR THE MAP, so stop drawing it. The whole
     // city, shadows and post chain were redrawn 60 times a second behind an
     // 86 %-opaque overlay: a paused phone ran as hot as a playing one. Two

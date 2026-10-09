@@ -368,7 +368,8 @@ window.R = (async () => {
     bankClip: (name, i) => ({ ...pcm([bank[name][i].getChannelData(0)]), sr: bank[name][i].sampleRate }),
     engines: Object.keys(A.ENGINES),
     engineFor: (profile) => ENGINE_DEMO[profile],
-    engine: (profile) => scene(17, driveScript(ENGINE_DEMO[profile])),
+    engine: (profile) => scene(17, driveScript(ENGINE_DEMO[profile] || profile)),   // (a vehicle key also works: 'artic')
+    A,
     scenes: Object.keys(scenes),
     scene: (k) => scene(scenes[k][0], scenes[k][1], scenes[k][2]),
     select: Object.fromEntries(Object.entries(V.TYPES).map(([k, s]) => [k, A.selectEngine(s)])),
@@ -522,7 +523,11 @@ async function main() {
     for (const [name, n] of info.bank) {
       for (let i = 0; i < n; i++) if (want(name)) await out(`sfx/${name}-${i}.wav`, `r.bankClip(${JSON.stringify(name)}, ${i})`);
     }
-    for (const e of info.engines) if (want('engine-' + e)) await out(`engine-${e}.wav`, `r.engine(${JSON.stringify(e)})`);
+    // --set 'r.A.ENGINES.tank.level = 0.4' : a one-off tweak before rendering (r = the page's toolkit)
+    const pre = arg('--set', null);
+    if (pre) await s.eval(`R.then(r => { ${pre}; return true; })`);
+    // 'artic' is a vehicle, not a profile (it drives the diesel): rendered for comparison
+    for (const e of [...info.engines, 'artic']) if (want('engine-' + e)) await out(`engine-${e}.wav`, `r.engine(${JSON.stringify(e)})`);
     for (const k of info.scenes) if (want('scene-' + k)) await out(`scene-${k}.wav`, `r.scene(${JSON.stringify(k)})`);
     console.log('\nfile                               secs  peak dB  rms dB  centroid Hz  silent  clipped  DC mV');
     for (const r of rows) {

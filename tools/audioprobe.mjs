@@ -96,18 +96,27 @@ window.P = (async () => {
     return 20 * Math.log10(p || 1e-9);
   };
 
-  function pause() {
+  // mode: 'world' (radio off), 'radio' (synth station on, tickRadio() in the held
+  // frames as main.js calls it), 'catchup' (station on, NOT ticked while held:
+  // the resume must skip the missed beats, not burst them)
+  function pause(mode = 'world') {
     const cop = { x: -70, y: 0, z: -12, vLong: 0, mode: 'police', spec: V.TYPES.police, forward: { x: 1, z: 0 }, dead: false, siren: 0 };
     const tr = { x: 30, y: 0, z: -6, vLong: 10, mode: 'traffic', spec: V.TYPES.sedan, forward: { x: 1, z: 0 }, dead: false };
+    const notes = [];   // when each synth-radio note was scheduled to start
     return run(11, (t, dt, st, au) => {
-      if (t === 0) { st.inCar = true; st.onFoot = false; st.spec = V.TYPES.sedan; au.enterVehicle(V.TYPES.sedan, true); }
+      if (t === 0) {
+        st.inCar = true; st.onFoot = false; st.spec = V.TYPES.sedan; au.enterVehicle(V.TYPES.sedan, true);
+        const note = au.note.bind(au);
+        au.note = (m, tt, ...r) => { notes.push(tt); return note(m, tt, ...r); };
+      }
       const held = t >= 5 && t < 8;
       au.holdWorld(held);                       // as main.js does, every frame
-      if (held) { if (at(t, dt, 7.6)) au.ui('tick'); return false; }
+      if (held) { if (at(t, dt, 7.6)) au.ui('tick'); if (mode === 'radio') au.tickRadio(); return false; }
       st.speed = 22; st.throttle = 0.6; st.brake = 0;
       st.amb = { water: 0, green: 0.1, road: 0.4, alt: 0 };
       st.cars = [cop, tr]; tr.x += tr.vLong * dt;
-    }).then((ch) => ({
+    }, { music: mode !== 'world' }).then((ch) => ({
+      burst: notes.filter((x) => x >= 8 && x < 8.1).length,
       driving: rmsDb(ch, 3, 5), paused: rmsDb(ch, 5.5, 7.5), uiPeak: peakDb(ch, 7.6, 7.9),
       resume0: rmsDb(ch, 8.0, 8.2), resume1: rmsDb(ch, 8.2, 8.5), after: rmsDb(ch, 9, 11),
     }));
@@ -160,7 +169,29 @@ window.P = (async () => {
       modHz: flips / 2 / 10 };
   }
 
-  return { pause, tank, sirens, V, A };
+  // Two cars on opposite sides swap which is nearer at t = 6 (A 50 -> 85 m, B 85 -> 50
+  // m, both teleported: no doppler). Voices are assigned by rank, so unless a
+  // car KEEPS its voice, its sweep jumps to the other voice's phase and rate.
+  // Each car's frequency track is compared with a control render where nobody
+  // swaps (a car's own sweep does not depend on how far it is): the rms
+  // difference after the swap is ~0 if each car kept its voice, hundreds of Hz
+  // if not.
+  async function swap(seed) {
+    const mk = (x) => ({ x, y: 0, z: 0, vLong: 0, mode: 'police', spec: V.TYPES.police, forward: { x: 0, z: -1 }, dead: false, siren: 0 });
+    const render = async (doSwap) => {
+      const a = mk(-50), b = mk(85);
+      const ch = await run(12, (t, dt, st) => {
+        if (doSwap && t >= 6 && a.x === -50) { a.x = -85; b.x = 50; }
+        st.cars = [a, b];
+      }, { seed });
+      return [track(ch[0], 6.5, 11.5), track(ch[1], 6.5, 11.5)];
+    };
+    const [sa, sb] = await render(true), [ca, cb] = await render(false);
+    const rms = (x, y) => Math.sqrt(x.reduce((p, v, i) => p + (v - y[i]) ** 2, 0) / x.length);
+    return { A: rms(sa, ca), B: rms(sb, cb) };
+  }
+
+  return { pause, tank, sirens, swap, V, A };
 })();
 `;
 
@@ -191,10 +222,14 @@ async function main() {
     const E = (expr) => s.eval(`P.then(p => ${expr})`);
 
     if (ONLY.includes('pause')) {
-      const r = await E('p.pause()');
+      const r = await E("p.pause('world')");
       console.log('pause', JSON.stringify(r, (k, v) => typeof v === 'number' ? +v.toFixed(1) : v));
       check('paused RMS >= 25 dB below driving', r.paused <= r.driving - 25, `driving ${f(r.driving)}, paused ${f(r.paused)} dBFS (${f(r.driving - r.paused)} dB down)`);
       check('UI cue audible while paused', r.uiPeak > -45, `peak ${f(r.uiPeak)} dBFS`);
+      const rad = await E("p.pause('radio')");
+      const cu = await E("p.pause('catchup')");
+      check('synth radio still plays behind the pause', rad.paused > cu.paused + 20, `paused ${f(rad.paused)} dBFS with tickRadio, ${f(cu.paused)} without`);
+      check('resume does not burst the missed beats', cu.burst <= 6, `${cu.burst} synth notes start in the first 0.1 s after resume (the unfixed catch-up puts ~14 there)`);
       check('engine back within 0.3 s', r.resume1 >= r.driving - 3, `0.2-0.5 s after resume ${f(r.resume1)} vs driving ${f(r.driving)} (0.0-0.2 s: ${f(r.resume0)})`);
     }
     if (ONLY.includes('tank')) {
@@ -202,7 +237,7 @@ async function main() {
       console.log('tank, engine only', JSON.stringify(bare, (k, v) => typeof v === 'number' ? +v.toFixed(1) : v));
       const r = await E('p.tank()');
       console.log('tank, with tracks', JSON.stringify(r, (k, v) => typeof v === 'number' ? +v.toFixed(1) : v));
-      check('cannon window >= 6 dB over the engine before it', r.cannon - r.before >= 6, `${f(r.before)} -> ${f(r.cannon)} dBFS (+${f(r.cannon - r.before)} dB)`);
+      check('cannon window >= 5 dB over the engine before it', r.cannon - r.before >= 5, `${f(r.before)} -> ${f(r.cannon)} dBFS (+${f(r.cannon - r.before)} dB)`);
     }
     if (ONLY.includes('sirens')) {
       for (const [label, dist] of [['wail', 85], ['yelp', 35]]) {
@@ -218,6 +253,15 @@ async function main() {
         `5th-95th percentile ${fire.lo}..${fire.hi} Hz, ${fire.modHz.toFixed(2)} alternations/s`);
       const swat = await E('p.sirens(p.V.TYPES.swat, p.V.TYPES.swat, 85, 12345)');
       check('SWAT yelps fast', swat.modHz > 4, `${swat.modHz.toFixed(2)} sweeps/s, ${swat.lo}..${swat.hi} Hz`);
+    }
+    if (ONLY.includes('sirens')) {
+      let worst = 0;
+      for (const seed of [12345, 7, 99]) {
+        const r = await E(`p.swap(${seed})`);
+        worst = Math.max(worst, r.A, r.B);
+      }
+      check('a car keeps its voice when two swap rank (no sweep jump)', worst < 60,
+        `rms difference from a no-swap control, 0.5 s to 5.5 s after the swap, worst of 3 seeds: ${worst.toFixed(0)} Hz`);
     }
     for (const l of s.logs) { console.log(l); bad++; }
   } finally {
