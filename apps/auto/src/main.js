@@ -154,6 +154,21 @@ function showEnd(text, sub) {
 }
 
 class Game {
+  /**
+   * The world stands still when the pause menu is up OR an activity (the
+   * arcade, fishing, the Seafair office ...) is holding it. They are separate
+   * on purpose: Resume, the pad's Start and coming back from the home screen
+   * all clear the menu, and used to clear an activity's freeze with it, so the
+   * traffic and the police ran on behind the arcade's screen. `paused = v` is
+   * the menu's (and the harnesses'); an activity uses hold() / release() with
+   * its own name, which Resume cannot touch.
+   */
+  get paused() { return this._menu || this.holds.size > 0; }
+  set paused(v) { this._menu = !!v; }
+  get held() { return this.holds.size > 0; }
+  hold(who) { this.holds.add(who); }
+  release(who) { this.holds.delete(who); }
+
   constructor() {
     this.wanted = 0;
     this.points = 0;
@@ -167,7 +182,8 @@ class Game {
     this.deathT = 0;
     this.respawnAt = null;   // the hospital WASTED is taking you to (damagePlayer)
     this.busted = false;
-    this.paused = false;
+    this._menu = false;      // the pause menu is up (what `paused = v` has always meant)
+    this.holds = new Set();  // activities holding the world frozen (hold / release)
     this.mapOpen = false;
     this.sirenLevel = 0;
     this.settings = {
@@ -337,7 +353,7 @@ class Game {
     if (!fishing || fishing.active) return false;
     for (const sp of fishSpots) {
       if (Math.hypot(pl.x - sp.rx, pl.z - sp.rz) < 3.2 && Math.abs(pl.y - sp.y) < 2) {
-        this.paused = true;
+        this.hold('fishing');
         const b = player.h.bones;
         fishing.start(sp, { scene, camera, player, audio,
           bones: { handR: b[BONES.handR], shoulderR: b[BONES.shoulderR], elbowR: b[BONES.elbowR], shoulderL: b[BONES.shoulderL], elbowL: b[BONES.elbowL] } });
@@ -351,19 +367,19 @@ class Game {
     if (needleTop && needleTop.tryInteract(pl)) return true;
     // the arcade's door on 2nd Ave?
     if (arcade && !arcade.active && arcade.near(pl)) {
-      this.paused = true;
+      this.hold('arcade');
       arcade.start();
       return true;
     }
     // the pinball museum's door on Maynard Ave S?
     if (pinball && !pinball.active && pinball.near(pl)) {
-      this.paused = true;
+      this.hold('pinball');
       pinball.start();
       return true;
     }
     // the arena's doors on Thomas St?
     if (hockey && !hockey.active && hockey.near(pl)) {
-      this.paused = true;
+      this.hold('hockey');
       hockey.start();
       return true;
     }
@@ -373,7 +389,7 @@ class Game {
     if (seafair && seafair.state === 'idle' && seafair.near(pl)) { seafair.start(); return true; }
     // pickleball on Bainbridge, where it was invented?
     if (pickle && !pickle.active && pickle.near(pl)) {
-      this.paused = true;
+      this.hold('pickleball');
       pickle.start();
       return true;
     }
@@ -381,25 +397,25 @@ class Game {
     if (islands && islands.tryInteract(pl)) return true;
     // the coffee shop at 1912 Pike Place?
     if (coffee && !coffee.active && coffee.near(pl)) {
-      this.paused = true;
+      this.hold('coffee');
       coffee.start();
       return true;
     }
     // the control tower's door at Boeing Field?
     if (tower && !tower.active && tower.near(pl)) {
-      this.paused = true;
+      this.hold('atc');
       tower.start();
       return true;
     }
     // the first tee at Interbay?
     if (golf && !golf.active && golf.near(pl)) {
-      this.paused = true;
+      this.hold('golf');
       golf.start({ camera, player });
       return true;
     }
     // the fish stall at Pike Place Market?
     if (fishToss && !fishToss.active && fishToss.near(pl)) {
-      this.paused = true;
+      this.hold('fishtoss');
       const b = player.h.bones;
       fishToss.start({ camera, player,
         bones: { shoulderR: b[BONES.shoulderR], elbowR: b[BONES.elbowR], shoulderL: b[BONES.shoulderL], elbowL: b[BONES.elbowL],
@@ -409,7 +425,7 @@ class Game {
     // a basketball court's free throw line?
     const court = hoops && !hoops.active && hoops.near(pl);
     if (court) {
-      this.paused = true;
+      this.hold('hoops');
       const b = player.h.bones;
       hoops.start(court, { camera, player,
         bones: { shoulderR: b[BONES.shoulderR], elbowR: b[BONES.elbowR], shoulderL: b[BONES.shoulderL], elbowL: b[BONES.elbowL],
@@ -1176,33 +1192,33 @@ function installShadowFade() {
     audio,
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Fishing paid $${m}`), 400); },
     onEnd: () => {
-      game.paused = false;
+      game.release('fishing');
       for (const sp of fishSpots) if (sp.prop) sp.prop.userData.rod.visible = true;
     },
   });
   hoops = new Hoops({
     scene, city, world, audio,
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Free throws paid $${m}`), 400); },
-    onEnd: () => { game.paused = false; },
+    onEnd: () => { game.release('hoops'); },
   });
   arcade = new Arcade({
     scene, city, world, audio,
     money: () => game.money,
     charge: (n) => { if (game.money < n) return false; game.money -= n; return true; },
     onReward: (m) => { game.money += m; },
-    onEnd: () => { game.paused = false; },
+    onEnd: () => { game.release('arcade'); },
   });
   pinball = new Pinball({
     scene, city, world, audio,
     money: () => game.money,
     charge: (n) => { if (game.money < n) return false; game.money -= n; return true; },
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`The pinball museum paid $${m}`), 400); },
-    onEnd: () => { game.paused = false; },
+    onEnd: () => { game.release('pinball'); },
   });
   hockey = new HockeyNight({
     scene, city, world, audio, arena: lmRoot.userData.arena,
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Hockey night paid $${m}`), 400); },
-    onEnd: () => { game.paused = false; },
+    onEnd: () => { game.release('hockey'); },
   });
   duckTour = new DuckTour({
     scene, city, world, traffic, needle: lmRoot.userData.needle,
@@ -1222,28 +1238,28 @@ function installShadowFade() {
   coffee = new CoffeeShop({
     scene, city, world, audio,
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Your shift at First Cup paid $${m}`), 400); },
-    onEnd: () => { game.paused = false; },
+    onEnd: () => { game.release('coffee'); },
   });
   pickle = new PickleballCourt({
     scene, city, world, audio, get player() { return player; },
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Pickleball paid $${m}`), 400); },
-    onEnd: () => { game.paused = false; },
+    onEnd: () => { game.release('pickleball'); },
   });
   islands = new Islands({ scene, city, world, get game() { return game; }, get hud() { return hud; }, get audio() { return audio; }, get player() { return player; } });
   tower = new TowerGame({
     scene, city, world, audio, tower: lmRoot.userData.tower,
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`The tower paid $${m}`), 400); },
-    onEnd: () => { game.paused = false; },
+    onEnd: () => { game.release('atc'); },
   });
   golf = new Golf({
     scene, city, world, audio, controls,
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Interbay Golf paid $${m}`), 400); },
-    onEnd: () => { game.paused = false; },
+    onEnd: () => { game.release('golf'); },
   });
   fishToss = new FishToss({
     scene, city, world, audio, controls,
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`The fish stall paid $${m}`), 400); },
-    onEnd: () => { game.paused = false; },
+    onEnd: () => { game.release('fishtoss'); },
   });
   if (lmRoot.userData.wheel) {
     wheelRide = new WheelRide({ scene, city, player, camera, audio, hud: null, at: lmRoot.userData.wheel });
@@ -2108,6 +2124,9 @@ function wireUi() {
   const bigMapWrap = document.getElementById('mapOverlay');
 
   const setPaused = (v) => {
+    // an activity (arcade, fishing ...) owns the freeze and has its own
+    // screen: the menu does not open over it, and Resume cannot end it
+    if (v && game.held) return;
     game.paused = v;
     pause.classList.toggle('show', v);
     if (v) refreshJobs();          // the Jobs list is only ever read here
@@ -2308,7 +2327,7 @@ function wireUi() {
   // only way out was the pause button, which nobody presses on a frozen app.
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) setPaused(true);
-    else if (game.paused) { pause.classList.add('show'); idleRedraw = true; }
+    else if (game.paused && !game.held) { pause.classList.add('show'); idleRedraw = true; }
   });
 }
 
@@ -2325,6 +2344,10 @@ function doRespawn() {
   game.cool = 0;
   document.getElementById('wasted').classList.remove('show');
   if (police) police.clear();
+  // dying (or Respawn from the menu) on the Great Wheel or in the Needle's
+  // elevator: the ride's mode, camera and hidden body must not outlive it
+  if (wheelRide) wheelRide.abort();
+  if (needleTop) needleTop.abort();
   if (player.vehicle) player.exitVehicle(true);
   if (busted) {
     // a fine by the stars you had, and your gun confiscated
