@@ -14,6 +14,7 @@ import { Freight } from './freight.js';
 import { Ferry, fixTerminals } from './ferry.js';
 import { BikeNet, Cyclists } from './bikes.js';
 import { Islands } from './islands.js';
+import { Career } from './career.js';
 import { Piers } from './piers.js';
 import { PickleballCourt } from './pickleball.js';
 import { freezeStatic, skipHiddenMatrices, Builder, dropStaticArrays } from './build.js';
@@ -108,6 +109,7 @@ let tower = null;    // Boeing Field's control tower and FINAL APPROACH (atc.js)
 let duckTour = null; // the Duck Tour: kiosk, ducks, ramp and the tour (ducktour.js)
 let islands = null, pickle = null, piers = null, ferry = null, ferryPrev = null;   // the islands across the Sound (islands.js), pickleball on Bainbridge (pickleball.js)
 let coffee = null;   // First Cup Coffee at 1912 Pike Place and MORNING RUSH (barista.js)
+let career = null;   // the saved wallet and the Seattle Passport (career.js)
 let seafair = null;  // hydroplane racing on Lake Washington (hydrorace.js)
 let golf = null;   // three holes at Interbay (golf.js)
 let wheelRide = null;   // the Great Wheel, turning, and its ride (wheelride.js)
@@ -1065,6 +1067,13 @@ function installShadowFade() {
 
   await step(0.9, 'Waking the city');
   game = new Game();
+  // the wallet comes back from the last launch (career.js); the passport reads the rest
+  career = new Career(game, () => ({
+    acts, stunts, islands, missions, seafair, arcade,
+    // a best on the board = played (golf's is a stroke count, so lower is better; any is a round)
+    games: [['fishing', fishing], ['fishtoss', fishToss], ['hoops', hoops], ['pinball', pinball], ['tower', tower], ['coffee', coffee], ['pickle', pickle], ['golf', golf]]
+      .map(([id, g]) => ({ id, best: g ? +(g.best || g.hi || 0) : 0 })),
+  }));
   audio = new Audio();
   // KEXP's now-playing feed drives a toast, so the radio names its own tracks.
   audio.onTrack = (label) => { if (hud) hud.showToast(`♪ ${label}`); };
@@ -1506,8 +1515,9 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { police, missions, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { career, police, missions, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   wireUi();
+  career.start(hud);
   game.newTarget();
   // Start on `high` everywhere.
   //
@@ -1947,6 +1957,7 @@ function refreshJobs() {
   const list = document.getElementById('jobsList');
   if (cnt) cnt.textContent = `${s.done}/${s.total} · ${s.golds} gold · finds ${s.found}/${s.findTotal} · tech tour ${s.tech}/${s.techTotal}`;
   if (mon) mon.textContent = formatMoney(game.money);
+  refreshPassport();
   for (const b of document.querySelectorAll('.buy')) b.disabled = game.money < +b.dataset.cost;
   if (!list) return;
   const COL = { gold: '#f4c542', silver: '#c8d0d8', bronze: '#c0763c' };
@@ -1954,6 +1965,23 @@ function refreshJobs() {
     + `<span class="bt">${r.best || '--'}`
     + (r.medal && r.medal !== 'none' ? `<i class="md" style="background:${COL[r.medal]}"></i>` : '')
     + '</span></div>').join('');
+}
+
+/** The Seattle Passport panel: the wallet, the rank and what the game has saved. Read only when paused. */
+function refreshPassport() {
+  const box = document.getElementById('passport');
+  if (!box || !career) return;
+  const p = career.passport();
+  const rk = document.getElementById('ppRank');
+  if (rk) rk.textContent = `${p.rank.toUpperCase()} · ${p.pct}%`;
+  const bar = document.getElementById('ppBar');
+  if (bar) bar.style.width = `${Math.min(100, p.frac * 100).toFixed(1)}%`;
+  const nx = document.getElementById('ppNext');
+  if (nx) nx.textContent = (p.next ? `${p.next.name} at ${p.next.pct}%` : 'top rank') + ` · wallet ${formatMoney(p.money)}`
+    + (p.extra.length ? ` · ${p.extra.join(' · ')}` : '');
+  const grid = document.getElementById('ppGrid');
+  if (grid) grid.innerHTML = p.rows.map((r) => `<div class="ppRow${r.done >= r.total ? ' full' : ''}"><span>${r.label}</span>`
+    + `<b>${r.done}/${r.total}</b></div>`).join('');
 }
 let warpArmed = false;
 let showStation = () => {};   // wireUi: mark the tuned station in the menu

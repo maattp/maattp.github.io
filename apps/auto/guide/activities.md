@@ -583,3 +583,41 @@ activities save; the pause menu counts them and both maps mark the rest.
   directly: `nearestNode` can answer a deck (Aurora over Fremont), and
   returns **-1, not null**, when nothing is in range (the landmark coins had
   the same latent bug).
+
+
+## The wallet and the Seattle Passport (v194)
+
+`Game.money` used to start at $250 on every launch, so every payout and every
+DELIVERY button lived and died inside one sitting. `src/career.js` saves it
+(`localStorage 'auto-career'` = `{ money, rank }`) and reads the rest of what
+the game already keeps into one panel in the pause menu, between Resume and
+JOBS.
+
+- **Saving is a 1 Hz poll**, not a hook on the ~25 places that pay out: a write
+  whenever `game.money` differs from what was last written (so the poll is also
+  the debounce), plus a flush on `visibilitychange` (hidden) and `pagehide`,
+  because iOS kills a backgrounded PWA without an unload. `Career`'s constructor
+  runs right after `new Game()` and overwrites the $250.
+- **The shop has no ownership**: a DELIVERY button spawns a vehicle or hands you
+  the pistol, and nothing is kept, so nothing is saved. **The rank gates
+  nothing** -- never add a gate; the player must not lose access to something
+  they could afford yesterday.
+- **The passport's rows come off the live lists**: `acts.found` / `acts.coins`,
+  `acts.techFound` / `acts.tech`, the job medals over `acts.list`, `stunts.list`
+  by `done`, `islands.found` against `EGGS` (exported from islands.js -- add a
+  new `_reward` key there too; the check reads the source and fails if they
+  differ), the mini-games' bests (`fishing`, `fishToss`, `hoops`, `pinball`,
+  `tower`, `coffee`, `pickle`, `golf`: a best on the board = played) and the
+  arcade's `hi` against `GAMES`. A row whose list is empty is simply omitted.
+  The police mission best and the Seafair cups are shown as plain text; they
+  have no total.
+- **Rank = the mean of the rows' fractions** (each category counts the same, so
+  the 20 coins do not drown the 5 island finds): Tourist 0, Local 10 %, Regular
+  30 %, Insider 55 %, Local Legend 85 % (`RANKS`). A rank-up toasts once; a rank
+  already earned when the session starts is stored and stays silent.
+- **Verify**: `AUTO_HTTP_PORT=8000 node tools/careercheck.mjs [--desktop]` -- sets
+  $5000, reloads, and checks the wallet came back; compares every passport
+  number with a direct count off the sources and the menu's text; checks the
+  rank, the toast, and that the panel sits in the card above the OpenStreetMap
+  credit (the credit paragraph is the pause menu's end; do not remove it). Look
+  at `tools/data/careershots/pause-top.png`.
