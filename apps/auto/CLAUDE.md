@@ -63,6 +63,7 @@ src/mountains.js            the Olympics, Rainier and the Cascades: one sky-laye
 src/trees.js                every tree: planted per chunk as records, drawn far (merged),
                             mid and near (instanced); see "A green Seattle"
 src/landmarks.js            landmarks to published dimensions, + their solids
+src/lmdowntown.js           the Arch, Central Library, Aquarium, Colman Dock terminal, Kerry Park and the Locks, from their OSM plans
 src/vehicles.js             vehicle models + the arcade driving model
 src/traffic.js              traffic AI, parked cars, police units' driving, A*
 src/police.js               the wanted levels: what each sends, guns, the helicopters, search, busted
@@ -230,7 +231,7 @@ The purpose-built harnesses, each a fixed-dt, paused-game driver:
 | `tools/pedcheck/harness.mjs <scenario>` | the crowd, as numbers with a `pass` where there is a bar: `density` (people within 40 m at Pike Place / Westlake / Pioneer Sq), `road` (share in a carriageway, crossings apart), `behav` (AI knockdowns, cars held), `flee` (through walls / into water), `cops` (time to BUSTED), `stall`, `overpass`; `look` / `crossing` shoot it. See "The crowd: living streets" in `guide/on-foot.md` |
 | `tools/vehshots.mjs <tag> [types] [--street]` | `--street` parks a fixed lineup on the densest commercial street, shot at eye height and raised — a before/after random traffic can't give. The lineup spawns occupied, with a `chase` view on the first near-lane car; `VEH_NEAR=a,b,..` replaces the near lane (put a new type first to get its chase view). Launches through tools/chrome.mjs, so `AUTO_GPU=1` works |
 | `tools/viewshots.mjs <dir> [names]` | fixed camera views by bearing/pitch/altitude (`at`/`bearing`/`pitch`/`alt`, or look-at `t`/`c`); defaults are the mountain views; prints the scene pass's draw count; `VIEW_PROBE='<js>'` evaluates once (see "Mountains on the horizon") |
-| `tools/landmarkshots.mjs <dir> [views] [--collide]` | world-framed landmark views, per-landmark cost built alone, and the collision drive/walk (see "Landmarks"); `LM_PROBE` |
+| `tools/landmarkshots.mjs <dir> [views] [--collide] [--kerry]` | world-framed landmark views, per-landmark cost built alone, the collision drive/walk (incl. the downtown landmarks), and `--kerry`: rays from the terrace at the Needle and the skyline (see "Landmarks"); `LM_PROBE` / `LM_PROBE_FILE` |
 | `tools/lotshots.mjs <dir> [--probe]` | lot views; `--probe` prints the grass share per region (see "Lots, plazas and yards") |
 | `tools/bldshots.mjs <dir> [--scan] [--shots=a,b] [--n=6] [--from=index.json]` + `tools/bldsheet.py <dir> [out] [--pair=<dir>]` | the building outlier scan and per-category contact sheets, eye level off the long (downhill) face plus an aerial; `--from` re-shoots another run's buildings by position for a before/after (see "Buildings: the outlier scan"). GPU by default (`AUTO_GPU=0` for SwiftShader) |
 | `tools/stuntjumps.mjs [ids] [--caps] [--shots DIR]` | every stunt jump: corridor check, then the player's car driven off it at fixed dt per speed cap (see "Stunt jumps") |

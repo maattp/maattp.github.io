@@ -144,11 +144,28 @@ is `rot - t`**, because three's `rotation.y = t` maps local (x, z) to
 - **Every solid is tested against the roads before it is installed**
   (`city.onRoad(x, z, 0.3, false)` over its footprint; decks ignored, so a
   viaduct overhead drops nothing). Dropped ones are listed in
-  `landmarks.userData.solidsDropped` — today the convention centre (I-5 runs
-  under it) and the ferry terminal (Colman Dock's vehicle lanes). **A dropped
+  `landmarks.userData.solidsDropped` — today a few pieces of the convention
+  centre's wall where Convention Place and the Pike Street ramp enter it, two
+  of the ferry terminal's where Colman Dock's vehicle lanes pass. **A dropped
   solid usually means the MODEL is on the road too**: Smith Tower's east wall was
   dropped until its lot was clipped clear of the street (`clipHalf`), because
   OSM's lot runs to that street's centreline.
+- **A wall is a row of short solids, never one long one** (`outline` in
+  `lmdowntown.js`: pieces of ~12 m). The Convention Center's 130 m Pike Street
+  face was ONE solid, and one street crossing its end dropped all of it -- a
+  car drove through the whole front. **A solid with `surfaceOnly` is dropped
+  only by a road on the surface** (`onRoad(..., includeTunnel = false)`): I-5
+  runs in a tunnel under the Arch, and a tunnel under a wall is no reason to
+  drop it. That also needs the solid's `y0` at the GROUND where the wall
+  stands (a function of the piece's midpoint), so a car in the tunnel is more
+  than the 2.5 m below `y0` that a solid reaches and is not hit by the wall
+  above it.
+- **A deck you can walk onto needs a solid that ends 0.3 m under it.** The
+  Locks' walls are platforms (`userData.decks`) and solids: with the solid's
+  `y1` at the deck's own height, a walker standing on it is *at* `y1` and
+  blocked by the wall he stands on; at `deck - 0.3` the walker is above it and
+  a boat or swimmer at the water is not. A deck may be sloped: `top` is its
+  height at its -v end, `top1` at its +v end (Kerry Park's terrace falls 4 %).
 
 **Greenspace and footprints are separate OSM layers and they overlap.** Park
 polygons are mapped straight over the museum, pavilion or house standing in
@@ -208,6 +225,74 @@ it was set from. Collision is in "Solid street objects".
   under unlabelled ponds) needs a raster rebuild and a road re-grade, so it
   is a separate change. `city.clearCircles` keeps the scatter off the lawn.
   1 draw, 17.6k triangles; views `bdp-*` in landmarkshots.
+
+### The downtown landmarks rebuilt from their OSM plans (`src/lmdowntown.js`)
+
+The Convention Center, the Central Library, the Aquarium, Colman Dock's
+terminal, Kerry Park and the Ballard Locks were boxes and a tube; they are now
+built from the OSM plans, in their own module because they share a kit
+(`Acc`, `walls`, `cap`, `skin`, `vault`, `clipPoly`, `insetPoly`) the older
+builders do not need. It takes landmarks.js's palette, sign atlas and solids
+through `makeDowntown(h)`, so every piece still folds into the same cluster
+meshes (the header table gives each number and its source).
+
+- **A hillside building's skirt follows the ground** (`walls(acc, poly, base,
+  top, ...)` with `base` a function of x, z: `groundFn`): the Arch's podium is
+  ~4 m high on the freeway side and ~20 m on Pike Street, as the hill makes it.
+  A box at a fixed `y` either floated on the downhill side or stood in the hill.
+- **The Arch stands on the ground; I-5 runs under it** (OSM layer -1/-2, a
+  lid), so there is no span to draw. It is the OSM way's plan (66 points, 244 x
+  128 m, in a frame turned 0.558 rad to the street grid), a pale precast
+  podium, a glazed block set 3 m in, a roof of four skylit barrel vaults on
+  steel ribs, a glazed portal on the Pike Street front. **One texture serves
+  both walls**: the canvas's top half is a precast storey and its bottom half
+  a curtain-wall storey, and `walls()` splits the wall at every 4.5 m of
+  absolute height so each band's v stays inside its half (a wall on a slope
+  cannot tile a two-storey texture any other way).
+- **The Library is five platforms lofted between rings** (`skin`): each
+  volume's bottom and top are the OSM plan scaled, sheared and shifted
+  differently, so the sides lean and each platform overhangs the one below. The
+  skin is one texture, a diamond grid of steel over glass with a lime floor band
+  every two floors; the reading room's roof is a tilted plane. It reads
+  as the real building from the air and across a street.
+- **The Aquarium's entrance is on its SOUTH face**: east of Pier 59 is water (a
+  cove between it and the Ocean Pavilion), and the OSM way the importer drew as
+  a roofed box along the south is the approach pier, 150 x 22 m. It is a plank
+  deck on piles now, walkable (`decks`, the last with a `land` gangway to the
+  shore). The Ocean Pavilion is on the land to the north-east, with a
+  planted roof over its water end; `LANDMARK_CLEAR.aquarium` clears its OSM box.
+- **Colman Dock's terminal is the OSM entry building (16 x 90 m, 0.553 rad)**
+  with a glass canopy toward the slips and an overhead walkway built in WORLD
+  axes (`toL`) so it runs due west whatever the building's yaw.
+- **Kerry Park is a terrace laid to the slope**: a 54 x 22 m paved shelf whose
+  surface passes 0.1 m over Changing Form's ground and falls 4 % south, a
+  retaining wall dropping 2-4 m to the grass, a parapet 1.05 m high. **The
+  parapet's height is the design**: from a 1.7 m eye the skyline and the Needle
+  stand 0.95 m above it. `landmarkshots --kerry` casts rays from the park
+  centre and four more stations at the Needle (base to top) and along a fan of
+  the skyline. **It passed on the old model too** (the old plank sat at the eye's
+  feet): the old defect was a bare grey slab and a bare wall, not a blocked
+  view, so the ray test is a guard against a future parapet that is too tall,
+  not proof of this change.
+- **The Locks are stacked across the channel, north to south**: small lock,
+  centre wall, large lock (with its intermediate gate, which falls where the
+  canal's 5.3 m fresh water meets the Sound's in the water mask), south wall
+  with the control tower, the spillway dam running on south to the fish ladder.
+  The OSM buildings fix the stack (the Control Tower on the south wall,
+  Operating House 2 on the centre wall at the intermediate gate, the Locks and
+  Dam node at the dam). The 10 m water mask carries the chambers, so only
+  walls, gates, rails and the dam are drawn; the walls are walkable.
+  **Wall-top height (6.7 m) and the exact z of each wall are est.**
+
+Cost, each built alone (draws / triangles, was -> now): Arch 1 / 76 -> 3 / 4.9k
+(a wall texture and the sign atlas), Library 2 / 300 -> 2 / 340 (its lattice
+glass replaces the old glass draw), Aquarium 2 / 38 -> 2 / 4.2k, Colman Dock
+2 / 38 -> 2 / 1.9k, Kerry Park 1 / 288 -> 1 / 1.2k, Locks 1 / 96 -> 1 / 3.8k:
+**+1 draw and +15.6k triangles in all** (all landmarks 66 / 111k -> 67 / 127k).
+Build time is the same as the box models: **boxes, posts and ribs go into one
+`Acc` per material (`Kit`), not a Mesh and BufferGeometry each**. The first cut
+made the Arch's ~480 rib struts as meshes, and building it took 68 ms against
+9 ms now (each landmark built alone, best of 6).
 
 Built alone (draws after merge / triangles): Needle 6 / 14.0k, Spheres 5 / 15.0k,
 Wheel 6 / 7.3k, arena 8 / 5.6k, Troll 4 / 5.5k, MoPOP 7 / 4.7k, T-Mobile 8 / 4.7k,

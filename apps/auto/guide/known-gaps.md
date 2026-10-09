@@ -22,6 +22,15 @@ Part of the Auto guide; the index and the laws every change needs are in
 - **Nobody rides the monorail with you, and its terminal interiors are not
   walkable** beyond Seattle Center's platforms and ramp. (Its doors, and
   Link's, show open while a train stands at a platform: v155.)
+- **The rebuilt downtown landmarks are shells** (`src/lmdowntown.js`): no
+  interiors, and several numbers are est. -- which platform of the Central
+  Library leans which way, the Arch's roof vaults (OSM gives the plan, not the
+  roof), the Locks' wall-top height and the exact z of each wall (the OSM
+  buildings fix the stack, not the chambers). The Locks' chambers are the
+  10 m water mask, so a boat can be taken into the large lock and the
+  intermediate gate stands across its middle at the fresh/salt step. The
+  Arch's tunnel roads (I-5, Convention Place's passages) pass under its solid
+  walls by the ground rule, but the building has no passage drawn for them.
 - **No Kenmore Air Harbor.** The real floatplane base at the north end of Lake
   Washington (47.756 N) is ~0.5 km past the map's north edge (47.752 N).
 

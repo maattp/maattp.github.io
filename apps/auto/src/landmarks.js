@@ -48,6 +48,10 @@
 // | | letter / clock sizes | est.: "PUBLIC MARKET" letters 2.2 m, clock 2.6 m | photographs |
 // | | Main Arcade | plan from OSM (two ways); ~9 m over Pike Place (est.) | OSM; Wikipedia |
 //
+// The Convention Center's Arch, the Central Library, the Aquarium and its Ocean
+// Pavilion, Colman Dock's terminal, Kerry Park and the Ballard Locks are in
+// lmdowntown.js, with their own table of numbers and sources.
+//
 // Footprints are OpenStreetMap (ODbL), relative to the landmark's own point.
 
 import * as THREE from './three.js';
@@ -2396,12 +2400,14 @@ export const LANDMARK_CLEAR = {
   // The Main Arcade's two OSM ways, which the model replaces; the Market's
   // own node is 220 m up the bluff from its sign.
   market: [[96.5, 99.5, 6], [143.5, 154.9, 6], [152.5, 141, 10], [122.5, 114.7, 10], [94.9, 85.5, 8]],
+  // the Aquarium's circle, and one over the Ocean Pavilion's OSM box (45, -42 from the point)
   aquarium: [[0, 0, 48], [45, -42, 40]], ferry: 72, library: 48, pier: 52, troll: 18,
   // the park, and the Play Barn and picnic shelter's own OSM boxes, which the
   // model replaces (they stand ~110 m east of the park's point)
   gasworks: [[0, 0, 95], [101, -24, 30], [93, -45, 28]],
   // the Statue of Liberty stands 1.1 km from Alki Beach Park's point
-  locks: [[0, 60, 70], [-50, 130, 45]], kerry: 30, ferriswheelPier: [[-818.8, 759.8, 5]], convention: 62,
+  // the Locks' works run 250 m east-west and 150 m north-south from the OSM point (lmdowntown.js)
+  locks: [[0, 60, 70], [-50, 130, 45]], kerry: 34, ferriswheelPier: [[-818.8, 759.8, 5]], convention: 62,
   stadiumF: 135, stadiumB: 128, stadiumH: 122, smith: 6,
   // the tower/apron cluster only -- the runway lies over real open ground and
   // the hangars beside it are real buildings that must stay

@@ -52,6 +52,57 @@ class Acc {
     this.tri(a, b, c, nx, ny, nz, ua, ub, uc);
     this.tri(a, c, d, nx, ny, nz, ua, uc, ud);
   }
+  /** A box with its base centre at (cx, y0, cz), turned `ry` the way three's rotation.y turns a mesh. */
+  box(cx, y0, cz, w, h, d, ry = 0) {
+    const c = Math.cos(ry), s = Math.sin(ry), hx = w / 2, hz = d / 2, y1 = y0 + h;
+    const P3 = (lx, y, lz) => [cx + lx * c + lz * s, y, cz - lx * s + lz * c];
+    const a = P3(-hx, y0, -hz), b = P3(hx, y0, -hz), cc = P3(hx, y0, hz), dd = P3(-hx, y0, hz);
+    const e = P3(-hx, y1, -hz), f = P3(hx, y1, -hz), g = P3(hx, y1, hz), hh = P3(-hx, y1, hz);
+    this.quad(e, f, g, hh, 0, 1, 0);
+    this.quad(dd, cc, b, a, 0, -1, 0);
+    this.quad(a, b, f, e, -s, 0, -c);        // local -z face
+    this.quad(cc, dd, hh, g, s, 0, c);       // local +z face
+    this.quad(b, cc, g, f, c, 0, -s);
+    this.quad(dd, a, e, hh, -c, 0, s);
+  }
+  /** A rectangular beam between two points, `w` wide (across the horizontal) and `h` deep. */
+  beam(p0, p1, w, h) {
+    const dx = p1[0] - p0[0], dy = p1[1] - p0[1], dz = p1[2] - p0[2], L = Math.hypot(dx, dy, dz);
+    if (L < 1e-4) return;
+    const fx = dx / L, fy = dy / L, fz = dz / L;
+    // side = f x up (horizontal); up2 = side x f
+    let sx = fz, sy = 0, sz = -fx, sl = Math.hypot(sx, sz);
+    if (sl < 1e-3) { sx = 1; sy = 0; sz = 0; sl = 1; }
+    sx /= sl; sz /= sl;
+    const ux = sy * fz - sz * fy, uy = sz * fx - sx * fz, uz = sx * fy - sy * fx;
+    const k = (p, a, b) => [p[0] + sx * w / 2 * a + ux * h / 2 * b, p[1] + sy * w / 2 * a + uy * h / 2 * b, p[2] + sz * w / 2 * a + uz * h / 2 * b];
+    const A0 = k(p0, -1, -1), B0 = k(p0, 1, -1), C0 = k(p0, 1, 1), D0 = k(p0, -1, 1);
+    const A1 = k(p1, -1, -1), B1 = k(p1, 1, -1), C1 = k(p1, 1, 1), D1 = k(p1, -1, 1);
+    this.quad(A0, B0, B1, A1, -ux, -uy, -uz);
+    this.quad(B0, C0, C1, B1, sx, sy, sz);
+    this.quad(C0, D0, D1, C1, ux, uy, uz);
+    this.quad(D0, A0, A1, D1, -sx, -sy, -sz);
+  }
+  /** An n-sided post of radius r from y0 to y0 + h, capped on top. */
+  post(cx, y0, cz, r, h, n = 6) {
+    let prev = [cx + r, cz];
+    for (let i = 1; i <= n; i++) {
+      const a = (i / n) * Math.PI * 2, cur = [cx + Math.cos(a) * r, cz + Math.sin(a) * r];
+      const mx = (prev[0] + cur[0]) / 2 - cx, mz = (prev[1] + cur[1]) / 2 - cz;
+      this.quad([prev[0], y0, prev[1]], [cur[0], y0, cur[1]], [cur[0], y0 + h, cur[1]], [prev[0], y0 + h, prev[1]], mx, 0, mz);
+      this.tri([cx, y0 + h, cz], [prev[0], y0 + h, prev[1]], [cur[0], y0 + h, cur[1]], 0, 1, 0);
+      prev = cur;
+    }
+  }
+  /** A squashed icosahedron (a shrub): 20 faces. */
+  blob(cx, cy, cz, sx, sy, sz) {
+    const t = (1 + Math.sqrt(5)) / 2, n = Math.hypot(1, t);
+    const V0 = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]].map(([x, y, z]) => [cx + x / n * sx, cy + y / n * sy, cz + z / n * sz]);
+    for (const [i, j, k] of [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]]) {
+      const a = V0[i], b = V0[j], c = V0[k];
+      this.tri(a, b, c, (a[0] + b[0] + c[0]) / 3 - cx, (a[1] + b[1] + c[1]) / 3 - cy, (a[2] + b[2] + c[2]) / 3 - cz);
+    }
+  }
   mesh() {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3));
@@ -61,6 +112,20 @@ class Acc {
     return new THREE.Mesh(g, this.m);
   }
 }
+
+/** One Acc per material: a landmark's boxes and posts go in here (a few hundred of
+ *  them, none its own Mesh and BufferGeometry: that cost 60 ms to build the Arch's
+ *  ribs alone) and flush into the group as one mesh per material. */
+class Kit {
+  constructor() { this.by = new Map(); }
+  A(m) { let a = this.by.get(m); if (!a) this.by.set(m, (a = new Acc(m))); return a; }
+  box(m, w, h, d, x = 0, y = 0, z = 0, ry = 0) { this.A(m).box(x, y, z, w, h, d, ry); }
+  beam(m, p0, p1, w, h) { this.A(m).beam(pt(p0), pt(p1), w, h); }
+  cyl(m, r, h, x, y, z, n = 6) { this.A(m).post(x, y, z, r, h, n); }
+  blob(m, cx, cy, cz, sx, sy, sz) { this.A(m).blob(cx, cy, cz, sx, sy, sz); }
+  flush(g) { for (const a of this.by.values()) if (a.i.length) g.add(a.mesh()); this.by.clear(); }
+}
+const pt = (p) => (Array.isArray(p) ? p : [p.x, p.y, p.z]);
 
 const area2 = (poly) => {
   let s = 0;
@@ -236,7 +301,13 @@ function vault(acc, cx, cz, y0, ax, az, len, R, ry, nSeg, tw = 6, th = 6, caps =
 }
 
 export function makeDowntown(h) {
-  const { P, M, mat, sign, solidBox, canvasTex, panelMat, box, cyl, strut, beam, solid } = h;
+  const { P, M, mat, sign, solidBox, canvasTex, panelMat, solid } = h;
+  // the kit of the landmark being built (they are built one after another)
+  let K = null;
+  const box = (w, hh, d, m, x, y, z, ry) => K.box(m, w, hh, d, x, y, z, ry);
+  const cyl = (rt, rb, hh, m, x, y, z, seg) => K.cyl(m, Math.max(rt, rb), hh, x, y, z, seg);
+  const strut = (p0, p1, r, m) => K.beam(m, p0, p1, r * 2, r * 2);
+  const beam = (p0, p1, w, hh, m) => K.beam(m, p0, p1, w, hh);
   /** A wall along each edge of a polygon, `t` thick, from y0 to y1 (local). */
   // `y0` may be a function of the edge's midpoint (a hillside building's wall stands from the ground there,
   // so a road in a tunnel beneath it is past the 2.5 m a solid reaches below its base); `surfaceOnly`: only a
@@ -342,7 +413,7 @@ export function makeDowntown(h) {
       for (let q = 0; q < n; q++) {
         const px = ax + dx * (st + q * o.pitch) + nx * o.off, pz = az + dz * (st + q * o.pitch) + nz * o.off;
         if (o.skip && o.skip(px, pz)) continue;
-        g.add(box(o.w, o.h, 0.14, o.mat, px, o.y0, pz, ry));
+        box(o.w, o.h, 0.14, o.mat, px, o.y0, pz, ry);
       }
     }
   };
@@ -368,6 +439,7 @@ export function makeDowntown(h) {
 
   function convention(l) {
     const g = new THREE.Group();
+    K = new Kit();
     const rot = 0.558;
     const o = origin(l, rot);
     const gnd = groundFn(o, 0.6);
@@ -404,14 +476,14 @@ export function makeDowntown(h) {
     const V = new Acc(vglass);
     for (const [cx, cz, len] of [[-70, -2, 38], [-12, -14, 56], [46, -34, 62], [94, -38, 40]]) {
       vault(V, cx, cz, EAVE + 0.5, ax, az, len, 11, 7.5, 8);
-      g.add(box(22.4, 1.0, len, rib, cx, EAVE + 0.5, cz));
+      box(22.4, 1.0, len, rib, cx, EAVE + 0.5, cz);
       for (let k = 0; k <= Math.floor(len / 8); k++) {
         const zz = cz - len / 2 + k * (len / Math.floor(len / 8));
         let prev = null;
         for (let a = 0; a <= 8; a++) {
           const t = (a / 8) * Math.PI;
           const p = V3(cx + Math.cos(t) * 11.1, EAVE + 0.5 + Math.sin(t) * 7.6, zz);
-          if (prev) g.add(strut(prev, p, 0.28, rib, 5));
+          if (prev) strut(prev, p, 0.28, rib, 5);
           prev = p;
         }
       }
@@ -423,19 +495,19 @@ export function makeDowntown(h) {
       const gl = new Acc(vglass);
       vault(gl, cx, z0 - 5, PODIUM + 0.2, 0, 1, 10, 9, 8.5, 10);
       g.add(gl.mesh());
-      g.add(box(18.6, 0.6, 10.4, rib, cx, PODIUM, z0 - 5));
+      box(18.6, 0.6, 10.4, rib, cx, PODIUM, z0 - 5);
       let prev = null;
       for (let a = 0; a <= 10; a++) {
         const t = (a / 10) * Math.PI;
         const p = V3(cx + Math.cos(t) * 9.1, PODIUM + 0.2 + Math.sin(t) * 8.6, z0 - 10);
-        if (prev) g.add(strut(prev, p, 0.3, rib, 5));
+        if (prev) strut(prev, p, 0.3, rib, 5);
         prev = p;
       }
     }
     // mechanical penthouses
     const pent = P(0x8c8f8f, 0.7, 0.3, 0.55);
     for (const [x, z, w, d] of [[-40, -40, 14, 10], [20, 0, 18, 12], [60, -20, 12, 14], [-100, -55, 10, 8], [0, 20, 10, 8]])
-      g.add(box(w, 3.4, d, pent, x, EAVE + 0.5, z));
+      box(w, 3.4, d, pent, x, EAVE + 0.5, z);
     // the name, on the Pike Street parapet
     const s = sign('WASHINGTON STATE CONVENTION CENTER', 46, 2.6, null, '#f4f4f0', { stroke: '#243f47', px: 18 });
     s.position.set(40, PODIUM + 12.5, -77.9);
@@ -444,6 +516,7 @@ export function makeDowntown(h) {
     // collision: the podium's outline. A wall segment that lies on a road
     // (I-5's lid, Convention Place's passages) is dropped by buildLandmarks.
     outline(g, insetPoly(CONV_PLAN, 2.2), 2.0, 20, (x, z) => gnd(x, z) - 0.8);
+    K.flush(g);
     return g;
   }
 
@@ -462,10 +535,11 @@ export function makeDowntown(h) {
   });
   function library() {
     const g = new THREE.Group();
+    K = new Kit();
     const lg = libraryGlass();
     const A = new Acc(lg);
     const deck = new Acc(P(0x99a4a8, 0.6, 0.3, 0.9));
-    const under = new Acc(P(0x7c898e, 0.65, 0.25, 1.1));
+    const under = new Acc(P(0x93a2a7, 0.65, 0.2, 1.35));
     const edge = new Acc(P(0xcfd6d6, 0.35, 0.65, 0.8));
     const cx = 2.2, cz = -2.7;
     // [y0, y1, bottom: scale, shear, ox, oz, top: scale, shear, ox, oz]
@@ -492,6 +566,7 @@ export function makeDowntown(h) {
     });
     g.add(A.mesh(), deck.mesh(), under.mesh(), edge.mesh());
     outline(g, LIB_PLAN.map(([x, z]) => [cx + (x - cx) * 0.96, cz + (z - cz) * 0.96]), 2.4, 52, -24);
+    K.flush(g);
     return g;
   }
 
@@ -507,13 +582,14 @@ export function makeDowntown(h) {
   const AQ_PAV = [[19.2, -48.2], [22.3, -39.8], [25.9, -34.9], [39.5, -22.2], [56.6, -7.1], [69.2, -14.4], [65.1, -21.3], [71.7, -25.0], [45.3, -67.4], [41.6, -71.0], [35.5, -73.0], [30.7, -73.7], [29.0, -71.1], [21.5, -60.0], [19.4, -52.7]];
   function aquarium(l) {
     const g = new THREE.Group();
+    K = new Kit();
     g.userData.baseY = 2.4;
     const o = origin(l, 0, 2.4);
     const gnd = groundFn(o, 0.5);
     const wx = (lx, lz) => [o.x + lx, o.z + lz];
     // the deck, and the piles it stands on where the water is
     const deckPoly = insetPoly(AQ_MAIN, -2.5);
-    const dk = new Acc(P(0x8a6b4a, 0.85, 0, 0.5));
+    const dk = new Acc(P(0x84735f, 0.9, 0, 0.5));
     cap(dk, deckPoly, 0, true, 4);
     walls(dk, deckPoly, -1.3, 0, 4, 1.3);
     g.add(dk.mesh());
@@ -522,7 +598,7 @@ export function makeDowntown(h) {
       if (!pointIn(deckPoly, x, z)) continue;
       const [qx, qz] = wx(x, z);
       if (G.terrainHeight(qx, qz) > o.y - 1) continue;
-      g.add(cyl(0.38, 0.38, 9, pile, x, -9.3, z, 6));
+      cyl(0.38, 0.38, 9, pile, x, -9.3, z, 6);
     }
     g.userData.decks = [{ x: 14.5, z: -3, hw: 28.5, hd: 32.5, top: 0 }];
     // Pier 59's shed
@@ -548,16 +624,16 @@ export function makeDowntown(h) {
       skip: (x, z) => z > 23 && x > 3 && x < 30 });
     // ridge cap, a row of skylights and vents
     const ridge = P(0xc9d0d2, 0.4, 0.6, 0.8);
-    g.add(box(0.8, 0.5, 52, ridge, XR, EAVE + RISE - 0.1, -3.5));
-    for (let k = 0; k < 4; k++) g.add(box(5.2, 1.2, 4.2, P(0x7fb0c0, 0.12, 0.5, 1.0), XR - 8.5 + (k % 2) * 17, EAVE + RISE * 0.62 - 0.1 - 0.0, -22 + k * 11));
+    box(0.8, 0.5, 52, ridge, XR, EAVE + RISE - 0.1, -3.5);
+    for (let k = 0; k < 4; k++) box(5.2, 1.2, 4.2, P(0x7fb0c0, 0.12, 0.5, 1.0), XR - 8.5 + (k % 2) * 17, EAVE + RISE * 0.62 - 0.1 - 0.0, -22 + k * 11);
     // the vestibule: the entrance is on the SOUTH face, where the approach pier meets the shed -- glass
     // between the two stubs of wall, a flat canopy over it, the name on the canopy's edge
     {
       const gl = P(0x5d8f9c, 0.1, 0.6, 1.0);
-      g.add(box(15, 6.6, 0.6, gl, 16, 0, 25.1));
-      g.add(box(18, 0.7, 7.4, P(0x2f6f8c, 0.5, 0.3, 0.7), 16, 6.4, 28.4));
-      for (let k = -3; k <= 3; k++) g.add(box(0.35, 6.6, 0.35, ridge, 16 + k * 2.5, 0, 25.4));
-      for (const sx of [-8.4, 8.4]) g.add(box(0.4, 6.6, 0.4, ridge, 16 + sx, 0, 31.9));
+      box(15, 6.6, 0.6, gl, 16, 0, 25.1);
+      box(18, 0.7, 7.4, P(0x2f6f8c, 0.5, 0.3, 0.7), 16, 6.4, 28.4);
+      for (let k = -3; k <= 3; k++) box(0.35, 6.6, 0.35, ridge, 16 + k * 2.5, 0, 25.4);
+      for (const sx of [-8.4, 8.4]) box(0.4, 6.6, 0.4, ridge, 16 + sx, 0, 31.9);
     }
     const s1 = sign('SEATTLE AQUARIUM', 22, 3.0, '#0f3d55', '#ffffff');
     s1.position.set(16, 8.7, 32.2);
@@ -568,20 +644,26 @@ export function makeDowntown(h) {
     // the approach pier, 22 m wide and 150 long (the OSM way the importer drew as a roofed box): decked, on piles, walkable
     {
       const AP = [[-44.7, 27.9], [-18.9, 50.2], [102.3, 50.8], [97.2, 46.0], [78.9, 28.5], [37, 28.1], [28.2, 28.0], [6.4, 28.1], [0, 28]];
-      const ad = new Acc(P(0x8a6b4a, 0.85, 0, 0.5));
+      const ad = new Acc(P(0x84735f, 0.9, 0, 0.5));
       cap(ad, AP, 0, true, 4);
       walls(ad, AP, -1.0, 0, 4, 1);
       g.add(ad.mesh());
+      // the boards: seams every 1.1 m along the pier's length, and butt joints every 6 m
+      const seam = new Acc(P(0x5d4a36, 0.95, 0, 0.45));
+      const xl = (z) => -44.7 + 1.157 * (z - 27.9), xr = (z) => 78.9 + 1.049 * (z - 28.5);
+      for (let z = 28.6; z < 50.4; z += 1.1) seam.quad([xl(z) + 0.4, 0.012, z - 0.025], [xr(z) - 0.4, 0.012, z - 0.025], [xr(z) - 0.4, 0.012, z + 0.025], [xl(z) + 0.4, 0.012, z + 0.025], 0, 1, 0);
+      for (let x = -30; x < 98; x += 6) seam.quad([x - 0.025, 0.013, 28.8], [x + 0.025, 0.013, 28.8], [x + 0.025, 0.013, 50.2], [x - 0.025, 0.013, 50.2], 0, 1, 0);
+      g.add(seam.mesh());
       for (let x = -40; x <= 100; x += 7) for (let z = 30; z <= 50; z += 7) {
         if (!pointIn(AP, x, z)) continue;
         const [qx, qz] = wx(x, z);
         if (G.terrainHeight(qx, qz) > o.y - 1) continue;
-        g.add(cyl(0.36, 0.36, 8, pile, x, -8.3, z, 6));
+        cyl(0.36, 0.36, 8, pile, x, -8.3, z, 6);
       }
       // low rails on the long edges
       const rl = P(0x3a4348, 0.5, 0.5, 0.6);
-      g.add(box(110, 0.07, 0.07, rl, 45, 1.05, 50.2));
-      g.add(box(78, 0.07, 0.07, rl, 60, 1.05, 28.6));
+      box(110, 0.07, 0.07, rl, 45, 1.05, 50.2);
+      box(78, 0.07, 0.07, rl, 60, 1.05, 28.6);
       // walkable: strips along the pier; a gangway at its east end meets the shore if one is in reach
       for (let x0 = -20; x0 < 96; x0 += 22) g.userData.decks.push({ x: x0 + 11, z: 39.4, hw: 11, hd: 10.4, top: 0 });
       g.userData.decks[g.userData.decks.length - 1].land = { x: 97, z: 39.4, dx: 1, dz: 0, w: 5 };
@@ -605,13 +687,13 @@ export function makeDowntown(h) {
         const L = Math.hypot(bx - ax, bz - az);
         if (L < 4) continue;
         const dx = (bx - ax) / L, dz = (bz - az) / L, ry = Math.atan2(-dz, dx);
-        for (let q = 1.5; q < L - 0.8; q += 3) g.add(box(0.35, 6.2, 0.55, fin, ax + dx * q, 4.3, az + dz * q, ry));
-        g.add(box(L, 0.45, 0.8, band, (ax + bx) / 2, 3.95, (az + bz) / 2, ry));
+        for (let q = 1.5; q < L - 0.8; q += 3) box(0.35, 6.2, 0.55, fin, ax + dx * q, 4.3, az + dz * q, ry);
+        box(L, 0.45, 0.8, band, (ax + bx) / 2, 3.95, (az + bz) / 2, ry);
       }
       // the roof: one plane, low at the land side and rising toward the water
       const rp = insetPoly(AQ_PAV, -1.8);
-      const pr = new Acc(P(0x8d9895, 0.55, 0.35, 0.8));
-      const grn = new Acc(P(0x86a366, 0.95, 0, 0.5));
+      const pr = new Acc(P(0xa3adaa, 0.55, 0.35, 0.8));
+      const grn = new Acc(P(0x7a9a63, 0.95, 0, 0.5));
       const py = (x, z) => 10.6 - (x - 45) * 0.03 - (z + 40) * 0.06;
       // the water end carries a planted roof: one half of the plan by a line across its long axis
       const side = (x, z) => (x - 50) * -0.5 + (z + 45) * -0.86;
@@ -622,10 +704,11 @@ export function makeDowntown(h) {
       cap(pr, rp, (x, z) => py(x, z) - 0.7, false, 6);
       g.add(pr.mesh(), grn.mesh());
       // skylights over the atrium
-      for (const [sx, sz] of [[36, -58], [42, -48], [50, -36]]) g.add(box(7, 1.1, 5, P(0x7fb0c0, 0.12, 0.5, 1.0), sx, py(sx, sz), sz, -0.5));
+      for (const [sx, sz] of [[36, -58], [42, -48], [50, -36]]) box(7, 1.1, 5, P(0x7fb0c0, 0.12, 0.5, 1.0), sx, py(sx, sz), sz, -0.5);
       outline(g, AQ_PAV, 1.5, 12, -3);
     }
     outline(g, AQ_MAIN, 1.5, 11, -3);
+    K.flush(g);
     return g;
   }
 
@@ -638,6 +721,7 @@ export function makeDowntown(h) {
   // foot passengers out over the dock's vehicle lanes to the boats.
   function ferryTerminal(l) {
     const g = new THREE.Group();
+    K = new Kit();
     const ROT = 0.553, c = Math.cos(ROT), s = Math.sin(ROT);
     g.userData.rot = ROT;
     const CX = -2.0, CZ = -12.75, HW = 8.0, HL = 45.0;     // the slab, in the group's frame
@@ -646,24 +730,24 @@ export function makeDowntown(h) {
     const steel = P(0xb9c0c2, 0.4, 0.6, 0.75);
     const green = mat.wsfGreen;
     const slab = P(0xa9a79f, 0.9, 0, 0.5);
-    g.add(box(HW * 2 + 3, 1.6, HL * 2 + 3, slab, CX, -1.4, CZ));
+    box(HW * 2 + 3, 1.6, HL * 2 + 3, slab, CX, -1.4, CZ);
     // concourse glass and the columns in front of it
-    g.add(box(HW * 2 - 0.4, 5.0, HL * 2 - 0.4, glassD, CX, 0, CZ));
+    box(HW * 2 - 0.4, 5.0, HL * 2 - 0.4, glassD, CX, 0, CZ);
     for (const sd of [-1, 1]) for (let k = 0; k <= 15; k++) {
-      g.add(box(0.5, 5.2, 0.5, steel, CX + sd * (HW + 0.1), 0, CZ - HL + 0.5 + k * (HL * 2 - 1) / 15));
+      box(0.5, 5.2, 0.5, steel, CX + sd * (HW + 0.1), 0, CZ - HL + 0.5 + k * (HL * 2 - 1) / 15);
     }
     // two floors of curtain wall, banded by fins
-    g.add(box(HW * 2 - 0.6, 8.8, HL * 2 - 0.6, glassL, CX, 5.0, CZ));
-    for (const y of [5.0, 9.4, 13.6]) g.add(box(HW * 2 + 0.8, 0.3, HL * 2 + 0.8, steel, CX, y, CZ));
+    box(HW * 2 - 0.6, 8.8, HL * 2 - 0.6, glassL, CX, 5.0, CZ);
+    for (const y of [5.0, 9.4, 13.6]) box(HW * 2 + 0.8, 0.3, HL * 2 + 0.8, steel, CX, y, CZ);
     for (const sd of [-1, 1]) for (let k = 0; k <= 30; k++) {
-      g.add(box(0.28, 8.8, 0.35, steel, CX + sd * (HW - 0.28), 5.0, CZ - HL + 0.5 + k * (HL * 2 - 1) / 30));
+      box(0.28, 8.8, 0.35, steel, CX + sd * (HW - 0.28), 5.0, CZ - HL + 0.5 + k * (HL * 2 - 1) / 30);
     }
     // fascia and parapet
-    g.add(box(HW * 2 + 0.8, 1.5, HL * 2 + 0.8, green, CX, 13.8, CZ));
-    g.add(box(HW * 2 - 1, 0.6, HL * 2 - 1, P(0x3d4144, 0.8, 0, 0.45), CX, 15.3, CZ));
+    box(HW * 2 + 0.8, 1.5, HL * 2 + 0.8, green, CX, 13.8, CZ);
+    box(HW * 2 - 1, 0.6, HL * 2 - 1, P(0x3d4144, 0.8, 0, 0.45), CX, 15.3, CZ);
     // roof lantern and plant
-    g.add(box(5.5, 2.6, 36, glassL, CX, 15.3, CZ - 4));
-    g.add(box(6, 2.2, 8, P(0x8c8f8f, 0.7, 0.3, 0.55), CX + 1, 15.3, CZ + 33));
+    box(5.5, 2.6, 36, glassL, CX, 15.3, CZ - 4);
+    box(6, 2.2, 8, P(0x8c8f8f, 0.7, 0.3, 0.55), CX + 1, 15.3, CZ + 33);
     // the canopy toward the slips (west): one glass plane on steel ribs
     {
       const x0 = CX - HW - 0.3, x1 = CX - HW - 7.2;
@@ -674,14 +758,14 @@ export function makeDowntown(h) {
       g.add(cn.mesh());
       for (let k = 0; k <= 12; k++) {
         const z = zA + (zB - zA) * k / 12;
-        g.add(strut(V3(x0, 11.4, z), V3(x1, 8.7, z), 0.1, steel, 5));
-        if (k % 3 === 0) g.add(box(0.25, 8.7, 0.25, steel, x1, 0, z));
+        strut(V3(x0, 11.4, z), V3(x1, 8.7, z), 0.1, steel, 5);
+        if (k % 3 === 0) box(0.25, 8.7, 0.25, steel, x1, 0, z);
       }
-      g.add(box(0.3, 0.3, zB - zA, steel, x1, 8.55, (zA + zB) / 2));
+      box(0.3, 0.3, zB - zA, steel, x1, 8.55, (zA + zB) / 2);
     }
     // the entry: a taller glazed bay on the Alaskan Way side, mid-building
-    g.add(box(4.5, 16.2, 14, glassL, CX + HW + 2.1, 0, CZ + 4));
-    g.add(box(4.9, 0.8, 14.6, green, CX + HW + 2.1, 16.2, CZ + 4));
+    box(4.5, 16.2, 14, glassL, CX + HW + 2.1, 0, CZ + 4);
+    box(4.9, 0.8, 14.6, green, CX + HW + 2.1, 16.2, CZ + 4);
     // names: green on white, facing out from each face
     const sE = sign('WASHINGTON STATE FERRIES', 30, 3.2, '#1c6b52', '#ffffff');
     sE.position.set(CX + HW + 0.5, 14.5, CZ - 20); sE.rotation.y = Math.PI / 2;
@@ -698,20 +782,21 @@ export function makeDowntown(h) {
       const [sx, sz] = toL(-14.5, -5.6);                // the terminal's west face at the walkway's level
       const LEN = 58;
       const [mx, mz] = toL(-14.5 - LEN / 2 + 1, -5.6);
-      g.add(box(LEN, 0.5, 4.8, steel, mx, wy - 0.5, mz, ry));
-      g.add(box(LEN, wh, 4.2, glassL, mx, wy, mz, ry));
-      g.add(box(LEN + 0.6, 0.4, 5.2, P(0x5b6063, 0.7, 0.3, 0.5), mx, wy + wh, mz, ry));
+      box(LEN, 0.5, 4.8, steel, mx, wy - 0.5, mz, ry);
+      box(LEN, wh, 4.2, glassL, mx, wy, mz, ry);
+      box(LEN + 0.6, 0.4, 5.2, P(0x5b6063, 0.7, 0.3, 0.5), mx, wy + wh, mz, ry);
       for (const dx of [-8, -30, -52]) {
         const [px, pz] = toL(dx, -5.6);
-        g.add(box(1.0, wy - 0.4 + 1.6, 1.0, steel, px, -1.4, pz, ry));
+        box(1.0, wy - 0.4 + 1.6, 1.0, steel, px, -1.4, pz, ry);
       }
       // mullions along both sides
       for (let k = 0; k <= 14; k++) for (const sd of [-1, 1]) {
         const [px, pz] = toL(-14.5 - k * (LEN - 2) / 14, -5.6 + sd * 2.15);
-        g.add(box(0.25, wh, 0.25, steel, px, wy, pz, ry));
+        box(0.25, wh, 0.25, steel, px, wy, pz, ry);
       }
     }
     for (let k = 0; k < 6; k++) solidBox(g, CX, CZ - HL + HL * 2 / 6 * (k + 0.5), HW + 0.4, HL / 6 + 0.3, 0, 14, -4);
+    K.flush(g);
     return g;
   }
 
@@ -725,6 +810,7 @@ export function makeDowntown(h) {
   // grass. Changing Form (its own landmark, landmarks.js) stands on it.
   function kerryPark(l) {
     const g = new THREE.Group();
+    K = new Kit();
     g.userData.worldAligned = true;
     const o = origin(l, 0);
     const X0 = -27, X1 = 27, Z0 = -14.2, Z1 = 8.0;
@@ -752,50 +838,49 @@ export function makeDowntown(h) {
     // the parapet: along the south edge and 9 m back along each end
     const capM = P(0xd0cdc4, 0.8, 0, 0.6), wallM = P(0xaaa69b, 0.9, 0, 0.5);
     const PH = 1.05;
-    g.add(box(X1 - X0 + 0.6, PH, 0.42, wallM, 0, tY(Z1) - 0.1, Z1 - 0.2));
-    g.add(box(X1 - X0 + 0.9, 0.12, 0.62, capM, 0, tY(Z1) + PH - 0.1, Z1 - 0.2));
+    box(X1 - X0 + 0.6, PH, 0.42, wallM, 0, tY(Z1) - 0.1, Z1 - 0.2);
+    box(X1 - X0 + 0.9, 0.12, 0.62, capM, 0, tY(Z1) + PH - 0.1, Z1 - 0.2);
     for (const sx of [-1, 1]) for (let z = Z1 - 9; z < Z1 - 0.3; z += 3) {
       const yy = tY(z + 1.5);
-      g.add(box(0.42, PH, 3.02, wallM, sx * (X1 - 0.2), yy - 0.1, z + 1.5));
-      g.add(box(0.62, 0.12, 3.02, capM, sx * (X1 - 0.2), yy + PH - 0.1, z + 1.5));
+      box(0.42, PH, 3.02, wallM, sx * (X1 - 0.2), yy - 0.1, z + 1.5);
+      box(0.62, 0.12, 3.02, capM, sx * (X1 - 0.2), yy + PH - 0.1, z + 1.5);
     }
     // pilasters every 6 m up the retaining wall, a plinth course and a cornice under the cap
     {
       const pil = P(0x8a867c, 0.92, 0, 0.5);
       for (let x = X0 + 2; x <= X1 - 1; x += 6) {
         const b = gnd(x, Z1 + 0.15);
-        g.add(box(0.7, tY(Z1) - b - 0.1, 0.5, pil, x, b, Z1 + 0.05));
+        box(0.7, tY(Z1) - b - 0.1, 0.5, pil, x, b, Z1 + 0.05);
       }
       const b0 = gnd(0, Z1 + 0.1);
-      g.add(box(X1 - X0 + 0.5, 0.45, 0.62, P(0x77736a, 0.95, 0, 0.45), 0, tY(Z1) - 0.55, Z1 + 0.05));
+      box(X1 - X0 + 0.5, 0.45, 0.62, P(0x77736a, 0.95, 0, 0.45), 0, tY(Z1) - 0.55, Z1 + 0.05);
       // a clipped hedge and shrubs at the wall's foot
       const hedge = P(0x4d7f3d, 0.95, 0, 0.5);
       for (let x = X0 + 1; x <= X1 - 1; x += 2.2) {
         const gy = gnd(x, Z1 + 1.6);
-        const m = new THREE.Mesh(new THREE.IcosahedronGeometry(0.85, 0), hedge);
-        m.scale.set(1.2, 0.8, 0.9); m.position.set(x, gy + 0.5 + 0.35, Z1 + 1.6);
-        g.add(m);
+        K.blob(hedge, x, gy + 0.5 + 0.35, Z1 + 1.6, 1.0, 0.68, 0.76);
       }
     }
     // benches along the parapet, facing south; lamps; the sculpture's low plinth
     const slat = P(0x7a5a3a, 0.8, 0, 0.5), iron = P(0x34383b, 0.5, 0.5, 0.6);
     for (const bx of [-20, -9, 9, 20]) {
       const yy = tY(Z1 - 2.6);
-      g.add(box(2.0, 0.07, 0.5, slat, bx, yy + 0.43, Z1 - 2.6));
-      g.add(box(2.0, 0.4, 0.06, slat, bx, yy + 0.5, Z1 - 2.84));
-      for (const sx of [-0.85, 0.85]) g.add(box(0.07, 0.43, 0.5, iron, bx + sx, yy, Z1 - 2.6));
+      box(2.0, 0.07, 0.5, slat, bx, yy + 0.43, Z1 - 2.6);
+      box(2.0, 0.4, 0.06, slat, bx, yy + 0.5, Z1 - 2.84);
+      for (const sx of [-0.85, 0.85]) box(0.07, 0.43, 0.5, iron, bx + sx, yy, Z1 - 2.6);
     }
     for (const lx of [-24, -8, 8, 24]) {
       const yy = tY(Z0 + 3);
-      g.add(cyl(0.07, 0.09, 4.4, iron, lx, yy, Z0 + 3, 6));
-      g.add(box(0.5, 0.18, 0.5, P(0xe9e3c8, 0.5, 0, 0.8), lx, yy + 4.4, Z0 + 3));
+      cyl(0.07, 0.09, 4.4, iron, lx, yy, Z0 + 3, 6);
+      box(0.5, 0.18, 0.5, P(0xe9e3c8, 0.5, 0, 0.8), lx, yy + 4.4, Z0 + 3);
     }
-    g.add(cyl(2.6, 2.7, 0.14, P(0x8f8c83, 0.9, 0, 0.5), -0.68, tY(-7.7) - 0.1, -7.7, 14));
+    cyl(2.6, 2.7, 0.14, P(0x8f8c83, 0.9, 0, 0.5), -0.68, tY(-7.7) - 0.1, -7.7, 14);
     // collision: the parapet and the two end walls, from just under the terrace to its top
     solidBox(g, 0, Z1 - 0.2, (X1 - X0) / 2 + 0.3, 0.45, 0, tY(Z1) + PH + 0.3, tY(Z1) - 1.5);
     for (const sx of [-1, 1]) solidBox(g, sx * (X1 - 0.2), (Z0 + Z1) / 2, 0.45, (Z1 - Z0) / 2, 0, tY(Z1) + PH + 0.3, tY(Z1) - 1.5);
     // the shelf is ground: a platform laid to the same plane (north edge high, south low)
     g.userData.decks = [{ x: 0, z: (Z0 + Z1) / 2, hw: (X1 - X0) / 2 - 0.6, hd: (Z1 - Z0) / 2 - 0.5, top: tY(Z0 + 0.5), top1: tY(Z1 - 0.5) }];
+    K.flush(g);
     return g;
   }
 
@@ -815,6 +900,7 @@ export function makeDowntown(h) {
   // Wall tops are at 6.7 m (est.), a step down from the 7.2 m bank.
   function locks() {
     const g = new THREE.Group();
+    K = new Kit();
     g.userData.worldAligned = true;
     const TOP = -0.5, BOT = -13;
     const conc = P(0xb9b6ae, 0.9, 0, 0.5), concD = P(0x8d8a82, 0.92, 0, 0.45);
@@ -823,8 +909,8 @@ export function makeDowntown(h) {
     const decks = [];
     const wallRect = (x0, x1, z0, z1, deck = true) => {
       const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, w = x1 - x0, d = z1 - z0;
-      g.add(box(w, TOP - BOT - 0.4, d, concD, cx, BOT, cz));
-      g.add(box(w, 0.4, d, conc, cx, TOP - 0.4, cz));
+      box(w, TOP - BOT - 0.4, d, concD, cx, BOT, cz);
+      box(w, 0.4, d, conc, cx, TOP - 0.4, cz);
       // the solid stops at the wall's top less 0.3 m: a walker standing on the deck is above it, and
       // one stepping up from the bank (0.5 m) is not blocked, but a boat or swimmer at the water is
       solidBox(g, cx, cz, w / 2, d / 2, 0, TOP - 0.3, BOT);
@@ -833,9 +919,9 @@ export function makeDowntown(h) {
     // a guard rail along a water edge: two bars and a post every 10 m, and a solid walkers cannot cross
     const railRun = (x0, x1, z) => {
       const L = x1 - x0, cx = (x0 + x1) / 2;
-      g.add(box(L, 0.07, 0.07, rail, cx, TOP + 1.05, z));
-      g.add(box(L, 0.05, 0.05, rail, cx, TOP + 0.5, z));
-      for (let x = x0; x <= x1 + 0.1; x += 10) g.add(box(0.08, 1.1, 0.08, rail, x, TOP, z));
+      box(L, 0.07, 0.07, rail, cx, TOP + 1.05, z);
+      box(L, 0.05, 0.05, rail, cx, TOP + 0.5, z);
+      for (let x = x0; x <= x1 + 0.1; x += 10) box(0.08, 1.1, 0.08, rail, x, TOP, z);
       solidBox(g, cx, z, L / 2, 0.15, 0, TOP + 1.1, TOP - 0.2);
     };
     const XW = -123, XE = 123;
@@ -847,10 +933,10 @@ export function makeDowntown(h) {
     // bollards and lamp posts along both edges of each wall
     const bol = P(0x2c2f31, 0.6, 0.4, 0.5);
     for (let x = XW + 8; x < XE; x += 16) {
-      for (const z of [60.5, 83.9]) g.add(cyl(0.28, 0.35, 0.55, bol, x, TOP, z, 6));
+      for (const z of [60.5, 83.9]) cyl(0.28, 0.35, 0.55, bol, x, TOP, z, 6);
       if (x % 32 === (XW + 8) % 32) for (const z of [57, 90]) {
-        g.add(cyl(0.09, 0.1, 5.2, rail, x, TOP, z, 6));
-        g.add(box(0.8, 0.18, 0.3, P(0xe9e3c8, 0.5, 0, 0.8), x, TOP + 5.2, z));
+        cyl(0.09, 0.1, 5.2, rail, x, TOP, z, 6);
+        box(0.8, 0.18, 0.3, P(0xe9e3c8, 0.5, 0, 0.8), x, TOP + 5.2, z);
       }
     }
     railRun(XW, XE, 50.0); railRun(XW, XE, 59.5);         // the centre wall's two edges
@@ -863,9 +949,9 @@ export function makeDowntown(h) {
         const ax = xg, az = zw, bx = xg + apex, bz = zm;
         const L = Math.hypot(bx - ax, bz - az), cx = (ax + bx) / 2, cz = (az + bz) / 2;
         const ry = Math.atan2(-(bz - az), bx - ax);
-        g.add(box(L, hh, 1.5, steel, cx, TOP - hh + 0.9, cz, ry));
-        g.add(box(L, 0.35, 1.9, steelL, cx, TOP + 0.9, cz, ry));            // the catwalk on top
-        g.add(box(L, 0.1, 0.1, rail, cx, TOP + 1.9, cz + (sd > 0 ? -0.1 : 0.1), ry));
+        box(L, hh, 1.5, steel, cx, TOP - hh + 0.9, cz, ry);
+        box(L, 0.35, 1.9, steelL, cx, TOP + 0.9, cz, ry);            // the catwalk on top
+        box(L, 0.1, 0.1, rail, cx, TOP + 1.9, cz + (sd > 0 ? -0.1 : 0.1), ry);
       }
     };
     for (const xg of [XW + 2, 7, XE - 6]) gate(xg, 60, 84.4, 13, 14);
@@ -876,14 +962,14 @@ export function makeDowntown(h) {
     // THE SPILLWAY DAM: seven piers and six Tainter gates down x = -50.6 (local), from the south wall to the fish ladder
     {
       const DX = -50.6, Z0 = 96, Z1 = 167, N = 6, bay = (Z1 - Z0) / N;
-      g.add(box(13, 1.0, Z1 - Z0 + 3, conc, DX, TOP - 1.0, (Z0 + Z1) / 2 + 1.5));     // the roadway deck
-      g.add(box(13, 12.5, Z1 - Z0 + 3, concD, DX, BOT, (Z0 + Z1) / 2 + 1.5));
+      box(13, 1.0, Z1 - Z0 + 3, conc, DX, TOP - 1.0, (Z0 + Z1) / 2 + 1.5);     // the roadway deck
+      box(13, 12.5, Z1 - Z0 + 3, concD, DX, BOT, (Z0 + Z1) / 2 + 1.5);
       decks.push({ x: DX, z: (Z0 + Z1) / 2 + 1.5, hw: 6.5, hd: (Z1 - Z0 + 3) / 2, top: TOP });
       solidBox(g, DX, (Z0 + Z1) / 2 + 1.5, 6.5, (Z1 - Z0 + 3) / 2, 0, TOP - 0.3, BOT);
       for (let k = 0; k <= N; k++) {
         const z = Z0 + k * bay;
-        g.add(box(13, 5.5, 2.6, conc, DX, TOP, z));                                  // pier up to the hoist deck
-        g.add(box(4, 3.2, 2.6, concD, DX + 3, TOP + 5.5, z));                         // a hoist house per pier
+        box(13, 5.5, 2.6, conc, DX, TOP, z);                                  // pier up to the hoist deck
+        box(4, 3.2, 2.6, concD, DX + 3, TOP + 5.5, z);                         // a hoist house per pier
       }
       for (let k = 0; k < N; k++) {
         const z = Z0 + (k + 0.5) * bay;
@@ -891,38 +977,39 @@ export function makeDowntown(h) {
         let prev = null;
         for (let a = 0; a <= 6; a++) {
           const t = -0.55 + (a / 6) * 1.1, p = V3(DX - 6.5 + Math.cos(t) * 5.5 - 5.5 * 0.85, TOP - 0.5 + Math.sin(t) * 5.5, z);
-          if (prev) g.add(beam(prev, p, bay - 3.0, 0.28, steel));
+          if (prev) beam(prev, p, bay - 3.0, 0.28, steel);
           prev = p;
         }
-        for (const sd of [-1, 1]) g.add(beam(V3(DX - 1, TOP + 0.5, z + sd * (bay / 2 - 1.5)), V3(DX - 8.5, TOP - 2.2, z + sd * (bay / 2 - 1.5)), 0.35, 0.35, steelL));
+        for (const sd of [-1, 1]) beam(V3(DX - 1, TOP + 0.5, z + sd * (bay / 2 - 1.5)), V3(DX - 8.5, TOP - 2.2, z + sd * (bay / 2 - 1.5)), 0.35, 0.35, steelL);
       }
       // the fish ladder: stepped pools running east from the dam's south end
       for (let k = 0; k < 14; k++) {
-        g.add(box(3.4, 0.6, 7, conc, DX + 6.5 + 1.7 + k * 3.4, TOP - 0.5 + k * 0.05 - 0.4, Z1 + 5));
-        g.add(box(0.4, 1.2, 7.4, concD, DX + 6.5 + k * 3.4, TOP - 0.4, Z1 + 5));
+        box(3.4, 0.6, 7, conc, DX + 6.5 + 1.7 + k * 3.4, TOP - 0.5 + k * 0.05 - 0.4, Z1 + 5);
+        box(0.4, 1.2, 7.4, concD, DX + 6.5 + k * 3.4, TOP - 0.4, Z1 + 5);
       }
     }
     // the buildings the OSM plan puts on the works (buildLandmarks clears them: they would stand in the water)
     {
-      const brick = M(0x9b5b45), roofC = P(0x5b4a40, 0.8, 0, 0.5), win = P(0x2f4650, 0.15, 0.5, 0.9);
+      const brick = P(0x8d5a49, 0.85, 0, 0.5), roofC = P(0x5b4a40, 0.8, 0, 0.5), win = P(0x2f4650, 0.15, 0.5, 0.9);
       const cream = P(0xd8d0bd, 0.85, 0, 0.55);
       // the Administration Building: two storeys of brick under a hip roof
-      g.add(box(24, 7.5, 21, brick, -11.6, TOP - 0.5 - 7 + 7.2, 35.5));
-      for (let k = 0; k < 6; k++) for (const [fz, fx] of [[46.05, 0], [24.95, 0]]) g.add(box(2.0, 1.6, 0.12, win, -21 + k * 3.6, 3.2, fz));
+      box(24, 7.5, 21, brick, -11.6, TOP - 0.5 - 7 + 7.2, 35.5);
+      for (let k = 0; k < 6; k++) for (const [fz, fx] of [[46.05, 0], [24.95, 0]]) box(2.0, 1.6, 0.12, win, -21 + k * 3.6, 3.2, fz);
       const hip = new THREE.Mesh(new THREE.ConeGeometry(17.2, 4.2, 4), roofC);
       hip.rotation.y = Math.PI / 4; hip.scale.set(1.0, 1, 0.9);
       hip.position.set(-11.6, 6.7 + 2.1, 35.5);
       g.add(hip);
       // the Control Tower: four storeys and a glazed cab, on the south wall
-      g.add(box(9, 15, 9, cream, -24, TOP, 90.5));
-      g.add(box(10.2, 3.4, 10.2, win, -24, TOP + 15, 90.5));
-      g.add(box(11.2, 0.6, 11.2, roofC, -24, TOP + 18.4, 90.5));
-      for (let k = 0; k < 3; k++) for (const sd of [-1, 1]) g.add(box(0.12, 1.5, 6, win, -24 + sd * 4.55, TOP + 2.5 + k * 4, 90.5));
+      box(9, 15, 9, cream, -24, TOP, 90.5);
+      box(10.2, 3.4, 10.2, win, -24, TOP + 15, 90.5);
+      box(11.2, 0.6, 11.2, roofC, -24, TOP + 18.4, 90.5);
+      for (let k = 0; k < 3; k++) for (const sd of [-1, 1]) box(0.12, 1.5, 6, win, -24 + sd * 4.55, TOP + 2.5 + k * 4, 90.5);
       // Operating House 2, on the centre wall at the intermediate gate
-      g.add(box(7, 4.6, 6, cream, 3.9, TOP, 56));
-      g.add(box(7.8, 0.5, 6.8, roofC, 3.9, TOP + 4.6, 56));
+      box(7, 4.6, 6, cream, 3.9, TOP, 56);
+      box(7.8, 0.5, 6.8, roofC, 3.9, TOP + 4.6, 56);
     }
     g.userData.decks = decks;
+    K.flush(g);
     return g;
   }
 

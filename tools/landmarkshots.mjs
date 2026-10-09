@@ -86,6 +86,7 @@ const VIEWS = [
   { name: 'conv-west', t: [480, -30, 20], c: [350, 20, 0], cy: 110 },
   { name: 'conv-east', t: [490, -40, 10], c: [640, 40, 0], cy: 70 },
   { name: 'conv-close', t: [503, -21, 10], c: [420, 40, 1.7] },
+  { name: 'conv-nw', t: [440, -70, 14], c: [330, -190, 0], cy: 75 },
   { name: 'lib-air', t: [390, 518, 0], c: [300, 640, 0], cy: 120 },
   { name: 'lib-close', t: [395, 515, 24], c: [333, 548, 1.7] },
   { name: 'lib-east', t: [390, 518, 25], c: [490, 450, 1.7] },
@@ -107,7 +108,8 @@ const VIEWS = [
   { name: 'locks-air', t: [-4417, -6105, 0], c: [-4300, -6000, 0], cy: 120 },
   { name: 'locks-close', t: [-4417, -6040, 4], c: [-4400, -6120, 1.7] },
   { name: 'locks-walk', t: [-4320, -6048, 3], c: [-4460, -6050, 1.7] },
-  { name: 'locks-dam', t: [-4468, -6010, 3], c: [-4468, -5930, 1.7] },
+  { name: 'locks-gate', t: [-4410, -6034, 2], c: [-4388, -6012, 1.7] },
+  { name: 'locks-dam', t: [-4468, -6040, 3], c: [-4468, -5990, 1.7] },
   { name: 'locks-side', t: [-4417, -6040, 2], c: [-4417, -5900, 30], cy: 30 },
   // Terrain, not the highest deck: the Troll is under the Aurora Bridge.
   { name: 'troll-close', t: [-700, -4414, 3], c: [-694, -4396, 1.7], terrain: true },
