@@ -30,6 +30,8 @@ const SITES = {
   treasure: [-12338, 7821],        // Blake Island's west beach
   labyrinth: [-12774, 2562],       // Halls Hill, Bainbridge
 };
+/** Every find that pays once (the keys `_reward` is called with), for the Seattle Passport's total (career.js). */
+export const EGGS = ['bikeTree', 'sasquatch', 'salmon', 'treasure', 'labyrinth'];
 const FUR = [0.2, 0.13, 0.08], FUR_D = [0.13, 0.08, 0.05];
 
 export class Islands {

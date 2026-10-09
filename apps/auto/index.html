@@ -327,6 +327,15 @@
     opacity: .62; border: 1px solid rgba(255,255,255,0.22); border-radius: 6px;
     padding: 2px 8px; display: inline-block;
   }
+  /* the Seattle Passport: rank, progress, the counts the game already saves */
+  #passport { margin: 10px 0 2px; text-align: left; }
+  #ppTrack { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.12); overflow: hidden; margin: 2px 0 4px; }
+  #ppBar { height: 100%; width: 0; background: #f4c542; }
+  #ppNext { font-size: 10px; opacity: .55; margin-bottom: 4px; }
+  #ppGrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px 14px; font-size: 11px; }
+  .ppRow { display: flex; justify-content: space-between; gap: 6px; padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+  .ppRow span { opacity: .85; } .ppRow b { font-weight: 600; font-variant-numeric: tabular-nums; opacity: .7; }
+  .ppRow.full b { color: #f4c542; opacity: 1; }
   #jobsBox { margin: 10px 0 4px; text-align: left; }
   .rowHead { font-size: 10px; letter-spacing: .14em; opacity: .55; margin: 8px 0 4px; display: flex; justify-content: space-between; }
   #jobsList { max-height: 34vh; overflow-y: auto; -webkit-overflow-scrolling: touch; font-size: 12px; }
@@ -460,6 +469,12 @@
       <!-- Jobs and the delivery service. A design review's sharpest note was
            that money had no sink: activities paying into an economy that buys
            nothing is a scoreboard, not a reward. -->
+      <div id="passport">
+        <div class="rowHead">SEATTLE PASSPORT <span id="ppRank"></span></div>
+        <div id="ppTrack"><div id="ppBar"></div></div>
+        <div id="ppNext"></div>
+        <div id="ppGrid"></div>
+      </div>
       <div id="jobsBox">
         <div class="rowHead">JOBS <span id="jobsCount"></span></div>
         <div id="jobsList"></div>
@@ -539,7 +554,7 @@
     <pre id="bootLog"></pre>
     <div id="loadRotate">Turn sideways to play once it has loaded</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v193</div>
+    <div id="build">v194</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation USGS 3DEP</div>
   </div>
   <script>
