@@ -836,6 +836,15 @@ the coarser one is hidden in it, so nothing is swapped, faded or popped.
   purpose**: deleting it would hand its hash band to the hydrants. The
   junction margin applies only at real junctions: OSM cuts a street every
   40 m or so, and a margin at both ends of every piece left room for one tree.
+  **But a dead end keeps 14 m clear and a bend (a 2-way node turning more
+  than 25 deg) 10 m**, a pavement tree stands more than half the pavement in
+  from the kerb (1.4-1.6 m, not 1 m), and a narrow residential street
+  (half-width under 4.5 m) gets no pavement trees at all: the AI turns round
+  at a dead end and swings wide at a bend and onto a narrow street's kerb,
+  and trunks there wedged 3-7 cars a site for good (aidrive street-object
+  contact: downtown 60 -> 2,353 frames, Capitol Hill 0 -> 1,446, Queen Anne
+  0 -> 774). With these rules aidrive reads identical to master at every
+  site. Pedestrians push out of a trunk and slide past it (peds `_place`).
 - **Yard trees**: up to four tries round each house (~1.3 trees a house), a
   third of them conifers -- Seattle's yards are full of firs and cedars; two
   round a campus building, one round a small low-rise.
@@ -857,12 +866,22 @@ go to a shared pool, not a flat mesh of their own** (`TreeSystem.far`: one
 `InstancedMesh` per species, each chunk a contiguous block written when it
 arrives and zeroed when it goes), because a flat mesh per road-less chunk was
 a draw each: 21 of them over Blake Island. 2 draws for all of them, never
-culled, ~13k instances (~170k triangles) over Blake.
+culled, ~13k instances (~170k triangles) over Blake. The pool starts at one
+instance and doubles to need (a new mesh, the old one disposed), and the
+chunk group's own copy of the records is dropped once the TreeSystem has
+filed them.
 
 **The mid ring plants a fixed 60 %** of the near build's trees, skipped
 before any test (`thin`): at 0.8-1.8 km the canopy reads the same, and the
 ring's builds are what the streamer has to keep up with in flight.
-Promotion to the near ring adds the rest where they were.
+Promotion to the near ring adds the rest where they were. **And it plants
+late**: while any other chunk is waiting to be built, a mid chunk is built
+bare (`buildChunkStep(..., trees = false)`, `c.treesLater`); once the
+streamer has nothing else to do it rebuilds the nearest bare one with its
+trees, swapped in whole like any rebuild. Planting made a mid build ~1.75x
+its massing and roads, and on a phone's fixed 2 ms slice a low flight left
+twice the chunks unbuilt after a minute. Tools that settle the streamer
+must wait for `world.treesLater()` too (greenshots does).
 
 **Woodland past the trees is drawn by the terrain**: a 20 m coverage
 texture of the wood mask (`geo.woodCover`, R8, linear, mipmapped, ~3 MB),

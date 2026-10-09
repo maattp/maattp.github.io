@@ -225,7 +225,7 @@ export class TankSystem {
             }
           }
           // a tree's instanced crown goes too (trees.js skips a felled trunk)
-          if (this.world.trees) this.world.trees.invalidate();
+          if (this.world.trees) this.world.trees.invalidate(ck);
           this.stats.felled++;
           const gy = G.terrainHeight(ox, oz);
           if (r <= 0.4) {

@@ -472,7 +472,7 @@ export class TreeSystem {
     this.group.name = 'trees';
     const capMid = ON_PHONE ? 3500 : 7000, capNear = ON_PHONE ? 900 : 1800;
     const make = (ib, cap, name, cast) => {
-      const m = new THREE.InstancedMesh(ib.geometry(), this.mat, cap);
+      const m = new THREE.InstancedMesh(ib.isBufferGeometry ? ib : ib.geometry(), this.mat, cap);
       m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3);
       m.instanceColor.setUsage(THREE.DynamicDrawUsage);
@@ -497,10 +497,15 @@ export class TreeSystem {
     // instances written once when it arrives and zeroed when it goes (so a
     // hole is a degenerate instance until the block is reused). Not culled:
     // the whole pool is drawn, like the flat meshes it replaces mostly were.
+    // Sized to need: a pool starts at 1 instance and doubles (a new mesh,
+    // the old one's buffers disposed) up to farCap. A fixed 24k was 3 MB of
+    // instance arrays held whether or not any road-less chunk was near.
     this.farCap = ON_PHONE ? 16000 : 24000;
-    this.far = [make(shapes.farCon, this.farCap, 'trees:far:conifer', shadows && !ON_PHONE), make(shapes.farBroad, this.farCap, 'trees:far:broadleaf', shadows && !ON_PHONE)];
+    this._make = make;
+    this._farSpec = [[shapes.farCon, 'trees:far:conifer'], [shapes.farBroad, 'trees:far:broadleaf']].map(([ib, name]) => ({ geo: ib.geometry(), name }));
+    this._farCast = shadows && !ON_PHONE;
+    this.far = this._farSpec.map((f) => this._farMesh(f, 1));
     this.farBlocks = [[], []];   // per species, sorted [start, len, key]
-    for (const M of this.far) M.visible = false;
     this.tris.farBroad = shapes.farBroad.tris; this.tris.farCon = shapes.farCon.tris;
     scene.add(this.group);
     this.chunks = new Map();
@@ -553,11 +558,39 @@ export class TreeSystem {
     if (this.chunks.delete(key)) this.dirty = true;
   }
 
-  /** Something changed that a refresh must see (a felled trunk). */
-  invalidate() {
+  /**
+   * Something changed that a refresh must see: a trunk felled in chunk `key`
+   * (tank.js). A pooled chunk's block is rewritten without it.
+   */
+  invalidate(key) {
     this.dirty = true;
-    // a felled tree's pooled far crown goes too: rewrite the pooled blocks
-    for (const [key, C] of this.chunks) if (C.pooled) { this._unpool(key); this._pool(key, C); }
+    const C = key !== undefined ? this.chunks.get(key) : null;
+    if (C && C.pooled) { this._unpool(key); this._pool(key, C); }
+  }
+
+  _farMesh(f, cap) {
+    const M = this._make(f.geo, cap, f.name, this._farCast);
+    M.visible = false;
+    return M;
+  }
+
+  /** Room for `need` instances in species `sp`'s pool: double its mesh until it fits. */
+  _farGrow(sp, need) {
+    const old = this.far[sp], have = old.instanceMatrix.count;
+    if (need <= have) return true;
+    if (need > this.farCap) return false;
+    let cap = have;
+    while (cap < need) cap *= 2;
+    const M = this._farMesh(this._farSpec[sp], Math.min(this.farCap, cap));
+    M.instanceMatrix.array.set(old.instanceMatrix.array.subarray(0, old.count * 16));
+    M.instanceColor.array.set(old.instanceColor.array.subarray(0, old.count * 3));
+    M.count = old.count; M.visible = old.visible;
+    M.instanceMatrix.addUpdateRange(0, Math.max(1, old.count) * 16); M.instanceMatrix.needsUpdate = true;
+    M.instanceColor.addUpdateRange(0, Math.max(1, old.count) * 3); M.instanceColor.needsUpdate = true;
+    this.group.remove(old);
+    old.dispose();   // three frees its instance buffers (the geometry is shared)
+    this.far[sp] = M;
+    return true;
   }
 
   /** Write a pooled chunk's far crowns into a free block of each species' pool. */
@@ -567,11 +600,12 @@ export class TreeSystem {
       let n = 0;
       for (let i = 0; i < C.n; i++) if ((C.ord[i * REC + 5] === CONIFER ? 0 : 1) === sp) n++;
       if (!n) continue;
-      const M = this.far[sp], B = this.farBlocks[sp];
+      const B = this.farBlocks[sp];
       // first fit between the blocks, else at the end
       let start = 0, at = 0;
       for (; at < B.length; at++) { if (B[at][0] - start >= n) break; start = B[at][0] + B[at][1]; }
-      if (start + n > this.farCap) continue;   // full: these draw no far crown
+      if (!this._farGrow(sp, start + n)) continue;   // full: these draw no far crown
+      const M = this.far[sp];
       B.splice(at, 0, [start, n, key]);
       const m = M.instanceMatrix.array, ca = M.instanceColor.array;
       let k = start;
@@ -736,6 +770,7 @@ function playgroundsOf(cx, cz) {
 
 const WALK_W = { res: 2.6, st: 2.6, art: 3.2 };
 export const NEAR_CAP = 1600, MID_CAP = 650;
+const DEAD_END_CLEAR = 14, BEND_CLEAR = 10, BEND_COS = Math.cos((25 * Math.PI) / 180);
 
 // THE CHUNK'S OCCUPANCY, at 2 m: what stands on the ground (buildings, padded
 // 1 m) and what is paved (every carriageway with its pavement and verge, and
@@ -854,7 +889,15 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
   // when a kind of tree goes missing)
   const rej = st.treeRejects || (st.treeRejects = {});
   const no = (k) => { rej[k] = (rej[k] || 0) + 1; return false; };
-  const occ = occupancy(city, cx, cz);
+  // A chunk with no road, no building and no green (the lake, the Sound)
+  // has nothing to plant: a 20 m look at the mask says so before any work.
+  if (!ch.edges.length && !ch.buildings.length) {
+    let any = false;
+    for (let j = 0; j < 20 && !any; j++) for (let i = 0; i < 20 && !any; i++) if (G.greenKind(x0 + 10 + i * 20, z0 + 10 + j * 20)) any = true;
+    if (!any) { world._treeRecs = null; return; }
+  }
+  // the raster, built the first time a candidate needs it
+  let occ = null;
   // `mode`: OPEN (yard, park, forest: the raster), VERGE (a street tree just
   // past its pavement: exact, the raster's margin would push it into the
   // yard) or WALK (a street tree on the pavement: exact, and no lot test).
@@ -863,6 +906,7 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
     if (!own(x, z)) return no('chunk');
     const walk = mode === WALK;
     if (mode === OPEN) {
+      if (!occ) occ = occupancy(city, cx, cz);
       const o = occ[Math.floor((z - z0) / OCC_C) * OCC_N + Math.floor((x - x0) / OCC_C)];
       if (o & OCC_PAVE) return no('pavement');
       if (o & OCC_BLD) return no('building');
@@ -933,9 +977,22 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
     for (const sg of [1, -1]) {
       // clear of a junction's corner, but not of a node that only splits
       // the street (OSM's ways are cut every block or so, and a margin at
-      // both ends of every 40 m piece left room for one tree)
-      const s0 = a.e.length > 2 ? world.paveStart(e.a, ei, sg) + 5 : 1.5;
-      const s1 = e.len - (b.e.length > 2 ? world.paveStart(e.b, ei, sg) + 5 : 1.5);
+      // both ends of every 40 m piece left room for one tree) -- and well
+      // clear of a DEAD END: the AI turns round there in a sweep onto the
+      // verge, and trunks 5-10 m from one wedged 3-7 cars a site for good
+      // (aidrive: street-object contact 0 -> 1,446 frames on Capitol Hill)
+      // A node that only splits the street but BENDS it is a corner too:
+      // cars swing wide round one (aidrive: a car off the road 11 m from a
+      // 2-way node, wedged on a verge trunk).
+      const bend = (n, ni) => {
+        const o = city.edges[n.e[0] === ei ? n.e[1] : n.e[0]];
+        const ax = ni === e.a ? e.dx : -e.dx, az = ni === e.a ? e.dz : -e.dz;
+        const bx = ni === o.a ? o.dx : -o.dx, bz = ni === o.a ? o.dz : -o.dz;
+        return -(ax * bx + az * bz) < BEND_COS;   // the two ways out are not opposite
+      };
+      const margin = (n, ni) => (n.e.length > 2 ? world.paveStart(ni, ei, sg) + 5
+        : n.e.length === 1 ? DEAD_END_CLEAR : bend(n, ni) ? BEND_CLEAR : 1.5);
+      const s0 = margin(a, e.a), s1 = e.len - margin(b, e.b);
       for (let s = s0 + hash2(ei, sg + 5) * sp * 0.6; s < s1; s += sp * (0.85 + 0.3 * hash2(Math.round(s * 10), ei))) {
         const h = hash2(ei * 7 + Math.round(s), sg * 13 + 1);
         if (h > fill || thin(ei + Math.round(s), sg)) continue;
@@ -945,12 +1002,19 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
         // a grate on the pavement instead (arterials and minor streets)
         let x = cxl + px * sg * (e.hw + ww + 1.5), z = czl + pz * sg * (e.hw + ww + 1.5), walk = false;
         if (e.cls === 'art' || !clear(x, z, 2.5, VERGE_T)) {
+          // not on a narrow street's pavement: a car meeting another there
+          // runs onto the kerb (aidrive: downtown's 7 m residential lanes)
+          if (e.cls === 'res' && e.hw < 4.5) continue;
           let slot = false;
           for (let q = 0; q < slots.length; q += 2) if (slots[q + 1] === sg && Math.abs(slots[q] - s) < 2.8) { slot = true; break; }
           if (slot) { no('kerbSlot'); continue; }
-          x = cxl + px * sg * (e.hw + 1.0); z = czl + pz * sg * (e.hw + 1.0); walk = true;
+          // in from the kerb by more than half the pavement: 1 m in, a
+          // trunk stood 0.5-0.75 m off the carriageway and a car brushing
+          // the kerb hung on it
+          const off = e.hw + Math.min(1.6, ww * 0.55);
+          x = cxl + px * sg * off; z = czl + pz * sg * off; walk = true;
           { const ns = city.nodeSurface(x, z); if (ns && ns.inSquare) { no('junction'); continue; } }
-          if (!clear(x, z, 0.55, WALK)) continue;
+          if (!clear(x, z, 1.0, WALK)) continue;
           // a grate on a commercial pavement, a square of earth on a
           // residential one's planting strip
           const gy = G.terrainHeight(x, z) + WALK_LIFT;

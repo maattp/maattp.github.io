@@ -4462,11 +4462,24 @@ float frLine(float o, float fw, float c, float w) {
     const t0 = performance.now();
     while (performance.now() - t0 < sliceMs) {
       if (!this._build) {
-        const c = todo.find((k) => k.lod !== k.wantLod && k !== this._buildFor);
-        if (!c) break;
+        let c = todo.find((k) => k.lod !== k.wantLod && k !== this._buildFor), trees = true;
+        if (c) {
+          // A MID-RING CHUNK'S TREES WAIT while anything else waits to be
+          // built: planting cost a mid build ~1.75x its massing and roads,
+          // and in a low flight on a phone's 2 ms slice that was twice the
+          // chunks still pending after a minute. It is built bare now and
+          // planted below once the streamer has nothing else to do.
+          if (c.wantLod === 0 && todo.some((k) => k !== c && k.lod !== k.wantLod)) trees = false;
+        } else {
+          // nothing to build: plant the nearest mid chunk left bare (a
+          // rebuild, swapped in whole like any other)
+          for (const k of this.chunks.values()) if (k.treesLater && k.lod === 0 && k.wantLod === 0 && (!c || k.dist < c.dist)) c = k;
+          if (!c) break;
+        }
         this._buildFor = c;
         this._buildLod = c.wantLod;
-        this._build = this.buildChunkStep(c.cx, c.cz, c.wantLod);
+        this._buildTrees = trees;
+        this._build = this.buildChunkStep(c.cx, c.cz, c.wantLod, trees);
       }
       const c = this._buildFor;
       // The chunk stopped being wanted, or wants a different detail level than
@@ -4491,8 +4504,13 @@ float frLine(float o, float fw, float c, float w) {
       const old = c.group;
       c.group = step.value || null;
       c.lod = this._buildLod;
+      c.treesLater = c.lod === 0 && !this._buildTrees;
       if (c.group) { this.group.add(c.group); freezeStatic(c.group); }
-      if (this.trees) this.trees.setChunk(c.key, c.cx, c.cz, c.group && c.group.userData.trees, c.key, c.group && c.group.userData.treesPooled);
+      if (this.trees) {
+        this.trees.setChunk(c.key, c.cx, c.cz, c.group && c.group.userData.trees, c.key, c.group && c.group.userData.treesPooled);
+        // the TreeSystem keeps its own (cell-ordered) copy
+        if (c.group) c.group.userData.trees = null;
+      }
       // the phone's shadow cache holds this chunk's shadows (shadowcache.js)
       if (this.onChunkChange) this.onChunkChange((c.cx + 0.5) * CHUNK, (c.cz + 0.5) * CHUNK, CHUNK);
       if (old) {
@@ -4541,7 +4559,14 @@ float frLine(float o, float fw, float c, float w) {
    * Nothing is added to the scene until the last yield, so an abandoned build
    * leaves nothing half-drawn.
    */
-  *buildChunkStep(cx, cz, lod) {
+  /** Mid-ring chunks built bare, waiting for their trees (tools settle on this too). */
+  treesLater() {
+    let n = 0;
+    for (const c of this.chunks.values()) if (c.treesLater && c.lod === 0 && c.wantLod === 0) n++;
+    return n;
+  }
+
+  *buildChunkStep(cx, cz, lod, trees = true) {
     const city = this.city;
     const ck = city.chunkKey(cx, cz);
     // A chunk with no road or building has no entry in the city -- but it may
@@ -4556,6 +4581,7 @@ float frLine(float o, float fw, float c, float w) {
     // caller of the unguarded pushes) runs inside this step, and chunk builds
     // run one at a time, as this._ck already assumes.
     this._fell = [];
+    this._treeRecs = null;
     const road = new ChunkBuilder(true);
     const flat = new ChunkBuilder(false);
     // A near chunk's pavement is written straight into its road mesh, and
@@ -4643,8 +4669,10 @@ float frLine(float o, float fw, float c, float w) {
       // The same trees as the near build, drawn only (no trunks to hit): the
       // housing stock had no canopy past the 1 km ring, which from the air
       // was the top half of every frame.
-      yield* plantTrees(this, flat, ch, cx, cz, 0, ch === NO_CITY_CHUNK);
-      yield; this._yt = performance.now();
+      if (trees) {
+        yield* plantTrees(this, flat, ch, cx, cz, 0, ch === NO_CITY_CHUNK);
+        yield; this._yt = performance.now();
+      }
     }
 
     // MID-RING ROADS DRAW IN THE FLAT MATERIAL. At 800 m+ a 13 m asphalt tile

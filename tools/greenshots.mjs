@@ -122,6 +122,32 @@ async function main() {
       d.game.paused = true;
     })()`);
 
+    // GREEN_FLIGHT='x0,z0,x1,z1[,secs]': a low flight's streaming, on the real
+    // loop. The CPU is throttled (GREEN_THROTTLE, default 8: the phone
+    // stand-in), the game runs, and the streamer is fed a position moving
+    // from (x0, z0) toward (x1, z1) at 90 m/s, 70 m up (under the flying
+    // LOD), as the plane would feed it. Prints the chunks still pending (and
+    // mid chunks still waiting for their trees) every 10 s.
+    if (process.env.GREEN_FLIGHT) {
+      const [x0, z0, x1, z1, secs = 60] = process.env.GREEN_FLIGHT.split(',').map(Number);
+      await evaluate(`(() => { const d = window.__dbg; d.game.paused = false; const w = d.world, orig = w.update.bind(w);
+        const len = Math.hypot(${x1} - ${x0}, ${z1} - ${z0}), ux = (${x1} - ${x0}) / len, uz = (${z1} - ${z0}) / len;
+        w.__flightT0 = performance.now();
+        w.update = (px, pz, b) => { const s = Math.min(len, (performance.now() - w.__flightT0) / 1000 * 90);
+          w.playerAlt = 70; w.playerFlying = false; w.playerFwdX = ux; w.playerFwdZ = uz;
+          return orig(${x0} + ux * s, ${z0} + uz * s, b); };
+      })()`);
+      await send('Emulation.setCPUThrottlingRate', { rate: +(process.env.GREEN_THROTTLE || 8) });
+      for (let t = 10; t <= secs; t += 10) {
+        await sleep(10000);
+        const r = JSON.parse(await evaluate(`JSON.stringify({ pending: [...window.__dbg.world.chunks.values()].filter((c) => c.lod !== c.wantLod).length, bare: window.__dbg.world.treesLater ? window.__dbg.world.treesLater() : 0 })`));
+        console.log(`  t ${t} s: chunks pending ${r.pending}, mid chunks bare ${r.bare}`);
+      }
+      await send('Emulation.setCPUThrottlingRate', { rate: 1 });
+      console.log(`  exceptions: ${errs.length}${errs.length ? '\n    ' + errs.slice(0, 5).join('\n    ') : ''}`);
+      return;
+    }
+
     // GREEN_PROBE='<expr>' / GREEN_PROBE_FILE: a one-off diagnostic on this
     // boot (awaited, `d = window.__dbg` in scope if the expression asks for it);
     // prints its value and exits without shooting.
@@ -176,9 +202,10 @@ async function main() {
         }
         if (${FLY} && V.cy) { world.playerAlt = V.cy; world.playerFlying = true; }
         else { world.playerAlt = 0; world.playerFlying = false; world.flyLod = false; }
-        const pending = () => [...world.chunks.values()].filter((c) => c.lod !== c.wantLod).length;
+        // (and the mid ring's deferred trees, planted once nothing else waits)
+        const pending = () => [...world.chunks.values()].filter((c) => c.lod !== c.wantLod).length + (world.treesLater ? world.treesLater() : 0);
         world.update(cx, cz, 60);
-        for (let i = 0; i < 4000 && pending() > 0; i++) world.update(cx, cz, 60);
+        for (let i = 0; i < 6000 && pending() > 0; i++) world.update(cx, cz, 60);
         const gy = (x, z) => Math.max(0, city.groundAt(x, z, null));
         const ty = gy(tx, tz);
         const cy = V.cy !== undefined ? ty + V.cy : gy(cx, cz) + ch;
