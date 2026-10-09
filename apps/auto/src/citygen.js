@@ -4462,7 +4462,16 @@ export function* cityGenerator(md, cache = {}) {
             // downtown with 17-41 m of ground overhead. Same underground rule
             // as collideWithBuildings (2.5 m of ground above you), judged at the
             // post's own footing -- world.js plants it on terrainHeight.
-            if (y !== undefined && G.terrainHeight(l[i], l[i + 1]) - y > 2.5) continue;
+            // ...AND NOT IN THE SKY OVER IT. Nothing in this store stands
+            // taller than ~10 m over its footing (a lamp's head is 7.5 m; a
+            // tree is solid at the trunk, which a crown hides from ~4 m up),
+            // and the store is 2D: with street trees on most kerbs, the
+            // balloon and a helicopter -- which always collide -- were stopped
+            // dead by trunk columns 60 m under them.
+            if (y !== undefined) {
+              const fy = G.terrainHeight(l[i], l[i + 1]);
+              if (fy - y > 2.5 || y - fy > 10) continue;
+            }
             const d = Math.sqrt(d2) || 1e-4;
             const pen = rr - d;
             if (!best || pen > best.pen) best = { pen, nx: dx / d, nz: dz / d };

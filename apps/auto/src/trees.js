@@ -383,11 +383,29 @@ function buildShapes() {
 
 // --- the instanced material -------------------------------------------------
 
-function treeMaterial() {
+function treeMaterial(timeU) {
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.04, envMapIntensity: 0.45 });
   m.onBeforeCompile = (sh) => {
+    sh.uniforms.treeTime = timeU;
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float leaf;')
+      .replace('#include <common>', '#include <common>\nattribute float leaf;\nuniform float treeTime;')
+      // A gentle sway, in WORLD space after the instance's turn so every tree
+      // leans the same way: the top of a crown moves ~0.3 m, the trunk's foot
+      // not at all, each tree on its own phase. Two sines per vertex and one
+      // uniform a frame; the shadow pass does not sway (nobody can tell).
+      .replace('#include <project_vertex>', `
+        vec4 mvPosition = vec4( transformed, 1.0 );
+        #ifdef USE_INSTANCING
+          mvPosition = instanceMatrix * mvPosition;
+          {
+            float ph = dot( instanceMatrix[ 3 ].xz, vec2( 0.071, 0.113 ) );
+            float k = clamp( position.y / 18.0, 0.0, 1.0 );
+            float sw = sin( treeTime * 1.1 + ph ) * 0.7 + sin( treeTime * 2.3 + ph * 1.7 ) * 0.3;
+            mvPosition.xz += vec2( 0.3, 0.17 ) * sw * k * k;
+          }
+        #endif
+        mvPosition = modelViewMatrix * mvPosition;
+        gl_Position = projectionMatrix * mvPosition;`)
       // The instance colour is the FOLIAGE albedo: the trunk's vertex colour
       // is its bark and must not take it. Then the sun-side tint (leafLight).
       .replace('#include <defaultnormal_vertex>', `#include <defaultnormal_vertex>
@@ -419,7 +437,8 @@ export class TreeSystem {
     this.TURN = Math.cos((9 * Math.PI) / 180);
     const shapes = buildShapes();
     this.tris = { midBroad: shapes.midBroad.tris, midCon: shapes.midCon.tris, nearBroad: shapes.nearBroad.tris, nearCon: shapes.nearCon.tris };
-    this.mat = treeMaterial();
+    this.timeU = { value: 0 };
+    this.mat = treeMaterial(this.timeU);
     this.group = new THREE.Group();
     this.group.name = 'trees';
     const capMid = ON_PHONE ? 3500 : 7000, capNear = ON_PHONE ? 900 : 1800;
@@ -497,6 +516,7 @@ export class TreeSystem {
    * enough since the last time. Call before the scene pass.
    */
   update(camera) {
+    this.timeU.value = (performance.now() / 1000) % 10000;
     camera.updateMatrixWorld();
     const e = camera.matrixWorld.elements;
     const px = e[12], py = e[13], pz = e[14], fx = -e[8], fy = -e[9], fz = -e[10];
@@ -548,12 +568,15 @@ export class TreeSystem {
           if (d2 < R2q) { M = near[con]; k = nNear[con]; if (k >= capNear) continue; nNear[con] = k + 1; }
           else { M = mid[con]; k = nMid[con]; if (k >= capMid) continue; nMid[con] = k + 1; }
           const cr = ord[o + 4], seed = ord[o + 6];
-          const sx = con ? cr / B_CR : cr / C_CR, sy = con ? th / B_TH : th / C_TH;
+          // a crown is a little elliptical, each its own way -- never
+          // narrower than the far crown it has to hide
+          const s0 = con ? cr / B_CR : cr / C_CR, sy = con ? th / B_TH : th / C_TH;
+          const sx = s0 * (1 + 0.14 * frac(seed * 97.3)), sz = s0 * (1 + 0.14 * frac(seed * 61.7));
           const a = seed * 43.98, cs = Math.cos(a), sn = Math.sin(a);
           const m = M.instanceMatrix.array, q = k * 16;
           m[q] = cs * sx; m[q + 1] = 0; m[q + 2] = -sn * sx; m[q + 3] = 0;
           m[q + 4] = 0; m[q + 5] = sy; m[q + 6] = 0; m[q + 7] = 0;
-          m[q + 8] = sn * sx; m[q + 9] = 0; m[q + 10] = cs * sx; m[q + 11] = 0;
+          m[q + 8] = sn * sz; m[q + 9] = 0; m[q + 10] = cs * sz; m[q + 11] = 0;
           m[q + 12] = x; m[q + 13] = gy; m[q + 14] = z; m[q + 15] = 1;
           const ca = M.instanceColor.array, k3 = k * 3;
           ca[k3] = alb[i * 3]; ca[k3 + 1] = alb[i * 3 + 1]; ca[k3 + 2] = alb[i * 3 + 2];
@@ -609,6 +632,7 @@ function playgroundsOf(cx, cz) {
 }
 
 const WALK_W = { res: 2.6, st: 2.6, art: 3.2 };
+export const NEAR_CAP = 1600, MID_CAP = 650;
 
 // THE CHUNK'S OCCUPANCY, at 2 m: what stands on the ground (buildings, padded
 // 1 m) and what is paved (every carriageway with its pavement and verge, and
@@ -712,7 +736,14 @@ export function* plantTrees(world, flat, ch, cx, cz, lod) {
   // the same, and the ring's builds -- what the streamer has to keep up with
   // in flight -- cost half as much. Promotion to the near ring adds the rest
   // where they were, so nothing moves.
-  const thin = lod === 1 ? () => false : (a, b) => hash2(a * 5 + 17, b * 3 + 29) > 0.6;
+  // Forest thins harder (35 %): the terrain already draws a wood as canopy
+  // underneath, and a view over an island's woods is all forest.
+  const thin = lod === 1 ? () => false : (a, b, keep = 0.6) => hash2(a * 5 + 17, b * 3 + 29) > keep;
+  // THE CAPS, whatever the ground: a near chunk holds at most NEAR_CAP trees,
+  // a mid one MID_CAP. A forested chunk reaches ~1,550 near; the caps bound
+  // the far crowns' memory (~550 bytes a tree) and triangles (~12) in a view
+  // that is woods to the horizon.
+  const cap = lod === 1 ? NEAR_CAP : MID_CAP;
 
   // Everything a trunk must keep off, cheapest test first. `pad` is the clear
   // margin off a carriageway (onRoad's fine grid takes up to 2.5 m).
@@ -751,6 +782,7 @@ export function* plantTrees(world, flat, ch, cx, cz, lod) {
     return mode !== OPEN && world.inBuilding(x, z, walk ? 0.6 : 1.0) ? no('building') : true;
   };
   const plant = (x, z, th, cr, kind, tone, from) => {
+    if (recs.length >= cap * REC) { st.treesCapped = (st.treesCapped || 0) + 1; return; }
     const gy = G.terrainHeight(x, z);
     const seed = hash2(Math.round(x * 4) + 101, Math.round(z * 4) - 77);
     let obs = -1;
@@ -859,17 +891,21 @@ export function* plantTrees(world, flat, ch, cx, cz, lod) {
   }
 
   // --- forest and park: a jittered grid over the chunk's green
+  // The cells in a fixed scattered order (997 is prime to 44 x 44), so a
+  // chunk that reaches its cap is thinned evenly rather than losing its
+  // last rows.
   const N = 44, S = CHUNK / N;
-  for (let j = 0; j < N; j++) {
-    if (yieldNow()) { yield; world._yt = performance.now(); }
-    for (let i = 0; i < N; i++) {
+  for (let q = 0; q < N * N; q++) {
+    if (q % N === 0 && yieldNow()) { yield; world._yt = performance.now(); }
+    {
+      const cell = (q * 997) % (N * N), i = cell % N, j = Math.floor(cell / N);
       const hx = hash2(cx * 977 + i, cz * 613 + j), hz = hash2(cx * 389 + i + 7, cz * 211 + j + 3);
       const x = x0 + (i + 0.12 + 0.76 * hx) * S, z = z0 + (j + 0.12 + 0.76 * hz) * S;
       const gk = G.greenKind(x, z);
-      if (!gk || gk === G.GREEN_OPEN || thin(cx * 64 + i, cz * 64 + j)) continue;
+      if (!gk || gk === G.GREEN_OPEN || thin(cx * 64 + i, cz * 64 + j, gk === G.GREEN_WOOD ? 0.35 : 0.6)) continue;
       const h = hash2(cx * 131 + i * 3, cz * 71 + j * 5);
       if (gk === G.GREEN_WOOD) {
-        if (h > 0.9) continue;
+        if (h > 0.8) continue;
         if (!clear(x, z, 2.5, OPEN)) continue;
         // stands: some mostly fir, some mostly maple and alder
         const pc = 0.22 + 0.5 * field(x, z, 240, 11);

@@ -232,12 +232,15 @@ Parks come from the green channel of `surface.png` (OSM `leisure=park`,
 lookup. Nothing has to keep streets out of them any more: roads go where OSM says
 they go, which correctly includes Aurora cutting straight through Woodland Park.
 
-Tree scatter is *candidates per chunk*, filtered by `inPark`. At 46 a
-chunk-sized park got one tree per 60 m and read as bare ground; it is 230 now.
-If you add a large park, check it doesn't look empty. A candidate on a lot is
-skipped (`G.lotAt`), except that a plaza keeps a third of its trees —
-Occidental Square is paving under plane trees. `jank.mjs`'s `tree-on-lot`
-counts built trunks on non-plaza lots: 0.
+**Which green is which** rides in the mask's value (`G.greenKind`: lawn,
+wood, scrub, kept open), from surface.png's blue channel
+(`tools/build_wood.py`, OSM's own tags). Trees are planted by `trees.js` --
+forest on wood, groves and lined edges on lawn, none on pitches and beaches,
+plus street and yard trees: see "A green Seattle" in rendering.md. (The old
+scatter was 230 random candidates a chunk, ~14 trees a hectare at best.) A
+candidate on a lot is skipped (`G.lotAt`), except that a plaza keeps a third
+of its trees — Occidental Square is paving under plane trees. `jank.mjs`'s
+`tree-on-lot` counts built trees on non-plaza lots: 0.
 
 ### Beaches, landmarks in the parks, park furniture (v118)
 

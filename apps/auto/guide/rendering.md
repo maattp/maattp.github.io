@@ -395,10 +395,12 @@ it clears the kit's parapet (w+0.5) by 12 cm, not 2.5. Roofs take their own
 coplanar-ish tops need more separation than one depth step at the farthest
 distance they are seen from**, not at street level.
 
-**Trees are lit volumes** (`meshCanopy`): conifers are five 8-sided skirts
-brightening toward the leader; broadleaf crowns are a dark core, four jittered
-lobes and a crown lobe, with the lobes on the sun's side (`SUN_OFFSET` xz) in a
-yellower lit foliage colour, so the crown reads as a volume at any heading.
+**Trees are lit volumes**: a broadleaf crown is a core and clumps over its
+upper surface, a conifer stacked skirts brightening toward the leader, and the
+foliage on the sun's side (`SUN_OFFSET`) goes yellower, so the crown reads as
+a volume at any heading. How they are planted and drawn -- records, three
+levels of detail -- is "A green Seattle" below; `meshCanopy`, which merged
+~300 vertices per tree into the chunk, is gone.
 
 **The ground map is sampled at three scales.** One 13 m tile was the whole city
 floor: blurry underfoot and a visible grid from the air. `buildTerrain`'s
@@ -431,7 +433,8 @@ visible: the streaks were the problem.) The lakes and the canal clone the sea
 material, so they follow.
 
 **Foliage is shaded as a volume.** `Builder.foliage()` (crowns) and
-`cone(..., shade)` (fir tiers) replace `spheroid`/`cone` in `meshCanopy`:
+`cone(..., shade)` (fir tiers) replaced `spheroid`/`cone` in the old
+`meshCanopy`, and trees.js's `lobe()` keeps the idea for the instanced crowns:
 normals are smooth per corner and bent 55 % toward the normal of the WHOLE
 crown (from its centre), so a tree shades as one mass with a lit shoulder and
 a dark underside instead of five faceted balls with a hard terminator across
@@ -765,3 +768,107 @@ shoots N live settings per view (camera, materials, a recompiled shader via
 same-boot A/B; settings carry over from one view to the next unless each
 variant resets them. Two harnesses on one CDP port hijack each other's page
 (the second navigates the first's tab mid-run): one port per run.
+
+## A green Seattle: trees as records, three levels of detail
+
+**Seattle is ~28 % tree canopy and it read as a treeless grey grid.** Each
+tree was full merged geometry (`meshCanopy`, ~300 vertices), so a chunk could
+afford ~47 of them: Discovery Park's forest was a golf course, there were no
+yard trees, street trees were a lamp-post alternative every ~65 m, and past
+the 1 km detail ring -- the top half of every aerial -- there were none at
+all. A tree is now a **record** (`trees.js`, `REC` floats: x, ground, z,
+height, crown radius, kind, seed, tone, trunk index) drawn at three levels of
+detail, **each built inside the level above it**: where a finer level draws,
+the coarser one is hidden in it, so nothing is swapped, faded or popped.
+
+| level | which trees | shape | cost |
+|---|---|---|---|
+| far | every tree of every streamed chunk, near and mid ring | merged into the chunk's flat mesh: a 6-sided bipyramid on a 3-sided trunk (15 tris), a 6-sided cone (9) | 0 draws, culled with its chunk |
+| mid | within `R1` 300 m (phone 220) and in view | one `InstancedMesh` per species: a core and five clumps (134 tris), three skirts (34) | 2 draws |
+| near | within `R2` 95 m (phone 70) and in view | a core, twelve clumps and three boughs (372), seven drooping skirts with undersides (152) | 2 draws |
+
+- **The instanced sets are chosen on the CPU, rarely.** `TreeSystem.update`
+  (main.js `draw()`, before the scene pass) walks the records by 50 m cell
+  against the camera's frustum -- each cell's sphere grown by how far the view
+  can turn or slide before the next choice -- and only when the camera has
+  moved 10 m or turned 9 degrees. Cells within 70 m are taken whatever the
+  frustum, since their shadows fall into view. The meshes are not
+  frustum-culled (their sets already are). 0.1-0.3 ms a refresh on the Mac;
+  below the top 40 of an 8x profile.
+- **The instance colour is the foliage's albedo, not a tint of the tree.**
+  A per-vertex `leaf` flag mixes it in, so trunks keep their bark. Sunlit
+  foliage goes yellow-green (`leafLight`): the far crowns bake it per vertex in
+  world space, the instanced ones compute it from the turned normal -- one
+  formula, so a tree keeps its hue across levels.
+- **An instanced mesh's fog ray needs `instanceMatrix`.** `installHeightFog`
+  built `vFogRay` from `modelMatrix * transformed`, which fogged every
+  instance -- the trees, and the phone's far traffic all along -- as if it
+  stood at the map's origin. Fixed for every instanced mesh.
+- **Shadows**: the near crowns cast everywhere, the mid ones on a desktop.
+  The far crowns ride in the flat mesh, which casts on a desktop only, as
+  before. On a phone the near crowns are movers in the shadow pass (+1-2
+  shadow draws): re-chosen as you move, they cannot join the shadow cache.
+- **A tank still fells them**: the trunk's obstacle entry goes to 1e9 and
+  the far crown's index range is hidden (`_fell`), as for a lamp post; the
+  refresh skips a record whose trunk is felled (tank.js calls
+  `world.trees.invalidate()`).
+- **The program compiles behind the loading screen**: `world.trees.warm`
+  draws one degenerate instance per tier in the warm-up frames ("Hitches").
+  An empty tier is hidden, not drawn with no instances.
+
+**Where they stand** (`plantTrees`, per chunk in `buildChunkStep`, sliced like
+`meshProps`; deterministic by hash, so a rebuilt chunk plants the same trees):
+
+- **Forest** on the wood mask (surface.png blue, `tools/build_wood.py`, see
+  "Where the map comes from"): a jittered 9 m grid, 90 % filled, stands of
+  20-70 % fir by a 240 m noise field -- fir 18-35 m tall, maple and alder
+  14-24 m, a little understorey.
+- **Park lawn**: groves from a 150 m noise field, and +40 % within 14 m of
+  the park's edge or a shore: Seattle's parks are ringed with trees and
+  mown in the middle (Green Lake's path). Pitches and beaches
+  (`G.GREEN_OPEN`) get none.
+- **Street trees** on both kerbs of `res`, `st` and `art` streets every
+  10-12 m, filled by class x a 520 m "leafiness" field (blocks differ, as
+  Seattle's do): past the pavement and its verge on a residential street;
+  where a building, lot or drive meets the pavement -- and always on an
+  arterial -- in a grate 1 m in from the kerb, clear of every slot of
+  `meshProps`' kerb furniture. **That cascade's tree branch is empty on
+  purpose**: deleting it would hand its hash band to the hydrants. The
+  junction margin applies only at real junctions: OSM cuts a street every
+  40 m or so, and a margin at both ends of every piece left room for one tree.
+- **Yard trees**: up to four tries round each house (~1.3 trees a house), a
+  third of them conifers -- Seattle's yards are full of firs and cedars; two
+  round a campus building, one round a small low-rise.
+
+The tests are the old scatter's (road, lot, water, drawn lake, pit, jump,
+airfield, playground, building) plus pavements, but **most candidates ask one
+2 m occupancy raster per chunk** (`occupancy`: footprints padded 1 m, every
+carriageway with its pavement and verge, every junction's corner), built once
+per chunk build: `roadLift` and `inBuilding` at ~6 and ~5 us a call were most
+of the planting. It is conservative by half a cell's diagonal, so it only
+ever keeps a tree further off. Street trees ask the exact queries.
+`cityStats.treeRejects` counts why candidates fail -- the first question when
+a kind of tree goes missing.
+
+**A chunk with no road or building has no entry in the city** and was never
+built at all: the middle of Seward Park, an island's woods. `buildChunkStep`
+builds those too now (`NO_CITY_CHUNK`), trees only.
+
+**The mid ring plants a fixed 60 %** of the near build's trees, skipped
+before any test (`thin`): at 0.8-1.8 km the canopy reads the same, and the
+ring's builds are what the streamer has to keep up with in flight.
+Promotion to the near ring adds the rest where they were.
+
+**Woodland past the trees is drawn by the terrain**: a 20 m coverage
+texture of the wood mask (`geo.woodCover`, R8, linear, mipmapped, ~3 MB),
+under which the ground is dark, mottled canopy -- the forest floor under the
+near trees, and the forest itself where no tree is built. Two noise scales,
+one turned 37 degrees: aligned, the periodic noise tiled into a waffle grid.
+0 draws, 0 triangles.
+
+`tools/greenshots.mjs <dir> [views] [--stats] [--fly]` shoots the brief's
+views (capitol/magnolia/discovery/greenlake/arboretum/seward/alki-air,
+residential and downtown streets found from the city, perfcpu's standing
+spots) and with `--stats` prints the scene pass's draws and triangles and a
+frustum breakdown by category; `GREEN_PROBE` / `GREEN_PROBE_SHOT` run a
+one-off diagnostic on the same boot. `docs/green/` has before | after pairs.

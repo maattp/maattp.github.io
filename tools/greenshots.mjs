@@ -49,6 +49,9 @@ const VIEWS = [
   { name: 'seward-air', t: [6496, 6008, 0], c: [6350, 6200, 0], cy: 140 },
   { name: 'alki-air', t: [-5383, 3418, 0], c: [-5150, 3500, 0], cy: 130 },
   { name: 'wseattle-air', t: [-3661, 5430, 0], c: [-3500, 5600, 0], cy: 140 },
+  // the worst case for the trees: woods to the horizon (Blake Island, Bainbridge)
+  { name: 'blake-air', t: [-11669, 8198, 0], c: [-11200, 7700, 0], cy: 160 },
+  { name: 'bainbridge-air', t: [-13800, -2500, 0], c: [-13300, -2000, 0], cy: 150 },
   { name: 'discovery-ground', t: [-5834, -5521, 2], c: [-5780, -5470, 1.7] },
   { name: 'greenlake-shore', t: [500, -7600, 1], c: [640, -7560, 1.7] },
   { name: 'residential-street', t: [1180, -1400, 3], c: [1200, -1450, 1.7] },

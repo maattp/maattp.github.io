@@ -19,8 +19,8 @@ When code or an old note cites `CLAUDE.md "Some Heading"`, find it with
   Sections: "Where the map comes from"; "Keeping the roads clear"; "What the map looks like from above"; "The map grew to 27.6 km (v163)"; "The map grew to 31.2 km (v167)"; "The islands across the Sound (v151)"; "The minimap at the map's edge (v166)".
 - **`guide/roads.md`** (86 KB) -- junctions, bridges, street and freeway grading, SR-99, one-way traffic, shimmer and jolt.
   Sections: "One-way traffic"; "Shimmer and jolt: two things that read as "janky""; "Junctions, dead ends, bridges"; "Street grading: the ground fitted to the streets"; "Parked cars sit on the slope"; "Freeway grading: decks and freeway chains are one profile"; "SR-99: ride it the way a player does".
-- **`guide/rendering.md`** (44 KB) -- pipeline, shadows, surfaces, judging screenshots, draw-call budget, the gfx169 pass.
-  Sections: "Rendering pipeline"; "Shadows: snap the box, fade its edge"; "Surfaces: glass, windows, roofs, trees, ground"; "Judging how it looks"; "Draw-call budget"; "Mountains on the horizon"; "Far buildings take their real colour (v166)"; "A phone-neutral graphics pass (docs/gfx169)".
+- **`guide/rendering.md`** (52 KB) -- pipeline, shadows, surfaces, judging screenshots, draw-call budget, the gfx169 pass, the trees.
+  Sections: "Rendering pipeline"; "Shadows: snap the box, fade its edge"; "Surfaces: glass, windows, roofs, trees, ground"; "Judging how it looks"; "Draw-call budget"; "Mountains on the horizon"; "Far buildings take their real colour (v166)"; "A phone-neutral graphics pass (docs/gfx169)"; "A green Seattle: trees as records, three levels of detail".
 - **`guide/city.md`** (23 KB) -- building variety and outliers, street objects, landmarks, parks, lots/plazas/yards.
   Sections: "Buildings: variety"; "Houses: dormers, garages, and modern townhomes (v156)"; "Buildings: the outlier scan"; "Solid street objects"; "Landmarks"; "Parks"; "Lots, plazas and yards".
 - **`guide/models.md`** (45 KB) -- vehicle, character and prop models: how they are built and judged.
@@ -60,6 +60,8 @@ src/build.js                Builder (merged geometry) + mergeByMaterial
 src/textures.js             every texture, drawn into canvases at boot
 src/world.js                terrain, water, sky, streamed chunks, far skyline
 src/mountains.js            the Olympics, Rainier and the Cascades: one sky-layer draw (see "Mountains on the horizon")
+src/trees.js                every tree: planted per chunk as records, drawn far (merged),
+                            mid and near (instanced); see "A green Seattle"
 src/landmarks.js            landmarks to published dimensions, + their solids
 src/vehicles.js             vehicle models + the arcade driving model
 src/traffic.js              traffic AI, parked cars, police units' driving, A*
@@ -114,6 +116,7 @@ tools/build_roads.py        OSM ways -> roads.bin, and the graph assertions
 tools/build_buildings.py    OSM footprints -> buildings.bin
 tools/build_places.py       landmarks, neighbourhood names, spawn points
 tools/build_lots.py         car parks, plazas, yards -> lots.png
+tools/build_wood.py         which green is woodland -> surface.png's blue channel
 tools/build_monorail.py     the monorail's beams, stations, platforms -> monorail.json
 tools/extract_rail.py       every rail way and stop in the box -> tools/data/raw_rail.json
 tools/build_link.py         Link's two 1 Line tracks and its stations -> link.json
@@ -233,8 +236,9 @@ The purpose-built harnesses, each a fixed-dt, paused-game driver:
 | `tools/aidrive.mjs [--sites a,b] [--json FILE]` | how the AI drives, per car per frame at 5 sites (downtown, an arterial, I-5, Queen Anne, Capitol Hill): lane error, weaving, yaw jerk, hard braking, pedal switching, lateral g, speed through turns, off road / left of centre, tailgating, circle contacts vs real body hits, street-object contact and the cars wedged there. `AD_PROBE='<expr>'` / `AD_PROBE_FILE` runs a diagnostic after each site (see "How the AI drives") |
 | `tools/flycam.mjs [--jitter]` | a scripted flight: camera measured RELATIVE TO THE PLANE and the plane's on-screen motion, since absolute camera movement at 116 m/s is ~2 m a frame regardless. The autopilot holds 45 m over the terrain under AND 400 m ahead, or the bay dive flies into Queen Anne. Also counts building and road pop-ins, and flies `i5high` (see "flycam: road pop-ins") |
 | `tools/camtunnel.mjs` | camera height at stations through bores — nothing through the roof |
+| `tools/greenshots.mjs <dir> [views] [--stats] [--fly]` | the trees: forested parks, leafy neighbourhoods from the air, residential and downtown streets at eye level; `--stats` the scene pass's draws and triangles and a frustum breakdown by category, `GREEN_PROBE` a one-off diagnostic (see "A green Seattle") |
 | `tools/aircraftshots.mjs [dir] [types] [--stage] [--field] [--flight] [--takeoff]` | aircraft on a plain stage (incl. a `close` cockpit view), on their Boeing Field spots, the helicopter flown through spool/lift/hover/yaw/forward/turn/stop/land under the game's chase camera, and fixed-wing take-off numbers (see "The hangar"). `AIR_PROBE='view:x,y'` raycasts stage pixels |
-| `tools/jank.mjs` | `fwy-bump`, `crossing-clash`, `barrier-on-road` added for the grading (see "Freeway grading") |
+| `tools/jank.mjs` | `fwy-bump`, `crossing-clash`, `barrier-on-road` added for the grading (see "Freeway grading"); `tree-on-road`, `tree-in-building`, and `tree-in-water` / `tree-on-lot` counting trees only, all off the built tree records |
 | `tools/junctions.mjs [tag] [--only=cat] [--noshots]` | 19 junctions picked by kind; per junction a raycast classification map, hole / stacked tarmac / crossing paint / kerb gap / sink counts, and oblique, top and eye shots (GPU by default; `JUNC_PROBE='<expr>'`, `JUNC_AT=x,z`). See "Junctions, dead ends, bridges" |
 | `tools/shadowcheck.mjs` | the phone's shadow cache against three's own pass: live shadow map read back both ways at seven boxes, depths compared texel by texel, draws counted (see "Heat") |
 | `tools/shadowshots.mjs <dir> [--desktop]` | close-ups of the walking player's shadow, his car's, and building shadows on streets, on the game's own sun; `SHOTS_EVAL` / `SHOTS_PROBE` / `SHOTS_ONLY` (see "Smooth edges, and the player's own map") |
