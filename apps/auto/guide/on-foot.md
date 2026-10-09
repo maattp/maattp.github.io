@@ -401,3 +401,81 @@ Vashon's; SIREN hidden on foot and in a sedan, shown in a police car, dark
 when taken, a tap strobes it and starts the voice, G stops it, leaving
 stops it, traffic ahead yields, an SPD unit still strobes; every pickup on
 the maps, none in the water or the road, every hospital marked.
+
+## The crowd: living streets
+
+**The scout's census of v193's crowd** (24 civilians, `tools/pedcheck/`): within
+30 m of the player, none downtown and none on Pike St; within 40 m, one at Pike
+Place, two at Westlake, none at Pioneer Square. 37.4 % of walkers were inside a
+carriageway (29.2 % cutting across junction squares, 8.2 % mid-block), AI cars
+knocked down 21 of them in 3 x 120 sim-s, and a scared pedestrian or an
+officer ran straight through a building or into the water, because the
+walk / flee loop tested nothing but knock-back.
+
+- **The crowd is where you are** (`peds._spot`). A civilian appears in a ring
+  15-60 m round the player (cap `MAX_PEDS` 24, phone and desktop alike) and is
+  recycled past 90 m (`CULL_R`; an officer keeps the old 20-150 m rule,
+  `spawnCop`). A pavement spot is kept by `_footWeight`: the buildings round it
+  by facade style (tower 1.2 ... house 0.15), so a dense block is ten times as
+  likely as a suburban one. A quarter of attempts look for open ground first
+  (`_openWeight`): a plaza (`lotAt` 2), a pier or float (`platformAt`, not a
+  landmark's high deck), a park at half odds. Those people WANDER (`edge` -1,
+  `_wander`): stroll, stop, turn, drift about the spot they appeared on, never
+  onto a carriageway (looked for 2.4 m ahead) -- the walls and the water's
+  edge are `_move`'s. Not in view nearer than 45 m unless the crowd is a long
+  way short (`_fill`: just arrived or warped: 0.12 s a spawn, anywhere), and
+  half as often past 12 m/s in a car, where a spawn is all it is.
+- **A pedestrian's side is across the way he GOES.** The walking line is
+  `perp = (-fz, fx) * side` along his travel direction, but a spawn put him at
+  `-dz, dx` of the EDGE's own direction: a pedestrian spawned facing against it
+  stood on the opposite side to the line he walked, and crossed the whole road
+  to it. Half of every spawn, and the bulk of the mid-block carriageway samples.
+- **Junctions are walked, not cut** (`planNode`, within `PLAN_AT` 13 m of a
+  street's end). The node's other arms are ordered round it on his side; the
+  next arm is the corner he turns, along the pavement, where his walking line
+  meets its (the intersection of two lines `hw + 1.4` out, citygen's `meet`
+  maths); or he CROSSES that arm, straight across at its mouth beside the
+  corner (40 % of the first hops), to the far pavement, and then turns the next
+  corner or carries on out along the arm. A path is up to 8 waypoints in
+  `p.path`, a bit per leg for "this leg crosses" (`p.pcr`). Sharp corners
+  (|a|, |b| > 14 m) keep to the two lines; straight-on arms shift the line to
+  the next street's width; a dead end is crossed at its end. Two roads close
+  enough that one's pavement line lies in the other's carriageway (a Y, an
+  offset junction: 2 % of samples) are not helped by this -- it only sees the
+  node's own arms.
+- **People stop for cars and cars stop for people.** A leg that crosses waits
+  at the kerb until `_crossClear` -- every moving car run forward 0.2 s at a
+  time against the crossing pedestrian's own place at that moment (a car
+  standing where he must cross is waited out too) -- or 6 s, then goes. Once he
+  is in the road (`p.cross`) he is published to the cars (`peds.crossXZ` ->
+  `traffic.crossN`, read once a frame): a car whose lane he is in, or whose
+  nose he is at (wider there: a turning car sweeps across the crossing from the
+  side), stops short of him, like for the player on foot. Only people actually
+  in the carriageway count: one waiting at the kerb waits for the cars. A
+  pedestrian with a car coming hurries (3.8 m/s). `behav.mjs`, 120 sim-s at
+  three sites: AI knockdowns 21 -> 0, cars still for over 15 s unchanged.
+- **The walk obeys what the player's step obeys** (`_move` / `_place`; for
+  walkers, runners and officers alike): not into a building (`city.insideBuilding`,
+  Player.blocked's test without its allocations), not off a drop or into deep
+  water (the ground under the next step 1.4 m below or 1 m above him, or under
+  the drawn water -- `peds.waterAt` is the boats' rule), trunks and poles pushed
+  out of rather than stopped at (within 50 m only: nobody sees him walk through
+  one further out), the whole step then each axis alone. Held by a wall a
+  fleeing pedestrian turns 75 deg along it; a walker held 3 s is recycled.
+  A pedestrian standing inside a building walks out of it, as the player does.
+  A stationary pedestrian makes no ground query at all.
+- **When he stops running** (`reanchor`) he is put back on the nearest walking
+  line (side and direction from where he stands and which way he faces), or on
+  open ground if none is within 12 m.
+- Pace is the pedestrian's own (`p.pace`; it was `hash2(i, 3)`, the INDEX in
+  the array, so everyone's speed changed when anyone was recycled).
+
+**Verify**: `tools/pedcheck/` (harness.mjs drives a scenario module; each
+prints numbers with a `pass` where there is a bar). `density.mjs` (>= 6 within
+40 m at Pike Place, Westlake, Pioneer Square; total <= 24), `road.mjs` (< 8 %
+in a carriageway, crossings counted apart), `behav.mjs` (AI knockdowns 0, cars
+still), `flee.mjs` (0 through a building, 0 in the water), `cops.mjs`,
+`look.mjs` / `crossing.mjs` (shots: LOOK at them). Run as
+`AUTO_HTTP_PORT=8000 node tools/pedcheck/harness.mjs tools/pedcheck/road.mjs`.
+v193 -> this change: within 40 m at Pike Place / Westlake / Pioneer Sq 1 / 2 / 0 ->
+14 / 9 / 9-12; in a carriageway 37.4 % -> 3.1 % (+ 2.9 % crossing on purpose).
