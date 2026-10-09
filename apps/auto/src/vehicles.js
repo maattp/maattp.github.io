@@ -8594,6 +8594,7 @@ export class Vehicle {
     this.offGraph = false;   // ...and none to the target's own node: the crew finish it on foot (police.js)
     this.slot = null; this.wasParked = false; this.exploded = false;
     this.airborne = false; this.lowDetail = false;
+    this.prevTarget = undefined; this.carVy = 0; this.airGap = 0; this.airVy = 0; this.floorVy = 0;   // the vertical follow's history (see "THE GROUND'S OWN DESCENT")
     // Flight state (updatePlane / updateHeli). `yVis` is how far the drawn
     // body sits off `y`: a taildragger rocking back onto its tailwheel pivots
     // about its main wheels, not its middle.
@@ -10139,19 +10140,66 @@ export class Vehicle {
       this.sync();
       return { dx, dz };
     }
+    // THE GROUND'S OWN DESCENT IS NOT A FALL. A car going down a 20 % street
+    // at 24 m/s rides a floor that drops 5 m/s. The exponential follow below
+    // lags a falling floor by rate / 18 = 0.3 m, which is over the 0.25 m that
+    // means "airborne" -- and the fall then began from vy = 0, so the car hung
+    // while the road ran away, dropped, landed with a snap and did it again.
+    // Measured on SW Genesee St (-23 %): 40 of 136 frames airborne, 18
+    // take-offs, 60 frames over 30 m/s^2, a peak of 790. Two parts, both below:
+    //  - the follow is FED FORWARD with the floor's descent, so a steady grade
+    //    is tracked without lag (descent only: uphill is clean already);
+    //  - contact is judged as physics does. `airGap` is how far above the floor
+    //    a body in free fall (the car's last velocity, 22 m/s^2) would be now,
+    //    integrated across frames. On a steady slope, or a crest gentler than
+    //    gravity, it stays 0; where the floor curves away faster than 22 m/s^2
+    //    it grows, the car is carried up with it, and past the 0.25 m grace it
+    //    is airborne and falls on from the velocity it left with, not from a
+    //    standstill. The climb the car arrives with counts at a quarter: all of
+    //    it hopped the crest of every hill (an 18 % rise into flat ground threw
+    //    a sedan 1.4 m at 32 m/s), none of it lost the sharp crests that should
+    //    leave; at 1/4 the city's airborne frames are master's, not 1.3x.
+    // A STEP in the floor (a deck taken or lost, a teleport, a ramp lip) is not
+    // a slope and keeps the plain 0.25 m rule; so does everything on a stunt
+    // ramp, whose lip launch above reads the follow's lag on purpose.
+    const wasGround = this.onGround;
+    const dT = this.prevTarget === undefined ? 0 : target - this.prevTarget;
+    this.prevTarget = target;
+    const slope = dt > 0 && !onRamp && !this.rampRef && Math.abs(dT) < 0.25;
+    const y0 = this.y;
+    // the floor's descent rate, smoothed over ~0.12 s: a step of the target in
+    // one frame (a kerb, a camber seam, a grade break) is not a slope to feed
+    // forward, and fed forward raw it would pass straight through the follow
+    this.floorVy = slope ? this.floorVy + (dT / dt - this.floorVy) * (1 - Math.exp(-dt / 0.12)) : 0;
+    let gap = 0;
+    if (wasGround && slope) {
+      const cv = this.carVy || 0, vb = this.airGap > 0 ? this.airVy : cv > 0 ? cv * 0.25 : cv;
+      gap = Math.max(0, this.airGap + vb * dt - 11 * dt * dt - dT);
+      this.airVy = vb - 22 * dt;
+    }
+    this.airGap = gap;
+    let landed = false;
     if (onRamp && this.y <= target + 0.25) {
       this.y = target; this.vy = 0; this.onGround = true;
-    } else if (this.y > target + 0.25) {
+    } else if (this.y > target + 0.25 || gap > 0.25) {
+      if (wasGround) {
+        if (gap > 0.25) { this.vy = this.airVy + 22 * dt; this.y = Math.max(this.y, target + gap); }
+        else if (this.vy <= 0) this.vy = Math.min(0, this.carVy || 0);
+      }
       this.vy -= 22 * dt;
       this.y += this.vy * dt;
       this.onGround = false;
-      if (this.y <= target) { this.y = target; this.vy = 0; this.onGround = true; }
+      this.airGap = 0;
+      if (this.y <= target) { this.y = target; this.vy = 0; this.onGround = true; landed = true; }
     } else {
       const rise = target - this.y;
       if (rise > 0.6 && sp > 6) { this.vy = Math.min(6, rise * 4); }
-      this.y = lerp(this.y, target, 1 - Math.exp(-18 * dt));
+      const ff = Math.min(0, this.floorVy) * dt;
+      this.y = lerp(this.y + ff, target + gap, 1 - Math.exp(-18 * dt));
       this.onGround = true;
     }
+    // what the follow did, for the next frame's seed (descent only is used)
+    this.carVy = dt <= 0 ? 0 : !this.onGround ? this.vy : landed ? (slope ? dT / dt : 0) : clamp((this.y - y0) / dt, -20, 20);
 
     // body attitude, from the samples taken above
     let tgtPitch = Math.atan2(bh - fh, this.halfLen * 2) - clamp(acc, -12, 12) * 0.0045;

@@ -34,6 +34,32 @@ column queued behind it. The loss now scales with the angle: `glance =
 clamp(-along / 0.3, 0, 1)`, `vLong *= 1 - 0.8 * glance`. Head-on (~17 deg or
 more into it) keeps the full loss, a pure side contact keeps all its speed.
 
+**A car follows the ground DOWN a hill; it does not fall down it** (v200). The
+vertical follow is an 18/s exponential toward the four-wheel average, and a
+body more than 0.25 m over that average is airborne. Going down a 20 % street
+at 24 m/s the floor drops 5 m/s, the exponential lags it by 5/18 = 0.3 m, and
+the car was "airborne" -- falling from `vy = 0` while the road ran off, then
+landing with a snap: SW Genesee St (-23 %) 40 of 136 frames in the air, 18
+take-offs, 60 frames over 30 m/s^2, peaks of 790. Same path for every wheeled
+type (cars, AI traffic, bikes, quad: one `Vehicle.update`), so the fix is one
+place, in the vertical block of `updateDrive`'s tail: (1) the follow is **fed
+forward** with the floor's descent, smoothed over ~0.12 s (raw per-frame steps
+-- kerbs, camber seams -- must still be smoothed by the lerp: feeding them
+forward quadrupled acc>30 city-wide); (2) contact is judged **ballistically**:
+`airGap` integrates how far a free-falling body (the car's last velocity,
+22 m/s^2) would be over the floor, so a steady slope or a crest gentler than
+gravity keeps the car planted, a crest the floor curves away from faster takes
+it off past the same 0.25 m, and it falls on from the velocity it left with.
+Only a quarter of the climb it arrives with counts (all of it hopped every hill
+crest, none lost the sharp ones). A STEP in the floor (>0.25 m in a frame: a
+deck taken/lost, a pier end, a teleport) and anything on a stunt ramp
+(`rampRef`) keep the plain 0.25 m rule, so a bridge-deck end, a pier and the
+`rampVy` lip launch are untouched. Verify with `node tools/hillride.mjs
+[--type atv|cruiser|bicycle] [--trace]`: the steepest streets must give <= 2
+air flips and <= 5 frames over 30 m/s^2, and a sharp crest at 32 m/s must still
+leave the ground. `ridesurvey` carries a replica of the follow (`--legacy`
+gives the old one for a before/after).
+
 **The electric car is a spec flag, not a special case.** `ev: true` in `TYPES`
 switches four things: a sealed nose with one full-width light bar at each end
 instead of a grille and paired lamps, a square-root torque falloff instead of a
