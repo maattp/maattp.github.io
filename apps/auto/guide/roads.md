@@ -519,10 +519,16 @@ Before / after, `docs/roads/` (ridesurvey `--shots`, AUTO_GPU=1):
 `tools/ridesurvey.mjs [--tag T] [--top N] [--cls a,b]` rides the centreline of
 every chain (the straightest same-class continuation through each node,
 never a tunnel) at 28 / 18 / 15 / 12 / 10 m/s for hwy / ramp / art / st / res
-and dt 1/60, following the ground EXACTLY as `Vehicle.update` does: four
+and dt 1/60, following the ground the way `Vehicle.update`'s vertical block
+does (a REPLICA of its arithmetic, not the vehicle: no collisions, ramps or lowDetail,
+and on hwy / ramp kinds its air frames are not the real car's -- graded ramps
+read 611 here against 42 for the real Vehicle.update; trust it for acc>30 / acc>60
+and the site ranking, `tools/hillride.mjs` for the vehicle): four
 wheel samples through `groundAt` from y + 0.45 with the centre's `roadLift`,
-the bore spike guard, the 18/s follow and the 22 m/s2 fall off a crest. **If
-vehicles.js changes how a car follows the ground, change `ride()` with it.**
+the bore spike guard, the 18/s follow (fed forward with the floor's steady descent) and
+the 22 m/s2 fall over a crest (v202, "A car follows the ground DOWN a
+hill" in `guide/vehicles.md`). **If vehicles.js changes how a car follows the
+ground, change `ride()` with it.**
 A rider is seeded on the edge's own surface. The whole city takes ~60 s after
 boot. It writes `tools/data/ridesurvey-<tag>.json`; compare two by 60 m site
 to see what got worse, not just the totals -- a totals win hid 157 sites
@@ -536,15 +542,17 @@ worse than master, which is how every rule above was found.
   along the road; run it against master's server too for a pair.
 - `RIDE_PROFDEBUG=1` boots with `__profDebug` (gradeRoads' per-sample
   intermediates on `e.pdbg`); `RIDE_PROBE='<expr>'` evaluates after the ride.
-- `--carry` is a what-if, not the game: see below.
+- `--legacy` rides the pre-v202 follow (a fall began from rest), for a before/after;
+  `--upk K` is the tuning knob for how much of a climb counts at a crest.
 
 **What is left, by class** (worst sites in the json):
 
-- **A car hops down a steep street.** The follow never sets `vy`, so leaving
-  the ground on a 25 %+ descent starts the fall from rest: air, land, lerp,
-  air. Carrying the descent into the fall (`--carry`) measured acc>30 -6 %,
-  acc>60 -13 % city-wide. Not shipped: it changes the vehicle follow, which
-  the tunnel guards depend on (re-run tunneldrive if you take it).
+- **(fixed v201) A car hopped down a steep street.** The follow never set
+  `vy`, so a fall began from rest on every 20 %+ descent: air, land, lerp, air.
+  A feed-forward on the steady part of the floor's descent cured it
+  (`tools/hillride.mjs`; tunnelride sb/nb unchanged). City-wide, same survey
+  (replica): acc>30 17 056 -> 16 310, acc>60 6 887 -> 5 922, airborne frames
+  7 122 -> 7 141.
 - **Ferry terminals and shore decks** (Winslow Way E, Southworth, Manitou
   Beach Drive): deck ends and the streets meeting them on ground the lake
   carve dug as bed, the class in "Known gaps". An anchor in the dug bed pins

@@ -34,6 +34,54 @@ column queued behind it. The loss now scales with the angle: `glance =
 clamp(-along / 0.3, 0, 1)`, `vLong *= 1 - 0.8 * glance`. Head-on (~17 deg or
 more into it) keeps the full loss, a pure side contact keeps all its speed.
 
+**A car follows the ground DOWN a hill; it does not fall down it** (v202). The
+vertical follow is an 18/s exponential toward the four-wheel average, and a
+body more than 0.25 m over that average is airborne. Going down a 20 % street
+at 24 m/s the floor drops 5 m/s, the exponential lags it by 5/18 = 0.3 m, and
+the car was "airborne" -- falling from `vy = 0` while the road ran off, then
+landing with a snap: SW Genesee St (-23 %) 40 of 136 frames in the air, 18
+take-offs, 60 frames over 30 m/s^2, peaks of 790. Same path for every wheeled
+type (cars, AI traffic, bikes, quad: one `Vehicle.update`), so the fix is one
+place, in the vertical block of `updateDrive`'s tail: the follow is **fed
+forward** with the floor's steady descent. `floorVy` is a ~0.12 s average of the
+floor's own motion; under 1.5 m/s of it (a 0.08 m lag) the follow is left alone
+-- most of the city, where feeding forward only passed the floor's noise
+through (a full feed-forward: acc>30 +27 % city-wide) -- and only the rate above
+that is fed, so a steep street is held about 0.08 m behind its floor, nowhere
+near the 0.25 m that means airborne. The feed fades out when the floor's rate
+this frame disagrees with the average by 1-3 m/s, which is exactly what the far
+side of a crest does: there the old lag rule runs untouched and the car takes
+off with the hang it always had. **A steady grade is a slope, a crest is a
+jump.** A fall that starts leaves with the descent the follow was riding, not
+from rest.
+
+Two things were tried and are wrong, so do not rebuild them. A *ballistic*
+take-off test (integrate a free-falling body against the floor, carry the
+climb the car arrives with) is physically lovely and gave a bus a quarter of
+master's crest hang, a pickup half, and -- because "the climb" was read off the
+follow's own catch-up -- launched cars off every freeway data bump (a floor
+that steps up 0.5-1 m on I-5 / Aurora / SR-99) and off a teleport. And the
+climb has no business in the test at all: what the car did to reach the floor
+is not the floor's velocity.
+
+A STEP in the floor (>0.25 m in a frame: a deck taken or lost, a pier end, a
+teleport) and anything on a stunt ramp (`rampRef`) keep the plain 0.25 m rule,
+so a bridge-deck end, a pier and the `rampVy` lip launch are untouched. Verify
+with `node tools/hillride.mjs [--types sedan,pickup,bus,...] [--trace]`: the
+steepest streets must give <= 2 air flips and <= 5 frames over 30 m/s^2, the
+sharp 32/-27 % crest at (-434, -1467) must still hang >= 24 frames (master 32,
+sedan 1.1 m up; the 18/-3 % data cliff leaves on any build and proves nothing),
+freeway step sites may not launch more than master does, a made-up 0.7 m step
+up in a flat street may not launch, and a car dropped 2 m under Genesee's floor
+may not fly. The crest table prints every type. **Crest hang is the one number
+here that is chaotic**: the same crest lands on a -27 % slope at 9 m/s of
+descent, beyond what the feed-forward holds, so a second hop of ~20 frames
+comes and goes with the vehicle's wheelbase (a sedan 42 frames, a hatch 26 --
+the first flight, height and landing speed, are the same). Compare heights.
+`ridesurvey` carries a replica of the follow (`--legacy` gives the old one) --
+trust it for acc>30 / acc>60 and the ranking, not for air frames on freeway
+kinds, which it overstates.
+
 **The electric car is a spec flag, not a special case.** `ev: true` in `TYPES`
 switches four things: a sealed nose with one full-width light bar at each end
 instead of a grille and paired lamps, a square-root torque falloff instead of a
