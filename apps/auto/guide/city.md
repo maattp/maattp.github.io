@@ -281,7 +281,12 @@ meshes (the header table gives each number and its source).
   The OSM buildings fix the stack (the Control Tower on the south wall,
   Operating House 2 on the centre wall at the intermediate gate, the Locks and
   Dam node at the dam). The 10 m water mask carries the chambers, so only
-  walls, gates, rails and the dam are drawn; the walls are walkable.
+  walls, gates, rails and the dam are drawn. **They are walkable end to end**:
+  a ramp from the north bank (it stands 1.5-2 m under the wall tops, past the
+  0.9 m a walker steps up), a footbridge over each lock's gate, the dam.
+  `landmarkshots --collide` walks it ("walkTheLocks": 7 of 7 waypoints in 2.2k
+  frames). **Rails have gaps where a bridge or the dam leaves a wall**, or the
+  rail's own solid stops you at the bridge's foot (it did, twice).
   **Wall-top height (6.7 m) and the exact z of each wall are est.**
 
 Cost, each built alone (draws / triangles, was -> now): Arch 1 / 76 -> 3 / 4.9k

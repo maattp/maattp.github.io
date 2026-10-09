@@ -898,10 +898,11 @@ export function makeDowntown(h) {
   // intermediate gate sits where the canal's fresh water, 5.3 m, meets the
   // Sound's, at x ~ -4410), so what is drawn is the walls, gates and dam.
   // Wall tops are at 6.7 m (est.), a step down from the 7.2 m bank.
-  function locks() {
+  function locks(l) {
     const g = new THREE.Group();
     K = new Kit();
     g.userData.worldAligned = true;
+    const o = origin(l, 0);
     const TOP = -0.5, BOT = -13;
     const conc = P(0xb9b6ae, 0.9, 0, 0.5), concD = P(0x8d8a82, 0.92, 0, 0.45);
     const steel = P(0x3e4f5a, 0.55, 0.5, 0.7), steelL = P(0xa9b1b5, 0.45, 0.6, 0.75);
@@ -917,12 +918,18 @@ export function makeDowntown(h) {
       if (deck) decks.push({ x: cx, z: cz, hw: w / 2, hd: d / 2, top: TOP });
     };
     // a guard rail along a water edge: two bars and a post every 10 m, and a solid walkers cannot cross
-    const railRun = (x0, x1, z) => {
+    const railRun1 = (x0, x1, z) => {
       const L = x1 - x0, cx = (x0 + x1) / 2;
       box(L, 0.07, 0.07, rail, cx, TOP + 1.05, z);
       box(L, 0.05, 0.05, rail, cx, TOP + 0.5, z);
       for (let x = x0; x <= x1 + 0.1; x += 10) box(0.08, 1.1, 0.08, rail, x, TOP, z);
       solidBox(g, cx, z, L / 2, 0.15, 0, TOP + 1.1, TOP - 0.2);
+    };
+    // `gaps`: x ranges left open where a footbridge or a ramp comes on
+    const railRun = (x0, x1, z, gaps = []) => {
+      let a = x0;
+      for (const [g0, g1] of [...gaps].sort((p, q) => p[0] - q[0])) { if (g0 > a + 0.5) railRun1(a, g0, z); a = Math.max(a, g1); }
+      if (x1 > a + 0.5) railRun1(a, x1, z);
     };
     const XW = -123, XE = 123;
     // the large lock's three walls, the small lock's two
@@ -939,9 +946,38 @@ export function makeDowntown(h) {
         box(0.8, 0.18, 0.3, P(0xe9e3c8, 0.5, 0, 0.8), x, TOP + 5.2, z);
       }
     }
-    railRun(XW, XE, 50.0); railRun(XW, XE, 59.5);         // the centre wall's two edges
-    railRun(XW, XE, 84.9); railRun(XW, XE, 95.5);          // the south wall's: the lock and the dam's side
-    railRun(-73, -27, 39.9);                                // the small lock's north wall, on the water
+    // the same across a footbridge (a rail along z)
+    const railZ = (x, z0, z1) => {
+      const L = z1 - z0, cz = (z0 + z1) / 2, y = TOP + 0.55;
+      box(0.07, 0.07, L, rail, x, y + 1.0, cz);
+      box(0.05, 0.05, L, rail, x, y + 0.5, cz);
+      for (let z = z0; z <= z1 + 0.1; z += 5) box(0.08, 1.05, 0.08, rail, x, y, z);
+      solidBox(g, x, cz, 0.15, L / 2, 0, y + 1.1, y - 0.2);
+    };
+    // THE WAY THROUGH: the lock gates carry footbridges, so the walls join. From the north bank a ramp
+    // (the bank is 1.5-2 m under the wall tops here) up onto the small lock's north wall; over its east gate
+    // to the centre wall; over the large lock's intermediate gate to the south wall and the dam.
+    const bridge = (x, z0, z1) => {
+      const zc = (z0 + z1) / 2, L = z1 - z0;
+      box(2.6, 0.2, L, steelL, x, TOP + 0.35, zc);
+      railZ(x - 1.25, z0, z1); railZ(x + 1.25, z0, z1);
+      decks.push({ x, z: zc, hw: 1.3, hd: L / 2, top: TOP + 0.55 });
+    };
+    bridge(-28.5, 39.5, 50.5);
+    bridge(8.5, 58.5, 85.9);
+    {
+      // the ramp: concrete, 5 m wide, from 0.3 m over the bank at z 21 to the wall top at z 29
+      const RX = -50, rz0 = 21, rz1 = 29.2;
+      const yb = G.terrainHeight(o.x + RX, o.z + rz0) - o.y + 0.3;
+      const ra = K.A(conc);
+      ra.quad([RX - 2.5, yb, rz0], [RX + 2.5, yb, rz0], [RX + 2.5, TOP, rz1], [RX - 2.5, TOP, rz1], 0, 1, 0);
+      for (const sx of [-1, 1]) ra.tri([RX + sx * 2.5, yb - 1.5, rz0], [RX + sx * 2.5, yb, rz0], [RX + sx * 2.5, TOP, rz1], sx, 0, 0);
+      ra.quad([RX - 2.5, yb - 1.5, rz1], [RX + 2.5, yb - 1.5, rz1], [RX + 2.5, TOP, rz1], [RX - 2.5, TOP, rz1], 0, 0, -1);
+      decks.push({ x: RX, z: (rz0 + rz1) / 2, hw: 2.5, hd: (rz1 - rz0) / 2, top: yb, top1: TOP });
+    }
+    railRun(XW, XE, 50.0, [[-29.9, -27.1]]); railRun(XW, XE, 59.5, [[7.1, 9.9]]);   // the centre wall's two edges
+    railRun(XW, XE, 84.9, [[7.1, 9.9]]); railRun(XW, XE, 95.5, [[-57.1, -44.1]]);          // the south wall's: the lock and the dam's side (open where the dam leaves it)
+    railRun(-73, -27, 39.9, [[-29.9, -27.1]]);              // the small lock's north wall, on the water
     // gates: a pair of leaves meeting in a V that points east (toward the high water)
     const gate = (xg, z0, z1, hh, leafLen) => {
       const zm = (z0 + z1) / 2, apex = 3.4;

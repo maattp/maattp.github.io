@@ -342,6 +342,26 @@ async function main() {
         into('walkIntoAquariumSouth', 'aquarium', 0, [17, 40], [17, 24], 'walk');
         into('walkIntoKerryParapet', 'kerry', 0, [0, -8], [0, 9], 'walk');
         into('walkOntoLocksNorthWall', 'locks', 0, [-50, 20], [-50, 42], 'walk');
+        // The Locks end to end on foot: bank, ramp, the small lock's north wall, its gate's footbridge, the centre
+        // wall, the large lock's intermediate gate, the south wall, the dam to its south end. Waypoints in the
+        // landmark's frame; reached is how many it got to.
+        {
+          const l = L('locks'), pts = [[-50, 14], [-50, 34], [-28.5, 34], [-28.5, 55], [8.5, 55], [8.5, 90], [-50.6, 90], [-50.6, 150]];
+          settle(l.x - 50, l.z + 14);
+          if (!p.onFoot) p.exitVehicle();
+          p.x = l.x + pts[0][0]; p.z = l.z + pts[0][1]; p.y = c.groundAt(p.x, p.z, null); p.speed = 0;
+          const input = { x: 0, y: -1, sprint: true, gas: false, brake: false, hand: false, attack: false };
+          let k = 1, f = 0, minY = 1e9;
+          for (; f < 6000 && k < pts.length; f++) {
+            const tx = l.x + pts[k][0], tz = l.z + pts[k][1];
+            const h = Math.atan2(tx - p.x, tz - p.z);
+            p.heading = h; p.camYaw = h - Math.PI;
+            p.update(1 / 60, input, look, ctl, d.traffic, d.peds);
+            minY = Math.min(minY, p.y);
+            if (Math.hypot(p.x - tx, p.z - tz) < 1.6) k++;
+          }
+          out.walkTheLocks = { reached: k - 1, of: pts.length - 1, frames: f, end: [+(p.x - l.x).toFixed(1), +(p.z - l.z).toFixed(1)], lowestY: +minY.toFixed(1), deckY: +(c.groundAt(l.x, l.z + 55, null)).toFixed(1) };
+        }
         out.dropped = d.scene.children.find((o) => o.name === 'landmarks').userData.solidsDropped;
         return JSON.stringify(out, null, 1);
       })()`);
