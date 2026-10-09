@@ -154,7 +154,7 @@ const CELL_MEAN = {
 };
 // Paint sits just proud of the asphalt; any less and it z-fights at distance.
 const MARK_Y = ROAD_LIFT + 0.012;
-const LOT_PLAZA = G.LOT_KINDS.indexOf('plaza');
+const NO_CITY_CHUNK = Object.freeze({ edges: [], buildings: [] });
 // `flat` has no map, but Builder.quad indexes the uv array unconditionally.
 const ZERO_UV = [0, 0, 0, 0, 0, 0, 0, 0];
 const NODE_Y = NODE_LIFT;
@@ -1063,8 +1063,8 @@ export class World {
               vec2 wq = vec2( vLotXZ.x * 0.8 + vLotXZ.y * 0.6, vLotXZ.y * 0.8 - vLotXZ.x * 0.6 );
               float c1 = texture2D( lotNoise, wq / 67.0 + vec2( 0.17, 0.61 ) ).r;
               float c2 = texture2D( lotNoise, vLotXZ / 29.0 + vec2( 0.53, 0.29 ) ).r;
-              float crown = smoothstep( 0.36, 0.62, c1 * 0.55 + c2 * 0.45 );
-              vec3 canopy = mix( vec3( 0.030, 0.052, 0.024 ), vec3( 0.068, 0.112, 0.046 ), crown );
+              float crown = smoothstep( 0.34, 0.66, c1 * 0.3 + c2 * 0.7 );
+              vec3 canopy = mix( vec3( 0.036, 0.062, 0.028 ), vec3( 0.060, 0.098, 0.041 ), crown );
               canopy *= 0.85 + 0.3 * macroT.g;
               diffuseColor.rgb = mix( diffuseColor.rgb, canopy, wk );
             }
@@ -4544,8 +4544,10 @@ float frLine(float o, float fw, float c, float w) {
   *buildChunkStep(cx, cz, lod) {
     const city = this.city;
     const ck = city.chunkKey(cx, cz);
-    const ch = city.chunks.get(ck);
-    if (!ch) return null;
+    // A chunk with no road or building has no entry in the city -- but it may
+    // be all forest (the middle of Seward Park, an island), and a forest is
+    // what it has to draw. Nothing in it is built but its trees.
+    const ch = city.chunks.get(ck) || NO_CITY_CHUNK;
     this._ck = ck;
     // Each street object's run of triangles in the flat mesh, [x, z, i0, i1]
     // per object: what a tank knocks down is hidden by its index range

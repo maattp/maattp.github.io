@@ -92,8 +92,8 @@ export function treeAlbedo(kind, seed, tone, out) {
   if (kind === CONIFER) {
     if (b < 0.3) { r = 0.1; g = 0.232; bl = 0.088; }      // cedar: a touch yellower
     else { r = 0.082; g = 0.205; bl = 0.098; }             // Douglas fir, hemlock
-  } else if (tone === T_STREET && b < 0.03) { r = 0.2; g = 0.085; bl = 0.095; }
-  else if (b < 0.13) { r = 0.17; g = 0.27; bl = 0.09; }     // birch, locust: yellow-green
+  } else if (tone === T_STREET && b < 0.03) { r = 0.16; g = 0.095; bl = 0.095; }
+  else if (b < 0.12 && tone !== T_FOREST) { r = 0.155; g = 0.26; bl = 0.09; }   // birch, locust: yellow-green
   else if (b > 0.9) { r = 0.11; g = 0.235; bl = 0.13; }   // blue-green
   else { const w = (a - 0.5) * 0.05; r = 0.135 + w; g = 0.255 + b * 0.04; bl = 0.105 - w * 0.5; }
   const f = (tone === T_FOREST ? 0.86 : 1) * (kind === SHRUB ? 0.88 : 1);
@@ -874,7 +874,7 @@ export function* plantTrees(world, flat, ch, cx, cz, lod) {
         // stands: some mostly fir, some mostly maple and alder
         const pc = 0.22 + 0.5 * field(x, z, 240, 11);
         const r = hash2(Math.round(x * 5) + 1, Math.round(z * 5) + 2), sz = sub(r, 3);
-        if (r < pc) plant(x, z, 19 + 17 * sz, 4.0 + 1.6 * sz + 0.8 * sub(r, 4), CONIFER, T_FOREST, 'forest');
+        if (r < pc) plant(x, z, 18 + 17 * sz, 4.4 + 2.0 * sz + 1.2 * sub(r, 4), CONIFER, T_FOREST, 'forest');
         else if (r < pc + 0.07) plant(x, z, 3 + 2.5 * sz, 2 + 1.2 * sub(r, 4), SHRUB, T_FOREST, 'forest');
         else plant(x, z, 14 + 10 * sz, 4.6 + 1.8 * sz + 0.8 * sub(r, 4), BROAD, T_FOREST, 'forest');
       } else if (gk === G.GREEN_SCRUB) {
@@ -884,9 +884,12 @@ export function* plantTrees(world, flat, ch, cx, cz, lod) {
         if (r < 0.8) plant(x, z, 2.2 + 2.2 * sub(r, 3), 1.6 + 1.2 * sub(r, 4), SHRUB, T_PARK, 'park');
         else plant(x, z, 7 + 6 * sub(r, 3), 3 + 1.5 * sub(r, 4), BROAD, T_PARK, 'park');
       } else {
-        // lawn: groves and open grass, by a 150 m noise field
+        // lawn: groves and open grass, by a 150 m noise field -- and a
+        // park's edges and shores lined with trees, as Green Lake's path is
+        // and most of Seattle's parks are: the mown middle stays open.
         const g = field(x, z, 150, 5);
-        const p = 0.035 + 0.5 * clamp((g - 0.52) / 0.28, 0, 1);
+        let p = 0.035 + 0.5 * clamp((g - 0.52) / 0.28, 0, 1);
+        if (h < 0.55 && (!G.greenKind(x + 14, z) || !G.greenKind(x - 14, z) || !G.greenKind(x, z + 14) || !G.greenKind(x, z - 14))) p += 0.4;
         if (h > p) continue;
         if (!clear(x, z, 2.5, OPEN)) continue;
         const r = hash2(Math.round(x * 5) + 1, Math.round(z * 5) + 2);
