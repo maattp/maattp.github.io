@@ -33,6 +33,16 @@ Part of the Auto guide; the index and the laws every change needs are in
   passages meet its footprint at road level (they are dropped so a car is not
   stopped by nothing), and no portal or passage is drawn there: you drive into
   a plain facade line that simply has a gap in its collision.
+- **The Queen Anne Counterbalance streetcar has gaps** (see "The Queen Anne
+  Counterbalance: Route 26"):
+  - Its livery is a period guess, because the 1940 photographs are black and
+    white.
+  - Its ends are stubs, not McGraw's wye and the downtown loop, and the line
+    stops at Cherry St rather than S King St.
+  - Nobody waits at the stops or rides with you. Riding, you stand on the
+    step frozen in an idle pose: there is no grab-rail arm.
+  - The DEM's 40 m cells make some blocks of 1st Ave and Galer St 10-13 %
+    for a few metres, so cars crawl there.
 - **No Kenmore Air Harbor.** The real floatplane base at the north end of Lake
   Washington (47.756 N) is ~0.5 km past the map's north edge (47.752 N).
 

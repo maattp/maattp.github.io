@@ -1123,6 +1123,40 @@ const SOUNDS = {
     k.noise('pink', t, 2.0, R).connect(k.filt('bandpass', 650, 0.5)).connect(w).connect(out);
     for (let i = 0; i < 8; i++) k.thump(out, t + i * 0.25, 52, 34, 0.18, 0.3, 0.06);
   } },
+  // A 1930s streetcar's gong (counterbalance.js): a bronze dish under the
+  // floor struck by the motorman's foot plunger. One hard strike -- the
+  // clapper's crack, then the dish ringing, its partials inharmonic and
+  // beating in pairs -- so a held BELL becomes the cable-car rhythm.
+  cable_bell: { dur: 1.4, build(k, out, t, R) {
+    const g = k.gain(1);
+    g.connect(out);
+    k.burst(g, 'white', t, 'bandpass', 3200, 1.2, 0.5, 0.006, R, 0.0005);
+    METAL.slice(0, 6).forEach((r, i) => {
+      const f = 930 * r;
+      k.ping(g, t, f, 0.3 / (1 + i * 0.6), 0.75 / (1 + i * 0.55), 0.0006);
+      k.ping(g, t, f * 1.006, 0.16 / (1 + i * 0.6), 0.6 / (1 + i * 0.55), 0.0006);
+    });
+  } },
+  // The counterbalance's finger dropping into the plow (or lifted out): a
+  // heavy iron clunk, the cable's jerk through the slot, a rattle below.
+  cb_clunk: { dur: 1.3, build(k, out, t, R) {
+    k.thump(out, t, 130, 45, 0.12, 0.9, 0.09);
+    k.burst(out, 'white', t, 'bandpass', 900, 1.4, 0.55, 0.03, R);
+    for (const [f, d] of [[212, 0.18], [347, 0.12], [561, 0.07]]) k.ping(out, t + 0.004, f, 0.22, d, 0.001);
+    const rg = k.gain(0);
+    k.noise('white', t + 0.08, 0.7, R).connect(k.filt('bandpass', 2400, 1.0)).connect(rg).connect(out);
+    k.grains(rg.gain, t + 0.08, 0.6, 26, R, 0.5, 0.003, 0.012, 1.4);
+    k.thump(out, t + 0.22, 70, 38, 0.2, 0.45, 0.25);
+  } },
+  // The cable running in its conduit under a car on the counterbalance: the
+  // sheaves' rumble and a tick each time a splice passes the plow.
+  cb_hum: { dur: 2.0, loop: 0.1, build(k, out, t, R) {
+    const g = k.gain(0.7);
+    k.noise('brown', t, 2.0, R).connect(k.filt('lowpass', 140, 0.9)).connect(g).connect(out);
+    const w = k.gain(0.16);
+    k.noise('pink', t, 2.0, R).connect(k.filt('bandpass', 620, 3.0)).connect(w).connect(out);
+    for (let i = 0; i < 8; i++) k.burst(out, 'white', t + i * 0.25 + R() * 0.02, 'bandpass', 1500 + R() * 600, 2, 0.08, 0.01, R);
+  } },
   tram_bell: { dur: 1.6, build(k, out, t, R) {
     for (const t0 of [t, t + 0.34]) {
       METAL.slice(0, 5).forEach((r, i) => k.ping(out, t0, 1046 * r, 0.32 / (1 + i * 0.8), 0.55 / (1 + i * 0.5), 0.0015));
@@ -3287,6 +3321,8 @@ export class Audio {
     if (s.freight) this._freights(dt, t, s, L);
     // --- the ferries: their horns carry across the Sound, the rumble aboard ---
     if (s.ferry) this._ferries(dt, t, s, L);
+    // --- the Queen Anne Counterbalance's streetcars: wheels, and the cable ---
+    if (s.streetcars) this._streetcars(dt, t, s, L);
 
     // --- the police helicopter -----------------------------------------------------
     const h = s.heli;
@@ -3407,6 +3443,30 @@ export class Audio {
    */
   /** The nearer ferry's horn (heard for kilometres) and the rumble of the
    *  nearest one, loudest aboard. */
+  /** The nearest streetcar (yours, if you are aboard one): its wheels on
+   *  the rails, and under one on the counterbalance the cable's rumble. Its
+   *  motor is the `traction` engine voice (main.js withTrains). */
+  _streetcars(dt, t, s, L) {
+    const c = this.ctx;
+    if (!this.scPan) {
+      this.scPan = c.createStereoPanner ? c.createStereoPanner() : c.createGain();
+      this.scPan.connect(this.worldBus);   // (quiet behind the pause, like every world voice)
+    }
+    if (!this.scRoll && this.bank && this.bank.rail_roll) this.scRoll = new Tap(c, this.bank.rail_roll[0], this.scPan);
+    if (!this.scHum && this.bank && this.bank.cb_hum) this.scHum = new Tap(c, this.bank.cb_hum[0], this.scPan);
+    let best = null, bd = Infinity;
+    for (const car of s.streetcars) {
+      const d = car === s.vehicle ? 0 : Math.hypot(car.cx - L.x, car.cz - L.z);
+      if (d < bd) { bd = d; best = car; }
+    }
+    const sp = best && bd < 260 ? spatial(L, best.cx, best.cy + 0.5, best.cz, 0, 0, 12, 260) : null;
+    const v = best ? Math.abs(best.u) : 0;
+    if (sp && this.scPan.pan) setp(this.scPan.pan, best === s.vehicle ? 0 : sp.pan, t, 0.1);
+    const g = sp ? (best === s.vehicle ? 0.8 : Math.min(1, sp.gain)) : 0;
+    if (this.scRoll) this.scRoll.set(g * clamp(v / 5, 0, 1) * 0.55, t, 0.15, clamp(v / 12, 0.25, 1.6));
+    if (this.scHum) this.scHum.set(best && best.hitch ? g * (0.25 + 0.75 * clamp(v / 3, 0, 1)) * 0.6 : 0, t, 0.3, 0.8 + 0.3 * clamp(v / 3.6, 0, 1));
+  }
+
   _ferries(dt, t, s, L) {
     const c = this.ctx;
     if (!this.fyHorn) {

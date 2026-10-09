@@ -477,3 +477,350 @@ minutes of service (its own stations served, never overlapping a 1 Line
 train); a merge forced at the junction (one holds, both get through, never
 together); a run driven Mercer Island -> South Bellevue, stopped on the
 mark.
+
+## The Queen Anne Counterbalance: Route 26
+
+**Streetcars run Route 26, "West Queen Anne", and you can drive one up the
+counterbalance** (`src/counterbalance.js`). From 1901 to 11 August 1940
+Queen Anne Avenue N between Roy St and Lee St was too steep for a streetcar
+on its own: 13.8-18.7 % [EN], "up to 19 percent" [K]. So every car was
+hooked to a 16-ton counterweight that ran in a tunnel under the street. A car
+going up was pulled by the weight coming down, and a car going down hauled it
+back up. The tunnels, and reportedly both weights, are still under the
+street [K][QA2][W]. The hill is still called the Counterbalance. Frasier said
+he lived on it.
+
+**Sources.** Each figure in the header of counterbalance.js names one of these:
+- [EN] *Engineering News*, 9 Mar 1911, "A Cable Counterweight System for a Steep Grade on an Electric Railway at Seattle" (archive.org `sim_enr_1911-03-09_65_10`). It gives the mechanism, the 2,600 ft system, the grades, the 13.7 % tunnels, the 16 t weights, the 12 min headway per track and five stops each way.
+- [K] HistoryLink 20746 (Kershner).
+- [D] HistoryLink 3027 (Dorpat): about 8 mph, cars 311-320.
+- [F] HistoryLink 20980: the last run, and the dogleg at Galer.
+- [QA1] [QA2] Queen Anne Historical Society: "Counterbalance & Streetcars", "Men in Little Boxes".
+- [PNR] Pacific Northwest Railroad Archive: car 315 at 6th Ave W & McGraw, and the Lee St photograph, July 1940.
+- [T] The Seattle Municipal Street Railway route list of 1 Apr 1931, as transcribed at tundria.com.
+- [W] Wikipedia, "Queen Anne Counterbalance".
+
+**How it worked** [EN]. Each of the two tracks had its own endless cable over
+two 10 ft sheaves. The cable's upper run lay in a slotted conduit between the
+rails, and its lower run pulled the weight: cast-iron slabs on two coupled
+trucks, on a 30 in track in a 5 x 4 ft tunnel at a uniform 13.7 %. At each end
+of the hill a car stopped, and the conductor dropped a forked "finger" on its
+truck into a notched steel "plow" clamped to the cable. Attendants in little
+boxes on the kerb at Roy and at Lee hooked cars on and off [K][QA2]. A track's
+weight could only serve a car at the end where the weight was waiting. So
+uphill cars took whichever track's weight was at the top, and the crossovers
+at Lee in the 1940 photographs are where they changed sides [PNR][QA2].
+
+**Where the cable ended: the sources disagree, and the game uses Lee.**
+- *Comstock St:* HistoryLink [K] calls it "five steep blocks between Roy
+  Street and Comstock Street", and Wikipedia's ~1,500 ft runs Roy-Comstock.
+  The Queen Anne Historical Society gives Mercer-Comstock. That is where the
+  steep street ends.
+- *Lee St:* PNR's July 1940 photograph (WWASMR-26-011) is captioned "Queen
+  Anne Avenue at Lee Street ... counterbalance cable pick-up". [QA2] has
+  uphill cars switching back at Lee, and the 1937 "2,150 foot hill" fits
+  Roy-Lee (Roy-Comstock is ~1,820 ft).
+
+The steep blocks stop at Comstock and the cable's pick-up was a block on,
+at Lee, which is why the game hooks on and off there.
+The weight is 16 t [EN]; HistoryLink describes it after about 1907 as two
+8 t cars, for the heavier double-truck streetcars. That is the same total,
+so the physics uses 16 t.
+
+### The route
+
+The route is best attested in 1931 [T][PNR][F]. It ran north on 1st Ave from
+Pioneer Square, onto Queen Anne Ave N at Denny Way, up the counterbalance from
+Roy St to Lee St, west on W Galer St (the dogleg), and north on 6th Ave W to
+W McGraw St, where a wye turned the cars.
+
+Stops, northbound:
+1. Pioneer Square (1st Ave & Cherry St)
+2. Madison St
+3. Pike Place Market
+4. Bell St
+5. Denny Way
+6. Mercer St
+7. **Roy St** (hook on)
+8. Aloha St
+9. Highland Dr, for Kerry Park
+10. **Lee St** (unhook)
+11. 3rd Ave W
+12. Blaine St
+13. McGraw St
+
+The line is 5.4 km each way. The counterbalance, mark to mark, is 598 m and
+rises 69.5 m. It is steepest at 18.6 %, against a published 18.7 %. Three
+changes for today's streets:
+- **The line ends at 1st Ave & Cherry St.** In 1931 it ran three blocks on, to
+  S King St, but south of Cherry today's 1st Ave S is a divided road.
+- **Northbound cars run up 1st Ave N and along Roy St.** Lower Queen Anne Ave N
+  is one-way southbound now, so only the southbound cars use it.
+- **Both ends are stubs.** The double-ended cars change ends there, where the
+  real ones used a wye at McGraw.
+
+Other 1931 lines also reached the top of the hill without the counterbalance
+(24, 25 East Queen Anne, 7 Kinnear Park). They are not built.
+
+### How it is built
+
+- **The route is laid on the road graph at boot, from way points.** `LEGS`
+  lists the intersections and the street each leg runs on. `routeNodes`
+  runs Dijkstra over citygen's edges: other streets cost 25x, and one-way
+  streets can only be taken their own way. **OSM can split one street by a
+  metre where two ways meet without sharing a node** (1st Ave N at Thomas St),
+  so a leg's own street's nodes within 3 m are joined. Without that the whole
+  line failed to route. Each direction is its own track (`out` runs north,
+  `in` runs back). Corners are rounded (up to 20 m), and each track lies 1.7 m
+  right of the centreline. **On a curve the tracks are laid up to 2 m wider
+  apart**: a 13.4 m car's ends swing ~1 m out on a 20 m curve, and two cars
+  meeting at the Galer / 6th Ave W corner locked together until they were.
+- **The rails follow `city.groundAt`**, seeded from the sample before and
+  lightly smoothed (never below the road). The probe holds the rail head 0 to
+  0.11 m over the drawn road. Each track also keeps the heights `2 x lat` to
+  its left (`YL`), where a car on the other hill track runs.
+- **The hill: two tracks, two weights, not one-way.** The `E` weight is under
+  the out track's rails and the `W` weight under the in track's.
+  `free(P, car)` asks whether weight P is at this car's end (top for a car
+  going up), whether nobody holds it, and whether nobody is on that physical
+  track's hill. An AI car takes its own side if it can, else the other. With
+  neither free it waits at a signal short of the crossover; the probe's
+  longest wait in 20 min of service was 45 s. A car on the other side is
+  shifted `2 x lat` to its left through the crossovers below Roy and above Lee
+  (`shiftAt`, `railPoint`), and those crossovers are drawn. **While a car is
+  hooked on, its weight's position is its own mirrored** (`f = 1 - up`).
+  Nobody can lose a weight, because the plow cannot pass a sheave: run off the
+  end hooked and you are stopped there and unhooked. A weight stranded at the
+  wrong end (you left a car on the hill) is wound back by the attendants
+  (`winch`) after 20-45 s of waiting.
+- **The physics is what made the counterbalance necessary.** The car is
+  20 t, its motor 1.3 m/s2 at low speed, and adhesion 0.16 (sanded). So a car
+  alone climbs ~12 % and holds ~17 % on the brake, which is enough for 1st Ave
+  but not for the hill. Unhooked on the counterbalance, POWER spins the wheels
+  and the car goes nowhere, and the brakes slide it back down the steepest
+  block. Hooked on, the weight adds 16 t x g x 13.7 % toward the top. That is
+  the tunnel's uniform grade, not the street's, so the hill feels different
+  block by block. A small governor holds a hooked car under ~11 mph. An AI car
+  you abandon on the hill unhooked is hooked back on (`_ghost`), or it would
+  slide down forever. The 1919 runaway [K] is a toast.
+- **The cars** (`buildCarGeometry`) are modelled on car 315 in July 1940
+  [PNR]:
+  - double-truck, enclosed and double-ended;
+  - a railroad clerestory roof;
+  - ten windows a side with guard bars;
+  - folding doors, a dash headlight, a "WEST QUEEN ANNE 26" dash sign, the
+    "26" route box and the destination glass;
+  - an ad card on the dash (the photograph's sale at the Bon Marche);
+  - the car's number on each side.
+
+  Lettering is a 3 x 5 pixel font in vertex colours. **The livery is
+  unsourced.** The photographs are black and white (light body, dark roof and
+  trucks), so the cream and dark green is a period guess, and the guide says
+  so. Both ends are the same model turned 180 degrees, so changing ends only
+  turns the car. The raised pole is always at the back, and it reaches the
+  wire at 5.5 m. Each car is two draws: body, plus trim (glass, brass and
+  nickel through the vehicles' glass shader). Beyond 110 m (70 m on a phone)
+  the trim is hidden, so a car further off is one draw. 3,370 triangles.
+- **The line's geometry** is one vertex-coloured mesh per 1200 m cell. The
+  grid is shifted (`CX0`, `CZ0`) so the whole counterbalance is one cell, and
+  each cell is drawn within 560 m (360 m on a phone). A cell holds:
+  - the rails, each with a groove, set in a concrete band;
+  - the slot and its Z-bars, and a plate every 22 m, on the counterbalance;
+  - the crossovers;
+  - kerbside poles with bracket arms, and the trolley wire;
+  - a white-banded "CAR STOP" post at every stop;
+  - the attendants' green boxes at Roy and Lee;
+  - two plaques with pixel lettering.
+
+  The material has a polygon offset, so ground-hugging strips win against
+  the road. Trees, furniture and parked cars keep off the rails
+  (`keepClear` through `city.extraClear`).
+
+### Driving it, riding it, traffic
+
+- **Board** like Link: on foot, ENTER beside a car that is stopped or rolling
+  under 2.6 m/s (`boardable`). At a stop with no car in, ENTER calls the next
+  one: it is moved up to ~150 m out, if that would not skip the hill or
+  overrun another car, and it waits for you.
+- **Drive.** You are the motorman: POWER, BRAKE, and BELL on the horn button
+  (main.js relabels it, and back to HORN in anything else). Holding BRAKE at
+  a stand reverses. At a stub end, POWER at a stand changes ends.
+  - Stopping on a stop's mark pays $15 within 1 m, $8 within 3 m.
+  - At Roy (going up) or Lee (going down), stop on the mark and stand: the
+    attendant hooks you on (the clunk, and a toast the first time). Unhook the
+    same way at the far end.
+  - The readout fits a phone's top pill, in the speedometer's km/h (e.g.
+    `312 · 9/13 km/h · hook on at Roy: 2.8 m`). It shows the next stop, the
+    approach to the hook, the weight's place in its tunnel while you are on
+    the cable, and why you are going nowhere when unhooked on the hill.
+    Toasts stay under ~60 characters, and repeated ones are rate-limited
+    (`sayOnce`).
+  - **At a stand the brake holds by itself** until you touch POWER, so a car
+    you board on the 11 % at Roy does not roll. Since the brake holds by
+    itself, **BRAKE held for 1.2 s means "back up", on any grade**, with the
+    full motor. You must always be able to get out of the way: at Lee's -4 %
+    the old 0.35 m/s2 reverse could not back a car up hill at all. A crew's
+    car right behind you backs out of your way when you do. (Before the
+    auto-hold, a held BRAKE at the Roy mark engaged reverse after 0.6 s and
+    slid the car off the mark.)
+  - **The hook window and the sheave are the same `CB.hookTol` (1 m).** The
+    window was 3 m and the sheave 1.2 m, so a car hooked 2 m short was jumped
+    to the mark and unhooked in the same breath. A car never re-hooks where a
+    sheave has just let it go until it has moved 3 m.
+  - **The stop block: nobody goes down the counterbalance without a weight.**
+    An unhooked car on the descending track is held 0.75 m past the Lee
+    mark, inside the 1 m hook window.
+    Driving down unhooked with no weight at the bottom used to run away into
+    the climbing car.
+- **THE SIGNAL: you wait at the gate like the crew.** Short of each
+  crossover is a gate (`tr.gate`, moved back off any curve: the out track
+  turns off Roy St right there, and a car waiting on the corner fouled the
+  other track). Your car is given a cable on the way to it, if one is free.
+  If none is, the signal holds you at the gate, and the toast says why:
+  "no weight at the top yet", "the cable is in use", or "a car is coming to
+  this mark on the cable — back up". A checker found the jam this prevents.
+  A player's car went down to the Lee mark with no cable while a crew's car
+  climbed to it hooked on the same cable. Each waited for the other, and the
+  player could not back up the -4 %.
+- **Cars see each other by where they are, not by track** (`sameRails`). On
+  the hill a car of the other direction can stand on your rails, because it
+  took the other cable. The car-ahead rule and the collision in `step` used
+  to compare `o.track === tr`, so a car on the other track's key was
+  invisible there. A checker reproduced it: a player's runaway met the
+  climbing car, he bailed out, and both cars stood nose to nose for good.
+  Every descending car queued behind them, and the line was dead until a
+  reload. Now:
+  - **Nose to nose, one gives way** (`yields`): the car on the cable keeps the
+    hill, then the car on its own rails, then you, then the older car.
+  - The car that yields **backs off** at 3 m/s (`_backOff`, kinematic: the
+    crew), to its own rails short of the crossover.
+  - **Nose to nose is checked in a dwell too.** A car dwelling at a mark used
+    to wait for ever.
+  - **A crew's car on the hill with no cable of its own** (you left it
+    there) takes a free one if it can. Otherwise it backs off to the gate,
+    and a car of the crew behind it backs off further, so two cars that
+    cannot pass clear the hill in order. A car past the gate with no cable
+    backs to the gate too, and a car waiting there counts toward the
+    attendants' winch.
+  - **"In the way" is asked from both cars' sides** (`inWay`). A car
+    crossing over is off one car's path while its body is still across the
+    other's.
+  - **The bodies decide the rules**:
+    - A car going the same way is in the way if its body reaches yours
+      (2.84 m).
+    - One coming the other way is in the way only on your very rails
+      (1.4 m), except at the stub ends, where the two tracks are one.
+  - **A car changing sides has the hill to itself** (`free`). Cars on their
+    own cables share the hill: going opposite ways on their own rails they
+    never meet, and going the same way they queue. A car on the other cable,
+    though, crosses everybody's rails twice, in the scissors crossovers below
+    Roy and above Lee, and every rule that tried to share the hill with it
+    left a jam for the fuzz probe to find. The scissors also have a lock of
+    their own (`takeX`, `sys.xlock`), now a second line of defence.
+  - **A cable given on the way to the gate is kept** until the car is 100 m
+    back from it. It used to be let go 10 m short of the crossover, so your
+    car was given its cable and lost it every frame at the gate.
+  - **A cable goes to the front of the queue** (`queuedBehind`). Two cars
+    behind a cable-less front car once held both cables while the front car
+    waited for ever. For the same reason, a car of the same track behind the
+    one asking, not hooked on, does not stand in its way, even if that car
+    was given the cable first.
+  - **The winch winds only the waiting car's own weight** (`winch(need,
+    car)`), never one another car holds or has been given. Two cars waiting
+    at opposite ends once wound one weight back and forth at each other
+    every 45 s. A car standing anywhere on the approach or the hill for want
+    of a cable counts toward it. A car waiting at its gate is waiting, not
+    stuck, and is never towed.
+  - **A stranded car past the mark goes on** with the crew's help
+    (`_ghost`). Backing it off ran it into whoever followed it up or down.
+  - **Everyone waits at the gate**, for a cable or for the scissors. The
+    stretch between the gate and the crossover is the Roy corner, where a
+    standing car fouls the other track. A car found past the gate with
+    nothing to go on backs to it.
+  - **A body test before any move** (`boxPen`). In service, and backing
+    off, a car does not make a move that brings its body closer to another
+    car's, whatever the rails say: yours parked across a corner, one
+    swinging through a crossover. It looks as far ahead as the car needs to
+    stop. Two cars blocked this way for 8 s settle it as nose to nose does.
+  - **At the end of the line with no stop ahead** (you stopped on the
+    terminus and got off rolling) a car changes ends anyway.
+  - **A car standing in service for two minutes is towed** (`tow`), but
+    only when both it and the spot it is towed to are out of sight: farther
+    than a car is drawn from you and from the camera. If the cause is
+    another of the crew's cars standing in its way, that car is towed
+    instead. The rules above should never leave a car stuck; this is the
+    floor under them.
+  - `cbprobe --only robust` covers it:
+    - two cars nose to nose on the W rails;
+    - a car abandoned unhooked mid-hill;
+    - POWER downhill at Lee with no weight;
+    - BRAKE at the Roy mark;
+    - hooking on 0.8 m short;
+    - ENTER at a stop's post;
+    - eight minutes of service afterwards, in which every car must make stops.
+  - **`cbprobe --only fuzz`** stops finding jams one at a time:
+    - Each of `CB_FUZZ_SEEDS` seeds (default 40; `CB_FUZZ_FROM`) puts every
+      car in a random state: each mark in both directions, each crossover,
+      mid-hill hooked or not, each stop, each stub end, cables assigned
+      (sometimes illegally), the weights anywhere.
+    - You are either away; or you board a car, press random POWER / BRAKE /
+      reverse and leave it, standing beside it; or you stay aboard.
+    - It then runs `CB_FUZZ_MIN` (15) simulated minutes.
+    - The invariants: no two bodies ever overlap; with you out of it, every
+      crew car makes a stop or a hill trip; staying aboard, you can always
+      move your car one way or the other.
+    - Each failure prints where every car stood longest and what it stood
+      for. It found the corner gate, the scissors, the merge, the terminus,
+      the one-sided "in the way" test, the boxed-in reverse, the exclusive
+      hill, the winch war, the backward roll and a player standing on the
+      rails.
+- **Board from the stop post.** The post stands on the kerb, 7-11 m from the
+  rails, so ENTER there also boards the car standing at that stop.
+- **People crossing at a corner** (peds.js, traffic's `crossXZ`) stop a car
+  in service, as they stop traffic. **You, standing on the rails**, get 8 s
+  of ringing; then the car edges on at a walk and nudges you aside. A car
+  that waits for ever for someone who never moves is a jam too.
+- **Ride.** The RIDE pill (or V) hands the car to its crew, and DRIVE takes it
+  back. While riding you are drawn out on the front entrance's step, upright
+  whatever the grade, as on a cable car's running board. On the counterbalance the riding camera (`camRig`) moves to the
+  downhill platform and looks down Queen Anne Ave at the city. It yields for 3
+  s whenever you drag the view.
+- **Getting off** is allowed anywhere under 4.2 m/s, onto the street on the
+  door side. Every way out must leave nothing behind: the door, WASTED and its
+  respawn, a warp, the pause menu's respawn. `update` notices a car whose
+  driver is no longer in it and runs `onLeave`, which puts the car back in
+  service and clears the readout and the button. The probe checks the door,
+  WASTED and the warp.
+- **Traffic.** traffic.js asks `streetcars.blocks` along its path, the way it
+  asks Link's: an AI car queues behind a streetcar at its stop, and waits
+  for one crossing. A car in service brakes and rings for you, your car, or
+  AI traffic on its rails ahead (`_guard`). The exception is a traffic car
+  standing nose to nose with it: that car is waiting for the streetcar, and
+  if the streetcar waited too, neither would ever move. Anything inside a
+  car's box is pushed out the short way, and you get hurt if it is moving.
+- **Sound** (audio.js; the wheels' and the cable's loops on the world bus, so
+  they go quiet behind the pause):
+  - `cable_bell`: one hard strike of a bronze gong. A held BELL repeats it
+    into the cable-car rhythm, and AI cars ring twice leaving a stop and
+    three times at anything in the way.
+  - `cb_clunk`: the finger dropping into the plow.
+  - `cb_hum`: the cable in its conduit, under a hooked car.
+  - The nearest car's wheels are the `rail_roll` loop. Its motor is the
+    `traction` engine voice (main.js `withTrains`).
+- **Maps.** Both tracks are drawn in maroon, bolder on the counterbalance,
+  with the cars as cream dots. Each stop has a streetcar icon; the termini and
+  the two hitch stops are labelled.
+
+`node tools/cbprobe.mjs [--phone] [--only ...]` checks the line, twenty
+minutes of service, the drive up the hill, the unhooked slip, riding, an AI
+car behind a car at its stop, the exits, the draws, and the shots.
+Measured on the desktop profile:
+
+| Where | Extra draws | Extra triangles | What is drawn |
+|---|---|---|---|
+| From the spawn (330 m from 1st Ave N) | +2 | +21k | two cells |
+| The foot of the hill, a car in view | +4 | +39k | two cells, a car's body and trim |
+| 1st Ave at Pike, a car at its stop | +4 | +25k | |
+
+Away from Queen Anne and 1st Ave the line costs nothing: no cell and no car
+is in range. LOOK at the shots in `tools/data/cbshots/`.
