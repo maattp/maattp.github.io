@@ -222,7 +222,8 @@ export class Player {
         // door) before any car: see monorail.js boardable.
         const m = (this.monorail && this.monorail.boardable(this.x, this.y, this.z))
           || (this.link && this.link.boardable(this.x, this.y, this.z))
-          || (this.freight && this.freight.boardable(this.x, this.y, this.z));
+          || (this.freight && this.freight.boardable(this.x, this.y, this.z))
+          || (this.counterbal && this.counterbal.boardable(this.x, this.y, this.z));
         let v = m || traffic.nearestEnterable(this.x, this.z, 5.0);
         // (nearestEnterable is flat: under a canopy only a vehicle at about
         // your height counts, or free fall over a road car would seat you in it
@@ -231,6 +232,7 @@ export class Player {
         if (v) this.enterVehicle(v);
         else if (this.link && this.link.onWait(this.x, this.z)) { /* told when the next trains are due */ }
         else if (this.freight && this.freight.onWait(this.x, this.z)) { /* a freight is called into the yard */ }
+        else if (this.counterbal && this.counterbal.onWait(this.x, this.z)) { /* a streetcar is called to the stop */ }
         else if (this.monorail && this.game.onMonorailWait) this.game.onMonorailWait(this.x, this.y, this.z);
       } else this.exitVehicle();
     }
@@ -844,6 +846,12 @@ export class Player {
         dist = 21 + clamp(sp * 0.18, 0, 5);
         height = 8.6;
         lookH = 3.4;
+      } else if (v.spec.streetcar) {
+        // behind and over a 13 m streetcar, close enough to see the hill
+        // tilt it: the counterbalance is the view
+        dist = 11.5 + clamp(sp * 0.25, 0, 2.5);
+        height = 4.6;
+        lookH = 2.4;
       } else if (v.spec.link) {
         // over the lead car's roof, looking down the line: 118 m of train
         // behind the cab

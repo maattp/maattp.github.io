@@ -1775,6 +1775,14 @@ export class TrafficSystem {
         if (fr.blocks(v.x + f.x * d, v.z + f.z * d, v.y)) { stopAt = Math.min(stopAt, d - 4); break; }
       }
     }
+    // A streetcar standing at its stop, or crossing ahead: queue behind it
+    // (counterbalance.js)
+    const sc = this.streetcars;
+    if (sc && sc.ok && sc.near(v.x, v.z)) {
+      for (let d = 3; d <= look; d += 3) {
+        if (sc.blocks(v.x + f.x * d, v.z + f.z * d, v.y)) { stopAt = Math.min(stopAt, d - 4); break; }
+      }
+    }
     // YOU, ON FOOT. It used to look 10 m ahead, which at 15 m/s is well
     // inside its stopping distance, and only at where you were: a car saw you
     // step off the kerb once it was too late to stop. Now it looks as far as

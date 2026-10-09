@@ -13,7 +13,7 @@ const SCALE = MAP_PX / (G.MAP_HALF * 2);
  */
 function placeIcon(ctx, kind, x, y, r) {
   ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f'
-    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : kind === 'coffee' ? '#6a4a32' : kind === 'hydro' ? '#d8242c' : kind === 'link' ? '#3a9a44' : kind === 'link2' ? '#0082ca' : kind === 'freight' ? '#b8501c' : kind === 'ferry' ? '#0b6e4f' : kind === 'bike' ? '#57b83a' : kind === 'pickle' ? '#c8a21a'
+    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : kind === 'coffee' ? '#6a4a32' : kind === 'hydro' ? '#d8242c' : kind === 'link' ? '#3a9a44' : kind === 'link2' ? '#0082ca' : kind === 'freight' ? '#b8501c' : kind === 'streetcar' ? '#8c1f2b' : kind === 'ferry' ? '#0b6e4f' : kind === 'bike' ? '#57b83a' : kind === 'pickle' ? '#c8a21a'
     : kind === 'gun' ? '#2f6fb8' : kind === 'health' ? '#2e9a56' : kind === 'clinic' ? '#d8343a' : kind === 'wedge' ? '#7f8b96' : kind === 'tank' ? '#5f6b3a' : kind === 'fire' ? '#c4141c' : '#e0782e';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = r * 0.22;
@@ -130,6 +130,17 @@ function placeIcon(ctx, kind, x, y, r) {
     ctx.fillRect(x - r * 0.22, y + r * 0.2, r * 0.1, r * 0.08); ctx.fillRect(x + r * 0.12, y + r * 0.2, r * 0.1, r * 0.08);
     ctx.strokeStyle = '#ffffff'; ctx.lineWidth = r * 0.1;
     ctx.beginPath(); ctx.moveTo(x - r * 0.2, y - r * 0.3); ctx.lineTo(x + r * 0.1, y - r * 0.55); ctx.lineTo(x - r * 0.1, y - r * 0.62); ctx.stroke();
+  } else if (kind === 'streetcar') {
+    // a 1930s streetcar side-on: the body, its windows, the trolley pole up
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x - r * 0.56, y - r * 0.22, r * 1.12, r * 0.48);
+    ctx.fillRect(x - r * 0.4, y - r * 0.32, r * 0.8, r * 0.12);
+    ctx.fillStyle = '#8c1f2b';
+    for (let i = 0; i < 4; i++) ctx.fillRect(x - r * 0.44 + i * r * 0.24, y - r * 0.14, r * 0.15, r * 0.16);
+    ctx.fillStyle = '#ffffff';
+    for (const sx of [-0.32, 0.32]) { ctx.beginPath(); ctx.arc(x + sx * r, y + r * 0.32, r * 0.09, 0, Math.PI * 2); ctx.fill(); }
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = r * 0.08;
+    ctx.beginPath(); ctx.moveTo(x - r * 0.1, y - r * 0.32); ctx.lineTo(x - r * 0.5, y - r * 0.68); ctx.stroke();
   } else if (kind === 'ferry') {
     // a ferry side-on: the hull, the cabin, the stacks
     ctx.fillStyle = '#ffffff';
@@ -507,6 +518,45 @@ export class Hud {
     ctx.stroke();
   }
 
+  /** Route 26, the Queen Anne Counterbalance: both tracks as one line in
+   *  the streetcar's maroon, its cable section bolder, and the cars on it. */
+  drawStreetcar(ctx, to, w, carR, near = null) {
+    const L = this.counterbal;
+    if (!L || !L.ok) return;
+    if (!this._scPts) {
+      this._scPts = L.keys.map((k) => {
+        const tr = L.tracks[k], n = Math.floor(tr.len / 10) + 1, P = new Float32Array(n * 2);
+        for (let i = 0; i < n; i++) { P[i * 2] = tr.x(i * 10); P[i * 2 + 1] = tr.z(i * 10); }
+        return { P, h1: Math.floor(tr.h1 / 10), h2: Math.ceil(tr.h2 / 10) };
+      });
+    }
+    const r2 = near ? near.r * near.r : Infinity;
+    ctx.lineJoin = 'round';
+    for (const { P, h1, h2 } of this._scPts) {
+      for (const [i0, i1, ww] of [[0, P.length / 2, w], [h1, h2 + 1, w * 1.9]]) {
+        ctx.strokeStyle = '#8c1f2b';
+        ctx.lineWidth = ww;
+        ctx.beginPath();
+        let pen = false;
+        for (let i = i0; i < Math.min(i1, P.length / 2); i++) {
+          const x = P[i * 2], z = P[i * 2 + 1];
+          if (near && (x - near.x) ** 2 + (z - near.z) ** 2 > r2) { pen = false; continue; }
+          const [cx, cy] = to(x, z);
+          if (pen) ctx.lineTo(cx, cy); else { ctx.moveTo(cx, cy); pen = true; }
+        }
+        ctx.stroke();
+      }
+    }
+    if (carR > 0) {
+      for (const c of L.cars) {
+        if (near && (c.cx - near.x) ** 2 + (c.cz - near.z) ** 2 > r2) continue;
+        const [cx, cy] = to(c.cx, c.cz);
+        ctx.fillStyle = '#f2e6c4'; ctx.strokeStyle = '#8c1f2b'; ctx.lineWidth = carR * 0.4;
+        ctx.beginPath(); ctx.arc(cx, cy, carR, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      }
+    }
+  }
+
   /** The monorail's two beams as one teal line, through `to(x, z)` -> canvas. */
   drawMonorail(ctx, to, w) {
     const tr = this.monorail.tracks.west;
@@ -670,6 +720,7 @@ export class Hud {
     if (this.ferry) this.drawFerry(ctx, toMap, 2.0 / zoom, 5 / zoom);
     if (this.freight) this.drawFreight(ctx, toMap, 2.2 / zoom, { x: p.x, z: p.z, r: S / (zoom * SCALE) + 60 });
     if (this.link) this.drawLink(ctx, toMap, 2.6 / zoom, { x: p.x, z: p.z, r: S / (zoom * SCALE) + 60 });
+    if (this.counterbal) this.drawStreetcar(ctx, toMap, 2.0 / zoom, 2.6 / zoom, { x: p.x, z: p.z, r: S / (zoom * SCALE) + 60 });
     if (this.monorail) this.drawMonorail(ctx, toMap, 2.2 / zoom);
     // Marked places (the seaplane dock, the quads), upright whatever the
     // dial's rotation, so the anchor reads as an anchor.
@@ -838,6 +889,7 @@ export class Hud {
     if (this.ferry) this.drawFerry(ctx, toC, Math.max(1.4, size * 0.0018), size * 0.006);
     if (this.freight) this.drawFreight(ctx, toC, Math.max(1.5, size * 0.002));
     if (this.link) this.drawLink(ctx, toC, Math.max(1.8, size * 0.0026));
+    if (this.counterbal) this.drawStreetcar(ctx, toC, Math.max(1.5, size * 0.002), Math.max(2, size * 0.0035));
     if (this.monorail) this.drawMonorail(ctx, toC, Math.max(1.5, size * 0.0022));
     for (const pl of (this.places || [])) {
       if (pl.off) continue;   // a pickup that has been taken
@@ -846,7 +898,7 @@ export class Hud {
       // named, quads too: an unlabelled orange dot was a quad nobody found.
       // (Pistols and first aid are not: thirty labels would bury the map, and
       // the icons say what they are.)
-      if (pl.kind === 'clinic' || pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle' || pl.kind === 'kayak' || pl.kind === 'wheel' || pl.kind === 'golf' || pl.kind === 'arcade' || pl.kind === 'pinball' || pl.kind === 'hockey' || pl.kind === 'tower' || pl.kind === 'duck' || pl.kind === 'coffee' || pl.kind === 'hydro' || pl.kind === 'link' || pl.kind === 'link2' || pl.kind === 'freight' || pl.kind === 'ferry' || pl.kind === 'bike' || pl.kind === 'pickle' || pl.kind === 'wedge' || pl.kind === 'tank' || pl.kind === 'fire') {
+      if (pl.kind === 'clinic' || pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle' || pl.kind === 'kayak' || pl.kind === 'wheel' || pl.kind === 'golf' || pl.kind === 'arcade' || pl.kind === 'pinball' || pl.kind === 'hockey' || pl.kind === 'tower' || pl.kind === 'duck' || pl.kind === 'coffee' || pl.kind === 'hydro' || pl.kind === 'link' || pl.kind === 'link2' || pl.kind === 'freight' || pl.kind === 'ferry' || pl.kind === 'bike' || pl.kind === 'pickle' || pl.kind === 'wedge' || pl.kind === 'tank' || pl.kind === 'fire' || (pl.kind === 'streetcar' && pl.label)) {
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.fillText(pl.name, qx, qz - size * 0.016);
       }

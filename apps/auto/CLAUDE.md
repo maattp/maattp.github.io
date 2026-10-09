@@ -33,8 +33,8 @@ When code or an old note cites `CLAUDE.md "Some Heading"`, find it with
   Sections: "Sound".
 - **`guide/on-foot.md`** (29 KB) -- swimming, fighting, WASTED/siren/guns, stunt jumps, the crowd (living streets).
   Sections: "Swimming (v154)"; "Fighting on foot"; "Stunt jumps"; "WASTED, the siren, and finding a gun"; "The crowd: living streets".
-- **`guide/transit.md`** (31 KB) -- Monorail, Link light rail, BNSF freight, the Bainbridge ferry.
-  Sections: "The Monorail"; "Freight: BNSF's main line (v160)"; "The Seattle-Bainbridge ferry (v164)"; "Link light rail (v146)".
+- **`guide/transit.md`** (52 KB) -- Monorail, Link light rail, BNSF freight, the Bainbridge ferry, the Queen Anne Counterbalance streetcar.
+  Sections: "The Monorail"; "Freight: BNSF's main line (v160)"; "The Seattle-Bainbridge ferry (v164)"; "Link light rail (v146)"; "The Queen Anne Counterbalance: Route 26".
 - **`guide/activities.md`** (36 KB) -- fishing, fish toss, Great Wheel, golf, arcade, pinball, hockey, ATC, Duck Tour, coffee, Seafair, hoops, Needle, Tech Tour, taxi fares.
   Sections: "The wallet and the Seattle Passport (v194)"; "Fishing off the piers (an Easter egg)"; "The flying fish at Pike Place (v129)"; "The Great Wheel turns, and you can ride it (v131)"; "Golf at Interbay (v132)"; "The Belltown arcade (v133)"; "The pinball museum (v136)"; "Hockey night at Climate Pledge Arena (v137)"; "Boeing Field's control tower and FINAL APPROACH (v138)"; "The Duck Tour (v139)"; "First Cup Coffee at Pike Place (v140)"; "Seafair: unlimited hydroplanes on Lake Washington (v141)"; "Basketball in the parks"; "Up the Space Needle"; "The Tech Tour"; "Taxi fares".
 - **`guide/police-fire.md`** (38 KB) -- wanted levels, police missions, the tank, fire apparatus and calls.
@@ -96,6 +96,7 @@ src/monorail.js             the Seattle Center Monorail: beams, stations, both t
 src/link.js                 Link light rail's 1 Line: tracks, guideway, bores, stations, the trains
 src/freight.js              BNSF's main line: the bed and its carve, crossings and gates, the freights, driving
 src/railcars.js             freight rolling stock: BNSF / CN locomotives, hoppers, coal, tank cars, boxcars, lettering
+src/counterbalance.js       Route 26, the Queen Anne Counterbalance: rails, slot and wire on today's streets, the 1902 cars, the counterweights, driving and riding
 src/ferry.js                WSF's Seattle-Bainbridge ferries: the boats, their decks as a moving surface, the terminals' roads
 src/bikes.js                bike paths drawn and ridden, AI cyclists, bike-share docks
 src/piers.js                every other pier OSM maps, as a deck on piles; decks under sheds in the sea
@@ -135,6 +136,7 @@ tools/render_map.py         draws the whole graph top-down, for eyeballing
 tools/taxicheck.mjs         the taxi fares job end to end, and every way it ends
 tools/taxihitch.mjs         the worst single call of finding a fare at 8x CPU throttle (before/after for a search change)
 tools/verify.mjs            headless CDP boot + assertions + screenshots
+tools/cbprobe.mjs           the Queen Anne Counterbalance: route, service, the drive up the hill, traffic, exits, shots, draws
 tools/jank.mjs, perfguard.mjs, beauty.mjs, survey.mjs, gait.mjs, flycam.mjs,
   crowdshots.mjs, charshots.mjs, vehshots.mjs, landmarkshots.mjs, bldshots.mjs,
   lotshots.mjs, trafficcheck.mjs ...   see "Verifying"

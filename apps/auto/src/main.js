@@ -12,6 +12,7 @@ import { TreeSystem } from './trees.js';
 import { Monorail } from './monorail.js';
 import { Link } from './link.js';
 import { Freight } from './freight.js';
+import { Counterbalance } from './counterbalance.js';
 import { Ferry, fixTerminals } from './ferry.js';
 import { BikeNet, Cyclists } from './bikes.js';
 import { Islands } from './islands.js';
@@ -300,6 +301,8 @@ class Game {
     if (player.vehicle && player.vehicle.spec.amphib && duckTour) { duckTour.quack(player.vehicle); peds.scare(player.position.x, player.position.z, 6); return; }
     // a light-rail car rings its bell
     if (player.vehicle && player.vehicle.spec.bicycle) { if (audio.ready) audio.play('bike_bell', { gain: 0.9 }); peds.scare(player.position.x, player.position.z, 5); return; }
+    // a streetcar's gong: the motorman's foot on the plunger, clang-clang
+    if (player.vehicle && player.vehicle.spec.streetcar) { if (audio.ready) audio.play('cable_bell', { gain: 1, jitter: false }); peds.scare(player.position.x, player.position.z, 12); return; }
     if (player.vehicle && player.vehicle.spec.link) { if (audio.ready) audio.play('tram_bell', { gain: 0.9 }); peds.scare(player.position.x, player.position.z, 10); return; }
     // a freight's air horn, held for as long as you hold it
     if (player.vehicle && player.vehicle.spec.freight) { player.vehicle.blow(); peds.scare(player.position.x, player.position.z, 40); return; }
@@ -312,6 +315,9 @@ class Game {
 
   onEnterVehicle(v, wasMode) {
     controls.setMode('drive');
+    // HORN rings a streetcar's gong
+    const hb = document.querySelector('[data-btn="horn"]');
+    if (hb) hb.textContent = v.spec.streetcar ? 'BELL' : 'HORN';
     if (tanks) tanks.onEnter(v);
     if (v.spec.rail) {
       // a freight's engines are already running: you climb into a live cab
@@ -572,7 +578,7 @@ function nearShadowFocus() {
 }
 let tanks = null;       // the tank at Sand Point and its guns (tank.js)
 let gpuLedger = null;
-let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts, stunts, monorail, link, freight, bikeNet, cyclists, lmRoot, shadowCache = null;
+let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts, stunts, monorail, link, freight, counterbal, bikeNet, cyclists, lmRoot, shadowCache = null;
 let pickups = [];
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
 const LOOK_AHEAD = new THREE.Vector3();
@@ -986,8 +992,12 @@ function installShadowFade() {
     const rampMesh = buildRampMesh(city, ramps, world.mats.flat);
     if (rampMesh) scene.add(rampMesh);
   }
-  // nor on Link's tracks
-  city.extraClear = (x, z) => link.keepClear(x, z) || freight.keepClear(x, z) || bikeNet.keepClear(x, z);
+  // The Queen Anne Counterbalance's streetcar line, laid on the road graph
+  // (counterbalance.js) before anything is placed by the kerb
+  counterbal = new Counterbalance();
+  counterbal.attach(city);
+  // nor on Link's tracks (nor the streetcar's rails)
+  city.extraClear = (x, z) => link.keepClear(x, z) || freight.keepClear(x, z) || bikeNet.keepClear(x, z) || counterbal.keepClear(x, z);
 
   await step(0.8, 'Building the skyline');
   world.buildSkyline();
@@ -1001,6 +1011,7 @@ function installShadowFade() {
   link.build(scene, world);
   freight.build(scene, world);
   bikeNet.build(scene, city);
+  counterbal.build(scene);
   // every other pier OSM maps, after everything that builds its own decks
   piers = new Piers(md.piers, { scene, city, dropArrays: ON_PHONE, waterAt: (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; } });
   // on a phone their arrays go once uploaded: a lost context rebuilds them
@@ -1062,6 +1073,7 @@ function installShadowFade() {
   monorail.makeTrains(scene);
   link.makeTrains(scene);
   freight.makeTrains(scene);
+  counterbal.makeCars(scene);
   if (freight.yardGroup) freezeStatic(freight.yardGroup);
   // Phones draw the city's shadows once and copy them each frame; only what
   // moves is drawn into the shadow map every frame (shadowcache.js). The
@@ -1069,7 +1081,7 @@ function installShadowFade() {
   if (ON_PHONE && !window.__noShadowCache) {
     try {
       const ramps = scene.getObjectByName('stuntRamps');
-      shadowCache = new ShadowCache(renderer, sun, { margin: 60, statics: () => [world.group, lmRoot, ramps, link.group, freight.group, freight.yardGroup], keep: () => [] });
+      shadowCache = new ShadowCache(renderer, sun, { margin: 60, statics: () => [world.group, lmRoot, ramps, link.group, freight.group, freight.yardGroup, counterbal.group], keep: () => [] });
       world.onChunkChange = (x, z, r) => shadowCache.chunkChanged(x, z, r);
       // Link's and the freight line's chunks come and go too (LazyChunks)
       link.onChunkChange = freight.onChunkChange = (x, z, r) => shadowCache.chunkChanged(x, z, r);
@@ -1090,8 +1102,8 @@ function installShadowFade() {
     // its arrays the same way when it is made)
     link.dropArrays = freight.dropArrays = true;
     let b = 0;
-    for (const r of [world.terrainGroup, world.skyline, lmRoot, link.group, link.tunGroup, freight.group, freight.tunGroup, freight.yardGroup]) if (r) b += dropStaticArrays(r);
-    for (const t of [...link.trains, ...freight.trains, ...Object.values(monorail.trains || {})]) for (const m of t.meshes || []) b += dropStaticArrays(m);
+    for (const r of [world.terrainGroup, world.skyline, lmRoot, link.group, link.tunGroup, freight.group, freight.tunGroup, freight.yardGroup, counterbal.group]) if (r) b += dropStaticArrays(r);
+    for (const t of [...link.trains, ...freight.trains, ...counterbal.cars, ...Object.values(monorail.trains || {})]) for (const m of t.meshes || []) b += dropStaticArrays(m);
     blog(`static geometry: ${(b / 1048576).toFixed(0)} MB of arrays go once uploaded`);
   }
 
@@ -1112,10 +1124,12 @@ function installShadowFade() {
   player.monorail = monorail;
   player.link = link;
   player.freight = freight;
+  player.counterbal = counterbal;
   traffic = new TrafficSystem(scene, city, game);
   traffic.camera = camera;   // far-LOD instances are culled against it
   traffic.link = link;       // cars stop for a train on a level crossing
   traffic.freight = freight; // ...and at a freight crossing's gates
+  traffic.streetcars = counterbal; // ...and behind (or for) a streetcar
   // where water is drawn (the boats' query): no car parks under it
   traffic.waterAt = (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; };
   // the cyclists on the bike paths, and the bike-share docks
@@ -1389,6 +1403,10 @@ function installShadowFade() {
       hello: `${st.full} Station — Link light rail's ${st.lines.map((l) => `${l} Line`).join(' and ')}. Tap ENTER here${st.under ? '' : ' or on the platform'} to catch the next train and drive it` })),
     // the ferry terminals: where you drive aboard
     ...ferry.places().map((f) => ({ x: f.x, z: f.z, kind: 'ferry', name: f.name, near: false, hello: f.hello })),
+    // Route 26's stops: the Queen Anne Counterbalance streetcar
+    ...counterbal.stops.map((st) => ({ x: st.x, z: st.z, kind: 'streetcar', name: `Streetcar · ${st.name}`, near: false, label: !!(st.hitch || st.term),
+      hello: st.hitch ? `${st.full} — Route 26, the Queen Anne Counterbalance. Every car stopped here to be ${st.hitch === 'bot' ? 'hooked onto' : 'unhooked from'} a 16-ton counterweight. ENTER beside a car to board`
+        : `${st.full} — Route 26, West Queen Anne. ENTER beside a car to board and drive it, or ENTER here to call the next one` })),
     // BNSF's crew-change stop: where you take a freight
     { x: freight.yard.x, z: freight.yard.z, kind: 'freight', name: 'Freight · Balmer Yard', near: false,
       hello: 'Balmer Yard — BNSF freights stop here for a crew change. Climb up at the lead locomotive (ENTER), or tap ENTER to call the next one in' },
@@ -1418,12 +1436,14 @@ function installShadowFade() {
   hud.monorail = monorail;
   hud.link = link;
   hud.freight = freight;
+  hud.counterbal = counterbal;
   hud.ferry = ferry;
   ferry.hud = hud;
   ferry.player = player;
   monorail.bind({ game, hud, audio, player });
   link.bind({ game, hud, audio, player });
   freight.bind({ game, hud, audio, player });
+  counterbal.bind({ game, hud, audio, player, fx, peds, traffic });
   cyclists.audio = audio;
   {
     // One tap, never behind a menu: a lost run on a phone ends the session.
@@ -1548,7 +1568,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   wireUi();
   career.start(hud);
   game.newTarget();
@@ -2681,6 +2701,7 @@ function frame(now) {
   monorail.update(dt);
   link.update(dt, camera);
   freight.update(dt, camera);
+  counterbal.update(dt, camera);
   cyclists.update(dt, player);
   bikeNet.update(camera);
   piers.update(camera);
@@ -2911,6 +2932,7 @@ function withTrains(cars) {
   for (let i = 0; i < cars.length; i++) audioCars.push(cars[i]);
   if (monorail && monorail.trains) for (const t of Object.values(monorail.trains)) if (t !== player.vehicle) audioCars.push(t);
   if (link) for (const t of link.trains) if (t !== player.vehicle && t.group.visible) audioCars.push(t);
+  if (counterbal) for (const t of counterbal.cars) if (t !== player.vehicle && t.group.visible) audioCars.push(t);
   return audioCars;
 }
 function audioState(dt, input, p, camDir, buried) {
@@ -2975,6 +2997,7 @@ function audioState(dt, input, p, camDir, buried) {
     listener,
     cars: withTrains(traffic.cars),
     freight: freight ? freight.trains : null,
+    streetcars: counterbal && counterbal.ok ? counterbal.cars : null,
     ferry: ferry ? ferry.boats : null,
     heli: hp,
   };
