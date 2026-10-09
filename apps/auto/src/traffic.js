@@ -41,6 +41,136 @@ function disposeTree(root) {
   });
 }
 
+// --- crashes: an impulse at the contact point ----------------------------------
+//
+// Every hit -- car on car, car on wall -- is resolved as two rigid bodies in
+// the plane: a contact point and normal, an impulse J along the normal (with
+// restitution) plus friction along the face (bounded by mu J), applied to both
+// bodies' velocity, longitudinal AND lateral, and to their yaw through the
+// lever arm, (r x J) / I. It replaced a rule that only ever changed vLong
+// projected on each car's own heading, which is why nothing spun and a T-bone
+// was a brick wall: measured on v199, a sedan into a stationary one side-on at
+// 20 m/s stopped dead, moved it 0.6 m and turned neither car at all.
+//
+// The yaw goes into Vehicle.spin (decaying, on top of the steering's yaw) and a
+// hard hit lets the tyres go for a moment (Vehicle.slide), so the car that was
+// hit skids and spins instead of stopping in its own length.
+//
+// Restitution and friction, car-car / wall / street object (a mast shears and
+// a trunk gives).
+const CRASH_E = 0.2, CRASH_MU = 0.5, WALL_E = 0.15, WALL_MU = 0.3, OB_E = 0.1, OB_MU = 0.3;
+// THE CENTRE OF MASS IS AHEAD OF THE MIDDLE: the engine is in the front.
+// It is also what spins a car hit squarely in the side -- through the middle
+// of the box it would only slide -- and what a real T-bone does.
+const CG_FWD = 0.06;
+// No hit spins anything faster than this (rad/s); the tyres let go fully
+// once the hit moves an end sideways by SLIDE_FROM + SLIDE_SPAN m/s.
+const SPIN_MAX = 5, SLIDE_FROM = 2, SLIDE_SPAN = 6;
+/** Can a hit turn this body? Not an aircraft, a hull, a tank on its tracks, a
+ *  train, an articulated rear (placed by its front), a hulk or a flattened car. */
+function canSpin(v) {
+  const s = v.spec;
+  return !(s.plane || s.boat || s.tank || s.rail || s.balloon) && !v.afloat
+    && v.mode !== 'trailer' && !v.wreck && !v.crushed && !v.stunt;
+}
+const _cp = { x: 0, z: 0 };
+/** Where body v touches a wall whose outward normal is (nx, nz): its corner
+ *  furthest into the wall, or the middle of the face when two tie. */
+function supportPoint(v, nx, nz) {
+  const f = v.forward, hl = v.halfLen, hw = v.halfWid;
+  const a = (f.x * nx + f.z * nz) * hl, b = (f.z * nx - f.x * nz) * hw;
+  // depth of a corner (sl, sw) = -(sl a + sw b); pick the deepest signs, and
+  // take the middle of the face where one axis hardly matters
+  const sl = Math.abs(a) < 0.15 ? 0 : -Math.sign(a), sw = Math.abs(b) < 0.15 ? 0 : -Math.sign(b);
+  _cp.x = v.x + f.x * hl * sl + f.z * hw * sw;
+  _cp.z = v.z + f.z * hl * sl - f.x * hw * sw;
+  return _cp;
+}
+/** Give v the impulse (Jx, Jz) at lever arm (rx, rz) from its centre of mass;
+ *  im / ii its inverse mass and inverse moment of inertia (0: does not turn). */
+function kick(v, Jx, Jz, rx, rz, im, ii) {
+  const f = v.forward, dvx = Jx * im, dvz = Jz * im;
+  const dLong = dvx * f.x + dvz * f.z, dLat = dvx * f.z - dvz * f.x;
+  v.vLong += dLong;
+  v.vLat += dLat;
+  if (!ii) return;
+  const dw = (rz * Jx - rx * Jz) * ii;
+  v.spin = clamp(v.spin + dw, -SPIN_MAX, SPIN_MAX);
+  v.yawRate += dw;
+  // how hard the hit threw an end sideways: that is what breaks the tyres loose
+  const side = Math.abs(dLat) + Math.abs(dw) * v.halfLen;
+  v.slide = Math.max(v.slide, clamp((side - SLIDE_FROM) / SLIDE_SPAN, 0, 1));
+}
+// A TOUCH IS NOT A SPIN, AND A SCRAPE IS NOT A CRASH. Closing under
+// TOUCH_FROM m/s (a car leaning on a wall as its lane bends, a queue nudging
+// up) only stops the closing: no yaw, no friction, which fade in up to
+// TOUCH_FROM + TOUCH_SPAN. Without the first every AI car brushing I-5's
+// walls was turned a little each frame and steered back (aidrive's weave
+// there 4 -> 11 reversals a car-minute); without the second a bus whose
+// 3.5 m obstacle circle brushed a post on East Pike, steering back into it
+// every frame, lost ~10 m/s^2 to the friction and wedged, a queue behind it.
+const TOUCH_FROM = 1, TOUCH_SPAN = 3;
+// TWO AI DRIVERS TOUCHING is not a crash until 4 m/s. Their low-speed
+// contacts are the yielding's imperfections, mostly at junctions, and under
+// the 1 m/s threshold every such bump spun both: on 1st Ave S a sedan left
+// across both lanes held eight cars in a slow knot for a minute (trafficcheck
+// stuck 4 -> 7). You, a police unit, a suspect or a shunted car: TOUCH_FROM.
+const AI_TOUCH = 4, AI_TOUCH_SPAN = 6;
+const touch = (closing) => clamp((closing - TOUCH_FROM) / TOUCH_SPAN, 0, 1);
+const invI = (v) => (canSpin(v) ? 12 / (v.mass * 4 * (v.halfLen * v.halfLen + v.halfWid * v.halfWid)) : 0);
+/**
+ * The impulse between bodies a and b touching at (cx, cz), the normal
+ * (nx, nz) pointing from a to b; ma / mb their masses. Returns the closing
+ * speed at the contact (0 if they are already parting), the crash's size.
+ */
+function pairImpulse(a, b, nx, nz, cx, cz, ma, mb) {
+  const fa = a.forward, fb = b.forward;
+  const ga = CG_FWD * 2 * a.halfLen, gb = CG_FWD * 2 * b.halfLen;
+  const rax = cx - a.x - fa.x * ga, raz = cz - a.z - fa.z * ga;
+  const rbx = cx - b.x - fb.x * gb, rbz = cz - b.z - fb.z * gb;
+  const ia0 = invI(a), ib0 = invI(b), oa = ia0 ? a.yawRate : 0, ob = ib0 ? b.yawRate : 0;
+  // each body's velocity at the contact: v + w x r, with w x r = w (rz, -rx)
+  const vax = fa.x * a.vLong + fa.z * a.vLat + oa * raz, vaz = fa.z * a.vLong - fa.x * a.vLat - oa * rax;
+  const vbx = fb.x * b.vLong + fb.z * b.vLat + ob * rbz, vbz = fb.z * b.vLong - fb.x * b.vLat - ob * rbx;
+  const rvx = vbx - vax, rvz = vbz - vaz, vn = rvx * nx + rvz * nz;
+  if (vn >= 0) return 0;
+  // (two AI drivers' own scrape -- at a junction, nosing into a gap -- is a
+  // touch up to 4 m/s and spins in full only from 10: see AI_TOUCH)
+  const k = a.mode === 'traffic' && b.mode === 'traffic' ? clamp((-vn - AI_TOUCH) / AI_TOUCH_SPAN, 0, 1) : touch(-vn);
+  const ia = ia0 * k, ib = ib0 * k;
+  const ima = 1 / ma, imb = 1 / mb;
+  const pan = raz * nx - rax * nz, pbn = rbz * nx - rbx * nz;
+  const j = -(1 + CRASH_E) * vn / (ima + imb + pan * pan * ia + pbn * pbn * ib);
+  const tx = -nz, tz = nx, vt = rvx * tx + rvz * tz;
+  const pat = raz * tx - rax * tz, pbt = rbz * tx - rbx * tz;
+  const jm = CRASH_MU * k * j;
+  const jt = clamp(-vt / (ima + imb + pat * pat * ia + pbt * pbt * ib), -jm, jm);
+  const Jx = j * nx + jt * tx, Jz = j * nz + jt * tz;
+  if (a.mode !== 'trailer') kick(a, -Jx, -Jz, rax, raz, ima, ia);
+  if (b.mode !== 'trailer') kick(b, Jx, Jz, rbx, rbz, imb, ib);
+  return -vn;
+}
+/** The same against something that does not move (a wall, a post): (nx, nz)
+ *  points out of it at the body. Returns the closing speed, 0 if parting.
+ *  `linear` false: the turn only (a street object keeps its own speed rule). */
+function wallImpulse(v, nx, nz, e, mu, linear = true) {
+  const f = v.forward, g = CG_FWD * 2 * v.halfLen;
+  const c = supportPoint(v, nx, nz);
+  const rx = c.x - v.x - f.x * g, rz = c.z - v.z - f.z * g;
+  const ii0 = invI(v), w = ii0 ? v.yawRate : 0;
+  const vx = f.x * v.vLong + f.z * v.vLat + w * rz, vz = f.z * v.vLong - f.x * v.vLat - w * rx;
+  const vn = vx * nx + vz * nz;
+  if (vn >= 0) return 0;
+  const k = touch(-vn), ii = ii0 * k;
+  const im = 1 / v.mass;
+  const pn = rz * nx - rx * nz;
+  const j = -(1 + e) * vn / (im + pn * pn * ii);
+  const tx = -nz, tz = nx, vt = vx * tx + vz * tz, pt = rz * tx - rx * tz;
+  const jt = clamp(-vt / (im + pt * pt * ii), -mu * k * j, mu * k * j);
+  kick(v, j * nx + jt * tx, j * nz + jt * tz, rx, rz, linear ? im : 0, ii);
+  return -vn;
+}
+
 export function collideWithBuildings(v, city, onHit, ai = false) {
   // Street objects first: a tree or a lamp post is closer than the building
   // line and is what you actually hit coming off a kerb. Until this existed
@@ -60,9 +190,18 @@ export function collideWithBuildings(v, city, onHit, ai = false) {
   if (ob) {
     v.x += ob.nx * ob.pen;
     v.z += ob.nz * ob.pen;
+    // A STREET OBJECT KEEPS ITS OWN SPEED RULE: the hit's spin from the
+    // impulse (wallImpulse, `linear` off), and the speed by the angle as
+    // before. The obstacle test is a circle of 0.7 x radius -- 3.5 m for a
+    // bus, which is 1.3 m half-wide -- so it touches posts the body is well
+    // clear of, and a hit that only steers the body round a post is what
+    // lets a long vehicle get past one. With the full impulse a bus on East
+    // Pike met a post square on its circle, stopped, and nosed into it for
+    // good with a queue behind it.
     const f = v.forward;
     const along = f.x * ob.nx + f.z * ob.nz;
     const impact = Math.abs(v.vLong) * Math.abs(along) * 0.7 + Math.abs(v.vLat) * 0.3;
+    wallImpulse(v, ob.nx, ob.nz, OB_E, OB_MU, false);
     // A SCRAPE IS NOT A CRASH. The push-out took 80 % of the speed whatever
     // the angle, so a vehicle grazing a wall side-on -- along ~ 0 -- lost it
     // every frame it stayed in contact and wedged at full throttle. Measured:
@@ -110,13 +249,30 @@ export function collideWithBuildings(v, city, onHit, ai = false) {
     const wz = -nx * s + nz * c;
     v.x += wx * pen;
     v.z += wz * pen;
-    const f = v.forward;
-    const along = f.x * wx + f.z * wz;
-    const impact = Math.abs(v.vLong) * Math.abs(along) + Math.abs(v.vLat) * 0.4;
-    v.vLong *= along > 0 ? -0.18 : 0.28;
-    v.vLat *= 0.2;
+    // A wall takes the speed into it at the corner that hit, and turns the
+    // car about that corner: a glancing hit deflects along the wall instead
+    // of stopping dead (it kept 28 % of vLong and 20 % of vLat, whatever the
+    // angle -- 20 m/s at 30 deg came off 0 m/s, held against the wall).
+    //
+    // AN AI DRIVER'S ROUTINE CONTACT KEEPS THE OLD RULE; the impulse is for
+    // you, and for a car still sliding from a hit. The test is the centre
+    // against the footprint grown by 0.8 x radius -- 4 m for a bus -- so a
+    // bus turning at a corner building "hits" it with a body that is 1.3 m
+    // half-wide. Under the impulse that was a crash: measured, a bus on East
+    // Pike stopped dead from 17.7 m/s at the corner of its turn, nosed back
+    // into it every few seconds, and the queue behind it counted as stuck in
+    // tools/trafficcheck. The old rule's leftover speed is what scraped it round.
+    if (ai && !(v.slide > 0)) {
+      const f = v.forward;
+      const along = f.x * wx + f.z * wz;
+      const impact = Math.abs(v.vLong) * Math.abs(along) + Math.abs(v.vLat) * 0.4;
+      v.vLong *= along > 0 ? -0.18 : 0.28;
+      v.vLat *= 0.2;
+      return impact;
+    }
+    const impact = wallImpulse(v, wx, wz, WALL_E, WALL_MU);
     if (onHit && impact > 3) onHit(impact);
-    return impact;
+    return Math.max(impact, 0.01);
   }
   return 0;
 }
@@ -241,7 +397,7 @@ const IDM_T = 1.2, IDM_S0 = 2.2, IDM_B = 2.5;
 // A vehicle's body for car-car collision: its footprint rectangle.
 // (Vehicle keeps it: Math.hypot three times a pair was a profile line of its own)
 const bodyR = (v) => v.bodyR || Math.hypot(v.halfLen, v.halfWid);
-const _hit = { nx: 0, nz: 0, pen: 0 };
+const _hit = { nx: 0, nz: 0, pen: 0, refA: true };
 // nobody at the wheel (traffic.update): read-only inputs, not one per car a frame
 const COAST_IN = { throttle: 0, brake: 0.12, steer: 0 };
 const PARK_IN = { throttle: 0, brake: 0, steer: 0, park: true };
@@ -250,7 +406,7 @@ const PARK_IN = { throttle: 0, brake: 0, steer: 0, park: true };
 function boxOverlap(a, b, dx, dz) {
   const fa = a.forward, fb = b.forward;
   const ax = [fa.x, fa.z, fa.z, -fa.x, fb.x, fb.z, fb.z, -fb.x];
-  let best = Infinity, bx = 0, bz = 0;
+  let best = Infinity, bx = 0, bz = 0, ref = true;
   for (let k = 0; k < 8; k += 2) {
     const ux = ax[k], uz = ax[k + 1];
     const ra = a.halfLen * Math.abs(fa.x * ux + fa.z * uz) + a.halfWid * Math.abs(fa.z * ux - fa.x * uz);
@@ -258,10 +414,49 @@ function boxOverlap(a, b, dx, dz) {
     const dd = dx * ux + dz * uz;
     const o = ra + rb - Math.abs(dd);
     if (o <= 0) return null;
-    if (o < best) { best = o; bx = dd < 0 ? -ux : ux; bz = dd < 0 ? -uz : uz; }
+    if (o < best) { best = o; bx = dd < 0 ? -ux : ux; bz = dd < 0 ? -uz : uz; ref = k < 4; }
   }
-  _hit.nx = bx; _hit.nz = bz; _hit.pen = best;
+  _hit.nx = bx; _hit.nz = bz; _hit.pen = best; _hit.refA = ref;
   return _hit;
+}
+/**
+ * Where a and b touch, given boxOverlap's normal (a to b) and whose face it is
+ * (refA): the other body's face most against that normal, clipped to the
+ * reference face's extent and to the part of it that is inside, and the
+ * middle of what is left. So a square T-bone touches mid-door, an offset
+ * rear-end at the middle of the bumpers' overlap, and a corner on a corner.
+ */
+function pairContact(a, b, nx, nz, refA) {
+  const R = refA ? a : b, I = refA ? b : a;
+  const sx = refA ? nx : -nx, sz = refA ? nz : -nz;   // out of R's face, into I
+  const fr = R.forward;
+  const onLong = Math.abs(fr.x * sx + fr.z * sz) > 0.7;
+  const hN = onLong ? R.halfLen : R.halfWid, hT = onLong ? R.halfWid : R.halfLen;
+  const tx = -sz, tz = sx;
+  const fi = I.forward, dl = fi.x * sx + fi.z * sz, dw = fi.z * sx - fi.x * sz;
+  let cx, cz, ex, ez;
+  if (Math.abs(dl) >= Math.abs(dw)) {
+    const g = -Math.sign(dl) * I.halfLen;
+    cx = I.x + fi.x * g; cz = I.z + fi.z * g; ex = fi.z * I.halfWid; ez = -fi.x * I.halfWid;
+  } else {
+    const g = -Math.sign(dw) * I.halfWid;
+    cx = I.x + fi.z * g; cz = I.z - fi.x * g; ex = fi.x * I.halfLen; ez = fi.z * I.halfLen;
+  }
+  // the incident edge p(l) = c + e (2l - 1), l in 0..1: across R's face (u)
+  // and how deep past it (d)
+  const qx = cx - ex - R.x, qz = cz - ez - R.z;
+  const u0 = qx * tx + qz * tz, du = 2 * (ex * tx + ez * tz);
+  const d0 = hN - (qx * sx + qz * sz), dd = -2 * (ex * sx + ez * sz);
+  let l0 = 0, l1 = 1;
+  const clip = (p0, dp, lo) => {   // keep p0 + dp l >= lo
+    if (Math.abs(dp) < 1e-9) { if (p0 < lo) { l0 = 1; l1 = 0; } return; }
+    const l = (lo - p0) / dp;
+    if (dp > 0) l0 = Math.max(l0, l); else l1 = Math.min(l1, l);
+  };
+  clip(u0, du, -hT); clip(-u0, -du, -hT); clip(d0, dd, 0);
+  const l = l0 <= l1 ? (l0 + l1) / 2 : (d0 + dd > d0 ? 1 : 0);
+  _cp.x = cx + ex * (2 * l - 1); _cp.z = cz + ez * (2 * l - 1);
+  return _cp;
 }
 
 /** Warm-up stand-ins for the light bar's materials (main.js, Hitches): the
@@ -1364,6 +1559,17 @@ export class TrafficSystem {
     const alpha = angleWrap(Math.atan2(ddx, ddz) - v.heading);
     // Far off the path's heading (a U-turn, a car shunted round): full lock.
     inp.steer = Math.abs(alpha) > 1.3 ? Math.sign(alpha) : v.aiSteer((2 * Math.sin(alpha)) / ld);
+    // BACKING OUT OF A WEDGE (set below), wheel reversed so the nose comes
+    // round to the path, then a fresh route from where it ends up. A crash
+    // that spins a car can leave it nose-in to another or to a post at an
+    // angle no amount of throttle gets past; it used to sit there for good in
+    // sight (only out of sight is a wedged car recycled).
+    if (v.backT > 0) {
+      v.backT -= dt;
+      if (v.backT <= 0) this.reroute(v);
+      inp.brake = 1; inp.steer = -clamp(alpha * 1.7, -1, 1);
+      return inp;
+    }
 
     // SPEED: the road ahead (corners, slower streets) and the car ahead (IDM),
     // whichever asks for less, as one wanted acceleration.
@@ -1489,7 +1695,12 @@ export class TrafficSystem {
       }
       // GRIDLOCK: two cars each waiting on the other (crossing at a junction,
       // nosing into the same gap) would wait for ever. The older one goes.
-      if (o.lead === v && o.prio > v.prio && Math.abs(o.vLong) < 1) continue;
+      // A RING OF THEM TOO: after a crash at a junction the waiting can run
+      // round three or four cars (A on B, B on C, C on A), which the pair
+      // test never saw -- measured, 1st Ave S, a queue of eight for good.
+      // Walked along the leads: if it comes back to this car through cars
+      // all younger and all stopped, this one is the oldest and goes.
+      if (o.prio > v.prio && Math.abs(o.vLong) < 1 && this.waitsOn(o, v)) continue;
       const g = along - v.halfLen - (o.halfLen * Math.abs(co) + o.halfWid * so);
       if (g < gap) { gap = g; vLead = o.vLong * co; lead = o; }
     }
@@ -1589,12 +1800,41 @@ export class TrafficSystem {
     // sight it is recycled like a dead-end car; in sight it keeps trying.
     if (v.wantGo && Math.abs(v.vLong) < 0.5) v.stuckT += dt;
     else v.stuckT = 0;
+    // three seconds of that: back out (above), once per wedge -- not with
+    // a section or a trailer behind, which only jackknifes
+    if (v.stuckT > 3 && v.stuckT - dt <= 3 && !v.trailer) v.backT = 1.2;
     // ...and anything standing for 20 s out of sight, whatever it waits on:
     // there are no signals to wait at, so a car that long at rest is queued
     // behind a wedge or a gridlock of three or more, and the queue goes with it.
     if (Math.abs(v.vLong) < 0.5) v.restT += dt; else v.restT = 0;
     if ((v.stuckT > 8 || v.restT > 20) && dist2(v.x, v.z, px, pz) > 120 * 120) { this.stats.stuckRecycled++; v.recycle = true; }
     return inp;
+  }
+
+  /** A traffic car back on the graph where it now stands, after a back-out:
+   *  the edge under it the way it faces (snapRoute), turned round if that is
+   *  against a one-way. Re-planning from its OLD edge (rtN = 0) sent a car
+   *  that had turned into a junction back toward a lane it could not reach,
+   *  and it circled the junction. */
+  reroute(v) {
+    if (!this.snapRoute(v)) { v.rtN = 0; return; }
+    if (!this.allowed(v.edge, v.dirSign)) {
+      v.dirSign = -v.dirSign;
+      v.laneU = this.flow[v.edge] !== 0 ? this.nearestLaneU(v.edge, v.dirSign, 0) : 0.5;
+      this.routeInit(v);
+    }
+  }
+
+  /** Does o wait on v, through at most four cars each younger than v and
+   *  stopped (driveTraffic's gridlock rule)? Last frame's leads. */
+  waitsOn(o, v) {
+    let q = o;
+    for (let k = 0; k < 4; k++) {
+      q = q.lead;
+      if (q === v) return true;
+      if (!q || q.prio < v.prio || Math.abs(q.vLong) >= 1) return false;
+    }
+    return false;
   }
 
   /** The way on from nodeId for a car arriving along edge fromEi (driven
@@ -1900,27 +2140,24 @@ export class TrafficSystem {
         // a rear section is placed by its front, so it does not give way
         const ma = a.mode === 'trailer' ? 1e6 : a.mass, mb = b.mode === 'trailer' ? 1e6 : b.mass;
         const total = ma + mb;
+        // (where they touch, judged before they are pushed apart)
+        const cp = pairContact(a, b, nx, nz, hit.refA), cx = cp.x, cz = cp.z;
         a.x -= nx * pen * (mb / total);
         a.z -= nz * pen * (mb / total);
         b.x += nx * pen * (ma / total);
         b.z += nz * pen * (ma / total);
-        const fa = a.forward.x * nx + a.forward.z * nz;
-        const fb = b.forward.x * nx + b.forward.z * nz;
-        const av = a.vLong * fa;
-        const bv = b.vLong * fb;
-        const rel = av - bv;
+        // THE IMPULSE AT THE CONTACT (pairImpulse, above): both velocities,
+        // along and across each car, and both yaws through the lever arm, so
+        // a T-bone shoves and spins the car it hits, an offset shunt turns
+        // both, and a glancing one deflects. It replaced each car taking its
+        // share along its own heading only -- which itself replaced a
+        // `b.vLong += ...` unprojected that pushed a head-on car forward into
+        // the other (SR-99, an AI car 41 -> 110 m/s in four frames). The
+        // impulse is along the contact normal by construction, so neither
+        // can come back.
+        const rel = pairImpulse(a, b, nx, nz, cx, cz, ma, mb);
         if (rel > 0) {
-          // EACH CAR TAKES ITS SHARE ALONG ITS OWN HEADING. `b.vLong += ...`
-          // unprojected is right only when b faces along the normal: a car
-          // coming HEAD-ON was pushed forward into the other one, re-overlapped
-          // next frame and was pushed again. Measured riding SR-99 south out of
-          // the SB exit into oncoming traffic, an AI car went 41 -> 110 m/s in
-          // four frames while the player's car bounced backwards (-3.4 m/s).
-          // Projected, the head-on car is pushed back along the normal, and a
-          // side-on one (heading across it) barely changes its speed.
-          a.vLong -= rel * 0.55 * (mb / total) * fa;
-          b.vLong += rel * 0.5 * (ma / total) * fb;
-          const impact = Math.abs(rel);
+          const impact = rel;
           if (impact > 4) {
             a.damage(impact * 0.7);
             b.damage(impact * 0.7);

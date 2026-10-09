@@ -56,6 +56,12 @@ const ROLL = 0.020;
 const STUNT_G = 15;
 const STUNT_SPIN = 2.6;   // rad/s of yaw at full steer, in the air
 const STILL = { dx: 0, dz: 0 };
+// A crash's spin-out (see Vehicle.spin / slide; traffic.js pairImpulse):
+// how fast the spin is scrubbed off (a share a second + a constant rad/s^2,
+// that constant up to 1 + SPIN_SLOW times over as the car comes to rest),
+// a sliding tyre's deceleration (~0.75 g), and how long the tyres take to bite
+// again from fully let go.
+const SPIN_DAMP = 0.9, SPIN_FRIC = 0.6, SPIN_SLOW = 5, SLIDE_DECEL = 7.5, SLIDE_T = 1.1;
 const V0_100 = 100 / 3.6;
 
 // How much punchier than real the throttle is.
@@ -8581,6 +8587,12 @@ export class Vehicle {
     // The grade's pull along the car last frame, m/s^2 (Vehicle.update): the
     // AI's feed-forward on hills. 0 for a lowDetail car, which ignores grade.
     this.gradeA = 0;
+    // A CRASH SPINS AND SLIDES (traffic.js pairImpulse / wallImpulse): `spin` is yaw rate
+    // a hit gave the body on top of what the steering makes, decaying;
+    // `slide` (0..1) is how far the tyres have let go after it, decaying;
+    // `yawRate` is last frame's whole yaw rate, which the next hit reads to
+    // know how fast each corner is moving.
+    this.spin = 0; this.slide = 0; this.yawRate = 0;
     this.path = null; this.pathT = 0; this.repath = 0; this.rammed = 0; this.siren = 0;
     this.sirenOn = false;   // a police car you drive: SIREN switched on (main.js updateSiren)
     this.lightL = null; this.lightR = null; this.extra = null;
@@ -9862,7 +9874,7 @@ export class Vehicle {
     const pull = light ? clamp(input.pitch || 0, -1, 1) : 0;
     this.pullIn = pull;
     const steerIn = clamp(input.steer || 0, -1, 1) * (1 - 0.6 * clamp(this.wheelie / 0.3, 0, 1));
-    if (this.stunt) { this.stuntAir(dt, steerIn, pull); return STILL; }
+    if (this.stunt) { this.spin = 0; this.stuntAir(dt, steerIn, pull); return STILL; }
 
     // One paved-surface query per body per frame, reused by all seven ground
     // samples below -- the scan is too expensive to repeat per wheel.
@@ -10014,7 +10026,29 @@ export class Vehicle {
     // rear steer: only AGAINST the fronts adds yaw (with them is drawn only: see above)
     const rsAgainst = this.rearSteer * this.steer < 0 ? this.rearSteer : 0;
     const yawRate = spec.tank ? this._tankYaw(dt, steerIn) : (this.vLong / wheelbase) * (Math.tan(this.steer) - Math.tan(rsAgainst));
-    this.heading += yawRate * dt;
+    // A HIT'S SPIN (traffic.js pairImpulse / wallImpulse) rides on top of the steering's
+    // yaw. The body turns under its own velocity, so the body-frame velocity
+    // is turned back by the same angle: the car slides on the line it was
+    // knocked along instead of carrying its speed round with its nose.
+    let spin = this.spin;
+    if (spin !== 0) {
+      const a = spin * dt, c = Math.cos(a), s = Math.sin(a), vl = this.vLong, vt = this.vLat;
+      this.vLong = vl * c + vt * s;
+      this.vLat = vt * c - vl * s;
+      // The tyres scrubbing sideways take the spin off: a share of it a
+      // second, and a constant torque that ends it rather than leaving a
+      // creep that never quite stops. A car sliding fast barely resists the
+      // turn (its tyres' friction mostly opposes the slide), one nearly at
+      // rest resists it hard -- so a wall's corner hit that stops the car
+      // dead does not leave it pirouetting on the spot. A hard T-bone turns
+      // the victim ~1 rad over ~1.5 s; a wall-stopped car settles in < 1 s.
+      const slow = 1 + SPIN_SLOW * clamp(1 - Math.hypot(this.vLong, this.vLat) / 8, 0, 1);
+      const d = Math.abs(spin) * SPIN_DAMP * dt + SPIN_FRIC * slow * dt;
+      spin = Math.abs(spin) <= d ? 0 : spin - Math.sign(spin) * d;
+      this.spin = spin;
+    }
+    this.yawRate = yawRate + spin;
+    this.heading += this.yawRate * dt;
 
     // The battery floor puts the mass under the axle line, so it holds on
     // rather than leaning; the handbrake still breaks it loose.
@@ -10031,7 +10065,19 @@ export class Vehicle {
     const grip = hand > 0.5 ? 1.5 : gripBase;
     this.vLat += -yawRate * this.vLong * dt;
     const before = this.vLat;
-    this.vLat *= Math.exp(-grip * dt);
+    if (this.slide > 0) {
+      // After a hit the tyres have let go (`slide`, set by traffic.js kick):
+      // the scrub is capped at a sliding tyre's friction, SLIDE_DECEL, the
+      // cap lifting as the tyres bite again -- so a car knocked sideways at
+      // 11 m/s skids several metres across the road instead of stopping in
+      // half a metre, which is what made a T-bone a brick wall. (A plain
+      // blend of the exponential scrub let 24/s back in long before the
+      // slide was over: the victim stopped in 3 m.)
+      const cap = SLIDE_DECEL / Math.max(0.05, Math.min(1, this.slide));
+      const d = Math.min(Math.abs(this.vLat) * (1 - Math.exp(-grip * dt)), cap * dt);
+      this.vLat -= Math.sign(this.vLat) * d;
+      this.slide = Math.max(0, this.slide - dt / SLIDE_T);
+    } else this.vLat *= Math.exp(-grip * dt);
 
     // Grip is spent in the steering limit above, so there is nothing left to
     // claw back here. What remains is the slide itself: lateral velocity that

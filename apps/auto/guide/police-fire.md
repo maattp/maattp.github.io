@@ -266,10 +266,13 @@ diamond sits on the minimap's edge and on the full map, and the objective
 line says the level, the clock and the distance.
 
 It is taken down WRECKED (rams or gunfire; its health is the level's, and a
-ram costs it 0.7 x the closing speed, so a level-1 car takes four or five
-hard ones; under 40 % it limps at half speed) or PULLED OVER (under 1.2 m/s
-within 22 m of you for 2.2 s: boxed in, or spun out; near you it does not
-back out of a wedge). Ramming a suspect,
+ram costs it 0.7 x the closing speed at the contact, so a level-1 car takes
+four or five hard ones; under 40 % it limps at half speed) or PULLED OVER
+(under 1.2 m/s within 22 m of you for 2.2 s: boxed in, or spun out; near you
+it does not back out of a wedge). A ram into a rear quarter is a PIT now: the
+crash impulse spins the suspect (see "A crash spins and slides" in
+`guide/vehicles.md`; crashcheck's `pit` case), and the police units' own rams
+spin you the same way. Ramming a suspect,
 wrecking one and a mission's gunfire add no heat. Cleared, it pays, and the
 next call comes in 4 s; MISSION again, leaving the vehicle or WASTED ends the
 run. The siren the run switched on goes off with it (`_sirenV`; one you had
