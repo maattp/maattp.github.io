@@ -572,6 +572,16 @@ spawns at random:
   most candidates ask the 2 m raster. **Mid-ring chunks build ~1-5 ms
   slower** on the Mac (4-9 ms before): the planting is in the streamer's
   fixed slice, so it costs fill rate in flight, not frame time.
+- **The mid ring plants late** (rendering.md, "A green Seattle"): a checker
+  found mid builds ~1.75x slower with trees and, on the phone's fixed 2 ms
+  slice, twice the chunks still pending after a minute of 8x low flight
+  (Discovery 14/15 -> 28/24, Seward 32/28 -> 51/36). Built bare while
+  anything else waits, planted when the streamer is idle, and a road-less
+  chunk with no green skipped at once, `greenshots.mjs` with
+  `GREEN_FLIGHT=x0,z0,x1,z1` (phone profile, 8x, 90 m/s at 70 m) reads like
+  master: toward Discovery 71/64/61/27/1/0 pending at 10-60 s against
+  71/63/60/30/14/0, toward Seward 61/41/53/53/27/33 against 61/43/48/48/46/32
+  (master alone read 18 and 32 at 60 s on two runs: this machine's noise).
 - **The refresh** (`TreeSystem.update`) is 0.1-0.3 ms on the Mac when it
   runs (10 m moved or 9 degrees turned) and does not appear in the top 40
   of an 8x profile. The planting does (`plantTrees` 1.4-2.5 %, `occupancy`
