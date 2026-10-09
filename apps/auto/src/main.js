@@ -184,6 +184,7 @@ class Game {
     this.busted = false;
     this._menu = false;      // the pause menu is up (what `paused = v` has always meant)
     this.holds = new Set();  // activities holding the world frozen (hold / release)
+    this.leaks = [];         // holds reapHolds / doRespawn had to let go: a bug, kept for the probes
     this.mapOpen = false;
     this.sirenLevel = 0;
     this.settings = {
@@ -2335,8 +2336,26 @@ function wireUi() {
 // you are released after a bust.
 const POLICE_HQ = [47.6043, -122.3296];
 
+/**
+ * Insurance for game.hold: a hold whose activity is no longer running (its
+ * start() threw after the hold, an onEnd that never came) would freeze the
+ * world for good, because Resume cannot clear a hold by design. Each frame, a
+ * hold with nothing behind it is let go.
+ */
+function reapHolds() {
+  const live = { fishing, arcade, pinball, hockey, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops };
+  for (const who of game.holds) {
+    if (who === 'seafair') { if (seafair && (seafair.state === 'menu' || seafair.state === 'done')) continue; }
+    else if (live[who] && live[who].active) continue;
+    game.release(who);
+    game.leaks.push(who);
+  }
+}
+
 function doRespawn() {
   const busted = game.busted, stars = game.wanted;
+  for (const who of game.holds) game.leaks.push(who);   // (nothing is playing if you are respawning)
+  game.holds.clear();
   game.dead = false;
   game.busted = false;
   game.wanted = 0;
@@ -2568,6 +2587,7 @@ function frame(now) {
   controls.poll(dt);
   handlePadUi(dt);
 
+  if (game.holds.size) reapHolds();
   if (fishing && fishing.active) fishing.update(dt);
   if (hoops && hoops.active) hoops.update(dt);
   if (golf && golf.active) golf.update(dt);

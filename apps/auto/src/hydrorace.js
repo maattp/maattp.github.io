@@ -472,6 +472,10 @@ export class Seafair {
     for (const v of hydros) this._tail(v, dt);
     this.spray.update(dt, (this.o.renderer ? this.o.renderer.domElement.height : 800) * 0.5 / Math.tan((camera.fov * Math.PI / 180) / 2));
     this._hydroHud(dt);
+    if (this._orphan && player.vehicle !== this._orphan) {
+      if (this.o.traffic.cars.includes(this._orphan)) this.o.traffic.remove(this._orphan);
+      this._orphan = null;
+    }
     if (this.jets) this._jetsStep(dt);
     if (this.state !== 'staging' && this.state !== 'racing') return;
     this._raceStep(dt);
@@ -690,6 +694,9 @@ export class Seafair {
 
   /** The race ends without a result: the boats go, the screen clears, the player is left where they are. */
   _abandon() {
+    // (the boat you were in is left to the respawn, which gets you out of it;
+    // update() takes it off the lake once you are)
+    this._orphan = this.me && this.me.v;
     this.state = 'idle';
     this._offT = 0;
     this.ui.clock.style.display = 'none';

@@ -223,7 +223,11 @@ export class Player {
         const m = (this.monorail && this.monorail.boardable(this.x, this.y, this.z))
           || (this.link && this.link.boardable(this.x, this.y, this.z))
           || (this.freight && this.freight.boardable(this.x, this.y, this.z));
-        const v = m || traffic.nearestEnterable(this.x, this.z, 5.0);
+        let v = m || traffic.nearestEnterable(this.x, this.z, 5.0);
+        // (nearestEnterable is flat: under a canopy only a vehicle at about
+        // your height counts, or free fall over a road car would seat you in it
+        // and skip the fall)
+        if (v && this.sky && Math.abs(v.y - this.y) > 6) v = null;
         if (v) this.enterVehicle(v);
         else if (this.link && this.link.onWait(this.x, this.z)) { /* told when the next trains are due */ }
         else if (this.freight && this.freight.onWait(this.x, this.z)) { /* a freight is called into the yard */ }
@@ -646,15 +650,22 @@ export class Player {
         this.game.onGunshot(m.x, m.y, m.z, dir);
         this.camKick = Math.max(this.camKick, 0.3);
         // hitscan against peds and cars, from the barrel -- as far as the
-        // first wall (the shot is level, at the barrel's height, so a ped on
-        // another floor or a roof is not in its line either)
+        // first wall. The height test FOLLOWS THE GROUND: a target counts when
+        // its feet are within 1.2 m of the ground under it plus the height you
+        // stand above yours (a roof, a platform), so a hill street is
+        // shootable up and down it while a ped on another floor, a deck over
+        // you or a roof is not in the line. (A level test at the barrel's
+        // height missed anything more than ~1 m lower or 1.5 m higher: every
+        // slope of 6 % or more at 10 m.)
         const reach = this.wallDist(m, dir, 60);
+        const city = this.city, stand = this.y - city.groundAt(this.x, this.z, this.y + 1);
         for (let t = 0.6; t < reach; t += 1.2) {
           const hx = m.x + dir.x * t, hz = m.z + dir.z * t;
-          const p = peds.hitAt(hx, hz, 0.9, 34, true, this.x, this.z, m.y);
+          const yRef = city.groundAt(hx, hz, m.y) + stand;
+          const p = peds.hitAt(hx, hz, 0.9, 34, true, this.x, this.z, yRef);
           if (p) return;
           for (const v of traffic.cars) {
-            if (dist2(v.x, v.z, hx, hz) < v.radius * v.radius && m.y > v.y - 0.3 && m.y < v.y + (v.spec.roof || 1.5) + 0.6) {
+            if (dist2(v.x, v.z, hx, hz) < v.radius * v.radius && Math.abs(v.y - yRef) < 1.5) {
               v.damage(9, true);
               this.game.onShotVehicle(v, hx, hz);
               return;
@@ -680,8 +691,12 @@ export class Player {
   wallDist(m, dir, max) {
     const city = this.city;
     let best = max;
+    // the barrel's height over the terrain, so a building on a slope blocks
+    // at the same height of itself as one on the flat (only a shooter above
+    // the roofline, on a deck or a roof, fires over it)
+    const hs = m.y - G.terrainHeight(m.x, m.z);
     for (const b of city.buildingsNear(m.x + dir.x * max * 0.5, m.z + dir.z * max * 0.5, max * 0.5 + 8)) {
-      if (m.y < b.y - 3 || m.y > b.y + b.h) continue;
+      if (hs > b.h) continue;
       const c = Math.cos(-b.rot), s = Math.sin(-b.rot), px = m.x - b.x, pz = m.z - b.z;
       const ox = px * c - pz * s, oz = px * s + pz * c, dx = dir.x * c - dir.z * s, dz = dir.x * s + dir.z * c;
       let t0 = 0, t1 = best, hit = true;
@@ -697,7 +712,10 @@ export class Player {
       if (hit && t0 < best) best = t0;
     }
     if (city.landmarkHit) {
-      for (let t = 1; t < best; t += 1.5) if (city.landmarkHit(m.x + dir.x * t, m.z + dir.z * t, 0.15, m.y)) { best = t; break; }
+      for (let t = 1; t < best; t += 1.5) {
+        const x = m.x + dir.x * t, z = m.z + dir.z * t;
+        if (city.landmarkHit(x, z, 0.15, G.terrainHeight(x, z) + hs)) { best = t; break; }
+      }
     }
     return best;
   }

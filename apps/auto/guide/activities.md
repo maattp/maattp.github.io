@@ -15,7 +15,11 @@ while `game.held`, `visibilitychange` opens no menu over an activity, and Resume
 cannot end a hold (only the activity's own `onEnd` / `_close` does). Seafair
 holds `'seafair'` for its office and results panel, and releases it when the
 race starts or it leaves. A new activity: `hold` in `tryInteract`, `release` in
-its `onEnd`.
+its `onEnd`, and add it to `reapHolds` (main.js): a hold whose activity is no
+longer `active` (its `start()` threw after the hold) is let go each frame, and
+`doRespawn` clears them all -- Resume cannot, by design, so without that a
+throw would freeze the world for good. Both record the name in `game.leaks`,
+which the probes assert stays empty.
 
 ## Fishing off the piers (an Easter egg)
 
@@ -503,7 +507,8 @@ series advancing, back to the pits. `docs/seafair/` has shots.
 
 **A race ended by WASTED or BUSTED** (`_raceStep` sees `game.dead`) is called
 off (`_abandon`): the boats go, no results panel (it would hold the world over
-the hospital respawn) and no teleport to the pits. Leaving the boat alive for
+the hospital respawn) and no teleport to the pits. The player's own boat is
+taken off the lake once the respawn has got them out of it (`_orphan`). Leaving the boat alive for
 8 s still ends in DID NOT FINISH and the pits, as designed.
 
 ## Basketball in the parks

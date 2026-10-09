@@ -51,13 +51,17 @@ for (let i = 0; i < 120; i++) { if (await ev('window.__dbg.sceneStats.calls > 0 
 // in-page helpers
 await ev(`(() => { const d = __dbg, p = d.player;
   window.W = {
+    leaked: [],
     sl: (ms) => new Promise((r) => setTimeout(r, ms)),
     // wait for cond() up to ms
     until: async (cond, ms = 20000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { if (cond()) return true; await W.sl(150); } return false; },
     reset: async () => {
       if (d.wheelRide.mode) d.wheelRide.abort ? d.wheelRide.abort() : d.wheelRide._alight();
       if (d.game.dead) await W.until(() => !d.game.dead, 30000);
+      // a hold left over from the last probe is a leak: note it, THEN clear it
+      W.leaked.push(...(d.game.holds ? d.game.holds : []), ...(d.game.leaks || []));
       if (d.game.holds) d.game.holds.clear();
+      if (d.game.leaks) d.game.leaks.length = 0;
       d.game.paused = false; d.game.wanted = 0; d.police.clear();
       if (p.vehicle) p.exitVehicle(true);
       await W.sl(300);
@@ -148,6 +152,7 @@ const PROBES = {
     return ev(`(async () => { const d = __dbg, p = d.player, sf = d.seafair, o = {}; await W.reset();
       sf._startRace({ id: 'heat', name: 'Heat 1', laps: 2 }); await W.sl(1500);
       o['racing'] = sf.state === 'staging' && sf.boats.length > 0;
+      const boat0 = p.vehicle;
       await W.die();
       const panel = sf.ui.panel;
       // wait out the 8 s "left the boat" DNF timer (v193 ended the race with its panel here)
@@ -156,6 +161,7 @@ const PROBES = {
       o['the world is not frozen'] = !d.game.paused;
       o['not teleported to the pits'] = Math.hypot(p.x - sf.door.x, p.z - sf.door.z) > 30;
       o['the race is over'] = sf.state === 'idle' && sf.boats.length === 0;
+      o['the boat is not left on the lake'] = !!boat0 && !d.traffic.cars.includes(boat0);
       return o; })()`);
   },
 
@@ -188,7 +194,7 @@ const PROBES = {
         const yaw = Math.atan2(toward.x - from.x, toward.z - from.z);
         p.camYaw = yaw - Math.PI; p.heading = yaw;
         p.armed = true; p.ammo = 50; p.attackCd = 0;
-        place(ped, pedAt.x, pedAt.z, pedY === undefined ? p.y : pedY);
+        place(ped, pedAt.x, pedAt.z, pedY === undefined ? d.city.groundAt(pedAt.x, pedAt.z, null) : pedY);
         p.attack(d.traffic, d.peds);
         return ped.hp < 30 || ped.state === 'down';
       };
@@ -198,7 +204,60 @@ const PROBES = {
       const open = { x: A.x + (A.x - b.x) * 0.5, z: A.z + (A.z - b.z) * 0.5 };
       o['a ped in the open is hit'] = shoot(A, open, open) === true;
       // on a floor ten metres up, same line: not hit
-      o['a ped ten metres above the line is not hit'] = shoot(A, open, open, p.y + 10) === false;
+      o['a ped ten metres above the line is not hit'] = shoot(A, open, open, d.city.groundAt(open.x, open.z, null) + 10) === false;
+      // slopes: the ground, not the level of the barrel, is what a ped stands on
+      // (v193's first fix missed at 6 % at 10 m, and at 8-18 % at 10-40 m)
+      const G = d.G, ter = (x, z) => G.terrainHeight(x, z);
+      const clear = (S, T, D) => {
+        if (G.isWater(S.x, S.z) || G.isWater(T.x, T.z)) return false;
+        for (let t = 0; t <= D; t += 1.5) {   // no landmark solid on the line either
+          const x = S.x + (T.x - S.x) * t / D, z = S.z + (T.z - S.z) * t / D;
+          if (d.city.landmarkHit && d.city.landmarkHit(x, z, 0.5, ter(x, z) + 1.45)) return false;
+        }
+        const mx = (S.x + T.x) / 2, mz = (S.z + T.z) / 2;
+        for (const q of d.city.buildingsNear(mx, mz, D / 2 + 8)) {
+          const dx = T.x - S.x, dz = T.z - S.z, t = Math.max(0, Math.min(1, ((q.x - S.x) * dx + (q.z - S.z) * dz) / (D * D)));
+          if (Math.hypot(q.x - (S.x + dx * t), q.z - (S.z + dz * t)) < Math.hypot(q.w, q.d) / 2 + 3) return false;
+        }
+        return true;
+      };
+      const [cx0, cz0] = G.toWorld(47.6253, -122.3205);          // Capitol Hill
+      const centres = [[cx0, cz0], [cx0 - 1500, cz0 - 1000], [cx0 + 1200, cz0 + 1500], [-2000, 800], [1500, -2500]];
+      const findSlope = (grade, D) => {
+        for (const [cx, cz] of centres) for (let x = cx - 1400; x <= cx + 1400; x += 20) for (let z = cz - 1400; z <= cz + 1400; z += 20) {
+          const h0 = ter(x, z);
+          for (let k = 0; k < 8; k++) {
+            const a = k * Math.PI / 4, T = { x: x + Math.sin(a) * D, z: z + Math.cos(a) * D };
+            if (Math.abs((ter(T.x, T.z) - h0) / D - grade) < 0.012 && clear({ x, z }, T, D)) return { S: { x, z }, T };
+          }
+        }
+        return null;
+      };
+      for (const grade of [-0.18, -0.11, -0.06, 0.06, 0.11, 0.18]) for (const D of [10, 25, 40]) {
+        const c = findSlope(grade, D), name = 'slope ' + Math.round(grade * 100) + '% at ' + D + ' m';
+        if (!c) { o[name + ': a site was found'] = false; continue; }
+        o[name + ': a ped is hit'] = shoot(c.S, c.T, c.T) === true;
+        if (!o[name + ': a ped is hit']) {   // say why: where, how far the wall is, how far off the height was
+          const m = { x: c.S.x + Math.sin(p.heading) * 0.75, y: p.y + 1.45, z: c.S.z + Math.cos(p.heading) * 0.75 };
+          o[name + ' (diagnosis)'] = JSON.stringify({ S: c.S, T: c.T, wall: p.wallDist(m, { x: Math.sin(p.heading), z: Math.cos(p.heading) }, 60), pedY: ped.y, groundT: d.city.groundAt(c.T.x, c.T.z, m.y) });
+        }
+      }
+      // a car on a slope, and on the flat
+      const carShot = (from, at) => {
+        const v = d.traffic.spawnAt(at.x, at.z, 0, 'sedan', 0xdfe3e6, 'free');
+        v.y = d.city.groundAt(at.x, at.z, null); v.sync(); v.mode = 'parked';
+        p.x = from.x; p.z = from.z; p.y = d.city.groundAt(from.x, from.z, null); p.vehicle = null; p.onFoot = true;
+        const yaw = Math.atan2(at.x - from.x, at.z - from.z);
+        p.camYaw = yaw - Math.PI; p.heading = yaw; p.armed = true; p.ammo = 50; p.attackCd = 0;
+        const h0 = v.health; p.attack(d.traffic, d.peds);
+        const hit = v.health < h0;
+        d.traffic.remove(v);
+        return hit;
+      };
+      o['a car in the open is hit'] = carShot(A, open) === true;
+      const cs = findSlope(0.11, 25), cd = findSlope(-0.11, 25);
+      o['a car 11 % uphill at 25 m is hit'] = !!cs && carShot(cs.S, cs.T) === true;
+      o['a car 11 % downhill at 25 m is hit'] = !!cd && carShot(cd.S, cd.T) === true;
       d.game.paused = false;
       return o; })()`);
   },
@@ -225,6 +284,35 @@ const PROBES = {
       p.enterVehicle(car); await W.sl(500);
       o['taking a vehicle clears the jump'] = p.sky === null && !p.onFoot;
       p.exitVehicle(true);
+      // ENTER under a canopy high over a road car does not seat you in it
+      const car2 = W.spawn('sedan');
+      p.onFoot = true; p.vehicle = null; p.h.group.visible = true;
+      p.x = car2.x + 1; p.z = car2.z; p.y = car2.y + 40; p.vy = 0;
+      p.sky = new Skydive(p, { forward: { x: 0, z: 1 }, vLong: 0, heading: 0 }, p.h.group.parent);
+      d.controls.tapped = 'enter'; await W.sl(4000);
+      o['ENTER 40 m over a car does not seat you'] = p.vehicle === null;
+      p.endSky(); p.y = car2.y + 3; p.sky = new Skydive(p, { forward: { x: 0, z: 1 }, vLong: 0, heading: 0 }, p.h.group.parent);
+      d.controls.tapped = 'enter'; await W.sl(4000);
+      o['ENTER 3 m over it does'] = p.vehicle === car2;
+      p.exitVehicle(true);
+      return o; })()`);
+  },
+
+  // 4. an insurance policy: a hold with no activity behind it is let go
+  async reap() {
+    return ev(`(async () => { const d = __dbg, o = {}; await W.reset();
+      d.game.hold('arcade');                    // as if arcade.start() had thrown
+      o['an orphan hold freezes the world'] = d.game.paused === true;
+      await W.until(() => !d.game.paused, 60000);
+      o['the reaper lets it go'] = !d.game.paused && d.game.holds.size === 0;
+      o['and records the leak'] = d.game.leaks.includes('arcade');
+      d.game.leaks.length = 0;                  // (expected here; keeps the leak check meaningful)
+      // a live activity's hold is left alone
+      const sp = d.fishSpots[0]; d.player.respawn(sp.rx, sp.rz); d.player.y = sp.y; d.game.tryInteract(d.player);
+      await W.sl(3000);
+      o['a live activity keeps its hold'] = d.fishing.active && d.game.held;
+      d.fishing.close(); await W.sl(500);
+      o['and releases it itself'] = !d.game.held && d.game.leaks.length === 0;
       return o; })()`);
   },
 };
@@ -236,6 +324,8 @@ for (const n of names) {
   console.log('\n== ' + n);
   let res;
   try { res = await PROBES[n](); } catch (e) { console.log('  ERROR', e.message.slice(0, 400)); bad++; continue; }
+  // no activity hold may outlive its probe (the reaper and doRespawn would mask one)
+  res['no leaked holds'] = await ev(`(() => { const g = __dbg.game; return g.holds.size === 0 && g.leaks.length === 0 && W.leaked.length === 0; })()`);
   for (const [k, v] of Object.entries(res)) { console.log(`  ${v === true ? 'PASS' : v === false ? 'FAIL' : 'INFO'}  ${k}${typeof v === 'boolean' ? '' : ' = ' + v}`); if (v === false) bad++; }
 }
 if (logs.length) console.log('\npage exceptions:\n' + logs.slice(0, 8).join('\n'));
