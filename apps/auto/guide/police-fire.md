@@ -272,7 +272,10 @@ within 22 m of you for 2.2 s: boxed in, or spun out; near you it does not
 back out of a wedge). Ramming a suspect,
 wrecking one and a mission's gunfire add no heat. Cleared, it pays, and the
 next call comes in 4 s; MISSION again, leaving the vehicle or WASTED ends the
-run. `missionSpec(n)`:
+run. The siren the run switched on goes off with it (`_sirenV`; one you had
+on yourself stays on), and the objective line is put back only if it is still
+the run's own -- a delivery written meanwhile is left alone (the same rule in
+firecalls.js and the Duck Tour). `missionSpec(n)`:
 
 | level | suspects | shoots back | clock | top speed | health | pay |
 |---|---|---|---|---|---|---|
@@ -554,7 +557,10 @@ from call 3 and a third from call 5, a clock of `50 + d/10 + 11 per flame`
 seconds scaled down 7 % a call (to 62 %). Wetting takes a flame's hp down at
 0.42/s; dry, it creeps back at 0.035/s. Every flame out pays `250 + 125k + 30
 per flame + 1 per second left` and the next call comes 5 s later; the clock
-running out ends the run; MISSION again stands down.
+running out ends the run; MISSION again stands down. **A call lives in the
+rig**, as a police mission does in its cruiser: dying, a respawn or climbing
+out stands it down (flames, beacon, `fireTarget`, the objective) in
+`mission()`. Probe: `node tools/bugrepro/wo6.mjs fire`.
 
 **Every flame is placed where the street can put it out** (`flameSpots`).
 Building boxes abut and overlap along a block, and a flame set 0.6 m in front

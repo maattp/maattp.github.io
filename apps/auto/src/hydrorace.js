@@ -404,7 +404,7 @@ export class Seafair {
     const S = this.series, ev = EVENTS[S.event % EVENTS.length];
     const table = BOATS.map((b, i) => ({ b, p: S.points[i] })).sort((a, c) => c.p - a.p);
     this.state = 'menu';
-    this.o.game.paused = true;
+    this.o.game.hold('seafair');
     this._panel(`<div class="big">SEAFAIR</div><div class="sm">Unlimited hydroplanes on Lake Washington. You drive ${BOATS[0].num} ${BOATS[0].name}.<br>
       Hit the start line flat out AFTER the clock reaches zero. Lift for the turns or she'll hook. Watch the nose at speed -- push the stick forward or lift, or she'll blow over.
       Stay outside the turn buoys.</div>
@@ -413,11 +413,11 @@ export class Seafair {
       [{ label: `RACE ${ev.name}`, go: () => this._startRace(ev) }, { label: 'FREE PRACTICE', go: () => this._practice() }, { label: 'LEAVE', back: true, go: () => this._closeMenu() }]);
   }
 
-  _closeMenu() { this.state = 'idle'; this.o.game.paused = false; if (!this.boats.length) this.el.classList.remove('show'); }
+  _closeMenu() { this.state = 'idle'; this.o.game.release('seafair'); if (!this.boats.length) this.el.classList.remove('show'); }
 
   _practice() {
     this.state = 'idle';
-    this.o.game.paused = false;
+    this.o.game.release('seafair');
     const { player } = this.o;
     if (!this.practice || this.practice.dead) this.spawnPractice();
     player.enterVehicle(this.practice);
@@ -428,7 +428,7 @@ export class Seafair {
 
   _startRace(ev) {
     const { traffic, player, game } = this.o, C = this.course;
-    game.paused = false;
+    game.release('seafair');
     if (player.vehicle) player.exitVehicle(true);
     this._clearBoats();
     this.ev = ev;
@@ -514,6 +514,10 @@ export class Seafair {
 
   _raceStep(dt) {
     const C = this.course, { player } = this.o;
+    // WASTED or BUSTED mid-race: the hospital respawn is the end of it. No
+    // results panel (it would freeze the world over the respawn) and no
+    // teleport to the pits.
+    if (this.o.game.dead) { this._abandon(); return; }
     this.t += dt;
     if (this.state === 'staging') {
       this.clock -= dt;
@@ -681,12 +685,23 @@ export class Seafair {
     const head = outMe ? 'DID NOT FINISH' : cup ? 'SEAFAIR CUP CHAMPION!' : place === 1 ? `${ev.name}: YOU WIN!` : `${ev.name}: P${place}`;
     this._panel(`<div class="big">${head}</div><table>${rows}</table><div class="sm">${pay ? `Purse $${pay}` : ''}${cup ? ' + $2,000 and the Seafair Cup!' : ev.id === 'final' && this._cupRes ? ` · The Cup goes to ${this._cupRes.champ.num} ${this._cupRes.champ.name}` : ''}</div>`,
       [{ label: 'BACK TO THE PITS', go: () => this._toPits() }]);
-    this.o.game.paused = true;
+    this.o.game.hold('seafair');
+  }
+
+  /** The race ends without a result: the boats go, the screen clears, the player is left where they are. */
+  _abandon() {
+    this.state = 'idle';
+    this._offT = 0;
+    this.ui.clock.style.display = 'none';
+    this.ui.panel.classList.remove('on');
+    this.o.game.release('seafair');
+    this._clearBoats();
+    this.say('The race is called off.', 2);
   }
 
   _toPits() {
     const { player, game } = this.o;
-    game.paused = false;
+    game.release('seafair');
     if (player.vehicle) player.exitVehicle(true);
     this._clearBoats();
     this.state = 'idle';
