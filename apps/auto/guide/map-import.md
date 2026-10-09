@@ -16,7 +16,7 @@ tools/data/dem/*.png                   361 terrarium tiles, z14 (~6.4 m/px)
 tools/data/raw_*.json                  projected + clipped intermediates
         |  build_raster / build_roads / build_buildings / build_places
 apps/auto/data/height.png     781x781 @ 40 m   h = ((R<<8)|G)/10 - 100
-apps/auto/data/surface.png   3121x3121 @ 10 m  R = water, G = green
+apps/auto/data/surface.png   3121x3121 @ 10 m  R = water, G = green, B = which green (build_wood.py)
 apps/auto/data/lots.png      2168x2168 @ 14.4 m  G = lot code, R = coverage
 apps/auto/data/roads.bin      192k nodes, 205k edges        5.74 MB
 apps/auto/data/buildings.bin  342k oriented boxes, chunked  4.13 MB
@@ -37,7 +37,19 @@ tools/.venv/bin/python tools/build_raster.py    # must run before build_roads
 tools/.venv/bin/python tools/build_roads.py
 tools/.venv/bin/python tools/build_buildings.py && ... build_places.py
 tools/.venv/bin/python tools/build_lots.py      # after build_raster, 4 s
+tools/.venv/bin/python tools/build_wood.py      # after build_raster: woodland -> surface.png blue
 ```
+
+**surface.png's blue channel is which green is woodland** (`build_wood.py`,
+from raw_green.json's kinds: 255 wood, 170 scrub, 85 kept open -- pitches and
+beaches -- 0 lawn). build_raster.py writes the file with blue 0, so run
+build_wood.py after it, as build_lots.py is. Wood is OSM's `natural=wood` and
+`landuse=forest`, a `nature_reserve` unless its name says wetland, a park
+named as woodland (Woods, Forest, Ravine, Greenbelt, Preserve, Natural Area),
+the Arboretum and Interlaken, and green ground steeper than 0.25 (a Seattle
+park slope that steep is a wooded ravine or bluff). It asserts the share of
+eight named parks that is wood (Discovery >= 55 %, Schmitz and Camp Long >=
+90 %...): believe those over a screenshot. R and G are untouched.
 
 `build_roads.py` reads `height.png`, so **the raster step has to run first** or
 every road node gets its height from the previous terrain. The raster step

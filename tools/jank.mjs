@@ -122,6 +122,23 @@ const CHECKS = `(() => {
   const isRoadHit = (h) => h.object.isMesh && surfOf(h) === 'road';
   const isPavedHit = (h) => h.object.isMesh && surfOf(h) !== null;
 
+  // Is this obstacle a TREE? Trunks, lamp posts, picnic tables and play
+  // towers share city.obstacles, and the tree checks below counted all of
+  // them: master's 4 "trees" in the water were picnic tables on the
+  // Duwamish shore and a play tower. trees.js keeps its built trees as
+  // records (world.trees); without them (older builds) every obstacle counts.
+  const isTree = (() => {
+    if (!world.trees) return () => true;
+    return (x, z) => {
+      for (const C of world.trees.chunks.values()) {
+        if (x < C.x0 || x >= C.x0 + 400 || z < C.z0 || z >= C.z0 + 400) continue;
+        // (records are Float32, the obstacle list holds doubles)
+        for (let i = 0; i < C.n; i++) if (Math.abs(C.ord[i * 9] - x) < 0.01 && Math.abs(C.ord[i * 9 + 2] - z) < 0.01) return true;
+      }
+      return false;
+    };
+  })();
+
   const add = (name, n, of, worst, note) =>
     out.push({ name, n, of, rate: of ? +(100 * n / of).toFixed(2) : 0, worst: worst.slice(0, 6), note });
 
@@ -186,7 +203,7 @@ const CHECKS = `(() => {
           // from its own road, and a road over water here is a PIER -- Alaskan
           // Way and Colman Dock are supposed to be out there -- so a pole above
           // the tide line is correct and only a tree is a bug.
-          if (city.onRoad(ox, oz, 4.0)) continue;
+          if (city.onRoad(ox, oz, 4.0) || !isTree(ox, oz)) continue;
           const key = Math.round(ox) + ',' + Math.round(oz);
           if (seen.has(key)) continue;
           seen.add(key);
@@ -238,7 +255,7 @@ const CHECKS = `(() => {
           const ox = list[i], oz = list[i + 1];
           if (!nearSite(ox, oz, sx, sz)) continue;
           // street furniture stands beside its road; only park trees count
-          if (city.onRoad(ox, oz, 4.0) || !G.inPark(ox, oz)) continue;
+          if (city.onRoad(ox, oz, 4.0) || !G.inPark(ox, oz) || !isTree(ox, oz)) continue;
           const key = Math.round(ox) + ',' + Math.round(oz);
           if (seen.has(key)) continue;
           seen.add(key);
@@ -250,6 +267,38 @@ const CHECKS = `(() => {
     }
     add('tree-on-lot', on, planted, worst,
       'park trunks standing on a lot (' + lotCand.length + ' park-lot candidates, ' + sites.length + ' sites)');
+  }
+
+  // --- trees on a carriageway, or inside a building ------------------------
+  //
+  // trees.js plants tens of thousands of trunks -- forest on the wood mask,
+  // both kerbs of most streets, round every house -- each kept off roads and
+  // footprints by its own tests (a 2 m raster for most of them). Counted off
+  // the BUILT records the instanced crowns draw from (world.trees), not off
+  // re-derived candidates: a trunk within 0.3 m of any carriageway, deck or
+  // bore (onRoad's own default) or inside a footprint is a bug. A pavement
+  // tree stands 1 m in from the kerb on purpose, which onRoad(0.3) clears.
+  if (want('tree-on-road') && world.trees) {
+    let on = 0, inb = 0, planted = 0;
+    const seen = new Set(), worst = [], worstB = [];
+    for (const [sx, sz] of roadSites(14, 47)) {
+      settle(sx, sz);
+      for (const C of world.trees.chunks.values()) {
+        const o = C.ord;
+        for (let i = 0; i < C.n; i++) {
+          const x = o[i * 9], z = o[i * 9 + 2];
+          if (!nearSite(x, z, sx, sz)) continue;
+          const key = Math.round(x * 10) + ',' + Math.round(z * 10);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          planted++;
+          if (city.onRoad(x, z, 0.3)) { on++; if (worst.length < 6) worst.push({ x: Math.round(x), z: Math.round(z) }); }
+          if (world.inBuilding(x, z, 0.1)) { inb++; if (worstB.length < 6) worstB.push({ x: Math.round(x), z: Math.round(z) }); }
+        }
+      }
+    }
+    add('tree-on-road', on, planted, worst, 'built trunks within 0.3 m of a carriageway, deck or bore');
+    add('tree-in-building', inb, planted, worstB, 'built trunks inside a building footprint');
   }
 
   // --- ground that stands above the water covering it --------------------
