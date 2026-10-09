@@ -89,6 +89,17 @@ The parts, each of which was measured wrong first:
   long vehicle round a post its body is clear of.
 - Aircraft, hulls, the tank, trains, an articulated rear, a hulk and a stunt
   flight take the impulse's velocity but never spin (`canSpin`).
+- **A deck's parapet is solid where it is drawn** (world.js `railKinds` /
+  `deckRailSegs`, traffic.js `deckRailHit`). Nothing but its own steering ever
+  kept a car on an elevated deck -- the parapets were geometry only -- so once
+  a hit could spin a car, a PIT on the Magnolia Bridge put the suspect over the
+  side (crashcheck `CRASH_NORAILS=1`: off the deck, 9 m past the rail).
+  `meshGradedDeck` and the collision now read ONE per-piece decision (open at
+  a merge or beside a same-level deck, a low median, or a parapet), so a wall
+  cannot be solid where none is drawn or missing where one is. It answers
+  you, a car nobody drives, a suspect and anything sliding from a hit; a
+  traffic or police driver in its lane is left as it was. Into the rail at 20
+  m/s and 25 deg: deflected, 14 m/s after, still on the deck.
 - **AI cars recover**: a spun or shunted car that cannot drive on backs out
   and re-snaps its route (see "How the AI drives" in `guide/roads.md`).
   Measured before/after over trafficcheck's 7 sites at four warm-ups (15, 20,
@@ -100,7 +111,11 @@ after; offset rear-end yaw 0 -> 0.81 / 0.89 rad (striker / struck); a cruiser's
 PIT turns the car it hits 0.66 rad; 30 deg into a wall at 20 m/s, 0 -> 12.9 m/s
 after, the body turned from 30 deg into the wall to 10 deg out of it; a bus
 T-boning a sedan moves it 1.7 -> 9.1 m, a sedan into a bus 0.2. A shunted AI
-car spins and re-takes its lane (`aiRecover`).
+car spins and re-takes its lane (`aiRecover`). The wall case is a real building
+face with clear paved ground before it (the probe searches for one and checks
+the first thing touched is that wall); `recover` hits your car hard enough to
+spin it (2.8 rad/s), takes the other car away, and the spin is gone in 1.3 s
+with nothing touched.
 
 **A car follows the ground DOWN a hill; it does not fall down it** (v202). The
 vertical follow is an 18/s exponential toward the four-wheel average, and a

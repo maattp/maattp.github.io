@@ -613,6 +613,8 @@ export class World {
   constructor(scene, city, tx, opts = {}) {
     this.scene = scene;
     this.city = city;
+    // the drawn deck parapets as collision segments (deckRailSegs)
+    city.deckRails = (ei) => this.deckRailSegs(ei);
     this.tx = tx;
     this.renderer = opts.renderer;
     this.shadows = opts.shadows !== false;
@@ -4805,6 +4807,114 @@ float frLine(float o, float fw, float c, float w) {
     return [n.x + ox * dist, n.z + oz * dist];
   }
 
+  /** meshGradedDeck's point on an edge line {sx, sz, ex, ez, sg} at t, pulled
+   *  in where that side was trimmed off a lower neighbour (citygen's split
+   *  levels), so deck, soffit, fascia and rail follow the trimmed edge together. */
+  deckAt(e) {
+    const k = e.pk, hw = e.hw;
+    return (c, t) => {
+      const i = Math.min(k, Math.max(0, Math.round(t * k)));
+      const cut = hw - e.tw[i * 2 + (c.sg > 0 ? 0 : 1)];
+      return [c.sx + (c.ex - c.sx) * t + e.dz * c.sg * cut, c.sz + (c.ez - c.sz) * t - e.dx * c.sg * cut];
+    };
+  }
+
+  /**
+   * What stands on each side of each profile piece of a graded deck: 0 open
+   * (another carriageway at this level, or a higher neighbour's girder), 1 a
+   * low median (the lower-indexed of two decks side by side), 2 a parapet.
+   * `[i * 2 + (left ? 0 : 1)]`. Cached per edge: meshGradedDeck draws from it
+   * and deckRailSegs collides with it, so a wall is solid exactly where one is
+   * drawn.
+   */
+  railKinds(e, ei) {
+    const C = this._railKinds || (this._railKinds = new Map());
+    let K = C.get(ei);
+    if (K) return K;
+    const k = e.pk, hw = e.hw, PARAPET = 0.55;
+    K = new Int8Array(k * 2);
+    const at = this.deckAt(e);
+    for (const sg of [1, -1]) {
+      const [rsx, rsz] = this.deckEdgePoint(e.a, e, sg, hw), [rex, rez] = this.deckEdgePoint(e.b, e, sg, hw);
+      const [dsx, dsz] = this.deckEdgePoint(e.a, e, sg, hw + PARAPET), [dex, dez] = this.deckEdgePoint(e.b, e, sg, hw + PARAPET);
+      const run = { sx: rsx, sz: rsz, ex: rex, ez: rez, sg }, deck = { sx: dsx, sz: dsz, ex: dex, ez: dez, sg };
+      const ox = -e.dz * sg, oz = e.dx * sg;
+      for (let i = 0; i < k; i++) {
+        const t0 = i / k, t1 = (i + 1) / k;
+        // the middle of the piece's rail strip and its height, the same
+        // arithmetic the drawing always used (a different rounding could
+        // flip a carriagewayAt answer and move a wall)
+        const R0 = at(run, t0), R1 = at(run, t1), D0 = at(deck, t0), D1 = at(deck, t1);
+        const mx = (R0[0] + R1[0] + D0[0] + D1[0]) / 4, mz = (R0[1] + R1[1] + D0[1] + D1[1]) / 4;
+        const my = ((e.ph[i] - 0.03) + (e.ph[i + 1] - 0.03)) / 2 + 0.03;
+        let open = !!this.city.carriagewayAt(mx, mz, my, ei);
+        // Two decks side by side each built a parapet on the shared side --
+        // two walls back to back down the middle of the freeway, with a slot
+        // of daylight between them. Where another carriageway at this level
+        // starts within 3 m outboard, the pair gets ONE low median barrier,
+        // drawn by whichever edge has the lower index.
+        let median = false;
+        if (!open) {
+          const px3 = mx + ox * 3.0, pz3 = mz + oz * 3.0;
+          const nb = this.city.carriagewayAt(px3, pz3, my, ei, 0.9);
+          if (nb) {
+            if (nb - 1 > ei) median = true; else open = true;
+          } else if (this.city.carriagewayAt(px3, pz3, my + 2.2, ei, 1.3)) {
+            // The neighbour is up to 3.5 m HIGHER. Its own girder face is the
+            // wall on this side; a rail here was the second, lower wall of the
+            // staggered pair between I-5's express lanes and the main line --
+            // the decks there sit 0.6-3 m apart and 1.6-2.8 m out of level,
+            // just past the same-level test. A LOWER neighbour keeps this
+            // rail: that is a drop, and a drop wants a parapet.
+            open = true;
+          }
+        }
+        K[i * 2 + (sg > 0 ? 0 : 1)] = open ? 0 : median ? 1 : 2;
+      }
+    }
+    C.set(ei, K);
+    return K;
+  }
+
+  /**
+   * THE PARAPETS ARE SOLID (traffic.js collideWithBuildings, via
+   * city.deckRails): an elevated edge's drawn rails as segments along their
+   * traffic face, stride 7 [ax, az, bx, bz, deck y at a, at b, side (+1 left,
+   * -1 right)], one per profile piece and side that has a rail or a median. Nothing stopped a
+   * car at a deck's edge but its own steering until crashes could spin it,
+   * and then a PIT on the Magnolia Bridge put the suspect over the side.
+   * Cached per edge, built on first ask (a few per frame at most).
+   */
+  deckRailSegs(ei) {
+    const C = this._railSegs || (this._railSegs = new Map());
+    let S = C.get(ei);
+    if (S) return S;
+    const city = this.city, e = city.edges[ei];
+    const out = [];
+    if (e && e.elev && !e.tunnel) {
+      const hw = e.hw;
+      for (const sg of [1, -1]) {
+        const [rsx, rsz] = this.deckEdgePoint(e.a, e, sg, hw), [rex, rez] = this.deckEdgePoint(e.b, e, sg, hw);
+        if (e.prof) {
+          const k = e.pk, K = this.railKinds(e, ei), at = this.deckAt(e);
+          const run = { sx: rsx, sz: rsz, ex: rex, ez: rez, sg };
+          for (let i = 0; i < k; i++) {
+            if (K[i * 2 + (sg > 0 ? 0 : 1)] === 0) continue;
+            const R0 = at(run, i / k), R1 = at(run, (i + 1) / k);
+            out.push(R0[0], R0[1], R1[0], R1[1], e.ph[i] - 0.03, e.ph[i + 1] - 0.03, sg);
+          }
+        } else {
+          // the old flat span: a parapet the whole length, both sides
+          const a = city.nodes[e.a], b = city.nodes[e.b];
+          out.push(rsx, rsz, rex, rez, a.y + 0.06, b.y + 0.06, sg);
+        }
+      }
+    }
+    S = new Float32Array(out);
+    C.set(ei, S);
+    return S;
+  }
+
   /**
    * An elevated span: deck, edge beam, parapets and piers.
    *
@@ -4855,17 +4965,14 @@ float frLine(float o, float fw, float c, float w) {
     // A point on an edge line at t, pulled in where that side was trimmed off
     // a lower neighbour (citygen's split levels), so deck, soffit, fascia and
     // rail all follow the trimmed edge together.
-    const at = (c, t) => {
-      const i = Math.min(k, Math.max(0, Math.round(t * k)));
-      const cut = hw - e.tw[i * 2 + (c.sg > 0 ? 0 : 1)];
-      return [c.sx + (c.ex - c.sx) * t + e.dz * c.sg * cut, c.sz + (c.ez - c.sz) * t - e.dx * c.sg * cut];
-    };
+    const at = this.deckAt(e);
     // Drawn 3 cm under the standing height, as the old deck was (y + 0.06
     // drawn against y + 0.09 stood on).
     const Y = (i) => e.ph[i] - 0.03;
     const col = e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1];
     const seg = e.len / k, U = (2 * hw) / ROAD_TILE;
     const wasOpen = { 1: null, '-1': null };
+    const kinds = this.railKinds(e, ei);
     for (let i = 0; i < k; i++) {
       const t0 = i / k, t1 = (i + 1) / k, y0 = Y(i), y1 = Y(i + 1);
       const [l0x, l0z] = at(run[1], t0), [l1x, l1z] = at(run[1], t1);
@@ -4882,30 +4989,9 @@ float frLine(float o, float fw, float c, float w) {
         const R0 = at(run[sg], t0), R1 = at(run[sg], t1);
         const D0 = at(deck[sg], t0), D1 = at(deck[sg], t1);
         const ox = -e.dz * sg, oz = e.dx * sg;
-        const mx = (R0[0] + R1[0] + D0[0] + D1[0]) / 4, mz = (R0[1] + R1[1] + D0[1] + D1[1]) / 4;
-        const my = (y0 + y1) / 2 + 0.03;
-        let open = !!this.city.carriagewayAt(mx, mz, my, ei);
-        // Two decks side by side each built a parapet on the shared side --
-        // two walls back to back down the middle of the freeway, with a slot
-        // of daylight between them. Where another carriageway at this level
-        // starts within 3 m outboard, the pair gets ONE low median barrier,
-        // drawn by whichever edge has the lower index.
-        let median = false;
-        if (!open) {
-          const px3 = mx + ox * 3.0, pz3 = mz + oz * 3.0;
-          const nb = this.city.carriagewayAt(px3, pz3, my, ei, 0.9);
-          if (nb) {
-            if (nb - 1 > ei) median = true; else open = true;
-          } else if (this.city.carriagewayAt(px3, pz3, my + 2.2, ei, 1.3)) {
-            // The neighbour is up to 3.5 m HIGHER. Its own girder face is the
-            // wall on this side; a rail here was the second, lower wall of the
-            // staggered pair between I-5's express lanes and the main line --
-            // the decks there sit 0.6-3 m apart and 1.6-2.8 m out of level,
-            // just past the same-level test. A LOWER neighbour keeps this
-            // rail: that is a drop, and a drop wants a parapet.
-            open = true;
-          }
-        }
+        // (open / a median / a rail: railKinds, which the collision shares)
+        const kind = kinds[i * 2 + (sg > 0 ? 0 : 1)];
+        const open = kind === 0, median = kind === 1;
         const top = open ? 0 : median ? 0.8 : RAIL;
         // Fascia: girder and rail in one cast-concrete face.
         face.quad([D0[0], y0 - GIRDER, D0[1]], [D1[0], y1 - GIRDER, D1[1]],

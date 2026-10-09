@@ -31,6 +31,7 @@
 // Each line prints a JSON object; the last line, CRASH {...}, has `pass` per
 // acceptance bar and `ok` overall. Exit code 1 on a miss.
 //
+// Env:    CRASH_NORAILS=1  the deck parapets not solid, for the deck cases' control
 // Flags:  --shots DIR   the T-bone from straight above, before / contact /
 //                       +0.5 s / +1.5 s (slow: the paused loop draws each)
 // Usage:  python3 -m http.server 8000; node tools/crashcheck.mjs
@@ -109,69 +110,190 @@ function pageCase(name, meType, oType, setup, frames, extra) {
   return JSON.stringify(out);
 }
 
-// The wall: a stand-in building along the street, 4 m off the car's line,
-// on the real collideWithBuildings path (Vehicle.update + the push-out).
+// The wall: a REAL building face with clear paved ground in front of it --
+// no street object, barrier, landmark, other building, deck or water over the
+// approach and the slide along it -- driven into at 30 deg and 20 m/s through
+// player.update (your car's path), and the first thing touched must be that
+// wall. (A stand-in building on a stub city hid every street object and
+// parked car from the test.)
 function pageWall() {
-  const d = window.__dbg, c = d.city, S = window.__cc;
+  const d = window.__dbg, c = d.city, G = d.G, p = d.player, S = window.__cc;
   S.clear();
-  const v = S.mk('sedan', 'race');   // (not 'free': no grass drag if it leaves the tarmac)
-  const off = 4, D = 20, W = 300;
-  const rot = Math.atan2(S.uz, S.ux);
-  const bx = S.mx + S.px * (off + D / 2), bz = S.mz + S.pz * (off + D / 2);
-  const bld = { x: bx, z: bz, w: W, d: D, rot, y: c.groundAt(S.mx, S.mz, null) - 2, h: 60 };
-  const proxy = {
-    obstacleHit: () => null, barrierHit: () => null, landmarkHit: () => null,
-    buildingsNear: () => [bld],
+  const A = 30 * Math.PI / 180, R = 1.6 + 0.6;   // the sedan's obstacle circle, and some
+  const blocked = (b0, x, z, y, g0) => {
+    if (c.obstacleHit(x, z, R, y, false) || (c.barrierHit && c.barrierHit(x, z, R, y)) || (c.landmarkHit && c.landmarkHit(x, z, R, y, false))) return true;
+    if (G.isWater(x, z)) return true;
+    const g = c.groundAt(x, z, null);
+    if (Math.abs(g - g0) > 0.4 || Math.abs(g - G.terrainHeight(x, z)) > 0.6) return true;   // a slope, or a deck
+    if (c.roadLift(x, z) < 0.02 && !G.inLot(x, z)) return true;   // paved only: grass drags
+    for (const b of c.buildingsNear(x, z, 14)) {
+      if (b === b0) continue;
+      const cc = Math.cos(-b.rot), ss = Math.sin(-b.rot), dx = x - b.x, dz = z - b.z;
+      if (Math.abs(dx * cc - dz * ss) < b.w / 2 + 3 && Math.abs(dx * ss + dz * cc) < b.d / 2 + 3) return true;
+    }
+    return false;
   };
-  const A = 30 * Math.PI / 180;
-  const dx = S.ux * Math.cos(A) + S.px * Math.sin(A), dz = S.uz * Math.cos(A) + S.pz * Math.sin(A);
-  S.pose(v, -12, 0, Math.atan2(dx, dz), 20);
-  const IN = { throttle: 0, brake: 0, steer: 0 };
-  // the body's angle to the wall's face, + into it
-  const ang = () => { const f = v.forward; return Math.atan2(f.x * S.px + f.z * S.pz, f.x * S.ux + f.z * S.uz) * 180 / Math.PI; };
+  let site = null;
+  const seen = new Set();
+  for (const [sx, sz] of [[S.mx, S.mz], [0, 0], [1300, 1350], [-1195, -2616], [1681, -291], [-219, -4598]]) {
+    for (const b of c.buildingsNear(sx, sz, 500)) {
+      if (site || seen.has(b)) continue;
+      seen.add(b);
+      const cc = Math.cos(-b.rot), ss = Math.sin(-b.rot);
+      const W = (lx, lz) => [b.x + lx * cc + lz * ss, b.z - lx * ss + lz * cc];
+      // faces: [half-length, centre (local), tangent (local), outward normal (local)]
+      for (const [Lh, cx0, cz0, tx0, tz0, nx0, nz0] of [[b.w / 2, 0, b.d / 2, 1, 0, 0, 1], [b.w / 2, 0, -b.d / 2, 1, 0, 0, -1],
+        [b.d / 2, b.w / 2, 0, 0, 1, 1, 0], [b.d / 2, -b.w / 2, 0, 0, 1, -1, 0]]) {
+        if (site || Lh < 18) continue;
+        const [fx, fz] = W(cx0, cz0), [tx1, tz1] = W(cx0 + tx0, cz0 + tz0), [nx1, nz1] = W(cx0 + nx0, cz0 + nz0);
+        const tx = tx1 - fx, tz = tz1 - fz, nx = nx1 - fx, nz = nz1 - fz;
+        const g0 = c.groundAt(fx + nx * 4, fz + nz * 4, null);
+        if (g0 + 2 > b.y + b.h) continue;
+        let ok = true;
+        // the run-in, from 12 m back along the face and 4 m out, to the face;
+        // then the slide along it 2.5 m out
+        for (let k = 0; ok && k <= 16; k++) {
+          const u = -12 + k * 0.5 * Math.cos(A), w = 4 - k * 0.5 * Math.sin(A);
+          if (w < 1.5) break;
+          if (blocked(b, fx + tx * u + nx * w, fz + tz * u + nz * w, g0, g0)) ok = false;
+        }
+        for (let u = -6; ok && u <= 14; u += 1) if (blocked(b, fx + tx * u + nx * 2.5, fz + tz * u + nz * 2.5, g0, g0)) ok = false;
+        if (ok) site = { b, fx, fz, tx, tz, nx, nz };
+      }
+    }
+  }
+  if (!site) return JSON.stringify({ case: 'wall', site: null });
+  const { b, fx, fz, tx, tz, nx, nz } = site;
+  const v = S.mk('sedan');
+  p.enterVehicle(v);
+  const dx = tx * Math.cos(A) - nx * Math.sin(A), dz = tz * Math.cos(A) - nz * Math.sin(A);
+  v.x = fx - tx * 12 + nx * 4; v.z = fz - tz * 12 + nz * 4; v.heading = Math.atan2(dx, dz);
+  v.vLong = 20; v.vLat = 0; v.y = c.groundAt(v.x, v.z, null);
+  // the body's angle to the face, + into it
+  const ang = () => { const f = v.forward; return Math.atan2(-(f.x * nx + f.z * nz), f.x * tx + f.z * tz) * 180 / Math.PI; };
+  const inWall = () => {
+    const cc = Math.cos(-b.rot), ss = Math.sin(-b.rot), ddx = v.x - b.x, ddz = v.z - b.z;
+    return Math.abs(ddx * cc - ddz * ss) < b.w / 2 + v.radius * 0.8 + 0.4 && Math.abs(ddx * ss + ddz * cc) < b.d / 2 + v.radius * 0.8 + 0.4;
+  };
   const ang0 = ang();
-  let hit = -1, imp = 0;
-  for (let f = 0; f < 120; f++) {
-    v.update(1 / 60, IN);
-    const i = d.collideWithBuildings(v, proxy, null, false);   // (your car's path: ai off)
-    if (i > 0.5 && hit < 0) { hit = f; imp = i; }
+  let hit = -1, first = null, sp0 = 0;
+  for (let f = 0; f < 150; f++) {
+    const s0 = S.speed(v);
+    S.step();
+    if (hit < 0 && (Math.abs(S.speed(v) - s0) > 1 || Math.abs(v.spin || 0) > 0.3)) {
+      hit = f; sp0 = s0;
+      // what it touched: the wall, and nothing else
+      first = { wall: inWall(), obstacle: !!c.obstacleHit(v.x, v.z, v.radius * 0.7 + 0.3, v.y, false),
+        otherCar: d.traffic.cars.some((o) => o !== v && Math.hypot(o.x - v.x, o.z - v.z) < 6) };
+    }
     if (hit >= 0 && f >= hit + 30) break;
   }
   const f = v.forward;
   const wx = f.x * v.vLong + f.z * v.vLat, wz = f.z * v.vLong - f.x * v.vLat;
-  const velAng = Math.atan2(wx * S.px + wz * S.pz, wx * S.ux + wz * S.uz) * 180 / Math.PI;
-  const out = { case: 'wall', hitFrame: hit, impact: +imp.toFixed(1), angBefore: +ang0.toFixed(1),
-    speedAfter: +S.speed(v).toFixed(1), bodyAngAfter: +ang().toFixed(1), velAngAfter: +velAng.toFixed(1) };
+  const out = { case: 'wall', site: [Math.round(fx), Math.round(fz)], hitFrame: hit, speedBefore: +sp0.toFixed(1), first,
+    angBefore: +ang0.toFixed(1), speedAfter: +S.speed(v).toFixed(1), bodyAngAfter: +ang().toFixed(1),
+    velAngAfter: +(Math.atan2(-(wx * nx + wz * nz), wx * tx + wz * tz) * 180 / Math.PI).toFixed(1) };
+  p.exitVehicle(true);
   S.clear();
   return JSON.stringify(out);
 }
 
-// After the T-bone: how long your car's hit spin lasts, then does it steer.
+// A spin that starts HIGH ends: a cruiser at 25 m/s puts its nose into your
+// rear quarter while you do 12, and is taken away the moment it has hit, so
+// nothing touches you again. When is your hit spin gone (|spin| < 0.05), and
+// does the stick turn the car after.
 function pageRecover() {
   const d = window.__dbg, p = d.player, S = window.__cc;
   S.clear();
-  const me = S.mk('sedan'), o = S.mk('sedan');
+  const me = S.mk('sedan'), o = S.mk('police');
   p.enterVehicle(me);
-  S.pose(me, -15, 0.9, S.H0, 20); S.pose(o, 0, 0, S.H0 + Math.PI / 2, 0);
-  let hit = -1, gone = null, maxSpin = 0;
-  for (let f = 0; f < 300; f++) {
-    const v0 = me.vLong;
+  S.pose(me, 0, 0, S.H0, 12); S.pose(o, -13, -1.4, S.H0, 25);
+  let hit = -1, peak = 0, gone = null, touched = 0, touchWhat = null;
+  for (let f = 0; f < 240; f++) {
     S.step();
-    if (hit < 0 && Math.abs(me.vLong - v0) > 1) hit = f;
     const sp = Math.abs(me.spin || 0);
-    maxSpin = Math.max(maxSpin, sp);
-    if (hit >= 0 && gone == null && sp < 0.02 && f > hit + 5) gone = (f - hit) / 60;
+    if (hit < 0 && sp > 0.3) { hit = f; S.pose(o, 400, 0, S.H0, 0); }
+    if (hit < 0) continue;
+    peak = Math.max(peak, sp);
+    if (f > hit + 1 && gone == null) {   // (until the spin is gone: what it hits after is not the spin's)
+      const q = d.traffic.cars.find((q) => q !== me && Math.hypot(q.x - me.x, q.z - me.z) < me.halfLen + q.halfLen);
+      if (p.scrapeT > 0.1 || q) { touched++; if (!touchWhat) touchWhat = q ? q.mode + ' ' + q.spec.hand : 'scrape f' + (f - hit); }
+    }
+    if (gone == null && sp < 0.05) gone = (f - hit) / 60;
+    if (gone != null && f > hit + gone * 60 + 10) break;
   }
-  // now steer: GAS and the stick hard over for 1.5 s, away from the other car
-  for (let f = 0; f < 60; f++) S.step({ x: 0, y: 0, gasAmt: 1, brakeAmt: 0 });
-  S.pose(o, 200, 0, S.H0, 0);
+  // now the stick: hard over with some gas for 1.5 s
   const h0 = me.heading;
   for (let f = 0; f < 90; f++) S.step({ x: 1, y: 0, gasAmt: 0.6, brakeAmt: 0 });
-  const out = { case: 'recover', hitFrame: hit, meMaxSpin: +maxSpin.toFixed(2),
-    spinGoneS: gone == null ? (maxSpin < 0.02 ? 0 : null) : +gone.toFixed(2),
-    steerYaw: +Math.abs(me.heading - h0).toFixed(2), speed: +S.speed(me).toFixed(1), spinLeft: +(me.spin || 0).toFixed(3) };
+  const out = { case: 'recover', hitFrame: hit, spinPeak: +peak.toFixed(2), spinGoneS: gone == null ? null : +gone.toFixed(2),
+    touchedAfter: touched, touchWhat, steerYaw: +Math.abs(me.heading - h0).toFixed(2) };
   p.exitVehicle(true);
   S.clear();
+  return JSON.stringify(out);
+}
+
+// The Magnolia Bridge's deck: its parapet is solid where it is drawn. (a)
+// your sedan at 20 m/s, 25 deg into the rail; (b) a PIT -- a cruiser at 22 m/s
+// into the inner rear quarter of a car doing 16 in the lane by the rail.
+// Measured: how far past the rail's traffic face either got, and whether it
+// is still on the deck (over the ground under the bridge) at the end.
+function pageDeck() {
+  const d = window.__dbg, c = d.city, G = d.G, p = d.player, S = window.__cc;
+  S.clear();
+  let ei = -1;
+  for (let i = 0; i < c.edges.length; i++) {
+    const e = c.edges[i];
+    if (e.elev && e.prof && e.name === 'Magnolia Bridge' && (ei < 0 || e.len > c.edges[ei].len)) ei = i;
+  }
+  const e = c.edges[ei], a = c.nodes[e.a], b = c.nodes[e.b];
+  const mid = e.pk >> 1;
+  const K = d.world.railKinds ? d.world.railKinds(e, ei) : null;
+  const sg = !K || K[mid * 2] === 2 ? 1 : -1;
+  const ux = e.dx, uz = e.dz, ox = -e.dz * sg, oz = e.dx * sg, hw = e.hw;
+  const cx = (a.x + b.x) / 2, cz = (a.z + b.z) / 2;
+  p.respawn(cx, cz); d.world.update(cx, cz, 2);
+  const put = (v, along, out, hdg, spd) => {
+    v.x = cx + ux * along + ox * out; v.z = cz + uz * along + oz * out; v.heading = hdg; v.vLong = spd; v.vLat = 0;
+    v.y = c.groundAt(v.x, v.z, null);
+  };
+  const past = (v) => (v.x - cx) * ox + (v.z - cz) * oz - hw;   // + = past the rail's traffic face
+  const onDeck = (v) => v.y > G.terrainHeight(v.x, v.z) + 3 && Math.abs((v.x - cx) * ox + (v.z - cz) * oz) < hw + 0.6;
+  const H = Math.atan2(ux, uz);
+  const out = { case: 'deck', edge: ei, side: sg, hw, deckOverGround: +(c.groundAt(cx, cz, null) - G.terrainHeight(cx, cz)).toFixed(1) };
+  // (a) into the parapet
+  {
+    const me = S.mk('sedan');
+    p.enterVehicle(me);
+    const A = 25 * Math.PI / 180;
+    put(me, -14, hw - 4.5, Math.atan2(ux * Math.cos(A) + ox * Math.sin(A), uz * Math.cos(A) + oz * Math.sin(A)), 20);
+    let maxPast = -9, hit = -1, after = null;
+    for (let f = 0; f < 150; f++) {
+      const s0 = S.speed(me);
+      S.step();
+      maxPast = Math.max(maxPast, past(me));
+      if (hit < 0 && Math.abs(S.speed(me) - s0) > 1) hit = f;
+      if (hit >= 0 && f === hit + 30) after = S.speed(me);
+    }
+    out.rail = { hitFrame: hit, maxPast: +maxPast.toFixed(2), speedAfter: after == null ? null : +after.toFixed(1), onDeck: onDeck(me), y: +(me.y - G.terrainHeight(me.x, me.z)).toFixed(1) };
+    p.exitVehicle(true);
+    S.clear();
+  }
+  // (b) a PIT by the rail
+  {
+    const me = S.mk('police'), o = S.mk('sedan');
+    p.enterVehicle(me);
+    put(o, 0, hw - 1.7, H, 16);
+    put(me, -14, hw - 1.7 - 1.5, H, 22);
+    const h0 = o.heading;
+    let maxPast = -9, peak = 0, yawMax = 0;
+    for (let f = 0; f < 240; f++) {
+      S.step(); maxPast = Math.max(maxPast, past(o));
+      peak = Math.max(peak, Math.abs(o.yawRate || 0)); yawMax = Math.max(yawMax, Math.abs(o.heading - h0));
+    }
+    out.pit = { victimYawMax: +yawMax.toFixed(2), victimYawRateMax: +peak.toFixed(2), maxPast: +maxPast.toFixed(2), onDeck: onDeck(o), y: +(o.y - G.terrainHeight(o.x, o.z)).toFixed(1) };
+    p.exitVehicle(true);
+    S.clear();
+  }
   return JSON.stringify(out);
 }
 
@@ -266,6 +388,8 @@ try {
   const fn = (f, ...a) => `(${f.toString()})(${a.map((x) => JSON.stringify(x)).join(',')})`;
   const R = {};
   const run = async (expr) => { const o = JSON.parse(await ev(expr)); R[o.case || 'site'] = o; console.log(JSON.stringify(o)); return o; };
+  // CRASH_NORAILS=1: the deck parapets not solid (what the deck cases measure against)
+  if (process.env.CRASH_NORAILS) await ev('window.__dbg.city.deckRails = null');
   await run(fn(pageInit));
   const C = (name, mt, ot, setup, frames = 150, extra) => run(fn(pageCase, name, mt, ot, setup, frames, extra));
   // heading h faces (sin h, cos h); the player drives along the street (H0)
@@ -278,6 +402,7 @@ try {
   await C('pit', 'police', 'sedan', `(me, o) => { const S = window.__cc; S.pose(me, -14, 1.5, S.H0, 22); S.pose(o, 0, 0, S.H0, 16); }`);
   await run(fn(pageWall));
   await run(fn(pageRecover));
+  await run(fn(pageDeck));
   await run(fn(pageAI));
   await run(fn(pageNaN));
 
@@ -314,9 +439,13 @@ try {
     tboneVictimYaw: Math.abs(R.tbone.victimYaw) >= 0.3,
     tboneMeSpeed: R.tbone.meSpeedAfterHit > 3,
     rearOffsetYawBoth: Math.abs(R.rearOffset.meYaw) >= 0.02 && Math.abs(R.rearOffset.victimYaw) >= 0.02,
-    wallDeflects: R.wall.speedAfter > 8 && R.wall.bodyAngAfter < R.wall.angBefore - 3,
+    wallDeflects: !!R.wall.first && R.wall.first.wall && !R.wall.first.obstacle && !R.wall.first.otherCar
+      && R.wall.speedAfter > 8 && R.wall.bodyAngAfter < R.wall.angBefore - 3,
     busShoves: R.busTbone.victimMoved > R.sedanIntoBus.victimMoved,
-    spinEnds: R.recover.spinGoneS != null && R.recover.spinGoneS < 3 && R.recover.steerYaw > 0.3,
+    spinEnds: R.recover.spinPeak >= 1 && R.recover.spinGoneS != null && R.recover.spinGoneS <= 2.5
+      && R.recover.touchedAfter === 0 && R.recover.steerYaw > 0.3,
+    deckRailHolds: R.deck.rail.onDeck && R.deck.rail.maxPast < 0.6 && R.deck.rail.speedAfter > 8,
+    deckPitStays: R.deck.pit.onDeck && R.deck.pit.maxPast < 0.6 && R.deck.pit.victimYawMax > 0.2,
     aiRecovers: !R.aiRecover.removed && R.aiRecover.speedEnd > 2 && R.aiRecover.offRoadM < 1 && R.aiRecover.alongRoad > 0.85,
     noNaN: R.nan.bad === 0,
   };

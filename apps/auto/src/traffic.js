@@ -171,6 +171,44 @@ function wallImpulse(v, nx, nz, e, mu, linear = true) {
   return -vn;
 }
 
+const _rail = { nx: 0, nz: 0, pen: 0 };
+/** The deepest corner of v's body past the traffic face of a deck parapet at
+ *  its height: the push-out normal and depth, or null. Only a body whose
+ *  middle is still on the deck side: past the rail it is off the deck. */
+function deckRailHit(v, city) {
+  const f = v.forward, hl = v.halfLen, hw = v.halfWid, reach = v.bodyR + 1;
+  let best = 0;
+  for (const ei of city.edgesNear(v.x, v.z, reach)) {
+    const e = city.edges[ei];
+    if (!e.elev || e.tunnel) continue;
+    const S = city.deckRails(ei);
+    for (let i = 0; i < S.length; i += 7) {
+      const ax = S[i], az = S[i + 1], sx = S[i + 2] - ax, sz = S[i + 3] - az;
+      const L = Math.hypot(sx, sz);
+      if (L < 1e-3) continue;
+      const ux = sx / L, uz = sz / L, sg = S[i + 6];
+      const ox = -e.dz * sg, oz = e.dx * sg;   // outward, off the deck
+      const rx = v.x - ax, rz = v.z - az;
+      const cd = rx * ox + rz * oz, ca = rx * ux + rz * uz;
+      if (cd > 0.3 || cd < -reach || ca < -reach || ca > L + reach) continue;
+      // at the deck's height there: the band a car on it stands in
+      const y = S[i + 4] + (S[i + 5] - S[i + 4]) * clamp(ca / L, 0, 1);
+      if (v.y < y - 1 || v.y > y + 1.6) continue;
+      for (let c = 0; c < 4; c++) {
+        const sl = c & 1 ? 1 : -1, sw = c & 2 ? 1 : -1;
+        const qx = rx + f.x * hl * sl + f.z * hw * sw, qz = rz + f.z * hl * sl - f.x * hw * sw;
+        const along = qx * ux + qz * uz;
+        if (along < -0.3 || along > L + 0.3) continue;
+        const d = qx * ox + qz * oz;
+        if (d > best) { best = d; _rail.nx = -ox; _rail.nz = -oz; }
+      }
+    }
+  }
+  if (best <= 0) return null;
+  _rail.pen = best;
+  return _rail;
+}
+
 export function collideWithBuildings(v, city, onHit, ai = false) {
   // Street objects first: a tree or a lamp post is closer than the building
   // line and is what you actually hit coming off a kerb. Until this existed
@@ -215,6 +253,20 @@ export function collideWithBuildings(v, city, onHit, ai = false) {
     v.vLat *= 0.3;
     if (onHit && impact > 3) onHit(impact);
     return impact;
+  }
+  // A DECK'S PARAPET (world.js deckRailSegs): solid where it is drawn -- for
+  // you, a car nobody drives, a suspect, and any car still sliding from a hit.
+  // A traffic or police driver in its lane is left as it was (its routine
+  // contacts are not changed; see the buildings below).
+  if (city.deckRails && (!ai || v.slide > 0 || (v.mode !== 'traffic' && v.mode !== 'police'))) {
+    const rh = deckRailHit(v, city);
+    if (rh) {
+      v.x += rh.nx * rh.pen;
+      v.z += rh.nz * rh.pen;
+      const impact = wallImpulse(v, rh.nx, rh.nz, WALL_E, WALL_MU);
+      if (onHit && impact > 3) onHit(impact);
+      return Math.max(impact, 0.01);
+    }
   }
   const near = city.buildingsNear(v.x, v.z, 14);
   for (const b of near) {
@@ -426,6 +478,14 @@ function boxOverlap(a, b, dx, dz) {
  * middle of what is left. So a square T-bone touches mid-door, an offset
  * rear-end at the middle of the bumpers' overlap, and a corner on a corner.
  */
+// pairContact's clip range [l0, l1] on the incident edge, and the clip that
+// keeps p0 + dp l >= lo (module level: it ran per colliding pair per frame)
+const _lr = new Float64Array(2);
+function clipL(p0, dp, lo) {
+  if (Math.abs(dp) < 1e-9) { if (p0 < lo) { _lr[0] = 1; _lr[1] = 0; } return; }
+  const l = (lo - p0) / dp;
+  if (dp > 0) { if (l > _lr[0]) _lr[0] = l; } else if (l < _lr[1]) _lr[1] = l;
+}
 function pairContact(a, b, nx, nz, refA) {
   const R = refA ? a : b, I = refA ? b : a;
   const sx = refA ? nx : -nx, sz = refA ? nz : -nz;   // out of R's face, into I
@@ -447,14 +507,9 @@ function pairContact(a, b, nx, nz, refA) {
   const qx = cx - ex - R.x, qz = cz - ez - R.z;
   const u0 = qx * tx + qz * tz, du = 2 * (ex * tx + ez * tz);
   const d0 = hN - (qx * sx + qz * sz), dd = -2 * (ex * sx + ez * sz);
-  let l0 = 0, l1 = 1;
-  const clip = (p0, dp, lo) => {   // keep p0 + dp l >= lo
-    if (Math.abs(dp) < 1e-9) { if (p0 < lo) { l0 = 1; l1 = 0; } return; }
-    const l = (lo - p0) / dp;
-    if (dp > 0) l0 = Math.max(l0, l); else l1 = Math.min(l1, l);
-  };
-  clip(u0, du, -hT); clip(-u0, -du, -hT); clip(d0, dd, 0);
-  const l = l0 <= l1 ? (l0 + l1) / 2 : (d0 + dd > d0 ? 1 : 0);
+  _lr[0] = 0; _lr[1] = 1;
+  clipL(u0, du, -hT); clipL(-u0, -du, -hT); clipL(d0, dd, 0);
+  const l = _lr[0] <= _lr[1] ? (_lr[0] + _lr[1]) / 2 : (d0 + dd > d0 ? 1 : 0);
   _cp.x = cx + ex * (2 * l - 1); _cp.z = cz + ez * (2 * l - 1);
   return _cp;
 }

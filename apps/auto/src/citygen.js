@@ -4025,6 +4025,7 @@ export function* cityGenerator(md, cache = {}) {
     // polylines that draw the walls (setBarriers), indexed by POSITION, so the
     // store and the lookup cannot disagree and no chunk lifecycle touches them.
     barrierSegs: null,
+    deckRails: null,   // world.js deckRailSegs: an elevated edge's parapets as collision segments
     barrierGrid: new Map(),
 
     // --- Cut-and-cover lids ------------------------------------------------
