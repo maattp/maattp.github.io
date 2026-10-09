@@ -10184,7 +10184,6 @@ export class Vehicle {
       ffVy = Math.min(0, this.floorVy + FF_FREE) * clamp((3 - Math.abs(raw - before)) / 2, 0, 1);
     } else this.floorVy = 0;
     this.floorOk = slope;
-    let landed = false;
     if (onRamp && this.y <= target + 0.25) {
       this.y = target; this.vy = 0; this.onGround = true;
     } else if (this.y > target + 0.25) {
@@ -10192,7 +10191,7 @@ export class Vehicle {
       this.vy -= 22 * dt;
       this.y += this.vy * dt;
       this.onGround = false;
-      if (this.y <= target) { this.y = target; this.vy = 0; this.onGround = true; landed = true; }
+      if (this.y <= target) { this.y = target; this.vy = 0; this.onGround = true; }
     } else {
       const rise = target - this.y;
       if (rise > 0.6 && sp > 6) { this.vy = Math.min(6, rise * 4); }
@@ -10200,8 +10199,9 @@ export class Vehicle {
       this.onGround = true;
     }
     // what a fall starting next frame leaves with: the steady descent the
-    // follow was riding (0 at a crest, over a step, or after a landing -- the
-    // follow's own catch-up after a step up is not a velocity)
+    // follow was riding (0 at a crest or over a step -- the follow's own
+    // catch-up after a step up is not a velocity). A landing on a slope leaves
+    // the floor's descent too, not 0: falling from rest there is the hop chain
     this.carVy = this.onGround ? ffVy : this.vy;
 
     // body attitude, from the samples taken above
