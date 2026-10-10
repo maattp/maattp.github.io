@@ -344,6 +344,39 @@ function pageAI() {
   return JSON.stringify(out);
 }
 
+// A LONG BODY CLEARS WHAT IT IS CLEAR OF (v206): a bus driven west on East
+// Pike from 60 m out, in the lane nearest the kerb posts. With the 0.7 x
+// radius obstacle circle (3.5 m for a bus 1.3 m half-wide) it stopped dead at
+// (1267,-310) after 58 m and never got past.
+function pageBusPike() {
+  const d = window.__dbg, c = d.city, T = d.traffic, p = d.player;
+  const X = 1265.7, Z = -308.4;
+  let best = null, bd = 1e9;
+  for (const e of c.edges) {
+    const a = c.nodes[e.a], b = c.nodes[e.b];
+    const ux = b.x - a.x, uz = b.z - a.z, L = Math.hypot(ux, uz) || 1;
+    const t = Math.max(0, Math.min(1, ((X - a.x) * ux + (Z - a.z) * uz) / (L * L)));
+    const dd = Math.hypot(a.x + ux * t - X, a.z + uz * t - Z);
+    if (dd < bd) { bd = dd; best = { ux: ux / L, uz: uz / L }; }
+  }
+  let { ux, uz } = best; if (ux > 0) { ux = -ux; uz = -uz; }
+  for (const v of [...T.cars]) if (v.mode !== 'apron') T.remove(v);
+  const sx = X - ux * 60 - uz * 1.8, sz = Z - uz * 60 + ux * 1.8;
+  p.respawn(sx, sz); d.world.update(sx, sz, 2);
+  const bus = T.spawnAt(sx, sz, Math.atan2(ux, uz), 'bus', 0x2266aa, 'free');
+  bus.heading = Math.atan2(ux, uz); bus.vLong = 12; bus.y = c.groundAt(sx, sz, null); bus.sync && bus.sync();
+  p.enterVehicle(bus);
+  let minV = 99;
+  for (let f = 0; f < 600; f++) {
+    p.update(1 / 60, { x: 0, y: 0, gasAmt: 0.7, brakeAmt: 0 }, { x: 0, y: 0 }, d.controls, T, d.peds);
+    T.update(1 / 60, bus.x, bus.z, { x: 0, z: 1 }, p);
+    if (f > 30) minV = Math.min(minV, bus.vLong);
+  }
+  const travelled = (bus.x - sx) * ux + (bus.z - sz) * uz;
+  p.exitVehicle(true);
+  return JSON.stringify({ case: 'busPike', travelled: Math.round(travelled), minV: +minV.toFixed(1) });
+}
+
 function pageNaN() {
   const T = window.__dbg.traffic, p = window.__dbg.player;
   let bad = 0;
@@ -404,6 +437,7 @@ try {
   await run(fn(pageRecover));
   await run(fn(pageDeck));
   await run(fn(pageAI));
+  await run(fn(pageBusPike));
   await run(fn(pageNaN));
 
   if (SHOTS) {
@@ -447,6 +481,7 @@ try {
     deckRailHolds: R.deck.rail.onDeck && R.deck.rail.maxPast < 0.6 && R.deck.rail.speedAfter > 8,
     deckPitStays: R.deck.pit.onDeck && R.deck.pit.maxPast < 0.6 && R.deck.pit.victimYawMax > 0.2,
     aiRecovers: !R.aiRecover.removed && R.aiRecover.speedEnd > 2 && R.aiRecover.offRoadM < 1 && R.aiRecover.alongRoad > 0.85,
+    busClearsPike: R.busPike.travelled > 120 && R.busPike.minV > 5,
     noNaN: R.nan.bad === 0,
   };
   const ok = Object.values(pass).every(Boolean);
