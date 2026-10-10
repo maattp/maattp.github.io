@@ -881,6 +881,14 @@ const SOUNDS = {
   } },
 
   // --- water -----------------------------------------------------------------
+  // An orca's blow: the explosive exhale through the blowhole -- a breathy
+  // roar with a wet top -- and the short, softer inhale that follows (orcas.js).
+  orca_blow: { dur: 1.5, variants: 2, build(k, out, t, R) {
+    k.burst(out, 'pink', t, 'bandpass', 700 + R() * 250, 0.6, 0.9, 0.22, R, 0.012);
+    k.burst(out, 'white', t + 0.01, 'highpass', 2600 + R() * 800, 0.7, 0.32, 0.18, R, 0.01);
+    k.burst(out, 'brown', t, 'lowpass', 260, 0.7, 0.5, 0.12, R, 0.01);
+    k.burst(out, 'pink', t + 0.62 + R() * 0.1, 'bandpass', 520, 0.8, 0.22, 0.16, R, 0.09);
+  } },
   splash: { dur: 2.0, build(k, out, t, R) {
     const lp = k.filt('lowpass', 2600, 0.7);
     lp.frequency.setValueAtTime(2600, t);

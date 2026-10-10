@@ -709,3 +709,34 @@ T on a keyboard), lights red while on shift, and pressing it again goes off.
   peds and the taxi itself) and every ending above; `--shots` writes `hail.png`
   and `dropoff.png` (camera forced behind the car with `updateCamera`, or it is
   still flying in from the last teleport).
+
+## Orcas off West Point (v207)
+
+A pod of Southern Resident killer whales works the Sound past Discovery Park's
+lighthouse (`src/orcas.js`): a bull at 7.6 m with the tall straight 1.8 m
+dorsal fin of a mature male, two cows and a juvenile with the shorter curved
+fin, and a calf at its mother's flank -- sized from NOAA / Center for Whale
+Research figures. The pod travels a 9.3 km loop of open water off the point at
+2.6 m/s; each whale dives for 20-50 s and surfaces for 3-4 breaths 3.4 s each,
+the back rolling through the surface, the blow going up as mist with a
+synthesised exhale (`orca_blow` in audio.js), the last breath of a series a
+fluke-up dive. Every two to four minutes that the pod is in view, one breaches:
+out nose-first, a quarter-roll, and a crash of spray. The first blow or breach
+seen within 700 m, roughly where you are looking, pays $1000 once
+(localStorage `auto-orcas`). Best from the ferry, a boat, or the bluff at
+West Point.
+
+**Three draws, and only within 3 km**: the pod is three InstancedMeshes (the
+body, the tail stock with its flukes -- a second piece pivoted a third of the
+way back so the flukes beat and lift on a dive -- and the dorsal fin, sheared
+per whale for the cows' curve). Beyond 3 km the update returns before moving
+anyone. A whale deeper than ~2-3.5 m is scaled to nothing: the water hides it
+anyway. The route is checked at boot to be wet for 80 m all round at every
+point, pushed west where it is not.
+
+**The probe** is `tools/orcaprobe.js`, a page script for viewshots:
+`VIEW_PROBE="$(cat tools/orcaprobe.js)" node tools/viewshots.mjs /tmp/x` --
+five sim-minutes beside the pod, asserting open water, blows, dives, a forced
+breach, nothing on land and the payment once. To LOOK at the pod, pose it
+before shooting with `VIEW_PRE`: put the camera near it first (the update does
+nothing when the camera is 3 km off), pose, then freeze `orcas.update`.
