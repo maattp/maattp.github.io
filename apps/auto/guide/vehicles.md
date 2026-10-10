@@ -262,6 +262,22 @@ tilts off horizontal by `asin(sin(steer)·sin(spin))`, about 30° at half lock.
 That is the wheel wobble. `rotation.order = 'YXZ'` gives `Ry·Rx`: roll on the
 axle, then steer the lot.
 
+**A long body is a rectangle, not a circle** (v206). Every vehicle met
+buildings as its centre against the footprint grown by 0.8 x radius, and posts
+and trunks as a circle of 0.7 x radius. For a car that is near enough; for a
+12 m bus 1.3 m half-wide the circles are 4 m and 3.5 m, so it hit kerbside
+posts and walls its side was well clear of while its nose could sink 2 m into
+a wall ahead. A bus westbound on East Pike stopped dead from 17 m/s at
+(1267,-310) against a post and never got past (sedans drove by); a traffic
+bus there queued the street behind it. Anything with a half-length over
+`LONG_BODY` (4 m: buses, artics, the garbage truck, the Duck, aircraft on the
+ground) now meets buildings with its real half-extents and a separating-axis
+test on its own axes, and posts through `obstacleHit(..., body)` (the post's
+centre against the body's box). Shorter cars keep the circles: their routine
+contacts, and trafficcheck's numbers, are tuned to them. The probe is a bus
+driven west on East Pike from 60 m out (`VIEW_PROBE` in `tools/viewshots.mjs`):
+it stopped at 58 m on v205 and drives 169 m now.
+
 ### The Wedge: fast, tough, stainless
 
 **An angular stainless electric pickup** (`wedge`, `buildWedge`), original

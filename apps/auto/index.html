@@ -187,7 +187,11 @@
     opacity: 0; transition: opacity .25s; white-space: nowrap;
   }
   #objective { top: calc(12px + var(--safe-t)); }
-  #toast { top: calc(52px + var(--safe-t)); background: rgba(20,30,40,0.75); }
+  /* A place's hello can run to a sentence or two: wrap it between the minimap
+     and the money rather than running off both edges of a phone. */
+  #toast { top: calc(52px + var(--safe-t)); background: rgba(20,30,40,0.75);
+    white-space: normal; width: max-content; text-align: center; line-height: 1.3;
+    max-width: min(560px, calc(100vw - 360px - var(--safe-l) - var(--safe-r))); }
   #objective.show, #toast.show { opacity: 1; }
 
   #topBtns {
@@ -560,7 +564,7 @@
     <pre id="bootLog"></pre>
     <div id="loadRotate">Turn sideways to play once it has loaded</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v205</div>
+    <div id="build">v206</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation USGS 3DEP</div>
   </div>
   <script>

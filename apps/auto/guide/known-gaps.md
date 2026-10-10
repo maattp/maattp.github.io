@@ -88,17 +88,6 @@ Part of the Auto guide; the index and the laws every change needs are in
 - **Obstacles in dug pits wedge traffic** (posts beside lidded ramps, the I-5
   express portal near (520, 0)). Out of sight the car is recycled; in view it
   stays stuck.
-- **A long vehicle hits buildings its body is clear of.** collideWithBuildings
-  tests the CENTRE against the footprint grown by 0.8 x radius -- 4 m for a
-  12 m bus that is 1.3 m half-wide -- so a bus westbound on East Pike at
-  (1265.7, -308.4) stops dead from 17 m/s against the 10 x 22 m building at
-  (1257, -323) whose wall is ~1.3 m clear of its side, and never gets past it
-  (sedans and box trucks drive by). Measured on v199 and v201 alike; since the
-  crash work a wedged traffic car backs out and retries, but this one meets
-  the same phantom wall every time, and trafficcheck's `capitol` site counts
-  the car queued behind it as stuck when a bus is dealt that route. The fix
-  is the body's corners against the real footprint, which changes every
-  vehicle's building contact and wants its own pass.
 - **Far roads still pop in during take-off, and double up on bends.** All 34
   of flycam's remaining road pop-ins (48 km) happen before the far layer's gate
   opens at 45 m. And an edge's end pieces reach over their node to cover a
@@ -140,3 +129,13 @@ Part of the Auto guide; the index and the laws every change needs are in
 - **997 buildings (0.8 %) stand over water.** Most are real: Lake Union's
   houseboats, the Alaskan Way piers, Harbor Island. Not worth a filter that would
   also delete the real ones.
+- **Faint vertical hairlines in the mountain band at a telephoto zoom.** Under
+  Rainier, at fov ~7-14 deg from Kerry Park, the haze band shows 1-2 px
+  hairlines of at most ~2 grey levels (invisible at the game's own fov). Ruled
+  out (v206): the band's mesh segments (720 -> 2880 left them in place), the
+  baked skyline's one-column needles (a 3-column median re-bake changed 793
+  columns and not one line), the shader's per-column slope tilt (`dH`, off: the
+  same lines), and the sky dome (`VIEW_PRE='__dbg.world.mountains.visible=false'
+  node tools/viewshots.mjs <dir> mt-rainier-close`: none). They are fixed in the
+  world and sub-column wide; the next suspects are the value-noise hash's
+  float precision at large `s` and the face texture's edge texels.

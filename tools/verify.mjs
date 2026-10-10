@@ -3274,18 +3274,31 @@ async function main() {
         const sb = document.querySelector('[data-btn="siren"]');
         await wait(700);
         out.steal.sirenShown = getComputedStyle(sb).display !== 'none';
-        d.controls.sirenTaps++; await wait(700);
+        // Each step waits for the game to act on it rather than a fixed time:
+        // under load SwiftShader can go most of a second between frames, and a
+        // fixed wait read the state before the frame that changes it.
+        const until = async (ok, ms = 6000) => { for (let t = 0; t < ms && !ok(); t += 100) await wait(100); return ok(); };
+        d.controls.sirenTaps++;
+        await until(() => !!v.sirenOn && !!v._fireLights);
         // (the voice picks up within a few frames: SwiftShader's are slow)
-        for (let i = 0; i < 20 && d.audio.ready && !d.audio.sirens.some((q) => q.on); i++) await wait(200);
+        await until(() => !d.audio.ready || d.audio.sirens.some((q) => q.on), 4000);
         out.steal.sirenOn = !!v.sirenOn && !!v._fireLights && (!d.audio.ready || d.audio.sirens.some((q) => q.on));
         out.steal.sirenWhy = { on: !!v.sirenOn, heads: !!v._fireLights, ready: !!d.audio.ready, voice: d.audio.sirens.some((q) => q.on), paused: !!d.game.paused, inRig: P.vehicle === v };
+        // V (WATER) held across a few frames must leave the siren alone
+        let rafs = 0;
+        const count = () => { if (++rafs < 4) requestAnimationFrame(count); };
         window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyV', key: 'v' }));
+        requestAnimationFrame(count);
+        await until(() => rafs >= 3, 4000);
         await wait(300);
         out.steal.waterKeepsSiren = !!v.sirenOn;
         window.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyV', key: 'v' }));
+        // G: the press is held until a frame has read it (down and up in one
+        // tick could fall between frames and never be seen -- the flake this was)
         window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyG', key: 'g' }));
+        await until(() => !v.sirenOn);
         window.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyG', key: 'g' }));
-        await wait(700);
+        await until(() => !v.sirenOn && !v._fireLights, 3000);
         out.steal.gOff = !v.sirenOn && !v._fireLights;
         P.exitVehicle(true);
         await wait(300);
