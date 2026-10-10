@@ -209,6 +209,12 @@ function deckRailHit(v, city) {
   return _rail;
 }
 
+// Buses, trucks, fire rigs, the tank: a body this long (half-length, m) meets
+// buildings as a rectangle; shorter cars keep the grown-circle test, which
+// their routine contacts (and tools/trafficcheck's numbers) are tuned to.
+const LONG_BODY = 4, BODY_SKIN = 0.25;
+const _body = { fx: 0, fz: 1, hl: 0, hw: 0 };
+
 export function collideWithBuildings(v, city, onHit, ai = false) {
   // Street objects first: a tree or a lamp post is closer than the building
   // line and is what you actually hit coming off a kerb. Until this existed
@@ -224,6 +230,10 @@ export function collideWithBuildings(v, city, onHit, ai = false) {
   if (v.stunt && v.y - G.terrainHeight(v.x, v.z) > 3.5) {
     const b = city.barrierHit(v.x, v.z, v.radius * 0.7, v.y), lm = city.landmarkHit(v.x, v.z, v.radius * 0.7, v.y, ai);
     ob = b && lm ? (b.pen > lm.pen ? b : lm) : b || lm;
+  } else if (v.halfLen > LONG_BODY) {
+    // a long body meets posts and trunks as its rectangle (citygen obstacleHit)
+    _body.fx = v.forward.x; _body.fz = v.forward.z; _body.hl = v.halfLen + BODY_SKIN; _body.hw = v.halfWid + BODY_SKIN;
+    ob = city.obstacleHit(v.x, v.z, v.radius * 0.7, v.y, ai, _body);
   } else ob = city.obstacleHit(v.x, v.z, v.radius * 0.7, v.y, ai);
   if (ob) {
     v.x += ob.nx * ob.pen;
@@ -273,8 +283,26 @@ export function collideWithBuildings(v, city, onHit, ai = false) {
     const c = Math.cos(-b.rot), s = Math.sin(-b.rot);
     const dx = v.x - b.x, dz = v.z - b.z;
     const lx = dx * c - dz * s, lz = dx * s + dz * c;
-    const ex = b.w / 2 + v.radius * 0.8, ez = b.d / 2 + v.radius * 0.8;
-    if (Math.abs(lx) > ex || Math.abs(lz) > ez) continue;
+    let ex, ez;
+    if (v.halfLen > LONG_BODY) {
+      // A LONG BODY IS A RECTANGLE, NOT A CIRCLE. The circle grown by 0.8 x
+      // radius is 4 m for a 12 m bus that is 1.3 m half-wide: it met walls
+      // 2.7 m clear of its side (a bus westbound on East Pike at (1265,-308)
+      // stopped dead from 17 m/s against a building it never touched, and
+      // never got past) while its nose could sink 2 m into a wall ahead. The
+      // body's half-extents along the building's axes, then a separating-axis
+      // check on the body's own axes for a body turned across the corner.
+      const f = v.forward, fx = f.x * c - f.z * s, fz = f.x * s + f.z * c;
+      const ax = Math.abs(fx), az = Math.abs(fz);
+      ex = b.w / 2 + ax * v.halfLen + az * v.halfWid + BODY_SKIN;
+      ez = b.d / 2 + az * v.halfLen + ax * v.halfWid + BODY_SKIN;
+      if (Math.abs(lx) > ex || Math.abs(lz) > ez) continue;
+      if (Math.abs(lx * fx + lz * fz) > b.w / 2 * ax + b.d / 2 * az + v.halfLen + BODY_SKIN) continue;
+      if (Math.abs(lx * fz - lz * fx) > b.w / 2 * az + b.d / 2 * ax + v.halfWid + BODY_SKIN) continue;
+    } else {
+      ex = b.w / 2 + v.radius * 0.8; ez = b.d / 2 + v.radius * 0.8;
+      if (Math.abs(lx) > ex || Math.abs(lz) > ez) continue;
+    }
     if (v.y > b.y + b.h - 1) continue;
     // A TUNNEL PASSES UNDER BUILDINGS, and this test is 2D. The skip above
     // frees a plane over the roof; nothing freed a car UNDER the base, so a

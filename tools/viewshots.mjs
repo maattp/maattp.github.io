@@ -6,6 +6,8 @@
 //   VIEWS=file.json     replaces the built-in views
 //   VIEW_WAIT=ms        settle time before each shot (default 4000)
 //   VIEW_PROBE='<js>'   evaluate once on the booted page and print it, no shots
+//   VIEW_PRE='<js>'     evaluate once before the shots (e.g. hide a layer to see what draws what)
+//   VIEW_SIZE=874x402   window size (default 1280x720; 874x402 is the phone's landscape)
 //
 // Boot recipe as verify.mjs / landmarkshots.mjs: service worker bypassed,
 // __noAutoQuality, streamer settled, HUD hidden, game paused. Two ways to
@@ -54,7 +56,7 @@ function launch() {
   return spawn(CHROME, [
     `--remote-debugging-port=${PORT}`, '--headless=new', '--use-gl=swiftshader',
     '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required',
-    '--window-size=1280,720', '--no-first-run',
+    `--window-size=${(process.env.VIEW_SIZE || '1280x720').replace('x', ',')}`, '--no-first-run',
     `--user-data-dir=/tmp/auto-viewshots-profile-${PORT}`, 'about:blank',
   ], { stdio: 'ignore' });
 }
@@ -107,6 +109,7 @@ async function main() {
       d.game.paused = true;
     })()`);
 
+    if (process.env.VIEW_PRE) await evaluate(process.env.VIEW_PRE);
     if (process.env.VIEW_PROBE) {
       const v = await evaluate(process.env.VIEW_PROBE, true);
       console.log(typeof v === 'string' ? v : JSON.stringify(v, null, 1));

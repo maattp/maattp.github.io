@@ -4414,8 +4414,15 @@ export function* cityGenerator(md, cache = {}) {
      * deepest overlap rather than the first, so a car wedged between a tree and
      * a pole is pushed out of the one it is furthest into.
      */
-    obstacleHit(x, z, rad, y, ai) {
+    obstacleHit(x, z, rad, y, ai, body) {
       let best = null;
+      // A LONG BODY (body = { fx, fz, hl, hw }) meets a post as a rectangle:
+      // its circle of 0.7 x radius is 3.5 m for a bus 1.3 m half-wide, so it
+      // stopped dead against kerbside posts its side was well clear of
+      // (East Pike, (1267,-310)). The search widens to cover the body; the
+      // cutting walls and landmarks below keep the caller's circle.
+      const rad0 = rad;
+      if (body) rad = Math.hypot(body.hl, body.hw);
       const c0 = Math.floor((x - rad) / CHUNK), c1 = Math.floor((x + rad) / CHUNK);
       const d0 = Math.floor((z - rad) / CHUNK), d1 = Math.floor((z + rad) / CHUNK);
       for (let cx = c0; cx <= c1; cx++) {
@@ -4452,10 +4459,32 @@ export function* cityGenerator(md, cache = {}) {
             const i = fl[n];
             if (stamp[i / 3] === q) continue;
             stamp[i / 3] = q;
-            const dx = x - l[i], dz = z - l[i + 1];
-            const rr = rad + l[i + 2];
+            let dx = x - l[i], dz = z - l[i + 1];
+            let rr = rad + l[i + 2];
             const d2 = dx * dx + dz * dz;
             if (d2 >= rr * rr) continue;
+            let bpen = -1, bnx = 0, bnz = 0;
+            if (body) {
+              // the post's centre in the body's frame, to the nearest point of the box
+              const ox = l[i] - x, oz = l[i + 1] - z;
+              const a = ox * body.fx + oz * body.fz, w = ox * body.fz - oz * body.fx;
+              const ca = Math.max(-body.hl, Math.min(body.hl, a)), cw = Math.max(-body.hw, Math.min(body.hw, w));
+              const ea = a - ca, ew = w - cw, e2 = ea * ea + ew * ew, r = l[i + 2];
+              if (e2 >= r * r) continue;
+              if (e2 > 1e-8) {
+                const e = Math.sqrt(e2);
+                bpen = r - e;
+                // out of the post: from its centre toward the box, back in world axes
+                const na = -ea / e, nw = -ew / e;
+                bnx = na * body.fx + nw * body.fz; bnz = na * body.fz - nw * body.fx;
+              } else {
+                // the centre inside the box: out along the shallower axis
+                const pa = body.hl - Math.abs(a), pw = body.hw - Math.abs(w);
+                const na = pa < pw ? -Math.sign(a) || 1 : 0, nw = pa < pw ? 0 : -Math.sign(w) || 1;
+                bpen = Math.min(pa, pw) + r;
+                bnx = na * body.fx + nw * body.fz; bnz = na * body.fz - nw * body.fx;
+              }
+            }
             // A TRUNK STANDS ON THE STREET, NOT IN THE BORE UNDER IT. The store
             // is 2D, so every street tree and lamp post above SR-99 was a solid
             // post in the tunnel carriageway 20-40 m below it: measured riding
@@ -4473,6 +4502,10 @@ export function* cityGenerator(md, cache = {}) {
               const fy = G.terrainHeight(l[i], l[i + 1]);
               if (fy - y > 2.5 || y - fy > 10) continue;
             }
+            if (body) {
+              if (!best || bpen > best.pen) best = { pen: bpen, nx: bnx, nz: bnz };
+              continue;
+            }
             const d = Math.sqrt(d2) || 1e-4;
             const pen = rr - d;
             if (!best || pen > best.pen) best = { pen, nx: dx / d, nz: dz / d };
@@ -4483,9 +4516,9 @@ export function* cityGenerator(md, cache = {}) {
       // The cutting walls answer through the same query, so every consumer --
       // traffic AI, the player's car, walking -- collides with them without a
       // single call site changing.
-      const b = this.barrierHit(x, z, rad, y);
+      const b = this.barrierHit(x, z, rad0, y);
       if (b && (!best || b.pen > best.pen)) best = b;
-      const lm = this.landmarkHit(x, z, rad, y, ai);
+      const lm = this.landmarkHit(x, z, rad0, y, ai);
       if (lm && (!best || lm.pen > best.pen)) best = lm;
       return best;
     },
