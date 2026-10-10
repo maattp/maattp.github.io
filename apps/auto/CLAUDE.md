@@ -101,6 +101,7 @@ src/ferry.js                WSF's Seattle-Bainbridge ferries: the boats, their d
 src/bikes.js                bike paths drawn and ridden, AI cyclists, bike-share docks
 src/piers.js                every other pier OSM maps, as a deck on piles; decks under sheds in the sea
 src/islands.js              the islands across the Sound: Easter eggs, the Sasquatch, Blake's deer
+src/orcas.js                a pod of orcas off West Point (Easter egg): surfacing, blows, breaches
 src/pickleball.js           the pickleball court on Bainbridge and its screen
 src/pickleballgame.js       PICKLEBALL itself: singles, the two-bounce rule, the kitchen (no DOM)
 src/shadowcache.js          phones: the city's shadows drawn once, only movers per frame
