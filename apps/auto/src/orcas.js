@@ -150,6 +150,10 @@ export class Orcas {
       this.lens.push(d); L += d;
     }
     this.loop = L;
+    // every 50 m of the loop, not just its corners, must be open water
+    this.dry = 0;
+    for (let d = 0; d < L; d += 50) { const q = this._at(d); if (!this._open(q.x, q.z)) this.dry++; }
+    if (this.dry) console.warn(`orcas: ${this.dry} samples of the loop are not open water`);
     this.wp = G.toWorld(...WEST_POINT);
 
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0, envMapIntensity: 0.45, side: THREE.DoubleSide });
@@ -224,7 +228,12 @@ export class Orcas {
     const c = this._at(this.s);
     const near = Math.hypot(c.x - cam.position.x, c.z - cam.position.z) < SHOW_R;
     for (const m of [this.front, this.tail, this.fin]) m.visible = near;
-    if (!near) return;
+    // Out of range nobody moves but the pod's place on the loop. Coming back,
+    // every whale is put on its station again (they are under water then, out
+    // of sight): swimming the straight line to it from where it was left
+    // would cut across West Point or Magnolia.
+    if (!near) { this._away = true; return; }
+    if (this._away) { this._away = false; for (const w of this.whales) { w.placed = false; if (w.mode === 'breach') w.mode = 'under'; } }
     this.breachT -= dt;
     const audio = this.o.audio, fx = this.o.fx;
     for (const w of this.whales) {
@@ -234,7 +243,7 @@ export class Orcas {
       const off = w.at[1] + Math.sin(this.s * 0.021 + w.i * 2) * 3;
       const tx = p.x + sx * off, tz = p.z + sz * off;
       w.h += angleWrap(Math.atan2(tx - w.x, tz - w.z) - w.h) * (w.mode === 'breach' ? 0 : Math.min(1, dt * 0.8));
-      if (!w.placed) { w.x = tx; w.z = tz; w.h = p.h; w.placed = true; }
+      if (!w.placed || Math.hypot(tx - w.x, tz - w.z) > 150) { w.x = tx; w.z = tz; w.h = p.h; w.placed = true; }
       const lag = Math.hypot(tx - w.x, tz - w.z);
       const v = w.mode === 'breach' ? 3 : SPEED * clamp(0.6 + lag / 20, 0.6, 1.8);
       w.x += Math.sin(w.h) * v * dt; w.z += Math.cos(w.h) * v * dt;

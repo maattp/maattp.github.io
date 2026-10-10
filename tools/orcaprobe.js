@@ -24,7 +24,15 @@
     }
     if (O.front.visible) visFrames++;
   }
-  out.ok = out.route.every((r) => r[2] && r[3]) && O.stats.blows > 20 && O.stats.breaches >= 1 && O.stats.dives > 5 && onLand === 0 && O.seen && d.game.money - m0 === 1000 && O.whales.every((w) => Number.isFinite(w.x + w.z + w.y + w.h));
+  // away for a minute and back: everyone back on station, in the water
+  cam.position.set(0, 20, 0); cam.updateMatrixWorld(true);
+  for (let f = 0; f < 1800; f++) O.update(1 / 30);
+  const back = O._at(O.s); cam.position.set(back.x + 250, 20, back.z + 250); cam.lookAt(back.x, 0, back.z); cam.updateMatrixWorld(true);
+  O.update(1 / 30);
+  out.reentry = O.whales.map((w) => Math.round(Math.hypot(w.x - back.x, w.z - back.z)));
+  const reOk = O.whales.every((w) => G.isWater(w.x, w.z) && Math.hypot(w.x - back.x, w.z - back.z) < 60);
+  out.dry = O.dry;
+  out.ok = reOk && O.dry === 0 && out.route.every((r) => r[2] && r[3]) && O.stats.blows > 20 && O.stats.breaches >= 1 && O.stats.dives > 5 && onLand === 0 && O.seen && d.game.money - m0 === 1000 && O.whales.every((w) => Number.isFinite(w.x + w.z + w.y + w.h));
   Object.assign(out, { stats: O.stats, onLand, maxY: +maxY.toFixed(1), visFrames, seen: O.seen, paid: d.game.money - m0,
     modes: O.whales.map((w) => w.mode), finite: O.whales.every((w) => Number.isFinite(w.x + w.z + w.y + w.h)) });
   return out;
