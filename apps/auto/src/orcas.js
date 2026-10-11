@@ -290,7 +290,7 @@ export class Orcas {
         if (w.vy < 0 && w.y < -0.3 * w.L) {
           if (fx) {
             fx.emit(w.x, 0.4, w.z, 70, { r: 0.94, g: 0.96, b: 0.98, size: 1.6, life: 1.8, spread: 7, vy: 6, grav: -7, drag: 0.93, jitter: 2.2 });
-            fx.emit(w.x, 0.2, w.z, 30, { r: 0.88, g: 0.92, b: 0.95, size: 2.6, life: 2.4, spread: 3, vy: 2, grav: -1, drag: 0.95, jitter: 3 });
+            fx.emit(w.x, 0.2, w.z, 30, { r: 0.88, g: 0.92, b: 0.95, size: 1.8, grow: 1.4, alpha: 0.75, life: 2.4, spread: 3, vy: 2, grav: -1, drag: 0.95, jitter: 3 });
           }
           if (audio && audio.ready) audio.play('splash', { x: w.x, y: 0, z: w.z, ref: 40, maxD: 1100, gain: 1.4, rate: 0.6 });
           w.mode = 'under'; w.t = 25 + Math.random() * 20; w.roll = 0; w.blew = false;

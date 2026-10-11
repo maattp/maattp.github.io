@@ -3007,11 +3007,19 @@ function frame(now) {
   if (player.vehicle) {
     const v = player.vehicle;
     if (v.burnout) {
-      // a burnout: thick smoke off both rear tyres, rolling out behind
+      // A burnout: white smoke off both rear tyres. Thrown back off the tread,
+      // it stops within a metre and hangs low where it was laid, swelling
+      // and lifting slowly -- so a donut leaves a ring of it round the car.
+      // By rate, not per frame (it used to be 4 particles a frame, which at
+      // 60 fps overran the shared pool and cut puffs off mid-life).
       const f = v.forward, rb = (v.spec.wheelbase || v.halfLen) * 0.5, w = v.halfWid * 0.85;
-      for (const s of [1, -1]) {
-        fx.emit(v.x - f.x * rb + f.z * s * w, v.y + 0.3, v.z - f.z * rb - f.x * s * w, 2,
-          { r: 0.78, g: 0.78, b: 0.8, size: 2.4, life: 2.2, spread: 1.4, vy: 0.9, grav: 0.3, drag: 0.93, vx: -f.x * 2.5, vz: -f.z * 2.5 });
+      v._boSmoke = (v._boSmoke || 0) + dt * 30;
+      const n = Math.floor(v._boSmoke);
+      v._boSmoke -= n;
+      if (n) for (const s of [1, -1]) {
+        fx.emit(v.x - f.x * rb + f.z * s * w, v.y + 0.3, v.z - f.z * rb - f.x * s * w, n,
+          { r: 0.9, g: 0.9, b: 0.92, size: 1.2, grow: 3.2, alpha: 0.72, life: 3.4, spread: 0.8, jitter: 0.35,
+            vy: 0.3, grav: 0.16, drag: 0.95, vx: -f.x * 3.5, vz: -f.z * 3.5 });
       }
     } else if (v.skid > 0.35 && Math.random() < 0.5) {
       fx.smoke(v.x - v.forward.x * v.halfLen, v.y + 0.15, v.z - v.forward.z * v.halfLen, 1);

@@ -9,10 +9,13 @@ export class Effects {
     this.scene = scene;
     const geo = new THREE.BufferGeometry();
     this.pos = new Float32Array(MAX * 3);
-    this.col = new Float32Array(MAX * 3);
+    this.col = new Float32Array(MAX * 4);
     this.size = new Float32Array(MAX);
     geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
-    geo.setAttribute('color', new THREE.BufferAttribute(this.col, 3));
+    // RGBA: a particle fades out by its alpha. It used to fade by darkening
+    // its colour to black, so every white puff -- tyre smoke, a whale's blow,
+    // a boat's spray -- went grey and then sooty on its way out.
+    geo.setAttribute('color', new THREE.BufferAttribute(this.col, 4));
     // Per-particle size. PointsMaterial has no size attribute of its own:
     // this one (it was named `size`, the uniform's name) was written every
     // frame and never read, so every spark, droplet, blood drop and puff of
@@ -152,11 +155,16 @@ export class Effects {
       p.s = opts.size || 0.7;
       p.grav = opts.grav != null ? opts.grav : -4;
       p.drag = opts.drag != null ? opts.drag : 0.92;
+      // A CLOUD (opts.grow: smoke, dust, mist) swells to (1 + grow) times its
+      // size and fades in and out; anything else (a spark, a drop) shrinks
+      // as it dies. `alpha` is a cloud's peak opacity.
+      p.grow = opts.grow || 0;
+      p.a = opts.alpha != null ? opts.alpha : 1;
     }
   }
 
   smoke(x, y, z, n = 4) {
-    this.emit(x, y, z, n, { r: 0.55, g: 0.55, b: 0.58, size: 1.9, life: 1.5, spread: 0.7, vy: 1.6, grav: 0.4, drag: 0.9 });
+    this.emit(x, y, z, n, { r: 0.55, g: 0.55, b: 0.58, size: 1.2, grow: 1.8, alpha: 0.85, life: 1.6, spread: 0.7, vy: 1.6, grav: 0.4, drag: 0.9 });
   }
 
   sparks(x, y, z, n = 10) {
@@ -165,7 +173,7 @@ export class Effects {
 
   explosion(x, y, z) {
     this.emit(x, y, z, 40, { r: 1, g: 0.55, b: 0.15, size: 2.6, life: 1.1, spread: 8, vy: 5, grav: -3, jitter: 1.5 });
-    this.emit(x, y, z, 30, { r: 0.3, g: 0.3, b: 0.32, size: 3.6, life: 2.4, spread: 4, vy: 4, grav: 0.6, jitter: 2 });
+    this.emit(x, y, z, 30, { r: 0.3, g: 0.3, b: 0.32, size: 2.4, grow: 1.6, life: 2.6, spread: 4, vy: 4, grav: 0.6, jitter: 2 });
   }
 
   /** Water off a paddle blade, or any small splash. */
@@ -236,8 +244,15 @@ export class Effects {
       p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
       const t = Math.max(0, p.life / p.maxLife);
       pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
-      col[i * 3] = p.r * t; col[i * 3 + 1] = p.g * t; col[i * 3 + 2] = p.b * t;
-      size[i] = p.s * (0.5 + t);
+      col[i * 4] = p.r; col[i * 4 + 1] = p.g; col[i * 4 + 2] = p.b;
+      if (p.grow) {
+        const age = 1 - t;
+        col[i * 4 + 3] = p.a * Math.min(1, age * 12) * t * t;
+        size[i] = p.s * (1 + p.grow * Math.sqrt(age));
+      } else {
+        col[i * 4 + 3] = p.a * t;
+        size[i] = p.s * (0.5 + t);
+      }
     }
     this.geo.attributes.position.needsUpdate = true;
     this.geo.attributes.color.needsUpdate = true;

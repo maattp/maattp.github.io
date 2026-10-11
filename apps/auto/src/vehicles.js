@@ -112,6 +112,10 @@ export function setWaterQuery(fn) { waterQuery = fn; }
 // tyres a bit harder than physics allows without ever demanding the multiples
 // that made it pivot on rails.
 const STEER_BITE = 1.25;
+/** A burnout's donut: its top yaw rate (rad/s, a turn in ~3.7 s) and how far
+ *  inside the front axle it turns about (m). See Vehicle.update. */
+const BO_YAW = 1.7, BO_R = 3.0;
+
 /** How long your car burns before it explodes (Vehicle.damage). */
 export const BURN_S = 5;
 // the fighter's lit nozzles (setDetailed, updatePlane): unlit, additive, and
@@ -10237,11 +10241,12 @@ export class Vehicle {
     if (hand > 0.5 && this.vLong > 0) acc -= 11;
     // A BURNOUT (spec.rwd, your own car): GAS and BRAKE together at a stand.
     // The fronts hold it, the rears spin -- smoke, the squeal, the engine on
-    // the limiter -- and the stick swings it round (yawRate below). Let the
-    // brake go after half a second of it and it launches.
+    // the limiter -- and the stick swings it into a donut (below, after the
+    // yaw). Let the brake go after half a second of it and it launches.
+    // (Up to 8 m/s once it is going: a donut's own speed must not end it.)
     const bo = !!(spec.rwd && this.detailedWheels && this.onGround !== false
-      && throttle > 0.4 && brake > 0.4 && this.vLong > -1.5 && this.vLong < 3);
-    if (bo) acc = -this.vLong * 8;
+      && throttle > 0.4 && brake > 0.4 && this.vLong > -1.5 && this.vLong < (this.burnout ? 8 : 3));
+    if (bo) acc = 0;
     else if (this.burnoutT > 0.5 && throttle > 0.4) this.launchT = 0.7;
     this.burnout = bo;
     this.burnoutT = bo ? (this.burnoutT || 0) + dt : 0;
@@ -10267,8 +10272,10 @@ export class Vehicle {
     // axles 7.4 m apart against a real 6.
     // rear steer: only AGAINST the fronts adds yaw (with them is drawn only: see above)
     const rsAgainst = this.rearSteer * this.steer < 0 ? this.rearSteer : 0;
+    // (a burnout's donut winds up over half a second rather than snapping round)
+    this.boYaw = bo ? damp(this.boYaw || 0, steerIn * BO_YAW, 2.6, dt) : 0;
     const yawRate = spec.tank ? this._tankYaw(dt, steerIn)
-      : this.burnout ? steerIn * 1.7   // a burnout's donut: the tail round the held fronts
+      : this.burnout ? this.boYaw
       : (this.vLong / wheelbase) * (Math.tan(this.steer) - Math.tan(rsAgainst));
     // A HIT'S SPIN (traffic.js pairImpulse / wallImpulse) rides on top of the steering's
     // yaw. The body turns under its own velocity, so the body-frame velocity
@@ -10307,9 +10314,21 @@ export class Vehicle {
     // (tracks do not slide: a tank goes where its hull points)
     const gripBase = spec.tank ? 40 : spec.moto ? 30 : spec.bus || spec.cargo ? 18 : spec.ev ? 26 : 24;
     const grip = hand > 0.5 ? 1.5 : gripBase;
-    this.vLat += -yawRate * this.vLong * dt;
+    if (!this.burnout) this.vLat += -yawRate * this.vLong * dt;
     const before = this.vLat;
-    if (this.slide > 0) {
+    if (this.burnout) {
+      // THE DONUT. A real one turns about a point BO_R inside the front axle,
+      // not about the car's own middle: the fronts roll round a small circle
+      // while the spinning rears swing the tail out round a wider one -- a
+      // ring of smoke ~10 m across, not a pirouette on the spot. A body
+      // turning at w about a point (a ahead, b to the right) moves at
+      // vLong = w*b, vLat = -w*a: forward, with the tail sliding out.
+      // Steer nothing and w is 0: a burnout on the spot.
+      const w = this.boYaw, a = wheelbase * 0.5, b = Math.sign(w) * BO_R;
+      const k = 1 - Math.exp(-6 * dt);
+      this.vLong += (w * b - this.vLong) * k;
+      this.vLat += (-w * a - this.vLat) * k;
+    } else if (this.slide > 0) {
       // After a hit the tyres have let go (`slide`, set by traffic.js kick):
       // the scrub is capped at a sliding tyre's friction, SLIDE_DECEL, the
       // cap lifting as the tyres bite again -- so a car knocked sideways at
@@ -10545,6 +10564,9 @@ export class Vehicle {
     this.roll = lerp(this.roll, tgtRoll, 1 - Math.exp(-(two ? 17 : 10) * dt));
 
     this.wheelSpin += (this.vLong / (this.assets.wheelR || 0.34)) * dt;
+    // a burnout's rears spin on their own, as fast as reads as spinning (any
+    // faster and a spoked wheel strobes back to slow at 30-60 fps; see sync)
+    if (this.burnout) this.boSpin = ((this.boSpin || 0) + 22 * dt) % (Math.PI * 2);
     if (this.tank) this._tankParts(dt, yawRate);
     this.sync();
     return { dx, dz };
@@ -10790,7 +10812,7 @@ export class Vehicle {
         // wheel tumbles instead of rolling, which is the visible wobble.
         // 'YXZ' gives Ry*Rx: roll on the axle first, then steer the whole thing.
         if (m.rotation.order !== 'YXZ') m.rotation.order = 'YXZ';
-        m.rotation.x = this.wheelSpin;
+        m.rotation.x = m.userData.front ? this.wheelSpin : this.wheelSpin + (this.boSpin || 0);
         m.rotation.y = m.userData.front ? this.steer : this.rearSteer;
       }
       if (this.glow) {
