@@ -376,6 +376,18 @@ shots.
   the stick swings it round; release the brake after 0.5 s for a launch of a
   third more pull for 0.7 s.
 
+**v217: a driver in the convertible; Metro's livery; an XDE60's sections.**
+- Every car's cabin builder seats a driver in `matte.crew` (merged into the
+  geometry of an occupied car, yours included); `buildConvertible` builds its
+  own cockpit and never did, so the open car you drove had nobody in it.
+- Buses wear King County Metro's livery: the lower body (`bodyCore`, drawn
+  through `tinted(matte, METRO_YELLOW)`) golden yellow, the top the paint,
+  one of `METRO_TOPS` (teal, blue, green) per bus, or RapidRide red on an
+  artic (`spec.liveries`, picked from the spawn colour so both sections agree).
+- The artic is 10.6 m + 7.6 m (an XDE60's split, the joint just behind the
+  middle axle); it was 11.4 + 6.5, the rear barely half the front. `ARTIC`'s
+  hitch and axle, the doors and the axles moved with it.
+
 ## Flying
 
 **The camera jumps were a TUNNEL clamp firing on hillsides.** `updateCamera`'s
@@ -953,6 +965,14 @@ tunneldrive does -- a steering autopilot measured itself, not the water):
 dock to the Locks 8.3 km in 412 s, 0 shore contacts, held at the lock chamber
 at full throttle; dock to Lake Washington through the Montlake Cut, settling
 5.31 -> 5.09 m. Worst vertical move per frame 3.7 cm, the swell's bob.
+
+**Private boats on the lakes (v217)** (main.js `privateMoorings` /
+`updateMoorings`): a third of the small lake docks OSM maps (by hash; ~1,100
+under 70 m on Lake Washington, ~230 round Mercer Island) have a runabout or a
+jet ski tied up alongside the end, where the water is over 1.2 m. Spawned
+within 650 m of you and taken away past 900 m (twice a second), so ~330
+boats never sit in the traffic pass at once; one you take is yours, and its
+dock fills again once you are far off.
 
 ## Bicycles and the bike paths (v147)
 

@@ -916,3 +916,24 @@ in while driving: a chunk crossing leaves a dozen pending, so whole blocks
 drew no trees -- not even far crowns -- for seconds. It now applies only when
 the camera is over 80 m above the ground (`world.deferTrees`, set from
 main.js), which is where it was measured and needed: the low flight.
+
+**v216: tiers dissolve, and the phone's trees cast to the box's edge.**
+- **A tier dissolves across a band, it does not switch.** Each tier has its
+  own material (`matMid`, `matNear`) with a `treeFade` band at its outer edge
+  (mid `R1 - 30 .. R1`, near `R2 - 12 .. R2`: crossed in under a second at
+  driving speed, so a crown is seldom seen half-dissolved); across it the crown is
+  screen-door dithered by its distance (`vTreeD`, from the instance's foot +
+  `TREE_MID_Y`, the same height `update` chooses by) and the coarser crown it
+  was built round shows through. `update` chooses each tier `STEP + 2` past
+  its edge, so a tree is in the tier before the dither starts drawing it, and
+  the mid tier reaches in under the near one's band, so a near crown
+  dissolving has a mid one inside it. A switch at one distance was the
+  "jarring" level of detail.
+- **The phone's tree shadows come from the shadow cache** (`shadowGroup`,
+  `shadowFill` / `shadowDone`, the cache's `before` / `after` in main.js).
+  Only the near crowns cast live on a phone, so a tree's shadow appeared out
+  of nothing at 70 m. Every tree in the cache's box now goes into the cache
+  as its far crown (15 tris, up to 9,000 a species), drawn only when the
+  cache is -- every ~2 s on the move -- so tree shadows reach the box's faded
+  edge like a building's, for no per-frame cost. A felled tree invalidates
+  the cache (`onInvalidate`).

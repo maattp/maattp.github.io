@@ -34,6 +34,21 @@ const TAILC = [0.92, 0.12, 0.1];
 const AMBER = [0.95, 0.55, 0.08];
 const PLATE = [0.86, 0.86, 0.82];
 const WHITE = [1, 1, 1];
+// KING COUNTY METRO'S LIVERY: the bottom half golden yellow, the top teal,
+// blue or green (since 1996), and RapidRide red over the same yellow (2004).
+// The yellow is the lower body's own colour (buildBus draws it through
+// `tinted`); the top is the paint, one of these per bus (`spec.liveries`,
+// picked from the spawn colour, so an artic's two sections agree).
+const METRO_YELLOW = [0.86, 0.43, 0.02];
+const METRO_TOPS = [0x0f6e78, 0x1f4f9a, 0x2c6e3c];
+const ARTIC_LIVERIES = [0x0f6e78, 0x1f4f9a, 0x2c6e3c, 0xc41a24];
+/** A builder seen through one colour: every WHITE part handed to it comes out `col`. */
+function tinted(b, col) {
+  return new Proxy(b, { get(t, k) {
+    const f = t[k];
+    return typeof f === 'function' ? (...a) => f.apply(t, a.map((x) => (x === WHITE ? col : x))) : f;
+  } });
+}
 const DISC = [0.30, 0.31, 0.33];
 const CALIPER = [0.55, 0.09, 0.07];
 // Inside of every recess. Near-black rather than black so the wall still takes
@@ -253,8 +268,8 @@ export const TYPES = {
   taxi: deriveSpec({ rwd: true, wheelbase: 2.98,len: 4.76, wid: 1.85, wheelR: 0.33, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', taxi: true, livery: 0xf0b40c, mass: 1.0, acc: 3.8, topKph: 195, brakeM: 41, latG: 0.85 }),
   police: deriveSpec({ rwd: true, wheelbase: 2.95,len: 4.98, wid: 1.92, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', police: true, livery: 0xf2f4f6, mass: 1.1, acc: 5.6, topKph: 230, brakeM: 37, latG: 0.93 }),
   // the articulated bus: the front section and the trailing rear (buildArticFront)
-  artic: deriveSpec({ wheelbase: 6.7, len: 11.4, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'artic', livery: 0xc41a24, bus: true, artic: true, towed: 'articRear', boxy: 3, mass: 6.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
-  articRear: deriveSpec({ wheelbase: 5.3, len: 6.5, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'articRear', livery: 0xc41a24, bus: true, trailer: true, boxy: 3, mass: 3.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
+  artic: deriveSpec({ wheelbase: 5.9, len: 10.6, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'artic', liveries: ARTIC_LIVERIES, bus: true, artic: true, towed: 'articRear', boxy: 3, mass: 6.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
+  articRear: deriveSpec({ wheelbase: 6.4, len: 7.6, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'articRear', liveries: ARTIC_LIVERIES, bus: true, trailer: true, boxy: 3, mass: 3.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
   // an unlimited hydroplane: a turbine three-pointer that runs on its sponsons (updateHydro)
   hydro: deriveSpec({ wheelbase: 6.0, len: 9.6, wid: 4.4, wheelR: 0.3, sill: 0.2, belt: 0.6, roof: 1.3, cab: [0.1, 0.35], hand: 'hydro', boat: true, hydro: true, engine: 'turbine', mass: 3.0, acc: 12, topKph: 250, brakeM: 60, latG: 1.6 }),
   // the Duck Tour's amphibious DUKW: a truck on land, a boat in the water (updateDuck)
@@ -267,7 +282,7 @@ export const TYPES = {
   // at ~65 km/h, slow off the line; `offroad` because tracks do not bog down.
   // `len` is the HULL: the gun overhangs nothing it collides with.
   tank: deriveSpec({ wheelbase: 4.6, len: 7.93, wid: 3.66, wheelR: 0.32, sill: 0.48, belt: 1.42, roof: 2.44, cab: [0, 0.3], hand: 'tank', tank: true, offroad: true, engine: 'tank', livery: 0xb9a27a, armor: 0.12, mass: 40, acc: 2.0, topKph: 65, brakeM: 45, latG: 0.6 }),
-  bus: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', livery: 0xeceae3, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
+  bus: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', liveries: METRO_TOPS, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
   boxtruck: deriveSpec({ wheelbase: 4.3,len: 7.5, wid: 2.38, wheelR: 0.46, sill: 0.62, belt: 1.55, roof: 2.55, cab: [0.14, 0.46], cargo: 2.55, hand: 'boxtruck', boxy: 2, mass: 3.0, acc: 2.5, topKph: 125, brakeM: 51, latG: 0.66 }),
   ambulance: deriveSpec({ wheelbase: 3.9,len: 6.3, wid: 2.28, wheelR: 0.42, sill: 0.56, belt: 1.42, roof: 2.35, cab: [0.16, 0.46], cargo: 2.25, hand: 'ambulance', livery: 0xf4f4f0, boxy: 2, emergency: true, mass: 2.4, acc: 3.2, topKph: 155, brakeM: 48, latG: 0.72 }),
   // The police tactical van (wanted 4+, traffic.js spawnPolice 'swat'): heavy,
@@ -3315,6 +3330,12 @@ function buildConvertible(spec, paint, trim, matte) {
     trim.tube(wc, [wc[0] + Math.cos(a) * 0.155, wc[1] + Math.sin(a) * 0.135, wc[2] - Math.sin(a) * 0.078],
       0.013, 6, ALLOY, true);
   }
+  // THE DRIVER. Every other car's cabin builder seats one in `matte.crew`
+  // (merged into the geometry of a car somebody is in); this body builds its
+  // own cockpit and never did, so the open car you drove had nobody in it.
+  // Left-hand seat (cx 0.30), shoulders at the wheel's height + 7 cm, the
+  // backrest's top as the seat back, hands on the rim.
+  if (matte.crew) occupant(matte.crew, 0.300, wc[1] + 0.07, -0.625, 0.57, wc);
   trim.tube([wc[0], wc[1], wc[2] + 0.010], [wc[0], wc[1], wc[2] - 0.020], 0.048, 10, CHROME, true);
   matte.box(-0.180, cowlY - 0.110, cockF - 0.185, 0.320, 0.105, 0.14, 0, [0.19, 0.20, 0.21]);  // glovebox lid
   trim.tube([-0.055, floorY + 0.150, -0.080], [-0.060, floorY + 0.290, -0.045], 0.016, 6, CHROME, true); // shifter
@@ -6249,7 +6270,8 @@ function buildBus(spec, paint, trim, matte, o = {}) {
   const zF = o.zF !== undefined ? o.zF : 3.45, zR = o.zR !== undefined ? o.zR : -2.55;   // 2.55 m front overhang, 3.45 m rear
   const frontEnd = o.frontEnd !== false, rearEnd = o.rearEnd !== false;
   const belt = 1.20;
-  const core = bodyCore(spec, paint, matte, {
+  // the lower body in Metro yellow, as matte (paint is the top's colour)
+  const core = bodyCore(spec, tinted(matte, METRO_YELLOW), matte, {
     halfW: curve([[tail, frontEnd || rearEnd ? (rearEnd ? 0.975 : 1.0) : 1.0], [tail + 0.4, 1.0], [nose - 0.4, 1.0], [nose, frontEnd ? 0.975 : 1.0]]),
     sillY: curve([[tail, rearEnd ? 0.52 : 0.42], [tail + 0.6, 0.42], [nose - 0.6, 0.42], [nose, frontEnd ? 0.46 : 0.42]]),
     beltY: () => belt, tuckAt: () => 0.97, topAt: () => 0.99, zF, zR,
@@ -6387,13 +6409,15 @@ function buildBus(spec, paint, trim, matte, o = {}) {
 
 /**
  * King County Metro's 60 ft articulated bus (a New Flyer XDE60 as RapidRide
- * runs them): an 11.4 m front section on the front and middle axles, a
- * rubber bellows round the turntable, and a 6.5 m rear section on the drive
+ * runs them): a 10.6 m front section on the front and middle axles, a
+ * rubber bellows round the turntable, and a 7.6 m rear section on the drive
  * axle, riding on the hitch. Two vehicles (see Vehicle.follow): the front is
  * `artic`, which traffic and the player drive as a bus; the rear is
  * `articRear`, placed by trailer kinematics every frame.
  */
-const ARTIC = { hitchF: 6.35, hitchR: 3.85, axleR: -1.45, maxAngle: 0.95 };
+// Sections 10.6 + 7.6 m (an XDE60's: the joint just behind the middle axle,
+// the rear section most of the front's length, not half of it).
+const ARTIC = { hitchF: 5.95, hitchR: 4.4, axleR: -2.0, maxAngle: 0.95 };
 
 // The bellows: a corrugated rubber ring stretched from the front section's
 // tail to the rear section's nose, rebuilt from the two sections every frame
@@ -6448,10 +6472,10 @@ function updateBellows(m, lead, rear) {
 }
 function buildArticFront(spec, paint, trim, matte) {
   // front axle 2.6 m back from the nose; the middle axle 2.1 m ahead of the tail
-  return buildBus(spec, paint, trim, matte, { zF: 3.1, zR: -3.6, doors: [[3.95, 5.05], [-1.9, -0.8]], rearEnd: false, pod: -1.5 });
+  return buildBus(spec, paint, trim, matte, { zF: 2.7, zR: -3.2, doors: [[3.55, 4.65], [-1.5, -0.4]], rearEnd: false, pod: -1.3 });
 }
 function buildArticRear(spec, paint, trim, matte) {
-  return buildBus(spec, paint, trim, matte, { zF: 1.0, zR: ARTIC.axleR, doors: [[0.55, 1.65]], frontEnd: false, pod: -0.6, noFrontAxle: true });
+  return buildBus(spec, paint, trim, matte, { zF: 1.6, zR: ARTIC.axleR, doors: [[1.1, 2.2]], frontEnd: false, pod: -0.6, noFrontAxle: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -8611,7 +8635,8 @@ export class Vehicle {
     this.spec = t.spec;
     // A livery overrides the kerbside colour: a taxi is yellow whatever the
     // spawner drew for it, or it is a random car with a sign on the roof.
-    this.color = t.spec.livery !== undefined ? t.spec.livery : color;
+    this.color = t.spec.liveries ? t.spec.liveries[Math.abs(Math.floor(color)) % t.spec.liveries.length]
+      : t.spec.livery !== undefined ? t.spec.livery : color;
     this.detailedWheels = false;
 
     this.group = new THREE.Group();

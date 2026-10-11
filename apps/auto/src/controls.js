@@ -37,6 +37,18 @@ const PAD = {
   navDown: 13,    // ...and in a car, outside menus: fares / missions / a rig's call
 };
 const DEAD = 0.16;
+/* THE MINIGAMES' PAD. Every minigame (fishing, the arcade, pinball, hockey,
+   the tower, the coffee bar, hoops, pickleball, golf, fish toss, the wheel)
+   was touch and keyboard only, so a pad did nothing in any of them. While
+   one is open (`bridge()`, main.js) the pad is turned into the keys they
+   already read: one table for all of them, as keydown/keyup on the edges.
+   A is the action, B is back, the D-pad and stick are the arrows, the
+   shoulders and triggers the flippers. */
+const PAD_KEYS = [
+  [0, ['Space']], [1, ['Escape']], [2, ['KeyK']], [3, ['KeyC', 'KeyL']],
+  [4, ['ShiftLeft']], [5, ['ShiftRight']], [6, ['KeyZ']], [7, ['KeyM']],
+  [8, ['KeyF']], [9, ['Escape']],
+];
 const LOOK_RATE = 2.9;     // rad/s at full deflection
 const TRIGGER_ON = 0.12;   // where an analogue trigger starts counting as held
 
@@ -70,6 +82,7 @@ export class Controls {
     });
     window.addEventListener('gamepaddisconnected', () => {
       this._padIndex = null;
+      this._padPrev = [];   // a stale held button must not swallow the next press
       this.setPad(false);
       this._padStick = { x: 0, y: 0 };
       this._padGas = this._padBrake = 0;
@@ -163,6 +176,8 @@ export class Controls {
   setPad(on) {
     if (this.hasPad === on) return;
     this.hasPad = on;
+    // (main.js handlePadUi: a pad coming back is a press it never saw)
+    if (on) this.padJoined = true;
     this.root.dataset.pad = on ? '1' : '';
     if (on) this.releaseStick();
   }
@@ -214,7 +229,10 @@ export class Controls {
     held.job = down(PAD.navDown);
     this._padHeld = held;
 
-    const edge = (i) => down(i) && !this._padPrev[i];
+    // an open minigame has the pad (as keys, below): none of the game's own
+    // presses -- the map, the pause menu, getting in -- fire under it
+    const bridged = !!(this.bridge && this.bridge());
+    const edge = (i) => !bridged && down(i) && !this._padPrev[i];
     if (edge(PAD.enter)) this.tapped = 'enter';
     if (edge(PAD.jump) && this.mode !== 'drive') this.tapped = 'jump';
     if (edge(PAD.navDown) && this.mode === 'drive') this._ui.job = true;
@@ -236,8 +254,24 @@ export class Controls {
     if (navXNow && navXNow !== this._navXPrev) this._ui.navX = navXNow;
     this._navXPrev = navXNow;
 
+    if (bridged) this._bridgeKeys(down, lx, ly);
+    else if (this._bridged && this._bridged.size) this._bridgeKeys(() => false, 0, 0);
     this._padPrev = [];
     for (let i = 0; i < b.length; i++) this._padPrev[i] = down(i);
+  }
+
+  /** The pad as keys, for an open minigame (PAD_KEYS): keydown/keyup on what changed. */
+  _bridgeKeys(down, lx, ly) {
+    const want = new Set();
+    for (const [i, codes] of PAD_KEYS) if (down(i)) for (const c of codes) want.add(c);
+    if (down(PAD.navUp) || ly < -0.5) want.add('ArrowUp');
+    if (down(PAD.navDown) || ly > 0.5) want.add('ArrowDown');
+    if (down(PAD.radioPrev) || lx < -0.5) want.add('ArrowLeft');
+    if (down(PAD.radioNext) || lx > 0.5) want.add('ArrowRight');
+    const had = this._bridged || (this._bridged = new Set());
+    const fire = (type, code) => window.dispatchEvent(new KeyboardEvent(type, { code, key: code, bubbles: true, cancelable: true }));
+    for (const c of had) if (!want.has(c)) { had.delete(c); fire('keyup', c); }
+    for (const c of want) if (!had.has(c)) { had.add(c); fire('keydown', c); }
   }
 
   /** Consume the pad's UI edges. Menus own these; gameplay never sees them. */

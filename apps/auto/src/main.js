@@ -62,7 +62,7 @@ import { Effects } from './effects.js';
 import { TankSystem, TANK_SITE } from './tank.js';
 import { Audio, STATION_NAMES } from './audio.js';
 import { PostFX } from './postfx.js';
-import { clamp, lerp, rng, dist2, formatMoney } from './util.js';
+import { clamp, lerp, rng, dist2, formatMoney, hash2 } from './util.js';
 
 const app = document.getElementById('app');
 const loadBar = document.getElementById('loadBar');
@@ -581,6 +581,7 @@ let chunkCull = null;   // chunkcull.js
 let police = null, missions = null;   // the wanted levels (police.js) and police missions (policemissions.js)
 let taxi = null;                      // taxi fares (taxi.js)
 const burning = new Set();             // cars on fire (VEHICLE_HOOKS.ignite)
+let moorings = null, mooringT = 0;    // private boats at the lakes' docks (privateMoorings)
 let nearShadow = null;  // nearshadow.js
 // Who casts into the near map this frame: the player on foot, or the vehicle
 // he drives on the ground or the water. An aircraft keeps the sun's map (its
@@ -1043,6 +1044,7 @@ function installShadowFade() {
   piers = new Piers(md.piers, { scene, city, dropArrays: ON_PHONE, waterAt: (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; } });
   // on a phone their arrays go once uploaded: a lost context rebuilds them
   if (ON_PHONE) renderer.domElement.addEventListener('webglcontextlost', () => { piers.contextLost(); bikeNet.contextLost(); });
+  moorings = privateMoorings(md.piers.piers || []);
   // A lost context cannot be re-uploaded on a phone: the static city keeps no
   // JS copy of what the GPU holds (dropStaticArrays, below). A context lost on
   // an iPhone is the GPU process going away under memory pressure, and the
@@ -1154,6 +1156,9 @@ function installShadowFade() {
   // KEXP's now-playing feed drives a toast, so the radio names its own tracks.
   audio.onTrack = (label) => { if (hud) hud.showToast(`♪ ${label}`); };
   controls = new Controls(document.getElementById('app'));
+  // an open minigame takes the pad as keys (controls.js PAD_KEYS)
+  controls.bridge = () => [fishing, arcade, pinball, hockey, tower, coffee, hoops, pickle, golf, fishToss]
+    .some((a) => a && a.active) || !!(wheelRide && wheelRide.busy);
   player = new Player(scene, city, game, world);
   player.monorail = monorail;
   player.link = link;
@@ -1624,7 +1629,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   wireUi();
   career.start(hud);
   game.newTarget();
@@ -2061,6 +2066,7 @@ function makePadMenu() {
 }
 const padMenu = makePadMenu();
 let setPausedRef = null;
+let bgPaused = false;   // paused by leaving the app (visibilitychange), not by the menu button
 
 /** Fill the Jobs list and the delivery buttons. Read only when paused. */
 function refreshJobs() {
@@ -2166,6 +2172,15 @@ function warpTo(x, z) {
  */
 function handlePadUi(dt) {
   const u = controls.takeUi();
+  // BACK FROM THE HOME SCREEN, A RESUMES. iOS hides a pad from the page
+  // until a button on it is pressed, and the press that brings it back is
+  // never reported as one -- so the A that should have resumed did nothing
+  // and only a tap on the glass would. A pad (re)joining while the menu the
+  // app's own background pause put up is showing resumes, as A would.
+  if (controls.padJoined) {
+    controls.padJoined = false;
+    if (bgPaused && game.paused && !game.held && !game.mapOpen && setPausedRef) { setPausedRef(false); return; }
+  }
 
   if (u.pause) {
     if (game.mapOpen) setMapOpen(false);
@@ -2232,6 +2247,7 @@ function wireUi() {
     // screen: the menu does not open over it, and Resume cannot end it
     if (v && game.held) return;
     game.paused = v;
+    if (!v) bgPaused = false;
     pause.classList.toggle('show', v);
     if (v) refreshJobs();          // the Jobs list is only ever read here
     if (v) showStation();
@@ -2442,7 +2458,7 @@ function wireUi() {
   // tap, so coming back from the home screen looked like a hung game -- the
   // only way out was the pause button, which nobody presses on a frozen app.
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) setPaused(true);
+    if (document.hidden) { setPaused(true); bgPaused = game.paused; }
     else if (game.paused && !game.held) { pause.classList.add('show'); idleRedraw = true; }
   });
 }
@@ -2666,6 +2682,110 @@ function kayakRack(at) {
   post.position.set(x - 2.0, y + 0.55, z);
   scene.add(post);
 }
+/**
+ * PRIVATE BOATS. The lakes' shores are lined with private docks -- OSM maps
+ * ~1,100 piers under 70 m on Lake Washington alone, ~230 round Mercer Island
+ * -- and the marinas' fleets were the only boats on the water: a boat was
+ * hard to find. A third of the small lake docks (by hash, so always the same
+ * ones) have a runabout or a jet ski tied up alongside the end: the pier's
+ * point with the most water under it, 3 m to whichever side is open water.
+ * Lakes only (a level over 3 m): the Sound's piers are the city's.
+ */
+function privateMoorings(list) {
+  const out = [];
+  for (const q of list) {
+    const P = q.p;
+    if (!P || P.length < 2) continue;
+    let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9, cx = 0, cz = 0;
+    for (const [x, z] of P) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); cx += x; cz += z; }
+    cx /= P.length; cz /= P.length;
+    if (Math.max(x1 - x0, z1 - z0) > 70) continue;
+    if (hash2(Math.round(cx), Math.round(cz)) > 0.33) continue;
+    let tip = null, dep = 0, wl = null;
+    for (const [x, z] of P) {
+      const w = world.waterLevelAt(x, z);
+      if (w === null || w < 3) continue;
+      const d = w - G.terrainHeight(x, z);
+      if (d > dep) { dep = d; tip = [x, z]; wl = w; }
+    }
+    if (!tip || dep < 1.2) continue;
+    let dx = tip[0] - cx, dz = tip[1] - cz;
+    const l = Math.hypot(dx, dz);
+    if (l < 1) continue;
+    dx /= l; dz /= l;
+    let spot = null;
+    for (const s of [1, -1]) {
+      const x = tip[0] - dx * 2 + dz * s * 3.2, z = tip[1] - dz * 2 - dx * s * 3.2;
+      if (world.waterLevelAt(x, z) !== null && wl - G.terrainHeight(x, z) > 1.2) { spot = [x, z]; break; }
+    }
+    if (!spot) continue;
+    // the dock itself, from the shore to the tip (piers.js leaves docks this
+    // small out of the city; a moored boat draws its own, see mooringDocks)
+    let land = P[0], hi = -1e9;
+    for (const [x, z] of P) { const g = G.terrainHeight(x, z); if (g > hi) { hi = g; land = [x, z]; } }
+    out.push({ x: spot[0], z: spot[1], h: Math.atan2(dx, dz), wl, land, tip, ty: hash2(Math.round(cz), Math.round(cx)) < 0.7 ? 'boat' : 'jetski',
+      col: [0xf2f2ee, 0x1d3f8a, 0xb8322a, 0x2a2a2e, 0x2e7d6b][Math.floor(hash2(Math.round(cx), 7) * 5) % 5], v: null, taken: false });
+  }
+  return out;
+}
+
+/**
+ * Tie up the private boats within 650 m of you and let the ones past 900 m
+ * go (twice a second): ~330 moored at once would be 330 vehicles in every
+ * traffic pass. One you take is yours; its dock fills again once you are far.
+ */
+function updateMoorings(dt) {
+  if (!moorings || (mooringT -= dt) > 0) return;
+  mooringT = 0.5;
+  const p = player.position, IN = 650, OUT = 900;
+  let changed = false;
+  for (const m of moorings) {
+    const d = Math.hypot(m.x - p.x, m.z - p.z);
+    if (m.v) {
+      if (m.v === player.vehicle || m.v.dead || Math.hypot(m.v.x - m.x, m.v.z - m.z) > 20) { m.v = null; m.taken = true; continue; }
+      if (d > OUT) { traffic.remove(m.v); m.v = null; changed = true; }
+    } else if (!m.taken && d < IN) {
+      const v = traffic.spawnAt(m.x, m.z, m.h, m.ty, m.col, 'apron');
+      v.vLong = 0;
+      v.y = m.wl + 0.12;
+      v.group.position.y = v.y + (v.spec.wheelR || 0.3) + 0.25;
+      m.v = v;
+      changed = true;
+    } else if (m.taken && d > OUT) m.taken = false;
+  }
+  if (changed) mooringDocks();
+}
+
+/**
+ * The docks of the moorings tied up now, one merged mesh (a deck from the
+ * shore to the tip, 2 m wide and 0.55 m over the lake, piles every 4 m):
+ * rebuilt when the set changes, which is seldom. A taken boat's dock stays.
+ */
+let dockMesh = null;
+const DOCK_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 });
+function mooringDocks() {
+  const b = new Builder(false);
+  const p = player.position;
+  for (const m of moorings) {
+    if (!m.v && !(m.taken && Math.hypot(m.x - p.x, m.z - p.z) < 900)) continue;
+    const [ax, az] = m.land, [bx, bz] = m.tip;
+    const len = Math.hypot(bx - ax, bz - az);
+    if (len < 2) continue;
+    const hd = Math.atan2(bx - ax, bz - az), y = m.wl + 0.55;
+    b.box((ax + bx) / 2, y - 0.12, (az + bz) / 2, 2.0, 0.12, len + 0.6, -hd, [0.42, 0.37, 0.31]);
+    const fx = (bx - ax) / len, fz = (bz - az) / len;
+    for (let t = 0; t <= len; t += 4) {
+      for (const s of [1, -1]) b.box(ax + fx * t + fz * s * 0.9, m.wl - 1.6, az + fz * t - fx * s * 0.9, 0.22, y - m.wl + 1.5, 0.22, -hd, [0.22, 0.19, 0.16]);
+    }
+  }
+  if (dockMesh) { scene.remove(dockMesh); dockMesh.geometry.dispose(); dockMesh = null; }
+  if (b.empty) return;
+  dockMesh = new THREE.Mesh(b.build(), DOCK_MAT);
+  dockMesh.name = 'moorings:docks';
+  dockMesh.receiveShadow = true;
+  scene.add(dockMesh);
+}
+
 /** The balloon, inflated and waiting on its launch field. */
 function spawnBalloon() {
   const v = traffic.spawnAt(BALLOON_SITE.x, BALLOON_SITE.z, BALLOON_SITE.heading, 'balloon', 0xffffff, 'apron');
@@ -2714,6 +2834,7 @@ function frame(now) {
   if (pickle) pickle.update(dt);
   if (islands) islands.update(dt);
   if (orcas) orcas.update(dt);
+  updateMoorings(dt);
   if (saucer) saucer.update(dt);
   if (fishToss) { if (fishToss.active) fishToss.update(dt); fishToss.updateWorld(dt, camera.position.x, camera.position.z); }
   if (hoops) hoops.updateVisibility(camera.position.x, camera.position.z);

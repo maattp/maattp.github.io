@@ -3135,7 +3135,7 @@ async function main() {
       const step = (k, i) => { for (let n = 0; n < k; n++) {
         P.update(1 / 60, i, { x: 0, y: 0 }, d.controls, T, d.peds); T.update(1 / 60, P.x, P.z, { x: 0, z: 1 }, P);
         maxA = Math.max(maxA, Math.abs(Math.atan2(Math.sin(r.heading - v.heading), Math.cos(r.heading - v.heading))));
-        hitch = Math.max(hitch, Math.hypot(v.x - v.forward.x * 6.35 - (r.x + r.forward.x * 3.85), v.z - v.forward.z * 6.35 - (r.z + r.forward.z * 3.85)));
+        hitch = Math.max(hitch, Math.hypot(v.x - v.forward.x * 5.95 - (r.x + r.forward.x * 4.4), v.z - v.forward.z * 5.95 - (r.z + r.forward.z * 4.4)));   // ARTIC.hitchF / hitchR (vehicles.js)
         if (!isFinite(r.x + r.y + r.z + r.heading)) bad++; } };
       step(300, inp(1, 0));
       const straight = Math.abs(Math.atan2(Math.sin(r.heading - v.heading), Math.cos(r.heading - v.heading)));

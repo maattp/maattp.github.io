@@ -512,7 +512,10 @@ pad button as a badge** (`data-hint` in index.html), so the screen is the
 legend -- change the two together. The menu's "Controller hints" turns
 that off (`settings.padHints`, kept in localStorage `auto-padhints`): the
 buttons go away with a pad, as before v213. iOS exposes no pad until a button on it is
-pressed, so "the controller doesn't work" at launch is usually that.
+pressed, so "the controller doesn't work" at launch is usually that. And
+the press that brings a pad back after the home screen is never reported as
+a press: a pad (re)joining while the app's own background pause is up
+resumes (`controls.padJoined`, main.js `handlePadUi`, `bgPaused`).
 
 ## Heading sense (the sign trap)
 
