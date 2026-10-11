@@ -152,7 +152,7 @@ export const TYPES = {
   // (street-scale collision); the wings are drawn wide.
   jumbo: deriveSpec({ wheelbase: 26, len: 76.3, wid: 6.5, wheelR: 0.62, sill: 2.2, belt: 6.0, roof: 10.3, cab: [0.9, 0.3], hand: 'jumbo', plane: true, jet: true, mass: 12, acc: 5.8, topKph: 560, brakeM: 180, latG: 0.4, seeFar: 7000,
     // climbBase 7 -> 16: pulling back near rotation speed (little excess)
-    // asked for ~12 m/s and felt like nothing happened
+    // asked for ~7.6 m/s and felt like nothing happened
     fly: { vr: 72, stall: 58, bank: 0.55, turn: 0.34, climb: 36, climbBase: 16, vne: 150, thrustK: 0.62, pitchK: 3.2 } }),
   // Boeing-Stearman Model 75: the biplane Boeing built, and the one hanging
   // in the Museum of Flight next door. A taildragger: it sits 11 degrees nose

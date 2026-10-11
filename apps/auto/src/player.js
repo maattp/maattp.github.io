@@ -643,8 +643,8 @@ export class Player {
     // (the Needle, the stadiums), which carry their own height bands. A hit
     // is the end of the airframe (main.js onCarDestroyed: the fireball).
     if (v.spec.plane && v.airborne && !v.spec.heli && !v.spec.balloon && !v.dead && this.planeHits(v)) {
+      v.planeHit = true;   // before damage(): onCarDestroyed reads it
       v.damage(1e4, true);
-      v.planeHit = true;
       this.game.onCrash(60, false);
     }
     const impact = airborne ? 0 : collideWithBuildings(v, this.city, (imp) => {
