@@ -272,6 +272,8 @@ v2 adds benchmarks (GPU fill/draw calls/compute, CPU scaling, storage, downloads
 and interactive tests (touch, background/resume, 30 s sustained GPU, memory
 stress, and a two-phone P2P pair test that signals through the `/sf/*` relay
 room on the worker — no worker changes needed).
+**`apps/pwa/CAPABILITIES.md` records what the iPhone PWA can do, with measured
+numbers — read it before building a performance-sensitive game or app here.**
 
 ## Photos App
 
