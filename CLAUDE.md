@@ -254,6 +254,21 @@ prices, so its free list is the hand-kept `GEMINI_FREE_MODELS` in
 through DOMPurify; user text renders as text nodes. Local testing:
 `?api=http://localhost:8787` (honoured only on localhost) against `wrangler dev`.
 
+## PWA App
+
+### Version Management
+
+**IMPORTANT:** Increment `VERSION` in `/apps/pwa/index.html` once per PR, and
+bump `CACHE` in `/apps/pwa/sw.js` (`pwa-vN`) to match.
+
+Capability probe, not a product: run it pinned to the iPhone home screen and in
+a Safari tab, then compare, to see which 3D-racer / P2P features
+(WebGPU, WebGL2, wasm SIMD/threads, SAB, WebRTC, audio, sensors…) work in standalone mode.
+**No fallbacks — a failure is reported, never worked around.** GitHub Pages can't
+send headers, so `sw.js` adds COOP/COEP to every same-origin response (`?coi=0`
+turns that off for a comparison run); the first launch reloads once to come
+under the SW. "Copy results" puts a plain-text report on the clipboard.
+
 ## Photos App
 
 ### Known Limitations
