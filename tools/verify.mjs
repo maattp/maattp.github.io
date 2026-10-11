@@ -3814,7 +3814,11 @@ async function main() {
       for (let i = 0; i < 16; i++) { await wait(100); seen.add(cop.lightL.visible ? 'L' : 'R'); }
       out.on = st(); out.strobe = seen.size;
       // traffic ahead of it eases off and keeps right (traffic.sirenFrom)
-      const tc = T.cars.find((v) => v.mode === 'traffic' && v.vLong > 4 && !v.spec.bus && !v.spec.cargo);
+      // the NEAREST such car: one out of sight runs its AI at half rate (traffic.js
+      // far LOD), and the first in the list could be anywhere -- the count then
+      // hung on spawn order, not on yielding
+      const tc = T.cars.filter((v) => v.mode === 'traffic' && v.vLong > 4 && !v.spec.bus && !v.spec.cargo)
+        .sort((a, b) => Math.hypot(a.x - cop.x, a.z - cop.z) - Math.hypot(b.x - cop.x, b.z - cop.z))[0];
       if (tc) {
         const f = tc.forward;
         cop.x = tc.x - f.x * 22; cop.z = tc.z - f.z * 22; cop.heading = tc.heading; cop.vLong = 0;

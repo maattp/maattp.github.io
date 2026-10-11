@@ -979,7 +979,7 @@ function buildVessel(mats, cells, name) {
   b.quad([-CAB_X, PAX + cabH - 0.02, -CAB_Z], [-CAB_X, PAX + cabH - 0.02, CAB_Z], [CAB_X, PAX + cabH - 0.02, CAB_Z], [CAB_X, PAX + cabH - 0.02, -CAB_Z], [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], C.ceil);
   // the cabin roof, and the sun deck on it
   b.box(0, SUN - 0.3, 0, 2 * CAB_X + 0.6, 0.3, 2 * SUN_Z, 0, C.whiteD);
-  b.quad([-12.6, SUN + 0.005, -SUN_Z], [12.6, SUN + 0.005, -SUN_Z], [12.6, SUN + 0.005, SUN_Z], [-12.6, SUN + 0.005, SUN_Z], up, [0, 0, 1, 0, 1, 1, 0, 1], [0.3, 0.32, 0.31]);
+  b.quad([-12.6, SUN + 0.03, -SUN_Z], [12.6, SUN + 0.03, -SUN_Z], [12.6, SUN + 0.03, SUN_Z], [-12.6, SUN + 0.03, SUN_Z], up, [0, 0, 1, 0, 1, 1, 0, 1], [0.3, 0.32, 0.31]);
   for (const sx of [-1, 1]) rail(sx * 12.75, -SUN_Z, sx * 12.75, SUN_Z, SUN);
   // the ends, open at each stair's head
   rail(-12.75, SUN_Z, 11.3, SUN_Z, SUN);

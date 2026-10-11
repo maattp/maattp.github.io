@@ -552,6 +552,8 @@ export class Player {
       const f = v.forward;
       if (Math.abs(dx * f.x + dz * f.z) < v.halfLen + 0.32 && Math.abs(dx * f.z - dz * f.x) < v.halfWid + 0.32) return true;
     }
+    // ...and so is a train (main.js trainBlock: freight, Link, the streetcar)
+    if (this.trainBlock && this.trainBlock(x, z, this.y, 0.32)) return true;
     const near = this.city.buildingsNear(x, z, 6);
     for (const b of near) {
       const c = Math.cos(-b.rot), s = Math.sin(-b.rot);

@@ -75,6 +75,7 @@ const SECTIONS = (() => {
 })();
 
 const STEP = 1;
+const _lfw = new THREE.Vector3();
 const ON_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 // how far each part is drawn: the structure, the ballast bed, the near
 // detail (rails, wires, poles), the boards, a train (a phone draws less)
@@ -1133,7 +1134,7 @@ export class Link {
     for (let s = s0; s < s1 - 0.01; s += DS) {
       const A = frame(tr, s), B = frame(tr, Math.min(s1, s + DS));
       band(b, A, B, e0 * sg, H, e1 * sg, H, UP, plat);
-      band(b, A, B, e0 * sg, H, (e0 + 0.6) * sg, H + 0.004, UP, under ? [0.5, 0.42, 0.1] : C.tactile);
+      band(b, A, B, e0 * sg, H, (e0 + 0.6) * sg, H + 0.015, UP, under ? [0.5, 0.42, 0.1] : C.tactile);
       band(b, A, B, e0 * sg, -0.2, e0 * sg, H, side(A, -sg), under ? [0.2, 0.2, 0.2] : C.concreteD);
       if (!island) {
         // the back edge: underground a wall, in the open a railing
@@ -1419,6 +1420,27 @@ export class Link {
       }
     }
     return null;
+  }
+
+  /**
+   * A TRAIN IS SOLID ON FOOT: is (x, z) at height y inside any car's body,
+   * grown by r? player.blocked and the crowd's _place ask it (main.js
+   * trainBlock). Walking through a standing train was the car bug again.
+   */
+  blockAt(x, z, y, r) {
+    for (const t of this.trains) {
+      if (!t.group.visible || Math.hypot(t.cx - x, t.cz - z) > LINK.len / 2 + 10) continue;
+      for (let k = 0; k < SECTIONS.length; k++) {
+        const b = t.bones[k], p = b.position;
+        if (y < p.y - 1.2 || y > p.y + 4.2) continue;
+        const dx = x - p.x, dz = z - p.z, hl = (SECTIONS[k][1] - SECTIONS[k][0]) / 2 + r;
+        if (dx * dx + dz * dz > (hl + 2) * (hl + 2)) continue;
+        _lfw.set(0, 0, 1).applyQuaternion(b.quaternion);
+        const l = Math.hypot(_lfw.x, _lfw.z) || 1, fx = _lfw.x / l, fz = _lfw.z / l;
+        if (Math.abs(dx * fx + dz * fz) < hl && Math.abs(dx * fz - dz * fx) < 1.33 + r) return true;
+      }
+    }
+    return false;
   }
 
   update(dt, camera) {
@@ -1750,9 +1772,9 @@ function buildLRVGeometry() {
       }
       // door details: the open-door buttons, lit green, and the step plate
       for (const d of doors) {
-        open[k].quad([sd * (HW + 0.008), 0.34, d - 0.64], [sd * (HW + 0.008), 0.34, d + 0.64], [sd * (HW + 0.008), 2.2, d + 0.64], [sd * (HW + 0.008), 2.2, d - 0.64], [sd, 0, 0], uv0, [0.05, 0.05, 0.055]);
-        open[k].quad([sd * (HW + 0.009), 0.3, d - 0.64], [sd * (HW + 0.009), 0.3, d + 0.64], [sd * (HW + 0.009), 0.35, d + 0.64], [sd * (HW + 0.009), 0.35, d - 0.64], [sd, 0, 0], uv0, [0.9, 0.75, 0.1]);
-        T.quad([sd * (HW + 0.004), 1.18, d - 0.78], [sd * (HW + 0.004), 1.18, d - 0.7], [sd * (HW + 0.004), 1.26, d - 0.7], [sd * (HW + 0.004), 1.26, d - 0.78], [sd, 0, 0], uv0, LIV.green);
+        open[k].quad([sd * (HW + 0.025), 0.34, d - 0.64], [sd * (HW + 0.025), 0.34, d + 0.64], [sd * (HW + 0.025), 2.2, d + 0.64], [sd * (HW + 0.025), 2.2, d - 0.64], [sd, 0, 0], uv0, [0.05, 0.05, 0.055]);
+        open[k].quad([sd * (HW + 0.03), 0.3, d - 0.64], [sd * (HW + 0.03), 0.3, d + 0.64], [sd * (HW + 0.03), 0.35, d + 0.64], [sd * (HW + 0.03), 0.35, d - 0.64], [sd, 0, 0], uv0, [0.9, 0.75, 0.1]);
+        T.quad([sd * (HW + 0.02), 1.18, d - 0.78], [sd * (HW + 0.02), 1.18, d - 0.7], [sd * (HW + 0.02), 1.26, d - 0.7], [sd * (HW + 0.02), 1.26, d - 0.78], [sd, 0, 0], uv0, LIV.green);
         B.quad([sd * (HW - 0.02), 0.3, d - 0.7], [sd * (HW + 0.03), 0.3, d - 0.7], [sd * (HW + 0.03), 0.3, d + 0.7], [sd * (HW - 0.02), 0.3, d + 0.7], UP, uv0, [0.4, 0.4, 0.4]);
       }
       // the underframe inside the skirt

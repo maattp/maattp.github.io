@@ -1238,10 +1238,10 @@ function buildTrainGeometry(liv) {
     matte.quad([sd * SKIRT_IN, -1.05, z0], [sd * 1.47, -1.05, z0], [sd * 1.47, -1.05, z1], [sd * SKIRT_IN, -1.05, z1], [0, -1, 0], uv, [0.2, 0.2, 0.21]);
     // doors: a dark seam each side of each leaf, and the glazing runs lower
     for (const dz of doors) {
-      open.quad([sd * (HALF + 0.008), 0.66, dz - 0.6], [sd * (HALF + 0.008), 0.66, dz + 0.6], [sd * (HALF + 0.008), 2.5, dz + 0.6], [sd * (HALF + 0.008), 2.5, dz - 0.6], [sd, 0, 0], uv, [0.05, 0.05, 0.055]);
-      open.quad([sd * (HALF + 0.009), 0.62, dz - 0.6], [sd * (HALF + 0.009), 0.62, dz + 0.6], [sd * (HALF + 0.009), 0.67, dz + 0.6], [sd * (HALF + 0.009), 0.67, dz - 0.6], [sd, 0, 0], uv, [0.55, 0.55, 0.52]);
+      open.quad([sd * (HALF + 0.025), 0.66, dz - 0.6], [sd * (HALF + 0.025), 0.66, dz + 0.6], [sd * (HALF + 0.025), 2.5, dz + 0.6], [sd * (HALF + 0.025), 2.5, dz - 0.6], [sd, 0, 0], uv, [0.05, 0.05, 0.055]);
+      open.quad([sd * (HALF + 0.03), 0.62, dz - 0.6], [sd * (HALF + 0.03), 0.62, dz + 0.6], [sd * (HALF + 0.03), 0.67, dz + 0.6], [sd * (HALF + 0.03), 0.67, dz - 0.6], [sd, 0, 0], uv, [0.55, 0.55, 0.52]);
       for (const e of [dz - 0.62, dz + 0.62, dz]) {
-        body.quad([sd * (HALF + 0.004), 0.62, e - 0.018], [sd * (HALF + 0.004), 0.62, e + 0.018], [sd * (HALF + 0.004), 2.52, e + 0.018], [sd * (HALF + 0.004), 2.52, e - 0.018], [sd, 0, 0], uv, [0.25, 0.25, 0.26]);
+        body.quad([sd * (HALF + 0.02), 0.62, e - 0.018], [sd * (HALF + 0.02), 0.62, e + 0.018], [sd * (HALF + 0.02), 2.52, e + 0.018], [sd * (HALF + 0.02), 2.52, e - 0.018], [sd, 0, 0], uv, [0.25, 0.25, 0.26]);
       }
       trim.quad([sd * (HALF - 0.01), 0.95, dz - 0.52], [sd * (HALF - 0.01), 0.95, dz + 0.52], [sd * (HALF - 0.01), 1.55, dz + 0.52], [sd * (HALF - 0.01), 1.55, dz - 0.52], [sd, 0, 0], uv, GLASS_C);
     }

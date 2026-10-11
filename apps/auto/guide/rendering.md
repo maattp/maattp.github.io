@@ -458,6 +458,13 @@ lobe per paint pixel, so the phone keeps the one-layer material (and the far
 LOD's `FAR_PARTS` copy of it). Same three draws; the warm-up's sedan compiles
 the physical program on a desktop.
 
+**No surface within ~2 cm of another on anything seen from afar (v218).**
+The audit after the freight's flashing (v215): the Monorail's and Link's door
+and window panels stood 4-9 mm off the body, the Counterbalance car's lining
+4-6 mm, the ferry's sun deck 5 mm over its deck. At a 24-bit depth and a 0.5 m
+near plane one depth step is ~2 cm at 400 m, so each z-fought -- flashed --
+from a few hundred metres. All are 2-3 cm now.
+
 ## Judging how it looks
 
 Four separate visual bugs were each diagnosed two or three times as something

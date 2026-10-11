@@ -1472,6 +1472,8 @@ function installShadowFade() {
         : `${mr.name} — boats and jet skis. Walk out on the float and take one` })),
   ];
   peds = new PedSystem(scene, city, game);
+  // trains are solid to anyone on foot (each system's blockAt)
+  player.trainBlock = peds.trainBlock = (x, z, y, r) => freight.blockAt(x, z, y, r) || link.blockAt(x, z, y, r) || counterbal.blockAt(x, z, y, r);
   peds.camera = camera;   // animation LOD culls against it
   peds.waterAt = (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; };   // the boats' rule (Player.waterAt)
   fx = new Effects(scene, tx);
@@ -2024,6 +2026,8 @@ function makePadMenu() {
         { el: document.getElementById('setMusic'), kind: 'click' },
         { el: document.getElementById('setSound'), kind: 'click' },
         { el: document.getElementById('setSens'), kind: 'range' },
+        // (a switch the pad cannot reach is no switch for a pad player)
+        { el: document.getElementById('setPadHints'), kind: 'click' },
       ].filter((r) => r.el);
       i = 0;
       on = true;

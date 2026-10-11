@@ -1018,6 +1018,21 @@ export class Counterbalance {
     return false;
   }
 
+  /**
+   * A TRAIN IS SOLID ON FOOT: is (x, z) at height y inside any car's body,
+   * grown by r? player.blocked and the crowd's _place ask it (main.js
+   * trainBlock). Walking through a standing train was the car bug again.
+   */
+  blockAt(x, z, y, r) {
+    for (const o of this.cars) {
+      if (o.group && !o.group.visible) continue;
+      if (y < o.cy - 1.2 || y > o.cy + 3.6) continue;
+      const dx = x - o.cx, dz = z - o.cz, f = o._fwd;
+      if (Math.abs(dx * f.x + dz * f.z) < CB.carLen / 2 + r && Math.abs(dx * f.z - dz * f.x) < CB.wid / 2 + r) return true;
+    }
+    return false;
+  }
+
   update(dt, camera) {
     if (!this.ok || !this.cars.length) return;
     this.camera = camera;
@@ -1980,21 +1995,21 @@ function buildCarGeometry(number) {
     wallX(B, sd, HW, -ZS, ZS, YS, YB - 0.1, C.cream);
     wallX(B, sd, HW + 0.012, -ZS, ZS, YB - 0.1, YB, C.green);           // the belt rail
     wallX(B, sd, HW, -ZS, ZS, YT, YE, C.cream);                           // the letterboard
-    wallX(B, sd, HW + 0.004, -ZS, ZS, YT, YT + 0.035, C.green);
-    wallX(B, sd, HW + 0.004, -ZS, ZS, YE - 0.035, YE, C.green);
-    wallX(B, sd, HW + 0.004, -ZS, ZS, YS + 0.05, YS + 0.08, C.green);     // a lining stripe
+    wallX(B, sd, HW + 0.02, -ZS, ZS, YT, YT + 0.035, C.green);
+    wallX(B, sd, HW + 0.02, -ZS, ZS, YE - 0.035, YE, C.green);
+    wallX(B, sd, HW + 0.02, -ZS, ZS, YS + 0.05, YS + 0.08, C.green);     // a lining stripe
     for (let j = 0; j < nW; j++) {
       const z0 = -ZS + j * pitch, z1 = z0 + pitch, g0 = z0 + 0.06, g1 = z1 - 0.06;
       wallX(B, sd, HW, z0, g0, YB, YT, C.green);
       wallX(B, sd, HW, g1, z1, YB, YT, C.green);
-      wallX(B, sd, HW + 0.006, g0, g1, 2.38, 2.43, C.green);               // the upper sash's rail
+      wallX(B, sd, HW + 0.025, g0, g1, 2.38, 2.43, C.green);               // the upper sash's rail
       wallX(T, sd, HW - 0.02, g0, g1, YB, YT, GLASS);
       // the guard bars across the lower sash, as the photograph shows them
       for (const yb of [1.98, 2.13]) wallX(T, sd, HW + 0.035, g0 - 0.02, g1 + 0.02, yb, yb + 0.022, C.nickel);
     }
     // the car's number near each end, read from the street
     const dir = sd > 0 ? [0, 0, -1] : [0, 0, 1];
-    for (const zc of [-3.55, 3.55]) text(B, String(number), [sd * (HW + 0.006), 1.12, zc], dir, [sd, 0, 0], 0.2, C.green);
+    for (const zc of [-3.55, 3.55]) text(B, String(number), [sd * (HW + 0.025), 1.12, zc], dir, [sd, 0, 0], 0.2, C.green);
   }
   // inside: floor, liners under the windows, the ceiling, the cross seats
   B.quad([-HW + 0.05, FL, -ZE + 0.1], [HW - 0.05, FL, -ZE + 0.1], [HW - 0.05, FL, ZE - 0.1], [-HW + 0.05, FL, ZE - 0.1], [0, 1, 0], uv, C.floor);
@@ -2116,7 +2131,7 @@ function buildCarGeometry(number) {
       q(B, [xa, YT, za], [xb, YT, zb], [xb, YE, zb], [xa, YE, za], n, C.cream);
     }
     // the dash: headlight, the route sign, the destination glass, an ad card
-    const zf = ZE + 0.004;
+    const zf = ZE + 0.02;
     const hl = P(0, 1.3, ZE);
     B.tube(hl, P(0, 1.3, ZE + 0.13), 0.17, 10, C.dark, true);
     T.tube(P(0, 1.3, ZE + 0.13), P(0, 1.3, ZE + 0.15), 0.13, 10, C.lamp, true);

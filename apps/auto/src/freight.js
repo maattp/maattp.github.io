@@ -28,6 +28,7 @@ import { vehicleAssets, tagGlass } from './vehicles.js';
 import { railCar, railDecals, RAIL_COLOURS } from './railcars.js';
 import { clamp, angleWrap } from './util.js';
 import { memo } from './bootcache.js';
+const _fw = new THREE.Vector3();
 
 const { TUN, BOX, DECK, FILL, CROSS } = KIND;
 
@@ -1078,6 +1079,28 @@ export class Freight {
     if (occ) return false;
     sc.owner = t;
     return true;
+  }
+
+  /**
+   * A TRAIN IS SOLID ON FOOT: is (x, z) at height y inside any car's body,
+   * grown by r? player.blocked and the crowd's _place ask it (main.js
+   * trainBlock). Walking through a standing train was the car bug again.
+   */
+  blockAt(x, z, y, r) {
+    for (const t of this.trains) {
+      if (!t.group.visible || !t._geoReady || Math.hypot(t.cx - x, t.cz - z) > t.len / 2 + 20) continue;
+      for (let i = 0; i < t.cars.length; i++) {
+        const b = t.bones[i], p = b.position;
+        if (y < p.y - 1.2 || y > p.y + 4.6) continue;
+        const dx = x - p.x, dz = z - p.z;
+        const hl = t.cars[i].L / 2 + r;
+        if (dx * dx + dz * dz > (hl + 2) * (hl + 2)) continue;
+        _fw.set(0, 0, 1).applyQuaternion(b.quaternion);
+        const l = Math.hypot(_fw.x, _fw.z) || 1, fx = _fw.x / l, fz = _fw.z / l;
+        if (Math.abs(dx * fx + dz * fz) < hl && Math.abs(dx * fz - dz * fx) < 1.6 + r) return true;
+      }
+    }
+    return false;
   }
 
   update(dt, camera) {

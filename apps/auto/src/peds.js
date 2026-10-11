@@ -3698,7 +3698,8 @@ export class PedSystem {
       const y = y0 === null ? city.groundAt(x, z, null) : city.groundAt(x, z, y0, city.roadLift(x, z));
       if (city.insideBuilding(x, z, y, 0.5)) continue;
       if (edge < 0) { const wl = this.waterAt ? this.waterAt(x, z) : null; if (wl !== null && y < wl - 0.2) continue; }
-      if (avoidView && d < 45 && this._seen(x, y, z)) continue;
+      // (in view only near the ring's edge: at 45 m one appeared out of nothing)
+      if (avoidView && d < 52 && this._seen(x, y, z)) continue;
       s.x = x; s.z = z; s.y = y; s.edge = edge; s.side = side; s.dirSign = dirSign; s.t = t;
       return s;
     }
@@ -3990,6 +3991,7 @@ export class PedSystem {
       }
     }
     if (walls && city.insideBuilding(x, z, p.y, 0.3)) return false;
+    if (walls && p.nearCar && this.trainBlock && this.trainBlock(x, z, p.y, 0.3)) return false;   // a train is solid too
     const lift = city.roadLift(x, z);
     const y = city.groundAt(x, z, p.y + 1, lift);
     if (walls) {
