@@ -2168,6 +2168,12 @@ function handlePadUi(dt) {
     return;
   }
   if (u.map) setMapOpen(true);
+  // D-pad down in a car: a taxi's fares or a police car's missions, on or off
+  // (a fire rig's call is firecalls.js's, off the same button held)
+  if (u.job && !game.dead) {
+    if (taxi && (taxi.on || taxi.available(player))) taxi.toggle(player);
+    else if (missions && (missions.run || missions.nextT > 0 || missions.available(player))) missions.toggle(player);
+  }
   if (u.radio) {
     audio.init();
     audio.resume();

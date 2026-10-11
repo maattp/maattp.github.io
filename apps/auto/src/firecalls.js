@@ -398,7 +398,7 @@ export class FireService {
     const app = this._app || (this._app = document.getElementById('app'));
     const inRig = !!rig && !player.onFoot;
     if (app && (app.dataset.fire === '1') !== inRig) app.dataset.fire = inRig ? '1' : '';
-    const missionDown = !!(c && (c.btn.mission || c.key('KeyM')));
+    const missionDown = !!(c && (c.btn.mission || c.key('KeyM') || (c._padHeld && c._padHeld.job)));
     if (missionDown && !this._wasMission && inRig) {
       if (this.call || this._nextT > 0) this.standDown('Stood down');
       else this.dispatch();

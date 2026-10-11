@@ -8,24 +8,33 @@ import { clamp } from './util.js';
      0 A/Cross   1 B/Circle  2 X/Square  3 Y/Triangle
      4 LB  5 RB  6 LT  7 RT  8 Back/Share  9 Start/Options
      10 L3  11 R3   12/13/14/15 dpad U/D/L/R                                */
+/* GTA's layout. On foot: A runs (held), X jumps, B punches, RT attacks too,
+   Y gets in. In a car: RT / LT gas and brake, A the handbrake, X the tank's
+   main gun, L3 the horn, R3 the siren, D-pad down a taxi's fares or a police
+   car's missions. The on-screen buttons wear these as hints while a pad is
+   connected (index.html, data-hint) -- change both together. */
 const PAD = {
-  jump: 0,        // A -- also handbrake in a car, as in GTA
-  hand: 0,
-  back: 1,        // B -- menus only
-  attack: 2,      // X
+  confirm: 0,     // A -- menus
+  sprint: 0,      // A -- on foot, held: run (GTA's sprint)
+  hand: 0,        // A -- in a car, the handbrake
+  back: 1,        // B -- menus
+  punch: 1,       // B -- on foot, attack (GTA's melee)
+  jump: 2,        // X -- on foot, jump
+  carAttack: 2,   // X -- in a car (the tank's main gun)
+  warp: 2,        // X -- on the map, arms the spawn picker
   enter: 3,       // Y -- enter/exit vehicle
-  sprintAlt: 5,   // RB
+  sprintAlt: 5,   // RB -- run on foot too; the tank's machine gun, a rig's water
   brake: 6,       // LT -- analogue
-  gas: 7,         // RT -- analogue
+  gas: 7,         // RT -- analogue; on foot, attack (GTA's fire)
   map: 8,         // Back/Share
   pause: 9,       // Start/Options
   horn: 10,       // L3 -- GTA puts the horn on the left stick click
+  sprintL3: 10,   // ...and on foot the same click runs too
   siren: 11,      // R3 -- a police car's siren and lights, on and off
-  sprint: 10,     // ...and on foot the same click is hold-to-sprint
   radioPrev: 14,  // dpad left
   radioNext: 15,  // dpad right
   navUp: 12,
-  navDown: 13,
+  navDown: 13,    // ...and in a car, outside menus: fares / missions / a rig's call
 };
 const DEAD = 0.16;
 const LOOK_RATE = 2.9;     // rad/s at full deflection
@@ -53,7 +62,7 @@ export class Controls {
     this._padGas = 0;
     this._padBrake = 0;
     this._padHeld = {};
-    this._ui = { pause: false, map: false, radio: 0, nav: 0, navX: 0, confirm: false, back: false, warp: false };
+    this._ui = { pause: false, map: false, radio: 0, nav: 0, navX: 0, confirm: false, back: false, warp: false, job: false };
     this._padLook = { x: 0, y: 0 };
     window.addEventListener('gamepadconnected', (e) => {
       this._padIndex = e.gamepad.index;
@@ -200,20 +209,23 @@ export class Controls {
     this._padBrake = raw(PAD.brake);
 
     const held = {};
-    for (const k of ['jump', 'hand', 'attack', 'horn', 'sprint', 'sprintAlt']) held[k] = down(PAD[k]);
+    for (const k of ['jump', 'hand', 'punch', 'carAttack', 'horn', 'sprint', 'sprintAlt', 'sprintL3']) held[k] = down(PAD[k]);
+    held.fire = raw(PAD.gas) > TRIGGER_ON;
+    held.job = down(PAD.navDown);
     this._padHeld = held;
 
     const edge = (i) => down(i) && !this._padPrev[i];
     if (edge(PAD.enter)) this.tapped = 'enter';
     if (edge(PAD.jump) && this.mode !== 'drive') this.tapped = 'jump';
+    if (edge(PAD.navDown) && this.mode === 'drive') this._ui.job = true;
     if (edge(PAD.pause)) this._ui.pause = true;
     if (edge(PAD.map)) this._ui.map = true;
     if (edge(PAD.siren)) this.sirenTaps++;
     if (edge(PAD.radioNext)) this._ui.radio = 1;
     if (edge(PAD.radioPrev)) this._ui.radio = -1;
-    if (edge(PAD.jump)) this._ui.confirm = true;
+    if (edge(PAD.confirm)) this._ui.confirm = true;
     if (edge(PAD.back)) this._ui.back = true;
-    if (edge(PAD.attack)) this._ui.warp = true;   // X arms the map's spawn picker
+    if (edge(PAD.warp)) this._ui.warp = true;   // X arms the map's spawn picker
 
     // Menu cursor: d-pad or left stick, edge-triggered so a held direction
     // moves one item rather than forty.
@@ -231,7 +243,7 @@ export class Controls {
   /** Consume the pad's UI edges. Menus own these; gameplay never sees them. */
   takeUi() {
     const u = this._ui;
-    this._ui = { pause: false, map: false, radio: 0, nav: 0, navX: 0, confirm: false, back: false, warp: false };
+    this._ui = { pause: false, map: false, radio: 0, nav: 0, navX: 0, confirm: false, back: false, warp: false, job: false };
     return u;
   }
 
@@ -385,10 +397,10 @@ export class Controls {
 
     const p = this._padHeld;
     const driving = this.mode === 'drive';
-    // A is the handbrake in a car and jump on foot, and L3 is the horn in a car
-    // and hold-to-sprint on foot -- both are what GTA does with those buttons.
-    // Sprint is a HOLD, never a toggle: a toggle stays latched after the stick
-    // is released, so you arrive somewhere still sprinting.
+    // A is the handbrake in a car and run on foot, and L3 is the horn in a car
+    // (and runs on foot too) -- what GTA does with those buttons. Sprint is a
+    // HOLD, never a toggle: a toggle stays latched after the stick is
+    // released, so you arrive somewhere still sprinting.
     const gasAmt = clamp(Math.max(
       this._padGas,
       (this.btn.gas || this.key('ArrowUp', 'KeyW')) ? 1 : 0,
@@ -412,8 +424,9 @@ export class Controls {
       brakeAmt,
       hand: this.btn.hand || this.key('Space') || (driving && !!p.hand),
       sprint: this.btn.sprint || this.key('ShiftLeft', 'ShiftRight')
-        || (!driving && (!!p.sprint || !!p.sprintAlt)),
-      attack: this.btn.attack || this.key('KeyJ') || this.key('ControlLeft') || !!p.attack,
+        || (!driving && (!!p.sprint || !!p.sprintAlt || !!p.sprintL3)),
+      attack: this.btn.attack || this.key('KeyJ') || this.key('ControlLeft')
+        || (driving ? !!p.carAttack : (!!p.punch || !!p.fire)),
       horn: this.btn.horn || this.key('KeyH') || (driving && !!p.horn),
       // a tank's machine gun: K, or RB on a pad (the pad's horn, L3, too)
       mg: this.key('KeyK') || (driving && !!p.sprintAlt),

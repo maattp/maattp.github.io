@@ -501,6 +501,17 @@ ev('pointerdown', 2, 100, 300);                                 // must re-grab
 __dbg.controls.stick.x; // must be 0, and _stickId must be 2
 ```
 
+## The controller layout (v213)
+
+GTA's: on foot A runs (held), X jumps, B punches, RT attacks, Y gets in; in a
+car RT / LT gas and brake, A the handbrake, X the tank's gun, L3 the horn, R3
+the siren, RB a rig's water, D-pad down a taxi's fares or a police car's
+missions (a rig's call), D-pad left / right the radio. The table is `PAD` in
+`controls.js`. **With a pad connected the on-screen buttons stay and wear the
+pad button as a badge** (`data-hint` in index.html), so the screen is the
+legend -- change the two together. iOS exposes no pad until a button on it is
+pressed, so "the controller doesn't work" at launch is usually that.
+
 ## Heading sense (the sign trap)
 
 `heading` is literally a three.js `rotation.y`, so **forward = `(sin h, cos h)`**
