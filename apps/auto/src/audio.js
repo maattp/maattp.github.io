@@ -23,6 +23,7 @@
 // OfflineAudioContext (`init(ctx)` + `_simT`) and writes WAVs to docs/audio/.
 
 import { clamp, lerp, mulberry32 } from './util.js';
+import { SynthRadio } from './radiosynth.js';
 
 // Idle voices are disconnected so the audio thread stops rendering them. An
 // offline preview schedules the whole script BEFORE it renders, and a graph
@@ -1806,9 +1807,9 @@ export class EngineVoice {
 // Radio
 // ---------------------------------------------------------------------------
 
-const SCALE = [0, 3, 5, 7, 10];
 // A live station is its real stream when there is a network, and a
-// synthesised stand-in (root/tempo/wave/mood) when there isn't -- every station
+// synthesised stand-in when there isn't (radiosynth.js: songs written in the
+// station's `style`, in a key near `root`) -- every station
 // keeps its synth voice so the radio still works with the aeroplane on, which
 // is the whole point of an offline-first PWA. The last two are synth only.
 //
@@ -1818,32 +1819,32 @@ const SCALE = [0, 3, 5, 7, 10];
 // https page may not load, so this is that variant over https. Safari plays
 // HLS in an <audio>; a browser that cannot (`canPlayType`) skips the station.
 const STATIONS = [
-  { name: 'KEXP 90.3', root: 55, tempo: 104, wave: 'sawtooth', mood: 0.6,
+  { name: 'KEXP 90.3', root: 55, style: 'indie',
     stream: 'https://kexp.streamguys1.com/kexp160.aac', nowPlaying: 'kexp' },
-  { name: 'RdMix Classic Rock', root: 52, tempo: 118, wave: 'sawtooth', mood: 0.7,
+  { name: 'RdMix Classic Rock', root: 52, style: 'rock',
     stream: 'https://cast1.torontocast.com:4610/stream' },
-  { name: 'BBC Radio 1', root: 60, tempo: 122, wave: 'square', mood: 0.8,
+  { name: 'BBC Radio 1', root: 60, style: 'pop',
     stream: 'https://as-hls-ww.live.cf.md.bbci.co.uk/pool_01505109/live/ww/bbc_radio_one/bbc_radio_one.isml/bbc_radio_one-audio%3d96000.norewind.m3u8',
     hls: true },
-  { name: 'Top 100 Charts', root: 57, tempo: 126, wave: 'square', mood: 0.85,
+  { name: 'Top 100 Charts', root: 57, style: 'pop',
     stream: 'https://breakz-high.rautemusik.fm/' },
-  { name: 'NRJ Linkin Park', root: 50, tempo: 105, wave: 'sawtooth', mood: 0.75,
+  { name: 'NRJ Linkin Park', root: 50, style: 'rock',
     stream: 'https://streaming.nrjaudio.fm/ouvfbfoarp52' },
-  { name: 'Rock Antenne Alternative', root: 55, tempo: 112, wave: 'sawtooth', mood: 0.7,
+  { name: 'Rock Antenne Alternative', root: 55, style: 'indie',
     stream: 'https://stream.rockantenne.de/alternative' },
-  { name: '80s Drive', root: 57, tempo: 116, wave: 'square', mood: 0.75,
+  { name: '80s Drive', root: 57, style: 'synthwave',
     stream: 'https://samcloud.spacial.com/api/listen?sid=111415&m=sc&rid=293634&t=ssl' },
-  { name: 'C89.5 Seattle', root: 58, tempo: 124, wave: 'square', mood: 0.8,
+  { name: 'C89.5 Seattle', root: 58, style: 'house',
     stream: 'https://knhc-ice.streamguys1.com/live' },
-  { name: 'KNKX 88.5 Jazz', root: 53, tempo: 92, wave: 'triangle', mood: 0.45,
+  { name: 'KNKX 88.5 Jazz', root: 53, style: 'jazz',
     stream: 'https://knkx-live-a.edge.audiocdn.com/6284_128k' },
-  { name: 'Classical KING FM', root: 48, tempo: 72, wave: 'triangle', mood: 0.25,
+  { name: 'Classical KING FM', root: 48, style: 'classical',
     stream: 'https://classicalking.streamguys1.com/king-fm-aac-128k' },
-  { name: 'Rain City FM', root: 49, tempo: 86, wave: 'triangle', mood: 0.3 },
-  { name: 'Pike St Radio', root: 62, tempo: 124, wave: 'square', mood: 0.85 },
+  { name: 'Rain City FM', root: 49, style: 'lofi' },
+  { name: 'Pike St Radio', root: 62, style: 'house' },
 ];
 /** The station list, for the menu's picker: [{ name, live }]. */
-export const STATION_NAMES = STATIONS.map((s) => ({ name: s.name, live: !!s.stream }));
+export const STATION_NAMES = STATIONS.map((s) => ({ name: s.name, live: !!s.stream, style: s.style }));
 
 // KEXP's now-playing feed, the one /apps/radio uses. The other stations
 // publish titles only inside the stream (ICY), which a media element hides.
@@ -2360,8 +2361,6 @@ export class Audio {
     this._groundWas = true;
     this._popCd = 0;
     this._brakeWas = 0;
-    this.nextBeat = c.currentTime + 0.3;
-    this.beat = 0;
     this.ready = true;
 
     // The bank exists from the start and fills in as it renders (renderBank).
@@ -3045,6 +3044,7 @@ export class Audio {
       this._pollNowPlaying();
       // The synth station and the real one must never play together.
       setp(this.musicBus.gain, 0, t, 0.3);
+      if (this.radio) this.radio.quiet(t, keepLinked);
     } else if (this.musicOn && inCar) {
       // The SYNTH stations are the car radio too. Only the live stream was
       // gated on being in a car, so on foot the synthesised KEXP played on --
@@ -3053,6 +3053,7 @@ export class Audio {
       this.scheduleMusic();
     } else {
       setp(this.musicBus.gain, 0, t, 0.3);
+      if (this.radio) this.radio.quiet(t, keepLinked);
     }
   }
 
@@ -3632,82 +3633,16 @@ export class Audio {
     if (sv.pan) setp(sv.pan.pan, sp.pan, t, 0.06);
   }
 
+  /**
+   * The synth radio: what plays in a car when no stream does (radiosynth.js).
+   * Called every frame (and behind the pause, tickRadio); it schedules ~0.4 s
+   * ahead.
+   */
   scheduleMusic() {
-    const ctx = this.ctx;
-    const st = STATIONS[this.station];
-    const spb = 60 / st.tempo;
+    if (!this.radio) this.radio = new SynthRadio(this.ctx, this.musicBus, this.noise);
     const now = this.now();
     setp(this.musicBus.gain, 0.2, now, 0.4);
-    // Beats missed while the context was suspended (or the scheduler not
-    // called) are SKIPPED, not played at once: the loop below puts every beat
-    // it catches up on at now + 0.02, a burst of the whole backlog.
-    if (this.nextBeat < now - 0.1) this.nextBeat = now;
-    while (this.nextBeat < now + 0.4) {
-      const t = Math.max(this.nextBeat, now + 0.02);
-      const b = this.beat;
-      const bar = Math.floor(b / 8) % 4;
-      const rootMidi = st.root + [0, 5, 3, 7][bar];
-      // bass
-      if (b % 2 === 0) this.note(rootMidi, t, spb * 0.9, 'sawtooth', 0.16, 260);
-      // chord stab
-      if (b % 4 === 2) {
-        for (const s of [0, 3, 7]) this.note(rootMidi + 12 + s, t, spb * 0.5, st.wave, 0.05, 1600);
-      }
-      // lead
-      if (Math.random() < st.mood * 0.55) {
-        const deg = SCALE[Math.floor(Math.random() * SCALE.length)];
-        this.note(rootMidi + 24 + deg, t + spb * 0.25, spb * 0.4, st.wave, 0.04, 2600);
-      }
-      // drums
-      this.hit(t, b % 4 === 0 ? 'kick' : b % 4 === 2 ? 'snare' : 'hat');
-      this.nextBeat += spb / 2;
-      this.beat++;
-    }
-  }
-
-  note(midi, t, dur, type, vol, cutoff) {
-    const ctx = this.ctx;
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    const f = ctx.createBiquadFilter();
-    f.type = 'lowpass';
-    f.frequency.value = cutoff;
-    o.type = type;
-    o.frequency.value = 440 * Math.pow(2, (midi - 69) / 12);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(vol, t + 0.015);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(f).connect(g).connect(this.musicBus);
-    o.start(t);
-    o.stop(t + dur + 0.05);
-  }
-
-  hit(t, kind) {
-    const ctx = this.ctx;
-    if (kind === 'kick') {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.frequency.setValueAtTime(120, t);
-      o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
-      g.gain.setValueAtTime(0.3, t);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
-      o.connect(g).connect(this.musicBus);
-      o.start(t);
-      o.stop(t + 0.2);
-      return;
-    }
-    const s = ctx.createBufferSource();
-    s.buffer = this.noise;
-    const f = ctx.createBiquadFilter();
-    f.type = kind === 'snare' ? 'bandpass' : 'highpass';
-    f.frequency.value = kind === 'snare' ? 1600 : 7000;
-    const g = ctx.createGain();
-    const dur = kind === 'snare' ? 0.13 : 0.045;
-    g.gain.setValueAtTime(kind === 'snare' ? 0.16 : 0.07, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    s.connect(f).connect(g).connect(this.musicBus);
-    s.start(t);
-    s.stop(t + dur + 0.05);
+    this.radio.schedule(STATIONS[this.station], now);
   }
 
   /** The current station's stream URL (any live station's, for priming). */

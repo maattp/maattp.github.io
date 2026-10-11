@@ -56,6 +56,40 @@ pad (the only on-screen radio control, and only in a car: v124 removed the
 HUD's 📻), R or the pad's shoulder buttons tune the next;
 the pause menu lists them all.
 
+**The synth radio (v221, `radiosynth.js`)** is what a station plays with no
+stream: offline, a stream that died, and always on Rain City FM and Pike St
+Radio. It was one loop for every station (a saw bass on the root, a triad
+stab, a random pentatonic note on any eighth, kick/snare/hat), and random
+notes on a grid is why it sounded silly: nothing repeated, so nothing was a
+tune. Now each station has a `style` (indie, rock, pop, house, synthwave,
+jazz, classical, lofi) and each song is written as it starts:
+- a key near the station's `root`, a tempo from the style's range, major or
+  minor (dorian for lo-fi), a verse, chorus and bridge progression, and a
+  form (intro, verse, chorus, verse, chorus, bridge, chorus, outro; jazz
+  plays heads and choruses, the calm styles are shorter);
+- the melody is a two-bar MOTIF (rhythm + contour) stated, restated over the
+  next chords, varied, then answered with a long chord tone. Strong beats
+  snap to a chord tone **in the direction the contour moves** -- the plain
+  nearest pulled a rising step back to the note before ("7, 7, 7");
+- chords are voiced close inside a fixed octave (`inWin`), which voice-leads
+  by itself; the bass's root sits C2-B2; classical minor raises the V's
+  leading tone; jazz and lo-fi swing (`swing`, `swing16`) and stack 7ths;
+- voices per style: overdriven guitar (one shared WaveShaper + cab) for
+  rock, clean jangle for indie, FM Rhodes / vibes / bells, a walking upright,
+  ride and brushes, strings over a harp, a gated snare and 16th arpeggio,
+  house's four-on-the-floor with off-beat bass. Into a dotted-eighth delay
+  and one compressor, trimmed to the old radio's level (-39 to -42 dB RMS
+  offline, against ~-42 while the old one sounded).
+
+Tuning in starts a song at a section's first bar part-way through, as a real
+station would be; a song ends on the tonic and the next starts after a
+breath. Cost: each step is scheduled as the 0.4 s lookahead reaches it (a
+retune cuts in at once); desktop ~0.2-0.55 ms of main thread per second of
+music, p99 frame 0.1-0.2 ms, the tune-in frame 1-2.5 ms. The persistent
+buses (delay, amp, compressor) are linked to `musicBus` only while it plays
+(`quiet`). `node tools/audiorender.mjs --only scene-radio-pop,...` renders
+40 s of each style (`radio-<style>`).
+
 - **Find streams with the radio-browser.info search /apps/radio uses**, then
   check each with curl: HTTPS, an audio content type, and a CORS header for
   polkiewicz.com. An https page may not load an http stream. BBC Radio 1's HLS

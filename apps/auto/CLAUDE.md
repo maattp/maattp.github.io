@@ -112,6 +112,7 @@ src/career.js               the saved wallet (auto-career) and the Seattle Passp
 src/effects.js              particles + tracers
 src/audio.js                all sound, synthesised: engine models, one-shot bank,
                             positional traffic/sirens, radio (see "Sound")
+src/radiosynth.js           the synth radio: songs written per station style, their voices
 src/main.js                 boot sequence, game rules, frame loop
 
 tools/proj.py               THE projection. Mirrored by geo.js -- change both.
