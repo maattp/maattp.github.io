@@ -17,6 +17,7 @@ import { Ferry, fixTerminals } from './ferry.js';
 import { BikeNet, Cyclists } from './bikes.js';
 import { Islands } from './islands.js';
 import { Orcas } from './orcas.js';
+import { Saucer } from './saucer.js';
 import { Career } from './career.js';
 import { Piers } from './piers.js';
 import { PickleballCourt } from './pickleball.js';
@@ -115,6 +116,7 @@ let hockey = null;   // hockey night at Climate Pledge Arena (hockey.js)
 let tower = null;    // Boeing Field's control tower and FINAL APPROACH (atc.js)
 let duckTour = null; // the Duck Tour: kiosk, ducks, ramp and the tour (ducktour.js)
 let orcas = null;     // a pod off West Point, an Easter egg (orcas.js)
+let saucer = null;    // a flying saucer, parked sometimes in a meadow (saucer.js)
 let islands = null, pickle = null, piers = null, ferry = null, ferryPrev = null;   // the islands across the Sound (islands.js), pickleball on Bainbridge (pickleball.js)
 let coffee = null;   // First Cup Coffee at 1912 Pike Place and MORNING RUSH (barista.js)
 let career = null;   // the saved wallet and the Seattle Passport (career.js)
@@ -1437,6 +1439,7 @@ function installShadowFade() {
   peds.waterAt = (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; };   // the boats' rule (Player.waterAt)
   fx = new Effects(scene, tx);
   orcas = new Orcas({ scene, fx, camera, get game() { return game; }, get hud() { return hud; }, get audio() { return audio; }, get player() { return player; } });
+  saucer = new Saucer({ scene, city, traffic, get hud() { return hud; }, get game() { return game; }, get audio() { return audio; }, get player() { return player; } });
   let mapCanvas = null;
   if (bc.map) { try { mapCanvas = await blobToCanvas(bc.map); } catch (e) { mapCanvas = null; blog('map: restore failed ' + e.message); } }
   if (!mapCanvas) { mapCanvas = buildMapCanvas(city); bcOut.mapCanvas = mapCanvas; }
@@ -1584,7 +1587,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   wireUi();
   career.start(hud);
   game.newTarget();
@@ -2662,6 +2665,7 @@ function frame(now) {
   if (pickle) pickle.update(dt);
   if (islands) islands.update(dt);
   if (orcas) orcas.update(dt);
+  if (saucer) saucer.update(dt);
   if (fishToss) { if (fishToss.active) fishToss.update(dt); fishToss.updateWorld(dt, camera.position.x, camera.position.z); }
   if (hoops) hoops.updateVisibility(camera.position.x, camera.position.z);
   // The paused branch below returns before audio.update(): the engine, traffic
