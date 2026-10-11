@@ -304,16 +304,26 @@
     width: min(460px, 86%); max-height: 34vh; overflow: hidden; white-space: pre-wrap; text-align: left;
   }
   /* Which build you're actually running — the first thing to check when a fix
-     seems to be missing, since a stale service worker looks exactly like that. */
+     seems to be missing, since a stale service worker looks exactly like that.
+     Fixed, not absolute, and so is #attrib: they hang off the screen's real
+     bottom, not #app's, which the standalone rule above makes taller than the
+     screen in portrait -- the launch screen is mostly seen upright, and there
+     the badge sat under the home indicator. */
   #build {
-    position: absolute; bottom: calc(env(safe-area-inset-bottom) + 28px);
+    position: fixed; bottom: calc(env(safe-area-inset-bottom) + 28px);
     font-size: 11px; letter-spacing: .18em; opacity: .4;
   }
   /* OpenStreetMap is ODbL: attribution is required wherever its data is shown,
      and the whole street network here is derived from it. */
   #attrib {
-    position: absolute; bottom: calc(env(safe-area-inset-bottom) + 12px);
+    position: fixed; bottom: calc(env(safe-area-inset-bottom) + 12px);
     font-size: 10px; opacity: .32; text-align: center; padding: 0 18px;
+  }
+  /* Upright there is room to spare, so the badge stands clear of the home
+     indicator. Not sideways: there it would meet a full boot log. */
+  @media (orientation: portrait) {
+    #build { bottom: calc(env(safe-area-inset-bottom) + 48px); }
+    #attrib { bottom: calc(env(safe-area-inset-bottom) + 26px); }
   }
 
   #racePanel {
@@ -564,7 +574,7 @@
     <pre id="bootLog"></pre>
     <div id="loadRotate">Turn sideways to play once it has loaded</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v211</div>
+    <div id="build">v212</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation USGS 3DEP</div>
   </div>
   <script>
