@@ -268,6 +268,10 @@ a Safari tab, then compare, to see which 3D-racer / P2P features
 send headers, so `sw.js` adds COOP/COEP to every same-origin response (`?coi=0`
 turns that off for a comparison run); the first launch reloads once to come
 under the SW. "Copy results" puts a plain-text report on the clipboard.
+v2 adds benchmarks (GPU fill/draw calls/compute, CPU scaling, storage, downloads)
+and interactive tests (touch, background/resume, 30 s sustained GPU, memory
+stress, and a two-phone P2P pair test that signals through the `/sf/*` relay
+room on the worker — no worker changes needed).
 
 ## Photos App
 

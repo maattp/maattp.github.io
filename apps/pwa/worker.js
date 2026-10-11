@@ -1,12 +1,15 @@
-/* PWA probe helper worker. One command per message, one worker per command.
+/* PWA probe helper worker. Every message carries an `id`; the reply echoes it.
    It is a real same-origin file (not a blob) so the service worker serves it
    with the same COOP/COEP headers as the page, the way a game's worker would. */
+let runInstance = null;
+
 const CMDS = {
   async env() {
     const out = {
       crossOriginIsolated: self.crossOriginIsolated,
       SharedArrayBuffer: typeof SharedArrayBuffer,
       hardwareConcurrency: navigator.hardwareConcurrency,
+      requestAnimationFrame: typeof self.requestAnimationFrame === 'function',
     };
     if (typeof OffscreenCanvas === 'undefined') {
       out.offscreenWebgl2 = 'OffscreenCanvas is undefined';
@@ -42,12 +45,43 @@ const CMDS = {
     inst.exports.inc(n);
     return { ms: performance.now() - t };
   },
+
+  // CPU scaling: load the integer-loop module once, then spin on demand.
+  async load({ module }) {
+    runInstance = await WebAssembly.instantiate(module);
+    return {};
+  },
+  spin({ n }) {
+    const t = performance.now();
+    const r = runInstance.exports.run(n);
+    return { ms: performance.now() - t, r };
+  },
+  echo() { return {}; },
+
+  // OPFS sync access handles only exist in workers — the fast path for asset caches.
+  async opfs({ mb }) {
+    const root = await navigator.storage.getDirectory();
+    const fh = await root.getFileHandle('probe-sync.bin', { create: true });
+    if (!fh.createSyncAccessHandle) throw new Error('createSyncAccessHandle is undefined');
+    const h = await fh.createSyncAccessHandle();
+    const chunk = new Uint8Array(1 << 20).fill(3);
+    let t = performance.now();
+    for (let i = 0; i < mb; i++) h.write(chunk, { at: i << 20 });
+    h.flush();
+    const writeMs = performance.now() - t;
+    t = performance.now();
+    for (let i = 0; i < mb; i++) h.read(chunk, { at: i << 20 });
+    const readMs = performance.now() - t;
+    h.close();
+    await root.removeEntry('probe-sync.bin');
+    return { writeMs, readMs };
+  },
 };
 
 self.onmessage = async ({ data: m }) => {
   try {
-    self.postMessage({ ok: true, ...(await CMDS[m.cmd](m)) });
+    self.postMessage({ id: m.id, ok: true, ...(await CMDS[m.cmd](m)) });
   } catch (e) {
-    self.postMessage({ ok: false, error: `${e && e.name}: ${e && e.message}` });
+    self.postMessage({ id: m.id, ok: false, error: `${e && e.name}: ${e && e.message}` });
   }
 };
