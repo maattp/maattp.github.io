@@ -770,3 +770,20 @@ damage, and it barely tips (`tip` 0.25). It collides with buildings as a
 helicopter does. Probe: `tools/saucerprobe.js` (a viewshots page script) --
 parked on the ground, enterable, paid once, 88 m climbed in 4 s, 321 m covered
 in the next 4 at 576 km/h and rising.
+
+**The look (v211).** The hull is mirror chrome (`finish: 'chrome'` in
+paintMaterial: full metalness, roughness 0.1, clearcoat on a desktop) in a
+72-segment lathe -- an upper lens stepped by raised rings with dark panel
+seams, 24 louvres, a rim band, a lower lens of concentric rings round a
+central emitter -- and a cockpit floor with a lit instrument ring and a grey,
+big-headed, black-eyed pilot at the controls. What glows is saucer.js's,
+hung from the vehicle's tilt group and unlit (toneMapped off, so the bloom
+takes it; each lamp carries a faint halo too, so a phone sees it glow): 16
+rim lamps chasing in cyan and amber (faster with speed), a breathing glow
+under the belly, a dashed energy ring under the rim that wakes in the air
+and turns faster with speed, and -- hovering under 60 m and slower than
+9 m/s -- a cone of light down to the ground. The dome is its own clear glass
+(the vehicle trim glass is tinted for windscreens and hid the pilot). The
+legs are live parts on the flown saucer and fold up above 3 m. A low hover
+throws dust off the ground. It hums: `engine: 'saucer'`, odd harmonics, low,
+with a high shimmer and a little wander.

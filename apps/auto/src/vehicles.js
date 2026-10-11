@@ -176,7 +176,7 @@ export const TYPES = {
   // 11 m polished disc, a glass dome, a ring of lights round the rim that
   // turns, three legs. It flies on the helicopter's model (hover, collective,
   // pedal turns) with none of a helicopter's limits, and stays level.
-  saucer: deriveSpec({ wheelbase: 6.0, len: 11.0, wid: 11.0, wheelR: 0.3, sill: 1.2, belt: 2.0, roof: 3.6, cab: [0.2, 0.2], hand: 'saucer', plane: true, heli: true, saucer: true, engine: 'ev', mass: 2.0, acc: 30, topKph: 1100, brakeM: 30, latG: 2.0,
+  saucer: deriveSpec({ wheelbase: 6.0, len: 11.0, wid: 11.0, wheelR: 0.3, sill: 1.2, belt: 2.0, roof: 3.6, cab: [0.2, 0.2], hand: 'saucer', finish: 'chrome', plane: true, heli: true, saucer: true, engine: 'saucer', mass: 2.0, acc: 30, topKph: 1100, brakeM: 30, latG: 2.0,
     pivotY: 1.6,
     rotor: { climb: 45, sink: 40, accel: 40, grip: 40, yaw: 2.4, yawFast: 1.2, back: 60 } }),
   sedan: deriveSpec({ wheelbase: 2.98,len: 5.06, wid: 1.90, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.26, 0.10], hand: 'sedan', mass: 1.0, acc: 4.1, topKph: 205, brakeM: 40, latG: 0.88 }),
@@ -7987,43 +7987,76 @@ function buildTank(spec, paint, trim, matte) {
 }
 
 /**
- * The saucer: a lathe of a disc -- a shallow upper lens, a dark rim band, a
- * flatter lower lens -- under a glass dome, on three splayed legs, with a
- * ring of lamps round the rim as a spin part (it turns when flown) and a
- * lamp at the centre of the belly. Polished silver is the paint.
+ * The saucer: a lathe of a disc in mirror chrome (`finish: 'chrome'`) -- a
+ * shallow upper lens stepped by two raised rings and cut by panel seams, a
+ * dark rim band (its lamps are saucer.js's: lit, and they chase), a lower
+ * lens of concentric rings round a central emitter -- under a dome
+ * (saucer.js's clear glass) with a ring of portholes at its foot and a pilot inside. Three legs are
+ * live parts on the flown one (axis 'z', never spun) so saucer.js can
+ * retract them. Everything is in metres from the ground; the rim is at Y0.
  */
 function buildSaucer(spec, paint, trim, matte) {
-  const N = 40, Y0 = 1.25;
+  const N = 72, Y0 = 1.25;
   const ring = (r, y) => { const out = []; for (let i = 0; i <= N; i++) { const a = (i / N) * Math.PI * 2; out.push([Math.cos(a) * r, Y0 + y, -Math.sin(a) * r]); } return out; };
-  const lathe = (b, prof, col) => { const rows = prof.map(([r, y]) => ring(r, y)); b.patch(rows, col); };
-  const SILVER = [0.82, 0.84, 0.87], BAND = [0.16, 0.17, 0.19], BELLY = [0.55, 0.57, 0.6];
-  // upper lens, from the dome's foot out to the rim
-  lathe(paint, [[1.75, 1.05], [2.6, 0.98], [3.6, 0.8], [4.6, 0.55], [5.3, 0.3], [5.5, 0.18]], SILVER);
-  // the rim band the lamps sit on
-  lathe(matte, [[5.5, 0.18], [5.55, 0.0], [5.5, -0.18]], BAND);
-  // lower lens, back in toward the belly
-  lathe(paint, [[5.5, -0.18], [4.9, -0.32], [3.6, -0.5], [2.2, -0.6], [0.9, -0.64], [0.01, -0.65]], BELLY);
-  // the dome: glass over a silver collar
-  lathe(paint, [[1.75, 1.05], [1.7, 1.18]], SILVER);
-  trim.spheroid(0, Y0 + 1.18, 0, 1.62, 18, 8, GLASS, 0.62);
-  // a pilot's seat, dimly through the glass
-  matte.box(0, Y0 + 1.0, 0, 0.7, 0.5, 0.7, 0, [0.12, 0.12, 0.14]);
-  // three legs and their pads
+  const lathe = (b, prof, col) => { b.patch(prof.map(([r, y]) => ring(r, y)), col); };
+  const SILVER = [0.82, 0.84, 0.87], SEAM = [0.08, 0.085, 0.095], BAND = [0.1, 0.105, 0.12];
+  const G1 = [0.2, 0.21, 0.23], G2 = [0.32, 0.33, 0.36];
+  // upper lens, in panels: the chrome between seams, a seam a few cm wide
+  // standing proud so the light catches it
+  const up = [[1.85, 1.02], [2.25, 0.99], [2.3, 1.03], [2.36, 0.97], [3.1, 0.86], [3.2, 0.9], [3.3, 0.84],
+    [4.05, 0.66], [4.1, 0.69], [4.15, 0.64], [4.8, 0.44], [5.25, 0.27], [5.5, 0.16]];
+  lathe(paint, up, SILVER);
+  // the seams themselves: dark bands just over the chrome at three radii
+  for (const [r0, r1] of [[2.62, 2.66], [3.62, 3.66], [4.55, 4.59]]) {
+    const h = (r) => { for (let k = 1; k < up.length; k++) if (r <= up[k][0]) { const [ra, ya] = up[k - 1], [rb, yb] = up[k]; return ya + (yb - ya) * (r - ra) / (rb - ra); } return 0.16; };
+    lathe(matte, [[r0, h(r0) + 0.012], [r1, h(r1) + 0.012]], SEAM);
+  }
+  // vents: 24 dark louvres on the outer lens
+  for (let k = 0; k < 24; k++) {
+    const a = (k / 24) * Math.PI * 2 + 0.13;
+    matte.box(Math.cos(a) * 4.95, Y0 + 0.36, -Math.sin(a) * 4.95, 0.42, 0.035, 0.11, a + Math.PI / 2, SEAM);
+  }
+  // the rim band and its lip
+  lathe(matte, [[5.5, 0.16], [5.6, 0.1], [5.62, 0.0], [5.6, -0.1], [5.5, -0.16]], BAND);
+  // lower lens: concentric rings stepping in to the emitter
+  lathe(paint, [[5.5, -0.16], [5.1, -0.28], [4.55, -0.38]], SILVER);
+  lathe(matte, [[4.55, -0.38], [4.5, -0.43], [4.0, -0.46], [3.95, -0.42]], G1);
+  lathe(paint, [[3.95, -0.42], [3.1, -0.52], [2.6, -0.56]], SILVER);
+  lathe(matte, [[2.6, -0.56], [2.55, -0.6], [1.6, -0.64], [1.55, -0.6]], G2);
+  lathe(matte, [[1.55, -0.6], [1.0, -0.7], [0.01, -0.72]], [0.14, 0.2, 0.24]);   // the emitter's housing (lit by saucer.js)
+  // the dome: a chrome collar with twelve portholes, glass over it
+  lathe(paint, [[1.85, 1.02], [1.82, 1.2], [1.74, 1.32]], SILVER);
+  for (let k = 0; k < 12; k++) {
+    const a = (k / 12) * Math.PI * 2;
+    trim.spheroid(Math.cos(a) * 1.86, Y0 + 1.12, -Math.sin(a) * 1.86, 0.075, 8, 5, GLASS, 0.6);
+  }
+  // (the dome itself is saucer.js's: clear glass with the pilot showing through;
+  // the vehicle trim glass is tinted dark for windscreens and hid him)
+  // the cockpit floor under the dome, and a lit ring of instruments round it
+  lathe(matte, [[0.01, 1.03], [1.86, 1.03]], [0.1, 0.11, 0.13]);
+  for (let k = 0; k < 10; k++) { const a = (k / 10) * Math.PI * 2 + 0.3; trim.box(Math.cos(a) * 1.45, Y0 + 1.06, -Math.sin(a) * 1.45, 0.16, 0.05, 0.08, a, k % 3 ? [0.3, 0.9, 1.0] : [1.0, 0.7, 0.3]); }
+  // the pilot: grey, big-headed, black-eyed, in a high-backed seat
+  matte.box(0, Y0 + 1.25, -0.42, 0.62, 0.95, 0.14, 0, [0.12, 0.12, 0.14]);
+  matte.box(0, Y0 + 1.25, -0.05, 0.62, 0.12, 0.6, 0, [0.12, 0.12, 0.14]);
+  const SKIN = [0.56, 0.6, 0.58];
+  matte.spheroid(0, Y0 + 1.62, -0.12, 0.2, 10, 7, SKIN, 1.25);           // torso
+  matte.spheroid(0, Y0 + 2.02, -0.06, 0.24, 14, 10, SKIN, 1.15);         // the head
+  for (const sx of [-1, 1]) {
+    matte.spheroid(sx * 0.1, Y0 + 2.0, 0.15, 0.085, 10, 6, [0.02, 0.02, 0.03], 0.62);   // eyes
+    matte.tube([sx * 0.18, Y0 + 1.72, -0.08], [sx * 0.12, Y0 + 1.5, 0.28], 0.04, 6, SKIN, true);   // arms to the controls
+  }
+  matte.box(0, Y0 + 1.42, 0.38, 0.5, 0.08, 0.2, 0, [0.15, 0.16, 0.2]);    // the console
+  trim.box(-0.12, Y0 + 1.505, 0.38, 0.05, 0.01, 0.05, 0, [0.3, 1.0, 0.6]);
+  trim.box(0.12, Y0 + 1.505, 0.38, 0.05, 0.01, 0.05, 0, [1.0, 0.4, 0.25]);
+  // three legs and their pads, each a live part on the flown saucer
   for (let k = 0; k < 3; k++) {
-    const a = (k / 3) * Math.PI * 2 + Math.PI / 6, c = Math.cos(a), s = -Math.sin(a);
-    matte.tube([c * 2.6, Y0 - 0.5, s * 2.6], [c * 3.3, 0.12, s * 3.3], 0.09, 6, [0.4, 0.42, 0.45], true);
-    matte.prism(c * 3.3, 0, s * 3.3, 0.38, 0.12, 8, [0.3, 0.32, 0.34]);
+    const a = (k / 3) * Math.PI * 2 + Math.PI / 6, c = Math.cos(a), sn = -Math.sin(a);
+    const leg = new Builder(false);
+    leg.tube([0, 0, 0], [c * 0.75, -(Y0 - 0.55), sn * 0.75], 0.1, 8, [0.38, 0.4, 0.43], true);
+    leg.tube([c * 0.2, -0.25, sn * 0.2], [c * 0.62, -(Y0 - 0.75), sn * 0.62], 0.05, 6, [0.24, 0.25, 0.28], true);
+    leg.prism(c * 0.75, -(Y0 - 0.5) - 0.12, sn * 0.75, 0.4, 0.12, 12, [0.3, 0.32, 0.34]);
+    spinPart(matte, [c * 2.55, Y0 - 0.5, sn * 2.55], 'z', leg);
   }
-  // the belly lamp
-  trim.prism(0, Y0 - 0.72, 0, 0.55, 0.08, 12, LAMP);
-  // the lamps round the rim: a spin part, so the ring turns when it flies
-  const lamps = new Builder(false);
-  for (let k = 0; k < 16; k++) {
-    const a = (k / 16) * Math.PI * 2;
-    const col = k % 2 ? [1.0, 0.86, 0.35] : [0.55, 0.95, 1.0];
-    lamps.spheroid(Math.cos(a) * 5.56, 0, -Math.sin(a) * 5.56, 0.16, 6, 4, col);
-  }
-  spinPart(matte, [0, Y0, 0], 'y', lamps);
   return [];
 }
 
@@ -8367,6 +8400,17 @@ export function paintMaterial(color, finish = null) {
   // clearcoat stays above zero on purpose: it is a define, so a stainless
   // body compiles the SAME program as every painted one (no hitch the first
   // time one comes round a corner); the values are only uniforms.
+  // Mirror chrome (the saucer): full metalness, nearly polished; the city
+  // and the sky lie across it. Same program as the others (clearcoat > 0).
+  if (finish === 'chrome') {
+    if (!PAINT_PHONE) {
+      return new THREE.MeshPhysicalMaterial({
+        color, metalness: 1, roughness: 0.1, envMapIntensity: 2.0,
+        clearcoat: 0.5, clearcoatRoughness: 0.04,
+      });
+    }
+    return new THREE.MeshStandardMaterial({ color, metalness: 1, roughness: 0.12, envMapIntensity: 2.0 });
+  }
   if (finish === 'steel') {
     if (!PAINT_PHONE) {
       return new THREE.MeshPhysicalMaterial({
