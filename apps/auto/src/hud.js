@@ -547,12 +547,25 @@ export class Hud {
         ctx.stroke();
       }
     }
-    if (carR > 0) {
+    if (carR > 0) this.drawStreetcarCars(ctx, to, carR, near);
+  }
+
+  /** The streetcars themselves, drawn after the place icons so a stop's icon
+   *  never hides the car standing at it. */
+  drawStreetcarCars(ctx, to, carR, near = null) {
+    const L = this.counterbal;
+    if (!L || !L.ok) return;
+    const r2 = near ? near.r * near.r : Infinity;
+    {
       for (const c of L.cars) {
         if (near && (c.cx - near.x) ** 2 + (c.cz - near.z) ** 2 > r2) continue;
         const [cx, cy] = to(c.cx, c.cz);
-        ctx.fillStyle = '#f2e6c4'; ctx.strokeStyle = '#8c1f2b'; ctx.lineWidth = carR * 0.4;
+        // a cream disc ringed in maroon with a dark centre: the car, big
+        // enough to find (it was a 2.6 px dot nobody could see on the minimap)
+        ctx.fillStyle = '#f2e6c4'; ctx.strokeStyle = '#8c1f2b'; ctx.lineWidth = carR * 0.45;
         ctx.beginPath(); ctx.arc(cx, cy, carR, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#5a1018';
+        ctx.beginPath(); ctx.arc(cx, cy, carR * 0.38, 0, Math.PI * 2); ctx.fill();
       }
     }
   }
@@ -720,7 +733,7 @@ export class Hud {
     if (this.ferry) this.drawFerry(ctx, toMap, 2.0 / zoom, 5 / zoom);
     if (this.freight) this.drawFreight(ctx, toMap, 2.2 / zoom, { x: p.x, z: p.z, r: S / (zoom * SCALE) + 60 });
     if (this.link) this.drawLink(ctx, toMap, 2.6 / zoom, { x: p.x, z: p.z, r: S / (zoom * SCALE) + 60 });
-    if (this.counterbal) this.drawStreetcar(ctx, toMap, 2.0 / zoom, 2.6 / zoom, { x: p.x, z: p.z, r: S / (zoom * SCALE) + 60 });
+    if (this.counterbal) this.drawStreetcar(ctx, toMap, 2.0 / zoom, 0, { x: p.x, z: p.z, r: S / (zoom * SCALE) + 60 });
     if (this.monorail) this.drawMonorail(ctx, toMap, 2.2 / zoom);
     // Marked places (the seaplane dock, the quads), upright whatever the
     // dial's rotation, so the anchor reads as an anchor.
@@ -753,6 +766,7 @@ export class Hud {
       if (Math.abs(bx) > S || Math.abs(bz) > S) continue;
       drawJumpIcon(ctx, bx, bz, j, 5 / zoom);
     }
+    if (this.counterbal) this.drawStreetcarCars(ctx, toMap, 5.5 / zoom, { x: p.x, z: p.z, r: S / (zoom * SCALE) + 60 });
     ctx.restore();
 
     // player arrow, always upright at centre
@@ -889,7 +903,7 @@ export class Hud {
     if (this.ferry) this.drawFerry(ctx, toC, Math.max(1.4, size * 0.0018), size * 0.006);
     if (this.freight) this.drawFreight(ctx, toC, Math.max(1.5, size * 0.002));
     if (this.link) this.drawLink(ctx, toC, Math.max(1.8, size * 0.0026));
-    if (this.counterbal) this.drawStreetcar(ctx, toC, Math.max(1.5, size * 0.002), Math.max(2, size * 0.0035));
+    if (this.counterbal) this.drawStreetcar(ctx, toC, Math.max(1.5, size * 0.002), 0);
     if (this.monorail) this.drawMonorail(ctx, toC, Math.max(1.5, size * 0.0022));
     for (const pl of (this.places || [])) {
       if (pl.off) continue;   // a pickup that has been taken
@@ -907,6 +921,7 @@ export class Hud {
       const [jx, jz] = toC(j.x, j.z);
       drawJumpIcon(ctx, jx, jz, j, size * 0.009);
     }
+    if (this.counterbal) this.drawStreetcarCars(ctx, toC, Math.max(4.5, size * 0.007));
     for (const c of (this.techFinds || [])) {
       const [cx, cz] = toC(c.x, c.z);
       techIcon(ctx, cx, cz, size * 0.008, c.col);

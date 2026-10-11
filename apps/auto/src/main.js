@@ -1406,9 +1406,16 @@ function installShadowFade() {
     // the ferry terminals: where you drive aboard
     ...ferry.places().map((f) => ({ x: f.x, z: f.z, kind: 'ferry', name: f.name, near: false, hello: f.hello })),
     // Route 26's stops: the Queen Anne Counterbalance streetcar
-    ...counterbal.stops.map((st) => ({ x: st.x, z: st.z, kind: 'streetcar', name: `Streetcar · ${st.name}`, near: false, label: !!(st.hitch || st.term),
-      hello: st.hitch ? `${st.full} — Route 26, the Queen Anne Counterbalance. Every car stopped here to be ${st.hitch === 'bot' ? 'hooked onto' : 'unhooked from'} a 16-ton counterweight. ENTER beside a car to board`
-        : `${st.full} — Route 26, West Queen Anne. ENTER beside a car to board and drive it, or ENTER here to call the next one` })),
+    // On foot only: driving up Queen Anne Ave a stop every block said hello,
+    // and the toast covered the road. It says where the nearest car is.
+    ...counterbal.stops.map((st) => ({ x: st.x, z: st.z, kind: 'streetcar', name: `Streetcar · ${st.name}`, near: false, label: !!(st.hitch || st.term), foot: true,
+      hello: () => {
+        let best = Infinity;
+        for (const c of counterbal.cars) best = Math.min(best, Math.hypot(c.cx - st.x, c.cz - st.z));
+        const car = best < 40 ? 'a car is here: ENTER beside it to drive' : best < Infinity ? `the nearest car is ${Math.round(best / 10) * 10} m off (on the map): ENTER here to call it` : 'ENTER here to call a car';
+        return st.hitch ? `${st.full} — the Queen Anne Counterbalance, where cars ${st.hitch === 'bot' ? 'hooked onto' : 'came off'} a 16-ton counterweight. ${car}`
+          : `${st.full} — Route 26 streetcar stop. ${car}`;
+      } })),
     // BNSF's crew-change stop: where you take a freight
     { x: freight.yard.x, z: freight.yard.z, kind: 'freight', name: 'Freight · Balmer Yard', near: false,
       hello: 'Balmer Yard — BNSF freights stop here for a crew change. Climb up at the lead locomotive (ENTER), or tap ENTER to call the next one in' },
@@ -2746,7 +2753,7 @@ function frame(now) {
     if (pl.near) { if (d2 > 110 * 110) pl.near = false; continue; }
     if (d2 < 55 * 55 && helloCd <= 0) {
       pl.near = true;
-      if (pl.hello) { hud.showToast(pl.hello, 4200); helloCd = 4.6; }
+      if (pl.hello) { hud.showToast(typeof pl.hello === 'function' ? pl.hello() : pl.hello, 4200); helloCd = 4.6; }
     }
   }
   if (prof) lap('activities');
@@ -2842,6 +2849,8 @@ function frame(now) {
     world.playerFlying = !!(pv && pv.spec.plane && pv.airborne);
   }
   if (prof) lap('misc');
+  // a mid chunk's trees wait for an idle streamer only in the air (world.js)
+  world.deferTrees = camera.position.y - G.terrainHeight(camera.position.x, camera.position.z) > 80;
   world.update(p.x, p.z, fps < 45 ? 1 : 2);
   if (prof) lap('world');
   // Atmospheric haze thickens with altitude. From 300 m up the streaming
@@ -3027,7 +3036,13 @@ function draw(now) {
   if (lmRoot && updateLandmarkRange(lmRoot, camera.position) && shadowCache) shadowCache.invalidate();
   renderer.setRenderTarget(postfx.target);
   if (world) { world.updateTerrainLod(camera.position); world.cullTerrain(camera); }
-  if (world && world.trees) world.trees.update(camera);
+  if (world && world.trees) {
+    world.trees.update(camera);
+    // keep the line from the camera to you clear of crowns (trees.js)
+    const pv = player && (player.vehicle || player);
+    if (pv && !game.paused) world.trees.cut(camera.position, pv.x, (pv.y || 0) + (player.vehicle ? 1.6 : 1.4), pv.z, player.vehicle ? 3.2 : 2.2);
+    else world.trees.cut(camera.position, 0, 0, 0, 0);
+  }
   if (chunkCull) chunkCull.cull(camera);
   try { renderer.render(scene, camera); } finally { if (chunkCull) chunkCull.restore(); }
   // capture before the post passes reset the counters

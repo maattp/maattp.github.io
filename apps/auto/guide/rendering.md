@@ -897,3 +897,22 @@ spots) and with `--stats` prints the scene pass's draws and triangles and a
 frustum breakdown by category; `GREEN_PROBE` / `GREEN_PROBE_SHOT` run a
 one-off diagnostic on the same boot. The budget it was held to is in
 performance.md, "The trees' budget".
+
+**The line of sight is kept clear (v208).** Playing it, the trees "obscure my
+view too much": on a tree-lined street the chase camera sat behind a crown
+as often as not. The tree material dithers away any crown or trunk inside a
+tube round the line from the camera to you -- 3.2 m in a vehicle, 2.2 m on
+foot -- full width at the camera (a branch you drive under is the worst of
+it) and tapering to nothing at you, so the trees beside you stay solid.
+`trees.cut(cam, x, y, z, r)` is set every frame from main.js's draw (off,
+r = 0, while the game is paused: the map, activities and the shot harnesses
+see whole trees). The shadow pass draws the depth material, so shadows stay
+whole. No draws; one segment-distance per tree fragment.
+
+**And a mid chunk is planted as it is built, on the ground (v208).** The
+deferral above (a mid-ring chunk built bare while anything else waits, and
+planted when the streamer is idle) is what the player saw as trees popping
+in while driving: a chunk crossing leaves a dozen pending, so whole blocks
+drew no trees -- not even far crowns -- for seconds. It now applies only when
+the camera is over 80 m above the ground (`world.deferTrees`, set from
+main.js), which is where it was measured and needed: the low flight.
