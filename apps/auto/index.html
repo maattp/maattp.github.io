@@ -310,13 +310,13 @@
      screen in portrait -- the launch screen is mostly seen upright, and there
      the badge sat under the home indicator. */
   #build {
-    position: fixed; bottom: calc(env(safe-area-inset-bottom) + 28px);
+    position: fixed; left: 0; right: 0; text-align: center; bottom: calc(env(safe-area-inset-bottom) + 28px);
     font-size: 11px; letter-spacing: .18em; opacity: .4;
   }
   /* OpenStreetMap is ODbL: attribution is required wherever its data is shown,
      and the whole street network here is derived from it. */
   #attrib {
-    position: fixed; bottom: calc(env(safe-area-inset-bottom) + 12px);
+    position: fixed; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom) + 12px);
     font-size: 10px; opacity: .32; text-align: center; padding: 0 18px;
   }
   /* Upright there is room to spare, so the badge stands clear of the home
