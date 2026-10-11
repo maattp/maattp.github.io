@@ -127,7 +127,7 @@ window.R = (async () => {
     const ctx = new OfflineAudioContext(2, Math.ceil(dur * SR), SR);
     const au = new A.Audio();
     au.musicOn = !!opts.music;
-    au.station = 1;                     // a synth station: never the network
+    au.station = opts.station != null ? opts.station : 1;   // a synth station: never the network
     au.init(ctx);
     await au.bankReady;
     const L = { x: 0, y: 1.5, z: 0, fx: 0, fz: -1, vx: 0, vz: 0 };
@@ -171,6 +171,11 @@ window.R = (async () => {
   }
 
   const scenes = {
+    // radio-<style>: 40 s of the synth radio in a car, music only, one per
+    // style (the first station that plays it)
+    ...Object.fromEntries([...new Set(A.STATION_NAMES.map((x) => x.style))].map((style) => ['radio-' + style, [40, (t, dt, st) => {
+      st.inCar = true; st.onFoot = false;
+    }, { music: true, station: A.STATION_NAMES.findIndex((x) => x.style === style), seed: 7 }]])),
     'traffic-passby': [9, (() => {
       const car = (spec, x, z, vx) => ({ x, y: 0, z, vLong: Math.abs(vx), mode: 'traffic', spec: V.TYPES[spec],
         forward: { x: Math.sign(vx), z: 0 }, dead: false });
