@@ -1108,8 +1108,15 @@ function installShadowFade() {
   if (ON_PHONE && !window.__noShadowCache) {
     try {
       const ramps = scene.getObjectByName('stuntRamps');
-      shadowCache = new ShadowCache(renderer, sun, { margin: 60, statics: () => [world.group, lmRoot, ramps, link.group, freight.group, freight.yardGroup, counterbal.group], keep: () => [] });
+      shadowCache = new ShadowCache(renderer, sun, { margin: 60,
+        statics: () => [world.group, lmRoot, ramps, link.group, freight.group, freight.yardGroup, counterbal.group, world.trees.shadowGroup], keep: () => [],
+        // every tree in the box, into the cache only (trees.js shadowFill): the
+        // box is turned to the sun, so its world square is ~1.42x, plus the
+        // shadows of the trees just outside it
+        before: (c, half) => world.trees.shadowFill(c.x, c.z, half * 1.42 + 30),
+        after: () => world.trees.shadowDone() });
       world.onChunkChange = (x, z, r) => shadowCache.chunkChanged(x, z, r);
+      world.trees.onInvalidate = () => shadowCache.invalidate();
       // Link's and the freight line's chunks come and go too (LazyChunks)
       link.onChunkChange = freight.onChunkChange = (x, z, r) => shadowCache.chunkChanged(x, z, r);
     } catch (e) { blog(`shadow cache: ${e.message}`); shadowCache = null; }

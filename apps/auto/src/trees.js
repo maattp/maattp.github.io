@@ -45,6 +45,9 @@ const T_STREET = 0, T_PARK = 1, T_FOREST = 2;
 // One record: x, ground y, z, height, crown radius, kind, seed (0..1), tone,
 // and the trunk's index in its chunk's obstacle list (-1: none).
 export const REC = 9;
+// The height over a tree's foot that tiers are chosen by -- on the CPU
+// (TreeSystem.update) and in the dither (treeMaterial): the two must agree.
+const TREE_MID_Y = 6;
 
 // The reference shapes the instanced geometry is built at, in metres; an
 // instance is scaled (cr / CR, th / TH, cr / CR). A broadleaf crown is an
@@ -412,19 +415,31 @@ function spike(ib, top, r) {
 
 // --- the instanced material -------------------------------------------------
 
-function treeMaterial(timeU, cutU) {
+function treeMaterial(timeU, cutU, fade = [1e9, 1e9]) {
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.04, envMapIntensity: 0.45 });
+  m.userData.fade = { value: new THREE.Vector2(fade[0], fade[1]) };
   m.onBeforeCompile = (sh) => {
     sh.uniforms.treeTime = timeU;
     sh.uniforms.treeCam = cutU.cam; sh.uniforms.treeTgt = cutU.tgt; sh.uniforms.treeCut = cutU.r;
+    sh.uniforms.treeFade = m.userData.fade;
     // THE VIEW IS KEPT CLEAR: a crown (or trunk) between the camera and you is
     // dithered away inside a tube round the line of sight -- full width at
     // the camera (a branch you drive under is the worst of it), tapering to
     // nothing at you, so the trees beside you stay -- rather than filling the
     // chase view with leaves on a tree-lined street. The shadow pass uses the depth material: shadows stay whole.
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vTreeW;\nuniform vec3 treeCam, treeTgt;\nuniform float treeCut;')
+      .replace('#include <common>', '#include <common>\nvarying vec3 vTreeW;\nvarying float vTreeD;\nuniform vec3 treeCam, treeTgt;\nuniform float treeCut;\nuniform vec2 treeFade;')
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+        // A TIER DISSOLVES, IT DOES NOT SWITCH: across its band [x, y] of
+        // distance a mid or near crown is screen-door dithered away, and the
+        // coarser crown it was built round shows through (TreeSystem.update
+        // puts a tree in both tiers there). A switch at one distance was the
+        // "jarring" level of detail.
+        if ( vTreeD > treeFade.x ) {
+          float a = 1.0 - smoothstep( treeFade.x, treeFade.y, vTreeD );
+          float n = fract( 52.9829189 * fract( dot( floor( gl_FragCoord.xy ), vec2( 0.06711056, 0.00583715 ) ) ) );
+          if ( n > a ) discard;
+        }
         if ( treeCut > 0.0 ) {
           vec3 ab = treeTgt - treeCam;
           float t = clamp( dot( vTreeW - treeCam, ab ) / max( dot( ab, ab ), 1e-4 ), 0.0, 1.0 );
@@ -437,7 +452,7 @@ function treeMaterial(timeU, cutU) {
           }
         }`);
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float leaf;\nuniform float treeTime;\nvarying vec3 vTreeW;')
+      .replace('#include <common>', '#include <common>\nattribute float leaf;\nuniform float treeTime;\nvarying vec3 vTreeW;\nvarying float vTreeD;')
       // A gentle sway, in WORLD space after the instance's turn so every tree
       // leans the same way: the top of a crown moves ~0.3 m, the trunk's foot
       // not at all, each tree on its own phase. Two sines per vertex and one
@@ -454,6 +469,12 @@ function treeMaterial(timeU, cutU) {
           }
         #endif
         vTreeW = ( modelMatrix * mvPosition ).xyz;
+        #ifdef USE_INSTANCING
+          // the same distance TreeSystem.update chooses tiers by (TREE_MID_Y)
+          vTreeD = distance( cameraPosition, ( modelMatrix * ( instanceMatrix[ 3 ] + vec4( 0.0, ${TREE_MID_Y.toFixed(1)}, 0.0, 0.0 ) ) ).xyz );
+        #else
+          vTreeD = 0.0;
+        #endif
         mvPosition = modelViewMatrix * mvPosition;
         gl_Position = projectionMatrix * mvPosition;`)
       // The instance colour is the FOLIAGE albedo: the trunk's vertex colour
@@ -490,11 +511,16 @@ export class TreeSystem {
     this.timeU = { value: 0 };
     this.cutU = { cam: { value: new THREE.Vector3() }, tgt: { value: new THREE.Vector3() }, r: { value: 0 } };
     this.mat = treeMaterial(this.timeU, this.cutU);
+    // Each tier dissolves out across a band at its outer edge (see the
+    // material); the far crowns and the shadow set never do.
+    this.FADE1 = 30; this.FADE2 = 12;
+    this.matMid = treeMaterial(this.timeU, this.cutU, [this.R1 - this.FADE1, this.R1]);
+    this.matNear = treeMaterial(this.timeU, this.cutU, [this.R2 - this.FADE2, this.R2]);
     this.group = new THREE.Group();
     this.group.name = 'trees';
     const capMid = ON_PHONE ? 3500 : 7000, capNear = ON_PHONE ? 900 : 1800;
-    const make = (ib, cap, name, cast) => {
-      const m = new THREE.InstancedMesh(ib.isBufferGeometry ? ib : ib.geometry(), this.mat, cap);
+    const make = (ib, cap, name, cast, mat = this.mat) => {
+      const m = new THREE.InstancedMesh(ib.isBufferGeometry ? ib : ib.geometry(), mat, cap);
       m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3);
       m.instanceColor.setUsage(THREE.DynamicDrawUsage);
@@ -510,8 +536,8 @@ export class TreeSystem {
     // mid crowns cast on a desktop. On a phone the flat mesh casts nothing and
     // the city's shadows come from a cache (shadowcache.js) that these, being
     // re-chosen as you move, cannot join -- they are movers, drawn each frame.
-    this.mid = [make(shapes.midCon, capMid, 'trees:mid:conifer', shadows && !ON_PHONE), make(shapes.midBroad, capMid, 'trees:mid:broadleaf', shadows && !ON_PHONE)];
-    this.near = [make(shapes.nearCon, capNear, 'trees:near:conifer', shadows), make(shapes.nearBroad, capNear, 'trees:near:broadleaf', shadows)];
+    this.mid = [make(shapes.midCon, capMid, 'trees:mid:conifer', shadows && !ON_PHONE, this.matMid), make(shapes.midBroad, capMid, 'trees:mid:broadleaf', shadows && !ON_PHONE, this.matMid)];
+    this.near = [make(shapes.nearCon, capNear, 'trees:near:conifer', shadows, this.matNear), make(shapes.nearBroad, capNear, 'trees:near:broadleaf', shadows, this.matNear)];
     // THE FAR POOL: a chunk with no road or building (a forest's middle, an
     // island) would be a flat mesh -- a draw -- holding nothing but far
     // crowns; Blake Island alone was 21 of them. Their far crowns live here
@@ -527,6 +553,27 @@ export class TreeSystem {
     this._farSpec = [[shapes.farCon, 'trees:far:conifer'], [shapes.farBroad, 'trees:far:broadleaf']].map(([ib, name]) => ({ geo: ib.geometry(), name }));
     this._farCast = shadows && !ON_PHONE;
     this.far = this._farSpec.map((f) => this._farMesh(f, 1));
+    // THE PHONE'S TREE SHADOWS. On a phone only the near crowns cast (live,
+    // as movers), so a tree's shadow appeared out of nothing at 70 m. Every
+    // tree in the shadow cache's box goes into the cache instead
+    // (shadowcache.js before/after; main.js), as its far crown -- 15 tris --
+    // drawn only when the cache is, every ~2 s on the move: tree shadows out
+    // to the box's faded edge like a building's, for no per-frame cost. The
+    // group is a static root and invisible to every other pass.
+    this.shadowGroup = null;
+    if (ON_PHONE && shadows) {
+      this.shadowGroup = new THREE.Group();
+      this.shadowGroup.name = 'trees:shadows';
+      this.shadowGroup.visible = false;
+      this.shadowSet = this._farSpec.map((f) => {
+        const M = make(f.geo, 9000, f.name + ':shadow', true);
+        this.group.remove(M);
+        M.receiveShadow = false;
+        this.shadowGroup.add(M);
+        return M;
+      });
+      scene.add(this.shadowGroup);
+    }
     this.farBlocks = [[], []];   // per species, sorted [start, len, key]
     this.tris.farBroad = shapes.farBroad.tris; this.tris.farCon = shapes.farCon.tris;
     scene.add(this.group);
@@ -594,9 +641,49 @@ export class TreeSystem {
    */
   invalidate(key) {
     this.dirty = true;
+    if (this.onInvalidate) this.onInvalidate();   // the shadow cache holds the set (main.js)
     const C = key !== undefined ? this.chunks.get(key) : null;
     if (C && C.pooled) { this._unpool(key); this._pool(key, C); }
   }
+
+  /** Fill the shadow set with every tree within `half` of (cx, cz) and show it (the cache is about to draw). */
+  shadowFill(cx, cz, half) {
+    if (!this.shadowGroup) return;
+    const n = [0, 0], cap = this.shadowSet[0].instanceMatrix.count;
+    const obs = this.city ? this.city.obstacles : null;
+    for (const C of this.chunks.values()) {
+      if (C.x0 > cx + half || C.x0 + CHUNK < cx - half || C.z0 > cz + half || C.z0 + CHUNK < cz - half) continue;
+      const ol = obs && C.ck !== undefined ? obs.get(C.ck) : null;
+      for (let i = 0; i < C.n; i++) {
+        const o = i * REC, x = C.ord[o], z = C.ord[o + 2];
+        if (Math.abs(x - cx) > half || Math.abs(z - cz) > half) continue;
+        const ob = C.ord[o + 8];
+        if (ob >= 0 && ol && ol[ob * 3] > 1e8) continue;   // felled
+        const sp = C.ord[o + 5] === CONIFER ? 0 : 1;
+        if (n[sp] >= cap) continue;
+        const M = this.shadowSet[sp], m = M.instanceMatrix.array, q = n[sp] * 16;
+        const th = C.ord[o + 3], cr = C.ord[o + 4], seed = C.ord[o + 6];
+        const sx = sp ? cr / B_CR : cr / C_CR, sy = sp ? th / B_TH : th / C_TH;
+        const a = seed * 43.98, cs = Math.cos(a), sn = Math.sin(a);
+        m[q] = cs * sx; m[q + 1] = 0; m[q + 2] = -sn * sx; m[q + 3] = 0;
+        m[q + 4] = 0; m[q + 5] = sy; m[q + 6] = 0; m[q + 7] = 0;
+        m[q + 8] = sn * sx; m[q + 9] = 0; m[q + 10] = cs * sx; m[q + 11] = 0;
+        m[q + 12] = x; m[q + 13] = C.ord[o + 1]; m[q + 14] = z; m[q + 15] = 1;
+        n[sp]++;
+      }
+    }
+    for (let sp = 0; sp < 2; sp++) {
+      const M = this.shadowSet[sp];
+      M.count = n[sp];
+      M.visible = n[sp] > 0;
+      M.instanceMatrix.clearUpdateRanges(); M.instanceMatrix.addUpdateRange(0, Math.max(1, n[sp]) * 16); M.instanceMatrix.needsUpdate = true;
+    }
+    this.shadowCount = n[0] + n[1];
+    this.shadowGroup.visible = true;
+  }
+
+  /** The cache has drawn: hide the shadow set again. */
+  shadowDone() { if (this.shadowGroup) this.shadowGroup.visible = false; }
 
   _farMesh(f, cap) {
     const M = this._make(f.geo, cap, f.name, this._farCast);
@@ -695,7 +782,12 @@ export class TreeSystem {
     this.dirty = false;
     const fr = this._fr, sph = this._s;
     fr.setFromProjectionMatrix(this._m.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
-    const R1 = this.R1, R2 = this.R2, R1q = R1 * R1, R2q = R2 * R2;
+    // Chosen with a margin past each tier's edge (STEP: how far the camera
+    // can move before the next choice), so a tree is already in the tier
+    // when the dither starts drawing it; and the mid tier reaches in under
+    // the near one's band, so a near crown dissolving has a mid one inside.
+    const R1 = this.R1 + this.STEP + 2, R2 = this.R2 + this.STEP + 2, R1q = R1 * R1, R2q = R2 * R2;
+    const Rin = Math.max(0, this.R2 - this.FADE2 - this.STEP - 2), Rinq = Rin * Rin;
     const nMid = [0, 0], nNear = [0, 0];
     const mid = this.mid, near = this.near;
     const capMid = mid[0].instanceMatrix.count, capNear = near[0].instanceMatrix.count;
@@ -724,16 +816,17 @@ export class TreeSystem {
         for (let i = i0; i < i1; i++) {
           const o = i * REC;
           const x = ord[o], gy = ord[o + 1], z = ord[o + 2], th = ord[o + 3];
-          const dx = x - px, dz = z - pz, dy = gy + th * 0.5 - py;
+          const dx = x - px, dz = z - pz, dy = gy + TREE_MID_Y - py;
           const d2 = dx * dx + dz * dz + dy * dy;
           if (d2 > R1q) continue;
           const ob = ord[o + 8];
           if (ob >= 0 && ol && ol[ob * 3] > 1e8) continue;   // felled by the tank
           const kind = ord[o + 5], con = kind === CONIFER ? 0 : 1;
-          let M, k;
-          if (d2 < R2q) { M = near[con]; k = nNear[con]; if (k >= capNear) continue; nNear[con] = k + 1; }
-          else { M = mid[con]; k = nMid[con]; if (k >= capMid) continue; nMid[con] = k + 1; }
           const cr = ord[o + 4], seed = ord[o + 6];
+          for (let tier = 0; tier < 2; tier++) {
+          let M, k;
+          if (tier === 0) { if (d2 >= R2q) continue; M = near[con]; k = nNear[con]; if (k >= capNear) continue; nNear[con] = k + 1; }
+          else { if (d2 < Rinq) continue; M = mid[con]; k = nMid[con]; if (k >= capMid) continue; nMid[con] = k + 1; }
           // a crown is a little elliptical, each its own way -- never
           // narrower than the far crown it has to hide
           const s0 = con ? cr / B_CR : cr / C_CR, sy = con ? th / B_TH : th / C_TH;
@@ -746,6 +839,7 @@ export class TreeSystem {
           m[q + 12] = x; m[q + 13] = gy; m[q + 14] = z; m[q + 15] = 1;
           const ca = M.instanceColor.array, k3 = k * 3;
           ca[k3] = alb[i * 3]; ca[k3 + 1] = alb[i * 3 + 1]; ca[k3 + 2] = alb[i * 3 + 2];
+          }
         }
       }
     }

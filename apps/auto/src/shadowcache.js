@@ -64,6 +64,10 @@ export class ShadowCache {
     this.margin = opts.margin;
     this.statics = opts.statics;
     this.keep = opts.keep;
+    // around each cache render: before(centre, half) / after() -- what only
+    // the cache draws (trees.js's shadow set)
+    this.before = opts.before || null;
+    this.after = opts.after || null;
     this.on = true;
     this.valid = false;
     this.dirty = true;
@@ -211,9 +215,11 @@ export class ShadowCache {
     for (const o of this.keep()) if (o.visible) { o.visible = false; hid.push(o); }
     const sm = this.r.shadowMap, nu = sm.needsUpdate;
     try {
+      if (this.before) this.before(this.cachePos, (this.nc * this.texel) / 2);
       sm.needsUpdate = true;
       this._orig([cl], scene, camera);
     } finally {
+      if (this.after) this.after();
       for (const o of hid) o.visible = true;
       sm.needsUpdate = nu;
     }
