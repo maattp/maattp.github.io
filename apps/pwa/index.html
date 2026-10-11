@@ -9,7 +9,7 @@
 <meta name="theme-color" content="#101418">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="../icon.png">
-<title>PWA Probe v2</title>
+<title>PWA Probe v3</title>
 <style>
   :root {
     --bg: #101418; --card: #182027; --line: #26313b; --fg: #e4ebf1; --dim: #8a9aa8;
@@ -94,7 +94,8 @@
   <button id="bg">Background test</button>
   <button id="load">Sustained GPU (30 s)</button>
   <button id="pair">Pair test (2 phones)</button>
-  <button id="stress" class="danger">Memory stress</button>
+  <button id="stress" class="danger">Memory: wasm</button>
+  <button id="stressGpu" class="danger">Memory: GPU</button>
 </div>
 <div id="pairPanel" class="panel" hidden>
   <div class="line"><button id="pairHost">Host</button><input id="pairCode" maxlength="5" placeholder="CODE" autocapitalize="characters" autocomplete="off"><button id="pairJoin">Join</button></div>
@@ -108,7 +109,7 @@
 
 <script>
 'use strict';
-const VERSION = 2;
+const VERSION = 3;
 // The Cloudflare worker: its Space Flight room DO is a generic relay
 // (hello/welcome, roster, rtc signaling, pp echo, snap/input) the probe reuses.
 const API = 'https://cloudflare-backend.maattp.workers.dev';
@@ -1654,9 +1655,10 @@ function wav() {
 
 /* ---------- memory stress (opt-in: may get the app killed) ---------- */
 const STRESS_KEY = 'pwa-stress';
+// Two separate runs: each can get the app killed, and a kill in the first
+// would otherwise hide the second.
 async function memoryStress() {
   const G = 'Memory stress';
-  clearGroup(G);
   status('Memory stress: growing wasm memory and touching every page…');
   await check(G, 'Wasm memory: how much can actually be committed', async () => {
     const STEP = 128;   // MB
@@ -1677,7 +1679,10 @@ async function memoryStress() {
     if (err) d.push(`stopped by: ${errText(err)}`);
     return info(`Reached ${mb} MB${err ? '' : ' (hit the 4 GB cap)'}`, d);
   }, 120000);
-  await sleep(1500);   // let the wasm memory above be collected
+  status('');
+}
+async function gpuMemoryStress() {
+  const G = 'Memory stress';
   status('Memory stress: allocating WebGPU buffers…');
   await check(G, 'WebGPU buffers: how much GPU memory can be allocated', async () => {
     const device = await getGpuDevice();
@@ -2112,6 +2117,7 @@ async function runAll() {
 $('#rerun').addEventListener('click', runAll);
 $('#tap').addEventListener('click', startTapChecks);
 $('#stress').addEventListener('click', memoryStress);
+$('#stressGpu').addEventListener('click', gpuMemoryStress);
 $('#touch').addEventListener('click', touchTest);
 $('#bg').addEventListener('click', backgroundTest);
 $('#load').addEventListener('click', sustainedTest);
