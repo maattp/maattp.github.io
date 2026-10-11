@@ -102,6 +102,7 @@ src/bikes.js                bike paths drawn and ridden, AI cyclists, bike-share
 src/piers.js                every other pier OSM maps, as a deck on piles; decks under sheds in the sea
 src/islands.js              the islands across the Sound: Easter eggs, the Sasquatch, Blake's deer
 src/orcas.js                a pod of orcas off West Point (Easter egg): surfacing, blows, breaches
+src/saucer.js               a flying saucer parked sometimes in a meadow (Easter egg); the 'saucer' type is in vehicles.js
 src/pickleball.js           the pickleball court on Bainbridge and its screen
 src/pickleballgame.js       PICKLEBALL itself: singles, the two-bounce rule, the kitchen (no DOM)
 src/shadowcache.js          phones: the city's shadows drawn once, only movers per frame

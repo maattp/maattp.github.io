@@ -740,3 +740,33 @@ five sim-minutes beside the pod, asserting open water, blows, dives, a forced
 breach, nothing on land and the payment once. To LOOK at the pod, pose it
 before shooting with `VIEW_PRE`: put the camera near it first (the update does
 nothing when the camera is 3 km off), pose, then freeze `orcas.update`.
+
+## The saucer (v210)
+
+Sometimes a flying saucer is parked in one of Seattle's meadows
+(`src/saucer.js`): Discovery Park, Magnuson Park's playfields, Lincoln Park,
+the meadow above Golden Gardens, Seward Park, Volunteer Park -- each searched
+at boot for a flat, dry, open circle 16 m across (lawn first, then any open
+ground), clear of buildings, posts and paved lots, and kept clear of the tree
+scatter (`city.clearCircles`) since a chunk's trees are planted after boot.
+It keeps its own schedule: parked about five minutes, gone three to eight,
+first arriving ~90 s in. When it lands somewhere you are not, a toast says
+where the lights were reported; while it waits, a faint shaft of light stands
+over it (hidden within 90 m). Climb in (ENTER) and it is yours to fly; the
+first time pays $2,500 once (localStorage `auto-saucer`). Left somewhere, it
+leaves on its own three minutes later, once you are 220 m off.
+
+A nod to June 24, 1947: Kenneth Arnold, flying past Mt Rainier, saw nine
+shining objects skipping in a line "like a saucer if you skip it across water"
+-- the sighting that gave the world the words "flying saucer".
+
+**The machine** is the `saucer` type in vehicles.js: an 11 m polished disc, a
+glass dome, three legs, sixteen lamps round the rim as a spin part (the ring
+turns when it flies), an electric whine for an engine (`engine: 'ev'`). It
+flies on the helicopter's model (`updateHeli`: hover, collective on UP/DOWN,
+pedal turns) with `rotor` values no helicopter has (climb 45 m/s, 1,100 km/h,
+grip 40, so it turns rather than skates), a 1,800 m ceiling, no landing
+damage, and it barely tips (`tip` 0.25). It collides with buildings as a
+helicopter does. Probe: `tools/saucerprobe.js` (a viewshots page script) --
+parked on the ground, enterable, paid once, 88 m climbed in 4 s, 321 m covered
+in the next 4 at 576 km/h and rising.

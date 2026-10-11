@@ -172,6 +172,13 @@ export const TYPES = {
   heli: deriveSpec({ wheelbase: 3.0, len: 9.9, wid: 1.9, wheelR: 0.3, sill: 0.5, belt: 1.2, roof: 3.1, cab: [0.6, 0.3], hand: 'heli', plane: true, heli: true, mass: 1.2, acc: 6.0, topKph: 230, brakeM: 60, latG: 0.8,
     pivotY: 1.5,
     rotor: { climb: 9, sink: 7, accel: 7.5, grip: 14, yaw: 1.35, yawFast: 0.5, back: 10 } }),
+  // THE SAUCER (saucer.js parks it, sometimes): a 1950s 'pie plate' -- an
+  // 11 m polished disc, a glass dome, a ring of lights round the rim that
+  // turns, three legs. It flies on the helicopter's model (hover, collective,
+  // pedal turns) with none of a helicopter's limits, and stays level.
+  saucer: deriveSpec({ wheelbase: 6.0, len: 11.0, wid: 11.0, wheelR: 0.3, sill: 1.2, belt: 2.0, roof: 3.6, cab: [0.2, 0.2], hand: 'saucer', plane: true, heli: true, saucer: true, engine: 'ev', mass: 2.0, acc: 30, topKph: 1100, brakeM: 30, latG: 2.0,
+    pivotY: 1.6,
+    rotor: { climb: 45, sink: 40, accel: 40, grip: 40, yaw: 2.4, yawFast: 1.2, back: 60 } }),
   sedan: deriveSpec({ wheelbase: 2.98,len: 5.06, wid: 1.90, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.26, 0.10], hand: 'sedan', mass: 1.0, acc: 4.1, topKph: 205, brakeM: 40, latG: 0.88 }),
   hatch: deriveSpec({ wheelbase: 2.6,len: 4.10, wid: 1.76, wheelR: 0.31, sill: 0.29, belt: 0.96, roof: 1.50, cab: [-0.30, 0.16], hand: 'hatch', mass: 0.9, acc: 3.6, topKph: 185, brakeM: 41, latG: 0.85 }),
   compact: deriveSpec({ wheelbase: 2.42,len: 3.74, wid: 1.68, wheelR: 0.29, sill: 0.28, belt: 0.94, roof: 1.48, cab: [-0.28, 0.15], hand: 'compact', mass: 0.85, acc: 3.0, topKph: 170, brakeM: 43, latG: 0.83 }),
@@ -7979,9 +7986,50 @@ function buildTank(spec, paint, trim, matte) {
   return [];
 }
 
+/**
+ * The saucer: a lathe of a disc -- a shallow upper lens, a dark rim band, a
+ * flatter lower lens -- under a glass dome, on three splayed legs, with a
+ * ring of lamps round the rim as a spin part (it turns when flown) and a
+ * lamp at the centre of the belly. Polished silver is the paint.
+ */
+function buildSaucer(spec, paint, trim, matte) {
+  const N = 40, Y0 = 1.25;
+  const ring = (r, y) => { const out = []; for (let i = 0; i <= N; i++) { const a = (i / N) * Math.PI * 2; out.push([Math.cos(a) * r, Y0 + y, -Math.sin(a) * r]); } return out; };
+  const lathe = (b, prof, col) => { const rows = prof.map(([r, y]) => ring(r, y)); b.patch(rows, col); };
+  const SILVER = [0.82, 0.84, 0.87], BAND = [0.16, 0.17, 0.19], BELLY = [0.55, 0.57, 0.6];
+  // upper lens, from the dome's foot out to the rim
+  lathe(paint, [[1.75, 1.05], [2.6, 0.98], [3.6, 0.8], [4.6, 0.55], [5.3, 0.3], [5.5, 0.18]], SILVER);
+  // the rim band the lamps sit on
+  lathe(matte, [[5.5, 0.18], [5.55, 0.0], [5.5, -0.18]], BAND);
+  // lower lens, back in toward the belly
+  lathe(paint, [[5.5, -0.18], [4.9, -0.32], [3.6, -0.5], [2.2, -0.6], [0.9, -0.64], [0.01, -0.65]], BELLY);
+  // the dome: glass over a silver collar
+  lathe(paint, [[1.75, 1.05], [1.7, 1.18]], SILVER);
+  trim.spheroid(0, Y0 + 1.18, 0, 1.62, 18, 8, GLASS, 0.62);
+  // a pilot's seat, dimly through the glass
+  matte.box(0, Y0 + 1.0, 0, 0.7, 0.5, 0.7, 0, [0.12, 0.12, 0.14]);
+  // three legs and their pads
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * Math.PI * 2 + Math.PI / 6, c = Math.cos(a), s = -Math.sin(a);
+    matte.tube([c * 2.6, Y0 - 0.5, s * 2.6], [c * 3.3, 0.12, s * 3.3], 0.09, 6, [0.4, 0.42, 0.45], true);
+    matte.prism(c * 3.3, 0, s * 3.3, 0.38, 0.12, 8, [0.3, 0.32, 0.34]);
+  }
+  // the belly lamp
+  trim.prism(0, Y0 - 0.72, 0, 0.55, 0.08, 12, LAMP);
+  // the lamps round the rim: a spin part, so the ring turns when it flies
+  const lamps = new Builder(false);
+  for (let k = 0; k < 16; k++) {
+    const a = (k / 16) * Math.PI * 2;
+    const col = k % 2 ? [1.0, 0.86, 0.35] : [0.55, 0.95, 1.0];
+    lamps.spheroid(Math.cos(a) * 5.56, 0, -Math.sin(a) * 5.56, 0.16, 6, 4, col);
+  }
+  spinPart(matte, [0, Y0, 0], 'y', lamps);
+  return [];
+}
+
 /** Types with their own authored builder, keyed by `spec.hand`. */
 const HAND_BUILT = {
-  plane: buildPlane, twin: buildTwin, jet: buildJet, biplane: buildBiplane, heli: buildHeli, fighter: buildFighter, jumbo: buildJumbo,
+  plane: buildPlane, twin: buildTwin, jet: buildJet, biplane: buildBiplane, heli: buildHeli, fighter: buildFighter, jumbo: buildJumbo, saucer: buildSaucer,
   sports: buildSports, muscle: buildMuscle,
   sedan: buildSedan, suv: buildSuv, pickup: buildPickup,
   hatch: (s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.hatch),
@@ -9338,7 +9386,7 @@ export class Vehicle {
     let vyT = cIn > 0 ? cIn * R.climb : cIn * R.sink;
     if (!ready) vyT = Math.min(vyT, this.airborne ? -2 - 7 * (1 - this.spool) : 0);
     // Soft ceiling, like the planes'.
-    if (this.y > 560) vyT = Math.min(vyT, (600 - this.y) * 0.1);
+    if (this.y > (spec.saucer ? 1800 : 560)) vyT = Math.min(vyT, ((spec.saucer ? 1850 : 600) - this.y) * 0.1);
     // Cushion the last few metres of a descent so a held DOWN lands it.
     const agl = this.y - ground;
     if (vyT < 0 && agl < 6) vyT = Math.max(vyT, -1.2 - agl * 0.9);
@@ -9385,8 +9433,10 @@ export class Vehicle {
         // Touchdown. A firm landing is fine, a hard one hurts, and landing
         // while still moving fast along the ground is a skid-and-roll.
         const hs = Math.hypot(wx, wz);
-        if (this.vy < -6.5) this.damage(Math.min(80, (-this.vy - 6.5) * 12), true);
-        if (hs > 14) this.damage(Math.min(60, (hs - 14) * 4), true);
+        if (!spec.saucer) {
+          if (this.vy < -6.5) this.damage(Math.min(80, (-this.vy - 6.5) * 12), true);
+          if (hs > 14) this.damage(Math.min(60, (hs - 14) * 4), true);
+        }
         this.y = ground;
         this.airborne = false;
         this.vy = 0;
@@ -9405,8 +9455,10 @@ export class Vehicle {
     const aL = ax * f2.x + az * f2.z, aS = ax * l2x + az * l2z;
     this.accLong = aL; this.accLeft = aS;
     const air = this.airborne ? 1 : 0;
-    const pitchT = air * clamp(-(aL * 0.032 + (this.vLong / top) * 0.10), -0.36, 0.24);
-    const rollT = air * clamp(-aS * 0.05, -0.5, 0.5);
+    // (the saucer barely tips: it flies level, with a hint of lean)
+    const tip = spec.saucer ? 0.25 : 1;
+    const pitchT = air * tip * clamp(-(aL * 0.032 + (this.vLong / top) * 0.10), -0.36, 0.24);
+    const rollT = air * tip * clamp(-aS * 0.05, -0.5, 0.5);
     this.pitchA = damp(this.pitchA, pitchT, 5, dt);
     this.rollA = damp(this.rollA, rollT, 5, dt);
     this.pitch = -this.pitchA;
@@ -9416,7 +9468,7 @@ export class Vehicle {
     // Main rotor about Y, tail rotor about X. Not real rpm, which would alias
     // into a stationary or backward-turning disc at any frame rate; a rate
     // that reads as fast and still shows the blades.
-    this.spinParts(dt, 0, this.spool * 17, this.spool * 44);
+    this.spinParts(dt, 0, this.spool * (spec.saucer ? 2.2 : 17), this.spool * 44);
     this.latAcc = 0;
     this.skid = 0;
   }
