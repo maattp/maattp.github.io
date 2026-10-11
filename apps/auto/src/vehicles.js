@@ -151,7 +151,9 @@ export const TYPES = {
   // Heavy and slow to wind up; rotates at ~150 kt. `wid` is the fuselage
   // (street-scale collision); the wings are drawn wide.
   jumbo: deriveSpec({ wheelbase: 26, len: 76.3, wid: 6.5, wheelR: 0.62, sill: 2.2, belt: 6.0, roof: 10.3, cab: [0.9, 0.3], hand: 'jumbo', plane: true, jet: true, mass: 12, acc: 5.8, topKph: 560, brakeM: 180, latG: 0.4, seeFar: 7000,
-    fly: { vr: 72, stall: 58, bank: 0.55, turn: 0.34, climb: 34, climbBase: 7, vne: 150, thrustK: 0.62 } }),
+    // climbBase 7 -> 16: pulling back near rotation speed (little excess)
+    // asked for ~7.6 m/s and felt like nothing happened
+    fly: { vr: 72, stall: 58, bank: 0.55, turn: 0.34, climb: 36, climbBase: 16, vne: 150, thrustK: 0.62, pitchK: 3.2 } }),
   // Boeing-Stearman Model 75: the biplane Boeing built, and the one hanging
   // in the Museum of Flight next door. A taildragger: it sits 11 degrees nose
   // up on its tailwheel until the tail lifts at ~15 m/s (`taildragger` is the
@@ -9002,7 +9004,7 @@ export class Vehicle {
       if (this.vLong < STALL) vyT = Math.min(vyT, -6 * (1 - this.vLong / STALL) * 3);
       // soft ceiling: the air runs out, gently
       if (this.y > 520) vyT = Math.min(vyT, (560 - this.y) * 0.08);
-      this.vy = damp(this.vy, vyT, 2.2, dt);
+      this.vy = damp(this.vy, vyT, fly.pitchK || 2.2, dt);   // pitchK: how fast the climb answers the stick
       this.pitchA = damp(this.pitchA, Math.atan2(this.vy, Math.max(this.vLong, 8)), 5, dt);
       this.y += this.vy * dt;
 

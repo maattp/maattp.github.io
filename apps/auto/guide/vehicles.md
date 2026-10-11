@@ -1044,3 +1044,20 @@ verify's "hot air balloon" section flies it at fixed dt: climbs on the burner,
 holds within metres on short burns, drifts on the wind, lands softly on the
 vent, and keeps its envelope off the tallest downtown tower when shoved into
 it. `docs/balloon/` has shots.
+
+**A plane that flies into a building hits it (v209).** The wall test is off
+for an airborne plane (2D, it would wreck one against towers far below), so
+a plane flew straight through every tower downtown. `Player.planeHits` tests
+it in 3D instead: the nose, the middle and the tail against each footprint
+within 40 m AND below its roof, and against the landmarks' solids (their own
+height bands). A hit destroys the airframe (`planeHit`): the fireball, and
+WASTED -- into a tower at flying speed is not a car fire you walk away from.
+Probe: a trainer flown at 60 m/s at half the height of the tallest tower
+downtown is destroyed within 158 frames.
+
+**The 747 answers the stick (v209).** Pulling back near rotation speed asked
+for `climbBase 7` plus a sliver of excess-airspeed climb, ~7.6 m/s, through a
+2.2/s response: the nose came up 4.6 deg and it "pulled up too slowly".
+`climbBase 16`, `climb 36` and its own response `fly.pitchK 3.2`: at 85 m/s,
+full back stick gives 16.5 m/s and 11 deg within a second (45 m gained in
+3 s, against 19 m) -- a real 747's first climb.

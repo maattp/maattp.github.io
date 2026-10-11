@@ -242,6 +242,7 @@ export class Player {
   }
 
   updateFoot(dt, input, traffic, peds) {
+    this._traffic = traffic;
     // in the air after bailing out: the parachute has the frame (parachute.js)
     if (this.sky) {
       if (this.sky.update(this, dt, input)) return;
@@ -517,11 +518,40 @@ export class Player {
     if (cancelBlend) this.poseBlend.t = this.poseBlend.dur;
   }
 
+  /** Is airborne plane v inside a building (below its roof) or a landmark's
+   *  solid? Sampled at its nose, middle and tail. */
+  planeHits(v) {
+    const f = v.forward, hl = v.halfLen * 0.9;
+    for (const k of [1, 0, -1]) {
+      const x = v.x + f.x * hl * k, z = v.z + f.z * hl * k, y = v.y + (v.spec.roof || 2) * 0.4;
+      for (const b of this.city.buildingsNear(x, z, 40)) {
+        if (y > b.y + b.h || y < b.y - 2) continue;
+        const c = Math.cos(-b.rot), s = Math.sin(-b.rot), dx = x - b.x, dz = z - b.z;
+        if (Math.abs(dx * c - dz * s) < b.w / 2 + 0.6 && Math.abs(dx * s + dz * c) < b.d / 2 + 0.6) return true;
+      }
+      if (this.city.landmarkHit && this.city.landmarkHit(x, z, 1.2, y)) return true;
+    }
+    return false;
+  }
+
   blocked(x, z) {
     // Trunks and poles. `blocked` is tried on each axis separately by the
     // caller, so a circle here lets you slide around a tree rather than
     // sticking to it.
     if (this.city.obstacleHit(x, z, 0.32, this.y)) return true;
+    // A CAR IS SOLID ON FOOT. Only trunks, poles and buildings stopped a
+    // walker, so you walked through every parked car and bus in the city.
+    // Each vehicle's body as its rectangle, grown by your 0.32 m, within its
+    // height; tried per axis by the caller, so you slide along a door.
+    const T = this._traffic;
+    if (T) for (const v of T.cars) {
+      if (v.spec.rail || v.dead) continue;
+      const dx = x - v.x, dz = z - v.z;
+      if (dx * dx + dz * dz > 400) continue;
+      if (this.y > v.y + (v.spec.roof || 1.6) || this.y < v.y - 1.2) continue;
+      const f = v.forward;
+      if (Math.abs(dx * f.x + dz * f.z) < v.halfLen + 0.32 && Math.abs(dx * f.z - dz * f.x) < v.halfWid + 0.32) return true;
+    }
     const near = this.city.buildingsNear(x, z, 6);
     for (const b of near) {
       const c = Math.cos(-b.rot), s = Math.sin(-b.rot);
@@ -606,6 +636,17 @@ export class Player {
     // A balloon's basket collides too, like the helicopter; its envelope is
     // kept out of towers by updateBalloon.
     const airborne = (v.spec.plane && v.airborne && !v.spec.heli && !v.spec.balloon) || v.spec.rail;
+    // ...BUT A PLANE THAT FLIES INTO A BUILDING HITS IT. With the wall test
+    // off in the air, a plane went straight through every tower downtown.
+    // Here the test is 3D: the nose, the middle and the tail against each
+    // footprint nearby AND below its roof, and against the landmarks' solids
+    // (the Needle, the stadiums), which carry their own height bands. A hit
+    // is the end of the airframe (main.js onCarDestroyed: the fireball).
+    if (v.spec.plane && v.airborne && !v.spec.heli && !v.spec.balloon && !v.dead && this.planeHits(v)) {
+      v.planeHit = true;   // before damage(): onCarDestroyed reads it
+      v.damage(1e4, true);
+      this.game.onCrash(60, false);
+    }
     const impact = airborne ? 0 : collideWithBuildings(v, this.city, (imp) => {
       if (this.crashCd > 0) return;
       this.crashCd = 0.4;

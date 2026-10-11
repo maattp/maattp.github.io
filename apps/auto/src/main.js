@@ -88,6 +88,9 @@ const ATV_SPOTS = [
   [-894, -940, 1.0, 0xe8b21c],
   // Jefferson Park, beside the balloon's launch field on the reservoir lid
   [2045, 4600, 0.6, 0x2e6fd0],
+  // Alki Beach: on the sand (beaches.json's "Alki Beach", lot kind sand),
+  // ~2.5 m over the water's edge, pointed along the shore
+  [-5130, 3355, 2.16, 0xe07a1c],
 ];
 // THE HOT AIR BALLOON, on the lawn over Jefferson Park's reservoir lid on
 // Beacon Hill: dead flat (98.7 m), open for 80 m every way, and one of the
@@ -501,9 +504,11 @@ class Game {
     audio.explosion(v.x, v.z);
     peds.scare(v.x, v.z, 45);
     if (v === player.vehicle) {
-      this.damagePlayer(70, 'explosion');
+      // into a tower at flying speed is not a car fire you walk away from
+      this.damagePlayer(v.planeHit ? 1000 : 70, 'explosion');
       player.exitVehicle(true);
     }
+    if (v.planeHit) { fx.explosion(v.x, v.y + 3, v.z); fx.smoke(v.x, v.y + 4, v.z, 30); }
     if (!v.suspect) this.addHeat(14);
     setTimeout(() => traffic.remove(v), 60);
   }
@@ -1210,7 +1215,8 @@ function installShadowFade() {
     }
   }
   // Quads, parked out on the grass where they are for: Gas Works' Kite Hill,
-  // the lawn by the seaplane dock, and Seattle Center's by the spawn.
+  // the lawn by the seaplane dock, Seattle Center's by the spawn, Jefferson
+  // Park, and on the sand at Alki Beach.
   for (const [x, z, h, col] of ATV_SPOTS) {
     const v = traffic.spawnAt(x, z, h, 'atv', col, 'apron');
     v.vLong = 0;
