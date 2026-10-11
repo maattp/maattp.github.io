@@ -345,7 +345,7 @@ export class TankSystem {
       vx: dx * 9, vy: dy * 9, vz: dz * 9, grav: 0, drag: 0.8, jitter: 0.8 });
     for (let k = 0; k < 3; k++) fx.smoke(ox + dx * (1 + k * 1.5), oy + dy * (1 + k * 1.5), oz + dz * (1 + k * 1.5), 5);
     const gy = G.terrainHeight(ox, oz);
-    fx.emit(ox, gy + 0.3, oz, 18, { r: 0.55, g: 0.5, b: 0.42, size: 2.4, life: 1.6, spread: 7, vy: 0.8, grav: 0.2, drag: 0.9, jitter: 2.5 });
+    fx.emit(ox, gy + 0.3, oz, 18, { r: 0.55, g: 0.5, b: 0.42, size: 1.6, grow: 1.6, alpha: 0.85, life: 1.8, spread: 7, vy: 0.8, grav: 0.2, drag: 0.9, jitter: 2.5 });
     // the round: a streak to where it lands, the blast when it gets there
     fx.tracer(ox, oy, oz, hx, hy, hz);
     if (this.audio.ready) this.audio.cannon();
@@ -420,7 +420,7 @@ export class TankSystem {
     // the fireball, the debris it throws, the black smoke standing over it
     fx.emit(x, y + 1.2, z, 28, { r: 1, g: 0.72, b: 0.28, size: 4.4, life: 0.5, spread: 9, vy: 4, grav: -1, jitter: 1.5 });
     fx.emit(x, y + 0.5, z, 24, { r: 0.32, g: 0.28, b: 0.22, size: 1.3, life: 1.3, spread: 11, vy: 9, grav: -14, jitter: 1 });
-    fx.emit(x, y + 2.5, z, 16, { r: 0.16, g: 0.15, b: 0.14, size: 4.8, life: 3.2, spread: 2.5, vy: 3.2, grav: 0.4, drag: 0.93, jitter: 2 });
+    fx.emit(x, y + 2.5, z, 16, { r: 0.16, g: 0.15, b: 0.14, size: 3.0, grow: 1.8, life: 3.4, spread: 2.5, vy: 3.2, grav: 0.4, drag: 0.93, jitter: 2 });
     fx.sparks(x, y + 0.5, z, 20);
     this.peds.scare(x, z, 70);
     const P = this.player;

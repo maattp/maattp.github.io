@@ -4495,6 +4495,40 @@ async function main() {
       if (bad.length) { console.error(`FAIL: tank: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // A BURNOUT (v220): GAS + BRAKE in a rear-drive car stays on the spot;
+    // with the stick held it is a donut round a point inside the front axle
+    // (vehicles.js BO_R), not a pirouette on the car's own middle.
+    {
+      const bo = await session.eval(`(() => {
+        const { player: p, traffic, game } = window.__dbg;
+        const v = traffic.cars.find((c) => c.spec.rwd && !c.spec.bus && Math.hypot(c.x - p.x, c.z - p.z) < 600);
+        if (!v) return { none: true };
+        const was = game.paused; game.paused = true;
+        const sv = { x: v.x, z: v.z, y: v.y, h: v.heading, dw: v.detailedWheels, mode: v._mode };
+        v.detailedWheels = true; v._mode = 'free';
+        const run = (steer) => {
+          v.x = sv.x; v.z = sv.z; v.y = sv.y; v.heading = sv.h; v.vLong = 0; v.vLat = 0; v.burnout = false; v.boYaw = 0;
+          const P = [];
+          for (let i = 0; i < 480; i++) { v.update(1 / 60, { throttle: 1, brake: 1, steer }); if (i >= 120) P.push([v.x, v.z]); }
+          let cx = 0, cz = 0; for (const [x, z] of P) { cx += x; cz += z; } cx /= P.length; cz /= P.length;
+          let r = 0; for (const [x, z] of P) r += Math.hypot(x - cx, z - cz);
+          return { burnout: v.burnout, r: r / P.length, moved: Math.hypot(v.x - sv.x, v.z - sv.z) };
+        };
+        const still = run(0), donut = run(1);
+        v.x = sv.x; v.z = sv.z; v.y = sv.y; v.heading = sv.h; v.vLong = 0; v.vLat = 0; v.burnout = false;
+        v.detailedWheels = sv.dw; v._mode = sv.mode; game.paused = was;
+        return { still, donut };
+      })()`);
+      const bad = [];
+      if (bo.none) bad.push('no rear-drive car near the player to test');
+      else {
+        if (!bo.still.burnout || bo.still.moved > 0.3) bad.push(`a burnout with no steer moves (${bo.still.moved.toFixed(2)} m)`);
+        if (!bo.donut.burnout || bo.donut.r < 2.5 || bo.donut.r > 5.5) bad.push(`a donut's circle is ${bo.donut.r.toFixed(2)} m, not 2.5-5.5`);
+      }
+      console.log(`burnout: ${bo.none ? '-' : `still ${bo.still.moved.toFixed(2)} m, donut radius ${bo.donut.r.toFixed(2)} m`}`);
+      if (bad.length) { console.error(`FAIL: burnout: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // AUTO_PROBE lets a one-off diagnostic ride the same proven boot path
     // rather than maintaining a second, subtly different CDP harness.
     if (process.env.AUTO_PROBE) {

@@ -376,6 +376,22 @@ shots.
   the stick swings it round; release the brake after 0.5 s for a launch of a
   third more pull for 0.7 s.
 
+**v220: a burnout's donut, and smoke that billows.**
+- The stick used to spin a burnout on the car's own middle at 1.7 rad/s (a
+  pirouette, radius 0). It now turns about a point `BO_R` (3 m) inside the
+  front axle, winding up to `BO_YAW` over half a second: a body turning at
+  w about (a ahead, b to the side) moves at vLong = w*b, vLat = -w*a, set
+  directly in place of the lateral grip. The fronts roll a 3 m circle, the
+  tail swings out round ~4 m; with no steer it stays on the spot. The
+  burnout holds up to 8 m/s once going. The rears spin visibly (`boSpin`,
+  22 rad/s: faster strobes on a spoked wheel).
+- Particles (effects.js) are RGBA and fade by alpha. They faded by darkening
+  their colour, so every white puff went grey, then sooty, before it went.
+  A CLOUD (`grow`: tyre smoke, `fx.smoke`, the explosion's smoke, dust, the
+  orcas' mist) swells to (1 + grow) its size and fades in and out; sparks
+  and drops still shrink. Burnout smoke is by rate (30/s a tyre), not 4 a
+  frame, which at 60 fps overran the 420-particle pool and cut puffs off.
+
 **v217: a driver in the convertible; Metro's livery; an XDE60's sections.**
 - Every car's cabin builder seats a driver in `matte.crew` (merged into the
   geometry of an occupied car, yours included); `buildConvertible` builds its

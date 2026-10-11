@@ -170,7 +170,7 @@ export class Saucer {
     if (fx && air && agl < 14 && Math.random() < dt * 30) {
       const a = Math.random() * Math.PI * 2, r = 5 + Math.random() * 4;
       const gx = v.x + Math.cos(a) * r, gz = v.z + Math.sin(a) * r;
-      fx.emit(gx, G.terrainHeight(gx, gz) + 0.3, gz, 2, { r: 0.62, g: 0.58, b: 0.5, size: 1.6, life: 1.4, spread: 1.5, vx: Math.cos(a) * 4, vz: Math.sin(a) * 4, vy: 0.8, grav: 0.2, drag: 0.93 });
+      fx.emit(gx, G.terrainHeight(gx, gz) + 0.3, gz, 2, { r: 0.62, g: 0.58, b: 0.5, size: 1.1, grow: 1.5, alpha: 0.8, life: 1.5, spread: 1.5, vx: Math.cos(a) * 4, vz: Math.sin(a) * 4, vy: 0.8, grav: 0.2, drag: 0.93 });
     }
   }
 
