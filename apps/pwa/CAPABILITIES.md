@@ -8,7 +8,7 @@ marked as a limitation.
 **Device:** iPhone 17 Pro class: 402×874 CSS px @3x = 1206×2622 physical px,
 6 CPU cores (2 performance + 4 efficiency), Apple GPU. **iOS:** Safari 27.0.1
 (the UA string is frozen at `iPhone OS 18_7` and doesn't show the real version).
-Measured 2026-10-11, mostly in portrait, with Low Power Mode off.
+Measured 2026-10-11 on home Wi-Fi, mostly in portrait, with Low Power Mode off.
 
 ## Rules of thumb
 
@@ -26,7 +26,9 @@ Measured 2026-10-11, mostly in portrait, with Low Power Mode off.
    `resume()`.
 7. **No fullscreen API, no orientation lock, no vibration.** Standalone is
    already chrome-free; handle orientation yourself; haptics via `<input switch>`.
-8. **Pause on `visibilitychange`.** In the background, rendering stops and timers drop to
+8. **Keep total memory well under ~1.9 GB.** iOS kills the app (no exception,
+   no `grow()` failure) once committed wasm memory passes ~1.9 GB.
+9. **Pause on `visibilitychange`.** In the background, rendering stops and timers drop to
    about 1 per second, but connections and GPU contexts survive (tested for 14 s).
 
 ## Hosting: cross-origin isolation on GitHub Pages
@@ -142,9 +144,15 @@ drive it.
 | `postMessage` round trip | 0.02 ms; 4 MB Float32Array clone ≈ 2 ms |
 | SharedArrayBuffer + `Atomics.wait` in worker | works; `Atomics.waitAsync` present |
 | Wasm threads (shared memory, atomics across workers) | exact |
-| Shared `WebAssembly.Memory` reservation | maximum 256 MB / 1 / 2 / 4 GB all accepted |
+| Shared `WebAssembly.Memory` reservation | maximum 256 MB / 1 / 2 / 4 GB all accepted (address space only) |
+| **Committed wasm memory before iOS kills the app** | **~1.9 GB**: survived 1920 MB, killed while growing to 2048 MB (128 MB steps, every 4 KB page touched). `grow()` never threw; the process was terminated |
 | Wasm SIMD128 | yes |
 | Wasm proposals | **yes**: bulk memory, exceptions (legacy and exnref), tail calls, GC, JSPI, `WebAssembly.Tag`. **no**: relaxed SIMD, memory64, multi-memory |
+
+Memory: the kill is silent, so the game can't catch it. The ~1.9 GB measured is for
+wasm alone; JS heap, decoded images and GPU resources share the phone's unified
+memory and count against the same limit. Target a total footprint under ~1.2–1.5 GB,
+and set the wasm `maximum` to what you need, not 4 GB.
 
 Toolchains: don't pass `-mrelaxed-simd` or `-sMEMORY64`. Emscripten with
 `-pthread -msimd128 -fwasm-exceptions` matches what the phone supports. Rapier,
@@ -190,9 +198,9 @@ workers to yield.
 | WebRTC data channels (loopback) | open in ~60 ms; RTT 0.2 ms; unreliable (`ordered:false, maxRetransmits:0`) works; `sctp.maxMessageSize` 262144 |
 | STUN (stun.cloudflare.com) | public (srflx) address found; host candidates are mDNS `.local` |
 | **TURN** | **not configured** on the worker (`/sf/turn` returns STUN only). Phones behind carrier NAT may fail to connect P2P. Set `CF_TURN_KEY_ID` + `CF_TURN_API_TOKEN` on the worker to enable |
-| WebSocket to the Cloudflare worker | create room + connect ~700 ms; echo RTT median 13 ms |
+| WebSocket to the Cloudflare worker (Wi-Fi) | create room + connect ~700 ms; echo RTT median 13 ms |
 | WebTransport | present (not yet tested against a server) |
-| GitHub Pages download (5.5 MB file) | ~5 MB/s cold, ~25 MB/s warm (network type not recorded) |
+| GitHub Pages download (5.5 MB file, Wi-Fi) | ~5 MB/s cold, ~25 MB/s warm; cellular not yet measured |
 
 Signaling already exists: the `/sf/*` relay rooms on the worker (`POST
 /sf/rooms`, WebSocket `/sf/rooms/:code/ws`: `hello`→`welcome`, `roster`, `rtc`
@@ -241,8 +249,8 @@ present; gzip `CompressionStream`/`DecompressionStream` work. Canvas
 ## Not yet measured
 
 - Phone-to-phone P2P over cellular (pair test), and whether TURN is needed.
-- Memory ceiling: how much wasm memory and WebGPU buffer space can be committed before iOS
-  kills the app (the probe's Memory stress).
+- GPU memory ceiling: how much WebGPU buffer space can be allocated before an
+  out-of-memory error or a kill (the probe's "Memory: GPU" button).
 - Gamepad input with a real controller.
 - Whether anything renders in the bottom strip of the short viewport at launch.
 - 120 Hz: nothing tried got past 60 Hz. There may be no way.

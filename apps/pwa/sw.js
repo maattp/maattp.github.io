@@ -6,7 +6,7 @@
 
    Network-first (a probe should always run the newest build when online),
    cache only as the offline copy. */
-const CACHE = 'pwa-v2';
+const CACHE = 'pwa-v3';
 const SHELL = ['./', './manifest.webmanifest', './worker.js', '../icon.png'];
 // Only the app's own files are kept offline — the download benchmark fetches
 // multi-MB files from elsewhere on the site, which must not pile up here.
