@@ -363,6 +363,19 @@ shots.
   kerbside parking, and adding one would move every parked car in the city
   (see "The articulated bus").
 
+**v215: your car steers sharper at speed, burns before it blows, and does burnouts.**
+- `PLAYER_BITE` 1.7 (vs `STEER_BITE` 1.25) in `steerLock`, for the detailed
+  vehicle only: a sedan at 108 km/h turns on 11 m, not 17. The AI's lock is
+  unchanged (`aiSteer` asks for a share of it).
+- `Vehicle.damage`: yours takes 60 % of every hit, and at zero it catches fire
+  for `BURN_S` (5 s; `VEHICLE_HOOKS.ignite`, main.js burns it down) before the
+  blast. Standing within 7 m when it goes costs up to 45. A forced hit of 500
+  or more (a plane into a tower) still goes at once.
+- **Burnout**: `spec.rwd` (sedan, sports, muscle, convertible, pickup, taxi,
+  police), GAS and BRAKE together under 3 m/s: held, rear smoke, the squeal,
+  the stick swings it round; release the brake after 0.5 s for a launch of a
+  third more pull for 0.7 s.
+
 ## Flying
 
 **The camera jumps were a TUNNEL clamp firing on hillsides.** `updateCamera`'s

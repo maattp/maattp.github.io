@@ -97,6 +97,11 @@ export function setWaterQuery(fn) { waterQuery = fn; }
 // tyres a bit harder than physics allows without ever demanding the multiples
 // that made it pivot on rails.
 const STEER_BITE = 1.25;
+/** How long your car burns before it explodes (Vehicle.damage). */
+export const BURN_S = 5;
+/** main.js's: `ignite(v)` when your car catches fire. */
+export const VEHICLE_HOOKS = { ignite: null };
+const PLAYER_BITE = 1.7;
 
 // Braking was the one axis left at real-world scale, and that is why it felt
 // slow: you accelerated 2.4x harder than the spec sheet and cornered at 2.2x
@@ -179,14 +184,14 @@ export const TYPES = {
   saucer: deriveSpec({ wheelbase: 6.0, len: 11.0, wid: 11.0, wheelR: 0.3, sill: 1.2, belt: 2.0, roof: 3.6, cab: [0.2, 0.2], hand: 'saucer', finish: 'chrome', plane: true, heli: true, saucer: true, engine: 'saucer', mass: 2.0, acc: 30, topKph: 1100, brakeM: 30, latG: 2.0,
     pivotY: 1.6,
     rotor: { climb: 45, sink: 40, accel: 40, grip: 40, yaw: 2.4, yawFast: 1.2, back: 60 } }),
-  sedan: deriveSpec({ wheelbase: 2.98,len: 5.06, wid: 1.90, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.26, 0.10], hand: 'sedan', mass: 1.0, acc: 4.1, topKph: 205, brakeM: 40, latG: 0.88 }),
+  sedan: deriveSpec({ rwd: true, wheelbase: 2.98,len: 5.06, wid: 1.90, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.26, 0.10], hand: 'sedan', mass: 1.0, acc: 4.1, topKph: 205, brakeM: 40, latG: 0.88 }),
   hatch: deriveSpec({ wheelbase: 2.6,len: 4.10, wid: 1.76, wheelR: 0.31, sill: 0.29, belt: 0.96, roof: 1.50, cab: [-0.30, 0.16], hand: 'hatch', mass: 0.9, acc: 3.6, topKph: 185, brakeM: 41, latG: 0.85 }),
   compact: deriveSpec({ wheelbase: 2.42,len: 3.74, wid: 1.68, wheelR: 0.29, sill: 0.28, belt: 0.94, roof: 1.48, cab: [-0.28, 0.15], hand: 'compact', mass: 0.85, acc: 3.0, topKph: 170, brakeM: 43, latG: 0.83 }),
   suv: deriveSpec({ wheelbase: 2.87,len: 4.94, wid: 1.98, wheelR: 0.38, sill: 0.46, belt: 1.30, roof: 1.88, cab: [-0.34, 0.20], hand: 'suv', mass: 1.3, acc: 4.0, topKph: 195, brakeM: 42, latG: 0.8 }),
   // `hand` sends a type to its own authored builder instead of the shared
   // loft. sill/belt/roof are then a DESCRIPTION of what that builder draws
   // rather than an input to it, so they stay readable next to the other rows.
-  sports: deriveSpec({ wheelbase: 2.72,len: 4.42, wid: 1.92, wheelR: 0.34, sill: 0.22, belt: 0.94, roof: 1.32, cab: [-0.24, 0.06], hand: 'sports', mass: 0.85, acc: 7.4, topKph: 275, brakeM: 33, latG: 1.02 }),
+  sports: deriveSpec({ rwd: true, wheelbase: 2.72,len: 4.42, wid: 1.92, wheelR: 0.34, sill: 0.22, belt: 0.94, roof: 1.32, cab: [-0.24, 0.06], hand: 'sports', mass: 0.85, acc: 7.4, topKph: 275, brakeM: 33, latG: 1.02 }),
   // Cab-forward and low, on a long wheelbase with almost no overhang -- the
   // shape a floor full of batteries gives you. Heavier than the sports car and
   // quicker anyway, because the torque is all there from a standstill.
@@ -200,11 +205,11 @@ export const TYPES = {
   // `finish: 'steel'` is the brushed-metal paint material; the livery keeps it
   // stainless whatever colour the spawner drew. `engine` is the deeper motor.
   wedge: deriveSpec({ wheelbase: 3.66, len: 5.68, wid: 2.06, wheelR: 0.445, sill: 0.40, belt: 1.22, roof: 1.88, cab: [-0.16, 0.35], hand: 'wedge', ev: true, engine: 'evtruck', finish: 'steel', livery: 0xb9bdc1, lightbar: [[1.010, 1.94], [1.260, 1.95]], hp: 250, armor: 0.5, mass: 2.6, acc: 11.0, topKph: 200, brakeM: 38, latG: 0.94, rearSteer: 0.175 }),
-  muscle: deriveSpec({ wheelbase: 2.95,len: 5.02, wid: 1.98, wheelR: 0.35, sill: 0.26, belt: 1.02, roof: 1.40, cab: [-0.24, 0.13], hand: 'muscle', mass: 1.15, acc: 7.0, topKph: 265, brakeM: 36, latG: 0.94 }),
+  muscle: deriveSpec({ rwd: true, wheelbase: 2.95,len: 5.02, wid: 1.98, wheelR: 0.35, sill: 0.26, belt: 1.02, roof: 1.40, cab: [-0.24, 0.13], hand: 'muscle', mass: 1.15, acc: 7.0, topKph: 265, brakeM: 36, latG: 0.94 }),
   // Roofless muscle. `roof` is the top of the windscreen frame, 16 cm under the
   // coupe's, and there is no greenhouse above the beltline at all -- which is
   // why the interior has to be built: you look straight down into it.
-  convertible: deriveSpec({ wheelbase: 2.95,len: 4.86, wid: 1.94, wheelR: 0.35, sill: 0.26, belt: 1.00, roof: 1.34, cab: [-0.24, 0.10], hand: 'convertible', mass: 1.10, acc: 6.6, topKph: 250, brakeM: 37, latG: 0.90 }),
+  convertible: deriveSpec({ rwd: true, wheelbase: 2.95,len: 4.86, wid: 1.94, wheelR: 0.35, sill: 0.26, belt: 1.00, roof: 1.34, cab: [-0.24, 0.10], hand: 'convertible', mass: 1.10, acc: 6.6, topKph: 250, brakeM: 37, latG: 0.90 }),
   // Motorcycles. `moto` is not a styling flag: it switches the ground solve to
   // two contact patches and turns on lean, both of which are wrong for a car
   // and both of which a bike looks broken without. Light, quick, and with LESS
@@ -243,10 +248,10 @@ export const TYPES = {
   bicycle: deriveSpec({ wheelbase: 1.06, len: 1.80, wid: 0.62, wheelR: 0.345, sill: 0.28, belt: 0.95, roof: 1.12, cab: [-0.2, 0.1], hand: 'bicycle', moto: true, bicycle: true, noEngine: true, mass: 0.1, acc: 1.7, topKph: 35, brakeM: 14, latG: 0.8 }),
   jetski: deriveSpec({ wheelbase: 1.8, len: 3.20, wid: 1.20, wheelR: 0.20, sill: 0.3, belt: 0.6, roof: 1.05, cab: [-0.1, 0.1], hand: 'jetski', boat: true, jetski: true, minDepth: 0.12, mass: 0.4, acc: 7.5, topKph: 105, brakeM: 30, latG: 0.9 }),
   boat: deriveSpec({ wheelbase: 3.2, len: 5.70, wid: 2.20, wheelR: 0.30, sill: 0.4, belt: 0.7, roof: 1.45, cab: [-0.2, 0.1], hand: 'boat', boat: true, minDepth: 0.3, cockpit: [0.12, -2.2, 0.9, 0.86], mass: 1.1, acc: 3.0, topKph: 70, brakeM: 45, latG: 0.6 }),
-  pickup: deriveSpec({ wheelbase: 3.68,len: 5.92, wid: 2.05, wheelR: 0.42, sill: 0.48, belt: 1.26, roof: 1.98, cab: [-0.15, 0.22], hand: 'pickup', mass: 1.4, acc: 4.4, topKph: 185, brakeM: 45, latG: 0.77 }),
+  pickup: deriveSpec({ rwd: true, wheelbase: 3.68,len: 5.92, wid: 2.05, wheelR: 0.42, sill: 0.48, belt: 1.26, roof: 1.98, cab: [-0.15, 0.22], hand: 'pickup', mass: 1.4, acc: 4.4, topKph: 185, brakeM: 45, latG: 0.77 }),
   van: deriveSpec({ wheelbase: 3.5,len: 5.26, wid: 2.00, wheelR: 0.35, sill: 0.36, belt: 1.10, roof: 2.28, cab: [-0.44, 0.30], hand: 'van', boxy: 2, mass: 1.5, acc: 2.9, topKph: 155, brakeM: 47, latG: 0.73 }),
-  taxi: deriveSpec({ wheelbase: 2.98,len: 4.76, wid: 1.85, wheelR: 0.33, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', taxi: true, livery: 0xf0b40c, mass: 1.0, acc: 3.8, topKph: 195, brakeM: 41, latG: 0.85 }),
-  police: deriveSpec({ wheelbase: 2.95,len: 4.98, wid: 1.92, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', police: true, livery: 0xf2f4f6, mass: 1.1, acc: 5.6, topKph: 230, brakeM: 37, latG: 0.93 }),
+  taxi: deriveSpec({ rwd: true, wheelbase: 2.98,len: 4.76, wid: 1.85, wheelR: 0.33, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', taxi: true, livery: 0xf0b40c, mass: 1.0, acc: 3.8, topKph: 195, brakeM: 41, latG: 0.85 }),
+  police: deriveSpec({ rwd: true, wheelbase: 2.95,len: 4.98, wid: 1.92, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', police: true, livery: 0xf2f4f6, mass: 1.1, acc: 5.6, topKph: 230, brakeM: 37, latG: 0.93 }),
   // the articulated bus: the front section and the trailing rear (buildArticFront)
   artic: deriveSpec({ wheelbase: 6.7, len: 11.4, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'artic', livery: 0xc41a24, bus: true, artic: true, towed: 'articRear', boxy: 3, mass: 6.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
   articRear: deriveSpec({ wheelbase: 5.3, len: 6.5, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'articRear', livery: 0xc41a24, bus: true, trailer: true, boxy: 3, mass: 3.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
@@ -9918,7 +9923,12 @@ export class Vehicle {
     const spec = this.spec;
     const wheelbase = spec.wheelbase || spec.len * 0.62;
     const agility = clamp(spec.latG / 0.88, 0.70, 1.32);
-    const turnR = Math.max((spec.minTurnR || 4.5) / agility, (sp * sp) / (spec.latA * ARCADE_GRIP * STEER_BITE));
+    // Your own car bites harder at speed (PLAYER_BITE): at STEER_BITE a
+    // sedan at 110 km/h asked for a 38 m radius, and a city corner taken
+    // quick could not be made. The AI's lock is unchanged (aiSteer asks for
+    // an angle as a share of it, and its speeds were tuned against it).
+    const bite = this.detailedWheels ? PLAYER_BITE : STEER_BITE;
+    const turnR = Math.max((spec.minTurnR || 4.5) / agility, (sp * sp) / (spec.latA * ARCADE_GRIP * bite));
     return Math.min(0.62, Math.atan(wheelbase / turnR));
   }
 
@@ -10103,6 +10113,18 @@ export class Vehicle {
       acc -= Math.sign(this.vLong) * (spec.ev ? 4.6 : 2.4);
     }
     if (hand > 0.5 && this.vLong > 0) acc -= 11;
+    // A BURNOUT (spec.rwd, your own car): GAS and BRAKE together at a stand.
+    // The fronts hold it, the rears spin -- smoke, the squeal, the engine on
+    // the limiter -- and the stick swings it round (yawRate below). Let the
+    // brake go after half a second of it and it launches.
+    const bo = !!(spec.rwd && this.detailedWheels && this.onGround !== false
+      && throttle > 0.4 && brake > 0.4 && this.vLong > -1.5 && this.vLong < 3);
+    if (bo) acc = -this.vLong * 8;
+    else if (this.burnoutT > 0.5 && throttle > 0.4) this.launchT = 0.7;
+    this.burnout = bo;
+    this.burnoutT = bo ? (this.burnoutT || 0) + dt : 0;
+    // (a launch off warm tyres: a third again for 0.7 s, not a catapult)
+    if (this.launchT > 0) { this.launchT -= dt; acc += spec.acc * 0.35 * throttle; }
     this.vLong += acc * dt;
     if (Math.abs(this.vLong) < 0.12 && throttle === 0) this.vLong *= 0.82;
     // NOBODY AT THE WHEEL: the parking brake. Unattended vehicles used to get
@@ -10123,7 +10145,9 @@ export class Vehicle {
     // axles 7.4 m apart against a real 6.
     // rear steer: only AGAINST the fronts adds yaw (with them is drawn only: see above)
     const rsAgainst = this.rearSteer * this.steer < 0 ? this.rearSteer : 0;
-    const yawRate = spec.tank ? this._tankYaw(dt, steerIn) : (this.vLong / wheelbase) * (Math.tan(this.steer) - Math.tan(rsAgainst));
+    const yawRate = spec.tank ? this._tankYaw(dt, steerIn)
+      : this.burnout ? steerIn * 1.7   // a burnout's donut: the tail round the held fronts
+      : (this.vLong / wheelbase) * (Math.tan(this.steer) - Math.tan(rsAgainst));
     // A HIT'S SPIN (traffic.js pairImpulse / wallImpulse) rides on top of the steering's
     // yaw. The body turns under its own velocity, so the body-frame velocity
     // is turned back by the same angle: the car slides on the line it was
@@ -10186,7 +10210,7 @@ export class Vehicle {
     // limited to what grip supports, the yaw the car achieves IS the lateral
     // acceleration, so there is nothing to correct for.
     this.latAcc = yawRate * this.vLong;
-    this.skid = clamp(Math.abs(before) * 0.35, 0, 1);
+    this.skid = this.burnout ? 1 : clamp(Math.abs(before) * 0.35, 0, 1);
 
     const f = this.forward;
     const rx = f.z, rz = -f.x;
@@ -10680,9 +10704,25 @@ export class Vehicle {
     }
     // `spec.armor` scales every hit, scripted or not: a crash, a bullet, a
     // hard landing all dent stainless plate less.
-    this.health -= n * (this.spec.armor || 1);
+    //
+    // YOUR CAR IS TOUGHER, AND IT BURNS BEFORE IT BLOWS. A dozen ordinary
+    // knocks in traffic used to write a car off and the blast took 70 of your
+    // 100: "it exploded from a minor crash" and WASTED with it. The player's
+    // vehicle (the detailed one) takes 60 % of every hit, and at nothing left
+    // it catches fire for BURN_S first (main.js: smoke, flames, the warning)
+    // -- GTA's rule: get out, or go up with it. A plane into a tower (1e4,
+    // forced) still goes at once.
+    const mine = this.detailedWheels && !this.spec.rail;
+    this.health -= n * (this.spec.armor || 1) * (mine ? 0.6 : 1);
     if (this.health <= 0 && !this.dead) {
       this.health = 0;
+      if (mine && n < 500) {
+        if (!(this.burnT > 0)) {
+          this.burnT = BURN_S;
+          if (VEHICLE_HOOKS.ignite) VEHICLE_HOOKS.ignite(this);
+        }
+        return false;
+      }
       this.dead = true;
       return true;
     }

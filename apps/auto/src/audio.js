@@ -3157,8 +3157,10 @@ export class Audio {
       const grunt = spec ? spec.acc || 3 : 3;
       const spin = onGround && !offroad && speed > -0.5 && sp < 11 && thr > 0.8 && grunt >= 5.5 && (p.kind === 'car' || p.kind === 'ev')
         ? clamp((grunt - 4.5) / 4, 0.3, 1) * (1 - sp / 11) * 0.85 : 0;
-      const sq = Math.max(lat, lock, spin);
-      const sqRate = (sq === lock && lock > 0 ? 0.74 + clamp(sp / 80, 0, 0.2) : sq === spin && spin > 0 ? 0.95 + sp * 0.02 : 0.85 + clamp(sp / 40, 0, 0.35))
+      // a burnout (vehicles.js): the rears spinning on the spot, flat out
+      const bo = inCar && s.burnout ? 0.95 : 0;
+      const sq = Math.max(lat, lock, spin, bo);
+      const sqRate = bo > 0 && sq === bo ? 1.02 : (sq === lock && lock > 0 ? 0.74 + clamp(sp / 80, 0, 0.2) : sq === spin && spin > 0 ? 0.95 + sp * 0.02 : 0.85 + clamp(sp / 40, 0, 0.35))
         * (heavy ? 0.8 : 1);
       this.loops.squeal.set(sq * 0.22, t, 0.04, sqRate);
       const grav = surf === 'gravel' && onGround ? clamp(sp / 18, 0, 1) * 0.12 + skid * 0.15 : 0;

@@ -84,6 +84,50 @@ const TUN = 1, BOX = 2, DECK = 3, FILL = 4, CROSS = 5;
 /** What each metre of a track is (LinkTrack.KD): freight.js shares them. */
 export const KIND = { TUN, BOX, DECK, FILL, CROSS };
 
+/**
+ * THE BALLAST IS GROUND: a query for city.bedQueries. The bed is drawn over
+ * the ground the city answers for (freight's on a formation cut 1 m under the
+ * rail head, Link's on the ground), so a car or a walker on the line stood in
+ * it. Flat at the rail head - 0.15 (ties and rails) across `top` either side,
+ * then the shoulder down to `shY` under the rail head at `shW`. Tunnels, decks
+ * and level crossings answer for themselves. Built once the tracks have their
+ * heights (main.js).
+ */
+export function railBedSurface(tracks, top, shW, shY) {
+  const C = 16, cells = new Map();
+  tracks.forEach((tr, ti) => {
+    for (let i = 0; i < tr.n; i += 2) {
+      const kd = tr.KD ? tr.KD[i] : FILL;
+      if (kd === TUN || kd === DECK || kd === CROSS) continue;
+      const x0 = Math.floor((tr.X[i] - shW) / C), x1 = Math.floor((tr.X[i] + shW) / C);
+      const z0 = Math.floor((tr.Z[i] - shW) / C), z1 = Math.floor((tr.Z[i] + shW) / C);
+      for (let cx = x0; cx <= x1; cx++) for (let cz = z0; cz <= z1; cz++) {
+        const k = cx * 100003 + cz;
+        let l = cells.get(k);
+        if (!l) cells.set(k, (l = []));
+        l.push(ti, i);
+      }
+    }
+  });
+  return (x, z) => {
+    const l = cells.get(Math.floor(x / C) * 100003 + Math.floor(z / C));
+    if (!l) return null;
+    let best = null;
+    for (let q = 0; q < l.length; q += 2) {
+      const tr = tracks[l[q]], i = l[q + 1];
+      const h = tr.H[i], fx = Math.sin(h), fz = Math.cos(h);
+      const dx = x - tr.X[i], dz = z - tr.Z[i];
+      const al = dx * fx + dz * fz;
+      if (al > 1.05 || al < -1.05) continue;
+      const d = Math.abs(dx * fz - dz * fx);
+      if (d > shW) continue;
+      const y = tr.Y[i] - 0.15 + (d <= top ? 0 : (shY + 0.15) * (d - top) / (shW - top));
+      if (best === null || y > best) best = y;
+    }
+    return best;
+  };
+}
+
 function boxAvg(a, r) {
   const n = a.length, out = new Float64Array(n), c = new Float64Array(n + 1);
   for (let i = 0; i < n; i++) c[i + 1] = c[i] + a[i];

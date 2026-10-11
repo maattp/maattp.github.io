@@ -10,7 +10,7 @@ import { buildLandmarks, updateLandmarkRange, SEAPLANE_DOCK, airportSurface } fr
 import { ShadowCache } from './shadowcache.js';
 import { TreeSystem } from './trees.js';
 import { Monorail } from './monorail.js';
-import { Link } from './link.js';
+import { Link, railBedSurface } from './link.js';
 import { Freight } from './freight.js';
 import { Counterbalance } from './counterbalance.js';
 import { Ferry, fixTerminals } from './ferry.js';
@@ -45,7 +45,7 @@ import { TrafficSystem, collideWithBuildings, warmLightBar } from './traffic.js'
 import { Police } from './police.js';
 import { PoliceMissions } from './policemissions.js';
 import { TaxiFares } from './taxi.js';
-import { TYPES as VEHICLE_TYPES, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial, dropVehicleArrays } from './vehicles.js';
+import { TYPES as VEHICLE_TYPES, VEHICLE_HOOKS, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial, dropVehicleArrays } from './vehicles.js';
 
 // Aircraft come in their own colours, parked at Boeing Field or delivered.
 const AIRCRAFT_PAINT = {
@@ -92,6 +92,14 @@ const ATV_SPOTS = [
   // Alki Beach: on the sand (beaches.json's "Alki Beach", lot kind sand),
   // ~2.5 m over the water's edge, pointed along the shore
   [-5130, 3355, 2.16, 0xe07a1c],
+];
+// Helicopters parked out where you might want one: the big lawn at Luther
+// Burbank Park on Mercer Island, and the top of Queen Anne Hill (118 m, by
+// the Counterbalance's summit). Both from saucer.js's open-ground search
+// (lawn first, 9 m clear of trees and posts); kept clear of new trees.
+const HELI_SPOTS = [
+  [8450, 2293, 0.6, 0x1d3f8a, 'Luther Burbank Park, Mercer Island'],
+  [-1436, -2876, 2.2, 0xe8e8e4, 'the top of Queen Anne Hill'],
 ];
 // THE HOT AIR BALLOON, on the lawn over Jefferson Park's reservoir lid on
 // Beacon Hill: dead flat (98.7 m), open for 80 m every way, and one of the
@@ -572,6 +580,7 @@ class Game {
 let chunkCull = null;   // chunkcull.js
 let police = null, missions = null;   // the wanted levels (police.js) and police missions (policemissions.js)
 let taxi = null;                      // taxi fares (taxi.js)
+const burning = new Set();             // cars on fire (VEHICLE_HOOKS.ignite)
 let nearShadow = null;  // nearshadow.js
 // Who casts into the near map this frame: the player on foot, or the vehicle
 // he drives on the ground or the water. An aircraft keeps the sun's map (its
@@ -1017,6 +1026,13 @@ function installShadowFade() {
   monorail.attach(city);
   link.attach(city);
   freight.attach(city, (x, z) => world.waterLevelAt(x, z));
+  // The ballast is ground: a car or a walker on the line stands on the bed,
+  // not in it (link.js railBedSurface; freight's bed is 0.8 m over its cut).
+  // After attach: Link's profiles and kinds are solved again there.
+  city.bedQueries = [
+    railBedSurface(Object.values(freight.tracks).filter((t) => t.Y), 1.7, 3.6, -0.62),
+    railBedSurface(Object.values(link.tracks).filter((t) => t.Y), 1.5, 2.4, -0.45),
+  ];
   lmRoot = buildLandmarks(scene, city, (x, z) => world.waterLevelAt(x, z), monorail);
   // the line's structure after the landmarks, whose solids and platforms it adds to
   link.build(scene, world);
@@ -1225,6 +1241,12 @@ function installShadowFade() {
     const v = traffic.spawnAt(x, z, h, 'atv', col, 'apron');
     v.vLong = 0;
   }
+  if (!city.clearCircles) city.clearCircles = [];
+  for (const [x, z, h, col] of HELI_SPOTS) {
+    city.clearCircles.push([x, z, 14]);
+    const v = traffic.spawnAt(x, z, h, 'heli', col, 'apron');
+    v.vLong = 0;
+  }
   spawnBalloon();
   if (SEAPLANE_DOCK.kayakRack) kayakRack(SEAPLANE_DOCK.kayakRack);
   fishSpots = fishingSpots();
@@ -1368,6 +1390,7 @@ function installShadowFade() {
         hello: 'A 747-8, the biggest thing Boeing ever built. She needs the whole runway: rotate at 150 knots' }];
     })(),
     ...ATV_SPOTS.map(([x, z]) => ({ x, z, kind: 'atv', name: 'Quad bike', near: false, hello: 'A quad bike — made for the grass' })),
+    ...HELI_SPOTS.map(([x, z, , , where]) => ({ x, z, kind: 'jet', name: 'Helicopter', near: false, hello: `A helicopter on ${where}. GAS lifts, BRAKE sinks` })),
     { x: TANK_SITE.x, z: TANK_SITE.z, kind: 'tank', name: 'Tank', near: false,
       hello: 'A main battle tank on the old Naval Air Station apron. Climb in: FIRE is the main gun, MG the machine gun' },
     ...fishSpots.map((sp) => ({ x: sp.x, z: sp.z, kind: 'fish', name: `Fishing — ${sp.name}`, near: false,
@@ -1446,6 +1469,11 @@ function installShadowFade() {
   if (bc.map) { try { mapCanvas = await blobToCanvas(bc.map); } catch (e) { mapCanvas = null; blog('map: restore failed ' + e.message); } }
   if (!mapCanvas) { mapCanvas = buildMapCanvas(city); bcOut.mapCanvas = mapCanvas; }
   hud = new Hud(document.getElementById('app'), city, mapCanvas);
+  // your car catching fire (vehicles.js Vehicle.damage): the frame burns it down
+  VEHICLE_HOOKS.ignite = (v) => {
+    burning.add(v);
+    hud.showToast('Your car is on fire — get out!', 3000);
+  };
   hud.places = mapPlaces;
   // Seattle Fire: a rig or two on every station's apron, and the calls
   fire = new FireService({ scene, city, world, traffic, peds, game, hud, audio, fx, controls, tex: tx.particle, renderer, phone: ON_PHONE,
@@ -2736,6 +2764,28 @@ function frame(now) {
   monorail.update(dt);
   link.update(dt, camera);
   freight.update(dt, camera);
+  // A car on fire (VEHICLE_HOOKS.ignite): smoke and flame from under the
+  // bonnet for BURN_S, then the blast -- yours if you are still in it, and
+  // some of it if you are standing beside it.
+  if (burning.size) {
+    for (const v of [...burning]) {
+      if (v.dead || !traffic.cars.includes(v)) { burning.delete(v); continue; }
+      v.burnT -= dt;
+      const f = v.forward, nx = v.x + f.x * v.halfLen * 0.55, nz = v.z + f.z * v.halfLen * 0.55;
+      fx.smoke(nx, v.y + 1.3, nz, 1);
+      fx.emit(nx, v.y + 1.0, nz, 2, { r: 1, g: 0.42 + Math.random() * 0.3, b: 0.08, size: 0.55, life: 0.45, spread: 0.6, vy: 2.2, grav: 1.5, jitter: 0.6 });
+      if (v.burnT <= 0) {
+        burning.delete(v);
+        v.dead = true;
+        const out = v !== player.vehicle;
+        game.onCarDestroyed(v);
+        if (out && player.onFoot) {
+          const d = Math.hypot(player.x - v.x, player.z - v.z);
+          if (d < 7) game.damagePlayer(45 * (1 - d / 7), 'explosion');
+        }
+      }
+    }
+  }
   counterbal.update(dt, camera);
   cyclists.update(dt, player);
   bikeNet.update(camera);
@@ -2813,7 +2863,14 @@ function frame(now) {
   // engine smoke / skid marks
   if (player.vehicle) {
     const v = player.vehicle;
-    if (v.skid > 0.35 && Math.random() < 0.5) {
+    if (v.burnout) {
+      // a burnout: thick smoke off both rear tyres, rolling out behind
+      const f = v.forward, rb = (v.spec.wheelbase || v.halfLen) * 0.5, w = v.halfWid * 0.85;
+      for (const s of [1, -1]) {
+        fx.emit(v.x - f.x * rb + f.z * s * w, v.y + 0.3, v.z - f.z * rb - f.x * s * w, 2,
+          { r: 0.78, g: 0.78, b: 0.8, size: 2.4, life: 2.2, spread: 1.4, vy: 0.9, grav: 0.3, drag: 0.93, vx: -f.x * 2.5, vz: -f.z * 2.5 });
+      }
+    } else if (v.skid > 0.35 && Math.random() < 0.5) {
       fx.smoke(v.x - v.forward.x * v.halfLen, v.y + 0.15, v.z - v.forward.z * v.halfLen, 1);
     }
     if (v.health < 0.45 * (v.spec.hp || 100) && Math.random() < 0.35) {
@@ -3017,6 +3074,7 @@ function audioState(dt, input, p, camDir, buried) {
     tracks: v && v.spec.tank ? Math.abs(v.vLong) + Math.abs(v.yawRate) * 2.2 : 0,
     brake: v ? (input.brakeAmt != null ? input.brakeAmt : input.brake ? 1 : 0) : 0,
     skid: v ? v.skid : 0,
+    burnout: !!(v && v.burnout),
     airborne: !!(v && v.airborne),
     carAirborne: !!(v && !spec.plane && v.onGround === false),
     wading: !!(v && !floating && depth > 0.35),

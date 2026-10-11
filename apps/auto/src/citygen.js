@@ -3808,6 +3808,16 @@ export function* cityGenerator(md, cache = {}) {
         const sy = this.slabQuery(x, z);
         if (sy !== null && sy > terr && (curY == null || sy <= curY + DECK_REACH)) terr = sy;
       }
+      // A RAIL BED (link.js railBedSurface): ballast standing proud of the
+      // ground under it -- freight's 0.8 m over its cut formation -- by the
+      // same top-surface rule. Without it a car on the line sat in the
+      // ballast to its axles.
+      if (this.bedQueries) {
+        for (let b = 0; b < this.bedQueries.length; b++) {
+          const by = this.bedQueries[b](x, z);
+          if (by !== null && by > terr && (curY == null || by <= curY + DECK_REACH)) terr = by;
+        }
+      }
       let best = terr;
       // NEAREST deck to where you already are, not the highest one within
       // reach. Taking the highest meant any deck up to 2.6 m above the car
@@ -4082,6 +4092,7 @@ export function* cityGenerator(md, cache = {}) {
     // seaplaneDock), which is what keeps "the one height surface" true on it.
     /** Top of any drawn slab at (x, z) or null (the airfield; main.js installs it). */
     slabQuery: null,
+    bedQueries: null,
     // moving decks (ferry.js): each has deckAt(x, z, curY)
     movers: null,
     platforms: null,

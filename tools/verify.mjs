@@ -4249,8 +4249,12 @@ async function main() {
     // (a tighter turn) and a touch with them on the highway (the same radius).
     {
       const r = await session.eval(`(() => { const d = window.__dbg, T = d.traffic, p = d.player.position, out = {};
+        // both runs as YOUR car (it steers sharper at speed than the AI's,
+        // vehicles.js PLAYER_BITE); the plain one with the rear steer off
+        const RS = d.TYPES.wedge.rearSteer;
         for (const [det, kmh] of [[false, 15], [true, 15], [false, 90], [true, 90]]) {
-          const v = T.spawnAt(p.x + 40, p.z + 40, 0, 'wedge', 0xb9bdc1, 'free'); v.setDetailed(det); v.vLong = kmh / 3.6;
+          d.TYPES.wedge.rearSteer = det ? RS : 0;
+          const v = T.spawnAt(p.x + 40, p.z + 40, 0, 'wedge', 0xb9bdc1, 'free'); v.setDetailed(true); v.vLong = kmh / 3.6;
           let h0 = 0, dist = 0;
           for (let i = 0; i < 240; i++) {
             const tgt = kmh / 3.6;
@@ -4261,6 +4265,7 @@ async function main() {
           out[(det ? 'rs' : 'plain') + kmh] = { R: dist / Math.abs(v.heading - h0), rear: v.rearSteer, mesh: rear.length ? rear[0].rotation.y : 0 };
           v.setDetailed(false); T.remove(v);
         }
+        d.TYPES.wedge.rearSteer = RS;
         return out; })()`);
       console.log('\n--- the Wedge: rear-wheel steer ----------------------------');
       console.log(`  15 km/h full lock: radius ${r.plain15.R.toFixed(2)} m -> ${r.rs15.R.toFixed(2)} m, rear ${(r.rs15.rear * 57.3).toFixed(1)} deg (wheel ${(r.rs15.mesh * 57.3).toFixed(1)}); 90 km/h: ${r.plain90.R.toFixed(1)} m -> ${r.rs90.R.toFixed(1)} m, rear ${(r.rs90.rear * 57.3).toFixed(1)} deg`);

@@ -930,7 +930,7 @@ export class Freight {
 
   makeTrains(scene) {
     const A = vehicleAssets();
-    this.bodyMat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.25, roughness: 0.55, envMapIntensity: 1.0 });
+    this.bodyMat = weatheredBody(new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.25, roughness: 0.55, envMapIntensity: 1.0 }));
     this.trimMat = A.trimMat;
     this.decMat = railDecals().mat;
     CONSISTS.forEach((cons, i) => {
@@ -2122,6 +2122,60 @@ export class FreightTrain {
   }
   /** The horn button (main.js onHorn): keeps the horn blowing while held. */
   blow() { this._hornHeld = 0.46; this.hornOn = true; }
+}
+
+// ---------------------------------------------------------------------------
+// WEATHERING, in the shader. Vertex colours alone made every car a clean
+// plastic toy: one flat orange, one flat grey, from the rails to the roof.
+// Freight is filthy, and the dirt has a direction -- thrown up from the
+// wheels (dark and brown toward the trucks), run down the sides in streaks
+// from every seam and hatch, soot on the roofs, and broad uneven fading.
+// All in the car's own metres: a train's vertices stay in car-local space
+// under their bone (assembleTrain), so `position` is rail-relative -- y up from
+// the rail head, z along the car, x across. The yard's merged cuts are in
+// world space and keep the plain colour (no USE_SKINNING there). Arithmetic
+// only, no texture: ~20 ALU a fragment on the trains alone.
+function weatheredBody(m) {
+  m.onBeforeCompile = (sh) => {
+    // (USE_SKINNING is defined for the vertex stage only: the fragment
+    // learns it from vRK)
+    sh.vertexShader = 'varying vec3 vRL;\nvarying vec3 vRN;\nvarying float vRK;\n' + sh.vertexShader
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+\tvRL = position; vRN = objectNormal;
+\t#ifdef USE_SKINNING
+\tvRK = 1.0;
+\t#else
+\tvRK = 0.0;
+\t#endif`);
+    sh.fragmentShader = 'varying vec3 vRL;\nvarying vec3 vRN;\nvarying float vRK;\n' + sh.fragmentShader
+      .replace('#include <color_fragment>', `#include <color_fragment>
+      float rlGrime = 0.0;
+      if (vRK > 0.5) {
+        float yy = vRL.y;
+        // thrown up from the wheels
+        float lo = 1.0 - smoothstep(0.3, 2.8, yy);
+        // streaks: a column every 18 cm along a side (across an end), each
+        // run broken up the height, from 4.6 m down
+        float col = floor(vRL.z * 5.5) + floor(vRL.x * 5.5) * 37.0;
+        float sh = fract(sin(col * 12.9898) * 43758.5453);
+        float run = smoothstep(0.3, 1.0, fract(sin(col * 7.13 + floor(yy * 0.8) * 3.1) * 15731.743));
+        float streak = step(0.6, sh) * run * (1.0 - smoothstep(2.0, 4.6, yy)) * (0.4 + 0.6 * sh);
+        // broad, uneven fading
+        vec2 pp = vRL.zy * vec2(0.33, 0.55) + vRL.x * 0.21;
+        float n = sin(pp.x * 2.1 + sin(pp.y * 1.7) * 1.3) * sin(pp.y * 2.6 + pp.x * 0.9) * 0.5 + 0.5;
+        // soot and dust on what faces up, high
+        float roof = smoothstep(0.5, 0.9, vRN.y) * smoothstep(2.6, 4.2, yy);
+        rlGrime = clamp(lo * 0.62 + streak * 0.5 + n * 0.16 + roof * 0.5, 0.0, 0.85);
+        vec3 dirt = vec3(0.105, 0.078, 0.056) * (0.75 + 0.5 * n);
+        diffuseColor.rgb = mix(diffuseColor.rgb, dirt, rlGrime * 0.72);
+      }`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+      roughnessFactor = clamp(roughnessFactor + rlGrime * 0.4, 0.0, 1.0);`)
+      .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
+      metalnessFactor *= 1.0 - rlGrime * 0.7;`);
+  };
+  m.customProgramCacheKey = () => 'freightWeathered';
+  return m;
 }
 
 // ---------------------------------------------------------------------------

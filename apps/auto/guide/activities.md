@@ -653,6 +653,10 @@ JOBS.
   credit (the credit paragraph is the pause menu's end; do not remove it). Look
   at `tools/data/careershots/pause-top.png`.
 
+**Helicopters out in the city (v215)**: `HELI_SPOTS` in main.js, on the lawn
+at Luther Burbank Park (Mercer Island) and on top of Queen Anne Hill, found
+with saucer.js's open-ground search and kept clear of trees.
+
 ## Taxi fares (`src/taxi.js`)
 
 **FARE in a taxi (`spec.taxi`) goes on shift**, the way MISSION does in a police

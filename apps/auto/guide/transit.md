@@ -234,6 +234,22 @@ jog after it), beside a hopper mid-train
 gates go up, you climb in at the cab). Cost near the line: +25 draws at Balmer Yard with two trains and the
 cuts in view, +220k triangles.
 
+**v215: weathering, no flicker, and the bed is ground.**
+- `weatheredBody` (freight.js) dirties the train in its shader, in each car's
+  own metres: grime up from the wheels, streaks down from the top, soot on the
+  roofs, broad fading. Arithmetic only. The yard's merged cuts are in world
+  space and keep the plain colour. **USE_SKINNING is a vertex-stage define**:
+  the fragment learns it from a varying (`vRK`), or the code compiles out.
+- Nothing on a car sits closer than ~2 cm to another face now: decals stand
+  3.5 cm off (`sideDecal` / `endDecal` default), and seams, grilles, the frame
+  stripe and the step frames stand clear of the faces they lay on. At 1 cm
+  they z-fought from a few hundred metres, and the train "flashed".
+- **The ballast is ground** (link.js `railBedSurface`, `city.bedQueries`,
+  registered in main.js after attach): freight's bed stands 0.8 m over its cut
+  formation and Link's 0.4 m over the ground, and a car or walker on the line
+  stood in it. Top-surface rule, like a ramp; tunnels, decks and crossings
+  answer for themselves.
+
 ## The Seattle-Bainbridge ferry (v164)
 
 **Two Jumbo Mark II ferries, M/V Wenatchee and M/V Tacoma, sail WSF's

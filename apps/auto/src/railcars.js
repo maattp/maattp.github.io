@@ -198,7 +198,7 @@ export function railDecals() {
  * (and toward +z on the other side). A box mirrored this way reads correctly
  * from both.
  */
-function sideDecal(D, cells, name, side, x, zc, yc, w, h, off = 0.012) {
+function sideDecal(D, cells, name, side, x, zc, yc, w, h, off = 0.035) {
   const cl = cells[name];
   if (!cl) return;
   const [u0, v0, u1, v1] = cl;
@@ -208,7 +208,7 @@ function sideDecal(D, cells, name, side, x, zc, yc, w, h, off = 0.012) {
     [u0, v0, u1, v0, u1, v1, u0, v1], [1, 1, 1]);
 }
 /** A panel on an end face (normal +z * e), reading from outside. */
-function endDecal(D, cells, name, e, z, xc, yc, w, h, off = 0.012) {
+function endDecal(D, cells, name, e, z, xc, yc, w, h, off = 0.035) {
   const cl = cells[name];
   if (!cl) return;
   const [u0, v0, u1, v1] = cl;
@@ -328,12 +328,12 @@ function buildLoco(road, num) {
   const stripe = bn ? C.bnsfYellow : C.white;
   // --- the frame and the deck ------------------------------------------------
   B.box(0, deck - 0.34, 0, fullW, 0.34, L - 1.2, 0, C.frame);
-  B.box(0, deck - 0.02, 0, fullW, 0.04, L - 1.4, 0, C.dark);
+  B.box(0, deck - 0.02, 0, fullW, 0.08, L - 1.4, 0, C.dark);
   // the walkway's edge: a safety stripe down each side
-  for (const s of [1, -1]) B.box(s * (fullW / 2 - 0.03), deck - 0.34, 0, 0.06, 0.34, L - 1.3, 0, bn ? C.bnsfYellow : C.white);
+  for (const s of [1, -1]) B.box(s * (fullW / 2 - 0.01), deck - 0.34, 0, 0.06, 0.34, L - 1.3, 0, bn ? C.bnsfYellow : C.white);
   // --- the fuel tank between the trucks -------------------------------------
   B.box(0, 0.62, 0, 2.7, 0.95, 6.6, 0, C.frame);
-  for (const s of [1, -1]) B.box(s * 1.36, 0.66, 0, 0.02, 0.8, 6.2, 0, C.dark);
+  for (const s of [1, -1]) B.box(s * 1.37, 0.66, 0, 0.04, 0.8, 6.2, 0, C.dark);
   B.box(0, 0.5, 3.4, 2.4, 0.9, 0.3, 0, C.dark);         // air reservoirs' end
   // --- the cab (safety cab: full width, with a nose) --------------------------
   const cabZ0 = half - 5.35, cabZ1 = half - 1.75;      // cab back wall .. windscreen
@@ -359,15 +359,15 @@ function buildLoco(road, num) {
   for (const s of [1, -1]) {
     T.quad([s * 0.08, 3.6, ws[0]], [s * 1.35, 3.6, ws[0]], [s * 1.3, 4.45, ws[1]], [s * 0.08, 4.45, ws[1]], [0, 0.3, 1], uv0, GLASS);
   }
-  B.quad([-1.5, 3.42, ws[0] + 0.01], [1.5, 3.42, ws[0] + 0.01], [1.5, 4.7, ws[1] + 0.01], [-1.5, 4.7, ws[1] + 0.01], [0, 0.3, 1], uv0, roof);
+  B.quad([-1.5, 3.42, ws[0] - 0.05], [1.5, 3.42, ws[0] - 0.05], [1.5, 4.7, ws[1] - 0.05], [-1.5, 4.7, ws[1] - 0.05], [0, 0.3, 1], uv0, roof);
   // number boards over the windscreen
   for (const s of [1, -1]) endDecal(D, cells, 'b' + num, 1, ws[1] + 0.03, s * 0.7, 4.58, 0.62, 0.18);
   // --- the nose: a short hood ahead of the cab, stepped down -----------------
   const noseZ0 = cabZ1, noseZ1 = half - 0.55;
   band(noseZ0, noseZ1, 2.6, deck, 3.05, bn ? C.bnsfBlack : C.cnRed);
   B.box(0, 3.05, (noseZ0 + noseZ1) / 2, 2.5, 0.12, noseZ1 - noseZ0 - 0.05, 0, bn ? C.bnsfBlack : C.cnRed);
-  if (bn) endDecal(D, cells, 'wings', 1, noseZ1 + 0.005, 0, 2.35, 2.2, 1.1);
-  else endDecal(D, cells, 'cnWhite', 1, noseZ1 + 0.005, 0, 2.45, 1.7, 0.9);
+  if (bn) endDecal(D, cells, 'wings', 1, noseZ1, 0, 2.35, 2.2, 1.1);
+  else endDecal(D, cells, 'cnWhite', 1, noseZ1, 0, 2.45, 1.7, 0.9);
   // headlights high on the nose, ditch lights on the pilot
   for (const s of [1, -1]) {
     T.spheroid(s * 0.32, 2.95, noseZ1 + 0.02, 0.1, 8, 5, C.lamp, 0.8);
@@ -381,12 +381,12 @@ function buildLoco(road, num) {
   B.box(0, 4.28, (hoodZ0 + hoodZ1) / 2, hoodW - 0.3, 0.1, hoodZ1 - hoodZ0 - 0.2, 0, C.dark);
   // hood doors: a run of panel seams, and louvres over the engine room
   for (const s of [1, -1]) {
-    for (let z = hoodZ0 + 0.9; z < hoodZ1 - 0.6; z += 1.05) B.box(s * (hoodW / 2 + 0.005), deck + 0.2, z, 0.012, 3.45 - deck - 0.2, 0.025, 0, C.dark);
-    B.box(s * (hoodW / 2 + 0.006), 3.7, (hoodZ0 + hoodZ1) / 2 - 1.5, 0.012, 0.45, 5.5, 0, C.grille);
+    for (let z = hoodZ0 + 0.9; z < hoodZ1 - 0.6; z += 1.05) B.box(s * (hoodW / 2 + 0.012), deck + 0.2, z, 0.04, 3.45 - deck - 0.2, 0.03, 0, C.dark);
+    B.box(s * (hoodW / 2 + 0.012), 3.7, (hoodZ0 + hoodZ1) / 2 - 1.5, 0.04, 0.45, 5.5, 0, C.grille);
     // the road name, big on the hood
     if (bn) sideDecal(D, cells, 'bnsfHood', s, hoodW / 2, (hoodZ0 + hoodZ1) / 2 + 0.6, 2.75, 5.4, 1.2);
     else sideDecal(D, cells, 'cnWhite', s, hoodW / 2, (hoodZ0 + hoodZ1) / 2 + 0.4, 2.8, 3.2, 1.65);
-    sideDecal(D, cells, 'grime', s, hoodW / 2, (hoodZ0 + hoodZ1) / 2, 2.6, hoodZ1 - hoodZ0, 1.9, 0.02);
+    sideDecal(D, cells, 'grime', s, hoodW / 2, (hoodZ0 + hoodZ1) / 2, 2.6, hoodZ1 - hoodZ0, 1.9, 0.05);
   }
   // exhaust stack, the dynamic-brake blister, and the air intake
   B.box(0, 4.38, hoodZ1 - 3.6, 0.5, 0.28, 0.9, 0, C.dark);
@@ -398,7 +398,7 @@ function buildLoco(road, num) {
   band(radZ0, radZ1, hoodW + 0.1, 3.55, 3.66, stripe);
   // the wings: full width up top, the radiators behind their grilles
   B.box(0, 3.66, (radZ0 + radZ1) / 2, fullW, 0.95, radZ1 - radZ0, 0, roof);
-  for (const s of [1, -1]) B.box(s * (fullW / 2 + 0.005), 3.75, (radZ0 + radZ1) / 2, 0.012, 0.75, radZ1 - radZ0 - 0.4, 0, C.grille);
+  for (const s of [1, -1]) B.box(s * (fullW / 2 + 0.012), 3.75, (radZ0 + radZ1) / 2, 0.04, 0.75, radZ1 - radZ0 - 0.4, 0, C.grille);
   // radiator fans on the roof
   for (const dz of [-1, 1]) B.tube([0, 4.6, (radZ0 + radZ1) / 2 + dz], [0, 4.66, (radZ0 + radZ1) / 2 + dz], 0.62, 12, C.grille, true);
   // rear end: headlights, the number boards
@@ -417,7 +417,7 @@ function buildLoco(road, num) {
     for (const e of [1, -1]) {
       const zs = e * (half - 0.9);
       for (let k = 0; k < 3; k++) B.box(s * (fullW / 2 - 0.25), 0.55 + k * 0.4, zs, 0.5, 0.06, 0.7, 0, k === 0 ? C.yellow : C.steel);
-      B.box(s * (fullW / 2 - 0.02), 0.5, zs, 0.04, 1.3, 0.72, 0, C.frame);
+      B.box(s * (fullW / 2 + 0.01), 0.5, zs, 0.04, 1.3, 0.72, 0, C.frame);
     }
   }
   // --- pilots, plows and couplers ---------------------------------------------
@@ -465,13 +465,13 @@ function buildHopper(road, mark) {
     B.box(s * (hw + 0.03), 1.42, 0, 0.1, 0.16, 2 * slope0, 0, colD);
     sideDecal(D, cells, road === 'cn' ? 'cnRed' : 'bnsfCarDark', s, hw + 0.06, road === 'cn' ? 1.2 : 1.5, 3.3, road === 'cn' ? 2.6 : 3.2, road === 'cn' ? 1.35 : 0.72);
     sideDecal(D, cells, mark, s, hw + 0.06, road === 'cn' ? -5.0 : -4.6, 2.35, 3.2, 0.92);
-    sideDecal(D, cells, 'grime', s, hw + 0.05, 0, 3.0, 2 * slope0, 3.0, 0.02);
+    sideDecal(D, cells, 'grime', s, hw + 0.05, 0, 3.0, 2 * slope0, 3.0, 0.04);
   }
   ribs(B, hw, -slope0, slope0, 1.5, top - 0.3, 1.25, 0.08, colD);
   // the roof: a flat crown with the long trough hatch running down it
   B.quad([-hw, top - 0.3, -half + 0.6], [hw, top - 0.3, -half + 0.6], [hw, top - 0.3, half - 0.6], [-hw, top - 0.3, half - 0.6], UP, uv0, col);
   B.box(0, top - 0.3, 0, 0.76, 0.3, L - 2.4, 0, colD);
-  for (let z = -half + 2.2; z < half - 1.8; z += 1.1) B.box(0, top - 0.02, z, 0.8, 0.04, 0.08, 0, C.steel);
+  for (let z = -half + 2.2; z < half - 1.8; z += 1.1) B.box(0, top - 0.02, z, 0.8, 0.07, 0.08, 0, C.steel);
   // the end slope sheets, raked down to the bolsters, and the bays below
   for (const e of [1, -1]) {
     B.quad([-hw, top - 0.3, e * (half - 0.6)], [hw, top - 0.3, e * (half - 0.6)], [hw, 2.6, e * (half - 0.6)], [-hw, 2.6, e * (half - 0.6)], [0, 0, e], uv0, col);
@@ -509,7 +509,7 @@ function buildCoal(mark) {
     B.box(s * (hw + 0.04), top - 0.16, 0, 0.1, 0.18, L - 0.7, 0, C.aluD);
     B.box(s * (hw + 0.04), 1.2, 0, 0.1, 0.16, L - 0.7, 0, C.aluD);
     sideDecal(D, cells, mark, s, hw + 0.05, -3.8, 2.3, 3.0, 0.86);
-    sideDecal(D, cells, 'grime', s, hw + 0.04, 0, 2.6, L - 1.2, 2.6, 0.02);
+    sideDecal(D, cells, 'grime', s, hw + 0.04, 0, 2.6, L - 1.2, 2.6, 0.04);
   }
   ribs(B, hw, -half + 0.6, half - 0.6, 1.25, top - 0.15, 1.0, 0.07, C.aluD);
   // the tubs under the floor, between the trucks
@@ -565,7 +565,7 @@ function buildTank(mark, un) {
     [barrel, r], [half - 0.7, r * 0.95], [half - 0.45, r * 0.72], [half - 0.3, 0.2]]) rings.push({ z, pts: ring(rr) });
   B.loft(rings, C.tank, { capStart: true, capEnd: true });
   // the jacket's girth seams and the head shields' edge
-  for (let z = -barrel + 2.2; z < barrel; z += 2.3) B.tube([0, cy, z], [0, cy, z + 0.03], r + 0.012, 20, C.tankD);
+  for (let z = -barrel + 2.2; z < barrel; z += 2.3) B.tube([0, cy, z], [0, cy, z + 0.05], r + 0.03, 20, C.tankD);
   // the top fittings under their protective housing, and the manway
   B.tube([0, cy + r - 0.05, -0.4], [0, cy + r + 0.42, -0.4], 0.46, 10, C.tank, true);
   B.box(0, cy + r + 0.38, -0.4, 1.0, 0.1, 1.0, 0, C.tankD);
@@ -587,9 +587,9 @@ function buildTank(mark, un) {
   // bottom outlet valve
   B.tube([0, cy - r + 0.05, 0.3], [0, cy - r - 0.35, 0.3], 0.14, 8, C.tankD, true);
   for (const s of [1, -1]) {
-    sideDecal(D, cells, mark, s, r + 0.01, -4.8, 1.62, 2.8, 0.8, 0.0);
+    sideDecal(D, cells, mark, s, r + 0.01, -4.8, 1.62, 2.8, 0.8, 0.03);
     // the placard holder on each side and each end
-    sideDecal(D, cells, un, s, r + 0.01, 3.2, cy - 0.35, 0.7, 0.7, 0.0);
+    sideDecal(D, cells, un, s, r + 0.01, 3.2, cy - 0.35, 0.7, 0.7, 0.03);
   }
   for (const e of [1, -1]) endDecal(D, cells, un, e, e * (half - 0.2), 0, cy, 0.6, 0.6);
   freightTruck(B, 6.8); freightTruck(B, -6.8);
@@ -618,7 +618,7 @@ function buildBox(road, mark) {
     if (road === 'cn') sideDecal(D, cells, 'cnWhite', s, hw + 0.02, 4.7, 3.4, 3.4, 1.8);
     else sideDecal(D, cells, 'bnsfCar', s, hw + 0.02, 4.9, 3.9, 4.2, 0.96);
     sideDecal(D, cells, mark, s, hw + 0.02, -4.8, 2.3, 3.4, 0.98);
-    sideDecal(D, cells, 'grime', s, hw + 0.03, 0, 3.2, L - 1, 3.9, 0.02);
+    sideDecal(D, cells, 'grime', s, hw + 0.03, 0, 3.2, L - 1, 3.9, 0.04);
     // ladders at the corners
     for (const e of [1, -1]) ladder(B, hw, s, e * (half - 0.7), y0, top - 0.3, 0.4);
   }
