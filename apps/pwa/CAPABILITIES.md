@@ -26,8 +26,9 @@ Measured 2026-10-11 on home Wi-Fi, mostly in portrait, with Low Power Mode off.
    `resume()`.
 7. **No fullscreen API, no orientation lock, no vibration.** Standalone is
    already chrome-free; handle orientation yourself; haptics via `<input switch>`.
-8. **Keep total memory well under ~1.9 GB.** iOS kills the app (no exception,
-   no `grow()` failure) once committed wasm memory passes ~1.9 GB.
+8. **Keep total memory well under ~2 GB.** iOS kills the app (no exception,
+   no `grow()` failure, no WebGPU out-of-memory error) at ~1.9 GB of wasm memory
+   or ~2 GB of WebGPU buffers.
 9. **Pause on `visibilitychange`.** In the background, rendering stops and timers drop to
    about 1 per second, but connections and GPU contexts survive (tested for 14 s).
 
@@ -130,6 +131,12 @@ The phone held 60 fps, but the same work took 1.8x longer once warm. Leave headr
 or build dynamic resolution scaling. `onSubmittedWorkDone` latency is a usable signal to
 drive it.
 
+### GPU memory
+WebGPU storage buffers in 128 MB steps, each cleared on the GPU: survived **2048 MB**,
+then iOS killed the app while it allocated the next buffer. No `out-of-memory` error scope
+fired and no validation error was raised. Textures, render targets and buffers count
+against this, and against the wasm/JS memory above.
+
 ### Workers
 `OffscreenCanvas` WebGL2 **and** WebGPU both work in a dedicated worker, and
 `requestAnimationFrame` exists in workers. A render worker is viable.
@@ -149,9 +156,10 @@ drive it.
 | Wasm SIMD128 | yes |
 | Wasm proposals | **yes**: bulk memory, exceptions (legacy and exnref), tail calls, GC, JSPI, `WebAssembly.Tag`. **no**: relaxed SIMD, memory64, multi-memory |
 
-Memory: the kill is silent, so the game can't catch it. The ~1.9 GB measured is for
-wasm alone; JS heap, decoded images and GPU resources share the phone's unified
-memory and count against the same limit. Target a total footprint under ~1.2–1.5 GB,
+Memory: the kill is silent, so the game can't catch it. Measured separately, the
+ceiling is ~1.9 GB of wasm memory or ~2 GB of WebGPU buffers (see GPU). The phone
+has unified memory, so the two almost certainly share one budget along with the JS
+heap and decoded images; plan for one combined limit of about 2 GB. Target a total footprint under ~1.2–1.5 GB,
 and set the wasm `maximum` to what you need, not 4 GB.
 
 Toolchains: don't pass `-mrelaxed-simd` or `-sMEMORY64`. Emscripten with
@@ -249,8 +257,7 @@ present; gzip `CompressionStream`/`DecompressionStream` work. Canvas
 ## Not yet measured
 
 - Phone-to-phone P2P over cellular (pair test), and whether TURN is needed.
-- GPU memory ceiling: how much WebGPU buffer space can be allocated before an
-  out-of-memory error or a kill (the probe's "Memory: GPU" button).
+- Combined ceiling (wasm + GPU at the same time). Each was only measured on its own.
 - Gamepad input with a real controller.
 - Whether anything renders in the bottom strip of the short viewport at launch.
 - 120 Hz: nothing tried got past 60 Hz. There may be no way.
