@@ -6,8 +6,12 @@
 
    Network-first (a probe should always run the newest build when online),
    cache only as the offline copy. */
-const CACHE = 'pwa-v1';
+const CACHE = 'pwa-v2';
 const SHELL = ['./', './manifest.webmanifest', './worker.js', '../icon.png'];
+// Only the app's own files are kept offline — the download benchmark fetches
+// multi-MB files from elsewhere on the site, which must not pile up here.
+const SCOPE = new URL('./', location).pathname;
+const KEEP = new Set(SHELL.map((u) => new URL(u, location).pathname));
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE)
@@ -38,10 +42,12 @@ self.addEventListener('fetch', (e) => {
   const add = url.searchParams.get('coi') !== '0';
   const key = url.origin + url.pathname;
   // WebKit rejects fetch() of a navigation-mode Request: revalidate by URL.
-  const net = nav ? fetch(req.url, { cache: 'no-cache' }) : fetch(req, { cache: 'no-cache' });
+  // A request that asked for no-store (the benchmarks) keeps it.
+  const net = nav ? fetch(req.url, { cache: 'no-cache' })
+    : fetch(req, { cache: req.cache === 'no-store' || req.cache === 'reload' ? req.cache : 'no-cache' });
   e.respondWith(
     net.then((res) => {
-      if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(key, copy)); }
+      if (res.ok && (url.pathname.startsWith(SCOPE) || KEEP.has(url.pathname))) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(key, copy)); }
       return res;
     }, () => caches.match(key))
       .then((res) => (add ? isolate(res) : res))

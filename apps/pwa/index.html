@@ -9,7 +9,7 @@
 <meta name="theme-color" content="#101418">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="../icon.png">
-<title>PWA Probe</title>
+<title>PWA Probe v2</title>
 <style>
   :root {
     --bg: #101418; --card: #182027; --line: #26313b; --fg: #e4ebf1; --dim: #8a9aa8;
@@ -62,20 +62,44 @@
   .det { font: 11px/1.4 ui-monospace, Menlo, monospace; color: var(--dim); margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
   .det:empty { display: none; }
   .row canvas { display: block; width: 96px; height: 96px; margin-top: 8px; border-radius: 6px; background: #000; }
-  .note { font-size: 12px; color: var(--dim); margin: -2px 0 8px; }
+  #ver { font-size: 15px; font-weight: 800; color: #0b0e11; background: #c792ff; padding: 3px 9px; border-radius: 999px; }
+  .buttons { grid-template-columns: 1fr 1fr; }
+  .panel { background: var(--card); border: 1px solid #2c66ad; border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+  .panel[hidden] { display: none; }
+  .panel .line { display: flex; gap: 8px; }
+  .panel input { flex: 1; min-width: 0; font: 600 18px ui-monospace, Menlo, monospace; text-transform: uppercase; letter-spacing: .15em;
+    background: #0b0e11; color: var(--fg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+  #pairCodeBig { font: 800 40px ui-monospace, Menlo, monospace; letter-spacing: .2em; text-align: center; color: var(--pass); margin: 8px 0 0; }
+  #pairCodeBig:empty { display: none; }
+  #pairStatus { font-size: 13px; color: var(--run); margin-top: 8px; }
+  .overlay { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; text-align: center;
+    padding: 24px; touch-action: none; -webkit-user-select: none; user-select: none; }
+  #touchpad { background: #0d2238; color: #cfe3ff; font-size: 20px; font-weight: 600; }
+  #loadCanvas { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 10; background: #000; }
+  #loadText { position: fixed; left: 0; right: 0; top: calc(env(safe-area-inset-top) + 40px); z-index: 11; text-align: center;
+    font: 700 18px ui-monospace, Menlo, monospace; color: #fff; text-shadow: 0 1px 3px #000; pointer-events: none; }
 </style>
 </head>
 <body>
 <header>
-  <h1>PWA Probe <small id="ver"></small></h1>
+  <h1>PWA Probe <span id="ver"></span></h1>
   <div id="mode"></div>
   <div id="tally"></div>
 </header>
 <div class="buttons">
   <button id="copy" class="primary">Copy results</button>
   <button id="rerun">Re-run checks</button>
-  <button id="tap">Run tap-gated checks</button>
+  <button id="tap">Tap-gated checks</button>
+  <button id="touch">Touch test</button>
+  <button id="bg">Background test</button>
+  <button id="load">Sustained GPU (30 s)</button>
+  <button id="pair">Pair test (2 phones)</button>
   <button id="stress" class="danger">Memory stress</button>
+</div>
+<div id="pairPanel" class="panel" hidden>
+  <div class="line"><button id="pairHost">Host</button><input id="pairCode" maxlength="5" placeholder="CODE" autocapitalize="characters" autocomplete="off"><button id="pairJoin">Join</button></div>
+  <div id="pairCodeBig"></div>
+  <div id="pairStatus">One phone taps Host; the other types the code and taps Join. Both copy their results afterwards.</div>
 </div>
 <div id="modeLinks"></div>
 <textarea id="copyOut" readonly></textarea>
@@ -84,7 +108,11 @@
 
 <script>
 'use strict';
-const VERSION = 1;
+const VERSION = 2;
+// The Cloudflare worker: its Space Flight room DO is a generic relay
+// (hello/welcome, roster, rtc signaling, pp echo, snap/input) the probe reuses.
+const API = 'https://cloudflare-backend.maattp.workers.dev';
+const WSAPI = API.replace(/^https/, 'wss');
 
 const $ = (s) => document.querySelector(s);
 const out = $('#out');
@@ -155,6 +183,7 @@ function addRow(group, name) {
   return {
     rec, el,
     attach(node) { el.append(node); },
+    note(text) { el.querySelector('.sum').textContent = text; },
     set({ status, summary = '', details = [] }) {
       Object.assign(rec, { status, summary, details });
       el.className = `row ${status}`;
@@ -191,16 +220,43 @@ const fail = (summary, details) => ({ status: 'fail', summary, details });
 const info = (summary, details) => ({ status: 'info', summary, details });
 const status = (t) => { $('#status').textContent = t; };
 
-function workerCall(msg) {
-  return new Promise((resolve, reject) => {
-    let w;
-    try { w = new Worker('worker.js'); } catch (e) { reject(e); return; }
-    w.onmessage = (e) => { w.terminate(); e.data.ok ? resolve(e.data) : reject(new Error(e.data.error)); };
-    w.onerror = (e) => { w.terminate(); reject(new Error(`worker error: ${e.message || 'script failed to load'}`)); };
-    w.onmessageerror = () => { w.terminate(); reject(new Error('messageerror (could not deserialize)')); };
-    try { w.postMessage(msg); } catch (e) { w.terminate(); reject(e); }
-  });
+// A worker that answers id-tagged requests (see worker.js).
+class Thread {
+  constructor() {
+    this.w = new Worker('worker.js');
+    this.seq = 0; this.wait = new Map(); this.dead = null;
+    this.w.onmessage = (e) => {
+      const p = this.wait.get(e.data.id);
+      if (!p) return;
+      this.wait.delete(e.data.id);
+      e.data.ok ? p.res(e.data) : p.rej(new Error(e.data.error));
+    };
+    const die = (msg) => { this.dead = new Error(msg); for (const p of this.wait.values()) p.rej(this.dead); this.wait.clear(); };
+    this.w.onerror = (e) => die(`worker error: ${e.message || 'script failed to load'}`);
+    this.w.onmessageerror = () => die('messageerror (could not deserialize)');
+  }
+  call(msg) {
+    if (this.dead) return Promise.reject(this.dead);
+    return new Promise((res, rej) => {
+      const id = ++this.seq;
+      this.wait.set(id, { res, rej });
+      try { this.w.postMessage({ ...msg, id }); } catch (e) { this.wait.delete(id); rej(e); }
+    });
+  }
+  end() { this.w.terminate(); }
 }
+async function workerCall(msg) {
+  const t = new Thread();
+  try { return await t.call(msg); } finally { t.end(); }
+}
+const median = (a) => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; };
+const pct = (a, p) => { const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(s.length * p))]; };
+const fmtMs = (v) => `${v.toFixed(v < 10 ? 2 : 1)} ms`;
+const waitEvent = (target, type, ms, what) => new Promise((res, rej) => {
+  const t = setTimeout(() => { target.removeEventListener(type, on); rej(new Error(`timed out waiting for ${what}`)); }, ms);
+  const on = (e) => { clearTimeout(t); target.removeEventListener(type, on); res(e); };
+  target.addEventListener(type, on);
+});
 
 /* ---------- tiny wasm assembler ---------- */
 const leb = (n) => { const o = []; do { let b = n & 0x7f; n >>>= 7; if (n) b |= 0x80; o.push(b); } while (n); return o; };
@@ -234,24 +290,42 @@ const WASM = {
       0x20, 0, 0x41, 1, 0x6b, 0x22, 0, 0x0d, 0, 0x0b, 0x20, 1, 0x0b] }),
 };
 
+// Feature-detection modules: valid only if the engine supports the proposal.
+const wmod = (...secs) => new Uint8Array([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0, ...secs.flatMap(([id, b]) => wsec(id, b))]);
+const wfn = (body) => [10, [1, ...leb(body.length), ...body]];
+const W_VOID = [1, [1, 0x60, 0, 0]], W_F0 = [3, [1, 0]];
+const WASM_FEATURES = [
+  ['bulk memory', wmod(W_VOID, W_F0, [5, [1, 0, 1]], wfn([0, 0x41, 0, 0x41, 0, 0x41, 0, 0xfc, 0x0b, 0, 0x0b]))],
+  ['exceptions (legacy try/catch)', wmod(W_VOID, W_F0, [13, [1, 0, 0]], wfn([0, 0x06, 0x40, 0x08, 0, 0x07, 0, 0x0b, 0x0b]))],
+  ['exceptions (exnref try_table)', wmod(W_VOID, W_F0, [13, [1, 0, 0]], wfn([0, 0x1f, 0x40, 1, 0x02, 0, 0x08, 0, 0x0b, 0x0b]))],
+  ['tail calls', wmod(W_VOID, W_F0, wfn([0, 0x12, 0, 0x0b]))],
+  ['relaxed SIMD', wmod(W_VOID, W_F0, wfn([0, 0xfd, 0x0c, ...new Array(16).fill(0), 0xfd, 0x81, 0x02, 0x1a, 0x0b]))],
+  ['GC (struct types)', wmod([1, [2, 0x5f, 1, 0x7f, 1, 0x60, 0, 0]], [3, [1, 1]], wfn([0, 0x41, 0, 0xfb, 0, 0, 0x1a, 0x0b]))],
+  ['memory64', wmod([5, [1, 0x04, 1]])],
+  ['multi-memory', wmod([5, [2, 0, 1, 0, 1]])],
+];
+
 /* ================= checks ================= */
 
 async function envChecks() {
   const G = 'Environment';
-  await check(G, 'Display mode', () => {
-    const d = [
-      `display-mode media query: ${MODE.dm}`,
-      `navigator.standalone: ${MODE.navStandalone}`,
-      `URL: ${location.href}`,
-      `UA: ${navigator.userAgent}`,
-      `screen: ${screen.width}x${screen.height} @${devicePixelRatio}x · viewport ${innerWidth}x${innerHeight}`,
-      `orientation: ${screen.orientation ? screen.orientation.type : 'n/a'}`,
-      `safe-area insets: ${safeAreas()}`,
-      `color gamut p3: ${matchMedia('(color-gamut: p3)').matches} · dynamic-range high: ${matchMedia('(dynamic-range: high)').matches}`,
-      `hardwareConcurrency: ${navigator.hardwareConcurrency} · deviceMemory: ${navigator.deviceMemory ?? 'n/a'}`,
-      `language: ${navigator.language} · online: ${navigator.onLine}`,
-    ];
-    return info(MODE.standalone ? 'Running standalone from the home screen' : 'Running in a browser tab', d);
+  await check(G, 'Display mode', () => info(MODE.standalone ? 'Running standalone from the home screen' : 'Running in a browser tab', [
+    `display-mode media query: ${MODE.dm}`,
+    `navigator.standalone: ${MODE.navStandalone}`,
+    `URL: ${location.href}`,
+    `UA: ${navigator.userAgent}`,
+    `color gamut p3: ${matchMedia('(color-gamut: p3)').matches} · dynamic-range high: ${matchMedia('(dynamic-range: high)').matches}`,
+    `prefers-reduced-motion: ${matchMedia('(prefers-reduced-motion: reduce)').matches}`,
+    `hardwareConcurrency: ${navigator.hardwareConcurrency} · deviceMemory: ${navigator.deviceMemory ?? 'n/a'}`,
+    `language: ${navigator.language} · online: ${navigator.onLine}`,
+  ]));
+
+  // Measured after layout settles, then re-measured live on every resize /
+  // rotation (the log is part of the copied text).
+  await check(G, 'Viewport + safe areas (live)', async (row) => {
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    vpRow = row;
+    return viewportResult();
   });
 
   await check(G, 'Service worker', async () => {
@@ -269,15 +343,69 @@ async function envChecks() {
   });
 }
 
-function safeAreas() {
-  const p = document.createElement('div');
-  p.style.cssText = 'position:fixed;visibility:hidden;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
-  document.body.append(p);
-  const cs = getComputedStyle(p);
-  const v = `t${cs.paddingTop} r${cs.paddingRight} b${cs.paddingBottom} l${cs.paddingLeft}`;
-  p.remove();
+// Three independent ways to read the insets, in case one of them lies.
+function insetsVia(method) {
+  const sides = ['top', 'right', 'bottom', 'left'];
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;left:0;top:0;visibility:hidden;pointer-events:none';
+  document.body.append(el);
+  let v;
+  if (method === 'padding') {
+    el.style.padding = sides.map((x) => `env(safe-area-inset-${x})`).join(' ');
+    const cs = getComputedStyle(el);
+    v = [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].map(parseFloat);
+  } else {
+    v = sides.map((x) => { el.style.width = '0'; el.style.height = `env(safe-area-inset-${x}, 0px)`; return el.getBoundingClientRect().height; });
+  }
+  el.remove();
   return v;
 }
+function viewportNow() {
+  const vv = window.visualViewport;
+  const full = document.createElement('div');
+  full.style.cssText = 'position:fixed;inset:0;visibility:hidden;pointer-events:none';
+  document.body.append(full);
+  const fr = full.getBoundingClientRect();
+  const hOf = (u) => { full.style.cssText = `position:fixed;left:0;top:0;width:0;height:100${u};visibility:hidden`; return full.getBoundingClientRect().height; };
+  const dvh = hOf('dvh'), svh = hOf('svh'), lvh = hOf('lvh');
+  full.remove();
+  return {
+    orientation: screen.orientation ? screen.orientation.type : String(window.orientation),
+    inner: `${innerWidth}x${innerHeight}`,
+    client: `${document.documentElement.clientWidth}x${document.documentElement.clientHeight}`,
+    fixedInset0: `${Math.round(fr.width)}x${Math.round(fr.height)}`,
+    visual: vv ? `${Math.round(vv.width)}x${Math.round(vv.height)} @scale ${vv.scale} offsetTop ${vv.offsetTop}` : 'n/a',
+    screen: `${screen.width}x${screen.height} (avail ${screen.availWidth}x${screen.availHeight}) @${devicePixelRatio}x`,
+    units: `100dvh=${dvh} 100svh=${svh} 100lvh=${lvh}`,
+    pad: insetsVia('padding'), height: insetsVia('height'),
+  };
+}
+let vpRow = null;
+const vpLog = [];
+function viewportResult() {
+  const v = viewportNow();
+  const fmt = (a) => `t${a[0]} r${a[1]} b${a[2]} l${a[3]}`;
+  const longSide = Math.max(screen.width, screen.height), shortSide = Math.min(screen.width, screen.height);
+  const landscape = innerWidth > innerHeight;
+  const fullBleed = landscape ? innerWidth >= longSide - 1 : innerHeight >= longSide - 1;
+  return info(`${v.inner} ${v.orientation} · insets ${fmt(v.pad)} · ${fullBleed ? 'full-bleed' : 'NOT full-bleed'}`, [
+    `innerWidth x innerHeight: ${v.inner}`, `documentElement.client: ${v.client}`, `position:fixed inset:0 box: ${v.fixedInset0}`,
+    `visualViewport: ${v.visual}`, `screen: ${v.screen}`, `viewport units: ${v.units}`,
+    `safe-area via padding: ${fmt(v.pad)}`, `safe-area via height: ${fmt(v.height)}`,
+    `page spans the full ${landscape ? 'width' : 'height'} of the screen (${longSide}x${shortSide}): ${fullBleed}`,
+    ...(vpLog.length ? ['resize / rotation log:', ...vpLog.map((l) => `  ${l}`)] : ['rotate the phone to log more samples']),
+  ]);
+}
+function onViewportChange(ev) {
+  setTimeout(() => {
+    const v = viewportNow();
+    vpLog.push(`${(performance.now() / 1000).toFixed(1)}s ${ev.type}: ${v.inner} ${v.orientation} insets t${v.pad[0]} r${v.pad[1]} b${v.pad[2]} l${v.pad[3]} fixed ${v.fixedInset0}`);
+    if (vpLog.length > 12) vpLog.shift();
+    if (vpRow) vpRow.set(viewportResult());
+  }, 300);
+}
+addEventListener('resize', onViewportChange);
+addEventListener('orientationchange', onViewportChange);
 
 /* ---------- WebGPU ---------- */
 const GPU_LIMITS = ['maxTextureDimension2D', 'maxTextureArrayLayers', 'maxBindGroups', 'maxSampledTexturesPerShaderStage',
@@ -314,6 +442,36 @@ async function shaderErrors(module) {
   return ci.messages.filter((m) => m.type === 'error').map((m) => `line ${m.lineNum}: ${m.message}`);
 }
 
+let gpuDevice = null;
+async function getGpuDevice() {
+  if (gpuDevice) return gpuDevice;
+  if (!navigator.gpu) throw new Error('navigator.gpu is undefined');
+  const a = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  if (!a) throw new Error('requestAdapter() returned null');
+  gpuDevice = await a.requestDevice();
+  gpuDevice.lost.then(() => { gpuDevice = null; });
+  return gpuDevice;
+}
+// Unique-per-call shader text, big enough that compile time is measurable.
+function bigShader(lang, salt) {
+  const f = (x) => x.toFixed(4);
+  let s = '';
+  const calls = [];
+  for (let i = 0; i < 40; i++) {
+    const k = 4 + (i % 5), m = f((i + 1) * 1.37 + salt), n = f(0.5 + i * 0.01);
+    s += lang === 'wgsl'
+      ? `fn f${i}(v: vec3f) -> vec3f { var c = v; for (var k = 0; k < ${k}; k++) { c = fract(sin(c.zxy * ${m}) * 43758.5453 + c * ${n}); } return c; }\n`
+      : `vec3 f${i}(vec3 v) { vec3 c = v; for (int k = 0; k < ${k}; k++) { c = fract(sin(c.zxy * ${m}) * 43758.5453 + c * ${n}); } return c; }\n`;
+    calls.push(`c = f${i}(c);`);
+  }
+  return lang === 'wgsl'
+    ? `${s}@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f { var p = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0)); return vec4f(p[i], 0.0, 1.0); }
+@fragment fn fs(@builtin(position) p: vec4f) -> @location(0) vec4f { var c = vec3f(p.xy * 0.001, ${f(salt)}); ${calls.join(' ')} return vec4f(c, 1.0); }`
+    : `#version 300 es
+precision highp float; out vec4 o;
+${s}void main() { vec3 c = vec3(gl_FragCoord.xy * 0.001, ${f(salt)}); ${calls.join(' ')} o = vec4(c, 1.0); }`;
+}
+
 async function webgpuChecks() {
   const G = 'Graphics: WebGPU';
   const gpuErrors = [];
@@ -340,6 +498,7 @@ async function webgpuChecks() {
     return { ...pass(`${ai.vendor || '?'} ${ai.architecture || ''} — device acquired`, d), device };
   });
   const device = base && base.device;
+  gpuDevice = device || null;
 
   await check(G, 'Render (triangle + pixel readback)', async (row) => {
     if (!device) return fail('No device (see Adapter + device)');
@@ -420,6 +579,48 @@ async function webgpuChecks() {
     const d = [`${N} elements, workgroup 64`, `dispatch + readback: ${(performance.now() - t).toFixed(1)} ms`];
     if (bad >= 0) d.push(`first mismatch at ${bad}: got ${res[bad]}, expected ${2 * bad}`);
     return bad < 0 ? pass('All results correct', d) : fail('Compute results are wrong', d);
+  });
+
+  await check(G, 'Canvas + pipeline options (P3, HDR, MSAA, async compile)', async () => {
+    if (!device) return fail('No device (see Adapter + device)');
+    const d = [];
+    const tryCfg = (label, cfg) => {
+      const c = document.createElement('canvas'); c.width = c.height = 16;
+      const ctx = c.getContext('webgpu');
+      try {
+        ctx.configure({ device, alphaMode: 'opaque', ...cfg });
+        ctx.getCurrentTexture();
+        const got = ctx.getConfiguration ? ctx.getConfiguration() : null;
+        d.push(`ok   ${label}${got ? ` → format ${got.format}, colorSpace ${got.colorSpace}, toneMapping ${got.toneMapping ? got.toneMapping.mode : 'n/a'}` : ''}`);
+        return true;
+      } catch (e) { d.push(`FAIL ${label}: ${errText(e)}`); return false; }
+    };
+    tryCfg('display-p3 canvas (bgra8unorm)', { format: navigator.gpu.getPreferredCanvasFormat(), colorSpace: 'display-p3' });
+    const hdr = tryCfg('HDR canvas (rgba16float, toneMapping extended)', { format: 'rgba16float', colorSpace: 'display-p3', toneMapping: { mode: 'extended' } });
+    device.pushErrorScope('validation');
+    const module = device.createShaderModule({ code: WGSL_RENDER });
+    const msaa = device.createRenderPipeline({ layout: 'auto', vertex: { module, entryPoint: 'vsFull' },
+      fragment: { module, entryPoint: 'fsSolid', targets: [{ format: 'rgba8unorm' }] }, multisample: { count: 4 } });
+    const ms4 = device.createTexture({ size: [64, 64], sampleCount: 4, format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT });
+    const res = device.createTexture({ size: [64, 64], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT });
+    const enc = device.createCommandEncoder();
+    const rp = enc.beginRenderPass({ colorAttachments: [{ view: ms4.createView(), resolveTarget: res.createView(), loadOp: 'clear', storeOp: 'discard' }] });
+    rp.setPipeline(msaa); rp.draw(3); rp.end();
+    device.queue.submit([enc.finish()]);
+    const merr = await device.popErrorScope();
+    d.push(merr ? `FAIL 4x MSAA render + resolve: ${merr.message}` : 'ok   4x MSAA render + resolve');
+    ms4.destroy(); res.destroy();
+    // Pipeline compile: the hitch a game sees the first time it uses a material.
+    const times = [];
+    for (let i = 0; i < 3; i++) {
+      const m = device.createShaderModule({ code: bigShader('wgsl', Math.random()) });
+      const t = performance.now();
+      await device.createRenderPipelineAsync({ layout: 'auto', vertex: { module: m, entryPoint: 'vs' },
+        fragment: { module: m, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] } });
+      times.push(performance.now() - t);
+    }
+    d.push(`createRenderPipelineAsync (40-function fragment shader, uncached): ${times.map(fmtMs).join(', ')}`);
+    return info(`HDR canvas ${hdr ? 'yes' : 'no'} · MSAA ${merr ? 'no' : '4x'} · pipeline compile ~${fmtMs(median(times))}`, d);
   });
 }
 
@@ -533,6 +734,26 @@ async function webglChecks() {
     const half = rows[1].ok;
     return half ? pass('RGBA16F renders and keeps values > 1', d) : fail('RGBA16F render target does not work', d);
   });
+  await check(G, 'Shader compile + link time', async () => {
+    if (!gl) return fail('No WebGL2 context');
+    const par = gl.getExtension('KHR_parallel_shader_compile');
+    const vs = '#version 300 es\nvoid main() { vec2 p[3] = vec2[3](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0)); gl_Position = vec4(p[gl_VertexID], 0.0, 1.0); }';
+    const times = [];
+    for (let i = 0; i < 3; i++) {
+      const t = performance.now();
+      const prog = gl.createProgram();
+      for (const [type, src] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, bigShader('glsl', Math.random())]]) {
+        const sh = gl.createShader(type); gl.shaderSource(sh, src); gl.compileShader(sh); gl.attachShader(prog, sh);
+      }
+      gl.linkProgram(prog);
+      if (par) while (!gl.getProgramParameter(prog, par.COMPLETION_STATUS_KHR)) await sleep(1);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return fail(`link failed: ${gl.getProgramInfoLog(prog)}`);
+      times.push(performance.now() - t);
+      gl.deleteProgram(prog);
+    }
+    return info(`~${fmtMs(median(times))} per uncached program`, [`KHR_parallel_shader_compile: ${!!par} (compile off the main thread)`,
+      `40-function fragment shader, compile + link: ${times.map(fmtMs).join(', ')}`]);
+  });
 }
 
 async function workerGraphicsCheck() {
@@ -543,6 +764,248 @@ async function workerGraphicsCheck() {
     const ok = /^WebGL 2/.test(r.offscreenWebgl2);
     return ok ? pass('WebGL2 works off the main thread', d) : fail('No WebGL2 in a worker', d);
   });
+}
+
+/* ---------- GPU performance ---------- */
+const WGSL_BENCH = `
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  var p = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
+  return vec4f(p[i], 0.0, 1.0);
+}
+@fragment fn fsCheap(@builtin(position) p: vec4f) -> @location(0) vec4f { return vec4f(p.xy * 0.0005, 0.5, 0.5); }
+@fragment fn fsHeavy(@builtin(position) p: vec4f) -> @location(0) vec4f {
+  var c = vec3f(p.xy * 0.001, 0.3);
+  for (var i = 0; i < 64; i++) { c = fract(sin(c.yzx * 12.9898 + c.zxy * 78.233) * 43758.5453); }
+  return vec4f(c, 1.0);
+}
+struct U { off: vec4f };
+@group(0) @binding(0) var<uniform> u: U;
+@vertex fn vsSmall(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  var p = array<vec2f, 3>(vec2f(0.0, 0.02), vec2f(-0.02, -0.02), vec2f(0.02, -0.02));
+  return vec4f(p[i] + u.off.xy, 0.0, 1.0);
+}
+@fragment fn fsFlat() -> @location(0) vec4f { return vec4f(1.0, 0.6, 0.2, 1.0); }
+@group(0) @binding(0) var<storage, read_write> o: array<vec4f>;
+@compute @workgroup_size(256) fn flops(@builtin(global_invocation_id) id: vec3u) {
+  var a = vec4f(f32(id.x) * 1e-6, 1.0, 2.0, 3.0);
+  let b = vec4f(0.9999, 0.9998, 0.9997, 0.9996);
+  let c = vec4f(0.0001);
+  for (var i = 0u; i < 512u; i++) { a = fma(a, b, c); a = fma(a, b, c); a = fma(a, b, c); a = fma(a, b, c); }
+  o[id.x] = a;
+}`;
+const BLEND = { color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha' }, alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' } };
+const NATIVE = () => [Math.round(screen.width * devicePixelRatio), Math.round(screen.height * devicePixelRatio)];
+
+// Best-of-N wall time from submit to onSubmittedWorkDone (encode excluded); first run is warm-up.
+async function gpuTime(device, encode, reps = 3) {
+  let best = Infinity;
+  for (let r = 0; r <= reps; r++) {
+    const enc = device.createCommandEncoder();
+    encode(enc);
+    const cb = enc.finish();
+    const t = performance.now();
+    device.queue.submit([cb]);
+    await device.queue.onSubmittedWorkDone();
+    if (r) best = Math.min(best, performance.now() - t);
+  }
+  return best;
+}
+
+async function gpuPerfChecks() {
+  const G = 'GPU performance';
+  const [W, H] = NATIVE();
+  await check(G, `WebGPU fill rate at native resolution (${W}x${H})`, async () => {
+    const device = await getGpuDevice();
+    const module = device.createShaderModule({ code: WGSL_BENCH });
+    const d = [];
+    const res = {};
+    for (const c of [
+      { key: 'rgba8', label: 'rgba8 cheap shader, 8 separate passes', format: 'rgba8unorm', fs: 'fsCheap', passes: 8, draws: 1 },
+      { key: 'rgba16f', label: 'rgba16float cheap shader, 8 separate passes', format: 'rgba16float', fs: 'fsCheap', passes: 8, draws: 1 },
+      { key: 'blend', label: 'rgba16float alpha-blended overdraw, 8 layers in 1 pass', format: 'rgba16float', fs: 'fsCheap', passes: 1, draws: 8, blend: true },
+      { key: 'heavy', label: 'rgba8 heavy shader (64-iteration ALU loop), 1 pass', format: 'rgba8unorm', fs: 'fsHeavy', passes: 1, draws: 1 },
+    ]) {
+      device.pushErrorScope('validation');
+      const pipe = device.createRenderPipeline({ layout: 'auto', vertex: { module, entryPoint: 'vs' },
+        fragment: { module, entryPoint: c.fs, targets: [{ format: c.format, blend: c.blend ? BLEND : undefined }] } });
+      const tex = device.createTexture({ size: [W, H], format: c.format, usage: GPUTextureUsage.RENDER_ATTACHMENT });
+      const view = tex.createView();
+      const t = await gpuTime(device, (enc) => {
+        for (let p = 0; p < c.passes; p++) {
+          const rp = enc.beginRenderPass({ colorAttachments: [{ view, loadOp: p ? 'load' : 'clear', storeOp: 'store' }] });
+          rp.setPipeline(pipe);
+          for (let k = 0; k < c.draws; k++) rp.draw(3);
+          rp.end();
+        }
+      });
+      const err = await device.popErrorScope();
+      tex.destroy();
+      if (err) { d.push(`FAIL ${c.label}: ${err.message}`); continue; }
+      const layers = c.passes * c.draws;
+      const per = t / layers;
+      res[c.key] = per;
+      d.push(`${c.label}: ${fmtMs(t)} total → ${fmtMs(per)} per full-screen layer, ${(W * H / per / 1000).toFixed(0)} Mpix/s`);
+    }
+    d.push('Budget at 60 Hz is 16.7 ms per frame; Apple GPUs remove hidden opaque overdraw, so only blended layers really cost fill.');
+    return info(`native ${W}x${H}: ${res.rgba16f ? fmtMs(res.rgba16f) : '?'} per HDR pass, ${res.heavy ? fmtMs(res.heavy) : '?'} heavy`, d);
+  }, 30000);
+
+  await check(G, 'WebGPU draw calls (dynamic-offset uniforms)', async () => {
+    const device = await getGpuDevice();
+    const module = device.createShaderModule({ code: WGSL_BENCH });
+    const bgl = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform', hasDynamicOffset: true } }] });
+    const pipe = device.createRenderPipeline({ layout: device.createPipelineLayout({ bindGroupLayouts: [bgl] }),
+      vertex: { module, entryPoint: 'vsSmall' }, fragment: { module, entryPoint: 'fsFlat', targets: [{ format: 'rgba8unorm' }] } });
+    const d = [];
+    for (const N of [1000, 4000, 10000]) {
+      const ubuf = device.createBuffer({ size: N * 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      const data = new Float32Array(N * 64);
+      for (let i = 0; i < N; i++) { data[i * 64] = Math.random() * 1.8 - 0.9; data[i * 64 + 1] = Math.random() * 1.8 - 0.9; }
+      device.queue.writeBuffer(ubuf, 0, data);
+      const bg = device.createBindGroup({ layout: bgl, entries: [{ binding: 0, resource: { buffer: ubuf, size: 16 } }] });
+      const tex = device.createTexture({ size: [512, 512], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT });
+      const cpu = [], gpu = [];
+      for (let r = 0; r < 4; r++) {
+        const t = performance.now();
+        const enc = device.createCommandEncoder();
+        const rp = enc.beginRenderPass({ colorAttachments: [{ view: tex.createView(), loadOp: 'clear', storeOp: 'store' }] });
+        rp.setPipeline(pipe);
+        for (let i = 0; i < N; i++) { rp.setBindGroup(0, bg, [i * 256]); rp.draw(3); }
+        rp.end();
+        device.queue.submit([enc.finish()]);
+        const t1 = performance.now();
+        await device.queue.onSubmittedWorkDone();
+        if (r) { cpu.push(t1 - t); gpu.push(performance.now() - t); }
+      }
+      tex.destroy(); ubuf.destroy();
+      d.push(`${N} draws: CPU encode+submit ${fmtMs(median(cpu))} (${(median(cpu) * 1000 / N).toFixed(2)} µs/draw), submit→done total ${fmtMs(median(gpu))}`);
+    }
+    return info(d[1], d);
+  }, 30000);
+
+  await check(G, 'WebGPU compute throughput', async () => {
+    const device = await getGpuDevice();
+    const module = device.createShaderModule({ code: WGSL_BENCH });
+    const groups = 4096, inv = groups * 256;
+    const buf = device.createBuffer({ size: inv * 16, usage: GPUBufferUsage.STORAGE });
+    const pipe = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'flops' } });
+    const bg = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: buf } }] });
+    const t = await gpuTime(device, (enc) => { const cp = enc.beginComputePass(); cp.setPipeline(pipe); cp.setBindGroup(0, bg); cp.dispatchWorkgroups(groups); cp.end(); });
+    buf.destroy();
+    const flops = inv * 512 * 4 * 4 * 2;
+    return info(`~${(flops / (t / 1000) / 1e9).toFixed(0)} GFLOPS (fp32 FMA)`, [`${inv} invocations × 2048 vec4 FMAs = ${(flops / 1e9).toFixed(1)} GFLOP in ${fmtMs(t)} (best of 3, includes submit overhead)`]);
+  }, 20000);
+
+  await check(G, 'WebGL2 fill rate + draw calls', async () => {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const gl = c.getContext('webgl2', { antialias: false });
+    if (!gl) return fail('No WebGL2 context');
+    gl.getExtension('EXT_color_buffer_float');
+    const vs = '#version 300 es\nvoid main() { vec2 p[3] = vec2[3](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0)); gl_Position = vec4(p[gl_VertexID], 0.0, 1.0); }';
+    const cheap = glProgram(gl, vs, '#version 300 es\nprecision highp float; out vec4 o; void main() { o = vec4(gl_FragCoord.xy * 0.0005, 0.5, 0.5); }');
+    const heavy = glProgram(gl, vs, '#version 300 es\nprecision highp float; out vec4 o; void main() { vec3 c = vec3(gl_FragCoord.xy * 0.001, 0.3); for (int i = 0; i < 64; i++) { c = fract(sin(c.yzx * 12.9898 + c.zxy * 78.233) * 43758.5453); } o = vec4(c, 1.0); }');
+    const sync = () => { const b = new Uint8Array(4); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, b); };
+    const syncF = () => { const b = new Float32Array(4); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, b); };
+    const d = [];
+    for (const cfg of [
+      { label: 'rgba8 alpha-blended overdraw, 8 layers', internal: gl.RGBA8, type: gl.UNSIGNED_BYTE, prog: cheap, layers: 8, blend: true },
+      { label: 'rgba16f alpha-blended overdraw, 8 layers', internal: gl.RGBA16F, type: gl.HALF_FLOAT, prog: cheap, layers: 8, blend: true },
+      { label: 'rgba8 heavy shader, 1 layer', internal: gl.RGBA8, type: gl.UNSIGNED_BYTE, prog: heavy, layers: 1, blend: false },
+    ]) {
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texStorage2D(gl.TEXTURE_2D, 1, cfg.internal, W, H);
+      const fb = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) { d.push(`FAIL ${cfg.label}: framebuffer incomplete`); continue; }
+      gl.viewport(0, 0, W, H);
+      gl.useProgram(cfg.prog);
+      cfg.blend ? gl.enable(gl.BLEND) : gl.disable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      const s = cfg.type === gl.UNSIGNED_BYTE ? sync : syncF;
+      let best = Infinity;
+      for (let r = 0; r < 4; r++) {
+        gl.clear(gl.COLOR_BUFFER_BIT); s();
+        const t = performance.now();
+        for (let k = 0; k < cfg.layers; k++) gl.drawArrays(gl.TRIANGLES, 0, 3);
+        s();
+        if (r) best = Math.min(best, performance.now() - t);
+      }
+      gl.disable(gl.BLEND);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.deleteFramebuffer(fb); gl.deleteTexture(tex);
+      d.push(`${cfg.label}: ${fmtMs(best)} → ${fmtMs(best / cfg.layers)} per layer (includes one readPixels sync)`);
+    }
+    // draw calls
+    const small = glProgram(gl, '#version 300 es\nuniform vec2 off; void main() { vec2 p[3] = vec2[3](vec2(0.0, 0.02), vec2(-0.02, -0.02), vec2(0.02, -0.02)); gl_Position = vec4(p[gl_VertexID] + off, 0.0, 1.0); }',
+      '#version 300 es\nprecision mediump float; out vec4 o; void main() { o = vec4(1.0, 0.6, 0.2, 1.0); }');
+    const loc = gl.getUniformLocation(small, 'off');
+    gl.viewport(0, 0, 64, 64);
+    gl.useProgram(small);
+    for (const N of [1000, 4000, 10000]) {
+      const cpu = [], tot = [];
+      for (let r = 0; r < 4; r++) {
+        const t = performance.now();
+        for (let i = 0; i < N; i++) { gl.uniform2f(loc, (i % 97) / 50 - 1, (i % 89) / 45 - 1); gl.drawArrays(gl.TRIANGLES, 0, 3); }
+        const t1 = performance.now();
+        sync();
+        if (r) { cpu.push(t1 - t); tot.push(performance.now() - t); }
+      }
+      d.push(`${N} draws (uniform2f + drawArrays): CPU ${fmtMs(median(cpu))} (${(median(cpu) * 1000 / N).toFixed(2)} µs/draw), with sync ${fmtMs(median(tot))}`);
+    }
+    return info('see details', d);
+  }, 30000);
+
+  await check(G, 'Texture upload + image decode', async () => {
+    const d = [];
+    const S = 2048;
+    const px = new Uint8Array(S * S * 4);
+    for (let i = 0; i < px.length; i += 4096) px[i] = i & 255;
+    let device = null;
+    try { device = await getGpuDevice(); } catch (e) { d.push(`WebGPU: ${errText(e)}`); }
+    if (device) {
+      const tex = device.createTexture({ size: [S, S], format: 'rgba8unorm', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT });
+      const tt = [];
+      for (let r = 0; r < 3; r++) { const t = performance.now(); device.queue.writeTexture({ texture: tex }, px, { bytesPerRow: S * 4 }, [S, S]); await device.queue.onSubmittedWorkDone(); tt.push(performance.now() - t); }
+      d.push(`WebGPU writeTexture 2048² RGBA8 (16 MB): ${tt.map(fmtMs).join(', ')}`);
+      tex.destroy();
+    }
+    const c = document.createElement('canvas'); c.width = c.height = 4;
+    const gl = c.getContext('webgl2');
+    if (gl) {
+      const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+      const tt = [];
+      for (let r = 0; r < 3; r++) { const t = performance.now(); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, S, S, 0, gl.RGBA, gl.UNSIGNED_BYTE, px); gl.finish(); tt.push(performance.now() - t); }
+      d.push(`WebGL2 texImage2D 2048² RGBA8 + finish: ${tt.map(fmtMs).join(', ')}`);
+    }
+    if (typeof OffscreenCanvas === 'function') {
+      const oc = new OffscreenCanvas(S, S);
+      const g = oc.getContext('2d');
+      const grd = g.createLinearGradient(0, 0, S, S); grd.addColorStop(0, '#234'); grd.addColorStop(1, '#fa4');
+      g.fillStyle = grd; g.fillRect(0, 0, S, S);
+      for (let i = 0; i < 400; i++) { g.fillStyle = `hsl(${i * 37 % 360},70%,50%)`; g.fillRect(Math.random() * S, Math.random() * S, 60, 60); }
+      for (const type of ['image/jpeg', 'image/png', 'image/webp']) {
+        let blob;
+        try { blob = await oc.convertToBlob({ type, quality: 0.85 }); } catch (e) { d.push(`${type} encode: ${errText(e)}`); continue; }
+        if (blob.type !== type) { d.push(`${type}: encoder not available (got ${blob.type})`); continue; }
+        const t = performance.now();
+        const bmp = await createImageBitmap(blob);
+        const dec = performance.now() - t;
+        let up = '';
+        if (device) {
+          const tex = device.createTexture({ size: [S, S], format: 'rgba8unorm', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT });
+          const t2 = performance.now();
+          device.queue.copyExternalImageToTexture({ source: bmp }, { texture: tex }, [S, S]);
+          await device.queue.onSubmittedWorkDone();
+          up = `, copyExternalImageToTexture ${fmtMs(performance.now() - t2)}`;
+          tex.destroy();
+        }
+        d.push(`${type} 2048² (${(blob.size / 1024).toFixed(0)} KB): createImageBitmap decode ${fmtMs(dec)}${up}`);
+        bmp.close();
+      }
+    }
+    return info('see details', d);
+  }, 30000);
 }
 
 /* ---------- isolation, SAB, wasm ---------- */
@@ -624,20 +1087,95 @@ async function isolationChecks() {
     return ok1g ? pass('A 1 GB-max shared memory can be reserved', d) : fail('Cannot reserve a 1 GB-max shared memory', d);
   });
 
-  await check(G, 'JS / Wasm speed (JIT sanity)', async () => {
-    const n = 30000000;
-    let t = performance.now();
-    let acc = 0;
-    for (let i = n; i > 0; i--) acc = (Math.imul(acc, 31) + i) | 0;
-    const js = performance.now() - t;
-    const { instance } = await WebAssembly.instantiate(WASM.run);
-    t = performance.now();
-    const w = instance.exports.run(n);
-    const wm = performance.now() - t;
-    const d = [`${n / 1e6}M-iteration integer loop`, `JS: ${js.toFixed(1)} ms · Wasm: ${wm.toFixed(1)} ms`,
-      'Compare these numbers between standalone and Safari; ~10x slower would mean no JIT.'];
-    return acc === w ? info(`JS ${js.toFixed(0)} ms · Wasm ${wm.toFixed(0)} ms`, d) : fail(`results differ: JS ${acc}, Wasm ${w}`, d);
+  await check(G, 'Wasm proposals (toolchain flags)', () => {
+    const d = WASM_FEATURES.map(([name, bytes]) => `${WebAssembly.validate(bytes) ? 'yes' : 'NO '}  ${name}`);
+    d.push(`${typeof WebAssembly.Suspending === 'function' && typeof WebAssembly.promising === 'function' ? 'yes' : 'NO '}  JSPI (WebAssembly.Suspending / promising)`);
+    d.push(`${typeof WebAssembly.Tag === 'function' ? 'yes' : 'NO '}  WebAssembly.Tag (JS exception API)`);
+    const yes = d.filter((l) => l.startsWith('yes')).length;
+    return info(`${yes}/${d.length} supported`, d);
   });
+}
+
+async function cpuChecks() {
+  const G = 'CPU + workers';
+  await check(G, 'JS / Wasm speed (5 runs)', async () => {
+    const n = 30000000;
+    const { instance } = await WebAssembly.instantiate(WASM.run);
+    const js = [], wa = [];
+    let acc = 0, w = 0;
+    for (let r = 0; r < 5; r++) {
+      let t = performance.now();
+      acc = 0;
+      for (let i = n; i > 0; i--) acc = (Math.imul(acc, 31) + i) | 0;
+      js.push(performance.now() - t);
+      t = performance.now();
+      w = instance.exports.run(n);
+      wa.push(performance.now() - t);
+      await sleep(0);
+    }
+    const d = [`${n / 1e6}M-iteration integer loop, 5 runs each`,
+      `JS:   ${js.map((v) => v.toFixed(0)).join(', ')} ms (median ${fmtMs(median(js))})`,
+      `Wasm: ${wa.map((v) => v.toFixed(0)).join(', ')} ms (median ${fmtMs(median(wa))})`];
+    return acc === w ? info(`JS ${median(js).toFixed(0)} ms · Wasm ${median(wa).toFixed(0)} ms (median)`, d) : fail(`results differ: JS ${acc}, Wasm ${w}`, d);
+  });
+
+  await check(G, 'Worker startup + message latency', async () => {
+    const starts = [];
+    for (let i = 0; i < 3; i++) {
+      const t = performance.now();
+      const th = new Thread();
+      await th.call({ cmd: 'echo' });
+      starts.push(performance.now() - t);
+      th.end();
+    }
+    const th = new Thread();
+    await th.call({ cmd: 'echo' });
+    const rtt = [];
+    for (let i = 0; i < 100; i++) { const t = performance.now(); await th.call({ cmd: 'echo' }); rtt.push(performance.now() - t); }
+    const big = new Float32Array(1 << 20);   // 4 MB structured clone
+    let t = performance.now();
+    await th.call({ cmd: 'echo', payload: big });
+    const clone4 = performance.now() - t;
+    th.end();
+    const ch = new MessageChannel();
+    const mc = [];
+    await new Promise((res) => {
+      let i = 0, t0 = 0;
+      ch.port2.onmessage = () => { ch.port1.postMessage(0); };
+      ch.port1.onmessage = () => { mc.push(performance.now() - t0); if (++i < 50) { t0 = performance.now(); ch.port2.postMessage(0); } else res(); };
+      t0 = performance.now(); ch.port2.postMessage(0);
+    });
+    return info(`spawn ${fmtMs(median(starts))} · postMessage RTT ${fmtMs(median(rtt))}`, [
+      `new Worker → first reply: ${starts.map(fmtMs).join(', ')}`,
+      `postMessage round trip (main ↔ worker, 100x): median ${fmtMs(median(rtt))}, p95 ${fmtMs(pct(rtt, 0.95))}`,
+      `4 MB Float32Array structured clone to worker + reply: ${fmtMs(clone4)}`,
+      `MessageChannel round trip on main thread: median ${fmtMs(median(mc))}`]);
+  });
+
+  await check(G, 'Parallel scaling (wasm spin on N workers)', async () => {
+    const module = await WebAssembly.compile(WASM.run);
+    const threads = Array.from({ length: 8 }, () => new Thread());
+    try {
+      await Promise.all(threads.map((th) => th.call({ cmd: 'load', module })));
+      const n = 60000000;
+      await threads[0].call({ cmd: 'spin', n: 1000000 });
+      const rows = [];
+      let base = 0, best = 0;
+      for (const k of [1, 2, 3, 4, 5, 6, 8]) {
+        const t = performance.now();
+        const r = await Promise.all(threads.slice(0, k).map((th) => th.call({ cmd: 'spin', n })));
+        const wall = performance.now() - t;
+        const thr = k * n / wall;
+        if (k === 1) base = thr;
+        const sp = thr / base;
+        best = Math.max(best, sp);
+        rows.push(`${k} worker${k > 1 ? 's' : ' '}: wall ${wall.toFixed(0)} ms, per-worker ${r.map((x) => x.ms.toFixed(0)).join('/')} ms → speedup ${sp.toFixed(2)}x`);
+      }
+      return info(`~${best.toFixed(1)} cores' worth of parallel speedup (hardwareConcurrency says ${navigator.hardwareConcurrency})`, [
+        `each worker runs the same ${n / 1e6}M-iteration wasm loop; speedup = throughput vs 1 worker`, ...rows,
+        'Apple phones mix performance and efficiency cores: expect the curve to flatten after the P-cores.']);
+    } finally { threads.forEach((th) => th.end()); }
+  }, 60000);
 }
 
 /* ---------- WebRTC ---------- */
@@ -663,12 +1201,59 @@ async function connectPair(config, channels) {
     : new Promise((r, j) => { c.onopen = r; c.onerror = (e) => j(e.error || new Error('channel error')); }))]);
   const state = () => `ice ${a.iceConnectionState}/${b.iceConnectionState}, connection ${a.connectionState}/${b.connectionState}, ` +
     `candidates offered ${(a.localDescription.sdp.match(/a=candidate:[^\r\n]*/g) || []).map((c) => /typ (\w+)/.exec(c)[1] + (/\.local /.test(c) ? '(mDNS)' : '')).join(' ') || 'none'}`;
-  const [rem] = await Promise.race([opened, sleep(10000).then(() => { const st = state(); a.close(); b.close(); throw new Error(`channels never opened in 10 s — ${st}`); })]);
+  let timer;
+  const [rem] = await Promise.race([opened, new Promise((_, rej) => {
+    timer = setTimeout(() => { const st = state(); a.close(); b.close(); rej(new Error(`channels never opened in 10 s — ${st}`)); }, 10000);
+  })]).finally(() => clearTimeout(timer));
   return { a, b, local, remote: rem, openMs: performance.now() - t };
 }
 
+// A connection to a relay room on the worker. `code` null creates a room.
+async function edgeRoom(code, name) {
+  if (!code) {
+    const r = await fetch(`${API}/sf/rooms`, { method: 'POST' });
+    if (!r.ok) throw new Error(`POST /sf/rooms → ${r.status}`);
+    code = (await r.json()).code;
+  }
+  const ws = new WebSocket(`${WSAPI}/sf/rooms/${code}/ws`);
+  const listeners = new Set();
+  let roster = null;
+  ws.onmessage = (e) => {
+    let m; try { m = JSON.parse(e.data); } catch { return; }
+    if (m.t === 'roster') roster = m;
+    for (const l of [...listeners]) l(m);
+  };
+  const next = (pred, ms, what) => new Promise((res, rej) => {
+    const l = (m) => { if (pred(m)) { listeners.delete(l); clearTimeout(t); res(m); } };
+    const t = setTimeout(() => { listeners.delete(l); rej(new Error(`timed out waiting for ${what}`)); }, ms);
+    listeners.add(l);
+  });
+  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('WebSocket to the worker failed to open')); setTimeout(() => rej(new Error('WebSocket open timed out')), 10000); });
+  const send = (o) => ws.send(JSON.stringify(o));
+  const welcome = next((m) => m.t === 'welcome' || m.t === 'error', 10000, 'welcome');
+  send({ t: 'hello', name, ver: 'pwa-probe' });
+  const w = await welcome;
+  if (w.t === 'error') { ws.close(); throw new Error(`room said: ${w.msg}`); }
+  return {
+    ws, code, send, next, listeners, id: w.id, host: w.host,
+    roster: () => roster,
+    async ppRtt(n) {
+      const out = [];
+      for (let i = 0; i < n; i++) {
+        const ts = performance.now();
+        const p = next((m) => m.t === 'pp' && m.ts === ts, 5000, 'pp echo');
+        send({ t: 'pp', ts });
+        await p;
+        out.push(performance.now() - ts);
+      }
+      return out;
+    },
+    close() { try { ws.close(); } catch {} },
+  };
+}
+
 async function webrtcChecks() {
-  const G = 'Networking: WebRTC';
+  const G = 'Networking';
   await check(G, 'Data channels (local loopback)', async () => {
     if (typeof RTCPeerConnection === 'undefined') return fail('RTCPeerConnection is undefined');
     const { a, b, local, remote, openMs } = await connectPair({ iceServers: [] },
@@ -746,6 +1331,44 @@ async function webrtcChecks() {
       : fail('No srflx candidate — STUN did not answer', d);
   }, 12000);
 
+  await check(G, 'Edge server (Cloudflare worker) WebSocket', async () => {
+    const t = performance.now();
+    const room = await edgeRoom(null, 'probe');
+    const openMs = performance.now() - t;
+    try {
+      const rtt = await room.ppRtt(30);
+      const turn = await (await fetch(`${API}/sf/turn`)).json();
+      return info(`RTT median ${fmtMs(median(rtt))} · TURN ${turn.turn ? 'configured' : 'NOT configured'}`, [
+        `create room + open + hello/welcome: ${openMs.toFixed(0)} ms`,
+        `WebSocket echo RTT (30x): median ${fmtMs(median(rtt))}, p95 ${fmtMs(pct(rtt, 0.95))}, min ${fmtMs(Math.min(...rtt))}`,
+        `/sf/turn: ${turn.turn ? 'TURN relay credentials available' : 'STUN only — two phones on carrier NAT may fail to connect P2P'}`,
+        `ICE servers offered: ${turn.iceServers.map((x) => [].concat(x.urls).map((u) => u.split('?')[0]).join(' ')).join(' | ')}`]);
+    } finally { room.close(); }
+  });
+
+  await check(G, 'Asset download (GitHub Pages CDN)', async () => {
+    const url = new URL('/apps/auto/data/roads.bin', location).href;
+    const d = [];
+    let last = 0;
+    for (const [label, u] of [['cold (unique query)', `${url}?probe=${Date.now()}`], ['warm', `${url}?probe=warm`], ['warm again', `${url}?probe=warm`]]) {
+      const t = performance.now();
+      const r = await fetch(u, { cache: 'no-store' });
+      const reader = r.body.getReader();
+      let bytes = 0, ttfb = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (!ttfb) ttfb = performance.now() - t;
+        if (done) break;
+        bytes += value.byteLength;
+      }
+      const sec = (performance.now() - t) / 1000;
+      last = bytes / 1048576 / sec;
+      const e = performance.getEntriesByName(u).pop();
+      d.push(`${label}: ${(bytes / 1048576).toFixed(1)} MB in ${(sec * 1000).toFixed(0)} ms = ${last.toFixed(1)} MB/s, first chunk ${ttfb.toFixed(0)} ms${e && e.nextHopProtocol ? `, ${e.nextHopProtocol}` : ''}`);
+    }
+    return info(`~${last.toFixed(1)} MB/s warm`, [...d, 'Over whatever network the phone is on right now (note Wi-Fi vs cellular).']);
+  }, 60000);
+
   await check(G, 'Other transports', () => info('Availability only', [
     `WebSocket: ${typeof WebSocket === 'function'}`,
     `WebTransport: ${typeof WebTransport === 'function'}`,
@@ -759,12 +1382,13 @@ async function timingChecks() {
   const G = 'Frame pacing + timers';
   await check(G, 'requestAnimationFrame rate', () => new Promise((resolve) => {
     const ts = [];
-    const step = (t) => { ts.push(t); ts.length < 121 ? requestAnimationFrame(step) : finish(); };
+    const step = (t) => { ts.push(t); ts.length < 241 && t - ts[0] < 5000 ? requestAnimationFrame(step) : finish(); };
     const finish = () => {
       const dts = ts.slice(1).map((t, i) => t - ts[i]).sort((x, y) => x - y);
       const med = dts[dts.length >> 1];
       resolve(info(`${(1000 / med).toFixed(0)} Hz (median frame ${med.toFixed(2)} ms)`, [
-        `120 frames · min ${dts[0].toFixed(2)} ms · p90 ${dts[Math.floor(dts.length * 0.9)].toFixed(2)} ms · max ${dts[dts.length - 1].toFixed(2)} ms`,
+        `${dts.length} frames · min ${dts[0].toFixed(2)} ms · p90 ${dts[Math.floor(dts.length * 0.9)].toFixed(2)} ms · p99 ${pct(dts, 0.99).toFixed(2)} ms · max ${dts[dts.length - 1].toFixed(2)} ms`,
+        `frames over 20 ms: ${dts.filter((x) => x > 20).length}/${dts.length}`,
         'Low Power Mode caps this at 60 Hz (and Safari may cap 120 Hz displays at 60).']));
     };
     requestAnimationFrame(step);
@@ -778,6 +1402,19 @@ async function timingChecks() {
     }
     return info(`${(min * 1000).toFixed(1)} µs smallest step`, [`crossOriginIsolated: ${self.crossOriginIsolated} (isolation usually buys finer timers)`]);
   });
+  await check(G, 'Timers + scheduling APIs', async () => {
+    const chain = async (n) => { const t = performance.now(); for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); return (performance.now() - t) / n; };
+    const st = await chain(20);
+    const d = [`setTimeout(0) average over a 20-deep chain: ${fmtMs(st)} (browsers clamp nested timers to ≥4 ms)`];
+    const iv = await new Promise((res) => { const ts = []; const id = setInterval(() => { ts.push(performance.now()); if (ts.length === 31) { clearInterval(id); res(ts.slice(1).map((t, i) => t - ts[i])); } }, 1); });
+    d.push(`setInterval(1) actual period: median ${fmtMs(median(iv))}`);
+    d.push(`scheduler.postTask: ${typeof scheduler !== 'undefined' && typeof scheduler.postTask === 'function'} · scheduler.yield: ${typeof scheduler !== 'undefined' && typeof scheduler.yield === 'function'}`);
+    d.push(`requestIdleCallback: ${typeof requestIdleCallback === 'function'} · requestVideoFrameCallback: ${'requestVideoFrameCallback' in HTMLVideoElement.prototype}`);
+    d.push(`PerformanceObserver longtask: ${typeof PerformanceObserver === 'function' && (PerformanceObserver.supportedEntryTypes || []).includes('longtask')}`);
+    d.push(`supported performance entry types: ${(PerformanceObserver.supportedEntryTypes || []).join(', ')}`);
+    try { const r = await workerCall({ cmd: 'env' }); d.push(`requestAnimationFrame inside a worker: ${r.requestAnimationFrame}`); } catch (e) { d.push(`worker env: ${errText(e)}`); }
+    return info(`setTimeout(0) chain ${fmtMs(st)} each`, d);
+  });
 }
 
 /* ---------- storage ---------- */
@@ -786,8 +1423,12 @@ async function storageChecks() {
   await check(G, 'Quota + persistence', async () => {
     if (!navigator.storage || !navigator.storage.estimate) return fail('navigator.storage.estimate is undefined');
     const e = await navigator.storage.estimate();
-    const persisted = navigator.storage.persisted ? await navigator.storage.persisted() : 'n/a';
-    return info(`quota ${(e.quota / 1048576).toFixed(0)} MB · used ${(e.usage / 1048576).toFixed(1)} MB`, [`persisted: ${persisted}`]);
+    const before = navigator.storage.persisted ? await navigator.storage.persisted() : 'n/a';
+    let after = 'n/a';
+    if (navigator.storage.persist) { try { after = await navigator.storage.persist(); } catch (x) { after = errText(x); } }
+    return info(`quota ${(e.quota / 1048576).toFixed(0)} MB · used ${(e.usage / 1048576).toFixed(1)} MB · persist() → ${after}`, [
+      `persisted before: ${before} · navigator.storage.persist() returned: ${after}`,
+      'Persistent storage is exempt from WebKit\'s 7-day eviction of script-written data.']);
   });
   await check(G, 'IndexedDB (1 MB blob round trip)', () => new Promise((resolve, reject) => {
     const req = indexedDB.open('pwa-probe', 1);
@@ -810,14 +1451,20 @@ async function storageChecks() {
       };
     };
   }));
-  await check(G, 'Cache API', async () => {
+  await check(G, 'Cache API (32 MB write + read)', async () => {
     const c = await caches.open('pwa-probe-test');
-    await c.put('./__probe', new Response('hello'));
+    const big = new Uint8Array(32 << 20).fill(5);
+    let t = performance.now();
+    await c.put('./__probe', new Response(big));
+    const w = performance.now() - t;
+    t = performance.now();
     const r = await c.match('./__probe');
-    const t = r && await r.text();
+    const got = r ? (await r.arrayBuffer()).byteLength : 0;
+    const rd = performance.now() - t;
     await caches.delete('pwa-probe-test');
-    return t === 'hello' ? pass('put/match/delete work') : fail(`match returned ${t}`);
-  });
+    const d = [`put 32 MB: ${fmtMs(w)} (${(32 / (w / 1000)).toFixed(0)} MB/s) · match + read: ${fmtMs(rd)} (${(32 / (rd / 1000)).toFixed(0)} MB/s)`];
+    return got === big.length ? pass('put/match/delete work', d) : fail(`read back ${got} bytes`, d);
+  }, 30000);
   await check(G, 'OPFS (origin private file system)', async () => {
     if (!navigator.storage || !navigator.storage.getDirectory) return fail('navigator.storage.getDirectory is undefined');
     const root = await navigator.storage.getDirectory();
@@ -830,6 +1477,11 @@ async function storageChecks() {
     await root.removeEntry('probe.bin');
     return size === 1 << 20 ? pass('Wrote and read a 1 MB file') : fail(`file size ${size}`);
   });
+  await check(G, 'OPFS sync access handle in a worker (64 MB)', async () => {
+    const r = await workerCall({ cmd: 'opfs', mb: 64 });
+    return pass(`write ${(64 / (r.writeMs / 1000)).toFixed(0)} MB/s · read ${(64 / (r.readMs / 1000)).toFixed(0)} MB/s`,
+      [`write 64 × 1 MB + flush: ${fmtMs(r.writeMs)} · read: ${fmtMs(r.readMs)}`]);
+  }, 30000);
 }
 
 /* ---------- assets + input ---------- */
@@ -878,13 +1530,15 @@ function startTapChecks() {
   const begin = (fn) => { try { return Promise.resolve(fn()); } catch (e) { return Promise.reject(e); } };
 
   const AC = window.AudioContext || window.webkitAudioContext;
-  let ac = null, sessionNote = 'navigator.audioSession: absent';
+  const tapRun = (+ss.get('pwa-tapruns') || 0) + 1;
+  ss.set('pwa-tapruns', String(tapRun));
+  let ac = null, sessionNote = 'navigator.audioSession: absent', tResume = 0;
   if ('audioSession' in navigator) {
     const before = navigator.audioSession.type;
     try { navigator.audioSession.type = 'playback'; sessionNote = `navigator.audioSession.type: ${before} → ${navigator.audioSession.type} (plays through the silent switch)`; }
     catch (e) { sessionNote = `navigator.audioSession.type set threw ${errText(e)}`; }
   }
-  const audioP = begin(() => { ac = new AC({ latencyHint: 'interactive' }); return ac.resume(); });
+  const audioP = begin(() => { ac = new AC({ latencyHint: 'interactive' }); tResume = performance.now(); return ac.resume(); });
   const motionP = begin(() => (typeof DeviceMotionEvent !== 'undefined' && DeviceMotionEvent.requestPermission
     ? DeviceMotionEvent.requestPermission() : 'no-permission-api'));
   const fsEl = document.documentElement;
@@ -903,15 +1557,32 @@ function startTapChecks() {
     status('Running tap-gated checks…');
     await check(G, 'Web Audio', async () => {
       await audioP;
-      const d = [sessionNote, `state: ${ac.state}`, `sampleRate: ${ac.sampleRate}`,
-        `baseLatency: ${ac.baseLatency != null ? (ac.baseLatency * 1000).toFixed(1) + ' ms' : 'n/a'}`,
-        `outputLatency: ${ac.outputLatency != null ? (ac.outputLatency * 1000).toFixed(1) + ' ms' : 'n/a'}`];
+      const resumed = performance.now() - tResume;
+      const d = [`tap-gated run #${tapRun} in this session (run it twice: the first run switches the audio session)`, sessionNote,
+        `state: ${ac.state} · sampleRate: ${ac.sampleRate} · resume() resolved after ${fmtMs(resumed)}`,
+        `baseLatency: ${ac.baseLatency != null ? fmtMs(ac.baseLatency * 1000) : 'n/a'}`];
       if (ac.state !== 'running') return fail(`AudioContext state is "${ac.state}" after resume()`, d);
+      // When does the audio clock actually start moving?
+      const c0 = ac.currentTime;
+      while (ac.currentTime === c0 && performance.now() - tResume < 3000) await sleep(2);
+      const started = performance.now() - tResume;
+      d.push(`audio clock first advanced ${fmtMs(started)} after resume() was called${ac.currentTime === c0 ? ' — NEVER (3 s)' : ''}`);
       const o = ac.createOscillator(), g = ac.createGain();
       o.frequency.value = 660; g.gain.setValueAtTime(0.15, ac.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.15);
       o.connect(g).connect(ac.destination); o.start(); o.stop(ac.currentTime + 0.16);
-      const t0 = ac.currentTime; await sleep(250);
-      d.push(`clock advanced ${((ac.currentTime - t0) * 1000).toFixed(0)} ms in 250 ms (you should have heard a blip)`);
+      // Clock rate in 250 ms slices over 2 s: shows a late start vs a slow clock.
+      const slices = [];
+      let w0 = performance.now(), a0 = ac.currentTime;
+      for (let i = 0; i < 8; i++) {
+        await sleep(250);
+        const w1 = performance.now(), a1 = ac.currentTime;
+        slices.push(((a1 - a0) * 1000) / (w1 - w0));
+        w0 = w1; a0 = a1;
+      }
+      d.push(`audio clock speed per 250 ms slice (1.00 = real time): ${slices.map((x) => x.toFixed(2)).join(' ')}`);
+      const ol = ac.outputLatency;
+      d.push(`outputLatency raw: ${ol} s${ol != null && ol > 2 ? ' — implausible, ignore (WebKit reports garbage here)' : ol != null ? ` = ${fmtMs(ol * 1000)}` : ''}`);
+      if (ac.getOutputTimestamp) { const ts = ac.getOutputTimestamp(); d.push(`getOutputTimestamp: contextTime ${ts.contextTime?.toFixed(3)} s vs currentTime ${ac.currentTime.toFixed(3)} s, performanceTime ${ts.performanceTime?.toFixed(1)} vs now ${performance.now().toFixed(1)}`); }
       if (ac.audioWorklet) {
         const src = 'registerProcessor("probe", class extends AudioWorkletProcessor { process() { return true; } });';
         const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
@@ -920,7 +1591,10 @@ function startTapChecks() {
       } else d.push('AudioWorklet: absent');
       try { const buf = await ac.decodeAudioData(wav()); d.push(`decodeAudioData(WAV): ok, ${buf.duration.toFixed(2)} s`); }
       catch (e) { d.push(`decodeAudioData: ${errText(e)}`); }
-      return pass(`Running at ${ac.sampleRate} Hz`, d);
+      const steady = median(slices.slice(2));
+      return Math.abs(steady - 1) < 0.1
+        ? pass(`${ac.sampleRate} Hz · clock moving after ${started.toFixed(0)} ms`, d)
+        : fail(`audio clock runs at ${steady.toFixed(2)}x real time`, d);
     });
     await check(G, 'Motion sensors (tilt steering)', async () => {
       const perm = await motionP;
@@ -933,7 +1607,8 @@ function startTapChecks() {
       removeEventListener('devicemotion', on);
       if (last) {
         const g = last.accelerationIncludingGravity || {};
-        d.push(`events in 1 s: ${n} · interval ${last.interval} ms`, `gravity sample: x=${(g.x ?? NaN).toFixed(2)} y=${(g.y ?? NaN).toFixed(2)} z=${(g.z ?? NaN).toFixed(2)}`);
+        const iv = last.interval;
+        d.push(`events in 1 s: ${n} · event.interval raw ${iv}${iv < 1 ? ` (that is seconds, not the spec's ms: ${fmtMs(iv * 1000)})` : ' ms'}`, `gravity sample: x=${(g.x ?? NaN).toFixed(2)} y=${(g.y ?? NaN).toFixed(2)} z=${(g.z ?? NaN).toFixed(2)}`);
       }
       return n ? pass(`${n} devicemotion events/s`, d) : fail('No devicemotion events arrived', d);
     });
@@ -989,7 +1664,7 @@ async function memoryStress() {
     let mb = 0, err = null;
     const t = performance.now();
     while (mb < 4096) {
-      ls.set(STRESS_KEY, JSON.stringify({ running: true, mb, at: Date.now(), standalone: MODE.standalone }));
+      ls.set(STRESS_KEY, JSON.stringify({ phase: 'wasm memory', mb, at: Date.now(), standalone: MODE.standalone }));
       try { mem.grow(STEP * 16); } catch (e) { err = e; break; }
       const u8 = new Uint8Array(mem.buffer, mb * 1048576, STEP * 1048576);
       for (let i = 0; i < u8.length; i += 4096) u8[i] = 1;
@@ -1002,6 +1677,35 @@ async function memoryStress() {
     if (err) d.push(`stopped by: ${errText(err)}`);
     return info(`Reached ${mb} MB${err ? '' : ' (hit the 4 GB cap)'}`, d);
   }, 120000);
+  await sleep(1500);   // let the wasm memory above be collected
+  status('Memory stress: allocating WebGPU buffers…');
+  await check(G, 'WebGPU buffers: how much GPU memory can be allocated', async () => {
+    const device = await getGpuDevice();
+    const STEP = 128;
+    const bufs = [];
+    let mb = 0, err = null;
+    const t = performance.now();
+    while (mb < 6144) {
+      ls.set(STRESS_KEY, JSON.stringify({ phase: 'WebGPU buffers', mb, at: Date.now(), standalone: MODE.standalone }));
+      device.pushErrorScope('out-of-memory');
+      device.pushErrorScope('validation');
+      const b = device.createBuffer({ size: STEP * 1048576, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+      const enc = device.createCommandEncoder();
+      enc.clearBuffer(b);   // make the driver actually back it
+      device.queue.submit([enc.finish()]);
+      await device.queue.onSubmittedWorkDone();
+      const verr = await device.popErrorScope(), oom = await device.popErrorScope();
+      if (verr || oom) { err = verr || oom; b.destroy(); break; }
+      bufs.push(b);
+      mb += STEP;
+      status(`Memory stress: ${mb} MB of GPU buffers…`);
+    }
+    bufs.forEach((b) => b.destroy());
+    ls.del(STRESS_KEY);
+    const d = [`${STEP} MB storage buffers, each cleared on the GPU`, `time: ${(performance.now() - t).toFixed(0)} ms`];
+    if (err) d.push(`stopped by: ${err.constructor.name}: ${err.message}`);
+    return info(`Reached ${mb} MB${err ? '' : ' (hit the 6 GB cap)'}`, d);
+  }, 120000);
   status('');
 }
 function previousStress() {
@@ -1010,8 +1714,353 @@ function previousStress() {
   ls.del(STRESS_KEY);
   let s; try { s = JSON.parse(raw); } catch { return; }
   check('Memory stress', 'Previous run (app was killed)', () => fail(
-    `The app died after committing ${s.mb} MB`, [`at ${new Date(s.at).toISOString()} · standalone: ${s.standalone}`,
+    `The app died during ${s.phase || 'wasm memory'} after ${s.mb} MB`, [`at ${new Date(s.at).toISOString()} · standalone: ${s.standalone}`,
       'iOS killed the page instead of failing the allocation; that number is the practical ceiling.']));
+}
+
+/* ---------- touch sampling ---------- */
+function touchTest() {
+  const G = 'Touch input';
+  clearGroup(G);
+  const pad = document.createElement('div');
+  pad.id = 'touchpad'; pad.className = 'overlay';
+  pad.textContent = 'Drag one finger around here for 3 seconds. Add a second (and third) finger for a moment too.';
+  document.body.append(pad);
+  check(G, 'Touch sampling + latency', () => new Promise((resolve) => {
+    let start = 0, touchmoves = 0, pmoves = 0, coalesced = 0, predicted = 0, maxTouches = 0;
+    const lag = [], frames = [];
+    const scroll0 = scrollY;
+    const tick = (t) => { frames.push(t); if (pad.isConnected) requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+    pad.addEventListener('touchstart', (e) => { e.preventDefault(); maxTouches = Math.max(maxTouches, e.touches.length); }, { passive: false });
+    pad.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      if (!start) { start = performance.now(); setTimeout(finish, 3000); }
+      touchmoves++;
+      maxTouches = Math.max(maxTouches, e.touches.length);
+      lag.push(performance.now() - e.timeStamp);
+    }, { passive: false });
+    pad.addEventListener('pointermove', (e) => {
+      if (!start) return;
+      pmoves++;
+      if (e.getCoalescedEvents) coalesced += e.getCoalescedEvents().length;
+      if (e.getPredictedEvents) predicted += e.getPredictedEvents().length;
+    });
+    function finish() {
+      const sec = (performance.now() - start) / 1000;
+      pad.remove();
+      resolve(info(`touchmove ${(touchmoves / sec).toFixed(0)} Hz · up to ${maxTouches} touches`, [
+        `touchmove events: ${touchmoves} in ${sec.toFixed(2)} s = ${(touchmoves / sec).toFixed(0)} Hz`,
+        `pointermove events: ${(pmoves / sec).toFixed(0)} Hz · getCoalescedEvents: ${typeof PointerEvent.prototype.getCoalescedEvents === 'function' ? `${(coalesced / Math.max(1, pmoves)).toFixed(2)} samples per pointermove (${(coalesced / sec).toFixed(0)} Hz raw)` : 'absent'}`,
+        `getPredictedEvents: ${typeof PointerEvent.prototype.getPredictedEvents === 'function' ? `${predicted} predicted samples` : 'absent'}`,
+        `event.timeStamp → handler: median ${fmtMs(median(lag))}, p95 ${fmtMs(pct(lag, 0.95))}`,
+        `rAF during touch: ${frames.length > 1 ? (1000 / median(frames.slice(1).map((t, i) => t - frames[i]))).toFixed(0) : '?'} Hz`,
+        `max simultaneous touches: ${maxTouches}`,
+        `page scrolled despite preventDefault: ${scrollY !== scroll0}`]));
+    }
+  }), 120000);
+}
+
+/* ---------- background / resume ---------- */
+function backgroundTest() {
+  const G = 'Background + resume';
+  clearGroup(G);
+  // In the click: the audio context needs the gesture.
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ac = new AC();
+  ac.resume();
+  const osc = ac.createOscillator(), og = ac.createGain();
+  og.gain.value = 0.0001;   // inaudible, but the context is "playing"
+  osc.connect(og).connect(ac.destination); osc.start();
+  check(G, 'Leave the app, come back', async (row) => {
+    const T0 = performance.now();
+    const log = [];
+    const ev = (x) => log.push(`${((performance.now() - T0) / 1000).toFixed(2)}s ${x}`);
+    const docEvents = ['visibilitychange', 'freeze', 'resume'];
+    const winEvents = ['pagehide', 'pageshow', 'blur', 'focus'];
+    const onDoc = (e) => ev(`${e.type}${e.type === 'visibilitychange' ? ` → ${document.visibilityState}` : ''}`);
+    const onWin = (e) => ev(e.type);
+    docEvents.forEach((t) => document.addEventListener(t, onDoc));
+    winEvents.forEach((t) => addEventListener(t, onWin));
+    ac.onstatechange = () => ev(`audio state → ${ac.state}`);
+    const pair = await connectPair({ iceServers: [] }, [['r', { ordered: true }]]);
+    const dc = pair.local[0];
+    let rtcGot = 0;
+    pair.remote.r.onmessage = () => rtcGot++;
+    dc.onclose = () => ev('rtc data channel closed');
+    pair.a.onconnectionstatechange = () => ev(`rtc connection → ${pair.a.connectionState}`);
+    const glc = document.createElement('canvas');
+    const gl = glc.getContext('webgl2');
+    glc.addEventListener('webglcontextlost', () => ev('webgl context lost'));
+    glc.addEventListener('webglcontextrestored', () => ev('webgl context restored'));
+    let dev = null;
+    try { dev = await getGpuDevice(); dev.lost.then((i) => ev(`webgpu device lost: ${i.reason} ${i.message}`)); } catch (e) { ev(`webgpu: ${errText(e)}`); }
+    let room = null;
+    try { room = await edgeRoom(null, 'bg'); room.ws.addEventListener('close', (e) => ev(`websocket closed (code ${e.code})`)); } catch (e) { ev(`websocket: ${errText(e)}`); }
+    let ticks = 0, frames = 0, looping = true;
+    const iv = setInterval(() => { ticks++; if (dc.readyState === 'open') dc.send('x'); }, 100);
+    const loop = () => { frames++; if (looping) requestAnimationFrame(loop); };
+    requestAnimationFrame(loop);
+    ev(`armed: audio ${ac.state}, rtc ${pair.a.connectionState}, websocket ${room ? 'open' : 'none'}, webgpu ${dev ? 'ok' : 'none'}`);
+    row.note('Now leave the app (home screen or lock the phone) for ~10 s, then come back.');
+    status('Background test armed: leave the app for ~10 s, then come back.');
+    if (document.visibilityState !== 'hidden') await waitEvent(document, 'visibilitychange', 180000, 'you to leave the app');
+    const h = { t: performance.now(), ticks, frames, rtc: rtcGot };
+    while (document.visibilityState !== 'visible') await waitEvent(document, 'visibilitychange', 1800000, 'you to come back');
+    const away = (performance.now() - h.t) / 1000;
+    const during = { ticks: ticks - h.ticks, frames: frames - h.frames, rtc: rtcGot - h.rtc };
+    row.note('Back — checking what survived…');
+    await sleep(1500);
+    const d = [`away for ${away.toFixed(1)} s`,
+      `setInterval(100 ms) ticks while away: ${during.ticks} (${(during.ticks / away).toFixed(1)}/s; 10/s = not suspended)`,
+      `rAF frames while away: ${during.frames}`,
+      `rtc messages received while away: ${during.rtc}`];
+    const audioBack = ac.state;
+    try { await Promise.race([ac.resume(), sleep(1000)]); } catch {}
+    d.push(`audio after return: ${audioBack}; after resume() without a tap: ${ac.state}`);
+    if (dc.readyState === 'open') {
+      const t = performance.now();
+      const got = await Promise.race([new Promise((r) => { pair.remote.r.onmessage = () => r(true); dc.send('y'); }), sleep(2000).then(() => false)]);
+      d.push(`rtc data channel: open, message ${got ? `delivered in ${fmtMs(performance.now() - t)}` : 'NOT delivered within 2 s'}`);
+    } else d.push(`rtc data channel: ${dc.readyState}, connection ${pair.a.connectionState}`);
+    if (room) {
+      if (room.ws.readyState === 1) {
+        try { const r = await room.ppRtt(3); d.push(`websocket: still open, RTT ${fmtMs(median(r))}`); } catch (e) { d.push(`websocket: open but ${errText(e)}`); }
+      } else d.push(`websocket: readyState ${room.ws.readyState} (closed while away)`);
+    }
+    d.push(`webgl: context lost = ${gl ? gl.isContextLost() : 'n/a'}`);
+    if (dev) {
+      try { dev.queue.submit([dev.createCommandEncoder().finish()]); const ok = await Promise.race([dev.queue.onSubmittedWorkDone().then(() => true), sleep(2000).then(() => false)]); d.push(`webgpu: device ${ok ? 'still works' : 'did not complete work within 2 s'}`); }
+      catch (e) { d.push(`webgpu: ${errText(e)}`); }
+    }
+    d.push('event log:', ...log.map((l) => `  ${l}`));
+    const summary = `away ${away.toFixed(0)} s · audio ${audioBack} · rtc ${dc.readyState} · ws ${room ? ['connecting', 'open', 'closing', 'closed'][room.ws.readyState] : 'n/a'}`;
+    clearInterval(iv); looping = false;
+    docEvents.forEach((t) => document.removeEventListener(t, onDoc));
+    winEvents.forEach((t) => removeEventListener(t, onWin));
+    pair.a.close(); pair.b.close(); if (room) room.close(); ac.close();
+    status('');
+    return info(summary, d);
+  }, 2100000);
+}
+
+/* ---------- sustained GPU load ---------- */
+function sustainedTest() {
+  const G = 'Sustained GPU load';
+  clearGroup(G);
+  check(G, '30 s of heavy WebGPU rendering at native resolution', async () => {
+    const device = await getGpuDevice();
+    const canvas = document.createElement('canvas');
+    canvas.id = 'loadCanvas';
+    canvas.width = Math.round(innerWidth * devicePixelRatio);
+    canvas.height = Math.round(innerHeight * devicePixelRatio);
+    const label = document.createElement('div');
+    label.id = 'loadText';
+    document.body.append(canvas, label);
+    const ctx = canvas.getContext('webgpu');
+    const format = navigator.gpu.getPreferredCanvasFormat();
+    ctx.configure({ device, format, alphaMode: 'opaque' });
+    const module = device.createShaderModule({ code: WGSL_BENCH });
+    const pipe = device.createRenderPipeline({ layout: 'auto', vertex: { module, entryPoint: 'vs' },
+      fragment: { module, entryPoint: 'fsHeavy', targets: [{ format }] } });
+    let stop = false;
+    canvas.addEventListener('click', () => { stop = true; });
+    const frame = (passes) => {
+      const enc = device.createCommandEncoder();
+      const view = ctx.getCurrentTexture().createView();
+      for (let p = 0; p < passes; p++) {
+        const rp = enc.beginRenderPass({ colorAttachments: [{ view, loadOp: p ? 'load' : 'clear', storeOp: 'store' }] });
+        rp.setPipeline(pipe); rp.draw(3); rp.end();
+      }
+      const t = performance.now();
+      device.queue.submit([enc.finish()]);
+      return device.queue.onSubmittedWorkDone().then(() => performance.now() - t);
+    };
+    // Calibrate: aim for ~10 ms of GPU work per frame (60% of a 60 Hz budget).
+    const one = [];
+    for (let i = 0; i < 5; i++) one.push(await frame(1));
+    const passes = Math.max(1, Math.round(10 / Math.max(0.5, median(one.slice(1)))));
+    const buckets = [];
+    let b = { frames: 0, dts: [], gpu: [] };
+    const T0 = performance.now();
+    let last = T0, bucketStart = T0;
+    await new Promise((done) => {
+      const tick = (now) => {
+        b.frames++; b.dts.push(now - last); last = now;
+        frame(passes).then((g) => b.gpu.push(g));
+        if (now - bucketStart >= 5000) { buckets.push(b); b = { frames: 0, dts: [], gpu: [] }; bucketStart = now; }
+        const left = 30 - (now - T0) / 1000;
+        label.textContent = `${left.toFixed(0)} s left · ${buckets.length ? (buckets[buckets.length - 1].frames / 5).toFixed(0) : '…'} fps · tap to stop`;
+        if (left <= 0 || stop) done(); else requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    await device.queue.onSubmittedWorkDone();
+    canvas.remove(); label.remove();
+    if (!buckets.length) return fail('stopped before the first 5 s bucket');
+    const d = [`canvas ${canvas.width}x${canvas.height}, ${passes} heavy full-screen pass(es) per frame (1 pass ≈ ${fmtMs(median(one.slice(1)))})`,
+      ...buckets.map((x, i) => `${i * 5}-${i * 5 + 5} s: ${(x.frames / 5).toFixed(1)} fps, frame median ${fmtMs(median(x.dts))} p95 ${fmtMs(pct(x.dts, 0.95))}, GPU submit→done median ${fmtMs(median(x.gpu))}`)];
+    const f0 = buckets[0].frames, f1 = buckets[buckets.length - 1].frames;
+    const g0 = median(buckets[0].gpu), g1 = median(buckets[buckets.length - 1].gpu);
+    d.push(`first vs last bucket: fps ${(f0 / 5).toFixed(1)} → ${(f1 / 5).toFixed(1)}, GPU ${fmtMs(g0)} → ${fmtMs(g1)}${g1 > g0 * 1.2 ? ' — GPU got slower (thermal throttling?)' : ''}`);
+    return info(`${(f0 / 5).toFixed(0)} → ${(f1 / 5).toFixed(0)} fps over ${buckets.length * 5} s`, d);
+  }, 90000);
+}
+
+/* ---------- two-phone P2P ---------- */
+async function pairTest(role) {
+  const G = 'Pair test (two phones)';
+  clearGroup(G);
+  const ps = (t) => { $('#pairStatus').textContent = t; };
+  const code = role === 'host' ? null : $('#pairCode').value.trim().toUpperCase();
+  if (role === 'guest' && !/^[A-Z0-9]{5}$/.test(code)) { ps('Type the 5-character code shown on the host phone.'); return; }
+  $('#pairCodeBig').textContent = '';
+  check(G, role === 'host' ? 'Host side' : 'Guest side', async (row) => {
+    const d = [];
+    const ice = await (await fetch(`${API}/sf/turn`)).json();
+    d.push(`TURN relay: ${ice.turn ? 'configured' : 'NOT configured (STUN only)'}`);
+    const t0 = performance.now();
+    const room = await edgeRoom(code, role);
+    d.push(`room ${room.code}: joined in ${(performance.now() - t0).toFixed(0)} ms as ${room.host ? 'host' : 'guest'}`);
+    if (role === 'host') { $('#pairCodeBig').textContent = room.code; ps('On the other phone: Pair test → type this code → Join.'); row.note(`waiting for the other phone (code ${room.code})`); }
+    else ps('Joined — connecting…');
+    const pc = new RTCPeerConnection({ iceServers: ice.iceServers });
+    let peerId = null;
+    const cands = { local: {}, remote: {} };
+    const pending = [];
+    const typeOf = (c) => c.type || (/ typ (\w+)/.exec(c.candidate) || [])[1] || '?';
+    pc.onicecandidate = (e) => {
+      if (!e.candidate) return;
+      cands.local[typeOf(e.candidate)] = (cands.local[typeOf(e.candidate)] || 0) + 1;
+      if (peerId != null) room.send({ t: 'rtc', to: peerId, cand: e.candidate.toJSON() });
+      else pending.push(e.candidate.toJSON());
+    };
+    const remoteQ = [];
+    room.listeners.add(async (m) => {
+      if (m.t !== 'rtc') return;
+      if (peerId == null) { peerId = m.from; pending.splice(0).forEach((c) => room.send({ t: 'rtc', to: peerId, cand: c })); }
+      if (m.sdp) {
+        await pc.setRemoteDescription(m.sdp);
+        if (m.sdp.type === 'offer') { await pc.setLocalDescription(await pc.createAnswer()); room.send({ t: 'rtc', to: peerId, sdp: pc.localDescription }); }
+        for (const c of remoteQ.splice(0)) await pc.addIceCandidate(c).catch(() => {});
+      } else if (m.cand) {
+        cands.remote[typeOf(m.cand)] = (cands.remote[typeOf(m.cand)] || 0) + 1;
+        if (pc.remoteDescription) await pc.addIceCandidate(m.cand).catch(() => {}); else remoteQ.push(m.cand);
+      }
+    });
+    // Relay-path echo (guest side): host 'snap' → guest answers with 'input'.
+    room.listeners.add((m) => { if (m.t === 'snap' && m.k === 'rp') room.send({ t: 'input', k: 'rp', ts: m.ts }); });
+    let rel, unrel, summary = null;
+    if (role === 'host') {
+      const roster = room.roster() && room.roster().players.length >= 2 ? room.roster()
+        : await room.next((m) => m.t === 'roster' && m.players.length >= 2, 600000, 'the other phone to join');
+      peerId = roster.players.find((p) => p.id !== room.id).id;
+      pending.splice(0).forEach((c) => room.send({ t: 'rtc', to: peerId, cand: c }));
+      row.note('peer joined — connecting P2P…');
+      rel = pc.createDataChannel('rel', { ordered: true });
+      unrel = pc.createDataChannel('unrel', { ordered: false, maxRetransmits: 0 });
+      await pc.setLocalDescription(await pc.createOffer());
+      room.send({ t: 'rtc', to: peerId, sdp: pc.localDescription });
+    } else {
+      const got = {};
+      await new Promise((res) => { pc.ondatachannel = (e) => { got[e.channel.label] = e.channel; if (got.rel && got.unrel) res(); }; });
+      rel = got.rel; unrel = got.unrel;
+      // Echo handlers go on before anything else is awaited, or the host's
+      // first ping can arrive with nobody listening.
+      unrel.binaryType = rel.binaryType = 'arraybuffer';
+      unrel.onmessage = (e) => unrel.send(e.data);
+      let bytes = 0;
+      summary = new Promise((res) => {
+        rel.onmessage = (e) => {
+          if (typeof e.data !== 'string') { bytes += e.data.byteLength; return; }
+          const m = JSON.parse(e.data);
+          if (m.k === 'ping') rel.send(e.data);
+          else if (m.k === 'count') rel.send(JSON.stringify({ k: 'count', bytes }));
+          else if (m.k === 'summary') res(m.lines);
+        };
+      });
+    }
+    for (const c of [rel, unrel]) c.binaryType = 'arraybuffer';
+    const tc = performance.now();
+    const opened = Promise.all([rel, unrel].map((c) => c.readyState === 'open' ? 0 : new Promise((r) => { c.onopen = r; })));
+    const ok = await Promise.race([opened.then(() => true), sleep(30000).then(() => false)]);
+    const diag = () => `ice ${pc.iceConnectionState}, connection ${pc.connectionState}, local candidates ${JSON.stringify(cands.local)}, remote candidates ${JSON.stringify(cands.remote)}`;
+    if (!ok) { d.push(diag()); pc.close(); room.close(); return fail(`P2P data channels never opened in 30 s${ice.turn ? '' : ' (no TURN relay to fall back on)'}`, d); }
+    d.push(`P2P channels open ${(performance.now() - tc).toFixed(0)} ms after signaling began`, diag());
+    try {
+      const st = await pc.getStats();
+      let pair = null;
+      st.forEach((x) => { if (x.type === 'transport' && x.selectedCandidatePairId) pair = st.get(x.selectedCandidatePairId); });
+      if (!pair) st.forEach((x) => { if (x.type === 'candidate-pair' && x.nominated && x.state === 'succeeded') pair = x; });
+      if (pair) {
+        const l = st.get(pair.localCandidateId) || {}, r = st.get(pair.remoteCandidateId) || {};
+        const fam = (a) => (a ? (a.includes(':') ? 'IPv6' : 'IPv4') : '?');
+        d.push(`selected path: local ${l.candidateType} ${l.protocol} ${fam(l.address)}${l.networkType ? ` (${l.networkType})` : ''}${l.relayProtocol ? ` relay over ${l.relayProtocol}` : ''} ↔ remote ${r.candidateType} ${fam(r.address)}`);
+        if (pair.currentRoundTripTime != null) d.push(`ICE currentRoundTripTime: ${fmtMs(pair.currentRoundTripTime * 1000)}`);
+      }
+    } catch (e) { d.push(`getStats: ${errText(e)}`); }
+    if (role === 'guest') {
+      // The guest only echoes; the host measures and sends the summary back.
+      ps('Connected — the host is measuring…'); row.note('connected — host is measuring');
+      const lines = await Promise.race([summary, sleep(120000).then(() => ['(no summary from host within 2 min)'])]);
+      d.push('host measured:', ...lines.map((l) => `  ${l}`));
+      pc.close(); room.close(); ps('Done — copy results on both phones.');
+      return pass('P2P connected', d);
+    }
+    // Host measurements.
+    ps('Connected — measuring (~20 s)…'); row.note('connected — measuring (~20 s)');
+    const m = [];
+    const relRtt = [];
+    let lostPings = 0;
+    await sleep(300);
+    for (let i = 0; i < 30; i++) {
+      const t = performance.now();
+      const ok = await Promise.race([new Promise((r) => { rel.onmessage = () => r(true); rel.send(JSON.stringify({ k: 'ping', t })); }), sleep(3000).then(() => false)]);
+      if (ok) relRtt.push(performance.now() - t); else lostPings++;
+    }
+    if (!relRtt.length) { d.push(...m); pc.close(); room.close(); return fail('reliable channel: no ping came back', d); }
+    m.push(`reliable channel RTT (30x): median ${fmtMs(median(relRtt))}, p95 ${fmtMs(pct(relRtt, 0.95))}, max ${fmtMs(Math.max(...relRtt))}${lostPings ? `, ${lostPings} timed out` : ''}`);
+    // 60 Hz stream of 200-byte "snapshots" on the unreliable channel, echoed back.
+    const sent = new Map(), rtt = [];
+    unrel.onmessage = (e) => { const seq = new Float64Array(e.data, 0, 1)[0]; const t = sent.get(seq); if (t != null) { rtt.push(performance.now() - t); sent.delete(seq); } };
+    let N = 0;
+    const tStream = performance.now();
+    while (performance.now() - tStream < 10000) {
+      const b = new ArrayBuffer(200); new Float64Array(b, 0, 1)[0] = N;
+      sent.set(N++, performance.now()); unrel.send(b);
+      await sleep(1000 / 60);
+    }
+    await sleep(1000);
+    const jitter = rtt.length > 1 ? rtt.slice(1).reduce((a, x, i) => a + Math.abs(x - rtt[i]), 0) / (rtt.length - 1) : 0;
+    m.push(`unreliable ~60 Hz × 200 B for 10 s (${(N / 10).toFixed(0)} Hz actual): ${rtt.length}/${N} echoed (${((1 - rtt.length / N) * 100).toFixed(1)}% round-trip loss), RTT median ${fmtMs(median(rtt))}, p95 ${fmtMs(pct(rtt, 0.95))}, max ${fmtMs(Math.max(...rtt))}, jitter ${fmtMs(jitter)}`);
+    // Bulk throughput on the reliable channel.
+    const total = 4 << 20, chunk = 16384, blk = new Uint8Array(chunk);
+    rel.bufferedAmountLowThreshold = 256 * 1024;
+    const tt = performance.now();
+    for (let sentB = 0; sentB < total; sentB += chunk) {
+      if (rel.bufferedAmount > 1 << 20) await new Promise((r) => { rel.onbufferedamountlow = r; });
+      rel.send(blk);
+    }
+    const counted = await Promise.race([new Promise((r) => { rel.onmessage = (e) => r(JSON.parse(e.data)); rel.send(JSON.stringify({ k: 'count' })); }), sleep(30000).then(() => ({ bytes: 0 }))]);
+    m.push(`reliable bulk: ${(counted.bytes / 1048576).toFixed(1)} MB in ${((performance.now() - tt) / 1000).toFixed(1)} s = ${(counted.bytes / 1048576 / ((performance.now() - tt) / 1000)).toFixed(2)} MB/s`);
+    // Same round trip through the worker relay, for comparison.
+    const relay = [];
+    for (let i = 0; i < 20; i++) {
+      const ts = performance.now();
+      const p = room.next((x) => x.t === 'input' && x.k === 'rp' && x.ts === ts, 5000, 'relay echo');
+      room.send({ t: 'snap', k: 'rp', to: peerId, ts });
+      try { await p; relay.push(performance.now() - ts); } catch {}
+    }
+    if (relay.length) m.push(`same round trip via the worker relay (WebSocket, 20x): median ${fmtMs(median(relay))}, p95 ${fmtMs(pct(relay, 0.95))}`);
+    const edge = await room.ppRtt(10);
+    m.push(`host ↔ worker WebSocket RTT: median ${fmtMs(median(edge))}`);
+    rel.send(JSON.stringify({ k: 'summary', lines: m }));
+    await sleep(500);
+    d.push(...m);
+    pc.close(); room.close();
+    ps('Done — copy results on both phones.');
+    return pass(`P2P RTT ${fmtMs(median(rtt.length ? rtt : relRtt))} · loss ${((1 - rtt.length / N) * 100).toFixed(1)}%`, d);
+  }, 900000).then(() => { $('#pairCodeBig').textContent = ''; });
 }
 
 /* ---------- copy as text ---------- */
@@ -1019,7 +2068,7 @@ function resultText() {
   const L = [`PWA probe v${VERSION} · ${new Date().toISOString()}`,
     `Mode: ${MODE.standalone ? 'STANDALONE' : 'BROWSER TAB'} (display-mode ${MODE.dm}, navigator.standalone ${MODE.navStandalone})`,
     `URL: ${location.href}`, `UA: ${navigator.userAgent}`,
-    `crossOriginIsolated: ${self.crossOriginIsolated}`, ''];
+    `crossOriginIsolated: ${self.crossOriginIsolated} · ${navigator.connection ? `connection ${navigator.connection.effectiveType}` : 'network type unknown (say Wi-Fi or cellular)'}`, ''];
   let g = null;
   for (const r of results) {
     if (r.group !== g) { g = r.group; L.push(`== ${g} ==`); }
@@ -1046,21 +2095,29 @@ let running = false;
 async function runAll() {
   if (running) return;
   running = true;
-  for (const name of [...groups.keys()]) if (name !== 'Tap-gated' && name !== 'Memory stress') clearGroup(name);
+  const KEEP = ['Tap-gated', 'Memory stress', 'Touch input', 'Background + resume', 'Sustained GPU load', 'Pair test (two phones)'];
+  for (const name of [...groups.keys()]) if (!KEEP.includes(name)) clearGroup(name);
   previousStress();
   const steps = [['Environment', envChecks], ['WebGPU', webgpuChecks], ['WebGL2', webglChecks],
-    ['Worker graphics', workerGraphicsCheck], ['Isolation + wasm', isolationChecks], ['WebRTC', webrtcChecks],
-    ['Timing', timingChecks], ['Storage', storageChecks], ['Assets + input', miscChecks]];
+    ['Worker graphics', workerGraphicsCheck], ['Isolation + wasm', isolationChecks], ['CPU + workers', cpuChecks],
+    ['GPU performance', gpuPerfChecks], ['Networking', webrtcChecks], ['Timing', timingChecks],
+    ['Storage', storageChecks], ['Assets + input', miscChecks]];
   for (const [label, fn] of steps) {
     status(`Running ${label}…`);
     try { await fn(); } catch (e) { check(label, 'Harness error', () => fail(errText(e))); }
   }
-  status('Done. Tap "Run tap-gated checks" for audio, motion, fullscreen, orientation and wake lock.');
+  status('Done. The buttons above run the interactive tests: tap-gated, touch, background, sustained GPU, pair, memory.');
   running = false;
 }
 $('#rerun').addEventListener('click', runAll);
 $('#tap').addEventListener('click', startTapChecks);
 $('#stress').addEventListener('click', memoryStress);
+$('#touch').addEventListener('click', touchTest);
+$('#bg').addEventListener('click', backgroundTest);
+$('#load').addEventListener('click', sustainedTest);
+$('#pair').addEventListener('click', () => { const p = $('#pairPanel'); p.hidden = !p.hidden; });
+$('#pairHost').addEventListener('click', () => pairTest('host'));
+$('#pairJoin').addEventListener('click', () => pairTest('guest'));
 
 let swError = null;
 (async function boot() {
