@@ -824,3 +824,11 @@ Measured on the desktop profile:
 
 Away from Queen Anne and 1st Ave the line costs nothing: no cell and no car
 is in range. LOOK at the shots in `tools/data/cbshots/`.
+
+**Quiet on the road, findable on the map (v208).** Driving up Queen Anne Ave
+every stop said hello in a toast, one per block, over the road. Stop hellos
+are now `foot: true` (on foot only), and say where the nearest car is ("a car
+is here: ENTER beside it to drive" / "the nearest car is 180 m off (on the
+map): ENTER here to call it"). The cars on the minimap were 2.6 px dots; they
+are now 5.5 px cream discs ringed in maroon with a dark centre (and ~0.7 % of
+the full map's size), so the one to walk to is visible.

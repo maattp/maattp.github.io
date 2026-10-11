@@ -4471,7 +4471,12 @@ float frLine(float o, float fw, float c, float w) {
           // and in a low flight on a phone's 2 ms slice that was twice the
           // chunks still pending after a minute. It is built bare now and
           // planted below once the streamer has nothing else to do.
-          if (c.wantLod === 0 && todo.some((k) => k !== c && k.lod !== k.wantLod)) trees = false;
+          // ...BUT ONLY IN THE AIR. On the ground a chunk crossing leaves a
+          // dozen pending too, and a mid chunk built bare there drew no
+          // trees at all (its far crowns are planted with the rest) until the
+          // streamer went idle: whole blocks of trees popped in while you
+          // drove. `deferTrees` is set by main.js from the camera's height.
+          if (this.deferTrees && c.wantLod === 0 && todo.some((k) => k !== c && k.lod !== k.wantLod)) trees = false;
         } else {
           // nothing to build: plant the nearest mid chunk left bare (a
           // rebuild, swapped in whole like any other)

@@ -412,12 +412,32 @@ function spike(ib, top, r) {
 
 // --- the instanced material -------------------------------------------------
 
-function treeMaterial(timeU) {
+function treeMaterial(timeU, cutU) {
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.04, envMapIntensity: 0.45 });
   m.onBeforeCompile = (sh) => {
     sh.uniforms.treeTime = timeU;
+    sh.uniforms.treeCam = cutU.cam; sh.uniforms.treeTgt = cutU.tgt; sh.uniforms.treeCut = cutU.r;
+    // THE VIEW IS KEPT CLEAR: a crown (or trunk) between the camera and you is
+    // dithered away inside a tube round the line of sight -- full width at
+    // the camera (a branch you drive under is the worst of it), tapering to
+    // nothing at you, so the trees beside you stay -- rather than filling the
+    // chase view with leaves on a tree-lined street. The shadow pass uses the depth material: shadows stay whole.
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vTreeW;\nuniform vec3 treeCam, treeTgt;\nuniform float treeCut;')
+      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+        if ( treeCut > 0.0 ) {
+          vec3 ab = treeTgt - treeCam;
+          float t = clamp( dot( vTreeW - treeCam, ab ) / max( dot( ab, ab ), 1e-4 ), 0.0, 1.0 );
+          float r = treeCut * ( 1.0 - smoothstep( 0.8, 0.97, t ) );
+          float d = length( vTreeW - ( treeCam + ab * t ) );
+          if ( d < r ) {
+            float k = d / r;
+            float n = fract( 52.9829189 * fract( dot( floor( gl_FragCoord.xy ), vec2( 0.06711056, 0.00583715 ) ) ) );
+            if ( n > k * k * 0.85 ) discard;
+          }
+        }`);
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float leaf;\nuniform float treeTime;')
+      .replace('#include <common>', '#include <common>\nattribute float leaf;\nuniform float treeTime;\nvarying vec3 vTreeW;')
       // A gentle sway, in WORLD space after the instance's turn so every tree
       // leans the same way: the top of a crown moves ~0.3 m, the trunk's foot
       // not at all, each tree on its own phase. Two sines per vertex and one
@@ -433,6 +453,7 @@ function treeMaterial(timeU) {
             mvPosition.xz += vec2( 0.3, 0.17 ) * sw * k * k;
           }
         #endif
+        vTreeW = ( modelMatrix * mvPosition ).xyz;
         mvPosition = modelViewMatrix * mvPosition;
         gl_Position = projectionMatrix * mvPosition;`)
       // The instance colour is the FOLIAGE albedo: the trunk's vertex colour
@@ -467,7 +488,8 @@ export class TreeSystem {
     const shapes = buildShapes();
     this.tris = { midBroad: shapes.midBroad.tris, midCon: shapes.midCon.tris, nearBroad: shapes.nearBroad.tris, nearCon: shapes.nearCon.tris };
     this.timeU = { value: 0 };
-    this.mat = treeMaterial(this.timeU);
+    this.cutU = { cam: { value: new THREE.Vector3() }, tgt: { value: new THREE.Vector3() }, r: { value: 0 } };
+    this.mat = treeMaterial(this.timeU, this.cutU);
     this.group = new THREE.Group();
     this.group.name = 'trees';
     const capMid = ON_PHONE ? 3500 : 7000, capNear = ON_PHONE ? 900 : 1800;
@@ -515,6 +537,14 @@ export class TreeSystem {
     this.last = { x: 1e9, y: 0, z: 0, fx: 0, fy: 0, fz: 0, fov: 0, aspect: 0 };
     this.refreshes = 0; this.refreshMs = 0;
     this._fr = new THREE.Frustum(); this._m = new THREE.Matrix4(); this._s = new THREE.Sphere();
+  }
+
+  /** Keep the line of sight from `cam` to (x, y, z) clear of crowns (see the
+   *  material); r 0 turns it off (a cinematic camera, the map). */
+  cut(cam, x, y, z, r = 2.6) {
+    this.cutU.cam.value.copy(cam);
+    this.cutU.tgt.value.set(x, y, z);
+    this.cutU.r.value = r;
   }
 
   /**
