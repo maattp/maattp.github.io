@@ -938,7 +938,11 @@ export class Player {
       } else if (v.vLong > 3 && !(v.spec.tank && this.lookT < 3)) {
         // ease the camera behind the car when driving forward (in a tank,
         // only once you have stopped aiming: the turret follows the camera)
-        const want = v.heading + Math.PI;
+        // in a slide (your car's tyres: vehicles.js _tyres) it looks half way
+        // along where the car is going, not only where its nose is -- a drift
+        // is framed from behind the line, not from behind the bonnet
+        const drift = v.dynW !== undefined && v.slipAngle ? clamp(v.slipAngle, -0.9, 0.9) * 0.5 : 0;
+        const want = v.heading + drift + Math.PI;
         const d = angleWrap(want - this.camYaw);
         this.camYaw += d * clamp(dt * 1.5 * clamp(sp / 12, 0, 1), 0, 0.25);
       }

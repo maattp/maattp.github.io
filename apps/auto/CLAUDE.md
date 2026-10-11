@@ -110,6 +110,7 @@ src/chunkcull.js            the city's chunk groups frustum-culled whole before 
 src/nearshadow.js           the player's own shadow map, folded into the sun's in every lit material
 src/career.js               the saved wallet (auto-career) and the Seattle Passport: rank + completion counts
 src/effects.js              particles + tracers
+src/skidmarks.js            tyre marks on the road: one ring-buffered strip mesh, faded in its shader
 src/audio.js                all sound, synthesised: engine models, one-shot bank,
                             positional traffic/sirens, radio (see "Sound")
 src/radiosynth.js           the synth radio: songs written per station style, their voices
