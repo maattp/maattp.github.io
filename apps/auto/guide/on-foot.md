@@ -491,3 +491,10 @@ junction path), `overpass.mjs` (cars on a viaduct are not held by a person below
 `AUTO_HTTP_PORT=8000 node tools/pedcheck/harness.mjs tools/pedcheck/road.mjs`.
 v193 -> this change: within 40 m at Pike Place / Westlake / Pioneer Sq 1 / 2 / 0 ->
 14 / 9 / 9-12; in a carriageway 37.4 % -> 3.1 % (+ 2.9 % crossing on purpose).
+
+**A car is solid on foot (v209).** `Player.blocked` stopped a walker at
+trunks, poles and buildings only, so you walked through every parked car and
+bus. It now tests each vehicle within 20 m as its rectangle grown by the
+walker's 0.32 m, between 1.2 m under its floor and its roof (trains excluded:
+their platforms are their own). Tried per axis like the rest, you slide along
+a door; the "already inside" escape still frees you if a car is placed on you.
