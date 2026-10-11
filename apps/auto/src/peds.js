@@ -3456,6 +3456,50 @@ function sprawl(h, k) {
   to(b[B.head], 'x', 0.25);
 }
 
+/**
+ * A SKYDIVER'S BODY (parachute.js), eased toward over the frames (k), on
+ * every axis the walk would leave behind: the whole figure used to be tilted
+ * as it stood, frozen mid-stride, belly down in free fall and stiff as a post
+ * under the canopy.
+ *   'free'   the box position: back arched, head up looking ahead, arms out
+ *            and bent up toward the head, knees bent with the feet up, a
+ *            flutter in the wind;
+ *   'canopy' hanging in the harness: hands up on the toggles, legs together
+ *            and dangling a little forward, a slow sway;
+ *   'water'  treading water: arms out sculling, legs down.
+ */
+export function skydivePose(h, state, t, k) {
+  const b = h.bones;
+  const to = (bone, x, y, z) => {
+    const r = b[bone].rotation;
+    r.x += (x - r.x) * k; r.y += (y - r.y) * k; r.z += (z - r.z) * k;
+  };
+  const fl = Math.sin(t * 9.0) * 0.05, fl2 = Math.sin(t * 7.3 + 1.1) * 0.05;
+  if (state === 'free') {
+    to(B.spine, -0.28, 0, 0); to(B.chest, -0.22, 0, 0); to(B.neck, -0.35, 0, 0); to(B.head, -0.55, 0, 0);
+    to(B.shoulderL, -1.95 + fl, 0, -0.95); to(B.shoulderR, -1.95 + fl2, 0, 0.95);
+    to(B.elbowL, -1.05, 0, 0); to(B.elbowR, -1.05, 0, 0);
+    to(B.thighL, 0.18, 0, -0.22); to(B.thighR, 0.18, 0, 0.22);
+    to(B.kneeL, 1.25 + fl2, 0, 0); to(B.kneeR, 1.25 + fl, 0, 0);
+    to(B.footL, 0.45, 0, 0); to(B.footR, 0.45, 0, 0);
+  } else if (state === 'water') {
+    const w = Math.sin(t * 2.4) * 0.25;
+    to(B.spine, 0.05, 0, 0); to(B.chest, 0, 0, 0); to(B.neck, 0, 0, 0); to(B.head, -0.1, 0, 0);
+    to(B.shoulderL, -0.6, 0, -1.0 - w); to(B.shoulderR, -0.6, 0, 1.0 + w);
+    to(B.elbowL, -0.4, 0, 0); to(B.elbowR, -0.4, 0, 0);
+    to(B.thighL, -0.3 + w, 0, -0.1); to(B.thighR, -0.3 - w, 0, 0.1);
+    to(B.kneeL, 0.6, 0, 0); to(B.kneeR, 0.6, 0, 0); to(B.footL, 0.2, 0, 0); to(B.footR, 0.2, 0, 0);
+  } else {
+    const sw = Math.sin(t * 1.3) * 0.06;
+    to(B.spine, 0.02, 0, 0); to(B.chest, 0, 0, 0); to(B.neck, -0.05, 0, 0); to(B.head, -0.12, 0, 0);
+    to(B.shoulderL, -2.75, 0, -0.32); to(B.shoulderR, -2.75, 0, 0.32);
+    to(B.elbowL, -0.55, 0, 0); to(B.elbowR, -0.55, 0, 0);
+    to(B.thighL, -0.32 + sw, 0, -0.04); to(B.thighR, -0.28 - sw, 0, 0.04);
+    to(B.kneeL, 0.38, 0, 0); to(B.kneeR, 0.42, 0, 0);
+    to(B.footL, 0.35, 0, 0); to(B.footR, 0.35, 0, 0);
+  }
+}
+
 // A fare hailing: the right arm up and waving at the wrist (eased in by the
 // walk pose's own reset every posed frame, so this is set, not added).
 function hailPose(h, t) {

@@ -114,8 +114,15 @@ export function setWaterQuery(fn) { waterQuery = fn; }
 const STEER_BITE = 1.25;
 /** How long your car burns before it explodes (Vehicle.damage). */
 export const BURN_S = 5;
-/** main.js's: `ignite(v)` when your car catches fire. */
-export const VEHICLE_HOOKS = { ignite: null };
+// the fighter's lit nozzles (setDetailed, updatePlane): unlit, additive, and
+// not tone-mapped, so the bloom takes them
+const JET_GLOW_GEO = new THREE.CircleGeometry(0.31, 18);
+const JET_GLOW_MAT = new THREE.MeshBasicMaterial({ color: 0xff8a3a, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, side: THREE.DoubleSide });
+// a cone 1 m long pointing back (-z) from its base at the nozzle, scaled in z
+const JET_FLAME_GEO = (() => { const g = new THREE.ConeGeometry(0.28, 1, 14, 1, true); g.rotateX(-Math.PI / 2); g.translate(0, 0, -0.5); return g; })();
+const JET_FLAME_MAT = new THREE.MeshBasicMaterial({ color: 0xff9248, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, side: THREE.DoubleSide });
+/** main.js's: `ignite(v)` when your car catches fire; `belly(v)` when a plane lands gear up. */
+export const VEHICLE_HOOKS = { ignite: null, belly: null };
 const PLAYER_BITE = 1.7;
 
 // Braking was the one axis left at real-world scale, and that is why it felt
@@ -152,7 +159,7 @@ export const TYPES = {
   // Twin turboprop, King Air 350 proportions: 14.2 m long, 17.6 m span, T-tail,
   // two PT6 nacelles on a low wing. Heavier and steadier than the singles --
   // it banks less and turns wider -- and faster in a straight line.
-  twin: deriveSpec({ wheelbase: 5.2, len: 14.2, wid: 1.7, wheelR: 0.34, sill: 0.85, belt: 1.75, roof: 2.65, cab: [0.6, 0.3], hand: 'twin', plane: true, turboprop: true, mass: 1.6, acc: 6.8, topKph: 440, brakeM: 75, latG: 0.6,
+  twin: deriveSpec({ retract: true, wheelbase: 5.2, len: 14.2, wid: 1.7, wheelR: 0.34, sill: 0.85, belt: 1.75, roof: 2.65, cab: [0.6, 0.3], hand: 'twin', plane: true, turboprop: true, mass: 1.6, acc: 6.8, topKph: 440, brakeM: 75, latG: 0.6,
     fly: { vr: 31, stall: 25, bank: 0.60, turn: 0.85, climb: 17, vne: 118 } }),
   // Light business jet, Learjet 45 proportions: 15 m, 15.5 m span, swept low
   // wing, two fans on pylons at the tail, T-tail. Rotates at 150 km/h, stalls
@@ -160,17 +167,17 @@ export const TYPES = {
   // fastest thing in the game, and still inside what the streamer keeps up with.
   // A fighter: its own flight model (updateFighter, full 3D attitude), so it
   // rolls, loops and flies inverted; the others fly heading-and-bank.
-  fighter: deriveSpec({ wheelbase: 6.7, len: 16.0, wid: 2.6, wheelR: 0.36, sill: 0.8, belt: 1.95, roof: 2.95, cab: [0.6, 0.3], hand: 'fighter', plane: true, fighter: true, jet: true, mass: 2.2, acc: 17, topKph: 780, brakeM: 90, latG: 0.8,
+  fighter: deriveSpec({ retract: true, wheelbase: 6.7, len: 16.0, wid: 2.6, wheelR: 0.36, sill: 0.8, belt: 1.95, roof: 2.95, cab: [0.6, 0.3], hand: 'fighter', plane: true, fighter: true, jet: true, mass: 2.2, acc: 17, topKph: 780, brakeM: 90, latG: 0.8,
     // `thrust` is updateFighter's own, in m/s^2 (acc is the shared arcade
     // figure deriveSpec validates against the ground-drag model)
     fly: { vr: 62, stall: 46, bank: 1.2, turn: 1.4, climb: 40, vne: 215, thrust: 21 } }),
-  jet: deriveSpec({ wheelbase: 6.2, len: 15.0, wid: 1.7, wheelR: 0.30, sill: 0.7, belt: 1.55, roof: 2.45, cab: [0.6, 0.3], hand: 'jet', plane: true, jet: true, mass: 2.0, acc: 9.0, topKph: 540, brakeM: 90, latG: 0.6,
+  jet: deriveSpec({ retract: true, wheelbase: 6.2, len: 15.0, wid: 1.7, wheelR: 0.30, sill: 0.7, belt: 1.55, roof: 2.45, cab: [0.6, 0.3], hand: 'jet', plane: true, jet: true, mass: 2.0, acc: 9.0, topKph: 540, brakeM: 90, latG: 0.6,
     fly: { vr: 42, stall: 33, bank: 0.78, turn: 0.80, climb: 26, vne: 150 } }),
   // The Boeing 747-8, the largest airliner Boeing has built: 76.3 m long,
   // 68.4 m span, 19.4 m to the fin tip, four GEnx-2B on the wing, 18 wheels.
   // Heavy and slow to wind up; rotates at ~150 kt. `wid` is the fuselage
   // (street-scale collision); the wings are drawn wide.
-  jumbo: deriveSpec({ wheelbase: 26, len: 76.3, wid: 6.5, wheelR: 0.62, sill: 2.2, belt: 6.0, roof: 10.3, cab: [0.9, 0.3], hand: 'jumbo', plane: true, jet: true, mass: 12, acc: 5.8, topKph: 560, brakeM: 180, latG: 0.4, seeFar: 7000,
+  jumbo: deriveSpec({ retract: true, wheelbase: 26, len: 76.3, wid: 6.5, wheelR: 0.62, sill: 2.2, belt: 6.0, roof: 10.3, cab: [0.9, 0.3], hand: 'jumbo', plane: true, jet: true, mass: 12, acc: 5.8, topKph: 560, brakeM: 180, latG: 0.4, seeFar: 7000,
     // climbBase 7 -> 16: pulling back near rotation speed (little excess)
     // asked for ~7.6 m/s and felt like nothing happened
     fly: { vr: 72, stall: 58, bank: 0.55, turn: 0.34, climb: 36, climbBase: 16, vne: 150, thrustK: 0.62, pitchK: 3.2 } }),
@@ -3502,6 +3509,20 @@ function spinPart(matte, at, axis, b) {
   matte.spins.push({ b, at, axis });
 }
 
+/**
+ * RETRACTABLE GEAR (spec.retract): a leg and its wheels, drawn by `draw(trim,
+ * matte)` in the model's own metres into a part of their own, hung at `top`
+ * (the leg's root). Baked down in a parked aircraft like any spin part; on
+ * the flown one Vehicle.updatePlane folds it toward the root (the GEAR
+ * button). Axis 'g': spinParts never turns it. Hubs go in the part too.
+ */
+function gearPart(matte, top, draw) {
+  const g = new Builder(false);
+  draw(g, g);
+  for (let i = 0; i < g.pos.length; i += 3) { g.pos[i] -= top[0]; g.pos[i + 1] -= top[1]; g.pos[i + 2] -= top[2]; }
+  spinPart(matte, top, 'g', g);
+}
+
 /** Rotate the vertices a builder added since `from` about Y (and their normals). */
 function rotYFrom(b, from, ang) {
   const c = Math.cos(ang), s = Math.sin(ang);
@@ -4000,13 +4021,17 @@ function buildTwin(spec, paint, trim, matte) {
     ], WHITE, { capEnd: true });
     spinPart(matte, [nx, 1.50, 3.45], 'z', propeller(4, 1.33, 0.19, [0.07, 0.07, 0.08], [0.95, 0.80, 0.12], { phase: sd > 0 ? 0 : 0.4 }));
     // main gear: a leg out of the nacelle onto a pair of wheels
-    matte.tube([nx, 1.02, -0.05], [nx, 0.36, -0.25], 0.055, 8, ALU, false);
-    matte.tube([nx - 0.14, 0.34, -0.25], [nx + 0.14, 0.34, -0.25], 0.04, 6, ALU, false);
-    for (const wx of [-0.13, 0.13]) airWheel(trim, matte, nx + wx, 0.34, -0.25, 0.34, 0.15);
+    gearPart(matte, [nx, 1.02, -0.05], (t, m) => {
+      m.tube([nx, 1.02, -0.05], [nx, 0.36, -0.25], 0.055, 8, ALU, false);
+      m.tube([nx - 0.14, 0.34, -0.25], [nx + 0.14, 0.34, -0.25], 0.04, 6, ALU, false);
+      for (const wx of [-0.13, 0.13]) airWheel(t, m, nx + wx, 0.34, -0.25, 0.34, 0.15);
+    });
   }
   // nose gear
-  matte.tube([0, 1.05, 5.30], [0, 0.26, 5.45], 0.045, 8, ALU, false);
-  airWheel(trim, matte, 0, 0.23, 5.45, 0.23, 0.13);
+  gearPart(matte, [0, 1.05, 5.30], (t, m) => {
+    m.tube([0, 1.05, 5.30], [0, 0.26, 5.45], 0.045, 8, ALU, false);
+    airWheel(t, m, 0, 0.23, 5.45, 0.23, 0.13);
+  });
   // --- T-tail ------------------------------------------------------------------------
   aerofoil(paint, WHITE, [{ x: 0, y: 2.34, zLE: -3.85, c: 2.65 }, { x: 0, y: 3.40, zLE: -5.55, c: 1.75 },
     { x: 0, y: 4.30, zLE: -6.55, c: 1.25 }], { thick: 0.12, n: 7, vertical: true });
@@ -4077,11 +4102,15 @@ function buildJet(spec, paint, trim, matte) {
   }
   // gear: mains out of the wing roots, twin nosewheels
   for (const sd of [-1, 1]) {
-    matte.tube([sd * 1.60, 0.96, -0.10], [sd * 1.62, 0.32, -0.32], 0.05, 8, ALU, false);
-    airWheel(trim, matte, sd * 1.68, 0.30, -0.32, 0.30, 0.18);
+    gearPart(matte, [sd * 1.60, 0.96, -0.10], (t, m) => {
+      m.tube([sd * 1.60, 0.96, -0.10], [sd * 1.62, 0.32, -0.32], 0.05, 8, ALU, false);
+      airWheel(t, m, sd * 1.68, 0.30, -0.32, 0.30, 0.18);
+    });
   }
-  matte.tube([0, 0.86, 5.60], [0, 0.24, 5.74], 0.04, 8, ALU, false);
-  for (const wx of [-0.085, 0.085]) airWheel(trim, matte, wx, 0.21, 5.74, 0.21, 0.10);
+  gearPart(matte, [0, 0.86, 5.60], (t, m) => {
+    m.tube([0, 0.86, 5.60], [0, 0.24, 5.74], 0.04, 8, ALU, false);
+    for (const wx of [-0.085, 0.085]) airWheel(t, m, wx, 0.21, 5.74, 0.21, 0.10);
+  });
   // --- T-tail -------------------------------------------------------------------
   aerofoil(paint, WHITE, [{ x: 0, y: 2.20, zLE: -4.35, c: 2.85 }, { x: 0, y: 3.60, zLE: -6.30, c: 1.75 },
     { x: 0, y: 4.45, zLE: -7.20, c: 1.25 }], { thick: 0.11, n: 7, vertical: true });
@@ -4205,14 +4234,16 @@ function buildJumbo(spec, paint, trim, matte) {
   trim.box(0, 2.0, 2, 0.12, 0.1, 0.3, 0, TAILC);               // and under the belly
   // --- the gear: two nosewheels, four four-wheel main bogies (18 wheels) ---------------
   const R = spec.wheelR;
-  const bogie = (x, z, top) => {
-    matte.tube([x, top, z], [x, R + 0.35, z], 0.2, 10, ALU, false);
-    matte.box(x, R - 0.08, z, 0.4, 0.2, 2.6, 0, [0.3, 0.31, 0.33]);
-    for (const dz of [-0.8, 0.8]) for (const dx of [-0.62, 0.62]) airWheel(trim, matte, x + dx, R, z + dz, R, 0.5);
-  };
+  const bogie = (x, z, top) => gearPart(matte, [x, top, z], (t, m) => {
+    m.tube([x, top, z], [x, R + 0.35, z], 0.2, 10, ALU, false);
+    m.box(x, R - 0.08, z, 0.4, 0.2, 2.6, 0, [0.3, 0.31, 0.33]);
+    for (const dz of [-0.8, 0.8]) for (const dx of [-0.62, 0.62]) airWheel(t, m, x + dx, R, z + dz, R, 0.5);
+  });
   for (const sd of [-1, 1]) { bogie(sd * 5.6, -1.2, 3.8); bogie(sd * 1.9, -4.4, 2.4); }
-  matte.tube([0, 2.4, H - 8.8], [0, R + 0.2, H - 8.9], 0.16, 10, ALU, false);
-  for (const dx of [-0.42, 0.42]) airWheel(trim, matte, dx, R * 0.85, H - 8.9, R * 0.85, 0.42);
+  gearPart(matte, [0, 2.4, H - 8.8], (t, m) => {
+    m.tube([0, 2.4, H - 8.8], [0, R + 0.2, H - 8.9], 0.16, 10, ALU, false);
+    for (const dx of [-0.42, 0.42]) airWheel(t, m, dx, R * 0.85, H - 8.9, R * 0.85, 0.42);
+  });
   trim.box(0, 1.2, H - 8.3, 0.3, 0.15, 0.2, 0, LAMP);
   return [];
 }
@@ -4253,12 +4284,16 @@ function buildFighter(spec, paint, trim, matte) {
     matte.tube([sd * 0.44, 1.92, -7.2], [sd * 0.44, 1.92, -8.05], 0.40, 12, DARK, false);
     matte.tube([sd * 0.44, 1.92, -7.95], [sd * 0.44, 1.92, -8.02], 0.31, 10, CAVITY, true);
     // main gear
-    matte.tube([sd * 1.15, 1.40, -0.9], [sd * 1.40, 0.36, -1.05], 0.06, 8, ALU, false);
-    airWheel(trim, matte, sd * 1.44, 0.36, -1.05, 0.36, 0.2);
+    gearPart(matte, [sd * 1.15, 1.40, -0.9], (t, m) => {
+      m.tube([sd * 1.15, 1.40, -0.9], [sd * 1.40, 0.36, -1.05], 0.06, 8, ALU, false);
+      airWheel(t, m, sd * 1.44, 0.36, -1.05, 0.36, 0.2);
+    });
   }
   // nose gear
-  matte.tube([0, 1.45, 5.55], [0, 0.30, 5.70], 0.05, 8, ALU, false);
-  airWheel(trim, matte, 0, 0.30, 5.70, 0.30, 0.14);
+  gearPart(matte, [0, 1.45, 5.55], (t, m) => {
+    m.tube([0, 1.45, 5.55], [0, 0.30, 5.70], 0.05, 8, ALU, false);
+    airWheel(t, m, 0, 0.30, 5.70, 0.30, 0.14);
+  });
   // a dark anti-glare panel ahead of the canopy, and the refuelling probe fairing
   matte.patch([[[-0.34, 2.33, 5.35], [0, 2.41, 5.35], [0.34, 2.33, 5.35]], [[-0.2, 2.06, 6.5], [0, 2.12, 6.5], [0.2, 2.06, 6.5]]], [0.16, 0.17, 0.19], [0, 1, 0.3]);
   return [];
@@ -6271,7 +6306,8 @@ function buildBus(spec, paint, trim, matte, o = {}) {
   const frontEnd = o.frontEnd !== false, rearEnd = o.rearEnd !== false;
   const belt = 1.20;
   // the lower body in Metro yellow, as matte (paint is the top's colour)
-  const core = bodyCore(spec, tinted(matte, METRO_YELLOW), matte, {
+  const lower = tinted(matte, METRO_YELLOW);
+  const core = bodyCore(spec, lower, matte, {
     halfW: curve([[tail, frontEnd || rearEnd ? (rearEnd ? 0.975 : 1.0) : 1.0], [tail + 0.4, 1.0], [nose - 0.4, 1.0], [nose, frontEnd ? 0.975 : 1.0]]),
     sillY: curve([[tail, rearEnd ? 0.52 : 0.42], [tail + 0.6, 0.42], [nose - 0.6, 0.42], [nose, frontEnd ? 0.46 : 0.42]]),
     beltY: () => belt, tuckAt: () => 0.97, topAt: () => 0.99, zF, zR,
@@ -6308,9 +6344,10 @@ function buildBus(spec, paint, trim, matte, o = {}) {
     const scrTop = sN.side - 0.03;
     endFace(paint, nose, 1, shell.prof(nose), [[0, (sN.y0 + scrTop) / 2 + 0.001, sN.w0 - 0.10, (scrTop - sN.y0) / 2]], WHITE);
     const LAMP_A = [0.90, 0.68, 0.17, 0.075];
-    endFace(paint, nose, 1, endProf(nose), [LAMP_A], WHITE);
+    // the lower nose is the lower body: Metro yellow like the sides
+    endFace(lower, nose, 1, endProf(nose), [LAMP_A], WHITE);
     for (const sx of [-1, 1]) {
-      const hp = pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.07, 1, { rim: 0.02, rimCol: PLASTIC });
+      const hp = pocket(lower, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.07, 1, { rim: 0.02, rimCol: PLASTIC });
       trim.box(sx * LAMP_A[0], LAMP_A[1] - 0.05, nose - 0.02, hp.hw * 1.9, 0.10, 0.02, 0, LAMP);
     }
     // Windscreen: one tall pane from bumper height to the destination sign.
@@ -6374,13 +6411,20 @@ function buildBus(spec, paint, trim, matte, o = {}) {
   // --- rear -----------------------------------------------------------------------
   if (rearEnd) {
     const TL = [1.02, 0.86, 0.08, 0.15];
-    endFace(paint, tail, -1, endProf(tail), [TL], WHITE);
+    endFace(lower, tail, -1, endProf(tail), [TL], WHITE);
     const RW = [0, 2.20, 0.90, 0.36];
     endFace(paint, tail, -1, shell.prof(tail), [RW], WHITE);
+    // THE BAND UNDER THE REAR WINDOW. The shell's end face starts at the
+    // window, the lower body's stops at the belt, and between the two the
+    // back of every bus was open: you saw the seats through it from behind.
+    {
+      const sT = shell.sec(tail), w = sT.w0 - 0.02, y0 = belt - 0.05, y1 = RW[1] - RW[3] + 0.02;
+      paint.quad([w, y0, tail - 0.004], [-w, y0, tail - 0.004], [-w, y1, tail - 0.004], [w, y1, tail - 0.004], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], WHITE);
+    }
     const wp = pocket(paint, matte, 0, RW[1], tail, RW[2], RW[3], 0.04, -1, { rim: 0.03, rimCol: PLASTIC });
     trim.box(0, RW[1] - wp.hh, tail + 0.012, wp.hw * 2, wp.hh * 2, 0.010, 0, GLASS);
     for (const sx of [-1, 1]) {
-      const tp = pocket(paint, matte, sx * TL[0], TL[1], tail, TL[2], TL[3], 0.04, -1, { rim: 0.018, rimCol: PLASTIC });
+      const tp = pocket(lower, matte, sx * TL[0], TL[1], tail, TL[2], TL[3], 0.04, -1, { rim: 0.018, rimCol: PLASTIC });
       trim.box(sx * TL[0], TL[1] - tp.hh * 0.95, tail + 0.014, tp.hw * 1.9, tp.hh * 1.9, 0.020, 0, TAILC);
     }
     matte.box(0, 0.55, tail - 0.012, 1.40, 0.50, 0.02, 0, [0.10, 0.11, 0.12]);                           // engine grille
@@ -8868,6 +8912,22 @@ export class Vehicle {
         for (const m of [T.turret, T.gun, T.trackL, T.trackR]) m.castShadow = true;
         this.tilt.add(T.turret, T.trackL, T.trackR);
       }
+      // THE FIGHTER'S NOZZLES, lit (the flown one only): a disc of heat in
+      // each that brightens with the throttle, and past 85 % the afterburner,
+      // a cone of flame out the back (updatePlane). They were black holes.
+      if (this.spec.fighter) {
+        this.jetFx = [];
+        for (const sd of [-1, 1]) {
+          const glow = new THREE.Mesh(JET_GLOW_GEO, JET_GLOW_MAT.clone());
+          glow.position.set(sd * 0.44, 1.92 - this.pivotY, -7.99);
+          glow.rotation.y = Math.PI;
+          const flame = new THREE.Mesh(JET_FLAME_GEO, JET_FLAME_MAT.clone());
+          flame.position.set(sd * 0.44, 1.92 - this.pivotY, -8.02);
+          flame.visible = false;
+          this.tilt.add(glow, flame);
+          this.jetFx.push({ glow, flame });
+        }
+      }
       for (const s of this.assets.spins) {
         const m = new THREE.Mesh(s.geo, A.matteMat);
         m.castShadow = true;
@@ -8895,6 +8955,7 @@ export class Vehicle {
       this.wheelMeshes.length = 0;
       for (const m of this.spinMeshes) this.tilt.remove(m);
       this.spinMeshes.length = 0;
+      if (this.jetFx) { for (const f of this.jetFx) this.tilt.remove(f.glow, f.flame); this.jetFx = null; }
       if (T && T.turret) {
         this.tilt.remove(T.turret, T.trackL, T.trackR);
         T.turret = T.gun = T.trackL = T.trackR = null;
@@ -8912,7 +8973,7 @@ export class Vehicle {
       const a = m.userData.axis;
       if (a === 'y') m.rotation.y += rateY * dt;
       else if (a === 'x') m.rotation.x += rateX * dt;
-      else m.rotation.z += rateZ * dt;
+      else if (a !== 'g') m.rotation.z += rateZ * dt;   // (a retractable leg: never)
     }
   }
 
@@ -9064,6 +9125,7 @@ export class Vehicle {
     // ahead forever while x and z dissolved.
     if (this.rollA === undefined) this.rollA = 0;
     if (this.pitchA === undefined) this.pitchA = 0;
+    this._airParts(dt, throttle);
     if (this.vy === undefined) this.vy = 0;
     if (this.airborne === undefined) this.airborne = false;
 
@@ -9137,6 +9199,8 @@ export class Vehicle {
         this.airborne = false;
         if (this.vy < -7) this.damage(Math.min(70, (-this.vy - 7) * 9), true);
         else if (this.vy < -3.5) this.damage((-this.vy - 3.5) * 3, true);
+        // on its belly: the gear was up -- the airframe pays and it slides
+        this._bellyCheck();
         this.vy = 0;
       }
     }
@@ -9178,9 +9242,41 @@ export class Vehicle {
    * group.rotation.y then tilt x, z in), so everything else sees the usual
    * fields. On the ground it rolls and steers like the other planes.
    */
+  /** The flown aircraft's live parts, every frame: the lit nozzles and the gear's fold (updatePlane, updateFighter). */
+  _airParts(dt, throttle) {
+    const spec = this.spec;
+    if (this.jetFx) {
+      const ab = clamp((throttle - 0.85) / 0.15, 0, 1);
+      for (const f of this.jetFx) {
+        f.glow.material.opacity = 0.45 + 0.55 * throttle;
+        f.glow.material.color.setRGB(1, 0.42 + 0.35 * throttle, 0.15 + 0.3 * ab);
+        f.flame.visible = ab > 0.02;
+        f.flame.scale.set(1, 1, (1.0 + 2.2 * ab) * (0.9 + 0.2 * Math.random()));
+        f.flame.material.opacity = 0.16 + 0.3 * ab;
+      }
+    }
+    // THE GEAR (gearPart): folds toward its roots over ~2 s, gone when up
+    if (spec.retract) {
+      const k = this.gearK = damp(this.gearK || 0, this.gearUp ? 1 : 0, 2.0, dt);
+      for (const m of this.spinMeshes) if (m.userData.axis === 'g') {
+        m.scale.set(1 - 0.5 * k, Math.max(0.02, 1 - k), 1 - 0.5 * k);
+        m.visible = k < 0.97;
+      }
+    }
+  }
+
+  /** Touched down gear up (gearPart): the airframe pays and it slides. */
+  _bellyCheck() {
+    if (!this.spec.retract || (this.gearK || 0) <= 0.5) return;
+    this.damage(45, true);
+    this.vLong *= 0.55;
+    if (VEHICLE_HOOKS.belly) VEHICLE_HOOKS.belly(this);
+  }
+
   updateFighter(dt, input) {
     const spec = this.spec, fly = spec.fly;
     const throttle = input.throttle || 0, brake = input.brake || 0;
+    this._airParts(dt, throttle);
     const steerIn = clamp(input.steer || 0, -1, 1), pitchIn = clamp(input.pitch || 0, -1, 1);
     if (!this.q) { this.q = new THREE.Quaternion(); this._fv = new THREE.Vector3(); this._fu = new THREE.Vector3(); this._e = new THREE.Euler(0, 0, 0, 'YXZ'); }
     if (this.airborne === undefined) this.airborne = false;
@@ -9253,6 +9349,7 @@ export class Vehicle {
         this._e.setFromQuaternion(this.q, 'YXZ');
         this.heading = this._e.y;
         if (vyy < -4.5) this.damage((-vyy - 4.5) * 4, true);
+        this._bellyCheck();
       } else {
         this.damage(Math.min(100, 30 + v * 0.6), true);
         this.airborne = false;

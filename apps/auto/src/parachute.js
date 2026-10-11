@@ -18,6 +18,7 @@
 
 import * as THREE from './three.js';
 import * as G from './geo.js';
+import { skydivePose } from './peds.js';
 
 const G0 = 9.8, TERMINAL = 55, K_FREE = G0 / (TERMINAL * TERMINAL);
 const AUTO_OPEN = 60, OPEN_T = 1.3;
@@ -164,6 +165,9 @@ export class Skydive {
     // belly to earth in free fall; hanging in the harness under the canopy
     const lean = this.state === 'free' ? Math.PI / 2 * 0.88 : this.state === 'water' ? 0.3 : 0.08;
     g.rotation.x += (lean - g.rotation.x) * Math.min(1, dt * 6);
+    // and the body itself (peds.js skydivePose), not the stride it left the door in
+    skydivePose(p.h, this.state === 'opening' ? 'canopy' : this.state, this.t, Math.min(1, dt * 5));
+    p.h.group.updateMatrixWorld(true);
     canopy.visible = open;
     if (open) {
       const k = this.state === 'opening' ? Math.min(1, 0.15 + this.openT / OPEN_T) : 1;

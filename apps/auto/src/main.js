@@ -1484,6 +1484,7 @@ function installShadowFade() {
   if (!mapCanvas) { mapCanvas = buildMapCanvas(city); bcOut.mapCanvas = mapCanvas; }
   hud = new Hud(document.getElementById('app'), city, mapCanvas);
   // your car catching fire (vehicles.js Vehicle.damage): the frame burns it down
+  VEHICLE_HOOKS.belly = () => hud.showToast('Belly landing — the gear was up!', 2400);
   VEHICLE_HOOKS.ignite = (v) => {
     burning.add(v);
     hud.showToast('Your car is on fire — get out!', 3000);
@@ -2559,6 +2560,16 @@ function updateSiren(dt) {
     // fire rig has its own (firecalls.js, data-fire)
     controls.root.dataset.cop = v && v.spec.police ? '1' : '';
   }
+  // THE GEAR (vehicles.js gearPart): up only in the air, down anywhere
+  const gv = pv && pv.spec.retract && !pv.dead ? pv : null;
+  controls.root.dataset.gear = gv ? '1' : '';
+  if (controls.takeGear() % 2 && gv) {
+    if (gv.gearUp) { gv.gearUp = false; hud.showToast('Gear down', 1200); }
+    else if (gv.airborne) { gv.gearUp = true; hud.showToast('Gear up', 1200); }
+    else hud.showToast('Gear stays down on the ground', 1400);
+  }
+  const gb = document.querySelector('[data-btn="gear"]');
+  if (gb) gb.classList.toggle('on', !!(gv && gv.gearUp));
   if (controls.takeSiren() % 2 && v) {
     setSiren(v, !v.sirenOn);
     hud.showToast(v.sirenOn ? 'Siren on' : 'Siren off', 1200);

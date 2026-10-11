@@ -23,6 +23,7 @@ const PAD = {
   carAttack: 2,   // X -- in a car (the tank's main gun)
   warp: 2,        // X -- on the map, arms the spawn picker
   enter: 3,       // Y -- enter/exit vehicle
+  gear: 4,        // LB -- in an aircraft with retractable gear, up and down
   sprintAlt: 5,   // RB -- run on foot too; the tank's machine gun, a rig's water
   brake: 6,       // LT -- analogue
   gas: 7,         // RT -- analogue; on foot, attack (GTA's fire)
@@ -65,6 +66,7 @@ export class Controls {
     this._lookId = null;
     this.sensitivity = 1;
     this.sirenTaps = 0;   // SIREN presses (button, G, R3) since takeSiren()
+    this.gearTaps = 0;    // GEAR presses (button, L, LB) since takeGear()
 
     // --- gamepad ---
     this.hasPad = false;
@@ -127,6 +129,7 @@ export class Controls {
         b.classList.add('down');
         if (b.dataset.tap) this.tapped = b.dataset.btn;
         if (b.dataset.btn === 'siren') this.sirenTaps++;
+        if (b.dataset.btn === 'gear') this.gearTaps++;
       }, opts);
       const up = (e) => {
         if (!this._pointers.has(e.pointerId)) return;
@@ -159,6 +162,7 @@ export class Controls {
       if (e.code === 'Space') this.tapped = 'jump';
       if (e.code === 'KeyR' && this._ui) this._ui.radio = 1;   // the next station
       if (e.code === 'KeyG') this.sirenTaps++;
+      if (e.code === 'KeyL') this.gearTaps++;
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
@@ -239,6 +243,7 @@ export class Controls {
     if (edge(PAD.pause)) this._ui.pause = true;
     if (edge(PAD.map)) this._ui.map = true;
     if (edge(PAD.siren)) this.sirenTaps++;
+    if (edge(PAD.gear) && this.mode === 'drive') this.gearTaps++;
     if (edge(PAD.radioNext)) this._ui.radio = 1;
     if (edge(PAD.radioPrev)) this._ui.radio = -1;
     if (edge(PAD.confirm)) this._ui.confirm = true;
@@ -398,6 +403,13 @@ export class Controls {
     this.camDX = 0;
     this.camDY = 0;
     return d;
+  }
+
+  /** Consume the GEAR presses (as takeSiren). */
+  takeGear() {
+    const n = this.gearTaps;
+    this.gearTaps = 0;
+    return n;
   }
 
   /** Consume the SIREN presses: a count, not a held state, so a tap shorter than a frame still counts. */

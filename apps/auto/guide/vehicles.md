@@ -388,6 +388,11 @@ shots.
   middle axle); it was 11.4 + 6.5, the rear barely half the front. `ARTIC`'s
   hitch and axle, the doors and the axles moved with it.
 
+**v219: the bus's back is closed.** Between the lower body's end face
+(to the belt) and the shell's (from the rear window) the back of every bus
+was open -- you saw the seats through it from behind. A panel fills the band;
+the lower ends front and back are Metro yellow like the sides (`lower`).
+
 ## Flying
 
 **The camera jumps were a TUNNEL clamp firing on hillsides.** `updateCamera`'s
@@ -705,6 +710,21 @@ exist and both are closed:
   harness drove the OTHER page; when that browser died, the pending evaluate
   never answered. flycam now refuses a port whose page is not its own
   `about:blank` and exits when the socket closes.
+
+**v219: gear up, lit nozzles, a skydiver's body.**
+- `spec.retract` (twin, jet, fighter, jumbo): each leg and its wheels is a
+  `gearPart` -- a spin part with axis `'g'` that `spinParts` never turns,
+  hung at the leg's root. GEAR (L, pad LB; the button over EXIT, `data-gear`)
+  raises it in the air only and lowers it anywhere; `_airParts` folds it
+  toward the roots over ~2 s. Touching down gear up is a belly landing
+  (`_bellyCheck`: 45 damage, speed halved, `VEHICLE_HOOKS.belly`'s toast) --
+  for the fighter too, which flies `updateFighter`, not `updatePlane`: both
+  call `_airParts`.
+- The fighter's nozzles are lit on the flown one (`jetFx`): a disc of heat in
+  each brightening with the throttle, and past 85 % an afterburner cone.
+- Out of an aircraft, `skydivePose` (peds.js) poses the body for the state:
+  the box position in free fall, hands on the toggles under the canopy,
+  treading water. The figure was only ever tilted, frozen mid-stride.
 
 ## The seaplane dock, the boat and the quad
 
