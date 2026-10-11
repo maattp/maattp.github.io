@@ -1,0 +1,1084 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PWA">
+<meta name="theme-color" content="#101418">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="../icon.png">
+<title>PWA Probe</title>
+<style>
+  :root {
+    --bg: #101418; --card: #182027; --line: #26313b; --fg: #e4ebf1; --dim: #8a9aa8;
+    --pass: #3ddc84; --fail: #ff5c5c; --info: #6cb4ff; --run: #e8c547;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: var(--fg); background: var(--bg);
+    padding: calc(env(safe-area-inset-top) + 14px) calc(env(safe-area-inset-right) + 14px)
+             calc(env(safe-area-inset-bottom) + 24px) calc(env(safe-area-inset-left) + 14px);
+    -webkit-tap-highlight-color: transparent;
+    -webkit-overflow-scrolling: touch;
+    -webkit-text-size-adjust: 100%;
+  }
+  header h1 { font-size: 22px; font-weight: 700; display: flex; align-items: baseline; gap: 8px; }
+  header h1 small { font-size: 13px; color: var(--dim); font-weight: 500; }
+  #mode {
+    margin: 10px 0 4px; padding: 12px 14px; border-radius: 12px; font-weight: 700; font-size: 17px;
+    letter-spacing: .02em;
+  }
+  #mode.standalone { background: rgba(61,220,132,.14); color: var(--pass); border: 1px solid rgba(61,220,132,.4); }
+  #mode.browser { background: rgba(232,197,71,.12); color: var(--run); border: 1px solid rgba(232,197,71,.4); }
+  #mode small { display: block; font-weight: 500; font-size: 12px; color: var(--dim); margin-top: 3px; letter-spacing: 0; }
+  #tally { color: var(--dim); font-size: 13px; margin: 6px 0 10px; }
+  #tally b.p { color: var(--pass); } #tally b.f { color: var(--fail); }
+  .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+  button {
+    font: inherit; font-weight: 600; font-size: 14px; color: var(--fg); background: var(--card);
+    border: 1px solid var(--line); border-radius: 10px; padding: 11px 8px; cursor: pointer;
+  }
+  button:active { background: var(--line); }
+  button.primary { background: #1f4f8a; border-color: #2c66ad; }
+  button.danger { color: #ffb0b0; }
+  #modeLinks { font-size: 13px; color: var(--dim); margin-bottom: 14px; }
+  #modeLinks a { color: var(--info); }
+  #copyOut { display: none; width: 100%; height: 180px; margin-bottom: 12px; background: #0b0e11; color: var(--fg);
+    border: 1px solid var(--line); border-radius: 8px; font: 11px/1.35 ui-monospace, Menlo, monospace; padding: 8px; }
+  #status { font-size: 13px; color: var(--run); min-height: 18px; margin-bottom: 6px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); margin: 18px 0 8px; }
+  .row { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+  .row .hd { display: flex; gap: 8px; align-items: baseline; }
+  .st { flex: none; font: 700 11px/1 ui-monospace, Menlo, monospace; padding: 4px 6px; border-radius: 5px; color: #0b0e11; min-width: 42px; text-align: center; }
+  .pass .st { background: var(--pass); } .fail .st { background: var(--fail); }
+  .info .st { background: var(--info); } .run .st { background: var(--run); }
+  .nm { font-weight: 600; }
+  .sum { color: var(--fg); font-size: 13px; margin-top: 4px; word-break: break-word; }
+  .fail .sum { color: #ffb0b0; }
+  .det { font: 11px/1.4 ui-monospace, Menlo, monospace; color: var(--dim); margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
+  .det:empty { display: none; }
+  .row canvas { display: block; width: 96px; height: 96px; margin-top: 8px; border-radius: 6px; background: #000; }
+  .note { font-size: 12px; color: var(--dim); margin: -2px 0 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>PWA Probe <small id="ver"></small></h1>
+  <div id="mode"></div>
+  <div id="tally"></div>
+</header>
+<div class="buttons">
+  <button id="copy" class="primary">Copy results</button>
+  <button id="rerun">Re-run checks</button>
+  <button id="tap">Run tap-gated checks</button>
+  <button id="stress" class="danger">Memory stress</button>
+</div>
+<div id="modeLinks"></div>
+<textarea id="copyOut" readonly></textarea>
+<div id="status"></div>
+<main id="out"></main>
+
+<script>
+'use strict';
+const VERSION = 1;
+
+const $ = (s) => document.querySelector(s);
+const out = $('#out');
+const params = new URLSearchParams(location.search);
+const WANT_COI = params.get('coi') !== '0';
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const errText = (e) => (e && e.name ? `${e.name}: ${e.message}` : String(e));
+const ss = { get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
+             set(k, v) { try { sessionStorage.setItem(k, v); } catch {} } };
+const ls = { get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+             set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+             del(k) { try { localStorage.removeItem(k); } catch {} } };
+
+$('#ver').textContent = `v${VERSION}`;
+
+/* ---------- display mode ---------- */
+function displayMode() {
+  const dm = ['fullscreen', 'standalone', 'minimal-ui', 'browser']
+    .find((m) => matchMedia(`(display-mode: ${m})`).matches) || 'unknown';
+  const standalone = navigator.standalone === true || dm === 'standalone' || dm === 'fullscreen';
+  return { dm, standalone, navStandalone: navigator.standalone };
+}
+const MODE = displayMode();
+{
+  const el = $('#mode');
+  el.className = MODE.standalone ? 'standalone' : 'browser';
+  el.innerHTML = '';
+  el.append(MODE.standalone ? 'STANDALONE (home screen app)' : 'BROWSER TAB (not standalone)');
+  const s = document.createElement('small');
+  s.textContent = `display-mode: ${MODE.dm} · navigator.standalone: ${MODE.navStandalone} · ` +
+    `isolation requested: ${WANT_COI ? 'yes' : 'no (?coi=0)'}`;
+  el.append(s);
+  const links = $('#modeLinks');
+  const a = document.createElement('a');
+  a.href = WANT_COI ? './?coi=0' : './';
+  a.textContent = WANT_COI ? 'Re-load without COOP/COEP (?coi=0)' : 'Re-load with COOP/COEP';
+  links.append(a);
+  if (!MODE.standalone) links.append(' · To compare: Share → Add to Home Screen, then open it from the icon.');
+}
+
+/* ---------- result rows ---------- */
+const results = [];
+const groups = new Map();
+function section(name) {
+  let g = groups.get(name);
+  if (!g) {
+    const h = document.createElement('h2'); h.textContent = name;
+    const box = document.createElement('div');
+    out.append(h, box);
+    g = { h, box };
+    groups.set(name, g);
+  }
+  return g.box;
+}
+function clearGroup(name) {
+  const g = groups.get(name);
+  if (g) { g.h.remove(); g.box.remove(); groups.delete(name); }
+  for (let i = results.length - 1; i >= 0; i--) if (results[i].group === name) results.splice(i, 1);
+}
+function addRow(group, name) {
+  const el = document.createElement('div');
+  el.className = 'row run';
+  el.innerHTML = '<div class="hd"><span class="st">RUN</span><span class="nm"></span></div><div class="sum">running…</div><div class="det"></div>';
+  el.querySelector('.nm').textContent = name;
+  section(group).append(el);
+  const rec = { group, name, status: 'run', summary: 'running…', details: [] };
+  results.push(rec);
+  return {
+    rec, el,
+    attach(node) { el.append(node); },
+    set({ status, summary = '', details = [] }) {
+      Object.assign(rec, { status, summary, details });
+      el.className = `row ${status}`;
+      el.querySelector('.st').textContent = status.toUpperCase();
+      el.querySelector('.sum').textContent = summary;
+      el.querySelector('.det').textContent = details.join('\n');
+      tally();
+    },
+  };
+}
+function tally() {
+  const n = (s) => results.filter((r) => r.status === s).length;
+  $('#tally').innerHTML = `<b class="p">${n('pass')} pass</b> · <b class="f">${n('fail')} fail</b> · ${n('info')} info` +
+    (n('run') ? ` · ${n('run')} running` : '');
+}
+// Runs one check; whatever it throws (or a timeout) becomes a FAIL row with the error.
+async function check(group, name, fn, ms = 15000) {
+  const row = addRow(group, name);
+  let timer;
+  try {
+    const r = await Promise.race([
+      Promise.resolve().then(() => fn(row)),
+      new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`timed out after ${ms / 1000}s`)), ms); }),
+    ]);
+    row.set(r);
+    return r;
+  } catch (e) {
+    row.set({ status: 'fail', summary: errText(e) });
+    return null;
+  } finally { clearTimeout(timer); }
+}
+const pass = (summary, details) => ({ status: 'pass', summary, details });
+const fail = (summary, details) => ({ status: 'fail', summary, details });
+const info = (summary, details) => ({ status: 'info', summary, details });
+const status = (t) => { $('#status').textContent = t; };
+
+function workerCall(msg) {
+  return new Promise((resolve, reject) => {
+    let w;
+    try { w = new Worker('worker.js'); } catch (e) { reject(e); return; }
+    w.onmessage = (e) => { w.terminate(); e.data.ok ? resolve(e.data) : reject(new Error(e.data.error)); };
+    w.onerror = (e) => { w.terminate(); reject(new Error(`worker error: ${e.message || 'script failed to load'}`)); };
+    w.onmessageerror = () => { w.terminate(); reject(new Error('messageerror (could not deserialize)')); };
+    try { w.postMessage(msg); } catch (e) { w.terminate(); reject(e); }
+  });
+}
+
+/* ---------- tiny wasm assembler ---------- */
+const leb = (n) => { const o = []; do { let b = n & 0x7f; n >>>= 7; if (n) b |= 0x80; o.push(b); } while (n); return o; };
+const wsec = (id, bytes) => [id, ...leb(bytes.length), ...bytes];
+const wstr = (s) => [...leb(s.length), ...[...s].map((c) => c.charCodeAt(0))];
+// One function (index 0), optionally importing memory e.m, exported under `name`.
+function wasm({ type, mem, name, body }) {
+  return new Uint8Array([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
+    ...wsec(1, [1, 0x60, ...type]),
+    ...(mem ? wsec(2, [1, ...wstr('e'), ...wstr('m'), 2, ...mem]) : []),
+    ...wsec(3, [1, 0]),
+    ...wsec(7, [1, ...wstr(name), 0, 0]),
+    ...wsec(10, [1, ...leb(body.length), ...body])]);
+}
+const i32x4 = (a, b, c, d) => [...new Uint8Array(new Int32Array([a, b, c, d]).buffer)];
+const WASM = {
+  // add(a, b) = a + b
+  add: wasm({ type: [2, 0x7f, 0x7f, 1, 0x7f], name: 'add',
+    body: [0, 0x20, 0, 0x20, 1, 0x6a, 0x0b] }),
+  // simd() = extract_lane 2 of (i32x4(1,2,3,4) + i32x4(10,20,30,40)) = 33
+  simd: wasm({ type: [0, 1, 0x7f], name: 'simd',
+    body: [0, 0xfd, 0x0c, ...i32x4(1, 2, 3, 4), 0xfd, 0x0c, ...i32x4(10, 20, 30, 40),
+      0xfd, 0xae, 0x01, 0xfd, 0x1b, 2, 0x0b] }),
+  // inc(n): n times, atomic add 1 to the i32 at address 0 of imported shared memory
+  inc: wasm({ type: [1, 0x7f, 0], mem: [3, 1, 1], name: 'inc',
+    body: [0, 0x03, 0x40, 0x41, 0, 0x41, 1, 0xfe, 0x1e, 2, 0, 0x1a,
+      0x20, 0, 0x41, 1, 0x6b, 0x22, 0, 0x0d, 0, 0x0b, 0x0b] }),
+  // run(n): acc = acc*31 + n, n times; returns acc (speed test)
+  run: wasm({ type: [1, 0x7f, 1, 0x7f], name: 'run',
+    body: [1, 1, 0x7f, 0x03, 0x40, 0x20, 1, 0x41, 31, 0x6c, 0x20, 0, 0x6a, 0x21, 1,
+      0x20, 0, 0x41, 1, 0x6b, 0x22, 0, 0x0d, 0, 0x0b, 0x20, 1, 0x0b] }),
+};
+
+/* ================= checks ================= */
+
+async function envChecks() {
+  const G = 'Environment';
+  await check(G, 'Display mode', () => {
+    const d = [
+      `display-mode media query: ${MODE.dm}`,
+      `navigator.standalone: ${MODE.navStandalone}`,
+      `URL: ${location.href}`,
+      `UA: ${navigator.userAgent}`,
+      `screen: ${screen.width}x${screen.height} @${devicePixelRatio}x · viewport ${innerWidth}x${innerHeight}`,
+      `orientation: ${screen.orientation ? screen.orientation.type : 'n/a'}`,
+      `safe-area insets: ${safeAreas()}`,
+      `color gamut p3: ${matchMedia('(color-gamut: p3)').matches} · dynamic-range high: ${matchMedia('(dynamic-range: high)').matches}`,
+      `hardwareConcurrency: ${navigator.hardwareConcurrency} · deviceMemory: ${navigator.deviceMemory ?? 'n/a'}`,
+      `language: ${navigator.language} · online: ${navigator.onLine}`,
+    ];
+    return info(MODE.standalone ? 'Running standalone from the home screen' : 'Running in a browser tab', d);
+  });
+
+  await check(G, 'Service worker', async () => {
+    if (!('serviceWorker' in navigator)) return fail('navigator.serviceWorker is undefined');
+    const reg = await navigator.serviceWorker.getRegistration();
+    const d = [
+      `controller: ${navigator.serviceWorker.controller ? 'yes' : 'no'}`,
+      `registration scope: ${reg ? reg.scope : 'none'}`,
+      `active state: ${reg && reg.active ? reg.active.state : 'none'}`,
+      `reloaded once to come under SW control: ${ss.get('pwa-reloaded') ? 'yes' : 'no'}`,
+    ];
+    if (swError) d.push(`register() error: ${swError}`);
+    return navigator.serviceWorker.controller ? pass('Page is controlled by the service worker', d)
+      : fail('Page is NOT controlled by the service worker', d);
+  });
+}
+
+function safeAreas() {
+  const p = document.createElement('div');
+  p.style.cssText = 'position:fixed;visibility:hidden;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
+  document.body.append(p);
+  const cs = getComputedStyle(p);
+  const v = `t${cs.paddingTop} r${cs.paddingRight} b${cs.paddingBottom} l${cs.paddingLeft}`;
+  p.remove();
+  return v;
+}
+
+/* ---------- WebGPU ---------- */
+const GPU_LIMITS = ['maxTextureDimension2D', 'maxTextureArrayLayers', 'maxBindGroups', 'maxSampledTexturesPerShaderStage',
+  'maxStorageBuffersPerShaderStage', 'maxUniformBufferBindingSize', 'maxStorageBufferBindingSize', 'maxBufferSize',
+  'maxVertexBuffers', 'maxVertexAttributes', 'maxColorAttachments', 'maxComputeWorkgroupStorageSize',
+  'maxComputeInvocationsPerWorkgroup', 'maxComputeWorkgroupSizeX', 'maxComputeWorkgroupsPerDimension'];
+const GPU_WANT_FEATURES = ['texture-compression-astc', 'texture-compression-etc2', 'texture-compression-bc',
+  'float32-filterable', 'rg11b10ufloat-renderable', 'shader-f16', 'depth32float-stencil8', 'indirect-first-instance'];
+
+const WGSL_RENDER = `
+struct VO { @builtin(position) pos: vec4f, @location(0) col: vec3f };
+@vertex fn vs(@builtin(vertex_index) i: u32) -> VO {
+  var p = array<vec2f, 3>(vec2f(0.0, 0.8), vec2f(-0.8, -0.7), vec2f(0.8, -0.7));
+  var c = array<vec3f, 3>(vec3f(1.0, 0.25, 0.25), vec3f(0.25, 1.0, 0.35), vec3f(0.25, 0.45, 1.0));
+  var o: VO; o.pos = vec4f(p[i], 0.0, 1.0); o.col = c[i]; return o;
+}
+@vertex fn vsFull(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  var p = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
+  return vec4f(p[i], 0.0, 1.0);
+}
+@fragment fn fsColor(v: VO) -> @location(0) vec4f { return vec4f(v.col, 1.0); }
+@fragment fn fsSolid() -> @location(0) vec4f { return vec4f(1.0, 0.5, 0.25, 1.0); }`;
+
+const WGSL_COMPUTE = `
+@group(0) @binding(0) var<storage, read_write> data: array<f32>;
+@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) id: vec3u) {
+  let i = id.x;
+  if (i < arrayLength(&data)) { data[i] = data[i] * 2.0 + f32(i); }
+}`;
+
+async function shaderErrors(module) {
+  if (!module.getCompilationInfo) return [];
+  const ci = await module.getCompilationInfo();
+  return ci.messages.filter((m) => m.type === 'error').map((m) => `line ${m.lineNum}: ${m.message}`);
+}
+
+async function webgpuChecks() {
+  const G = 'Graphics: WebGPU';
+  const gpuErrors = [];
+  const base = await check(G, 'Adapter + device', async () => {
+    if (!('gpu' in navigator)) return fail('navigator.gpu is undefined (WebGPU not exposed)');
+    const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+    if (!adapter) return fail('navigator.gpu.requestAdapter() returned null');
+    const ai = adapter.info || {};
+    const d = [
+      `vendor: ${ai.vendor || '?'} · architecture: ${ai.architecture || '?'}`,
+      `device: ${ai.device || '?'} · description: ${ai.description || '?'}`,
+      `isFallbackAdapter: ${ai.isFallbackAdapter ?? adapter.isFallbackAdapter ?? '?'}`,
+      `preferredCanvasFormat: ${navigator.gpu.getPreferredCanvasFormat()}`,
+      `wgslLanguageFeatures: ${navigator.gpu.wgslLanguageFeatures ? [...navigator.gpu.wgslLanguageFeatures].sort().join(', ') || '(none)' : 'n/a'}`,
+      `adapter features: ${[...adapter.features].sort().join(', ') || '(none)'}`,
+      ...GPU_LIMITS.map((k) => `${k}: ${adapter.limits[k]}`),
+    ];
+    const requiredFeatures = GPU_WANT_FEATURES.filter((f) => adapter.features.has(f));
+    const t = performance.now();
+    const device = await adapter.requestDevice({ requiredFeatures });
+    d.push(`requestDevice: ${(performance.now() - t).toFixed(1)} ms, features requested: ${requiredFeatures.join(', ') || '(none)'}`);
+    device.lost.then((l) => gpuErrors.push(`device lost: ${l.reason} ${l.message}`));
+    device.addEventListener('uncapturederror', (e) => gpuErrors.push(`uncaptured: ${e.error.message}`));
+    return { ...pass(`${ai.vendor || '?'} ${ai.architecture || ''} — device acquired`, d), device };
+  });
+  const device = base && base.device;
+
+  await check(G, 'Render (triangle + pixel readback)', async (row) => {
+    if (!device) return fail('No device (see Adapter + device)');
+    const module = device.createShaderModule({ code: WGSL_RENDER });
+    const errs = await shaderErrors(module);
+    if (errs.length) return fail('WGSL compile errors', errs);
+    const d = [];
+    device.pushErrorScope('validation');
+    // 1) Visible canvas
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 192;
+    row.attach(canvas);
+    const ctx = canvas.getContext('webgpu');
+    if (!ctx) return fail('canvas.getContext("webgpu") returned null');
+    const fmt = navigator.gpu.getPreferredCanvasFormat();
+    ctx.configure({ device, format: fmt, alphaMode: 'opaque' });
+    const pipe = (format, vs, fs) => device.createRenderPipeline({
+      layout: 'auto',
+      vertex: { module, entryPoint: vs },
+      fragment: { module, entryPoint: fs, targets: [{ format }] },
+      primitive: { topology: 'triangle-list' },
+    });
+    const visible = pipe(fmt, 'vs', 'fsColor');
+    // 2) Offscreen rgba8 target, solid colour, copied back to a buffer
+    const solid = pipe('rgba8unorm', 'vsFull', 'fsSolid');
+    const tex = device.createTexture({ size: [4, 4], format: 'rgba8unorm',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
+    const buf = device.createBuffer({ size: 256 * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const t = performance.now();
+    const enc = device.createCommandEncoder();
+    for (const [view, p, clear] of [[ctx.getCurrentTexture().createView(), visible, [0.05, 0.05, 0.08, 1]],
+                                     [tex.createView(), solid, [0, 0, 0, 1]]]) {
+      const rp = enc.beginRenderPass({ colorAttachments: [{ view, loadOp: 'clear', storeOp: 'store',
+        clearValue: { r: clear[0], g: clear[1], b: clear[2], a: clear[3] } }] });
+      rp.setPipeline(p); rp.draw(3); rp.end();
+    }
+    enc.copyTextureToBuffer({ texture: tex }, { buffer: buf, bytesPerRow: 256 }, [4, 4]);
+    device.queue.submit([enc.finish()]);
+    const verr = await device.popErrorScope();
+    if (verr) return fail(`Validation error: ${verr.message}`);
+    await buf.mapAsync(GPUMapMode.READ);
+    const px = [...new Uint8Array(buf.getMappedRange(0, 4))];
+    buf.unmap();
+    d.push(`canvas format: ${fmt}`, `GPU round trip: ${(performance.now() - t).toFixed(1)} ms`,
+      `readback pixel: [${px}] (expected ≈ [255,128,64,255])`);
+    if (gpuErrors.length) d.push(...gpuErrors);
+    const ok = Math.abs(px[0] - 255) <= 2 && Math.abs(px[1] - 128) <= 2 && Math.abs(px[2] - 64) <= 2 && px[3] === 255;
+    return ok ? pass('Rendered and read back the expected pixel', d) : fail('Readback pixel is wrong', d);
+  });
+
+  await check(G, 'Compute shader', async () => {
+    if (!device) return fail('No device (see Adapter + device)');
+    const module = device.createShaderModule({ code: WGSL_COMPUTE });
+    const errs = await shaderErrors(module);
+    if (errs.length) return fail('WGSL compile errors', errs);
+    const N = 1 << 16;
+    const input = new Float32Array(N).map((_, i) => i * 0.5);
+    device.pushErrorScope('validation');
+    const storage = device.createBuffer({ size: input.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(storage, 0, input);
+    const read = device.createBuffer({ size: input.byteLength, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const pipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+    const bind = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: storage } }] });
+    const t = performance.now();
+    const enc = device.createCommandEncoder();
+    const cp = enc.beginComputePass();
+    cp.setPipeline(pipeline); cp.setBindGroup(0, bind); cp.dispatchWorkgroups(N / 64); cp.end();
+    enc.copyBufferToBuffer(storage, 0, read, 0, input.byteLength);
+    device.queue.submit([enc.finish()]);
+    const verr = await device.popErrorScope();
+    if (verr) return fail(`Validation error: ${verr.message}`);
+    await read.mapAsync(GPUMapMode.READ);
+    const res = new Float32Array(read.getMappedRange().slice(0));
+    read.unmap();
+    let bad = -1;
+    for (let i = 0; i < N; i++) if (res[i] !== 2 * i) { bad = i; break; }
+    const d = [`${N} elements, workgroup 64`, `dispatch + readback: ${(performance.now() - t).toFixed(1)} ms`];
+    if (bad >= 0) d.push(`first mismatch at ${bad}: got ${res[bad]}, expected ${2 * bad}`);
+    return bad < 0 ? pass('All results correct', d) : fail('Compute results are wrong', d);
+  });
+}
+
+/* ---------- WebGL2 ---------- */
+function glProgram(gl, vs, fs) {
+  const sh = (type, src) => {
+    const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(`shader compile: ${gl.getShaderInfoLog(s)}`);
+    return s;
+  };
+  const p = gl.createProgram();
+  gl.attachShader(p, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(`program link: ${gl.getProgramInfoLog(p)}`);
+  return p;
+}
+
+async function webglChecks() {
+  const G = 'Graphics: WebGL2';
+  let gl, canvas, ctxLost = false;
+  await check(G, 'Context + limits', () => {
+    canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 192;
+    canvas.addEventListener('webglcontextlost', () => { ctxLost = true; });
+    gl = canvas.getContext('webgl2', { antialias: true, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
+    if (!gl) return fail('canvas.getContext("webgl2") returned null');
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    const P = (k) => gl.getParameter(gl[k]);
+    const exts = gl.getSupportedExtensions() || [];
+    const attrs = gl.getContextAttributes();
+    const d = [
+      `VERSION: ${P('VERSION')}`, `GLSL: ${P('SHADING_LANGUAGE_VERSION')}`,
+      `VENDOR/RENDERER: ${P('VENDOR')} / ${P('RENDERER')}`,
+      `unmasked: ${dbg ? `${gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL)} / ${gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)}` : 'n/a'}`,
+      ...['MAX_TEXTURE_SIZE', 'MAX_CUBE_MAP_TEXTURE_SIZE', 'MAX_3D_TEXTURE_SIZE', 'MAX_ARRAY_TEXTURE_LAYERS', 'MAX_RENDERBUFFER_SIZE',
+        'MAX_SAMPLES', 'MAX_DRAW_BUFFERS', 'MAX_VERTEX_ATTRIBS', 'MAX_TEXTURE_IMAGE_UNITS', 'MAX_COMBINED_TEXTURE_IMAGE_UNITS',
+        'MAX_VERTEX_UNIFORM_VECTORS', 'MAX_FRAGMENT_UNIFORM_VECTORS', 'MAX_UNIFORM_BLOCK_SIZE']
+        .map((k) => `${k}: ${P(k)}`),
+      `MAX_VIEWPORT_DIMS: ${[...P('MAX_VIEWPORT_DIMS')]}`,
+      `context attrs: antialias=${attrs.antialias} alpha=${attrs.alpha} depth=${attrs.depth} stencil=${attrs.stencil} powerPreference=${attrs.powerPreference}`,
+      `compressed formats: ${exts.filter((e) => /compressed/.test(e)).join(', ') || '(none)'}`,
+      `extensions (${exts.length}): ${exts.join(', ')}`,
+    ];
+    return pass(`${P('VERSION')}`, d);
+  });
+
+  await check(G, 'Render (triangle + readPixels)', (row) => {
+    if (!gl) return fail('No WebGL2 context');
+    row.attach(canvas);
+    const p = glProgram(gl, `#version 300 es
+      out vec3 vCol;
+      void main() {
+        vec2 P[3] = vec2[3](vec2(0.0, 0.8), vec2(-0.8, -0.7), vec2(0.8, -0.7));
+        vec3 C[3] = vec3[3](vec3(1.0, 0.25, 0.25), vec3(0.25, 1.0, 0.35), vec3(0.25, 0.45, 1.0));
+        vCol = C[gl_VertexID]; gl_Position = vec4(P[gl_VertexID], 0.0, 1.0);
+      }`, `#version 300 es
+      precision highp float; in vec3 vCol; out vec4 o;
+      void main() { o = vec4(vCol, 1.0); }`);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.05, 0.05, 0.08, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(p); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    const px = (x, y) => { const b = new Uint8Array(4); gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, b); return [...b]; };
+    const centre = px(96, 80), corner = px(2, 2);
+    const err = gl.getError();
+    const d = [`centre pixel: [${centre}]`, `corner pixel: [${corner}] (clear colour ≈ [13,13,20,255])`, `glError: ${err}`];
+    const ok = err === 0 && centre[0] + centre[1] + centre[2] > 200 && corner[0] < 30 && corner[2] < 40;
+    return ok ? pass('Triangle drawn and read back', d) : fail('Unexpected pixels', d);
+  });
+
+  await check(G, 'Float / HDR render targets', () => {
+    if (!gl) return fail('No WebGL2 context');
+    const cbf = !!gl.getExtension('EXT_color_buffer_float');
+    const cbhf = !!gl.getExtension('EXT_color_buffer_half_float');
+    const flin = !!gl.getExtension('OES_texture_float_linear');
+    const target = (label, internal, type) => {
+      const t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texImage2D(gl.TEXTURE_2D, 0, internal, 4, 4, 0, gl.RGBA, type, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      const fb = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+      const st = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+      let res;
+      if (st !== gl.FRAMEBUFFER_COMPLETE) res = { ok: false, text: `incomplete (0x${st.toString(16)})` };
+      else {
+        gl.viewport(0, 0, 4, 4);
+        gl.clearColor(0.25, 0.5, 1.5, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+        if (type === gl.UNSIGNED_BYTE) {
+          const b = new Uint8Array(4); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, b);
+          res = { ok: Math.abs(b[0] - 64) <= 1 && b[2] === 255, text: `read [${b}]` };
+        } else {
+          const b = new Float32Array(4); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, b);
+          res = { ok: Math.abs(b[0] - 0.25) < 0.01 && Math.abs(b[2] - 1.5) < 0.01, text: `read [${[...b].map((v) => +v.toFixed(3))}] (want 1.5 in blue: HDR kept)` };
+        }
+      }
+      const e = gl.getError();
+      if (e) res = { ok: false, text: `${res.text} · glError ${e}` };
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.deleteFramebuffer(fb); gl.deleteTexture(t);
+      return { label, ...res };
+    };
+    const rows = [
+      target('RGBA8', gl.RGBA8, gl.UNSIGNED_BYTE),
+      target('RGBA16F (HalfFloat)', gl.RGBA16F, gl.HALF_FLOAT),
+      target('RGBA32F (Float)', gl.RGBA32F, gl.FLOAT),
+    ];
+    const d = [`EXT_color_buffer_float: ${cbf} · EXT_color_buffer_half_float: ${cbhf} · OES_texture_float_linear: ${flin}`,
+      ...rows.map((r) => `${r.ok ? 'ok  ' : 'FAIL'} ${r.label}: ${r.text}`)];
+    if (ctxLost) d.push('context was lost');
+    const half = rows[1].ok;
+    return half ? pass('RGBA16F renders and keeps values > 1', d) : fail('RGBA16F render target does not work', d);
+  });
+}
+
+async function workerGraphicsCheck() {
+  await check('Graphics: workers', 'OffscreenCanvas WebGL2 / WebGPU in a worker', async () => {
+    const r = await workerCall({ cmd: 'env' });
+    const d = [`OffscreenCanvas webgl2: ${r.offscreenWebgl2}`, `WebGPU: ${r.workerWebGPU}`,
+      `worker crossOriginIsolated: ${r.crossOriginIsolated} · SharedArrayBuffer: ${r.SharedArrayBuffer}`];
+    const ok = /^WebGL 2/.test(r.offscreenWebgl2);
+    return ok ? pass('WebGL2 works off the main thread', d) : fail('No WebGL2 in a worker', d);
+  });
+}
+
+/* ---------- isolation, SAB, wasm ---------- */
+async function isolationChecks() {
+  const G = 'Isolation + threads';
+  await check(G, 'crossOriginIsolated', async () => {
+    const d = [`self.crossOriginIsolated: ${self.crossOriginIsolated}`,
+      `isolation requested: ${WANT_COI ? 'yes' : 'no (?coi=0)'}`,
+      `SW controller: ${navigator.serviceWorker && navigator.serviceWorker.controller ? 'yes' : 'no'}`,
+      'headers come from the service worker (GitHub Pages cannot set COOP/COEP)'];
+    try {
+      const r = await fetch(location.href, { cache: 'no-store' });
+      d.push(`headers on this URL: COOP=${r.headers.get('cross-origin-opener-policy')} COEP=${r.headers.get('cross-origin-embedder-policy')} source=${r.headers.get('x-isolation-source')}`);
+    } catch (e) { d.push(`header fetch failed: ${errText(e)}`); }
+    return self.crossOriginIsolated ? pass('Page is cross-origin isolated', d) : fail('Page is NOT cross-origin isolated', d);
+  });
+
+  await check(G, 'SharedArrayBuffer + Atomics.wait in worker', async () => {
+    if (typeof SharedArrayBuffer === 'undefined') return fail('SharedArrayBuffer is undefined');
+    const sab = new SharedArrayBuffer(16);
+    const a = new Int32Array(sab);
+    const d = [`Atomics.waitAsync: ${typeof Atomics.waitAsync === 'function' ? 'yes' : 'no'}`];
+    const result = workerCall({ cmd: 'sab', sab });
+    const t0 = performance.now();
+    while (Atomics.load(a, 1) === 0) {
+      if (performance.now() - t0 > 5000) return fail('Worker never saw the shared buffer write', d);
+      await sleep(5);
+    }
+    Atomics.store(a, 0, 1); Atomics.notify(a, 0);
+    const r = await result;
+    d.push(`worker Atomics.wait returned "${r.wait}" after ${r.waitedMs.toFixed(1)} ms`);
+    return r.wait === 'ok' ? pass('Shared memory + blocking wait/notify work', d) : fail(`Atomics.wait returned ${r.wait}`, d);
+  });
+
+  await check(G, 'WebAssembly basic', async () => {
+    if (typeof WebAssembly === 'undefined') return fail('WebAssembly is undefined');
+    const { instance } = await WebAssembly.instantiate(WASM.add);
+    const v = instance.exports.add(40, 2);
+    const d = [`instantiateStreaming: ${typeof WebAssembly.instantiateStreaming === 'function'}`, `add(40,2) = ${v}`];
+    return v === 42 ? pass('Compiled and ran', d) : fail(`add(40,2) returned ${v}`, d);
+  });
+
+  await check(G, 'WebAssembly SIMD (128-bit)', async () => {
+    if (!WebAssembly.validate(WASM.simd)) return fail('WebAssembly.validate rejected a v128 module');
+    const { instance } = await WebAssembly.instantiate(WASM.simd);
+    const v = instance.exports.simd();
+    return v === 33 ? pass('i32x4.add correct', [`lane 2 of (1,2,3,4)+(10,20,30,40) = ${v}`]) : fail(`expected 33, got ${v}`);
+  });
+
+  await check(G, 'WebAssembly threads (shared memory + atomics across workers)', async () => {
+    if (!WebAssembly.validate(WASM.inc)) return fail('WebAssembly.validate rejected a shared-memory/atomics module');
+    let memory;
+    try { memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }); }
+    catch (e) { return fail(`new WebAssembly.Memory({shared:true}) threw ${errText(e)}`); }
+    const d = [`memory.buffer is SharedArrayBuffer: ${typeof SharedArrayBuffer !== 'undefined' && memory.buffer instanceof SharedArrayBuffer}`];
+    const module = await WebAssembly.compile(WASM.inc);
+    const N = 2000000, W = 2;
+    const t = performance.now();
+    const runs = Array.from({ length: W }, () => workerCall({ cmd: 'wasm', module, memory, n: N }));
+    await sleep(20);
+    (await WebAssembly.instantiate(module, { e: { m: memory } })).exports.inc(N);
+    const r = await Promise.all(runs);
+    const total = new Int32Array(memory.buffer)[0];
+    d.push(`${W} workers + main thread each did ${N} atomic adds`, `counter = ${total} (expected ${(W + 1) * N})`,
+      `worker times: ${r.map((x) => x.ms.toFixed(0) + ' ms').join(', ')} · wall ${(performance.now() - t).toFixed(0)} ms`);
+    return total === (W + 1) * N ? pass('Wasm atomics across threads are exact', d) : fail('Counter is wrong', d);
+  }, 20000);
+
+  await check(G, 'Shared wasm memory reservations', () => {
+    const d = [];
+    let ok1g = false;
+    for (const [label, pages] of [['256 MB', 4096], ['1 GB', 16384], ['2 GB', 32768], ['4 GB', 65536]]) {
+      try {
+        const m = new WebAssembly.Memory({ initial: 16, maximum: pages, shared: true });
+        d.push(`ok   maximum ${label}: buffer ${m.buffer.byteLength / 1048576} MB`);
+        if (pages === 16384) ok1g = true;
+      } catch (e) { d.push(`FAIL maximum ${label}: ${errText(e)}`); }
+    }
+    return ok1g ? pass('A 1 GB-max shared memory can be reserved', d) : fail('Cannot reserve a 1 GB-max shared memory', d);
+  });
+
+  await check(G, 'JS / Wasm speed (JIT sanity)', async () => {
+    const n = 30000000;
+    let t = performance.now();
+    let acc = 0;
+    for (let i = n; i > 0; i--) acc = (Math.imul(acc, 31) + i) | 0;
+    const js = performance.now() - t;
+    const { instance } = await WebAssembly.instantiate(WASM.run);
+    t = performance.now();
+    const w = instance.exports.run(n);
+    const wm = performance.now() - t;
+    const d = [`${n / 1e6}M-iteration integer loop`, `JS: ${js.toFixed(1)} ms · Wasm: ${wm.toFixed(1)} ms`,
+      'Compare these numbers between standalone and Safari; ~10x slower would mean no JIT.'];
+    return acc === w ? info(`JS ${js.toFixed(0)} ms · Wasm ${wm.toFixed(0)} ms`, d) : fail(`results differ: JS ${acc}, Wasm ${w}`, d);
+  });
+}
+
+/* ---------- WebRTC ---------- */
+async function connectPair(config, channels) {
+  const a = new RTCPeerConnection(config), b = new RTCPeerConnection(config);
+  a.onicecandidate = (e) => e.candidate && b.addIceCandidate(e.candidate);
+  b.onicecandidate = (e) => e.candidate && a.addIceCandidate(e.candidate);
+  const local = channels.map(([label, opts]) => { const c = a.createDataChannel(label, opts); c.binaryType = 'arraybuffer'; return c; });
+  const remote = new Promise((res) => {
+    const got = {};
+    b.ondatachannel = (e) => {
+      e.channel.binaryType = 'arraybuffer';
+      const ready = () => { got[e.channel.label] = e.channel; if (Object.keys(got).length === channels.length) res(got); };
+      e.channel.readyState === 'open' ? ready() : (e.channel.onopen = ready);
+    };
+  });
+  const t = performance.now();
+  await a.setLocalDescription(await a.createOffer());
+  await b.setRemoteDescription(a.localDescription);
+  await b.setLocalDescription(await b.createAnswer());
+  await a.setRemoteDescription(b.localDescription);
+  const opened = Promise.all([remote, ...local.map((c) => c.readyState === 'open' ? 0
+    : new Promise((r, j) => { c.onopen = r; c.onerror = (e) => j(e.error || new Error('channel error')); }))]);
+  const state = () => `ice ${a.iceConnectionState}/${b.iceConnectionState}, connection ${a.connectionState}/${b.connectionState}, ` +
+    `candidates offered ${(a.localDescription.sdp.match(/a=candidate:[^\r\n]*/g) || []).map((c) => /typ (\w+)/.exec(c)[1] + (/\.local /.test(c) ? '(mDNS)' : '')).join(' ') || 'none'}`;
+  const [rem] = await Promise.race([opened, sleep(10000).then(() => { const st = state(); a.close(); b.close(); throw new Error(`channels never opened in 10 s — ${st}`); })]);
+  return { a, b, local, remote: rem, openMs: performance.now() - t };
+}
+
+async function webrtcChecks() {
+  const G = 'Networking: WebRTC';
+  await check(G, 'Data channels (local loopback)', async () => {
+    if (typeof RTCPeerConnection === 'undefined') return fail('RTCPeerConnection is undefined');
+    const { a, b, local, remote, openMs } = await connectPair({ iceServers: [] },
+      [['reliable', { ordered: true }], ['unreliable', { ordered: false, maxRetransmits: 0 }]]);
+    const [rel, unrel] = local;
+    const d = [`connect + both channels open: ${openMs.toFixed(0)} ms`,
+      `sctp.maxMessageSize: ${a.sctp ? a.sctp.maxMessageSize : 'n/a'}`,
+      `unreliable channel: ordered=${unrel.ordered} maxRetransmits=${unrel.maxRetransmits}`];
+    remote.reliable.onmessage = (e) => remote.reliable.send(e.data);  // echo
+    // RTT
+    const rtts = [];
+    for (let i = 0; i < 40; i++) {
+      const t = performance.now();
+      await new Promise((r) => { rel.onmessage = r; rel.send(new Float64Array([i]).buffer); });
+      rtts.push(performance.now() - t);
+    }
+    rtts.sort((x, y) => x - y);
+    d.push(`reliable echo RTT: median ${rtts[20].toFixed(2)} ms, max ${rtts[39].toFixed(2)} ms`);
+    // Unreliable burst
+    let got = 0;
+    remote.unreliable.onmessage = () => got++;
+    for (let i = 0; i < 200; i++) unrel.send(new Uint8Array(64));
+    await sleep(400);
+    d.push(`unreliable: ${got}/200 64-byte packets arrived`);
+    // Throughput
+    remote.reliable.onmessage = null;
+    const total = 4 << 20, chunk = 16384;
+    let recv = 0;
+    const done = new Promise((r) => { remote.reliable.onmessage = (e) => { recv += e.data.byteLength; if (recv >= total) r(); }; });
+    rel.bufferedAmountLowThreshold = 256 * 1024;
+    const t = performance.now();
+    const block = new Uint8Array(chunk);
+    for (let sent = 0; sent < total; sent += chunk) {
+      if (rel.bufferedAmount > 1 << 20) await new Promise((r) => { rel.onbufferedamountlow = r; });
+      rel.send(block);
+    }
+    await done;
+    d.push(`reliable throughput: ${(total / 1048576 / ((performance.now() - t) / 1000)).toFixed(1)} MB/s (4 MB in 16 KB messages)`);
+    try {
+      const stats = await a.getStats();
+      stats.forEach((s) => {
+        if (s.type === 'candidate-pair' && s.nominated && s.state === 'succeeded') {
+          const lc = stats.get(s.localCandidateId);
+          if (lc) d.push(`selected local candidate: ${lc.candidateType} ${lc.protocol}`);
+        }
+      });
+    } catch (e) { d.push(`getStats: ${errText(e)}`); }
+    a.close(); b.close();
+    return pass(`Open in ${openMs.toFixed(0)} ms · RTT ${rtts[20].toFixed(1)} ms`, d);
+  });
+
+  await check(G, 'ICE gathering via STUN (NAT traversal)', async () => {
+    if (typeof RTCPeerConnection === 'undefined') return fail('RTCPeerConnection is undefined');
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }] });
+    pc.createDataChannel('x');
+    const cands = [];
+    const done = new Promise((r) => {
+      pc.onicecandidate = (e) => (e.candidate ? cands.push(e.candidate) : r());
+      setTimeout(r, 8000);
+    });
+    await pc.setLocalDescription(await pc.createOffer());
+    await done;
+    pc.close();
+    const types = {};
+    let mdns = 0;
+    for (const c of cands) {
+      const ty = c.type || (/ typ (\w+)/.exec(c.candidate) || [])[1] || '?';
+      types[ty] = (types[ty] || 0) + 1;
+      if (/\.local/.test(c.candidate)) mdns++;
+    }
+    const d = ['STUN server: stun.cloudflare.com:3478 (addresses not shown here on purpose)',
+      `candidates: ${Object.entries(types).map(([k, v]) => `${k}×${v}`).join(', ') || '(none)'}`,
+      `host candidates hidden behind mDNS (.local): ${mdns}`, `gathering state: ${pc.iceGatheringState}`];
+    return types.srflx ? pass('Got a server-reflexive candidate (public address discovered)', d)
+      : fail('No srflx candidate — STUN did not answer', d);
+  }, 12000);
+
+  await check(G, 'Other transports', () => info('Availability only', [
+    `WebSocket: ${typeof WebSocket === 'function'}`,
+    `WebTransport: ${typeof WebTransport === 'function'}`,
+    `RTCDataChannel: ${typeof RTCDataChannel === 'function'}`,
+    `RTCPeerConnection.generateCertificate: ${typeof RTCPeerConnection === 'function' && typeof RTCPeerConnection.generateCertificate === 'function'}`,
+  ]));
+}
+
+/* ---------- frame pacing, timers ---------- */
+async function timingChecks() {
+  const G = 'Frame pacing + timers';
+  await check(G, 'requestAnimationFrame rate', () => new Promise((resolve) => {
+    const ts = [];
+    const step = (t) => { ts.push(t); ts.length < 121 ? requestAnimationFrame(step) : finish(); };
+    const finish = () => {
+      const dts = ts.slice(1).map((t, i) => t - ts[i]).sort((x, y) => x - y);
+      const med = dts[dts.length >> 1];
+      resolve(info(`${(1000 / med).toFixed(0)} Hz (median frame ${med.toFixed(2)} ms)`, [
+        `120 frames · min ${dts[0].toFixed(2)} ms · p90 ${dts[Math.floor(dts.length * 0.9)].toFixed(2)} ms · max ${dts[dts.length - 1].toFixed(2)} ms`,
+        'Low Power Mode caps this at 60 Hz (and Safari may cap 120 Hz displays at 60).']));
+    };
+    requestAnimationFrame(step);
+  }));
+  await check(G, 'performance.now() resolution', () => {
+    let min = Infinity, last = performance.now();
+    for (let i = 0; i < 200000; i++) {
+      const t = performance.now();
+      if (t > last && t - last < min) min = t - last;
+      last = t;
+    }
+    return info(`${(min * 1000).toFixed(1)} µs smallest step`, [`crossOriginIsolated: ${self.crossOriginIsolated} (isolation usually buys finer timers)`]);
+  });
+}
+
+/* ---------- storage ---------- */
+async function storageChecks() {
+  const G = 'Storage';
+  await check(G, 'Quota + persistence', async () => {
+    if (!navigator.storage || !navigator.storage.estimate) return fail('navigator.storage.estimate is undefined');
+    const e = await navigator.storage.estimate();
+    const persisted = navigator.storage.persisted ? await navigator.storage.persisted() : 'n/a';
+    return info(`quota ${(e.quota / 1048576).toFixed(0)} MB · used ${(e.usage / 1048576).toFixed(1)} MB`, [`persisted: ${persisted}`]);
+  });
+  await check(G, 'IndexedDB (1 MB blob round trip)', () => new Promise((resolve, reject) => {
+    const req = indexedDB.open('pwa-probe', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('kv');
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const db = req.result;
+      const data = new Uint8Array(1 << 20).fill(7);
+      const tx = db.transaction('kv', 'readwrite');
+      tx.objectStore('kv').put(new Blob([data]), 'blob');
+      tx.onerror = () => reject(tx.error);
+      tx.oncomplete = () => {
+        const g = db.transaction('kv').objectStore('kv').get('blob');
+        g.onerror = () => reject(g.error);
+        g.onsuccess = async () => {
+          const b = g.result;
+          db.close();
+          resolve(b && b.size === data.length ? pass('Wrote and read a 1 MB Blob') : fail(`read back ${b && b.size} bytes`));
+        };
+      };
+    };
+  }));
+  await check(G, 'Cache API', async () => {
+    const c = await caches.open('pwa-probe-test');
+    await c.put('./__probe', new Response('hello'));
+    const r = await c.match('./__probe');
+    const t = r && await r.text();
+    await caches.delete('pwa-probe-test');
+    return t === 'hello' ? pass('put/match/delete work') : fail(`match returned ${t}`);
+  });
+  await check(G, 'OPFS (origin private file system)', async () => {
+    if (!navigator.storage || !navigator.storage.getDirectory) return fail('navigator.storage.getDirectory is undefined');
+    const root = await navigator.storage.getDirectory();
+    const fh = await root.getFileHandle('probe.bin', { create: true });
+    if (!fh.createWritable) { await root.removeEntry('probe.bin'); return fail('FileSystemFileHandle.createWritable is undefined (main thread can only use sync handles in a worker)'); }
+    const w = await fh.createWritable();
+    await w.write(new Uint8Array(1 << 20));
+    await w.close();
+    const size = (await fh.getFile()).size;
+    await root.removeEntry('probe.bin');
+    return size === 1 << 20 ? pass('Wrote and read a 1 MB file') : fail(`file size ${size}`);
+  });
+}
+
+/* ---------- assets + input ---------- */
+async function miscChecks() {
+  await check('Assets', 'Decoding + compression', async () => {
+    const d = [];
+    let ok = true;
+    try {
+      const bmp = await createImageBitmap(new ImageData(4, 4));
+      d.push(`createImageBitmap: ok (${bmp.width}x${bmp.height})`);
+    } catch (e) { ok = false; d.push(`createImageBitmap: ${errText(e)}`); }
+    try {
+      const src = new TextEncoder().encode('track data '.repeat(500));
+      const gz = await new Response(new Blob([src]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
+      const back = await new Response(new Blob([gz]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+      d.push(`gzip Compression/DecompressionStream: ${back.byteLength === src.length ? 'ok' : 'mismatch'} (${src.length} → ${gz.byteLength} bytes)`);
+    } catch (e) { ok = false; d.push(`CompressionStream: ${errText(e)}`); }
+    d.push(`ImageDecoder: ${typeof ImageDecoder === 'function'} · VideoDecoder: ${typeof VideoDecoder === 'function'} · AudioDecoder: ${typeof AudioDecoder === 'function'}`);
+    d.push(`OffscreenCanvas: ${typeof OffscreenCanvas === 'function'} · TextDecoder: ${typeof TextDecoder === 'function'}`);
+    return ok ? pass('Bitmap decode + gzip streams work', d) : fail('Some asset APIs failed', d);
+  });
+  await check('Input', 'Touch, controllers, haptics', () => {
+    const sw = document.createElement('input');
+    sw.setAttribute('type', 'checkbox'); sw.setAttribute('switch', '');
+    const pads = navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : null;
+    return info(`maxTouchPoints ${navigator.maxTouchPoints}`, [
+      `PointerEvent: ${typeof PointerEvent === 'function'} · TouchEvent: ${typeof TouchEvent === 'function'}`,
+      `Gamepad API: ${pads ? `yes, ${pads.length} connected now${pads.length ? ` (${pads.map((p) => p.id).join('; ')})` : ' — press a button on a paired controller and re-run'}` : 'no'}`,
+      `navigator.vibrate: ${typeof navigator.vibrate === 'function' ? 'present' : 'absent'}`,
+      `<input switch> (iOS haptic tick hack): ${'switch' in sw ? 'supported' : 'not detected'}`,
+      `DeviceMotionEvent.requestPermission: ${typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function'}`,
+      `Fullscreen API: fullscreenEnabled=${document.fullscreenEnabled} webkitFullscreenEnabled=${document.webkitFullscreenEnabled}`,
+      `screen.orientation.lock: ${!!(screen.orientation && screen.orientation.lock)}`,
+      `wakeLock: ${'wakeLock' in navigator}`,
+      `navigator.audioSession: ${'audioSession' in navigator ? `yes (type ${navigator.audioSession.type})` : 'no'}`,
+    ]);
+  });
+}
+
+/* ---------- tap-gated (need a user gesture) ---------- */
+// Every gesture-requiring call is started synchronously inside the click, then
+// each row awaits its own promise — later awaits would lose the activation.
+function startTapChecks() {
+  const G = 'Tap-gated';
+  clearGroup(G);
+  const begin = (fn) => { try { return Promise.resolve(fn()); } catch (e) { return Promise.reject(e); } };
+
+  const AC = window.AudioContext || window.webkitAudioContext;
+  let ac = null, sessionNote = 'navigator.audioSession: absent';
+  if ('audioSession' in navigator) {
+    const before = navigator.audioSession.type;
+    try { navigator.audioSession.type = 'playback'; sessionNote = `navigator.audioSession.type: ${before} → ${navigator.audioSession.type} (plays through the silent switch)`; }
+    catch (e) { sessionNote = `navigator.audioSession.type set threw ${errText(e)}`; }
+  }
+  const audioP = begin(() => { ac = new AC({ latencyHint: 'interactive' }); return ac.resume(); });
+  const motionP = begin(() => (typeof DeviceMotionEvent !== 'undefined' && DeviceMotionEvent.requestPermission
+    ? DeviceMotionEvent.requestPermission() : 'no-permission-api'));
+  const fsEl = document.documentElement;
+  const fsP = begin(() => {
+    if (fsEl.requestFullscreen) return fsEl.requestFullscreen().then(() => 'requestFullscreen');
+    if (fsEl.webkitRequestFullscreen) { fsEl.webkitRequestFullscreen(); return sleep(300).then(() => 'webkitRequestFullscreen'); }
+    throw new Error('no requestFullscreen / webkitRequestFullscreen on <html>');
+  });
+  const wakeP = begin(() => {
+    if (!('wakeLock' in navigator)) throw new Error('navigator.wakeLock is undefined');
+    return navigator.wakeLock.request('screen');
+  });
+  const vib = begin(() => (typeof navigator.vibrate === 'function' ? navigator.vibrate(40) : 'absent'));
+
+  (async () => {
+    status('Running tap-gated checks…');
+    await check(G, 'Web Audio', async () => {
+      await audioP;
+      const d = [sessionNote, `state: ${ac.state}`, `sampleRate: ${ac.sampleRate}`,
+        `baseLatency: ${ac.baseLatency != null ? (ac.baseLatency * 1000).toFixed(1) + ' ms' : 'n/a'}`,
+        `outputLatency: ${ac.outputLatency != null ? (ac.outputLatency * 1000).toFixed(1) + ' ms' : 'n/a'}`];
+      if (ac.state !== 'running') return fail(`AudioContext state is "${ac.state}" after resume()`, d);
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.frequency.value = 660; g.gain.setValueAtTime(0.15, ac.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.15);
+      o.connect(g).connect(ac.destination); o.start(); o.stop(ac.currentTime + 0.16);
+      const t0 = ac.currentTime; await sleep(250);
+      d.push(`clock advanced ${((ac.currentTime - t0) * 1000).toFixed(0)} ms in 250 ms (you should have heard a blip)`);
+      if (ac.audioWorklet) {
+        const src = 'registerProcessor("probe", class extends AudioWorkletProcessor { process() { return true; } });';
+        const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+        try { await ac.audioWorklet.addModule(url); new AudioWorkletNode(ac, 'probe'); d.push('AudioWorklet: module loaded, node created'); }
+        catch (e) { d.push(`AudioWorklet: ${errText(e)}`); }
+      } else d.push('AudioWorklet: absent');
+      try { const buf = await ac.decodeAudioData(wav()); d.push(`decodeAudioData(WAV): ok, ${buf.duration.toFixed(2)} s`); }
+      catch (e) { d.push(`decodeAudioData: ${errText(e)}`); }
+      return pass(`Running at ${ac.sampleRate} Hz`, d);
+    });
+    await check(G, 'Motion sensors (tilt steering)', async () => {
+      const perm = await motionP;
+      const d = [`permission: ${perm}`];
+      if (perm !== 'granted' && perm !== 'no-permission-api') return fail(`permission ${perm}`, d);
+      let n = 0, last = null;
+      const on = (e) => { n++; last = e; };
+      addEventListener('devicemotion', on);
+      await sleep(1000);
+      removeEventListener('devicemotion', on);
+      if (last) {
+        const g = last.accelerationIncludingGravity || {};
+        d.push(`events in 1 s: ${n} · interval ${last.interval} ms`, `gravity sample: x=${(g.x ?? NaN).toFixed(2)} y=${(g.y ?? NaN).toFixed(2)} z=${(g.z ?? NaN).toFixed(2)}`);
+      }
+      return n ? pass(`${n} devicemotion events/s`, d) : fail('No devicemotion events arrived', d);
+    });
+    await check(G, 'Fullscreen API', async () => {
+      const how = await fsP;
+      const on = !!(document.fullscreenElement || document.webkitFullscreenElement);
+      const r = on ? pass(`${how} succeeded`) : fail(`${how} resolved but no fullscreen element`);
+      if (document.exitFullscreen && document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+      else if (document.webkitExitFullscreen && document.webkitFullscreenElement) document.webkitExitFullscreen();
+      return r;
+    });
+    await check(G, 'Orientation lock (landscape)', async () => {
+      if (!screen.orientation || !screen.orientation.lock) return fail('screen.orientation.lock is undefined');
+      await screen.orientation.lock('landscape');
+      const t = screen.orientation.type;
+      screen.orientation.unlock();
+      return pass(`locked (${t})`);
+    });
+    await check(G, 'Screen Wake Lock', async () => {
+      const s = await wakeP;
+      const r = pass(`sentinel acquired (released=${s.released})`, ['Released again right away.']);
+      await s.release();
+      return r;
+    });
+    await check(G, 'Vibration', async () => {
+      const v = await vib;
+      return v === true ? pass('navigator.vibrate(40) returned true') : fail(`navigator.vibrate: ${v}`, ['iOS has no Vibration API; the <input switch> tick is the only haptic route.']);
+    });
+    status('');
+  })();
+}
+
+function wav() {
+  const n = 4410, b = new ArrayBuffer(44 + n * 2), v = new DataView(b);
+  const s = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  s(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); s(8, 'WAVEfmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, 44100, true); v.setUint32(28, 88200, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  s(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.sin(i / 10) * 8000, true);
+  return b;
+}
+
+/* ---------- memory stress (opt-in: may get the app killed) ---------- */
+const STRESS_KEY = 'pwa-stress';
+async function memoryStress() {
+  const G = 'Memory stress';
+  clearGroup(G);
+  status('Memory stress: growing wasm memory and touching every page…');
+  await check(G, 'Wasm memory: how much can actually be committed', async () => {
+    const STEP = 128;   // MB
+    const mem = new WebAssembly.Memory({ initial: 0, maximum: 65536 });
+    let mb = 0, err = null;
+    const t = performance.now();
+    while (mb < 4096) {
+      ls.set(STRESS_KEY, JSON.stringify({ running: true, mb, at: Date.now(), standalone: MODE.standalone }));
+      try { mem.grow(STEP * 16); } catch (e) { err = e; break; }
+      const u8 = new Uint8Array(mem.buffer, mb * 1048576, STEP * 1048576);
+      for (let i = 0; i < u8.length; i += 4096) u8[i] = 1;
+      mb += STEP;
+      status(`Memory stress: ${mb} MB committed…`);
+      await sleep(0);
+    }
+    ls.del(STRESS_KEY);
+    const d = [`grew in ${STEP} MB steps, writing one byte per 4 KB page`, `time: ${(performance.now() - t).toFixed(0)} ms`];
+    if (err) d.push(`stopped by: ${errText(err)}`);
+    return info(`Reached ${mb} MB${err ? '' : ' (hit the 4 GB cap)'}`, d);
+  }, 120000);
+  status('');
+}
+function previousStress() {
+  const raw = ls.get(STRESS_KEY);
+  if (!raw) return;
+  ls.del(STRESS_KEY);
+  let s; try { s = JSON.parse(raw); } catch { return; }
+  check('Memory stress', 'Previous run (app was killed)', () => fail(
+    `The app died after committing ${s.mb} MB`, [`at ${new Date(s.at).toISOString()} · standalone: ${s.standalone}`,
+      'iOS killed the page instead of failing the allocation; that number is the practical ceiling.']));
+}
+
+/* ---------- copy as text ---------- */
+function resultText() {
+  const L = [`PWA probe v${VERSION} · ${new Date().toISOString()}`,
+    `Mode: ${MODE.standalone ? 'STANDALONE' : 'BROWSER TAB'} (display-mode ${MODE.dm}, navigator.standalone ${MODE.navStandalone})`,
+    `URL: ${location.href}`, `UA: ${navigator.userAgent}`,
+    `crossOriginIsolated: ${self.crossOriginIsolated}`, ''];
+  let g = null;
+  for (const r of results) {
+    if (r.group !== g) { g = r.group; L.push(`== ${g} ==`); }
+    L.push(`[${r.status.toUpperCase()}] ${r.name} — ${r.summary}`);
+    for (const d of r.details) L.push(`    ${d}`);
+  }
+  return L.join('\n');
+}
+$('#copy').addEventListener('click', async () => {
+  const text = resultText();
+  const box = $('#copyOut');
+  try {
+    await navigator.clipboard.writeText(text);
+    status(`Copied ${results.length} results to the clipboard.`);
+    box.style.display = 'none';
+  } catch (e) {
+    status(`Clipboard write failed (${errText(e)}). Select the text below instead.`);
+    box.value = text; box.style.display = 'block'; box.focus(); box.select();
+  }
+});
+
+/* ---------- run ---------- */
+let running = false;
+async function runAll() {
+  if (running) return;
+  running = true;
+  for (const name of [...groups.keys()]) if (name !== 'Tap-gated' && name !== 'Memory stress') clearGroup(name);
+  previousStress();
+  const steps = [['Environment', envChecks], ['WebGPU', webgpuChecks], ['WebGL2', webglChecks],
+    ['Worker graphics', workerGraphicsCheck], ['Isolation + wasm', isolationChecks], ['WebRTC', webrtcChecks],
+    ['Timing', timingChecks], ['Storage', storageChecks], ['Assets + input', miscChecks]];
+  for (const [label, fn] of steps) {
+    status(`Running ${label}…`);
+    try { await fn(); } catch (e) { check(label, 'Harness error', () => fail(errText(e))); }
+  }
+  status('Done. Tap "Run tap-gated checks" for audio, motion, fullscreen, orientation and wake lock.');
+  running = false;
+}
+$('#rerun').addEventListener('click', runAll);
+$('#tap').addEventListener('click', startTapChecks);
+$('#stress').addEventListener('click', memoryStress);
+
+let swError = null;
+(async function boot() {
+  if ('serviceWorker' in navigator) {
+    try {
+      await navigator.serviceWorker.register('sw.js');
+      // First launch (Safari and the home-screen app have separate storage, so
+      // this happens once in each): the page loaded before the SW existed, so
+      // it has no COOP/COEP. Reload once under the SW to pick them up.
+      if (!navigator.serviceWorker.controller && !ss.get('pwa-reloaded')) {
+        status('Installing service worker, then reloading once for COOP/COEP…');
+        await new Promise((r) => { navigator.serviceWorker.addEventListener('controllerchange', r, { once: true }); setTimeout(r, 5000); });
+        if (navigator.serviceWorker.controller) { ss.set('pwa-reloaded', '1'); location.reload(); return; }
+      }
+    } catch (e) { swError = errText(e); }
+  }
+  runAll();
+})();
+</script>
+</body>
+</html>

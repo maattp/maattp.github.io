@@ -1,0 +1,12 @@
+{
+  "id": "/apps/pwa/",
+  "name": "PWA Probe",
+  "short_name": "PWA",
+  "description": "Tests which game-engine web features work in standalone mode.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#101418",
+  "theme_color": "#101418",
+  "icons": [{ "src": "../icon.png", "sizes": "512x512", "type": "image/png" }]
+}
