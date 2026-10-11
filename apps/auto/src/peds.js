@@ -3977,6 +3977,18 @@ export class PedSystem {
     // (trunks and poles only where somebody can see him walk through one)
     const o = p.near ? city.obstacleHit(x, z, 0.3, p.y) : null;
     if (o) { x += o.nx * o.pen; z += o.nz * o.pen; }
+    // A standing vehicle is solid: out past its nearer long side, at most
+    // 0.2 m a step, so one that stops on top of him eases him out rather
+    // than popping him clear. A fare is getting into one.
+    if (walls && p.nearCar && !p.fare) {
+      const v = this._carAt(x, z, p.y, 0.3);
+      if (v) {
+        const f = v.forward, dx = x - v.x, dz = z - v.z;
+        const lat = dx * f.z - dz * f.x, hw = v.halfWid + 0.3;
+        const out = clamp((lat < 0 ? -hw : hw) - lat, -0.2, 0.2);
+        x += f.z * out; z -= f.x * out;
+      }
+    }
     if (walls && city.insideBuilding(x, z, p.y, 0.3)) return false;
     const lift = city.roadLift(x, z);
     const y = city.groundAt(x, z, p.y + 1, lift);
@@ -3987,6 +3999,47 @@ export class PedSystem {
     }
     p.x = x; p.z = z; p.lift = lift; p.y = y;
     return true;
+  }
+
+  /** The standing vehicle whose body, grown by `r`, holds (x, z) at height y; or null. */
+  _carAt(x, z, y, r) {
+    const cars = this._solid;
+    if (!cars) return null;
+    for (let i = 0; i < cars.length; i++) {
+      const v = cars[i];
+      const dx = x - v.x, dz = z - v.z;
+      if (dx * dx + dz * dz > 400) continue;
+      if (y > v.y + (v.spec.roof || 1.6) || y < v.y - 1.2) continue;
+      const f = v.forward;
+      if (Math.abs(dx * f.x + dz * f.z) < v.halfLen + r && Math.abs(dx * f.z - dz * f.x) < v.halfWid + r) return v;
+    }
+    return null;
+  }
+
+  /**
+   * A heading round the standing vehicle a stride and a half along `desired`,
+   * or null when the way is clear: to a point beside its long side, 1.5 m
+   * further along it, so he walks the length of it and past its end, then
+   * back to his own line. The side is the one he is on unless a wall is
+   * there; held there anyway, he tries the other (update, `avFlip`).
+   */
+  _avoidCar(p, desired) {
+    const hx = Math.sin(desired), hz = Math.cos(desired);
+    const v = this._carAt(p.x + hx * 1.6, p.z + hz * 1.6, p.y, 0.5);
+    if (!v) { p.avCar = null; return null; }
+    const f = v.forward, qx = p.x - v.x, qz = p.z - v.z;
+    const pa = qx * f.x + qz * f.z, pl = qx * f.z - qz * f.x;
+    const off = v.halfWid + 0.75;
+    if (p.avCar !== v) {
+      p.avCar = v; p.avFlip = false;
+      p.avSide = pl >= 0 ? 1 : -1;
+      const sx = v.x + f.x * pa + f.z * p.avSide * off, sz = v.z + f.z * pa - f.x * p.avSide * off;
+      if (this.city.insideBuilding(sx, sz, p.y, 0.3)) p.avSide = -p.avSide;
+    }
+    const dirA = hx * f.x + hz * f.z >= 0 ? 1 : -1;
+    const ta = clamp(pa + dirA * 1.5, -v.halfLen - 1, v.halfLen + 1);
+    const tx = v.x + f.x * ta + f.z * p.avSide * off, tz = v.z + f.z * ta - f.x * p.avSide * off;
+    return Math.atan2(tx - p.x, tz - p.z);
   }
 
   /**
@@ -4082,6 +4135,17 @@ export class PedSystem {
     const movers = this._movers || (this._movers = []);
     movers.length = 0;
     for (const v of traffic.cars) if (v.mode !== 'parked' && Math.abs(v.vLong) >= 2.2) movers.push(v);
+    // ...and what a walker can't walk through: every vehicle standing or
+    // creeping, the player's own included. Only trunks, poles and buildings
+    // stopped anyone, so the crowd walked through a truck pulled onto the
+    // pavement. Found once a frame, round the player, for the near walkers
+    // (_avoidCar steers round one, _place keeps anyone out of one).
+    const solid = this._solid || (this._solid = []);
+    solid.length = 0;
+    for (const v of traffic.cars) {
+      if (v.dead || v.spec.rail || Math.abs(v.vLong) >= 2.2) continue;
+      if (dist2(v.x, v.z, px, pz) < 75 * 75) solid.push(v);
+    }
 
     this.crossN = 0;
     for (let i = this.peds.length - 1; i >= 0; i--) {
@@ -4121,6 +4185,8 @@ export class PedSystem {
       let desired = p.heading;
       if (p.hurry > 0) p.hurry -= dt;
       p.near = d2p < 2500;
+      // (a truck is seen further off than a trunk)
+      p.nearCar = d2p < 4900;
 
       if (p.cop) {
         // police.js decides: chase, search, arrest, shoot, get back in the car
@@ -4198,6 +4264,14 @@ export class PedSystem {
         // held by something for good (a wall of earth on a street): another place
         if (p.blocked > 3) { this.remove(p); continue; }
       }
+
+      // a vehicle standing across his way: round it, along whichever long
+      // side is open (an officer closes on you in one, a fare gets in one)
+      if (p.nearCar && !p.cop && !p.fare && targetSpeed > 0) {
+        const av = this._avoidCar(p, desired);
+        if (av !== null) desired = av;
+        if (p.avCar && p.blocked > 0.5 && !p.avFlip) { p.avSide = -p.avSide; p.avFlip = true; }
+      } else p.avCar = null;
 
       if (p.stag > 0) {
         // knocked back from a hit: facing whoever threw it, driven back

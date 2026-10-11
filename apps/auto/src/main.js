@@ -205,6 +205,8 @@ class Game {
       sensitivity: 1,
       debug: false,
       post: true,
+      // the pad's badges on the on-screen buttons (off: no buttons with a pad)
+      padHints: (() => { try { return localStorage.getItem('auto-padhints') !== '0'; } catch (e) { return true; } })(),
     };
   }
 
@@ -2294,6 +2296,12 @@ function wireUi() {
   });
   bind('setSound', 'sound', (v) => { audio.enabled = v; });
   bind('setDebug', 'debug', (v) => { debugEl.classList.toggle('on', v); });
+  const padHints = (v) => {
+    controls.root.dataset.nohints = v ? '' : '1';
+    try { localStorage.setItem('auto-padhints', v ? '1' : '0'); } catch (e) { /* private mode */ }
+  };
+  bind('setPadHints', 'padHints', padHints);
+  padHints(game.settings.padHints);
   bind('setPost', 'post', (v) => { postfx.setPostEnabled(v); syncFogColour(); });
   // the flight recorder's last session: read it, copy it into a message
   const fShow = document.getElementById('flightShow');

@@ -509,7 +509,9 @@ the siren, RB a rig's water, D-pad down a taxi's fares or a police car's
 missions (a rig's call), D-pad left / right the radio. The table is `PAD` in
 `controls.js`. **With a pad connected the on-screen buttons stay and wear the
 pad button as a badge** (`data-hint` in index.html), so the screen is the
-legend -- change the two together. iOS exposes no pad until a button on it is
+legend -- change the two together. The menu's "Controller hints" turns
+that off (`settings.padHints`, kept in localStorage `auto-padhints`): the
+buttons go away with a pad, as before v213. iOS exposes no pad until a button on it is
 pressed, so "the controller doesn't work" at launch is usually that.
 
 ## Heading sense (the sign trap)

@@ -388,8 +388,23 @@ function facadeMat(f) {
   m.onBeforeCompile = (sh) => {
     sh.uniforms.facU0 = { value: u0 };
     sh.uniforms.facDu = { value: du };
+    // The per-building seed, from the tint's channel RATIOS, not its value:
+    // Box's baked AO scales the tint toward the ground, so the value changes
+    // continuously up the wall -- hashing it through sin() re-rolled every
+    // window per pixel into blue static. A uniform scale leaves the ratios
+    // constant. Made once per vertex and passed FLAT, and rounded rather than
+    // floored: a grey tint's r/g is exactly 1, which floor(64 r/g) put on the
+    // bucket edge -- 21 % of facade vertices -- and a GPU that divides by a
+    // reciprocal (every iPhone) lands each pixel on either side of it, so every
+    // window on a grey building flickered between dark, blinds and mirror as
+    // the camera moved. Per triangle and away from the edge, it can't.
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nflat varying float vFacSeed;')
+      .replace('#include <color_vertex>', `#include <color_vertex>
+        vFacSeed = floor(vColor.r / max(vColor.g, 0.01) * 64.0 + 0.5)
+          + floor(vColor.b / max(vColor.g, 0.01) * 64.0 + 0.5) * 7.0;`);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float facU0;\nuniform float facDu;')
+      .replace('#include <common>', '#include <common>\nuniform float facU0;\nuniform float facDu;\nflat varying float vFacSeed;')
       .replace('#include <color_fragment>', `#include <color_fragment>
         {
           // Cell index: 0 = masonry, 1 = brick. CELL_W / FS = 528 / 512.
@@ -398,14 +413,7 @@ function facadeMat(f) {
           float facGlass = 1.0 - smoothstep(0.16, 0.36, texture2D(roughnessMap, vRoughnessMapUv).g);
           if (facCell < 1.5 && facGlass > 0.01) {
             vec2 wid = vec2(floor(facU / (facDu * 0.25)), floor(vMapUv.y * 4.0));
-            // Per-building seed from the tint's channel RATIOS, not its value.
-            // Box's baked AO scales the tint toward the ground, so the value
-            // changes continuously up the wall -- hashing it through sin()
-            // re-rolled every window per pixel into blue static. A uniform
-            // scale leaves the ratios constant under interpolation.
-            float bseed = floor(vColor.r / max(vColor.g, 0.01) * 64.0)
-              + floor(vColor.b / max(vColor.g, 0.01) * 64.0) * 7.0;
-            float hsh = fract(sin(dot(wid, vec2(12.9898, 78.233)) + bseed * 3.17) * 43758.5453);
+            float hsh = fract(sin(dot(wid, vec2(12.9898, 78.233)) + vFacSeed * 3.17) * 43758.5453);
             vec3 winMul = hsh < 0.24 ? vec3(0.38, 0.41, 0.46)
               : hsh < 0.36 ? vec3(1.22, 1.16, 1.02)
               : hsh < 0.54 ? vec3(0.78, 0.9, 1.1)
