@@ -112,6 +112,21 @@ export function setWaterQuery(fn) { waterQuery = fn; }
 // tyres a bit harder than physics allows without ever demanding the multiples
 // that made it pivot on rails.
 const STEER_BITE = 1.25;
+/**
+ * YOUR CAR'S TYRES (Vehicle._tyres). The player's road car is a two-axle
+ * model with slip angles above TYRE_FROM m/s: each axle's sideways grip
+ * peaks at ~8.5 deg of slip and falls to ~80 % past it, so a car can slide
+ * and be caught. TYRE_K scales its grip against the steering lock's
+ * (latA * ARCADE_GRIP * PLAYER_BITE): 1.2, so a bend taken on full
+ * lock is at the limit with a little in hand. The front has FRONT_SHARE of
+ * the rear's: at the limit it pushes wide rather than spins. DRIVE_EAT is
+ * how much of the driven axle's grip the engine's pull spends (power
+ * oversteer in a rear-drive car); HAND_GRIP what a locked rear keeps.
+ */
+const TYRE_FROM = 2.5, TYRE_K = 1.2, SLIP_B = 14, SLIP_C = 1.4, FRONT_SHARE = 0.97;
+const DRIVE_EAT = 1.25, HAND_GRIP = 0.4;
+const tyreF = (a, D) => D * Math.sin(SLIP_C * Math.atan(SLIP_B * a));
+
 /** A burnout's donut: its top yaw rate (rad/s, a turn in ~3.7 s) and how far
  *  inside the front axle it turns about (m). See Vehicle.update. */
 const BO_YAW = 1.7, BO_R = 3.0;
@@ -8889,6 +8904,7 @@ export class Vehicle {
         g.add(a, b);
         g.position.set(wx, wy, wz);
         g.userData.front = wz > 0;
+        g.userData.y0 = wy;
         this.tilt.add(g);
         this.wheelMeshes.push(g);
       }
@@ -10164,14 +10180,28 @@ export class Vehicle {
     // class differs by its own latG rather than by a fudge. The low-speed floor
     // is unchanged, so parking-lot lock is exactly as tight as before -- below
     // about 34 km/h the floor is what applies.
-    const lock = this.steerLock(sp)
+    let lock = this.steerLock(sp)
       * (hand > 0.5 ? 1.25 : 1)
       * (brake > 0 && this.vLong > 0.4 ? 0.92 : 1);
+    // COUNTERSTEER (your car, _tyres): steering INTO a slide -- the wheels
+    // turned toward where the car is going, the same sign as its drift
+    // angle -- the lock opens to the slide's angle, so there is enough to
+    // catch it with: at 90 km/h the lock is ~8 deg, and a 25 deg slide needs
+    // more than that the other way. Only into it: opened in a plain bend it
+    // turned a fast slalom into a spin.
+    if (this.dynW !== undefined && this.slipAngle && steerIn * this.slipAngle > 0 && Math.abs(this.slipAngle) > 0.08) {
+      lock = Math.max(lock, Math.min(0.6, Math.abs(this.slipAngle) * 1.15 + 0.04));
+    }
     // How fast the wheel reaches where you asked for it. At 11 the time
     // constant is 91 ms and a step input took 233 ms to reach 90 % of its yaw,
     // which is the "sloppy" -- the car was still winding on lock a fifth of a
     // second after the input. 20 puts it near 115 ms.
-    this.steer = lerp(this.steer, steerIn * lock, 1 - Math.exp(-20 * dt));
+    // ...and the wheels lean into a slide by themselves a little (your car's
+    // tyres, not under the handbrake): the self-correction GTA's cars have,
+    // which turns "held full lock on full throttle" from a spin into a drift.
+    const selfCatch = this.dynW !== undefined && hand <= 0.5 && Math.abs(this.slipAngle || 0) > 0.08
+      ? clamp(this.slipAngle, -0.5, 0.5) * 0.4 : 0;
+    this.steer = lerp(this.steer, steerIn * lock + selfCatch, 1 - Math.exp(-20 * dt));
     // REAR-WHEEL STEER (spec.rearSteer, the Wedge's 10 deg, like the truck
     // it is after): the rear wheels turn AGAINST the fronts at parking speed,
     // fading out by ~45 km/h, and a touch WITH them from ~65 km/h. Against,
@@ -10238,7 +10268,9 @@ export class Vehicle {
       // engine braking, or regen -- which bites noticeably harder
       acc -= Math.sign(this.vLong) * (spec.ev ? 4.6 : 2.4);
     }
-    if (hand > 0.5 && this.vLong > 0) acc -= 11;
+    // (your car's tyre model slides the locked rears instead: half the bite,
+    // so a handbrake turn keeps its way on -- _tyres)
+    if (hand > 0.5 && this.vLong > 0) acc -= this.dynW !== undefined ? 5 : 11;
     // A BURNOUT (spec.rwd, your own car): GAS and BRAKE together at a stand.
     // The fronts hold it, the rears spin -- smoke, the squeal, the engine on
     // the limiter -- and the stick swings it into a donut (below, after the
@@ -10274,7 +10306,13 @@ export class Vehicle {
     const rsAgainst = this.rearSteer * this.steer < 0 ? this.rearSteer : 0;
     // (a burnout's donut winds up over half a second rather than snapping round)
     this.boYaw = bo ? damp(this.boYaw || 0, steerIn * BO_YAW, 2.6, dt) : 0;
-    const yawRate = spec.tank ? this._tankYaw(dt, steerIn)
+    // your road car above walking pace, on the ground: the tyre model
+    // (not a bus or a truck: 12 m of bus does not drift, it goes where it is steered)
+    const dyn = this.detailedWheels && !spec.tank && !light && !spec.bicycle && !bo && spec.len < 7
+      && this.onGround !== false && this.vLong > TYRE_FROM;
+    if (!dyn) this.dynW = undefined;
+    const yawRate = dyn ? this._tyres(dt, wheelbase, throttle, brake, hand, rsAgainst)
+      : spec.tank ? this._tankYaw(dt, steerIn)
       : this.burnout ? this.boYaw
       : (this.vLong / wheelbase) * (Math.tan(this.steer) - Math.tan(rsAgainst));
     // A HIT'S SPIN (traffic.js pairImpulse / wallImpulse) rides on top of the steering's
@@ -10314,9 +10352,11 @@ export class Vehicle {
     // (tracks do not slide: a tank goes where its hull points)
     const gripBase = spec.tank ? 40 : spec.moto ? 30 : spec.bus || spec.cargo ? 18 : spec.ev ? 26 : 24;
     const grip = hand > 0.5 ? 1.5 : gripBase;
-    if (!this.burnout) this.vLat += -yawRate * this.vLong * dt;
+    if (!this.burnout && !dyn) this.vLat += -yawRate * this.vLong * dt;
     const before = this.vLat;
-    if (this.burnout) {
+    if (dyn) {
+      // (the tyres did it: _tyres)
+    } else if (this.burnout) {
       // THE DONUT. A real one turns about a point BO_R inside the front axle,
       // not about the car's own middle: the fronts roll round a small circle
       // while the spinning rears swing the tail out round a wider one -- a
@@ -10350,8 +10390,12 @@ export class Vehicle {
     // friction-circle block that the steering clamp replaced; with steering
     // limited to what grip supports, the yaw the car achieves IS the lateral
     // acceleration, so there is nothing to correct for.
-    this.latAcc = yawRate * this.vLong;
-    this.skid = this.burnout ? 1 : clamp(Math.abs(before) * 0.35, 0, 1);
+    this.latAcc = dyn ? this.tyreLat : yawRate * this.vLong;
+    this.skid = this.burnout ? 1 : dyn ? this.tyreSkid : clamp(Math.abs(before) * 0.35, 0, 1);
+    // where the tyres mark the road (main.js skid marks): the rears in a
+    // burnout, a slide or a handbrake turn, the fronts pushing wide or locked
+    this.markR = this.burnout ? 1 : dyn ? this.tyreMarkR : this.detailedWheels && hand > 0.5 && sp > 6 ? 0.8 : 0;
+    this.markF = dyn ? this.tyreMarkF : 0;
 
     const f = this.forward;
     const rx = f.z, rz = -f.x;
@@ -10514,7 +10558,8 @@ export class Vehicle {
     this.carVy = this.onGround ? ffVy : this.vy;
 
     // body attitude, from the samples taken above
-    let tgtPitch = Math.atan2(bh - fh, this.halfLen * 2) - clamp(acc, -12, 12) * 0.0045;
+    // (your car's dive and squat are its suspension's, below)
+    let tgtPitch = Math.atan2(bh - fh, this.halfLen * 2) - (this.detailedWheels && !two ? 0 : clamp(acc, -12, 12) * 0.0045);
     // Ruts and tussocks. The heightfield is 40 m smooth, so without this a
     // quad on a field glides like a car on a motorway. Deterministic in
     // position, so standing still is still; a road car on grass jolts too.
@@ -10549,6 +10594,27 @@ export class Vehicle {
       : Math.atan2(lh - rh, this.halfWid * 2) + clamp(this.vLat, -9, 9) * 0.016
         + (rough > 0 ? Math.sin(this.x * 2.7 - this.z * 1.3) * rough * (spec.offroad ? 0.03 : 0.015) : 0);
     this.pitch = lerp(this.pitch, tgtPitch, 1 - Math.exp(-10 * dt));
+    // YOUR CAR'S SUSPENSION: the body (not the wheels: sync) leans out of a
+    // bend, dives under braking and squats under power, on a spring that
+    // overshoots a little and settles -- the weight moving about is most of
+    // what makes a car feel heavy rather than a box on rails. The measured
+    // longitudinal acceleration (susAx) also feeds the tyres' load (_tyres).
+    if (this.detailedWheels && !two && !spec.tank) {
+      const ax = dt > 0 ? (this.vLong - (this._vlWas !== undefined ? this._vlWas : this.vLong)) / dt : 0;
+      this._vlWas = this.vLong;
+      this.susAx = lerp(this.susAx || 0, clamp(ax, -30, 30), 1 - Math.exp(-12 * dt));
+      // tall and soft (vans, SUVs, pickups, buses) lean more, a sports car less
+      const soft = clamp(((spec.roof || 1.5) - 1.2) / 0.6, 0.6, 1.6);
+      const rollT = this.onGround ? 0.06 * soft * Math.tanh((this.latAcc || 0) / 24) : 0;
+      const pitchT = this.onGround ? -0.04 * soft * Math.tanh(this.susAx / 16) : 0;
+      const K = 95, C = 9;          // ~1.5 Hz, ~45 % damped
+      this.susRollV = (this.susRollV || 0) + (K * (rollT - (this.susRoll || 0)) - C * (this.susRollV || 0)) * dt;
+      this.susRoll = clamp((this.susRoll || 0) + this.susRollV * dt, -0.12, 0.12);
+      this.susPitchV = (this.susPitchV || 0) + (K * (pitchT - (this.susPitch || 0)) - C * (this.susPitchV || 0)) * dt;
+      this.susPitch = clamp((this.susPitch || 0) + this.susPitchV * dt, -0.08, 0.08);
+    } else if (this.susRoll || this.susPitch) {
+      this.susRoll = this.susPitch = this.susRollV = this.susPitchV = 0; this._vlWas = undefined;
+    }
     if (light) {
       // Held on the gas with the stick back, the nose comes up to a balance
       // angle in proportion to the pull; let go, or lift off, and it drops.
@@ -10579,6 +10645,96 @@ export class Vehicle {
    * reverse like a car's. The turn is slow to build (62 t of it), and the
    * scrubbing tracks take speed off it: a hard turn at speed slows you down.
    */
+  /**
+   * YOUR CAR'S TYRES: a two-axle model with slip angles, for the player's
+   * road car above TYRE_FROM (Vehicle.update; under it, and for everyone
+   * else, the plain bicycle model). Returns the yaw rate and sets vLat (and
+   * vLong's scrub) itself.
+   *
+   * The plain model points the car where the front wheels point and wipes
+   * any sideways speed out at 24/s: it cannot slide unless the handbrake
+   * cuts that to 1.5, and then it slides like a puck. Here each axle makes
+   * a sideways force from its own slip angle (tyreF: peaks at ~8.5 deg, a
+   * sliding tyre keeps ~80 %), so:
+   * - in a normal bend both axles work below the peak and the car goes
+   *   where it is steered -- the same radius as the lock asks for;
+   * - past the limit the front lets go first (FRONT_SHARE) and the car
+   *   runs wide;
+   * - a rear-drive car's engine spends rear grip (DRIVE_EAT): power in a
+   *   bend and the tail steps out, and holds out while you feed it;
+   * - braking moves the load forward (so the tail goes light), and the
+   *   handbrake locks the rears (HAND_GRIP): a handbrake turn, a drift;
+   * Countersteer is what catches it: the lock opens up to the slide's
+   * angle (Vehicle.update), and the camera looks partly along the slide.
+   */
+  _tyres(dt, L, throttle, brake, hand, rsAgainst) {
+    const spec = this.spec;
+    // (a hit's spin rides on top of this, as for everyone: Vehicle.update)
+    let w = this.dynW !== undefined ? this.dynW : (this.yawRate || 0) - (this.spin || 0);
+    const a = L * 0.5, b = L * 0.5;
+    const heavy = spec.bus || spec.cargo;
+    const k2 = a * b * (heavy ? 1.25 : 0.95);                     // yaw inertia / mass
+    const hcg = (spec.roof || 1.5) * 0.36;                         // centre of gravity height
+    let u = this.vLong, v = this.vLat;
+    // grip: the steering lock's, with a little downforce at speed
+    let D = spec.latA * ARCADE_GRIP * PLAYER_BITE * TYRE_K * (1 + clamp((u - 20) / 40, 0, 0.25));
+    if (this.slide > 0) {
+      // knocked loose by a hit (traffic.js kick): the tyres bite again over SLIDE_T
+      D *= 1 - 0.55 * Math.min(1, this.slide);
+      this.slide = Math.max(0, this.slide - dt / SLIDE_T);
+    }
+    // load on each axle: braking puts it on the front, the throttle on the rear
+    // (capped at 7 % of the load each way: more, and braking hard on lock at
+    // 100 km/h lightened the rear enough to spin the car -- ABS-era cars
+    // rotate a little under trail-braking, they do not swap ends)
+    const sf = 0.5 - clamp((this.susAx || 0) / 9.81 * hcg / L, -0.07, 0.07);
+    const Df0 = D * sf * 2 * 0.5 * FRONT_SHARE, Dr0 = D * (1 - sf) * 2 * 0.5;
+    // the longitudinal force each axle carries, out of the same grip
+    const fade = 1 - clamp(u / spec.fadeTop, 0, 1);
+    // Past ~25 deg of drift the pull's bite on the rears fades (a traction
+    // control's job): power holds a slide, it does not swap ends. Holding
+    // full lock on full throttle out of a junction in a muscle car, without
+    // it, spun it every time.
+    const tc = clamp(1 - (Math.abs(this.slipAngle || 0) - 0.35) / 0.25, 0.2, 1);
+    const drv = throttle > 0 ? spec.acc * throttle * (spec.ev ? Math.sqrt(fade) : fade) * DRIVE_EAT * tc : 0;
+    const rearShare = spec.rwd ? 1 : spec.ev ? 0.55 : 0;
+    const brk = brake > 0 ? spec.brakeA * brake : 0;
+    const fxF = drv * (1 - rearShare) + brk * 0.68;
+    const fxR = drv * rearShare + brk * 0.32;
+    const left = (D0, fx, min) => Math.sqrt(Math.max(D0 * D0 - fx * fx, (D0 * min) * (D0 * min)));
+    const Df = left(Df0, fxF, 0.35);
+    const Dr = hand > 0.5 ? Dr0 * HAND_GRIP : left(Dr0, fxR, 0.3);
+    const d = this.steer, dr = rsAgainst;
+    const n = u < 8 ? 6 : 3, h = dt / n;
+    let aF = 0, aR = 0, fyF = 0, fyR = 0;
+    for (let i = 0; i < n; i++) {
+      aF = Math.atan2(v + w * a, u) - d;
+      aR = Math.atan2(v - w * b, u) - dr;
+      fyF = -tyreF(aF, Df);
+      fyR = -tyreF(aR, Dr);
+      // body frame: the sideways forces, the steered front's drag, and the
+      // turn carrying each velocity component into the other
+      v += (fyF * Math.cos(d) + fyR - u * w) * h;
+      u += (-fyF * Math.sin(d) + v * w) * h;
+      w += ((a * fyF * Math.cos(d) - b * fyR) / k2) * h;
+    }
+    this.vLat = v;
+    this.vLong = Math.max(u, 0);
+    this.dynW = w;
+    this.tyreLat = fyF * Math.cos(d) + fyR;
+    // how hard the tyres are sliding: the squeal, the smoke, the marks
+    const over = (x, D0, Dn) => clamp((Math.abs(x) - 0.13) / 0.18, 0, 1) * clamp(Dn / Math.max(D0, 1e-3) + 0.3, 0, 1);
+    const spinR = rearShare > 0 && fxR > Dr0 * 0.9 ? clamp((fxR / Dr0 - 0.9) * 3, 0, 1) : 0;
+    this.tyreMarkR = Math.max(over(aR, Dr0, Dr), hand > 0.5 && u > 5 ? 0.8 : 0, spinR);
+    this.tyreMarkF = Math.max(over(aF, Df0, Df), brake > 0.85 && u > 12 ? 0.35 : 0);
+    this.tyreSkid = Math.max(this.tyreMarkR, this.tyreMarkF * 0.8);
+    // the DRIFT angle: how far the rear axle is travelling off its own line
+    // (the body's slip angle is not it -- turning tight at walking pace, the
+    // middle of the car moves at b/R off its heading without sliding at all)
+    this.slipAngle = Math.atan2(v - w * b, Math.max(u, 0.1)) - dr;
+    return w;
+  }
+
   _tankYaw(dt, steerIn) {
     const sp = Math.abs(this.vLong);
     const want = steerIn * TANK.pivot / (1 + sp / TANK.pivotFade) * (this.vLong < -0.5 ? -1 : 1);
@@ -10776,8 +10932,9 @@ export class Vehicle {
     // skipped write leaves exactly what the write would have.
     const gr = this.group.rotation, tr = this.tilt.rotation;
     // a shot rocks the hull away from the gun; a crushed car bumps it
-    const tx = this.pitch - this.wheelie + (T ? -T.rock * Math.cos(T.rockYaw) * 0.035 - T.bump * 0.03 : 0);
-    const tz = this.roll + (T ? T.rock * Math.sin(T.rockYaw) * 0.035 : 0);
+    const sr = this.detailedWheels ? this.susRoll || 0 : 0, spch = this.detailedWheels ? this.susPitch || 0 : 0;
+    const tx = this.pitch - this.wheelie + spch + (T ? -T.rock * Math.cos(T.rockYaw) * 0.035 - T.bump * 0.03 : 0);
+    const tz = this.roll + sr + (T ? T.rock * Math.sin(T.rockYaw) * 0.035 : 0);
     if (gr.y !== this.heading) gr.y = this.heading;
     if (tr.x !== tx) tr.x = tx;
     if (this.shadowTilt) {
@@ -10814,6 +10971,9 @@ export class Vehicle {
         if (m.rotation.order !== 'YXZ') m.rotation.order = 'YXZ';
         m.rotation.x = m.userData.front ? this.wheelSpin : this.wheelSpin + (this.boSpin || 0);
         m.rotation.y = m.userData.front ? this.steer : this.rearSteer;
+        // the suspension's lean is the body's: each wheel is held down to
+        // where it was, so a leaning car keeps all four on the road
+        m.position.y = m.userData.y0 + m.position.z * spch - m.position.x * sr;
       }
       if (this.glow) {
         // 0.4 s sweep out from the centre at a flash, settling to a glow

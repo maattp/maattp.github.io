@@ -392,6 +392,50 @@ shots.
   and drops still shrink. Burnout smoke is by rate (30/s a tyre), not 4 a
   frame, which at 60 fps overran the 420-particle pool and cut puffs off.
 
+**v222: your car has tyres -- it slides, drifts, leans, and marks the road.**
+The plain model (still everyone else's, and yours under `TYRE_FROM` 2.5 m/s,
+in the air, in a burnout, on two wheels and in anything over 7 m) points the
+car where the fronts point and wipes sideways speed at 24/s: it cannot slide
+without the handbrake, and then it slides like a puck. `Vehicle._tyres` is a
+two-axle model with slip angles for your road car:
+- Each axle's sideways force is `tyreF` (peaks at ~8.5 deg of slip, keeps
+  ~80 % sliding) from a grip of the steering lock's own `latA * ARCADE_GRIP
+  * PLAYER_BITE` times `TYRE_K` 1.2, so **a bend on full lock turns on the
+  radius the lock asks for** (verify "tyres": within 12 %). The front has
+  `FRONT_SHARE` 0.97 of it: at the limit it pushes wide. A front much weaker
+  than the rear understeered badly at speed, where the lock is only a few
+  degrees and a few degrees of front slip is most of it.
+- Load moves with `susAx` (capped at 7 % each way: at 14 % a hard stop on
+  lock spun the car); the engine's pull spends the driven axle's grip
+  (`DRIVE_EAT` 1.25: 1.2 never stepped out, 1.3 spun a muscle car on lock);
+  past ~20 deg of drift a traction control fades that pull; the handbrake
+  leaves the rears `HAND_GRIP` 0.4 and brakes at 5, not 11, so a handbrake
+  turn keeps its way on.
+- **Countersteer opens the lock** to the slide's angle (`slipAngle`, the REAR
+  AXLE's drift, not the body's: turning tight at walking pace the middle of
+  the car moves b/R off its heading without sliding). Only INTO a slide:
+  opened in a plain bend it spun a fast slalom. The fronts also lean into a
+  slide by themselves (`selfCatch`, 0.4 of it, not under the handbrake).
+- A hit's spin still rides on top (traffic.js `spin`, its own clock, as for
+  everyone): crashcheck's recover case reads it.
+- The camera looks half way along the drift (player.js).
+Measured on flat ground (`tools`-style rig in verify): full lock at 90 km/h
+R 20 m as before; 125 km/h slalom < 2 deg; a handbrake flick at 65 km/h
+70-80 deg then caught at 14.6 m/s; a muscle car on lock and full throttle
+~10 deg out and on its way, a sedan ~3.
+
+**Suspension** (your car, `susRoll` / `susPitch`): the body leans out of a
+bend, dives and squats, on a ~1.5 Hz spring ~45 % damped -- the tilt group
+turns and each wheel's `position.y` is held to its `y0` against it, so all
+four stay on the road. The ground plane's own pitch no longer carries the
+acceleration term for your car (the spring does).
+
+**Tyre marks** (`skidmarks.js`): every wheel of your car that slides, spins
+or locks (`markR` / `markF`) lays a strip, 2.5 cm up with a polygon offset,
+in one ring-buffered mesh (1400 quads, 700 on a phone; one draw, hidden
+when none is alive) faded in the shader over 50 s, so laid quads are never
+touched again and only the new ones upload (`addUpdateRange`).
+
 **v217: a driver in the convertible; Metro's livery; an XDE60's sections.**
 - Every car's cabin builder seats a driver in `matte.crew` (merged into the
   geometry of an occupied car, yours included); `buildConvertible` builds its

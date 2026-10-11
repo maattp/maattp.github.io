@@ -4529,6 +4529,51 @@ async function main() {
       if (bad.length) { console.error(`FAIL: burnout: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // YOUR CAR'S TYRES (v222, vehicles.js _tyres): on flat ground, a bend on
+    // full lock holds the lock's radius (the plain model's), a fast slalom
+    // stays gripped, a handbrake flick slides the tail out past 30 deg and a
+    // countersteer catches it with way still on, and full lock on full
+    // throttle in a muscle car steps out without spinning.
+    {
+      const h = await session.eval(`(() => {
+        const d = window.__dbg, T = d.traffic, city = d.city, p = d.player.position;
+        const was = d.game.paused; d.game.paused = true;
+        const gA = city.groundAt, rL = city.roadLift;
+        city.groundAt = () => 0; city.roadLift = () => 0;
+        const run = (type, v0, script, frames) => {
+          const v = T.spawnAt(p.x + 60, p.z + 60, 0, type, 0xaa3333, 'free');
+          v.setDetailed(true); v.vLong = v0; v.y = 0; v.onGround = true;
+          let maxDrift = 0, dist = 0, h0 = 0;
+          for (let i = 0; i < frames; i++) {
+            v.update(1 / 60, script(i, v));
+            if (i === 60) h0 = v.heading;
+            if (i > 60) dist += Math.hypot(v.vLong, v.vLat) / 60;
+            maxDrift = Math.max(maxDrift, Math.abs(v.slipAngle || 0));
+          }
+          const r = { maxDrift: maxDrift * 57.3, R: dist / Math.abs(v.heading - h0 || 1e-6), speed: Math.hypot(v.vLong, v.vLat), lock: v.steerLock(Math.abs(v.vLong)), wb: v.spec.wheelbase };
+          v.setDetailed(false); T.remove(v);
+          return r;
+        };
+        const hold = (spd) => (i, v) => ({ throttle: v.vLong < spd ? 0.6 : 0, brake: v.vLong > spd + 0.5 ? 0.2 : 0, steer: 1 });
+        const out = {
+          lock: run('sedan', 25, hold(25), 300),
+          slalom: run('sports', 35, (i) => ({ throttle: 0.5, steer: Math.sin(i / 20) }), 360),
+          hand: run('sedan', 18, (i, v) => ({ throttle: i > 50 ? 0.5 : 0, steer: i < 50 ? 1 : (v.slipAngle > 0.1 ? -1 : v.slipAngle < -0.1 ? 1 : 0), handbrake: i > 5 && i < 40 ? 1 : 0 }), 240),
+          power: run('muscle', 10, (i) => ({ throttle: 1, steer: i < 120 ? 1 : 0 }), 240),
+        };
+        city.groundAt = gA; city.roadLift = rL; d.game.paused = was;
+        return out;
+      })()`);
+      const want = h.lock.wb / Math.tan(h.lock.lock);
+      const bad = [];
+      if (Math.abs(h.lock.R / want - 1) > 0.12) bad.push(`full lock at 90 km/h turns on ${h.lock.R.toFixed(1)} m, the lock asks ${want.toFixed(1)}`);
+      if (h.slalom.maxDrift > 6) bad.push(`a 125 km/h slalom drifts ${h.slalom.maxDrift.toFixed(1)} deg`);
+      if (h.hand.maxDrift < 30 || h.hand.speed < 8) bad.push(`a handbrake flick: ${h.hand.maxDrift.toFixed(0)} deg, ${h.hand.speed.toFixed(1)} m/s after the catch`);
+      if (h.power.maxDrift < 4 || h.power.maxDrift > 40) bad.push(`a muscle car on full lock and throttle drifts ${h.power.maxDrift.toFixed(1)} deg (want 4-40)`);
+      console.log(`tyres: lock R ${h.lock.R.toFixed(1)}/${want.toFixed(1)} m, slalom ${h.slalom.maxDrift.toFixed(1)} deg, handbrake ${h.hand.maxDrift.toFixed(0)} deg -> ${h.hand.speed.toFixed(1)} m/s, power ${h.power.maxDrift.toFixed(1)} deg`);
+      if (bad.length) { console.error(`FAIL: tyres: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // AUTO_PROBE lets a one-off diagnostic ride the same proven boot path
     // rather than maintaining a second, subtly different CDP harness.
     if (process.env.AUTO_PROBE) {

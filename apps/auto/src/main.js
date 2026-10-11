@@ -59,6 +59,7 @@ import { Hud, buildMapCanvas } from './hud.js';
 import { Activities } from './activities.js';
 import { installRamps, buildRampMesh, StuntJumps } from './stunts.js';
 import { Effects } from './effects.js';
+import { SkidMarks } from './skidmarks.js';
 import { TankSystem, TANK_SITE } from './tank.js';
 import { Audio, STATION_NAMES } from './audio.js';
 import { PostFX } from './postfx.js';
@@ -599,7 +600,7 @@ function nearShadowFocus() {
 }
 let tanks = null;       // the tank at Sand Point and its guns (tank.js)
 let gpuLedger = null;
-let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts, stunts, monorail, link, freight, counterbal, bikeNet, cyclists, lmRoot, shadowCache = null;
+let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, skidMarks, audio, game, marker, postfx, acts, stunts, monorail, link, freight, counterbal, bikeNet, cyclists, lmRoot, shadowCache = null;
 let pickups = [];
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
 const LOOK_AHEAD = new THREE.Vector3();
@@ -1477,6 +1478,7 @@ function installShadowFade() {
   peds.camera = camera;   // animation LOD culls against it
   peds.waterAt = (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; };   // the boats' rule (Player.waterAt)
   fx = new Effects(scene, tx);
+  skidMarks = new SkidMarks(scene, ON_PHONE);
   orcas = new Orcas({ scene, fx, camera, get game() { return game; }, get hud() { return hud; }, get audio() { return audio; }, get player() { return player; } });
   saucer = new Saucer({ scene, city, traffic, fx, get hud() { return hud; }, get game() { return game; }, get audio() { return audio; }, get player() { return player; } });
   let mapCanvas = null;
@@ -1632,7 +1634,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   wireUi();
   career.start(hud);
   game.newTarget();
@@ -3002,10 +3004,27 @@ function frame(now) {
     audio.play('splash', { gain: 0.1, rate: 1.9 + Math.random() * 0.4, x: bx, y: v.y, z: bz });
   }
   fx.update(dt);
+  skidMarks.update(dt);
 
   // engine smoke / skid marks
   if (player.vehicle) {
     const v = player.vehicle;
+    // TYRE MARKS (skidmarks.js): each wheel that is sliding, spinning or
+    // locked lays its own strip -- the rears from markR, the fronts from
+    // markF (vehicles.js). A strip ends when the wheel grips again.
+    if (v.wheelMeshes && v.wheelMeshes.length && !v.spec.boat && !v.afloat) {
+      if (skidMarks.owner !== v) { skidMarks.owner = v; skidMarks.streams.clear(); }
+      const f = v.forward, rxx = f.z, rzz = -f.x, W = v.assets.wheels;
+      const air = v.onGround === false || v.stunt;
+      for (let i = 0; i < W.length; i++) {
+        const [wx, , wz] = W[i];
+        const k = air ? 0 : wz < 0 ? v.markR || 0 : v.markF || 0;
+        if (!(k > 0.03)) { skidMarks.add(i, 0, 0, 0, 0, 0); continue; }
+        const px = v.x + rxx * wx + f.x * wz, pz = v.z + rzz * wx + f.z * wz;
+        const py = cityRef.groundAt(px, pz, v.y + 0.45, v.lift);
+        skidMarks.add(i, px, py, pz, k, v.spec.moto ? 0.14 : 0.24);
+      }
+    }
     if (v.burnout) {
       // A burnout: white smoke off both rear tyres. Thrown back off the tread,
       // it stops within a metre and hangs low where it was laid, swelling
