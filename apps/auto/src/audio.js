@@ -1388,6 +1388,13 @@ export const ENGINES = {
     idle: 0, redline: 36000, gears: [1],
     lp: [2500, 5000, 1500], ex: [1800, 1.5, 3], noise: { ratio: 0, q: 1, gain: 0, pulse: 0, order: 1 },
     whine: { hz0: 380, hz1: 7800, gain: 0.05, load: 0.6 }, drive: 1.0, level: 0.3, jitter: 0 },
+  // The saucer (`engine: 'saucer'`): a hollow, theremin-ish tone -- odd
+  // harmonics only, low and soft -- with a high shimmer for the 'inverter'
+  // and a little pitch wander, so it hums rather than drives.
+  saucer: { kind: 'ev', stroke: 2, fire: [0], amps: [1], pw: 0.6, harm: [1, 0, 0.32, 0, 0.14, 0, 0.05],
+    idle: 0, redline: 14000, gears: [1],
+    lp: [1400, 3600, 1200], ex: [900, 1.8, 4], noise: { ratio: 0, q: 1, gain: 0, pulse: 0, order: 1 },
+    whine: { hz0: 1200, hz1: 5200, gain: 0.035, load: 0.5 }, drive: 0.9, level: 0.34, jitter: 0.05 },
   // The Wedge (`engine: 'evtruck'`): the EV's motor a quarter lower, and no
   // more than that. An octave down with rich harmonics, a low resonance and
   // the saturator driven read as a big combustion engine -- a low, buzzy

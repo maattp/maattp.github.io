@@ -1439,7 +1439,7 @@ function installShadowFade() {
   peds.waterAt = (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; };   // the boats' rule (Player.waterAt)
   fx = new Effects(scene, tx);
   orcas = new Orcas({ scene, fx, camera, get game() { return game; }, get hud() { return hud; }, get audio() { return audio; }, get player() { return player; } });
-  saucer = new Saucer({ scene, city, traffic, get hud() { return hud; }, get game() { return game; }, get audio() { return audio; }, get player() { return player; } });
+  saucer = new Saucer({ scene, city, traffic, fx, get hud() { return hud; }, get game() { return game; }, get audio() { return audio; }, get player() { return player; } });
   let mapCanvas = null;
   if (bc.map) { try { mapCanvas = await blobToCanvas(bc.map); } catch (e) { mapCanvas = null; blog('map: restore failed ' + e.message); } }
   if (!mapCanvas) { mapCanvas = buildMapCanvas(city); bcOut.mapCanvas = mapCanvas; }
