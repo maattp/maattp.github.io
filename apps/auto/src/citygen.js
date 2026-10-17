@@ -120,6 +120,88 @@ const IND_DEFAULT_H = 8.5;
  * the blob carries, and it separates them well: a garage is under ~120 m2, a
  * workshop or a big shed under ~400. A TAGGED height is never touched.
  */
+/**
+ * Convex polygon `poly` ([[x, z], ...]) minus the triangles `tris`
+ * ([[a, b, c], ...]): what of it they leave uncovered, as convex pieces. Each
+ * triangle splits a piece into at most three convex parts outside it (outside
+ * its first edge; inside that and outside the second; inside both and outside
+ * the third), so this is exact. Slivers under `minArea` are dropped.
+ */
+/** Convex polygon `P` cut to the half-plane x * nx + z * nz >= c. */
+function clipKeep(P, nx, nz, c) {
+  const out = [];
+  for (let i = 0; i < P.length; i++) {
+    const p = P[i], q = P[(i + 1) % P.length];
+    const fp = p[0] * nx + p[1] * nz - c, fq = q[0] * nx + q[1] * nz - c;
+    if (fp >= 0) out.push(p);
+    if ((fp >= 0) !== (fq >= 0)) {
+      const r = fp / (fp - fq);
+      out.push([p[0] + (q[0] - p[0]) * r, p[1] + (q[1] - p[1]) * r]);
+    }
+  }
+  return out;
+}
+
+function convexMinus(poly, tris, minArea = 0.02) {
+  // Keep the side of line a->b where the cross product has sign `sg`.
+  const clip = (P, a, b, sg) => {
+    const out = [];
+    const f = (p) => sg * ((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]));
+    for (let i = 0; i < P.length; i++) {
+      const p = P[i], q = P[(i + 1) % P.length], fp = f(p), fq = f(q);
+      if (fp >= 0) out.push(p);
+      if ((fp >= 0) !== (fq >= 0)) {
+        const r = fp / (fp - fq);
+        out.push([p[0] + (q[0] - p[0]) * r, p[1] + (q[1] - p[1]) * r]);
+      }
+    }
+    return out;
+  };
+  const area = (P) => {
+    let A = 0;
+    for (let i = 0; i < P.length; i++) { const p = P[i], q = P[(i + 1) % P.length]; A += p[0] * q[1] - q[0] * p[1]; }
+    return Math.abs(A) / 2;
+  };
+  // Separating axis test between two convex polygons (touching is not overlap).
+  const overlaps = (P, Q) => {
+    for (const [A, B] of [[P, Q], [Q, P]]) {
+      for (let i = 0; i < A.length; i++) {
+        const a = A[i], b = A[(i + 1) % A.length], nx = a[1] - b[1], nz = b[0] - a[0];
+        if (Math.abs(nx) + Math.abs(nz) < 1e-9) continue;   // a repeated vertex
+        let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+        for (const p of A) { const d = p[0] * nx + p[1] * nz; if (d < a0) a0 = d; if (d > a1) a1 = d; }
+        for (const p of B) { const d = p[0] * nx + p[1] * nz; if (d < b0) b0 = d; if (d > b1) b1 = d; }
+        const eps = 1e-9 * (Math.abs(nx) + Math.abs(nz));
+        if (a1 <= b0 + eps || b1 <= a0 + eps) return false;
+      }
+    }
+    return true;
+  };
+  let pieces = [poly];
+  for (const T of tris) {
+    // anticlockwise in (x, z): inside is the +cross side of every edge
+    const o = (T[1][0] - T[0][0]) * (T[2][1] - T[0][1]) - (T[1][1] - T[0][1]) * (T[2][0] - T[0][0]);
+    if (Math.abs(o) < 1e-9) continue;
+    const t = o > 0 ? T : [T[0], T[2], T[1]];
+    const next = [];
+    for (const P of pieces) {
+      // A triangle that does not overlap the piece leaves it whole: split along
+      // its edge LINES anyway and a piece shatters into hundreds.
+      if (!overlaps(P, t)) { next.push(P); continue; }
+      let inside = P;
+      for (let k = 0; k < 3 && inside.length >= 3; k++) {
+        const a = t[k], b = t[(k + 1) % 3];
+        const out = clip(inside, a, b, -1);
+        if (out.length >= 3 && area(out) >= minArea) next.push(out);
+        inside = clip(inside, a, b, 1);
+      }
+    }
+    pieces = next;
+    if (!pieces.length) break;
+  }
+  return pieces;
+}
+
 function untaggedHeight(cls, h, area) {
   if (cls !== 3 || h !== IND_DEFAULT_H) return h;
   return area < 120 ? 3.2 : area < 400 ? 5.5 : h;
@@ -3175,6 +3257,13 @@ export function* cityGenerator(md, cache = {}) {
       // Paint stops where the polygon does, which past a nose corner is
       // beyond the mouth.
       A.pm = Math.min(A.hard, Math.max(A.m, cl.pa || 0, cr.pb || 0));
+      // Beside a corner too acute to build, nothing turns the pavement round,
+      // and stopping it at the mouth left the kerb bare to the node -- ground
+      // roadLift reports as pavement all along the strip. It runs on to the
+      // node, and meshRoad drops the pieces that would lie on another
+      // carriageway, as it does anywhere.
+      if (cl.acute) A.sP = 0;
+      if (cr.acute) A.sN = 0;
     }
     // TOO ACUTE FOR A CORNER (two roads ~25-40 deg apart on short edges):
     // the arms overlap past both mouths. Joining the mouths' facing kerb
@@ -3219,11 +3308,12 @@ export function* cityGenerator(md, cache = {}) {
     // The tarmac polygon, anticlockwise round the node: each mouth from its
     // -p kerb to its +p kerb (with the strip's own cross-section vertices, so
     // the wear shading carries across the seam), then the corner's kerb.
-    const pts = [], col = [];
+    const pts = [], col = [], acu = [];
     const push = (p, w) => {
       const l = pts.length;
-      if (l && Math.hypot(pts[l - 1][0] - p[0], pts[l - 1][1] - p[1]) < 0.05) return;
-      pts.push(p); col.push(w);
+      if (l && Math.hypot(pts[l - 1][0] - p[0], pts[l - 1][1] - p[1]) < 0.05) return l - 1;
+      pts.push(p); col.push(w); acu.push(false);
+      return l;
     };
     const wear = (f) => {
       f = Math.min(1, Math.abs(f));
@@ -3242,9 +3332,17 @@ export function* cityGenerator(md, cache = {}) {
         }
         push([n.x + A.ux * A.m + A.px * q, n.z + A.uz * A.m + A.pz * q], wear(q / A.hw));
       }
-      for (const p of corners[i].K) push(p, wear(1));
+      for (const p of corners[i].K) { const k = push(p, wear(1)); if (corners[i].acute) acu[k] = true; }
     }
-    if (pts.length > 1 && Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) < 0.05) { pts.pop(); col.pop(); }
+    if (pts.length > 1 && Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) < 0.05) { pts.pop(); col.pop(); if (acu.pop()) acu[0] = true; }
+    const wearAt = (x, z) => {
+      let f = 1;
+      for (const A of arms) {
+        const t = (x - n.x) * A.ux + (z - n.z) * A.uz;
+        if (t >= 0) f = Math.min(f, Math.abs((x - n.x) * A.px + (z - n.z) * A.pz) / A.hw);
+      }
+      return wear(f);
+    };
     // No boundary chord longer than 6 m: the surface is drawn per vertex from
     // the terrain, and a long chord is the grass-through-the-road problem.
     const poly = [], pcol = [];
@@ -3254,12 +3352,88 @@ export function* cityGenerator(md, cache = {}) {
       const s = Math.max(1, Math.ceil(L / 6));
       for (let j = 0; j < s; j++) {
         const f = j / s;
-        poly.push(p0[0] + (p1[0] - p0[0]) * f, p0[1] + (p1[1] - p0[1]) * f);
-        pcol.push(col[k] + (col[(k + 1) % pts.length] - col[k]) * f);
+        const x = p0[0] + (p1[0] - p0[0]) * f, z = p0[1] + (p1[1] - p0[1]) * f;
+        poly.push(x, z);
+        // The chord between the two kerb corners of a corner that does not
+        // fit crosses the carriageway, and interpolated it drew a band of
+        // kerb grime down the lanes: its points take the wear of where they are.
+        const ch = acu[k] && acu[(k + 1) % pts.length];
+        pcol.push(j && ch ? wearAt(x, z) : col[k] + (col[(k + 1) % pts.length] - col[k]) * f);
       }
     }
     let R = 0;
     for (let k = 0; k < poly.length; k += 2) R = Math.max(R, Math.hypot(poly[k] - n.x, poly[k + 1] - n.z));
+    // WHERE NO CORNER FITS, THE APPROACHES STILL REACH THE NODE. A corner too
+    // acute for its arms' edges (a short edge where OSM splits a road into a
+    // dual carriageway, or the link between a dual carriageway's two halves)
+    // joins the two mouths with a straight chord, and that chord cuts across
+    // the arms' own carriageway between node and mouth: ground the strips
+    // stop short of and roadLift reports as road (NODE_LIFT: mouthRamp is 1
+    // short of a mouth). That was grass growing inside the lanes at the
+    // spawn -- the wedges between Mercer St's two halves, and 5th Ave N's
+    // kerbs pinching to half its width where it forks. What the fan leaves
+    // uncovered of each arm's half next to such a corner, node to mouth, is
+    // `fill`: convex pieces world.meshJunction draws at the polygon's own
+    // height and nodeSurface reports as the polygon (see junctionFill for
+    // the neighbours taken out of it).
+    const fill = [];
+    {
+      const fan = [];
+      const np = poly.length / 2;
+      for (let k = 0; k < np; k++) {
+        const k2 = (k + 1) % np;
+        fan.push([[n.x, n.z], [poly[2 * k], poly[2 * k + 1]], [poly[2 * k2], poly[2 * k2 + 1]]]);
+      }
+      // Pieces are kept disjoint: a later region loses what earlier ones cover.
+      const fillTris = [];
+      // Each piece keeps the arm it paves (`w`), so it takes that strip's
+      // wear across its width instead of a flat value.
+      const addFill = (region, minus, A) => {
+        const w = { x: n.x, z: n.z, px: A.px, pz: A.pz, hw: A.hw };
+        for (const P of convexMinus(region, minus.concat(fillTris))) {
+          fill.push({ P, w });
+          for (let k = 1; k + 1 < P.length; k++) fillTris.push([P[0], P[k], P[k + 1]]);
+          for (const p of P) R = Math.max(R, Math.hypot(p[0] - n.x, p[1] - n.z));
+        }
+      };
+      for (let i = 0; i < N; i++) {
+        if (!corners[i].acute) continue;
+        for (const [A, sg] of [[arms[i], 1], [arms[(i + 1) % N], -1]]) {
+          if (A.m < 0.5) continue;
+          const ox = A.px * A.hw * sg, oz = A.pz * A.hw * sg, mx = A.ux * A.m, mz = A.uz * A.m;
+          const band = [[n.x, n.z], [n.x + mx, n.z + mz], [n.x + mx + ox, n.z + mz + oz], [n.x + ox, n.z + oz]];
+          addFill(band, fan, A);
+        }
+      }
+      // ...and what an acute corner's clip takes off a strip that neither the
+      // fan nor another approach's strip draws. A nose clip is a kerb LINE,
+      // and run on past the node it cut a strip back on its far side too: the
+      // grass slit beside Mercer St's westbound half at the spawn.
+      const strips = [];
+      for (const B of arms) {
+        const e = g.edges[B.ei], t0 = Math.max(0, B.m - 0.4);
+        const ax = n.x + B.ux * t0, az = n.z + B.uz * t0, bx = n.x + B.ux * e.len, bz = n.z + B.uz * e.len;
+        const qx = B.px * B.hw, qz = B.pz * B.hw;
+        // as two triangles, for convexMinus
+        strips.push({ ei: B.ei, tris: [[[ax - qx, az - qz], [bx - qx, bz - qz], [bx + qx, bz + qz]],
+          [[ax - qx, az - qz], [bx + qx, bz + qz], [ax + qx, az + qz]]] });
+      }
+      for (const A of arms) {
+        if (!A.clip) continue;
+        const e = g.edges[A.ei];
+        const others = [...fan];
+        for (const st of strips) if (st.ei !== A.ei) others.push(...st.tris);
+        for (const c of A.clip) {
+          const tE = Math.min(c.tEnd, e.len);
+          const qx = A.px * A.hw, qz = A.pz * A.hw, ex = A.ux * tE, ez = A.uz * tE;
+          let P = [[n.x - qx, n.z - qz], [n.x - qx + ex, n.z - qz + ez], [n.x + qx + ex, n.z + qz + ez], [n.x + qx, n.z + qz]];
+          // what the clip removes: (x - node) . N < d
+          P = clipKeep(P, -c.nx, -c.nz, -c.d - (n.x * c.nx + n.z * c.nz));
+          if (P.length < 3) continue;
+          addFill(P, others, A);
+        }
+      }
+    }
     // Corner pavement: one band per corner, as quads between the kerb (K) and
     // the building-side line (I). Which of them are drawn is decided HERE, so
     // nodeSurface reports exactly the quads world.meshNode draws.
@@ -3274,8 +3448,72 @@ export function* cityGenerator(md, cache = {}) {
       for (const p of I) R = Math.max(R, Math.hypot(p[0] - n.x, p[1] - n.z) + VERGE);
       raw.push({ K, I, arc: c.arc });
     }
-    return { legacy: false, x: n.x, z: n.z, hw, sw, arms, poly, pcol, raw, pieces: null,
+    return { legacy: false, ni, x: n.x, z: n.z, hw, sw, arms, poly, pcol, fillRaw: fill, fill: fill.length ? null : fill, raw, pieces: null,
       R2: (R + 0.1) * (R + 0.1) };
+  };
+  // A junction's `fill`, on first use, as flat [x, z, ...] convex pieces. A
+  // neighbouring junction close enough to reach it (the two halves of a dual
+  // carriageway are often 10-15 m apart) paves some of the same ground, and two
+  // surfaces at NODE_LIFT drawn as different triangles z-fight: whatever that
+  // neighbour's fan draws is taken out, and of two fills the lower node's wins.
+  const junctionFill = (J) => {
+    if (J.fill) return J.fill;
+    const n = g.nodes[J.ni];
+    let pieces = J.fillRaw;
+    // this junction's own arms are not taken out: its fill is what they leave
+    const seen = new Set(J.arms.map((A) => A.ei));
+    const cut = (tris) => {
+      const next = [];
+      for (const { P, w } of pieces) for (const Q of convexMinus(P, tris)) next.push({ P: Q, w });
+      pieces = next;
+    };
+    const R = Math.sqrt(J.R2), reach = R + Math.hypot(Math.max(JT_MAX, 4 * MAX_HW), MAX_HW + MAX_WALK + 3.2) + VERGE + 0.5;
+    const c0 = Math.floor((n.x - reach) / nCell), c1 = Math.floor((n.x + reach) / nCell);
+    const d0 = Math.floor((n.z - reach) / nCell), d1 = Math.floor((n.z + reach) / nCell);
+    for (let cx = c0; cx <= c1 && pieces.length; cx++) {
+      for (let cz = d0; cz <= d1 && pieces.length; cz++) {
+        const nc = nGrid.cell(cx, cz);
+        for (let q = nGrid.off[nc], qe = nGrid.off[nc + 1]; q < qe && pieces.length; q++) {
+          const nj = nGrid.ids[q];
+          if (nj === J.ni) continue;
+          const m = g.nodes[nj];
+          if (!m.e.length) continue;
+          if (Math.hypot(m.x - n.x, m.z - n.z) > R + junctionBound(nj)) continue;
+          const tris = [];
+          // ...and the strips it meets, where they are drawn: one ramped up
+          // to 16 mm under NODE_LIFT is within a chord's error of a fill.
+          for (const ei of m.e) {
+            if (seen.has(ei)) continue;
+            seen.add(ei);
+            const e = g.edges[ei];
+            if (e.tunnel || e.elev || e.prof) continue;
+            const a = g.nodes[e.a], mc = stripMouths(ei);
+            const t0 = Math.max(0, mc[ei * 2] - 0.4), t1 = e.len - Math.max(0, mc[ei * 2 + 1] - 0.4);
+            if (t1 <= t0) continue;
+            const ax = a.x + e.dx * t0, az = a.z + e.dz * t0, bx = a.x + e.dx * t1, bz = a.z + e.dz * t1;
+            const qx = -e.dz * e.hw, qz = e.dx * e.hw;
+            tris.push([[ax - qx, az - qz], [bx - qx, bz - qz], [bx + qx, bz + qz]],
+              [[ax - qx, az - qz], [bx + qx, bz + qz], [ax + qx, az + qz]]);
+          }
+          const K = junction(nj);
+          if (K && !K.legacy) {
+            const P = K.poly, np = P.length / 2;
+            for (let k = 0; k < np; k++) {
+              const k2 = (k + 1) % np;
+              tris.push([[m.x, m.z], [P[2 * k], P[2 * k + 1]], [P[2 * k2], P[2 * k2 + 1]]]);
+            }
+          }
+          if (K && !K.legacy && nj < J.ni) {
+            for (const F of junctionFill(K)) {
+              for (let k = 2; k + 3 < F.length; k += 2) tris.push([[F[0], F[1]], [F[k], F[k + 1]], [F[k + 2], F[k + 3]]]);
+            }
+          }
+          if (tris.length) cut(tris);
+        }
+      }
+    }
+    J.fill = pieces.map(({ P, w }) => { const f = P.flat(); f.w = w; return f; });
+    return J.fill;
   };
   // The corner quads world.meshJunction draws, and the verges off them --
   // decided HERE so nodeSurface reports exactly those.
@@ -3723,6 +3961,7 @@ export function* cityGenerator(md, cache = {}) {
             }
             if (d2 > q.R2) continue;
             if (inPoly(q.poly, x, z)) return { lift: NODE_LIFT, inSquare: true };
+            for (const P of junctionFill(q)) if (inPoly(P, x, z)) return { lift: NODE_LIFT, inSquare: true };
             // Corner pavement: exactly the quads meshNode draws, and the
             // verge off their building-side edge where it draws one.
             for (const pc of junctionPieces(q)) {
@@ -3755,6 +3994,8 @@ export function* cityGenerator(md, cache = {}) {
     junction,
     /** Its corner pavement quads, with which of them are drawn. */
     junctionPieces,
+    /** What it paves where no corner fits (flat convex pieces). */
+    junctionFill,
 
     /** Ground height accounting for paved lift and for bridge decks under Y. */
     groundAt(x, z, curY, lift) {

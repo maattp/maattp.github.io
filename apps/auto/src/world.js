@@ -7391,6 +7391,45 @@ float frLine(float o, float fw, float c, float w) {
         }
         prev = ring;
       }
+      // What the fan leaves of an approach's carriageway where no corner fits
+      // (citygen buildJunction's `fill`): convex, so a fan from its centroid,
+      // edges cut to 4 m and ringed like the polygon where the ground bows.
+      for (const F of this.city.junctionFill(J)) {
+        const pts = [];
+        for (let k = 0; k < F.length; k += 2) {
+          const k2 = (k + 2) % F.length;
+          const s = Math.max(1, Math.ceil(Math.hypot(F[k2] - F[k], F[k2 + 1] - F[k + 1]) / 4));
+          for (let j = 0; j < s; j++) pts.push(F[k] + (F[k2] - F[k]) * j / s, F[k + 1] + (F[k2 + 1] - F[k + 1]) * j / s);
+        }
+        const m = pts.length / 2;
+        let fx = 0, fz = 0;
+        for (let k = 0; k < m; k++) { fx += pts[2 * k]; fz += pts[2 * k + 1]; }
+        fx /= m; fz /= m;
+        let fd = 0, fr = 0;
+        for (let k = 0; k < m; k++) {
+          const x = pts[2 * k], z = pts[2 * k + 1];
+          fd = Math.max(fd, Math.abs(T((fx + x) / 2, (fz + z) / 2) - (T(fx, fz) + T(x, z)) / 2));
+          fr = Math.max(fr, Math.hypot(x - fx, z - fz));
+        }
+        const fs = fd < 0.04 ? 1 : Math.max(2, Math.min(6, Math.ceil(fr / 4)));
+        // the strip's own wear (meshRoad), by offset across the arm it paves
+        const W = F.w, FV = (x, z) => {
+          const f = Math.min(1, Math.abs(((x - W.x) * W.px + (z - W.z) * W.pz) / W.hw));
+          return V(x, z, (1 + 0.12 * (1 - f * f)) * (1 - 0.30 * Math.max(0, f - 0.55) / 0.45));
+        };
+        const fc = FV(fx, fz);
+        let fp = null;
+        for (let r = 1; r <= fs; r++) {
+          const f = r / fs, ring = new Array(m);
+          for (let k = 0; k < m; k++) ring[k] = FV(fx + (pts[2 * k] - fx) * f, fz + (pts[2 * k + 1] - fz) * f);
+          for (let k = 0; k < m; k++) {
+            const k2 = (k + 1) % m;
+            if (!fp) tri(fc, ring[k], ring[k2]);
+            else { tri(fp[k], ring[k], ring[k2]); tri(fp[k], ring[k2], fp[k2]); }
+          }
+          fp = ring;
+        }
+      }
     }
     if (lod !== 1 || !walk) return;
     const pieces = this.city.junctionPieces(J);

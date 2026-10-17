@@ -54,10 +54,17 @@ const CATS = [
   ['hillCH', 1947, -1296, 2],
   ['multi', 200, -300, 2],       // 5+ ways
 ];
+// --spawn[=R]: instead, EVERY street junction within R m (default 220) of the
+// spawn point -- the streets every player sees first.
+// --nodes=a,b,c: exactly these nodes (e.g. a sample printed by a JUNC_PROBE),
+// for a before/after of one class of junction.
+const NODES = (process.argv.find((a) => a.startsWith('--nodes=')) || '').slice(8);
+const SPAWN_R = (() => { const a = process.argv.find((x) => x.startsWith('--spawn')); return a ? +(a.split('=')[1] || 220) : 0; })();
 
 const PICK = `(() => {
   const d = window.__dbg, c = d.city, G = d.G;
-  const CATS = ${JSON.stringify(CATS)};
+  const SPAWN_R = ${SPAWN_R};
+  const CATS = SPAWN_R ? [['spawn', G.SPAWN.x, G.SPAWN.z, 1e9]] : ${JSON.stringify(CATS)};
   const only = ${JSON.stringify(ONLY)};
   const arms = (ni) => {
     const n = c.nodes[ni], out = [];
@@ -73,6 +80,7 @@ const PICK = `(() => {
   const street = (a) => a.cls === 'st' || a.cls === 'art' || a.cls === 'res';
   const test = (cat, ni, A) => {
     const n = c.nodes[ni];
+    if (cat === 'spawn') return !!A && A.length >= 3 && A.every(street);
     if (!A || A.length < 3 || A.some((a) => !street(a)) || A.some((a) => a.len < 25)) return false;
     const ang = A.map((a) => Math.atan2(a.dz, a.dx)).sort((p, q) => p - q);
     const gaps = ang.map((t, i) => ((i + 1 < ang.length ? ang[i + 1] : ang[0] + 2 * Math.PI) - t) * 180 / Math.PI);
@@ -95,13 +103,20 @@ const PICK = `(() => {
     return false;
   };
   const picked = [], used = new Set();
-  for (const [cat, ax, az, k] of CATS) {
+  const NODES = ${JSON.stringify(NODES)};
+  if (NODES) for (const ni of NODES.split(',').map(Number)) {
+    const A = arms(ni), n = c.nodes[ni];
+    if (!A || A.length < 2) continue;
+    picked.push({ cat: 'list', ni, x: n.x, z: n.z, arms: A.map((a) => ({ ei: a.ei, cls: a.cls, hw: +a.hw.toFixed(1),
+      deg: Math.round(Math.atan2(a.dz, a.dx) * 180 / Math.PI) })) });
+  }
+  if (!NODES) for (const [cat, ax, az, k] of CATS) {
     if (only && !only.split(',').includes(cat)) continue;
     const cand = [];
     for (let ni = 0; ni < c.nodes.length; ni++) {
       const n = c.nodes[ni];
       const dd = (n.x - ax) ** 2 + (n.z - az) ** 2;
-      if (dd > 3000 * 3000 || n.elev || n.prof) continue;
+      if (dd > (SPAWN_R || 3000) ** 2 || n.elev || n.prof) continue;
       cand.push([dd, ni]);
     }
     cand.sort((p, q) => p[0] - q[0]);
@@ -113,7 +128,7 @@ const PICK = `(() => {
       if (!test(cat, ni, A)) continue;
       // not right next to another pick
       const n = c.nodes[ni];
-      if (picked.some((p) => Math.hypot(p.x - n.x, p.z - n.z) < 120)) continue;
+      if (!SPAWN_R && picked.some((p) => Math.hypot(p.x - n.x, p.z - n.z) < 120)) continue;
       used.add(ni); got++;
       picked.push({ cat, ni, x: n.x, z: n.z, arms: A.map((a) => ({ ei: a.ei, cls: a.cls, hw: +a.hw.toFixed(1),
         deg: Math.round(Math.atan2(a.dz, a.dx) * 180 / Math.PI) })) });
@@ -207,7 +222,7 @@ const ANALYSE = (J) => `(() => {
   const cvs = document.createElement('canvas'); cvs.width = N; cvs.height = N;
   const cx = cvs.getContext('2d'); const img = cx.createImageData(N, N);
   const st = { pts: 0, cw: 0, hole: 0, walkOnCw: 0, stack: 0, sink: 0, paved: 0, paintX: 0, expWalk: 0, kerbGap: 0,
-    maxSink: 0, worst: [] };
+    maxSink: 0, worst: [], holes: [] };
   const nr = w.nodeRadius(J.ni);
   const sinkPts = [];
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
@@ -226,7 +241,7 @@ const ANALYSE = (J) => `(() => {
     if (top) col = top.kind === 'road' ? [70, 70, 75] : top.kind === 'walk' ? [185, 185, 175] : [240, 220, 60];
     if (onCw) {
       st.cw++;
-      if (!top || top.kind === 'none') { st.hole++; col = [255, 0, 0]; }
+      if (!top || top.kind === 'none') { st.hole++; col = [255, 0, 0]; if (st.holes.length < 400) st.holes.push([+x.toFixed(1), +z.toFixed(1)]); }
       else if (top.kind === 'walk') { st.walkOnCw++; col = [255, 0, 255]; }
       // paint on the junction's own surface (what nodeSurface calls the
       // crossing: the square before, the polygon now)
@@ -366,6 +381,7 @@ try {
     console.log(`${name.padEnd(12)} n${j.ni} (${Math.round(j.x)},${Math.round(j.z)}) ${j.arms.map((a) => `${a.cls}${a.hw}@${a.deg}`).join(' ')}`);
     const s = r.st;
     if (s.at) console.log('   at', JSON.stringify(s.at));
+    if (process.env.JUNC_HOLES && s.holes.length) console.log('   holes', JSON.stringify(s.holes));
     console.log(`   cw ${s.cw}  hole ${s.hole}  walkOnCw ${s.walkOnCw}  stack ${s.stack}  paintX ${s.paintX}  kerbGap ${s.kerbGap}/${s.expWalk}  sink ${s.sink}/${s.paved} max ${s.maxSink}${s.worst.length ? ' ' + JSON.stringify(s.worst.slice(0, 3)) : ''}`);
     if (NOSHOTS) continue;
     for (const view of ['oblique', 'top', 'eye']) {

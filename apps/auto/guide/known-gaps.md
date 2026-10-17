@@ -46,6 +46,15 @@ Part of the Auto guide; the index and the laws every change needs are in
 - **No Kenmore Air Harbor.** The real floatplane base at the north end of Lake
   Washington (47.756 N) is ~0.5 km past the map's north edge (47.752 N).
 
+- **Junctions on chains of 5-8 m edges still show grass round the node.**
+  No corner fits on either side (`c.acute`), the mouths sit a couple of
+  metres out, and the approaches' round ends round the node are unpaved
+  (`roadLift` agrees: caps are not carriageway). The fill (v223) covers the
+  arms' bands, not the caps; a disc out to the narrowest kerb was tried and
+  moved holes only 2105 -> 2056 in the 30-junction sample. The fix is to
+  shape junctions on the street's chain rather than its first edge. Also
+  OSM stubs: 129009 (2425, 3373) is a road ending in two 5 m dead ends.
+
 - **Freeway over freeway at interchanges stays as imported.** 110 of the 154
   refused overpasses; see "Don't dip a graded freeway under a ramp". They are
   most of what `barrier-on-road` still finds (another carriageway's tarmac
