@@ -374,6 +374,62 @@ ring -- drawn as four whole sides, a footpath straight over all four approach
 roads. The legacy square still cuts its ring into pieces and drops the ones
 covering an approach; a fitted junction's corner quads are tested the same way.
 
+### Where no corner fits: the fill (v223)
+
+**A corner that cannot be built must not take the approaches' own
+carriageway with it.** When the kerb lines meet beyond an arm's share of
+its edge (`X.a > tmax`; a 5-15 m edge where OSM splits a road into a dual
+carriageway, or the link between a dual carriageway's two halves),
+`buildJunction` falls back to `c.acute`: the polygon joins the two mouths
+with a straight chord. That chord cuts across the arms between node and
+mouth, which the strips stop short of and `roadLift` reports as road
+(`mouthRamp` is 1 short of a mouth). It was grass in the lanes at the spawn:
+wedges between Mercer St's two halves, and 5th Ave N's kerbs pinching to
+half its width where it forks (`docs/spawnroads/`).
+
+- **`J.fill`** is what the fan leaves uncovered of each arm's half next to
+  an acute corner, node to mouth, plus what an acute corner's `clip` takes
+  off a strip that neither the fan nor another approach's strip draws (a
+  nose clip is a kerb LINE, and run on past the node it cut its strip back
+  on the far side too). `convexMinus` (exact: a convex piece minus
+  triangles, as convex pieces) builds it; `meshJunction` draws it at
+  NODE_LIFT with the arm's own wear, and `nodeSurface` reports it as the
+  polygon.
+- **`junctionFill(J)`, on first use, takes out whatever a neighbouring
+  junction draws there**: its fan, the strips meeting it (ramped to 16 mm
+  under NODE_LIFT, within a chord's error), and, of two fills, the lower
+  node's wins. Without that the fill z-fought the next junction 11 m away
+  (stack 792 -> 1658 at the spawn).
+- **`convexMinus` must test overlap before splitting.** Splitting a piece
+  along every triangle's edge LINES shattered fills into 536,665 pieces (up
+  to 1312 per junction, 21 s for the city); the separating-axis test first
+  gives 30,119 (max 22). A repeated vertex has a zero-length edge normal,
+  and an un-skipped one "separated" everything: stack 792 -> 10,430.
+- **The pavement runs on to the node beside an acute corner** (`sP`/`sN` =
+  0): nothing turns it round, and it stopped at the mouth, leaving the kerb
+  bare where `roadLift` reports pavement. meshRoad drops the pieces that
+  would lie on another carriageway, as anywhere.
+- The chord's subdivided points take the wear of where they are, not the
+  kerb grime of its two ends (it crosses the lanes).
+
+`node tools/junctions.mjs <tag> --spawn` surveys every street junction
+within 220 m of the spawn; `--nodes=a,b,..` a fixed list (for a class:
+print a sample with `JUNC_PROBE`); `JUNC_HOLES=1` lists hole points.
+
+| | spawn (18 junctions) | 30 city-wide acute junctions |
+|---|---|---|
+| hole (carriageway, nothing drawn) | 1014 -> **146** | 3641 -> **2012** |
+| kerbGap | 785 -> **121** | 1829 -> **504** |
+| stack | 792 -> 792 | 576 -> 590 |
+| sink | 1 -> 1 | 114 -> 114 |
+
+8717 of 162,251 fitted junctions (5.4 %) have a fill. Building every
+junction in the city: 351 -> 1427 ms, spread over chunk builds. The
+standard 19-junction survey is unchanged (none of them is acute). What is
+left in the city-wide sample is mostly the round ends of approaches at
+junctions of 5-8 m edges, and roads ending in two 5 m OSM stubs; see
+"Known gaps".
+
 **A dead end is not a junction.** `meshNode` returns early below degree 2.
 Otherwise a single street running out to nothing gets a full crossing square and
 a kerbed ring sitting on bare ground — the "road to nowhere". `nodeSurface()`
