@@ -1005,13 +1005,19 @@ export class Counterbalance {
    * For traffic.js: does a streetcar stand at (x, z), or will it be there in
    * a couple of seconds? An AI car queues behind one standing at its stop,
    * and waits for one crossing its road.
+   *
+   * `v`, the car asking: one AHEAD of a streetcar and going its way is being
+   * followed, not crossed, and is let be. The "will be there" reach runs
+   * 2.5 s up the rails, so every car driving in front of a streetcar found
+   * it there and stopped dead in its path -- and your streetcar rammed them.
    */
-  blocks(x, z, y) {
+  blocks(x, z, y, v) {
     for (const c of this.cars) {
       const dx = x - c.cx, dz = z - c.cz;
       if (dx * dx + dz * dz > 40 * 40) continue;
       if (y !== undefined && Math.abs(y - c.cy) > 3.5) continue;
       const f = c._fwd, a = dx * f.x + dz * f.z, b = dx * f.z - dz * f.x;
+      if (v && v.forward && v.forward.x * f.x + v.forward.z * f.z > 0.5 && (v.x - c.cx) * f.x + (v.z - c.cz) * f.z > 0) continue;
       const reach = Math.max(0, c.u) * 2.5;
       if (Math.abs(b) < CB.wid / 2 + 1.15 && a > -CB.carLen / 2 - 1.5 && a < CB.carLen / 2 + 1.5 + reach) return true;
     }
@@ -1145,7 +1151,14 @@ export class Counterbalance {
         const pa = ea - Math.abs(a), pb = eb - Math.abs(b);
         if (pb < pa) { const sg = Math.sign(b) || 1; o.x += f.z * sg * (pb + 0.02); o.z += -f.x * sg * (pb + 0.02); } else { const sg = Math.sign(a) || 1; o.x += f.x * sg * (pa + 0.02); o.z += f.z * sg * (pa + 0.02); }
         const sp = Math.abs(c.u) + (isVehicle ? Math.abs(o.vLong || 0) : 0);
-        if (isVehicle) o.vLong = (o.vLong || 0) * 0.4;
+        // YOUR streetcar shoving a car from behind: it gets out of the way,
+        // off at more than your speed (a 20 t car on its bumper). It used to
+        // be slowed like anything else hit, so it sat braking on your fender.
+        const of = o.forward, ahead = pb >= pa && Math.sign(a) === Math.sign(c.u || 1);
+        if (isVehicle && !isPlayer && mine === c && o.mode === 'traffic' && ahead && of && of.x * f.x * Math.sign(c.u || 1) + of.z * f.z * Math.sign(c.u || 1) > 0.5) {
+          o.vLong = Math.max(o.vLong || 0, Math.abs(c.u) + 1.5);
+          o.panic = 4;
+        } else if (isVehicle) o.vLong = (o.vLong || 0) * 0.4;
         if (isPlayer && sp > 1.5 && !(this._hitCd > 0)) {
           this._hitCd = 1;
           if (this.game) { this.game.onCrash(sp * (isVehicle ? 3 : 2), false); if (sp > 2.5) this.game.damagePlayer(sp * (isVehicle ? 3 : 5), 'crash'); }

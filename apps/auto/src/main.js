@@ -336,6 +336,8 @@ class Game {
     // HORN rings a streetcar's gong
     const hb = document.querySelector('[data-btn="horn"]');
     if (hb) hb.textContent = v.spec.streetcar ? 'BELL' : 'HORN';
+    // an aircraft has no horn and no handbrake: the buttons go (index.html)
+    controls.root.dataset.air = v.spec.plane ? '1' : '';
     if (tanks) tanks.onEnter(v);
     if (v.spec.rail) {
       // a freight's engines are already running: you climb into a live cab
@@ -466,6 +468,7 @@ class Game {
 
   onExitVehicle(v) {
     controls.setMode('foot');
+    controls.root.dataset.air = '';
     if (tanks) tanks.onExit();
     if (v) audio.exitVehicle(v.spec, v.dead);
     if (v && v.spec.rail) v.sys.onLeave(v);
