@@ -242,12 +242,19 @@ async function main() {
     // swim pose blend was born active and faded him up out of the ground
     // from an all-zero pose for a second after every spawn.
     {
-      const st = await session.eval(`(() => { const d = window.__dbg, p = d.player, V = new d.THREE.Vector3();
+      // The model is placed on the player by the frame loop (player.js sets
+      // h.group from x, y, z). A slow boot -- the phone path -- can get here
+      // before that frame has run, with the body still at the world origin,
+      // and that read as a player 28 m under the street. Wait for it to be
+      // placed (frames, not a guess at time); a body never placed is a FAIL.
+      const st = await session.eval(`(async () => { const d = window.__dbg, p = d.player, V = new d.THREE.Vector3();
+        const placed = () => Math.hypot(p.h.group.position.x - p.x, p.h.group.position.z - p.z) < 0.5;
+        for (let i = 0; i < 600 && !placed(); i++) await new Promise((r) => requestAnimationFrame(r));
         p.h.group.updateMatrixWorld(true); let lo = Infinity;
         for (const b of p.h.bones) { b.getWorldPosition(V); if (V.y < lo) lo = V.y; }
-        return { blend: !!(p.poseBlend && p.poseBlend.active), low: +(lo - d.city.groundAt(p.x, p.z, p.y + 0.5)).toFixed(3) }; })()`);
-      console.log(`  standing at spawn: pose blend ${st.blend ? 'ACTIVE' : 'off'}, lowest bone ${st.low} m from the ground`);
-      if (st.blend || st.low < -0.1) { console.error('FAIL: the player is not standing on the ground at spawn'); process.exitCode = 1; }
+        return { placed: placed(), blend: !!(p.poseBlend && p.poseBlend.active), low: +(lo - d.city.groundAt(p.x, p.z, p.y + 0.5)).toFixed(3) }; })()`, true);
+      console.log(`  standing at spawn: body placed ${st.placed}, pose blend ${st.blend ? 'ACTIVE' : 'off'}, lowest bone ${st.low} m from the ground`);
+      if (!st.placed || st.blend || st.low < -0.1) { console.error('FAIL: the player is not standing on the ground at spawn'); process.exitCode = 1; }
     }
 
     // The player's own shadow map (nearshadow.js) is a chunk patch pinned to
@@ -1765,7 +1772,7 @@ async function main() {
         }
       }
       const res = SF._order();
-      out.heat = { state: SF.state, secs: Math.round(k / 60), finished: res.filter((b) => b.done && !b.out).length, out: res.filter((b) => b.out).length, laps: res.map((b) => b.laps - b.pen), best: Math.min(...res.map((b) => b.best || 999)).toFixed(1), myPlace: me.place, series: SF.series.event };
+      out.heat = { state: SF.state, secs: Math.round(k / 60), finished: res.filter((b) => b.done && !b.out).length, out: res.filter((b) => b.out).length, laps: res.map((b) => b.laps - b.pen), best: Math.min(...res.map((b) => b.best || 999)).toFixed(1), myPlace: me.place, meDone: !!me.done, lapReq: M.EVENTS[0].laps, series: SF.series.event };
       SF._toPits();
       out.after = { state: SF.state, boats: SF.boats.length, paused: d.game.paused };
       return out;
@@ -1785,7 +1792,13 @@ async function main() {
       if (sfr.boat.blow === null) bad.push('no blowover');
       if (!sfr.jump) bad.push('a jump start counted');
       if (!sfr.buoy) bad.push('a buoy cut was not penalised');
-      if (sfr.heat.state !== 'done' || sfr.heat.finished < 5 || sfr.heat.laps.some((l) => l < 3 && l > 0 && false)) bad.push('the heat did not run to the flag');
+      // The heat ends 25 s after your boat finishes (hydrorace.js), and the
+      // boats behind are where the race left them: wake kicks are random, so
+      // how many AI boats beat that flag varies run to run (5 usually, 3 seen).
+      // What the rules do promise: it ends, the winner and you finish, and
+      // nobody still racing is short of the last lap.
+      const h = sfr.heat, lag = h.laps.filter((l, i) => i >= h.finished && i < h.laps.length - h.out);
+      if (h.state !== 'done' || h.finished < 1 || !h.meDone || lag.some((l) => l < h.lapReq - 1)) bad.push('the heat did not run to the flag');
       if (sfr.heat.series !== 1) bad.push('the series did not advance');
       if (sfr.after.state !== 'idle' || sfr.after.boats || sfr.after.paused) bad.push('back at the pits');
       if (bad.length) { console.error(`FAIL: seafair: ${bad.join('; ')}`); process.exitCode = 1; }
@@ -3077,7 +3090,14 @@ async function main() {
         for (let i = 0; i < 8 * 40 && !(mine && mine.m); i++) P.update(cam);
         d.scene.updateMatrixWorld(true);
         const rc = new d.THREE.Raycaster(new d.THREE.Vector3(q.x, q.y0 + 5, q.z), new d.THREE.Vector3(0, -1, 0));
-        const h = rc.intersectObject(P.group, true)[0];
+        // On a phone a pier mesh's raycast is switched off (dropAfterUpload:
+        // its arrays go once drawn), so the ray never hit and this read as a
+        // pier never built. Nothing has drawn the chunk just built yet, so its
+        // arrays are still here: cast with three's own Mesh.raycast.
+        const hits = [];
+        P.group.traverse((o) => { if (o.isMesh && o.geometry.attributes.position.array) d.THREE.Mesh.prototype.raycast.call(o, rc, hits); });
+        hits.sort((a, b) => a.distance - b.distance);
+        const h = hits[0];
         out.lazy = { before, after: P.chunks.filter((c) => c.m).length, deck: h ? +(h.point.y - q.y0).toFixed(2) : null };
         const N = d.bikeNet, ch = N.chunks.find((c) => !c.m && c.segs), bc = ch ? { position: { x: ch.x, y: 0, z: ch.z } } : null;
         if (bc) for (let i = 0; i < 16; i++) N.update(bc);
