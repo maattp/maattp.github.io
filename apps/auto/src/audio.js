@@ -1548,6 +1548,8 @@ export class EngineModel {
     this.limT = 0;
     this.lastThr = 0;
     this.popT = 0;      // seconds of lift-off crackle left
+    this.bangQ = [];    // a `bang` engine's backfires to come, seconds from now
+    this.lastIn = 0;    // the driver's throttle last step (not the shift's cut)
     this.event = null;  // 'up' | 'down' | 'pop' | null, read once per step
     this.boost = 0;     // 0..1 turbo boost (profiles with `turbo`)
     this.bov = 0;       // > 0 on the step a blow-off valve vents: the boost it held
@@ -1664,7 +1666,18 @@ export class EngineModel {
     this.rpm += (target - this.rpm) * (1 - Math.exp(-rate * dt));
     this.load += (thr - this.load) * (1 - Math.exp(-(p.kind === 'loco' ? 1.2 : 10) * dt));
     // lift-off from high revs: the exhaust crackles and pops for a moment
-    if (p.crackle && this.lastThr > 0.6 && thr < 0.1 && this.rpm > p.redline * 0.55) this.popT = 0.7;
+    if (p.crackle && !p.bang && this.lastThr > 0.6 && thr < 0.1 && this.rpm > p.redline * 0.55) this.popT = 0.7;
+    // A `bang` engine (the Hellcat) does not crackle: off a HARD rev, the
+    // DRIVER's foot off (not the cut a gear change makes), it goes "bang,
+    // bang" -- one to three, a beat apart, and not every time. A crackle of
+    // gunshots was a machine gun.
+    if (p.bang && this.on && this.lastIn > 0.6 && throttle < 0.1 && this.rpm > p.redline * 0.72 && Math.random() < 0.75) {
+      const n = Math.random() < 0.2 ? 1 : Math.random() < 0.8 ? 2 : 3;
+      let at = 0.05 + Math.random() * 0.1;
+      this.bangQ.length = 0;
+      for (let i = 0; i < n; i++) { this.bangQ.push(at); at += 0.16 + Math.random() * 0.2; }
+    }
+    this.lastIn = throttle;
     // Turbo boost: load times revs past the boost threshold, lagging on the
     // way up (spool) and dumped at once when the throttle shuts -- through the
     // blow-off valve, which is the "pssh" (`bov` holds the boost it vented).
@@ -1675,6 +1688,10 @@ export class EngineModel {
       this.boost += (want - this.boost) * (1 - Math.exp(-k * dt));
     }
     this.lastThr = thr;
+    if (this.bangQ.length) {
+      for (let i = 0; i < this.bangQ.length; i++) this.bangQ[i] -= dt;
+      if (this.bangQ[0] <= 0) { this.bangQ.shift(); this.event = 'pop'; }
+    }
     if (this.popT > 0) {
       this.popT -= dt;
       if (Math.random() < dt * 9) this.event = 'pop';
@@ -2189,7 +2206,8 @@ export class Audio {
       // not left until some later tap happens to count as a gesture.
       c.onstatechange = () => {
         this._log('state: ' + c.state);
-        if (c.state !== 'running' && c.state !== 'closed') this._heal();
+        // (and the next tap unmutes it again: kick(), below)
+        if (c.state !== 'running' && c.state !== 'closed') { this._kicked = false; this._heal(); }
       };
     }
 
@@ -2672,6 +2690,41 @@ export class Audio {
     } catch (e) { /* nothing to start yet */ }
   }
 
+  /**
+   * THE STALL WATCHDOG. A context iOS has interrupted (the radio's stream
+   * starting, a notification, Siri) and that came back WITHOUT a tap -- _heal
+   * -- can say 'running' while its clock stands still or its output stays
+   * muted. Every sound effect is then silent while the radio, an <audio>
+   * element outside the graph, plays on; and since the context "runs", no
+   * tap ever tried again. A clock that has not moved for 1.5 s of a visible
+   * page is a stall: the next tap restarts the context (`unstall`).
+   */
+  _watch() {
+    if (this._simT != null || keepLinked) return;   // (an offline render has no clock to stall)
+    const t = this.ctx.currentTime, now = typeof performance !== 'undefined' ? performance.now() : 0;
+    if (t !== this._ctLast || this._ctAt === undefined) { this._ctLast = t; this._ctAt = now; return; }
+    if (this._stalled || now - this._ctAt < 1500) return;
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+    this._stalled = true;
+    this._kicked = false;
+    this._log('stalled: running, clock stopped');
+  }
+
+  /** In a gesture: a stalled or muted context, started again. */
+  unstall() {
+    const c = this.ctx;
+    if (!c || c.state === 'closed') return;
+    if (this._stalled && c.state === 'running' && c.suspend) {
+      this._stalled = false;
+      this._ctAt = undefined;
+      // suspend and resume in the same gesture: queued in order, so the
+      // resume is still the tap's
+      c.suspend().catch(() => {});
+      c.resume().then(() => this._log('unstalled')).catch((e) => this._log('unstall: ' + (e && e.name)));
+    }
+    this.kick();
+  }
+
   resume(why = '') {
     // Anything but 'running': iOS reports 'interrupted' after the app comes
     // back from the background (or a call, or Siri), and a context left there
@@ -3037,6 +3090,7 @@ export class Audio {
     if (!this.ready || !this.live) return;   // see `live`
     const ctx = this.ctx;
     const t = this.now();
+    this._watch();
     if (!this.enabled) {
       setp(this.sfxBus.gain, 0, t, 0.05);
       setp(this.musicBus.gain, 0, t, 0.05);
@@ -3143,7 +3197,7 @@ export class Audio {
       if (p.bang) this.eng.duck(this.now());
     }
     this._popCd -= dt;
-    if (m.event === 'up' && p.crackle && s.throttle > 0.9) {
+    if (m.event === 'up' && p.crackle && s.throttle > 0.9 && (!p.bang || Math.random() < 0.2)) {
       this.play(p.bang ? 'bang' : 'backfire', { gain: p.bang ? 1.4 : 0.18, send: 0.1 });
       if (p.bang) this.eng.duck(this.now());
     }
@@ -3631,9 +3685,9 @@ export class Audio {
   /**
    * The Belltown Hellcat, the nearest one in traffic: the player's own engine
    * voice and model, driven the way its driver drives -- foot to the floor
-   * off every stop, a lift (and the crackle) into every one, and at a
-   * standstill a rev-bomb every couple of seconds. Each pop and full-throttle
-   * upshift is a backfire, placed on the car.
+   * off every stop, a lift into every one, and at a standstill a rev-bomb
+   * every 3-8 s. Off a hard rev it goes "bang, bang" (EngineModel `bangQ`),
+   * and one flat-out upshift in five bangs too, placed on the car.
    */
   _hellcat(dt, t, s, L) {
     let car = null, bd = HELLCAT_HEAR * HELLCAT_HEAR;
@@ -3670,7 +3724,7 @@ export class Audio {
         free = true;
         this._hcBomb -= dt;
         this._hcRev -= dt;
-        if (this._hcBomb <= 0) { this._hcRev = 0.22 + Math.random() * 0.4; this._hcBomb = 1.4 + Math.random() * 2.6; }
+        if (this._hcBomb <= 0) { this._hcRev = 0.22 + Math.random() * 0.4; this._hcBomb = 3 + Math.random() * 5; }
         thr = this._hcRev > 0 ? 1 : 0.04;
       } else {
         thr = acc > 0.6 ? 1 : acc > 0.05 ? 0.55 : 0.05;
@@ -3678,7 +3732,7 @@ export class Audio {
     }
     m.step(dt, car ? car.vLong : 0, thr, free);
     this._hcPop -= dt;
-    if (sp && this._hcPop <= 0 && (m.event === 'pop' || (m.event === 'up' && thr > 0.9))) {
+    if (sp && this._hcPop <= 0 && (m.event === 'pop' || (m.event === 'up' && thr > 0.9 && Math.random() < 0.2))) {
       this._hcPop = 0.06;
       this.play('bang', { x: car.x, y: car.y + 0.5, z: car.z, ref: HELLCAT_REF, maxD: HELLCAT_HEAR,
         gain: (m.event === 'up' ? 1.8 : 1.3) + Math.random() * 0.5, send: 0.2 });

@@ -14,6 +14,9 @@
 // bank is ready after each step. The bug this pins: the unlock listened for
 // pointerdown only and removed itself, so walking with the stick never
 // started the audio; it started later, all at once, on some unrelated tap.
+// Then: a context iOS stopped ('interrupted'), and one that says 'running'
+// while its clock stands still (the effects silent, the radio playing on) --
+// each must come back on the next tap.
 import { setTimeout as sleep } from 'node:timers/promises';
 import { launchChrome } from './chrome.mjs';
 
@@ -107,6 +110,30 @@ try {
   const ok2 = stopped.ctx !== 'running' && back.ctx === 'running';
   console.log(ok2 ? 'OK: a later tap restarts a context the system stopped' : 'FAIL: a stopped context stays stopped after a tap');
   if (!ok2) code = 1;
+  // iOS can also bring a context back WITHOUT a tap (audio.js _heal) that says
+  // 'running' while its clock stands still: every effect silent, the radio
+  // (an <audio> element) playing on, and no tap tried again because the
+  // context "ran". Freeze the clock while it says 'running': the watchdog must
+  // see it, and the next tap must start it again.
+  await ev(`(() => { const c = window.__dbg.audio.ctx, t = c.currentTime;
+    Object.defineProperty(c, 'currentTime', { configurable: true, get() { return t; } });
+    const s = c.suspend.bind(c);
+    c.suspend = () => { delete c.currentTime; delete c.suspend; return s(); };
+    return 1; })()`);
+  await sleep(2500);
+  const stall = await ev(`JSON.stringify({ ctx: window.__dbg.audio.ctx.state, stalled: !!window.__dbg.audio._stalled, log: window.__dbg.audio.log.slice(-2) })`);
+  await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 3 }] });
+  await sleep(150);
+  await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await sleep(800);
+  const t0 = await ev('window.__dbg.audio.ctx.currentTime');
+  await sleep(500);
+  const unst = await ev(`JSON.stringify({ ctx: window.__dbg.audio.ctx.state, stalled: !!window.__dbg.audio._stalled, kicked: !!window.__dbg.audio._kicked, clock: +(window.__dbg.audio.ctx.currentTime - ${t0}).toFixed(2), log: window.__dbg.audio.log.slice(-2) })`);
+  console.log('  stalled: ' + stall + '\n  tapped:  ' + unst);
+  const S = JSON.parse(stall), U = JSON.parse(unst);
+  const ok3 = S.stalled && U.ctx === 'running' && !U.stalled && U.kicked && U.clock > 0.3;
+  console.log(ok3 ? 'OK: a context running with a stopped clock is seen, and a tap starts it again' : 'FAIL: a stalled context is not recovered by a tap');
+  if (!ok3) code = 1;
 } catch (e) {
   console.error(e); code = 1;
 } finally {
