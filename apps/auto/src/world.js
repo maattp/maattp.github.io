@@ -319,7 +319,15 @@ const HOUSE_ROOF = [
 // A building's frame turned so its +z is side k (see houseFront): local +x
 // is turned by -90 deg, -z by 180, -x by +90.
 const FRONT_TURN = [0, -Math.PI / 2, Math.PI, Math.PI / 2];
-const NOTOP = { top: false };   // a panel's top edge is never seen
+const NOTOP = { top: false };
+const QUAD_UV = [0, 0, 1, 0, 1, 1, 0, 1];
+// wrought and painted iron: fire escapes, railings
+const IRON = [0.06, 0.06, 0.065];
+// a pressed-metal cornice's paint: dark green, brown, black, cream
+const CORNICE = [[0.16, 0.22, 0.18], [0.24, 0.17, 0.12], [0.1, 0.1, 0.11], [0.62, 0.58, 0.48]];
+// a modern block's accent cladding: rust, mustard, teal, charcoal, cedar, white, slate
+const ACCENT = [[0.6, 0.22, 0.1], [0.74, 0.54, 0.16], [0.18, 0.36, 0.38], [0.15, 0.15, 0.17],
+  [0.52, 0.33, 0.2], [0.88, 0.87, 0.83], [0.3, 0.4, 0.52]];   // a panel's top edge is never seen
 const MODERN_PAINT = [[0.2, 0.21, 0.23], [0.86, 0.86, 0.84], [0.55, 0.56, 0.57], [0.11, 0.11, 0.12],
   [0.86, 0.86, 0.84], [0.2, 0.21, 0.23], [0.18, 0.26, 0.22], [0.42, 0.43, 0.45]];
 
@@ -8196,7 +8204,9 @@ float frLine(float o, float fw, float c, float w) {
     }
 
     let w = bd.w, d = bd.d;
+    const tierList = [];
     for (const tier of buildingTiers(bd, y, remaining)) {
+      tierList.push(tier);
       // Each tier's pattern is hung from ITS TOP, so the cornice lands on a
       // storey line (the tile's integer v) whatever the wall's height or how
       // deep its base is buried; the bottom is under a trim band, a
@@ -8277,6 +8287,13 @@ float frLine(float o, float fw, float c, float w) {
       d + 0.75, bd.rot, DARK, { top: false });
     y += 0.83;
 
+    // The building's own character: what its style, age and material put on
+    // it (bays, balconies, fire escapes, cornices, crowns, fins...): see
+    // buildingDetail. A crowned tower carries no loose roof plant.
+    const crowned = this.buildingDetail(bl, flat, glow, bd, {
+      fam, col, cell, target, uS, vS, rows, plinthH, tiers: tierList, roofY: y, base, off, w, d, lidded });
+    if (crowned) return;
+
     const rc = [0.4, 0.41, 0.42];
     const n = 1 + Math.floor(hash2(seed, 31) * 3);
     for (let i = 0; i < n; i++) {
@@ -8294,6 +8311,435 @@ float frLine(float o, float fw, float c, float w) {
       const mastH = 8 + hash2(seed, 92) * 16;
       flat.prism(bd.x, y, bd.z, 0.28, mastH, 4, [0.32, 0.33, 0.35]);
       glow.box(bd.x, y + mastH, bd.z, 0.5, 0.5, 0.5, 0, [1.0, 0.22, 0.15]);
+    }
+  }
+
+  /** Building `bd`'s frame turned so its +z is side k (see houseFront), for a box w x d. */
+  _side(bd, k, w, d) {
+    const rot = bd.rot + FRONT_TURN[k], cs = Math.cos(rot), sn = Math.sin(rot);
+    return { rot, w: k % 2 ? d : w, d: k % 2 ? w : d,
+      off: (lx, lz) => [bd.x + lx * cs - lz * sn, bd.z + lx * sn + lz * cs] };
+  }
+
+  /** Is a point just outside a wall free -- not a carriageway, not another building? */
+  _outClear(x, z) {
+    return !this.city.onRoad(x, z, 0.2, false) && !this.inBuilding(x, z, 0);
+  }
+
+  /** A quad seen from both sides (a stair, an awning): two faces, one each way. */
+  _quad2(flat, a, b, c, e, n, col) {
+    flat.quad(a, b, c, e, n, QUAD_UV, col);
+    flat.quad(a, b, c, e, [-n[0], -n[1], -n[2]], QUAD_UV, col);
+  }
+
+  /**
+   * What a building's era, material and use put on it, past its walls and
+   * roof. A street of the same textured boxes in different colours is still
+   * a street of boxes; these are the things that tell a 1910 brick walk-up
+   * from a 2015 five-over-one from a glass tower at a glance:
+   *
+   *   brick        iron fire escapes, stone corner piers, a heavy sheet-metal
+   *                cornice and frieze, a raised name panel on the parapet
+   *   modern       projecting bays in an accent colour (the five-over-one's
+   *                signature), stacked balconies with glass or metal rails
+   *   shops        a row of sloped canvas awnings over the bays, a false front
+   *   glass        vertical fins or spandrel bands down the curtain wall
+   *   towers       a crown: stepped, a pyramid, a glass lantern, fins, a helipad
+   *   roofs        a terrace with planters and umbrellas, solar arrays
+   *
+   * Each by the building's seed; balconies, bays and awnings on the street
+   * side (houseFront), and nothing that stands out from a wall over a
+   * carriageway or into a neighbour. All vertex-coloured boxes and quads in
+   * the chunk's flat mesh, or the facade atlas for the bays and crowns
+   * (their windows): no draw calls, no materials. Returns true when the roof
+   * is spoken for (a crown or a terrace), so the loose plant is skipped.
+   */
+  buildingDetail(bl, flat, glow, bd, c) {
+    const seed = bd.seed, h = (k) => hash2(seed, 800 + k);
+    // cityStats.bldDetail: how many of each, and a few of each where (for
+    // the shot tools: x, z, and the bearing out of the face it is on)
+    const st = cityStats.bldDetail || (cityStats.bldDetail = { n: {}, at: {} });
+    const note = (kind, k = 0) => {
+      st.n[kind] = (st.n[kind] || 0) + 1;
+      const a = st.at[kind] || (st.at[kind] = []);
+      if (a.length < 24) a.push([bd.x, bd.z, bd.rot + FRONT_TURN[k], bd.w, bd.d, bd.h]);
+    };
+    this._note = note;
+    const fam = c.fam;
+    if (bd.style === 'industrial') {
+      this._solarRoof(flat, bd, c, h);
+      return false;
+    }
+    if (!fam) return false;
+    const t0 = c.tiers[0], top0 = t0.y + t0.h, tl = c.tiers[c.tiers.length - 1];
+    if (!t0) return false;
+    const glassy = fam.m === 'glass', brick = fam.m === 'brick';
+    // one storey, in metres: masonry and brick tiles carry four, a curtain
+    // wall's eight pane rows are four storeys
+    const storey = c.vS ? (glassy ? c.vS / 4 : c.vS / c.rows) : 3.4;
+    const street = this.houseFront(bd);
+    const S = this._side(bd, street, t0.w, t0.d);
+    // floor lines down from the tier's top, above the ground floor
+    const floorsOf = (t, max = 40) => {
+      const out = [];
+      for (let k = 1; k <= max; k++) {
+        const y = t.y + t.h - k * storey;
+        if (y < t.y + storey * 0.8 || y < c.base + 2 + storey * 0.9) break;
+        out.push(y);
+      }
+      return out;
+    };
+    const civic = bd.style === 'campus';
+    let roofBusy = false;
+
+    // --- brick: the walk-up and the warehouse loft ----------------------------
+    if (brick && !civic) {
+      if (bd.h >= 8 && bd.h <= 34 && h(1) < 0.45) {
+        const k = h(2) < 0.55 ? street : (street + 1) % 4;
+        if (this._fireEscape(flat, bd, c, h, t0, k, floorsOf(t0, 9))) note('fireEscape', k);
+      }
+      if (bd.h <= 40 && h(3) < 0.55) {
+        // the sheet-metal cornice and its frieze, over the bed moulding
+        const cc = CORNICE[Math.floor(h(4) * CORNICE.length)];
+        note('cornice', street);
+        flat.box(bd.x, top0 - 1.55, bd.z, t0.w + 0.22, 0.75, t0.d + 0.22, bd.rot, [cc[0] * 1.25, cc[1] * 1.25, cc[2] * 1.25], NOTOP);
+        flat.box(bd.x, top0 - 0.8, bd.z, t0.w + 1.9, 0.38, t0.d + 1.9, bd.rot, cc, NOTOP);
+        // brackets under its overhang along the street face
+        const nb = Math.floor(S.w / 2.4);
+        for (let i = 0; i <= nb; i++) {
+          const [qx, qz] = S.off(((i / Math.max(1, nb)) - 0.5) * (S.w - 0.6), S.d / 2 + 0.45);
+          flat.box(qx, top0 - 1.2, qz, 0.22, 0.42, 0.8, S.rot, cc, NOTOP);
+        }
+      }
+      if (h(5) < 0.5) {
+        // corner piers in a dressed stone or a darker brick
+        note('piers', street);
+        const pc = h(6) < 0.6 ? [0.74, 0.7, 0.62] : [c.col[0] * 0.7, c.col[1] * 0.68, c.col[2] * 0.66];
+        for (const [fx, fz] of CORNERS) {
+          const [qx, qz] = c.off(fx * t0.w / 2, fz * t0.d / 2);
+          flat.box(qx, t0.y - 0.3, qz, 0.75, t0.h + 0.3 - 0.5, 0.75, bd.rot, pc, NOTOP);
+        }
+      }
+      if (bd.h <= 26 && h(7) < 0.4) {
+        // a raised panel at the middle of the street parapet, stone-capped
+        note('namePanel', street);
+        const pw = Math.min(9, S.w * 0.36), [px, pz] = S.off(0, S.d / 2 - 0.15);
+        c.target.box(px, c.roofY - 0.4, pz, pw, 2.4, 0.42, S.rot, c.col, { uScale: c.uS, vScale: c.vS, cell: c.cell, top: false });
+        flat.box(px, c.roofY + 2.0, pz, pw + 0.3, 0.22, 0.6, S.rot, [0.74, 0.7, 0.62]);
+      }
+    }
+
+    // --- the modern mid-rise: bays and balconies ------------------------------
+    const residential = !civic && (bd.style === 'midrise' || bd.style === 'lowrise' || bd.style === 'tower');
+    let bays = false;
+    if (residential && !glassy && !brick && c.tiers.length === 1 && bd.h >= 10 && bd.h <= 45 && h(10) < 0.32) {
+      bays = this._bays(flat, bd, c, h, t0, S, storey);
+      if (bays) note('bays', street);
+    }
+    if (residential && !bays && !brick && !glassy && bd.h >= 14 && bd.h <= 70 && h(11) < 0.32) {
+      if (this._balconies(flat, bd, c, h, t0, S, floorsOf(t0, 24))) note('balconies', street);
+      if (h(12) < 0.45) this._balconies(flat, bd, c, h, t0, this._side(bd, (street + 2) % 4, t0.w, t0.d), floorsOf(t0, 24));
+    }
+
+    // --- shops: awnings over the bays, a false front ----------------------------
+    if (c.plinthH > 2 && hash2(seed, 41) <= 0.55 && h(20) < 0.5 && this._awnings(flat, bd, c, h, S)) note('awnings', street);
+    if (bd.style === 'lowrise' && bd.h < 9 && !glassy && c.tiers.length === 1 && h(21) < 0.28) {
+      note('falseFront', street);
+      const fw = S.w + 0.5, [fx, fz] = S.off(0, S.d / 2 - 0.1), mc = this.massColour(bd);
+      const fy = c.roofY - 0.5, fh = 1.6 + h(22) * 1.2;
+      flat.box(fx, fy, fz, fw, fh, 0.35, S.rot, mc, NOTOP);
+      flat.box(fx, fy + fh, fz, fw + 0.2, 0.2, 0.5, S.rot, TRIM);
+      if (h(23) < 0.6) {
+        flat.box(fx, fy + fh, fz, fw * 0.36, 0.9, 0.35, S.rot, mc, NOTOP);
+        flat.box(fx, fy + fh + 0.9, fz, fw * 0.36 + 0.2, 0.2, 0.5, S.rot, TRIM);
+      }
+    }
+
+    // --- glass: fins or spandrel bands down the curtain wall ---------------------
+    if (glassy && bd.h >= 22) {
+      if (h(30) < 0.42) { this._fins(flat, bd, c, h, storey); note('fins'); }
+      else if (h(30) < 0.68) { this._bands(flat, bd, c, h, storey); note('bands'); }
+    }
+
+    // --- the roofline -----------------------------------------------------------
+    if (bd.h >= 45 && (bd.style === 'tower' || bd.style === 'midrise') && h(40) < 0.72) {
+      roofBusy = this._crown(bl, flat, glow, bd, c, h, tl, storey);
+      if (roofBusy) note('crown' + Math.floor(h(130) * 5));
+    } else if (residential && (bays || h(41) < 0.16) && bd.h >= 10 && bd.h < 60 && tl.w > 14 && tl.d > 14) {
+      this._terrace(flat, bd, c, h, tl);
+      note('terrace');
+      roofBusy = true;
+    } else this._solarRoof(flat, bd, c, h);
+    return roofBusy;
+  }
+
+  /** Solar arrays in rows across a big flat roof (one in nine). */
+  _solarRoof(flat, bd, c, h) {
+    if (bd.w * bd.d < 700 || bd.w < 18 || bd.d < 18 || h(60) > 0.11) return;
+    if (this._note) this._note('solar');
+    const along = bd.w >= bd.d, L = (along ? bd.w : bd.d) * 0.62, Wd = (along ? bd.d : bd.w) * 0.6;
+    const rows = Math.min(10, Math.floor(Wd / 2.6));
+    for (let r = 0; r < rows; r++) {
+      const t = ((r + 0.5) / rows - 0.5) * Wd;
+      const [x, z] = along ? c.off(0, t) : c.off(t, 0);
+      flat.box(x, c.roofY + 0.25, z, along ? L : 1.7, 0.12, along ? 1.7 : L, bd.rot, [0.05, 0.08, 0.17]);
+      flat.box(x, c.roofY - 0.1, z, along ? L : 0.1, 0.35, along ? 0.1 : L, bd.rot, [0.45, 0.46, 0.47], NOTOP);
+    }
+  }
+
+  /** An iron fire escape: a platform per floor, rails, a stair between, a drop ladder. */
+  _fireEscape(flat, bd, c, h, t0, k, floors) {
+    if (floors.length < 1) return false;
+    const F = this._side(bd, k, t0.w, t0.d);
+    if (F.w < 8) return false;
+    const W = 3.4, D = 1.15, lx = (h(70) - 0.5) * Math.max(0, F.w - W - 3);
+    const [ox, oz] = F.off(lx, F.d / 2 + D + 0.3);
+    if (!this._outClear(ox, oz)) return false;
+    const z0 = F.d / 2, zo = z0 + D;
+    floors.forEach((fy, i) => {
+      const [px, pz] = F.off(lx, z0 + D / 2);
+      flat.box(px, fy - 0.07, pz, W, 0.07, D, F.rot, IRON);
+      // the rail: a top bar, a mid bar, balusters; and the ends
+      for (const ry of [0.98, 0.5]) {
+        const [rx, rz] = F.off(lx, zo - 0.03);
+        flat.box(rx, fy + ry, rz, W, 0.045, 0.045, F.rot, IRON, NOTOP);
+      }
+      for (let b = 0; b <= 4; b++) {
+        const [bx, bz] = F.off(lx - W / 2 + 0.03 + b * (W - 0.06) / 4, zo - 0.03);
+        flat.box(bx, fy, bz, 0.04, 1.0, 0.04, F.rot, IRON, NOTOP);
+      }
+      for (const sd of [-1, 1]) {
+        const [ex, ez] = F.off(lx + sd * (W / 2 - 0.03), z0 + D / 2);
+        flat.box(ex, fy + 0.98, ez, 0.045, 0.045, D, F.rot, IRON, NOTOP);
+      }
+      // a stair down to the next platform, alternating ends
+      const below = floors[i + 1];
+      if (below !== undefined) {
+        const s = i % 2 ? 1 : -1;
+        const xa = lx + s * (W / 2 - 0.35), xb = lx - s * (W / 2 - 0.35);
+        const A = F.off(xa, z0 + 0.35), B = F.off(xa, z0 + 0.95), C2 = F.off(xb, z0 + 0.95), E = F.off(xb, z0 + 0.35);
+        this._quad2(flat, [A[0], fy, A[1]], [B[0], fy, B[1]], [C2[0], below, C2[1]], [E[0], below, E[1]], [0, 1, 0], IRON);
+      } else {
+        // the drop ladder from the lowest platform
+        for (const sd of [-0.22, 0.22]) {
+          const [qx, qz] = F.off(lx + W / 2 - 0.5 + sd, zo - 0.15);
+          flat.box(qx, fy - 2.2, qz, 0.05, 2.2, 0.05, F.rot, IRON, NOTOP);
+        }
+      }
+    });
+    return true;
+  }
+
+  /** The five-over-one's projecting bays, in an accent colour, windows and all. */
+  _bays(flat, bd, c, h, t0, S, storey) {
+    const n = clamp(Math.floor(S.w / 8.5), 1, 5);
+    const bw = clamp((S.w / n) * 0.44, 2.6, 4.4), dep = 0.9;
+    const top0 = t0.y + t0.h;
+    const y0 = t0.y + (c.plinthH > 2 ? 0.05 : storey), y1 = top0 - 0.45;
+    if (y1 - y0 < storey * 1.5) return false;
+    const a1 = ACCENT[Math.floor(h(80) * ACCENT.length)], a2 = ACCENT[Math.floor(h(81) * ACCENT.length)];
+    const two = h(82) < 0.35;
+    let any = false;
+    for (let i = 0; i < n; i++) {
+      const lx = ((i + 0.5) / n - 0.5) * S.w;
+      const [ox, oz] = S.off(lx, S.d / 2 + dep + 0.3);
+      if (!this._outClear(ox, oz)) continue;
+      const col = two && i % 2 ? a2 : a1;
+      const [x, z] = S.off(lx, S.d / 2 + dep / 2 - 0.02);
+      c.target.box(x, y0, z, bw, y1 - y0, dep + 0.04, S.rot, col,
+        { uScale: c.uS, vScale: c.vS, vOff: 64 - (top0 - y0) / c.vS, cell: c.cell, top: false });
+      flat.box(x, y1, z, bw + 0.16, 0.22, dep + 0.2, S.rot, TRIM);
+      // its underside, seen from the pavement
+      const A = S.off(lx - bw / 2, S.d / 2), B = S.off(lx + bw / 2, S.d / 2), C2 = S.off(lx + bw / 2, S.d / 2 + dep), E = S.off(lx - bw / 2, S.d / 2 + dep);
+      flat.quad([A[0], y0, A[1]], [B[0], y0, B[1]], [C2[0], y0, C2[1]], [E[0], y0, E[1]], [0, -1, 0], QUAD_UV, [col[0] * 0.5, col[1] * 0.5, col[2] * 0.5]);
+      any = true;
+    }
+    return any;
+  }
+
+  /** Stacked balconies across one face: slab, underside, a glass or metal rail. */
+  _balconies(flat, bd, c, h, t0, S, floors) {
+    if (!floors.length || S.w < 9) return false;
+    let any = false;
+    const n = clamp(Math.floor(S.w / 6.5), 1, 7);
+    const bw = Math.min(4.2, (S.w / n) * 0.66), dep = 1.4;
+    const glassRail = h(90) < 0.55;
+    const rail = glassRail ? [0.42, 0.5, 0.55] : [0.12, 0.12, 0.13];
+    const slab = [0.6, 0.6, 0.6];
+    // every floor, or every other on some, and on some only the upper half
+    const step = h(91) < 0.25 ? 2 : 1, upper = h(92) < 0.25 ? Math.ceil(floors.length / 2) : floors.length;
+    for (let i = 0; i < n; i++) {
+      const lx = ((i + 0.5) / n - 0.5) * S.w;
+      const [ox, oz] = S.off(lx, S.d / 2 + dep + 0.3);
+      if (!this._outClear(ox, oz)) continue;
+      const [x, z] = S.off(lx, S.d / 2 + dep / 2);
+      const [rx, rz] = S.off(lx, S.d / 2 + dep - 0.04);
+      any = true;
+      for (let f = 0; f < upper; f += step) {
+        const y = floors[f];
+        flat.box(x, y - 0.2, z, bw, 0.2, dep, S.rot, slab);
+        const A = S.off(lx - bw / 2, S.d / 2), B = S.off(lx + bw / 2, S.d / 2), C2 = S.off(lx + bw / 2, S.d / 2 + dep), E = S.off(lx - bw / 2, S.d / 2 + dep);
+        flat.quad([A[0], y - 0.2, A[1]], [B[0], y - 0.2, B[1]], [C2[0], y - 0.2, C2[1]], [E[0], y - 0.2, E[1]], [0, -1, 0], QUAD_UV, [0.34, 0.34, 0.34]);
+        if (glassRail) {
+          flat.box(rx, y, rz, bw, 1.0, 0.05, S.rot, rail, NOTOP);
+          flat.box(rx, y + 1.0, rz, bw, 0.05, 0.08, S.rot, [0.2, 0.2, 0.21]);
+        } else {
+          flat.box(rx, y + 0.95, rz, bw, 0.06, 0.06, S.rot, rail);
+          flat.box(rx, y + 0.12, rz, bw, 0.05, 0.05, S.rot, rail, NOTOP);
+          for (let b = 0; b <= 3; b++) {
+            const [bx, bz] = S.off(lx - bw / 2 + 0.03 + b * (bw - 0.06) / 3, S.d / 2 + dep - 0.04);
+            flat.box(bx, y, bz, 0.05, 0.95, 0.05, S.rot, rail, NOTOP);
+          }
+        }
+      }
+    }
+    return any;
+  }
+
+  /** A row of sloped canvas awnings over a shopfront's bays. */
+  _awnings(flat, bd, c, h, S) {
+    const n = clamp(Math.floor(S.w / 4.2), 1, 8);
+    const bay = S.w / n, aw = bay - 0.7, out = 1.3, drop = 0.7;
+    const yt = c.base + c.plinthH - 0.15;
+    const ca = AWNING[Math.floor(h(100) * AWNING.length)], cb = AWNING[Math.floor(h(101) * AWNING.length)];
+    const alt = h(102) < 0.3;
+    let any = false;
+    for (let i = 0; i < n; i++) {
+      const lx = ((i + 0.5) / n - 0.5) * S.w;
+      const [ox, oz] = S.off(lx, S.d / 2 + out + 0.5);
+      if (this.city.onRoad(ox, oz, 0.2, false)) continue;
+      const col = alt && i % 2 ? cb : ca;
+      const z0 = S.d / 2 + 0.16, z1 = z0 + out;
+      const A = S.off(lx - aw / 2, z0), B = S.off(lx + aw / 2, z0), C2 = S.off(lx + aw / 2, z1), E = S.off(lx - aw / 2, z1);
+      const ny = out / Math.hypot(out, drop), nz = drop / Math.hypot(out, drop);
+      const cs = Math.cos(S.rot), sn = Math.sin(S.rot);
+      const an = [-nz * sn, ny, nz * cs];
+      flat.quad([A[0], yt, A[1]], [B[0], yt, B[1]], [C2[0], yt - drop, C2[1]], [E[0], yt - drop, E[1]], an, QUAD_UV, col);
+      flat.quad([A[0], yt, A[1]], [B[0], yt, B[1]], [C2[0], yt - drop, C2[1]], [E[0], yt - drop, E[1]], [-an[0], -an[1], -an[2]], QUAD_UV,
+        [col[0] * 0.55, col[1] * 0.55, col[2] * 0.55]);
+      // the valance
+      const [vx, vz] = S.off(lx, z1);
+      flat.box(vx, yt - drop - 0.28, vz, aw, 0.28, 0.04, S.rot, col, NOTOP);
+      any = true;
+    }
+    return any;
+  }
+
+  /** Vertical fins (mullion caps) down every face of every tier of a curtain wall. */
+  _fins(flat, bd, c, h, storey) {
+    const sp = 3 + h(110) * 1.6, dep = 0.3 + h(111) * 0.25;
+    const fc = h(112) < 0.5 ? [0.66, 0.68, 0.7] : [c.col[0] * 0.45, c.col[1] * 0.47, c.col[2] * 0.5];
+    let budget = 220;
+    for (const t of c.tiers) {
+      for (let k = 0; k < 4 && budget > 0; k++) {
+        const F = this._side(bd, k, t.w, t.d);
+        const n = Math.floor(F.w / sp);
+        for (let i = 1; i < n && budget > 0; i++, budget--) {
+          const [x, z] = F.off((i / n - 0.5) * F.w, F.d / 2 + dep / 2);
+          flat.box(x, t.y, z, 0.22, t.h, dep, F.rot, fc, NOTOP);
+        }
+      }
+    }
+  }
+
+  /** Spandrel bands every two storeys round a curtain wall. */
+  _bands(flat, bd, c, h, storey) {
+    const bc = h(120) < 0.5 ? [0.72, 0.72, 0.7] : [0.2, 0.21, 0.23];
+    const every = storey * (h(121) < 0.5 ? 2 : 3);
+    let budget = 60;
+    for (const t of c.tiers) {
+      for (let y = t.y + t.h - every; y > t.y + storey && budget > 0; y -= every, budget--) {
+        flat.box(bd.x, y - 0.2, bd.z, t.w + 0.24, 0.4, t.d + 0.24, bd.rot, bc, NOTOP);
+      }
+    }
+  }
+
+  /** A tower's crown. Returns true when one was built. */
+  _crown(bl, flat, glow, bd, c, h, tl, storey) {
+    const kind = Math.floor(h(130) * 5);
+    const ry = c.roofY;
+    const glassy = c.fam.m === 'glass';
+    const tile = { uScale: c.uS, vScale: c.vS, top: false, cell: c.cell };
+    if (kind === 0) {
+      // stepped: two more setbacks of the same wall, each with its cornice
+      let y = ry - 0.6, w = tl.w, d = tl.d;
+      for (let s = 0; s < 2; s++) {
+        w *= 0.78; d *= 0.78;
+        const hh = storey * (s ? 1.5 : 2.5);
+        c.target.box(bd.x, y, bd.z, w, hh, d, bd.rot, c.col, { ...tile, vOff: 64 - hh / c.vS });
+        y += hh;
+        flat.box(bd.x, y, bd.z, w + 0.8, 0.5, d + 0.8, bd.rot, TRIM);
+        y += 0.5;
+      }
+      flat.box(bd.x, y, bd.z, w * 0.9, 0.6, d * 0.9, bd.rot, DARK);
+      if (h(131) < 0.6) { flat.prism(bd.x, y + 0.6, bd.z, 0.3, 10 + h(132) * 14, 4, [0.35, 0.36, 0.38]); }
+    } else if (kind === 1) {
+      // a pyramid roof: copper gone green, dark standing seam, or slate
+      const pc = [[0.34, 0.52, 0.46], [0.16, 0.17, 0.19], [0.3, 0.33, 0.38]][Math.floor(h(133) * 3)];
+      const ph = Math.min(tl.w, tl.d) * (0.3 + h(134) * 0.25);
+      this.meshPyramid(flat, bd.x, ry - 0.3, bd.z, tl.w * 0.5 + 0.3, tl.d * 0.5 + 0.3, ph, bd.rot, pc);
+      flat.prism(bd.x, ry - 0.3 + ph * 0.9, bd.z, 0.18, 4 + h(135) * 6, 4, [0.3, 0.3, 0.32]);
+    } else if (kind === 2) {
+      // a glass lantern on top, lit from inside
+      const lw = tl.w * 0.7, ld = tl.d * 0.7, lh = 6 + h(136) * 8;
+      bl.glass.box(bd.x, ry - 0.3, bd.z, lw, lh, ld, bd.rot, glassy ? [c.col[0] * 1.2, c.col[1] * 1.2, c.col[2] * 1.2] : [0.62, 0.68, 0.74],
+        { uScale: 14, vScale: 13.6, top: false });
+      flat.box(bd.x, ry - 0.3 + lh, bd.z, lw + 0.6, 0.6, ld + 0.6, bd.rot, DARK);
+      for (const [fx, fz] of CORNERS) {
+        const [qx, qz] = c.off(fx * lw / 2, fz * ld / 2);
+        flat.box(qx, ry - 0.3, qz, 0.6, lh + 3, 0.6, bd.rot, [0.5, 0.52, 0.55], NOTOP);
+      }
+      const mh = 8 + h(137) * 18;
+      flat.prism(bd.x, ry + lh + 0.3, bd.z, 0.3, mh, 4, [0.32, 0.33, 0.35]);
+      glow.box(bd.x, ry + lh + 0.3 + mh, bd.z, 0.5, 0.5, 0.5, 0, [1.0, 0.22, 0.15]);
+    } else if (kind === 3) {
+      // a crown of fins standing proud of the roof all round
+      const fh = 5 + h(138) * 7, sp = 2.6;
+      const fc = [0.6, 0.62, 0.65];
+      for (let k = 0; k < 4; k++) {
+        const F = this._side(bd, k, tl.w, tl.d);
+        const n = Math.max(2, Math.floor(F.w / sp));
+        for (let i = 0; i <= n; i++) {
+          const [x, z] = F.off((i / n - 0.5) * (F.w - 0.3), F.d / 2 - 0.15);
+          flat.box(x, ry - 0.5, z, 0.3, fh * (0.75 + 0.25 * Math.sin((i / n) * Math.PI)), 0.5, F.rot, fc, NOTOP);
+        }
+      }
+      flat.box(bd.x, ry - 0.3, bd.z, tl.w * 0.5, 3.2, tl.d * 0.5, bd.rot, [0.42, 0.43, 0.45]);
+    } else {
+      // a helipad: the pad, its H and edge lights
+      const pw = Math.min(tl.w, tl.d) * 0.72;
+      if (pw < 14) return false;
+      flat.box(bd.x, ry - 0.1, bd.z, pw, 1.2, pw, bd.rot, [0.24, 0.25, 0.26]);
+      const yh = ry + 1.11, hc = [0.9, 0.9, 0.86];
+      const L = pw * 0.36;
+      for (const sd of [-1, 1]) { const [qx, qz] = c.off(sd * L * 0.35, 0); flat.box(qx, yh, qz, 0.9, 0.03, L, bd.rot, hc); }
+      flat.box(bd.x, yh, bd.z, L * 0.7, 0.03, 0.9, bd.rot, hc);
+      for (const [fx, fz] of CORNERS) {
+        const [qx, qz] = c.off(fx * pw / 2 * 0.95, fz * pw / 2 * 0.95);
+        glow.box(qx, ry + 1.1, qz, 0.35, 0.25, 0.35, 0, [1.0, 0.75, 0.25]);
+      }
+    }
+    return true;
+  }
+
+  /** A roof terrace: decking, planters with something growing, two umbrellas. */
+  _terrace(flat, bd, c, h, tl) {
+    const sx = h(140) < 0.5 ? 1 : -1, sz = h(141) < 0.5 ? 1 : -1;
+    const tw = tl.w * 0.42, td = tl.d * 0.4;
+    const [x, z] = c.off(sx * tl.w * 0.22, sz * tl.d * 0.22);
+    flat.box(x, c.roofY - 0.1, z, tw, 0.22, td, bd.rot, [0.44, 0.32, 0.22]);
+    const green = [0.12, 0.22, 0.07];
+    for (let i = 0; i < 4; i++) {
+      const [px, pz] = c.off(sx * tl.w * 0.22 + (i % 2 ? 1 : -1) * tw * 0.42, sz * tl.d * 0.22 + (i < 2 ? -1 : 1) * td * 0.35);
+      flat.box(px, c.roofY, pz, 1.6, 0.6, 0.7, bd.rot, [0.3, 0.3, 0.31]);
+      flat.foliage(px, c.roofY + 0.75, pz, 0.6, 6, 3, FALL && i % 2 ? [0.42, 0.16, 0.03] : green, 0.7, 0.3, 0.4, null, 0.3);
+    }
+    const UMB = [[0.75, 0.2, 0.12], [0.85, 0.82, 0.74], [0.15, 0.3, 0.45], [0.2, 0.38, 0.25]];
+    for (let i = 0; i < 2; i++) {
+      const [ux, uz] = c.off(sx * tl.w * 0.22 + (i ? 1 : -1) * tw * 0.18, sz * tl.d * 0.22);
+      flat.prism(ux, c.roofY, uz, 0.04, 2.3, 4, [0.3, 0.3, 0.3]);
+      flat.cone(ux, c.roofY + 1.9, uz, 1.3, 0.55, 8, UMB[Math.floor(h(142 + i) * UMB.length)]);
+      flat.box(ux, c.roofY + 0.1, uz, 0.9, 0.72, 0.9, bd.rot, [0.25, 0.2, 0.16]);
     }
   }
 

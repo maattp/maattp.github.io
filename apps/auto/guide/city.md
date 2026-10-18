@@ -58,6 +58,44 @@ balconies, mullions) and the extras ~140k -- attributed by stubbing each
 method through `RCPU_PRE` (`w.townhome = () => {}`), which is the way to
 find what a building feature costs. `docs/houses2/`.
 
+## Buildings: character by era and use (v233)
+
+A street of the same textured boxes in different colours was still a street
+of boxes. `buildingDetail` (world.js) puts on each non-house building what its
+material, age and use would, by its seed, all vertex-coloured boxes and quads
+in the chunk's flat mesh or the facade atlas (no draws, no materials):
+
+- **Brick**: an iron fire escape (45 % of 8-34 m blocks: a platform, rails and
+  balusters per floor, a stair between, a drop ladder), stone or dark-brick
+  corner piers, a pressed-metal cornice and frieze on brackets (dark green,
+  brown, black or cream), a raised name panel on the street parapet.
+- **The modern mid-rise**: projecting bays in an accent colour (rust, mustard,
+  teal, charcoal, cedar, white, slate) with the facade's own windows, hung
+  from the tier's top like the wall; or stacked balconies with glass or metal
+  rails on the street face and, on some, the back. Not on curtain wall:
+  there they read as slabs floating on glass.
+- **Shops**: a row of sloped canvas awnings over the bays where there was no
+  single awning; a false front on some one-storey shops.
+- **Curtain wall**: vertical fins down every face of every tier, or
+  spandrel bands every two or three storeys.
+- **Towers over 45 m** (72 %): a crown -- two more setbacks with a mast, a
+  pyramid (copper gone green, standing seam, slate), a lit glass lantern, a
+  ring of fins, or a helipad with its H and edge lights. A crowned tower
+  carries no loose roof plant.
+- **Roofs**: a terrace (decking, planters, umbrellas) on mid-rises with bays
+  and some others; solar arrays on one in nine big flat roofs.
+
+Bays, balconies, awnings and fire escapes go on the street side
+(`houseFront`), and nothing is built that stands out of a wall over a
+carriageway or into a neighbour (`_outClear`). `cityStats.bldDetail` counts
+each and keeps a few positions (with the bearing out of the face) for the
+shot tools.
+
+Cost, against v232 served side by side: perfguard downtown steady draws
+222 / 222, triangles 1.014 M -> 1.062 M (+4.7 %), update times the same;
+`rendercpu --builds --ring=4` near builds 288 -> 306 ms, longest step
+unchanged, geometry +11.6 % vertices downtown.
+
 ## Buildings: the outlier scan
 
 `tools/bldshots.mjs --scan` counts every shipped box into categories (style x

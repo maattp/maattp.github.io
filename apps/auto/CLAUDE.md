@@ -22,7 +22,7 @@ When code or an old note cites `CLAUDE.md "Some Heading"`, find it with
 - **`guide/rendering.md`** (56 KB) -- pipeline, shadows, surfaces, judging screenshots, draw-call budget, the gfx169 pass, the trees, the fall season and its sun.
   Sections: "Rendering pipeline"; "Shadows: snap the box, fade its edge"; "Surfaces: glass, windows, roofs, trees, ground"; "Judging how it looks"; "Draw-call budget"; "Mountains on the horizon"; "Far buildings take their real colour (v166)"; "A phone-neutral graphics pass (docs/gfx169)"; "A green Seattle: trees as records, three levels of detail"; "Fall (v232)".
 - **`guide/city.md`** (23 KB) -- building variety and outliers, street objects, landmarks, parks, lots/plazas/yards.
-  Sections: "Buildings: variety"; "Houses: dormers, garages, and modern townhomes (v156)"; "Buildings: the outlier scan"; "Solid street objects"; "Landmarks"; "Parks"; "Lots, plazas and yards".
+  Sections: "Buildings: variety"; "Houses: dormers, garages, and modern townhomes (v156)"; "Buildings: character by era and use (v233)"; "Buildings: the outlier scan"; "Solid street objects"; "Landmarks"; "Parks"; "Lots, plazas and yards".
 - **`guide/models.md`** (45 KB) -- vehicle, character and prop models: how they are built and judged.
   Sections: "Models".
 - **`guide/vehicles.md`** (54 KB) -- driving model, aircraft and flight, boats, the seaplane dock, bikes, jet skis, the balloon.
