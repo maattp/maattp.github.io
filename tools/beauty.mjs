@@ -266,9 +266,9 @@ async function main() {
         // a black band -- read for four passes as an albedo problem, then as a
         // missing ambient term, and it was neither.
         //
-        // main.js uses an offset of (-215, 200, -150) from the point of
-        // interest, about 38 deg. Reproduce it exactly, anchored partway into
-        // the shot so the shadow box covers what is in frame.
+        // main.js offsets the light from the point of interest along the
+        // season's sun. Reproduce its elevation, anchored partway into the
+        // shot so the shadow box covers what is in frame.
         const ax = ${cx} + (${lx} - ${cx}) * 0.25, az = ${cz} + (${lz} - ${cz}) * 0.25;
         const ay = gy(ax, az);
         // Put the sun ACROSS the view, not behind it.
@@ -281,11 +281,15 @@ async function main() {
         // 1.3:1 lit-to-shadow ratio and looked unlit: the numbers were reading
         // bounce and baked AO, not the key light at all.
         //
-        // Same elevation (38 deg) and the same distance, rotated 100 degrees off
-        // the view bearing so shadows cross the frame and can be seen.
+        // The game's elevation and distance (its offset is the season's:
+        // util.js SUN_DIR, 24 deg in fall, 38 in summer -- read off the light,
+        // kept on window.__sunOff from the first view since later views move
+        // it), rotated 100 degrees off the view bearing so shadows cross the
+        // frame and can be seen.
+        const so = window.__sunOff || (window.__sunOff = d.sun.position.clone().sub(d.sun.target.position));
         const SUN_AZ = 0.9 + 1.75;
-        const sr = Math.hypot(215, 150);
-        d.sun.position.set(ax - Math.sin(SUN_AZ) * sr, ay + 200, az - Math.cos(SUN_AZ) * sr);
+        const sr = Math.hypot(so.x, so.z);
+        d.sun.position.set(ax - Math.sin(SUN_AZ) * sr, ay + so.y, az - Math.cos(SUN_AZ) * sr);
         d.sun.target.position.set(ax, ay, az);
         d.sun.target.updateMatrixWorld();
         // Populate the shot. The game is paused so the camera can be flown, and

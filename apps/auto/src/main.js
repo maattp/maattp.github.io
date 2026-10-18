@@ -9,6 +9,7 @@ import { World, WET_FLOOR, HAZE_SUN } from './world.js';
 import { buildLandmarks, updateLandmarkRange, SEAPLANE_DOCK, airportSurface } from './landmarks.js';
 import { ShadowCache } from './shadowcache.js';
 import { TreeSystem } from './trees.js';
+import { FallDecor } from './fall.js';
 import { Monorail } from './monorail.js';
 import { Link, railBedSurface } from './link.js';
 import { Freight } from './freight.js';
@@ -63,7 +64,7 @@ import { SkidMarks } from './skidmarks.js';
 import { TankSystem, TANK_SITE } from './tank.js';
 import { Audio, STATION_NAMES } from './audio.js';
 import { PostFX } from './postfx.js';
-import { clamp, lerp, rng, dist2, formatMoney, hash2 } from './util.js';
+import { clamp, lerp, rng, dist2, formatMoney, hash2, FALL, SUN_DIR } from './util.js';
 
 const app = document.getElementById('app');
 const loadBar = document.getElementById('loadBar');
@@ -615,8 +616,14 @@ let pickups = [];
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
 const LOOK_AHEAD = new THREE.Vector3();
 
-// The sun's offset from the point it lights: ~38 deg elevation, fixed azimuth.
-const SUN_OFFSET = new THREE.Vector3(-215, 200, -150);
+// The sun's offset from the point it lights, along SUN_DIR (util.js): the
+// season's sun, fixed. The low fall sun stands further back: the shadow box's
+// ground runs S / tan(elevation) toward the sun in depth (~580 m at 24 deg,
+// against ~330 m at 38), and a caster there has to be in front of the near
+// plane. SUN_FAR is the far plane that goes with it.
+const SUN_DIST = FALL ? 700 : Math.hypot(215, 200, 150);
+const SUN_FAR = FALL ? 1320 : 980;
+const SUN_OFFSET = new THREE.Vector3(SUN_DIR[0], SUN_DIR[1], SUN_DIR[2]).multiplyScalar(SUN_DIST);
 
 // The haze. Its colour reaches the shader through syncFogColour, never
 // directly: see the note where scene.fog is made.
@@ -937,10 +944,12 @@ function installShadowFade() {
   // street asphalt and the black tower bodies at once, and it lets the roof
   // albedo go back where it belongs.
   scene.add(new THREE.AmbientLight(0xb4c2cc, 0.36));
-  sun = new THREE.DirectionalLight(0xfff2dc, 4.3);
-  // ~38 deg elevation: high enough to light the streets, low enough that every
-  // shot has a lit face and a shadowed one.
-  sun.position.set(-215, 200, -150);
+  // Fall's afternoon sun is a warmer white than summer's.
+  sun = new THREE.DirectionalLight(FALL ? 0xffe9cc : 0xfff2dc, 4.3);
+  // Summer's ~38 deg elevation: high enough to light the streets, low enough
+  // that every shot has a lit face and a shadowed one. Fall's 24 deg throws
+  // the long shadows of an October afternoon.
+  sun.position.copy(SUN_OFFSET);
   sun.castShadow = true;
   sun.shadow.mapSize.set(ON_PHONE ? 1024 : 2048, ON_PHONE ? 1024 : 2048);
   sun.shadow.camera.near = 20;
@@ -948,7 +957,7 @@ function installShadowFade() {
   // edge. That is still the reason, but the far plane costs geometry in the
   // shadow pass every frame, and the pass measured 152 draw calls and 318k
   // triangles -- a third of the whole frame.
-  sun.shadow.camera.far = 980;
+  sun.shadow.camera.far = SUN_FAR;
   // 105 m covered barely a block: buildings cast no shadow on the streets they
   // line, which is most of why the city read as flat. 190 m reaches across a
   // downtown block and its far side at the cost of shadow-map resolution,
@@ -982,7 +991,8 @@ function installShadowFade() {
   //
   // Computing it removes the chance of getting it wrong again.
   const shadowTexel = (S * 2) / sun.shadow.mapSize.x;
-  sun.shadow.bias = -0.0006;
+  // (in the depth range's units: held at what -0.0006 was over summer's 960 m)
+  sun.shadow.bias = -0.0006 * 960 / (SUN_FAR - 20);
   sun.shadow.normalBias = shadowTexel * 0.48;
   shadowTexelM = shadowTexel;
   installShadowFade();
@@ -1003,6 +1013,8 @@ function installShadowFade() {
   // records against the camera before each scene pass.
   world.trees = new TreeSystem(scene, world.shadows);
   world.trees.city = city;
+  // Fall: the pumpkins on the steps and the leaves coming down (fall.js)
+  if (FALL) { world.decor = new FallDecor(scene); world.decor.trees = world.trees; }
   // ...and its portal cuts, barriers and lids (the terrain's carve needs them).
   // Only with a cached grading: the lids were computed on those profiles.
   world.bootCache = { portal: bootCache.grade ? bc.portal : null };
@@ -1720,6 +1732,7 @@ function installShadowFade() {
       // the trees' instanced crowns: at least one instance each, so their
       // program compiles here (trees.js)
       if (world.trees) world.trees.warm = true;
+      if (world.decor) world.decor.warm = true;
       scene.add(warm);
       placeSun(player.x, player.y, player.z);
       player.updateCamera(1 / 60, null);   // look where the first frame will
@@ -1734,6 +1747,7 @@ function installShadowFade() {
     } finally {
       scene.remove(warm);
       if (world.trees) { world.trees.warm = false; world.trees.invalidate(); }
+      if (world.decor) { world.decor.warm = false; world.decor.dirty = true; }
       if (fx.wakeMesh) fx.wakeMesh.visible = wakeWas;
       if (fireWarm) fireWarm.restore();
       if (fx.lines) fx.lines.visible = false;
@@ -3307,6 +3321,11 @@ function draw(now) {
     const pv = player && (player.vehicle || player);
     if (pv && !game.paused) world.trees.cut(camera.position, pv.x, (pv.y || 0) + (player.vehicle ? 1.6 : 1.4), pv.z, player.vehicle ? 3.2 : 2.2);
     else world.trees.cut(camera.position, 0, 0, 0, 0);
+  }
+  if (world && world.decor) {
+    const dt = game.paused || !draw.lastT ? 0 : Math.min(0.06, (now - draw.lastT) / 1000);
+    draw.lastT = now;
+    world.decor.update(camera, dt || 0);
   }
   if (chunkCull) chunkCull.cull(camera);
   try { renderer.render(scene, camera); } finally { if (chunkCull) chunkCull.restore(); }

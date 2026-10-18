@@ -944,3 +944,69 @@ main.js), which is where it was measured and needed: the low flight.
   cache is -- every ~2 s on the move -- so tree shadows reach the box's faded
   edge like a building's, for no per-frame cost. A felled tree invalidates
   the cache (`onInvalidate`).
+
+## Fall (v232)
+
+**The city is dressed for October.** `FALL` in util.js is the switch;
+`?season=summer` puts every piece of it back, for a before/after.
+
+- **The sun is a mid-October afternoon**: `SUN_DIR` (util.js), 24 deg up from
+  azimuth 218 (south-west; the game's z runs south), so a house throws a
+  shadow twice its height. Summer's was 38 deg from the north-west, a
+  midsummer evening. main.js, trees.js and the baked Rainier face
+  (`tools/build_mountains.py`, rebuilt; the old sun reproduces the old file
+  byte for byte) all read the one direction. **A low sun moves the shadow
+  camera back**: the box's ground runs `S / tan(elevation)` in depth toward
+  the sun (~580 m at 24 deg against ~330 at 38), so the light stands 700 m
+  off (`SUN_DIST`) with its far plane at 1320 (`SUN_FAR`), and the depth bias
+  is scaled to keep its metric size. `beauty.mjs` now keeps the game's
+  elevation when it turns the sun across a view (it used to rebuild the 38 deg
+  one), and the shadow cache's "is a chunk near" reach is derived from the
+  sun (a 260 m tower throws ~580 m now, not ~330).
+- **Broadleaf crowns turn** (`fallAlbedo`): weighted gold, orange, scarlet,
+  crimson, russet, half-turned and still-green by where the tree stands
+  (street trees the most colour, forest broadleaf mostly gold and brown);
+  conifers stay evergreen, which is what makes the colour read. The instanced
+  crowns let clumps here and there, and the lower crown, lag a step behind
+  (red going orange, gold going green), hashed per clump and per tree, so a
+  crown is not one flat colour. The far woodland canopy in the terrain
+  shader turns a crown in four gold or rust.
+- **Leaves on the ground are drawn by the terrain shader**: drifts from three
+  scales of the cloud noise, each on its own turned axes (aligned, it printed
+  a grid of blobs), and single leaves hashed per 0.32 m cell in two offset
+  layers -- size, lobed maple or oval, angle and colour per leaf (the cloud
+  texture at leaf scale tiled as a dot grid). They fade to the drift's mean
+  colour and cover once a pixel is bigger than a leaf, and the loop is skipped
+  there; lots paint over them, a wood seen from afar keeps its canopy. 0
+  draws, 0 triangles.
+- **Front doors face the street** (`houseFront`): a house's step, porch, its
+  pumpkins and a townhome's door go on the side whose middle has pavement
+  nearest straight out from it, by the chunk's 2 m occupancy raster (built
+  once per near chunk before its buildings now, and reused by the trees).
+  The footprint's own +z was any side at all, so porches stood in back
+  gardens. Shops' displays use the same side.
+- **Halloween on the steps** (`fallHouse`, `fallShop` in world.js): on about
+  half the houses 1-4 pumpkins on the step or along the porch's front, ~28 %
+  of them carved; potted mums (30 %), a hay bale with corn stalks (9 %), a
+  sheet ghost from the porch roof (12 % of porches), a raked leaf pile in the
+  side yard (16 %), and on one house in sixty a giant inflatable
+  jack-o'-lantern; 16 % of shops put hay bales and a heap of pumpkins by the
+  door. All by the building's seed, near chunks only.
+- **Pumpkins are records, drawn instanced near the camera** (`src/fall.js`):
+  an eight-lobed lathe with a bent stem, ~200 triangles, so a city's worth
+  merged into the chunks was not affordable; one `InstancedMesh` of those
+  within 120 m (80 on a phone), re-chosen every 8 m. A carved face is part of
+  every pumpkin's geometry, glowing (emissive, dark rind round it) and
+  collapsed to a point on an uncarved one: one draw for both. Built behind
+  the loading screen like the trees (`warm`).
+- **Leaves come down** out of the near broadleaf crowns (the TreeSystem's
+  near tier: its instance matrices and colours), in front of the camera and
+  within 32 m, fluttering and drifting with the breeze, lying 2.5 s and
+  shrinking away: a 260-leaf pool (140 on a phone), one draw. A little larger
+  than life, or one coming down across a street is not seen at all.
+
+Cost (perfguard downtown, each run alone against master): steady draws
+222 / 222, triangles +0.2 %, `updateMax` 15.7 / 14.6 ms (noise). The low sun
+widens the shadow box's ground along the sun's azimuth, so the desktop's
+shadow pass sees more casters; the phone's statics come from the shadow
+cache.

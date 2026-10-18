@@ -34,8 +34,8 @@ mountains.bin (little-endian):
     rw*rh x 4 bytes  Rainier:  R = height/4500, G = slope/90 deg, B = lit,
                                A = (distance - 70 km) / 45 km      (row 0 = lowest)
 
-Keep EXAG, the sun and the origin in step with src/mountains.js, src/main.js
-(SUN_OFFSET) and src/geo.js.
+Keep EXAG, the sun and the origin in step with src/mountains.js, src/util.js
+(SUN_DIR) and src/geo.js.
 """
 
 import math
@@ -58,7 +58,9 @@ LAT0, LON0 = 47.61134, -122.33790          # geo.js: Westlake Center
 R_EARTH = 6371000.0
 R_EFF = R_EARTH / (1 - 0.13)
 EXAG = 1.2                                  # mountains.js
-SUN = np.array([-215.0, 150.0, 200.0])      # main.js SUN_OFFSET as (east, north, up)
+# util.js SUN_DIR (the fall sun: 24 deg up, azimuth 218) as (east, north, up);
+# the game's z runs south. Summer's was (-215, 150, 200).
+SUN = np.array([-0.56244, -0.71987, 0.40674])
 SUN /= np.linalg.norm(SUN)
 
 COLS = 8192
