@@ -1286,6 +1286,7 @@ export async function renderBank(sampleRate, onlyNames = null, bank = {}, onBatc
 // spec flags, first match wins, so a new vehicle type needs only a flag:
 //
 //   spec.engine      explicit profile key below -- overrides everything
+//                    (the Belltown Hellcat sets `engine: 'hellcat'`)
 //   spec.heli        'heli'       rotor blade slap + tail rotor + turbine
 //   spec.boat        'outboard'   2-stroke outboard (+ hull slosh by speed)
 //   spec.plane       'turboprop' if spec.turboprop or spec.jet, else 'piston'
@@ -1364,6 +1365,16 @@ export const ENGINES = {
     idle: 720, redline: 6400, gears: [0.24, 0.4, 0.58, 0.76, 0.93, 1.1],
     lp: [260, 1600, 1700], ex: [105, 2.6, 8], noise: { ratio: 24, q: 0.9, gain: 0.22, pulse: 0.5, order: 8 },
     whine: null, drive: 2.4, level: 0.5, jitter: 0.08, rough: 0.4, crackle: true, blip: true },
+  // THE BELLTOWN HELLCAT (`engine: 'hellcat'`): a supercharged 6.2 V8 with
+  // a straight-through exhaust, built to annoy. The V8's cross-plane burble
+  // with a rawer pulse, a deep 90 Hz body boom, the saturator driven hard, a
+  // lumpy idle, the supercharger's whine riding the revs (a blower is geared
+  // to the crank, so it climbs with rpm, not boost), eight gears for eight
+  // blasts through the box, and the crackle on every lift.
+  hellcat: { kind: 'car', stroke: 4, fire: V8_PATTERN.fire, amps: V8_PATTERN.amps, pw: 0.032,
+    idle: 820, redline: 6500, gears: [0.2, 0.32, 0.45, 0.58, 0.71, 0.84, 0.97, 1.1],
+    lp: [320, 2400, 2600], ex: [90, 2.8, 11], noise: { ratio: 22, q: 0.85, gain: 0.34, pulse: 0.6, order: 8 },
+    whine: { hz0: 1300, hz1: 7600, gain: 0.08, load: 0.5 }, drive: 3.2, level: 0.74, jitter: 0.1, rough: 0.6, crackle: true, blip: true },
   flat6: { kind: 'car', stroke: 4, fire: [0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6], amps: [1, 0.98, 1.01, 0.99, 1.02, 0.97], pw: 0.018,
     idle: 950, redline: 8400, gears: [0.22, 0.37, 0.52, 0.68, 0.84, 1.02],
     lp: [450, 3400, 2200], ex: [320, 2, 5], noise: { ratio: 40, q: 1.3, gain: 0.22, pulse: 0.4, order: 6 },
@@ -2052,6 +2063,10 @@ function hornFor(spec) {
 }
 
 const TRAFFIC_VOICES = 3;
+// The nearest Belltown Hellcat gets a whole engine voice of its own, heard
+// this far off (m), at full level out to HELLCAT_REF: the traffic voices are a
+// tone and a hiss, and 75 m is as far as they carry.
+const HELLCAT_HEAR = 360, HELLCAT_REF = 30;
 const SIREN_VOICES = 2;
 // What a siren voice can sing: [LFO wave, LFO Hz, centre Hz, sweep +-Hz].
 // The wail at a distance, the yelp when a police car is on top of you, a fire
@@ -3262,6 +3277,7 @@ export class Audio {
         const dx = v.x - L.x, dz = v.z - L.z;
         const d2 = dx * dx + dz * dz;
         if (d2 < 160 * 160) near++;
+        if (v === this._hcCar) continue;   // (it has a voice of its own: _hellcat)
         if (d2 > 70 * 70) continue;
         best.push(d2, v);
       }
@@ -3341,6 +3357,9 @@ export class Audio {
     if (s.ferry) this._ferries(dt, t, s, L);
     // --- the Queen Anne Counterbalance's streetcars: wheels, and the cable ---
     if (s.streetcars) this._streetcars(dt, t, s, L);
+
+    // --- the Belltown Hellcat ---------------------------------------------------------
+    if (cars) this._hellcat(dt, t, s, L);
 
     // --- the police helicopter -----------------------------------------------------
     const h = s.heli;
@@ -3570,6 +3589,65 @@ export class Audio {
         } else fv.roll.set(0, t);
       }
     });
+  }
+
+  /**
+   * The Belltown Hellcat, the nearest one in traffic: the player's own engine
+   * voice and model, driven the way its driver drives -- foot to the floor
+   * off every stop, a lift (and the crackle) into every one, and at a
+   * standstill a rev-bomb every couple of seconds. Each pop and full-throttle
+   * upshift is a backfire, placed on the car.
+   */
+  _hellcat(dt, t, s, L) {
+    let car = null, bd = HELLCAT_HEAR * HELLCAT_HEAR;
+    for (const v of s.cars) {
+      if (!v.spec.hellcat || v === s.vehicle || v.mode !== 'traffic' || v.dead) continue;
+      const dx = v.x - L.x, dz = v.z - L.z, d2 = dx * dx + dz * dz;
+      if (d2 < bd) { bd = d2; car = v; }
+    }
+    if (!car && !this.hcVoice) return;
+    const c = this.ctx;
+    if (!this.hcVoice) {
+      this.hcPan = c.createStereoPanner ? c.createStereoPanner() : c.createGain();
+      this.hcPan.connect(this.worldBus);
+      this.hcVoice = new EngineVoice(c, this.pinkNoise, this.hcPan);
+      this.hcVoice.setProfile('hellcat');
+      this.hcModel = new EngineModel();
+      this.hcModel.setProfile(ENGINES.hellcat, { topKph: 315 });
+      this._hcPop = 0;
+    }
+    const m = this.hcModel;
+    if (car !== this._hcCar) {
+      this._hcCar = car;
+      if (car) { m.setProfile(ENGINES.hellcat, car.spec); m.start(true); this._hcV = car.vLong; this._hcBomb = 0.6; this._hcRev = 0; }
+      else m.stop();
+    }
+    let sp = null, thr = 0, free = false;
+    if (car) {
+      const f = car.forward;
+      sp = spatial(L, car.x, car.y + 0.6, car.z, f.x * car.vLong, f.z * car.vLong, HELLCAT_REF, HELLCAT_HEAR);
+      const acc = dt > 0 ? (car.vLong - this._hcV) / dt : 0;
+      this._hcV = car.vLong;
+      if (Math.abs(car.vLong) < 0.6) {
+        // stopped: blip it to the limiter, let it crackle, again
+        free = true;
+        this._hcBomb -= dt;
+        this._hcRev -= dt;
+        if (this._hcBomb <= 0) { this._hcRev = 0.22 + Math.random() * 0.4; this._hcBomb = 1.4 + Math.random() * 2.6; }
+        thr = this._hcRev > 0 ? 1 : 0.04;
+      } else {
+        thr = acc > 0.6 ? 1 : acc > 0.05 ? 0.55 : 0.05;
+      }
+    }
+    m.step(dt, car ? car.vLong : 0, thr, free);
+    this._hcPop -= dt;
+    if (sp && this._hcPop <= 0 && (m.event === 'pop' || (m.event === 'up' && thr > 0.9))) {
+      this._hcPop = 0.06;
+      this.play('backfire', { x: car.x, y: car.y + 0.5, z: car.z, ref: HELLCAT_REF * 0.7, maxD: HELLCAT_HEAR,
+        gain: (m.event === 'up' ? 0.7 : 0.45) + Math.random() * 0.4, send: 0.15 });
+    }
+    if (sp && this.hcPan.pan) setp(this.hcPan.pan, sp.pan, t, 0.05);
+    this.hcVoice.apply(m, t, sp ? sp.gain * 1.3 : 0, sp ? sp.dop : 1);
   }
 
   _trafficVoice(tv, dt, t, L) {

@@ -80,6 +80,9 @@ const BANDS = {
   // launch (real ones of the kind do 0-100 in under 3 s), electronically
   // limited around 200, and grippy for its size on a battery floor.
   wedge: { name: 'electric super-pickup', accel: [2.6, 3.5], top: [190, 215], brake: [35, 42], lat: [0.88, 1.00] },
+  // The Belltown Hellcat: a supercharged Charger, 700-odd hp -- 0-100 in the
+  // high threes, past 300, grippy for its weight.
+  hellcat: { name: 'supercharged muscle sedan', accel: [3.4, 4.6], top: [300, 330], brake: [32, 38], lat: [0.90, 1.00] },
   van: { name: 'panel van', accel: [11, 16], top: [140, 170], brake: [42, 52], lat: [0.68, 0.78] },
   taxi: { name: 'taxi (sedan)', accel: [8, 12], top: [180, 220], brake: [36, 45], lat: [0.80, 0.90] },
   police: { name: 'police interceptor', accel: [5.5, 7], top: [210, 250], brake: [34, 40], lat: [0.88, 0.98] },

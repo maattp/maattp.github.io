@@ -12,6 +12,10 @@ const TRAFFIC_TARGET = 26;
 const PARKED_RADIUS = 105;
 const LOT_TYPES = new Set(['sedan', 'suv', 'pickup', 'compact', 'hatch', 'ev', 'muscle', 'sports', 'convertible']);
 const DESPAWN = 520;
+// The Belltown Hellcat (vehicles.js `hellcat`): the chance a Belltown spawn is
+// one, and how many may be about at once.
+const HELLCAT_P = 0.12, HELLCAT_MAX = 3;
+const HEAVY = new Set(['bus', 'artic', 'boxtruck', 'garbage', 'pickup', 'van', 'cruiser', 'sportbike', 'bicycle']);
 // A phone is draw-call bound, and the fleet was over half of it: an iPhone 17
 // Pro driving downtown showed 58 vehicles (3 draws each, plus shadows) and 9.6
 // ms of render submission. Parked cars are only drawn this close on a phone,
@@ -942,6 +946,11 @@ export class TrafficSystem {
       // parking, and appending would move every parked car in the city. A
       // hash, not this.R, so the spawn stream after it is unchanged.
       if (tn === 'ev' && hash2(ei, this._prio) < 0.25) tn = 'wedge';
+      // The Belltown Hellcat: a few, and only in Belltown (the HUD's
+      // neighbourhood). A car-sized draw there turns into one now and then,
+      // never more than HELLCAT_MAX about at once. A hash again, not this.R.
+      if (!HEAVY.has(tn) && hash2(ei + 7919, this._prio) < HELLCAT_P && G.placeNameAt(x, z) === 'Belltown'
+        && this.cars.filter((c) => c.spec.hellcat).length < HELLCAT_MAX) tn = 'hellcat';
       const v = this.spawnAt(x + lo.x, z + lo.z, heading, tn, randomCarColor((this.R.n() * 1e6) | 0), 'traffic');
       if (e.tunnel) {
         // IN the bore, not on the street over it. place() seeds groundAt with
@@ -962,6 +971,7 @@ export class TrafficSystem {
       // Every driver keeps a pace of their own, +-8 % on the limit: a whole
       // street at exactly the limit drives in formation.
       v.drvK = 0.92 + 0.16 * hash2(ei, (x * 7) | 0);
+      if (v.spec.hellcat) v.drvK = 1.35;   // and the Hellcat keeps nobody's pace
       v.prio = ++this._prio;
       this.routeInit(v);
       return v;
@@ -1674,7 +1684,8 @@ export class TrafficSystem {
     const v0 = v.unit ? v.pursuitV : rt[R_SPD] * v.drvK * (v.panic > 0 ? 1.5 : 1) * yieldK;
     let aWant = Math.min(aRoad, Math.abs(alpha) > 1.3 ? (9 - sp * sp) / 6 : Infinity);
     const heavy = v.spec.bus || v.spec.cargo;
-    const aMax = v.unit ? 4.5 : heavy ? 1.3 : 2.0;   // (a unit in pursuit puts its foot down)
+    // (a unit in pursuit puts its foot down; so does the Hellcat, always)
+    const aMax = v.unit ? 4.5 : v.spec.hellcat ? 5.5 : heavy ? 1.3 : 2.0;
     // THE CAR AHEAD, judged along the PATH: the planned route sampled every
     // few metres out to the scan length. A straight corridor along the bonnet
     // saw the far side of every junction a car was about to turn at (and
