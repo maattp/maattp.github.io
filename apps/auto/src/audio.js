@@ -1183,6 +1183,27 @@ const SOUNDS = {
     k.noise('pink', t, 2.0, R).connect(k.filt('bandpass', 620, 3.0)).connect(w).connect(out);
     for (let i = 0; i < 8; i++) k.burst(out, 'white', t + i * 0.25 + R() * 0.02, 'bandpass', 1500 + R() * 600, 2, 0.08, 0.01, R);
   } },
+  // The Wienermobile's musical horn: a little tune of its own (not the
+  // jingle), on a bright twin-trumpet voice through a horn's bandpass.
+  wiener_horn: { dur: 1.9, build(k, out, t, R) {
+    const bus = k.gain(1);
+    bus.connect(k.shaper(1.6)).connect(k.filt('bandpass', 1500, 0.9)).connect(k.filt('lowpass', 5200, 0.7)).connect(out);
+    // E5 G5 A5 G5 | E5 C5 D5 -- C5, long
+    const N = [[659, 0.13], [784, 0.13], [880, 0.13], [784, 0.13], [659, 0.13], [523, 0.13], [587, 0.2], [523, 0.5]];
+    let at = t;
+    for (const [f, d] of N) {
+      for (const det of [1, 1.006]) {
+        const o = k.osc('square', f * det, at, d + 0.06);
+        const g = k.gain(0);
+        o.connect(g).connect(bus);
+        g.gain.setValueAtTime(0, at);
+        g.gain.linearRampToValueAtTime(0.16, at + 0.012);
+        g.gain.setValueAtTime(0.145, at + d - 0.025);
+        g.gain.linearRampToValueAtTime(0, at + d + 0.01);
+      }
+      at += d + 0.03;
+    }
+  } },
   tram_bell: { dur: 1.6, build(k, out, t, R) {
     for (const t0 of [t, t + 0.34]) {
       METAL.slice(0, 5).forEach((r, i) => k.ping(out, t0, 1046 * r, 0.32 / (1 + i * 0.8), 0.55 / (1 + i * 0.5), 0.0015));
@@ -2119,6 +2140,8 @@ const TRAFFIC_VOICES = 3;
 // this far off (m), at full level out to HELLCAT_REF: the traffic voices are a
 // tone and a hiss, and 75 m is as far as they carry.
 const HELLCAT_HEAR = 360, HELLCAT_REF = 30;
+// An AI Wienermobile toots its tune when you come this close (m).
+const WIENER_TOOT = 45;
 const SIREN_VOICES = 2;
 // What a siren voice can sing: [LFO wave, LFO Hz, centre Hz, sweep +-Hz].
 // The wail at a distance, the yelp when a police car is on top of you, a fire
@@ -3451,6 +3474,8 @@ export class Audio {
 
     // --- the Belltown Hellcat ---------------------------------------------------------
     if (cars) this._hellcat(dt, t, s, L);
+    // --- the Wienermobile toots its tune at you when it passes ---------------------
+    if (cars) this._wiener(dt, s, L);
 
     // --- the police helicopter -----------------------------------------------------
     const h = s.heli;
@@ -3689,6 +3714,20 @@ export class Audio {
    * every 3-8 s. Off a hard rev it goes "bang, bang" (EngineModel `bangQ`),
    * and one flat-out upshift in five bangs too, placed on the car.
    */
+  /** An AI Wienermobile within WIENER_TOOT m plays its horn, then not again for a while. */
+  _wiener(dt, s, L) {
+    this._wmT = (this._wmT || 0) - dt;
+    if (this._wmT > 0) return;
+    for (const v of s.cars) {
+      if (!v.spec.wiener || v === s.vehicle || v.mode !== 'traffic' || v.dead) continue;
+      const dx = v.x - L.x, dz = v.z - L.z;
+      if (dx * dx + dz * dz > WIENER_TOOT * WIENER_TOOT) continue;
+      this.play('wiener_horn', { gain: 1.1, x: v.x, y: v.y + 1.2, z: v.z, ref: 18, maxD: 300, jitter: false });
+      this._wmT = 25 + Math.random() * 20;
+      return;
+    }
+  }
+
   _hellcat(dt, t, s, L) {
     let car = null, bd = HELLCAT_HEAR * HELLCAT_HEAR;
     for (const v of s.cars) {

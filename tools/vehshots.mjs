@@ -36,12 +36,14 @@ const VIEWS = [
   ['rear', Math.PI - 0.62, 0.28],
   ...(process.env.VEH_BEHIND ? [['behind', Math.PI - 0.18, 0.22], ['above', Math.PI - 0.12, 0.55]] : []),
 ];
+// VEH_VIEWS='name:azimuth:elevation[:zoom],...' replaces them (zoom > 1 closer).
+if (process.env.VEH_VIEWS) VIEWS.splice(0, VIEWS.length, ...process.env.VEH_VIEWS.split(',').map((v) => { const [n, a, e, z] = v.split(':'); return [n, +a, +e, +(z || 1)]; }));
 
 // Launch flags live in tools/chrome.mjs: AUTO_GPU=1 shoots on the Mac's GPU
 // (a minute instead of ten), and the profile is a fresh one, removed on exit.
 function launch() {
   return launchChrome({ port: PORT, profile: `/tmp/auto-vshot-profile-${PORT}`,
-    width: STREET ? 1280 : 900, height: STREET ? 720 : 600 });
+    width: STREET ? 1280 : +(process.env.VEH_W || 900), height: STREET ? 720 : +(process.env.VEH_H || 600) });
 }
 
 async function main() {
@@ -141,7 +143,7 @@ async function main() {
         v.setDetailed(true);
         window.__veh = v;
       })()`);
-      for (const [view, az, elev] of VIEWS) {
+      for (const [view, az, elev, zoom = 1] of VIEWS) {
         await evaluate(`(() => {
           const d = window.__dbg, v = window.__veh, s0 = d.TYPES['${name}'];
           // Frame by the vehicle's own size so every type fills the frame
@@ -149,7 +151,7 @@ async function main() {
           // A tractor and its trailer (the tiller) are framed as the whole rig.
           const tr = v.trailer, mz = tr ? (s0.len / 2 + tr.z - tr.spec.len / 2) / 2 : 0;
           const s = tr ? { len: s0.len / 2 - (tr.z - tr.spec.len / 2), roof: Math.max(s0.roof, tr.spec.roof) } : s0;
-          const r = s.len * 0.92;
+          const r = s.len * 0.92 / ${zoom};
           const cx = Math.sin(${az}) * r, cz = Math.cos(${az}) * r + mz;
           const cy = s.roof * 0.62 + s.len * ${elev} * 0.55;
           d.camera.position.set(cx, cy, cz);
