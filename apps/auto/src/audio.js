@@ -690,6 +690,21 @@ const SOUNDS = {
     k.noise('white', t, 0.25, R).connect(k.filt('highpass', 2000)).connect(g).connect(out);
     k.grains(g.gain, t + 0.02, 0.12, 5, R, 0.3, 0.002, 0.006);
   } },
+  // The Belltown Hellcat's backfire (profiles with `bang`): unburnt fuel
+  // lighting off in a straight-through exhaust. A gunshot crack on top, a
+  // chest-thump under it that falls to 30 Hz, and the pipe ringing after.
+  bang: { dur: 0.75, variants: 3, build(k, out, t, R) {
+    const bus = k.gain(1);
+    bus.connect(k.shaper(3.5)).connect(out);
+    k.burst(bus, 'white', t, 'highpass', 1400 + R() * 800, 0.7, 1.3, 0.006, R, 0.0003);
+    k.burst(bus, 'white', t, 'bandpass', 420 + R() * 200, 0.6, 1.2, 0.03, R, 0.0005);
+    k.thump(bus, t, 78 + R() * 14, 30, 0.22, 1.4, 0.1);
+    k.thump(bus, t + 0.004, 160, 55, 0.05, 0.6, 0.03, 'triangle');
+    k.burst(out, 'pink', t + 0.02, 'lowpass', 260, 0.8, 0.5, 0.12, R);
+    const g = k.gain(0);
+    k.noise('white', t, 0.5, R).connect(k.filt('bandpass', 2600, 1.2)).connect(g).connect(out);
+    k.grains(g.gain, t + 0.04, 0.3, 4, R, 0.35, 0.003, 0.01);
+  } },
   // A turbo's blow-off valve venting the boost when the throttle shuts: a
   // burst of hiss falling in pitch as the pressure goes. Variant 1 is the
   // flutter of a compressor surging instead ("stu-tu-tu").
@@ -1367,14 +1382,15 @@ export const ENGINES = {
     whine: null, drive: 2.4, level: 0.5, jitter: 0.08, rough: 0.4, crackle: true, blip: true },
   // THE BELLTOWN HELLCAT (`engine: 'hellcat'`): a supercharged 6.2 V8 with
   // a straight-through exhaust, built to annoy. The V8's cross-plane burble
-  // with a rawer pulse, a deep 90 Hz body boom, the saturator driven hard, a
-  // lumpy idle, the supercharger's whine riding the revs (a blower is geared
-  // to the crank, so it climbs with rpm, not boost), eight gears for eight
-  // blasts through the box, and the crackle on every lift.
-  hellcat: { kind: 'car', stroke: 4, fire: V8_PATTERN.fire, amps: V8_PATTERN.amps, pw: 0.032,
-    idle: 820, redline: 6500, gears: [0.2, 0.32, 0.45, 0.58, 0.71, 0.84, 0.97, 1.1],
-    lp: [320, 2400, 2600], ex: [90, 2.8, 11], noise: { ratio: 22, q: 0.85, gain: 0.34, pulse: 0.6, order: 8 },
-    whine: { hz0: 1300, hz1: 7600, gain: 0.08, load: 0.5 }, drive: 3.2, level: 0.74, jitter: 0.1, rough: 0.6, crackle: true, blip: true },
+  // with a fat, slow pulse, a 58 Hz body boom you feel more than hear, a dark
+  // low-pass that only opens up near the top, the saturator driven hard, a
+  // loping cam at idle, the supercharger's whine riding the revs (a blower is
+  // geared to the crank, so it climbs with rpm, not boost), eight gears for
+  // eight blasts through the box, and a `bang` on every lift and upshift.
+  hellcat: { kind: 'car', stroke: 4, fire: V8_PATTERN.fire, amps: V8_PATTERN.amps, pw: 0.046,
+    idle: 680, redline: 6500, gears: [0.2, 0.32, 0.45, 0.58, 0.71, 0.84, 0.97, 1.1],
+    lp: [190, 1500, 1900], ex: [58, 1.5, 14], noise: { ratio: 15, q: 0.8, gain: 0.3, pulse: 0.7, order: 8 },
+    whine: { hz0: 1100, hz1: 6400, gain: 0.05, load: 0.5 }, drive: 3.2, level: 0.8, jitter: 0.12, rough: 0.8, crackle: true, blip: true, bang: true },
   flat6: { kind: 'car', stroke: 4, fire: [0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6], amps: [1, 0.98, 1.01, 0.99, 1.02, 0.97], pw: 0.018,
     idle: 950, redline: 8400, gears: [0.22, 0.37, 0.52, 0.68, 0.84, 1.02],
     lp: [450, 3400, 2200], ex: [320, 2, 5], noise: { ratio: 40, q: 1.3, gain: 0.22, pulse: 0.4, order: 6 },
@@ -3104,11 +3120,11 @@ export class Audio {
     m.step(dt, speed, thr, free);
     if (m.event === 'pop' && this._popCd <= 0) {
       this._popCd = 0.07;
-      this.play('backfire', { gain: 0.25 + Math.random() * 0.25, send: 0.15 });
+      this.play(p.bang ? 'bang' : 'backfire', { gain: (p.bang ? 0.5 : 0.25) + Math.random() * 0.25, send: 0.15 });
     }
     this._popCd -= dt;
     if (m.event === 'up' && p.crackle && s.throttle > 0.9) {
-      this.play('backfire', { gain: 0.18, send: 0.1 });
+      this.play(p.bang ? 'bang' : 'backfire', { gain: p.bang ? 0.6 : 0.18, send: 0.1 });
     }
     // the box itself: a bike's shift drum, a truck's gears
     if (inCar && (m.event === 'up' || m.event === 'down') && p.clunk) {
@@ -3643,8 +3659,8 @@ export class Audio {
     this._hcPop -= dt;
     if (sp && this._hcPop <= 0 && (m.event === 'pop' || (m.event === 'up' && thr > 0.9))) {
       this._hcPop = 0.06;
-      this.play('backfire', { x: car.x, y: car.y + 0.5, z: car.z, ref: HELLCAT_REF * 0.7, maxD: HELLCAT_HEAR,
-        gain: (m.event === 'up' ? 0.7 : 0.45) + Math.random() * 0.4, send: 0.15 });
+      this.play('bang', { x: car.x, y: car.y + 0.5, z: car.z, ref: HELLCAT_REF, maxD: HELLCAT_HEAR,
+        gain: (m.event === 'up' ? 0.9 : 0.6) + Math.random() * 0.4, send: 0.2 });
     }
     if (sp && this.hcPan.pan) setp(this.hcPan.pan, sp.pan, t, 0.05);
     this.hcVoice.apply(m, t, sp ? sp.gain * 1.3 : 0, sp ? sp.dop : 1);
