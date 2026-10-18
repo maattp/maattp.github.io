@@ -363,7 +363,7 @@ shots.
   kerbside parking, and adding one would move every parked car in the city
   (see "The articulated bus").
 
-### The Belltown Hellcat: an Easter egg (v224, v225)
+### The Belltown Hellcat: an Easter egg (v224-v226)
 
 **A tiger-striped, supercharged muscle car, a few at a time, only in
 Belltown.** After the real one: a modified Dodge Charger Hellcat whose
@@ -382,7 +382,33 @@ reckless driving in 2025. `docs/hellcat/` has shots.
   reflection dimmed, in the shared glass program). 0-100 3.6 s / 315 km/h on
   the sheet (`tools/vehicles.mjs`'s `supercharged muscle sedan` band).
   v224 used the 1970 muscle car's body in orange; v225 is after the photos of
-  the real one.
+  the real one; v226 was fitted against a photo of it, rendered in the same
+  pose side by side (`docs/hellcat/vs-photo.jpg`) and iterated on the
+  differences: the windscreen 18 cm forward (it starts right behind the
+  bonnet scoop), the beltline 7 cm down (the glass is half the body's
+  height), a thick body-colour C-pillar, mirrors in the wrap.
+- **No flat ends (v226).** The core lofts the body to `EXT` (34 cm) short of
+  each end, square (`endRound` ~0); `endLoft` carries on from its end
+  section, rounding the corners in plan on a quarter circle, rolling the
+  deck down into the face (the bonnet curves into the nose, the boot into
+  the tail) and tucking the bottom up, then closes it with a face that bows
+  out. **The fascias are drawn, not punched:** `endFace` and `pocket` cut
+  rectangles in a flat plate, which is what made the lamps boxes, so the
+  lamps (a swept shape whose foot curves up to the corner and wraps round
+  it, a bright bezel, a projector in a lit halo, a second lens, an LED line),
+  the grille, the mouth and its ducts, the racetrack tail lamp (lit) and the
+  diffuser are shapes in (|x|, y) in `tigerShader`, on the curved surface,
+  so they follow it round. The bonnet's black is the shader's too: the deck
+  forward of the cowl, over the roll (the bulge is still its own panel).
+- **The wheels (v226)** are `addWheel` kind `'black'`: five split spokes in
+  gunmetal, each a pair of arms apart at the rim and meeting near the hub,
+  dished deep, a brighter lip, a dark brake disc (a metallic grey one
+  mirrored the sky white), a red caliper, on a low-profile tyre (the rim is
+  0.78 of the wheel's radius against the fleet's 0.70), 30 segments.
+- **The most detailed car in traffic, on purpose:** 14.8k triangles against
+  a sedan's 6.8k (100 loft stations, the curved ends, the wheels, finer glass
+  and bonnet). Affordable because at most three are ever about: +24k worst
+  case on a ~2.2M-triangle frame, and a phone draws the far LOD past 60 m.
 - **The wrap is the paint shader's** (`finish: 'tiger'`, `tigerShader`): no
   UVs on the body, so the strokes are a function of the body-frame position
   -- narrow, ragged black brush-strokes on a sandy beige (`livery`
