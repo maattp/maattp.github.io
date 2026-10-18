@@ -112,19 +112,20 @@ export function treeAlbedo(kind, seed, tone, out) {
  * most colour, red and orange as much as yellow. A park is mostly gold and
  * russet, a forest's broadleaf is bigleaf maple and alder, yellow going
  * brown, some still green. Each tree's share of each is by its seed.
- *   [weight street, park, forest, shrub], rgb
+ *   [weight street, park, forest, shrub, maple], rgb -- a maple (isMaple) is
+ * scarlet, orange or gold, whatever it stands in
  */
 const FALL_PAL = [
-  [[0.22, 0.25, 0.38, 0.10], [0.50, 0.29, 0.025]],   // gold (bigleaf maple, ginkgo, birch)
-  [[0.20, 0.17, 0.08, 0.20], [0.52, 0.15, 0.018]],   // orange (sugar maple, sweetgum)
-  [[0.22, 0.13, 0.02, 0.34], [0.37, 0.035, 0.022]],  // scarlet (red maple, burning bush)
-  [[0.09, 0.05, 0.00, 0.14], [0.20, 0.022, 0.035]],  // crimson (Japanese maple, plum)
-  [[0.11, 0.17, 0.17, 0.10], [0.25, 0.085, 0.022]],  // russet (oak, alder going brown)
-  [[0.10, 0.14, 0.22, 0.08], [0.26, 0.27, 0.045]],   // half-turned, yellow-green
-  [[0.06, 0.09, 0.13, 0.04], [0.13, 0.22, 0.075]],   // still green
+  [[0.22, 0.25, 0.38, 0.10, 0.20], [0.50, 0.29, 0.025]],   // gold (bigleaf maple, ginkgo, birch)
+  [[0.20, 0.17, 0.08, 0.20, 0.30], [0.52, 0.15, 0.018]],   // orange (sugar maple, sweetgum)
+  [[0.22, 0.13, 0.02, 0.34, 0.32], [0.37, 0.035, 0.022]],  // scarlet (red maple, burning bush)
+  [[0.09, 0.05, 0.00, 0.14, 0.10], [0.20, 0.022, 0.035]],  // crimson (Japanese maple, plum)
+  [[0.11, 0.17, 0.17, 0.10, 0.00], [0.25, 0.085, 0.022]],  // russet (oak, alder going brown)
+  [[0.10, 0.14, 0.22, 0.08, 0.06], [0.26, 0.27, 0.045]],   // half-turned, yellow-green
+  [[0.06, 0.09, 0.13, 0.04, 0.02], [0.13, 0.22, 0.075]],   // still green
 ];
 function fallAlbedo(kind, seed, tone, out) {
-  const col = kind === SHRUB ? 3 : tone === T_STREET ? 0 : tone === T_PARK ? 1 : 2;
+  const col = kind === SHRUB ? 3 : isMaple(kind, seed, tone) ? 4 : tone === T_STREET ? 0 : tone === T_PARK ? 1 : 2;
   const a = sub(seed, 1), u = sub(seed, 2);
   let acc = 0, c = FALL_PAL[FALL_PAL.length - 1][1];
   for (const [w, rgb] of FALL_PAL) { acc += w[col]; if (u < acc) { c = rgb; break; } }
@@ -350,19 +351,8 @@ function buildShapes() {
   // mid broadleaf: the near crown's idea at a third of the cost -- a core and
   // five clumps over it (a single smooth shell read as a cotton ball from
   // the air), and a five-sided trunk: ~134 tris
-  {
-    const ib = new IB();
-    const fc = [0, CY + RY * 0.1, 0];
-    lobe(ib, 0, CY, 0, R * 0.82, RY * 0.84, 6, 3, 0.37, 0.32, fc, 0.35, 0.06, 0.05, 0.4);
-    for (let k = 0; k < 5; k++) {
-      const t = (k + 0.5) / 5, yN = 1 - t * 1.45, rN = Math.sqrt(Math.max(0, 1 - yN * yN));
-      const a = k * 2.39996 + 1.1, c = Math.cos(a), s = Math.sin(a);
-      const lr = R * (0.44 + 0.06 * hash2(k, 91));
-      lobe(ib, c * rN * R * 0.6, CY + yN * RY * 0.62, s * rN * R * 0.6, lr, lr * (RY / R) * 1.08, 5, 3, 3.3 + k, 0.3, fc, 0.6, 0.1);
-    }
-    limb(ib, [0, -0.3, 0], [0, CY, 0], 0.06 * R, 0.036 * R, 5);
-    out.midBroad = ib;
-  }
+  out.midBroad = midBroad(false);
+  out.midMaple = midBroad(true);
   // mid conifer: three skirts and a trunk -- 34 tris
   {
     const ib = new IB();
@@ -378,25 +368,8 @@ function buildShapes() {
   // trunk and three boughs into the crown -- ~370 tris. The clumps' normals
   // lean hard toward the crown's own, so the tree shades as one mass and
   // each clump shows only as its darker underside.
-  {
-    const ib = new IB();
-    const fc = [0, CY + RY * 0.1, 0];
-    lobe(ib, 0, CY, 0, R * 0.8, RY * 0.8, 8, 4, 0.11, 0.3, fc, 0.4, 0.06, 0.05, 0.4);
-    const NL = 12;
-    for (let k = 0; k < NL; k++) {
-      const t = (k + 0.5) / NL, yN = 1 - t * 1.55, rN = Math.sqrt(Math.max(0, 1 - yN * yN));
-      const a = k * 2.39996 + 0.4, c = Math.cos(a), s = Math.sin(a);
-      const lr = R * (0.36 + 0.09 * hash2(k, 77));
-      lobe(ib, c * rN * R * 0.7, CY + yN * RY * 0.68, s * rN * R * 0.7, lr, lr * (RY / R) * 1.08, 6, 3, 1.3 + k, 0.3, fc, 0.62, 0.12);
-    }
-    limb(ib, [0, -0.3, 0], [0, CY - RY * 0.1, 0], 0.062 * R, 0.04 * R, 6);
-    for (let k = 0; k < 3; k++) {
-      const a = 0.5 + (k * 2 * Math.PI) / 3, c = Math.cos(a), s = Math.sin(a);
-      const y0 = CY - RY * (0.72 - 0.12 * k);
-      limb(ib, [0, y0, 0], [c * R * 0.5, y0 + RY * 0.55, s * R * 0.5], 0.03 * R, 0.014 * R, 4, 0.9);
-    }
-    out.nearBroad = ib;
-  }
+  out.nearBroad = nearBroad(false);
+  out.nearMaple = nearBroad(true);
   // near conifer: seven drooping skirts with undersides, and a trunk -- ~150 tris
   {
     const ib = new IB();
@@ -436,6 +409,89 @@ function buildShapes() {
   return out;
 }
 
+/**
+ * The broadleaf crowns, and the same crowns as a MAPLE: a broad, dense dome
+ * nearly as wide as it is tall, set low, its clumps spread evenly round the
+ * sides so the outline is round rather than a heap of lumps, on a short
+ * trunk that forks into three thick limbs. The two are built by the same
+ * calls with the same counts, so the maple is a morph target of the
+ * broadleaf (TreeSystem: `pos2` / `nor2`, chosen per instance by `maple`)
+ * and costs no draw of its own.
+ */
+function midBroad(maple) {
+  const CY = B_CY * B_TH * (maple ? 0.92 : 1), RY = B_RY * B_TH * (maple ? 0.96 : 1), R = B_CR * (maple ? 1.08 : 1);
+  const ib = new IB();
+  const fc = [0, CY + RY * 0.1, 0];
+  lobe(ib, 0, CY, 0, R * (maple ? 0.9 : 0.82), RY * (maple ? 0.9 : 0.84), 6, 3, 0.37, 0.32, fc, 0.35, 0.06, 0.05, 0.4);
+  for (let k = 0; k < 5; k++) {
+    const t = (k + 0.5) / 5, yN = maple ? 0.75 - t * 1.0 : 1 - t * 1.45, rN = Math.sqrt(Math.max(0, 1 - yN * yN));
+    const a = k * 2.39996 + 1.1, c = Math.cos(a), s = Math.sin(a);
+    const lr = R * (maple ? 0.46 + 0.03 * hash2(k, 91) : 0.44 + 0.06 * hash2(k, 91));
+    const rr = R * (maple ? 0.62 : 0.6);
+    lobe(ib, c * rN * rr, CY + yN * RY * 0.62, s * rN * rr, lr, lr * (RY / R) * 1.08, 5, 3, 3.3 + k, 0.3, fc, maple ? 0.75 : 0.6, 0.1);
+  }
+  limb(ib, [0, -0.3, 0], [0, CY, 0], 0.06 * R, 0.036 * R, 5);
+  return ib;
+}
+function nearBroad(maple) {
+  const CY = B_CY * B_TH * (maple ? 0.92 : 1), RY = B_RY * B_TH * (maple ? 0.96 : 1), R = B_CR * (maple ? 1.08 : 1);
+  const ib = new IB();
+  const fc = [0, CY + RY * 0.1, 0];
+  lobe(ib, 0, CY, 0, R * (maple ? 0.88 : 0.8), RY * (maple ? 0.88 : 0.8), 8, 4, 0.11, 0.3, fc, 0.4, 0.06, 0.05, 0.4);
+  const NL = 12;
+  for (let k = 0; k < NL; k++) {
+    const t = (k + 0.5) / NL, yN = maple ? 0.85 - t * 1.25 : 1 - t * 1.55, rN = Math.sqrt(Math.max(0, 1 - yN * yN));
+    const a = k * 2.39996 + 0.4, c = Math.cos(a), s = Math.sin(a);
+    const lr = R * (maple ? 0.38 + 0.04 * hash2(k, 77) : 0.36 + 0.09 * hash2(k, 77));
+    const rr = R * (maple ? 0.74 : 0.7);
+    lobe(ib, c * rN * rr, CY + yN * RY * 0.7, s * rN * rr, lr, lr * (RY / R) * 1.08, 6, 3, 1.3 + k, 0.3, fc, maple ? 0.72 : 0.62, 0.12);
+  }
+  // the trunk; a maple's forks a third of the way up into three thick limbs
+  limb(ib, [0, -0.3, 0], [0, maple ? CY - RY * 0.7 : CY - RY * 0.1, 0], 0.062 * R, (maple ? 0.05 : 0.04) * R, 6);
+  for (let k = 0; k < 3; k++) {
+    const a = 0.5 + (k * 2 * Math.PI) / 3, c = Math.cos(a), s = Math.sin(a);
+    const y0 = maple ? CY - RY * 0.72 : CY - RY * (0.72 - 0.12 * k);
+    const reach = maple ? 0.6 : 0.5, rise = maple ? 0.95 : 0.55;
+    limb(ib, [0, y0, 0], [c * R * reach, y0 + RY * rise, s * R * reach], (maple ? 0.042 : 0.03) * R, (maple ? 0.02 : 0.014) * R, 4, 0.9);
+  }
+  return ib;
+}
+
+/** Give `base`'s geometry the maple's positions and normals as a morph target. */
+function withMaple(base, maple) {
+  const g = base.geometry();
+  if (maple.p.length !== base.p.length) throw new Error('maple crown does not match the broadleaf');
+  g.setAttribute('pos2', new THREE.Float32BufferAttribute(maple.p, 3));
+  g.setAttribute('nor2', new THREE.Float32BufferAttribute(maple.n, 3));
+  // One index for both. IB.t winds each triangle by its normals, and on a
+  // few the two shapes disagree (a dozen, round the lobes' poles): those go
+  // in twice, once each way -- whichever faces away is culled, so neither
+  // shape has a hole.
+  const idx = base.i.slice();
+  let flip = 0;
+  for (let t = 0; t < base.i.length; t += 3) {
+    if (base.i[t] !== maple.i[t] || base.i[t + 1] !== maple.i[t + 1] || base.i[t + 2] !== maple.i[t + 2]) {
+      idx.push(maple.i[t], maple.i[t + 1], maple.i[t + 2]);
+      flip++;
+    }
+  }
+  g.setIndex(idx);
+  g.userData.mapleWinding = flip;
+  return g;
+}
+/** A geometry that is never a maple still carries the attributes the morph reads. */
+function noMaple(ib) {
+  const g = ib.geometry();
+  g.setAttribute('pos2', g.attributes.position);
+  g.setAttribute('nor2', g.attributes.normal);
+  return g;
+}
+
+/** Is this tree a maple? Most planted street trees are; fewer in a park or a wood (bigleaf). */
+export function isMaple(kind, seed, tone) {
+  return kind === BROAD && sub(seed, 5) < (tone === T_STREET ? 0.5 : tone === T_PARK ? 0.38 : 0.3);
+}
+
 /** writeFarTree's three-sided trunk spike, from below the ground to `top`. */
 function spike(ib, top, r) {
   const bc = [BARK[0] * 0.8, BARK[1] * 0.8, BARK[2] * 0.8];
@@ -446,7 +502,23 @@ function spike(ib, top, r) {
 
 // --- the instanced material -------------------------------------------------
 
-function treeMaterial(timeU, cutU, fade = [1e9, 1e9]) {
+// A maple is the broadleaf crown morphed (see nearBroad): per instance,
+// `maple` picks the second set of positions and normals.
+const MAPLE_MORPH = (vs, normals) => {
+  vs = vs.replace('#include <common>', '#include <common>\nattribute vec3 pos2;\nattribute vec3 nor2;\nattribute float maple;')
+    .replace('#include <begin_vertex>', 'vec3 transformed = mix( position, pos2, maple );');
+  if (normals) vs = vs.replace('#include <beginnormal_vertex>', 'vec3 objectNormal = normalize( mix( normal, nor2, maple ) );');
+  return vs;
+};
+/** The shadow pass's material for the morphing crowns, so a maple casts a maple. */
+function mapleDepthMaterial() {
+  const m = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+  m.onBeforeCompile = (sh) => { sh.vertexShader = MAPLE_MORPH(sh.vertexShader, false); };
+  m.customProgramCacheKey = () => 'treesMapleDepth';
+  return m;
+}
+
+function treeMaterial(timeU, cutU, fade = [1e9, 1e9], morph = false) {
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.04, envMapIntensity: 0.45 });
   m.userData.fade = { value: new THREE.Vector2(fade[0], fade[1]) };
   m.onBeforeCompile = (sh) => {
@@ -482,6 +554,7 @@ function treeMaterial(timeU, cutU, fade = [1e9, 1e9]) {
             if ( n > k * k * 0.85 ) discard;
           }
         }`);
+    if (morph) sh.vertexShader = MAPLE_MORPH(sh.vertexShader, true);
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nattribute float leaf;\nuniform float treeTime;\nvarying vec3 vTreeW;\nvarying float vTreeD;')
       // A gentle sway, in WORLD space after the instance's turn so every tree
@@ -536,7 +609,7 @@ function treeMaterial(timeU, cutU, fade = [1e9, 1e9]) {
           #endif
         }`);
   };
-  m.customProgramCacheKey = () => (FALL ? 'trees-fall' : 'trees');
+  m.customProgramCacheKey = () => (FALL ? 'trees-fall' : 'trees') + (morph ? '-maple' : '');
   return m;
 }
 
@@ -558,8 +631,9 @@ export class TreeSystem {
     // Each tier dissolves out across a band at its outer edge (see the
     // material); the far crowns and the shadow set never do.
     this.FADE1 = 30; this.FADE2 = 12;
-    this.matMid = treeMaterial(this.timeU, this.cutU, [this.R1 - this.FADE1, this.R1]);
-    this.matNear = treeMaterial(this.timeU, this.cutU, [this.R2 - this.FADE2, this.R2]);
+    this.matMid = treeMaterial(this.timeU, this.cutU, [this.R1 - this.FADE1, this.R1], true);
+    this.matNear = treeMaterial(this.timeU, this.cutU, [this.R2 - this.FADE2, this.R2], true);
+    this.matDepth = mapleDepthMaterial();
     this.group = new THREE.Group();
     this.group.name = 'trees';
     const capMid = ON_PHONE ? 3500 : 7000, capNear = ON_PHONE ? 900 : 1800;
@@ -580,8 +654,18 @@ export class TreeSystem {
     // mid crowns cast on a desktop. On a phone the flat mesh casts nothing and
     // the city's shadows come from a cache (shadowcache.js) that these, being
     // re-chosen as you move, cannot join -- they are movers, drawn each frame.
-    this.mid = [make(shapes.midCon, capMid, 'trees:mid:conifer', shadows && !ON_PHONE, this.matMid), make(shapes.midBroad, capMid, 'trees:mid:broadleaf', shadows && !ON_PHONE, this.matMid)];
-    this.near = [make(shapes.nearCon, capNear, 'trees:near:conifer', shadows, this.matNear), make(shapes.nearBroad, capNear, 'trees:near:broadleaf', shadows, this.matNear)];
+    // (the mid and near tiers morph a broadleaf into a maple per instance:
+    // every one of their geometries carries the morph's attributes, a
+    // conifer's being its own shape, and an instanced `maple` weight)
+    const morphing = (M, cap) => {
+      M.geometry.setAttribute('maple', new THREE.InstancedBufferAttribute(new Float32Array(cap), 1).setUsage(THREE.DynamicDrawUsage));
+      M.customDepthMaterial = this.matDepth;
+      return M;
+    };
+    this.mid = [morphing(make(noMaple(shapes.midCon), capMid, 'trees:mid:conifer', shadows && !ON_PHONE, this.matMid), capMid),
+      morphing(make(withMaple(shapes.midBroad, shapes.midMaple), capMid, 'trees:mid:broadleaf', shadows && !ON_PHONE, this.matMid), capMid)];
+    this.near = [morphing(make(noMaple(shapes.nearCon), capNear, 'trees:near:conifer', shadows, this.matNear), capNear),
+      morphing(make(withMaple(shapes.nearBroad, shapes.nearMaple), capNear, 'trees:near:broadleaf', shadows, this.matNear), capNear)];
     // THE FAR POOL: a chunk with no road or building (a forest's middle, an
     // island) would be a flat mesh -- a draw -- holding nothing but far
     // crowns; Blake Island alone was 21 of them. Their far crowns live here
@@ -873,8 +957,10 @@ export class TreeSystem {
           else { if (d2 < Rinq) continue; M = mid[con]; k = nMid[con]; if (k >= capMid) continue; nMid[con] = k + 1; }
           // a crown is a little elliptical, each its own way -- never
           // narrower than the far crown it has to hide
+          const mp = con && isMaple(kind, seed, ord[o + 7]) ? 1 : 0;
           const s0 = con ? cr / B_CR : cr / C_CR, sy = con ? th / B_TH : th / C_TH;
           const sx = s0 * (1 + 0.14 * frac(seed * 97.3)), sz = s0 * (1 + 0.14 * frac(seed * 61.7));
+          M.geometry.attributes.maple.array[k] = mp;
           const a = seed * 43.98, cs = Math.cos(a), sn = Math.sin(a);
           const m = M.instanceMatrix.array, q = k * 16;
           m[q] = cs * sx; m[q + 1] = 0; m[q + 2] = -sn * sx; m[q + 3] = 0;
@@ -895,6 +981,9 @@ export class TreeSystem {
       M.visible = n > 0;   // an empty tier is not a draw
       M.instanceMatrix.clearUpdateRanges(); M.instanceMatrix.addUpdateRange(0, Math.max(1, n) * 16); M.instanceMatrix.needsUpdate = true;
       M.instanceColor.clearUpdateRanges(); M.instanceColor.addUpdateRange(0, Math.max(1, n) * 3); M.instanceColor.needsUpdate = true;
+      const mp = M.geometry.attributes.maple;
+      if (this.warm && n === 1) mp.array[0] = 0;
+      mp.clearUpdateRanges(); mp.addUpdateRange(0, Math.max(1, n)); mp.needsUpdate = true;
     };
     done(mid[0], nMid[0]); done(mid[1], nMid[1]); done(near[0], nNear[0]); done(near[1], nNear[1]);
     this.refreshes++;

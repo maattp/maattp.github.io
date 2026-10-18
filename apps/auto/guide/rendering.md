@@ -1010,3 +1010,14 @@ Cost (perfguard downtown, each run alone against master): steady draws
 widens the shadow box's ground along the sun's azimuth, so the desktop's
 shadow pass sees more casters; the phone's statics come from the shadow
 cache.
+
+**Maples (v233).** Half the street trees, 38 % of park broadleaf and 30 %
+of a wood's are maples (`isMaple`): a broad, dense dome nearly as wide as it
+is tall, set low, its clumps spread round the sides so the outline is round,
+on a trunk that forks a third of the way up into three thick limbs. It is a
+MORPH of the broadleaf crown (`nearBroad(true)` / `midBroad(true)`: the same
+calls with the same counts), carried as `pos2` / `nor2` and chosen per
+instance by `maple`, so it costs no draw; the few triangles the two shapes
+wind differently go in once each way. A depth material does the same morph,
+so a maple's shadow is a maple's. In fall a maple turns scarlet, orange,
+gold or crimson, never brown.
