@@ -246,6 +246,13 @@ export const TYPES = {
   // `finish: 'steel'` is the brushed-metal paint material; the livery keeps it
   // stainless whatever colour the spawner drew. `engine` is the deeper motor.
   wedge: deriveSpec({ wheelbase: 3.66, len: 5.68, wid: 2.06, wheelR: 0.445, sill: 0.40, belt: 1.22, roof: 1.88, cab: [-0.16, 0.35], hand: 'wedge', ev: true, engine: 'evtruck', finish: 'steel', livery: 0xb9bdc1, lightbar: [[1.010, 1.94], [1.260, 1.95]], hp: 250, armor: 0.5, mass: 2.6, acc: 11.0, topKph: 200, brakeM: 38, latG: 0.94, rearSteer: 0.175 }),
+  // THE BELLTOWN HELLCAT (an Easter egg): Seattle's most-complained-about car,
+  // a supercharged Dodge Charger that rev-bombed Belltown at 2 am until the
+  // city sued its owner. The muscle car's body in `finish: 'tiger'` (orange,
+  // black stripes, drawn in the paint shader: no UVs needed), the loudest
+  // engine in the city (`engine: 'hellcat'`, audio.js), and quick. Only a
+  // few, and only in Belltown traffic (traffic.js HELLCAT_*).
+  hellcat: deriveSpec({ rwd: true, wheelbase: 2.95,len: 5.02, wid: 1.98, wheelR: 0.35, sill: 0.26, belt: 1.02, roof: 1.40, cab: [-0.24, 0.13], hand: 'muscle', engine: 'hellcat', finish: 'tiger', livery: 0xff5200, hellcat: true, mass: 1.2, acc: 8.6, topKph: 315, brakeM: 35, latG: 0.95 }),
   muscle: deriveSpec({ rwd: true, wheelbase: 2.95,len: 5.02, wid: 1.98, wheelR: 0.35, sill: 0.26, belt: 1.02, roof: 1.40, cab: [-0.24, 0.13], hand: 'muscle', mass: 1.15, acc: 7.0, topKph: 265, brakeM: 36, latG: 0.94 }),
   // Roofless muscle. `roof` is the top of the windscreen frame, 16 cm under the
   // coupe's, and there is no greenhouse above the beltline at all -- which is
@@ -8487,6 +8494,15 @@ const PAINT_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Androi
  * material (and its far LOD's per-vertex copy, FAR_PARTS). Same three draws.
  */
 export function paintMaterial(color, finish = null) {
+  // Tiger (the Belltown Hellcat): the ordinary paint with stripes drawn into
+  // it (tigerShader), so it lacquers and reflects like every other car.
+  if (finish === 'tiger') {
+    const m = paintMaterial(color);
+    m.onBeforeCompile = tigerShader;
+    m.customProgramCacheKey = () => 'vehicleTiger';
+    m.userData.seed = Math.random() * 100;
+    return m;
+  }
   // Bare brushed stainless (the Wedge): a metal, not a lacquer -- near-full
   // metalness, a satin roughness, and only a whisper of clearcoat. The
   // clearcoat stays above zero on purpose: it is a define, so a stainless
@@ -8521,6 +8537,44 @@ export function paintMaterial(color, finish = null) {
   return new THREE.MeshStandardMaterial({
     color, metalness: 0.5, roughness: 0.26, envMapIntensity: 1.5,
   });
+}
+
+/**
+ * Tiger stripes, in the body's own frame (x across, y up, z along, nose +z):
+ * the paint has no UVs, and needs none. Each stripe is a band round the body
+ * at a station along it, wobbling with height and side, thickest at the
+ * spine (the roof, bonnet and boot's centre line) and running out to a point
+ * down the flank, each its own width and length; under the waist the orange
+ * fades to a tiger's cream belly. `seed` moves the pattern, car to car.
+ */
+function tigerShader(sh, renderer) {
+  sh.uniforms.tigSeed = { value: this.userData.seed || 0 };
+  sh.vertexShader = 'varying vec3 vTig;\n' + sh.vertexShader
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvTig = position;');
+  sh.fragmentShader = 'varying vec3 vTig;\nuniform float tigSeed;\nfloat tigH( float n ) { return fract( sin( n * 127.1 + tigSeed ) * 43758.5453 ); }\n' + sh.fragmentShader
+    .replace('#include <color_fragment>', `#include <color_fragment>
+	{
+		vec3 q = vTig;
+		float ax = abs( q.x );
+		float side = q.x < 0.0 ? 1.0 : 0.0;
+		// round the body from the spine: 0 on the roof's centre line, ~2 at the sill
+		float d = ax + max( 0.0, 1.45 - q.y );
+		float s = q.z * 2.2 + 0.34 * sin( d * 3.1 + q.z * 1.9 + tigSeed ) + 0.14 * sin( d * 7.3 - q.z * 3.0 ) + side * 0.21;
+		float k = floor( s ) + side * 31.0;
+		float f = abs( fract( s ) - 0.5 );
+		float reach = 1.2 + 1.0 * tigH( k );                       // how far down the flank this one runs
+		float taper = clamp( 1.0 - d / reach, 0.0, 1.0 );
+		float w = ( 0.15 + 0.15 * tigH( k + 7.0 ) ) * sqrt( taper );
+		float aa = fwidth( s ) * 0.8 + 1e-4;
+		float stripe = 1.0 - smoothstep( w - aa, w + aa, f );
+		// and a short thin stroke between each pair, from the spine
+		float f2 = abs( fract( s + 0.5 ) - 0.5 );
+		float t2 = clamp( 1.0 - d / ( 0.45 + 0.6 * tigH( k + 3.0 ) ), 0.0, 1.0 );
+		stripe = max( stripe, 1.0 - smoothstep( 0.07 * sqrt( t2 ) - aa, 0.07 * sqrt( t2 ) + aa, f2 ) );
+		float belly = smoothstep( 0.62, 0.40, q.y );
+		diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.93, 0.86, 0.72 ), belly );
+		diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.015, 0.012, 0.010 ), stripe );
+	}`);
 }
 
 // ---------------------------------------------------------------------------

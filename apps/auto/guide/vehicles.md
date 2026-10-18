@@ -363,6 +363,45 @@ shots.
   kerbside parking, and adding one would move every parked car in the city
   (see "The articulated bus").
 
+### The Belltown Hellcat: an Easter egg (v224)
+
+**A tiger-striped, supercharged muscle car, a few at a time, only in
+Belltown.** After the real one: a modified Dodge Charger Hellcat whose
+late-night revving and street racing got its owner sued by the city in 2024
+(an $83,619.97 default judgment for noise violations) and convicted of
+reckless driving in 2025. `docs/hellcat/` has shots.
+
+- **The body is the muscle car's** (`hand: 'muscle'`), the type is
+  `hellcat` with `spec.hellcat`. 0-100 3.6 s / 315 km/h on the sheet
+  (`tools/vehicles.mjs`'s `supercharged muscle sedan` band).
+- **The tiger paint is the paint shader's** (`finish: 'tiger'`,
+  `tigerShader`): no UVs on the body, so the stripes are a function of the
+  body-frame position -- bands round the body at stations along it, wobbling,
+  thickest at the spine and tapering to points down the flank, a short
+  stroke between each pair, a cream belly under the waist, and a per-car
+  `seed`. Otherwise the ordinary lacquer. Its own program
+  (`customProgramCacheKey` 'vehicleTiger'), compiled in main.js's boot warm-up
+  on the sedan's body, so the first one round a corner is no hitch. The far
+  LOD is the plain orange.
+- **Where:** `spawnTraffic` turns a car-sized draw into one when the spawn
+  point's neighbourhood (`G.placeNameAt`, the HUD's) is Belltown and a hash
+  says so (`HELLCAT_P` 0.12), never more than `HELLCAT_MAX` (3) about. A
+  minute parked in the middle of Belltown met two. Not a `CIVILIAN_TYPES`
+  slot, for the Wedge's reason. It drives like its owner: `drvK` 1.35 (35 %
+  over everyone's limit) and an IDM `aMax` of 5.5 against everyone's 2.
+- **The noise is the point.** `engine: 'hellcat'` (audio.js): the V8's
+  cross-plane burble with a rawer pulse, a 90 Hz body boom, the saturator
+  driven at 3.2, a lumpy idle, a blower's whine on the revs, eight gears and
+  the crackle (`audiorender.mjs --only engine-hellcat,engine-v8`: RMS -12.9
+  against the V8's -15.0 dB, centroid 1294 Hz, no clipping). Your own is
+  that through the engine voice. **An AI one gets a whole voice of its own**
+  (`_hellcat`): the nearest within `HELLCAT_HEAR` (360 m), at full level to
+  `HELLCAT_REF` (30 m, against a traffic voice's 7 m and 75 m reach), on the
+  player's `EngineModel`, driven as it is driven -- the floor off every stop,
+  a lift (and the crackle) into every one, and standing still a rev-bomb to
+  ~6000 rpm every 1.4-4 s; every pop and flat-out upshift is a `backfire`
+  placed on the car. It is skipped by the traffic voices while it has it.
+
 **v215: your car steers sharper at speed, burns before it blows, and does burnouts.**
 - `PLAYER_BITE` 1.7 (vs `STEER_BITE` 1.25) in `steerLock`, for the detailed
   vehicle only: a sedan at 108 km/h turns on 11 m, not 17. The AI's lock is

@@ -1683,7 +1683,8 @@ function installShadowFade() {
       // table. (paint is never disposed: that would release the program just
       // compiled, which no car is using yet.)
       const va = vehicleAssets(), sd = va.types.sedan, paint = paintMaterial(0xffffff);
-      for (const [geo, mat] of [[sd.paintGeo, paint], [sd.trimGeoW, va.trimMat], [sd.matteGeoW, va.matteMat]]) {
+      // (and the Belltown Hellcat's tiger paint, its own program, on the same body)
+      for (const [geo, mat] of [[sd.paintGeo, paint], [sd.paintGeo, paintMaterial(0xff5200, 'tiger')], [sd.trimGeoW, va.trimMat], [sd.matteGeoW, va.matteMat]]) {
         if (!geo) continue;
         const m = new THREE.Mesh(geo, mat);
         m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false;
