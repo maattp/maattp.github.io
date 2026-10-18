@@ -17,7 +17,7 @@ import * as G from './geo.js';
 const TYRE = [0.05, 0.05, 0.055];
 const RIM = [0.80, 0.82, 0.85];
 const HUB = [0.42, 0.44, 0.47];
-const RIM_BLACK = [0.045, 0.045, 0.05], HUB_BLACK = [0.02, 0.02, 0.022];
+const RIM_BLACK = [0.12, 0.125, 0.135], HUB_BLACK = [0.04, 0.04, 0.045], RIM_LIP = [0.22, 0.225, 0.24], DISC_DARK = [0.07, 0.07, 0.075];
 // Glazing. This exact colour is what marks a trim vertex as GLASS: buildType
 // tags every trim vertex carrying it with the `glass` attribute, and the trim
 // shader turns those into see-through, sky-reflecting glass (see glassShader).
@@ -255,7 +255,7 @@ export const TYPES = {
   // black stripes, drawn in the paint shader: no UVs needed), the loudest
   // engine in the city (`engine: 'hellcat'`, audio.js), and quick. Only a
   // few, and only in Belltown traffic (traffic.js HELLCAT_*).
-  hellcat: deriveSpec({ rwd: true, wheelbase: 3.05,len: 5.10, wid: 2.03, wheelR: 0.36, sill: 0.25, belt: 1.02, roof: 1.46, cab: [-0.30, 0.10], hand: 'charger', engine: 'hellcat', finish: 'tiger', livery: 0xc9ad94, hellcat: true, mass: 1.2, acc: 8.6, topKph: 315, brakeM: 35, latG: 0.95 }),
+  hellcat: deriveSpec({ rwd: true, wheelbase: 3.05,len: 5.10, wid: 2.03, wheelR: 0.36, sill: 0.26, belt: 0.96, roof: 1.47, cab: [-0.30, 0.10], hand: 'charger', engine: 'hellcat', finish: 'tiger', livery: 0xc9ad94, hellcat: true, mass: 1.2, acc: 8.6, topKph: 315, brakeM: 35, latG: 0.95 }),
   muscle: deriveSpec({ rwd: true, wheelbase: 2.95,len: 5.02, wid: 1.98, wheelR: 0.35, sill: 0.26, belt: 1.02, roof: 1.40, cab: [-0.24, 0.13], hand: 'muscle', mass: 1.15, acc: 7.0, topKph: 265, brakeM: 36, latG: 0.94 }),
   // Roofless muscle. `roof` is the top of the windscreen frame, 16 cm under the
   // coupe's, and there is no greenhouse above the beltline at all -- which is
@@ -438,13 +438,14 @@ export const CAR_COLORS = [
  */
 function addWheel(trim, matte, cx, cy, cz, r, w, out = 1, knobby = false, kind = null) {
   if (kind === 'bike') { bikeWheel(trim, matte, cx, cy, cz, r, w); return; }
-  const SEG = 18;
+  // (the Belltown Hellcat's are rounder: three of it about at most)
+  const SEG = kind === 'black' ? 30 : 18;
   // Knob tops at the rolling radius, the carcass under them: the wheel
   // still stands on `r`, as the ground solve assumes.
   if (knobby) { knobs(matte, cx, cy, cz, r, w); r *= 0.9; }
   const hw = w / 2;
   // where the tyre grips the rim; an off-road tyre is mostly sidewall
-  const bead = r * (knobby ? 0.60 : 0.70);
+  const bead = r * (knobby ? 0.60 : kind === 'black' ? 0.78 : 0.70);
   const ang = (i) => (i / SEG) * Math.PI * 2;
 
   /**
@@ -508,10 +509,12 @@ function addWheel(trim, matte, cx, cy, cz, r, w, out = 1, knobby = false, kind =
 
     disc(trim, face, bead * 0.99, bead * 0.88, o, rimC);            // rim lip
     band(trim, face, bead * 0.88, face * 0.62, bead * 0.88, rimC, [0, 1]);
+    // 'black': five split spokes, each a pair spreading toward the rim
     const SPOKES = kind === 'black' ? 10 : 5;
     const hubR = r * 0.20, spokeX = face * 0.62;
     for (let s = 0; s < SPOKES; s++) {
-      const a = (s / SPOKES) * Math.PI * 2 + 0.35;
+      const a = SPOKES > 5 ? (Math.floor(s / 2) / 5) * Math.PI * 2 + 0.35 + (s % 2 ? 0.13 : -0.13)
+        : (s / SPOKES) * Math.PI * 2 + 0.35;
       const p = (rr, da, x) => [cx + x, cy + Math.cos(a + da) * rr, cz + Math.sin(a + da) * rr];
       const wo = SPOKES > 5 ? 0.12 : 0.30, wi = SPOKES > 5 ? 0.09 : 0.17;
       trim.quad(p(bead * 0.89, -wo, face), p(bead * 0.89, wo, face), p(hubR, wi, spokeX), p(hubR, -wi, spokeX),
@@ -544,7 +547,49 @@ function addWheel(trim, matte, cx, cy, cz, r, w, out = 1, knobby = false, kind =
     }
     disc(trim, face + bulge, r1, 0.001, o, AERO_A);
   };
-  const finish = kind === 'aero' ? aero : dress;
+  // `kind` 'black' (the Belltown Hellcat): five split spokes in gunmetal --
+  // each a pair of arms, apart at the rim and meeting near the hub, dished
+  // deep toward the centre -- the lip of the rim proud round them.
+  const split = (o) => {
+    const face = o * hw * 0.58, deep = face * 0.20;
+    band(trim, face * 0.30, r * 0.62, face * 0.46, r * 0.62, DISC_DARK, [0, 1]);
+    disc(trim, face * 0.46, r * 0.62, r * 0.22, o, DISC_DARK);
+    const ca = 2.35;
+    trim.tube(
+      [cx + face * 0.12, cy + Math.cos(ca - 0.40) * r * 0.54, cz + Math.sin(ca - 0.40) * r * 0.54],
+      [cx + face * 0.12, cy + Math.cos(ca + 0.40) * r * 0.54, cz + Math.sin(ca + 0.40) * r * 0.54],
+      r * 0.12, 8, CALIPER, true);
+    disc(trim, face, bead * 0.99, bead * 0.90, o, RIM_LIP);           // the lip, brighter
+    band(trim, face, bead * 0.90, face * 0.5, bead * 0.90, RIM_BLACK, [0, 1]);
+    const hubR = r * 0.17, rimR = bead * 0.90;
+    // an arm: from the hub (angle a0, half-width w0) to the rim (a1, w1), its
+    // face bowing out between them, with two sides so it has depth
+    const arm = (a0, a1, w0, w1) => {
+      const N = 4, F = [], B = [];
+      for (let k = 0; k <= N; k++) {
+        const t = k / N, rr = lp(hubR, rimR, t), a = lp(a0, a1, t), hwid = lp(w0, w1, t) / rr;
+        const x = lp(deep, face, Math.sqrt(t)) + o * 0.004;
+        const P = (da, dx) => [cx + x - dx, cy + Math.cos(a + da) * rr, cz + Math.sin(a + da) * rr];
+        F.push([P(-hwid, 0), P(hwid, 0)]);
+        B.push([P(-hwid, o * 0.035), P(hwid, o * 0.035)]);
+      }
+      trim.patch(F, RIM_BLACK, [o, 0, 0]);
+      const am = (a0 + a1) / 2;
+      for (const sd of [0, 1]) {
+        const sg = sd ? 1 : -1;
+        trim.patch(F.map((f, k) => [f[sd], B[k][sd]]), HUB_BLACK, [0, -Math.sin(am) * sg, Math.cos(am) * sg]);
+      }
+    };
+    for (let sp = 0; sp < 5; sp++) {
+      const A = (sp / 5) * Math.PI * 2 + 0.35;
+      arm(A - 0.045, A - 0.20, 0.016, 0.027);
+      arm(A + 0.045, A + 0.20, 0.016, 0.027);
+    }
+    disc(trim, deep, hubR * 1.05, r * 0.05, o, RIM_BLACK);
+    disc(trim, deep + o * 0.01, r * 0.08, 0.001, o, HUB_BLACK);
+  };
+  const lp = (a, b, t) => a + (b - a) * t;
+  const finish = kind === 'aero' ? aero : kind === 'black' ? split : dress;
   if (out === 0) { finish(1); finish(-1); } else finish(out);
 }
 
@@ -1604,32 +1649,76 @@ function buildCharger(spec, paint, trim, matte) {
   const wr = spec.wheelR;
   const nose = spec.len / 2, tail = -spec.len / 2;
   const zF = 1.55, zR = -1.50;                 // 3.05 m wheelbase
+  const lp = (a, b, t) => a + (b - a) * t;
 
   // Widebody: the full width is the flares, the doors between them pulled in.
+  // The face is broad and the nose blunt -- a wide, upright fascia.
   const halfW = curve([
-    [tail, 0.86], [-2.25, 0.95], [zR, 1.00], [-0.75, 0.925], [0.65, 0.925],
-    [zF, 1.00], [2.25, 0.95], [nose, 0.88],
+    [tail, 0.87], [-2.25, 0.95], [zR, 1.00], [-0.75, 0.925], [0.65, 0.925],
+    [zF, 1.00], [2.25, 0.96], [nose, 0.915],
   ]);
   const sillY = curve([
-    [tail, 0.40], [-2.10, 0.30], [-0.60, 0.25], [0.60, 0.25], [2.10, 0.29], [nose, 0.33],
+    [tail, 0.42], [-2.10, 0.30], [-0.60, 0.26], [0.60, 0.26], [2.10, 0.29], [nose, 0.29],
   ]);
-  // High and level: the bonnet falls 13 cm over its 1.8 m.
+  // High and level, to a TALL nose: the bonnet's leading edge is at 0.96 m,
+  // which is most of what makes a Charger's face so big.
   const beltY = curve([
-    [tail, 1.01], [-2.30, 1.04], [zR, 1.04], [-0.60, 1.02], [0.30, 1.01],
-    [0.90, 1.00], [1.60, 0.975], [2.20, 0.935], [nose, 0.875],
+    [tail, 0.955], [-2.30, 0.975], [zR, 0.98], [-0.60, 0.965], [0.30, 0.96],
+    [0.90, 0.95], [1.60, 0.94], [2.20, 0.925], [nose, 0.905],
   ]);
   const tuckAt = curve([
-    [tail, 0.90], [zR, 0.95], [-0.60, 0.92], [0.60, 0.92], [zF, 0.95], [nose, 0.90],
+    [tail, 0.90], [zR, 0.95], [-0.60, 0.92], [0.60, 0.92], [zF, 0.95], [nose, 0.92],
   ]);
   const topAt = curve([
-    [tail, 0.88], [-2.15, 0.93], [-1.10, 0.95], [1.10, 0.95], [1.90, 0.93],
-    [2.30, 0.88], [nose, 0.80],
+    [tail, 0.88], [-2.15, 0.93], [-1.10, 0.95], [1.10, 0.95], [1.90, 0.94],
+    [2.30, 0.91], [nose, 0.87],
   ]);
-  const { geom, half, surf, endProf } = bodyCore(spec, paint, matte, {
+  // 110 stations, against the fleet's 44: three of these about at most, and
+  // the flares, the shoulder and the nose's roll are smooth for it.
+  // The core lofts the body to EXT short of each end, square; the nose and
+  // tail are lofted on from its end sections below, curving as they go.
+  const EXT = 0.34;
+  const { geom, half, surf } = bodyCore({ ...spec, len: spec.len - 2 * EXT }, paint, matte, {
     halfW, sillY, beltY, tuckAt, topAt, zF, zR,
-    archR: 0.60, archGap: 0.04, creaseAt: 0.56, tumble: 0.90,
-    deckDrop: 0.028, lipOut: 0.065, endRound: 0.15, endMin: 0.90,
+    archR: 0.60, archGap: 0.04, creaseAt: 0.58, tumble: 0.91,
+    deckDrop: 0.026, lipOut: 0.065, endRound: 0.001, endMin: 1, stations: 100,
   });
+  /**
+   * An end, lofted on from the core's end section over EXT: in plan the
+   * corners round (x pulls in on a quarter circle), in profile the deck rolls
+   * down into the face and the bottom tucks up, so the bonnet curves into the
+   * nose and the boot into the tail. Closed by a face that bows out. The
+   * fascia's lamps, grille and mouth are drawn on it by the paint shader
+   * (tigerShader), so they follow every curve; nothing is punched through.
+   */
+  const endLoft = (dir, o) => {
+    const z0 = dir * (spec.len / 2 - EXT);
+    const base = [...half(z0, -1), ...half(z0, 1).reverse()];
+    let ymin = Infinity, ymax = -Infinity;
+    for (const [, y] of base) { ymin = Math.min(ymin, y); ymax = Math.max(ymax, y); }
+    const mid = (ymin + ymax) / 2, M = 14, rings = [];
+    for (let i = 0; i <= M; i++) {
+      const t = Math.sin((i / M) * Math.PI / 2), c = 1 - Math.sqrt(Math.max(0, 1 - t * t));
+      rings.push({ z: z0 + dir * EXT * t, pts: base.map(([x, y]) => {
+        const wt = clamp((y - mid) / (ymax - mid), 0, 1) ** 1.6, wb = clamp((mid - y) / (mid - ymin), 0, 1) ** 2;
+        return [x * (1 - o.plan * c), y - o.top * wt * c + o.bot * wb * c];
+      }) });
+    }
+    paint.loft(rings, WHITE, { capStart: false, capEnd: false });
+    const last = rings[M].pts, K = last.length, H = K / 2, rows = [];
+    for (let i = 0; i < H; i++) {
+      const L = last[i], R = last[K - 1 - i], vf = Math.sin(Math.PI * i / (H - 1)), row = [];
+      for (let j = 0; j <= 18; j++) {
+        const u = j / 18;
+        row.push([lp(L[0], R[0], u), lp(L[1], R[1], u), rings[M].z + dir * o.bow * (1 - (2 * u - 1) ** 2) * vf]);
+      }
+      rows.push(row);
+    }
+    paint.patch(rows, WHITE, [0, 0, dir]);
+    return { z: rings[M].z, top: ymax - o.top, rings };
+  };
+  const front = endLoft(1, { plan: 0.15, top: 0.085, bot: 0.05, bow: 0.05 });
+  const rear = endLoft(-1, { plan: 0.12, top: 0.05, bot: 0.08, bow: 0.035 });
 
   const tw = 0.305;
   const wx = geom(zF).wb - tw / 2 + 0.03;
@@ -1639,78 +1728,90 @@ function buildCharger(spec, paint, trim, matte) {
     [-wxR, wr, zR, wr, tw, undefined, false, 'black'], [wxR, wr, zR, wr, tw, undefined, false, 'black'],
   ];
 
-  // --- the glasshouse: low, with a fast screen at each end ------------------
-  const cowlZ = 0.74, cowlY = 1.005, roofY = spec.roof;
-  const scrZ = -0.10, backZ = -1.02, rearZ = -1.86, rearY = 1.045;
-  const wScrB = 0.83, wScrT = 0.69, wRoof = 0.705, wRearT = 0.69, wRear = 0.82;
-  const wGlassT = 0.676, wGlassB = 0.825;
-  const lp = (a, b, t) => a + (b - a) * t;
+  // --- the glasshouse: a big raked screen, a long roof, a fast rear screen ---
+  const cowlZ = 1.00, cowlY = 0.97, roofY = spec.roof;
+  const scrZ = 0.02, backZ = -1.08, rearZ = -1.92, rearY = 0.995;
+  const wScrB = 0.845, wScrT = 0.70, wRoof = 0.715, wRearT = 0.70, wRear = 0.835;
+  const wGlassT = 0.684, wGlassB = 0.84;
 
+  const NR = 6, NC = 14;
   const scrRows = [];
-  for (let i = 0; i <= 3; i++) {
-    const t = i / 3, row = [];
-    const cz = lp(cowlZ, scrZ, t) + 0.034 * Math.sin(Math.PI * t);
-    const cy = lp(cowlY, roofY, t) + 0.012 * Math.sin(Math.PI * t);
+  for (let i = 0; i <= NR; i++) {
+    const t = i / NR, row = [];
+    const cz = lp(cowlZ, scrZ, t) + 0.040 * Math.sin(Math.PI * t);
+    const cy = lp(cowlY, roofY, t) + 0.014 * Math.sin(Math.PI * t);
     const hwv = lp(wScrB, wScrT, t);
-    for (let j = 0; j <= 8; j++) {
-      const u = -1 + (2 * j) / 8;
-      row.push([u * hwv, cy - 0.026 * u * u, cz - 0.09 * u * u]);
+    for (let j = 0; j <= NC; j++) {
+      const u = -1 + (2 * j) / NC;
+      row.push([u * hwv, cy - 0.028 * u * u, cz - 0.095 * u * u]);
     }
     scrRows.push(row);
   }
   trim.patch(scrRows, GLASS_TINT, [0, 0.5, 1]);
 
-  const roofCols = [[-0.98, -0.050], [-1, -0.012], [-0.94, 0], [-0.66, 0.008], [-0.3, 0.013],
-    [0, 0.015], [0.3, 0.013], [0.66, 0.008], [0.94, 0], [1, -0.012], [0.98, -0.050]];
+  const roofCols = [[-0.98, -0.052], [-1, -0.012], [-0.94, 0], [-0.80, 0.005], [-0.62, 0.009], [-0.42, 0.012], [-0.2, 0.014],
+    [0, 0.015], [0.2, 0.014], [0.42, 0.012], [0.62, 0.009], [0.80, 0.005], [0.94, 0], [1, -0.012], [0.98, -0.052]];
   const roofRows = [];
-  for (let i = 0; i <= 3; i++) {
-    const t = i / 3;
-    const cz = lp(scrZ, backZ, t), cy = roofY + 0.008 * Math.sin(Math.PI * t);
+  for (let i = 0; i <= NR; i++) {
+    const t = i / NR;
+    const cz = lp(scrZ, backZ, t), cy = roofY + 0.010 * Math.sin(Math.PI * t);
     roofRows.push(roofCols.map(([u, dy]) => [u * wRoof, cy + dy - 0.018 * u * u, cz]));
   }
   paint.patch(roofRows, WHITE, [0, 1, 0]);
 
-  // fastback: the rear screen curves down onto the deck
+  // the rear screen curves down onto the deck
   const rearRows = [];
-  for (let i = 0; i <= 3; i++) {
-    const t = i / 3, row = [];
-    const cz = lp(backZ, rearZ, t), cy = lp(roofY - 0.006, rearY, t) + 0.045 * Math.sin(Math.PI * t);
+  for (let i = 0; i <= NR; i++) {
+    const t = i / NR, row = [];
+    const cz = lp(backZ, rearZ, t), cy = lp(roofY - 0.006, rearY, t) + 0.05 * Math.sin(Math.PI * t);
     const hwv = lp(wRearT, wRear, t);
-    for (let j = 0; j <= 8; j++) {
-      const u = -1 + (2 * j) / 8;
-      row.push([u * hwv, cy - 0.026 * u * u, cz + 0.04 * u * u]);
+    for (let j = 0; j <= NC; j++) {
+      const u = -1 + (2 * j) / NC;
+      row.push([u * hwv, cy - 0.028 * u * u, cz + 0.045 * u * u]);
     }
     rearRows.push(row);
   }
   trim.patch(rearRows, GLASS_TINT, [0, 0.7, -1]);
 
-  // the side glass kicks up at its tail, as the Charger's does
-  const sgFB = [0.66, 1.020], sgFT = [-0.06, roofY - 0.012], sgRT = [-1.02, roofY - 0.018], sgRB = [-1.56, 1.085];
-  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [-0.30, -1.10], scrWrap: 0.09, rearWrap: 0.04 }, paint);
-  const sailOuter = [0, 1, 2, 3].map((i) => {
-    const t = i / 3;
-    return [lp(wGlassT, wRear + 0.02, Math.sqrt(t)), lp(roofY - 0.012, rearY + 0.004, t) + 0.035 * Math.sin(Math.PI * t), lp(backZ, rearZ, t)];
-  });
+  // Four side windows' worth of glass, the line kicking up at its tail
+  const sgFB = [0.92, 0.980], sgFT = [0.06, roofY - 0.012], sgRT = [-0.98, roofY - 0.020], sgRB = [-1.46, 1.010];
+  const dloB = (u) => [lp(sgFB[0], sgRB[0], u), lp(sgFB[1], sgRB[1], u * u * u)];
+  const dloT = (u) => [lp(sgFT[0], sgRT[0], u), lp(sgFT[1], sgRT[1], u)];
+  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [-0.20, -1.08], scrWrap: 0.095, rearWrap: 0.045 }, paint);
+  const sailOuter = [];
+  for (let i = 0; i <= NR; i++) {
+    const t = i / NR;
+    sailOuter.push([lp(wGlassT, wRear + 0.025, Math.sqrt(t)), lp(roofY - 0.016, rearY + 0.004, t) + 0.04 * Math.sin(Math.PI * t), lp(backZ, rearZ, t)]);
+  }
   for (const sx of [-1, 1]) {
     const rows = [];
-    for (let i = 0; i <= 2; i++) {
-      const t = i / 2, row = [];
-      for (let j = 0; j <= 6; j++) {
-        const u = j / 6;
-        const bz = lp(sgFB[0], sgRB[0], u), by = lp(sgFB[1], sgRB[1], u * u);
-        const tz = lp(sgFT[0], sgRT[0], u), ty = lp(sgFT[1], sgRT[1], u);
+    for (let i = 0; i <= 3; i++) {
+      const t = i / 3, row = [];
+      for (let j = 0; j <= 12; j++) {
+        const u = j / 12, [bz, by] = dloB(u), [tz, ty] = dloT(u);
         row.push([sx * lp(wGlassB, wGlassT, t), lp(by, ty, t), lp(bz, tz, t)]);
       }
       rows.push(row);
     }
     trim.patch(rows, GLASS_TINT, [sx, 0, 0]);
-    const bz0 = lp(sgFB[0], sgRB[0], 0.45), bz1 = lp(sgFT[0], sgRT[0], 0.45);
-    matte.patch([
-      [[sx * (wGlassB + 0.006), lp(sgFB[1], sgRB[1], 0.2) - 0.01, bz0 + 0.05], [sx * (wGlassB + 0.006), lp(sgFB[1], sgRB[1], 0.2) - 0.01, bz0 - 0.05]],
-      [[sx * (wGlassT + 0.006), sgFT[1] + 0.004, bz1 + 0.05], [sx * (wGlassT + 0.006), sgFT[1] + 0.004, bz1 - 0.05]],
-    ], [0.05, 0.05, 0.055], [sx, 0, 0]);
+    // the B-pillar, black, between the doors' glass
+    for (const [u, hwz] of [[0.47, 0.05]]) {
+      const [bz, by] = dloB(u), [tz, ty] = dloT(u);
+      matte.patch([
+        [[sx * (wGlassB + 0.006), by - 0.01, bz + hwz], [sx * (wGlassB + 0.006), by - 0.01, bz - hwz]],
+        [[sx * (wGlassT + 0.006), ty + 0.004, tz + hwz], [sx * (wGlassT + 0.006), ty + 0.004, tz - hwz]],
+      ], [0.04, 0.04, 0.045], [sx, 0, 0]);
+    }
+    // bright surround round the top of the glass, and along its foot
+    const frame = [];
+    for (let j = 0; j <= 10; j++) { const [tz, ty] = dloT(j / 10); frame.push([sx * (wGlassT + 0.008), ty + 0.006, tz]); }
+    for (let j = 0; j < frame.length - 1; j++) trim.tube(frame[j], frame[j + 1], 0.008, 5, CHROME, false);
+    for (let j = 0; j < 10; j++) {
+      const [z0, y0] = dloB(j / 10), [z1, y1] = dloB((j + 1) / 10);
+      trim.tube([sx * (wGlassB + 0.004), y0 - 0.010, z0], [sx * (wGlassB + 0.004), y1 - 0.010, z1], 0.009, 5, CHROME, false);
+    }
     paint.patch(scrRows.map((r, i) => {
-      const e = r[r.length - 1], t = i / 3;
+      const e = r[r.length - 1], t = i / NR;
       return [[sx * e[0], e[1], e[2]],
         [sx * lp(wGlassB, wGlassT, t), lp(sgFB[1], sgFT[1], t), lp(sgFB[0], sgFT[0], t)]];
     }), WHITE, [sx, 0.4, 0]);
@@ -1718,15 +1819,14 @@ function buildCharger(spec, paint, trim, matte) {
       const e = r[r.length - 1], o = sailOuter[i];
       return [[sx * e[0], e[1], e[2]], [sx * o[0], o[1], o[2]]];
     }), WHITE, [sx, 0.4, 0]);
-    // black window surround along the beltline
-    trim.tube([sx * (wGlassB + 0.004), sgFB[1] - 0.012, sgFB[0]],
-      [sx * (wGlassB + 0.004), lp(sgFB[1], sgRB[1], 0.6) - 0.012, lp(sgFB[0], sgRB[0], 0.6)], 0.012, 6, PLASTIC, true);
+    // the thick C-pillar: from the side glass's rear edge back to the sail
+    paint.patch(sailOuter.map((o, i) => {
+      const t = i / NR, [bz, by] = dloB(1), [tz, ty] = dloT(1);
+      return [[sx * lp(wGlassT, wGlassB, t), lp(ty, by, t), lp(tz, bz, t)], [sx * (o[0] + 0.002), o[1], o[2]]];
+    }), WHITE, [sx, 0.3, 0]);
   }
 
-  // --- the bonnet: matte black, a power bulge with a scoop at its front -----
-  // Laid 1.2 cm proud of the deck the loft drew, from the cowl to where the
-  // nose starts to roll in, across the deck to its shoulders.
-  const hoodZ0 = cowlZ - 0.02, hoodZ1 = nose - 0.035;
+  // --- the bonnet: matte black, a power bulge with a wide scoop -------------
   const deckY = (z, x) => {
     const pts = half(z, 1).slice(8);              // shoulder .. centre, x falling
     const ax = Math.abs(x);
@@ -1739,97 +1839,62 @@ function buildCharger(spec, paint, trim, matte) {
     }
     return pts[pts.length - 1][1];
   };
-  // the deck as DRAWN (the nose rolls in over its last 15 cm), 1.2 cm proud
-  const HZ = 16, hoodRows = [];
-  for (let i = 0; i <= HZ; i++) {
-    const z = lp(hoodZ0, hoodZ1, i / HZ), row = [];
-    for (const k of [7, 8, 9, 10, 11]) row.push(surf(z, -1, k, 0.012));
-    for (const k of [11, 10, 9, 8, 7]) row.push(surf(z, 1, k, 0.012));
-    hoodRows.push(row);
-  }
-  paint.patch(hoodRows, TIG_HOOD, [0, 1, 0]);
-  // the power bulge down the middle, its scoop at the front
-  const bz0 = 0.95, bz1 = nose - 0.30, BX = [-0.34, -0.26, -0.16, 0, 0.16, 0.26, 0.34], BH = [0, 0.030, 0.042, 0.046, 0.042, 0.030, 0];
+  // (the bonnet's black is the paint shader's: the deck forward of the cowl,
+  // over the roll into the nose; the bulge is a panel of its own)
+  const bz0 = 1.12, bz1 = nose - EXT - 0.06;
+  const BX = [-0.40, -0.33, -0.26, -0.18, -0.09, 0, 0.09, 0.18, 0.26, 0.33, 0.40];
+  const BH = [0, 0.022, 0.036, 0.044, 0.048, 0.050, 0.048, 0.044, 0.036, 0.022, 0];
   const bulgeRows = [];
-  for (let i = 0; i <= 8; i++) {
-    const t = i / 8, z = lp(bz0, bz1, t), rise = Math.min(1, t * 4);
+  for (let i = 0; i <= 12; i++) {
+    const t = i / 12, z = lp(bz0, bz1, t), rise = Math.min(1, t * 3.5) ** 0.7;
     bulgeRows.push(BX.map((x, j) => [x, deckY(z, x) + 0.014 + BH[j] * rise, z]));
   }
   paint.patch(bulgeRows, TIG_HOOD, [0, 1, 0]);
+  // its open front: the scoop, a black mouth across the bulge
   paint.patch([BX.map((x, j) => [x, deckY(bz1, x) + 0.014 + BH[j], bz1]),
     BX.map((x) => [x, deckY(bz1, x) + 0.012, bz1 + 0.002])], TIG_HOOD, [0, 0, 1]);
-  const hoodZ1b = bz1;
-  // the scoop's mouth at the bulge's front, and two extractor vents
-  matte.box(0, deckY(hoodZ1b, 0) + 0.018, hoodZ1b + 0.004, 0.40, 0.030, 0.008, 0, CAVITY);
+  matte.box(0, deckY(bz1, 0) + 0.016, bz1 + 0.003, 0.56, 0.036, 0.006, 0, CAVITY);
   for (const sx of [-1, 1]) {
-    const vz = 1.55, vx = sx * 0.50;
-    matte.box(vx, deckY(vz, vx) + 0.010, vz, 0.20, 0.008, 0.26, 0, CAVITY);
+    const vz = 1.70, vx = sx * 0.58;
+    matte.box(vx, deckY(vz, vx) + 0.010, vz, 0.18, 0.008, 0.30, 0, CAVITY);
   }
 
-  // --- front fascia -----------------------------------------------------------
-  const GRILLE = [0, 0.738, 0.445, 0.058], LAMP_A = [0.665, 0.742, 0.20, 0.048];
-  const MOUTH = [0, 0.470, 0.62, 0.120];
-  endFace(paint, nose, 1, endProf(nose), [GRILLE, LAMP_A, MOUTH], WHITE);
-  const gp = pocket(paint, matte, GRILLE[0], GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.12, 1,
-    { rim: 0.022, rimCol: PLASTIC });
-  // mesh behind it, and the split bar across it in body colour
-  matte.box(0, GRILLE[1] - gp.hh, gp.z + 0.02, gp.hw * 2, gp.hh * 2, 0.02, 0, [0.03, 0.03, 0.035]);
-  paint.box(0, GRILLE[1] - 0.010, nose - 0.012, GRILLE[2] * 2.02, 0.020, 0.03, 0, TIG_BLACK);
-  for (const sx of [-1, 1]) {
-    const hp = pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose - 0.02, LAMP_A[2], LAMP_A[3], 0.08, 1,
-      { rim: 0.018, rimCol: PLASTIC });
-    // the projector and its chrome, smoked, then the LED ring round it, lit
-    trim.box(sx * LAMP_A[0], LAMP_A[1] - hp.hh, hp.z + 0.025, hp.hw * 1.9, hp.hh * 2, 0.02, 0, [0.22, 0.24, 0.24]);
-    for (const p of [0.38, 0.62]) {
-      hole(trim, matte, sx * (LAMP_A[0] + (p - 0.5) * LAMP_A[2] * 1.7), LAMP_A[1], hp.z + 0.05, 0.030, 0.02, 1,
-        { rimCol: CHROME, wallCol: LAMP });
-    }
-    paint.box(sx * LAMP_A[0], LAMP_A[1] + LAMP_A[3] - 0.016, nose - 0.008, LAMP_A[2] * 2.0, 0.014, 0.02, 0, TIG_LAMP);
-    paint.box(sx * LAMP_A[0], LAMP_A[1] - LAMP_A[3] + 0.002, nose - 0.008, LAMP_A[2] * 2.0, 0.012, 0.02, 0, TIG_LAMP);
-    // the lamp wraps round onto the wing, its ring with it
-    const wz0 = nose - 0.22, wz1 = nose - 0.03, yl = LAMP_A[1];
-    const side = (z, dy, d) => { const q = surf(z, sx, 6, d); return [q[0], yl + dy, z]; };
-    matte.patch([[side(wz0, -0.045, 0.004), side(wz1, -0.045, 0.004)], [side(wz0, 0.045, 0.004), side(wz1, 0.045, 0.004)]],
-      [0.08, 0.085, 0.09], [sx, 0, 0]);
-    paint.patch([[side(wz0, 0.030, 0.008), side(wz1, 0.030, 0.008)], [side(wz0, 0.044, 0.008), side(wz1, 0.044, 0.008)]],
-      TIG_LAMP, [sx, 0, 0]);
-    // fog/brake ducts at the mouth's corners
-    pocket(paint, matte, sx * 0.80, 0.47, nose - 0.03, 0.10, 0.055, 0.10, 1, { rim: 0.014, rimCol: PLASTIC });
-  }
-  pocket(paint, matte, MOUTH[0], MOUTH[1], nose, MOUTH[2], MOUTH[3], 0.12, 1, { rim: 0.022, rimCol: PLASTIC });
-  // splitter, standing out under the mouth
-  matte.box(0, 0.312, nose - 0.07, 1.66, 0.022, 0.14, 0, PLASTIC);
-  // the strip between the grille and the mouth, gloss black, as the real one's
-  paint.box(0, MOUTH[1] + MOUTH[3] + 0.02, nose - 0.004, 1.02, GRILLE[1] - GRILLE[3] - MOUTH[1] - MOUTH[3] - 0.045, 0.012, 0, TIG_BLACK);
+  // --- front: the splitter under the mouth; the rest is the shader's --------
+  matte.box(0, 0.300, front.z - 0.09, 1.62, 0.022, 0.16, 0, PLASTIC);
 
-  // --- rear: the racetrack lamp, full width, and two big pipes ---------------
-  const TAILBAR = [0, 0.885, 0.78, 0.055], PLATEREC = [0, 0.640, 0.225, 0.072];
-  endFace(paint, tail, -1, endProf(tail), [TAILBAR, PLATEREC], WHITE);
-  pocket(paint, matte, TAILBAR[0], TAILBAR[1], tail, TAILBAR[2], TAILBAR[3], 0.06, -1, { rim: 0.018, rimCol: PLASTIC });
-  trim.box(0, TAILBAR[1] - 0.040, tail + 0.018, TAILBAR[2] * 1.96, 0.080, 0.024, 0, TAILC);
-  pocket(paint, matte, PLATEREC[0], PLATEREC[1], tail, PLATEREC[2], PLATEREC[3], 0.05, -1, { rim: 0.02, rimCol: PLASTIC });
-  trim.box(0, 0.580, tail - 0.028, 0.42, 0.125, 0.02, 0, PLATE);
-  matte.box(0, 0.36, tail + 0.10, 1.66, 0.12, 0.24, 0, PLASTIC);   // diffuser
-  for (const sx of [-1, 1]) hole(trim, matte, sx * 0.62, 0.42, tail + 0.01, 0.062, 0.12, -1);
-  // ducktail spoiler on the deck's edge, gloss black
-  const sz = tail + 0.10, sg = geom(sz);
-  paint.box(0, sg.y1 - 0.005, sz, sg.tw * 1.92, 0.045, 0.10, 0, TIG_BLACK);
+  // --- rear: the plate, two big pipes, the ducktail -----------------------------
+  trim.box(0, 0.555, rear.z - 0.022, 0.42, 0.125, 0.02, 0, PLATE);
+  for (const sx of [-1, 1]) hole(trim, matte, sx * 0.60, 0.40, rear.z - 0.004, 0.064, 0.12, -1, { seg: 16 });
+  matte.box(0, 0.31, rear.z + 0.12, 1.50, 0.06, 0.22, 0, PLASTIC);   // diffuser
+  paint.box(0, rear.top - 0.012, rear.z + 0.12, 1.42, 0.034, 0.09, 0, TIG_BLACK);
 
   // --- flanks -----------------------------------------------------------------
   for (const sx of [-1, 1]) {
-    for (const zc of [0.62, -0.38, -1.30]) {
-      const rows = [-0.008, 0.008].map((dz) =>
+    for (const zc of [0.66, -0.40, -1.36]) {
+      const rows = [-0.006, 0.006].map((dz) =>
         half(zc + dz, sx).slice(2, 9).map(([x, y]) => [x + sx * 0.005, y, zc + dz]));
       matte.patch(rows, [0.10, 0.10, 0.11], [sx, 0, 0]);
     }
-    // the side scallop's crease is the flank's own; a black rocker under it
+    // door handles, flush, dark
+    for (const zc of [0.28, -0.78]) {
+      const g = geom(zc);
+      matte.box(sx * (g.w * 0.975 + 0.004), g.yc + g.h * 0.13, zc, 0.012, 0.028, 0.16, 0, [0.06, 0.06, 0.065]);
+    }
+    // a black rocker under the doors
     matte.box(sx * (geom(0).wb + 0.004), 0.262, 0.03, 0.03, 0.07, 2.72, 0, PLASTIC);
-    // mirror, gloss black
-    paint.tube([sx * 0.810, 1.028, sgFB[0] - 0.01], [sx * 0.915, 1.055, sgFB[0] - 0.05], 0.020, 6, TIG_BLACK, true);
-    paint.box(sx * 0.955, 1.015, sgFB[0] - 0.09, 0.11, 0.085, 0.06, 0, TIG_BLACK);
-    trim.box(sx * 0.955, 1.022, sgFB[0] - 0.121, 0.094, 0.068, 0.02, 0, MIRROR);
-    // fender vent behind the front arch
-    matte.box(sx * (geom(zF - 0.72).w + 0.002), 0.78, zF - 0.72, 0.012, 0.05, 0.16, 0, CAVITY);
+    // the mirror, in the wrap, on a short stalk off the sail
+    paint.tube([sx * 0.825, 0.995, sgFB[0] - 0.03], [sx * 0.925, 1.020, sgFB[0] - 0.07], 0.020, 8, WHITE, true);
+    const mx = sx * 0.965, my = 0.985, mz = sgFB[0] - 0.11;
+    const MR = [[0, 0.075, 0.040], [0.5, 0.090, 0.050], [1, 0.080, 0.045]];   // fore-aft, half-width, half-height
+    paint.patch(MR.map(([t, hw, hh]) => {
+      const z = mz + 0.05 - t * 0.09, ring = [];
+      for (let k = 0; k <= 10; k++) {
+        const a = (k / 10) * Math.PI * 2;
+        ring.push([mx + Math.cos(a) * hw * (t === 0 ? 0.6 : 1), my + Math.sin(a) * hh * (t === 0 ? 0.6 : 1), z]);
+      }
+      return ring;
+    }), WHITE, [0, 0, 1]);
+    trim.box(mx, my - 0.040, mz - 0.042, 0.16, 0.080, 0.01, 0, MIRROR);
   }
   return wheels;
 }
@@ -8814,7 +8879,7 @@ function tigerShader(sh) {
   sh.uniforms.tigSeed = { value: this.userData.seed || 0 };
   sh.vertexShader = 'varying vec3 vTig;\nvarying vec3 vTigN;\n' + sh.vertexShader
     .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvTig = position;\n\tvTigN = normal;');
-  sh.fragmentShader = 'varying vec3 vTig;\nvarying vec3 vTigN;\nuniform float tigSeed;\nfloat tigH( float n ) { return fract( sin( n * 127.1 + tigSeed ) * 43758.5453 ); }\n' + sh.fragmentShader
+  sh.fragmentShader = `#define TIG_NOSE ${(TYPES.hellcat.len / 2).toFixed(3)}\n` + 'varying vec3 vTig;\nvarying vec3 vTigN;\nuniform float tigSeed;\nfloat tigH( float n ) { return fract( sin( n * 127.1 + tigSeed ) * 43758.5453 ); }\n' + sh.fragmentShader
     .replace('#include <color_fragment>', `#include <color_fragment>
 	// the flags, read before the wrap overwrites the colour
 	#ifdef USE_COLOR
@@ -8833,21 +8898,22 @@ function tigerShader(sh) {
 		// round the body from the spine: 0 on the roof's centre line, ~2 at the sill
 		float d = ax + max( 0.0, 1.30 - q.y );
 		// along the body on the flanks; across it on the nose and tail
-		float endW = step( 0.72, abs( nn.z ) );
+		float endW = step( 0.80, abs( nn.z ) );
 		float u = mix( q.z, q.x * sign( nn.z ) + 7.0 * sign( nn.z ), endW );
 		d = mix( d, 1.25 - q.y + 0.6, endW );
 		float side = q.x < 0.0 ? 1.0 : 0.0;
-		float s = u * 2.6 + d * 0.85 + 0.16 * sin( d * 3.1 + u * 1.7 + tigSeed ) + 0.25 * sin( u * 0.9 + tigSeed * 0.3 ) + side * 0.37;
+		float s = u * mix( 2.8, 2.5, endW ) - d * mix( 0.50, 0.10, endW ) + 0.18 * sin( d * 2.7 + u * 1.5 + tigSeed ) + 0.25 * sin( u * 0.9 + tigSeed * 0.3 ) + side * 0.37;
 		float k = floor( s ) + side * 57.0 + endW * 113.0;
 		float f = fract( s ) - 0.5;
 		float aa = fwidth( s ) * 0.75 + 1e-4;
 		// the stroke: a centre and a half-length down the body, tapering both ways
-		float c = 0.55 + 1.15 * tigH( k );
-		float L = 0.32 + 0.55 * tigH( k + 5.0 );
+		// (on the nose and tail nearly every stroke runs the face's full height)
+		float c = mix( 0.45 + 1.20 * tigH( k ), 1.22, endW );
+		float L = mix( 0.45 + 0.60 * tigH( k + 5.0 ), 0.62, endW );
 		float t = clamp( 1.0 - abs( d - c ) / L, 0.0, 1.0 );
 		float rag = 1.0 + 0.16 * sin( d * 23.0 + k * 3.7 );
-		float w = ( 0.11 + 0.09 * tigH( k + 7.0 ) ) * pow( t, 0.45 ) * rag;
-		float bend = 0.07 * sin( d * 2.6 + k * 1.3 );
+		float w = mix( 0.12 + 0.11 * tigH( k + 7.0 ), 0.09 + 0.07 * tigH( k + 7.0 ), endW ) * pow( t, 0.40 ) * rag;
+		float bend = 0.11 * sin( d * 2.4 + k * 1.3 );
 		float stripe = 1.0 - smoothstep( w - aa, w + aa, abs( f - bend ) );
 		// a thinner prong beside some of them, shorter, off the stroke's lower half
 		float c2 = c + L * 0.45, L2 = L * 0.55;
@@ -8856,6 +8922,56 @@ function tigerShader(sh) {
 		stripe = max( stripe, 1.0 - smoothstep( w2 - aa, w2 + aa, abs( f - bend - 0.27 ) ) );
 		diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.022, 0.020, 0.020 ), stripe );
 	}
+	// THE FASCIAS, drawn on the curved nose and tail (buildCharger's endLoft)
+	// as shapes in (|x|, y), so they wrap round the corners with the surface:
+	// a dark band of lamps and grille under the bonnet's edge, the mouth and
+	// two ducts below; the racetrack lamp and the diffuser at the back. And
+	// the bonnet's black: the deck forward of the cowl, over the roll.
+	float tigDark = 0.0, tigLampBody = 0.0, tigLens = 0.0, tigTail = 0.0, tigBezel = 0.0;
+	{
+		vec3 q = vTig;
+		vec3 nn = normalize( vTigN );
+		float X = abs( q.x ), Y = q.y;
+		float px = 0.6 * ( fwidth( X ) + fwidth( Y ) ) + 1e-4;
+		tigHood = max( tigHood, step( 0.98, q.z ) * smoothstep( 0.40, 0.62, nn.y ) );
+		if ( q.z > TIG_NOSE - 0.45 && nn.z > 0.10 && nn.y < 0.62 ) {
+			float s = clamp( ( X - 0.41 ) / 0.52, 0.0, 1.0 );
+			float yt = 0.838 - 0.012 * s, yb = 0.728 + 0.058 * pow( s, 1.6 );
+			float dl = max( max( yb - Y, Y - yt ), max( 0.415 - X, X - 0.96 ) );
+			tigLampBody = 1.0 - smoothstep( -px, px, dl );
+			// its bright bezel, so the lamp's curve reads against the grille
+			tigBezel = tigLampBody * smoothstep( -0.007 - px, -0.007 + px, dl );
+			float dg = max( max( 0.748 - Y, Y - 0.828 ), X - 0.395 );
+			float mtop = 0.588 - 0.028 * ( 1.0 - X / 0.47 );
+			float dm = max( max( 0.372 - Y, Y - mtop ), X - 0.47 );
+			float dd = max( max( 0.398 - Y, Y - 0.566 ), max( 0.565 - X, X - ( 0.79 - ( 0.566 - Y ) * 0.45 ) ) );
+			tigDark = 1.0 - smoothstep( -px, px, min( dg, min( dm, dd ) ) );
+			// the projector in its halo, a second lens outboard, an LED line along the top
+			float r = length( vec2( X, Y ) - vec2( 0.515, 0.784 ) );
+			float halo = 1.0 - smoothstep( 0.0065 - px, 0.0065 + px, abs( r - 0.040 ) );
+			float r2 = length( vec2( X, Y ) - vec2( 0.665, 0.796 ) );
+			tigLens = ( 1.0 - smoothstep( 0.025 - px, 0.025 + px, r ) ) + ( 1.0 - smoothstep( 0.018 - px, 0.018 + px, r2 ) );
+			float led = ( 1.0 - smoothstep( 0.0042 - px, 0.0042 + px, abs( Y - ( yt - 0.011 ) ) ) ) * step( 0.44, X );
+			tigLamp = max( tigLamp, max( halo, led ) * tigLampBody );
+			tigLens *= tigLampBody;
+		}
+		if ( q.z < -TIG_NOSE + 0.42 && nn.z < -0.10 && nn.y < 0.62 ) {
+			float dt = max( abs( Y - 0.812 ) - 0.026, X - 0.90 );
+			tigTail = 1.0 - smoothstep( -px, px, dt );
+			float housing = 1.0 - smoothstep( -px, px, max( abs( Y - 0.812 ) - 0.040, X - 0.915 ) );
+			float diff = 1.0 - smoothstep( -px, px, Y - 0.445 );
+			tigDark = max( housing, diff );
+		}
+	}
+	{
+		// mesh in the openings, smoked chrome in the lamps
+		float mesh = 0.5 + 0.5 * sin( vTig.x * 260.0 ) * sin( vTig.y * 260.0 );
+		diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.010 + 0.012 * mesh ), tigDark );
+		diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.05, 0.055, 0.06 ), tigLampBody );
+		diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.42, 0.44, 0.46 ), tigBezel );
+		diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.75, 0.78, 0.80 ), clamp( tigLens, 0.0, 1.0 ) );
+		diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.25, 0.02, 0.02 ), tigTail );
+	}
 	diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.028, 0.028, 0.030 ), max( tigHood, tigGloss ) );
 	diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.10, 0.16, 0.06 ), tigLamp );`)
     .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
@@ -8863,7 +8979,7 @@ function tigerShader(sh) {
     .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
 	metalnessFactor = mix( metalnessFactor, 0.15, tigHood );`)
     .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-	totalEmissiveRadiance += vec3( 0.75, 1.9, 0.30 ) * tigLamp;`)
+	totalEmissiveRadiance += vec3( 0.75, 1.9, 0.30 ) * tigLamp + vec3( 0.35, 0.40, 0.42 ) * clamp( tigLens, 0.0, 1.0 ) + vec3( 1.5, 0.10, 0.06 ) * tigTail;`)
     .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
 	#ifdef USE_CLEARCOAT
 		material.clearcoat *= 1.0 - tigHood;
