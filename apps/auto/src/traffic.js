@@ -15,6 +15,11 @@ const DESPAWN = 520;
 // The Belltown Hellcat (vehicles.js `hellcat`): the chance a Belltown spawn is
 // one, and how many may be about at once.
 const HELLCAT_P = 0.12, HELLCAT_MAX = 3;
+// The Wienermobile (vehicles.js `wiener`): the chance any car-sized spawn
+// anywhere is it, and never more than one about. Rare on purpose: driving
+// spawned a car every ~110 m, so this is about one per 10 km driven. It goes
+// when it is left behind, as every car does.
+const WIENER_P = 0.01;
 const HEAVY = new Set(['bus', 'artic', 'boxtruck', 'garbage', 'pickup', 'van', 'cruiser', 'sportbike', 'bicycle']);
 // A phone is draw-call bound, and the fleet was over half of it: an iPhone 17
 // Pro driving downtown showed 58 vehicles (3 draws each, plus shadows) and 9.6
@@ -951,6 +956,7 @@ export class TrafficSystem {
       // never more than HELLCAT_MAX about at once. A hash again, not this.R.
       if (!HEAVY.has(tn) && hash2(ei + 7919, this._prio) < HELLCAT_P && G.placeNameAt(x, z) === 'Belltown'
         && this.cars.filter((c) => c.spec.hellcat).length < HELLCAT_MAX) tn = 'hellcat';
+      else if (!HEAVY.has(tn) && hash2(ei + 104729, this._prio) < WIENER_P && !this.cars.some((c) => c.spec.wiener)) tn = 'wiener';
       const v = this.spawnAt(x + lo.x, z + lo.z, heading, tn, randomCarColor((this.R.n() * 1e6) | 0), 'traffic');
       if (e.tunnel) {
         // IN the bore, not on the street over it. place() seeds groundAt with
@@ -972,6 +978,7 @@ export class TrafficSystem {
       // street at exactly the limit drives in formation.
       v.drvK = 0.92 + 0.16 * hash2(ei, (x * 7) | 0);
       if (v.spec.hellcat) v.drvK = 1.35;   // and the Hellcat keeps nobody's pace
+      if (v.spec.wiener) v.drvK = 0.9;     // the Hotdoggers drive it gently
       v.prio = ++this._prio;
       this.routeInit(v);
       return v;

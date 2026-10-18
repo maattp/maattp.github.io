@@ -256,6 +256,12 @@ export const TYPES = {
   // engine in the city (`engine: 'hellcat'`, audio.js), and quick. Only a
   // few, and only in Belltown traffic (traffic.js HELLCAT_*).
   hellcat: deriveSpec({ rwd: true, wheelbase: 3.05,len: 5.10, wid: 2.03, wheelR: 0.36, sill: 0.26, belt: 0.96, roof: 1.47, cab: [-0.30, 0.10], hand: 'charger', engine: 'hellcat', finish: 'tiger', livery: 0xc9ad94, hellcat: true, mass: 1.2, acc: 8.6, topKph: 315, brakeM: 35, latG: 0.95 }),
+  // THE WIENERMOBILE (an Easter egg): Oscar Mayer's hot dog on wheels, 27 ft
+  // long and 11 tall, on a V8 van chassis. One at most, rarely, anywhere in
+  // the city's traffic (traffic.js WIENER_*). `finish: 'wiener'` is its own
+  // paint (wienerShader): the body's vertex colours are its colours, and the
+  // badge, lamps and lettering are drawn on. Its horn plays a tune (audio.js).
+  wiener: deriveSpec({ rwd: true, wheelbase: 4.60, len: 8.23, wid: 2.44, wheelR: 0.39, sill: 0.30, belt: 1.55, roof: 3.30, cab: [0.20, 0.30], hand: 'wiener', finish: 'wiener', livery: 0xffffff, wiener: true, v8: true, paintVC: true, mass: 3.2, acc: 2.9, topKph: 145, brakeM: 48, latG: 0.70, minTurnR: 6.5 }),
   muscle: deriveSpec({ rwd: true, wheelbase: 2.95,len: 5.02, wid: 1.98, wheelR: 0.35, sill: 0.26, belt: 1.02, roof: 1.40, cab: [-0.24, 0.13], hand: 'muscle', mass: 1.15, acc: 7.0, topKph: 265, brakeM: 36, latG: 0.94 }),
   // Roofless muscle. `roof` is the top of the windscreen frame, 16 cm under the
   // coupe's, and there is no greenhouse above the beltline at all -- which is
@@ -439,7 +445,8 @@ export const CAR_COLORS = [
 function addWheel(trim, matte, cx, cy, cz, r, w, out = 1, knobby = false, kind = null) {
   if (kind === 'bike') { bikeWheel(trim, matte, cx, cy, cz, r, w); return; }
   // (the Belltown Hellcat's are rounder: three of it about at most)
-  const SEG = kind === 'black' ? 30 : 18;
+  // 'polish' (the Wienermobile): the fleet's five spokes, polished, and as round as 'black'
+  const SEG = kind === 'black' || kind === 'polish' ? 30 : 18;
   // Knob tops at the rolling radius, the carcass under them: the wheel
   // still stands on `r`, as the ground solve assumes.
   if (knobby) { knobs(matte, cx, cy, cz, r, w); r *= 0.9; }
@@ -486,7 +493,7 @@ function addWheel(trim, matte, cx, cy, cz, r, w, out = 1, knobby = false, kind =
   band(matte, -hw * 0.52, r, hw * 0.52, r, TYRE, [0, 1]);
   band(matte, hw * 0.52, r, hw, r * 0.955, TYRE, [0, 1]);
   // `kind` 'black' (the Belltown Hellcat): gloss-black rims, ten spokes
-  const rimC = kind === 'black' ? RIM_BLACK : RIM, hubC = kind === 'black' ? HUB_BLACK : HUB;
+  const rimC = kind === 'black' ? RIM_BLACK : kind === 'polish' ? CHROME : RIM, hubC = kind === 'black' ? HUB_BLACK : HUB;
   for (const sx of [-1, 1]) {
     band(matte, sx * hw, r * 0.955, sx * hw * 1.10, r * 0.87, TYRE, [sx, 0.5]);
     band(matte, sx * hw * 1.10, r * 0.87, sx * hw * 0.96, bead, TYRE, [sx, 0.3]);
@@ -1897,6 +1904,369 @@ function buildCharger(spec, paint, trim, matte) {
     trim.box(mx, my - 0.040, mz - 0.042, 0.16, 0.080, 0.01, 0, MIRROR);
   }
   return wheels;
+}
+
+// ---------------------------------------------------------------------------
+// THE WIENERMOBILE (an Easter egg)
+// ---------------------------------------------------------------------------
+
+/** An sRGB hex colour as the linear rgb a vertex colour is read as. */
+const linRgb = (h) => [16, 8, 0].map((s) => {
+  const c = ((h >> s) & 255) / 255;
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+});
+// Its paint reads vertex colour as the colour itself (wienerShader), and the
+// shader tells the parts apart by hue: the dog is red (green under a third of
+// red), the bun yellow, the plates white.
+const WM_DOG_TOP = linRgb(0xcc3a1f), WM_DOG_LOW = linRgb(0xf07420);
+const WM_BUN = linRgb(0xf4bb1e), WM_BUN_LOW = linRgb(0xe2a012);
+const WM_PLATE = [0.9, 0.9, 0.88];
+const WM_RUBBER = [0.03, 0.03, 0.034];
+
+/**
+ * A closed parametric shell with openings cut into it by a signed distance.
+ * `S(u, v)` is the surface (u 0..1 along it, v 0..1 round it, wrapping),
+ * sampled NU x NV; every triangle is clipped against `f(p)` -> [d, w] (d < 0
+ * inside opening w), so an outline is the curve f = 0 found along the
+ * triangles' sides -- a window's own rounded corner, not the grid's
+ * staircase. Outside goes to `out`, coloured by `col(p)`. Inside opening w,
+ * `wins[w]` sets a pane `depth` in along the normal (into `pane`, GLASS; no
+ * pane is a hole) and walls the cut edge down to it (into `wall`, `rim`), so
+ * the pane's edge and the wall's foot are the same points.
+ */
+function cutShell(out, S, NU, NV, f, col, wins) {
+  const P = [], N = [], D = [], W = [];
+  const nrm = (v) => { const l = Math.hypot(v[0], v[1], v[2]); return l > 1e-9 ? [v[0] / l, v[1] / l, v[2] / l] : null; };
+  const e = 1e-4;
+  for (let i = 0; i <= NU; i++) {
+    const u = i / NU;
+    for (let j = 0; j < NV; j++) {
+      const v = j / NV, p = S(u, v);
+      const a = S(Math.min(1, u + e), v), b = S(Math.max(0, u - e), v), c = S(u, v + e), d = S(u, v - e);
+      const du = [a[0] - b[0], a[1] - b[1], a[2] - b[2]], dv = [c[0] - d[0], c[1] - d[1], c[2] - d[2]];
+      let n = nrm([du[1] * dv[2] - du[2] * dv[1], du[2] * dv[0] - du[0] * dv[2], du[0] * dv[1] - du[1] * dv[0]]);
+      // at a tip the ring is a point: the normal is straight out of the end
+      if (!n) { const m = S(0.5, v); n = nrm([p[0] - m[0], 0, p[2] - m[2]]) || [0, 0, 1]; }
+      P.push(p); N.push(n);
+      const [dd, ww] = f(p); D.push(dd); W.push(ww);
+    }
+  }
+  // outward: away from the middle of the shell
+  {
+    const k = Math.floor(NU / 2) * NV, m = S(0.5, 0.5), p = P[k], n = N[k];
+    if ((p[0] - m[0]) * n[0] + (p[1] - m[1]) * n[1] < 0) for (const q of N) { q[0] = -q[0]; q[1] = -q[1]; q[2] = -q[2]; }
+  }
+  const V = (k) => ({ p: P[k], n: N[k], d: D[k], w: W[k] });
+  const cross = (k) => {
+    const [A, B] = k;
+    const t = A.d / (A.d - B.d);
+    const p = [A.p[0] + (B.p[0] - A.p[0]) * t, A.p[1] + (B.p[1] - A.p[1]) * t, A.p[2] + (B.p[2] - A.p[2]) * t];
+    const n = nrm([A.n[0] + (B.n[0] - A.n[0]) * t, A.n[1] + (B.n[1] - A.n[1]) * t, A.n[2] + (B.n[2] - A.n[2]) * t]) || A.n;
+    return { p, n, d: 0, w: A.d < 0 ? A.w : B.w, cut: true };
+  };
+  const clip = (poly, inside) => {
+    const res = [];
+    for (let i = 0; i < poly.length; i++) {
+      const A = poly[i], B = poly[(i + 1) % poly.length];
+      const ia = inside ? A.d < 0 : A.d >= 0, ib = inside ? B.d < 0 : B.d >= 0;
+      if (ia) res.push(A);
+      if (ia !== ib) res.push(cross([A, B]));
+    }
+    return res;
+  };
+  const area = (a, b, c) => {
+    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+    return Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+  };
+  const fan = (into, poly, map, colOf) => {
+    for (let k = 1; k < poly.length - 1; k++) {
+      const a = poly[0], b = poly[k], c = poly[k + 1];
+      const pa = map(a), pb = map(b), pc = map(c);
+      if (area(pa, pb, pc) < 1e-8) continue;
+      into.tri(pa, pb, pc, [a.n, b.n, c.n], [colOf(pa), colOf(pb), colOf(pc)]);
+    }
+  };
+  const id = (q) => q.p;
+  const tri = (A, B, C) => {
+    const poly = [A, B, C];
+    if (A.d >= 0 && B.d >= 0 && C.d >= 0) { fan(out, poly, id, col); return; }
+    const win = wins[[A, B, C].reduce((m, q) => (q.d < m.d ? q : m)).w];
+    const inset = (q) => [q.p[0] - q.n[0] * win.depth, q.p[1] - q.n[1] * win.depth, q.p[2] - q.n[2] * win.depth];
+    const inner = clip(poly, true);
+    if (win.pane) fan(win.pane, inner, inset, () => win.glass || GLASS);
+    if (A.d < 0 && B.d < 0 && C.d < 0) return;
+    fan(out, clip(poly, false), id, col);
+    // the wall round the cut, from the shell down to the pane
+    const cuts = inner.filter((q) => q.cut);
+    if (cuts.length !== 2 || !win.wall) return;
+    const [c0, c1] = cuts, i0 = inset(c0), i1 = inset(c1);
+    const ins = poly.filter((q) => q.d < 0), m = [0, 0, 0];
+    for (const q of ins) for (let k = 0; k < 3; k++) m[k] += q.p[k] / ins.length;
+    const ed = [c1.p[0] - c0.p[0], c1.p[1] - c0.p[1], c1.p[2] - c0.p[2]], n = c0.n;
+    let wn = nrm([ed[1] * n[2] - ed[2] * n[1], ed[2] * n[0] - ed[0] * n[2], ed[0] * n[1] - ed[1] * n[0]]);
+    if (!wn) return;
+    if (wn[0] * (m[0] - c0.p[0]) + wn[1] * (m[1] - c0.p[1]) + wn[2] * (m[2] - c0.p[2]) < 0) wn = [-wn[0], -wn[1], -wn[2]];
+    win.wall.quad(c0.p, c1.p, i1, i0, wn, [0, 0, 1, 0, 1, 1, 0, 1], win.rim);
+  };
+  for (let i = 0; i < NU; i++) {
+    for (let j = 0; j < NV; j++) {
+      const a = V(i * NV + j), b = V(i * NV + (j + 1) % NV), c = V((i + 1) * NV + (j + 1) % NV), d = V((i + 1) * NV + j);
+      tri(a, b, c); tri(a, c, d);
+    }
+  }
+}
+
+/** A rounded rectangle's signed distance: (px, py) from its centre, half-size (hx, hy), corner r. */
+function rrect(px, py, hx, hy, r) {
+  const qx = Math.abs(px) - hx + r, qy = Math.abs(py) - hy + r;
+  return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r;
+}
+
+// The Wienermobile's proportions: the dog (a sausage of revolution, its
+// axis at YC) and the bun it lies in (a superellipse section, fuller below
+// than above). Each runs straight between `zr` and `zf` and rounds off over
+// `lr` / `lf` at the ends. wienerShader draws on these numbers too.
+const WM = {
+  dog: { zc: -0.18, lr: 3.94, lf: 3.98, pr: 2.5, pf: 3.4, rx: 1.06, ry: 1.12, yc: 2.18, dip: 0.14 },
+  bun: { zr: -2.45, zf: 3.05, lr: 0.80, lf: 1.06, w: 1.22, ht: 0.54, hb: 0.66, yc: 0.94 },
+  zF: 2.35, zR: -2.25, track: 0.92,
+  bandZ: -1.62, bandW: 0.40, bandLean: 0.28,
+};
+const sgnPow = (t, e) => Math.sign(t) * Math.abs(t) ** e;
+
+/**
+ * The dog's section at z: axis height, side scale, top and bottom scales.
+ * A sausage, not a capsule: it swells to the middle and runs out to each end
+ * as a superellipse (blunter at the nose, where the bubble is, than at the
+ * tail).
+ */
+function dogSec(z) {
+  const D = WM.dog;
+  const front = z > D.zc, t = Math.min(1, Math.abs(z - D.zc) / (front ? D.lf : D.lr)), p = front ? D.pf : D.pr;
+  const k = (1 - t ** p) ** (1 / p);
+  if (!front) return { yc: D.yc, k, kt: k, kb: k };
+  // the nose's chin stays full and the axis dips, so the front of the dog
+  // goes down into the bun instead of floating over it
+  const n = Math.max(0, (t - 0.55) / 0.45);
+  return { yc: D.yc - D.dip * n * n, k, kt: k, kb: k ** 0.2 };
+}
+function dogAt(z, th) {
+  const D = WM.dog, g = dogSec(z), c = Math.cos(th);
+  return [D.rx * g.k * sgnPow(Math.sin(th), 0.9), g.yc + D.ry * (c >= 0 ? g.kt : g.kb) * sgnPow(c, 0.9), z];
+}
+/** Where the dog's skin is at (z, y) on side sx, or null above / below it. */
+function dogX(z, y) {
+  const D = WM.dog, g = dogSec(z), kk = y >= g.yc ? g.kt : g.kb;
+  const t = (y - g.yc) / (D.ry * kk);
+  if (!(Math.abs(t) < 1)) return 0;
+  const c = Math.abs(t) ** (1 / 0.9);
+  return D.rx * g.k * Math.sqrt(Math.max(0, 1 - c * c)) ** 0.9;
+}
+/** The meridian: u 0..1 -> z, with the ends sampled by angle (they curve fastest). */
+function meridian(u, zr, zf, lr, lf, ur = 0.22, uf = 0.72) {
+  if (u < ur) return zr - lr * Math.cos((u / ur) * Math.PI / 2);
+  if (u > uf) return zf + lf * Math.sin(((u - uf) / (1 - uf)) * Math.PI / 2);
+  return zr + (zf - zr) * (u - ur) / (uf - ur);
+}
+function bunSec(z, e = 0.42) {
+  const B = WM.bun;
+  if (z > B.zf) { const s = Math.min(1, (z - B.zf) / B.lf); return Math.sqrt(Math.max(0, 1 - s * s)) ** e; }
+  if (z < B.zr) { const c = Math.min(1, (B.zr - z) / B.lr); return Math.sqrt(Math.max(0, 1 - c * c)) ** 0.3; }
+  return 1;
+}
+function bunAt(z, th) {
+  const B = WM.bun, k = bunSec(z), kx = bunSec(z, 0.3), c = Math.cos(th), s = Math.sin(th);
+  // the bun's lip: a soft ridge round it just over its widest
+  const ridge = 1 + 0.045 * Math.exp(-(((c - 0.22) / 0.13) ** 2)) - 0.02 * Math.exp(-(((c + 0.02) / 0.07) ** 2));
+  const x = B.w * kx * ridge * sgnPow(s, c >= 0 ? 2 / 2.4 : 2 / 4);
+  const y = B.yc + (c >= 0 ? B.ht : B.hb) * k * sgnPow(c, c >= 0 ? 2 / 2.4 : 2 / 4);
+  return [x, y, z];
+}
+/** The bun's half-width at (z, y), ridge aside; 0 off its section. */
+function bunX(z, y) {
+  const B = WM.bun, k = bunSec(z), top = y >= B.yc, n = top ? 2.4 : 4;
+  const t = Math.abs(y - B.yc) / ((top ? B.ht : B.hb) * k);
+  return t < 1 ? B.w * bunSec(z, 0.3) * (1 - t ** n) ** (1 / n) : 0;
+}
+/** Bisect z over [z0, z1] (g falling along it) for g(z) = 0. */
+function solveZ(g, z0, z1) {
+  for (let k = 0; k < 40; k++) { const m = (z0 + z1) / 2; if (g(m) > 0) z0 = m; else z1 = m; }
+  return (z0 + z1) / 2;
+}
+const bunNoseZ = (x, y) => solveZ((z) => bunX(z, y) - x, WM.bun.zf, WM.bun.zf + WM.bun.lf);
+const bunTailZ = (x, y) => -solveZ((z) => bunX(-z, y) - x, -WM.bun.zr, -WM.bun.zr + WM.bun.lr);
+
+/**
+ * The Oscar Mayer Wienermobile (an Easter egg): a hot dog on wheels, 8.2 m
+ * long, 3.3 m tall, roaming the city's streets one at a time and rarely
+ * (traffic.js WIENER_*). After the 2024 car: a red-orange dog lying in a
+ * golden bun, the dog's nose a glass bubble over the dash, a door window and
+ * two recessed side windows down each flank and a skylight along the top; a
+ * pale band round the dog's tail end with the badge on it (drawn by the
+ * paint shader, wienerShader, as are the grille, the lamps, the lettering on
+ * the bun's nose and the "OH I WISH" plate). The dog and the bun are each
+ * one surface cut by a signed distance (cutShell), so the windows are real
+ * openings with their own rounded outlines, onto a cabin: a lined interior,
+ * two seats and a driver, the dash, and a toy hot dog on it.
+ */
+function buildWiener(spec, paint, trim, matte) {
+  const D = WM.dog, B = WM.bun, wr = spec.wheelR;
+  const sm = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+  const lp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+
+  // --- the dog -----------------------------------------------------------------
+  const zDog = (u) => { const w = 2 * u - 1; return D.zc + (w < 0 ? D.lr : D.lf) * Math.sin(w * Math.PI / 2); };
+  const dogS = (u, v) => dogAt(zDog(u), v * Math.PI * 2);
+  // A-pillar, windscreen top and foot: the glass a band round the nose,
+  // its top coming down toward the tip so the dog keeps a brow over it
+  const zA = (y) => 2.12 - 0.10 * (y - 2.2);
+  const yTop = (z) => 3.0 - 0.26 * Math.max(0, z - 2.1);
+  const yBot = (z) => 1.56 - 0.02 * Math.max(0, z - 2.1);
+  const SIDE = [[1.58, 2.40, 0.40, 0.52, 0.17], [0.58, 2.42, 0.42, 0.46, 0.20], [-0.44, 2.42, 0.42, 0.46, 0.20]];
+  const dogF = ([x, y, z]) => {
+    let best = 1e9, w = 0;
+    {
+      const dA = zA(y) - z, dv = Math.max(y - yTop(z), yBot(z) - y), r = 0.2;
+      const qx = dA + r, qy = dv + r;
+      const d = Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r;
+      if (d < best) { best = d; w = 0; }
+    }
+    SIDE.forEach(([zc, yc, hz, hy, r], i) => {
+      const d = Math.max(rrect(z - zc, y - yc, hz, hy, r), 0.45 - Math.abs(x));
+      if (d < best) { best = d; w = i === 0 ? 1 : 2; }
+    });
+    {
+      const d = Math.max(rrect(z - 0.45, x, 1.20, 0.29, 0.26), D.yc + 0.62 - y);
+      if (d < best) { best = d; w = 3; }
+    }
+    return [best, w];
+  };
+  const dogCol = ([, y, z]) => {
+    const c = lp3(WM_DOG_LOW, WM_DOG_TOP, sm(1.9, 2.75, y));
+    const end = 1 - 0.10 * sm(-3.4, -4.1, z);
+    return [c[0] * end, c[1] * end, c[2] * end];
+  };
+  cutShell(paint, dogS, 124, 84, dogF, dogCol, [
+    { depth: 0.018, pane: trim, wall: matte, rim: WM_RUBBER },      // windscreen
+    { depth: 0.030, pane: trim, wall: matte, rim: WM_RUBBER },      // door windows
+    { depth: 0.065, pane: trim, wall: matte, rim: [0.07, 0.07, 0.075] },   // side windows, set in
+    { depth: 0.022, pane: trim, wall: matte, rim: WM_RUBBER },      // skylight
+  ]);
+
+  // The cabin's lining: the dog again, 6 % in and facing in, so through any
+  // window you see the inside of the far wall and never daylight through it.
+  {
+    const zc = D.zc, rings = 36, segs = 28;
+    for (let i = 0; i < rings; i++) {
+      for (let j = 0; j < segs; j++) {
+        const q = (a, b) => {
+          const p = dogS(a / rings, b / segs), g = dogSec(p[2]);
+          return [p[0] * 0.94, g.yc + (p[1] - g.yc) * 0.94, zc + (p[2] - zc) * 0.985];
+        };
+        const A = q(i, j), Bq = q(i, j + 1), C = q(i + 1, j + 1), Dq = q(i + 1, j);
+        const m = [(A[0] + C[0]) / 2, (A[1] + C[1]) / 2, (A[2] + C[2]) / 2], g = dogSec(m[2]);
+        const n = [-(m[0]), -(m[1] - g.yc), -(m[2] - zc) * 0.15];
+        const l = Math.hypot(n[0], n[1], n[2]) || 1;
+        if (area3(A, Bq, C) + area3(A, C, Dq) < 1e-7) continue;
+        matte.quad(A, Bq, C, Dq, [n[0] / l, n[1] / l, n[2] / l], [0, 0, 1, 0, 1, 1, 0, 1], m[1] > 2.6 ? CAB_ROOF : [0.30, 0.10, 0.08]);
+      }
+    }
+  }
+
+  // --- the bun -------------------------------------------------------------------
+  const bunS = (u, v) => bunAt(meridian(u, B.zr, B.zf, B.lr, B.lf, 0.14, 0.80), v * Math.PI * 2);
+  const archR = wr + 0.13;
+  const bunF = ([x, y, z]) => {
+    let best = 1e9;
+    for (const az of [WM.zF, WM.zR]) best = Math.min(best, Math.max(Math.hypot(z - az, y - wr) - archR, 0.55 - Math.abs(x)));
+    return [best, 0];
+  };
+  const bunCol = ([, y]) => lp3(WM_BUN_LOW, WM_BUN, sm(0.30, 1.05, y));
+  cutShell(paint, bunS, 76, 52, bunF, bunCol, [{ depth: 0.34, pane: null, wall: matte, rim: CAVITY }]);
+  // each wheelhouse closed off inboard
+  for (const az of [WM.zF, WM.zR]) {
+    for (const sx of [-1, 1]) {
+      const rows = [];
+      for (const rr of [0, archR]) {
+        const row = [];
+        for (let k = 0; k <= 12; k++) {
+          const a = (k / 12) * Math.PI;
+          row.push([sx * 0.70, wr + Math.sin(a) * rr, az + Math.cos(a) * rr]);
+        }
+        rows.push(row);
+      }
+      matte.patch(rows, CAVITY, [sx, 0, 0]);
+    }
+  }
+  // the underside, dark
+  matte.box(0, 0.30, 0.3, 1.30, 0.04, 6.6, 0, PLASTIC);
+
+  const wheels = [];
+  for (const az of [WM.zF, WM.zR]) for (const sx of [-1, 1]) wheels.push([sx * WM.track, wr, az, wr, 0.245, undefined, false, 'polish']);
+
+  // --- the cabin -------------------------------------------------------------------
+  const floorY = 1.58;
+  {
+    const rows = [];
+    for (let i = 0; i <= 16; i++) {
+      const z = -2.6 + (5.4 * i) / 16, hw = Math.max(0.05, dogX(z, floorY + 0.02) * 0.93 - 0.04);
+      rows.push([[-hw, floorY, z], [0, floorY, z], [hw, floorY, z]]);
+    }
+    matte.patch(rows, CAB_FLOOR, [0, 1, 0]);
+  }
+  // the dash, under the bubble
+  const dashZ = 2.62, dashY = 1.98;
+  for (let i = 0; i < 1; i++) {
+    const hw = dogX(dashZ + 0.1, dashY) * 0.94 - 0.03;
+    rakedBox(matte, 0, floorY, dashZ, hw * 2, dashY - floorY, 0.42, -0.10, CAB_DASH);
+  }
+  const H = 2.95 - floorY;
+  for (const sx of [-1, 1]) seat(matte, sx * 0.48, floorY + 0.36, 1.55, 0.50, H, false, 0.36);
+  // a bench down each side behind, facing in, in ketchup red
+  for (const sx of [-1, 1]) matte.box(sx * 0.60, floorY, -0.9, 0.42, 0.42, 1.9, 0, [0.45, 0.05, 0.04]);
+  const wheelAt = [0.48, floorY + 0.66, 2.20];
+  wheelRim(matte, wheelAt[0], wheelAt[1], wheelAt[2]);
+  if (matte.crew) occupant(matte.crew, 0.48, floorY + 0.36, 1.55, H * 0.62, wheelAt);
+  // the toy hot dog on the passenger's side of the dash
+  {
+    const ty = dashY + 0.035, tz = dashZ - 0.02;
+    matte.spheroid(-0.40, ty, tz, 0.16, 10, 5, WM_BUN, 0.32);
+    matte.tube([-0.62, ty + 0.05, tz + 0.02], [-0.18, ty + 0.05, tz - 0.02], 0.055, 8, WM_DOG_LOW, true);
+  }
+
+  // --- outside: mirrors, wipers, the bars in the side windows -----------------------
+  for (const sx of [-1, 1]) {
+    const mz = 1.98, my = 1.96, x0 = dogX(mz, my);
+    matte.tube([sx * (x0 - 0.02), my, mz], [sx * (x0 + 0.20), my - 0.02, mz + 0.06], 0.022, 6, PLASTIC, true);
+    matte.box(sx * (x0 + 0.24), my - 0.18, mz + 0.06, 0.07, 0.34, 0.20, 0, PLASTIC);
+    trim.box(sx * (x0 + 0.24), my - 0.16, mz + 0.06 - 0.101, 0.06, 0.30, 0.004, 0, MIRROR);
+    // wipers: an arm from the foot of the bubble up toward the pillar
+    const w0 = [sx * 0.18, 1.74], w1 = [sx * 0.66, 2.34];
+    const pts = [0, 0.5, 1].map((t) => {
+      const x = w0[0] + (w1[0] - w0[0]) * t, y = w0[1] + (w1[1] - w0[1]) * t;
+      // the glass is where the dog's skin is, at this x and y: solve for z
+      const z = solveZ((zz) => dogX(zz, y) - Math.abs(x), D.zc, D.zc + D.lf);
+      return [x, y + 0.012, z + 0.03];
+    });
+    for (let k = 0; k < 2; k++) matte.tube(pts[k], pts[k + 1], 0.011, 5, PLASTIC, true);
+    // each side window has a sill bar across it, and a mullion under that
+    for (const [zc, yc, hz] of SIDE.slice(1)) {
+      const y = yc - 0.06, x = dogX(zc, y) - 0.05;
+      matte.box(sx * x, y, zc, 0.03, 0.035, hz * 2 - 0.08, 0, [0.07, 0.07, 0.075]);
+      matte.box(sx * (dogX(zc, yc - 0.25) - 0.05), yc - 0.44, zc, 0.03, 0.38, 0.03, 0, [0.07, 0.07, 0.075]);
+    }
+  }
+  // the plates: white panels the shader letters (WM_PLATE)
+  paint.box(0, 0.33, bunNoseZ(0.16, 0.41) + 0.006, 0.31, 0.155, 0.02, 0, WM_PLATE);
+  paint.box(0, 0.50, bunTailZ(0.16, 0.58) - 0.006, 0.31, 0.155, 0.02, 0, WM_PLATE);
+  // twin pipes under the tail
+  for (const sx of [-1, 1]) hole(trim, matte, sx * 0.35, 0.36, bunTailZ(0.4, 0.36) + 0.02, 0.045, 0.10, -1, { seg: 12 });
+  return wheels;
+}
+
+function area3(a, b, c) {
+  const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+  return Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
 }
 
 /**
@@ -8485,7 +8855,7 @@ function buildSaucer(spec, paint, trim, matte) {
 const HAND_BUILT = {
   plane: buildPlane, twin: buildTwin, jet: buildJet, biplane: buildBiplane, heli: buildHeli, fighter: buildFighter, jumbo: buildJumbo, saucer: buildSaucer,
   sports: buildSports, muscle: buildMuscle,
-  sedan: buildSedan, suv: buildSuv, pickup: buildPickup, charger: buildCharger,
+  sedan: buildSedan, suv: buildSuv, pickup: buildPickup, charger: buildCharger, wiener: buildWiener,
   hatch: (s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.hatch),
   compact: (s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.compact),
   ev: buildEv, service: buildServiceSedan, van: buildVan, bus: buildBus, ambulance: buildAmbulance,
@@ -8821,6 +9191,16 @@ const PAINT_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Androi
 export function paintMaterial(color, finish = null) {
   // Tiger (the Belltown Hellcat): the ordinary paint with stripes drawn into
   // it (tigerShader), so it lacquers and reflects like every other car.
+  // The Wienermobile: its vertex colours are its colours (vertexColors), and
+  // the artwork is drawn on (wienerShader). Fibreglass under a deep lacquer.
+  if (finish === 'wiener') {
+    const m = paintMaterial(color);
+    m.vertexColors = true;
+    m.metalness = 0.05; m.roughness = 0.3;
+    m.onBeforeCompile = wienerShader;
+    m.customProgramCacheKey = () => 'vehicleWiener';
+    return m;
+  }
   if (finish === 'tiger') {
     const m = paintMaterial(color);
     m.vertexColors = true;                 // the panel flags (TIG_*)
@@ -8986,6 +9366,183 @@ function tigerShader(sh) {
 	#endif`);
 }
 
+// The Wienermobile's artwork, drawn once into a canvas: the badge, the
+// "WIENERMOBILE" script for the bun's nose, and the plate. wienerShader
+// projects each onto the body; the rects are where each sits in it.
+const WM_ATLAS = { badge: [8, 8, 240, 296], plate: [264, 8, 240, 120], word: [8, 336, 496, 72] };
+let wmTex = null;
+function wienerAtlas() {
+  if (wmTex) return wmTex;
+  const S = 512, cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const g = cv.getContext('2d');
+  const rr = (x, y, w, h, r) => { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); };
+  const serif = 'Georgia, "Times New Roman", serif';
+  {
+    // the badge: a dark keyline, a white field, a red inner frame, and
+    // "Oscar Mayer" in two lines of heavy red serif, set rising
+    const [x, y, w, h] = WM_ATLAS.badge;
+    rr(x, y, w, h, 34); g.fillStyle = '#1d1a24'; g.fill();
+    rr(x + 9, y + 9, w - 18, h - 18, 27); g.fillStyle = '#fbf8f2'; g.fill();
+    rr(x + 22, y + 22, w - 44, h - 44, 18); g.lineWidth = 7; g.strokeStyle = '#d2263a'; g.stroke();
+    g.save();
+    g.translate(x + w / 2, y + h / 2); g.rotate(-0.13);
+    g.fillStyle = '#c8102e'; g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+    g.font = `bold 78px ${serif}`;
+    g.fillText('Oscar', 0, -12, w - 60);
+    g.fillText('Mayer', 0, 70, w - 56);
+    g.restore();
+  }
+  {
+    // the plate: Wisconsin's, OH I WISH
+    const [x, y, w, h] = WM_ATLAS.plate;
+    rr(x, y, w, h, 12); g.fillStyle = '#f4f4ef'; g.fill();
+    g.lineWidth = 4; g.strokeStyle = '#3a3f55'; rr(x + 4, y + 4, w - 8, h - 8, 9); g.stroke();
+    g.fillStyle = '#b3202a'; g.textAlign = 'center'; g.font = `bold 20px ${serif}`;
+    g.fillText('WISCONSIN', x + w / 2, y + 28);
+    g.fillStyle = '#1e2a5a'; g.font = 'bold 56px "Arial Narrow", Arial, sans-serif';
+    g.fillText('OH I WISH', x + w / 2, y + 92, w - 24);
+  }
+  {
+    // the nose's lettering, in red italic caps between speed lines
+    const [x, y, w, h] = WM_ATLAS.word;
+    g.fillStyle = '#c4161c'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = `italic bold 46px ${serif}`;
+    const cx = x + w / 2, cy = y + h / 2;
+    g.fillText('WIENERMOBILE', cx, cy + 2, w * 0.66);
+    const tw = Math.min(g.measureText('WIENERMOBILE').width, w * 0.66);
+    for (const sd of [-1, 1]) {
+      for (let k = 0; k < 3; k++) {
+        const ly = cy - 9 + k * 9, l = 46 - k * 10, x0 = cx + sd * (tw / 2 + 10);
+        g.fillRect(sd > 0 ? x0 : x0 - l, ly - 1.8, l, 3.6);
+      }
+    }
+  }
+  wmTex = new THREE.CanvasTexture(cv);
+  wmTex.colorSpace = THREE.SRGBColorSpace;
+  wmTex.anisotropy = 4;
+  return wmTex;
+}
+
+/**
+ * The Wienermobile's paint (finish 'wiener'). The body's vertex colour is
+ * its colour -- red-orange dog, golden bun, white plates -- and this draws
+ * the rest on, in the body's own frame (x across, y up, z along, nose +z):
+ * the pale band round the dog's tail end and the badge on it, both sides;
+ * on the bun's nose the grille, the swept headlamps, the indicators, the fog
+ * lamps and the lettering; the tail lamps; the plates' faces. The lamps are
+ * chrome and lit, the grille matte, without the lacquer.
+ */
+function wienerShader(sh) {
+  sh.uniforms.wmMap = { value: wienerAtlas() };
+  const f = (v) => v.toFixed(4);
+  const v2 = (a, b) => `vec2( ${f(a)}, ${f(b)} )`;
+  const rect = ([x, y, w, h]) => `vec4( ${f(x / 512)}, ${f(1 - (y + h) / 512)}, ${f(w / 512)}, ${f(h / 512)} )`;
+  const B = WM.bun, D = WM.dog;
+  // where the lamps sit on the bun: the corner of the nose and of the tail
+  const hl = [0.80, 0.90], hlZ = bunNoseZ(hl[0], hl[1]);
+  const tl = [0.86, 0.86], tlZ = bunTailZ(tl[0], tl[1]);
+  const badgeY = 2.02, badgeZ = WM.bandZ + WM.bandLean * (badgeY - 2.2);
+  sh.vertexShader = 'varying vec3 vWm;\nvarying vec3 vWmN;\n' + sh.vertexShader
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvWm = position;\n\tvWmN = normal;');
+  sh.fragmentShader = `varying vec3 vWm;
+varying vec3 vWmN;
+uniform sampler2D wmMap;
+float wmBox( vec2 p, vec2 b, float r ) { vec2 q = abs( p ) - b + r; return length( max( q, 0.0 ) ) + min( max( q.x, q.y ), 0.0 ) - r; }
+float wmIn( float d ) { float a = fwidth( d ) + 1e-4; return 1.0 - smoothstep( -a, a, d ); }
+vec4 wmTexAt( vec2 uv, vec4 r ) { return texture2D( wmMap, r.xy + clamp( uv, 0.0, 1.0 ) * r.zw ); }
+float wmUnit( vec2 uv ) { return step( 0.0, uv.x ) * step( uv.x, 1.0 ) * step( 0.0, uv.y ) * step( uv.y, 1.0 ); }
+// a swept lamp: an almond in (u along the corner, v up), fuller at its outer end
+float wmLamp( vec2 p, float len, float h0, float h1 ) {
+	float t = clamp( p.x / len * 0.5 + 0.5, 0.0, 1.0 );
+	float hh = mix( h0, h1, t * t ) * sqrt( max( 0.0, 1.0 - pow( abs( 2.0 * t - 1.0 ), 6.0 ) ) );
+	return max( abs( p.y ) - hh, abs( p.x ) - len );
+}
+` + sh.fragmentShader
+    .replace('#include <color_fragment>', `#include <color_fragment>
+	float wmR = -1.0, wmM = -1.0, wmCC = 1.0;
+	vec3 wmGlow = vec3( 0.0 );
+	{
+		vec3 q = vWm, nn = normalize( vWmN );
+		float dog = step( vColor.g, 0.35 * vColor.r );
+		float plate = step( 0.7, vColor.g ) * step( 0.7, vColor.b );
+		float bun = ( 1.0 - dog ) * ( 1.0 - plate );
+		float sx = q.x < 0.0 ? -1.0 : 1.0;
+		vec3 c = diffuseColor.rgb;
+		// the band round the dog, leaning forward at the top
+		float s = q.z - ${f(WM.bandZ)} - ${f(WM.bandLean)} * ( q.y - 2.2 );
+		c = mix( c, vec3( 0.80, 0.62, 0.20 ), dog * wmIn( abs( s ) - ${f(WM.bandW)} ) );
+		// the badge on it, each side, read from outside
+		vec2 b = vec2( ( ${f(badgeZ)} - q.z ) * sx, q.y - ${f(badgeY)} );
+		vec2 bu = normalize( vec2( -${f(WM.bandLean)} * sx, 1.0 ) ), br = vec2( bu.y, -bu.x );
+		vec2 buv = vec2( dot( b, br ), dot( b, bu ) ) / vec2( 0.56, 0.69 ) + 0.5;
+		vec4 bt = wmTexAt( buv, ${rect(WM_ATLAS.badge)} );
+		c = mix( c, bt.rgb, bt.a * dog * wmUnit( buv ) * step( 0.3, abs( nn.x ) ) );
+		// the nose: grille, lettering, indicators, fog lamps
+		float front = bun * step( 0.25, nn.z ) * step( 3.2, q.z );
+		float gr = wmBox( vec2( q.x, q.y - 0.55 ), vec2( 0.47, 0.115 ), 0.11 );
+		float mesh = step( 0.5, fract( q.x * 38.0 ) ) * step( 0.5, fract( q.y * 38.0 ) );
+		vec3 grc = mix( vec3( 0.012 ), vec3( 0.035 ), mesh ) * smoothstep( 0.0, -0.03, gr );
+		float inG = front * wmIn( gr );
+		c = mix( c, grc, inG );
+		wmR = mix( wmR, 0.75, inG ); wmM = mix( wmM, 0.0, inG ); wmCC = mix( wmCC, 0.0, inG );
+		vec2 wuv = vec2( q.x / 1.04 + 0.5, ( q.y - 0.765 ) / 0.15 + 0.5 );
+		vec4 wt = wmTexAt( wuv, ${rect(WM_ATLAS.word)} );
+		c = mix( c, wt.rgb, wt.a * front * wmUnit( wuv ) );
+		float ind = wmBox( vec2( abs( q.x ) - 0.56, q.y - 0.705 ), vec2( 0.075, 0.019 ), 0.008 );
+		float inI = front * wmIn( ind );
+		c = mix( c, vec3( 0.9, 0.35, 0.03 ), inI ); wmGlow += vec3( 0.5, 0.16, 0.0 ) * inI;
+		float fog = length( vec2( abs( q.x ) - 0.64, q.y - 0.47 ) );
+		float inF = front * wmIn( fog - 0.045 );
+		c = mix( c, mix( vec3( 0.7, 0.72, 0.75 ), vec3( 0.03 ), smoothstep( 0.02, 0.035, fog ) ), inF );
+		wmM = mix( wmM, 0.9, inF * step( fog, 0.03 ) );
+		// side markers on the bun's flanks, ahead of the front arch
+		float sm = wmBox( vec2( q.z - 3.42, q.y - 0.74 ), vec2( 0.07, 0.02 ), 0.008 );
+		float inS = bun * step( 0.5, abs( nn.x ) ) * wmIn( sm );
+		c = mix( c, vec3( 0.9, 0.35, 0.03 ), inS ); wmGlow += vec3( 0.4, 0.12, 0.0 ) * inS;
+		// headlamps: on each front corner, projected along its own normal
+		vec3 hd = normalize( vec3( sx * 0.66, 0.0, 0.75 ) );
+		vec3 hc = vec3( sx * ${f(hl[0])}, ${f(hl[1])}, ${f(hlZ)} );
+		vec3 ht = vec3( sx * hd.z, 0.0, -abs( hd.x ) );
+		vec2 hp = vec2( dot( q - hc, ht ), q.y - hc.y );
+		float hlD = wmLamp( hp, 0.24, 0.032, 0.062 );
+		float inH = bun * step( 0.2, dot( nn, hd ) ) * wmIn( hlD );
+		float bowl = smoothstep( 0.0, -0.025, hlD );
+		float proj = length( hp - vec2( 0.12, 0.004 ) );
+		vec3 hcol = mix( vec3( 0.18, 0.19, 0.21 ), vec3( 0.86, 0.88, 0.92 ), bowl * ( 0.75 + 0.25 * sin( hp.x * 90.0 ) ) );
+		hcol = mix( hcol, vec3( 1.0 ), 1.0 - smoothstep( 0.022, 0.03, proj ) );
+		c = mix( c, hcol, inH );
+		wmM = mix( wmM, 1.0, inH ); wmR = mix( wmR, 0.12, inH );
+		wmGlow += vec3( 1.6, 1.55, 1.4 ) * inH * ( 1.0 - smoothstep( 0.018, 0.03, proj ) );
+		// tail lamps on the tail's corners, and a reflector strip
+		vec3 td = normalize( vec3( sx * 0.66, 0.0, -0.75 ) );
+		vec3 tc = vec3( sx * ${f(tl[0])}, ${f(tl[1])}, ${f(tlZ)} );
+		vec3 tt = vec3( sx * abs( td.z ), 0.0, abs( td.x ) );
+		vec2 tp = vec2( dot( q - tc, tt ), q.y - tc.y );
+		float tlD = wmLamp( tp, 0.20, 0.04, 0.07 );
+		float inT = bun * step( 0.2, dot( nn, td ) ) * wmIn( tlD );
+		c = mix( c, mix( vec3( 0.35, 0.02, 0.02 ), vec3( 0.85, 0.05, 0.04 ), smoothstep( 0.0, -0.015, tlD ) ), inT );
+		wmGlow += vec3( 0.55, 0.02, 0.01 ) * inT; wmR = mix( wmR, 0.15, inT );
+		// the plates
+		float pd = q.z > 0.0 ? 1.0 : -1.0;
+		vec2 puv = vec2( q.x * pd / 0.30 + 0.5, ( q.y - ( pd > 0.0 ? 0.33 : 0.50 ) ) / 0.15 + 0.5 );
+		vec4 pt = wmTexAt( puv, ${rect(WM_ATLAS.plate)} );
+		c = mix( c, pt.rgb, plate * step( 0.5, nn.z * pd ) * wmUnit( puv ) );
+		diffuseColor.rgb = c;
+		// fibreglass under the lacquer, not metal flake
+		wmM = wmM < 0.0 ? 0.05 : wmM;
+	}`)
+    .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
+	if ( wmR >= 0.0 ) roughnessFactor = wmR;
+	metalnessFactor = wmM;`)
+    .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
+	#ifdef USE_CLEARCOAT
+		material.clearcoat *= wmCC;
+	#endif`)
+    .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+	totalEmissiveRadiance += wmGlow;`);
+}
+
 // ---------------------------------------------------------------------------
 // FAR LOD: one geometry, one material, one draw per TYPE.
 //
@@ -9014,7 +9571,7 @@ function clusterFar(parts) {
   const clusters = new Map();
   const P = [], N = [], C = [], A = [], Gl = [], cnt = [];
   const out = [];
-  for (const { geo, part } of parts) {
+  for (const { geo, part, vc } of parts) {
     const pos = geo.attributes.position.array, nor = geo.attributes.normal.array;
     const col = geo.attributes.color ? geo.attributes.color.array : null;
     const gls = geo.attributes.glass ? geo.attributes.glass.array : null;
@@ -9038,7 +9595,7 @@ function clusterFar(parts) {
       P[c * 3] += pos[k3]; P[c * 3 + 1] += pos[k3 + 1]; P[c * 3 + 2] += pos[k3 + 2];
       N[c * 3] += nx; N[c * 3 + 1] += ny; N[c * 3 + 2] += nz;
       if (glass) { C[c * 3] += 0.05; C[c * 3 + 1] += 0.06; C[c * 3 + 2] += 0.075; }
-      else if (col && part !== 'paint') { C[c * 3] += col[k3]; C[c * 3 + 1] += col[k3 + 1]; C[c * 3 + 2] += col[k3 + 2]; }
+      else if (col && (part !== 'paint' || vc)) { C[c * 3] += col[k3]; C[c * 3 + 1] += col[k3 + 1]; C[c * 3 + 2] += col[k3 + 2]; }
       else { C[c * 3] += 1; C[c * 3 + 1] += 1; C[c * 3 + 2] += 1; }
       cnt[c]++;
       map[v] = c;
@@ -9130,7 +9687,7 @@ export function farLod(typeName) {
   if (!geo) {
     const t = vehicleAssets().types[typeName];
     geo = clusterFar([
-      { geo: t.paintGeo, part: 'paint' },
+      { geo: t.paintGeo, part: 'paint', vc: !!t.spec.paintVC },
       { geo: t.trimGeoW, part: 'trim' },
       { geo: t.matteGeoWE, part: 'matte' },
     ]);

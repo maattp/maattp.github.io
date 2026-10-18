@@ -322,6 +322,13 @@ class Game {
     // a streetcar's gong: the motorman's foot on the plunger, clang-clang
     if (player.vehicle && player.vehicle.spec.streetcar) { if (audio.ready) audio.play('cable_bell', { gain: 1, jitter: false }); peds.scare(player.position.x, player.position.z, 12); return; }
     if (player.vehicle && player.vehicle.spec.link) { if (audio.ready) audio.play('tram_bell', { gain: 0.9 }); peds.scare(player.position.x, player.position.z, 10); return; }
+    // the Wienermobile plays its tune, once through (attack() re-fires while held)
+    if (player.vehicle && player.vehicle.spec.wiener) {
+      const now = performance.now();
+      if (audio.ready && !(now < this._wmHornUntil)) { audio.play('wiener_horn', { gain: 0.9, jitter: false }); this._wmHornUntil = now + 1900; }
+      peds.scare(player.position.x, player.position.z, 14);
+      return;
+    }
     // a freight's air horn, held for as long as you hold it
     if (player.vehicle && player.vehicle.spec.freight) { player.vehicle.blow(); peds.scare(player.position.x, player.position.z, 40); return; }
     audio.horn();
@@ -1686,8 +1693,8 @@ function installShadowFade() {
       // table. (paint is never disposed: that would release the program just
       // compiled, which no car is using yet.)
       const va = vehicleAssets(), sd = va.types.sedan, paint = paintMaterial(0xffffff);
-      // (and the Belltown Hellcat's tiger paint, its own program, on the same body)
-      for (const [geo, mat] of [[sd.paintGeo, paint], [sd.paintGeo, paintMaterial(0xff5200, 'tiger')], [sd.trimGeoW, va.trimMat], [sd.matteGeoW, va.matteMat]]) {
+      // (and the Belltown Hellcat's tiger paint and the Wienermobile's, their own programs, on the same body)
+      for (const [geo, mat] of [[sd.paintGeo, paint], [sd.paintGeo, paintMaterial(0xff5200, 'tiger')], [sd.paintGeo, paintMaterial(0xffffff, 'wiener')], [sd.trimGeoW, va.trimMat], [sd.matteGeoW, va.matteMat]]) {
         if (!geo) continue;
         const m = new THREE.Mesh(geo, mat);
         m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false;

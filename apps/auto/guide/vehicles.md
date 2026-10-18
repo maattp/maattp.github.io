@@ -458,6 +458,61 @@ reckless driving in 2025. `docs/hellcat/` has shots.
   ~6000 rpm every 3-8 s; every backfire is a `bang`
   placed on the car, at full level to 30 m. It is skipped by the traffic voices while it has it.
 
+### The Wienermobile: an Easter egg (v231)
+
+**Oscar Mayer's hot dog on wheels, one at most, rarely, anywhere.** After
+the 2024 car (27 ft long, 11 tall, 8 wide): a red-orange dog lying in a
+golden bun. `docs/wienermobile/` has shots.
+
+- **Where:** any car-sized traffic spawn anywhere is it at `WIENER_P`
+  (0.01, traffic.js), never more than one about, and it goes when it is
+  left behind like any car. A minute's drive spawned a car every ~110 m, so
+  that is about one per 10 km driven (a small sample: it moves with how
+  fast and where you drive). No toast
+  and no map blip: finding it is the point. It drives gently (`drvK` 0.9),
+  and **an AI one within `WIENER_TOOT` (45 m) plays its horn at you**, then
+  not again for 25-45 s (audio.js `_wiener`). Get in and HORN plays the same
+  tune (`wiener_horn`: an original eight-note phrase on twin square
+  trumpets, not the jingle), once through per press.
+- **The body is two cut shells** (`buildWiener`, `hand: 'wiener'`). The dog
+  is a surface of revolution whose section swells to the middle and runs
+  out to each end as a superellipse (`dogSec`: blunter at the nose, with
+  the chin kept full and the axis dipped so the nose goes down into the
+  bun); the bun a superellipse section fuller below than above with a lip
+  ridge round it (`bunAt`). **`cutShell` makes the openings:** it samples the
+  surface on a grid and clips every triangle against a signed distance
+  (`f(p) -> [d, window]`), so a window's outline is the curve d = 0 -- its
+  own rounded corner, not the grid's staircase -- and each opening gets a
+  pane set in along the normal and a wall from the cut down to it (the
+  pane's edge and the wall's foot are the same points). The windscreen is a
+  band round the nose (A-pillar plane, a top coming down toward the tip, a
+  foot): a glass bubble over the dash. Then a door window and two recessed
+  side windows with a sill bar and mullion each side, and a skylight. The
+  bun's wheel arches are the same cut with no pane: a 34 cm dark liner.
+- **A cabin behind the glass:** the dog again at 94 %, facing in (so a
+  window never shows daylight through the far wall), a floor, the dash,
+  two seats and a driver, ketchup-red benches, and a toy hot dog on the dash
+  as in the photo. Truck mirrors, wipers solved onto the bubble, polished
+  five-spoke wheels (`addWheel` kind `'polish'`: chrome, 30 segments).
+- **The paint is its own program** (`finish: 'wiener'`, `wienerShader`,
+  compiled in main.js's boot warm-up beside the tiger). Its vertex colours
+  ARE its colours (red over orange on the dog, gold on the bun), and the
+  shader tells the parts apart by hue (dog: green under a third of red;
+  white plates). It draws on, in the body frame: the pale band round the
+  dog's tail, leaning forward at the top, with the badge on it each side
+  (read from outside); on the bun's nose the grille (matte, no lacquer), the
+  WIENERMOBILE lettering with its speed lines, swept chrome headlamps with
+  a lit projector, indicators and fog lamps; side markers; tail lamps; the
+  "OH I WISH" plates. The badge, lettering and plate are one 512 px canvas
+  (`wienerAtlas`) projected flat onto each place. Fibreglass: metalness
+  0.05 under the clearcoat. **The far LOD keeps its colours**: `paintVC` on
+  the spec has `clusterFar` average the paint's vertex colours (white
+  livery), so from afar it is still a red dog in a yellow bun.
+- **Cost:** 39.8k triangles (the Hellcat 14.8k, a sedan 6.8k), affordable
+  because there is never more than one, and a phone draws the far LOD past
+  60 m. On the sheet: 0-100 in 6.5 s arcade (a panel van's band), 145 km/h,
+  a 6.5 m minimum turn.
+
 **v215: your car steers sharper at speed, burns before it blows, and does burnouts.**
 - `PLAYER_BITE` 1.7 (vs `STEER_BITE` 1.25) in `steerLock`, for the detailed
   vehicle only: a sedan at 108 km/h turns on 11 m, not 17. The AI's lock is
