@@ -363,7 +363,7 @@ shots.
   kerbside parking, and adding one would move every parked car in the city
   (see "The articulated bus").
 
-### The Belltown Hellcat: an Easter egg (v224)
+### The Belltown Hellcat: an Easter egg (v224, v225)
 
 **A tiger-striped, supercharged muscle car, a few at a time, only in
 Belltown.** After the real one: a modified Dodge Charger Hellcat whose
@@ -371,18 +371,30 @@ late-night revving and street racing got its owner sued by the city in 2024
 (an $83,619.97 default judgment for noise violations) and convicted of
 reckless driving in 2025. `docs/hellcat/` has shots.
 
-- **The body is the muscle car's** (`hand: 'muscle'`), the type is
-  `hellcat` with `spec.hellcat`. 0-100 3.6 s / 315 km/h on the sheet
-  (`tools/vehicles.mjs`'s `supercharged muscle sedan` band).
-- **The tiger paint is the paint shader's** (`finish: 'tiger'`,
-  `tigerShader`): no UVs on the body, so the stripes are a function of the
-  body-frame position -- bands round the body at stations along it, wobbling,
-  thickest at the spine and tapering to points down the flank, a short
-  stroke between each pair, a cream belly under the waist, and a per-car
-  `seed`. Otherwise the ordinary lacquer. Its own program
-  (`customProgramCacheKey` 'vehicleTiger'), compiled in main.js's boot warm-up
-  on the sedan's body, so the first one round a corner is no hitch. The far
-  LOD is the plain orange.
+- **The body is a modern Charger widebody** (`buildCharger`, `hand:
+  'charger'`, the type `hellcat` with `spec.hellcat`), built on the sedan's
+  technique: four doors, a long low body with a high level beltline, a short
+  glasshouse with a fast screen at each end down onto a ducktail, bolt-on
+  flares over a waisted flank and 305 tyres, a full-width grille between slim
+  wrap-round lamps, a big lower mouth and a splitter, the racetrack tail lamp,
+  black ten-spoke wheels (`addWheel` kind `'black'`) and limo-tinted glass
+  (`GLASS_TINT`: `tagGlass` flags it 3, glazing at 0.9 alpha face-on and its
+  reflection dimmed, in the shared glass program). 0-100 3.6 s / 315 km/h on
+  the sheet (`tools/vehicles.mjs`'s `supercharged muscle sedan` band).
+  v224 used the 1970 muscle car's body in orange; v225 is after the photos of
+  the real one.
+- **The wrap is the paint shader's** (`finish: 'tiger'`, `tigerShader`): no
+  UVs on the body, so the strokes are a function of the body-frame position
+  -- narrow, ragged black brush-strokes on a sandy beige (`livery`
+  0xc9ad94), each tapering at both ends, leaning and bending, some with a
+  thinner prong; on the nose and tail they run across the face. **Its paint
+  reads vertex colour as flags** (the only paint that does): white is the
+  wrap, `TIG_HOOD` the matte-black bonnet (roughness up, no clearcoat),
+  `TIG_LAMP` the LED rings (emissive green-yellow, as the real car's lamps),
+  `TIG_BLACK` gloss-black trims. The far LOD ignores paint vertex colour, so
+  from afar it is all beige. Its own program (`customProgramCacheKey`
+  'vehicleTiger'), compiled in main.js's boot warm-up on the sedan's body, so
+  the first one round a corner is no hitch.
 - **Where:** `spawnTraffic` turns a car-sized draw into one when the spawn
   point's neighbourhood (`G.placeNameAt`, the HUD's) is Belltown and a hash
   says so (`HELLCAT_P` 0.12), never more than `HELLCAT_MAX` (3) about. A
