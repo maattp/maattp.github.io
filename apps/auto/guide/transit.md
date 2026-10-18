@@ -814,6 +814,14 @@ Other 1931 lines also reached the top of the hill without the counterbalance
   standing nose to nose with it: that car is waiting for the streetcar, and
   if the streetcar waited too, neither would ever move. Anything inside a
   car's box is pushed out the short way, and you get hurt if it is moving.
+  - **A car ahead of a streetcar, going its way, is not blocked by it**
+    (v229, `blocks(x, z, y, v)`). `blocks` answers for where a streetcar
+    *will be* in 2.5 s, so every car driving in front of one found it under
+    its own path and stopped dead on the rails -- and your streetcar rammed
+    car after car that "would not move". The car asking is now passed in,
+    and a streetcar behind it is let be.
+  - **Your streetcar shoving a car from behind sends it off** at your speed
+    plus 1.5 m/s, panicked, instead of slowing it like anything else hit.
 - **Sound** (audio.js; the wheels' and the cable's loops on the world bus, so
   they go quiet behind the pause):
   - `cable_bell`: one hard strike of a bronze gong. A held BELL repeats it

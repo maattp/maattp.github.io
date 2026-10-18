@@ -1819,7 +1819,7 @@ export class TrafficSystem {
     const sc = this.streetcars;
     if (sc && sc.ok && sc.near(v.x, v.z)) {
       for (let d = 3; d <= look; d += 3) {
-        if (sc.blocks(v.x + f.x * d, v.z + f.z * d, v.y)) { stopAt = Math.min(stopAt, d - 4); break; }
+        if (sc.blocks(v.x + f.x * d, v.z + f.z * d, v.y, v)) { stopAt = Math.min(stopAt, d - 4); break; }
       }
     }
     // YOU, ON FOOT. It used to look 10 m ahead, which at 15 m/s is well

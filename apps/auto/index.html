@@ -103,6 +103,9 @@
   .b-fare.on { background: rgba(200,40,40,0.55); border-color: rgba(255,170,170,0.7); }
   #app:not([data-police="1"]) .police-only { display: none; }
   #app:not([data-gear="1"]) .gear-only { display: none; }
+  /* an aircraft (main.js sets data-air): no HORN, no HAND BRAKE. Hidden, not
+     removed, so the grid keeps every other button under the same thumb */
+  #app[data-air="1"] [data-btn="horn"], #app[data-air="1"] [data-btn="hand"] { visibility: hidden; pointer-events: none; }
   .b-gear { background: rgba(60,70,80,0.55); border-color: rgba(200,210,220,0.55); }
   .b-gear.on { background: rgba(200,140,20,0.55); border-color: rgba(255,220,140,0.7); }
   .b-siren { position: absolute; left: 0; bottom: calc(100% + 10px); }
@@ -597,7 +600,7 @@
     <pre id="bootLog"></pre>
     <div id="loadRotate">Turn sideways to play once it has loaded</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v228</div>
+    <div id="build">v229</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation USGS 3DEP</div>
   </div>
   <script>
