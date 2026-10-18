@@ -363,7 +363,7 @@ shots.
   kerbside parking, and adding one would move every parked car in the city
   (see "The articulated bus").
 
-### The Belltown Hellcat: an Easter egg (v224-v228)
+### The Belltown Hellcat: an Easter egg (v224-v230)
 
 **A tiger-striped, supercharged muscle car, a few at a time, only in
 Belltown.** After the real one: a modified Dodge Charger Hellcat whose
@@ -443,13 +443,19 @@ reckless driving in 2025. `docs/hellcat/` has shots.
   0.8 -- flat out, it held the master limiter at its ceiling, so nothing
   could be louder than it. In the phone band the loudest bang now stands
   7.3 dB over the flat-out engine (v227: 3.5) and ~14 dB over the engine
-  on a lift. Your own is
+  on a lift. **And it backfires like one** (v230): not a crackle of them on
+  every lift -- off a hard rev (over 72 % of the redline), the driver's foot
+  off, three times in four it goes "bang, bang" (one to three, 0.16-0.36 s
+  apart: EngineModel `bangQ`), and one flat-out upshift in five bangs once.
+  The lift is the driver's pedal, not the model's own cut during a gear
+  change, which read as a lift and fired on every upshift. Measured on a
+  minute of flat-out pulls and rev-bombs: 282 bangs before, 16 now. Your own is
   that through the engine voice. **An AI one gets a whole voice of its own**
   (`_hellcat`): the nearest within `HELLCAT_HEAR` (360 m), at full level to
   `HELLCAT_REF` (30 m, against a traffic voice's 7 m and 75 m reach), on the
   player's `EngineModel`, driven as it is driven -- the floor off every stop,
-  a lift (and the crackle) into every one, and standing still a rev-bomb to
-  ~6000 rpm every 1.4-4 s; every pop and flat-out upshift is a `bang`
+  a lift into every one, and standing still a rev-bomb to
+  ~6000 rpm every 3-8 s; every backfire is a `bang`
   placed on the car, at full level to 30 m. It is skipped by the traffic voices while it has it.
 
 **v215: your car steers sharper at speed, burns before it blows, and does burnouts.**

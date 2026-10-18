@@ -2434,7 +2434,9 @@ function wireUi() {
   // no tap could ever start it again and the game went silent for good. A
   // running context makes this a single state check.
   const startAudio = (e) => {
-    if (audio.ctx && audio.ctx.state === 'running' && audio._livePrimed) return;
+    // (running is not enough: a context resumed without a tap can run muted
+    // or stalled -- audio.js _watch -- and only a tap starts it again)
+    if (audio.ctx && audio.ctx.state === 'running' && audio._livePrimed && audio._kicked && !audio._stalled) return;
     audio.init();
     // The radio's element first, then the context: on iOS a media element
     // starting up can interrupt Web Audio, so the context is resumed LAST in
@@ -2443,7 +2445,7 @@ function wireUi() {
     // in the frame loop and would be rejected on its own.)
     audio.primeLive();
     audio.resume(e && e.type);
-    audio.kick();
+    audio.unstall();
   };
   for (const ev of UNLOCK) window.addEventListener(ev, startAudio, true);
 
