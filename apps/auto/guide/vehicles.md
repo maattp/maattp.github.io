@@ -363,7 +363,7 @@ shots.
   kerbside parking, and adding one would move every parked car in the city
   (see "The articulated bus").
 
-### The Belltown Hellcat: an Easter egg (v224-v227)
+### The Belltown Hellcat: an Easter egg (v224-v228)
 
 **A tiger-striped, supercharged muscle car, a few at a time, only in
 Belltown.** After the real one: a modified Dodge Charger Hellcat whose
@@ -431,11 +431,19 @@ reckless driving in 2025. `docs/hellcat/` has shots.
   cross-plane burble with a fat pulse (`pw` 0.046), a 58 Hz body boom
   (+14 dB), a dark low-pass, the saturator driven at 3.2, a loping 680 rpm
   idle (`rough` 0.8), a blower's whine on the revs, eight gears and the
-  crackle (v227, `audiorender.mjs --only engine-hellcat,engine-v8`: RMS -10.6
-  against the V8's -15.0 dB, centroid 1033 Hz (v226: 1294), the share of
-  energy under 80 Hz -3.6 dB (v226: -11.7), no clipping). Its pops are
-  `bang`, not `backfire` (any profile with `bang: true`): a 0.75 s gunshot
-  crack over a thump falling to 30 Hz, the pipe ringing after. Your own is
+  crackle (v227, `audiorender.mjs --only engine-hellcat,engine-v8`: centroid
+  1033 Hz (v226: 1294), the share of energy under 80 Hz -3.6 dB (v226:
+  -11.7), no clipping). Its pops are `bang`, not `backfire` (any profile with
+  `bang: true`), and **a bang is a gunshot a phone can play** (v228): a hard,
+  clipped 1-5 kHz crack held ~30 ms, a 300 Hz bark, and the slap off the
+  buildings 70-110 ms on. v227's bang put its energy in a 30 Hz thump, 1 % of
+  it in a phone speaker's 400 Hz-8 kHz; v228's puts 36 % there. Two more
+  things it took to be heard: **the engine ducks to 0.3 for 120 ms under
+  each bang** (`EngineVoice.duck`), and the Hellcat's `level` is 0.42, not
+  0.8 -- flat out, it held the master limiter at its ceiling, so nothing
+  could be louder than it. In the phone band the loudest bang now stands
+  7.3 dB over the flat-out engine (v227: 3.5) and ~14 dB over the engine
+  on a lift. Your own is
   that through the engine voice. **An AI one gets a whole voice of its own**
   (`_hellcat`): the nearest within `HELLCAT_HEAR` (360 m), at full level to
   `HELLCAT_REF` (30 m, against a traffic voice's 7 m and 75 m reach), on the

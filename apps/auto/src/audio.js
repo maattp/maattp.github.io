@@ -691,19 +691,21 @@ const SOUNDS = {
     k.grains(g.gain, t + 0.02, 0.12, 5, R, 0.3, 0.002, 0.006);
   } },
   // The Belltown Hellcat's backfire (profiles with `bang`): unburnt fuel
-  // lighting off in a straight-through exhaust. A gunshot crack on top, a
-  // chest-thump under it that falls to 30 Hz, and the pipe ringing after.
-  bang: { dur: 0.75, variants: 3, build(k, out, t, R) {
+  // lighting off in a straight-through exhaust, and it should sound like a
+  // gunshot. So the energy is where a phone speaker can play it: a hard,
+  // clipped crack of broadband noise at 1-5 kHz with a sub-millisecond
+  // attack, a short 300 Hz bark under it, and the slap of it coming back off
+  // the buildings 70-110 ms later. The thump below 100 Hz is a garnish.
+  bang: { dur: 0.45, variants: 3, build(k, out, t, R) {
     const bus = k.gain(1);
-    bus.connect(k.shaper(3.5)).connect(out);
-    k.burst(bus, 'white', t, 'highpass', 1400 + R() * 800, 0.7, 1.3, 0.006, R, 0.0003);
-    k.burst(bus, 'white', t, 'bandpass', 420 + R() * 200, 0.6, 1.2, 0.03, R, 0.0005);
-    k.thump(bus, t, 78 + R() * 14, 30, 0.22, 1.4, 0.1);
-    k.thump(bus, t + 0.004, 160, 55, 0.05, 0.6, 0.03, 'triangle');
-    k.burst(out, 'pink', t + 0.02, 'lowpass', 260, 0.8, 0.5, 0.12, R);
-    const g = k.gain(0);
-    k.noise('white', t, 0.5, R).connect(k.filt('bandpass', 2600, 1.2)).connect(g).connect(out);
-    k.grains(g.gain, t + 0.04, 0.3, 4, R, 0.35, 0.003, 0.01);
+    bus.connect(k.shaper(7)).connect(k.filt('lowpass', 6500, 0.6)).connect(out);
+    k.burst(bus, 'white', t, 'bandpass', 1500 + R() * 500, 0.5, 2.6, 0.022, R, 0.0002);
+    k.burst(bus, 'white', t, 'bandpass', 2600 + R() * 1200, 0.9, 1.4, 0.035, R, 0.0002);
+    k.burst(bus, 'white', t, 'bandpass', 300 + R() * 120, 0.8, 1.8, 0.045, R, 0.0004);
+    k.thump(bus, t, 180, 70, 0.05, 0.7, 0.035, 'triangle');
+    const slap = t + 0.07 + R() * 0.04;
+    k.burst(out, 'white', slap, 'bandpass', 1800 + R() * 600, 0.7, 0.32, 0.03, R, 0.001);
+    k.burst(out, 'pink', slap + 0.01, 'bandpass', 500, 0.6, 0.18, 0.06, R, 0.002);
   } },
   // A turbo's blow-off valve venting the boost when the throttle shuts: a
   // burst of hiss falling in pitch as the pressure goes. Variant 1 is the
@@ -1390,7 +1392,7 @@ export const ENGINES = {
   hellcat: { kind: 'car', stroke: 4, fire: V8_PATTERN.fire, amps: V8_PATTERN.amps, pw: 0.046,
     idle: 680, redline: 6500, gears: [0.2, 0.32, 0.45, 0.58, 0.71, 0.84, 0.97, 1.1],
     lp: [190, 1500, 1900], ex: [58, 1.5, 14], noise: { ratio: 15, q: 0.8, gain: 0.3, pulse: 0.7, order: 8 },
-    whine: { hz0: 1100, hz1: 6400, gain: 0.05, load: 0.5 }, drive: 3.2, level: 0.8, jitter: 0.12, rough: 0.8, crackle: true, blip: true, bang: true },
+    whine: { hz0: 1100, hz1: 6400, gain: 0.05, load: 0.5 }, drive: 3.2, level: 0.42, jitter: 0.12, rough: 0.8, crackle: true, blip: true, bang: true },
   flat6: { kind: 'car', stroke: 4, fire: [0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6], amps: [1, 0.98, 1.01, 0.99, 1.02, 0.97], pw: 0.018,
     idle: 950, redline: 8400, gears: [0.22, 0.37, 0.52, 0.68, 0.84, 1.02],
     lp: [450, 3400, 2200], ex: [320, 2, 5], noise: { ratio: 40, q: 1.3, gain: 0.22, pulse: 0.4, order: 6 },
@@ -1692,7 +1694,10 @@ export class EngineModel {
  * 19 nodes (with the roughness low-pass on the tone's gain). Works on any BaseAudioContext, so the offline previews run the
  * exact same code.
  */
-export class EngineVoice {
+export // how far a bang ducks the engine under it (EngineVoice.duck)
+const DUCK = 0.3;
+
+class EngineVoice {
   constructor(c, noiseBuf, dest) {
     this.c = c;
     this.dest = dest;
@@ -1822,10 +1827,24 @@ export class EngineVoice {
     setp(this.lp.frequency, clamp(p.lp[0] + p.lp[1] * rn + p.lp[2] * load, 80, 16000), t, 0.04);
     // Off-throttle the note drops and darkens but does not vanish: engine braking.
     const run = p.kind === 'ev' ? clamp(0.25 + rn * 3, 0, 1) : clamp(rpm / Math.max(200, (p.idle || p.redline * 0.3) * 0.6), 0, 1);
-    const lvl = p.level * (0.42 + 0.58 * load) * (0.62 + 0.38 * rn) * run * gain;
+    let lvl = p.level * (0.42 + 0.58 * load) * (0.62 + 0.38 * rn) * run * gain;
+    if (t < this._duckTo) lvl *= DUCK;
     setp(this.out.gain, lvl, t, 0.03);
   }
+  /**
+   * A backfire's bang ducks the engine under it for a moment: through the
+   * master limiter, an engine already near the ceiling would otherwise leave a
+   * gunshot no louder than itself. The contrast is what makes it a gunshot.
+   */
+  duck(t) {
+    const g = this.out.gain;
+    this._duckTo = t + 0.12;
+    g.cancelScheduledValues(t);
+    g.setTargetAtTime((g._lv || 0) * DUCK, t, 0.004);
+    g._lv = undefined;
+  }
   silence(t) {
+    this._duckTo = 0;
     setp(this.out.gain, 0, t, 0.05);
   }
 }
@@ -3120,11 +3139,13 @@ export class Audio {
     m.step(dt, speed, thr, free);
     if (m.event === 'pop' && this._popCd <= 0) {
       this._popCd = 0.07;
-      this.play(p.bang ? 'bang' : 'backfire', { gain: (p.bang ? 0.5 : 0.25) + Math.random() * 0.25, send: 0.15 });
+      this.play(p.bang ? 'bang' : 'backfire', { gain: p.bang ? 1.1 + Math.random() * 0.4 : 0.25 + Math.random() * 0.25, send: 0.15 });
+      if (p.bang) this.eng.duck(this.now());
     }
     this._popCd -= dt;
     if (m.event === 'up' && p.crackle && s.throttle > 0.9) {
-      this.play(p.bang ? 'bang' : 'backfire', { gain: p.bang ? 0.6 : 0.18, send: 0.1 });
+      this.play(p.bang ? 'bang' : 'backfire', { gain: p.bang ? 1.4 : 0.18, send: 0.1 });
+      if (p.bang) this.eng.duck(this.now());
     }
     // the box itself: a bike's shift drum, a truck's gears
     if (inCar && (m.event === 'up' || m.event === 'down') && p.clunk) {
@@ -3660,7 +3681,8 @@ export class Audio {
     if (sp && this._hcPop <= 0 && (m.event === 'pop' || (m.event === 'up' && thr > 0.9))) {
       this._hcPop = 0.06;
       this.play('bang', { x: car.x, y: car.y + 0.5, z: car.z, ref: HELLCAT_REF, maxD: HELLCAT_HEAR,
-        gain: (m.event === 'up' ? 0.9 : 0.6) + Math.random() * 0.4, send: 0.2 });
+        gain: (m.event === 'up' ? 1.8 : 1.3) + Math.random() * 0.5, send: 0.2 });
+      this.hcVoice.duck(this.now());
     }
     if (sp && this.hcPan.pan) setp(this.hcPan.pan, sp.pan, t, 0.05);
     this.hcVoice.apply(m, t, sp ? sp.gain * 1.3 : 0, sp ? sp.dop : 1);
