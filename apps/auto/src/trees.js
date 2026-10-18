@@ -36,7 +36,7 @@
 import * as THREE from './three.js';
 import * as G from './geo.js';
 import { CHUNK, WALK_LIFT, VERGE, cityStats } from './citygen.js';
-import { hash2, clamp, lerp } from './util.js';
+import { hash2, clamp, lerp, FALL, SUN_DIR } from './util.js';
 
 const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
@@ -56,8 +56,8 @@ const TREE_MID_Y = 6;
 const B_TH = 12, B_CR = 4.5, B_CY = 0.55, B_RY = 0.41;
 const C_TH = 20, C_CR = 4, C_BASE = 0.12;
 
-// Toward the sun: main.js SUN_OFFSET (-215, 200, -150), normalised.
-const SUN = (() => { const l = Math.hypot(215, 200, 150); return [-215 / l, 200 / l, -150 / l]; })();
+// Toward the sun (util.js, the one main.js places the light along).
+const SUN = SUN_DIR;
 const BARK = [0.25, 0.21, 0.17];
 
 const frac = (v) => v - Math.floor(v);
@@ -89,6 +89,7 @@ const LEAF_LIGHT = `
  * and a forest's crowns shade each other, so they sit darker again.
  */
 export function treeAlbedo(kind, seed, tone, out) {
+  if (FALL && kind !== CONIFER) return fallAlbedo(kind, seed, tone, out);
   const a = sub(seed, 1), b = sub(seed, 2);
   const v = 0.8 + a * 0.42;
   let r, g, bl;
@@ -101,6 +102,36 @@ export function treeAlbedo(kind, seed, tone, out) {
   else { const w = (a - 0.5) * 0.05; r = 0.135 + w; g = 0.255 + b * 0.04; bl = 0.105 - w * 0.5; }
   const f = (tone === T_FOREST ? 0.86 : 1) * (kind === SHRUB ? 0.88 : 1);
   out[0] = r * v * f; out[1] = g * v * f; out[2] = bl * v * f;
+  return out;
+}
+
+/**
+ * October's foliage (linear albedo). The firs and cedars stay as they are --
+ * that dark evergreen is most of what makes the colour read against it.
+ * Street trees are the planted maples, sweetgums, cherries and plums: the
+ * most colour, red and orange as much as yellow. A park is mostly gold and
+ * russet, a forest's broadleaf is bigleaf maple and alder, yellow going
+ * brown, some still green. Each tree's share of each is by its seed.
+ *   [weight street, park, forest, shrub], rgb
+ */
+const FALL_PAL = [
+  [[0.22, 0.25, 0.38, 0.10], [0.50, 0.29, 0.025]],   // gold (bigleaf maple, ginkgo, birch)
+  [[0.20, 0.17, 0.08, 0.20], [0.52, 0.15, 0.018]],   // orange (sugar maple, sweetgum)
+  [[0.22, 0.13, 0.02, 0.34], [0.37, 0.035, 0.022]],  // scarlet (red maple, burning bush)
+  [[0.09, 0.05, 0.00, 0.14], [0.20, 0.022, 0.035]],  // crimson (Japanese maple, plum)
+  [[0.11, 0.17, 0.17, 0.10], [0.25, 0.085, 0.022]],  // russet (oak, alder going brown)
+  [[0.10, 0.14, 0.22, 0.08], [0.26, 0.27, 0.045]],   // half-turned, yellow-green
+  [[0.06, 0.09, 0.13, 0.04], [0.13, 0.22, 0.075]],   // still green
+];
+function fallAlbedo(kind, seed, tone, out) {
+  const col = kind === SHRUB ? 3 : tone === T_STREET ? 0 : tone === T_PARK ? 1 : 2;
+  const a = sub(seed, 1), u = sub(seed, 2);
+  let acc = 0, c = FALL_PAL[FALL_PAL.length - 1][1];
+  for (const [w, rgb] of FALL_PAL) { acc += w[col]; if (u < acc) { c = rgb; break; } }
+  // value and a little hue drift between individuals, as for the greens
+  const v = (0.8 + a * 0.4) * (tone === T_FOREST ? 0.86 : 1) * (kind === SHRUB ? 0.9 : 1);
+  const h = (sub(seed, 3) - 0.5) * 0.18;
+  out[0] = c[0] * v * (1 + h); out[1] = c[1] * v * (1 - h * 0.6); out[2] = c[2] * v;
   return out;
 }
 
@@ -488,11 +519,24 @@ function treeMaterial(timeU, cutU, fade = [1e9, 1e9]) {
           #endif
           ${LEAF_LIGHT}
           #ifdef USE_INSTANCING_COLOR
-            vColor = color * mix( vec3( 1.0 ), instanceColor * leafLit, leaf );
+            vec3 leafC = instanceColor;
+            ${FALL ? `
+            // A turning crown is not one colour: clumps here and there, and
+            // more of them low in the crown, lag a step behind -- a red maple
+            // with orange in it, a gold one with green. Hashed per clump of
+            // the reference shape and per tree, so no two trees share it.
+            // (Only where the foliage is warmer than green: a fir is left be.)
+            {
+              float hk = fract( sin( dot( floor( position * 0.55 ) + instanceMatrix[ 3 ].xyz * 0.37, vec3( 12.9898, 78.233, 37.719 ) ) ) * 43758.5453 );
+              float low = 1.0 - clamp( position.y / 10.0, 0.0, 1.0 );
+              float lag = clamp( smoothstep( 0.5, 0.95, hk ) * 0.75 + low * 0.35, 0.0, 0.85 ) * step( leafC.g, leafC.r );
+              leafC = mix( leafC, vec3( leafC.r * 0.62 + leafC.g * 0.3, leafC.g * 1.3 + leafC.r * 0.2, leafC.b * 1.2 ), lag );
+            }` : ''}
+            vColor = color * mix( vec3( 1.0 ), leafC * leafLit, leaf );
           #endif
         }`);
   };
-  m.customProgramCacheKey = () => 'trees';
+  m.customProgramCacheKey = () => (FALL ? 'trees-fall' : 'trees');
   return m;
 }
 
@@ -904,10 +948,12 @@ const DEAD_END_CLEAR = 14, BEND_CLEAR = 10, BEND_COS = Math.cos((25 * Math.PI) /
 // candidate is one lookup. Conservative by half a cell's diagonal, so it only
 // ever keeps a tree further off than the exact tests would. One buffer,
 // reused: chunk builds run one at a time.
-const OCC_C = 2, OCC_N = CHUNK / OCC_C, OCC_HALF = OCC_C * 0.7072;
-const OCC_BLD = 1, OCC_PAVE = 2;
+export const OCC_C = 2, OCC_N = CHUNK / OCC_C;
+const OCC_HALF = OCC_C * 0.7072;
+export const OCC_PAVE = 2;
+const OCC_BLD = 1;
 let OCC = null;
-function occupancy(city, cx, cz) {
+export function occupancy(city, cx, cz) {
   if (!OCC) OCC = new Uint8Array(OCC_N * OCC_N);
   OCC.fill(0);
   const x0 = cx * CHUNK, z0 = cz * CHUNK, x1 = x0 + CHUNK, z1 = z0 + CHUNK;
@@ -1020,8 +1066,9 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
     for (let j = 0; j < 20 && !any; j++) for (let i = 0; i < 20 && !any; i++) if (G.greenKind(x0 + 10 + i * 20, z0 + 10 + j * 20)) any = true;
     if (!any) { world._treeRecs = null; return; }
   }
-  // the raster, built the first time a candidate needs it
-  let occ = null;
+  // the raster, built the first time a candidate needs it (a near chunk's
+  // build made it already, before its buildings: world._occ)
+  let occ = world._occ && world._occKey === ck ? world._occ : null;
   // `mode`: OPEN (yard, park, forest: the raster), VERGE (a street tree just
   // past its pavement: exact, the raster's margin would push it into the
   // yard) or WALK (a street tree on the pavement: exact, and no lot test).

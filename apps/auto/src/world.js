@@ -11,8 +11,9 @@ import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, MOUTH_RAMP, mo
 import { Builder, ChunkBuilder, freezeStatic } from './build.js';
 import { memo } from './bootcache.js';
 import { buildMountains } from './mountains.js';
-import { plantTrees } from './trees.js';
-import { hash2, clamp, lerp, distToSeg, segDist } from './util.js';
+import { plantTrees, occupancy, OCC_C, OCC_N, OCC_PAVE } from './trees.js';
+import { pumpkinSeed } from './fall.js';
+import { hash2, clamp, lerp, distToSeg, segDist, FALL } from './util.js';
 
 // The bore's cross-section, shared by the mesher and by the trench that has to
 // be cut out of the ground to make room for it.
@@ -315,6 +316,9 @@ const HOUSE_ROOF = [
 ];
 // Modern townhomes (houseExtras' neighbour, townhome): the palette infill has
 // in Seattle -- charcoal, white, mid grey, near-black, the odd deep green.
+// A building's frame turned so its +z is side k (see houseFront): local +x
+// is turned by -90 deg, -z by 180, -x by +90.
+const FRONT_TURN = [0, -Math.PI / 2, Math.PI, Math.PI / 2];
 const NOTOP = { top: false };   // a panel's top edge is never seen
 const MODERN_PAINT = [[0.2, 0.21, 0.23], [0.86, 0.86, 0.84], [0.55, 0.56, 0.57], [0.11, 0.11, 0.12],
   [0.86, 0.86, 0.84], [0.2, 0.21, 0.23], [0.18, 0.26, 0.22], [0.42, 0.43, 0.45]];
@@ -1059,7 +1063,7 @@ export class World {
                  + w.w * ( abs( t3.y - c ) < 0.5 ? t3.x : -t3.x );
           }`)
         .replace('#include <color_fragment>', `#include <color_fragment>
-          float lotCover = 0.0;
+          float lotCover = 0.0, woodK = 0.0;
           {
             // Woodland: texel i of the 20 m coverage is centred at
             // -MAP_HALF + 20 i + 5 (geo.woodCover). Crown-sized clumps from
@@ -1067,6 +1071,7 @@ export class World {
             // floor under the near trees is the same dark, as a forest's is.
             float wc = texture2D( woodTex, ( vLotXZ + ${LH} + 5.0 ) / ${WN} ).r;
             float wk = smoothstep( 0.28, 0.72, wc );
+            woodK = wk;
             if ( wk > 0.0 ) {
               // two scales, one turned 37 deg: aligned, the periodic noise
               // tiled into a waffle grid at crown size
@@ -1074,11 +1079,75 @@ export class World {
               float c1 = texture2D( lotNoise, wq / 67.0 + vec2( 0.17, 0.61 ) ).r;
               float c2 = texture2D( lotNoise, vLotXZ / 29.0 + vec2( 0.53, 0.29 ) ).r;
               float crown = smoothstep( 0.34, 0.66, c1 * 0.3 + c2 * 0.7 );
-              vec3 canopy = mix( vec3( 0.036, 0.062, 0.028 ), vec3( 0.060, 0.098, 0.041 ), crown );
+              vec3 canopy = mix( vec3( 0.036, 0.062, 0.028 ), vec3( 0.060, 0.098, 0.041 ), crown );${FALL ? `
+              // Fall: the maples and alders among the firs have turned -- a
+              // crown in four is gold or rust, picked by a third noise.
+              float turn = texture2D( lotNoise, wq / 41.0 + vec2( 0.71, 0.07 ) ).r;
+              canopy = mix( canopy, mix( vec3( 0.105, 0.066, 0.014 ), vec3( 0.088, 0.036, 0.012 ), smoothstep( 0.45, 0.6, c2 ) ),
+                smoothstep( 0.56, 0.64, turn ) * crown );` : ''}
               canopy *= 0.85 + 0.3 * macroT.g;
               diffuseColor.rgb = mix( diffuseColor.rgb, canopy, wk );
             }
           }
+${FALL ? `
+          {
+            // FALLEN LEAVES. Drifts of them under and between the trees (two
+            // scales of the cloud noise, ~25 % of the ground well covered and
+            // a thin scatter elsewhere), and in them single leaves of gold,
+            // orange, red and brown that fade to the drift's mean colour and
+            // coverage as a pixel's footprint passes a leaf's size, so they
+            // cannot shimmer. A lot is painted over it below, as it should be.
+            // (each scale on its own turned axes: aligned, the periodic noise
+            // printed a grid of blobs across a lawn)
+            vec2 q1 = vec2( vLotXZ.x * 0.8 + vLotXZ.y * 0.6, vLotXZ.y * 0.8 - vLotXZ.x * 0.6 );
+            vec2 q2 = vec2( vLotXZ.x * 0.28 - vLotXZ.y * 0.96, vLotXZ.y * 0.28 + vLotXZ.x * 0.96 );
+            float n0 = texture2D( lotNoise, vLotXZ / 173.0 + vec2( 0.59, 0.23 ) ).r;
+            float n1 = texture2D( lotNoise, q1 / 31.0 + vec2( 0.41, 0.83 ) ).r;
+            float n2 = texture2D( lotNoise, q2 / 9.7 + vec2( 0.13, 0.37 ) ).r;
+            float drift = smoothstep( 0.5, 0.7, n0 * 0.35 + n1 * 0.4 + n2 * 0.25 );
+            float cover = 0.05 + drift * 0.5;
+            // Single leaves: one chance in each 0.32 m cell, two offset layers
+            // of cells, hashed per cell (where, which way it lies, its colour)
+            // -- the cloud texture at leaf scale printed its own period as a
+            // dot grid. The cell index is wrapped at 1024 before the hash so
+            // the sine stays in range at the map's edge.
+            float fl = max( fwidth( vLotXZ.x ), 1e-4 );
+            float leafA = 0.0;
+            vec3 leafG = vec3( 0.0 );
+            // (past leaf size the loop is skipped: most of the ground on screen)
+            if ( fl < 0.18 ) for ( int L = 0; L < 2; L++ ) {
+              vec2 lp = vLotXZ / 0.32 + ( L == 0 ? vec2( 0.0 ) : vec2( 0.5, 0.37 ) );
+              vec2 cell = mod( floor( lp ), 1024.0 ), f = fract( lp ) - 0.5;
+              float h1 = fract( sin( dot( cell, vec2( 12.9898, 78.233 ) ) + float( L ) * 3.1 ) * 43758.5453 );
+              if ( h1 > cover * 1.25 ) continue;
+              float h2 = fract( h1 * 91.37 ), h3 = fract( h1 * 317.9 ), h4 = fract( h1 * 57.1 ), h5 = fract( h1 * 23.71 );
+              vec2 c = f - ( vec2( h2, h3 ) - 0.5 ) * 0.3;
+              float an = h4 * 6.2832;
+              vec2 r = vec2( c.x * cos( an ) + c.y * sin( an ), c.y * cos( an ) - c.x * sin( an ) );
+              // sizes from a birch leaf to a bigleaf maple's; a maple is
+              // lobed (five points), the rest an oval
+              r /= 0.55 + h5 * 0.75;
+              float lob = h5 > 0.55 ? 1.0 - 0.28 * abs( cos( 2.5 * atan( r.y, r.x ) ) ) : 1.0;
+              float e = length( r / ( h5 > 0.55 ? vec2( 0.3, 0.3 ) : vec2( 0.34, 0.17 ) ) ) / lob;
+              float a = 1.0 - smoothstep( 0.8, 1.05, e );
+              if ( a > leafA ) {
+                leafA = a;
+                // gold, orange, red and the browns most of them have gone to
+                leafG = h2 < 0.26 ? vec3( 0.34, 0.19, 0.03 ) : h2 < 0.44 ? vec3( 0.3, 0.085, 0.02 )
+                      : h2 < 0.54 ? vec3( 0.21, 0.03, 0.02 ) : h2 < 0.8 ? vec3( 0.17, 0.09, 0.035 ) : vec3( 0.12, 0.07, 0.035 );
+                leafG *= 0.7 + 0.5 * h3;
+              }
+            }
+            // a pixel bigger than a leaf sees the drift's mean colour and cover
+            float far = clamp( ( fl - 0.03 ) / 0.15, 0.0, 1.0 );
+            float hue = texture2D( lotNoise, q2 / 2.3 + vec2( 0.77, 0.19 ) ).r;
+            vec3 meanG = mix( vec3( 0.28, 0.14, 0.026 ), vec3( 0.25, 0.075, 0.022 ), smoothstep( 0.42, 0.6, hue ) );
+            meanG = mix( meanG, vec3( 0.14, 0.07, 0.03 ), smoothstep( 0.5, 0.68, n1 ) * 0.6 );
+            leafG = mix( leafG, meanG, far );
+            leafA = mix( leafA, cover * 0.6, far );
+            // (a wood seen from afar is its canopy, not its floor)
+            diffuseColor.rgb = mix( diffuseColor.rgb, leafG, leafA * 0.8 * ( 1.0 - woodK * far ) );
+          }` : ''}
           {
             // THE EDGE IS RECONSTRUCTED, NOT SNAPPED. Each candidate code gets
             // a signed field from its four neighbours -- +(a - 0.5) where a tap
@@ -1210,7 +1279,7 @@ export class World {
         .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
           roughnessFactor = mix( roughnessFactor, 0.8, lotCover );`);
     };
-    mat.customProgramCacheKey = () => (lotTex ? 'terrain3scale-lots-wood' : 'terrain3scale');
+    mat.customProgramCacheKey = () => (lotTex ? (FALL ? 'terrain3scale-lots-wood-fall' : 'terrain3scale-lots-wood') : 'terrain3scale');
     this.terrainGroup = new THREE.Group();
     this.scene.add(this.terrainGroup);
     const lod = this.terrainLod = {
@@ -4526,6 +4595,7 @@ float frLine(float o, float fw, float c, float w) {
         // the TreeSystem keeps its own (cell-ordered) copy
         if (c.group) c.group.userData.trees = null;
       }
+      if (this.decor) this.decor.setChunk(c.key, c.group && c.group.userData.decor);
       // the phone's shadow cache holds this chunk's shadows (shadowcache.js)
       if (this.onChunkChange) this.onChunkChange((c.cx + 0.5) * CHUNK, (c.cz + 0.5) * CHUNK, CHUNK);
       if (old) {
@@ -4546,6 +4616,7 @@ float frLine(float o, float fw, float c, float w) {
     // it does. Leaving them behind means invisible trees you keep hitting.
     this.city.clearObstacles(this.city.chunkKey(c.cx, c.cz));
     if (this.trees) this.trees.dropChunk(c.key);
+    if (this.decor) this.decor.dropChunk(c.key);
     if (!c.group) return;
     c.group.traverse((o) => {
       if (o.geometry) o.geometry.dispose();
@@ -4597,6 +4668,8 @@ float frLine(float o, float fw, float c, float w) {
     // run one at a time, as this._ck already assumes.
     this._fell = [];
     this._treeRecs = null;
+    this._decor = FALL && lod === 1 ? [] : null;
+    this._occ = null;
     const road = new ChunkBuilder(true);
     const flat = new ChunkBuilder(false);
     // A near chunk's pavement is written straight into its road mesh, and
@@ -4642,6 +4715,10 @@ float frLine(float o, float fw, float c, float w) {
 
     if (lod === 1) {
       since = 0;
+      // the chunk's occupancy raster: which way each house faces
+      // (houseFront), then the trees' planting tests -- built once for both
+      this._occ = occupancy(city, cx, cz); this._occX0 = cx * CHUNK; this._occZ0 = cz * CHUNK; this._occKey = ck;
+      yield; this._yt = performance.now();
       for (const bi of ch.buildings) {
         if (performance.now() - this._yt > this._yb) { yield; this._yt = performance.now(); }
         this.meshBuilding(bl, flat, glow, city.buildings[bi]);
@@ -4650,6 +4727,7 @@ float frLine(float o, float fw, float c, float w) {
       yield* this.meshProps(flat, glow, ch, cx, cz);
       yield; this._yt = performance.now();
       yield* plantTrees(this, flat, ch, cx, cz, 1, ch === NO_CITY_CHUNK);
+      this._occ = null;
       yield; this._yt = performance.now();
     } else {
       // Mid-ring massing: every building the far skyline skips, as one merged
@@ -4745,10 +4823,13 @@ float frLine(float o, float fw, float c, float w) {
     // own flat mesh: an empty group still carries its records
     grp.userData.treesPooled = ch === NO_CITY_CHUNK;
     this._treeRecs = null;
+    // the season's pumpkins, for fall.js
+    grp.userData.decor = this._decor && this._decor.length ? new Float32Array(this._decor) : null;
+    this._decor = null;
     yield;
     add(bl.glass, this.mats.glass, true, true); yield;
     add(bl.facade, this.mats.facade, true, true);
-    return grp.children.length || grp.userData.trees ? grp : null;
+    return grp.children.length || grp.userData.trees || grp.userData.decor ? grp : null;
   }
 
   // --- road surfaces --------------------------------------------------------
@@ -7112,6 +7193,179 @@ float frLine(float o, float fw, float c, float w) {
    * the short half-span at each end (a pyramid on a square footprint). Normals
    * in the house's frame, as meshGable's are.
    */
+  /**
+   * Which side of a building faces the street: 0 its +z, 1 +x, 2 -z, 3 -x
+   * (in its own frame), the one whose middle has pavement nearest straight
+   * out from it, by the chunk's 2 m occupancy raster (trees.js), 16 m at
+   * most. +z when nothing is found, or outside a near chunk's build.
+   */
+  houseFront(bd) {
+    const occ = this._occ;
+    if (!occ) return 0;
+    const x0 = this._occX0, z0 = this._occZ0;
+    const cs = Math.cos(bd.rot), sn = Math.sin(bd.rot);
+    let best = 0, bestD = 1e9;
+    for (let k = 0; k < 4; k++) {
+      const lx = k === 1 ? 1 : k === 3 ? -1 : 0, lz = k === 0 ? 1 : k === 2 ? -1 : 0;
+      const half = lx ? bd.w / 2 : bd.d / 2;
+      const dx = lx * cs - lz * sn, dz = lx * sn + lz * cs;
+      for (let s = 1.5; s <= 16 && s < bestD; s += 1.5) {
+        const i = Math.floor((bd.x + dx * (half + s) - x0) / OCC_C), j = Math.floor((bd.z + dz * (half + s) - z0) / OCC_C);
+        if (i < 0 || j < 0 || i >= OCC_N || j >= OCC_N) break;
+        if (occ[j * OCC_N + i] & OCC_PAVE) { bestD = s; best = k; break; }
+      }
+    }
+    return best;
+  }
+
+  // --- fall: what the houses and shops put out -------------------------------
+
+  /** A pumpkin record for fall.js, at house-local (lx, lz) facing the house's front. */
+  _pumpkin(bd, off, lx, lz, y, r, carved, k) {
+    if (!this._decor) return;
+    const [x, z] = off(lx, lz);
+    const yaw = -bd.rot + (hash2(bd.seed, 700 + k) - 0.5) * 0.9;
+    this._decor.push(x, y, z, r, yaw, pumpkinSeed(x, z, k), carved ? 1 : 0);
+  }
+
+  /**
+   * Halloween on the front step, on about half the houses: pumpkins (a few
+   * of them carved) on the step or along the porch's front, potted mums, now
+   * and then a hay bale with corn stalks, a ghost hung from the porch roof, a
+   * raked pile of leaves in the side yard, and on one house in sixty a giant
+   * inflatable jack-o'-lantern on the lawn. All by the house's seed; pumpkins
+   * are records drawn near the camera (fall.js), the rest a few vertex-
+   * coloured shapes in the chunk's flat mesh.
+   */
+  fallHouse(flat, bd, seed, off, porch, form) {
+    const h = (k) => hash2(seed, 600 + k);
+    const front = bd.d / 2;
+    const ground = (lx, lz) => { const [x, z] = off(lx, lz); return G.terrainHeight(x, z); };
+    const clearAt = (lx, lz, pad = 0.4) => {
+      const [x, z] = off(lx, lz);
+      return !this.city.onRoad(x, z, pad, false) && !G.isWater(x, z);
+    };
+    const pumpR = (k) => 0.16 + h(k) * h(k + 1) * 0.17;
+    if (h(0) < 0.5) {
+      const n = 1 + Math.floor(h(1) * 3.4);
+      const carvedP = 0.28;
+      if (porch) {
+        // along the porch's front edge, either side of the steps
+        const y = porch.py + 0.34;
+        for (let i = 0; i < n; i++) {
+          const sd = i % 2 === 0 ? 1 : -1;
+          const lx = porch.px + sd * (1.05 + Math.floor(i / 2) * 0.55 + h(10 + i) * 0.15);
+          if (Math.abs(lx - porch.px) > porch.pw / 2 - 0.25) continue;
+          this._pumpkin(bd, off, lx, front + porch.pd - 0.45 - h(20 + i) * 0.3, y, pumpR(30 + i), h(40 + i) < carvedP, i);
+        }
+      } else if (form !== 'flat') {
+        // on the front step, at its back corners, then down the sides of it
+        const sy = bd.y + 0.12;
+        for (let i = 0; i < n; i++) {
+          const sd = i % 2 === 0 ? 1 : -1;
+          if (i < 2) this._pumpkin(bd, off, sd * (0.62 + h(10 + i) * 0.2), front + 0.32, sy, pumpR(30 + i), h(40 + i) < carvedP, i);
+          else {
+            const lx = sd * (1.35 + h(10 + i) * 0.3), lz = front + 0.7;
+            if (clearAt(lx, lz)) this._pumpkin(bd, off, lx, lz, ground(lx, lz), pumpR(30 + i), h(40 + i) < carvedP, i);
+          }
+        }
+      } else {
+        // a townhome: by the door, on the ground
+        for (let i = 0; i < Math.min(n, 2); i++) {
+          const lx = (i ? -1 : 1) * (0.7 + h(10 + i) * 0.3), lz = front + 0.45;
+          if (clearAt(lx, lz)) this._pumpkin(bd, off, lx, lz, ground(lx, lz), pumpR(30 + i), h(40 + i) < carvedP, i);
+        }
+      }
+    }
+    // potted mums either side of the way in
+    if (h(2) < 0.3) {
+      // rust, gold, burgundy, bronze; the odd purple or white
+      const MUM = [[0.62, 0.17, 0.02], [0.7, 0.45, 0.04], [0.3, 0.025, 0.04], [0.48, 0.2, 0.05], [0.62, 0.17, 0.02],
+        [0.7, 0.45, 0.04], [0.26, 0.07, 0.24], [0.72, 0.7, 0.62]];
+      const POT = [[0.42, 0.18, 0.1], [0.42, 0.18, 0.1], [0.3, 0.22, 0.15], [0.12, 0.12, 0.13]];
+      const mc = MUM[Math.floor(h(3) * MUM.length)], pc = POT[Math.floor(h(4) * POT.length)];
+      for (const sd of h(5) < 0.5 ? [1, -1] : [h(6) < 0.5 ? 1 : -1]) {
+        const lx = porch ? porch.px + sd * 0.85 : sd * 1.25, lz = porch ? front + porch.pd + 0.45 : front + 0.25;
+        if (!clearAt(lx, lz)) continue;
+        const [x, z] = off(lx, lz), y = G.terrainHeight(x, z);
+        // a pot, its rim, and a cushion of flowers over it, wider than the pot
+        flat.prism(x, y - 0.05, z, 0.16, 0.28, 7, pc);
+        flat.prism(x, y + 0.2, z, 0.19, 0.06, 7, [pc[0] * 0.85, pc[1] * 0.85, pc[2] * 0.85]);
+        flat.foliage(x, y + 0.36, z, 0.3, 8, 4, mc, 0.62, 0.22, 0.45, null, 0.3);
+      }
+    }
+    // a hay bale with a pumpkin on it and a bundle of corn stalks behind
+    if (h(7) < 0.09 && form !== 'flat') {
+      const sd = h(8) < 0.5 ? 1 : -1;
+      const lx = porch ? porch.px + sd * (porch.pw / 2 + 0.7) : sd * 2.0, lz = front + 0.75;
+      if (clearAt(lx, lz, 0.8)) {
+        const [x, z] = off(lx, lz), y = G.terrainHeight(x, z);
+        const straw = [0.62, 0.5, 0.22];
+        flat.box(x, y - 0.05, z, 1.0, 0.5, 0.48, bd.rot, straw);
+        for (const b of [-0.3, 0.3]) flat.box(x + b * Math.cos(bd.rot), y + 0.02, z + b * Math.sin(bd.rot), 0.04, 0.44, 0.5, bd.rot, [0.42, 0.33, 0.14]);
+        this._pumpkin(bd, off, lx, lz, y + 0.45, 0.2 + h(9) * 0.06, h(11) < 0.4, 9);
+        const [sx, sz] = off(lx + sd * 0.7, front + 0.25);
+        for (let i = 0; i < 4; i++) {
+          const a = i * 1.7, r = 0.09;
+          flat.cone(sx + Math.cos(a) * r, y - 0.05, sz + Math.sin(a) * r, 0.11, 1.75 + h(12 + i) * 0.35, 4, [0.52, 0.44, 0.24]);
+        }
+        flat.box(sx, y + 0.75, sz, 0.3, 0.06, 0.3, bd.rot, [0.42, 0.3, 0.12]);
+      }
+    }
+    // a sheet ghost hung from the porch roof
+    if (porch && h(13) < 0.12) {
+      const [gx, gz] = off(porch.px + (h(14) < 0.5 ? 1 : -1) * (porch.pw / 2 - 0.45), front + porch.pd - 0.3);
+      const top = porch.py + porch.ph - 0.2;
+      flat.box(gx, top - 0.35, gz, 0.02, 0.35, 0.02, 0, [0.85, 0.85, 0.85]);
+      flat.cone(gx, top - 1.25, gz, 0.3, 0.8, 7, [0.9, 0.9, 0.88]);
+      flat.spheroid(gx, top - 0.5, gz, 0.2, 7, 4, [0.92, 0.92, 0.9], 1.05);
+    }
+    // a raked pile of leaves in the side yard
+    if (h(15) < 0.16) {
+      const sd = h(16) < 0.5 ? 1 : -1;
+      const lx = sd * (bd.w / 2 + 1.6 + h(17)), lz = front - 1 - h(18) * 3;
+      const [x, z] = off(lx, lz);
+      if (clearAt(lx, lz, 1.2) && !this.inBuilding(x, z, 1.2)) {
+        const LEAF = [[0.42, 0.2, 0.03], [0.36, 0.09, 0.02], [0.22, 0.11, 0.04]];
+        const lc = LEAF[Math.floor(h(19) * LEAF.length)];
+        flat.cone(x, G.terrainHeight(x, z) - 0.08, z, 0.95 + h(21) * 0.6, 0.45 + h(22) * 0.25, 7, lc, 0.35);
+      }
+    }
+    // the giant inflatable on the lawn
+    if (h(23) < 0.017) {
+      const lx = (h(24) - 0.5) * bd.w * 0.6, lz = front + 3.2;
+      if (clearAt(lx, lz, 1.6)) this._pumpkin(bd, off, lx, lz, ground(lx, lz), 0.95, true, 24);
+    }
+  }
+
+  /** A shop's seasonal display at its door: hay bales and a heap of pumpkins. */
+  fallShop(flat, bd0, seed) {
+    const h = (k) => hash2(seed, 650 + k);
+    if (h(0) > 0.16) return;
+    // on the street side (houseFront), in that side's frame
+    const fk = this.houseFront(bd0);
+    const bd = fk === 0 ? bd0 : { x: bd0.x, z: bd0.z, seed: bd0.seed, rot: bd0.rot + FRONT_TURN[fk], w: fk % 2 ? bd0.d : bd0.w, d: fk % 2 ? bd0.w : bd0.d };
+    if (bd.w < 8) return;
+    const cs = Math.cos(bd.rot), sn = Math.sin(bd.rot);
+    const off = (lx, lz) => [bd.x + lx * cs - lz * sn, bd.z + lx * sn + lz * cs];
+    const sd = h(1) < 0.5 ? 1 : -1;
+    const lx = sd * (bd.w / 2 - 1.6 - h(2) * Math.max(0, bd.w / 2 - 4)), lz = bd.d / 2 + 0.75;
+    const [x, z] = off(lx, lz);
+    if (this.city.onRoad(x, z, 0.6, false)) return;
+    const y = G.terrainHeight(x, z) + this.city.roadLift(x, z);
+    const straw = [0.62, 0.5, 0.22];
+    flat.box(x, y - 0.03, z, 1.0, 0.48, 0.48, bd.rot, straw);
+    const [x2, z2] = off(lx + sd * -1.05, lz);
+    flat.box(x2, y - 0.03, z2, 1.0, 0.48, 0.48, bd.rot, [straw[0] * 0.92, straw[1] * 0.92, straw[2] * 0.9]);
+    const n = 3 + Math.floor(h(3) * 4);
+    for (let i = 0; i < n; i++) {
+      const on = i < 2;
+      const px = on ? lx + (i ? sd * -1.05 : 0) : lx + sd * (0.75 + (i - 2) * 0.42) * (i % 2 ? -1 : 1) * 1.2;
+      const pz = on ? lz : lz + 0.5 + h(10 + i) * 0.25;
+      this._pumpkin(bd, off, px, pz, on ? y + 0.45 : y, 0.14 + h(20 + i) * 0.13, h(30 + i) < 0.15, i);
+    }
+  }
+
   meshHip(flat, bd, y0, col, pitch) {
     const cs = Math.cos(bd.rot), sn = Math.sin(bd.rot);
     const OVER = 0.45;
@@ -7697,37 +7951,50 @@ float frLine(float o, float fw, float c, float w) {
       }
       // A front porch on some: a deck, two posts and a roof, on the side the
       // step is on, where it clears the street.
-      if (form !== 'flat' && bd.w >= 6.5 && bd.d >= 6 && hash2(seed, 135) < 0.42) {
-        const pw = Math.min(bd.w * (0.4 + hash2(seed, 136) * 0.35), 7), pd = 2.2;
-        const px = (hash2(seed, 137) < 0.5 ? -1 : 1) * (bd.w - pw) / 2 * hash2(seed, 138);
-        const [cx0, cz0] = off(px, bd.d / 2 + pd / 2);
-        const [ex0, ez0] = off(px, bd.d / 2 + pd + 0.3);
+      // The way in -- step, porch, the season's pumpkins, a townhome's door --
+      // is on the side that faces the street (`houseFront`): `rot` is the
+      // footprint's own, so its +z was any side at all, and a porch stood
+      // in the back garden as often as not. `fb` is the same box turned so
+      // its +z is that side.
+      const fk = this.houseFront(bd);
+      const fb = fk === 0 ? bd : { x: bd.x, y: bd.y, z: bd.z, h: bd.h, seed: bd.seed, style: bd.style,
+        rot: bd.rot + FRONT_TURN[fk], w: fk % 2 ? bd.d : bd.w, d: fk % 2 ? bd.w : bd.d };
+      const fcs = Math.cos(fb.rot), fsn = Math.sin(fb.rot);
+      const offF = fk === 0 ? off : (lx, lz) => [bd.x + lx * fcs - lz * fsn, bd.z + lx * fsn + lz * fcs];
+      let porch = null;
+      if (form !== 'flat' && fb.w >= 6.5 && fb.d >= 6 && hash2(seed, 135) < 0.42) {
+        const pw = Math.min(fb.w * (0.4 + hash2(seed, 136) * 0.35), 7), pd = 2.2;
+        const px = (hash2(seed, 137) < 0.5 ? -1 : 1) * (fb.w - pw) / 2 * hash2(seed, 138);
+        const [cx0, cz0] = offF(px, fb.d / 2 + pd / 2);
+        const [ex0, ez0] = offF(px, fb.d / 2 + pd + 0.3);
         if (!this.city.onRoad(cx0, cz0, 0.5, false) && !this.city.onRoad(ex0, ez0, 0.5, false)) {
           const py = bd.y - 0.1, ph = 2.6;
-          flat.box(cx0, py, cz0, pw, 0.34, pd, bd.rot, [0.52, 0.47, 0.42]);
-          flat.box(cx0, py + ph, cz0, pw + 0.3, 0.2, pd + 0.3, bd.rot, rc);
-          flat.box(cx0, py + ph - 0.22, cz0, pw + 0.1, 0.22, pd + 0.1, bd.rot, trim, { top: false });
+          porch = { px, pw, pd, py, ph };
+          flat.box(cx0, py, cz0, pw, 0.34, pd, fb.rot, [0.52, 0.47, 0.42]);
+          flat.box(cx0, py + ph, cz0, pw + 0.3, 0.2, pd + 0.3, fb.rot, rc);
+          flat.box(cx0, py + ph - 0.22, cz0, pw + 0.1, 0.22, pd + 0.1, fb.rot, trim, { top: false });
           for (const sd of [-1, 1]) {
-            const [qx, qz] = off(px + sd * (pw / 2 - 0.2), bd.d / 2 + pd - 0.2);
-            flat.box(qx, py + 0.34, qz, 0.2, ph - 0.34, 0.2, bd.rot, trim);
+            const [qx, qz] = offF(px + sd * (pw / 2 - 0.2), fb.d / 2 + pd - 0.2);
+            flat.box(qx, py + 0.34, qz, 0.2, ph - 0.34, 0.2, fb.rot, trim);
           }
           // a railing along the front, open in the middle for the steps
           if (pw > 3) for (const sd of [-1, 1]) {
-            const rw = pw / 2 - 0.9, [rx, rz] = off(px + sd * (pw / 2 - 0.2 - rw / 2), bd.d / 2 + pd - 0.2);
-            flat.box(rx, py + 0.34 + 0.82, rz, rw, 0.08, 0.1, bd.rot, trim);
+            const rw = pw / 2 - 0.9, [rx, rz] = offF(px + sd * (pw / 2 - 0.2 - rw / 2), fb.d / 2 + pd - 0.2);
+            flat.box(rx, py + 0.34 + 0.82, rz, rw, 0.08, 0.1, fb.rot, trim);
           }
         }
       }
+      if (FALL) this.fallHouse(flat, bd, seed, off, porch, form);
       if (form === 'flat') {
-        this.townhome(flat, bd, seed, col, top, off);
+        this.townhome(flat, fb, seed, col, top, offF);
         return;
       }
       const pitch = 0.46 + hash2(seed, 139) * 0.36;
       if (form === 'hip') {
         this.meshHip(flat, bd, top + 0.26, rc, pitch);
         this.houseExtras(flat, bd, seed, 'hip', top + 0.26, pitch, rc, col, trim, off);
-        const [sx, sz] = off(0, bd.d / 2 + 0.5);
-        flat.box(sx, bd.y - 0.1, sz, 2.0, 0.22, 1.2, bd.rot, [0.62, 0.6, 0.57]);
+        const [sx, sz] = offF(0, fb.d / 2 + 0.5);
+        flat.box(sx, bd.y - 0.1, sz, 2.0, 0.22, 1.2, fb.rot, [0.62, 0.6, 0.57]);
         return;
       }
       // A gable that fits the house it sits on.
@@ -7751,9 +8018,9 @@ float frLine(float o, float fw, float c, float w) {
       // touches this one. The guard was suppressing three correct roofs.
       this.meshGable(flat, bd, base + wallH + 2.26, rc, seed, pitch);
       this.houseExtras(flat, bd, seed, 'gable', top + 0.26, pitch, rc, col, trim, off);
-      const [sx, sz] = off(0, bd.d / 2 + 0.5);
+      const [sx, sz] = offF(0, fb.d / 2 + 0.5);
       // The front step, on the ground rather than 40 cm under it.
-      flat.box(sx, bd.y - 0.1, sz, 2.0, 0.22, 1.2, bd.rot, [0.62, 0.6, 0.57]);
+      flat.box(sx, bd.y - 0.1, sz, 2.0, 0.22, 1.2, fb.rot, [0.62, 0.6, 0.57]);
       return;
     }
 
@@ -7923,6 +8190,7 @@ float frLine(float o, float fw, float c, float w) {
         flat.box(ax, y + plinthH - 1.4, az, bd.w * 0.62, 0.22, 1.8, bd.rot, ac);
       }
       this.meshSigns(bl.facade, flat, bd, y + plinthH, plinthH, seed, off);
+      if (FALL) this.fallShop(flat, bd, seed);
       y += plinthH + 0.5;
       remaining -= plinthH + 0.5;
     }

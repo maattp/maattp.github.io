@@ -1,6 +1,21 @@
 // Small math / rng / geometry helpers shared across the whole game.
 
 export const TAU = Math.PI * 2;
+
+// The season the city is dressed for. Fall: the broadleaf trees turn, leaves
+// lie on the lawns and drift down from the crowns, pumpkins sit on the front
+// steps. `?season=summer` puts it back to summer, for a before/after.
+export const FALL = typeof location === 'undefined' || !/[?&]season=summer\b/.test(location.search);
+
+// Toward the sun, unit length, in the game's frame (x east, y up, z SOUTH).
+// Fall is a mid-October afternoon in Seattle, about a quarter to three: the
+// sun 24 deg up in the south-west (azimuth 218), so a house throws a shadow
+// twice its height and a tower one across the next block. Summer keeps the
+// old sun, 38 deg up in the north-west. main.js places the light along it,
+// trees.js lights the crowns by it, tools/build_mountains.py bakes Rainier's
+// face against the fall one.
+export const SUN_DIR = FALL ? [-0.56244, 0.40674, 0.71987]
+  : (() => { const l = Math.hypot(215, 200, 150); return [-215 / l, 200 / l, -150 / l]; })();
 export const DEG = Math.PI / 180;
 
 export const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);

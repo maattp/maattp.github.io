@@ -19,8 +19,8 @@ When code or an old note cites `CLAUDE.md "Some Heading"`, find it with
   Sections: "Where the map comes from"; "Keeping the roads clear"; "What the map looks like from above"; "The map grew to 27.6 km (v163)"; "The map grew to 31.2 km (v167)"; "The islands across the Sound (v151)"; "The minimap at the map's edge (v166)".
 - **`guide/roads.md`** (86 KB) -- junctions, bridges, street and freeway grading, SR-99, one-way traffic, shimmer and jolt.
   Sections: "One-way traffic"; "Shimmer and jolt: two things that read as "janky""; "Junctions, dead ends, bridges"; "Street grading: the ground fitted to the streets"; "Parked cars sit on the slope"; "Freeway grading: decks and freeway chains are one profile"; "SR-99: ride it the way a player does".
-- **`guide/rendering.md`** (52 KB) -- pipeline, shadows, surfaces, judging screenshots, draw-call budget, the gfx169 pass, the trees.
-  Sections: "Rendering pipeline"; "Shadows: snap the box, fade its edge"; "Surfaces: glass, windows, roofs, trees, ground"; "Judging how it looks"; "Draw-call budget"; "Mountains on the horizon"; "Far buildings take their real colour (v166)"; "A phone-neutral graphics pass (docs/gfx169)"; "A green Seattle: trees as records, three levels of detail".
+- **`guide/rendering.md`** (56 KB) -- pipeline, shadows, surfaces, judging screenshots, draw-call budget, the gfx169 pass, the trees, the fall season and its sun.
+  Sections: "Rendering pipeline"; "Shadows: snap the box, fade its edge"; "Surfaces: glass, windows, roofs, trees, ground"; "Judging how it looks"; "Draw-call budget"; "Mountains on the horizon"; "Far buildings take their real colour (v166)"; "A phone-neutral graphics pass (docs/gfx169)"; "A green Seattle: trees as records, three levels of detail"; "Fall (v232)".
 - **`guide/city.md`** (23 KB) -- building variety and outliers, street objects, landmarks, parks, lots/plazas/yards.
   Sections: "Buildings: variety"; "Houses: dormers, garages, and modern townhomes (v156)"; "Buildings: the outlier scan"; "Solid street objects"; "Landmarks"; "Parks"; "Lots, plazas and yards".
 - **`guide/models.md`** (45 KB) -- vehicle, character and prop models: how they are built and judged.
@@ -62,6 +62,8 @@ src/world.js                terrain, water, sky, streamed chunks, far skyline
 src/mountains.js            the Olympics, Rainier and the Cascades: one sky-layer draw (see "Mountains on the horizon")
 src/trees.js                every tree: planted per chunk as records, drawn far (merged),
                             mid and near (instanced); see "A green Seattle"
+src/fall.js                 the season: pumpkins (records, instanced near the camera) and the
+                            leaves coming down; the rest of fall is listed in "Fall (v232)"
 src/landmarks.js            landmarks to published dimensions, + their solids
 src/lmdowntown.js           the Arch, Central Library, Aquarium, Colman Dock terminal, Kerry Park and the Locks, from their OSM plans
 src/vehicles.js             vehicle models + the arcade driving model

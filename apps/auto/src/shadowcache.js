@@ -61,6 +61,7 @@ export class ShadowCache {
   constructor(renderer, sun, opts) {
     this.r = renderer;
     this.sun = sun;
+    this._L = new THREE.Vector3();
     this.margin = opts.margin;
     this.statics = opts.statics;
     this.keep = opts.keep;
@@ -137,8 +138,11 @@ export class ShadowCache {
   chunkChanged(x, z, r) {
     if (!this.valid) return;
     // the cache's box, the chunk's half-diagonal, and how far a tall caster's
-    // shadow reaches at this sun (38 deg: a 260 m tower throws ~330 m)
-    const c = this.cachePos, reach = (this.nc * this.texel) / 2 + r * 0.71 + 340;
+    // shadow reaches at this sun (a 260 m tower throws ~330 m at 38 deg,
+    // ~580 m at 24)
+    const L = this._L.copy(this.sun.position).sub(this.sun.target.position);
+    const throwM = 260 * Math.hypot(L.x, L.z) / Math.max(1, L.y) + 10;
+    const c = this.cachePos, reach = (this.nc * this.texel) / 2 + r * 0.71 + throwM;
     if (Math.abs(x - c.x) < reach && Math.abs(z - c.z) < reach) this.dirty = true;
   }
 
