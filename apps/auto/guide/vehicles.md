@@ -363,7 +363,7 @@ shots.
   kerbside parking, and adding one would move every parked car in the city
   (see "The articulated bus").
 
-### The Belltown Hellcat: an Easter egg (v224-v226)
+### The Belltown Hellcat: an Easter egg (v224-v227)
 
 **A tiger-striped, supercharged muscle car, a few at a time, only in
 Belltown.** After the real one: a modified Dodge Charger Hellcat whose
@@ -428,17 +428,21 @@ reckless driving in 2025. `docs/hellcat/` has shots.
   slot, for the Wedge's reason. It drives like its owner: `drvK` 1.35 (35 %
   over everyone's limit) and an IDM `aMax` of 5.5 against everyone's 2.
 - **The noise is the point.** `engine: 'hellcat'` (audio.js): the V8's
-  cross-plane burble with a rawer pulse, a 90 Hz body boom, the saturator
-  driven at 3.2, a lumpy idle, a blower's whine on the revs, eight gears and
-  the crackle (`audiorender.mjs --only engine-hellcat,engine-v8`: RMS -12.9
-  against the V8's -15.0 dB, centroid 1294 Hz, no clipping). Your own is
+  cross-plane burble with a fat pulse (`pw` 0.046), a 58 Hz body boom
+  (+14 dB), a dark low-pass, the saturator driven at 3.2, a loping 680 rpm
+  idle (`rough` 0.8), a blower's whine on the revs, eight gears and the
+  crackle (v227, `audiorender.mjs --only engine-hellcat,engine-v8`: RMS -10.6
+  against the V8's -15.0 dB, centroid 1033 Hz (v226: 1294), the share of
+  energy under 80 Hz -3.6 dB (v226: -11.7), no clipping). Its pops are
+  `bang`, not `backfire` (any profile with `bang: true`): a 0.75 s gunshot
+  crack over a thump falling to 30 Hz, the pipe ringing after. Your own is
   that through the engine voice. **An AI one gets a whole voice of its own**
   (`_hellcat`): the nearest within `HELLCAT_HEAR` (360 m), at full level to
   `HELLCAT_REF` (30 m, against a traffic voice's 7 m and 75 m reach), on the
   player's `EngineModel`, driven as it is driven -- the floor off every stop,
   a lift (and the crackle) into every one, and standing still a rev-bomb to
-  ~6000 rpm every 1.4-4 s; every pop and flat-out upshift is a `backfire`
-  placed on the car. It is skipped by the traffic voices while it has it.
+  ~6000 rpm every 1.4-4 s; every pop and flat-out upshift is a `bang`
+  placed on the car, at full level to 30 m. It is skipped by the traffic voices while it has it.
 
 **v215: your car steers sharper at speed, burns before it blows, and does burnouts.**
 - `PLAYER_BITE` 1.7 (vs `STEER_BITE` 1.25) in `steerLock`, for the detailed
