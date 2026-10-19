@@ -177,6 +177,7 @@ const dropArray = function () { this.array = null; };
 
 export class Builder {
   constructor(useUV = true) {
+    this.solids = null;
     this.useUV = useUV;
     this.pos = [];
     this.nor = [];
@@ -418,6 +419,8 @@ export class Builder {
    * only U needs confining, and `faceU` below for what it costs.
    */
   box(cx, by, cz, w, h, d, rot, col, opts = {}) {
+    // `solids`, while set: what was drawn, as boxes (world.js roofSolids)
+    if (this.solids && w > 0.5 && d > 0.5) this.solids.push(0, cx, cz, w, d, rot, by, by + h);
     const { uScale = 0, vScale = 0, top = true, vOff = 0, sides = true, ao = 0, cell = null,
       uFit = false } = opts;
     const cr = Math.cos(rot), sr = Math.sin(rot);
@@ -496,6 +499,7 @@ export class Builder {
 
   /** Regular n-gon prism (poles, trunks, columns). */
   prism(cx, by, cz, r, h, sides, col, rot = 0) {
+    if (this.solids && r >= 0.5) this.solids.push(0, cx, cz, 2 * r, 2 * r, 0, by, by + h);
     const n = sides;
     for (let i = 0; i < n; i++) {
       const a0 = rot + (i / n) * Math.PI * 2;
@@ -514,6 +518,7 @@ export class Builder {
    * against the tip -- the skirt's underside, which the sky cannot see.
    */
   cone(cx, by, cz, r, h, sides, col, shade = -1) {
+    if (this.solids && r >= 0.5) this.solids.push(0, cx, cz, 2 * r, 2 * r, 0, by, by + h);
     const sm = shade >= 0;
     const ny = r / Math.hypot(r, h);   // slope normal's vertical part
     const nh = h / Math.hypot(r, h);

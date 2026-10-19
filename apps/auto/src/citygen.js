@@ -12,7 +12,7 @@
 import * as G from './geo.js';
 import { CLS_NAME, F_ELEV, F_TUNNEL, F_ONEWAY, F_ONEWAY_REV } from './mapdata.js';
 import { LANDMARK_CLEAR } from './landmarks.js';
-import { distToSeg, segDist, clamp, hash2 } from './util.js';
+import { distToSeg, segDist, clamp, hash2, roofAt } from './util.js';
 import { memo } from './bootcache.js';
 
 export const CHUNK = 400;
@@ -4791,6 +4791,23 @@ export function* cityGenerator(md, cache = {}) {
           }
         }
       return out;
+    },
+
+    /**
+     * The highest drawn roof under (x, z) at or below `maxY` (util roofAt:
+     * the footprint grown by `pad`), or -Infinity. What a helicopter, the
+     * balloon, a parachute or someone on foot comes down on: `groundAt`
+     * answers the terrain and the decks, never a building, so a helicopter set
+     * down on a roof sank through it until the wall test shoved it out into
+     * the street.
+     */
+    roofUnder(x, z, maxY, pad = 0) {
+      let top = -Infinity;
+      for (const b of this.buildingsNear(x, z, pad + 1)) {
+        const r = roofAt(b, x, z, pad, maxY);
+        if (r > top) top = r;
+      }
+      return top;
     },
 
     /**

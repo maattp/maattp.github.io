@@ -99,7 +99,7 @@ export class Skydive {
   /** The frame, while in the air. Returns false once back on the ground (player drops `sky`). */
   update(p, dt, input) {
     this.t += dt;
-    const ground = p.city.groundAt(p.x, p.z, p.y + 1);
+    const ground = Math.max(p.city.groundAt(p.x, p.z, p.y + 1), p.city.roofUnder(p.x, p.z, p.y + 1));   // a roof is a landing
     const agl = p.y - ground;
     const wl = p.world.waterLevelAt(p.x, p.z);
     const overWater = wl !== null && G.isWater(p.x, p.z) && wl > ground;
