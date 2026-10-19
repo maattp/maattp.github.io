@@ -2,7 +2,7 @@
 
 import * as THREE from './three.js';
 import { Vehicle, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, makeBellows, HITCH } from './vehicles.js';
-import { clamp, lerp, angleWrap, hash2, rng, dist2 } from './util.js';
+import { clamp, lerp, angleWrap, hash2, rng, dist2, tierScale } from './util.js';
 import * as G from './geo.js';
 import { memo } from './bootcache.js';
 
@@ -292,6 +292,9 @@ export function collideWithBuildings(v, city, onHit, ai = false) {
     const c = Math.cos(-b.rot), s = Math.sin(-b.rot);
     const dx = v.x - b.x, dz = v.z - b.z;
     const lx = dx * c - dz * s, lz = dx * s + dz * c;
+    // the storey at this height: above a setback the tower is narrower, and a
+    // helicopter on the ledge is not inside it (util tierScale)
+    const k = b.h > 55 ? tierScale(b, v.y) : 1, hw = b.w * k / 2, hd = b.d * k / 2;
     let ex, ez;
     if (v.halfLen > LONG_BODY) {
       // A LONG BODY IS A RECTANGLE, NOT A CIRCLE. The circle grown by 0.8 x
@@ -303,13 +306,13 @@ export function collideWithBuildings(v, city, onHit, ai = false) {
       // check on the body's own axes for a body turned across the corner.
       const f = v.forward, fx = f.x * c - f.z * s, fz = f.x * s + f.z * c;
       const ax = Math.abs(fx), az = Math.abs(fz);
-      ex = b.w / 2 + ax * v.halfLen + az * v.halfWid + BODY_SKIN;
-      ez = b.d / 2 + az * v.halfLen + ax * v.halfWid + BODY_SKIN;
+      ex = hw + ax * v.halfLen + az * v.halfWid + BODY_SKIN;
+      ez = hd + az * v.halfLen + ax * v.halfWid + BODY_SKIN;
       if (Math.abs(lx) > ex || Math.abs(lz) > ez) continue;
-      if (Math.abs(lx * fx + lz * fz) > b.w / 2 * ax + b.d / 2 * az + v.halfLen + BODY_SKIN) continue;
-      if (Math.abs(lx * fz - lz * fx) > b.w / 2 * az + b.d / 2 * ax + v.halfWid + BODY_SKIN) continue;
+      if (Math.abs(lx * fx + lz * fz) > hw * ax + hd * az + v.halfLen + BODY_SKIN) continue;
+      if (Math.abs(lx * fz - lz * fx) > hw * az + hd * ax + v.halfWid + BODY_SKIN) continue;
     } else {
-      ex = b.w / 2 + v.radius * 0.8; ez = b.d / 2 + v.radius * 0.8;
+      ex = hw + v.radius * 0.8; ez = hd + v.radius * 0.8;
       if (Math.abs(lx) > ex || Math.abs(lz) > ez) continue;
     }
     if (v.y > b.y + b.h - 1) continue;

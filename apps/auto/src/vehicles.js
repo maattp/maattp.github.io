@@ -10516,14 +10516,7 @@ export class Vehicle {
 
   /** The highest thing under the basket: ground, a deck, a roof, the water. */
   _balloonFloor(x, z) {
-    let y = this.city.groundAt(x, z, this.y + 1.2);
-    for (const b of this.city.buildingsNear(x, z, 40)) {
-      const c = Math.cos(-b.rot), s = Math.sin(-b.rot), dx = x - b.x, dz = z - b.z;
-      if (Math.abs(dx * c - dz * s) < b.w / 2 + 0.6 && Math.abs(dx * s + dz * c) < b.d / 2 + 0.6) {
-        const top = (b.base != null ? b.base : b.y) + b.h;
-        if (top <= this.y + 1.2 && top > y) y = top;
-      }
-    }
+    let y = Math.max(this.city.groundAt(x, z, this.y + 1.2), this.city.roofUnder(x, z, this.y + 1.2, 0.6));
     if (waterQuery && G.isWater(x, z)) {
       const wl = waterQuery(x, z);
       if (wl !== null && wl > y) y = wl;
@@ -10540,7 +10533,7 @@ export class Vehicle {
     const R = 7.6, mouth = this.y + BAL.mouthY;
     let best = null;
     for (const b of this.city.buildingsNear(x, z, 60)) {
-      const top = (b.base != null ? b.base : b.y) + b.h;
+      const top = b.y + b.h;
       if (top < mouth) continue;
       const c = Math.cos(-b.rot), s = Math.sin(-b.rot), dx = x - b.x, dz = z - b.z;
       const lx = dx * c - dz * s, lz = dx * s + dz * c;
@@ -10590,7 +10583,10 @@ export class Vehicle {
     const ready = this.spool > 0.92;
 
     this.lift = this.city.roadLift(this.x, this.z);
-    const ground = this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift);
+    // the ground, a deck, or a roof: it sets down on a building like anywhere
+    // else (the skids' half-width of overhang still stands on it)
+    const ground = Math.max(this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift),
+      this.city.roofUnder(this.x, this.z, this.y + 1.2, 0.9));
 
     // collective -> vertical speed
     let cIn = piloted ? clamp((input.lift || 0) - (input.sink || 0), -1, 1) : -0.5;

@@ -13,7 +13,7 @@ import { memo } from './bootcache.js';
 import { buildMountains } from './mountains.js';
 import { plantTrees, occupancy, OCC_C, OCC_N, OCC_PAVE } from './trees.js';
 import { pumpkinSeed } from './fall.js';
-import { hash2, clamp, lerp, distToSeg, segDist, FALL } from './util.js';
+import { hash2, clamp, lerp, distToSeg, segDist, FALL, buildingTiers, roofAt, tierScale } from './util.js';
 
 // The bore's cross-section, shared by the mesher and by the trench that has to
 // be cut out of the ground to make room for it.
@@ -104,30 +104,24 @@ const ROAD_Y = ROAD_LIFT;
 // Metres per road-texture repeat. Fixed, so the asphalt's grain is the same
 // size on an alley and on a freeway.
 /**
- * The tiers a tall building steps back through.
- *
- * Shared by the near chunk mesh and the far skyline mesh, because they were
- * modelling the same building differently and each poked through the other. The
- * near mesh stepped back at 62 % of the height; the far mesh at 80-90 %. Between
- * those the far version was WIDER, so it stood proud of the textured geometry
- * all the way round -- and the far mesh has no map, so every tall building in
- * downtown wore a blank pale slab across its upper third. Measured by raycast,
- * the far mesh was the frontmost surface at 235-353 m, well inside the 800 m
- * near radius where it has no business being visible at all.
- *
- * One profile, two consumers. They cannot drift again.
+ * What stands on a flat roof, from the boxes meshBuilding drew (`rec`, 8
+ * numbers each: kind, x, z, w, d, rot, base, top -- kind 2 a pyramid): those
+ * standing on the top deck and rising over it, less anything as big as the
+ * roof itself (the deck, the lid, the parapet, a cornice). For util roofAt;
+ * null when there is nothing.
  */
-function* buildingTiers(bd, baseY, totalH) {
-  const n = bd.h > 100 ? 3 : bd.h > 55 ? 2 : 1;
-  let y = baseY, remaining = totalH, w = bd.w, d = bd.d;
-  for (let t = 0; t < n; t++) {
-    const frac = t === n - 1 ? 1 : t === 0 ? 0.62 : 0.6;
-    const h = remaining * frac;
-    yield { t, last: t === n - 1, y, h, w, d };
-    y += h;
-    remaining -= h;
-    if (t < n - 1) { y += 0.55; w *= 0.78; d *= 0.78; }
+function roofSolids(bd, rec) {
+  const deck = roofAt(bd, bd.x, bd.z);
+  if (!(deck > -Infinity)) return null;
+  const tierTop = deck - 0.83, k = tierScale(bd, deck);
+  const out = [];
+  for (let i = 0; i < rec.length; i += 8) {
+    const base = rec[i + 6], top = rec[i + 7];
+    if (base < tierTop - 0.05 || top < deck + 0.1) continue;
+    if (rec[i + 3] >= 0.9 * bd.w * k && rec[i + 4] >= 0.9 * bd.d * k) continue;
+    for (let j = 0; j < 8; j++) out.push(rec[i + j]);
   }
+  return out.length ? new Float32Array(out) : null;
 }
 
 const ROAD_TILE = 9;
@@ -4623,6 +4617,9 @@ float frLine(float o, float fw, float c, float w) {
     // Solid street objects belong to the chunk that drew them, so they go when
     // it does. Leaving them behind means invisible trees you keep hitting.
     this.city.clearObstacles(this.city.chunkKey(c.cx, c.cz));
+    // ...and so do the solids on its roofs
+    const cr = this.city.chunks.get(this.city.chunkKey(c.cx, c.cz));
+    if (cr) for (const bi of cr.buildings) this.city.buildings[bi].roofSolids = null;
     if (this.trees) this.trees.dropChunk(c.key);
     if (this.decor) this.decor.dropChunk(c.key);
     if (!c.group) return;
@@ -4727,9 +4724,18 @@ float frLine(float o, float fw, float c, float w) {
       // (houseFront), then the trees' planting tests -- built once for both
       this._occ = occupancy(city, cx, cz); this._occX0 = cx * CHUNK; this._occZ0 = cz * CHUNK; this._occKey = ck;
       yield; this._yt = performance.now();
+      const rec = [];
       for (const bi of ch.buildings) {
         if (performance.now() - this._yt > this._yb) { yield; this._yt = performance.now(); }
-        this.meshBuilding(bl, flat, glow, city.buildings[bi]);
+        const bd = city.buildings[bi];
+        // A flat roof's plant, crown and terrace furniture are solid to what
+        // lands on it (util roofAt): recorded as they are drawn.
+        const flatRoof = !bd.kind && bd.style !== 'house' && !(bd.style === 'industrial' && bd.h < 3.5);
+        bd.roofSolids = null;
+        if (flatRoof) { rec.length = 0; flat.solids = bl.facade.solids = bl.glass.solids = rec; }
+        this.meshBuilding(bl, flat, glow, bd);
+        flat.solids = bl.facade.solids = bl.glass.solids = null;
+        bd.roofSolids = flatRoof ? roofSolids(bd, rec) : null;
       }
       yield; this._yt = performance.now();
       yield* this.meshProps(flat, glow, ch, cx, cz);
@@ -7405,6 +7411,7 @@ float frLine(float o, float fw, float c, float w) {
 
   /** Square-based pyramid that honours the footprint and its rotation. */
   meshPyramid(flat, x, y0, z, hw, hd, h, rot, col) {
+    if (flat.solids) flat.solids.push(2, x, z, 2 * hw, 2 * hd, rot, y0, y0 + h);   // a slope, not a box
     const cs = Math.cos(rot), sn = Math.sin(rot);
     const P = (lx, lz, yy) => [x + lx * cs - lz * sn, yy, z + lx * sn + lz * cs];
     const apex = [x, y0 + h, z];

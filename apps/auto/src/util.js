@@ -171,3 +171,92 @@ export function inRotRect(px, pz, cx, cz, hw, hd, rot) {
 export function formatMoney(n) {
   return '$' + Math.floor(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
+
+/**
+ * The tiers a tall building steps back through.
+ *
+ * Shared by the near chunk mesh and the far skyline mesh, because they were
+ * modelling the same building differently and each poked through the other. The
+ * near mesh stepped back at 62 % of the height; the far mesh at 80-90 %. Between
+ * those the far version was WIDER, so it stood proud of the textured geometry
+ * all the way round -- and the far mesh has no map, so every tall building in
+ * downtown wore a blank pale slab across its upper third. Measured by raycast,
+ * the far mesh was the frontmost surface at 235-353 m, well inside the 800 m
+ * near radius where it has no business being visible at all.
+ *
+ * One profile, two consumers. They cannot drift again. (Here rather than in
+ * world.js so the roof and wall queries below read it too.)
+ */
+export function* buildingTiers(bd, baseY, totalH) {
+  const n = bd.h > 100 ? 3 : bd.h > 55 ? 2 : 1;
+  let y = baseY, remaining = totalH, w = bd.w, d = bd.d;
+  for (let t = 0; t < n; t++) {
+    const frac = t === n - 1 ? 1 : t === 0 ? 0.62 : 0.6;
+    const h = remaining * frac;
+    yield { t, last: t === n - 1, y, h, w, d };
+    y += h;
+    remaining -= h;
+    if (t < n - 1) { y += 0.55; w *= 0.78; d *= 0.78; }
+  }
+}
+
+/**
+ * The tiers the near mesh draws a building's walls in (world.js
+ * meshBuilding): a shopfront plinth on anything but a warehouse, a school or a
+ * church, then buildingTiers over the rest. For the queries that must agree
+ * with the drawing -- what you land on and what you fly into.
+ */
+function drawnTiers(b) {
+  const plinth = b.style !== 'industrial' && b.style !== 'campus' ? Math.min(5.2, b.h * 0.3) : 0;
+  const lift = plinth > 2 ? plinth + 0.5 : 0;
+  return buildingTiers(b, b.y - 2 + lift, b.h + 2 - lift);
+}
+
+/**
+ * The drawn roof of footprint `b` at (x, z), the footprint grown by `pad`: the
+ * highest surface there at or below `maxY`, or -Infinity. The deck inside the
+ * parapet on the top tier, the trim band's top on a lower setback, the top of
+ * a pitched roof (a house, a shed) or a landmark tower -- and what stands on
+ * a flat roof, where world.js has recorded it for a built chunk
+ * (`b.roofSolids`: plant, a stair bulkhead, a crown, a terrace's furniture).
+ */
+export function roofAt(b, x, z, pad = 0, maxY = Infinity) {
+  const c = Math.cos(-b.rot), s = Math.sin(-b.rot), dx = x - b.x, dz = z - b.z;
+  const lx = Math.abs(dx * c - dz * s), lz = Math.abs(dx * s + dz * c);
+  if (lx > b.w / 2 + pad || lz > b.d / 2 + pad) return -Infinity;
+  if (b.kind || b.style === 'house' || (b.style === 'industrial' && b.h < 3.5)) return b.y + b.h <= maxY ? b.y + b.h : -Infinity;
+  let top = -Infinity;
+  for (const t of drawnTiers(b)) {
+    if (lx > t.w / 2 + pad || lz > t.d / 2 + pad) break;
+    const y = t.y + t.h + (t.last ? 0.83 : 0.55);
+    if (y <= maxY) top = y;
+  }
+  const S = b.roofSolids;
+  if (S) {
+    for (let i = 0; i < S.length; i += 8) {
+      const cr = Math.cos(S[i + 5]), sr = Math.sin(S[i + 5]), ex = x - S[i + 1], ez = z - S[i + 2];
+      const ux = Math.abs(ex * cr + ez * sr), uz = Math.abs(-ex * sr + ez * cr);
+      const hw = S[i + 3] / 2, hd = S[i + 4] / 2;
+      if (ux > hw + pad || uz > hd + pad) continue;
+      // a pyramid's slope falls from the apex to its eaves
+      const y = S[i] === 2 ? S[i + 7] - (S[i + 7] - S[i + 6]) * Math.min(1, Math.max(ux / hw, uz / hd)) : S[i + 7];
+      if (y > top && y <= maxY) top = y;
+    }
+  }
+  return top;
+}
+
+/**
+ * How much of a building's footprint stands at height y: all of it up to the
+ * first setback, then each tier's share. A wall test against the whole
+ * footprint pushed anything over a setback's ledge out past the base.
+ */
+export function tierScale(b, y) {
+  if (b.h <= 55 || b.kind) return 1;
+  let k = 1;
+  for (const t of drawnTiers(b)) {
+    k = t.w / b.w;
+    if (y < t.y + t.h + 0.5) break;
+  }
+  return k;
+}

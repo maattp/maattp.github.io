@@ -783,6 +783,25 @@ already frees anything over a roof). Its camera is the planes' rigid rig,
 closer (12.5 m, lengthening with speed), easing round behind a pedal turn even
 at the hover, and it keeps the building pull-in below 25 m/s.
 
+**It lands on roofs (v234).** `groundAt` answers terrain and decks, never a
+building, so a helicopter let down onto a roof sank through it until the wall
+test (`collideWithBuildings`, which frees only what is above `b.y + b.h - 1`)
+shoved it out sideways, into the street against the wall with the camera
+inside the building. `city.roofUnder(x, z, maxY, pad)` (citygen) is the
+highest drawn roof at or below `maxY`, from `util.roofAt`: the deck of the top
+tier, a setback's ledge, a pitched roof's top, and what world.js recorded
+standing on a flat roof as it built the chunk (`bd.roofSolids`: plant, the
+stair bulkhead, crowns -- a pyramid as its slope -- terrace furniture; `Builder.solids`
+records boxes, prisms and cones while set, and the chunk's drop clears them).
+The helicopter, the balloon, a parachute, someone on foot and the step out of
+a vehicle all stand on it, so you can land, get out and walk a roof, and walk
+off its edge (a fall). **Setbacks are solid at their own width:**
+`buildingTiers` moved to util.js, and `util.tierScale` narrows the wall test
+(cars, the helicopter) and `Player.blocked` above a tower's first setback --
+the whole footprint used to push anything on a ledge out past the base.
+Stepping out, the door's side is tried, then the other side, the nose and the
+tail, for a floor no more than 1 m down.
+
 ### Far massing: lazy, instanced, masked per chunk
 
 Past the 9x9 mid ring (~1.6 km) only the tall skyline existed, so from a plane

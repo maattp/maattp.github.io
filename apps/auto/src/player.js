@@ -6,7 +6,7 @@ import { makeHumanoid, animateWalk, BONES } from './peds.js';
 import { poseSwim, PoseBlend, PRONE, UPRIGHT } from './swim.js';
 import { Fighter } from './melee.js';
 import { collideWithBuildings } from './traffic.js';
-import { clamp, lerp, angleWrap, damp, dist2, smooth } from './util.js';
+import { clamp, lerp, angleWrap, damp, dist2, smooth, tierScale } from './util.js';
 import * as G from './geo.js';
 import { TUNNEL_H } from './citygen.js';
 
@@ -120,7 +120,9 @@ export class Player {
     // Out of an aircraft in the air: you JUMP (parachute.js). More than 12 m
     // up, a plane, the helicopter or the balloon -- it used to put you
     // straight down on the ground under it.
-    if (v.spec.plane && !force && (v.airborne || v.spec.balloon) && v.y - this.city.groundAt(v.x, v.z, null) > 12) {
+    // (Over the ground or a roof: the balloon at rest on one is not in the air.)
+    if (v.spec.plane && !force && (v.airborne || v.spec.balloon)
+      && v.y - Math.max(this.city.groundAt(v.x, v.z, null), this.city.roofUnder(v.x, v.z, v.y + 1.2, 0.9)) > 12) {
       const rx = f.z, rz = -f.x;
       this.x = G.clampToMap(v.x - rx * (v.halfWid + 2.5)); this.z = G.clampToMap(v.z - rz * (v.halfWid + 2.5)); this.y = v.y - 1.5;
       this.heading = v.heading;
@@ -174,9 +176,19 @@ export class Player {
       }
       if (spot) [ox, oz] = spot;
     }
+    // Out onto whatever the vehicle stands on. Landed on a roof (a helicopter)
+    // or by a deck's edge, the door's side can be a drop: try the other side,
+    // the nose and the tail first, and step down only if all of them are.
+    const floorAt = (x, z) => Math.max(this.city.groundAt(x, z, oy), this.city.roofUnder(x, z, oy));
+    if (!v.spec.rail && !(v.spec.boat || v.spec.floats || v.afloat) && floorAt(ox, oz) < v.y - 1) {
+      for (const [ux, uz, e] of [[rx, rz, v.halfWid], [f.x, f.z, v.halfLen], [-f.x, -f.z, v.halfLen]]) {
+        const x = v.x + ux * (e + 1.1), z = v.z + uz * (e + 1.1);
+        if (floorAt(x, z) >= v.y - 1) { ox = x; oz = z; break; }
+      }
+    }
     this.x = G.clampToMap(ox);
     this.z = G.clampToMap(oz);
-    this.y = this.city.groundAt(this.x, this.z, oy);
+    this.y = floorAt(this.x, this.z);
     this.heading = v.heading;
     this.onFoot = true;
     this.h.group.visible = true;
@@ -309,7 +321,10 @@ export class Player {
 
     // one paved-surface scan per frame, shared by the ground and camera queries
     this.lift = this.city.roadLift(this.x, this.z);
-    const ground = this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift);
+    // and a roof is somewhere to stand: out of a helicopter landed on one, or
+    // down on it under a parachute
+    const ground = Math.max(this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift),
+      this.city.roofUnder(this.x, this.z, this.y + 1.2));
     if (input.jump && this.grounded) {
       this.vy = 6.2;
       this.grounded = false;
@@ -563,7 +578,8 @@ export class Player {
       // downtown, the buildings overhead are not walls. "Below" is judged
       // against the ground under the PLAYER -- b.y is the footprint centroid's
       // terrain, and a big box on a grade drops metres from centroid to corner.
-      if (Math.abs(lx) < b.w / 2 + 0.35 && Math.abs(lz) < b.d / 2 + 0.35
+      const k = b.h > 55 ? tierScale(b, this.y) : 1;   // narrower over a setback
+      if (Math.abs(lx) < b.w * k / 2 + 0.35 && Math.abs(lz) < b.d * k / 2 + 0.35
         && this.y < b.y + b.h - 0.5
         && G.terrainRaw(x, z) - this.y < 2.5) return true;
     }

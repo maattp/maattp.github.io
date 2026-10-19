@@ -96,12 +96,14 @@ const ATV_SPOTS = [
   [-5130, 3355, 2.16, 0xe07a1c],
 ];
 // Helicopters parked out where you might want one: the big lawn at Luther
-// Burbank Park on Mercer Island, and the top of Queen Anne Hill (118 m, by
-// the Counterbalance's summit). Both from saucer.js's open-ground search
-// (lawn first, 9 m clear of trees and posts); kept clear of new trees.
+// Burbank Park on Mercer Island, and the playing field of West Queen Anne
+// Playfield near the top of Queen Anne Hill (114 m, nosed at the Needle).
+// Each on park ground 16 m clear of roads and buildings and level within
+// 0.2 m; kept clear of new trees. (The Queen Anne one stood in the
+// carriageway of Queen Anne Ave N until v234.)
 const HELI_SPOTS = [
   [8450, 2293, 0.6, 0x1d3f8a, 'Luther Burbank Park, Mercer Island'],
-  [-1436, -2876, 2.2, 0xe8e8e4, 'the top of Queen Anne Hill'],
+  [-1616, -2684, 0.43, 0xe8e8e4, 'West Queen Anne Playfield'],
 ];
 // THE HOT AIR BALLOON, on the lawn over Jefferson Park's reservoir lid on
 // Beacon Hill: dead flat (98.7 m), open for 80 m every way, and one of the
@@ -3366,7 +3368,8 @@ function flightTick(dt) {
   try {
     const o = player.vehicle || player;
     const m = flightModeNow();
-    const ground = cityRef ? cityRef.groundAt(o.x, o.z, null) : 0;
+    // a roof counts: "0 m up" on one should read as landed on it
+    const ground = cityRef ? Math.max(cityRef.groundAt(o.x, o.z, null), cityRef.roofUnder(o.x, o.z, o.y + 1.2, 0.9)) : 0;
     if (m !== flightMode) { flight(`mode ${flightMode || '-'} -> ${m} at ${Math.round(o.x)},${Math.round(o.z)} ${Math.round(o.y - ground)} m up`); flightMode = m; }
     if (world.playerFlying !== flightFlying) { flight(`flying ${world.playerFlying}`); flightFlying = world.playerFlying; }
     const far = !!world.farMass;
