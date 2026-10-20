@@ -111,6 +111,28 @@ export const LOOKS = {
   'St. Matthew Catholic Elementary School': { h: 7, fam: BUFF },
 };
 
+// The region's landmarks, each with a big sign high on its street face.
+export const LM_SIGNS = {
+  'Kitchener Memorial Auditorium': { text: 'THE AUD', sub: 'HOME OF THE KITCHENER RANGERS', bg: '#c8102e', fg: '#ffffff', w: 16 },
+  'Kitchener City Hall': { text: 'KITCHENER CITY HALL', bg: '#1d2a3a', fg: '#ffffff', w: 16 },
+  'Kitchener Market': { text: 'KITCHENER MARKET', bg: '#7a1f24', fg: '#f4e4c1', w: 12 },
+  'Perimeter Institute for Theoretical Physics': { text: 'PERIMETER INSTITUTE', sub: 'FOR THEORETICAL PHYSICS', bg: '#111418', fg: '#ffffff', w: 14 },
+  'CIGI Campus': { text: 'CIGI', sub: 'CENTRE FOR INTERNATIONAL GOVERNANCE INNOVATION', bg: '#2a2a2a', fg: '#ffffff', w: 12 },
+  'The Tannery': { text: 'THE TANNERY', sub: 'COMMUNITECH · D2L', bg: '#3a2418', fg: '#f2c48a', fg2: '#ffffff', w: 14 },
+  'Google': { text: 'Google', bg: '#ffffff', fg: '#4285f4', w: 10 },
+  'Bingemans Conference Centre': { text: 'BINGEMANS', bg: '#1a3a8a', fg: '#ffd23a', w: 14 },
+  'Fairview Park': { text: 'CF FAIRVIEW PARK', bg: '#ffffff', fg: '#1d2a3a', w: 16 },
+  'Cambridge Mill': { text: 'CAMBRIDGE MILL', bg: '#3a2a20', fg: '#f4e4c1', w: 10 },
+  'Cambridge City Hall': { text: 'CAMBRIDGE CITY HALL', bg: '#1d2a3a', fg: '#ffffff', w: 12 },
+  'Manulife Financial': { text: 'Manulife', bg: '#00a758', fg: '#ffffff', w: 12 },
+  'Sun Life Financial': { text: 'Sun Life', bg: '#ffffff', fg: '#e8a300', w: 12 },
+  'BlackBerry A': { text: 'BlackBerry', bg: '#111111', fg: '#ffffff', w: 12 },
+  'Ken Seiling Waterloo Region Museum': { text: 'WATERLOO REGION MUSEUM', bg: '#4a2a5a', fg: '#ffffff', w: 14 },
+  'Galt Arena Gardens': { text: 'GALT ARENA GARDENS', bg: '#7a1f24', fg: '#ffffff', w: 12 },
+  'Manulife Financial Sportsplex': { text: 'RIM PARK', sub: 'MANULIFE SPORTSPLEX', bg: '#0b3e8a', fg: '#ffffff', w: 14 },
+  'Conestoga Student Recreation Centre': { text: 'CONESTOGA COLLEGE', sub: 'RECREATION CENTRE', bg: '#0b2d4a', fg: '#ffffff', w: 14 },
+};
+
 // Which campus a point is on, for the nameplates' colours.
 const CAMPUS_SIGN = {
   uw: { bg: '#141414', fg: '#ffffff', bar: '#fed34c' },          // Waterloo black and gold
@@ -174,6 +196,14 @@ function markStrips(city) {
 
 // --- footprints drawn as themselves -------------------------------------------------
 
+function inPoly(p, x, z) {
+  let c = false;
+  for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
+    if ((p[i][1] > z) !== (p[j][1] > z) && x < ((p[j][0] - p[i][0]) * (z - p[i][1])) / (p[j][1] - p[i][1]) + p[i][0]) c = !c;
+  }
+  return c;
+}
+
 function polyArea(p) {
   let a = 0;
   for (let i = 0; i < p.length; i++) { const j = (i + 1) % p.length; a += p[i][0] * p[j][1] - p[j][0] * p[i][1]; }
@@ -199,12 +229,14 @@ function markPolys(city) {
     if (!b || (b.kw && b.kw.poly)) continue;
     if (b.w * b.d > A * 6 + 400) continue;     // a different, bigger building
     const L = LOOKS[nm];
-    const retail = bt === 'retail' || bt === 'commercial' || bt === 'supermarket' || bt === 'yes';
-    const h = L && L.h ? L.h : lv ? lv * 3.9 + 1.2 : retail ? 6 : b.h > 0.5 ? Math.max(b.h, 7) : 8;
+    const arena = /stadium|sports_centre|sports_hall/.test(bt) || /Arena|Auditorium|Sportsplex|Recreation Complex/.test(nm);
+    const civic = !arena && (/civic|public|government|townhall/.test(bt) || /City Hall|Museum/.test(nm));
+    const retail = !arena && !civic && (bt === 'retail' || bt === 'commercial' || bt === 'supermarket' || bt === 'yes');
+    const h = L && L.h ? L.h : arena ? (A > 6000 ? 17 : 12) : lv ? lv * 3.9 + 1.2 : retail ? 6 : b.h > 0.5 ? Math.max(b.h, 7) : 8;
     if (!b.kw) b.kw = {};
     if (nm && !b.kw.name) b.kw.name = nm;
     if (bt) b.kw.bt = bt;
-    b.kw.poly = { pts: A < 0 ? pts.slice().reverse() : pts, h, n: nm, bt, retail, fam: L ? L.fam : null };
+    b.kw.poly = { pts: A < 0 ? pts.slice().reverse() : pts, h, n: nm, bt, retail, arena, civic, fam: L ? L.fam : null };
     b.h = 0;
     n++;
   }
@@ -216,7 +248,9 @@ const STUCCO = [[0.86, 0.80, 0.68], [0.80, 0.72, 0.60], [0.74, 0.56, 0.44], [0.8
 
 /** A polygon building's walls, windows, parapet, roof and plant into `B`; its solids into `solids`. */
 const U0 = [0, 0, 0, 0, 0, 0, 0, 0];
-function meshPoly(B, solids, b, P) {
+function meshPoly(B, solids, b, P, city) {
+  // is there a street within 45 m of (x, z)?
+  const streetward = (x, z) => !!faceRoad(city, x, z, 45);
   const pts = P.pts, n = pts.length;
   const seed = Math.round(b.x * 3 + b.z * 7);
   const T = G.terrainHeight;
@@ -225,7 +259,8 @@ function meshPoly(B, solids, b, P) {
   cx /= n; cz /= n;
   const yTop = T(cx, cz) + P.h, y0 = lo - 1.2;
   const camp = campusOf(cx, cz);
-  const col = P.fam ? P.fam.c : P.retail ? STUCCO[Math.floor(hash2(seed, 5) * STUCCO.length)]
+  const col = P.fam ? P.fam.c : P.arena ? [[0.72, 0.70, 0.66], [0.60, 0.62, 0.64], [0.78, 0.70, 0.56]][Math.floor(hash2(seed, 4) * 3)]
+    : P.civic ? [0.80, 0.76, 0.68] : P.retail ? STUCCO[Math.floor(hash2(seed, 5) * STUCCO.length)]
     : camp === 'wlu' ? BRICKS[2] : camp === 'uw' ? [BRICKS[0], BRICKS[3], BRICKS[4]][Math.floor(hash2(seed, 6) * 3)]
       : BRICKS[Math.floor(hash2(seed, 7) * BRICKS.length)];
   const glassy = P.fam && P.fam.m === 'glass';
@@ -240,7 +275,11 @@ function meshPoly(B, solids, b, P) {
     const a = pts[i], c = pts[(i + 1) % n];
     const dx = c[0] - a[0], dz = c[1] - a[1], L = Math.hypot(dx, dz);
     if (L < 0.3) continue;
-    const ux = dx / L, uz = dz / L, nx = uz, nz = -ux;   // CCW: outward is (dz, -dx)
+    const ux = dx / L, uz = dz / L;
+    // CCW: outward is (dz, -dx) -- unless the outline is a tangle (the Aud's
+    // is several rinks in one way): then it is whichever side is outside
+    let nx = uz, nz = -ux;
+    if (inPoly(pts, a[0] + dx / 2 + nx * 0.6, a[1] + dz / 2 + nz * 0.6)) { nx = -nx; nz = -nz; }
     const N = [nx, 0, nz];
     // the wall, to a parapet 0.7 m over the roof, and its inside face above the roof
     B.quad([a[0], y0, a[1]], [c[0], y0, c[1]], [c[0], yTop + 0.7, c[1]], [a[0], yTop + 0.7, a[1]], N, U0, [dark, dark, colL, colL]);
@@ -252,6 +291,23 @@ function meshPoly(B, solids, b, P) {
     const gy = T(a[0] + dx / 2 + nx * 2, a[1] + dz / 2 + nz * 2);
     const o = 0.05, e0 = Math.min(1.2, L * 0.15);
     const at = (t, y, off) => [a[0] + ux * t + nx * off, y, a[1] + uz * t + nz * off];
+    if (P.arena) {
+      // an arena: blank walls with ribs, a band at the eaves, glass doors
+      // on the faces toward a street
+      const nr = Math.floor(L / 6);
+      for (let k = 1; k < nr; k++) {
+        const t = (k / nr) * L;
+        B.quad(at(t - 0.2, gy + 2, o), at(t + 0.2, gy + 2, o), at(t + 0.2, yTop, o), at(t - 0.2, yTop, o), N, U0, dark);
+      }
+      B.quad(at(0, yTop - 1.6, o * 2), at(L, yTop - 1.6, o * 2), at(L, yTop - 0.4, o * 2), at(0, yTop - 0.4, o * 2), N, U0, TRIM);
+      if (L > 20 && streetward(a[0] + dx / 2 + nx * 3, a[1] + dz / 2 + nz * 3)) {
+        const w = Math.min(L * 0.5, 24), t0 = L / 2 - w / 2;
+        B.quad(at(t0, gy - 0.3, o), at(t0 + w, gy - 0.3, o), at(t0 + w, gy + 4.2, o), at(t0, gy + 4.2, o), N, U0, GLASS);
+        B.quad(at(t0 - 1, gy + 4.2, 2.2), at(t0 + w + 1, gy + 4.2, 2.2), at(t0 + w + 1, gy + 4.2, 0), at(t0 - 1, gy + 4.2, 0), [0, -1, 0], U0, TRIM);
+        B.quad(at(t0 - 1, gy + 4.2, 2.2), at(t0 + w + 1, gy + 4.2, 2.2), at(t0 + w + 1, gy + 4.7, 2.2), at(t0 - 1, gy + 4.7, 2.2), N, U0, TRIM);
+      }
+      continue;
+    }
     if (P.retail) {
       // a store: a storefront of glass along any face that is not a back wall
       // (a back wall faces a lane, a fence or the neighbours: no lot, no road in front)
@@ -318,7 +374,7 @@ export function buildPolys(ctx) {
     const k = 'kwp' + Math.round(b.x / 1200) + ',' + Math.round(b.z / 1200);
     let B = builders.get(k);
     if (!B) builders.set(k, (B = new Builder(false)));
-    meshPoly(B, ctx.solids, b, b.kw.poly);
+    meshPoly(B, ctx.solids, b, b.kw.poly, city);
     n++;
   }
   for (const [k, B] of builders) {
@@ -340,12 +396,14 @@ function polyFace(P, px, pz) {
     const dx = c[0] - a[0], dz = c[1] - a[1], L = Math.hypot(dx, dz);
     if (L < 3) continue;
     const ux = dx / L, uz = dz / L;
+    let nx = uz, nz = -ux;
+    if (inPoly(pts, a[0] + dx / 2 + nx * 0.6, a[1] + dz / 2 + nz * 0.6)) { nx = -nx; nz = -nz; }
     const t = Math.max(0, Math.min(L, (px - a[0]) * ux + (pz - a[1]) * uz));
     const qx = a[0] + ux * t, qz = a[1] + uz * t, d = Math.hypot(px - qx, pz - qz);
     // a store's face is one in front of a lot (the storefront): prefer those
-    const front = G.lotAt(a[0] + dx / 2 + uz * 12, a[1] + dz / 2 - ux * 12) >= 0;
+    const front = G.lotAt(a[0] + dx / 2 + nx * 12, a[1] + dz / 2 + nz * 12) >= 0;
     const sc = d + (P.retail && !front ? 60 : 0);
-    if (sc < bd) { bd = sc; best = { x: qx, z: qz, nx: uz, nz: -ux, len: L, t, ux, uz, ax: a[0], az: a[1] }; }
+    if (sc < bd) { bd = sc; best = { x: qx, z: qz, nx, nz, len: L, t, ux, uz, ax: a[0], az: a[1] }; }
   }
   return best;
 }
@@ -668,8 +726,42 @@ export function buildSigns(ctx) {
     const r = storeSign(x, z, w, 0.95, (ww, hh) => shopPanel(L, n, brand, ww, hh, Math.round(x * 7 + z)), { y: 3.4 });
     if (r) stats.shops++;
   }
-  // campus nameplates and the schools: one per named box
+  // the region's landmarks: a big sign high on the face toward the street
   const plated = new Set();
+  for (const b of city.buildings) {
+    const S = b.kw && b.kw.name && LM_SIGNS[b.kw.name];
+    if (!S || plated.has(b)) continue;
+    plated.add(b);
+    const rd = faceRoad(city, b.x, b.z, 260);
+    const tx = rd ? rd.qx : b.x + 100, tz = rd ? rd.qz : b.z;
+    let f, sx, sz, top;
+    if (b.kw.poly) {
+      f = polyFace(b.kw.poly, tx, tz);
+      if (!f) continue;
+      const ww = Math.min(S.w, f.len - 1);
+      const t = Math.max(ww / 2 + 0.3, Math.min(f.len - ww / 2 - 0.3, f.t));
+      sx = f.ax + f.ux * t; sz = f.az + f.uz * t;
+      top = G.terrainHeight(b.x, b.z) + b.kw.poly.h;
+    } else {
+      f = faceFor(city, b, tx, tz, S.w, true);
+      if (!f) continue;
+      sx = f.x; sz = f.z; top = b.y + b.h;
+    }
+    const w = Math.min(S.w, f.len - 1), h = S.sub ? w * 0.28 : w * 0.18;
+    const p = L.panel(w, h, 22, (g, W, H) => {
+      g.fillStyle = S.bg; g.fillRect(0, 0, W, H);
+      g.fillStyle = S.fg; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.font = `800 ${H * (S.sub ? 0.46 : 0.62)}px Helvetica, Arial, sans-serif`;
+      g.fillText(S.text, W / 2, H * (S.sub ? 0.36 : 0.52), W * 0.94);
+      if (S.sub) {
+        g.fillStyle = S.fg2 || S.fg; g.font = `700 ${H * 0.22}px Helvetica, Arial, sans-serif`;
+        g.fillText(S.sub, W / 2, H * 0.78, W * 0.94);
+      }
+    });
+    hang(grp(sx, sz), p, sx, Math.max(G.terrainHeight(sx, sz) + h / 2 + 2, top - h / 2 - 0.9), sz, f.nx, f.nz, 0.18);
+    stats.landmarks = (stats.landmarks || 0) + 1;
+  }
+  // campus nameplates and the schools: one per named box
   for (const b of city.buildings) {
     if (!b.kw || !b.kw.name || plated.has(b)) continue;
     const bt = b.kw.bt, n = b.kw.name;

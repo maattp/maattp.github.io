@@ -136,16 +136,16 @@ function routeLength(pts, sx, sz) {
 // Nintendo's main campuses are in Redmond, east of the map. Found ones persist in the save
 // as `__tech`; collecting them all pays a bonus.
 const TECH = [
-  ['Google', 'Google, the Breithaupt Block', -1967, -533],
-  ['Communitech', 'Communitech, the Tannery', -1902, 111],
-  ['D2L', 'D2L, Kitchener', -1886, 89],
-  ['Vidyard', 'Vidyard, King St', -1384, 122],
-  ['ApplyBoard', 'ApplyBoard, Kitchener', -1036, -289],
-  ['BlackBerry', 'BlackBerry, University Ave', -5585, -4066],
-  ['OpenText', 'OpenText, David Johnston Research Park', -6759, -2944],
-  ['Perimeter', 'Perimeter Institute', -4104, -1689],
-  ['Manulife', 'Manulife, King St N', -4452, -2833],
-  ['Sun Life', 'Sun Life, Waterloo', -3642, -889],
+  ['Google', 'Google, the Breithaupt Block', -1990, -225],             // OSM building
+  ['Communitech', 'Communitech, the Tannery', -1879, 100],             // OSM building
+  ['D2L', 'D2L, the Tannery', -1850, 135],
+  ['Vidyard', 'Vidyard, Queen St N', -1384, 122],
+  ['ApplyBoard', 'ApplyBoard, Frederick St', -1036, -289],
+  ['BlackBerry', 'BlackBerry, Phillip St', -3130, -7100],               // OSM buildings A-C
+  ['OpenText', 'OpenText, David Johnston Research Park', -6314, -2762], // OSM building
+  ['Perimeter', 'Perimeter Institute', -4286, -1485],                  // OSM building
+  ['Manulife', 'Manulife, King St N', -4134, -4354],                   // OSM building
+  ['Sun Life', 'Sun Life, King St S', -3383, -644],                    // OSM building
   ['Toyota', 'Toyota Motor Manufacturing, Cambridge', 10684, 4222],
 ];
 // each badge takes its company's colour

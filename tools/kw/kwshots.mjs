@@ -75,8 +75,12 @@ async function main() {
     await send('Network.enable');
     await send('Network.setBypassServiceWorker', { bypass: true });
     await send('Network.setCacheDisabled', { cacheDisabled: true });
+    if (process.env.AUTO_PHONE === '1') {
+      await send('Emulation.setDeviceMetricsOverride', { width: 874, height: 402, deviceScaleFactor: 3, mobile: true, screenWidth: 874, screenHeight: 402, screenOrientation: { type: 'landscapePrimary', angle: 90 } });
+      await send('Emulation.setUserAgentOverride', { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1', platform: 'iPhone' });
+    }
     await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.__noAutoQuality = true;' });
-    await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/autokw/` });
+    await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/${process.env.AUTO_APP || 'autokw'}/` });
     let up = false;
     for (let i = 0; i < 400; i++) {
       await sleep(500);

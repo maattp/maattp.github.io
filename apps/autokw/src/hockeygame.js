@@ -29,12 +29,13 @@
 export const RINK = { hx: 100, hy: 42.5, corner: 28, goalX: 89, blue: 25, netHalf: 3, netDepth: 3.3 };
 export const PERIOD_S = 150;               // game seconds a period (2:30)
 export const TEAMS = [
-  { name: 'SEATTLE', abbr: 'SEA', jersey: '#10284a', trim: '#6fd3e8', pants: '#0a1830', helmet: '#10284a', num: '#e8f8ff' },
-  { name: 'VANCOUVER', abbr: 'VAN', jersey: '#1f6e46', trim: '#f2f2f2', pants: '#10283a', helmet: '#1a3a6a', num: '#ffffff' },
+  // Auto KW: the Kitchener Rangers at the Aud, against the London Knights
+  { name: 'KITCHENER', abbr: 'KIT', jersey: '#c8102e', trim: '#ffffff', pants: '#0b2350', helmet: '#0b2350', num: '#ffffff' },
+  { name: 'LONDON', abbr: 'LDN', jersey: '#00703c', trim: '#fdb913', pants: '#00351c', helmet: '#00703c', num: '#fdb913' },
 ];
 const ROLES = ['C', 'LW', 'RW', 'LD', 'RD', 'G'];
 const NUMS = [[19, 11, 27, 4, 44, 31], [9, 17, 22, 3, 55, 35]];
-const NAMES = [['ANDERSON', 'BERG', 'OKAFOR', 'LINDQVIST', 'MORALES', 'PARK'], ['TREMBLAY', 'SINGH', 'KOVAC', 'MACLEOD', 'NAKAMURA', 'ROY']];
+const NAMES = [['BAUMAN', 'SCHNEIDER', 'OKAFOR', 'MARTIN', 'WEBER', 'BRUBACHER'], ['TREMBLAY', 'SINGH', 'KOVAC', 'MACLEOD', 'NAKAMURA', 'ROY']];
 
 // skating
 const MAX_V = 25, MAX_V_PUCK = 22, ACC = 40, STOP = 58, GLIDE = 5, PR = 1.5;

@@ -118,7 +118,9 @@ def main():
         cx, cz = sum(xs) / len(xs), sum(zs) / len(zs)
         if not inmap(cx, cz) or len(b["o"]) < 4:
             continue
-        keep = bt in ("school", "university", "college", "dormitory", "kindergarten") \
+        keep = bt in ("school", "university", "college", "dormitory", "kindergarten", "stadium", "sports_centre",
+                      "sports_hall", "civic", "public", "government", "townhall") \
+            or re.search(r"Arena|Auditorium|Sportsplex|Recreation Complex|City Hall|Market|Perimeter|CIGI|Tannery|Google|Mill|Museum", n) \
             or re.search(r"School|Collegiate|College|University|Campus|Hall\b|Library|Centre for", n) \
             or (bt in ("retail", "commercial", "supermarket", "yes") and any(math.hypot(cx - zx, cz - zz) < r for _, zx, zz, r in POLY_ZONES))
         if not keep:

@@ -1288,7 +1288,28 @@ function installShadowFade() {
   // Auto KW: Seattle's venues are not here (arcade, pinball, hockey, ducks,
   // Seafair, First Cup, pickleball, islands, the tower, golf, the fish, the
   // Wheel and the Needle).
-  arcade = pinball = hockey = duckTour = seafair = coffee = pickle = islands = tower = golf = fishToss = null;
+  arcade = pinball = duckTour = seafair = coffee = pickle = islands = tower = golf = fishToss = null;
+  // Hockey night at the Aud: the Kitchener Rangers against the London Knights.
+  // The marquee stands at the street nearest the Kitchener Memorial
+  // Auditorium, facing it; ENTER anywhere round the building drops the puck.
+  {
+    const AUD = { x: 638, z: 540 };
+    let best = null;
+    for (const ei of city.edgesNear(AUD.x, AUD.z, 220)) {
+      const e = city.edges[ei];
+      if (e.elev || e.tunnel || e.cls === 'hwy' || e.cls === 'ramp' || e.cls === 'res') continue;
+      const a = city.nodes[e.a], t = Math.max(0, Math.min(e.len, (AUD.x - a.x) * e.dx + (AUD.z - a.z) * e.dz));
+      const qx = a.x + e.dx * t, qz = a.z + e.dz * t, d = Math.hypot(qx - AUD.x, qz - AUD.z);
+      if (!best || d < best.d) best = { qx, qz, d, hw: e.hw };
+    }
+    const dx = best ? (best.qx - AUD.x) / best.d : 0, dz = best ? (best.qz - AUD.z) / best.d : 1;
+    const door = best ? { x: best.qx - dx * (best.hw + 7), z: best.qz - dz * (best.hw + 7), yaw: Math.atan2(dx, dz) } : { x: AUD.x, z: AUD.z + 90, yaw: 0 };
+    hockey = new HockeyNight({
+      scene, city, world, audio, arena: { x: AUD.x, y: G.terrainHeight(AUD.x, AUD.z), z: AUD.z, r: 135, door },
+      onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`The Rangers paid $${m}`), 400); },
+      onEnd: () => { game.release('hockey'); },
+    });
+  }
   wheelRide = needleTop = null;
   // A CAR WORTH TAKING at the kerb in front of the spawn. Kerbside cars come
   // from a fixed hash of street slots, so the first car every player walked
@@ -1351,6 +1372,8 @@ function installShadowFade() {
     ...(lmRoot.userData.marinas || []).map((mr) => ({ x: mr.x, z: mr.z, kind: 'dock', name: mr.name, near: false,
       hello: mr.hello ? mr.hello : `${mr.name} — boats and jet skis. Walk out on the float and take one` })),
     ...kwPlaces(),
+    { x: hockey.spot.x, z: hockey.spot.z, kind: 'hockey', name: 'The Aud', near: false,
+      hello: 'The Aud — Kitchener Rangers hockey tonight against the London Knights. Press ENTER anywhere at the arena to drop the puck' },
     ...(ykf.runwayEnd() ? [{ x: 7228, z: -440, kind: 'jet', name: 'YKF Airport', near: false, label: 'YKF',
       hello: 'Region of Waterloo International Airport — planes on the stands and a fighter on runway 08. Climb in' }] : []),
     // ION: every station's street entrance

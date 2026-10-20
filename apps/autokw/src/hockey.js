@@ -126,7 +126,8 @@ export class HockeyNight {
     const a = arena || { x: -1213.8, y: 0, z: -1197.3 };
     this.arena = a;
     // the atrium's glass front peaks at local (3.7, 92.4); its solid ends 91.5 m south of the centre
-    const x = a.x + 3.7, z = a.z + 95.5;
+    // (Auto KW: the Aud gives its door, by its main doors on the street)
+    const x = a.door ? a.door.x + 20 : a.x + 3.7, z = a.door ? a.door.z - 2 : a.z + 95.5;
     const y = city.groundAt(x, z, null);
     this.door = { x, y, z };
     this.spot = { x, z };
@@ -139,7 +140,7 @@ export class HockeyNight {
     g.shadowBlur = 16; g.shadowColor = '#6fd3e8'; g.fillStyle = '#bff4ff';
     g.font = '900 64px Helvetica, Arial, sans-serif'; g.fillText('HOCKEY', 256, 92);
     g.shadowColor = '#ffd23a'; g.fillStyle = '#ffe89a'; g.font = '900 34px Helvetica, Arial, sans-serif'; g.fillText('TONIGHT', 256, 134);
-    g.shadowColor = '#ff5a3a'; g.fillStyle = '#ffffff'; g.font = '800 26px Helvetica, Arial, sans-serif'; g.fillText('SEATTLE vs VANCOUVER', 256, 188);
+    g.shadowColor = '#ff5a3a'; g.fillStyle = '#ffffff'; g.font = '800 26px Helvetica, Arial, sans-serif'; g.fillText('RANGERS vs KNIGHTS', 256, 188);
     g.shadowBlur = 0; g.fillStyle = '#8aa'; g.font = '700 18px Helvetica, Arial, sans-serif'; g.fillText('PUCK DROP · PRESS ENTER', 256, 228);
     const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
     const grp = new THREE.Group();
@@ -151,6 +152,7 @@ export class HockeyNight {
     for (const s of [-1, 1]) { const p = new THREE.Mesh(new THREE.BoxGeometry(0.16, 2.5, 0.16), steel); p.position.set(s * 1.9, 1.25, 0); grp.add(p); }
     // merge into one draw: the posts and frame share the steel, the face its own map -- two meshes
     grp.position.set(x - 20, city.groundAt(x - 20, z + 2, null), z + 2);
+    if (a.door && a.door.yaw !== undefined) grp.rotation.y = a.door.yaw;
     grp.name = 'hockeyMarquee';
     scene.add(grp);
     this.marquee = grp;
@@ -170,6 +172,7 @@ export class HockeyNight {
    */
   near(pl) {
     const a = this.arena;
+    if (a.r) return Math.hypot(pl.x - a.x, pl.z - a.z) < a.r && pl.onFoot !== false;
     const dx = pl.x - (a.x + 4.5), dz = pl.z - (a.z + 1);
     const round = Math.max(Math.abs(dx), Math.abs(dz)) < 55 + 22;
     const atrium = Math.abs(pl.x - (a.x + 3.7)) < 60 && dz > 50 && dz < 92 + 22;
@@ -321,7 +324,7 @@ export class HockeyNight {
     const pay = (g.result === 'win' ? 250 : g.result === 'tie' ? 100 : 25) + 25 * a;
     if (!this.paid) { this.paid = true; if (this.o.onReward) this.o.onReward(pay); }
     this.mode = 'final';
-    const head = g.result === 'win' ? 'SEATTLE WINS!' : g.result === 'tie' ? 'A TIE' : 'VANCOUVER WINS';
+    const head = g.result === 'win' ? 'RANGERS WIN!' : g.result === 'tie' ? 'A TIE' : 'LONDON WINS';
     this._panel(`<div class="big">${head}</div><div class="sm">FINAL${g.period > 3 ? ' (OT)' : ''} · ${TEAMS[0].abbr} ${a} – ${b} ${TEAMS[1].abbr}<br>
       SHOTS ${g.shots[0]} – ${g.shots[1]} · ONE-TIMERS ${g.stats.oneTimers[0]} · CHECKS ${g.stats.checks[0]}<br>The arena pays $${pay}</div>
       <button class="go">PLAY AGAIN</button><button class="back">LEAVE THE ARENA</button>`, () => this._newGame(), () => this.close());
@@ -414,7 +417,7 @@ export class HockeyNight {
     // the far boards: a white wall with ads, a yellow kick plate, the glass over it
     g.fillStyle = '#a8c0cc'; g.fillRect(wx(-RINK.hx) + RINK.corner * S, iceTop - 16, (2 * RINK.hx - 2 * RINK.corner) * S, 5);
     g.fillStyle = '#f2f2ee'; g.fillRect(wx(-RINK.hx) + RINK.corner * S - 6, iceTop - 11, (2 * RINK.hx - 2 * RINK.corner) * S + 12, 11);
-    const ads = [['EMERALD CITY PINBALL', '#c02838'], ['RAIN CITY COFFEE', '#1a5a3a'], ['PIKE PLACE FISH', '#1a3a8a'], ['SOUND FERRIES', '#10284a'], ['MONORAIL', '#c83a3a'], ['SEATTLE', '#10284a'], ['GREAT WHEEL', '#2f6fb0'], ['INTERBAY GOLF', '#2c8a4a']];
+    const ads = [['TIM HORTONS', '#c8102e'], ['FRESHCO', '#4c9a2a'], ['BINGEMANS', '#1a3a8a'], ['ION', '#d0202e'], ['OKTOBERFEST', '#1a5aa8'], ['COMMUNITECH', '#f26722'], ['CHICOPEE', '#1d3b6b'], ['GRAND RIVER', '#2c8a4a']];
     let ax = wx(-RINK.hx) + RINK.corner * S;
     for (let i = 0; ax < wx(RINK.hx) - RINK.corner * S - 40; i++) {
       const [t, c] = ads[i % ads.length];
@@ -443,7 +446,7 @@ export class HockeyNight {
     for (const x of [-20, 20]) for (const y of [-22, 22]) circ(x, y, 1, '#c8202a', true);
     // centre ice: a Sound-blue logo, the city's initial
     g.globalAlpha = 0.35; circ(0, 0, 9, '#10284a', true); g.globalAlpha = 1;
-    text(g, 'SEA', wx(0) - 5, wy(0) - 2, 1, '#e4eef3');
+    text(g, 'KIT', wx(0) - 5, wy(0) - 2, 1, '#e4eef3');
     // the creases
     for (const sd2 of [-1, 1]) {
       g.beginPath(); g.ellipse(wx(sd2 * RINK.goalX), wy(0), 6 * S, 6 * S * K, 0, sd2 > 0 ? Math.PI / 2 : -Math.PI / 2, sd2 > 0 ? Math.PI * 1.5 : Math.PI / 2);
@@ -644,7 +647,7 @@ export class HockeyNight {
       text(g, s, 7, VH - 11, 1, '#ffe83a');
     }
     // messages
-    const m = this.mode === 'intro' ? { text: 'HOCKEY NIGHT', sub: 'SEATTLE VS VANCOUVER' } : gm.msg;
+    const m = this.mode === 'intro' ? { text: 'HOCKEY NIGHT', sub: 'RANGERS VS KNIGHTS' } : gm.msg;
     if (m && m.text) {
       const big = m.text === 'GOAL!' ? 5 : 3;
       if (m.text !== 'GOAL!' || Math.floor(gm.t * 5) % 2 === 0) {
