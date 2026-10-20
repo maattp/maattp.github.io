@@ -41,6 +41,8 @@ import { CoffeeShop } from './barista.js';
 import { Seafair } from './hydrorace.js';
 import { FireService, placeStations } from './firecalls.js';
 import { BONES } from './peds.js';
+import { setKwData, applyNamed, buildSigns, mapPlaces as kwPlaces, kwData } from './kw.js';
+import { addLandmarkExtra } from './landmarks.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings, warmLightBar } from './traffic.js';
 import { Police } from './police.js';
@@ -717,6 +719,10 @@ async function boot() {
   }
   const city = r.value;
   cityRef = city;
+  // Auto KW: names and real looks onto the boxes, before anything is meshed
+  setKwData(md.kw);
+  { const k = applyNamed(city); blog(`kw: ${k.named} named buildings, ${k.looks} with their own look, ${k.strips} strip stores`); }
+  addLandmarkExtra(buildSigns);
   blog(`city: grading ${cityStats.gradeCached ? 'from cache' : 'computed'}, buildings ${bootCache.buildings ? 'from cache' : 'computed'}`);
 
   await step(0.64, 'Raising the terrain');
@@ -1288,7 +1294,9 @@ function installShadowFade() {
       hello: `Bike share — ${dk.name}. Take a bike from the rack: the trail is right here` })),
     ...(lmRoot.userData.marinas || []).map((mr) => ({ x: mr.x, z: mr.z, kind: 'dock', name: mr.name, near: false,
       hello: mr.hello ? mr.hello : `${mr.name} — boats and jet skis. Walk out on the float and take one` })),
+    ...kwPlaces(),
   ];
+  { const k = kwData(); if (k && k.signStats) blog('kw signs: ' + JSON.stringify(k.signStats)); }
   peds = new PedSystem(scene, city, game);
   // trains are solid to anyone on foot (each system's blockAt)
   player.trainBlock = peds.trainBlock = () => false;

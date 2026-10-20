@@ -202,7 +202,9 @@ mat.neonBlue.userData.noShadow = true;
 class SignAtlas {
   constructor() {
     this.c = document.createElement('canvas');
-    this.c.width = 2048; this.c.height = 1024;
+    // Auto KW: 2048 square -- the region's storefronts, nameplates and
+    // every Tim Hortons share it (kw.js), and Seattle's landmarks are not here
+    this.c.width = 2048; this.c.height = 2048;
     this.g = this.c.getContext('2d');
     this.x = 0; this.y = 0; this.row = 0;
     this.tex = new THREE.CanvasTexture(this.c);
@@ -214,6 +216,7 @@ class SignAtlas {
   /** Reserve a w x h pixel cell; returns [x, y] in canvas pixels. */
   alloc(w, h) {
     if (this.x + w > this.c.width) { this.x = 0; this.y += this.row + 2; this.row = 0; }
+    if (this.y + h > this.c.height) { this.full = (this.full || 0) + 1; }
     const at = [this.x, this.y];
     this.x += w + 2; this.row = Math.max(this.row, h);
     return at;
@@ -254,6 +257,10 @@ class SignAtlas {
   }
 }
 let atlas = null;
+// Extra builders run inside buildLandmarks, after the landmarks: Auto KW's
+// signs and stores (kw.js buildSigns). Each gets { addTo, solids, atlas, city }.
+const EXTRAS = [];
+export function addLandmarkExtra(fn) { EXTRAS.push(fn); }
 let monoRef = null;   // the Monorail, while buildLandmarks runs (MoPOP's passage)
 const sign = (text, w, h, bg, fg, opts) => atlas.text(text, w, h, bg, fg, opts);
 
@@ -3292,6 +3299,14 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
     // open ground the scatter must keep off (circles [dx, dz, r] from the group's point, world axes)
     for (const [dx, dz, r] of g.userData.clearAt || []) clearAt.push([x + dx, z + dz, r]);
     addTo(l.kind === 'airport' ? 'airport' : `${Math.round(x / 1200)},${Math.round(z / 1200)}`, g);
+  }
+  for (const fn of EXTRAS) {
+    const extraSolids = [];
+    fn({ addTo, solids: extraSolids, atlas, city, platforms, clearAt });
+    for (const s of extraSolids) {
+      if (city && onRoad(city, s)) { dropped.push(`extra@${s.x.toFixed(0)},${s.z.toFixed(0)}`); continue; }
+      solids.push(s);
+    }
   }
   atlas.tex.needsUpdate = true;
 

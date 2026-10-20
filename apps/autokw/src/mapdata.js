@@ -184,6 +184,8 @@ export async function loadMapData(onStep) {
   const ferry = await opt('ferry.json');
   // trails off the street network: Chicopee's mountain-bike runs and the like
   const trails = await opt('trails.json');
+  // Waterloo Region's local layer: named buildings, storefronts, every Tims (kw.js)
+  const kw = await opt('kw.json');
   // The Olympics, Rainier and the Cascades as seen from here (tools/build_mountains.py).
   // Scenery only: a failed fetch costs the view, never the boot.
   let mountains = null;
@@ -192,6 +194,6 @@ export async function loadMapData(onStep) {
   return {
     height, hfN: hp.w, wlevel,
     water, green, maskN: sp.w, lot, lotN: lp.w,
-    roads, buildings, places, lakes, monorail, link, freight, beaches, parkprops, bikepaths, piers, ferry, mountains, trails,
+    roads, buildings, places, lakes, monorail, link, freight, beaches, parkprops, bikepaths, piers, ferry, mountains, trails, kw,
   };
 }

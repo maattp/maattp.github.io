@@ -7810,6 +7810,8 @@ float frLine(float o, float fw, float c, float w) {
    * INSIDE each family rather than across the whole city.
    */
   buildingFamily(bd) {
+    // Auto KW: a named building's real material (kw.js LOOKS)
+    if (bd.kw && bd.kw.fam) return bd.kw.fam;
     const seed = bd.seed;
     const pick = hash2(seed, 101);
     // Taller and newer skews to glass and dark curtain wall; low and old skews
@@ -7854,6 +7856,54 @@ float frLine(float o, float fw, float c, float w) {
       if (pick <= acc) return FAMS[i];
     }
     return FAMS[0];
+  }
+
+  /**
+   * AUTO KW: A STRIP PLAZA. One storey of block or stucco, the storefront
+   * face a run of dark glass under a deep fascia (kw.js hangs each store's
+   * sign on the fascia's face), a parapet, a flat roof with its units. The
+   * plaza at University and Bridge, the University of Waterloo Plaza, and
+   * every other low commercial box in the region.
+   */
+  _stripMall(target, flat, bd, base, drop, seed) {
+    const st = bd.kw.strip;
+    const PAL = [[0.84, 0.78, 0.66], [0.78, 0.70, 0.60], [0.70, 0.52, 0.42], [0.80, 0.80, 0.78], [0.62, 0.58, 0.54], [0.88, 0.84, 0.74]];
+    const col = tint(seed, PAL[Math.floor(hash2(seed, 801) * PAL.length)], 0.12);
+    const wh = bd.h + 2 + drop;
+    // plain painted block / stucco: the facade cells all carry windows
+    flat.box(bd.x, base - drop, bd.z, bd.w, wh, bd.d, bd.rot, col, { ao: 0.25 });
+    const c = Math.cos(bd.rot), sn = Math.sin(bd.rot);
+    const off = (lx, lz) => [bd.x + lx * c - lz * sn, bd.z + lx * sn + lz * c];
+    // the front: along u, out along n (both local), `len` long, at `dist` from the centre
+    const F = [[[0, 1], [1, 0], bd.d, bd.w / 2], [[0, 1], [-1, 0], bd.d, bd.w / 2],
+      [[1, 0], [0, 1], bd.w, bd.d / 2], [[1, 0], [0, -1], bd.w, bd.d / 2]][st.face];
+    const [u, n, len, dist] = F;
+    const g0 = bd.y;   // the storefront's floor
+    const at = (t, o, y, w, h, d, colr) => {
+      const lx = u[0] * t + n[0] * (dist + o), lz = u[1] * t + n[1] * (dist + o);
+      const [x, z] = off(lx, lz);
+      // a box w along the front, d out from it
+      const bw = u[0] ? w : d, bdp = u[0] ? d : w;
+      flat.box(x, y, z, bw, h, bdp, bd.rot, colr);
+    };
+    const glass = [0.10, 0.14, 0.17], frame = [0.30, 0.31, 0.32], fasc = tint(seed, [0.92, 0.90, 0.86], 0.06);
+    const runL = len - 1.2;
+    at(0, 0.06, g0 - 0.3, runL, 3.4, 0.14, glass);
+    // mullions every ~3 m, a door frame every ~7 m
+    const nm = Math.max(1, Math.round(runL / 3));
+    for (let i = 0; i <= nm; i++) at(-runL / 2 + (i / nm) * runL, 0.14, g0 - 0.3, 0.12, 3.4, 0.08, frame);
+    // the fascia: a deep band the signs hang on, over a soffit
+    at(0, 0.9, g0 + 3.2, len + 0.2, 1.25, 1.8, fasc);
+    at(0, 0.9, g0 + 3.08, len + 0.2, 0.12, 1.8, [0.5, 0.5, 0.5]);
+    // a parapet all round, and the roof's plant
+    const rt = bd.y + bd.h;
+    flat.box(bd.x, rt, bd.z, bd.w + 0.25, 0.7, bd.d + 0.25, bd.rot, [col[0] * 0.9, col[1] * 0.9, col[2] * 0.9], NOTOP);
+    const nu = Math.min(12, Math.max(1, Math.round(bd.w * bd.d / 500)));
+    for (let i = 0; i < nu; i++) {
+      const [gx, gz] = off((hash2(seed, 820 + i) - 0.5) * (bd.w - 5), (hash2(seed, 840 + i) - 0.5) * (bd.d - 5));
+      const k = 1.6 + hash2(seed, 860 + i) * 1.6;
+      flat.box(gx, rt, gz, k, 1.1 + hash2(seed, 880 + i), k * 0.7, bd.rot, [0.6, 0.61, 0.62]);
+    }
   }
 
   /** The colour a building's textured walls average to (see CELL_MEAN): what
@@ -8090,6 +8140,9 @@ float frLine(float o, float fw, float c, float w) {
       this.meshGable(flat, bd, bd.y + bd.h, rc, seed, 0.34, false);
       return;
     }
+
+    // Auto KW: a strip plaza or a stand-alone store (kw.js markStrips)
+    if (bd.kw && bd.kw.strip) { this._stripMall(target, flat, bd, base, drop, seed); return; }
 
     // Roof clutter. The top face is the most-seen surface of a low building
     // from any elevated view, and a bare extrusion cap is the loudest tell that

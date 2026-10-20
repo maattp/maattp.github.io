@@ -14,7 +14,8 @@ const SCALE = MAP_PX / (G.MAP_HALF * 2);
 function placeIcon(ctx, kind, x, y, r) {
   ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f'
     : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : kind === 'coffee' ? '#6a4a32' : kind === 'hydro' ? '#d8242c' : kind === 'link' ? '#3a9a44' : kind === 'link2' ? '#0082ca' : kind === 'freight' ? '#b8501c' : kind === 'streetcar' ? '#8c1f2b' : kind === 'ferry' ? '#0b6e4f' : kind === 'bike' ? '#57b83a' : kind === 'pickle' ? '#c8a21a'
-    : kind === 'gun' ? '#2f6fb8' : kind === 'health' ? '#2e9a56' : kind === 'clinic' ? '#d8343a' : kind === 'wedge' ? '#7f8b96' : kind === 'tank' ? '#5f6b3a' : kind === 'fire' ? '#c4141c' : '#e0782e';
+    : kind === 'gun' ? '#2f6fb8' : kind === 'health' ? '#2e9a56' : kind === 'clinic' ? '#d8343a' : kind === 'wedge' ? '#7f8b96' : kind === 'tank' ? '#5f6b3a' : kind === 'fire' ? '#c4141c'
+    : kind === 'tims' ? '#c8102e' : kind === 'freshco' ? '#4c9a2a' : kind === 'school' ? '#123a6b' : kind === 'campus' ? '#330072' : kind === 'lm' ? '#6a4c9c' : '#e0782e';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = r * 0.22;
   ctx.beginPath();
@@ -161,6 +162,23 @@ function placeIcon(ctx, kind, x, y, r) {
     ctx.fillStyle = '#ffffff';
     ctx.beginPath(); ctx.moveTo(x - r * 0.42, y - r * 0.4); ctx.lineTo(x + r * 0.42, y - r * 0.4); ctx.lineTo(x + r * 0.22, y + r * 0.3); ctx.lineTo(x - r * 0.22, y + r * 0.3); ctx.closePath(); ctx.fill();
     ctx.globalAlpha = 0.7; ctx.beginPath(); ctx.moveTo(x - r * 0.15, y + r * 0.35); ctx.lineTo(x + r * 0.15, y + r * 0.35); ctx.lineTo(x, y + r * 0.7); ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
+  } else if (kind === 'tims') {
+    // a takeout cup with a lid
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.moveTo(x - r * 0.34, y - r * 0.32); ctx.lineTo(x + r * 0.34, y - r * 0.32); ctx.lineTo(x + r * 0.24, y + r * 0.52); ctx.lineTo(x - r * 0.24, y + r * 0.52); ctx.closePath(); ctx.fill();
+    ctx.fillRect(x - r * 0.42, y - r * 0.5, r * 0.84, r * 0.16);
+    ctx.fillStyle = '#c8102e'; ctx.fillRect(x - r * 0.3, y - r * 0.05, r * 0.6, r * 0.18);
+  } else if (kind === 'freshco') {
+    // a grocery cart
+    ctx.strokeStyle = '#ffffff'; ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.moveTo(x - r * 0.55, y - r * 0.4); ctx.lineTo(x - r * 0.38, y - r * 0.4); ctx.lineTo(x - r * 0.22, y + r * 0.22); ctx.lineTo(x + r * 0.42, y + r * 0.22); ctx.lineTo(x + r * 0.5, y - r * 0.22); ctx.lineTo(x - r * 0.3, y - r * 0.22); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x - r * 0.14, y + r * 0.42, r * 0.1, 0, Math.PI * 2); ctx.arc(x + r * 0.34, y + r * 0.42, r * 0.1, 0, Math.PI * 2); ctx.fill();
+  } else if (kind === 'school' || kind === 'campus' || kind === 'lm') {
+    // a star
+    ctx.fillStyle = kind === 'campus' ? '#f2a900' : '#ffffff';
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r * 0.26 : r * 0.6; ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); }
+    ctx.closePath(); ctx.fill();
   } else if (kind === 'coffee') {
     // a cup and its steam
     ctx.fillStyle = '#ffffff';
@@ -912,7 +930,7 @@ export class Hud {
       // named, quads too: an unlabelled orange dot was a quad nobody found.
       // (Pistols and first aid are not: thirty labels would bury the map, and
       // the icons say what they are.)
-      if (pl.kind === 'clinic' || pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle' || pl.kind === 'kayak' || pl.kind === 'wheel' || pl.kind === 'golf' || pl.kind === 'arcade' || pl.kind === 'pinball' || pl.kind === 'hockey' || pl.kind === 'tower' || pl.kind === 'duck' || pl.kind === 'coffee' || pl.kind === 'hydro' || pl.kind === 'link' || pl.kind === 'link2' || pl.kind === 'freight' || pl.kind === 'ferry' || pl.kind === 'bike' || pl.kind === 'pickle' || pl.kind === 'wedge' || pl.kind === 'tank' || pl.kind === 'fire' || (pl.kind === 'streetcar' && pl.label)) {
+      if (pl.kind === 'clinic' || pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle' || pl.kind === 'kayak' || pl.kind === 'wheel' || pl.kind === 'golf' || pl.kind === 'arcade' || pl.kind === 'pinball' || pl.kind === 'hockey' || pl.kind === 'tower' || pl.kind === 'duck' || pl.kind === 'coffee' || pl.kind === 'hydro' || pl.kind === 'link' || pl.kind === 'link2' || pl.kind === 'freight' || pl.kind === 'ferry' || pl.kind === 'bike' || pl.kind === 'pickle' || pl.kind === 'wedge' || pl.kind === 'tank' || pl.kind === 'fire' || (pl.kind === 'streetcar' && pl.label) || pl.label === true || typeof pl.label === 'string') {
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.fillText(pl.name, qx, qz - size * 0.016);
       }

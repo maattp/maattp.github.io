@@ -156,6 +156,17 @@ def height_of(b, cls, area):
                 return n * CLS_STOREY_H[cls] + 1.0
         except ValueError:
             pass
+    # Waterloo Region is suburban: an untagged store is a one-storey plaza
+    # unit or a big box, not an 11 m block, and an office park is two or three.
+    bt = str(b.get("bt", "")).lower()
+    if bt in ("retail", "supermarket", "commercial", "shop", "kiosk"):
+        return 6.0
+    if bt == "office":
+        return 10.0
+    if bt in ("school", "church", "civic", "public"):
+        return 8.0
+    if cls == 2:
+        return 6.5
     return CLS_DEFAULT_H[cls]
 
 
@@ -235,7 +246,12 @@ def main():
                 if not (0 <= qx <= 65535 and 0 <= qz <= 65535):
                     clamped += 1
                     qx, qz = max(0, min(65535, qx)), max(0, min(65535, qz))
-                r = int(round((rot % math.pi) * 256 / math.pi)) & 255
+                # min_area_rect's rot puts w along (sin rot, cos rot); the game's
+                # boxes (build.js Builder.box, world.js off()) put w along
+                # (cos rot, sin rot). Packed as the game reads it, or every box
+                # is mirrored across the diagonal: a north-south plaza drawn
+                # east-west, only boxes at 45 deg coming out right.
+                r = int(round(((math.pi / 2 - rot) % math.pi) * 256 / math.pi)) & 255
                 blob += struct.pack(
                     "<HHHHHBB", qx, qz,
                     max(1, min(65535, int(round(w * 20)))),
