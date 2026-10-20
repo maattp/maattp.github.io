@@ -41,7 +41,7 @@ import { CoffeeShop } from './barista.js';
 import { Seafair } from './hydrorace.js';
 import { FireService, placeStations } from './firecalls.js';
 import { BONES } from './peds.js';
-import { setKwData, applyNamed, buildSigns, mapPlaces as kwPlaces, kwData } from './kw.js';
+import { setKwData, applyNamed, buildSigns, buildPolys, mapPlaces as kwPlaces, kwData } from './kw.js';
 import { addLandmarkExtra } from './landmarks.js';
 import { Chicopee } from './chicopee.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
@@ -739,7 +739,8 @@ async function boot() {
   cityRef = city;
   // Auto KW: names and real looks onto the boxes, before anything is meshed
   setKwData(md.kw);
-  { const k = applyNamed(city); blog(`kw: ${k.named} named buildings, ${k.looks} with their own look, ${k.strips} strip stores`); }
+  { const k = applyNamed(city); blog(`kw: ${k.named} named buildings, ${k.looks} with their own look, ${k.polys} drawn from their footprints, ${k.strips} strip stores`); }
+  addLandmarkExtra(buildPolys);
   addLandmarkExtra(buildSigns);
   chicopee = new Chicopee(md.chicopee, { scene: null, city });
   addLandmarkExtra((ctx) => chicopee.buildSign(ctx));

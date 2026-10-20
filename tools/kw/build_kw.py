@@ -18,6 +18,7 @@ What src/kw.js puts on top of the imported city:
 import json
 import math
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -104,11 +105,45 @@ def main():
         if inmap(x, z) and not any(math.hypot(o[0] - x, o[1] - z) < 60 for o in fresh):
             fresh.append([round(x, 1), round(z, 1), addr])
 
-    doc = {"named": named, "shops": shops, "tims": tims, "freshco": fresh,
+    # Footprints drawn as their real polygons (kw.js buildPolys): the schools,
+    # the universities and colleges, and the stores in the two plazas that
+    # matter most. Everything else stays a box.
+    POLY_ZONES = [z for z in zones if z[0] in ("University of Waterloo Plaza", "University & Bridge")]
+    polys = []
+    for b in blds:
+        bt = str(b.get("bt", "")).lower()
+        n = b.get("n") or ""
+        xs = [q[0] for q in b["o"]]
+        zs = [q[1] for q in b["o"]]
+        cx, cz = sum(xs) / len(xs), sum(zs) / len(zs)
+        if not inmap(cx, cz) or len(b["o"]) < 4:
+            continue
+        keep = bt in ("school", "university", "college", "dormitory", "kindergarten") \
+            or re.search(r"School|Collegiate|College|University|Campus|Hall\b|Library|Centre for", n) \
+            or (bt in ("retail", "commercial", "supermarket", "yes") and any(math.hypot(cx - zx, cz - zz) < r for _, zx, zz, r in POLY_ZONES))
+        if not keep:
+            continue
+        pts = []
+        for q in b["o"]:
+            if not pts or math.hypot(q[0] - pts[-1][0], q[1] - pts[-1][1]) > 0.4:
+                pts.append([round(q[0], 1), round(q[1], 1)])
+        if len(pts) > 2 and pts[0] == pts[-1]:
+            pts.pop()
+        if len(pts) < 3:
+            continue
+        lv = b.get("lv")
+        try:
+            lv = float(str(lv).split(";")[0]) if lv else None
+        except ValueError:
+            lv = None
+        polys.append([n, bt, lv, pts])
+
+    doc = {"named": named, "shops": shops, "tims": tims, "freshco": fresh, "polys": polys,
            "zones": [[nm, round(x), round(z), r] for nm, x, z, r in zones]}
     p = os.path.join(OUT, "kw.json")
     with open(p, "w") as f:
         json.dump(doc, f, separators=(",", ":"), ensure_ascii=False)
+    print(f"  {len(polys)} footprints drawn as polygons")
     print(f"kw.json {os.path.getsize(p) // 1024} KB: {len(named)} named buildings, "
           f"{len(shops)} zone shops, {len(tims)} Tim Hortons, {len(fresh)} FreshCo")
     assert len(tims) > 40, "Tim Hortons missing"

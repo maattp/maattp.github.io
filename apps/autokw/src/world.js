@@ -3572,6 +3572,7 @@ ${FALL ? `
       // see. 4032 buildings pass; the sub-30 additions take the plain-box path
       // (plant and crown are height-gated) at ~12 triangles each.
       if (bd.h < 16 && bd.w * bd.d < 1400) continue;
+      if (bd.kw && bd.kw.poly) continue;   // Auto KW: drawn from its footprint (kw.js)
       const col = this.massColour(bd);
       const s = 0.985;
       // A tower is read almost entirely by its top. Extruded to full height
@@ -3701,6 +3702,7 @@ ${FALL ? `
     const boxes = [];   // [x, y, z, w, h, d, rot, r, g, b, chunk]
     const cells = new Map();
     for (const bd of t.list) {
+      if (bd.kw && bd.kw.poly) continue;   // Auto KW: drawn from its footprint (kw.js)
       if (bd.style === 'house' || (bd.h < 10 && bd.w * bd.d < 400)) {
         const k = Math.floor(bd.x / CELL) * 100000 + Math.floor(bd.z / CELL);
         let l = cells.get(k);
@@ -4766,6 +4768,7 @@ float frLine(float o, float fw, float c, float w) {
       for (const bi of ch.buildings) {
         if (performance.now() - this._yt > this._yb) { yield; this._yt = performance.now(); }
         const bd = city.buildings[bi];
+        if (bd.kw && bd.kw.poly) continue;   // Auto KW: drawn from its footprint (kw.js)
         // A flat roof's plant, crown and terrace furniture are solid to what
         // lands on it (util roofAt): recorded as they are drawn.
         const flatRoof = !bd.kind && bd.style !== 'house' && !(bd.style === 'industrial' && bd.h < 3.5);
@@ -4803,6 +4806,7 @@ float frLine(float o, float fw, float c, float w) {
       for (const bi of ch.buildings) {
         const bd = city.buildings[bi];
         if (bd.h >= 16 || bd.w * bd.d >= 1400) continue;   // skyline draws these
+        if (bd.kw && bd.kw.poly) continue;   // Auto KW: drawn from its footprint (kw.js)
         const wall = this.massColour(bd);
         flat.box(bd.x, bd.y - 0.5, bd.z, bd.w, bd.h + 0.5, bd.d, bd.rot, wall, { ao: 0.35, top: false });
         // the roof: membrane grey for a flat top, shingle for a house's

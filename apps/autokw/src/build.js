@@ -24,11 +24,14 @@ export function mergeByMaterial(root) {
   });
   const out = new THREE.Group();
   for (const [material, meshes] of byMat) {
-    const pos = [], nor = [], uv = [], idx = [];
+    const pos = [], nor = [], uv = [], idx = [], col = [];
+    // vertex colours carry through (Auto KW's footprint buildings are drawn in them)
+    const hasCol = meshes.some((m) => m.geometry.attributes.color);
     let base = 0;
     for (const m of meshes) {
       const g = m.geometry;
       const p = g.attributes.position;
+      const c = g.attributes.color;
       const n = g.attributes.normal;
       const t = g.attributes.uv;
       const mw = m.matrixWorld;
@@ -42,6 +45,7 @@ export function mergeByMaterial(root) {
           nor.push(v.x, v.y, v.z);
         } else nor.push(0, 1, 0);
         uv.push(t ? t.getX(i) : 0, t ? t.getY(i) : 0);
+        if (hasCol) { if (c) col.push(c.getX(i), c.getY(i), c.getZ(i)); else col.push(1, 1, 1); }
       }
       if (g.index) {
         const ix = g.index;
@@ -55,6 +59,7 @@ export function mergeByMaterial(root) {
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    if (hasCol) geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
     geo.setIndex(idx);
     geo.computeBoundingSphere();
     out.add(new THREE.Mesh(geo, material));

@@ -18,6 +18,7 @@
 import * as THREE from './three.js';
 import * as G from './geo.js';
 import { hash2 } from './util.js';
+import { Builder } from './build.js';
 
 let KW = null;
 export function setKwData(d) { KW = d; }
@@ -145,8 +146,9 @@ export function applyNamed(city) {
       looks++;
     }
   }
+  const polys = markPolys(city);
   const strips = markStrips(city);
-  return { named, looks, strips };
+  return { named, looks, strips, polys };
 }
 
 /**
@@ -159,6 +161,7 @@ function markStrips(city) {
   let n = 0;
   for (const b of city.buildings) {
     if (b.style !== 'brick' || b.h > 7.5 || b.w * b.d < 200 || b.w < 8 || b.d < 8) continue;
+    if (b.kw && b.kw.poly) continue;
     if (b.kw && (b.kw.fam || campusOf(b.x, b.z))) continue;
     const f = faceFor(city, b, b.x, b.z, 3, true);
     if (!f) continue;
@@ -167,6 +170,184 @@ function markStrips(city) {
     n++;
   }
   return n;
+}
+
+// --- footprints drawn as themselves -------------------------------------------------
+
+function polyArea(p) {
+  let a = 0;
+  for (let i = 0; i < p.length; i++) { const j = (i + 1) % p.length; a += p[i][0] * p[j][1] - p[j][0] * p[i][1]; }
+  return a / 2;
+}
+
+/**
+ * The schools, the campuses and the plazas' stores (kw.json polys) are
+ * drawn from their real footprints (buildPolys), not their boxes: St.
+ * Matthew's is a 35-sided plan the box made a 95 x 101 m cube of. The box
+ * stays for the scatter and the ground's tint but goes flat (h 0), so
+ * nothing collides with it; the polygon's walls are solids of their own.
+ */
+function markPolys(city) {
+  let n = 0;
+  for (const [nm, bt, lv, pts] of KW.polys || []) {
+    let cx = 0, cz = 0;
+    for (const q of pts) { cx += q[0]; cz += q[1]; }
+    cx /= pts.length; cz /= pts.length;
+    const A = Math.abs(polyArea(pts));
+    if (A < 60) continue;
+    const b = boxAt(city, cx, cz, 3);
+    if (!b || (b.kw && b.kw.poly)) continue;
+    if (b.w * b.d > A * 6 + 400) continue;     // a different, bigger building
+    const L = LOOKS[nm];
+    const retail = bt === 'retail' || bt === 'commercial' || bt === 'supermarket' || bt === 'yes';
+    const h = L && L.h ? L.h : lv ? lv * 3.9 + 1.2 : retail ? 6 : b.h > 0.5 ? Math.max(b.h, 7) : 8;
+    if (!b.kw) b.kw = {};
+    if (nm && !b.kw.name) b.kw.name = nm;
+    if (bt) b.kw.bt = bt;
+    b.kw.poly = { pts: A < 0 ? pts.slice().reverse() : pts, h, n: nm, bt, retail, fam: L ? L.fam : null };
+    b.h = 0;
+    n++;
+  }
+  return n;
+}
+
+const BRICKS = [[0.80, 0.66, 0.48], [0.56, 0.36, 0.27], [0.70, 0.42, 0.31], [0.84, 0.78, 0.64], [0.64, 0.60, 0.55]];
+const STUCCO = [[0.86, 0.80, 0.68], [0.80, 0.72, 0.60], [0.74, 0.56, 0.44], [0.82, 0.82, 0.80], [0.66, 0.62, 0.56]];
+
+/** A polygon building's walls, windows, parapet, roof and plant into `B`; its solids into `solids`. */
+const U0 = [0, 0, 0, 0, 0, 0, 0, 0];
+function meshPoly(B, solids, b, P) {
+  const pts = P.pts, n = pts.length;
+  const seed = Math.round(b.x * 3 + b.z * 7);
+  const T = G.terrainHeight;
+  let cx = 0, cz = 0, lo = Infinity;
+  for (const q of pts) { cx += q[0]; cz += q[1]; lo = Math.min(lo, T(q[0], q[1])); }
+  cx /= n; cz /= n;
+  const yTop = T(cx, cz) + P.h, y0 = lo - 1.2;
+  const camp = campusOf(cx, cz);
+  const col = P.fam ? P.fam.c : P.retail ? STUCCO[Math.floor(hash2(seed, 5) * STUCCO.length)]
+    : camp === 'wlu' ? BRICKS[2] : camp === 'uw' ? [BRICKS[0], BRICKS[3], BRICKS[4]][Math.floor(hash2(seed, 6) * 3)]
+      : BRICKS[Math.floor(hash2(seed, 7) * BRICKS.length)];
+  const glassy = P.fam && P.fam.m === 'glass';
+  // vertex colours are linear: the palettes above are sRGB
+  const lin = (c) => [Math.pow(c[0], 2.2), Math.pow(c[1], 2.2), Math.pow(c[2], 2.2)];
+  const colL = lin(col);
+  const dark = [colL[0] * 0.75, colL[1] * 0.75, colL[2] * 0.75];
+  const GLASS = lin([0.16, 0.2, 0.24]), FRAME = lin([0.36, 0.37, 0.38]), TRIM = lin([0.84, 0.83, 0.8]);
+  const storey = P.retail ? 6 : 3.9;
+  const floors = Math.max(1, Math.round((P.h - 0.8) / storey));
+  for (let i = 0; i < n; i++) {
+    const a = pts[i], c = pts[(i + 1) % n];
+    const dx = c[0] - a[0], dz = c[1] - a[1], L = Math.hypot(dx, dz);
+    if (L < 0.3) continue;
+    const ux = dx / L, uz = dz / L, nx = uz, nz = -ux;   // CCW: outward is (dz, -dx)
+    const N = [nx, 0, nz];
+    // the wall, to a parapet 0.7 m over the roof, and its inside face above the roof
+    B.quad([a[0], y0, a[1]], [c[0], y0, c[1]], [c[0], yTop + 0.7, c[1]], [a[0], yTop + 0.7, a[1]], N, U0, [dark, dark, colL, colL]);
+    B.quad([a[0], yTop, a[1]], [c[0], yTop, c[1]], [c[0], yTop + 0.7, c[1]], [a[0], yTop + 0.7, a[1]], [-nx, 0, -nz], U0, dark);
+    B.quad([a[0] + nx * 0.12, yTop + 0.7, a[1] + nz * 0.12], [c[0] + nx * 0.12, yTop + 0.7, c[1] + nz * 0.12], [c[0], yTop + 0.84, c[1]], [a[0], yTop + 0.84, a[1]], [0, 1, 0], U0, TRIM);
+    // collision: the wall as a thin box
+    solids.push({ x: (a[0] + c[0]) / 2, z: (a[1] + c[1]) / 2, hw: L / 2 + 0.2, hd: 0.35, rot: Math.atan2(dz, dx), y0: y0, y1: yTop + 0.7 });
+    if (L < 4) continue;
+    const gy = T(a[0] + dx / 2 + nx * 2, a[1] + dz / 2 + nz * 2);
+    const o = 0.05, e0 = Math.min(1.2, L * 0.15);
+    const at = (t, y, off) => [a[0] + ux * t + nx * off, y, a[1] + uz * t + nz * off];
+    if (P.retail) {
+      // a store: a storefront of glass along any face that is not a back wall
+      // (a back wall faces a lane, a fence or the neighbours: no lot, no road in front)
+      const fx = a[0] + dx / 2 + nx * 12, fz = a[1] + dz / 2 + nz * 12;
+      const front = G.lotAt(fx, fz) >= 0;
+      if (!front) continue;
+      B.quad(at(e0, gy - 0.3, o), at(L - e0, gy - 0.3, o), at(L - e0, gy + 3.0, o), at(e0, gy + 3.0, o), N, U0, GLASS);
+      const nm = Math.max(1, Math.round((L - 2 * e0) / 3));
+      for (let k = 0; k <= nm; k++) {
+        const t = e0 + (k / nm) * (L - 2 * e0);
+        B.quad(at(t - 0.06, gy - 0.3, o * 2), at(t + 0.06, gy - 0.3, o * 2), at(t + 0.06, gy + 3.0, o * 2), at(t - 0.06, gy + 3.0, o * 2), N, U0, FRAME);
+      }
+      // the fascia the signs hang on: 1.8 m out, 3.2-4.45 m up
+      const f0 = gy + 3.2, f1 = gy + 4.45, D = 1.8;
+      B.quad(at(0, f0, D), at(L, f0, D), at(L, f1, D), at(0, f1, D), N, U0, TRIM);
+      B.quad(at(0, f0, 0), at(L, f0, 0), at(L, f0, D), at(0, f0, D), [0, -1, 0], U0, lin([0.5, 0.5, 0.5]));
+      B.quad(at(0, f1, 0), at(L, f1, 0), at(L, f1, D), at(0, f1, D), [0, 1, 0], U0, lin([0.6, 0.6, 0.6]));
+      continue;
+    }
+    // ribbon windows, a band per storey (a curtain wall: most of the storey)
+    for (let k = 0; k < floors; k++) {
+      const ya = gy + 1.0 + k * storey, yb = ya + (glassy ? storey - 0.7 : 1.55);
+      if (yb > yTop - 0.3) break;
+      B.quad(at(e0, ya, o), at(L - e0, ya, o), at(L - e0, yb, o), at(e0, yb, o), N, U0, GLASS);
+      // mullions every 2.6 m
+      const nm = Math.floor((L - 2 * e0) / 2.6);
+      for (let m = 1; m < nm; m++) {
+        const t = e0 + (m / nm) * (L - 2 * e0);
+        B.quad(at(t - 0.07, ya, o * 2), at(t + 0.07, ya, o * 2), at(t + 0.07, yb, o * 2), at(t - 0.07, yb, o * 2), N, U0, FRAME);
+      }
+      // a sill under the band
+      B.quad(at(e0, ya - 0.12, o * 3), at(L - e0, ya - 0.12, o * 3), at(L - e0, ya, o * 3), at(e0, ya, o * 3), N, U0, TRIM);
+    }
+  }
+  // the roof, triangulated
+  const contour = pts.map((q) => new THREE.Vector2(q[0], q[1]));
+  let tris = [];
+  try { tris = THREE.ShapeUtils.triangulateShape(contour, []); } catch (e) { tris = []; }
+  const RC = lin([0.56, 0.56, 0.54]);
+  for (const [i, j, k] of tris) {
+    const A = pts[i], Bq = pts[j], C = pts[k];
+    B.tri([A[0], yTop, A[1]], [Bq[0], yTop, Bq[1]], [C[0], yTop, C[1]], [0, 1, 0], RC);
+  }
+  // plant on the roof: a few units inside the footprint
+  const nu = Math.min(8, Math.max(1, Math.round(Math.abs(polyArea(pts)) / 700)));
+  for (let u = 0; u < nu; u++) {
+    const q = pts[Math.floor(hash2(seed, 40 + u) * n)];
+    const t = 0.35 + hash2(seed, 60 + u) * 0.4;
+    const ux = cx + (q[0] - cx) * t, uz = cz + (q[1] - cz) * t;
+    B.box(ux, yTop, uz, 2 + hash2(seed, 80 + u) * 2, 1.2 + hash2(seed, 90 + u), 1.6, 0, lin([0.66, 0.67, 0.68]));
+  }
+}
+
+let POLY_MAT = null;
+/** landmarks.js extra: every polygon building, merged per 1200 m cluster. */
+export function buildPolys(ctx) {
+  if (!KW) return;
+  const { addTo, city } = ctx;
+  if (!POLY_MAT) POLY_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0 });
+  const builders = new Map();
+  let n = 0;
+  for (const b of city.buildings) {
+    if (!b.kw || !b.kw.poly) continue;
+    const k = 'kwp' + Math.round(b.x / 1200) + ',' + Math.round(b.z / 1200);
+    let B = builders.get(k);
+    if (!B) builders.set(k, (B = new Builder(false)));
+    meshPoly(B, ctx.solids, b, b.kw.poly);
+    n++;
+  }
+  for (const [k, B] of builders) {
+    if (B.empty) continue;
+    const m = new THREE.Mesh(B.build(), POLY_MAT);
+    const g = new THREE.Group();
+    g.add(m);
+    addTo(k, g);
+  }
+  if (KW) KW.polyStats = { buildings: n, clusters: builders.size };
+}
+
+/** The face of a polygon building nearest (px, pz): world point at the wall, outward normal, length. */
+function polyFace(P, px, pz) {
+  const pts = P.pts, n = pts.length;
+  let best = null, bd = Infinity;
+  for (let i = 0; i < n; i++) {
+    const a = pts[i], c = pts[(i + 1) % n];
+    const dx = c[0] - a[0], dz = c[1] - a[1], L = Math.hypot(dx, dz);
+    if (L < 3) continue;
+    const ux = dx / L, uz = dz / L;
+    const t = Math.max(0, Math.min(L, (px - a[0]) * ux + (pz - a[1]) * uz));
+    const qx = a[0] + ux * t, qz = a[1] + uz * t, d = Math.hypot(px - qx, pz - qz);
+    // a store's face is one in front of a lot (the storefront): prefer those
+    const front = G.lotAt(a[0] + dx / 2 + uz * 12, a[1] + dz / 2 - ux * 12) >= 0;
+    const sc = d + (P.retail && !front ? 60 : 0);
+    if (sc < bd) { bd = sc; best = { x: qx, z: qz, nx: uz, nz: -ux, len: L, t, ux, uz, ax: a[0], az: a[1] }; }
+  }
+  return best;
 }
 
 // --- signs ------------------------------------------------------------------------
@@ -404,6 +585,19 @@ export function buildSigns(ctx) {
 
   const storeSign = (x, z, w, h, makePanel, opts = {}) => {
     const b = boxAt(city, x, z, 3);
+    if (b && b.kw && b.kw.poly) {
+      const P = b.kw.poly, f = polyFace(P, x, z);
+      if (!f) return null;
+      const ww = Math.min(w, f.len - 0.6), half = (f.len - ww) / 2;
+      const t = Math.max(ww / 2 + 0.3, Math.min(f.len - ww / 2 - 0.3, f.t));
+      const sx = f.ax + f.ux * t, sz = f.az + f.uz * t;
+      const gy = G.terrainHeight(sx + f.nx * 2, sz + f.nz * 2);
+      const g = grp(sx, sz);
+      if (P.retail) hang(g, makePanel(ww, Math.min(h, 1.05)), sx, gy + 3.82, sz, f.nx, f.nz, 1.88);
+      else hang(g, makePanel(ww, h), sx, gy + (opts.y || 3.4), sz, f.nx, f.nz);
+      void half;
+      return { b, f: { ...f, x: sx, z: sz } };
+    }
     if (b && b.h > 3 && b.w * b.d < 60000) {
       const f = faceFor(city, b, x, z, w);
       if (f) {
@@ -477,7 +671,7 @@ export function buildSigns(ctx) {
   // campus nameplates and the schools: one per named box
   const plated = new Set();
   for (const b of city.buildings) {
-    if (!b.kw || plated.has(b)) continue;
+    if (!b.kw || !b.kw.name || plated.has(b)) continue;
     const bt = b.kw.bt, n = b.kw.name;
     const camp = campusOf(b.x, b.z);
     const school = bt === 'school' || /Catholic (Elementary|Secondary) School|Public School|Collegiate|Secondary School/.test(n);
@@ -487,6 +681,18 @@ export function buildSigns(ctx) {
     const col = school ? CAMPUS_SIGN.school : CAMPUS_SIGN[camp];
     const w = Math.max(3.2, Math.min(9, n.length * (n.length > 26 ? 0.24 : 0.36) + 1.2));
     const h = n.length > 26 ? 1.5 : 1.0;
+    if (b.kw.poly) {
+      // on the face nearest a street
+      const rd = faceRoad(city, b.x, b.z, 200);
+      const f = polyFace(b.kw.poly, rd ? rd.qx : b.x, rd ? rd.qz : b.z);
+      if (!f || f.len < w + 0.6) continue;
+      const t = Math.max(w / 2 + 0.3, Math.min(f.len - w / 2 - 0.3, f.t));
+      const sx = f.ax + f.ux * t, sz = f.az + f.uz * t;
+      const gy = G.terrainHeight(sx + f.nx * 2, sz + f.nz * 2);
+      hang(grp(sx, sz), namePanel(L, n, w, h, col), sx, gy + Math.min(3.2, b.kw.poly.h - 1.2), sz, f.nx, f.nz);
+      stats.plates++;
+      continue;
+    }
     const f = faceFor(city, b, b.x, b.z, w);
     if (!f) continue;
     const ty = G.terrainHeight(f.x + f.nx * 1.5, f.z + f.nz * 1.5);
