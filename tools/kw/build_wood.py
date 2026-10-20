@@ -100,6 +100,31 @@ def main():
     b[grn & scrub] = 170
     b[grn & (wood | (steep & ~open_))] = 255
     b[grn & open_ & ~wood] = 85
+    # Auto KW: THE FIELDS. Outside the green, blue is which crop a farm
+    # field (OSM landuse=farmland) stands in this October -- geo.farmAt,
+    # world.groundTint: 30 standing corn, 60 soybeans gone gold, 90 wheat
+    # stubble, 120 ploughed, 150 hay and pasture, 180 winter wheat up green,
+    # 210 a farmyard. Picked per field from its OSM id, weighted to what
+    # Waterloo Region grows.
+    farms_p = os.path.join(DATA, "raw_farms.json")
+    nf = 0
+    if os.path.exists(farms_p):
+        CROPS = [30, 30, 30, 60, 60, 60, 90, 90, 120, 120, 150, 150, 180]
+        fim = Image.new("L", (MASK_N, MASK_N), 0)
+        fd = ImageDraw.Draw(fim)
+        tx = lambda pts: [((x + MAP_HALF) / MASK_STEP, (z + MAP_HALF) / MASK_STEP) for x, z in pts]
+        farms = json.load(open(farms_p))["farms"]
+        # biggest first, so a farmyard drawn inside a field stays on top
+        for f in sorted(farms, key=lambda f: -abs(sum(a[0] * b[1] - b[0] * a[1] for a, b in zip(f["o"], f["o"][1:] + f["o"][:1])))):
+            code = 210 if f["k"] == "farmyard" else 150 if f["k"] in ("orchard", "vineyard", "plant_nursery") \
+                else CROPS[(f["id"] * 2654435761 >> 7) % len(CROPS)]
+            fd.polygon(tx(f["o"]), fill=code)
+            nf += 1
+        farm = np.asarray(fim)
+        wet = surf[:, :, 0] > 127
+        mask = (~grn) & (~wet) & (farm > 0)
+        b[mask] = farm[mask]
+        print(f"fields: {nf} farm polygons, {mask.mean() * 100:.1f} % of the map")
     surf[:, :, 2] = b
     Image.fromarray(surf, "RGB").save(os.path.join(OUT, "surface.png"), optimize=True)
 

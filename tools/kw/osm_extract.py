@@ -107,6 +107,7 @@ class Collector:
         self.seen_area = set()
         self.seen_lot = set()
         self.rivers = []   # waterway centrelines: the river's level follows them
+        self.farms = []    # farmland, farmyards, orchards: the countryside's fields
         self.trails = []   # paths and tracks: mountain-bike and dirt trails
 
     # --- ways -------------------------------------------------------------
@@ -185,6 +186,11 @@ class Collector:
             return
         t = a.tags
         self.maybe_lot(a, t)
+        if t.get("landuse") in ("farmland", "farmyard", "orchard", "vineyard", "plant_nursery", "greenhouse_horticulture"):
+            for ring in a.outer_rings():
+                pts = ring_world(ring)
+                if pts:
+                    self.farms.append({"k": t.get("landuse"), "c": t.get("crop") or "", "o": pts, "id": a.orig_id()})
         kind = None
         if t.get("natural") in ("water", "bay", "strait") or t.get("waterway") == "riverbank" \
                 or t.get("landuse") in WATER_LANDUSE or t.get("water"):
@@ -377,6 +383,7 @@ def main():
         "raw_pois.json": {"pois": c.pois, "places": c.places},
         "raw_lots.json": {"lots": c.lots, "aisles": c.aisles},
         "raw_rivers.json": {"rivers": c.rivers},
+        "raw_farms.json": {"farms": c.farms},
         "raw_trails.json": {"trails": c.trails},
     }
     if only_lots:

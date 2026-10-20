@@ -134,6 +134,8 @@ export async function loadMapData(onStep) {
   const sp = await pixels('surface.png');
   const water = new Uint8Array(sp.w * sp.h);
   const green = new Uint8Array(sp.w * sp.h);
+  // Auto KW: outside the green, blue is a farm field's crop (build_wood.py)
+  const farm = new Uint8Array(sp.w * sp.h);
   for (let i = 0, p = 0; i < water.length; i++, p += 4) {
     water[i] = sp.data[p] > 127 ? 1 : 0;
     // Green is non-zero; WHICH green rides in the value, from the blue
@@ -141,6 +143,7 @@ export async function loadMapData(onStep) {
     // Everything that only asks "is it green" tests for non-zero.
     const b = sp.data[p + 2];
     green[i] = sp.data[p + 1] > 127 ? (b > 212 ? 2 : b > 127 ? 3 : b > 42 ? 4 : 1) : 0;
+    farm[i] = sp.data[p + 1] > 127 ? 0 : Math.round(b / 30);
   }
 
   // The lot layer: R = coverage of the sample's own cell by its code, G = the
@@ -197,7 +200,7 @@ export async function loadMapData(onStep) {
 
   return {
     height, hfN: hp.w, wlevel,
-    water, green, maskN: sp.w, lot, lotN: lp.w,
+    water, green, farm, maskN: sp.w, lot, lotN: lp.w,
     roads, buildings, places, lakes, monorail, link, freight, beaches, parkprops, bikepaths, piers, ferry, mountains, trails, kw, chicopee,
   };
 }

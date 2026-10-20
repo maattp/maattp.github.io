@@ -6886,6 +6886,30 @@ float frLine(float o, float fw, float c, float w) {
         GRASS[1] + (built[1] - GRASS[1]) * t,
         GRASS[2] + (built[2] - GRASS[2]) * t,
       ];
+      // Auto KW: open country OSM has not mapped as farmland is fields all
+      // the same -- parcels on the township's grid (turned ~37 deg, as the
+      // concession roads are), each its own crop, fading out into the towns.
+      if (dense < 0.1 && !G.farmAt(x, z)) {
+        const u = x * 0.8 - z * 0.6, w = x * 0.6 + z * 0.8;
+        const pi = Math.floor(u / 260), pj = Math.floor(w / 410);
+        const k = hash2(pi * 7 + 3, pj * 13 + 1);
+        const F = k < 0.22 ? [0.66, 0.55, 0.32] : k < 0.42 ? [0.74, 0.58, 0.30] : k < 0.55 ? [0.80, 0.72, 0.48]
+          : k < 0.66 ? [0.40, 0.31, 0.22] : k < 0.86 ? [0.50, 0.58, 0.32] : null;
+        if (F) {
+          const f = clamp((0.1 - dense) / 0.04, 0, 1);
+          for (let q = 0; q < 3; q++) c[q] += (F[q] - c[q]) * f;
+        }
+      }
+    }
+    // Auto KW: THE FIELDS, in October. A farm field takes its crop's colour
+    // (geo.farmAt): corn standing tan, soy gone gold, stubble, ploughed
+    // earth, hay, winter wheat up green, a farmyard's packed ground.
+    const crop = G.farmAt(x, z);
+    if (crop && crop <= 7 && !G.inPark(x, z)) {
+      const F = [null, [0.66, 0.55, 0.32], [0.74, 0.58, 0.30], [0.80, 0.72, 0.48], [0.40, 0.31, 0.22],
+        [0.50, 0.58, 0.32], [0.36, 0.56, 0.24], [0.54, 0.50, 0.42]][crop];
+      const v = 0.92 + vnoise(x * 0.9 + 191, z * 0.9 - 77) * 0.16;
+      c = [F[0] * v, F[1] * v, F[2] * v];
     }
     // Two grass tones, in patches.
     //

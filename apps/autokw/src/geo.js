@@ -45,6 +45,7 @@ let HF = null;
 let WL = null;   // the water's surface per heightfield vertex, NaN where none is drawn
 let WET = null;
 let GRN = null;
+let FARM = null;   // Auto KW: a farm field's crop, 0 none (farmAt)
 let LOT = null;
 
 export let LANDMARKS = [];
@@ -74,6 +75,7 @@ export function initGeo(md) {
   liftBeaches(HF, md.beaches || [], md.lakes || [], md.water);
   WET = md.water;
   GRN = md.green;
+  FARM = md.farm || null;
   LOT = md.lot || null;
   if (LOT) { LOT_N = md.lotN; LOT_STEP = (MAP_HALF * 2) / (LOT_N - 1); }
   const p = md.places;
@@ -511,6 +513,13 @@ export function shipCanal(lakes) {
   };
   CANAL = { cells, i0, j0, w, h, step: S, level, count, union, deepIn, at };
   return CANAL;
+}
+
+/** Auto KW: the crop in the farm field at (x, z): 0 none, 1 standing corn,
+ *  2 soybeans, 3 wheat stubble, 4 ploughed, 5 hay or pasture, 6 winter wheat,
+ *  7 a farmyard (tools/kw/build_wood.py). */
+export function farmAt(x, z) {
+  return maskAt(FARM, x, z);
 }
 
 export function inPark(x, z) {
