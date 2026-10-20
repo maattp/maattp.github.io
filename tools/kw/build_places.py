@@ -26,8 +26,8 @@ LANDMARKS = [
 
 # Where the player starts, and where the hospital puts them back. Both are real
 # places, and citygen keeps buildings off them (G.KEEP_CLEAR).
-SPAWN_LL = (43.46560, -80.52270)     # King St S by Erb St, Uptown Waterloo
-SPAWN_HEADING = 2.55                  # down King St towards Kitchener (rotation.y)
+SPAWN_LL = (43.46447, -80.52207)     # King St S by Erb St, Uptown Waterloo (the east sidewalk)
+SPAWN_HEADING = 3.33                  # north up King St to Erb (rotation.y)
 RESPAWN_LL = (43.45680, -80.51060)   # Grand River Hospital, KW campus
 
 

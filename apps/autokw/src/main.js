@@ -44,6 +44,7 @@ import { BONES } from './peds.js';
 import { setKwData, applyNamed, buildSigns, buildPolys, mapPlaces as kwPlaces, kwData } from './kw.js';
 import { addLandmarkExtra } from './landmarks.js';
 import { Chicopee } from './chicopee.js';
+import { YKF } from './ykf.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings, warmLightBar } from './traffic.js';
 import { Police } from './police.js';
@@ -128,6 +129,7 @@ const RESPAWN_SITES = [
   { name: 'Breslau Clinic', ll: [43.47450, -80.41200] },
 ];
 let respawns = [];   // [{ name, x, z, node }] (buildRespawns)
+let ykf = null;        // the Region of Waterloo International Airport (ykf.js)
 let chicopee = null;   // Chicopee's bike park: trails, lifts, bikes (chicopee.js)
 let fire = null, fireStations = [];   // Seattle Fire: the stations' rigs, the water cannon, fire calls (firecalls.js)
 
@@ -744,6 +746,9 @@ async function boot() {
   addLandmarkExtra(buildSigns);
   chicopee = new Chicopee(md.chicopee, { scene: null, city });
   addLandmarkExtra((ctx) => chicopee.buildSign(ctx));
+  ykf = new YKF(md.kw && md.kw.aero);
+  addLandmarkExtra((ctx) => ykf.build(ctx));
+  city.slabQuery = (x, z) => ykf.surface(x, z);
   blog(`city: grading ${cityStats.gradeCached ? 'from cache' : 'computed'}, buildings ${bootCache.buildings ? 'from cache' : 'computed'}`);
 
   await step(0.64, 'Raising the terrain');
@@ -995,6 +1000,8 @@ function installShadowFade() {
   postfx.setSize(viewW(), viewH(), renderer.getPixelRatio());
 
   world = new World(scene, city, tx, { shadows: true, renderer, lakes: md.lakes });
+  // the trees keep off YKF's runways, taxiways and aprons
+  world.inAirfield = (x, z) => ykf.inField(x, z);
   // The trees' mid and near crowns (trees.js): chosen from the chunks'
   // records against the camera before each scene pass.
   world.trees = new TreeSystem(scene, world.shadows);
@@ -1248,6 +1255,17 @@ function installShadowFade() {
     v.vLong = 0;
   }
   if (BALLOON_SITE) spawnBalloon();
+  // YKF: aircraft on the terminal's stands, and a fighter on 08's threshold
+  {
+    const fleet = ['jet', 'twin', 'plane', 'sportplane', 'plane', 'heli', 'biplane', 'twin', 'sportplane'];
+    ykf.stands().forEach(([x, z, h], i) => {
+      const ty = fleet[i % fleet.length];
+      const v = traffic.spawnAt(x, z, h, ty, AIRCRAFT_PAINT[ty], 'apron');
+      v.vLong = 0;
+    });
+    const e = ykf.runwayEnd('08/26');
+    if (e) traffic.spawnAt(e.x, e.z, e.heading, 'fighter', 0x7b8590, 'apron').vLong = 0;
+  }
   // Chicopee's bikes, at the base and the summit
   for (const [ty, x, z, h] of chicopee.bikeSpots()) {
     const v = traffic.spawnAt(x, z, h, ty, ty === 'dirtbike' ? 0xd8462a : 0x2f8f4e, 'apron');
@@ -1333,6 +1351,8 @@ function installShadowFade() {
     ...(lmRoot.userData.marinas || []).map((mr) => ({ x: mr.x, z: mr.z, kind: 'dock', name: mr.name, near: false,
       hello: mr.hello ? mr.hello : `${mr.name} — boats and jet skis. Walk out on the float and take one` })),
     ...kwPlaces(),
+    ...(ykf.runwayEnd() ? [{ x: 7228, z: -440, kind: 'jet', name: 'YKF Airport', near: false, label: 'YKF',
+      hello: 'Region of Waterloo International Airport — planes on the stands and a fighter on runway 08. Climb in' }] : []),
     // ION: every station's street entrance
     ...link.stations.map((st) => ({ x: st.ent.x, z: st.ent.z, kind: 'link', name: `ION · ${st.name}`, near: false,
       hello: `${st.full} — ION light rail, Conestoga to Fairway. Tap ENTER here or on the platform to catch the next train and drive it` })),

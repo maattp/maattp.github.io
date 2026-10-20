@@ -376,6 +376,68 @@ def carve_water(h, wet):
     return h, lake_level, frac, (bank, lvl_near)
 
 
+def grade_ykf(h):
+    """Grade the Region of Waterloo International Airport's runways and aprons.
+
+    The DEM under runway 08/26 wanders 2.5 m along it, which would launch a
+    landing plane: each runway is laid on the straight line between its
+    ends' mean ground, 22 m either side of the centreline plus 30 m, blended
+    out over 110 m; each apron is levelled to its own mean, blended over
+    40 m. Same idea as Seattle's grade_airfield, from OSM's own aeroways
+    (tools/kw/extract_aero.py). Returns the graded field and the mask of
+    vertices it set, which grade_streets must not move.
+    """
+    aero = json.load(open(os.path.join(DATA, "raw_aero.json")))["aero"]
+    n = h.shape[0]
+    xs = -MAP_HALF + np.arange(n) * HF_STEP
+    X, Z = np.meshgrid(xs, xs)
+    out = h.copy()
+    touched = np.zeros_like(h, dtype=bool)
+
+    def sample(x, z, r=60):
+        m = np.hypot(X - x, Z - z) < r
+        return float(h[m].mean())
+    for o in aero:
+        if o["k"] != "runway" or o.get("ref") not in ("08/26", "14/32"):
+            continue
+        (ax, az), (bx, bz) = o["p"][0], o["p"][-1]
+        ya, yb = sample(ax, az), sample(bx, bz)
+        dx, dz = bx - ax, bz - az
+        L = math.hypot(dx, dz)
+        ux, uz = dx / L, dz / L
+        t = ((X - ax) * ux + (Z - az) * uz)
+        d = np.abs((X - ax) * -uz + (Z - az) * ux)
+        tc = np.clip(t, 0, L)
+        dd = np.hypot(np.maximum(d - 52, 0), np.maximum(np.maximum(-t, t - L) - 60, 0))
+        w = np.clip(1 - dd / 110, 0, 1)
+        prof = ya + (yb - ya) * tc / L
+        out = np.where(w > 0, out * (1 - w) + prof * w, out)
+        touched |= w > 0
+        print(f"  runway {o['ref']}: {L:.0f} m, {ya + ELEV_BASE:.1f} -> {yb + ELEV_BASE:.1f} m ASL")
+    from PIL import ImageDraw as _D
+    for o in aero:
+        if o["k"] != "apron" or not o.get("closed"):
+            continue
+        cx = sum(p[0] for p in o["p"]) / len(o["p"])
+        cz = sum(p[1] for p in o["p"]) / len(o["p"])
+        if not (5500 < cx < 9500 and -2500 < cz < 500):
+            continue
+        img = Image.new("L", (n, n), 0)
+        _D.Draw(img).polygon([((p[0] + MAP_HALF) / HF_STEP, (p[1] + MAP_HALF) / HF_STEP) for p in o["p"]], fill=1)
+        m = np.asarray(img, dtype=bool)
+        if not m.any():
+            continue
+        y = float(out[m].mean())
+        # blend: 1 inside, falling over one cell round it
+        grow = m.copy()
+        for dj in (-1, 0, 1):
+            for di in (-1, 0, 1):
+                grow |= np.roll(np.roll(m, dj, 0), di, 1)
+        out = np.where(m, y, np.where(grow & ~m, (out + y) / 2, out))
+        touched |= grow
+    return out, touched
+
+
 LANDMARK_KEEP = 160.0   # metres round each landmark grade_streets leaves alone
 
 
@@ -416,7 +478,7 @@ if __name__ == "__main__":
     wet = build_masks()
     h0 = h.copy()
     h, lake_level, frac, banks = carve_water(h, wet)
-    air = np.zeros_like(h, dtype=bool)
+    h, air = grade_ykf(h)
     # Streets last. Never moved: the airfield, open water (over half the 50 m
     # round a vertex is wet), and the ground under the landmarks, which were
     # modelled on the DEM as it was. A shore vertex may move for a street on

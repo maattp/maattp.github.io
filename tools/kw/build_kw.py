@@ -138,7 +138,26 @@ def main():
             lv = None
         polys.append([n, bt, lv, pts])
 
-    doc = {"named": named, "shops": shops, "tims": tims, "freshco": fresh, "polys": polys,
+    # the airport's pavement, for kw.js's YKF (tools/kw/extract_aero.py)
+    aero = {"runways": [], "taxiways": [], "aprons": [], "stands": []}
+    ap = os.path.join(DATA, "raw_aero.json")
+    if os.path.exists(ap):
+        for o in json.load(open(ap))["aero"]:
+            cx = sum(p[0] for p in o["p"]) / len(o["p"])
+            cz = sum(p[1] for p in o["p"]) / len(o["p"])
+            if not (5500 < cx < 9600 and -2600 < cz < 600):
+                continue
+            pts = [[round(p[0], 1), round(p[1], 1)] for p in o["p"]]
+            if o["k"] == "runway" and o.get("ref"):
+                aero["runways"].append({"ref": o["ref"], "w": float(o.get("w") or 45), "p": [pts[0], pts[-1]]})
+            elif o["k"] == "taxiway":
+                aero["taxiways"].append({"ref": o.get("ref") or "", "p": pts})
+            elif o["k"] == "apron" and o.get("closed"):
+                aero["aprons"].append({"n": o.get("n") or "", "p": pts[:-1]})
+            elif o["k"] == "parking_position":
+                aero["stands"].append({"ref": o.get("ref") or "", "p": [pts[0], pts[-1]]})
+
+    doc = {"named": named, "shops": shops, "tims": tims, "freshco": fresh, "polys": polys, "aero": aero,
            "zones": [[nm, round(x), round(z), r] for nm, x, z, r in zones]}
     p = os.path.join(OUT, "kw.json")
     with open(p, "w") as f:
