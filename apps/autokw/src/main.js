@@ -35,6 +35,7 @@ import { Golf } from './golf.js';
 import { Arcade } from './arcade.js';
 import { Pinball } from './pinball.js';
 import { HockeyNight } from './hockey.js';
+import { RollUp } from './rollup.js';
 import { TowerGame } from './atc.js';
 import { DuckTour } from './ducktour.js';
 import { CoffeeShop } from './barista.js';
@@ -99,6 +100,7 @@ let hoops = null;   // the basketball courts (hoops.js)
 let arcade = null;   // the Belltown arcade (arcade.js)
 let pinball = null;  // the pinball museum in the International District (pinball.js)
 let hockey = null;   // hockey night at Climate Pledge Arena (hockey.js)
+let rollup = null;   // Roll Up the Rim at every Tim Hortons (rollup.js)
 let tower = null;    // Boeing Field's control tower and FINAL APPROACH (atc.js)
 let duckTour = null; // the Duck Tour: kiosk, ducks, ramp and the tour (ducktour.js)
 let orcas = null;     // a pod off West Point, an Easter egg (orcas.js)
@@ -404,6 +406,13 @@ class Game {
       hockey.start();
       return true;
     }
+    // a Tim Hortons door: Roll Up the Rim
+    const tims = rollup && !rollup.active && rollup.near(pl);
+    if (tims) {
+      this.hold('rollup');
+      rollup.start(tims);
+      return true;
+    }
     // the Duck Tour's kiosk at Seattle Center?
     if (duckTour && !duckTour.tour && duckTour.near(pl)) return duckTour.start();
     // the race office at Stan Sayres Pits?
@@ -454,6 +463,15 @@ class Game {
       return true;
     }
     return false;
+  }
+
+  /** ENTER in a car stopped by a Tims: the drive-thru (player.js, before getting out). */
+  tryDriveThru(pl) {
+    const tims = rollup && !rollup.active && rollup.driveThru(pl);
+    if (!tims) return false;
+    this.hold('rollup');
+    rollup.start(tims, true);
+    return true;
   }
 
   onExitVehicle(v) {
@@ -1158,7 +1176,7 @@ function installShadowFade() {
   audio.onTrack = (label) => { if (hud) hud.showToast(`♪ ${label}`); };
   controls = new Controls(document.getElementById('app'));
   // an open minigame takes the pad as keys (controls.js PAD_KEYS)
-  controls.bridge = () => [fishing, arcade, pinball, hockey, tower, coffee, hoops, pickle, golf, fishToss]
+  controls.bridge = () => [fishing, arcade, pinball, hockey, rollup, tower, coffee, hoops, pickle, golf, fishToss]
     .some((a) => a && a.active) || !!(wheelRide && wheelRide.busy);
   player = new Player(scene, city, game, world);
   player.link = link;
@@ -1313,6 +1331,15 @@ function installShadowFade() {
     });
   }
   wheelRide = needleTop = null;
+  // Roll Up the Rim at every Tims (kw.js built the stores and their doors)
+  rollup = new RollUp({
+    city, traffic, audio, kw: kwData,
+    money: () => game.money,
+    charge: (n) => { if (game.money < n) return false; game.money -= n; return true; },
+    onReward: (m) => { game.money += m; },
+    onToast: (t) => setTimeout(() => hud.showToast(t, 4200), 300),
+    onEnd: () => { game.release('rollup'); },
+  });
   // A CAR WORTH TAKING at the kerb in front of the spawn. Kerbside cars come
   // from a fixed hash of street slots, so the first car every player walked
   // up to was the same pickup -- and the nearest slot was usually out of the
@@ -1541,7 +1568,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   wireUi();
   career.start(hud);
   game.newTarget();
@@ -2393,7 +2420,7 @@ const POLICE_HQ = [47.6043, -122.3296];
  * hold with nothing behind it is let go.
  */
 function reapHolds() {
-  const live = { fishing, arcade, pinball, hockey, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops };
+  const live = { fishing, arcade, pinball, hockey, rollup, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops };
   for (const who of game.holds) {
     if (who === 'seafair') { if (seafair && (seafair.state === 'menu' || seafair.state === 'done')) continue; }
     else if (live[who] && live[who].active) continue;
@@ -2758,6 +2785,7 @@ function frame(now) {
   if (arcade && arcade.active) arcade.update(dt);
   if (pinball && pinball.active) pinball.update(dt);
   if (hockey && hockey.active) hockey.update(dt);
+  if (rollup && rollup.active) rollup.update(dt);
   if (tower && tower.active) tower.update(dt);
   if (coffee && coffee.active) coffee.update(dt);
   if (pickle) pickle.update(dt);
@@ -2784,7 +2812,7 @@ function frame(now) {
     // and those still draw every frame.
     // (the fishing game's screen covers the city too, once it is up)
     const idle = game.mapOpen || pauseMenuEl.classList.contains('show') || (fishing && fishing.el.classList.contains('show'))
-      || (arcade && arcade.active) || (pinball && pinball.active) || (hockey && hockey.active) || (tower && tower.active) || (coffee && coffee.active) || (pickle && pickle.active);
+      || (arcade && arcade.active) || (pinball && pinball.active) || (hockey && hockey.active) || (rollup && rollup.active) || (tower && tower.active) || (coffee && coffee.active) || (pickle && pickle.active);
     if (!idle || idleDrawn < 2 || idleRedraw) { draw(now); idleDrawn++; idleRedraw = false; }
     return;
   }

@@ -59,6 +59,23 @@ file and a guide disagree, this file wins.
   (build_wood.py), `geo.farmAt`, `world.groundTint`.
 - **Water:** only vertices with > 25 % of their 50 m wet are drawn and dug;
   banks are re-lifted over their water after street grading.
+- **Roll Up the Rim (src/rollup.js):** every Tims in `kwData().built.tims`
+  carries a `door` (kw.js buildSigns: 1.6 m out from its sign's face, or in
+  front of a small store it built; null for a pylon-only store, which then
+  answers within 14 m of its point). ENTER on foot within 5 m of a door, or
+  ENTER in a stopped road vehicle within 45 m (the drive-thru, via
+  `game.tryDriveThru` in player.js before exitVehicle), holds the world
+  (`'rollup'`) and opens a DOM overlay: medium $2 / 1 roll, large $3 / 2,
+  double-double toggle. The cup is a canvas: the wrap is mapped round the cone
+  in 90 slices so the cup turns (English front, French back, each side
+  unrolls on its own); upward drags on the stage roll the lip (`_need()` px
+  per side, ~3 swipes), Up / W / Space held rolls by keyboard. The prize is
+  drawn when the cup is poured (`PRIZES`, 21 % win, car 1 in 400); the car is
+  `traffic.spawnAt(..., 'apron')` at the kerb nearest the door on the store's
+  side. Stats in localStorage `autokw-rollup`. After a drive-thru the next
+  ENTER at the same store gets you out (`dtLock`). Harness hooks:
+  `__dbg.rollup.rig = 'car' | 'c100' | 'lose' | ...` forces the next cup,
+  `__dbg.rollup._roll(dp)` rolls. Shots: `docs/rollup-*.png`.
 
 ## Build number
 
