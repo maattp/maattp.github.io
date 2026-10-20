@@ -94,8 +94,19 @@ def main():
             out.append([round(p["x"], 1), round(p["z"], 1), addr])
         return out
 
-    tims = brand(lambda n, t: "tim horton" in (n + " " + t.get("brand", "")).lower())
-    fresh = brand(lambda n, t: "freshco" in (n + " " + t.get("brand", "")).lower().replace(" ", ""))
+    # The stores themselves: the official lists, matched to OSM's buildings
+    # (tools/kw/kw_stores.json) -- 94 open Tim Hortons, 8 FreshCo. OSM alone
+    # missed some and kept two that are gone.
+    stores = json.load(open(os.path.join(HERE, "kw_stores.json")))
+    tims, fresh = [], []
+    for la, lo, addr, *_ in stores["tims"]:
+        x, z = to_world(la, lo)
+        if inmap(x, z):
+            tims.append([round(x, 1), round(z, 1), addr])
+    for la, lo, addr in stores["freshco"]:
+        x, z = to_world(la, lo)
+        if inmap(x, z):
+            fresh.append([round(x, 1), round(z, 1), addr])
     for la, lo, addr in EXTRA_TIMS:
         x, z = to_world(la, lo)
         if inmap(x, z) and not any(math.hypot(o[0] - x, o[1] - z) < 60 for o in tims):
@@ -159,7 +170,26 @@ def main():
             elif o["k"] == "parking_position":
                 aero["stands"].append({"ref": o.get("ref") or "", "p": [pts[0], pts[-1]]})
 
-    doc = {"named": named, "shops": shops, "tims": tims, "freshco": fresh, "polys": polys, "aero": aero,
+    # the two schools that matter: their sports fields, for kw.js buildSchools
+    green = json.load(open(os.path.join(DATA, "raw_green.json")))["green"]
+    SCHOOLS = [
+        ("stmatt", "ST. MATTHEW", "CATHOLIC ELEMENTARY SCHOOL · HOME OF THE WILDCATS", "#0b3a7a", "#f2c230", -1542, -4808),
+        ("stdavid", "ST. DAVID", "CATHOLIC SECONDARY SCHOOL · HOME OF THE CELTICS", "#0e6b3a", "#ffffff", -4399, -3569),
+    ]
+    schools = []
+    for key, nm, sub, bg, fg, sx, sz in SCHOOLS:
+        pitches = []
+        for g in green:
+            if g.get("k") != "pitch":
+                continue
+            xs = [q[0] for q in g["o"]]; zs = [q[1] for q in g["o"]]
+            cx, cz = sum(xs) / len(xs), sum(zs) / len(zs)
+            if math.hypot(cx - sx, cz - sz) < 260:
+                pitches.append({"n": g.get("n") or "", "p": [[round(q[0], 1), round(q[1], 1)] for q in g["o"]]})
+        schools.append({"key": key, "name": nm, "sub": sub, "bg": bg, "fg": fg, "x": sx, "z": sz, "pitches": pitches})
+        print(f"  {nm}: {len(pitches)} pitches")
+
+    doc = {"named": named, "schools": schools, "shops": shops, "tims": tims, "freshco": fresh, "polys": polys, "aero": aero,
            "zones": [[nm, round(x), round(z), r] for nm, x, z, r in zones]}
     p = os.path.join(OUT, "kw.json")
     with open(p, "w") as f:

@@ -799,12 +799,222 @@ export function buildSigns(ctx) {
   KW.signStats = stats;
 }
 
+/**
+ * OKTOBERFEST: blue-and-white bunting strung across King Street through
+ * downtown Kitchener and Uptown Waterloo, every ~70 m, pennants hanging off
+ * a sagging rope 7 m up. A landmarks.js extra (one merged draw per cluster).
+ */
+export function buildBunting(ctx) {
+  const { addTo, city } = ctx;
+  const ZONES = [[-1376, 111, 650], [-3830, -1400, 450]];
+  const lin = (c) => [Math.pow(c[0], 2.2), Math.pow(c[1], 2.2), Math.pow(c[2], 2.2)];
+  const BLUE = lin([0.12, 0.42, 0.78]), WHITE = lin([0.95, 0.95, 0.95]), ROPE = lin([0.3, 0.3, 0.3]);
+  const B = new Builder(false);
+  const U = [0, 0, 0, 0, 0, 0, 0, 0];
+  let n = 0;
+  const seen = [];
+  for (let ei = 0; ei < city.edges.length; ei++) {
+    const e = city.edges[ei];
+    if (!e.name || !/^King Street/.test(e.name) || e.elev || e.tunnel) continue;
+    const a = city.nodes[e.a];
+    const mx = a.x + e.dx * e.len / 2, mz = a.z + e.dz * e.len / 2;
+    if (!ZONES.some(([zx, zz, r]) => Math.hypot(mx - zx, mz - zz) < r)) continue;
+    for (let t = 20; t < e.len - 10; t += 70) {
+      const cx = a.x + e.dx * t, cz = a.z + e.dz * t;
+      if (seen.some(([sx, sz]) => Math.hypot(sx - cx, sz - cz) < 50)) continue;
+      seen.push([cx, cz]);
+      const px = -e.dz, pz = e.dx, half = e.hw + 3.5;
+      const y0 = G.terrainHeight(cx, cz) + 7.2;
+      const N = 14;
+      let prev = null;
+      for (let k = 0; k <= N; k++) {
+        const u = k / N, o = -half + 2 * half * u;
+        const sag = 1.1 * 4 * u * (1 - u);
+        const p = [cx + px * o, y0 - sag, cz + pz * o];
+        if (prev) {
+          B.quad(prev, p, [p[0], p[1] - 0.05, p[2]], [prev[0], prev[1] - 0.05, prev[2]], [e.dx, 0, e.dz], U, ROPE);
+          // a pennant hanging from the middle of the span
+          const mxp = (prev[0] + p[0]) / 2, mzp = (prev[2] + p[2]) / 2, myp = (prev[1] + p[1]) / 2;
+          B.tri([prev[0], prev[1], prev[2]], [p[0], p[1], p[2]], [mxp, myp - 0.9, mzp], [e.dx, 0, e.dz], k % 2 ? BLUE : WHITE);
+          B.tri([prev[0], prev[1], prev[2]], [p[0], p[1], p[2]], [mxp, myp - 0.9, mzp], [-e.dx, 0, -e.dz], k % 2 ? BLUE : WHITE);
+        }
+        prev = p;
+      }
+      n++;
+    }
+  }
+  if (!n) return;
+  const m = new THREE.Mesh(B.build(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide }));
+  const g = new THREE.Group();
+  g.add(m);
+  addTo('bunting', g);
+}
+
+/** A polygon's oriented box: centre, half-sizes along u (the long side) and v, and u's direction. */
+function obb(pts) {
+  let best = null;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (L < 1) continue;
+    const ux = (b[0] - a[0]) / L, uz = (b[1] - a[1]) / L;
+    let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    for (const q of pts) {
+      const u = q[0] * ux + q[1] * uz, v = -q[0] * uz + q[1] * ux;
+      u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v);
+    }
+    const A = (u1 - u0) * (v1 - v0);
+    if (!best || A < best.A) {
+      const cu = (u0 + u1) / 2, cv = (v0 + v1) / 2;
+      best = { A, x: cu * ux - cv * uz, z: cu * uz + cv * ux, hu: (u1 - u0) / 2, hv: (v1 - v0) / 2, ux, uz };
+    }
+  }
+  if (best && best.hv > best.hu) {   // u along the long side
+    const t = best.hu; best.hu = best.hv; best.hv = t;
+    const ux = best.ux; best.ux = -best.uz; best.uz = ux;
+  }
+  return best;
+}
+
+/**
+ * ST. MATTHEW AND ST. DAVID (kw.json schools): a monument sign at the
+ * street in the school's colours, and their fields drawn -- St. David's
+ * lit turf football field inside a running track with its bleachers and
+ * five tennis courts, St. Matthew's soccer pitches with their goals.
+ */
+export function buildSchools(ctx) {
+  if (!KW || !KW.schools) return;
+  const { addTo, city, atlas: AT } = ctx;
+  const lin = (c) => [Math.pow(c[0], 2.2), Math.pow(c[1], 2.2), Math.pow(c[2], 2.2)];
+  const TURF = lin([0.30, 0.52, 0.24]), LINE = lin([0.95, 0.95, 0.93]), TRACK = lin([0.62, 0.30, 0.22]);
+  const COURT = lin([0.25, 0.42, 0.52]), COURTO = lin([0.30, 0.50, 0.32]), POST = lin([0.92, 0.78, 0.15]);
+  const STEEL = lin([0.55, 0.56, 0.58]), BRICK = lin([0.62, 0.40, 0.30]);
+  const U = [0, 0, 0, 0, 0, 0, 0, 0];
+  for (const S of KW.schools) {
+    const B = new Builder(false);
+    const g = new THREE.Group();
+    const T = (x, z) => G.terrainHeight(x, z) + 0.06;
+    // a flat rectangle in the box frame: (cu, cv) centre, half-sizes, lift
+    const rect = (o, cu, cv, hu, hv, col, lift = 0) => {
+      const P = (u, v) => { const x = o.x + o.ux * u - o.uz * v, z = o.z + o.uz * u + o.ux * v; return [x, T(x, z) + lift, z]; };
+      const n = Math.max(1, Math.ceil(hu / 10)), m = Math.max(1, Math.ceil(hv / 10));
+      for (let i = 0; i < n; i++) for (let j = 0; j < m; j++) {
+        const u0 = cu - hu + (2 * hu * i) / n, u1 = cu - hu + (2 * hu * (i + 1)) / n;
+        const v0 = cv - hv + (2 * hv * j) / m, v1 = cv - hv + (2 * hv * (j + 1)) / m;
+        B.quad(P(u0, v0), P(u1, v0), P(u1, v1), P(u0, v1), [0, 1, 0], U, col);
+      }
+    };
+    const post = (o, u, v, h, w, col) => {
+      const x = o.x + o.ux * u - o.uz * v, z = o.z + o.uz * u + o.ux * v;
+      B.box(x, G.terrainHeight(x, z), z, w, h, w, 0, col);
+      ctx.solids.push({ x, z, r: Math.max(0.2, w / 2), y0: G.terrainHeight(x, z) - 1, y1: G.terrainHeight(x, z) + h });
+    };
+    for (const pt of S.pitches) {
+      const o = obb(pt.p);
+      if (!o) continue;
+      const area = o.hu * o.hv * 4;
+      if (area < 900) {
+        // a tennis court: hard court, lines, a net, a fence round it
+        rect(o, 0, 0, o.hu, o.hv, COURTO, 0.01);
+        rect(o, 0, 0, Math.min(o.hu - 1.5, 11.9), Math.min(o.hv - 1.2, 5.5), COURT, 0.02);
+        for (const v of [-1, 1]) rect(o, 0, v * Math.min(o.hv - 1.2, 5.5), Math.min(o.hu - 1.5, 11.9), 0.03, LINE, 0.03);
+        for (const u of [-1, 1]) rect(o, u * Math.min(o.hu - 1.5, 11.9), 0, 0.03, Math.min(o.hv - 1.2, 5.5), LINE, 0.03);
+        const nx = o.x, nz = o.z;
+        const P = (v, y) => [nx - o.uz * v, T(nx, nz) + y, nz + o.ux * v];
+        B.quad(P(-6, 0), P(6, 0), P(6, 0.95), P(-6, 0.95), [o.ux, 0, o.uz], U, lin([0.1, 0.1, 0.1]));
+        continue;
+      }
+      if (S.key === 'stdavid' && o.hu > 45) {
+        // the football field: turf, yard lines every 10 yards, goalposts;
+        // the track round it; floodlights and the home bleachers
+        const fu = Math.min(o.hu - 16, 55), fv = Math.min(o.hv - 14, 29);
+        // track: an oval band 7 m wide outside the field
+        const ru = fu + 4, rv = fv + 4, W = 7;
+        const N = 48;
+        for (let k = 0; k < N; k++) {
+          const ang = (k / N) * Math.PI * 2, ang2 = ((k + 1) / N) * Math.PI * 2;
+          const ring = (a, r) => {
+            // a stadium shape: straights along u, semicircle ends
+            const c = Math.cos(a), sn = Math.sin(a);
+            const u = Math.sign(c) * Math.min(ru - rv, Math.abs(c) * 1e9) + c * (rv + r), v = sn * (rv + r);
+            const x = o.x + o.ux * u - o.uz * v, z = o.z + o.uz * u + o.ux * v;
+            return [x, T(x, z) + 0.02, z];
+          };
+          B.quad(ring(ang, 0), ring(ang2, 0), ring(ang2, W), ring(ang, W), [0, 1, 0], U, TRACK);
+        }
+        rect(o, 0, 0, ru, rv, TURF, 0.025);
+        for (let y = -50; y <= 50; y += 10) rect(o, y * 0.9144, 0, 0.08, fv, LINE, 0.035);
+        for (const v of [-1, 1]) rect(o, 0, v * fv, fu, 0.08, LINE, 0.035);
+        for (const u of [-1, 1]) {
+          const ue = u * (fu + 0.5);
+          post(o, ue, 0, 3, 0.25, POST);
+          for (const v of [-2.8, 2.8]) post(o, ue, v, 9, 0.12, POST);
+          const x = o.x + o.ux * ue, z = o.z + o.uz * ue, y = G.terrainHeight(x, z) + 3;
+          B.box(x, y, z, 0.15, 0.2, 5.8, -Math.atan2(o.uz, o.ux) + Math.PI / 2, POST);
+        }
+        for (const [u, v] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+          post(o, u * (ru - 8), v * (rv + W + 3), 20, 0.5, STEEL);
+          const x = o.x + o.ux * u * (ru - 8) - o.uz * v * (rv + W + 3), z = o.z + o.uz * u * (ru - 8) + o.ux * v * (rv + W + 3);
+          B.box(x, G.terrainHeight(x, z) + 19, z, 3, 1.6, 1.2, -Math.atan2(o.uz, o.ux), lin([0.9, 0.9, 0.85]));
+        }
+        // bleachers: five steps along the home side
+        for (let k = 0; k < 5; k++) {
+          const v = -(rv + W + 3 + k * 0.9);
+          const x = o.x - o.uz * v, z = o.z + o.ux * v;
+          B.box(x, G.terrainHeight(o.x, o.z) + k * 0.45, z, 50, 0.45 * (k + 1) + 0.3, 0.9, -Math.atan2(o.uz, o.ux), STEEL);
+        }
+        continue;
+      }
+      // a soccer pitch: its lines and two goals
+      const fu = o.hu - 2, fv = o.hv - 2;
+      for (const v of [-1, 1]) rect(o, 0, v * fv, fu, 0.07, LINE, 0.02);
+      for (const u of [-1, 1]) rect(o, u * fu, 0, 0.07, fv, LINE, 0.02);
+      rect(o, 0, 0, 0.07, fv, LINE, 0.02);
+      for (const u of [-1, 1]) {
+        for (const v of [-3.6, 3.6]) post(o, u * fu, v, 2.4, 0.12, LINE);
+        const x = o.x + o.ux * u * fu, z = o.z + o.uz * u * fu;
+        B.box(x, G.terrainHeight(x, z) + 2.4, z, 0.12, 0.12, 7.3, -Math.atan2(o.uz, o.ux) + Math.PI / 2, LINE);
+      }
+    }
+    // the monument sign at the street: a brick base and the school's panel
+    const rd = faceRoad(city, S.x, S.z, 220);
+    if (rd) {
+      const dx = (rd.qx - S.x) / rd.d, dz = (rd.qz - S.z) / rd.d;
+      const sx = rd.qx - dx * (rd.hw + 6), sz = rd.qz - dz * (rd.hw + 6), y = G.terrainHeight(sx, sz);
+      const yaw = Math.atan2(dx, dz);
+      B.box(sx, y - 0.5, sz, 5.2, 1.5, 0.8, -yaw + Math.PI / 2, BRICK);
+      B.box(sx, y + 2.9, sz, 5.4, 0.25, 0.9, -yaw + Math.PI / 2, BRICK);
+      for (const s2 of [-1, 1]) B.box(sx + Math.cos(yaw) * s2 * 2.45, y + 1.0, sz - Math.sin(yaw) * s2 * 2.45, 0.5, 1.9, 0.8, -yaw + Math.PI / 2, BRICK);
+      for (const side of [1, -1]) {
+        const pnl = AT.panel(4.4, 1.85, 40, (q, W, H) => {
+          q.fillStyle = S.bg; q.fillRect(0, 0, W, H);
+          q.fillStyle = S.fg; q.textAlign = 'center'; q.textBaseline = 'middle';
+          q.font = `800 ${H * 0.34}px Helvetica, Arial, sans-serif`;
+          q.fillText(S.name, W / 2, H * 0.32, W * 0.94);
+          q.font = `600 ${H * 0.12}px Helvetica, Arial, sans-serif`;
+          q.fillText(S.sub, W / 2, H * 0.72, W * 0.96);
+        });
+        hang(g, pnl, sx, y + 1.95, sz, dx * side, dz * side, 0.42);
+      }
+      ctx.solids.push({ x: sx, z: sz, hw: 2.8, hd: 0.5, rot: -yaw + Math.PI / 2, y0: y - 1, y1: y + 3.2 });
+    }
+    const mesh = new THREE.Mesh(B.build(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85,
+      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 }));
+    mesh.receiveShadow = true; mesh.castShadow = true;
+    g.add(mesh);
+    addTo('school:' + S.key, g);
+  }
+}
+
 /** The map's marked places: every Tims and FreshCo. */
 export function mapPlaces() {
   if (!KW || !KW.built) return [];
   return [
     ...KW.built.tims.map((t) => ({ x: t.x, z: t.z, kind: 'tims', name: 'Tim Hortons', near: false, foot: true,
       hello: `Tim Hortons${t.addr ? `, ${t.addr}` : ''}. Double-double?` })),
+    ...(KW.schools || []).map((sc) => ({ x: sc.x, z: sc.z, kind: 'school', name: sc.name === 'ST. MATTHEW' ? "St. Matt's" : 'St. David', near: false, label: true,
+      hello: sc.name === 'ST. MATTHEW' ? 'St. Matthew Catholic Elementary School, 405 Pastern Trail — home of the Wildcats'
+        : 'St. David Catholic Secondary School, 4 High St — home of the Celtics' })),
     ...KW.built.freshco.map((t) => ({ x: t.x, z: t.z, kind: 'freshco', name: 'FreshCo', near: false, label: 'FreshCo',
       hello: `FreshCo${t.addr ? `, ${t.addr}` : ''}` })),
   ];

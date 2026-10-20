@@ -1,0 +1,611 @@
+{
+"source": "Tim Hortons official store list (AllThePlaces scrape 2026-10-10) matched to OSM; FreshCo store sitemap, Oct 2026",
+"tims": [
+[
+43.58389,
+-80.5616,
+"305 Arthur Street South, Elmira",
+"standalone drive-thru"
+],
+[
+43.57768,
+-80.26047,
+"486-488 Woodlawn Road East, Guelph",
+"standalone drive-thru"
+],
+[
+43.56694,
+-80.25723,
+"386 Speedvale Ave. East, Guelph",
+"standalone drive-thru"
+],
+[
+43.56189,
+-80.24943,
+"380 Eramosa Rd, BULLFROG MALL, Guelph",
+"mall"
+],
+[
+43.56079,
+-80.27224,
+"698 Woolwich Street, Guelph",
+"standalone drive-thru"
+],
+[
+43.55824,
+-80.2859,
+"138 Woodlawn Road West, Guelph",
+"standalone drive-thru"
+],
+[
+43.54493,
+-80.30615,
+"415 Woodlawn Rd W, Guelph",
+"plaza unit with drive-thru"
+],
+[
+43.54406,
+-80.30769,
+"435 Woodlawn Rd West, Guelph",
+"gas station combo"
+],
+[
+43.54378,
+-80.28741,
+"232 Silvercreek Parkway N, Guelph",
+"standalone drive-thru"
+],
+[
+43.54177,
+-80.24458,
+"28 Wellington Street East, Guelph",
+"standalone drive-thru"
+],
+[
+43.53866,
+-80.27977,
+"110 Silvercreek Parkway N, Guelph",
+"gas station combo"
+],
+[
+43.53185,
+-80.55536,
+"1229 King Street North, St Jacobs",
+"standalone drive-thru"
+],
+[
+43.52545,
+-80.24206,
+"Inside Circle K - 138 College Ave West, Guelph",
+"gas station combo"
+],
+[
+43.52489,
+-80.28545,
+"950 Paisley Rd, Guelph",
+"plaza unit with drive-thru"
+],
+[
+43.52115,
+-80.26906,
+"715 Wellington St, Guelph",
+"standalone drive-thru beside gas station"
+],
+[
+43.50283,
+-80.52762,
+"55 Northfield Dr E, Waterloo",
+"plaza unit with drive-thru"
+],
+[
+43.50048,
+-80.53314,
+"565 King Street North, Waterloo",
+"plaza unit with drive-thru"
+],
+[
+43.49685,
+-80.52634,
+"550 King Street North, CONESTOGA MALL, Waterloo",
+"mall"
+],
+[
+43.49605,
+-80.55001,
+"585 Weber St N, Waterloo",
+"standalone"
+],
+[
+43.48885,
+-80.49268,
+"425 University Ave East, Waterloo",
+"standalone drive-thru"
+],
+[
+43.4876,
+-80.28713,
+"7017 - Wellington Road 124, Guelph/Eramosa",
+"gas station combo"
+],
+[
+43.48473,
+-80.52744,
+"Inside Circle K - 415 King Street North, Waterloo",
+"gas station combo"
+],
+[
+43.48465,
+-80.54025,
+"465 Phillip St, Waterloo",
+"standalone drive-thru"
+],
+[
+43.48373,
+-80.526,
+"384 King St N, Waterloo",
+"standalone drive-thru"
+],
+[
+43.47721,
+-80.48417,
+"526 Lancaster Street W, Kitchener",
+"standalone drive-thru"
+],
+[
+43.47699,
+-80.52149,
+"65 University Ave East, Waterloo",
+"standalone drive-thru"
+],
+[
+43.47686,
+-80.5393,
+"151 Columbia St, Waterloo",
+"standalone drive-thru beside gas station"
+],
+[
+43.47544,
+-80.54076,
+"305 Phillip Street, Waterloo",
+"campus kiosk"
+],
+[
+43.4731,
+-80.52552,
+"Wilfred Laurier University, WILFRID LAURIER UNIVERSITY, Waterloo",
+"campus kiosk"
+],
+[
+43.47266,
+-80.54227,
+"200 University Ave W, Davis Hall - University of Waterloo, Waterloo",
+"campus kiosk"
+],
+[
+43.47146,
+-80.44048,
+"1475 Victoria St N, Kitchener",
+"standalone drive-thru"
+],
+[
+43.47128,
+-80.5452,
+"200 UNIVERSITY AVE W, UNIVERSITY OF WATERLOO, WATERLOO",
+"campus kiosk"
+],
+[
+43.47127,
+-80.54522,
+"200 University Ave W, UNIVERSITY OF WATERLOO, Waterloo",
+"campus kiosk"
+],
+[
+43.46997,
+-80.51392,
+"94 Bridgeport Rd East, Waterloo",
+"plaza unit"
+],
+[
+43.46915,
+-80.54012,
+"200 University Ave W, UNIVERSITY OF WATERLOO, Waterloo",
+"campus kiosk"
+],
+[
+43.46901,
+-80.52367,
+"109 King Street North, Waterloo",
+"standalone drive-thru"
+],
+[
+43.46556,
+-80.46188,
+"1000 Victoria St N, Kitchener",
+"standalone drive-thru"
+],
+[
+43.46032,
+-80.47572,
+"Inside Circle K - 593 Victoria Street N, Kitchener",
+"gas station combo"
+],
+[
+43.45803,
+-80.47304,
+"385 Frederick St. #41, Kitchener",
+"standalone drive-thru"
+],
+[
+43.45796,
+-80.51704,
+"227 KING STREET SOUTH - Employee Access Only, 2nd Floor, Waterloo",
+"office, employee only"
+],
+[
+43.45628,
+-80.51184,
+"835 King St W, GRAND RIVER HOSPITAL, Kitchener",
+"hospital"
+],
+[
+43.45565,
+-80.50621,
+"730 King Street West, Kitchener",
+"standalone drive-thru"
+],
+[
+43.45229,
+-80.44354,
+"1020 Ottawa Street, Kitchener",
+"standalone drive-thru"
+],
+[
+43.45223,
+-80.51666,
+"638 Belmont Ave West, Kitchener",
+"standalone drive-thru"
+],
+[
+43.45025,
+-80.48591,
+"85 Frederick Street, Kitchener",
+"courthouse"
+],
+[
+43.44987,
+-80.48897,
+"4 King St E, kitchener",
+"plaza unit"
+],
+[
+43.44625,
+-80.57052,
+"5 Westhill Drive, Waterloo",
+"standalone drive-thru"
+],
+[
+43.44346,
+-80.4696,
+"120 Ottawa Street N, Kitchener",
+"standalone drive-thru"
+],
+[
+43.4428,
+-80.54394,
+"851 Fischer Hallman Rd, Kitchener",
+"plaza unit"
+],
+[
+43.44249,
+-80.47456,
+"925 King St E, Kitchener",
+"standalone drive-thru"
+],
+[
+43.43985,
+-80.52078,
+"340 Westmount Rd West, Kitchener",
+"standalone drive-thru"
+],
+[
+43.43817,
+-80.51082,
+"354 Highland Road West, Kitchener",
+"standalone drive-thru"
+],
+[
+43.438,
+-80.502,
+"911 Queen\u2019s Blvd. Kitchener, Kitchener",
+"hospital"
+],
+[
+43.43531,
+-80.24651,
+"ONroute - Cambridge North - 401 Westbound, Cambridge",
+"highway service centre"
+],
+[
+43.43304,
+-80.44504,
+"1241 Weber Street East, Kitchener",
+"plaza unit with drive-thru"
+],
+[
+43.43297,
+-80.24496,
+"ONroute - Cambridge South - 401 Eastbound, Cambridge",
+"highway service centre"
+],
+[
+43.43231,
+-80.43858,
+"1426 Weber St E, Kitchener",
+"standalone drive-thru"
+],
+[
+43.42549,
+-80.41169,
+"3570 King St E, Kitchener",
+"hospital"
+],
+[
+43.42526,
+-80.43872,
+"2960 Kingsway Drive, Kitchener",
+"mall"
+],
+[
+43.42427,
+-80.28589,
+"900 Jamieson Parkway, Cambridge",
+"standalone drive-thru"
+],
+[
+43.42344,
+-80.55345,
+"1500 Highland Road West, Kitchener",
+"standalone drive-thru beside gas station"
+],
+[
+43.42203,
+-80.48801,
+"795 Ottawa St South, Kitchener",
+"standalone drive-thru"
+],
+[
+43.42185,
+-80.4596,
+"1144 Courtland Ave. East, Kitchener",
+"standalone drive-thru"
+],
+[
+43.42109,
+-80.44512,
+"340 Fairway Rd S Kitchener, Kitchener",
+"standalone drive-thru"
+],
+[
+43.41945,
+-80.5011,
+"700 Westmount Rd E, Kitchener",
+"standalone drive-thru"
+],
+[
+43.41903,
+-80.36952,
+"Inside TMMC - No Public Access, TOYOTA PLANT - NORTH PLANT CAFE, Cambridge",
+"factory, employee only"
+],
+[
+43.41894,
+-80.47043,
+"1450 Block Line Road, Kitchener",
+"standalone drive-thru"
+],
+[
+43.41843,
+-80.32535,
+"150 Holiday Inn Drive, Cambridge",
+"standalone drive-thru"
+],
+[
+43.41597,
+-80.51142,
+"685 Fischer-Hallman Rd, Kitchener",
+"standalone drive-thru"
+],
+[
+43.41428,
+-80.37501,
+"Inside TMMC - No Public Access, Cambridge",
+"factory, employee only"
+],
+[
+43.41118,
+-80.45918,
+"260 Bleams Rd, Kitchener",
+"standalone drive-thru"
+],
+[
+43.41069,
+-80.30891,
+"209 Pinebush Blvd, Cambridge",
+"standalone drive-thru"
+],
+[
+43.40935,
+-80.399,
+"4285 King St East, Kitchener",
+"standalone drive-thru"
+],
+[
+43.4075,
+-80.32867,
+"2485 Eagle St, Cambridge",
+"standalone drive-thru"
+],
+[
+43.40665,
+-80.39365,
+"4396 King St E, Kitchener",
+"plaza unit with drive-thru"
+],
+[
+43.40378,
+-80.67046,
+"34 Snyders Rd W, Baden",
+"standalone drive-thru"
+],
+[
+43.40229,
+-80.49738,
+"1201 Fischer-Hallman Rd, Kitchener",
+"plaza unit with drive-thru"
+],
+[
+43.39572,
+-80.32354,
+"425 Hespeler Road, Cambridge",
+"standalone drive-thru"
+],
+[
+43.395,
+-80.27319,
+"825 Saginaw Pkwy, Cambridge",
+"standalone drive-thru"
+],
+[
+43.39414,
+-80.31943,
+"355 Hespeler Road, CAMBRIDGE CENTER MALL, Cambridge",
+"mall"
+],
+[
+43.39389,
+-80.43316,
+"123 Pioneer Road, Kitchener",
+"standalone drive-thru"
+],
+[
+43.3912,
+-80.30144,
+"95 Saginaw Parkway, Cambridge",
+"standalone drive-thru"
+],
+[
+43.39015,
+-80.40351,
+"299 Doon Valley Drive, Kitchener",
+"campus kiosk"
+],
+[
+43.38992,
+-80.34761,
+"1460 King Street East, Cambridge",
+"standalone drive-thru"
+],
+[
+43.38671,
+-80.41328,
+"2420 Homer Watson Blvd, Kitchener",
+"standalone drive-thru beside gas station"
+],
+[
+43.38268,
+-80.48928,
+"301-1415 Huron Road, Kitchener",
+"standalone drive-thru"
+],
+[
+43.37847,
+-80.6965,
+"374 Hamilton Road Unit 5, New Hamburg",
+"standalone drive-thru"
+],
+[
+43.3781,
+-80.32801,
+"Cambridge Memorial Hospital, Cambridge",
+"hospital"
+],
+[
+43.37227,
+-80.31782,
+"275 Water Street N, Cambridge",
+"standalone drive-thru"
+],
+[
+43.35732,
+-80.29095,
+"Inside Circle K - 31 Dundas Street South, Cambridge",
+"gas station combo"
+],
+[
+43.35556,
+-80.28567,
+"235 Franklin Blvd, Cambridge",
+"standalone drive-thru"
+],
+[
+43.35185,
+-80.3296,
+"130 Cedar St, WESTGATE PLAZA, Cambridge",
+"plaza unit"
+],
+[
+43.34424,
+-80.33152,
+"300 St Andrews Drive, Cambridge",
+"gas station combo"
+],
+[
+43.34072,
+-80.31275,
+"301 Water St South, Cambridge",
+"standalone drive-thru"
+]
+],
+"freshco": [
+[
+43.48966,
+-80.4919,
+"425 University Ave E"
+],
+[
+43.43453,
+-80.44913,
+"1111 Weber St E"
+],
+[
+43.41858,
+-80.50031,
+"720 Westmount Rd E"
+],
+[
+43.38607,
+-80.41428,
+"2400 Homer Watson Blvd"
+],
+[
+43.4003,
+-80.3247,
+"525 Hespeler Rd"
+],
+[
+43.37378,
+-80.31626,
+"1 Hespeler Rd"
+],
+[
+43.35943,
+-80.29081,
+"75 Dundas St N"
+],
+[
+43.56761,
+-80.25892,
+"330 Speedvale Ave E"
+]
+]
+}
