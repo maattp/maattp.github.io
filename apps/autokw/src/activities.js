@@ -296,9 +296,9 @@ export class Activities {
     // helicopter loses you, so a bore becomes a tactical option rather than
     // geometry you happen to drive through. main.js enforces it.
     const GETAWAY = [
-      ['Downtown Heat', -300, 200, 3, 70],
-      ['Eastside Heat', 9600, 200, 3, 75],
-      ['South End Heat', 1800, 5200, 4, 85],
+      ['Uptown Heat', -3861, -1511, 3, 70],
+      ['Downtown Kitchener Heat', -1376, 111, 3, 75],
+      ['Cambridge Heat', 12000, 8000, 4, 85],
     ];
     for (const [name, x, z, stars, secs] of GETAWAY) {
       const s = city.nearestNode(x, z, 900);
@@ -322,11 +322,6 @@ export class Activities {
         need: 'plane', target: { x: tx, z: tz, r: 50 },
       });
     }
-    add({
-      id: 'landing-union', kind: 'landing', name: 'Lake Union Splashdown',
-      sub: 'Floatplane, on the mark', x: 500, z: -2900, y: 5.31,
-      need: 'floatplane', target: { x: 500, z: -2900, r: 60 },
-    });
 
     // ---- collectibles at named places --------------------------------------
     this.coins = [];
@@ -407,6 +402,17 @@ export class Activities {
     this.group.add(this.ghostMesh);
   }
 
+  /** An activity built elsewhere (chicopee.js's downhills). */
+  addExternal(a) {
+    a.best = this.save[a.id] || null;
+    const m = new THREE.Mesh(this.geo.pillar, this.mat.start);
+    m.position.set(a.x, (a.y || 0) + 15, a.z);
+    m.visible = false;
+    this.group.add(m);
+    a.mesh = m;
+    this.list.push(a);
+  }
+
   vehicleKind(player) {
     if (player.onFoot || !player.vehicle) return 'foot';
     const s = player.vehicle.spec;
@@ -416,18 +422,21 @@ export class Activities {
     if (s.plane) return 'plane';
     // A boat is not a car: no road race or getaway starts in one.
     if (s.boat) return 'boat';
+    // Auto KW: a bicycle or the dirt bike, for Chicopee's trails
+    if (s.bicycle || s.hand === 'dirtbike') return 'trail';
     return 'car';
   }
   canStart(a, k) {
     if (k === 'monorail') return false;
     if (a.need === 'any') return k !== 'foot';
-    if (a.need === 'car') return k === 'car';
+    if (a.need === 'car') return k === 'car' || k === 'trail';
+    if (a.need === 'trail') return k === 'trail';
     if (a.need === 'plane') return k === 'plane' || k === 'floatplane';
     if (a.need === 'floatplane') return k === 'floatplane';
     return true;
   }
   needText(a) {
-    return a.need === 'car' ? 'needs a car' : a.need === 'floatplane' ? 'needs a floatplane'
+    return a.need === 'trail' ? 'needs a mountain bike or the dirt bike' : a.need === 'car' ? 'needs a car' : a.need === 'floatplane' ? 'needs a floatplane'
       : a.need === 'plane' ? 'needs a plane' : 'needs a vehicle';
   }
   persist() {

@@ -274,6 +274,10 @@ export const TYPES = {
   // -- two contact patches the size of a credit card is what that costs.
   cruiser: deriveSpec({ wheelbase: 1.66,len: 2.56, wid: 0.95, wheelR: 0.40, sill: 0.30, belt: 0.80, roof: 1.24, cab: [-0.2, 0.1], hand: 'cruiser', moto: true, mass: 0.22, acc: 7.2, topKph: 190, brakeM: 48, latG: 0.80 }),
   sportbike: deriveSpec({ wheelbase: 1.36,len: 2.05, wid: 0.72, wheelR: 0.32, sill: 0.28, belt: 0.78, roof: 1.18, cab: [-0.2, 0.1], hand: 'sportbike', moto: true, mass: 0.16, acc: 10.2, topKph: 285, brakeM: 40, latG: 1.08 }),
+  // Auto KW: a 250 dirt bike for Chicopee's trails. `offroad` as the quad's
+  // (no grass drag, half the grade term), tall knobblies, light and quick off
+  // the line, out of breath by 130.
+  dirtbike: deriveSpec({ wheelbase: 1.48, len: 2.18, wid: 0.82, wheelR: 0.34, sill: 0.34, belt: 0.95, roof: 1.30, cab: [-0.2, 0.1], hand: 'dirtbike', moto: true, offroad: true, mass: 0.11, acc: 9.4, topKph: 130, brakeM: 30, latG: 1.0 }),
   // Quad bike. Four wheels, so the car's ground solve and camber roll -- but
   // a rider (`atv` puts one on, as `moto` does) and handling of its own:
   // `offroad` skips the grass drag road cars pay and halves the grade term
@@ -303,6 +307,9 @@ export const TYPES = {
   // (`bicycle`: the rider's legs follow the cranks) and silent (`noEngine`).
   // 700c wheels, a 1.06 m wheelbase, ~35 km/h on the flat.
   bicycle: deriveSpec({ wheelbase: 1.06, len: 1.80, wid: 0.62, wheelR: 0.345, sill: 0.28, belt: 0.95, roof: 1.12, cab: [-0.2, 0.1], hand: 'bicycle', moto: true, bicycle: true, noEngine: true, mass: 0.1, acc: 1.7, topKph: 35, brakeM: 14, latG: 0.8 }),
+  // Auto KW: a hardtail for Chicopee: the bicycle on knobblies, `offroad`,
+  // quicker downhill than up.
+  mtb: deriveSpec({ wheelbase: 1.06, len: 1.80, wid: 0.72, wheelR: 0.345, sill: 0.3, belt: 1.0, roof: 1.15, cab: [-0.2, 0.1], hand: 'bicycle', moto: true, bicycle: true, noEngine: true, offroad: true, mass: 0.11, acc: 2.0, topKph: 48, brakeM: 11, latG: 0.95 }),
   jetski: deriveSpec({ wheelbase: 1.8, len: 3.20, wid: 1.20, wheelR: 0.20, sill: 0.3, belt: 0.6, roof: 1.05, cab: [-0.1, 0.1], hand: 'jetski', boat: true, jetski: true, minDepth: 0.12, mass: 0.4, acc: 7.5, topKph: 105, brakeM: 30, latG: 0.9 }),
   boat: deriveSpec({ wheelbase: 3.2, len: 5.70, wid: 2.20, wheelR: 0.30, sill: 0.4, belt: 0.7, roof: 1.45, cab: [-0.2, 0.1], hand: 'boat', boat: true, minDepth: 0.3, cockpit: [0.12, -2.2, 0.9, 0.86], mass: 1.1, acc: 3.0, topKph: 70, brakeM: 45, latG: 0.6 }),
   pickup: deriveSpec({ rwd: true, wheelbase: 3.68,len: 5.92, wid: 2.05, wheelR: 0.42, sill: 0.48, belt: 1.26, roof: 1.98, cab: [-0.15, 0.22], hand: 'pickup', mass: 1.4, acc: 4.4, topKph: 185, brakeM: 45, latG: 0.77 }),
@@ -2980,6 +2987,75 @@ function buildCruiser(spec, paint, trim, matte) {
 }
 
 /**
+ * AUTO KW: THE DIRT BIKE. Everything high and narrow: a 21 inch front and an
+ * 18 inch rear on long forks, a front fender standing off the top yoke, a
+ * number plate where the headlamp would be, radiator shrouds and a flat seat
+ * running up onto the tank, the pipe swept up under the side panel.
+ */
+function buildDirtbike(spec, paint, trim, matte) {
+  const zF = 0.78, rF = 0.36, twF = 0.09;
+  const zR = -0.70, rR = spec.wheelR, twR = 0.13;
+  const wheels = [[0, rF, zF, rF, twF, 0], [0, rR, zR, rR, twR, 0]];
+  const fz = (y) => 0.50 - 0.50 * (y - 1.02);         // 27 deg of rake
+  const KNOB = [0.07, 0.07, 0.075];
+  // knobbly tread: a ring of blocks round each tyre
+  for (const [cz, r, tw] of [[zF, rF, twF], [zR, rR, twR]]) {
+    for (let i = 0; i < 18; i++) {
+      const a = (i / 18) * Math.PI * 2;
+      matte.box(0, r + Math.cos(a) * (r + 0.012), cz + Math.sin(a) * (r + 0.012), tw * 1.25, 0.03, 0.045, 0, KNOB);
+    }
+  }
+  // frame: a single cradle, steel, painted
+  matte.tube([0, 1.0, fz(1.0) - 0.04], [0, 0.82, 0.02], 0.034, 8, [0.18, 0.18, 0.2], true);
+  matte.tube([0, 0.82, 0.02], [0, 0.34, -0.06], 0.032, 8, [0.18, 0.18, 0.2], true);
+  for (const sx of [-1, 1]) {
+    // swingarm, alloy, to the rear axle; and a shock standing behind the engine
+    trim.tube([sx * 0.07, 0.42, -0.10], [sx * 0.08, rR, zR], 0.026, 8, ALLOY, true);
+  }
+  trim.tube([0, 0.84, -0.12], [0, 0.48, -0.26], 0.034, 8, [0.9, 0.55, 0.1], true);   // the shock's spring
+  // long forks, gold-anodised lowers
+  for (const sx of [-1, 1]) {
+    const x = sx * 0.085;
+    matte.tube([x, 1.06, fz(1.06)], [x, 0.66, fz(0.66)], 0.03, 8, [0.2, 0.2, 0.22], true);
+    trim.tube([x, 0.70, fz(0.70)], [x, rF, zF], 0.026, 8, [0.85, 0.66, 0.22], true);
+  }
+  for (const y of [1.04, 0.92]) trim.tube([-0.12, y, fz(y)], [0.12, y, fz(y)], 0.024, 8, ALLOY, true);
+  // the high front fender off the bottom yoke
+  fender(paint, 0.80, fz(0.80) + 0.06, 0.16, 0.07, -1.0, 1.2, WHITE);
+  // wide bar with pad and grips
+  trim.tube([-0.40, 1.16, fz(1.16) - 0.06], [0.40, 1.16, fz(1.16) - 0.06], 0.014, 8, ALLOY, true);
+  matte.box(0, 1.15, fz(1.17) - 0.06, 0.20, 0.05, 0.05, 0, [0.08, 0.08, 0.09]);
+  for (const sx of [-1, 1]) matte.tube([sx * 0.33, 1.16, fz(1.16) - 0.06], [sx * 0.42, 1.16, fz(1.16) - 0.06], 0.02, 8, LEATHER, true);
+  // number plate where the lamp would be
+  trim.box(0, 0.84, fz(0.96) + 0.09, 0.22, 0.24, 0.02, 0, [0.96, 0.96, 0.94]);
+  matte.box(0, 0.90, fz(0.96) + 0.102, 0.12, 0.12, 0.004, 0, [0.08, 0.08, 0.09]);
+  // engine: a compact single, radiator shrouds either side of the tank
+  matte.box(0, 0.30, -0.02, 0.26, 0.30, 0.34, 0, ENGINE);
+  trim.box(0, 0.58, 0.02, 0.18, 0.10, 0.2, 0, ALLOY);
+  for (const sx of [-1, 1]) {
+    matte.box(sx * 0.11, 0.66, 0.24, 0.04, 0.24, 0.20, 0, [0.15, 0.15, 0.16]);    // radiator
+    paint.box(sx * 0.14, 0.66, 0.22, 0.03, 0.30, 0.30, 0, WHITE);                  // shroud
+  }
+  paint.loft([
+    { z: 0.34, pts: ring2(0.09, 0.92, 0.06, 10) },
+    { z: 0.14, pts: ring2(0.13, 0.95, 0.08, 10) },
+    { z: -0.06, pts: ring2(0.11, 0.97, 0.06, 10) },
+  ], WHITE, { capStart: true, capEnd: true });
+  // the long flat seat
+  matte.box(0, 0.93, -0.30, 0.20, 0.07, 0.72, 0, LEATHER);
+  // side panels and the rear fender sweeping up
+  for (const sx of [-1, 1]) paint.box(sx * 0.12, 0.74, -0.40, 0.03, 0.18, 0.34, 0, WHITE);
+  fender(paint, 0.90, -0.64, 0.10, 0.08, -2.2, -1.2, WHITE);
+  paint.box(0, 0.92, -0.86, 0.17, 0.02, 0.38, 0, WHITE);
+  // pipe: down off the head, up under the right side panel
+  trim.tube([0.06, 0.62, 0.14], [0.13, 0.46, 0.0], 0.026, 8, CHROME, true);
+  trim.tube([0.13, 0.46, 0.0], [0.15, 0.72, -0.36], 0.03, 8, CHROME, true);
+  matte.tube([0.15, 0.72, -0.36], [0.16, 0.86, -0.70], 0.052, 10, [0.62, 0.64, 0.66], true);
+  trim.box(0, 0.92, -1.0, 0.05, 0.02, 0.02, 0, TAILC);
+  return wheels;
+}
+
+/**
  * The sportbike: everything the cruiser is not. Mass carried high and forward,
  * a fairing wrapped round the front of the engine, clip-ons under the top yoke
  * and a tail that runs up and away to nothing behind the rider.
@@ -3797,6 +3873,13 @@ const RIDERS = {
     lean: 0.08, head: -0.14,
     shoulder: [-1.10, 0.30], elbow: [-0.40, 0.06],
     thigh: [-0.90, 0.18], knee: 0.28, foot: -0.20,
+  },
+  // Auto KW: up on the pegs-ish, elbows out to a wide bar, the motocross stance.
+  dirtbike: {
+    z: -0.160, hipY: 1.010, seed: 77,
+    lean: 0.30, head: -0.30,
+    shoulder: [-0.86, 0.36], elbow: [-0.30, 0.10],
+    thigh: [-1.05, 0.22], knee: 1.25, foot: -0.15,
   },
   // Folded over the tank: chest down 35 degrees, head back up to look through
   // the screen, knees behind the hips and tucked into the tank.
@@ -7933,6 +8016,17 @@ function buildBicycle(spec, paint, trim, matte) {
     { z: -0.08, pts: ring2(0.025, 1.015, 0.022, 10) },
   ], BLACK, { capStart: true, capEnd: true });
   for (const sx of [-1, 1]) trim.tube([sx * 0.05, 0.985, -0.29], [sx * 0.05, 0.955, -0.29], 0.012, 6, SILVER, true);
+  // Auto KW: the mountain bike (spec.offroad) has none of the city bike's
+  // fenders, rack or basket, and knobblies instead
+  if (spec.offroad) {
+    for (const zc of [zF, zR]) for (let i = 0; i < 20; i++) {
+      const a = (i / 20) * Math.PI * 2;
+      matte.box(0, r + Math.cos(a) * (r + 0.006) - 0.012, zc + Math.sin(a) * (r + 0.006), 0.05, 0.024, 0.03, 0, [0.07, 0.07, 0.075]);
+    }
+    // a suspension fork's fat stanchions
+    for (const sx of [-1, 1]) matte.tube([sx * 0.05, r + 0.12, zF - 0.06], [sx * 0.05, r + 0.42, zF - 0.17], 0.02, 8, [0.12, 0.12, 0.13], true);
+  }
+  if (!spec.offroad) {
   // fenders over both wheels, and their stays
   fender(matte, r, zF, r + 0.035, 0.03, -0.5, 1.8, SILVER);
   fender(matte, r, zR, r + 0.035, 0.03, -1.9, 0.3, SILVER);
@@ -7956,6 +8050,7 @@ function buildBicycle(spec, paint, trim, matte) {
     for (let k = 1; k < 4; k++) { const y = y0 + (y1 - y0) * k / 4; matte.tube([-x0, y, z1], [x0, y, z1], 0.004, 3, B, false); matte.tube([-x0, y, z0], [x0, y, z0], 0.004, 3, B, false); }
     matte.quad([-x0, y0, z0], [x0, y0, z0], [x0, y0, z1], [-x0, y0, z1], [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], B);
     matte.tube([0, y0, z0], [0, 0.93, 0.36], 0.008, 4, B, true);
+  }
   }
   // drivetrain: the chain from the chainring to the cassette, the
   // derailleur, the kickstand
@@ -8863,7 +8958,7 @@ const HAND_BUILT = {
   swat: buildSwat,
   boxtruck: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.boxtruck),
   garbage: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.garbage),
-  convertible: buildConvertible, cruiser: buildCruiser, sportbike: buildSportbike,
+  convertible: buildConvertible, cruiser: buildCruiser, sportbike: buildSportbike, dirtbike: buildDirtbike,
   atv: buildAtv, bicycle: buildBicycle, boat: buildBoat, duck: buildDuck, hydro: buildHydro, jetski: buildJetski, kayak: buildKayak, artic: buildArticFront, articRear: buildArticRear, balloon: buildBalloon,
   tank: buildTank,
   fireengine: buildFireEngine, tiller: buildTiller, tillerRear: buildTillerRear,
@@ -9870,7 +9965,7 @@ export class Vehicle {
     }
     // A quad's rider is there only when someone is riding it. (The bikes
     // keep theirs as they always have: traffic is all they ever are.)
-    if (this.rider && (this.spec.atv || this.spec.bicycle || this.spec.jetski || this.spec.kayak || this.spec.balloon)) this.rider.group.visible = this.detailedWheels || !empty;
+    if (this.rider && (this.spec.atv || this.spec.bicycle || this.spec.hand === 'dirtbike' || this.spec.jetski || this.spec.kayak || this.spec.balloon)) this.rider.group.visible = this.detailedWheels || !empty;
   }
 
   /** The player's own car gets steerable, spinning wheel meshes; traffic doesn't. */
@@ -9899,7 +9994,7 @@ export class Vehicle {
     // re-applies its own rule once you leave the car
     if (on) this._cast = undefined;
     if (!on) this.mode = this._mode;
-    if (this.rider && (this.spec.atv || this.spec.bicycle || this.spec.jetski || this.spec.kayak || this.spec.balloon)) this.rider.group.visible = on || this._mode === 'traffic' || this._mode === 'path';
+    if (this.rider && (this.spec.atv || this.spec.bicycle || this.spec.hand === 'dirtbike' || this.spec.jetski || this.spec.kayak || this.spec.balloon)) this.rider.group.visible = on || this._mode === 'traffic' || this._mode === 'path';
     // the kayak's paddle, in the paddler's hands (updateKayak)
     if (this.spec.kayak) {
       if (on && !this.paddle) { this.paddle = kayakPaddle(); this.tilt.add(this.paddle); }

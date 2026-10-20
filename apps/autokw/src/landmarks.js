@@ -2185,6 +2185,20 @@ export function beachProps(beaches, city, wl) {
 }
 
 export const MARINAS = [
+  // Auto KW: the Grand River and the lakes. The river's surface slopes
+  // (geo.waterLevel), so each dock takes the level where it stands.
+  { name: 'Grand River Jet Skis · Bridgeport', x: -250, z: -2850, fleet: ['jetski', 'jetski', 'boat', 'jetski'], lake: true, float: 18,
+    hello: 'Jet skis on the Grand River at Bridgeport. Walk out on the float and take one — downstream is Kitchener, then Cambridge' },
+  { name: 'Grand River · Freeport', x: 5000, z: 3600, fleet: ['jetski', 'boat', 'jetski'], lake: true, float: 16,
+    hello: 'The Grand at Freeport — jet skis and a boat. Walk out on the float and take one' },
+  { name: 'Grand River · Riverside Park, Galt', x: 12880, z: 10600, fleet: ['jetski', 'boat', 'jetski'], lake: true, float: 16,
+    hello: 'The Grand through Galt — jet skis and a boat. Walk out on the float and take one' },
+  { name: 'Columbia Lake · UW', x: -6572, z: -2355, fleet: ['kayak', 'kayak', 'jetski'], lake: true, float: 12,
+    hello: "Columbia Lake, on UW's north campus — mind the geese. Kayaks and a jet ski on the float" },
+  { name: 'Victoria Park Boathouse', x: -2015, z: 567, fleet: ['kayak', 'kayak', 'boat'], lake: true, float: 12,
+    hello: 'The Victoria Park boathouse — kayaks and a boat on the lake' },
+  { name: 'Laurel Creek Conservation Area', x: -8499, z: -3111, fleet: ['boat', 'jetski', 'kayak'], lake: true, float: 14,
+    hello: 'Laurel Creek reservoir — a boat, a jet ski and a kayak. Walk out on the float and take one' },
 ];
 const BOAT_PAINT = [0xf2f2ee, 0x1f3f6a, 0xb8352a, 0xe8e2d0, 0x2d5a45, 0x3c4450];
 const SKI_PAINT = [0xf2c21a, 0x1e7fd0, 0xd8322a, 0x21b3a0, 0xf07a1c, 0x7a3fc2];

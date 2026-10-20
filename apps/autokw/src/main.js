@@ -43,6 +43,7 @@ import { FireService, placeStations } from './firecalls.js';
 import { BONES } from './peds.js';
 import { setKwData, applyNamed, buildSigns, mapPlaces as kwPlaces, kwData } from './kw.js';
 import { addLandmarkExtra } from './landmarks.js';
+import { Chicopee } from './chicopee.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings, warmLightBar } from './traffic.js';
 import { Police } from './police.js';
@@ -127,6 +128,7 @@ const RESPAWN_SITES = [
   { name: 'Breslau Clinic', ll: [43.47450, -80.41200] },
 ];
 let respawns = [];   // [{ name, x, z, node }] (buildRespawns)
+let chicopee = null;   // Chicopee's bike park: trails, lifts, bikes (chicopee.js)
 let fire = null, fireStations = [];   // Seattle Fire: the stations' rigs, the water cannon, fire calls (firecalls.js)
 
 /** The WASTED / BUSTED card. */
@@ -363,6 +365,18 @@ class Game {
         fishing.start(sp, { scene, camera, player, audio,
           bones: { handR: b[BONES.handR], shoulderR: b[BONES.shoulderR], elbowR: b[BONES.elbowR], shoulderL: b[BONES.shoulderL], elbowL: b[BONES.elbowL] } });
         if (sp.prop) sp.prop.userData.rod.visible = false;
+        return true;
+      }
+    }
+    // Chicopee: a chairlift's bottom station rides you to the top
+    if (chicopee) {
+      const l = chicopee.liftAt(pl.x, pl.z);
+      if (l) {
+        const dx = (l.b[0] - l.a[0]) / l.len, dz = (l.b[1] - l.a[1]) / l.len;
+        const tx = l.b[0] + dx * 6, tz = l.b[1] + dz * 6;
+        player.respawn(tx, tz);
+        world.update(tx, tz, 40);
+        hud.showToast(`You rode the ${l.name || 'chairlift'} to the top. The bikes are here`);
         return true;
       }
     }
@@ -723,6 +737,8 @@ async function boot() {
   setKwData(md.kw);
   { const k = applyNamed(city); blog(`kw: ${k.named} named buildings, ${k.looks} with their own look, ${k.strips} strip stores`); }
   addLandmarkExtra(buildSigns);
+  chicopee = new Chicopee(md.chicopee, { scene: null, city });
+  addLandmarkExtra((ctx) => chicopee.buildSign(ctx));
   blog(`city: grading ${cityStats.gradeCached ? 'from cache' : 'computed'}, buildings ${bootCache.buildings ? 'from cache' : 'computed'}`);
 
   await step(0.64, 'Raising the terrain');
@@ -1004,7 +1020,7 @@ function installShadowFade() {
   // The Queen Anne Counterbalance's streetcar line, laid on the road graph
   // (counterbalance.js) before anything is placed by the kerb
   counterbal = null;
-  city.extraClear = (x, z) => bikeNet.keepClear(x, z);
+  city.extraClear = (x, z) => bikeNet.keepClear(x, z) || chicopee.keepClear(x, z);
 
   await step(0.8, 'Building the skyline');
   world.buildSkyline();
@@ -1012,6 +1028,8 @@ function installShadowFade() {
   await step(0.86, 'Placing the landmarks');
   lmRoot = buildLandmarks(scene, city, (x, z) => world.waterLevelAt(x, z), null);
   bikeNet.build(scene, city);
+  chicopee.scene = scene;
+  chicopee.build();
   // every other pier OSM maps, after everything that builds its own decks
   piers = new Piers(md.piers, { scene, city, dropArrays: ON_PHONE, waterAt: (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; } });
   // on a phone their arrays go once uploaded: a lost context rebuilds them
@@ -1215,6 +1233,11 @@ function installShadowFade() {
     v.vLong = 0;
   }
   if (BALLOON_SITE) spawnBalloon();
+  // Chicopee's bikes, at the base and the summit
+  for (const [ty, x, z, h] of chicopee.bikeSpots()) {
+    const v = traffic.spawnAt(x, z, h, ty, ty === 'dirtbike' ? 0xd8462a : 0x2f8f4e, 'apron');
+    v.vLong = 0;
+  }
   fishSpots = fishingSpots();
   fishing = new Fishing({
     audio,
@@ -1295,6 +1318,8 @@ function installShadowFade() {
     ...(lmRoot.userData.marinas || []).map((mr) => ({ x: mr.x, z: mr.z, kind: 'dock', name: mr.name, near: false,
       hello: mr.hello ? mr.hello : `${mr.name} — boats and jet skis. Walk out on the float and take one` })),
     ...kwPlaces(),
+    ...(chicopee.base() ? [{ x: chicopee.base().x, z: chicopee.base().z, kind: 'atv', name: 'Chicopee Bike Park', near: false, label: 'Chicopee',
+      hello: 'Chicopee Bike Park — dirt bikes and mountain bikes. Ride a downhill, or walk to a chairlift and press ENTER to ride to the top' }] : []),
   ];
   { const k = kwData(); if (k && k.signStats) blog('kw signs: ' + JSON.stringify(k.signStats)); }
   peds = new PedSystem(scene, city, game);
@@ -1360,6 +1385,7 @@ function installShadowFade() {
   }
   // after the HUD: Activities writes its readout and map icons through it
   acts = new Activities(scene, city, world, game, hud, audio, traffic);
+  for (const a of chicopee.races()) acts.addExternal(a);
   stunts = new StuntJumps(city, game, hud, audio);
   tanks = new TankSystem({ scene, city, world, traffic, peds, fx, audio, hud, game, player, camera, root: document.getElementById('app') });
   tanks.spawnHome();
@@ -1448,7 +1474,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   wireUi();
   career.start(hud);
   game.newTarget();
@@ -2750,6 +2776,7 @@ function frame(now) {
     }
   }
   if (counterbal) counterbal.update(dt, camera);
+  if (chicopee) chicopee.update(dt, camera.position.x, camera.position.z);
   cyclists.update(dt, player);
   bikeNet.update(camera);
   piers.update(camera);
