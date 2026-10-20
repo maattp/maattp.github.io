@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Auto KW</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Auto KW">
+<meta name="theme-color" content="#10151b">
+<meta name="description" content="Drive around Kitchener-Waterloo and Cambridge, Ontario.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+<style>
+  :root {
+    --safe-t: env(safe-area-inset-top, 0px);
+    --safe-b: env(safe-area-inset-bottom, 0px);
+    --safe-l: env(safe-area-inset-left, 0px);
+    --safe-r: env(safe-area-inset-right, 0px);
+    --ink: #eaf0f4;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden; background: #10151b;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none; user-select: none;
+    overscroll-behavior: none;
+    touch-action: none;
+  }
+  #app { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; touch-action: none; }
+  canvas#gl { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; }
+  /* iOS standalone + black-translucent lays the document out shifted UP by the
+     status-bar inset, so anything sized to the viewport stops that many px short
+     of the physical bottom. Documented fix: extend the document by the top inset. */
+  @media (display-mode: standalone) {
+    html, body, #app { height: calc(100vh + env(safe-area-inset-top)); }
+  }
+
+  /* ---------- interaction zones ---------- */
+  /* The stick is the left third only; everything else drags the camera.
+     At 46% wide the stick grabbed presses near the middle meant for looking. */
+  #lookZone {
+    position: absolute; inset: 0;
+    touch-action: none; z-index: 2;
+  }
+  #stickZone {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 33.333%;
+    touch-action: none; z-index: 3;
+  }
+  #stickBase {
+    position: absolute; width: 128px; height: 128px; margin: 0; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.22); background: rgba(10,16,22,0.24);
+    transform: translate(-50%, -50%); opacity: 0; transition: opacity .12s;
+    pointer-events: none;
+  }
+  #stickBase.active { opacity: 1; }
+  #stickKnob {
+    position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; border-radius: 50%;
+    background: rgba(235,244,250,0.5); border: 2px solid rgba(255,255,255,0.55);
+    transform: translate(-50%, -50%);
+  }
+
+  /* ---------- buttons ---------- */
+  #pad {
+    position: absolute; right: calc(14px + var(--safe-r)); bottom: calc(14px + var(--safe-b));
+    z-index: 6; display: grid; gap: 10px;
+    grid-template-columns: repeat(3, auto); align-items: end; justify-items: center;
+  }
+  .btn {
+    position: relative;
+    -webkit-tap-highlight-color: transparent;
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    border-radius: 50%; font-weight: 700; letter-spacing: .04em;
+    background: rgba(18,26,34,0.5); border: 2px solid rgba(255,255,255,0.28);
+    color: var(--ink); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    transition: transform .06s, background .1s;
+    touch-action: none; user-select: none;
+  }
+  .btn.down { transform: scale(0.93); background: rgba(120,180,220,0.45); }
+  .b-lg { width: 92px; height: 92px; font-size: 15px; }
+  .b-md { width: 74px; height: 74px; font-size: 13px; }
+  .b-sm { width: 60px; height: 60px; font-size: 11px; }
+  .b-gas { background: rgba(40,120,80,0.45); border-color: rgba(150,240,190,0.5); }
+  .b-brake { background: rgba(140,50,45,0.42); border-color: rgba(255,170,160,0.45); }
+  .b-atk { background: rgba(150,90,30,0.42); border-color: rgba(255,205,140,0.45); }
+
+  #app[data-mode="drive"] .foot-only { display: none; }
+  /* MISSION (police missions): a police vehicle's own button, in a top row
+     of its own over EXIT, so the thumb positions under it never move */
+  /* (a police vehicle only: data-cop; data-police shows SIREN in a fire rig too) */
+  #app:not([data-cop="1"]) .cop-only { display: none; }
+  .b-mission { grid-column: 3; font-size: 10px; background: rgba(30,60,140,0.5); border-color: rgba(150,180,255,0.55); }
+  .b-mission.on { background: rgba(200,40,40,0.55); border-color: rgba(255,170,170,0.7); }
+  #app:not([data-mode="drive"]) .car-only { display: none; }
+  /* FARE (taxi fares): a taxi's own button, in the same slot over EXIT */
+  #app:not([data-taxi="1"]) .taxi-only { display: none; }
+  .b-fare { background: rgba(190,140,10,0.55); border-color: rgba(255,225,120,0.7); color: #fff7d0; }
+  .b-fare.on { background: rgba(200,40,40,0.55); border-color: rgba(255,170,170,0.7); }
+  #app:not([data-police="1"]) .police-only { display: none; }
+  #app:not([data-gear="1"]) .gear-only { display: none; }
+  /* an aircraft (main.js sets data-air): no HORN, no HAND BRAKE. Hidden, not
+     removed, so the grid keeps every other button under the same thumb */
+  #app[data-air="1"] [data-btn="horn"], #app[data-air="1"] [data-btn="hand"] { visibility: hidden; pointer-events: none; }
+  .b-gear { background: rgba(60,70,80,0.55); border-color: rgba(200,210,220,0.55); }
+  .b-gear.on { background: rgba(200,140,20,0.55); border-color: rgba(255,220,140,0.7); }
+  .b-siren { position: absolute; left: 0; bottom: calc(100% + 10px); }
+  .b-siren.on { background: linear-gradient(90deg, rgba(50,90,240,0.62), rgba(235,45,45,0.62)); border-color: rgba(255,255,255,0.62); }
+
+  /* A fire rig's own two (firecalls.js sets data-fire): beside the pad, not in
+     it, so every other vehicle's layout is untouched. */
+  #fireBtns {
+    position: absolute; right: calc(270px + var(--safe-r)); bottom: calc(14px + var(--safe-b));
+    z-index: 6; display: none; gap: 10px; align-items: end;
+  }
+  #app[data-fire="1"][data-mode="drive"] #fireBtns { display: flex; }
+  .b-water { background: rgba(40,110,170,0.48); border-color: rgba(150,210,255,0.55); }
+  .b-fire { background: rgba(170,30,30,0.48); border-color: rgba(255,160,150,0.55); }
+
+  /* A pad takes the touch stick away (it would grab a thumb resting on the
+     glass) but leaves the buttons, each wearing the pad button that does the
+     same thing (controls.js PAD; change both together), so the screen is the
+     controller's legend. Face buttons in the Xbox colours the Backbone uses. */
+  #app[data-pad="1"] #stickZone { display: none; }
+  [data-hint]::after {
+    content: attr(data-hint); display: none; position: absolute; top: -7px; right: -7px;
+    min-width: 21px; height: 21px; padding: 0 5px; box-sizing: border-box; border-radius: 11px;
+    font: 800 10px/19px -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: 0;
+    text-align: center; color: #fff; background: rgba(28,34,42,0.92);
+    border: 1px solid rgba(255,255,255,0.55); pointer-events: none; white-space: nowrap;
+  }
+  #app[data-pad="1"] [data-hint]::after { display: block; }
+  /* Controller hints off (the menu): a pad takes the buttons away entirely */
+  #app[data-pad="1"][data-nohints="1"] #pad,
+  #app[data-pad="1"][data-nohints="1"] #fireBtns { display: none !important; }
+  #app[data-pad="1"][data-nohints="1"] [data-hint]::after { display: none; }
+  [data-hint="A"]::after { background: #2b9a48; border-color: #8fe0a6; }
+  [data-hint="B"]::after { background: #c8352f; border-color: #f2a19c; }
+  [data-hint="X"]::after { background: #2f6fd0; border-color: #9cc0f5; }
+  [data-hint="Y"]::after { background: #d9a510; border-color: #f7dc85; color: #1c1600; }
+
+  /* The controller cursor. A cursor that cannot be seen is not a cursor: being
+     able to confirm without showing WHICH row is about to be pressed is the
+     whole bug this exists to avoid. */
+  .padfocus {
+    position: relative;
+    box-shadow: 0 0 0 2px rgba(126, 200, 240, 0.95), 0 0 16px rgba(126, 200, 240, 0.45);
+    border-radius: 10px;
+  }
+
+  /* ---------- hud ---------- */
+  #hud { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+  /* The minimap IS the map button -- #hud is pointer-events:none, so this has
+     to opt back in for the tap to land. */
+  #minimapWrap {
+    position: absolute; left: calc(12px + var(--safe-l)); top: calc(12px + var(--safe-t));
+    width: 138px; height: 138px; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.3); overflow: hidden;
+    box-shadow: 0 6px 22px rgba(0,0,0,0.45); background: #22282a;
+    pointer-events: auto; cursor: pointer; -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation; transition: transform .06s;
+  }
+  #minimapWrap:active { transform: scale(0.96); }
+  #minimap { width: 100%; height: 100%; display: block; }
+  #place {
+    position: absolute; left: calc(12px + var(--safe-l)); top: calc(156px + var(--safe-t));
+    font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.8); max-width: 200px;
+  }
+  #place.flash { animation: placeIn .5s ease-out; }
+  @keyframes placeIn { from { opacity: 0; transform: translateY(6px);} to { opacity: 1; transform: none; } }
+
+  #healthWrap {
+    position: absolute; left: calc(12px + var(--safe-l)); top: calc(178px + var(--safe-t));
+    width: 138px; height: 8px; border-radius: 4px; background: rgba(0,0,0,0.45);
+    border: 1px solid rgba(255,255,255,0.22); overflow: hidden;
+  }
+  #healthFill { height: 100%; width: 100%; background: #4fd07a; transition: width .15s; }
+
+  #topRight {
+    position: absolute; right: calc(12px + var(--safe-r)); top: calc(10px + var(--safe-t));
+    text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+  }
+  #money { font-size: 22px; font-weight: 800; color: #8ff0b0; text-shadow: 0 2px 8px rgba(0,0,0,0.7); }
+  #stars { font-size: 19px; letter-spacing: 2px; height: 22px; }
+  .star { color: rgba(255,255,255,0.16); }
+  .star.on { color: #ffd24a; text-shadow: 0 0 10px rgba(255,190,60,0.8); animation: starPulse 1.1s infinite; }
+  @keyframes starPulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+  /* out of sight, the police are searching: the stars flash grey and gold */
+  #stars.search .star.on { animation: starSearch .7s steps(1) infinite; }
+  @keyframes starSearch { 0% { color: #ffd24a; } 50% { color: rgba(255,255,255,0.32); text-shadow: none; } }
+  #speedo { display: flex; align-items: baseline; gap: 3px; text-shadow: 0 2px 8px rgba(0,0,0,0.7); }
+  #speedVal { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  #speedo .u { font-size: 11px; opacity: .7; }
+  #altRow { font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; text-shadow: 0 2px 8px rgba(0,0,0,0.7); }
+  #altRow .u { font-size: 11px; opacity: .7; }
+  #ammo { font-size: 15px; font-weight: 700; opacity: .9; }
+  .hidden { display: none !important; }
+
+  #objective, #toast {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    padding: 7px 15px; border-radius: 20px; font-size: 13px; font-weight: 600;
+    background: rgba(12,18,24,0.62); border: 1px solid rgba(255,255,255,0.16);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    opacity: 0; transition: opacity .25s; white-space: nowrap;
+  }
+  #objective { top: calc(12px + var(--safe-t)); }
+  /* A place's hello can run to a sentence or two: wrap it between the minimap
+     and the money rather than running off both edges of a phone. */
+  #toast { top: calc(52px + var(--safe-t)); background: rgba(20,30,40,0.75);
+    white-space: normal; width: max-content; text-align: center; line-height: 1.3;
+    max-width: max(200px, min(560px, calc(100vw - 360px - var(--safe-l) - var(--safe-r)))); }
+  #objective.show, #toast.show { opacity: 1; }
+
+  #topBtns {
+    position: absolute; left: calc(160px + var(--safe-l)); top: calc(12px + var(--safe-t));
+    display: flex; flex-direction: row; gap: 8px; z-index: 6;
+  }
+  .mini {
+    position: relative;
+    width: 42px; height: 42px; border-radius: 12px; font-size: 16px;
+    background: rgba(18,26,34,0.5); border: 1px solid rgba(255,255,255,0.22);
+    color: var(--ink); display: flex; align-items: center; justify-content: center;
+  }
+
+  #hurt {
+    position: absolute; inset: 0; pointer-events: none; z-index: 5; opacity: 0;
+    background: radial-gradient(ellipse at center, transparent 40%, rgba(190,20,20,0.6) 100%);
+    transition: opacity .16s;
+  }
+  #hurt.flash { opacity: 1; }
+
+  #wasted {
+    position: absolute; inset: 0; z-index: 20; display: none;
+    align-items: center; justify-content: center; background: rgba(60,4,4,0.55);
+    backdrop-filter: grayscale(1) blur(2px); -webkit-backdrop-filter: grayscale(1) blur(2px);
+  }
+  #wasted.show { display: flex; animation: fadeIn .5s; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  #wasted span { font-size: 52px; font-weight: 900; letter-spacing: .14em; color: #e8cfa0; text-shadow: 0 6px 24px #000; }
+  #wasted { flex-direction: column; gap: 10px; }
+  #wastedTo { font-size: 15px; font-weight: 600; color: #f2e6d0; text-shadow: 0 2px 10px #000; }
+
+  /* ---------- overlays ---------- */
+  #mapOverlay, #pauseMenu {
+    position: absolute; inset: 0; z-index: 30; display: none;
+    align-items: center; justify-content: center;
+    background: rgba(8,12,16,0.86); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    padding: calc(14px + var(--safe-t)) calc(14px + var(--safe-r)) calc(14px + var(--safe-b)) calc(14px + var(--safe-l));
+  }
+  #mapOverlay.show, #pauseMenu.show { display: flex; }
+  #bigMap { width: 100%; height: 100%; object-fit: contain; }
+
+  #mapBar {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    bottom: calc(16px + var(--safe-b)); z-index: 31;
+    display: flex; align-items: center; gap: 12px;
+    background: rgba(16,22,28,0.82); border: 1px solid rgba(255,255,255,0.16);
+    border-radius: 999px; padding: 8px 16px 8px 8px;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+  .mapchip {
+    -webkit-tap-highlight-color: transparent;
+    font: 700 12px/1 -apple-system, Helvetica, sans-serif; letter-spacing: .08em;
+    color: var(--ink); background: rgba(40,52,64,0.9);
+    border: 1px solid rgba(255,255,255,0.22); border-radius: 999px;
+    padding: 9px 15px; touch-action: manipulation;
+  }
+  .mapchip.on { background: rgba(70,180,120,0.55); border-color: rgba(150,240,190,0.7); }
+  #mapHint { font-size: 11px; opacity: .62; letter-spacing: .03em; white-space: nowrap; }
+  #pauseCard {
+    width: min(420px, 92%); background: rgba(20,27,34,0.94); border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 18px; padding: 20px; max-height: 92%; overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  #pauseCard h2 { font-size: 20px; margin-bottom: 4px; letter-spacing: .1em; }
+  #pauseCard p.sub { font-size: 12px; opacity: .6; margin-bottom: 14px; }
+  .row { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; border-top: 1px solid rgba(255,255,255,0.08); font-size: 14px; }
+  .toggle {
+    width: 50px; height: 28px; border-radius: 14px; background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.18); position: relative; transition: background .18s;
+  }
+  .toggle::after {
+    content: ''; position: absolute; left: 3px; top: 2px; width: 22px; height: 22px; border-radius: 50%;
+    background: #dfe7ec; transition: transform .18s;
+  }
+  .toggle.on { background: rgba(80,200,140,0.6); }
+  .toggle.on::after { transform: translateX(21px); }
+  .cta {
+    display: block; width: 100%; margin-top: 14px; padding: 12px; border-radius: 12px;
+    background: rgba(90,160,220,0.28); border: 1px solid rgba(150,210,255,0.4);
+    color: var(--ink); font-size: 15px; font-weight: 700;
+  }
+  .cta.ghost { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.16); }
+  input[type=range] { width: 130px; accent-color: #7ec8f0; }
+  .seg { display: flex; gap: 4px; }
+  .segbtn {
+    padding: 6px 12px; border-radius: 9px; font-size: 12px; font-weight: 700;
+    background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.14);
+    color: var(--ink); opacity: .65;
+  }
+  .segbtn.on { background: rgba(90,170,230,0.34); border-color: rgba(150,215,255,0.5); opacity: 1; }
+  .help { font-size: 12px; opacity: .65; line-height: 1.5; margin-top: 12px; }
+
+  /* ---------- loading ---------- */
+  #loading {
+    position: absolute; inset: 0; z-index: 50; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 16px;
+    background: linear-gradient(160deg, #16202b, #0d1218 60%, #1a2029);
+    transition: opacity .6s;
+  }
+  #loading.hide { opacity: 0; pointer-events: none; }
+  #loading h1 { font-size: 44px; font-weight: 900; letter-spacing: .34em; margin-left: .34em; }
+  #loading .tag { font-size: 12px; letter-spacing: .3em; opacity: .55; text-transform: uppercase; }
+  #loadTrack { width: min(320px, 70%); height: 5px; border-radius: 3px; background: rgba(255,255,255,0.12); overflow: hidden; }
+  #loadBar { height: 100%; width: 0%; background: linear-gradient(90deg, #6fd7a0, #7ec8f0); transition: width .25s; }
+  #loadMsg { font-size: 12px; opacity: .6; height: 16px; }
+  /* Boot log: every loading step with its time, what the boot cache found and
+     any error -- so a launch that stalls on a phone can be photographed and
+     read. Loading screen only. */
+  #bootLog {
+    font: 10px/1.35 ui-monospace, Menlo, monospace; opacity: .55; margin: 0;
+    width: min(460px, 86%); max-height: 34vh; overflow: hidden; white-space: pre-wrap; text-align: left;
+  }
+  /* Which build you're actually running — the first thing to check when a fix
+     seems to be missing, since a stale service worker looks exactly like that.
+     Fixed, not absolute, and so is #attrib: they hang off the screen's real
+     bottom, not #app's, which the standalone rule above makes taller than the
+     screen in portrait -- the launch screen is mostly seen upright, and there
+     the badge sat under the home indicator. */
+  #build {
+    position: fixed; left: 0; right: 0; text-align: center; bottom: calc(env(safe-area-inset-bottom) + 28px);
+    font-size: 11px; letter-spacing: .18em; opacity: .4;
+  }
+  /* OpenStreetMap is ODbL: attribution is required wherever its data is shown,
+     and the whole street network here is derived from it. */
+  #attrib {
+    position: fixed; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom) + 12px);
+    font-size: 10px; opacity: .32; text-align: center; padding: 0 18px;
+  }
+  /* Upright there is room to spare, so the badge stands clear of the home
+     indicator. Not sideways: there it would meet a full boot log. */
+  @media (orientation: portrait) {
+    #build { bottom: calc(env(safe-area-inset-bottom) + 48px); }
+    #attrib { bottom: calc(env(safe-area-inset-bottom) + 26px); }
+  }
+
+  #racePanel {
+    position: absolute; top: calc(env(safe-area-inset-top) + 6px); left: 50%;
+    transform: translateX(-50%); z-index: 42; display: none; text-align: center;
+    background: rgba(10,16,22,0.55); border-radius: 10px; padding: 6px 14px 5px;
+    pointer-events: none; min-width: 172px;
+  }
+  #racePanel.on { display: block; }
+  #raceName { font-size: 10px; letter-spacing: .14em; opacity: .68; text-transform: uppercase; }
+  #raceRow { display: flex; gap: 12px; justify-content: center; align-items: baseline; }
+  #raceTime { font: 800 21px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #raceLeft { font-size: 11px; opacity: .78; }
+  #raceFoot { display: flex; gap: 10px; justify-content: center; font-size: 11px; }
+  #raceDelta.ahead { color: #7ee0a4; } #raceDelta.behind { color: #ff8f7a; }
+  #raceBest { opacity: .5; }
+  #raceRestart {
+    pointer-events: auto; margin-top: 4px; font-size: 10px; letter-spacing: .12em;
+    opacity: .62; border: 1px solid rgba(255,255,255,0.22); border-radius: 6px;
+    padding: 2px 8px; display: inline-block;
+  }
+  /* the Seattle Passport: rank, progress, the counts the game already saves */
+  #passport { margin: 10px 0 2px; text-align: left; }
+  #ppTrack { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.12); overflow: hidden; margin: 2px 0 4px; }
+  #ppBar { height: 100%; width: 0; background: #f4c542; }
+  #ppNext { font-size: 10px; opacity: .55; margin-bottom: 4px; }
+  #ppGrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px 14px; font-size: 11px; }
+  .ppRow { display: flex; justify-content: space-between; gap: 6px; padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+  .ppRow span { opacity: .85; } .ppRow b { font-weight: 600; font-variant-numeric: tabular-nums; opacity: .7; }
+  .ppRow.full b { color: #f4c542; opacity: 1; }
+  #jobsBox { margin: 10px 0 4px; text-align: left; }
+  .rowHead { font-size: 10px; letter-spacing: .14em; opacity: .55; margin: 8px 0 4px; display: flex; justify-content: space-between; }
+  #jobsList { max-height: 34vh; overflow-y: auto; -webkit-overflow-scrolling: touch; font-size: 12px; }
+  .jobRow { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+  .jobRow .nm { opacity: .9; }
+  .jobRow .bt { font-variant-numeric: tabular-nums; opacity: .7; }
+  .jobRow .md { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-left: 6px; }
+  #buyRow { display: flex; flex-wrap: wrap; gap: 6px; }
+  .buy { font-size: 11px; padding: 5px 9px; border-radius: 7px; background: #1d2a36;
+         color: #dce6ee; border: 1px solid rgba(255,255,255,0.14); }
+  .buy:disabled { opacity: .35; }
+  #rotate {
+    position: absolute; inset: 0; z-index: 60; display: none;
+    align-items: center; justify-content: center; flex-direction: column; gap: 12px;
+    background: #10151b; font-size: 15px; text-align: center; padding: 24px;
+  }
+  @media (orientation: portrait) and (max-width: 900px) {
+    #rotate { display: flex; }
+  }
+  /* The rotate prompt waits for the game. While it loads -- and if it fails --
+     the loading screen stays readable upright: the bar, the build number and
+     the boot log are what you look at with the phone in your hand, and it
+     should only need turning once there is something to play. */
+  body:not(.booted) #rotate { display: none !important; }
+  #loadRotate { display: none; font-size: 11px; opacity: .45; letter-spacing: .08em; }
+  @media (orientation: portrait) and (max-width: 900px) { #loadRotate { display: block; } }
+</style>
+<style>
+  #debugStats {
+    position: absolute; top: calc(env(safe-area-inset-top) + 8px);
+    left: calc(env(safe-area-inset-left) + 96px);
+    display: none; pointer-events: none; z-index: 40;
+    font: 600 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #d8e2ea; text-shadow: 0 1px 2px rgba(0,0,0,0.75);
+    background: rgba(10,12,16,0.55); border-radius: 8px; padding: 6px 9px;
+    white-space: pre;
+  }
+  #debugStats.on { display: block; }
+  .dbgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 2px 0 10px; }
+  .dbg {
+    font: 600 11px/1 ui-sans-serif, system-ui; padding: 8px 4px; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.06);
+    color: #97a2ad; -webkit-tap-highlight-color: transparent;
+  }
+  .dbg.on { background: rgba(90,190,140,0.22); border-color: rgba(90,190,140,0.5); color: #dff3e8; }
+  /* the radio's stations: tap one to tune (the radio button cycles them) */
+  .stgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin: 2px 0 10px; }
+  .stn {
+    font: 600 12px/1.15 ui-sans-serif, system-ui; padding: 9px 8px; border-radius: 8px; text-align: left;
+    border: 1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.06);
+    color: #b9c3cc; -webkit-tap-highlight-color: transparent;
+  }
+  .stn.on { background: rgba(90,190,140,0.22); border-color: rgba(90,190,140,0.5); color: #dff3e8; }
+  .stn .syn { opacity: .55; font-weight: 500; }
+</style>
+</head>
+<body>
+<div id="app" data-mode="foot">
+  <canvas id="gl"></canvas>
+
+  <div id="lookZone"></div>
+  <div id="stickZone">
+    <div id="stickBase"><div id="stickKnob"></div></div>
+  </div>
+
+  <div id="hud">
+    <div id="minimapWrap"><canvas id="minimap"></canvas></div>
+    <div id="healthWrap"><div id="healthFill"></div></div>
+    <div id="place">Downtown</div>
+    <div id="topRight">
+      <div id="money">$250</div>
+      <div id="stars"></div>
+      <div id="speedo" class="hidden"><span id="speedVal">0</span><span class="u">km/h</span></div>
+      <div id="altRow" class="hidden"><span class="u">ALT</span> <span id="altVal">0</span><span class="u"> m</span></div>
+      <div id="ammo" class="hidden">⌖ 0</div>
+    </div>
+    <div id="objective"></div>
+    <div id="toast"></div>
+  </div>
+
+  <div id="hurt"></div>
+
+  <div id="topBtns">
+    <button class="mini" id="pauseBtn" aria-label="Menu" data-hint="≡">☰</button>
+  </div>
+
+  <div id="pad">
+    <!-- driving -->
+    <!-- a police car or a fire rig only (main.js updateSiren): over HORN, out of the grid -->
+    <div class="btn b-sm car-only police-only b-siren" data-btn="siren" data-hint="R3">SIREN</div>
+    <!-- police missions: only in a police vehicle, in a row of its own over EXIT -->
+    <div class="btn b-sm car-only cop-only b-mission" data-btn="policemission" data-hint="▼">MIS&shy;SION</div>
+    <!-- taxi fares: a taxi only, in the same slot (taxi.js sets data-taxi) -->
+    <div class="btn b-sm car-only taxi-only b-mission b-fare" data-btn="taxifare" data-hint="▼">FARE</div>
+    <!-- an aircraft with retractable gear only (main.js sets data-gear): the slot over EXIT -->
+    <div class="btn b-sm car-only gear-only b-mission b-gear" data-btn="gear" data-hint="LB">GEAR</div>
+    <div class="btn b-sm car-only" data-btn="horn" data-hint="L3">HORN</div>
+    <div class="btn b-md car-only" data-btn="hand" data-hint="A">HAND<br>BRAKE</div>
+    <div class="btn b-sm car-only" data-btn="enter" data-tap="1" data-hint="Y">EXIT</div>
+    <!-- bottom row, right to left: GAS under the thumb, BRAKE beside it, RADIO out of the way -->
+    <div class="btn b-sm car-only" data-btn="radio" data-hint="◀ ▶">RADIO</div>
+    <div class="btn b-md b-brake car-only" data-btn="brake" data-hint="LT">BRAKE</div>
+    <div class="btn b-lg b-gas car-only" data-btn="gas" data-hint="RT">GAS</div>
+    <!-- on foot -->
+    <div class="btn b-sm foot-only" data-btn="jump" data-hint="X">JUMP</div>
+    <div class="btn b-md foot-only" data-btn="sprint" data-hint="A">RUN</div>
+    <div class="btn b-sm foot-only" data-btn="enter" data-tap="1" data-hint="Y">ENTER</div>
+    <div class="btn b-sm foot-only" style="visibility:hidden"></div>
+    <div class="btn b-sm foot-only" style="visibility:hidden"></div>
+    <div class="btn b-lg b-atk foot-only" data-btn="attack" data-hint="B">ATTACK</div>
+  </div>
+
+  <div id="fireBtns">
+    <div class="btn b-sm b-fire" data-btn="mission" data-hint="▼">MISSION</div>
+    <div class="btn b-md b-water" data-btn="water" data-hint="RB">WATER</div>
+  </div>
+
+  <div id="wasted"><span>WASTED</span><div id="wastedTo"></div></div>
+
+  <div id="mapOverlay">
+    <canvas id="bigMap"></canvas>
+    <div id="mapBar">
+      <button id="warpBtn" class="mapchip">SET SPAWN</button>
+      <span id="mapHint">Tap the map to close</span>
+    </div>
+  </div>
+
+  <div id="pauseMenu">
+    <div id="pauseCard">
+      <h2>AUTO KW</h2>
+      <p class="sub">Waterloo Region, Ontario</p>
+      <!-- Resume first: it is what the menu is opened to do, and burying it
+           under the settings meant scrolling to get back into the game. -->
+      <button class="cta" id="resumeBtn">Resume</button>
+      <!-- Jobs and the delivery service. A design review's sharpest note was
+           that money had no sink: activities paying into an economy that buys
+           nothing is a scoreboard, not a reward. -->
+      <div id="passport">
+        <div class="rowHead">REGION PASSPORT <span id="ppRank"></span></div>
+        <div id="ppTrack"><div id="ppBar"></div></div>
+        <div id="ppNext"></div>
+        <div id="ppGrid"></div>
+      </div>
+      <div id="jobsBox">
+        <div class="rowHead">JOBS <span id="jobsCount"></span></div>
+        <div id="jobsList"></div>
+        <div class="rowHead">DELIVERY <span id="jobsMoney"></span></div>
+        <div id="buyRow">
+          <button class="buy" data-buy="pistol" data-cost="300">Pistol $300</button>
+          <button class="buy" data-buy="sports" data-cost="900">Sports $900</button>
+          <button class="buy" data-buy="muscle" data-cost="900">Muscle $900</button>
+          <button class="buy" data-buy="police" data-cost="1500">Police $1500</button>
+          <button class="buy" data-buy="wedge" data-cost="2500">Wedge $2500</button>
+          <button class="buy" data-buy="atv" data-cost="700">Quad bike $700</button>
+          <button class="buy" data-buy="tank" data-cost="25000">Tank $25000</button>
+          <button class="buy" data-buy="plane" data-cost="4000">Plane $4000</button>
+          <button class="buy" data-buy="sportplane" data-cost="6000">Sport plane $6000</button>
+          <button class="buy" data-buy="floatplane" data-cost="6500">Floatplane $6500</button>
+          <button class="buy" data-buy="biplane" data-cost="5000">Biplane $5000</button>
+          <button class="buy" data-buy="heli" data-cost="8000">Helicopter $8000</button>
+          <button class="buy" data-buy="twin" data-cost="9000">Twin turboprop $9000</button>
+          <button class="buy" data-buy="jet" data-cost="14000">Business jet $14000</button>
+        </div>
+      </div>
+      <button class="cta ghost" id="respawnBtn">Respawn at the nearest hospital</button>
+      <div class="row" id="rowQuality"><span>Graphics</span><div class="seg">
+        <button class="segbtn" data-quality="high">High</button>
+        <button class="segbtn" data-quality="medium">Med</button>
+        <button class="segbtn" data-quality="low">Low</button>
+      </div></div>
+      <div class="row"><span>Shadows</span><div class="toggle" id="setShadows"></div></div>
+      <div class="row"><span>Radio</span><div class="toggle" id="setMusic"></div></div>
+      <div class="stgrid" id="stations"></div>
+      <div class="row"><span>Sound effects</span><div class="toggle" id="setSound"></div></div>
+      <div class="row"><span>Camera speed</span><input type="range" id="setSens" min="0.4" max="2.2" step="0.1" value="1"></div>
+      <div class="row"><span>Controller hints</span><div class="toggle" id="setPadHints"></div></div>
+      <div class="row"><span>Debug stats</span><div class="toggle" id="setDebug"></div></div>
+      <div class="row"><span id="flightLabel">Last session log</span><button class="segbtn" id="flightShow">Show</button></div>
+      <!-- One switch per screen-space pass. A single "post on/off" cannot answer
+           "which of these is hazing the picture", and that is the question that
+           actually gets asked. -->
+      <div class="row"><span>Post effects</span><div class="toggle" id="setPost"></div></div>
+      <div class="dbgrid">
+        <button class="dbg on" data-fx="bloom">Bloom</button>
+        <button class="dbg on" data-fx="ssao">SSAO</button>
+        <button class="dbg on" data-fx="grade">Grade</button>
+        <button class="dbg on" data-fx="vignette">Vignette</button>
+        <button class="dbg on" data-fx="grain">Grain</button>
+        <button class="dbg on" data-fx="dither">Dither</button>
+        <button class="dbg on" data-fx="fxaa">FXAA</button>
+        <button class="dbg on" data-world="fog">Fog</button>
+      </div>
+      <p class="help">
+        Left thumb steers and walks. Right side: drag to look, buttons to drive.
+        Walk up to any car and hit ENTER to take it. Deliveries pay — the gold ring
+        on the minimap is your drop-off. Hurt someone and the WRPS will notice.
+        <br><br>Pistols lie on the pavement all over the map: the blue gun marks on
+        the minimap and the map. Walk over one (or buy one above) and ATTACK fires
+        it. Green crosses are first aid. If you are wasted, you wake at the nearest
+        hospital or clinic (red crosses) your roads reach. In a police car, SIREN
+        (or G) switches the siren and lights on and off.
+        <br><br>Keyboard: WASD / arrows, F enter-exit, Space handbrake &amp; jump, R radio,
+        Shift run, J attack, H horn, G siren.
+        <br><br>Streets, shoreline and buildings are real: map data ©
+        OpenStreetMap contributors, licensed ODbL. Elevation from Mapzen terrain tiles (NRCan CDEM, SRTM).
+      </p>
+    </div>
+  </div>
+
+  <!-- Performance readout. The draw-call and triangle budget in CLAUDE.md was
+       a convention written against "it ships to a phone", never a measurement
+       on one, and the scene has quietly been over it for some time with
+       nothing going wrong. This is how it gets settled with a real number. -->
+  <div id="debugStats"></div>
+
+  <div id="loading">
+    <div class="tag">Waterloo Region</div>
+    <h1>AUTO KW</h1>
+    <div id="loadTrack"><div id="loadBar"></div></div>
+    <div id="loadMsg">Starting up</div>
+    <pre id="bootLog"></pre>
+    <div id="loadRotate">Turn sideways to play once it has loaded</div>
+    <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
+    <div id="build">v1</div>
+    <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation NRCan CDEM / SRTM</div>
+  </div>
+  <script>
+    // THE BOOT LOG. A classic script, so it runs even if a module never loads.
+    // window.__bootLog(msg) appends a line with the seconds since page start;
+    // every change of the loading message is logged too, and so is every error.
+    (function () {
+      var el = document.getElementById('bootLog'), lines = [], started = false;
+      function log(m) {
+        started = true;
+        lines.push((performance.now() / 1000).toFixed(1) + 's  ' + m);
+        if (lines.length > 22) lines.shift();
+        if (el) { el.textContent = lines.join('\n'); el.scrollTop = el.scrollHeight; }
+      }
+      window.__bootLog = function (m) { log(m); if (window.__flight) window.__flight.ev(m); };
+
+      // THE FLIGHT RECORDER. A crash on the phone cannot be reproduced from
+      // here (WebKit ending the page for memory leaves no error behind), so
+      // the game keeps a small record of what it was doing in localStorage,
+      // saved every 2 s and at once on an error: recent events, and rolling
+      // snapshots from main.js (__flight.snap). A record left 'visible' at the
+      // next launch means the page ended while it was on screen, which is a
+      // crash; it is kept as 'autokw-flight-prev' and shown in the pause menu.
+      (function () {
+        var KEY = 'autokw-flight', PREV = 'autokw-flight-prev';
+        var b = document.getElementById('build');
+        var rec = { build: b ? b.textContent.trim() : '?', start: new Date().toISOString(),
+          ua: (navigator.userAgent.match(/iPhone OS [\d_]+|OS [\d_]+|Chrome\/\d+|Version\/[\d.]+/g) || []).join(' '),
+          state: 'visible', events: [], snaps: [] };
+        var prev = null;
+        try {
+          var old = JSON.parse(localStorage.getItem(KEY) || 'null');
+          if (old) {
+            old.crashed = old.state === 'visible';
+            prev = old;
+            localStorage.setItem(PREV, JSON.stringify(old));
+          } else prev = JSON.parse(localStorage.getItem(PREV) || 'null');
+        } catch (x) { /* no storage */ }
+        function save() { rec.saved = new Date().toISOString(); try { localStorage.setItem(KEY, JSON.stringify(rec)); } catch (x) { /* full or blocked */ } }
+        function ev(m) {
+          rec.events.push((performance.now() / 1000).toFixed(1) + 's ' + String(m).slice(0, 300));
+          if (rec.events.length > 60) rec.events.shift();
+        }
+        window.__flight = {
+          prev: prev, rec: rec, save: save,
+          ev: function (m, now) { ev(m); if (now) save(); },
+          snap: function (o) { rec.snaps.push(o); if (rec.snaps.length > 12) rec.snaps.shift(); },
+        };
+        document.addEventListener('visibilitychange', function () {
+          rec.state = document.visibilityState === 'hidden' ? 'hidden' : 'visible';
+          ev('page ' + rec.state); save();
+        });
+        window.addEventListener('pagehide', function () { rec.state = 'closed'; ev('pagehide'); save(); });
+        window.addEventListener('pageshow', function () { if (rec.state === 'closed') { rec.state = 'visible'; save(); } });
+        setInterval(save, 2000);
+        save();
+      })();
+      var msg = document.getElementById('loadMsg');
+      if (msg && window.MutationObserver) {
+        var lastMsg = '';
+        new MutationObserver(function () { if (msg.textContent !== lastMsg) { lastMsg = msg.textContent; window.__bootLog(lastMsg); } })
+          .observe(msg, { childList: true, characterData: true, subtree: true });
+      }
+      // FILES FROM TWO VERSIONS. A module importing a name its neighbour does
+      // not export (or a module that failed to load) means the old service
+      // worker served a stale copy of one file. The new worker deletes the old
+      // caches when it takes over, so reload once -- when it does, or after a
+      // few seconds -- rather than leave the player on an error screen.
+      function staleReload() {
+        try { if (sessionStorage.getItem('autokw-stale-reload')) return; sessionStorage.setItem('autokw-stale-reload', '1'); } catch (x) { return; }
+        log('files from two versions -- reloading once');
+        var go = function () { location.reload(); };
+        if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('controllerchange', go);
+        setTimeout(go, 4000);
+      }
+      window.addEventListener('error', function (e) {
+        var m = e.message || '';
+        window.__bootLog('ERROR ' + (m || (e.target && e.target.src) || e) + (e.filename ? ' @' + e.filename.split('/').pop() + ':' + e.lineno : '')
+          + (e.error && e.error.stack ? ' | ' + String(e.error.stack).split('\n').slice(0, 4).join(' | ') : ''));
+        if (window.__flight) window.__flight.save();
+        if (/Importing binding name|does not provide an export|not found in module/.test(m)
+          || (e.target && e.target.tagName === 'SCRIPT' && e.target.type === 'module')) staleReload();
+      }, true);
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e.reason; window.__bootLog('REJECTED ' + (r && (r.stack || r.message) || r));
+        if (window.__flight) window.__flight.save();
+      });
+      setTimeout(function () { if (!started) log('game code has not started after 8 s (a module failed to load?)'); }, 8000);
+      // A launch that got as far as the game clears the one-reload allowance.
+      window.__bootOk = function () { try { sessionStorage.removeItem('autokw-stale-reload'); } catch (x) { /* none */ } };
+    })();
+  </script>
+
+  <!-- Race readout. TOP-CENTRE deliberately: thumbs occlude the bottom
+       corners on a phone, and this is the one thing you read mid-corner. -->
+  <div id="racePanel">
+    <div id="raceName"></div>
+    <div id="raceRow"><span id="raceTime"></span><span id="raceLeft"></span></div>
+    <div id="raceFoot"><span id="raceDelta"></span><span id="raceBest"></span></div>
+    <div id="raceRestart">RESTART</div>
+  </div>
+  <div id="rotate">
+    <div style="font-size:34px">📱↻</div>
+    <div>Rotate your device sideways to play.</div>
+    <!-- Filled from #build at boot: the version must be readable in portrait
+         too, because "which build are you on" is asked of a phone being held
+         upright, and the rotate overlay covers the launch screen's badge. -->
+    <div id="rotateBuild" style="font-size:11px;letter-spacing:.18em;opacity:.4"></div>
+  </div>
+</div>
+
+<script type="module" src="src/main.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      // updateViaCache: 'none' makes the BROWSER's HTTP cache irrelevant to
+      // the update check: without it, GitHub Pages' max-age=600 means a
+      // relaunch inside ten minutes of a deploy refetches the OLD sw.js and
+      // sees "no change" -- which, byte-compare being the update trigger,
+      // reads as no update at all. And check again whenever the app comes
+      // back to the foreground, because an iOS PWA can sit resident for days
+      // without a fresh launch.
+      const rb = document.getElementById('rotateBuild');
+      if (rb) rb.textContent = document.getElementById('build').textContent;
+      navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+        .then((reg) => {
+          document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) reg.update().catch(() => {});
+          });
+        })
+        .catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>

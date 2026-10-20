@@ -107,6 +107,20 @@ ferry: `tools/extract_ferry.py` + `tools/build_ferry.py`, `src/ferry.js`). **OSM
 attribution on the launch screen and in the pause menu is a licence condition —
 don't remove it.** See `apps/auto/guide/map-import.md` for how to re-run the import.
 
+## Auto KW App
+
+### Version Management
+
+**IMPORTANT:** Increment the build number in `/apps/autokw/index.html`
+(`<div id="build">vN</div>`) once per change, and move `CACHE` in
+`/apps/autokw/sw.js` (`autokw-vN`) to match.
+
+A fork of Auto set in Waterloo Region, Ontario (Kitchener, Waterloo,
+Cambridge), imported from OSM by `tools/kw/`. Its storage keys are all
+`autokw-` prefixed because it shares an origin with Auto. Read
+`apps/autokw/CLAUDE.md` first: no sea, a sloping river water field, heights
+offset by 250 m.
+
 ## Claw App
 
 ### Version Management

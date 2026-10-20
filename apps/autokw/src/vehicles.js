@@ -1,0 +1,12065 @@
+// Vehicle models and the arcade driving model.
+//
+// Bodies are lofted through cross-sections rather than assembled from boxes, so
+// they get a real shoulder line, a raked screen and smooth shading. Each type
+// bakes down to three geometries that share materials across every instance:
+//
+//   paint  - the painted shell, tinted per car by its own material colour
+//   trim   - glass, chrome, lamp lenses, wheel rims (shiny, metallic)
+//   matte  - tyres, bumper rubber, plastic, wheel arches (rough, dielectric)
+
+import * as THREE from './three.js';
+import { Builder, dropGeometryArrays } from './build.js';
+import { makeHumanoid, buildCharacter, BONES, gripHands } from './peds.js';
+import { clamp, lerp, hash2, damp } from './util.js';
+import * as G from './geo.js';
+
+const TYRE = [0.05, 0.05, 0.055];
+const RIM = [0.80, 0.82, 0.85];
+const HUB = [0.42, 0.44, 0.47];
+const RIM_BLACK = [0.12, 0.125, 0.135], HUB_BLACK = [0.04, 0.04, 0.045], RIM_LIP = [0.22, 0.225, 0.24], DISC_DARK = [0.07, 0.07, 0.075];
+// Glazing. This exact colour is what marks a trim vertex as GLASS: buildType
+// tags every trim vertex carrying it with the `glass` attribute, and the trim
+// shader turns those into see-through, sky-reflecting glass (see glassShader).
+// Anything that must stay opaque and merely looks dark -- a mirror face, a lamp
+// housing -- takes another colour.
+export const GLASS = [0.06, 0.08, 0.10];
+// Limo-tinted glazing (the Belltown Hellcat): glass too, nearly opaque face-on.
+const GLASS_TINT = [0.04, 0.05, 0.06];
+// A door mirror's face: silvered, so it mirrors the sky rather than being a
+// dark tile, and deliberately NOT the glass colour, or it would go see-through
+// onto the empty inside of its pod.
+const MIRROR = [0.52, 0.55, 0.58];
+const CHROME = [0.84, 0.86, 0.89];
+const PLASTIC = [0.11, 0.12, 0.13];
+const LAMP = [1.0, 0.98, 0.9];
+const TAILC = [0.92, 0.12, 0.1];
+const AMBER = [0.95, 0.55, 0.08];
+const PLATE = [0.86, 0.86, 0.82];
+const WHITE = [1, 1, 1];
+// KING COUNTY METRO'S LIVERY: the bottom half golden yellow, the top teal,
+// blue or green (since 1996), and RapidRide red over the same yellow (2004).
+// The yellow is the lower body's own colour (buildBus draws it through
+// `tinted`); the top is the paint, one of these per bus (`spec.liveries`,
+// picked from the spawn colour, so an artic's two sections agree).
+const METRO_YELLOW = [0.86, 0.43, 0.02];
+const METRO_TOPS = [0x0f6e78, 0x1f4f9a, 0x2c6e3c];
+const ARTIC_LIVERIES = [0x0f6e78, 0x1f4f9a, 0x2c6e3c, 0xc41a24];
+/** A builder seen through one colour: every WHITE part handed to it comes out `col`. */
+function tinted(b, col) {
+  return new Proxy(b, { get(t, k) {
+    const f = t[k];
+    return typeof f === 'function' ? (...a) => f.apply(t, a.map((x) => (x === WHITE ? col : x))) : f;
+  } });
+}
+const DISC = [0.30, 0.31, 0.33];
+const CALIPER = [0.55, 0.09, 0.07];
+// Inside of every recess. Near-black rather than black so the wall still takes
+// a little bounce and the depth of the pocket reads.
+const CAVITY = [0.035, 0.04, 0.045];
+
+// len/wid in metres; sill = bottom of the visible bodywork, belt = shoulder
+// line, roof = roof height, cab = greenhouse extent as a fraction of length.
+// Longitudinal resistance, shared by the integrator and by deriveSpec so the
+// solved top speed is the one the integrator actually converges to.
+// These were 0.0016 and 0.07, which at 57 m/s cost a sedan 5.2 and 4.0 m/s^2
+// against a real ~0.9 and ~0.12 -- roughly five times too much drag and thirty
+// times too much rolling resistance. That is what held every top speed far
+// under its class and forced the launch accelerations up to compensate, so a
+// family sedan did 0-100 in 3.5 s and still could not reach 100 km/h.
+const DRAG = 0.00040;
+const ROLL = 0.020;
+// Off a stunt ramp (stunts.js) the flight is arcade, not the crest hop: lower
+// gravity for hang time, the flight path held while steering spins the body.
+const STUNT_G = 15;
+const STUNT_SPIN = 2.6;   // rad/s of yaw at full steer, in the air
+const STILL = { dx: 0, dz: 0 };
+// A crash's spin-out (see Vehicle.spin / slide; traffic.js pairImpulse):
+// how fast the spin is scrubbed off (a share a second + a constant rad/s^2,
+// that constant up to 1 + SPIN_SLOW times over as the car comes to rest),
+// a sliding tyre's deceleration (~0.75 g), and how long the tyres take to bite
+// again from fully let go.
+const SPIN_DAMP = 0.9, SPIN_FRIC = 0.6, SPIN_SLOW = 5, SLIDE_DECEL = 7.5, SLIDE_T = 1.1;
+const V0_100 = 100 / 3.6;
+
+// How much punchier than real the throttle is.
+//
+// The bench measures against real-world 0-100 figures and the table declares
+// them, which is the right way to keep a bus from out-dragging a hatchback --
+// but a real family sedan takes 8.6 s to 100 km/h and in a game that feels
+// broken. You spend the whole time waiting for the car to do something.
+//
+// So the ratios between vehicles stay real and the whole scale is compressed:
+// everything accelerates ARCADE_PUNCH times harder than its spec sheet, which
+// keeps a sports car quicker than a van by the right margin while making both
+// enjoyable. Top speed stays honest; grip and braking are scaled together by
+// ARCADE_GRIP / ARCADE_BRAKE, so the ratios between classes survive and the
+// whole scale moves as one.
+const ARCADE_PUNCH = 2.4;
+
+// And how much more grip than real. Same bargain as ARCADE_PUNCH: the ratios
+// between classes stay honest, the whole scale moves. At true road-tyre grip a
+// sedan's cornering radius at 72 km/h is 46 m, which in a city built from real
+// street widths means you cannot make a junction at any speed worth driving.
+const ARCADE_GRIP = 2.2;
+
+// The flight model needs the LOCAL water surface for floatplanes, and lakes
+// live on world, which vehicles never see. main.js injects the query at boot.
+let waterQuery = null;
+const _dq = new THREE.Quaternion(), _tv = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
+export function setWaterQuery(fn) { waterQuery = fn; }
+// How hard a corner may be asked for, as a fraction of the grip that exists.
+// Above 1 on purpose: this is a GTA-style car, not a simulator. It should feel
+// planted and willing -- lane changes and sweeping bends at speed take no
+// thought, a hairpin at 120 km/h is simply not on -- so the car leans on its
+// tyres a bit harder than physics allows without ever demanding the multiples
+// that made it pivot on rails.
+const STEER_BITE = 1.25;
+/**
+ * YOUR CAR'S TYRES (Vehicle._tyres). The player's road car is a two-axle
+ * model with slip angles above TYRE_FROM m/s: each axle's sideways grip
+ * peaks at ~8.5 deg of slip and falls to ~80 % past it, so a car can slide
+ * and be caught. TYRE_K scales its grip against the steering lock's
+ * (latA * ARCADE_GRIP * PLAYER_BITE): 1.2, so a bend taken on full
+ * lock is at the limit with a little in hand. The front has FRONT_SHARE of
+ * the rear's: at the limit it pushes wide rather than spins. DRIVE_EAT is
+ * how much of the driven axle's grip the engine's pull spends (power
+ * oversteer in a rear-drive car); HAND_GRIP what a locked rear keeps.
+ */
+const TYRE_FROM = 2.5, TYRE_K = 1.2, SLIP_B = 14, SLIP_C = 1.4, FRONT_SHARE = 0.97;
+const DRIVE_EAT = 1.25, HAND_GRIP = 0.4;
+const tyreF = (a, D) => D * Math.sin(SLIP_C * Math.atan(SLIP_B * a));
+
+/** A burnout's donut: its top yaw rate (rad/s, a turn in ~3.7 s) and how far
+ *  inside the front axle it turns about (m). See Vehicle.update. */
+const BO_YAW = 1.7, BO_R = 3.0;
+
+/** How long your car burns before it explodes (Vehicle.damage). */
+export const BURN_S = 5;
+// the fighter's lit nozzles (setDetailed, updatePlane): unlit, additive, and
+// not tone-mapped, so the bloom takes them
+const JET_GLOW_GEO = new THREE.CircleGeometry(0.31, 18);
+const JET_GLOW_MAT = new THREE.MeshBasicMaterial({ color: 0xff8a3a, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, side: THREE.DoubleSide });
+// a cone 1 m long pointing back (-z) from its base at the nozzle, scaled in z
+const JET_FLAME_GEO = (() => { const g = new THREE.ConeGeometry(0.28, 1, 14, 1, true); g.rotateX(-Math.PI / 2); g.translate(0, 0, -0.5); return g; })();
+const JET_FLAME_MAT = new THREE.MeshBasicMaterial({ color: 0xff9248, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, side: THREE.DoubleSide });
+/** main.js's: `ignite(v)` when your car catches fire; `belly(v)` when a plane lands gear up. */
+export const VEHICLE_HOOKS = { ignite: null, belly: null };
+const PLAYER_BITE = 1.7;
+
+// Braking was the one axis left at real-world scale, and that is why it felt
+// slow: you accelerated 2.4x harder than the spec sheet and cornered at 2.2x
+// the grip, then braked at exactly 1.0x. The comment above used to claim
+// braking stayed honest alongside grip -- but grip has not been honest since
+// ARCADE_GRIP arrived, so all that survived was an inconsistency. A tyre that
+// gives 2.2x laterally gives it longitudinally too, which also keeps the
+// friction budget isotropic.
+const ARCADE_BRAKE = 2.2;
+
+// The trainer's handling, which every aircraft without its own `fly` flies.
+const PLANE_FLY = { vr: 27, stall: 21, bank: 0.72, turn: 1, climb: 14, vne: 0 };
+
+export const TYPES = {
+  // Boeing Field's resident: a high-wing single-prop trainer. `plane: true`
+  // sends update() to the flight model; wid is the FUSELAGE (collision), the
+  // 11 m wingspan lives in the builder. Speeds in kph as everywhere: rotates
+  // ~100, cruises ~190.
+  plane: deriveSpec({ wheelbase: 4.6, len: 8.3, wid: 2.0, wheelR: 0.30, sill: 0.55, belt: 1.35, roof: 2.10, cab: [0.6, 0.3], hand: 'plane', plane: true, mass: 0.8, acc: 6.5, topKph: 330, brakeM: 60, latG: 0.7 }),
+  // Low-wing sport single: hotter (cruise ~380), rotates later, banks harder.
+  sportplane: deriveSpec({ wheelbase: 4.2, len: 7.6, wid: 1.9, wheelR: 0.28, sill: 0.5, belt: 1.2, roof: 1.7, cab: [0.4, 0.3], hand: 'plane', plane: true, wing: 'low', mass: 0.75, acc: 8.0, topKph: 385, brakeM: 55, latG: 0.85 }),
+  // Floatplane: pontoons instead of gear, lands on WATER (spec.floats routes
+  // the flight model's ground query through the lake surface).
+  floatplane: deriveSpec({ wheelbase: 5.0, len: 9.0, wid: 2.1, wheelR: 0.55, sill: 0.6, belt: 1.4, roof: 2.2, cab: [0.6, 0.3], hand: 'plane', plane: true, floats: true, mass: 0.95, acc: 5.5, topKph: 280, brakeM: 70, latG: 0.62 }),
+  // `fly` is the flight model's per-type handling (updatePlane): rotation
+  // speed `vr` and `stall` in m/s, `bank` the full-stick bank in radians,
+  // `turn` a multiplier on the bank-to-yaw rate, `climb` the climb rate the
+  // excess airspeed buys, `vne` a soft cap on airspeed in m/s (the drag above
+  // gives every airframe ~30 % more in level flight than its declared top, and
+  // the streamer has only been proven to ~120 m/s). Types without it fly as
+  // the trainer always has.
+  //
+  // Twin turboprop, King Air 350 proportions: 14.2 m long, 17.6 m span, T-tail,
+  // two PT6 nacelles on a low wing. Heavier and steadier than the singles --
+  // it banks less and turns wider -- and faster in a straight line.
+  twin: deriveSpec({ retract: true, wheelbase: 5.2, len: 14.2, wid: 1.7, wheelR: 0.34, sill: 0.85, belt: 1.75, roof: 2.65, cab: [0.6, 0.3], hand: 'twin', plane: true, turboprop: true, mass: 1.6, acc: 6.8, topKph: 440, brakeM: 75, latG: 0.6,
+    fly: { vr: 31, stall: 25, bank: 0.60, turn: 0.85, climb: 17, vne: 118 } }),
+  // Light business jet, Learjet 45 proportions: 15 m, 15.5 m span, swept low
+  // wing, two fans on pylons at the tail, T-tail. Rotates at 150 km/h, stalls
+  // at 120, and is held near 150 m/s (~560 km/h level, measured) -- the
+  // fastest thing in the game, and still inside what the streamer keeps up with.
+  // A fighter: its own flight model (updateFighter, full 3D attitude), so it
+  // rolls, loops and flies inverted; the others fly heading-and-bank.
+  fighter: deriveSpec({ retract: true, wheelbase: 6.7, len: 16.0, wid: 2.6, wheelR: 0.36, sill: 0.8, belt: 1.95, roof: 2.95, cab: [0.6, 0.3], hand: 'fighter', plane: true, fighter: true, jet: true, mass: 2.2, acc: 17, topKph: 780, brakeM: 90, latG: 0.8,
+    // `thrust` is updateFighter's own, in m/s^2 (acc is the shared arcade
+    // figure deriveSpec validates against the ground-drag model)
+    fly: { vr: 62, stall: 46, bank: 1.2, turn: 1.4, climb: 40, vne: 215, thrust: 21 } }),
+  jet: deriveSpec({ retract: true, wheelbase: 6.2, len: 15.0, wid: 1.7, wheelR: 0.30, sill: 0.7, belt: 1.55, roof: 2.45, cab: [0.6, 0.3], hand: 'jet', plane: true, jet: true, mass: 2.0, acc: 9.0, topKph: 540, brakeM: 90, latG: 0.6,
+    fly: { vr: 42, stall: 33, bank: 0.78, turn: 0.80, climb: 26, vne: 150 } }),
+  // The Boeing 747-8, the largest airliner Boeing has built: 76.3 m long,
+  // 68.4 m span, 19.4 m to the fin tip, four GEnx-2B on the wing, 18 wheels.
+  // Heavy and slow to wind up; rotates at ~150 kt. `wid` is the fuselage
+  // (street-scale collision); the wings are drawn wide.
+  jumbo: deriveSpec({ retract: true, wheelbase: 26, len: 76.3, wid: 6.5, wheelR: 0.62, sill: 2.2, belt: 6.0, roof: 10.3, cab: [0.9, 0.3], hand: 'jumbo', plane: true, jet: true, mass: 12, acc: 5.8, topKph: 560, brakeM: 180, latG: 0.4, seeFar: 7000,
+    // climbBase 7 -> 16: pulling back near rotation speed (little excess)
+    // asked for ~7.6 m/s and felt like nothing happened
+    fly: { vr: 72, stall: 58, bank: 0.55, turn: 0.34, climb: 36, climbBase: 16, vne: 150, thrustK: 0.62, pitchK: 3.2 } }),
+  // Boeing-Stearman Model 75: the biplane Boeing built, and the one hanging
+  // in the Museum of Flight next door. A taildragger: it sits 11 degrees nose
+  // up on its tailwheel until the tail lifts at ~15 m/s (`taildragger` is the
+  // three-point attitude and where the main wheels are, which is what it
+  // pivots about). Slow, floaty, and the tightest turner in the hangar.
+  biplane: deriveSpec({ wheelbase: 5.3, len: 7.5, wid: 1.0, wheelR: 0.40, sill: 1.0, belt: 1.5, roof: 2.6, cab: [0.6, 0.3], hand: 'biplane', plane: true, mass: 0.7, acc: 6.0, topKph: 215, brakeM: 55, latG: 0.8,
+    taildragger: { deg: 11, zMain: 2.1, tailUp: 15 },
+    fly: { vr: 20, stall: 15, bank: 0.85, turn: 1.2, climb: 9, vne: 64 } }),
+  // Helicopter: Bell 407 proportions (fuselage 9.5 m, 10.7 m rotor), skids.
+  // `heli` sends update() to updateHeli instead of the fixed-wing model;
+  // `plane` stays set so everything that treats an aircraft as an aircraft
+  // (the flying camera rig, the streamer's altitude feed, no contact shadow,
+  // flying courses) does so. topKph is the cruise the stick asks for.
+  // `pivotY` puts the attitude pivot at the rotor's centre of mass instead of
+  // on the skids, or pitching forward swung the whole cabin out over the nose.
+  heli: deriveSpec({ wheelbase: 3.0, len: 9.9, wid: 1.9, wheelR: 0.3, sill: 0.5, belt: 1.2, roof: 3.1, cab: [0.6, 0.3], hand: 'heli', plane: true, heli: true, mass: 1.2, acc: 6.0, topKph: 230, brakeM: 60, latG: 0.8,
+    pivotY: 1.5,
+    rotor: { climb: 9, sink: 7, accel: 7.5, grip: 14, yaw: 1.35, yawFast: 0.5, back: 10 } }),
+  // THE SAUCER (saucer.js parks it, sometimes): a 1950s 'pie plate' -- an
+  // 11 m polished disc, a glass dome, a ring of lights round the rim that
+  // turns, three legs. It flies on the helicopter's model (hover, collective,
+  // pedal turns) with none of a helicopter's limits, and stays level.
+  saucer: deriveSpec({ wheelbase: 6.0, len: 11.0, wid: 11.0, wheelR: 0.3, sill: 1.2, belt: 2.0, roof: 3.6, cab: [0.2, 0.2], hand: 'saucer', finish: 'chrome', plane: true, heli: true, saucer: true, engine: 'saucer', mass: 2.0, acc: 30, topKph: 1100, brakeM: 30, latG: 2.0,
+    pivotY: 1.6,
+    rotor: { climb: 45, sink: 40, accel: 40, grip: 40, yaw: 2.4, yawFast: 1.2, back: 60 } }),
+  sedan: deriveSpec({ rwd: true, wheelbase: 2.98,len: 5.06, wid: 1.90, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.26, 0.10], hand: 'sedan', mass: 1.0, acc: 4.1, topKph: 205, brakeM: 40, latG: 0.88 }),
+  hatch: deriveSpec({ wheelbase: 2.6,len: 4.10, wid: 1.76, wheelR: 0.31, sill: 0.29, belt: 0.96, roof: 1.50, cab: [-0.30, 0.16], hand: 'hatch', mass: 0.9, acc: 3.6, topKph: 185, brakeM: 41, latG: 0.85 }),
+  compact: deriveSpec({ wheelbase: 2.42,len: 3.74, wid: 1.68, wheelR: 0.29, sill: 0.28, belt: 0.94, roof: 1.48, cab: [-0.28, 0.15], hand: 'compact', mass: 0.85, acc: 3.0, topKph: 170, brakeM: 43, latG: 0.83 }),
+  suv: deriveSpec({ wheelbase: 2.87,len: 4.94, wid: 1.98, wheelR: 0.38, sill: 0.46, belt: 1.30, roof: 1.88, cab: [-0.34, 0.20], hand: 'suv', mass: 1.3, acc: 4.0, topKph: 195, brakeM: 42, latG: 0.8 }),
+  // `hand` sends a type to its own authored builder instead of the shared
+  // loft. sill/belt/roof are then a DESCRIPTION of what that builder draws
+  // rather than an input to it, so they stay readable next to the other rows.
+  sports: deriveSpec({ rwd: true, wheelbase: 2.72,len: 4.42, wid: 1.92, wheelR: 0.34, sill: 0.22, belt: 0.94, roof: 1.32, cab: [-0.24, 0.06], hand: 'sports', mass: 0.85, acc: 7.4, topKph: 275, brakeM: 33, latG: 1.02 }),
+  // Cab-forward and low, on a long wheelbase with almost no overhang -- the
+  // shape a floor full of batteries gives you. Heavier than the sports car and
+  // quicker anyway, because the torque is all there from a standstill.
+  ev: deriveSpec({ wheelbase: 2.96,len: 4.62, wid: 1.98, wheelR: 0.36, sill: 0.23, belt: 0.90, roof: 1.40, cab: [-0.28, 0.09], hand: 'ev', ev: true, mass: 1.2, acc: 9.0, topKph: 235, brakeM: 35, latG: 0.96 }),
+  // The Wedge: an angular stainless electric pickup, one straight roofline
+  // from the nose over the cabin to the covered bed. Fast (the EV's
+  // square-root torque, tuned to ~3 s to 100 on the spec sheet), and TOUGH:
+  // `hp` is its health (every other vehicle has 100), `armor` scales every
+  // hit it takes -- collisions, gunfire, landings -- and the crash and gunfire
+  // damage to whoever is inside. `mass` 2.6 shoves a 1.0 sedan aside.
+  // `finish: 'steel'` is the brushed-metal paint material; the livery keeps it
+  // stainless whatever colour the spawner drew. `engine` is the deeper motor.
+  wedge: deriveSpec({ wheelbase: 3.66, len: 5.68, wid: 2.06, wheelR: 0.445, sill: 0.40, belt: 1.22, roof: 1.88, cab: [-0.16, 0.35], hand: 'wedge', ev: true, engine: 'evtruck', finish: 'steel', livery: 0xb9bdc1, lightbar: [[1.010, 1.94], [1.260, 1.95]], hp: 250, armor: 0.5, mass: 2.6, acc: 11.0, topKph: 200, brakeM: 38, latG: 0.94, rearSteer: 0.175 }),
+  // THE BELLTOWN HELLCAT (an Easter egg): Seattle's most-complained-about car,
+  // a supercharged Dodge Charger that rev-bombed Belltown at 2 am until the
+  // city sued its owner. The muscle car's body in `finish: 'tiger'` (orange,
+  // black stripes, drawn in the paint shader: no UVs needed), the loudest
+  // engine in the city (`engine: 'hellcat'`, audio.js), and quick. Only a
+  // few, and only in Belltown traffic (traffic.js HELLCAT_*).
+  hellcat: deriveSpec({ rwd: true, wheelbase: 3.05,len: 5.10, wid: 2.03, wheelR: 0.36, sill: 0.26, belt: 0.96, roof: 1.47, cab: [-0.30, 0.10], hand: 'charger', engine: 'hellcat', finish: 'tiger', livery: 0xc9ad94, hellcat: true, mass: 1.2, acc: 8.6, topKph: 315, brakeM: 35, latG: 0.95 }),
+  // THE WIENERMOBILE (an Easter egg): Oscar Mayer's hot dog on wheels, 27 ft
+  // long and 11 tall, on a V8 van chassis. One at most, rarely, anywhere in
+  // the city's traffic (traffic.js WIENER_*). `finish: 'wiener'` is its own
+  // paint (wienerShader): the body's vertex colours are its colours, and the
+  // badge, lamps and lettering are drawn on. Its horn plays a tune (audio.js).
+  wiener: deriveSpec({ rwd: true, wheelbase: 4.60, len: 8.23, wid: 2.44, wheelR: 0.39, sill: 0.30, belt: 1.55, roof: 3.30, cab: [0.20, 0.30], hand: 'wiener', finish: 'wiener', livery: 0xffffff, wiener: true, v8: true, paintVC: true, mass: 3.2, acc: 2.9, topKph: 145, brakeM: 48, latG: 0.70, minTurnR: 6.5 }),
+  muscle: deriveSpec({ rwd: true, wheelbase: 2.95,len: 5.02, wid: 1.98, wheelR: 0.35, sill: 0.26, belt: 1.02, roof: 1.40, cab: [-0.24, 0.13], hand: 'muscle', mass: 1.15, acc: 7.0, topKph: 265, brakeM: 36, latG: 0.94 }),
+  // Roofless muscle. `roof` is the top of the windscreen frame, 16 cm under the
+  // coupe's, and there is no greenhouse above the beltline at all -- which is
+  // why the interior has to be built: you look straight down into it.
+  convertible: deriveSpec({ rwd: true, wheelbase: 2.95,len: 4.86, wid: 1.94, wheelR: 0.35, sill: 0.26, belt: 1.00, roof: 1.34, cab: [-0.24, 0.10], hand: 'convertible', mass: 1.10, acc: 6.6, topKph: 250, brakeM: 37, latG: 0.90 }),
+  // Motorcycles. `moto` is not a styling flag: it switches the ground solve to
+  // two contact patches and turns on lean, both of which are wrong for a car
+  // and both of which a bike looks broken without. Light, quick, and with LESS
+  // braking distance in hand and less lateral grip than a car of the same era
+  // -- two contact patches the size of a credit card is what that costs.
+  cruiser: deriveSpec({ wheelbase: 1.66,len: 2.56, wid: 0.95, wheelR: 0.40, sill: 0.30, belt: 0.80, roof: 1.24, cab: [-0.2, 0.1], hand: 'cruiser', moto: true, mass: 0.22, acc: 7.2, topKph: 190, brakeM: 48, latG: 0.80 }),
+  sportbike: deriveSpec({ wheelbase: 1.36,len: 2.05, wid: 0.72, wheelR: 0.32, sill: 0.28, belt: 0.78, roof: 1.18, cab: [-0.2, 0.1], hand: 'sportbike', moto: true, mass: 0.16, acc: 10.2, topKph: 285, brakeM: 40, latG: 1.08 }),
+  // Quad bike. Four wheels, so the car's ground solve and camber roll -- but
+  // a rider (`atv` puts one on, as `moto` does) and handling of its own:
+  // `offroad` skips the grass drag road cars pay and halves the grade term
+  // (low gearing, four driven knobblies), and `minTurnR` tightens the
+  // low-speed lock below every car's 4.5 m. Top speed ~95 km/h, like a
+  // sport quad; 0-80 in about 5 s real, which the arcade punch halves.
+  atv: deriveSpec({ wheelbase: 1.26, len: 2.00, wid: 1.20, wheelR: 0.29, sill: 0.30, belt: 0.80, roof: 1.25, cab: [-0.2, 0.1], hand: 'atv', atv: true, offroad: true, minTurnR: 3.0, mass: 0.34, acc: 8.5, topKph: 125, brakeM: 42, latG: 0.92 }),
+  // A 5.7 m outboard runabout. `boat` sends update() to the hull model
+  // (updateBoat): it floats on the LOCAL water surface and treats anything
+  // shallower than its draft as a wall. `wheelR` is only there because
+  // deriveSpec's callers read it; there are no wheels. `cockpit` is the
+  // floor buildBoat draws: [height over the waterline, aft z, fore z, half-width],
+  // which updateBoat keeps above the water.
+  // A personal watercraft: the boat's physics (boat: true) on a 3.2 m hull
+  // with a rider astride it, quicker to plane and far quicker to turn
+  // (updateBoat reads `jetski`). Moored at the marinas, never traffic.
+  // A hot air balloon (balloon.js-free: it is a Vehicle, flown by updateBalloon).
+  // `len`/`wid` are the BASKET, which is what collides; the envelope is
+  // handled in updateBalloon. `seeFar`: a 21 m balloon is a landmark from
+  // kilometres away, not a quad that can vanish at 80 lengths.
+  balloon: deriveSpec({ wheelbase: 1.3, len: 1.6, wid: 1.6, wheelR: 0.2, sill: 0.2, belt: 1.1, roof: 1.2, cab: [0, 0.1], hand: 'balloon', plane: true, balloon: true, mass: 0.6, acc: 3, topKph: 40, brakeM: 40, latG: 0.5, livery: 0xffffff, seeFar: 4000 }),
+  // A sea kayak, 4.3 m, paddled: strokes alternate sides and the stroke is
+  // the thrust and the steering both (updateKayak). A kayak is a boat to the
+  // water rules -- float, shore, exit onto a deck -- with no engine.
+  kayak: deriveSpec({ wheelbase: 2.6, len: 4.3, wid: 0.64, wheelR: 0.1, sill: 0.1, belt: 0.2, roof: 0.3, cab: [-0.5, 0.3], hand: 'kayak', boat: true, kayak: true, noEngine: true, mass: 0.12, acc: 1.6, topKph: 11, brakeM: 6, latG: 0.4 }),
+  // A city bicycle: a bike to the ground solve and the lean (`moto`), pedalled
+  // (`bicycle`: the rider's legs follow the cranks) and silent (`noEngine`).
+  // 700c wheels, a 1.06 m wheelbase, ~35 km/h on the flat.
+  bicycle: deriveSpec({ wheelbase: 1.06, len: 1.80, wid: 0.62, wheelR: 0.345, sill: 0.28, belt: 0.95, roof: 1.12, cab: [-0.2, 0.1], hand: 'bicycle', moto: true, bicycle: true, noEngine: true, mass: 0.1, acc: 1.7, topKph: 35, brakeM: 14, latG: 0.8 }),
+  jetski: deriveSpec({ wheelbase: 1.8, len: 3.20, wid: 1.20, wheelR: 0.20, sill: 0.3, belt: 0.6, roof: 1.05, cab: [-0.1, 0.1], hand: 'jetski', boat: true, jetski: true, minDepth: 0.12, mass: 0.4, acc: 7.5, topKph: 105, brakeM: 30, latG: 0.9 }),
+  boat: deriveSpec({ wheelbase: 3.2, len: 5.70, wid: 2.20, wheelR: 0.30, sill: 0.4, belt: 0.7, roof: 1.45, cab: [-0.2, 0.1], hand: 'boat', boat: true, minDepth: 0.3, cockpit: [0.12, -2.2, 0.9, 0.86], mass: 1.1, acc: 3.0, topKph: 70, brakeM: 45, latG: 0.6 }),
+  pickup: deriveSpec({ rwd: true, wheelbase: 3.68,len: 5.92, wid: 2.05, wheelR: 0.42, sill: 0.48, belt: 1.26, roof: 1.98, cab: [-0.15, 0.22], hand: 'pickup', mass: 1.4, acc: 4.4, topKph: 185, brakeM: 45, latG: 0.77 }),
+  van: deriveSpec({ wheelbase: 3.5,len: 5.26, wid: 2.00, wheelR: 0.35, sill: 0.36, belt: 1.10, roof: 2.28, cab: [-0.44, 0.30], hand: 'van', boxy: 2, mass: 1.5, acc: 2.9, topKph: 155, brakeM: 47, latG: 0.73 }),
+  taxi: deriveSpec({ rwd: true, wheelbase: 2.98,len: 4.76, wid: 1.85, wheelR: 0.33, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', taxi: true, livery: 0xf0b40c, mass: 1.0, acc: 3.8, topKph: 195, brakeM: 41, latG: 0.85 }),
+  police: deriveSpec({ rwd: true, wheelbase: 2.95,len: 4.98, wid: 1.92, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', police: true, livery: 0xf2f4f6, mass: 1.1, acc: 5.6, topKph: 230, brakeM: 37, latG: 0.93 }),
+  // the articulated bus: the front section and the trailing rear (buildArticFront)
+  artic: deriveSpec({ wheelbase: 5.9, len: 10.6, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'artic', liveries: ARTIC_LIVERIES, bus: true, artic: true, towed: 'articRear', boxy: 3, mass: 6.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
+  articRear: deriveSpec({ wheelbase: 6.4, len: 7.6, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'articRear', liveries: ARTIC_LIVERIES, bus: true, trailer: true, boxy: 3, mass: 3.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
+  // an unlimited hydroplane: a turbine three-pointer that runs on its sponsons (updateHydro)
+  hydro: deriveSpec({ wheelbase: 6.0, len: 9.6, wid: 4.4, wheelR: 0.3, sill: 0.2, belt: 0.6, roof: 1.3, cab: [0.1, 0.35], hand: 'hydro', boat: true, hydro: true, engine: 'turbine', mass: 3.0, acc: 12, topKph: 250, brakeM: 60, latG: 1.6 }),
+  // the Duck Tour's amphibious DUKW: a truck on land, a boat in the water (updateDuck)
+  duck: deriveSpec({ wheelbase: 5.2, len: 9.5, wid: 2.52, wheelR: 0.56, sill: 0.62, belt: 2.05, roof: 3.4, cab: [-0.42, 0.26], hand: 'duck', livery: 0xf2c230, amphib: true, diesel: true, mass: 6.5, acc: 1.35, topKph: 80, brakeM: 55, latG: 0.55 }),
+  // A modern main battle tank, M1A2 proportions: 7.93 m hull (the gun takes
+  // it to 9.8), 3.66 m over the skirts, 2.44 m to the turret roof, ~62 t.
+  // `tank` sends the yaw to skid steering (Vehicle._tankYaw: it pivots on
+  // the spot) and the model to buildTank (tracks, turret and gun are live
+  // parts on the player's tank); `armor` scales the damage it takes. Governed
+  // at ~65 km/h, slow off the line; `offroad` because tracks do not bog down.
+  // `len` is the HULL: the gun overhangs nothing it collides with.
+  tank: deriveSpec({ wheelbase: 4.6, len: 7.93, wid: 3.66, wheelR: 0.32, sill: 0.48, belt: 1.42, roof: 2.44, cab: [0, 0.3], hand: 'tank', tank: true, offroad: true, engine: 'tank', livery: 0xb9a27a, armor: 0.12, mass: 40, acc: 2.0, topKph: 65, brakeM: 45, latG: 0.6 }),
+  bus: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', liveries: METRO_TOPS, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
+  boxtruck: deriveSpec({ wheelbase: 4.3,len: 7.5, wid: 2.38, wheelR: 0.46, sill: 0.62, belt: 1.55, roof: 2.55, cab: [0.14, 0.46], cargo: 2.55, hand: 'boxtruck', boxy: 2, mass: 3.0, acc: 2.5, topKph: 125, brakeM: 51, latG: 0.66 }),
+  ambulance: deriveSpec({ wheelbase: 3.9,len: 6.3, wid: 2.28, wheelR: 0.42, sill: 0.56, belt: 1.42, roof: 2.35, cab: [0.16, 0.46], cargo: 2.25, hand: 'ambulance', livery: 0xf4f4f0, boxy: 2, emergency: true, mass: 2.4, acc: 3.2, topKph: 155, brakeM: 48, latG: 0.72 }),
+  // The police tactical van (wanted 4+, traffic.js spawnPolice 'swat'): heavy,
+  // so its rams shove you, and quick enough to keep up on surface streets.
+  // `police` gives it the cruiser's V8 and the MISSION button (police missions).
+  swat: deriveSpec({ wheelbase: 3.9, len: 6.6, wid: 2.40, wheelR: 0.45, sill: 0.58, belt: 1.46, roof: 2.45, cab: [0.16, 0.46], cargo: 2.3, hand: 'swat', livery: 0x1b2331, boxy: 2, police: true, swat: true, mass: 3.2, acc: 3.9, topKph: 160, brakeM: 48, latG: 0.76 }),
+  garbage: deriveSpec({ wheelbase: 4.6,len: 8.1, wid: 2.48, wheelR: 0.50, sill: 0.66, belt: 1.62, roof: 2.6, cab: [0.20, 0.46], cargo: 2.5, hand: 'garbage', livery: 0x2e6a3f, boxy: 2, mass: 4.0, acc: 1.45, topKph: 90, brakeM: 55, latG: 0.61 }),
+  // Fire apparatus (buildFireEngine / buildTiller): Seattle Fire's red. `fire`
+  // marks them for the water cannon, the station aprons and the fire calls
+  // (firecalls.js); `diesel` gives them the heavy diesel and its air brakes.
+  // Heavy, slow off the line, governed near 110, and a big turning circle
+  // (minTurnR). The tiller is two vehicles like the artic: the tractor
+  // (`towed` names its trailer) and the trailer, which Vehicle.follow places
+  // and its tillerman steers (TILLER.rearSteer).
+  fireengine: deriveSpec({ wheelbase: 5.1, len: 10.0, wid: 2.50, wheelR: 0.52, sill: 0.62, belt: 1.70, roof: 3.05, cab: [0.17, 0.50], hand: 'fireengine', livery: 0xb3121b, diesel: true, fire: true, showR: 340, boxy: 2, mass: 5.5, acc: 2.0, topKph: 112, brakeM: 50, latG: 0.64, minTurnR: 6.0 }),
+  tiller: deriveSpec({ wheelbase: 4.3, len: 6.9, wid: 2.50, wheelR: 0.52, sill: 0.62, belt: 1.70, roof: 3.05, cab: [0.17, 0.50], hand: 'tiller', livery: 0xb3121b, diesel: true, fire: true, showR: 340, towed: 'tillerRear', boxy: 2, mass: 5.0, acc: 1.7, topKph: 105, brakeM: 55, latG: 0.62, minTurnR: 5.2 }),
+  tillerRear: deriveSpec({ wheelbase: 4.0, len: 13.0, wid: 2.50, wheelR: 0.52, sill: 0.66, belt: 1.70, roof: 3.58, cab: [-0.48, -0.36], hand: 'tillerRear', livery: 0xb3121b, diesel: true, fire: true, trailer: true, boxy: 2, mass: 6.0, acc: 1.7, topKph: 105, brakeM: 55, latG: 0.62 }),
+};
+
+/**
+ * Turn the declared class figures into the constants the driving model wants.
+ *
+ * `top` used to be a curve parameter that the code called a top speed, and the
+ * two are not the same number: drag and rolling resistance balance the engine
+ * well before it. Measured, a sedan declaring 42 m/s actually stopped at 27.8,
+ * and NINE of the fifteen types could not reach 100 km/h at all -- including
+ * the pickup, the SUV and the panel van.
+ *
+ * The table now declares what a vehicle DOES: real top speed in km/h, real
+ * 100-0 braking in metres, real lateral grip in g. Everything the integrator
+ * needs is solved from those, so the table can be read against a spec sheet and
+ * `tools/vehicles.mjs` can check it.
+ */
+function deriveSpec(s) {
+  const V = s.topKph / 3.6;                       // target terminal velocity
+  // At terminal: acc * (1 - V/param) == drag + rolling. Solve for param.
+  const resist = DRAG * V * V + ROLL * V;
+  // The EV's pull tails off as sqrt(fade), not linearly, so the same parameter
+  // carries it a good deal further -- solved as if it were linear it overshot
+  // its declared top by 47 km/h.
+  s.acc *= ARCADE_PUNCH;
+  const frac = s.ev ? 1 - (resist / s.acc) ** 2 : 1 - resist / s.acc;
+  // A vehicle whose launch acceleration cannot even overcome its own drag at
+  // the declared top speed is a table error, not a tuning choice.
+  if (frac <= 0.02) {
+    throw new Error(`vehicle spec: acc ${s.acc} too low to reach ${s.topKph} km/h`);
+  }
+  s.fadeTop = V / frac;
+  // 100-0 in `brakeM` metres, at constant deceleration: a = v^2 / 2d.
+  // Drag and rolling resistance help stop the car too, so the brakes have to
+  // supply the target deceleration MINUS what the air and the tyres already
+  // give. Ignoring it made every vehicle stop about 15 % shorter than declared.
+  const vMean = V0_100 / 2;
+  s.brakeA = ((V0_100 * V0_100) / (2 * s.brakeM) - (DRAG * vMean * vMean + ROLL * vMean))
+    * ARCADE_BRAKE;
+  // Lateral limit in m/s^2, which is what the friction circle below compares.
+  s.latA = s.latG * 9.81;
+  return s;
+}
+
+// Weighted by repetition. Two bikes in eighteen is about one vehicle in nine,
+// which is a summer afternoon in a American city and not a bike show.
+/**
+ * What actually drives past, weighted like an American city.
+ *
+ * This was a flat array sampled uniformly, so a refuse truck was exactly as
+ * likely to appear as a hatchback and heavy freight was a fifth of all traffic
+ * -- both moving and parked at the kerb. Sedans, SUVs and pickups are most of
+ * what a Seattle street holds, and they should be most of what spawns.
+ */
+export const CIVILIAN_TYPES = [
+  ...Array(9).fill('sedan'),
+  ...Array(8).fill('suv'),
+  ...Array(7).fill('pickup'),
+  ...Array(4).fill('compact'),
+  ...Array(4).fill('hatch'),
+  ...Array(3).fill('ev'),
+  // (one of the three taxi slots is the articulated bus: in place, so every
+  // other slot, and the hash-picked kerbside cars, keep their types)
+  ...Array(2).fill('taxi'), 'artic',
+  ...Array(3).fill('van'),
+  ...Array(2).fill('muscle'),
+  ...Array(2).fill('sports'),
+  ...Array(2).fill('cruiser'),
+  'convertible', 'sportbike', 'boxtruck', 'bus', 'garbage',
+];
+
+export const CAR_COLORS = [
+  0x9fa4a9, 0x1b1d20, 0xe6e8ea, 0x6d0f14, 0x102b52, 0x14472f, 0x7a5a22,
+  0x2f3a44, 0x9c968c, 0x4a2058, 0xb85f0c, 0x0d5b66, 0x5b5f63, 0xbcc2c8,
+  0x243b6b, 0x7d2418,
+];
+
+// ---------------------------------------------------------------------------
+// Geometry
+// ---------------------------------------------------------------------------
+
+/**
+ * One wheel: tyre with a real sidewall into `matte`; rim, spokes, brake disc
+ * and caliper into `trim`.
+ *
+ * What this replaced was 14 segments of flat tread, no sidewall at all, and
+ * alternating triangles across a disc standing in for spokes -- on the one
+ * part of a car a player is always looking at. A wheel is a lathe, so it is
+ * built as a lathe: a chain of bands of revolution between (x, radius) pairs,
+ * with the normal for each band derived from its own slope so the tread crown
+ * and the sidewall bulge shade as curves rather than as facets.
+ *
+ * `out` is which way the OUTBOARD face points, +1 or -1. The spokes, disc and
+ * caliper are only built on that side: the inboard face is never seen, and
+ * building both doubles the cost on every vehicle in the fleet.
+ *
+ * `out` 0 dresses BOTH faces and skips the plain inboard dish. That is for a
+ * motorcycle, whose wheels are on the centreline: there is no inboard side, a
+ * player walks round the bike, and a dished blank facing the kerb would be the
+ * most obvious thing on it.
+ */
+function addWheel(trim, matte, cx, cy, cz, r, w, out = 1, knobby = false, kind = null) {
+  if (kind === 'bike') { bikeWheel(trim, matte, cx, cy, cz, r, w); return; }
+  // (the Belltown Hellcat's are rounder: three of it about at most)
+  // 'polish' (the Wienermobile): the fleet's five spokes, polished, and as round as 'black'
+  const SEG = kind === 'black' || kind === 'polish' ? 30 : 18;
+  // Knob tops at the rolling radius, the carcass under them: the wheel
+  // still stands on `r`, as the ground solve assumes.
+  if (knobby) { knobs(matte, cx, cy, cz, r, w); r *= 0.9; }
+  const hw = w / 2;
+  // where the tyre grips the rim; an off-road tyre is mostly sidewall
+  const bead = r * (knobby ? 0.60 : kind === 'black' ? 0.78 : 0.70);
+  const ang = (i) => (i / SEG) * Math.PI * 2;
+
+  /**
+   * Band of revolution about the axle from (x0, r0) to (x1, r1). `hint` is a
+   * rough outward direction in (x, radial) so the band faces the right way --
+   * the sign cannot be derived from the slope alone, because a sidewall that
+   * bulges out and then tucks back in reverses it halfway along.
+   */
+  const band = (b, x0, r0, x1, r1, col, hint) => {
+    let nx = -(r1 - r0), nr = x1 - x0;
+    const l = Math.hypot(nx, nr) || 1;
+    nx /= l; nr /= l;
+    if (nx * hint[0] + nr * hint[1] < 0) { nx = -nx; nr = -nr; }
+    for (let i = 0; i < SEG; i++) {
+      const a0 = ang(i), a1 = ang(i + 1);
+      const c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
+      const n0 = [nx, nr * c0, nr * s0], n1 = [nx, nr * c1, nr * s1];
+      b.quad(
+        [cx + x0, cy + c0 * r0, cz + s0 * r0], [cx + x0, cy + c1 * r0, cz + s1 * r0],
+        [cx + x1, cy + c1 * r1, cz + s1 * r1], [cx + x1, cy + c0 * r1, cz + s0 * r1],
+        [n0, n1, n1, n0], [0, 0, 1, 0, 1, 1, 0, 1], col);
+    }
+  };
+  const disc = (b, x, r0, r1, dir, col) => {
+    for (let i = 0; i < SEG; i++) {
+      const a0 = ang(i), a1 = ang(i + 1);
+      b.quad(
+        [cx + x, cy + Math.cos(a0) * r0, cz + Math.sin(a0) * r0],
+        [cx + x, cy + Math.cos(a1) * r0, cz + Math.sin(a1) * r0],
+        [cx + x, cy + Math.cos(a1) * r1, cz + Math.sin(a1) * r1],
+        [cx + x, cy + Math.cos(a0) * r1, cz + Math.sin(a0) * r1],
+        [dir, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], col);
+    }
+  };
+
+  // tread, crowned so the contact patch is not a flat ribbon
+  band(matte, -hw, r * 0.955, -hw * 0.52, r, TYRE, [0, 1]);
+  band(matte, -hw * 0.52, r, hw * 0.52, r, TYRE, [0, 1]);
+  band(matte, hw * 0.52, r, hw, r * 0.955, TYRE, [0, 1]);
+  // `kind` 'black' (the Belltown Hellcat): gloss-black rims, ten spokes
+  const rimC = kind === 'black' ? RIM_BLACK : kind === 'polish' ? CHROME : RIM, hubC = kind === 'black' ? HUB_BLACK : HUB;
+  for (const sx of [-1, 1]) {
+    band(matte, sx * hw, r * 0.955, sx * hw * 1.10, r * 0.87, TYRE, [sx, 0.5]);
+    band(matte, sx * hw * 1.10, r * 0.87, sx * hw * 0.96, bead, TYRE, [sx, 0.3]);
+    band(trim, sx * hw * 0.96, bead, sx * hw * 0.55, bead * 0.99, rimC, [0, 1]);
+  }
+  // inboard face is a plain dish -- nothing behind a car's wheel is ever in
+  // frame, and a bike (out 0) has no inboard face to hide
+  if (out !== 0) disc(trim, -out * hw * 0.55, bead * 0.99, r * 0.16, -out, hubC);
+
+  const dress = (o) => {
+    const face = o * hw * 0.55;       // rim face plane, set in from the sidewall
+    // brake disc first, so it shows through the gaps between spokes
+    band(trim, face * 0.30, r * 0.60, face * 0.46, r * 0.60, DISC, [0, 1]);
+    disc(trim, face * 0.46, r * 0.60, r * 0.22, o, DISC);
+    const ca = 2.35;
+    trim.tube(
+      [cx + face * 0.14, cy + Math.cos(ca - 0.34) * r * 0.52, cz + Math.sin(ca - 0.34) * r * 0.52],
+      [cx + face * 0.14, cy + Math.cos(ca + 0.34) * r * 0.52, cz + Math.sin(ca + 0.34) * r * 0.52],
+      r * 0.11, 6, CALIPER, true);
+
+    disc(trim, face, bead * 0.99, bead * 0.88, o, rimC);            // rim lip
+    band(trim, face, bead * 0.88, face * 0.62, bead * 0.88, rimC, [0, 1]);
+    // 'black': five split spokes, each a pair spreading toward the rim
+    const SPOKES = kind === 'black' ? 10 : 5;
+    const hubR = r * 0.20, spokeX = face * 0.62;
+    for (let s = 0; s < SPOKES; s++) {
+      const a = SPOKES > 5 ? (Math.floor(s / 2) / 5) * Math.PI * 2 + 0.35 + (s % 2 ? 0.13 : -0.13)
+        : (s / SPOKES) * Math.PI * 2 + 0.35;
+      const p = (rr, da, x) => [cx + x, cy + Math.cos(a + da) * rr, cz + Math.sin(a + da) * rr];
+      const wo = SPOKES > 5 ? 0.12 : 0.30, wi = SPOKES > 5 ? 0.09 : 0.17;
+      trim.quad(p(bead * 0.89, -wo, face), p(bead * 0.89, wo, face), p(hubR, wi, spokeX), p(hubR, -wi, spokeX),
+        [o, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], rimC);
+      // sides, so a spoke has depth and catches the light along its edge
+      for (const sg of [-1, 1]) {
+        trim.quad(p(bead * 0.89, sg * wo, face), p(hubR, sg * wi, spokeX),
+          p(hubR, sg * wi, spokeX - o * 0.03), p(bead * 0.89, sg * wo, face - o * 0.03),
+          [0, -Math.sin(a + sg * wo) * sg, Math.cos(a + sg * wo) * sg], [0, 0, 1, 0, 1, 1, 0, 1], hubC);
+      }
+    }
+    disc(trim, spokeX, hubR, r * 0.05, o, hubC);
+    disc(trim, spokeX + o * 0.012, r * 0.09, 0.001, o, kind === 'black' ? HUB_BLACK : CHROME);
+  };
+  // `kind` 'aero' (the Wedge): a flat-faceted cover over the whole rim instead
+  // of spokes -- a shallow twelve-sided pyramid in two greys, so it reads as a
+  // cover and still shows the wheel turning.
+  const aero = (o) => {
+    const face = o * hw * 0.55, N = 12, r0 = bead * 0.93, r1 = r * 0.13, bulge = o * 0.03;
+    disc(trim, face, bead * 0.99, r0, o, RIM);
+    for (let s = 0; s < N; s++) {
+      const a0 = (s / N) * Math.PI * 2, a1 = ((s + 1) / N) * Math.PI * 2;
+      const at = (a, rr, x) => [cx + x, cy + Math.cos(a) * rr, cz + Math.sin(a) * rr];
+      const A = at(a0, r0, face), B = at(a1, r0, face), C = at(a1, r1, face + bulge), D = at(a0, r1, face + bulge);
+      const ux = B[0] - A[0], uy = B[1] - A[1], uz = B[2] - A[2], vx = D[0] - A[0], vy = D[1] - A[1], vz = D[2] - A[2];
+      let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const l = Math.hypot(nx, ny, nz) || 1;
+      if (nx * o < 0) { nx = -nx; ny = -ny; nz = -nz; }
+      trim.quad(A, B, C, D, [nx / l, ny / l, nz / l], [0, 0, 1, 0, 1, 1, 0, 1], s % 2 ? AERO_A : AERO_B);
+    }
+    disc(trim, face + bulge, r1, 0.001, o, AERO_A);
+  };
+  // `kind` 'black' (the Belltown Hellcat): five split spokes in gunmetal --
+  // each a pair of arms, apart at the rim and meeting near the hub, dished
+  // deep toward the centre -- the lip of the rim proud round them.
+  const split = (o) => {
+    const face = o * hw * 0.58, deep = face * 0.20;
+    band(trim, face * 0.30, r * 0.62, face * 0.46, r * 0.62, DISC_DARK, [0, 1]);
+    disc(trim, face * 0.46, r * 0.62, r * 0.22, o, DISC_DARK);
+    const ca = 2.35;
+    trim.tube(
+      [cx + face * 0.12, cy + Math.cos(ca - 0.40) * r * 0.54, cz + Math.sin(ca - 0.40) * r * 0.54],
+      [cx + face * 0.12, cy + Math.cos(ca + 0.40) * r * 0.54, cz + Math.sin(ca + 0.40) * r * 0.54],
+      r * 0.12, 8, CALIPER, true);
+    disc(trim, face, bead * 0.99, bead * 0.90, o, RIM_LIP);           // the lip, brighter
+    band(trim, face, bead * 0.90, face * 0.5, bead * 0.90, RIM_BLACK, [0, 1]);
+    const hubR = r * 0.17, rimR = bead * 0.90;
+    // an arm: from the hub (angle a0, half-width w0) to the rim (a1, w1), its
+    // face bowing out between them, with two sides so it has depth
+    const arm = (a0, a1, w0, w1) => {
+      const N = 4, F = [], B = [];
+      for (let k = 0; k <= N; k++) {
+        const t = k / N, rr = lp(hubR, rimR, t), a = lp(a0, a1, t), hwid = lp(w0, w1, t) / rr;
+        const x = lp(deep, face, Math.sqrt(t)) + o * 0.004;
+        const P = (da, dx) => [cx + x - dx, cy + Math.cos(a + da) * rr, cz + Math.sin(a + da) * rr];
+        F.push([P(-hwid, 0), P(hwid, 0)]);
+        B.push([P(-hwid, o * 0.035), P(hwid, o * 0.035)]);
+      }
+      trim.patch(F, RIM_BLACK, [o, 0, 0]);
+      const am = (a0 + a1) / 2;
+      for (const sd of [0, 1]) {
+        const sg = sd ? 1 : -1;
+        trim.patch(F.map((f, k) => [f[sd], B[k][sd]]), HUB_BLACK, [0, -Math.sin(am) * sg, Math.cos(am) * sg]);
+      }
+    };
+    for (let sp = 0; sp < 5; sp++) {
+      const A = (sp / 5) * Math.PI * 2 + 0.35;
+      arm(A - 0.045, A - 0.20, 0.016, 0.027);
+      arm(A + 0.045, A + 0.20, 0.016, 0.027);
+    }
+    disc(trim, deep, hubR * 1.05, r * 0.05, o, RIM_BLACK);
+    disc(trim, deep + o * 0.01, r * 0.08, 0.001, o, HUB_BLACK);
+  };
+  const lp = (a, b, t) => a + (b - a) * t;
+  const finish = kind === 'aero' ? aero : kind === 'black' ? split : dress;
+  if (out === 0) { finish(1); finish(-1); } else finish(out);
+}
+
+/**
+ * Knobbly tread for an off-road tyre: blocks standing proud of the crown in
+ * two staggered rows, the shoulder rows wrapping over the edge of the
+ * sidewall. A plain crowned tyre on a quad reads as a lawnmower's. Each knob
+ * is five faces of a block laid in the wheel's own (axle, radial, tangent)
+ * frame, so it turns with the wheel group like the rest of the tyre.
+ */
+function knobs(matte, cx, cy, cz, r, w) {
+  const N = 14, hw = w / 2, h = r * 0.12;
+  const block = (x0, x1, a, da, r0) => {
+    const r1 = r0 + h;
+    const P = (x, rr, aa) => [cx + x, cy + Math.cos(aa) * rr, cz + Math.sin(aa) * rr];
+    const a0 = a - da, a1 = a + da;
+    const up = [0, Math.cos(a), Math.sin(a)], t0 = [0, -Math.sin(a0), Math.cos(a0)], t1 = [0, Math.sin(a1), -Math.cos(a1)];
+    const uv = [0, 0, 1, 0, 1, 1, 0, 1];
+    matte.quad(P(x0, r1, a0), P(x1, r1, a0), P(x1, r1, a1), P(x0, r1, a1), up, uv, TYRE);
+    matte.quad(P(x0, r0, a0), P(x1, r0, a0), P(x1, r1, a0), P(x0, r1, a0), [0, -t0[1], -t0[2]], uv, TYRE);
+    matte.quad(P(x0, r0, a1), P(x1, r0, a1), P(x1, r1, a1), P(x0, r1, a1), [0, -t1[1], -t1[2]], uv, TYRE);
+    matte.quad(P(x0, r0, a0), P(x0, r0, a1), P(x0, r1, a1), P(x0, r1, a0), [-1, 0, 0], uv, TYRE);
+    matte.quad(P(x1, r0, a0), P(x1, r0, a1), P(x1, r1, a1), P(x1, r1, a0), [1, 0, 0], uv, TYRE);
+  };
+  const da = Math.PI / N * 0.42;
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2;
+    // centre row alternates sides; the shoulder blocks sit on the other half-turn
+    const s = i % 2 ? 1 : -1;
+    block(s * hw * 0.04, s * hw * 0.66, a, da, r - h);
+    block(-s * hw * 0.60, -s * hw * 1.04, a + Math.PI / N, da * 0.9, r - h * 1.25);
+  }
+}
+
+/**
+ * A recess set into a body surface, facing +Z (`dir` 1) or -Z (`dir` -1).
+ *
+ * There is no boolean operation in this builder, so an aperture cannot be cut
+ * out of a lofted shell, and a pocket sunk flush z-fights with the paint behind
+ * it. The rim therefore stands about a centimetre PROUD of the surface: it
+ * hides the skin behind it from every angle a car is seen from, and what reads
+ * is a real opening rather than a black rectangle painted on the nose. This is
+ * the difference between a grille and a decal, and between an exhaust outlet
+ * and a pipe stuck on the bumper.
+ *
+ * Returns the back plane so the caller can put a lens or a mesh in it.
+ */
+function pocket(rimB, wallB, cx, cy, cz, hw, hh, depth, dir, o = {}) {
+  const { rim = 0.03, lip = 0.022, rimCol = WHITE, wallCol = CAVITY, taper = 0.88 } = o;
+  const zf = cz + dir * lip, zb = cz - dir * depth;
+  const rect = (x, y, z) => [[cx - x, cy - y, z], [cx + x, cy - y, z], [cx + x, cy + y, z], [cx - x, cy + y, z]];
+  const A = rect(hw + rim, hh + rim, zf), B = rect(hw, hh, zf);
+  const C = rect(hw * taper, hh * taper, zb), D = rect(hw + rim, hh + rim, cz - dir * 0.01);
+  for (let i = 0; i < 4; i++) {
+    const j = (i + 1) % 4;
+    const ox = (A[i][0] + A[j][0]) / 2 - cx, oy = (A[i][1] + A[j][1]) / 2 - cy;
+    const l = Math.hypot(ox, oy) || 1;
+    rimB.quad(A[i], A[j], B[j], B[i], [0, 0, dir], [0, 0, 1, 0, 1, 1, 0, 1], rimCol);
+    rimB.quad(A[i], A[j], D[j], D[i], [ox / l, oy / l, 0], [0, 0, 1, 0, 1, 1, 0, 1], rimCol);
+    wallB.quad(B[i], B[j], C[j], C[i], [-ox / l, -oy / l, 0], [0, 0, 1, 0, 1, 1, 0, 1], wallCol);
+  }
+  wallB.quad(C[0], C[1], C[2], C[3], [0, 0, dir], [0, 0, 1, 0, 1, 1, 0, 1], wallCol);
+  return { z: zb, hw: hw * taper, hh: hh * taper };
+}
+
+/**
+ * Flat end face with the apertures genuinely cut out of it.
+ *
+ * `loft`'s cap is a solid triangle fan, so a `pocket` sunk into a capped end
+ * looks straight back at painted bodywork a few centimetres behind the rim --
+ * the grille and the headlamps come out as flat plates with a raised outline
+ * and no depth at all. It does NOT show up in a render, which reads as "the
+ * recess is too shallow"; a raycast down the middle of the grille returned
+ * `paint` at z 2.21 with the pocket's own back panel 12 cm further in, which is
+ * one step from the cause. Same lesson as the wheel-well slab.
+ *
+ * The face is built as horizontal bands with the aperture x-spans subtracted,
+ * so there is nothing behind a hole. `prof` is [[y, halfWidth], ...] ascending
+ * in y -- the end section's own outline, so the face follows the bodywork.
+ * `holes` are [xCentre, yCentre, halfW, halfH] and mirror themselves in x.
+ */
+function endFace(b, z, dir, prof, holes, col) {
+  const y0 = prof[0][0], y1 = prof[prof.length - 1][0];
+  const hwAt = (y) => {
+    if (y <= y0 || y >= y1) return 0;
+    for (let i = 1; i < prof.length; i++) {
+      if (y <= prof[i][0]) {
+        const t = (y - prof[i - 1][0]) / ((prof[i][0] - prof[i - 1][0]) || 1);
+        return prof[i - 1][1] + (prof[i][1] - prof[i - 1][1]) * t;
+      }
+    }
+    return 0;
+  };
+  const cuts = new Set();
+  for (const [, hy, , hh] of holes) { cuts.add(hy - hh); cuts.add(hy + hh); }
+  // Every station of the outline is a band edge too. Banded only at the holes,
+  // a face with none is three quads whose top one runs from full width down to
+  // the crown's zero -- a 2 m cargo box's front face came out as a triangle
+  // standing up above the cab.
+  for (const [py] of prof) cuts.add(py);
+  const edges = [y0, ...[...cuts].filter((y) => y > y0 && y < y1).sort((a, c) => a - c), y1];
+  const n = [0, 0, dir];
+  const clip = (x, y) => Math.max(-hwAt(y), Math.min(hwAt(y), x));
+  for (let i = 0; i < edges.length - 1; i++) {
+    // No subdivision: every station of the outline is already a band edge
+    // (above), so the outer edge is exactly linear across each band. Splitting
+    // each one in three as well was ~250 triangles a car that drew nothing new.
+    const SUB = 1;
+    for (let k = 0; k < SUB; k++) {
+      const ya = edges[i] + ((edges[i + 1] - edges[i]) * k) / SUB;
+      const yb = edges[i] + ((edges[i + 1] - edges[i]) * (k + 1)) / SUB;
+      const mid = (ya + yb) / 2;
+      const bad = [];
+      for (const [hx, hy, hw, hh] of holes) {
+        if (Math.abs(mid - hy) >= hh) continue;
+        bad.push([hx - hw, hx + hw]);
+        if (hx !== 0) bad.push([-hx - hw, -hx + hw]);
+      }
+      bad.sort((p, q) => p[0] - q[0]);
+      const lim = Math.max(hwAt(ya), hwAt(yb));
+      const spans = [];
+      let x = -lim;
+      for (const [a, c] of bad) { if (a > x) spans.push([x, Math.min(a, lim)]); x = Math.max(x, c); }
+      if (x < lim) spans.push([x, lim]);
+      for (const [xa, xb] of spans) {
+        if (xb - xa < 1e-4) continue;
+        b.quad([clip(xa, ya), ya, z], [clip(xb, ya), ya, z], [clip(xb, yb), yb, z], [clip(xa, yb), yb, z],
+          n, [0, 0, 1, 0, 1, 1, 0, 1], col);
+      }
+    }
+  }
+}
+
+/** Round version of `pocket` -- exhaust outlets, intakes. */
+function hole(rimB, wallB, cx, cy, cz, r, depth, dir, o = {}) {
+  const { rim = 0.022, lip = 0.016, seg = 12, rimCol = CHROME, wallCol = CAVITY } = o;
+  const zf = cz + dir * lip, zb = cz - dir * depth;
+  const at = (i, rr, z) => [cx + Math.cos((i / seg) * Math.PI * 2) * rr, cy + Math.sin((i / seg) * Math.PI * 2) * rr, z];
+  for (let i = 0; i < seg; i++) {
+    const j = i + 1;
+    const mx = Math.cos(((i + 0.5) / seg) * Math.PI * 2), my = Math.sin(((i + 0.5) / seg) * Math.PI * 2);
+    rimB.quad(at(i, r + rim, zf), at(j, r + rim, zf), at(j, r, zf), at(i, r, zf), [0, 0, dir], [0, 0, 1, 0, 1, 1, 0, 1], rimCol);
+    rimB.quad(at(i, r + rim, zf), at(j, r + rim, zf), at(j, r + rim, cz - dir * 0.02), at(i, r + rim, cz - dir * 0.02),
+      [mx, my, 0], [0, 0, 1, 0, 1, 1, 0, 1], rimCol);
+    wallB.quad(at(i, r, zf), at(j, r, zf), at(j, r * 0.9, zb), at(i, r * 0.9, zb), [-mx, -my, 0], [0, 0, 1, 0, 1, 1, 0, 1], wallCol);
+    wallB.tri([cx, cy, zb], at(i, r * 0.9, zb), at(j, r * 0.9, zb), [0, 0, dir], wallCol);
+  }
+}
+
+/** Smooth curve through authored key stations, keyed on z. Keys ascend in z. */
+function curve(keys) {
+  return (z) => {
+    if (z <= keys[0][0]) return keys[0][1];
+    for (let i = 1; i < keys.length; i++) {
+      if (z <= keys[i][0]) {
+        const [z0, v0] = keys[i - 1], [z1, v1] = keys[i];
+        const t = (z - z0) / (z1 - z0);
+        // smoothstep, so the surface has no kink where two stations meet
+        return v0 + (v1 - v0) * t * t * (3 - 2 * t);
+      }
+    }
+    return keys[keys.length - 1][1];
+  };
+}
+
+/**
+ * The shared half of an authored body: the lofted volume, the wheel arches and
+ * the end profiles the fascias are cut into.
+ *
+ * What is shared here is the TECHNIQUE, not the shape. Every number that
+ * decides what the car looks like is a curve the caller writes; this function
+ * only knows how to turn five curves into a shell with real arch openings and
+ * to hand back the section so the caller can register panels against it. That
+ * distinction is the whole difference from `buildGeneric`, where the shape
+ * itself came out of one parameterised tube.
+ */
+function bodyCore(spec, paint, matte, cfg) {
+  const {
+    halfW, sillY, beltY, tuckAt, topAt, zF, zR,
+    archR = 0.55, archGap = 0.05, archPow = 2, creaseAt = 0.60, tumble = 0.90,
+    deckDrop = 0.030, lipOut = 0.07, endRound = 0.12, endMin = 0.88,
+    lipInto = paint, lipCol = WHITE, deckDip = null,
+    stations = 44,
+  } = cfg;
+  const W = spec.wid / 2, wr = spec.wheelR;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const archTop = wr * 2 + archGap;              // the opening clears the tyre
+  // `archPow` squares the opening off. 2 is a semicircle, which is a car; above
+  // that the corners pull out toward a rectangle, which is what a truck or a
+  // crossover has, and it is visible in silhouette from across a street.
+  // Everything downstream reads the arch through this ONE function -- the lip
+  // takes its y from `half()` and the liner calls `archShape` itself -- so a
+  // change of profile cannot leave the lip trimming a differently-shaped hole.
+  const archShape = (u) => (1 - Math.abs(u) ** archPow) ** (1 / archPow);
+  const archLift = (z) => {
+    let l = 0;
+    for (const az of [zR, zF]) {
+      const d = Math.abs(z - az);
+      if (d < archR) l = Math.max(l, archTop * archShape(d / archR));
+    }
+    return l;
+  };
+
+  const geom = (z) => {
+    const w = W * halfW(z);
+    const y0 = Math.max(sillY(z), archLift(z));
+    const y1 = beltY(z);
+    const h = Math.max(0.10, y1 - y0);
+    return { w, wb: w * tuckAt(z), tw: w * topAt(z), y0, y1, h, yc: y0 + h * creaseAt };
+  };
+
+  // Half the body section, sill to deck centre. Two points are DOUBLED -- the
+  // shoulder crease and the bonnet crest. `loft` averages a point's normals
+  // from its neighbours, so a single corner shades as a soft radius however
+  // sharp the numbers are; two coincident points give the surfaces either side
+  // their own normal and the flank gets a hard folded line down it. That line
+  // is most of what says a body was styled rather than extruded.
+  //
+  // `deckDip` sinks the two innermost points to a floor height, which turns
+  // the closed deck into an open tub -- the convertible's cockpit. It is done
+  // HERE, in the section, rather than by laying an interior over the deck,
+  // because there is no boolean operation in this builder: bodywork drawn at
+  // the beltline across the middle of the car hides anything put underneath it,
+  // and no amount of interior helps if the lid is still on.
+  const half = (z, s) => {
+    const g = geom(z);
+    const dip = deckDip ? Math.max(deckDip(z), g.y0 + 0.06) : null;
+    if (dip !== null && dip < g.y1 - 0.02) {
+      return [
+        [s * g.wb * 0.58, g.y0],
+        [s * g.wb, g.y0 + g.h * 0.06],
+        [s * g.w * 0.975, g.y0 + g.h * 0.30],
+        [s * g.w, g.yc - g.h * 0.10],
+        [s * g.w, g.yc],
+        [s * g.w, g.yc + 0.006],
+        [s * g.w * 0.965, g.yc + g.h * 0.16],
+        [s * g.w * tumble, g.y1 - g.h * 0.22],
+        [s * g.tw, g.y1 - deckDrop],
+        [s * g.tw * 0.965, g.y1 - deckDrop - 0.030],   // the door's inner lip
+        [s * g.tw * 0.72, dip],                        // tub wall, then floor
+        [s * g.tw * 0.24, dip],
+      ];
+    }
+    return [
+      [s * g.wb * 0.58, g.y0],
+      [s * g.wb, g.y0 + g.h * 0.06],            // sill outer -- the arch edge
+      [s * g.w * 0.975, g.y0 + g.h * 0.30],
+      [s * g.w, g.yc - g.h * 0.10],
+      [s * g.w, g.yc],
+      [s * g.w, g.yc + 0.006],                  // crease, doubled
+      [s * g.w * 0.965, g.yc + g.h * 0.16],
+      [s * g.w * tumble, g.y1 - g.h * 0.22],    // tumblehome
+      [s * g.tw, g.y1 - deckDrop],              // shoulder / deck edge
+      [s * g.tw * 0.995, g.y1 - deckDrop + 0.008],
+      [s * g.tw * 0.70, g.y1],
+      [s * g.tw * 0.24, g.y1 + 0.008],
+    ];
+  };
+  const P_SILL = 1;                             // index into half(), above
+
+  // The last few centimetres at each end roll in, so the nose and tail have a
+  // radius rather than a sheared-off edge. Not to a point, though: what is left
+  // is the fascia the lamps and the grille are set into.
+  const endK = (z) => {
+    const e = Math.min((nose - z) / endRound, (z - tail) / endRound);
+    return e >= 1 ? 1 : endMin + (1 - endMin) * Math.sqrt(Math.max(0, e));
+  };
+  const bodyRings = [];
+  for (let i = 0; i <= stations; i++) {
+    const z = tail + (nose - tail) * (i / stations);
+    const g = geom(z), mid = (g.y0 + g.y1) / 2, k = endK(z);
+    bodyRings.push({
+      z,
+      pts: [...half(z, -1), ...half(z, 1).reverse()].map(([x, y]) => [x * k, mid + (y - mid) * k]),
+    });
+  }
+  // Uncapped: `endFace` closes both ends, with the apertures cut out of them.
+  paint.loft(bodyRings, WHITE, { capStart: false, capEnd: false });
+
+  // Wheel arches: a flared lip outside, a dark liner tunnelled in behind it.
+  // Both walk the same angles and read their x from the same `half` that drew
+  // the body, so the lip cannot drift off the opening it is trimming -- the
+  // arithmetic that would have to be kept in step simply does not exist.
+  const arch = (az, sx) => {
+    // Where the opening meets the sill, inverted through `archShape` rather
+    // than assumed to be a sine -- with a squared arch the two differ by enough
+    // to leave the lip hanging in mid-air at both ends.
+    const s = Math.min(0.99, sillY(az) / archTop);
+    const th0 = Math.acos((1 - s ** archPow) ** (1 / archPow)) + 0.04;
+    const N = 12;
+    const lip = [[], [], []], liner = [[], [], [], []];
+    // The liner closes over toward the axle, so an arch is a dark cavity from
+    // every angle rather than a hole you can see daylight through.
+    const inner = [[0.008, 1.00], [0.26, 1.00], [0.30, 0.74], [0.31, 0.26]];
+    for (let i = 0; i <= N; i++) {
+      const th = th0 + ((Math.PI - 2 * th0) * i) / N;
+      const z = az + Math.cos(th) * archR;
+      const [lx, ly] = half(z, sx)[P_SILL];
+      lip[0].push([lx, ly, z]);
+      lip[1].push([lx + sx * lipOut, ly - 0.014, z]);
+      lip[2].push([lx + sx * lipOut * 0.66, ly - 0.058, z]);
+      for (let k = 0; k < 4; k++) {
+        const [inset, t] = inner[k];
+        liner[k].push([lx - sx * inset,
+          wr * 0.42 + (archTop * 0.97 * archShape(Math.cos(th)) - wr * 0.42) * t,
+          az + Math.cos(th) * archR * 0.97 * t]);
+      }
+    }
+    lipInto.patch(lip, lipCol, [sx, 0.2, 0]);
+    matte.patch(liner, CAVITY, [-sx, 0, 0]);
+  };
+  for (const az of [zF, zR]) for (const sx of [-1, 1]) arch(az, sx);
+
+  return {
+    geom,
+    half,
+    /**
+     * A point of the DRAWN shell: `half` with the end roll-in applied, pushed
+     * `d` metres out along the section. A lens or a stripe laid on the flank
+     * near an end has to follow the shell as lofted -- `half` is the section
+     * before the nose rolls in, and a patch built from it stands off the paint
+     * by up to 12 % of the section there.
+     */
+    surf: (z, s, i, d = 0) => {
+      const g = geom(z), mid = (g.y0 + g.y1) / 2, k = endK(z);
+      const [x, y] = half(z, s)[i];
+      const px = x * k, py = mid + (y - mid) * k;
+      const l = Math.hypot(px, py - mid) || 1;
+      return [px + (px / l) * d, py + ((py - mid) / l) * d, z];
+    },
+    /** The end section as [[y, halfWidth], ...] ascending, for `endFace`. */
+    endProf: (z) => {
+      const g = geom(z), mid = (g.y0 + g.y1) / 2, k = endK(z);
+      return half(z, 1).map(([x, y]) => [mid + (y - mid) * k, x * k]);
+    },
+  };
+}
+
+/**
+ * The sports car, modelled rather than parameterised.
+ *
+ * The technique, which is the point of this function and is meant to be copied
+ * for the rest of the fleet:
+ *
+ *  1. The main volume is still a loft, but through ~44 stations driven by
+ *     SEPARATE authored curves for half-width, sill height and beltline. One
+ *     curve per feature is what lets the nose be low while the cowl rises and
+ *     the rear haunch stands over the wheel -- with a single scalar and a
+ *     handful of flags every car is the same tube at a different size.
+ *  2. The wheel arches are cut into that loft's bottom edge and then dressed:
+ *     a flared lip built from the SAME curves (so it registers by construction
+ *     rather than by arithmetic that has to be kept in step) and a dark liner
+ *     tunnelled in behind it. An arch has to be an opening; a chamfer in a
+ *     straight sill reads as a toy.
+ *  3. Everything that should be a hole -- grille, headlamps, taillamps,
+ *     exhausts -- is a `pocket`/`hole` whose rim stands proud of the paint.
+ *     See those functions for why proud and not flush.
+ *  4. The greenhouse is authored PANELS: windscreen, two side windows and a
+ *     rear screen in glass, with A-pillars, a roof and sail panels in body
+ *     colour between them. This is also how the floating-roof-plank bug is
+ *     designed out -- there is no roof skin lofted over a glass tube to
+ *     mis-register, the roof is a panel whose edges are shared points with the
+ *     glass either side of it.
+ */
+function buildSports(spec, paint, trim, matte) {
+  const W = spec.wid / 2, wr = spec.wheelR;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = 1.36, zR = -1.36;               // axle centres, 2.72 m wheelbase
+
+  // --- the four longitudinal curves ----------------------------------------
+  // The full declared width is spent on the arches and the waist between them
+  // is pulled in, rather than the whole flank being one width. That difference
+  // is what a flare IS -- with a constant width there is nothing for the lip to
+  // stand proud of and the car reads slab-sided at any track.
+  const halfW = curve([
+    [tail, 0.84], [-1.95, 0.94], [zR, 1.00], [-0.70, 0.90], [0, 0.885],
+    [0.70, 0.90], [zF, 0.985], [1.85, 0.90], [2.10, 0.85], [nose, 0.76],
+  ]);
+  const sillY = curve([
+    [tail, 0.36], [-1.85, 0.24], [-0.60, 0.19], [0.60, 0.19], [1.85, 0.24], [nose, 0.24],
+  ]);
+  // Low nose, rising cowl, haunch over the rear axle, then down to the tail.
+  const beltY = curve([
+    [tail, 0.90], [-1.90, 0.98], [zR, 1.00], [-0.60, 0.96], [0, 0.94],
+    [0.55, 0.95], [0.88, 0.94], [1.20, 0.90], [1.55, 0.85], [1.90, 0.80], [nose, 0.76],
+  ]);
+  // How far the sill tucks under. Pinched at the waist between the arches and
+  // let out over them, which is what makes the flares read as flares.
+  const tuckAt = curve([
+    [tail, 0.84], [zR, 0.93], [-0.60, 0.85], [0.60, 0.85], [zF, 0.93], [nose, 0.84],
+  ]);
+  // Width of the flat top deck. Narrow at the ends (a crowned bonnet and boot
+  // lid), wide across the cabin so the greenhouse has something to stand on.
+  const topAt = curve([
+    [tail, 0.84], [-1.60, 0.90], [0.60, 0.90], [1.50, 0.88], [2.05, 0.78], [nose, 0.70],
+  ]);
+
+  const { geom, half, endProf } = bodyCore(spec, paint, matte,
+    { halfW, sillY, beltY, tuckAt, topAt, zF, zR });
+
+  // --- wheels --------------------------------------------------------------
+  // Staggered: the rear tyre is wider than the front, which is most of what
+  // says "rear drive" about a shape standing still.
+  const twF = 0.235, twR = 0.28;
+  const wxF = geom(zF).wb - twF / 2 + 0.02;
+  const wxR = geom(zR).wb - twR / 2 + 0.02;
+  const wheels = [
+    [-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF],
+    [-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR],
+  ];
+
+  // --- greenhouse: separate panels, real pillars ---------------------------
+  const cowlZ = 0.82, cowlY = 0.955;
+  const scrZ = -0.08, roofY = spec.roof;
+  const backZ = -0.72;
+  const rearZ = -1.62, rearY = 1.00;
+  // The roof is the widest thing up here and the side glass tucks in under it.
+  // The other way round, the glass hides the roof panel from every side angle
+  // and the whole greenhouse reads as one dark mass with no roof at all.
+  const wScrB = 0.70, wScrT = 0.585, wRoof = 0.60, wRearT = 0.578, wRear = 0.66;
+  const wGlassT = 0.572, wGlassB = 0.678;
+
+  const lp = (a, b, t) => a + (b - a) * t;
+  // Windscreen: bowed forward in the middle and wrapped back at the edges,
+  // which is what stops a screen reading as a flat sheet of slate.
+  const scrRows = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3, row = [];
+    const cz = lp(cowlZ, scrZ, t) + 0.035 * Math.sin(Math.PI * t);
+    const cy = lp(cowlY, roofY, t) + 0.012 * Math.sin(Math.PI * t);
+    const hwv = lp(wScrB, wScrT, t);
+    for (let j = 0; j <= 8; j++) {
+      const u = -1 + (2 * j) / 8;
+      row.push([u * hwv, cy - 0.030 * u * u, cz - 0.10 * u * u]);
+    }
+    scrRows.push(row);
+  }
+  trim.patch(scrRows, GLASS, [0, 0.5, 1]);
+
+  // Roof, with the outermost column rolled down into a drip rail so the panel
+  // has an edge instead of ending in a knife.
+  const roofCols = [[-0.98, -0.055], [-1, -0.012], [-0.94, 0], [-0.66, 0.008], [-0.3, 0.013],
+    [0, 0.015], [0.3, 0.013], [0.66, 0.008], [0.94, 0], [1, -0.012], [0.98, -0.055]];
+  const roofRows = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3;
+    const cz = lp(scrZ, backZ, t), cy = lp(roofY, roofY - 0.01, t) + 0.008 * Math.sin(Math.PI * t);
+    roofRows.push(roofCols.map(([u, dy]) => [u * wRoof, cy + dy - 0.022 * u * u, cz]));
+  }
+  paint.patch(roofRows, WHITE, [0, 1, 0]);
+
+  // Fastback rear screen.
+  const rearRows = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3, row = [];
+    const cz = lp(backZ, rearZ, t), cy = lp(roofY - 0.01, rearY, t) + 0.022 * Math.sin(Math.PI * t);
+    const hwv = lp(wRearT, wRear, t);
+    for (let j = 0; j <= 8; j++) {
+      const u = -1 + (2 * j) / 8;
+      row.push([u * hwv, cy - 0.035 * u * u, cz + 0.05 * u * u]);
+    }
+    rearRows.push(row);
+  }
+  trim.patch(rearRows, GLASS, [0, 0.6, -1]);
+
+  // Side glass and the sail panel behind it, per side.
+  const sgFB = [0.66, 0.965], sgFT = [-0.02, 1.272], sgRT = [-0.78, 1.258], sgRB = [-1.16, 1.01];
+  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [-0.46], scrWrap: 0.1, rearWrap: 0.05 }, paint);
+  for (const sx of [-1, 1]) {
+    const rows = [];
+    for (let i = 0; i <= 2; i++) {
+      const t = i / 2, row = [];
+      for (let j = 0; j <= 4; j++) {
+        const u = j / 4;
+        const bz = lp(sgFB[0], sgRB[0], u), by = lp(sgFB[1], sgRB[1], u);
+        const tz = lp(sgFT[0], sgRT[0], u), ty = lp(sgFT[1], sgRT[1], u);
+        row.push([sx * lp(wGlassB, wGlassT, t), lp(by, ty, t), lp(bz, tz, t)]);
+      }
+      rows.push(row);
+    }
+    trim.patch(rows, GLASS, [sx, 0, 0]);
+
+    // A-pillar: the strip between the windscreen's outer edge and the front
+    // edge of the side glass, built from the screen's OWN edge points so it is
+    // flush with it. The first pass ran a `tube` up there and it read as a roll
+    // bar lying on the roof -- a pillar is a panel, not a pipe.
+    paint.patch(scrRows.map((r, i) => {
+      const e = r[r.length - 1], t = i / 3;
+      return [[sx * e[0], e[1], e[2]],
+        [sx * lp(wGlassB, wGlassT, t), lp(sgFB[1], sgFT[1], t), lp(sgFB[0], sgFT[0], t)]];
+    }), WHITE, [sx, 0.4, 0]);
+    // C-pillar / sail panel: the fastback's shoulder, running from the rear
+    // screen's own outer edge out to the back of the side glass and down to the
+    // deck. It starts as a line where the glass meets the screen -- built from
+    // two independent outlines instead it comes out twisted, and a twisted quad
+    // reads as a flat plate stuck on the quarter.
+    const sailOuter = [[wGlassT, sgRT[1], sgRT[0]], [0.640, 1.130, -1.02],
+      [wGlassB, sgRB[1], sgRB[0]], [0.700, 0.965, rearZ]];
+    paint.patch(rearRows.map((r, i) => {
+      const e = r[r.length - 1], o = sailOuter[i];
+      return [[sx * e[0], e[1], e[2]], [sx * o[0], o[1], o[2]]];
+    }), WHITE, [sx, 0.4, 0]);
+  }
+
+  // --- front fascia --------------------------------------------------------
+  // Every aperture is listed once and drives both the hole in the face and the
+  // pocket set into it -- two lists that have to agree is how a recess ends up
+  // with a rim over solid paint.
+  const GRILLE = [0, 0.455, 0.28, 0.065], LAMP_A = [0.345, 0.60, 0.128, 0.055];
+  const INTAKE = [0, 0.335, 0.40, 0.035];
+  const TAILBAR = [0, 0.72, 0.50, 0.05], PIPE = [0.34, 0.48, 0.040, 0.040];
+  endFace(paint, nose, 1, endProf(nose), [GRILLE, LAMP_A, INTAKE], WHITE);
+  endFace(paint, tail, -1, endProf(tail), [TAILBAR, PIPE], WHITE);
+
+  const gp = pocket(paint, matte, GRILLE[0], GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.16, 1);
+  // slats standing in the mouth, not painted on the nose
+  for (let i = 0; i < 3; i++) {
+    trim.box(0, 0.415 + i * 0.040, gp.z + 0.03, gp.hw * 1.9, 0.014, 0.035, 0, CHROME);
+  }
+  for (const sx of [-1, 1]) {
+    const lp2 = pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.11, 1, { rim: 0.024 });
+    // Lens near the MOUTH of the housing, not at the back of it. `trim` is
+    // metalness 0.88, so a coloured lens buried 10 cm inside a black pocket
+    // sees nothing to reflect and renders as another patch of the pocket.
+    trim.box(sx * LAMP_A[0], 0.575, nose - 0.035, lp2.hw * 1.86, 0.050, 0.024, 0, LAMP);
+    trim.box(sx * LAMP_A[0], 0.552, lp2.z + 0.05, lp2.hw * 1.86, 0.014, 0.024, 0, AMBER);
+  }
+  pocket(paint, matte, INTAKE[0], INTAKE[1], nose, INTAKE[2], INTAKE[3], 0.14, 1, { rim: 0.026 });
+  // splitter: a blade under the nose, tucked close enough to read as part of
+  // the car rather than a tray sliding out from under it
+  matte.box(0, 0.226, nose - 0.06, 1.24, 0.030, 0.28, 0, PLASTIC);
+  for (const sx of [-1, 1]) matte.box(sx * 0.60, 0.226, nose - 0.11, 0.05, 0.09, 0.16, 0, PLASTIC);
+
+  // --- rear ----------------------------------------------------------------
+  const rz = tail;
+  const tp = pocket(paint, matte, TAILBAR[0], TAILBAR[1], rz, TAILBAR[2], TAILBAR[3], 0.09, -1, { rim: 0.026 });
+  trim.box(0, 0.678, rz + 0.024, tp.hw * 1.94, 0.086, 0.026, 0, TAILC);
+  // one body-colour bridge across the middle, so the bar reads as two lamps
+  paint.box(0, 0.665, rz + 0.014, 0.10, 0.11, 0.035, 0, WHITE);
+  for (const sx of [-1, 1]) {
+    trim.box(sx * 0.40, 0.605, rz - 0.03, 0.11, 0.05, 0.022, 0, WHITE);   // reversing lamp
+    hole(trim, matte, sx * PIPE[0], PIPE[1], rz, 0.055, 0.12, -1);
+  }
+  trim.box(0, 0.492, rz - 0.028, 0.42, 0.135, 0.02, 0, PLATE);
+  // diffuser: a ramp under the tail with fins standing in it
+  matte.patch([
+    [[-0.56, 0.17, -1.82], [0, 0.17, -1.82], [0.56, 0.17, -1.82]],
+    [[-0.52, 0.38, rz - 0.02], [0, 0.38, rz - 0.02], [0.52, 0.38, rz - 0.02]],
+  ], PLASTIC, [0, -1, 0]);
+  for (const x of [-0.44, -0.22, 0, 0.22, 0.44]) {
+    matte.box(x, 0.16, -2.02, 0.028, 0.20, 0.40, 0, PLASTIC);
+  }
+
+  // --- flanks: side skirts, shut lines, handles, mirrors -------------------
+  for (const sx of [-1, 1]) {
+    matte.box(sx * (geom(0).wb - 0.02), 0.175, 0, 0.09, 0.05, 1.62, 0, PLASTIC);
+    // Shut lines follow the section itself rather than being a straight box
+    // laid on a curved flank, which is why they stay a constant hairline all
+    // the way up the door.
+    for (const zc of [0.62, -0.64]) {
+      const rows = [-0.009, 0.009].map((dz) =>
+        half(zc + dz, sx).slice(2, 9).map(([x, y]) => [x + sx * 0.005, y, zc + dz]));
+      matte.patch(rows, [0.13, 0.14, 0.15], [sx, 0, 0]);
+    }
+    const hg = geom(-0.06);
+    trim.tube([sx * (hg.w * 0.985), hg.yc + 0.075, -0.10], [sx * (hg.w * 0.985), hg.yc + 0.075, 0.10],
+      0.017, 6, CHROME, true);
+    // mirror on a stalk, not a block bolted to the door
+    paint.tube([sx * 0.700, 0.960, 0.64], [sx * 0.828, 0.995, 0.60], 0.021, 6, WHITE, true);
+    const pod = (k) => {
+      const out = [];
+      for (let i = 0; i < 10; i++) {
+        const a = (i / 10) * Math.PI * 2;
+        out.push([sx * 0.878 + Math.cos(a) * 0.058 * k, 1.005 + Math.sin(a) * 0.046 * k]);
+      }
+      return out;
+    };
+    paint.loft([{ z: 0.505, pts: pod(0.86) }, { z: 0.575, pts: pod(1) }, { z: 0.645, pts: pod(0.78) }],
+      WHITE, { capStart: true, capEnd: true });
+    trim.box(sx * 0.878, 0.962, 0.498, 0.094, 0.072, 0.02, 0, MIRROR);
+  }
+
+  // --- rear wing -----------------------------------------------------------
+  const blade = (yb, yt, k) => {
+    const out = [];
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      out.push([Math.cos(a) * 0.62 * k, (yb + yt) / 2 + Math.sin(a) * ((yt - yb) / 2)]);
+    }
+    return out;
+  };
+  paint.loft([
+    { z: -1.70, pts: blade(1.030, 1.062, 1) },
+    { z: -1.86, pts: blade(1.048, 1.086, 1) },
+    { z: -2.00, pts: blade(1.064, 1.100, 0.985) },
+  ], WHITE, { capStart: true, capEnd: true });
+  for (const sx of [-1, 1]) {
+    paint.tube([sx * 0.44, beltY(-1.84) - 0.01, -1.84], [sx * 0.44, 1.05, -1.84], 0.028, 6, WHITE, true);
+    // end plate
+    paint.box(sx * 0.615, 1.01, -1.85, 0.022, 0.12, 0.34, 0, WHITE);
+  }
+  // engine cover louvres, so the rear deck is not a blank lid
+  for (let i = 0; i < 3; i++) {
+    const lz = -1.70 - i * 0.10;
+    matte.box(0, beltY(lz) - 0.014, lz, 0.60, 0.024, 0.055, 0, [0.10, 0.11, 0.12]);
+  }
+  // bonnet extractors: the front deck is the largest blank panel on the car
+  for (const sx of [-1, 1]) {
+    matte.box(sx * 0.30, beltY(1.52) - 0.020, 1.52, 0.24, 0.030, 0.13, 0, [0.08, 0.09, 0.10]);
+  }
+
+  return wheels;
+}
+
+/**
+ * The muscle car, hand built on the same core as the sports car and sharing
+ * none of its numbers: long flat bonnet, short deck, a formal notchback roof,
+ * quad round lamps sunk in a full-width grille, chrome bumpers at both ends and
+ * hips over the rear axle. Slab-sided on purpose -- the tumblehome and the
+ * waist are both much flatter here, which is most of what separates 1970 from
+ * a modern coupe.
+ */
+function buildMuscle(spec, paint, trim, matte) {
+  const wr = spec.wheelR;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = 1.40, zR = -1.34;
+
+  const halfW = curve([
+    [tail, 0.90], [-2.10, 0.97], [zR, 1.00], [-0.55, 0.92], [0.30, 0.92],
+    [zF, 0.985], [2.10, 0.94], [nose, 0.86],
+  ]);
+  const sillY = curve([
+    [tail, 0.34], [-2.00, 0.26], [-0.60, 0.24], [0.60, 0.24], [2.00, 0.26], [nose, 0.34],
+  ]);
+  const beltY = curve([
+    [tail, 1.02], [-2.05, 1.06], [zR, 1.08], [-0.60, 1.04], [0.20, 1.02],
+    [0.85, 1.02], [1.30, 1.00], [1.90, 0.96], [2.25, 0.94], [nose, 0.92],
+  ]);
+  const tuckAt = curve([
+    [tail, 0.88], [zR, 0.95], [-0.60, 0.88], [0.60, 0.88], [zF, 0.95], [nose, 0.88],
+  ]);
+  const topAt = curve([
+    [tail, 0.90], [-1.90, 0.94], [0.80, 0.94], [1.60, 0.93], [2.20, 0.86], [nose, 0.78],
+  ]);
+  const { geom, half, endProf } = bodyCore(spec, paint, matte, {
+    halfW, sillY, beltY, tuckAt, topAt, zF, zR,
+    archR: 0.58, archGap: 0.06, creaseAt: 0.66, tumble: 0.94,
+    deckDrop: 0.026, lipOut: 0.05, endRound: 0.14, endMin: 0.90,
+  });
+
+  const twF = 0.24, twR = 0.30;
+  const wxF = geom(zF).wb - twF / 2 + 0.02;
+  const wxR = geom(zR).wb - twR / 2 + 0.02;
+  const wheels = [
+    [-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF],
+    [-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR],
+  ];
+
+  // --- notchback greenhouse ------------------------------------------------
+  const cowlZ = 0.72, cowlY = 1.035, roofY = spec.roof;
+  const scrZ = -0.22, backZ = -1.06, rearZ = -1.62, rearY = 1.055;
+  const wScrB = 0.76, wScrT = 0.66, wRoof = 0.68, wRearT = 0.655, wRear = 0.74;
+  const wGlassT = 0.652, wGlassB = 0.755;
+  const lp = (a, b, t) => a + (b - a) * t;
+
+  const scrRows = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3, row = [];
+    const cz = lp(cowlZ, scrZ, t) + 0.03 * Math.sin(Math.PI * t);
+    const cy = lp(cowlY, roofY, t) + 0.012 * Math.sin(Math.PI * t);
+    const hwv = lp(wScrB, wScrT, t);
+    for (let j = 0; j <= 8; j++) {
+      const u = -1 + (2 * j) / 8;
+      row.push([u * hwv, cy - 0.028 * u * u, cz - 0.09 * u * u]);
+    }
+    scrRows.push(row);
+  }
+  trim.patch(scrRows, GLASS, [0, 0.5, 1]);
+
+  const roofCols = [[-0.98, -0.05], [-1, -0.010], [-0.94, 0], [-0.66, 0.006], [-0.3, 0.010],
+    [0, 0.012], [0.3, 0.010], [0.66, 0.006], [0.94, 0], [1, -0.010], [0.98, -0.05]];
+  const roofRows = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3;
+    const cz = lp(scrZ, backZ, t), cy = roofY + 0.006 * Math.sin(Math.PI * t);
+    roofRows.push(roofCols.map(([u, dy]) => [u * wRoof, cy + dy - 0.020 * u * u, cz]));
+  }
+  paint.patch(roofRows, WHITE, [0, 1, 0]);
+
+  // A notchback's rear screen is steep and short, and the boot lid behind it is
+  // flat -- that break is the whole difference from the sports car's fastback.
+  const rearRows = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3, row = [];
+    const cz = lp(backZ, rearZ, t), cy = lp(roofY - 0.006, rearY, t) + 0.014 * Math.sin(Math.PI * t);
+    const hwv = lp(wRearT, wRear, t);
+    for (let j = 0; j <= 8; j++) {
+      const u = -1 + (2 * j) / 8;
+      row.push([u * hwv, cy - 0.028 * u * u, cz + 0.04 * u * u]);
+    }
+    rearRows.push(row);
+  }
+  trim.patch(rearRows, GLASS, [0, 0.7, -1]);
+
+  const sgFB = [0.60, 1.035], sgFT = [-0.16, 1.360], sgRT = [-1.06, 1.352], sgRB = [-1.34, 1.058];
+  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [-0.30, -1.02], scrWrap: 0.09, rearWrap: 0.04 }, paint);
+  for (const sx of [-1, 1]) {
+    const rows = [];
+    for (let i = 0; i <= 2; i++) {
+      const t = i / 2, row = [];
+      for (let j = 0; j <= 4; j++) {
+        const u = j / 4;
+        const bz = lp(sgFB[0], sgRB[0], u), by = lp(sgFB[1], sgRB[1], u);
+        const tz = lp(sgFT[0], sgRT[0], u), ty = lp(sgFT[1], sgRT[1], u);
+        row.push([sx * lp(wGlassB, wGlassT, t), lp(by, ty, t), lp(bz, tz, t)]);
+      }
+      rows.push(row);
+    }
+    trim.patch(rows, GLASS, [sx, 0, 0]);
+    paint.patch(scrRows.map((r, i) => {
+      const e = r[r.length - 1], t = i / 3;
+      return [[sx * e[0], e[1], e[2]],
+        [sx * lp(wGlassB, wGlassT, t), lp(sgFB[1], sgFT[1], t), lp(sgFB[0], sgFT[0], t)]];
+    }), WHITE, [sx, 0.4, 0]);
+    const sailOuter = [[wGlassT, sgRT[1], sgRT[0]], [0.700, 1.250, -1.20],
+      [wGlassB, sgRB[1], sgRB[0]], [0.760, 1.030, rearZ]];
+    paint.patch(rearRows.map((r, i) => {
+      const e = r[r.length - 1], o = sailOuter[i];
+      return [[sx * e[0], e[1], e[2]], [sx * o[0], o[1], o[2]]];
+    }), WHITE, [sx, 0.4, 0]);
+  }
+
+  // --- front: quad lamps sunk in one full-width grille ----------------------
+  const GRILLE = [0, 0.66, 0.60, 0.085], INTAKE = [0, 0.47, 0.46, 0.045];
+  const TAILA = [0.40, 0.72, 0.24, 0.075], PIPE = [0.42, 0.60, 0.038, 0.038];
+  endFace(paint, nose, 1, endProf(nose), [GRILLE, INTAKE], WHITE);
+  endFace(paint, tail, -1, endProf(tail), [TAILA, PIPE], WHITE);
+
+  const gp = pocket(paint, matte, GRILLE[0], GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.15, 1,
+    { rim: 0.034, rimCol: WHITE });
+  // Round sealed-beam units standing in the grille, chrome-ringed. They sit in
+  // the recess rather than being holes of their own: a hole inside a hole needs
+  // the back panel pierced too, and a lamp on a stalk in a dark pocket already
+  // reads as inset from anywhere a player stands.
+  for (const sx of [-1, 1]) {
+    for (const xc of [0.24, 0.485]) {
+      // Chrome barrel down the pocket with the lens across its mouth. Buried at
+      // the back of the recess a lens has nothing to catch, and `trim` is
+      // metalness 0.88 -- it renders as more pocket.
+      trim.tube([sx * xc, GRILLE[1], gp.z + 0.01], [sx * xc, GRILLE[1], nose - 0.03], 0.082, 12, CHROME);
+      trim.tube([sx * xc, GRILLE[1], nose - 0.055], [sx * xc, GRILLE[1], nose - 0.028], 0.072, 12, LAMP, true);
+    }
+    trim.box(sx * 0.62, 0.60, nose - 0.02, 0.10, 0.05, 0.03, 0, AMBER);
+  }
+  // grille mesh: vertical bars right across the mouth
+  for (let i = -5; i <= 5; i++) {
+    trim.box(i * 0.105, GRILLE[1] - 0.072, gp.z + 0.012, 0.016, 0.144, 0.02, 0, [0.30, 0.31, 0.33]);
+  }
+  pocket(paint, matte, INTAKE[0], INTAKE[1], nose, INTAKE[2], INTAKE[3], 0.11, 1, { rim: 0.026 });
+  // Chrome bumper. A muscle car's is a separate bright bar standing off the
+  // bodywork, not a colour-keyed moulding.
+  trim.box(0, 0.372, nose + 0.012, 1.56, 0.098, 0.13, 0, CHROME);
+  trim.box(0, 0.400, nose + 0.05, 0.42, 0.135, 0.02, 0, PLATE);
+
+  // --- rear ----------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    const tp = pocket(paint, matte, sx * TAILA[0], TAILA[1], tail, TAILA[2], TAILA[3], 0.07, -1,
+      { rim: 0.028 });
+    trim.box(sx * TAILA[0], 0.655, tail + 0.022, tp.hw * 1.9, 0.130, 0.026, 0, TAILC);
+    // three chrome ribs across each lens, the era's signature
+    for (const d of [-0.045, 0, 0.045]) {
+      trim.box(sx * TAILA[0] + d, 0.660, tail + 0.008, 0.014, 0.120, 0.02, 0, CHROME);
+    }
+    hole(trim, matte, sx * PIPE[0], PIPE[1], tail, 0.052, 0.12, -1);
+  }
+  trim.box(0, 0.372, tail - 0.012, 1.56, 0.098, 0.13, 0, CHROME);
+  trim.box(0, 0.560, tail - 0.028, 0.42, 0.135, 0.02, 0, PLATE);
+  // ducktail lip along the trailing edge of the boot lid
+  paint.box(0, beltY(-2.28) - 0.01, -2.30, geom(-2.30).tw * 1.9, 0.055, 0.20, 0, WHITE);
+
+  // --- bonnet scoop, flanks, trim ------------------------------------------
+  const scoopY = beltY(1.62) - 0.02;
+  paint.box(0, scoopY, 1.62, 0.66, 0.105, 0.78, 0, WHITE);
+  pocket(paint, matte, 0, scoopY + 0.055, 2.02, 0.26, 0.035, 0.10, 1, { rim: 0.02 });
+  for (const sx of [-1, 1]) {
+    trim.box(sx * (geom(0).wb + 0.01), 0.255, 0, 0.03, 0.05, 2.10, 0, CHROME);  // rocker trim
+    for (const zc of [0.55, -0.72]) {
+      const rows = [-0.009, 0.009].map((dz) =>
+        half(zc + dz, sx).slice(2, 9).map(([x, y]) => [x + sx * 0.005, y, zc + dz]));
+      matte.patch(rows, [0.13, 0.14, 0.15], [sx, 0, 0]);
+    }
+    const hg = geom(-0.12);
+    trim.tube([sx * hg.w * 0.985, hg.yc + 0.08, -0.22], [sx * hg.w * 0.985, hg.yc + 0.08, -0.02],
+      0.017, 6, CHROME, true);
+    // chrome bullet mirror on a short stalk
+    trim.tube([sx * 0.760, 1.030, 0.50], [sx * 0.860, 1.070, 0.46], 0.018, 6, CHROME, true);
+    trim.tube([sx * 0.860, 1.070, 0.52], [sx * 0.878, 1.074, 0.40], 0.052, 8, CHROME, true);
+    trim.box(sx * 0.868, 1.032, 0.398, 0.086, 0.078, 0.02, 0, MIRROR);
+    // side gill behind the front arch
+    for (let i = 0; i < 3; i++) {
+      matte.box(sx * (geom(0.72).w + 0.004), geom(0.72).yc - 0.10 + i * 0.05, 0.72,
+        0.012, 0.032, 0.24, 0, [0.10, 0.11, 0.12]);
+    }
+  }
+
+  return wheels;
+}
+
+/**
+ * The full-size American sedan -- the commonest car on these streets, so the
+ * one that matters most. Long bonnet, long boot, a formal notchback greenhouse
+ * on a thick C-pillar, a wide horizontal-bar grille and a tail lamp panel that
+ * runs the whole width.
+ *
+ * Against the muscle car, which is the nearest thing to it in the fleet: the
+ * cabin is a metre longer and sits further back (four doors, not two), the roof
+ * is level rather than domed, and the flanks carry almost no flare. A full-size
+ * sedan reads big precisely because nothing on it is dramatic, so the shape has
+ * to be carried by proportion -- overhangs, the length of the roof and the
+ * height of the beltline -- rather than by features.
+ */
+function buildSedan(spec, paint, trim, matte) {
+  const wr = spec.wheelR;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = 1.52, zR = -1.46;                 // 2.98 m wheelbase
+
+  // Nearly full width down the whole flank: a sedan's arches are wheel openings
+  // in a flat side, not flares standing out of a waisted one.
+  const halfW = curve([
+    [tail, 0.86], [-2.20, 0.95], [zR, 1.00], [-0.60, 0.955], [0.60, 0.955],
+    [zF, 1.00], [2.20, 0.95], [nose, 0.90],
+  ]);
+  const sillY = curve([
+    [tail, 0.36], [-2.05, 0.30], [-0.60, 0.28], [0.60, 0.28], [2.05, 0.30], [nose, 0.36],
+  ]);
+  // A high, level beltline. The bonnet falls only 11 cm over 1.6 m, which is
+  // what makes it read as long rather than as a wedge.
+  const beltY = curve([
+    [tail, 1.00], [-2.15, 1.05], [zR, 1.07], [-0.60, 1.06], [0.30, 1.055],
+    [0.85, 1.045], [1.50, 1.01], [2.10, 0.98], [nose, 0.95],
+  ]);
+  const tuckAt = curve([
+    [tail, 0.90], [zR, 0.95], [-0.60, 0.90], [0.60, 0.90], [zF, 0.95], [nose, 0.90],
+  ]);
+  const topAt = curve([
+    [tail, 0.86], [-2.10, 0.92], [-1.10, 0.95], [1.10, 0.95], [1.90, 0.92],
+    [2.25, 0.86], [nose, 0.76],
+  ]);
+  const { geom, half, endProf } = bodyCore(spec, paint, matte, {
+    halfW, sillY, beltY, tuckAt, topAt, zF, zR,
+    archR: 0.56, archGap: 0.05, creaseAt: 0.62, tumble: 0.93,
+    deckDrop: 0.028, lipOut: 0.034, endRound: 0.16, endMin: 0.92,
+  });
+
+  // Square tyres front and rear -- a family sedan is not staggered.
+  const tw = 0.235;
+  const wx = geom(zF).wb - tw / 2 + 0.02;
+  const wxR = geom(zR).wb - tw / 2 + 0.02;
+  const wheels = [
+    [-wx, wr, zF, wr, tw], [wx, wr, zF, wr, tw],
+    [-wxR, wr, zR, wr, tw], [wxR, wr, zR, wr, tw],
+  ];
+
+  // --- formal four-door greenhouse -----------------------------------------
+  const cowlZ = 0.80, cowlY = 1.045, roofY = spec.roof;
+  const scrZ = 0.14, backZ = -1.24, rearZ = -1.80, rearY = 1.058;
+  const wScrB = 0.80, wScrT = 0.70, wRoof = 0.715, wRearT = 0.695, wRear = 0.78;
+  const wGlassT = 0.688, wGlassB = 0.790;
+  const lp = (a, b, t) => a + (b - a) * t;
+
+  const scrRows = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3, row = [];
+    const cz = lp(cowlZ, scrZ, t) + 0.026 * Math.sin(Math.PI * t);
+    const cy = lp(cowlY, roofY, t) + 0.010 * Math.sin(Math.PI * t);
+    const hwv = lp(wScrB, wScrT, t);
+    for (let j = 0; j <= 8; j++) {
+      const u = -1 + (2 * j) / 8;
+      row.push([u * hwv, cy - 0.024 * u * u, cz - 0.085 * u * u]);
+    }
+    scrRows.push(row);
+  }
+  trim.patch(scrRows, GLASS, [0, 0.5, 1]);
+
+  // Level roof, 1.38 m of it. The crown is deliberately half what the coupes
+  // carry -- a formal saloon roof is close to flat and the shallow camber is
+  // the difference between "big car" and "bubble".
+  const roofCols = [[-0.98, -0.048], [-1, -0.010], [-0.94, 0], [-0.66, 0.005], [-0.3, 0.008],
+    [0, 0.010], [0.3, 0.008], [0.66, 0.005], [0.94, 0], [1, -0.010], [0.98, -0.048]];
+  const roofRows = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3;
+    const cz = lp(scrZ, backZ, t), cy = roofY + 0.005 * Math.sin(Math.PI * t);
+    roofRows.push(roofCols.map(([u, dy]) => [u * wRoof, cy + dy - 0.016 * u * u, cz]));
+  }
+  paint.patch(roofRows, WHITE, [0, 1, 0]);
+
+  const rearRows = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3, row = [];
+    const cz = lp(backZ, rearZ, t), cy = lp(roofY - 0.006, rearY, t) + 0.012 * Math.sin(Math.PI * t);
+    const hwv = lp(wRearT, wRear, t);
+    for (let j = 0; j <= 8; j++) {
+      const u = -1 + (2 * j) / 8;
+      row.push([u * hwv, cy - 0.024 * u * u, cz + 0.035 * u * u]);
+    }
+    rearRows.push(row);
+  }
+  trim.patch(rearRows, GLASS, [0, 0.7, -1]);
+
+  const sgFB = [0.72, 1.055], sgFT = [0.16, 1.470], sgRT = [-1.24, 1.464], sgRB = [-1.44, 1.080];
+  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [-0.26, -1.14], scrWrap: 0.085, rearWrap: 0.035 }, paint);
+  const sailOuter = [[wGlassT, 1.464, backZ], [0.745, 1.335, -1.4267],
+    [0.788, 1.190, -1.6133], [0.800, 1.058, rearZ]];
+  for (const sx of [-1, 1]) {
+    const rows = [];
+    for (let i = 0; i <= 2; i++) {
+      const t = i / 2, row = [];
+      for (let j = 0; j <= 6; j++) {
+        const u = j / 6;
+        const bz = lp(sgFB[0], sgRB[0], u), by = lp(sgFB[1], sgRB[1], u);
+        const tz = lp(sgFT[0], sgRT[0], u), ty = lp(sgFT[1], sgRT[1], u);
+        row.push([sx * lp(wGlassB, wGlassT, t), lp(by, ty, t), lp(bz, tz, t)]);
+      }
+      rows.push(row);
+    }
+    trim.patch(rows, GLASS, [sx, 0, 0]);
+    // B-pillar, blacked out and laid ON the glass rather than splitting it into
+    // two panels. A real sedan's centre pillar is a black-taped strip between
+    // two windows and reads the same way at any distance a player sees it from.
+    const bz0 = lp(sgFB[0], sgRB[0], 0.42), bz1 = lp(sgFT[0], sgRT[0], 0.42);
+    matte.patch([
+      [[sx * (wGlassB + 0.006), sgFB[1] - 0.01, bz0 + 0.045], [sx * (wGlassB + 0.006), sgFB[1] - 0.01, bz0 - 0.045]],
+      [[sx * (wGlassT + 0.006), sgFT[1] + 0.005, bz1 + 0.045], [sx * (wGlassT + 0.006), sgFT[1] + 0.005, bz1 - 0.045]],
+    ], [0.09, 0.10, 0.11], [sx, 0, 0]);
+    // A-pillar, off the windscreen's own edge points so it is flush with it.
+    paint.patch(scrRows.map((r, i) => {
+      const e = r[r.length - 1], t = i / 3;
+      return [[sx * e[0], e[1], e[2]],
+        [sx * lp(wGlassB, wGlassT, t), lp(sgFB[1], sgFT[1], t), lp(sgFB[0], sgFT[0], t)]];
+    }), WHITE, [sx, 0.4, 0]);
+    // Thick formal C-pillar: the sail runs from the rear screen's own edge out
+    // to the quarter and down onto the boot shoulder.
+    paint.patch(rearRows.map((r, i) => {
+      const e = r[r.length - 1], o = sailOuter[i];
+      return [[sx * e[0], e[1], e[2]], [sx * o[0], o[1], o[2]]];
+    }), WHITE, [sx, 0.4, 0]);
+    // Bright window surround along the beltline, which is most of what says
+    // "American full-size" about a greenhouse.
+    trim.tube([sx * (wGlassB + 0.004), sgFB[1] - 0.012, sgFB[0]],
+      [sx * (wGlassB + 0.004), sgRB[1] - 0.012, sgRB[0]], 0.014, 6, CHROME, true);
+  }
+
+  // --- front fascia: wide horizontal-bar grille ----------------------------
+  const GRILLE = [0, 0.805, 0.390, 0.098], LAMP_A = [0.575, 0.812, 0.130, 0.062];
+  const INTAKE = [0, 0.520, 0.520, 0.058];
+  const TAILBAR = [0, 0.800, 0.620, 0.085], PLATEREC = [0, 0.560, 0.230, 0.075];
+  endFace(paint, nose, 1, endProf(nose), [GRILLE, LAMP_A, INTAKE], WHITE);
+  endFace(paint, tail, -1, endProf(tail), [TAILBAR, PLATEREC], WHITE);
+
+  const gp = pocket(paint, matte, GRILLE[0], GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.13, 1,
+    { rim: 0.030, rimCol: CHROME });
+  // Four chrome blades across the mouth, standing in the recess. Horizontal
+  // bars are the American grille; vertical slats read European.
+  for (let i = 0; i < 4; i++) {
+    trim.box(0, 0.726 + i * 0.052, gp.z + 0.02, gp.hw * 1.94, 0.022, 0.045, 0, CHROME);
+  }
+  for (const sx of [-1, 1]) {
+    const hp = pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.10, 1,
+      { rim: 0.022, rimCol: CHROME });
+    trim.box(sx * LAMP_A[0], 0.818, nose - 0.030, hp.hw * 1.9, 0.068, 0.024, 0, LAMP);
+    trim.box(sx * LAMP_A[0], 0.764, hp.z + 0.045, hp.hw * 1.9, 0.022, 0.024, 0, AMBER);
+  }
+  pocket(paint, matte, INTAKE[0], INTAKE[1], nose, INTAKE[2], INTAKE[3], 0.11, 1,
+    { rim: 0.024, rimCol: PLASTIC });
+  // Body-coloured bumper with a bright insert under the grille, and a valance
+  // low enough that the nose does not end in a shelf.
+  trim.box(0, 0.610, nose - 0.005, 1.42, 0.026, 0.05, 0, CHROME);
+  matte.box(0, 0.392, nose - 0.10, 1.54, 0.040, 0.24, 0, PLASTIC);
+  trim.box(0, 0.430, nose - 0.028, 0.42, 0.135, 0.02, 0, PLATE);
+
+  // --- rear: one lamp panel across the full width --------------------------
+  const tp = pocket(paint, matte, TAILBAR[0], TAILBAR[1], tail, TAILBAR[2], TAILBAR[3], 0.075, -1,
+    { rim: 0.028, rimCol: CHROME });
+  for (const sx of [-1, 1]) {
+    trim.box(sx * 0.365, 0.760, tail + 0.020, 0.46, 0.130, 0.026, 0, TAILC);
+    trim.box(sx * 0.575, 0.760, tail + 0.020, 0.11, 0.130, 0.026, 0, AMBER);
+    trim.box(sx * 0.155, 0.775, tail + 0.020, 0.11, 0.075, 0.026, 0, WHITE);   // reversing lamp
+    hole(trim, matte, sx * 0.470, 0.395, tail + 0.02, 0.048, 0.11, -1);
+  }
+  // Bright bar down the middle of the panel, tying the two lamps together.
+  trim.box(0, 0.760, tail + 0.026, tp.hw * 0.62, 0.048, 0.03, 0, CHROME);
+  pocket(paint, matte, PLATEREC[0], PLATEREC[1], tail, PLATEREC[2], PLATEREC[3], 0.05, -1,
+    { rim: 0.024, rimCol: CHROME });
+  trim.box(0, 0.500, tail - 0.030, 0.42, 0.135, 0.02, 0, PLATE);
+  matte.box(0, 0.392, tail + 0.10, 1.54, 0.040, 0.24, 0, PLASTIC);
+  // Boot shut line across the deck, so the lid is a lid.
+  matte.box(0, beltY(-1.86) + 0.002, -1.86, geom(-1.86).tw * 1.86, 0.008, 0.014, 0, [0.15, 0.16, 0.17]);
+
+  // --- flanks ---------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    // Four shut lines, because there are four doors, and their spacing is what
+    // a player counts without knowing they are counting.
+    for (const zc of [1.02, 0.06, -0.98]) {
+      const rows = [-0.008, 0.008].map((dz) =>
+        half(zc + dz, sx).slice(2, 9).map(([x, y]) => [x + sx * 0.005, y, zc + dz]));
+      matte.patch(rows, [0.13, 0.14, 0.15], [sx, 0, 0]);
+    }
+    trim.box(sx * (geom(0).wb + 0.008), 0.318, 0.06, 0.026, 0.05, 2.60, 0, CHROME);  // rocker moulding
+    for (const zc of [0.56, -0.50]) {
+      const hg = geom(zc);
+      trim.tube([sx * hg.w * 0.99, hg.yc + 0.115, zc - 0.09], [sx * hg.w * 0.99, hg.yc + 0.115, zc + 0.09],
+        0.016, 6, CHROME, true);
+    }
+    // Mirror on a short body-colour stalk. The stalk STARTS inside the shoulder
+    // at the A-pillar's own base (`sgFB`), not out over the bonnet -- placed by
+    // eye it ends up a red brick hanging in the air beside the wing, which is
+    // exactly what the first pass rendered.
+    paint.tube([sx * 0.790, 1.062, sgFB[0] - 0.02], [sx * 0.900, 1.088, sgFB[0] - 0.06], 0.020, 6, WHITE, true);
+    paint.box(sx * 0.940, 1.048, sgFB[0] - 0.10, 0.105, 0.090, 0.055, 0, WHITE);
+    trim.box(sx * 0.940, 1.055, sgFB[0] - 0.128, 0.090, 0.070, 0.02, 0, MIRROR);
+  }
+  // Roof aerial: a shark fin, which every American sedan built this century has.
+  paint.patch([
+    [[0, roofY - 0.002, -1.10], [0, roofY - 0.002, -1.30]],
+    [[0.028, roofY + 0.030, -1.16], [0.028, roofY + 0.030, -1.29]],
+    [[0, roofY + 0.062, -1.24], [0, roofY + 0.062, -1.29]],
+  ], [0.10, 0.11, 0.12], [1, 0.4, 0]);
+  paint.patch([
+    [[0, roofY - 0.002, -1.10], [0, roofY - 0.002, -1.30]],
+    [[-0.028, roofY + 0.030, -1.16], [-0.028, roofY + 0.030, -1.29]],
+    [[0, roofY + 0.062, -1.24], [0, roofY + 0.062, -1.29]],
+  ], [0.10, 0.11, 0.12], [-1, 0.4, 0]);
+
+  return wheels;
+}
+
+// The Belltown Hellcat's paint flags. Its paint is the one material that
+// reads vertex colour (tigerShader), so a panel's colour says what it is:
+// white is the tiger wrap, these are the rest. The far LOD ignores paint
+// vertex colour, so from a distance the whole body is the wrap's beige.
+const TIG_HOOD = [0, 0, 1];     // matte black (the bonnet)
+const TIG_LAMP = [0, 1, 0];     // lit: the green-yellow LED lamps
+const TIG_BLACK = [1, 0, 0];    // gloss black (the fascia's surrounds, the spoiler)
+
+/**
+ * The Belltown Hellcat: a modern Charger widebody, built after the sedan
+ * (same technique, its own numbers). Four doors on a long, low body with a
+ * high, level beltline and a short glasshouse; a fast windscreen and a
+ * fastback rear screen down onto a short deck with a ducktail; bolt-on flares
+ * standing out of a waisted flank over 305-section tyres; a long flat bonnet
+ * with a power bulge and a scoop, painted matte black; a full-width grille
+ * between slim wrap-round lamps with LED rings (lit green-yellow, as the real
+ * one's), a big lower mouth and a splitter; black ten-spoke wheels.
+ */
+function buildCharger(spec, paint, trim, matte) {
+  const wr = spec.wheelR;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = 1.55, zR = -1.50;                 // 3.05 m wheelbase
+  const lp = (a, b, t) => a + (b - a) * t;
+
+  // Widebody: the full width is the flares, the doors between them pulled in.
+  // The face is broad and the nose blunt -- a wide, upright fascia.
+  const halfW = curve([
+    [tail, 0.87], [-2.25, 0.95], [zR, 1.00], [-0.75, 0.925], [0.65, 0.925],
+    [zF, 1.00], [2.25, 0.96], [nose, 0.915],
+  ]);
+  const sillY = curve([
+    [tail, 0.42], [-2.10, 0.30], [-0.60, 0.26], [0.60, 0.26], [2.10, 0.29], [nose, 0.29],
+  ]);
+  // High and level, to a TALL nose: the bonnet's leading edge is at 0.96 m,
+  // which is most of what makes a Charger's face so big.
+  const beltY = curve([
+    [tail, 0.955], [-2.30, 0.975], [zR, 0.98], [-0.60, 0.965], [0.30, 0.96],
+    [0.90, 0.95], [1.60, 0.94], [2.20, 0.925], [nose, 0.905],
+  ]);
+  const tuckAt = curve([
+    [tail, 0.90], [zR, 0.95], [-0.60, 0.92], [0.60, 0.92], [zF, 0.95], [nose, 0.92],
+  ]);
+  const topAt = curve([
+    [tail, 0.88], [-2.15, 0.93], [-1.10, 0.95], [1.10, 0.95], [1.90, 0.94],
+    [2.30, 0.91], [nose, 0.87],
+  ]);
+  // 110 stations, against the fleet's 44: three of these about at most, and
+  // the flares, the shoulder and the nose's roll are smooth for it.
+  // The core lofts the body to EXT short of each end, square; the nose and
+  // tail are lofted on from its end sections below, curving as they go.
+  const EXT = 0.34;
+  const { geom, half, surf } = bodyCore({ ...spec, len: spec.len - 2 * EXT }, paint, matte, {
+    halfW, sillY, beltY, tuckAt, topAt, zF, zR,
+    archR: 0.60, archGap: 0.04, creaseAt: 0.58, tumble: 0.91,
+    deckDrop: 0.026, lipOut: 0.065, endRound: 0.001, endMin: 1, stations: 100,
+  });
+  /**
+   * An end, lofted on from the core's end section over EXT: in plan the
+   * corners round (x pulls in on a quarter circle), in profile the deck rolls
+   * down into the face and the bottom tucks up, so the bonnet curves into the
+   * nose and the boot into the tail. Closed by a face that bows out. The
+   * fascia's lamps, grille and mouth are drawn on it by the paint shader
+   * (tigerShader), so they follow every curve; nothing is punched through.
+   */
+  const endLoft = (dir, o) => {
+    const z0 = dir * (spec.len / 2 - EXT);
+    const base = [...half(z0, -1), ...half(z0, 1).reverse()];
+    let ymin = Infinity, ymax = -Infinity;
+    for (const [, y] of base) { ymin = Math.min(ymin, y); ymax = Math.max(ymax, y); }
+    const mid = (ymin + ymax) / 2, M = 14, rings = [];
+    for (let i = 0; i <= M; i++) {
+      const t = Math.sin((i / M) * Math.PI / 2), c = 1 - Math.sqrt(Math.max(0, 1 - t * t));
+      rings.push({ z: z0 + dir * EXT * t, pts: base.map(([x, y]) => {
+        const wt = clamp((y - mid) / (ymax - mid), 0, 1) ** 1.6, wb = clamp((mid - y) / (mid - ymin), 0, 1) ** 2;
+        return [x * (1 - o.plan * c), y - o.top * wt * c + o.bot * wb * c];
+      }) });
+    }
+    paint.loft(rings, WHITE, { capStart: false, capEnd: false });
+    const last = rings[M].pts, K = last.length, H = K / 2, rows = [];
+    for (let i = 0; i < H; i++) {
+      const L = last[i], R = last[K - 1 - i], vf = Math.sin(Math.PI * i / (H - 1)), row = [];
+      for (let j = 0; j <= 18; j++) {
+        const u = j / 18;
+        row.push([lp(L[0], R[0], u), lp(L[1], R[1], u), rings[M].z + dir * o.bow * (1 - (2 * u - 1) ** 2) * vf]);
+      }
+      rows.push(row);
+    }
+    paint.patch(rows, WHITE, [0, 0, dir]);
+    return { z: rings[M].z, top: ymax - o.top, rings };
+  };
+  const front = endLoft(1, { plan: 0.15, top: 0.085, bot: 0.05, bow: 0.05 });
+  const rear = endLoft(-1, { plan: 0.12, top: 0.05, bot: 0.08, bow: 0.035 });
+
+  const tw = 0.305;
+  const wx = geom(zF).wb - tw / 2 + 0.03;
+  const wxR = geom(zR).wb - tw / 2 + 0.03;
+  const wheels = [
+    [-wx, wr, zF, wr, tw, undefined, false, 'black'], [wx, wr, zF, wr, tw, undefined, false, 'black'],
+    [-wxR, wr, zR, wr, tw, undefined, false, 'black'], [wxR, wr, zR, wr, tw, undefined, false, 'black'],
+  ];
+
+  // --- the glasshouse: a big raked screen, a long roof, a fast rear screen ---
+  const cowlZ = 1.00, cowlY = 0.97, roofY = spec.roof;
+  const scrZ = 0.02, backZ = -1.08, rearZ = -1.92, rearY = 0.995;
+  const wScrB = 0.845, wScrT = 0.70, wRoof = 0.715, wRearT = 0.70, wRear = 0.835;
+  const wGlassT = 0.684, wGlassB = 0.84;
+
+  const NR = 6, NC = 14;
+  const scrRows = [];
+  for (let i = 0; i <= NR; i++) {
+    const t = i / NR, row = [];
+    const cz = lp(cowlZ, scrZ, t) + 0.040 * Math.sin(Math.PI * t);
+    const cy = lp(cowlY, roofY, t) + 0.014 * Math.sin(Math.PI * t);
+    const hwv = lp(wScrB, wScrT, t);
+    for (let j = 0; j <= NC; j++) {
+      const u = -1 + (2 * j) / NC;
+      row.push([u * hwv, cy - 0.028 * u * u, cz - 0.095 * u * u]);
+    }
+    scrRows.push(row);
+  }
+  trim.patch(scrRows, GLASS_TINT, [0, 0.5, 1]);
+
+  const roofCols = [[-0.98, -0.052], [-1, -0.012], [-0.94, 0], [-0.80, 0.005], [-0.62, 0.009], [-0.42, 0.012], [-0.2, 0.014],
+    [0, 0.015], [0.2, 0.014], [0.42, 0.012], [0.62, 0.009], [0.80, 0.005], [0.94, 0], [1, -0.012], [0.98, -0.052]];
+  const roofRows = [];
+  for (let i = 0; i <= NR; i++) {
+    const t = i / NR;
+    const cz = lp(scrZ, backZ, t), cy = roofY + 0.010 * Math.sin(Math.PI * t);
+    roofRows.push(roofCols.map(([u, dy]) => [u * wRoof, cy + dy - 0.018 * u * u, cz]));
+  }
+  paint.patch(roofRows, WHITE, [0, 1, 0]);
+
+  // the rear screen curves down onto the deck
+  const rearRows = [];
+  for (let i = 0; i <= NR; i++) {
+    const t = i / NR, row = [];
+    const cz = lp(backZ, rearZ, t), cy = lp(roofY - 0.006, rearY, t) + 0.05 * Math.sin(Math.PI * t);
+    const hwv = lp(wRearT, wRear, t);
+    for (let j = 0; j <= NC; j++) {
+      const u = -1 + (2 * j) / NC;
+      row.push([u * hwv, cy - 0.028 * u * u, cz + 0.045 * u * u]);
+    }
+    rearRows.push(row);
+  }
+  trim.patch(rearRows, GLASS_TINT, [0, 0.7, -1]);
+
+  // Four side windows' worth of glass, the line kicking up at its tail
+  const sgFB = [0.92, 0.980], sgFT = [0.06, roofY - 0.012], sgRT = [-0.98, roofY - 0.020], sgRB = [-1.46, 1.010];
+  const dloB = (u) => [lp(sgFB[0], sgRB[0], u), lp(sgFB[1], sgRB[1], u * u * u)];
+  const dloT = (u) => [lp(sgFT[0], sgRT[0], u), lp(sgFT[1], sgRT[1], u)];
+  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [-0.20, -1.08], scrWrap: 0.095, rearWrap: 0.045 }, paint);
+  const sailOuter = [];
+  for (let i = 0; i <= NR; i++) {
+    const t = i / NR;
+    sailOuter.push([lp(wGlassT, wRear + 0.025, Math.sqrt(t)), lp(roofY - 0.016, rearY + 0.004, t) + 0.04 * Math.sin(Math.PI * t), lp(backZ, rearZ, t)]);
+  }
+  for (const sx of [-1, 1]) {
+    const rows = [];
+    for (let i = 0; i <= 3; i++) {
+      const t = i / 3, row = [];
+      for (let j = 0; j <= 12; j++) {
+        const u = j / 12, [bz, by] = dloB(u), [tz, ty] = dloT(u);
+        row.push([sx * lp(wGlassB, wGlassT, t), lp(by, ty, t), lp(bz, tz, t)]);
+      }
+      rows.push(row);
+    }
+    trim.patch(rows, GLASS_TINT, [sx, 0, 0]);
+    // the B-pillar, black, between the doors' glass
+    for (const [u, hwz] of [[0.47, 0.05]]) {
+      const [bz, by] = dloB(u), [tz, ty] = dloT(u);
+      matte.patch([
+        [[sx * (wGlassB + 0.006), by - 0.01, bz + hwz], [sx * (wGlassB + 0.006), by - 0.01, bz - hwz]],
+        [[sx * (wGlassT + 0.006), ty + 0.004, tz + hwz], [sx * (wGlassT + 0.006), ty + 0.004, tz - hwz]],
+      ], [0.04, 0.04, 0.045], [sx, 0, 0]);
+    }
+    // bright surround round the top of the glass, and along its foot
+    const frame = [];
+    for (let j = 0; j <= 10; j++) { const [tz, ty] = dloT(j / 10); frame.push([sx * (wGlassT + 0.008), ty + 0.006, tz]); }
+    for (let j = 0; j < frame.length - 1; j++) trim.tube(frame[j], frame[j + 1], 0.008, 5, CHROME, false);
+    for (let j = 0; j < 10; j++) {
+      const [z0, y0] = dloB(j / 10), [z1, y1] = dloB((j + 1) / 10);
+      trim.tube([sx * (wGlassB + 0.004), y0 - 0.010, z0], [sx * (wGlassB + 0.004), y1 - 0.010, z1], 0.009, 5, CHROME, false);
+    }
+    paint.patch(scrRows.map((r, i) => {
+      const e = r[r.length - 1], t = i / NR;
+      return [[sx * e[0], e[1], e[2]],
+        [sx * lp(wGlassB, wGlassT, t), lp(sgFB[1], sgFT[1], t), lp(sgFB[0], sgFT[0], t)]];
+    }), WHITE, [sx, 0.4, 0]);
+    paint.patch(rearRows.map((r, i) => {
+      const e = r[r.length - 1], o = sailOuter[i];
+      return [[sx * e[0], e[1], e[2]], [sx * o[0], o[1], o[2]]];
+    }), WHITE, [sx, 0.4, 0]);
+    // the thick C-pillar: from the side glass's rear edge back to the sail
+    paint.patch(sailOuter.map((o, i) => {
+      const t = i / NR, [bz, by] = dloB(1), [tz, ty] = dloT(1);
+      return [[sx * lp(wGlassT, wGlassB, t), lp(ty, by, t), lp(tz, bz, t)], [sx * (o[0] + 0.002), o[1], o[2]]];
+    }), WHITE, [sx, 0.3, 0]);
+  }
+
+  // --- the bonnet: matte black, a power bulge with a wide scoop -------------
+  const deckY = (z, x) => {
+    const pts = half(z, 1).slice(8);              // shoulder .. centre, x falling
+    const ax = Math.abs(x);
+    if (ax >= pts[0][0]) return pts[0][1];
+    for (let i = 1; i < pts.length; i++) {
+      if (ax >= pts[i][0]) {
+        const t = (ax - pts[i][0]) / ((pts[i - 1][0] - pts[i][0]) || 1);
+        return pts[i][1] + (pts[i - 1][1] - pts[i][1]) * t;
+      }
+    }
+    return pts[pts.length - 1][1];
+  };
+  // (the bonnet's black is the paint shader's: the deck forward of the cowl,
+  // over the roll into the nose; the bulge is a panel of its own)
+  const bz0 = 1.12, bz1 = nose - EXT - 0.06;
+  const BX = [-0.40, -0.33, -0.26, -0.18, -0.09, 0, 0.09, 0.18, 0.26, 0.33, 0.40];
+  const BH = [0, 0.022, 0.036, 0.044, 0.048, 0.050, 0.048, 0.044, 0.036, 0.022, 0];
+  const bulgeRows = [];
+  for (let i = 0; i <= 12; i++) {
+    const t = i / 12, z = lp(bz0, bz1, t), rise = Math.min(1, t * 3.5) ** 0.7;
+    bulgeRows.push(BX.map((x, j) => [x, deckY(z, x) + 0.014 + BH[j] * rise, z]));
+  }
+  paint.patch(bulgeRows, TIG_HOOD, [0, 1, 0]);
+  // its open front: the scoop, a black mouth across the bulge
+  paint.patch([BX.map((x, j) => [x, deckY(bz1, x) + 0.014 + BH[j], bz1]),
+    BX.map((x) => [x, deckY(bz1, x) + 0.012, bz1 + 0.002])], TIG_HOOD, [0, 0, 1]);
+  matte.box(0, deckY(bz1, 0) + 0.016, bz1 + 0.003, 0.56, 0.036, 0.006, 0, CAVITY);
+  for (const sx of [-1, 1]) {
+    const vz = 1.70, vx = sx * 0.58;
+    matte.box(vx, deckY(vz, vx) + 0.010, vz, 0.18, 0.008, 0.30, 0, CAVITY);
+  }
+
+  // --- front: the splitter under the mouth; the rest is the shader's --------
+  matte.box(0, 0.300, front.z - 0.09, 1.62, 0.022, 0.16, 0, PLASTIC);
+
+  // --- rear: the plate, two big pipes, the ducktail -----------------------------
+  trim.box(0, 0.555, rear.z - 0.022, 0.42, 0.125, 0.02, 0, PLATE);
+  for (const sx of [-1, 1]) hole(trim, matte, sx * 0.60, 0.40, rear.z - 0.004, 0.064, 0.12, -1, { seg: 16 });
+  matte.box(0, 0.31, rear.z + 0.12, 1.50, 0.06, 0.22, 0, PLASTIC);   // diffuser
+  paint.box(0, rear.top - 0.012, rear.z + 0.12, 1.42, 0.034, 0.09, 0, TIG_BLACK);
+
+  // --- flanks -----------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    for (const zc of [0.66, -0.40, -1.36]) {
+      const rows = [-0.006, 0.006].map((dz) =>
+        half(zc + dz, sx).slice(2, 9).map(([x, y]) => [x + sx * 0.005, y, zc + dz]));
+      matte.patch(rows, [0.10, 0.10, 0.11], [sx, 0, 0]);
+    }
+    // door handles, flush, dark
+    for (const zc of [0.28, -0.78]) {
+      const g = geom(zc);
+      matte.box(sx * (g.w * 0.975 + 0.004), g.yc + g.h * 0.13, zc, 0.012, 0.028, 0.16, 0, [0.06, 0.06, 0.065]);
+    }
+    // a black rocker under the doors
+    matte.box(sx * (geom(0).wb + 0.004), 0.262, 0.03, 0.03, 0.07, 2.72, 0, PLASTIC);
+    // the mirror, in the wrap, on a short stalk off the sail
+    paint.tube([sx * 0.825, 0.995, sgFB[0] - 0.03], [sx * 0.925, 1.020, sgFB[0] - 0.07], 0.020, 8, WHITE, true);
+    const mx = sx * 0.965, my = 0.985, mz = sgFB[0] - 0.11;
+    const MR = [[0, 0.075, 0.040], [0.5, 0.090, 0.050], [1, 0.080, 0.045]];   // fore-aft, half-width, half-height
+    paint.patch(MR.map(([t, hw, hh]) => {
+      const z = mz + 0.05 - t * 0.09, ring = [];
+      for (let k = 0; k <= 10; k++) {
+        const a = (k / 10) * Math.PI * 2;
+        ring.push([mx + Math.cos(a) * hw * (t === 0 ? 0.6 : 1), my + Math.sin(a) * hh * (t === 0 ? 0.6 : 1), z]);
+      }
+      return ring;
+    }), WHITE, [0, 0, 1]);
+    trim.box(mx, my - 0.040, mz - 0.042, 0.16, 0.080, 0.01, 0, MIRROR);
+  }
+  return wheels;
+}
+
+// ---------------------------------------------------------------------------
+// THE WIENERMOBILE (an Easter egg)
+// ---------------------------------------------------------------------------
+
+/** An sRGB hex colour as the linear rgb a vertex colour is read as. */
+const linRgb = (h) => [16, 8, 0].map((s) => {
+  const c = ((h >> s) & 255) / 255;
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+});
+// Its paint reads vertex colour as the colour itself (wienerShader), and the
+// shader tells the parts apart by hue: the dog is red (green under a third of
+// red), the bun yellow, the plates white.
+const WM_DOG_TOP = linRgb(0xcc3a1f), WM_DOG_LOW = linRgb(0xf07420);
+const WM_BUN = linRgb(0xf4bb1e), WM_BUN_LOW = linRgb(0xe2a012);
+const WM_PLATE = [0.9, 0.9, 0.88];
+const WM_RUBBER = [0.03, 0.03, 0.034];
+
+/**
+ * A closed parametric shell with openings cut into it by a signed distance.
+ * `S(u, v)` is the surface (u 0..1 along it, v 0..1 round it, wrapping),
+ * sampled NU x NV; every triangle is clipped against `f(p)` -> [d, w] (d < 0
+ * inside opening w), so an outline is the curve f = 0 found along the
+ * triangles' sides -- a window's own rounded corner, not the grid's
+ * staircase. Outside goes to `out`, coloured by `col(p)`. Inside opening w,
+ * `wins[w]` sets a pane `depth` in along the normal (into `pane`, GLASS; no
+ * pane is a hole) and walls the cut edge down to it (into `wall`, `rim`), so
+ * the pane's edge and the wall's foot are the same points.
+ */
+function cutShell(out, S, NU, NV, f, col, wins) {
+  const P = [], N = [], D = [], W = [];
+  const nrm = (v) => { const l = Math.hypot(v[0], v[1], v[2]); return l > 1e-9 ? [v[0] / l, v[1] / l, v[2] / l] : null; };
+  const e = 1e-4;
+  for (let i = 0; i <= NU; i++) {
+    const u = i / NU;
+    for (let j = 0; j < NV; j++) {
+      const v = j / NV, p = S(u, v);
+      const a = S(Math.min(1, u + e), v), b = S(Math.max(0, u - e), v), c = S(u, v + e), d = S(u, v - e);
+      const du = [a[0] - b[0], a[1] - b[1], a[2] - b[2]], dv = [c[0] - d[0], c[1] - d[1], c[2] - d[2]];
+      let n = nrm([du[1] * dv[2] - du[2] * dv[1], du[2] * dv[0] - du[0] * dv[2], du[0] * dv[1] - du[1] * dv[0]]);
+      // at a tip the ring is a point: the normal is straight out of the end
+      if (!n) { const m = S(0.5, v); n = nrm([p[0] - m[0], 0, p[2] - m[2]]) || [0, 0, 1]; }
+      P.push(p); N.push(n);
+      const [dd, ww] = f(p); D.push(dd); W.push(ww);
+    }
+  }
+  // outward: away from the middle of the shell
+  {
+    const k = Math.floor(NU / 2) * NV, m = S(0.5, 0.5), p = P[k], n = N[k];
+    if ((p[0] - m[0]) * n[0] + (p[1] - m[1]) * n[1] < 0) for (const q of N) { q[0] = -q[0]; q[1] = -q[1]; q[2] = -q[2]; }
+  }
+  const V = (k) => ({ p: P[k], n: N[k], d: D[k], w: W[k] });
+  const cross = (k) => {
+    const [A, B] = k;
+    const t = A.d / (A.d - B.d);
+    const p = [A.p[0] + (B.p[0] - A.p[0]) * t, A.p[1] + (B.p[1] - A.p[1]) * t, A.p[2] + (B.p[2] - A.p[2]) * t];
+    const n = nrm([A.n[0] + (B.n[0] - A.n[0]) * t, A.n[1] + (B.n[1] - A.n[1]) * t, A.n[2] + (B.n[2] - A.n[2]) * t]) || A.n;
+    return { p, n, d: 0, w: A.d < 0 ? A.w : B.w, cut: true };
+  };
+  const clip = (poly, inside) => {
+    const res = [];
+    for (let i = 0; i < poly.length; i++) {
+      const A = poly[i], B = poly[(i + 1) % poly.length];
+      const ia = inside ? A.d < 0 : A.d >= 0, ib = inside ? B.d < 0 : B.d >= 0;
+      if (ia) res.push(A);
+      if (ia !== ib) res.push(cross([A, B]));
+    }
+    return res;
+  };
+  const area = (a, b, c) => {
+    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+    return Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+  };
+  const fan = (into, poly, map, colOf) => {
+    for (let k = 1; k < poly.length - 1; k++) {
+      const a = poly[0], b = poly[k], c = poly[k + 1];
+      const pa = map(a), pb = map(b), pc = map(c);
+      if (area(pa, pb, pc) < 1e-8) continue;
+      into.tri(pa, pb, pc, [a.n, b.n, c.n], [colOf(pa), colOf(pb), colOf(pc)]);
+    }
+  };
+  const id = (q) => q.p;
+  const tri = (A, B, C) => {
+    const poly = [A, B, C];
+    if (A.d >= 0 && B.d >= 0 && C.d >= 0) { fan(out, poly, id, col); return; }
+    const win = wins[[A, B, C].reduce((m, q) => (q.d < m.d ? q : m)).w];
+    const inset = (q) => [q.p[0] - q.n[0] * win.depth, q.p[1] - q.n[1] * win.depth, q.p[2] - q.n[2] * win.depth];
+    const inner = clip(poly, true);
+    if (win.pane) fan(win.pane, inner, inset, () => win.glass || GLASS);
+    if (A.d < 0 && B.d < 0 && C.d < 0) return;
+    fan(out, clip(poly, false), id, col);
+    // the wall round the cut, from the shell down to the pane
+    const cuts = inner.filter((q) => q.cut);
+    if (cuts.length !== 2 || !win.wall) return;
+    const [c0, c1] = cuts, i0 = inset(c0), i1 = inset(c1);
+    const ins = poly.filter((q) => q.d < 0), m = [0, 0, 0];
+    for (const q of ins) for (let k = 0; k < 3; k++) m[k] += q.p[k] / ins.length;
+    const ed = [c1.p[0] - c0.p[0], c1.p[1] - c0.p[1], c1.p[2] - c0.p[2]], n = c0.n;
+    let wn = nrm([ed[1] * n[2] - ed[2] * n[1], ed[2] * n[0] - ed[0] * n[2], ed[0] * n[1] - ed[1] * n[0]]);
+    if (!wn) return;
+    if (wn[0] * (m[0] - c0.p[0]) + wn[1] * (m[1] - c0.p[1]) + wn[2] * (m[2] - c0.p[2]) < 0) wn = [-wn[0], -wn[1], -wn[2]];
+    win.wall.quad(c0.p, c1.p, i1, i0, wn, [0, 0, 1, 0, 1, 1, 0, 1], win.rim);
+  };
+  for (let i = 0; i < NU; i++) {
+    for (let j = 0; j < NV; j++) {
+      const a = V(i * NV + j), b = V(i * NV + (j + 1) % NV), c = V((i + 1) * NV + (j + 1) % NV), d = V((i + 1) * NV + j);
+      tri(a, b, c); tri(a, c, d);
+    }
+  }
+}
+
+/** A rounded rectangle's signed distance: (px, py) from its centre, half-size (hx, hy), corner r. */
+function rrect(px, py, hx, hy, r) {
+  const qx = Math.abs(px) - hx + r, qy = Math.abs(py) - hy + r;
+  return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r;
+}
+
+// The Wienermobile's proportions: the dog (a sausage of revolution, its
+// axis at YC) and the bun it lies in (a superellipse section, fuller below
+// than above). Each runs straight between `zr` and `zf` and rounds off over
+// `lr` / `lf` at the ends. wienerShader draws on these numbers too.
+const WM = {
+  dog: { zc: -0.18, lr: 3.94, lf: 3.98, pr: 2.5, pf: 3.4, rx: 1.06, ry: 1.12, yc: 2.18, dip: 0.14 },
+  bun: { zr: -2.45, zf: 3.05, lr: 0.80, lf: 1.06, w: 1.22, ht: 0.54, hb: 0.66, yc: 0.94 },
+  zF: 2.35, zR: -2.25, track: 0.92,
+  bandZ: -1.62, bandW: 0.40, bandLean: 0.28,
+};
+const sgnPow = (t, e) => Math.sign(t) * Math.abs(t) ** e;
+
+/**
+ * The dog's section at z: axis height, side scale, top and bottom scales.
+ * A sausage, not a capsule: it swells to the middle and runs out to each end
+ * as a superellipse (blunter at the nose, where the bubble is, than at the
+ * tail).
+ */
+function dogSec(z) {
+  const D = WM.dog;
+  const front = z > D.zc, t = Math.min(1, Math.abs(z - D.zc) / (front ? D.lf : D.lr)), p = front ? D.pf : D.pr;
+  const k = (1 - t ** p) ** (1 / p);
+  if (!front) return { yc: D.yc, k, kt: k, kb: k };
+  // the nose's chin stays full and the axis dips, so the front of the dog
+  // goes down into the bun instead of floating over it
+  const n = Math.max(0, (t - 0.55) / 0.45);
+  return { yc: D.yc - D.dip * n * n, k, kt: k, kb: k ** 0.2 };
+}
+function dogAt(z, th) {
+  const D = WM.dog, g = dogSec(z), c = Math.cos(th);
+  return [D.rx * g.k * sgnPow(Math.sin(th), 0.9), g.yc + D.ry * (c >= 0 ? g.kt : g.kb) * sgnPow(c, 0.9), z];
+}
+/** Where the dog's skin is at (z, y) on side sx, or null above / below it. */
+function dogX(z, y) {
+  const D = WM.dog, g = dogSec(z), kk = y >= g.yc ? g.kt : g.kb;
+  const t = (y - g.yc) / (D.ry * kk);
+  if (!(Math.abs(t) < 1)) return 0;
+  const c = Math.abs(t) ** (1 / 0.9);
+  return D.rx * g.k * Math.sqrt(Math.max(0, 1 - c * c)) ** 0.9;
+}
+/** The meridian: u 0..1 -> z, with the ends sampled by angle (they curve fastest). */
+function meridian(u, zr, zf, lr, lf, ur = 0.22, uf = 0.72) {
+  if (u < ur) return zr - lr * Math.cos((u / ur) * Math.PI / 2);
+  if (u > uf) return zf + lf * Math.sin(((u - uf) / (1 - uf)) * Math.PI / 2);
+  return zr + (zf - zr) * (u - ur) / (uf - ur);
+}
+function bunSec(z, e = 0.42) {
+  const B = WM.bun;
+  if (z > B.zf) { const s = Math.min(1, (z - B.zf) / B.lf); return Math.sqrt(Math.max(0, 1 - s * s)) ** e; }
+  if (z < B.zr) { const c = Math.min(1, (B.zr - z) / B.lr); return Math.sqrt(Math.max(0, 1 - c * c)) ** 0.3; }
+  return 1;
+}
+function bunAt(z, th) {
+  const B = WM.bun, k = bunSec(z), kx = bunSec(z, 0.3), c = Math.cos(th), s = Math.sin(th);
+  // the bun's lip: a soft ridge round it just over its widest
+  const ridge = 1 + 0.045 * Math.exp(-(((c - 0.22) / 0.13) ** 2)) - 0.02 * Math.exp(-(((c + 0.02) / 0.07) ** 2));
+  const x = B.w * kx * ridge * sgnPow(s, c >= 0 ? 2 / 2.4 : 2 / 4);
+  const y = B.yc + (c >= 0 ? B.ht : B.hb) * k * sgnPow(c, c >= 0 ? 2 / 2.4 : 2 / 4);
+  return [x, y, z];
+}
+/** The bun's half-width at (z, y), ridge aside; 0 off its section. */
+function bunX(z, y) {
+  const B = WM.bun, k = bunSec(z), top = y >= B.yc, n = top ? 2.4 : 4;
+  const t = Math.abs(y - B.yc) / ((top ? B.ht : B.hb) * k);
+  return t < 1 ? B.w * bunSec(z, 0.3) * (1 - t ** n) ** (1 / n) : 0;
+}
+/** Bisect z over [z0, z1] (g falling along it) for g(z) = 0. */
+function solveZ(g, z0, z1) {
+  for (let k = 0; k < 40; k++) { const m = (z0 + z1) / 2; if (g(m) > 0) z0 = m; else z1 = m; }
+  return (z0 + z1) / 2;
+}
+const bunNoseZ = (x, y) => solveZ((z) => bunX(z, y) - x, WM.bun.zf, WM.bun.zf + WM.bun.lf);
+const bunTailZ = (x, y) => -solveZ((z) => bunX(-z, y) - x, -WM.bun.zr, -WM.bun.zr + WM.bun.lr);
+
+/**
+ * The Oscar Mayer Wienermobile (an Easter egg): a hot dog on wheels, 8.2 m
+ * long, 3.3 m tall, roaming the city's streets one at a time and rarely
+ * (traffic.js WIENER_*). After the 2024 car: a red-orange dog lying in a
+ * golden bun, the dog's nose a glass bubble over the dash, a door window and
+ * two recessed side windows down each flank and a skylight along the top; a
+ * pale band round the dog's tail end with the badge on it (drawn by the
+ * paint shader, wienerShader, as are the grille, the lamps, the lettering on
+ * the bun's nose and the "OH I WISH" plate). The dog and the bun are each
+ * one surface cut by a signed distance (cutShell), so the windows are real
+ * openings with their own rounded outlines, onto a cabin: a lined interior,
+ * two seats and a driver, the dash, and a toy hot dog on it.
+ */
+function buildWiener(spec, paint, trim, matte) {
+  const D = WM.dog, B = WM.bun, wr = spec.wheelR;
+  const sm = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+  const lp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+
+  // --- the dog -----------------------------------------------------------------
+  const zDog = (u) => { const w = 2 * u - 1; return D.zc + (w < 0 ? D.lr : D.lf) * Math.sin(w * Math.PI / 2); };
+  const dogS = (u, v) => dogAt(zDog(u), v * Math.PI * 2);
+  // A-pillar, windscreen top and foot: the glass a band round the nose,
+  // its top coming down toward the tip so the dog keeps a brow over it
+  const zA = (y) => 2.12 - 0.10 * (y - 2.2);
+  const yTop = (z) => 3.0 - 0.26 * Math.max(0, z - 2.1);
+  const yBot = (z) => 1.56 - 0.02 * Math.max(0, z - 2.1);
+  const SIDE = [[1.58, 2.40, 0.40, 0.52, 0.17], [0.58, 2.42, 0.42, 0.46, 0.20], [-0.44, 2.42, 0.42, 0.46, 0.20]];
+  const dogF = ([x, y, z]) => {
+    let best = 1e9, w = 0;
+    {
+      const dA = zA(y) - z, dv = Math.max(y - yTop(z), yBot(z) - y), r = 0.2;
+      const qx = dA + r, qy = dv + r;
+      const d = Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r;
+      if (d < best) { best = d; w = 0; }
+    }
+    SIDE.forEach(([zc, yc, hz, hy, r], i) => {
+      const d = Math.max(rrect(z - zc, y - yc, hz, hy, r), 0.45 - Math.abs(x));
+      if (d < best) { best = d; w = i === 0 ? 1 : 2; }
+    });
+    {
+      const d = Math.max(rrect(z - 0.45, x, 1.20, 0.29, 0.26), D.yc + 0.62 - y);
+      if (d < best) { best = d; w = 3; }
+    }
+    return [best, w];
+  };
+  const dogCol = ([, y, z]) => {
+    const c = lp3(WM_DOG_LOW, WM_DOG_TOP, sm(1.9, 2.75, y));
+    const end = 1 - 0.10 * sm(-3.4, -4.1, z);
+    return [c[0] * end, c[1] * end, c[2] * end];
+  };
+  cutShell(paint, dogS, 124, 84, dogF, dogCol, [
+    { depth: 0.018, pane: trim, wall: matte, rim: WM_RUBBER },      // windscreen
+    { depth: 0.030, pane: trim, wall: matte, rim: WM_RUBBER },      // door windows
+    { depth: 0.065, pane: trim, wall: matte, rim: [0.07, 0.07, 0.075] },   // side windows, set in
+    { depth: 0.022, pane: trim, wall: matte, rim: WM_RUBBER },      // skylight
+  ]);
+
+  // The cabin's lining: the dog again, 6 % in and facing in, so through any
+  // window you see the inside of the far wall and never daylight through it.
+  {
+    const zc = D.zc, rings = 36, segs = 28;
+    for (let i = 0; i < rings; i++) {
+      for (let j = 0; j < segs; j++) {
+        const q = (a, b) => {
+          const p = dogS(a / rings, b / segs), g = dogSec(p[2]);
+          return [p[0] * 0.94, g.yc + (p[1] - g.yc) * 0.94, zc + (p[2] - zc) * 0.985];
+        };
+        const A = q(i, j), Bq = q(i, j + 1), C = q(i + 1, j + 1), Dq = q(i + 1, j);
+        const m = [(A[0] + C[0]) / 2, (A[1] + C[1]) / 2, (A[2] + C[2]) / 2], g = dogSec(m[2]);
+        const n = [-(m[0]), -(m[1] - g.yc), -(m[2] - zc) * 0.15];
+        const l = Math.hypot(n[0], n[1], n[2]) || 1;
+        if (area3(A, Bq, C) + area3(A, C, Dq) < 1e-7) continue;
+        matte.quad(A, Bq, C, Dq, [n[0] / l, n[1] / l, n[2] / l], [0, 0, 1, 0, 1, 1, 0, 1], m[1] > 2.6 ? CAB_ROOF : [0.30, 0.10, 0.08]);
+      }
+    }
+  }
+
+  // --- the bun -------------------------------------------------------------------
+  const bunS = (u, v) => bunAt(meridian(u, B.zr, B.zf, B.lr, B.lf, 0.14, 0.80), v * Math.PI * 2);
+  const archR = wr + 0.13;
+  const bunF = ([x, y, z]) => {
+    let best = 1e9;
+    for (const az of [WM.zF, WM.zR]) best = Math.min(best, Math.max(Math.hypot(z - az, y - wr) - archR, 0.55 - Math.abs(x)));
+    return [best, 0];
+  };
+  const bunCol = ([, y]) => lp3(WM_BUN_LOW, WM_BUN, sm(0.30, 1.05, y));
+  cutShell(paint, bunS, 76, 52, bunF, bunCol, [{ depth: 0.34, pane: null, wall: matte, rim: CAVITY }]);
+  // each wheelhouse closed off inboard
+  for (const az of [WM.zF, WM.zR]) {
+    for (const sx of [-1, 1]) {
+      const rows = [];
+      for (const rr of [0, archR]) {
+        const row = [];
+        for (let k = 0; k <= 12; k++) {
+          const a = (k / 12) * Math.PI;
+          row.push([sx * 0.70, wr + Math.sin(a) * rr, az + Math.cos(a) * rr]);
+        }
+        rows.push(row);
+      }
+      matte.patch(rows, CAVITY, [sx, 0, 0]);
+    }
+  }
+  // the underside, dark
+  matte.box(0, 0.30, 0.3, 1.30, 0.04, 6.6, 0, PLASTIC);
+
+  const wheels = [];
+  for (const az of [WM.zF, WM.zR]) for (const sx of [-1, 1]) wheels.push([sx * WM.track, wr, az, wr, 0.245, undefined, false, 'polish']);
+
+  // --- the cabin -------------------------------------------------------------------
+  const floorY = 1.58;
+  {
+    const rows = [];
+    for (let i = 0; i <= 16; i++) {
+      const z = -2.6 + (5.4 * i) / 16, hw = Math.max(0.05, dogX(z, floorY + 0.02) * 0.93 - 0.04);
+      rows.push([[-hw, floorY, z], [0, floorY, z], [hw, floorY, z]]);
+    }
+    matte.patch(rows, CAB_FLOOR, [0, 1, 0]);
+  }
+  // the dash, under the bubble
+  const dashZ = 2.62, dashY = 1.98;
+  for (let i = 0; i < 1; i++) {
+    const hw = dogX(dashZ + 0.1, dashY) * 0.94 - 0.03;
+    rakedBox(matte, 0, floorY, dashZ, hw * 2, dashY - floorY, 0.42, -0.10, CAB_DASH);
+  }
+  const H = 2.95 - floorY;
+  for (const sx of [-1, 1]) seat(matte, sx * 0.48, floorY + 0.36, 1.55, 0.50, H, false, 0.36);
+  // a bench down each side behind, facing in, in ketchup red
+  for (const sx of [-1, 1]) matte.box(sx * 0.60, floorY, -0.9, 0.42, 0.42, 1.9, 0, [0.45, 0.05, 0.04]);
+  const wheelAt = [0.48, floorY + 0.66, 2.20];
+  wheelRim(matte, wheelAt[0], wheelAt[1], wheelAt[2]);
+  if (matte.crew) occupant(matte.crew, 0.48, floorY + 0.36, 1.55, H * 0.62, wheelAt);
+  // the toy hot dog on the passenger's side of the dash
+  {
+    const ty = dashY + 0.035, tz = dashZ - 0.02;
+    matte.spheroid(-0.40, ty, tz, 0.16, 10, 5, WM_BUN, 0.32);
+    matte.tube([-0.62, ty + 0.05, tz + 0.02], [-0.18, ty + 0.05, tz - 0.02], 0.055, 8, WM_DOG_LOW, true);
+  }
+
+  // --- outside: mirrors, wipers, the bars in the side windows -----------------------
+  for (const sx of [-1, 1]) {
+    const mz = 1.98, my = 1.96, x0 = dogX(mz, my);
+    matte.tube([sx * (x0 - 0.02), my, mz], [sx * (x0 + 0.20), my - 0.02, mz + 0.06], 0.022, 6, PLASTIC, true);
+    matte.box(sx * (x0 + 0.24), my - 0.18, mz + 0.06, 0.07, 0.34, 0.20, 0, PLASTIC);
+    trim.box(sx * (x0 + 0.24), my - 0.16, mz + 0.06 - 0.101, 0.06, 0.30, 0.004, 0, MIRROR);
+    // wipers: an arm from the foot of the bubble up toward the pillar
+    const w0 = [sx * 0.18, 1.74], w1 = [sx * 0.66, 2.34];
+    const pts = [0, 0.5, 1].map((t) => {
+      const x = w0[0] + (w1[0] - w0[0]) * t, y = w0[1] + (w1[1] - w0[1]) * t;
+      // the glass is where the dog's skin is, at this x and y: solve for z
+      const z = solveZ((zz) => dogX(zz, y) - Math.abs(x), D.zc, D.zc + D.lf);
+      return [x, y + 0.012, z + 0.03];
+    });
+    for (let k = 0; k < 2; k++) matte.tube(pts[k], pts[k + 1], 0.011, 5, PLASTIC, true);
+    // each side window has a sill bar across it, and a mullion under that
+    for (const [zc, yc, hz] of SIDE.slice(1)) {
+      const y = yc - 0.06, x = dogX(zc, y) - 0.05;
+      matte.box(sx * x, y, zc, 0.03, 0.035, hz * 2 - 0.08, 0, [0.07, 0.07, 0.075]);
+      matte.box(sx * (dogX(zc, yc - 0.25) - 0.05), yc - 0.44, zc, 0.03, 0.38, 0.03, 0, [0.07, 0.07, 0.075]);
+    }
+  }
+  // the plates: white panels the shader letters (WM_PLATE)
+  paint.box(0, 0.33, bunNoseZ(0.16, 0.41) + 0.006, 0.31, 0.155, 0.02, 0, WM_PLATE);
+  paint.box(0, 0.50, bunTailZ(0.16, 0.58) - 0.006, 0.31, 0.155, 0.02, 0, WM_PLATE);
+  // twin pipes under the tail
+  for (const sx of [-1, 1]) hole(trim, matte, sx * 0.35, 0.36, bunTailZ(0.4, 0.36) + 0.02, 0.045, 0.10, -1, { seg: 12 });
+  return wheels;
+}
+
+function area3(a, b, c) {
+  const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+  return Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+}
+
+/**
+ * The mid-size American crossover: tall two-box, upright nose, a big grille, a
+ * long roof on rails, a thick D-pillar and a tailgate with a spoiler over the
+ * screen. It rides 16 cm higher than the sedan and the arches are SQUARED
+ * (`archPow` above 2) and clad in black plastic, which together are most of
+ * what a crossover is at a glance -- the rest of the fleet has semicircular
+ * openings in painted metal.
+ *
+ * The cladding is why `bodyCore` takes `lipInto`: the arch lip is built from
+ * the body's own sill points, so the only thing that should change for a clad
+ * arch is which builder it lands in. Drawing a second black lip over a painted
+ * one would z-fight along its whole length.
+ */
+function buildSuv(spec, paint, trim, matte) {
+  const wr = spec.wheelR;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = 1.46, zR = -1.42;                 // 2.88 m wheelbase, short overhangs
+
+  // Nearly constant width: a crossover's flanks are slabs and its arches are
+  // squared cutouts in them, not flares.
+  const halfW = curve([
+    [tail, 0.90], [-2.10, 0.96], [zR, 1.00], [-0.60, 0.97], [0.60, 0.97],
+    [zF, 1.00], [2.10, 0.96], [nose, 0.90],
+  ]);
+  const sillY = curve([
+    [tail, 0.50], [-2.00, 0.46], [-0.60, 0.44], [0.60, 0.44], [2.00, 0.46], [nose, 0.52],
+  ]);
+  // The bonnet falls 10 cm in total. An upright nose is the point: a crossover
+  // that noses down turns into a tall hatchback.
+  const beltY = curve([
+    [tail, 1.30], [-2.10, 1.32], [zR, 1.33], [-0.60, 1.32], [0.40, 1.31],
+    [1.00, 1.30], [1.60, 1.28], [2.10, 1.24], [nose, 1.20],
+  ]);
+  const tuckAt = curve([
+    [tail, 0.94], [zR, 0.97], [-0.60, 0.93], [0.60, 0.93], [zF, 0.97], [nose, 0.94],
+  ]);
+  const topAt = curve([
+    [tail, 0.92], [-2.10, 0.96], [-1.20, 0.97], [1.20, 0.97], [1.90, 0.95],
+    [2.25, 0.90], [nose, 0.82],
+  ]);
+  const { geom, half, endProf } = bodyCore(spec, paint, matte, {
+    halfW, sillY, beltY, tuckAt, topAt, zF, zR,
+    archR: 0.62, archGap: 0.07, archPow: 3.0, creaseAt: 0.50, tumble: 0.96,
+    deckDrop: 0.030, lipOut: 0.052, endRound: 0.14, endMin: 0.94,
+    lipInto: matte, lipCol: PLASTIC,
+  });
+
+  const tw = 0.265;
+  const wx = geom(zF).wb - tw / 2 + 0.02;
+  const wxR = geom(zR).wb - tw / 2 + 0.02;
+  const wheels = [
+    [-wx, wr, zF, wr, tw], [wx, wr, zF, wr, tw],
+    [-wxR, wr, zR, wr, tw], [wxR, wr, zR, wr, tw],
+  ];
+
+  // --- tall two-box greenhouse ---------------------------------------------
+  const cowlZ = 0.86, cowlY = 1.305, roofY = spec.roof;
+  const scrZ = 0.10, backZ = -1.96, rearZ = -2.34, rearY = 1.325;
+  const wScrB = 0.84, wScrT = 0.76, wRoof = 0.780, wRearT = 0.755, wRear = 0.800;
+  const wGlassT = 0.752, wGlassB = 0.845;
+  const lp = (a, b, t) => a + (b - a) * t;
+
+  const scrRows = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3, row = [];
+    const cz = lp(cowlZ, scrZ, t) + 0.030 * Math.sin(Math.PI * t);
+    const cy = lp(cowlY, roofY, t) + 0.014 * Math.sin(Math.PI * t);
+    const hwv = lp(wScrB, wScrT, t);
+    for (let j = 0; j <= 8; j++) {
+      const u = -1 + (2 * j) / 8;
+      row.push([u * hwv, cy - 0.026 * u * u, cz - 0.095 * u * u]);
+    }
+    scrRows.push(row);
+  }
+  trim.patch(scrRows, GLASS, [0, 0.5, 1]);
+
+  const roofCols = [[-0.98, -0.050], [-1, -0.012], [-0.94, 0], [-0.66, 0.006], [-0.3, 0.010],
+    [0, 0.012], [0.3, 0.010], [0.66, 0.006], [0.94, 0], [1, -0.012], [0.98, -0.050]];
+  const roofRows = [];
+  for (let i = 0; i <= 4; i++) {
+    const t = i / 4;
+    const cz = lp(scrZ, backZ, t), cy = roofY + 0.010 * Math.sin(Math.PI * t);
+    roofRows.push(roofCols.map(([u, dy]) => [u * wRoof, cy + dy - 0.020 * u * u, cz]));
+  }
+  paint.patch(roofRows, WHITE, [0, 1, 0]);
+
+  // The tailgate glass is 35 degrees off vertical -- steep, because the load
+  // space behind the D-pillar has to be square. A raked one is an estate.
+  const rearRows = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3, row = [];
+    const cz = lp(backZ, rearZ, t), cy = lp(roofY - 0.010, rearY, t) + 0.010 * Math.sin(Math.PI * t);
+    const hwv = lp(wRearT, wRear, t);
+    for (let j = 0; j <= 8; j++) {
+      const u = -1 + (2 * j) / 8;
+      row.push([u * hwv, cy - 0.022 * u * u, cz + 0.030 * u * u]);
+    }
+    rearRows.push(row);
+  }
+  trim.patch(rearRows, GLASS, [0, 0.5, -1]);
+
+  const sgFB = [0.78, 1.315], sgFT = [0.14, 1.848], sgRT = [-1.50, 1.842], sgRB = [-1.62, 1.322];
+  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [-0.30, -1.30], scrWrap: 0.095, rearWrap: 0.03 }, paint);
+  // The D-pillar is the whole panel between the side glass and the rear screen,
+  // and it is 30-50 cm of painted metal -- the widest pillar on any vehicle
+  // here, and the reason an SUV's rear quarter reads solid.
+  //
+  // Its first row has to be the side glass's OWN rear-top corner. Started at
+  // the roof's trailing edge instead, the panel begins 24 cm behind where the
+  // glass ends and the quarter has a hole in it half a metre tall -- which is
+  // what the first pass looked straight through.
+  const sailOuter = [[wGlassT, sgRT[1], sgRT[0]], [0.805, 1.640, -1.555],
+    [wGlassB, sgRB[1], sgRB[0]], [0.870, 1.302, -2.10]];
+  for (const sx of [-1, 1]) {
+    const rows = [];
+    for (let i = 0; i <= 2; i++) {
+      const t = i / 2, row = [];
+      for (let j = 0; j <= 6; j++) {
+        const u = j / 6;
+        const bz = lp(sgFB[0], sgRB[0], u), by = lp(sgFB[1], sgRB[1], u);
+        const tz = lp(sgFT[0], sgRT[0], u), ty = lp(sgFT[1], sgRT[1], u);
+        row.push([sx * lp(wGlassB, wGlassT, t), lp(by, ty, t), lp(bz, tz, t)]);
+      }
+      rows.push(row);
+    }
+    trim.patch(rows, GLASS, [sx, 0, 0]);
+    for (const u of [0.40, 0.74]) {           // B-pillar and the quarter-light divider
+      const bz0 = lp(sgFB[0], sgRB[0], u), bz1 = lp(sgFT[0], sgRT[0], u);
+      matte.patch([
+        [[sx * (wGlassB + 0.006), sgFB[1] - 0.01, bz0 + 0.042], [sx * (wGlassB + 0.006), sgFB[1] - 0.01, bz0 - 0.042]],
+        [[sx * (wGlassT + 0.006), sgFT[1] + 0.005, bz1 + 0.042], [sx * (wGlassT + 0.006), sgFT[1] + 0.005, bz1 - 0.042]],
+      ], [0.09, 0.10, 0.11], [sx, 0, 0]);
+    }
+    paint.patch(scrRows.map((r, i) => {
+      const e = r[r.length - 1], t = i / 3;
+      return [[sx * e[0], e[1], e[2]],
+        [sx * lp(wGlassB, wGlassT, t), lp(sgFB[1], sgFT[1], t), lp(sgFB[0], sgFT[0], t)]];
+    }), WHITE, [sx, 0.4, 0]);
+    paint.patch(rearRows.map((r, i) => {
+      const e = r[r.length - 1], o = sailOuter[i];
+      return [[sx * e[0], e[1], e[2]], [sx * o[0], o[1], o[2]]];
+    }), WHITE, [sx, 0.4, 0]);
+    // Roof rail on two feet, standing just clear of the roof so daylight shows
+    // under it. A rail flush to the panel is a painted stripe; one held 4 cm up
+    // reads as bolted onto nothing.
+    matte.box(sx * 0.615, roofY + 0.020, -0.90, 0.052, 0.044, 2.00, 0, [0.15, 0.16, 0.17]);
+    for (const rz of [0.02, -1.82]) {
+      matte.box(sx * 0.615, roofY - 0.020, rz, 0.046, 0.044, 0.11, 0, [0.15, 0.16, 0.17]);
+    }
+  }
+
+  // Tailgate spoiler: it overhangs the roof's trailing edge, so it starts ON
+  // the roof and cantilevers back. Centred behind the roof it hangs in the air
+  // above the screen with a hand's width of daylight under it.
+  paint.box(0, roofY - 0.056, backZ + 0.10, wRoof * 1.90, 0.058, 0.42, 0, WHITE);
+  for (const sx of [-1, 1]) paint.box(sx * 0.735, roofY - 0.096, backZ + 0.06, 0.05, 0.10, 0.30, 0, WHITE);
+  trim.box(0, roofY - 0.070, backZ - 0.06, 0.22, 0.05, 0.05, 0, [0.05, 0.05, 0.06]);  // high stop lamp
+
+  // --- front: a big upright grille -----------------------------------------
+  const GRILLE = [0, 1.010, 0.480, 0.130], LAMP_A = [0.640, 1.020, 0.135, 0.072];
+  const INTAKE = [0, 0.740, 0.520, 0.075];
+  const TAILA = [0.630, 1.055, 0.115, 0.150], TPLATE = [0, 0.770, 0.235, 0.075];
+  endFace(paint, nose, 1, endProf(nose), [GRILLE, LAMP_A, INTAKE], WHITE);
+  endFace(paint, tail, -1, endProf(tail), [TAILA, TPLATE], WHITE);
+
+  const gp = pocket(paint, matte, GRILLE[0], GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.15, 1,
+    { rim: 0.036, rimCol: CHROME });
+  for (let i = 0; i < 4; i++) {
+    trim.box(0, 0.912 + i * 0.066, gp.z + 0.02, gp.hw * 1.94, 0.030, 0.05, 0, [0.20, 0.21, 0.23]);
+  }
+  for (const sx of [-1, 1]) {
+    const hp = pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.11, 1,
+      { rim: 0.026, rimCol: PLASTIC });
+    trim.box(sx * LAMP_A[0], 1.038, nose - 0.034, hp.hw * 1.9, 0.078, 0.024, 0, LAMP);
+    trim.box(sx * LAMP_A[0], 0.972, hp.z + 0.05, hp.hw * 1.9, 0.024, 0.024, 0, AMBER);
+    // Fog lamp in the lower cladding.
+    hole(trim, matte, sx * 0.560, 0.660, nose - 0.03, 0.048, 0.07, 1, { rimCol: PLASTIC });
+  }
+  pocket(paint, matte, INTAKE[0], INTAKE[1], nose, INTAKE[2], INTAKE[3], 0.12, 1,
+    { rim: 0.028, rimCol: PLASTIC });
+  // Bumper cladding and a brushed skid plate, which is the crossover's one
+  // gesture at the off-roader it is styled after.
+  matte.box(0, 0.560, nose - 0.11, 1.62, 0.075, 0.26, 0, PLASTIC);
+  trim.box(0, 0.508, nose - 0.16, 0.98, 0.030, 0.26, 0, [0.55, 0.57, 0.60]);
+  trim.box(0, 0.610, nose - 0.030, 0.42, 0.135, 0.02, 0, PLATE);
+
+  // --- rear: tall lamps up the corners of the tailgate ----------------------
+  for (const sx of [-1, 1]) {
+    const tp = pocket(paint, matte, sx * TAILA[0], TAILA[1], tail, TAILA[2], TAILA[3], 0.07, -1,
+      { rim: 0.026, rimCol: PLASTIC });
+    trim.box(sx * TAILA[0], 0.930, tail + 0.020, tp.hw * 1.9, 0.220, 0.026, 0, TAILC);
+    trim.box(sx * TAILA[0], 1.168, tail + 0.020, tp.hw * 1.9, 0.048, 0.026, 0, AMBER);
+  }
+  pocket(paint, matte, TPLATE[0], TPLATE[1], tail, TPLATE[2], TPLATE[3], 0.05, -1,
+    { rim: 0.024, rimCol: PLASTIC });
+  trim.box(0, 0.710, tail - 0.030, 0.42, 0.135, 0.02, 0, PLATE);
+  matte.box(0, 0.560, tail + 0.11, 1.62, 0.075, 0.26, 0, PLASTIC);
+  trim.box(0, 0.508, tail + 0.16, 0.98, 0.030, 0.26, 0, [0.55, 0.57, 0.60]);
+  for (const sx of [-1, 1]) hole(trim, matte, sx * 0.420, 0.470, tail + 0.06, 0.045, 0.10, -1);
+
+  // --- flanks: cladding all the way round ----------------------------------
+  for (const sx of [-1, 1]) {
+    for (const zc of [0.88, -0.14, -1.10]) {
+      const rows = [-0.008, 0.008].map((dz) =>
+        half(zc + dz, sx).slice(2, 9).map(([x, y]) => [x + sx * 0.005, y, zc + dz]));
+      matte.patch(rows, [0.13, 0.14, 0.15], [sx, 0, 0]);
+    }
+    // Rocker cladding between the two arches, deep enough to tie them together
+    // into one black band round the bottom of the car.
+    matte.box(sx * (geom(0).wb + 0.005), 0.470, 0.02, 0.055, 0.135, 2.10, 0, PLASTIC);
+    matte.box(sx * (geom(0).w + 0.004), 0.860, 0.02, 0.016, 0.075, 2.30, 0, [0.14, 0.15, 0.16]);
+    for (const zc of [0.62, -0.52]) {
+      const hg = geom(zc);
+      trim.tube([sx * hg.w * 0.99, hg.yc + 0.290, zc - 0.09], [sx * hg.w * 0.99, hg.yc + 0.290, zc + 0.09],
+        0.017, 6, CHROME, true);
+    }
+    // Mirror hung off the A-pillar's base, not out over the wing -- see the
+    // sedan's for what placing it by eye produces.
+    paint.tube([sx * 0.830, 1.318, sgFB[0] - 0.03], [sx * 0.955, 1.348, sgFB[0] - 0.08], 0.022, 6, WHITE, true);
+    paint.box(sx * 1.000, 1.300, sgFB[0] - 0.13, 0.115, 0.100, 0.060, 0, WHITE);
+    trim.box(sx * 1.000, 1.308, sgFB[0] - 0.161, 0.098, 0.078, 0.02, 0, MIRROR);
+  }
+
+  return wheels;
+}
+
+/**
+ * The full-size American pickup, and the one vehicle here that is genuinely a
+ * different ARCHITECTURE rather than a different set of curves: a cab and a bed
+ * with a gap between them, not one body.
+ *
+ * The lofted shell covers sill to beltline over the whole length -- front
+ * fenders, cab sides and bed sides are one surface on a real truck too, and
+ * building it as one is what keeps the arches and the flares registered. What
+ * stands ABOVE the beltline is built separately and is where the two-box reads:
+ * a crew cab from z 1.30 to -0.86, an open slot, then bed walls from -1.00 back
+ * to a hinged tailgate. Everything in that slot is deliberately dark, because
+ * what a player sees between a cab and a bed is shadow.
+ */
+function buildPickup(spec, paint, trim, matte) {
+  const wr = spec.wheelR;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = 1.86, zR = -1.82;                 // 3.68 m wheelbase
+
+  const halfW = curve([
+    [tail, 0.98], [-2.55, 1.00], [zR, 1.00], [-1.05, 0.965], [1.05, 0.965],
+    [zF, 1.00], [2.45, 0.97], [nose, 0.92],
+  ]);
+  const sillY = curve([
+    [tail, 0.52], [-2.40, 0.48], [-0.60, 0.46], [0.60, 0.46], [2.40, 0.48], [nose, 0.54],
+  ]);
+  // Flat to within 8 cm end to end. A truck's beltline is a straight line and
+  // any dip in it turns the bonnet into a car's.
+  const beltY = curve([
+    [tail, 1.26], [-2.30, 1.26], [-1.00, 1.26], [1.00, 1.26], [1.60, 1.25],
+    [2.30, 1.22], [nose, 1.18],
+  ]);
+  const tuckAt = curve([
+    [tail, 0.97], [zR, 0.99], [-0.60, 0.95], [0.60, 0.95], [zF, 0.99], [nose, 0.97],
+  ]);
+  const topAt = curve([
+    [tail, 0.98], [-2.40, 0.99], [1.40, 0.99], [2.10, 0.97], [2.55, 0.94], [nose, 0.88],
+  ]);
+  const { geom, half, endProf } = bodyCore(spec, paint, matte, {
+    halfW, sillY, beltY, tuckAt, topAt, zF, zR,
+    archR: 0.68, archGap: 0.09, archPow: 2.6, creaseAt: 0.42, tumble: 0.985,
+    deckDrop: 0.022, lipOut: 0.082, endRound: 0.12, endMin: 0.94,
+  });
+
+  const tw = 0.30;
+  const wx = geom(zF).wb - tw / 2 + 0.02;
+  const wxR = geom(zR).wb - tw / 2 + 0.02;
+  const wheels = [
+    [-wx, wr, zF, wr, tw], [wx, wr, zF, wr, tw],
+    [-wxR, wr, zR, wr, tw], [wxR, wr, zR, wr, tw],
+  ];
+
+  // --- crew cab -------------------------------------------------------------
+  const cowlZ = 1.30, cowlY = 1.258, roofY = spec.roof;
+  const scrZ = 0.68, backZ = -0.62, rearZ = -0.86, rearY = 1.40;
+  const wScrB = 0.86, wScrT = 0.800, wRoof = 0.820, wRearT = 0.800, wRear = 0.840;
+  const wGlassT = 0.790, wGlassB = 0.870;
+  const lp = (a, b, t) => a + (b - a) * t;
+
+  const scrRows = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3, row = [];
+    const cz = lp(cowlZ, scrZ, t) + 0.024 * Math.sin(Math.PI * t);
+    const cy = lp(cowlY, roofY, t) + 0.012 * Math.sin(Math.PI * t);
+    const hwv = lp(wScrB, wScrT, t);
+    for (let j = 0; j <= 8; j++) {
+      const u = -1 + (2 * j) / 8;
+      row.push([u * hwv, cy - 0.022 * u * u, cz - 0.075 * u * u]);
+    }
+    scrRows.push(row);
+  }
+  trim.patch(scrRows, GLASS, [0, 0.5, 1]);
+
+  const roofCols = [[-0.98, -0.046], [-1, -0.010], [-0.94, 0], [-0.66, 0.005], [-0.3, 0.008],
+    [0, 0.010], [0.3, 0.008], [0.66, 0.005], [0.94, 0], [1, -0.010], [0.98, -0.046]];
+  const roofRows = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3;
+    const cz = lp(scrZ, backZ, t), cy = roofY + 0.006 * Math.sin(Math.PI * t);
+    roofRows.push(roofCols.map(([u, dy]) => [u * wRoof, cy + dy - 0.016 * u * u, cz]));
+  }
+  paint.patch(roofRows, WHITE, [0, 1, 0]);
+
+  // Rear cab window: near vertical, and short. Everything behind it is bed.
+  const rearRows = [];
+  for (let i = 0; i <= 2; i++) {
+    const t = i / 2, row = [];
+    const cz = lp(backZ, rearZ, t), cy = lp(roofY - 0.008, rearY, t);
+    const hwv = lp(wRearT, wRear, t);
+    for (let j = 0; j <= 6; j++) {
+      const u = -1 + (2 * j) / 6;
+      row.push([u * hwv, cy - 0.018 * u * u, cz + 0.020 * u * u]);
+    }
+    rearRows.push(row);
+  }
+  trim.patch(rearRows, GLASS, [0, 0.5, -1]);
+  // The painted panel under it, down to the beltline -- a truck's back-of-cab.
+  paint.patch([
+    rearRows[rearRows.length - 1].map(([x, y, z]) => [x, y, z]),
+    rearRows[rearRows.length - 1].map(([x, , z]) => [x * 1.03, beltY(rearZ) - 0.005, z - 0.03]),
+  ], WHITE, [0, 0.3, -1]);
+
+  const sgFB = [1.24, 1.278], sgFT = [0.74, 1.944], sgRT = [-0.58, 1.938], sgRB = [-0.78, 1.282];
+  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [0.34, -0.48], scrWrap: 0.075, rearWrap: 0.02 }, paint);
+  const sailOuter = [[wGlassT, 1.938, backZ], [0.815, 1.660, -0.74], [0.830, 1.300, rearZ]];
+  for (const sx of [-1, 1]) {
+    const rows = [];
+    for (let i = 0; i <= 2; i++) {
+      const t = i / 2, row = [];
+      for (let j = 0; j <= 6; j++) {
+        const u = j / 6;
+        const bz = lp(sgFB[0], sgRB[0], u), by = lp(sgFB[1], sgRB[1], u);
+        const tz = lp(sgFT[0], sgRT[0], u), ty = lp(sgFT[1], sgRT[1], u);
+        row.push([sx * lp(wGlassB, wGlassT, t), lp(by, ty, t), lp(bz, tz, t)]);
+      }
+      rows.push(row);
+    }
+    trim.patch(rows, GLASS, [sx, 0, 0]);
+    const bz0 = lp(sgFB[0], sgRB[0], 0.46), bz1 = lp(sgFT[0], sgRT[0], 0.46);
+    matte.patch([
+      [[sx * (wGlassB + 0.006), sgFB[1] - 0.01, bz0 + 0.045], [sx * (wGlassB + 0.006), sgFB[1] - 0.01, bz0 - 0.045]],
+      [[sx * (wGlassT + 0.006), sgFT[1] + 0.005, bz1 + 0.045], [sx * (wGlassT + 0.006), sgFT[1] + 0.005, bz1 - 0.045]],
+    ], [0.09, 0.10, 0.11], [sx, 0, 0]);
+    paint.patch(scrRows.map((r, i) => {
+      const e = r[r.length - 1], t = i / 3;
+      return [[sx * e[0], e[1], e[2]],
+        [sx * lp(wGlassB, wGlassT, t), lp(sgFB[1], sgFT[1], t), lp(sgFB[0], sgFT[0], t)]];
+    }), WHITE, [sx, 0.4, 0]);
+    paint.patch(rearRows.map((r, i) => {
+      const e = r[r.length - 1], o = sailOuter[i];
+      return [[sx * e[0], e[1], e[2]], [sx * o[0], o[1], o[2]]];
+    }), WHITE, [sx, 0.4, 0]);
+  }
+
+  // --- the bed --------------------------------------------------------------
+  // Walls stand 34 cm above the beltline, which puts the rail just under the
+  // cab's shoulder. Taller and the truck loses its two-box step; shorter and it
+  // is a car with a hole in the back.
+  const bedF = -1.00, bedR = tail - 0.02, railH = 0.34;
+  const bedY = beltY(-2.0) - 0.005;
+  const bedMid = (bedF + bedR) / 2, bedLen = bedF - bedR;
+  const wallX = geom(-2.0).tw;
+  for (const sx of [-1, 1]) {
+    paint.box(sx * wallX, bedY, bedMid, 0.070, railH, bedLen, 0, WHITE);
+    // Dark inner skin, set in behind the rail so the bed is a container rather
+    // than a painted trough. Everything a player sees down in there is shadow.
+    matte.box(sx * (wallX - 0.070), bedY, bedMid, 0.030, railH - 0.035, bedLen - 0.04, 0, CAVITY);
+  }
+  paint.box(0, bedY, bedF - 0.035, wallX * 2 + 0.07, railH, 0.070, 0, WHITE);   // bulkhead
+  matte.box(0, bedY, bedF - 0.075, wallX * 2 - 0.14, railH - 0.035, 0.030, 0, CAVITY);
+  matte.box(0, bedY - 0.06, bedMid, wallX * 2 - 0.14, 0.060, bedLen - 0.10, 0, [0.16, 0.17, 0.18]);
+  // Corrugations in the floor -- a flat black rectangle down there reads as a
+  // hole rather than as a load bed.
+  for (let i = -3; i <= 3; i++) {
+    matte.box(i * 0.22, bedY - 0.004, bedMid, 0.055, 0.012, bedLen - 0.14, 0, [0.20, 0.21, 0.22]);
+  }
+  // Tailgate: its own panel with a shut gap either side and a chrome handle.
+  paint.box(0, bedY - 0.02, bedR + 0.055, wallX * 2 - 0.16, railH + 0.02, 0.075, 0, WHITE);
+  matte.box(0, bedY + railH - 0.014, bedR + 0.055, wallX * 2 - 0.16, 0.020, 0.085, 0, PLASTIC);
+  trim.box(0, bedY + railH - 0.110, bedR + 0.020, 0.30, 0.055, 0.030, 0, CHROME);
+  // The slot between cab and bed. Painted bodywork carrying straight through
+  // here is what would make the whole thing read as one body again.
+  matte.box(0, beltY(bedF) - 0.075, bedF + 0.075, wallX * 1.96, 0.070, 0.16, 0, CAVITY);
+
+  // --- front: rectangular grille with a chrome bar across it ---------------
+  const GRILLE = [0, 0.985, 0.545, 0.140], LAMP_A = [0.710, 0.995, 0.140, 0.090];
+  const INTAKE = [0, 0.700, 0.480, 0.065];
+  const TAILA = [0.800, 1.020, 0.125, 0.160], TPLATE = [0, 0.745, 0.235, 0.075];
+  endFace(paint, nose, 1, endProf(nose), [GRILLE, LAMP_A, INTAKE], WHITE);
+  endFace(paint, tail, -1, endProf(tail), [TAILA, TPLATE], WHITE);
+
+  const gp = pocket(paint, matte, GRILLE[0], GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.16, 1,
+    { rim: 0.042, rimCol: CHROME });
+  // One heavy chrome bar across the middle with a black honeycomb above and
+  // below it. That bar is the single most recognisable thing on a full-size
+  // American truck's face.
+  trim.box(0, GRILLE[1] - 0.028, gp.z + 0.075, gp.hw * 1.96, 0.056, 0.09, 0, CHROME);
+  for (const dy of [-0.098, 0.086]) {
+    for (let i = -6; i <= 6; i++) {
+      trim.box(i * 0.082, GRILLE[1] + dy, gp.z + 0.02, 0.022, 0.058, 0.04, 0, [0.16, 0.17, 0.19]);
+    }
+  }
+  for (const sx of [-1, 1]) {
+    const hp = pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.11, 1,
+      { rim: 0.030, rimCol: CHROME });
+    trim.box(sx * LAMP_A[0], 1.020, nose - 0.036, hp.hw * 1.9, 0.098, 0.026, 0, LAMP);
+    trim.box(sx * LAMP_A[0], 0.938, hp.z + 0.05, hp.hw * 1.9, 0.030, 0.026, 0, AMBER);
+  }
+  pocket(paint, matte, INTAKE[0], INTAKE[1], nose, INTAKE[2], INTAKE[3], 0.12, 1,
+    { rim: 0.028, rimCol: PLASTIC });
+  // Chrome step bumper at both ends, standing off the body on its own brackets.
+  const stepBumper = (z, dir) => {
+    trim.box(0, 0.522, z + dir * 0.055, 2.00, 0.095, 0.110, 0, CHROME);
+    matte.box(0, 0.498, z + dir * 0.055, 0.68, 0.032, 0.130, 0, PLASTIC);       // step pad
+    for (const sx of [-1, 1]) matte.box(sx * 0.62, 0.560, z + dir * 0.015, 0.09, 0.11, 0.08, 0, PLASTIC);
+  };
+  stepBumper(nose, 1);
+  stepBumper(tail, -1);
+  trim.box(0, 0.640, nose + 0.114, 0.44, 0.145, 0.02, 0, PLATE);
+  trim.box(0, 0.640, tail - 0.114, 0.44, 0.145, 0.02, 0, PLATE);
+
+  // --- rear lamps: tall units up the corners, past the bed rail ------------
+  for (const sx of [-1, 1]) {
+    const tp = pocket(paint, matte, sx * TAILA[0], TAILA[1], tail, TAILA[2], TAILA[3], 0.07, -1,
+      { rim: 0.028, rimCol: PLASTIC });
+    trim.box(sx * TAILA[0], 0.890, tail + 0.020, tp.hw * 1.9, 0.230, 0.028, 0, TAILC);
+    trim.box(sx * TAILA[0], 1.140, tail + 0.020, tp.hw * 1.9, 0.052, 0.028, 0, AMBER);
+  }
+  pocket(paint, matte, TPLATE[0], TPLATE[1], tail, TPLATE[2], TPLATE[3], 0.05, -1,
+    { rim: 0.024, rimCol: PLASTIC });
+
+  // --- flanks: flares, running boards, tow mirrors -------------------------
+  for (const sx of [-1, 1]) {
+    for (const zc of [1.18, 0.14]) {
+      const rows = [-0.008, 0.008].map((dz) =>
+        half(zc + dz, sx).slice(2, 9).map(([x, y]) => [x + sx * 0.005, y, zc + dz]));
+      matte.patch(rows, [0.13, 0.14, 0.15], [sx, 0, 0]);
+    }
+    // Running board on two brackets, between the arches.
+    matte.box(sx * (geom(0).wb + 0.055), 0.560, 0.10, 0.170, 0.055, 1.90, 0, PLASTIC);
+    for (const bz of [0.90, -0.70]) {
+      matte.box(sx * (geom(0).wb - 0.02), 0.600, bz, 0.14, 0.055, 0.07, 0, PLASTIC);
+    }
+    // Tow mirror: a tall flat glass on a double arm, which is the detail that
+    // makes a truck read as a truck from the front.
+    //
+    // The arms have to START ON THE DOOR SKIN, not on the glass line. The
+    // glass is 12 cm inboard of the door at this station, so arms run from
+    // there spent their first 12 cm INSIDE the bodywork and only 16 cm of arm
+    // ever emerged -- and from a front three-quarter, where the cab hides that
+    // 16 cm, the head read as a block floating in mid-air beside the truck.
+    // Now: a base plate on the door, two arms out from it, and a riser joining
+    // them at the head, so the whole thing is one visible ladder from any
+    // angle rather than a mirror with its supports behind the cab.
+    // The arms have to START ON THE DOOR SKIN and reach FORWARD, past the
+    // cowl. Two things were wrong before. They began at the glass line, 12 cm
+    // inboard of the door, so a third of each arm was buried in the bodywork.
+    // And the head sat level with the A-pillar, where the cab -- 72 cm taller
+    // than the mirror -- hides every centimetre of arm on the far side: from a
+    // front three-quarter the far head read as a block floating in the air
+    // beside the truck, which is exactly what it was, visually. Ahead of the
+    // cowl the arms cross only the BONNET, whose deck is 14 cm below them, so
+    // they are seen against the sky and the mirror reads as bolted on from
+    // every angle a player can stand in.
+    const mz = sgFB[0] - 0.02, hz = mz + 0.22, mx = geom(mz).w;
+    // Mounted ACROSS the beltline, where a door skin is, rather than up on the
+    // glass -- the arms have to land on something a bracket could bolt to.
+    matte.box(sx * (mx + 0.010), 1.250, mz, 0.030, 0.240, 0.140, 0, PLASTIC);   // base plate
+    for (const ay of [1.315, 1.505]) {
+      matte.tube([sx * (mx + 0.015), ay, mz], [sx * 1.190, ay + 0.020, hz], 0.026, 6, PLASTIC, true);
+    }
+    matte.tube([sx * 1.190, 1.305, hz], [sx * 1.190, 1.535, hz], 0.024, 6, PLASTIC, true);
+    paint.box(sx * 1.228, 1.272, hz - 0.030, 0.075, 0.300, 0.085, 0, WHITE);
+    trim.box(sx * 1.228, 1.286, hz - 0.074, 0.062, 0.266, 0.02, 0, MIRROR);
+    // Bed rail cap and a tie-down, so the rail has a top edge that catches light.
+    trim.box(sx * wallX, bedY + railH - 0.006, bedMid, 0.078, 0.014, bedLen - 0.02, 0, [0.22, 0.23, 0.25]);
+    // Fuel filler on the bed side, ahead of the rear arch.
+    matte.box(sx * (geom(-1.10).w + 0.004), 0.900, -1.10, 0.014, 0.150, 0.190, 0, [0.20, 0.21, 0.23]);
+  }
+
+  return wheels;
+}
+
+// ---------------------------------------------------------------------------
+// Motorcycles
+//
+// A bike is not a car with two of its wheels deleted, so none of it goes
+// through `bodyCore`: there is no shell to loft, no arches to cut and no
+// greenhouse. What there is instead is a frame, and everything hangs off it --
+// which is why these are built almost entirely from `tube` between named
+// points rather than from boxes. `box` and `prism` can only yaw, and on a
+// motorcycle nearly every member is diagonal in Y: forks, downtube, swingarm,
+// shocks, headers. Built from boxes they come out as level bars floating in
+// the air, which is what the viaduct barriers looked like.
+// ---------------------------------------------------------------------------
+
+const LEATHER = [0.075, 0.075, 0.085];   // seat, grips, boots
+const ENGINE = [0.15, 0.16, 0.175];
+const ALLOY = [0.58, 0.60, 0.63];
+
+/** Closed ellipse in the (x, y) plane, for a `loft` ring: tanks, mufflers. */
+function ring2(hx, cy, hy, n = 12, cx = 0) {
+  const p = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    p.push([cx + Math.cos(a) * hx, cy + Math.sin(a) * hy]);
+  }
+  return p;
+}
+
+/**
+ * Mudguard: a crowned strip of sheet wrapped round a wheel.
+ *
+ * `a0`/`a1` are angles about the axle with 0 straight up and positive toward
+ * the nose, so a front guard and a bobbed rear one differ only in their arc.
+ * The section is crowned across its width because a flat one reads as a plank
+ * laid over the tyre -- the same reason the roofs are cambered.
+ */
+function fender(b, cy, cz, r, halfW, a0, a1, col) {
+  const rows = [];
+  for (let i = 0; i <= 12; i++) {
+    const a = a0 + ((a1 - a0) * i) / 12;
+    const row = [];
+    for (let j = 0; j <= 4; j++) {
+      const u = -1 + j / 2;
+      const rr = r * (1 - 0.05 * u * u);
+      row.push([u * halfW, cy + Math.cos(a) * rr, cz + Math.sin(a) * rr]);
+    }
+    rows.push(row);
+  }
+  b.patch(rows, col, [0, 1, 0]);
+}
+
+/** A round mirror head on a stalk, aimed back down the bike. */
+function mirror(trim, x, y, z, r, stalkFrom, col) {
+  trim.tube(stalkFrom, [x, y, z], 0.011, 6, col, true);
+  trim.tube([x, y, z + 0.020], [x, y, z - 0.012], r, 10, col, true);
+  trim.box(x, y, z - 0.016, r * 1.7, r * 1.7, 0.014, 0, MIRROR);
+}
+
+/**
+ * The cruiser: long, low and raked, with a 45-degree V-twin standing in an
+ * open cradle frame where a player can see straight through it.
+ *
+ * Everything that separates this from the sportbike is deliberate and
+ * measurable in the numbers below: 28 degrees of rake against 23, a 1.66 m
+ * wheelbase against 1.36, bars 88 cm across against clip-ons that sit BELOW
+ * the top yoke, feet forward of the engine rather than tucked behind it, and a
+ * seat 20 cm lower. Two bikes that share a builder and differ by a scale
+ * factor would read as the same bike twice, which is the mistake the whole
+ * fleet used to make.
+ */
+function buildCruiser(spec, paint, trim, matte) {
+  const zF = 0.86, rF = 0.42, twF = 0.11;      // 21 inch front, skinny
+  const zR = -0.80, rR = spec.wheelR, twR = 0.20;
+  // `out` 0: both faces of a bike's wheel are outboard faces.
+  const wheels = [[0, rF, zF, rF, twF, 0], [0, rR, zR, rR, twR, 0]];
+
+  // The steering axis, as ONE function of height. The forks, both yokes, the
+  // headlamp and the bars all read their z from it, so raking the bike is a
+  // change to two numbers rather than to fifteen coordinates that have to stay
+  // in step -- the same reason the wheel arches read their x from `half()`.
+  const fz = (y) => 0.545 - 0.525 * (y - 1.02);      // 28 deg from vertical
+  const topY = 1.00, botY = 0.74;
+
+  // --- frame ---------------------------------------------------------------
+  const FRAME = [0.13, 0.135, 0.145];
+  matte.tube([0, topY + 0.02, fz(topY) - 0.055], [0, botY - 0.02, fz(botY) - 0.055], 0.048, 8, FRAME, true);
+  // backbone under the tank, then down behind the engine
+  matte.tube([0, 0.985, 0.50], [0, 0.870, -0.12], 0.030, 8, FRAME, true);
+  matte.tube([0, 0.870, -0.12], [0, 0.560, -0.36], 0.028, 8, FRAME, true);
+  // downtube and cradle: the loop the engine sits in
+  matte.tube([0, 0.760, 0.545], [0, 0.330, 0.400], 0.030, 8, FRAME, true);
+  for (const sx of [-1, 1]) {
+    matte.tube([0, 0.330, 0.400], [sx * 0.105, 0.300, 0.300], 0.024, 6, FRAME, true);
+    matte.tube([sx * 0.105, 0.300, 0.300], [sx * 0.105, 0.290, -0.180], 0.024, 6, FRAME, true);
+    matte.tube([sx * 0.105, 0.290, -0.180], [sx * 0.100, 0.560, -0.320], 0.024, 6, FRAME, true);
+    // seat rails out to the back
+    matte.tube([sx * 0.075, 0.735, -0.180], [sx * 0.095, 0.700, -0.760], 0.022, 6, FRAME, true);
+  }
+
+  // --- front end -----------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    const x = sx * 0.105;
+    trim.tube([x, 1.055, fz(1.055)], [x, 0.700, fz(0.700)], 0.026, 8, CHROME, true);  // stanchion
+    matte.tube([x, 0.760, fz(0.760)], [x, rF, zF], 0.036, 8, [0.10, 0.11, 0.12], true); // slider
+  }
+  for (const y of [topY, botY]) {
+    trim.tube([-0.155, y, fz(y)], [0.155, y, fz(y)], 0.030, 8, ALLOY, true);          // yokes
+  }
+  fender(paint, rF, zF, rF + 0.050, 0.078, -0.30, 1.05, WHITE);
+  // Headlamp: a chrome bucket with the lens across its MOUTH. Buried at the
+  // back of a bucket a lens catches nothing and renders as more shadow -- the
+  // same trap as the muscle car's sealed beams.
+  trim.tube([0, 0.945, 0.545], [0, 0.945, 0.660], 0.098, 12, CHROME, true);
+  trim.tube([0, 0.945, 0.655], [0, 0.945, 0.678], 0.084, 12, LAMP, true);
+  for (const sx of [-1, 1]) {
+    trim.tube([sx * 0.135, 0.985, 0.560], [sx * 0.150, 0.985, 0.595], 0.030, 8, AMBER, true);
+  }
+
+  // --- bars: pulled back, high, and 84 cm across ---------------------------
+  // The grips sit where the RIDER's hands reach, not where a bar looks best on
+  // its own: shoulder to grip is 64 cm on this humanoid and the arms simply do
+  // not stretch further, so a bar 10 cm too far forward leaves him steering
+  // thin air with his fingertips.
+  for (const sx of [-1, 1]) {
+    trim.tube([sx * 0.075, topY + 0.01, fz(topY)], [sx * 0.085, 1.150, 0.500], 0.024, 6, CHROME, true);
+    trim.tube([sx * 0.085, 1.170, 0.495], [sx * 0.230, 1.185, 0.455], 0.017, 8, CHROME, true);
+    trim.tube([sx * 0.230, 1.185, 0.455], [sx * 0.410, 1.205, 0.392], 0.017, 8, CHROME, true);
+    matte.tube([sx * 0.275, 1.194, 0.425], [sx * 0.402, 1.204, 0.395], 0.021, 8, LEATHER, true);
+    trim.tube([sx * 0.270, 1.170, 0.432], [sx * 0.370, 1.170, 0.400], 0.010, 6, CHROME, true);  // lever
+    mirror(trim, sx * 0.275, 1.345, 0.420, 0.055, [sx * 0.215, 1.190, 0.462], CHROME);
+  }
+  trim.box(0, 1.195, 0.462, 0.150, 0.055, 0.10, 0, ALLOY);      // clocks on the risers
+
+  // --- V-twin --------------------------------------------------------------
+  matte.box(0, 0.255, -0.030, 0.235, 0.230, 0.420, 0, ENGINE);   // crankcase
+  matte.box(0, 0.215, -0.030, 0.290, 0.110, 0.360, 0, [0.11, 0.12, 0.13]); // sump
+  // Two barrels in a 45 degree V, finned. The fins are what make a cylinder
+  // read as an engine rather than as a can, and they cost eight rings each.
+  const barrel = (z0, ang) => {
+    const dy = Math.cos(ang), dz = Math.sin(ang);
+    const base = [0, 0.360, z0];
+    const top = [0, 0.360 + dy * 0.300, z0 + dz * 0.300];
+    matte.tube(base, top, 0.072, 10, [0.09, 0.10, 0.11], true);
+    for (let i = 0; i < 7; i++) {
+      const t = 0.10 + i * 0.115;
+      const p = [0, 0.360 + dy * 0.300 * t, z0 + dz * 0.300 * t];
+      const q = [0, 0.360 + dy * 0.300 * (t + 0.03), z0 + dz * 0.300 * (t + 0.03)];
+      trim.tube(p, q, 0.100, 10, ALLOY, true);
+    }
+    trim.tube(top, [0, 0.360 + dy * 0.375, z0 + dz * 0.375], 0.088, 10, ALLOY, true); // rocker box
+  };
+  barrel(0.115, 0.42);
+  barrel(-0.115, -0.42);
+  // Primary case on the left, air cleaner on the right: a V-twin is not
+  // symmetrical, and which side each lands on is most of what tells the two
+  // flanks apart. Offset in x, not centred -- a cover built on the centreline
+  // is a lump growing out of the middle of the engine.
+  paint.loft([
+    { z: -0.180, pts: ring2(0.050, 0.300, 0.130, 12, 0.140) },
+    { z: -0.030, pts: ring2(0.058, 0.300, 0.155, 12, 0.150) },
+    { z: 0.130, pts: ring2(0.045, 0.310, 0.125, 12, 0.140) },
+  ], WHITE, { capStart: true, capEnd: true });
+  trim.tube([-0.135, 0.560, -0.010], [-0.245, 0.560, -0.010], 0.105, 12, CHROME, true);
+  trim.tube([-0.245, 0.560, -0.010], [-0.262, 0.560, -0.010], 0.088, 12, ALLOY, true);
+
+  // --- tank, seat, tail ----------------------------------------------------
+  paint.loft([
+    { z: 0.500, pts: ring2(0.055, 0.905, 0.055, 12) },
+    { z: 0.360, pts: ring2(0.140, 0.905, 0.100, 12) },
+    { z: 0.140, pts: ring2(0.185, 0.900, 0.120, 12) },
+    { z: -0.040, pts: ring2(0.155, 0.885, 0.105, 12) },
+    { z: -0.160, pts: ring2(0.070, 0.860, 0.055, 12) },
+  ], WHITE, { capStart: true, capEnd: true });
+  trim.box(0, 1.008, 0.150, 0.075, 0.020, 0.34, 0, CHROME);      // tank console
+  trim.tube([0, 1.010, 0.320], [0, 1.010, 0.360], 0.030, 10, CHROME, true);  // filler cap
+
+  matte.loft([
+    { z: -0.150, pts: ring2(0.090, 0.735, 0.045, 10) },
+    { z: -0.300, pts: ring2(0.160, 0.715, 0.055, 10) },
+    { z: -0.460, pts: ring2(0.165, 0.730, 0.050, 10) },
+    { z: -0.600, pts: ring2(0.135, 0.790, 0.055, 10) },
+    { z: -0.720, pts: ring2(0.080, 0.815, 0.040, 10) },
+  ], LEATHER, { capStart: true, capEnd: true });
+  // Bobbed: the guard follows the top of the tyre and stops, rather than
+  // wrapping down round the back of it. Carried too far round it stops being a
+  // mudguard and becomes a skirt, which is a different decade of motorcycle.
+  fender(paint, rR, zR, rR + 0.050, 0.115, -1.20, 0.75, WHITE);
+  // Sissy bar. Nothing else on the bike stands up above the rear wheel, and
+  // the silhouette from across a street is the point of it.
+  for (const sx of [-1, 1]) {
+    trim.tube([sx * 0.080, 0.760, -0.905], [sx * 0.070, 1.150, -0.980], 0.012, 6, CHROME, true);
+  }
+  trim.tube([-0.070, 1.146, -0.978], [0.070, 1.146, -0.978], 0.012, 6, CHROME, true);
+  matte.loft([
+    { z: -0.930, pts: ring2(0.070, 0.980, 0.105, 10) },
+    { z: -0.968, pts: ring2(0.078, 0.975, 0.115, 10) },
+  ], LEATHER, { capStart: true, capEnd: true });
+
+  // --- rear end ------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    matte.tube([sx * 0.105, 0.330, -0.170], [sx * 0.085, rR, zR], 0.028, 8, [0.11, 0.12, 0.13], true);
+    trim.tube([sx * 0.110, 0.690, -0.400], [sx * 0.090, 0.430, -0.720], 0.021, 8, CHROME, true);  // shock
+    matte.tube([sx * 0.150, 0.300, 0.330], [sx * 0.265, 0.288, 0.355], 0.022, 6, PLASTIC, true);  // forward peg
+  }
+  // Staggered pipes down the right: two lengths, two heights, which is the
+  // arrangement the shape is named after.
+  matte.tube([-0.060, 0.640, 0.230], [-0.170, 0.420, 0.190], 0.036, 8, [0.10, 0.11, 0.12], true);
+  trim.tube([-0.170, 0.420, 0.190], [-0.205, 0.355, 0.010], 0.038, 8, CHROME, true);
+  trim.tube([-0.205, 0.355, 0.010], [-0.225, 0.345, -0.870], 0.049, 10, CHROME, true);
+  matte.tube([-0.060, 0.615, -0.230], [-0.190, 0.330, -0.190], 0.034, 8, [0.10, 0.11, 0.12], true);
+  trim.tube([-0.190, 0.330, -0.190], [-0.255, 0.275, -0.720], 0.044, 10, CHROME, true);
+  hole(trim, matte, -0.225, 0.345, -0.872, 0.038, 0.07, -1);
+  hole(trim, matte, -0.255, 0.275, -0.722, 0.034, 0.07, -1);
+
+  // Lamp and plate ON the end of the guard, at the radius the guard actually
+  // reaches -- placed by eye they hang in the air behind it.
+  trim.box(0, 0.612, -1.198, 0.095, 0.060, 0.030, 0, TAILC);
+  matte.box(0, 0.478, -1.205, 0.185, 0.125, 0.014, 0, PLASTIC);
+  trim.box(0, 0.482, -1.214, 0.160, 0.100, 0.014, 0, PLATE);
+
+  return wheels;
+}
+
+/**
+ * The sportbike: everything the cruiser is not. Mass carried high and forward,
+ * a fairing wrapped round the front of the engine, clip-ons under the top yoke
+ * and a tail that runs up and away to nothing behind the rider.
+ *
+ * The fairing is a closed `loft`, not an open shell. A real one is open at the
+ * bottom and along the flanks, but the section that is left when you close it
+ * IS the belly pan, and a closed loft shades continuously round the nose where
+ * two mirrored open patches would show a seam straight down the middle of the
+ * thing a player looks at from in front.
+ */
+function buildSportbike(spec, paint, trim, matte) {
+  const zF = 0.70, rF = 0.31, twF = 0.12;
+  const zR = -0.66, rR = spec.wheelR, twR = 0.19;
+  const wheels = [[0, rF, zF, rF, twF, 0], [0, rR, zR, rR, twR, 0]];
+
+  const fz = (y) => 0.440 - 0.425 * (y - 0.900);     // 23 deg of rake
+  const topY = 0.885, botY = 0.660;
+
+  // --- frame: twin alloy beams round the outside of the engine -------------
+  for (const sx of [-1, 1]) {
+    trim.tube([sx * 0.075, 0.845, fz(0.845) - 0.030], [sx * 0.150, 0.760, 0.180], 0.038, 8, ALLOY, true);
+    trim.tube([sx * 0.150, 0.760, 0.180], [sx * 0.140, 0.680, -0.120], 0.040, 8, ALLOY, true);
+    trim.tube([sx * 0.140, 0.680, -0.120], [sx * 0.110, 0.430, -0.150], 0.034, 8, ALLOY, true);
+  }
+  matte.tube([0, topY + 0.03, fz(topY + 0.03) - 0.045], [0, botY - 0.02, fz(botY - 0.02) - 0.045],
+    0.042, 8, [0.13, 0.135, 0.145], true);
+
+  // --- front end -----------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    const x = sx * 0.092;
+    matte.tube([x, 0.925, fz(0.925)], [x, 0.640, fz(0.640)], 0.032, 8, [0.28, 0.29, 0.31], true); // upside-down
+    trim.tube([x, 0.660, fz(0.660)], [x, rF, zF], 0.024, 8, CHROME, true);
+  }
+  for (const y of [topY, botY]) {
+    trim.tube([-0.135, y, fz(y)], [0.135, y, fz(y)], 0.026, 8, ALLOY, true);
+  }
+  fender(paint, rF, zF, rF + 0.045, 0.075, -0.55, 1.05, WHITE);
+  // Clip-ons: BELOW the top yoke and angled down. Bars above it would be the
+  // cruiser's riding position on a different frame, and the rider's pose is
+  // built on where these end up.
+  for (const sx of [-1, 1]) {
+    trim.tube([sx * 0.092, 0.858, fz(0.858)], [sx * 0.245, 0.840, 0.360], 0.016, 8, ALLOY, true);
+    matte.tube([sx * 0.180, 0.848, 0.385], [sx * 0.242, 0.841, 0.362], 0.020, 8, LEATHER, true);
+    trim.tube([sx * 0.185, 0.826, 0.372], [sx * 0.268, 0.822, 0.344], 0.009, 6, ALLOY, true);
+  }
+
+  // --- fairing -------------------------------------------------------------
+  // Slim. The first pass ran this out to a 43 cm section and the bike came
+  // back as one red torpedo with a rider sitting on it -- a fairing has to
+  // read as a skin stretched over the front of a narrow machine, and the
+  // wheel, forks and engine all have to stay visible past it.
+  // Two-tone by height, which `loft` will do for nothing: the lower half of a
+  // fairing is dark on most of these bikes, and without that break the
+  // fairing, the tank and the tail run together into one red mass from nose to
+  // tail with a rider sitting on top of it.
+  paint.loft([
+    { z: 0.860, pts: ring2(0.080, 0.860, 0.070, 14) },
+    { z: 0.740, pts: ring2(0.120, 0.820, 0.115, 14) },
+    { z: 0.580, pts: ring2(0.155, 0.760, 0.145, 14) },
+    { z: 0.400, pts: ring2(0.155, 0.690, 0.155, 14) },
+    { z: 0.220, pts: ring2(0.115, 0.618, 0.118, 14) },
+  ], [0.26, 0.26, 0.28], { capStart: true, capEnd: false, colTop: WHITE, topFrom: 0.790 });
+  // Screen: a small bubble standing off the top of the nose.
+  const scr = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3, row = [];
+    const cz = 0.795 - 0.275 * t, cy = 0.928 + 0.145 * t;
+    for (let j = 0; j <= 6; j++) {
+      const u = -1 + j / 3;
+      row.push([u * (0.085 + 0.060 * t), cy - 0.030 * u * u, cz + 0.028 * u * u]);
+    }
+    scr.push(row);
+  }
+  trim.patch(scr, GLASS, [0, 0.6, 1]);
+  // Twin headlamps stacked into the nose, and mirrors on the fairing rather
+  // than on the bars -- both are sportbike signatures.
+  for (const sx of [-1, 1]) {
+    const hp = pocket(paint, matte, sx * 0.040, 0.862, 0.856, 0.032, 0.036, 0.06, 1, { rim: 0.012 });
+    // Lens at the MOUTH of the housing. Sunk to the back of the pocket it has
+    // nothing to catch and renders as more shadow -- see `pocket`.
+    trim.box(sx * 0.040, 0.868, 0.870, hp.hw * 1.8, 0.046, 0.018, 0, LAMP);
+    trim.box(sx * 0.120, 0.812, 0.775, 0.050, 0.028, 0.028, 0, AMBER);
+    mirror(trim, sx * 0.235, 0.955, 0.665, 0.046, [sx * 0.120, 0.900, 0.740], [0.16, 0.17, 0.18]);
+  }
+  // Duct in the flank of the fairing, so the side is not one blank panel.
+  for (const sx of [-1, 1]) {
+    matte.box(sx * 0.168, 0.690, 0.420, 0.018, 0.070, 0.170, 0, [0.09, 0.10, 0.11]);
+  }
+
+  // --- engine and exhaust --------------------------------------------------
+  matte.box(0, 0.330, 0.020, 0.290, 0.250, 0.320, 0, ENGINE);
+  trim.box(0, 0.560, 0.060, 0.250, 0.090, 0.230, 0, ALLOY);       // cam cover
+  // Four headers sweeping down and back into one collector under the engine,
+  // then up to a can on the right. `tube` between arbitrary points is the only
+  // thing here that can follow that.
+  for (const sx of [-1, 1]) {
+    for (const dx of [0.040, 0.110]) {
+      trim.tube([sx * dx, 0.520, 0.185], [sx * dx * 0.9, 0.330, 0.290], 0.021, 6, CHROME, true);
+      trim.tube([sx * dx * 0.9, 0.330, 0.290], [sx * dx * 0.5, 0.185, 0.090], 0.021, 6, CHROME, true);
+    }
+  }
+  trim.tube([0, 0.175, 0.100], [-0.040, 0.190, -0.230], 0.048, 10, CHROME, true);
+  matte.loft([
+    { z: -0.240, pts: ring2(0.045, 0.235, 0.045, 10, -0.055) },
+    { z: -0.420, pts: ring2(0.070, 0.360, 0.070, 10, -0.135) },
+    { z: -0.640, pts: ring2(0.062, 0.470, 0.062, 10, -0.185) },
+  ], [0.24, 0.25, 0.27], { capStart: true, capEnd: true });
+  hole(trim, matte, -0.185, 0.470, -0.642, 0.048, 0.07, -1);
+  matte.box(0, 0.145, 0.020, 0.285, 0.080, 0.430, 0, [0.09, 0.095, 0.105]);   // belly pan
+
+  // --- tank, seat, tail unit -----------------------------------------------
+  paint.loft([
+    { z: 0.440, pts: ring2(0.085, 0.815, 0.055, 12) },
+    { z: 0.280, pts: ring2(0.165, 0.840, 0.092, 12) },
+    { z: 0.060, pts: ring2(0.178, 0.845, 0.096, 12) },
+    { z: -0.090, pts: ring2(0.118, 0.855, 0.062, 12) },
+  ], WHITE, { capStart: true, capEnd: true });
+  matte.loft([
+    { z: -0.090, pts: ring2(0.105, 0.872, 0.035, 10) },
+    { z: -0.260, pts: ring2(0.130, 0.882, 0.040, 10) },
+    { z: -0.380, pts: ring2(0.115, 0.905, 0.038, 10) },
+  ], LEATHER, { capStart: false, capEnd: true });
+  // The tail runs UP and back and finishes almost at a point. A level tail is
+  // a commuter; this is the one line that carries the whole bike from behind.
+  // It is also SHORT -- carried out to the end of the wheelbase it stops being
+  // a tail unit and becomes a rocket with a bike underneath.
+  paint.loft([
+    { z: -0.340, pts: ring2(0.118, 0.898, 0.062, 12) },
+    { z: -0.520, pts: ring2(0.102, 0.938, 0.062, 12) },
+    { z: -0.660, pts: ring2(0.062, 0.976, 0.048, 12) },
+    { z: -0.730, pts: ring2(0.028, 0.992, 0.026, 12) },
+  ], WHITE, { capStart: false, capEnd: true });
+  trim.box(0, 0.988, -0.742, 0.062, 0.026, 0.018, 0, TAILC);
+  // Plate on a hanger off the swingarm side, which is where an undertail
+  // exhaust leaves room for it.
+  matte.tube([0, 0.930, -0.700], [0, 0.800, -0.775], 0.012, 6, PLASTIC, true);
+  trim.box(0, 0.760, -0.790, 0.115, 0.075, 0.012, 0, PLATE);
+
+  // --- single-sided swingarm, rear sets ------------------------------------
+  // Only one arm, which is what the name means: from the other side the wheel
+  // hangs on nothing, and that is the look. It is on the LEFT (+X), opposite
+  // the silencer, the way the bikes that have one are built.
+  matte.loft([
+    { z: -0.140, pts: ring2(0.038, 0.395, 0.075, 8, 0.140) },
+    { z: -0.420, pts: ring2(0.034, 0.360, 0.062, 8, 0.150) },
+    { z: zR, pts: ring2(0.030, rR, 0.048, 8, 0.140) },
+  ], [0.30, 0.31, 0.33], { capStart: true, capEnd: true });
+  trim.tube([0.140, rR, zR], [0.190, rR, zR], 0.055, 10, ALLOY, true);   // hub nut
+  trim.tube([0, 0.700, -0.240], [0.020, 0.430, -0.230], 0.026, 8, [0.55, 0.20, 0.16], true); // shock
+  for (const sx of [-1, 1]) {
+    trim.tube([sx * 0.115, 0.420, -0.180], [sx * 0.185, 0.400, -0.235], 0.012, 6, ALLOY, true);
+    matte.tube([sx * 0.185, 0.400, -0.235], [sx * 0.245, 0.398, -0.250], 0.017, 6, PLASTIC, true);
+  }
+
+  return wheels;
+}
+
+/** `fender`, off the centreline: a quad's four guards sit out on the track. */
+function fenderAt(b, cx, cy, cz, r, halfW, a0, a1, col) {
+  const rows = [];
+  for (let i = 0; i <= 10; i++) {
+    const a = a0 + ((a1 - a0) * i) / 10;
+    const row = [];
+    for (let j = 0; j <= 4; j++) {
+      const u = -1 + j / 2;
+      const rr = r * (1 - 0.06 * u * u);
+      row.push([cx + u * halfW, cy + Math.cos(a) * rr, cz + Math.sin(a) * rr]);
+    }
+    rows.push(row);
+  }
+  b.patch(rows, col, [0, 1, 0]);
+  // the guard's outer lip turned down, so from the side it has a thickness
+  const lip = rows.map((row) => {
+    const p = row[cx > 0 ? 4 : 0];
+    return [p, [p[0], p[1] - 0.05, p[2]]];
+  });
+  b.patch(lip, col, [Math.sign(cx) || 1, 0, 0]);
+}
+
+const FRAME_C = [0.11, 0.115, 0.125];
+const SPRING = [0.72, 0.14, 0.10];
+
+/**
+ * The quad bike: a sport-utility ATV, which is a different animal from
+ * either motorcycle. Four fat knobbly tyres on a wide track, the plastics as
+ * four separate guards joined by a nose and a tail deck, steel racks front and
+ * rear, footboards between the wheels, and a straight bar with a lamp pod on
+ * it. The rider is the bikes' posed humanoid (see RIDERS.atv) sitting
+ * upright on a saddle, feet on the boards.
+ *
+ * `paint` is the plastics, `matte` the frame, seat, racks and tyres, `trim`
+ * the lamps, suspension springs and the chrome.
+ */
+function buildAtv(spec, paint, trim, matte) {
+  const r = spec.wheelR;
+  const zF = 0.63, zR = -0.63, xF = 0.46, xR = 0.47;
+  // [x, y, z, r, w, out, knobby]
+  const wheels = [
+    [xF, r, zF, r, 0.24, 1, 1], [-xF, r, zF, r, 0.24, -1, 1],
+    [xR, r, zR, r, 0.29, 1, 1], [-xR, r, zR, r, 0.29, -1, 1],
+  ];
+
+  // --- frame, engine, footboards -------------------------------------------
+  for (const sx of [-1, 1]) {
+    matte.tube([sx * 0.15, 0.28, 0.78], [sx * 0.16, 0.26, -0.62], 0.028, 6, FRAME_C, true);
+    matte.tube([sx * 0.13, 0.64, 0.50], [sx * 0.14, 0.68, -0.86], 0.026, 6, FRAME_C, true);
+    matte.tube([sx * 0.15, 0.28, 0.62], [sx * 0.13, 0.64, 0.50], 0.024, 6, FRAME_C, true);
+    matte.tube([sx * 0.16, 0.26, -0.52], [sx * 0.14, 0.67, -0.60], 0.024, 6, FRAME_C, true);
+    // footboard and its nerf bar
+    matte.box(sx * 0.33, 0.29, -0.03, 0.24, 0.035, 0.56, 0, PLASTIC);
+    for (let k = 0; k < 4; k++) matte.box(sx * 0.33, 0.325, -0.24 + k * 0.14, 0.22, 0.012, 0.03, 0, [0.2, 0.21, 0.22]);
+    matte.tube([sx * 0.45, 0.33, -0.33], [sx * 0.45, 0.33, 0.26], 0.018, 6, FRAME_C, true);
+    matte.tube([sx * 0.45, 0.33, 0.26], [sx * 0.20, 0.30, 0.34], 0.018, 6, FRAME_C, true);
+    matte.tube([sx * 0.45, 0.33, -0.33], [sx * 0.20, 0.30, -0.40], 0.018, 6, FRAME_C, true);
+  }
+  matte.box(0, 0.16, 0.02, 0.32, 0.30, 0.50, 0, ENGINE);                       // crankcase
+  matte.tube([0, 0.44, 0.10], [0, 0.66, 0.22], 0.085, 10, [0.09, 0.10, 0.11], true); // barrel
+  for (let i = 0; i < 5; i++) {
+    const t = 0.15 + i * 0.16;
+    trim.tube([0, 0.44 + 0.22 * t, 0.10 + 0.12 * t], [0, 0.44 + 0.22 * (t + 0.05), 0.10 + 0.12 * (t + 0.05)], 0.11, 10, ALLOY, true);
+  }
+  matte.box(0, 0.06, 0.05, 0.40, 0.05, 0.9, 0, [0.20, 0.21, 0.22]);             // skid plate
+
+  // --- suspension ------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    // front double wishbones to the knuckle, a coil-over standing up to the frame
+    matte.tube([sx * 0.14, 0.27, zF + 0.10], [sx * (xF - 0.10), r - 0.03, zF], 0.020, 6, FRAME_C, true);
+    matte.tube([sx * 0.14, 0.27, zF - 0.10], [sx * (xF - 0.10), r - 0.03, zF], 0.020, 6, FRAME_C, true);
+    matte.tube([sx * 0.14, 0.44, zF + 0.08], [sx * (xF - 0.11), r + 0.09, zF], 0.018, 6, FRAME_C, true);
+    matte.tube([sx * 0.14, 0.44, zF - 0.08], [sx * (xF - 0.11), r + 0.09, zF], 0.018, 6, FRAME_C, true);
+    trim.tube([sx * 0.17, 0.66, zF - 0.04], [sx * (xF - 0.13), r + 0.05, zF - 0.02], 0.040, 8, SPRING, true);
+    trim.tube([sx * 0.17, 0.67, zF - 0.04], [sx * (xF - 0.13), r + 0.04, zF - 0.02], 0.018, 6, CHROME, true);
+    // rear: swingarm to the axle, and a shock each side
+    matte.tube([sx * 0.12, 0.30, -0.18], [sx * 0.20, r, zR], 0.030, 6, FRAME_C, true);
+    trim.tube([sx * 0.13, 0.68, -0.40], [sx * 0.19, r + 0.06, zR + 0.10], 0.038, 8, SPRING, true);
+  }
+  matte.tube([-xR + 0.10, r, zR], [xR - 0.10, r, zR], 0.032, 8, FRAME_C, true);   // rear axle
+  matte.tube([-xF + 0.10, r, zF], [-xF + 0.13, r, zF], 0.05, 8, FRAME_C, true);
+
+  // --- plastics --------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    fenderAt(paint, sx * xF, r, zF, r + 0.075, 0.155, -0.75, 1.30, WHITE);
+    fenderAt(paint, sx * xR, r, zR, r + 0.075, 0.165, -1.30, 0.80, WHITE);
+  }
+  // nose: from between the front guards up to the bar
+  paint.loft([
+    { z: 1.00, pts: ring2(0.18, 0.60, 0.06, 12) },
+    { z: 0.88, pts: ring2(0.29, 0.64, 0.10, 12) },
+    { z: 0.60, pts: ring2(0.33, 0.69, 0.12, 12) },
+    { z: 0.34, pts: ring2(0.28, 0.72, 0.11, 12) },
+    { z: 0.14, pts: ring2(0.19, 0.76, 0.08, 12) },
+  ], WHITE, { capStart: true, capEnd: true });
+  // side covers under the saddle
+  paint.loft([
+    { z: 0.20, pts: ring2(0.17, 0.62, 0.13, 12) },
+    { z: -0.10, pts: ring2(0.21, 0.64, 0.15, 12) },
+    { z: -0.50, pts: ring2(0.21, 0.66, 0.14, 12) },
+    { z: -0.70, pts: ring2(0.16, 0.68, 0.10, 12) },
+  ], WHITE, { capStart: true, capEnd: true });
+  // tail deck joining the rear guards
+  paint.loft([
+    { z: -0.44, pts: ring2(0.30, 0.74, 0.05, 12) },
+    { z: -0.70, pts: ring2(0.34, 0.75, 0.06, 12) },
+    { z: -1.00, pts: ring2(0.30, 0.72, 0.05, 12) },
+  ], WHITE, { capStart: true, capEnd: true });
+  // saddle
+  matte.loft([
+    { z: 0.18, pts: ring2(0.11, 0.80, 0.045, 10) },
+    { z: 0.02, pts: ring2(0.17, 0.83, 0.065, 10) },
+    { z: -0.36, pts: ring2(0.18, 0.845, 0.07, 10) },
+    { z: -0.62, pts: ring2(0.15, 0.835, 0.06, 10) },
+  ], LEATHER, { capStart: true, capEnd: true });
+
+  // --- lamps -------------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    matte.box(sx * 0.14, 0.585, 0.985, 0.13, 0.075, 0.04, 0, [0.03, 0.03, 0.035]);
+    trim.box(sx * 0.14, 0.595, 1.004, 0.10, 0.052, 0.012, 0, LAMP);
+  }
+  trim.box(0, 0.70, -1.015, 0.16, 0.05, 0.02, 0, TAILC);
+
+  // --- racks and bumper --------------------------------------------------------
+  const rack = (z0, z1, y, hx) => {
+    for (const sx of [-1, 1]) matte.tube([sx * hx, y, z0], [sx * hx, y, z1], 0.015, 6, FRAME_C, true);
+    for (let k = 0; k <= 4; k++) {
+      const z = z0 + ((z1 - z0) * k) / 4;
+      matte.tube([-hx, y, z], [hx, y, z], 0.013, 6, FRAME_C, true);
+    }
+    for (const sx of [-1, 1]) for (const z of [z0, z1]) matte.tube([sx * hx, y, z], [sx * hx * 0.8, y - 0.14, z], 0.013, 6, FRAME_C, true);
+  };
+  rack(0.44, 0.93, 0.86, 0.36);
+  rack(-0.50, -0.99, 0.90, 0.40);
+  matte.tube([-0.26, 0.38, 1.06], [0.26, 0.38, 1.06], 0.022, 6, FRAME_C, true);
+  for (const sx of [-1, 1]) {
+    matte.tube([sx * 0.26, 0.38, 1.06], [sx * 0.24, 0.62, 1.03], 0.022, 6, FRAME_C, true);
+    matte.tube([sx * 0.24, 0.62, 1.03], [sx * 0.10, 0.66, 1.00], 0.020, 6, FRAME_C, true);
+    matte.tube([sx * 0.26, 0.38, 1.06], [sx * 0.14, 0.30, 0.82], 0.020, 6, FRAME_C, true);
+  }
+
+  // --- bars ------------------------------------------------------------------------
+  trim.tube([0, 0.74, 0.34], [0, 0.98, 0.29], 0.022, 8, ALLOY, true);
+  for (const sx of [-1, 1]) {
+    trim.tube([0, 1.00, 0.29], [sx * 0.16, 1.01, 0.28], 0.016, 8, ALLOY, true);
+    trim.tube([sx * 0.16, 1.01, 0.28], [sx * 0.41, 1.04, 0.24], 0.016, 8, ALLOY, true);
+    matte.tube([sx * 0.30, 1.03, 0.255], [sx * 0.415, 1.04, 0.24], 0.021, 8, LEATHER, true);
+    trim.tube([sx * 0.26, 1.02, 0.28], [sx * 0.36, 1.03, 0.31], 0.008, 6, ALLOY, true);   // lever
+  }
+  matte.box(0, 0.995, 0.29, 0.14, 0.04, 0.05, 0, [0.06, 0.06, 0.07]);                   // bar pad
+  paint.loft([
+    { z: 0.28, pts: ring2(0.12, 0.94, 0.05, 10) },
+    { z: 0.36, pts: ring2(0.13, 0.935, 0.055, 10) },
+    { z: 0.40, pts: ring2(0.11, 0.93, 0.045, 10) },
+  ], WHITE, { capStart: true, capEnd: true });
+  trim.box(0, 0.93, 0.405, 0.16, 0.05, 0.012, 0, LAMP);
+
+  // --- exhaust down the right --------------------------------------------------
+  trim.tube([-0.08, 0.60, 0.20], [-0.22, 0.52, 0.00], 0.030, 8, CHROME, true);
+  trim.tube([-0.22, 0.52, 0.00], [-0.25, 0.62, -0.52], 0.030, 8, CHROME, true);
+  matte.loft([
+    { z: -0.50, pts: ring2(0.05, 0.64, 0.05, 10, -0.26) },
+    { z: -0.62, pts: ring2(0.065, 0.645, 0.065, 10, -0.26) },
+    { z: -0.90, pts: ring2(0.06, 0.65, 0.06, 10, -0.26) },
+  ], [0.22, 0.23, 0.25], { capStart: true, capEnd: true });
+  hole(trim, matte, -0.26, 0.65, -0.905, 0.028, 0.05, -1);
+  return wheels;
+}
+
+// --- the boat --------------------------------------------------------------------
+const GEL = [0.86, 0.86, 0.83];        // deck and liner gelcoat
+const VINYL = [0.88, 0.85, 0.78];      // upholstery
+const NONSKID = [0.70, 0.70, 0.66];
+const HULL_BOTTOM = [0.80, 0.81, 0.79];   // a trailer boat's white bottom: the entry shows above water
+
+/**
+ * A 5.7 m outboard runabout. Its y = 0 is the WATERLINE (updateBoat sets the
+ * group on the local surface), so the V-bottom hangs below it.
+ *
+ * The hull is a patch per side through ten stations, keel -> chine -> spray
+ * rail lip -> flared topside -> sheer, with a real deadrise: 20-odd degrees
+ * aft, sharpening to a fine entry forward where the keel sweeps up into the
+ * stem. `paint` is the topsides only, so a navy boat still has a white deck
+ * (matte gelcoat) the way real ones do. The cockpit is OPEN -- the section
+ * is never closed across the top -- with a liner, a floor, two buckets, a
+ * bench, consoles, and a wrap-round screen in trim glass you look through at
+ * all of it. The driver is `matte.crew`, so a moored boat is empty.
+ */
+/**
+ * An unlimited hydroplane (after the modern turbine cab-forward boats Seafair
+ * races): a flat wing-deck 9.6 m long and 4.4 m wide at the sponsons, which
+ * run forward either side; the canopy at the front of a central cowl, a turbine
+ * intake behind it; a tall fin and a wing on it at the stern; a propeller that
+ * skims the surface. Origin at the waterline under the centre; nose +z.
+ */
+export const HYDRO = { thrust: 12.5, drag: 0.00235, roll: 0.02, grip: 20, yawMax: 0.42, blow: 0.36, warn: 0.27, lift: 0.000052 };
+function buildHydro(spec, paint, trim, matte) {
+  // the deck's half-width along its length
+  const ST = [[-3.7, 1.08], [-2.0, 1.42], [0.0, 1.78], [2.0, 2.08], [3.9, 2.2], [4.6, 2.12], [4.85, 1.9]];
+  const hwAt = (z) => { for (let i = 1; i < ST.length; i++) if (z <= ST[i][0]) { const [z0, w0] = ST[i - 1], [z1, w1] = ST[i]; return w0 + (w1 - w0) * (z - z0) / (z1 - z0); } return ST[ST.length - 1][1]; };
+  const Z = []; for (let z = -3.7; z < 4.85; z += 0.3) Z.push(z); Z.push(4.85);
+  const TOP = 0.62, BOT = 0.28;
+  // the deck: cambered top, flat bottom, edges
+  paint.patch(Z.map((z) => { const w = hwAt(z); return [-1, -0.6, -0.25, 0, 0.25, 0.6, 1].map((u) => [u * w, TOP + 0.1 * (1 - u * u), z]); }), WHITE, [0, 1, 0]);
+  matte.patch(Z.map((z) => { const w = hwAt(z); return [[-w, BOT, z], [0, BOT - 0.04, z], [w, BOT, z]]; }), [0.14, 0.15, 0.16], [0, -1, 0]);
+  for (const sd of [-1, 1]) {
+    paint.patch(Z.map((z) => { const w = hwAt(z); return [[sd * w, BOT, z], [sd * w, TOP, z]]; }), WHITE, [sd, 0, 0]);
+    // a racing stripe along each edge
+    matte.patch(Z.map((z) => { const w = hwAt(z) - 0.12; return [[sd * w, TOP + 0.1 * (1 - (w / hwAt(z)) ** 2) + 0.012, z], [sd * (w - 0.22), TOP + 0.1 * (1 - ((w - 0.22) / hwAt(z)) ** 2) + 0.012, z]]; }), [0.96, 0.96, 0.94], [0, 1, 0]);
+    // the sponsons: running surfaces under the forward outer corners
+    const SZ = Z.filter((z) => z >= 0.8);
+    matte.patch(SZ.map((z) => { const w = hwAt(z); return [[sd * w, BOT, z], [sd * w, -0.02 + Math.max(0, z - 4.2) * 0.35, z], [sd * (w - 0.55), 0.02 + Math.max(0, z - 4.2) * 0.35, z], [sd * (w - 0.62), BOT, z]]; }), [0.12, 0.13, 0.14], [sd * 0.4, -1, 0]);
+    paint.patch(SZ.map((z) => { const w = hwAt(z); return [[sd * w, BOT, z], [sd * w, -0.02 + Math.max(0, z - 4.2) * 0.35, z]]; }), WHITE, [sd, 0, 0]);
+  }
+  // transom and the nose's rolled edge
+  paint.patch([[[-1.08, BOT, -3.7], [1.08, BOT, -3.7]], [[-1.08, TOP, -3.7], [1.08, TOP, -3.7]]], WHITE, [0, 0, -1]);
+  for (let i = 0; i < 8; i++) {
+    const x0 = -2.1 + i * 4.2 / 8, x1 = x0 + 4.2 / 8;
+    paint.tube([x0, (TOP + BOT) / 2, 4.84], [x1, (TOP + BOT) / 2, 4.84], (TOP - BOT) / 2, 6, WHITE, false);
+  }
+  // the central cowl, from behind the canopy to the fin
+  const rings = [];
+  for (const [z, w, h] of [[2.3, 0.42, 0.3], [1.8, 0.62, 0.62], [0.6, 0.7, 0.86], [-1.2, 0.66, 0.9], [-2.6, 0.52, 0.72], [-3.6, 0.38, 0.5]]) {
+    const ring = [];
+    for (let k = 0; k <= 8; k++) { const a = Math.PI * k / 8; ring.push([Math.cos(a) * w, TOP + Math.sin(a) * h, z]); }
+    rings.push(ring);
+  }
+  paint.patch(rings, WHITE, [0, 1, 0]);
+  // a coloured band down the cowl, and the turbine intakes each side of it
+  matte.patch(rings.slice(1).map((r) => [r[3].map((v, i) => v * (i === 1 ? 1.01 : 1)), r[4], r[5].map((v, i) => v * (i === 1 ? 1.01 : 1))]), [0.95, 0.78, 0.12], [0, 1, 0]);
+  for (const sd of [-1, 1]) {
+    matte.box(sd * 0.72, TOP + 0.2, 0.9, 0.34, 0.5, 0.9, 0, [0.08, 0.08, 0.09]);
+    trim.box(sd * 0.72, TOP + 0.3, 1.36, 0.28, 0.34, 0.02, 0, CHROME);
+  }
+  // the canopy: a glass bubble on a painted collar at the front of the cowl
+  paint.patch([0, 1, 2, 3, 4, 5, 6, 7, 8].map((k) => { const a = Math.PI * k / 8; return [[Math.cos(a) * 0.62, TOP + Math.sin(a) * 0.28, 3.4], [Math.cos(a) * 0.5, TOP + Math.sin(a) * 0.32, 2.2]]; }), WHITE, [0, 1, 0]);
+  trim.spheroid(0, TOP + 0.3, 2.85, 0.56, 12, 7, GLASS, 0.75);
+  if (matte.crew) matte.crew.spheroid(0, TOP + 0.32, 2.7, 0.2, 8, 5, [0.9, 0.9, 0.92], 1);
+  // the fin and the wing on it
+  matte.patch([[[0, TOP + 0.7, -2.4], [0, TOP + 2.35, -3.0]], [[0, TOP + 0.5, -3.7], [0, TOP + 2.35, -3.75]]], [0.96, 0.96, 0.94], [1, 0, 0]);
+  matte.patch([[[0, TOP + 0.5, -3.7], [0, TOP + 2.35, -3.75]], [[0, TOP + 0.7, -2.4], [0, TOP + 2.35, -3.0]]], [0.96, 0.96, 0.94], [-1, 0, 0]);
+  paint.box(0, TOP + 2.3, -3.35, 3.8, 0.1, 0.9, 0, WHITE);
+  for (const sd of [-1, 1]) matte.box(sd * 1.9, TOP + 1.9, -3.35, 0.06, 0.55, 0.8, 0, [0.95, 0.78, 0.12]);
+  // the propeller, half under the surface at the transom, and the skid fin
+  matte.spheroid(0, 0.18, -3.95, 0.16, 8, 5, [0.3, 0.3, 0.32], 1);
+  for (let k = 0; k < 3; k++) { const a = k / 3 * Math.PI * 2; matte.tube([0, 0.18, -4.0], [Math.cos(a) * 0.5, 0.18 + Math.sin(a) * 0.5, -4.05], 0.07, 4, [0.72, 0.6, 0.3], false); }
+  matte.box(-1.0, -0.25, -2.4, 0.04, 0.55, 0.7, 0, [0.2, 0.2, 0.22]);
+  return [];
+}
+
+/**
+ * The Duck Tour's DUKW (after the WWII amphibious truck the Seattle tours
+ * ran): a boat hull 9.5 m long on six wheels in arches cut into its sides, an
+ * open passenger tub under a striped canopy on posts, a windscreen, benches
+ * of tourists, and a duck's face on the bow -- eyes on the flanks and a bill
+ * on the stem. Origin on the ground under the centre; nose +z.
+ */
+export const DUCK = { draft: 1.28, floor: 1.42, floatIn: 1.25, floatOut: 0.85, waterKph: 18, waterAcc: 1.5, axles: [2.95, -1.75, -3.15], track: 1.0 };
+function buildDuck(spec, paint, trim, matte) {
+  //        z     half-beam  bottomY  topY
+  const S = [
+    [-4.72, 1.18, 0.84, 2.00],
+    [-4.35, 1.24, 0.66, 2.02],
+    [-2.00, 1.26, 0.62, 2.05],
+    [1.60, 1.26, 0.62, 2.05],
+    [2.90, 1.23, 0.68, 2.06],
+    [3.60, 1.10, 0.92, 2.08],
+    [4.20, 0.86, 1.26, 2.10],
+    [4.58, 0.56, 1.60, 2.12],
+    [4.76, 0.30, 1.86, 2.12],
+  ];
+  const at = (z) => {
+    for (let i = 1; i < S.length; i++) if (z <= S[i][0]) { const a = S[i - 1], b = S[i], t = (z - a[0]) / (b[0] - a[0]); return a.map((v, k) => v + (b[k] - v) * t); }
+    return S[S.length - 1].slice();
+  };
+  const R = spec.wheelR, AX = DUCK.axles;
+  // the arch over each wheel: the hull side's bottom edge lifted round it
+  const arch = (z) => { let l = 0; for (const wz of AX) { const d = Math.abs(z - wz); if (d < R + 0.2) l = Math.max(l, Math.sqrt((R + 0.2) ** 2 - d * d) * 0.95 + 0.52 - 0.62); } return l; };
+  const Z = [];
+  for (let z = S[0][0]; z < S[S.length - 1][0]; z += 0.12) Z.push(z);
+  Z.push(S[S.length - 1][0]);
+  for (const sd of [-1, 1]) {
+    // the topsides, painted: from the chine (lifted over the arches) to the gunwale
+    paint.patch(Z.map((z) => { const [, hb, by, ty] = at(z); const b = by + Math.max(0, arch(z)); return [[sd * hb * 0.94, b, z], [sd * hb, Math.max(b, by + 0.16), z], [sd * hb, ty, z]]; }), WHITE, [sd, 0, 0]);
+    // a sea-blue boot stripe low on the side, and a white rub strake under the gunwale
+    matte.patch(Z.map((z) => { const [, hb, by] = at(z); const b = by + 0.22 + Math.max(0, arch(z)); return [[sd * (hb + 0.006), Math.min(b, by + 1.2), z], [sd * (hb + 0.006), Math.min(b + 0.14, by + 1.3), z]]; }), [0.10, 0.34, 0.62], [sd, 0, 0]);
+    for (let i = 0; i < S.length - 1; i++) matte.tube([sd * (S[i][1] + 0.02), S[i][3] - 0.06, S[i][0]], [sd * (S[i + 1][1] + 0.02), S[i + 1][3] - 0.06, S[i + 1][0]], 0.05, 6, [0.94, 0.94, 0.9], false);
+  }
+  // the bottom and the wheel wells
+  matte.patch(Z.map((z) => { const [, hb, by] = at(z); return [[-hb * 0.94, by, z], [0, by - 0.05, z], [hb * 0.94, by, z]]; }), [0.16, 0.17, 0.18], [0, -1, 0]);
+  for (const wz of AX) for (const sd of [-1, 1]) {
+    matte.box(sd * 0.98, 0.5, wz, 0.56, 0.72, 2 * R + 0.36, 0, CAVITY);
+  }
+  // transom
+  for (const sd of [-1, 1]) {
+    const [z, hb, by, ty] = S[0];
+    paint.patch([[[sd * hb * 0.94, by, z], [sd * hb, by + 0.16, z], [sd * hb, ty, z]], [[0, by - 0.05, z], [0, by + 0.16, z], [0, ty, z]]], WHITE, [0, 0, -1]);
+  }
+  // decks: aft, and the foredeck over the bow (cambered), in the hull colour
+  const deck = (z0, z1) => {
+    const rows = [];
+    for (const z of Z.filter((q) => q >= z0 - 1e-6 && q <= z1 + 1e-6)) {
+      const [, hb, , ty] = at(z);
+      rows.push([-1, -0.5, 0, 0.5, 1].map((u) => [u * hb, ty + 0.06 * (1 - u * u), z]));
+    }
+    paint.patch(rows, WHITE, [0, 1, 0]);
+  };
+  deck(S[0][0], -3.95); deck(2.45, S[S.length - 1][0]);
+  // the tub: floor, liners, the bulkheads fore and aft
+  const F = DUCK.floor, TZ0 = -3.95, TZ1 = 2.45;
+  matte.quad([-1.14, F, TZ0], [1.14, F, TZ0], [1.14, F, TZ1], [-1.14, F, TZ1], [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], [0.28, 0.3, 0.32]);
+  for (const sd of [-1, 1]) matte.quad([sd * 1.16, F, TZ0], [sd * 1.16, F, TZ1], [sd * 1.16, 2.04, TZ1], [sd * 1.16, 2.04, TZ0], [-sd, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], [0.78, 0.76, 0.7]);
+  matte.quad([-1.16, F, TZ1], [1.16, F, TZ1], [1.16, 2.08, TZ1], [-1.16, 2.08, TZ1], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], [0.78, 0.76, 0.7]);
+  matte.quad([1.16, F, TZ0], [-1.16, F, TZ0], [-1.16, 2.02, TZ0], [1.16, 2.02, TZ0], [0, 0, 1], [0, 0, 1, 0, 1, 1, 0, 1], [0.78, 0.76, 0.7]);
+  // the windscreen, framed
+  const WZ = 2.4, WY0 = 2.08, WY1 = 2.95;
+  trim.quad([-1.12, WY0, WZ], [1.12, WY0, WZ], [1.12, WY1, WZ - 0.12], [-1.12, WY1, WZ - 0.12], [0, 0.14, 1], [0, 0, 1, 0, 1, 1, 0, 1], GLASS);
+  for (const x of [-1.14, 0, 1.14]) matte.tube([x, WY0, WZ], [x, WY1, WZ - 0.12], 0.035, 5, [0.2, 0.2, 0.22], false);
+  matte.tube([-1.14, WY1, WZ - 0.12], [1.14, WY1, WZ - 0.12], 0.035, 5, [0.2, 0.2, 0.22], false);
+  // the canopy: posts, a striped roof, a scalloped valance
+  const CY = 3.36, CZ0 = -4.1, CZ1 = 2.3;
+  for (const z of [CZ0 + 0.1, -1.5, 0.6, CZ1 - 0.05]) for (const sd of [-1, 1]) matte.tube([sd * 1.18, 2.04, z], [sd * 1.18, CY, z], 0.04, 6, [0.9, 0.9, 0.88], false);
+  for (let k = 0; k < 7; k++) {
+    const x0 = -1.3 + k * (2.6 / 7);
+    matte.box(x0 + 2.6 / 14, CY, (CZ0 + CZ1) / 2, 2.6 / 7 + 0.002, 0.07, CZ1 - CZ0 + 0.3, 0, k % 2 ? [0.94, 0.94, 0.9] : [0.10, 0.36, 0.66]);
+  }
+  for (const sd of [-1, 1]) matte.box(sd * 1.3, CY - 0.22, (CZ0 + CZ1) / 2, 0.03, 0.22, CZ1 - CZ0 + 0.3, 0, [0.10, 0.36, 0.66]);
+  matte.box(0, CY - 0.22, CZ1 + 0.15, 2.62, 0.22, 0.03, 0, [0.94, 0.72, 0.1]);
+  matte.box(0, CY - 0.22, CZ0 - 0.15, 2.62, 0.22, 0.03, 0, [0.94, 0.72, 0.1]);
+  // the driver's seat and wheel (right, +x), and six benches of tourists behind
+  const H = 0.78;
+  rakedBox(matte, 0.55, F, 1.55, 0.6, 0.62, 0.14, 0.05, [0.62, 0.12, 0.1]);
+  wheelRim(matte, 0.55, F + 0.72, 2.12, 0.22);
+  if (matte.crew) occupant(matte.crew, 0.55, F + 0.08, 1.55, H, [0.55, F + 0.72, 2.12]);
+  const shirts = [[0.85, 0.2, 0.2], [0.2, 0.5, 0.85], [0.95, 0.8, 0.2], [0.25, 0.65, 0.35], [0.9, 0.9, 0.88], [0.55, 0.3, 0.65]];
+  let n = 0;
+  for (let z = 0.75; z > TZ0 + 0.3; z -= 0.8) {
+    for (const sd of [-1, 1]) {
+      rakedBox(matte, sd * 0.55, F, z - 0.2, 0.96, 0.6, 0.12, 0.05, [0.62, 0.12, 0.1]);
+      if (matte.crew) for (const dx of [-0.24, 0.24]) {
+        if ((n++ * 7) % 5 === 0) continue;
+        occupant(matte.crew, sd * 0.55 + dx, F + 0.08, z, H);
+        matte.crew.box(sd * 0.55 + dx, F + 0.12, z + 0.1, 0.3, 0.42, 0.2, 0, shirts[n % shirts.length]);
+      }
+    }
+  }
+  // the duck's face: eyes on the bow flanks, a bill on the stem
+  for (const sd of [-1, 1]) {
+    const z = 3.95, [, hb] = at(z);
+    matte.spheroid(sd * (hb + 0.02), 1.72, z, 0.3, 10, 6, [0.97, 0.97, 0.95], 1);
+    matte.spheroid(sd * (hb + 0.2), 1.74, z + 0.08, 0.13, 8, 5, [0.04, 0.04, 0.05], 1);
+  }
+  matte.spheroid(0, 1.78, 4.92, 0.5, 12, 6, [0.98, 0.56, 0.12], 0.32);
+  matte.spheroid(0, 1.62, 4.86, 0.44, 12, 6, [0.92, 0.48, 0.08], 0.26);
+  // lamps, a propeller and rudder under the stern, a life ring
+  for (const sd of [-1, 1]) {
+    trim.box(sd * 0.62, 1.55, 4.32, 0.26, 0.2, 0.08, 0, LAMP);
+    trim.box(sd * 0.92, 1.5, -4.74, 0.18, 0.22, 0.05, 0, TAILC);
+  }
+  matte.box(0, 0.55, -4.55, 0.06, 0.62, 0.36, 0, [0.2, 0.2, 0.22]);
+  matte.spheroid(0, 0.72, -4.4, 0.24, 8, 4, [0.72, 0.58, 0.28], 0.25);
+  for (let k = 0; k < 10; k++) {
+    const a0 = k / 10 * Math.PI * 2, a1 = (k + 1) / 10 * Math.PI * 2;
+    matte.tube([Math.cos(a0) * 0.32, 2.5 + Math.sin(a0) * 0.32, -4.18], [Math.cos(a1) * 0.32, 2.5 + Math.sin(a1) * 0.32, -4.18], 0.07, 5, k % 2 ? [0.95, 0.95, 0.92] : [0.92, 0.3, 0.12], false);
+  }
+  return AX.flatMap((z) => [[-DUCK.track, R, z, R, 0.36], [DUCK.track, R, z, R, 0.36]]);
+}
+
+function buildBoat(spec, paint, trim, matte) {
+  //        z      hb    sheer  chineX chineY  keelY
+  const S = [
+    [-2.80, 1.00, 0.60, 0.90, -0.14, -0.30],
+    [-2.20, 1.05, 0.61, 0.95, -0.15, -0.32],
+    [-1.20, 1.09, 0.63, 0.98, -0.15, -0.34],
+    [0.00, 1.10, 0.67, 0.96, -0.13, -0.34],
+    [0.90, 1.05, 0.72, 0.88, -0.08, -0.31],
+    [1.60, 0.92, 0.77, 0.72, 0.00, -0.24],
+    [2.20, 0.68, 0.83, 0.48, 0.12, -0.12],
+    [2.62, 0.40, 0.88, 0.24, 0.30, 0.06],
+    [2.86, 0.12, 0.92, 0.06, 0.52, 0.32],
+    [2.93, 0.02, 0.93, 0.01, 0.72, 0.60],
+  ];
+  const at = (z) => {
+    for (let i = 1; i < S.length; i++) {
+      if (z <= S[i][0]) {
+        const a = S[i - 1], b = S[i], t = (z - a[0]) / (b[0] - a[0]);
+        return a.map((v, k) => v + (b[k] - v) * t);
+      }
+    }
+    return S[S.length - 1].slice();
+  };
+  const bottomPts = (s, sd) => {
+    const [, , , cx, cy, ky] = s;
+    return [[0, ky], [sd * cx * 0.5, ky + (cy - ky) * 0.52], [sd * cx, cy], [sd * (cx + 0.05), cy + 0.02]];
+  };
+  const topPts = (s, sd) => {
+    const [, hb, sy, cx, cy] = s;
+    return [[sd * (cx + 0.05), cy + 0.02], [sd * (cx + 0.05 + (hb - cx - 0.05) * 0.6), cy + (sy - cy) * 0.45], [sd * hb, sy]];
+  };
+  for (const sd of [-1, 1]) {
+    paint.patch(S.map((s) => topPts(s, sd).map(([x, y]) => [x, y, s[0]])), WHITE, [sd, 0.2, 0]);
+    matte.patch(S.map((s) => bottomPts(s, sd).map(([x, y]) => [x, y, s[0]])), HULL_BOTTOM, [sd * 0.5, -1, 0]);
+    // a boot stripe laid on the topside just above the water, and a sheer
+    // stripe under the rub rail -- the two lines that say "boat"
+    const stripe = (f0, f1, col) => {
+      matte.patch(S.slice(0, 9).map((s) => {
+        const p = topPts(s, sd);
+        const q = (f) => {
+          // along the topside profile, 0 = chine lip, 1 = sheer
+          const seg = f < 0.5 ? [p[0], p[1], f / 0.5] : [p[1], p[2], (f - 0.5) / 0.5];
+          const x = seg[0][0] + (seg[1][0] - seg[0][0]) * seg[2], y = seg[0][1] + (seg[1][1] - seg[0][1]) * seg[2];
+          return [x + sd * 0.004, y, s[0]];
+        };
+        return [q(f0), q(f1)];
+      }), col, [sd, 0, 0]);
+    };
+    stripe(0.12, 0.2, [0.07, 0.08, 0.09]);
+    stripe(0.80, 0.86, [0.62, 0.10, 0.08]);
+    // rub rail along the sheer
+    for (let i = 0; i < S.length - 2; i++) {
+      matte.tube([sd * (S[i][1] + 0.012), S[i][2] - 0.01, S[i][0]], [sd * (S[i + 1][1] + 0.012), S[i + 1][2] - 0.01, S[i + 1][0]], 0.028, 6, [0.08, 0.08, 0.09], false);
+    }
+  }
+  // transom, both halves, in the topside colour above the chine lip
+  for (const sd of [-1, 1]) {
+    const s = S[0];
+    const prof = [...bottomPts(s, sd), ...topPts(s, sd).slice(1)];
+    paint.patch([prof.map(([x, y]) => [x, y, s[0]]), prof.map(([, y]) => [0, y, s[0]])], WHITE, [0, 0, -1]);
+  }
+
+  // --- deck ----------------------------------------------------------------------
+  // the floor updateBoat keeps above the water (spec.cockpit)
+  const [FLOOR, COCK_R, COCK_F] = spec.cockpit, CAP = 0.15;
+  const deckStations = S.filter((s) => s[0] <= COCK_F + 1e-6).map((s) => s[0]);
+  // gunwale caps down the cockpit
+  for (const sd of [-1, 1]) {
+    matte.patch(deckStations.map((z) => {
+      const s = at(z);
+      return [[sd * s[1], s[2], z], [sd * (s[1] - CAP), s[2] + 0.01, z]];
+    }), GEL, [0, 1, 0]);
+    // inner liner from the cap down to the floor
+    matte.patch(deckStations.filter((z) => z >= COCK_R).map((z) => {
+      const s = at(z);
+      return [[sd * (s[1] - CAP), s[2] + 0.01, z], [sd * (s[1] - CAP - 0.04), FLOOR, z]];
+    }), GEL, [-sd, 0.3, 0]);
+  }
+  // foredeck, cambered, from the screen to the stem
+  {
+    const rows = [];
+    for (const s of S.filter((s) => s[0] >= COCK_F - 1e-6)) {
+      const row = [];
+      for (let j = 0; j <= 6; j++) {
+        const u = -1 + j / 3;
+        row.push([u * s[1], s[2] + 0.07 * (1 - u * u) * Math.min(1, s[1] / 0.5), s[0]]);
+      }
+      rows.push(row);
+    }
+    matte.patch(rows, GEL, [0, 1, 0]);
+  }
+  // cockpit floor and the bulkheads fore and aft
+  {
+    const fr = [];
+    for (const z of [COCK_R, -1.2, 0, COCK_F]) {
+      const w = at(z)[1] - CAP - 0.04;
+      fr.push([[-w, FLOOR, z], [0, FLOOR, z], [w, FLOOR, z]]);
+    }
+    matte.patch(fr, NONSKID, [0, 1, 0]);
+    const sF = at(COCK_F), sR = at(COCK_R);
+    matte.quad([-(sF[1] - CAP), FLOOR, COCK_F], [sF[1] - CAP, FLOOR, COCK_F], [sF[1] - CAP, sF[2] + 0.02, COCK_F], [-(sF[1] - CAP), sF[2] + 0.02, COCK_F], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], GEL);
+    matte.quad([-(sR[1] - CAP), FLOOR, COCK_R], [sR[1] - CAP, FLOOR, COCK_R], [sR[1] - CAP, sR[2] + 0.01, COCK_R], [-(sR[1] - CAP), sR[2] + 0.01, COCK_R], [0, 0, 1], [0, 0, 1, 0, 1, 1, 0, 1], GEL);
+    // aft deck over the splash well, to the transom
+    matte.patch([S[0], S[1]].map((s) => [[-s[1], s[2], s[0]], [0, s[2] + 0.03, s[0]], [s[1], s[2], s[0]]]), GEL, [0, 1, 0]);
+  }
+  // rear bench: base, cushion, back against the bulkhead
+  {
+    const w = at(COCK_R + 0.3)[1] - CAP - 0.06;
+    matte.box(0, FLOOR, COCK_R + 0.24, w * 2, 0.30, 0.46, 0, GEL);
+    matte.box(0, FLOOR + 0.30, COCK_R + 0.25, w * 2 - 0.04, 0.10, 0.44, 0, VINYL);
+    rakedBox(matte, 0, FLOOR + 0.40, COCK_R + 0.06, w * 2 - 0.1, 0.34, 0.10, 0.08, VINYL);
+  }
+  // consoles: helm to starboard (-x), passenger to port
+  const HELM = -0.50;
+  for (const sx of [-1, 1]) {
+    const x = sx * 0.50, top = sx < 0 ? 0.80 : 0.70;
+    matte.box(x, FLOOR, 0.62, 0.52, top - FLOOR, 0.52, 0, GEL);
+    // raked dash face toward the seat
+    matte.quad([x - 0.26, top, 0.36], [x + 0.26, top, 0.36], [x + 0.26, top + 0.10, 0.62], [x - 0.26, top + 0.10, 0.62], [0, 0.93, -0.36], [0, 0, 1, 0, 1, 1, 0, 1], CAB_DASH);
+    matte.quad([x - 0.26, top + 0.10, 0.62], [x + 0.26, top + 0.10, 0.62], [x + 0.26, top + 0.10, 0.88], [x - 0.26, top + 0.10, 0.88], [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], GEL);
+    matte.quad([x - 0.26, top, 0.36], [x - 0.26, FLOOR, 0.36], [x + 0.26, FLOOR, 0.36], [x + 0.26, top, 0.36], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], GEL);
+    // bucket seat on a pedestal
+    matte.tube([x, FLOOR, -0.30], [x, FLOOR + 0.30, -0.30], 0.05, 8, [0.5, 0.52, 0.55], true);
+    matte.box(x, FLOOR + 0.30, -0.28, 0.46, 0.12, 0.46, 0, VINYL);
+    rakedBox(matte, x, FLOOR + 0.40, -0.50, 0.44, 0.46, 0.10, 0.10, VINYL);
+  }
+  // gauges and wheel at the helm
+  for (const dx of [-0.10, 0.10]) trim.tube([HELM + dx, 0.86, 0.47], [HELM + dx, 0.875, 0.455], 0.045, 10, [0.9, 0.9, 0.86], true);
+  {
+    const R = 0.17, c = [HELM, 0.92, 0.36], tilt = 0.9;
+    const pt = (a) => [c[0] + Math.cos(a) * R, c[1] + Math.sin(a) * R * Math.cos(tilt), c[2] - Math.sin(a) * R * Math.sin(tilt)];
+    for (let i = 0; i < 10; i++) trim.tube(pt((i / 10) * Math.PI * 2), pt(((i + 1) / 10) * Math.PI * 2), 0.014, 4, CHROME, false);
+    trim.tube([HELM, 0.92, 0.36], [HELM, 0.86, 0.48], 0.02, 6, CHROME, true);
+  }
+  // throttle lever beside the helm
+  trim.tube([HELM + 0.30, 0.80, 0.42], [HELM + 0.30, 0.95, 0.36], 0.012, 6, CHROME, true);
+  trim.box(HELM + 0.30, 0.95, 0.36, 0.06, 0.04, 0.05, 0, [0.06, 0.06, 0.07]);
+
+  // --- windscreen: one wrap-round pane in trim glass, framed ----------------------
+  {
+    const rows = [];
+    const bot = (u) => { const s = at(COCK_F - 0.05); const w = s[1] - 0.10; return [u * w, s[2] + 0.06, COCK_F + 0.02 - 0.42 * u * u]; };
+    for (let i = 0; i <= 2; i++) {
+      const t = i / 2, row = [];
+      for (let j = 0; j <= 8; j++) {
+        const u = -1 + j / 4, b = bot(u);
+        // raked back 30 degrees and drawn in 8 % at the top
+        row.push([b[0] * (1 - 0.08 * t), b[1] + 0.40 * t, b[2] - 0.23 * t]);
+      }
+      rows.push(row);
+    }
+    trim.patch(rows, GLASS, [0, 0.5, 1]);
+    for (let j = 0; j < 8; j++) trim.tube(rows[2][j], rows[2][j + 1], 0.014, 5, CHROME, false);
+    for (const j of [0, 8]) trim.tube(rows[0][j], rows[2][j], 0.016, 5, CHROME, false);
+  }
+  // bow rail on stanchions, bow cleat and nav light, stern cleats and light pole
+  for (const sd of [-1, 1]) {
+    const pts = [1.05, 1.60, 2.20, 2.62].map((z) => { const s = at(z); return [sd * (s[1] - 0.07), s[2] + 0.30, z]; });
+    for (let i = 0; i < pts.length - 1; i++) trim.tube(pts[i], pts[i + 1], 0.013, 6, CHROME, false);
+    for (const p of pts) trim.tube([p[0], p[1] - 0.30, p[2]], p, 0.011, 6, CHROME, false);
+    trim.box(sd * 0.85, 0.61, -2.55, 0.06, 0.04, 0.18, 0, CHROME);
+  }
+  trim.tube([-0.08, 0.99, 2.62], [0.08, 0.99, 2.62], 0.015, 6, CHROME, true);        // bow rail tip
+  trim.box(0.05, 0.94, 2.72, 0.05, 0.04, 0.07, 0, [0.1, 0.85, 0.3]);
+  trim.box(-0.05, 0.94, 2.72, 0.05, 0.04, 0.07, 0, TAILC);
+  trim.box(0, 0.95, 2.45, 0.05, 0.03, 0.2, 0, CHROME);
+  trim.tube([0.62, 0.61, -2.62], [0.62, 1.55, -2.62], 0.014, 6, CHROME, true);
+  trim.tube([0.62, 1.55, -2.62], [0.62, 1.60, -2.62], 0.03, 8, LAMP, true);
+
+  // --- outboard ---------------------------------------------------------------------
+  // A 150 hp four-stroke on the transom: a clamp bracket with its tilt/trim
+  // ram, a lower cowl in black and a tall sculpted top cowl in white with a
+  // livery band and its vents, a hydrofoil-section midsection and leg, the
+  // anti-ventilation plate, a torpedo gearcase with its skeg, and a
+  // three-bladed stainless prop.
+  {
+    const OB = -3.10, BLK = [0.06, 0.06, 0.07], WHT = [0.9, 0.9, 0.88];
+    matte.box(0, 0.34, -2.86, 0.36, 0.34, 0.14, 0, [0.12, 0.12, 0.13]);            // clamp bracket
+    trim.tube([0, 0.30, -2.92], [0, 0.52, -2.98], 0.035, 8, ALLOY, true);         // trim ram
+    // lower cowl, black, and the top cowl over it
+    matte.loft([
+      { z: -2.90, pts: ring2(0.18, 0.74, 0.12, 14) },
+      { z: -3.00, pts: ring2(0.23, 0.76, 0.14, 14) },
+      { z: -3.26, pts: ring2(0.22, 0.76, 0.14, 14) },
+      { z: -3.36, pts: ring2(0.15, 0.75, 0.11, 14) },
+    ], BLK, { capStart: true, capEnd: true });
+    matte.loft([
+      { z: -2.91, pts: ring2(0.16, 0.95, 0.18, 14) },
+      { z: -2.97, pts: ring2(0.225, 0.99, 0.24, 14) },
+      { z: -3.08, pts: ring2(0.245, 1.01, 0.265, 14) },
+      { z: -3.22, pts: ring2(0.24, 1.00, 0.26, 14) },
+      { z: -3.33, pts: ring2(0.20, 0.975, 0.225, 14) },
+      { z: -3.40, pts: ring2(0.12, 0.95, 0.16, 14) },
+      { z: -3.43, pts: ring2(0.05, 0.94, 0.08, 14) },
+    ], WHT, { capStart: true, capEnd: false });
+    // the livery band round the cowl and a black top panel with its vents
+    for (const sd of [-1, 1]) {
+      paint.patch([[[sd * 0.246, 0.98, -3.02], [sd * 0.251, 1.04, -3.02]], [[sd * 0.246, 0.975, -3.30], [sd * 0.228, 1.02, -3.30]]], WHITE, [sd, 0, 0]);
+      for (let k = 0; k < 4; k++) matte.box(sd * 0.1, 1.255, -3.1 - k * 0.045, 0.08, 0.012, 0.018, 0, BLK);
+    }
+    matte.spheroid(0, 1.2, -3.15, 0.2, 12, 6, BLK, 0.35);
+    // midsection and leg: a foil section tapering down to the plate
+    const foil = (half, chord, zc) => {
+      const p = [];
+      for (let k = 0; k < 12; k++) {
+        const a = (k / 12) * Math.PI * 2, c = Math.cos(a), sn = Math.sin(a);
+        p.push([sn * half * (c > 0 ? 1 : 0.8), zc + c * chord * (c > 0 ? 0.4 : 0.6)]);
+      }
+      return p;
+    };
+    matte.loftY([
+      { y: 0.66, pts: foil(0.13, 0.42, OB + 0.02) },
+      { y: 0.40, pts: foil(0.09, 0.36, OB) },
+      { y: 0.10, pts: foil(0.065, 0.32, OB - 0.01) },
+      { y: -0.20, pts: foil(0.055, 0.30, OB - 0.02) },
+    ], BLK, { capStart: false, capEnd: false });
+    matte.box(0, -0.21, OB - 0.03, 0.32, 0.018, 0.46, 0, BLK);                    // anti-ventilation plate
+    matte.box(0, -0.30, OB + 0.06, 0.03, 0.08, 0.1, 0, [0.5, 0.52, 0.55]);         // trim tab / anode
+    // gearcase torpedo, nose forward, and the skeg under it
+    matte.tube([0, -0.40, OB + 0.18], [0, -0.40, OB - 0.20], 0.07, 12, BLK, false);
+    matte.spheroid(0, -0.40, OB + 0.18, 0.07, 10, 6, BLK, 1);
+    matte.tube([0, -0.40, OB - 0.20], [0, -0.40, OB - 0.24], 0.05, 10, BLK, true);
+    matte.quad([0, -0.46, OB + 0.02], [0, -0.46, OB - 0.18], [0, -0.66, OB - 0.20], [0, -0.64, OB - 0.05], [1, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], BLK);
+    matte.quad([0, -0.46, OB + 0.02], [0, -0.46, OB - 0.18], [0, -0.66, OB - 0.20], [0, -0.64, OB - 0.05], [-1, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], BLK);
+    // the prop: hub and three raked blades, both faces
+    const pz = OB - 0.27;
+    trim.tube([0, -0.40, pz + 0.04], [0, -0.40, pz - 0.08], 0.045, 10, ALLOY, true);
+    for (let k = 0; k < 3; k++) {
+      const a = (k / 3) * Math.PI * 2 + 0.3;
+      const P = (r, da, dz) => [Math.cos(a + da) * r, -0.40 + Math.sin(a + da) * r, pz + dz];
+      const pts = [P(0.045, -0.35, 0.03), P(0.17, -0.22, 0.0), P(0.19, 0.12, -0.04), P(0.045, 0.30, -0.06)];
+      for (const n of [1, -1]) trim.quad(pts[0], pts[1], pts[2], pts[3], [0, 0, n], [0, 0, 1, 0, 1, 1, 0, 1], ALLOY);
+    }
+  }
+  // swim platforms either side of the motor, teak on stainless brackets,
+  // and a ladder on the port one
+  {
+    const TEAK = [0.50, 0.34, 0.19];
+    for (const sd of [-1, 1]) {
+      matte.box(sd * 0.60, 0.40, -2.97, 0.54, 0.05, 0.34, 0, TEAK);
+      for (let k = 0; k < 6; k++) matte.box(sd * 0.60, 0.451, -2.83 - k * 0.055, 0.52, 0.004, 0.012, 0, [0.9, 0.88, 0.8]);
+      for (const x of [0.4, 0.8]) trim.tube([sd * x, 0.40, -2.80], [sd * x, 0.36, -3.1], 0.012, 5, CHROME, true);
+    }
+    for (const x of [0.52, 0.72]) trim.tube([x, 0.45, -3.12], [x, -0.35, -3.18], 0.012, 6, CHROME, true);
+    for (let k = 0; k < 4; k++) trim.tube([0.52, 0.2 - k * 0.18, -3.14 - k * 0.012], [0.72, 0.2 - k * 0.18, -3.14 - k * 0.012], 0.014, 5, CHROME, true);
+  }
+  // running strakes along the bottom, both sides
+  for (const sd of [-1, 1]) {
+    for (const f of [0.42, 0.72]) {
+      const pts = S.slice(0, 8).map((q) => { const [z, , , cx, cy, ky] = q; return [sd * cx * f, ky + (cy - ky) * f * 0.98 - 0.012, z]; });
+      for (let k = 0; k < pts.length - 1; k++) matte.tube(pts[k], pts[k + 1], 0.016, 4, HULL_BOTTOM, false);
+    }
+  }
+  // cleats midships and aft on the caps, and the bimini top folded into its
+  // boot over the stern seat on two stainless bows
+  for (const sd of [-1, 1]) {
+    for (const z of [-0.2, -2.3]) {
+      const q = at(z), x = sd * (q[1] - 0.07);
+      trim.box(x, q[2] + 0.01, z, 0.04, 0.03, 0.05, 0, CHROME);
+      trim.box(x, q[2] + 0.04, z, 0.035, 0.02, 0.2, 0, CHROME);
+    }
+    const q = at(-1.9);
+    trim.tube([sd * (q[1] - 0.12), q[2], -1.9], [sd * (q[1] - 0.2), q[2] + 0.34, -2.3], 0.014, 6, CHROME, true);
+  }
+  {
+    const q = at(-2.3), w = q[1] - 0.22;
+    matte.tube([-w, q[2] + 0.40, -2.3], [w, q[2] + 0.40, -2.3], 0.09, 10, [0.06, 0.1, 0.24], true);
+  }
+  // --- the driver, at the helm (occupied geometry only) ---------------------------
+  if (matte.crew) occupant(matte.crew, HELM, 1.06, -0.46, 0.46, [HELM, 0.92, 0.36]);
+  return [];
+}
+
+/**
+ * Where a rider sits, and how. One entry per bike, because the two riding
+ * positions are as different as the bikes: a cruiser rider is upright with his
+ * feet ahead of him, a sportbike rider is folded over the tank with his knees
+ * behind his hips.
+ *
+ * Signs, all of which are easy to get backwards: the limb bones hang down the
+ * -Y axis, so +x on a thigh or an upper arm swings it BACKWARD and -x swings
+ * it forward; +x on the spine leans the torso forward; +z on a bone swings it
+ * toward +X, which is the vehicle's left.
+ */
+const RIDERS = {
+  // Sitting up, hands out on pullback bars, feet on forward controls -- so the
+  // legs are nearly straight and the reach is almost horizontal.
+  cruiser: {
+    z: -0.200, hipY: 0.870, seed: 31,
+    lean: 0.08, head: -0.14,
+    shoulder: [-1.10, 0.30], elbow: [-0.40, 0.06],
+    thigh: [-0.90, 0.18], knee: 0.28, foot: -0.20,
+  },
+  // Folded over the tank: chest down 35 degrees, head back up to look through
+  // the screen, knees behind the hips and tucked into the tank.
+  sportbike: {
+    z: -0.120, hipY: 0.930, seed: 57,
+    lean: 0.74, head: -0.82,
+    shoulder: [-0.60, 0.22], elbow: [-0.22, 0.06],
+    thigh: [-1.35, 0.26], knee: 1.55, foot: -0.25,
+  },
+  // Upright on the saddle, arms out to a wide straight bar, knees bent over
+  // the footboards and splayed round the tank: the quad's stance.
+  // Measured in the quad's frame: hands land within ~5 cm of the grips
+  // (+-0.36, 1.035, 0.25), soles on the boards (top 0.325).
+  // Astride the saddle, knees bent into the footwells, hands on the bars
+  // (+-0.36, 0.98, 0.22): the quad's stance, lower and further aft.
+  // the balloon's pilot stands in the basket; updateBalloon raises the right
+  // arm to the blast valve while the burner is lit
+  balloon: {
+    z: -0.28, hipY: 1.05, seed: 133,
+    lean: 0, head: -0.12,
+    shoulder: [0.04, 0.16], elbow: [-0.30, 0.04],
+    thigh: [0.02, 0.07], knee: 0.06, foot: -0.02,
+  },
+  // On the saddle, leaning to a flat bar; the arms and legs are solved to the
+  // grips and the pedals every frame (Vehicle._pedal), so these are only
+  // where they start.
+  bicycle: {
+    z: -0.17, hipY: 1.06, seed: 47,
+    lean: 0.52, head: -0.46,
+    shoulder: [-0.72, 0.24], elbow: [-0.2, 0.06],
+    thigh: [-1.1, 0.08], knee: 1.2, foot: -0.1,
+  },
+  jetski: {
+    z: -0.42, hipY: 0.90, seed: 91,
+    lean: 0.26, head: -0.24,
+    shoulder: [-0.74, 0.30], elbow: [-0.18, 0.06],
+    thigh: [-1.20, 0.34], knee: 1.50, foot: -0.12,
+  },
+  // Sitting in the cockpit, legs forward under the deck; the arms are the
+  // paddle's (updateKayak solves them to the shaft every frame).
+  kayak: {
+    z: -0.14, hipY: 0.17, seed: 61,
+    lean: 0.02, head: -0.04,
+    shoulder: [-0.9, 0.25], elbow: [-0.9, 0.05],
+    thigh: [-1.48, 0.10], knee: 0.28, foot: -0.25,
+  },
+  atv: {
+    z: -0.19, hipY: 0.96, seed: 77,
+    lean: 0.20, head: -0.22,
+    shoulder: [-0.70, 0.30], elbow: [-0.16, 0.06],
+    thigh: [-1.25, 0.36], knee: 1.45, foot: -0.15,
+  },
+};
+
+// One rider mesh for the whole fleet, built once. Leathers and a helmet, so a
+// rider is legible at the distance a bike is usually seen from.
+let RIDER_GEO = null;
+function riderGeometry() {
+  if (!RIDER_GEO) {
+    RIDER_GEO = buildCharacter({
+      seed: 4242,
+      shirt: [0.14, 0.15, 0.18], pants: [0.10, 0.10, 0.12],
+      vest: [0.11, 0.12, 0.15], hat: [0.10, 0.11, 0.14],
+    });
+  }
+  return RIDER_GEO;
+}
+
+// A kayaker: shirt sleeves under a yellow life vest (the hi-vis loft), no helmet.
+let PADDLER_GEO = null;
+function paddlerGeometry() {
+  if (!PADDLER_GEO) {
+    PADDLER_GEO = buildCharacter({ seed: 5150, variant: 4, shirt: [0.16, 0.34, 0.52], pants: [0.12, 0.12, 0.14], hivis: true });
+  }
+  return PADDLER_GEO;
+}
+
+/** Poses a humanoid onto a bike and returns it, ready to add to the tilt group. */
+function makeRider(hand) {
+  const p = RIDERS[hand];
+  const h = makeHumanoid({ geometry: hand === 'kayak' ? paddlerGeometry() : riderGeometry(), seed: p.seed, scale: 0.96 });
+  const b = h.bones;
+  b[BONES.spine].rotation.x = p.lean * 0.45;
+  b[BONES.chest].rotation.x = p.lean * 0.55;
+  b[BONES.neck].rotation.x = p.head * 0.4;
+  b[BONES.head].rotation.x = p.head * 0.6;
+  for (const [s, sh, el, th, kn, ft] of [
+    [-1, BONES.shoulderL, BONES.elbowL, BONES.thighL, BONES.kneeL, BONES.footL],
+    [1, BONES.shoulderR, BONES.elbowR, BONES.thighR, BONES.kneeR, BONES.footR],
+  ]) {
+    b[sh].rotation.set(p.shoulder[0] - p.lean, 0, s * p.shoulder[1]);
+    b[el].rotation.set(p.elbow[0], 0, s * p.elbow[1]);
+    b[th].rotation.set(p.thigh[0], 0, s * p.thigh[1]);
+    b[kn].rotation.x = p.knee;
+    b[ft].rotation.x = p.foot;
+  }
+  gripHands(h);   // palms down, fingers round the bars
+  // 0.927 is the hip height of the unscaled character -- see peds.js `J`.
+  h.group.position.set(0, p.hipY - 0.927 * h.scale, p.z);
+  return h;
+}
+
+/**
+ * The convertible: a US two-seater with the roof taken off, which is a
+ * different problem from every other body here rather than the same one with
+ * fewer panels.
+ *
+ * Nothing is lofted above the beltline at all -- no greenhouse, no roof, no
+ * pillars past the screen header. What that leaves is an open box, and the
+ * whole shape depends on what is INSIDE it: a floor, a tub, two seats, a dash
+ * and a wheel. Without those you are looking down through the beltline at the
+ * far sill and the car reads as an empty shell, which is exactly what a
+ * roofless body is if nobody builds the interior.
+ *
+ * The cockpit is built the same way every other opening here is: as a recess
+ * whose rim stands proud of the deck. There is no boolean operation in this
+ * builder, so the aperture cannot be cut out of the loft -- but a tub dropped
+ * in with its rim standing 2 cm above the deck hides the shell underneath from
+ * every angle, and what reads is an opening.
+ */
+function buildConvertible(spec, paint, trim, matte) {
+  const wr = spec.wheelR;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = 1.34, zR = -1.30;                 // 2.64 m wheelbase
+
+  const halfW = curve([
+    [tail, 0.90], [-2.00, 0.97], [zR, 1.00], [-0.55, 0.93], [0.30, 0.93],
+    [zF, 0.99], [2.00, 0.94], [nose, 0.86],
+  ]);
+  const sillY = curve([
+    [tail, 0.32], [-1.90, 0.26], [-0.60, 0.24], [0.60, 0.24], [1.90, 0.26], [nose, 0.32],
+  ]);
+  // Flat and low along the whole flank. With no roof over it the beltline IS
+  // the top of the car, and a dipping one would leave the doors looking like a
+  // coupe someone had cut the roof off with a saw.
+  const beltY = curve([
+    [tail, 0.985], [-1.95, 1.010], [zR, 1.020], [-0.60, 1.005], [0.30, 1.000],
+    [0.90, 0.998], [1.40, 0.980], [1.95, 0.945], [nose, 0.920],
+  ]);
+  const tuckAt = curve([
+    [tail, 0.88], [zR, 0.95], [-0.60, 0.88], [0.60, 0.88], [zF, 0.95], [nose, 0.88],
+  ]);
+  const topAt = curve([
+    [tail, 0.90], [-1.80, 0.95], [0.80, 0.95], [1.50, 0.93], [2.10, 0.86], [nose, 0.78],
+  ]);
+  // The cockpit floor, as a curve rather than a step: the ramp up at the front
+  // is the scuttle the dash sits under and the ramp at the back is the deck
+  // the folded top stacks on, both of which a convertible has to have.
+  const cockF = 0.88, cockR = -1.06, floorY = 0.520;
+  // The ramp in FRONT is short on purpose: it is the firewall, and the screen
+  // stands just behind it. Drawn out over 30 cm instead it becomes a wall
+  // rising in front of the windscreen, which is a scuttle in the wrong place.
+  const deckDip = curve([
+    [cockR - 0.24, 1.06], [cockR, floorY], [cockF, floorY], [cockF + 0.14, 1.06],
+  ]);
+  const { geom, half, endProf } = bodyCore(spec, paint, matte, {
+    halfW, sillY, beltY, tuckAt, topAt, zF, zR,
+    archR: 0.56, archGap: 0.06, creaseAt: 0.64, tumble: 0.95,
+    deckDrop: 0.026, lipOut: 0.048, endRound: 0.14, endMin: 0.90,
+    deckDip,
+  });
+
+  const twF = 0.235, twR = 0.275;
+  const wxF = geom(zF).wb - twF / 2 + 0.02;
+  const wxR = geom(zR).wb - twR / 2 + 0.02;
+  const wheels = [
+    [-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF],
+    [-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR],
+  ];
+
+  // --- cockpit: the tub the loft dips into ---------------------------------
+  // The interior is laid ON the dipped section's own points, 5 mm proud, the
+  // same trick the roof panels use. Registered by construction, so the trim
+  // cannot drift off the opening it is lining -- and it has to be a surface of
+  // its own regardless, because a `loft` forces every normal outward from the
+  // ring's centre and the inside of a tub faces the other way.
+  const NZ = 18;
+  const tubRows = [], topEdge = [];
+  for (let i = 0; i <= NZ; i++) {
+    const z = cockR - 0.16 + ((cockF - cockR + 0.30) * i) / NZ;
+    const L = half(z, -1), R = half(z, 1);
+    const row = [];
+    for (const k of [9, 10, 11]) row.push([L[k][0] * 0.985, L[k][1] + 0.005, z]);
+    for (const k of [11, 10, 9]) row.push([R[k][0] * 0.985, R[k][1] + 0.005, z]);
+    tubRows.push(row);
+    topEdge.push([L[8], R[8], z]);
+  }
+  matte.patch(tubRows, [0.055, 0.058, 0.065], [0, 1, 0]);
+  for (const sx of [-1, 1]) {
+    // Roll over the top of the door: painted, between the shoulder and the
+    // inner lip, which is what a convertible has instead of a window frame.
+    paint.patch([
+      topEdge.map(([L, R, z]) => (sx < 0 ? [L[0], L[1], z] : [R[0], R[1], z])),
+      tubRows.map((r) => (sx < 0 ? [r[0][0], r[0][1] + 0.004, r[0][2]] : [r[5][0], r[5][1] + 0.004, r[5][2]])),
+    ], WHITE, [sx, 0.5, 0]);
+  }
+  // Tunnel and a rear bulkhead, so the floor is not one flat sheet.
+  matte.box(0, floorY, -0.200, 0.240, 0.105, 1.00, 0, [0.125, 0.128, 0.138]);
+  matte.box(0, floorY, cockR + 0.075, 0.860, 0.230, 0.070, 0, [0.09, 0.095, 0.105]);
+
+  // Seats: a cushion and a raked back, built as a lathe up Y so the back can
+  // lean without `box`'s yaw-only rotation getting in the way.
+  const seat = (sx) => {
+    const cx = sx * 0.300, cz = -0.320;
+    matte.loftY([
+      { y: floorY + 0.030, pts: ring2(0.220, cz, 0.240, 10, cx) },
+      { y: floorY + 0.150, pts: ring2(0.235, cz, 0.250, 10, cx) },
+      { y: floorY + 0.200, pts: ring2(0.210, cz + 0.02, 0.220, 10, cx) },
+    ], LEATHER, { capStart: true, capEnd: true });
+    // Backrest, raked and tall enough to stand above the beltline -- a seat
+    // whose top is under the door line cannot be seen from outside the car at
+    // all, and the interior is the whole point of this body.
+    matte.loftY([
+      { y: floorY + 0.180, pts: ring2(0.215, cz - 0.190, 0.085, 10, cx) },
+      { y: floorY + 0.380, pts: ring2(0.220, cz - 0.245, 0.080, 10, cx) },
+      { y: floorY + 0.560, pts: ring2(0.190, cz - 0.305, 0.070, 10, cx) },
+    ], LEATHER, { capStart: true, capEnd: true });
+    matte.box(cx, floorY + 0.575, cz - 0.330, 0.185, 0.135, 0.095, 0, LEATHER);   // head restraint
+  };
+  seat(-1); seat(1);
+
+  // Dash, binnacle and a wheel on a raked column. The wheel is a ring of tubes
+  // rather than a torus primitive, since there is not one here.
+  const cowlY = beltY(cockF);
+  matte.patch([
+    [[-0.560, cowlY - 0.020, cockF - 0.030], [0, cowlY - 0.010, cockF - 0.045], [0.560, cowlY - 0.020, cockF - 0.030]],
+    [[-0.545, cowlY - 0.150, cockF - 0.220], [0, cowlY - 0.140, cockF - 0.235], [0.545, cowlY - 0.150, cockF - 0.220]],
+    [[-0.520, floorY + 0.130, cockF - 0.250], [0, floorY + 0.140, cockF - 0.265], [0.520, floorY + 0.130, cockF - 0.250]],
+  ], [0.145, 0.150, 0.160], [0, 0.6, -1]);
+  // Bright strip along the top edge of the dash. Without it the dash, the tub
+  // and the footwell are three dark surfaces meeting at unlit angles and the
+  // whole front of the cockpit reads as one hole.
+  trim.tube([-0.545, cowlY - 0.014, cockF - 0.034], [0.545, cowlY - 0.014, cockF - 0.034],
+    0.014, 6, CHROME, true);
+  // Left-hand drive: the wheel goes on the +X side, which is the vehicle's own
+  // left. Built on -X it is on the kerb side of an American street.
+  trim.tube([0.170, cowlY - 0.085, cockF - 0.160], [0.470, cowlY - 0.085, cockF - 0.150],
+    0.078, 10, [0.19, 0.20, 0.21], true);        // instrument binnacle
+  // The wheel goes where a DRIVER's hands are -- about 35 cm in front of the
+  // seat back, not up against the dash. Pushed forward to look tidy against
+  // the bulkhead it leaves the cockpit reading as an empty tub with a screen.
+  const wc = [0.330, 0.915, 0.155];
+  matte.tube([0.395, 1.000, 0.560], wc, 0.024, 8, [0.16, 0.17, 0.18], true);
+  for (let i = 0; i < 12; i++) {
+    const a0 = (i / 12) * Math.PI * 2, a1 = ((i + 1) / 12) * Math.PI * 2;
+    // The rim lies in a plane raked back 30 degrees, so its z varies with the
+    // point's height -- a wheel built flat reads as a plate on the dash.
+    const p = (a) => [wc[0] + Math.cos(a) * 0.175, wc[1] + Math.sin(a) * 0.175 * 0.87,
+      wc[2] - Math.sin(a) * 0.175 * 0.50];
+    // Bright rim, into `trim`. A dark-grey wheel in a dark tub is invisible
+    // however carefully it is placed -- and a period wheel is chrome and wood
+    // anyway, so the thing that reads is also the thing that is right.
+    trim.tube(p(a0), p(a1), 0.020, 6, [0.62, 0.50, 0.34]);
+  }
+  for (const a of [1.7, 3.8, 5.9]) {
+    trim.tube(wc, [wc[0] + Math.cos(a) * 0.155, wc[1] + Math.sin(a) * 0.135, wc[2] - Math.sin(a) * 0.078],
+      0.013, 6, ALLOY, true);
+  }
+  // THE DRIVER. Every other car's cabin builder seats one in `matte.crew`
+  // (merged into the geometry of a car somebody is in); this body builds its
+  // own cockpit and never did, so the open car you drove had nobody in it.
+  // Left-hand seat (cx 0.30), shoulders at the wheel's height + 7 cm, the
+  // backrest's top as the seat back, hands on the rim.
+  if (matte.crew) occupant(matte.crew, 0.300, wc[1] + 0.07, -0.625, 0.57, wc);
+  trim.tube([wc[0], wc[1], wc[2] + 0.010], [wc[0], wc[1], wc[2] - 0.020], 0.048, 10, CHROME, true);
+  matte.box(-0.180, cowlY - 0.110, cockF - 0.185, 0.320, 0.105, 0.14, 0, [0.19, 0.20, 0.21]);  // glovebox lid
+  trim.tube([-0.055, floorY + 0.150, -0.080], [-0.060, floorY + 0.290, -0.045], 0.016, 6, CHROME, true); // shifter
+
+  // --- windscreen frame and roll hoops -------------------------------------
+  const hdrZ = 0.460, hdrY = spec.roof, baseY = cowlY + 0.010;
+  const scrRows = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3, row = [];
+    const cz = cockF - 0.020 + (hdrZ - cockF + 0.020) * t, cy = baseY + (hdrY - baseY) * t;
+    for (let j = 0; j <= 6; j++) {
+      const u = -1 + j / 3;
+      row.push([u * (0.560 - 0.055 * t), cy - 0.030 * u * u, cz - 0.075 * u * u]);
+    }
+    scrRows.push(row);
+  }
+  trim.patch(scrRows, GLASS, [0, 0.5, 1]);
+  // A-pillars off the screen's OWN edge points, and a header across the top.
+  // Sized by eye they end up beside the glass rather than on it -- the sports
+  // car's first pillar was a pipe lying on the roof for the same reason.
+  for (const sx of [-1, 1]) {
+    for (let i = 0; i < 3; i++) {
+      const a = scrRows[i][scrRows[i].length - 1], b2 = scrRows[i + 1][scrRows[i + 1].length - 1];
+      trim.tube([sx * a[0], a[1], a[2]], [sx * b2[0], b2[1], b2[2]], 0.028, 8, CHROME, true);
+    }
+  }
+  const hdr = scrRows[3];
+  trim.tube([hdr[0][0], hdr[0][1], hdr[0][2]], [hdr[hdr.length - 1][0], hdr[hdr.length - 1][1], hdr[hdr.length - 1][2]],
+    0.030, 8, CHROME, true);
+  // Roll hoops behind the seats. Two of them, and they are the only thing that
+  // stands above the beltline behind the screen.
+  for (const sx of [-1, 1]) {
+    const hz = -0.760, hy = beltY(hz);
+    const arc = [];
+    for (let i = 0; i <= 5; i++) {
+      const a = (i / 5) * Math.PI * 0.5;
+      arc.push([sx * (0.370 - 0.155 * Math.sin(a) * Math.sin(a)), hy + 0.300 * Math.sin(a), hz - 0.030 * Math.sin(a)]);
+    }
+    for (let i = 0; i < 5; i++) trim.tube(arc[i], arc[i + 1], 0.030, 8, [0.55, 0.57, 0.60], true);
+  }
+
+  // --- folded top stack ----------------------------------------------------
+  // A soft top does not disappear; it stacks behind the seats, and the deck
+  // over it is the reason a convertible's tail is longer than a coupe's.
+  matte.loft([
+    { z: -0.980, pts: ring2(0.520, beltY(-0.98) - 0.055, 0.085, 12) },
+    { z: -1.180, pts: ring2(0.545, beltY(-1.18) - 0.010, 0.115, 12) },
+    { z: -1.420, pts: ring2(0.500, beltY(-1.42) - 0.020, 0.100, 12) },
+  ], [0.085, 0.09, 0.10], { capStart: true, capEnd: true });
+  for (let i = 0; i < 3; i++) {
+    // The bows showing through the cover. Evenly spaced bright bars read as a
+    // grille laid on the deck; three dark ones read as folded fabric.
+    matte.box(0, beltY(-1.18) + 0.090 - i * 0.006, -1.075 - i * 0.115, 0.980 - i * 0.05, 0.014, 0.028, 0,
+      [0.055, 0.058, 0.065]);
+  }
+  // Body-colour lip round the front of the well, which is what the tonneau
+  // shuts against.
+  paint.box(0, beltY(-0.98) - 0.030, -0.950, 1.120, 0.045, 0.075, 0, WHITE);
+
+  // --- front fascia --------------------------------------------------------
+  const GRILLE = [0, 0.640, 0.520, 0.090], LAMP_A = [0.610, 0.680, 0.140, 0.070];
+  const INTAKE = [0, 0.440, 0.440, 0.045];
+  const TAILA = [0.400, 0.700, 0.230, 0.080], PIPE = [0.420, 0.560, 0.038, 0.038];
+  endFace(paint, nose, 1, endProf(nose), [GRILLE, LAMP_A, INTAKE], WHITE);
+  endFace(paint, tail, -1, endProf(tail), [TAILA, PIPE], WHITE);
+
+  const gp = pocket(paint, matte, GRILLE[0], GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.14, 1,
+    { rim: 0.032, rimCol: CHROME });
+  for (let i = -6; i <= 6; i++) {
+    trim.box(i * 0.078, GRILLE[1], gp.z + 0.015, 0.018, 0.150, 0.03, 0, [0.28, 0.29, 0.31]);
+  }
+  for (const sx of [-1, 1]) {
+    const hp = pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.10, 1,
+      { rim: 0.024, rimCol: CHROME });
+    trim.box(sx * LAMP_A[0], 0.692, nose - 0.030, hp.hw * 1.9, 0.074, 0.024, 0, LAMP);
+    trim.box(sx * LAMP_A[0], 0.632, hp.z + 0.045, hp.hw * 1.9, 0.022, 0.024, 0, AMBER);
+  }
+  pocket(paint, matte, INTAKE[0], INTAKE[1], nose, INTAKE[2], INTAKE[3], 0.11, 1, { rim: 0.024 });
+  trim.box(0, 0.370, nose + 0.008, 1.52, 0.085, 0.12, 0, CHROME);
+  trim.box(0, 0.395, nose + 0.046, 0.42, 0.135, 0.02, 0, PLATE);
+
+  // --- rear ----------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    const tp = pocket(paint, matte, sx * TAILA[0], TAILA[1], tail, TAILA[2], TAILA[3], 0.07, -1,
+      { rim: 0.026, rimCol: CHROME });
+    trim.box(sx * TAILA[0], 0.700, tail + 0.022, tp.hw * 1.9, 0.135, 0.026, 0, TAILC);
+    trim.box(sx * (TAILA[0] + 0.140), 0.700, tail + 0.022, 0.075, 0.135, 0.026, 0, AMBER);
+    hole(trim, matte, sx * PIPE[0], PIPE[1], tail, 0.050, 0.12, -1);
+  }
+  trim.box(0, 0.370, tail - 0.008, 1.52, 0.085, 0.12, 0, CHROME);
+  trim.box(0, 0.560, tail - 0.026, 0.42, 0.135, 0.02, 0, PLATE);
+
+  // --- flanks --------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    trim.box(sx * (geom(0).wb + 0.008), 0.250, 0, 0.028, 0.048, 2.00, 0, CHROME);
+    // One shut line: this is a two-door, and the door is long.
+    const rows = [-0.009, 0.009].map((dz) =>
+      half(0.94 + dz, sx).slice(2, 9).map(([x, y]) => [x + sx * 0.005, y, 0.94 + dz]));
+    matte.patch(rows, [0.13, 0.14, 0.15], [sx, 0, 0]);
+    const hg = geom(-0.10);
+    trim.tube([sx * hg.w * 0.985, hg.yc + 0.09, -0.20], [sx * hg.w * 0.985, hg.yc + 0.09, 0.00],
+      0.017, 6, CHROME, true);
+    // Mirror on the door shoulder, at the base of the A-pillar.
+    paint.tube([sx * 0.760, 1.000, 0.760], [sx * 0.870, 1.020, 0.720], 0.020, 6, WHITE, true);
+    paint.box(sx * 0.905, 0.985, 0.688, 0.100, 0.085, 0.055, 0, WHITE);
+    trim.box(sx * 0.905, 0.992, 0.660, 0.086, 0.066, 0.02, 0, MIRROR);
+    // Side gill behind the front arch, the one flank feature.
+    for (let i = 0; i < 3; i++) {
+      matte.box(sx * (geom(0.70).w + 0.004), geom(0.70).yc - 0.08 + i * 0.048, 0.70,
+        0.012, 0.030, 0.22, 0, [0.10, 0.11, 0.12]);
+    }
+  }
+
+  return wheels;
+}
+
+/**
+ * A tapered aerofoil surface through span stations `{ x, y, zLE, c }` -- a
+ * wing, a tailplane or (with `vertical`) a fin. Upper and lower skins are
+ * patches over a NACA 00xx half-thickness with cosine chord spacing, so the
+ * leading edge is round and the trailing edge thin. The wings used to be
+ * 18 cm boxes: a plank reads as a plank from every angle a player flies past.
+ */
+function aerofoil(b, col, stations, { thick = 0.12, n = 8, vertical = false } = {}) {
+  const half = (t) => thick * 5 * (0.2969 * Math.sqrt(t) - 0.126 * t - 0.3516 * t * t + 0.2843 * t ** 3 - 0.1036 * t ** 4);
+  const ts = [];
+  for (let i = 0; i <= n; i++) ts.push((1 - Math.cos((Math.PI * i) / n)) / 2);
+  const upper = [], lower = [];
+  for (const st of stations) {
+    const ru = [], rl = [];
+    for (const t of ts) {
+      const z = st.zLE - t * st.c, h = half(t) * st.c;
+      if (vertical) { ru.push([st.x + h, st.y, z]); rl.push([st.x - h, st.y, z]); }
+      else { ru.push([st.x, st.y + h * 1.2, z]); rl.push([st.x, st.y - h * 0.8, z]); }
+    }
+    upper.push(ru); lower.push(rl);
+  }
+  b.patch(upper, col, vertical ? [1, 0, 0] : [0, 1, 0]);
+  b.patch(lower, col, vertical ? [-1, 0, 0] : [0, -1, 0]);
+  const tip = stations.length - 1;
+  b.patch([upper[tip], lower[tip]], col, vertical ? [0, 1, 0] : [Math.sign(stations[tip].x) || 1, 0, 0]);
+}
+
+// ---------------------------------------------------------------------------
+// Aircraft kit: shared by the twin, the jet, the biplane and the helicopter.
+// ---------------------------------------------------------------------------
+
+/**
+ * A SPINNING part -- a propeller or a rotor. `b` is a Builder of matte-coloured
+ * geometry centred on its own hub; `at` is where the hub sits on the airframe
+ * and `axis` what it turns about ('x', 'y' or 'z').
+ *
+ * buildType bakes every spin part STILL into the parked/traffic geometries
+ * (matteGeoW / matteGeoWE, and so the far LOD), and keeps it as its own
+ * geometry for the flown aircraft: Vehicle.setDetailed(true) hangs one live
+ * mesh per part and drops the baked copy with the rest of the W geometry. A
+ * parked aircraft is 3 draws; only the one being flown pays for its rotors.
+ * The live prop used to exist on every plane, parked or not, and spin at
+ * idle beside the runway.
+ */
+const _pedalV = new THREE.Vector3();
+function spinPart(matte, at, axis, b) {
+  if (!matte.spins) throw new Error('spinPart: buildType did not open matte.spins');
+  matte.spins.push({ b, at, axis });
+}
+
+/**
+ * RETRACTABLE GEAR (spec.retract): a leg and its wheels, drawn by `draw(trim,
+ * matte)` in the model's own metres into a part of their own, hung at `top`
+ * (the leg's root). Baked down in a parked aircraft like any spin part; on
+ * the flown one Vehicle.updatePlane folds it toward the root (the GEAR
+ * button). Axis 'g': spinParts never turns it. Hubs go in the part too.
+ */
+function gearPart(matte, top, draw) {
+  const g = new Builder(false);
+  draw(g, g);
+  for (let i = 0; i < g.pos.length; i += 3) { g.pos[i] -= top[0]; g.pos[i + 1] -= top[1]; g.pos[i + 2] -= top[2]; }
+  spinPart(matte, top, 'g', g);
+}
+
+/** Rotate the vertices a builder added since `from` about Y (and their normals). */
+function rotYFrom(b, from, ang) {
+  const c = Math.cos(ang), s = Math.sin(ang);
+  for (let i = from * 3; i < b.pos.length; i += 3) {
+    const x = b.pos[i], z = b.pos[i + 2];
+    b.pos[i] = x * c + z * s; b.pos[i + 2] = -x * s + z * c;
+    const nx = b.nor[i], nz = b.nor[i + 2];
+    b.nor[i] = nx * c + nz * s; b.nor[i + 2] = -nx * s + nz * c;
+  }
+}
+
+/** Swap two axes of everything a builder added since `from` (a blade laid along x, stood up). */
+function swapFrom(b, from, a0, a1) {
+  for (let i = from * 3; i < b.pos.length; i += 3) {
+    let t = b.pos[i + a0]; b.pos[i + a0] = b.pos[i + a1]; b.pos[i + a1] = t;
+    t = b.nor[i + a0]; b.nor[i + a0] = b.nor[i + a1]; b.nor[i + a1] = t;
+  }
+  // an axis swap is a reflection: flip the winding back
+  for (let i = 0; i < b.idx.length; i += 3) {
+    if (b.idx[i] < from) continue;
+    const t = b.idx[i + 1]; b.idx[i + 1] = b.idx[i + 2]; b.idx[i + 2] = t;
+  }
+}
+
+/**
+ * Rotor or propeller blades in the XZ plane round the origin, turning about
+ * Y: `n` blades from `r0` to `r`, `chord` wide, a thin aerofoil in section,
+ * with a painted tip band. Twist is baked in (`twist` radians root to tip) --
+ * a flat plank is what reads as a toy propeller. Stood up for a propeller by
+ * swapping Y and Z afterwards (see propeller()).
+ */
+function blades(b, n, r0, r, chord, col, tipCol, { twist = 0.35, thick = 0.10, droop = 0, tipChord = null, phase = 0 } = {}) {
+  const tc = tipChord === null ? chord : tipChord;
+  for (let k = 0; k < n; k++) {
+    const from = b.pos.length / 3;
+    const tipAt = r - Math.min(0.30, r * 0.09);
+    const st = [];
+    for (const u of [0, 0.35, 0.75, 1]) {
+      const x = lerp(r0, tipAt, u);
+      st.push({ x, c: lerp(chord, tc, u), tw: twist * (1 - u), y: -droop * u * u });
+    }
+    st.push({ x: r, c: tc * 0.8, tw: 0, y: -droop });
+    const skin = (sgn) => st.map(({ x, c, tw, y }) => {
+      const row = [];
+      for (let j = 0; j <= 4; j++) {
+        const t = j / 4;
+        const h = thick * c * 0.5 * Math.sin(Math.PI * Math.sqrt(t)) * (sgn > 0 ? 1 : 0.35);
+        const z0 = (0.5 - t) * c;
+        // twist: rotate the section about the blade axis (x)
+        row.push([x, y + z0 * Math.sin(tw) + sgn * h * Math.cos(tw), z0 * Math.cos(tw) - sgn * h * Math.sin(tw)]);
+      }
+      return row;
+    });
+    const up = skin(1), dn = skin(-1);
+    // tip band colour on the last two stations
+    const body = (rows) => rows.slice(0, 4), tip = (rows) => rows.slice(3);
+    b.patch(body(up), col, [0, 1, 0]); b.patch(body(dn), col, [0, -1, 0]);
+    b.patch(tip(up), tipCol, [0, 1, 0]); b.patch(tip(dn), tipCol, [0, -1, 0]);
+    b.patch([up[up.length - 1], dn[dn.length - 1]], tipCol, [1, 0, 0]);
+    rotYFrom(b, from, phase + (k / n) * Math.PI * 2);
+  }
+}
+
+/** A propeller turning about +Z (nose), hub at the origin: blades plus a hub. */
+function propeller(n, r, chord, col = [0.08, 0.08, 0.09], tipCol = [0.95, 0.78, 0.10], opts = {}) {
+  const b = new Builder(false);
+  blades(b, n, 0.08, r, chord, col, tipCol, { twist: 0.55, thick: 0.12, ...opts });
+  // Y and Z swapped: the disc now lies in XY and turns about Z.
+  swapFrom(b, 0, 1, 2);
+  return b;
+}
+
+// Symmetric ring angles for a fuselage section: 0 is +x (port), pi/2 the
+// crown. From the keel round the port side to the crown and down the
+// starboard, so a quad index k names one strip of skin. `HULL_A` gives
+// window rows on each side and a narrow crown strip.
+const HULL_HALF = [-Math.PI / 2, -1.12, -0.74, -0.38, -0.05, 0.28, 0.58, 0.88, 1.18, 1.40];
+const HULL_A = [...HULL_HALF, Math.PI / 2, ...HULL_HALF.slice(1).reverse().map((a) => Math.PI - a)];
+
+/**
+ * One fuselage section: a superellipse `w` wide either side, `ht` over and
+ * `hb` under the centre height `yc`, through the given angles. `sq` above 2
+ * squares it off (a fabric fuselage's longerons), 2 is an ellipse.
+ */
+function hullRing(z, w, ht, hb, yc, angs = HULL_A, sq = 2) {
+  const e = 2 / sq;
+  return { z, pts: angs.map((a) => {
+    const c = Math.cos(a), s = Math.sin(a);
+    return [Math.sign(c) * Math.abs(c) ** e * w, yc + Math.sign(s) * Math.abs(s) ** e * (s > 0 ? ht : hb)];
+  }) };
+}
+
+/** Linear lookup in a station table [[z, ...values]] ordered nose (high z) to tail. */
+function stationAt(ST, z) {
+  if (z >= ST[0][0]) return ST[0].slice(1);
+  for (let i = 1; i < ST.length; i++) {
+    if (z >= ST[i][0]) {
+      const a = ST[i], b = ST[i - 1], t = (z - a[0]) / (b[0] - a[0] || 1);
+      return a.slice(1).map((v, j) => lerp(v, b[j + 1], t));
+    }
+  }
+  return ST[ST.length - 1].slice(1);
+}
+
+/**
+ * Loft a hull through `rings` and send each quad to a builder of its own:
+ * `pick(i, k, zMid)` returns [builder, colour] (paint, glass in trim, a matte
+ * livery band) or null for an opening. Windows cut this way are the skin
+ * itself, so a see-through pane shows the cabin behind it and never the
+ * painted shell. Normals come from the whole surface like loft's, so the
+ * panes and the paint around them shade as one skin. `inset` shrinks the
+ * rings toward their centre and `inward` turns the normals in -- the liner of
+ * a cockpit you look into.
+ */
+function hullLoft(rings, pick, { inset = 0, inward = false, caps = true } = {}) {
+  const R = rings.length, K = rings[0].pts.length;
+  const cen = rings.map((r) => {
+    let x = 0, y = 0;
+    for (const p of r.pts) { x += p[0]; y += p[1]; }
+    return [x / K, y / K];
+  });
+  const P = rings.map((r, i) => r.pts.map(([x, y]) => {
+    const dx = x - cen[i][0], dy = y - cen[i][1], l = Math.hypot(dx, dy) || 1;
+    const k = inset ? Math.max(0, 1 - inset / l) : 1;
+    return [cen[i][0] + dx * k, cen[i][1] + dy * k, r.z];
+  }));
+  const N = [];
+  for (let i = 0; i < R; i++) {
+    N.push([]);
+    for (let k = 0; k < K; k++) {
+      const a = P[Math.max(0, i - 1)][k], c = P[Math.min(R - 1, i + 1)][k];
+      const kp = P[i][(k - 1 + K) % K], kn = P[i][(k + 1) % K];
+      const u = [kn[0] - kp[0], kn[1] - kp[1], kn[2] - kp[2]], v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+      const l = Math.hypot(n[0], n[1], n[2]) || 1;
+      n = [n[0] / l, n[1] / l, n[2] / l];
+      const ox = P[i][k][0] - cen[i][0], oy = P[i][k][1] - cen[i][1];
+      if ((n[0] * ox + n[1] * oy < 0) !== inward) n = [-n[0], -n[1], -n[2]];
+      N[i].push(n);
+    }
+  }
+  for (let i = 0; i < R - 1; i++) {
+    const zm = (rings[i].z + rings[i + 1].z) / 2;
+    for (let k = 0; k < K; k++) {
+      const got = pick(i, k, zm);
+      if (!got) continue;
+      const k2 = (k + 1) % K;
+      got[0].quad(P[i][k], P[i][k2], P[i + 1][k2], P[i + 1][k],
+        [N[i][k], N[i][k2], N[i + 1][k2], N[i + 1][k]], [0, 0, 1, 0, 1, 1, 0, 1], got[1]);
+    }
+  }
+  if (caps) {
+    for (const [i, dir] of [[0, 1], [R - 1, -1]]) {
+      const got = pick(i === 0 ? -1 : R - 1, -1, rings[i].z);
+      if (!got) continue;
+      const c = [cen[i][0], cen[i][1], rings[i].z];
+      for (let k = 0; k < K; k++) got[0].tri(c, P[i][k], P[i][(k + 1) % K], [0, 0, inward ? -dir : dir], got[1]);
+    }
+  }
+  return { P, cen };
+}
+
+/**
+ * A rounded cabin window ON a fuselage skin: a dark matte backing 3 mm proud
+ * and the pane 3 mm over that (see "Vehicle glass is see-through": glass over
+ * a skin is backed, or it shows the paint under it). `skin(z, y)` is the
+ * skin's half-width at a point; the window is centred on (zc, yc), `w` long
+ * and `h` tall, with superellipse corners.
+ */
+function skinWindow(trim, matte, skin, sd, zc, yc, w, h, back = CAB_FLOOR) {
+  const rows = [], J = 6;
+  for (let j = 0; j <= J; j++) {
+    const t = -1 + (2 * j) / J;
+    const hh = (h / 2) * (1 - Math.abs(t) ** 3) ** (1 / 3);
+    const z = zc + t * w / 2, row = [];
+    for (const f of [-1, -0.33, 0.33, 1]) {
+      const y = yc + f * Math.max(hh, 0.004);
+      row.push([z, y]);
+    }
+    rows.push(row);
+  }
+  const lay = (b, d, col) => b.patch(rows.map((r) => r.map(([z, y]) => [sd * (skin(z, y) + d), y, z])), col, [sd, 0, 0]);
+  lay(matte, 0.003, back);
+  lay(trim, 0.006, GLASS);
+}
+
+/** A simple aircraft wheel about X: tyre in matte, hub in trim. */
+function airWheel(trim, matte, x, y, z, r, w) {
+  matte.tube([x - w / 2, y, z], [x + w / 2, y, z], r, 14, TYRE, true);
+  matte.tube([x - w / 2 - 0.004, y, z], [x + w / 2 + 0.004, y, z], r * 0.72, 12, [0.07, 0.07, 0.075], true);
+  trim.tube([x - w / 2 - 0.012, y, z], [x + w / 2 + 0.012, y, z], r * 0.46, 10, HUB, true);
+}
+
+const ALU = [0.72, 0.73, 0.75];
+const DARK = [0.10, 0.105, 0.11];
+const NAV_R = TAILC, NAV_G = [0.1, 0.85, 0.3];
+
+/**
+ * Light aircraft, nose at +z: the high-wing trainer, the low-wing sport single
+ * and the floatplane. `wid` stays the FUSELAGE so street-scale collision
+ * works; the wings are simply drawn wider. Gear is drawn into `matte` rather
+ * than returned as wheels -- aircraft wheels neither steer nor need
+ * articulation, and an empty wheel list keeps setDetailed() a no-op.
+ */
+function buildPlane(spec, paint, trim, matte) {
+  const half = spec.len / 2;
+  const low = spec.wing === 'low';
+  const N = 14;
+  // Fuselage stations: [z, halfWidth, halfHeight, centreY], nose to tail.
+  const ST = [
+    [half, 0.16, 0.16, 1.15], [half - 0.30, 0.50, 0.47, 1.12], [half - 0.90, 0.60, 0.60, 1.16],
+    [half - 1.50, 0.64, 0.74, 1.26], [half - 2.30, 0.66, 0.84, 1.34], [half - 3.20, 0.62, 0.78, 1.34],
+    [half - 4.20, 0.44, 0.52, 1.36], [-half + 1.60, 0.28, 0.34, 1.42], [-half + 0.60, 0.16, 0.25, 1.50],
+    [-half + 0.08, 0.09, 0.18, 1.54],
+  ];
+  const ring = (z, w, h, yc) => {
+    const pts = [];
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2;
+      pts.push([Math.cos(a) * w, yc + Math.sin(a) * h]);
+    }
+    return { z, pts };
+  };
+  paint.loft([...ST].reverse().map((s) => ring(...s)), WHITE, { capStart: true, capEnd: true });
+  // The body's own ellipse at any station, so windows and the cheat line sit
+  // ON it rather than floating at a guessed radius.
+  const at = (z) => {
+    for (let i = 1; i < ST.length; i++) {
+      if (z >= ST[i][0]) {
+        const [z0, w0, h0, y0] = ST[i], [z1, w1, h1, y1] = ST[i - 1];
+        const t = (z - z0) / (z1 - z0 || 1);
+        return [lerp(w0, w1, t), lerp(h0, h1, t), lerp(y0, y1, t)];
+      }
+    }
+    return ST[ST.length - 1].slice(1);
+  };
+  const skinX = (z, y, d) => {
+    const [w, h, yc] = at(z), u = clamp((y - yc) / h, -0.98, 0.98);
+    return w * Math.sqrt(1 - u * u) + d;
+  };
+  for (const sd of [-1, 1]) {
+    // Cabin side windows, laid on the skin.
+    const rows = [];
+    for (let i = 0; i <= 3; i++) {
+      const z = lerp(half - 1.55, half - 3.05, i / 3), row = [];
+      for (const y of [1.44, 1.60, 1.76]) row.push([sd * skinX(z, y, 0.008), y, z]);
+      rows.push(row);
+    }
+    trim.patch(rows, GLASS, [sd, 0, 0]);
+    // The pane is laid on the skin, so the see-through glass would show the
+    // paint under it: back it with the cabin's dark, 4 mm in.
+    matte.patch(rows.map((r) => r.map(([x, y, z]) => [x - sd * 0.004, y, z])), CAB_FLOOR, [sd, 0, 0]);
+    matte.patch([0, 1, 2, 3].map((i) => {
+      const z = lerp(half - 2.25, half - 2.33, 0), y0 = 1.40 + i * 0.13;
+      return [[sd * skinX(z, y0, 0.012), y0, z], [sd * skinX(z - 0.08, y0, 0.012), y0, z - 0.08]];
+    }), [0.08, 0.09, 0.10], [sd, 0, 0]);
+    // Cheat line down the flank.
+    const band = [];
+    for (let i = 0; i <= 8; i++) {
+      const z = lerp(half - 0.40, -half + 0.50, i / 8), [, h, yc] = at(z);
+      const ya = yc - h * 0.05, yb = yc + h * 0.09;
+      band.push([[sd * skinX(z, ya, 0.006), ya, z], [sd * skinX(z, yb, 0.006), yb, z]]);
+    }
+    matte.patch(band, [0.06, 0.11, 0.26], [sd, 0, 0]);
+  }
+  // Windscreen, wrapping over the cowl into the cabin roof.
+  trim.loft([
+    ring(half - 1.30, 0.56, 0.30, 1.70), ring(half - 1.70, 0.64, 0.40, 1.80), ring(half - 2.25, 0.63, 0.40, 1.80),
+  ].reverse(), GLASS, { capStart: true, capEnd: true });
+  // And a dark cockpit a centimetre inside it, for the same reason.
+  matte.loft([
+    ring(half - 1.31, 0.55, 0.29, 1.70), ring(half - 1.70, 0.63, 0.39, 1.80), ring(half - 2.24, 0.62, 0.39, 1.80),
+  ].reverse(), CAB_FLOOR, { capStart: true, capEnd: true });
+  // Spinner. No baked blades: the constructor hangs a LIVE prop group at the
+  // nose for spec.plane, and baked ones underneath it would show as a frozen
+  // ghost cross behind the spinning one.
+  paint.loft([
+    ring(half + 0.02, 0.17, 0.17, 1.12), ring(half + 0.24, 0.10, 0.10, 1.12), ring(half + 0.36, 0.03, 0.03, 1.12),
+  ], WHITE, { capEnd: true });
+  for (const sd of [-1, 1]) {
+    trim.tube([sd * 0.30, 0.98, half - 0.31], [sd * 0.30, 0.98, half - 0.27], 0.085, 10, CAVITY, true);    // cooling inlets
+    matte.tube([sd * 0.22, 0.66, half - 0.70], [sd * 0.24, 0.60, half - 0.35], 0.030, 6, [0.25, 0.24, 0.22], true);   // exhaust
+  }
+
+  // --- wings --------------------------------------------------------------------
+  const wingY = low ? 0.95 : 2.13;
+  const span = low ? 4.3 : 5.5;
+  for (const sd of [-1, 1]) {
+    const st = low
+      ? [{ x: 0, y: wingY, zLE: half - 1.60, c: 1.75 }, { x: sd * 2.2, y: wingY + 0.12, zLE: half - 1.78, c: 1.45 },
+        { x: sd * span, y: wingY + 0.28, zLE: half - 2.02, c: 0.85 }]
+      : [{ x: 0, y: wingY, zLE: half - 1.90, c: 1.60 }, { x: sd * 3.0, y: wingY + 0.06, zLE: half - 1.92, c: 1.52 },
+        { x: sd * span, y: wingY + 0.14, zLE: half - 2.10, c: 1.05 }];
+    aerofoil(paint, WHITE, st, { thick: 0.12 });
+    // Aileron hinge line and a nav light at the tip: red to port (+x, since
+    // the nose is +z), green to starboard.
+    const tip = st[st.length - 1], mid = st[1];
+    matte.patch([
+      [[mid.x, mid.y + 0.012, mid.zLE - mid.c * 0.74], [tip.x * 0.97, tip.y + 0.010, tip.zLE - tip.c * 0.74]],
+      [[mid.x, mid.y + 0.012, mid.zLE - mid.c * 0.77], [tip.x * 0.97, tip.y + 0.010, tip.zLE - tip.c * 0.77]],
+    ], [0.12, 0.13, 0.14], [0, 1, 0]);
+    trim.box(tip.x + sd * 0.02, tip.y - 0.03, tip.zLE - 0.20, 0.05, 0.06, 0.16, 0, sd > 0 ? TAILC : [0.1, 0.85, 0.3]);
+    if (!low) {
+      // Lift strut from the lower fuselage to a third of the way out.
+      matte.tube([sd * 0.52, 0.86, half - 2.10], [sd * 2.60, wingY - 0.04, half - 2.30], 0.040, 6, [0.72, 0.73, 0.75], true);
+    }
+  }
+  // --- tail -----------------------------------------------------------------------
+  for (const sd of [-1, 1]) {
+    aerofoil(paint, WHITE, [{ x: 0, y: 1.50, zLE: -half + 1.18, c: 0.98 }, { x: sd * 1.65, y: 1.53, zLE: -half + 0.92, c: 0.55 }], { thick: 0.10, n: 6 });
+  }
+  aerofoil(paint, WHITE, [{ x: 0, y: 1.56, zLE: -half + 1.45, c: 1.40 }, { x: 0, y: 2.10, zLE: -half + 0.95, c: 0.95 },
+    { x: 0, y: 2.62, zLE: -half + 0.58, c: 0.62 }], { thick: 0.10, n: 6, vertical: true });
+  trim.box(0, 2.62, -half + 0.10, 0.04, 0.05, 0.08, 0, WHITE);        // tail light
+
+  if (spec.floats) {
+    // Pontoons: long hulls with upswept bows and a step, on V-struts.
+    for (const sd of [-1, 1]) {
+      paint.loft([
+        ring(-half + 1.05, 0.10, 0.08, 0.40), ring(-half + 1.50, 0.26, 0.20, 0.34), ring(-half + 3.40, 0.33, 0.28, 0.30),
+        ring(half - 2.40, 0.34, 0.30, 0.30), ring(half - 1.40, 0.30, 0.25, 0.36), ring(half - 0.90, 0.16, 0.12, 0.48),
+      ].map((r) => ({ z: r.z, pts: r.pts.map(([x, y]) => [x + sd * 1.05, y]) })), WHITE, { capStart: true, capEnd: true });
+      for (const [z0, z1] of [[half - 1.70, half - 2.00], [half - 3.10, half - 2.80]]) {
+        matte.tube([sd * 1.05, 0.55, z0], [sd * 0.45, 0.80, z1], 0.035, 6, [0.72, 0.73, 0.75], true);
+        matte.tube([sd * 1.05, 0.55, z0], [sd * 0.62, 1.05, z0], 0.030, 6, [0.72, 0.73, 0.75], true);
+      }
+    }
+    for (const z of [half - 1.75, half - 3.05]) matte.tube([-1.05, 0.58, z], [1.05, 0.58, z], 0.030, 6, [0.72, 0.73, 0.75], true);
+  } else {
+    // Spring-steel main legs, a nose leg, and the wheels in spats.
+    const wheel = (x, z, r, legFrom) => {
+      matte.tube(legFrom, [x, r + 0.05, z], 0.035, 6, [0.72, 0.73, 0.75], true);
+      matte.tube([x - 0.07, r, z], [x + 0.07, r, z], r, 12, TYRE, true);
+      // `ring` is centred on the fuselage axis, so the spat has to be moved
+      // out to its wheel -- without it all three hang under the belly.
+      paint.loft([
+        ring(z + r * 1.45, 0.02, 0.05, r + 0.05), ring(z + r * 0.6, 0.11, r * 0.75, r + 0.04),
+        ring(z - r * 0.7, 0.11, r * 0.72, r + 0.06), ring(z - r * 1.55, 0.02, 0.06, r + 0.12),
+      ].reverse().map((rg) => ({ z: rg.z, pts: rg.pts.map(([px, py]) => [px + x, py]) })),
+      WHITE, { capStart: true, capEnd: true });
+    };
+    for (const sd of [-1, 1]) wheel(sd * 1.15, half - 3.30, 0.28, [sd * 0.40, 0.78, half - 3.10]);
+    wheel(0, half - 0.75, 0.24, [0, 0.82, half - 0.95]);
+  }
+  // Two-blade metal prop, 1.9 m, turning in front of the spinner.
+  spinPart(matte, [0, 1.12, half + 0.30], 'z', propeller(2, 0.95, 0.15, [0.14, 0.14, 0.15], [0.92, 0.92, 0.9]));
+  return [];
+}
+
+/**
+ * A fuselage from a station table [z, halfWidth, heightOver, heightUnder,
+ * centreY] (nose first), as rings through HULL_A, plus the queries a builder
+ * needs to put things ON it: `sec(z)` the interpolated station and `skinX(z,
+ * y)` the skin's half-width at a height, so windows and livery lie on the
+ * surface rather than at a guessed radius.
+ */
+function hullTable(ST, sq = 2) {
+  const rings = ST.map(([z, w, ht, hb, yc]) => hullRing(z, w, ht, hb, yc, HULL_A, sq));
+  const sec = (z) => stationAt(ST, z);
+  const skinX = (z, y) => {
+    const [w, ht, hb, yc] = sec(z);
+    const u = clamp(Math.abs(y - yc) / (y > yc ? ht : hb), 0, 0.999);
+    return w * (1 - u ** sq) ** (1 / sq);
+  };
+  return { rings, sec, skinX, zs: ST.map((r) => r[0]) };
+}
+
+/** skinX over a raw station table without building its rings. */
+function hullTableX(ST, z, y, sq = 3) {
+  const [w, ht, hb, yc] = stationAt(ST, z);
+  const u = clamp(Math.abs(y - yc) / (y > yc ? ht : hb), 0, 0.999);
+  return w * (1 - u ** sq) ** (1 / sq);
+}
+
+// Port-side index of a HULL_A quad: 0-2 keel, 3-4 the flank either side of
+// the waterline, 5-8 up the side, 9 the crown. Starboard quads mirror to it.
+const hullSide = (k) => (k <= 9 ? k : 19 - k);
+
+/**
+ * A livery band along the flank over a z range, laid on the skin. `f0`..`f1`
+ * are heights as FRACTIONS of the section's own half-height (negative is
+ * under the centre line), so a cheat line follows the tail cone up and in
+ * instead of running on level and leaving the hull where it narrows.
+ */
+function hullBand(b, hull, sd, z0, z1, f0, f1, col, n = 14) {
+  const rows = [];
+  const yAt = (z, f) => { const [, ht, hb, yc] = hull.sec(z); return yc + f * (f > 0 ? ht : hb); };
+  // Sampled AT the hull's own stations as well: the skin is straight
+  // between them and bends at them, so a band sampled only in between cuts
+  // the corner and sinks under a convex nose -- it showed as dashes.
+  const lo = Math.min(z0, z1), hi = Math.max(z0, z1);
+  const zs = new Set();
+  for (let i = 0; i <= n; i++) zs.add(lerp(z0, z1, i / n));
+  for (const z of hull.zs) if (z > lo && z < hi) zs.add(z);
+  for (const z of [...zs].sort((a, c) => (z1 > z0 ? a - c : c - a))) {
+    const ya = yAt(z, f0), yb = yAt(z, f1);
+    rows.push([[sd * (hull.skinX(z, ya) + 0.005), ya, z], [sd * (hull.skinX(z, yb) + 0.005), yb, z]]);
+  }
+  b.patch(rows, col, [sd, 0, 0]);
+}
+
+/**
+ * A cockpit you can see into through its screen: an inward-facing liner
+ * over the hull between zBack and zFront, a floor, an instrument panel under
+ * the screen with its glare shield, two seats, and a pilot in `crew`.
+ * `pilotX` is the pilot's side (+x is port: the captain's seat).
+ */
+function flightDeck(matte, trim, hull, zBack, zFront, { floorY, panelZ, seatZ, halfW, headY, pilotX }) {
+  const { rings, skinX } = hull;
+  const sub = rings.filter((r) => r.z <= zFront + 1e-6 && r.z >= zBack - 1e-6);
+  hullLoft(sub, () => [matte, CAB_FLOOR], { inset: 0.035, inward: true, caps: false });
+  // Everything sized off the skin, not a width: the hull narrows fast below
+  // the centre line and a fixed-width floor stood out of both flanks.
+  const inX = (z, y) => Math.max(0.05, skinX(z, y) - 0.04);
+  matte.patch([zBack + 0.02, (zBack + panelZ) / 2, panelZ].map((z) => [-1, 0, 1].map((u) => [u * inX(z, floorY), floorY, z])), CAB_FLOOR, [0, 1, 0]);
+  // panel, with two dark screens, and the shield over it
+  const pw = Math.min(inX(panelZ + 0.15, floorY + 0.06), inX(panelZ - 0.15, floorY + 0.06), halfW);
+  matte.box(0, floorY + 0.06, panelZ, pw * 2, headY - 0.42 - floorY, 0.30, 0, CAB_DASH);
+  const sw = Math.min(inX(panelZ + 0.25, headY - 0.38), halfW);
+  matte.box(0, headY - 0.38, panelZ + 0.05, sw * 2, 0.035, 0.45, 0, [0.03, 0.03, 0.035]);
+  for (const sx of [-1, 1]) trim.box(sx * pw * 0.48, headY - 0.64, panelZ - 0.152, pw * 0.62, 0.20, 0.004, 0, [0.03, 0.05, 0.09]);
+  // bulkhead behind the seats, cut to the skin
+  const bz = zBack + 0.02, ys = [0, 0.25, 0.5, 0.75, 1].map((t) => lerp(floorY, headY + 0.35, t));
+  matte.patch(ys.map((y) => [-1, 0, 1].map((u) => [u * inX(bz, y), y, bz])), [0.16, 0.16, 0.17], [0, 0, 1]);
+  const H = (headY - floorY) / 0.53 * 0.5;
+  for (const sx of [-1, 1]) seat(matte, sx * Math.abs(pilotX), floorY + 0.40, seatZ, 0.46, H, false, 0.40);
+  if (matte.crew) occupant(matte.crew, pilotX, headY - 0.53 * 0.9, seatZ, 0.9, [pilotX, floorY + 0.40, seatZ + 0.55]);
+}
+
+/**
+ * Twin turboprop, King Air 350 proportions: 14.2 m, 17.6 m span with
+ * winglets, a T-tail 4.4 m up, the wing low and the two PT6 nacelles on it
+ * with four-blade props. Cabin windows are backed panes on the skin; the
+ * windscreen and cockpit side windows are cut into the skin, and behind them
+ * is a flight deck with a pilot in it.
+ */
+function buildTwin(spec, paint, trim, matte) {
+  const ST = [
+    [7.10, 0.05, 0.05, 0.05, 1.60], [6.95, 0.26, 0.24, 0.24, 1.62], [6.60, 0.46, 0.42, 0.42, 1.65],
+    [6.00, 0.62, 0.56, 0.58, 1.69], [5.20, 0.74, 0.62, 0.74, 1.72], [4.55, 0.79, 0.66, 0.82, 1.74],
+    [4.15, 0.80, 0.79, 0.85, 1.75], [3.75, 0.81, 0.90, 0.87, 1.75], [3.05, 0.81, 0.90, 0.88, 1.75],
+    [2.95, 0.81, 0.90, 0.88, 1.75], [0.5, 0.81, 0.90, 0.88, 1.755], [-1.8, 0.80, 0.90, 0.88, 1.76],
+    [-3.2, 0.70, 0.80, 0.64, 1.88], [-4.8, 0.48, 0.58, 0.38, 2.08], [-6.2, 0.28, 0.38, 0.20, 2.30],
+    [-7.0, 0.13, 0.18, 0.09, 2.44], [-7.12, 0.05, 0.08, 0.04, 2.47],
+  ];
+  const hull = hullTable(ST), { rings, skinX } = hull;
+  hullLoft(rings, (i, k, zm) => {
+    if (k < 0) return [paint, WHITE];
+    const s = hullSide(k);
+    if (zm < 4.55 && zm > 3.75 && s >= 5) return [trim, GLASS];            // windscreen
+    if (zm < 3.75 && zm > 3.05 && s >= 5 && s <= 7) return [trim, GLASS];   // cockpit side windows
+    return [paint, WHITE];
+  });
+  flightDeck(matte, trim, hull, 2.95, 4.55, { floorY: 1.08, panelZ: 4.30, seatZ: 3.30, halfW: 0.70, headY: 2.20, pilotX: 0.36 });
+  for (const sd of [-1, 1]) {
+    // seven cabin windows a side, and the airstair door's outline to port
+    for (let i = 0; i < 7; i++) skinWindow(trim, matte, skinX, sd, 2.30 - i * 0.72, 1.94, 0.40, 0.34);
+    hullBand(matte, hull, sd, 6.4, -6.9, -0.15, -0.035, [0.07, 0.12, 0.30]);
+    hullBand(matte, hull, sd, 6.1, -6.7, -0.23, -0.19, [0.78, 0.58, 0.16]);
+  }
+  // the airstair door's outline, to port behind the wing
+  for (const [z0, z1, f0, f1] of [[-2.75, -2.73, -0.80, 0.74], [-3.52, -3.50, -0.80, 0.74], [-3.52, -2.73, 0.73, 0.75], [-3.52, -2.73, -0.81, -0.79]]) {
+    hullBand(matte, hull, 1, z0, z1, f0, f1, [0.35, 0.36, 0.38], 2);
+  }
+  // --- wing, low, 6 deg dihedral, winglets ----------------------------------------
+  for (const sd of [-1, 1]) {
+    const st = [{ x: 0, y: 1.12, zLE: 1.35, c: 2.45 }, { x: sd * 2.75, y: 1.40, zLE: 1.20, c: 2.15 },
+      { x: sd * 8.6, y: 2.02, zLE: 0.62, c: 0.95 }];
+    aerofoil(paint, WHITE, st, { thick: 0.15, n: 8 });
+    aerofoil(paint, WHITE, [{ x: sd * 8.60, y: 2.02, zLE: 0.62, c: 0.95 }, { x: sd * 8.72, y: 2.62, zLE: 0.22, c: 0.42 }], { thick: 0.10, n: 6, vertical: true });
+    // flap and aileron hinge lines, and the nav light
+    const hl = (a, b2, f) => matte.patch([
+      [[a.x, a.y + 0.03, a.zLE - a.c * f], [b2.x, b2.y + 0.022, b2.zLE - b2.c * f]],
+      [[a.x, a.y + 0.03, a.zLE - a.c * (f + 0.02)], [b2.x, b2.y + 0.022, b2.zLE - b2.c * (f + 0.02)]],
+    ], [0.30, 0.31, 0.33], [0, 1, 0]);
+    const mid = (u) => ({ x: lerp(st[1].x, st[2].x, u), y: lerp(st[1].y, st[2].y, u), zLE: lerp(st[1].zLE, st[2].zLE, u), c: lerp(st[1].c, st[2].c, u) });
+    hl({ x: sd * 0.85, y: 1.18, zLE: 1.30, c: 2.35 }, mid(0.55), 0.74);
+    hl(mid(0.58), mid(0.96), 0.72);
+    trim.box(sd * 8.62, 2.00, 0.30, 0.05, 0.06, 0.14, 0, sd > 0 ? NAV_R : NAV_G);
+    // --- nacelle ---------------------------------------------------------------------
+    const nx = sd * 2.75;
+    const NS = [[3.35, 0.20, 0.20, 0.20, 1.50], [3.12, 0.34, 0.34, 0.36, 1.48], [2.40, 0.40, 0.42, 0.47, 1.46],
+      [1.20, 0.40, 0.42, 0.49, 1.44], [0.00, 0.36, 0.34, 0.43, 1.44], [-1.40, 0.24, 0.20, 0.30, 1.46], [-2.10, 0.07, 0.05, 0.09, 1.48]];
+    const nr = NS.map(([z, w, ht, hb, yc]) => { const r = hullRing(z, w, ht, hb, yc); return { z, pts: r.pts.map(([x, y]) => [x + nx, y]) }; });
+    hullLoft(nr, (i, k) => (k < 0 ? [matte, [0.05, 0.05, 0.055]] : [paint, WHITE]));
+    // intake under the spinner, two exhaust stacks sweeping back, and the spinner
+    trim.tube([nx, 1.19, 3.14], [nx, 1.19, 3.02], 0.12, 10, CAVITY, true);
+    for (const ex of [-1, 1]) {
+      matte.tube([nx + ex * 0.36, 1.50, 2.30], [nx + ex * 0.50, 1.53, 1.85], 0.085, 8, [0.22, 0.21, 0.20], false);
+      trim.tube([nx + ex * 0.50, 1.53, 1.85], [nx + ex * 0.51, 1.53, 1.83], 0.07, 8, CAVITY, true);
+    }
+    paint.loft([
+      { z: 3.33, pts: hullRing(0, 0.21, 0.21, 0.21, 1.50, HULL_A).pts.map(([x, y]) => [x + nx, y]) },
+      { z: 3.58, pts: hullRing(0, 0.15, 0.15, 0.15, 1.50, HULL_A).pts.map(([x, y]) => [x + nx, y]) },
+      { z: 3.74, pts: hullRing(0, 0.04, 0.04, 0.04, 1.50, HULL_A).pts.map(([x, y]) => [x + nx, y]) },
+    ], WHITE, { capEnd: true });
+    spinPart(matte, [nx, 1.50, 3.45], 'z', propeller(4, 1.33, 0.19, [0.07, 0.07, 0.08], [0.95, 0.80, 0.12], { phase: sd > 0 ? 0 : 0.4 }));
+    // main gear: a leg out of the nacelle onto a pair of wheels
+    gearPart(matte, [nx, 1.02, -0.05], (t, m) => {
+      m.tube([nx, 1.02, -0.05], [nx, 0.36, -0.25], 0.055, 8, ALU, false);
+      m.tube([nx - 0.14, 0.34, -0.25], [nx + 0.14, 0.34, -0.25], 0.04, 6, ALU, false);
+      for (const wx of [-0.13, 0.13]) airWheel(t, m, nx + wx, 0.34, -0.25, 0.34, 0.15);
+    });
+  }
+  // nose gear
+  gearPart(matte, [0, 1.05, 5.30], (t, m) => {
+    m.tube([0, 1.05, 5.30], [0, 0.26, 5.45], 0.045, 8, ALU, false);
+    airWheel(t, m, 0, 0.23, 5.45, 0.23, 0.13);
+  });
+  // --- T-tail ------------------------------------------------------------------------
+  aerofoil(paint, WHITE, [{ x: 0, y: 2.34, zLE: -3.85, c: 2.65 }, { x: 0, y: 3.40, zLE: -5.55, c: 1.75 },
+    { x: 0, y: 4.30, zLE: -6.55, c: 1.25 }], { thick: 0.12, n: 7, vertical: true });
+  for (const sd of [-1, 1]) {
+    aerofoil(paint, WHITE, [{ x: 0, y: 4.28, zLE: -6.30, c: 1.32 }, { x: sd * 2.85, y: 4.30, zLE: -7.02, c: 0.72 }], { thick: 0.10, n: 6 });
+    // ventral strakes under the tail cone
+    matte.tube([sd * 0.22, 1.86, -5.6], [sd * 0.30, 1.72, -6.3], 0.02, 4, [0.62, 0.63, 0.65], true);
+  }
+  trim.box(0, 4.30, -7.85, 0.05, 0.05, 0.06, 0, WHITE);
+  trim.box(0, 2.66, -0.80, 0.07, 0.06, 0.16, 0, TAILC);               // beacon
+  for (const [z, h] of [[1.55, 0.24], [-2.45, 0.20]]) {                // blade antennas
+    aerofoil(paint, WHITE, [{ x: 0, y: 2.62, zLE: z, c: 0.30 }, { x: 0, y: 2.62 + h, zLE: z - 0.14, c: 0.15 }], { thick: 0.12, n: 4, vertical: true });
+  }
+  trim.box(0, 0.86, 3.20, 0.10, 0.03, 0.14, 0, LAMP);                  // taxi light
+  return [];
+}
+
+/**
+ * Light business jet, Learjet 45 proportions: 15 m, a 21-degree swept low wing
+ * with winglets, two fans on pylons at the tail, a T-tail, sat low on short
+ * gear. No propeller: the only fixed-wing type with no spin part.
+ */
+function buildJet(spec, paint, trim, matte) {
+  const ST = [
+    [7.50, 0.04, 0.04, 0.04, 1.40], [7.30, 0.22, 0.20, 0.20, 1.42], [6.85, 0.42, 0.38, 0.38, 1.45],
+    [6.10, 0.62, 0.52, 0.58, 1.50], [5.30, 0.75, 0.60, 0.74, 1.53], [4.80, 0.80, 0.72, 0.80, 1.54],
+    [4.25, 0.83, 0.86, 0.84, 1.55], [3.60, 0.84, 0.88, 0.86, 1.55], [3.50, 0.84, 0.88, 0.86, 1.55],
+    [0.8, 0.84, 0.88, 0.86, 1.555], [-1.8, 0.84, 0.88, 0.86, 1.56], [-3.4, 0.76, 0.80, 0.70, 1.65],
+    [-5.0, 0.56, 0.62, 0.44, 1.84], [-6.4, 0.34, 0.40, 0.22, 2.04], [-7.3, 0.14, 0.18, 0.08, 2.20],
+    [-7.52, 0.05, 0.07, 0.04, 2.24],
+  ];
+  const hull = hullTable(ST), { rings, skinX } = hull;
+  hullLoft(rings, (i, k, zm) => {
+    if (k < 0) return [paint, WHITE];
+    const s = hullSide(k);
+    if (zm < 5.30 && zm > 4.25 && s >= 5) return [trim, GLASS];
+    if (zm < 4.25 && zm > 3.60 && s >= 5 && s <= 7) return [trim, GLASS];
+    return [paint, WHITE];
+  });
+  flightDeck(matte, trim, hull, 3.50, 5.30, { floorY: 0.90, panelZ: 5.00, seatZ: 3.95, halfW: 0.72, headY: 2.02, pilotX: 0.37 });
+  for (const sd of [-1, 1]) {
+    for (let i = 0; i < 6; i++) skinWindow(trim, matte, skinX, sd, 2.55 - i * 0.84, 1.76, 0.44, 0.36);
+    hullBand(matte, hull, sd, 6.9, -7.3, -0.22, -0.105, [0.13, 0.14, 0.17]);
+    hullBand(matte, hull, sd, 6.6, -7.1, -0.29, -0.255, [0.66, 0.08, 0.08]);
+  }
+  // --- wing ---------------------------------------------------------------------
+  for (const sd of [-1, 1]) {
+    const st = [{ x: 0, y: 0.92, zLE: 1.30, c: 3.0 }, { x: sd * 1.4, y: 0.99, zLE: 0.95, c: 2.5 },
+      { x: sd * 7.5, y: 1.38, zLE: -1.45, c: 1.05 }];
+    aerofoil(paint, WHITE, st, { thick: 0.12, n: 8 });
+    aerofoil(paint, WHITE, [{ x: sd * 7.50, y: 1.38, zLE: -1.45, c: 1.05 }, { x: sd * 7.78, y: 2.28, zLE: -2.30, c: 0.45 }], { thick: 0.09, n: 6, vertical: true });
+    const P = (u, f, dy) => ({ x: lerp(st[1].x, st[2].x, u), y: lerp(st[1].y, st[2].y, u) + dy, z: lerp(st[1].zLE, st[2].zLE, u) - lerp(st[1].c, st[2].c, u) * f });
+    for (const [u0, u1] of [[0.02, 0.55], [0.58, 0.95]]) {
+      const a0 = P(u0, 0.76, 0.03), a1 = P(u1, 0.76, 0.02), b0 = P(u0, 0.78, 0.03), b1 = P(u1, 0.78, 0.02);
+      matte.patch([[[a0.x, a0.y, a0.z], [a1.x, a1.y, a1.z]], [[b0.x, b0.y, b0.z], [b1.x, b1.y, b1.z]]], [0.32, 0.33, 0.35], [0, 1, 0]);
+    }
+    trim.box(sd * 7.52, 1.36, -1.62, 0.05, 0.06, 0.14, 0, sd > 0 ? NAV_R : NAV_G);
+    // --- engine on its pylon -----------------------------------------------------
+    const ex = sd * 1.42, ey = 2.02;
+    const ES = [[-2.00, 0.37, 0.37, 0.37, ey], [-2.25, 0.43, 0.43, 0.43, ey], [-3.20, 0.45, 0.45, 0.45, ey],
+      [-4.30, 0.39, 0.39, 0.39, ey], [-4.85, 0.30, 0.30, 0.30, ey]];
+    const er = ES.map(([z, w, ht, hb, yc]) => { const r = hullRing(z, w, ht, hb, yc); return { z, pts: r.pts.map(([x, y]) => [x + ex, y]) }; });
+    hullLoft(er, (i, k) => (i === -1 ? [matte, CAVITY] : k < 0 ? [matte, [0.16, 0.15, 0.14]] : [paint, WHITE]));
+    trim.tube([ex, ey, -1.97], [ex, ey, -2.06], 0.375, 14, CHROME, false);
+    trim.tube([ex, ey, -2.08], [ex, ey, -2.20], 0.10, 8, CHROME, true);         // fan spinner
+    matte.tube([ex, ey, -4.84], [ex, ey, -5.05], 0.16, 10, [0.14, 0.13, 0.12], true);   // exhaust cone
+    aerofoil(paint, WHITE, [{ x: sd * 0.60, y: 1.96, zLE: -2.75, c: 1.55 }, { x: sd * 1.06, y: 2.0, zLE: -2.85, c: 1.35 }], { thick: 0.16, n: 6 });
+  }
+  // gear: mains out of the wing roots, twin nosewheels
+  for (const sd of [-1, 1]) {
+    gearPart(matte, [sd * 1.60, 0.96, -0.10], (t, m) => {
+      m.tube([sd * 1.60, 0.96, -0.10], [sd * 1.62, 0.32, -0.32], 0.05, 8, ALU, false);
+      airWheel(t, m, sd * 1.68, 0.30, -0.32, 0.30, 0.18);
+    });
+  }
+  gearPart(matte, [0, 0.86, 5.60], (t, m) => {
+    m.tube([0, 0.86, 5.60], [0, 0.24, 5.74], 0.04, 8, ALU, false);
+    for (const wx of [-0.085, 0.085]) airWheel(t, m, wx, 0.21, 5.74, 0.21, 0.10);
+  });
+  // --- T-tail -------------------------------------------------------------------
+  aerofoil(paint, WHITE, [{ x: 0, y: 2.20, zLE: -4.35, c: 2.85 }, { x: 0, y: 3.60, zLE: -6.30, c: 1.75 },
+    { x: 0, y: 4.45, zLE: -7.20, c: 1.25 }], { thick: 0.11, n: 7, vertical: true });
+  for (const sd of [-1, 1]) {
+    aerofoil(paint, WHITE, [{ x: 0, y: 4.42, zLE: -6.95, c: 1.35 }, { x: sd * 2.90, y: 4.52, zLE: -7.95, c: 0.70 }], { thick: 0.10, n: 6 });
+  }
+  trim.box(0, 4.45, -8.46, 0.05, 0.05, 0.06, 0, WHITE);
+  trim.box(0, 2.44, -1.2, 0.07, 0.06, 0.16, 0, TAILC);
+  trim.box(0, 0.66, 1.5, 0.07, 0.05, 0.16, 0, TAILC);
+  aerofoil(paint, WHITE, [{ x: 0, y: 2.40, zLE: 1.75, c: 0.30 }, { x: 0, y: 2.62, zLE: 1.62, c: 0.16 }], { thick: 0.12, n: 4, vertical: true });
+  trim.box(0, 0.70, 5.90, 0.12, 0.04, 0.14, 0, LAMP);
+  return [];
+}
+
+/**
+ * The Boeing 747-8 Intercontinental: the Queen of the Skies at her biggest.
+ * Station figures from Boeing's airport planning document (76.3 m long,
+ * 6.5 m fuselage, 68.4 m span, 19.4 m tail height, 37.5 deg sweep); the
+ * upper-deck hump runs 27 m back from the nose. White over a pale grey
+ * belly with a deep blue cheatline and fin (a house livery, not an
+ * airline's). Nose +z, the ground at y = 0 under the gear.
+ */
+function buildJumbo(spec, paint, trim, matte) {
+  const H = spec.len / 2;                    // 38.15
+  const ST = [
+    [H, 0.08, 0.08, 0.08, 4.35], [H - 0.5, 1.15, 1.25, 1.05, 4.45], [H - 1.6, 2.05, 2.25, 1.85, 4.7],
+    [H - 3.2, 2.72, 3.25, 2.55, 5.0], [H - 5.2, 3.08, 4.25, 2.92, 5.2], [H - 8.0, 3.24, 4.9, 3.08, 5.3],
+    [H - 12, 3.25, 5.0, 3.1, 5.3], [H - 20, 3.25, 5.0, 3.1, 5.3], [H - 24, 3.25, 4.55, 3.1, 5.3],
+    [H - 27, 3.25, 3.7, 3.1, 5.3], [H - 29.5, 3.25, 3.3, 3.1, 5.3], [-17, 3.25, 3.3, 3.1, 5.3],
+    [-23, 3.12, 3.22, 2.75, 5.5], [-29, 2.68, 2.95, 2.05, 6.05], [-34, 1.85, 2.4, 1.3, 6.7],
+    [-37.4, 0.85, 1.45, 0.55, 7.35], [-H, 0.3, 0.6, 0.25, 7.6],
+  ];
+  const hull = hullTable(ST), { rings, skinX, sec } = hull;
+  const BELLY = [0.80, 0.82, 0.85], BLUE = [0.07, 0.2, 0.52], DOOR = [0.72, 0.74, 0.78];
+  // the windscreen, cut into the upper deck's nose
+  hullLoft(rings, (i, k, zm) => {
+    if (k < 0) return i === -1 ? [paint, WHITE] : [matte, [0.35, 0.36, 0.38]];
+    const sdk = hullSide(k);
+    if (zm < H - 3.2 && zm > H - 5.2 && (sdk === 7 || sdk === 8)) return [trim, GLASS];
+    if (sdk <= 2) return [matte, BELLY];
+    return [paint, WHITE];
+  });
+  flightDeck(matte, trim, hull, H - 7.5, H - 3.4, { floorY: 8.05, panelZ: H - 3.7, seatZ: H - 5.0, halfW: 1.2, headY: 9.5, pilotX: 0.62 });
+  const skinPatch = (b, sd, zc, yc, w, h, col, d) => {
+    const rows = [];
+    for (const z of [zc - w / 2, zc + w / 2]) rows.push([yc - h / 2, yc + h / 2].map((y) => [sd * (skinX(z, y) + d), y, z]));
+    b.patch(rows, col, [sd, 0, 0]);
+  };
+  const DOORS = [H - 9.2, H - 19.5, 3.2, -10.5, -21.5];
+  for (const sd of [-1, 1]) {
+    // main deck windows, the length of the cabin, gaps for the doors and the wing box
+    for (let z = H - 8.4; z > -26; z -= 0.51) {
+      if (DOORS.some((dz) => Math.abs(z - dz) < 1.05)) continue;
+      skinWindow(trim, matte, skinX, sd, z, 6.05, 0.27, 0.40);
+    }
+    // the upper deck's, down the hump
+    for (let z = H - 8.2; z > H - 25.5; z -= 0.51) skinWindow(trim, matte, skinX, sd, z, 9.2, 0.26, 0.36);
+    // five doors a side: a grey panel and its small window
+    for (const dz of DOORS) {
+      skinPatch(matte, sd, dz, 5.55, 1.1, 1.95, DOOR, 0.004);
+      skinWindow(trim, matte, skinX, sd, dz, 6.1, 0.22, 0.28);
+    }
+    // the cheatline under the windows, and a thin one over it
+    hullBand(matte, hull, sd, H - 2.2, -34.5, 0.06, 0.13, BLUE);
+    hullBand(matte, hull, sd, H - 2.6, -33.5, 0.16, 0.18, BLUE);
+    // the cockpit's side windows
+    for (let j = 0; j < 3; j++) skinWindow(trim, matte, skinX, sd, H - 5.6 - j * 0.62, 9.35, 0.5, 0.42);
+  }
+  // --- wings -------------------------------------------------------------------------
+  const WST = (sd) => [
+    { x: sd * 3.1, y: 3.35, zLE: 7.0, c: 15.5 }, { x: sd * 12.5, y: 4.4, zLE: -1.3, c: 9.6 },
+    { x: sd * 29.5, y: 6.45, zLE: -14.3, c: 4.1 }, { x: sd * 34.2, y: 7.05, zLE: -19.8, c: 1.4 },
+  ];
+  const wingAt = (sd, x) => {
+    const st = WST(sd), ax = Math.abs(x);
+    for (let i = 1; i < st.length; i++) {
+      if (ax <= Math.abs(st[i].x)) {
+        const a = st[i - 1], b = st[i], t = (ax - Math.abs(a.x)) / (Math.abs(b.x) - Math.abs(a.x));
+        return { y: lerp(a.y, b.y, t), zLE: lerp(a.zLE, b.zLE, t), c: lerp(a.c, b.c, t) };
+      }
+    }
+    return st[st.length - 1];
+  };
+  for (const sd of [-1, 1]) {
+    aerofoil(paint, WHITE, WST(sd), { thick: 0.11, n: 10 });
+    // flaps and ailerons: panel lines along the trailing edge, and the flap-track canoes under it
+    for (const [u0, u1] of [[4, 12], [12.6, 21], [21.5, 28.6]]) {
+      const a = wingAt(sd, u0), b = wingAt(sd, u1);
+      const ca = 0.72, cb = 0.74;
+      matte.patch([[[sd * u0, a.y + 0.2, a.zLE - a.c * ca], [sd * u1, b.y + 0.14, b.zLE - b.c * ca]], [[sd * u0, a.y + 0.2, a.zLE - a.c * cb], [sd * u1, b.y + 0.14, b.zLE - b.c * cb]]], [0.55, 0.57, 0.6], [0, 1, 0]);
+    }
+    for (const x of [6.5, 10, 15, 19.5, 24]) {
+      const w = wingAt(sd, x), z = w.zLE - w.c * 0.55;
+      matte.box(sd * x, w.y - 0.55, z - 1.2, 0.5, 0.55, w.c * 0.75, 0, [0.82, 0.84, 0.86]);
+    }
+    const tip = wingAt(sd, 34.1);
+    trim.box(sd * 34.15, tip.y, tip.zLE - 0.4, 0.06, 0.1, 0.2, 0, sd > 0 ? NAV_R : NAV_G);
+    // --- four engines: GEnx nacelles on pylons ahead of and under the wing ---------------
+    for (const ex of [12.0, 21.3]) {
+      const w = wingAt(sd, ex), x = sd * ex, yc = w.y - 2.35, z0 = w.zLE + 3.4;
+      const ES = [[z0, 1.62, 1.62, 1.62, yc], [z0 - 0.4, 1.78, 1.78, 1.78, yc], [z0 - 2.2, 1.82, 1.82, 1.82, yc],
+        [z0 - 4.4, 1.62, 1.62, 1.62, yc], [z0 - 5.4, 1.2, 1.2, 1.2, yc], [z0 - 6.6, 0.8, 0.8, 0.8, yc], [z0 - 7.6, 0.55, 0.55, 0.55, yc]];
+      const er = ES.map(([z, rw, ht, hb, y]) => { const r = hullRing(z, rw, ht, hb, y); return { z, pts: r.pts.map(([px, py]) => [px + x, py]) }; });
+      hullLoft(er, (i, k) => (i === -1 ? [matte, CAVITY] : k < 0 ? [matte, [0.2, 0.19, 0.18]] : [paint, WHITE]));
+      trim.tube([x, yc, z0 + 0.05], [x, yc, z0 - 0.12], 1.6, 20, CHROME, false);
+      trim.tube([x, yc, z0 - 0.35], [x, yc, z0 - 0.9], 0.45, 12, CHROME, true);          // the spinner
+      matte.tube([x, yc, z0 - 0.3], [x, yc, z0 - 0.32], 1.52, 20, [0.18, 0.18, 0.2], true);  // the fan face
+      matte.tube([x, yc, z0 - 7.4], [x, yc, z0 - 8.6], 0.5, 12, [0.3, 0.28, 0.26], true);   // the core nozzle and plug
+      aerofoil(paint, WHITE, [{ x, y: yc + 1.6, zLE: z0 - 1.4, c: 7.0 }, { x, y: w.y - 0.1, zLE: w.zLE + 0.6, c: 5.2 }], { thick: 0.14, n: 6, vertical: true });
+    }
+  }
+  // wing-to-body fairing under the centre section
+  matte.box(0, 1.9, 0.5, 6.8, 1.3, 20, 0, BELLY);
+  // --- the tail: fin with its blue, and the tailplane ------------------------------
+  aerofoil(matte, BLUE, [{ x: 0, y: 8.4, zLE: -19.5, c: 15.5 }, { x: 0, y: 13.5, zLE: -27.8, c: 9.0 }, { x: 0, y: 19.4, zLE: -35.0, c: 5.2 }], { thick: 0.1, n: 8, vertical: true });
+  for (const sd of [-1, 1]) {
+    aerofoil(paint, WHITE, [{ x: sd * 1.4, y: 7.0, zLE: -26.5, c: 9.4 }, { x: sd * 11.1, y: 8.35, zLE: -35.2, c: 2.6 }], { thick: 0.09, n: 7 });
+  }
+  trim.box(0, 19.2, -40.2, 0.1, 0.1, 0.15, 0, WHITE);
+  trim.box(0, 10.4, 12, 0.12, 0.1, 0.3, 0, TAILC);             // the beacon on the crown
+  trim.box(0, 2.0, 2, 0.12, 0.1, 0.3, 0, TAILC);               // and under the belly
+  // --- the gear: two nosewheels, four four-wheel main bogies (18 wheels) ---------------
+  const R = spec.wheelR;
+  const bogie = (x, z, top) => gearPart(matte, [x, top, z], (t, m) => {
+    m.tube([x, top, z], [x, R + 0.35, z], 0.2, 10, ALU, false);
+    m.box(x, R - 0.08, z, 0.4, 0.2, 2.6, 0, [0.3, 0.31, 0.33]);
+    for (const dz of [-0.8, 0.8]) for (const dx of [-0.62, 0.62]) airWheel(t, m, x + dx, R, z + dz, R, 0.5);
+  });
+  for (const sd of [-1, 1]) { bogie(sd * 5.6, -1.2, 3.8); bogie(sd * 1.9, -4.4, 2.4); }
+  gearPart(matte, [0, 2.4, H - 8.8], (t, m) => {
+    m.tube([0, 2.4, H - 8.8], [0, R + 0.2, H - 8.9], 0.16, 10, ALU, false);
+    for (const dx of [-0.42, 0.42]) airWheel(t, m, dx, R * 0.85, H - 8.9, R * 0.85, 0.42);
+  });
+  trim.box(0, 1.2, H - 8.3, 0.3, 0.15, 0.2, 0, LAMP);
+  return [];
+}
+
+/**
+ * A single-seat twin-engined fighter, F/A-18-ish: a pointed nose, a bubble
+ * canopy, side intakes under swept wings, twin canted fins and twin nozzles,
+ * sitting tall on its gear. Navy grey (the livery comes from the spawn).
+ */
+function buildFighter(spec, paint, trim, matte) {
+  const ST = [
+    [8.00, 0.03, 0.03, 0.03, 1.70], [7.50, 0.18, 0.16, 0.14, 1.72], [6.60, 0.40, 0.36, 0.30, 1.78],
+    [5.40, 0.58, 0.55, 0.42, 1.86], [4.60, 0.66, 0.92, 0.46, 1.90], [3.40, 0.80, 1.00, 0.52, 1.92],
+    [2.40, 1.10, 0.72, 0.58, 1.92], [0.60, 1.30, 0.60, 0.60, 1.92], [-2.40, 1.28, 0.56, 0.56, 1.92],
+    [-5.20, 1.05, 0.50, 0.50, 1.92], [-6.90, 0.86, 0.44, 0.44, 1.92], [-7.50, 0.80, 0.42, 0.42, 1.92],
+  ];
+  const hull = hullTable(ST), { rings } = hull;
+  hullLoft(rings, (i, k, zm) => {
+    if (k < 0) return i === -1 ? [matte, CAVITY] : [paint, WHITE];
+    if (zm < 5.3 && zm > 2.9 && hullSide(k) >= 6) return [trim, GLASS];
+    return [paint, WHITE];
+  });
+  flightDeck(matte, trim, hull, 3.0, 5.2, { floorY: 1.55, panelZ: 5.0, seatZ: 3.55, halfW: 0.5, headY: 2.62, pilotX: 0 });
+  const DARK = [0.20, 0.21, 0.23];
+  for (const sd of [-1, 1]) {
+    // wing, swept, thin
+    aerofoil(paint, WHITE, [{ x: sd * 0.9, y: 1.86, zLE: 2.1, c: 5.8 }, { x: sd * 1.6, y: 1.86, zLE: 1.4, c: 4.9 },
+      { x: sd * 5.7, y: 1.80, zLE: -2.5, c: 1.5 }], { thick: 0.06, n: 8 });
+    trim.box(sd * 5.72, 1.80, -2.9, 0.05, 0.06, 0.14, 0, sd > 0 ? NAV_R : NAV_G);
+    // tailplane
+    aerofoil(paint, WHITE, [{ x: sd * 1.0, y: 1.95, zLE: -4.9, c: 2.6 }, { x: sd * 3.3, y: 1.90, zLE: -6.6, c: 1.1 }], { thick: 0.05, n: 6 });
+    // fins, canted out
+    aerofoil(paint, WHITE, [{ x: sd * 0.95, y: 2.40, zLE: -3.8, c: 2.9 }, { x: sd * 1.60, y: 4.55, zLE: -6.1, c: 1.2 }], { thick: 0.06, n: 6, vertical: true });
+    // intake trunk down each side, a dark mouth at its front
+    matte.box(sd * 1.22, 1.32, 0.9, 0.52, 0.72, 2.8, 0, [0.42, 0.44, 0.47]);
+    matte.quad([sd * 0.98, 1.36, 2.31], [sd * 1.46, 1.36, 2.31], [sd * 1.46, 1.98, 2.31], [sd * 0.98, 1.98, 2.31], [0, 0, 1], [0, 0, 1, 0, 1, 1, 0, 1], CAVITY);
+    // twin nozzles
+    matte.tube([sd * 0.44, 1.92, -7.2], [sd * 0.44, 1.92, -8.05], 0.40, 12, DARK, false);
+    matte.tube([sd * 0.44, 1.92, -7.95], [sd * 0.44, 1.92, -8.02], 0.31, 10, CAVITY, true);
+    // main gear
+    gearPart(matte, [sd * 1.15, 1.40, -0.9], (t, m) => {
+      m.tube([sd * 1.15, 1.40, -0.9], [sd * 1.40, 0.36, -1.05], 0.06, 8, ALU, false);
+      airWheel(t, m, sd * 1.44, 0.36, -1.05, 0.36, 0.2);
+    });
+  }
+  // nose gear
+  gearPart(matte, [0, 1.45, 5.55], (t, m) => {
+    m.tube([0, 1.45, 5.55], [0, 0.30, 5.70], 0.05, 8, ALU, false);
+    airWheel(t, m, 0, 0.30, 5.70, 0.30, 0.14);
+  });
+  // a dark anti-glare panel ahead of the canopy, and the refuelling probe fairing
+  matte.patch([[[-0.34, 2.33, 5.35], [0, 2.41, 5.35], [0.34, 2.33, 5.35]], [[-0.2, 2.06, 6.5], [0, 2.12, 6.5], [0.2, 2.06, 6.5]]], [0.16, 0.17, 0.19], [0, 1, 0.3]);
+  return [];
+}
+
+/**
+ * Boeing-Stearman Model 75 -- blue fabric fuselage, yellow wings, the
+ * striped rudder, an exposed seven-cylinder radial and two open cockpits.
+ * Built LEVEL, main wheels at z = spec.taildragger.zMain; the flight model
+ * rocks it back onto the tailwheel (updatePlane's `rest` and `yVis`), so the
+ * tailwheel hangs here exactly (zMain - zTail) tan(11 deg) above the ground.
+ * The pilot flies from the rear cockpit, as a Stearman is flown solo.
+ */
+function buildBiplane(spec, paint, trim, matte) {
+  const WING = [0.86, 0.62, 0.08];
+  const SQ = 3;
+  const ST = [
+    [3.10, 0.52, 0.53, 0.53, 1.60], [2.70, 0.47, 0.51, 0.50, 1.56], [2.00, 0.44, 0.47, 0.52, 1.52],
+    [1.10, 0.43, 0.45, 0.52, 1.50], [0.35, 0.43, 0.44, 0.52, 1.49], [-0.15, 0.42, 0.43, 0.50, 1.48],
+    [-0.85, 0.40, 0.42, 0.47, 1.47], [-2.00, 0.27, 0.34, 0.32, 1.46], [-3.20, 0.12, 0.22, 0.14, 1.47],
+    [-3.75, 0.04, 0.12, 0.05, 1.49],
+  ];
+  const { rings, skinX } = hullTable(ST, SQ);
+  const pit = (zm) => (zm < 1.10 && zm > 0.35) || (zm < -0.15 && zm > -0.85);
+  hullLoft(rings, (i, k, zm) => {
+    if (k < 0) return i === -1 ? [matte, [0.20, 0.20, 0.21]] : [paint, WHITE];
+    return pit(zm) && hullSide(k) >= 7 ? null : [paint, WHITE];
+  });
+  // Cockpit tubs: a leather-dark liner, a floor and the bulkheads.
+  const TUB = [0.13, 0.10, 0.075];
+  for (const [zF, zB] of [[1.10, 0.35], [-0.15, -0.85]]) {
+    const sub = rings.filter((r) => r.z <= zF + 1e-6 && r.z >= zB - 1e-6);
+    hullLoft(sub, () => [matte, TUB], { inset: 0.02, inward: true, caps: false });
+    matte.box(0, 1.10, (zF + zB) / 2, 0.76, 0.02, zF - zB, 0, TUB);
+    for (const [z, nz] of [[zF - 0.01, -1], [zB + 0.01, 1]]) {
+      matte.quad([-0.40, 1.02, z], [0.40, 1.02, z], [0.40, 1.93, z], [-0.40, 1.93, z], [0, 0, nz], [0, 0, 1, 0, 1, 1, 0, 1], [0.10, 0.08, 0.06]);
+    }
+    // Leather coaming round the opening: the rim runs along ring points 7 and
+    // 13 (the quads 7..12 are the hole) and across at both ends.
+    const r0 = rings.find((r) => Math.abs(r.z - zF) < 1e-6), r1 = rings.find((r) => Math.abs(r.z - zB) < 1e-6);
+    const rim = (r, j) => [r.pts[j][0], r.pts[j][1] + 0.015, r.z];
+    const LEATHER = [0.22, 0.12, 0.06];
+    for (const j of [7, 13]) matte.tube(rim(r0, j), rim(r1, j), 0.028, 5, LEATHER, false);
+    for (const r of [r0, r1]) for (let j = 7; j < 13; j++) matte.tube(rim(r, j), rim(r, j + 1), 0.028, 5, LEATHER, false);
+    // instrument panel under the front coaming, a seat back, and a windscreen
+    matte.box(0, 1.55, zF - 0.06, 0.62, 0.28, 0.05, 0, [0.07, 0.07, 0.075]);
+    seat(matte, 0, 1.45, zB + 0.20, 0.48, 0.95, false, 0.35);
+    const scr = [];
+    for (let i = 0; i <= 2; i++) {
+      const row = [];
+      for (let j = 0; j <= 4; j++) {
+        const u = -1 + j / 2, t = i / 2;
+        row.push([u * 0.26, 1.93 + t * 0.20, zF + 0.10 - t * 0.09 - 0.05 * u * u]);
+      }
+      scr.push(row);
+    }
+    trim.patch(scr, GLASS, [0, 0.4, 1]);
+  }
+  // The pilot, in the rear seat, head well out over the coaming.
+  if (matte.crew) occupant(matte.crew, 0, 1.52, -0.66, 0.95, [0, 1.40, -0.20]);
+  // --- the radial: crankcase, seven finned cylinders, nose case ---------------------
+  matte.tube([0, 1.60, 3.10], [0, 1.60, 3.52], 0.24, 12, [0.16, 0.16, 0.17], true);
+  for (let c = 0; c < 7; c++) {
+    const a = Math.PI / 2 + (c / 7) * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a);
+    const at = (r, dz = 0) => [ca * r, 1.60 + sa * r, 3.33 + dz];
+    matte.tube(at(0.18), at(0.40), 0.085, 8, [0.34, 0.34, 0.36], true);
+    matte.tube(at(0.40), at(0.55), 0.105, 8, [0.46, 0.46, 0.48], true);
+    for (let fn = 0; fn < 3; fn++) matte.tube(at(0.24 + fn * 0.06), at(0.25 + fn * 0.06), 0.10, 8, [0.24, 0.24, 0.26], false);
+    matte.tube(at(0.48, 0.08), at(0.22, -0.20), 0.016, 4, [0.55, 0.50, 0.40], false);        // pushrod
+  }
+  matte.tube([0, 1.60, 3.50], [0, 1.60, 3.74], 0.14, 10, [0.30, 0.30, 0.32], true);
+  // exhaust collector out along the lower flank
+  for (const sd of [-1, 1]) matte.tube([sd * 0.35, 1.18, 3.05], [sd * 0.46, 1.10, 1.70], 0.045, 6, [0.25, 0.22, 0.19], true);
+  spinPart(matte, [0, 1.60, 3.80], 'z', propeller(2, 1.30, 0.21, [0.40, 0.40, 0.42], [0.92, 0.72, 0.08], { twist: 0.6 }));
+  // --- wings: upper staggered ahead of the lower, both yellow fabric ----------------
+  for (const sd of [-1, 1]) {
+    aerofoil(matte, WING, [{ x: 0, y: 2.62, zLE: 1.62, c: 1.45 }, { x: sd * 4.50, y: 2.62, zLE: 1.62, c: 1.45 },
+      { x: sd * 4.90, y: 2.62, zLE: 1.52, c: 1.10 }], { thick: 0.12, n: 8 });
+    aerofoil(matte, WING, [{ x: sd * 0.30, y: 1.02, zLE: 1.10, c: 1.40 }, { x: sd * 4.25, y: 1.25, zLE: 1.10, c: 1.40 },
+      { x: sd * 4.62, y: 1.27, zLE: 0.98, c: 1.02 }], { thick: 0.12, n: 8 });
+    // aileron hinge lines on the upper wing, and the nav light
+    matte.patch([[[sd * 2.3, 2.71, 0.54], [sd * 4.6, 2.71, 0.54]], [[sd * 2.3, 2.71, 0.51], [sd * 4.6, 2.71, 0.51]]], [0.55, 0.40, 0.06], [0, 1, 0]);
+    trim.box(sd * 4.92, 2.60, 1.20, 0.04, 0.05, 0.12, 0, sd > 0 ? NAV_R : NAV_G);
+    // Interplane N-struts, cabane struts, and the flying and landing wires.
+    const lo = (x, z) => [sd * x, 1.02 + (1.25 - 1.02) * (x - 0.3) / 3.95, z];
+    const hi = (x, z) => [sd * x, 2.60, z];
+    matte.tube(lo(3.30, 0.76), hi(3.36, 1.26), 0.035, 6, ALU, false);
+    matte.tube(lo(3.30, 0.14), hi(3.36, 0.62), 0.035, 6, ALU, false);
+    matte.tube(lo(3.30, 0.76), hi(3.36, 0.62), 0.025, 6, ALU, false);
+    for (const z of [1.26, 0.64]) matte.tube([sd * 0.30, 1.93, z - 0.02], [sd * 0.46, 2.60, z], 0.028, 6, ALU, false);
+    matte.tube([sd * 0.30, 1.93, 1.24], [sd * 0.46, 2.60, 0.64], 0.02, 5, ALU, false);
+    const WIRE = [0.56, 0.57, 0.60];
+    for (const [zl, zh] of [[0.76, 1.26], [0.14, 0.62]]) {
+      matte.tube(lo(0.55, zl), hi(3.30, zh), 0.008, 3, WIRE, false);
+      matte.tube(hi(0.50, zh), lo(3.25, zl), 0.008, 3, WIRE, false);
+    }
+    // --- main gear -----------------------------------------------------------------
+    const hub = [sd * 0.92, 0.40, 2.10];
+    matte.tube([sd * 0.26, 1.00, 2.40], hub, 0.035, 6, [0.20, 0.21, 0.22], false);
+    matte.tube([sd * 0.26, 1.00, 1.78], hub, 0.035, 6, [0.20, 0.21, 0.22], false);
+    matte.tube([sd * 0.62, 1.06, 2.00], [sd * 0.90, 0.46, 2.08], 0.05, 8, ALU, false);    // oleo
+    airWheel(trim, matte, sd * 0.98, 0.40, 2.10, 0.40, 0.17);
+  }
+  // tailwheel on its spring
+  matte.tube([0, 1.30, -3.02], [0, 1.15, -3.20], 0.025, 5, [0.20, 0.21, 0.22], false);
+  airWheel(trim, matte, 0, 1.14, -3.20, 0.11, 0.07);
+  // --- tail: yellow stabiliser and fin, a red-and-white striped rudder ------------------
+  for (const sd of [-1, 1]) {
+    aerofoil(matte, WING, [{ x: 0, y: 1.52, zLE: -2.50, c: 1.05 }, { x: sd * 1.55, y: 1.52, zLE: -2.58, c: 0.86 },
+      { x: sd * 1.74, y: 1.52, zLE: -2.72, c: 0.55 }], { thick: 0.10, n: 6 });
+    matte.tube([sd * 0.10, 1.30, -2.85], [sd * 0.80, 1.51, -2.90], 0.012, 4, ALU, false);   // stab strut
+  }
+  const fin = (y) => ({ zLE: lerp(-2.62, -3.12, (y - 1.62) / 0.92), c: lerp(1.10, 0.62, (y - 1.62) / 0.92) });
+  const hinge = (y) => { const f = fin(y); return { zLE: f.zLE - f.c * 0.52, c: f.c * 0.48 }; };
+  aerofoil(matte, WING, [1.62, 2.10, 2.54].map((y) => ({ x: 0, y, zLE: fin(y).zLE, c: fin(y).c * 0.54 })), { thick: 0.13, n: 6, vertical: true });
+  const bands = 7;
+  for (let s = 0; s < bands; s++) {
+    const y0 = lerp(1.48, 2.54, s / bands), y1 = lerp(1.48, 2.54, (s + 1) / bands);
+    aerofoil(matte, s % 2 ? [0.92, 0.92, 0.90] : [0.72, 0.07, 0.07],
+      [y0, y1].map((y) => ({ x: 0, y, ...hinge(y) })), { thick: 0.12, n: 5, vertical: true });
+  }
+  trim.box(0, 2.50, -3.72, 0.04, 0.05, 0.06, 0, WHITE);
+  return [];
+}
+
+/**
+ * Helicopter, Bell 407 proportions: a 1.4 m-wide cabin whose front half is
+ * glass (windscreen wrapped over the roof and down into the chin, door
+ * windows cut into the skin), a turbine cowl behind the mast, a 6.3 m tail
+ * boom with its stabiliser and fin, a four-blade 10.7 m main rotor and a
+ * two-blade tail rotor to port, on skids.
+ *
+ * The glass is the skin itself (hullLoft), so it is see-through onto a real
+ * cabin: floor, console, seats, a pilot in the right-hand seat, a headliner
+ * and a rear bulkhead -- and out through the far side.
+ */
+function buildHeli(spec, paint, trim, matte) {
+  const SQ = 2.3;
+  const ST = [
+    [4.75, 0.10, 0.10, 0.10, 1.15], [4.62, 0.42, 0.46, 0.40, 1.15], [4.35, 0.60, 0.66, 0.56, 1.18],
+    [3.85, 0.67, 0.76, 0.63, 1.20], [3.55, 0.69, 0.79, 0.68, 1.20], [3.45, 0.70, 0.80, 0.69, 1.20],
+    [3.10, 0.70, 0.80, 0.70, 1.20], [2.40, 0.70, 0.80, 0.71, 1.20], [2.28, 0.70, 0.80, 0.71, 1.20],
+    [1.60, 0.69, 0.80, 0.71, 1.20], [1.50, 0.69, 0.80, 0.71, 1.20], [0.90, 0.62, 0.74, 0.62, 1.28],
+    [0.30, 0.46, 0.52, 0.40, 1.46], [-0.40, 0.26, 0.28, 0.24, 1.62], [-2.70, 0.17, 0.18, 0.16, 1.74],
+    [-4.90, 0.11, 0.12, 0.11, 1.80], [-5.12, 0.05, 0.06, 0.05, 1.81],
+  ];
+  const hull = hullTable(ST, SQ), { rings, skinX } = hull;
+  const BELLY = [0.15, 0.16, 0.17];
+  hullLoft(rings, (i, k, zm) => {
+    if (k < 0) return [paint, WHITE];
+    const s = hullSide(k);
+    let glass = false;
+    if (zm > 4.35 && zm < 4.62) glass = s >= 3;              // nose: screen down to the chin
+    else if (zm > 3.55 && zm < 4.35) glass = s >= 2;         // windscreen over the top, chin bubbles
+    else if (zm > 2.40 && zm < 3.45) glass = s >= 3 && s <= 7;   // front door
+    else if (zm > 1.60 && zm < 2.28) glass = s >= 4 && s <= 7;   // rear door
+    if (glass) return [trim, GLASS];
+    if (s <= 1 && zm > 0.3) return [matte, BELLY];
+    return [paint, WHITE];
+  });
+  // --- cabin --------------------------------------------------------------------
+  const FY = 0.68;
+  const fw = (z) => skinX(z, FY) - 0.03;
+  const floor = [];
+  for (const z of [4.05, 3.6, 3.0, 2.3, 1.52]) floor.push([-1, -0.5, 0, 0.5, 1].map((u) => [u * fw(z), FY, z]));
+  matte.patch(floor, CAB_FLOOR, [0, 1, 0]);
+  matte.box(0, FY, 3.86, 1.00, 0.46, 0.34, 0, CAB_DASH);                          // console
+  matte.box(0, FY + 0.46, 3.80, 1.10, 0.035, 0.52, 0, [0.03, 0.03, 0.035]);      // glare shield
+  for (const sx of [-1, 1]) trim.box(sx * 0.24, FY + 0.20, 3.688, 0.30, 0.22, 0.004, 0, [0.03, 0.05, 0.09]);
+  matte.quad([-0.62, 1.965, 1.52], [0.62, 1.965, 1.52], [0.62, 1.965, 3.45], [-0.62, 1.965, 3.45], [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAB_ROOF);
+  matte.quad([-0.66, FY, 1.53], [0.66, FY, 1.53], [0.66, 1.97, 1.53], [-0.66, 1.97, 1.53], [0, 0, 1], [0, 0, 1, 0, 1, 1, 0, 1], [0.20, 0.20, 0.21]);
+  for (const sx of [-1, 1]) {
+    seat(matte, sx * 0.34, 1.05, 2.55, 0.46, 0.9, false, 0.40);
+    matte.box(sx * 0.34, FY, 2.80, 0.46, 0.27, 0.46, 0, CAB_SEAT);
+  }
+  seat(matte, 0, 1.05, 1.62, 1.12, 0.9, true, 0.40);
+  matte.box(0, FY, 1.86, 1.12, 0.27, 0.44, 0, CAB_SEAT);
+  // The pilot flies from the right seat (-x), hands on the cyclic.
+  matte.tube([-0.34, FY, 3.10], [-0.34, 1.02, 3.05], 0.016, 5, [0.05, 0.05, 0.05], false);
+  if (matte.crew) occupant(matte.crew, -0.34, 1.18, 2.55, 0.95, [-0.34, 1.02, 3.05]);
+  for (const sd of [-1, 1]) {
+    trim.box(sd * (skinX(2.95, 1.12) + 0.01), 1.10, 2.72, 0.03, 0.03, 0.14, 0, CHROME);   // door handles
+    // door seams, a dark hairline on the paint below each door window
+    hullBand(matte, hull, sd, 3.44, 1.61, -0.44, -0.42, [0.30, 0.31, 0.33], 4);
+  }
+  // --- engine cowl, mast, exhaust ------------------------------------------------------
+  // Transmission and turbine under one cowl, from over the front seats back:
+  // on a 407 it stands half a metre proud of the cabin roof.
+  const CW = [[3.05, 0.30, 0.03, 0.05, 1.99], [2.70, 0.48, 0.40, 0.05, 2.00], [1.90, 0.54, 0.60, 0.05, 2.00],
+    [0.70, 0.52, 0.56, 0.06, 1.97], [-0.35, 0.36, 0.36, 0.06, 1.88], [-0.98, 0.12, 0.12, 0.05, 1.82]];
+  hullLoft(CW.map(([z, w, ht, hb, yc]) => hullRing(z, w, ht, hb, yc, HULL_A, 3)), () => [paint, WHITE]);
+  for (const sd of [-1, 1]) {
+    // intake grilles either side, just behind the mast
+    matte.patch([0, 1, 2].map((i) => [[sd * (hullTableX(CW, 1.35, 2.20 + i * 0.08) + 0.004), 2.20 + i * 0.08, 1.35],
+      [sd * (hullTableX(CW, 0.90, 2.20 + i * 0.08) + 0.004), 2.20 + i * 0.08, 0.90]]), [0.06, 0.065, 0.07], [sd, 0, 0]);
+    matte.tube([sd * 0.17, 2.20, -0.20], [sd * 0.24, 2.44, -0.64], 0.095, 8, [0.24, 0.22, 0.20], false);   // exhaust stacks
+    trim.tube([sd * 0.24, 2.44, -0.64], [sd * 0.245, 2.45, -0.66], 0.08, 8, CAVITY, true);
+  }
+  matte.tube([0, 2.55, 1.50], [0, 3.10, 1.50], 0.075, 8, [0.22, 0.23, 0.24], false);          // mast
+  matte.tube([0, 2.68, 1.50], [0, 2.76, 1.50], 0.20, 10, [0.30, 0.31, 0.33], true);           // swashplate
+  trim.box(0, 2.53, 0.20, 0.07, 0.06, 0.14, 0, TAILC);                                         // beacon
+  // --- tail --------------------------------------------------------------------------
+  for (const sd of [-1, 1]) {
+    aerofoil(paint, WHITE, [{ x: 0, y: 1.73, zLE: -2.80, c: 0.50 }, { x: sd * 1.05, y: 1.73, zLE: -2.86, c: 0.42 }], { thick: 0.12, n: 6 });
+    aerofoil(paint, WHITE, [{ x: sd * 1.05, y: 1.54, zLE: -2.80, c: 0.46 }, { x: sd * 1.05, y: 1.96, zLE: -2.92, c: 0.34 }], { thick: 0.10, n: 5, vertical: true });
+    trim.box(sd * 1.07, 1.72, -3.02, 0.04, 0.05, 0.10, 0, sd > 0 ? NAV_R : NAV_G);
+  }
+  aerofoil(paint, WHITE, [{ x: 0, y: 1.82, zLE: -4.40, c: 0.86 }, { x: 0, y: 2.30, zLE: -4.72, c: 0.66 },
+    { x: 0, y: 2.72, zLE: -5.00, c: 0.48 }], { thick: 0.13, n: 6, vertical: true });
+  aerofoil(paint, WHITE, [{ x: 0, y: 1.78, zLE: -4.52, c: 0.66 }, { x: 0, y: 1.22, zLE: -4.86, c: 0.40 }], { thick: 0.12, n: 5, vertical: true });
+  matte.tube([0, 1.24, -4.70], [0, 1.15, -5.10], 0.018, 5, ALU, true);                       // tail skid
+  matte.tube([0.02, 1.84, -4.80], [0.22, 1.84, -4.80], 0.07, 8, [0.26, 0.27, 0.29], true);  // tail gearbox
+  trim.box(0, 2.72, -5.30, 0.04, 0.05, 0.05, 0, WHITE);
+  // --- skids -------------------------------------------------------------------------
+  for (const sd of [-1, 1]) {
+    const x = sd * 1.08;
+    matte.tube([x, 0.065, 3.45], [x, 0.065, -0.55], 0.048, 8, ALU, true);
+    matte.tube([x, 0.065, 3.45], [x, 0.13, 3.77], 0.048, 8, ALU, false);
+    matte.tube([x, 0.13, 3.77], [x, 0.30, 3.93], 0.048, 8, ALU, true);
+    for (const z of [3.00, 0.75]) {
+      matte.tube([x, 0.08, z], [sd * 1.00, 0.40, z], 0.042, 8, ALU, false);
+      matte.tube([sd * 1.00, 0.40, z], [sd * 0.55, 0.56, z], 0.042, 8, ALU, false);
+    }
+    trim.box(x, 0.02, 2.4, 0.035, 0.03, 0.30, 0, [0.9, 0.9, 0.9]);   // skid shoe
+  }
+  trim.box(0, 0.52, 4.05, 0.14, 0.04, 0.14, 0, LAMP);                // landing light
+  // --- rotors (spin parts) -------------------------------------------------------------
+  const main = new Builder(false);
+  blades(main, 4, 0.20, 5.35, 0.29, DARK, [0.95, 0.95, 0.92], { twist: 0.14, thick: 0.12, droop: 0.12, phase: Math.PI / 4 });
+  main.prism(0, -0.07, 0, 0.26, 0.14, 8, [0.26, 0.27, 0.29]);
+  main.cone(0, 0.07, 0, 0.26, 0.12, 8, [0.26, 0.27, 0.29]);
+  for (let k = 0; k < 4; k++) {
+    const a = Math.PI / 4 + (k / 4) * Math.PI * 2;
+    main.tube([Math.cos(a) * 0.1, 0, -Math.sin(a) * 0.1], [Math.cos(a) * 0.36, 0, -Math.sin(a) * 0.36], 0.06, 6, [0.20, 0.21, 0.22], true);
+  }
+  spinPart(matte, [0, 3.12, 1.50], 'y', main);
+  const tail = new Builder(false);
+  blades(tail, 2, 0.07, 0.83, 0.13, DARK, [0.90, 0.20, 0.16], { twist: 0.25, thick: 0.10 });
+  tail.prism(0, -0.05, 0, 0.07, 0.10, 8, [0.26, 0.27, 0.29]);
+  swapFrom(tail, 0, 0, 1);   // disc into the YZ plane, turning about X
+  spinPart(matte, [0.30, 1.84, -4.80], 'x', tail);
+  return [];
+}
+
+/**
+ * The four-panel greenhouse every hand-built car uses -- windscreen, roof, rear
+ * screen and side glass as separate patches, with the A- and C-pillars built
+ * from those panels' OWN edge points -- driven by one table of stations instead
+ * of another ninety-line copy of the sedan's. The construction is the sedan's
+ * exactly; see there for why the roof is a panel and not a skin over a tube.
+ *
+ * `g` names what a body engineer would: cowl and roof heights, where the
+ * screen tops out and the roof ends, where the rear screen lands, the widths of
+ * each panel, and the four corners of the side glass. `deck` is the deck edge
+ * at `rearZ`, where the C-pillar comes down onto the body.
+ */
+function greenhouse(paint, trim, matte, g) {
+  const {
+    cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY,
+    wScrB, wScrT, wRoof, wRearT, wRear, wGlassT, wGlassB,
+    sgFB, sgFT, sgRT, sgRB, deck,
+    bPillars = [0.42], pillarInto = paint, pillarCol = WHITE, roofInto = paint, roofCol = WHITE,
+    scrBow = 0.026, scrWrap = 0.085, rearBow = 0.012, rearWrap = 0.035, crown = 0.010,
+  } = g;
+  const lp = (a, b, t) => a + (b - a) * t;
+
+  const scrRows = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3, row = [];
+    const cz = lp(cowlZ, scrZ, t) + scrBow * Math.sin(Math.PI * t);
+    const cy = lp(cowlY, roofY, t) + 0.010 * Math.sin(Math.PI * t);
+    const hwv = lp(wScrB, wScrT, t);
+    for (let j = 0; j <= 8; j++) {
+      const u = -1 + (2 * j) / 8;
+      row.push([u * hwv, cy - 0.024 * u * u, cz - scrWrap * u * u]);
+    }
+    scrRows.push(row);
+  }
+  trim.patch(scrRows, GLASS, [0, 0.5, 1]);
+
+  const roofCols = [[-0.98, -0.048], [-1, -0.010], [-0.94, 0], [-0.66, 0.5 * crown], [-0.3, 0.8 * crown],
+    [0, crown], [0.3, 0.8 * crown], [0.66, 0.5 * crown], [0.94, 0], [1, -0.010], [0.98, -0.048]];
+  const roofRows = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3;
+    const cz = lp(scrZ, backZ, t), cy = roofY + 0.005 * Math.sin(Math.PI * t);
+    roofRows.push(roofCols.map(([u, dy]) => [u * wRoof, cy + dy - 0.016 * u * u, cz]));
+  }
+  roofInto.patch(roofRows, roofCol, [0, 1, 0]);
+
+  const rearRows = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3, row = [];
+    const cz = lp(backZ, rearZ, t), cy = lp(roofY - 0.006, rearY, t) + rearBow * Math.sin(Math.PI * t);
+    const hwv = lp(wRearT, wRear, t);
+    for (let j = 0; j <= 8; j++) {
+      const u = -1 + (2 * j) / 8;
+      row.push([u * hwv, cy - 0.024 * u * u, cz + rearWrap * u * u]);
+    }
+    rearRows.push(row);
+  }
+  trim.patch(rearRows, GLASS, [0, 0.7, -1]);
+  // A hatch's screen stops short of the deck and the tailgate carries on in
+  // paint below it. Run the glass all the way down instead and the whole back
+  // of the car is one black slab -- which is what the first pass of the
+  // hatchback looked like from behind.
+  if (rearY - deck[1] > 0.03) {
+    const foot = rearRows[rearRows.length - 1];
+    paint.patch([foot.map(([x, y, z]) => [x * 1.004, y + 0.004, z + 0.006]),
+      foot.map(([x, , z]) => [x * (deck[0] / wRear), deck[1] + 0.002, z - 0.012])], WHITE, [0, 0.2, -1]);
+  }
+
+  // The C-pillar's outer edge walks DOWN the back of the side glass and then
+  // along the deck to the rear screen's foot -- one row per rear-screen row, so
+  // the sail is a strip between two lines that each belong to a real edge.
+  const sailOuter = [
+    [wGlassT, sgRT[1], sgRT[0]],
+    [lp(wGlassT, wGlassB, 0.5), lp(sgRT[1], sgRB[1], 0.5), lp(sgRT[0], sgRB[0], 0.5)],
+    [wGlassB, sgRB[1], sgRB[0]],
+    [deck[0], Math.max(deck[1], rearY - 0.03), rearZ],
+  ];
+  for (const sx of [-1, 1]) {
+    const rows = [];
+    for (let i = 0; i <= 2; i++) {
+      const t = i / 2, row = [];
+      for (let j = 0; j <= 6; j++) {
+        const u = j / 6;
+        const bz = lp(sgFB[0], sgRB[0], u), by = lp(sgFB[1], sgRB[1], u);
+        const tz = lp(sgFT[0], sgRT[0], u), ty = lp(sgFT[1], sgRT[1], u);
+        row.push([sx * lp(wGlassB, wGlassT, t), lp(by, ty, t), lp(bz, tz, t)]);
+      }
+      rows.push(row);
+    }
+    trim.patch(rows, GLASS, [sx, 0, 0]);
+    for (const u of bPillars) {
+      const bz0 = lp(sgFB[0], sgRB[0], u), bz1 = lp(sgFT[0], sgRT[0], u);
+      matte.patch([
+        [[sx * (wGlassB + 0.006), sgFB[1] - 0.01, bz0 + 0.045], [sx * (wGlassB + 0.006), sgFB[1] - 0.01, bz0 - 0.045]],
+        [[sx * (wGlassT + 0.006), sgFT[1] + 0.005, bz1 + 0.045], [sx * (wGlassT + 0.006), sgFT[1] + 0.005, bz1 - 0.045]],
+      ], [0.09, 0.10, 0.11], [sx, 0, 0]);
+    }
+    pillarInto.patch(scrRows.map((r, i) => {
+      const e = r[r.length - 1], t = i / 3;
+      return [[sx * e[0], e[1], e[2]],
+        [sx * lp(wGlassB, wGlassT, t), lp(sgFB[1], sgFT[1], t), lp(sgFB[0], sgFT[0], t)]];
+    }), pillarCol, [sx, 0.4, 0]);
+    pillarInto.patch(rearRows.map((r, i) => {
+      const e = r[r.length - 1], o = sailOuter[i];
+      return [[sx * e[0], e[1], e[2]], [sx * o[0], o[1], o[2]]];
+    }), pillarCol, [sx, 0.4, 0]);
+    // Black seal along the foot of the side glass. Painted metal running
+    // straight into glass is the "window drawn on" look.
+    matte.tube([sx * (wGlassB + 0.006), sgFB[1] - 0.004, sgFB[0]],
+      [sx * (wGlassB + 0.006), sgRB[1] - 0.004, sgRB[0]], 0.012, 5, PLASTIC, true);
+  }
+  // A glass roof (the EV's) has nothing to line: you look down into the cabin.
+  if (g.rows) carCabin(matte, { ...g, scrWrap, rearWrap, headliner: roofInto !== trim }, paint);
+  return { scrRows, rearRows, roofRows };
+}
+
+// --- cabins -----------------------------------------------------------------
+//
+// The glass is see-through (glassShader), so what is behind it has to exist.
+// Behind a car's glass was the top of the body's own deck in car colour and
+// nothing above it, so a cabin is the few things that actually show over a
+// beltline: a dark floor over that deck, a dash under the screen, seat backs
+// with their headrests standing clear on posts, a light headliner, and in an
+// occupied car a driver. Everything is in `matte` (no extra draw); the driver
+// goes in `matte.crew`, which buildType merges only into the geometries of
+// cars somebody is in -- a parked car is empty.
+//
+// Colours are dim but NOT black. Behind a pane passing 45 % and under its own roof's
+// shadow, a black cabin is the old dark slab over again; it is the lighter
+// headliner and the headrest-against-window silhouettes that read as a cabin.
+const CAB_FLOOR = [0.045, 0.045, 0.05];
+const CAB_SEAT = [0.10, 0.10, 0.108];
+const CAB_DASH = [0.055, 0.056, 0.06];
+const CAB_ROOF = [0.34, 0.33, 0.31];
+const SKIN = [0.52, 0.36, 0.26];
+const HAIR = [0.05, 0.04, 0.035];
+const SHIRT = [0.13, 0.16, 0.22];
+
+/**
+ * A box on its base whose top leans back by `rake` -- a seat back. Open
+ * underneath, like `box`; the bottom is always below the deck.
+ */
+function rakedBox(b, x, y, z, w, h, d, rake, col) {
+  const hw = w / 2, hd = d / 2;
+  const P = (sx, up, sz) => [x + sx * hw, y + (up ? h : 0), z + sz * hd - (up ? rake : 0)];
+  const nb = Math.hypot(rake, h);
+  b.quad(P(-1, 0, 1), P(1, 0, 1), P(1, 1, 1), P(-1, 1, 1), [0, rake / nb, h / nb], [0, 0, 1, 0, 1, 1, 0, 1], col);
+  b.quad(P(1, 0, -1), P(-1, 0, -1), P(-1, 1, -1), P(1, 1, -1), [0, -rake / nb, -h / nb], [0, 0, 1, 0, 1, 1, 0, 1], col);
+  for (const s of [-1, 1]) b.quad(P(s, 0, 1), P(s, 0, -1), P(s, 1, -1), P(s, 1, 1), [s, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], col);
+  b.quad(P(-1, 1, 1), P(1, 1, 1), P(1, 1, -1), P(-1, 1, -1), [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], col);
+}
+
+/**
+ * One seat seen over a beltline: the top of the back, and a headrest on two
+ * posts with daylight between -- that gap is most of what makes it read as a
+ * seat rather than a box. `y` is the floor, `H` the floor-to-headliner height.
+ */
+function seat(b, x, y, z, w, H, bench = false, down = 0.25) {
+  const back = 0.22 * H, hr0 = 0.30 * H, hr1 = 0.60 * H;
+  rakedBox(b, x, y - down, z, w, back + down, 0.13, 0.05, CAB_SEAT);
+  const heads = bench ? [-w * 0.3, w * 0.3] : [0];
+  for (const hx of heads) {
+    for (const px of [-0.07, 0.07]) b.box(x + hx + px, y + back - 0.01, z - 0.045, 0.014, hr0 - back + 0.02, 0.014, 0, [0.30, 0.31, 0.33]);
+    b.box(x + hx, y + hr0, z - 0.05, 0.26, hr1 - hr0, 0.09, 0, CAB_SEAT);
+  }
+}
+
+/**
+ * A seated occupant as seen through a side window: head, hair, neck, the top of
+ * the shoulders, and forearms out to the wheel. Built facing +z on the seat
+ * whose back is at `z`.
+ */
+function occupant(b, x, y, z, H, wheelAt = null) {
+  const r = Math.min(0.105, 0.26 * H);
+  const hy = y + 0.53 * H, hz = z + 0.17;
+  b.spheroid(x, hy, hz, r, 8, 5, SKIN, 1.18);
+  // Hair: a cap over the crown and the back, a hair's breadth outside the head.
+  b.spheroid(x, hy + r * 0.28, hz - r * 0.12, r * 1.06, 8, 4, HAIR, 1.0);
+  b.prism(x, hy - r * 1.75, hz - 0.02, r * 0.42, r * 0.9, 6, SKIN);
+  rakedBox(b, x, y - 0.30, z + 0.16, 0.44, 0.30 + 0.16 * H, 0.22, 0.04, SHIRT);
+  if (wheelAt) {
+    for (const s of [-1, 1]) {
+      b.tube([x + s * 0.19, y + 0.10 * H, z + 0.14], [wheelAt[0] + s * 0.15, wheelAt[1], wheelAt[2] - 0.02], 0.038, 5, SHIRT, true);
+    }
+  }
+}
+
+/**
+ * Steering wheel: the top half of the rim, tilted back, which is all a beltline
+ * lets you see of one.
+ */
+function wheelRim(b, cx, cy, cz, R = 0.18) {
+  const tilt = 0.45, seg = 6;
+  const at = (a) => [cx + Math.cos(a) * R, cy + Math.sin(a) * R * Math.cos(tilt), cz - Math.sin(a) * R * Math.sin(tilt)];
+  for (let i = 0; i < seg; i++) {
+    b.tube(at((Math.PI * i) / seg), at((Math.PI * (i + 1)) / seg), 0.016, 4, [0.03, 0.03, 0.035], false);
+  }
+}
+
+/**
+ * A car's cabin, derived from the same greenhouse stations that drew its glass
+ * so it can never poke through it: the floor is held inside the screens' feet
+ * (following their wrap), the headliner inside the roof, the seats between the
+ * side glass. `rows` are seat-back stations, front first; `front` is 'pair'
+ * (buckets) and later rows are benches unless `rowKind` says otherwise.
+ */
+/**
+ * Highest point of `b`'s geometry straight under (x, z) within a band round
+ * `yRef` -- the top of a car's deck under its cabin. Brute force over the
+ * builder's triangles; it runs a few dozen times per type at boot.
+ */
+function deckAt(b, x, z, yRef) {
+  const p = b.pos, ix = b.idx;
+  let best = -Infinity;
+  for (let i = 0; i < ix.length; i += 3) {
+    const a = ix[i] * 3, c = ix[i + 1] * 3, e = ix[i + 2] * 3;
+    const ya = p[a + 1], yc = p[c + 1], ye = p[e + 1];
+    if (Math.max(ya, yc, ye) < yRef - 0.15 || Math.min(ya, yc, ye) > yRef + 0.15) continue;
+    const x0 = p[a], z0 = p[a + 2], x1 = p[c], z1 = p[c + 2], x2 = p[e], z2 = p[e + 2];
+    const d = (z1 - z2) * (x0 - x2) + (x2 - x1) * (z0 - z2);
+    if (Math.abs(d) < 1e-9) continue;
+    const l0 = ((z1 - z2) * (x - x2) + (x2 - x1) * (z - z2)) / d;
+    const l1 = ((z2 - z0) * (x - x2) + (x0 - x2) * (z - z2)) / d;
+    if (l0 < 0 || l1 < 0 || l0 + l1 > 1) continue;
+    const y = l0 * ya + l1 * yc + (1 - l0 - l1) * ye;
+    if (y < yRef + 0.12 && y > best) best = y;
+  }
+  return best;
+}
+
+function carCabin(matte, g, paint = null) {
+  const {
+    cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB,
+    sgFB, sgRB, rows, scrWrap = 0.085, rearWrap = 0.035, headliner = true, driverX = null,
+  } = g;
+  const y = Math.max(sgFB[1], sgRB[1]) + 0.010;
+  const H = roofY - 0.035 - y;
+  const rakeF = (scrZ - cowlZ) / (roofY - cowlY), rakeR = (backZ - rearZ) / (roofY - rearY);
+  const zF = cowlZ + Math.max(0, y - cowlY) * rakeF - 0.035;
+  const zR = rearZ + Math.max(0, y - rearY) * rakeR + 0.035;
+  const x = Math.min(wGlassB, wScrB, wRear) - 0.05;
+  // Floor over the deck, out to the glass on every side -- any deck left
+  // showing is a strip of body colour inside the car. Cut to the screens'
+  // wrap at both ends, and to the side glass's foot between them.
+  const xS = wGlassB - 0.015, zSR = Math.max(sgRB[0], zR + 0.06), zSF = Math.min(sgFB[0], zF - 0.06);
+  const row = (hw, z, wrap) => {
+    const out = [];
+    for (let j = 0; j <= 6; j++) { const u = -1 + (2 * j) / 6; out.push([u * hw, y, z + wrap * u * u]); }
+    return out;
+  };
+  const floor = [row(wRear - 0.03, zR, rearWrap)];
+  if (zSF - zSR > 0.1) {
+    for (let i = 0; i <= 4; i++) floor.push(row(xS, lerp(zSR, zSF, i / 4), 0));
+  }
+  floor.push(row(wScrB - 0.03, zF, -scrWrap));
+  // The deck is not flat -- it climbs toward a hatch's tailgate and an SUV's
+  // cargo sill -- so a flat floor at the glass line had the car's own colour
+  // showing through it behind the rear seats. Drape it on the paint instead.
+  if (paint) for (const r of floor) for (const pt of r) pt[1] = Math.max(y, deckAt(paint, pt[0], pt[2], y) + 0.012);
+  matte.patch(floor, CAB_FLOOR, [0, 1, 0]);
+  // Dash: a step up under the screen, kept a margin under the glass.
+  const dashD = Math.min(0.34, (zF - zR) * 0.2);
+  const dashH = Math.min(0.07, Math.max(0.02, (dashD * 0.5) / Math.max(0.5, -rakeF) - 0.01));
+  matte.box(0, y, zF - dashD / 2 - 0.02, x * 1.9, dashH, dashD, 0, CAB_DASH);
+  if (headliner) {
+    const hx = Math.min(wRoof * 0.92, wGlassT - 0.04);
+    matte.quad([-hx, roofY - 0.035, scrZ - 0.01], [hx, roofY - 0.035, scrZ - 0.01],
+      [hx, roofY - 0.035, backZ + 0.01], [-hx, roofY - 0.035, backZ + 0.01], [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAB_ROOF);
+  }
+  const sx = Math.min(0.37, x * 0.52);
+  const dx = driverX === null ? sx : driverX;
+  rows.forEach((z, i) => {
+    if (i === 0) for (const s of [-1, 1]) seat(matte, s * sx, y, z, Math.min(0.50, x * 0.68), H);
+    else seat(matte, 0, y, z, x * 1.75, H, true);
+  });
+  const wheel = [dx, y - 0.07, rows[0] + 0.55];
+  wheelRim(matte, wheel[0], wheel[1], wheel[2]);
+  if (matte.crew) occupant(matte.crew, dx, y, rows[0], H, wheel);
+  return { y, H, x, zF, zR };
+}
+
+/**
+ * The cabin inside a `boxShell` (van, truck and bus cabs), which unlike a car's
+ * greenhouse has no deck under it and no roof lining: a floor at `y` between
+ * `zR` and `zF`, a dash at the front, a bulkhead at `zR` facing forward, a
+ * headliner at `top` back from `hzF`, and seat rows. Every figure comes from
+ * the shell's own stations at the call site, inside the glass.
+ */
+function boxCabin(matte, c) {
+  // `sit` is the level a car's beltline would be at -- about the seated
+  // shoulder -- which in a van or truck is well above the cab floor.
+  const { y, x, zR, zF, top, hzF = zF, rows, wheelDz = 0.55, bulkhead = true, driverX = null, benches = 'pair' } = c;
+  const sit = c.sit === undefined ? y : c.sit;
+  matte.quad([-x, y, zR], [x, y, zR], [x, y, zF], [-x, y, zF], [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAB_FLOOR);
+  matte.box(0, y, zF - 0.20, x * 1.96, Math.max(0.10, sit - y - 0.12), 0.36, 0, CAB_DASH);
+  if (bulkhead) matte.quad([-x, y, zR], [x, y, zR], [x, top, zR], [-x, top, zR], [0, 0, 1], [0, 0, 1, 0, 1, 1, 0, 1], CAB_FLOOR);
+  matte.quad([-x, top, zR], [x, top, zR], [x, top, hzF], [-x, top, hzF], [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAB_ROOF);
+  const sx = Math.min(0.46, x * 0.52), dx = driverX === null ? sx : driverX;
+  const Hs = Math.min(top - sit, 0.72);   // a seat is a seat's height, however tall the box
+  const down = sit - y + 0.02;
+  rows.forEach((z) => {
+    if (benches === 'pair') for (const s of [-1, 1]) seat(matte, s * sx, sit, z, 0.50, Hs, false, down);
+    else seat(matte, 0, sit, z, x * 1.75, Hs, true, down);
+  });
+  const wheel = [dx, sit - 0.04, rows[0] + wheelDz];
+  wheelRim(matte, wheel[0], wheel[1], wheel[2], 0.22);
+  if (matte.crew) occupant(matte.crew, dx, sit, rows[0], Hs, wheel);
+}
+
+/**
+ * A city bus's saloon: a floor, a light ceiling, forward-facing double seats
+ * down both sides of an aisle, the driver's cab at the front on the left, and
+ * a few passengers. The windows run both sides, so this is seen THROUGH, the
+ * way a real bus is -- no liner walls.
+ */
+function busCabin(matte, shell, o) {
+  const { belt, nose, tail, roofY } = o;
+  const y = belt + 0.01, sit = belt + 0.05, top = roofY - 0.14, Hs = 0.72;
+  const x = shell.sec(0).w0 - 0.06;
+  const z0 = tail + 0.25, z1 = nose - 0.20;
+  matte.quad([-x, y, z0], [x, y, z0], [x, y, z1], [-x, y, z1], [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAB_FLOOR);
+  matte.quad([-x, top, z0], [x, top, z0], [x, top, z1], [-x, top, z1], [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAB_ROOF);
+  matte.box(0, y, nose - 0.45, x * 1.96, 0.22, 0.40, 0, CAB_DASH);
+  // Driver on the left (+x), behind a screen; the wheel is flat and big.
+  const dz = nose - 1.35;
+  rakedBox(matte, 0.62, y - 0.02, dz, 0.52, sit - y + 0.55 * Hs, 0.12, 0.05, CAB_SEAT);
+  const wheel = [0.62, sit + 0.02, dz + 0.62];
+  wheelRim(matte, wheel[0], wheel[1], wheel[2], 0.24);
+  matte.box(0.18, y, dz + 0.10, 0.03, 0.80 * Hs + sit - y, 0.60, 0, [0.30, 0.31, 0.33]);    // cab screen
+  if (matte.crew) occupant(matte.crew, 0.62, sit, dz, Hs, wheel);
+  // Double seats, one tall back each, every 0.85 m down both sides.
+  const seatX = x - 0.46, backH = sit - y + 0.58 * Hs;
+  const riders = new Set([1, 4, 6, 9, 13, 17, 20]);
+  let n = 0;
+  for (let z = nose - 2.35; z > tail + 1.0; z -= 0.85) {
+    for (const sx of [-1, 1]) {
+      // The kerb-side doors are standing room.
+      if (sx < 0 && ((z > 4.35 && z < 5.65) || (z > -0.70 && z < 0.70))) continue;
+      rakedBox(matte, sx * seatX, y - 0.02, z, 0.86, backH, 0.10, 0.06, CAB_SEAT);
+      if (matte.crew && riders.has(n)) occupant(matte.crew, sx * (seatX + (n % 2 ? 0.2 : -0.2)), sit, z, Hs);
+      n++;
+    }
+  }
+}
+
+/**
+ * A lens or trim strip laid over the drawn shell between two stations and two
+ * section points, `d` proud of the paint. This is how a lamp WRAPS: a pocket in
+ * the end face is a lamp seen from dead ahead, and a modern car's lamps turn the
+ * corner onto the wing, which is most of what separates a face from a decal.
+ */
+function onShell(core, b, sx, z0, z1, i0, i1, col, d = 0.006, rows = 3) {
+  const out = [];
+  for (let r = 0; r <= rows; r++) {
+    const z = z0 + ((z1 - z0) * r) / rows, row = [];
+    for (let i = i0; i <= i1; i++) row.push(core.surf(z, sx, i, d));
+    out.push(row);
+  }
+  b.patch(out, col, [sx, 0.3, 0]);
+}
+
+/**
+ * The corner of a headlamp as it turns onto the wing: a gloss-black housing
+ * over the shoulder with a slim lamp strip set in it. A bright lens laid
+ * straight on the paint mirrors the sky from `trim`'s metalness and reads as a
+ * chrome shard stuck to the wing -- which is what the first pass did.
+ */
+function headlampWrap(core, trim, sx, nose, len) {
+  onShell(core, trim, sx, nose - len, nose - 0.02, 6, 8, [0.035, 0.04, 0.045], 0.006, 2);
+  onShell(core, trim, sx, nose - len * 0.75, nose - 0.03, 7, 8, LAMP, 0.010, 1);
+}
+
+/** One door shut line: a hairline patch that follows the section at `zc`. */
+function shutLine(core, matte, sx, zc, i0 = 2, i1 = 8) {
+  const rows = [-0.008, 0.008].map((dz) =>
+    core.half(zc + dz, sx).slice(i0, i1 + 1).map(([x, y]) => [x + sx * 0.005, y, zc + dz]));
+  matte.patch(rows, [0.13, 0.14, 0.15], [sx, 0, 0]);
+}
+
+/**
+ * Door mirror on a stalk from the A-pillar's foot. Placed from the glass
+ * corner, never by eye -- see the sedan's for the red brick hanging in the air
+ * that placing it by eye produced.
+ */
+function doorMirror(paint, trim, sx, fb, wGlassB, reach = 0.15) {
+  const [z, y] = fb;
+  paint.tube([sx * wGlassB, y + 0.004, z - 0.02], [sx * (wGlassB + reach * 0.75), y + 0.03, z - 0.06], 0.019, 6, WHITE, true);
+  const mx = sx * (wGlassB + reach), my = y + 0.01;
+  const pod = (k) => {
+    const out = [];
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2;
+      out.push([mx + Math.cos(a) * 0.070 * k, my + Math.sin(a) * 0.048 * k]);
+    }
+    return out;
+  };
+  paint.loft([{ z: z - 0.14, pts: pod(0.80) }, { z: z - 0.07, pts: pod(1) }, { z: z - 0.02, pts: pod(0.72) }],
+    WHITE, { capStart: true, capEnd: true });
+  trim.box(mx, my - 0.040, z - 0.146, 0.118, 0.080, 0.012, 0, MIRROR);
+}
+
+/**
+ * The two small cars, on one builder with two looks.
+ *
+ * What they replaced was `buildGeneric`: one tube through `section`, capped
+ * with a flat triangle fan at each end and dressed in boxes. On a short car the
+ * caps are most of what you see, and the lamp "housings" were boxes standing
+ * off the corners of that slab -- a hatchback read as a bread loaf with ears.
+ *
+ * Both run through `bodyCore` + `greenhouse`, so the end faces are real
+ * fascias with the apertures cut out and the pillars are panels.
+ *
+ *   hatch    a C-segment five-door: short sloping nose, raked screen, a steep
+ *            tailgate and a THICK C-pillar, swept lamps that turn the corner.
+ *   compact  a city car: stubby, tall for its length, upright tail, round lamps
+ *            in black housings and blacked-out pillars, so the roof floats --
+ *            the one detail that says "small and cheerful" from across a road.
+ */
+const SMALL_LOOKS = {
+  hatch: {
+    zF: 1.19, zR: -1.41,                       // 2.60 m wheelbase, FWD overhangs
+    halfW: [[-2.05, 0.88], [-1.85, 0.96], [-1.41, 1.00], [-0.55, 0.965], [0.55, 0.965], [1.19, 1.00], [1.75, 0.95], [2.05, 0.86]],
+    sillY: [[-2.05, 0.40], [-1.75, 0.32], [-0.60, 0.29], [0.60, 0.29], [1.70, 0.32], [2.05, 0.38]],
+    // The bonnet falls 17 cm over the last 1.25 m: a hatch's nose is short
+    // and sloped, where the sedan's is long and level.
+    beltY: [[-2.05, 0.97], [-1.80, 0.99], [-1.41, 1.00], [-0.50, 0.98], [0.40, 0.965], [0.80, 0.955], [1.30, 0.91], [1.75, 0.85], [2.05, 0.79]],
+    tuckAt: [[-2.05, 0.90], [-1.41, 0.95], [-0.60, 0.90], [0.60, 0.90], [1.19, 0.95], [2.05, 0.90]],
+    topAt: [[-2.05, 0.88], [-1.80, 0.93], [-1.00, 0.95], [0.90, 0.95], [1.50, 0.90], [1.85, 0.84], [2.05, 0.74]],
+    core: { archR: 0.50, archGap: 0.05, creaseAt: 0.60, tumble: 0.93, deckDrop: 0.028, lipOut: 0.030, endRound: 0.16, endMin: 0.90 },
+    tw: 0.215,
+    gh: {
+      cowlZ: 0.78, scrZ: -0.08, backZ: -1.34, rearZ: -1.80, rearY: 1.10,
+      wScrB: 0.76, wScrT: 0.64, wRoof: 0.655, wRearT: 0.635, wRear: 0.735, wGlassT: 0.630, wGlassB: 0.740,
+      sgFB: [0.70, 0.965], sgFT: [-0.06, 1.470], sgRT: [-1.05, 1.462], sgRB: [-1.30, 0.995],
+      bPillars: [0.46], rearWrap: 0.030, rows: [-0.24, -1.02],
+    },
+    doors: [0.70, -0.33, -1.22],
+  },
+  compact: {
+    zF: 1.13, zR: -1.29,                       // 2.42 m wheelbase on 3.74 m
+    halfW: [[-1.87, 0.90], [-1.70, 0.97], [-1.29, 1.00], [-0.50, 0.97], [0.50, 0.97], [1.13, 1.00], [1.62, 0.96], [1.87, 0.88]],
+    sillY: [[-1.87, 0.38], [-1.60, 0.31], [-0.50, 0.28], [0.50, 0.28], [1.55, 0.31], [1.87, 0.36]],
+    beltY: [[-1.87, 0.95], [-1.60, 0.97], [-1.29, 0.975], [-0.40, 0.96], [0.40, 0.95], [0.75, 0.94], [1.20, 0.90], [1.60, 0.85], [1.87, 0.80]],
+    tuckAt: [[-1.87, 0.92], [-1.29, 0.96], [-0.50, 0.91], [0.50, 0.91], [1.13, 0.96], [1.87, 0.92]],
+    topAt: [[-1.87, 0.90], [-1.60, 0.94], [-0.90, 0.95], [0.80, 0.95], [1.35, 0.90], [1.70, 0.84], [1.87, 0.76]],
+    core: { archR: 0.47, archGap: 0.05, creaseAt: 0.58, tumble: 0.94, deckDrop: 0.026, lipOut: 0.036, endRound: 0.15, endMin: 0.92 },
+    tw: 0.195,
+    gh: {
+      cowlZ: 0.74, scrZ: -0.02, backZ: -1.50, rearZ: -1.72, rearY: 1.07,
+      wScrB: 0.72, wScrT: 0.63, wRoof: 0.648, wRearT: 0.628, wRear: 0.700, wGlassT: 0.622, wGlassB: 0.722,
+      sgFB: [0.66, 0.955], sgFT: [-0.02, 1.450], sgRT: [-1.36, 1.446], sgRB: [-1.47, 0.978],
+      bPillars: [0.52], rearWrap: 0.024, rearBow: 0.006, rows: [-0.30, -1.16],
+      pillarBlack: true,
+    },
+    doors: [0.62, -0.60],
+  },
+};
+
+function buildSmallCar(spec, paint, trim, matte, S) {
+  const wr = spec.wheelR;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const { zF, zR } = S;
+  const halfW = curve(S.halfW), sillY = curve(S.sillY), beltY = curve(S.beltY);
+  const core = bodyCore(spec, paint, matte, {
+    halfW, sillY, beltY, tuckAt: curve(S.tuckAt), topAt: curve(S.topAt), zF, zR, ...S.core,
+  });
+  const { geom, endProf } = core;
+  const round = S === SMALL_LOOKS.compact;
+
+  const tw = S.tw;
+  const wx = geom(zF).wb - tw / 2 + 0.02, wxR = geom(zR).wb - tw / 2 + 0.02;
+  const wheels = [[-wx, wr, zF, wr, tw], [wx, wr, zF, wr, tw], [-wxR, wr, zR, wr, tw], [wxR, wr, zR, wr, tw]];
+
+  const G = S.gh;
+  const BLACKOUT = [0.065, 0.07, 0.075];
+  greenhouse(paint, trim, matte, {
+    ...G, cowlY: beltY(G.cowlZ) - 0.005, roofY: spec.roof,
+    deck: [geom(G.rearZ).tw * 0.985, beltY(G.rearZ) - 0.006],
+    pillarInto: G.pillarBlack ? matte : paint, pillarCol: G.pillarBlack ? BLACKOUT : WHITE,
+  });
+
+  // --- front ------------------------------------------------------------------
+  const yN = sillY(nose), bN = beltY(nose);
+  if (round) {
+    const LAMP_A = [0.505, yN + 0.300, 0.105, 0.092], GRILLE = [0, yN + 0.215, 0.250, 0.070];
+    const INTAKE = [0, yN + 0.085, 0.380, 0.045];
+    endFace(paint, nose, 1, endProf(nose), [LAMP_A, GRILLE, INTAKE], WHITE);
+    const gp = pocket(paint, matte, 0, GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.10, 1, { rim: 0.024, rimCol: CHROME });
+    for (let i = -4; i <= 4; i++) trim.box(i * 0.052, GRILLE[1] - GRILLE[3] * 0.85, gp.z + 0.02, 0.014, GRILLE[3] * 1.7, 0.03, 0, [0.20, 0.21, 0.23]);
+    for (const sx of [-1, 1]) {
+      pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.08, 1, { rim: 0.018, rimCol: PLASTIC });
+      // Round lamp in the square housing: a chrome bezel and a domed lens.
+      trim.tube([sx * LAMP_A[0], LAMP_A[1], nose - 0.030], [sx * LAMP_A[0], LAMP_A[1], nose + 0.004], 0.086, 14, CHROME, true);
+      trim.tube([sx * LAMP_A[0], LAMP_A[1], nose - 0.020], [sx * LAMP_A[0], LAMP_A[1], nose + 0.016], 0.070, 14, LAMP, true);
+      trim.box(sx * 0.66, yN + 0.155, nose - 0.02, 0.07, 0.035, 0.03, 0, AMBER);
+    }
+    pocket(paint, matte, 0, INTAKE[1], nose, INTAKE[2], INTAKE[3], 0.09, 1, { rim: 0.02, rimCol: PLASTIC });
+  } else {
+    const GRILLE = [0, yN + 0.225, 0.300, 0.046], LAMP_A = [0.505, bN - 0.115, 0.165, 0.060];
+    const INTAKE = [0, yN + 0.090, 0.440, 0.058];
+    endFace(paint, nose, 1, endProf(nose), [GRILLE, LAMP_A, INTAKE], WHITE);
+    const gp = pocket(paint, matte, 0, GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.10, 1, { rim: 0.018, rimCol: PLASTIC });
+    trim.box(0, GRILLE[1] + GRILLE[3] + 0.004, nose + 0.012, GRILLE[2] * 2.1, 0.014, 0.02, 0, CHROME);
+    for (let i = 0; i < 2; i++) trim.box(0, GRILLE[1] - 0.024 + i * 0.030, gp.z + 0.02, gp.hw * 1.9, 0.012, 0.03, 0, [0.20, 0.21, 0.23]);
+    for (const sx of [-1, 1]) {
+      const hp = pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.09, 1, { rim: 0.016, rimCol: PLASTIC });
+      trim.box(sx * LAMP_A[0], LAMP_A[1] - 0.042, nose - 0.028, hp.hw * 1.9, 0.084, 0.022, 0, LAMP);
+      trim.box(sx * LAMP_A[0], LAMP_A[1] - 0.036, nose - 0.004, hp.hw * 1.8, 0.012, 0.012, 0, WHITE); // DRL
+      // The lamp turns the corner onto the wing.
+      headlampWrap(core, trim, sx, nose, 0.15);
+      hole(trim, matte, sx * 0.50, yN + 0.085, nose - 0.01, 0.036, 0.06, 1, { rimCol: PLASTIC });
+    }
+    pocket(paint, matte, 0, INTAKE[1], nose, INTAKE[2], INTAKE[3], 0.10, 1, { rim: 0.02, rimCol: PLASTIC });
+  }
+  matte.box(0, yN - 0.03, nose - 0.17, geom(nose - 0.17).wb * 1.6, 0.050, 0.20, 0, PLASTIC);   // chin, tucked under
+  trim.box(0, yN + 0.155, nose + 0.004, 0.40, 0.11, 0.02, 0, PLATE);
+
+  // --- rear -------------------------------------------------------------------
+  const yT = sillY(tail), bT = beltY(tail);
+  const TAILA = round ? [0.600, bT - 0.150, 0.080, 0.100] : [0.585, bT - 0.120, 0.115, 0.058];
+  const TPLATE = [0, yT + 0.210, 0.230, 0.070];
+  endFace(paint, tail, -1, endProf(tail), [TAILA, TPLATE], WHITE);
+  for (const sx of [-1, 1]) {
+    const tp = pocket(paint, matte, sx * TAILA[0], TAILA[1], tail, TAILA[2], TAILA[3], 0.06, -1, { rim: 0.018, rimCol: PLASTIC });
+    trim.box(sx * TAILA[0], TAILA[1] - tp.hh * 0.95, tail + 0.018, tp.hw * 1.9, tp.hh * 1.9, 0.022, 0, TAILC);
+    if (!round) onShell(core, trim, sx, tail + 0.02, tail + 0.13, 6, 8, TAILC, 0.006, 2);
+    hole(trim, matte, sx * 0.40, yT + 0.03, tail + 0.03, 0.036, 0.09, -1);
+  }
+  pocket(paint, matte, 0, TPLATE[1], tail, TPLATE[2], TPLATE[3], 0.04, -1, { rim: 0.018, rimCol: PLASTIC });
+  trim.box(0, TPLATE[1] - 0.062, tail - 0.024, 0.40, 0.12, 0.02, 0, PLATE);
+  matte.box(0, yT - 0.03, tail + 0.17, geom(tail + 0.17).wb * 1.6, 0.070, 0.20, 0, PLASTIC);    // valance, tucked under
+  // Tailgate shut line across the back, and a spoiler over the screen.
+  matte.box(0, bT - 0.004, tail + 0.03, geom(tail + 0.03).tw * 1.6, 0.010, 0.012, 0, [0.13, 0.14, 0.15]);
+  paint.box(0, spec.roof - 0.040, G.backZ - 0.02, G.wRoof * 1.94, 0.036, 0.13, 0, WHITE);
+  trim.box(0, spec.roof - 0.052, G.backZ - 0.085, 0.20, 0.022, 0.012, 0, TAILC);          // high stop lamp
+  matte.tube([0.02, G.rearY + 0.03, G.rearZ + 0.02], [0.42, G.rearY + 0.13, G.rearZ - 0.06], 0.010, 4, PLASTIC, true); // wiper
+
+  // --- flanks -----------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    for (const zc of S.doors) shutLine(core, matte, sx, zc);
+    matte.box(sx * (geom(0).wb + 0.004), sillY(0) + 0.005, (zF + zR) / 2 + 0.02, 0.030, 0.07, (zF - zR) - 0.95, 0, PLASTIC);
+    for (let k = 0; k < S.doors.length - 1; k++) {
+      const zc = S.doors[k + 1] + 0.14, hg = geom(zc);
+      trim.tube([sx * hg.w * 0.99, hg.yc + 0.07, zc - 0.075], [sx * hg.w * 0.99, hg.yc + 0.07, zc + 0.075], 0.014, 6, CHROME, true);
+    }
+    doorMirror(paint, trim, sx, G.sgFB, G.wGlassB, 0.13);
+    trim.box(sx * (geom(zF + 0.52).w + 0.004), geom(zF + 0.52).yc + 0.02, zF + 0.52, 0.01, 0.025, 0.07, 0, AMBER);
+  }
+  // Shark-fin aerial over the rear of the roof.
+  for (const sx of [-1, 1]) {
+    paint.patch([
+      [[0, spec.roof - 0.002, G.backZ + 0.30], [0, spec.roof - 0.002, G.backZ + 0.12]],
+      [[sx * 0.026, spec.roof + 0.028, G.backZ + 0.25], [sx * 0.026, spec.roof + 0.028, G.backZ + 0.13]],
+      [[0, spec.roof + 0.056, G.backZ + 0.18], [0, spec.roof + 0.056, G.backZ + 0.13]],
+    ], [0.10, 0.11, 0.12], [sx, 0.4, 0]);
+  }
+  return wheels;
+}
+
+/**
+ * The electric car: a low fastback on a long wheelbase with short overhangs,
+ * a sealed nose, a screen raked so far it runs into a black glass roof, and one
+ * full-width light bar at each end (see "The electric car is a spec flag" in
+ * CLAUDE.md for what else `ev` switches). It was `buildGeneric` with its lamps
+ * removed, which left the flat end caps as the only thing at either end.
+ *
+ * The roof is glass rather than paint, laid into `trim` on the same rows the
+ * painted roof would use -- that single change is most of what makes it read
+ * as a modern electric saloon rather than as a coupe.
+ */
+function buildEv(spec, paint, trim, matte) {
+  const wr = spec.wheelR;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = 1.48, zR = -1.48;                 // 2.96 m wheelbase, 83 cm overhangs
+
+  const halfW = curve([
+    [tail, 0.86], [-2.00, 0.95], [zR, 1.00], [-0.60, 0.955], [0.60, 0.955], [zF, 1.00], [2.00, 0.94], [nose, 0.84],
+  ]);
+  const sillY = curve([[tail, 0.36], [-1.95, 0.26], [-0.60, 0.23], [0.60, 0.23], [1.95, 0.26], [nose, 0.30]]);
+  // The nose is the lowest here -- 66 cm, against the sedan's 95 -- because
+  // there is no engine under it. Held up to 86 cm over the front axle so the
+  // wing still covers the tyre by 9 cm.
+  const beltY = curve([
+    [tail, 0.92], [-2.00, 0.95], [zR, 0.96], [-0.60, 0.93], [0.30, 0.915], [0.80, 0.90],
+    [1.30, 0.88], [1.80, 0.81], [2.10, 0.74], [nose, 0.66],
+  ]);
+  const core = bodyCore(spec, paint, matte, {
+    halfW, sillY, beltY, zF, zR,
+    tuckAt: curve([[tail, 0.86], [zR, 0.93], [-0.60, 0.88], [0.60, 0.88], [zF, 0.93], [nose, 0.86]]),
+    topAt: curve([[tail, 0.84], [-1.90, 0.90], [-1.00, 0.93], [0.90, 0.93], [1.60, 0.88], [2.05, 0.80], [nose, 0.70]]),
+    archR: 0.55, archGap: 0.05, creaseAt: 0.55, tumble: 0.92, deckDrop: 0.030, lipOut: 0.030,
+    endRound: 0.22, endMin: 0.86,
+  });
+  const { geom, endProf } = core;
+  const tw = 0.245;
+  const wx = geom(zF).wb - tw / 2 + 0.02, wxR = geom(zR).wb - tw / 2 + 0.02;
+  const wheels = [[-wx, wr, zF, wr, tw], [wx, wr, zF, wr, tw], [-wxR, wr, zR, wr, tw], [wxR, wr, zR, wr, tw]];
+
+  const G = {
+    cowlZ: 0.92, cowlY: beltY(0.92) - 0.005, scrZ: -0.26, roofY: spec.roof, backZ: -0.90,
+    rearZ: -1.80, rearY: beltY(-1.80) + 0.070,
+    wScrB: 0.80, wScrT: 0.655, wRoof: 0.672, wRearT: 0.650, wRear: 0.80, wGlassT: 0.645, wGlassB: 0.80,
+    sgFB: [0.86, beltY(0.86) + 0.008], sgFT: [-0.24, spec.roof - 0.030],
+    sgRT: [-1.00, spec.roof - 0.040], sgRB: [-1.50, beltY(-1.50) + 0.008],
+    deck: [geom(-1.80).tw * 0.985, beltY(-1.80) - 0.006],
+    bPillars: [0.47], scrWrap: 0.10, rearWrap: 0.045, rearBow: 0.020, crown: 0.014,
+    // A real glass roof now that glass is see-through: from above, or looking
+    // up through a side window, you see the cabin and the sky.
+    roofInto: trim, roofCol: GLASS, rows: [-0.22, -1.14],
+  };
+  greenhouse(paint, trim, matte, G);
+
+  // --- front: sealed, with slim lamps joined by a light bar -------------------
+  const yN = sillY(nose), bN = beltY(nose);
+  const LAMP_A = [0.52, bN - 0.080, 0.140, 0.028], INTAKE = [0, yN + 0.080, 0.40, 0.038];
+  endFace(paint, nose, 1, endProf(nose), [LAMP_A, INTAKE], WHITE);
+  for (const sx of [-1, 1]) {
+    const hp = pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.07, 1, { rim: 0.012, rimCol: PLASTIC });
+    trim.box(sx * LAMP_A[0], LAMP_A[1] - 0.020, nose - 0.024, hp.hw * 1.9, 0.040, 0.020, 0, LAMP);
+    headlampWrap(core, trim, sx, nose, 0.17);
+  }
+  trim.box(0, LAMP_A[1] + 0.012, nose + 0.004, (LAMP_A[0] - LAMP_A[2]) * 2, 0.012, 0.010, 0, WHITE);   // light bar
+  pocket(paint, matte, 0, INTAKE[1], nose, INTAKE[2], INTAKE[3], 0.08, 1, { rim: 0.016, rimCol: PLASTIC });
+  matte.box(0, yN - 0.035, nose - 0.17, geom(nose - 0.17).wb * 1.5, 0.045, 0.20, 0, PLASTIC);
+  trim.box(0, yN + 0.150, nose + 0.004, 0.40, 0.11, 0.02, 0, PLATE);
+
+  // --- rear: one lamp bar across the tail, a ducktail over it ------------------
+  const yT = sillY(tail), bT = beltY(tail);
+  const TAILBAR = [0, bT - 0.085, 0.62, 0.030], TPLATE = [0, yT + 0.170, 0.230, 0.070];
+  endFace(paint, tail, -1, endProf(tail), [TAILBAR, TPLATE], WHITE);
+  const tp = pocket(paint, matte, 0, TAILBAR[1], tail, TAILBAR[2], TAILBAR[3], 0.06, -1, { rim: 0.014, rimCol: PLASTIC });
+  trim.box(0, TAILBAR[1] - tp.hh * 0.95, tail + 0.016, tp.hw * 1.96, tp.hh * 1.9, 0.020, 0, TAILC);
+  for (const sx of [-1, 1]) onShell(core, trim, sx, tail + 0.02, tail + 0.14, 6, 8, TAILC, 0.006, 2);
+  pocket(paint, matte, 0, TPLATE[1], tail, TPLATE[2], TPLATE[3], 0.04, -1, { rim: 0.016, rimCol: PLASTIC });
+  trim.box(0, TPLATE[1] - 0.062, tail - 0.022, 0.40, 0.12, 0.02, 0, PLATE);
+  // Ducktail rather than a wing -- it belongs to the bodywork, so it is painted
+  // with the car instead of bolted on in a contrast colour.
+  paint.box(0, beltY(tail + 0.14) - 0.012, tail + 0.13, geom(tail + 0.13).tw * 1.80, 0.034, 0.20, 0, WHITE);
+  matte.box(0, yT - 0.06, tail + 0.16, geom(tail + 0.16).wb * 1.5, 0.070, 0.20, 0, PLASTIC);   // diffuser
+
+  // --- flanks -----------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    for (const zc of [0.86, -0.12, -1.10]) shutLine(core, matte, sx, zc);
+    matte.box(sx * (geom(0).wb + 0.004), sillY(0) - 0.01, 0, 0.034, 0.075, 1.80, 0, PLASTIC);
+    // Flush handles: a dark sliver, not a chrome bar standing off the door.
+    for (const zc of [0.50, -0.50]) {
+      const hg = geom(zc);
+      matte.box(sx * (hg.w + 0.002), hg.yc + 0.055, zc, 0.008, 0.022, 0.15, 0, [0.12, 0.13, 0.14]);
+    }
+    doorMirror(paint, trim, sx, G.sgFB, G.wGlassB, 0.13);
+  }
+  // Charge flap on the rear quarter, driver's side.
+  matte.box(-(geom(-1.95).w + 0.003), geom(-1.95).yc + 0.02, -1.95, 0.008, 0.085, 0.11, 0, [0.14, 0.15, 0.16]);
+  return wheels;
+}
+
+// ---------------------------------------------------------------------------
+// The Wedge: an angular stainless electric pickup.
+//
+// Every other body here is LOFTED -- smooth sections, smooth normals, because
+// a car is curves. This one is the opposite brief: flat stainless sheets
+// meeting at sharp creases, so it is built facet by facet, each a planar quad
+// with its own flat normal (`wFacet`). Smooth normals across a crease would
+// round off the one thing the shape is about.
+//
+// The whole body hangs off four lines, all straight:
+//   top(z)  the single roofline: nose 1.06 m up to the apex (z -0.10, `roof`)
+//           and down again to the tail at 1.30 -- bonnet, screen, glass roof
+//           and the bed's cover are all on it
+//   BELT    a horizontal crease at 1.22 m, the widest point of the body
+//   xs(y)   the section: the lower sides lean OUT from the sill to the belt,
+//           the upper sides lean IN from the belt to the roof edge, so the
+//           roof is narrowest at the apex and widens to the full body at
+//           both ends -- which is what makes it read as a wedge from any side
+//   sill(z) the bottom of the flanks, rising into the chin and rear bumper
+// Each flank is ONE plane (x is a function of y alone), so any quad whose
+// corners are on it is planar however the stations fall.
+// ---------------------------------------------------------------------------
+const WEDGE_SEAM = [0.05, 0.055, 0.06];
+const WEDGE_CLAD = [0.075, 0.078, 0.082];   // arch flares, chin, rear bumper: grained black plastic
+const WEDGE_VAULT = [0.13, 0.135, 0.14];    // the bed cover's slats
+const WEDGE_GLOSS = [0.022, 0.025, 0.03];   // light-bar housings (trim, so gloss black)
+const WEDGE_LINER = [0.15, 0.15, 0.16];
+const AERO_A = [0.15, 0.155, 0.165], AERO_B = [0.27, 0.28, 0.30];
+
+/**
+ * A flat polygon (3 or 4 corners), normal from its own corners (Newell),
+ * turned to agree with `hint`. `col` is one rgb or one per corner. With
+ * `liner`, an inward-facing copy goes into that builder `ld` metres inside:
+ * the back of a painted panel is culled, so a pillar seen across the cabin
+ * through the far window would otherwise be a hole.
+ */
+function wFacet(b, pts, col, hint, liner = null, ld = 0.012) {
+  let nx = 0, ny = 0, nz = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i], q = pts[(i + 1) % pts.length];
+    nx += (p[1] - q[1]) * (p[2] + q[2]);
+    ny += (p[2] - q[2]) * (p[0] + q[0]);
+    nz += (p[0] - q[0]) * (p[1] + q[1]);
+  }
+  const l = Math.hypot(nx, ny, nz);
+  if (l < 1e-9) return;
+  if (nx * hint[0] + ny * hint[1] + nz * hint[2] < 0) { nx = -nx; ny = -ny; nz = -nz; }
+  const n = [nx / l, ny / l, nz / l];
+  if (pts.length === 3) b.tri(pts[0], pts[1], pts[2], n, col);
+  else b.quad(pts[0], pts[1], pts[2], pts[3], n, [0, 0, 1, 0, 1, 1, 0, 1], col);
+  if (liner) {
+    const inner = pts.map((p) => [p[0] - n[0] * ld, p[1] - n[1] * ld, p[2] - n[2] * ld]);
+    wFacet(liner, inner, WEDGE_LINER, [-n[0], -n[1], -n[2]]);
+  }
+}
+
+/**
+ * The lit light bars on the player's Wedge (Vehicle.setDetailed / sync): one
+ * box scaled to each bar's width, two shared unlit materials. `{ color,
+ * toneMapped: false }` is the police strobes' and the Needle beacon's exact
+ * parameter set, so it is a program the city has already compiled -- no
+ * hitch the first time you get in. Made once, never disposed.
+ */
+let LIGHTBAR = null;
+function lightbarParts() {
+  if (!LIGHTBAR) {
+    LIGHTBAR = {
+      geo: new THREE.BoxGeometry(1, 0.022, 0.008),
+      front: new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }),
+      rear: new THREE.MeshBasicMaterial({ color: 0xff2a1a, toneMapped: false }),
+    };
+  }
+  return LIGHTBAR;
+}
+
+function buildWedge(spec, paint, trim, matte) {
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const wr = spec.wheelR, tw = 0.315;
+  const zF = 1.86, zR = -1.80;                       // 3.66 m wheelbase
+  const SILL = spec.sill, BELT = spec.belt;
+  const W = 1.00, WS = 0.955, ROOFW = 0.70;          // half-widths: belt, sill, roof at the apex
+  const TN = 1.06, ZA = -0.10, YA = spec.roof, TT = 1.30;
+  const K = (W - ROOFW) / (YA - BELT);               // the upper sides' lean
+  const top = (z) => (z >= ZA ? YA + ((TN - YA) * (z - ZA)) / (nose - ZA) : YA + ((TT - YA) * (ZA - z)) / (ZA - tail));
+  const xs = (y) => (y <= BELT ? WS + ((W - WS) * (y - SILL)) / (BELT - SILL) : W - (y - BELT) * K);
+  // Where the bonnet rises through the beltline: forward of it, no upper side.
+  const zHB = ZA + ((nose - ZA) * (YA - BELT)) / (YA - TN);
+  const NOSE_LO = 0.66, TAIL_LO = 0.62, CHIN = 2.56, BUMP = -2.52;
+  const sill = (z) => (z > CHIN ? SILL + ((NOSE_LO - SILL) * (z - CHIN)) / (nose - CHIN)
+    : z < BUMP ? SILL + ((TAIL_LO - SILL) * (BUMP - z)) / (BUMP - tail) : SILL);
+  // Wheel arches: angular, a flat top over chamfered shoulders.
+  const AB = 0.68, AS = 0.60, AT = 0.36, YS = 0.78, YT = 1.00;
+  const archAt = (z) => {
+    for (const zc of [zF, zR]) {
+      const d = Math.abs(z - zc);
+      if (d > AB) continue;
+      if (d <= AT) return YT;
+      if (d <= AS) return YT + ((YS - YT) * (d - AT)) / (AS - AT);
+      return YS + ((SILL - YS) * (d - AS)) / (AB - AS);
+    }
+    return null;
+  };
+  const bottom = (z) => { const a = archAt(z); return a === null ? sill(z) : a; };
+  const P = (sx, y, z, d = 0) => [sx * (xs(y) + d), y, z];
+
+  // Windows on the upper sides, and the stations along the roofline.
+  const COWL = 1.98, WF = 1.62, WB = 0.20, BP = 0.10, RW = -0.92, RX = -1.00, LIP = tail + 0.05;
+  const CAB = [RW - 0.06, WF];                       // what you can see into: liners here
+
+  // --- the flanks: lower sheet, sill to belt, arches cut out ------------------
+  const SL = [...new Set([nose, CHIN, zHB, zF + AB, zF + AS, zF + AT, zF - AT, zF - AS, zF - AB,
+    zR + AB, zR + AS, zR + AT, zR - AT, zR - AS, zR - AB, BUMP, tail].map((z) => +z.toFixed(5)))].sort((a, b) => b - a);
+  for (const sx of [-1, 1]) {
+    for (let i = 0; i < SL.length - 1; i++) {
+      const z0 = SL[i], z1 = SL[i + 1];
+      // sample just inside the interval: an arch's end station is on the sill
+      const b0 = bottom(z0 - 1e-6), b1 = bottom(z1 + 1e-6);
+      const t0 = Math.min(BELT, top(z0)), t1 = Math.min(BELT, top(z1));
+      wFacet(paint, [P(sx, b0, z0), P(sx, b1, z1), P(sx, t1, z1), P(sx, t0, z0)],
+        WHITE, [sx, 0, 0]);
+    }
+    // --- upper sides: belt to roof edge, with the side glass flush in them ---
+    const SU = [zHB, WF, WB, BP, ZA, RW, tail];
+    const glazed = (i) => i === 1 || i === 3 || i === 4;
+    for (let i = 0; i < SU.length - 1; i++) {
+      const z0 = SU[i], z1 = SU[i + 1];
+      const inCab = z0 <= CAB[1] + 1e-6 && z1 >= CAB[0] - 1e-6;
+      const lin = inCab ? matte : null;
+      if (!glazed(i)) {
+        // the sail runs to the tail: line only the part beside the cabin
+        if (z1 < CAB[0]) {
+          wFacet(paint, [P(sx, BELT, z0), P(sx, BELT, CAB[0]), P(sx, top(CAB[0]), CAB[0]), P(sx, top(z0), z0)], WHITE, [sx, 0.5, 0], matte);
+          wFacet(paint, [P(sx, BELT, CAB[0]), P(sx, BELT, z1), P(sx, top(z1), z1), P(sx, top(CAB[0]), CAB[0])], WHITE, [sx, 0.5, 0]);
+        } else {
+          wFacet(paint, [P(sx, BELT, z0), P(sx, BELT, z1), P(sx, top(z1), z1), P(sx, top(z0), z0)], WHITE, [sx, 0.5, 0], lin);
+        }
+        continue;
+      }
+      const g0 = BELT + 0.025, gT = (z) => top(z) - 0.055;
+      wFacet(paint, [P(sx, BELT, z0), P(sx, BELT, z1), P(sx, g0, z1), P(sx, g0, z0)], WHITE, [sx, 0.5, 0], lin);
+      wFacet(trim, [P(sx, g0, z0), P(sx, g0, z1), P(sx, gT(z1), z1), P(sx, gT(z0), z0)], GLASS, [sx, 0.5, 0]);
+      wFacet(paint, [P(sx, gT(z0), z0), P(sx, gT(z1), z1), P(sx, top(z1), z1), P(sx, top(z0), z0)], WHITE, [sx, 0.5, 0], lin);
+    }
+  }
+
+  // --- the roofline: bonnet, screen, glass roof, crossbar, bed cover -----------
+  const edge = (z) => xs(top(z));
+  const across = (b, z0, z1, x0, x1, col, lin = null) => {
+    // a strip between |x| x0(z)..x1(z) on both sides, or across the middle when x0 is null
+    if (x0 === null) {
+      wFacet(b, [[-x1(z0), top(z0), z0], [x1(z0), top(z0), z0], [x1(z1), top(z1), z1], [-x1(z1), top(z1), z1]], col, [0, 1, 0], lin);
+      return;
+    }
+    for (const sx of [-1, 1]) {
+      wFacet(b, [[sx * x0(z0), top(z0), z0], [sx * x1(z0), top(z0), z0], [sx * x1(z1), top(z1), z1], [sx * x0(z1), top(z1), z1]], col, [0, 1, 0], lin);
+    }
+  };
+  const inset = (s) => (z) => edge(z) - s;
+  across(paint, nose, zHB, null, edge, WHITE);
+  across(paint, zHB, COWL, null, edge, WHITE);
+  across(paint, COWL, ZA, inset(0.06), edge, WHITE, matte);         // A-pillars
+  across(trim, COWL, ZA, null, inset(0.06), GLASS);                   // the screen
+  across(paint, ZA, RW, inset(0.07), edge, WHITE, matte);
+  across(trim, ZA, RW, null, inset(0.07), GLASS);                     // glass roof
+  across(paint, RW, RX, null, edge, WHITE, matte);                    // crossbar over the rear window
+  across(paint, RX, LIP, inset(0.07), edge, WHITE);
+  across(paint, LIP, tail, null, edge, WHITE);
+  // The bed's cover, on the same line as the roof: one matte panel. It was
+  // fifteen slats with a 1.2 cm dark seam each -- far thinner than a pixel
+  // from the chase camera, so on the move they crawled and shimmered.
+  across(matte, RX, LIP, null, inset(0.07), WEDGE_VAULT);
+  // Seam where the bonnet meets the screen.
+  {
+    const z0 = COWL + 0.004, z1 = COWL + 0.020, x0 = inset(0.06)(z0), x1 = inset(0.06)(z1);
+    matte.quad([-x0, top(z0) + 0.002, z0], [x0, top(z0) + 0.002, z0], [x1, top(z1) + 0.002, z1], [-x1, top(z1) + 0.002, z1],
+      [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], WEDGE_SEAM);
+  }
+
+  // --- nose: a flat face under the leading edge, the light bar across it ------
+  const endFace = (b, z, y0, y1, col, dir) => wFacet(b, [[-xs(y0), y0, z], [xs(y0), y0, z], [xs(y1), y1, z], [-xs(y1), y1, z]], col, [0, 0, dir]);
+  endFace(paint, nose, NOSE_LO, 0.985, WHITE, 1);
+  endFace(trim, nose, 0.985, 1.035, WEDGE_GLOSS, 1);
+  endFace(paint, nose, 1.035, TN, WHITE, 1);
+  {
+    const x = xs(1.01) - 0.03, z = nose + 0.004;
+    trim.quad([-x, 0.998, z], [x, 0.998, z], [x, 1.022, z], [-x, 1.022, z], [0, 0, 1], [0, 0, 1, 0, 1, 1, 0, 1], LAMP);
+  }
+  wFacet(matte, [[-xs(NOSE_LO), NOSE_LO, nose], [xs(NOSE_LO), NOSE_LO, nose], [xs(SILL), SILL, CHIN], [-xs(SILL), SILL, CHIN]], WEDGE_CLAD, [0, -0.5, 1]);
+
+  // --- tail: the tailgate face, the red bar along its top edge ---------------
+  endFace(paint, tail, TAIL_LO, BELT, WHITE, -1);
+  endFace(paint, tail, BELT, 1.235, WHITE, -1);
+  endFace(trim, tail, 1.235, 1.285, WEDGE_GLOSS, -1);
+  endFace(paint, tail, 1.285, TT, WHITE, -1);
+  {
+    const x = xs(1.26) - 0.03, z = tail - 0.004;
+    trim.quad([-x, 1.247, z], [x, 1.247, z], [x, 1.273, z], [-x, 1.273, z], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], TAILC);
+    // the tailgate's bottom shut line
+    const xl = xs(0.70);
+    matte.quad([-xl, 0.69, tail - 0.002], [xl, 0.69, tail - 0.002], [xl, 0.70, tail - 0.002], [-xl, 0.70, tail - 0.002],
+      [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], WEDGE_SEAM);
+  }
+  trim.box(0, 0.78, tail - 0.006, 0.31, 0.155, 0.012, 0, PLATE);
+  wFacet(matte, [[-xs(TAIL_LO), TAIL_LO, tail], [xs(TAIL_LO), TAIL_LO, tail], [xs(SILL), SILL, BUMP], [-xs(SILL), SILL, BUMP]], WEDGE_CLAD, [0, -0.5, -1]);
+
+  // --- underside, out to the wheel wells ---------------------------------------
+  const WELL = 0.52;
+  const under = (x0, x1, z0, z1) => wFacet(matte, [[x0, SILL, z0], [x1, SILL, z0], [x1, SILL, z1], [x0, SILL, z1]], CAVITY, [0, -1, 0]);
+  under(-WELL, WELL, CHIN, BUMP);
+  for (const sx of [-1, 1]) under(sx * WELL, sx * xs(SILL), zF - AB, zR + AB);
+
+  // --- arches: a proud black flare round each, and a dark well inside ---------
+  for (const zc of [zF, zR]) {
+    const O = [[zc + AB, SILL], [zc + AS, YS], [zc + AT, YT], [zc - AT, YT], [zc - AS, YS], [zc - AB, SILL]];
+    // outward normals per segment, in (z, y), away from the axle line
+    const segN = [];
+    for (let k = 0; k < O.length - 1; k++) {
+      const dz = O[k + 1][0] - O[k][0], dy = O[k + 1][1] - O[k][1], l = Math.hypot(dz, dy);
+      let n = [dy / l, -dz / l];
+      const mz = (O[k][0] + O[k + 1][0]) / 2 - zc, my = (O[k][1] + O[k + 1][1]) / 2 - SILL;
+      if (n[0] * mz + n[1] * my < 0) n = [-n[0], -n[1]];
+      segN.push(n);
+    }
+    // the flare's outer edge, D out from the opening, mitred at the corners
+    // and slid along the sill at the ends
+    const D = 0.075;
+    const off = O.map((p, k) => {
+      if (k === 0 || k === O.length - 1) {
+        const n = segN[k === 0 ? 0 : k - 1];
+        return [p[0] + (Math.sign(n[0]) * D) / Math.max(0.3, Math.abs(n[0])), p[1]];
+      }
+      const a = segN[k - 1], b = segN[k];
+      let mz = a[0] + b[0], my = a[1] + b[1];
+      const ml = Math.hypot(mz, my); mz /= ml; my /= ml;
+      const s = D / Math.max(0.4, mz * a[0] + my * a[1]);
+      return [p[0] + mz * s, p[1] + my * s];
+    });
+    for (const sx of [-1, 1]) {
+      for (let k = 0; k < O.length - 1; k++) {
+        const [z0, y0] = O[k], [z1, y1] = O[k + 1], [w0, v0] = off[k], [w1, v1] = off[k + 1];
+        const n = segN[k];
+        // the flare's face: proud at the opening, meeting the sheet at its edge
+        wFacet(matte, [P(sx, y0, z0, 0.035), P(sx, y1, z1, 0.035), P(sx, v1, w1, 0.006), P(sx, v0, w0, 0.006)], WEDGE_CLAD, [sx, 0, 0]);
+        // its lip, turning in toward the tyre
+        wFacet(matte, [P(sx, y0, z0, 0.035), P(sx, y1, z1, 0.035), P(sx, y1, z1, -0.07), P(sx, y0, z0, -0.07)], WEDGE_CLAD, [0, -n[1], -n[0]]);
+        // and the well behind it, back to the inner wall
+        wFacet(matte, [P(sx, y0, z0, -0.07), P(sx, y1, z1, -0.07), [sx * WELL, y1, z1], [sx * WELL, y0, z0]], CAVITY, [0, -n[1], -n[0]]);
+        wFacet(matte, [[sx * WELL, SILL, zc], [sx * WELL, y0, z0], [sx * WELL, y1, z1]], CAVITY, [sx, 0, 0]);
+      }
+    }
+  }
+
+  // --- seams, mirrors -----------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    const seam = (z, y0, y1) => {
+      wFacet(matte, [P(sx, y0, z + 0.007, 0.003), P(sx, y0, z - 0.007, 0.003), P(sx, y1, z - 0.007, 0.003), P(sx, y1, z + 0.007, 0.003)],
+        WEDGE_SEAM, [sx, 0, 0]);
+    };
+    for (const z of [1.10, 0.15, -0.95]) seam(z, bottom(z) + 0.03, BELT - 0.004);
+    // ... and up the upper side, at the B-pillar and behind the rear door
+    for (const z of [0.15, -0.95]) seam(z, BELT + 0.004, top(z) - 0.004);
+    // Door mirror: a flat-faced pod on a short stalk off the front door.
+    const mz = 1.46, my = 1.31, mx = sx * 1.10;
+    paint.tube([sx * (xs(1.29) - 0.01), 1.29, mz + 0.02], [mx - sx * 0.03, my + 0.02, mz], 0.018, 5, WHITE, true);
+    paint.box(mx, my, mz, 0.075, 0.105, 0.16, 0, WHITE);
+    wFacet(paint, [[mx - 0.0375, my, mz - 0.08], [mx + 0.0375, my, mz - 0.08], [mx + 0.0375, my, mz + 0.08], [mx - 0.0375, my, mz + 0.08]], WHITE, [0, -1, 0]);
+    trim.box(mx, my + 0.01, mz - 0.083, 0.062, 0.085, 0.006, 0, MIRROR);
+  }
+
+  // --- the cabin, seen through the screen, the side glass and the glass roof --
+  {
+    const fy = BELT - 0.004, fx = W - 0.06;
+    matte.quad([-fx, fy, RX + 0.03], [fx, fy, RX + 0.03], [fx, fy, 1.20], [-fx, fy, 1.20], [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAB_FLOOR);
+    // bulkhead behind the rear seats: the cabin's back wall
+    const zb = RX + 0.03, tb = top(zb) - 0.01;
+    wFacet(matte, [[-xs(BELT) + 0.02, BELT, zb], [xs(BELT) - 0.02, BELT, zb], [xs(tb) - 0.02, tb, zb], [-xs(tb) + 0.02, tb, zb]], CAB_FLOOR, [0, 0, 1]);
+    matte.box(0, BELT - 0.01, 1.56, 1.80, 0.14, 0.84, 0, CAB_DASH);                 // dash, a flat slab
+    trim.box(0, 1.33, 1.08, 0.40, 0.20, 0.022, 0, [0.02, 0.025, 0.035]);           // the big screen
+    const H = 0.52;
+    for (const s of [-1, 1]) seat(matte, s * 0.42, BELT, 0.30, 0.50, H, false, 0.30);
+    seat(matte, 0, BELT, -0.66, 1.55, H, true, 0.30);
+    const wheel = [0.42, BELT - 0.02, 0.85];
+    wheelRim(matte, wheel[0], wheel[1], wheel[2], 0.18);
+    if (matte.crew) occupant(matte.crew, 0.42, BELT, 0.30, H, wheel);
+  }
+
+  // Chunky tyres under flat aero covers (addWheel's 'aero'). Knobbly blocks
+  // (knobs) read as a tractor's at this size, not an all-terrain pickup's.
+  const wx = 0.80;
+  return [[-wx, wr, zF, wr, tw, undefined, false, 'aero'], [wx, wr, zF, wr, tw, undefined, false, 'aero'],
+    [-wx, wr, zR, wr, tw, undefined, false, 'aero'], [wx, wr, zR, wr, tw, undefined, false, 'aero']];
+}
+
+/**
+ * Build a hand-built type at another type's size. The sedan's builder is
+ * authored in absolute stations for a 5.06 x 1.90 m car; a taxi and a police
+ * cruiser ARE that car, a little shorter or wider. Scaling the finished
+ * vertices keeps every registered panel registered -- re-deriving the stations
+ * by hand is ninety numbers to keep in step. Normals take the inverse scale.
+ * The wheels are scaled in POSITION only, because they are built round by
+ * `addWheel` afterwards; squashing them would make them ellipses.
+ */
+function scaledBuild(build, refLen, refWid) {
+  return (spec, paint, trim, matte) => {
+    const kx = spec.wid / refWid, kz = spec.len / refLen;
+    const bs = [paint, trim, matte, matte.crew].filter(Boolean), from = bs.map((b) => b.pos.length);
+    const wheels = build({ ...spec, len: refLen, wid: refWid }, paint, trim, matte);
+    bs.forEach((b, j) => {
+      for (let i = from[j]; i < b.pos.length; i += 3) {
+        b.pos[i] *= kx; b.pos[i + 2] *= kz;
+        const nx = b.nor[i] / kx, ny = b.nor[i + 1], nz = b.nor[i + 2] / kz;
+        const l = Math.hypot(nx, ny, nz) || 1;
+        b.nor[i] = nx / l; b.nor[i + 1] = ny / l; b.nor[i + 2] = nz / l;
+      }
+    });
+    return wheels.map((wl) => [wl[0] * kx, wl[1], wl[2] * kz, ...wl.slice(3)]);
+  };
+}
+
+/**
+ * Taxi and police cruiser: the sedan's body at their own size, dressed. Both
+ * used to be `buildGeneric` -- a bread-loaf shell with a sign on it -- so the
+ * two vehicles a player sees most in a chase were the ugliest on the street.
+ */
+function buildServiceSedan(spec, paint, trim, matte) {
+  const wheels = scaledBuild(buildSedan, 5.06, 1.90)(spec, paint, trim, matte);
+  const kx = spec.wid / 1.90, kz = spec.len / 5.06;
+  const roofY = spec.roof;
+  // Door band, between the arches: the sedan's flank is vertical from y 0.69
+  // to 0.77 along the doors, which is where a livery stripe sits flat.
+  const doorBand = (y0, y1, z0, z1, col, into, segs = 1) => {
+    for (const sx of [-1, 1]) {
+      const x = sx * (0.95 * 0.955 * kx + 0.004);
+      for (let i = 0; i < segs; i++) {
+        const za = z0 + ((z1 - z0) * i) / segs, zb = z0 + ((z1 - z0) * (i + 1)) / segs;
+        into.quad([x, y0, za], [x, y0, zb], [x, y1, zb], [x, y1, za], [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], col);
+      }
+    }
+  };
+  if (spec.taxi) {
+    // A roof sign on two feet, lit face front and back, and the checker band
+    // down the doors that says "cab" from a block away.
+    matte.box(0, roofY + 0.004, -0.55 * kz, 0.62, 0.030, 0.26, 0, PLASTIC);
+    paint.patch([
+      [[-0.44, roofY + 0.034, -0.42 * kz], [0.44, roofY + 0.034, -0.42 * kz]],
+      [[-0.40, roofY + 0.21, -0.51 * kz], [0.40, roofY + 0.21, -0.51 * kz]],
+    ], WHITE, [0, 0.3, 1]);
+    paint.patch([
+      [[-0.44, roofY + 0.034, -0.68 * kz], [0.44, roofY + 0.034, -0.68 * kz]],
+      [[-0.40, roofY + 0.21, -0.59 * kz], [0.40, roofY + 0.21, -0.59 * kz]],
+    ], WHITE, [0, 0.3, -1]);
+    paint.box(0, roofY + 0.206, -0.55 * kz, 0.80, 0.022, 0.10, 0, WHITE);
+    for (const sx of [-1, 1]) paint.box(sx * 0.43, roofY + 0.034, -0.55 * kz, 0.04, 0.17, 0.26, 0, WHITE);
+    trim.box(0, roofY + 0.075, -0.435 * kz, 0.50, 0.09, 0.02, 0, [1.0, 0.97, 0.86]);
+    trim.box(0, roofY + 0.075, -0.665 * kz, 0.50, 0.09, 0.02, 0, [1.0, 0.97, 0.86]);
+    const z0 = 0.95 * kz, z1 = -0.95 * kz, N = 18, h = 0.045;
+    for (let r = 0; r < 2; r++) {
+      for (let i = 0; i < N; i++) {
+        if ((i + r) % 2) continue;
+        const za = z0 + ((z1 - z0) * i) / N, zb = z0 + ((z1 - z0) * (i + 1)) / N;
+        doorBand(0.70 + r * h, 0.70 + (r + 1) * h, za, zb, [0.04, 0.04, 0.045], matte);
+      }
+    }
+  }
+  if (spec.police) {
+    // Blue stripe the length of the doors, over a dark lower band.
+    doorBand(0.72, 0.79, 0.98 * kz, -0.98 * kz, [0.05, 0.10, 0.24], matte, 4);
+    doorBand(0.79, 0.805, 0.98 * kz, -0.98 * kz, [0.78, 0.62, 0.18], matte, 4);
+    // Push bar: two uprights and a crossbar standing clear of the grille.
+    const nz = spec.len / 2;
+    for (const sx of [-1, 1]) {
+      matte.tube([sx * 0.30, 0.42, nz + 0.12], [sx * 0.30, 0.98, nz + 0.10], 0.030, 6, PLASTIC, true);
+      matte.tube([sx * 0.30, 0.50, nz - 0.02], [sx * 0.30, 0.50, nz + 0.12], 0.028, 6, PLASTIC, true);
+    }
+    matte.box(0, 0.62, nz + 0.12, 0.72, 0.060, 0.045, 0, PLASTIC);
+    matte.box(0, 0.86, nz + 0.11, 0.66, 0.050, 0.045, 0, PLASTIC);
+    // Spotlights on the A-pillars, and a trunk-lid antenna.
+    for (const sx of [-1, 1]) {
+      matte.tube([sx * 0.80 * kx, 1.12, 0.66 * kz], [sx * 0.86 * kx, 1.16, 0.64 * kz], 0.014, 5, PLASTIC, true);
+      trim.tube([sx * 0.86 * kx, 1.16, 0.56 * kz], [sx * 0.86 * kx, 1.16, 0.68 * kz], 0.045, 8, CHROME, true);
+      trim.tube([sx * 0.86 * kx, 1.16, 0.68 * kz], [sx * 0.86 * kx, 1.16, 0.69 * kz], 0.038, 8, LAMP, true);
+    }
+    matte.tube([0.30, 1.05, -2.10 * kz], [0.33, 1.72, -2.16 * kz], 0.006, 4, PLASTIC, true);
+  }
+  return wheels;
+}
+
+/**
+ * A tall painted volume -- the upper body of a van, a bus, a truck cab or a
+ * cargo box -- lofted through a section with flat sides, a radiused roof edge
+ * and a crowned roof, between two height curves over [z0, z1].
+ *
+ * Glazing goes ON this shell, a few millimetres proud, rather than being lofted
+ * in glass: `buildGeneric` lofted a van's upper body as a glass tube and stood
+ * slab boxes of glass off its sides, which is the "black sails" the van used to
+ * wear. The shell's sides are exactly vertical up to `side` (y), so a pane
+ * placed at `w0 + d` sits flat on them however the height curves change.
+ */
+function boxShell(into, cfg) {
+  const {
+    z0, z1, stations = 30, wAt, y0At, y1At, rr = 0.12, tumble = 0.03, crown = 0.02,
+    capStart = false, capEnd = false, col = WHITE, windows = [], slope = null,
+  } = cfg;
+  const sec = (z) => {
+    const w0 = wAt(z), y0 = y0At(z), y1 = Math.max(y0 + 0.02, y1At(z)), h = y1 - y0;
+    const r = Math.min(rr, h * 0.2);
+    return { w0, wT: w0 - Math.min(tumble, h * 0.03), y0, y1, h, r, side: y1 - r * 1.6 };
+  };
+  const half = (z, s) => {
+    const g = sec(z);
+    return [[s * g.w0, g.y0], [s * g.w0, g.side], [s * g.wT, g.y1 - g.r],
+      [s * (g.wT - g.r * 0.3), g.y1 - g.r * 0.3], [s * (g.wT - g.r), g.y1], [s * g.wT * 0.35, g.y1 + crown]];
+  };
+  // Openings. The glass on a shell used to be laid over unbroken paint, which
+  // was fine while glass was opaque; see-through, every van and bus window
+  // showed its own body colour. `windows` are the `sideGlass` calls that will
+  // glaze this shell ({ sx, zA, zB, yBot, yTopMax, cols }; yTopMax may be a
+  // function of `sec`), `slope` the `slopeGlass` one ({ zA, zB, rows }). Their
+  // stations become ring stations, so every hole edge is a ring edge and
+  // nothing is left half-covered behind the glass.
+  const zSet = [];
+  for (let i = 0; i <= stations; i++) zSet.push(z0 + ((z1 - z0) * i) / stations);
+  const wins = windows.map((w) => ({
+    ...w, cols: w.cols || 6, lo: Math.min(w.zA, w.zB), hi: Math.max(w.zA, w.zB),
+    top: typeof w.yTopMax === 'function' ? w.yTopMax(sec) : w.yTopMax,
+  }));
+  for (const w of wins) for (let j = 0; j <= w.cols; j++) zSet.push(w.zA + ((w.zB - w.zA) * j) / w.cols);
+  const sl = slope && { ...slope, rows: slope.rows || 4, lo: Math.min(slope.zA, slope.zB), hi: Math.max(slope.zA, slope.zB) };
+  if (sl) for (let i = 0; i <= sl.rows; i++) zSet.push(sl.zA + ((sl.zB - sl.zA) * i) / sl.rows);
+  zSet.sort((a, b) => (z1 > z0 ? a - b : b - a));
+  const zs = zSet.filter((z, i) => i === 0 || Math.abs(z - zSet[i - 1]) > 1e-4);
+  const rings = zs.map((z) => ({ z, pts: [...half(z, -1), ...half(z, 1).reverse()] }));
+  const within = (o, za, zb) => Math.min(za, zb) >= o.lo - 1e-4 && Math.max(za, zb) <= o.hi + 1e-4;
+  // Ring points run L0..L5 then R5..R0: segment 0 is the left flat side, 10
+  // the right, and 4..6 the top between the roof radii.
+  const sideWin = (i, sx) => wins.find((w) => w.sx === sx && within(w, rings[i].z, rings[i + 1].z));
+  const skip = (i, k) => (k === 0 && !!sideWin(i, -1)) || (k === 10 && !!sideWin(i, 1))
+    || (!!sl && k >= 4 && k <= 6 && within(sl, rings[i].z, rings[i + 1].z));
+  into.loft(rings, col, { capStart, capEnd, skip: wins.length || sl ? skip : null });
+  const UV = [0, 0, 1, 0, 1, 1, 0, 1];
+  for (let i = 0; i < rings.length - 1; i++) {
+    const za = rings[i].z, zb = rings[i + 1].z, ga = sec(za), gb = sec(zb);
+    for (const sx of [-1, 1]) {
+      const w = sideWin(i, sx);
+      if (!w) continue;
+      // The same top edge sideGlass draws, so pane and hole agree.
+      const yt = (g) => Math.max(w.yBot + 0.002, Math.min(w.top, g.side - 0.035));
+      const xa = sx * ga.w0, xb = sx * gb.w0;
+      if (w.yBot - Math.min(ga.y0, gb.y0) > 1e-3) into.quad([xa, ga.y0, za], [xb, gb.y0, zb], [xb, w.yBot, zb], [xa, w.yBot, za], [sx, 0, 0], UV, col);
+      if (ga.side - yt(ga) > 1e-3 || gb.side - yt(gb) > 1e-3) {
+        into.quad([xa, yt(ga), za], [xb, yt(gb), zb], [xb, gb.side, zb], [xa, ga.side, za], [sx, 0, 0], UV, col);
+      }
+    }
+    if (sl && within(sl, za, zb)) {
+      // slopeGlass spans 93 % of the flat top; paint the last 7 % to the radius.
+      for (const s of [-1, 1]) {
+        const edge = (g) => {
+          const ax = (g.wT - g.r) * 0.93, flat = g.wT * 0.35;
+          return [s * ax, g.y1 + crown * (1 - (ax - flat) / (g.wT - g.r - flat))];
+        };
+        const ea = edge(ga), eb = edge(gb);
+        const A = [s * (ga.wT - ga.r), ga.y1, za], B = [s * (gb.wT - gb.r), gb.y1, zb], C = [eb[0], eb[1], zb], D = [ea[0], ea[1], za];
+        const u = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], v = [D[0] - A[0], D[1] - A[1], D[2] - A[2]];
+        let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+        const l = Math.hypot(...n) || 1;
+        n = n.map((c) => (c / l) * (n[1] < 0 ? -1 : 1));
+        into.quad(A, B, C, D, n, UV, col);
+      }
+    }
+  }
+  return {
+    sec, half, crown,
+    /** The section as [[y, halfWidth], ...] ascending, for `endFace`. */
+    prof: (z) => half(z, 1).map(([x, y]) => [y, x]),
+  };
+}
+
+/** A pane laid flat on a `boxShell`'s side between two stations. */
+function sideGlass(trim, shell, sx, zA, zB, yBot, yTopMax, d = 0.007, cols = 6) {
+  const bot = [], top = [];
+  for (let j = 0; j <= cols; j++) {
+    const z = zA + ((zB - zA) * j) / cols, g = shell.sec(z);
+    const yt = Math.max(yBot + 0.002, Math.min(yTopMax, g.side - 0.035));
+    bot.push([sx * (g.w0 + d), yBot, z]);
+    top.push([sx * (g.w0 + d), yt, z]);
+  }
+  trim.patch([bot, top], GLASS, [sx, 0, 0]);
+}
+
+/**
+ * The panel van: a short sloping bonnet, a windscreen raked straight into a
+ * tall painted box, a sliding door, and rear doors with their own glass. The
+ * lower body is `bodyCore` (so it has real arches and fascias); everything
+ * above the beltline is one `boxShell` whose roof line comes down the
+ * windscreen to the cowl, which is what gives a van its side outline -- the
+ * cab sides follow the screen, they do not stop square.
+ */
+function buildVan(spec, paint, trim, matte) {
+  // A high-roof panel van (the Transit / Sprinter class) as ONE body: every
+  // cross-section runs from the sill, up a flat flank with a little
+  // tumblehome, round the roof edge to the crown, and the long profile goes
+  // flat roof -> raked windscreen -> short bonnet -> nose. The rear is a flat
+  // pair of doors from the bumper to the roof. Wheel arches are the flank's
+  // bottom edge rising over each tyre, with a liner behind and a black flare
+  // round it. Glass is cut out of the same grid (side windows in the cab
+  // doors, the windscreen) so the cab is seen into; the cargo box is closed
+  // off behind the seats.
+  const wr = spec.wheelR, roofY = spec.roof;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = 1.70, zR = -1.80, AR = 0.47;
+  const W = curve([[tail, 0.965], [tail + 0.14, 0.99], [zR, 1.0], [1.55, 1.0], [2.15, 0.975], [nose - 0.12, 0.93], [nose, 0.88]]);
+  const TOP = curve([[tail, roofY - 0.03], [tail + 0.10, roofY], [0.92, roofY], [1.05, roofY - 0.06], [1.64, 1.17], [2.25, 1.05], [nose - 0.10, 0.98], [nose, 0.90]]);
+  const SILL = 0.40, BELT = 1.14;
+  const archY = (z) => {
+    let y = SILL;
+    for (const az of [zF, zR]) {
+      const dz = z - az;
+      if (Math.abs(dz) < AR) y = Math.max(y, wr + Math.sqrt(AR * AR - dz * dz) * 0.98);
+    }
+    return y;
+  };
+  // the cab's side windows: from the A-pillar back to the B-pillar
+  const WIN0 = 0.50, WIN1 = 1.52;
+  const sec = (z) => {
+    const w = W(z), H = TOP(z), b = archY(z);
+    const belt = Math.min(BELT, H - 0.06);
+    const upY = Math.max(belt + 0.02, H - 0.16);
+    const winB = Math.min(belt + 0.07, upY - 0.02), winT = Math.max(winB + 0.01, Math.min(H - 0.24, upY - 0.01));
+    return [
+      [w - 0.035, b], [w, Math.min(b + 0.08, belt - 0.03)], [w, belt], [w - 0.005, winB], [w - 0.022, winT],
+      [w - 0.03, upY], [w - 0.13, H - 0.025], [w * 0.5, H], [0, H + 0.012],
+    ];
+  };
+  // stations: dense round the arches, the cab and the ends
+  const zs = new Set([tail, tail + 0.04, tail + 0.12, nose, nose - 0.05, nose - 0.12, WIN0, WIN1, WIN0 + 0.04, WIN1 - 0.04, 0.92, 1.05, 1.64, 2.25]);
+  for (let z = tail; z < nose; z += 0.2) zs.add(+z.toFixed(3));
+  for (const az of [zF, zR]) for (let k = -12; k <= 12; k++) zs.add(+(az + (k / 12) * (AR + 0.01)).toFixed(4));
+  const Z = [...zs].filter((z) => z >= tail && z <= nose).sort((a, b) => a - b);
+  const GL = GLASS, CLAD = [0.08, 0.085, 0.09];
+  // what each quad is: (station interval i, column k) -> [builder, colour] or null
+  const pick = (za, zb, k) => {
+    const zm = (za + zb) / 2;
+    if (k === 0) return [matte, CLAD];                                       // lower cladding
+    if (k === 3 && zm > WIN0 + 0.04 && zm < WIN1 - 0.04) return [trim, GL]; // cab side window
+    if (k >= 6 && zm > 1.07 && zm < 1.62) return [trim, GL];               // windscreen
+    return [paint, WHITE];
+  };
+  for (const sd of [-1, 1]) {
+    const rows = Z.map((z) => sec(z).map(([x, y]) => [sd * x, y, z]));
+    // per-vertex normals, from the grid, outward
+    const N = rows.map((r, i) => r.map((q, k) => {
+      const a = rows[Math.max(0, i - 1)][k], b = rows[Math.min(rows.length - 1, i + 1)][k];
+      const c = r[Math.max(0, k - 1)], d = r[Math.min(r.length - 1, k + 1)];
+      const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], v = [d[0] - c[0], d[1] - c[1], d[2] - c[2]];
+      let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+      const l = Math.hypot(...n) || 1; n = n.map((t) => t / l);
+      const out = [q[0], q[1] - 0.8, 0];
+      if (n[0] * out[0] + n[1] * out[1] < 0) n = n.map((t) => -t);
+      return n;
+    }));
+    for (let i = 0; i < rows.length - 1; i++) {
+      for (let k = 0; k < rows[i].length - 1; k++) {
+        const pk = pick(Z[i], Z[i + 1], k);
+        if (!pk) continue;
+        const [b, col] = pk;
+        const inset = b === trim ? 0.006 : 0;
+        const P = (ii, kk) => { const q = rows[ii][kk]; return inset ? [q[0] - sd * inset * Math.sign(q[0] || 1) * 0 - N[ii][kk][0] * inset, q[1] - N[ii][kk][1] * inset, q[2]] : q; };
+        b.quad(P(i, k), P(i + 1, k), P(i + 1, k + 1), P(i, k + 1), [N[i][k], N[i + 1][k], N[i + 1][k + 1], N[i][k + 1]], [0, 0, 1, 0, 1, 1, 0, 1], col);
+      }
+    }
+    // wheel arches: a liner tunnelled in behind each opening, and a flare
+    for (const az of [zF, zR]) {
+      const lipPts = [], liner = [[], [], []];
+      for (let t = 0; t <= 16; t++) {
+        const a = Math.PI * (t / 16);
+        const z = az - Math.cos(a) * AR * 0.995, y = Math.max(SILL - 0.02, wr + Math.sin(a) * AR * 0.98);
+        const x = sd * (W(z) - 0.03);
+        lipPts.push([x + sd * 0.03, y + 0.01, z]);
+        liner[0].push([x, y, z]); liner[1].push([x - sd * 0.28, y, z]); liner[2].push([x - sd * 0.30, wr * 0.6 + (y - wr * 0.6) * 0.3, z]);
+      }
+      matte.patch(liner, CAVITY, [-sd, -0.5, 0]);
+      for (let t = 0; t < lipPts.length - 1; t++) matte.tube(lipPts[t], lipPts[t + 1], 0.035, 5, CLAD, false);
+    }
+  }
+  // the underbody between the sills
+  matte.quad([-0.96, SILL - 0.02, tail + 0.2], [0.96, SILL - 0.02, tail + 0.2], [0.96, SILL - 0.02, nose - 0.25], [-0.96, SILL - 0.02, nose - 0.25], [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAVITY);
+
+  const profAt = (z) => sec(z).map(([x, y]) => [y, x]);
+  const tw = 0.235;
+  const wx = W(zF) - tw / 2 - 0.02, wxR = W(zR) - tw / 2 - 0.02;
+  const wheels = [[-wx, wr, zF, wr, tw], [wx, wr, zF, wr, tw], [-wxR, wr, zR, wr, tw], [wxR, wr, zR, wr, tw]];
+
+  // --- the cab: floor, seats, dash, wheel, the bulkhead closing the cargo
+  // box behind them, the headliner
+  boxCabin(matte, { y: 0.62, sit: 1.14, x: W(1.0) - 0.08, zR: 0.30, zF: 1.58, top: roofY - 0.09, hzF: 1.02, rows: [0.62], wheelDz: 0.58 });
+  // wipers at the foot of the screen
+  for (const x of [-0.42, 0.18]) matte.tube([x, 1.19, 1.6], [x + 0.45, 1.36, 1.5], 0.012, 4, CLAD, true);
+  // A-pillar trims and the screen's black surround at the top
+  for (const sd of [-1, 1]) {
+    // door shut lines: cab door front and back, the sliding door on the kerb side
+    for (const zc of sd < 0 ? [WIN0 - 0.02, 1.58, -0.92] : [WIN0 - 0.02, 1.58]) {
+      const q = sec(zc);
+      matte.box(sd * (q[2][0] + 0.003), archY(zc) + 0.04, zc, 0.008, q[5][1] - archY(zc) - 0.08, 0.014, 0, [0.12, 0.13, 0.14]);
+    }
+    // the sliding door's track along the waist behind it
+    if (sd < 0) matte.box(sd * (W(-1.6) - 0.02), roofY - 0.42, -1.72, 0.014, 0.03, 1.6, 0, [0.12, 0.13, 0.14]);
+    for (const zc of [1.40, -0.80]) if (sd < 0 || zc > 0) matte.box(sd * (W(zc) + 0.006), 1.04, zc, 0.012, 0.032, 0.17, 0, PLASTIC);   // handles
+    // rubbing strip down the flank between the arches
+    matte.box(sd * (W(0) + 0.008), 0.72, (zF + zR) / 2, 0.02, 0.11, (zF - zR) - 1.25, 0, PLASTIC);
+    // side marker and fuel filler
+    trim.box(sd * (W(2.1) + 0.004), 0.86, 2.1, 0.01, 0.03, 0.08, 0, AMBER);
+    if (sd > 0) matte.box(sd * (W(-1.2) + 0.004), 0.95, -1.2, 0.01, 0.12, 0.12, 0, [0.14, 0.15, 0.16]);
+    // commercial mirror on a black arm off the A-pillar
+    const mz = 1.52, bx = W(mz);
+    matte.tube([sd * bx, 1.22, mz], [sd * (bx + 0.2), 1.34, mz + 0.03], 0.022, 6, PLASTIC, true);
+    matte.box(sd * (bx + 0.25), 1.08, mz + 0.03, 0.08, 0.36, 0.12, 0, PLASTIC);
+    trim.box(sd * (bx + 0.25), 1.1, mz - 0.034, 0.06, 0.32, 0.012, 0, MIRROR);
+  }
+
+  // --- the front: grille, lamps, bumper ------------------------------------------
+  const yN = SILL;
+  const GRILLE = [0, yN + 0.33, 0.44, 0.11], LAMP_A = [0.62, yN + 0.47, 0.17, 0.07], INTAKE = [0, yN + 0.12, 0.46, 0.045];
+  endFace(paint, nose, 1, profAt(nose), [GRILLE, LAMP_A, INTAKE], WHITE);
+  const gp = pocket(paint, matte, 0, GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.12, 1, { rim: 0.028, rimCol: PLASTIC });
+  for (let i = 0; i < 3; i++) trim.box(0, GRILLE[1] - 0.075 + i * 0.062, gp.z + 0.02, gp.hw * 1.92, 0.02, 0.04, 0, CHROME);
+  for (const sx of [-1, 1]) {
+    const hp = pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.09, 1, { rim: 0.018, rimCol: PLASTIC });
+    trim.box(sx * LAMP_A[0], LAMP_A[1] - 0.05, nose - 0.028, hp.hw * 1.9, 0.1, 0.022, 0, LAMP);
+    trim.box(sx * (LAMP_A[0] + 0.12), LAMP_A[1] - 0.02, nose - 0.03, 0.05, 0.05, 0.02, 0, AMBER);
+    trim.tube([sx * 0.62, yN + 0.02, nose + 0.02], [sx * 0.62, yN + 0.02, nose + 0.05], 0.035, 8, LAMP, true);   // fog lamps
+  }
+  pocket(paint, matte, 0, INTAKE[1], nose, INTAKE[2], INTAKE[3], 0.08, 1, { rim: 0.02, rimCol: PLASTIC });
+  matte.box(0, yN - 0.1, nose - 0.08, W(nose - 0.08) * 2.02, 0.2, 0.2, 0, PLASTIC);     // bumper
+  trim.box(0, yN - 0.02, nose + 0.03, 0.4, 0.11, 0.02, 0, PLATE);
+
+  // --- the rear: two flat doors from the bumper to the roof, each with its
+  // glass, tall lamp clusters in the corners, the step bumper -----------------------
+  const TAILA = [0.86, SILL + 0.62, 0.07, 0.30], TPLATE = [0, SILL + 0.26, 0.23, 0.07];
+  const RW = [0.44, roofY - 0.56, 0.30, 0.24];
+  endFace(paint, tail, -1, profAt(tail), [TAILA, TPLATE, RW], WHITE);
+  for (const sx of [-1, 1]) {
+    const tp = pocket(paint, matte, sx * TAILA[0], TAILA[1], tail, TAILA[2], TAILA[3], 0.05, -1, { rim: 0.016, rimCol: PLASTIC });
+    trim.box(sx * TAILA[0], TAILA[1] - tp.hh * 0.95, tail + 0.016, tp.hw * 1.9, tp.hh * 0.95, 0.02, 0, TAILC);
+    trim.box(sx * TAILA[0], TAILA[1] + 0.0, tail + 0.016, tp.hw * 1.9, tp.hh * 0.9, 0.02, 0, AMBER);
+    const wp = pocket(paint, matte, sx * RW[0], RW[1], tail, RW[2], RW[3], 0.03, -1, { rim: 0.02, rimCol: PLASTIC });
+    trim.box(sx * RW[0], RW[1] - wp.hh, tail + 0.012, wp.hw * 2, wp.hh * 2, 0.01, 0, GLASS);
+    matte.box(sx * RW[0], RW[1] - wp.hh, tail + 0.12, wp.hw * 2, wp.hh * 2, 0.01, 0, CAVITY);   // behind the glass: the dark cargo box
+    trim.box(sx * 0.1, SILL + 0.78, tail - 0.02, 0.03, 0.16, 0.03, 0, CHROME);                     // door handles
+    for (const y of [SILL + 0.35, roofY - 0.35]) matte.box(sx * (W(tail) - 0.02), y, tail - 0.01, 0.03, 0.12, 0.02, 0, PLASTIC);   // hinges
+  }
+  matte.box(0, SILL + 0.02, tail - 0.006, 0.014, roofY - SILL - 0.1, 0.012, 0, [0.12, 0.13, 0.14]);   // door split
+  pocket(paint, matte, 0, TPLATE[1], tail, TPLATE[2], TPLATE[3], 0.04, -1, { rim: 0.016, rimCol: PLASTIC });
+  trim.box(0, TPLATE[1] - 0.062, tail - 0.022, 0.4, 0.12, 0.02, 0, PLATE);
+  matte.box(0, SILL - 0.14, tail + 0.04, W(tail) * 2.0, 0.18, 0.2, 0, PLASTIC);      // step bumper
+  matte.box(0, SILL - 0.05, tail - 0.12, 0.7, 0.04, 0.16, 0, [0.2, 0.21, 0.22]);     // the step
+  trim.box(0, roofY - 0.07, tail - 0.012, 0.3, 0.03, 0.02, 0, TAILC);               // high stop lamp
+  return wheels;
+}
+
+/** Windscreen laid on a `boxShell`'s sloping top, from station zA (low) to zB (high). */
+function slopeGlass(trim, shell, zA, zB, rows = 4) {
+  const scr = [];
+  for (let i = 0; i <= rows; i++) {
+    const z = zA + ((zB - zA) * i) / rows, g = shell.sec(z);
+    const slope = (shell.sec(z + 0.01).y1 - shell.sec(z - 0.01).y1) / 0.02;
+    const nl = Math.hypot(1, slope), ny = 1 / nl, nz = -slope / nl;
+    const row = [];
+    for (let j = 0; j <= 8; j++) {
+      const u = -1 + (2 * j) / 8, x = u * (g.wT - g.r) * 0.93, ax = Math.abs(x);
+      const flat = g.wT * 0.35;
+      const y = ax <= flat ? g.y1 + shell.crown : g.y1 + shell.crown * (1 - (ax - flat) / (g.wT - g.r - flat));
+      row.push([x, y + ny * 0.008, z + nz * 0.008]);
+    }
+    scr.push(row);
+  }
+  trim.patch(scr, GLASS, [0, 0.6, 1]);
+}
+
+/** Squared wheel-arch opening as a height over z, for a `boxShell`'s bottom edge. */
+function archCut(zs, archR, archTop, pow = 3) {
+  const shape = (u) => (1 - Math.abs(u) ** pow) ** (1 / pow);
+  return (z) => {
+    let l = 0;
+    for (const az of zs) {
+      const d = Math.abs(z - az);
+      if (d < archR) l = Math.max(l, archTop * shape(d / archR));
+    }
+    return l;
+  };
+}
+
+/** Dark well behind a `boxShell` arch, and a black flare round its edge. */
+function shellArch(matte, shell, zc, wr, archR, archTop, floor) {
+  for (const sx of [-1, 1]) {
+    const w = shell.sec(zc).w0;
+    matte.box(sx * (w - 0.17), wr * 0.85, zc, 0.30, archTop - wr * 0.85 - 0.012, archR * 1.85, 0, CAVITY);
+    const lipA = [], lipB = [];
+    for (let i = 0; i <= 12; i++) {
+      const th = 0.12 + ((Math.PI - 0.24) * i) / 12, z = zc + Math.cos(th) * archR * 0.995;
+      const g = shell.sec(z), y = Math.max(floor, g.y0);
+      lipA.push([sx * (g.w0 + 0.002), y, z]);
+      lipB.push([sx * (g.w0 + 0.045), y - 0.018, z]);
+    }
+    matte.patch([lipA, lipB], PLASTIC, [sx, -0.3, 0]);
+  }
+}
+
+/**
+ * A commercial cab as one `boxShell`: flat sides with the front arch cut into
+ * the bottom edge, and either a cab-over brow (the roof rolls down onto a flat
+ * face) or a short bonnet (the roof line comes down a raked screen and along
+ * the hood). The plan corners at the nose roll in, so the face is not a slab.
+ */
+function truckCab(paint, matte, o) {
+  const { z0, z1, W, roofY, zF, wr, archR, sill, bonnet = null, windows = [], slope = null } = o;
+  const archTop = wr * 2 + 0.07;
+  const lift = archCut([zF], archR, archTop, 3.0);
+  const k = (z) => 0.93 + 0.07 * Math.sqrt(clamp((z1 - z) / 0.22, 0, 1));
+  const y1At = bonnet
+    ? curve([[z0, roofY], [bonnet.scrTopZ, roofY], [bonnet.cowlZ, bonnet.cowlY], [z1 - 0.18, bonnet.noseY + 0.04], [z1, bonnet.noseY]])
+    : curve([[z0, roofY], [z1 - 0.40, roofY], [z1, roofY - 0.16]]);
+  const shell = boxShell(paint, {
+    z0, z1, stations: 34, rr: 0.16, tumble: 0.05, crown: 0.04, capStart: true,
+    wAt: (z) => W * k(z), y0At: (z) => Math.max(sill, lift(z)), y1At, windows, slope,
+  });
+  shellArch(matte, shell, zF, wr, archR, archTop, sill);
+  return { shell, archTop };
+}
+
+/** Big flat commercial mirror on an arm reaching forward of the A-pillar. */
+function truckMirror(trim, matte, sx, x, y, z) {
+  matte.tube([sx * x, y, z - 0.10], [sx * (x + 0.22), y - 0.04, z + 0.12], 0.024, 6, PLASTIC, true);
+  matte.tube([sx * (x + 0.22), y - 0.04, z + 0.12], [sx * (x + 0.22), y - 0.52, z + 0.12], 0.020, 6, PLASTIC, true);
+  matte.box(sx * (x + 0.27), y - 0.58, z + 0.12, 0.085, 0.50, 0.14, 0, PLASTIC);
+  trim.box(sx * (x + 0.27), y - 0.56, z + 0.046, 0.065, 0.46, 0.012, 0, MIRROR);
+}
+
+/**
+ * The cab-over trucks: the box truck and the refuse truck, one cab on one
+ * chassis carrying either a cargo box or a rear-loading packer body.
+ *
+ * `buildGeneric` gave these a car's bonnet and greenhouse on the front of a
+ * 4 m slab, which is the shape of nothing on a road. An American city's
+ * medium-duty box truck is a cab-over: a flat face with the windscreen high on
+ * it, a roof brow, the front wheel UNDER the door, and a separate box behind a
+ * visible gap, standing on a ladder chassis you can see daylight under.
+ */
+const TRUCK_LOOKS = {
+  boxtruck: { ovF: 1.20, cabLen: 2.00, gap: 0.13, boxTop: 3.45, boxY: 1.12, packer: false },
+  garbage: { ovF: 1.25, cabLen: 2.10, gap: 0.13, boxTop: 3.30, boxY: 1.15, packer: true },
+};
+
+function buildTruck(spec, paint, trim, matte, S) {
+  const wr = spec.wheelR, W = spec.wid / 2, roofY = spec.roof;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = nose - S.ovF, zR = zF - spec.wheelbase;
+  const cz0 = nose - S.cabLen, cabW = W * 0.95, archR = wr + 0.17;
+  const { shell: cab } = truckCab(paint, matte, {
+    z0: cz0, z1: nose, W: cabW, roofY, zF, wr, archR, sill: 0.56,
+    windows: [-1, 1].map((sx) => ({ sx, zA: cz0 + 0.32, zB: nose - 0.30, yBot: 1.50, yTopMax: (sec) => sec(nose).side - 0.06 })),
+  });
+  const cs = cab.sec(nose);
+
+  // --- face ---------------------------------------------------------------------
+  const LAMP_A = [cs.w0 * 0.78, 0.84, 0.14, 0.07], GRILLE = [0, 1.06, cs.w0 * 0.46, 0.17];
+  // The windscreen is a hole in the face now, not a pane on painted metal.
+  const fw = cs.w0 - 0.12, zs = nose + 0.008, scrTop = cs.side - 0.05;
+  const SCR = [0, (1.50 + scrTop) / 2, fw, (scrTop - 1.50) / 2];
+  endFace(paint, nose, 1, cab.prof(nose), [GRILLE, LAMP_A, SCR], WHITE);
+  const gp = pocket(paint, matte, 0, GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.14, 1, { rim: 0.030, rimCol: CHROME });
+  for (let i = 0; i < 5; i++) trim.box(0, GRILLE[1] - GRILLE[3] + 0.04 + i * 0.056, gp.z + 0.02, gp.hw * 1.92, 0.018, 0.04, 0, [0.20, 0.21, 0.23]);
+  for (const sx of [-1, 1]) {
+    const hp = pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.08, 1, { rim: 0.020, rimCol: PLASTIC });
+    trim.box(sx * LAMP_A[0], LAMP_A[1] - 0.052, nose - 0.026, hp.hw * 1.9, 0.104, 0.022, 0, LAMP);
+    trim.box(sx * (LAMP_A[0] - 0.22), LAMP_A[1] - 0.03, nose - 0.01, 0.06, 0.06, 0.03, 0, AMBER);
+  }
+  trim.patch([[[-fw, 1.50, zs], [0, 1.50, zs], [fw, 1.50, zs]],
+    [[-fw, scrTop, zs], [0, scrTop, zs], [fw, scrTop, zs]]], GLASS, [0, 0, 1]);
+  // Cab-over: you sit over the front wheel, the floor is at the glass line
+  // and the back wall is the cab's own rear face.
+  boxCabin(matte, { y: 1.44, sit: 1.62, x: cs.w0 - 0.10, zR: cz0 + 0.06, zF: nose - 0.06, top: roofY - 0.10,
+    rows: [cz0 + 0.55], wheelDz: 0.72 });
+  matte.box(0, 1.47, nose + 0.004, fw * 2 + 0.06, 0.035, 0.02, 0, PLASTIC);
+  for (const x of [-0.55, 0.25]) matte.tube([x, 1.54, nose + 0.024], [x + 0.42, 1.64, nose + 0.024], 0.011, 4, PLASTIC, true);
+  matte.box(0, 0.42, nose + 0.05, cabW * 1.98, 0.28, 0.16, 0, PLASTIC);                      // bumper
+  trim.box(0, 0.47, nose + 0.135, 0.40, 0.12, 0.02, 0, PLATE);
+  for (let i = -1; i <= 1; i++) trim.box(i * 0.26, roofY - 0.085, nose - 0.24, 0.09, 0.04, 0.06, 0, AMBER);   // cab markers
+
+  // --- cab sides ----------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    sideGlass(trim, cab, sx, cz0 + 0.32, nose - 0.30, 1.50, cs.side - 0.06);
+    for (const zc of [cz0 + 0.20, nose - 0.16]) {
+      const g = cab.sec(zc);
+      matte.box(sx * (g.w0 + 0.004), 0.90, zc, 0.010, g.side - 0.95, 0.016, 0, [0.13, 0.14, 0.15]);
+    }
+    trim.box(sx * (cab.sec(cz0 + 0.5).w0 + 0.01), 1.32, cz0 + 0.50, 0.02, 0.03, 0.18, 0, CHROME);   // handle
+    truckMirror(trim, matte, sx, cs.w0 - 0.02, cs.side - 0.05, nose - 0.10);
+  }
+
+  // --- body -----------------------------------------------------------------------
+  const bz1 = cz0 - S.gap, y0 = S.boxY;
+  const y1At = S.packer ? curve([[tail, S.boxTop - 0.80], [tail + 1.20, S.boxTop], [bz1, S.boxTop]]) : () => S.boxTop;
+  const body = boxShell(paint, {
+    z0: tail, z1: bz1, stations: S.packer ? 22 : 10, rr: S.packer ? 0.16 : 0.05, tumble: 0.01, crown: 0.015,
+    wAt: () => W, y0At: () => y0, y1At,
+  });
+  endFace(paint, bz1, 1, body.prof(bz1), [], WHITE);
+  const post = [0.55, 0.56, 0.58];
+  for (const sx of [-1, 1]) {
+    trim.box(sx * (W + 0.008), y0, (tail + bz1) / 2, 0.02, 0.11, bz1 - tail, 0, post);            // bottom rail
+    trim.box(sx * (geom0(body, bz1 - 0.05) + 0.004), y0 + 0.30, bz1 - 0.08, 0.014, 0.05, 0.08, 0, AMBER);
+    trim.box(sx * (W + 0.004), y0 + 0.30, tail + 0.12, 0.014, 0.05, 0.08, 0, TAILC);
+  }
+  if (S.packer) {
+    // Packer: vertical ribs down the body, a black hopper hanging under the
+    // tail and the tailgate's rams, which together are most of what says
+    // "garbage truck" in silhouette.
+    for (const sx of [-1, 1]) {
+      for (let zc = tail + 1.5; zc < bz1 - 0.3; zc += 0.80) {
+        matte.box(sx * (W + 0.012), y0 + 0.12, zc, 0.024, S.boxTop - y0 - 0.30, 0.06, 0, [0.16, 0.17, 0.18]);
+      }
+      trim.tube([sx * (W + 0.03), y0 + 0.20, tail + 1.25], [sx * (W + 0.03), S.boxTop - 0.55, tail + 0.30], 0.055, 8, CHROME, true);
+    }
+    endFace(paint, tail, -1, body.prof(tail), [], WHITE);
+    matte.box(0, 0.62, tail + 0.28, W * 1.94, 0.96, 0.62, 0, [0.12, 0.13, 0.14]);                 // hopper
+    matte.box(0, 1.20, tail - 0.04, W * 1.60, 0.10, 0.06, 0, PLASTIC);
+    for (const sx of [-1, 1]) {
+      trim.box(sx * (W - 0.18), 0.92, tail - 0.034, 0.16, 0.12, 0.02, 0, TAILC);
+      trim.box(sx * (W - 0.18), 0.80, tail - 0.034, 0.16, 0.06, 0.02, 0, AMBER);
+    }
+  } else {
+    // Roll-up door set into the rear frame, with its slats.
+    const DOOR = [0, (y0 + S.boxTop) / 2, W - 0.13, (S.boxTop - y0) / 2 - 0.14];
+    endFace(paint, tail, -1, body.prof(tail), [DOOR], WHITE);
+    const dp = pocket(trim, matte, 0, DOOR[1], tail, DOOR[2], DOOR[3], 0.04, -1, { rim: 0.05, rimCol: post });
+    matte.box(0, DOOR[1] - dp.hh, tail + 0.015, dp.hw * 2, dp.hh * 2, 0.01, 0, [0.62, 0.63, 0.62]);
+    for (let yy = DOOR[1] - dp.hh + 0.20; yy < DOOR[1] + dp.hh; yy += 0.20) {
+      matte.box(0, yy, tail + 0.003, dp.hw * 1.98, 0.012, 0.012, 0, [0.40, 0.41, 0.41]);
+    }
+    trim.box(0, DOOR[1] - dp.hh + 0.10, tail - 0.01, 0.30, 0.04, 0.03, 0, CHROME);
+    for (const sx of [-1, 1]) trim.box(sx * (W - 0.03), y0, tail + 0.03, 0.09, S.boxTop - y0, 0.09, 0, post);   // corner posts
+  }
+
+  // --- chassis ------------------------------------------------------------------
+  matte.box(0, 0.96, (tail + bz1) / 2, W * 1.55, 0.16, bz1 - tail - 0.20, 0, PLASTIC);   // subframe
+  for (const sx of [-1, 1]) matte.box(sx * 0.46, 0.72, (cz0 + tail) / 2 + 0.3, 0.14, 0.26, cz0 - tail - 0.2, 0, PLASTIC);
+  trim.tube([-0.84, 0.64, zF - archR - 0.35], [-0.84, 0.64, zF - archR - 1.05], 0.23, 10, [0.72, 0.74, 0.77], true);   // tank
+  matte.box(0.84, 0.46, zF - archR - 0.60, 0.40, 0.36, 0.60, 0, PLASTIC);                                             // battery box
+  if (!S.packer) {
+    matte.box(0, 0.48, tail + 0.14, W * 1.70, 0.12, 0.08, 0, PLASTIC);                          // underride bar
+    for (const sx of [-1, 1]) {
+      matte.box(sx * 0.62, 0.58, tail + 0.18, 0.08, 0.40, 0.06, 0, PLASTIC);
+      trim.box(sx * 0.72, 0.52, tail + 0.095, 0.16, 0.06, 0.02, 0, TAILC);
+    }
+    trim.box(0, 0.64, tail + 0.20, 0.40, 0.12, 0.02, 0, PLATE);
+  }
+  const twF = 0.30, twR = 0.44;
+  const wxF = cab.sec(zF).w0 - 0.17, wxR = W - 0.26;
+  for (const sx of [-1, 1]) {
+    matte.box(sx * wxR, wr * 2 + 0.03, zR, twR + 0.08, 0.04, wr * 2.3, 0, PLASTIC);               // guard
+    matte.box(sx * wxR, 0.20, zR - wr - 0.22, twR, 0.60, 0.02, 0, PLASTIC);                        // mud flap
+  }
+  return [[-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF], [-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR]];
+}
+
+/** Half-width of a `boxShell` at a station. */
+function geom0(shell, z) { return shell.sec(z).w0; }
+
+/**
+ * Type III ambulance: a bonneted van cab with a tall square module behind it.
+ * The module is wider and taller than the cab and carries its own arch, a red
+ * band and a light at every corner -- the corners are what a player reads at a
+ * distance, and the one old version had was a bar on top of a box truck.
+ */
+function buildAmbulance(spec, paint, trim, matte) {
+  const wr = spec.wheelR, W = spec.wid / 2;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = nose - 1.05, zR = zF - spec.wheelbase;
+  const cabW = 1.00, modTop = 2.80, modZ1 = 0.66;
+  const { shell: cab } = truckCab(paint, matte, {
+    z0: 0.62, z1: nose, W: cabW, roofY: spec.roof, zF, wr, archR: wr + 0.16, sill: 0.50,
+    bonnet: { scrTopZ: 1.30, cowlZ: 2.00, cowlY: 1.28, noseY: 1.08 },
+    windows: [-1, 1].map((sx) => ({ sx, zA: 0.84, zB: 1.86, yBot: 1.38, yTopMax: spec.roof - 0.26 })),
+    slope: { zA: 1.92, zB: 1.36 },
+  });
+  slopeGlass(trim, cab, 1.92, 1.36);
+  boxCabin(matte, { y: 1.30, sit: 1.52, x: cab.sec(1.2).w0 - 0.07, zR: 0.70, zF: 1.86, top: spec.roof - 0.08,
+    hzF: 1.32, rows: [0.92], wheelDz: 0.60 });
+  const cs = cab.sec(nose);
+  const GRILLE = [0, 0.82, 0.36, 0.12], LAMP_A = [cs.w0 * 0.76, 0.90, 0.13, 0.055];
+  endFace(paint, nose, 1, cab.prof(nose), [GRILLE, LAMP_A], WHITE);
+  const gp = pocket(paint, matte, 0, GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.12, 1, { rim: 0.026, rimCol: CHROME });
+  for (let i = 0; i < 3; i++) trim.box(0, GRILLE[1] - 0.08 + i * 0.07, gp.z + 0.02, gp.hw * 1.92, 0.020, 0.04, 0, CHROME);
+  for (const sx of [-1, 1]) {
+    const hp = pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.08, 1, { rim: 0.018, rimCol: PLASTIC });
+    trim.box(sx * LAMP_A[0], LAMP_A[1] - 0.042, nose - 0.026, hp.hw * 1.9, 0.084, 0.022, 0, LAMP);
+    trim.box(sx * 0.20, 0.64, nose + 0.012, 0.10, 0.05, 0.02, 0, TAILC);                          // grille strobes
+  }
+  matte.box(0, 0.40, nose + 0.05, cabW * 1.96, 0.22, 0.16, 0, PLASTIC);
+  trim.box(0, 0.44, nose + 0.135, 0.40, 0.12, 0.02, 0, PLATE);
+  const RED = [0.70, 0.06, 0.05];
+  for (const sx of [-1, 1]) {
+    sideGlass(trim, cab, sx, 0.84, 1.86, 1.38, spec.roof - 0.26);
+    const g = cab.sec(1.3);
+    matte.quad([sx * (g.w0 + 0.005), 1.14, 0.70], [sx * (g.w0 + 0.005), 1.14, 1.56], [sx * (g.w0 + 0.005), 1.26, 1.56],
+      [sx * (g.w0 + 0.005), 1.26, 0.70], [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], RED);
+    truckMirror(trim, matte, sx, cab.sec(1.9).w0 - 0.02, 1.62, 1.80);
+  }
+
+  // --- module ---------------------------------------------------------------------
+  const archTopR = wr * 2 + 0.08, archRR = wr + 0.16;
+  const liftR = archCut([zR], archRR, archTopR, 3.0);
+  const mod = boxShell(paint, {
+    z0: tail, z1: modZ1, stations: 22, rr: 0.08, tumble: 0.012, crown: 0.015,
+    wAt: () => W, y0At: (z) => Math.max(0.60, liftR(z)), y1At: () => modTop,
+  });
+  shellArch(matte, mod, zR, wr, archRR, archTopR, 0.60);
+  endFace(paint, modZ1, 1, mod.prof(modZ1), [], WHITE);
+  const RW = [0.42, 2.12, 0.24, 0.20], TL = [W - 0.15, 1.24, 0.065, 0.17];
+  endFace(paint, tail, -1, mod.prof(tail), [RW, TL], WHITE);
+  for (const sx of [-1, 1]) {
+    const wp = pocket(paint, matte, sx * RW[0], RW[1], tail, RW[2], RW[3], 0.03, -1, { rim: 0.02, rimCol: PLASTIC });
+    trim.box(sx * RW[0], RW[1] - wp.hh, tail + 0.012, wp.hw * 2, wp.hh * 2, 0.010, 0, GLASS);
+    const tp = pocket(paint, matte, sx * TL[0], TL[1], tail, TL[2], TL[3], 0.04, -1, { rim: 0.016, rimCol: PLASTIC });
+    trim.box(sx * TL[0], TL[1] - tp.hh * 0.95, tail + 0.014, tp.hw * 1.9, tp.hh * 1.9, 0.020, 0, TAILC);
+    // Red band the length of the module, and the corner beacons.
+    matte.quad([sx * (W + 0.005), 1.42, tail + 0.05], [sx * (W + 0.005), 1.42, modZ1 - 0.05], [sx * (W + 0.005), 1.64, modZ1 - 0.05],
+      [sx * (W + 0.005), 1.64, tail + 0.05], [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], RED);
+    for (const zc of [modZ1 - 0.12, tail + 0.12]) {
+      trim.box(sx * (W - 0.12), modTop - 0.16, zc, 0.20, 0.13, 0.09, 0, TAILC);
+    }
+    trim.box(sx * (W - 0.40), modTop - 0.14, modZ1 - 0.11, 0.20, 0.10, 0.08, 0, LAMP);
+  }
+  matte.quad([-(W - 0.08), 1.42, tail - 0.005], [W - 0.08, 1.42, tail - 0.005], [W - 0.08, 1.64, tail - 0.005],
+    [-(W - 0.08), 1.64, tail - 0.005], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], RED);
+  matte.box(0, 0.62, tail - 0.004, 0.014, modTop - 0.75, 0.012, 0, [0.12, 0.13, 0.14]);          // door split
+  matte.box(0, 0.44, tail + 0.05, W * 1.80, 0.16, 0.20, 0, PLASTIC);                                // step bumper
+  trim.box(0, 0.70, tail - 0.024, 0.40, 0.12, 0.02, 0, PLATE);
+  matte.box(0, 0.62, (0.62 + nose - 1.6) / 2, 0.9, 0.22, 1.2, 0, PLASTIC);                          // chassis under the cab
+
+  const twF = 0.26, twR = 0.36;
+  const wxF = cab.sec(zF).w0 - 0.15, wxR = W - 0.22;
+  return [[-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF], [-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR]];
+}
+
+/**
+ * Block capitals for stencilled lettering ("SWAT", "POLICE"): each glyph is a
+ * few rectangles on a 5 x 7 grid, [c0, r0, c1, r1], rows counted from the
+ * bottom. Geometry, not a texture: the vehicle parts are vertex-coloured and
+ * carry no map, and a dozen quads a letter is nothing.
+ */
+const STENCIL = {
+  S: [[0, 6, 5, 7], [0, 3, 1, 7], [0, 3, 5, 4], [4, 0, 5, 4], [0, 0, 5, 1]],
+  W: [[0, 0, 1, 7], [4, 0, 5, 7], [2, 0, 3, 4], [0, 0, 5, 1]],
+  A: [[0, 0, 1, 7], [4, 0, 5, 7], [0, 6, 5, 7], [0, 3, 5, 4]],
+  T: [[0, 6, 5, 7], [2, 0, 3, 6]],
+  P: [[0, 0, 1, 7], [0, 6, 5, 7], [4, 3, 5, 7], [0, 3, 5, 4]],
+  O: [[0, 0, 1, 7], [4, 0, 5, 7], [0, 6, 5, 7], [0, 0, 5, 1]],
+  L: [[0, 0, 1, 7], [0, 0, 5, 1]],
+  I: [[2, 0, 3, 7], [1, 6, 4, 7], [1, 0, 4, 1]],
+  C: [[0, 0, 1, 7], [0, 6, 5, 7], [0, 0, 5, 1]],
+  E: [[0, 0, 1, 7], [0, 6, 5, 7], [0, 3, 4, 4], [0, 0, 5, 1]],
+};
+
+/**
+ * Lay `text` flat on a plane: centred on (cx, cy, cz), reading along the
+ * horizontal unit vector (ux, uz) -- which must be the viewer's RIGHT as they
+ * face the panel from outside along -n -- `h` tall, outward normal `n`.
+ */
+function stencil(into, text, cx, cy, cz, ux, uz, h, n, col) {
+  const cell = h / 7, adv = cell * 6.4, w = adv * text.length - cell * 1.4;
+  let s0 = -w / 2;
+  for (const ch of text) {
+    for (const [c0, r0, c1, r1] of STENCIL[ch] || []) {
+      const a = s0 + c0 * cell, b = s0 + c1 * cell, y0 = cy - h / 2 + r0 * cell, y1 = cy - h / 2 + r1 * cell;
+      const P = (s, y) => [cx + ux * s, y, cz + uz * s];
+      into.quad(P(a, y0), P(b, y0), P(b, y1), P(a, y1), n, [0, 0, 1, 0, 1, 1, 0, 1], col);
+    }
+    s0 += adv;
+  }
+}
+
+/**
+ * The police tactical van (wanted level 4+): a bonneted cab with an armoured
+ * box behind it, Lenco/"Bearcat"-sized but square, in navy-black with SWAT
+ * stencilled on both flanks and the rear doors. What reads at fifty metres is
+ * the silhouette -- taller and squarer than the ambulance it is built like --
+ * the ram bar standing off the nose, the white lettering and the roof rails;
+ * the gun ports and steps are for the close look. The roof light bar is the
+ * spawner's (traffic.js), because it strobes.
+ */
+function buildSwat(spec, paint, trim, matte) {
+  const wr = spec.wheelR, W = spec.wid / 2;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = nose - 1.10, zR = zF - spec.wheelbase;
+  const cabW = 1.04, modTop = 2.92, modZ1 = 0.70;
+  const BLK = [0.06, 0.065, 0.07], STEN = [0.90, 0.91, 0.90];
+  const { shell: cab } = truckCab(paint, matte, {
+    z0: 0.66, z1: nose, W: cabW, roofY: spec.roof, zF, wr, archR: wr + 0.16, sill: 0.56,
+    bonnet: { scrTopZ: 1.36, cowlZ: 2.02, cowlY: 1.36, noseY: 1.16 },
+    windows: [-1, 1].map((sx) => ({ sx, zA: 0.90, zB: 1.90, yBot: 1.46, yTopMax: spec.roof - 0.24 })),
+    slope: { zA: 1.96, zB: 1.40 },
+  });
+  slopeGlass(trim, cab, 1.96, 1.40);
+  boxCabin(matte, { y: 1.34, sit: 1.56, x: cab.sec(1.2).w0 - 0.07, zR: 0.74, zF: 1.90, top: spec.roof - 0.08,
+    hzF: 1.36, rows: [0.96], wheelDz: 0.60 });
+  const cs = cab.sec(nose);
+  const GRILLE = [0, 0.88, 0.40, 0.15], LAMP_A = [cs.w0 * 0.76, 0.98, 0.13, 0.055];
+  endFace(paint, nose, 1, cab.prof(nose), [GRILLE, LAMP_A], WHITE);
+  const gp = pocket(paint, matte, 0, GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.12, 1, { rim: 0.026, rimCol: PLASTIC });
+  for (let i = 0; i < 4; i++) trim.box(0, GRILLE[1] - 0.12 + i * 0.07, gp.z + 0.02, gp.hw * 1.92, 0.022, 0.04, 0, [0.16, 0.17, 0.18]);
+  for (const sx of [-1, 1]) {
+    const hp = pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.08, 1, { rim: 0.018, rimCol: PLASTIC });
+    trim.box(sx * LAMP_A[0], LAMP_A[1] - 0.042, nose - 0.026, hp.hw * 1.9, 0.084, 0.022, 0, LAMP);
+    // grille strobes, one red, one blue
+    trim.box(sx * 0.22, 0.70, nose + 0.012, 0.12, 0.05, 0.02, 0, sx < 0 ? [0.12, 0.25, 0.95] : TAILC);
+  }
+  // Steel bumper and the ram bar: two uprights, two cross tubes and a skid
+  // plate, standing 25 cm proud of the face.
+  matte.box(0, 0.36, nose + 0.06, cabW * 2.04, 0.30, 0.20, 0, BLK);
+  trim.box(0, 0.44, nose + 0.165, 0.40, 0.12, 0.02, 0, PLATE);
+  const rz = nose + 0.30;
+  for (const sx of [-1, 1]) {
+    matte.tube([sx * 0.52, 0.34, rz], [sx * 0.52, 1.20, rz - 0.04], 0.050, 8, BLK, true);
+    matte.tube([sx * 0.52, 0.52, nose + 0.12], [sx * 0.52, 0.52, rz], 0.045, 8, BLK, true);
+    matte.tube([sx * 0.52, 1.02, nose + 0.02], [sx * 0.52, 1.02, rz - 0.03], 0.040, 8, BLK, true);
+  }
+  matte.tube([-0.70, 0.60, rz + 0.02], [0.70, 0.60, rz + 0.02], 0.050, 8, BLK, true);
+  matte.tube([-0.62, 1.00, rz - 0.02], [0.62, 1.00, rz - 0.02], 0.045, 8, BLK, true);
+  matte.box(0, 0.22, rz - 0.20, 1.10, 0.06, 0.40, 0, BLK);
+  for (const sx of [-1, 1]) {
+    sideGlass(trim, cab, sx, 0.90, 1.90, 1.46, spec.roof - 0.24);
+    truckMirror(trim, matte, sx, cab.sec(1.94).w0 - 0.02, 1.70, 1.84);
+    // A-pillar spotlight
+    trim.tube([sx * (cab.sec(1.9).w0 + 0.06), 1.86, 1.80], [sx * (cab.sec(1.9).w0 + 0.06), 1.86, 1.96], 0.06, 8, CHROME, true);
+    trim.tube([sx * (cab.sec(1.9).w0 + 0.06), 1.86, 1.96], [sx * (cab.sec(1.9).w0 + 0.06), 1.86, 1.97], 0.05, 8, LAMP, true);
+  }
+
+  // --- the armoured box ------------------------------------------------------------
+  const archTopR = wr * 2 + 0.08, archRR = wr + 0.16;
+  const liftR = archCut([zR], archRR, archTopR, 3.0);
+  const mod = boxShell(paint, {
+    z0: tail, z1: modZ1, stations: 22, rr: 0.10, tumble: 0.02, crown: 0.02,
+    wAt: () => W, y0At: (z) => Math.max(0.62, liftR(z)), y1At: () => modTop,
+  });
+  shellArch(matte, mod, zR, wr, archRR, archTopR, 0.62);
+  endFace(paint, modZ1, 1, mod.prof(modZ1), [], WHITE);
+  const TL = [W - 0.15, 1.20, 0.065, 0.17];
+  endFace(paint, tail, -1, mod.prof(tail), [TL], WHITE);
+  const midZ = (tail + modZ1) / 2;
+  for (const sx of [-1, 1]) {
+    const x = sx * (W + 0.006);
+    // SWAT, big, reading front to back on the right flank and back to front
+    // on the left (each from outside); POLICE under it.
+    stencil(matte, 'SWAT', x, 2.02, midZ - 0.10, 0, -sx, 0.56, [sx, 0, 0], STEN);
+    stencil(matte, 'POLICE', x, 1.48, midZ - 0.10, 0, -sx, 0.20, [sx, 0, 0], STEN);
+    // a dark band at the sill and two gun ports high up front and back
+    matte.quad([x, 0.98, tail + 0.06], [x, 0.98, modZ1 - 0.06], [x, 1.10, modZ1 - 0.06], [x, 1.10, tail + 0.06], [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], BLK);
+    for (const zc of [modZ1 - 0.42, tail + 0.46]) {
+      matte.box(sx * (W - 0.01), 2.36, zc, 0.04, 0.22, 0.42, 0, BLK);
+      matte.box(sx * (W + 0.012), 2.42, zc, 0.03, 0.06, 0.26, 0, [0.02, 0.02, 0.025]);
+    }
+    // running board the officers ride on, with its brackets, and a grab rail
+    matte.box(sx * (W + 0.12), 0.56, midZ + 0.10, 0.26, 0.05, 1.70, 0, BLK);
+    for (const zc of [midZ - 0.6, midZ + 0.8]) matte.box(sx * (W + 0.05), 0.46, zc, 0.12, 0.10, 0.08, 0, BLK);
+    matte.tube([sx * (W + 0.06), 2.48, midZ - 0.80], [sx * (W + 0.06), 2.48, midZ + 0.95], 0.025, 6, BLK, true);
+    // roof rails
+    matte.tube([sx * (W - 0.10), modTop + 0.10, tail + 0.10], [sx * (W - 0.10), modTop + 0.10, modZ1 - 0.10], 0.030, 6, BLK, true);
+    for (const zc of [tail + 0.15, midZ, modZ1 - 0.15]) matte.box(sx * (W - 0.10), modTop, zc, 0.04, 0.12, 0.04, 0, BLK);
+    // tail lamp in its pocket, corner beacons
+    const tp = pocket(paint, matte, sx * TL[0], TL[1], tail, TL[2], TL[3], 0.04, -1, { rim: 0.016, rimCol: PLASTIC });
+    trim.box(sx * TL[0], TL[1] - tp.hh * 0.95, tail + 0.014, tp.hw * 1.9, tp.hh * 1.9, 0.020, 0, TAILC);
+    trim.box(sx * (W - 0.12), modTop - 0.16, tail + 0.12, 0.20, 0.13, 0.09, 0, sx < 0 ? [0.12, 0.25, 0.95] : TAILC);
+  }
+  // rear doors: the split, SWAT across them, hinges, a ladder up the right door
+  matte.box(0, 0.66, tail - 0.004, 0.016, modTop - 0.80, 0.012, 0, BLK);
+  stencil(matte, 'SWAT', 0, 2.10, tail - 0.006, -1, 0, 0.36, [0, 0, -1], STEN);
+  for (const sx of [-1, 1]) for (const y of [1.0, 2.3]) matte.box(sx * (W - 0.04), y, tail - 0.02, 0.06, 0.16, 0.04, 0, BLK);
+  for (const lx of [0.42, 0.84]) matte.tube([lx, 0.72, tail - 0.08], [lx, modTop + 0.08, tail - 0.08], 0.022, 6, BLK, true);
+  for (let y = 0.95; y < modTop; y += 0.32) matte.tube([0.42, y, tail - 0.08], [0.84, y, tail - 0.08], 0.018, 6, BLK, true);
+  matte.box(0, 0.42, tail + 0.06, W * 1.86, 0.20, 0.24, 0, BLK);                                      // step bumper
+  trim.box(-0.5, 0.72, tail - 0.024, 0.40, 0.12, 0.02, 0, PLATE);
+  matte.box(0, 0.62, (0.62 + nose - 1.6) / 2, 0.9, 0.22, 1.2, 0, PLASTIC);                           // chassis under the cab
+
+  const twF = 0.30, twR = 0.40;
+  const wxF = cab.sec(zF).w0 - 0.16, wxR = W - 0.24;
+  return [[-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF], [-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR]];
+}
+
+/**
+ * The low-floor city bus. What it replaced was the generic tube at twelve
+ * metres with glass boxes standing off its sides and its windscreen mirrors
+ * as two slabs sticking out of the roof corners.
+ *
+ * The lower body is `bodyCore` (squared arches, sill low enough for a kneeling
+ * floor), the upper is a `boxShell` with rounded brows front and rear, and the
+ * glazing is a band laid flat on the side, broken by pillars. Doors are on the
+ * KERB side, which is -x: traffic drives on the right and `laneOffset` puts a
+ * vehicle heading +z at -x of the centreline.
+ */
+// `o` makes the articulated bus's two sections from the same body: its axle
+// positions, its kerb doors, whether it has a front end (screen, lamps, sign,
+// bike rack, mirrors) and a rear end (lamps, rear window, grille), and where
+// the roof pod sits. An end it does not have is a dark mounting plate for the
+// bellows. The defaults are the 12 m city bus, unchanged.
+function buildBus(spec, paint, trim, matte, o = {}) {
+  const wr = spec.wheelR, roofY = spec.roof;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = o.zF !== undefined ? o.zF : 3.45, zR = o.zR !== undefined ? o.zR : -2.55;   // 2.55 m front overhang, 3.45 m rear
+  const frontEnd = o.frontEnd !== false, rearEnd = o.rearEnd !== false;
+  const belt = 1.20;
+  // the lower body in Metro yellow, as matte (paint is the top's colour)
+  const lower = tinted(matte, METRO_YELLOW);
+  const core = bodyCore(spec, lower, matte, {
+    halfW: curve([[tail, frontEnd || rearEnd ? (rearEnd ? 0.975 : 1.0) : 1.0], [tail + 0.4, 1.0], [nose - 0.4, 1.0], [nose, frontEnd ? 0.975 : 1.0]]),
+    sillY: curve([[tail, rearEnd ? 0.52 : 0.42], [tail + 0.6, 0.42], [nose - 0.6, 0.42], [nose, frontEnd ? 0.46 : 0.42]]),
+    beltY: () => belt, tuckAt: () => 0.97, topAt: () => 0.99, zF, zR,
+    archR: 0.66, archGap: 0.06, archPow: 3.2, creaseAt: 0.40, tumble: 0.99, deckDrop: 0.010, lipOut: 0.030,
+    endRound: 0.12, endMin: 0.96, stations: 64,
+  });
+  const { geom, endProf } = core;
+  const rk = (z) => 0.95 + 0.05 * Math.sqrt(clamp(Math.min(nose - z, z - tail) / 0.30, 0, 1));
+  // The window band and the kerb-side doors, worked out before the shell so
+  // it can be built with the openings in it (see boxShell).
+  const winY0 = belt + 0.10, winY1 = roofY - 0.52;
+  const DOORS = o.doors || [[4.45, 5.55], [-0.60, 0.60]];
+  const spansOf = (sx) => {
+    const cuts = sx < 0 ? DOORS : [], spans = [];
+    let z = tail + (rearEnd ? 1.70 : 0.30);
+    for (const [a, b] of [...cuts].sort((p, q) => p[0] - q[0])) { spans.push([z, a - 0.05]); z = b + 0.05; }
+    spans.push([z, nose - (frontEnd ? 0.35 : 0.30)]);
+    return { cuts, spans };
+  };
+  const windows = [];
+  for (const sx of [-1, 1]) {
+    const { cuts, spans } = spansOf(sx);
+    for (const [a, b] of spans) windows.push({ sx, zA: a, zB: b, yBot: winY0, yTopMax: winY1, cols: 2 });
+    for (const [a, b] of cuts) windows.push({ sx, zA: a, zB: b, yBot: belt - 0.03, yTopMax: winY1, cols: 1 });
+  }
+  const shell = boxShell(paint, {
+    z0: tail, z1: nose, stations: 48, rr: 0.22, tumble: 0.04, crown: 0.05,
+    wAt: (z) => geom(z).tw * rk(z), y0At: () => belt - 0.03,
+    y1At: curve([[tail, rearEnd ? roofY - 0.10 : roofY], [tail + 0.35, roofY], [nose - 0.45, roofY], [nose, frontEnd ? roofY - 0.12 : roofY]]),
+    windows,
+  });
+  const sN = shell.sec(nose);
+  if (frontEnd) {
+    const scrTop = sN.side - 0.03;
+    endFace(paint, nose, 1, shell.prof(nose), [[0, (sN.y0 + scrTop) / 2 + 0.001, sN.w0 - 0.10, (scrTop - sN.y0) / 2]], WHITE);
+    const LAMP_A = [0.90, 0.68, 0.17, 0.075];
+    // the lower nose is the lower body: Metro yellow like the sides
+    endFace(lower, nose, 1, endProf(nose), [LAMP_A], WHITE);
+    for (const sx of [-1, 1]) {
+      const hp = pocket(lower, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.07, 1, { rim: 0.02, rimCol: PLASTIC });
+      trim.box(sx * LAMP_A[0], LAMP_A[1] - 0.05, nose - 0.02, hp.hw * 1.9, 0.10, 0.02, 0, LAMP);
+    }
+    // Windscreen: one tall pane from bumper height to the destination sign.
+    const fw = sN.w0 - 0.10, zs = nose + 0.008;
+    trim.patch([[[-fw, 0.98, zs], [0, 0.98, zs], [fw, 0.98, zs]],
+      [[-fw, sN.side - 0.03, zs], [0, sN.side - 0.03, zs], [fw, sN.side - 0.03, zs]]], GLASS, [0, 0, 1]);
+    // Its foot runs down over the lower body's nose, which stays solid: back
+    // that strip in the dark of the dash rather than the livery.
+    matte.quad([-fw, 0.98, nose + 0.004], [fw, 0.98, nose + 0.004], [fw, sN.y0 + 0.002, nose + 0.004], [-fw, sN.y0 + 0.002, nose + 0.004],
+      [0, 0, 1], [0, 0, 1, 0, 1, 1, 0, 1], CAB_DASH);
+    busCabin(matte, shell, { belt, nose, tail, roofY });
+    matte.box(0, sN.side - 0.02, nose + 0.004, fw * 2 + 0.08, 0.26, 0.03, 0, [0.04, 0.04, 0.045]);      // sign housing
+    trim.box(0, sN.side + 0.07, nose + 0.018, 1.30, 0.08, 0.012, 0, [1.0, 0.62, 0.12]);                 // route display
+    for (const x of [-0.70, 0.30]) matte.tube([x, 1.02, nose + 0.024], [x + 0.46, 1.36, nose + 0.024], 0.012, 4, PLASTIC, true);
+    matte.box(0, 0.26, nose + 0.03, geom(nose).w * 1.92, 0.26, 0.16, 0, PLASTIC);                        // bumper
+    trim.box(0, 0.30, nose + 0.115, 0.40, 0.12, 0.02, 0, PLATE);
+    // Folded bike rack on the nose -- the detail every Seattle bus carries.
+    for (const sx of [-1, 1]) matte.tube([sx * 0.42, 0.40, nose + 0.12], [sx * 0.42, 0.92, nose + 0.12], 0.020, 5, PLASTIC, true);
+    matte.tube([-0.42, 0.92, nose + 0.12], [0.42, 0.92, nose + 0.12], 0.020, 5, PLASTIC, true);
+    matte.tube([-0.42, 0.66, nose + 0.12], [0.42, 0.66, nose + 0.12], 0.016, 5, PLASTIC, true);
+    for (const sx of [-1, 1]) {
+      matte.tube([sx * (sN.w0 - 0.05), sN.side - 0.10, nose - 0.20], [sx * (sN.w0 + 0.16), sN.side - 0.02, nose + 0.32], 0.024, 6, PLASTIC, true);
+      matte.box(sx * (sN.w0 + 0.16), sN.side - 0.62, nose + 0.32, 0.10, 0.58, 0.16, 0, PLASTIC);
+      trim.box(sx * (sN.w0 + 0.16), sN.side - 0.60, nose + 0.235, 0.08, 0.54, 0.012, 0, MIRROR);
+    }
+  } else {
+    // the bellows' mounting plate
+    matte.box(0, sN.y0 - 0.2, nose - 0.02, sN.w0 * 2 + 0.04, sN.side - sN.y0 + 0.5, 0.06, 0, [0.07, 0.07, 0.08]);
+    matte.box(0, 0.40, nose - 0.04, geom(nose).w * 1.9, 0.9, 0.08, 0, [0.07, 0.07, 0.08]);
+  }
+
+  // --- sides: window band, doors on the kerb side ---------------------------------
+  const BAND = [0.05, 0.30, 0.24];
+  for (const sx of [-1, 1]) {
+    const { cuts, spans } = spansOf(sx);
+    for (const [a, b] of spans) {
+      sideGlass(trim, shell, sx, a, b, winY0, winY1, 0.007, 2);
+      const g = shell.sec((a + b) / 2);
+      matte.quad([sx * (g.w0 + 0.006), belt - 0.02, a], [sx * (g.w0 + 0.006), belt - 0.02, b], [sx * (g.w0 + 0.006), belt + 0.07, b],
+        [sx * (g.w0 + 0.006), belt + 0.07, a], [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], BAND);
+      for (let pz = a + 1.25; pz < b - 0.3; pz += 1.25) {
+        matte.box(sx * (g.w0 + 0.012), winY0, pz, 0.010, winY1 - winY0, 0.07, 0, [0.07, 0.075, 0.08]);
+      }
+    }
+    for (const [a, b] of cuts) {
+      // Glass doors to the kerb, set in the body line with a centre split.
+      const w = geom((a + b) / 2).w + 0.008;
+      trim.patch([[[sx * w, 0.46, a], [sx * w, 0.46, b]], [[sx * w, winY1, a], [sx * w, winY1, b]]], GLASS, [sx, 0, 0]);
+      // Below the shell the door glass is over the lower body's paint: back it
+      // with the dark of the stairwell instead.
+      matte.quad([sx * (w - 0.004), 0.46, a], [sx * (w - 0.004), 0.46, b], [sx * (w - 0.004), belt, b], [sx * (w - 0.004), belt, a],
+        [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAB_FLOOR);
+      for (const zc of [a, (a + b) / 2, b]) matte.box(sx * (w + 0.004), 0.44, zc, 0.012, winY1 - 0.42, 0.05, 0, [0.07, 0.075, 0.08]);
+      matte.box(sx * (w + 0.004), winY1, (a + b) / 2, 0.012, 0.05, b - a, 0, [0.07, 0.075, 0.08]);
+    }
+    // Engine-bay louvres behind the last window, street side only.
+    if (sx > 0 && rearEnd) for (let i = 0; i < 5; i++) matte.box(sx * (geom(tail + 0.9).w + 0.006), 0.62 + i * 0.07, tail + 0.90, 0.01, 0.025, 1.10, 0, [0.10, 0.11, 0.12]);
+    trim.box(sx * (geom(zF - 0.9).w + 0.004), 0.55, zF - 0.9, 0.012, 0.05, 0.10, 0, AMBER);
+  }
+
+  // --- rear -----------------------------------------------------------------------
+  if (rearEnd) {
+    const TL = [1.02, 0.86, 0.08, 0.15];
+    endFace(lower, tail, -1, endProf(tail), [TL], WHITE);
+    const RW = [0, 2.20, 0.90, 0.36];
+    endFace(paint, tail, -1, shell.prof(tail), [RW], WHITE);
+    // THE BAND UNDER THE REAR WINDOW. The shell's end face starts at the
+    // window, the lower body's stops at the belt, and between the two the
+    // back of every bus was open: you saw the seats through it from behind.
+    {
+      const sT = shell.sec(tail), w = sT.w0 - 0.02, y0 = belt - 0.05, y1 = RW[1] - RW[3] + 0.02;
+      paint.quad([w, y0, tail - 0.004], [-w, y0, tail - 0.004], [-w, y1, tail - 0.004], [w, y1, tail - 0.004], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], WHITE);
+    }
+    const wp = pocket(paint, matte, 0, RW[1], tail, RW[2], RW[3], 0.04, -1, { rim: 0.03, rimCol: PLASTIC });
+    trim.box(0, RW[1] - wp.hh, tail + 0.012, wp.hw * 2, wp.hh * 2, 0.010, 0, GLASS);
+    for (const sx of [-1, 1]) {
+      const tp = pocket(lower, matte, sx * TL[0], TL[1], tail, TL[2], TL[3], 0.04, -1, { rim: 0.018, rimCol: PLASTIC });
+      trim.box(sx * TL[0], TL[1] - tp.hh * 0.95, tail + 0.014, tp.hw * 1.9, tp.hh * 1.9, 0.020, 0, TAILC);
+    }
+    matte.box(0, 0.55, tail - 0.012, 1.40, 0.50, 0.02, 0, [0.10, 0.11, 0.12]);                           // engine grille
+    matte.box(0, 0.26, tail - 0.03, geom(tail).w * 1.92, 0.24, 0.16, 0, PLASTIC);
+    trim.box(0, 0.42, tail - 0.045, 0.40, 0.12, 0.02, 0, PLATE);
+  } else {
+    const sT = shell.sec(tail);
+    matte.box(0, sT.y0 - 0.2, tail + 0.02, sT.w0 * 2 + 0.04, sT.side - sT.y0 + 0.5, 0.06, 0, [0.07, 0.07, 0.08]);
+    matte.box(0, 0.40, tail + 0.04, geom(tail).w * 1.9, 0.9, 0.08, 0, [0.07, 0.07, 0.08]);
+  }
+
+  // --- roof: air-conditioning pod ---------------------------------------------------
+  const pod = o.pod !== undefined ? o.pod : -3.0;
+  if (pod !== null) {
+    paint.box(0, roofY + 0.02, pod, 1.70, 0.24, 2.80, 0, WHITE);
+    matte.box(0, roofY + 0.26, pod, 1.20, 0.012, 2.00, 0, [0.20, 0.21, 0.22]);
+  }
+  if (frontEnd) matte.box(0, roofY + 0.03, nose - 2.1, 0.70, 0.06, 0.70, 0, [0.30, 0.31, 0.32]);        // escape hatch
+
+  const twF = 0.30, twR = 0.42;
+  const wxF = geom(zF).wb - twF / 2 + 0.02, wxR = geom(zR).wb - twR / 2 + 0.02;
+  const wheels = [[-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR]];
+  // a trailing section has only its drive axle; it rides on the hitch at the front
+  return o.noFrontAxle ? wheels : [[-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF], ...wheels];
+}
+
+/**
+ * King County Metro's 60 ft articulated bus (a New Flyer XDE60 as RapidRide
+ * runs them): a 10.6 m front section on the front and middle axles, a
+ * rubber bellows round the turntable, and a 7.6 m rear section on the drive
+ * axle, riding on the hitch. Two vehicles (see Vehicle.follow): the front is
+ * `artic`, which traffic and the player drive as a bus; the rear is
+ * `articRear`, placed by trailer kinematics every frame.
+ */
+// Sections 10.6 + 7.6 m (an XDE60's: the joint just behind the middle axle,
+// the rear section most of the front's length, not half of it).
+const ARTIC = { hitchF: 5.95, hitchR: 4.4, axleR: -2.0, maxAngle: 0.95 };
+
+// The bellows: a corrugated rubber ring stretched from the front section's
+// tail to the rear section's nose, rebuilt from the two sections every frame
+// (112 vertices), so it opens on the outside of a turn and folds on the inside.
+const BEL_P = [];
+{
+  // the section: a rounded rectangle 2.4 m wide, from 0.45 m to 3.0 m up
+  const w = 1.2, y0 = 0.45, y1 = 3.0, r = 0.35;
+  const corners = [[w - r, y1 - r, 0], [-w + r, y1 - r, Math.PI / 2], [-w + r, y0 + r, Math.PI], [w - r, y0 + r, Math.PI * 1.5]];
+  for (const [cx, cy, a0] of corners) for (let k = 0; k < 4; k++) { const a = a0 + (k / 3) * (Math.PI / 2); BEL_P.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); }
+}
+const BEL_RINGS = 7;
+const BEL_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 });
+export function makeBellows() {
+  const n = BEL_P.length, geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * BEL_RINGS * 3), 3));
+  const col = new Float32Array(n * BEL_RINGS * 3);
+  for (let i = 0; i < BEL_RINGS; i++) for (let j = 0; j < n; j++) { const k = i % 2 ? 0.07 : 0.12; col.set([k, k, k * 1.05], (i * n + j) * 3); }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const idx = [];
+  for (let i = 0; i < BEL_RINGS - 1; i++) for (let j = 0; j < n; j++) {
+    const a = i * n + j, b = i * n + ((j + 1) % n), c = (i + 1) * n + j, d = (i + 1) * n + ((j + 1) % n);
+    idx.push(a, c, b, b, c, d);
+  }
+  geo.setIndex(idx);
+  const m = new THREE.Mesh(geo, BEL_MAT);
+  m.frustumCulled = false;
+  m.castShadow = false;
+  return m;
+}
+const _bA = new THREE.Vector3(), _bB = new THREE.Vector3(), _bC = new THREE.Vector3();
+function updateBellows(m, lead, rear) {
+  lead.group.updateMatrixWorld(true);
+  rear.group.updateMatrixWorld(true);
+  const n = BEL_P.length, pos = m.geometry.attributes.position.array;
+  const zF = -lead.spec.len / 2 - 0.02, zR = rear.spec.len / 2 + 0.02;
+  const cF = lead.matteMesh.localToWorld(_bC.set(0, 1.7, zF)).clone(), cR = rear.matteMesh.localToWorld(_bC.set(0, 1.7, zR)).clone();
+  for (let j = 0; j < n; j++) {
+    const [x, y] = BEL_P[j];
+    lead.matteMesh.localToWorld(_bA.set(x, y, zF));
+    rear.matteMesh.localToWorld(_bB.set(x, y, zR));
+    for (let i = 0; i < BEL_RINGS; i++) {
+      const t = i / (BEL_RINGS - 1), fold = i % 2 ? 1.035 : 1;
+      const cx = cF.x + (cR.x - cF.x) * t, cy = cF.y + (cR.y - cF.y) * t, cz = cF.z + (cR.z - cF.z) * t;
+      const px = _bA.x + (_bB.x - _bA.x) * t, py = _bA.y + (_bB.y - _bA.y) * t, pz = _bA.z + (_bB.z - _bA.z) * t;
+      const o = (i * n + j) * 3;
+      pos[o] = cx + (px - cx) * fold; pos[o + 1] = cy + (py - cy) * fold; pos[o + 2] = cz + (pz - cz) * fold;
+    }
+  }
+  m.geometry.attributes.position.needsUpdate = true;
+  m.geometry.computeVertexNormals();
+}
+function buildArticFront(spec, paint, trim, matte) {
+  // front axle 2.6 m back from the nose; the middle axle 2.1 m ahead of the tail
+  return buildBus(spec, paint, trim, matte, { zF: 2.7, zR: -3.2, doors: [[3.55, 4.65], [-1.5, -0.4]], rearEnd: false, pod: -1.3 });
+}
+function buildArticRear(spec, paint, trim, matte) {
+  return buildBus(spec, paint, trim, matte, { zF: 1.6, zR: ARTIC.axleR, doors: [[1.1, 2.2]], frontEnd: false, pod: -0.6, noFrontAxle: true });
+}
+
+// ---------------------------------------------------------------------------
+// FIRE APPARATUS: a pumper (`fireengine`) and a tiller aerial ladder truck
+// (`tiller` + `tillerRear`, two vehicles like the articulated bus). Seattle
+// Fire runs custom-cab Pierce rigs: a flat cab-forward face, a raised-roof
+// four-door crew cab with the front axle under the front doors, roll-up
+// aluminium compartment doors, a pump panel behind the cab, a hose bed on top
+// and ground ladders racked on the side. Red paint; the white cab roof, the
+// reflective band and the gold lettering are matte (paint is tinted by its
+// material, so nothing painted can be white on a red truck).
+// ---------------------------------------------------------------------------
+const FIRE_WHITE = [0.92, 0.92, 0.9];
+const FIRE_GOLD = [0.86, 0.66, 0.22];
+const FIRE_DIAMOND = [0.62, 0.63, 0.65];
+const FIRE_RED_LENS = [1.0, 0.08, 0.06];
+
+// A squared stroke font for lettering, in a unit cell (x right, y up). Every
+// stroke is a 4-sided tube, so diagonals cost the same as anything else.
+const GLYPHS = {
+  S: [[[1, 1], [0, 1], [0, 0.5], [1, 0.5], [1, 0], [0, 0]]],
+  E: [[[1, 1], [0, 1], [0, 0], [1, 0]], [[0, 0.5], [0.75, 0.5]]],
+  A: [[[0, 0], [0.5, 1], [1, 0]], [[0.25, 0.45], [0.75, 0.45]]],
+  T: [[[0, 1], [1, 1]], [[0.5, 1], [0.5, 0]]],
+  L: [[[0, 1], [0, 0], [1, 0]]],
+  F: [[[1, 1], [0, 1], [0, 0]], [[0, 0.5], [0.75, 0.5]]],
+  I: [[[0.5, 1], [0.5, 0]]],
+  R: [[[0, 0], [0, 1], [1, 1], [1, 0.5], [0, 0.5]], [[0.4, 0.5], [1, 0]]],
+  D: [[[0, 0], [0, 1], [0.65, 1], [1, 0.7], [1, 0.3], [0.65, 0], [0, 0]]],
+  N: [[[0, 0], [0, 1], [1, 0], [1, 1]]],
+  G: [[[1, 1], [0, 1], [0, 0], [1, 0], [1, 0.45], [0.5, 0.45]]],
+  K: [[[0, 0], [0, 1]], [[1, 1], [0, 0.5], [1, 0]]],
+  U: [[[0, 1], [0, 0], [1, 0], [1, 1]]],
+  M: [[[0, 0], [0, 1], [0.5, 0.5], [1, 1], [1, 0]]],
+  O: [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
+  0: [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
+  1: [[[0.25, 0.8], [0.5, 1], [0.5, 0]]],
+  2: [[[0, 1], [1, 1], [1, 0.5], [0, 0.5], [0, 0], [1, 0]]],
+  3: [[[0, 1], [1, 1], [1, 0], [0, 0]], [[0.2, 0.5], [1, 0.5]]],
+  4: [[[0, 1], [0, 0.5], [1, 0.5]], [[1, 1], [1, 0]]],
+  5: [[[1, 1], [0, 1], [0, 0.5], [1, 0.5], [1, 0], [0, 0]]],
+  6: [[[1, 1], [0, 1], [0, 0], [1, 0], [1, 0.5], [0, 0.5]]],
+  7: [[[0, 1], [1, 1], [0.4, 0]]],
+  8: [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]], [[0, 0.5], [1, 0.5]]],
+  9: [[[1, 0.5], [0, 0.5], [0, 1], [1, 1], [1, 0], [0, 0]]],
+};
+/**
+ * Letter `text` on a vehicle's flank: side `sx`, face at |x| = `x`, centred on
+ * `zc`, baseline `y`, cap height `h`. Reads left to right from outside on
+ * either side (on +x the reading direction is -z, on -x it is +z).
+ */
+function letter(b, text, sx, x, y, zc, h, col) {
+  const w = h * 0.62, gap = h * 0.30, r = Math.max(0.011, h * 0.075);
+  const adv = (ch) => (ch === ' ' ? w * 0.8 : (ch === 'I' || ch === '1' ? w * 0.45 : w)) + gap;
+  let total = -gap;
+  for (const ch of text) total += adv(ch);
+  const dir = sx > 0 ? -1 : 1;
+  let u = -total / 2;
+  const px = sx * (x + r * 0.6);
+  for (const ch of text) {
+    const g = GLYPHS[ch];
+    const cw = ch === 'I' || ch === '1' ? w * 0.45 : w;
+    if (g) {
+      for (const line of g) {
+        for (let i = 0; i < line.length - 1; i++) {
+          const [ax, ay] = line[i], [bx, by] = line[i + 1];
+          b.tube([px, y + ay * h, zc + dir * (u + ax * cw)], [px, y + by * h, zc + dir * (u + bx * cw)], r, 4, col, false);
+        }
+      }
+    }
+    u += adv(ch);
+  }
+}
+
+/** A roll-up aluminium compartment door on a flank, with its slats and lift bar. */
+function rollDoor(trim, matte, sx, x, y0, y1, za, zb) {
+  const zc = (za + zb) / 2, len = Math.abs(zb - za);
+  trim.box(sx * (x + 0.006), y0, zc, 0.012, y1 - y0, len, 0, ALU);
+  for (let yy = y0 + 0.12; yy < y1 - 0.06; yy += 0.12) {
+    const xx = sx * (x + 0.0135);
+    matte.quad([xx, yy, za + 0.02], [xx, yy, zb - 0.02], [xx, yy + 0.012, zb - 0.02], [xx, yy + 0.012, za + 0.02],
+      [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], [0.30, 0.31, 0.33]);
+  }
+  trim.box(sx * (x + 0.02), y0 + 0.10, zc, 0.03, 0.035, len * 0.7, 0, CHROME);
+}
+
+/** A roof light bar: alternating red and white lenses in a black base. */
+function lightBar(trim, matte, y, z, w, d = 0.30) {
+  matte.box(0, y, z, w, 0.06, d, 0, PLASTIC);
+  const n = 6, seg = w / n;
+  for (let i = 0; i < n; i++) {
+    const x = -w / 2 + seg * (i + 0.5);
+    trim.box(x, y + 0.06, z, seg * 0.92, 0.12, d * 0.9, 0, i === 2 || i === 3 ? LAMP : FIRE_RED_LENS);
+  }
+}
+
+/** A side-mounted ground ladder: two rails and the rungs, lying on its side. */
+function sideLadder(trim, sx, x, y0, y1, za, zb) {
+  for (const y of [y0, y1]) trim.tube([sx * x, y, za], [sx * x, y, zb], 0.028, 4, ALU, true);
+  const n = Math.max(2, Math.round(Math.abs(zb - za) / 0.30));
+  for (let i = 1; i < n; i++) {
+    const z = za + ((zb - za) * i) / n;
+    trim.tube([sx * x, y0, z], [sx * x, y1, z], 0.014, 4, ALU, false);
+  }
+}
+
+/**
+ * The cab both rigs share: a custom cab-forward crew cab, the front axle
+ * under the front doors, a flat face with a big screen, a white roof, a light
+ * bar, chrome bumper and grille. `o`: z0/nose, zF, roofY, W. Returns the shell.
+ */
+function fireCab(spec, paint, trim, matte, o) {
+  const { z0, nose, zF, roofY, W, unit } = o;
+  const wr = spec.wheelR, archR = wr + 0.18;
+  const winBot = 1.78;
+  const windows = [];
+  for (const sx of [-1, 1]) {
+    windows.push({ sx, zA: zF - 0.28, zB: nose - 0.34, yBot: winBot, yTopMax: (sec) => sec(nose).side - 0.07 });
+    windows.push({ sx, zA: z0 + 0.22, zB: zF - 0.62, yBot: winBot, yTopMax: (sec) => sec(nose).side - 0.07 });
+  }
+  const { shell: cab } = truckCab(paint, matte, { z0, z1: nose, W, roofY, zF, wr, archR, sill: 0.66, windows });
+  const cs = cab.sec(nose);
+  // --- face -------------------------------------------------------------------
+  const GRILLE = [0, 1.02, cs.w0 * 0.52, 0.30], LAMP_A = [cs.w0 * 0.74, 0.86, 0.17, 0.085];
+  const fw = cs.w0 - 0.12, zs = nose + 0.008, scrTop = cs.side - 0.06, scrBot = 1.62;
+  const SCR = [0, (scrBot + scrTop) / 2, fw, (scrTop - scrBot) / 2];
+  endFace(paint, nose, 1, cab.prof(nose), [GRILLE, LAMP_A, SCR], WHITE);
+  const gp = pocket(paint, matte, 0, GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.12, 1, { rim: 0.035, rimCol: CHROME });
+  for (let i = 0; i < 7; i++) trim.box(0, GRILLE[1] - GRILLE[3] + 0.05 + i * 0.08, gp.z + 0.02, gp.hw * 1.95, 0.022, 0.04, 0, CHROME);
+  for (const sx of [-1, 1]) {
+    pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.08, 1, { rim: 0.02, rimCol: CHROME });
+    trim.box(sx * (LAMP_A[0] - 0.08), LAMP_A[1] - 0.055, nose - 0.026, 0.13, 0.11, 0.022, 0, LAMP);
+    trim.box(sx * (LAMP_A[0] + 0.08), LAMP_A[1] - 0.055, nose - 0.026, 0.13, 0.11, 0.022, 0, LAMP);
+    // red warning heads on the face, above the lamps and at the cab's top corners
+    trim.box(sx * LAMP_A[0], 1.24, nose + 0.012, 0.24, 0.09, 0.03, 0, FIRE_RED_LENS);
+    trim.box(sx * (cs.w0 - 0.16), cs.side - 0.02, nose - 0.02, 0.20, 0.12, 0.06, 0, FIRE_RED_LENS);
+  }
+  trim.patch([[[-fw, scrBot, zs], [0, scrBot, zs], [fw, scrBot, zs]],
+    [[-fw, scrTop, zs], [0, scrTop, zs], [fw, scrTop, zs]]], GLASS, [0, 0, 1]);
+  matte.box(0, scrBot - 0.04, nose + 0.004, fw * 2 + 0.06, 0.04, 0.02, 0, PLASTIC);
+  for (const x of [-0.62, 0.22]) matte.tube([x, scrBot + 0.05, nose + 0.024], [x + 0.46, scrBot + 0.16, nose + 0.024], 0.011, 4, PLASTIC, true);
+  // the extended chrome bumper, its hose well and the tow eyes
+  trim.box(0, 0.38, nose + 0.26, W * 2.02, 0.32, 0.50, 0, CHROME);
+  matte.box(0, 0.69, nose + 0.26, W * 1.2, 0.012, 0.42, 0, FIRE_DIAMOND);
+  matte.box(0, 0.70, nose + 0.26, W * 0.9, 0.06, 0.32, 0, [0.82, 0.70, 0.18]);   // a yellow trash line, folded
+  trim.box(0, 0.47, nose + 0.515, 0.40, 0.12, 0.02, 0, PLATE);
+  // a Q2B: the mechanical siren on the bumper deck, chrome bell
+  trim.prism(-0.62, 0.70, nose + 0.32, 0.12, 0.24, 10, CHROME);
+  // the white cab roof (matte: paint cannot be white on a red truck)
+  const rs = cab.sec((z0 + nose) / 2);
+  matte.box(0, roofY - 0.012, (z0 + nose - 0.42) / 2, (rs.wT - rs.r) * 2 + 0.02, 0.065, nose - 0.42 - z0 - 0.02, 0, FIRE_WHITE);
+  lightBar(trim, matte, roofY + 0.05, nose - 0.55, W * 1.55);
+  // --- cab sides ---------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    sideGlass(trim, cab, sx, zF - 0.28, nose - 0.34, winBot, cs.side - 0.07);
+    sideGlass(trim, cab, sx, z0 + 0.22, zF - 0.62, winBot, cs.side - 0.07);
+    const g = cab.sec(zF - 0.45);
+    for (const zc of [zF - 0.45, z0 + 0.10]) {
+      matte.box(sx * (cab.sec(zc).w0 + 0.004), 0.95, zc, 0.010, g.side - 1.0, 0.016, 0, [0.13, 0.14, 0.15]);
+    }
+    trim.box(sx * (g.w0 + 0.01), 1.56, zF - 0.10, 0.02, 0.03, 0.18, 0, CHROME);   // door handles
+    trim.box(sx * (g.w0 + 0.01), 1.56, z0 + 0.40, 0.02, 0.03, 0.18, 0, CHROME);
+    // chrome grab rails and the two steps up into the cab
+    trim.tube([sx * (g.w0 + 0.04), 1.05, zF - 0.30], [sx * (g.w0 + 0.04), 1.70, zF - 0.30], 0.018, 6, CHROME, true);
+    matte.box(sx * (g.w0 - 0.08), 0.52, zF - 0.70, 0.24, 0.035, 0.55, 0, FIRE_DIAMOND);
+    // the reflective band and the unit number on the doors
+    matte.quad([sx * (g.w0 + 0.006), 1.08, z0 + 0.04], [sx * (g.w0 + 0.006), 1.08, nose - 0.06], [sx * (g.w0 + 0.006), 1.20, nose - 0.06],
+      [sx * (g.w0 + 0.006), 1.20, z0 + 0.04], [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], FIRE_WHITE);
+    if (unit) letter(matte, unit, sx, g.w0, 1.30, (zF + nose) / 2 - 0.12, 0.26, FIRE_GOLD);
+    truckMirror(trim, matte, sx, cs.w0 - 0.02, cs.side - 0.08, nose - 0.12);
+    // side warning lights, front and back of the cab
+    trim.box(sx * (cab.sec(nose - 0.2).w0 + 0.01), 1.32, nose - 0.20, 0.03, 0.10, 0.16, 0, FIRE_RED_LENS);
+    trim.box(sx * (cab.sec(z0 + 0.15).w0 + 0.01), cs.side - 0.16, z0 + 0.15, 0.03, 0.10, 0.16, 0, FIRE_RED_LENS);
+  }
+  boxCabin(matte, { y: 1.30, sit: 1.62, x: cs.w0 - 0.10, zR: z0 + 0.06, zF: nose - 0.06, top: roofY - 0.10,
+    rows: [zF - 0.02, z0 + 0.55], wheelDz: 0.72 });
+  return { cab, archR };
+}
+
+/**
+ * The pumper: Engine 10's type of rig. 10 m, a single rear axle on duals.
+ * The deck gun (FIRE_MONITOR) is on top of the pump house behind the cab.
+ */
+// (the tiller's is on its trailer: the waterway at the aerial's heel)
+export const FIRE_MONITOR = { fireengine: [0, 3.30, 0.95], tillerRear: [0, 3.78, 3.30] };
+function buildFireEngine(spec, paint, trim, matte) {
+  const wr = spec.wheelR, W = spec.wid / 2;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = nose - 1.55, zR = zF - spec.wheelbase;
+  const z0 = nose - 3.30, roofY = spec.roof;
+  fireCab(spec, paint, trim, matte, { z0, nose, zF, roofY, W: W * 0.97, unit: 'E10' });
+  // --- body: pump house, compartments, hose bed --------------------------------
+  const bz1 = z0 - 0.06, bodyTop = 2.42, sill = 0.62;
+  const archTopR = wr * 2 + 0.10, archRR = wr + 0.20;
+  const liftR = archCut([zR], archRR, archTopR, 3.0);
+  const body = boxShell(paint, {
+    z0: tail, z1: bz1, stations: 26, rr: 0.07, tumble: 0.01, crown: 0.012,
+    wAt: () => W, y0At: (z) => Math.max(sill, liftR(z)), y1At: () => bodyTop,
+  });
+  shellArch(matte, body, zR, wr, archRR, archTopR, sill);
+  endFace(paint, bz1, 1, body.prof(bz1), [], WHITE);
+  // pump panels behind the cab: brushed panel, gauges, discharges with caps
+  const pz0 = bz1 - 0.08, pz1 = bz1 - 1.05;
+  for (const sx of [-1, 1]) {
+    trim.box(sx * (W + 0.006), 0.80, (pz0 + pz1) / 2, 0.012, 1.45, pz0 - pz1, 0, ALU);
+    for (let i = 0; i < 4; i++) {
+      matte.box(sx * (W + 0.016), 1.78, pz1 + 0.16 + i * 0.22, 0.012, 0.12, 0.12, 0, [0.06, 0.06, 0.07]);
+      trim.box(sx * (W + 0.022), 1.80, pz1 + 0.16 + i * 0.22, 0.006, 0.08, 0.08, 0, WHITE);
+    }
+    for (const [zz, yy] of [[pz1 + 0.25, 1.05], [pz1 + 0.70, 1.05], [pz1 + 0.47, 1.40]]) {
+      trim.tube([sx * W, yy, zz], [sx * (W + 0.12), yy, zz], 0.055, 8, CHROME, true);
+      trim.tube([sx * (W + 0.12), yy, zz], [sx * (W + 0.16), yy, zz], 0.07, 8, [0.80, 0.62, 0.18], true);
+    }
+    matte.box(sx * (W - 0.12), 0.50, (pz0 + pz1) / 2, 0.26, 0.035, pz0 - pz1, 0, FIRE_DIAMOND);   // running board
+    // compartments: ahead of the axle, over it, and behind it to the tail
+    rollDoor(trim, matte, sx, W, 0.78, bodyTop - 0.16, pz1 - 0.08, zR + archRR + 0.06);
+    rollDoor(trim, matte, sx, W, archTopR + 0.10, bodyTop - 0.16, zR + archRR - 0.04, zR - archRR + 0.04);
+    rollDoor(trim, matte, sx, W, 0.78, bodyTop - 0.16, zR - archRR - 0.06, (zR - archRR + tail) / 2 + 0.02);
+    rollDoor(trim, matte, sx, W, 0.78, bodyTop - 0.16, (zR - archRR + tail) / 2 - 0.02, tail + 0.10);
+    // the band and the lettering
+    matte.quad([sx * (W + 0.02), 0.66, tail + 0.02], [sx * (W + 0.02), 0.66, bz1], [sx * (W + 0.02), 0.76, bz1],
+      [sx * (W + 0.02), 0.76, tail + 0.02], [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], FIRE_WHITE);
+    matte.box(sx * (W + 0.004), bodyTop - 0.14, (tail + bz1) / 2, 0.012, 0.12, bz1 - tail - 0.04, 0, FIRE_WHITE);
+    // warning lights high at the rear corners and over the axle
+    trim.box(sx * (W - 0.10), bodyTop + 0.02, tail + 0.12, 0.18, 0.16, 0.12, 0, FIRE_RED_LENS);
+    trim.box(sx * (W + 0.01), 0.90, zR, 0.03, 0.10, 0.20, 0, AMBER);
+    // the ground ladders on the kerb side, and the pike poles on the street side
+    if (sx < 0) {
+      sideLadder(trim, sx, W + 0.12, bodyTop - 0.08, bodyTop + 0.30, pz1 - 0.15, tail + 0.40);
+      for (const zz of [pz1 - 0.3, tail + 0.6]) matte.box(sx * (W + 0.06), bodyTop - 0.12, zz, 0.12, 0.46, 0.06, 0, PLASTIC);
+    } else {
+      for (let k = 0; k < 2; k++) trim.tube([sx * (W + 0.04), bodyTop + 0.04 + k * 0.07, pz1 - 0.3], [sx * (W + 0.04), bodyTop + 0.04 + k * 0.07, tail + 0.6], 0.018, 5, [0.85, 0.75, 0.30], true);
+    }
+  }
+  letter(matte, 'SEATTLE FIRE', 1, W + 0.012, 1.54, (pz1 + tail) / 2 + 0.2, 0.26, FIRE_GOLD);
+  letter(matte, 'SEATTLE FIRE', -1, W + 0.012, 1.54, (pz1 + tail) / 2 + 0.2, 0.26, FIRE_GOLD);
+  // pump house top: a raised box behind the cab, the deck gun on it
+  paint.box(0, bodyTop, (pz0 + pz1) / 2, W * 1.9, 0.38, pz0 - pz1, 0, WHITE);
+  const [mx, my, mz] = FIRE_MONITOR.fireengine;
+  trim.prism(mx, bodyTop + 0.38, mz, 0.11, my - bodyTop - 0.38 - 0.08, 10, CHROME);
+  trim.tube([mx, my - 0.08, mz], [mx, my + 0.02, mz + 0.30], 0.07, 8, [0.80, 0.80, 0.82], true);
+  trim.tube([mx, my + 0.02, mz + 0.30], [mx, my + 0.08, mz + 0.62], 0.05, 8, CHROME, true);
+  // hose bed: walls, the folded supply line in two colours and the preconnects
+  const hz0 = tail + 0.06, hz1 = pz1 - 0.04;
+  for (const sx of [-1, 1]) paint.box(sx * (W - 0.03), bodyTop, (hz0 + hz1) / 2, 0.06, 0.34, hz1 - hz0, 0, WHITE);
+  trim.tube([-(W - 0.03), bodyTop + 0.36, hz0], [-(W - 0.03), bodyTop + 0.36, hz1], 0.02, 5, CHROME, true);
+  trim.tube([W - 0.03, bodyTop + 0.36, hz0], [W - 0.03, bodyTop + 0.36, hz1], 0.02, 5, CHROME, true);
+  const HOSE = [[0.86, 0.80, 0.70], [0.78, 0.66, 0.16], [0.70, 0.12, 0.10]];
+  for (let k = 0; k < 4; k++) {
+    matte.box(0, bodyTop + 0.02 + k * 0.075, (hz0 + hz1) / 2, W * 1.78, 0.07, hz1 - hz0 - 0.10, 0, HOSE[k % 3]);
+  }
+  for (const yy of [bodyTop + 0.06, bodyTop + 0.15, bodyTop + 0.24]) {
+    matte.box(0, yy, tail + 0.02, W * 1.72, 0.008, 0.008, 0, [0.20, 0.20, 0.21]);   // fold lines on the end
+  }
+  // --- rear -----------------------------------------------------------------------
+  const TL = [W - 0.18, 1.05, 0.10, 0.22];
+  endFace(paint, tail, -1, body.prof(tail), [TL], WHITE);
+  for (const sx of [-1, 1]) {
+    const tp = pocket(paint, matte, sx * TL[0], TL[1], tail, TL[2], TL[3], 0.04, -1, { rim: 0.018, rimCol: CHROME });
+    trim.box(sx * TL[0], TL[1] - tp.hh * 0.95, tail + 0.014, tp.hw * 1.9, tp.hh * 0.62, 0.020, 0, TAILC);
+    trim.box(sx * TL[0], TL[1] - tp.hh * 0.30, tail + 0.014, tp.hw * 1.9, tp.hh * 0.6, 0.020, 0, AMBER);
+    trim.box(sx * TL[0], TL[1] + tp.hh * 0.32, tail + 0.014, tp.hw * 1.9, tp.hh * 0.6, 0.020, 0, LAMP);
+    trim.tube([sx * 0.55, 0.90, tail - 0.08], [sx * 0.55, 2.10, tail - 0.08], 0.018, 6, CHROME, true);   // grab rails
+  }
+  // chevrons on the back, as every US rig now carries (red / gold stripes)
+  for (let i = -4; i <= 4; i++) {
+    matte.quad([i * 0.24 - 0.06, 1.40, tail - 0.004], [i * 0.24 + 0.06, 1.40, tail - 0.004], [i * 0.24 + 0.18, 2.20, tail - 0.004],
+      [i * 0.24 + 0.06, 2.20, tail - 0.004], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], i % 2 ? FIRE_GOLD : [0.75, 0.10, 0.10]);
+  }
+  matte.box(0, 0.46, tail - 0.18, W * 1.9, 0.07, 0.40, 0, FIRE_DIAMOND);       // tailboard step
+  trim.box(0, 0.62, tail - 0.012, 0.40, 0.12, 0.02, 0, PLATE);
+  // --- chassis ------------------------------------------------------------------
+  matte.box(0, 0.62, (tail + nose) / 2 - 0.4, 0.98, 0.26, spec.len - 1.6, 0, PLASTIC);
+  for (const sx of [-1, 1]) matte.box(sx * (W - 0.24), wr * 2 + 0.04, zR, 0.52, 0.04, wr * 2.3, 0, PLASTIC);
+  const twF = 0.34, twR = 0.50;
+  const wxF = W * 0.97 - 0.19, wxR = W - 0.28;
+  return [[-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF], [-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR]];
+}
+
+/**
+ * The tiller: an aerial ladder truck in two halves. The tractor is the crew
+ * cab on a short wheelbase with the fifth wheel ahead of its drive axle; the
+ * trailer carries the turntable and a 100 ft ladder bedded the full length,
+ * the compartments down both sides, and the tillerman's glass cab over the
+ * rear axle, which he steers. TILLER is the hitch: `hitchF` back from the
+ * tractor's centre to the fifth wheel, `hitchR` forward from the trailer's
+ * centre to its kingpin, `axleR` the trailer's axle, `maxAngle` the
+ * articulation stop, `rearSteer` the tillerman's gain (Vehicle.follow).
+ */
+const TILLER = { hitchF: 1.75, hitchR: 5.55, axleR: -4.85, maxAngle: 1.10, rearSteer: 0.7, rearSteerRev: -1.5, rearLock: 0.55 };
+const LADDER_Y = 3.06;   // the bedded aerial's bottom chord, clear of the tiller cab's roof
+// Every trailer's hitch, by the trailer's type (Vehicle.follow, traffic.spawnAt).
+export const HITCH = { articRear: { ...ARTIC, rearSteer: 0, rearLock: 0 }, tillerRear: TILLER };
+function buildTiller(spec, paint, trim, matte) {
+  const wr = spec.wheelR, W = spec.wid / 2;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = nose - 1.50, zR = zF - spec.wheelbase;
+  const z0 = nose - 3.25, roofY = spec.roof;
+  fireCab(spec, paint, trim, matte, { z0, nose, zF, roofY, W: W * 0.97, unit: 'L10' });
+  const bz1 = z0 - 0.06, sill = 0.62, top = 1.50;
+  const archTopR = wr * 2 + 0.10, archRR = wr + 0.20;
+  const liftR = archCut([zR], archRR, archTopR, 3.0);
+  // low compartment boxes either side of the fifth wheel, the rear fenders in them
+  for (const sx of [-1, 1]) {
+    // boxShell builds about the centreline: what it adds is moved out to the side
+    const mark = paint.pos.length;
+    boxShell(paint, {
+      z0: tail + 0.05, z1: bz1, stations: 14, rr: 0.05, tumble: 0.006, crown: 0.006, capStart: true, capEnd: true,
+      wAt: () => 0.32, y0At: (z) => Math.max(sill, liftR(z)), y1At: () => top,
+    });
+    for (let i = mark; i < paint.pos.length; i += 3) paint.pos[i] += sx * (W - 0.32);
+    rollDoor(trim, matte, sx, W, 0.70, top - 0.10, bz1 - 0.12, zR + archRR + 0.08);
+    matte.box(sx * (W - 0.32), top, (tail + bz1) / 2, 0.66, 0.02, bz1 - tail - 0.12, 0, FIRE_DIAMOND);
+    trim.box(sx * (W - 0.10), top + 0.02, tail + 0.20, 0.16, 0.14, 0.10, 0, FIRE_RED_LENS);
+    trim.box(sx * (W + 0.01), 0.95, zR - archRR - 0.10, 0.03, 0.12, 0.18, 0, TAILC);
+  }
+  shellArchAt(matte, W, zR, wr, archRR, archTopR, sill);
+  // the fifth wheel on the frame, between the boxes
+  matte.box(0, 0.60, (tail + bz1) / 2, 0.98, 0.50, bz1 - tail - 0.1, 0, PLASTIC);
+  matte.prism(0, 1.10, -TILLER.hitchF, 0.62, 0.16, 16, [0.16, 0.16, 0.17]);
+  matte.box(0, 1.26, -TILLER.hitchF - 0.1, 0.9, 0.012, 0.8, 0, [0.30, 0.30, 0.31]);
+  trim.box(0, 0.48, tail + 0.02, W * 1.6, 0.14, 0.06, 0, CHROME);
+  for (const sx of [-1, 1]) trim.box(sx * 0.72, 0.62, tail - 0.012, 0.16, 0.08, 0.02, 0, TAILC);
+  // air lines to the trailer (red and blue glad hands' hoses, coiled)
+  matte.tube([0.25, 1.35, bz1 - 0.05], [0.25, 1.40, -TILLER.hitchF + 0.5], 0.02, 5, [0.75, 0.12, 0.10], false);
+  matte.tube([-0.25, 1.35, bz1 - 0.05], [-0.25, 1.40, -TILLER.hitchF + 0.5], 0.02, 5, [0.12, 0.25, 0.75], false);
+  const twF = 0.34, twR = 0.50;
+  const wxF = W * 0.97 - 0.19, wxR = W - 0.28;
+  return [[-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF], [-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR]];
+}
+/** `shellArch` for a body whose flank is at ±W rather than on a single shell. */
+function shellArchAt(matte, W, zc, wr, archR, archTop, floor) {
+  for (const sx of [-1, 1]) {
+    matte.box(sx * (W - 0.17), wr * 0.85, zc, 0.30, archTop - wr * 0.85 - 0.012, archR * 1.85, 0, CAVITY);
+    const lipA = [], lipB = [];
+    for (let i = 0; i <= 12; i++) {
+      const th = 0.12 + ((Math.PI - 0.24) * i) / 12, z = zc + Math.cos(th) * archR * 0.995;
+      const y = Math.max(floor, archTop * (1 - Math.abs(Math.cos(th)) ** 3) ** (1 / 3));
+      lipA.push([sx * (W + 0.002), y, z]);
+      lipB.push([sx * (W + 0.045), y - 0.018, z]);
+    }
+    matte.patch([lipA, lipB], PLASTIC, [sx, -0.3, 0]);
+  }
+}
+
+/** One section of the aerial: two trusses (top and bottom chords, lacing) and the rungs. */
+function ladderSection(b, hw, y0, depth, za, zb, col) {
+  const len = Math.abs(zb - za), dz = zb > za ? 1 : -1;
+  for (const sx of [-1, 1]) {
+    b.tube([sx * hw, y0, za], [sx * hw, y0, zb], 0.035, 4, col, true);
+    b.tube([sx * hw, y0 + depth, za], [sx * hw, y0 + depth, zb], 0.03, 4, col, true);
+    const n = Math.max(2, Math.round(len / 0.55));
+    for (let i = 0; i < n; i++) {
+      const a = za + (dz * len * i) / n, c = za + (dz * len * (i + 1)) / n;
+      b.tube([sx * hw, i % 2 ? y0 + depth : y0, a], [sx * hw, i % 2 ? y0 : y0 + depth, c], 0.016, 4, col, false);
+    }
+  }
+  const r = Math.max(2, Math.round(len / 0.36));
+  for (let i = 1; i < r; i++) {
+    const z = za + (dz * len * i) / r;
+    b.tube([-hw, y0 + 0.02, z], [hw, y0 + 0.02, z], 0.017, 4, col, false);
+  }
+}
+
+function buildTillerRear(spec, paint, trim, matte) {
+  const wr = spec.wheelR, W = spec.wid / 2;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const kp = TILLER.hitchR, zR = TILLER.axleR;
+  const top = 2.05, sill = 0.66, neckZ = kp - 1.15;
+  const archTopR = wr * 2 + 0.10, archRR = wr + 0.20;
+  const liftR = archCut([zR], archRR, archTopR, 3.0);
+  // the gooseneck over the fifth wheel: narrower, its nose rounded off
+  const neck = boxShell(paint, {
+    z0: neckZ - 0.2, z1: nose, stations: 12, rr: 0.12, tumble: 0.02, crown: 0.01, capEnd: true,
+    wAt: curve([[neckZ - 0.2, 1.0], [nose - 0.5, 1.0], [nose, 0.82]]), y0At: () => 1.32, y1At: () => 1.92,
+  });
+  matte.box(0, 1.31, (neckZ + nose) / 2, 1.9, 0.02, nose - neckZ - 0.1, 0, PLASTIC);
+  void neck;
+  // the main body: compartments full height down both sides to the tiller cab
+  const bz1 = neckZ, bz0 = tail + 1.95;
+  const body = boxShell(paint, {
+    z0: bz0, z1: bz1, stations: 24, rr: 0.07, tumble: 0.01, crown: 0.01,
+    wAt: () => W, y0At: (z) => Math.max(sill, liftR(z)), y1At: () => top,
+  });
+  shellArch(matte, body, zR, wr, archRR, archTopR, sill);
+  endFace(paint, bz1, 1, body.prof(bz1), [], WHITE);
+  // under the tiller cab: a lower, shorter body over the axle to the tail
+  const tb = boxShell(paint, {
+    z0: tail, z1: bz0 + 0.02, stations: 10, rr: 0.06, tumble: 0.01, crown: 0.01,
+    wAt: () => W, y0At: (z) => Math.max(sill, liftR(z)), y1At: () => 1.30,
+  });
+  endFace(paint, tail, -1, tb.prof(tail), [], WHITE);
+  endFace(paint, bz0, -1, body.prof(bz0), [], WHITE);
+  for (const sx of [-1, 1]) {
+    rollDoor(trim, matte, sx, W, 0.80, top - 0.16, bz1 - 0.10, (bz1 + zR + archRR) / 2 + 0.03);
+    rollDoor(trim, matte, sx, W, 0.80, top - 0.16, (bz1 + zR + archRR) / 2 - 0.03, zR + archRR + 0.08);
+    matte.quad([sx * (W + 0.02), 0.70, tail + 0.02], [sx * (W + 0.02), 0.70, bz1], [sx * (W + 0.02), 0.78, bz1],
+      [sx * (W + 0.02), 0.78, tail + 0.02], [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], FIRE_WHITE);
+    matte.box(sx * (W + 0.004), top - 0.13, (bz0 + bz1) / 2, 0.012, 0.11, bz1 - bz0 - 0.04, 0, FIRE_WHITE);
+    trim.box(sx * (W - 0.10), top + 0.01, bz1 - 0.10, 0.18, 0.15, 0.12, 0, FIRE_RED_LENS);
+    trim.box(sx * (W + 0.01), 1.05, (bz1 + zR) / 2, 0.03, 0.10, 0.20, 0, AMBER);
+    trim.box(sx * (W - 0.12), 0.95, tail - 0.012, 0.16, 0.24, 0.02, 0, TAILC);
+    trim.box(sx * (W - 0.34), 0.95, tail - 0.012, 0.16, 0.12, 0.02, 0, AMBER);
+    // outriggers (the jacks) stowed behind the turntable
+    matte.box(sx * (W - 0.10), 0.36, neckZ - 0.45, 0.22, 0.34, 0.28, 0, [0.16, 0.16, 0.17]);
+    trim.box(sx * (W + 0.005), 0.70, neckZ - 0.45, 0.012, 0.9, 0.24, 0, [0.85, 0.75, 0.25]);
+  }
+  letter(matte, 'SEATTLE FIRE', 1, W + 0.012, 1.40, (bz1 + zR + archRR) / 2, 0.28, FIRE_GOLD);
+  letter(matte, 'SEATTLE FIRE', -1, W + 0.012, 1.40, (bz1 + zR + archRR) / 2, 0.28, FIRE_GOLD);
+  // ground ladders racked in the torque box: their butts show at the tail
+  for (let k = 0; k < 3; k++) {
+    for (const x of [-0.35, 0.35]) trim.box(x, 0.86 + k * 0.12, tail - 0.01, 0.07, 0.07, 0.02, 0, ALU);
+  }
+  matte.box(0, 0.80, tail - 0.006, 0.86, 0.40, 0.012, 0, [0.07, 0.07, 0.08]);
+  trim.box(0, 0.50, tail + 0.02, W * 1.6, 0.14, 0.06, 0, CHROME);
+  trim.box(0, 0.62, tail - 0.04, 0.40, 0.12, 0.02, 0, PLATE);
+  for (let i = -4; i <= 4; i++) {
+    matte.quad([i * 0.24 - 0.06, 0.66, tail - 0.012], [i * 0.24 + 0.06, 0.66, tail - 0.012], [i * 0.24 + 0.14, 1.26, tail - 0.012],
+      [i * 0.24 + 0.02, 1.26, tail - 0.012], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], i % 2 ? FIRE_GOLD : [0.75, 0.10, 0.10]);
+  }
+  // --- the tiller cab: a glass box over the axle, the tillerman in it ----------
+  const cz0 = tail + 0.10, cz1 = bz0 - 0.08, cw = 0.72, cy0 = 1.30, cy1 = 2.92;
+  const tcab = boxShell(paint, {
+    z0: cz0, z1: cz1, stations: 6, rr: 0.10, tumble: 0.02, crown: 0.02,
+    wAt: () => cw, y0At: () => cy0, y1At: () => cy1,
+    windows: [-1, 1].map((sx) => ({ sx, zA: cz0 + 0.12, zB: cz1 - 0.12, yBot: 1.95, yTopMax: cy1 - 0.12, cols: 2 })),
+  });
+  const TS = [0, (1.85 + cy1 - 0.14) / 2, cw - 0.10, (cy1 - 0.14 - 1.85) / 2];
+  endFace(paint, cz1, 1, tcab.prof(cz1), [TS], WHITE);
+  endFace(paint, cz0, -1, tcab.prof(cz0), [TS], WHITE);
+  for (const [z, d] of [[cz1 + 0.008, 1], [cz0 - 0.008, -1]]) {
+    trim.patch([[[-(cw - 0.10), 1.85, z], [cw - 0.10, 1.85, z]], [[-(cw - 0.10), cy1 - 0.14, z], [cw - 0.10, cy1 - 0.14, z]]], GLASS, [0, 0, d]);
+  }
+  for (const sx of [-1, 1]) sideGlass(trim, tcab, sx, cz0 + 0.12, cz1 - 0.12, 1.95, cy1 - 0.12, 0.007, 2);
+  matte.box(0, cy1 - 0.01, (cz0 + cz1) / 2, cw * 1.7, 0.05, cz1 - cz0 - 0.16, 0, FIRE_WHITE);
+  for (const sx of [-1, 1]) for (const z of [cz0 + 0.06, cz1 - 0.06]) trim.box(sx * (cw - 0.08), cy1 - 0.16, z, 0.12, 0.10, 0.04, 0, FIRE_RED_LENS);
+  boxCabin(matte, { y: 1.40, sit: 1.70, x: cw - 0.08, zR: cz0 + 0.06, zF: cz1 - 0.06, top: cy1 - 0.08,
+    rows: [cz0 + 0.62], wheelDz: 0.62, bulkhead: false, driverX: 0, benches: 'bench' });
+  // --- turntable and the aerial, bedded nose to tail over the tiller cab ---------
+  const ttZ = neckZ - 1.05;
+  matte.prism(0, top, ttZ, 1.02, 0.10, 18, [0.14, 0.14, 0.15]);
+  paint.prism(0, top + 0.10, ttZ, 0.92, 0.30, 18, WHITE);
+  // the control pedestal and the lift cylinders under the heel
+  paint.box(-0.62, top + 0.40, ttZ + 0.05, 0.30, 0.55, 0.40, 0, WHITE);
+  trim.box(-0.62, top + 0.62, ttZ + 0.26, 0.24, 0.20, 0.02, 0, [0.30, 0.32, 0.35]);
+  for (const sx of [-1, 1]) {
+    paint.box(sx * 0.62, top + 0.40, ttZ - 0.15, 0.16, 0.70, 0.36, 0, WHITE);
+    trim.tube([sx * 0.45, top + 0.42, ttZ - 0.20], [sx * 0.45, LADDER_Y - 0.02, ttZ - 1.70], 0.075, 8, CHROME, true);
+  }
+  const zTip = tail - 0.75, zHeel = ttZ + 0.25;
+  ladderSection(trim, 0.78, LADDER_Y, 0.52, zHeel, zTip + 2.4, ALU);
+  ladderSection(trim, 0.64, LADDER_Y + 0.05, 0.44, zHeel - 1.4, zTip + 1.2, [0.80, 0.81, 0.83]);
+  ladderSection(trim, 0.50, LADDER_Y + 0.10, 0.36, zHeel - 2.6, zTip, ALU);
+  // the heel pins, the tip's waterway nozzle, and the cradle the tip rests in
+  trim.tube([-0.82, LADDER_Y + 0.15, zHeel], [0.82, LADDER_Y + 0.15, zHeel], 0.06, 8, CHROME, true);
+  trim.tube([0, LADDER_Y + 0.18, zTip + 0.2], [0, LADDER_Y + 0.10, zTip - 0.10], 0.05, 8, CHROME, true);
+  for (const sx of [-1, 1]) paint.box(sx * 0.70, top, cz1 + 0.18, 0.12, LADDER_Y - top, 0.14, 0, WHITE);
+  matte.box(0, LADDER_Y - 0.06, cz1 + 0.18, 1.60, 0.06, 0.20, 0, PLASTIC);
+  // chassis rails
+  matte.box(0, 0.62, (tail + bz1) / 2, 0.98, 0.30, bz1 - tail - 0.3, 0, PLASTIC);
+  // the kingpin plate under the neck
+  matte.box(0, 1.24, kp, 0.9, 0.08, 0.9, 0, [0.20, 0.20, 0.21]);
+  const twR = 0.50, wxR = W - 0.28;
+  return [[-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR]];
+}
+
+
+// Paddling: a stroke's length in s, the share of it the blade is in the
+// water, peak push m/s2, the push's yaw (the wiggle) and the turn's, drag
+// (quadratic, linear), yaw damping (at rest, per m/s of speed), and the
+// draft a kayak can run in. Measured: cruise 2.4 m/s (9 km/h), a paddled
+// turn and a pivot at rest both ~40 deg/s, back-paddling ~2 m/s.
+const KAYAK = { stroke: 0.64, catchOut: 0.55, push: 2.4, yaw: 1.4, turn: 9, drag: 0.12, lin: 0.05, yawDamp: 3.5, track: 0.4, draft: 0.22 };
+const X_AXIS = new THREE.Vector3(1, 0, 0);
+const _ikA = new THREE.Vector3(), _ikB = new THREE.Vector3(), _ikC = new THREE.Vector3(), _ikQ = new THREE.Quaternion();
+
+/**
+ * Two-bone arm IK onto a world-space target: the elbow bends in the plane
+ * holding the pole (out to the side, down and back), the upper arm aims at
+ * the elbow, the forearm at the target. Bone directions are their children's
+ * bind offsets, so it works on any humanoid from peds.js.
+ */
+export function solveArm(sh, el, hand, target, frame, side, poleDir = null) {
+  const S = sh.getWorldPosition(new THREE.Vector3());
+  const E0 = el.getWorldPosition(new THREE.Vector3()), H0 = hand.getWorldPosition(new THREE.Vector3());
+  const L1 = S.distanceTo(E0), L2 = E0.distanceTo(H0);
+  const toT = target.clone().sub(S);
+  let d = toT.length();
+  d = clamp(d, Math.abs(L1 - L2) + 1e-3, L1 + L2 - 1e-3);
+  const dir = toT.normalize();
+  // pole: the elbow drops and goes out to its own side, in the boat's frame
+  const pole = (poleDir ? new THREE.Vector3(...poleDir) : new THREE.Vector3(side * 0.8, -0.9, -0.3)).applyQuaternion(frame.getWorldQuaternion(_ikQ)).normalize();
+  const perp = pole.addScaledVector(dir, -pole.dot(dir)).normalize();
+  const a = (L1 * L1 - L2 * L2 + d * d) / (2 * d), hgt = Math.sqrt(Math.max(0, L1 * L1 - a * a));
+  const E = S.clone().addScaledVector(dir, a).addScaledVector(perp, hgt);
+  const T = S.clone().addScaledVector(dir, d);
+  const aim = (bone, child, from, to) => {
+    // world direction -> the bone's parent space, then from the child's bind offset
+    const pq = bone.parent.getWorldQuaternion(_ikQ).invert();
+    const want = _ikA.copy(to).sub(from).normalize().applyQuaternion(pq);
+    const rest = _ikB.copy(child.position).normalize();
+    bone.quaternion.setFromUnitVectors(rest, want);
+    bone.updateMatrixWorld(true);
+  };
+  aim(sh, el, S, E);
+  aim(el, hand, el.getWorldPosition(_ikC), T);
+}
+
+/** A touring paddle along local x: an alloy shaft and two yellow blades. */
+let PADDLE_GEO = null;
+const PADDLE_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.2 });
+function kayakPaddle() {
+  if (!PADDLE_GEO) {
+    const b = new Builder(false);
+    const shaft = [0.16, 0.17, 0.19], blade = [0.95, 0.78, 0.12], tip = [0.12, 0.12, 0.13];
+    b.tube([-0.86, 0, 0], [0.86, 0, 0], 0.016, 8, shaft, true);
+    for (const sd of [-1, 1]) {
+      // a blade: asymmetric-ish oval, 46 x 17 cm, 1 cm thick
+      const x0 = sd * 0.84, x1 = sd * 1.3;
+      b.box((x0 + x1) / 2 - 0.23, -0.07, 0, 0.46, 0.14, 0.012, 0, blade);
+      b.box((x0 + x1) / 2 - 0.23 + sd * 0.02, -0.085, 0, 0.36, 0.17, 0.013, 0, blade);
+      b.box(x1 - sd * 0.01 - 0.01, -0.07, 0, 0.02, 0.14, 0.014, 0, tip);
+      b.tube([sd * 0.72, 0, 0], [sd * 0.76, 0, 0], 0.024, 8, tip, true);     // drip ring
+    }
+    PADDLE_GEO = b.build();
+  }
+  const m = new THREE.Mesh(PADDLE_GEO, PADDLE_MAT);
+  m.castShadow = true;
+  return m;
+}
+
+/**
+ * A sea kayak: 4.3 m by 64 cm, lofted through stations (a rounded-V hull, the
+ * sheer rising to the ends, a crowned deck), a cockpit coaming, deck lines
+ * and toggles at the ends. y = 0 is the waterline. The hull and deck take the
+ * livery.
+ */
+function buildKayak(spec, paint, trim, matte) {
+  const L = 2.15, N = 14;
+  const st = [];
+  for (let i = 0; i <= N; i++) {
+    const z = -L + (2 * L * i) / N, u = Math.abs(z) / L;
+    const w = 0.32 * Math.pow(Math.max(0, 1 - Math.pow(u, 2.1)), 0.75) + 0.004;
+    const sheer = 0.13 + 0.09 * u * u;
+    const keel = -0.14 * (1 - Math.pow(u, 2.6)) + 0.1 * Math.pow(u, 6);
+    const crown = 0.07 * (1 - u * u) * (z > 0 ? 1 : 0.7);
+    st.push({ z, w, sheer, keel, crown });
+  }
+  const WHITE_ = [1, 1, 1], DARK = [0.08, 0.08, 0.09], LINE = [0.1, 0.1, 0.11];
+  for (const sd of [-1, 1]) {
+    paint.patch(st.map(({ z, w, sheer, keel }) => [[0, keel, z], [sd * w * 0.62, keel * 0.55, z], [sd * w * 0.96, sheer * 0.35, z], [sd * w, sheer, z]]), WHITE_, [sd, -0.2, 0]);
+  }
+  paint.patch(st.map(({ z, w, sheer, crown }) => [[-w, sheer, z], [-w * 0.55, sheer + crown * 0.8, z], [0, sheer + crown, z], [w * 0.55, sheer + crown * 0.8, z], [w, sheer, z]]), WHITE_, [0, 1, 0]);
+  // the cockpit: a black opening with a raised coaming round it
+  const deckY = (z, x) => {
+    const u = Math.abs(z) / L, sheer = 0.13 + 0.09 * u * u, crown = 0.07 * (1 - u * u) * (z > 0 ? 1 : 0.7);
+    return sheer + crown * (1 - (x / 0.3) ** 2 * 0.45);
+  };
+  const CZ = -0.12, CA = 0.42, CB = 0.22, NS = 20;
+  const ring = (ra, rb, dy) => {
+    const pts = [];
+    for (let j = 0; j <= NS; j++) {
+      const a = (j / NS) * Math.PI * 2, x = Math.sin(a) * rb, z = CZ + Math.cos(a) * ra;
+      pts.push([x, deckY(z, x) + dy, z]);
+    }
+    return pts;
+  };
+  matte.patch([ring(CA, CB, 0.05), ring(CA - 0.04, CB - 0.04, 0.055)], DARK, [0, 1, 0]);
+  matte.patch([ring(CA + 0.03, CB + 0.03, 0.005), ring(CA, CB, 0.05)], DARK, [0, 1, 0]);
+  {
+    const pts = ring(CA - 0.04, CB - 0.04, 0.052);
+    const c = [0, deckY(CZ, 0) + 0.02, CZ];
+    for (let j = 0; j < NS; j++) matte.tri(c, pts[j], pts[j + 1], [0, 1, 0], [0.03, 0.03, 0.035]);
+    // the seat back, just visible behind the opening
+    matte.box(0, deckY(CZ - 0.34, 0) - 0.05, CZ - 0.34, 0.3, 0.2, 0.04, 0, [0.14, 0.14, 0.16]);
+  }
+  // deck lines: bungees criss-crossing the fore and aft decks, a perimeter line
+  for (const [z0, z1] of [[0.55, 1.25], [-0.75, -1.35]]) {
+    for (const [a, c] of [[z0, z1], [z1, z0]]) {
+      const wa = 0.18, wc = 0.18;
+      matte.tube([-wa, deckY(a, wa) + 0.012, a], [wc, deckY(c, wc) + 0.012, c], 0.006, 4, LINE);
+    }
+    matte.tube([-0.2, deckY(z0, 0.2) + 0.012, z0], [0.2, deckY(z0, 0.2) + 0.012, z0], 0.006, 4, LINE);
+  }
+  // toggles at bow and stern
+  for (const sd of [-1, 1]) {
+    const z = sd * (L - 0.1);
+    matte.tube([-0.05, deckY(z, 0) + 0.02, z], [0.05, deckY(z, 0) + 0.02, z], 0.012, 6, DARK, true);
+  }
+  // a skeg box aft, and a compass bump fore
+  matte.box(0, deckY(-1.6, 0) - 0.01, -1.6, 0.06, 0.03, 0.18, 0, DARK);
+  trim.spheroid(0, deckY(0.62, 0) + 0.015, 0.62, 0.05, 10, 5, [0.1, 0.12, 0.14], 0.5);
+  return [];   // no wheels
+}
+
+/**
+ * A personal watercraft. y = 0 is the waterline, like the boat's: a V-hull
+ * lofted through seven stations, a flat deck with footwells either side of a
+ * saddle, the hood over the engine, and the bars. Hull sides take the livery.
+ */
+/**
+ * A bicycle wheel: a 38 mm tyre round a narrow alloy rim, 32 wire spokes
+ * laced from both hub flanges, the hub. Built about the axle along x like
+ * addWheel's. Spokes are 3-sided tubes: at a few pixels they read as a
+ * shimmer, which is what spokes look like.
+ */
+function bikeWheel(trim, matte, cx, cy, cz, r, w) {
+  const SEG = 24, hw = w / 2, tr = r - hw;
+  // the tyre: a tube of revolution, round in section
+  const ring = (k) => {
+    const a = (k / 8) * Math.PI * 2;
+    return [Math.cos(a) * hw, tr + Math.sin(a) * hw * 1.05];
+  };
+  for (let i = 0; i < SEG; i++) {
+    const a0 = (i / SEG) * Math.PI * 2, a1 = ((i + 1) / SEG) * Math.PI * 2;
+    for (let k = 0; k < 8; k++) {
+      const [x0, r0] = ring(k), [x1, r1] = ring(k + 1);
+      const P = (x, rr, a) => [cx + x, cy + Math.cos(a) * rr, cz + Math.sin(a) * rr];
+      const am = (k + 0.5) / 8 * Math.PI * 2, n = (a) => [Math.cos(am), Math.sin(am) * Math.cos(a), Math.sin(am) * Math.sin(a)];
+      matte.quad(P(x0, r0, a0), P(x0, r0, a1), P(x1, r1, a1), P(x1, r1, a0), [n(a0), n(a1), n(a1), n(a0)], [0, 0, 1, 0, 1, 1, 0, 1], k === 2 || k === 1 ? [0.36, 0.3, 0.22] : TYRE);
+    }
+    // the rim: a shallow U, both faces
+    for (const sx of [-1, 1]) {
+      const P = (rr, a) => [cx + sx * 0.011, cy + Math.cos(a) * rr, cz + Math.sin(a) * rr];
+      trim.quad(P(tr - hw * 0.6, a0), P(tr - hw * 0.6, a1), P(tr - 0.03, a1), P(tr - 0.03, a0), [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], RIM);
+    }
+    const P = (rr, a) => [cx, cy + Math.cos(a) * rr, cz + Math.sin(a) * rr];
+    trim.quad([P(tr - 0.03, a0)[0] - 0.011, P(tr - 0.03, a0)[1], P(tr - 0.03, a0)[2]], [P(tr - 0.03, a1)[0] - 0.011, P(tr - 0.03, a1)[1], P(tr - 0.03, a1)[2]],
+      [P(tr - 0.03, a1)[0] + 0.011, P(tr - 0.03, a1)[1], P(tr - 0.03, a1)[2]], [P(tr - 0.03, a0)[0] + 0.011, P(tr - 0.03, a0)[1], P(tr - 0.03, a0)[2]],
+      [0, -Math.cos((a0 + a1) / 2), -Math.sin((a0 + a1) / 2)], [0, 0, 1, 0, 1, 1, 0, 1], RIM);
+  }
+  // spokes, crossed: each from a flange tangentially to the rim
+  const N = 32;
+  for (let k = 0; k < N; k++) {
+    const side = k % 2 ? 1 : -1, a = (k / N) * Math.PI * 2, lead = (k % 4 < 2 ? 1 : -1) * 0.5;
+    const h = [cx + side * 0.028, cy + Math.cos(a + lead) * 0.026, cz + Math.sin(a + lead) * 0.026];
+    const e = [cx + side * 0.004, cy + Math.cos(a) * (tr - 0.028), cz + Math.sin(a) * (tr - 0.028)];
+    trim.tube(h, e, 0.0022, 3, [0.78, 0.8, 0.82], false);
+  }
+  trim.tube([cx - 0.035, cy, cz], [cx + 0.035, cy, cz], 0.018, 10, HUB, true);
+  trim.tube([cx - 0.05, cy, cz], [cx + 0.05, cy, cz], 0.006, 6, ALLOY, true);
+}
+
+/**
+ * A city bicycle, the kind a bike-share dock or a commuter rides: a diamond
+ * frame in the livery (the paint tint), a steel fork, flat bars with grips,
+ * brake levers and a bell, a sprung saddle, full fenders, a rear rack with
+ * its lamp, a front basket over the headlamp, a chainring and chain to a
+ * cassette and derailleur, a kickstand. 700c wheels on a 1.06 m wheelbase.
+ * The crank (arms, pedals, chainring) is a spin part about the bottom
+ * bracket: the ridden bike turns it with the rider's feet (Vehicle._pedal).
+ * Local: +z forward, x to the left, y = 0 on the ground.
+ */
+const BIKE = { bb: [0, 0.285, -0.06], crank: 0.17, qx: 0.085 };
+function buildBicycle(spec, paint, trim, matte) {
+  const r = spec.wheelR, zF = 0.53, zR = -0.53;
+  const wheels = [[0, r, zF, r, 0.038, 0, false, 'bike'], [0, r, zR, r, 0.038, 0, false, 'bike']];
+  const BB = BIKE.bb, headTop = [0, 0.93, 0.33], headBot = [0, 0.76, 0.375], seatTop = [0, 0.86, -0.17];
+  const STEEL = [0.2, 0.2, 0.21], BLACK = [0.03, 0.03, 0.035], SILVER = [0.72, 0.73, 0.75];
+  const T = (a, b, rr) => paint.tube(a, b, rr, 8, WHITE, true);
+  // the frame: head tube, top tube, down tube, seat tube, stays
+  T(headBot, headTop, 0.022);
+  T(seatTop, [0, 0.905, 0.335], 0.017);
+  T(headBot, BB, 0.02);
+  T(BB, [0, 0.9, -0.19], 0.017);
+  for (const sx of [-1, 1]) {
+    T([sx * 0.02, BB[1], BB[2]], [sx * 0.065, r, zR], 0.011);
+    T([sx * 0.012, 0.85, -0.175], [sx * 0.065, r + 0.01, zR + 0.01], 0.01);
+    // dropouts
+    trim.box(sx * 0.066, r - 0.015, zR, 0.012, 0.05, 0.05, 0, SILVER);
+  }
+  trim.tube([0, BB[1], BB[2]], [0, BB[1], BB[2]].map((v, i) => (i === 0 ? v + 0.001 : v)), 0.03, 10, SILVER, true);
+  matte.tube([-0.04, BB[1], BB[2]], [0.04, BB[1], BB[2]], 0.026, 10, STEEL, true);   // bottom bracket shell
+  // the fork: crown and two legs raked forward to the axle
+  matte.box(0, headBot[1] - 0.03, headBot[2] + 0.01, 0.12, 0.04, 0.05, 0, STEEL);
+  for (const sx of [-1, 1]) matte.tube([sx * 0.045, headBot[1] - 0.03, headBot[2] + 0.01], [sx * 0.05, r + 0.01, zF], 0.012, 6, STEEL, true);
+  // stem, bars, grips, levers, bell
+  matte.tube(headTop, [0, 0.98, 0.35], 0.018, 8, STEEL, true);
+  matte.tube([0, 0.98, 0.35], [0, 0.995, 0.43], 0.017, 8, STEEL, true);
+  matte.tube([-0.31, 0.995, 0.43], [0.31, 0.995, 0.43], 0.012, 8, SILVER, true);
+  for (const sx of [-1, 1]) {
+    matte.tube([sx * 0.2, 0.995, 0.43], [sx * 0.32, 0.995, 0.43], 0.017, 8, BLACK, true);
+    trim.tube([sx * 0.17, 0.995, 0.445], [sx * 0.26, 0.985, 0.52], 0.006, 4, SILVER, true);   // brake lever
+    matte.tube([sx * 0.16, 0.995, 0.43], [sx * 0.05, 0.9, 0.36], 0.004, 3, BLACK, false);        // cable
+  }
+  trim.tube([0.12, 1.01, 0.43], [0.12, 1.03, 0.43], 0.022, 10, SILVER, true);                     // bell
+  // saddle on its post, springs under it
+  matte.tube([0, 0.9, -0.19], [0, 0.99, -0.225], 0.012, 8, SILVER, true);
+  matte.loft([
+    { z: -0.32, pts: ring2(0.085, 1.015, 0.03, 10) },
+    { z: -0.26, pts: ring2(0.095, 1.02, 0.035, 10) },
+    { z: -0.18, pts: ring2(0.05, 1.02, 0.03, 10) },
+    { z: -0.08, pts: ring2(0.025, 1.015, 0.022, 10) },
+  ], BLACK, { capStart: true, capEnd: true });
+  for (const sx of [-1, 1]) trim.tube([sx * 0.05, 0.985, -0.29], [sx * 0.05, 0.955, -0.29], 0.012, 6, SILVER, true);
+  // fenders over both wheels, and their stays
+  fender(matte, r, zF, r + 0.035, 0.03, -0.5, 1.8, SILVER);
+  fender(matte, r, zR, r + 0.035, 0.03, -1.9, 0.3, SILVER);
+  for (const sx of [-1, 1]) {
+    matte.tube([sx * 0.032, r + 0.08, zF + 0.34], [sx * 0.05, r, zF], 0.004, 3, SILVER, false);
+    matte.tube([sx * 0.032, r + 0.08, zR - 0.34], [sx * 0.065, r, zR], 0.004, 3, SILVER, false);
+  }
+  // the rear rack and its lamp, the front basket over the headlamp
+  for (const sx of [-1, 1]) {
+    matte.tube([sx * 0.07, 0.83, -0.2], [sx * 0.07, 0.83, -0.72], 0.007, 5, STEEL, true);
+    matte.tube([sx * 0.07, 0.83, -0.66], [sx * 0.066, r + 0.02, zR - 0.02], 0.007, 5, STEEL, true);
+  }
+  for (const z of [-0.36, -0.5, -0.64]) matte.tube([-0.07, 0.83, z], [0.07, 0.83, z], 0.005, 4, STEEL, false);
+  trim.box(0, 0.8, -0.735, 0.07, 0.035, 0.02, 0, TAILC);
+  trim.tube([0, 0.93, 0.44], [0, 0.93, 0.47], 0.028, 10, LAMP, true);
+  {
+    const B = [0.2, 0.2, 0.21], x0 = 0.15, y0 = 0.82, y1 = 1.04, z0 = 0.44, z1 = 0.72;
+    for (const [a, b] of [[[-x0, y0, z0], [x0, y0, z0]], [[-x0, y0, z1], [x0, y0, z1]], [[-x0, y1, z0], [x0, y1, z0]], [[-x0, y1, z1], [x0, y1, z1]],
+      [[-x0, y0, z0], [-x0, y0, z1]], [[x0, y0, z0], [x0, y0, z1]], [[-x0, y1, z0], [-x0, y1, z1]], [[x0, y1, z0], [x0, y1, z1]]]) matte.tube(a, b, 0.006, 4, B, false);
+    for (const [x, z] of [[-x0, z0], [x0, z0], [-x0, z1], [x0, z1]]) matte.tube([x, y0, z], [x, y1, z], 0.006, 4, B, false);
+    for (let k = 1; k < 4; k++) { const y = y0 + (y1 - y0) * k / 4; matte.tube([-x0, y, z1], [x0, y, z1], 0.004, 3, B, false); matte.tube([-x0, y, z0], [x0, y, z0], 0.004, 3, B, false); }
+    matte.quad([-x0, y0, z0], [x0, y0, z0], [x0, y0, z1], [-x0, y0, z1], [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], B);
+    matte.tube([0, y0, z0], [0, 0.93, 0.36], 0.008, 4, B, true);
+  }
+  // drivetrain: the chain from the chainring to the cassette, the
+  // derailleur, the kickstand
+  const cr = BIKE.crank, dx = -BIKE.qx + 0.02;
+  for (const dy of [0.1, -0.1]) matte.tube([dx, BB[1] + dy, BB[2]], [dx, r + dy * 0.36, zR], 0.006, 4, [0.12, 0.12, 0.12], false);
+  trim.tube([dx - 0.01, r, zR], [dx + 0.012, r, zR], 0.04, 12, SILVER, true);
+  matte.box(dx - 0.01, r - 0.12, zR + 0.02, 0.02, 0.09, 0.05, 0, BLACK);
+  matte.tube([0.05, BB[1] - 0.01, BB[2] - 0.12], [0.1, 0.02, BB[2] - 0.22], 0.01, 5, STEEL, true);
+  // the crank, as a spin part: chainring, two arms opposite, pedals
+  {
+    const c = new Builder(false);
+    for (let i = 0; i < 16; i++) {
+      const a0 = (i / 16) * Math.PI * 2, a1 = ((i + 1) / 16) * Math.PI * 2;
+      for (const sx of [-1, 1]) {
+        const x = -BIKE.qx + 0.02 + sx * 0.003;
+        c.quad([x, Math.cos(a0) * 0.1, Math.sin(a0) * 0.1], [x, Math.cos(a1) * 0.1, Math.sin(a1) * 0.1], [x, Math.cos(a1) * 0.035, Math.sin(a1) * 0.035], [x, Math.cos(a0) * 0.035, Math.sin(a0) * 0.035],
+          [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], [0.55, 0.56, 0.58]);
+      }
+    }
+    c.tube([-BIKE.qx, 0, 0], [BIKE.qx, 0, 0], 0.012, 6, SILVER, true);
+    for (const [sx, a] of [[1, 0], [-1, Math.PI]]) {
+      const e = [sx * BIKE.qx, Math.cos(a) * cr, Math.sin(a) * cr];
+      c.tube([sx * BIKE.qx, 0, 0], e, 0.012, 6, SILVER, true);
+      c.box(sx * (BIKE.qx + 0.055), e[1] - 0.012, e[2], 0.09, 0.024, 0.07, 0, BLACK);
+    }
+    spinPart(matte, BB, 'x', c);
+  }
+  return wheels;
+}
+
+function buildJetski(spec, paint, trim, matte) {
+  // A modern three-seat personal watercraft (the 3.2-3.4 m runabouts every
+  // maker builds): a deep-V hull with strakes and a chine flat, sponsons aft,
+  // the upper deck in the livery -- a long hood over the engine rising into a
+  // steering pod, footwells either side of a stepped two-tone saddle, a
+  // swim platform at the stern and the jet's steering nozzle and reverse
+  // bucket under it. y = 0 is the waterline; the rider (RIDERS.jetski) sits
+  // at z -0.42 with his hands on the bars at (+-0.36, 0.98, 0.22).
+  //        z      chineX chineY keelY  gunwale half, y
+  const S = [
+    [-1.62, 0.50, -0.02, -0.09, 0.60, 0.40],
+    [-1.25, 0.53, -0.04, -0.15, 0.63, 0.42],
+    [-0.60, 0.55, -0.05, -0.19, 0.64, 0.44],
+    [0.00, 0.54, -0.04, -0.20, 0.63, 0.46],
+    [0.55, 0.49, -0.01, -0.18, 0.58, 0.50],
+    [1.00, 0.39, 0.05, -0.12, 0.47, 0.54],
+    [1.35, 0.25, 0.14, -0.02, 0.33, 0.58],
+    [1.56, 0.11, 0.27, 0.13, 0.16, 0.61],
+    [1.66, 0.02, 0.40, 0.33, 0.03, 0.63],
+  ];
+  const at = (z) => {
+    if (z <= S[0][0]) return S[0].slice();
+    for (let i = 1; i < S.length; i++) if (z <= S[i][0]) { const a = S[i - 1], b = S[i], t = (z - a[0]) / (b[0] - a[0]); return a.map((v, k) => v + (b[k] - v) * t); }
+    return S[S.length - 1].slice();
+  };
+  const HULL = [0.15, 0.16, 0.18], DECK = [0.07, 0.075, 0.08], TRIMG = [0.34, 0.35, 0.38], SEATTOP = [0.05, 0.05, 0.055],
+    SEATSIDE = [0.30, 0.31, 0.33], ACCENT = [0.04, 0.04, 0.045], PIN = [0.9, 0.9, 0.88];
+  // the topsides profile, chine lip to gunwale, at a fraction 0..1
+  const side = (s, sd) => {
+    const [, cx, cy, , hb, sy] = s;
+    return [[sd * (cx + 0.035), cy + 0.012], [sd * (hb - 0.004), cy + (sy - cy) * 0.36], [sd * hb, cy + (sy - cy) * 0.76], [sd * (hb - 0.012), sy]];
+  };
+  const alongSide = (s, sd, f) => {
+    const p = side(s, sd), k = Math.min(2, Math.floor(f * 3)), t = f * 3 - k;
+    return [p[k][0] + (p[k + 1][0] - p[k][0]) * t + sd * 0.004, p[k][1] + (p[k + 1][1] - p[k][1]) * t];
+  };
+  for (const sd of [-1, 1]) {
+    // bottom: keel, a strake, the chine, the chine flat -- dark, like every
+    // PWC's bottom
+    matte.patch(S.map(([z, cx, cy, ky]) => [[0, ky, z], [sd * cx * 0.45, ky + (cy - ky) * 0.40, z], [sd * cx * 0.47, ky + (cy - ky) * 0.47, z],
+      [sd * cx * 0.82, ky + (cy - ky) * 0.84, z], [sd * cx * 0.84, ky + (cy - ky) * 0.90, z], [sd * cx, cy, z], [sd * (cx + 0.035), cy + 0.012, z]]), HULL, [sd * 0.5, -1, 0]);
+    // topsides in the livery
+    paint.patch(S.map((s) => side(s, sd).map(([x, y]) => [x, y, s[0]])), WHITE, [sd, 0.2, 0]);
+    // the graphic: a dark sweep low at the stern rising forward, pinstriped
+    const sweep = S.slice(0, 6);
+    const band = (f0, f1) => sweep.map((s) => {
+      const k = (s[0] + 1.62) / 2.8;
+      return [f0 + k * 0.32, f1 + k * 0.32].map((f) => { const q = alongSide(s, sd, clamp(f, 0, 0.99)); return [q[0], q[1], s[0]]; });
+    });
+    matte.patch(band(0.08, 0.30), ACCENT, [sd, 0, 0]);
+    matte.patch(band(0.33, 0.36), PIN, [sd, 0, 0]);
+    // rub rail along the gunwale
+    for (let i = 0; i < S.length - 2; i++) matte.tube([sd * (S[i][4] + 0.004), S[i][5] - 0.018, S[i][0]], [sd * (S[i + 1][4] + 0.004), S[i + 1][5] - 0.018, S[i + 1][0]], 0.024, 6, TRIMG, false);
+    // sponsons: short fins at the chine, aft
+    matte.box(sd * (at(-1.2)[1] + 0.04), at(-1.2)[2] - 0.02, -1.18, 0.05, 0.1, 0.5, 0, HULL);
+    // footwell: floor, and a raised lip at the gunwale
+    const fw = [-1.25, -0.9, -0.5, -0.1, 0.25, 0.42];
+    matte.patch(fw.map((z) => { const s = at(z), fy = s[5] - 0.015; return [[sd * 0.22, fy, z], [sd * (s[4] - 0.06), fy, z]]; }), DECK, [0, 1, 0]);
+    matte.patch(fw.map((z) => { const s = at(z), fy = s[5] - 0.015; return [[sd * (s[4] - 0.06), fy, z], [sd * (s[4] - 0.035), s[5] + 0.06, z], [sd * (s[4] - 0.004), s[5], z]]; }), TRIMG, [0, 1, 0]);
+    // the footwell's front, rising into the hood
+    const f0 = at(0.42);
+    matte.quad([sd * 0.22, f0[5] - 0.015, 0.42], [sd * (f0[4] - 0.06), f0[5] - 0.015, 0.42], [sd * (f0[4] - 0.06), f0[5] + 0.08, 0.36], [sd * 0.22, f0[5] + 0.22, 0.30],
+      [0, 0.4, -1], [0, 0, 1, 0, 1, 1, 0, 1], DECK);
+  }
+  // transom and the swim platform
+  {
+    const [z, cx, cy, ky, hb, sy] = S[0];
+    matte.patch([[[-cx, cy, z], [0, ky, z], [cx, cy, z]], [[-hb, sy, z], [0, sy, z], [hb, sy, z]]], HULL, [0, 0, -1]);
+    const pz = at(-1.25);
+    matte.patch([[[-hb, sy + 0.005, z], [hb, sy + 0.005, z]], [[-pz[4] + 0.02, pz[5] + 0.005, -1.25], [pz[4] - 0.02, pz[5] + 0.005, -1.25]]], DECK, [0, 1, 0]);
+    // non-slip mat squares on the platform
+    for (const x of [-0.28, 0, 0.28]) matte.box(x, sy + 0.006, -1.44, 0.22, 0.008, 0.28, 0, [0.14, 0.15, 0.16]);
+    // reboarding step, folded, under the platform's middle
+    matte.box(0, 0.20, z - 0.07, 0.32, 0.035, 0.12, 0, TRIMG);
+    trim.tube([0, 0.22, z - 0.01], [0, 0.22, z - 0.08], 0.012, 5, ALLOY, true);
+  }
+  // the jet: a steering nozzle out of the transom, the reverse bucket over
+  // it, the ride plate and the intake under the hull
+  {
+    const z0 = S[0][0];
+    matte.loft([
+      { z: z0 + 0.02, pts: ring2(0.10, 0.08, 0.10, 12) },
+      { z: z0 - 0.14, pts: ring2(0.09, 0.08, 0.09, 12) },
+      { z: z0 - 0.22, pts: ring2(0.075, 0.08, 0.075, 12) },
+    ], [0.22, 0.23, 0.25], { capEnd: false });
+    matte.tube([0, 0.08, z0 - 0.20], [0, 0.08, z0 - 0.23], 0.066, 12, [0.03, 0.03, 0.03], true);
+    matte.box(0, 0.03, z0 - 0.26, 0.22, 0.16, 0.04, 0, TRIMG);
+    for (const sd of [-1, 1]) trim.tube([sd * 0.14, 0.14, z0 - 0.26], [sd * 0.12, 0.2, z0 - 0.02], 0.012, 5, ALLOY, true);
+    matte.box(0, -0.105, -1.38, 0.34, 0.018, 0.5, 0, [0.28, 0.29, 0.31]);
+    for (let k = 0; k < 5; k++) matte.box(0, -0.2, -0.55 - k * 0.09, 0.26, 0.012, 0.02, 0, [0.3, 0.31, 0.33]);
+    // tow eye
+    trim.tube([0, 0.34, z0 - 0.01], [0, 0.34, z0 - 0.06], 0.02, 6, ALLOY, true);
+  }
+  // the saddle's pedestal, between the footwells
+  {
+    const P = [-1.25, -0.8, -0.2, 0.3];
+    for (const sd of [-1, 1]) matte.patch(P.map((z) => { const fy = at(z)[5] - 0.015; return [[sd * 0.22, fy, z], [sd * 0.205, 0.63, z]]; }), SEATSIDE, [sd, 0, 0]);
+    const fy = at(-1.25)[5];
+    matte.quad([-0.22, fy, -1.25], [0.22, fy, -1.25], [0.205, 0.63, -1.25], [-0.205, 0.63, -1.25], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], SEATSIDE);
+  }
+  // the saddle: driver and passengers stepped, a black top over grey sides,
+  // livery piping between them, the grab strap across the middle
+  {
+    const T = [[-1.22, 0.78], [-1.12, 0.84], [-0.96, 0.875], [-0.74, 0.88], [-0.64, 0.855], [-0.56, 0.83], [-0.30, 0.822], [-0.05, 0.83], [0.12, 0.83], [0.24, 0.79], [0.30, 0.72]];
+    const W = (z) => 0.22 - Math.max(0, z - 0.1) * 0.25;
+    const prof = (z, top, sd) => {
+      const w = W(z);
+      return [[sd * (w - 0.012), 0.625], [sd * (w + 0.018), top - 0.12], [sd * (w + 0.004), top - 0.045], [sd * (w - 0.05), top - 0.004], [sd * (w * 0.45), top + 0.012], [0, top + 0.016]];
+    };
+    for (const sd of [-1, 1]) {
+      const rows = T.map(([z, t]) => prof(z, t, sd).map(([x, y]) => [x, y, z]));
+      matte.patch(rows.map((r) => r.slice(0, 3)), SEATSIDE, [sd, 0.2, 0]);
+      paint.patch(rows.map((r) => [r[2], [r[2][0] * 0.985 + sd * 0.0, r[2][1] + 0.012, r[2][2]]]), WHITE, [sd, 0.6, 0]);
+      matte.patch(rows.map((r) => [[r[2][0] * 0.985, r[2][1] + 0.012, r[2][2]], ...r.slice(3)]), SEATTOP, [sd * 0.3, 1, 0]);
+    }
+    // ends
+    for (const [z, t, n] of [[T[0][0], T[0][1], -1], [T[T.length - 1][0], T[T.length - 1][1], 1]]) {
+      const row = [...prof(z, t, -1).reverse(), ...prof(z, t, 1).slice(1)].map(([x, y]) => [x, y, z]);
+      matte.patch([row, row.map(([x, y]) => [x * 0.2, Math.max(0.625, y - 0.02), z + n * 0.03])], SEATTOP, [0, 0, n]);
+    }
+    matte.tube([-0.23, 0.852, -0.66], [0.23, 0.852, -0.66], 0.014, 6, [0.02, 0.02, 0.02], true);
+    // the rear grab handle, round the back of the saddle
+    const gh = [[-0.275, 0.64, -1.02], [-0.26, 0.69, -1.28], [0, 0.70, -1.34], [0.26, 0.69, -1.28], [0.275, 0.64, -1.02]];
+    for (let k = 0; k < gh.length - 1; k++) matte.tube(gh[k], gh[k + 1], 0.02, 6, TRIMG, true);
+  }
+  // the hood: a long shell over the engine from the steering pod to the bow,
+  // in the livery above a dark skirt at the gunwale, with the storage lid's
+  // shut line across it
+  {
+    const H = [[0.30, 0.34, 0.80], [0.45, 0.43, 0.79], [0.70, 0.46, 0.75], [0.95, 0.43, 0.70], [1.18, 0.35, 0.665], [1.38, 0.24, 0.645], [1.54, 0.12, 0.635], [1.64, 0.03, 0.632]];
+    const sec = (z, w, h, sd) => {
+      const s = at(z), hb = s[4] - 0.006, sy = s[5];
+      return [[sd * hb, sy, z], [sd * (hb - 0.01), sy + 0.035, z], [sd * Math.max(w, 0.02) * 1.0, sy + (h - sy) * 0.55, z],
+        [sd * w * 0.78, h - 0.02, z], [sd * w * 0.4, h - 0.003, z], [0, h, z]];
+    };
+    for (const sd of [-1, 1]) {
+      const rows = H.map(([z, w, h]) => sec(z, w, h, sd));
+      matte.patch(rows.map((r) => r.slice(0, 2)), ACCENT, [sd, 0.3, 0]);
+      paint.patch(rows.map((r) => r.slice(1)), WHITE, [sd * 0.3, 1, 0]);
+    }
+    // the shut line of the storage lid, and a vent pair either side
+    const lz = 0.98, ls = at(lz), row = [];
+    for (let j = -4; j <= 4; j++) {
+      const u = j / 4, w = 0.43, h = 0.70;
+      row.push([u * w, (1 - u * u) * (h - ls[5]) * 0.95 + ls[5] + 0.004, lz]);
+    }
+    for (let k = 0; k < row.length - 1; k++) matte.tube(row[k], row[k + 1], 0.006, 4, ACCENT, false);
+    for (const sd of [-1, 1]) for (let k = 0; k < 3; k++) matte.box(sd * 0.3, 0.70 - k * 0.006, 0.62 + k * 0.05, 0.1, 0.012, 0.025, 0, ACCENT);
+    // the pod's back, facing the rider
+    const r0 = [...sec(0.30, 0.34, 0.80, -1).reverse(), ...sec(0.30, 0.34, 0.80, 1).slice(1)];
+    matte.patch([r0, r0.map(([x, y, z]) => [x * 0.6, Math.max(y, 0.62), z - 0.02])], DECK, [0, 0, -1]);
+  }
+  // steering pod: the fairing over the bars, a tinted visor, the display
+  matte.spheroid(0, 0.86, 0.34, 0.2, 12, 8, [0.09, 0.095, 0.1], 0.55);
+  trim.quad([-0.16, 0.9, 0.30], [0.16, 0.9, 0.30], [0.13, 1.0, 0.40], [-0.13, 1.0, 0.40], [0, 0.7, -0.7], [0, 0, 1, 0, 1, 1, 0, 1], [0.15, 0.17, 0.2]);
+  trim.quad([-0.07, 0.905, 0.29], [0.07, 0.905, 0.29], [0.06, 0.95, 0.33], [-0.06, 0.95, 0.33], [0, 0.7, -0.7], [0, 0, 1, 0, 1, 1, 0, 1], [0.35, 0.85, 0.95]);
+  // bars, grips, levers, mirrors
+  matte.tube([0, 0.84, 0.28], [0, 0.97, 0.24], 0.03, 6, DECK, true);
+  matte.tube([-0.36, 0.98, 0.22], [0.36, 0.98, 0.22], 0.019, 8, [0.16, 0.16, 0.17], true);
+  for (const sd of [-1, 1]) {
+    matte.tube([sd * 0.26, 0.98, 0.22], [sd * 0.39, 0.98, 0.22], 0.031, 8, [0.03, 0.03, 0.035], true);
+    matte.tube([sd * 0.395, 0.98, 0.22], [sd * 0.405, 0.98, 0.22], 0.036, 8, TRIMG, true);
+    matte.tube([sd * 0.25, 0.995, 0.25], [sd * 0.33, 0.99, 0.27], 0.01, 4, TRIMG, true);
+    mirror(trim, sd * 0.33, 1.07, 0.40, 0.045, [sd * 0.15, 0.93, 0.36], [0.1, 0.1, 0.11]);
+  }
+  // bow eye and cleats, stern lights
+  trim.tube([0, 0.40, 1.68], [0, 0.44, 1.63], 0.018, 6, ALLOY, true);
+  for (const sd of [-1, 1]) trim.box(sd * 0.5, 0.435, -1.55, 0.04, 0.03, 0.1, 0, ALLOY);
+  return [];   // no wheels
+}
+
+/**
+ * A hot air balloon, to the proportions of a 77,000 cu ft (2,200 m3) sport
+ * balloon (Cameron / Lindstrand / Ultramagic type sheets): an envelope 18 m
+ * from mouth to crown and 16.5 m across at the equator, 24 gores, a basket
+ * 1.5 x 1.3 m and 1.15 m deep, a double burner 2.5 m over the basket floor.
+ *
+ * The envelope is the classic "natural shape" -- a narrow throat widening to
+ * an equator about 60 % of the way up, then a rounded crown -- lofted gore by
+ * gore, each gore bulging between its load tapes (the tapes are the creases
+ * where two gores' normals meet), in colour bands: a rainbow of gores with
+ * a white chevron belt and a dark crown. Local y = 0 is the ground under the
+ * basket.
+ */
+const BAL = {
+  mouthY: 4.0, height: 18.0, gores: 24,
+  // [height above the mouth, radius]: throat, flare, equator, shoulder, crown
+  profile: [[0, 1.9], [1.0, 2.6], [2.5, 3.9], [4.5, 5.6], [6.5, 6.9], [8.5, 7.8], [10.3, 8.25], [12.0, 8.2],
+    [13.6, 7.6], [15.0, 6.5], [16.2, 4.9], [17.1, 3.1], [17.7, 1.6], [18.0, 0.55]],
+};
+function buildBalloon(spec, paint, trim, matte) {
+  const G = BAL.gores, P = BAL.profile, M = BAL.mouthY;
+  const RAINBOW = [[0.86, 0.13, 0.12], [0.96, 0.46, 0.07], [0.98, 0.80, 0.10], [0.17, 0.62, 0.25],
+    [0.10, 0.45, 0.80], [0.36, 0.21, 0.62]];
+  const WHITE_ = [0.94, 0.93, 0.90], NAVY = [0.08, 0.12, 0.28];
+  // Envelope in the MATTE draw: the paint material takes one tint per car
+  // (the livery) and drops per-vertex colour, which left a rainbow envelope
+  // plain silver; matte keeps it, and its roughness is right for nylon.
+  // Rings up the envelope, with a colour per band: the gore's own colour, a
+  // white belt round the equator with a navy chevron, the gore colour above,
+  // a navy crown.
+  const rows = [];
+  for (let i = 0; i < P.length - 1; i++) {
+    const [h0, r0] = P[i], [h1, r1] = P[i + 1];
+    const n = i < 3 || i > P.length - 4 ? 1 : 2;
+    for (let k = 0; k < n; k++) {
+      const t = k / n;
+      rows.push([h0 + (h1 - h0) * t, r0 + (r1 - r0) * t]);
+    }
+  }
+  rows.push(P[P.length - 1]);
+  const band = (h) => (h < 7.2 ? 0 : h < 8.2 ? 1 : h < 11.2 ? 2 : h < 12.2 ? 1 : h < 16.4 ? 3 : 4);
+  for (let g = 0; g < G; g++) {
+    const a0 = (g / G) * Math.PI * 2, a1 = ((g + 1) / G) * Math.PI * 2;
+    const gc = RAINBOW[g % RAINBOW.length];
+    const mid = (a0 + a1) / 2;
+    // three columns across the gore: tape, belly, tape. A gore under
+    // pressure bulges ~3 % of the radius between its tapes.
+    const col = (h, r, a, belly) => {
+      const rr = r * (1 + belly * 0.03 * Math.min(1, r / 3));
+      return [Math.sin(a) * rr, M + h, Math.cos(a) * rr];
+    };
+    // Split the gore into its colour bands; a band boundary is a ring both
+    // patches share, so the envelope is closed.
+    let start = 0;
+    for (let i = 1; i <= rows.length; i++) {
+      const bi = band(rows[start][0] + 0.01);
+      const end = i === rows.length || band(rows[i][0] + 0.01) !== bi;
+      if (!end) continue;
+      const seg = rows.slice(start, Math.min(i + 1, rows.length));
+      let c = bi === 0 || bi === 2 ? gc : bi === 1 ? WHITE_ : bi === 3 ? gc : NAVY;
+      // the chevron: alternate belt gores navy
+      if (bi === 1 && g % 2 === 0) c = NAVY;
+      if (bi === 3) c = RAINBOW[(g + 3) % RAINBOW.length];
+      if (seg.length >= 2) {
+        matte.patch(seg.map(([h, r]) => [col(h, r, a0, 0), col(h, r, (a0 + mid) / 2, 0.7), col(h, r, mid, 1),
+          col(h, r, (mid + a1) / 2, 0.7), col(h, r, a1, 0)]), c, [Math.sin(mid), 0.2, Math.cos(mid)]);
+      }
+      start = i;
+    }
+  }
+  // the parachute vent's cap at the crown
+  {
+    const [h, r] = P[P.length - 1];
+    const ring = [];
+    for (let g = 0; g <= G; g++) { const a = (g / G) * Math.PI * 2; ring.push([Math.sin(a) * r, M + h, Math.cos(a) * r]); }
+    matte.patch([ring, ring.map(() => [0, M + h + 0.12, 0])], NAVY, [0, 1, 0]);
+  }
+  // Inside the mouth: the lining you see up the throat, dark and scorched.
+  {
+    const lin = [];
+    for (let i = 0; i < 4; i++) {
+      const [h, r] = P[i];
+      const ring = [];
+      for (let g = 0; g <= G; g++) { const a = (g / G) * Math.PI * 2; ring.push([Math.sin(a) * r * 0.985, M + h, Math.cos(a) * r * 0.985]); }
+      lin.push(ring);
+    }
+    matte.patch(lin, [0.16, 0.10, 0.08], [0, -1, 0]);
+  }
+  // The skirt (scoop): heat-proof Nomex from the throat down round the burner.
+  {
+    const sk = [];
+    for (const [y, r] of [[M, 1.92], [M - 0.55, 1.78], [M - 1.1, 1.62]]) {
+      const ring = [];
+      for (let g = 0; g <= G; g++) { const a = (g / G) * Math.PI * 2; ring.push([Math.sin(a) * r, y, Math.cos(a) * r]); }
+      sk.push(ring);
+    }
+    matte.patch(sk, [0.12, 0.13, 0.15], [0, 0, 1]);
+  }
+  // --- the basket -----------------------------------------------------------
+  const BW = 1.5, BD = 1.3, BH = 1.15, FLOOR = 0.14;
+  const WICKER = [0.60, 0.44, 0.26], WICKER_IN = [0.42, 0.30, 0.18], SUEDE = [0.30, 0.19, 0.11];
+  // four walls, each a thin box, outer weave and a darker inside
+  matte.box(0, 0.06, BD / 2 - 0.03, BW, BH - 0.06, 0.06, 0, WICKER);
+  matte.box(0, 0.06, -BD / 2 + 0.03, BW, BH - 0.06, 0.06, 0, WICKER);
+  matte.box(BW / 2 - 0.03, 0.06, 0, 0.06, BH - 0.06, BD - 0.12, 0, WICKER);
+  matte.box(-BW / 2 + 0.03, 0.06, 0, 0.06, BH - 0.06, BD - 0.12, 0, WICKER);
+  matte.box(0, 0.06, 0, BW - 0.1, FLOOR - 0.06, BD - 0.1, 0, WICKER_IN);
+  // woven bands: darker courses round the outside every 0.2 m
+  for (let y = 0.22; y < BH; y += 0.22) {
+    matte.box(0, y, 0, BW + 0.012, 0.035, BD + 0.012, 0, [0.46, 0.32, 0.18]);
+  }
+  // padded suede rim round the top, and rope handles on each side
+  const rim = [[-BW / 2, BH, -BD / 2], [BW / 2, BH, -BD / 2], [BW / 2, BH, BD / 2], [-BW / 2, BH, BD / 2]];
+  for (let k = 0; k < 4; k++) matte.tube(rim[k], rim[(k + 1) % 4], 0.065, 8, SUEDE, true);
+  for (const sd of [-1, 1]) {
+    matte.tube([sd * (BW / 2 + 0.03), 0.7, -0.25], [sd * (BW / 2 + 0.06), 0.62, 0], 0.018, 5, [0.78, 0.72, 0.58]);
+    matte.tube([sd * (BW / 2 + 0.06), 0.62, 0], [sd * (BW / 2 + 0.03), 0.7, 0.25], 0.018, 5, [0.78, 0.72, 0.58]);
+  }
+  // wooden skids under it
+  for (const sd of [-0.45, 0.45]) matte.box(sd, 0, 0, 0.1, 0.07, BD + 0.08, 0, [0.36, 0.25, 0.15]);
+  // four propane cylinders in padded covers, in the corners
+  for (const [x, z] of [[-0.5, -0.4], [0.5, -0.4], [-0.5, 0.42], [0.5, 0.42]]) {
+    matte.tube([x, FLOOR, z], [x, FLOOR + 0.82, z], 0.17, 12, [0.10, 0.22, 0.44], true);
+    trim.tube([x, FLOOR + 0.82, z], [x, FLOOR + 0.9, z], 0.05, 8, CHROME, true);
+  }
+  // --- uprights, burner, flying wires ---------------------------------------
+  const BY = 2.62;                                        // burner frame height
+  const FR = 0.38;                                        // frame half-width
+  const top = [[-FR, BY, -FR], [FR, BY, -FR], [FR, BY, FR], [-FR, BY, FR]];
+  const corners = [[-BW / 2 + 0.06, BH, -BD / 2 + 0.06], [BW / 2 - 0.06, BH, -BD / 2 + 0.06], [BW / 2 - 0.06, BH, BD / 2 - 0.06], [-BW / 2 + 0.06, BH, BD / 2 - 0.06]];
+  for (let k = 0; k < 4; k++) {
+    // the flexi-pole in its padded sleeve
+    matte.tube(corners[k], top[k], 0.035, 6, [0.13, 0.13, 0.15]);
+    trim.tube(top[k], top[(k + 1) % 4], 0.025, 6, CHROME);
+  }
+  // the double burner: two stainless cans with their coils, a blast valve
+  for (const sd of [-1, 1]) {
+    // (in the paint draw -- white metallic, which reads as brushed steel --
+    // so a balloon's paint geometry is not empty)
+    paint.tube([sd * 0.17, BY - 0.05, 0], [sd * 0.17, BY + 0.34, 0], 0.13, 12, WHITE, true);
+    for (let k = 0; k < 3; k++) trim.tube([sd * 0.17 - 0.15, BY + 0.06 + k * 0.1, 0], [sd * 0.17 + 0.15, BY + 0.06 + k * 0.1, 0], 0.028, 8, [0.62, 0.64, 0.66]);
+  }
+  matte.box(0, BY - 0.18, FR - 0.02, 0.18, 0.1, 0.08, 0, [0.72, 0.12, 0.10]);   // the blast valve handle
+  // Flying wires: from the frame corners and between them up to the load
+  // tapes at the mouth, sixteen of them. Dark steel, thin.
+  for (let g = 0; g < 16; g++) {
+    const a = ((g + 0.5) / 16) * Math.PI * 2;
+    const k = Math.floor(((a + Math.PI / 4) % (Math.PI * 2)) / (Math.PI / 2)) % 4;
+    const from = top[(k + 2) % 4];
+    matte.tube([from[0] * 1.05, BY + 0.02, from[2] * 1.05], [Math.sin(a) * 1.9, M - 0.02, Math.cos(a) * 1.9], 0.012, 4, [0.18, 0.18, 0.2]);
+  }
+  return [];   // no wheels
+}
+
+/** The burner's flame: two glowing cones, shown while the burner is lit. */
+function balloonFlame() {
+  const g = new THREE.Group();
+  const outer = new THREE.Mesh(new THREE.ConeGeometry(0.28, 1.5, 10, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xff8a2a, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+  const inner = new THREE.Mesh(new THREE.ConeGeometry(0.14, 1.0, 8, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xbfe2ff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+  outer.position.y = 0.75; inner.position.y = 0.5;
+  g.add(outer, inner);
+  g.position.set(0, 2.98, 0);
+  g.visible = false;
+  return g;
+}
+
+// --- the tank ------------------------------------------------------------------
+//
+// A modern main battle tank on M1A2 lines (generic markings). Everything is in
+// the shared MATTE material with vertex colours -- a tank is flat paint, and
+// the per-car clearcoated `paint` would make it a toy -- so the hull can carry
+// its shading and the turret needs no material of its own. Three parts live
+// on the player's tank (setDetailed) and are baked into everyone else's:
+//
+//   turret  turns about the ring (turretAt), one draw
+//   gun     elevates about its trunnions (gunAt, in the turret's frame), one draw
+//   track   one side's belt, road wheels, sprocket and idler, drawn twice (the
+//           right side mirrored, scale.x = -1). It is built at TANK.phases
+//           offsets along the belt, and the live mesh swaps between them as
+//           the belt moves: every link steps forward pitch/phases, round the
+//           sprocket and idler and back along the ground, and the wheels turn
+//           1/11 of a revolution per pitch (11 bolts, 11 sprocket teeth), so the
+//           cycle closes on itself. No material, no shader: a geometry swap.
+//
+// So the player's tank is paint/trim/matte + shadow + 4 = 8 draws (a car with
+// articulated wheels is 12), and a parked one is the usual 3.
+export const TANK = {
+  pitch: 0.1828, phases: 4,
+  trackX: 1.51, trackW: 0.62, trackT: 0.08,
+  wheelR: 0.32, wheelY: 0.40, wheelZ: [-2.46, -1.64, -0.82, 0, 0.82, 1.64, 2.46],
+  sprocket: [-3.30, 0.66, 0.32], idler: [3.25, 0.62, 0.32],
+  turretAt: [0, 1.42, 0.35], gunAt: [0, 0.47, 1.70], muzzle: 4.55,
+  coax: [0.19, 0.05, 0.63],
+  // turret traverse and gun elevation (rad/s), the gun's limits (rad)
+  traverse: 1.05, elevRate: 0.55, elevMin: -0.16, elevMax: 0.35,
+  // skid steering: yaw at a standstill (rad/s), and how it falls with speed
+  pivot: 0.9, pivotFade: 11,
+};
+const TAN = [0.40, 0.335, 0.215];     // CARC tan
+const TAN_D = [0.30, 0.25, 0.165];     // underside, recesses
+const TAN_S = [0.37, 0.31, 0.2];       // the skirts, a different batch of paint
+const TRACK_C = [0.05, 0.05, 0.052];   // rubber pads
+const TRACK_PIN = [0.15, 0.148, 0.14]; // end connectors
+const TYRE_C = [0.035, 0.035, 0.038];
+const WHEEL_C = [0.30, 0.245, 0.14];   // road wheel discs, painted
+const GUNMETAL = [0.085, 0.09, 0.095];
+const OPTIC = [0.025, 0.04, 0.06];
+const GRILLE = [0.06, 0.058, 0.05];
+const STOW = [0.22, 0.21, 0.13];       // tarps and packs in the bustle rack
+
+/** Newell's normal of a polygon of [x,y,z]. */
+function polyNormal(pts) {
+  let nx = 0, ny = 0, nz = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    nx += (a[1] - b[1]) * (a[2] + b[2]);
+    ny += (a[2] - b[2]) * (a[0] + b[0]);
+    nz += (a[0] - b[0]) * (a[1] + b[1]);
+  }
+  const l = Math.hypot(nx, ny, nz) || 1;
+  return [nx / l, ny / l, nz / l];
+}
+
+/**
+ * A faceted solid between two rings of [x,y,z] (same count, same order):
+ * flat-shaded faces, normals turned away from the solid's centre, both ends
+ * capped. Armour is planes, and a smoothed loft rounds every edge off it.
+ * `col` is a colour, or (normal) => colour.
+ */
+function facet(b, A, B, col, caps = true) {
+  const K = A.length;
+  let cx = 0, cy = 0, cz = 0;
+  for (const p of A) { cx += p[0]; cy += p[1]; cz += p[2]; }
+  for (const p of B) { cx += p[0]; cy += p[1]; cz += p[2]; }
+  cx /= 2 * K; cy /= 2 * K; cz /= 2 * K;
+  const C = typeof col === 'function' ? col : () => col;
+  const out = (pts) => {
+    const n = polyNormal(pts);
+    let mx = 0, my = 0, mz = 0;
+    for (const p of pts) { mx += p[0]; my += p[1]; mz += p[2]; }
+    mx /= pts.length; my /= pts.length; mz /= pts.length;
+    if (n[0] * (mx - cx) + n[1] * (my - cy) + n[2] * (mz - cz) < 0) { n[0] = -n[0]; n[1] = -n[1]; n[2] = -n[2]; }
+    return [n, [mx, my, mz]];
+  };
+  for (let k = 0; k < K; k++) {
+    const k2 = (k + 1) % K;
+    const q = [A[k], A[k2], B[k2], B[k]];
+    const [n] = out(q);
+    b.quad(q[0], q[1], q[2], q[3], n, [0, 0, 1, 0, 1, 1, 0, 1], C(n));
+  }
+  if (!caps) return;
+  for (const R of [A, B]) {
+    const [n, m] = out(R);
+    for (let k = 0; k < K; k++) b.tri(m, R[k], R[(k + 1) % K], n, C(n));
+  }
+}
+const atX = (x, prof) => prof.map(([z, y]) => [x, y, z]);
+const atY = (y, plan) => plan.map(([x, z]) => [x, y, z]);
+const tankCol = (top, side, bottom) => (n) => (n[1] > 0.6 ? top : n[1] < -0.6 ? bottom : side);
+
+/** A closed cylinder standing on (cx, by, cz). */
+function tankCyl(b, cx, by, cz, r, h, sides, col, topCol = col) {
+  const lo = [], hi = [];
+  for (let i = 0; i < sides; i++) {
+    const a = (i / sides) * Math.PI * 2;
+    lo.push([cx + Math.cos(a) * r, by, cz + Math.sin(a) * r]);
+    hi.push([cx + Math.cos(a) * r, by + h, cz + Math.sin(a) * r]);
+  }
+  facet(b, lo, hi, (n) => (n[1] > 0.6 ? topCol : col));
+}
+
+/** A box tilted about X by `pitch` (nose down positive), centred at (cx, cy, cz). */
+function tankBoxX(b, cx, cy, cz, w, h, d, pitch, col) {
+  const c = Math.cos(pitch), s = Math.sin(pitch);
+  const P = (x, y, z) => [cx + x, cy + y * c - z * s, cz + y * s + z * c];
+  const ring = (z) => [P(-w / 2, -h / 2, z), P(w / 2, -h / 2, z), P(w / 2, h / 2, z), P(-w / 2, h / 2, z)];
+  facet(b, ring(-d / 2), ring(d / 2), col);
+}
+
+/**
+ * The belt's centre line in the side plane (z, y): the convex hull of the
+ * sprocket's pitch circle, the idler, and the end road wheels, traversed the
+ * way the belt moves when the tank drives forward -- along the top toward the
+ * idler, round it and down, back along the ground, up round the sprocket.
+ * `at(s)` gives the point, the direction of travel and the outward normal.
+ */
+let BELT = null;
+function tankBelt() {
+  if (BELT) return BELT;
+  const T = TANK, half = T.trackT / 2, rw = T.wheelR + half;
+  const C = [
+    [T.sprocket[0], T.sprocket[1], T.sprocket[2]],
+    [T.idler[0], T.idler[1], T.idler[2] + half],
+    [T.wheelZ[T.wheelZ.length - 1], T.wheelY, rw],
+    [T.wheelZ[0], T.wheelY, rw],
+  ];
+  // outer tangents, interior on the right of travel (clockwise in z-y)
+  const tan = [];
+  for (let i = 0; i < 4; i++) {
+    const A = C[i], B = C[(i + 1) % 4];
+    const dz = B[0] - A[0], dy = B[1] - A[1], L = Math.hypot(dz, dy);
+    const d = [dz / L, dy / L], left = [-d[1], d[0]];
+    const c = (A[2] - B[2]) / L, s = Math.sqrt(1 - c * c);
+    const n = [d[0] * c + left[0] * s, d[1] * c + left[1] * s];
+    tan.push({ a: [A[0] + A[2] * n[0], A[1] + A[2] * n[1]], b: [B[0] + B[2] * n[0], B[1] + B[2] * n[1]] });
+  }
+  const segs = [];
+  let L = 0;
+  for (let i = 0; i < 4; i++) {
+    const t = tan[i];
+    const len = Math.hypot(t.b[0] - t.a[0], t.b[1] - t.a[1]);
+    segs.push({ line: true, a: t.a, b: t.b, len, s0: L });
+    L += len;
+    const c = C[(i + 1) % 4], nx = tan[(i + 1) % 4].a;
+    const aIn = Math.atan2(t.b[1] - c[1], t.b[0] - c[0]);
+    const aOut = Math.atan2(nx[1] - c[1], nx[0] - c[0]);
+    let da = aIn - aOut;
+    while (da < 0) da += Math.PI * 2;
+    while (da >= Math.PI * 2) da -= Math.PI * 2;
+    segs.push({ line: false, c, aIn, da, len: c[2] * da, s0: L });
+    L += c[2] * da;
+  }
+  const at = (s) => {
+    s = ((s % L) + L) % L;
+    let g = segs[segs.length - 1];
+    for (const q of segs) if (s < q.s0 + q.len) { g = q; break; }
+    const u = s - g.s0;
+    if (g.line) {
+      const tz = (g.b[0] - g.a[0]) / g.len, ty = (g.b[1] - g.a[1]) / g.len;
+      return { p: [g.a[0] + tz * u, g.a[1] + ty * u], t: [tz, ty], n: [-ty, tz] };
+    }
+    const a = g.aIn - u / g.c[2];
+    const ca = Math.cos(a), sa = Math.sin(a);
+    return { p: [g.c[0] + g.c[2] * ca, g.c[1] + g.c[2] * sa], t: [sa, -ca], n: [ca, sa] };
+  };
+  const N = Math.round(L / T.pitch);
+  BELT = { L, at, N, pitch: L / N };
+  return BELT;
+}
+
+/**
+ * A lathe about the X axis through (cy, cz): `prof` is [[x, r, col], ...];
+ * each band is shaded smoothly round and flat along. `ang` turns its start.
+ */
+function tankLathe(b, cy, cz, prof, segs, ang = 0) {
+  for (let j = 0; j < prof.length - 1; j++) {
+    const [xa, ra, col] = prof[j], [xb, rb] = prof[j + 1];
+    const dx = xb - xa, dr = rb - ra, l = Math.hypot(dx, dr) || 1;
+    const nx = -dr / l, nr = dx / l;
+    for (let k = 0; k < segs; k++) {
+      const t0 = ang + (k / segs) * Math.PI * 2, t1 = ang + ((k + 1) / segs) * Math.PI * 2;
+      const P = (x, r, t) => [x, cy + r * Math.sin(t), cz + r * Math.cos(t)];
+      const N = (t) => [nx, nr * Math.sin(t), nr * Math.cos(t)];
+      b.quad(P(xa, ra, t0), P(xa, ra, t1), P(xb, rb, t1), P(xb, rb, t0), [N(t0), N(t1), N(t1), N(t0)],
+        [0, 0, 1, 0, 1, 1, 0, 1], col);
+    }
+  }
+}
+
+/** Small flat hexagon on the plane x = const, facing +x (bolt heads, holes). */
+function tankSpot(b, x, cy, cz, r, col) {
+  const pts = [];
+  for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; pts.push([x, cy + r * Math.sin(a), cz + r * Math.cos(a)]); }
+  for (let i = 1; i < 5; i++) b.tri(pts[0], pts[i], pts[i + 1], [1, 0, 0], col);
+}
+
+/**
+ * One side's running gear, the +x (left) side, at phase `k` of TANK.phases:
+ * the belt's links, seven road wheels, the sprocket and the idler. The return
+ * rollers are in the hull (they are plain, so their turning cannot be seen).
+ */
+function tankRunningGear(b, k) {
+  const T = TANK, B = tankBelt();
+  const x0 = T.trackX - T.trackW / 2, x1 = T.trackX + T.trackW / 2;
+  const off = (k / T.phases) * B.pitch;
+  const hl = B.pitch * 0.43, hc = B.pitch * 0.22, th = T.trackT / 2;
+  const P3 = (x, zy) => [x, zy[1], zy[0]];
+  const shift = (q, n, d) => [q[0] + n[0] * d, q[1] + n[1] * d];
+  for (let i = 0; i < B.N; i++) {
+    const s = i * B.pitch + off;
+    const m = B.at(s), a = B.at(s - hl), c = B.at(s + hl);
+    const n = m.n;
+    // the rubber pad: outer face, both ends, both sides (the inner face is
+    // never seen: the wheels and the hull are on that side)
+    const o0 = shift(a.p, n, th), o1 = shift(c.p, n, th), i0 = shift(a.p, n, -th), i1 = shift(c.p, n, -th);
+    const xa = x0 + 0.05, xb = x1 - 0.07;
+    const n3 = [0, n[1], n[0]], t3 = [0, m.t[1], m.t[0]];
+    b.quad(P3(xa, o0), P3(xb, o0), P3(xb, o1), P3(xa, o1), n3, [0, 0, 1, 0, 1, 1, 0, 1], TRACK_C);
+    b.quad(P3(xa, o0), P3(xb, o0), P3(xb, i0), P3(xa, i0), [0, -t3[1], -t3[2]], [0, 0, 1, 0, 1, 1, 0, 1], TRACK_C);
+    b.quad(P3(xa, o1), P3(xb, o1), P3(xb, i1), P3(xa, i1), t3, [0, 0, 1, 0, 1, 1, 0, 1], TRACK_C);
+    b.quad(P3(xb, o0), P3(xb, o1), P3(xb, i1), P3(xb, i0), [1, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], TRACK_C);
+    b.quad(P3(xa, o0), P3(xa, o1), P3(xa, i1), P3(xa, i0), [-1, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], TRACK_C);
+    // the outboard end connector, steel, proud of the pad: what reads as a
+    // track from the side
+    const ca = B.at(s - hc).p, cc = B.at(s + hc).p, cth = th + 0.012;
+    const q0 = shift(ca, n, cth), q1 = shift(cc, n, cth), r0 = shift(ca, n, -cth), r1 = shift(cc, n, -cth);
+    const xc = x1 + 0.012;
+    b.quad(P3(xb, q0), P3(xc, q0), P3(xc, q1), P3(xb, q1), n3, [0, 0, 1, 0, 1, 1, 0, 1], TRACK_PIN);
+    b.quad(P3(xc, q0), P3(xc, q1), P3(xc, r1), P3(xc, r0), [1, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], TRACK_PIN);
+    b.quad(P3(xb, q0), P3(xc, q0), P3(xc, r0), P3(xb, r0), [0, -t3[1], -t3[2]], [0, 0, 1, 0, 1, 1, 0, 1], TRACK_PIN);
+    b.quad(P3(xb, q1), P3(xc, q1), P3(xc, r1), P3(xb, r1), t3, [0, 0, 1, 0, 1, 1, 0, 1], TRACK_PIN);
+  }
+  // Wheels turn 1/11 of a revolution per pitch of belt, so the phases close.
+  const ang = -((k / T.phases) * (Math.PI * 2)) / 11;
+  const xo = x1 - 0.03, xi = x0 + 0.04;
+  const wheel = (cy, cz, r, bolts, col = WHEEL_C, segs = 16) => {
+    tankLathe(b, cy, cz, [
+      [xi, r, TYRE_C], [xo, r, TYRE_C], [xo, r - 0.055, TYRE_C], [xo - 0.025, r - 0.06, col],
+      [xo - 0.025, 0.14, col], [xo + 0.015, 0.125, GUNMETAL], [xo + 0.015, 0, GUNMETAL],
+    ], segs, ang);
+    for (let j = 0; j < bolts; j++) {
+      const a = ang + (j / bolts) * Math.PI * 2;
+      tankSpot(b, xo - 0.021, cy + Math.sin(a) * 0.19, cz + Math.cos(a) * 0.19, 0.03, [0.06, 0.055, 0.04]);
+    }
+  };
+  for (const z of T.wheelZ) wheel(T.wheelY, z, T.wheelR, 11);
+  wheel(T.idler[1], T.idler[0], T.idler[2], 11);
+  // the sprocket: a toothed ring inside the belt, a dished hub outboard
+  {
+    const [sz, sy, sr] = T.sprocket;
+    tankLathe(b, sy, sz, [[xi + 0.1, sr - 0.04, GUNMETAL], [xo - 0.02, sr - 0.04, GUNMETAL], [xo - 0.02, 0.16, WHEEL_C],
+      [xo + 0.03, 0.15, GUNMETAL], [xo + 0.03, 0, GUNMETAL]], 16, ang);
+    for (let j = 0; j < 11; j++) {
+      const a = ang + (j / 11) * Math.PI * 2 + Math.PI / 11;
+      const cy = sy + Math.sin(a) * (sr - 0.01), cz = sz + Math.cos(a) * (sr - 0.01);
+      tankBoxX(b, xo - 0.05, cy, cz, 0.06, 0.07, 0.07, Math.PI / 2 - a, GUNMETAL);
+      tankSpot(b, xo - 0.016, sy + Math.sin(a) * 0.22, sz + Math.cos(a) * 0.22, 0.026, [0.05, 0.05, 0.05]);
+    }
+  }
+}
+
+/** Mirror everything a builder holds into another across x = 0. */
+function mirrorInto(dst, src) {
+  const base = dst.pos.length / 3;
+  for (let i = 0; i < src.pos.length; i += 3) {
+    dst.pos.push(-src.pos[i], src.pos[i + 1], src.pos[i + 2]);
+    dst.nor.push(-src.nor[i], src.nor[i + 1], src.nor[i + 2]);
+  }
+  dst.col.push(...src.col);
+  for (let i = 0; i < src.idx.length; i += 3) dst.idx.push(src.idx[i] + base, src.idx[i + 2] + base, src.idx[i + 1] + base);
+}
+
+/** Append a builder into another, moved by `at`. */
+function appendAt(dst, src, at) {
+  const base = dst.pos.length / 3;
+  for (let i = 0; i < src.pos.length; i += 3) dst.pos.push(src.pos[i] + at[0], src.pos[i + 1] + at[1], src.pos[i + 2] + at[2]);
+  dst.nor.push(...src.nor); dst.col.push(...src.col);
+  for (const i of src.idx) dst.idx.push(i + base);
+}
+
+function buildTank(spec, paint, trim, matte) {
+  const T = TANK;
+  const hull = tankCol(TAN, TAN, TAN_D);
+
+  // --- hull ------------------------------------------------------------------
+  // Lower hull between the tracks, 0.48 m clearance, the lower front plate
+  // raked back under the glacis.
+  const lower = [[-3.70, 0.50], [3.30, 0.50], [3.98, 1.04], [-3.82, 1.04]];
+  facet(matte, atX(-1.17, lower), atX(1.17, lower), hull);
+  // Upper hull out over the tracks (the sponsons), with the long shallow
+  // glacis an M1 is recognised by and the flat engine deck behind the ring.
+  const upper = [[-3.86, 1.04], [3.98, 1.04], [3.98, 1.13], [2.70, 1.42], [-3.86, 1.42]];
+  facet(matte, atX(-1.83, upper), atX(1.83, upper), hull);
+  // driver's hatch and his three periscopes, on the glacis below the gun
+  {
+    const g0 = [2.70, 1.42], g1 = [3.98, 1.13];
+    const gl = (u) => [g0[0] + (g1[0] - g0[0]) * u, g0[1] + (g1[1] - g0[1]) * u];
+    const pitch = Math.atan2(g0[1] - g1[1], g1[0] - g0[0]);
+    const [hz, hy] = gl(0.16);
+    tankBoxX(matte, 0, hy + 0.03, hz, 0.78, 0.05, 0.55, pitch, TAN);
+    for (const x of [-0.28, 0, 0.28]) {
+      const [pz, py] = gl(0.38);
+      tankBoxX(matte, x, py + 0.05, pz, 0.2, 0.09, 0.09, pitch, GUNMETAL);
+      tankBoxX(trim, x, py + 0.06, pz + 0.05, 0.16, 0.05, 0.012, pitch - 0.9, GLASS);
+    }
+    // the glacis' joint with the turret ring area, and the front tow points
+    for (const sx of [-1, 1]) {
+      tankBoxX(paint, sx * 0.85, 0.80, 3.62, 0.16, 0.18, 0.16, -0.66, WHITE);
+      // headlamp clusters on the sponson fronts, behind guards
+      matte.box(sx * 1.52, 1.10, 3.86, 0.34, 0.2, 0.16, 0, GUNMETAL);
+      trim.box(sx * 1.44, 1.14, 3.945, 0.12, 0.1, 0.01, 0, LAMP);
+      trim.box(sx * 1.62, 1.14, 3.945, 0.08, 0.07, 0.01, 0, AMBER);
+      for (const gx of [-0.17, 0.17]) matte.tube([sx * 1.52 + gx, 1.06, 3.96], [sx * 1.52 + gx, 1.32, 3.96], 0.015, 4, GUNMETAL, true);
+    }
+  }
+  // turret ring, standing a little proud of the deck
+  tankCyl(matte, 0, 1.40, T.turretAt[2], 1.18, 0.06, 20, TAN_D, TAN_D);
+  // Engine deck: grille panels with their slats, the turbine's intake.
+  matte.box(0, 1.42, -2.55, 2.5, 0.012, 2.2, 0, GRILLE);
+  for (let i = 0; i < 12; i++) matte.box(0, 1.43, -3.55 + i * 0.18, 2.4, 0.03, 0.05, 0, TAN_D);
+  for (const sx of [-1, 1]) matte.box(sx * 1.45, 1.42, -2.0, 0.55, 0.05, 1.6, 0, TAN);
+  // Rear plate: the exhaust grille, tail lamps, the tow pintle.
+  matte.box(0, 1.0, -3.875, 2.2, 0.38, 0.03, 0, GRILLE);
+  for (let i = 0; i < 6; i++) matte.box(0, 1.03 + i * 0.06, -3.9, 2.1, 0.02, 0.03, 0, TAN_D);
+  matte.box(0, 0.62, -3.82, 0.3, 0.16, 0.16, 0, GUNMETAL);
+  for (const sx of [-1, 1]) {
+    matte.box(sx * 1.55, 1.18, -3.89, 0.3, 0.16, 0.05, 0, GUNMETAL);
+    trim.box(sx * 1.55, 1.2, -3.918, 0.18, 0.08, 0.01, 0, TAILC);
+    tankBoxX(paint, sx * 0.85, 0.72, -3.80, 0.16, 0.16, 0.14, 0.2, WHITE);
+    // mud flaps behind the sprockets
+    matte.box(sx * 1.52, 0.42, -3.92, 0.6, 0.5, 0.02, 0, TYRE_C);
+  }
+  // Side skirts: armoured panels hung from the sponson over the top of the
+  // road wheels, thicker over the front three; their seams.
+  for (const sx of [-1, 1]) {
+    const rear = [[-3.78, 0.45], [1.25, 0.45], [1.25, 1.06], [-3.78, 1.06]];
+    const front = [[1.25, 0.40], [3.0, 0.40], [3.62, 0.72], [3.62, 1.06], [1.25, 1.06]];
+    facet(matte, atX(sx * 1.84, rear), atX(sx * 1.90, rear), tankCol(TAN_S, TAN_S, TAN_D));
+    facet(matte, atX(sx * 1.84, front), atX(sx * 1.96, front), tankCol(TAN_S, TAN_S, TAN_D));
+    for (const z of [-2.55, -1.3, 0.0]) matte.box(sx * 1.905, 0.47, z, 0.012, 0.57, 0.03, 0, TAN_D);
+    for (const z of [1.9, 2.6]) matte.box(sx * 1.965, 0.43, z, 0.012, 0.6, 0.03, 0, TAN_D);
+    // fender lip over the idler and the tow cables along the sponson
+    matte.box(sx * 1.52, 1.04, 3.75, 0.66, 0.04, 0.5, 0, TAN);
+    matte.tube([sx * 1.7, 1.45, -3.6], [sx * 1.7, 1.45, 0.9], 0.03, 5, [0.12, 0.12, 0.11], true);
+    // return rollers under the top run of the belt (behind the skirt)
+    for (const z of [-1.2, 1.1]) {
+      tankLathe(matte, 0.84, z, [[sx * (T.trackX - 0.25), 0.11, GUNMETAL], [sx * (T.trackX + 0.25), 0.11, GUNMETAL], [sx * (T.trackX + 0.25), 0, GUNMETAL]], 10);
+    }
+  }
+
+  // --- turret (its own frame: origin on the ring centre at deck height) -----
+  const tur = new Builder(false);
+  const turretC = tankCol(TAN, TAN, TAN_D);
+  // The plan: a wedge of frontal armour to a narrow face round the gun, flat
+  // cheeks, sides leaning in toward the roof, the bustle narrowing behind.
+  const lo = [[0.55, 2.25], [1.80, 1.00], [1.80, -1.50], [1.60, -2.70], [-1.60, -2.70], [-1.80, -1.50], [-1.80, 1.00], [-0.55, 2.25]];
+  const hi = [[0.45, 2.02], [1.60, 0.95], [1.64, -1.50], [1.44, -2.60], [-1.44, -2.60], [-1.64, -1.50], [-1.60, 0.95], [-0.45, 2.02]];
+  facet(tur, atY(0.03, lo), atY(0.88, hi), turretC);
+  // roof panel lines
+  for (const z of [-1.6, -0.5, 0.6]) tur.box(0, 0.882, z, 3.3, 0.008, 0.03, 0, TAN_D);
+  // Commander's cupola on the right (-x) with his .50 cal on a remote mount.
+  tankCyl(tur, -0.62, 0.88, -0.25, 0.46, 0.14, 14, TAN, TAN);
+  tankCyl(tur, -0.62, 1.02, -0.25, 0.38, 0.05, 14, TAN_D, TAN);
+  tur.box(-0.62, 1.07, -0.05, 0.24, 0.24, 0.62, 0, GUNMETAL);                  // receiver
+  tur.box(-0.47, 1.05, -0.12, 0.12, 0.2, 0.3, 0, [0.16, 0.17, 0.12]);           // ammo can
+  tur.tube([-0.62, 1.19, 0.26], [-0.62, 1.19, 1.62], 0.028, 6, GUNMETAL, true);
+  tur.tube([-0.62, 1.19, 1.42], [-0.62, 1.19, 1.66], 0.04, 6, GUNMETAL, true);   // flash hider
+  tur.box(-0.62, 1.32, 0.05, 0.3, 0.18, 0.3, 0, TAN);                           // sight head
+  tur.box(-0.62, 1.32, 0.205, 0.22, 0.1, 0.012, 0, OPTIC);
+  // Loader's hatch on the left with his M240 behind a pair of shields.
+  tur.box(0.62, 0.88, -0.15, 0.75, 0.07, 0.8, 0, TAN);
+  tur.tube([0.62, 1.12, 0.1], [0.62, 1.12, 1.0], 0.018, 5, GUNMETAL, true);
+  tur.box(0.62, 1.08, 0.08, 0.12, 0.14, 0.4, 0, GUNMETAL);
+  for (const sx of [-1, 1]) tur.box(0.62 + sx * 0.32, 0.92, 0.28, 0.03, 0.42, 0.55, 0, TAN);
+  tur.box(0.62, 0.92, 0.56, 0.6, 0.36, 0.03, 0, TAN);
+  // Gunner's primary sight (right front) and the commander's independent
+  // viewer (left front), the windows dark.
+  tur.box(-0.98, 0.88, 1.2, 0.48, 0.26, 0.62, 0, TAN);
+  tur.box(-0.98, 0.96, 1.515, 0.38, 0.13, 0.012, 0, OPTIC);
+  tankCyl(tur, 0.75, 0.88, 0.75, 0.13, 0.36, 8, TAN_D);
+  tur.box(0.75, 1.24, 0.75, 0.46, 0.34, 0.42, 0, TAN);
+  tur.box(0.75, 1.32, 0.965, 0.3, 0.14, 0.012, 0, OPTIC);
+  // Wind sensor and the two whip antennas at the rear corners.
+  tur.tube([0, 0.88, -2.0], [0, 1.38, -2.0], 0.025, 5, GUNMETAL, true);
+  tur.tube([-0.14, 1.38, -2.0], [0.14, 1.38, -2.0], 0.02, 5, GUNMETAL, true);
+  for (const sx of [-1, 1]) {
+    tankCyl(tur, sx * 1.22, 0.88, -2.25, 0.07, 0.14, 6, GUNMETAL);
+    tur.tube([sx * 1.22, 1.0, -2.25], [sx * 1.3, 3.5, -2.45], 0.009, 3, [0.05, 0.05, 0.05], true);
+    // smoke grenade launchers at the cheek corners: a block of six tubes
+    tur.box(sx * 1.80, 0.46, 0.98, 0.34, 0.32, 0.26, 0, TAN_D);
+    for (let i = 0; i < 2; i++) for (let j = 0; j < 3; j++) {
+      const x = sx * (1.70 + j * 0.1), y = 0.54 + i * 0.13;
+      tur.box(x, y - 0.04, 1.2, 0.085, 0.085, 0.16, 0, GUNMETAL);
+    }
+    // stowage boxes along the turret sides
+    tur.box(sx * 1.87, 0.22, -0.55, 0.16, 0.5, 1.6, 0, TAN);
+    tur.box(sx * 1.95, 0.48, -0.55, 0.012, 0.03, 1.5, 0, TAN_D);
+  }
+  // A plain star on each stowage box: the only marking.
+  for (const sx of [-1, 1]) {
+    const cx = sx * 1.954, cy = 0.48 - 0.1, cz = -0.6;
+    const pts = [];
+    for (let i = 0; i < 10; i++) {
+      const a = Math.PI / 2 + (i / 10) * Math.PI * 2, r = i % 2 ? 0.07 : 0.17;
+      pts.push([cx, cy - 0.12 + r * Math.sin(a), cz + sx * r * Math.cos(a)]);
+    }
+    const c = [cx, cy - 0.12, cz];
+    for (let i = 0; i < 10; i++) tur.tri(c, pts[i], pts[(i + 1) % 10], [sx, 0, 0], [0.04, 0.04, 0.035]);
+  }
+  // The bustle rack: a cage of rails round the turret's back, with packs.
+  {
+    const ys = [0.42, 0.86];
+    const rim = [[1.74, -1.4], [1.78, -2.5], [1.56, -3.05], [-1.56, -3.05], [-1.78, -2.5], [-1.74, -1.4]];
+    for (const y of ys) for (let i = 0; i < rim.length - 1; i++) {
+      tur.tube([rim[i][0], y, rim[i][1]], [rim[i + 1][0], y, rim[i + 1][1]], 0.025, 4, GUNMETAL, true);
+    }
+    for (const [x, z] of rim) tur.tube([x, 0.3, z], [x, 0.88, z], 0.022, 4, GUNMETAL, true);
+    for (let i = -2; i <= 2; i++) tur.tube([i * 0.6, 0.3, -3.05], [i * 0.6, 0.88, -3.05], 0.02, 4, GUNMETAL, true);
+    tur.box(0.7, 0.36, -2.82, 0.9, 0.42, 0.36, 0, STOW);
+    tur.box(-0.5, 0.36, -2.84, 1.1, 0.34, 0.34, 0, [0.16, 0.18, 0.12]);
+    tur.box(-1.45, 0.36, -2.0, 0.28, 0.36, 0.9, 0, STOW);
+  }
+
+  // --- the main gun (its own frame: origin on the trunnions) ---------------
+  const gun = new Builder(false);
+  gun.box(0, -0.22, 0.36, 0.56, 0.44, 0.52, 0, TAN);                 // mantlet
+  gun.box(TANK.coax[0], TANK.coax[1] - 0.05, TANK.coax[2], 0.1, 0.1, 0.04, 0, GUNMETAL);   // coax port
+  gun.tube([0, 0, 0.6], [0, 0, 2.35], 0.112, 12, TAN, false);          // thermal sleeve
+  gun.tube([0, 0, 2.35], [0, 0, 2.55], 0.13, 12, TAN, false);          // bore evacuator
+  gun.tube([0, 0, 2.55], [0, 0, 2.9], 0.142, 12, TAN, false);
+  gun.tube([0, 0, 2.9], [0, 0, 3.05], 0.122, 12, TAN, false);
+  gun.tube([0, 0, 3.05], [0, 0, T.muzzle], 0.1, 12, TAN, false);
+  for (const z of [1.1, 1.75, 3.6, 4.1]) gun.tube([0, 0, z], [0, 0, z + 0.035], 0.118 - (z > 3 ? 0.012 : 0), 12, TAN_D, false);
+  gun.tube([0, 0, T.muzzle - 0.01], [0, 0, T.muzzle], 0.1, 12, GUNMETAL, true);
+  gun.tube([0, 0, T.muzzle - 0.002], [0, 0, T.muzzle + 0.001], 0.06, 10, [0.01, 0.01, 0.01], true);   // the bore
+  gun.box(0, 0.1, T.muzzle - 0.12, 0.07, 0.06, 0.12, 0, GUNMETAL);   // muzzle reference sensor
+
+  // --- the running gear ------------------------------------------------------
+  const phases = [];
+  for (let k = 0; k < T.phases; k++) {
+    const g = new Builder(false);
+    tankRunningGear(g, k);
+    phases.push(g);
+  }
+  matte.tank = { turret: tur, gun, phases };
+  return [];
+}
+
+/**
+ * The saucer: a lathe of a disc in mirror chrome (`finish: 'chrome'`) -- a
+ * shallow upper lens stepped by two raised rings and cut by panel seams, a
+ * dark rim band (its lamps are saucer.js's: lit, and they chase), a lower
+ * lens of concentric rings round a central emitter -- under a dome
+ * (saucer.js's clear glass) with a ring of portholes at its foot and a pilot inside. Three legs are
+ * live parts on the flown one (axis 'z', never spun) so saucer.js can
+ * retract them. Everything is in metres from the ground; the rim is at Y0.
+ */
+function buildSaucer(spec, paint, trim, matte) {
+  const N = 72, Y0 = 1.25;
+  const ring = (r, y) => { const out = []; for (let i = 0; i <= N; i++) { const a = (i / N) * Math.PI * 2; out.push([Math.cos(a) * r, Y0 + y, -Math.sin(a) * r]); } return out; };
+  const lathe = (b, prof, col) => { b.patch(prof.map(([r, y]) => ring(r, y)), col); };
+  const SILVER = [0.82, 0.84, 0.87], SEAM = [0.08, 0.085, 0.095], BAND = [0.1, 0.105, 0.12];
+  const G1 = [0.2, 0.21, 0.23], G2 = [0.32, 0.33, 0.36];
+  // upper lens, in panels: the chrome between seams, a seam a few cm wide
+  // standing proud so the light catches it
+  const up = [[1.85, 1.02], [2.25, 0.99], [2.3, 1.03], [2.36, 0.97], [3.1, 0.86], [3.2, 0.9], [3.3, 0.84],
+    [4.05, 0.66], [4.1, 0.69], [4.15, 0.64], [4.8, 0.44], [5.25, 0.27], [5.5, 0.16]];
+  lathe(paint, up, SILVER);
+  // the seams themselves: dark bands just over the chrome at three radii
+  for (const [r0, r1] of [[2.62, 2.66], [3.62, 3.66], [4.55, 4.59]]) {
+    const h = (r) => { for (let k = 1; k < up.length; k++) if (r <= up[k][0]) { const [ra, ya] = up[k - 1], [rb, yb] = up[k]; return ya + (yb - ya) * (r - ra) / (rb - ra); } return 0.16; };
+    lathe(matte, [[r0, h(r0) + 0.012], [r1, h(r1) + 0.012]], SEAM);
+  }
+  // vents: 24 dark louvres on the outer lens
+  for (let k = 0; k < 24; k++) {
+    const a = (k / 24) * Math.PI * 2 + 0.13;
+    matte.box(Math.cos(a) * 4.95, Y0 + 0.36, -Math.sin(a) * 4.95, 0.42, 0.035, 0.11, a + Math.PI / 2, SEAM);
+  }
+  // the rim band and its lip
+  lathe(matte, [[5.5, 0.16], [5.6, 0.1], [5.62, 0.0], [5.6, -0.1], [5.5, -0.16]], BAND);
+  // lower lens: concentric rings stepping in to the emitter
+  lathe(paint, [[5.5, -0.16], [5.1, -0.28], [4.55, -0.38]], SILVER);
+  lathe(matte, [[4.55, -0.38], [4.5, -0.43], [4.0, -0.46], [3.95, -0.42]], G1);
+  lathe(paint, [[3.95, -0.42], [3.1, -0.52], [2.6, -0.56]], SILVER);
+  lathe(matte, [[2.6, -0.56], [2.55, -0.6], [1.6, -0.64], [1.55, -0.6]], G2);
+  lathe(matte, [[1.55, -0.6], [1.0, -0.7], [0.01, -0.72]], [0.14, 0.2, 0.24]);   // the emitter's housing (lit by saucer.js)
+  // the dome: a chrome collar with twelve portholes, glass over it
+  lathe(paint, [[1.85, 1.02], [1.82, 1.2], [1.74, 1.32]], SILVER);
+  for (let k = 0; k < 12; k++) {
+    const a = (k / 12) * Math.PI * 2;
+    trim.spheroid(Math.cos(a) * 1.86, Y0 + 1.12, -Math.sin(a) * 1.86, 0.075, 8, 5, GLASS, 0.6);
+  }
+  // (the dome itself is saucer.js's: clear glass with the pilot showing through;
+  // the vehicle trim glass is tinted dark for windscreens and hid him)
+  // the cockpit floor under the dome, and a lit ring of instruments round it
+  lathe(matte, [[0.01, 1.03], [1.86, 1.03]], [0.1, 0.11, 0.13]);
+  for (let k = 0; k < 10; k++) { const a = (k / 10) * Math.PI * 2 + 0.3; trim.box(Math.cos(a) * 1.45, Y0 + 1.06, -Math.sin(a) * 1.45, 0.16, 0.05, 0.08, a, k % 3 ? [0.3, 0.9, 1.0] : [1.0, 0.7, 0.3]); }
+  // the pilot: grey, big-headed, black-eyed, in a high-backed seat
+  matte.box(0, Y0 + 1.25, -0.42, 0.62, 0.95, 0.14, 0, [0.12, 0.12, 0.14]);
+  matte.box(0, Y0 + 1.25, -0.05, 0.62, 0.12, 0.6, 0, [0.12, 0.12, 0.14]);
+  const SKIN = [0.56, 0.6, 0.58];
+  matte.spheroid(0, Y0 + 1.62, -0.12, 0.2, 10, 7, SKIN, 1.25);           // torso
+  matte.spheroid(0, Y0 + 2.02, -0.06, 0.24, 14, 10, SKIN, 1.15);         // the head
+  for (const sx of [-1, 1]) {
+    matte.spheroid(sx * 0.1, Y0 + 2.0, 0.15, 0.085, 10, 6, [0.02, 0.02, 0.03], 0.62);   // eyes
+    matte.tube([sx * 0.18, Y0 + 1.72, -0.08], [sx * 0.12, Y0 + 1.5, 0.28], 0.04, 6, SKIN, true);   // arms to the controls
+  }
+  matte.box(0, Y0 + 1.42, 0.38, 0.5, 0.08, 0.2, 0, [0.15, 0.16, 0.2]);    // the console
+  trim.box(-0.12, Y0 + 1.505, 0.38, 0.05, 0.01, 0.05, 0, [0.3, 1.0, 0.6]);
+  trim.box(0.12, Y0 + 1.505, 0.38, 0.05, 0.01, 0.05, 0, [1.0, 0.4, 0.25]);
+  // three legs and their pads, each a live part on the flown saucer
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * Math.PI * 2 + Math.PI / 6, c = Math.cos(a), sn = -Math.sin(a);
+    const leg = new Builder(false);
+    leg.tube([0, 0, 0], [c * 0.75, -(Y0 - 0.55), sn * 0.75], 0.1, 8, [0.38, 0.4, 0.43], true);
+    leg.tube([c * 0.2, -0.25, sn * 0.2], [c * 0.62, -(Y0 - 0.75), sn * 0.62], 0.05, 6, [0.24, 0.25, 0.28], true);
+    leg.prism(c * 0.75, -(Y0 - 0.5) - 0.12, sn * 0.75, 0.4, 0.12, 12, [0.3, 0.32, 0.34]);
+    spinPart(matte, [c * 2.55, Y0 - 0.5, sn * 2.55], 'z', leg);
+  }
+  return [];
+}
+
+/** Types with their own authored builder, keyed by `spec.hand`. */
+const HAND_BUILT = {
+  plane: buildPlane, twin: buildTwin, jet: buildJet, biplane: buildBiplane, heli: buildHeli, fighter: buildFighter, jumbo: buildJumbo, saucer: buildSaucer,
+  sports: buildSports, muscle: buildMuscle,
+  sedan: buildSedan, suv: buildSuv, pickup: buildPickup, charger: buildCharger, wiener: buildWiener,
+  hatch: (s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.hatch),
+  compact: (s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.compact),
+  ev: buildEv, service: buildServiceSedan, van: buildVan, bus: buildBus, ambulance: buildAmbulance,
+  wedge: buildWedge,
+  swat: buildSwat,
+  boxtruck: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.boxtruck),
+  garbage: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.garbage),
+  convertible: buildConvertible, cruiser: buildCruiser, sportbike: buildSportbike,
+  atv: buildAtv, bicycle: buildBicycle, boat: buildBoat, duck: buildDuck, hydro: buildHydro, jetski: buildJetski, kayak: buildKayak, artic: buildArticFront, articRear: buildArticRear, balloon: buildBalloon,
+  tank: buildTank,
+  fireengine: buildFireEngine, tiller: buildTiller, tillerRear: buildTillerRear,
+};
+
+/**
+ * Mark a trim geometry's glazing and draw it LAST.
+ *
+ * `glass` is 1 on every vertex whose colour is GLASS, 0 elsewhere; the trim
+ * shader reads it (see glassShader). The triangles are reordered so all the
+ * opaque trim -- chrome, lenses, rims -- comes first in the index buffer: the
+ * trim draw is in the transparent pass with depth writes on, and a pane drawn
+ * before the chrome behind it would depth-reject that chrome.
+ */
+export function tagGlass(geo) {
+  const col = geo.attributes.color.array, n = col.length / 3;
+  const flag = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    if (Math.abs(col[i * 3] - GLASS[0]) < 1e-4 && Math.abs(col[i * 3 + 1] - GLASS[1]) < 1e-4
+      && Math.abs(col[i * 3 + 2] - GLASS[2]) < 1e-4) flag[i] = 1;
+    else if (Math.abs(col[i * 3] - GLASS_TINT[0]) < 1e-4 && Math.abs(col[i * 3 + 1] - GLASS_TINT[1]) < 1e-4
+      && Math.abs(col[i * 3 + 2] - GLASS_TINT[2]) < 1e-4) flag[i] = 3;
+    else if (Math.abs(col[i * 3 + 1] - SHADOW_G) < 1e-4 && Math.abs(col[i * 3 + 2] - SHADOW_B) < 1e-4) flag[i] = 2;
+  }
+  geo.setAttribute('glass', new THREE.BufferAttribute(flag, 1));
+  // Solid first, then the contact shadow on the road, then the panes.
+  const idx = geo.index.array, solid = [], shade = [], glass = [];
+  for (let i = 0; i < idx.length; i += 3) {
+    const f = Math.min(flag[idx[i]], flag[idx[i + 1]], flag[idx[i + 2]]);
+    (f === 2 ? shade : f === 1 || f === 3 ? glass : solid).push(idx[i], idx[i + 1], idx[i + 2]);
+  }
+  geo.setIndex(solid.concat(shade, glass));
+  return geo;
+}
+
+// CONTACT SHADOW. Measured, tyres sit on the drawn road (median 2 cm under
+// it while driving), and still a truck read as hovering a few inches up: the
+// road between its wheels was lit exactly like open road, and the sun shadow
+// lands off to one side. What grounds a real vehicle is the dark ambient
+// patch under it, and nothing drew one -- SSAO is gated to occluders 0.7 m+
+// above the ground on purpose (see postfx). A soft blob in the trim geometry,
+// which is already in the premultiplied transparent pass (glassShader): black
+// at alpha = the vertex colour's red, so no extra draw. Its green and blue are
+// the marker tagGlass keys on.
+const SHADOW_G = 0.123, SHADOW_B = 0.456;
+function contactShadow(trim, spec) {
+  const hl = spec.len / 2, hw = spec.wid / 2;
+  const moto = !!spec.moto;
+  // inner patch under the body, feathering to nothing a little past it
+  const il = hl * (moto ? 0.7 : 0.82), iw = hw * (moto ? 0.5 : 0.78);
+  const ol = hl + (moto ? 0.25 : 0.45), ow = hw + (moto ? 0.2 : 0.4);
+  // 8 cm up: tyres ride up to ~9 cm into a cambered road (they average the
+  // four contact patches), and a lower blob vanished under it in patches.
+  const y = 0.08, A = moto ? 0.5 : 0.7;
+  const c = (a) => [a, SHADOW_G, SHADOW_B];
+  const P = (x, z) => [x, y, z];
+  const up = [0, 1, 0], uv = [0, 0, 1, 0, 1, 1, 0, 1];
+  trim.quad(P(-iw, -il), P(iw, -il), P(iw, il), P(-iw, il), up, uv, c(A));
+  // four feathered sides and four corners
+  const ring = [[-iw, -il, -ow, -ol], [iw, -il, ow, -ol], [iw, il, ow, ol], [-iw, il, -ow, ol]];
+  for (let k = 0; k < 4; k++) {
+    const [ax, az, oax, oaz] = ring[k], [bx, bz, obx, obz] = ring[(k + 1) % 4];
+    // side between corner k and k+1
+    const sa = k % 2 === 0 ? P(ax, oaz) : P(oax, az), sb = k % 2 === 0 ? P(bx, obz) : P(obx, bz);
+    trim.quad(P(ax, az), P(bx, bz), sb, sa, up, uv, [c(A), c(A), c(0), c(0)]);
+    // corner k
+    trim.quad(P(ax, az), k % 2 === 0 ? P(ax, oaz) : P(oax, az), P(oax, oaz), k % 2 === 0 ? P(oax, az) : P(ax, oaz), up, uv, [c(A), c(0), c(0), c(0)]);
+  }
+}
+
+// Face-on, tinted automotive glass lets roughly half the light through; at a
+// grazing angle Fresnel takes it to a mirror. GLASS_ALPHA is the face-on
+// opacity of the tint layer, which is what decides how much of the cabin reads.
+const GLASS_ALPHA = 0.55;
+const GLASS_IBL_FROM = 'reflectVec = inverseTransformDirection( reflectVec, viewMatrix );';
+
+/**
+ * The trim material's glass. One material still, so still one draw: `glass`
+ * switches a fragment from metallic trim to a dielectric pane that
+ *
+ *  - reflects the SKY, not the ground: the reflected ray is folded into the
+ *    upper hemisphere exactly as the towers' curtain wall does (world.js), or
+ *    a vertical side window seen level mirrors the IBL's ground half;
+ *  - is see-through face-on and a mirror at grazing angles (Schlick on N.V
+ *    drives the opacity from GLASS_ALPHA up to 1), so the cabin shows through
+ *    a windscreen you look into and a raked rear screen reads as sky;
+ *  - is PREMULTIPLIED: the blend is ONE, ONE_MINUS_SRC_ALPHA, so the
+ *    reflection is added at full strength while the tint only scales what is
+ *    behind it. Straight alpha would dim the reflection by the same factor as
+ *    the cabin, which is what makes game glass look like grey film.
+ *
+ * Opaque trim has alpha 1 and so draws exactly as it did; only its pass moves.
+ */
+function glassShader(sh) {
+  // glass 1 (clear) and 3 (tinted: GLASS_TINT) are glazing, 2 the contact shadow
+  sh.vertexShader = 'attribute float glass;\nvarying float vGlass;\nvarying float vShade;\nvarying float vTint;\n' + sh.vertexShader
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvGlass = ( glass > 0.5 && glass < 1.5 ) || glass > 2.5 ? 1.0 : 0.0;\n\tvShade = glass > 1.5 && glass < 2.5 ? 1.0 : 0.0;\n\tvTint = glass > 2.5 ? 1.0 : 0.0;');
+  let fs = 'varying float vGlass;\nvarying float vShade;\nvarying float vTint;\n' + sh.fragmentShader;
+  if (THREE.ShaderChunk.envmap_physical_pars_fragment.includes(GLASS_IBL_FROM)) {
+    fs = fs.replace('#include <envmap_physical_pars_fragment>',
+      THREE.ShaderChunk.envmap_physical_pars_fragment.replace(GLASS_IBL_FROM, `${GLASS_IBL_FROM}
+			reflectVec = normalize( mix( reflectVec, vec3( reflectVec.x, abs( reflectVec.y ) * 0.85 + 0.12, reflectVec.z ), vGlass ) );`));
+  } else {
+    console.warn('vehicles: envmap chunk changed, car glass reflects the ground again');
+  }
+  fs = fs
+    .replace('#include <color_fragment>', `#include <color_fragment>
+	diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.018, 0.022, 0.026 ), vGlass );`)
+    .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
+	metalnessFactor = mix( metalnessFactor, 0.0, vGlass );
+	roughnessFactor = mix( roughnessFactor, 0.05, vGlass );`)
+    .replace('#include <opaque_fragment>', `if ( vGlass > 0.5 ) {
+		float gNV = saturate( dot( normal, normalize( vViewPosition ) ) );
+		float gA = mix( mix( ${GLASS_ALPHA.toFixed(3)}, 0.9, vTint ), 1.0, pow( 1.0 - gNV, 5.0 ) );
+		// A laminated screen has two faces, so it reflects about twice what
+		// one dielectric surface does face-on; the boost fades out toward
+		// grazing, where Schlick has already taken it to a mirror.
+		outgoingLight = totalDiffuse * gA + totalSpecular * mix( 2.0, 1.0, pow( 1.0 - gNV, 2.0 ) ) * mix( 1.0, 0.3, vTint );
+		diffuseColor.a = gA;
+	}
+	#include <opaque_fragment>`)
+    // Fog mixes toward fogCol (main.js) at full strength, but a premultiplied pane
+    // only covers `a` of what is behind it -- and that is fogged already.
+    .replace('#include <fog_fragment>', `#include <fog_fragment>
+	#ifdef USE_FOG
+		gl_FragColor.rgb -= fogCol * fogFactor * ( 1.0 - gl_FragColor.a );
+	#endif
+	// the contact shadow: darken what is under it, premultiplied, fading with the fog
+	if ( vShade > 0.5 ) {
+		float sa = vColor.r;
+		#ifdef USE_FOG
+			sa *= 1.0 - fogFactor;
+		#endif
+		gl_FragColor = vec4( 0.0, 0.0, 0.0, sa );
+	}`);
+  sh.fragmentShader = fs;
+}
+
+function buildType(spec) {
+  const paint = new Builder(false);
+  const trim = new Builder(false);
+  const matte = new Builder(false);
+  // Whoever sits in the car: merged only into the occupied geometries below.
+  matte.crew = new Builder(false);
+  // Propellers and rotors (spinPart): live for the flown aircraft, baked
+  // still into everything else.
+  matte.spins = [];
+  // Every type has an authored builder now. A missing one is a table error,
+  // not something to paper over with a parameterised tube.
+  const build = HAND_BUILT[spec.hand];
+  if (!build) throw new Error(`vehicle type has no builder: hand '${spec.hand}'`);
+  const wheels = build(spec, paint, trim, matte);
+  const clone = (base) => {
+    const b = new Builder(false);
+    b.pos = base.pos.slice(); b.nor = base.nor.slice();
+    b.col = base.col.slice(); b.idx = base.idx.slice();
+    return b;
+  };
+  // Not under a hull: a dark blob on the water reads as a hole in it.
+  // Baked into the traffic trim (no draw), but the PLAYER's detailed car has
+  // it as its own mesh on the ground: in the trim it tilted with the body, so
+  // a wheelie lifted the patch off the road with the nose, and a jump carried
+  // it up into the air under the car.
+  const shadow = new Builder(false);
+  if (!spec.plane && !spec.boat) contactShadow(shadow, spec);
+  const trimW = clone(trim), matteW = clone(matte);
+  {
+    const base = trimW.pos.length / 3;
+    trimW.pos.push(...shadow.pos); trimW.nor.push(...shadow.nor); trimW.col.push(...shadow.col);
+    for (const i of shadow.idx) trimW.idx.push(i + base);
+  }
+  const spins = matte.spins.map(({ b, at, axis }) => {
+    const base = matteW.pos.length / 3;
+    for (let i = 0; i < b.pos.length; i += 3) matteW.pos.push(b.pos[i] + at[0], b.pos[i + 1] + at[1], b.pos[i + 2] + at[2]);
+    matteW.nor.push(...b.nor); matteW.col.push(...b.col);
+    for (const i of b.idx) matteW.idx.push(i + base);
+    return { geo: b.build(), at, axis };
+  });
+  // A tank's live parts (buildTank): baked into the traffic/parked geometry
+  // at rest -- turret ahead, gun level, the belt at phase 0 on both sides --
+  // and kept apart for the player's tank (setDetailed).
+  let tank = null;
+  if (matte.tank) {
+    const { turret, gun, phases } = matte.tank;
+    const ta = TANK.turretAt, ga = TANK.gunAt;
+    appendAt(matteW, turret, ta);
+    appendAt(matteW, gun, [ta[0] + ga[0], ta[1] + ga[1], ta[2] + ga[2]]);
+    appendAt(matteW, phases[0], [0, 0, 0]);
+    mirrorInto(matteW, phases[0]);
+    tank = { turretGeo: turret.build(), gunGeo: gun.build(), phaseGeos: phases.map((b) => b.build()) };
+  }
+  // A wheel may declare its own outboard side; a bike's are on the centreline,
+  // where `Math.sign(ax)` says nothing.
+  const outOf = ([ax, , , , , o]) => (o !== undefined ? o : (Math.sign(ax) || 1));
+  for (const wl of wheels) addWheel(trimW, matteW, wl[0], wl[1], wl[2], wl[3], wl[4], outOf(wl), !!wl[6], wl[7]);
+  // The detailed build needs a wheel geometry per distinct size AND per side:
+  // the spokes and brake disc are only on the outboard face, so the left and
+  // right wheels are mirror images and cannot share a buffer. Staggered tyres
+  // (a wider rear than front) are what makes that worth indexing rather than
+  // building one.
+  const geoKey = new Map(), wheelGeos = [];
+  const placed = wheels.map((wl) => {
+    const [ax, ay, az, r, w] = wl;
+    const out = outOf(wl);
+    const k = `${r}|${w}|${out}|${!!wl[6]}|${wl[7] || ''}`;
+    let gi = geoKey.get(k);
+    if (gi === undefined) {
+      const wt = new Builder(false), wm = new Builder(false);
+      addWheel(wt, wm, 0, 0, 0, r, w, out, !!wl[6], wl[7]);
+      gi = wheelGeos.length;
+      wheelGeos.push({ trim: wt.build(), matte: wm.build() });
+      geoKey.set(k, gi);
+    }
+    return [ax, ay, az, gi];
+  });
+
+  for (const wg of wheelGeos) tagGlass(wg.trim);
+  // Three matte buffers: the player's car (wheel-less, occupied), traffic
+  // (baked wheels, occupied) and parked or abandoned (baked wheels, empty).
+  // Vehicle swaps between the last two as its `mode` changes; same draw.
+  const crewed = (b) => {
+    if (matte.crew.empty) return b;
+    const c = clone(b), base = c.pos.length / 3, cr = matte.crew;
+    c.pos.push(...cr.pos); c.nor.push(...cr.nor); c.col.push(...cr.col);
+    for (const i of cr.idx) c.idx.push(i + base);
+    return c;
+  };
+  const matteGeoWE = matteW.build();
+  return {
+    paintGeo: paint.build(),
+    trimGeo: tagGlass(trim.build()),
+    matteGeo: crewed(matte).build(),
+    trimGeoW: tagGlass(trimW.build()),
+    shadowGeo: shadow.idx.length ? tagGlass(shadow.build()) : null,
+    matteGeoW: matte.crew.empty ? matteGeoWE : crewed(matteW).build(),
+    matteGeoWE,
+    wheelGeos,
+    wheels: placed,
+    spins,
+    tank,
+    spec,
+    wheelR: spec.wheelR,
+  };
+}
+
+// --- boot cache (bootcache.js via main.js) ----------------------------------
+// Building all 21 types is ~1 s of a phone's boot and entirely deterministic,
+// so main.js keeps the geometry of a build and hands it back on a later
+// launch of the same build. Geometry only: materials, specs and wheels' meshes
+// are made as usual. `matteGeoW` is the same object as `matteGeoWE` for a type
+// with no crew, and stays so.
+const GEO_KEYS = ['paintGeo', 'trimGeo', 'matteGeo', 'trimGeoW', 'matteGeoW', 'matteGeoWE', 'shadowGeo'];
+const packGeo = (g) => ({ a: Object.entries(g.attributes).map(([k, at]) => [k, at.array, at.itemSize]), i: g.index.array });
+function unpackGeo(p) {
+  const g = new THREE.BufferGeometry();
+  for (const [k, arr, n] of p.a) g.setAttribute(k, new THREE.BufferAttribute(arr, n));
+  g.setIndex(new THREE.BufferAttribute(p.i, 1));
+  g.computeBoundingSphere();
+  return g;
+}
+let PRE = null;
+export function setVehicleCache(snap) { PRE = snap && snap.types ? snap : null; }
+export function vehicleSnapshot() {
+  const A = vehicleAssets(), types = {};
+  for (const [k, t] of Object.entries(A.types)) {
+    const r = { wheels: t.wheels, wheelR: t.wheelR, mwShared: t.matteGeoW === t.matteGeoWE,
+      wheelGeos: t.wheelGeos.map((w) => ({ trim: packGeo(w.trim), matte: packGeo(w.matte) })),
+      spins: t.spins.map((s) => ({ geo: packGeo(s.geo), at: s.at, axis: s.axis })),
+      tank: t.tank ? { turret: packGeo(t.tank.turretGeo), gun: packGeo(t.tank.gunGeo), phases: t.tank.phaseGeos.map(packGeo) } : null };
+    for (const g of GEO_KEYS) if (t[g] && !(g === 'matteGeoW' && r.mwShared)) r[g] = packGeo(t[g]);
+    types[k] = r;
+  }
+  const far = {};
+  if (FAR) for (const [k, g] of FAR.geos) far[k] = packGeo(g);
+  return { types, far };
+}
+function restoreType(r, spec) {
+  const t = { spec, wheels: r.wheels, wheelR: r.wheelR,
+    wheelGeos: r.wheelGeos.map((w) => ({ trim: unpackGeo(w.trim), matte: unpackGeo(w.matte) })),
+    spins: (r.spins || []).map((s) => ({ geo: unpackGeo(s.geo), at: s.at, axis: s.axis })),
+    tank: r.tank ? { turretGeo: unpackGeo(r.tank.turret), gunGeo: unpackGeo(r.tank.gun), phaseGeos: r.tank.phases.map(unpackGeo) } : null };
+  for (const g of GEO_KEYS) if (r[g]) t[g] = unpackGeo(r[g]);
+  if (r.mwShared) t.matteGeoW = t.matteGeoWE;
+  return t;
+}
+
+let CACHE = null;
+export function vehicleAssets() {
+  if (CACHE) return CACHE;
+  const types = {};
+  for (const k of Object.keys(TYPES)) types[k] = PRE && PRE.types[k] ? restoreType(PRE.types[k], TYPES[k]) : buildType(TYPES[k]);
+  // The trim draw moves to the transparent pass for its glass (see
+  // glassShader); depth writes stay on, so its opaque parts behave as before.
+  const trimMat = new THREE.MeshStandardMaterial({
+    vertexColors: true, metalness: 0.88, roughness: 0.16, envMapIntensity: 1.7,
+    transparent: true, blending: THREE.CustomBlending,
+    blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
+    blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
+  });
+  trimMat.onBeforeCompile = glassShader;
+  trimMat.customProgramCacheKey = () => 'vehicleGlass';
+  CACHE = {
+    types,
+    trimMat,
+    matteMat: new THREE.MeshStandardMaterial({
+      vertexColors: true, metalness: 0.05, roughness: 0.86, envMapIntensity: 0.55,
+    }),
+  };
+  return CACHE;
+}
+
+// Same test as main.js's ON_PHONE (navigator is absent when this module is
+// imported in Node to count triangles).
+const PAINT_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '');
+
+/**
+ * Car paint. On a desktop it is CLEARCOATED: a softer, less metallic base
+ * (metalness 0.35, roughness 0.42) under a mirror-smooth lacquer
+ * (clearcoatRoughness 0.06), which is what car paint actually is -- the sky
+ * lies across the panels as a sharp band over a colour that stays saturated,
+ * where one 0.26-rough semi-metal gives a single blurred sheen. It costs a
+ * second specular lobe per paint pixel, so a phone keeps the one-layer
+ * material (and its far LOD's per-vertex copy, FAR_PARTS). Same three draws.
+ */
+export function paintMaterial(color, finish = null) {
+  // Tiger (the Belltown Hellcat): the ordinary paint with stripes drawn into
+  // it (tigerShader), so it lacquers and reflects like every other car.
+  // The Wienermobile: its vertex colours are its colours (vertexColors), and
+  // the artwork is drawn on (wienerShader). Fibreglass under a deep lacquer.
+  if (finish === 'wiener') {
+    const m = paintMaterial(color);
+    m.vertexColors = true;
+    m.metalness = 0.05; m.roughness = 0.3;
+    m.onBeforeCompile = wienerShader;
+    m.customProgramCacheKey = () => 'vehicleWiener';
+    return m;
+  }
+  if (finish === 'tiger') {
+    const m = paintMaterial(color);
+    m.vertexColors = true;                 // the panel flags (TIG_*)
+    m.onBeforeCompile = tigerShader;
+    m.customProgramCacheKey = () => 'vehicleTiger';
+    m.userData.seed = Math.random() * 100;
+    return m;
+  }
+  // Bare brushed stainless (the Wedge): a metal, not a lacquer -- near-full
+  // metalness, a satin roughness, and only a whisper of clearcoat. The
+  // clearcoat stays above zero on purpose: it is a define, so a stainless
+  // body compiles the SAME program as every painted one (no hitch the first
+  // time one comes round a corner); the values are only uniforms.
+  // Mirror chrome (the saucer): full metalness, nearly polished; the city
+  // and the sky lie across it. Same program as the others (clearcoat > 0).
+  if (finish === 'chrome') {
+    if (!PAINT_PHONE) {
+      return new THREE.MeshPhysicalMaterial({
+        color, metalness: 1, roughness: 0.1, envMapIntensity: 2.0,
+        clearcoat: 0.5, clearcoatRoughness: 0.04,
+      });
+    }
+    return new THREE.MeshStandardMaterial({ color, metalness: 1, roughness: 0.12, envMapIntensity: 2.0 });
+  }
+  if (finish === 'steel') {
+    if (!PAINT_PHONE) {
+      return new THREE.MeshPhysicalMaterial({
+        color, metalness: 0.92, roughness: 0.30, envMapIntensity: 1.35,
+        clearcoat: 0.12, clearcoatRoughness: 0.32,
+      });
+    }
+    return new THREE.MeshStandardMaterial({ color, metalness: 0.9, roughness: 0.30, envMapIntensity: 1.4 });
+  }
+  if (!PAINT_PHONE) {
+    return new THREE.MeshPhysicalMaterial({
+      color, metalness: 0.35, roughness: 0.42, envMapIntensity: 1.5,
+      clearcoat: 1, clearcoatRoughness: 0.06,
+    });
+  }
+  return new THREE.MeshStandardMaterial({
+    color, metalness: 0.5, roughness: 0.26, envMapIntensity: 1.5,
+  });
+}
+
+/**
+ * The Belltown Hellcat's wrap, in the body's own frame (x across, y up, z
+ * along, nose +z): the paint has no UVs, and needs none. After the real car:
+ * a sandy beige under narrow, ragged black brush-strokes, each tapering at
+ * both ends, standing roughly upright down the flanks with a lean and a bend
+ * of its own, some with a thinner prong beside them; on the nose and tail
+ * (faces along z) the strokes run across the face instead. The panel's
+ * vertex colour is a flag (TIG_*): the bonnet matte black, the lamps lit,
+ * the trims gloss black; white is the wrap. `seed` moves the pattern.
+ */
+function tigerShader(sh) {
+  sh.uniforms.tigSeed = { value: this.userData.seed || 0 };
+  sh.vertexShader = 'varying vec3 vTig;\nvarying vec3 vTigN;\n' + sh.vertexShader
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvTig = position;\n\tvTigN = normal;');
+  sh.fragmentShader = `#define TIG_NOSE ${(TYPES.hellcat.len / 2).toFixed(3)}\n` + 'varying vec3 vTig;\nvarying vec3 vTigN;\nuniform float tigSeed;\nfloat tigH( float n ) { return fract( sin( n * 127.1 + tigSeed ) * 43758.5453 ); }\n' + sh.fragmentShader
+    .replace('#include <color_fragment>', `#include <color_fragment>
+	// the flags, read before the wrap overwrites the colour
+	#ifdef USE_COLOR
+		vec3 tigF = vColor.rgb;
+	#else
+		vec3 tigF = vec3( 1.0 );
+	#endif
+	float tigHood = step( 0.5, tigF.b ) * step( tigF.r, 0.5 ) * step( tigF.g, 0.5 );
+	float tigLamp = step( 0.5, tigF.g ) * step( tigF.r, 0.5 ) * step( tigF.b, 0.5 );
+	float tigGloss = step( 0.5, tigF.r ) * step( tigF.g, 0.5 ) * step( tigF.b, 0.5 );
+	diffuseColor.rgb = diffuse;
+	{
+		vec3 q = vTig;
+		vec3 nn = normalize( vTigN );
+		float ax = abs( q.x );
+		// round the body from the spine: 0 on the roof's centre line, ~2 at the sill
+		float d = ax + max( 0.0, 1.30 - q.y );
+		// along the body on the flanks; across it on the nose and tail
+		float endW = step( 0.80, abs( nn.z ) );
+		float u = mix( q.z, q.x * sign( nn.z ) + 7.0 * sign( nn.z ), endW );
+		d = mix( d, 1.25 - q.y + 0.6, endW );
+		float side = q.x < 0.0 ? 1.0 : 0.0;
+		float s = u * mix( 2.8, 2.5, endW ) - d * mix( 0.50, 0.10, endW ) + 0.18 * sin( d * 2.7 + u * 1.5 + tigSeed ) + 0.25 * sin( u * 0.9 + tigSeed * 0.3 ) + side * 0.37;
+		float k = floor( s ) + side * 57.0 + endW * 113.0;
+		float f = fract( s ) - 0.5;
+		float aa = fwidth( s ) * 0.75 + 1e-4;
+		// the stroke: a centre and a half-length down the body, tapering both ways
+		// (on the nose and tail nearly every stroke runs the face's full height)
+		float c = mix( 0.45 + 1.20 * tigH( k ), 1.22, endW );
+		float L = mix( 0.45 + 0.60 * tigH( k + 5.0 ), 0.62, endW );
+		float t = clamp( 1.0 - abs( d - c ) / L, 0.0, 1.0 );
+		float rag = 1.0 + 0.16 * sin( d * 23.0 + k * 3.7 );
+		float w = mix( 0.12 + 0.11 * tigH( k + 7.0 ), 0.09 + 0.07 * tigH( k + 7.0 ), endW ) * pow( t, 0.40 ) * rag;
+		float bend = 0.11 * sin( d * 2.4 + k * 1.3 );
+		float stripe = 1.0 - smoothstep( w - aa, w + aa, abs( f - bend ) );
+		// a thinner prong beside some of them, shorter, off the stroke's lower half
+		float c2 = c + L * 0.45, L2 = L * 0.55;
+		float t2 = clamp( 1.0 - abs( d - c2 ) / L2, 0.0, 1.0 ) * step( 0.45, tigH( k + 11.0 ) );
+		float w2 = 0.06 * pow( t2, 0.5 ) * rag;
+		stripe = max( stripe, 1.0 - smoothstep( w2 - aa, w2 + aa, abs( f - bend - 0.27 ) ) );
+		diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.022, 0.020, 0.020 ), stripe );
+	}
+	// THE FASCIAS, drawn on the curved nose and tail (buildCharger's endLoft)
+	// as shapes in (|x|, y), so they wrap round the corners with the surface:
+	// a dark band of lamps and grille under the bonnet's edge, the mouth and
+	// two ducts below; the racetrack lamp and the diffuser at the back. And
+	// the bonnet's black: the deck forward of the cowl, over the roll.
+	float tigDark = 0.0, tigLampBody = 0.0, tigLens = 0.0, tigTail = 0.0, tigBezel = 0.0;
+	{
+		vec3 q = vTig;
+		vec3 nn = normalize( vTigN );
+		float X = abs( q.x ), Y = q.y;
+		float px = 0.6 * ( fwidth( X ) + fwidth( Y ) ) + 1e-4;
+		tigHood = max( tigHood, step( 0.98, q.z ) * smoothstep( 0.40, 0.62, nn.y ) );
+		if ( q.z > TIG_NOSE - 0.45 && nn.z > 0.10 && nn.y < 0.62 ) {
+			float s = clamp( ( X - 0.41 ) / 0.52, 0.0, 1.0 );
+			float yt = 0.838 - 0.012 * s, yb = 0.728 + 0.058 * pow( s, 1.6 );
+			float dl = max( max( yb - Y, Y - yt ), max( 0.415 - X, X - 0.96 ) );
+			tigLampBody = 1.0 - smoothstep( -px, px, dl );
+			// its bright bezel, so the lamp's curve reads against the grille
+			tigBezel = tigLampBody * smoothstep( -0.007 - px, -0.007 + px, dl );
+			float dg = max( max( 0.748 - Y, Y - 0.828 ), X - 0.395 );
+			float mtop = 0.588 - 0.028 * ( 1.0 - X / 0.47 );
+			float dm = max( max( 0.372 - Y, Y - mtop ), X - 0.47 );
+			float dd = max( max( 0.398 - Y, Y - 0.566 ), max( 0.565 - X, X - ( 0.79 - ( 0.566 - Y ) * 0.45 ) ) );
+			tigDark = 1.0 - smoothstep( -px, px, min( dg, min( dm, dd ) ) );
+			// the projector in its halo, a second lens outboard, an LED line along the top
+			float r = length( vec2( X, Y ) - vec2( 0.515, 0.784 ) );
+			float halo = 1.0 - smoothstep( 0.0065 - px, 0.0065 + px, abs( r - 0.040 ) );
+			float r2 = length( vec2( X, Y ) - vec2( 0.665, 0.796 ) );
+			tigLens = ( 1.0 - smoothstep( 0.025 - px, 0.025 + px, r ) ) + ( 1.0 - smoothstep( 0.018 - px, 0.018 + px, r2 ) );
+			float led = ( 1.0 - smoothstep( 0.0042 - px, 0.0042 + px, abs( Y - ( yt - 0.011 ) ) ) ) * step( 0.44, X );
+			tigLamp = max( tigLamp, max( halo, led ) * tigLampBody );
+			tigLens *= tigLampBody;
+		}
+		if ( q.z < -TIG_NOSE + 0.42 && nn.z < -0.10 && nn.y < 0.62 ) {
+			float dt = max( abs( Y - 0.812 ) - 0.026, X - 0.90 );
+			tigTail = 1.0 - smoothstep( -px, px, dt );
+			float housing = 1.0 - smoothstep( -px, px, max( abs( Y - 0.812 ) - 0.040, X - 0.915 ) );
+			float diff = 1.0 - smoothstep( -px, px, Y - 0.445 );
+			tigDark = max( housing, diff );
+		}
+	}
+	{
+		// mesh in the openings, smoked chrome in the lamps
+		float mesh = 0.5 + 0.5 * sin( vTig.x * 260.0 ) * sin( vTig.y * 260.0 );
+		diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.010 + 0.012 * mesh ), tigDark );
+		diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.05, 0.055, 0.06 ), tigLampBody );
+		diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.42, 0.44, 0.46 ), tigBezel );
+		diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.75, 0.78, 0.80 ), clamp( tigLens, 0.0, 1.0 ) );
+		diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.25, 0.02, 0.02 ), tigTail );
+	}
+	diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.028, 0.028, 0.030 ), max( tigHood, tigGloss ) );
+	diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.10, 0.16, 0.06 ), tigLamp );`)
+    .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+	roughnessFactor = mix( roughnessFactor, 0.62, tigHood );`)
+    .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
+	metalnessFactor = mix( metalnessFactor, 0.15, tigHood );`)
+    .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+	totalEmissiveRadiance += vec3( 0.75, 1.9, 0.30 ) * tigLamp + vec3( 0.35, 0.40, 0.42 ) * clamp( tigLens, 0.0, 1.0 ) + vec3( 1.5, 0.10, 0.06 ) * tigTail;`)
+    .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
+	#ifdef USE_CLEARCOAT
+		material.clearcoat *= 1.0 - tigHood;
+	#endif`);
+}
+
+// The Wienermobile's artwork, drawn once into a canvas: the badge, the
+// "WIENERMOBILE" script for the bun's nose, and the plate. wienerShader
+// projects each onto the body; the rects are where each sits in it.
+const WM_ATLAS = { badge: [8, 8, 240, 296], plate: [264, 8, 240, 120], word: [8, 336, 496, 72] };
+let wmTex = null;
+function wienerAtlas() {
+  if (wmTex) return wmTex;
+  const S = 512, cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const g = cv.getContext('2d');
+  const rr = (x, y, w, h, r) => { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); };
+  const serif = 'Georgia, "Times New Roman", serif';
+  {
+    // the badge: a dark keyline, a white field, a red inner frame, and
+    // "Oscar Mayer" in two lines of heavy red serif, set rising
+    const [x, y, w, h] = WM_ATLAS.badge;
+    rr(x, y, w, h, 34); g.fillStyle = '#1d1a24'; g.fill();
+    rr(x + 9, y + 9, w - 18, h - 18, 27); g.fillStyle = '#fbf8f2'; g.fill();
+    rr(x + 22, y + 22, w - 44, h - 44, 18); g.lineWidth = 7; g.strokeStyle = '#d2263a'; g.stroke();
+    g.save();
+    g.translate(x + w / 2, y + h / 2); g.rotate(-0.13);
+    g.fillStyle = '#c8102e'; g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+    g.font = `bold 78px ${serif}`;
+    g.fillText('Oscar', 0, -12, w - 60);
+    g.fillText('Mayer', 0, 70, w - 56);
+    g.restore();
+  }
+  {
+    // the plate: Wisconsin's, OH I WISH
+    const [x, y, w, h] = WM_ATLAS.plate;
+    rr(x, y, w, h, 12); g.fillStyle = '#f4f4ef'; g.fill();
+    g.lineWidth = 4; g.strokeStyle = '#3a3f55'; rr(x + 4, y + 4, w - 8, h - 8, 9); g.stroke();
+    g.fillStyle = '#b3202a'; g.textAlign = 'center'; g.font = `bold 20px ${serif}`;
+    g.fillText('WISCONSIN', x + w / 2, y + 28);
+    g.fillStyle = '#1e2a5a'; g.font = 'bold 56px "Arial Narrow", Arial, sans-serif';
+    g.fillText('OH I WISH', x + w / 2, y + 92, w - 24);
+  }
+  {
+    // the nose's lettering, in red italic caps between speed lines
+    const [x, y, w, h] = WM_ATLAS.word;
+    g.fillStyle = '#c4161c'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = `italic bold 46px ${serif}`;
+    const cx = x + w / 2, cy = y + h / 2;
+    g.fillText('WIENERMOBILE', cx, cy + 2, w * 0.66);
+    const tw = Math.min(g.measureText('WIENERMOBILE').width, w * 0.66);
+    for (const sd of [-1, 1]) {
+      for (let k = 0; k < 3; k++) {
+        const ly = cy - 9 + k * 9, l = 46 - k * 10, x0 = cx + sd * (tw / 2 + 10);
+        g.fillRect(sd > 0 ? x0 : x0 - l, ly - 1.8, l, 3.6);
+      }
+    }
+  }
+  wmTex = new THREE.CanvasTexture(cv);
+  wmTex.colorSpace = THREE.SRGBColorSpace;
+  wmTex.anisotropy = 4;
+  return wmTex;
+}
+
+/**
+ * The Wienermobile's paint (finish 'wiener'). The body's vertex colour is
+ * its colour -- red-orange dog, golden bun, white plates -- and this draws
+ * the rest on, in the body's own frame (x across, y up, z along, nose +z):
+ * the pale band round the dog's tail end and the badge on it, both sides;
+ * on the bun's nose the grille, the swept headlamps, the indicators, the fog
+ * lamps and the lettering; the tail lamps; the plates' faces. The lamps are
+ * chrome and lit, the grille matte, without the lacquer.
+ */
+function wienerShader(sh) {
+  sh.uniforms.wmMap = { value: wienerAtlas() };
+  const f = (v) => v.toFixed(4);
+  const v2 = (a, b) => `vec2( ${f(a)}, ${f(b)} )`;
+  const rect = ([x, y, w, h]) => `vec4( ${f(x / 512)}, ${f(1 - (y + h) / 512)}, ${f(w / 512)}, ${f(h / 512)} )`;
+  const B = WM.bun, D = WM.dog;
+  // where the lamps sit on the bun: the corner of the nose and of the tail
+  const hl = [0.80, 0.90], hlZ = bunNoseZ(hl[0], hl[1]);
+  const tl = [0.86, 0.86], tlZ = bunTailZ(tl[0], tl[1]);
+  const badgeY = 2.02, badgeZ = WM.bandZ + WM.bandLean * (badgeY - 2.2);
+  sh.vertexShader = 'varying vec3 vWm;\nvarying vec3 vWmN;\n' + sh.vertexShader
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvWm = position;\n\tvWmN = normal;');
+  sh.fragmentShader = `varying vec3 vWm;
+varying vec3 vWmN;
+uniform sampler2D wmMap;
+float wmBox( vec2 p, vec2 b, float r ) { vec2 q = abs( p ) - b + r; return length( max( q, 0.0 ) ) + min( max( q.x, q.y ), 0.0 ) - r; }
+float wmIn( float d ) { float a = fwidth( d ) + 1e-4; return 1.0 - smoothstep( -a, a, d ); }
+vec4 wmTexAt( vec2 uv, vec4 r ) { return texture2D( wmMap, r.xy + clamp( uv, 0.0, 1.0 ) * r.zw ); }
+float wmUnit( vec2 uv ) { return step( 0.0, uv.x ) * step( uv.x, 1.0 ) * step( 0.0, uv.y ) * step( uv.y, 1.0 ); }
+// a swept lamp: an almond in (u along the corner, v up), fuller at its outer end
+float wmLamp( vec2 p, float len, float h0, float h1 ) {
+	float t = clamp( p.x / len * 0.5 + 0.5, 0.0, 1.0 );
+	float hh = mix( h0, h1, t * t ) * sqrt( max( 0.0, 1.0 - pow( abs( 2.0 * t - 1.0 ), 6.0 ) ) );
+	return max( abs( p.y ) - hh, abs( p.x ) - len );
+}
+` + sh.fragmentShader
+    .replace('#include <color_fragment>', `#include <color_fragment>
+	float wmR = -1.0, wmM = -1.0, wmCC = 1.0;
+	vec3 wmGlow = vec3( 0.0 );
+	{
+		vec3 q = vWm, nn = normalize( vWmN );
+		float dog = step( vColor.g, 0.35 * vColor.r );
+		float plate = step( 0.7, vColor.g ) * step( 0.7, vColor.b );
+		float bun = ( 1.0 - dog ) * ( 1.0 - plate );
+		float sx = q.x < 0.0 ? -1.0 : 1.0;
+		vec3 c = diffuseColor.rgb;
+		// the band round the dog, leaning forward at the top
+		float s = q.z - ${f(WM.bandZ)} - ${f(WM.bandLean)} * ( q.y - 2.2 );
+		c = mix( c, vec3( 0.80, 0.62, 0.20 ), dog * wmIn( abs( s ) - ${f(WM.bandW)} ) );
+		// the badge on it, each side, read from outside
+		vec2 b = vec2( ( ${f(badgeZ)} - q.z ) * sx, q.y - ${f(badgeY)} );
+		vec2 bu = normalize( vec2( -${f(WM.bandLean)} * sx, 1.0 ) ), br = vec2( bu.y, -bu.x );
+		vec2 buv = vec2( dot( b, br ), dot( b, bu ) ) / vec2( 0.56, 0.69 ) + 0.5;
+		vec4 bt = wmTexAt( buv, ${rect(WM_ATLAS.badge)} );
+		c = mix( c, bt.rgb, bt.a * dog * wmUnit( buv ) * step( 0.3, abs( nn.x ) ) );
+		// the nose: grille, lettering, indicators, fog lamps
+		float front = bun * step( 0.25, nn.z ) * step( 3.2, q.z );
+		float gr = wmBox( vec2( q.x, q.y - 0.55 ), vec2( 0.47, 0.115 ), 0.11 );
+		float mesh = step( 0.5, fract( q.x * 38.0 ) ) * step( 0.5, fract( q.y * 38.0 ) );
+		vec3 grc = mix( vec3( 0.012 ), vec3( 0.035 ), mesh ) * smoothstep( 0.0, -0.03, gr );
+		float inG = front * wmIn( gr );
+		c = mix( c, grc, inG );
+		wmR = mix( wmR, 0.75, inG ); wmM = mix( wmM, 0.0, inG ); wmCC = mix( wmCC, 0.0, inG );
+		vec2 wuv = vec2( q.x / 1.04 + 0.5, ( q.y - 0.765 ) / 0.15 + 0.5 );
+		vec4 wt = wmTexAt( wuv, ${rect(WM_ATLAS.word)} );
+		c = mix( c, wt.rgb, wt.a * front * wmUnit( wuv ) );
+		float ind = wmBox( vec2( abs( q.x ) - 0.56, q.y - 0.705 ), vec2( 0.075, 0.019 ), 0.008 );
+		float inI = front * wmIn( ind );
+		c = mix( c, vec3( 0.9, 0.35, 0.03 ), inI ); wmGlow += vec3( 0.5, 0.16, 0.0 ) * inI;
+		float fog = length( vec2( abs( q.x ) - 0.64, q.y - 0.47 ) );
+		float inF = front * wmIn( fog - 0.045 );
+		c = mix( c, mix( vec3( 0.7, 0.72, 0.75 ), vec3( 0.03 ), smoothstep( 0.02, 0.035, fog ) ), inF );
+		wmM = mix( wmM, 0.9, inF * step( fog, 0.03 ) );
+		// side markers on the bun's flanks, ahead of the front arch
+		float sm = wmBox( vec2( q.z - 3.42, q.y - 0.74 ), vec2( 0.07, 0.02 ), 0.008 );
+		float inS = bun * step( 0.5, abs( nn.x ) ) * wmIn( sm );
+		c = mix( c, vec3( 0.9, 0.35, 0.03 ), inS ); wmGlow += vec3( 0.4, 0.12, 0.0 ) * inS;
+		// headlamps: on each front corner, projected along its own normal
+		vec3 hd = normalize( vec3( sx * 0.66, 0.0, 0.75 ) );
+		vec3 hc = vec3( sx * ${f(hl[0])}, ${f(hl[1])}, ${f(hlZ)} );
+		vec3 ht = vec3( sx * hd.z, 0.0, -abs( hd.x ) );
+		vec2 hp = vec2( dot( q - hc, ht ), q.y - hc.y );
+		float hlD = wmLamp( hp, 0.24, 0.032, 0.062 );
+		float inH = bun * step( 0.2, dot( nn, hd ) ) * wmIn( hlD );
+		float bowl = smoothstep( 0.0, -0.025, hlD );
+		float proj = length( hp - vec2( 0.12, 0.004 ) );
+		vec3 hcol = mix( vec3( 0.18, 0.19, 0.21 ), vec3( 0.86, 0.88, 0.92 ), bowl * ( 0.75 + 0.25 * sin( hp.x * 90.0 ) ) );
+		hcol = mix( hcol, vec3( 1.0 ), 1.0 - smoothstep( 0.022, 0.03, proj ) );
+		c = mix( c, hcol, inH );
+		wmM = mix( wmM, 1.0, inH ); wmR = mix( wmR, 0.12, inH );
+		wmGlow += vec3( 1.6, 1.55, 1.4 ) * inH * ( 1.0 - smoothstep( 0.018, 0.03, proj ) );
+		// tail lamps on the tail's corners, and a reflector strip
+		vec3 td = normalize( vec3( sx * 0.66, 0.0, -0.75 ) );
+		vec3 tc = vec3( sx * ${f(tl[0])}, ${f(tl[1])}, ${f(tlZ)} );
+		vec3 tt = vec3( sx * abs( td.z ), 0.0, abs( td.x ) );
+		vec2 tp = vec2( dot( q - tc, tt ), q.y - tc.y );
+		float tlD = wmLamp( tp, 0.20, 0.04, 0.07 );
+		float inT = bun * step( 0.2, dot( nn, td ) ) * wmIn( tlD );
+		c = mix( c, mix( vec3( 0.35, 0.02, 0.02 ), vec3( 0.85, 0.05, 0.04 ), smoothstep( 0.0, -0.015, tlD ) ), inT );
+		wmGlow += vec3( 0.55, 0.02, 0.01 ) * inT; wmR = mix( wmR, 0.15, inT );
+		// the plates
+		float pd = q.z > 0.0 ? 1.0 : -1.0;
+		vec2 puv = vec2( q.x * pd / 0.30 + 0.5, ( q.y - ( pd > 0.0 ? 0.33 : 0.50 ) ) / 0.15 + 0.5 );
+		vec4 pt = wmTexAt( puv, ${rect(WM_ATLAS.plate)} );
+		c = mix( c, pt.rgb, plate * step( 0.5, nn.z * pd ) * wmUnit( puv ) );
+		diffuseColor.rgb = c;
+		// fibreglass under the lacquer, not metal flake
+		wmM = wmM < 0.0 ? 0.05 : wmM;
+	}`)
+    .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
+	if ( wmR >= 0.0 ) roughnessFactor = wmR;
+	metalnessFactor = wmM;`)
+    .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
+	#ifdef USE_CLEARCOAT
+		material.clearcoat *= wmCC;
+	#endif`)
+    .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+	totalEmissiveRadiance += wmGlow;`);
+}
+
+// ---------------------------------------------------------------------------
+// FAR LOD: one geometry, one material, one draw per TYPE.
+//
+// A traffic car is 3 draws and ~6-12k triangles, and on a phone most of the
+// ones on screen are 60 m+ away, 20-40 px long: at Yesler Terrace 25 of 41
+// cars were, which was 75 draws and ~250k triangles of detail nobody could
+// see. Past that distance traffic.js draws them through one InstancedMesh per
+// type over this geometry instead.
+//
+// It is the three part geometries merged and VERTEX-CLUSTERED: vertices snap
+// to a FAR_CELL grid and merge only within the same part and normal bin, so
+// creases and part boundaries survive and a panel's curvature collapses. What
+// the three materials did differently rides per vertex (`lodA`: paint mask,
+// metalness, roughness, env intensity); the paint colour is the instance
+// colour, applied to the paint mask only. Glass is opaque here, sky-folded
+// like the near glass, since nobody sees into a cabin at 60 m.
+const FAR_CELL = 0.2;
+const FAR_PARTS = {
+  paint: [1, 0.5, 0.26, 1.5],
+  trim: [0, 0.88, 0.16, 1.7],
+  matte: [0, 0.05, 0.86, 0.55],
+  glass: [0, 0.0, 0.08, 1.4],
+};
+
+function clusterFar(parts) {
+  const clusters = new Map();
+  const P = [], N = [], C = [], A = [], Gl = [], cnt = [];
+  const out = [];
+  for (const { geo, part, vc } of parts) {
+    const pos = geo.attributes.position.array, nor = geo.attributes.normal.array;
+    const col = geo.attributes.color ? geo.attributes.color.array : null;
+    const gls = geo.attributes.glass ? geo.attributes.glass.array : null;
+    const idx = geo.index.array;
+    const map = new Int32Array(pos.length / 3);
+    for (let v = 0; v < map.length; v++) {
+      const k3 = v * 3;
+      if (gls && gls[v] > 1.5) { map[v] = -1; continue; }   // contact shadow: not in the far LOD
+      const glass = gls && gls[v] > 0.5;
+      const pt = glass ? 'glass' : part;
+      const nx = nor[k3], ny = nor[k3 + 1], nz = nor[k3 + 2];
+      const key = `${pt}|${Math.round(pos[k3] / FAR_CELL)}|${Math.round(pos[k3 + 1] / FAR_CELL)}|${Math.round(pos[k3 + 2] / FAR_CELL)}`
+        + `|${Math.round(nx * 1.2)}|${Math.round(ny * 1.2)}|${Math.round(nz * 1.2)}`;
+      let c = clusters.get(key);
+      if (c === undefined) {
+        c = cnt.length;
+        clusters.set(key, c);
+        P.push(0, 0, 0); N.push(0, 0, 0); C.push(0, 0, 0); cnt.push(0);
+        A.push(...FAR_PARTS[pt]); Gl.push(glass ? 1 : 0);
+      }
+      P[c * 3] += pos[k3]; P[c * 3 + 1] += pos[k3 + 1]; P[c * 3 + 2] += pos[k3 + 2];
+      N[c * 3] += nx; N[c * 3 + 1] += ny; N[c * 3 + 2] += nz;
+      if (glass) { C[c * 3] += 0.05; C[c * 3 + 1] += 0.06; C[c * 3 + 2] += 0.075; }
+      else if (col && (part !== 'paint' || vc)) { C[c * 3] += col[k3]; C[c * 3 + 1] += col[k3 + 1]; C[c * 3 + 2] += col[k3 + 2]; }
+      else { C[c * 3] += 1; C[c * 3 + 1] += 1; C[c * 3 + 2] += 1; }
+      cnt[c]++;
+      map[v] = c;
+    }
+    for (let i = 0; i < idx.length; i += 3) {
+      const a = map[idx[i]], b = map[idx[i + 1]], c = map[idx[i + 2]];
+      if (a < 0 || b < 0 || c < 0 || a === b || b === c || a === c) continue;
+      out.push(a, b, c);
+    }
+  }
+  const n = cnt.length;
+  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), col = new Float32Array(n * 3);
+  for (let c = 0; c < n; c++) {
+    const k = cnt[c];
+    for (let j = 0; j < 3; j++) { pos[c * 3 + j] = P[c * 3 + j] / k; col[c * 3 + j] = C[c * 3 + j] / k; }
+    const l = Math.hypot(N[c * 3], N[c * 3 + 1], N[c * 3 + 2]) || 1;
+    for (let j = 0; j < 3; j++) nor[c * 3 + j] = N[c * 3 + j] / l;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setAttribute('lodA', new THREE.BufferAttribute(new Float32Array(A), 4));
+  geo.setAttribute('lodG', new THREE.BufferAttribute(new Float32Array(Gl), 1));
+  geo.setIndex(out);
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+function farShader(sh) {
+  sh.vertexShader = 'attribute vec4 lodA;\nattribute float lodG;\nvarying vec4 vLodA;\nvarying float vLodG;\n' + sh.vertexShader
+    .replace('#include <color_vertex>', `#include <color_vertex>
+	vLodA = lodA; vLodG = lodG;
+	#ifdef USE_INSTANCING_COLOR
+		// paint only: undo the instance tint on trim, matte and glass
+		vColor.xyz /= mix( max( instanceColor.xyz, vec3( 1e-3 ) ), vec3( 1.0 ), lodA.x );
+	#endif`);
+  let fs = 'varying vec4 vLodA;\nvarying float vLodG;\n' + sh.fragmentShader;
+  let env = THREE.ShaderChunk.envmap_physical_pars_fragment.split('envMapColor.rgb * envMapIntensity;').join('envMapColor.rgb * envMapIntensity * vLodA.w;');
+  if (env.includes(GLASS_IBL_FROM)) {
+    env = env.replace(GLASS_IBL_FROM, `${GLASS_IBL_FROM}
+			reflectVec = normalize( mix( reflectVec, vec3( reflectVec.x, abs( reflectVec.y ) * 0.85 + 0.12, reflectVec.z ), vLodG ) );`);
+  }
+  fs = fs.replace('#include <envmap_physical_pars_fragment>', env)
+    .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
+	metalnessFactor = vLodA.y;
+	roughnessFactor = vLodA.z;`);
+  sh.fragmentShader = fs;
+}
+
+/**
+ * Phones: every vehicle type's geometry -- body, trim, glass, wheels, spinning
+ * parts and far LOD, ~23 MB -- keeps no JS copy once it is on the GPU (CLAUDE.md
+ * "Memory"). Call after the boot cache has its snapshot and after the far
+ * LODs, which are made from these arrays, exist (traffic.js builds every
+ * type's far LOD at boot on a phone; a type without one keeps its arrays).
+ */
+export function dropVehicleArrays() {
+  const A = vehicleAssets();
+  let bytes = 0;
+  for (const [name, t] of Object.entries(A.types)) {
+    const farReady = FAR && FAR.geos.has(name);
+    const far = new Set([t.paintGeo, t.trimGeoW, t.matteGeoWE]);
+    const geos = [t.paintGeo, t.trimGeo, t.matteGeo, t.trimGeoW, t.matteGeoW, t.matteGeoWE, t.shadowGeo];
+    for (const w of t.wheelGeos || []) geos.push(w.trim, w.matte);
+    for (const sp of t.spins || []) geos.push(sp.geo);
+    if (t.tank) geos.push(t.tank.turretGeo, t.tank.gunGeo, ...t.tank.phaseGeos);
+    for (const g of geos) if (g && (farReady || !far.has(g))) bytes += dropGeometryArrays(g);
+  }
+  if (FAR) for (const g of FAR.geos.values()) bytes += dropGeometryArrays(g);
+  // a cached launch's geometry is views of the boot cache's snapshot: let it
+  // go too (every far LOD it could still give is built by now, or is built
+  // from the types' own arrays, which a type without one keeps)
+  PRE = null;
+  return bytes;
+}
+
+let FAR = null;
+/** The far LOD for a type: { geo, mat }, built on first use. */
+export function farLod(typeName) {
+  if (!FAR) {
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.5, roughness: 0.5, envMapIntensity: 1 });
+    mat.onBeforeCompile = farShader;
+    mat.customProgramCacheKey = () => 'vehicleFar';
+    FAR = { mat, geos: new Map() };
+  }
+  let geo = FAR.geos.get(typeName);
+  if (!geo && PRE && PRE.far && PRE.far[typeName]) { geo = unpackGeo(PRE.far[typeName]); FAR.geos.set(typeName, geo); }
+  if (!geo) {
+    const t = vehicleAssets().types[typeName];
+    geo = clusterFar([
+      { geo: t.paintGeo, part: 'paint', vc: !!t.spec.paintVC },
+      { geo: t.trimGeoW, part: 'trim' },
+      { geo: t.matteGeoWE, part: 'matte' },
+    ]);
+    FAR.geos.set(typeName, geo);
+  }
+  return { geo, mat: FAR.mat };
+}
+
+// ---------------------------------------------------------------------------
+
+// The follow lags a falling floor by rate / 18. Under FF_FREE m/s of descent (an
+// 0.08 m lag, well inside the 0.25 m that means airborne) it is left alone -- most of
+// the city, where feeding forward only passed the floor's noise through. Only
+// the rate ABOVE that is fed forward, so a steep street is held at 0.08 m.
+const FF_FREE = 1.5;
+
+export class Vehicle {
+  constructor(city, typeName, color, opts = {}) {
+    const A = vehicleAssets();
+    const t = A.types[typeName];
+    this.city = city;
+    this.typeName = typeName;
+    // Named `assets`, not `t`. It used to be `this.t`, and traffic.js spawning a
+    // car did `v.t = t` with its position along the edge -- silently replacing
+    // the whole geometry table with a number. Nothing noticed until you tried to
+    // get in, because the meshes were already built by then.
+    this.assets = t;
+    this.spec = t.spec;
+    // A livery overrides the kerbside colour: a taxi is yellow whatever the
+    // spawner drew for it, or it is a random car with a sign on the roof.
+    this.color = t.spec.liveries ? t.spec.liveries[Math.abs(Math.floor(color)) % t.spec.liveries.length]
+      : t.spec.livery !== undefined ? t.spec.livery : color;
+    this.detailedWheels = false;
+
+    this.group = new THREE.Group();
+    this.bodyMat = paintMaterial(this.color, t.spec.finish);
+    const paintMesh = new THREE.Mesh(t.paintGeo, this.bodyMat);
+    this.trimMesh = new THREE.Mesh(t.trimGeoW, A.trimMat);
+    this.matteMesh = new THREE.Mesh(t.matteGeoW, A.matteMat);
+    paintMesh.castShadow = this.trimMesh.castShadow = this.matteMesh.castShadow = true;
+    this.paintMesh = paintMesh;
+    this.tilt = new THREE.Group();
+    this.tilt.add(paintMesh, this.trimMesh, this.matteMesh);
+    this.group.add(this.tilt);
+    // Attitude pivot (a helicopter's is at the rotor, not on its skids): the
+    // tilt group is raised and its meshes lowered by the same amount, so the
+    // model is where it was and only the centre of rotation moves.
+    this.pivotY = t.spec.pivotY || 0;
+    if (this.pivotY) {
+      this.tilt.position.y = this.pivotY;
+      paintMesh.position.y = this.trimMesh.position.y = this.matteMesh.position.y = -this.pivotY;
+    }
+    // Live propellers and rotors, made in setDetailed(true): see spinPart.
+    this.spinMeshes = [];
+    // A bike carries its rider. He goes in the tilt group, so he leans with it
+    // -- parented to `group` instead he would stay bolt upright through every
+    // corner while the bike went over underneath him.
+    this.rider = this.spec.moto || this.spec.bicycle || this.spec.atv || this.spec.jetski || this.spec.kayak || this.spec.balloon ? makeRider(this.spec.hand) : null;
+    if (this.rider) this.tilt.add(this.rider.group);
+    this.wheelMeshes = [];
+    this.shadowTilt = null;   // the player's contact shadow (setDetailed)
+    this.glow = null; this.glowT0 = 0;   // the Wedge's lit light bars (setDetailed)
+
+    this.x = 0; this.y = 0; this.z = 0;
+    this.heading = 0;
+    this.vLong = 0; this.vLat = 0;
+    this.steer = 0;
+    this.rearSteer = 0;   // the rear wheels' angle (spec.rearSteer), + = with the fronts
+    this.pitch = 0; this.roll = 0;
+    // `spec.hp` for an armoured type (the Wedge); every other vehicle has 100.
+    this.health = t.spec.hp || 100;
+    this.dead = false;
+    this.latAcc = 0;      // lateral acceleration, which is what a bike leans to
+    // Seconds before this vehicle can take collision damage again. One crash
+    // spans many frames -- see damage().
+    this.hitCd = 0;
+    this.onGround = true;
+    this.vy = 0;
+    this.wheelSpin = 0;
+    this.crank = 0; this.pedaling = false; this._spinWas = 0;   // a bicycle's cranks (_pedal)
+    this.skid = 0;
+    this.lift = 0;
+    this.radius = Math.max(t.spec.len, t.spec.wid) * 0.42;
+    this.halfLen = t.spec.len / 2;
+    this.halfWid = t.spec.wid / 2;
+    this.bodyR = Math.hypot(this.halfLen, this.halfWid);   // traffic.js car-car broad phase
+    this.dodge = 0; this.dodgeT = 0;   // traffic.js: steering round a car in the lane
+    this.mass = t.spec.mass;
+    // EVERY FIELD ANYONE SETS, DECLARED HERE. traffic.js, player.js and main.js
+    // used to add these as they went, so vehicles ended up with a dozen
+    // different hidden classes and every loop over `traffic.cars` -- the
+    // forward scan, car-car collisions, the physics -- ran megamorphic: slower
+    // in V8 and JavaScriptCore alike, and allocating as it went. Each default
+    // tests the same as the `undefined` it replaces.
+    this._mode = null;
+    this.edge = -1; this.dirSign = 0; this.laneU = null;
+    this.panic = 0; this.stuckT = 0; this.recycle = false;
+    // traffic.js's driver (see "How the AI drives" in CLAUDE.md): the planned
+    // route (entries of RT_F numbers, allocated the first time the car is
+    // driven), this driver's pace against the limit, the input it reuses every
+    // frame, and whether it is holding at a standstill.
+    this.rt = null; this.rtN = 0; this.drvK = 1; this.aiIn = null; this.held = false; this.wantGo = false;
+    this.lead = null; this.prio = 0; this.restT = 0;   // the car it is following; spawn order (gridlock: the older goes)
+    // The grade's pull along the car last frame, m/s^2 (Vehicle.update): the
+    // AI's feed-forward on hills. 0 for a lowDetail car, which ignores grade.
+    this.gradeA = 0;
+    // A CRASH SPINS AND SLIDES (traffic.js pairImpulse / wallImpulse): `spin` is yaw rate
+    // a hit gave the body on top of what the steering makes, decaying;
+    // `slide` (0..1) is how far the tyres have let go after it, decaying;
+    // `yawRate` is last frame's whole yaw rate, which the next hit reads to
+    // know how fast each corner is moving.
+    this.spin = 0; this.slide = 0; this.yawRate = 0;
+    this.path = null; this.pathT = 0; this.repath = 0; this.rammed = 0; this.siren = 0;
+    this.sirenOn = false;   // a police car you drive: SIREN switched on (main.js updateSiren)
+    this.lightL = null; this.lightR = null; this.extra = null;
+    this.rearSteer = 0; this._followK = NaN;   // a tiller trailer's rear wheels (Vehicle.follow); traffic.js's last follow
+    this.sirenOn = false; this.cannon = null;   // fire apparatus: the player's siren, the water cannon (firecalls.js)
+    // police.js: which kind of unit ('car' | 'swat', null for everyone else),
+    // how many of its crew are out on foot, its search point, the passenger's
+    // trigger (shootCd / burst); `suspect` is a police mission's quarry
+    // (policemissions.js), which drives and shoots on its own.
+    this.unit = null; this.crew = 0; this.searchX = 0; this.searchZ = 0; this.searchT = 0;
+    this.shootCd = 0; this.burst = 0; this.suspect = null; this.backT = 0;
+    // drivePolice's pursuit: its pace, its target, how long it has gone nowhere
+    this.pursuitV = 0; this.pursuitTX = 0; this.pursuitTZ = 0; this.polStuckT = 0;
+    this.deployCd = 0;   // police.js: s before a crew that got back in may get out again
+    this.progD = Infinity; this.progT = 0;   // drivePolice: the closest it has got, and since when
+    this.noPath = false;   // drivePolice: no A* path to the target (it comes straight, and asks again in 4 s)
+    this.offGraph = false;   // ...and none to the target's own node: the crew finish it on foot (police.js)
+    this.slot = null; this.wasParked = false; this.exploded = false;
+    this.airborne = false; this.lowDetail = false;
+    this.prevTarget = undefined; this.carVy = 0; this.floorVy = 0; this.floorOk = false;   // the vertical follow's history (see "THE GROUND'S OWN DESCENT")
+    // Flight state (updatePlane / updateHeli). `yVis` is how far the drawn
+    // body sits off `y`: a taildragger rocking back onto its tailwheel pivots
+    // about its main wheels, not its middle.
+    this.rollA = 0; this.pitchA = 0; this.yVis = 0;
+    this.spool = 0; this.yawRate = 0; this.accLong = 0; this.accLeft = 0;
+    // A balloon's envelope: air temperature over ambient (deg C), whether the
+    // burner is lit, the flame mesh (setDetailed) and the gust clock.
+    this.heat = 58; this.burning = false; this.flame = null; this.gustT = Math.random() * 100;
+    // stunt ramps: the ramp under the centre (held briefly past the lip), the
+    // vertical speed it would launch at, and the flight state while airborne.
+    this.rampRef = null; this.rampT = 0; this.rampVy = 0; this.rampAlong = 0;
+    this.stunt = false; this.spinRate = 0; this.stuntLaunch = null; this.stuntLanded = false; this.landVy = 0;
+    // Wheelies (bikes and quads): the nose-up angle about the rear axle, how
+    // long the current one has lasted, and a finished one for the HUD to read.
+    this.wheelie = 0; this.wheelieT = 0; this.wheelieDone = 0; this.pullIn = 0;
+    this._cast = null; this._farCol = null;
+    this._fwd = { x: 0, z: 1 }; this._fwdH = NaN;
+    this._acc = 0; this._still = 0;   // traffic.js: half-rate AI time, parked-settle frames
+    this._t = 0; this.shoreHit = 0; this._surf = NaN;   // boats: wave clock, last grounding impact, eased surface
+    this.afloat = false; this.splashed = false; this._waterSpec = null;   // the Duck Tour's DUKW (updateDuck)
+    this._bob = (typeName.length * 1.37 + (color & 0xff) * 0.021) % 6.28;
+    // A tank's turret, gun and belts (see buildTank / tank.js): where the
+    // turret and gun point and where they are asked to (`aimT` counts down;
+    // unaimed, they stow), the gun's recoil, the hull's rock from a shot, and
+    // each belt's travel. The live meshes exist only while it is detailed.
+    this.tank = t.spec.tank ? {
+      yaw: 0, elev: 0, yawWant: 0, elevWant: 0, aimT: 0, recoil: 0, rock: 0, rockYaw: 0, bump: 0,
+      sL: 0, sR: 0, sL0: 0, sR0: 0, dL: 0, dR: 0, turret: null, gun: null, trackL: null, trackR: null, stow: false,
+    } : null;
+    // Flattened under a tank, and the burnt-out, thrown hulk a shell leaves
+    // (updateWreck): no longer a car anyone drives or collides with as one.
+    this.crushed = false;
+    this.wreck = null;
+  }
+
+  // `mode` decides whether anyone is at the wheel. Traffic and police are
+  // driven; a parked car, or one the player got out of ('free'), is empty.
+  // Assigned from traffic.js and player.js, so it is a setter rather than a
+  // call they would each have to remember.
+  get mode() { return this._mode; }
+  set mode(m) {
+    this._mode = m;
+    // 'apron' is parked too (the airfield's planes, the moored boats and
+    // floatplanes, the parks' quads): nobody at the controls.
+    const empty = m === 'parked' || m === 'free' || m === 'apron';
+    if (this.matteMesh && !this.detailedWheels) {
+      this.matteMesh.geometry = empty ? this.assets.matteGeoWE : this.assets.matteGeoW;
+    }
+    // A quad's rider is there only when someone is riding it. (The bikes
+    // keep theirs as they always have: traffic is all they ever are.)
+    if (this.rider && (this.spec.atv || this.spec.bicycle || this.spec.jetski || this.spec.kayak || this.spec.balloon)) this.rider.group.visible = this.detailedWheels || !empty;
+  }
+
+  /** The player's own car gets steerable, spinning wheel meshes; traffic doesn't. */
+  setDetailed(on) {
+    const T = this.tank;
+    if (T && on) T.stow = false;
+    // Out of a tank with the turret turned: it stays detailed while the
+    // turret swings home (_tankParts), then bakes -- no snap.
+    if (T && !on && this.detailedWheels && !this.dead && (Math.abs(T.yaw) > 0.01 || Math.abs(T.elev) > 0.01 || T.recoil > 0.01)) {
+      T.stow = true;
+      return;
+    }
+    if (this.detailedWheels === on) return;
+    this.detailedWheels = on;
+    if (!on) this.rearSteer = 0;
+    const A = vehicleAssets();
+    this.trimMesh.geometry = on ? this.assets.trimGeo : this.assets.trimGeoW;
+    this.matteMesh.geometry = on ? this.assets.matteGeo : this.assets.matteGeoW;
+    // Your own car always casts. A parked car has its body's casting switched
+    // off (traffic.js: its shadow lands on shaded kerbside ground), and
+    // traffic's per-car loop, which switches it by distance on a phone, skips
+    // the player's vehicle -- so a car taken from the kerb drove off casting
+    // only its four detailed wheels.
+    if (on) this.paintMesh.castShadow = this.trimMesh.castShadow = this.matteMesh.castShadow = true;
+    // and traffic's phone distance switch (which caches what it last set)
+    // re-applies its own rule once you leave the car
+    if (on) this._cast = undefined;
+    if (!on) this.mode = this._mode;
+    if (this.rider && (this.spec.atv || this.spec.bicycle || this.spec.jetski || this.spec.kayak || this.spec.balloon)) this.rider.group.visible = on || this._mode === 'traffic' || this._mode === 'path';
+    // the kayak's paddle, in the paddler's hands (updateKayak)
+    if (this.spec.kayak) {
+      if (on && !this.paddle) { this.paddle = kayakPaddle(); this.tilt.add(this.paddle); }
+      else if (!on && this.paddle) { this.tilt.remove(this.paddle); this.paddle = null; }
+    }
+    // the burner's flame, shown while it is lit (updateBalloon)
+    if (this.spec.balloon) {
+      if (on && !this.flame) {
+        this.flame = balloonFlame();
+        this.tilt.add(this.flame);
+      } else if (!on && this.flame) {
+        this.tilt.remove(this.flame);
+        this.flame = null;
+      }
+    }
+    if (on) {
+      for (const [wx, wy, wz, gi] of this.assets.wheels) {
+        const g = new THREE.Group();
+        const a = new THREE.Mesh(this.assets.wheelGeos[gi].trim, A.trimMat);
+        const b = new THREE.Mesh(this.assets.wheelGeos[gi].matte, A.matteMat);
+        a.castShadow = b.castShadow = true;
+        g.add(a, b);
+        g.position.set(wx, wy, wz);
+        g.userData.front = wz > 0;
+        g.userData.y0 = wy;
+        this.tilt.add(g);
+        this.wheelMeshes.push(g);
+      }
+      // the contact shadow, on the ground: follows the road's slope (pitch,
+      // roll) but not a wheelie, and goes when the wheels leave the ground
+      if (this.assets.shadowGeo) {
+        this.shadowTilt = new THREE.Group();
+        const sm = new THREE.Mesh(this.assets.shadowGeo, A.trimMat);
+        sm.renderOrder = -1;   // under the car's own glass in the transparent pass
+        sm.position.y = -this.pivotY;
+        this.shadowTilt.add(sm);
+        this.group.add(this.shadowTilt);
+      }
+      if (T && this.assets.tank) {
+        const k = this.assets.tank, ta = TANK.turretAt, ga = TANK.gunAt;
+        T.turret = new THREE.Mesh(k.turretGeo, A.matteMat);
+        T.turret.position.set(ta[0], ta[1] - this.pivotY, ta[2]);
+        T.gun = new THREE.Mesh(k.gunGeo, A.matteMat);
+        T.gun.position.set(ga[0], ga[1], ga[2]);
+        T.gun.rotation.order = 'YXZ';
+        T.turret.add(T.gun);
+        T.trackL = new THREE.Mesh(k.phaseGeos[0], A.matteMat);
+        T.trackR = new THREE.Mesh(k.phaseGeos[0], A.matteMat);
+        T.trackR.scale.x = -1;   // the right side is the left, mirrored
+        for (const m of [T.turret, T.gun, T.trackL, T.trackR]) m.castShadow = true;
+        this.tilt.add(T.turret, T.trackL, T.trackR);
+      }
+      // THE FIGHTER'S NOZZLES, lit (the flown one only): a disc of heat in
+      // each that brightens with the throttle, and past 85 % the afterburner,
+      // a cone of flame out the back (updatePlane). They were black holes.
+      if (this.spec.fighter) {
+        this.jetFx = [];
+        for (const sd of [-1, 1]) {
+          const glow = new THREE.Mesh(JET_GLOW_GEO, JET_GLOW_MAT.clone());
+          glow.position.set(sd * 0.44, 1.92 - this.pivotY, -7.99);
+          glow.rotation.y = Math.PI;
+          const flame = new THREE.Mesh(JET_FLAME_GEO, JET_FLAME_MAT.clone());
+          flame.position.set(sd * 0.44, 1.92 - this.pivotY, -8.02);
+          flame.visible = false;
+          this.tilt.add(glow, flame);
+          this.jetFx.push({ glow, flame });
+        }
+      }
+      for (const s of this.assets.spins) {
+        const m = new THREE.Mesh(s.geo, A.matteMat);
+        m.castShadow = true;
+        m.position.set(s.at[0], s.at[1] - this.pivotY, s.at[2]);
+        m.userData.axis = s.axis;
+        this.tilt.add(m);
+        this.spinMeshes.push(m);
+      }
+      // The Wedge's light bars, lit: a dash of light sweeps out from the
+      // middle of both bars as you get in, then they hold a steady glow
+      // (see sync). The player's car only, like the articulated wheels.
+      if (this.spec.lightbar) {
+        const L = lightbarParts();
+        this.glow = new THREE.Group();
+        const [[fy, fw], [ry, rw]] = this.spec.lightbar, hl = this.spec.len / 2 + 0.0065;
+        const f = new THREE.Mesh(L.geo, L.front), r = new THREE.Mesh(L.geo, L.rear);
+        f.position.set(0, fy - this.pivotY, hl); f.userData.w = fw;
+        r.position.set(0, ry - this.pivotY, -hl); r.userData.w = rw;
+        this.glow.add(f, r);
+        this.tilt.add(this.glow);
+        this.glowT0 = performance.now();
+      }
+    } else {
+      for (const m of this.wheelMeshes) this.tilt.remove(m);
+      this.wheelMeshes.length = 0;
+      for (const m of this.spinMeshes) this.tilt.remove(m);
+      this.spinMeshes.length = 0;
+      if (this.jetFx) { for (const f of this.jetFx) this.tilt.remove(f.glow, f.flame); this.jetFx = null; }
+      if (T && T.turret) {
+        this.tilt.remove(T.turret, T.trackL, T.trackR);
+        T.turret = T.gun = T.trackL = T.trackR = null;
+        T.yaw = T.elev = T.recoil = 0;
+        T.stow = false;
+      }
+      if (this.shadowTilt) { this.group.remove(this.shadowTilt); this.shadowTilt = null; }
+      if (this.glow) { this.tilt.remove(this.glow); this.glow = null; }
+    }
+  }
+
+  /** Turn the live propellers/rotors: `rate(axis)` in rad/s for each part's axis. */
+  spinParts(dt, rateZ, rateY = rateZ, rateX = rateZ) {
+    for (const m of this.spinMeshes) {
+      const a = m.userData.axis;
+      if (a === 'y') m.rotation.y += rateY * dt;
+      else if (a === 'x') m.rotation.x += rateX * dt;
+      else if (a !== 'g') m.rotation.z += rateZ * dt;   // (a retractable leg: never)
+    }
+  }
+
+  place(x, z, heading) {
+    this.x = x; this.z = z;
+    this.heading = heading;
+    if (this.spec.boat) {
+      // On the water's LOCAL surface, level. The lakebed under it is what
+      // groundAt would answer.
+      const wl = waterQuery ? waterQuery(x, z) : null;
+      this.lift = 0;
+      this.y = wl !== null ? wl : this.city.groundAt(x, z, null);
+      this._surf = this.y;
+      this.pitch = 0; this.roll = 0;
+      this.sync();
+      return;
+    }
+    this.lift = this.city.roadLift(x, z);
+    this.y = this.city.groundAt(x, z, null, this.lift);
+    // Sit on the slope, the same way update() does. A parked car never runs
+    // update(), so left at zero pitch it stays level on a hillside street and
+    // its downhill end is buried -- the sunken cars on Queen Anne.
+    const f = this.forward;
+    const rx = f.z, rz = -f.x;
+    // (from the wheels, as update() does: see REF there)
+    const at = (dx, dz) => this.city.groundAt(this.x + dx, this.z + dz, this.y + 0.45, this.lift);
+    const fh = at(f.x * this.halfLen, f.z * this.halfLen);
+    const bh = at(-f.x * this.halfLen, -f.z * this.halfLen);
+    // Two contact patches for a bike, four for a car -- see update() for why
+    // the cross-car pair is wrong on something with no track at all.
+    const two = !!this.spec.moto;
+    const lh = two ? 0 : at(rx * this.halfWid, rz * this.halfWid);
+    const rh = two ? 0 : at(-rx * this.halfWid, -rz * this.halfWid);
+    this.pitch = Math.atan2(bh - fh, this.halfLen * 2);
+    // see update(): +X is raised by +rotation.z. A parked bike stands upright.
+    this.roll = two ? 0 : Math.atan2(lh - rh, this.halfWid * 2);
+    // Rest on the plane through the contact patches, not on the ground under
+    // the centre -- otherwise a car parked across a camber sits with one pair
+    // of wheels buried and the other pair in the air.
+    this.y = two ? (fh + bh) / 2 : (fh + bh + lh + rh) / 4;
+    // A taildragger is parked on its tailwheel, not level until its first
+    // update (see updatePlane).
+    const td = this.spec.taildragger;
+    if (td) {
+      this.pitchA = td.deg * Math.PI / 180;
+      this.pitch -= this.pitchA;
+      this.yVis = -td.zMain * Math.sin(this.pitchA);
+    }
+    this.sync();
+  }
+
+  get speed() {
+    return Math.hypot(this.vLong, this.vLat);
+  }
+
+  // One object per vehicle, refreshed when the heading moves: this is read in
+  // every hot loop over the cars, and a fresh object per read was a large
+  // share of the frame's garbage. Every caller uses it at once and none holds
+  // it across a heading change; keep it that way (copy x/z if you must).
+  /**
+   * The articulated bus's rear section, placed behind its front (`lead`):
+   * its drive axle is dragged toward the turntable -- trailer kinematics,
+   * which is how the real one tracks, inside the front's path round a corner
+   * and straight behind it in reverse -- the turntable's angle is limited,
+   * and the section sits on the ground under its axle and on the hitch. Then
+   * the bellows are stretched between the two.
+   */
+  follow(lead) {
+    const city = this.city, f = lead.forward, H = HITCH[this.typeName] || HITCH.articRear;
+    const hx = lead.x - f.x * H.hitchF, hz = lead.z - f.z * H.hitchF;
+    const g = this.forward;
+    const ax0 = this.x + g.x * H.axleR, az0 = this.z + g.z * H.axleR;
+    let h;
+    // THE TILLERMAN. A trailer's axle is dragged toward the hitch, which cuts
+    // inside the tractor's path round a corner -- 3 m inside on a 17 m tiller,
+    // through the kerb and the lamp posts. Steering the rear axle against the
+    // articulation swings the tail out onto the tractor's line, which is the
+    // tillerman's whole job: here the axle moves along its wheels, steered
+    // `rearSteer` x the hitch angle (capped at `rearLock`), and is kept at its
+    // span from the hitch (the small root of |H - (A + s d)| = span). Only
+    // going forward: reversing, he centres the wheel.
+    const span = H.hitchR - H.axleR;
+    const rel0 = Math.atan2(Math.sin(this.heading - lead.heading), Math.cos(this.heading - lead.heading));
+    const gain = lead.vLong > 0.05 ? H.rearSteer : lead.vLong < -0.05 ? H.rearSteerRev || 0 : 0;
+    const delta = gain ? clamp(rel0 * gain, -H.rearLock, H.rearLock) : 0;
+    if (delta) {
+      const dx = Math.sin(this.heading + delta), dz = Math.cos(this.heading + delta);
+      const Dx = hx - ax0, Dz = hz - az0;
+      const bb = dx * Dx + dz * Dz, cc = Dx * Dx + Dz * Dz - span * span, disc = bb * bb - cc;
+      if (disc >= 0 && Math.abs(bb) > 1e-6) {
+        const sStep = cc / (bb + Math.sign(bb) * Math.sqrt(disc));
+        h = Math.atan2(hx - (ax0 + dx * sStep), hz - (az0 + dz * sStep));
+      }
+    }
+    this.rearSteer = delta;
+    if (h === undefined) h = Math.atan2(hx - ax0, hz - az0);
+    let rel = Math.atan2(Math.sin(h - lead.heading), Math.cos(h - lead.heading));
+    rel = clamp(rel, -H.maxAngle, H.maxAngle);
+    h = lead.heading + rel;
+    this.heading = h;
+    const F = this.forward;
+    this.x = hx - F.x * H.hitchR; this.z = hz - F.z * H.hitchR;
+    this.lift = city.roadLift(this.x, this.z);
+    const hy = city.groundAt(hx, hz, lead.y + 0.45, city.roadLift(hx, hz));
+    const axx = this.x + F.x * H.axleR, axz = this.z + F.z * H.axleR;
+    const ay = city.groundAt(axx, axz, lead.y + 0.45, city.roadLift(axx, axz));
+    this.pitch = Math.atan2(ay - hy, span);
+    this.y = ay + (hy - ay) * (-H.axleR / span);
+    this.roll = lead.roll * 0.6;
+    this.vLong = lead.vLong;
+    // whoever is in the lead is in the trailer too: the tillerman rides with the driver
+    if (this.matteMesh && this.assets.matteGeoW !== this.assets.matteGeoWE) {
+      const m = lead._mode, empty = (m === 'parked' || m === 'free' || m === 'apron') && !lead.detailedWheels;
+      const want = empty ? this.assets.matteGeoWE : this.assets.matteGeoW;
+      if (this.matteMesh.geometry !== want) this.matteMesh.geometry = want;
+    }
+    this.sync();
+    if (lead.bellows && lead.bellows.visible) updateBellows(lead.bellows, lead, this);
+  }
+
+  get forward() {
+    const f = this._fwd;
+    if (this._fwdH !== this.heading) { this._fwdH = this.heading; f.x = Math.sin(this.heading); f.z = Math.cos(this.heading); }
+    return f;
+  }
+
+  /**
+   * Arcade flight. The bar is the rest of the game's: responsive first,
+   * plausible second. Ground roll steers like a taxiing aircraft, rotation
+   * happens at VR with the stick back, and in the air the stick banks to
+   * turn and pitches to climb -- turn rate follows bank the way a
+   * coordinated turn does, but nothing here asks the wings for lift they
+   * cannot give except the stall, which mushes rather than spins.
+   *
+   * Same conventions as everything else: heading is rotation.y, forward is
+   * (sin h, cos h), +steer turns LEFT. Pull the stick back (input.pitch > 0)
+   * to climb, aviation-style -- the same axis that walks the player backward,
+   * which nobody notices because flying replaces walking wholesale.
+   */
+  updatePlane(dt, input) {
+    const spec = this.spec;
+    const throttle = input.throttle || 0;
+    const brake = input.brake || 0;
+    const steerIn = clamp(input.steer || 0, -1, 1);
+    const pitchIn = clamp(input.pitch || 0, -1, 1);
+    // Each field guarded on ITS OWN. The constructor already defines vy for
+    // the falling code, so a single vy-keyed guard never ran and rollA went
+    // into damp() undefined -- NaN heading, a plane that climbed straight
+    // ahead forever while x and z dissolved.
+    if (this.rollA === undefined) this.rollA = 0;
+    if (this.pitchA === undefined) this.pitchA = 0;
+    this._airParts(dt, throttle);
+    if (this.vy === undefined) this.vy = 0;
+    if (this.airborne === undefined) this.airborne = false;
+
+    this.lift = this.city.roadLift(this.x, this.z);
+    let ground = this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift);
+    if (spec.floats && waterQuery) {
+      // Pontoons make water a runway: the lake surface IS the ground. Lakes
+      // are at their own levels (Lake Union 5.3, Green Lake 50.3), so this
+      // must be the local surface, never a constant.
+      const wl = waterQuery(this.x, this.z);
+      if (wl !== null && wl > ground) ground = wl + 0.12;
+    }
+    const top = spec.fadeTop;
+    const fly = spec.fly || PLANE_FLY;
+    const VR = fly.vr;                   // rotation speed, m/s (~100 kph on the trainer)
+    const STALL = fly.stall;
+
+    // airspeed along the nose. Diving trades height for speed and climbing
+    // pays for it, which is most of what makes flight feel like flight.
+    let acc = 0;
+    // `fly.thrustK`: a heavy airliner winds up slowly (the 747's roll is ~1 km, not a light jet's 50 m)
+    if (throttle > 0) acc += spec.acc * (fly.thrustK || 1) * throttle * (1 - clamp(this.vLong / top, 0, 1));
+    if (brake > 0) acc -= (this.airborne ? 2.2 : spec.brakeA * 0.6) * brake;
+    // 0.45x, not 2.2x: with the heavy drag the measured cruise was 170 kph
+    // against a requested 300 -- the arcade bargain applies in the air too.
+    acc -= this.vLong * Math.abs(this.vLong) * DRAG * 0.45;
+    if (!this.airborne) acc -= this.vLong * ROLL * 1.6;      // rolling on grass/tarmac
+    if (this.airborne) acc -= this.vy * 0.55;                // climb bleeds, dive builds
+    // Past the airframe's never-exceed speed the air takes it back, softly.
+    if (fly.vne && this.vLong > fly.vne) acc -= (this.vLong - fly.vne) * 0.9;
+    this.vLong = Math.max(0, this.vLong + acc * dt);
+
+    if (!this.airborne) {
+      // ground roll: nosewheel steering, authority falling with speed
+      const yawRate = clamp(this.vLong, 0, 14) / 9 * steerIn * 0.55;
+      this.heading += yawRate * dt;
+      this.rollA = damp(this.rollA, 0, 6, dt);
+      // A taildragger sits back on its tailwheel until the tail flies.
+      const td = spec.taildragger;
+      const rest = td ? (td.deg * Math.PI / 180) * (1 - clamp(this.vLong / td.tailUp, 0, 1)) : 0;
+      this.pitchA = damp(this.pitchA, rest, 6, dt);
+      this.y = ground;
+      this.vy = 0;
+      if (this.vLong > VR && pitchIn > 0.25) {
+        this.airborne = true;
+        this.vy = 3.5;
+      }
+    } else {
+      // banked turn: the bank IS the turn, like a car's steer is its yaw
+      this.rollA = damp(this.rollA, -steerIn * fly.bank, 4.5, dt);
+      // ~30 deg/s at full bank. 1.6 here was a 67 deg/s snap-turn -- a probe
+      // measured 335 degrees in a five-second bank, which is a dogfighter, not
+      // a trainer over a city. (`turn` scales it per type: the biplane turns
+      // inside the trainer, the jet wide of it.)
+      this.heading += -this.rollA * 0.9 * clamp(this.vLong / 34, 0.3, 1.2) * dt * 0.75 * fly.turn;
+      // pitch: stick back climbs. Climb rate scales with excess airspeed, and
+      // below the stall the nose mushes down no matter what you ask for.
+      const excess = clamp((this.vLong - STALL) / (top - STALL), 0, 1);
+      let vyT = pitchIn * ((fly.climbBase || 4) + fly.climb * excess);
+      if (this.vLong < STALL) vyT = Math.min(vyT, -6 * (1 - this.vLong / STALL) * 3);
+      // soft ceiling: the air runs out, gently
+      if (this.y > 520) vyT = Math.min(vyT, (560 - this.y) * 0.08);
+      this.vy = damp(this.vy, vyT, fly.pitchK || 2.2, dt);   // pitchK: how fast the climb answers the stick
+      this.pitchA = damp(this.pitchA, Math.atan2(this.vy, Math.max(this.vLong, 8)), 5, dt);
+      this.y += this.vy * dt;
+
+      if (this.y <= ground + 0.05) {
+        // touchdown. A sink rate a real trainer's gear takes is fine; past it
+        // the airframe pays, scaled like a crash.
+        this.y = ground;
+        this.airborne = false;
+        if (this.vy < -7) this.damage(Math.min(70, (-this.vy - 7) * 9), true);
+        else if (this.vy < -3.5) this.damage((-this.vy - 3.5) * 3, true);
+        // on its belly: the gear was up -- the airframe pays and it slides
+        this._bellyCheck();
+        this.vy = 0;
+      }
+    }
+
+    // integrate position along the nose
+    const f = this.forward;
+    this.x += f.x * this.vLong * dt;
+    this.z += f.z * this.vLong * dt;
+
+    // Nose attitude on the tilt child, like a bike's lean, written to
+    // pitch/roll so sync() -- which traffic.js runs on every vehicle after
+    // the collision pass -- draws the same attitude. It used to be set on the
+    // tilt group directly and sync() levelled every parked plane again; and
+    // the flown one was drawn `wheelR + 0.25` up, so it taxied 55 cm off the
+    // tarmac while the parked ones sat on it.
+    this.pitch = -this.pitchA;
+    this.roll = this.rollA;
+    // A taildragger rocks about its main wheels (zMain ahead of the middle),
+    // so the drawn body drops as the nose comes up.
+    const td = spec.taildragger;
+    this.yVis = td && !this.airborne ? -td.zMain * Math.sin(Math.max(0, this.pitchA)) : 0;
+    this.sync();
+    this.spinParts(dt, 2 + this.vLong * 0.5 + throttle * 20);
+    this.latAcc = 0;
+    this.skid = 0;
+  }
+
+  /**
+   * The fighter: a full 3D attitude, so it loops, rolls and flies inverted.
+   *
+   * The other planes fly a heading, a bank that turns it, and a climb rate,
+   * which is easy and cannot go over the top. Here the attitude is a
+   * quaternion and the stick moves it in the BODY frame: y pitches the nose
+   * (back is up, relative to the jet, so a full pull is a loop), x rolls.
+   * Velocity runs along the nose (arcade: no sideslip); thrust fights drag
+   * and gravity along the nose, so a climb bleeds speed and a dive builds it,
+   * and below the stall the nose drops and the jet sinks. Heading, pitch and
+   * roll are read back out of the quaternion (YXZ -- the order sync() draws
+   * group.rotation.y then tilt x, z in), so everything else sees the usual
+   * fields. On the ground it rolls and steers like the other planes.
+   */
+  /** The flown aircraft's live parts, every frame: the lit nozzles and the gear's fold (updatePlane, updateFighter). */
+  _airParts(dt, throttle) {
+    const spec = this.spec;
+    if (this.jetFx) {
+      const ab = clamp((throttle - 0.85) / 0.15, 0, 1);
+      for (const f of this.jetFx) {
+        f.glow.material.opacity = 0.45 + 0.55 * throttle;
+        f.glow.material.color.setRGB(1, 0.42 + 0.35 * throttle, 0.15 + 0.3 * ab);
+        f.flame.visible = ab > 0.02;
+        f.flame.scale.set(1, 1, (1.0 + 2.2 * ab) * (0.9 + 0.2 * Math.random()));
+        f.flame.material.opacity = 0.16 + 0.3 * ab;
+      }
+    }
+    // THE GEAR (gearPart): folds toward its roots over ~2 s, gone when up
+    if (spec.retract) {
+      const k = this.gearK = damp(this.gearK || 0, this.gearUp ? 1 : 0, 2.0, dt);
+      for (const m of this.spinMeshes) if (m.userData.axis === 'g') {
+        m.scale.set(1 - 0.5 * k, Math.max(0.02, 1 - k), 1 - 0.5 * k);
+        m.visible = k < 0.97;
+      }
+    }
+  }
+
+  /** Touched down gear up (gearPart): the airframe pays and it slides. */
+  _bellyCheck() {
+    if (!this.spec.retract || (this.gearK || 0) <= 0.5) return;
+    this.damage(45, true);
+    this.vLong *= 0.55;
+    if (VEHICLE_HOOKS.belly) VEHICLE_HOOKS.belly(this);
+  }
+
+  updateFighter(dt, input) {
+    const spec = this.spec, fly = spec.fly;
+    const throttle = input.throttle || 0, brake = input.brake || 0;
+    this._airParts(dt, throttle);
+    const steerIn = clamp(input.steer || 0, -1, 1), pitchIn = clamp(input.pitch || 0, -1, 1);
+    if (!this.q) { this.q = new THREE.Quaternion(); this._fv = new THREE.Vector3(); this._fu = new THREE.Vector3(); this._e = new THREE.Euler(0, 0, 0, 'YXZ'); }
+    if (this.airborne === undefined) this.airborne = false;
+    this.lift = this.city.roadLift(this.x, this.z);
+    const ground = this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift);
+    const top = spec.topKph / 3.6;
+    const F = this._fv, U = this._fu;
+    if (!this.airborne) {
+      this.q.setFromEuler(this._e.set(0, this.heading, 0, 'YXZ'));
+    }
+    F.set(0, 0, 1).applyQuaternion(this.q);
+    const A = fly.thrust || spec.acc;
+    let acc = A * throttle - A * (this.vLong / top) ** 2 * Math.sign(this.vLong);
+    if (brake > 0) acc -= (this.airborne ? 9 : spec.brakeA * 0.6) * brake;
+    if (this.airborne) acc -= 9.8 * F.y;
+    else acc -= this.vLong * ROLL * 1.6;
+    // Past vne the air takes it back hard. Without it a full-throttle
+    // vertical dive settled near 262 m/s, and the streamer is only proven to
+    // ~150 (see "Flying"): vne sits at the level top speed.
+    if (fly.vne && this.vLong > fly.vne) acc -= (this.vLong - fly.vne) * 2.5;
+    this.vLong = Math.max(0, this.vLong + acc * dt);
+    const v = this.vLong;
+    if (!this.airborne) {
+      const yawRate = clamp(v, 0, 14) / 9 * steerIn * 0.55;
+      this.heading += yawRate * dt;
+      this.pitch = damp(this.pitch, 0, 6, dt);
+      this.roll = 0;
+      this.y = ground;
+      this.vy = 0;
+      const f = this.forward;
+      this.x += f.x * v * dt;
+      this.z += f.z * v * dt;
+      if (v > fly.vr && pitchIn > 0.25) {
+        this.airborne = true;
+        this.q.setFromEuler(this._e.set(-0.12, this.heading, 0, 'YXZ'));
+      }
+      this.sync();
+      this.latAcc = 0; this.skid = 0;
+      return;
+    }
+    // control authority grows with airspeed; below the stall it fades
+    const auth = clamp((v - 20) / (fly.stall), 0.12, 1);
+    const pRate = pitchIn * 1.9 * auth, rRate = -steerIn * 3.5 * Math.max(0.35, auth);
+    _dq.setFromEuler(this._e.set(-pRate * dt, 0, rRate * dt, 'YXZ'));
+    this.q.multiply(_dq);
+    // stalled: the nose falls toward the ground, in the world frame
+    const st = clamp(1 - v / fly.stall, 0, 1);
+    F.set(0, 0, 1).applyQuaternion(this.q);
+    if (st > 0 || this.y > 900) {
+      const k = st * 1.4 + (this.y > 900 ? (this.y - 900) * 0.01 : 0);
+      _tv.copy(F).addScaledVector(_up, -k * dt).normalize();
+      _dq.setFromUnitVectors(F, _tv);
+      this.q.premultiply(_dq);
+      F.copy(_tv);
+    }
+    this.q.normalize();
+    U.set(0, 1, 0).applyQuaternion(this.q);
+    const sink = 12 * st;
+    const vx = F.x * v, vyy = F.y * v - sink, vz = F.z * v;
+    this.x += vx * dt; this.y += vyy * dt; this.z += vz * dt;
+    this.vy = vyy;
+    this.x = G.clampToMap(this.x); this.z = G.clampToMap(this.z);
+    if (this.y <= ground + 0.05) {
+      // wheels down, wings level and a gentle sink: a landing; anything
+      // else is a crash
+      const level = F.y > -0.22 && U.y > 0.85;
+      this.y = ground;
+      if (level && vyy > -9 && v < 115) {
+        this.airborne = false;
+        this._e.setFromQuaternion(this.q, 'YXZ');
+        this.heading = this._e.y;
+        if (vyy < -4.5) this.damage((-vyy - 4.5) * 4, true);
+        this._bellyCheck();
+      } else {
+        this.damage(Math.min(100, 30 + v * 0.6), true);
+        this.airborne = false;
+        this.vLong *= 0.2;
+      }
+    }
+    this._e.setFromQuaternion(this.q, 'YXZ');
+    this.heading = this._e.y;
+    this.pitch = this._e.x;
+    this.roll = this._e.z;
+    this.yVis = 0;
+    this.sync();
+    this.latAcc = 0;
+    this.skid = 0;
+  }
+
+  /**
+   * A hot air balloon. It has no engine and nothing to push against: the
+   * burner heats the air in the envelope, hot air is lighter than the air
+   * round it, and the balloon rises. So:
+   *
+   *  - BURN (gas) heats the envelope and VENT (brake) opens the parachute
+   *    valve and dumps heat. The envelope always cools on its own, toward
+   *    well under the temperature it floats at, so to hold a height you burn
+   *    in short bursts every ten or fifteen seconds -- exactly how a balloon
+   *    is flown. The response lags by seconds, as a real one's does;
+   *  - buoyancy is the heat over the neutral temperature, against quadratic
+   *    drag: ~4-5 m/s climbing or sinking flat out;
+   *  - it goes where the WIND takes it, and the wind turns and strengthens
+   *    with height (calm on the ground, ~8 m/s from the north-west at 500 m),
+   *    so where you go is a matter of which height you fly at. The stick adds
+   *    a gentle push along the basket (and turns it: rotation vents), enough to
+   *    explore the city rather than drift out to sea;
+   *  - it lands wherever the basket meets something: ground, a roof, water.
+   *    Touching down faster than ~5.5 m/s hurts. On the ground the basket drags
+   *    to a stop, and a balloon nobody flies cools and settles.
+   *  - The envelope is 16.5 m across and cannot be flown through a tower: it is
+   *    pushed out of any building whose roof is above its mouth.
+   */
+  updateBalloon(dt, input) {
+    const piloted = !!input.pilot;
+    const burn = piloted && (input.lift || 0) > 0.3;
+    const vent = piloted && (input.sink || 0) > 0.3;
+    const steerIn = piloted ? clamp(input.steer || 0, -1, 1) : 0;
+    const fwdIn = piloted ? -clamp(input.pitch || 0, -1, 1) : 0;
+    const NEUTRAL = 62;
+    this.burning = burn;
+    this.heat = clamp(this.heat + ((burn ? 13 : 0) - (vent ? 12 : 0) - (this.heat - 34) * 0.046) * dt, 20, 115);
+    // what the basket would stand on here: ground, a deck, a roof, the water
+    const ground = this._balloonFloor(this.x, this.z);
+    const agl = this.y - ground;
+    // buoyancy, weaker in thin air, against drag
+    let ay = (this.heat - NEUTRAL) * 0.045 - Math.max(0, this.y - 700) * 0.004;
+    ay -= 0.07 * this.vy * Math.abs(this.vy) + 0.06 * this.vy;
+    // the wind at this height: calm near the ground, turning and building
+    // with height, with slow gusts
+    this.gustT += dt;
+    const h = Math.max(0, agl);
+    const wd = 2.2 + h * 0.0030 + Math.sin(this.gustT * 0.05) * 0.25;   // direction it blows TOWARD
+    const ws = clamp(0.4 + h * 0.016, 0, 9) * (0.85 + 0.15 * Math.sin(this.gustT * 0.21));
+    const f = this.forward;
+    const lx = f.z, lz = -f.x;
+    let wx = f.x * this.vLong + lx * this.vLat, wz = f.z * this.vLong + lz * this.vLat;
+    if (this.airborne) {
+      // drift to the wind plus the push along the basket
+      const push = fwdIn * 5.5;
+      const tx = Math.sin(wd) * ws + f.x * push, tz = Math.cos(wd) * ws + f.z * push;
+      const k = 1 - Math.exp(-dt / 3.2);
+      wx += (tx - wx) * k; wz += (tz - wz) * k;
+      this.vy += ay * dt;
+      this.y += this.vy * dt;
+      if (this.y <= ground) {
+        const hit = -this.vy;
+        if (hit > 5.5) this.damage(Math.min(70, (hit - 5.5) * 14), true);
+        this.y = ground; this.vy = 0; this.airborne = false;
+      }
+    } else {
+      // on the ground: the basket drags to a stop, and it only leaves when
+      // there is lift
+      const k = Math.min(1, 3 * dt);
+      wx -= wx * k; wz -= wz * k;
+      this.y = ground; this.vy = 0;
+      if (ay > 0.05) { this.airborne = true; this.vy = 0.2; }
+    }
+    // rotation vents turn the basket; a slow drift turn otherwise
+    this.yawRate = damp(this.yawRate, steerIn * 0.5 + (this.airborne ? 0.015 : 0), 2, dt);
+    this.heading += this.yawRate * dt;
+    // the envelope against buildings taller than its mouth
+    const env = this._balloonEnvelopeHit(this.x + wx * dt, this.z + wz * dt);
+    if (env) {
+      const into = wx * env.nx + wz * env.nz;
+      if (into < 0) { wx -= into * env.nx * 1.3; wz -= into * env.nz * 1.3; }
+      this.x += env.nx * env.depth; this.z += env.nz * env.depth;
+    }
+    this.x = G.clampToMap(this.x + wx * dt);
+    this.z = G.clampToMap(this.z + wz * dt);
+    const f2 = this.forward, l2x = f2.z, l2z = -f2.x;
+    this.vLong = wx * f2.x + wz * f2.z;
+    this.vLat = wx * l2x + wz * l2z;
+    // A basket hangs: it swings a little under the envelope in a gust or a
+    // change of speed, and hardly at all in steady drift.
+    const sw = this.airborne ? 0.022 : 0;
+    this.pitch = damp(this.pitch, Math.sin(this.gustT * 0.9) * sw, 2, dt);
+    this.roll = damp(this.roll, Math.sin(this.gustT * 0.7 + 1.3) * sw, 2, dt);
+    this.yVis = 0;
+    this.onGround = !this.airborne;
+    this.latAcc = 0; this.skid = 0;
+    if (this.flame) {
+      this.flame.visible = burn;
+      if (burn) {
+        const fl = 1 + Math.sin(this.gustT * 37) * 0.12 + Math.sin(this.gustT * 23) * 0.08;
+        this.flame.scale.set(1, fl, 1);
+      }
+    }
+    if (this.rider) {
+      // the pilot's right hand on the blast valve while the burner is lit
+      const b = this.rider.bones;
+      const want = burn ? -2.55 : 0.04;
+      b[BONES.shoulderR].rotation.x = damp(b[BONES.shoulderR].rotation.x, want, 10, dt);
+      b[BONES.elbowR].rotation.x = damp(b[BONES.elbowR].rotation.x, burn ? -0.5 : -0.3, 10, dt);
+    }
+    this.sync();
+  }
+
+  /** The highest thing under the basket: ground, a deck, a roof, the water. */
+  _balloonFloor(x, z) {
+    let y = Math.max(this.city.groundAt(x, z, this.y + 1.2), this.city.roofUnder(x, z, this.y + 1.2, 0.6));
+    if (waterQuery && G.isWater(x, z)) {
+      const wl = waterQuery(x, z);
+      if (wl !== null && wl > y) y = wl;
+    }
+    return y;
+  }
+
+  /**
+   * Is the envelope in a building? Any footprint within the envelope's radius
+   * whose roof stands above the mouth: the push out of it (unit normal and
+   * depth), or null.
+   */
+  _balloonEnvelopeHit(x, z) {
+    const R = 7.6, mouth = this.y + BAL.mouthY;
+    let best = null;
+    for (const b of this.city.buildingsNear(x, z, 60)) {
+      const top = b.y + b.h;
+      if (top < mouth) continue;
+      const c = Math.cos(-b.rot), s = Math.sin(-b.rot), dx = x - b.x, dz = z - b.z;
+      const lx = dx * c - dz * s, lz = dx * s + dz * c;
+      const hx = b.w / 2, hz = b.d / 2;
+      const qx = clamp(lx, -hx, hx), qz = clamp(lz, -hz, hz);
+      let ex = lx - qx, ez = lz - qz, d = Math.hypot(ex, ez);
+      if (d >= R) continue;
+      if (d < 1e-6) { ex = lx; ez = lz; d = Math.hypot(ex, ez) || 1; }
+      const depth = R - d;
+      if (!best || depth > best.depth) {
+        // back to world axes
+        const nx = (ex * c + ez * s) / d, nz = (-ex * s + ez * c) / d;
+        best = { nx, nz, depth };
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Helicopter. Built to be flown with one thumb and two buttons:
+   *
+   *   collective  input.lift / input.sink (UP / DOWN): a CLIMB RATE, and with
+   *               neither held the aircraft holds its height -- hands off is
+   *               a hover, which is the whole trick of making it easy
+   *   stick y     forward speed along the nose (back is a slow reverse);
+   *               released, it decelerates to a hover over the spot
+   *   stick x     yaw -- a pedal turn at the hover, easing to a banked turn
+   *               at speed
+   *
+   * Translation is a world-frame velocity chasing the one the stick asks for
+   * at a capped acceleration, so a turn at speed carries its momentum round
+   * (drift) instead of pivoting on rails. The attitude is DRAWN from that
+   * acceleration -- nose down to speed up, banked into a turn -- which is how
+   * a real helicopter looks when it does exactly this. vLong/vLat are kept in
+   * the body frame for everything else in the game (collisions write them,
+   * the HUD reads them).
+   *
+   * The rotor spools up over ~1.8 s with someone at the controls and will not
+   * lift until it has; abandoned in the air, it settles to the ground.
+   */
+  updateHeli(dt, input) {
+    const spec = this.spec, R = spec.rotor;
+    const piloted = !!input.pilot;
+    const steerIn = clamp(input.steer || 0, -1, 1);
+    const fwdIn = -clamp(input.pitch || 0, -1, 1);   // stick forward is -y
+    this.spool = clamp(this.spool + (piloted ? dt / 1.8 : -dt / 5), 0, 1);
+    const ready = this.spool > 0.92;
+
+    this.lift = this.city.roadLift(this.x, this.z);
+    // the ground, a deck, or a roof: it sets down on a building like anywhere
+    // else (the skids' half-width of overhang still stands on it)
+    const ground = Math.max(this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift),
+      this.city.roofUnder(this.x, this.z, this.y + 1.2, 0.9));
+
+    // collective -> vertical speed
+    let cIn = piloted ? clamp((input.lift || 0) - (input.sink || 0), -1, 1) : -0.5;
+    let vyT = cIn > 0 ? cIn * R.climb : cIn * R.sink;
+    if (!ready) vyT = Math.min(vyT, this.airborne ? -2 - 7 * (1 - this.spool) : 0);
+    // Soft ceiling, like the planes'.
+    if (this.y > (spec.saucer ? 1800 : 560)) vyT = Math.min(vyT, ((spec.saucer ? 1850 : 600) - this.y) * 0.1);
+    // Cushion the last few metres of a descent so a held DOWN lands it.
+    const agl = this.y - ground;
+    if (vyT < 0 && agl < 6) vyT = Math.max(vyT, -1.2 - agl * 0.9);
+
+    // world velocity from the body-frame one (collisions edit vLong/vLat)
+    const f = this.forward;
+    const lx = f.z, lz = -f.x;                        // local +X (port)
+    let wx = f.x * this.vLong + lx * this.vLat, wz = f.z * this.vLong + lz * this.vLat;
+
+    const top = spec.topKph / 3.6;
+    let vfT = fwdIn >= 0 ? fwdIn * top : fwdIn * R.back;
+    if (!this.airborne) vfT = 0;
+    // The error split along the nose and across it. Along the nose is the
+    // disc tilting to speed up or slow down; stopping is quicker than
+    // accelerating, because the stick released has to mean "hover HERE", not
+    // a 250 m coast. Across it is the banked disc pulling the aircraft round
+    // a turn, with more authority -- one cap for both measured a 44 m/s turn
+    // sliding 35 m/s sideways, skating rather than flying.
+    const eA = (f.x * vfT - wx) * f.x + (f.z * vfT - wz) * f.z;
+    const eL = -(wx * lx + wz * lz);
+    const capA = (eA * this.vLong < 0 ? 1.35 : 1) * R.accel;
+    const aA = clamp(eA * 1.4, -capA, capA), aLt = clamp(eL * 2.4, -R.grip, R.grip);
+    const ax = f.x * aA + lx * aLt, az = f.z * aA + lz * aLt;
+    wx += ax * dt; wz += az * dt;
+
+    // yaw: a pedal turn at the hover, easing off with speed
+    const sp = Math.hypot(wx, wz);
+    const yawMax = lerp(R.yaw, R.yawFast, clamp(sp / top, 0, 1));
+    const yawT = this.airborne ? steerIn * yawMax : (ready ? steerIn * yawMax * 0.3 : 0);
+    this.yawRate = damp(this.yawRate, yawT, 5, dt);
+    this.heading += this.yawRate * dt;
+
+    if (!this.airborne) {
+      // on the skids: friction holds it, and it only leaves when told to
+      const k = Math.min(1, 4 * dt);
+      wx -= wx * k; wz -= wz * k;
+      this.y = ground;
+      this.vy = 0;
+      if (ready && vyT > 0.3) { this.airborne = true; this.vy = 0.8; }
+    } else {
+      this.vy = damp(this.vy, vyT, 2.6, dt);
+      this.y += this.vy * dt;
+      if (this.y <= ground) {
+        // Touchdown. A firm landing is fine, a hard one hurts, and landing
+        // while still moving fast along the ground is a skid-and-roll.
+        const hs = Math.hypot(wx, wz);
+        if (!spec.saucer) {
+          if (this.vy < -6.5) this.damage(Math.min(80, (-this.vy - 6.5) * 12), true);
+          if (hs > 14) this.damage(Math.min(60, (hs - 14) * 4), true);
+        }
+        this.y = ground;
+        this.airborne = false;
+        this.vy = 0;
+      }
+    }
+
+    this.x += wx * dt;
+    this.z += wz * dt;
+    const f2 = this.forward, l2x = f2.z, l2z = -f2.x;
+    this.vLong = wx * f2.x + wz * f2.z;
+    this.vLat = wx * l2x + wz * l2z;
+    // Attitude from what the rotor is doing: tilted into the acceleration
+    // plus the steady nose-down of forward flight, banked into the turn
+    // (yaw rate x speed is the turn's centripetal pull). Positive roll raises
+    // local +X, so banking left (+X down) is NEGATIVE -- the bike's sign.
+    const aL = ax * f2.x + az * f2.z, aS = ax * l2x + az * l2z;
+    this.accLong = aL; this.accLeft = aS;
+    const air = this.airborne ? 1 : 0;
+    // (the saucer barely tips: it flies level, with a hint of lean)
+    const tip = spec.saucer ? 0.25 : 1;
+    const pitchT = air * tip * clamp(-(aL * 0.032 + (this.vLong / top) * 0.10), -0.36, 0.24);
+    const rollT = air * tip * clamp(-aS * 0.05, -0.5, 0.5);
+    this.pitchA = damp(this.pitchA, pitchT, 5, dt);
+    this.rollA = damp(this.rollA, rollT, 5, dt);
+    this.pitch = -this.pitchA;
+    this.roll = this.rollA;
+    this.yVis = 0;
+    this.sync();
+    // Main rotor about Y, tail rotor about X. Not real rpm, which would alias
+    // into a stationary or backward-turning disc at any frame rate; a rate
+    // that reads as fast and still shows the blades.
+    this.spinParts(dt, 0, this.spool * (spec.saucer ? 2.2 : 17), this.spool * 44);
+    this.latAcc = 0;
+    this.skid = 0;
+  }
+
+  /**
+   * The hull model. Same controls as a car -- throttle, brake-as-reverse,
+   * steer -- but nothing touches the ground:
+   *
+   *  - it floats on the LOCAL surface (waterQuery: Lake Union 5.31, Green
+   *    Lake 50.3, the sea 0), eased toward it so a change of level between
+   *    two waters is a drop, not a teleport;
+   *  - water is where the bed lies at least MIN_DEPTH under that surface.
+   *    Anything shallower is shore and stops the bow like a kerb stops a
+   *    wheel: the move is refused, tried again along each axis so the boat
+   *    slides along a bank, and the impact is left in `shoreHit` for the
+   *    player's crash handling. The last metre of depth drags, so running
+   *    in slowly beaches softly;
+   *  - drag is quadratic, sized so thrust balances it at the declared top
+   *    speed, plus a linear term so an idle hull coasts to a stop;
+   *  - it turns by thrust, so the rate falls away at rest unless the
+   *    throttle is open (prop wash), and it slides: a hull holds its line
+   *    far less than a tyre, which is what makes it feel like water;
+   *  - it bobs, pitches up onto the plane with speed, squats under power and
+   *    banks into a turn.
+   *
+   * A moored boat ('apron') holds its mooring and only bobs.
+   */
+  /**
+   * Move a hull through the water by its vLong/vLat: a probe leading the hull
+   * must find `minDepth` under the local surface and the same water LEVEL (a
+   * lock's step is a wall), trying each axis alone to slide along a bank.
+   * Sets shoreHit to the impact speed.
+   */
+  _waterMove(dt, minDepth) {
+    const depthAt = (x, z) => {
+      const wl = waterQuery ? waterQuery(x, z) : null;
+      return wl === null ? -1 : wl - G.terrainHeight(x, z);
+    };
+    const sp = Math.abs(this.vLong);
+    const f = this.forward;
+    const rx = f.z, rz = -f.x;
+    const dx = (f.x * this.vLong + rx * this.vLat) * dt;
+    const dz = (f.z * this.vLong + rz * this.vLat) * dt;
+    // The probe leads the hull by its half-length in the direction of travel.
+    const lead = this.vLong >= 0 ? this.halfLen * 0.92 : -this.halfLen * 0.92;
+    // A jump in the water's own LEVEL is a wall too: the Ballard Locks' gate
+    // between the canal at lake level and the Sound 5 m below, which a boat
+    // would otherwise sail straight over and drop down. Lake Washington's
+    // 22 cm below the canal passes.
+    const wlHere = waterQuery ? waterQuery(this.x, this.z) : null;
+    const level = (x, z) => {
+      if (wlHere === null) return true;
+      const w = waterQuery(x, z);
+      return w === null || Math.abs(w - wlHere) < 0.5;
+    };
+    const ok = (x, z) => depthAt(x, z) >= minDepth && depthAt(x + f.x * lead, z + f.z * lead) >= minDepth
+      && level(x + f.x * lead, z + f.z * lead);
+    this.shoreHit = 0;
+    if (ok(this.x + dx, this.z + dz)) { this.x += dx; this.z += dz; }
+    else {
+      const impact = sp;
+      if (ok(this.x + dx, this.z)) this.x += dx;
+      else if (ok(this.x, this.z + dz)) this.z += dz;
+      this.vLong *= impact > 4 ? -0.15 : 0.35;
+      this.vLat *= 0.3;
+      this.shoreHit = impact;
+    }
+    this.x = G.clampToMap(this.x);
+    this.z = G.clampToMap(this.z);
+    return { dx, dz };
+  }
+
+  /**
+   * An unlimited hydroplane. The turbine spools (it takes a second to come
+   * up); thrust against quadratic drag gives the top speed; below ~25 m/s the
+   * hull is in the water and drags until it gets up on its sponsons.
+   *
+   * TURNING: the rudder asks for a yaw rate (HYDRO.yawMax at speed); the
+   * lateral acceleration that needs is speed x yaw, and past HYDRO.grip the
+   * excess goes into sideslip. Held too long, the slide HOOKS: the boat spins
+   * out and scrubs off most of its speed. So you lift for the turns.
+   *
+   * BLOWOVER: the deck is a wing. The nose rises with the square of the
+   * speed; the stick trims it (back raises it, forward drops it), a hit on a
+   * wake kicks it. Past HYDRO.warn the HUD warns; past HYDRO.blow the boat
+   * blows over backwards -- a crash that ends the run until it is righted.
+   * Lifting off the throttle or pushing forward brings the nose down.
+   * `this.hyd` carries the state; the race sets `wakeKick` from other boats.
+   */
+  updateHydro(dt, input) {
+    const spec = this.spec, H = HYDRO;
+    const moored = this._mode === 'apron';
+    const throttle = moored ? 0 : clamp(input.throttle || 0, 0, 1), brake = moored ? 0 : input.brake || 0;
+    const steerIn = clamp(input.steer || 0, -1, 1), pitchIn = clamp(input.pitch || 0, -1, 1);
+    this._t += dt;
+    const h = this.hyd || (this.hyd = { spool: 0, nose: 0, noseV: 0, slip: 0, hook: 0, blown: 0, flip: 0, wakeKick: 0, warn: false, chine: 0 });
+    if (h.blown > 0) {
+      // over on its back: tumble, then sit there until righted
+      h.blown += dt;
+      h.flip = Math.min(Math.PI * 0.95, h.flip + dt * 5);
+      this.vLong *= Math.exp(-1.6 * dt); this.vLat *= Math.exp(-1.6 * dt);
+      this._waterMove(dt, 0.4);
+      const wl = waterQuery ? waterQuery(this.x, this.z) : null;
+      this.y = (wl !== null ? wl : this.y) + 0.3 + Math.sin(Math.min(h.flip, Math.PI)) * 3;
+      this.pitch = -h.flip; this.roll = 0.3 * Math.sin(h.flip);
+      this.sync();
+      return;
+    }
+    h.spool += (throttle - h.spool) * Math.min(1, dt * (throttle > h.spool ? 1.3 : 2.6));
+    let acc = H.thrust * h.spool - H.drag * this.vLong * Math.abs(this.vLong) - H.roll * this.vLong;
+    const planing = clamp((Math.abs(this.vLong) - 8) / 18, 0, 1);
+    acc -= (1 - planing) * this.vLong * 0.35;                         // the hull in the water
+    if (brake > 0.2) acc -= (this.vLong > 0 ? 7 : 2) * brake + (this.vLong < 0.5 ? 1.5 * brake : 0);
+    if (moored) { this.vLong = 0; this.vLat = 0; acc = 0; }
+    this.vLong += acc * dt;
+    const v = Math.abs(this.vLong);
+    // yaw: the rudder's demand, and the grip the sponsons have for it
+    let yawMax = v < 17 ? 1.1 - (1.1 - H.yawMax) * v / 17 : H.yawMax;
+    if (h.hook > 0) yawMax = 0;
+    let yaw = steerIn * yawMax * (this.vLong < -0.5 ? -1 : 1) * clamp(v / 3, 0, 1);
+    const need = Math.abs(yaw) * v;
+    if (need > H.grip && v > 10) {
+      const over = need - H.grip;
+      h.slip += over * dt * 0.6;
+      yaw *= 0.92;
+    } else h.slip = Math.max(0, h.slip - dt * 6);
+    this.vLat += -yaw * this.vLong * dt * 0.15 - Math.sign(yaw) * (need > H.grip ? (need - H.grip) * dt * 0.6 : 0);
+    this.vLat *= Math.exp(-(h.hook > 0 ? 1.2 : 5.5) * dt);
+    if (h.slip > 10 && v > 35 && h.hook <= 0) { h.hook = 1.3; this.hooked = true; }
+    if (h.hook > 0) {
+      h.hook -= dt;
+      this.heading += Math.sign(steerIn || 1) * 5.2 * dt;
+      this.vLong *= Math.exp(-1.7 * dt);
+      if (h.hook <= 0) h.slip = 0;
+    } else this.heading += yaw * dt;
+    this.steer = lerp(this.steer, steerIn * 0.4, 1 - Math.exp(-8 * dt));
+    this.latAcc = yaw * this.vLong;
+    // the nose: lift with speed, the stick's trim, the chop and other boats' wakes
+    const target = H.lift * v * v + pitchIn * 0.14 - brake * 0.05 + (h.spool - throttle) * -0.02;
+    const chop = (Math.sin(this._t * 13.1 + this._bob) * 0.5 + Math.sin(this._t * 7.3) * 0.5) * 0.4 * clamp((v - 40) / 30, 0, 1);
+    h.noseV += ((target - h.nose) * 14 - h.noseV * 5 + chop + h.wakeKick) * dt;
+    h.wakeKick = 0;
+    h.nose += h.noseV * dt;
+    h.nose = Math.max(-0.04, h.nose);
+    h.warn = h.nose > H.warn;
+    if (h.nose > H.blow && v > 30) { h.blown = 0.0001; h.flip = h.nose; this.blewOver = true; }
+    h.chine = Math.sin(this._t * 9.5) * 0.035 * clamp((v - 55) / 15, 0, 1);
+    const { dx, dz } = this._waterMove(dt, 0.4);
+    const wl = waterQuery ? waterQuery(this.x, this.z) : null;
+    const surf = wl !== null ? wl : this.y;
+    this._surf = Number.isNaN(this._surf) ? surf : damp(this._surf, surf, 3, dt);
+    const ride = -0.12 + 0.34 * planing + Math.sin(this._t * 17 + this._bob) * 0.03 * planing;
+    this.y = this._surf + ride;
+    this.onGround = true; this.vy = 0;
+    this.pitch = -h.nose;
+    this.roll = h.chine - clamp(yaw * clamp(v / 20, 0, 1), -0.5, 0.5) * 0.12 + (h.hook > 0 ? Math.sin(h.hook * 9) * 0.06 : 0);
+    this.skid = clamp(Math.abs(this.vLat) / 8, 0, 1);
+    this.sync();
+    return { dx, dz };
+  }
+
+  /**
+   * The DUKW: afloat when the water under it is deeper than DUCK.floatIn (it
+   * drove down a ramp or off a bank), back on its wheels when it is shallower
+   * than floatOut AND the bed ahead is gentle enough to climb (at a steep bank
+   * the boat's shore rule holds it off). Afloat it IS the boat -- updateBoat
+   * with a slow hull (a DUKW makes ~10 km/h in the water) -- drawn DUCK.draft
+   * below its waterline. Returns true when it handled the frame; false hands
+   * it to the ground model.
+   */
+  updateDuck(dt, input) {
+    const wl = waterQuery ? waterQuery(this.x, this.z) : null;
+    // The mask's shore band disagrees with the drawn water by metres (10 m
+    // cells against the 40 m DEM): off the ramp it said "dry" over 2.7 m of
+    // drawn lake and the duck drove the bed. Water is wherever the ground is
+    // under the local surface, the mask or not.
+    const ground = wl !== null ? this.city.groundAt(this.x, this.z, this.afloat ? wl - DUCK.draft + 0.5 : this.y + 0.5) : 0;
+    const wet = wl !== null && (G.isWater(this.x, this.z) || ground < wl - 0.3);
+    const depth = wet ? wl - ground : -1;
+    if (!this.afloat && depth > DUCK.floatIn) {
+      this.afloat = true; this._surf = NaN; this.vLat *= 0.3; this.splashed = true;
+    } else if (this.afloat && depth < DUCK.floatOut) {
+      const f = this.forward, ahead = this.city.groundAt(this.x + f.x * 3, this.z + f.z * 3, ground + 1);
+      if (ahead - ground < 1.2 || !wet) { this.afloat = false; this.y = Math.max(this.y, ground); this.vy = 0; }
+    } else if (this.afloat && !wet) this.afloat = false;
+    if (!this.afloat) return false;
+    const saved = this.spec;
+    this.spec = this._waterSpec || (this._waterSpec = Object.assign(Object.create(saved), {
+      topKph: DUCK.waterKph, acc: DUCK.waterAcc, boat: true, minDepth: -0.5, cockpit: [DUCK.floor - DUCK.draft, -3.95, 2.45, 1.14],
+    }));
+    try { this.updateBoat(dt, input); } finally { this.spec = saved; }
+    this.y -= DUCK.draft;
+    this.sync();
+    return true;
+  }
+
+  updateBoat(dt, input) {
+    const spec = this.spec;
+    // a DUKW's wheels touch before its hull does, so its bow may run up a gentle shore (updateDuck)
+    const MIN_DEPTH = spec.minDepth || 0.45;
+    const throttle = input.throttle || 0;
+    const brake = input.brake || 0;
+    const steerIn = clamp(input.steer || 0, -1, 1);
+    this._t += dt;
+    const depthAt = (x, z) => {
+      const wl = waterQuery ? waterQuery(x, z) : null;
+      return wl === null ? -1 : wl - G.terrainHeight(x, z);
+    };
+    const moored = this._mode === 'apron';
+    const V = spec.topKph / 3.6;
+    let acc = 0;
+    if (!moored) {
+      if (throttle > 0) acc += spec.acc * throttle * (this.vLong < -0.5 ? 1.6 : 1);
+      // A pad's resting trigger or a coasting AI's token brake is not a
+      // request for astern.
+      if (brake > 0.3) acc -= spec.acc * (this.vLong > 0.5 ? 1.0 : 0.45 * (1 - clamp(-this.vLong / 6, 0, 1))) * brake;
+    }
+    // sized so thrust and both terms balance exactly at V
+    acc -= (spec.acc - 0.18 * V) * (this.vLong * Math.abs(this.vLong)) / (V * V) + this.vLong * 0.18;
+    // shallows drag: the last metre before the bed is too shallow to run in
+    const dHere = depthAt(this.x, this.z);
+    const shallow = clamp((1.2 - dHere) / (1.2 - MIN_DEPTH), 0, 1);
+    acc -= this.vLong * 2.5 * shallow;
+    this.vLong += acc * dt;
+    if (moored) { this.vLong = 0; this.vLat = 0; }
+
+    const sp = Math.abs(this.vLong);
+    const bite = clamp(sp / 5, 0, 1) * (1 - 0.3 * clamp(sp / V, 0, 1)) + (1 - clamp(sp / 5, 0, 1)) * 0.35 * throttle;
+    // a jet ski turns on its pump's thrust: sharp, and it leans hard into it
+    const agile = spec.jetski ? 1.75 : 1;
+    const yawRate = steerIn * 0.95 * agile * bite * (this.vLong < -0.3 ? -1 : 1);
+    this.heading += yawRate * dt;
+    this.steer = lerp(this.steer, steerIn * 0.5, 1 - Math.exp(-8 * dt));
+    this.vLat += -yawRate * this.vLong * dt * 0.8;
+    this.vLat *= Math.exp(-2.4 * dt);
+    this.latAcc = yawRate * this.vLong;
+
+    const { dx, dz } = this._waterMove(dt, MIN_DEPTH);
+    const wl = waterQuery ? waterQuery(this.x, this.z) : null;
+    const surf = wl !== null ? wl : this.y;
+    const ph = this._bob, t = this._t;
+    const heave = Math.sin(t * 1.7 + ph) * 0.035 + Math.sin(t * 2.9 + ph * 2.1) * 0.015;
+    const base = Number.isNaN(this._surf) ? surf : damp(this._surf, surf, 3, dt);
+    this._surf = base;
+    this.y = base + heave * (1 - 0.6 * clamp(sp / 10, 0, 1));
+    this.onGround = true;
+    this.vy = 0;
+    // Up onto the plane: the bow climbs through the hump near a third of top
+    // speed and settles lower once planing. Bow up is NEGATIVE pitch here.
+    const r = clamp(this.vLong / V, 0, 1);
+    const hump = Math.exp(-(((r - 0.33) / 0.2) ** 2));
+    const tgtPitch = -(0.085 * hump + 0.03 * r) - clamp(acc, -8, 8) * 0.004
+      + Math.sin(t * 1.3 + ph * 1.7) * 0.012 * (1 - 0.5 * r);
+    const tgtRoll = -clamp(yawRate * clamp(sp / 6, 0, 1), -1, 1) * (spec.jetski ? 0.34 : 0.11)
+      + Math.sin(t * 1.1 + ph * 0.7) * 0.018;
+    this.pitch = lerp(this.pitch, tgtPitch, 1 - Math.exp(-4 * dt));
+    this.roll = lerp(this.roll, tgtRoll, 1 - Math.exp(-4 * dt));
+    // NO LAKE IN THE COCKPIT. The runabout's cockpit floor is 12 cm over the
+    // waterline, and the water is one flat plane: through the hump the bow
+    // rises ~0.11 rad, the helm end of the floor drops 25 cm, and the lake
+    // drew across the floor between the seats ("water inside the boat"). A
+    // hull on the plane rides up out of the water anyway, so it is lifted
+    // just enough that the floor's lowest corner, pitched and rolled, stays
+    // over the surface. At rest the bob never gets near it (4 cm to spare).
+    if (spec.cockpit && wl !== null) {
+      const [floor, z0, z1, hw] = spec.cockpit;
+      const sp2 = Math.sin(this.pitch), sr = Math.abs(Math.sin(this.roll));
+      const low = floor * Math.cos(this.pitch) * Math.cos(this.roll)
+        + Math.min(-z0 * sp2, -z1 * sp2) - hw * sr;
+      const lift = wl + 0.04 - (this.y + low);
+      if (lift > 0) this.y += lift;
+    }
+    this.skid = 0;
+    this.sync();
+    return { dx, dz };
+  }
+
+  /**
+   * A kayak, paddled. GAS paddles forward, BRAKE back-paddles, the stick
+   * steers -- and all of it is strokes: they alternate sides at ~1.6 a second,
+   * each blade in the water for the first 55 % of its stroke, and each one
+   * pushes the hull along and yaws it away from its own side. Straight
+   * paddling therefore wiggles the bow as a real one does. Steering makes the
+   * strokes on the outside of the turn long sweeps and the inside ones
+   * short, or at a standstill reverse sweeps, so the boat pivots on the spot.
+   * The hull tracks: yaw is damped, harder the faster it runs, and sideslip
+   * dies fast (the keel line).
+   */
+  updateKayak(dt, input) {
+    const moored = this._mode === 'apron';
+    const fwd = moored ? 0 : clamp(input.throttle || 0, 0, 1);
+    const back = moored ? 0 : ((input.brake || 0) > 0.3 ? clamp(input.brake, 0, 1) : 0);
+    const steer = moored ? 0 : clamp(input.steer || 0, -1, 1);
+    const k = this.kayak || (this.kayak = { ph: 0, side: 1, yawV: 0, strokes: 0, effort: 0, dip: 0, dipSide: 0 });
+    this._t += dt;
+    const paddling = fwd > 0 || back > 0 || Math.abs(steer) > 0.2;
+    k.effort = lerp(k.effort, paddling ? 1 : 0, 1 - Math.exp(-5 * dt));
+    k.dip = 0;
+    if (paddling || k.ph > 0) {
+      const was = k.ph;
+      k.ph += dt / KAYAK.stroke;
+      if (was === 0 || (was < 1e-6 && k.ph > 0)) { k.dip = 1; k.dipSide = k.side; }
+      if (k.ph >= 1) {
+        k.ph -= 1; k.side = -k.side; k.strokes++;
+        if (paddling) { k.dip = 1; k.dipSide = k.side; } else k.ph = 0;
+      }
+    }
+    const s = k.side;                                 // +1 the right side, -1 the left
+    const inWater = k.ph > 0 && k.ph < KAYAK.catchOut;
+    const pw = inWater ? Math.sin(Math.PI * k.ph / KAYAK.catchOut) : 0;
+    // This side's blade: the push (forward, or back-paddling) both sides
+    // share, and the turn (steer > 0 turns left: the right side sweeps wide,
+    // the left side reverse-sweeps). The push yaws the bow away from its own
+    // side a little -- the wiggle; the turn yaws it the same way from either
+    // side, and nets out to no thrust, so at a standstill it pivots.
+    const fPush = fwd - back * 0.8, fTurn = steer * s * 0.9;
+    let acc = clamp(fPush + fTurn, -1, 1.6) * pw * KAYAK.push;
+    const yawAcc = pw * (s * fPush * KAYAK.yaw + steer * 0.9 * KAYAK.turn);
+    const sp = Math.abs(this.vLong);
+    acc -= KAYAK.drag * this.vLong * sp + KAYAK.lin * this.vLong;
+    this.vLong += acc * dt;
+    k.yawV += yawAcc * dt;
+    k.yawV *= Math.exp(-(KAYAK.yawDamp + KAYAK.track * sp) * dt);
+    this.heading += k.yawV * dt;
+    this.steer = lerp(this.steer, steer * 0.5, 1 - Math.exp(-8 * dt));
+    this.vLat += -k.yawV * this.vLong * dt * 0.3;
+    this.vLat *= Math.exp(-4 * dt);
+    this.latAcc = k.yawV * this.vLong;
+    if (moored) { this.vLong = 0; this.vLat = 0; k.yawV = 0; }
+    this._waterMove(dt, KAYAK.draft);
+    // float on the local surface, a small surge on each stroke and a lean
+    // into the blade
+    const wl = waterQuery ? waterQuery(this.x, this.z) : null;
+    const surf = wl !== null ? wl : this.y;
+    const ph = this._bob, t = this._t;
+    const heave = Math.sin(t * 1.9 + ph) * 0.025 + Math.sin(t * 3.1 + ph * 2.1) * 0.01;
+    const base = Number.isNaN(this._surf) ? surf : damp(this._surf, surf, 3, dt);
+    this._surf = base;
+    this.y = base + heave;
+    this.onGround = true;
+    this.vy = 0;
+    const tgtPitch = -0.012 * pw + Math.sin(t * 1.4 + ph * 1.7) * 0.01;
+    const tgtRoll = -s * 0.05 * pw + Math.sin(t * 1.2 + ph * 0.7) * 0.02;
+    this.pitch = lerp(this.pitch, tgtPitch, 1 - Math.exp(-5 * dt));
+    this.roll = lerp(this.roll, tgtRoll, 1 - Math.exp(-5 * dt));
+    this.skid = 0;
+    this.sync();
+    if (this.paddle && this.rider && this.rider.group.visible) this._paddleStroke(k, pw);
+  }
+
+  /**
+   * The paddle's pose for this moment of the stroke (in the tilt group's
+   * frame), and the paddler's arms solved to its two grips. The stroke side's
+   * blade goes in by the feet and comes out at the hip, beside the hull and
+   * under the surface; through the recovery the paddle rolls over to the
+   * other side; at rest it lies across the cockpit.
+   */
+  _paddleStroke(k, pw) {
+    const P = this.paddle, h = this.rider, b = h.bones;
+    const pose = (side, u) => {
+      // u 0..1 through the pull: the blade from the catch to the exit
+      const bz = lerp(0.95, -0.35, u), c = new THREE.Vector3(side * 0.08, 0.5 + 0.06 * Math.sin(Math.PI * u), lerp(0.42, 0.05, u));
+      const blade = new THREE.Vector3(side * 0.86, -0.14, bz);
+      return { c, d: blade.sub(c).normalize() };
+    };
+    const u = k.ph < KAYAK.catchOut ? k.ph / KAYAK.catchOut : 1;
+    let c, d;
+    if (k.ph < KAYAK.catchOut) ({ c, d } = pose(k.side, u));
+    else {
+      // the recovery: out of the water on this side, over, and in on the other
+      const r = (k.ph - KAYAK.catchOut) / (1 - KAYAK.catchOut), e = r * r * (3 - 2 * r);
+      const A = pose(k.side, 1), B = pose(-k.side, 0);
+      c = A.c.lerp(B.c, e);
+      const up = new THREE.Vector3(0, 1, 0);
+      d = A.d.clone().lerp(B.d, e);
+      d.addScaledVector(up, Math.sin(Math.PI * e) * 0.5).normalize();
+    }
+    // at rest the paddle lies across the cockpit, level
+    const rest = { c: new THREE.Vector3(0, 0.46, 0.28), d: new THREE.Vector3(1, 0, 0) };
+    c.lerp(rest.c, 1 - k.effort);
+    d.lerp(rest.d, 1 - k.effort).normalize();
+    P.position.copy(c);
+    P.quaternion.setFromUnitVectors(X_AXIS, d);
+    // torso: wound toward the catch, unwinding through the pull
+    const twist = k.side * lerp(0.32, -0.12, u) * k.effort;
+    b[BONES.spine].rotation.y = twist * 0.45;
+    b[BONES.chest].rotation.y = twist * 0.55;
+    // the grips, into world space, and the arms solved to them
+    this.group.updateMatrixWorld(true);
+    const gl = c.clone().addScaledVector(d, -0.36), gr = c.clone().addScaledVector(d, 0.36);
+    this.tilt.localToWorld(gl); this.tilt.localToWorld(gr);
+    h.group.updateMatrixWorld(true);
+    // the humanoid's left hand holds the paddle's -x grip
+    solveArm(b[BONES.shoulderL], b[BONES.elbowL], b[BONES.handL], gl, this.tilt, -1);
+    solveArm(b[BONES.shoulderR], b[BONES.elbowR], b[BONES.handR], gr, this.tilt, 1);
+    void pw;
+  }
+
+  /** The steering lock (rad) at road speed `sp`: the radius the tyres can
+   *  hold, r = v^2 / a, floored at the class's tightest turn. The derivation
+   *  is in update(), which is its main caller. */
+  steerLock(sp) {
+    const spec = this.spec;
+    const wheelbase = spec.wheelbase || spec.len * 0.62;
+    const agility = clamp(spec.latG / 0.88, 0.70, 1.32);
+    // Your own car bites harder at speed (PLAYER_BITE): at STEER_BITE a
+    // sedan at 110 km/h asked for a 38 m radius, and a city corner taken
+    // quick could not be made. The AI's lock is unchanged (aiSteer asks for
+    // an angle as a share of it, and its speeds were tuned against it).
+    const bite = this.detailedWheels ? PLAYER_BITE : STEER_BITE;
+    const turnR = Math.max((spec.minTurnR || 4.5) / agility, (sp * sp) / (spec.latA * ARCADE_GRIP * bite));
+    return Math.min(0.62, Math.atan(wheelbase / turnR));
+  }
+
+  /** The AI's steering input for a path curvature `kappa` (1/m, + = left):
+   *  the wheel angle the bicycle model needs, as a share of the lock. */
+  aiSteer(kappa) {
+    const wheelbase = this.spec.wheelbase || this.spec.len * 0.62;
+    return clamp(Math.atan(wheelbase * kappa) / Math.max(1e-3, this.steerLock(Math.abs(this.vLong))), -1, 1);
+  }
+
+  /**
+   * The AI's pedals for a wanted acceleration `a` (m/s^2), the inverse of the
+   * longitudinal model in update(): throttle or brake (never neither while
+   * moving -- that is engine braking, a fixed 2.4 m/s^2 step the AI cannot
+   * modulate), with the grade's pull fed forward. Writes out.throttle/brake.
+   */
+  aiPedals(a, out) {
+    const spec = this.spec, v = this.vLong;
+    const need = a - this.gradeA + v * Math.abs(v) * DRAG + v * ROLL;
+    if (need >= 0) {
+      const fade = 1 - clamp(v / spec.fadeTop, 0, 1);
+      out.throttle = clamp(need / Math.max(0.1, spec.acc * (spec.ev ? Math.sqrt(fade) : fade)), 0.002, 1);
+      out.brake = 0;
+    } else {
+      out.throttle = 0;
+      out.brake = clamp(-need / spec.brakeA, 0.002, 1);
+    }
+  }
+
+  update(dt, input) {
+    const spec = this.spec;
+    if (this.hitCd > 0) this.hitCd -= dt;
+    if (this.wreck) { this.updateWreck(dt); return STILL; }
+    if (this.crushed) { this.vLong = 0; this.vLat = 0; return STILL; }
+    if (spec.balloon) { this.updateBalloon(dt, input); return; }
+    if (spec.heli) { this.updateHeli(dt, input); return; }
+    if (spec.fighter) { this.updateFighter(dt, input); return; }
+    if (spec.plane) { this.updatePlane(dt, input); return; }
+    if (spec.kayak) { this.updateKayak(dt, input); return; }
+    if (spec.hydro) { this.updateHydro(dt, input); return; }
+    if (spec.boat) { this.updateBoat(dt, input); return; }
+    if (spec.amphib && this.updateDuck(dt, input)) return;
+    const throttle = input.throttle || 0;
+    this.pedaling = throttle > 0.05;
+    const brake = input.brake || 0;
+    const hand = spec.tank ? 0 : input.handbrake || 0;   // (a tank's HAND BRAKE button is its gun)
+    // PULL BACK TO WHEELIE (bikes and quads), as in GTA: the stick's other
+    // axis, which cars ignore and planes climb with. With the front wheel in
+    // the air there is less to steer with.
+    const light = !!(spec.moto || spec.atv);
+    const pull = light ? clamp(input.pitch || 0, -1, 1) : 0;
+    this.pullIn = pull;
+    const steerIn = clamp(input.steer || 0, -1, 1) * (1 - 0.6 * clamp(this.wheelie / 0.3, 0, 1));
+    if (this.stunt) { this.spin = 0; this.stuntAir(dt, steerIn, pull); return STILL; }
+
+    // One paved-surface query per body per frame, reused by all seven ground
+    // samples below -- the scan is too expensive to repeat per wheel.
+    this.lift = this.city.roadLift(this.x, this.z);
+    const sp = Math.abs(this.vLong);
+    // Steering authority falls off with speed so the car stays controllable.
+    // Steering is a GAME CONTROL here, not a tyre model.
+    //
+    // It has been through both extremes. First there was no lateral limit at
+    // all, and the friction circle added later clawed back 82 % of the input
+    // every frame at any real speed, which felt like the car ignoring you.
+    // Solving for the angle the tyres could actually hold fixed that, and was
+    // still wrong: honest grip at 110 km/h is a 49 m radius, and a city built
+    // from real street widths is not drivable at that.
+    //
+    // So grip no longer limits steering. What is left is a mechanical lock that
+    // eases off with speed -- enough that the car is not twitchy at 110, not so
+    // much that it stops turning. The resulting cornering is several g and
+    // entirely unrealistic, which is the point.
+    const wheelbase = spec.wheelbase || spec.len * 0.62;
+    // Heavy things still turn worse than light ones -- a bus does not corner
+    // like a hatchback -- so the class stays in it through `agility`.
+    // The clamp was tight enough at the top that a sportbike's declared grip
+    // never reached the steering lock -- it and a muscle car came out the same,
+    // which the bench caught as a class-order failure. Wide enough now that the
+    // table means something at both ends.
+    // (agility: see steerLock)
+    // Think in TURN RADIUS, not steering angle.
+    //
+    // A fixed angle means the yaw it produces scales with 1/wheelbase, and a
+    // motorcycle has a 1.36 m one. Measured, the sportbike was pulling 340
+    // degrees a second at 60 km/h -- a full circle in about a second. It was
+    // not cornering, it was spinning, and the resulting "radius" was worse than
+    // the sedan's at every speed above walking pace. That is the bike that
+    // leaned hard and would not go round corners.
+    //
+    // Asking for a radius and solving `atan(L / R)` for the angle gives every
+    // vehicle a comparable, controllable turn, and short wheelbases correctly
+    // come out slightly tighter rather than uncontrollable.
+    //
+    // The radius has to come from the grip that EXISTS, not from a curve picked
+    // by feel. Lerping 4.5 -> 11 m across the speed range asked a sedan at
+    // 122 km/h to hold an 11 m radius, which is 10.7 g of lateral acceleration
+    // against the 1.9 g its tyres actually have -- a demand 5.5x over the
+    // limit, rising with speed. The block below states that the steering limit
+    // IS the grip limit ("the yaw the car achieves IS the lateral
+    // acceleration"); with a radius like that the statement was simply untrue,
+    // nothing anywhere enforced grip, and the car pivoted on rails at a rate no
+    // tyre could produce. That is the wild high-speed steering.
+    //
+    // r = v^2 / a is the whole of it. STEER_BITE sits just over 1 so a corner
+    // taken flat out is at the limit with a little left to provoke, and every
+    // class differs by its own latG rather than by a fudge. The low-speed floor
+    // is unchanged, so parking-lot lock is exactly as tight as before -- below
+    // about 34 km/h the floor is what applies.
+    let lock = this.steerLock(sp)
+      * (hand > 0.5 ? 1.25 : 1)
+      * (brake > 0 && this.vLong > 0.4 ? 0.92 : 1);
+    // COUNTERSTEER (your car, _tyres): steering INTO a slide -- the wheels
+    // turned toward where the car is going, the same sign as its drift
+    // angle -- the lock opens to the slide's angle, so there is enough to
+    // catch it with: at 90 km/h the lock is ~8 deg, and a 25 deg slide needs
+    // more than that the other way. Only into it: opened in a plain bend it
+    // turned a fast slalom into a spin.
+    if (this.dynW !== undefined && this.slipAngle && steerIn * this.slipAngle > 0 && Math.abs(this.slipAngle) > 0.08) {
+      lock = Math.max(lock, Math.min(0.6, Math.abs(this.slipAngle) * 1.15 + 0.04));
+    }
+    // How fast the wheel reaches where you asked for it. At 11 the time
+    // constant is 91 ms and a step input took 233 ms to reach 90 % of its yaw,
+    // which is the "sloppy" -- the car was still winding on lock a fifth of a
+    // second after the input. 20 puts it near 115 ms.
+    // ...and the wheels lean into a slide by themselves a little (your car's
+    // tyres, not under the handbrake): the self-correction GTA's cars have,
+    // which turns "held full lock on full throttle" from a spin into a drift.
+    const selfCatch = this.dynW !== undefined && hand <= 0.5 && Math.abs(this.slipAngle || 0) > 0.08
+      ? clamp(this.slipAngle, -0.5, 0.5) * 0.4 : 0;
+    this.steer = lerp(this.steer, steerIn * lock + selfCatch, 1 - Math.exp(-20 * dt));
+    // REAR-WHEEL STEER (spec.rearSteer, the Wedge's 10 deg, like the truck
+    // it is after): the rear wheels turn AGAINST the fronts at parking speed,
+    // fading out by ~45 km/h, and a touch WITH them from ~65 km/h. Against,
+    // it tightens the turn (the yaw below); with, it is the same yaw from a
+    // steadier car -- the lock above already holds the grip limit, so it is
+    // drawn, not added. Your own vehicle only: the AI steers by the plain
+    // bicycle model inverted (aiSteer), which a tighter turn would fight.
+    if (spec.rearSteer && this.detailedWheels) {
+      const against = clamp(1 - (sp - 6) / 6.5, 0, 1), along = clamp((sp - 18) / 8, 0, 1);
+      this.rearSteer = clamp(this.steer * (0.25 * along - 0.45 * against), -spec.rearSteer, spec.rearSteer);
+    } else this.rearSteer = 0;
+
+    const top = spec.fadeTop;
+    let acc = 0;
+    if (throttle > 0) {
+      // A combustion car has to wind up to make power, so its pull fades
+      // linearly with speed. An electric motor is at full torque from zero and
+      // only tails off near the top, which is the whole character of the
+      // thing -- squaring the falloff is what makes it leap off the line and
+      // still feel like it runs out of road rather than out of revs.
+      const fade = 1 - clamp(this.vLong / top, 0, 1);
+      acc += spec.acc * throttle * (spec.ev ? Math.sqrt(fade) : fade);
+      if (this.vLong < -0.5) acc += spec.acc * 1.4 * throttle;
+    }
+    if (brake > 0) {
+      // Braking is per-class now. A fixed 16 m/s^2 is 1.63 g -- beyond any road
+      // tyre -- and it was applied to the refuse truck and the sports car
+      // alike, so every vehicle in the game stopped from 100 km/h in exactly
+      // 21.6 m. `brakeA` comes from the declared 100-0 distance.
+      if (this.vLong > 0.4) acc -= spec.brakeA * brake;
+      else acc -= spec.acc * 0.55 * brake * (1 - clamp(-this.vLong / (top * 0.42), 0, 1));
+    }
+    // slope. Not for a distant AI car (lowDetail, a phone past 60 m): its
+    // driver holds a target speed whatever the grade, so gravity along the
+    // road changes nothing anyone can see, and these were two of its ground
+    // queries a frame.
+    // Off pavement, a road car bogs down; the quad does not.
+    let rough = 0;
+    this.gradeA = 0;
+    if (!this.lowDetail) {
+      const fw = this.forward;
+      const gy = this.city.groundAt(this.x, this.z, this.y + 0.6, this.lift);
+      const ahead = this.city.groundAt(this.x + fw.x * 3, this.z + fw.z * 3, this.y + 2.5, this.lift);
+      // Low gearing and four driven knobblies: a quad climbs what stalls a
+      // sedan, so it pays half the grade.
+      this.gradeA = -clamp((ahead - gy) / 3, -0.7, 0.7) * 9.0 * (spec.offroad ? 0.5 : 1);
+      acc += this.gradeA;
+      // GRASS. Only for a vehicle nobody's AI is driving (the player's, or one
+      // coasting after being left): traffic keeps to the roads. "Paved" is a
+      // road's lift, a deck or lid (the ground there is not the terrain), or
+      // a lot, which the terrain shader paints as tarmac.
+      if (this._mode === 'free' && this.lift < 0.02 && Math.abs(gy - G.terrainHeight(this.x, this.z)) < 0.05
+        && !G.inLot(this.x, this.z)) {
+        rough = clamp(sp / 8, 0, 1);
+        // Rolling resistance on turf: a sedan tops out near 110 km/h on a
+        // lawn instead of 205, and a quad does not notice.
+        if (!spec.offroad) acc -= this.vLong * Math.abs(this.vLong) * 0.0055 + this.vLong * 0.25;
+      }
+    }
+
+    acc -= this.vLong * Math.abs(this.vLong) * DRAG; // aero
+    acc -= this.vLong * ROLL; // rolling resistance
+    if (throttle === 0 && brake === 0 && Math.abs(this.vLong) > 0.3) {
+      // engine braking, or regen -- which bites noticeably harder
+      acc -= Math.sign(this.vLong) * (spec.ev ? 4.6 : 2.4);
+    }
+    // (your car's tyre model slides the locked rears instead: half the bite,
+    // so a handbrake turn keeps its way on -- _tyres)
+    if (hand > 0.5 && this.vLong > 0) acc -= this.dynW !== undefined ? 5 : 11;
+    // A BURNOUT (spec.rwd, your own car): GAS and BRAKE together at a stand.
+    // The fronts hold it, the rears spin -- smoke, the squeal, the engine on
+    // the limiter -- and the stick swings it into a donut (below, after the
+    // yaw). Let the brake go after half a second of it and it launches.
+    // (Up to 8 m/s once it is going: a donut's own speed must not end it.)
+    const bo = !!(spec.rwd && this.detailedWheels && this.onGround !== false
+      && throttle > 0.4 && brake > 0.4 && this.vLong > -1.5 && this.vLong < (this.burnout ? 8 : 3));
+    if (bo) acc = 0;
+    else if (this.burnoutT > 0.5 && throttle > 0.4) this.launchT = 0.7;
+    this.burnout = bo;
+    this.burnoutT = bo ? (this.burnoutT || 0) + dt : 0;
+    // (a launch off warm tyres: a third again for 0.7 s, not a catapult)
+    if (this.launchT > 0) { this.launchT -= dt; acc += spec.acc * 0.35 * throttle; }
+    this.vLong += acc * dt;
+    if (Math.abs(this.vLong) < 0.12 && throttle === 0) this.vLong *= 0.82;
+    // NOBODY AT THE WHEEL: the parking brake. Unattended vehicles used to get
+    // a feather of BRAKE, and at a standstill the brake is reverse gear, so
+    // every parked or abandoned car crept backwards -- and on a hill gravity
+    // took it from there. Now it holds: up to 9 m/s^2 (a 1-in-1 grade) is
+    // cancelled outright at rest. A car bailed out of at speed coasts down
+    // first, the way it would with its engine off.
+    if (input.park) {
+      const hold = Math.abs(this.vLong) < 4 ? 9 : 2.5;
+      const d = hold * dt;
+      this.vLong = Math.abs(this.vLong) <= d ? 0 : this.vLong - Math.sign(this.vLong) * d;
+    }
+
+    // Bicycle-model yaw plus lateral slip for arcade drift. `wheelbase` comes
+    // from the authored builders' real axle centres -- `len * 0.62` was a guess
+    // made before any vehicle had a wheelbase to read, and it put the bus's
+    // axles 7.4 m apart against a real 6.
+    // rear steer: only AGAINST the fronts adds yaw (with them is drawn only: see above)
+    const rsAgainst = this.rearSteer * this.steer < 0 ? this.rearSteer : 0;
+    // (a burnout's donut winds up over half a second rather than snapping round)
+    this.boYaw = bo ? damp(this.boYaw || 0, steerIn * BO_YAW, 2.6, dt) : 0;
+    // your road car above walking pace, on the ground: the tyre model
+    // (not a bus or a truck: 12 m of bus does not drift, it goes where it is steered)
+    const dyn = this.detailedWheels && !spec.tank && !light && !spec.bicycle && !bo && spec.len < 7
+      && this.onGround !== false && this.vLong > TYRE_FROM;
+    if (!dyn) this.dynW = undefined;
+    const yawRate = dyn ? this._tyres(dt, wheelbase, throttle, brake, hand, rsAgainst)
+      : spec.tank ? this._tankYaw(dt, steerIn)
+      : this.burnout ? this.boYaw
+      : (this.vLong / wheelbase) * (Math.tan(this.steer) - Math.tan(rsAgainst));
+    // A HIT'S SPIN (traffic.js pairImpulse / wallImpulse) rides on top of the steering's
+    // yaw. The body turns under its own velocity, so the body-frame velocity
+    // is turned back by the same angle: the car slides on the line it was
+    // knocked along instead of carrying its speed round with its nose.
+    let spin = this.spin;
+    if (spin !== 0) {
+      const a = spin * dt, c = Math.cos(a), s = Math.sin(a), vl = this.vLong, vt = this.vLat;
+      this.vLong = vl * c + vt * s;
+      this.vLat = vt * c - vl * s;
+      // The tyres scrubbing sideways take the spin off: a share of it a
+      // second, and a constant torque that ends it rather than leaving a
+      // creep that never quite stops. A car sliding fast barely resists the
+      // turn (its tyres' friction mostly opposes the slide), one nearly at
+      // rest resists it hard -- so a wall's corner hit that stops the car
+      // dead does not leave it pirouetting on the spot. A hard T-bone turns
+      // the victim ~1 rad over ~1.5 s; a wall-stopped car settles in < 1 s.
+      const slow = 1 + SPIN_SLOW * clamp(1 - Math.hypot(this.vLong, this.vLat) / 8, 0, 1);
+      const d = Math.abs(spin) * SPIN_DAMP * dt + SPIN_FRIC * slow * dt;
+      spin = Math.abs(spin) <= d ? 0 : spin - Math.sign(spin) * d;
+      this.spin = spin;
+    }
+    this.yawRate = yawRate + spin;
+    this.heading += this.yawRate * dt;
+
+    // The battery floor puts the mass under the axle line, so it holds on
+    // rather than leaning; the handbrake still breaks it loose.
+    // Lateral damping: how quickly a sideways slide is scrubbed off. Higher is
+    // tighter, because the car goes where it is pointed instead of crabbing.
+    // Two wheels barely slide until they let go completely, so a bike that
+    // crabs like a car reads as vague.
+    // Lateral damping. Higher is tighter: the car goes where it is pointed
+    // rather than crabbing. With the grip clamp gone the yaw is much larger, so
+    // without scrubbing the slip off harder all of that extra rotation would
+    // come out as slide.
+    // (tracks do not slide: a tank goes where its hull points)
+    const gripBase = spec.tank ? 40 : spec.moto ? 30 : spec.bus || spec.cargo ? 18 : spec.ev ? 26 : 24;
+    const grip = hand > 0.5 ? 1.5 : gripBase;
+    if (!this.burnout && !dyn) this.vLat += -yawRate * this.vLong * dt;
+    const before = this.vLat;
+    if (dyn) {
+      // (the tyres did it: _tyres)
+    } else if (this.burnout) {
+      // THE DONUT. A real one turns about a point BO_R inside the front axle,
+      // not about the car's own middle: the fronts roll round a small circle
+      // while the spinning rears swing the tail out round a wider one -- a
+      // ring of smoke ~10 m across, not a pirouette on the spot. A body
+      // turning at w about a point (a ahead, b to the right) moves at
+      // vLong = w*b, vLat = -w*a: forward, with the tail sliding out.
+      // Steer nothing and w is 0: a burnout on the spot.
+      const w = this.boYaw, a = wheelbase * 0.5, b = Math.sign(w) * BO_R;
+      const k = 1 - Math.exp(-6 * dt);
+      this.vLong += (w * b - this.vLong) * k;
+      this.vLat += (-w * a - this.vLat) * k;
+    } else if (this.slide > 0) {
+      // After a hit the tyres have let go (`slide`, set by traffic.js kick):
+      // the scrub is capped at a sliding tyre's friction, SLIDE_DECEL, the
+      // cap lifting as the tyres bite again -- so a car knocked sideways at
+      // 11 m/s skids several metres across the road instead of stopping in
+      // half a metre, which is what made a T-bone a brick wall. (A plain
+      // blend of the exponential scrub let 24/s back in long before the
+      // slide was over: the victim stopped in 3 m.)
+      const cap = SLIDE_DECEL / Math.max(0.05, Math.min(1, this.slide));
+      const d = Math.min(Math.abs(this.vLat) * (1 - Math.exp(-grip * dt)), cap * dt);
+      this.vLat -= Math.sign(this.vLat) * d;
+      this.slide = Math.max(0, this.slide - dt / SLIDE_T);
+    } else this.vLat *= Math.exp(-grip * dt);
+
+    // Grip is spent in the steering limit above, so there is nothing left to
+    // claw back here. What remains is the slide itself: lateral velocity that
+    // the tyres are scrubbing off, which is what the handbrake unleashes and
+    // what the skid sound and marks read from.
+    // What the bike is actually pulling laterally. This used to come out of the
+    // friction-circle block that the steering clamp replaced; with steering
+    // limited to what grip supports, the yaw the car achieves IS the lateral
+    // acceleration, so there is nothing to correct for.
+    this.latAcc = dyn ? this.tyreLat : yawRate * this.vLong;
+    this.skid = this.burnout ? 1 : dyn ? this.tyreSkid : clamp(Math.abs(before) * 0.35, 0, 1);
+    // where the tyres mark the road (main.js skid marks): the rears in a
+    // burnout, a slide or a handbrake turn, the fronts pushing wide or locked
+    this.markR = this.burnout ? 1 : dyn ? this.tyreMarkR : this.detailedWheels && hand > 0.5 && sp > 6 ? 0.8 : 0;
+    this.markF = dyn ? this.tyreMarkF : 0;
+
+    const f = this.forward;
+    const rx = f.z, rz = -f.x;
+    let dx = (f.x * this.vLong + rx * this.vLat) * dt;
+    let dz = (f.z * this.vLong + rz * this.vLat) * dt;
+
+    this.x += dx;
+    this.z += dz;
+    this.x = G.clampToMap(this.x);
+    this.z = G.clampToMap(this.z);
+
+    // Ground under each contact patch. Sampled BEFORE the vertical follow,
+    // because the height the body should sit at is the plane through its four
+    // wheels, not the ground under its centre. On a crest the centre reads high
+    // and the wheels hang; in a dip it reads low and they sink.
+    const f2 = this.forward;
+    const rx2 = f2.z, rz2 = -f2.x;
+    // THE REFERENCE IS THE WHEELS, not a point 1.5 m over them. groundAt
+    // takes the surface nearest its reference within DECK_REACH (0.9 m) above
+    // it -- "a deck may only pick you up if it is at your wheels" -- and from
+    // y + 1.5 that let any deck up to 2.4 m over the lane win: a ramp running
+    // beside the freeway 1.5 m higher, or a low overpass, captured cars on
+    // the carriageway under it and dropped them off its end (v162: I-5 under
+    // NE 45th St, SR-99 and Aurora beside their ramps, the 520 diverge).
+    const REF = 0.45;
+    const gAt = (ox, oz) => this.city.groundAt(this.x + ox, this.z + oz, this.y + REF, this.lift);
+    // A DISTANT AI car rides its centre sample. traffic.js sets lowDetail on a
+    // phone for cars past 60 m, where a level body on a slope is centimetres
+    // off at each end -- invisible -- and the four wheel queries were most of
+    // what traffic cost there (3.3 ms a frame on an iPhone 17 Pro, 58 cars).
+    const low = this.lowDetail;
+    const cg = low ? this.city.groundAt(this.x, this.z, this.y + REF, this.lift) : 0;
+    const fh = low ? cg : gAt(f2.x * this.halfLen, f2.z * this.halfLen);
+    const bh = low ? cg : gAt(-f2.x * this.halfLen, -f2.z * this.halfLen);
+    // A bike has TWO contact patches, both on the centreline. Sampling out to
+    // the half-width and averaging four is right for a car straddling a road's
+    // camber; on a bike those two samples are the gutter and the crown of a
+    // road it is nowhere near, and the average buries it or floats it by half
+    // the camber. Two samples also cost two `groundAt` calls instead of four.
+    const two = !!spec.moto;
+    const lh = two ? 0 : low ? cg : gAt(rx2 * this.halfWid, rz2 * this.halfWid);
+    const rh = two ? 0 : low ? cg : gAt(-rx2 * this.halfWid, -rz2 * this.halfWid);
+
+    // vertical: follow ground, with a little air time over crests
+    let target = two ? (fh + bh) / 2 : (fh + bh + lh + rh) / 4;
+    // THE FLOOR OF A TUNNEL DOES NOT TELEPORT UPWARD. The four wheel samples
+    // are what eject a car from a bore: at a bend seam one wheel's query can
+    // escape the deck and read the bank 9-20 m overhead, the average jumps
+    // metres in a frame, and the rise launcher below fires the car through
+    // the roof -- after which the in-bore rule ratchets and it never comes
+    // back. A car genuinely underground (raw ground 4+ m above it) whose
+    // floor "rises" 3+ m in one frame is reading the world above, not the
+    // road below: hold height and let the deck's widened capture re-acquire
+    // next frame. Legitimate driving cannot trip this -- kerbs are
+    // centimetres, ramps are grades, and leaving a portal the raw cover
+    // shrinks below 4 m well before any real climb.
+    // HOLD ONLY THE SPIKE. Three shapes of this guard were measured and two
+    // were worse than none: refusing every rise over 2.2 m and rate-limiting
+    // all underground rises both destroyed the follow's self-healing -- the
+    // exponential snap-back is what recovers a car from one lost-capture
+    // frame -- and test rides sank away (below sea level the water drag then
+    // compounds it, and nothing comes back from that). Only a JUMP of 3+ m in
+    // a single frame is ever the world-above leaking through a wheel sample;
+    // everything smaller must pass through untouched at full speed.
+    //
+    // The underground gate is 2.5 m of raw cover, not 4: the SR-99 tube runs
+    // its last few hundred metres under thin cover, and at 4 the guard stood
+    // down exactly there -- measured, a +3.28 eject at (-52, 450) under 3.4 m
+    // of cover after 1.9 km ridden underground.
+    if (target - this.y > 3 && G.terrainRaw(this.x, this.z) - this.y > 2.5) {
+      target = this.y;
+    }
+    // STUNT RAMPS ride on the CENTRE. The four-wheel plane is right for a
+    // road, but at a lip the front pair reads the ground beyond it and the
+    // average sinks the car into the ramp for the last car-length -- it would
+    // leave from half-way up. The centre sample keeps it on the ramp to the
+    // lip, followed stiffly (the usual lerp lags ~0.4 m on a 20 deg kicker).
+    // Leaving it, the car carries the ramp's vertical speed into the air.
+    const onRamp = this.city.rampMask && !low ? this.city.rampHere(this.x, this.z) : null;
+    if (onRamp) {
+      const ry = this.city.rampY(onRamp, this.x, this.z);
+      if (ry > target) target = ry;
+      const along = (f2.x * onRamp.dx + f2.z * onRamp.dz) * this.vLong + (rx2 * onRamp.dx + rz2 * onRamp.dz) * this.vLat;
+      this.rampRef = onRamp; this.rampT = 0.3;
+      this.rampAlong = along;
+      this.rampVy = along * this.city.rampSlope(onRamp, this.x, this.z);
+    } else if (this.rampRef && (this.rampT -= dt) <= 0) this.rampRef = null;
+    if (this.y > target + 0.25 && this.rampRef && !onRamp && this.onGround && this.rampVy > 1.5) {
+      // Off the lip: a stunt flight from here (stuntAir) until the wheels
+      // find the ground again.
+      this.stunt = true;
+      this.onGround = false;
+      // A bike or a quad POPS off the lip: a rider unloads the suspension into
+      // the kicker, and pulling back as you leave it pops harder. Without it a
+      // quad (26-33 m/s at the lip against a car's 40-50) cleared the ramps by
+      // a metre or two and felt like driving off a kerb.
+      this.vy = light ? this.rampVy * 1.15 + 3.5 * clamp(pull, 0, 1) + 1.0 : this.rampVy;
+      this.spinRate = 0;
+      this.stuntLaunch = this.rampRef;
+      this.rampRef = null;
+      this.sync();
+      return { dx, dz };
+    }
+    // THE GROUND'S OWN DESCENT IS NOT A FALL. A car going down a 20 % street
+    // at 24 m/s rides a floor that drops 5 m/s. The exponential follow below
+    // lags a falling floor by rate / 18 = 0.3 m, which is over the 0.25 m that
+    // means "airborne" -- and the fall then began from vy = 0, so the car hung
+    // while the road ran away, dropped, landed with a snap and did it again.
+    // Measured on SW Genesee St (-23 %): 40 of 136 frames airborne, 18
+    // take-offs, 60 frames over 30 m/s^2, a peak of 790.
+    //
+    // So the follow is FED FORWARD with the floor's descent -- but only while
+    // that descent is STEADY. The rate is a ~0.12 s average of the floor's own
+    // motion (`floorVy`); the feed-forward is faded out when the floor's rate
+    // this frame disagrees with it by 1-3 m/s, which is what the far side of a
+    // crest does (the floor goes from rising to falling in a car length). There
+    // the old lag rule runs untouched and the car takes off exactly as before,
+    // at the hang the player likes: a steady grade is a slope, a crest is a
+    // jump. (A free-fall "ballistic" test replaced the lag rule here first. It
+    // was physically right and gave a bus a quarter of master's crest, a pickup
+    // half, and read the follow's own catch-up after a data step as a climb.)
+    // A fall that does start leaves with the descent it was following.
+    //
+    // A STEP in the floor (a deck taken or lost, a teleport, a ramp lip: more
+    // than 0.25 m in a frame) is not a slope and keeps the plain rule, and so
+    // does everything on a stunt ramp, whose lip launch reads the lag on purpose.
+    const seen = this.prevTarget !== undefined;
+    const dT = seen ? target - this.prevTarget : 0;
+    this.prevTarget = target;
+    const slope = seen && dt > 0 && !onRamp && !this.rampRef && Math.abs(dT) < 0.25;
+    let ffVy = 0;
+    if (slope) {
+      const raw = dT / dt;
+      // the first frame after a step, a spawn or a teleport has no average yet:
+      // it takes the raw rate if the floor is falling (a car dropped on a slope
+      // is not "hanging"), 0 if rising
+      const before = this.floorOk ? this.floorVy : clamp(raw, -20, 0);
+      this.floorVy = this.floorOk ? before + (raw - before) * (1 - Math.exp(-dt / 0.12)) : before;
+      ffVy = Math.min(0, this.floorVy + FF_FREE) * clamp((3 - Math.abs(raw - before)) / 2, 0, 1);
+    } else this.floorVy = 0;
+    this.floorOk = slope;
+    if (onRamp && this.y <= target + 0.25) {
+      this.y = target; this.vy = 0; this.onGround = true;
+    } else if (this.y > target + 0.25) {
+      if (this.onGround && this.vy <= 0) this.vy = this.carVy;
+      this.vy -= 22 * dt;
+      this.y += this.vy * dt;
+      this.onGround = false;
+      if (this.y <= target) { this.y = target; this.vy = 0; this.onGround = true; }
+    } else {
+      const rise = target - this.y;
+      if (rise > 0.6 && sp > 6) { this.vy = Math.min(6, rise * 4); }
+      this.y = lerp(this.y + ffVy * dt, target, 1 - Math.exp(-18 * dt));
+      this.onGround = true;
+    }
+    // what a fall starting next frame leaves with: the steady descent the
+    // follow was riding (0 at a crest or over a step -- the follow's own
+    // catch-up after a step up is not a velocity). A landing on a slope leaves
+    // the floor's descent too, not 0: falling from rest there is the hop chain
+    this.carVy = this.onGround ? ffVy : this.vy;
+
+    // body attitude, from the samples taken above
+    // (your car's dive and squat are its suspension's, below)
+    let tgtPitch = Math.atan2(bh - fh, this.halfLen * 2) - (this.detailedWheels && !two ? 0 : clamp(acc, -12, 12) * 0.0045);
+    // Ruts and tussocks. The heightfield is 40 m smooth, so without this a
+    // quad on a field glides like a car on a motorway. Deterministic in
+    // position, so standing still is still; a road car on grass jolts too.
+    let rut = 0;
+    if (rough > 0) {
+      rut = (Math.sin(this.x * 1.9 + this.z * 0.7) * Math.sin(this.z * 2.3 - this.x * 0.4)) * rough;
+      tgtPitch += rut * (spec.offroad ? 0.022 : 0.012);
+    }
+    // `lh` is sampled along the body's local +X, and a positive rotation.z
+    // raises local +X -- so the far side has to be SUBTRACTED, not the near one.
+    // Reversed, the car leaned into the slope instead of along it: measured on
+    // a 2.4 deg cross-slope, the +X wheels sat 7.2 cm under the road while the
+    // other pair floated 7.1 cm above it, which is the two-wheels-in-the-air.
+    // A motorcycle leans INTO the corner instead of rolling out of it, at the
+    // angle that balances it: tan(lean) = lateral acceleration / g. `rotation.z`
+    // raises local +X and a positive yaw rate turns the bike toward +X, so
+    // leaning in is a NEGATIVE roll -- the sign that is easiest to get
+    // backwards here, and a bike leaning out of its corners is unmissable.
+    // Faded out below walking pace so a parked bike stands up straight.
+    const tgtRoll = two
+      // Lean is now a function of how hard you are STEERING, not of the
+      // lateral acceleration that produces.
+      //
+      // Cornering is several g by design, so the physical balance angle
+      // `atan(lat/g)` saturates any sane cap the moment you touch the bars --
+      // measured, the bike sat pinned at its 45 deg limit at 30, 60 and 100
+      // km/h alike, which is why it looked like it was falling over in every
+      // turn regardless of how gentle. Steering as a fraction of available lock
+      // gives a lean that is proportional to what the rider asked for, and it
+      // still fades out below walking pace so a parked bike stands up.
+      ? -0.70 * clamp(this.steer / Math.max(lock, 1e-3), -1, 1) * clamp((sp - 0.8) / 6, 0, 1)
+      : Math.atan2(lh - rh, this.halfWid * 2) + clamp(this.vLat, -9, 9) * 0.016
+        + (rough > 0 ? Math.sin(this.x * 2.7 - this.z * 1.3) * rough * (spec.offroad ? 0.03 : 0.015) : 0);
+    this.pitch = lerp(this.pitch, tgtPitch, 1 - Math.exp(-10 * dt));
+    // YOUR CAR'S SUSPENSION: the body (not the wheels: sync) leans out of a
+    // bend, dives under braking and squats under power, on a spring that
+    // overshoots a little and settles -- the weight moving about is most of
+    // what makes a car feel heavy rather than a box on rails. The measured
+    // longitudinal acceleration (susAx) also feeds the tyres' load (_tyres).
+    if (this.detailedWheels && !two && !spec.tank) {
+      const ax = dt > 0 ? (this.vLong - (this._vlWas !== undefined ? this._vlWas : this.vLong)) / dt : 0;
+      this._vlWas = this.vLong;
+      this.susAx = lerp(this.susAx || 0, clamp(ax, -30, 30), 1 - Math.exp(-12 * dt));
+      // tall and soft (vans, SUVs, pickups, buses) lean more, a sports car less
+      const soft = clamp(((spec.roof || 1.5) - 1.2) / 0.6, 0.6, 1.6);
+      const rollT = this.onGround ? 0.06 * soft * Math.tanh((this.latAcc || 0) / 24) : 0;
+      const pitchT = this.onGround ? -0.04 * soft * Math.tanh(this.susAx / 16) : 0;
+      const K = 95, C = 9;          // ~1.5 Hz, ~45 % damped
+      this.susRollV = (this.susRollV || 0) + (K * (rollT - (this.susRoll || 0)) - C * (this.susRollV || 0)) * dt;
+      this.susRoll = clamp((this.susRoll || 0) + this.susRollV * dt, -0.12, 0.12);
+      this.susPitchV = (this.susPitchV || 0) + (K * (pitchT - (this.susPitch || 0)) - C * (this.susPitchV || 0)) * dt;
+      this.susPitch = clamp((this.susPitch || 0) + this.susPitchV * dt, -0.08, 0.08);
+    } else if (this.susRoll || this.susPitch) {
+      this.susRoll = this.susPitch = this.susRollV = this.susPitchV = 0; this._vlWas = undefined;
+    }
+    if (light) {
+      // Held on the gas with the stick back, the nose comes up to a balance
+      // angle in proportion to the pull; let go, or lift off, and it drops.
+      const up = this.onGround && sp > 2.5 && this.vLong > 0 && throttle > 0.3 && pull > 0.25;
+      const want = up ? (spec.atv ? 0.42 : 0.55) * clamp((pull - 0.25) / 0.6, 0, 1) : 0;
+      this.wheelie = lerp(this.wheelie, want, 1 - Math.exp(-(want > this.wheelie ? 3.2 : 6) * dt));
+      if (this.wheelie > 0.2) this.wheelieT += dt;
+      else if (this.wheelie < 0.08 && this.wheelieT > 0) { if (this.wheelieT > 2) this.wheelieDone = this.wheelieT; this.wheelieT = 0; }
+    }
+    // A bike's lean IS its steering, visually, so it has to arrive with the
+    // turn rather than a tenth of a second behind it -- lagging the yaw is what
+    // makes the controls feel like they are wallowing.
+    this.roll = lerp(this.roll, tgtRoll, 1 - Math.exp(-(two ? 17 : 10) * dt));
+
+    this.wheelSpin += (this.vLong / (this.assets.wheelR || 0.34)) * dt;
+    // a burnout's rears spin on their own, as fast as reads as spinning (any
+    // faster and a spoked wheel strobes back to slow at 30-60 fps; see sync)
+    if (this.burnout) this.boSpin = ((this.boSpin || 0) + 22 * dt) % (Math.PI * 2);
+    if (this.tank) this._tankParts(dt, yawRate);
+    this.sync();
+    return { dx, dz };
+  }
+
+  /**
+   * SKID STEERING. A tank turns by driving one track faster than the other,
+   * so the stick asks for a YAW RATE, not a wheel angle: the full rate at a
+   * standstill (it pivots on the spot), falling with speed, reversed in
+   * reverse like a car's. The turn is slow to build (62 t of it), and the
+   * scrubbing tracks take speed off it: a hard turn at speed slows you down.
+   */
+  /**
+   * YOUR CAR'S TYRES: a two-axle model with slip angles, for the player's
+   * road car above TYRE_FROM (Vehicle.update; under it, and for everyone
+   * else, the plain bicycle model). Returns the yaw rate and sets vLat (and
+   * vLong's scrub) itself.
+   *
+   * The plain model points the car where the front wheels point and wipes
+   * any sideways speed out at 24/s: it cannot slide unless the handbrake
+   * cuts that to 1.5, and then it slides like a puck. Here each axle makes
+   * a sideways force from its own slip angle (tyreF: peaks at ~8.5 deg, a
+   * sliding tyre keeps ~80 %), so:
+   * - in a normal bend both axles work below the peak and the car goes
+   *   where it is steered -- the same radius as the lock asks for;
+   * - past the limit the front lets go first (FRONT_SHARE) and the car
+   *   runs wide;
+   * - a rear-drive car's engine spends rear grip (DRIVE_EAT): power in a
+   *   bend and the tail steps out, and holds out while you feed it;
+   * - braking moves the load forward (so the tail goes light), and the
+   *   handbrake locks the rears (HAND_GRIP): a handbrake turn, a drift;
+   * Countersteer is what catches it: the lock opens up to the slide's
+   * angle (Vehicle.update), and the camera looks partly along the slide.
+   */
+  _tyres(dt, L, throttle, brake, hand, rsAgainst) {
+    const spec = this.spec;
+    // (a hit's spin rides on top of this, as for everyone: Vehicle.update)
+    let w = this.dynW !== undefined ? this.dynW : (this.yawRate || 0) - (this.spin || 0);
+    const a = L * 0.5, b = L * 0.5;
+    const heavy = spec.bus || spec.cargo;
+    const k2 = a * b * (heavy ? 1.25 : 0.95);                     // yaw inertia / mass
+    const hcg = (spec.roof || 1.5) * 0.36;                         // centre of gravity height
+    let u = this.vLong, v = this.vLat;
+    // grip: the steering lock's, with a little downforce at speed
+    let D = spec.latA * ARCADE_GRIP * PLAYER_BITE * TYRE_K * (1 + clamp((u - 20) / 40, 0, 0.25));
+    if (this.slide > 0) {
+      // knocked loose by a hit (traffic.js kick): the tyres bite again over SLIDE_T
+      D *= 1 - 0.55 * Math.min(1, this.slide);
+      this.slide = Math.max(0, this.slide - dt / SLIDE_T);
+    }
+    // load on each axle: braking puts it on the front, the throttle on the rear
+    // (capped at 7 % of the load each way: more, and braking hard on lock at
+    // 100 km/h lightened the rear enough to spin the car -- ABS-era cars
+    // rotate a little under trail-braking, they do not swap ends)
+    const sf = 0.5 - clamp((this.susAx || 0) / 9.81 * hcg / L, -0.07, 0.07);
+    const Df0 = D * sf * 2 * 0.5 * FRONT_SHARE, Dr0 = D * (1 - sf) * 2 * 0.5;
+    // the longitudinal force each axle carries, out of the same grip
+    const fade = 1 - clamp(u / spec.fadeTop, 0, 1);
+    // Past ~25 deg of drift the pull's bite on the rears fades (a traction
+    // control's job): power holds a slide, it does not swap ends. Holding
+    // full lock on full throttle out of a junction in a muscle car, without
+    // it, spun it every time.
+    const tc = clamp(1 - (Math.abs(this.slipAngle || 0) - 0.35) / 0.25, 0.2, 1);
+    const drv = throttle > 0 ? spec.acc * throttle * (spec.ev ? Math.sqrt(fade) : fade) * DRIVE_EAT * tc : 0;
+    const rearShare = spec.rwd ? 1 : spec.ev ? 0.55 : 0;
+    const brk = brake > 0 ? spec.brakeA * brake : 0;
+    const fxF = drv * (1 - rearShare) + brk * 0.68;
+    const fxR = drv * rearShare + brk * 0.32;
+    const left = (D0, fx, min) => Math.sqrt(Math.max(D0 * D0 - fx * fx, (D0 * min) * (D0 * min)));
+    const Df = left(Df0, fxF, 0.35);
+    const Dr = hand > 0.5 ? Dr0 * HAND_GRIP : left(Dr0, fxR, 0.3);
+    const d = this.steer, dr = rsAgainst;
+    const n = u < 8 ? 6 : 3, h = dt / n;
+    let aF = 0, aR = 0, fyF = 0, fyR = 0;
+    for (let i = 0; i < n; i++) {
+      aF = Math.atan2(v + w * a, u) - d;
+      aR = Math.atan2(v - w * b, u) - dr;
+      fyF = -tyreF(aF, Df);
+      fyR = -tyreF(aR, Dr);
+      // body frame: the sideways forces, the steered front's drag, and the
+      // turn carrying each velocity component into the other
+      v += (fyF * Math.cos(d) + fyR - u * w) * h;
+      u += (-fyF * Math.sin(d) + v * w) * h;
+      w += ((a * fyF * Math.cos(d) - b * fyR) / k2) * h;
+    }
+    this.vLat = v;
+    this.vLong = Math.max(u, 0);
+    this.dynW = w;
+    this.tyreLat = fyF * Math.cos(d) + fyR;
+    // how hard the tyres are sliding: the squeal, the smoke, the marks
+    const over = (x, D0, Dn) => clamp((Math.abs(x) - 0.13) / 0.18, 0, 1) * clamp(Dn / Math.max(D0, 1e-3) + 0.3, 0, 1);
+    const spinR = rearShare > 0 && fxR > Dr0 * 0.9 ? clamp((fxR / Dr0 - 0.9) * 3, 0, 1) : 0;
+    this.tyreMarkR = Math.max(over(aR, Dr0, Dr), hand > 0.5 && u > 5 ? 0.8 : 0, spinR);
+    this.tyreMarkF = Math.max(over(aF, Df0, Df), brake > 0.85 && u > 12 ? 0.35 : 0);
+    this.tyreSkid = Math.max(this.tyreMarkR, this.tyreMarkF * 0.8);
+    // the DRIFT angle: how far the rear axle is travelling off its own line
+    // (the body's slip angle is not it -- turning tight at walking pace, the
+    // middle of the car moves at b/R off its heading without sliding at all)
+    this.slipAngle = Math.atan2(v - w * b, Math.max(u, 0.1)) - dr;
+    return w;
+  }
+
+  _tankYaw(dt, steerIn) {
+    const sp = Math.abs(this.vLong);
+    const want = steerIn * TANK.pivot / (1 + sp / TANK.pivotFade) * (this.vLong < -0.5 ? -1 : 1);
+    this.yawRate = lerp(this.yawRate, want, 1 - Math.exp(-4.5 * dt));
+    if (sp > 0.2) {
+      const scrub = Math.min(sp, Math.abs(this.yawRate) * sp * 0.22 * dt);
+      this.vLong -= Math.sign(this.vLong) * scrub;
+    }
+    return this.yawRate;
+  }
+
+  /**
+   * The turret and gun slew toward where they are asked to point (tank.js
+   * sets yawWant/elevWant and aimT each frame it aims; unaimed, they stow
+   * ahead), the gun runs out after recoil, the hull settles from a shot, and
+   * the belts move: each side's travel is the hull's speed less (left) or
+   * plus (right) the turn. Out of a tank, the turret's homecoming ends with
+   * the live parts baked back in (setDetailed).
+   */
+  _tankParts(dt, yawRate) {
+    const T = this.tank;
+    T.aimT -= dt;
+    const yW = T.aimT > 0 ? T.yawWant : 0, eW = T.aimT > 0 ? T.elevWant : 0;
+    const dy = Math.atan2(Math.sin(yW - T.yaw), Math.cos(yW - T.yaw));
+    T.yaw += clamp(dy, -TANK.traverse * dt, TANK.traverse * dt);
+    T.yaw = Math.atan2(Math.sin(T.yaw), Math.cos(T.yaw));
+    T.elev += clamp(eW - T.elev, -TANK.elevRate * dt, TANK.elevRate * dt);
+    T.recoil = Math.max(0, T.recoil - dt * (T.recoil > 0.25 ? 2.2 : 1.1));
+    T.rock *= Math.exp(-5 * dt);
+    T.bump *= Math.exp(-7 * dt);
+    T.sL += (this.vLong - yawRate * TANK.trackX) * dt;
+    T.sR += (this.vLong + yawRate * TANK.trackX) * dt;
+    if (T.stow && Math.abs(T.yaw) < 0.01 && Math.abs(T.elev) < 0.01 && T.recoil < 0.01) {
+      T.yaw = T.elev = T.recoil = 0;
+      T.stow = false;
+      this.setDetailed(false);
+    }
+  }
+
+  /**
+   * A hulk: thrown by the blast that made it, tumbling about its long axis,
+   * bouncing once, and coming to rest on its wheels or its roof. Burnt black
+   * (tank.js). It never drives again; traffic.js removes it like any other
+   * abandoned car once you are far away.
+   */
+  updateWreck(dt) {
+    const W = this.wreck;
+    W.t += dt;
+    this.vLong = 0; this.vLat = 0;
+    this.lift = this.city.roadLift(this.x, this.z);
+    const g = this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift);
+    const hw = this.halfWid, roof = this.spec.roof || 1.5;
+    // how far the base must stand off the ground at a roll: 0 upright, the
+    // half-width on its side, the roof's height upside down
+    const off = (rr) => { const sn = Math.abs(Math.sin(rr)), cs = Math.cos(rr); return sn * hw + (1 - cs) * 0.5 * roof * (1 - sn * 0.5); };
+    if (!W.rest) {
+      W.vy -= 15 * dt;
+      this.y += W.vy * dt;
+      this.x = G.clampToMap(this.x + W.vx * dt);
+      this.z = G.clampToMap(this.z + W.vz * dt);
+      this.roll += W.spin * dt;
+      this.pitch += W.spin * 0.12 * dt;
+      const floor = g + off(this.roll);
+      if (this.y <= floor && W.vy < 0) {
+        this.y = floor;
+        if (W.vy < -4) { W.vy *= -0.3; W.spin *= 0.55; W.vx *= 0.5; W.vz *= 0.5; }
+        else {
+          W.rest = true;
+          const rr = Math.atan2(Math.sin(this.roll), Math.cos(this.roll));
+          W.rollEnd = Math.abs(rr) > Math.PI / 2 ? Math.sign(rr) * Math.PI : 0;
+          this.roll = rr;
+        }
+      }
+    } else {
+      this.roll = damp(this.roll, W.rollEnd, 6, dt);
+      this.pitch = damp(this.pitch, 0, 6, dt);
+      this.y = damp(this.y, g + off(this.roll), 10, dt);
+    }
+    this.sync();
+  }
+
+  /**
+   * Flight off a stunt ramp, until the wheels are back on something.
+   *
+   * The ground model steers the VELOCITY with the body (yaw from the front
+   * wheels, lateral slip scrubbed by grip), which in the air would let you
+   * turn a jump in mid-flight. Here the flight path is held in world space and
+   * steering only spins the body about it, so a spin is a real rotation you
+   * then have to land out of: whatever angle the body is at on touchdown comes
+   * back as slide (vLat), which is what a clean landing is judged on. No
+   * engine, no brakes, no grip -- only air drag and STUNT_G.
+   */
+  stuntAir(dt, steerIn, pull = 0) {
+    const f = this.forward;
+    let wx = f.x * this.vLong + f.z * this.vLat, wz = f.z * this.vLong - f.x * this.vLat;
+    const sp = Math.hypot(wx, wz);
+    const drag = 1 - Math.min(0.5, sp * DRAG * dt);
+    wx *= drag; wz *= drag;
+    this.spinRate = damp(this.spinRate, steerIn * STUNT_SPIN, 5, dt);
+    this.heading += this.spinRate * dt;
+    const g = this.forward;
+    this.vLong = wx * g.x + wz * g.z;
+    this.vLat = wx * g.z - wz * g.x;
+    this.x = G.clampToMap(this.x + wx * dt);
+    this.z = G.clampToMap(this.z + wz * dt);
+    this.vy -= STUNT_G * dt;
+    this.y += this.vy * dt;
+    this.lift = this.city.roadLift(this.x, this.z);
+    const rx = g.z, rz = -g.x;
+    const at = (ox, oz) => this.city.groundAt(this.x + ox, this.z + oz, this.y + 1.5, this.lift);
+    const two = !!this.spec.moto;
+    const fh = at(g.x * this.halfLen, g.z * this.halfLen);
+    const bh = at(-g.x * this.halfLen, -g.z * this.halfLen);
+    const lh = two ? 0 : at(rx * this.halfWid, rz * this.halfWid);
+    const rh = two ? 0 : at(-rx * this.halfWid, -rz * this.halfWid);
+    let target = two ? (fh + bh) / 2 : (fh + bh + lh + rh) / 4;
+    const cr = this.city.rampMask ? this.city.rampHere(this.x, this.z) : null;
+    if (cr) target = Math.max(target, this.city.rampY(cr, this.x, this.z));
+    // A splashdown ends the flight at the surface, not on the lake bed.
+    let splash = false;
+    if (waterQuery && this.vy < 0 && G.isWater(this.x, this.z)) {
+      const wl = waterQuery(this.x, this.z);
+      if (wl !== null && wl - 0.8 > target) { target = wl - 0.8; splash = true; }
+    }
+    // The nose follows the flight path, as a thrown car's does.
+    // ...and on a bike or a quad the stick tilts it: back for nose up.
+    const tgtPitch = -Math.atan2(this.vy, Math.max(6, sp)) * 0.75 - pull * 0.55;
+    this.pitch = lerp(this.pitch, tgtPitch, 1 - Math.exp(-(pull ? 4 : 2.5) * dt));
+    this.wheelie = lerp(this.wheelie, 0, 1 - Math.exp(-4 * dt));
+    this.roll = lerp(this.roll, 0, 1 - Math.exp(-3 * dt));
+    this.latAcc = 0; this.skid = 0;
+    this.wheelSpin += (this.vLong / (this.assets.wheelR || 0.34)) * dt;
+    if (this.y <= target) {
+      // Impact is the speed INTO the ground, along its normal: a car coming
+      // down a slope the way it falls lands softly, so a cliff jump onto a
+      // hillside is survivable where the same drop onto a flat is not.
+      const sf = (fh - bh) / (2 * this.halfLen), sr = two ? 0 : (lh - rh) / (2 * this.halfWid);
+      this.landVy = (this.vy - sf * this.vLong - sr * this.vLat) / Math.sqrt(1 + sf * sf + sr * sr);
+      this.y = target;
+      this.vy = 0;
+      this.stunt = false;
+      this.onGround = true;
+      this.stuntLanded = true;
+      this.spinRate = 0;
+      // Suspension takes a normal landing; a drop from a big one costs.
+      if (splash) this.vLong *= 0.35;
+      else if (this.landVy < -20) this.damage(Math.min(40, (-this.landVy - 20) * 2), true);
+    }
+    this.sync();
+  }
+
+  /**
+   * A bicycle's cranks turn with the rear wheel while it is pedalled (a
+   * 2.4:1 gear), and freewheel otherwise; the rider's feet are solved onto
+   * the pedals and his hands onto the grips (solveArm, two bones each).
+   */
+  _pedal() {
+    const d = this.wheelSpin - this._spinWas;
+    this._spinWas = this.wheelSpin;
+    if (this.pedaling && Math.abs(d) < 1) this.crank += d / 2.4;
+    for (const m of this.spinMeshes) if (m.rotation.x !== this.crank) m.rotation.x = this.crank;   // (see sync)
+    const h = this.rider;
+    // the limbs are solved only where someone could see them (bikes.js sets
+    // _ikFar past 45 m): four two-bone solves and a matrix update a rider
+    if (!h || !h.group.visible || this._ikFar) return;
+    const b = h.bones, t = this.tilt, bb = BIKE.bb;
+    this.group.position.set(this.x, this.y + this.yVis, this.z);
+    this.group.rotation.y = this.heading;
+    t.rotation.x = this.pitch - this.wheelie; t.rotation.z = this.roll;
+    this.group.updateMatrixWorld(true);
+    const V = _pedalV;
+    for (const [sx, sh, el, hand, th, kn, ft, ph] of [
+      [1, BONES.shoulderL, BONES.elbowL, BONES.handL, BONES.thighL, BONES.kneeL, BONES.footL, 0],
+      [-1, BONES.shoulderR, BONES.elbowR, BONES.handR, BONES.thighR, BONES.kneeR, BONES.footR, Math.PI]]) {
+      const a = this.crank + ph;
+      // the ankle over the pedal spindle, the ball of the foot on it
+      t.localToWorld(V.set(sx * (BIKE.qx + 0.05), bb[1] + Math.cos(a) * BIKE.crank + 0.075, bb[2] + Math.sin(a) * BIKE.crank - 0.07));
+      solveArm(b[th], b[kn], b[ft], V, t, sx, [sx * 0.15, 0.3, 1]);
+      b[ft].rotation.x = -0.15 + Math.sin(a) * 0.2;
+      t.localToWorld(V.set(sx * 0.27, 0.995, 0.43));
+      solveArm(b[sh], b[el], b[hand], V, t, sx);
+    }
+  }
+
+  sync() {
+    if (this.spec.bicycle) this._pedal();
+    const T = this.tank;
+    // A wheelie turns the body about the rear axle: nose up, and the centre
+    // lifted so the back wheel stays on the ground.
+    const wl = this.wheelie ? (this.spec.wheelbase || 1.3) * 0.5 * Math.sin(this.wheelie) : 0;
+    this.group.position.set(this.x, this.y + this.yVis + wl, this.z);
+    // Each Euler write recomputes the quaternion (six trig calls), and every
+    // vehicle in the list is synced every frame, parked and settled ones too:
+    // write only what changed. Nothing sets these quaternions directly, so a
+    // skipped write leaves exactly what the write would have.
+    const gr = this.group.rotation, tr = this.tilt.rotation;
+    // a shot rocks the hull away from the gun; a crushed car bumps it
+    const sr = this.detailedWheels ? this.susRoll || 0 : 0, spch = this.detailedWheels ? this.susPitch || 0 : 0;
+    const tx = this.pitch - this.wheelie + spch + (T ? -T.rock * Math.cos(T.rockYaw) * 0.035 - T.bump * 0.03 : 0);
+    const tz = this.roll + sr + (T ? T.rock * Math.sin(T.rockYaw) * 0.035 : 0);
+    if (gr.y !== this.heading) gr.y = this.heading;
+    if (tr.x !== tx) tr.x = tx;
+    if (this.shadowTilt) {
+      const st = this.shadowTilt;
+      st.position.y = this.tilt.position.y - wl;
+      if (st.rotation.x !== this.pitch) st.rotation.x = this.pitch;
+      if (st.rotation.z !== this.roll) st.rotation.z = this.roll;
+      st.visible = this.onGround && !this.stunt;
+    }
+    if (tr.z !== tz) tr.z = tz;
+    if (T && T.turret) {
+      T.turret.rotation.y = T.yaw;
+      T.gun.rotation.x = -T.elev;
+      T.gun.position.z = TANK.gunAt[2] - T.recoil;
+      // The belts: the phase each side's travel is at. Past ~half a pitch a
+      // frame the true phase strobes (the wagon wheel), so the drawn travel
+      // is capped: still visibly running, and in the right direction.
+      const geos = this.assets.tank.phaseGeos, P = geos.length, step = tankBelt().pitch / P;
+      const cap = step * 1.8;
+      T.dL += clamp(T.sL - T.sL0, -cap, cap); T.sL0 = T.sL;
+      T.dR += clamp(T.sR - T.sR0, -cap, cap); T.sR0 = T.sR;
+      const ph = (d) => ((Math.floor(d / step) % P) + P) % P;
+      const gL = geos[ph(T.dL)], gR = geos[ph(T.dR)];
+      if (T.trackL.geometry !== gL) T.trackL.geometry = gL;
+      if (T.trackR.geometry !== gR) T.trackR.geometry = gR;
+    }
+    if (this.detailedWheels) {
+      for (const m of this.wheelMeshes) {
+        // Steer OUTSIDE the spin. Euler order matters here: the default 'XYZ'
+        // builds Rx*Ry, i.e. it steers the wheel and then rolls it about the
+        // car's X axis rather than the wheel's own axle -- so a turned front
+        // wheel tumbles instead of rolling, which is the visible wobble.
+        // 'YXZ' gives Ry*Rx: roll on the axle first, then steer the whole thing.
+        if (m.rotation.order !== 'YXZ') m.rotation.order = 'YXZ';
+        m.rotation.x = m.userData.front ? this.wheelSpin : this.wheelSpin + (this.boSpin || 0);
+        m.rotation.y = m.userData.front ? this.steer : this.rearSteer;
+        // the suspension's lean is the body's: each wheel is held down to
+        // where it was, so a leaning car keeps all four on the road
+        m.position.y = m.userData.y0 + m.position.z * spch - m.position.x * sr;
+      }
+      if (this.glow) {
+        // 0.4 s sweep out from the centre at a flash, settling to a glow
+        // bright enough for the bloom to pick up.
+        const k = (performance.now() - this.glowT0) / 1000;
+        if (k < 2) {
+          const s = 1 - (1 - clamp(k / 0.4, 0, 1)) ** 3;
+          for (const m of this.glow.children) m.scale.x = Math.max(0.01, s) * m.userData.w;
+          const g = k < 0.4 ? 3.2 : 1.3 + 1.9 * Math.exp(-(k - 0.4) * 3.5);
+          const L = lightbarParts();
+          L.front.color.setRGB(g, g, g * 0.94);
+          L.rear.color.setRGB(g, g * 0.08, g * 0.05);
+        }
+      }
+    }
+  }
+
+  /**
+   * Collision damage, debounced.
+   *
+   * A crash is not one frame. The pair stays overlapping and closing for
+   * several, and the caller ran on every one of them: a 20 m/s shunt is 14
+   * damage a frame, so 100 health was gone in about an eighth of a second and
+   * any real impact detonated the car on contact. `hitCd` makes one collision
+   * count once. Gunfire and other scripted damage passes `force` and is never
+   * debounced.
+   */
+  damage(n, force) {
+    if (!force) {
+      if (this.hitCd > 0) return false;
+      this.hitCd = 0.4;
+    }
+    // `spec.armor` scales every hit, scripted or not: a crash, a bullet, a
+    // hard landing all dent stainless plate less.
+    //
+    // YOUR CAR IS TOUGHER, AND IT BURNS BEFORE IT BLOWS. A dozen ordinary
+    // knocks in traffic used to write a car off and the blast took 70 of your
+    // 100: "it exploded from a minor crash" and WASTED with it. The player's
+    // vehicle (the detailed one) takes 60 % of every hit, and at nothing left
+    // it catches fire for BURN_S first (main.js: smoke, flames, the warning)
+    // -- GTA's rule: get out, or go up with it. A plane into a tower (1e4,
+    // forced) still goes at once.
+    const mine = this.detailedWheels && !this.spec.rail;
+    this.health -= n * (this.spec.armor || 1) * (mine ? 0.6 : 1);
+    if (this.health <= 0 && !this.dead) {
+      this.health = 0;
+      if (mine && n < 500) {
+        if (!(this.burnT > 0)) {
+          this.burnT = BURN_S;
+          if (VEHICLE_HOOKS.ignite) VEHICLE_HOOKS.ignite(this);
+        }
+        return false;
+      }
+      this.dead = true;
+      return true;
+    }
+    return false;
+  }
+
+  /** Point on the vehicle's oriented box nearest to (px,pz), in world space. */
+  nearest(px, pz) {
+    const f = this.forward;
+    const rx = f.z, rz = -f.x;
+    const dx = px - this.x, dz = pz - this.z;
+    let lf = clamp(dx * f.x + dz * f.z, -this.halfLen, this.halfLen);
+    let lr = clamp(dx * rx + dz * rz, -this.halfWid, this.halfWid);
+    return { x: this.x + f.x * lf + rx * lr, z: this.z + f.z * lf + rz * lr };
+  }
+}
+
+export function randomCarColor(seed) {
+  return CAR_COLORS[Math.floor(hash2(seed, 5) * CAR_COLORS.length) % CAR_COLORS.length];
+}

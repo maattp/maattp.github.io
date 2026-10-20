@@ -1,0 +1,3918 @@
+// All sound is synthesised with the Web Audio API -- no audio files to ship.
+//
+// Three layers, each built for what it has to cost:
+//
+//   ONE-SHOTS  (crashes, gunshots, doors, footsteps, cash, stings...) are
+//              recipes rendered ONCE into AudioBuffers by an OfflineAudioContext
+//              when the context is first unlocked (`renderBank`). Playing one
+//              is a BufferSource + a gain (+ a panner when it has a position),
+//              so a crash costs three nodes however elaborate the recipe was.
+//   CONTINUOUS (engines, tyres, wind, sirens, horn, traffic, the police
+//              helicopter) are persistent node graphs built once and steered
+//              every frame through AudioParams -- nothing is allocated per
+//              frame. Idle ones are DISCONNECTED from the mix, which is what
+//              stops the audio thread rendering them (see `Tap`).
+//   THE RADIO  the live KEXP stream and the synthesised stations, unchanged in
+//              behaviour, now under a ducker so a big hit cuts through it.
+//
+// Everything runs into one limiter before the volume control, so nothing the
+// mix can do clips.
+//
+// Headless Chrome cannot hear and its AudioContext never leaves `suspended`
+// without a gesture, so `tools/audiorender.mjs` drives THIS class against an
+// OfflineAudioContext (`init(ctx)` + `_simT`) and writes WAVs to docs/audio/.
+
+import { clamp, lerp, mulberry32 } from './util.js';
+import { SynthRadio } from './radiosynth.js';
+
+// Idle voices are disconnected so the audio thread stops rendering them. An
+// offline preview schedules the whole script BEFORE it renders, and a graph
+// change is not a scheduled event -- the last one would win for the entire
+// file -- so previews keep everything linked and let the gains do the work.
+let keepLinked = false;
+
+/**
+ * setTargetAtTime, skipped when the value has not really moved. A frame steers
+ * ~50 params; most hold still (a voice at a steady speed, a siren's level), and
+ * every automation call is a trip into the audio engine with a lock, which on
+ * the phone is main-thread time. The last target rides on the param itself, so
+ * a param must be driven ONLY through here once it is.
+ */
+function setp(param, v, t, tc) {
+  const last = param._lv;
+  if (last !== undefined && Math.abs(v - last) <= Math.abs(last) * 0.005 + 1e-5) return;
+  param._lv = v;
+  param.setTargetAtTime(v, t, tc);
+}
+
+// ---------------------------------------------------------------------------
+// Small DSP helpers
+// ---------------------------------------------------------------------------
+
+function fillNoise(d, kind, seed) {
+  const R = mulberry32(seed);
+  if (kind === 'white') {
+    for (let i = 0; i < d.length; i++) d[i] = R() * 2 - 1;
+  } else if (kind === 'pink') {
+    // Paul Kellet's economy pink filter.
+    let b0 = 0, b1 = 0, b2 = 0;
+    for (let i = 0; i < d.length; i++) {
+      const w = R() * 2 - 1;
+      b0 = 0.99765 * b0 + w * 0.0990460;
+      b1 = 0.96300 * b1 + w * 0.2965164;
+      b2 = 0.57000 * b2 + w * 1.0526913;
+      d[i] = (b0 + b1 + b2 + w * 0.1848) * 0.22;
+    }
+  } else {
+    // brown: integrated white, leaky so it cannot drift.
+    let y = 0;
+    for (let i = 0; i < d.length; i++) {
+      y = y * 0.985 + (R() * 2 - 1) * 0.15;
+      d[i] = y * 1.6;
+    }
+  }
+  return d;
+}
+
+function noiseBuffer(c, seconds, kind = 'white', seed = 1) {
+  const b = c.createBuffer(1, Math.floor(c.sampleRate * seconds), c.sampleRate);
+  fillNoise(b.getChannelData(0), kind, seed);
+  return b;
+}
+
+let _tanhCurves = {};
+function tanhCurve(k) {
+  if (_tanhCurves[k]) return _tanhCurves[k];
+  const n = 1024, a = new Float32Array(n), norm = Math.tanh(k);
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    a[i] = Math.tanh(k * x) / norm;
+  }
+  return (_tanhCurves[k] = a);
+}
+
+/** Street/tunnel reverb: early reflections plus a tail that darkens as it decays. */
+function makeImpulse(c, seconds = 1.1, seed = 7) {
+  const sr = c.sampleRate, len = Math.floor(sr * seconds);
+  const ir = c.createBuffer(2, len, sr);
+  const taps = [0.011, 0.017, 0.026, 0.034, 0.047, 0.061, 0.083, 0.104];
+  for (let ch = 0; ch < 2; ch++) {
+    const R = mulberry32(seed + ch * 101);
+    const d = ir.getChannelData(ch);
+    const tau = seconds / 6.9;
+    let y = 0;
+    for (let i = 0; i < len; i++) {
+      const t = i / sr;
+      // one-pole low-pass whose cutoff falls with time: air eats the top first
+      const a = 0.85 * Math.exp(-t / (seconds * 0.35)) + 0.08;
+      y += a * ((R() * 2 - 1) - y);
+      d[i] = y * Math.exp(-t / tau) * (t < 0.02 ? t / 0.02 : 1) * 0.5;
+    }
+    for (let k = 0; k < taps.length; k++) {
+      const i = Math.floor((taps[k] + (ch ? 0.0031 * (k % 3) : 0)) * sr);
+      if (i < len) d[i] += (k % 2 ? -1 : 1) * 0.55 * Math.exp(-k * 0.28);
+    }
+  }
+  return ir;
+}
+
+/** Linear crossfade of a buffer's tail into its head, so it loops seamlessly. */
+function loopify(c, buf, xfade) {
+  const sr = buf.sampleRate, n = Math.floor(xfade * sr);
+  const src = buf.getChannelData(0);
+  const len = src.length - n;
+  const out = c.createBuffer(1, len, sr);
+  const d = out.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = src[i];
+  for (let i = 0; i < n; i++) {
+    const w = i / n;
+    d[i] = src[i] * w + src[len + i] * (1 - w);
+  }
+  return out;
+}
+
+/** A one-shot without its inaudible tail: cut 10 ms after the last sample
+ *  within 60 dB of the peak. Recipes are given round durations; the silence
+ *  after the sound was a third of the bank's memory. */
+function trimTail(c, buf) {
+  const d = buf.getChannelData(0);
+  let m = 0;
+  for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > m) m = a; }
+  const th = m * 1e-3;
+  let end = d.length - 1;
+  while (end > 0 && Math.abs(d[end]) <= th) end--;
+  const n = Math.min(d.length, end + 1 + Math.floor(0.01 * buf.sampleRate));
+  if (n >= d.length - 64) return buf;
+  const out = c.createBuffer(1, n, buf.sampleRate);
+  out.getChannelData(0).set(d.subarray(0, n));
+  return out;
+}
+
+function normalize(buf, peak) {
+  const d = buf.getChannelData(0);
+  let m = 0;
+  for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > m) m = a; }
+  if (m > 1e-6) { const k = peak / m; for (let i = 0; i < d.length; i++) d[i] *= k; }
+  return buf;
+}
+
+// ---------------------------------------------------------------------------
+// One-shot recipes. Each builds a node graph in an OfflineAudioContext `c`,
+// starting at `t`, into `out`. R is a seeded RNG, so the bank is identical on
+// every device and every launch.
+// ---------------------------------------------------------------------------
+
+let _kitNoise = null;
+class Kit {
+  constructor(c) {
+    this.c = c;
+    // AudioBuffers belong to no context, so every batch shares one set.
+    if (!_kitNoise || _kitNoise.sr !== c.sampleRate) {
+      _kitNoise = {
+        sr: c.sampleRate,
+        white: noiseBuffer(c, 2.5, 'white', 11),
+        pink: noiseBuffer(c, 2.5, 'pink', 12),
+        brown: noiseBuffer(c, 2.5, 'brown', 13),
+      };
+    }
+    this.nz = _kitNoise;
+  }
+  noise(kind, t, dur, R) {
+    const s = this.c.createBufferSource();
+    s.buffer = this.nz[kind];
+    s.loop = true;
+    s.start(t, R ? R() * 2 : 0);
+    s.stop(t + dur);
+    return s;
+  }
+  osc(type, f, t, dur) {
+    const o = this.c.createOscillator();
+    o.type = type;
+    o.frequency.setValueAtTime(f, t);
+    o.start(t);
+    o.stop(t + dur);
+    return o;
+  }
+  filt(type, f, q = 0.707, g = 0) {
+    const b = this.c.createBiquadFilter();
+    b.type = type; b.frequency.value = f; b.Q.value = q; b.gain.value = g;
+    return b;
+  }
+  gain(v = 0) { const g = this.c.createGain(); g.gain.value = v; return g; }
+  shaper(k) { const s = this.c.createWaveShaper(); s.curve = tanhCurve(k); return s; }
+  /** Instant attack (or `a` seconds), exponential decay with time constant `tau`. */
+  hit(param, t, peak, tau, a = 0.0015) {
+    param.setValueAtTime(0, t);
+    param.linearRampToValueAtTime(peak, t + a);
+    param.setTargetAtTime(0, t + a, tau);
+  }
+  /** Noise burst through a filter, enveloped. */
+  burst(out, kind, t, ftype, f, q, peak, tau, R, a = 0.0015) {
+    const g = this.gain(0);
+    this.noise(kind, t, a + tau * 8, R).connect(this.filt(ftype, f, q)).connect(g).connect(out);
+    this.hit(g.gain, t, peak, tau, a);
+    return g;
+  }
+  /** Sine that sweeps f0 -> f1 (exponentially) over `sweep`, enveloped. */
+  thump(out, t, f0, f1, sweep, peak, tau, type = 'sine') {
+    const o = this.osc(type, f0, t, tau * 9 + 0.02);
+    o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + sweep);
+    const g = this.gain(0);
+    o.connect(g).connect(out);
+    this.hit(g.gain, t, peak, tau);
+    return o;
+  }
+  /** A single decaying sine partial. */
+  ping(out, t, f, peak, tau, a = 0.001) {
+    const o = this.osc('sine', f, t, tau * 8 + a + 0.01);
+    const g = this.gain(0);
+    o.connect(g).connect(out);
+    this.hit(g.gain, t, peak, tau, a);
+  }
+  /**
+   * Many tiny spikes on one gain param: crunch, crackle, gravel, rustle.
+   * `times` (sorted) and each spike's amplitude/width come from R.
+   */
+  grains(param, t, dur, n, R, amp = 1, w0 = 0.002, w1 = 0.01, shape = 1.6) {
+    const ts = [];
+    for (let i = 0; i < n; i++) ts.push(Math.pow(R(), shape) * dur);
+    ts.sort((a, b) => a - b);
+    param.setValueAtTime(0, t);
+    for (let i = 0; i < n; i++) {
+      const ti = t + ts[i];
+      const fade = 1 - (ts[i] / dur) * 0.7;
+      const pk = amp * (0.25 + 0.75 * R()) * fade;
+      param.setValueAtTime(0, ti);
+      param.linearRampToValueAtTime(pk, ti + 0.0008);
+      param.setTargetAtTime(0, ti + 0.0008, w0 + (w1 - w0) * R());
+    }
+  }
+  /** A slowly wandering value, as a curve. */
+  wander(param, t, dur, center, spread, R, steps = 40) {
+    const a = new Float32Array(steps);
+    let v = 0;
+    for (let i = 0; i < steps; i++) { v = clamp(v + (R() - 0.5) * 0.7, -1, 1); a[i] = center + v * spread; }
+    param.setValueCurveAtTime(a, t, dur);
+  }
+}
+
+// Metal is modal: inharmonic partials decaying at different rates.
+const METAL = [1, 1.58, 2.37, 3.11, 4.53, 5.97, 7.8];
+
+const SOUNDS = {
+  // --- impacts -------------------------------------------------------------
+  crunch: { dur: 1.4, variants: 3, build(k, out, t, R) {
+    const bus = k.gain(1);
+    // the shaper's grit, then the top taken off: a crash is weight, not hiss
+    bus.connect(k.shaper(2.2)).connect(k.filt('lowpass', 6500, 0.6)).connect(out);
+    // the body of the car taking it
+    k.thump(bus, t, 95 + R() * 25, 36, 0.35, 0.95, 0.09);
+    k.burst(bus, 'brown', t, 'lowpass', 420, 0.7, 1.1, 0.06, R);
+    // crumpling sheet: dense grains through a bank of resonances
+    const cg = k.gain(0);
+    const src = k.noise('white', t, 1.2, R);
+    for (let i = 0; i < 4; i++) {
+      src.connect(k.filt('bandpass', 450 + R() * 3200, 3 + R() * 5)).connect(cg);
+    }
+    cg.connect(bus);
+    k.grains(cg.gain, t, 0.6, 55, R, 2.2, 0.003, 0.02, 1.8);
+    // crackle of bending panels, higher and brighter
+    const hg = k.gain(0);
+    k.noise('white', t, 1, R).connect(k.filt('highpass', 2200, 0.8)).connect(hg).connect(bus);
+    k.grains(hg.gain, t, 0.4, 30, R, 0.4, 0.001, 0.006, 2.2);
+    // the panel ringing
+    const base = 180 + R() * 240;
+    for (let i = 0; i < METAL.length; i++) {
+      k.ping(bus, t + 0.004, base * METAL[i] * (1 + (R() - 0.5) * 0.04), 0.13 / (1 + i * 0.4), 0.12 + R() * 0.3);
+    }
+    // debris settling
+    const dg = k.gain(0);
+    k.noise('white', t, 1.4, R).connect(k.filt('bandpass', 2600, 1.4)).connect(dg).connect(bus);
+    k.grains(dg.gain, t + 0.3, 1.0, 14, R, 0.35, 0.002, 0.012, 1.3);
+  } },
+
+  bump: { dur: 0.6, variants: 2, build(k, out, t, R) {
+    k.thump(out, t, 120 + R() * 30, 55, 0.12, 1, 0.05);
+    k.burst(out, 'pink', t, 'lowpass', 900, 0.7, 0.8, 0.03, R);
+    k.burst(out, 'white', t + 0.002, 'bandpass', 1700 + R() * 600, 2, 0.5, 0.012, R);
+    const rg = k.gain(0);
+    k.noise('white', t, 0.5, R).connect(k.filt('bandpass', 2400, 2)).connect(rg).connect(out);
+    k.grains(rg.gain, t + 0.02, 0.2, 8, R, 0.25, 0.002, 0.01);
+  } },
+
+  glass: { dur: 1.7, variants: 2, build(k, out, t, R) {
+    k.burst(out, 'white', t, 'highpass', 3000, 0.7, 1.2, 0.004, R);
+    const sg = k.gain(0);
+    k.noise('white', t, 0.6, R).connect(k.filt('highpass', 2600, 0.7)).connect(sg).connect(out);
+    k.grains(sg.gain, t, 0.28, 34, R, 0.9, 0.002, 0.012, 1.5);
+    for (let i = 0; i < 58; i++) {
+      const ti = t + 0.005 + Math.pow(R(), 1.9) * 1.25;
+      const f = 2400 + R() * 6800;
+      k.ping(out, ti, f, 0.22 * (1 - (ti - t) / 1.6), 0.008 + R() * 0.04);
+    }
+    for (let i = 0; i < 8; i++) k.ping(out, t + 0.2 + R() * 1.1, 1100 + R() * 900, 0.08, 0.03);
+  } },
+
+  // Sustained contact. A loop: gain follows how hard you are grinding.
+  // GRIND, NOT WHISTLE. It was four narrow resonances with two sines at 1.65
+  // and 2.2 kHz on top: a steady band at ~2.5 kHz that read as a kettle. Metal
+  // dragged along concrete is stick-slip -- a rough, low-mid chatter of the
+  // panel catching and letting go -- with the bright hiss riding on it.
+  scrape: { dur: 2.7, loop: 0.35, build(k, out, t, R) {
+    const src = k.noise('white', t, 2.7, R);
+    const g = k.gain(0);
+    const bed = k.gain(0.2);
+    for (const [f, q] of [[1100, 5], [2600, 6], [4300, 8], [700, 4]]) {
+      const b = k.filt('bandpass', f, q);
+      k.wander(b.frequency, t, 2.7, f, f * 0.15, R);
+      src.connect(b);
+      b.connect(g);
+      b.connect(bed);
+    }
+    g.connect(out); bed.connect(out);
+    k.grains(g.gain, t, 2.7, 420, R, 1.4, 0.002, 0.007, 1);
+    // the panel chattering against the wall: dense, low, irregular catches
+    const chat = k.gain(0);
+    const cb = k.filt('bandpass', 420, 1.6);
+    k.wander(cb.frequency, t, 2.7, 420, 90, R);
+    k.noise('pink', t, 2.7, R).connect(cb).connect(k.shaper(2)).connect(chat).connect(out);
+    k.grains(chat.gain, t, 2.7, 300, R, 1.6, 0.004, 0.012, 1);
+    for (const f of [1650, 2230]) {
+      const o = k.osc('sine', f, t, 2.7);
+      k.wander(o.frequency, t, 2.7, f, 120, R);
+      const og = k.gain(0);
+      k.wander(og.gain, t, 2.7, 0.02, 0.02, R, 20);
+      o.connect(og).connect(out);
+    }
+    const rg = k.gain(0.45);
+    k.noise('brown', t, 2.7, R).connect(k.filt('lowpass', 220)).connect(rg).connect(out);
+  } },
+
+  // The hardest hits: the whole body taking it -- a deep slam with the
+  // structure's low modes ringing under it. Only over ~26 (see crash()).
+  slam: { dur: 1.3, variants: 2, half: true, build(k, out, t, R) {
+    const bus = k.gain(1);
+    bus.connect(k.shaper(1.8)).connect(k.filt('lowpass', 2400, 0.7)).connect(out);
+    k.thump(bus, t, 72 + R() * 14, 27, 0.45, 1.1, 0.17);
+    k.burst(bus, 'brown', t, 'lowpass', 260, 0.7, 1.2, 0.12, R);
+    const base = 52 + R() * 24;
+    for (let i = 0; i < 5; i++) k.ping(bus, t + 0.01, base * METAL[i] * (1 + (R() - 0.5) * 0.05), 0.22 / (1 + i * 0.5), 0.25 + R() * 0.3);
+  } },
+  // What comes off a car in a big hit: trim, plastic, bits of lamp and glass,
+  // bouncing and settling for a second after the crunch.
+  debris: { dur: 1.6, variants: 2, build(k, out, t, R) {
+    for (let i = 0; i < 22; i++) {
+      const dt = 0.04 + Math.pow(R(), 1.35) * 1.3;
+      const fade = 1 - dt / 1.6;
+      if (R() < 0.45) k.ping(out, t + dt, 2500 + R() * 5000, 0.2 * fade, 0.006 + R() * 0.02);
+      else k.burst(out, 'white', t + dt, 'bandpass', 900 + R() * 2400, 2.5, 0.4 * fade, 0.006 + R() * 0.01, R);
+    }
+  } },
+
+  explosion: { dur: 3.4, build(k, out, t, R) {
+    const bus = k.gain(1);
+    bus.connect(k.shaper(3)).connect(out);
+    k.thump(bus, t, 72, 24, 1.2, 1.1, 0.35);
+    const lp = k.filt('lowpass', 1100, 0.9);
+    lp.frequency.setValueAtTime(1100, t);
+    lp.frequency.exponentialRampToValueAtTime(110, t + 1.6);
+    const ng = k.gain(0);
+    k.noise('brown', t, 3.4, R).connect(lp).connect(ng).connect(bus);
+    k.hit(ng.gain, t, 1.6, 0.55, 0.004);
+    k.burst(bus, 'white', t, 'lowpass', 5000, 0.7, 0.9, 0.03, R);
+    const cg = k.gain(0);
+    k.noise('white', t, 2, R).connect(k.filt('bandpass', 1500, 1)).connect(cg).connect(bus);
+    k.grains(cg.gain, t + 0.05, 1.6, 90, R, 0.7, 0.002, 0.01, 1.7);
+    for (let i = 0; i < 14; i++) {
+      const ti = t + 0.5 + R() * 2.4;
+      k.burst(bus, 'white', ti, 'bandpass', 800 + R() * 2600, 3, 0.15 + R() * 0.2, 0.01 + R() * 0.02, R);
+    }
+  } },
+
+  gun: { dur: 0.55, variants: 3, build(k, out, t, R) {
+    const bus = k.gain(1);
+    bus.connect(k.shaper(3.5)).connect(out);
+    k.burst(bus, 'white', t, 'highpass', 2500, 0.7, 1.4, 0.0025, R, 0.0003);
+    k.burst(bus, 'white', t, 'bandpass', 1200 + R() * 500, 0.8, 1.1, 0.018, R, 0.0005);
+    k.burst(bus, 'pink', t, 'lowpass', 1300, 0.7, 0.8, 0.045, R, 0.0008);
+    k.thump(bus, t, 190 + R() * 30, 55, 0.06, 1.0, 0.03);
+    // the slide cycling
+    k.burst(out, 'white', t + 0.075 + R() * 0.01, 'bandpass', 3600, 4, 0.18, 0.003, R);
+    k.burst(out, 'white', t + 0.1 + R() * 0.01, 'bandpass', 2900, 4, 0.14, 0.004, R);
+  } },
+
+  // A tank's 120 mm: the crack of the round leaving, a chest-deep thump under
+  // it, the boom rolling off the buildings for seconds (played with a big
+  // reverb send), and the breech's clank as it runs out.
+  cannon: { dur: 3.2, build(k, out, t, R) {
+    const bus = k.gain(1);
+    bus.connect(k.shaper(2.6)).connect(out);
+    k.burst(bus, 'white', t, 'highpass', 1800, 0.6, 1.6, 0.006, R, 0.0003);
+    k.burst(bus, 'pink', t, 'bandpass', 700, 0.7, 1.4, 0.05, R, 0.0005);
+    k.thump(bus, t, 70, 22, 0.5, 1.5, 0.22);
+    k.thump(bus, t + 0.01, 140, 40, 0.12, 0.7, 0.07);
+    const lp = k.filt('lowpass', 900, 0.8);
+    lp.frequency.setValueAtTime(900, t);
+    lp.frequency.exponentialRampToValueAtTime(90, t + 2.6);
+    const rg = k.gain(0);
+    k.noise('brown', t, 3.2, R).connect(lp).connect(rg).connect(bus);
+    k.hit(rg.gain, t + 0.02, 1.3, 0.7, 0.01);
+    for (let i = 0; i < 4; i++) k.burst(bus, 'pink', t + 0.18 + i * 0.21 + R() * 0.08, 'lowpass', 500, 0.7, 0.35 / (1 + i), 0.18, R);
+    // the breech, metal on metal
+    METAL.slice(0, 4).forEach((r, i) => k.ping(out, t + 0.55, 310 * r, 0.12 / (1 + i), 0.08 / (1 + i * 0.4)));
+    k.burst(out, 'white', t + 0.55, 'bandpass', 2600, 3, 0.25, 0.01, R);
+  } },
+  // A coaxial machine gun's round: sharper and lower than the pistol, no slide.
+  mg: { dur: 0.32, variants: 3, build(k, out, t, R) {
+    const bus = k.gain(1);
+    bus.connect(k.shaper(3)).connect(out);
+    k.burst(bus, 'white', t, 'highpass', 2200, 0.7, 1.2, 0.003, R, 0.0003);
+    k.burst(bus, 'white', t, 'bandpass', 900 + R() * 300, 0.8, 1.0, 0.025, R, 0.0005);
+    k.burst(bus, 'pink', t, 'lowpass', 900, 0.7, 0.7, 0.05, R, 0.0008);
+    k.thump(bus, t, 150 + R() * 20, 50, 0.05, 0.9, 0.035);
+  } },
+  // A tank's tracks: the links slapping round the sprocket and idler, the
+  // grind of the road wheels, the squeal of steel; looped and pitched with
+  // the belt's speed.
+  tracks: { dur: 1.2, loop: 0.08, build(k, out, t, R) {
+    const rg = k.gain(0.5);
+    k.noise('brown', t, 1.2, R).connect(k.filt('lowpass', 220, 0.8)).connect(rg).connect(out);
+    const sq = k.gain(0);
+    k.noise('pink', t, 1.2, R).connect(k.filt('bandpass', 2300, 6)).connect(sq).connect(out);
+    k.wander(sq.gain, t, 1.2, 0.12, 0.1, R, 20);
+    for (let i = 0; i < 24; i++) {
+      const ti = t + i * 0.05 + R() * 0.012;
+      k.burst(out, 'white', ti, 'bandpass', 1100 + R() * 900, 2.2, 0.22 + R() * 0.2, 0.008 + R() * 0.01, R);
+      if (i % 3 === 0) k.thump(out, ti, 110, 60, 0.03, 0.25, 0.02);
+      if (i % 4 === 1) k.ping(out, ti, 700 + R() * 500, 0.05, 0.02);
+    }
+  } },
+
+  punch: { dur: 0.36, variants: 3, build(k, out, t, R) {
+    const wf = k.filt('bandpass', 500, 1.5);
+    wf.frequency.setValueAtTime(500, t);
+    wf.frequency.exponentialRampToValueAtTime(1900, t + 0.08);
+    const wg = k.gain(0);
+    k.noise('white', t, 0.1, R).connect(wf).connect(wg).connect(out);
+    wg.gain.setValueAtTime(0, t);
+    wg.gain.linearRampToValueAtTime(0.22, t + 0.07);
+    wg.gain.linearRampToValueAtTime(0, t + 0.088);
+    const ti = t + 0.085;
+    k.thump(out, ti, 125 + R() * 25, 52, 0.07, 1, 0.032);
+    k.burst(out, 'pink', ti, 'lowpass', 650, 0.7, 0.9, 0.022, R);
+    k.burst(out, 'white', ti, 'bandpass', 2000 + R() * 800, 1.2, 0.55, 0.006, R);
+  } },
+
+  // A punch, split at its contact for the on-foot combo (player.landPunch):
+  // the swing through the air on a miss, the contact alone on a hit -- the
+  // hit frame IS the contact, so `punch`'s 85 ms of whoosh would land late.
+  whoosh: { dur: 0.2, variants: 3, build(k, out, t, R) {
+    const f0 = 420 + R() * 120;
+    const wf = k.filt('bandpass', f0, 1.3);
+    wf.frequency.setValueAtTime(f0, t);
+    wf.frequency.exponentialRampToValueAtTime(1700 + R() * 400, t + 0.07);
+    wf.frequency.exponentialRampToValueAtTime(700, t + 0.16);
+    const wg = k.gain(0);
+    k.noise('white', t, 0.18, R).connect(wf).connect(wg).connect(out);
+    wg.gain.setValueAtTime(0, t);
+    wg.gain.linearRampToValueAtTime(0.30, t + 0.05);
+    wg.gain.exponentialRampToValueAtTime(0.001, t + 0.17);
+  } },
+
+  smack: { dur: 0.3, variants: 3, build(k, out, t, R) {
+    k.thump(out, t, 125 + R() * 25, 52, 0.07, 1, 0.032);
+    k.burst(out, 'pink', t, 'lowpass', 650, 0.7, 0.9, 0.022, R);
+    k.burst(out, 'white', t, 'bandpass', 2000 + R() * 800, 1.2, 0.55, 0.006, R);
+  } },
+
+  pedhit: { dur: 0.6, build(k, out, t, R) {
+    k.thump(out, t, 90, 42, 0.12, 1, 0.06);
+    k.burst(out, 'pink', t, 'lowpass', 500, 0.7, 1, 0.05, R);
+    k.burst(out, 'white', t + 0.01, 'bandpass', 1800, 1, 0.45, 0.012, R);
+    k.burst(out, 'brown', t + 0.18, 'lowpass', 400, 0.7, 0.4, 0.04, R);
+  } },
+
+  land: { dur: 0.35, build(k, out, t, R) {
+    k.thump(out, t, 95, 45, 0.08, 1, 0.045);
+    k.burst(out, 'pink', t, 'lowpass', 520, 0.7, 0.9, 0.035, R);
+    const g = k.gain(0);
+    k.noise('white', t, 0.3, R).connect(k.filt('bandpass', 2200, 1)).connect(g).connect(out);
+    k.grains(g.gain, t, 0.1, 10, R, 0.4, 0.002, 0.006);
+  } },
+
+  thunk: { dur: 0.6, build(k, out, t, R) {
+    k.thump(out, t, 64, 38, 0.1, 1, 0.08);
+    k.burst(out, 'brown', t, 'lowpass', 260, 0.7, 1, 0.06, R);
+    const g = k.gain(0);
+    k.noise('white', t, 0.5, R).connect(k.filt('bandpass', 1800, 2)).connect(g).connect(out);
+    k.grains(g.gain, t + 0.01, 0.3, 16, R, 0.35, 0.002, 0.012);
+  } },
+
+  // --- footsteps -------------------------------------------------------------
+  // SOFT, NOT SHARP. These were a white-noise click at 2.2-3.6 kHz with an
+  // instant attack (centroid 3-6 kHz): every step was a tick, and at its old
+  // level the footsteps scene measured louder than a car passing. A shoe on a
+  // pavement is a heel knock and a sole roll, mostly under 1.5 kHz, with a few
+  // milliseconds of onset. Surfaces differ in texture, not in brightness.
+  step_hard: { dur: 0.22, variants: 4, build(k, out, t, R) {
+    const lp = k.filt('lowpass', 2200 + R() * 500, 0.7);
+    lp.connect(out);
+    // heel: a dull knock
+    k.burst(lp, 'pink', t, 'bandpass', 520 + R() * 220, 1.1, 0.9, 0.014, R, 0.003);
+    k.thump(lp, t, 95 + R() * 25, 60, 0.025, 0.45, 0.016);
+    // sole rolling onto the ball of the foot
+    k.burst(lp, 'pink', t + 0.045 + R() * 0.025, 'bandpass', 1100 + R() * 300, 0.9, 0.32, 0.018, R, 0.006);
+    // the faintest grit, for texture
+    k.burst(lp, 'white', t + 0.002, 'bandpass', 1700 + R() * 300, 1.4, 0.08, 0.008, R, 0.004);
+  } },
+  step_grass: { dur: 0.26, variants: 4, build(k, out, t, R) {
+    // blades and stems crushed under a sole: a soft, low crunch
+    const lp = k.filt('lowpass', 1900 + R() * 400, 0.7);
+    lp.connect(out);
+    const g = k.gain(0);
+    k.noise('pink', t, 0.25, R).connect(k.filt('bandpass', 1200 + R() * 400, 0.8)).connect(g).connect(lp);
+    k.grains(g.gain, t, 0.13, 14, R, 0.55, 0.004, 0.012);
+    k.burst(lp, 'pink', t, 'lowpass', 420, 0.7, 0.7, 0.035, R, 0.006);
+  } },
+  step_gravel: { dur: 0.26, variants: 4, build(k, out, t, R) {
+    const lp = k.filt('lowpass', 2600 + R() * 400, 0.7);
+    lp.connect(out);
+    const g = k.gain(0);
+    k.noise('pink', t, 0.25, R).connect(k.filt('bandpass', 1500 + R() * 400, 0.9)).connect(g).connect(lp);
+    k.grains(g.gain, t, 0.15, 22, R, 0.6, 0.003, 0.008, 1.4);
+    const g2 = k.gain(0);
+    k.noise('pink', t, 0.25, R).connect(k.filt('bandpass', 700, 1.1)).connect(g2).connect(lp);
+    k.grains(g2.gain, t, 0.1, 8, R, 0.6, 0.004, 0.012);
+    k.thump(lp, t, 80, 55, 0.02, 0.35, 0.015);
+  } },
+  // A pier's boards: a hollow knock -- the plank ringing over the air under
+  // it -- not the dead pavement heel.
+  step_wood: { dur: 0.26, variants: 4, build(k, out, t, R) {
+    const lp = k.filt('lowpass', 2300 + R() * 400, 0.7);
+    lp.connect(out);
+    k.burst(lp, 'pink', t, 'bandpass', 380 + R() * 120, 2.4, 0.9, 0.02, R, 0.002);
+    k.ping(lp, t + 0.002, 190 + R() * 50, 0.35, 0.05);
+    k.ping(lp, t + 0.002, 520 + R() * 90, 0.15, 0.03);
+    k.burst(lp, 'pink', t + 0.04 + R() * 0.02, 'bandpass', 900 + R() * 200, 1.2, 0.25, 0.015, R, 0.004);
+  } },
+  step_water: { dur: 0.42, variants: 3, build(k, out, t, R) {
+    k.burst(out, 'pink', t, 'lowpass', 1800, 0.7, 0.8, 0.05, R, 0.004);
+    for (let i = 0; i < 4; i++) {
+      const ti = t + 0.01 + R() * 0.12, f0 = 300 + R() * 300;
+      const o = k.osc('sine', f0, ti, 0.06);
+      o.frequency.exponentialRampToValueAtTime(f0 * (2.4 + R()), ti + 0.03 + R() * 0.02);
+      const g = k.gain(0);
+      o.connect(g).connect(out);
+      k.hit(g.gain, ti, 0.25, 0.012, 0.003);
+    }
+    const dg = k.gain(0);
+    k.noise('white', t, 0.4, R).connect(k.filt('highpass', 3500)).connect(dg).connect(out);
+    k.grains(dg.gain, t + 0.03, 0.3, 9, R, 0.3, 0.002, 0.008);
+  } },
+
+  // --- getting in and out ----------------------------------------------------
+  door_open: { dur: 0.7, build(k, out, t, R) {
+    k.burst(out, 'white', t, 'bandpass', 3200, 3, 0.55, 0.003, R);
+    k.burst(out, 'white', t + 0.055, 'bandpass', 2000, 2, 0.8, 0.006, R);
+    k.ping(out, t + 0.055, 430, 0.18, 0.02);
+    k.ping(out, t + 0.055, 1130, 0.08, 0.012);
+    // the seal letting go
+    const g = k.gain(0);
+    k.noise('pink', t, 0.6, R).connect(k.filt('lowpass', 520, 0.7)).connect(g).connect(out);
+    g.gain.setValueAtTime(0, t + 0.07);
+    g.gain.linearRampToValueAtTime(0.4, t + 0.12);
+    g.gain.setTargetAtTime(0, t + 0.12, 0.06);
+    // hinge
+    const o = k.osc('sawtooth', 170, t + 0.1, 0.35);
+    o.frequency.linearRampToValueAtTime(215, t + 0.4);
+    const hg = k.gain(0);
+    o.connect(k.filt('bandpass', 900, 3)).connect(hg).connect(out);
+    hg.gain.setValueAtTime(0, t + 0.1);
+    hg.gain.linearRampToValueAtTime(0.05, t + 0.2);
+    hg.gain.linearRampToValueAtTime(0, t + 0.42);
+  } },
+  door_close: { dur: 0.8, build(k, out, t, R) {
+    const ti = t + 0.02;
+    k.thump(out, ti, 78, 46, 0.08, 1, 0.05);
+    k.burst(out, 'brown', ti, 'lowpass', 320, 0.7, 1, 0.05, R);
+    for (const f of [165, 243, 392]) k.ping(out, ti, f * (1 + (R() - 0.5) * 0.05), 0.22, 0.04 + R() * 0.04);
+    k.burst(out, 'white', ti + 0.012, 'bandpass', 1600, 2, 0.7, 0.008, R);
+    k.burst(out, 'white', ti + 0.03, 'bandpass', 2800, 3, 0.25, 0.004, R);
+    const rg = k.gain(0);
+    k.noise('white', ti, 0.5, R).connect(k.filt('bandpass', 1300, 3)).connect(rg).connect(out);
+    k.grains(rg.gain, ti + 0.02, 0.15, 6, R, 0.12, 0.003, 0.01);
+  } },
+  seat: { dur: 0.8, build(k, out, t, R) {
+    const g = k.gain(0);
+    k.noise('white', t, 0.8, R).connect(k.filt('bandpass', 1400, 0.7)).connect(g).connect(out);
+    k.grains(g.gain, t, 0.5, 12, R, 0.45, 0.02, 0.05, 1);
+    k.thump(out, t + 0.12, 70, 50, 0.05, 0.45, 0.06);
+    const o = k.osc('triangle', 320, t + 0.1, 0.4);
+    o.frequency.linearRampToValueAtTime(260, t + 0.45);
+    const sg = k.gain(0);
+    o.connect(k.filt('bandpass', 700, 4)).connect(sg).connect(out);
+    sg.gain.setValueAtTime(0, t + 0.1);
+    sg.gain.linearRampToValueAtTime(0.06, t + 0.15);
+    sg.gain.linearRampToValueAtTime(0, t + 0.45);
+  } },
+  starter: { dur: 1.0, build(k, out, t, R) {
+    // A starter motor turning a cold engine over: the whine of the motor,
+    // loaded down on each compression stroke.
+    const o = k.osc('sawtooth', 185, t, 0.9);
+    const g = k.gain(0);
+    o.connect(k.filt('bandpass', 900, 1.2)).connect(g).connect(out);
+    const w = k.osc('sine', 1400, t, 0.9);
+    const wg = k.gain(0.06);
+    w.connect(wg).connect(out);
+    wg.gain.setValueAtTime(0.06, t);
+    wg.gain.linearRampToValueAtTime(0, t + 0.85);
+    const ng = k.gain(0);
+    k.noise('pink', t, 0.9, R).connect(k.filt('bandpass', 600, 1)).connect(ng).connect(out);
+    g.gain.setValueAtTime(0, t);
+    ng.gain.setValueAtTime(0, t);
+    const n = 8;
+    for (let i = 0; i < n; i++) {
+      const ti = t + 0.03 + i * 0.095;
+      g.gain.linearRampToValueAtTime(0.9, ti + 0.02);
+      g.gain.linearRampToValueAtTime(0.35, ti + 0.07);
+      ng.gain.linearRampToValueAtTime(0.5, ti + 0.02);
+      ng.gain.linearRampToValueAtTime(0.15, ti + 0.07);
+      o.frequency.linearRampToValueAtTime(150, ti + 0.03);
+      o.frequency.linearRampToValueAtTime(190, ti + 0.08);
+    }
+    g.gain.linearRampToValueAtTime(0, t + 0.86);
+    ng.gain.linearRampToValueAtTime(0, t + 0.86);
+  } },
+  starter_bike: { dur: 0.6, build(k, out, t, R) {
+    const o = k.osc('sawtooth', 260, t, 0.5);
+    const g = k.gain(0);
+    o.connect(k.filt('bandpass', 1300, 1.2)).connect(g).connect(out);
+    g.gain.setValueAtTime(0, t);
+    for (let i = 0; i < 5; i++) {
+      const ti = t + 0.02 + i * 0.08;
+      g.gain.linearRampToValueAtTime(0.8, ti + 0.02);
+      g.gain.linearRampToValueAtTime(0.3, ti + 0.06);
+    }
+    g.gain.linearRampToValueAtTime(0, t + 0.45);
+  } },
+  ev_on: { dur: 1.0, build(k, out, t, R) {
+    for (const [dt, f] of [[0, 659], [0.13, 988]]) {
+      k.ping(out, t + dt, f, 0.5, 0.18, 0.01);
+      k.ping(out, t + dt, f * 2, 0.12, 0.08, 0.01);
+    }
+    const o = k.osc('sine', 120, t, 0.9);
+    o.frequency.exponentialRampToValueAtTime(420, t + 0.6);
+    const g = k.gain(0);
+    o.connect(g).connect(out);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.12, t + 0.3);
+    g.gain.linearRampToValueAtTime(0, t + 0.8);
+  } },
+  kickstand: { dur: 0.4, build(k, out, t, R) {
+    k.burst(out, 'white', t, 'bandpass', 2600, 3, 0.6, 0.004, R);
+    for (let i = 0; i < 4; i++) k.ping(out, t + 0.004, 880 * METAL[i], 0.3 / (1 + i), 0.03 + R() * 0.04);
+    k.thump(out, t, 110, 70, 0.03, 0.4, 0.02);
+  } },
+  airbrake: { dur: 1.1, build(k, out, t, R) {
+    k.burst(out, 'white', t, 'bandpass', 2400, 4, 0.4, 0.004, R);
+    const g = k.gain(0);
+    k.noise('white', t, 1.1, R).connect(k.filt('highpass', 2200)).connect(k.filt('bandpass', 4800, 0.5)).connect(g).connect(out);
+    g.gain.setValueAtTime(0, t + 0.01);
+    g.gain.linearRampToValueAtTime(1, t + 0.03);
+    g.gain.setTargetAtTime(0, t + 0.08, 0.22);
+  } },
+  backfire: { dur: 0.3, variants: 2, build(k, out, t, R) {
+    const bus = k.gain(1);
+    bus.connect(k.shaper(2.5)).connect(out);
+    k.burst(bus, 'white', t, 'bandpass', 650 + R() * 300, 0.7, 1, 0.012, R, 0.0005);
+    k.thump(bus, t, 115, 60, 0.03, 0.8, 0.02);
+    const g = k.gain(0);
+    k.noise('white', t, 0.25, R).connect(k.filt('highpass', 2000)).connect(g).connect(out);
+    k.grains(g.gain, t + 0.02, 0.12, 5, R, 0.3, 0.002, 0.006);
+  } },
+  // The Belltown Hellcat's backfire (profiles with `bang`): unburnt fuel
+  // lighting off in a straight-through exhaust, and it should sound like a
+  // gunshot. So the energy is where a phone speaker can play it: a hard,
+  // clipped crack of broadband noise at 1-5 kHz with a sub-millisecond
+  // attack, a short 300 Hz bark under it, and the slap of it coming back off
+  // the buildings 70-110 ms later. The thump below 100 Hz is a garnish.
+  bang: { dur: 0.45, variants: 3, build(k, out, t, R) {
+    const bus = k.gain(1);
+    bus.connect(k.shaper(7)).connect(k.filt('lowpass', 6500, 0.6)).connect(out);
+    k.burst(bus, 'white', t, 'bandpass', 1500 + R() * 500, 0.5, 2.6, 0.022, R, 0.0002);
+    k.burst(bus, 'white', t, 'bandpass', 2600 + R() * 1200, 0.9, 1.4, 0.035, R, 0.0002);
+    k.burst(bus, 'white', t, 'bandpass', 300 + R() * 120, 0.8, 1.8, 0.045, R, 0.0004);
+    k.thump(bus, t, 180, 70, 0.05, 0.7, 0.035, 'triangle');
+    const slap = t + 0.07 + R() * 0.04;
+    k.burst(out, 'white', slap, 'bandpass', 1800 + R() * 600, 0.7, 0.32, 0.03, R, 0.001);
+    k.burst(out, 'pink', slap + 0.01, 'bandpass', 500, 0.6, 0.18, 0.06, R, 0.002);
+  } },
+  // A turbo's blow-off valve venting the boost when the throttle shuts: a
+  // burst of hiss falling in pitch as the pressure goes. Variant 1 is the
+  // flutter of a compressor surging instead ("stu-tu-tu").
+  bov: { dur: 0.6, variants: 2, build(k, out, t, R, v) {
+    const bp = k.filt('bandpass', 4000, 0.9);
+    bp.frequency.setValueAtTime(4000 + R() * 700, t);
+    bp.frequency.exponentialRampToValueAtTime(1400, t + 0.42);
+    const g = k.gain(0);
+    const am = k.gain(1);
+    k.noise('white', t, 0.6, R).connect(bp).connect(am).connect(g).connect(out);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.9, t + 0.012);
+    g.gain.setTargetAtTime(0, t + 0.06, v ? 0.13 : 0.1);
+    if (v) {
+      am.gain.value = 0.55;
+      const lfo = k.osc('square', 19 + R() * 5, t, 0.55);
+      lfo.frequency.linearRampToValueAtTime(13, t + 0.5);
+      lfo.connect(k.gain(0.45)).connect(am.gain);
+    }
+    k.thump(out, t, 170, 70, 0.08, 0.22, 0.035);
+  } },
+  // A gear going in: a dull knock through the floor. Heard on the bikes and
+  // the heavy diesels (a truck's box, a bike's shift drum), not on the cars.
+  shift: { dur: 0.25, variants: 2, build(k, out, t, R) {
+    k.thump(out, t, 140 + R() * 30, 80, 0.03, 0.6, 0.02);
+    k.burst(out, 'pink', t, 'bandpass', 900 + R() * 300, 1.5, 0.4, 0.01, R);
+    k.ping(out, t + 0.002, 1700 + R() * 400, 0.06, 0.015);
+  } },
+  // An expansion joint under a tyre: a hard clack and the deck's hollow boom.
+  // Played twice per joint, front axle and rear (see _updateVehicle).
+  joint: { dur: 0.4, variants: 2, half: true, build(k, out, t, R) {
+    k.thump(out, t, 120 + R() * 30, 50, 0.05, 0.9, 0.04);
+    k.burst(out, 'pink', t, 'lowpass', 700, 0.8, 0.7, 0.025, R);
+    k.burst(out, 'white', t + 0.003, 'bandpass', 1500 + R() * 500, 1.5, 0.3, 0.008, R);
+    k.ping(out, t + 0.006, 62 + R() * 10, 0.35, 0.12);
+  } },
+
+  // --- ambience: the world around you (see _ambience) -----------------------
+  // The city's bed: the traffic of a few blocks around blurred into one sound
+  // -- a low rumble that swells and settles, cars passing out of sight as
+  // slow swells of tyre wash, and a building's air handling droning under it.
+  amb_city: { dur: 6.5, loop: 0.5, half: true, build(k, out, t, R) {
+    const D = 6.5;
+    const rg = k.gain(0.5);
+    k.wander(rg.gain, t, D, 0.5, 0.22, R, 16);
+    k.noise('brown', t, D, R).connect(k.filt('lowpass', 170, 0.7)).connect(rg).connect(out);
+    for (let i = 0; i < 7; i++) {
+      const len = 1.3 + R() * 1.6, t0 = t + R() * (D - 0.55 - len), f = 450 + R() * 550;
+      const bp = k.filt('bandpass', f, 0.8);
+      bp.frequency.setValueAtTime(f * 1.08, t0);
+      bp.frequency.linearRampToValueAtTime(f * 0.9, t0 + len);
+      const g = k.gain(0);
+      k.noise('pink', t0, len + 0.05, R).connect(bp).connect(g).connect(out);
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(0.14 + R() * 0.14, t0 + len * 0.5);
+      g.gain.linearRampToValueAtTime(0, t0 + len);
+    }
+    const wash = k.gain(0.07);
+    k.noise('pink', t, D, R).connect(k.filt('bandpass', 900, 0.5)).connect(wash).connect(out);
+    for (const [f, a] of [[118, 0.03], [121.4, 0.025], [236, 0.01]]) k.osc('sine', f, t, D).connect(k.gain(a)).connect(out);
+  } },
+  // Water against a sea wall or a beach: the slow wash of each wave, the slap
+  // as it meets the shore, a fizz as it draws back, the odd glug.
+  amb_water: { dur: 7.2, loop: 0.6, half: true, build(k, out, t, R) {
+    const D = 7.2;
+    const lp = k.filt('lowpass', 650, 0.6);
+    k.wander(lp.frequency, t, D, 650, 200, R, 20);
+    k.noise('pink', t, D, R).connect(lp).connect(k.gain(0.22)).connect(out);
+    let tw = t + 0.15;
+    while (tw < t + D - 1.9) {
+      const len = 1.1 + R() * 0.7;
+      const g = k.gain(0);
+      k.noise('pink', tw, len + 0.1, R).connect(k.filt('bandpass', 650 + R() * 300, 0.6)).connect(g).connect(out);
+      g.gain.setValueAtTime(0, tw);
+      g.gain.linearRampToValueAtTime(0.45 + R() * 0.15, tw + len * 0.55);
+      g.gain.setTargetAtTime(0, tw + len * 0.55, len * 0.18);
+      k.burst(out, 'pink', tw + len * 0.55, 'lowpass', 900, 0.7, 0.3, 0.05, R, 0.01);
+      const fz = k.gain(0);
+      k.noise('white', tw + len * 0.5, 1.0, R).connect(k.filt('highpass', 2500)).connect(fz).connect(out);
+      k.grains(fz.gain, tw + len * 0.6, 0.75, 26, R, 0.1, 0.002, 0.01, 1.3);
+      tw += len + 0.35 + R() * 0.8;
+    }
+    for (let i = 0; i < 6; i++) {
+      const ti = t + 0.1 + R() * (D - 0.8), f0 = 220 + R() * 300;
+      const o = k.osc('sine', f0, ti, 0.08);
+      o.frequency.exponentialRampToValueAtTime(f0 * 2, ti + 0.04);
+      const bg = k.gain(0);
+      o.connect(bg).connect(out);
+      k.hit(bg.gain, ti, 0.07, 0.012, 0.003);
+    }
+  } },
+  // Birds in the parks: a few species' phrases from whistled sweeps.
+  //   0 robin: a carol of rising and falling whistles
+  //   1 black-capped chickadee: "fee-bee", the second note lower
+  //   2 song sparrow: sharp introductory notes, a trill, a buzz
+  //   3 house finch: a rambling warble
+  //   4 dark-eyed junco: a fast trill on one pitch
+  //   5 contact chips
+  bird: { dur: 1.8, variants: 6, half: true, build(k, out, t, R, v) {
+    const note = (ti, f0, f1, len, a, vib = 0) => {
+      const o = k.osc('sine', f0, ti, len + 0.02);
+      o.frequency.exponentialRampToValueAtTime(f1, ti + len);
+      if (vib) k.osc('sine', vib, ti, len + 0.02).connect(k.gain(f0 * 0.05)).connect(o.frequency);
+      const g = k.gain(0);
+      o.connect(g).connect(out);
+      g.gain.setValueAtTime(0, ti);
+      g.gain.linearRampToValueAtTime(a, ti + Math.min(0.012, len * 0.3));
+      g.gain.setValueAtTime(a, ti + len * 0.7);
+      g.gain.linearRampToValueAtTime(0, ti + len);
+      // a syrinx is not a sine: a touch of the second harmonic
+      const o2 = k.osc('sine', f0 * 2, ti, len + 0.02);
+      o2.frequency.exponentialRampToValueAtTime(f1 * 2, ti + len);
+      const g2 = k.gain(0);
+      o2.connect(g2).connect(out);
+      g2.gain.setValueAtTime(0, ti);
+      g2.gain.linearRampToValueAtTime(a * 0.12, ti + 0.01);
+      g2.gain.linearRampToValueAtTime(0, ti + len);
+    };
+    let ti = t;
+    if (v === 0) {
+      for (let i = 0; i < 4; i++) { const f = 2000 + R() * 900; note(ti, f, f * (R() < 0.5 ? 1.25 : 0.8), 0.16 + R() * 0.08, 0.6); ti += 0.24 + R() * 0.08; }
+    } else if (v === 1) {
+      note(t, 3950, 3900, 0.32, 0.55); note(t + 0.4, 3500, 3350, 0.34, 0.5);
+    } else if (v === 2) {
+      for (let i = 0; i < 3; i++) { note(ti, 4200, 3600, 0.04, 0.5); ti += 0.14; }
+      for (let i = 0; i < 9; i++) { note(ti, 3000, 4800, 0.025, 0.4); ti += 0.042; }
+      note(ti + 0.05, 2600, 2300, 0.22, 0.32, 32);
+    } else if (v === 3) {
+      for (let i = 0; i < 9; i++) { const f = 2400 + R() * 2200, len = 0.05 + R() * 0.08; note(ti, f, f * (0.7 + R() * 0.6), len, 0.45); ti += len + 0.015 + R() * 0.03; }
+    } else if (v === 4) {
+      const f = 3600 + R() * 400;
+      for (let i = 0; i < 15; i++) { note(ti, f * 1.15, f * 0.85, 0.03, 0.4); ti += 0.055; }
+    } else {
+      for (let i = 0; i < 3; i++) note(t + i * (0.22 + R() * 0.1), 5200 + R() * 800, 3800, 0.03, 0.5);
+    }
+  } },
+  // Seattle's crows: a harsh, nasal "caw", two or three times.
+  crow: { dur: 1.6, variants: 2, half: true, build(k, out, t, R, v) {
+    for (let i = 0; i < (v ? 3 : 2); i++) {
+      const ti = t + i * (0.42 + R() * 0.08), len = 0.26 + R() * 0.06, f = 540 + R() * 80;
+      const o = k.osc('sawtooth', f * 0.9, ti, len + 0.02);
+      o.frequency.linearRampToValueAtTime(f * 1.05, ti + len * 0.3);
+      o.frequency.linearRampToValueAtTime(f * 0.82, ti + len);
+      const sh = k.shaper(2.5), g = k.gain(0);
+      o.connect(sh);
+      sh.connect(k.filt('bandpass', 1300, 3)).connect(g);
+      sh.connect(k.filt('bandpass', 2300, 4)).connect(g);
+      g.connect(out);
+      g.gain.setValueAtTime(0, ti);
+      g.gain.linearRampToValueAtTime(0.7, ti + 0.03);
+      g.gain.setValueAtTime(0.6, ti + len * 0.6);
+      g.gain.linearRampToValueAtTime(0, ti + len);
+      k.burst(out, 'white', ti, 'bandpass', 1800, 1.5, 0.12, len * 0.4, R, 0.02);
+    }
+  } },
+  // Gulls over the water: the long call (a drawn-out cry, then a run of
+  // short ones), a pair of cries, a quick laughing series.
+  gull: { dur: 2.0, variants: 3, half: true, build(k, out, t, R, v) {
+    const call = (ti, f, len, a) => {
+      const o = k.osc('sawtooth', f * 0.7, ti, len + 0.02);
+      o.frequency.exponentialRampToValueAtTime(f * 1.25, ti + len * 0.25);
+      o.frequency.exponentialRampToValueAtTime(f * 0.8, ti + len);
+      const g = k.gain(0);
+      o.connect(k.filt('bandpass', 1900, 2.5)).connect(g);
+      o.connect(k.filt('bandpass', 3200, 3)).connect(g);
+      g.connect(out);
+      g.gain.setValueAtTime(0, ti);
+      g.gain.linearRampToValueAtTime(a, ti + 0.04);
+      g.gain.setValueAtTime(a * 0.8, ti + len * 0.7);
+      g.gain.linearRampToValueAtTime(0, ti + len);
+    };
+    if (v === 0) { call(t, 900, 0.5, 0.8); for (let i = 0; i < 5; i++) call(t + 0.6 + i * 0.22, 1000 - i * 20, 0.18, 0.6 * (1 - i * 0.1)); }
+    else if (v === 1) { call(t, 950, 0.35, 0.7); call(t + 0.45, 920, 0.3, 0.6); }
+    else { let ti = t; for (let i = 0; i < 4; i++) { call(ti, 1150 + R() * 100, 0.12, 0.55); ti += 0.16 + R() * 0.05; } }
+  } },
+  // Somebody else's car horn, a few streets off: a tap, a double tap, a lean.
+  horn_far: { dur: 1.2, variants: 3, half: true, build(k, out, t, R, v) {
+    const beep = (ti, len) => {
+      const sh = k.shaper(2.5), g = k.gain(0);
+      for (const f of [415, 523]) k.osc('square', f * (1 + (R() - 0.5) * 0.03), ti, len + 0.04).connect(k.gain(0.5)).connect(sh);
+      sh.connect(k.filt('bandpass', 1900, 1.4)).connect(g).connect(out);
+      g.gain.setValueAtTime(0, ti);
+      g.gain.linearRampToValueAtTime(0.8, ti + 0.008);
+      g.gain.setValueAtTime(0.8, ti + len);
+      g.gain.linearRampToValueAtTime(0, ti + len + 0.02);
+    };
+    if (v === 0) beep(t, 0.2);
+    else if (v === 1) { beep(t, 0.12); beep(t + 0.2, 0.16); }
+    else beep(t, 0.85);
+  } },
+
+  // --- water -----------------------------------------------------------------
+  // An orca's blow: the explosive exhale through the blowhole -- a breathy
+  // roar with a wet top -- and the short, softer inhale that follows (orcas.js).
+  orca_blow: { dur: 1.5, variants: 2, build(k, out, t, R) {
+    k.burst(out, 'pink', t, 'bandpass', 700 + R() * 250, 0.6, 0.9, 0.22, R, 0.012);
+    k.burst(out, 'white', t + 0.01, 'highpass', 2600 + R() * 800, 0.7, 0.32, 0.18, R, 0.01);
+    k.burst(out, 'brown', t, 'lowpass', 260, 0.7, 0.5, 0.12, R, 0.01);
+    k.burst(out, 'pink', t + 0.62 + R() * 0.1, 'bandpass', 520, 0.8, 0.22, 0.16, R, 0.09);
+  } },
+  splash: { dur: 2.0, build(k, out, t, R) {
+    const lp = k.filt('lowpass', 2600, 0.7);
+    lp.frequency.setValueAtTime(2600, t);
+    lp.frequency.exponentialRampToValueAtTime(700, t + 0.5);
+    const g = k.gain(0);
+    k.noise('pink', t, 1.5, R).connect(lp).connect(g).connect(out);
+    k.hit(g.gain, t, 1, 0.14, 0.006);
+    k.burst(out, 'brown', t, 'lowpass', 300, 0.7, 0.8, 0.1, R, 0.004);
+    for (let i = 0; i < 18; i++) {
+      const ti = t + 0.04 + Math.pow(R(), 1.4) * 0.8, f0 = 180 + R() * 520;
+      const o = k.osc('sine', f0, ti, 0.1);
+      o.frequency.exponentialRampToValueAtTime(f0 * (2.2 + R()), ti + 0.02 + R() * 0.04);
+      const bg = k.gain(0);
+      o.connect(bg).connect(out);
+      k.hit(bg.gain, ti, 0.22, 0.015, 0.003);
+    }
+    const sg = k.gain(0);
+    k.noise('white', t, 1.6, R).connect(k.filt('highpass', 2600)).connect(sg).connect(out);
+    k.grains(sg.gain, t + 0.05, 1.2, 60, R, 0.45, 0.002, 0.012, 1.6);
+    const tg = k.gain(0);
+    k.noise('pink', t, 2, R).connect(k.filt('lowpass', 600)).connect(tg).connect(out);
+    k.grains(tg.gain, t + 0.5, 1.3, 6, R, 0.35, 0.05, 0.12, 1);
+  } },
+  slosh: { dur: 3.6, loop: 0.45, build(k, out, t, R) {
+    const lp = k.filt('lowpass', 750, 0.8);
+    k.wander(lp.frequency, t, 3.6, 750, 250, R);
+    const bed = k.gain(0.22);
+    const lumps = k.gain(0);
+    const src = k.noise('pink', t, 3.6, R);
+    src.connect(lp);
+    lp.connect(bed).connect(out);
+    lp.connect(lumps).connect(out);
+    k.grains(lumps.gain, t, 3.6, 12, R, 1.1, 0.06, 0.2, 1);
+    for (let i = 0; i < 9; i++) {
+      const ti = t + R() * 3.4, f0 = 250 + R() * 400;
+      const o = k.osc('sine', f0, ti, 0.08);
+      o.frequency.exponentialRampToValueAtTime(f0 * 2.3, ti + 0.035);
+      const bg = k.gain(0);
+      o.connect(bg).connect(out);
+      k.hit(bg.gain, ti, 0.12, 0.012, 0.003);
+    }
+    const dg = k.gain(0);
+    k.noise('white', t, 3.6, R).connect(k.filt('highpass', 3000)).connect(dg).connect(out);
+    k.grains(dg.gain, t, 3.6, 26, R, 0.18, 0.002, 0.008, 1);
+  } },
+
+  // --- tyres -----------------------------------------------------------------
+  // Tyre squeal is TONAL -- a rubber stick-slip oscillation near 1 kHz with
+  // a wobbling pitch -- not the band of hiss the old skid was.
+  squeal: { dur: 2.5, loop: 0.3, build(k, out, t, R) {
+    const base = 1020;
+    for (const [m, a] of [[1, 1], [2.01, 0.32], [2.97, 0.12]]) {
+      const o = k.osc('sine', base * m, t, 2.5);
+      k.wander(o.frequency, t, 2.5, base * m, 55 * m, R, 60);
+      const g = k.gain(0);
+      k.wander(g.gain, t, 2.5, a * 0.7, a * 0.3, R, 50);
+      o.connect(g).connect(out);
+    }
+    const ng = k.gain(0);
+    k.wander(ng.gain, t, 2.5, 0.25, 0.1, R, 30);
+    k.noise('white', t, 2.5, R).connect(k.filt('bandpass', 1300, 3)).connect(ng).connect(out);
+  } },
+  // A balloon's burner: a deep roar of propane burning, a hiss over it and
+  // the flutter of the flame. Looped while the burner is lit.
+  burner: { dur: 2.6, loop: 0.3, build(k, out, t, R) {
+    const roar = k.gain(0.9);
+    k.wander(roar.gain, t, 2.6, 0.85, 0.15, R, 60);
+    k.noise('brown', t, 2.6, R).connect(k.filt('lowpass', 420, 0.9)).connect(roar).connect(out);
+    const body = k.gain(0.35);
+    k.wander(body.gain, t, 2.6, 0.32, 0.08, R, 90);
+    k.noise('pink', t, 2.6, R).connect(k.filt('bandpass', 900, 0.6)).connect(body).connect(out);
+    const hiss = k.gain(0.10);
+    k.noise('white', t, 2.6, R).connect(k.filt('highpass', 3200)).connect(hiss).connect(out);
+  } },
+  gravel: { dur: 2.4, loop: 0.3, build(k, out, t, R) {
+    const g = k.gain(0);
+    k.noise('white', t, 2.4, R).connect(k.filt('bandpass', 1900, 0.8)).connect(g).connect(out);
+    k.grains(g.gain, t, 2.4, 360, R, 0.9, 0.002, 0.006, 1);
+    const rg = k.gain(0);
+    k.wander(rg.gain, t, 2.4, 0.5, 0.2, R, 30);
+    k.noise('brown', t, 2.4, R).connect(k.filt('lowpass', 260)).connect(rg).connect(out);
+  } },
+  // Tyres on turf: the swish of grass under the tread, stalks flicking the
+  // arches, and the thump of uneven ground -- not gravel's crunch.
+  grass_roll: { dur: 2.4, loop: 0.3, half: true, build(k, out, t, R) {
+    const g = k.gain(0);
+    k.noise('pink', t, 2.4, R).connect(k.filt('bandpass', 1300, 0.7)).connect(g).connect(out);
+    k.wander(g.gain, t, 2.4, 0.32, 0.18, R, 40);
+    const fl = k.gain(0);
+    k.noise('white', t, 2.4, R).connect(k.filt('bandpass', 2600, 1)).connect(fl).connect(out);
+    k.grains(fl.gain, t, 2.4, 90, R, 0.22, 0.004, 0.012, 1);
+    k.noise('brown', t, 2.4, R).connect(k.filt('lowpass', 140)).connect(k.gain(0.6)).connect(out);
+    for (let i = 0; i < 7; i++) k.thump(out, t + 0.05 + R() * 1.9, 70 + R() * 30, 40, 0.05, 0.3 + R() * 0.3, 0.04);
+  } },
+
+  // --- pickups, money, stings, UI ----------------------------------------------
+  pickup: { dur: 0.75, build(k, out, t, R) {
+    const notes = [1318.5, 1661.2, 1975.5, 2637];
+    notes.forEach((f, i) => {
+      const ti = t + i * 0.055;
+      k.ping(out, ti, f, 0.5, 0.14, 0.004);
+      k.ping(out, ti, f * 2.76, 0.08, 0.05, 0.002);
+    });
+    k.burst(out, 'white', t, 'highpass', 5000, 0.7, 0.12, 0.12, R, 0.02);
+  } },
+  weapon: { dur: 0.5, build(k, out, t, R) {
+    for (const dt of [0, 0.16]) {
+      k.burst(out, 'white', t + dt, 'bandpass', 3000, 3, 0.8, 0.005, R);
+      for (let i = 0; i < 3; i++) k.ping(out, t + dt, 1200 * METAL[i], 0.2 / (1 + i), 0.025);
+    }
+  } },
+  cash: { dur: 1.1, build(k, out, t, R) {
+    k.burst(out, 'white', t, 'bandpass', 1600, 3, 0.6, 0.01, R);
+    k.ping(out, t, 1250, 0.25, 0.02);
+    k.burst(out, 'brown', t + 0.02, 'lowpass', 220, 0.7, 0.5, 0.05, R);
+    const ti = t + 0.09;
+    const f = 2093;
+    k.ping(out, ti, f, 0.55, 0.28, 0.002);
+    k.ping(out, ti, f * 2.76, 0.22, 0.12, 0.002);
+    k.ping(out, ti, f * 5.4, 0.08, 0.05, 0.002);
+    k.ping(out, ti + 0.004, f * 1.5, 0.2, 0.2, 0.002);
+    for (let i = 0; i < 14; i++) k.ping(out, ti + 0.02 + R() * 0.5, 3500 + R() * 3500, 0.08, 0.01 + R() * 0.02);
+  } },
+  wanted: { dur: 1.9, build(k, out, t, R) {
+    k.thump(out, t, 115, 52, 0.25, 1, 0.13);
+    k.burst(out, 'brown', t, 'lowpass', 320, 0.7, 0.9, 0.08, R);
+    // brass stab: a detuned power chord through a lowpass that opens and closes
+    const lp = k.filt('lowpass', 300, 1.2);
+    lp.frequency.setValueAtTime(300, t);
+    lp.frequency.exponentialRampToValueAtTime(2900, t + 0.04);
+    lp.frequency.exponentialRampToValueAtTime(650, t + 0.8);
+    const g = k.gain(0);
+    lp.connect(g).connect(out);
+    for (const f of [110, 110.8, 164.8, 220, 219.2, 329.6]) k.osc('sawtooth', f, t, 1.6).connect(lp);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.28, t + 0.025);
+    g.gain.setTargetAtTime(0, t + 0.1, 0.38);
+    // tension riser
+    const o = k.osc('sawtooth', 880, t + 0.2, 1.6);
+    o.frequency.exponentialRampToValueAtTime(1760, t + 1.6);
+    const rg = k.gain(0);
+    o.connect(k.filt('bandpass', 1400, 2)).connect(rg).connect(out);
+    rg.gain.setValueAtTime(0, t + 0.2);
+    rg.gain.linearRampToValueAtTime(0.06, t + 1.3);
+    rg.gain.linearRampToValueAtTime(0, t + 1.7);
+  } },
+  ui_tick: { dur: 0.14, build(k, out, t, R) {
+    k.ping(out, t, 1250, 0.8, 0.018);
+    k.ping(out, t, 2710, 0.2, 0.008);
+    k.burst(out, 'white', t, 'bandpass', 2400, 2, 0.4, 0.004, R);
+  } },
+  ui_go: { dur: 0.9, build(k, out, t, R) {
+    for (const f of [784, 988, 1175, 1568]) {
+      k.ping(out, t, f, 0.35, 0.22, 0.004);
+      k.ping(out, t, f * 2, 0.06, 0.1, 0.004);
+    }
+    k.burst(out, 'white', t, 'bandpass', 3000, 0.8, 0.2, 0.05, R, 0.01);
+  } },
+  ui_start: { dur: 0.6, build(k, out, t, R) {
+    k.ping(out, t, 587, 0.55, 0.1, 0.004);
+    k.ping(out, t, 1174, 0.12, 0.05, 0.004);
+    k.ping(out, t + 0.11, 880, 0.55, 0.14, 0.004);
+    k.ping(out, t + 0.11, 1760, 0.12, 0.07, 0.004);
+  } },
+  ui_fail: { dur: 1.1, build(k, out, t, R) {
+    [392, 311, 262].forEach((f, i) => {
+      const ti = t + i * 0.22;
+      const o = k.osc('sawtooth', f, ti, 0.35);
+      o.frequency.linearRampToValueAtTime(f * 0.97, ti + 0.3);
+      const g = k.gain(0);
+      o.connect(k.filt('lowpass', 1100, 1)).connect(g).connect(out);
+      g.gain.setValueAtTime(0, ti);
+      g.gain.linearRampToValueAtTime(0.4, ti + 0.02);
+      g.gain.setTargetAtTime(0, ti + 0.12, i === 2 ? 0.12 : 0.05);
+    });
+  } },
+  // A light-rail car's warning bell: a small gong struck twice, its
+  // partials inharmonic and decaying at their own rates (METAL).
+  // a bicycle bell: a small dome struck twice, bright and quick
+  bike_bell: { dur: 0.9, build(k, out, t, R) {
+    for (const t0 of [t, t + 0.16]) METAL.slice(0, 4).forEach((r, i) => k.ping(out, t0, 2350 * r, 0.26 / (1 + i), 0.32 / (1 + i * 0.6), 0.001));
+  } },
+  // A level crossing's electronic bell: a hard little strike, about twice a
+  // second (freight.js paces it), bright and a touch inharmonic.
+  xing_bell: { dur: 0.5, build(k, out, t, R) {
+    const g = k.gain(1);
+    g.connect(k.filt('highpass', 400, 0.7)).connect(out);
+    k.ping(g, t, 1180, 0.55, 0.16, 0.0008);
+    k.ping(g, t, 1180 * 2.76, 0.22, 0.06, 0.0008);
+    k.ping(g, t, 1180 * 5.4, 0.08, 0.025, 0.0008);
+    k.burst(g, 'white', t, 'bandpass', 3800, 2, 0.12, 0.004, R);
+  } },
+  // A locomotive's pneumatic bell: one swing of the clapper, a big bronze bell.
+  loco_bell: { dur: 1.6, build(k, out, t, R) {
+    METAL.slice(0, 6).forEach((r, i) => k.ping(out, t, 560 * r * (1 + (R() - 0.5) * 0.01), 0.34 / (1 + i * 0.7), 0.9 / (1 + i * 0.45), 0.002));
+    k.burst(out, 'white', t, 'bandpass', 2400, 1.5, 0.06, 0.006, R);
+  } },
+  // Brakes released: the brake pipe recharging, a long soft hiss off the train.
+  brake_release: { dur: 2.4, build(k, out, t, R) {
+    const g = k.gain(0);
+    k.noise('white', t, 2.4, R).connect(k.filt('highpass', 1600, 0.6)).connect(k.filt('lowpass', 7000, 0.6)).connect(g).connect(out);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.5, t + 0.06);
+    g.gain.setTargetAtTime(0.18, t + 0.1, 0.3);
+    g.gain.setTargetAtTime(0, t + 1.2, 0.35);
+  } },
+  // Emergency: the brake pipe vented at once -- a roar, then a long hiss.
+  brake_dump: { dur: 3.6, build(k, out, t, R) {
+    const g = k.gain(0);
+    const bp = k.filt('bandpass', 1400, 0.5);
+    bp.frequency.setValueAtTime(900, t);
+    bp.frequency.exponentialRampToValueAtTime(3400, t + 2.8);
+    k.noise('pink', t, 3.6, R).connect(bp).connect(g).connect(out);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(1.0, t + 0.02);
+    g.gain.setTargetAtTime(0.35, t + 0.05, 0.5);
+    g.gain.setTargetAtTime(0, t + 2.2, 0.45);
+    k.thump(out, t, 80, 40, 0.3, 0.6, 0.12);
+  } },
+  // Steel wheels over rail: one 18 m car's worth at 15 m/s -- the rumble, the
+  // wheels' hum, and each axle over a joint (two trucks, two axles each: the
+  // clickety-clack). Played at speed / 15.
+  rail_roll: { dur: 1.2, loop: 0.06, build(k, out, t, R) {
+    const rg = k.gain(0.55);
+    k.noise('brown', t, 1.2, R).connect(k.filt('lowpass', 170, 0.8)).connect(rg).connect(out);
+    const hg = k.gain(0.12);
+    k.noise('pink', t, 1.2, R).connect(k.filt('bandpass', 420, 1.1)).connect(hg).connect(out);
+    for (const x of [0.25, 0.37, 0.87, 0.99]) {
+      const ti = t + x;
+      k.thump(out, ti, 140, 60, 0.05, 0.55, 0.035);
+      k.burst(out, 'white', ti, 'bandpass', 1700 + R() * 400, 1.6, 0.35, 0.012, R);
+      k.ping(out, ti, 900 + R() * 300, 0.06, 0.03);
+    }
+  } },
+  // a ferry underway: the diesels' slow throb and the wash along the hull
+  ferry_rumble: { dur: 2.0, loop: 0.1, build(k, out, t, R) {
+    const g = k.gain(0.7);
+    k.noise('brown', t, 2.0, R).connect(k.filt('lowpass', 95, 0.7)).connect(g).connect(out);
+    const w = k.gain(0.14);
+    k.noise('pink', t, 2.0, R).connect(k.filt('bandpass', 650, 0.5)).connect(w).connect(out);
+    for (let i = 0; i < 8; i++) k.thump(out, t + i * 0.25, 52, 34, 0.18, 0.3, 0.06);
+  } },
+  // A 1930s streetcar's gong (counterbalance.js): a bronze dish under the
+  // floor struck by the motorman's foot plunger. One hard strike -- the
+  // clapper's crack, then the dish ringing, its partials inharmonic and
+  // beating in pairs -- so a held BELL becomes the cable-car rhythm.
+  cable_bell: { dur: 1.4, build(k, out, t, R) {
+    const g = k.gain(1);
+    g.connect(out);
+    k.burst(g, 'white', t, 'bandpass', 3200, 1.2, 0.5, 0.006, R, 0.0005);
+    METAL.slice(0, 6).forEach((r, i) => {
+      const f = 930 * r;
+      k.ping(g, t, f, 0.3 / (1 + i * 0.6), 0.75 / (1 + i * 0.55), 0.0006);
+      k.ping(g, t, f * 1.006, 0.16 / (1 + i * 0.6), 0.6 / (1 + i * 0.55), 0.0006);
+    });
+  } },
+  // The counterbalance's finger dropping into the plow (or lifted out): a
+  // heavy iron clunk, the cable's jerk through the slot, a rattle below.
+  cb_clunk: { dur: 1.3, build(k, out, t, R) {
+    k.thump(out, t, 130, 45, 0.12, 0.9, 0.09);
+    k.burst(out, 'white', t, 'bandpass', 900, 1.4, 0.55, 0.03, R);
+    for (const [f, d] of [[212, 0.18], [347, 0.12], [561, 0.07]]) k.ping(out, t + 0.004, f, 0.22, d, 0.001);
+    const rg = k.gain(0);
+    k.noise('white', t + 0.08, 0.7, R).connect(k.filt('bandpass', 2400, 1.0)).connect(rg).connect(out);
+    k.grains(rg.gain, t + 0.08, 0.6, 26, R, 0.5, 0.003, 0.012, 1.4);
+    k.thump(out, t + 0.22, 70, 38, 0.2, 0.45, 0.25);
+  } },
+  // The cable running in its conduit under a car on the counterbalance: the
+  // sheaves' rumble and a tick each time a splice passes the plow.
+  cb_hum: { dur: 2.0, loop: 0.1, build(k, out, t, R) {
+    const g = k.gain(0.7);
+    k.noise('brown', t, 2.0, R).connect(k.filt('lowpass', 140, 0.9)).connect(g).connect(out);
+    const w = k.gain(0.16);
+    k.noise('pink', t, 2.0, R).connect(k.filt('bandpass', 620, 3.0)).connect(w).connect(out);
+    for (let i = 0; i < 8; i++) k.burst(out, 'white', t + i * 0.25 + R() * 0.02, 'bandpass', 1500 + R() * 600, 2, 0.08, 0.01, R);
+  } },
+  // The Wienermobile's musical horn: a little tune of its own (not the
+  // jingle), on a bright twin-trumpet voice through a horn's bandpass.
+  wiener_horn: { dur: 1.9, build(k, out, t, R) {
+    const bus = k.gain(1);
+    bus.connect(k.shaper(1.6)).connect(k.filt('bandpass', 1500, 0.9)).connect(k.filt('lowpass', 5200, 0.7)).connect(out);
+    // E5 G5 A5 G5 | E5 C5 D5 -- C5, long
+    const N = [[659, 0.13], [784, 0.13], [880, 0.13], [784, 0.13], [659, 0.13], [523, 0.13], [587, 0.2], [523, 0.5]];
+    let at = t;
+    for (const [f, d] of N) {
+      for (const det of [1, 1.006]) {
+        const o = k.osc('square', f * det, at, d + 0.06);
+        const g = k.gain(0);
+        o.connect(g).connect(bus);
+        g.gain.setValueAtTime(0, at);
+        g.gain.linearRampToValueAtTime(0.16, at + 0.012);
+        g.gain.setValueAtTime(0.145, at + d - 0.025);
+        g.gain.linearRampToValueAtTime(0, at + d + 0.01);
+      }
+      at += d + 0.03;
+    }
+  } },
+  tram_bell: { dur: 1.6, build(k, out, t, R) {
+    for (const t0 of [t, t + 0.34]) {
+      METAL.slice(0, 5).forEach((r, i) => k.ping(out, t0, 1046 * r, 0.32 / (1 + i * 0.8), 0.55 / (1 + i * 0.5), 0.0015));
+    }
+  } },
+  ui_check: { dur: 0.5, build(k, out, t, R) {
+    k.ping(out, t, 1568, 0.5, 0.13, 0.003);
+    k.ping(out, t, 2093, 0.35, 0.11, 0.003);
+    k.ping(out, t, 3136, 0.1, 0.05, 0.003);
+  } },
+  ui_ring: { dur: 0.55, build(k, out, t, R) {
+    const f = k.filt('bandpass', 600, 1.4);
+    f.frequency.setValueAtTime(600, t);
+    f.frequency.exponentialRampToValueAtTime(3200, t + 0.2);
+    const g = k.gain(0);
+    k.noise('white', t, 0.3, R).connect(f).connect(g).connect(out);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.3, t + 0.15);
+    g.gain.linearRampToValueAtTime(0, t + 0.24);
+    k.ping(out, t + 0.14, 1760, 0.45, 0.12, 0.003);
+    k.ping(out, t + 0.14, 2637, 0.15, 0.06, 0.003);
+  } },
+};
+
+// What a player hears first, rendered first. Until the whole bank existed
+// nothing played; it fills in place now, batch by batch, in this order, so
+// footsteps and doors are ready after the first small batch. (The whole bank
+// is ~0.3 s on the Mac's GPU page, ~2 s on a phone. Timed on SwiftShader it
+// reads 20-40 s -- every batch waits for a ~0.5 s frame -- which measures the
+// harness, not the audio: use tools/audiounlock.mjs --bench with AUTO_GPU=1.)
+const BANK_FIRST = ['step_hard', 'step_grass', 'step_gravel', 'step_water', 'door_open', 'door_close', 'seat',
+  'starter', 'bump', 'land', 'punch', 'whoosh', 'smack', 'pedhit', 'thunk', 'crunch', 'glass', 'gun', 'splash', 'squeal', 'gravel', 'slosh'];
+
+/**
+ * Render every recipe into AudioBuffers, into `bank` as each batch finishes
+ * (`onBatch` after each). Batched into offline contexts of about 3 s of audio
+ * each -- the first ones small, so footsteps are ready within a batch -- with
+ * a yield between them, so building the graphs never blocks the main thread
+ * for long; the rendering itself runs off it.
+ */
+// Main-thread cost of the bank: building each batch's graph is synchronous
+// (the rendering is not). `buildMs` is the sum, `buildMax` the worst batch --
+// the longest the loop can be held up by it.
+export const bankStats = { batches: 0, buildMs: 0, buildMax: 0, seconds: 0 };
+
+export async function renderBank(sampleRate, onlyNames = null, bank = {}, onBatch = null) {
+  const OAC = globalThis.OfflineAudioContext || globalThis.webkitOfflineAudioContext;
+  if (!OAC) return bank;
+  const jobs = [];
+  // `half` sounds -- nothing above ~10 kHz worth the memory: the ambience
+  // beds and birds, the distant horns, the slam, the joints, the grass --
+  // render at half the rate, last, in their own batches
+  const rank = (n) => { const i = BANK_FIRST.indexOf(n); return (i < 0 ? BANK_FIRST.length : i) + (SOUNDS[n].half ? 1000 : 0); };
+  const names = Object.keys(SOUNDS).sort((p, q) => rank(p) - rank(q));
+  for (const name of names) {
+    const s = SOUNDS[name];
+    if (onlyNames && !onlyNames.includes(name)) continue;
+    for (let v = 0; v < (s.variants || 1); v++) jobs.push({ name, s, v });
+  }
+  const GAP = 0.05;
+  const batches = [];
+  let cur = [], secs = 0;
+  for (const j of jobs) {
+    const cap = batches.length === 0 ? 1.6 : 3.2;
+    if (cur.length && (secs + j.s.dur > cap || !!j.s.half !== !!cur[0].s.half)) { batches.push(cur); cur = []; secs = 0; }
+    cur.push(j); secs += j.s.dur + GAP;
+  }
+  if (cur.length) batches.push(cur);
+  const fullRate = sampleRate;
+  for (const batch of batches) {
+    let len = 0;
+    for (const b of batch) { b.at = len; len += b.s.dur + GAP; }
+    const tb = typeof performance !== 'undefined' ? performance.now() : 0;
+    sampleRate = batch[0].s.half ? Math.round(fullRate / 2) : fullRate;
+    const c = new OAC(1, Math.ceil(len * sampleRate), sampleRate);
+    const k = new Kit(c);
+    for (const b of batch) {
+      const out = c.createGain();
+      out.connect(c.destination);
+      // Seeded per sound and variant, so the bank is the same on every launch.
+      const seed = 1000 + b.v * 7919 + [...b.name].reduce((a, ch) => a * 31 + ch.charCodeAt(0), 7);
+      b.s.build(k, out, b.at, mulberry32(seed >>> 0), b.v);
+    }
+    if (typeof performance !== 'undefined') {
+      const ms = performance.now() - tb;
+      bankStats.batches++; bankStats.buildMs += ms; bankStats.buildMax = Math.max(bankStats.buildMax, ms); bankStats.seconds += len;
+    }
+    const rendered = await new Promise((res, rej) => {
+      c.oncomplete = (e) => res(e.renderedBuffer);
+      const p = c.startRendering();
+      if (p && p.then) p.then(res, rej);
+    });
+    const src = rendered.getChannelData(0);
+    const fresh = {};
+    for (const b of batch) {
+      const i0 = Math.floor(b.at * sampleRate);
+      const n = Math.floor(b.s.dur * sampleRate);
+      let buf = c.createBuffer(1, n, sampleRate);
+      buf.getChannelData(0).set(src.subarray(i0, i0 + n));
+      if (b.s.loop) buf = loopify(c, buf, b.s.loop);
+      else buf = trimTail(c, buf);
+      normalize(buf, b.s.loop ? 0.7 : 0.9);
+      (fresh[b.name] = fresh[b.name] || []).push(buf);
+    }
+    // a sound's variants appear together, so play() never picks from half
+    for (const nm in fresh) bank[nm] = (bank[nm] || []).concat(fresh[nm]);
+    if (onBatch) onBatch(bank);
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  return bank;
+}
+
+// ---------------------------------------------------------------------------
+// Engines
+// ---------------------------------------------------------------------------
+//
+// THE ENGINE TABLE. `selectEngine(spec)` picks a profile from the vehicle's
+// spec flags, first match wins, so a new vehicle type needs only a flag:
+//
+//   spec.engine      explicit profile key below -- overrides everything
+//                    (the Belltown Hellcat sets `engine: 'hellcat'`)
+//   spec.heli        'heli'       rotor blade slap + tail rotor + turbine
+//   spec.boat        'outboard'   2-stroke outboard (+ hull slosh by speed)
+//   spec.plane       'turboprop' if spec.turboprop or spec.jet, else 'piston'
+//   spec.ev          'ev'         motor + inverter whine, no gears
+//                    (the Wedge sets `engine: 'evtruck'`: the same, a quarter lower)
+//   spec.moto        'vtwin' if spec.vtwin or hand 'cruiser', else 'sportbike'
+//   spec.atv         'single'     buzzy single-cylinder quad
+//   spec.bus / spec.cargo / spec.diesel   'diesel' (turbo, clatter, air brake)
+//   spec.police / spec.v8 / hand 'muscle' | 'convertible' | 'pickup'   'v8'
+//   hand 'sports'    'flat6' (twin-turbo: spool whistle, blow-off valve)
+//   hand 'hatch'     'i4t'   (a hot hatch: turbo four, blow-off valve)
+//   hand 'compact'   'i3'    (three cylinders: the 1.5-order thrum)
+//   hand 'suv' | 'van'   'v6'
+//   anything else    'i4'
+//
+// Each profile is a firing pattern plus filters. The oscillator's fundamental
+// is the ENGINE CYCLE (rpm / 120 for a four-stroke, rpm / 60 for a two-stroke
+// or a rotor/prop), and its harmonics are the spectrum of one exhaust pulse
+// per cylinder at that cylinder's point in the cycle (`fire`, fractions of the
+// cycle, with per-cylinder strength `amps`). Even firing puts all the energy
+// on the firing harmonics; the cross-plane V8's uneven bank pattern and the
+// 45-degree V-twin's 315/405 split put it on the half-orders too, and that is
+// the burble -- it falls out of the geometry rather than being dialled in.
+//   pw       exhaust pulse width (fraction of cycle): smaller = brighter/rawer
+//   gears    top speed of each gear as a fraction of the vehicle's top speed
+//   lp       [base, per-rpm, per-load] low-pass cutoff (Hz): load opens it
+//   ex       [freq, Q, dB] exhaust/body resonance
+//   noise    {ratio (bp centre / cycle freq), q, gain, pulse (AM depth at
+//            pulseOrder x cycle)}: intake roar, diesel clatter, rotor swish
+//   buzz     {ratio, gain}: a second tone (tail rotor, prop, gear whine)
+//   whine    {hz0, hz1 (at redline), gain, load}: turbo, turbine, motor
+//   turbo    {hz0, hz1, gain, lag, hiss, bov}: a petrol turbo, driven by
+//            BOOST (EngineModel.boost: load x revs, spooling with `lag` 1/s,
+//            dumped at once on a lift) -- the whistle on the whine oscillator,
+//            `hiss` more intake roar under boost, and a blow-off valve
+//            one-shot (`bov`) when a lift or an upshift vents it
+//   blip     rev-matching blip on a downshift off the throttle (heel-and-toe)
+//   clunk    level of the gearbox's knock on a shift (bikes, heavy diesels)
+//   drive    saturation into the tanh shaper, scaled by load
+//   rough    cycle-to-cycle variation: random AM on the tone (lope, clatter)
+//   jitter   per-frame level wobble on top of it
+//   level    output level
+const V8_PATTERN = (() => {
+  // Cross-plane firing order 1-8-4-3-6-5-7-2, banks L R R L R L L R: each
+  // bank's exhaust sees uneven intervals, which is the V8 burble.
+  const banks = [0, 1, 1, 0, 1, 0, 0, 1];
+  return {
+    fire: banks.map((b, i) => i / 8 + (b ? 0.012 : 0)),
+    amps: banks.map((b, i) => (b ? 0.72 : 1) * (1 + ((i * 7) % 5 - 2) * 0.03)),
+  };
+})();
+
+export const ENGINES = {
+  i4: { kind: 'car', stroke: 4, fire: [0, 0.25, 0.5, 0.75], amps: [1, 0.9, 1.07, 0.95], pw: 0.032,
+    idle: 850, redline: 6600, gears: [0.21, 0.37, 0.54, 0.72, 0.9, 1.1],
+    lp: [320, 1700, 1500], ex: [210, 2.5, 5], noise: { ratio: 34, q: 1.1, gain: 0.22, pulse: 0.35, order: 4 },
+    whine: null, drive: 1.8, level: 0.8, jitter: 0.05, rough: 0.3 },
+  // A hot hatch: the same four, freer-revving and brighter, with a turbo --
+  // the whistle rising under load and the valve's "pssh" on every lift.
+  i4t: { kind: 'car', stroke: 4, fire: [0, 0.25, 0.5, 0.75], amps: [1, 0.93, 1.05, 0.96], pw: 0.026,
+    idle: 880, redline: 6900, gears: [0.22, 0.38, 0.55, 0.72, 0.88, 1.06],
+    lp: [360, 2200, 1900], ex: [240, 2.4, 6], noise: { ratio: 34, q: 1.1, gain: 0.24, pulse: 0.4, order: 4 },
+    whine: null, turbo: { hz0: 2400, hz1: 6800, gain: 0.065, lag: 1.7, hiss: 0.9, bov: true },
+    drive: 2.0, level: 0.76, jitter: 0.05, rough: 0.28, blip: true },
+  // Three cylinders, 240 degrees apart: the energy sits on every third
+  // harmonic of the cycle -- a 1.5-order thrum no four can make.
+  i3: { kind: 'car', stroke: 4, fire: [0, 1 / 3, 2 / 3], amps: [1, 0.92, 1.05], pw: 0.036,
+    idle: 900, redline: 6300, gears: [0.21, 0.37, 0.54, 0.72, 0.9, 1.1],
+    lp: [300, 1500, 1400], ex: [180, 2.4, 6], noise: { ratio: 30, q: 1, gain: 0.2, pulse: 0.42, order: 3 },
+    whine: null, drive: 1.9, level: 0.78, jitter: 0.06, rough: 0.38 },
+  v6: { kind: 'car', stroke: 4, fire: [0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6], amps: [1, 0.93, 1.04, 0.97, 1.02, 0.9], pw: 0.03,
+    idle: 750, redline: 6100, gears: [0.2, 0.35, 0.52, 0.7, 0.88, 1.08],
+    lp: [300, 1500, 1500], ex: [150, 2.2, 6], noise: { ratio: 28, q: 1, gain: 0.18, pulse: 0.3, order: 6 },
+    whine: null, drive: 1.9, level: 0.72, jitter: 0.05, rough: 0.3 },
+  v8: { kind: 'car', stroke: 4, fire: V8_PATTERN.fire, amps: V8_PATTERN.amps, pw: 0.04,
+    idle: 720, redline: 6400, gears: [0.24, 0.4, 0.58, 0.76, 0.93, 1.1],
+    lp: [260, 1600, 1700], ex: [105, 2.6, 8], noise: { ratio: 24, q: 0.9, gain: 0.22, pulse: 0.5, order: 8 },
+    whine: null, drive: 2.4, level: 0.5, jitter: 0.08, rough: 0.4, crackle: true, blip: true },
+  // THE BELLTOWN HELLCAT (`engine: 'hellcat'`): a supercharged 6.2 V8 with
+  // a straight-through exhaust, built to annoy. The V8's cross-plane burble
+  // with a fat, slow pulse, a 58 Hz body boom you feel more than hear, a dark
+  // low-pass that only opens up near the top, the saturator driven hard, a
+  // loping cam at idle, the supercharger's whine riding the revs (a blower is
+  // geared to the crank, so it climbs with rpm, not boost), eight gears for
+  // eight blasts through the box, and a `bang` on every lift and upshift.
+  hellcat: { kind: 'car', stroke: 4, fire: V8_PATTERN.fire, amps: V8_PATTERN.amps, pw: 0.046,
+    idle: 680, redline: 6500, gears: [0.2, 0.32, 0.45, 0.58, 0.71, 0.84, 0.97, 1.1],
+    lp: [190, 1500, 1900], ex: [58, 1.5, 14], noise: { ratio: 15, q: 0.8, gain: 0.3, pulse: 0.7, order: 8 },
+    whine: { hz0: 1100, hz1: 6400, gain: 0.05, load: 0.5 }, drive: 3.2, level: 0.42, jitter: 0.12, rough: 0.8, crackle: true, blip: true, bang: true },
+  flat6: { kind: 'car', stroke: 4, fire: [0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6], amps: [1, 0.98, 1.01, 0.99, 1.02, 0.97], pw: 0.018,
+    idle: 950, redline: 8400, gears: [0.22, 0.37, 0.52, 0.68, 0.84, 1.02],
+    lp: [450, 3400, 2200], ex: [320, 2, 5], noise: { ratio: 40, q: 1.3, gain: 0.22, pulse: 0.4, order: 6 },
+    whine: null, turbo: { hz0: 2900, hz1: 8200, gain: 0.05, lag: 2.3, hiss: 0.6, bov: true },
+    drive: 2.0, level: 0.68, jitter: 0.04, rough: 0.2, crackle: true, blip: true },
+  diesel: { kind: 'car', stroke: 4, fire: [0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6], amps: [1, 0.9, 1.06, 0.92, 1.03, 0.95], pw: 0.05,
+    idle: 650, redline: 2600, gears: [0.12, 0.2, 0.3, 0.44, 0.6, 0.78, 1.0],
+    lp: [300, 1300, 1100], ex: [95, 2, 7], noise: { ratio: 90, q: 1.8, gain: 0.45, pulse: 0.85, order: 6 },
+    whine: { hz0: 1800, hz1: 4200, gain: 0.04, load: 1 }, drive: 1.6, level: 0.62, jitter: 0.06, rough: 0.5, airbrake: true, clunk: 0.3 },
+  vtwin: { kind: 'car', stroke: 4, fire: [0, 0.4375], amps: [1, 0.88], pw: 0.045,
+    idle: 950, redline: 5600, gears: [0.24, 0.4, 0.57, 0.76, 1.0],
+    lp: [260, 1500, 1800], ex: [85, 2.4, 8], noise: { ratio: 30, q: 0.9, gain: 0.22, pulse: 0.6, order: 2 },
+    whine: null, drive: 2.6, level: 0.6, jitter: 0.1, rough: 0.45, crackle: true, blip: true, clunk: 0.22 },
+  sportbike: { kind: 'car', stroke: 4, fire: [0, 0.25, 0.5, 0.75], amps: [1, 0.96, 1.03, 0.98], pw: 0.02,
+    idle: 1300, redline: 13500, gears: [0.3, 0.45, 0.6, 0.74, 0.88, 1.02],
+    lp: [550, 4200, 2400], ex: [360, 2, 4], noise: { ratio: 20, q: 1.4, gain: 0.3, pulse: 0.4, order: 4 },
+    whine: { hz0: 900, hz1: 4200, gain: 0.02, load: 0 }, drive: 2.0, level: 0.72, jitter: 0.04, rough: 0.2, crackle: true, blip: true, clunk: 0.18 },
+  single: { kind: 'car', stroke: 4, fire: [0], amps: [1], pw: 0.04,
+    idle: 1400, redline: 8800, gears: [0.24, 0.42, 0.6, 0.8, 1.0],
+    lp: [420, 2600, 2000], ex: [240, 2.2, 6], noise: { ratio: 26, q: 1, gain: 0.26, pulse: 0.6, order: 1 },
+    whine: null, drive: 2.4, level: 0.75, jitter: 0.08, rough: 0.4, clunk: 0.16 },
+  ev: { kind: 'ev', stroke: 2, fire: [0], amps: [1], pw: 0.6, harm: [1, 0.12, 0.3, 0.05, 0.08],
+    idle: 0, redline: 36000, gears: [1],
+    lp: [2500, 5000, 1500], ex: [1800, 1.5, 3], noise: { ratio: 0, q: 1, gain: 0, pulse: 0, order: 1 },
+    whine: { hz0: 380, hz1: 7800, gain: 0.05, load: 0.6 }, drive: 1.0, level: 0.3, jitter: 0 },
+  // The saucer (`engine: 'saucer'`): a hollow, theremin-ish tone -- odd
+  // harmonics only, low and soft -- with a high shimmer for the 'inverter'
+  // and a little pitch wander, so it hums rather than drives.
+  saucer: { kind: 'ev', stroke: 2, fire: [0], amps: [1], pw: 0.6, harm: [1, 0, 0.32, 0, 0.14, 0, 0.05],
+    idle: 0, redline: 14000, gears: [1],
+    lp: [1400, 3600, 1200], ex: [900, 1.8, 4], noise: { ratio: 0, q: 1, gain: 0, pulse: 0, order: 1 },
+    whine: { hz0: 1200, hz1: 5200, gain: 0.035, load: 0.5 }, drive: 0.9, level: 0.34, jitter: 0.05 },
+  // The Wedge (`engine: 'evtruck'`): the EV's motor a quarter lower, and no
+  // more than that. An octave down with rich harmonics, a low resonance and
+  // the saturator driven read as a big combustion engine -- a low, buzzy
+  // fundamental is exactly what a cylinder firing sounds like. A motor is a
+  // near-pure tone with the inverter's whine over it, at any size.
+  evtruck: { kind: 'ev', stroke: 2, fire: [0], amps: [1], pw: 0.6, harm: [1, 0.1, 0.22, 0.04, 0.05],
+    idle: 0, redline: 27000, gears: [1],
+    lp: [2000, 4600, 1500], ex: [1400, 1.5, 3], noise: { ratio: 0, q: 1, gain: 0, pulse: 0, order: 1 },
+    whine: { hz0: 300, hz1: 6800, gain: 0.06, load: 0.65 }, drive: 1.0, level: 0.32, jitter: 0 },
+  piston: { kind: 'plane', stroke: 4, fire: [0, 0.25, 0.5, 0.75], amps: [1, 0.94, 1.05, 0.92], pw: 0.03,
+    idle: 750, redline: 2700, gears: [1],
+    lp: [500, 1800, 2200], ex: [140, 1.8, 6], noise: { ratio: 30, q: 0.6, gain: 0.4, pulse: 0.55, order: 4 },
+    buzz: { ratio: 4, gain: 0.25 }, whine: null, drive: 2.0, level: 0.58, jitter: 0.06, rough: 0.3 },
+  turboprop: { kind: 'plane', stroke: 2, fire: [0, 0.25, 0.5, 0.75], amps: [1, 1, 1, 1], pw: 0.06,
+    idle: 900, redline: 1700, gears: [1], spool: 0.35,
+    lp: [700, 2000, 1800], ex: [200, 1.5, 4], noise: { ratio: 60, q: 0.5, gain: 0.35, pulse: 0.3, order: 4 },
+    buzz: { ratio: 8, gain: 0.12 }, whine: { hz0: 2600, hz1: 6400, gain: 0.08, load: 0.3 }, drive: 1.5, level: 0.62, jitter: 0.03 },
+  // An unlimited hydroplane's gas turbine: a jet's whine over a roar, spooling slowly.
+  turbine: { kind: 'plane', stroke: 2, fire: [0, 0.25, 0.5, 0.75], amps: [1, 1, 1, 1], pw: 0.08,
+    idle: 1100, redline: 2600, gears: [1], spool: 0.5,
+    lp: [900, 3400, 1600], ex: [240, 1.4, 4], noise: { ratio: 80, q: 0.5, gain: 0.7, pulse: 0.12, order: 4 },
+    buzz: { ratio: 10, gain: 0.08 }, whine: { hz0: 2800, hz1: 8800, gain: 0.15, load: 0.4 }, drive: 1.6, level: 0.72, jitter: 0.02 },
+  // A tank's gas turbine (the Abrams' AGT1500), written for MASS: sixty tonnes
+  // should be the biggest thing on the road, and a jet's 1.5-5 kHz whine made it
+  // read as small (centroid 2177 Hz against a bus's 594). The low-pass opens
+  // little, the intake roar sits at 250-600 Hz (ratio 16 on a 15-38 Hz cycle), the
+  // whine is a faint 500-1400 Hz thread; the tracks' squeal (a bank loop) stays as
+  // texture. Level 0.355: the limiter flattens level changes (0.78 -> 0.49 moved the
+  // render 1.6 dB), so it is set from renders -- RMS at the bus's, and ~5 dB
+  // under the cannon's window (tools/audioprobe.mjs).
+  tank: { kind: 'plane', stroke: 2, fire: [0, 0.25, 0.5, 0.75], amps: [1, 1, 1, 1], pw: 0.1,
+    idle: 900, redline: 2300, gears: [1], spool: 0.45,
+    lp: [220, 700, 500], ex: [110, 1.5, 6], noise: { ratio: 16, q: 0.5, gain: 0.65, pulse: 0.15, order: 4 },
+    buzz: { ratio: 6, gain: 0.1 }, whine: { hz0: 500, hz1: 1400, gain: 0.04, load: 0.45 }, drive: 1.8, level: 0.355, jitter: 0.03 },
+  heli: { kind: 'heli', stroke: 2, fire: [0, 0.5], amps: [1, 0.93], pw: 0.012,
+    idle: 0, redline: 400, gears: [1], spool: 0.22,
+    lp: [260, 900, 1200], ex: [70, 2, 9], noise: { ratio: 70, q: 0.6, gain: 0.8, pulse: 0.95, order: 2 },
+    buzz: { ratio: 14, gain: 0.14 }, whine: { hz0: 1800, hz1: 6100, gain: 0.05, load: 0.2 }, drive: 2.2, level: 0.75, jitter: 0.04 },
+  // The monorail: eight DC traction motors [LM], geared low -- a growl that
+  // climbs to a whine with speed, rubber on concrete under it, no gears.
+  traction: { kind: 'ev', stroke: 2, fire: [0], amps: [1], pw: 0.6, harm: [1, 0.3, 0.45, 0.15, 0.2],
+    idle: 0, redline: 9000, gears: [1],
+    lp: [700, 2400, 1400], ex: [420, 1.4, 6], noise: { ratio: 0, q: 1, gain: 0, pulse: 0, order: 1 },
+    whine: { hz0: 110, hz1: 1900, gain: 0.085, load: 0.75 }, drive: 1.2, level: 0.42, jitter: 0.01 },
+  // A GE GEVO-12: a 12-cylinder, four-stroke diesel at 440 rpm idle to 1050 in
+  // notch 8 [GE] -- the fundamental is the firing rate (a low, even beat), the
+  // turbo's whine climbs with load, and it is loud.
+  gevo: { kind: 'loco', stroke: 4, fire: [0, 1 / 12, 2 / 12, 3 / 12, 4 / 12, 5 / 12, 6 / 12, 7 / 12, 8 / 12, 9 / 12, 10 / 12, 11 / 12].map((f, i) => f + (i % 2 ? 0.006 : 0)),
+    amps: [1, 0.9, 1.05, 0.93, 1.02, 0.88, 1.04, 0.95, 0.99, 0.91, 1.06, 0.94], pw: 0.045,
+    idle: 440, redline: 1050, gears: [1],
+    lp: [180, 700, 900], ex: [62, 1.6, 8], noise: { ratio: 42, q: 1.2, gain: 0.3, pulse: 0.55, order: 12 },
+    whine: { hz0: 700, hz1: 4800, gain: 0.07, load: 0.85 }, drive: 1.9, level: 0.5, jitter: 0.04, rough: 0.45, airbrake: true },
+  outboard: { kind: 'boat', stroke: 2, fire: [0, 0.5], amps: [1, 0.9], pw: 0.028,
+    idle: 900, redline: 5800, gears: [1],
+    lp: [380, 2300, 1500], ex: [260, 2.5, 5], noise: { ratio: 18, q: 1.2, gain: 0.3, pulse: 0.5, order: 2 },
+    whine: null, drive: 2.3, level: 0.72, jitter: 0.06, rough: 0.35 },
+};
+
+export function selectEngine(spec) {
+  if (!spec) return 'i4';
+  if (spec.engine && ENGINES[spec.engine]) return spec.engine;
+  if (spec.heli) return 'heli';
+  if (spec.boat) return 'outboard';
+  if (spec.plane) return spec.turboprop || spec.jet ? 'turboprop' : 'piston';
+  if (spec.ev) return 'ev';
+  if (spec.moto) return spec.vtwin || spec.hand === 'cruiser' ? 'vtwin' : 'sportbike';
+  if (spec.atv) return 'single';
+  if (spec.bus || spec.cargo || spec.diesel) return 'diesel';
+  if (spec.police || spec.v8 || spec.hand === 'muscle' || spec.hand === 'convertible' || spec.hand === 'pickup') return 'v8';
+  if (spec.hand === 'sports') return 'flat6';
+  if (spec.hand === 'hatch') return 'i4t';
+  if (spec.hand === 'compact') return 'i3';
+  if (spec.hand === 'suv' || spec.hand === 'van') return 'v6';
+  return 'i4';
+}
+
+/** The PeriodicWave for a profile: one exhaust pulse per cylinder per cycle. */
+function engineWave(c, p, N = 200) {
+  const re = new Float32Array(N + 1), im = new Float32Array(N + 1);
+  if (p.harm) {
+    for (let n = 1; n <= p.harm.length; n++) im[n] = p.harm[n - 1];
+  } else {
+    for (let n = 1; n <= N; n++) {
+      const P = 1 / (1 + (n * p.pw) * (n * p.pw));
+      let sr = 0, si = 0;
+      for (let k = 0; k < p.fire.length; k++) {
+        const ph = 2 * Math.PI * n * p.fire[k];
+        sr += p.amps[k] * Math.cos(ph);
+        si += p.amps[k] * Math.sin(ph);
+      }
+      re[n] = P * sr;
+      im[n] = -P * si;
+    }
+  }
+  return c.createPeriodicWave(re, im);
+}
+
+/** A narrow positive pulse, for amplitude-modulating noise at a rate. */
+function pulseWave(c, N = 32) {
+  const re = new Float32Array(N + 1), im = new Float32Array(N + 1);
+  for (let n = 1; n <= N; n++) re[n] = Math.exp(-(n * n) / 60);
+  return c.createPeriodicWave(re, im);
+}
+
+/**
+ * The engine as a machine, in plain JS: gearbox, clutch, shift points, rev
+ * limiter, spool-up, lift-off crackle. Produces rpm and load; the voice turns
+ * them into sound. Pure and allocation-free, so traffic runs it per voice.
+ */
+export class EngineModel {
+  constructor() {
+    this.p = ENGINES.i4;
+    this.vmax = 55;
+    this.rpm = 0;
+    this.gear = 0;
+    this.load = 0;
+    this.shiftT = 0;
+    this.on = false;
+    this.spin = 0;      // 0..1 spool (turbines), start flare for pistons
+    this.flare = 0;
+    this.limT = 0;
+    this.lastThr = 0;
+    this.popT = 0;      // seconds of lift-off crackle left
+    this.bangQ = [];    // a `bang` engine's backfires to come, seconds from now
+    this.lastIn = 0;    // the driver's throttle last step (not the shift's cut)
+    this.event = null;  // 'up' | 'down' | 'pop' | null, read once per step
+    this.boost = 0;     // 0..1 turbo boost (profiles with `turbo`)
+    this.bov = 0;       // > 0 on the step a blow-off valve vents: the boost it held
+    this.blipT = 0;     // seconds of rev-matching blip left
+    this.downT = 0;     // downshift hold-off: one gear at a time, each heard
+    this.lastV = 0;
+    this.decel = 0;     // smoothed deceleration, m/s^2: braking, for the downshifts
+  }
+  setProfile(p, spec) {
+    this.p = p;
+    this.vmax = spec && spec.topKph ? spec.topKph / 3.6 : 55;
+    this.gear = 0;
+    this.boost = 0;
+    this.blipT = 0;
+    this.downT = 0;
+  }
+  start(instant) {
+    this.on = true;
+    if (instant) { this.spin = 1; this.rpm = Math.max(this.rpm, this.p.kind === 'heli' ? this.p.redline : this.p.idle); }
+    else this.flare = this.p.kind === 'car' || this.p.kind === 'boat' ? 0.5 : 0;
+  }
+  stop() { this.on = false; }
+
+  step(dt, speed, throttle, free) {
+    const p = this.p;
+    this.event = null;
+    this.bov = 0;
+    const v = Math.abs(speed);
+    if (dt > 0) this.decel += ((this.lastV - v) / dt - this.decel) * (1 - Math.exp(-6 * dt));
+    this.lastV = v;
+    let thr = clamp(throttle, 0, 1);
+    let target;
+    // spool: turbines and rotors take seconds to come up to speed
+    const spoolRate = p.spool || 3;
+    this.spin = clamp(this.spin + (this.on ? spoolRate : -spoolRate * 0.6) * dt, 0, 1);
+    if (!this.on) {
+      target = 0;
+      thr = 0;
+    } else if (p.kind === 'ev') {
+      target = p.redline * clamp(v / this.vmax, 0, 1.05);
+    } else if (p.kind === 'heli') {
+      target = p.redline * this.spin;          // governed: the rotor holds its speed
+    } else if (p.kind === 'plane') {
+      const wind = clamp(v / this.vmax, 0, 1) * 0.12;
+      target = (p.idle + (p.redline - p.idle) * clamp(Math.pow(thr, 0.8) + wind, 0, 1)) * this.spin;
+    } else if (p.kind === 'boat') {
+      target = p.idle + (p.redline - p.idle) * clamp(0.72 * thr + 0.28 * clamp(v / this.vmax, 0, 1), 0, 1);
+    } else if (p.kind === 'loco') {
+      // diesel-electric: the engine's speed is the throttle notch's, whatever
+      // the wheels are doing; it winds up and down over seconds
+      target = p.idle + (p.redline - p.idle) * thr;
+    } else {
+      const gears = p.gears;
+      const last = gears.length - 1;
+      const gTop = this.vmax * gears[this.gear];
+      let wheel = p.redline * v / gTop;
+      this.downT -= dt;
+      if (this.shiftT > 0) {
+        this.shiftT -= dt;
+        thr = Math.min(thr, 0.08);
+      } else if (!free) {
+        const up = p.redline * (0.52 + 0.42 * thr);
+        // never up while braking: a box that changed down for the corner
+        // would otherwise hunt straight back up on the blip
+        if (wheel > up && this.gear < last && speed >= 0 && (this.decel < 1.5 || wheel > p.redline * 0.95)) {
+          this.gear++;
+          this.shiftT = p.redline < 3000 ? 0.32 : 0.16;
+          this.event = 'up';
+        } else if (this.gear > 0 && this.downT <= 0
+          // a sporty box changes down early under braking, to be in the
+          // right gear for the exit -- which is what makes the blips heard
+          && wheel < p.redline * (p.blip && this.decel > 3 && thr < 0.1 ? 0.5 : 0.3 + 0.16 * thr)) {
+          // One gear at a time, a beat apart: braking from speed used to
+          // drop a gear a frame, which is one smeared rise, not downshifts.
+          const lower = p.redline * v / (this.vmax * gears[this.gear - 1]);
+          if (lower < p.redline * 0.88) {
+            this.gear--;
+            this.event = 'down';
+            this.downT = 0.3;
+            // heel-and-toe: off the throttle, a blip matches the revs
+            if (p.blip && thr < 0.3 && v > 3) this.blipT = 0.17;
+          }
+        }
+      }
+      if (this.blipT > 0) {
+        this.blipT -= dt;
+        thr = Math.max(thr, 0.9);
+      }
+      wheel = p.redline * v / (this.vmax * gears[this.gear]);
+      if (free) {
+        target = p.idle + (p.redline * 0.96 - p.idle) * thr;
+      } else {
+        // clutch slip off the line: revs rise with the throttle before the
+        // wheels catch up with them
+        // Off the line the revs rise with the throttle and HOLD there (clutch
+        // slip, a torque converter's stall speed) until the wheels catch up.
+        target = this.gear === 0 ? Math.max(wheel, p.idle + thr * (p.redline - p.idle) * 0.38) : wheel;
+        target = Math.max(p.idle, target);
+      }
+      // rev limiter: a hard bounce off the cut, which is what flat-out sounds like
+      if (target >= p.redline * 0.985 && thr > 0.8) {
+        this.limT -= dt;
+        if (this.limT <= 0) { this.limT = 0.07; this.rpm = p.redline * 0.94; }
+        target = p.redline * 0.985;
+      }
+    }
+    if (this.flare > 0 && this.on) {
+      this.flare -= dt;
+      target = Math.max(target, (p.idle || 800) * (1 + 1.2 * Math.max(0, this.flare) / 0.5));
+    }
+    // the blip overshoots the new gear's revs a little, and gets there fast
+    if (this.blipT > 0) target *= 1.16;
+    const rate = !this.on ? (p.kind === 'car' ? 4 : 1.5) : this.shiftT > 0 || this.blipT > 0 ? 14 : p.kind === 'car' ? 9 : p.kind === 'loco' ? 0.7 : 3;
+    this.rpm += (target - this.rpm) * (1 - Math.exp(-rate * dt));
+    this.load += (thr - this.load) * (1 - Math.exp(-(p.kind === 'loco' ? 1.2 : 10) * dt));
+    // lift-off from high revs: the exhaust crackles and pops for a moment
+    if (p.crackle && !p.bang && this.lastThr > 0.6 && thr < 0.1 && this.rpm > p.redline * 0.55) this.popT = 0.7;
+    // A `bang` engine (the Hellcat) does not crackle: off a HARD rev, the
+    // DRIVER's foot off (not the cut a gear change makes), it goes "bang,
+    // bang" -- one to three, a beat apart, and not every time. A crackle of
+    // gunshots was a machine gun.
+    if (p.bang && this.on && this.lastIn > 0.6 && throttle < 0.1 && this.rpm > p.redline * 0.72 && Math.random() < 0.75) {
+      const n = Math.random() < 0.2 ? 1 : Math.random() < 0.8 ? 2 : 3;
+      let at = 0.05 + Math.random() * 0.1;
+      this.bangQ.length = 0;
+      for (let i = 0; i < n; i++) { this.bangQ.push(at); at += 0.16 + Math.random() * 0.2; }
+    }
+    this.lastIn = throttle;
+    // Turbo boost: load times revs past the boost threshold, lagging on the
+    // way up (spool) and dumped at once when the throttle shuts -- through the
+    // blow-off valve, which is the "pssh" (`bov` holds the boost it vented).
+    if (p.turbo) {
+      const want = this.on ? thr * clamp((this.rpm / p.redline - 0.3) / 0.4, 0, 1) : 0;
+      if (p.turbo.bov && this.boost > 0.35 && this.lastThr > 0.5 && thr < 0.15) this.bov = this.boost;
+      const k = want > this.boost ? p.turbo.lag : 10;
+      this.boost += (want - this.boost) * (1 - Math.exp(-k * dt));
+    }
+    this.lastThr = thr;
+    if (this.bangQ.length) {
+      for (let i = 0; i < this.bangQ.length; i++) this.bangQ[i] -= dt;
+      if (this.bangQ[0] <= 0) { this.bangQ.shift(); this.event = 'pop'; }
+    }
+    if (this.popT > 0) {
+      this.popT -= dt;
+      if (Math.random() < dt * 9) this.event = 'pop';
+    }
+    return this;
+  }
+}
+
+/**
+ * The engine as a sound: one persistent node graph, steered per frame.
+ *
+ *   tone  osc(PeriodicWave @ cycle) -> toneG --\
+ *   buzz  osc(saw @ cycle x ratio)  -> buzzG ---+-> pre -> tanh -> lp -> ex -> out
+ *   noise src -> bp -> am(<- pulse osc) -> nG -/                              ^
+ *   whine osc(sine)                 -> whineG --------------------------------/
+ *
+ * 19 nodes (with the roughness low-pass on the tone's gain). Works on any BaseAudioContext, so the offline previews run the
+ * exact same code.
+ */
+export // how far a bang ducks the engine under it (EngineVoice.duck)
+const DUCK = 0.3;
+
+class EngineVoice {
+  constructor(c, noiseBuf, dest) {
+    this.c = c;
+    this.dest = dest;
+    this.tone = c.createOscillator();
+    this.toneG = c.createGain();
+    // Combustion is never two cycles alike. Low-passed noise on the tone's
+    // gain smears its harmonics into sidebands -- the difference between an
+    // engine and an organ pipe.
+    this.roughLp = c.createBiquadFilter();
+    this.roughLp.type = 'lowpass';
+    this.roughLp.frequency.value = 90;
+    this.roughG = c.createGain();
+    this.roughG.gain.value = 0;
+    this.buzz = c.createOscillator();
+    this.buzz.type = 'sawtooth';
+    this.buzzG = c.createGain();
+    this.buzzG.gain.value = 0;
+    this.nsrc = c.createBufferSource();
+    this.nsrc.buffer = noiseBuf;
+    this.nsrc.loop = true;
+    this.nbp = c.createBiquadFilter();
+    this.nbp.type = 'bandpass';
+    this.nam = c.createGain();
+    this.pulse = c.createOscillator();
+    this.pulse.setPeriodicWave(pulseWave(c));
+    this.pdepth = c.createGain();
+    this.nG = c.createGain();
+    this.pre = c.createGain();
+    this.shaper = c.createWaveShaper();
+    this.shaper.curve = tanhCurve(2);
+    this.shaper.oversample = 'none';
+    this.lp = c.createBiquadFilter();
+    this.lp.type = 'lowpass';
+    this.lp.Q.value = 0.9;
+    this.ex = c.createBiquadFilter();
+    this.ex.type = 'peaking';
+    this.whine = c.createOscillator();
+    this.whineG = c.createGain();
+    this.whineG.gain.value = 0;
+    this.out = c.createGain();
+    this.out.gain.value = 0;
+
+    this.tone.connect(this.toneG).connect(this.pre);
+    this.buzz.connect(this.buzzG).connect(this.pre);
+    this.nsrc.connect(this.nbp).connect(this.nam).connect(this.nG).connect(this.pre);
+    this.nsrc.connect(this.roughLp).connect(this.roughG).connect(this.toneG.gain);
+    this.pulse.connect(this.pdepth).connect(this.nam.gain);
+    this.pre.connect(this.shaper).connect(this.lp).connect(this.ex).connect(this.out);
+    this.whine.connect(this.whineG).connect(this.out);
+    const t = c.currentTime;
+    this.tone.start(t); this.buzz.start(t); this.nsrc.start(t); this.pulse.start(t); this.whine.start(t);
+    this.connected = false;
+    this.idleT = 0;
+    this.profile = null;
+    this.waves = {};
+  }
+  setProfile(name) {
+    if (this.profile === name) return;
+    this.profile = name;
+    const p = ENGINES[name];
+    this.p = p;
+    if (!this.waves[name]) this.waves[name] = engineWave(this.c, p);
+    this.tone.setPeriodicWave(this.waves[name]);
+    this.ex.frequency.value = p.ex[0];
+    this.ex.Q.value = p.ex[1];
+    this.ex.gain.value = p.ex[2];
+    this.nbp.Q.value = p.noise.q;
+    const k = Math.round(p.drive * 2) / 2;
+    this.shaper.curve = tanhCurve(k);
+  }
+  /** Connect to the mix only while audible: a disconnected graph is not rendered. */
+  _link(on) {
+    if (keepLinked) on = true;
+    if (on === this.connected) return;
+    this.connected = on;
+    if (on) this.out.connect(this.dest); else this.out.disconnect();
+  }
+  /**
+   * @param m     EngineModel after step()
+   * @param t     schedule time
+   * @param gain  extra level (distance attenuation, start fade)
+   * @param dop   doppler pitch factor
+   */
+  apply(m, t, gain = 1, dop = 1) {
+    const p = this.p;
+    const rpm = m.rpm;
+    const audible = rpm > 25 && gain > 0.002;
+    this.idleT = audible ? 0 : this.idleT + 1;
+    if (audible) this._link(true);
+    else if (this.idleT > 30) { this._link(false); return; }
+    const cyc = Math.max(0.5, rpm / 60 / (p.stroke / 2)) * dop;
+    const rn = clamp(rpm / p.redline, 0, 1.1);
+    const load = m.load;
+    const tc = 0.025;
+    setp(this.tone.frequency, cyc, t, tc);
+    const jit = p.jitter ? 1 + (Math.random() - 0.5) * p.jitter : 1;
+    setp(this.toneG.gain, jit, t, 0.012);
+    // roughness tracks the firing rate, and is worst lugging under load
+    setp(this.roughLp.frequency, clamp(cyc * 2, 20, 400), t, 0.05);
+    setp(this.roughG.gain, (p.rough || 0) * 3 * (0.5 + 0.5 * load), t, 0.05);
+    if (p.buzz) {
+      setp(this.buzz.frequency, cyc * p.buzz.ratio, t, tc);
+      setp(this.buzzG.gain, p.buzz.gain * (0.5 + 0.5 * load), t, 0.05);
+    } else setp(this.buzzG.gain, 0, t, 0.05);
+    const n = p.noise;
+    if (n.gain > 0) {
+      setp(this.nbp.frequency, clamp(cyc * n.ratio, 60, 7000), t, tc);
+      // under boost the intake roars: the turbo's compressor sucking air
+      const amp = n.gain * (0.35 + 0.65 * load) * (0.45 + 0.55 * rn) * (p.turbo ? 1 + p.turbo.hiss * m.boost : 1);
+      setp(this.nG.gain, amp, t, 0.04);
+      setp(this.pulse.frequency, cyc * n.order, t, tc);
+      setp(this.pdepth.gain, n.pulse, t, 0.05);
+      setp(this.nam.gain, 1 - n.pulse * 0.85, t, 0.05);
+    } else setp(this.nG.gain, 0, t, 0.05);
+    if (p.turbo) {
+      // the turbo's whistle: pitch and level ride the boost, not the revs
+      const tb = p.turbo, b = m.boost;
+      setp(this.whine.frequency, (tb.hz0 + (tb.hz1 - tb.hz0) * b * (0.55 + 0.45 * rn)) * dop, t, 0.05);
+      setp(this.whineG.gain, tb.gain * b * b, t, 0.05);
+    } else if (p.whine) {
+      const w = p.whine;
+      const wr = p.kind === 'ev' ? rn : clamp(rn * (1 - w.load) + load * rn * w.load, 0, 1);
+      setp(this.whine.frequency, w.hz0 + (w.hz1 - w.hz0) * wr, t, tc);
+      setp(this.whineG.gain, w.gain * (p.kind === 'ev' ? (0.4 + 0.6 * load) * clamp(rn * 8, 0, 1) : (1 - w.load + w.load * load) * clamp(rn * 3, 0, 1)), t, 0.06);
+    } else setp(this.whineG.gain, 0, t, 0.05);
+    setp(this.pre.gain, p.drive * (0.55 + 0.75 * load), t, 0.04);
+    setp(this.lp.frequency, clamp(p.lp[0] + p.lp[1] * rn + p.lp[2] * load, 80, 16000), t, 0.04);
+    // Off-throttle the note drops and darkens but does not vanish: engine braking.
+    const run = p.kind === 'ev' ? clamp(0.25 + rn * 3, 0, 1) : clamp(rpm / Math.max(200, (p.idle || p.redline * 0.3) * 0.6), 0, 1);
+    let lvl = p.level * (0.42 + 0.58 * load) * (0.62 + 0.38 * rn) * run * gain;
+    if (t < this._duckTo) lvl *= DUCK;
+    setp(this.out.gain, lvl, t, 0.03);
+  }
+  /**
+   * A backfire's bang ducks the engine under it for a moment: through the
+   * master limiter, an engine already near the ceiling would otherwise leave a
+   * gunshot no louder than itself. The contrast is what makes it a gunshot.
+   */
+  duck(t) {
+    const g = this.out.gain;
+    this._duckTo = t + 0.12;
+    g.cancelScheduledValues(t);
+    g.setTargetAtTime((g._lv || 0) * DUCK, t, 0.004);
+    g._lv = undefined;
+  }
+  silence(t) {
+    this._duckTo = 0;
+    setp(this.out.gain, 0, t, 0.05);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Radio
+// ---------------------------------------------------------------------------
+
+// A live station is its real stream when there is a network, and a
+// synthesised stand-in when there isn't (radiosynth.js: songs written in the
+// station's `style`, in a key near `root`) -- every station
+// keeps its synth voice so the radio still works with the aeroplane on, which
+// is the whole point of an offline-first PWA. The last two are synth only.
+//
+// Streams come from radio-browser.info (the search /apps/radio uses), each
+// checked to answer over HTTPS with audio and CORS for polkiewicz.com. BBC
+// Radio 1 is HLS: its master playlist points at an http:// variant, which an
+// https page may not load, so this is that variant over https. Safari plays
+// HLS in an <audio>; a browser that cannot (`canPlayType`) skips the station.
+const STATIONS = [
+  { name: 'KEXP 90.3', root: 55, style: 'indie',
+    stream: 'https://kexp.streamguys1.com/kexp160.aac', nowPlaying: 'kexp' },
+  { name: 'RdMix Classic Rock', root: 52, style: 'rock',
+    stream: 'https://cast1.torontocast.com:4610/stream' },
+  { name: 'BBC Radio 1', root: 60, style: 'pop',
+    stream: 'https://as-hls-ww.live.cf.md.bbci.co.uk/pool_01505109/live/ww/bbc_radio_one/bbc_radio_one.isml/bbc_radio_one-audio%3d96000.norewind.m3u8',
+    hls: true },
+  { name: 'Top 100 Charts', root: 57, style: 'pop',
+    stream: 'https://breakz-high.rautemusik.fm/' },
+  { name: 'NRJ Linkin Park', root: 50, style: 'rock',
+    stream: 'https://streaming.nrjaudio.fm/ouvfbfoarp52' },
+  { name: 'Rock Antenne Alternative', root: 55, style: 'indie',
+    stream: 'https://stream.rockantenne.de/alternative' },
+  { name: '80s Drive', root: 57, style: 'synthwave',
+    stream: 'https://samcloud.spacial.com/api/listen?sid=111415&m=sc&rid=293634&t=ssl' },
+  { name: 'C89.5 Seattle', root: 58, style: 'house',
+    stream: 'https://knhc-ice.streamguys1.com/live' },
+  { name: 'KNKX 88.5 Jazz', root: 53, style: 'jazz',
+    stream: 'https://knkx-live-a.edge.audiocdn.com/6284_128k' },
+  { name: 'Classical KING FM', root: 48, style: 'classical',
+    stream: 'https://classicalking.streamguys1.com/king-fm-aac-128k' },
+  { name: 'Rain City FM', root: 49, style: 'lofi' },
+  { name: 'Pike St Radio', root: 62, style: 'house' },
+];
+/** The station list, for the menu's picker: [{ name, live }]. */
+export const STATION_NAMES = STATIONS.map((s) => ({ name: s.name, live: !!s.stream, style: s.style }));
+
+// KEXP's now-playing feed, the one /apps/radio uses. The other stations
+// publish titles only inside the stream (ICY), which a media element hides.
+const KEXP_NOW = 'https://api.kexp.org/v2/plays/?limit=1&format=json';
+
+// ---------------------------------------------------------------------------
+// Live helpers
+// ---------------------------------------------------------------------------
+
+/** A looping bank buffer with a level, connected only while it is audible. */
+class Tap {
+  constructor(c, buf, dest, filter) {
+    this.src = c.createBufferSource();
+    this.src.buffer = buf;
+    this.src.loop = true;
+    this.g = c.createGain();
+    this.g.gain.value = 0;
+    if (filter) this.src.connect(filter).connect(this.g); else this.src.connect(this.g);
+    this.src.start(c.currentTime, Math.random() * buf.duration);
+    this.dest = dest;
+    this.on = false;
+    this.quiet = 0;
+  }
+  set(v, t, tc = 0.06, rate = null) {
+    if (v > 0.001) {
+      this.quiet = 0;
+      if (!this.on) { this.on = true; this.g.connect(this.dest); }
+    } else if (this.on && ++this.quiet > 45 && !keepLinked) {
+      this.on = false;
+      this.g.disconnect();
+    }
+    if (this.on) {
+      setp(this.g.gain, v, t, tc);
+      if (rate) setp(this.src.playbackRate, rate, t, 0.08);
+    }
+  }
+}
+
+/** An existing chain's last gain, connected to the mix only while audible
+ *  (Tap's rule, for a chain that is not a bank loop). */
+class Gate {
+  constructor(g, dest) { this.g = g; this.dest = dest; this.on = false; this.quiet = 0; }
+  set(v, t, tc = 0.08) {
+    if (v > 0.001) {
+      this.quiet = 0;
+      if (!this.on) { this.on = true; this.g.connect(this.dest); }
+    } else if (this.on && ++this.quiet > 45 && !keepLinked) {
+      this.on = false;
+      this.g.disconnect();
+    }
+    if (this.on) setp(this.g.gain, v, t, tc);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The freight's air horn
+// ---------------------------------------------------------------------------
+
+// A Nathan K5LA, what BNSF's road power carries: five bells, D#4 F#4 G#4 B4
+// D#5 -- the B6 chord everyone knows from a crossing. Each bell is a reed
+// driven by the air into a flared horn: a buzzy, harmonically rich pulse
+// (the reed) through a formant (the bell's flare), which is what separates a
+// horn from an organ. When the valve opens the bells scoop up to pitch as
+// the pressure builds, and they sag as it closes.
+const K5LA = [311.1, 370.0, 415.3, 493.9, 622.3];
+// A tenth of a second of silence (8 kHz mono WAV): what primeLive plays to
+// unlock the radio's media element without opening a stream.
+const SILENT_WAV = (() => {
+  const n = 800, buf = new Uint8Array(44 + n);
+  const dv = new DataView(buf.buffer);
+  const w = (o, str) => { for (let i = 0; i < str.length; i++) buf[o + i] = str.charCodeAt(i); };
+  w(0, 'RIFF'); dv.setUint32(4, 36 + n, true); w(8, 'WAVE'); w(12, 'fmt ');
+  dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, 8000, true); dv.setUint32(28, 8000, true); dv.setUint16(32, 1, true); dv.setUint16(34, 8, true);
+  w(36, 'data'); dv.setUint32(40, n, true);
+  buf.fill(128, 44);
+  let bin = '';
+  for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
+  return 'data:audio/wav;base64,' + (typeof btoa !== 'undefined' ? btoa(bin) : '');
+})();
+
+// A ferry's horn: two deep reeds a fifth apart (G2, D3), the formants low --
+// the prolonged blast a Washington State Ferry sounds leaving its slip.
+const SHIP_HORN = { freqs: [98.0, 146.8, 196.0], levels: [1, 0.8, 0.35], f1: 360, f2: 900, lp: 2600, body: 420, pre: 0.42 };
+
+function hornWave(c, f0, f1 = 1400, f2 = 3000) {
+  const N = 40, re = new Float32Array(N + 1), im = new Float32Array(N + 1);
+  for (let n = 1; n <= N; n++) {
+    const f = n * f0;
+    // reed pulse (~1/n^0.75), a formant round 1.4 kHz and a second near 3 kHz
+    const form = 1 + 2.2 * Math.exp(-(((f - f1) / (f1 / 2)) ** 2)) + 0.9 * Math.exp(-(((f - f2) / (f2 * 0.3)) ** 2));
+    const a = Math.pow(n, -0.75) * form * (f > 7000 ? Math.exp(-(f - 7000) / 1500) : 1);
+    im[n] = a * (n % 2 ? 1 : 0.8);
+  }
+  return c.createPeriodicWave(re, im);
+}
+
+/** One horn: five bells, a breath of air, an envelope with the scoop and sag. */
+class AirHorn {
+  // opts: the bells' pitches and levels and the formants (a locomotive's K5LA
+  // by default; a ship's horn is two deep reeds -- see SHIP_HORN)
+  constructor(c, dest, verbIn, opts = {}) {
+    const freqs = opts.freqs || K5LA, levels = opts.levels || [0.95, 1, 0.9, 0.85, 0.7];
+    this.c = c;
+    this.pre = c.createGain(); this.pre.gain.value = opts.pre || 0.34;
+    this.shaper = c.createWaveShaper(); this.shaper.curve = tanhCurve(1.6);
+    this.lp = c.createBiquadFilter(); this.lp.type = 'lowpass'; this.lp.frequency.value = opts.lp || 9000; this.lp.Q.value = 0.5;
+    this.body = c.createBiquadFilter(); this.body.type = 'peaking'; this.body.frequency.value = opts.body || 1300; this.body.Q.value = 0.9; this.body.gain.value = 4;
+    this.out = c.createGain(); this.out.gain.value = 0;
+    this.pan = c.createStereoPanner ? c.createStereoPanner() : c.createGain();
+    this.send = c.createGain(); this.send.gain.value = 0.35;
+    this.pre.connect(this.shaper).connect(this.body).connect(this.lp).connect(this.out).connect(this.pan);
+    this.out.connect(this.send);
+    this.bells = freqs.map((f, i) => {
+      const o = c.createOscillator();
+      o.setPeriodicWave(hornWave(c, f, opts.f1, opts.f2));
+      const det = (i * 37 % 7 - 3) * 1.5;            // a few cents apart: they beat
+      o.frequency.value = f;
+      o.detune.value = det;
+      const g = c.createGain(); g.gain.value = levels[i] !== undefined ? levels[i] : 0.8;
+      o.connect(g).connect(this.pre);
+      o.start(c.currentTime);
+      return { o, f, det };
+    });
+    // the air: a band of noise under the reeds
+    this.air = c.createBufferSource(); this.air.loop = true;
+    this.airBp = c.createBiquadFilter(); this.airBp.type = 'bandpass'; this.airBp.frequency.value = 2600; this.airBp.Q.value = 0.7;
+    this.airG = c.createGain(); this.airG.gain.value = 0.05;
+    this.dest = dest; this.verbIn = verbIn;
+    this.linked = false; this.on = false; this.quiet = 0;
+  }
+  setNoise(buf) {
+    if (this.air.buffer) return;
+    this.air.buffer = buf;
+    this.air.connect(this.airBp).connect(this.airG).connect(this.pre);
+    this.air.start(this.c.currentTime);
+  }
+  _link(on) {
+    if (keepLinked) on = true;
+    if (on === this.linked) return;
+    this.linked = on;
+    if (on) { this.pan.connect(this.dest); this.send.connect(this.verbIn); }
+    else { this.pan.disconnect(); this.send.disconnect(); }
+  }
+  /** Each frame: `on` the valve, `level` the loudness here, `pan`, doppler, how far. */
+  set(t, on, level, pan = 0, dop = 1, dist = 0) {
+    if (on || this.out.gain.value > 0.001) this._link(true);
+    if (on !== this.on) {
+      this.on = on;
+      for (const b of this.bells) {
+        const d = b.o.detune;
+        d.cancelScheduledValues(t);
+        if (on) { d.setValueAtTime(b.det - 70, t); d.linearRampToValueAtTime(b.det - 8, t + 0.09); d.linearRampToValueAtTime(b.det, t + 0.22); }
+        else { d.setValueAtTime(d.value, t); d.linearRampToValueAtTime(b.det - 30, t + 0.22); }
+      }
+      const g = this.out.gain;
+      g.cancelScheduledValues(t);
+      g._lv = undefined;
+      if (on) { g.setValueAtTime(g.value, t); g.linearRampToValueAtTime(level * 0.6, t + 0.035); g.setTargetAtTime(level, t + 0.035, 0.06); }
+      else { g.setValueAtTime(g.value, t); g.setTargetAtTime(0, t, 0.07); }
+      this.quiet = 0;
+    } else if (on) {
+      setp(this.out.gain, level, t, 0.05);
+    }
+    if (!on && ++this.quiet > 60) this._link(false);
+    if (this.pan.pan) setp(this.pan.pan, pan, t, 0.05);
+    for (const b of this.bells) setp(b.o.frequency, b.f * dop, t, 0.04);
+    // air takes the top off a distant horn
+    setp(this.lp.frequency, clamp(9000 * Math.exp(-dist / 700), 700, 9000), t, 0.1);
+    setp(this.send.gain, 0.3 + clamp(dist / 900, 0, 0.6), t, 0.2);
+  }
+}
+
+/** Where a sound at (x, y, z) sits for the listener: level, pan, doppler. */
+function spatial(L, x, y, z, vx = 0, vz = 0, ref = 6, maxD = 160) {
+  const dx = x - L.x, dz = z - L.z, dy = (y || L.y) - L.y;
+  const d = Math.sqrt(dx * dx + dz * dz + dy * dy) || 0.001;
+  if (d > maxD) return null;
+  const fade = d > maxD * 0.7 ? 1 - (d - maxD * 0.7) / (maxD * 0.3) : 1;
+  const gain = Math.min(1, ref / Math.max(ref, d)) * fade;
+  // right vector of a camera looking along (fx, fz) is (-fz, fx)
+  const pan = clamp(((dx * -L.fz + dz * L.fx) / Math.max(d, 1)) * 0.85, -0.85, 0.85);
+  // closing speed along the line of sight (positive = approaching)
+  const ux = -dx / d, uz = -dz / d;
+  const closing = (vx - L.vx) * ux + (vz - L.vz) * uz;
+  const dop = clamp(343 / (343 - closing), 0.8, 1.25);
+  return { d, gain, pan, dop };
+}
+
+const HORNS = {
+  car: { f: [415, 523], wave: 'square', bp: 1900, q: 1.4, gain: 0.42 },
+  truck: { f: [185, 233, 277], wave: 'sawtooth', bp: 900, q: 1, gain: 0.5 },
+  moto: { f: [560], wave: 'square', bp: 2200, q: 1.8, gain: 0.36 },
+  // a fire rig's air horns: three deep trumpets, a minor chord, loud
+  air: { f: [139, 165, 208], wave: 'sawtooth', bp: 620, q: 0.8, gain: 0.62 },
+  none: null,
+};
+function hornFor(spec) {
+  if (!spec) return 'car';
+  if (spec.plane || spec.heli) return 'none';
+  if (spec.moto || spec.atv) return 'moto';
+  if (spec.fire) return 'air';
+  if (spec.bus || spec.cargo || spec.diesel || spec.boat || spec.rail) return 'truck';
+  return 'car';
+}
+
+const TRAFFIC_VOICES = 3;
+// The nearest Belltown Hellcat gets a whole engine voice of its own, heard
+// this far off (m), at full level out to HELLCAT_REF: the traffic voices are a
+// tone and a hiss, and 75 m is as far as they carry.
+const HELLCAT_HEAR = 360, HELLCAT_REF = 30;
+// An AI Wienermobile toots its tune when you come this close (m).
+const WIENER_TOOT = 45;
+const SIREN_VOICES = 2;
+// What a siren voice can sing: [LFO wave, LFO Hz, centre Hz, sweep +-Hz].
+// The wail at a distance, the yelp when a police car is on top of you, a fire
+// rig's hi-lo two-tone (a square LFO: two held notes), SWAT's rapid yelp.
+const SIREN_KINDS = [
+  ['sine', 0.24, 1000, 380],
+  ['triangle', 3.3, 1050, 420],
+  ['square', 0.8, 1000, 150],
+  ['triangle', 6.5, 1050, 300],
+];
+/** One cycle of an LFO shape starting `ph` (0..1) of the way round. An
+ *  oscillator can't be seeked, so a siren's random phase is baked in here. */
+function lfoWave(c, shape, ph) {
+  const N = 31, re = new Float32Array(N + 1), im = new Float32Array(N + 1);
+  for (let n = 1; n <= N; n++) {
+    const a = shape === 'sine' ? (n === 1 ? 1 : 0)
+      : n % 2 === 0 ? 0
+      : shape === 'square' ? 1 / n : (n % 4 === 1 ? 1 : -1) / (n * n);
+    re[n] = a * Math.sin(2 * Math.PI * n * ph);
+    im[n] = a * Math.cos(2 * Math.PI * n * ph);
+  }
+  return c.createPeriodicWave(re, im);
+}
+const MAX_SHOTS = 18;
+
+export class Audio {
+  constructor() {
+    this.ready = false;
+    this.enabled = true;
+    this.musicOn = true;
+    this.station = 0;
+    this.volume = 0.8;
+    this.musicVolume = 0.55;
+    this.bank = null;       // name -> [AudioBuffer], filled asynchronously
+    this._simT = null;      // offline previews drive time explicitly
+
+    // Live radio state. `_liveFailed` latches for the session once the stream
+    // has proved unavailable, so a car with no signal doesn't retry every frame.
+    this._live = null;
+    this._liveState = 'idle';
+    this._liveFailed = false;
+    this._livePrimed = false;
+    this._liveWanted = false;
+    this._nowPlaying = null;
+    this._nowPlayingAt = 0;
+    // What the audio did and when, for the Debug readout: state changes, the
+    // gestures that tried to start it, the radio's unlock. "The sound starts
+    // after 30 seconds, sometimes never" is unreadable without it.
+    this.log = [];
+    this._t0 = typeof performance !== 'undefined' ? performance.now() : 0;
+    this._healT = 0;
+    this._duck = 1;
+    this.onTrack = null; // set by main.js to toast the track
+    if (typeof window !== 'undefined') {
+      // Coming back onto the network earns one more attempt.
+      window.addEventListener('online', () => { this._liveFailed = false; });
+      window.addEventListener('offline', () => { this.stopLive(); });
+    }
+  }
+
+  now() { return this._simT != null ? this._simT : this.ctx.currentTime; }
+
+  /** @param ctxOverride an (Offline)AudioContext, for the previews */
+  init(ctxOverride) {
+    if (this.ready) return;
+    let ctx = ctxOverride;
+    keepLinked = !!ctxOverride;
+    if (!ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      // A GAME, not a notification: on the iPhone, Web Audio follows the ring/
+      // silent switch unless the page's audio session says it is playback, so
+      // with the phone on silent every sound in the game was muted while the
+      // radio (a media element) still played. iOS 17+; elsewhere a no-op.
+      try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) { /* older WebKit */ }
+      ctx = new AC();
+    }
+    this.ctx = ctx;
+    const c = ctx;
+    if (!ctxOverride) {
+      this._log('created: ' + c.state);
+      // A context that stops while you are looking at the game -- iOS's
+      // 'interrupted' when another audio session (the radio's media element,
+      // a call) takes the hardware -- is asked to start again on its own,
+      // not left until some later tap happens to count as a gesture.
+      c.onstatechange = () => {
+        this._log('state: ' + c.state);
+        // (and the next tap unmutes it again: kick(), below)
+        if (c.state !== 'running' && c.state !== 'closed') { this._kicked = false; this._heal(); }
+      };
+    }
+
+    // --- the mix: every bus into one limiter, then the volume control -------
+    this.master = c.createGain();
+    this.master.gain.value = this.volume;
+    this.limiter = c.createDynamicsCompressor();
+    this.limiter.threshold.value = -4;
+    this.limiter.knee.value = 3;
+    this.limiter.ratio.value = 20;
+    this.limiter.attack.value = 0.002;
+    this.limiter.release.value = 0.18;
+    this.pre = c.createGain();
+    this.pre.gain.value = 0.9;
+    this.pre.connect(this.limiter).connect(this.master).connect(c.destination);
+
+    // Everything on sfxBus (the world and the one-shots) passes one ~25 Hz
+    // high-pass on its way to the limiter: the engines' waveshapers are not
+    // symmetric, and the offset they leave (up to -52 mV) wastes headroom and
+    // thumps on every gate. The radio (musicBus) and the mini-games' own sound
+    // (wired to master) bypass it.
+    this.dcHp = c.createBiquadFilter();
+    this.dcHp.type = 'highpass';
+    this.dcHp.frequency.value = 25;
+    this.dcHp.Q.value = 0.707;
+    this.dcHp.connect(this.pre);
+    this.sfxBus = c.createGain();
+    this.sfxBus.connect(this.dcHp);
+    // The WORLD -- engines, traffic, sirens, tyres, wind, ambience -- reaches
+    // sfxBus through its own gain, so a pause can shut it without touching the
+    // UI cues (which play on sfxBus) or the mini-games (which wire to master).
+    this.worldBus = c.createGain();
+    this.worldBus.connect(this.sfxBus);
+    this._held = false;
+    this.musicBus = c.createGain();
+    this.musicBus.gain.value = 0.22;
+    this.musicDuck = c.createGain();
+    this.musicBus.connect(this.musicDuck).connect(this.pre);
+
+    // One reverb for the whole game: gunshots and crashes echo down the
+    // street, and in a bore everything does.
+    this.verb = c.createConvolver();
+    this.verb.buffer = makeImpulse(c);
+    this.verbIn = c.createGain();
+    this.verbOut = c.createGain();
+    this.verbOut.gain.value = 0.55;
+    this.verbIn.connect(this.verb).connect(this.verbOut).connect(this.sfxBus);
+    // what the WORLD sends to the reverb (the engine, the horns), on its own
+    // gain so holdWorld() can shut it: a stuck note's echo is a drone too
+    this.verbWorld = c.createGain();
+    this.verbWorld.connect(this.verbIn);
+
+    this.noise = noiseBuffer(c, 2, 'white', 3);
+    this.pinkNoise = noiseBuffer(c, 2, 'pink', 4);
+
+    // --- the player's engine --------------------------------------------------
+    this.engBus = c.createGain();
+    this.engBus.connect(this.worldBus);
+    this.engSend = c.createGain();
+    this.engSend.gain.value = 0;
+    this.engBus.connect(this.engSend).connect(this.verbWorld);
+    this.eng = new EngineVoice(c, this.pinkNoise, this.engBus);
+    this.eng.setProfile('i4');
+    this.engModel = new EngineModel();
+    this._spec = null;
+    this._engStartAt = -1;
+
+    // --- tyres, road and wind: one noise source fanned out --------------------
+    this.bed = c.createBufferSource();
+    this.bed.buffer = this.pinkNoise;
+    this.bed.loop = true;
+    this.roadLp = c.createBiquadFilter();
+    this.roadLp.type = 'lowpass';
+    this.roadLp.frequency.value = 300;
+    this.roadG = c.createGain();
+    this.roadG.gain.value = 0;
+    this.windBp = c.createBiquadFilter();
+    this.windBp.type = 'bandpass';
+    this.windBp.Q.value = 0.5;
+    this.windBp.frequency.value = 500;
+    this.windG = c.createGain();
+    this.windG.gain.value = 0;
+    this.bed.connect(this.roadLp).connect(this.roadG).connect(this.worldBus);
+    this.bed.connect(this.windBp).connect(this.windG).connect(this.worldBus);
+    // the tread's hiss over the rumble: a band that climbs with speed
+    this.treadBp = c.createBiquadFilter();
+    this.treadBp.type = 'bandpass';
+    this.treadBp.Q.value = 0.8;
+    this.treadBp.frequency.value = 900;
+    this.treadG = c.createGain();
+    this.treadG.gain.value = 0;
+    this.bed.connect(this.treadBp).connect(this.treadG);
+    this.tread = new Gate(this.treadG, this.worldBus);
+    this.bed.start(c.currentTime);
+    this._jointD = 0;
+    this._windSpeed = 0;
+    this._windHz = 350;
+
+    // --- ambience: the city, the water, the birds (see _ambience) -------------
+    this.ambBus = c.createGain();
+    this.ambBus.connect(this.worldBus);
+    this._amb = null;
+    this._nearCars = 0;
+
+    // --- horn: a voice, so holding the button holds the note ------------------
+    this.hornG = c.createGain();
+    this.hornG.gain.value = 0;
+    this.hornBp = c.createBiquadFilter();
+    this.hornBp.type = 'bandpass';
+    this.hornShaper = c.createWaveShaper();
+    this.hornShaper.curve = tanhCurve(2.5);
+    this.hornOsc = [0, 1, 2].map(() => {
+      const o = c.createOscillator();
+      const g = c.createGain();
+      g.gain.value = 0;
+      o.connect(g).connect(this.hornShaper);
+      o.start(c.currentTime);
+      return { o, g };
+    });
+    this.hornShaper.connect(this.hornBp).connect(this.hornG);
+    this.hornOn = false;
+    this.hornT = 0;
+    this.hornKind = null;
+
+    // --- sirens: carrier + LFO on its frequency, so the sweep is smooth at
+    // any frame rate -------------------------------------------------------------
+    this.sirens = [];
+    const sq = (() => {
+      const N = 15, re = new Float32Array(N + 1), im = new Float32Array(N + 1);
+      for (let n = 1; n <= N; n += 2) im[n] = 1 / n;
+      return c.createPeriodicWave(re, im);
+    })();
+    let sirenPh0 = 0;
+    for (let i = 0; i < SIREN_VOICES; i++) {
+      const o = c.createOscillator();
+      o.setPeriodicWave(sq);
+      o.frequency.value = 1000;
+      // Two cars' sirens used to be phase-locked (both LFOs started at init,
+      // in step) and sounded like one. Each voice starts at its own random
+      // phase (the second about a quarter-turn off the first, which is where
+      // two equal sweeps are uncorrelated) and sweeps 35 % faster than the
+      // first, so they drift apart for good rather than coming back into step.
+      const lfo = c.createOscillator();
+      lfo.frequency.value = 0.24;
+      const ph0 = i === 0 ? Math.random() : (sirenPh0 + (Math.random() < 0.5 ? 0.25 : 0.75) + (Math.random() - 0.5) * 0.1) % 1;
+      sirenPh0 = ph0;
+      const waves = SIREN_KINDS.map((k) => lfoWave(c, k[0], ph0));
+      lfo.setPeriodicWave(waves[0]);
+      const depth = c.createGain();
+      depth.gain.value = 380;
+      lfo.connect(depth).connect(o.frequency);
+      const sh = c.createWaveShaper();
+      sh.curve = tanhCurve(1.5);
+      // a siren speaker is a horn: resonant, and nothing much past ~3 kHz
+      const bp = c.createBiquadFilter();
+      bp.type = 'lowpass';
+      bp.frequency.value = 2900;
+      bp.Q.value = 3;
+      const hp = c.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 450;
+      const g = c.createGain();
+      g.gain.value = 0;
+      const pan = c.createStereoPanner ? c.createStereoPanner() : null;
+      o.connect(sh).connect(hp).connect(bp).connect(g);
+      if (pan) g.connect(pan);
+      o.start(c.currentTime);
+      lfo.start(c.currentTime);
+      this.sirens.push({ o, lfo, depth, g, pan, out: pan || g, on: false, car: null, kind: -1, waves, rate: 1 + 0.35 * i, quiet: 0 });
+    }
+
+    // --- traffic: a few nearest engines, panned ---------------------------------
+    this.trafficBus = c.createGain();
+    this.trafficBus.gain.value = 0.9;
+    this.trafficBus.connect(this.worldBus);
+    this.tvoices = [];
+    for (let i = 0; i < TRAFFIC_VOICES; i++) {
+      const o = c.createOscillator();
+      const lp = c.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.Q.value = 0.8;
+      const g = c.createGain();
+      g.gain.value = 0;
+      const nb = c.createBiquadFilter();
+      nb.type = 'bandpass';
+      nb.frequency.value = 500;
+      nb.Q.value = 0.7;
+      const ng = c.createGain();
+      ng.gain.value = 0;
+      const pan = c.createStereoPanner ? c.createStereoPanner() : null;
+      o.connect(lp).connect(g);
+      this.bed.connect(nb).connect(ng);
+      const out = pan || c.createGain();
+      g.connect(out);
+      ng.connect(out);
+      o.start(c.currentTime);
+      this.tvoices.push({ o, lp, g, nb, ng, pan, out, car: null, prof: null, model: new EngineModel(), lastV: 0, on: false, quiet: 0 });
+    }
+
+    // --- the police helicopter ---------------------------------------------------
+    this.heliPan = c.createStereoPanner ? c.createStereoPanner() : c.createGain();
+    this.heliPan.connect(this.worldBus);
+    this.heliVoice = null;   // built on first sight: most sessions never see it
+    this.heliModel = new EngineModel();
+    this._heliPrev = null;
+
+    // --- freights: your train's horn; the AI trains' engines, horns, wheels ---
+    this.frHorn = null;      // built when you first drive one
+    this.frVoices = [];      // built when one first comes within earshot
+
+    // --- one-shots -----------------------------------------------------------------
+    this.shots = [];
+    this._last = {};
+    this.loops = null;       // Taps over bank loops, once the bank exists
+
+    this.footWas = [true, true];
+    this._wetWas = false;
+    this._airT = 0;
+    this._groundWas = true;
+    this._popCd = 0;
+    this._brakeWas = 0;
+    this.ready = true;
+
+    // The bank exists from the start and fills in as it renders (renderBank).
+    // The loop taps wait for the lot.
+    this.bank = {};
+    const makeLoops = (b) => {
+      if (!b.squeal || !b.gravel || !b.scrape || !b.slosh || !b.burner || !b.rail_roll
+        || !b.grass_roll || !b.amb_city || !b.amb_water) return;
+      const lp = (f) => { const x = c.createBiquadFilter(); x.type = 'lowpass'; x.frequency.value = f; return x; };
+      this.loops = {
+        squeal: new Tap(c, b.squeal[0], this.worldBus),
+        gravel: new Tap(c, b.gravel[0], this.worldBus),
+        scrape: new Tap(c, b.scrape[0], this.worldBus),
+        slosh: new Tap(c, b.slosh[0], this.worldBus, lp(2400)),
+        burner: new Tap(c, b.burner[0], this.worldBus),
+        roll: new Tap(c, b.rail_roll[0], this.worldBus, lp(3200)),
+        grass: new Tap(c, b.grass_roll[0], this.worldBus),
+        city: new Tap(c, b.amb_city[0], this.ambBus),
+        water: new Tap(c, b.amb_water[0], this.ambBus),
+        tracks: b.tracks ? new Tap(c, b.tracks[0], this.worldBus) : null,
+      };
+    };
+    const t0 = performance.now();
+    this.bankReady = renderBank(c.sampleRate, null, this.bank).then((b) => {
+      this.bankMs = Math.round(performance.now() - t0);
+      makeLoops(b);
+      return b;
+    }).catch((e) => { console.warn('audio bank failed', e); });
+  }
+
+  // --- live radio -----------------------------------------------------------
+  //
+  // A real stream, so it is the one part of this app that needs the network.
+  // Everything about it is written to fail back to the synthesised station
+  // rather than to silence: no network, a blocked autoplay, a dead stream and a
+  // stall all end with `_liveFailed` set and `scheduleMusic()` taking over.
+
+  _makeLive() {
+    if (this._live || typeof window === 'undefined' || !window.Audio) return this._live;
+    // `window.Audio`, not `Audio` -- this module exports a class of that name,
+    // so the bare identifier resolves to us, not to the DOM constructor.
+    const el = new window.Audio();
+    el.preload = 'none';
+    // No crossOrigin: nothing reads the samples (the stream is not routed
+    // through Web Audio), and asking for CORS only lets a station fail.
+    // Streams have no duration to seek in, and iOS otherwise offers scrubbing.
+    el.loop = false;
+    el.volume = 0;
+    // THE RADIO PLAYS ONLY WHEN THE GAME WANTS IT. The element can be started
+    // by other things than startLive(): primeLive's unlock, iOS's lock-screen
+    // and headphone controls, the end of a phone call. It used to take any
+    // 'playing' as the radio being on and never heard about the pause, so
+    // `liveOn` stayed true on foot -- and resume(), run on every unpause and
+    // every return from the home screen, started the stream again while you
+    // were walking. Anything the game did not ask for is paused on the spot.
+    el.addEventListener('playing', () => {
+      if (!this._liveWanted || this._priming) {
+        if (!this._priming) { try { el.pause(); } catch (e) { /* gone */ } }
+        return;
+      }
+      this._liveState = 'playing';
+      this._liveFailed = false;
+      el.muted = false;
+      this._pollNowPlaying();
+    });
+    el.addEventListener('play', () => {
+      if (!this._liveWanted && !this._priming) { try { el.pause(); } catch (e) { /* gone */ } }
+    });
+    el.addEventListener('pause', () => {
+      if (this._liveState === 'playing') this._liveState = 'idle';
+    });
+    // The lock screen's play button asks the page, not the element, when a
+    // handler is set: honour it only in a car.
+    try {
+      if (navigator.mediaSession) {
+        navigator.mediaSession.setActionHandler('play', () => { if (this._liveWanted) this.startLive(); });
+        navigator.mediaSession.setActionHandler('pause', () => this.stopLive());
+      }
+    } catch (e) { /* no media session */ }
+    for (const ev of ['error', 'stalled', 'ended']) {
+      el.addEventListener(ev, () => {
+        // Don't thrash a dead network: give up on the live feed for this drive
+        // and let the synth station cover, rather than retrying every frame.
+        if (this._liveState !== 'idle') this._liveFailed = true;
+        this._liveState = 'idle';
+      });
+    }
+    this._live = el;
+    return el;
+  }
+
+  /**
+   * Satisfy iOS autoplay while we still have a user gesture.
+   *
+   * Getting into a car happens inside the frame loop, one or more rAF ticks
+   * after the button was pressed, so a play() there is not a gesture-initiated
+   * call and Safari rejects it. Starting (and immediately pausing) the element
+   * during the same gesture that boots the AudioContext marks it as unlocked
+   * for the rest of the session.
+   */
+  primeLive() {
+    const el = this._makeLive();
+    if (!el || this._livePrimed) return;
+    // The real stream already has the element (loading or playing): it is
+    // unlocked by definition, and priming it now would mute and then pause it.
+    if (this._liveState === 'loading' || this._liveState === 'playing') { this._livePrimed = true; return; }
+    this._livePrimed = true;
+    // MUTED, not volume 0: iOS ignores `volume` on media elements (it is
+    // always 1 there), so the unlock played the stream out loud on the first
+    // tap -- on foot. `muted` it does honour.
+    this._priming = true;
+    // A token, because the priming play can resolve AFTER the real stream has
+    // taken the element over (startLive supersedes it): its pause() then
+    // stopped the radio 0.1 s in.
+    const tok = this._primeTok = (this._primeTok || 0) + 1;
+    const done = () => {
+      if (tok !== this._primeTok) return;
+      this._priming = false;
+      try { el.pause(); } catch (e) { /* gone */ }
+      this._log('radio unlocked');
+      // ...and if starting it knocked the context over, start that again
+      if (this.ctx && this.ctx.state !== 'running') this.resume('after the radio unlock');
+    };
+    try {
+      // A SILENT CLIP, not the stream. Priming used to point the element at a
+      // live station: every launch opened a radio stream on foot, and play()
+      // only resolved once it had buffered -- 13 s and more for some
+      // stations, never for one that did not answer -- and on iOS a media
+      // element starting up shares the audio session with Web Audio. A clip
+      // in memory unlocks the element just the same, at once, with no network.
+      el.muted = true;
+      el.src = SILENT_WAV;
+      el.volume = 0;
+      const p = el.play();
+      // Rejected for want of a gesture the browser accepts: not primed after
+      // all, so the next gesture tries again instead of never. (An AbortError
+      // is the real stream's load() taking over -- that one is fine.)
+      if (p && p.then) {
+        p.then(done).catch((err) => {
+          if (tok !== this._primeTok) return;
+          this._priming = false;
+          if (err && err.name === 'NotAllowedError') this._livePrimed = false;
+          if (err && err.name !== 'AbortError') this._log('radio unlock: ' + err.name);
+        });
+      }
+      else done();
+    } catch (e) { this._priming = false; /* no autoplay, no live radio -- the synth still plays */ }
+  }
+
+  startLive() {
+    if (this._liveFailed || navigator.onLine === false) return;
+    const el = this._makeLive();
+    if (!el) return;
+    if (this._liveState === 'playing' || this._liveState === 'loading') return;
+    this._liveState = 'loading';
+    this._liveLoadAt = Date.now();
+    // the real stream supersedes any priming play still in flight
+    this._primeTok = (this._primeTok || 0) + 1;
+    this._priming = false;
+    try {
+      const src = this._stream();
+      if (this._liveSrc !== src) { el.src = src; this._liveSrc = src; }
+      // A live stream that has been paused for a while resumes where it left
+      // off, i.e. behind. Reloading puts us back at the live edge.
+      el.load();
+      el.muted = false;
+      el.volume = this.musicVolume;
+      const p = el.play();
+      if (p && p.catch) p.catch((err) => this._liveDown(err));
+    } catch (e) {
+      this._liveDown(e);
+    }
+  }
+
+  /**
+   * Give up on the live feed -- but only when it is actually broken.
+   *
+   * A rejected play() has two very different causes. `NotAllowedError` means
+   * the browser has not seen a gesture it will accept yet, which is temporary
+   * and self-healing: the next time the player gets into a car they will have
+   * pressed something. Latching on that would kill the radio for the whole
+   * session on the very platform this feature is for. Anything else (no
+   * network, dead stream) latches, so a car with no signal is not retrying the
+   * stream every frame.
+   */
+  _liveDown(err) {
+    this._liveState = 'idle';
+    if (!err || err.name !== 'NotAllowedError') this._liveFailed = true;
+  }
+
+  stopLive() {
+    this._liveState = 'idle';
+    if (this._live) {
+      try { this._live.pause(); } catch (e) { /* already gone */ }
+    }
+  }
+
+  get liveOn() {
+    return this._liveState === 'playing';
+  }
+
+  async _pollNowPlaying() {
+    if (this._nowPlayingAt && Date.now() - this._nowPlayingAt < 20000) return;
+    this._nowPlayingAt = Date.now();
+    try {
+      if (STATIONS[this.station].nowPlaying !== 'kexp') return;
+      const r = await fetch(KEXP_NOW, { cache: 'no-store' });
+      if (!r.ok) return;
+      const d = await r.json();
+      const play = d.results && d.results[0];
+      if (!play) return;
+      // Field names checked against the live API, not copied from /apps/radio:
+      // that app tests `play.playtype.name === 'Air break'`, but v2 returns
+      // `play_type: 'airbreak'` with artist/song at the top level, so its
+      // air-break branch never fires and its `track.*` fallbacks are dead.
+      const label = play.play_type === 'airbreak'
+        ? null
+        : [play.artist, play.song].filter(Boolean).join(' — ');
+      if (label && label !== this._nowPlaying) {
+        this._nowPlaying = label;
+        if (this.onTrack) this.onTrack(label);
+      }
+    } catch (e) { /* the music keeps playing without a title */ }
+  }
+
+  /** A line in the audio log (Debug readout), seconds since boot. (Not
+   *  `note`: that is the synth radio's, and plays one.) */
+  _log(msg) {
+    const t = typeof performance !== 'undefined' ? (performance.now() - this._t0) / 1000 : 0;
+    this.log.push(`${t.toFixed(1)} ${msg}`);
+    if (this.log.length > 14) this.log.shift();
+  }
+
+  /** Keep asking a stopped context to start while the page is visible: at
+   *  0.3, 1, 2.5, 5 and 10 s. iOS lets a context it interrupted start again
+   *  without a gesture once the interruption is over; the gesture listeners
+   *  stay as the fallback. */
+  _heal() {
+    const tok = this._healT = (this._healT || 0) + 1;
+    for (const s of [0.3, 1, 2.5, 5, 10]) {
+      setTimeout(() => {
+        if (tok !== this._healT || !this.ctx || this.ctx.state === 'running' || this.ctx.state === 'closed') return;
+        if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+        this.ctx.resume().then(() => this._log(`healed (${s} s)`)).catch((e) => this._log('heal: ' + (e && e.name)));
+      }, s * 1000);
+    }
+  }
+
+  /** In a gesture: start a one-sample silent buffer. Some iOS versions report
+   *  a resumed context as 'running' and keep its output muted until a source
+   *  is started inside a gesture -- the standard WebKit unlock. */
+  kick() {
+    const c = this.ctx;
+    if (!c || c.state === 'closed' || this._kicked) return;
+    try {
+      const b = c.createBuffer(1, 1, c.sampleRate), s = c.createBufferSource();
+      s.buffer = b; s.connect(c.destination); s.start(0);
+      if (c.state === 'running') this._kicked = true;
+    } catch (e) { /* nothing to start yet */ }
+  }
+
+  /**
+   * THE STALL WATCHDOG. A context iOS has interrupted (the radio's stream
+   * starting, a notification, Siri) and that came back WITHOUT a tap -- _heal
+   * -- can say 'running' while its clock stands still or its output stays
+   * muted. Every sound effect is then silent while the radio, an <audio>
+   * element outside the graph, plays on; and since the context "runs", no
+   * tap ever tried again. A clock that has not moved for 1.5 s of a visible
+   * page is a stall: the next tap restarts the context (`unstall`).
+   */
+  _watch() {
+    if (this._simT != null || keepLinked) return;   // (an offline render has no clock to stall)
+    const t = this.ctx.currentTime, now = typeof performance !== 'undefined' ? performance.now() : 0;
+    if (t !== this._ctLast || this._ctAt === undefined) { this._ctLast = t; this._ctAt = now; return; }
+    if (this._stalled || now - this._ctAt < 1500) return;
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+    this._stalled = true;
+    this._kicked = false;
+    this._log('stalled: running, clock stopped');
+  }
+
+  /** In a gesture: a stalled or muted context, started again. */
+  unstall() {
+    const c = this.ctx;
+    if (!c || c.state === 'closed') return;
+    if (this._stalled && c.state === 'running' && c.suspend) {
+      this._stalled = false;
+      this._ctAt = undefined;
+      // suspend and resume in the same gesture: queued in order, so the
+      // resume is still the tap's
+      c.suspend().catch(() => {});
+      c.resume().then(() => this._log('unstalled')).catch((e) => this._log('unstall: ' + (e && e.name)));
+    }
+    this.kick();
+  }
+
+  resume(why = '') {
+    // Anything but 'running': iOS reports 'interrupted' after the app comes
+    // back from the background (or a call, or Siri), and a context left there
+    // because it was not 'suspended' stayed silent for the rest of the session.
+    if (this.ctx && this.ctx.state !== 'running' && this.ctx.state !== 'closed' && this.ctx.resume) {
+      const st = this.ctx.state;
+      this.ctx.resume().then(() => this._log(`resumed from ${st}${why ? ' (' + why + ')' : ''}`))
+        .catch((e) => this._log(`resume refused (${why || st}): ${e && e.name}`));
+    }
+    // iOS pauses media on the way to the background and does not resume it --
+    // but only a radio that is wanted (in a car) comes back.
+    if (this._liveWanted && this._live) {
+      this._liveState = 'idle';
+      this.startLive();
+    }
+  }
+
+  setVolume(v) {
+    this.volume = v;
+    if (this.master) this.master.gain.value = v;
+  }
+
+  // --- one-shots --------------------------------------------------------------
+
+  /**
+   * Play a bank sound. Options: gain, rate, at (seconds from now), send
+   * (reverb), x/y/z (positional: attenuated, panned, darkened with distance),
+   * duck (how far to pull the radio down), ref/maxD (distance model).
+   */
+  /**
+   * Is the context actually running? It is created at boot now and starts
+   * suspended until a gesture resumes it; anything scheduled on a suspended
+   * context piles up at time 0 and fires at once on the unlock -- a burst of
+   * every footstep so far. The offline previews (keepLinked) are always live.
+   */
+  get live() { return keepLinked || (this.ctx && this.ctx.state === 'running'); }
+
+  play(name, o = {}) {
+    if (!this.ready || !this.enabled || !this.bank || !this.live) return null;
+    const list = this.bank[name];
+    if (!list || !list.length) return null;
+    const c = this.ctx;
+    const t = this.now() + (o.at || 0);
+    let gain = o.gain == null ? 1 : o.gain;
+    let rate = o.rate || 1;
+    let pan = 0, dist = 0;
+    if (o.x != null && this.L) {
+      const s = spatial(this.L, o.x, o.y, o.z, 0, 0, o.ref || 8, o.maxD || 260);
+      if (!s) return null;
+      gain *= s.gain;
+      pan = s.pan;
+      dist = s.d;
+      if (gain < 0.004) return null;
+    }
+    // never the same variant twice running
+    let vi = 0;
+    if (list.length > 1) {
+      vi = Math.floor(Math.random() * list.length);
+      if (vi === this._last[name]) vi = (vi + 1) % list.length;
+      this._last[name] = vi;
+    }
+    const src = c.createBufferSource();
+    src.buffer = list[vi];
+    src.playbackRate.value = rate * (o.jitter === false ? 1 : 0.96 + Math.random() * 0.08);
+    const g = c.createGain();
+    g.gain.value = gain;
+    let head = src;
+    if (dist > 25) {
+      // air takes the top off a distant sound
+      const f = c.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = clamp(18000 * Math.exp(-dist / 90), 700, 18000);
+      head.connect(f);
+      head = f;
+    }
+    head.connect(g);
+    let out = g;
+    if (pan && c.createStereoPanner) {
+      const p = c.createStereoPanner();
+      p.pan.value = pan;
+      g.connect(p);
+      out = p;
+    }
+    out.connect(this.sfxBus);
+    const send = (o.send == null ? 0.12 : o.send) + (this._enclosed ? 0.25 : 0) + clamp(dist / 200, 0, 0.35);
+    if (send > 0.01) {
+      const sg = c.createGain();
+      sg.gain.value = send;
+      out.connect(sg).connect(this.verbIn);
+    }
+    src.start(t);
+    // A hard cap on voices: forget what has finished, then cut the oldest.
+    const end = t + src.buffer.duration / src.playbackRate.value;
+    if (this.shots.length >= MAX_SHOTS) this.shots = this.shots.filter((s) => s.end > t);
+    this.shots.push({ src, end });
+    if (this.shots.length > MAX_SHOTS) {
+      const old = this.shots.shift();
+      try { old.src.stop(t); } catch (e) { /* done */ }
+    }
+    if (o.duck) this.duck(o.duck, o.duckHold || 0.5);
+    return src;
+  }
+
+  /**
+   * Freeze or thaw the world's sound. main.js's frame returns before
+   * audio.update() while the game is paused or the map is open, so every
+   * continuous voice (engine, traffic, sirens, tyres, wind, ambience, horns)
+   * held its last note and droned behind the menu. Called every frame, it
+   * ramps the world bus to 0 in ~0.15 s and back up on resume. The radio
+   * (musicBus), UI cues (play() -> sfxBus) and the mini-games' own sound
+   * (wired to master) do not pass through it.
+   */
+  holdWorld(on) {
+    if (!this.ready || on === this._held) return;
+    this._held = on;
+    const t = this.now();
+    setp(this.worldBus.gain, on ? 0 : 1, t, on ? 0.04 : 0.03);
+    setp(this.verbWorld.gain, on ? 0 : 1, t, 0.04);
+  }
+
+  /** Pull the engine bus down under a big bang (the cannon, an explosion), then let it back. */
+  duckEngine(amount = 0.5, hold = 0.4) {
+    if (!this.ready) return;
+    const t = this.now();
+    const g = this.engBus.gain;
+    g.cancelScheduledValues(t);
+    g.setTargetAtTime(1 - amount, t, 0.02);
+    g.setTargetAtTime(1, t + hold, 0.12);
+  }
+
+  /** Pull the radio down under a big sound, then let it back up. */
+  duck(amount, hold = 0.5) {
+    if (!this.ready) return;
+    const t = this.now();
+    const g = this.musicDuck.gain;
+    const to = clamp(1 - amount, 0.15, 1);
+    g.cancelScheduledValues(t);
+    g.setTargetAtTime(to, t, 0.03);
+    g.setTargetAtTime(1, t + hold, 0.7);
+    this._duck = to;
+    this._duckUntil = t + hold + 1.5;
+  }
+
+  // Legacy synth voices, kept for anything that still calls them.
+  blip(freq, dur, type = 'square', vol = 0.25) {
+    if (!this.ready || !this.enabled) return;
+    const ctx = this.ctx, t = this.now();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = type;
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(vol * 0.6, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(this.sfxBus);
+    o.start(t);
+    o.stop(t + dur + 0.02);
+  }
+
+  burst(dur, freq, q, vol) {
+    this.play('bump', { gain: vol });
+  }
+
+  crash(force, x, z) {
+    const remote = x != null;
+    const key = remote ? '_crashR' : '_crashP';
+    const t = this.ready ? this.now() : 0;
+    if (this[key] && t - this[key] < (remote ? 0.25 : 0.1)) return;
+    this[key] = t;
+    const f = clamp(force / 24, 0, 1.4), f1 = Math.min(1, f);
+    const pos = remote ? { x, z, ref: 10 } : {};
+    // Severity tiers -- a kiss, a knock, a crunch, a smash, a wreck -- and the
+    // body's size in the pitch: a bus is a deeper hit than a hatchback, a bike
+    // a lighter one, and has hardly any glass to break.
+    const spec = remote ? null : this._spec;
+    const mass = spec && spec.mass ? spec.mass : 1;
+    const mr = clamp(Math.pow(mass, -0.13), 0.8, 1.22);
+    const bike = !!(spec && (spec.moto || spec.atv));
+    if (force < 3.5) {
+      this.play('bump', { ...pos, gain: 0.22 + force * 0.06, rate: 1.3 * mr });
+      return;
+    }
+    if (force < 7) {
+      this.play('bump', { ...pos, gain: 0.45 + f * 0.5, rate: 1.05 * mr });
+      return;
+    }
+    this.play('bump', { ...pos, gain: 0.7, rate: 0.95 * mr });
+    this.play('crunch', { ...pos, gain: 0.35 + 0.55 * f1, rate: (1.12 - 0.2 * f1) * mr, send: 0.2, duck: remote ? 0 : 0.3 + 0.4 * f1 });
+    if (force > 15) {
+      if (Math.random() < (bike ? 0.2 : 0.75)) this.play('glass', { ...pos, gain: 0.3 + 0.35 * f1, at: 0.01, send: 0.15 });
+      this.play('debris', { ...pos, gain: 0.2 + 0.3 * f1, at: 0.06, rate: mr, send: 0.1 });
+    }
+    if (force > 26) {
+      this.play('crunch', { ...pos, gain: 0.6, rate: 0.78 * mr, at: 0.03, send: 0.25 });
+      this.play('slam', { ...pos, gain: 0.55 + 0.25 * clamp((force - 26) / 20, 0, 1), rate: mr, send: 0.2, duck: remote ? 0 : 0.8, duckHold: 0.9 });
+    }
+  }
+
+  explosion(x, z) {
+    const pos = x != null ? { x, z, ref: 25, maxD: 900 } : {};
+    this.play('explosion', { ...pos, gain: 1, send: 0.45, duck: 0.8, duckHold: 1.6 });
+    // your engine gives way to a bang that is near (all but the far ones)
+    if (x == null || !this.L || Math.hypot(x - this.L.x, z - this.L.z) < 120) this.duckEngine(0.5, 0.4);
+    this.play('glass', { ...pos, gain: 0.35, at: 0.04 });
+  }
+
+  /** A tank's main gun, yours: the bank's boom, a big reverb send, the radio ducked. */
+  cannon() {
+    this.play('cannon', { gain: 1.6, send: 0.7, duck: 0.9, duckHold: 1.2, jitter: false });
+    this.duckEngine(0.5, 0.4);
+    this.play('debris', { gain: 0.2, at: 0.08 });
+  }
+
+  /** One round from a tank's machine gun. */
+  mg() { this.play('mg', { gain: 0.55, send: 0.3, duck: 0.25, duckHold: 0.1 }); }
+
+  gunshot(x, z) {
+    if (x != null) this.play('gun', { x, z, ref: 12, maxD: 500, gain: 0.8, send: 0.35 });
+    else this.play('gun', { gain: 0.72, send: 0.4, duck: 0.35, duckHold: 0.15 });
+  }
+
+  punch() { this.play('punch', { gain: 0.7, send: 0.05 }); }
+  whoosh() { this.play('whoosh', { gain: 0.55, send: 0.04 }); }
+  smack() { this.play('smack', { gain: 0.8, send: 0.05 }); }
+  pedHit() { this.play('pedhit', { gain: 0.8, send: 0.08 }); }
+  land(drop) { this.play('land', { gain: clamp(0.35 + drop * 0.12, 0.35, 0.95), send: 0.05 }); }
+
+  horn() {
+    if (!this.ready || !this.enabled) return;
+    const kind = hornFor(this._spec);
+    if (kind === 'none') return;
+    // attack() re-fires every 0.4 s while held; the voice holds the note.
+    this.hornT = 0.46;
+    if (kind !== this.hornKind) {
+      this.hornKind = kind;
+      const h = HORNS[kind];
+      const t = this.now();
+      this.hornBp.frequency.setValueAtTime(h.bp, t);
+      this.hornBp.Q.setValueAtTime(h.q, t);
+      this.hornOsc.forEach((v, i) => {
+        v.o.type = h.wave;
+        const f = h.f[i];
+        if (f) v.o.frequency.setValueAtTime(f, t);
+        v.g.gain.setValueAtTime(f ? 0.5 : 0, t);
+      });
+    }
+  }
+
+  /**
+   * A fire rig's water cannon and the fire it is aimed at (firecalls.js), both
+   * 0..1: the stream is a hiss over a low rush, the fire a dark roar with a
+   * crackle in it. One looped noise source, built the first time a rig sprays
+   * or a building burns, and linked to the bus only while either is heard.
+   */
+  fireSound(spray, roar) {
+    if (!this.ready || !this.enabled) return;
+    const c = this.ctx, t = this.now();
+    let S = this._fire;
+    if (!S) {
+      if (spray <= 0 && roar <= 0) return;
+      const src = c.createBufferSource();
+      src.buffer = this.pinkNoise; src.loop = true;
+      const hi = c.createBiquadFilter(); hi.type = 'bandpass'; hi.frequency.value = 2400; hi.Q.value = 0.5;
+      const lo = c.createBiquadFilter(); lo.type = 'lowpass'; lo.frequency.value = 420;
+      const sg = c.createGain(), lg = c.createGain(), out = c.createGain();
+      sg.gain.value = 0; lg.gain.value = 0; out.gain.value = 1;
+      const roarLp = c.createBiquadFilter(); roarLp.type = 'lowpass'; roarLp.frequency.value = 260;
+      const rg = c.createGain(); rg.gain.value = 0;
+      // the crackle: the roar's own noise, gated by a fast square LFO
+      const crack = c.createBiquadFilter(); crack.type = 'highpass'; crack.frequency.value = 1800;
+      const cg = c.createGain(); cg.gain.value = 0;
+      const lfo = c.createOscillator(); lfo.type = 'square'; lfo.frequency.value = 7.3;
+      const lfoG = c.createGain(); lfoG.gain.value = 0;
+      lfo.connect(lfoG).connect(cg.gain);
+      src.connect(hi).connect(sg).connect(out);
+      src.connect(lo).connect(lg).connect(out);
+      src.connect(roarLp).connect(rg).connect(out);
+      src.connect(crack).connect(cg).connect(out);
+      src.start(); lfo.start();
+      S = this._fire = { out, sg, lg, rg, lfoG, lfo, on: false, quiet: 0 };
+    }
+    const want = spray > 0 || roar > 0.01;
+    if (want && !S.on) { S.on = true; S.out.connect(this.worldBus); }
+    setp(S.sg.gain, spray * 0.22, t, spray > 0 ? 0.04 : 0.12);
+    setp(S.lg.gain, spray * 0.38, t, spray > 0 ? 0.06 : 0.15);
+    setp(S.rg.gain, roar * roar * 0.55, t, 0.3);
+    setp(S.lfoG.gain, roar * roar * 0.05, t, 0.3);
+    S.lfo.frequency.setValueAtTime(5 + Math.random() * 9, t);
+    if (!want && S.on) {
+      if (++S.quiet > 60 && !keepLinked) { S.on = false; S.out.disconnect(); }
+    } else S.quiet = 0;
+  }
+
+  pickup(kind) { this.play(kind === 'gun' ? 'weapon' : 'pickup', { gain: 0.55, send: 0.05 }); }
+  cash() { this.play('cash', { gain: 0.6, send: 0.05, duck: 0.3, duckHold: 0.4 }); }
+  wanted(level = 1) {
+    this.play('wanted', { gain: 0.6, rate: 1 + 0.05 * (level - 1), jitter: false, send: 0.15, duck: 0.55, duckHold: 0.9 });
+  }
+  /** The monorail's doors: a chime as they open, a tick as they close. */
+  chime(open) { this.ui(open ? 'check' : 'tick'); }
+  /** Mission and menu cues: 'start' | 'tick' | 'go' | 'check' | 'ring' | 'fail'. */
+  ui(kind) {
+    this.play('ui_' + kind, { gain: kind === 'fail' ? 0.45 : 0.5, send: 0.03, jitter: false, duck: kind === 'go' || kind === 'fail' ? 0.3 : 0 });
+  }
+
+  /** Getting in: doors, seat, starter, and the engine catching. */
+  enterVehicle(spec, running) {
+    if (!this.ready) return;
+    if (spec && (spec.balloon || spec.noEngine)) {
+      // No engine: a balloon is the burner and the wind, a kayak the paddle.
+      // Climbing in is a creak of wicker (or hull) and nothing else.
+      this._spec = spec;
+      this.engModel.on = false;
+      this._engStartAt = -1;
+      this.hornKind = null;
+      this.play('seat', { gain: 0.35, send: 0.04 });
+      return;
+    }
+    this._spec = spec;
+    const name = selectEngine(spec);
+    this.eng.setProfile(name);
+    this.engModel.setProfile(ENGINES[name], spec);
+    this.hornKind = null;
+    const kind = ENGINES[name].kind;
+    const t = this.now();
+    const g = { gain: 0.55, send: 0.04 };
+    let catchAt = 0.8;
+    if (spec && (spec.moto || spec.atv)) {
+      this.play('kickstand', { ...g, gain: 0.5 });
+      if (!running) this.play('starter_bike', { ...g, at: 0.18, gain: 0.45 });
+      catchAt = 0.5;
+    } else if (spec && spec.boat) {
+      this.play('slosh', { gain: 0.3 });
+      if (!running) this.play('starter', { ...g, at: 0.25, rate: 1.3, gain: 0.4 });
+      catchAt = 0.7;
+    } else {
+      if (spec && (spec.bus || spec.fire)) this.play('airbrake', { gain: 0.4 });
+      else this.play('door_open', g);
+      this.play('seat', { ...g, at: 0.2, gain: 0.4 });
+      this.play('door_close', { ...g, at: 0.42 });
+      if (kind === 'ev') this.play('ev_on', { at: 0.6, gain: 0.35, send: 0.02 });
+      else if (kind === 'heli') catchAt = 0.7;
+      else if (!running) this.play('starter', { ...g, at: 0.52, rate: spec && (spec.bus || spec.cargo || spec.fire) ? 0.78 : spec && spec.plane ? 0.85 : 1, gain: 0.42 });
+      catchAt = kind === 'ev' ? 0.6 : running ? 0.45 : 1.25;
+    }
+    if (running && kind !== 'heli' && kind !== 'plane') this.engModel.start(true);
+    else { this.engModel.on = false; this._engStartAt = t + catchAt; }
+  }
+
+  exitVehicle(spec, dead) {
+    if (!this.ready) return;
+    this.engModel.stop();
+    this._engStartAt = -1;
+    this.hornT = 0;
+    this._spec = null;
+    if (dead || !spec || spec.moto || spec.atv || spec.boat) return;
+    this.play('door_open', { gain: 0.5, send: 0.04, at: 0.05 });
+    this.play('door_close', { gain: 0.5, send: 0.06, at: 0.62 });
+  }
+
+  // --- the frame -----------------------------------------------------------------
+
+  update(dt, state) {
+    if (!this.ready || !this.live) return;   // see `live`
+    const ctx = this.ctx;
+    const t = this.now();
+    this._watch();
+    if (!this.enabled) {
+      setp(this.sfxBus.gain, 0, t, 0.05);
+      setp(this.musicBus.gain, 0, t, 0.05);
+      if (this._liveWanted) { this._liveWanted = false; this.stopLive(); }
+      return;
+    }
+    setp(this.sfxBus.gain, 1, t, 0.05);
+    const L = state.listener || { x: 0, y: 0, z: 0, fx: 0, fz: -1, vx: 0, vz: 0 };
+    this.L = L;
+    this._enclosed = !!state.enclosed;
+    setp(this.verbOut.gain, state.enclosed ? 1.1 : 0.55, t, 0.3);
+    setp(this.engSend.gain, state.enclosed ? 0.45 : 0.04, t, 0.3);
+
+    this._updateVehicle(dt, t, state);
+    this._updateFoot(state);
+    this._updateWorld(dt, t, state, L);
+    this._ambience(dt, t, state, L);
+
+    this._inCar = !!state.inCar;
+    this._updateRadio(t, this._inCar);
+  }
+
+  /**
+   * The radio keeps running behind the pause menu: the frame returns before
+   * update() while paused, so without this the synth stations went silent
+   * ~0.4 s into a pause (scheduleMusic only ran from update()) and retuning in
+   * the menu did nothing until you resumed.
+   */
+  tickRadio() {
+    if (!this.ready || !this.live || !this.enabled) return;
+    this._updateRadio(this.now(), !!this._inCar);
+  }
+
+  _updateRadio(t, inCar) {
+    // Radio. The live stream is a car radio: it runs while you are in a car and
+    // stops when you get out, which is also what keeps a background tab quiet.
+    const wantLive = !!inCar && this.musicOn && this.enabled
+      && !!STATIONS[this.station].stream;
+    if (wantLive !== this._liveWanted) {
+      this._liveWanted = wantLive;
+      if (wantLive) this.startLive(); else this.stopLive();
+    }
+    // A stream that neither plays nor errors -- an HLS station in a browser
+    // that says it can play HLS and then does not -- is silence forever. 20 s
+    // without sound and the synth voice takes over for this station.
+    if (this._liveState === 'loading' && Date.now() - this._liveLoadAt > 20000) {
+      this._liveFailed = true;
+      this.stopLive();
+    }
+    if (this.liveOn) {
+      // iOS ignores `volume` on a media element, so there the duck cannot
+      // reach the stream; elsewhere it rides the same envelope.
+      const dk = this._duckUntil && t < this._duckUntil ? this.musicDuck.gain.value : 1;
+      this._live.volume = clamp(this.musicVolume * dk, 0, 1);
+      this._pollNowPlaying();
+      // The synth station and the real one must never play together.
+      setp(this.musicBus.gain, 0, t, 0.3);
+      if (this.radio) this.radio.quiet(t, keepLinked);
+    } else if (this.musicOn && inCar) {
+      // The SYNTH stations are the car radio too. Only the live stream was
+      // gated on being in a car, so on foot the synthesised KEXP played on --
+      // walking around town scored like a menu screen. One radio, one rule:
+      // it plays in a car and stops the moment you step out.
+      this.scheduleMusic();
+    } else {
+      setp(this.musicBus.gain, 0, t, 0.3);
+      if (this.radio) this.radio.quiet(t, keepLinked);
+    }
+  }
+
+  _updateVehicle(dt, t, s) {
+    const m = this.engModel;
+    const inCar = !!s.inCar;
+    const spec = s.spec || this._spec;
+    if (inCar && spec && spec !== this._spec) {
+      // spawned or teleported into a vehicle without going through enterVehicle
+      this._spec = spec;
+      const name = selectEngine(spec);
+      this.eng.setProfile(name);
+      m.setProfile(ENGINES[name], spec);
+      if (!spec.balloon && !spec.noEngine) m.start(true);
+    }
+    // Out of the car by any route -- a respawn never calls exitVehicle -- and
+    // the engine is off.
+    if (!inCar && (m.on || this._engStartAt >= 0)) {
+      m.stop();
+      this._engStartAt = -1;
+      this._spec = null;
+    }
+    if (this._engStartAt >= 0 && (t >= this._engStartAt || (s.throttle > 0.2 && t > this._engStartAt - 0.6))) {
+      this._engStartAt = -1;
+      m.start(false);
+    }
+    const speed = s.speed || 0;
+    const thr = inCar ? s.throttle || 0 : 0;
+    const p = m.p;
+    // wheels off the ground (a jump, a ford) free-rev; planes and rotors
+    // handle "air" themselves
+    const free = inCar && p.kind === 'car' && (s.carAirborne || s.wading);
+    m.step(dt, speed, thr, free);
+    if (m.event === 'pop' && this._popCd <= 0) {
+      this._popCd = 0.07;
+      this.play(p.bang ? 'bang' : 'backfire', { gain: p.bang ? 1.1 + Math.random() * 0.4 : 0.25 + Math.random() * 0.25, send: 0.15 });
+      if (p.bang) this.eng.duck(this.now());
+    }
+    this._popCd -= dt;
+    if (m.event === 'up' && p.crackle && s.throttle > 0.9 && (!p.bang || Math.random() < 0.2)) {
+      this.play(p.bang ? 'bang' : 'backfire', { gain: p.bang ? 1.4 : 0.18, send: 0.1 });
+      if (p.bang) this.eng.duck(this.now());
+    }
+    // the box itself: a bike's shift drum, a truck's gears
+    if (inCar && (m.event === 'up' || m.event === 'down') && p.clunk) {
+      this.play('shift', { gain: p.clunk * (m.event === 'up' ? 1 : 0.8), send: 0.02 });
+    }
+    // the blow-off valve, venting what the turbo had built
+    if (inCar && m.bov > 0) this.play('bov', { gain: 0.1 + 0.3 * m.bov, rate: 0.95 + 0.1 * m.bov, send: 0.06 });
+    // heavy vehicles hiss when they come to a stop on the brakes
+    if (inCar && p.airbrake && s.brake > 0.5 && Math.abs(speed) < 1.2 && this._brakeWas >= 1.2) {
+      this.play('airbrake', { gain: 0.45, send: 0.08 });
+    }
+    this._brakeWas = Math.abs(speed);
+    this.eng.apply(m, t, 1, 1);
+
+    // road, tyres and wind
+    const sp = Math.abs(speed);
+    // Wheels on the ground. From the SPEC as well as the profile: an engineless
+    // vehicle (a kayak, a bicycle, the balloon) keeps the last car's profile,
+    // and a kayak over the water reads as a pier ('wood') -- joints under a
+    // paddle stroke.
+    const onGround = inCar && !s.airborne && !s.carAirborne && !s.onWater && p.kind !== 'boat' && p.kind !== 'heli'
+      && !(spec && (spec.boat || spec.balloon || spec.heli));
+    const surf = s.surface;
+    const offroad = surf === 'grass' || surf === 'gravel';
+    const deck = surf === 'deck' || surf === 'wood';
+    const roll = onGround ? clamp(sp / 30, 0, 1) : 0;
+    // rumble: a deck's hollow span booms a little more than the ground
+    setp(this.roadG.gain, roll * (offroad ? 0.03 : deck ? 0.09 : 0.07), t, 0.1);
+    setp(this.roadLp.frequency, (deck ? 170 : 220) + sp * 14, t, 0.2);
+    // the tread's hiss, rising faster than the rumble: what 100 km/h sounds
+    // like from inside a car, and why a stop is quiet
+    const heavy = !!(spec && (spec.mass || 1) > 2.5);
+    this.tread.set(onGround && !offroad ? Math.pow(clamp(sp / 32, 0, 1.2), 1.5) * (heavy ? 0.05 : 0.035) : 0, t, 0.1);
+    if (this.tread.on) setp(this.treadBp.frequency, (heavy ? 550 : 750) + sp * 22, t, 0.2);
+    const air = inCar ? ((p.kind === 'plane' && !(spec && spec.tank)) || p.kind === 'heli' ? 1.6 : spec && spec.moto ? 1.5 : 1) : (s.falling ? 1.2 : 0);
+    const wsp = inCar ? sp : Math.abs(s.fallSpeed || 0);
+    // the rush of air, mixed with the weather's wind in _ambience
+    this._windSpeed = clamp(wsp / 55, 0, 1.2) ** 2 * 0.09 * air;
+    this._windHz = 350 + wsp * 18;
+    // Expansion joints: on a bridge or a viaduct, ka-thunk, front axle then
+    // rear, every ~32 m of deck.
+    if (inCar && onGround && deck && sp > 3) {
+      this._jointD += sp * dt;
+      if (this._jointD > 32) {
+        this._jointD = Math.random() * 4;
+        const jg = clamp(sp / 25, 0.3, 1) * (heavy ? 0.42 : 0.3);
+        const wb = (spec && spec.wheelbase) || 2.8;
+        this.play('joint', { gain: jg, rate: heavy ? 0.85 : 1, send: 0.05 });
+        if (wb / sp < 0.6) this.play('joint', { gain: jg * 0.8, rate: heavy ? 0.82 : 0.97, at: wb / sp, send: 0.05 });
+      }
+    } else if (!deck) this._jointD = 20 + Math.random() * 10;
+    if (this.loops) {
+      // TYRES. Sideways: the slide (vehicles.js `skid`, lateral slip). Along:
+      // locking up under a hard stop, and wheelspin off the line in anything
+      // with the power for it. One squeal voice; the strongest wins, and sets
+      // the pitch -- a lock-up howls lower than a slide.
+      const skid = onGround ? clamp(s.skid || 0, 0, 1) : 0;
+      const lat = offroad ? 0 : skid * clamp(sp / 6, 0, 1);
+      const brk = s.brake || 0;
+      const lock = onGround && !offroad && speed > 4 && brk > 0.55 && p.kind !== 'boat' && !(spec && spec.tank)
+        ? clamp((brk - 0.55) / 0.45, 0, 1) * clamp((sp - 4) / 16, 0, 1) * 0.8 : 0;
+      const grunt = spec ? spec.acc || 3 : 3;
+      const spin = onGround && !offroad && speed > -0.5 && sp < 11 && thr > 0.8 && grunt >= 5.5 && (p.kind === 'car' || p.kind === 'ev')
+        ? clamp((grunt - 4.5) / 4, 0.3, 1) * (1 - sp / 11) * 0.85 : 0;
+      // a burnout (vehicles.js): the rears spinning on the spot, flat out
+      const bo = inCar && s.burnout ? 0.95 : 0;
+      const sq = Math.max(lat, lock, spin, bo);
+      const sqRate = bo > 0 && sq === bo ? 1.02 : (sq === lock && lock > 0 ? 0.74 + clamp(sp / 80, 0, 0.2) : sq === spin && spin > 0 ? 0.95 + sp * 0.02 : 0.85 + clamp(sp / 40, 0, 0.35))
+        * (heavy ? 0.8 : 1);
+      this.loops.squeal.set(sq * 0.22, t, 0.04, sqRate);
+      const grav = surf === 'gravel' && onGround ? clamp(sp / 18, 0, 1) * 0.12 + skid * 0.15 : 0;
+      this.loops.gravel.set(grav, t, 0.08, 0.8 + clamp(sp / 30, 0, 0.5));
+      const grs = surf === 'grass' && onGround ? clamp(sp / 16, 0, 1) * 0.16 + skid * 0.08 : 0;
+      this.loops.grass.set(grs, t, 0.1, 0.75 + clamp(sp / 30, 0, 0.6));
+      // a balloon's burner, lit
+      this.loops.burner.set(inCar && s.burner ? 0.55 : 0, t, s.burner ? 0.05 : 0.12);
+      // a tank's tracks: louder and quicker with the belts' speed
+      if (this.loops.tracks) {
+        const tr = inCar && spec && spec.tank ? s.tracks || 0 : 0;
+        this.loops.tracks.set(tr > 0.05 ? clamp(0.12 + tr / 9, 0, 1) * 0.3 : 0, t, 0.08, clamp(0.55 + tr / 10, 0.55, 2.2));
+      }
+      const scr = inCar ? clamp(s.scrape || 0, 0, 1) : 0;
+      this.loops.scrape.set(scr * 0.3, t, 0.03, 0.8 + clamp(sp / 25, 0, 0.5));
+      // water: a boat's hull, a floatplane on the lake, a car in a ford, or
+      // you wading
+      const boat = inCar && (p.kind === 'boat' || s.onWater);
+      const wet = (s.water || 0) > 0;
+      const slosh = boat ? 0.08 + clamp(sp / 14, 0, 1) * 0.3
+        : wet ? clamp((s.water || 0) * 0.6 + sp * 0.04, 0, 0.35) : 0;
+      this.loops.slosh.set(slosh, t, 0.15, 0.8 + clamp(sp / 25, 0, 0.6));
+      // falling in
+      if (wet && !this._wetWas && !boat) {
+        const hard = clamp((s.impactSpeed || sp) / 12, 0.2, 1);
+        this.play('splash', { gain: 0.35 + 0.6 * hard, rate: 1.1 - 0.2 * hard, send: 0.1, duck: 0.3 * hard });
+      }
+      this._wetWas = wet;
+    }
+    // a car landing off a jump
+    const grounded = !(s.carAirborne);
+    if (inCar && !grounded) this._airT += dt;
+    if (inCar && grounded && !this._groundWas && this._airT > 0.25) {
+      this.play('thunk', { gain: clamp(0.35 + this._airT * 0.4, 0.35, 0.9), send: 0.06 });
+      if (this._airT > 0.8) this.play('bump', { gain: 0.5 });
+    }
+    if (grounded) this._airT = 0;
+    this._groundWas = grounded;
+
+    // a freight you are driving: its air horn, its bell, its wheels
+    const fv = inCar && spec && spec.freight ? s.vehicle : null;
+    if (fv || this.frHorn) {
+      if (!this.frHorn) { this.frHorn = new AirHorn(this.ctx, this.worldBus, this.verbWorld); this.frHorn.setNoise(this.pinkNoise); }
+      // over the cab roof, a little behind you: loud, but not in your ear
+      this.frHorn.set(t, !!(fv && fv.hornOn), 0.78, 0, 1, 40);
+    }
+    if (fv && fv.bellOn) {
+      this._frBellT = (this._frBellT || 0) - dt;
+      if (this._frBellT <= 0) { this._frBellT = 0.95; this.play('loco_bell', { gain: 0.22, send: 0.05, jitter: false }); }
+    }
+    if (this.loops && this.loops.roll) {
+      const v = fv ? Math.abs(fv.u) : 0;
+      this.loops.roll.set(fv ? clamp(v / 6, 0, 1) * 0.42 : 0, t, 0.12, clamp(v / 15, 0.2, 2.2));
+    }
+
+    // horn
+    if (this.hornT > 0) this.hornT -= dt;
+    const hornWant = this.hornT > 0 && inCar;
+    if (hornWant && !this.hornOn) { this.hornOn = true; this.hornG.connect(this.worldBus); }
+    if (this.hornOn) {
+      const h = HORNS[this.hornKind] || HORNS.car;
+      setp(this.hornG.gain, hornWant ? h.gain : 0, t, hornWant ? 0.008 : 0.03);
+      if (!hornWant && this.hornT < -0.4 && !keepLinked) { this.hornOn = false; this.hornG.disconnect(); }
+    }
+  }
+
+  _updateFoot(s) {
+    if (!s.onFoot) { this.footWas[0] = this.footWas[1] = true; return; }
+    const sp = s.footSpeed || 0;
+    for (let i = 0; i < 2; i++) {
+      const down = i ? s.footR : s.footL;
+      if (down && !this.footWas[i] && sp > 0.5) {
+        const surf = s.surface || 'hard';
+        const name = surf === 'water' ? 'step_water' : surf === 'grass' ? 'step_grass' : surf === 'gravel' ? 'step_gravel'
+          : surf === 'wood' ? 'step_wood' : 'step_hard';
+        const run = clamp((sp - 1.4) / 5, 0, 1);
+        // Under the traffic, not over it (the footsteps scene measured -28.6 dB
+        // RMS against -33.4 for a car passing; now ~-37): about a quarter of
+        // the old level,
+        // with a little per-step variation so a walk is not a metronome.
+        const vary = 0.85 + Math.random() * 0.3;
+        this.play(name, { gain: ((surf === 'grass' ? 0.055 : 0.065) + run * 0.06) * vary, rate: (1.02 - run * 0.08) * (0.96 + Math.random() * 0.08), send: 0.04 });
+      }
+      this.footWas[i] = !!down;
+    }
+  }
+
+  _updateWorld(dt, t, s, L) {
+    // --- traffic engines ---------------------------------------------------------
+    const cars = s.cars;
+    if (cars) {
+      // nearest few moving (or idling) cars within earshot
+      const best = this._best || (this._best = []);
+      best.length = 0;
+      let near = 0;
+      for (const v of cars) {
+        if (v === s.vehicle || v.mode === 'parked' || v.mode === 'free' || v.mode === 'apron' || v.dead) continue;
+        const dx = v.x - L.x, dz = v.z - L.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < 160 * 160) near++;
+        if (v === this._hcCar) continue;   // (it has a voice of its own: _hellcat)
+        if (d2 > 70 * 70) continue;
+        best.push(d2, v);
+      }
+      this._nearCars = near;
+      // keep voices on the cars they already have if those are still near
+      const want = [];
+      for (let k = 0; k < TRAFFIC_VOICES; k++) {
+        let bi = -1, bd = Infinity;
+        for (let i = 0; i < best.length; i += 2) {
+          if (best[i] < bd && !want.includes(best[i + 1])) { bd = best[i]; bi = i; }
+        }
+        if (bi < 0) break;
+        want.push(best[bi + 1]);
+      }
+      for (const tv of this.tvoices) if (tv.car && !want.includes(tv.car)) tv.car = null;
+      for (const v of want) {
+        if (this.tvoices.some((tv) => tv.car === v)) continue;
+        const tv = this.tvoices.find((x) => !x.car);
+        if (!tv) break;
+        tv.car = v;
+        const name = selectEngine(v.spec);
+        if (tv.prof !== name) {
+          tv.prof = name;
+          if (!this.eng.waves[name]) this.eng.waves[name] = engineWave(this.ctx, ENGINES[name]);
+          tv.o.setPeriodicWave(this.eng.waves[name]);
+        }
+        tv.model.setProfile(ENGINES[name], v.spec);
+        tv.model.start(true);
+        tv.model.rpm = ENGINES[name].idle || 600;
+        tv.lastV = v.vLong;
+      }
+      for (const tv of this.tvoices) this._trafficVoice(tv, dt, t, L);
+    }
+
+    // --- sirens --------------------------------------------------------------------
+    if (cars) {
+      const cops = this._cops || (this._cops = []);
+      cops.length = 0;
+      for (const v of cars) {
+        // (sirenOn: your police car with SIREN on, or a fire rig's -- firecalls.js)
+        if ((v.mode !== 'police' && !v.sirenOn) || v.dead) continue;
+        const d2 = (v.x - L.x) ** 2 + (v.z - L.z) ** 2;
+        if (d2 < 260 * 260) cops.push(d2, v);
+      }
+      const pick = this._sirenPick || (this._sirenPick = []);
+      pick.length = 0;
+      for (let k = 0; k < SIREN_VOICES; k++) {
+        let bi = -1, bd = Infinity;
+        for (let i = 0; i < cops.length; i += 2) if (cops[i] < bd && !pick.includes(cops[i + 1])) { bd = cops[i]; bi = i; }
+        if (bi < 0) break;
+        pick.push(cops[bi + 1]);
+      }
+      // STICKY: a car keeps its voice while it stays among the nearest two, and
+      // only a newcomer takes a freed one. Handing voices out by rank made two
+      // cars passing each other swap voices, and the voices differ now (phase,
+      // sweep rate): each car's siren jumped.
+      const slot = this._sirenSlot || (this._sirenSlot = new Array(SIREN_VOICES).fill(null));
+      for (let i = 0; i < SIREN_VOICES; i++) slot[i] = pick.includes(this.sirens[i].car) ? this.sirens[i].car : null;
+      for (const c of pick) {
+        if (slot.includes(c)) continue;
+        const free = slot.indexOf(null);
+        if (free >= 0) slot[free] = c;
+      }
+      for (let i = 0; i < SIREN_VOICES; i++) {
+        const sv = this.sirens[i];
+        sv.car = slot[i];
+        this._siren(sv, slot[i], t, L);
+      }
+    } else if (s.siren > 0) {
+      // legacy: a level with no position
+      this._siren(this.sirens[0], { x: L.x, y: L.y, z: L.z + 20, vLong: 0, forward: { x: 0, z: 1 }, siren: t, legacy: s.siren }, t, L);
+    }
+
+    // --- freights ------------------------------------------------------------------
+    if (s.freight) this._freights(dt, t, s, L);
+    // --- the ferries: their horns carry across the Sound, the rumble aboard ---
+    if (s.ferry) this._ferries(dt, t, s, L);
+    // --- the Queen Anne Counterbalance's streetcars: wheels, and the cable ---
+    if (s.streetcars) this._streetcars(dt, t, s, L);
+
+    // --- the Belltown Hellcat ---------------------------------------------------------
+    if (cars) this._hellcat(dt, t, s, L);
+    // --- the Wienermobile toots its tune at you when it passes ---------------------
+    if (cars) this._wiener(dt, s, L);
+
+    // --- the police helicopter -----------------------------------------------------
+    const h = s.heli;
+    if (h || this.heliVoice) {
+      if (h && !this.heliVoice) {
+        this.heliVoice = new EngineVoice(this.ctx, this.pinkNoise, this.heliPan);
+        this.heliVoice.setProfile('heli');
+        this.heliModel.setProfile(ENGINES.heli, null);
+      }
+      const m = this.heliModel;
+      if (h) m.start(true); else m.stop();
+      let vx = 0, vz = 0;
+      if (h && this._heliPrev && dt > 0) { vx = (h.x - this._heliPrev.x) / dt; vz = (h.z - this._heliPrev.z) / dt; }
+      this._heliPrev = h ? { x: h.x, z: h.z } : null;
+      m.step(dt, 0, 0.6, false);
+      const sp = h ? spatial(L, h.x, h.y, h.z, vx, vz, 40, 700) : null;
+      if (sp && this.heliPan.pan) setp(this.heliPan.pan, sp.pan, t, 0.1);
+      this.heliVoice.apply(m, t, sp ? sp.gain * 0.9 : 0, sp ? sp.dop : 1);
+    }
+  }
+
+  /**
+   * THE AMBIENCE: the world you are standing in, from what is around you.
+   * main.js samples two rings around the camera twice a second (`s.amb`:
+   * shares of water, park and road, and the height over the ground or the
+   * water); traffic within 160 m counts too. Two looping beds (the city's
+   * traffic wash, water on the shore) are two Taps -- disconnected when
+   * silent -- and everything that comes and goes (birds, crows, gulls, a horn
+   * a few streets off) is a positional one-shot from the bank, Poisson-timed
+   * by the context, through play()'s voice cap. The wind is the bed's wind
+   * band, shared with the rush of speed. Nothing here allocates a node per
+   * frame; the one-shots cost what any one-shot does while they sound.
+   */
+  _ambience(dt, t, s, L) {
+    // 15 times a second is plenty for beds that move over seconds (every
+    // level here has a time constant of 0.25 s or more)
+    this._ambDt = (this._ambDt || 0) + dt;
+    if (this._ambDt < 1 / 15) return;
+    dt = this._ambDt;
+    this._ambDt = 0;
+    const a = s.amb;
+    const A = this._amb || (this._amb = { water: 0, green: 0, urban: 0, alt: 0, gust: 1, gustTo: 1, gustT: 0,
+      next: { bird: 0.5, crow: 4, gull: 1, horn: 3 }, o: { x: 0, y: 0, z: 0, ref: 8, maxD: 200, gain: 1, rate: 1, send: 0 } });
+    const k = 1 - Math.exp(-dt / 1.2);
+    const water = a ? a.water : 0, green = a ? a.green : 0, alt = a ? a.alt : 0;
+    const urban = clamp((a ? a.road : 0) * 1.8 + this._nearCars / 24, 0, 1) * (1 - 0.6 * water);
+    A.water += (water - A.water) * k;
+    A.green += (green - A.green) * k;
+    A.urban += (urban - A.urban) * k;
+    A.alt += (alt - A.alt) * k;
+    const inCar = !!s.inCar, enc = !!s.enclosed;
+    const cabin = inCar ? 0.45 : 1;
+    const high = clamp(1 - (A.alt - 25) / 160, 0.12, 1);   // the street falls away below
+    const low = clamp(1 - (A.alt - 6) / 40, 0, 1);         // birds keep to the trees
+    if (this.loops) {
+      this.loops.city.set(Math.pow(A.urban, 1.2) * 0.11 * cabin * high * (enc ? 0.3 : 1), t, 0.6);
+      this.loops.water.set(A.water * 0.26 * (inCar ? 0.5 : 1) * clamp(1 - (A.alt - 10) / 80, 0, 1) * (enc ? 0 : 1), t, 0.6);
+    }
+    // The weather's wind: gusting, stronger up high and over open water,
+    // under the rush of speed (_updateVehicle) rather than added to it. A
+    // gust, then a lull, alternating, so the wind breathes rather than hums.
+    A.gustT -= dt;
+    if (A.gustT <= 0) {
+      const gust = A.gustTo < 0.8;
+      A.gustT = gust ? 0.7 + Math.random() * 1.3 : 0.8 + Math.random() * 2;
+      A.gustTo = gust ? 0.95 + Math.random() * 0.75 : 0.2 + Math.random() * 0.4;
+    }
+    A.gust += (A.gustTo - A.gust) * (1 - Math.exp(-dt * 2));
+    const wAmb = enc ? 0 : (0.008 + 0.16 * clamp((A.alt - 12) / 90, 0, 1) + 0.012 * A.water) * A.gust * (inCar ? 0.3 : 1);
+    const wSp = this._windSpeed;
+    setp(this.windG.gain, Math.sqrt(wSp * wSp + wAmb * wAmb), t, 0.25);
+    // the rush of speed is broad; the weather's wind narrows and moans, its
+    // pitch riding the gust
+    const amb = wAmb > wSp;
+    setp(this.windBp.frequency, amb ? 240 + 300 * A.gust + A.alt * 0.6 : this._windHz, t, 0.25);
+    setp(this.windBp.Q, amb ? 1.3 : 0.5, t, 0.4);
+
+    // The things that come and go, Poisson-timed by the context.
+    if (enc || !this.bank) return;
+    const q = inCar ? 0.5 : 1, R = Math.random;
+    if (this._due(A, 'bird', (Math.pow(A.green, 1.2) * 0.8 + 0.02 * (1 - A.urban)) * low, dt)) {
+      this.play('bird', this._spot(A, L, 10, 45, 4, 12, 7, 120, (0.18 + R() * 0.16) * q, 0.92 + R() * 0.16, 0.05));
+    }
+    if (this._due(A, 'crow', 0.03 * (0.4 + A.green + 0.5 * A.urban) * (1 - A.water) * low, dt)) {
+      this.play('crow', this._spot(A, L, 25, 80, 6, 20, 10, 180, (0.3 + R() * 0.2) * q, 0.94 + R() * 0.12, 0.12));
+    }
+    if (this._due(A, 'gull', Math.pow(A.water, 1.2) * 0.22 * clamp(1 - (A.alt - 60) / 200, 0.2, 1), dt)) {
+      this.play('gull', this._spot(A, L, 20, 90, 12, 35, 12, 220, (0.28 + R() * 0.18) * q, 0.9 + R() * 0.2, 0.1));
+    }
+    if (this._due(A, 'horn', A.urban * A.urban * 0.08 * high, dt)) {
+      this.play('horn_far', this._spot(A, L, 60, 200, 0, 1, 8, 320, (0.55 + R() * 0.3) * q, 0.95 + R() * 0.1, 0.3));
+    }
+  }
+  /** Poisson timing at a varying rate: `next[key]` is how much of a unit
+   *  exponential is left, spent at `rate` per second. */
+  _due(A, key, rate, dt) {
+    if (rate <= 0) return false;
+    const N = A.next;
+    N[key] -= dt * rate;
+    if (N[key] > 0) return false;
+    N[key] = -Math.log(1 - Math.random() * 0.999);
+    return true;
+  }
+  /** play() options for a random spot d0..d1 m away, y0..y1 m up (one
+   *  reused object: play() reads it at once). */
+  _spot(A, L, d0, d1, y0, y1, ref, maxD, gain, rate, send) {
+    const o = A.o, R = Math.random;
+    const ang = R() * Math.PI * 2, d = d0 + R() * (d1 - d0);
+    o.x = L.x + Math.cos(ang) * d; o.y = L.y + y0 + R() * (y1 - y0); o.z = L.z + Math.sin(ang) * d;
+    o.ref = ref; o.maxD = maxD; o.gain = gain; o.rate = rate; o.send = send;
+    return o;
+  }
+
+  /**
+   * The AI freights you can hear: for the nearest two, the lead locomotive's
+   * engine and horn, and the wheels where the train is nearest you. A freight
+   * is heard a long way off -- the horn over a kilometre and a half.
+   */
+  /** The nearer ferry's horn (heard for kilometres) and the rumble of the
+   *  nearest one, loudest aboard. */
+  /** The nearest streetcar (yours, if you are aboard one): its wheels on
+   *  the rails, and under one on the counterbalance the cable's rumble. Its
+   *  motor is the `traction` engine voice (main.js withTrains). */
+  _streetcars(dt, t, s, L) {
+    const c = this.ctx;
+    if (!this.scPan) {
+      this.scPan = c.createStereoPanner ? c.createStereoPanner() : c.createGain();
+      this.scPan.connect(this.worldBus);   // (quiet behind the pause, like every world voice)
+    }
+    if (!this.scRoll && this.bank && this.bank.rail_roll) this.scRoll = new Tap(c, this.bank.rail_roll[0], this.scPan);
+    if (!this.scHum && this.bank && this.bank.cb_hum) this.scHum = new Tap(c, this.bank.cb_hum[0], this.scPan);
+    let best = null, bd = Infinity;
+    for (const car of s.streetcars) {
+      const d = car === s.vehicle ? 0 : Math.hypot(car.cx - L.x, car.cz - L.z);
+      if (d < bd) { bd = d; best = car; }
+    }
+    const sp = best && bd < 260 ? spatial(L, best.cx, best.cy + 0.5, best.cz, 0, 0, 12, 260) : null;
+    const v = best ? Math.abs(best.u) : 0;
+    if (sp && this.scPan.pan) setp(this.scPan.pan, best === s.vehicle ? 0 : sp.pan, t, 0.1);
+    const g = sp ? (best === s.vehicle ? 0.8 : Math.min(1, sp.gain)) : 0;
+    if (this.scRoll) this.scRoll.set(g * clamp(v / 5, 0, 1) * 0.55, t, 0.15, clamp(v / 12, 0.25, 1.6));
+    if (this.scHum) this.scHum.set(best && best.hitch ? g * (0.25 + 0.75 * clamp(v / 3, 0, 1)) * 0.6 : 0, t, 0.3, 0.8 + 0.3 * clamp(v / 3.6, 0, 1));
+  }
+
+  _ferries(dt, t, s, L) {
+    const c = this.ctx;
+    if (!this.fyHorn) {
+      this.fyHorn = new AirHorn(c, this.worldBus, this.verbWorld, SHIP_HORN);
+      this.fyHorn.setNoise(this.pinkNoise);
+      this.fyPan = c.createStereoPanner ? c.createStereoPanner() : c.createGain();
+      this.fyPan.connect(this.worldBus);
+    }
+    if (!this.fyRumble && this.bank && this.bank.ferry_rumble) this.fyRumble = new Tap(c, this.bank.ferry_rumble[0], this.fyPan);
+    let best = null, bd = Infinity;
+    for (const b of s.ferry) { const d = Math.hypot(b.x - L.x, b.z - L.z); if (d < bd) { bd = d; best = b; } }
+    if (!best) return;
+    const vx = Math.sin(best.h) * best.v, vz = Math.cos(best.h) * best.v;
+    const hs = spatial(L, best.x, best.y + 21, best.z, vx, vz, 90, 6000);
+    this.fyHorn.set(t, !!(best.hornOn && hs), hs ? Math.min(0.85, hs.gain * 1.1) : 0, hs ? hs.pan : 0, hs ? hs.dop : 1, hs ? hs.d : 6000);
+    if (this.fyRumble) {
+      const rs = spatial(L, best.x, best.y + 2, best.z, vx, vz, 40, 700);
+      const load = 0.35 + 0.65 * Math.min(1, Math.abs(best.v) / 9.26);
+      if (rs && this.fyPan.pan) setp(this.fyPan.pan, rs.pan * 0.5, t, 0.2);
+      this.fyRumble.set(rs ? Math.min(0.5, rs.gain * 0.9 * load) : 0, t, 0.3, 0.9 + 0.2 * load);
+    }
+  }
+
+  _freights(dt, t, s, L) {
+    const c = this.ctx;
+    const near = [];
+    for (const tr of s.freight) {
+      if (tr.state === 'off' || tr === s.vehicle) continue;
+      const d = Math.hypot(tr.x - L.x, tr.z - L.z);
+      if (d < 1800) near.push([d, tr]);
+    }
+    near.sort((p, q) => p[0] - q[0]);
+    while (this.frVoices.length < Math.min(2, near.length)) {
+      const pan = c.createStereoPanner ? c.createStereoPanner() : c.createGain();
+      pan.connect(this.worldBus);
+      const eng = new EngineVoice(c, this.pinkNoise, pan);
+      eng.setProfile('gevo');
+      const model = new EngineModel();
+      model.setProfile(ENGINES.gevo, { topKph: 80 });
+      model.start(true);
+      const horn = new AirHorn(c, this.worldBus, this.verbWorld);
+      horn.setNoise(this.pinkNoise);
+      const rpan = c.createStereoPanner ? c.createStereoPanner() : c.createGain();
+      rpan.connect(this.worldBus);
+      const roll = this.bank && this.bank.rail_roll ? new Tap(c, this.bank.rail_roll[0], rpan) : null;
+      this.frVoices.push({ pan, eng, model, horn, rpan, roll, train: null, bellT: 0 });
+    }
+    this.frVoices.forEach((fv, i) => {
+      const tr = near[i] ? near[i][1] : null;
+      if (!fv.roll && this.bank && this.bank.rail_roll) fv.roll = new Tap(c, this.bank.rail_roll[0], fv.rpan);
+      if (!tr) {
+        fv.eng.silence(t);
+        fv.horn.set(t, false, 0, 0, 1, 2000);
+        if (fv.roll) fv.roll.set(0, t);
+        return;
+      }
+      const f = tr.forward, v = tr.vLong;
+      // the engine and the horn, at the lead locomotive
+      const sp = spatial(L, tr.x, tr.y + 3.5, tr.z, f.x * v, f.z * v, 26, 1100);
+      fv.model.step(dt, v, tr.notch / 8, false);
+      if (sp) {
+        if (fv.pan.pan) setp(fv.pan.pan, sp.pan, t, 0.08);
+        fv.eng.apply(fv.model, t, sp.gain * 0.9, sp.dop);
+      } else fv.eng.silence(t);
+      const hs = spatial(L, tr.x, tr.y + 4.8, tr.z, f.x * v, f.z * v, 45, 2200);
+      fv.horn.set(t, !!(tr.hornOn && hs), hs ? Math.min(0.75, hs.gain * 0.85) : 0, hs ? hs.pan : 0, hs ? hs.dop : 1, hs ? hs.d : 2000);
+      // the bell, rung by the lead unit
+      if (tr.bellOn && sp && sp.d < 320) {
+        fv.bellT -= dt;
+        if (fv.bellT <= 0) { fv.bellT = 0.95; this.play('loco_bell', { gain: 0.5, x: tr.x, y: tr.y + 2, z: tr.z, ref: 12, maxD: 340, jitter: false }); }
+      }
+      // the wheels: from the point of the train nearest you
+      if (fv.roll) {
+        const tk = tr.track, q = tk.nearest(L.x, L.z, 600);
+        let ws = q ? q.s : tr.s;
+        const lo = Math.min(tr.lead, tr.tail), hi = Math.max(tr.lead, tr.tail);
+        ws = clamp(ws, lo, hi);
+        const rs = spatial(L, tk.x(ws), tk.y(ws) + 1, tk.z(ws), 0, 0, 14, 450);
+        const spd = Math.abs(tr.u);
+        if (rs) {
+          if (fv.rpan.pan) setp(fv.rpan.pan, rs.pan, t, 0.1);
+          fv.roll.set(rs.gain * clamp(spd / 6, 0, 1) * 0.8, t, 0.15, clamp(spd / 15, 0.2, 2.2));
+        } else fv.roll.set(0, t);
+      }
+    });
+  }
+
+  /**
+   * The Belltown Hellcat, the nearest one in traffic: the player's own engine
+   * voice and model, driven the way its driver drives -- foot to the floor
+   * off every stop, a lift into every one, and at a standstill a rev-bomb
+   * every 3-8 s. Off a hard rev it goes "bang, bang" (EngineModel `bangQ`),
+   * and one flat-out upshift in five bangs too, placed on the car.
+   */
+  /** An AI Wienermobile within WIENER_TOOT m plays its horn, then not again for a while. */
+  _wiener(dt, s, L) {
+    this._wmT = (this._wmT || 0) - dt;
+    if (this._wmT > 0) return;
+    for (const v of s.cars) {
+      if (!v.spec.wiener || v === s.vehicle || v.mode !== 'traffic' || v.dead) continue;
+      const dx = v.x - L.x, dz = v.z - L.z;
+      if (dx * dx + dz * dz > WIENER_TOOT * WIENER_TOOT) continue;
+      this.play('wiener_horn', { gain: 1.1, x: v.x, y: v.y + 1.2, z: v.z, ref: 18, maxD: 300, jitter: false });
+      this._wmT = 25 + Math.random() * 20;
+      return;
+    }
+  }
+
+  _hellcat(dt, t, s, L) {
+    let car = null, bd = HELLCAT_HEAR * HELLCAT_HEAR;
+    for (const v of s.cars) {
+      if (!v.spec.hellcat || v === s.vehicle || v.mode !== 'traffic' || v.dead) continue;
+      const dx = v.x - L.x, dz = v.z - L.z, d2 = dx * dx + dz * dz;
+      if (d2 < bd) { bd = d2; car = v; }
+    }
+    if (!car && !this.hcVoice) return;
+    const c = this.ctx;
+    if (!this.hcVoice) {
+      this.hcPan = c.createStereoPanner ? c.createStereoPanner() : c.createGain();
+      this.hcPan.connect(this.worldBus);
+      this.hcVoice = new EngineVoice(c, this.pinkNoise, this.hcPan);
+      this.hcVoice.setProfile('hellcat');
+      this.hcModel = new EngineModel();
+      this.hcModel.setProfile(ENGINES.hellcat, { topKph: 315 });
+      this._hcPop = 0;
+    }
+    const m = this.hcModel;
+    if (car !== this._hcCar) {
+      this._hcCar = car;
+      if (car) { m.setProfile(ENGINES.hellcat, car.spec); m.start(true); this._hcV = car.vLong; this._hcBomb = 0.6; this._hcRev = 0; }
+      else m.stop();
+    }
+    let sp = null, thr = 0, free = false;
+    if (car) {
+      const f = car.forward;
+      sp = spatial(L, car.x, car.y + 0.6, car.z, f.x * car.vLong, f.z * car.vLong, HELLCAT_REF, HELLCAT_HEAR);
+      const acc = dt > 0 ? (car.vLong - this._hcV) / dt : 0;
+      this._hcV = car.vLong;
+      if (Math.abs(car.vLong) < 0.6) {
+        // stopped: blip it to the limiter, let it crackle, again
+        free = true;
+        this._hcBomb -= dt;
+        this._hcRev -= dt;
+        if (this._hcBomb <= 0) { this._hcRev = 0.22 + Math.random() * 0.4; this._hcBomb = 3 + Math.random() * 5; }
+        thr = this._hcRev > 0 ? 1 : 0.04;
+      } else {
+        thr = acc > 0.6 ? 1 : acc > 0.05 ? 0.55 : 0.05;
+      }
+    }
+    m.step(dt, car ? car.vLong : 0, thr, free);
+    this._hcPop -= dt;
+    if (sp && this._hcPop <= 0 && (m.event === 'pop' || (m.event === 'up' && thr > 0.9 && Math.random() < 0.2))) {
+      this._hcPop = 0.06;
+      this.play('bang', { x: car.x, y: car.y + 0.5, z: car.z, ref: HELLCAT_REF, maxD: HELLCAT_HEAR,
+        gain: (m.event === 'up' ? 1.8 : 1.3) + Math.random() * 0.5, send: 0.2 });
+      this.hcVoice.duck(this.now());
+    }
+    if (sp && this.hcPan.pan) setp(this.hcPan.pan, sp.pan, t, 0.05);
+    this.hcVoice.apply(m, t, sp ? sp.gain * 1.3 : 0, sp ? sp.dop : 1);
+  }
+
+  _trafficVoice(tv, dt, t, L) {
+    const v = tv.car;
+    const quiet = () => {
+      if (!tv.on) return;
+      setp(tv.g.gain, 0, t, 0.08);
+      setp(tv.ng.gain, 0, t, 0.08);
+      if (++tv.quiet > 30 && !keepLinked) { tv.on = false; tv.out.disconnect(); }
+    };
+    if (!v) { quiet(); return; }
+    const f = v.forward;
+    const sp = spatial(L, v.x, v.y + 0.6, v.z, f.x * v.vLong, f.z * v.vLong, 7, 75);
+    if (!sp) { quiet(); return; }
+    if (!tv.on) { tv.on = true; tv.out.connect(this.trafficBus); }
+    tv.quiet = 0;
+    const acc = dt > 0 ? (v.vLong - tv.lastV) / dt : 0;
+    tv.lastV = v.vLong;
+    const thr = clamp(acc / 3 + 0.15, 0, 1);
+    const m = tv.model.step(dt, v.vLong, thr, false);
+    const p = m.p;
+    const cyc = Math.max(0.5, m.rpm / 60 / (p.stroke / 2)) * sp.dop;
+    setp(tv.o.frequency, cyc, t, 0.04);
+    const rn = clamp(m.rpm / p.redline, 0, 1);
+    setp(tv.lp.frequency, p.lp[0] * 0.8 + p.lp[1] * 0.5 * rn + p.lp[2] * 0.4 * m.load, t, 0.05);
+    const lvl = p.level * 1.1 * (0.45 + 0.55 * m.load) * (0.6 + 0.4 * rn) * sp.gain;
+    setp(tv.g.gain, lvl, t, 0.05);
+    setp(tv.nb.frequency, 300 + Math.abs(v.vLong) * 18, t, 0.1);
+    setp(tv.ng.gain, clamp(Math.abs(v.vLong) / 25, 0, 1) * 0.2 * sp.gain, t, 0.08);
+    if (tv.pan) setp(tv.pan.pan, sp.pan, t, 0.05);
+  }
+
+  _siren(sv, car, t, L) {
+    if (!car) {
+      if (sv.on) {
+        setp(sv.g.gain, 0, t, 0.15);
+        if (++sv.quiet > 40 && !keepLinked) { sv.on = false; sv.out.disconnect(); }
+      }
+      return;
+    }
+    const f = car.forward;
+    const sp = spatial(L, car.x, car.y + 1.5, car.z, f.x * car.vLong, f.z * car.vLong, 14, 260);
+    if (!sp) { this._siren(sv, null, t, L); return; }
+    if (!sv.on) { sv.on = true; sv.out.connect(this.worldBus); }
+    sv.quiet = 0;
+    // wail at a distance, yelp when it is on top of you
+    // (a fire rig sings hi-lo and SWAT yelps fast whatever the distance)
+    const sp2 = car.spec;
+    const kind = sp2 && sp2.fire ? 2 : sp2 && sp2.swat ? 3
+      : !car.sirenOn && sp.d < 45 ? 1 : 0;   // your own car's siren wails: it is always within 45 m
+    const K = SIREN_KINDS[kind];
+    if (kind !== sv.kind) {
+      sv.kind = kind;
+      sv.lfo.setPeriodicWave(sv.waves[kind]);
+      setp(sv.lfo.frequency, K[1] * sv.rate, t, 0.05);
+    }
+    setp(sv.o.frequency, K[2] * sp.dop, t, 0.05);
+    setp(sv.depth.gain, K[3] * sp.dop, t, 0.05);
+    const lvl = (car.legacy != null ? car.legacy : 1) * (car.sirenOn ? 0.075 : 0.11) * sp.gain;   // yours is heard from inside
+    setp(sv.g.gain, lvl, t, 0.1);
+    if (sv.pan) setp(sv.pan.pan, sp.pan, t, 0.06);
+  }
+
+  /**
+   * The synth radio: what plays in a car when no stream does (radiosynth.js).
+   * Called every frame (and behind the pause, tickRadio); it schedules ~0.4 s
+   * ahead.
+   */
+  scheduleMusic() {
+    if (!this.radio) this.radio = new SynthRadio(this.ctx, this.musicBus, this.noise);
+    const now = this.now();
+    setp(this.musicBus.gain, 0.2, now, 0.4);
+    this.radio.schedule(STATIONS[this.station], now);
+  }
+
+  /** The current station's stream URL (any live station's, for priming). */
+  _stream() {
+    const st = STATIONS[this.station];
+    return st.stream || STATIONS[0].stream;
+  }
+
+  /** Can this browser play the station's stream? (HLS: Safari yes, most others no.) */
+  playable(i) {
+    const st = STATIONS[i];
+    if (!st.hls) return true;
+    try { return !!(this._makeLive() && this._live.canPlayType('application/vnd.apple.mpegurl')); } catch (e) { return false; }
+  }
+
+  /** Tune to station i (skipping one this browser cannot play); returns its name. */
+  setStation(i) {
+    const n = STATIONS.length;
+    i = ((i % n) + n) % n;
+    this.station = i;
+    // Retune: stop whatever is playing, and let the update loop start the new
+    // stream (it acts on a change of intent, so clear the intent too). A dead
+    // stream is only given up on for the station it died on.
+    this._liveWanted = false;
+    this._liveFailed = false;
+    this._liveSrc = null;
+    this.stopLive();
+    this._nowPlaying = null;
+    this._nowPlayingAt = 0;
+    return this.stationName();
+  }
+
+  /**
+   * Every car has its own station, like GTA: a random one this browser can
+   * play, never the one you just left. Live stations while online; offline
+   * every station is its synth voice anyway.
+   */
+  randomStation() {
+    const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+    const pool = [];
+    for (let i = 0; i < STATIONS.length; i++) {
+      if (i !== this.station && this.playable(i) && (!online || STATIONS[i].stream)) pool.push(i);
+    }
+    return pool.length ? this.setStation(pool[Math.floor(Math.random() * pool.length)]) : this.stationName();
+  }
+
+  nextStation(dir = 1) {
+    let i = this.station;
+    for (let k = 0; k < STATIONS.length; k++) {
+      i = (i + dir + STATIONS.length) % STATIONS.length;
+      if (this.playable(i)) break;
+    }
+    return this.setStation(i);
+  }
+
+  /** True when this station is the real stream rather than its synth stand-in. */
+  liveStation() {
+    return !!STATIONS[this.station].stream && this.liveOn;
+  }
+
+  stationName() {
+    return STATIONS[this.station].name;
+  }
+}

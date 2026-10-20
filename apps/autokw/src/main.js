@@ -1,0 +1,3280 @@
+// AUTO -- an open-world Seattle you can drive around.
+
+import * as THREE from './three.js';
+import * as G from './geo.js';
+import { cityGenerator, cityStats } from './citygen.js';
+import { loadMapData } from './mapdata.js';
+import { buildTextures, planTextures, encodeTextures, restoreTextures, canvasToBlob, blobToCanvas, within } from './textures.js';
+import { World, WET_FLOOR, HAZE_SUN } from './world.js';
+import { buildLandmarks, updateLandmarkRange, SEAPLANE_DOCK, airportSurface } from './landmarks.js';
+import { ShadowCache } from './shadowcache.js';
+import { TreeSystem } from './trees.js';
+import { FallDecor } from './fall.js';
+import { Monorail } from './monorail.js';
+import { Link, railBedSurface } from './link.js';
+import { Freight } from './freight.js';
+import { Counterbalance } from './counterbalance.js';
+import { Ferry, fixTerminals } from './ferry.js';
+import { BikeNet, Cyclists } from './bikes.js';
+import { Islands } from './islands.js';
+import { Orcas } from './orcas.js';
+import { Saucer } from './saucer.js';
+import { Career } from './career.js';
+import { Piers } from './piers.js';
+import { PickleballCourt } from './pickleball.js';
+import { freezeStatic, skipHiddenMatrices, Builder, dropStaticArrays } from './build.js';
+import { releaseTextureSources, installGpuLedger } from './memory.js';
+import { installChunkCull } from './chunkcull.js';
+import { NearShadow, installNearShadowChunk } from './nearshadow.js';
+import { Fishing } from './fishing.js';
+import { Hoops } from './hoops.js';
+import { NeedleTop } from './needletop.js';
+import { FishToss } from './fishtoss.js';
+import { WheelRide } from './wheelride.js';
+import { Golf } from './golf.js';
+import { Arcade } from './arcade.js';
+import { Pinball } from './pinball.js';
+import { HockeyNight } from './hockey.js';
+import { TowerGame } from './atc.js';
+import { DuckTour } from './ducktour.js';
+import { CoffeeShop } from './barista.js';
+import { Seafair } from './hydrorace.js';
+import { FireService, placeStations } from './firecalls.js';
+import { BONES } from './peds.js';
+import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
+import { TrafficSystem, collideWithBuildings, warmLightBar } from './traffic.js';
+import { Police } from './police.js';
+import { PoliceMissions } from './policemissions.js';
+import { TaxiFares } from './taxi.js';
+import { TYPES as VEHICLE_TYPES, VEHICLE_HOOKS, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial, dropVehicleArrays } from './vehicles.js';
+
+// Aircraft come in their own colours, parked at Boeing Field or delivered.
+const AIRCRAFT_PAINT = {
+  plane: 0xdfe3e6, sportplane: 0xc8452e, floatplane: 0xe8c53a,
+  twin: 0xeceef0, jet: 0xe6e8eb, biplane: 0x2a4f93, heli: 0x223f7c,
+};
+import { PedSystem, animateWalk, warmLooks } from './peds.js';
+import { Player } from './player.js';
+import { Controls } from './controls.js';
+import { Hud, buildMapCanvas } from './hud.js';
+import { Activities } from './activities.js';
+import { installRamps, buildRampMesh, StuntJumps } from './stunts.js';
+import { Effects } from './effects.js';
+import { SkidMarks } from './skidmarks.js';
+import { TankSystem, TANK_SITE } from './tank.js';
+import { Audio, STATION_NAMES } from './audio.js';
+import { PostFX } from './postfx.js';
+import { clamp, lerp, rng, dist2, formatMoney, hash2, FALL, SUN_DIR } from './util.js';
+
+const app = document.getElementById('app');
+const loadBar = document.getElementById('loadBar');
+const loadMsg = document.getElementById('loadMsg');
+const loading = document.getElementById('loading');
+// index.html's boot log (a no-op if it is missing)
+const blog = (m) => { try { if (window.__bootLog) window.__bootLog(m); } catch (e) { /* log only */ } };
+
+// One definition of "is this a phone", used by the light rig, the starting
+// quality tier and the pixel-ratio cap. Three separate copies of this test had
+// already started to drift.
+const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+const STAR_POINTS = [0, 30, 90, 190, 340, 560];
+// Where the quads are parked: [x, z, heading, colour]. On measured open
+// grass -- in a park, off every road, clear of footprints, lots and trunks --
+// at the foot of Gas Works' Kite Hill, facing up it, and on Seattle Center's
+// lawn a short walk from the spawn; and one in the seaplane dock's car park.
+const ATV_SPOTS = [];
+// Helicopters parked out where you might want one: [x, z, heading, colour, where]
+const HELI_SPOTS = [];
+// THE HOT AIR BALLOON: none yet in Waterloo Region (null: not spawned).
+const BALLOON_SITE = null;
+// FISHING: a rod on a stand at the far end of a few real piers and floats.
+const FISHING_SITES = [];
+let fishing = null, fishSpots = [];
+let hoops = null;   // the basketball courts (hoops.js)
+let arcade = null;   // the Belltown arcade (arcade.js)
+let pinball = null;  // the pinball museum in the International District (pinball.js)
+let hockey = null;   // hockey night at Climate Pledge Arena (hockey.js)
+let tower = null;    // Boeing Field's control tower and FINAL APPROACH (atc.js)
+let duckTour = null; // the Duck Tour: kiosk, ducks, ramp and the tour (ducktour.js)
+let orcas = null;     // a pod off West Point, an Easter egg (orcas.js)
+let saucer = null;    // a flying saucer, parked sometimes in a meadow (saucer.js)
+let islands = null, pickle = null, piers = null, ferry = null, ferryPrev = null;   // the islands across the Sound (islands.js), pickleball on Bainbridge (pickleball.js)
+let coffee = null;   // First Cup Coffee at 1912 Pike Place and MORNING RUSH (barista.js)
+let career = null;   // the saved wallet and the Seattle Passport (career.js)
+let seafair = null;  // hydroplane racing on Lake Washington (hydrorace.js)
+let golf = null;   // three holes at Interbay (golf.js)
+let wheelRide = null;   // the Great Wheel, turning, and its ride (wheelride.js)
+let fishToss = null;   // the flying fish at Pike Place Market (fishtoss.js)
+let needleTop = null;   // the Space Needle's elevator, deck and viewers (needletop.js)
+// WASTED takes you to the nearest of these that the roads where you fell reach
+// (nearestRespawn): Bainbridge and Vashon are only joined to Seattle by ferry,
+// so dying in Winslow wakes you in Winslow, not at Harborview across the Sound.
+// Harborview is places.json's respawn, kept clear of buildings by citygen (via
+// G.KEEP_CLEAR); the rest are their real sites, put down on a dry verge
+// beside the nearest street at boot (buildRespawns). Where the real one is
+// off the map (Vashon's is in Vashon town, Highline's in Burien, Valley's in
+// south Renton) a clinic stands in for it inside the box, so nowhere on a
+// road network is more than ~7 km from one.
+const RESPAWN_SITES = [
+  { name: 'Grand River Hospital' },
+  { name: "St. Mary's General Hospital", ll: [43.43860, -80.50120] },
+  { name: 'Cambridge Memorial Hospital', ll: [43.37520, -80.31780] },
+  { name: 'Waterloo Walk-in Clinic', ll: [43.49860, -80.52740] },
+  { name: 'Elmira Clinic', ll: [43.59000, -80.55500] },
+  { name: 'Breslau Clinic', ll: [43.47450, -80.41200] },
+];
+let respawns = [];   // [{ name, x, z, node }] (buildRespawns)
+let fire = null, fireStations = [];   // Seattle Fire: the stations' rigs, the water cannon, fire calls (firecalls.js)
+
+/** The WASTED / BUSTED card. */
+function showEnd(text, sub) {
+  const el = document.getElementById('wasted');
+  const sp = el.querySelector('span');
+  if (sp) sp.textContent = text;
+  const to = document.getElementById('wastedTo');
+  if (to && sub !== undefined) to.textContent = sub;
+  el.classList.add('show');
+}
+
+class Game {
+  /**
+   * The world stands still when the pause menu is up OR an activity (the
+   * arcade, fishing, the Seafair office ...) is holding it. They are separate
+   * on purpose: Resume, the pad's Start and coming back from the home screen
+   * all clear the menu, and used to clear an activity's freeze with it, so the
+   * traffic and the police ran on behind the arcade's screen. `paused = v` is
+   * the menu's (and the harnesses'); an activity uses hold() / release() with
+   * its own name, which Resume cannot touch.
+   */
+  get paused() { return this._menu || this.holds.size > 0; }
+  set paused(v) { this._menu = !!v; }
+  get held() { return this.holds.size > 0; }
+  hold(who) { this.holds.add(who); }
+  release(who) { this.holds.delete(who); }
+
+  constructor() {
+    this.wanted = 0;
+    this.points = 0;
+    this.money = 250;
+    this.target = null;
+    this.tourTarget = null;   // the Duck Tour's next stop (ducktour.js)
+    this.fireTarget = null;   // a fire call's burning building (firecalls.js)
+    this.deliveryValue = 0;
+    this.cool = 0;
+    this.dead = false;
+    this.deathT = 0;
+    this.respawnAt = null;   // the hospital WASTED is taking you to (damagePlayer)
+    this.busted = false;
+    this._menu = false;      // the pause menu is up (what `paused = v` has always meant)
+    this.holds = new Set();  // activities holding the world frozen (hold / release)
+    this.leaks = [];         // holds reapHolds / doRespawn had to let go: a bug, kept for the probes
+    this.mapOpen = false;
+    this.sirenLevel = 0;
+    this.settings = {
+      shadows: true,
+      quality: 'auto',
+      music: true,
+      sound: true,
+      sensitivity: 1,
+      debug: false,
+      post: true,
+      // the pad's badges on the on-screen buttons (off: no buttons with a pad)
+      padHints: (() => { try { return localStorage.getItem('autokw-padhints') !== '0'; } catch (e) { return true; } })(),
+    };
+  }
+
+  /** Raise the wanted level to exactly `n` stars if it is lower (an activity's heat). */
+  setWanted(n) {
+    const need = STAR_POINTS[clamp(n, 0, 5)];
+    if (this.points < need) this.addHeat(need - this.points);
+  }
+
+  addHeat(n) {
+    if (this.dead) return;
+    const before = this.wanted;
+    this.points += n;
+    this.cool = 0;
+    // a crime the police know about: they know where you are
+    if (police && player) police.spotted(player.position.x, player.position.z);
+    let stars = 0;
+    for (let i = 1; i < STAR_POINTS.length; i++) if (this.points >= STAR_POINTS[i]) stars = i;
+    this.wanted = Math.min(5, stars);
+    if (this.wanted > before) {
+      audio.wanted(this.wanted);
+      hud.showToast(this.wanted === 1 ? 'WANTED' : `WANTED ${'★'.repeat(this.wanted)}`);
+    }
+  }
+
+  // --- callbacks used by the simulation ------------------------------------
+
+  onCrash(impact, isPolice, other) {
+    audio.crash(impact);
+    if (taxi) taxi.onCrash(impact);
+    const p = player.position;
+    fx.sparks(p.x, p.y + 0.8, p.z, Math.min(14, Math.round(impact)));
+    // A police mission's suspect is yours to ram.
+    if (other && other.suspect) return;
+    // Ramming a unit is a crime; being rammed BY one is not. (Every police
+    // contact used to add 18 points, so the units ramming you at 3+ stars
+    // drove your own wanted level up.)
+    const pv = player.vehicle;
+    const mine = !other || !pv || Math.abs(pv.vLong) >= Math.abs(other.vLong) - 1;
+    if (isPolice) { if (mine) this.addHeat(18); }
+    else if (impact > 12) this.addHeat(3);
+  }
+
+  // A crash between two AI cars, heard where it happened.
+  onTrafficCrash(impact, x, z) {
+    audio.crash(impact, x, z);
+  }
+
+  onPedHit(byPlayer, ped) {
+    audio.pedHit();
+    if (taxi) taxi.onPedHit(byPlayer);
+    fx.blood(ped.x, ped.y + 1, ped.z);
+    peds.scare(ped.x, ped.z, 30);
+    if (byPlayer) this.addHeat(22);
+  }
+
+  onPedKilled(ped, isPlayer) {
+    fx.blood(ped.x, ped.y + 1.1, ped.z);
+    peds.scare(ped.x, ped.z, 40);
+    if (isPlayer) this.addHeat(ped.cop ? 60 : 30);
+  }
+
+  // (police fire goes through police.js `fire` now: every weapon, the
+  // hit chance, and what reaches you through a car's body)
+
+  /** Arrested (police.js): BUSTED, and a fine at police headquarters. */
+  onBusted() {
+    if (this.dead) return;
+    this.dead = true;
+    this.deathT = 0;
+    this.busted = true;
+    showEnd('BUSTED', 'Taking you to WRPS headquarters');
+    if (audio) audio.ui('fail');
+  }
+
+  // (x, y, z) is the pistol's muzzle (player.attack)
+  onGunshot(x, y, z, dir) {
+    audio.gunshot();
+    fx.tracer(x + dir.x * 0.1, y, z + dir.z * 0.1, x + dir.x * 55, y - 1.5, z + dir.z * 55);
+    fx.muzzle(x, y, z, dir);
+    peds.scare(x, z, 45);
+    // a police mission's gunfire is police work
+    if (!(missions && missions.run)) this.addHeat(10);
+  }
+
+  onShotVehicle(v, x, z) {
+    fx.sparks(x, v.y + 0.9, z, 5);
+    if (v.dead) this.onCarDestroyed(v);
+  }
+
+  // a punch's hit frame (player.landPunch): `hit` is the pedestrian it
+  // landed on, or null -- a whoosh through the air
+  onPunch(hit, x, y, z) {
+    if (!hit) { audio.whoosh(); return; }
+    audio.smack();
+    peds.scare(hit.x, hit.z, 12);
+  }
+
+  onHorn() {
+    // in a duck, the horn is the passengers' quackers
+    if (player.vehicle && player.vehicle.spec.amphib && duckTour) { duckTour.quack(player.vehicle); peds.scare(player.position.x, player.position.z, 6); return; }
+    // a light-rail car rings its bell
+    if (player.vehicle && player.vehicle.spec.bicycle) { if (audio.ready) audio.play('bike_bell', { gain: 0.9 }); peds.scare(player.position.x, player.position.z, 5); return; }
+    // a streetcar's gong: the motorman's foot on the plunger, clang-clang
+    if (player.vehicle && player.vehicle.spec.streetcar) { if (audio.ready) audio.play('cable_bell', { gain: 1, jitter: false }); peds.scare(player.position.x, player.position.z, 12); return; }
+    if (player.vehicle && player.vehicle.spec.link) { if (audio.ready) audio.play('tram_bell', { gain: 0.9 }); peds.scare(player.position.x, player.position.z, 10); return; }
+    // the Wienermobile plays its tune, once through (attack() re-fires while held)
+    if (player.vehicle && player.vehicle.spec.wiener) {
+      const now = performance.now();
+      if (audio.ready && !(now < this._wmHornUntil)) { audio.play('wiener_horn', { gain: 0.9, jitter: false }); this._wmHornUntil = now + 1900; }
+      peds.scare(player.position.x, player.position.z, 14);
+      return;
+    }
+    // a freight's air horn, held for as long as you hold it
+    if (player.vehicle && player.vehicle.spec.freight) { player.vehicle.blow(); peds.scare(player.position.x, player.position.z, 40); return; }
+    audio.horn();
+    peds.scare(player.position.x, player.position.z, 14);
+  }
+
+  /** The tank you are in, each frame after it drives (player.updateDrive). */
+  onTankStep(v, dt, input) { if (tanks) tanks.step(v, dt, input); }
+
+  onEnterVehicle(v, wasMode) {
+    controls.setMode('drive');
+    // HORN rings a streetcar's gong
+    const hb = document.querySelector('[data-btn="horn"]');
+    if (hb) hb.textContent = v.spec.streetcar ? 'BELL' : 'HORN';
+    // an aircraft has no horn and no handbrake: the buttons go (index.html)
+    controls.root.dataset.air = v.spec.plane ? '1' : '';
+    if (tanks) tanks.onEnter(v);
+    if (v.spec.rail) {
+      // a freight's engines are already running: you climb into a live cab
+      audio.enterVehicle(v.spec, !!v.spec.freight);
+      for (const [k, t] of [['gas', 'POWER'], ['brake', 'BRAKE']]) {
+        const el = document.querySelector(`[data-btn="${k}"]`);
+        if (el) el.textContent = t;
+      }
+      v.sys.onBoard(v);
+      return;
+    }
+    // A car taken from traffic already has its engine running; a parked one,
+    // an apron plane or one you left earlier has to be started.
+    audio.enterVehicle(v.spec, wasMode === 'traffic' || wasMode === 'police');
+    // In a helicopter GAS and BRAKE are the collective.
+    const heli = !!v.spec.heli, balloon = !!v.spec.balloon, kayak = !!v.spec.kayak;
+    for (const [k, car, h, b, p] of [['gas', 'GAS', 'UP', 'BURN', 'PADDLE'], ['brake', 'BRAKE', 'DOWN', 'VENT', 'BACK']]) {
+      const el = document.querySelector(`[data-btn="${k}"]`);
+      if (el) el.textContent = kayak ? p : balloon ? b : heli ? h : car;
+    }
+    if (kayak) setTimeout(() => hud.showToast('Hold PADDLE to paddle — steer with the stick, even standing still'), 1000);
+    if (heli) setTimeout(() => hud.showToast('Hold UP to lift off — let go to hover'), 1400);
+    if (balloon) {
+      setTimeout(() => hud.showToast('Hold BURN to heat the envelope and rise — VENT to sink'), 1200);
+      setTimeout(() => hud.showToast('The wind turns with height: climb or sink to change course'), 6500);
+    }
+    if (v.mode === 'parked' || v.wasParked) this.addHeat(8);
+    hud.showToast(v.typeName === 'police' ? 'Police cruiser commandeered — SIREN switches the lights and siren'
+      : v.spec.fire ? `Fire ${v.spec.towed ? 'tiller ladder truck' : 'engine'} — SIREN for the lights, WATER runs the ${v.spec.towed ? 'ladder pipe' : 'deck gun'}, MISSION takes a fire call` : 'Vehicle acquired', v.spec.fire ? 4200 : undefined);
+    // The radio comes on with the ignition, on a random station (every car
+    // its own, as in GTA); RADIO on the pad tunes the next one. audio.update()
+    // starts the stream on the next frame; this is only the announcement.
+    if (this.settings.music && audio.musicOn) {
+      audio.randomStation();
+      setTimeout(() => hud.showToast(`♪ ${audio.stationName()}`), 900);
+    }
+  }
+
+  // a wheelie held over 2 s (vehicles.js), announced the way GTA does
+  onWheelie(t) { hud.showToast(`Wheelie ${t.toFixed(1)} s`); }
+
+  /** ENTER on foot, before the cars: a fishing rod within reach? */
+  tryInteract(pl) {
+    if (!fishing || fishing.active) return false;
+    for (const sp of fishSpots) {
+      if (Math.hypot(pl.x - sp.rx, pl.z - sp.rz) < 3.2 && Math.abs(pl.y - sp.y) < 2) {
+        this.hold('fishing');
+        const b = player.h.bones;
+        fishing.start(sp, { scene, camera, player, audio,
+          bones: { handR: b[BONES.handR], shoulderR: b[BONES.shoulderR], elbowR: b[BONES.elbowR], shoulderL: b[BONES.shoulderL], elbowL: b[BONES.elbowL] } });
+        if (sp.prop) sp.prop.userData.rod.visible = false;
+        return true;
+      }
+    }
+    // the Great Wheel's boarding platform?
+    if (wheelRide && wheelRide.tryInteract(pl)) return true;
+    // the Space Needle's elevator, or a viewer on its deck?
+    if (needleTop && needleTop.tryInteract(pl)) return true;
+    // the arcade's door on 2nd Ave?
+    if (arcade && !arcade.active && arcade.near(pl)) {
+      this.hold('arcade');
+      arcade.start();
+      return true;
+    }
+    // the pinball museum's door on Maynard Ave S?
+    if (pinball && !pinball.active && pinball.near(pl)) {
+      this.hold('pinball');
+      pinball.start();
+      return true;
+    }
+    // the arena's doors on Thomas St?
+    if (hockey && !hockey.active && hockey.near(pl)) {
+      this.hold('hockey');
+      hockey.start();
+      return true;
+    }
+    // the Duck Tour's kiosk at Seattle Center?
+    if (duckTour && !duckTour.tour && duckTour.near(pl)) return duckTour.start();
+    // the race office at Stan Sayres Pits?
+    if (seafair && seafair.state === 'idle' && seafair.near(pl)) { seafair.start(); return true; }
+    // pickleball on Bainbridge, where it was invented?
+    if (pickle && !pickle.active && pickle.near(pl)) {
+      this.hold('pickleball');
+      pickle.start();
+      return true;
+    }
+    // digging for Blake Island's treasure?
+    if (islands && islands.tryInteract(pl)) return true;
+    // the coffee shop at 1912 Pike Place?
+    if (coffee && !coffee.active && coffee.near(pl)) {
+      this.hold('coffee');
+      coffee.start();
+      return true;
+    }
+    // the control tower's door at Boeing Field?
+    if (tower && !tower.active && tower.near(pl)) {
+      this.hold('atc');
+      tower.start();
+      return true;
+    }
+    // the first tee at Interbay?
+    if (golf && !golf.active && golf.near(pl)) {
+      this.hold('golf');
+      golf.start({ camera, player });
+      return true;
+    }
+    // the fish stall at Pike Place Market?
+    if (fishToss && !fishToss.active && fishToss.near(pl)) {
+      this.hold('fishtoss');
+      const b = player.h.bones;
+      fishToss.start({ camera, player,
+        bones: { shoulderR: b[BONES.shoulderR], elbowR: b[BONES.elbowR], shoulderL: b[BONES.shoulderL], elbowL: b[BONES.elbowL],
+          handL: b[BONES.handL], handR: b[BONES.handR] } });
+      return true;
+    }
+    // a basketball court's free throw line?
+    const court = hoops && !hoops.active && hoops.near(pl);
+    if (court) {
+      this.hold('hoops');
+      const b = player.h.bones;
+      hoops.start(court, { camera, player,
+        bones: { shoulderR: b[BONES.shoulderR], elbowR: b[BONES.elbowR], shoulderL: b[BONES.shoulderL], elbowL: b[BONES.elbowL],
+          handL: b[BONES.handL], handR: b[BONES.handR] } });
+      return true;
+    }
+    return false;
+  }
+
+  onExitVehicle(v) {
+    controls.setMode('foot');
+    controls.root.dataset.air = '';
+    if (tanks) tanks.onExit();
+    if (v) audio.exitVehicle(v.spec, v.dead);
+    if (v && v.spec.rail) v.sys.onLeave(v);
+  }
+
+  /** ENTER with nothing to get into: near a monorail station, say when the next train is in. */
+  onMonorailWait(x, y, z) {
+    const near = (p, r) => p && Math.hypot(x - p.x, z - p.z) < r;
+    const st = near(monorail.wlDoor, 12) ? 'wl' : near(monorail.scStation, 45) && Math.abs(y - monorail.scFloor) < 2 ? 'sc' : null;
+    if (!st) return;
+    const eta = monorail.nextAt(st);
+    hud.showToast(eta === null ? 'The next train leaves the other end shortly — wait at the platform'
+      : eta < 5 ? 'The train is pulling in — wait for the doors' : `Next train in about ${Math.ceil(eta / 10) * 10} s`);
+  }
+
+  onLand(drop) {
+    audio.land(drop);
+  }
+
+  /** Out of an aircraft in the air (player.js exitVehicle, parachute.js). */
+  onBailOut() { hud.showToast('You jumped! JUMP opens the parachute (it opens itself at 60 m)', 3200); audio.play('door_open', { gain: 0.5 }); }
+  onChute() { audio.play('slosh', { gain: 0.9, rate: 2.2 }); }
+  onSplash(x, y, z) { fx.droplets(x, y + 0.2, z, 30); audio.play('splash', { gain: 1, x, y, z }); }
+
+  /** A boat refused to let you step off into the lake (player.exitVehicle). */
+  onNoLanding(v) {
+    if (v && v.spec.monorail) { hud.showToast('The doors only open at a platform — stop at Westlake Center or Seattle Center'); return; }
+    if (v && v.spec.rail) { hud.showToast(v.sys.noExitMsg); return; }
+    hud.showToast('Nowhere to step off — bring it alongside a dock or the shore');
+  }
+
+  // Swimming (player.js updateSwim): into the water, the strokes, climbing out.
+  onSwim(inWater) {
+    if (inWater && !this._swamOnce) { this._swamOnce = true; hud.showToast('Swimming — swim to the shore, a dock, or a boat and press ENTER to climb in', 3600); }
+  }
+  onSwimStroke(x, y, z) { if (audio.ready) audio.play('step_water', { gain: 0.55, x, y, z }); if (Math.random() < 0.5) fx.droplets(x, y + 0.1, z, 4); }
+  onJumpIn() { hud.showToast('Over the side — swim for it'); }
+
+  /** A car drove into water too deep and is going down: you get out and swim. */
+  onCarSank(v) {
+    hud.showToast('Your car is sinking — swim for it!');
+    player.exitVehicle(true);
+  }
+
+  onCarDestroyed(v) {
+    if (v.exploded) return;
+    v.exploded = true;
+    fx.explosion(v.x, v.y + 1, v.z);
+    audio.explosion(v.x, v.z);
+    peds.scare(v.x, v.z, 45);
+    if (v === player.vehicle) {
+      // into a tower at flying speed is not a car fire you walk away from
+      this.damagePlayer(v.planeHit ? 1000 : 70, 'explosion');
+      player.exitVehicle(true);
+    }
+    if (v.planeHit) { fx.explosion(v.x, v.y + 3, v.z); fx.smoke(v.x, v.y + 4, v.z, 30); }
+    if (!v.suspect) this.addHeat(14);
+    setTimeout(() => traffic.remove(v), 60);
+  }
+
+  damagePlayer(n, cause) {
+    if (this.dead) return;
+    player.health -= n;
+    document.getElementById('hurt').classList.add('flash');
+    setTimeout(() => document.getElementById('hurt').classList.remove('flash'), 160);
+    if (player.health <= 0) {
+      player.health = 0;
+      this.dead = true;
+      this.deathT = 0;
+      // where the ambulance goes is decided where you fell, and said
+      const p = player.position;
+      this.respawnAt = nearestRespawn(p.x, p.z);
+      const to = document.getElementById('wastedTo');
+      if (to) to.textContent = this.respawnAt ? `Taking you to ${this.respawnAt.name}` : '';
+      showEnd('WASTED');
+    }
+  }
+
+  // --- deliveries -----------------------------------------------------------
+
+  newTarget() {
+    const city = cityRef;
+    for (let i = 0; i < 60; i++) {
+      const ni = Math.floor(Math.random() * city.nodes.length);
+      const n = city.nodes[ni];
+      if (n.elev) continue;
+      const p = player.position;
+      const d = Math.hypot(n.x - p.x, n.z - p.z);
+      if (d < 420 || d > 2400) continue;
+      this.target = { x: n.x, z: n.z, y: city.groundAt(n.x, n.z, null) };
+      this.deliveryValue = Math.round(120 + d * 0.28);
+      hud.setObjective(`Deliver to ${G.placeNameAt(n.x, n.z)} — ${formatMoney(this.deliveryValue)}`);
+      marker.position.set(n.x, this.target.y, n.z);
+      marker.visible = true;
+      return;
+    }
+  }
+
+  checkTarget() {
+    if (!this.target) return;
+    const p = player.position;
+    if (dist2(p.x, p.z, this.target.x, this.target.z) < 13 * 13) {
+      this.money += this.deliveryValue;
+      audio.cash();
+      hud.showToast(`Delivered — ${formatMoney(this.deliveryValue)}`);
+      this.newTarget();
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+let chunkCull = null;   // chunkcull.js
+let police = null, missions = null;   // the wanted levels (police.js) and police missions (policemissions.js)
+let taxi = null;                      // taxi fares (taxi.js)
+const burning = new Set();             // cars on fire (VEHICLE_HOOKS.ignite)
+let moorings = null, mooringT = 0;    // private boats at the lakes' docks (privateMoorings)
+let nearShadow = null;  // nearshadow.js
+// Who casts into the near map this frame: the player on foot, or the vehicle
+// he drives on the ground or the water. An aircraft keeps the sun's map (its
+// shadow lands far from it, and the box is a few metres across).
+function nearShadowFocus() {
+  const P = player;
+  if (!P) return null;
+  if (P.onFoot) {
+    const g = P.h.group;
+    return g.visible ? { x: P.x, y: P.y + 0.9, z: P.z, half: 4, roots: [g] } : null;
+  }
+  const v = P.vehicle;
+  if (!v || !v.group || !v.group.visible || v.spec.rail || v.spec.plane || v.spec.heli || v.spec.balloon) return null;
+  return { x: v.x, y: v.y + 1, z: v.z, half: Math.max(4, v.halfLen + 2.5), roots: [v.group] };
+}
+let tanks = null;       // the tank at Sand Point and its guns (tank.js)
+let gpuLedger = null;
+let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, skidMarks, audio, game, marker, postfx, acts, stunts, monorail, link, freight, counterbal, bikeNet, cyclists, lmRoot, shadowCache = null;
+let pickups = [];
+// Scratch vector for the shadow-camera aim, so the frame loop allocates none.
+const LOOK_AHEAD = new THREE.Vector3();
+
+// The sun's offset from the point it lights, along SUN_DIR (util.js): the
+// season's sun, fixed. The low fall sun stands further back: the shadow box's
+// ground runs S / tan(elevation) toward the sun in depth (~580 m at 24 deg,
+// against ~330 m at 38), and a caster there has to be in front of the near
+// plane. SUN_FAR is the far plane that goes with it.
+const SUN_DIST = FALL ? 700 : Math.hypot(215, 200, 150);
+const SUN_FAR = FALL ? 1320 : 980;
+const SUN_OFFSET = new THREE.Vector3(SUN_DIR[0], SUN_DIR[1], SUN_DIR[2]).multiplyScalar(SUN_DIST);
+
+// The haze. Its colour reaches the shader through syncFogColour, never
+// directly: see the note where scene.fog is made.
+const FOG_HEX = 0xb9c3cf;
+function syncFogColour() {
+  if (!scene || !scene.fog) return;
+  if (postfx && postfx.enabled) {
+    scene.fog.color.setRGB(((FOG_HEX >> 16) & 255) / 255, ((FOG_HEX >> 8) & 255) / 255, (FOG_HEX & 255) / 255,
+      THREE.LinearSRGBColorSpace);
+  } else scene.fog.color.set(FOG_HEX);
+}
+// The shadow camera's own axes. It looks along -SUN_OFFSET with world up, so
+// these are exactly the basis three's lookAt builds for it every frame.
+const SUN_R = new THREE.Vector3(), SUN_U = new THREE.Vector3(), SUN_F = new THREE.Vector3();
+{
+  const m = new THREE.Matrix4().lookAt(SUN_OFFSET, new THREE.Vector3(), new THREE.Vector3(0, 1, 0));
+  SUN_R.setFromMatrixColumn(m, 0);
+  SUN_U.setFromMatrixColumn(m, 1);
+  SUN_F.setFromMatrixColumn(m, 2);
+}
+let shadowTexelM = 0.25;
+
+/**
+ * Follow the player with the shadow box, in whole shadow texels.
+ *
+ * The box used to be re-centred on the player every frame by whatever
+ * fraction of a texel they had moved, so the shadow map was rasterised at a
+ * different sub-texel phase each frame and every shadow edge in the city
+ * crawled and shimmered as you walked or drove -- the classic moving-shadow
+ * flicker, and it reads as "the whole picture is janky" rather than as a
+ * shadow problem. Snapping the centre to the texel grid in the LIGHT's own
+ * frame means a move re-draws the same map shifted by whole texels, and the
+ * shaded result is identical. Measured with the camera still and the centre
+ * stepped 5 cm at a time: 2.18 % of pixels changed per step on a commercial
+ * street before, 0.68 % on a residential one.
+ *
+ * Aiming the box down the view is unchanged: centred on the player, half of it
+ * covers ground behind the camera, so the centre is pushed 90 m ahead.
+ */
+function placeSun(px, py, pz) {
+  const fwd = LOOK_AHEAD.set(0, 0, -1).applyQuaternion(camera.quaternion);
+  const cx = px + fwd.x * 90, cy = py, cz = pz + fwd.z * 90;
+  const T = shadowTexelM;
+  const a = Math.round((cx * SUN_R.x + cy * SUN_R.y + cz * SUN_R.z) / T) * T;
+  const b = Math.round((cx * SUN_U.x + cy * SUN_U.y + cz * SUN_U.z) / T) * T;
+  // Depth along the light too: it does not move texels, but it moves every
+  // stored depth by a fraction and the PCF compare can flip on a grazing roof.
+  const d = Math.round((cx * SUN_F.x + cy * SUN_F.y + cz * SUN_F.z) / T) * T;
+  const sx = SUN_R.x * a + SUN_U.x * b + SUN_F.x * d;
+  const sy = SUN_R.y * a + SUN_U.y * b + SUN_F.y * d;
+  const sz = SUN_R.z * a + SUN_U.z * b + SUN_F.z * d;
+  sun.target.position.set(sx, sy, sz);
+  sun.position.set(sx + SUN_OFFSET.x, sy + SUN_OFFSET.y, sz + SUN_OFFSET.z);
+  sun.target.updateMatrixWorld();
+  sun.updateMatrixWorld();
+}
+let last = 0;
+let accumFps = 0, frames = 0, fps = 60;
+let baseFogDensity = 0.00026;
+let startedAt = 0;
+
+async function boot() {
+  const step = async (p, msg) => {
+    loadBar.style.width = `${Math.round(p * 100)}%`;
+    loadMsg.textContent = msg;
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  };
+
+  await step(0.02, 'Painting the city');
+  // WHAT AN EARLIER LAUNCH OF THIS BUILD LEFT (bootcache.js): everything below
+  // that is deterministic in the data and the code and slow on a phone.
+  // Each piece falls back to computing on its own, and whatever was computed
+  // is kept at the end of the boot for the next launch.
+  const BC_KEYS = ['textures', 'map', 'buildings', 'grade', 'portal', 'vehicles', 'link', 'freight', 'memo'];
+  const bc = {};
+  blog('main started, ' + (navigator.userAgent.match(/OS [\d_]+|Chrome\/\d+|Version\/[\d.]+/g) || []).join(' '));
+  if (cacheGuardTripped()) {
+    // the last launch from the cache never reached a frame: start clean
+    blog('cache: last cached launch never finished -- clearing it');
+    await cacheClear();
+  } else {
+    const t0 = performance.now();
+    (await Promise.all(BC_KEYS.map((k) => cacheGet(k)))).forEach((v, i) => { bc[BC_KEYS[i]] = v; });
+    blog(`cache read ${((performance.now() - t0) / 1000).toFixed(1)}s: ` + BC_KEYS.map((k) => k + (bc[k] ? '+' : '-')).join(' '));
+  }
+  if (Object.values(bc).some(Boolean)) cacheGuardSet(true);
+  // the smaller results, kept together (bootcache.js memo)
+  memoStart(bc.memo);
+  const bcOut = {};
+  let tx = null;
+  if (bc.textures) {
+    const t0 = performance.now();
+    try { tx = await within(restoreTextures(bc.textures), 12000); } catch (e) { tx = null; blog('textures: restore failed ' + e.message); }
+    blog(tx ? `textures restored ${((performance.now() - t0) / 1000).toFixed(1)}s` : 'textures: restore gave up, painting');
+  }
+  if (!tx) { tx = buildTextures(); bcOut.texPlan = planTextures(tx); }
+  if (bc.vehicles) setVehicleCache(bc.vehicles);
+
+  // The map is real data now -- USGS elevation and OpenStreetMap -- so the hills
+  // and the street grid are downloaded rather than generated. About 3.8 MB, and
+  // the service worker keeps it in the same lazy tier as the Three.js build.
+  await step(0.06, 'Downloading Waterloo Region');
+  let mdMsg = 'Downloading Waterloo Region';
+  const md = await loadMapData((m) => { mdMsg = m; loadMsg.textContent = m; });
+  loadMsg.textContent = mdMsg;
+  G.initGeo(md);
+
+  await step(0.18, 'Laying out the streets');
+  // The freeway grading of this build, if an earlier launch kept it (see
+  // bootcache.js): the biggest single step of a phone's boot.
+  const bootCache = { grade: bc.grade, buildings: bc.buildings };
+  // The monorail from its data alone: citygen keeps buildings off its line.
+  // Auto KW: no monorail, BNSF line or Link yet (ION comes as its own system)
+  monorail = null; link = null; freight = null;
+  md.monorailClear = md.linkClear = md.freightClear = [];
+  // Seattle's bike paths, from their data: the scatter keeps off them
+  bikeNet = new BikeNet(md.bikepaths);
+  // the ferry slips' roads, before the city reads them (ferry.js)
+  md.ferryFix = null;
+  const gen = cityGenerator(md, bootCache);
+  let r = gen.next();
+  while (!r.done) {
+    loadBar.style.width = `${Math.round((0.18 + r.value.p * 0.44) * 100)}%`;
+    loadMsg.textContent = r.value.msg;
+    await new Promise((res) => requestAnimationFrame(res));
+    r = gen.next();
+  }
+  const city = r.value;
+  cityRef = city;
+  blog(`city: grading ${cityStats.gradeCached ? 'from cache' : 'computed'}, buildings ${bootCache.buildings ? 'from cache' : 'computed'}`);
+
+  await step(0.64, 'Raising the terrain');
+
+  // --- renderer ---
+  const canvas = document.getElementById('gl');
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  // Antialiasing comes from FXAA in the post chain, so the context never needs
+  // MSAA -- which also means the scene can render into a target for free.
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+  // what the GPU holds, for the flight recorder (memory.js): Safari reports
+  // no JS heap, and an iPhone ends the page for memory without a word
+  try { gpuLedger = installGpuLedger(renderer.getContext()); } catch (e) { gpuLedger = null; }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 2 : 1.6));
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  // EXPOSURE, not ambient, is the lever on a scene sitting in the ACES toe.
+  //
+  // The city floor was at 0.02-0.04 scene-referred, which is exactly where the
+  // ACES curve compresses hardest, so light added at the source was eaten
+  // before it reached the framebuffer: hemisphere and ambient were pushed 2.6x
+  // and bought 1.6x on screen. Exposure slides the whole scene up the curve
+  // instead of pushing harder into the compressed region.
+  renderer.toneMappingExposure = 0.53;
+  const viewW = () => canvas.clientWidth || window.innerWidth;
+  const viewH = () => canvas.clientHeight || window.innerHeight;
+  renderer.setSize(viewW(), viewH(), false);
+  renderer.shadowMap.enabled = true;
+  // PCFSoft on every device. The phone used plain PCF on the belief that it
+  // was "a fraction of the cost"; in three r160 it is 17 nearest-texel taps
+  // against PCFSoft's 16 (bilinearly weighted), so it saved nothing, and its
+  // taps land on a fixed sub-texel pattern: every shadow edge in the city was
+  // a stair of nested rectangles, 0.37 m a step at the phone's 1024 map --
+  // the "lines in the shadow" (CLAUDE.md "Smooth edges, and the player's own
+  // map").
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+/**
+ * Height falloff on the exponential fog.
+ *
+ * FogExp2 is uniform in every direction, so haze that reads correctly along a
+ * street also fills the sky at the top of a tower: a 180 m building three
+ * kilometres out dissolves at its crown exactly as much as at its base, and
+ * the downtown silhouette flattens into one grey wash. Real aerial haze sits
+ * in the lower atmosphere, which is why distant towers punch out of it.
+ *
+ * Patched into three's fog shader chunks rather than done with a custom
+ * material, because it has to apply to every lit surface in the scene --
+ * terrain, roads, buildings, water, vehicles, characters -- and those are a
+ * dozen different materials. `transformed` is the final local position by the
+ * time <fog_vertex> is included (skinning and morphs have already run), so
+ * skinned pedestrians fog from where they actually stand.
+ *
+ * This is per-fragment height rather than a true integral along the view ray.
+ * The integral is the physically right answer and costs an exp and a divide
+ * per pixel; at the scale of the error over a 16 km map it is not visible.
+ */
+function installHeightFog() {
+  const C = THREE.ShaderChunk;
+  if (C.__heightFog) return;
+  C.__heightFog = true;
+  // The ray from the camera, in world space: its y + the camera's is the
+  // fragment's height, and its direction picks the sun-side haze tint. It is
+  // linear in position, so the interpolated varying is exact per fragment.
+  C.fog_pars_vertex = `${C.fog_pars_vertex}\n#ifdef USE_FOG\n  varying vec3 vFogRay;\n#endif`;
+  // An instanced mesh's vertex is placed by instanceMatrix before the model
+  // matrix: without it every instance was fogged as if it stood at the map's
+  // origin (the trees' crowns, the phone's far traffic).
+  C.fog_vertex = `${C.fog_vertex}\n#ifdef USE_FOG\n  #ifdef USE_INSTANCING\n  vFogRay = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz - cameraPosition;\n  #else\n  vFogRay = (modelMatrix * vec4(transformed, 1.0)).xyz - cameraPosition;\n  #endif\n#endif`;
+  C.fog_pars_fragment = `${C.fog_pars_fragment}\n#ifdef USE_FOG\n  varying vec3 vFogRay;\n#endif`;
+  // Scale the density by the fragment's height above sea level. At a scale
+  // height of 130 m a street is fully hazed and a 200 m crown keeps about a
+  // fifth of the density, which is the separation the skyline needs.
+  //
+  // The scale height is a shader constant, not a uniform. ShaderLib.physical
+  // COPIES UniformsLib.fog when three's module is evaluated, so a key added to
+  // UniformsLib afterwards never reaches the program and the shader compiles
+  // against an undeclared name.
+  //
+  // Then the sun side: the sky dome's horizon haze is brighter and warmer
+  // toward the sun and cooler away (HAZE_SUN, world.js), and the fog takes the
+  // same blend so distance still dissolves INTO the sky behind it. `fogCol`
+  // is that colour; the far layers' fades (world.js) mix toward it too. The
+  // dome tints in linear light and this mixes in output (sRGB-encoded) space,
+  // so the multipliers go in raised to 1/2.2. One normalize, a dot and a mix
+  // per fogged fragment; no uniform (UniformsLib, as above), the sun is fixed.
+  const sd = SUN_OFFSET.clone().normalize();
+  const enc = (v) => v.map((k) => Math.pow(k, 1 / 2.2).toFixed(4)).join(', ');
+  C.fog_fragment = C.fog_fragment.replace(
+    'float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );',
+    'float heightScale = exp( - max( vFogRay.y + cameraPosition.y, 0.0 ) / 130.0 );\n'
+    + '\tfloat hDensity = fogDensity * heightScale;\n'
+    + '\tfloat fogFactor = 1.0 - exp( - hDensity * hDensity * vFogDepth * vFogDepth );'
+  ).replace(
+    'gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );',
+    `float fogHs = 0.5 + 0.5 * dot( normalize( vFogRay ), vec3( ${sd.x.toFixed(5)}, ${sd.y.toFixed(5)}, ${sd.z.toFixed(5)} ) );\n`
+    + `\tvec3 fogCol = fogColor * mix( vec3( ${enc(HAZE_SUN.away)} ), vec3( ${enc(HAZE_SUN.toward)} ), fogHs * fogHs );\n`
+    + '\tgl_FragColor.rgb = mix( gl_FragColor.rgb, fogCol, fogFactor );'
+  );
+  if (!C.fog_fragment.includes('fogCol')) {
+    // three's chunk text changed: plain fog, but keep `fogCol` declared, or
+    // the far layers' fades and the vehicle glass (which mix toward it) stop
+    // compiling and every fogged material with them.
+    console.warn('sun-side fog: three chunk changed, not patched');
+    C.fog_fragment += '\n#ifdef USE_FOG\n\tvec3 fogCol = fogColor;\n#endif';
+  }
+}
+
+/**
+ * Fade shadowing out across the last few percent of the shadow box.
+ *
+ * Where the ortho box ends, three simply stops testing and returns "lit", so
+ * the boundary is a hard line: a block's shadow a couple of hundred metres
+ * ahead is cut square, and because the box follows the view that line slides
+ * across the street as you turn -- a whole band of the frame flicking from
+ * shaded to lit. Fading the last 7 % of the box (~36 m at 260 m half-width)
+ * turns the cut into a gradient nobody tracks. One smoothstep per shadowed
+ * fragment, inside the existing branch.
+ */
+function installShadowFade() {
+  const C = THREE.ShaderChunk;
+  if (C.__shadowFade) return;
+  C.__shadowFade = true;
+  const from = '#endif\n\t\t}\n\t\treturn shadow;\n\t}\n\tvec2 cubeToUV';
+  if (!C.shadowmap_pars_fragment.includes(from)) {
+    console.warn('shadow fade: three chunk changed, not patched');
+    return;
+  }
+  C.shadowmap_pars_fragment = C.shadowmap_pars_fragment.replace(from,
+    '#endif\n'
+    + '\t\t\tvec2 shadowEdge = min( shadowCoord.xy, 1.0 - shadowCoord.xy );\n'
+    + '\t\t\tshadow = mix( 1.0, shadow, smoothstep( 0.0, 0.07, min( shadowEdge.x, shadowEdge.y ) ) );\n'
+    + '\t\t}\n\t\treturn shadow;\n\t}\n\tvec2 cubeToUV');
+}
+
+  scene = new THREE.Scene();
+  // Aerial perspective. At 0.00032 a tower 3 km away reads at nearly the same
+  // contrast and saturation as one across the street, which is what made the
+  // city look like a diorama. The colour is matched to the sky near the
+  // horizon so distance resolves INTO the sky rather than toward a grey haze
+  // sitting in front of it.
+  // 0.00060 overshot: it dissolved the downtown silhouette into the sky rather
+  // than giving it depth. Aerial perspective should separate planes, not erase
+  // them, and the fog is tinted slightly cooler than the horizon so towers
+  // still read against it.
+  scene.fog = new THREE.FogExp2(FOG_HEX, 0.00026);
+  // three r160 mixes fog AFTER <colorspace_fragment>, in the target's sRGB
+  // encoding, but uploads fogColor as the linear value of the hex. So 0xb9c3cf
+  // landed on screen as ~#7a8a9e -- slate, a stop darker than the sky's
+  // horizon (the dome encodes its own colour, so it shows #b9c3cf) -- and
+  // instead of dissolving into the sky, distance went dark and met the
+  // horizon at a band. Give the shader the ENCODED value: on screen the fog is
+  // now exactly the haze it was always meant to be. (syncFogColour: only
+  // while the scene renders into postfx's target; straight to the canvas,
+  // three converts the colour itself.)
+  syncFogColour();
+  baseFogDensity = scene.fog.density;
+  installHeightFog();
+  camera = new THREE.PerspectiveCamera(62, viewW() / viewH(), 0.5, 9000);
+
+  // The sky IBL supplies most of the ambient, so the analytic lights are just a
+  // key with a cool bounce fill.
+  // KEY-TO-AMBIENT IS THE WHOLE LOOK. At hemi 2.0 against sun 2.5, plus full
+  // IBL on top, the ambient dominated and the ratio was about 1.3:1 -- so two
+  // faces of the same building differed only by texture, never by light. Nothing
+  // downstream can read under a shadowless sky: AO, normal maps and geometry all
+  // score flat no matter how good they are. Daylight open-worlds run nearer 4:1,
+  // warm key against cool sky fill.
+  const hemi = new THREE.HemisphereLight(0xdcecf6, 0x8d968a, 0.72);
+  scene.add(hemi);
+  // A floor under the shadows.
+  //
+  // Measured on the composited frame -- which is the only honest place to
+  // measure it, since the post chain is part of the value structure -- the
+  // aerial city ran a lit-to-shadow ratio of 13.8:1, with the shadowed quarter
+  // sitting at 0.004 linear under a 0.43 sky. That is a night value and a
+  // daylight sky in the same picture. Console open worlds of this era ran
+  // roughly 2.2-3.3:1, because a shadowed surface outdoors still sees most of
+  // the sky dome plus bounce off everything around it.
+  //
+  // Four passes were spent lifting albedos against this, which is the wrong
+  // lever: no base colour survives being multiplied by an ambient term near
+  // zero. Raising the floor fixes the aerial value inversion, the near-black
+  // street asphalt and the black tower bodies at once, and it lets the roof
+  // albedo go back where it belongs.
+  scene.add(new THREE.AmbientLight(0xb4c2cc, 0.36));
+  // Fall's afternoon sun is a warmer white than summer's.
+  sun = new THREE.DirectionalLight(FALL ? 0xffe9cc : 0xfff2dc, 4.3);
+  // Summer's ~38 deg elevation: high enough to light the streets, low enough
+  // that every shot has a lit face and a shadowed one. Fall's 24 deg throws
+  // the long shadows of an October afternoon.
+  sun.position.copy(SUN_OFFSET);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(ON_PHONE ? 1024 : 2048, ON_PHONE ? 1024 : 2048);
+  sun.shadow.camera.near = 20;
+  // 1150 was set to stop tall casters falling out of the frustum at the box
+  // edge. That is still the reason, but the far plane costs geometry in the
+  // shadow pass every frame, and the pass measured 152 draw calls and 318k
+  // triangles -- a third of the whole frame.
+  sun.shadow.camera.far = SUN_FAR;
+  // 105 m covered barely a block: buildings cast no shadow on the streets they
+  // line, which is most of why the city read as flat. 190 m reaches across a
+  // downtown block and its far side at the cost of shadow-map resolution,
+  // which 2048 absorbs.
+  //
+  // 190 was still not enough, and the way it failed was mistaken three times
+  // for a material bug. Where the ortho box ends, shadowing simply stops, so a
+  // tower's shadow on the block behind it was cut off mid-facade in a straight
+  // vertical line with no bottom to it -- a black band with a hard edge and no
+  // caster you could point at, which is not a shape any real shadow has. The
+  // giveaway is that widening the box turns previously LIT pixels dark: a real
+  // shadow does not gain area when you enlarge the camera that renders it.
+  //
+  // 260 m at 2048 is 0.25 m per texel, which is inside the range this era of
+  // console shadow ran at. `far` goes up with it, or tall casters fall out of
+  // the frustum at the same edge for the same reason.
+  const S = ON_PHONE ? 190 : 260;
+  sun.shadow.camera.left = -S;
+  sun.shadow.camera.right = S;
+  sun.shadow.camera.top = S;
+  sun.shadow.camera.bottom = -S;
+  // Bias is DERIVED from texel size, not written down.
+  //
+  // The rule is that normalBias has to span a shadow texel, and the texel is
+  // 2*S/mapSize -- so it changes whenever either the box or the map does. That
+  // coupling was noted in the docs and then promptly broken: dropping the phone
+  // to a 1024 map made its texel 0.37 m against the desktop's 0.25, and the
+  // bias was moved DOWN at the same time, from 0.12 to 0.09. The result is
+  // classic acne, dark cloudy blotches over flat sunlit ground, and it was
+  // mistaken for an SSAO artefact because it looks like one.
+  //
+  // Computing it removes the chance of getting it wrong again.
+  const shadowTexel = (S * 2) / sun.shadow.mapSize.x;
+  // (in the depth range's units: held at what -0.0006 was over summer's 960 m)
+  sun.shadow.bias = -0.0006 * 960 / (SUN_FAR - 20);
+  sun.shadow.normalBias = shadowTexel * 0.48;
+  shadowTexelM = shadowTexel;
+  installShadowFade();
+  scene.add(sun);
+  scene.add(sun.target);
+  // The player's own shadow, from a map of its own (nearshadow.js). Added
+  // straight after the sun, before any material compiles: its light is the
+  // second directional light every lit program is built for.
+  if (!window.__noNearShadow && installNearShadowChunk()) {
+    nearShadow = new NearShadow(renderer, scene, sun, { half: 4, size: 512, focus: nearShadowFocus });
+  }
+
+  postfx = new PostFX(renderer);
+  postfx.setSize(viewW(), viewH(), renderer.getPixelRatio());
+
+  world = new World(scene, city, tx, { shadows: true, renderer, lakes: md.lakes });
+  // The trees' mid and near crowns (trees.js): chosen from the chunks'
+  // records against the camera before each scene pass.
+  world.trees = new TreeSystem(scene, world.shadows);
+  world.trees.city = city;
+  // Fall: the pumpkins on the steps and the leaves coming down (fall.js)
+  if (FALL) { world.decor = new FallDecor(scene); world.decor.trees = world.trees; }
+  // ...and its portal cuts, barriers and lids (the terrain's carve needs them).
+  // Only with a cached grading: the lids were computed on those profiles.
+  world.bootCache = { portal: bootCache.grade ? bc.portal : null };
+  world.mountainData = md.mountains;
+  world.buildSky(SUN_OFFSET);
+  const terrGen = world.buildTerrain();
+  let tr = terrGen.next();
+  while (!tr.done) {
+    loadBar.style.width = `${Math.round((0.64 + tr.value * 0.14) * 100)}%`;
+    await new Promise((res) => requestAnimationFrame(res));
+    tr = terrGen.next();
+  }
+  world.buildWater();
+  // Stunt ramps: after the terrain (their bases read the carved ground and the
+  // portal barriers they join are installed) and before any chunk streams, so
+  // the scatter keeps their run-ups and landings clear.
+  {
+    const ramps = installRamps(city);
+    const rampMesh = buildRampMesh(city, ramps, world.mats.flat);
+    if (rampMesh) scene.add(rampMesh);
+  }
+  // The Queen Anne Counterbalance's streetcar line, laid on the road graph
+  // (counterbalance.js) before anything is placed by the kerb
+  counterbal = null;
+  city.extraClear = (x, z) => bikeNet.keepClear(x, z);
+
+  await step(0.8, 'Building the skyline');
+  world.buildSkyline();
+
+  await step(0.86, 'Placing the landmarks');
+  lmRoot = buildLandmarks(scene, city, (x, z) => world.waterLevelAt(x, z), null);
+  bikeNet.build(scene, city);
+  // every other pier OSM maps, after everything that builds its own decks
+  piers = new Piers(md.piers, { scene, city, dropArrays: ON_PHONE, waterAt: (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; } });
+  // on a phone their arrays go once uploaded: a lost context rebuilds them
+  if (ON_PHONE) renderer.domElement.addEventListener('webglcontextlost', () => { piers.contextLost(); bikeNet.contextLost(); });
+  moorings = privateMoorings(md.piers.piers || []);
+  // A lost context cannot be re-uploaded on a phone: the static city keeps no
+  // JS copy of what the GPU holds (dropStaticArrays, below). A context lost on
+  // an iPhone is the GPU process going away under memory pressure, and the
+  // way back is a fresh page -- once: a second loss inside a minute of the
+  // last reload is left alone rather than looped.
+  if (ON_PHONE) {
+    let reloading = false;
+    const reload = () => {
+      if (reloading) return;
+      let last = 0;
+      try { last = +sessionStorage.getItem('autokw-ctx-reload') || 0; } catch (e) { /* no storage */ }
+      if (Date.now() - last < 60000) {
+        // A second loss within a minute of a reload: not looped, but never a
+        // silent broken city either (the static arrays are gone, nothing can
+        // re-upload them). Ask, and reload on the tap.
+        if (!document.getElementById('ctxLost')) {
+          const d = document.createElement('div');
+          d.id = 'ctxLost';
+          d.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;'
+            + 'background:rgba(10,14,22,0.88);color:#fff;font:600 18px system-ui,sans-serif;text-align:center;padding:24px';
+          d.textContent = 'The graphics were reset. Tap to reload.';
+          d.addEventListener('pointerup', () => location.reload());
+          document.body.appendChild(d);
+          flight('context lost again within a minute: asked to reload', true);
+        }
+        return;
+      }
+      reloading = true;
+      try { sessionStorage.setItem('autokw-ctx-reload', String(Date.now())); } catch (e) { /* no storage */ }
+      flight('reloading after the lost context', true);
+      location.reload();
+    };
+    renderer.domElement.addEventListener('webglcontextlost', () => setTimeout(reload, 1500));
+    renderer.domElement.addEventListener('webglcontextrestored', reload);
+  }
+  // the flight recorder hears about the GPU going away (index.html)
+  renderer.domElement.addEventListener('webglcontextlost', () => flight('WEBGL CONTEXT LOST', true));
+  renderer.domElement.addEventListener('webglcontextrestored', () => flight('webgl context restored', true));
+  // Washington State Ferries' Seattle-Bainbridge run (ferry.js)
+  ferry = null;
+  // the balloon's launch field: no park trees on it
+  if (city.clearCircles && BALLOON_SITE) city.clearCircles.push([BALLOON_SITE.x, BALLOON_SITE.z, 26]);
+  // the fire stations' aprons: where each rig stands, kept clear before any chunk is scattered
+  try { fireStations = placeStations(city, world, (x, z) => world.waterLevelAt(x, z)); } catch (e) { blog(`fire stations: ${e.message}`); fireStations = []; }
+  // The scene root never moves, and its own matrixAutoUpdate re-flagged EVERY
+  // object in the world for a world-matrix multiply each frame. Static
+  // subtrees are frozen; see freezeStatic.
+  scene.matrixAutoUpdate = false;
+  skipHiddenMatrices(scene);
+  if (lmRoot) freezeStatic(lmRoot);
+  // the two trains (skinned: they pose their own bones each frame)
+
+  // Phones draw the city's shadows once and copy them each frame; only what
+  // moves is drawn into the shadow map every frame (shadowcache.js). The
+  // desktop keeps three's pass: its 2048 map would make the cache ~4x larger.
+  if (ON_PHONE && !window.__noShadowCache) {
+    try {
+      const ramps = scene.getObjectByName('stuntRamps');
+      shadowCache = new ShadowCache(renderer, sun, { margin: 60,
+        statics: () => [world.group, lmRoot, ramps, world.trees.shadowGroup], keep: () => [],
+        // every tree in the box, into the cache only (trees.js shadowFill): the
+        // box is turned to the sun, so its world square is ~1.42x, plus the
+        // shadows of the trees just outside it
+        before: (c, half) => world.trees.shadowFill(c.x, c.z, half * 1.42 + 30),
+        after: () => world.trees.shadowDone() });
+      world.onChunkChange = (x, z, r) => shadowCache.chunkChanged(x, z, r);
+      world.trees.onInvalidate = () => shadowCache.invalidate();
+    } catch (e) { blog(`shadow cache: ${e.message}`); shadowCache = null; }
+  }
+  if (world.terrainGroup) freezeStatic(world.terrainGroup);
+  // after the shadow cache: its wrapper on shadowMap.render goes inside ours
+  chunkCull = installChunkCull(renderer, world.group);
+  // outermost: the cache and the cull below it see only the sun
+  if (nearShadow) nearShadow.install();
+  // ON A PHONE THE STATIC CITY KEEPS ONE COPY, NOT TWO (CLAUDE.md "Memory"):
+  // the terrain, the skyline, the landmarks, Link's and the freight line's
+  // structure and trains drop their JS arrays once the GPU has them. Before
+  // the first frame, so nothing has been uploaded yet. `__keepArrays` keeps
+  // them (a harness that wants to raycast on the phone profile).
+  if (ON_PHONE && !window.__keepArrays) {
+    // (Link's and freight's chunks are built as you come near: each drops
+    // its arrays the same way when it is made)
+    let b = 0;
+    for (const r of [world.terrainGroup, world.skyline, lmRoot]) if (r) b += dropStaticArrays(r);
+    blog(`static geometry: ${(b / 1048576).toFixed(0)} MB of arrays go once uploaded`);
+  }
+
+  await step(0.9, 'Waking the city');
+  game = new Game();
+  // the wallet comes back from the last launch (career.js); the passport reads the rest
+  career = new Career(game, () => ({
+    acts, stunts, islands, missions, seafair, arcade, taxi,
+    // a best on the board = played (golf's is a stroke count, so lower is better; any is a round)
+    games: [['fishing', fishing], ['fishtoss', fishToss], ['hoops', hoops], ['pinball', pinball], ['tower', tower], ['coffee', coffee], ['pickle', pickle], ['golf', golf]]
+      .map(([id, g]) => ({ id, best: g ? +(g.best || g.hi || 0) : 0 })),
+  }));
+  audio = new Audio();
+  // KEXP's now-playing feed drives a toast, so the radio names its own tracks.
+  audio.onTrack = (label) => { if (hud) hud.showToast(`♪ ${label}`); };
+  controls = new Controls(document.getElementById('app'));
+  // an open minigame takes the pad as keys (controls.js PAD_KEYS)
+  controls.bridge = () => [fishing, arcade, pinball, hockey, tower, coffee, hoops, pickle, golf, fishToss]
+    .some((a) => a && a.active) || !!(wheelRide && wheelRide.busy);
+  player = new Player(scene, city, game, world);
+
+  traffic = new TrafficSystem(scene, city, game);
+  traffic.camera = camera;   // far-LOD instances are culled against it
+  // where water is drawn (the boats' query): no car parks under it
+  traffic.waterAt = (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; };
+  // the cyclists on the bike paths, and the bike-share docks
+  cyclists = new Cyclists(bikeNet, traffic, city, scene);
+  // Hulls ask where the water is DRAWN. The 10 m water mask and the 40 m
+  // terrain disagree along the shore: ground under the sea's surface is drawn
+  // as sea (the plane covers it) while the mask can call it land, and every
+  // such cell was an invisible wall in open water -- a jet ski running north
+  // along the waterfront stopped dead in it.
+  setWaterQuery((x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; });
+  // Boeing Field's apron: three trainers, parked nose-out along the taxiway
+  // side, matching the landmark's own layout constants (bearing -0.52, apron
+  // centred 260 m east, 120 m south of the ARP). Mode 'apron' so they never
+  // despawn -- flying one away and driving back must find the others waiting.
+  {
+    const ap = (G.LANDMARKS || []).find((l) => l.kind === 'airport');
+    if (ap) {
+      // Everything stands on the drawn apron and runway, not the field under them.
+      city.slabQuery = airportSurface(ap.x, ap.z, G.terrainHeight(ap.x, ap.z));
+      // Same explicit axes as the landmark: ALONG = runway bearing 150.
+      const AL = [Math.sin(0.52), Math.cos(0.52)], AC = [Math.cos(0.52), -Math.sin(0.52)];
+      const off = (dx, dz) => [ap.x + dx * AC[0] + dz * AL[0], ap.z + dx * AC[1] + dz * AL[1]];
+      // Three clusters, all on pavement, all reachable from the west-side
+      // streets: the apron row, the north threshold turnpad, and the south.
+      // The apron is not all clear: a real street with its pavements runs
+      // through its west side (across -260..-230) and a hangar stands at
+      // across -215..-185, along -50..-10 -- where the first trainer used to
+      // be parked, half inside it. The bigger aircraft take a second row
+      // toward the taxiway, and the two helicopters sit on their pads
+      // (landmarks.js AIRPORT_HELIPADS) at the apron's north and south ends.
+      const spots = [
+        ['plane', -160, -58], ['sportplane', -195, 45], ['plane', -195, 140],
+        ['twin', -150, 0], ['jet', -150, 95], ['biplane', -152, 188],
+        ['heli', -165, -103], ['heli', -195, 232, 0xb8322a],
+        ['sportplane', -150, -1380], ['plane', -150, -1290],
+        ['floatplane', -150, 1290], ['sportplane', -150, 1380],
+        // the fighter, on the runway centreline at the south threshold,
+        // facing north up all 3 km of it (heading 0.52 would face south)
+        ['fighter', 0, 1450, 0x7b8590, 0.52 + Math.PI],
+        // the 747-8, on the east taxiway at the north end, nose south toward
+        // the runway (its 68 m span needs the open grass either side of it)
+        ['jumbo', 150, -1240, 0xf4f5f6],
+      ];
+      for (const [ty, dx, dz, col, hd] of spots) {
+        const [px, pz] = off(dx, dz);
+        const v = traffic.spawnAt(px, pz, hd !== undefined ? hd : 0.52, ty, col || AIRCRAFT_PAINT[ty], 'apron');
+        v.vLong = 0;
+      }
+    }
+  }
+  // The seaplane dock on Lake Union (landmarks.js builds it and owns the
+  // mooring list): floatplanes and boats tied up alongside its float, 'apron'
+  // so they never despawn. place() puts a plane on the lakebed, so a
+  // floatplane's height is set from the LOCAL surface by hand and its float
+  // physics hold it there after; a boat's place() finds the surface itself.
+  for (const [ty, x, z, h, col] of []) {
+    const v = traffic.spawnAt(x, z, h, ty, col, 'apron');
+    v.vLong = 0;
+    if (v.spec.floats) {
+      const wl = world.waterLevelAt(x, z);
+      v.y = (wl !== null ? wl : SEAPLANE_DOCK.level) + 0.12;
+      v.group.position.y = v.y + (v.spec.wheelR || 0.3) + 0.25;
+    }
+  }
+  // The marinas' boats, jet skis and floatplanes (landmarks.js MARINAS),
+  // moored the way the seaplane dock's are.
+  for (const mr of lmRoot.userData.marinas || []) {
+    for (const [ty, x, z, h, col] of mr.moorings) {
+      const v = traffic.spawnAt(x, z, h, ty, col, 'apron');
+      v.vLong = 0;
+      if (v.spec.floats) {
+        const wl = world.waterLevelAt(x, z);
+        v.y = (wl !== null ? wl : mr.level) + 0.12;
+        v.group.position.y = v.y + (v.spec.wheelR || 0.3) + 0.25;
+      }
+    }
+  }
+  // Quads, parked out on the grass where they are for: Gas Works' Kite Hill,
+  // the lawn by the seaplane dock, Seattle Center's by the spawn, Jefferson
+  // Park, and on the sand at Alki Beach.
+  for (const [x, z, h, col] of ATV_SPOTS) {
+    const v = traffic.spawnAt(x, z, h, 'atv', col, 'apron');
+    v.vLong = 0;
+  }
+  if (!city.clearCircles) city.clearCircles = [];
+  for (const [x, z, h, col] of HELI_SPOTS) {
+    city.clearCircles.push([x, z, 14]);
+    const v = traffic.spawnAt(x, z, h, 'heli', col, 'apron');
+    v.vLong = 0;
+  }
+  if (BALLOON_SITE) spawnBalloon();
+  fishSpots = fishingSpots();
+  fishing = new Fishing({
+    audio,
+    onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Fishing paid $${m}`), 400); },
+    onEnd: () => {
+      game.release('fishing');
+      for (const sp of fishSpots) if (sp.prop) sp.prop.userData.rod.visible = true;
+    },
+  });
+  hoops = new Hoops({
+    scene, city, world, audio,
+    onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Free throws paid $${m}`), 400); },
+    onEnd: () => { game.release('hoops'); },
+  });
+  // Auto KW: Seattle's venues are not here (arcade, pinball, hockey, ducks,
+  // Seafair, First Cup, pickleball, islands, the tower, golf, the fish, the
+  // Wheel and the Needle).
+  arcade = pinball = hockey = duckTour = seafair = coffee = pickle = islands = tower = golf = fishToss = null;
+  wheelRide = needleTop = null;
+  // A CAR WORTH TAKING at the kerb in front of the spawn. Kerbside cars come
+  // from a fixed hash of street slots, so the first car every player walked
+  // up to was the same pickup -- and the nearest slot was usually out of the
+  // opening frame. A red sports coupe is parked for good (apron: never
+  // despawned, like the quads) at the right-hand kerb ~14 m ahead, facing up
+  // the street, and any kerbside car in that spot gives up its slot.
+  {
+    traffic.updateParked(G.SPAWN.x, G.SPAWN.z);
+    const fx = Math.sin(G.SPAWN_HEADING), fz = Math.cos(G.SPAWN_HEADING);
+    const ax = G.SPAWN.x + fx * 14, az = G.SPAWN.z + fz * 14;
+    let spot = null;
+    for (const ei of city.edgesNear(ax, az, 40)) {
+      const e = city.edges[ei];
+      if (e.elev || e.tunnel || e.prof || e.cls === 'hwy' || e.cls === 'ramp') continue;
+      const n0 = city.nodes[e.a];
+      const sg = e.dx * fx + e.dz * fz >= 0 ? 1 : -1;
+      if (Math.abs(e.dx * fx + e.dz * fz) < 0.9) continue;      // along the view only
+      const dx = e.dx * sg, dz = e.dz * sg;
+      const t = (ax - n0.x) * e.dx + (az - n0.z) * e.dz;
+      if (t < 6 || t > e.len - 6) continue;
+      const cx = n0.x + e.dx * t, cz = n0.z + e.dz * t;
+      if (Math.hypot(cx - ax, cz - az) > 25) continue;
+      const x = cx - dz * (e.hw - 1.15), z = cz + dx * (e.hw - 1.15);
+      // the outermost right-hand kerb (a divided street has a median kerb too)
+      const right = (x - G.SPAWN.x) * -fz + (z - G.SPAWN.z) * fx;
+      if (!spot || right > spot.right) spot = { x, z, heading: Math.atan2(dx, dz), right, t, len: e.len, es: sg };
+    }
+    if (spot) {
+      // The Wedge stands behind it on the same kerb, or ahead of it, wherever
+      // it clears the junction mouths: the two cars the street offers first.
+      // `t` runs along the edge, which may point against the view (`es`).
+      const fh = Math.sin(spot.heading), fzh = Math.cos(spot.heading);
+      const gap = 7.8, fits = (s) => { const t2 = spot.t + s * gap * spot.es; return t2 > 11 && t2 < spot.len - 11; };
+      const sg = fits(-1) ? -1 : fits(1) ? 1 : 0;
+      const wedge = sg ? { x: spot.x + fh * gap * sg, z: spot.z + fzh * gap * sg } : null;
+      for (const v of [...traffic.cars]) {
+        if (v.mode !== 'parked') continue;
+        if (Math.hypot(v.x - spot.x, v.z - spot.z) > 8 && !(wedge && Math.hypot(v.x - wedge.x, v.z - wedge.z) < 9)) continue;
+        if (typeof v.slot === 'number') traffic.reservedSlots.add(v.slot);
+        traffic.remove(v);
+      }
+      traffic.spawnAt(spot.x, spot.z, spot.heading, 'sports', 0xc4161c, 'apron').vLong = 0;
+      if (wedge) traffic.spawnAt(wedge.x, wedge.z, spot.heading, 'wedge', 0xb9bdc1, 'apron').vLong = 0;
+    }
+  }
+  // What the map marks, and what says hello when you get near (the HUD is
+  // made below; it takes the list then).
+  const mapPlaces = [
+    ...ATV_SPOTS.map(([x, z]) => ({ x, z, kind: 'atv', name: 'Quad bike', near: false, hello: 'A quad bike — made for the grass' })),
+    ...HELI_SPOTS.map(([x, z, , , where]) => ({ x, z, kind: 'jet', name: 'Helicopter', near: false, hello: `A helicopter on ${where}. GAS lifts, BRAKE sinks` })),
+    ...fishSpots.map((sp) => ({ x: sp.x, z: sp.z, kind: 'fish', name: `Fishing — ${sp.name}`, near: false,
+      hello: 'A fishing rod on the pier. Press ENTER to cast' })),
+    ...hoops.courts.map((c) => ({ x: c.x, z: c.z, kind: 'hoop', name: `Basketball — ${c.name}`, near: false,
+      hello: 'A basketball court. Stand on the free throw line and press ENTER' })),
+    ...(BALLOON_SITE ? [{ x: BALLOON_SITE.x, z: BALLOON_SITE.z, kind: 'balloon', name: 'Hot air balloon', near: false,
+      hello: 'A hot air balloon, ready to fly. Climb into the basket' }] : []),
+    ...cyclists.docks.map((dk) => ({ x: dk.x, z: dk.z, kind: 'bike', name: `Bikes · ${dk.name}`, near: false,
+      hello: `Bike share — ${dk.name}. Take a bike from the rack: the trail is right here` })),
+    ...(lmRoot.userData.marinas || []).map((mr) => ({ x: mr.x, z: mr.z, kind: 'dock', name: mr.name, near: false,
+      hello: mr.hello ? mr.hello : `${mr.name} — boats and jet skis. Walk out on the float and take one` })),
+  ];
+  peds = new PedSystem(scene, city, game);
+  // trains are solid to anyone on foot (each system's blockAt)
+  player.trainBlock = peds.trainBlock = () => false;
+  peds.camera = camera;   // animation LOD culls against it
+  peds.waterAt = (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; };   // the boats' rule (Player.waterAt)
+  fx = new Effects(scene, tx);
+  skidMarks = new SkidMarks(scene, ON_PHONE);
+  orcas = null;
+  saucer = new Saucer({ scene, city, traffic, fx, get hud() { return hud; }, get game() { return game; }, get audio() { return audio; }, get player() { return player; } });
+  let mapCanvas = null;
+  if (bc.map) { try { mapCanvas = await blobToCanvas(bc.map); } catch (e) { mapCanvas = null; blog('map: restore failed ' + e.message); } }
+  if (!mapCanvas) { mapCanvas = buildMapCanvas(city); bcOut.mapCanvas = mapCanvas; }
+  hud = new Hud(document.getElementById('app'), city, mapCanvas);
+  // your car catching fire (vehicles.js Vehicle.damage): the frame burns it down
+  VEHICLE_HOOKS.belly = () => hud.showToast('Belly landing — the gear was up!', 2400);
+  VEHICLE_HOOKS.ignite = (v) => {
+    burning.add(v);
+    hud.showToast('Your car is on fire — get out!', 3000);
+  };
+  hud.places = mapPlaces;
+  // Seattle Fire: a rig or two on every station's apron, and the calls
+  fire = new FireService({ scene, city, world, traffic, peds, game, hud, audio, fx, controls, tex: tx.particle, renderer, phone: ON_PHONE,
+    get player() { return player; }, get camera() { return camera; }, setSiren: (v, on) => setSiren(v, on) });
+  fire.spawnRigs(fireStations);
+  hud.places.push(...fire.places());
+  if (needleTop) needleTop.o.hud = hud;
+  if (wheelRide) wheelRide.o.hud = hud;
+
+  cyclists.audio = audio;
+  {
+    // One tap, never behind a menu: a lost run on a phone ends the session.
+    const rb = document.getElementById('raceRestart');
+    if (rb) rb.addEventListener('click', (ev) => { ev.stopPropagation(); if (acts) acts.restart(player); });
+    // The delivery service: the money sink. Spend winnings and the vehicle
+    // arrives beside you -- including aircraft, which is how you get a plane
+    // without driving to Boeing Field first.
+    for (const b of document.querySelectorAll('.buy')) {
+      b.addEventListener('click', () => {
+        const cost = +b.dataset.cost, type = b.dataset.buy;
+        if (game.money < cost) { hud.showToast('Not enough money'); return; }
+        game.money -= cost;
+        if (type === 'pistol') {
+          // not a vehicle: straight into your pocket
+          player.armed = true;
+          player.ammo += 45;
+          audio.pickup('gun');
+          hud.showToast(`Pistol delivered — 45 rounds, $${cost}`);
+          if (setPausedRef) setPausedRef(false);
+          return;
+        }
+        const p = player.position;
+        const f = { x: Math.sin(player.camYaw + Math.PI), z: Math.cos(player.camYaw + Math.PI) };
+        const dx = p.x + f.x * 12, dz = p.z + f.z * 12;
+        const v = traffic.spawnAt(dx, dz, player.camYaw + Math.PI, type, AIRCRAFT_PAINT[type] || 0xdfe3e6, 'free');
+        v.y = city.groundAt(dx, dz, null);
+        v.sync();
+        hud.showToast(`${b.textContent.replace(/\s*\$\d+$/, '')} delivered — $${cost}`);
+        if (setPausedRef) setPausedRef(false);
+      });
+    }
+  }
+  // after the HUD: Activities writes its readout and map icons through it
+  acts = new Activities(scene, city, world, game, hud, audio, traffic);
+  stunts = new StuntJumps(city, game, hud, audio);
+  tanks = new TankSystem({ scene, city, world, traffic, peds, fx, audio, hud, game, player, camera, root: document.getElementById('app') });
+  tanks.spawnHome();
+  acts.stunts = stunts;
+  // the law (police.js) and the police missions (policemissions.js)
+  police = new Police({ scene, city, game, traffic, peds, fx, audio, hud });
+  traffic.police = police;
+  game.police = police;
+  missions = new PoliceMissions({ scene, city, game, traffic, police, hud, audio });
+  game.setSiren = (v, on) => { traffic.lightBar(v); setSiren(v, on); };
+  taxi = new TaxiFares({ scene, city, game, traffic, peds, hud, audio, root: controls.root });
+  taxi.warm();
+
+  // delivery marker
+  const mg = new THREE.CylinderGeometry(6, 6, 26, 18, 1, true);
+  marker = new THREE.Mesh(mg, new THREE.MeshBasicMaterial({
+    color: 0xffd24a, transparent: true, opacity: 0.32, side: THREE.DoubleSide, forceSinglePass: true, depthWrite: false,
+  }));
+  marker.visible = false;
+  scene.add(marker);
+
+  buildPickups(scene, city);
+  buildRespawns(scene, city);
+
+  // Keep this launch's grading for the next one. Writing clones a few MB, so
+  // it happens here on the loading screen rather than during play.
+  const toKeep = [];
+  if (bootCache.gradeOut) toKeep.push(['grade', () => bootCache.gradeOut]);
+  if (world.bootCache.portalOut) toKeep.push(['portal', () => world.bootCache.portalOut]);
+  if (bootCache.buildingsOut) toKeep.push(['buildings', () => bootCache.buildingsOut]);
+
+  if (!bc.vehicles) toKeep.push(['vehicles', () => vehicleSnapshot()]);
+  if (bcOut.texPlan) toKeep.push(['textures', () => encodeTextures(bcOut.texPlan)]);
+  if (bcOut.mapCanvas) toKeep.push(['map', () => canvasToBlob(bcOut.mapCanvas)]);
+  {
+    const m = memoTake();
+    blog(`memo: ${memoStats.hit} kept, ${memoStats.miss} computed${m ? `, ${(memoStats.bytes / 1048576).toFixed(1)} MB` : ''}`);
+    if (m) toKeep.push(['memo', () => m]);
+  }
+  if (toKeep.length) {
+    await step(0.93, 'Remembering the city');
+    for (const [k, make] of toKeep) {
+      const t0 = performance.now();
+      let ok = false;
+      try { const v = await within(Promise.resolve(make()), 10000); if (v) ok = await cachePut(k, v); } catch (e) { blog(`keep ${k}: ${e.message}`); }
+      blog(`keep ${k}: ${ok ? 'saved' : 'not saved'} ${((performance.now() - t0) / 1000).toFixed(1)}s`);
+    }
+  }
+  bootCache.gradeOut = bootCache.buildingsOut = null;
+  world.bootCache = null;
+
+  // What the cache handed in is spent, and so is what went out: `bc` lives in
+  // boot()'s closure context, which every listener made in here keeps alive
+  // for the whole session -- on a cached launch that was the IndexedDB read
+  // itself, ~65 MB (the packed buildings, the memo, the vehicle snapshot)
+  // held to the end. See CLAUDE.md "Memory".
+  for (const k of BC_KEYS) bc[k] = null;
+  bootCache.grade = bootCache.buildings = null;
+  bcOut.texPlan = bcOut.mapCanvas = null;
+  toKeep.length = 0;
+  // ...and on a phone every texture's canvas goes once the GPU has it
+  // (memory.js), after the cache has encoded them and the mid ring has read
+  // its tints off two of them.
+  if (ON_PHONE && !window.__keepArrays) {
+    world.primeMidTint();
+    try {
+      const r = releaseTextureSources(renderer, scene, []);
+      blog(`texture sources: ${r.released} let go (${(r.bytes / 1048576).toFixed(0)} MB), ${r.pending} after their first upload`);
+    } catch (e) { blog('texture sources: ' + e.message); }
+    // ...and the vehicle types' geometry once uploaded (the snapshot above
+    // has been written, and traffic made every far LOD at boot)
+    try { blog(`vehicle geometry: ${(dropVehicleArrays() / 1048576).toFixed(0)} MB of arrays go once uploaded`); } catch (e) { blog('vehicle geometry: ' + e.message); }
+    // ...and the last static pieces made after the city's: the golf course,
+    // the ferries and their terminals
+    for (const r of [golf && golf.courseMesh, ferry && ferry.group, ferry && ferry.terminals]) if (r) dropStaticArrays(r);
+  }
+  await step(0.94, 'Opening the roads');
+  for (let i = 0; i < 90; i++) {
+    const left = world.update(player.x, player.z, 6);
+    if (!left) break;
+    if (i % 8 === 0) {
+      loadBar.style.width = `${Math.round((0.94 + Math.min(1, i / 60) * 0.05) * 100)}%`;
+      await new Promise((res) => requestAnimationFrame(res));
+    }
+  }
+
+  await step(1, 'Welcome to Waterloo Region');
+  window.__refreshJobs = refreshJobs;
+  window.__dbg = { get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  wireUi();
+  career.start(hud);
+  game.newTarget();
+  // Start on `high` everywhere.
+  //
+  // Phones were dropped to `medium` when the frame was 509 draws and a chunk
+  // build could block for a quarter of a second. Both are fixed -- 299 draws
+  // and a 17 ms worst frame -- and a modern phone measured 61 fps with a floor
+  // of 57 at `high`. `autoQuality` is still watching, so a device that cannot
+  // hold it steps down on its own rather than everyone being pre-emptively
+  // demoted.
+  let savedQ = null;
+  try { savedQ = localStorage.getItem('autokw-quality'); } catch (e) { /* private mode */ }
+  // literal, not TIERS: that const lives further down and this runs at boot
+  applyQuality(['high', 'medium', 'low'].includes(savedQ) ? savedQ : 'high', !!savedQ);
+  // WARM-UP BEHIND THE LOADING SCREEN (apps/auto/CLAUDE.md, "Hitches").
+  // Everything first-used used to happen in play: the pedestrian look pools
+  // inside the first frame (224-264 ms at 8x), ~36 programs compiling while
+  // the overlay faded, and later the vehicles' shadow-depth variant (a 468 ms
+  // frame when the first car entered the shadow box), the far layers (first
+  // climb past 45 m) and the boat wake.
+  //
+  // v98 did this and broke the game on the iPhone -- unplayable, no movement
+  // -- while every Chrome harness passed. That version uploaded EVERY vehicle
+  // type's geometry here (~20 types x 3 parts) for no measured gain; the likely
+  // failure is WebKit's GPU process giving up under it. So now: one sedan's
+  // parts only (the programs are shared by every type), and nothing in here
+  // may stop the boot -- any error is logged, the stand-ins always come out,
+  // and a lost context is reported instead of left for the first frame.
+  try { warmLooks(); } catch (e) { blog(`warm looks: ${e.message}`); }
+  // The audio graph and its sound bank, now: creating a context needs no
+  // gesture (it starts suspended; wireUi's unlock resumes it), and the bank
+  // is offline rendering that used to begin only at the first tap -- seconds
+  // of silence on a phone before any footstep or door could play.
+  try { audio.init(); } catch (e) { blog(`audio: ${e.message}`); }
+  {
+    const tw = performance.now();
+    const warm = new THREE.Group();
+    const wakeWas = fx.wakeMesh ? fx.wakeMesh.visible : false;
+    // the pistol in the player's hand is hidden until a pickup: compile it now
+    const gun = player.fighter ? player.fighter.gun : null, gunWas = gun ? gun.visible : false;
+    if (gun) gun.visible = true;
+    let lazy = null, fireWarm = null;
+    try {
+      // Traffic has not spawned yet, so the stand-ins come from the asset
+      // table. (paint is never disposed: that would release the program just
+      // compiled, which no car is using yet.)
+      const va = vehicleAssets(), sd = va.types.sedan, paint = paintMaterial(0xffffff);
+      // (and the Belltown Hellcat's tiger paint and the Wienermobile's, their own programs, on the same body)
+      for (const [geo, mat] of [[sd.paintGeo, paint], [sd.paintGeo, paintMaterial(0xff5200, 'tiger')], [sd.paintGeo, paintMaterial(0xffffff, 'wiener')], [sd.trimGeoW, va.trimMat], [sd.matteGeoW, va.matteMat]]) {
+        if (!geo) continue;
+        const m = new THREE.Mesh(geo, mat);
+        m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false;
+        warm.add(m);
+      }
+      warm.position.set(player.x, player.y, player.z);
+      // The layers built only later: far massing and far roads (their
+      // materials on an empty draw range; the layers stay unallocated) and
+      // the boat wake, hidden until then -- three compiles nothing it skips.
+      lazy = world.warmMeshes();
+      for (const m of lazy.meshes) warm.add(m);
+      // the fire service's particles, beacon and lights (drawn first in a fire call)
+      if (fire) { fireWarm = fire.warmMeshes(player); for (const m of fireWarm.meshes) warm.add(m); }
+      // The police's lazily-made materials: the units' light bar, a mission
+      // suspect's marker -- and the tracer lines, hidden until the first
+      // shot, which compiled their program mid-firefight.
+      warm.add(warmLightBar());
+      for (const m of police.warmMeshes()) warm.add(m);
+      for (const m of missions.warmMeshes()) warm.add(m);
+      for (const m of taxi.warmMeshes()) warm.add(m);
+      if (fx.lines) { fx.lines.visible = true; lazy.linesWere = true; }
+      if (fx.wakeMesh) fx.wakeMesh.visible = true;
+      // the trees' instanced crowns: at least one instance each, so their
+      // program compiles here (trees.js)
+      if (world.trees) world.trees.warm = true;
+      if (world.decor) world.decor.warm = true;
+      scene.add(warm);
+      placeSun(player.x, player.y, player.z);
+      player.updateCamera(1 / 60, null);   // look where the first frame will
+      // TWICE: three runs the shadow pass before it sets up the frame's
+      // lights, and depth programs are keyed on the light counts, so a
+      // renderer's first frame compiles them for zero lights and the next
+      // for the real ones. One warm frame compiled the wrong copy.
+      draw(tw);
+      draw(tw + 16);
+    } catch (e) {
+      blog(`warm shaders: ${e.message}`);
+    } finally {
+      scene.remove(warm);
+      if (world.trees) { world.trees.warm = false; world.trees.invalidate(); }
+      if (world.decor) { world.decor.warm = false; world.decor.dirty = true; }
+      if (fx.wakeMesh) fx.wakeMesh.visible = wakeWas;
+      if (fireWarm) fireWarm.restore();
+      if (fx.lines) fx.lines.visible = false;
+      if (gun) gun.visible = gunWas;
+      try { if (lazy) lazy.dispose(); } catch (e) { /* nothing to free */ }
+    }
+    const gl = renderer.getContext();
+    blog(`warm: ${renderer.info.programs.length} programs, ${Math.round(performance.now() - tw)} ms${gl.isContextLost && gl.isContextLost() ? ' -- CONTEXT LOST' : ''}`);
+  }
+  startedAt = performance.now();
+  loading.classList.add('hide');
+  document.body.classList.add('booted');   // now the rotate prompt may show
+  setTimeout(() => loading.remove(), 700);
+  last = performance.now();
+  requestAnimationFrame(frame);
+  // The game is running: this launch did not die in the cache (see bootcache.js).
+  requestAnimationFrame(() => requestAnimationFrame(() => cacheGuardSet(false)));
+  blog('running');
+  if (window.__bootOk) window.__bootOk();
+  const prev = window.__flight && window.__flight.prev;
+  if (prev && prev.crashed) {
+    setTimeout(() => hud.showToast('The last session ended unexpectedly. Its log is in the pause menu.', 6000), 1500);
+    const lab = document.getElementById('flightLabel');
+    if (lab) lab.textContent = 'Last session log (it ended unexpectedly)';
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Snap `anchors` ([x, z] each) to a street, then step off the carriageway onto
+ * the verge: the nearest street node `nodeOk` accepts, then a spiral out from
+ * it to the first point `usable` accepts. Spiralling out from the raw anchor
+ * is not enough on its own -- an anchor can sit well out in Puget Sound, and
+ * no search radius that stays in the right neighbourhood will ever find land.
+ * A road node is guaranteed to be somewhere you could stand. Returns
+ * [x, z, node, ...] (node -1: none was found, and the anchor is kept).
+ */
+function vergeSpots(city, anchors, nodeOk, usable, rMax = 60) {
+  const K = anchors.length, best = new Float64Array(K).fill(Infinity), nd = new Int32Array(K).fill(-1);
+  const N = city.nodes;
+  for (let ni = 0; ni < N.length; ni++) {
+    const n = N[ni];
+    if (n.elev) continue;
+    for (let k = 0; k < K; k++) {
+      const d2 = (n.x - anchors[k][0]) ** 2 + (n.z - anchors[k][1]) ** 2;
+      if (d2 < best[k] && nodeOk(ni)) { best[k] = d2; nd[k] = ni; }
+    }
+  }
+  const out = [];
+  for (let k = 0; k < K; k++) {
+    const n = nd[k] >= 0 ? N[nd[k]] : null;
+    const cx0 = n ? n.x : anchors[k][0], cz0 = n ? n.z : anchors[k][1];
+    let spot = null;
+    for (let r = 6; r <= rMax && !spot; r += 6) {
+      for (let a = 0; a < 16; a++) {
+        const th = (a / 16) * Math.PI * 2 + k;
+        const x = cx0 + Math.cos(th) * r, z = cz0 + Math.sin(th) * r;
+        if (usable(x, z)) { spot = [x, z]; break; }
+      }
+    }
+    out.push(...(spot || [cx0, cz0]), nd[k]);
+  }
+  return out;
+}
+
+function buildPickups(scene, city) {
+  // Pickup sites are found in the map, not written down.
+  //
+  // These were fifteen hardcoded coordinates from the hand-drawn city. Against
+  // real OSM data four of them had gone wrong: a health pack under Puget Sound
+  // at y = -2.1, a pistol floating on the water at (620, -4200), and two more
+  // sitting in a live carriageway. That is one of eight guns unobtainable, and
+  // it is the same failure the beauty harness had -- coordinates outlive the
+  // world they were measured in.
+  //
+  // Anchored to real places so they stay spread across the map and stay put
+  // between sessions, then nudged to the nearest spot that is dry land, off the
+  // carriageway and not inside a building. The first fifteen alternate pistol /
+  // first aid round the middle of Seattle; the rest reach the parts of the map
+  // it grew into (lat, lon, kind).
+  const FAR = [
+    [47.6246, -122.5190, 'gun'], [47.6062, -122.5370, 'health'],   // Winslow; Lynwood Center (Bainbridge)
+    [47.5070, -122.4650, 'gun'],                                   // Vashon's north end
+    [47.6150, -122.2010, 'gun'], [47.5770, -122.1700, 'health'],   // downtown Bellevue; Factoria
+    [47.6770, -122.2060, 'gun'], [47.5710, -122.2240, 'health'],   // Kirkland; Mercer Island
+    [47.5790, -122.4100, 'gun'], [47.5170, -122.3550, 'health'],   // Alki; White Center
+    [47.7060, -122.3260, 'gun'], [47.7190, -122.2960, 'health'],   // Northgate; Lake City
+    [47.6680, -122.3850, 'gun'],                                   // Ballard
+    [47.5480, -122.3220, 'gun'], [47.5220, -122.2700, 'gun'],      // Georgetown; Rainier Beach
+    [47.5600, -122.2870, 'health'],                                // Columbia City
+  ];
+  const anchors = [
+    [-1150, -900], [240, 1400], [-2200, 1100], [900, -1400], [1500, -2400],
+    [-960, -3760], [-300, 700], [-3400, -4000], [300, 1900], [2000, 600],
+    [-1300, -1500], [1250, 2500], [-2600, 3600], [620, -4200], [-1800, -2600],
+    ...FAR.map(([lat, lon]) => G.toWorld(lat, lon)),
+  ];
+  const kinds = anchors.map((_, i) => (i < 15 ? (i % 2 ? 'health' : 'gun') : FAR[i - 15][2]));
+  const usable = (x, z) => !G.isWater(x, z) && G.terrainHeight(x, z) > 1.2
+    && !city.onRoad(x, z, 1.5, false) && !world.inBuilding(x, z, 1.5);
+  // (where they landed is kept by the boot cache: bootcache.js memo)
+  const at = memo('pickups', () => Float64Array.from(vergeSpots(city, anchors, () => true, usable)),
+    (v) => v instanceof Float64Array && v.length === anchors.length * 3);
+  const spots = anchors.map((_, i) => ({ x: at[i * 3], z: at[i * 3 + 1], kind: kinds[i] }));
+  for (const s of spots) {
+    const y = city.groundAt(s.x, s.z, null) + 1.1;
+    const g = new THREE.Group();
+    if (s.kind === 'gun') {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.26, 0.28), new THREE.MeshLambertMaterial({ color: 0x2b3138 }));
+      const h = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.42, 0.24), new THREE.MeshLambertMaterial({ color: 0x3b2b20 }));
+      h.position.set(-0.25, -0.3, 0);
+      g.add(m, h);
+    } else {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 0.25), new THREE.MeshLambertMaterial({ color: 0xf2f2f2 }));
+      const c1 = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 0.28), new THREE.MeshBasicMaterial({ color: 0xe5484d }));
+      const c2 = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.5, 0.28), new THREE.MeshBasicMaterial({ color: 0xe5484d }));
+      g.add(m, c1, c2);
+    }
+    const halo = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.1, 1.1, 3, 14, 1, true),
+      new THREE.MeshBasicMaterial({ color: s.kind === 'gun' ? 0x8fd1ff : 0x7ef0a4, transparent: true, opacity: 0.2, side: THREE.DoubleSide, forceSinglePass: true, depthWrite: false })
+    );
+    halo.position.y = 0.6;
+    g.add(halo);
+    g.position.set(s.x, y, s.z);
+    scene.add(g);
+    // On both maps: a pickup that could only be seen from 300 m was a pickup
+    // nobody found ("how do I get a weapon?"). Off the map while it respawns.
+    const place = { x: s.x, z: s.z, kind: s.kind, name: s.kind === 'gun' ? 'Pistol' : 'First aid', near: false, off: false, foot: true,
+      hello: s.kind === 'gun' ? 'A pistol — walk over it to pick it up, then ATTACK (J) fires'
+        : 'A first-aid kit — walk over it to patch yourself up' };
+    hud.places.push(place);
+    pickups.push({ ...s, y, g, taken: 0, place });
+  }
+}
+
+/**
+ * Where WASTED takes you: RESPAWN_SITES on a dry verge beside a street (the
+ * pickups' snap, stricter: a street that is not a freeway, ramp, deck or
+ * bore; two metres clear of every carriageway, building and lake; level
+ * ground), each with a clinic sign and a mark on both maps.
+ */
+function buildRespawns(scene, city) {
+  const anchors = RESPAWN_SITES.map((s) => (s.ll ? G.toWorld(s.ll[0], s.ll[1]) : [G.RESPAWN.x, G.RESPAWN.z]));
+  const nodeOk = (ni) => {
+    let street = false;
+    for (const ei of city.nodes[ni].e) {
+      const e = city.edges[ei];
+      if (e.tunnel || e.elev) return false;
+      if (e.cls !== 'hwy' && e.cls !== 'ramp') street = true;
+    }
+    return street;
+  };
+  const level = (x, z) => {
+    const h = G.terrainHeight(x, z);
+    return Math.abs(G.terrainHeight(x + 2, z) - h) < 1 && Math.abs(G.terrainHeight(x - 2, z) - h) < 1
+      && Math.abs(G.terrainHeight(x, z + 2) - h) < 1 && Math.abs(G.terrainHeight(x, z - 2) - h) < 1;
+  };
+  const usable = (x, z) => !G.isWater(x, z) && G.terrainHeight(x, z) > 1.2 && world.waterLevelAt(x, z) === null
+    && !city.onRoad(x, z, 2, true) && !world.inBuilding(x, z, 2.4) && level(x, z);
+  // (kept by the boot cache, bootcache.js memo: x, z and the street node each)
+  const at = memo('respawns', () => {
+    const out = vergeSpots(city, anchors.slice(1), nodeOk, usable, 90);
+    // Harborview is the measured spot citygen keeps clear: only its node is found
+    return Float64Array.from([G.RESPAWN.x, G.RESPAWN.z, city.nearestNode(G.RESPAWN.x, G.RESPAWN.z, 400), ...out]);
+  }, (v) => v instanceof Float64Array && v.length === RESPAWN_SITES.length * 3);
+  // the sign: a white panel with a red cross on a post, facing the street
+  const post = new THREE.BoxGeometry(0.12, 2.6, 0.12), panel = new THREE.BoxGeometry(1.1, 1.1, 0.08);
+  const barH = new THREE.BoxGeometry(0.7, 0.22, 0.12), barV = new THREE.BoxGeometry(0.22, 0.7, 0.12);
+  const grey = new THREE.MeshLambertMaterial({ color: 0x8a9096 }), white = new THREE.MeshLambertMaterial({ color: 0xf4f4f2 });
+  const red = new THREE.MeshBasicMaterial({ color: 0xd8343a });
+  respawns = RESPAWN_SITES.map((s, i) => {
+    const x = at[i * 3], z = at[i * 3 + 1], node = at[i * 3 + 2];
+    const n = node >= 0 ? city.nodes[node] : null;
+    let dx = n ? x - n.x : 1, dz = n ? z - n.z : 0;
+    const dl = Math.hypot(dx, dz) || 1;
+    dx /= dl; dz /= dl;
+    let sx = x + dx * 1.6, sz = z + dz * 1.6;
+    if (world.inBuilding(sx, sz, 0.3)) { sx = x - dz * 1.6; sz = z + dx * 1.6; }
+    const g = new THREE.Group();
+    const p = new THREE.Mesh(post, grey);
+    p.position.y = 1.3;
+    const b = new THREE.Mesh(panel, white);
+    b.position.y = 2.6;
+    const c1 = new THREE.Mesh(barH, red), c2 = new THREE.Mesh(barV, red);
+    c1.position.y = c2.position.y = 2.6;
+    g.add(p, b, c1, c2);
+    g.position.set(sx, G.terrainHeight(sx, sz), sz);
+    g.rotation.y = Math.atan2(dx, dz);
+    g.visible = false;
+    scene.add(g);
+    hud.places.push({ x, z, kind: 'clinic', name: s.name, near: false, hello: null });
+    return { name: s.name, x, z, node, g };
+  });
+}
+
+// The road network each street node is on: an undirected union-find over the
+// edges, made the first time someone dies (~12 ms on the Mac). Bainbridge,
+// Vashon and the Kitsap shore at Southworth are each their own; Seattle and
+// the Eastside are one, joined by the bridges.
+let roadComp = null;
+function roadComponents() {
+  if (roadComp) return roadComp;
+  const city = cityRef, N = city.nodes.length, par = new Int32Array(N);
+  for (let i = 0; i < N; i++) par[i] = i;
+  const find = (i) => { while (par[i] !== i) { par[i] = par[par[i]]; i = par[i]; } return i; };
+  for (const e of city.edges) { const a = find(e.a), b = find(e.b); if (a !== b) par[a] = b; }
+  for (let i = 0; i < N; i++) par[i] = find(i);
+  return (roadComp = par);
+}
+
+/**
+ * The hospital WASTED takes you to from (x, z): the nearest street node on a
+ * network that has one (where you fell; or, where no road reaches -- Blake
+ * Island, mid-Sound, a pocket of private drives -- the nearest shore that
+ * does), then the nearest respawn on that network as the crow flies. So
+ * Winslow wakes in Winslow, not across the Sound at Harborview.
+ */
+function nearestRespawn(x, z) {
+  if (!respawns.length) return { name: 'Harborview Medical Center', x: G.RESPAWN.x, z: G.RESPAWN.z };
+  const comp = roadComponents(), N = cityRef.nodes;
+  const has = new Uint8Array(N.length);   // by component root (a node index)
+  for (const r of respawns) if (r.node >= 0) has[comp[r.node]] = 1;
+  let bi = -1, bd = Infinity;
+  for (let i = 0; i < N.length; i++) {
+    const n = N[i], d = (n.x - x) * (n.x - x) + (n.z - z) * (n.z - z);
+    if (d < bd && has[comp[i]]) { bd = d; bi = i; }
+  }
+  const c = bi >= 0 ? comp[bi] : -1;
+  let best = null;
+  bd = Infinity;
+  for (const r of respawns) {
+    if (c >= 0 && (r.node < 0 || comp[r.node] !== c)) continue;
+    const d = dist2(x, z, r.x, r.z);
+    if (d < bd) { bd = d; best = r; }
+  }
+  return best || respawns[0];
+}
+
+function updatePickups(dt) {
+  const p = player.position;
+  for (const pk of pickups) {
+    if (pk.taken > 0) {
+      pk.taken -= dt;
+      pk.place.off = pk.taken > 0;
+      continue;
+    }
+    // 3-4 draws each, and a metre-wide box past 300 m is a few pixels: they
+    // were drawing from anywhere on the map.
+    const near = dist2(p.x, p.z, pk.x, pk.z) < 300 * 300;
+    if (pk.g.visible !== near) pk.g.visible = near;
+    if (!near) continue;
+    pk.g.rotation.y += dt * 1.6;
+    pk.g.position.y = pk.y + Math.sin(performance.now() * 0.003) * 0.14;
+    if (player.onFoot && dist2(p.x, p.z, pk.x, pk.z) < 4) {
+      pk.taken = 30;
+      pk.place.off = true;
+      pk.g.visible = false;
+      audio.pickup(pk.kind);
+      if (pk.kind === 'gun') {
+        player.armed = true;
+        player.ammo += 45;
+        hud.showToast('Pistol — 45 rounds');
+      } else {
+        player.health = Math.min(100, player.health + 45);
+        hud.showToast('Health restored');
+      }
+    }
+  }
+  // the clinic signs, 4 draws each: within 400 m
+  for (const r of respawns) {
+    const near = dist2(p.x, p.z, r.x, r.z) < 400 * 400;
+    if (r.g.visible !== near) r.g.visible = near;
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Cursor over the pause menu for a pad.
+ *
+ * A cursor is not an action: being able to confirm and go back is useless if
+ * the player cannot see WHICH row is about to be pressed, so every move paints
+ * `.padfocus`. The ring keys off a pad being present rather than off "the last
+ * input was a stick", because a player using only the d-pad would otherwise
+ * navigate a menu that never highlights anything.
+ */
+function makePadMenu() {
+  let rows = [];
+  let i = 0;
+  let on = false;
+  const paint = () => {
+    for (const r of rows) r.el.classList.toggle('padfocus', on && r === rows[i]);
+  };
+  return {
+    open() {
+      // Same order as the menu reads on screen -- Resume first.
+      rows = [
+        { el: document.getElementById('resumeBtn'), kind: 'click' },
+        { el: document.getElementById('respawnBtn'), kind: 'click' },
+        { el: document.getElementById('rowQuality'), kind: 'seg' },
+        { el: document.getElementById('setShadows'), kind: 'click' },
+        { el: document.getElementById('setMusic'), kind: 'click' },
+        { el: document.getElementById('setSound'), kind: 'click' },
+        { el: document.getElementById('setSens'), kind: 'range' },
+        // (a switch the pad cannot reach is no switch for a pad player)
+        { el: document.getElementById('setPadHints'), kind: 'click' },
+      ].filter((r) => r.el);
+      i = 0;
+      on = true;
+      paint();
+    },
+    close() {
+      on = false;
+      paint();
+      rows = [];
+    },
+    get active() { return on && rows.length > 0; },
+    move(d) {
+      if (!this.active) return;
+      i = (i + d + rows.length) % rows.length;
+      paint();
+    },
+    adjust(d) {
+      if (!this.active) return;
+      const r = rows[i];
+      if (r.kind === 'range') {
+        const el = r.el;
+        const step = parseFloat(el.step) || 0.1;
+        el.value = String(clamp(parseFloat(el.value) + d * step,
+          parseFloat(el.min), parseFloat(el.max)));
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      } else if (r.kind === 'seg') {
+        const opts = Array.from(document.querySelectorAll('[data-quality]'));
+        const cur = opts.findIndex((o) => o.classList.contains('on'));
+        const next = opts[clamp((cur < 0 ? 0 : cur) + d, 0, opts.length - 1)];
+        if (next) next.click();
+      }
+    },
+    confirm() {
+      if (!this.active) return;
+      const r = rows[i];
+      if (r.kind === 'click') r.el.click();
+      else if (r.kind === 'seg') this.adjust(1);
+    },
+  };
+}
+const padMenu = makePadMenu();
+let setPausedRef = null;
+let bgPaused = false;   // paused by leaving the app (visibilitychange), not by the menu button
+
+/** Fill the Jobs list and the delivery buttons. Read only when paused. */
+function refreshJobs() {
+  if (!acts) return;
+  const s = acts.summary();
+  const cnt = document.getElementById('jobsCount');
+  const mon = document.getElementById('jobsMoney');
+  const list = document.getElementById('jobsList');
+  if (cnt) cnt.textContent = `${s.done}/${s.total} · ${s.golds} gold · finds ${s.found}/${s.findTotal} · tech tour ${s.tech}/${s.techTotal}`;
+  if (mon) mon.textContent = formatMoney(game.money);
+  refreshPassport();
+  for (const b of document.querySelectorAll('.buy')) b.disabled = game.money < +b.dataset.cost;
+  if (!list) return;
+  const COL = { gold: '#f4c542', silver: '#c8d0d8', bronze: '#c0763c' };
+  list.innerHTML = s.rows.map((r) => `<div class="jobRow"><span class="nm">${r.name}</span>`
+    + `<span class="bt">${r.best || '--'}`
+    + (r.medal && r.medal !== 'none' ? `<i class="md" style="background:${COL[r.medal]}"></i>` : '')
+    + '</span></div>').join('');
+}
+
+/** The Seattle Passport panel: the wallet, the rank and what the game has saved. Read only when paused. */
+function refreshPassport() {
+  const box = document.getElementById('passport');
+  if (!box || !career) return;
+  const p = career.passport();
+  const rk = document.getElementById('ppRank');
+  if (rk) rk.textContent = `${p.rank.toUpperCase()} · ${p.pct}%`;
+  const bar = document.getElementById('ppBar');
+  if (bar) bar.style.width = `${Math.min(100, p.frac * 100).toFixed(1)}%`;
+  const nx = document.getElementById('ppNext');
+  if (nx) nx.textContent = (p.next ? `${p.next.name} at ${p.next.pct}%` : 'top rank') + ` · wallet ${formatMoney(p.money)}`
+    + (p.extra.length ? ` · ${p.extra.join(' · ')}` : '');
+  const grid = document.getElementById('ppGrid');
+  if (grid) grid.innerHTML = p.rows.map((r) => `<div class="ppRow${r.done >= r.total ? ' full' : ''}"><span>${r.label}</span>`
+    + `<b>${r.done}/${r.total}</b></div>`).join('');
+}
+let warpArmed = false;
+let showStation = () => {};   // wireUi: mark the tuned station in the menu
+// the menu/map idle (see frame): frames drawn since it opened, and a request
+// for one more
+let idleDrawn = 0, idleRedraw = false;
+const pauseMenuEl = document.getElementById('pauseMenu');
+
+function setMapOpen(v) {
+  game.mapOpen = v;
+  document.getElementById('mapOverlay').classList.toggle('show', v);
+  if (v) hud.drawBigMap(player, game);
+  else setWarpArmed(false);
+}
+
+function setWarpArmed(v) {
+  warpArmed = v;
+  document.getElementById('warpBtn').classList.toggle('on', v);
+  document.getElementById('mapHint').textContent = v
+    ? (controls.hasPad ? 'Stick to aim, Ⓐ to drop in' : 'Tap anywhere to drop in')
+    : (controls.hasPad ? 'Ⓧ to set spawn, Ⓑ to close' : 'Tap the map to close');
+  if (v) {
+    // Start the crosshair on the player, so a pad has something to move.
+    hud.warp = { x: player.position.x, z: player.position.z, ok: true, snap: null };
+    refreshWarp(hud.warp.x, hud.warp.z);
+  } else {
+    hud.warp = null;
+  }
+  if (game.mapOpen) hud.drawBigMap(player, game);
+}
+
+/** Resolve a map point to the road it would drop you on, for the preview. */
+function refreshWarp(x, z) {
+  const snap = cityRef.respawnPointNear(x, z);
+  hud.warp = { x, z, ok: !!snap, snap };
+  if (game.mapOpen) hud.drawBigMap(player, game);
+  return snap;
+}
+
+/**
+ * Drop the player at a point picked off the map.
+ *
+ * Always snapped to a road node -- the tap is nearly always mid-block, and the
+ * point of the feature is to arrive somewhere you can drive away from. If there
+ * is no road within range (open water, the middle of Discovery Park) it refuses
+ * and says so rather than putting the player in the trees.
+ */
+function warpTo(x, z) {
+  const snap = refreshWarp(x, z);
+  if (!snap) {
+    hud.showToast('No road near there');
+    return;
+  }
+  setMapOpen(false);
+  player.respawn(snap.x, snap.z);
+  controls.setMode('foot');
+  game.dead = false;
+  game.busted = false;
+  document.getElementById('wasted').classList.remove('show');
+  world.update(snap.x, snap.z, 40);
+  hud.showToast(`Dropped in — ${G.placeNameAt(snap.x, snap.z)}`);
+  game.newTarget();
+}
+
+/**
+ * Everything the pad drives outside gameplay. Runs before the pause check in
+ * frame(), because the pad that opened the menu has to be able to work it.
+ */
+function handlePadUi(dt) {
+  const u = controls.takeUi();
+  // BACK FROM THE HOME SCREEN, A RESUMES. iOS hides a pad from the page
+  // until a button on it is pressed, and the press that brings it back is
+  // never reported as one -- so the A that should have resumed did nothing
+  // and only a tap on the glass would. A pad (re)joining while the menu the
+  // app's own background pause put up is showing resumes, as A would.
+  if (controls.padJoined) {
+    controls.padJoined = false;
+    if (bgPaused && game.paused && !game.held && !game.mapOpen && setPausedRef) { setPausedRef(false); return; }
+  }
+
+  if (u.pause) {
+    if (game.mapOpen) setMapOpen(false);
+    else if (setPausedRef) setPausedRef(!game.paused);
+    return;
+  }
+  if (game.mapOpen) {
+    if (u.warp) setWarpArmed(!warpArmed);
+    if (warpArmed) {
+      // The crosshair flies at a fixed metres-per-second so it crosses the
+      // 16 km map in a sane time; the map is drawn at whatever zoom fits, so
+      // moving in screen pixels would change speed with the window.
+      const s = controls.padLook();
+      const m = controls.padMove();
+      const vx = (Math.abs(m.x) > Math.abs(s.x) ? m.x : s.x);
+      const vz = (Math.abs(m.y) > Math.abs(s.y) ? m.y : s.y);
+      if (vx || vz) {
+        const sp = 2600 * dt;
+        refreshWarp(
+          G.clampToMap((hud.warp ? hud.warp.x : player.position.x) + vx * sp),
+          G.clampToMap((hud.warp ? hud.warp.z : player.position.z) + vz * sp),
+        );
+      }
+      if (u.confirm && hud.warp) { warpTo(hud.warp.x, hud.warp.z); return; }
+      if (u.back) { setWarpArmed(false); return; }
+      if (u.map) setMapOpen(false);
+      return;
+    }
+    if (u.map || u.back || u.confirm) setMapOpen(false);
+    return;
+  }
+  if (game.paused) {
+    if (u.nav) padMenu.move(u.nav);
+    if (u.navX) padMenu.adjust(u.navX);
+    if (u.confirm) padMenu.confirm();
+    if (u.back && setPausedRef) setPausedRef(false);
+    return;
+  }
+  if (u.map) setMapOpen(true);
+  // D-pad down in a car: a taxi's fares or a police car's missions, on or off
+  // (a fire rig's call is firecalls.js's, off the same button held)
+  if (u.job && !game.dead) {
+    if (taxi && (taxi.on || taxi.available(player))) taxi.toggle(player);
+    else if (missions && (missions.run || missions.nextT > 0 || missions.available(player))) missions.toggle(player);
+  }
+  if (u.radio) {
+    audio.init();
+    audio.resume();
+    if (!audio.musicOn) {
+      audio.musicOn = true;
+      hud.showToast(`♪ ${audio.stationName()}`);
+    } else {
+      hud.showToast(`♪ ${audio.nextStation(u.radio > 0 ? 1 : -1)}`);
+    }
+  }
+}
+
+function wireUi() {
+  const pause = document.getElementById('pauseMenu');
+  const bigMapWrap = document.getElementById('mapOverlay');
+
+  const setPaused = (v) => {
+    // an activity (arcade, fishing ...) owns the freeze and has its own
+    // screen: the menu does not open over it, and Resume cannot end it
+    if (v && game.held) return;
+    game.paused = v;
+    if (!v) bgPaused = false;
+    pause.classList.toggle('show', v);
+    if (v) refreshJobs();          // the Jobs list is only ever read here
+    if (v) showStation();
+    if (v) padMenu.open(); else padMenu.close();
+    // iOS suspends the AudioContext when the app goes to the background and
+    // does not hand it back on its own, so the world would come back silent.
+    if (!v) audio.resume();
+  };
+  setPausedRef = setPaused;
+  document.getElementById('pauseBtn').addEventListener('click', () => setPaused(!game.paused));
+  document.getElementById('resumeBtn').addEventListener('click', () => setPaused(false));
+  // A setting changed in the menu (graphics, shadows, a post pass) shows
+  // behind it: one redraw per tap.
+  pause.addEventListener('click', () => { idleRedraw = true; });
+  // Tap outside the card to close the menu, like the map.
+  pause.addEventListener('click', (e) => { if (e.target === pause) setPaused(false); });
+  // Tap the minimap to open the full map -- it replaced a dedicated button.
+  document.getElementById('minimapWrap').addEventListener('click', () => {
+    setMapOpen(!game.mapOpen);
+  });
+  document.getElementById('warpBtn').addEventListener('click', (e) => {
+    e.stopPropagation(); // the overlay's own click closes the map
+    setWarpArmed(!warpArmed);
+  });
+  bigMapWrap.addEventListener('click', (e) => {
+    // Armed, a tap on the map is a destination rather than "close". Disarmed,
+    // the old behaviour is untouched: tap anywhere to dismiss.
+    if (warpArmed) {
+      const w = hud.mapToWorld(e.clientX, e.clientY);
+      if (w) { warpTo(w.x, w.z); return; }
+    }
+    setMapOpen(false);
+  });
+  // RADIO on the driving pad: the next station. pointerdown, like every pad
+  // button (the pad's own handler stops propagation, not this listener).
+  // MISSION, in a police vehicle: start the police missions, or quit them
+  // (policemissions.js). N on a keyboard.
+  const missionPad = document.querySelector('[data-btn="policemission"]');
+  if (missionPad) missionPad.addEventListener('pointerdown', () => { if (missions && !game.paused && !game.dead) missions.toggle(player); });
+  // FARE, in a taxi: go on shift, or off it (taxi.js). T on a keyboard.
+  const farePad = document.querySelector('[data-btn="taxifare"]');
+  if (farePad) farePad.addEventListener('pointerdown', () => { if (taxi && !game.paused && !game.dead) taxi.toggle(player); });
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyT' && !e.repeat && !/^(INPUT|TEXTAREA|SELECT)$/.test(e.target && e.target.tagName) && taxi && !game.paused && !game.dead && (taxi.on || taxi.available(player))) taxi.toggle(player);
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyN' && !e.repeat && missions && !game.paused && !game.dead && (missions.run || missions.nextT > 0 || missions.available(player))) missions.toggle(player);
+  });
+  const radioPad = document.querySelector('[data-btn="radio"]');
+  if (radioPad) radioPad.addEventListener('pointerdown', () => {
+    audio.init();
+    audio.resume();
+    audio.primeLive();
+    if (!audio.musicOn) { audio.musicOn = true; game.settings.music = true; document.getElementById('setMusic').classList.add('on'); }
+    else audio.nextStation();
+    hud.showToast(`♪ ${audio.stationName()}`);
+  });
+
+  const bind = (id, key, apply) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('click', () => {
+      game.settings[key] = !game.settings[key];
+      el.classList.toggle('on', game.settings[key]);
+      apply(game.settings[key]);
+    });
+    el.classList.toggle('on', game.settings[key]);
+  };
+  bind('setShadows', 'shadows', (v) => { renderer.shadowMap.enabled = v && game.settings.quality !== 'low'; });
+  for (const el of document.querySelectorAll('[data-quality]')) {
+    el.addEventListener('click', () => applyQuality(el.dataset.quality, true));
+  }
+  bind('setMusic', 'music', (v) => { audio.musicOn = v; });
+  // The station picker. The radio button in the HUD cycles the same list.
+  const stEl = document.getElementById('stations');
+  const stBtns = STATION_NAMES.map((st, i) => {
+    const b = document.createElement('button');
+    b.className = 'stn';
+    b.textContent = st.name;
+    if (!st.live) { const t = document.createElement('span'); t.className = 'syn'; t.textContent = ' · synth'; b.appendChild(t); }
+    b.addEventListener('click', () => {
+      audio.init();
+      audio.resume();
+      audio.primeLive();
+      audio.setStation(i);
+      audio.musicOn = true;
+      game.settings.music = true;
+      document.getElementById('setMusic').classList.add('on');
+      showStation();
+    });
+    stEl.appendChild(b);
+    return b;
+  });
+  showStation = () => stBtns.forEach((b, i) => {
+    b.classList.toggle('on', i === audio.station);
+    b.style.display = audio.playable(i) ? '' : 'none';
+  });
+  bind('setSound', 'sound', (v) => { audio.enabled = v; });
+  bind('setDebug', 'debug', (v) => { debugEl.classList.toggle('on', v); });
+  const padHints = (v) => {
+    controls.root.dataset.nohints = v ? '' : '1';
+    try { localStorage.setItem('autokw-padhints', v ? '1' : '0'); } catch (e) { /* private mode */ }
+  };
+  bind('setPadHints', 'padHints', padHints);
+  padHints(game.settings.padHints);
+  bind('setPost', 'post', (v) => { postfx.setPostEnabled(v); syncFogColour(); });
+  // the flight recorder's last session: read it, copy it into a message
+  const fShow = document.getElementById('flightShow');
+  if (fShow) fShow.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(8,12,18,0.96);color:#dfe7ee;display:flex;flex-direction:column;'
+      + 'padding:calc(12px + env(safe-area-inset-top,0px)) calc(12px + env(safe-area-inset-right,0px)) calc(12px + env(safe-area-inset-bottom,0px)) calc(12px + env(safe-area-inset-left,0px));gap:10px';
+    const pre = document.createElement('pre');
+    pre.style.cssText = 'flex:1;overflow:auto;margin:0;font:11px/1.35 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-all;-webkit-user-select:text;user-select:text';
+    pre.textContent = flightText();
+    const bar = document.createElement('div');
+    bar.style.cssText = 'display:flex;gap:10px';
+    const mk = (label, fn) => { const b = document.createElement('button'); b.className = 'segbtn'; b.textContent = label; b.style.cssText = 'flex:1;height:42px'; b.addEventListener('click', (ev) => { ev.stopPropagation(); fn(b); }); bar.appendChild(b); };
+    mk('Copy', (b) => {
+      const done = () => { b.textContent = 'Copied'; };
+      try { navigator.clipboard.writeText(pre.textContent).then(done, () => { selectAll(); b.textContent = 'Selected: copy it'; }); } catch (x) { selectAll(); }
+    });
+    mk('Close', () => box.remove());
+    const selectAll = () => { const r = document.createRange(); r.selectNodeContents(pre); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); };
+    box.append(pre, bar);
+    for (const t of ['pointerdown', 'pointerup', 'touchstart', 'touchend']) box.addEventListener(t, (ev) => ev.stopPropagation());
+    document.body.appendChild(box);
+  });
+
+  // Per-pass switches. `scene.fog` is nulled rather than zeroed because the fog
+  // term is compiled into every material -- setting density to 0 still pays for
+  // it, and the question being answered is what things cost as well as what
+  // they look like.
+  let savedFog = null;
+  for (const b of document.querySelectorAll('.dbg')) {
+    b.addEventListener('click', () => {
+      const on = !b.classList.contains('on');
+      b.classList.toggle('on', on);
+      if (b.dataset.fx) postfx.setFx(b.dataset.fx, on);
+      else if (b.dataset.world === 'fog') {
+        if (on) { scene.fog = savedFog || scene.fog; }
+        else { savedFog = scene.fog; scene.fog = null; }
+        scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
+      }
+    });
+  }
+
+  const sens = document.getElementById('setSens');
+  sens.addEventListener('input', () => {
+    controls.sensitivity = parseFloat(sens.value);
+  });
+
+  document.getElementById('respawnBtn').addEventListener('click', () => {
+    setPaused(false);
+    doRespawn();
+  });
+
+  // UNLOCK ON A GESTURE THE BROWSER ACCEPTS, AND KEEP TRYING UNTIL IT TAKES.
+  // This listened for the first pointerdown and then removed itself. A TOUCH
+  // pointerdown is not user activation (only pointerup / touchend / click
+  // are, plus keydown and a mouse's pointerdown), so on the iPhone the first
+  // touch -- the stick, to walk -- created the context but could not start
+  // it, and the listener was gone: the world stayed silent until some later
+  // resume() happened to land inside a real gesture (unpausing, the radio
+  // button), and then everything started at once. Capture phase, because the
+  // on-screen buttons stop propagation. The context itself is created at boot
+  // (audio.init() before the reveal), so the sound bank renders while you
+  // load instead of after the first tap.
+  const UNLOCK = ['pointerup', 'touchend', 'click', 'keydown', 'pointerdown'];
+  // And the listeners STAY. They used to remove themselves once the context
+  // first ran, so when iOS stopped it later (the home screen, a call, Siri)
+  // no tap could ever start it again and the game went silent for good. A
+  // running context makes this a single state check.
+  const startAudio = (e) => {
+    // (running is not enough: a context resumed without a tap can run muted
+    // or stalled -- audio.js _watch -- and only a tap starts it again)
+    if (audio.ctx && audio.ctx.state === 'running' && audio._livePrimed && audio._kicked && !audio._stalled) return;
+    audio.init();
+    // The radio's element first, then the context: on iOS a media element
+    // starting up can interrupt Web Audio, so the context is resumed LAST in
+    // the gesture, after anything that could knock it over. (Same gesture, so
+    // Safari counts the radio as user-initiated: getting into a car happens
+    // in the frame loop and would be rejected on its own.)
+    audio.primeLive();
+    audio.resume(e && e.type);
+    audio.unstall();
+  };
+  for (const ev of UNLOCK) window.addEventListener(ev, startAudio, true);
+
+  // Size from the canvas box, not window.inner*: in iOS standalone the document
+  // is taller than the visual viewport by the status-bar inset.
+  const fit = () => {
+    idleRedraw = true;   // a resize clears the canvas
+    const c = renderer.domElement;
+    const w = c.clientWidth || window.innerWidth;
+    const h = c.clientHeight || window.innerHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    postfx.setSize(w, h, renderer.getPixelRatio());
+    hud.resize();
+  };
+  window.addEventListener('resize', fit);
+  renderer.domElement.addEventListener('webglcontextrestored', () => { idleRedraw = true; });
+  window.addEventListener('orientationchange', () => setTimeout(fit, 250));
+  fit();
+  // Pause on the way out, but through setPaused so the menu comes WITH it.
+  // Setting game.paused directly stopped the world without showing anything to
+  // tap, so coming back from the home screen looked like a hung game -- the
+  // only way out was the pause button, which nobody presses on a frozen app.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { setPaused(true); bgPaused = game.paused; }
+    else if (game.paused && !game.held) { pause.classList.add('show'); idleRedraw = true; }
+  });
+}
+
+// Seattle Police headquarters, the Justice Center at 5th and Cherry: where
+// you are released after a bust.
+const POLICE_HQ = [47.6043, -122.3296];
+
+/**
+ * Insurance for game.hold: a hold whose activity is no longer running (its
+ * start() threw after the hold, an onEnd that never came) would freeze the
+ * world for good, because Resume cannot clear a hold by design. Each frame, a
+ * hold with nothing behind it is let go.
+ */
+function reapHolds() {
+  const live = { fishing, arcade, pinball, hockey, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops };
+  for (const who of game.holds) {
+    if (who === 'seafair') { if (seafair && (seafair.state === 'menu' || seafair.state === 'done')) continue; }
+    else if (live[who] && live[who].active) continue;
+    game.release(who);
+    game.leaks.push(who);
+  }
+}
+
+function doRespawn() {
+  const busted = game.busted, stars = game.wanted;
+  for (const who of game.holds) game.leaks.push(who);   // (nothing is playing if you are respawning)
+  game.holds.clear();
+  game.dead = false;
+  game.busted = false;
+  game.wanted = 0;
+  game.points = 0;
+  game.cool = 0;
+  document.getElementById('wasted').classList.remove('show');
+  if (police) police.clear();
+  // dying (or Respawn from the menu) on the Great Wheel or in the Needle's
+  // elevator: the ride's mode, camera and hidden body must not outlive it
+  if (wheelRide) wheelRide.abort();
+  if (needleTop) needleTop.abort();
+  if (player.vehicle) player.exitVehicle(true);
+  if (busted) {
+    // a fine by the stars you had, and your gun confiscated
+    const fine = Math.min(game.money, 100 + 100 * stars);
+    game.money -= fine;
+    const had = player.armed;
+    player.armed = false; player.ammo = 0;
+    const [hx, hz] = G.toWorld(POLICE_HQ[0], POLICE_HQ[1]);
+    const sp = cityRef.respawnPointNear(hx, hz) || HOSPITAL;
+    player.respawn(sp.x, sp.z);
+    controls.setMode('foot');
+    hud.showToast(`Released from the Justice Center — ${formatMoney(fine)} fine${had ? ', weapon confiscated' : ''}`, 3600);
+    return;
+  }
+  game.money = Math.max(0, game.money - 200);
+  // where WASTED said (damagePlayer), or, from the menu, the nearest from here
+  const p = player.position;
+  const r = game.respawnAt || nearestRespawn(p.x, p.z);
+  game.respawnAt = null;
+  player.respawn(r.x, r.z);
+  controls.setMode('foot');
+  hud.showToast(r.name);
+}
+
+/**
+ * The police car you are driving: SIREN (the pad's button, G, a pad's R3)
+ * switches its siren and its light bar on and off. Off whenever you take one
+ * (a commandeered unit's strobes go dark), off again when you leave it by
+ * any door (out, wrecked, respawned, warped). A cruiser bought from the
+ * delivery menu gets its light bar here. The siren is traffic's positional
+ * siren voice (audio.js picks any car with `sirenOn`), and traffic ahead
+ * eases off and keeps right for it (traffic.sirenFrom).
+ */
+let copCar = null;
+// (police missions switch it on for a run: game.setSiren)
+function setSiren(v, on) {
+  v.sirenOn = on;
+  v.siren = 0;
+  traffic.policeLights(v, 0, on);
+  const b = document.querySelector('[data-btn="siren"]');
+  if (b) b.classList.toggle('on', on);
+}
+function updateSiren(dt) {
+  const pv = player.vehicle;
+  // a police car, or a fire rig (its own flashing heads: firecalls.js shows
+  // them while `sirenOn`; `data-police` shows SIREN for both)
+  const v = pv && (pv.spec.police || pv.spec.fire) && !pv.dead ? pv : null;
+  if (v !== copCar) {
+    if (copCar) setSiren(copCar, false);
+    copCar = v;
+    if (v && v.spec.police) traffic.lightBar(v);
+    if (v) setSiren(v, false);
+    controls.root.dataset.police = v ? '1' : '';
+    // the police MISSION (policemissions.js) is a police vehicle's only; a
+    // fire rig has its own (firecalls.js, data-fire)
+    controls.root.dataset.cop = v && v.spec.police ? '1' : '';
+  }
+  // THE GEAR (vehicles.js gearPart): up only in the air, down anywhere
+  const gv = pv && pv.spec.retract && !pv.dead ? pv : null;
+  controls.root.dataset.gear = gv ? '1' : '';
+  if (controls.takeGear() % 2 && gv) {
+    if (gv.gearUp) { gv.gearUp = false; hud.showToast('Gear down', 1200); }
+    else if (gv.airborne) { gv.gearUp = true; hud.showToast('Gear up', 1200); }
+    else hud.showToast('Gear stays down on the ground', 1400);
+  }
+  const gb = document.querySelector('[data-btn="gear"]');
+  if (gb) gb.classList.toggle('on', !!(gv && gv.gearUp));
+  if (controls.takeSiren() % 2 && v) {
+    setSiren(v, !v.sirenOn);
+    hud.showToast(v.sirenOn ? 'Siren on' : 'Siren off', 1200);
+  }
+  if (v) traffic.policeLights(v, dt, v.sirenOn);
+  traffic.sirenFrom = v && v.sirenOn ? v : null;
+}
+
+// ---------------------------------------------------------------------------
+
+// Per-system CPU time in the frame loop, behind a debug flag: on while the
+// pause-menu debug readout is (it prints the top systems there, which is the
+// only profiler a phone has), or `__dbg.perfSys.on = true` from a harness
+// (tools/perfbisect.mjs). Off, it costs one branch per system.
+const perfSys = { on: false, ms: {}, frames: 0 };
+let perfT = 0;
+let helloCd = 0;   // seconds until the next place may say hello
+let balloonCheck = 5;
+
+/**
+ * Each fishing site at the outermost walkable point of its deck: the platform
+ * point nearest the site that has open water a few metres beyond it, the one
+ * furthest from the shore. The rod stands there, facing the water.
+ */
+function fishingSpots() {
+  const out = [];
+  for (const site of FISHING_SITES) {
+    let best = null;
+    for (let dz = -70; dz <= 70; dz += 2) for (let dx = -70; dx <= 70; dx += 2) {
+      const x = site.x + dx, z = site.z + dz;
+      const y = cityRef.platformAt(x, z);
+      if (y == null) continue;
+      // which way is open water, right past the edge?
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * Math.PI * 2, ox = Math.sin(a), oz = Math.cos(a);
+        const ex = x + ox * 2.2, ez = z + oz * 2.2;
+        if (cityRef.platformAt(ex, ez) != null || !G.isWater(ex, ez) || !G.isWater(x + ox * 14, z + oz * 14)) continue;
+        const score = G.shoreDist(x, z) - Math.hypot(dx, dz) * 0.2;
+        if (!best || score > best.score) best = { x, z, y, heading: a, score };
+      }
+    }
+    if (!best) { blog(`fishing: no deck edge at ${site.name}`); continue; }
+    const wl = world.waterLevelAt(best.x, best.z);
+    // the player stands a metre in from the edge; the rod stand beside them
+    const fx = Math.sin(best.heading), fz = Math.cos(best.heading), rx = fz, rz = -fx;
+    const sp = { name: site.name, x: best.x - fx * 0.9, z: best.z - fz * 0.9, y: best.y, heading: best.heading,
+      water: wl !== null ? wl : 0, rx: best.x - fx * 0.5 + rx * 1.1, rz: best.z - fz * 0.5 + rz * 1.1 };
+    sp.prop = fishingProp(sp);
+    out.push(sp);
+  }
+  return out;
+}
+
+/** A rod in a stand, a bucket and a tackle box, on the deck at a spot. */
+function fishingProp(sp) {
+  const b = new Builder(false);
+  const fx = Math.sin(sp.heading), fz = Math.cos(sp.heading), rx = fz, rz = -fx;
+  const X = sp.rx, Z = sp.rz, Y = sp.y;
+  b.box(X, Y, Z, 0.12, 0.9, 0.12, -sp.heading, [0.35, 0.25, 0.16]);                         // stand post
+  b.prism(X + rx * 0.7, Y, Z + rz * 0.7, 0.16, 0.34, 10, [0.85, 0.85, 0.82]);               // bucket
+  b.prism(X + rx * 0.7, Y + 0.32, Z + rz * 0.7, 0.17, 0.03, 10, [0.62, 0.62, 0.6]);
+  b.box(X - rx * 0.55, Y, Z - rz * 0.55, 0.42, 0.2, 0.24, -sp.heading, [0.2, 0.42, 0.24]);   // tackle box
+  const g = new THREE.Group();
+  const m = new THREE.Mesh(b.build(), world.mats.flat);
+  m.castShadow = true;
+  g.add(m);
+  // the rod itself, leaning out over the water from the stand
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.016, 2.2, 6), new THREE.MeshStandardMaterial({ color: 0x1c2430, roughness: 0.5, metalness: 0.3 }));
+  rod.position.set(X + fx * 0.6, Y + 1.5, Z + fz * 0.6);
+  rod.rotation.order = 'YXZ';
+  rod.rotation.y = sp.heading;
+  rod.rotation.x = 0.75;
+  g.add(rod);
+  g.userData.rod = rod;
+  scene.add(g);
+  return g;
+}
+/**
+ * The kayak rental on the seaplane dock's landing: a rack of three boats on
+ * two frames, paddles leaning on it, and the board. Its kayaks to take are
+ * the four moored at the float (landmarks.js SEAPLANE_DOCK.moorings).
+ */
+function kayakRack(at) {
+  const b = new Builder(false);
+  const { x, y, z } = at;
+  const wood = [0.42, 0.3, 0.2], frame = [0.3, 0.32, 0.34];
+  // Builder.box turns the other way from rotation.y; everything here is along world x
+  for (const dx of [-1.1, 1.1]) {
+    b.box(x + dx, y, z - 0.35, 0.08, 1.5, 0.08, 0, frame);
+    b.box(x + dx, y, z + 0.35, 0.08, 1.5, 0.08, 0, frame);
+    for (const yy of [0.45, 0.95, 1.45]) b.box(x + dx, y + yy, z, 0.08, 0.06, 0.85, 0, wood);
+  }
+  const hulls = [[0.95, 0.72, 0.1], [0.84, 0.2, 0.16], [0.16, 0.56, 0.72]];
+  hulls.forEach((c, i) => {
+    // a kayak upside down on each rung: a long flattened spheroid
+    const g = new THREE.SphereGeometry(1, 14, 8);
+    g.scale(2.1, 0.13, 0.3); g.translate(x, y + 0.6 + i * 0.5, z);
+    const p = g.attributes.position, n = g.attributes.normal, ix = g.index.array, base = b.pos.length / 3;
+    for (let q = 0; q < p.count; q++) b.vert(p.getX(q), p.getY(q), p.getZ(q), n.getX(q), n.getY(q), n.getZ(q), 0, 0, c[0], c[1], c[2]);
+    for (let q = 0; q < ix.length; q += 3) b.face3(base + ix[q], base + ix[q + 1], base + ix[q + 2]);
+    g.dispose();
+  });
+  // paddles leaning against the end frame
+  for (const k of [0, 1, 2]) {
+    b.tube([x + 1.35 + k * 0.1, y, z - 0.3 + k * 0.2], [x + 1.25 + k * 0.1, y + 2.1, z - 0.3 + k * 0.2], 0.016, 6, [0.16, 0.17, 0.19], true);
+    b.box(x + 1.26 + k * 0.1, y + 1.8, z - 0.3 + k * 0.2, 0.012, 0.45, 0.16, 0, [0.95, 0.78, 0.12]);
+  }
+  const m = new THREE.Mesh(b.build(), world.mats.flat);
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m);
+  // the board
+  const c = document.createElement('canvas'); c.width = 384; c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#1f4f6e'; g.fillRect(0, 0, 384, 128);
+  g.fillStyle = '#fff'; g.font = '900 46px Helvetica, Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText('KAYAKS', 192, 50);
+  g.font = '700 20px Helvetica, Arial, sans-serif'; g.fillStyle = '#ffd24a';
+  g.fillText('BY THE HOUR · ON THE FLOAT', 192, 98);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 0.6), new THREE.MeshStandardMaterial({ map: t, roughness: 0.7, side: THREE.DoubleSide }));
+  sign.position.set(x - 2.0, y + 1.4, z);
+  sign.rotation.y = Math.PI / 2;
+  scene.add(sign);
+  const post = new THREE.Mesh(new THREE.BoxGeometry(0.07, 1.1, 0.07), world.mats.flat);
+  post.position.set(x - 2.0, y + 0.55, z);
+  scene.add(post);
+}
+/**
+ * PRIVATE BOATS. The lakes' shores are lined with private docks -- OSM maps
+ * ~1,100 piers under 70 m on Lake Washington alone, ~230 round Mercer Island
+ * -- and the marinas' fleets were the only boats on the water: a boat was
+ * hard to find. A third of the small lake docks (by hash, so always the same
+ * ones) have a runabout or a jet ski tied up alongside the end: the pier's
+ * point with the most water under it, 3 m to whichever side is open water.
+ * Lakes only (a level over 3 m): the Sound's piers are the city's.
+ */
+function privateMoorings(list) {
+  const out = [];
+  for (const q of list) {
+    const P = q.p;
+    if (!P || P.length < 2) continue;
+    let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9, cx = 0, cz = 0;
+    for (const [x, z] of P) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); cx += x; cz += z; }
+    cx /= P.length; cz /= P.length;
+    if (Math.max(x1 - x0, z1 - z0) > 70) continue;
+    if (hash2(Math.round(cx), Math.round(cz)) > 0.33) continue;
+    let tip = null, dep = 0, wl = null;
+    for (const [x, z] of P) {
+      const w = world.waterLevelAt(x, z);
+      if (w === null || w < 3) continue;
+      const d = w - G.terrainHeight(x, z);
+      if (d > dep) { dep = d; tip = [x, z]; wl = w; }
+    }
+    if (!tip || dep < 1.2) continue;
+    let dx = tip[0] - cx, dz = tip[1] - cz;
+    const l = Math.hypot(dx, dz);
+    if (l < 1) continue;
+    dx /= l; dz /= l;
+    let spot = null;
+    for (const s of [1, -1]) {
+      const x = tip[0] - dx * 2 + dz * s * 3.2, z = tip[1] - dz * 2 - dx * s * 3.2;
+      if (world.waterLevelAt(x, z) !== null && wl - G.terrainHeight(x, z) > 1.2) { spot = [x, z]; break; }
+    }
+    if (!spot) continue;
+    // the dock itself, from the shore to the tip (piers.js leaves docks this
+    // small out of the city; a moored boat draws its own, see mooringDocks)
+    let land = P[0], hi = -1e9;
+    for (const [x, z] of P) { const g = G.terrainHeight(x, z); if (g > hi) { hi = g; land = [x, z]; } }
+    out.push({ x: spot[0], z: spot[1], h: Math.atan2(dx, dz), wl, land, tip, ty: hash2(Math.round(cz), Math.round(cx)) < 0.7 ? 'boat' : 'jetski',
+      col: [0xf2f2ee, 0x1d3f8a, 0xb8322a, 0x2a2a2e, 0x2e7d6b][Math.floor(hash2(Math.round(cx), 7) * 5) % 5], v: null, taken: false });
+  }
+  return out;
+}
+
+/**
+ * Tie up the private boats within 650 m of you and let the ones past 900 m
+ * go (twice a second): ~330 moored at once would be 330 vehicles in every
+ * traffic pass. One you take is yours; its dock fills again once you are far.
+ */
+function updateMoorings(dt) {
+  if (!moorings || (mooringT -= dt) > 0) return;
+  mooringT = 0.5;
+  const p = player.position, IN = 650, OUT = 900;
+  let changed = false;
+  for (const m of moorings) {
+    const d = Math.hypot(m.x - p.x, m.z - p.z);
+    if (m.v) {
+      if (m.v === player.vehicle || m.v.dead || Math.hypot(m.v.x - m.x, m.v.z - m.z) > 20) { m.v = null; m.taken = true; continue; }
+      if (d > OUT) { traffic.remove(m.v); m.v = null; changed = true; }
+    } else if (!m.taken && d < IN) {
+      const v = traffic.spawnAt(m.x, m.z, m.h, m.ty, m.col, 'apron');
+      v.vLong = 0;
+      v.y = m.wl + 0.12;
+      v.group.position.y = v.y + (v.spec.wheelR || 0.3) + 0.25;
+      m.v = v;
+      changed = true;
+    } else if (m.taken && d > OUT) m.taken = false;
+  }
+  if (changed) mooringDocks();
+}
+
+/**
+ * The docks of the moorings tied up now, one merged mesh (a deck from the
+ * shore to the tip, 2 m wide and 0.55 m over the lake, piles every 4 m):
+ * rebuilt when the set changes, which is seldom. A taken boat's dock stays.
+ */
+let dockMesh = null;
+const DOCK_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 });
+function mooringDocks() {
+  const b = new Builder(false);
+  const p = player.position;
+  for (const m of moorings) {
+    if (!m.v && !(m.taken && Math.hypot(m.x - p.x, m.z - p.z) < 900)) continue;
+    const [ax, az] = m.land, [bx, bz] = m.tip;
+    const len = Math.hypot(bx - ax, bz - az);
+    if (len < 2) continue;
+    const hd = Math.atan2(bx - ax, bz - az), y = m.wl + 0.55;
+    b.box((ax + bx) / 2, y - 0.12, (az + bz) / 2, 2.0, 0.12, len + 0.6, -hd, [0.42, 0.37, 0.31]);
+    const fx = (bx - ax) / len, fz = (bz - az) / len;
+    for (let t = 0; t <= len; t += 4) {
+      for (const s of [1, -1]) b.box(ax + fx * t + fz * s * 0.9, m.wl - 1.6, az + fz * t - fx * s * 0.9, 0.22, y - m.wl + 1.5, 0.22, -hd, [0.22, 0.19, 0.16]);
+    }
+  }
+  if (dockMesh) { scene.remove(dockMesh); dockMesh.geometry.dispose(); dockMesh = null; }
+  if (b.empty) return;
+  dockMesh = new THREE.Mesh(b.build(), DOCK_MAT);
+  dockMesh.name = 'moorings:docks';
+  dockMesh.receiveShadow = true;
+  scene.add(dockMesh);
+}
+
+/** The balloon, inflated and waiting on its launch field. */
+function spawnBalloon() {
+  const v = traffic.spawnAt(BALLOON_SITE.x, BALLOON_SITE.z, BALLOON_SITE.heading, 'balloon', 0xffffff, 'apron');
+  v.vLong = 0;
+  return v;
+}
+function lap(name) {
+  const t = performance.now();
+  perfSys.ms[name] = (perfSys.ms[name] || 0) + (t - perfT);
+  perfT = t;
+}
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  const prof = perfSys.on;
+  if (prof) { perfT = performance.now(); perfSys.frames++; }
+  let dt = (now - last) / 1000;
+  last = now;
+  if (dt > 0.06) dt = 0.06;
+  if (dt <= 0) return;
+
+  frames++;
+  accumFps += dt;
+  if (accumFps > 0.5) {
+    fps = frames / accumFps;
+    frames = 0;
+    accumFps = 0;
+  }
+
+  // Poll and service the pad BEFORE the pause check: the pad that opened the
+  // menu is the one that has to be able to work it, and a paused frame returns
+  // early. takeLook() below then throws away any stick look accumulated while
+  // the menu was up, so the camera doesn't lurch on resume.
+  controls.poll(dt);
+  handlePadUi(dt);
+
+  if (game.holds.size) reapHolds();
+  if (fishing && fishing.active) fishing.update(dt);
+  if (hoops && hoops.active) hoops.update(dt);
+  if (golf && golf.active) golf.update(dt);
+  if (arcade && arcade.active) arcade.update(dt);
+  if (pinball && pinball.active) pinball.update(dt);
+  if (hockey && hockey.active) hockey.update(dt);
+  if (tower && tower.active) tower.update(dt);
+  if (coffee && coffee.active) coffee.update(dt);
+  if (pickle) pickle.update(dt);
+  if (islands) islands.update(dt);
+  if (orcas) orcas.update(dt);
+  updateMoorings(dt);
+  if (saucer) saucer.update(dt);
+  if (fishToss) { if (fishToss.active) fishToss.update(dt); fishToss.updateWorld(dt, camera.position.x, camera.position.z); }
+  if (hoops) hoops.updateVisibility(camera.position.x, camera.position.z);
+  // The paused branch below returns before audio.update(): the engine, traffic
+  // and sirens would hold their last note behind the menu. This ramps the world
+  // bus down (and back up on resume); the radio and the UI cues stay.
+  audio.holdWorld(game.paused || game.mapOpen);
+  if (game.paused || game.mapOpen) {
+    controls.takeLook();
+    audio.tickRadio();            // the radio plays on (and retunes) behind the menu
+    // NOTHING MOVES BEHIND THE MENU OR THE MAP, so stop drawing it. The whole
+    // city, shadows and post chain were redrawn 60 times a second behind an
+    // 86 %-opaque overlay: a paused phone ran as hot as a playing one. Two
+    // frames after it opens (the second takes anything the first compiled),
+    // then the canvas keeps the last one until something asks for a redraw
+    // (idleRedraw: a resize, a setting). Only when the menu is SHOWING or the
+    // map is open: harnesses pause the game without the menu to pose shots,
+    // and those still draw every frame.
+    // (the fishing game's screen covers the city too, once it is up)
+    const idle = game.mapOpen || pauseMenuEl.classList.contains('show') || (fishing && fishing.el.classList.contains('show'))
+      || (arcade && arcade.active) || (pinball && pinball.active) || (hockey && hockey.active) || (tower && tower.active) || (coffee && coffee.active) || (pickle && pickle.active);
+    if (!idle || idleDrawn < 2 || idleRedraw) { draw(now); idleDrawn++; idleRedraw = false; }
+    return;
+  }
+  idleDrawn = 0;
+
+  const input = controls.read();
+  const look = controls.takeLook();
+  // Slow motion through the middle of a big stunt jump (stunts.js eases it in
+  // and out, and it is off before touchdown). The whole sim slows together.
+  if (stunts && stunts.timeScale < 1) dt *= stunts.timeScale;
+
+  // the ferries sail, carrying whatever stands on one, before you move
+  if (ferry) ferry.update(dt, player, traffic, camera);
+  if (game.dead) {
+    game.deathT += dt;
+    controls.takeTap();
+    if (game.deathT > 2.6) doRespawn();
+  } else if (wheelRide && wheelRide.busy) {
+    // riding the Great Wheel: the ride has the camera (wheelRide.update below)
+  } else if (needleTop && needleTop.busy) {
+    // riding the Needle's elevator or looking through a viewer: the city runs on
+    needleTop.update(dt, input, look);
+  } else {
+    // on the Needle's deck the boom is short: it is 2.4 m wide
+    // and aboard a ferry it is shorter too: stairwells, the cabin and the
+    // promenade are a few metres across, and a 4.6 m boom lived in the walls
+    player.camShort = !player.onFoot ? 0
+      : needleTop && needleTop.onDeck(player) ? 2.6
+      : ferry && ferry.riding(player) ? 3.3 : 0;
+    player.update(dt, input, look, controls, traffic, peds);
+    if (ferry) { ferry.constrain(player, camera, ferryPrev); ferryPrev = ferry.snapshot(player); }
+  }
+  if (monorail) monorail.update(dt);
+  if (link) link.update(dt, camera);
+  if (freight) freight.update(dt, camera);
+  // A car on fire (VEHICLE_HOOKS.ignite): smoke and flame from under the
+  // bonnet for BURN_S, then the blast -- yours if you are still in it, and
+  // some of it if you are standing beside it.
+  if (burning.size) {
+    for (const v of [...burning]) {
+      if (v.dead || !traffic.cars.includes(v)) { burning.delete(v); continue; }
+      v.burnT -= dt;
+      const f = v.forward, nx = v.x + f.x * v.halfLen * 0.55, nz = v.z + f.z * v.halfLen * 0.55;
+      fx.smoke(nx, v.y + 1.3, nz, 1);
+      fx.emit(nx, v.y + 1.0, nz, 2, { r: 1, g: 0.42 + Math.random() * 0.3, b: 0.08, size: 0.55, life: 0.45, spread: 0.6, vy: 2.2, grav: 1.5, jitter: 0.6 });
+      if (v.burnT <= 0) {
+        burning.delete(v);
+        v.dead = true;
+        const out = v !== player.vehicle;
+        game.onCarDestroyed(v);
+        if (out && player.onFoot) {
+          const d = Math.hypot(player.x - v.x, player.z - v.z);
+          if (d < 7) game.damagePlayer(45 * (1 - d / 7), 'explosion');
+        }
+      }
+    }
+  }
+  if (counterbal) counterbal.update(dt, camera);
+  cyclists.update(dt, player);
+  bikeNet.update(camera);
+  piers.update(camera);
+  if (wheelRide) wheelRide.update(dt, wheelRide.busy ? input : null, wheelRide.busy ? look : null, camera.position.x, camera.position.z);
+  if (prof) lap('player');
+
+  const p = player.position;
+  const camDir = { x: p.x - player.camPos.x, z: p.z - player.camPos.z };
+  const cl = Math.hypot(camDir.x, camDir.z) || 1;
+  camDir.x /= cl; camDir.z /= cl;
+
+  if (prof) lap('misc');
+  traffic.update(dt, p.x, p.z, camDir, player);
+  if (prof) lap('traffic');
+  peds.update(dt, p.x, p.z, player, traffic);
+  if (prof) lap('peds');
+  if (fire) fire.update(dt);
+  if (stunts) stunts.update(dt, player);
+  if (tanks) tanks.update(dt);
+  if (acts) acts.update(dt, player);
+  if (missions) missions.update(dt, player);
+  if (taxi) taxi.update(dt, player);
+  // Say hello once per approach to anything the map marks (the dock, the
+  // quads): the map is how you find them, this is how you know you have.
+  // One at a time, in list order, so the dock is never talked over by the
+  // quad parked beside it: the next waits for this one's toast to finish.
+  helloCd = Math.max(0, helloCd - dt);
+  // There is always a balloon: one left somewhere and lost (a wreck, a
+  // despawn) is replaced at Jefferson Park, out of sight of the player.
+  if ((balloonCheck -= dt) <= 0) {
+    balloonCheck = 5;
+    if (BALLOON_SITE && !traffic.cars.some((v) => v.spec.balloon) && dist2(p.x, p.z, BALLOON_SITE.x, BALLOON_SITE.z) > 400 * 400) spawnBalloon();
+  }
+  for (const pl of hud.places) {
+    // (a pickup says hello on foot only, and not while it is gone)
+    if (pl.off || (pl.foot && !player.onFoot)) continue;
+    const d2 = dist2(pl.x, pl.z, p.x, p.z);
+    if (pl.near) { if (d2 > 110 * 110) pl.near = false; continue; }
+    if (d2 < 55 * 55 && helloCd <= 0) {
+      pl.near = true;
+      if (pl.hello) { hud.showToast(typeof pl.hello === 'function' ? pl.hello() : pl.hello, 4200); helloCd = 4.6; }
+    }
+  }
+  if (prof) lap('activities');
+  // UNDERGROUND, THE HELICOPTER LOSES YOU. This is what makes a bore a
+  // tactical option rather than scenery you drive through: the roof over your
+  // head is the only place in the city the air unit cannot see.
+  let buried = false;
+  {
+    const terr = G.terrainHeight(p.x, p.z);
+    buried = terr - p.y > 3;
+    if (buried && game.wanted > 0 && police.helis.length && !hud.__toldTunnel) {
+      hud.__toldTunnel = true;
+      hud.showToast('Off the radar — the chopper has lost you');
+    }
+    if (!buried) hud.__toldTunnel = false;
+  }
+  // the units, the helicopters, who can see you, arrests (police.js)
+  police.update(dt, player, buried);
+  if (prof) lap('police');
+  updatePickups(dt);
+  updateSiren(dt);
+  if (duckTour) duckTour.update(dt);
+  if (seafair) seafair.update(dt);
+  if (!player.vehicle || !(player.vehicle.spec.boat || player.vehicle.afloat)) fx.wake(dt, null);
+  if (player.vehicle && player.vehicle.spec.kayak && player.vehicle.kayak && player.vehicle.kayak.dip) {
+    const v = player.vehicle, sd = v.kayak.dipSide, f = v.forward;
+    const bx = v.x + f.z * sd * -0.66 + f.x * 0.9, bz = v.z - f.x * sd * -0.66 + f.z * 0.9;
+    fx.droplets(bx, v.y + 0.05, bz, 7);
+    audio.play('splash', { gain: 0.1, rate: 1.9 + Math.random() * 0.4, x: bx, y: v.y, z: bz });
+  }
+  fx.update(dt);
+  skidMarks.update(dt);
+
+  // engine smoke / skid marks
+  if (player.vehicle) {
+    const v = player.vehicle;
+    // TYRE MARKS (skidmarks.js): each wheel that is sliding, spinning or
+    // locked lays its own strip -- the rears from markR, the fronts from
+    // markF (vehicles.js). A strip ends when the wheel grips again.
+    if (v.wheelMeshes && v.wheelMeshes.length && !v.spec.boat && !v.afloat) {
+      if (skidMarks.owner !== v) { skidMarks.owner = v; skidMarks.streams.clear(); }
+      const f = v.forward, rxx = f.z, rzz = -f.x, W = v.assets.wheels;
+      const air = v.onGround === false || v.stunt;
+      for (let i = 0; i < W.length; i++) {
+        const [wx, , wz] = W[i];
+        const k = air ? 0 : wz < 0 ? v.markR || 0 : v.markF || 0;
+        if (!(k > 0.03)) { skidMarks.add(i, 0, 0, 0, 0, 0); continue; }
+        const px = v.x + rxx * wx + f.x * wz, pz = v.z + rzz * wx + f.z * wz;
+        const py = cityRef.groundAt(px, pz, v.y + 0.45, v.lift);
+        skidMarks.add(i, px, py, pz, k, v.spec.moto ? 0.14 : 0.24);
+      }
+    }
+    if (v.burnout) {
+      // A burnout: white smoke off both rear tyres. Thrown back off the tread,
+      // it stops within a metre and hangs low where it was laid, swelling
+      // and lifting slowly -- so a donut leaves a ring of it round the car.
+      // By rate, not per frame (it used to be 4 particles a frame, which at
+      // 60 fps overran the shared pool and cut puffs off mid-life).
+      const f = v.forward, rb = (v.spec.wheelbase || v.halfLen) * 0.5, w = v.halfWid * 0.85;
+      v._boSmoke = (v._boSmoke || 0) + dt * 30;
+      const n = Math.floor(v._boSmoke);
+      v._boSmoke -= n;
+      if (n) for (const s of [1, -1]) {
+        fx.emit(v.x - f.x * rb + f.z * s * w, v.y + 0.3, v.z - f.z * rb - f.x * s * w, n,
+          { r: 0.9, g: 0.9, b: 0.92, size: 1.2, grow: 3.2, alpha: 0.72, life: 3.4, spread: 0.8, jitter: 0.35,
+            vy: 0.3, grav: 0.16, drag: 0.95, vx: -f.x * 3.5, vz: -f.z * 3.5 });
+      }
+    } else if (v.skid > 0.35 && Math.random() < 0.5) {
+      fx.smoke(v.x - v.forward.x * v.halfLen, v.y + 0.15, v.z - v.forward.z * v.halfLen, 1);
+    }
+    if (v.health < 0.45 * (v.spec.hp || 100) && Math.random() < 0.35) {
+      fx.smoke(v.x + v.forward.x * v.halfLen, v.y + 0.9, v.z + v.forward.z * v.halfLen, 1);
+    }
+    // A boat leaves a wake: a foam ribbon from the transom (one draw, only
+    // while you are driving one) and spray off the bow once it is moving.
+    if (v.spec.boat || v.afloat) {
+      fx.wake(dt, v);
+      const sp = Math.abs(v.vLong);
+      if (sp > 6 && Math.random() < 0.4) {
+        const f = v.forward, s = Math.random() < 0.5 ? 1 : -1;
+        fx.emit(v.x + f.x * v.halfLen * 0.55 + f.z * s * 1.1, (v.afloat ? v._surf : v.y) + 0.15, v.z + f.z * v.halfLen * 0.55 - f.x * s * 1.1, 2,
+          { r: 0.92, g: 0.95, b: 0.97, size: 0.55, life: 0.55, spread: 1.2, vy: 1.4, grav: -9, drag: 0.9,
+            vx: f.z * s * 2.2, vz: -f.x * s * 2.2 });
+      }
+    }
+  }
+
+  // Wanted cool-down: unseen by every unit and the helicopter (police.js
+  // keeps the clock, and the stars flash while it runs), a star goes every
+  // 6 + 3 x stars seconds. Seen again, the clock restarts.
+  if (game.wanted > 0) {
+    const need = 6 + game.wanted * 3;
+    if (police.unseenT > need) {
+      police.unseenT = 0;
+      game.cool = 0;
+      game.points = STAR_POINTS[Math.max(0, game.wanted - 1)];
+      game.wanted = Math.max(0, game.wanted - 1);
+      if (game.wanted === 0) hud.showToast('You lost the cops');
+    }
+  } else {
+    game.points = Math.max(0, game.points - dt * 6);
+  }
+
+  game.checkTarget();
+
+  // marker pulse
+  if (marker.visible) {
+    marker.rotation.y += dt * 0.7;
+    marker.material.opacity = 0.22 + Math.sin(now * 0.004) * 0.1;
+  }
+
+  // Feed the streamer the two facts that let it keep up with a plane: how
+  // high we are (build massing-only near chunks at altitude) and which way we
+  // are moving (build ahead of the nose first).
+  world.playerAlt = Math.max(0, p.y - G.terrainHeight(p.x, p.z));
+  // On the Needle the view wants the far layers (on over 45 m) but not the
+  // flying LOD, which drops the near ring to massing (over 100 m): the
+  // Seattle Center below stays detailed.
+  if (needleTop && p.y > needleTop.Y + 20 && Math.hypot(p.x - needleTop.X, p.z - needleTop.Z) < 20) world.playerAlt = 50;
+  {
+    const pv = player.vehicle;
+    const fast = pv && Math.abs(pv.vLong) > 8;
+    world.playerFwdX = fast ? pv.forward.x * Math.sign(pv.vLong) : 0;
+    world.playerFwdZ = fast ? pv.forward.z * Math.sign(pv.vLong) : 0;
+    world.playerFlying = !!(pv && pv.spec.plane && pv.airborne);
+  }
+  if (prof) lap('misc');
+  // a mid chunk's trees wait for an idle streamer only in the air (world.js)
+  world.deferTrees = camera.position.y - G.terrainHeight(camera.position.x, camera.position.z) > 80;
+  world.update(p.x, p.z, fps < 45 ? 1 : 2);
+  if (prof) lap('world');
+  // Atmospheric haze thickens with altitude. From 300 m up the streaming
+  // rings are visible as a crawling boundary -- massing at 1.6 km, detail at
+  // 800 m -- and no draw budget pushes them past a 6 km sightline. Real air
+  // does the job instead: by ~250 m up the density has doubled, so chunks
+  // arrive inside the haze the way a distant city fades in from a real
+  // light aircraft. On the ground this is exactly the old constant.
+  if (scene.fog) {
+    const alt = Math.max(0, p.y - G.terrainHeight(p.x, p.z));
+    scene.fog.density = baseFogDensity * (1 + Math.min(2.2, alt / 220));
+  }
+
+  if (!(needleTop && needleTop.busy) && !(wheelRide && wheelRide.busy)) { player.applyCamera(camera); if (ferry) ferry.clampCamera(player, camera); }
+  placeSun(p.x, p.y, p.z);
+  if (prof) lap('camera');
+
+  // audio state
+  if (audio.ready) audio.update(dt, audioState(dt, input, p, camDir, buried));
+
+  if (prof) lap('misc');
+  hud.update(dt, game, player, traffic);
+  if (prof) lap('hud');
+  world.animate(dt, now / 1000);
+  if (prof) lap('animate');
+  draw(now);
+  // Render submission: three's scene walk, culling, sorting and the GL calls
+  // (the GPU's own time is not in here).
+  if (prof) lap('render');
+
+  updateDebug(dt);
+  flightTick(dt);
+}
+
+// What the sound needs from the frame. The surface under the player is a road,
+// lot and park lookup, so it is refreshed five times a second, not per frame.
+let surfT = 0, surfNow = 'hard';
+// What is around you, for the ambience (audio.js _ambience): the share of
+// water, park and road on two rings round the camera, and its height over
+// the ground (or the water). Mask lookups, 24 points, twice a second.
+const ambient = { water: 0, green: 0, road: 0, alt: 0 };
+let ambT = 0;
+function sampleAmbient(x, y, z) {
+  let w = 0, g = 0, r = 0, n = 0;
+  for (let ring = 0; ring < 2; ring++) {
+    const rad = ring ? 140 : 45, wt = ring ? 1 : 1.4;
+    for (let i = 0; i < 12; i++) {
+      const a = (i + ring * 0.5) / 12 * Math.PI * 2;
+      const px = x + Math.cos(a) * rad, pz = z + Math.sin(a) * rad;
+      n += wt;
+      if (G.isWater(px, pz)) { w += wt; continue; }
+      if (G.inPark(px, pz)) g += wt;
+      if (cityRef.onRoad(px, pz, 3, true, false)) r += wt;
+    }
+  }
+  ambient.water = w / n; ambient.green = g / n; ambient.road = r / n;
+  let ground = G.terrainHeight(x, z);
+  if (G.isWater(x, z)) { const wl = world.waterLevelAt(x, z); if (wl !== null) ground = Math.max(ground, wl); }
+  ambient.alt = Math.max(0, y - ground);
+}
+const listener = { x: 0, y: 0, z: 0, fx: 0, fz: -1, vx: 0, vz: 0 };
+function surfaceAt(x, y, z) {
+  const terr = G.terrainHeight(x, z);
+  // in a bore it is concrete whatever is above
+  if (terr - y > 2) return 'hard';
+  // Off the ground: a pier's boards just over the water, else a deck -- a
+  // bridge, a viaduct, a roof (audio.js: hollow footsteps on the boards,
+  // expansion joints under a car's tyres on either).
+  if (y - terr > 1.5) {
+    if (G.isWater(x, z)) {
+      const wl = world.waterLevelAt(x, z);
+      if (wl !== null && y - wl < 6) return 'wood';
+    }
+    // Joints only on a real bridge. Graded freeway on fill stands metres
+    // over the terrain too, and is tarmac on an embankment: asked by height
+    // alone, 35 % of ground-level I-5 clattered like a viaduct.
+    const ei = cityRef.carriagewayAt(x, z, y);
+    if (ei && !cityRef.edges[ei - 1].elev) return 'hard';
+    return 'deck';
+  }
+  if (cityRef.onRoad(x, z, 2.5)) return 'hard';
+  const lot = G.lotAt(x, z);
+  // ballast and beach sand crunch; every other lot is paved
+  if (lot >= 0) return G.LOT_KINDS[lot] === 'rail' || G.LOT_KINDS[lot] === 'sand' ? 'gravel' : 'hard';
+  return 'grass';
+}
+// Traffic's engine voices take the nearest cars from this list; the
+// monorail's trains in service ride along, so one passing overhead is heard.
+const audioCars = [];
+function withTrains(cars) {
+  audioCars.length = 0;
+  for (let i = 0; i < cars.length; i++) audioCars.push(cars[i]);
+  if (monorail && monorail.trains) for (const t of Object.values(monorail.trains)) if (t !== player.vehicle) audioCars.push(t);
+  if (link) for (const t of link.trains) if (t !== player.vehicle && t.group.visible) audioCars.push(t);
+  if (counterbal) for (const t of counterbal.cars) if (t !== player.vehicle && t.group.visible) audioCars.push(t);
+  return audioCars;
+}
+function audioState(dt, input, p, camDir, buried) {
+  const v = player.vehicle;
+  if ((surfT -= dt) <= 0) {
+    surfT = 0.2;
+    surfNow = surfaceAt(p.x, p.y, p.z);
+  }
+  if ((ambT -= dt) <= 0) {
+    ambT = 0.5;
+    sampleAmbient(camera.position.x, camera.position.y, camera.position.z);
+  }
+  const wl = world.waterLevelAt(p.x, p.z);
+  const wetMask = wl !== null && G.isWater(p.x, p.z);
+  const depth = wetMask ? wl - p.y : 0;
+  const spec = v ? v.spec : null;
+  const floating = !!(spec && (spec.floats || spec.boat || (v && v.afloat)));
+  const water = v ? (!floating && depth > 0 ? depth : 0) : depth > 0.05 ? depth : 0;
+  listener.x = camera.position.x; listener.y = camera.position.y; listener.z = camera.position.z;
+  listener.fx = camDir.x; listener.fz = camDir.z;
+  if (v) {
+    const f = v.forward;
+    listener.vx = f.x * v.vLong; listener.vz = f.z * v.vLong;
+  } else {
+    listener.vx = Math.sin(player.heading) * player.speed;
+    listener.vz = Math.cos(player.heading) * player.speed;
+  }
+  const h = player.h;
+  const hp = police ? police.nearestHeli(camera.position.x, camera.position.z) : null;
+  return {
+    inCar: !player.onFoot,
+    onFoot: player.onFoot,
+    vehicle: v,
+    spec,
+    speed: v ? (v.spec.balloon ? 0 : v.vLong) : 0,
+    burner: !!(v && v.spec.balloon && v.burning),
+    // a balloon moves WITH the air: no rush of wind at any speed
+    // A helicopter's turbine runs at governed speed whatever the collective
+    // is doing: the note follows the rotor spool, not the UP button.
+    throttle: !v ? 0 : v.spec.freight ? v.notch / 8 : v.spec.heli ? 0.6 * (v.spool || 0) + (input.gas ? 0.4 : 0)
+      // a tank's turbine works for a pivot turn as much as for the throttle
+      : v.spec.tank ? Math.max(input.gasAmt != null ? input.gasAmt : input.gas ? 1 : 0, Math.abs(input.x || 0) * 0.65, input.brake ? 0.5 : 0)
+      : input.gasAmt != null ? input.gasAmt : input.gas ? 1 : 0,
+    // the belts: their speed over the ground and the pivot's scrub
+    tracks: v && v.spec.tank ? Math.abs(v.vLong) + Math.abs(v.yawRate) * 2.2 : 0,
+    brake: v ? (input.brakeAmt != null ? input.brakeAmt : input.brake ? 1 : 0) : 0,
+    skid: v ? v.skid : 0,
+    burnout: !!(v && v.burnout),
+    airborne: !!(v && v.airborne),
+    carAirborne: !!(v && !spec.plane && v.onGround === false),
+    wading: !!(v && !floating && depth > 0.35),
+    onWater: !!(v && floating && wetMask && depth > -0.8 && !v.airborne),
+    scrape: v && player.scrapeT > 0 ? clamp(Math.abs(v.vLong) / 10, 0.3, 1) : 0,
+    water,
+    impactSpeed: v ? Math.abs(v.vLong) + Math.abs(v.vy || 0) : Math.abs(player.vy || 0) + player.speed,
+    surface: water > 0.05 ? 'water' : surfNow,
+    footL: h.contactL, footR: h.contactR,
+    footSpeed: player.speed,
+    falling: player.onFoot && !player.grounded,
+    fallSpeed: player.onFoot ? player.vy : 0,
+    enclosed: buried,
+    amb: ambient,
+    listener,
+    cars: withTrains(traffic.cars),
+    freight: freight ? freight.trains : null,
+    streetcars: counterbal && counterbal.ok ? counterbal.cars : null,
+    ferry: ferry ? ferry.boats : null,
+    heli: hp,
+  };
+}
+
+function draw(now) {
+  const prof = perfSys.on;
+  // The render lap split three ways for the phone readout: the shadow pass
+  // (timed inside renderer.render by wrapping shadowMap.render), the rest of
+  // the scene pass, and the post chain. Which one dominates decides whether
+  // the next cut is casters, draws or fill.
+  if (prof && !renderer.shadowMap.__timed) {
+    const sm = renderer.shadowMap, orig = sm.render;
+    sm.render = function (...a) {
+      const t0 = performance.now(), c0 = renderer.info.render.calls;
+      orig.apply(this, a);
+      perfRender.shadowMs += performance.now() - t0;
+      perfRender.shadowCalls += renderer.info.render.calls - c0;
+    };
+    sm.__timed = true;
+  }
+  const t0 = prof ? performance.now() : 0;
+  if (lmRoot && updateLandmarkRange(lmRoot, camera.position) && shadowCache) shadowCache.invalidate();
+  renderer.setRenderTarget(postfx.target);
+  if (world) { world.updateTerrainLod(camera.position); world.cullTerrain(camera); }
+  if (world && world.trees) {
+    world.trees.update(camera);
+    // keep the line from the camera to you clear of crowns (trees.js)
+    const pv = player && (player.vehicle || player);
+    if (pv && !game.paused) world.trees.cut(camera.position, pv.x, (pv.y || 0) + (player.vehicle ? 1.6 : 1.4), pv.z, player.vehicle ? 3.2 : 2.2);
+    else world.trees.cut(camera.position, 0, 0, 0, 0);
+  }
+  if (world && world.decor) {
+    const dt = game.paused || !draw.lastT ? 0 : Math.min(0.06, (now - draw.lastT) / 1000);
+    draw.lastT = now;
+    world.decor.update(camera, dt || 0);
+  }
+  if (chunkCull) chunkCull.cull(camera);
+  try { renderer.render(scene, camera); } finally { if (chunkCull) chunkCull.restore(); }
+  // capture before the post passes reset the counters
+  sceneStats.calls = renderer.info.render.calls;
+  sceneStats.tris = renderer.info.render.triangles;
+  const t1 = prof ? performance.now() : 0;
+  postfx.render(now / 1000, camera);
+  renderer.setRenderTarget(null);
+  if (prof) {
+    perfRender.sceneMs += t1 - t0;
+    perfRender.postMs += performance.now() - t1;
+    perfRender.frames++;
+  }
+}
+const sceneStats = { calls: 0, tris: 0 };
+const perfRender = { shadowMs: 0, shadowCalls: 0, sceneMs: 0, postMs: 0, frames: 0 };
+const debugEl = document.getElementById('debugStats');
+let debugAcc = 0;
+let fpsMin = 999;
+
+// THE FLIGHT RECORDER (index.html keeps and saves it). Once a second, what the
+// game is doing and what it is holding; and an event whenever what you are
+// doing changes, so the last lines before a crash say how you got there.
+const flight = (m, now) => { try { if (window.__flight) window.__flight.ev(m, now); } catch (e) { /* log only */ } };
+let flightAcc = 0, flightMode = '', flightFlying = null, flightFar = null;
+function flightModeNow() {
+  if (player.sky) return 'sky:' + player.sky.state;
+  if (player.onFoot) return 'foot';
+  const v = player.vehicle;
+  return v ? (v.type || (v.spec && v.spec.hand) || 'vehicle') + (v.airborne ? ':air' : '') : '?';
+}
+function flightTick(dt) {
+  if (!window.__flight) return;
+  flightAcc += dt;
+  if (flightAcc < 1) return;
+  flightAcc = 0;
+  try {
+    const o = player.vehicle || player;
+    const m = flightModeNow();
+    // a roof counts: "0 m up" on one should read as landed on it
+    const ground = cityRef ? Math.max(cityRef.groundAt(o.x, o.z, null), cityRef.roofUnder(o.x, o.z, o.y + 1.2, 0.9)) : 0;
+    if (m !== flightMode) { flight(`mode ${flightMode || '-'} -> ${m} at ${Math.round(o.x)},${Math.round(o.z)} ${Math.round(o.y - ground)} m up`); flightMode = m; }
+    if (world.playerFlying !== flightFlying) { flight(`flying ${world.playerFlying}`); flightFlying = world.playerFlying; }
+    const far = !!world.farMass;
+    if (far !== flightFar) { flight(`far layers ${far ? 'on' : 'off'}`); flightFar = far; }
+    const mi = renderer.info.memory, pm = performance.memory;
+    let built = 0;
+    for (const c of world.chunks.values()) if (c.lod >= 0) built++;
+    window.__flight.snap({
+      t: Math.round(performance.now() / 100) / 10, fps: Math.round(fps), q: game.settings.quality, m,
+      p: [Math.round(o.x), Math.round(o.z), Math.round(o.y)], agl: Math.round(o.y - ground),
+      v: Math.round(Math.abs(player.vehicle ? player.vehicle.vLong : player.sky ? Math.hypot(player.sky.vx, player.sky.vy, player.sky.vz) : player.speed || 0)),
+      draws: sceneStats.calls, ktris: Math.round(sceneStats.tris / 1000), geo: mi.geometries, tex: mi.textures, prog: renderer.info.programs ? renderer.info.programs.length : 0,
+      chunks: built + '/' + world.chunks.size, cars: traffic.cars.length, peds: peds.peds.length,
+      heapMB: pm ? Math.round(pm.usedJSHeapSize / 1e6) : undefined, paused: game.paused || undefined,
+      ...(gpuLedger ? gpuLedger.read() : null),
+    });
+  } catch (e) { flight('recorder: ' + e.message); }
+}
+
+/** The kept record of the LAST session, as text to read or copy. */
+function flightText() {
+  const r = window.__flight && window.__flight.prev;
+  if (!r) return 'No earlier session has been recorded yet.';
+  const lines = [`build ${r.build}  ${r.ua}`, `started ${r.start}  last saved ${r.saved}`,
+    `ended: ${r.crashed ? 'UNEXPECTEDLY (on screen)' : r.state}`, '', 'events:', ...r.events.map((e) => '  ' + e), '', 'snapshots (1 s apart, oldest first):'];
+  for (const q of r.snaps) lines.push('  ' + JSON.stringify(q));
+  return lines.join('\n');
+}
+
+/**
+ * On-device performance readout.
+ *
+ * The draw-call and triangle budget this game is written against was a
+ * convention -- "it ships to a phone" -- and was never measured on one. The
+ * scene has been over the documented 290-320 calls / 400k triangles for a
+ * while with nothing going wrong, which means nobody knows where the real
+ * ceiling is. Reading it off the device settles that.
+ *
+ * Worst-case frame rate matters more than the mean: a mean of 60 with a
+ * regular dip to 38 is what actually trips `autoQuality`, and an average hides
+ * it. `fpsMin` holds the floor since the last redraw of this panel.
+ */
+function perfLine() {
+  const n = perfSys.frames;
+  if (!n) return '';
+  const top = Object.entries(perfSys.ms).sort((a, b) => b[1] - a[1]).slice(0, 5)
+    .map(([k, v]) => `${k} ${(v / n).toFixed(1)}`).join('  ');
+  perfSys.ms = {};
+  perfSys.frames = 0;
+  const r = perfRender, rn = r.frames || 1;
+  // sceneMs includes the shadow pass, which runs inside renderer.render.
+  const rl = `\nrender ms: shadow ${(r.shadowMs / rn).toFixed(1)} (${Math.round(r.shadowCalls / rn)} draws)`
+    + `  scene ${((r.sceneMs - r.shadowMs) / rn).toFixed(1)}  post ${(r.postMs / rn).toFixed(1)}`;
+  r.shadowMs = r.shadowCalls = r.sceneMs = r.postMs = r.frames = 0;
+  return `\ncpu ms: ${top}${rl}`;
+}
+
+function updateDebug(dt) {
+  perfSys.on = game.settings.debug || perfSys.harness === true;
+  if (!game.settings.debug) return;
+  fpsMin = Math.min(fpsMin, fps);
+  debugAcc += dt;
+  if (debugAcc < 0.25) return;
+  debugAcc = 0;
+  const q = game.settings.quality;
+  const dpr = renderer.getPixelRatio().toFixed(2);
+  const w = Math.round(renderer.domElement.clientWidth * renderer.getPixelRatio());
+  const h = Math.round(renderer.domElement.clientHeight * renderer.getPixelRatio());
+  const cars = traffic.cars.length;
+  const people = peds.peds.length;
+  debugEl.textContent =
+    `${fps.toFixed(0)} fps  (min ${fpsMin.toFixed(0)})\n`
+    + `${sceneStats.calls} draws  ${(sceneStats.tris / 1000).toFixed(0)}k tris\n`
+    + `${w}x${h} @ ${dpr}x  ${q}\n`
+    + `${cars} vehicles  ${people} peds`
+    + perfLine()
+    // the audio's story so far (audio.js _log): state, gestures, the radio
+    + `\naudio: ${audio.ctx ? audio.ctx.state : 'none'}${audio.log.length ? '\n  ' + audio.log.slice(-6).join('\n  ') : ''}`;
+  fpsMin = fps;
+}
+
+// The phone this ships to can't be profiled from here, so the game measures
+// itself and steps the quality down if it can't hold frame rate.
+const TIERS = ['high', 'medium', 'low'];
+let tierIdx = 0;
+let slowFor = 0;
+let qualityLocked = false;
+
+// The adaptive quality ladder is GONE, by request. It watched fps with no
+// idea why a frame was slow, demoted people after warps, and even with a
+// streaming guard and a recovery rung it kept overriding a choice the player
+// had made on purpose. The picker in the pause menu is now the only
+// authority, and the choice persists in localStorage.
+function autoQuality() {}
+
+function applyQuality(q, manual) {
+  if (manual) {
+    qualityLocked = true;
+    try { localStorage.setItem('autokw-quality', q); } catch (e) { /* private mode */ }
+  }
+  // Keep the ladder position in step whether the change was manual or not --
+  // starting a phone on `medium` with tierIdx still at 0 made the first
+  // automatic step down re-apply medium and waste a rung.
+  tierIdx = Math.max(0, TIERS.indexOf(q));
+  game.settings.quality = q;
+  idleRedraw = true;
+  postfx.setQuality(q, ON_PHONE);
+  syncFogColour();
+  renderer.shadowMap.enabled = q !== 'low' && game.settings.shadows;
+  // Pixel ratio is the single biggest fill-rate dial there is: 2.0 against
+  // 1.45 is 1.9x the pixels through every one of the post chain's fullscreen
+  // passes. A phone was capped at 2 on `high`, which is where most of the cost
+  // went.
+  const cap = q === 'high' ? (ON_PHONE ? 1.45 : 1.6) : q === 'medium' ? (ON_PHONE ? 1.3 : 1.5) : 1.15;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap));
+  renderer.setSize(renderer.domElement.clientWidth, renderer.domElement.clientHeight, false);
+  postfx.setSize(renderer.domElement.clientWidth, renderer.domElement.clientHeight, renderer.getPixelRatio());
+  for (const el of document.querySelectorAll('[data-quality]')) {
+    el.classList.toggle('on', el.dataset.quality === q);
+  }
+}
+
+boot().catch((e) => {
+  loadMsg.textContent = 'Failed to start: ' + e.message;
+  blog('FAILED ' + (e.stack || e.message));
+  console.error(e);
+});

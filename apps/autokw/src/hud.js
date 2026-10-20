@@ -1,0 +1,1048 @@
+// Minimap, full map and the on-screen readouts.
+
+import * as G from './geo.js';
+import { formatMoney, clamp } from './util.js';
+
+const MAP_PX = 2048;
+const SCALE = MAP_PX / (G.MAP_HALF * 2);
+
+/**
+ * A marked place's icon, centred on (x, y), `r` its radius in the canvas's
+ * current units: the seaplane dock is an anchor on blue, a quad bike four
+ * wheels on orange. Drawn, not typed -- an emoji's glyph depends on the font.
+ */
+function placeIcon(ctx, kind, x, y, r) {
+  ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f'
+    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : kind === 'coffee' ? '#6a4a32' : kind === 'hydro' ? '#d8242c' : kind === 'link' ? '#3a9a44' : kind === 'link2' ? '#0082ca' : kind === 'freight' ? '#b8501c' : kind === 'streetcar' ? '#8c1f2b' : kind === 'ferry' ? '#0b6e4f' : kind === 'bike' ? '#57b83a' : kind === 'pickle' ? '#c8a21a'
+    : kind === 'gun' ? '#2f6fb8' : kind === 'health' ? '#2e9a56' : kind === 'clinic' ? '#d8343a' : kind === 'wedge' ? '#7f8b96' : kind === 'tank' ? '#5f6b3a' : kind === 'fire' ? '#c4141c' : '#e0782e';
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = r * 0.22;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.lineWidth = r * 0.2;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  if (kind === 'health' || kind === 'clinic') {
+    // a cross: first aid on green, a hospital on red
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x - r * 0.5, y - r * 0.16, r, r * 0.32);
+    ctx.fillRect(x - r * 0.16, y - r * 0.5, r * 0.32, r);
+  } else if (kind === 'gun') {
+    // a pistol, muzzle right: slide, grip, trigger guard
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x - r * 0.5, y - r * 0.32, r * 1.0, r * 0.26);
+    ctx.beginPath();
+    ctx.moveTo(x - r * 0.46, y - r * 0.08); ctx.lineTo(x - r * 0.12, y - r * 0.08);
+    ctx.lineTo(x - r * 0.2, y + r * 0.52); ctx.lineTo(x - r * 0.52, y + r * 0.52);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = r * 0.1;
+    ctx.beginPath(); ctx.arc(x - r * 0.02, y + r * 0.02, r * 0.14, 0, Math.PI); ctx.stroke();
+  } else if (kind === 'dock') {
+    ctx.moveTo(x, y - r * 0.42); ctx.lineTo(x, y + r * 0.55);
+    ctx.moveTo(x - r * 0.3, y - r * 0.2); ctx.lineTo(x + r * 0.3, y - r * 0.2);
+    ctx.moveTo(x - r * 0.52, y + r * 0.15);
+    ctx.quadraticCurveTo(x - r * 0.45, y + r * 0.62, x, y + r * 0.58);
+    ctx.quadraticCurveTo(x + r * 0.45, y + r * 0.62, x + r * 0.52, y + r * 0.15);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(x, y - r * 0.55, r * 0.14, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (kind === 'tank') {
+    // a tank side on, gun to the right: tracks, hull, turret, barrel
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x - r * 0.62, y + r * 0.12, r * 1.24, r * 0.26);
+    ctx.fillRect(x - r * 0.5, y - r * 0.06, r * 1.0, r * 0.2);
+    ctx.fillRect(x - r * 0.3, y - r * 0.32, r * 0.55, r * 0.26);
+    ctx.fillRect(x + r * 0.2, y - r * 0.24, r * 0.5, r * 0.08);
+  } else if (kind === 'monorail') {
+    // a train's round nose on its beam
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(x - r * 0.55, y + r * 0.22);
+    ctx.lineTo(x - r * 0.55, y - r * 0.3);
+    ctx.lineTo(x + r * 0.2, y - r * 0.3);
+    ctx.quadraticCurveTo(x + r * 0.6, y - r * 0.28, x + r * 0.6, y + r * 0.22);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillRect(x - r * 0.62, y + r * 0.32, r * 1.24, r * 0.12);
+  } else if (kind === 'fish') {
+    // a fish, nose left
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.ellipse(x - r * 0.08, y, r * 0.38, r * 0.22, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x + r * 0.22, y); ctx.lineTo(x + r * 0.55, y - r * 0.24); ctx.lineTo(x + r * 0.55, y + r * 0.24);
+    ctx.closePath();
+    ctx.fill();
+  } else if (kind === 'arcade') {
+    // a joystick
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x - r * 0.45, y + r * 0.18, r * 0.9, r * 0.26);
+    ctx.fillRect(x - r * 0.05, y - r * 0.3, r * 0.1, r * 0.5);
+    ctx.beginPath(); ctx.arc(x, y - r * 0.34, r * 0.17, 0, Math.PI * 2); ctx.fill();
+  } else if (kind === 'pinball') {
+    // a flipper and a ball
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(x + r * 0.22, y - r * 0.3, r * 0.2, 0, Math.PI * 2); ctx.fill();
+    ctx.save(); ctx.translate(x - r * 0.35, y + r * 0.2); ctx.rotate(0.35);
+    ctx.fillRect(0, -r * 0.1, r * 0.75, r * 0.2);
+    ctx.beginPath(); ctx.arc(0, 0, r * 0.16, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  } else if (kind === 'hockey') {
+    // a stick and a puck
+    ctx.fillStyle = '#ffffff';
+    ctx.save(); ctx.translate(x - r * 0.1, y - r * 0.5); ctx.rotate(0.45);
+    ctx.fillRect(-r * 0.07, 0, r * 0.14, r * 0.85); ctx.fillRect(-r * 0.07, r * 0.75, r * 0.42, r * 0.14);
+    ctx.restore();
+    ctx.fillRect(x + r * 0.08, y + r * 0.3, r * 0.34, r * 0.16);
+  } else if (kind === 'fire') {
+    // a flame
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(x, y - r * 0.62);
+    ctx.quadraticCurveTo(x + r * 0.5, y - r * 0.1, x + r * 0.34, y + r * 0.34);
+    ctx.quadraticCurveTo(x, y + r * 0.62, x - r * 0.34, y + r * 0.34);
+    ctx.quadraticCurveTo(x - r * 0.46, y - r * 0.02, x - r * 0.12, y - r * 0.2);
+    ctx.quadraticCurveTo(x - r * 0.02, y - r * 0.38, x, y - r * 0.62);
+    ctx.fill();
+  } else if (kind === 'pickle') {
+    // a paddle and its ball
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.ellipse(x - r * 0.1, y - r * 0.1, r * 0.3, r * 0.38, -0.6, 0, Math.PI * 2); ctx.fill();
+    ctx.fillRect(x + r * 0.08, y + r * 0.12, r * 0.12, r * 0.38);
+    ctx.beginPath(); ctx.arc(x + r * 0.38, y - r * 0.3, r * 0.13, 0, Math.PI * 2); ctx.fill();
+  } else if (kind === 'bike') {
+    // a bicycle: two wheels and the frame between them
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = r * 0.12;
+    for (const sx of [-1, 1]) { ctx.beginPath(); ctx.arc(x + sx * r * 0.34, y + r * 0.16, r * 0.24, 0, Math.PI * 2); ctx.stroke(); }
+    ctx.beginPath(); ctx.moveTo(x - r * 0.34, y + r * 0.16); ctx.lineTo(x - r * 0.06, y - r * 0.2); ctx.lineTo(x + r * 0.2, y - r * 0.2); ctx.lineTo(x + r * 0.34, y + r * 0.16);
+    ctx.moveTo(x - r * 0.06, y - r * 0.2); ctx.lineTo(x, y + r * 0.16); ctx.lineTo(x + r * 0.2, y - r * 0.2); ctx.stroke();
+  } else if (kind === 'link' || kind === 'link2') {
+    // a light-rail car's face: windscreen over its lamps, the pantograph
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x - r * 0.36, y - r * 0.3, r * 0.72, r * 0.72);
+    ctx.fillStyle = kind === 'link2' ? '#0082ca' : '#3a9a44';
+    ctx.fillRect(x - r * 0.26, y - r * 0.2, r * 0.52, r * 0.26);
+    ctx.fillRect(x - r * 0.22, y + r * 0.2, r * 0.1, r * 0.08); ctx.fillRect(x + r * 0.12, y + r * 0.2, r * 0.1, r * 0.08);
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = r * 0.1;
+    ctx.beginPath(); ctx.moveTo(x - r * 0.2, y - r * 0.3); ctx.lineTo(x + r * 0.1, y - r * 0.55); ctx.lineTo(x - r * 0.1, y - r * 0.62); ctx.stroke();
+  } else if (kind === 'streetcar') {
+    // a 1930s streetcar side-on: the body, its windows, the trolley pole up
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x - r * 0.56, y - r * 0.22, r * 1.12, r * 0.48);
+    ctx.fillRect(x - r * 0.4, y - r * 0.32, r * 0.8, r * 0.12);
+    ctx.fillStyle = '#8c1f2b';
+    for (let i = 0; i < 4; i++) ctx.fillRect(x - r * 0.44 + i * r * 0.24, y - r * 0.14, r * 0.15, r * 0.16);
+    ctx.fillStyle = '#ffffff';
+    for (const sx of [-0.32, 0.32]) { ctx.beginPath(); ctx.arc(x + sx * r, y + r * 0.32, r * 0.09, 0, Math.PI * 2); ctx.fill(); }
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = r * 0.08;
+    ctx.beginPath(); ctx.moveTo(x - r * 0.1, y - r * 0.32); ctx.lineTo(x - r * 0.5, y - r * 0.68); ctx.stroke();
+  } else if (kind === 'ferry') {
+    // a ferry side-on: the hull, the cabin, the stacks
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.moveTo(x - r * 0.56, y); ctx.lineTo(x + r * 0.56, y); ctx.lineTo(x + r * 0.42, y + r * 0.26); ctx.lineTo(x - r * 0.42, y + r * 0.26); ctx.closePath(); ctx.fill();
+    ctx.fillRect(x - r * 0.36, y - r * 0.2, r * 0.72, r * 0.18);
+    ctx.fillRect(x - r * 0.14, y - r * 0.44, r * 0.1, r * 0.24); ctx.fillRect(x + r * 0.04, y - r * 0.44, r * 0.1, r * 0.24);
+  } else if (kind === 'freight') {
+    // a road diesel side-on: the cab, the long hood, the trucks under it
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x + r * 0.16, y - r * 0.42, r * 0.3, r * 0.5);
+    ctx.fillRect(x - r * 0.5, y - r * 0.2, r * 0.7, r * 0.28);
+    ctx.fillRect(x - r * 0.56, y + r * 0.08, r * 1.08, r * 0.1);
+    for (const sx of [-0.34, 0.3]) { ctx.beginPath(); ctx.arc(x + sx * r, y + r * 0.3, r * 0.1, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = '#b8501c';
+    ctx.fillRect(x + r * 0.22, y - r * 0.34, r * 0.18, r * 0.14);
+  } else if (kind === 'hydro') {
+    // a hydroplane's planform, nose up, and its rooster tail
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.moveTo(x - r * 0.42, y - r * 0.4); ctx.lineTo(x + r * 0.42, y - r * 0.4); ctx.lineTo(x + r * 0.22, y + r * 0.3); ctx.lineTo(x - r * 0.22, y + r * 0.3); ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 0.7; ctx.beginPath(); ctx.moveTo(x - r * 0.15, y + r * 0.35); ctx.lineTo(x + r * 0.15, y + r * 0.35); ctx.lineTo(x, y + r * 0.7); ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
+  } else if (kind === 'coffee') {
+    // a cup and its steam
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.moveTo(x - r * 0.38, y - r * 0.1); ctx.lineTo(x + r * 0.38, y - r * 0.1); ctx.lineTo(x + r * 0.28, y + r * 0.5); ctx.lineTo(x - r * 0.28, y + r * 0.5); ctx.closePath(); ctx.fill();
+    ctx.fillRect(x - r * 0.12, y - r * 0.55, r * 0.08, r * 0.3); ctx.fillRect(x + r * 0.06, y - r * 0.6, r * 0.08, r * 0.35);
+  } else if (kind === 'duck') {
+    // a duck: body, head, bill
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.ellipse(x - r * 0.08, y + r * 0.15, r * 0.48, r * 0.26, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + r * 0.22, y - r * 0.22, r * 0.2, 0, Math.PI * 2); ctx.fill();
+    ctx.fillRect(x + r * 0.36, y - r * 0.24, r * 0.22, r * 0.1);
+  } else if (kind === 'tower') {
+    // a control tower: a shaft under a wide cab
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x - r * 0.12, y - r * 0.15, r * 0.24, r * 0.7);
+    ctx.beginPath(); ctx.moveTo(x - r * 0.5, y - r * 0.55); ctx.lineTo(x + r * 0.5, y - r * 0.55); ctx.lineTo(x + r * 0.32, y - r * 0.15); ctx.lineTo(x - r * 0.32, y - r * 0.15); ctx.closePath(); ctx.fill();
+  } else if (kind === 'golf') {
+    // a flag on its pin
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x - r * 0.06, y - r * 0.55, r * 0.12, r * 1.05);
+    ctx.beginPath();
+    ctx.moveTo(x + r * 0.06, y - r * 0.55); ctx.lineTo(x + r * 0.5, y - r * 0.36); ctx.lineTo(x + r * 0.06, y - r * 0.18);
+    ctx.closePath();
+    ctx.fill();
+  } else if (kind === 'wheel') {
+    // a Ferris wheel: a ring, spokes and a stand
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = r * 0.1;
+    ctx.arc(x, y - r * 0.08, r * 0.42, 0, Math.PI * 2);
+    for (let k = 0; k < 4; k++) {
+      const a = (k / 4) * Math.PI;
+      ctx.moveTo(x - Math.cos(a) * r * 0.42, y - r * 0.08 - Math.sin(a) * r * 0.42);
+      ctx.lineTo(x + Math.cos(a) * r * 0.42, y - r * 0.08 + Math.sin(a) * r * 0.42);
+    }
+    ctx.moveTo(x - r * 0.3, y + r * 0.5); ctx.lineTo(x, y - r * 0.08); ctx.lineTo(x + r * 0.3, y + r * 0.5);
+    ctx.stroke();
+  } else if (kind === 'kayak') {
+    // a kayak and its paddle, crossed
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.ellipse(x, y, r * 0.58, r * 0.14, -0.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = r * 0.09;
+    ctx.moveTo(x - r * 0.4, y - r * 0.38); ctx.lineTo(x + r * 0.4, y + r * 0.38);
+    ctx.stroke();
+  } else if (kind === 'fishtoss') {
+    // a fish in the air over a hand
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.ellipse(x, y - r * 0.12, r * 0.36, r * 0.17, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x - r * 0.26, y + r * 0.04); ctx.lineTo(x - r * 0.56, y + r * 0.02); ctx.lineTo(x - r * 0.4, y + r * 0.3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillRect(x - r * 0.3, y + r * 0.36, r * 0.6, r * 0.12);
+  } else if (kind === 'needle') {
+    // an elevator's up arrow
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(x, y - r * 0.55); ctx.lineTo(x + r * 0.42, y - r * 0.02); ctx.lineTo(x + r * 0.15, y - r * 0.02);
+    ctx.lineTo(x + r * 0.15, y + r * 0.5); ctx.lineTo(x - r * 0.15, y + r * 0.5); ctx.lineTo(x - r * 0.15, y - r * 0.02);
+    ctx.lineTo(x - r * 0.42, y - r * 0.02);
+    ctx.closePath();
+    ctx.fill();
+  } else if (kind === 'hoop') {
+    // a basketball: a circle and its seams
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = r * 0.13;
+    ctx.arc(x, y, r * 0.5, 0, Math.PI * 2);
+    ctx.moveTo(x - r * 0.5, y); ctx.lineTo(x + r * 0.5, y);
+    ctx.moveTo(x, y - r * 0.5); ctx.lineTo(x, y + r * 0.5);
+    ctx.stroke();
+  } else if (kind === 'balloon') {
+    // an envelope over a basket
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(x, y - r * 0.18, r * 0.42, Math.PI * 0.85, Math.PI * 2.15);
+    ctx.lineTo(x + r * 0.12, y + r * 0.3);
+    ctx.lineTo(x - r * 0.12, y + r * 0.3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillRect(x - r * 0.14, y + r * 0.38, r * 0.28, r * 0.2);
+  } else if (kind === 'jet') {
+    // a delta, nose up
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(x, y - r * 0.62); ctx.lineTo(x + r * 0.5, y + r * 0.42);
+    ctx.lineTo(x, y + r * 0.22); ctx.lineTo(x - r * 0.5, y + r * 0.42);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    ctx.moveTo(x - r * 0.45, y); ctx.lineTo(x + r * 0.45, y);
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    for (const [dx, dy] of [[-0.42, -0.36], [0.42, -0.36], [-0.42, 0.36], [0.42, 0.36]]) {
+      ctx.beginPath();
+      ctx.arc(x + dx * r, y + dy * r, r * 0.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.lineCap = 'butt';
+}
+
+/** A Tech Tour badge's map mark: a diamond in the company colour. */
+function techIcon(ctx, x, y, r, col) {
+  ctx.fillStyle = '#' + col.toString(16).padStart(6, '0');
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = r * 0.3;
+  ctx.beginPath();
+  ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+}
+
+/** Renders the whole city once into an offscreen canvas; both maps sample it. */
+export function buildMapCanvas(city) {
+  const c = document.createElement('canvas');
+  c.width = MAP_PX;
+  c.height = MAP_PX;
+  const g = c.getContext('2d');
+  const X = (x) => (x + G.MAP_HALF) * SCALE;
+  const Z = (z) => (z + G.MAP_HALF) * SCALE;
+
+  // Ground, water and parks come straight off the imported masks. Drawing the
+  // raster and letting the canvas scale it up beats stroking polygons: the
+  // shoreline on the map is then the same shoreline the game drives on, pixel
+  // for pixel, instead of a second hand-drawn copy of it that can disagree.
+  const { water, green, n } = G.masks();
+  const src = document.createElement('canvas');
+  src.width = src.height = n;
+  const sg = src.getContext('2d');
+  const img = sg.createImageData(n, n);
+  const px = img.data;
+  const WATER_C = [29, 59, 82], PARK_C = [57, 96, 58];
+  const GRASS_C = [43, 59, 48], BUILT_C = [74, 79, 70], LOT_C = [86, 88, 86];
+  const lot = G.lotCodes();
+  for (let j = 0, i = 0, p = 0; j < n; j++) {
+    for (let k = 0; k < n; k++, i++, p += 4) {
+      let c;
+      if (water[i]) c = WATER_C;
+      // Lots before parks: the lot layer only covers the park mask where it
+      // is a park's own car park or a paved square, and that is what it is.
+      else if (lot && G.lotNearest(-G.MAP_HALF + k * 10, -G.MAP_HALF + j * 10)) c = LOT_C;
+      else if (green[i]) c = PARK_C;
+      else {
+        const t = clamp(city.builtAt(-G.MAP_HALF + k * 10, -G.MAP_HALF + j * 10) / 0.2, 0, 1);
+        c = [
+          GRASS_C[0] + (BUILT_C[0] - GRASS_C[0]) * t,
+          GRASS_C[1] + (BUILT_C[1] - GRASS_C[1]) * t,
+          GRASS_C[2] + (BUILT_C[2] - GRASS_C[2]) * t,
+        ];
+      }
+      px[p] = c[0]; px[p + 1] = c[1]; px[p + 2] = c[2]; px[p + 3] = 255;
+    }
+  }
+  sg.putImageData(img, 0, 0);
+  g.imageSmoothingEnabled = true;
+  g.drawImage(src, 0, 0, MAP_PX, MAP_PX);
+
+  // roads, thin classes first
+  const order = ['res', 'st', 'ramp', 'art', 'hwy'];
+  const styles = {
+    res: { w: 1.2, c: '#6d7069' },
+    st: { w: 1.7, c: '#8b8e86' },
+    ramp: { w: 2.0, c: '#b7a05a' },
+    art: { w: 2.8, c: '#c3c6bd' },
+    hwy: { w: 4.4, c: '#e0c86a' },
+  };
+  g.lineCap = 'round';
+  for (const cls of order) {
+    const s = styles[cls];
+    g.strokeStyle = s.c;
+    g.lineWidth = s.w;
+    g.beginPath();
+    for (const e of city.edges) {
+      if (e.cls !== cls) continue;
+      const a = city.nodes[e.a], b = city.nodes[e.b];
+      g.moveTo(X(a.x), Z(a.z));
+      g.lineTo(X(b.x), Z(b.z));
+    }
+    g.stroke();
+  }
+  return c;
+}
+
+/** A stunt jump on either map: a wedge along the jump's direction (map space is world x/z). */
+function drawJumpIcon(ctx, x, y, j, r) {
+  const r0 = j.ramp;
+  const dx = r0 ? r0.dx : 1, dz = r0 ? r0.dz : 0;
+  ctx.fillStyle = j.done ? '#6fdc8c' : '#ff8a1f';
+  ctx.strokeStyle = 'rgba(16,20,24,0.9)';
+  ctx.lineWidth = Math.max(1, r * 0.28);
+  ctx.beginPath();
+  ctx.moveTo(x + dx * r * 1.3, y + dz * r * 1.3);
+  ctx.lineTo(x - dx * r * 0.8 - dz * r, y - dz * r * 0.8 + dx * r);
+  ctx.lineTo(x - dx * r * 0.8 + dz * r, y - dz * r * 0.8 - dx * r);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+}
+
+export class Hud {
+  constructor(root, city, mapCanvas) {
+    this.root = root;
+    this.city = city;
+    this.mapCanvas = mapCanvas;
+    // Marked places, {x, z, kind, name, hello}; main.js fills it at boot.
+    this.places = [];
+    this.mini = root.querySelector('#minimap');
+    this.mctx = this.mini.getContext('2d');
+    this.stars = root.querySelector('#stars');
+    this.money = root.querySelector('#money');
+    this.healthFill = root.querySelector('#healthFill');
+    this.armourRow = root.querySelector('#speedo');
+    this.speedVal = root.querySelector('#speedVal');
+    this.speedUnit = root.querySelector('#speedo .u');
+    this.altRow = root.querySelector('#altRow');
+    this.altVal = root.querySelector('#altVal');
+    this.place = root.querySelector('#place');
+    this.toast = root.querySelector('#toast');
+    this.objective = root.querySelector('#objective');
+    this.ammoEl = root.querySelector('#ammo');
+    this.bigMap = root.querySelector('#bigMap');
+    this.bigCtx = this.bigMap.getContext('2d');
+    this.lastPlace = '';
+    this.toastTimer = 0;
+    this.resize();
+  }
+
+  resize() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const r = this.mini.getBoundingClientRect();
+    this.mini.width = Math.round(r.width * dpr);
+    this.mini.height = Math.round(r.height * dpr);
+    this.miniSize = this.mini.width;
+  }
+
+  /** el.textContent = text, skipped when it already says that (cached under
+   *  `key`, so nothing is read back from the DOM). */
+  _put(el, key, text) {
+    const c = this._shown || (this._shown = {});
+    if (c[key] === text) return;
+    c[key] = text;
+    el.textContent = text;
+  }
+
+  /** el.style[prop] = val, skipped when unchanged. */
+  _css(el, prop, val) {
+    const c = this._shown || (this._shown = {}), key = 'css:' + prop;
+    if (c[key] === val) return;
+    c[key] = val;
+    el.style[prop] = val;
+  }
+
+  showToast(text, ms = 2600) {
+    this.toast.textContent = text;
+    this.toast.classList.add('show');
+    this.toastTimer = ms / 1000;
+  }
+
+  /** Race readout, plus the off-screen arrow to the next checkpoint. */
+  setRace(r, player) {
+    if (!this._rp) {
+      this._rp = document.getElementById('racePanel');
+      this._rn = document.getElementById('raceName');
+      this._rt = document.getElementById('raceTime');
+      this._rl = document.getElementById('raceLeft');
+      this._rd = document.getElementById('raceDelta');
+      this._rb = document.getElementById('raceBest');
+    }
+    if (!this._rp) return;
+    this._rp.classList.toggle('on', !!r);
+    if (!r) return;
+    this._rn.textContent = r.name;
+    this._rt.textContent = r.time;
+    this._rl.textContent = r.left || '';
+    this._rd.textContent = r.delta || '';
+    this._rd.className = r.delta ? (r.ahead ? 'ahead' : 'behind') : '';
+    this._rb.textContent = r.best ? `best ${r.best}` : '';
+  }
+
+  /** Link: the 1 Line green (its tracks as one line), the 2 Line's branch
+   *  blue, through `to(x, z)` -> canvas. */
+  drawLink(ctx, to, w, near = null) {
+    this._drawLine(ctx, to, w, near, this.link.tracks.sb, 0, '#3a9a44', '_linkPts');
+    const b = this.link.tracks.sb2;
+    if (b) this._drawLine(ctx, to, w, near, b, b.share.end, '#0082ca', '_link2Pts');
+  }
+
+  _drawLine(ctx, to, w, near, tr, s0, colour, key) {
+    if (!this[key]) {
+      const n = Math.floor((tr.len - s0) / 20) + 1, P = new Float32Array(n * 2);
+      for (let i = 0; i < n; i++) { P[i * 2] = tr.x(s0 + i * 20); P[i * 2 + 1] = tr.z(s0 + i * 20); }
+      this[key] = P;
+    }
+    const P = this[key], n = P.length / 2, r2 = near ? near.r * near.r : Infinity;
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = w;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    let pen = false;
+    for (let i = 0; i < n; i++) {
+      const x = P[i * 2], z = P[i * 2 + 1];
+      if (near && (x - near.x) ** 2 + (z - near.z) ** 2 > r2) { pen = false; continue; }
+      const [cx, cy] = to(x, z);
+      if (pen) ctx.lineTo(cx, cy); else { ctx.moveTo(cx, cy); pen = true; }
+    }
+    ctx.stroke();
+  }
+
+  /** The ferry route, dashed as a chart draws one, and each boat on it. */
+  drawFerry(ctx, to, w, boatR) {
+    const P = this.ferry.mapPoints(), n = P.length / 2;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+    ctx.lineWidth = w;
+    ctx.setLineDash([w * 4, w * 3]);
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) { const [cx, cy] = to(P[i * 2], P[i * 2 + 1]); if (i) ctx.lineTo(cx, cy); else ctx.moveTo(cx, cy); }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    for (const b of this.ferry.boats) {
+      const [cx, cy] = to(b.x, b.z), [fx, fy] = to(b.x + Math.sin(b.h) * 70, b.z + Math.cos(b.h) * 70);
+      const ang = Math.atan2(fy - cy, fx - cx);
+      ctx.translate(cx, cy); ctx.rotate(ang);
+      ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#0b6e4f'; ctx.lineWidth = boatR * 0.3;
+      ctx.beginPath(); ctx.ellipse(0, 0, boatR * 1.9, boatR * 0.7, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.rotate(-ang); ctx.translate(-cx, -cy);
+    }
+    ctx.restore();
+  }
+
+  /** BNSF's main line: rail brown, one line for both mains. */
+  drawFreight(ctx, to, w, near = null) {
+    if (!this._frPts) {
+      const tr = this.freight.tracks.sb, n = Math.floor(tr.len / 20) + 1, P = new Float32Array(n * 2);
+      for (let i = 0; i < n; i++) { P[i * 2] = tr.x(i * 20); P[i * 2 + 1] = tr.z(i * 20); }
+      this._frPts = P;
+    }
+    const P = this._frPts, n = P.length / 2, r2 = near ? near.r * near.r : Infinity;
+    ctx.strokeStyle = '#7a4a2c';
+    ctx.lineWidth = w;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    let pen = false;
+    for (let i = 0; i < n; i++) {
+      const x = P[i * 2], z = P[i * 2 + 1];
+      if (near && (x - near.x) ** 2 + (z - near.z) ** 2 > r2) { pen = false; continue; }
+      const [cx, cy] = to(x, z);
+      if (pen) ctx.lineTo(cx, cy); else { ctx.moveTo(cx, cy); pen = true; }
+    }
+    ctx.stroke();
+  }
+
+  /** Route 26, the Queen Anne Counterbalance: both tracks as one line in
+   *  the streetcar's maroon, its cable section bolder, and the cars on it. */
+  drawStreetcar(ctx, to, w, carR, near = null) {
+    const L = this.counterbal;
+    if (!L || !L.ok) return;
+    if (!this._scPts) {
+      this._scPts = L.keys.map((k) => {
+        const tr = L.tracks[k], n = Math.floor(tr.len / 10) + 1, P = new Float32Array(n * 2);
+        for (let i = 0; i < n; i++) { P[i * 2] = tr.x(i * 10); P[i * 2 + 1] = tr.z(i * 10); }
+        return { P, h1: Math.floor(tr.h1 / 10), h2: Math.ceil(tr.h2 / 10) };
+      });
+    }
+    const r2 = near ? near.r * near.r : Infinity;
+    ctx.lineJoin = 'round';
+    for (const { P, h1, h2 } of this._scPts) {
+      for (const [i0, i1, ww] of [[0, P.length / 2, w], [h1, h2 + 1, w * 1.9]]) {
+        ctx.strokeStyle = '#8c1f2b';
+        ctx.lineWidth = ww;
+        ctx.beginPath();
+        let pen = false;
+        for (let i = i0; i < Math.min(i1, P.length / 2); i++) {
+          const x = P[i * 2], z = P[i * 2 + 1];
+          if (near && (x - near.x) ** 2 + (z - near.z) ** 2 > r2) { pen = false; continue; }
+          const [cx, cy] = to(x, z);
+          if (pen) ctx.lineTo(cx, cy); else { ctx.moveTo(cx, cy); pen = true; }
+        }
+        ctx.stroke();
+      }
+    }
+    if (carR > 0) this.drawStreetcarCars(ctx, to, carR, near);
+  }
+
+  /** The streetcars themselves, drawn after the place icons so a stop's icon
+   *  never hides the car standing at it. */
+  drawStreetcarCars(ctx, to, carR, near = null) {
+    const L = this.counterbal;
+    if (!L || !L.ok) return;
+    const r2 = near ? near.r * near.r : Infinity;
+    {
+      for (const c of L.cars) {
+        if (near && (c.cx - near.x) ** 2 + (c.cz - near.z) ** 2 > r2) continue;
+        const [cx, cy] = to(c.cx, c.cz);
+        // a cream disc ringed in maroon with a dark centre: the car, big
+        // enough to find (it was a 2.6 px dot nobody could see on the minimap)
+        ctx.fillStyle = '#f2e6c4'; ctx.strokeStyle = '#8c1f2b'; ctx.lineWidth = carR * 0.45;
+        ctx.beginPath(); ctx.arc(cx, cy, carR, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#5a1018';
+        ctx.beginPath(); ctx.arc(cx, cy, carR * 0.38, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+  }
+
+  /** The monorail's two beams as one teal line, through `to(x, z)` -> canvas. */
+  drawMonorail(ctx, to, w) {
+    const tr = this.monorail.tracks.west;
+    ctx.strokeStyle = '#19b3b8';
+    ctx.lineWidth = w;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let s = 0; s <= tr.len; s += 10) {
+      const [x, y] = to(tr.x(s), tr.z(s));
+      if (s === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    const [ex, ey] = to(tr.x(tr.len), tr.z(tr.len));
+    ctx.lineTo(ex, ey);
+    ctx.stroke();
+  }
+
+  setObjective(text) {
+    this.objective.textContent = text || '';
+    this.objective.classList.toggle('show', !!text);
+  }
+
+  update(dt, game, player, traffic) {
+    const p = player.position;
+    this.setRace(this.race, player);
+    // minimap -- at 30 Hz: it is a few hundred canvas calls, and at 60 the
+    // phone drew it twice for every change you could see
+    this._mmAcc = (this._mmAcc || 0) + dt;
+    if (this._mmAcc >= 1 / 31) {
+    this._mmAcc = 0;
+    const ctx = this.mctx;
+    const S = this.miniSize;
+    const zoom = player.onFoot ? 1.9 : 1.35;
+    ctx.save();
+    ctx.clearRect(0, 0, S, S);
+    ctx.beginPath();
+    ctx.arc(S / 2, S / 2, S / 2, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.translate(S / 2, S / 2);
+    // The map image is drawn world-aligned (+X right, +Z down). Rotating by
+    // camYaw puts the camera's forward heading (camYaw + PI) at the top and,
+    // because a larger heading is a left turn, also puts the player's
+    // screen-right on the right of the dial.
+    ctx.rotate(player.camYaw);
+    ctx.scale(zoom, zoom);
+    const sx = (p.x + G.MAP_HALF) * SCALE;
+    const sz = (p.z + G.MAP_HALF) * SCALE;
+    const half = S / (2 * zoom);
+    // The source rectangle is CLAMPED to the canvas, and the destination with
+    // it. The window spans ~750 m of world either way, so within that of the
+    // map's edge (Winslow and the whole west of Bainbridge) it runs off the
+    // canvas, and WebKit stretches what is left of an out-of-bounds
+    // source over the whole destination instead of clipping it: on the
+    // iPhone the map slid out from under you toward every edge, with your
+    // road beside the road you were on. Chrome clips, so it never showed there.
+    {
+      const x0 = Math.max(0, sx - half), z0 = Math.max(0, sz - half);
+      const x1 = Math.min(MAP_PX, sx + half), z1 = Math.min(MAP_PX, sz + half);
+      if (x1 > x0 && z1 > z0) {
+        ctx.drawImage(this.mapCanvas, x0, z0, x1 - x0, z1 - z0, x0 - sx, z0 - sz, x1 - x0, z1 - z0);
+      }
+    }
+
+    const toMap = (x, z) => [((x - p.x) * SCALE), ((z - p.z) * SCALE)];
+    // blips
+    for (const v of traffic.cars) {
+      if (v.mode !== 'police') continue;
+      const [bx, bz] = toMap(v.x, v.z);
+      ctx.fillStyle = '#ff4d4d';
+      ctx.beginPath();
+      ctx.arc(bx, bz, 3.4 / zoom, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // police helicopters, and a police mission's suspects: on the dial's
+    // edge when they are off it, so you can see which way to go
+    for (const h of (this.policeHelis || [])) {
+      const [bx, bz] = toMap(h.x, h.z);
+      ctx.fillStyle = '#ff6b6b'; ctx.strokeStyle = '#2a0b0b'; ctx.lineWidth = 1 / zoom;
+      ctx.beginPath(); ctx.arc(bx, bz, 4.2 / zoom, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#2a0b0b'; ctx.fillRect(bx - 3 / zoom, bz - 0.6 / zoom, 6 / zoom, 1.2 / zoom);
+    }
+    if (this.suspects && this.suspects.length) {
+      const lim = S / (2 * zoom) - 6 / zoom;
+      const on = (this._blink = ((this._blink || 0) + 1) % 30) < 20;
+      for (const v of this.suspects) {
+        let [bx, bz] = toMap(v.x, v.z);
+        const l = Math.hypot(bx, bz);
+        if (l > lim) { bx *= lim / l; bz *= lim / l; }
+        ctx.fillStyle = on ? '#ff2d2d' : '#ffb0b0'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.4 / zoom;
+        const r = 5.5 / zoom;
+        ctx.beginPath(); ctx.moveTo(bx, bz - r); ctx.lineTo(bx + r, bz); ctx.lineTo(bx, bz + r); ctx.lineTo(bx - r, bz); ctx.closePath();
+        ctx.fill(); ctx.stroke();
+      }
+    }
+    // a taxi fare (taxi.js): the route in yellow, the person hailing, the drop-off.
+    // Both pins stay on the dial's edge when they are off it, so you know which way
+    if (this.fare) {
+      ctx.save();
+      const F = this.fare, lim = S / (2 * zoom) - 6 / zoom;
+      if (F.route && F.route.length > 3) {
+        // magenta on a dark casing: the map's roads are yellow and white, and the
+        // arterials and freeways swallowed a yellow route
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        ctx.beginPath();
+        for (let i = 0; i < F.route.length; i += 2) {
+          const [rx, rz] = toMap(F.route[i], F.route[i + 1]);
+          if (i) ctx.lineTo(rx, rz); else ctx.moveTo(rx, rz);
+        }
+        ctx.strokeStyle = 'rgba(20,0,24,0.9)'; ctx.lineWidth = 5 / zoom; ctx.stroke();
+        ctx.strokeStyle = '#ff35d6'; ctx.lineWidth = 2.6 / zoom; ctx.stroke();
+      }
+      for (const [pt, ring] of [[F.hail, true], [F.dest, false]]) {
+        if (!pt) continue;
+        let [bx, bz] = toMap(pt.x, pt.z);
+        const l = Math.hypot(bx, bz);
+        if (l > lim) { bx *= lim / l; bz *= lim / l; }
+        const pulse = 1 + 0.2 * Math.sin(performance.now() * 0.008);
+        ctx.fillStyle = '#ffd24a'; ctx.strokeStyle = '#2a1f00'; ctx.lineWidth = 1.5 / zoom;
+        ctx.beginPath(); ctx.arc(bx, bz, (ring ? 5.5 * pulse : 6.5) / zoom, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#2a1f00'; ctx.font = `bold ${8 / zoom}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(ring ? '!' : '$', bx, bz + 0.5 / zoom);
+      }
+      ctx.restore();
+    }
+    if (game.target) {
+      const [bx, bz] = toMap(game.target.x, game.target.z);
+      ctx.fillStyle = '#ffd24a';
+      ctx.beginPath();
+      ctx.arc(bx, bz, 4.5 / zoom, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (game.fireTarget) {
+      // a fire call's building: a pulsing red ring
+      const [bx, bz] = toMap(game.fireTarget.x, game.fireTarget.z);
+      const pulse = 1 + 0.25 * Math.sin(performance.now() * 0.008);
+      ctx.fillStyle = '#ff3b1e'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5 / zoom;
+      ctx.beginPath();
+      ctx.arc(bx, bz, (6 * pulse) / zoom, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+    }
+    if (game.tourTarget) {
+      const [bx, bz] = toMap(game.tourTarget.x, game.tourTarget.z);
+      ctx.fillStyle = '#4ae8ff'; ctx.strokeStyle = '#003a4a'; ctx.lineWidth = 1.5 / zoom;
+      ctx.beginPath();
+      ctx.arc(bx, bz, 5.5 / zoom, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+    }
+    // Activity and collectible icons live on the MINIMAP, not as world meshes:
+    // sixty markers would be sixty draws against a ~300 budget, and a canvas
+    // dot is free. This is also the discoverability path -- you find things by
+    // seeing them on the map, with no tutorial.
+    for (const a of (this.activities || [])) {
+      const [bx, bz] = toMap(a.x, a.z);
+      if (Math.abs(bx) > S || Math.abs(bz) > S) continue;
+      ctx.fillStyle = a.best ? (a.best.medal === 'gold' ? '#f4c542'
+        : a.best.medal === 'silver' ? '#c8d0d8' : '#c0763c') : '#4fd0ff';
+      ctx.beginPath();
+      ctx.arc(bx, bz, 3.8 / zoom, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // The monorail's line, teal, under the markers
+    if (this.ferry) this.drawFerry(ctx, toMap, 2.0 / zoom, 5 / zoom);
+    if (this.freight) this.drawFreight(ctx, toMap, 2.2 / zoom, { x: p.x, z: p.z, r: S / (zoom * SCALE) + 60 });
+    if (this.link) this.drawLink(ctx, toMap, 2.6 / zoom, { x: p.x, z: p.z, r: S / (zoom * SCALE) + 60 });
+    if (this.counterbal) this.drawStreetcar(ctx, toMap, 2.0 / zoom, 0, { x: p.x, z: p.z, r: S / (zoom * SCALE) + 60 });
+    if (this.monorail) this.drawMonorail(ctx, toMap, 2.2 / zoom);
+    // Marked places (the seaplane dock, the quads), upright whatever the
+    // dial's rotation, so the anchor reads as an anchor.
+    for (const pl of (this.places || [])) {
+      if (pl.off) continue;   // a pickup that has been taken
+      const [bx, bz] = toMap(pl.x, pl.z);
+      if (Math.abs(bx) > S || Math.abs(bz) > S) continue;
+      ctx.save();
+      ctx.translate(bx, bz);
+      ctx.rotate(-player.camYaw);
+      placeIcon(ctx, pl.kind, 0, 0, (pl.kind === 'dock' || pl.kind === 'clinic' ? 6.5 : pl.kind === 'gun' || pl.kind === 'health' ? 4.2 : 5) / zoom);
+      ctx.restore();
+    }
+    for (const c of (this.finds || [])) {
+      const [bx, bz] = toMap(c.x, c.z);
+      if (Math.abs(bx) > S || Math.abs(bz) > S) continue;
+      ctx.fillStyle = '#f4c542';
+      ctx.fillRect(bx - 1.6 / zoom, bz - 1.6 / zoom, 3.2 / zoom, 3.2 / zoom);
+    }
+    // Tech Tour badges: a diamond in the company's colour, white-edged
+    for (const c of (this.techFinds || [])) {
+      const [bx, bz] = toMap(c.x, c.z);
+      if (Math.abs(bx) > S || Math.abs(bz) > S) continue;
+      techIcon(ctx, bx, bz, 3.4 / zoom, c.col);
+    }
+    // Stunt jumps: a ramp-shaped wedge pointing the way you jump, orange until
+    // it has been landed clean, then green.
+    for (const j of (this.jumps || [])) {
+      const [bx, bz] = toMap(j.x, j.z);
+      if (Math.abs(bx) > S || Math.abs(bz) > S) continue;
+      drawJumpIcon(ctx, bx, bz, j, 5 / zoom);
+    }
+    if (this.counterbal) this.drawStreetcarCars(ctx, toMap, 5.5 / zoom, { x: p.x, z: p.z, r: S / (zoom * SCALE) + 60 });
+    ctx.restore();
+
+    // player arrow, always upright at centre
+    ctx.save();
+    ctx.translate(S / 2, S / 2);
+    const heading = player.onFoot ? player.heading : player.vehicle ? player.vehicle.heading : 0;
+    const rel = player.camYaw + Math.PI - heading;
+    ctx.rotate(rel);
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#101418';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, -9);
+    ctx.lineTo(6, 7);
+    ctx.lineTo(0, 3.5);
+    ctx.lineTo(-6, 7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    // North marker on the rim. The map is drawn world-aligned and then turned
+    // by camYaw, and north is -Z (heading 0 faces +Z, which is south), so the
+    // direction that was straight up before the rotation ends up here. Drawn
+    // outside that transform so the letter stays upright at any bearing.
+    ctx.save();
+    ctx.translate(S / 2, S / 2);
+    const nx = Math.sin(player.camYaw), nz = -Math.cos(player.camYaw);
+    const rr = S / 2 - 10;
+    ctx.beginPath();
+    ctx.moveTo(nx * (rr + 7), nz * (rr + 7));
+    ctx.lineTo(nx * rr - nz * 4.5, nz * rr + nx * 4.5);
+    ctx.lineTo(nx * rr + nz * 4.5, nz * rr - nx * 4.5);
+    ctx.closePath();
+    ctx.fillStyle = '#ff5a4d';
+    ctx.strokeStyle = 'rgba(16,20,24,0.9)';
+    ctx.lineWidth = 1.2;
+    ctx.fill();
+    ctx.stroke();
+    ctx.font = 'bold 11px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 2.6;
+    ctx.strokeText('N', nx * (rr - 9), nz * (rr - 9));
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText('N', nx * (rr - 9), nz * (rr - 9));
+    ctx.restore();
+
+    }
+
+    // readouts. Written only when they CHANGE: a textContent write replaces
+    // the text node even with the same string, and every one dirtied style and
+    // layout for the frame -- six of them, 60 times a second, for numbers that
+    // mostly stand still.
+    this._put(this.money, 'money', formatMoney(game.money));
+    this._css(this.healthFill, 'width', `${clamp(player.health, 0, 100)}%`);
+    this._css(this.healthFill, 'background', player.health > 45 ? '#4fd07a' : player.health > 20 ? '#f0b429' : '#e5484d');
+    const kph = player.onFoot ? player.speed * 3.6 : Math.abs(player.vehicle ? player.vehicle.vLong : 0) * 3.6;
+    // A balloon's instrument is its altimeter, not a speedometer.
+    const alt = !player.onFoot && player.vehicle && player.vehicle.spec.balloon;
+    this._put(this.speedVal, 'speed', String(Math.round(alt ? player.vehicle.y : kph)));
+    if (this.speedUnit) this._put(this.speedUnit, 'unit', alt ? 'm' : 'km/h');
+    // Flying anything, the altitude over sea level under the speed (a
+    // balloon's is already the main readout)
+    const fl = !player.onFoot && player.vehicle && player.vehicle.spec.plane && !player.vehicle.spec.balloon;
+    if (this.altRow) {
+      this.altRow.classList.toggle('hidden', !fl);
+      if (fl) this._put(this.altVal, 'alt', String(Math.max(0, Math.round(player.vehicle.y))));
+    }
+    this.armourRow.classList.toggle('hidden', player.onFoot);
+    this.ammoEl.classList.toggle('hidden', !(player.onFoot && player.armed));
+    if (player.armed) this._put(this.ammoEl, 'ammo', `⌖ ${player.ammo}`);
+
+    const stars = game.wanted;
+    // police.js: out of their sight, the stars flash while they search
+    const search = !!this.searching && stars > 0;
+    if (this._search !== search) { this._search = search; this.stars.classList.toggle('search', search); }
+    if (this.stars.dataset.n !== String(stars)) {
+      this.stars.dataset.n = String(stars);
+      this.stars.innerHTML = '';
+      for (let i = 0; i < 5; i++) {
+        const s = document.createElement('span');
+        s.textContent = '★';
+        s.className = i < stars ? 'star on' : 'star';
+        this.stars.appendChild(s);
+      }
+    }
+
+    const name = G.placeNameAt(p.x, p.z);
+    if (name !== this.lastPlace) {
+      this.lastPlace = name;
+      this.place.textContent = name;
+      this.place.classList.remove('flash');
+      void this.place.offsetWidth;
+      this.place.classList.add('flash');
+    }
+
+    if (this.toastTimer > 0) {
+      this.toastTimer -= dt;
+      if (this.toastTimer <= 0) this.toast.classList.remove('show');
+    }
+  }
+
+  drawBigMap(player, game) {
+    const c = this.bigMap;
+    const r = c.getBoundingClientRect();
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    c.width = Math.round(r.width * dpr);
+    c.height = Math.round(r.height * dpr);
+    const ctx = this.bigCtx;
+    const size = Math.min(c.width, c.height);
+    ctx.clearRect(0, 0, c.width, c.height);
+    const ox = (c.width - size) / 2, oy = (c.height - size) / 2;
+    ctx.drawImage(this.mapCanvas, 0, 0, MAP_PX, MAP_PX, ox, oy, size, size);
+    const p = player.position;
+    const toC = (x, z) => [ox + ((x + G.MAP_HALF) / (G.MAP_HALF * 2)) * size, oy + ((z + G.MAP_HALF) / (G.MAP_HALF * 2)) * size];
+    // Remember the projection so a tap can be turned back into world metres.
+    // The map is letterboxed inside the canvas and the canvas is scaled by dpr,
+    // so neither offset can be inferred from the element's size alone.
+    this._mapView = { ox, oy, size, dpr, w: c.width, h: c.height };
+
+    ctx.font = `${Math.round(size * 0.013)}px -apple-system, Helvetica, sans-serif`;
+    ctx.fillStyle = 'rgba(255,255,255,0.72)';
+    ctx.textAlign = 'center';
+    for (const l of G.LANDMARKS) {
+      const [lx, lz] = toC(l.p ? l.p[0] : l.x, l.p ? l.p[1] : l.z);
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.beginPath();
+      ctx.arc(lx, lz, size * 0.004, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.fillText(l.name, lx, lz - size * 0.008);
+    }
+    if (this.ferry) this.drawFerry(ctx, toC, Math.max(1.4, size * 0.0018), size * 0.006);
+    if (this.freight) this.drawFreight(ctx, toC, Math.max(1.5, size * 0.002));
+    if (this.link) this.drawLink(ctx, toC, Math.max(1.8, size * 0.0026));
+    if (this.counterbal) this.drawStreetcar(ctx, toC, Math.max(1.5, size * 0.002), 0);
+    if (this.monorail) this.drawMonorail(ctx, toC, Math.max(1.5, size * 0.0022));
+    for (const pl of (this.places || [])) {
+      if (pl.off) continue;   // a pickup that has been taken
+      const [qx, qz] = toC(pl.x, pl.z);
+      placeIcon(ctx, pl.kind, qx, qz, size * (pl.kind === 'dock' || pl.kind === 'clinic' ? 0.011 : pl.kind === 'gun' || pl.kind === 'health' ? 0.0078 : 0.008));
+      // named, quads too: an unlabelled orange dot was a quad nobody found.
+      // (Pistols and first aid are not: thirty labels would bury the map, and
+      // the icons say what they are.)
+      if (pl.kind === 'clinic' || pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle' || pl.kind === 'kayak' || pl.kind === 'wheel' || pl.kind === 'golf' || pl.kind === 'arcade' || pl.kind === 'pinball' || pl.kind === 'hockey' || pl.kind === 'tower' || pl.kind === 'duck' || pl.kind === 'coffee' || pl.kind === 'hydro' || pl.kind === 'link' || pl.kind === 'link2' || pl.kind === 'freight' || pl.kind === 'ferry' || pl.kind === 'bike' || pl.kind === 'pickle' || pl.kind === 'wedge' || pl.kind === 'tank' || pl.kind === 'fire' || (pl.kind === 'streetcar' && pl.label)) {
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.fillText(pl.name, qx, qz - size * 0.016);
+      }
+    }
+    for (const j of (this.jumps || [])) {
+      const [jx, jz] = toC(j.x, j.z);
+      drawJumpIcon(ctx, jx, jz, j, size * 0.009);
+    }
+    if (this.counterbal) this.drawStreetcarCars(ctx, toC, Math.max(4.5, size * 0.007));
+    for (const c of (this.techFinds || [])) {
+      const [cx, cz] = toC(c.x, c.z);
+      techIcon(ctx, cx, cz, size * 0.008, c.col);
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.fillText(c.co, cx, cz - size * 0.013);
+    }
+    if (game.target) {
+      const [tx, tz] = toC(game.target.x, game.target.z);
+      ctx.fillStyle = '#ffd24a';
+      ctx.beginPath();
+      ctx.arc(tx, tz, size * 0.008, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (game.fireTarget) {
+      const [tx, tz] = toC(game.fireTarget.x, game.fireTarget.z);
+      ctx.fillStyle = '#ff3b1e'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(1.5, size * 0.002);
+      ctx.beginPath();
+      ctx.arc(tx, tz, size * 0.012, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+    }
+    // a taxi fare (taxi.js): the route and its two pins
+    if (this.fare) {
+      ctx.save();
+      const F = this.fare;
+      if (F.route && F.route.length > 3) {
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        ctx.beginPath();
+        for (let i = 0; i < F.route.length; i += 2) {
+          const [rx, rz] = toC(F.route[i], F.route[i + 1]);
+          if (i) ctx.lineTo(rx, rz); else ctx.moveTo(rx, rz);
+        }
+        const w = Math.max(2.5, size * 0.004);
+        ctx.strokeStyle = 'rgba(20,0,24,0.9)'; ctx.lineWidth = w * 1.9; ctx.stroke();
+        ctx.strokeStyle = '#ff35d6'; ctx.lineWidth = w; ctx.stroke();
+      }
+      for (const [pt, ring] of [[F.hail, true], [F.dest, false]]) {
+        if (!pt) continue;
+        const [tx, tz] = toC(pt.x, pt.z), r = size * (ring ? 0.011 : 0.013);
+        ctx.fillStyle = '#ffd24a'; ctx.strokeStyle = '#2a1f00'; ctx.lineWidth = Math.max(1.5, size * 0.002);
+        ctx.beginPath(); ctx.arc(tx, tz, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#2a1f00'; ctx.font = `bold ${r * 1.4}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(ring ? '!' : '$', tx, tz + r * 0.08);
+      }
+      ctx.restore();
+    }
+    // a police mission's suspects, as red diamonds
+    for (const v of (this.suspects || [])) {
+      const [tx, tz] = toC(v.x, v.z), r = size * 0.011;
+      ctx.fillStyle = '#ff2d2d'; ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(1, size * 0.002);
+      ctx.beginPath(); ctx.moveTo(tx, tz - r); ctx.lineTo(tx + r, tz); ctx.lineTo(tx, tz + r); ctx.lineTo(tx - r, tz); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+    }
+    if (game.tourTarget) {
+      const [tx, tz] = toC(game.tourTarget.x, game.tourTarget.z);
+      ctx.fillStyle = '#4ae8ff';
+      ctx.beginPath();
+      ctx.arc(tx, tz, size * 0.01, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const [px, pz] = toC(p.x, p.z);
+    ctx.save();
+    ctx.translate(px, pz);
+    // North-up map: heading 0 faces +Z, which is south, i.e. down the page.
+    ctx.rotate(Math.PI - (player.onFoot ? player.heading : player.vehicle ? player.vehicle.heading : 0));
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, -size * 0.012);
+    ctx.lineTo(size * 0.008, size * 0.009);
+    ctx.lineTo(0, size * 0.004);
+    ctx.lineTo(-size * 0.008, size * 0.009);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    // Warp crosshair: where the tap landed, and the road it snapped to.
+    if (this.warp) {
+      const [wx, wz] = toC(this.warp.x, this.warp.z);
+      const r = size * 0.016;
+      ctx.strokeStyle = this.warp.ok ? '#7ee0a4' : '#e5645d';
+      ctx.lineWidth = Math.max(1.5, size * 0.0022);
+      ctx.beginPath();
+      ctx.arc(wx, wz, r, 0, Math.PI * 2);
+      ctx.moveTo(wx - r * 1.7, wz); ctx.lineTo(wx - r * 0.5, wz);
+      ctx.moveTo(wx + r * 0.5, wz); ctx.lineTo(wx + r * 1.7, wz);
+      ctx.moveTo(wx, wz - r * 1.7); ctx.lineTo(wx, wz - r * 0.5);
+      ctx.moveTo(wx, wz + r * 0.5); ctx.lineTo(wx, wz + r * 1.7);
+      ctx.stroke();
+      if (this.warp.ok && this.warp.snap) {
+        // Draw the leg from the tap to the road it actually snapped to, so a
+        // long snap is visible rather than a surprise on arrival.
+        const [sx, sz] = toC(this.warp.snap.x, this.warp.snap.z);
+        ctx.setLineDash([size * 0.008, size * 0.006]);
+        ctx.beginPath();
+        ctx.moveTo(wx, wz);
+        ctx.lineTo(sx, sz);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#7ee0a4';
+        ctx.beginPath();
+        ctx.arc(sx, sz, size * 0.006, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  /**
+   * Canvas/client point -> world metres, or null outside the map square.
+   * Inverse of drawBigMap's toC(); it needs the view drawBigMap recorded.
+   */
+  mapToWorld(clientX, clientY) {
+    const v = this._mapView;
+    if (!v) return null;
+    const r = this.bigMap.getBoundingClientRect();
+    const cx = (clientX - r.left) * (v.w / r.width);
+    const cy = (clientY - r.top) * (v.h / r.height);
+    const u = (cx - v.ox) / v.size;
+    const w = (cy - v.oy) / v.size;
+    if (u < 0 || u > 1 || w < 0 || w > 1) return null;
+    return { x: u * G.MAP_HALF * 2 - G.MAP_HALF, z: w * G.MAP_HALF * 2 - G.MAP_HALF };
+  }
+}

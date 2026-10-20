@@ -1,0 +1,4453 @@
+// Pedestrians: civilians wandering the sidewalks and cops on foot.
+
+import * as THREE from './three.js';
+
+const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+import { Builder } from './build.js';
+import { clamp, lerp, angleWrap, hash2, rng, dist2 } from './util.js';
+import * as G from './geo.js';
+
+// Linear albedo. The two lightest were 0.95 and 0.99 red -- whiter than a
+// white shirt -- and under the noon sun both faces and hands came out chalk,
+// the doll read on every pale pedestrian (0.86-0.90 still did). Pale skin is
+// pinker, not just lighter: less green and blue for its red.
+const SKINS = [[0.80, 0.59, 0.47], [0.70, 0.50, 0.36], [0.55, 0.38, 0.27], [0.36, 0.24, 0.17], [0.84, 0.64, 0.53]];
+// Street clothes, not toy brights: every tone pulled toward grey and down in
+// value. A crowd wearing saturated primaries under one matte material is a bin
+// of plastic figures -- muting the palette is half of what stops that reading.
+const SHIRTS = [
+  [0.55, 0.22, 0.20], [0.22, 0.30, 0.47], [0.20, 0.38, 0.30], [0.72, 0.68, 0.62],
+  [0.24, 0.24, 0.27], [0.62, 0.47, 0.20], [0.42, 0.27, 0.42], [0.24, 0.42, 0.45],
+  [0.78, 0.77, 0.74], [0.38, 0.40, 0.42], [0.12, 0.13, 0.15], [0.50, 0.12, 0.14],
+];
+const PANTS = [[0.18, 0.22, 0.34], [0.2, 0.2, 0.22], [0.35, 0.3, 0.25], [0.45, 0.45, 0.48], [0.12, 0.14, 0.18]];
+const HAIR = [[0.12, 0.09, 0.07], [0.30, 0.20, 0.10], [0.48, 0.39, 0.25], [0.62, 0.61, 0.60], [0.34, 0.14, 0.09], [0.05, 0.045, 0.04]];
+// A whole city in identical black shoes is a uniform -- but the first white
+// pair was the brightest thing on the pavement, a pair of lamps at the bottom
+// of every figure. Colourways skew dark and mid-tone; off-white is one in six.
+const SHOES = [[0.10, 0.10, 0.11], [0.24, 0.15, 0.09], [0.14, 0.16, 0.22], [0.26, 0.26, 0.25], [0.42, 0.32, 0.20], [0.52, 0.51, 0.48]];
+const SOLES = [[0.16, 0.155, 0.15], [0.10, 0.08, 0.06], [0.50, 0.49, 0.46], [0.14, 0.14, 0.14], [0.20, 0.15, 0.10], [0.62, 0.61, 0.58]];
+
+// Skeleton layout. Characters are skinned meshes: one draw call each, but with
+// real elbows, knees and a spine, which is the difference between a walk cycle
+// and a pair of swinging planks.
+const B = {
+  root: 0, hips: 1, spine: 2, chest: 3, neck: 4, head: 5,
+  shoulderL: 6, elbowL: 7, handL: 8,
+  shoulderR: 9, elbowR: 10, handR: 11,
+  thighL: 12, kneeL: 13, footL: 14,
+  thighR: 15, kneeR: 16, footR: 17,
+  // Fingers: one bone at the knuckles (MCP) and one at the middle joints (PIP)
+  // per hand, appended so every index above keeps its meaning. The relaxed
+  // curl is modelled into the bind pose; these only add to it -- a loose fist
+  // at a run, and the grip a rider holds the bars with (gripHands).
+  fingL: 18, tipL: 19, fingR: 20, tipR: 21,
+};
+const BONE_COUNT = 22;
+// Exported so vehicles.js can pose a rider on a motorcycle. A bike's rider is
+// this same humanoid held in a static pose rather than a model of its own --
+// one SkinnedMesh, one draw call, and it inherits every future fix to the body.
+export { B as BONES };
+
+// Joint heights in character space, taken from adult anthropometry as
+// fractions of a 1.75 m stature (eye 0.936H, chin 0.870H, acromion 0.812H,
+// elbow 0.630H, wrist 0.485H, hip 0.530H, knee 0.285H, ankle 0.039H).
+const J = {
+  hip: 0.927, spine: 1.06, chest: 1.26, neck: 1.47, head: 1.56,
+  shoulder: 1.421, elbow: 1.103, wrist: 0.849,
+  knee: 0.499, ankle: 0.068,
+  chin: 1.522, eye: 1.638, crown: 1.750,
+};
+const SHOULDER_X = 0.150;   // glenohumeral centre; the deltoid takes it to 0.21
+const HIP_X = 0.085;
+// The hand's knuckle line (MCP joints), and where the middle joints sit in the
+// relaxed bind pose, relative to it: in toward the palm and down.
+const KNUCKLE = J.wrist - 0.082;
+const PIP_IN = 0.008, PIP_DOWN = 0.040;
+// Around-the-body segment counts. At 14 (torso, head) and 10 (limbs) every
+// silhouette edge showed its facets from across the street and the skull read
+// as a cut gem; 18 and 12 cost ~1.7k triangles a character, which a crowd of
+// 24 one-draw-call figures does not notice.
+const ST = 18, SL = 12;
+
+function makeSkeletonBones(shoulderX = SHOULDER_X) {
+  const bones = [];
+  for (let i = 0; i < BONE_COUNT; i++) bones.push(new THREE.Bone());
+  const set = (b, x, y, z) => bones[b].position.set(x, y, z);
+  const link = (parent, child) => bones[parent].add(bones[child]);
+
+  set(B.root, 0, 0, 0);
+  set(B.hips, 0, J.hip, 0);
+  set(B.spine, 0, J.spine - J.hip, 0);
+  set(B.chest, 0, J.chest - J.spine, 0);
+  set(B.neck, 0, J.neck - J.chest, 0);
+  set(B.head, 0, J.head - J.neck, 0);
+  set(B.shoulderL, -shoulderX, J.shoulder - J.chest, 0);
+  set(B.elbowL, 0, J.elbow - J.shoulder, 0);
+  set(B.handL, 0, J.wrist - J.elbow, 0);
+  set(B.shoulderR, shoulderX, J.shoulder - J.chest, 0);
+  set(B.elbowR, 0, J.elbow - J.shoulder, 0);
+  set(B.handR, 0, J.wrist - J.elbow, 0);
+  set(B.thighL, -HIP_X, 0, 0);
+  set(B.kneeL, 0, J.knee - J.hip, 0);
+  set(B.footL, 0, J.ankle - J.knee, 0);
+  set(B.thighR, HIP_X, 0, 0);
+  set(B.kneeR, 0, J.knee - J.hip, 0);
+  set(B.footR, 0, J.ankle - J.knee, 0);
+  set(B.fingL, 0, KNUCKLE - J.wrist, 0);
+  set(B.fingR, 0, KNUCKLE - J.wrist, 0);
+  // the PIP line, where the relaxed MCP curl (FINGERS) puts it: toward the palm
+  set(B.tipL, PIP_IN, -PIP_DOWN, 0);
+  set(B.tipR, -PIP_IN, -PIP_DOWN, 0);
+
+  link(B.root, B.hips);
+  link(B.hips, B.spine); link(B.spine, B.chest);
+  link(B.chest, B.neck); link(B.neck, B.head);
+  link(B.chest, B.shoulderL); link(B.shoulderL, B.elbowL); link(B.elbowL, B.handL);
+  link(B.chest, B.shoulderR); link(B.shoulderR, B.elbowR); link(B.elbowR, B.handR);
+  link(B.hips, B.thighL); link(B.thighL, B.kneeL); link(B.kneeL, B.footL);
+  link(B.hips, B.thighR); link(B.thighR, B.kneeR); link(B.kneeR, B.footR);
+  link(B.handL, B.fingL); link(B.fingL, B.tipL);
+  link(B.handR, B.fingR); link(B.fingR, B.tipR);
+  return bones;
+}
+
+/** Elliptical cross-section in the XZ plane. */
+function oval(rx, rz, n = 10, ox = 0, oz = 0) {
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    pts.push([ox + Math.cos(a) * rx, oz + Math.sin(a) * rz]);
+  }
+  return pts;
+}
+
+const smoothT = (v) => v * v * (3 - 2 * v);
+
+// ---------------------------------------------------------------------------
+// THE CHARACTER ATLAS.
+//
+// Characters used to be vertex colour only, and a paintless mesh cannot do a
+// face: eyes, brows and lips were 3-6 mm boxes standing proud of the skull,
+// which read as stuck-on plates up close and, being thinner than a depth
+// texel at street distance, shimmered as you walked past. The agreed way past
+// that was a painted atlas in the manner of textures.js's facadeAtlas.
+//
+// One 1024 x 1024 canvas, drawn once at boot and shared by every character
+// through the one material, so a character is still ONE draw call:
+//  - cells 0-4: a painted face per skin tone -- head vertices are white, so
+//    what shows is the painted skin, with real eye whites, iris and lash line;
+//  - the rest: greyscale detail that MULTIPLIES the vertex colour, so one
+//    denim cell serves every trouser colour and one knit cell every shirt.
+//
+// ROUND TWO, and the lesson of round one: at street distance a figure is ~150
+// px tall and a face is twenty, so fine fabric grain simply is not there. What
+// carries is CONTRAST AT GARMENT BOUNDARIES -- collars, cuffs, hems, belts,
+// pockets -- and silhouette. Those are geometry where they have to read
+// (collars, cuffs, belts, hood, hi-vis bands) and high-contrast paint where
+// they can be flat (pocket outlines, ribbed hems, seams at 45-60% value, not
+// the 66-78% the first pass used).
+// 2048 x 1024. The left 1024 square is the 4 x 4 grid of 256 px cells it has
+// always been (cells 5-15: garment, hair, hand and skin detail). The right
+// square holds the five FACES at 512 x 341 each (2 across, 3 down). At 256 px
+// a face cell was stretched ~3x at the portrait distance and every painted
+// feature came out as a soft grey-brown haze; see faceRect.
+const ATLAS_W = 2048, ATLAS_H = 1024, CELL = 256, PAD = 6, CW = CELL - 2 * PAD;
+const FACE_W = 512, FACE_H = 341, FPAD = 8, FCW = FACE_W - 2 * FPAD, FCH = FACE_H - 2 * FPAD;
+const faceRect = (i) => [1024 + (i % 2) * FACE_W, Math.floor(i / 2) * FACE_H];
+const CELLS = {
+  shirt: 5, jacket: 6, pants: 7, shoe: 8, hair: 9, hand: 10, skin: 11,
+  hoodie: 12, skirt: 13, curly: 14, uniform: 15,
+  // Index 16 lives in grid square 0: the faces moved to the right half, so
+  // squares 0-4 of the left grid were empty (indices 0-4 still mean faces).
+  sleeve: 16,
+  // grid square 1: the outer layer of LOCKS laid over the hair shell
+  locks: 17,
+  // grid square 2: a shaved head's stubble
+  stubble: 18,
+};
+const cellPos = (cell) => (cell === CELLS.sleeve ? 0 : cell === CELLS.locks ? 1 : cell === CELLS.stubble ? 2 : cell);
+// The face cell wraps +-100 deg of the head (it was +-112), and runs from just
+// under the chin to just over the hairline (it ran to the crown). Everything
+// outside is hair, the ear's back or plain skin at the cell edge; the skull
+// above the hairline is not even drawn. With the 512 px cell that puts ~500 px
+// across the face where there were ~140.
+const HEAD_SPAN = (100 / 180) * Math.PI;
+const HEAD_Z = -0.004;
+const HY0 = J.chin - 0.014, HY1 = J.eye + 0.052;
+const HAIRLINE = J.eye + 0.040;
+// The hair cells' tip band: s below this is strand ends, cut out of the
+// atlas (see paintHair and buildHair's rows under the edge).
+const TIP_S = 0.22;
+
+function atlasUV(cell, t, s) {
+  if (cell < SKINS.length) {
+    const [fx, fy] = faceRect(cell);
+    return [(fx + FPAD + t * FCW) / ATLAS_W, 1 - (fy + FPAD + (1 - s) * FCH) / ATLAS_H];
+  }
+  const q = cellPos(cell), cx = (q % 4) * CELL, cy = Math.floor(q / 4) * CELL;
+  return [(cx + PAD + t * CW) / ATLAS_W, 1 - (cy + PAD + (1 - s) * CW) / ATLAS_H];
+}
+/** Cylindrical projection of a part around a vertical axis through (cx, cz). */
+const cylUV = (cell, cx, cz, y0, y1, span = Math.PI) => (x, y, z) => [
+  clamp(0.5 + Math.atan2(x - cx, z - cz) / (2 * span), 0, 1),
+  clamp((y - y0) / (y1 - y0), 0, 1),
+  cell,
+];
+
+function drawAtlas() {
+  const c = document.createElement('canvas');
+  c.width = ATLAS_W; c.height = ATLAS_H;
+  const g = c.getContext('2d');
+  const R = rng(9173);
+  // Vertex colours are linear and the map is sRGB-decoded, so a painted skin
+  // has to be ENCODED to land on the same value as the neck it joins.
+  const enc = (v) => {
+    v = clamp(v, 0, 1);
+    return Math.round((v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055) * 255);
+  };
+  // OPAQUE EVERYWHERE first. pedMat alpha-tests the atlas (the hair's strand
+  // tips are cut out of it), so a texel nobody painted -- the empty grid
+  // squares, a cell's padding -- would be a hole wherever a mip level or a
+  // stray UV reached it. Only the hair cells' tip bands are cleared, below.
+  g.fillStyle = '#9a9a9a'; g.fillRect(0, 0, ATLAS_W, ATLAS_H);
+  const rgba = (rgb, a = 1) => `rgba(${enc(rgb[0])},${enc(rgb[1])},${enc(rgb[2])},${a})`;
+  const grey = (v, a = 1) => rgba([v, v, v], a);
+  const mul = (rgb, k) => (Array.isArray(k) ? [rgb[0] * k[0], rgb[1] * k[1], rgb[2] * k[2]] : [rgb[0] * k, rgb[1] * k, rgb[2] * k]);
+  const P = (t) => PAD + t * CW;
+  const Q = (s) => PAD + (1 - s) * CW;
+  const inCell = (i, fn) => {
+    g.save();
+    i = cellPos(i);
+    g.translate((i % 4) * CELL, Math.floor(i / 4) * CELL);
+    g.beginPath(); g.rect(0, 0, CELL, CELL); g.clip();
+    fn();
+    g.restore();
+  };
+  const disc = (x, y, r) => { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill(); };
+  const blob = (x, y, r, rgb, a) => {
+    const gr = g.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, rgba(rgb, a)); gr.addColorStop(1, rgba(rgb, 0));
+    g.fillStyle = gr; g.fillRect(x - r, y - r, 2 * r, 2 * r);
+  };
+  const speckle = (n, lo, hi, a = 0.35, size = 1.5) => {
+    for (let k = 0; k < n; k++) {
+      g.fillStyle = grey(lo + (hi - lo) * R.n(), a);
+      g.fillRect(R.n() * CELL, R.n() * CELL, size, size);
+    }
+  };
+  // Fine and low-contrast. Broad strokes at 50-85% grey read as wood grain.
+  const strands = (n, top, bottom) => {
+    for (let k = 0; k < n; k++) {
+      const x = R.n() * CELL, y = top + R.n() * (bottom - top), len = 10 + R.n() * 30;
+      g.strokeStyle = grey(0.68 + R.n() * 0.24, 0.22);
+      g.lineWidth = 0.6 + R.n() * 0.5;
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x + (R.n() - 0.5) * 6, y + len); g.stroke();
+    }
+  };
+  // A ribbed band across the cell -- hems, cuffs, necklines. Dark enough to
+  // survive the trip to twenty pixels.
+  const rib = (s0, s1, v = 0.55) => {
+    g.fillStyle = grey(v, 0.9); g.fillRect(0, Q(s1), CELL, Q(s0) - Q(s1));
+    g.fillStyle = grey(v * 0.8, 0.5);
+    for (let x = 0; x < CELL; x += 4) g.fillRect(x, Q(s1), 1.5, Q(s0) - Q(s1));
+  };
+  const seams = (v = 0.50) => {
+    g.fillStyle = grey(v, 0.85);
+    for (const t of [0.25, 0.75]) g.fillRect(P(t) - 1.5, 0, 3, CELL);
+  };
+  // A FOLD: a soft valley of shade along a curve, with the cloth's lit ridge
+  // beside it. Cloth reads as cloth by where it creases -- tension folds
+  // from the armpit, bunching at the waist, the elbow and the knee -- and a
+  // garment with none is a coat of paint on a mannequin. Soft-edged (three
+  // passes, wide to narrow), so at twenty pixels it is form, not a line.
+  const fold = (t0, s0, t1, s1, tc, sc2, w = 7, v = 0.62, a = 0.45) => {
+    const path = () => { g.beginPath(); g.moveTo(P(t0), Q(s0)); g.quadraticCurveTo(P(tc), Q(sc2), P(t1), Q(s1)); };
+    g.lineCap = 'round';
+    for (const [k, al] of [[2.2, 0.35], [1.4, 0.55], [0.7, 1]]) {
+      g.strokeStyle = grey(v, a * al); g.lineWidth = w * k; path(); g.stroke();
+    }
+  };
+
+  // --- detail cells: multiplied into the vertex colour --------------------
+  // Torso cells are mapped J.hip - 0.06 .. J.shoulder + 0.07, so s 0.04 is the
+  // hem and s 0.97 the neckline; arms sharing the cell are mapped wrist ..
+  // shoulder, so the same s 0.00-0.06 band lands on the cuff.
+  inCell(CELLS.shirt, () => {
+    g.fillStyle = grey(0.96); g.fillRect(0, 0, CELL, CELL);
+    speckle(2200, 0.78, 1.0);
+    g.fillStyle = grey(0.80, 0.08);
+    for (let y = 0; y < CELL; y += 3) g.fillRect(0, y, CELL, 1);
+    seams();
+    rib(0.0, 0.06, 0.58);
+    // drape: the cloth gathers above the waist at the sides and under the chest
+    for (const t of [0.20, 0.80]) blob(P(t), Q(0.20), 46, [0.62, 0.62, 0.62], 0.5);
+    blob(P(0.5), Q(0.52), 60, [0.80, 0.80, 0.80], 0.35);
+    // tension folds from under each arm toward the waist, front and back
+    for (const [a, b] of [[0.31, 0.42], [0.69, 0.58], [0.06, 0.16], [0.94, 0.84]]) fold(a, 0.80, b, 0.40, (a + b) / 2 + (b - a) * 0.3, 0.62, 5, 0.70, 0.40);
+    // the cloth gathering just over the hem
+    for (const t of [0.12, 0.38, 0.55, 0.86]) fold(t - 0.07, 0.15, t + 0.07, 0.13, t, 0.19, 4, 0.70, 0.35);
+  });
+  inCell(CELLS.jacket, () => {
+    g.fillStyle = grey(0.95); g.fillRect(0, 0, CELL, CELL);
+    speckle(2000, 0.76, 1.0);
+    g.strokeStyle = grey(0.74, 0.12); g.lineWidth = 1;
+    for (let k = -CELL; k < 2 * CELL; k += 4) { g.beginPath(); g.moveTo(k, 0); g.lineTo(k + CELL, CELL); g.stroke(); }
+    seams(0.48);
+    rib(0.0, 0.07, 0.50);
+    for (const t of [0.20, 0.80]) blob(P(t), Q(0.22), 46, [0.62, 0.62, 0.62], 0.5);
+    for (const [a, b] of [[0.30, 0.40], [0.70, 0.60], [0.06, 0.15], [0.94, 0.85]]) fold(a, 0.82, b, 0.45, (a + b) / 2 + (b - a) * 0.3, 0.66, 5, 0.66, 0.40);
+    // zip placket up the centre line
+    g.fillStyle = grey(0.52, 0.95); g.fillRect(P(0.478), Q(0.97), P(0.522) - P(0.478), Q(0.05) - Q(0.97));
+    g.fillStyle = grey(0.32, 0.95); g.fillRect(P(0.5) - 1, Q(0.97), 2, Q(0.05) - Q(0.97));
+    // two lower pockets with flaps
+    g.strokeStyle = grey(0.38, 0.9); g.lineWidth = 2.5;
+    for (const t of [0.36, 0.64]) {
+      g.strokeRect(P(t) - 12, Q(0.34), 24, Q(0.16) - Q(0.34));
+      g.fillStyle = grey(0.55, 0.9); g.fillRect(P(t) - 13, Q(0.34), 26, 6);
+    }
+  });
+  inCell(CELLS.hoodie, () => {
+    g.fillStyle = grey(0.95); g.fillRect(0, 0, CELL, CELL);
+    speckle(2400, 0.80, 1.0);
+    seams(0.55);
+    rib(0.0, 0.08, 0.55);
+    for (const t of [0.20, 0.80]) blob(P(t), Q(0.24), 50, [0.62, 0.62, 0.62], 0.5);
+    for (const [a, b] of [[0.31, 0.40], [0.69, 0.60], [0.06, 0.15], [0.94, 0.85]]) fold(a, 0.82, b, 0.46, (a + b) / 2 + (b - a) * 0.3, 0.66, 6, 0.68, 0.40);
+    // the heavy cloth bags over the ribbed hem
+    for (const t of [0.08, 0.30, 0.70, 0.92]) fold(t - 0.08, 0.13, t + 0.08, 0.12, t, 0.17, 5, 0.66, 0.40);
+    // kangaroo pocket: the thing that says "hoodie" from across the street
+    g.fillStyle = grey(0.70, 0.9);
+    g.beginPath();
+    g.moveTo(P(0.36), Q(0.10)); g.lineTo(P(0.64), Q(0.10));
+    g.lineTo(P(0.60), Q(0.36)); g.lineTo(P(0.40), Q(0.36)); g.closePath(); g.fill();
+    g.strokeStyle = grey(0.35, 0.95); g.lineWidth = 2.5; g.stroke();
+    // drawstrings, pale against the neckline
+    g.fillStyle = grey(1.0, 0.95);
+    for (const t of [0.475, 0.525]) g.fillRect(P(t) - 1.5, Q(0.99), 3, Q(0.80) - Q(0.99));
+    rib(0.93, 1.0, 0.52);
+  });
+  inCell(CELLS.uniform, () => {
+    g.fillStyle = grey(0.95); g.fillRect(0, 0, CELL, CELL);
+    speckle(1600, 0.80, 1.0);
+    seams(0.50);
+    g.fillStyle = grey(0.42, 0.9); g.fillRect(P(0.5) - 1.5, Q(0.96), 3, Q(0.05) - Q(0.96));   // button line
+    g.strokeStyle = grey(0.40, 0.9); g.lineWidth = 2.5;
+    for (const t of [0.40, 0.60]) g.strokeRect(P(t) - 11, Q(0.78), 22, Q(0.64) - Q(0.78));  // breast pockets
+    g.fillStyle = grey(1.0); g.fillRect(P(0.40) - 5, Q(0.83), 10, 9);                           // badge
+    rib(0.0, 0.05, 0.55);
+  });
+  inCell(CELLS.skirt, () => {
+    g.fillStyle = grey(0.94); g.fillRect(0, 0, CELL, CELL);
+    speckle(1400, 0.80, 1.0, 0.3);
+    // soft folds falling from the waist
+    for (let t = 0.02; t < 1; t += 0.083) {
+      const gr = g.createLinearGradient(P(t - 0.04), 0, P(t + 0.04), 0);
+      gr.addColorStop(0, grey(1.0, 0)); gr.addColorStop(0.5, grey(0.60, 0.45)); gr.addColorStop(1, grey(1.0, 0));
+      g.fillStyle = gr; g.fillRect(P(t - 0.04), Q(0.85), P(t + 0.04) - P(t - 0.04), Q(0) - Q(0.85) + PAD);
+    }
+    rib(0.0, 0.05, 0.55);
+    rib(0.94, 1.0, 0.50);
+  });
+  inCell(CELLS.pants, () => {
+    g.fillStyle = grey(0.90); g.fillRect(0, 0, CELL, CELL);
+    g.strokeStyle = grey(0.60, 0.12); g.lineWidth = 1;
+    for (let k = -CELL; k < 2 * CELL; k += 3) { g.beginPath(); g.moveTo(k, CELL); g.lineTo(k + CELL, 0); g.stroke(); }
+    speckle(2400, 0.75, 1.0);
+    // worn at the knee and the top of the thigh, the way denim fades
+    blob(P(0.5), Q(0.43), 34, [1, 1, 1], 0.45);
+    blob(P(0.5), Q(0.80), 46, [1, 1, 1], 0.30);
+    // behind the knee, where trousers crease
+    blob(P(0.02), Q(0.40), 30, [0.55, 0.55, 0.55], 0.6);
+    blob(P(0.98), Q(0.40), 30, [0.55, 0.55, 0.55], 0.6);
+    // creases where the knee bends (the back of the leg is t 0 / 1) and where
+    // the hem breaks on the shoe
+    for (const [s0, dt] of [[0.38, 0.05], [0.44, -0.04], [0.50, 0.04]]) {
+      fold(0.0, s0, 0.16, s0 + dt, 0.08, s0 + dt * 0.4 - 0.02, 4, 0.62, 0.45);
+      fold(1.0, s0, 0.84, s0 + dt, 0.92, s0 + dt * 0.4 - 0.02, 4, 0.62, 0.45);
+    }
+    for (const [t, ds] of [[0.36, 0.01], [0.50, -0.01], [0.64, 0.012]]) fold(t - 0.09, 0.40 + ds, t + 0.09, 0.42 - ds, t, 0.45, 3, 0.74, 0.35);
+    for (const [s0, dt] of [[0.09, 0.03], [0.14, -0.02]]) fold(0.30, s0, 0.70, s0 + dt, 0.5, s0 + 0.035, 4, 0.68, 0.40);
+    seams(0.52);
+    g.fillStyle = grey(1.0, 0.8);
+    for (const t of [0.25, 0.75]) for (let y = 0; y < CELL; y += 6) { g.fillRect(P(t) - 5, y, 1, 3); g.fillRect(P(t) + 4, y, 1, 3); }
+    // front pockets, waistband and turn-up at the hem
+    g.strokeStyle = grey(0.38, 0.9); g.lineWidth = 2.5;
+    for (const t of [0.36, 0.64]) {
+      g.beginPath(); g.moveTo(P(t), Q(1.0)); g.quadraticCurveTo(P(t), Q(0.89), P(t + (t < 0.5 ? 0.11 : -0.11)), Q(0.87)); g.stroke();
+    }
+    rib(0.95, 1.0, 0.50);
+    rib(0.0, 0.035, 0.62);
+  });
+  inCell(CELLS.shoe, () => {
+    g.fillStyle = grey(0.92); g.fillRect(0, 0, CELL, CELL);
+    speckle(1800, 0.70, 1.0);
+    g.fillStyle = grey(0.72, 0.7);
+    g.fillRect(0, Q(0.62), P(0.08), Q(0.12) - Q(0.62));
+    g.fillRect(P(0.92), Q(0.62), CELL - P(0.92), Q(0.12) - Q(0.62));
+    g.beginPath(); g.ellipse(P(0.5), Q(0.16), P(0.14) - PAD, 18, 0, Math.PI, 0); g.fill();
+    g.fillStyle = grey(0.50, 0.8);
+    for (let x = 0; x < CELL; x += 5) g.fillRect(x, Q(0.20), 3, 1);
+    g.fillStyle = grey(0.55, 0.9);
+    g.fillRect(P(0.44), Q(0.80), P(0.56) - P(0.44), Q(0.38) - Q(0.80));
+    g.fillStyle = grey(1.0, 0.95);
+    for (let k = 0; k < 5; k++) g.fillRect(P(0.43), Q(0.42 + k * 0.08), P(0.57) - P(0.43), 2.5);
+  });
+  // HAIR IS LOCKS, AND IT ENDS IN TIPS. The cell is mapped by the hair's own
+  // rows and columns (buildHair's hairUV), not by height: t runs once round
+  // the head from the back (t 0.5 is the middle of the forehead) and s from
+  // the shell's EDGE (s = TIP_S) up to the crown (s 1). Below TIP_S is the
+  // tip band, the rows buildHair hangs below the edge: transparent but for
+  // tapering locks, so the edge of every style is a broken line of strand
+  // ends over the skin (pedMat alpha-tests it). Round two's cell was value
+  // structure on one smooth shell, and its edge -- one clean line round the
+  // head with a fringe cut straight across -- was what still read as a helmet.
+  //  - the body is CLUMPS: ~40 locks down the cell, each a lighter ridge
+  //    between two soft dark partings, each with its own short sheen stroke
+  //    at a slightly different height, so the highlight is a broken band of
+  //    dashes (what an anisotropic hair shader draws) and never one stripe;
+  //  - darker at the crown (the whorl, roots) and into the underside;
+  //  - fine strands over the top at low contrast (long strokes at 30 % read
+  //    as wood grain).
+  // Everything that crosses t = 0/1 is drawn twice: that is the back seam.
+  const paintHair = (curly) => {
+    const yT = Q(TIP_S);
+    const gr = g.createLinearGradient(0, Q(1), 0, yT);
+    gr.addColorStop(0.00, grey(0.66)); gr.addColorStop(0.10, grey(0.80));
+    gr.addColorStop(0.28, grey(0.93)); gr.addColorStop(0.42, grey(1.00));
+    gr.addColorStop(0.58, grey(0.92)); gr.addColorStop(0.85, grey(0.80));
+    gr.addColorStop(1.00, grey(0.72));
+    g.fillStyle = gr; g.fillRect(0, 0, CELL, yT + 3);
+    const wrap = (x, fn) => { fn(x); if (x < 24) fn(x + CW); if (x > CELL - 24) fn(x - CW); };
+    g.lineCap = 'round';
+    if (!curly) {
+      const NL = 30;
+      for (let k = 0; k < NL; k++) {
+        const x0 = P((k + R.n() * 0.9) / NL), w = 4 + R.n() * 9, dx = (R.n() - 0.5) * 12;
+        const top = Q(0.80 + R.n() * 0.22), bot = yT + 2;
+        wrap(x0, (x) => {
+          const path = (o) => { g.beginPath(); g.moveTo(x + o, top); g.quadraticCurveTo(x + o + dx * 0.2, (top + bot) / 2, x + o + dx, bot); };
+          // the partings either side of the lock, soft
+          for (const o of [-w / 2, w / 2]) {
+            if (R.n() < 0.45) continue;
+            g.strokeStyle = grey(0.50, 0.12); g.lineWidth = 3.0; path(o); g.stroke();
+            g.strokeStyle = grey(0.45, 0.14); g.lineWidth = 1.2; path(o); g.stroke();
+          }
+          // the lock's rounded top catches light down its middle
+          g.strokeStyle = grey(1.0, 0.10); g.lineWidth = w * 0.55; path(0); g.stroke();
+          // its own sheen, a dash at its own height
+          const sy = Q(0.60 + (R.n() - 0.5) * 0.16), sl = 10 + R.n() * 16;
+          const sx = x + dx * clamp((sy - top) / (bot - top), 0, 1) * 0.6;
+          for (const [k2, al] of [[1.0, 0.10], [0.6, 0.16], [0.3, 0.22]]) {
+            g.strokeStyle = grey(1.0, al); g.lineWidth = w * k2;
+            g.beginPath(); g.moveTo(sx, sy - sl / 2); g.lineTo(sx + dx * 0.05, sy + sl / 2); g.stroke();
+          }
+        });
+      }
+      for (let k = 0; k < 1600; k++) {
+        const x = R.n() * CELL, y = -30 + R.n() * (yT + 30), len = 10 + R.n() * 26;
+        const dark = R.n() < 0.6;
+        g.strokeStyle = dark ? grey(0.50 + R.n() * 0.2, 0.16) : grey(1.0, 0.16);
+        g.lineWidth = 0.5 + R.n() * 0.6;
+        g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + (R.n() - 0.5) * 4, y + len * 0.5, x + (R.n() - 0.5) * 6, y + len); g.stroke();
+      }
+    } else {
+      // curls: tight coils at many sizes, each with a lit upper edge and a
+      // shadowed lower one, so the surface is bumpy rather than scribbled
+      // (shaded coils, lit above and dark in their own shadow below: thin
+      // rings on a flat field read as a printed pattern on a swim cap)
+      g.fillStyle = grey(0.62); g.fillRect(0, 0, CELL, yT + 3);
+      // Drawn as UPRIGHT ellipses: the hair cell is mapped ~2.2 mm a pixel
+      // round the head and 0.4-0.8 mm up it, so a round coil painted round
+      // came out a horizontal smear ("wavy striations").
+      for (let k = 0; k < 1800; k++) {
+        const x = R.n() * CELL, y = R.n() * (yT + 4), r = 4 + R.n() * 7;
+        const cg2 = g.createRadialGradient(x - r * 0.3, y - r * 0.35, 0, x, y, r);
+        cg2.addColorStop(0, grey(1.0)); cg2.addColorStop(0.6, grey(0.80)); cg2.addColorStop(1, grey(0.45, 0));
+        wrap(x, (xx) => {
+          g.save(); g.translate(xx, y); g.scale(0.36, 1); g.translate(-x, -y);
+          g.fillStyle = cg2; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+          g.strokeStyle = grey(0.40, 0.45); g.lineWidth = 1.2;
+          g.beginPath(); g.arc(x, y, r * 0.8, 0.3, Math.PI - 0.3); g.stroke();
+          g.restore();
+        });
+      }
+    }
+    // The tip band: clear it, then hang the locks' ends in it. Each tapers
+    // to a point (curls: rounded ends) at its own depth, so the edge is
+    // ragged and never a line.
+    g.clearRect(0, yT, CELL, CELL - yT);
+    const yB = Q(0);
+    for (let k = 0; k < (curly ? 260 : 190); k++) {
+      const x = R.n() * CELL, w = curly ? 3 + R.n() * 3 : 2.5 + R.n() * 3.5;
+      const len = (curly ? 0.30 + R.n() * 0.55 : 0.25 + R.n() * 0.75) * (yB - yT);
+      const dx = (R.n() - 0.5) * (curly ? 3 : 7);
+      const v0 = curly ? 0.66 : 0.70 + R.n() * 0.10;
+      wrap(x, (xx) => {
+        const tg = g.createLinearGradient(0, yT, 0, yT + len);
+        tg.addColorStop(0, grey(v0)); tg.addColorStop(1, grey(v0 * 0.82));
+        g.fillStyle = tg;
+        g.beginPath();
+        if (curly) {
+          // a coil hanging from the edge: round in the world, so an upright
+          // ellipse in the cell (bars with round ends were battlements)
+          // (hung from the edge: a coil centred deeper floated on the skin)
+          const ry = 6 + R.n() * 10, cy = yT - 2 + ry * (0.3 + 0.5 * R.n());
+          g.ellipse(xx, cy, ry * 0.36, ry, 0, 0, Math.PI * 2);
+          g.closePath();
+        } else {
+          // two or three wisps, not one sawtooth
+          g.closePath();
+          const nw = 2 + (R.n() < 0.5 ? 1 : 0);
+          for (let q = 0; q < nw; q++) {
+            const o = (q / (nw - 1) - 0.5) * w * 0.7, ww = w * 0.45, l2 = len * (0.55 + 0.45 * R.n());
+            g.moveTo(xx + o - ww / 2, yT - 2);
+            g.quadraticCurveTo(xx + o - ww * 0.3 + dx * 0.4, yT + l2 * 0.6, xx + o + dx + o * 0.3, yT + l2);
+            g.quadraticCurveTo(xx + o + ww * 0.3 + dx * 0.4, yT + l2 * 0.6, xx + o + ww / 2, yT - 2);
+            g.closePath();
+          }
+        }
+        g.fill();
+        if (!curly) {
+          g.strokeStyle = grey(0.45, 0.35); g.lineWidth = 0.7;
+          g.beginPath(); g.moveTo(xx, yT); g.quadraticCurveTo(xx + dx * 0.3, yT + len * 0.5, xx + dx * 0.8, yT + len * 0.85); g.stroke();
+        }
+      });
+    }
+  };
+  inCell(CELLS.hair, () => paintHair(false));
+  // THE LOCKS: the outer layer (buildHair's `over`), mapped like the shell
+  // but by how far up its column a point is (s 0 at the shell's edge, 1 at
+  // the crown). Transparent but for ~40 overlapping locks, each wide at the
+  // crown and tapering to its own tip, so near the top they close into one
+  // surface and lower down they part over the darker shell beneath: depth
+  // and a broken silhouette, from one more alpha-tested shell.
+  inCell(CELLS.locks, () => {
+    g.clearRect(0, 0, CELL, CELL);
+    const wrap = (x, fn) => { fn(x); if (x < 30) fn(x + CW); if (x > CELL - 30) fn(x - CW); };
+    g.lineCap = 'round';
+    // a closed crown under the locks
+    const cg = g.createLinearGradient(0, Q(1), 0, Q(0.80));
+    cg.addColorStop(0, grey(0.70)); cg.addColorStop(1, grey(0.80));
+    g.fillStyle = cg; g.fillRect(0, 0, CELL, Q(0.80));
+    // (52 wide locks, most ending in the tip band: with 40 narrower ones
+    // ending anywhere, the dark shell between them ran down the hair in thin
+    // wavy streaks -- "dripping paint")
+    const NL = 52;
+    for (let k = 0; k < NL; k++) {
+      const x = P((k + R.n()) / NL), w = 12 + R.n() * 10;
+      const sEnd = R.n() < 0.12 ? 0.18 + R.n() * 0.22 : R.n() * 0.10;
+      const yTop = Q(1) - 4, yEnd = Q(sEnd), dx = (R.n() - 0.5) * 16;
+      const v0 = 0.80 + R.n() * 0.18;
+      // Each lock ends in three or four WISPS of different lengths: one
+      // tapered shape per lock was a torn-paper sawtooth at every edge.
+      const nw = 4 + (R.n() < 0.5 ? 1 : 0);
+      const subs = [];
+      for (let q = 0; q < nw; q++) {
+        const f = nw === 1 ? 0 : q / (nw - 1) - 0.5;
+        subs.push({ o: f * w * 0.70, ww: w * 0.36, e: yEnd - R.n() * 18, d: dx * 0.3 + f * 5 + (R.n() - 0.5) * 4 });
+      }
+      wrap(x, (xx) => {
+        const shape = () => {
+          g.beginPath();
+          for (const u of subs) {
+            const x0 = xx + u.o;
+            // Full width down to the last ~24 px, then the point: a lock that
+            // tapers over its whole length parts from its neighbours halfway
+            // down, and the darker shell between ran down as "drips".
+            const k = u.e - 24;
+            g.moveTo(x0 - u.ww / 2, yTop);
+            g.lineTo(x0 - u.ww / 2 + u.d * 0.3, k);
+            g.quadraticCurveTo(x0 - u.ww * 0.25 + u.d * 0.7, u.e - 8, x0 + u.d, u.e);
+            g.quadraticCurveTo(x0 + u.ww * 0.25 + u.d * 0.7, u.e - 8, x0 + u.ww / 2 + u.d * 0.3, k);
+            g.lineTo(x0 + u.ww / 2, yTop);
+            g.closePath();
+          }
+        };
+        const lg = g.createLinearGradient(0, yTop, 0, yEnd);
+        lg.addColorStop(0, grey(v0 * 0.86)); lg.addColorStop(0.45, grey(v0)); lg.addColorStop(1, grey(v0 * 0.80));
+        g.fillStyle = lg; shape(); g.fill();
+        g.save(); shape(); g.clip();
+        // dark down its two sides, where it lies over its neighbours -- soft,
+        // and not round the tip, or every lock is outlined like a cartoon
+        for (const sd of [-1, 1]) {
+          g.strokeStyle = grey(0.55, 0.12); g.lineWidth = 3.5;
+          g.beginPath(); g.moveTo(xx + sd * w / 2, yTop);
+          g.quadraticCurveTo(xx + sd * w / 2, yTop + (yEnd - yTop) * 0.45, xx + sd * w * 0.3 + dx * 0.3, yTop + (yEnd - yTop) * 0.7);
+          g.stroke();
+        }
+        // a few strands down it
+        for (let q = 0; q < 5; q++) {
+          const ox = (R.n() - 0.5) * w * 0.7;
+          g.strokeStyle = R.n() < 0.5 ? grey(0.55, 0.30) : grey(1.0, 0.22); g.lineWidth = 0.6 + R.n() * 0.6;
+          g.beginPath(); g.moveTo(xx + ox, yTop); g.quadraticCurveTo(xx + ox * 0.8 + dx * 0.3, (yTop + yEnd) / 2, xx + ox * 0.2 + dx, yEnd); g.stroke();
+        }
+        // its sheen: a dash at its own height
+        const sy = Q(0.55 + (R.n() - 0.5) * 0.2), sl = 12 + R.n() * 18;
+        for (const [k2, al] of [[0.9, 0.14], [0.55, 0.22], [0.25, 0.32]]) {
+          g.strokeStyle = grey(1.0, al); g.lineWidth = w * k2;
+          g.beginPath(); g.moveTo(xx + dx * 0.25, sy - sl / 2); g.lineTo(xx + dx * 0.32, sy + sl / 2); g.stroke();
+        }
+        g.restore();
+      });
+    }
+  });
+  inCell(CELLS.curly, () => paintHair(true));
+  // STUBBLE: a shaved head is scalp seen through a stipple of short dark
+  // hairs. Dense over the body of the cell; in the tip band only the dots
+  // remain, thinning out, so the hairline is a fade, not a line.
+  inCell(CELLS.stubble, () => {
+    const yT = Q(TIP_S);
+    g.fillStyle = grey(0.90); g.fillRect(0, 0, CELL, yT + 2);
+    // Every mark is UPRIGHT in the cell: it is ~2.2 mm a pixel round the head
+    // and ~0.4 up it, so a square dot is a horizontal dash on the head, and
+    // the pale gaps between dashes drew a scratched white line at the edge.
+    for (let k = 0; k < 9000; k++) {
+      g.fillStyle = grey(0.35 + R.n() * 0.3, 0.35);
+      g.fillRect(R.n() * CELL, R.n() * (yT + 2), 0.6 + R.n() * 0.5, 3 + R.n() * 4);
+    }
+    g.clearRect(0, yT, CELL, CELL - yT);
+    for (let k = 0; k < 2600; k++) {
+      const y = yT + Math.pow(R.n(), 1.6) * (CELL - yT);
+      g.fillStyle = grey(0.70 + R.n() * 0.2);
+      g.fillRect(R.n() * CELL, y - 4, 1.2, 5 + R.n() * 6);
+    }
+  });
+  // The palm and back of the hand (fingers are geometry now, on the plain
+  // skin cell): mapped wrist + 15 mm .. wrist - 100 mm, so the knuckle line
+  // is s ~ 0.16. Only soft value: the finger lines and nails painted for the
+  // mitten landed on the back of the new palm as stray strokes.
+  inCell(CELLS.hand, () => {
+    g.fillStyle = grey(0.97); g.fillRect(0, 0, CELL, CELL);
+    speckle(600, 0.88, 1.0, 0.25);
+    const gr = g.createLinearGradient(0, Q(0.26), 0, Q(0.10));
+    gr.addColorStop(0, grey(0.97, 0)); gr.addColorStop(0.6, grey(0.84, 0.5)); gr.addColorStop(1, grey(0.97, 0));
+    g.fillStyle = gr; g.fillRect(0, Q(0.26), CELL, Q(0.10) - Q(0.26));
+  });
+  inCell(CELLS.skin, () => {
+    g.fillStyle = grey(1.0); g.fillRect(0, 0, CELL, CELL);
+    speckle(500, 0.92, 1.0, 0.25);
+  });
+  // LONG SLEEVES: mapped wrist .. shoulder (s 0 .. 1), front of the arm at
+  // t 0.5. The inside of the elbow (s ~0.44) gathers in a fan of creases, the
+  // cuff end bunches, and a seam rings the shoulder. Short sleeves keep the
+  // plain skin cell, or the bare forearm below them would wear the creases.
+  inCell(CELLS.sleeve, () => {
+    g.fillStyle = grey(0.97); g.fillRect(0, 0, CELL, CELL);
+    speckle(1400, 0.82, 1.0, 0.3);
+    for (const [s0, dt, w] of [[0.38, 0.05, 5], [0.44, -0.03, 6], [0.50, 0.04, 5], [0.41, 0.0, 4]]) {
+      fold(0.28, s0, 0.72, s0 + dt, 0.5, s0 + dt * 0.5 + 0.035, w, 0.62, 0.45);
+    }
+    // the point of the elbow, behind: a lit stretch, and two short creases
+    for (const s0 of [0.40, 0.48]) {
+      fold(0.0, s0, 0.10, s0 + 0.02, 0.05, s0 + 0.03, 3, 0.70, 0.35);
+      fold(1.0, s0, 0.90, s0 + 0.02, 0.95, s0 + 0.03, 3, 0.70, 0.35);
+    }
+    for (const [s0, dt] of [[0.10, 0.02], [0.16, -0.02], [0.21, 0.015]]) fold(0.05, s0, 0.95, s0 + dt, 0.5, s0 + 0.02, 4, 0.72, 0.35);
+    g.fillStyle = grey(0.60, 0.8); g.fillRect(0, Q(0.93), CELL, 2.5);
+  });
+
+  // --- faces, one per skin tone -------------------------------------------
+  // ROUND THREE: 512 x 341 cells, and CRISP. The round-two face was painted
+  // for a 256 px cell with soft radial blobs doing the shading -- a jaw
+  // gradient, a chin shadow, a philtrum blob, nose-side blobs -- and the
+  // modelled head now shades all of that itself; stretched 3x, the blobs were
+  // a grey-brown haze at the nose base and the mouth corners. What paint does
+  // now is only what geometry cannot: the eyes, the brows, the colour of the
+  // lips with a clean edge, the nostrils, a warmth in the cheeks, and a sheen
+  // on the nose. No painted value falls below the skin except at the eye, the
+  // lips' seam, the nostrils and a small shadow right under the nose tip.
+  const IRIS = [[0.14, 0.09, 0.05], [0.10, 0.07, 0.04], [0.07, 0.045, 0.03], [0.05, 0.035, 0.025], [0.12, 0.13, 0.12]];
+  const PF = (t) => FPAD + t * FCW;
+  const QF = (s) => FPAD + (1 - s) * FCH;
+  // same projection as the head's cylUV, in face-cell pixels
+  const hp = (x, y, z) => [
+    PF(clamp(0.5 + Math.atan2(x, z - HEAD_Z) / (2 * HEAD_SPAN), 0, 1)),
+    QF(clamp((y - HY0) / (HY1 - HY0), 0, 1)),
+  ];
+  const sxm = FCW / (2 * HEAD_SPAN * 0.090);    // px per metre across the face
+  const sym = FCH / (HY1 - HY0);                 // px per metre up it
+  const mx_ = sxm / 1000, my_ = sym / 1000;      // px per millimetre
+  const inFace = (i, fn) => {
+    const [fx, fy] = faceRect(i);
+    g.save(); g.translate(fx, fy);
+    g.beginPath(); g.rect(0, 0, FACE_W, FACE_H); g.clip();
+    fn();
+    g.restore();
+  };
+  SKINS.forEach((skin, fi) => {
+    inFace(fi, () => {
+      g.fillStyle = rgba(skin); g.fillRect(0, 0, FACE_W, FACE_H);
+      // Above the hairline: SKIN with fine strands (see round two: white here
+      // was a stripe across every forehead). Clipped at the line.
+      const hy = QF((HAIRLINE - HY0) / (HY1 - HY0));
+      g.save(); g.beginPath(); g.rect(0, 0, FACE_W, hy); g.clip();
+      for (let k = 0; k < 900; k++) {
+        const x = R.n() * FACE_W, y = -20 + R.n() * (hy + 16), len = 8 + R.n() * 22;
+        g.strokeStyle = rgba(mul(skin, 0.80 + R.n() * 0.15), 0.25);
+        g.lineWidth = 0.8 + R.n() * 0.6;
+        g.beginPath(); g.moveTo(x, y); g.lineTo(x + (R.n() - 0.5) * 6, y + len); g.stroke();
+      }
+      g.restore();
+      // The hair's shadow on the skin, fading out 14 mm below the hairline:
+      // the tips of every style lie over it, so the edge of the hair blends
+      // into a darker scalp instead of being cut out of a clean forehead.
+      const gr = g.createLinearGradient(0, hy, 0, hy + 14 * my_);
+      gr.addColorStop(0, rgba(mul(skin, [0.74, 0.72, 0.74]), 0.55)); gr.addColorStop(0.45, rgba(mul(skin, 0.80), 0.25));
+      gr.addColorStop(1, rgba(mul(skin, 0.85), 0));
+      g.fillStyle = gr; g.fillRect(0, hy, FACE_W, 14 * my_);
+
+      const brow = [0.10, 0.075, 0.06];
+      for (const sx of [-1, 1]) {
+        // cheeks: warmth, not shade -- a colour shift at the skin's own value
+        const [cx, cy] = hp(sx * 0.047, J.eye - 0.034, 0.080);
+        blob(cx, cy, 20 * mx_, mul(skin, [1.03, 0.86, 0.84]), 0.22);
+        // the lid crease and a little depth over the eye, tight to it
+        const [ex, ey] = hp(sx * 0.034, J.eye + 0.001, 0.085);
+        // ROUND FOUR: the eye has to read at 2-9 m, where it is a few pixels.
+        // What carries there is the dark of the socket and the lash line,
+        // not the iris: a soft, cool orbital shade round the whole eye, the
+        // lid crease deeper, a shadow under the lower lid, a bigger almond
+        // and a heavier upper lash line. Painted flat, the eyes were decals.
+        blob(ex - sx * 2 * mx_, ey - 1.5 * my_, 24 * mx_, mul(skin, [0.80, 0.78, 0.80]), 0.30);
+        blob(ex, ey - 3.5 * my_, 15 * mx_, mul(skin, 0.76), 0.36);
+        blob(ex + sx * 1 * mx_, ey + 6.5 * my_, 13 * mx_, mul(skin, [0.86, 0.82, 0.86]), 0.30);
+        const w = 29 * mx_, hh = 11.5 * my_;
+        const inner = ex - sx * w / 2, outer = ex + sx * w / 2;
+        const almond = () => {
+          g.beginPath();
+          g.moveTo(inner, ey);
+          g.quadraticCurveTo(ex, ey - hh * 1.10, outer, ey - hh * 0.18);
+          g.quadraticCurveTo(ex, ey + hh * 0.80, inner, ey);
+          g.closePath();
+        };
+        g.fillStyle = rgba([0.80, 0.78, 0.74]); almond(); g.fill();
+        g.save(); almond(); g.clip();
+        g.fillStyle = rgba(IRIS[fi]); disc(ex, ey - hh * 0.12, hh * 0.62);
+        g.strokeStyle = rgba(mul(IRIS[fi], 0.45)); g.lineWidth = 1.2;
+        g.beginPath(); g.arc(ex, ey - hh * 0.12, hh * 0.62, 0, Math.PI * 2); g.stroke();
+        g.fillStyle = rgba([0.01, 0.01, 0.01]); disc(ex, ey - hh * 0.12, hh * 0.27);
+        g.fillStyle = rgba(mul(skin, 0.35), 0.40); g.fillRect(ex - w, ey - hh * 1.3, 2 * w, hh * 0.6);  // lid shadow
+        g.restore();
+        g.fillStyle = 'rgba(255,255,255,0.85)'; disc(ex - hh * 0.20, ey - hh * 0.40, 1.5 * mx_);
+        // lash line, heavier toward the outer corner
+        g.strokeStyle = rgba([0.035, 0.03, 0.025], 0.95); g.lineWidth = 2.9 * my_;
+        g.beginPath(); g.moveTo(inner, ey); g.quadraticCurveTo(ex, ey - hh * 1.12, outer + sx * 1.5 * mx_, ey - hh * 0.30); g.stroke();
+        g.strokeStyle = rgba(mul(skin, 0.60), 0.45); g.lineWidth = 1.1 * my_;
+        g.beginPath(); g.moveTo(inner + sx * mx_, ey - hh * 0.6); g.quadraticCurveTo(ex, ey - hh * 1.9, outer, ey - hh * 0.95); g.stroke();
+        g.strokeStyle = rgba(mul(skin, 0.66), 0.40); g.lineWidth = 0.8 * my_;
+        g.beginPath(); g.moveTo(inner, ey + 0.5 * my_); g.quadraticCurveTo(ex, ey + hh * 0.9, outer, ey - hh * 0.1); g.stroke();
+        // brow: thick at the inner end, tapering to a tail, slightly arched
+        const [bx, by] = hp(sx * 0.035, J.eye + 0.021, 0.089);
+        const bw = 42 * mx_;
+        g.fillStyle = rgba(brow, 0.85);
+        g.beginPath();
+        // (thicker than round three's: a 4 mm line vanished past 3 m)
+        g.moveTo(bx - sx * bw * 0.50, by + 2.0 * my_);
+        g.quadraticCurveTo(bx + sx * bw * 0.02, by - 5.6 * my_, bx + sx * bw * 0.56, by + 1.8 * my_);
+        g.quadraticCurveTo(bx + sx * bw * 0.04, by + 1.6 * my_, bx - sx * bw * 0.50, by + 8.4 * my_);
+        g.closePath(); g.fill();
+        // and broken into hairs at its edges, so it is not a stroke of paint
+        g.strokeStyle = rgba(brow, 0.30); g.lineWidth = 0.8 * my_;
+        for (let q = 0; q < 14; q++) {
+          const f = 0.08 + 0.84 * q / 13, x0 = bx + sx * bw * (-0.48 + 1.0 * f);
+          const y0 = by + lerp(5.0, 1.8, f) * my_ + (R.n() - 0.5) * 2 * my_;
+          g.beginPath(); g.moveTo(x0, y0); g.lineTo(x0 + sx * 2.5 * mx_, y0 - (1.6 - f) * my_); g.stroke();
+        }
+        // nostrils: two small darks on the underside, crisp-edged
+        const [qx, qy] = hp(sx * 0.0078, J.eye - 0.047, 0.101);
+        g.fillStyle = rgba(mul(skin, 0.38), 0.75);
+        g.beginPath(); g.ellipse(qx, qy, 2.3 * mx_, 1.2 * my_, sx * 0.35, 0, Math.PI * 2); g.fill();
+        // the ear's bowl, a little deeper than the skin
+        const [ax, ay] = hp(sx * 0.080, J.eye - 0.020, -0.012);
+        blob(ax, ay, 6 * mx_, mul(skin, 0.72), 0.40);
+      }
+      // A lit top to the nose: a sheen down the bridge and on the tip.
+      {
+        const [tx, ty] = hp(0, J.eye - 0.041, 0.115);
+        blob(tx, ty, 7 * mx_, mul(skin, 1.12), 0.50);
+        // and a little colour in it, as the cheeks have
+        blob(tx, ty + 2 * my_, 9 * mx_, mul(skin, [1.03, 0.90, 0.88]), 0.22);
+        const [bx0, by0] = hp(0, J.eye - 0.004, 0.100), [, by1] = hp(0, J.eye - 0.034, 0.110);
+        const bw2 = 3.5 * mx_;
+        const gr2 = g.createLinearGradient(bx0 - bw2, 0, bx0 + bw2, 0);
+        gr2.addColorStop(0, rgba(mul(skin, 1.06), 0)); gr2.addColorStop(0.5, rgba(mul(skin, 1.06), 0.45)); gr2.addColorStop(1, rgba(mul(skin, 1.06), 0));
+        g.fillStyle = gr2; g.fillRect(bx0 - bw2, by0, 2 * bw2, by1 - by0);
+        // the one shadow painted under the nose: small, right under the tip
+        const [ux, uy] = hp(0, J.eye - 0.054, 0.097);
+        g.fillStyle = rgba(mul(skin, 0.72), 0.30);
+        g.beginPath(); g.ellipse(ux, uy, 5 * mx_, 1.6 * my_, 0, 0, Math.PI * 2); g.fill();
+      }
+      // Mouth. The lips are colour with a CLEAN edge: an upper lip with a
+      // cupid's bow and a crisp border, a fuller lower lip with a soft
+      // highlight, and a seam that thins to nothing at the corners instead of
+      // ending in a dark dot.
+      const [mx, my] = hp(0, J.chin + 0.045, 0.094);
+      const mw = 36 * mx_;
+      const up = 5.6 * my_, lo = 7.5 * my_;
+      g.fillStyle = rgba(mul(skin, [0.84, 0.62, 0.60]));
+      g.beginPath(); g.moveTo(mx - mw / 2, my);
+      g.bezierCurveTo(mx - mw * 0.30, my - up * 0.55, mx - mw * 0.14, my - up * 1.05, mx - mw * 0.06, my - up * 0.92);
+      g.quadraticCurveTo(mx, my - up * 0.70, mx + mw * 0.06, my - up * 0.92);
+      g.bezierCurveTo(mx + mw * 0.14, my - up * 1.05, mx + mw * 0.30, my - up * 0.55, mx + mw / 2, my);
+      g.quadraticCurveTo(mx, my + 0.6 * my_, mx - mw / 2, my);
+      g.closePath(); g.fill();
+      // the border of the upper lip: a thin lighter line just above it
+      g.strokeStyle = rgba(mul(skin, 1.07), 0.55); g.lineWidth = 0.9 * my_;
+      g.beginPath(); g.moveTo(mx - mw * 0.46, my - up * 0.12);
+      g.bezierCurveTo(mx - mw * 0.30, my - up * 0.70, mx - mw * 0.14, my - up * 1.20, mx - mw * 0.06, my - up * 1.06);
+      g.quadraticCurveTo(mx, my - up * 0.84, mx + mw * 0.06, my - up * 1.06);
+      g.bezierCurveTo(mx + mw * 0.14, my - up * 1.20, mx + mw * 0.30, my - up * 0.70, mx + mw * 0.46, my - up * 0.12);
+      g.stroke();
+      g.fillStyle = rgba(mul(skin, [0.90, 0.70, 0.67]));
+      g.beginPath(); g.moveTo(mx - mw * 0.46, my + 0.4 * my_);
+      g.bezierCurveTo(mx - mw * 0.30, my + lo * 1.05, mx + mw * 0.30, my + lo * 1.05, mx + mw * 0.46, my + 0.4 * my_);
+      g.quadraticCurveTo(mx, my + 1.2 * my_, mx - mw * 0.46, my + 0.4 * my_);
+      g.closePath(); g.fill();
+      blob(mx, my + lo * 0.45, 7 * mx_, mul(skin, [1.02, 0.86, 0.83]), 0.35);   // lower-lip sheen
+      // the seam: a gradient stroke, full in the middle, gone at the corners
+      const gs = g.createLinearGradient(mx - mw / 2, 0, mx + mw / 2, 0);
+      const seam = mul(skin, 0.42);
+      gs.addColorStop(0, rgba(seam, 0)); gs.addColorStop(0.18, rgba(seam, 0.75));
+      gs.addColorStop(0.82, rgba(seam, 0.75)); gs.addColorStop(1, rgba(seam, 0));
+      g.strokeStyle = gs; g.lineWidth = 1.3 * my_;
+      g.beginPath(); g.moveTo(mx - mw / 2, my); g.quadraticCurveTo(mx, my + 1.4 * my_, mx + mw / 2, my); g.stroke();
+      // chin: a gentle lit boss, light rather than shade
+      const [kx, ky] = hp(0, J.chin + 0.009, 0.090);
+      blob(kx, ky, 11 * mx_, mul(skin, 1.05), 0.30);
+    });
+  });
+  return c;
+}
+
+let ATLAS_TEX = null;
+function atlasTexture() {
+  if (!ATLAS_TEX) {
+    ATLAS_TEX = new THREE.CanvasTexture(drawAtlas());
+    ATLAS_TEX.colorSpace = THREE.SRGBColorSpace;
+    ATLAS_TEX.anisotropy = 4;
+    // Uploaded PREMULTIPLIED, so filtering and mips average the hair's cut-out
+    // tips correctly (pedMat divides it back out). Straight alpha would carry
+    // the transparent texels' black into every tip: a dark rim on each lock.
+    ATLAS_TEX.premultiplyAlpha = true;
+  }
+  return ATLAS_TEX;
+}
+
+const pedMat = new THREE.MeshStandardMaterial({
+  vertexColors: true, roughness: 0.88, metalness: 0.0, envMapIntensity: 0.7,
+  map: atlasTexture(),
+  // The hair's strand tips are cut out of the atlas. Everything else in it is
+  // opaque (drawAtlas fills the canvas first), so this costs one discard
+  // test and no draw; the shadow pass's depth material copies map + alphaTest.
+  alphaTest: 0.5,
+});
+// A CHARACTER CANNOT SHADOW ITSELF AT THIS MAP'S RESOLUTION. The sun's shadow
+// texel is 0.25 m (main.js: a 520 m box on 2048) and its normal bias 0.12 m,
+// sized for buildings; a head is 0.23 m tall. So a face's shadow lookup lands
+// in one or two texels shared with the nose, the hair and the shoulders, and
+// the result is not form but dirt: measured by switching shadows off in the
+// portrait harness, the whole lower face and the band under the nose went from
+// mud to lit skin. The shadow is still sampled -- a pedestrian in a building's
+// shadow must go dark -- but from a point lifted 0.60 m TOWARD the sun, so
+// anything within a body's own depth (its own head, nose, hair, arms) cannot
+// occlude it while a wall metres away still does. The lift is taken off the
+// shadow matrix's depth row, so it stays 0.60 m whatever the box and range are.
+pedMat.onBeforeCompile = (sh) => {
+  // Per-vertex gloss (see GLOSS). A geometry without the attribute reads 0,
+  // which is plain cloth -- never a mirror.
+  sh.vertexShader = 'attribute float gloss;\nvarying float vGloss;\n' + sh.vertexShader
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvGloss = gloss;');
+  // (The fragment chunk is still an #include here: replace it expanded.)
+  // The atlas is premultiplied (see atlasTexture): un-premultiply after the
+  // alpha test has thrown away everything under 0.5.
+  sh.fragmentShader = sh.fragmentShader.replace('#include <alphatest_fragment>',
+    '#include <alphatest_fragment>\n\tdiffuseColor.rgb /= max( diffuseColor.a, 0.5 );');
+  sh.fragmentShader = 'varying float vGloss;\n' + sh.fragmentShader
+    .replace('#include <roughnessmap_fragment>', THREE.ShaderChunk.roughnessmap_fragment
+      .replace('float roughnessFactor = roughness;', 'float roughnessFactor = roughness - vGloss;'));
+  sh.vertexShader = sh.vertexShader.replace('#include <shadowmap_vertex>',
+    THREE.ShaderChunk.shadowmap_vertex.replace(
+      'vDirectionalShadowCoord[ i ] = directionalShadowMatrix[ i ] * shadowWorldPosition;',
+      'vDirectionalShadowCoord[ i ] = directionalShadowMatrix[ i ] * shadowWorldPosition;\n'
+      + '\t\t\tvDirectionalShadowCoord[ i ].z -= 0.60 * length( vec3( directionalShadowMatrix[ i ][ 0 ].z, directionalShadowMatrix[ i ][ 1 ].z, directionalShadowMatrix[ i ][ 2 ].z ) );'));
+};
+
+/**
+ * Accumulates parts into one skinned geometry. Each part supplies a weight
+ * function so vertices near a joint blend between two bones instead of
+ * creasing, and a UV function that places it in the atlas.
+ */
+// How much GLOSSIER than cloth each part is: roughness = pedMat.roughness -
+// gloss, per vertex (the `gloss` attribute, see pedMat). One material can only
+// have one roughness, and at 0.78 for everything skin, hair, cotton and leather
+// came out one plastic -- the figurine look. Cloth is the base (0.88, matte);
+// skin carries a soft sheen, hair a tighter one, shoes and belts a little.
+// Anything not listed is cloth, except vertices painted the skin colour (bare
+// arms and legs share a builder with their sleeves).
+// Hair 0.22, not 0.40: tighter, it was one specular hotspot on the crown and
+// the shell read as varnished wood.
+const GLOSS = { head: 0.26, neck: 0.26, ear: 0.20, hand: 0.26, fingers: 0.26, hair: 0.22, foot: 0.22, hat: 0.12, gun: 0.30 };
+const GLOSS_SKIN = 0.26;
+
+class SkinAcc {
+  constructor(skin = null) {
+    this.pos = []; this.nor = []; this.col = []; this.idx = []; this.uv = [];
+    this.si = []; this.sw = []; this.parts = []; this.gloss = [];
+    this.skin = skin;
+  }
+  add(builder, weightFn, uvFn, name = '') {
+    const base = this.pos.length / 3;
+    // Which triangles came from which part, for raycasting a pixel back to
+    // the geometry that drew it (tools/charshots.mjs --probe).
+    this.parts.push({ name, tri0: this.idx.length / 3, tris: builder.idx.length / 3 });
+    const ts = [], cells = [];
+    const gl = GLOSS[name], sk = this.skin;
+    for (let i = 0; i < builder.pos.length; i += 3) {
+      const x = builder.pos[i], y = builder.pos[i + 1], z = builder.pos[i + 2];
+      this.pos.push(x, y, z);
+      this.gloss.push(gl != null ? gl : sk && builder.col[i] === sk[0] && builder.col[i + 1] === sk[1] && builder.col[i + 2] === sk[2] ? GLOSS_SKIN : 0);
+      this.nor.push(builder.nor[i], builder.nor[i + 1], builder.nor[i + 2]);
+      this.col.push(builder.col[i], builder.col[i + 1], builder.col[i + 2]);
+      const w = weightFn(x, y, z);
+      this.si.push(w[0], w[2] != null ? w[2] : 0, 0, 0);
+      this.sw.push(w[1], w[3] != null ? w[3] : 0, 0, 0);
+      const m = uvFn(x, y, z, i / 3);
+      ts.push(m[0], m[1]);
+      cells.push(m[2]);   // per vertex: the hair's shell and its locks are two cells
+    }
+    // The back seam. A cylindrical projection wraps from t = 1 back to 0
+    // behind the part, and a triangle spanning it interpolates across the
+    // WHOLE cell -- a smeared strip of every feature down the back. Builder
+    // quads carry their own vertices, so each spanning triangle can simply
+    // pin its low side to the cell edge.
+    const idx = builder.idx;
+    for (let k = 0; k < idx.length; k += 3) {
+      const a = idx[k] * 2, b = idx[k + 1] * 2, c = idx[k + 2] * 2;
+      if (Math.max(ts[a], ts[b], ts[c]) - Math.min(ts[a], ts[b], ts[c]) > 0.5) {
+        for (const q of [a, b, c]) if (ts[q] < 0.5) ts[q] = 1;
+      }
+    }
+    for (let q = 0; q < ts.length; q += 2) {
+      const uv = atlasUV(cells[q / 2], ts[q], ts[q + 1]);
+      this.uv.push(uv[0], uv[1]);
+    }
+    for (const ix of idx) this.idx.push(base + ix);
+  }
+  build() {
+    // Baked vertex ambient occlusion, computed ONCE from the BIND POSE --
+    // it does not respond to the current pose (an armpit stays dark with the
+    // arm raised). That is the standard trade for a vertex-baked single-
+    // material character, and at street distances it is invisible.
+    //  - sky term: down-facing surfaces see less sky (underside of chin, arms,
+    //    hem) -- from the normal's y.
+    //  - crevice term: the armpit/inner-arm and inner-thigh bands, from
+    //    distance to the body midline at those heights.
+    //  - grounding: a mild darkening toward the feet, which seats the figure
+    //    instead of leaving it floating in uniform value.
+    for (let i = 0; i < this.pos.length; i += 3) {
+      const x = this.pos[i], y = this.pos[i + 1];
+      const ny = this.nor[i + 1];
+      let ao = 0.84 + 0.16 * clamp(ny * 0.5 + 0.5, 0, 1);         // sky
+      const ax = Math.abs(x);
+      if (y > 1.10 && y < 1.45 && ax > 0.10 && ax < 0.19) ao *= 0.88;  // armpit band
+      if (y > 0.45 && y < 0.95 && ax < 0.075) ao *= 0.90;             // inner thigh
+      ao *= 0.90 + 0.10 * clamp(y, 0, 1);                             // grounding
+      this.col[i] *= ao; this.col[i + 1] *= ao; this.col[i + 2] *= ao;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nor, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
+    g.setAttribute('gloss', new THREE.Float32BufferAttribute(this.gloss, 1));
+    g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(this.si, 4));
+    g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(this.sw, 4));
+    g.setIndex(this.idx);
+    g.computeBoundingSphere();
+    g.computeBoundingBox();
+    g.userData.parts = this.parts;
+    return g;
+  }
+}
+
+/** Blend between two bones across a joint at height `jy`. */
+const across = (jy, span, above, below) => (x, y) => {
+  const t = smoothT(clamp((y - (jy - span)) / (span * 2), 0, 1));
+  return [above, t, below, 1 - t];
+};
+const solid = (b) => () => [b, 1, 0, 0];
+
+/** Which painted face cell a skin tone uses: the nearest of SKINS. */
+function faceCell(skin) {
+  let best = 0, bd = 1e9;
+  SKINS.forEach((s, i) => {
+    const d = (s[0] - skin[0]) ** 2 + (s[1] - skin[1]) ** 2 + (s[2] - skin[2]) ** 2;
+    if (d < bd) { bd = d; best = i; }
+  });
+  return best;
+}
+
+// The skull, as rings. Shared by the head loft and by the hair, which is
+// grown FROM this surface rather than modelled beside it.
+const SKULL = [
+  // Two rings under the jaw: from the chin straight to the jawline was one
+  // cone, and the lower face read as a trapezoid with a pointed chin.
+  // The chin FORWARD and narrow. Measured off an adult profile, the chin's
+  // front is 10-11 cm ahead of the ear and 4-5 cm wide; these rings had it
+  // 8 cm ahead and 8 cm wide, which is the flat, jowly profile with no chin
+  // that read as "not human" in every portrait. The jaw's plan is a U that
+  // narrows to the front, not an egg: see the lower-face terms in faceRelief.
+  { y: J.chin - 0.012, rx: 0.032, rz: 0.058, oz: 0.020 },   // under the chin
+  // (Round four: 3 mm wider at the chin and jaw angle -- seen from the
+  // front the narrowed chin had become a point, the jaw long and gaunt.)
+  { y: J.chin - 0.002, rx: 0.039, rz: 0.075, oz: 0.014 },   // chin
+  { y: J.chin + 0.010, rx: 0.050, rz: 0.083, oz: 0.010 },   // jaw angle
+  { y: J.chin + 0.024, rx: 0.054, rz: 0.089, oz: 0.007 },   // jawline
+  { y: J.chin + 0.060, rx: 0.066, rz: 0.095, oz: 0.004 },   // cheeks
+  { y: J.eye - 0.020, rx: 0.075, rz: 0.095, oz: 0.001 },    // cheekbone
+  { y: J.eye, rx: 0.075, rz: 0.096, oz: 0 },                // brow line
+  { y: J.eye + 0.036, rx: 0.072, rz: 0.092, oz: -0.002 },   // forehead, skin
+  { y: HAIRLINE + 0.002, rx: 0.073, rz: 0.093, oz: -0.003 }, // hairline
+  // A dome, not a bullet: the skull keeps most of its breadth to within 3 cm
+  // of the crown. The old top was a cone from the hairline (2.4 cm across at
+  // the crown ring), and every buzz cut and hat read as a pointed egg.
+  { y: J.eye + 0.066, rx: 0.071, rz: 0.090, oz: -0.006 },
+  { y: J.crown - 0.022, rx: 0.062, rz: 0.080, oz: -0.009 },
+  { y: J.crown - 0.008, rx: 0.045, rz: 0.058, oz: -0.012 },
+  { y: J.crown, rx: 0.020, rz: 0.026, oz: -0.013 },
+];
+function skullAt(y) {
+  if (y <= SKULL[0].y) return SKULL[0];
+  for (let i = 1; i < SKULL.length; i++) {
+    if (y <= SKULL[i].y) {
+      const a = SKULL[i - 1], b = SKULL[i], t = (y - a.y) / (b.y - a.y);
+      return { y, rx: lerp(a.rx, b.rx, t), rz: lerp(a.rz, b.rz, t), oz: lerp(a.oz, b.oz, t) };
+    }
+  }
+  return SKULL[SKULL.length - 1];
+}
+
+// ---------------------------------------------------------------------------
+// THE HEAD IS SCULPTED, NOT AN EGG.
+//
+// Round two painted every feature on a smooth ellipsoid, and up close that
+// is what it was: a mannequin with a face drawn on, a nose stuck on as a peg
+// and ears as two lozenges. The skull rings above are now only the BASE; the
+// head is a grid of columns by rows where each vertex sits on that base plus a
+// relief (faceRelief) -- a brow ridge, eye sockets, cheekbones, a nose with a
+// bridge, a tip, wings and an underside, a philtrum, two lips, the dip under
+// the lower lip, a chin boss and the angle of the jaw.
+//
+// Every vertex is moved ALONG THE RAY FROM THE UV AXIS, (0, HEAD_Z), at its
+// column's angle. The face cell is a cylindrical projection round that same
+// axis, so a vertex's texture coordinate is a function of its column and row
+// only: the relief cannot slide the painted eyes off the sockets it carved.
+// Columns are dense across the face (3-13 deg at the nose and mouth) and
+// sparse behind the ears, where the hair is.
+const HEAD_COLS = (() => {
+  // 16 a side, not 12: 13-32 deg apart from 41 deg round, the jaw and cheek
+  // showed their facets on every silhouette, a head cut from a gem.
+  const d = [0, 3, 7, 12, 17, 23, 30, 37, 45, 54, 64, 76, 90, 106, 126, 152, 180].map((v) => (v * Math.PI) / 180);
+  return [...d, ...d.slice(1, -1).reverse().map((v) => -v)];
+})();
+const HEAD_BACK = 16;          // index of the 180 deg column: seams go here
+const HEAD_ROWS = [
+  J.chin - 0.010, J.chin - 0.001, J.chin + 0.010, J.chin + 0.024,   // under the chin, chin, boss, sulcus
+  J.chin + 0.036, J.chin + 0.044, J.chin + 0.052, J.chin + 0.058,   // lower lip, mouth, upper lip, philtrum
+  J.eye - 0.052, J.eye - 0.042, J.eye - 0.026, J.eye - 0.012,       // under the nose, tip, mid-nose, under the eye
+  J.eye, J.eye + 0.009, J.eye + 0.018,                              // eye, upper lid, brow
+  HAIRLINE + 0.002, J.eye + 0.066, J.crown - 0.022, J.crown - 0.008, J.crown,
+];
+// rows from here up are hair-coloured under the paint (see drawAtlas)
+const HEAD_HAIR_ROW = HEAD_ROWS.length - 5;
+
+/** Distance from the UV axis to the base skull ellipse at height y, along th. */
+function skullRay(th, y) {
+  const k = skullAt(y);
+  const sn = Math.sin(th), cs = Math.cos(th), dz = HEAD_Z - k.oz;
+  const A = (sn * sn) / (k.rx * k.rx) + (cs * cs) / (k.rz * k.rz);
+  const Bq = (2 * cs * dz) / (k.rz * k.rz);
+  const C = (dz * dz) / (k.rz * k.rz) - 1;
+  return (-Bq + Math.sqrt(Bq * Bq - 4 * A * C)) / (2 * A);
+}
+
+const gss = (v, w) => Math.exp(-(v / w) * (v / w));
+/** Piecewise-linear lookup of [y, value] pairs sorted by descending y. */
+function byY(y, tbl) {
+  if (y >= tbl[0][0]) return tbl[0][1];
+  for (let i = 1; i < tbl.length; i++) {
+    if (y >= tbl[i][0]) {
+      const [y0, v0] = tbl[i - 1], [y1, v1] = tbl[i];
+      return lerp(v1, v0, (y - y1) / (y0 - y1));
+    }
+  }
+  return tbl[tbl.length - 1][1];
+}
+
+/**
+ * Per-look proportions, so twelve pooled heads are not one head in twelve
+ * skin tones. Kept in bands where the painted features still land on the
+ * forms they belong to.
+ */
+function faceParams(seed, soft) {
+  const u = (k) => hash2(seed, 40 + k);
+  return {
+    nose: 0.85 + 0.35 * u(0),
+    bridge: 0.8 + 0.4 * u(1),
+    brow: (0.75 + 0.5 * u(2)) * (soft ? 0.65 : 1),
+    cheek: 0.75 + 0.5 * u(3),
+    jaw: (0.7 + 0.6 * u(4)) * (soft ? 0.55 : 1),
+    chin: 0.7 + 0.6 * u(5),
+    lips: (0.85 + 0.3 * u(6)) * (soft ? 1.2 : 1),
+  };
+}
+
+/**
+ * The relief, in metres along the ray, at column angle th and height y.
+ * `a` is arc length across the face from the midline. Every term is a feature
+ * the face cell already paints at that angle and height (see drawAtlas's hp):
+ * eyes at +-21 deg, brows at eye + 21 mm, nostrils at eye - 46 mm, the mouth
+ * at chin + 45 mm.
+ */
+function faceRelief(th, y, F) {
+  const a = Math.abs(th) * 0.095;
+  const E = J.eye, C = J.chin;
+  let d = 0;
+  // Nose. The bridge rises out of the brow, the tip is the most forward point
+  // of the face, and the underside runs back to the lip in one row -- a nose
+  // from below is a triangle, not a cylinder end.
+  // (Half as far forward again as round three had it: from the side the nose
+  // barely broke the line of the face, and from the front it was a smudge.)
+  const np = byY(y, [[E + 0.012, 0], [E + 0.002, 0.0060 * F.bridge], [E - 0.012, 0.0130 * F.bridge],
+    [E - 0.026, 0.0195], [E - 0.042, 0.0265 * F.nose], [E - 0.052, 0.0085], [C + 0.052, 0]]);
+  // The columella (the strip between the nostrils) keeps the base of the
+  // nose forward in the middle: with the whole underside running back to the
+  // lip in one row it was a broad down-facing band, and its shadow, smoothed
+  // onto the upper lip, read as a moustache.
+  const nw = byY(y, [[E + 0.012, 0.0070], [E - 0.012, 0.0070], [E - 0.030, 0.0090], [E - 0.042, 0.0115], [E - 0.052, 0.0072]]);
+  // A plateau, not a bell: the dorsum is a flat strip with steep sides, which
+  // is what gives a nose a side plane that turns from the light.
+  const nq = (a / nw) * (a / nw);
+  // (Round four: a softer shoulder to it. Steep-sided, the shadow side of
+  // the nose was a hard dark streak down the middle of every lit face, and
+  // from the front the nose read as a smear of paint rather than a form.)
+  d += np / (1 + nq * Math.sqrt(nq) * 1.2);
+  // the wings of the nose, either side of the tip
+  d += 0.0062 * gss(a - 0.0205, 0.0066) * gss(y - (E - 0.044), 0.0065);
+  // Eye sockets, deepest at the painted eye, and the brow ridge over them.
+  d -= 0.0115 * gss(a - 0.0345, 0.0165) * gss(y - (E + 0.002), 0.0110);
+  d += 0.0070 * F.brow * gss(y - (E + 0.019), 0.0078) * gss(Math.max(0, a - 0.028), 0.030);
+  // glabella: the brows meet over the bridge
+  d += 0.0015 * F.brow * gss(a, 0.012) * gss(y - (E + 0.012), 0.008);
+  // Cheekbones, and the soft hollow under them.
+  d += 0.0058 * F.cheek * gss(a - 0.064, 0.019) * gss(y - (E - 0.024), 0.013);
+  d -= 0.0006 * gss(a - 0.078, 0.018) * gss(y - (C + 0.054), 0.011);
+  // The cheek's soft fullness beside the nose and over the smile line: with
+  // the hollow under the cheekbone at full depth, a side light put a sunken
+  // dent between cheek and mouth on every face and made it gaunt.
+  d += 0.0030 * gss(a - 0.050, 0.022) * gss(y - (E - 0.045), 0.020);
+  // temples, under the hair edge
+  d -= 0.0014 * gss(a - 0.090, 0.018) * gss(y - (E + 0.022), 0.012);
+  // Mouth: upper lip, the seam, lower lip, the corners tucked in, the dip
+  // under the lower lip, and a chin boss.
+  d += 0.0038 * F.lips * gss(a, 0.017) * gss(y - (C + 0.052), 0.0045);
+  d += 0.0046 * F.lips * gss(a, 0.0145) * gss(y - (C + 0.036), 0.0050);
+  d -= 0.0010 * gss(a, 0.017) * gss(y - (C + 0.044), 0.0030);
+  d -= 0.0012 * gss(a - 0.021, 0.0065) * gss(y - (C + 0.044), 0.0050);
+  d -= 0.0026 * gss(a, 0.022) * gss(y - (C + 0.024), 0.0050);
+  d += 0.0058 * F.chin * gss(a, 0.021) * gss(y - (C + 0.009), 0.0090);
+  // philtrum: a groove between two ridges from the nose to the lip
+  const ph = gss(y - (C + 0.058), 0.0040);
+  d += ph * (0.0007 * gss(a - 0.0050, 0.0030) - 0.0009 * gss(a, 0.0030));
+  // The angle of the jaw, under and in front of the ear. A chin ring that is
+  // an ellipse all the way round has no jaw, only a jowl.
+  d += 0.0048 * F.jaw * gss(Math.abs(th) - 1.22, 0.30) * gss(y - (C + 0.020), 0.012);
+  // and the lower face narrower between chin and jaw angle than an egg is
+  d -= 0.0016 * gss(Math.abs(th) - 0.80, 0.22) * gss(y - (C + 0.010), 0.012);
+  // The muzzle: teeth and jaw carry the whole mouth forward of the cheeks.
+  // Without it the lips sat in a dish between cheek and chin, which went
+  // dark in any top light and read as a moustache on every face.
+  d += 0.0045 * gss(a, 0.037) * gss(y - (C + 0.046), 0.018);
+  // The FRONT PLANE of the face. Round the sides from the outer eye back to
+  // the ear the face turns away: temples, the side of the cheek behind the
+  // cheekbone, the masseter. On the base ellipse the front and the side were
+  // one curve, and the face read as a flat oval with features drawn on.
+  d -= 0.0036 * gss(Math.abs(th) - 1.05, 0.32) * gss(y - (E - 0.030), 0.050);
+  return d;
+}
+
+/**
+ * The head's rings (for loftY) and a lookup of its surface, so the hair can
+ * grow from the head that is actually drawn rather than from the ellipse under
+ * it. `at(j, y)` is the point on column j's vertical edge at height y -- the
+ * edge the loft draws, straight between rows.
+ */
+function headGrid(F) {
+  const rings = HEAD_ROWS.map((y) => ({
+    y,
+    pts: HEAD_COLS.map((th) => {
+      const r = skullRay(th, y) + faceRelief(th, y, F);
+      return [Math.sin(th) * r, HEAD_Z + Math.cos(th) * r];
+    }),
+  }));
+  // Surface normals at the grid points, the way loftY computes them, so the
+  // hair can stand off the head ALONG the normal: offset along the ray
+  // instead, a shell a millimetre out came out a fraction of that where the
+  // surface slopes, and sank through the head's triangulation in places.
+  const R = rings.length, K = HEAD_COLS.length;
+  const P3 = (i, j) => [rings[i].pts[j][0], rings[i].y, rings[i].pts[j][1]];
+  const N = rings.map((r, i) => r.pts.map((p, j) => {
+    const a = P3(i, (j + 1) % K), b = P3(i, (j - 1 + K) % K);
+    const c = P3(Math.min(R - 1, i + 1), j), e = P3(Math.max(0, i - 1), j);
+    const u = [a[0] - b[0], a[1] - b[1], a[2] - b[2]], v = [c[0] - e[0], c[1] - e[1], c[2] - e[2]];
+    let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    if (n[0] * p[0] + n[2] * (p[1] - HEAD_Z) < 0) n = [-n[0], -n[1], -n[2]];
+    const l = Math.hypot(n[0], n[1], n[2]) || 1;
+    return [n[0] / l, n[1] / l, n[2] / l];
+  }));
+  /** [x, z, nx, ny, nz] on column j's edge at height y. */
+  const at = (j, y) => {
+    const n = HEAD_ROWS.length;
+    let i = 1, t = 0;
+    if (y <= HEAD_ROWS[0]) { i = 1; t = 0; }
+    else if (y >= HEAD_ROWS[n - 1]) { i = n - 1; t = 1; }
+    else {
+      while (HEAD_ROWS[i] < y) i++;
+      t = (y - HEAD_ROWS[i - 1]) / (HEAD_ROWS[i] - HEAD_ROWS[i - 1]);
+    }
+    const p = rings[i - 1].pts[j], q = rings[i].pts[j];
+    const m = N[i - 1][j], o = N[i][j];
+    const nx = lerp(m[0], o[0], t), ny = lerp(m[1], o[1], t), nz = lerp(m[2], o[2], t);
+    const l = Math.hypot(nx, ny, nz) || 1;
+    return [lerp(p[0], q[0], t), lerp(p[1], q[1], t), nx / l, ny / l, nz / l];
+  };
+  return { rings, at };
+}
+
+/**
+ * SPLIT the normals where the nose meets the upper lip. loftY smooths every
+ * ring from its neighbours above and below, and at the subnasale ring those are
+ * the lip and the nose TIP two centimetres further forward: the ring's normal
+ * came out pointing down at the pavement, and the upper lip below it shaded as
+ * a dark band -- the "moustache", which a white, unshadowed, unpainted head
+ * still showed. Builder quads own their four vertices, so the crease is local:
+ * across the nose, each corner ON the subnasale ring takes the normal of the
+ * corner in its own column across the band -- the lip band's from the lip row
+ * below, the underside band's from the tip row above -- so the lip is lit as a
+ * lip and the underside shades as an underside, with no smoothing between.
+ * The weight is per VERTEX (from its own angle), fading out by ~16 deg; a
+ * per-quad weight, or a per-quad face normal, broke the shading into blocks.
+ */
+function creaseNoseBase(b, rows, K) {
+  const yC = HEAD_ROWS[8];                                  // J.eye - 0.052, under the nose
+  const quads = (rows - 1) * K;
+  const P = b.pos, N = b.nor;
+  for (let q = 0; q < quads; q++) {
+    const v0 = q * 4;
+    const ys = [0, 1, 2, 3].map((k) => P[(v0 + k) * 3 + 1]);
+    const at = [0, 1, 2, 3].filter((k) => Math.abs(ys[k] - yC) < 1e-6);
+    if (at.length !== 2) continue;
+    const other = [0, 1, 2, 3].filter((k) => !at.includes(k));
+    for (const k of at) {
+      const kx = P[(v0 + k) * 3], kz = P[(v0 + k) * 3 + 2];
+      const w = 1 - smoothT(clamp((Math.abs(Math.atan2(kx, kz - HEAD_Z)) - 0.10) / 0.18, 0, 1));
+      if (w <= 0) continue;
+      // its own column's corner across the band
+      let best = other[0], bd = 1e9;
+      for (const o of other) {
+        const d = Math.abs(Math.atan2(P[(v0 + o) * 3], P[(v0 + o) * 3 + 2] - HEAD_Z) - Math.atan2(kx, kz - HEAD_Z));
+        if (d < bd) { bd = d; best = o; }
+      }
+      const m = [0, 1, 2].map((c) => lerp(N[(v0 + k) * 3 + c], N[(v0 + best) * 3 + c], w));
+      const l = Math.hypot(m[0], m[1], m[2]) || 1;
+      for (let c = 0; c < 3; c++) N[(v0 + k) * 3 + c] = m[c] / l;
+    }
+  }
+}
+
+/**
+ * An ear: a rim (helix) standing off the head round a sunken bowl, flaring
+ * backward the way ears do. Lofted outward along x from inside the head.
+ * `side` is -1 / +1; `xs` is the head surface at the ear.
+ */
+function buildEar(b, side, xs, col) {
+  const yc = J.eye - 0.017, zc = -0.013;
+  // Outline in (dy, dz): 62 mm tall, 30 wide, a C open to the front -- round
+  // the top and back, the lobe, the tragus, up the front.
+  const O = [[0.031, -0.002], [0.027, -0.011], [0.017, -0.017], [0.002, -0.018], [-0.014, -0.013],
+    [-0.029, -0.004], [-0.024, 0.004], [-0.008, 0.008], [0.010, 0.007], [0.024, 0.005]];
+  // lateral stand-off per outline point: the back of the ear stands out more
+  const out = O.map(([, dz]) => 0.0025 + 0.0060 * clamp((0.006 - dz) / 0.024, 0, 1));
+  const ring = (k, dx, sc, dzs = 0) => O.map(([dy, dz], i) => [
+    side * (xs + dx(i)), yc + dy * sc, zc + dzs + dz * sc]);
+  const R = [
+    ring(0, () => -0.005, 0.70, 0.004),             // root, inside the head
+    ring(1, (i) => out[i] * 0.55, 0.96, 0.001),     // the rim's outer wall
+    ring(2, (i) => out[i], 1.0),                    // helix crest
+    ring(3, (i) => out[i] - 0.0035, 0.84),          // over the lip, into the bowl
+  ];
+  // Side walls: normals from the grid, pointing away from the ear's own axis.
+  const n = O.length;
+  for (let r = 0; r < R.length - 1; r++) {
+    for (let i = 0; i < n; i++) {
+      const i2 = (i + 1) % n;
+      const nr = (p) => {
+        const vy = p[1] - yc, vz = p[2] - zc, l = Math.hypot(vy, vz) || 1;
+        // the lip's inner face looks out and in, toward the bowl
+        const lat = r === 2 ? 0.8 : 0.35;
+        const v = [side * lat, (vy / l) * (r === 2 ? -0.6 : 1), (vz / l) * (r === 2 ? -0.6 : 1)];
+        const m = Math.hypot(v[0], v[1], v[2]);
+        return [v[0] / m, v[1] / m, v[2] / m];
+      };
+      b.quad(R[r][i], R[r][i2], R[r + 1][i2], R[r + 1][i],
+        [nr(R[r][i]), nr(R[r][i2]), nr(R[r + 1][i2]), nr(R[r + 1][i])], [0, 0, 1, 0, 1, 1, 0, 1], col);
+    }
+  }
+  // the bowl (concha), sunk toward the ear canal
+  const c = [side * (xs + 0.0035), yc - 0.004, zc + 0.002];
+  const bowl = [col[0] * 0.80, col[1] * 0.72, col[2] * 0.70];
+  for (let i = 0; i < n; i++) b.tri(c, R[3][i], R[3][(i + 1) % n], [side, 0, 0], bowl);
+}
+
+// Hair styles, drawn across the pool by weight.
+const STYLES = ['crop', 'side', 'long', 'bun', 'curly', 'buzz'];
+const STYLE_W = [0.22, 0.20, 0.18, 0.14, 0.14, 0.12];
+function pickStyle(u) {
+  let acc = 0;
+  for (let i = 0; i < STYLES.length; i++) { acc += STYLE_W[i]; if (u < acc) return STYLES[i]; }
+  return STYLES[0];
+}
+
+/**
+ * The hair. A shell GROWN FROM THE SKULL SURFACE, not a cap placed over it.
+ *
+ * Round one lofted two shells with open bottom rings, and whatever was done to
+ * those rings the result was a bowl: a straight rim above the ears, a gap
+ * between rim and skull, and from the side and back a cap. Here every column
+ * of the shell starts ON the skull at its own edge height -- a hairline with a
+ * slight corner at the temples, sideburns down in front of the ear, over the
+ * top of the ear, and down to a nape that follows the back of the head -- and
+ * grows outward over its first 2 cm. There is no rim because there is nothing
+ * standing off the head at the edge.
+ */
+function buildHair(style, seed, hair, grid, body) {
+  // Builder(true): the patches' own (column, row) coordinates are what the
+  // hair cell is mapped by (hairUV, read by the uvFn in buildCharacter).
+  const hb = new Builder(true);
+  const UV = [];
+  hb.hairUV = UV;
+  /** Map every vertex from v0 on: fn(u, v) of the builder's own uv -> [t, s]. */
+  const mapUV = (v0, fn) => {
+    for (let k = v0; k < hb.pos.length / 3; k++) UV[k] = fn(hb.uv[2 * k], hb.uv[2 * k + 1], k);
+  };
+  const nv = () => hb.pos.length / 3;
+  // Columns ARE the head's columns, so every column of the shell stands a
+  // fixed distance off one vertical edge of the drawn head and the two
+  // surfaces run parallel between them. Sampled from the ellipse instead, the
+  // head's flat faces between sparse columns sat millimetres inside the shell
+  // at one place and poked through it at another.
+  const K = HEAD_COLS.length;
+  // A buzz cut is a shell too, a couple of millimetres thick: painted on the
+  // skull its edge was one straight line round the head at the ring height,
+  // with a pale band under it.
+  // Rows: two from the edge up to the hairline ring, then ON the head's own
+  // top rows. Straight chords between rows placed anywhere else cut inside
+  // the dome of the skull, and a thin shell (the buzz cut) vanished into it.
+  // the head's rows over the hairline, which the shell follows up to the crown
+  const tops = HEAD_ROWS.slice(HEAD_HAIR_ROW + 1, HEAD_ROWS.length - 1);
+  // NX rows hang BELOW the edge: the tip band (TIP_S), strand ends over the
+  // skin, cut out of the atlas -- the edge of the hair is a ragged line of
+  // locks, not where a shell stops.
+  const NX = 2;
+  const NR = NX + 4 + tops.length;
+  const vol = { crop: 0.006, side: 0.011, long: 0.010, bun: 0.005, curly: 0.024, buzz: 0.0035, pony: 0.005, bob: 0.010, shaved: 0.0022 }[style];
+  const curtain = style === 'long' || style === 'bob';
+  const close = style === 'buzz' || style === 'shaved';
+  const covers = curtain || style === 'curly' || style === 'side';
+  const napeY = style === 'crop' || style === 'bun' || style === 'buzz' || style === 'pony' || style === 'shaved' ? J.chin + 0.050 : J.chin + 0.020;
+  // Edge height against the angle round the head: phi = +pi/2 at the front,
+  // 0 at the ear, -pi/2 at the back.
+  const edgeTable = [
+    // The front edge sits just below the painted hairline, so no band of skull
+    // shows between the paint and the shell.
+    // A hairline is a CURVE: lowest in the middle of the forehead, rising
+    // toward the temples. A level edge right round the front read as a cap
+    // pulled down to the brow. (It may not rise past HAIRLINE: the head is not
+    // drawn above that ring.)
+    [Math.PI / 2, HAIRLINE - 0.008],
+    [1.20, HAIRLINE - 0.006],
+    [0.95, HAIRLINE - 0.002],
+    [0.62, HAIRLINE - 0.010],                        // temple corner
+    // (clipped short on a buzz or a shave: a long point there read as Spock)
+    [0.24, close ? J.eye - 0.012 : J.eye - 0.030],   // sideburn, in front of the ear
+    // Over the ear, and behind it: short hair clears the top of the ear
+    // (which reaches brow height now it is modelled), long hair covers it.
+    // (6-8 mm higher than round three: the locks over it stand off the head)
+    [0.07, covers ? J.eye - 0.030 : J.eye + 0.026],
+    [-0.18, covers ? J.eye - 0.034 : J.eye + 0.022],
+    [-0.60, J.eye - 0.052],
+    [-Math.PI / 2, napeY],
+  ];
+  const edge = (phi) => {
+    for (let i = 1; i < edgeTable.length; i++) {
+      if (phi >= edgeTable[i][0]) {
+        const [p0, y0] = edgeTable[i - 1], [p1, y1] = edgeTable[i];
+        return lerp(y1, y0, smoothT((phi - p1) / (p0 - p1)));
+      }
+    }
+    return napeY;
+  };
+  // How far the tips hang below the edge, by phi like edgeTable: furthest at
+  // the nape, least over a short style's ear (whose rim stands 2.5-8.5 mm
+  // off the head; the band lies 1.6 mm off it) and under a long curtain.
+  const fringe = style === 'crop' || style === 'side' || close || style === 'bun' || style === 'pony' ? 0.006 : 0.010;
+  const extTable = [
+    // (the forehead is only 19 mm from brow to hairline: a full band there
+    // is a fringe, so the short styles keep theirs short)
+    [Math.PI / 2, fringe], [0.62, 0.008], [0.30, 0.008],
+    [0.10, covers ? 0.010 : 0.004], [-0.30, covers ? 0.010 : 0.004],
+    [-0.70, curtain ? 0.004 : 0.014], [-Math.PI / 2, curtain ? 0.004 : 0.016],
+  ];
+  const extOf = (phi) => {
+    for (let i = 1; i < extTable.length; i++) {
+      if (phi >= extTable[i][0]) {
+        const [p0, y0] = extTable[i - 1], [p1, y1] = extTable[i];
+        return lerp(y1, y0, smoothT((phi - p1) / (p0 - p1)));
+      }
+    }
+    return extTable[extTable.length - 1][1];
+  };
+  // Clumps: the shell's thickness swells and dips round the head and up it,
+  // so the silhouette is a run of locks, not a dome.
+  const cA = { crop: 0.45, side: 0.30, long: 0.22, bob: 0.22, bun: 0.15, pony: 0.12 }[style] || 0;
+  const cp1 = hash2(seed, 71) * 6.28, cp2 = hash2(seed, 72) * 6.28;
+  const clump = (th, i) => 1 + cA * (0.6 * Math.sin(9 * th + cp1 + i * 0.7) + 0.4 * Math.sin(17 * th + cp2 - i * 1.3));
+  // a side part's line, on the far side from the sweep
+  const partTh = -0.46;
+  const top = J.crown + 0.001;
+  const rows = [], sG = [];
+  // The outer layer of locks (CELLS.locks), on the styles that have length
+  // to lie in locks; its rows are the shell's from the edge up to the crown.
+  const layered = style === 'crop' || style === 'side' || curtain || style === 'curly';
+  // Curls lie in a second layer of the curly cell, further out and lumpier,
+  // so the edge is two rows of scallops and the outline is bumps, not a cap.
+  const oCell = style === 'curly' ? CELLS.curly : CELLS.locks;
+  const over = [], sO = [];
+  const op1 = hash2(seed, 74) * 6.28, op2 = hash2(seed, 75) * 6.28;
+  for (let i0 = 0; i0 < NR; i0++) {
+    const i = i0 - NX;
+    const row = [], srow = [], orow = [], sorow = [];
+    for (let j = 0; j <= K; j++) {
+      // start behind the head, so the patch's seam is under the hair
+      const jj = (HEAD_BACK + j) % K;
+      const th = HEAD_COLS[jj];
+      const ca = Math.sin(th), sa = Math.cos(th);   // x and forward components
+      const phi = Math.atan2(sa, Math.abs(ca));
+      // Irregular at the sides and nape only: a jittered FRONT edge surfaced
+      // through the forehead in square notches, a fringe cut with pinking shears.
+      // Not on long hair: there the shell's edge is where the curtain comes
+      // out from under it, and jittered it read as a torn ledge across the
+      // back of the head.
+      const yE = edge(phi) + (phi < 0.3 && style !== 'long' ? (hash2(jj * 17 + 3, seed) - 0.5) * 0.0024 : 0);
+      const yH = Math.max(HEAD_ROWS[HEAD_HAIR_ROW], yE + 0.003);
+      const yX = Math.max(HEAD_ROWS[1] + 0.002, yE - extOf(phi) * (style === 'buzz' ? 0.6 : 1));
+      const y = i < 0 ? lerp(yE, yX, -i / NX)
+        : i < 3 ? [yE, lerp(yE, yH, 0.40), yH][i] : i < 3 + tops.length ? tops[i - 3] : top;
+      const v = Math.max(0, (y - yE) / (top - yE));
+      // The front keeps little volume (it is a hairline, not a brim); the back
+      // and crown carry the most.
+      const face = sa > 0 ? 1 - 0.65 * sa : 1 + 0.25 * (-sa);
+      // Starts 1 mm OUTSIDE the drawn head, and grows over its first rows.
+      // 1.6 mm, along the head's own normal: at 1 mm the shell's edge rows,
+      // which cut diagonally across the head's quads, dipped under their
+      // triangulation and the two fought (raycast: 0.2 mm apart, then -0.6).
+      let th2 = lerp(0.0016, Math.max(0.0016, vol * face), smoothT(clamp(v / 0.24, 0, 1)));
+      if (style === 'side') th2 += 0.006 * smoothT(clamp(v / 0.4, 0, 1)) * Math.max(0, ca) * (1 - Math.abs(sa) * 0.5);
+      // curls are lumps a few centimetres across, in and out by a third
+      if (style === 'curly' && i >= 2) th2 *= 0.66 + 0.68 * hash2(jj * 31 + i * 7, seed + 11);
+      if (i >= 1) th2 = 0.0016 + (th2 - 0.0016) * clump(th, i);
+      if (style === 'side' && i >= 2) th2 = 0.0016 + (th2 - 0.0016) * (1 - 0.75 * gss(th - partTh, 0.07));
+      // out along the head's normal
+      const p = grid.at(jj, y);
+      row.push([p[0] + p[2] * th2, y + p[3] * th2, p[1] + p[4] * th2]);
+      srow.push(i < 0 ? TIP_S * (1 + i / NX) : TIP_S + (1 - TIP_S) * v);
+      if (layered && i >= -1) {
+        // Off the shell by 1 mm at the edge, 3-8 mm higher up, swelling and
+        // dipping lock by lock: what breaks the dome's outline.
+        const n = 0.5 + 0.3 * Math.sin(11 * th + op1 + i * 1.1) + 0.2 * Math.sin(23 * th + op2 - i * 0.6);
+        // (from the tip band's middle row: the locks' ends fall over the
+        // shell's own ragged edge, not above it)
+        let o = i === -1 ? 0.0007 : i === 0 ? 0.0012 : i === 1 ? 0.0024 : 0.0030 + 0.0050 * n * (sa > 0.5 ? 0.6 : 1);
+        if (style === 'curly' && i >= 1) o = 0.004 + 0.009 * hash2(jj * 13 + i * 5, seed + 21);
+        if (style === 'side') o *= 1 - 0.8 * gss(th - partTh, 0.07);
+        const t2 = th2 + o;
+        orow.push([p[0] + p[2] * t2, y + p[3] * t2, p[1] + p[4] * t2]);
+        sorow.push(i === -1 ? 0 : style === 'curly' ? TIP_S + (1 - TIP_S) * v : 0.10 + 0.90 * Math.pow(clamp(v, 0, 1), 0.8));
+      }
+    }
+    rows.push(row); sG.push(srow);
+    if (orow.length) { over.push(orow); sO.push(sorow); }
+  }
+  // t by the column's ANGLE (columns are 3 deg apart at the nose and 26 at
+  // the back: by index the locks would be crushed at the front), from the
+  // back round to the back; s by row, the tip band below the edge.
+  const colU = (j) => (j === 0 ? 0 : 0.5 + HEAD_COLS[(HEAD_BACK + j) % K] / (2 * Math.PI));
+  // Under a layer of locks the shell is the shadowed hair between them.
+  // (0.86, not 0.72: darker, the shell's band under the locks' ends read as
+  // a second helmet under the first)
+  const shellCol = layered ? [hair[0] * 0.92, hair[1] * 0.92, hair[2] * 0.92] : hair;
+  let v0 = nv();
+  hb.patch(rows, shellCol, [0, 1, 0]);
+  mapUV(v0, (u, v) => [colU(Math.round(u * K)), sG[Math.round(v * (NR - 1))][Math.round(u * K)]]);
+  if (over.length) {
+    v0 = nv();
+    hb.patch(over, hair, [0, 1, 0]);
+    hb.lockV0 = v0;
+    const R2 = over.length;
+    mapUV(v0, (u, v) => [colU(Math.round(u * K)), sO[Math.round(v * (R2 - 1))][Math.round(u * K)], oCell]);
+    hb.lockV1 = nv();
+  }
+  // Close the crown. The last row is a ring the width of the skull's top, and
+  // left open it showed the skull's cap through the hole -- hair-coloured
+  // skin paint, a pink smudge on top of every head.
+  {
+    // on top of the locks where there are any (the shell's crown would sit
+    // in a hole in them)
+    const last = over.length ? over[over.length - 1] : rows[rows.length - 1];
+    let cx = 0, cy = 0, cz = 0;
+    for (let j = 0; j < K; j++) { cx += last[j][0]; cy += last[j][1]; cz += last[j][2]; }
+    const c = [cx / K, cy / K + vol * 0.4, cz / K];
+    for (let j = 0; j < K; j++) {
+      v0 = nv();
+      hb.tri(c, last[j], last[j + 1], [0, 1, 0], hair);
+      const um = (colU(j) + colU(j + 1)) / 2;
+      mapUV(v0, (u, v, k) => {
+        const x = hb.pos[3 * k], z = hb.pos[3 * k + 2];
+        if (layered) return [um, 1, oCell];
+        if (x === c[0] && z === c[2]) return [um, 1];
+        return [x === last[j][0] && z === last[j][2] ? colU(j) : colU(j + 1), 1];
+      });
+    }
+  }
+
+  if (curtain) {
+    // (A BOB is the same curtain ending at the jaw: shorter, less flare.)
+    const bob = style === 'bob';
+    // Long hair continues the SHELL down the back of the head and past the
+    // nape, following the skull and flaring as it falls, longest at the centre
+    // with an uneven end. The first attempt was a separate half-tube with a
+    // straight bottom: from the side a board stood off the back of the head,
+    // from behind a plate with a ruler edge, and its two side edges showed
+    // from the front as ribbons. It is TWO-SIDED, because from the front its
+    // inside is what frames the neck and a single-sided sheet is culled there.
+    //
+    // ROUND THREE: it ends ON the shoulders, and its sides are a lock, not a
+    // sheet. Hung to below the shoulder line it went in through the
+    // trapezius and came out again as a separate patch on the upper back
+    // (worse on a runner, whose chest pitches forward); every row now stays
+    // 10 mm clear of the body under it (`body`). And the side edge -- a
+    // two-sided sheet seen edge-on beside the jaw, a strip -- stops flaring at
+    // the last columns, hugs the head, and is closed between its two faces.
+    const CK = 14;
+    // The first two rows are the TUCK: the top row 4-5 mm inside the shell,
+    // the next ~6 mm lower already 3 mm outside it, so the curtain dives into
+    // the shell steeply. Started level with the shell's surface (or at 40 %
+    // of it, under it until the shell thinned out at its own edge), the two
+    // crossed at a grazing angle -- raycast: 0.2 mm apart along the whole top
+    // row -- and the crossing was a torn, z-fighting ledge across the back
+    // and side of the head, the worst of the "helmet" read.
+    // (0.86: the last row down is the tip band -- the ends are locks.)
+    const TS = [0, 0.06, 0.25, 0.5, 0.75, 0.86, 1];
+    // On the LOCKS cell: closed near the head, parting into separate
+    // tapering locks toward the ends (the inner face shows through the gaps,
+    // as the strands of real long hair separate).
+    const SC = [0.98, 0.95, 0.88, 0.76, 0.60, 0.34, 0.06];
+    const cr = [], inner = [];
+    const cx = 0, cz = -0.010;
+    for (let i = 0; i < TS.length; i++) {
+      const t = TS[i];
+      const row = [], irow = [];
+      for (let j = 0; j <= CK; j++) {
+        // From over the ears round the back. (Round two pulled it back to
+        // 1.10-1.90 to hide the ribbon its open edge made beside the jaw;
+        // with the edge closed and tucked it can come forward to frame the
+        // face, which is where long hair actually hangs.)
+        // The front edge slants back as it falls, behind the shoulder: a
+        // straight vertical edge read as a board from the side.
+        const aa = Math.PI * (1.04 + 0.08 * t + (0.92 - 0.16 * t) * (j / CK));
+        const ca = Math.cos(aa), sa = Math.sin(aa);
+        const back = -sa;                                   // 1 at the centre of the back
+        const e = smoothT(clamp(Math.min(j, CK - j) / 3, 0, 1));   // 0 at the side edges
+        // It starts UNDER the shell and comes out from beneath its edge: begun
+        // on top of the shell, its top edge stood out as a shelf at the side.
+        const yTop = J.eye + 0.015;
+        // ends higher at the sides: out over the shoulder the deltoid swings
+        // with the arm and came up through it on a runner
+        const yBot = bob ? J.chin - 0.004 - 0.010 * back + (hash2(j * 13 + 5, seed + 3) - 0.5) * 0.008
+          : J.shoulder + 0.034 - 0.046 * back + 0.028 * (1 - back) + (hash2(j * 13 + 5, seed + 3) - 0.5) * 0.012;
+        const y = lerp(yTop, yBot, smoothT(t) * 0.6 + t * 0.4);
+        const k = skullAt(Math.max(y, SKULL[3].y));
+        const flare = (i === 0 ? vol * 0.55 : lerp(vol + 0.003, vol + 0.005, smoothT(clamp(t / 0.25, 0, 1))))
+          + (bob ? 0.010 : 0.028) * t * t * (0.15 + 0.85 * e)
+          // lying in locks, not one sheet: a ripple across it that grows as it falls
+          + 0.0045 * t * e * Math.sin(j * 2.3 + hash2(seed, 73) * 6.28);
+        let p = [ca * (k.rx + flare), y, k.oz - 0.012 * t + sa * (k.rz + flare)];
+        // clear of the neck and shoulders under it
+        const bd2 = body(y);
+        if (bd2) {
+          const q = [ca * (bd2.rx + 0.010), y, bd2.oz + sa * (bd2.rz + 0.010)];
+          if (Math.hypot(q[0] - cx, q[2] - cz) > Math.hypot(p[0] - cx, p[2] - cz)) p = q;
+        }
+        row.push(p);
+        // the inner face: a few millimetres in, meeting the outer at the edges
+        const th = 0.0012 + 0.0055 * e;
+        const l = Math.hypot(p[0] - cx, p[2] - cz) || 1;
+        irow.push([p[0] - ((p[0] - cx) / l) * th, y + 0.001, p[2] - ((p[2] - cz) / l) * th]);
+      }
+      cr.push(row); inner.push(irow);
+    }
+    const cv0 = nv();
+    hb.patch(cr, hair, [0, 0, -1]);
+    hb.patch(inner, [hair[0] * 0.82, hair[1] * 0.82, hair[2] * 0.82], [0, 0, 1]);
+    mapUV(cv0, (u, v) => [0.02 + 0.96 * u, SC[Math.round(v * (TS.length - 1))], CELLS.locks]);
+    // close the two side edges between the faces
+    for (const j of [0, CK]) {
+      const ev0 = nv();
+      hb.patch(cr.map((r, i) => [r[j], inner[i][j]]), [hair[0] * 0.8, hair[1] * 0.8, hair[2] * 0.8], [j === 0 ? -1 : 1, 0, 0.6]);
+      mapUV(ev0, (u, v) => [j === 0 ? 0.02 : 0.98, SC[Math.round(v * (TS.length - 1))], CELLS.locks]);
+    }
+  }
+  if (style === 'pony') {
+    // A PONYTAIL: a tapering lock hung from a tie at the back of the head,
+    // out and down to below the jaw, its end cut into the tip band.
+    const C = [[0, J.eye + 0.030, -0.094], [0, J.eye + 0.000, -0.122], [0, J.eye - 0.060, -0.128], [0, J.chin - 0.034, -0.116]];
+    const bez = (t) => {
+      const u = 1 - t, w = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t];
+      return [0, 1, 2].map((c) => w[0] * C[0][c] + w[1] * C[1][c] + w[2] * C[2][c] + w[3] * C[3][c]);
+    };
+    const PT = [0, 0.06, 0.22, 0.42, 0.62, 0.80, 0.92, 1];
+    const PR = [0.016, 0.024, 0.029, 0.028, 0.024, 0.018, 0.012, 0.006];
+    const PS = [0.97, 0.90, 0.75, 0.58, 0.42, TIP_S + 0.08, TIP_S, 0];
+    const NS = 8;
+    const prow = PT.map((t, i) => {
+      const p = bez(t), q = bez(Math.min(1, t + 0.01)), o = bez(Math.max(0, t - 0.01));
+      let ty = q[1] - o[1], tz = q[2] - o[2];
+      const l = Math.hypot(ty, tz) || 1; ty /= l; tz /= l;
+      // ring axes: x, and the normal in the y-z plane
+      const r = PR[i] * (1 + 0.10 * Math.sin(i * 2.1 + seed));
+      const row = [];
+      for (let k = 0; k <= NS; k++) {
+        const a = (k / NS) * Math.PI * 2;
+        const cx = Math.cos(a) * r, cn = Math.sin(a) * r * 0.85;
+        row.push([p[0] + cx, p[1] + cn * -tz, p[2] + cn * ty]);
+      }
+      return row;
+    });
+    const pv0 = nv();
+    hb.patch(prow, hair, false);
+    // outward normals: flip the patch if it came out facing in
+    {
+      let dot = 0;
+      for (let k = pv0; k < nv(); k++) {
+        const t = clamp((hb.pos[3 * k + 1] - C[0][1]) / (C[3][1] - C[0][1]), 0, 1), c = bez(t);
+        dot += hb.nor[3 * k] * (hb.pos[3 * k] - c[0]) + hb.nor[3 * k + 2] * (hb.pos[3 * k + 2] - c[2]);
+      }
+      if (dot < 0) {
+        hb.pos.length = pv0 * 3; hb.nor.length = pv0 * 3; hb.uv.length = pv0 * 2; hb.col.length = pv0 * 3;
+        hb.idx = hb.idx.filter((ix) => ix < pv0);
+        hb.patch(prow, hair, true);
+      }
+    }
+    mapUV(pv0, (u, v) => [0.30 + 0.40 * u, PS[Math.round(v * (PT.length - 1))]]);
+    // the tie
+    const tp = bez(0.03);
+    hb.loftY([
+      { y: tp[1] - 0.007, pts: oval(0.018, 0.016, 10, 0, tp[2]) },
+      { y: tp[1] + 0.007, pts: oval(0.018, 0.016, 10, 0, tp[2] + 0.004) },
+    ], [hair[0] * 0.4, hair[1] * 0.4, hair[2] * 0.4], {});
+  }
+  if (style === 'bun') {
+    // Smooth-shaded, and its strands run from the head to its back like hair
+    // wound into it (Builder.spheroid is per-facet: a cut gem on the head).
+    {
+      const bc = [0, J.eye + 0.036, -0.106], br = 0.034, NB = 14, LA = [-1.25, -0.8, -0.35, 0.1, 0.55, 1.0, 1.32];
+      const brows = LA.map((la, i) => {
+        const row = [];
+        for (let k = 0; k <= NB; k++) {
+          const a = (k / NB) * Math.PI * 2, rr = Math.cos(la) * br * (1 + 0.06 * Math.sin(k * 2.7 + i));
+          row.push([bc[0] + Math.cos(a) * rr, bc[1] + Math.sin(a) * rr * 0.88, bc[2] - Math.sin(la) * br * 0.9]);
+        }
+        return row;
+      });
+      const bv0 = nv();
+      hb.patch(brows, hair, [0, 0, -1]);
+      mapUV(bv0, (u, v) => [u, 0.40 + 0.55 * v]);
+      const last = brows[brows.length - 1], tipc = [bc[0], bc[1], bc[2] - br * 0.92];
+      for (let k = 0; k < NB; k++) {
+        const fv = nv();
+        hb.tri(tipc, last[k], last[k + 1], [0, 0, -1], hair);
+        mapUV(fv, () => [(k + 0.5) / NB, 0.96]);
+      }
+    }
+    hb.loftY([
+      { y: J.eye + 0.030, pts: oval(0.020, 0.010, 10, 0, -0.098) },
+      { y: J.eye + 0.040, pts: oval(0.022, 0.012, 10, 0, -0.100) },
+    ], [hair[0] * 0.5, hair[1] * 0.5, hair[2] * 0.5], {});   // the band
+  }
+  return hb;
+}
+
+/** Rounded-rectangle ring, 8 points, for a flat section (the palm). */
+function rrect(rx, rz, ox, oz) {
+  return [[rx, -0.45 * rz], [rx, 0.45 * rz], [0.55 * rx, rz], [-0.55 * rx, rz],
+    [-rx, 0.45 * rz], [-rx, -0.45 * rz], [-0.55 * rx, -rz], [0.55 * rx, -rz]].map(([x, z]) => [ox + x, oz + z]);
+}
+
+/**
+ * A finger or thumb: a four-cornered tube through a polyline, smooth-shaded
+ * so four corners read as a rounded digit, with a blunt capped tip. `ws` is
+ * the half-width across the hand (along z), `ts` the half-thickness. Each
+ * ring's corner positions are recorded in `W` against that ring's skin weight.
+ */
+function digit(b, pts, ws, ts, wts, W, col) {
+  const n = pts.length;
+  const nrm = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+  const rings = [], norms = [];
+  let dLast = null;
+  for (let i = 0; i < n; i++) {
+    const a = pts[Math.max(0, i - 1)], c = pts[Math.min(n - 1, i + 1)];
+    const d = nrm([c[0] - a[0], c[1] - a[1], c[2] - a[2]]);
+    dLast = d;
+    // across the hand: z made square to the digit
+    const k = d[2];
+    const sd = nrm([-k * d[0], -k * d[1], 1 - k * d[2]]);
+    const th = nrm([d[1] * sd[2] - d[2] * sd[1], d[2] * sd[0] - d[0] * sd[2], d[0] * sd[1] - d[1] * sd[0]]);
+    const ring = [], nr = [];
+    for (const [cs, ct] of [[1, 1], [-1, 1], [-1, -1], [1, -1]]) {
+      const q = [0, 1, 2].map((m) => pts[i][m] + sd[m] * cs * ws[i] + th[m] * ct * ts[i]);
+      ring.push(q);
+      nr.push(nrm([sd[0] * cs + th[0] * ct, sd[1] * cs + th[1] * ct, sd[2] * cs + th[2] * ct]));
+      W.set(q.join(','), wts[i]);
+    }
+    rings.push(ring); norms.push(nr);
+  }
+  for (let i = 0; i < n - 1; i++) {
+    for (let k = 0; k < 4; k++) {
+      const k2 = (k + 1) % 4;
+      b.quad(rings[i][k], rings[i][k2], rings[i + 1][k2], rings[i + 1][k],
+        [norms[i][k], norms[i][k2], norms[i + 1][k2], norms[i + 1][k]], [0, 0, 1, 0, 1, 1, 0, 1], col);
+    }
+  }
+  // A ROUNDED tip: one more ring, 70 % size, before the point. Four
+  // triangles straight to a point were a pyramid on every finger end.
+  const e = pts[n - 1], r = Math.min(ws[n - 1], ts[n - 1]);
+  const last = rings[n - 1], lastN = norms[n - 1];
+  const cap = last.map((q) => [0, 1, 2].map((m) => e[m] + (q[m] - e[m]) * 0.68 + dLast[m] * r * 0.55));
+  const capN = lastN.map((v) => nrm([v[0] + dLast[0] * 1.2, v[1] + dLast[1] * 1.2, v[2] + dLast[2] * 1.2]));
+  for (const q of cap) W.set(q.join(','), wts[n - 1]);
+  for (let k = 0; k < 4; k++) {
+    const k2 = (k + 1) % 4;
+    b.quad(last[k], last[k2], cap[k2], cap[k], [lastN[k], lastN[k2], capN[k2], capN[k]], [0, 0, 1, 0, 1, 1, 0, 1], col);
+  }
+  const tip = [e[0] + dLast[0] * r * 0.85, e[1] + dLast[1] * r * 0.85, e[2] + dLast[2] * r * 0.85];
+  W.set(tip.join(','), wts[n - 1]);
+  for (let k = 0; k < 4; k++) {
+    const k2 = (k + 1) % 4;
+    b.tri(tip, cap[k], cap[k2], dLast, col);
+  }
+}
+
+// The four fingers, index to little: z across the knuckles, half-width,
+// segment lengths (proximal, middle, distal) and the RELAXED curl at each
+// joint, in degrees. A resting hand is never flat: the curl cascades, each
+// finger bent a little more than the one before it toward the little finger.
+const FINGERS = [
+  { z: 0.0268, w: 0.0092, L: [0.040, 0.024, 0.020], curl: [8, 24, 12] },
+  { z: 0.0090, w: 0.0094, L: [0.044, 0.027, 0.021], curl: [12, 30, 14] },
+  { z: -0.0088, w: 0.0090, L: [0.041, 0.026, 0.020], curl: [16, 34, 16] },
+  { z: -0.0248, w: 0.0078, L: [0.032, 0.020, 0.017], curl: [21, 38, 18] },
+];
+
+/**
+ * A hand: a flat palm, four fingers and a thumb, not a mitten. The palm faces
+ * the thigh; fingers hang in a relaxed cascade from the knuckle line and are
+ * skinned to two bones, fing (MCP) and tip (PIP), which add curl to that rest
+ * shape -- a loose fist at a run, a grip on a motorbike's bars (gripHands).
+ * Low segment counts throughout: at the closest the camera gets a hand is
+ * ~60 px, and four-cornered smooth-shaded digits read as fingers there.
+ */
+function buildHand(acc, side, X, skin) {
+  const hB = side < 0 ? B.handL : B.handR, fB = side < 0 ? B.fingL : B.fingR, tB = side < 0 ? B.tipL : B.tipR;
+  const palm = new Builder(false);
+  const cx = X + side * 0.001;
+  palm.loftY([
+    { y: J.wrist + 0.014, pts: rrect(0.018, 0.026, cx, 0) },
+    { y: J.wrist - 0.014, pts: rrect(0.0165, 0.032, cx, 0.001) },    // heel of the hand
+    { y: J.wrist - 0.050, pts: rrect(0.0160, 0.039, cx, 0.002) },    // mid palm
+    { y: KNUCKLE - 0.002, pts: rrect(0.0135, 0.036, cx, 0.001) },    // knuckles
+  ], skin, { capEnd: true });
+  // The thumb: a fleshy base at the front of the palm, pointing down and
+  // forward, lying along the index finger on the palm side.
+  const tin = -side;   // toward the palm
+  // Its base is buried in the heel of the hand: at 9 mm off the palm's
+  // centre the base ring stood 2.5 mm out of the palm, open end and all -- a
+  // floating prism with a dark hole at the wrist.
+  const T = [
+    [cx + tin * 0.004, J.wrist - 0.006, 0.010],
+    [cx + tin * 0.014, J.wrist - 0.042, 0.030],    // MCP, the ball of the thumb
+    [cx + tin * 0.013, J.wrist - 0.064, 0.042],    // IP
+    [cx + tin * 0.010, J.wrist - 0.080, 0.046],    // tip
+  ];
+  const Wp = new Map();
+  digit(palm, T, [0.0115, 0.0098, 0.0088, 0.0074], [0.0115, 0.0095, 0.0084, 0.0068], T.map(() => null), Wp, skin);
+  acc.add(palm, solid(hB), cylUV(CELLS.hand, X, 0.0, J.wrist - 0.10, J.wrist + 0.015), 'hand');
+
+  const fing = new Builder(false);
+  const W = new Map();
+  const toR = Math.PI / 180;
+  for (const f of FINGERS) {
+    // base ring 6 mm up inside the palm, then PIP, DIP and the tip
+    let x = cx, y = KNUCKLE, ang = f.curl[0] * toR;
+    const pts = [[cx, KNUCKLE + 0.006, f.z]];
+    const w = f.w, t = 0.0084 * (f.w / 0.009);
+    for (let s = 0; s < 3; s++) {
+      x += tin * Math.sin(ang) * f.L[s];
+      y -= Math.cos(ang) * f.L[s];
+      pts.push([x, y, f.z]);
+      if (s < 2) ang += f.curl[s + 1] * toR;
+    }
+    // weights: the base half on the hand, the PIP ring shared, the rest on tip
+    const wts = [[fB, 0.55, hB, 0.45], [tB, 0.5, fB, 0.5], [tB, 1, 0, 0], [tB, 1, 0, 0]];
+    digit(fing, pts, [w, w * 0.96, w * 0.88, w * 0.80], [t, t * 0.95, t * 0.84, t * 0.72], wts, W, skin);
+  }
+  acc.add(fing, (x, y, z) => W.get([x, y, z].join(',')) || [fB, 1, 0, 0],
+    cylUV(CELLS.skin, X, 0.0, J.wrist - 0.19, KNUCKLE + 0.01), 'fingers');
+}
+
+/**
+ * Close a humanoid's hands round a grip -- a motorbike's bars. Palms turn
+ * down (pronation about the forearm) and the fingers curl round.
+ */
+export function gripHands(h, k = 1) {
+  const b = h.bones;
+  b[B.handL].rotation.y = 1.35 * k; b[B.handR].rotation.y = -1.35 * k;
+  b[B.fingL].rotation.z = 1.05 * k; b[B.fingR].rotation.z = -1.05 * k;
+  b[B.tipL].rotation.z = 1.00 * k; b[B.tipR].rotation.z = -1.00 * k;
+}
+
+/**
+ * Builds one character variant: a skinned geometry in the rest pose. Callers
+ * pair it with a fresh skeleton per instance.
+ */
+// The pedestrian POOL is designed, not rolled. With only twelve looks, hashing
+// garments and hair left whole categories out -- measured on the first pass,
+// no buzz cut and no dress anywhere in the crowd, but five skirts and four
+// side-parts. So pooled look i takes its outfit and style from this table
+// (every style twice; two dresses, two skirts, two shorts), and colours, skin,
+// build and shoes still come from the seed. Unique builds keep the hash path.
+// The fourth entry is facial hair (stubble or a short beard, painted in
+// vertex colour on the lower face). Round two of the hair: one of each pair
+// of long, bun and buzz became a ponytail, a bob and a shaved head, so the
+// twelve read as nine haircuts, not six.
+const LOOKS = [
+  ['hoodie', 'jeans', 'crop'], ['tee', 'skirt', 'long'], ['jacket', 'trousers', 'buzz', 'beard'],
+  ['tee', 'dress', 'bun'], ['tee', 'shorts', 'curly', 'stubble'], ['jacket', 'jeans', 'side', 'stubble'],
+  ['hoodie', 'skirt', 'pony'], ['longsleeve', 'trousers', 'crop', 'stubble'], ['tee', 'dress', 'curly'],
+  ['jacket', 'jeans', 'bob'], ['longsleeve', 'jeans', 'side'], ['longsleeve', 'shorts', 'shaved', 'stubble'],
+];
+
+export function buildCharacter(opts = {}) {
+  const seed = opts.seed != null ? opts.seed : 0;
+  const skin = opts.skin || SKINS[Math.floor(hash2(seed, 1) * SKINS.length)];
+  const hair = opts.hair || HAIR[Math.floor(hash2(seed, 4) * HAIR.length)];
+  const build = 0.92 + hash2(seed, 6) * 0.16;
+  const WHITE = [1, 1, 1];
+  const face = faceCell(skin);
+  const dk = (c, k) => [c[0] * k, c[1] * k, c[2] * k];
+
+  // --- what they are wearing ----------------------------------------------
+  // A pool of twelve identical outfits in twelve colours reads as a uniform
+  // at any distance. Tops: t-shirt, long sleeve, jacket, hoodie; bottoms:
+  // jeans, trousers, shorts, skirt, or a dress. Uniformed characters (opts.vest:
+  // cops, riders) and anyone with explicit trousers (the player) keep trousers.
+  const uniformed = !!opts.vest;
+  let bottom;
+  {
+    const u = hash2(seed, 8);
+    bottom = u < 0.42 ? 'jeans' : u < 0.62 ? 'trousers' : u < 0.76 ? 'shorts' : u < 0.89 ? 'skirt' : 'dress';
+    if (uniformed || opts.pants) bottom = uniformed ? 'trousers' : 'jeans';
+  }
+  let top;
+  {
+    const u = hash2(seed, 7);
+    top = u < 0.30 ? 'tee' : u < 0.50 ? 'longsleeve' : u < 0.72 ? 'jacket' : 'hoodie';
+    if (uniformed) top = 'uniform';
+    if (bottom === 'dress') top = 'tee';
+  }
+  const look = opts.variant != null && !uniformed ? LOOKS[opts.variant % LOOKS.length] : null;
+  if (look) { top = look[0]; bottom = look[1]; }
+  const shirt = opts.shirt || SHIRTS[Math.floor(hash2(seed, 2) * SHIRTS.length)];
+  const pantsBase = opts.pants || PANTS[Math.floor(hash2(seed, 3) * PANTS.length)];
+  // trousers are chinos and slacks, not a second pair of jeans
+  const pants = bottom === 'trousers' && !opts.pants && !uniformed
+    ? [[0.36, 0.31, 0.24], [0.16, 0.16, 0.17], [0.28, 0.30, 0.26], [0.30, 0.24, 0.20]][Math.floor(hash2(seed, 13) * 4)]
+    : pantsBase;
+  const skirtCol = bottom === 'dress' ? shirt : bottom === 'skirt' ? SHIRTS[Math.floor(hash2(seed, 14) * SHIRTS.length)] : null;
+  const coat = top === 'jacket' ? dk(shirt, 0.62) : shirt;
+  const topCell = top === 'jacket' ? CELLS.jacket : top === 'hoodie' ? CELLS.hoodie : top === 'uniform' ? CELLS.uniform : CELLS.shirt;
+  const legsBare = bottom === 'skirt' || bottom === 'dress';
+  const tucked = (top === 'tee' || top === 'longsleeve') && !legsBare && hash2(seed, 18) > 0.45;
+  const shortSleeve = top === 'tee' || bottom === 'dress';
+  const shoeI = uniformed ? 0 : Math.floor(hash2(seed, 17) * SHOES.length);
+  const shoeCol = SHOES[shoeI], soleCol = SOLES[shoeI];
+  // Under a cap the hair is close-cut: the crop's outer layer of locks stands
+  // up to 8 mm off the head, through the cap's sides.
+  const style = opts.hat || opts.swat ? 'buzz' : look ? look[2] : pickStyle(hash2(seed, 16));
+
+  const acc = new SkinAcc(skin);
+  // TWO BODY SHAPES, not one. Every look was the same torso, so the pool read
+  // as one mannequin in twelve outfits however the clothes differed. A
+  // woman's frame is narrower at the shoulders (bideltoid ~0.88 of a man's),
+  // in at the waist and as wide or wider at the hips, with slimmer arms; the
+  // look's dress and hair stand in for which (the face's `soft` uses the
+  // same cue). The shoulder JOINT moves in too (geometry.userData.shoulderX,
+  // read by makeHumanoid), or the narrower torso would leave the arms hung
+  // off its edge.
+  const fem = !uniformed && (bottom === 'skirt' || bottom === 'dress' || style === 'long' || style === 'bun' || style === 'pony' || style === 'bob');
+  const SX = SHOULDER_X * (fem ? 0.915 : 1.0);
+  const fs = fem ? 0.90 : 1.0, fwst = fem ? 0.92 : 1.0, fhip = fem ? 1.05 : 1.0, farm = fem ? 0.88 : 1.0;
+  // half-breadths. Shoulders 0.152 (was 0.140) and a narrower waist: at the
+  // old values the torso was one straight tube from hem to armpit and the
+  // shoulders sloped off it, which is most of what read as a toy.
+  const bw = 0.160 * build * fhip, bd = 0.112 * build;
+  const ww = 0.124 * build * fwst, wd = 0.098 * build * fwst;
+  const cw = 0.156 * build * (fem ? 0.94 : 1.0), cd = 0.120 * build;
+  const sw = 0.152 * build * fs, sd = 0.104 * build * (fem ? 0.95 : 1.0);
+  const outer = top === 'jacket' || top === 'hoodie' ? 1.05 : 1.0;
+  const legUV = (X) => cylUV(CELLS.pants, X, 0, J.ankle + 0.08, J.hip + 0.04);
+  const torsoW = (x, y) => {
+    if (y < J.spine) return across(J.spine - 0.05, 0.1, B.spine, B.hips)(x, y);
+    return across(J.chest - 0.06, 0.12, B.chest, B.spine)(x, y);
+  };
+
+  // --- pelvis seat ---------------------------------------------------------
+  if (!legsBare) {
+    const pelvis = new Builder(false);
+    // Seat ONLY: every attempt to draw the front of the pelvis read as a pale
+    // panel or an apron. The thighs meet at the midline and the shirt hem
+    // covers the join; this is the SEAT, narrower than the shirt everywhere
+    // so it cannot ride up beside the hem as two horns.
+    const seat = dk(pants, 0.94);
+    pelvis.loftY([
+      { y: J.hip - 0.115, pts: oval(bw * 0.80, bd * 0.50, ST, 0, -0.042) },
+      { y: J.hip - 0.06, pts: oval(bw * 0.87, bd * 0.56, ST, 0, -0.040) },
+      { y: J.hip + 0.02, pts: oval(bw * 0.84, bd * 0.58, ST, 0, -0.036) },
+    ], seat, { capStart: true });
+    for (const px of [-0.052, 0.052]) {
+      pelvis.box(px, J.hip - 0.062, -(0.036 + bd * 0.58 - 0.010), 0.056, 0.060, 0.004, 0, dk(pants, 0.62));
+    }
+    acc.add(pelvis, across(J.spine - 0.06, 0.09, B.spine, B.hips), legUV(0), 'pelvis');
+  }
+
+  // --- torso ---------------------------------------------------------------
+  const torso = new Builder(false);
+  // Chest mass forward of the spine, a waist, and shoulders that are a mass
+  // rather than a slope; the trapezius ring sits higher and steeper so less
+  // neck shows above the collar.
+  const tRings = [
+    { y: J.hip - 0.035, pts: oval(bw * 1.04 * outer, bd * 1.02 * outer, ST) },       // hem
+    { y: J.hip + 0.06, pts: oval(bw * 0.95 * outer, bd * 0.98 * outer, ST) },
+    { y: 1.075, pts: oval(ww * 1.0 * outer, wd * 1.02 * outer, ST, 0, 0.002) },        // waist
+    { y: J.chest - 0.06, pts: oval((ww + cw) * 0.52 * outer, (wd + cd) * 0.52 * outer, ST, 0, 0.006) },
+    { y: J.chest, pts: oval(cw * 1.02 * outer, cd * 1.04 * outer, ST, 0, 0.012) },     // chest
+    { y: 1.34, pts: oval(cw * 1.05 * outer, cd * 1.00 * outer, ST, 0, 0.006) },
+    { y: J.shoulder - 0.03, pts: oval(sw * 1.18 * outer, sd * 1.02 * outer, ST) },
+    { y: J.shoulder + 0.012, pts: oval(sw * 1.06 * outer, sd * 0.96 * outer, ST, 0, -0.004) },
+    { y: J.shoulder + 0.038, pts: oval(sw * 0.62 * outer, sd * 0.70 * outer, ST, 0, -0.012) },  // trapezius
+    { y: J.shoulder + 0.054, pts: oval(sw * 0.43 * outer, sd * 0.54 * outer, ST, 0, -0.012) },  // neck base
+  ];
+  // Tucked in: below the belt the "torso" is the trousers' waistband.
+  const tCols = tRings.map((r, i) => (tucked && i < 2 ? pants : coat));
+  torso.loftY(tRings, tCols, {});
+  // hem lip: an inward slope, darker, which blocks the see-through rim
+  torso.loftY([
+    { y: J.hip - 0.035, pts: oval(bw * 1.04 * outer, bd * 1.02 * outer, ST) },
+    { y: J.hip - 0.054, pts: oval(bw * 1.0 * outer, bd * 0.99 * outer, ST) },
+  ], dk(tucked ? pants : coat, 0.55), {});
+  if (tucked || top === 'uniform') {
+    // A belt: the one horizontal accent that splits a figure into top and
+    // bottom from across the street.
+    const beltCol = [0.07, 0.055, 0.045];
+    // Over the join, not below it: the torso shades from trousers to top
+    // between J.hip + 0.06 and the waist ring, and a belt at +0.04 left a band
+    // of trouser colour above it -- high waistband, belt round the hips.
+    torso.loftY([
+      { y: J.hip + 0.072, pts: oval(bw * 0.935 * outer, bd * 0.975 * outer, ST) },
+      { y: J.hip + 0.104, pts: oval(bw * 0.900 * outer, bd * 0.955 * outer, ST, 0, 0.001) },
+    ], beltCol, {});
+    torso.box(0, J.hip + 0.074, bd * 0.975 + 0.002, 0.034, 0.028, 0.006, 0, [0.55, 0.52, 0.45]);   // buckle
+  }
+  // Neckline, per garment: a crew rib on shirts, a standing collar on jackets
+  // and uniforms, the hood bunched behind the neck on a hoodie.
+  if (top === 'jacket' || top === 'uniform') {
+    torso.loftY([
+      { y: J.shoulder + 0.040, pts: oval(sw * 0.60 * outer, sd * 0.70 * outer, ST, 0, -0.010) },
+      { y: J.shoulder + 0.085, pts: oval(0.074, 0.074, ST, 0, -0.012) },
+    ], dk(coat, 0.72), {});
+  } else {
+    torso.loftY([
+      { y: J.shoulder + 0.046, pts: oval(sw * 0.52 * outer, sd * 0.63 * outer, ST, 0, -0.012) },
+      { y: J.shoulder + 0.064, pts: oval(sw * 0.45 * outer, sd * 0.56 * outer, ST, 0, -0.011) },
+    ], dk(coat, 0.60), { capEnd: true });
+  }
+  // No hood under long hair: the two fought for the same space behind the
+  // neck and the hood poked out through the curtain from the side.
+  // (the hood is built after the torso: see "hood" below)
+  if (opts.hivis) {
+    // Hi-vis over the uniform: fluorescent body with two reflective bands --
+    // geometry, because multiplied paint can only darken and a reflective band
+    // is the brightest thing on the vest.
+    const vest = [0.78, 0.88, 0.10];
+    const band = [0.66, 0.66, 0.64];
+    torso.loftY([
+      { y: J.hip + 0.10, pts: oval(bw * 1.00 * outer * 1.04, bd * 1.03 * outer * 1.05, ST) },
+      { y: 1.075, pts: oval(ww * 1.06 * outer, wd * 1.10 * outer, ST, 0, 0.002) },
+      { y: J.chest, pts: oval(cw * 1.07 * outer, cd * 1.10 * outer, ST, 0, 0.012) },
+      { y: J.shoulder - 0.03, pts: oval(sw * 1.20 * outer, sd * 1.08 * outer, ST) },
+      { y: J.shoulder + 0.02, pts: oval(sw * 0.90 * outer, sd * 0.95 * outer, ST, 0, -0.006) },
+    ], vest, {});
+    for (const by of [1.13, 1.23]) {
+      const k = (by - 1.075) / (J.chest - 1.075);
+      const rx = lerp(ww * 1.06, cw * 1.07, k) * outer * 1.012, rz = lerp(wd * 1.10, cd * 1.10, k) * outer * 1.012;
+      torso.loftY([
+        { y: by, pts: oval(rx, rz, ST, 0, 0.002 + 0.010 * k) },
+        { y: by + 0.035, pts: oval(rx, rz, ST, 0, 0.002 + 0.010 * k) },
+      ], band, {});
+    }
+  } else if (opts.vest && top !== 'uniform') {
+    torso.loftY([
+      { y: J.hip + 0.12, pts: oval(bw * 1.03 * outer, bd * 1.05 * outer, ST) },
+      { y: J.chest + 0.06, pts: oval(cw * 1.03 * outer, cd * 1.05 * outer, ST) },
+      { y: J.shoulder - 0.04, pts: oval(sw * 0.98 * outer, sd * 1.02 * outer, ST) },
+    ], opts.vest, {});
+  }
+  if (opts.swat) {
+    // A tactical officer's plate carrier: a slab front and back, wider and
+    // squarer than the body it rides on, with a row of magazine pouches on
+    // the front and a radio on the left shoulder strap. The silhouette is
+    // what says SWAT from across the street -- a boxy chest under a helmet.
+    const pc = [0.075, 0.082, 0.088], pouch = [0.10, 0.11, 0.105];
+    torso.loftY([
+      { y: J.hip + 0.11, pts: oval(bw * 1.06 * outer, bd * 1.16 * outer, ST) },
+      { y: 1.075, pts: oval(ww * 1.20 * outer, wd * 1.30 * outer, ST, 0, 0.004) },
+      { y: J.chest, pts: oval(cw * 1.13 * outer, cd * 1.24 * outer, ST, 0, 0.014) },
+      { y: J.shoulder - 0.05, pts: oval(sw * 1.04 * outer, sd * 1.18 * outer, ST, 0, 0.004) },
+      { y: J.shoulder + 0.01, pts: oval(sw * 0.74 * outer, sd * 0.98 * outer, ST, 0, -0.006) },
+    ], pc, {});
+    const fz = cd * 1.24 * outer + 0.012;
+    for (const px of [-0.075, 0, 0.075]) torso.box(px, 1.10, fz - 0.03, 0.062, 0.115, 0.05, 0, pouch);
+    torso.box(-0.10, J.chest + 0.07, fz - 0.035, 0.045, 0.09, 0.04, 0, [0.04, 0.04, 0.045]);
+    // the POLICE patch across the back, as a pale band
+    torso.box(0, J.chest + 0.02, -(cd * 1.24 * outer) - 0.004, 0.20, 0.05, 0.012, 0, [0.80, 0.80, 0.76]);
+  }
+  if (opts.bib) {
+    // Rubber bib overalls (a fishmonger's): hips to just over the chest line,
+    // standing a little off the shirt, the trousers in the same colour.
+    torso.loftY([
+      { y: J.hip - 0.02, pts: oval(bw * 1.06 * outer, bd * 1.08 * outer, ST) },
+      { y: 1.075, pts: oval(ww * 1.07 * outer, wd * 1.12 * outer, ST, 0, 0.004) },
+      { y: J.chest + 0.02, pts: oval(cw * 1.05 * outer, cd * 1.08 * outer, ST, 0, 0.012) },
+      { y: J.chest + 0.07, pts: oval(cw * 0.96 * outer, cd * 1.0 * outer, ST, 0, 0.01) },
+    ], opts.bib, {});
+  }
+  acc.add(torso, torsoW, cylUV(topCell, 0, 0, J.hip - 0.06, J.shoulder + 0.07), 'torso');
+
+  // --- hood ----------------------------------------------------------------
+  // A hood that is down LIES ON THE BACK: a soft fold round the back of the
+  // neck, and a flattened tongue of cloth hanging between the shoulder
+  // blades. Round two's was three ovals stacked behind the neck -- a neck
+  // pillow, and on a runner, whose chest pitches forward under a level head,
+  // a lump standing off the nape. This one is grown from the torso's own
+  // rings: each column stands off the torso along its normal, full thickness
+  // down the middle, and dives INTO the torso at its edges and bottom, so
+  // there is no ledge and nothing to see past.
+  // Torso ring parameters, read back off the rings themselves, and the neck
+  // above them: what the hood and long hair lie on.
+  const par = (r) => {
+    const oz = r.pts[0][1], rx = r.pts[0][0];
+    const rz = (r.pts[4][1] - oz) / Math.sin((4 / ST) * Math.PI * 2);
+    return { y: r.y, rx, rz, oz };
+  };
+  const TP = tRings.map(par);
+  // the neckline rib's top, above the torso's last ring
+  TP.push({ y: J.shoulder + 0.064, rx: sw * 0.45 * outer, rz: sd * 0.56 * outer, oz: -0.011 });
+  const NP = [{ y: J.shoulder + 0.01, rx: 0.062, rz: 0.060, oz: -0.008 }, { y: J.chin - 0.030, rx: 0.056, rz: 0.055, oz: -0.013 },
+    { y: J.chin + 0.012, rx: 0.044, rz: 0.048, oz: -0.016 }];
+  const lerpPar = (T, y) => {
+    if (y <= T[0].y) return T[0];
+    for (let i = 1; i < T.length; i++) {
+      if (y <= T[i].y) {
+        const a = T[i - 1], b2 = T[i], t = (y - a.y) / (b2.y - a.y);
+        return { rx: lerp(a.rx, b2.rx, t), rz: lerp(a.rz, b2.rz, t), oz: lerp(a.oz, b2.oz, t) };
+      }
+    }
+    return T[T.length - 1];
+  };
+  // the body under a point at height y: the torso up to its neckline, else the neck
+  const bodyAt = (y) => (y <= TP[TP.length - 1].y ? lerpPar(TP, y) : y < NP[NP.length - 1].y ? lerpPar(NP, y) : null);
+  if (top === 'hoodie' && style !== 'long' && style !== 'pony') {
+    // rows: y, the surface under it, thickness down the middle, half-width
+    // (radians either side of the spine) at which it has dived back in
+    const S = J.shoulder;
+    const HR = [
+      [S - 0.170, TP, -0.004, 1.0],
+      [S - 0.135, TP, 0.016, 0.34],    // the rounded point of the tongue
+      [S - 0.090, TP, 0.028, 0.56],
+      [S - 0.045, TP, 0.034, 0.70],
+      [S, TP, 0.036, 0.84],
+      [S + 0.032, TP, 0.034, 1.05],
+      [S + 0.058, TP, 0.032, 1.40],
+      [S + 0.084, NP, 0.028, 1.75],    // the rim of the opening, round the neck
+    ];
+    // Denser down the spine, where the tongue is; the sides only carry the
+    // rim round the neck.
+    const cols = [-90, -62, -44, -29, -14, 0, 14, 29, 44, 62, 90].map((d) => 1.5 * Math.PI + (d * Math.PI) / 180);
+    const pt = (row, a, extra = 0) => {
+      const [y, T, th, W] = row;
+      const q = lerpPar(T, y);
+      const ph = Math.abs(a - 1.5 * Math.PI);          // from the spine
+      const env = 1 - smoothT(clamp((ph - 0.55 * W) / (0.45 * W), 0, 1));
+      const t = (th > 0 ? th * env - 0.004 * (1 - env) : th) + extra;
+      let nx = Math.cos(a) / q.rx, nz = Math.sin(a) / q.rz;
+      const l = Math.hypot(nx, nz) || 1; nx /= l; nz /= l;
+      return [Math.cos(a) * q.rx + nx * t, y, q.oz + Math.sin(a) * q.rz + nz * t];
+    };
+    const hood = new Builder(false);
+    const hoodCol = dk(coat, 0.88);   // the same cloth, a shade down: darker still, the ragged line where it dives in showed
+    hood.patch(HR.map((row) => cols.map((a) => pt(row, a))), hoodCol, [0, 0, -1]);
+    // the opening's lining, turning in and down from the rim toward the neck
+    const lining = [HR[HR.length - 1], [S + 0.074, NP, 0.006, 1.75]];
+    hood.patch(lining.map((row) => cols.map((a) => pt(row, a))), dk(coat, 0.42), [0, 1, 0]);
+    // The rim and lining follow the NECK: on the chest they stood still while
+    // the neck bent back through them.
+    const neckW = across(J.neck - 0.06, 0.09, B.neck, B.chest);
+    acc.add(hood, (x, y) => (y > S + 0.066 ? neckW(x, y) : torsoW(x, y)),
+      cylUV(CELLS.skin, 0, 0, S - 0.17, S + 0.09), 'hood');
+  }
+
+  // --- skirt / dress -------------------------------------------------------
+  if (legsBare) {
+    const sk = new Builder(false);
+    // The waistband is under the top, not level with it: at J.hip + 0.07 and
+    // full width it pushed through a hoodie's front beside the pocket.
+    sk.loftY([
+      { y: J.hip + 0.020, pts: oval(bw * 0.92, bd * 0.94, ST) },
+      { y: J.hip - 0.050, pts: oval(bw * 1.06, bd * 1.10, ST, 0, 0.002) },
+      { y: J.knee + 0.10, pts: oval(bw * 1.26, bd * 1.34, ST, 0, 0.006) },
+      { y: J.knee + 0.07, pts: oval(bw * 1.30, bd * 1.38, ST, 0, 0.006) },
+    ], skirtCol, {});
+    sk.loftY([
+      { y: J.knee + 0.07, pts: oval(bw * 1.30, bd * 1.38, ST, 0, 0.006) },
+      { y: J.knee + 0.085, pts: oval(bw * 1.22, bd * 1.30, ST, 0, 0.006) },
+    ], dk(skirtCol, 0.55), {});
+    // A skirt follows the thigh on its own side and the hips in the middle,
+    // more so toward the hem -- enough to swing with a step without tearing.
+    acc.add(sk, (x, y) => {
+      const w = smoothT(clamp((J.hip - y) / 0.36, 0, 1)) * smoothT(clamp(Math.abs(x) / 0.12, 0, 1)) * 0.85;
+      return [x < 0 ? B.thighL : B.thighR, w, B.hips, 1 - w];
+    }, cylUV(CELLS.skirt, 0, 0, J.knee + 0.07, J.hip + 0.07), 'skirt');
+  }
+
+  // --- neck + head ---------------------------------------------------------
+  // Head width is 0.086H (half 0.075) and depth 0.115H (half 0.101), eyes on
+  // the half-height line; 0.228 m chin to crown against a 1.75 m stature is
+  // 1:7.7, inside the 1:7.5-8 adult band. The features are PAINTED (see the
+  // atlas): skull, nose and ears are white vertex colour.
+  const neck = new Builder(false);
+  neck.loftY([
+    { y: J.chest + 0.09, pts: oval(0.066, 0.064, SL) },
+    { y: J.shoulder + 0.01, pts: oval(0.062, 0.060, SL, 0, -0.008) },
+    // A neck is 11-13 cm across, and it rises BEHIND the jaw into the base of
+    // the skull. At 8.8 cm, straight up under the middle of the head, it was
+    // the stalk of a lollipop in every profile.
+    { y: J.chin - 0.030, pts: oval(0.056, 0.055, SL, 0, -0.013) },
+    // Tucked UP INSIDE the jaw, or the neck's top rim shows under the chin.
+    { y: J.chin + 0.012, pts: oval(0.044, 0.048, SL, 0, -0.016) },
+  ], skin, {});
+  acc.add(neck, (x, y) => across(J.neck - 0.06, 0.09, B.neck, B.chest)(x, y),
+    cylUV(CELLS.skin, 0, 0, J.chest + 0.09, J.chin), 'neck');
+
+  const head = new Builder(false);
+  // The sculpted head (see faceRelief): nose, lips, brow, jaw and all are the
+  // one loft now, so there is no seam where a peg nose met a smooth face.
+  // Rows from HEAD_HAIR_ROW up are hair-coloured under the painted skin.
+  const soft = bottom === 'skirt' || bottom === 'dress' || style === 'long' || style === 'bun' || style === 'pony' || style === 'bob';
+  const grid = headGrid(faceParams(seed, soft));
+  // Drawn only up to the hairline ring: above it every style's shell (the
+  // buzz cut's too) and every hat covers the skull, so its two top bands were
+  // ~100 triangles nobody could see. The grid still carries them, for the
+  // hair to grow over.
+  // A shaved head is scalp with a shadow of hair on it, not a hair colour.
+  const hairC = style === 'shaved'
+    ? [lerp(skin[0], hair[0], 0.30) * 0.92, lerp(skin[1], hair[1], 0.30) * 0.92, lerp(skin[2], hair[2], 0.30) * 0.96]
+    : hair;
+  const shown = grid.rings.slice(0, HEAD_HAIR_ROW + 1);
+  head.loftY(shown, shown.map((r, i) => (i < HEAD_HAIR_ROW ? WHITE : hairC)),
+    { capStart: true, capEnd: true });
+  // FACIAL HAIR is vertex colour over the painted face: the face cells are
+  // one per skin tone, and the head's own rows are dense round the mouth and
+  // jaw, so a shade multiplied in there is stubble (or a short beard) that
+  // follows the jaw, the chin and the upper lip and leaves the lips clear.
+  // A cool shade, weaker under fair hair.
+  const fh = look && look[3];
+  if (fh) {
+    // toward the hair's own colour: dark hair darkens, fair hair warms
+    const k = fh === 'beard' ? 0.58 : 0.34;
+    const tint = [0.35 + 0.9 * hair[0], 0.35 + 0.9 * hair[1], 0.37 + 0.9 * hair[2]];
+    for (let q = 0; q < head.pos.length; q += 3) {
+      const x = head.pos[q], y = head.pos[q + 1], z = head.pos[q + 2];
+      const th = Math.abs(Math.atan2(x, z - HEAD_Z)), a = th * 0.095;
+      // the cheek line: under the nose in front, rising to the sideburn
+      const yc = lerp(J.eye - 0.048, J.eye - 0.022, smoothT(clamp((th - 0.35) / 0.9, 0, 1)));
+      let w = smoothT(clamp((yc - y) / 0.012, 0, 1))
+        * smoothT(clamp((1.50 - th) / 0.22, 0, 1))
+        * smoothT(clamp((y - (J.chin - 0.016)) / 0.012, 0, 1));
+      w *= 1 - 0.9 * gss(a, 0.019) * gss(y - (J.chin + 0.044), 0.0075);   // the lips
+      if (w <= 0) continue;
+      for (let c = 0; c < 3; c++) head.col[q + c] *= lerp(1, Math.min(1, tint[c]), k * w);
+    }
+  }
+  creaseNoseBase(head, shown.length, HEAD_COLS.length);
+  // Ears, unless the hair falls over them: a long or curly shell over the
+  // side of the head would have them standing out through it.
+  const covers = style === 'long' || style === 'bob' || style === 'curly' || style === 'side';
+  // The ears are their own part, skin-coloured on the plain skin cell like
+  // the neck: on the face cell they sat at its clamped edge and came out a
+  // paler, pinker tone than the face they hang on.
+  const earB = new Builder(false);
+  if (!covers) {
+    const xs = skullRay(Math.PI / 2 + 0.12, J.eye - 0.017) * Math.sin(Math.PI / 2 + 0.12);
+    for (const sx of [-1, 1]) buildEar(earB, sx, xs, skin);
+  }
+  const headW = (x, y) => {
+    if (y < J.neck) return across(J.neck - 0.06, 0.09, B.neck, B.chest)(x, y);
+    return across(J.head - 0.03, 0.04, B.head, B.neck)(x, y);
+  };
+  acc.add(head, headW, cylUV(face, 0, HEAD_Z, HY0, HY1, HEAD_SPAN), 'head');
+  if (!earB.empty) acc.add(earB, headW, cylUV(CELLS.skin, 0, 0, J.eye - 0.05, J.eye + 0.02), 'ear');
+
+  const hairB = buildHair(style, seed, hairC, grid, bodyAt);
+  if (hairB) {
+    // Long hair below the jaw rides the chest, not the head, or it swings
+    // through the back when the head turns.
+    const hw = style === 'long'
+      // Below the jaw long hair lies on the shoulders, so it rides the CHEST
+      // there: 40% on the head at shoulder height, it swung back into the
+      // upper back whenever a runner's chest pitched forward under a level head.
+      ? (x, y) => (y < J.chin ? across(J.chin - 0.035, 0.035, B.head, B.chest)(x, y) : headW(x, y))
+      : headW;
+    // Shell and curtain carry their own (t, s) (hairUV, by row and column, so
+    // the tip band is the rows below the edge); anything else (the bun) maps
+    // round the head as before, kept out of the cut-out tip band.
+    // A buzz cut is the stubble cell too, in the hair's own colour: a 3.5 mm
+    // shell painted as hair was a skullcap with a cut fringe.
+    const close = style === 'buzz' || style === 'shaved';
+    const hcell = style === 'curly' ? CELLS.curly : close ? CELLS.stubble : CELLS.hair;
+    const hcyl = cylUV(hcell, 0, -0.01, J.eye - 0.08, J.crown + 0.03), huv = hairB.hairUV || [];
+    acc.add(hairB, hw, (x, y, z, k) => {
+      const m = huv[k];
+      if (m) return [m[0], m[1], m[2] != null ? m[2] : hcell];
+      const c = hcyl(x, y, z);
+      c[1] = Math.max(c[1], TIP_S + 0.08);
+      return c;
+    }, 'hair');
+  }
+
+  if (opts.hat) {
+    const hat = new Builder(false);
+    hat.loftY([
+      { y: J.eye + 0.016, pts: oval(0.086, 0.111, ST, 0, -0.006) },
+      { y: J.eye + 0.070, pts: oval(0.082, 0.105, ST, 0, -0.008) },
+      { y: J.crown - 0.004, pts: oval(0.057, 0.073, ST, 0, -0.010) },
+    ], opts.hat, { capEnd: true });
+    hat.box(0, J.eye + 0.014, 0.086, 0.166, 0.018, 0.11, 0, opts.hat);
+    acc.add(hat, headW, cylUV(CELLS.jacket, 0, 0, J.eye, J.crown), 'hat');
+  }
+  if (opts.swat) {
+    // Ballistic helmet: a dome over the ears with a flat brim at the brow, and
+    // a pair of goggles riding on its front.
+    const hel = new Builder(false), HC = [0.07, 0.075, 0.08];
+    hel.loftY([
+      { y: J.eye - 0.035, pts: oval(0.094, 0.112, ST, 0, -0.016) },
+      { y: J.eye + 0.016, pts: oval(0.104, 0.124, ST, 0, -0.008) },
+      { y: J.eye + 0.075, pts: oval(0.103, 0.122, ST, 0, -0.010) },
+      { y: J.crown - 0.004, pts: oval(0.082, 0.098, ST, 0, -0.012) },
+      { y: J.crown + 0.030, pts: oval(0.038, 0.046, ST, 0, -0.012) },
+    ], HC, { capEnd: true });
+    hel.box(0, J.eye + 0.040, 0.100, 0.13, 0.036, 0.03, 0, [0.03, 0.03, 0.035]);
+    acc.add(hel, headW, cylUV(CELLS.jacket, 0, 0, J.eye, J.crown), 'hat');
+  }
+
+  // --- arms ----------------------------------------------------------------
+  for (const side of [-1, 1]) {
+    const X = side * SX;
+    const arm = new Builder(false);
+    const ar = (rx, rz, ox, oz) => oval(rx * farm, rz * farm, SL, ox, oz);
+    // Deltoid, biceps and a forearm that is thicker below the elbow than at
+    // the wrist: round one's arm was one taper, a stick.
+    const aRings = [
+      { y: J.shoulder + 0.006, pts: ar(0.038, 0.036, X * 0.80, 0) },
+      { y: J.shoulder - 0.040, pts: ar(0.064, 0.058, X * 1.03, 0) },     // deltoid
+      { y: J.shoulder - 0.090, pts: ar(0.061, 0.058, X * 1.02, 0) },
+      { y: J.shoulder - 0.150, pts: ar(0.053, 0.056, X, 0.004) },        // biceps
+      { y: J.elbow + 0.030, pts: ar(0.046, 0.045, X, 0) },
+      { y: J.elbow - 0.020, pts: ar(0.045, 0.044, X, 0) },
+      { y: J.elbow - 0.070, pts: ar(0.047, 0.043, X, 0.002) },           // forearm
+      // The wrist is wider front to back than across: the palm faces the
+      // thigh, so its width runs along z.
+      { y: J.wrist + 0.050, pts: ar(0.031, 0.034, X, 0) },
+      { y: J.wrist + 0.012, pts: ar(0.021, 0.028, X, 0) },
+    ];
+    arm.loftY(aRings, shortSleeve
+      ? aRings.map((r, i) => (i < 3 ? coat : skin))
+      : coat, { capEnd: true });   // no cap at the shoulder: it is inside the torso
+    // cuff: a proud, contrasting band where the fabric ends
+    if (shortSleeve) {
+      arm.loftY([
+        { y: J.shoulder - 0.122, pts: ar(0.060, 0.059, X * 1.01, 0.002) },
+        { y: J.shoulder - 0.150, pts: ar(0.058, 0.060, X, 0.004) },
+      ], dk(coat, 0.62), {});
+      arm.loftY([
+        { y: J.shoulder - 0.090, pts: ar(0.062, 0.059, X * 1.02, 0) },
+        { y: J.shoulder - 0.122, pts: ar(0.060, 0.059, X * 1.01, 0.002) },
+      ], coat, {});
+    } else {
+      arm.loftY([
+        { y: J.wrist + 0.058, pts: ar(0.037, 0.034, X, 0) },
+        { y: J.wrist + 0.026, pts: ar(0.034, 0.031, X, 0) },
+      ], dk(coat, top === 'hoodie' ? 0.62 : 0.72), {});
+    }
+    acc.add(arm, (x, y) => {
+      if (y > J.elbow) return across(J.elbow + 0.05, 0.09, side < 0 ? B.shoulderL : B.shoulderR, side < 0 ? B.elbowL : B.elbowR)(x, y);
+      return [side < 0 ? B.elbowL : B.elbowR, 1, 0, 0];
+    // Sleeves take the plain cell, not the garment's: a torso cell carries
+    // pockets, zips and a kangaroo pocket, and mapped round an arm they landed
+    // on the sleeves as stray rectangles.
+    }, cylUV(shortSleeve ? CELLS.skin : CELLS.sleeve, X, 0, J.wrist, J.shoulder + 0.01), 'arm');
+    buildHand(acc, side, X, skin);
+  }
+  if (opts.swat) {
+    // A compact carbine in the right hand, muzzle DOWN along the arm's axis:
+    // carried at the low ready while walking, and pointing straight at the
+    // target when the arm comes up to aim (peds.js aimPose), because the
+    // hand's down axis is then the arm's forward one. Skinned to the hand.
+    const gun = new Builder(false), GC = [0.05, 0.05, 0.055], x = SX + 0.012;
+    gun.box(x, 0.60, 0.075, 0.046, 0.25, 0.074, 0, GC);           // receiver
+    gun.box(x, 0.47, 0.085, 0.042, 0.14, 0.052, 0, GC);           // handguard
+    gun.box(x, 0.34, 0.085, 0.022, 0.14, 0.022, 0, GC);           // barrel
+    gun.box(x, 0.85, 0.068, 0.036, 0.15, 0.050, 0, GC);           // stock
+    gun.box(x, 0.66, 0.005, 0.034, 0.10, 0.075, 0, GC);           // magazine
+    gun.box(x, 0.74, 0.020, 0.030, 0.07, 0.040, 0, GC);           // grip
+    acc.add(gun, () => [B.handR, 1, 0, 0], cylUV(CELLS.sleeve, x, 0, 0.3, 1.0), 'gun');
+  }
+
+  // --- legs ----------------------------------------------------------------
+  for (const side of [-1, 1]) {
+    const X = side * HIP_X;
+    const leg = new Builder(false);
+    // Thigh taper, a knee, a calf that sits BEHIND the shin and swells below
+    // the knee, and a slim ankle. Trousers keep a straighter fall over the
+    // calf; bare legs get the whole shape.
+    const bare = legsBare;
+    const loose = bottom === 'trousers' || bottom === 'jeans';
+    const lRings = [
+      { y: J.hip + 0.035, pts: oval(0.084, 0.088, SL, X * 0.88, 0) },
+      { y: J.hip - 0.090, pts: oval(0.090, 0.088, SL, X * 0.97, 0) },
+      { y: J.hip - 0.200, pts: oval(0.078, 0.080, SL, X, 0) },
+      { y: J.knee + 0.120, pts: oval(0.064, 0.066, SL, X, 0) },
+      { y: J.knee + 0.080, pts: oval(0.060, 0.063, SL, X, 0) },
+      { y: J.knee + 0.010, pts: oval(0.055, 0.056, SL, X, 0.006) },                 // knee
+      { y: J.knee - 0.050, pts: oval(0.054, loose ? 0.060 : 0.058, SL, X, loose ? -0.002 : -0.004) },
+      { y: J.knee - 0.120, pts: oval(loose ? 0.056 : 0.055, loose ? 0.062 : 0.066, SL, X, loose ? -0.004 : -0.012) },  // calf
+      { y: J.knee - 0.250, pts: oval(loose ? 0.048 : 0.042, loose ? 0.052 : 0.048, SL, X, -0.004) },
+      { y: J.ankle + 0.100, pts: oval(loose ? 0.042 : 0.036, loose ? 0.045 : 0.039, SL, X, 0) },
+    ];
+    const lCols = lRings.map((r, i) => {
+      if (bare) return skin;
+      if (bottom === 'shorts') return i <= 3 ? pants : skin;
+      return pants;
+    });
+    leg.loftY(lRings, lCols, { capStart: true, capEnd: true });
+    if (bottom === 'shorts') {
+      leg.loftY([
+        { y: J.knee + 0.140, pts: oval(0.068, 0.070, SL, X, 0) },
+        { y: J.knee + 0.105, pts: oval(0.066, 0.068, SL, X, 0) },
+      ], dk(pants, 0.60), {});
+    }
+    if (loose) {
+      // turn-up at the hem
+      leg.loftY([
+        { y: J.ankle + 0.100, pts: oval(0.044, 0.047, SL, X, 0) },
+        { y: J.ankle + 0.075, pts: oval(0.044, 0.047, SL, X, 0) },
+      ], dk(pants, 0.62), {});
+    }
+    acc.add(leg, (x, y) => across(J.knee + 0.04, 0.1,
+      side < 0 ? B.thighL : B.thighR, side < 0 ? B.kneeL : B.kneeR)(x, y),
+    bare ? cylUV(CELLS.skin, X, 0, J.ankle + 0.08, J.hip + 0.04) : legUV(X), 'leg');
+
+    // THE SHOE IS ONE LOFT, and its sole is where animateWalk thinks it is.
+    // The bottom ring spans exactly the sole the gait's roll model pivots on:
+    // 6.75 cm under the ankle, from 5.6 cm behind it to 15.6 cm ahead
+    // (SOLE / HEEL_Z / TOE_Z in animateWalk; tools/gait.mjs reads the same
+    // numbers). Change one, change all three.
+    const foot = new Builder(false);
+    foot.loftY([
+      { y: J.ankle - 0.0675, pts: oval(0.046, 0.106, SL, X, 0.050) },   // sole underside
+      { y: J.ankle - 0.052, pts: oval(0.050, 0.108, SL, X, 0.050) },    // sole top
+      { y: J.ankle - 0.032, pts: oval(0.048, 0.104, SL, X, 0.048) },    // toe box
+      { y: J.ankle + 0.004, pts: oval(0.046, 0.088, SL, X, 0.036) },    // instep
+      { y: J.ankle + 0.045, pts: oval(0.041, 0.051, SL, X, 0.010) },    // collar
+      { y: J.ankle + 0.10, pts: oval(0.036, 0.039, SL, X, 0) },         // inside the trouser
+    ], [soleCol, shoeCol, shoeCol, shoeCol, shoeCol, shoeCol], { capStart: true, capEnd: true });
+    acc.add(foot, solid(side < 0 ? B.footL : B.footR),
+      cylUV(CELLS.shoe, X, 0.050, J.ankle - 0.0675, J.ankle + 0.10), 'foot');
+  }
+
+  const geo = acc.build();
+  geo.userData.shoulderX = SX;
+  geo.userData.fem = fem;
+  return geo;
+}
+
+// A small pool of pre-built looks, shared by every pedestrian. Per-instance
+// variety comes from the skeleton, scale and gait rather than new geometry.
+let VARIANTS = null;
+function variants() {
+  if (!VARIANTS) {
+    VARIANTS = [];
+    for (let i = 0; i < 12; i++) VARIANTS.push(buildCharacter({ seed: i * 7919 + 13, variant: i }));
+  }
+  return VARIANTS;
+}
+
+// Cops need their OWN pool. They used to be spawned with a uniform in `opts`
+// -- shirt, trousers, hat, vest -- but a pooled character ignores opts and
+// takes a civilian variant, so every cop on foot was a civilian in a
+// random shirt, and only the shooting gave them away.
+let COP_VARIANTS = null;
+function copVariants() {
+  if (!COP_VARIANTS) {
+    COP_VARIANTS = [];
+    for (let i = 0; i < 4; i++) {
+      COP_VARIANTS.push(buildCharacter({
+        seed: i * 6007 + 71,
+        shirt: [0.12, 0.16, 0.3], pants: [0.1, 0.12, 0.2], hat: [0.08, 0.1, 0.18], vest: [0.16, 0.2, 0.36],
+        hivis: true,
+      }));
+    }
+  }
+  return COP_VARIANTS;
+}
+
+// The tactical officers (wanted 4+, police.js): their own pool, as cops have
+// theirs -- helmet, plate carrier, carbine (buildCharacter opts.swat).
+let SWAT_VARIANTS = null;
+function swatVariants() {
+  if (!SWAT_VARIANTS) {
+    SWAT_VARIANTS = [];
+    for (let i = 0; i < 3; i++) {
+      SWAT_VARIANTS.push(buildCharacter({
+        seed: i * 4111 + 29,
+        shirt: [0.11, 0.12, 0.14], pants: [0.10, 0.11, 0.13], vest: [0.07, 0.08, 0.085], swat: true,
+      }));
+    }
+  }
+  return SWAT_VARIANTS;
+}
+
+/**
+ * Build both look pools now. They are built lazily on first use, and the
+ * first use is the first frame of play (the crowd spawns at once): measured
+ * 224-264 ms of peds.update in that frame on the phone profile, and the cop
+ * pool again the first time a cop is on foot. main.js calls this while the
+ * loading screen is up.
+ */
+export function warmLooks() {
+  variants();
+  copVariants();
+  swatVariants();
+}
+
+export function makeHumanoid(opts = {}) {
+  const seed = opts.seed != null ? opts.seed : 0;
+  const pooled = !opts.geometry && !opts.unique;
+  const geo = opts.geometry
+    || (opts.unique ? buildCharacter(opts)
+      : opts.swat ? swatVariants()[Math.floor(hash2(seed, 9) * 3) % 3]
+      : opts.cop ? copVariants()[Math.floor(hash2(seed, 9) * 4) % 4]
+        : variants()[Math.floor(hash2(seed, 9) * 12) % 12]);
+  const bones = makeSkeletonBones(geo.userData.shoulderX);
+  const mesh = new THREE.SkinnedMesh(geo, pedMat);
+  mesh.add(bones[B.root]);
+  mesh.bind(new THREE.Skeleton(bones));
+  // A background pedestrian's shadow is a few dozen pixels at street level and
+  // costs a whole extra draw call plus a second pass over an 18-bone skinned
+  // mesh -- measured, 21 pedestrians were 21 draws and 27k triangles of shadow.
+  // The player is the exception: their own shadow is how you read where you are
+  // standing.
+  mesh.castShadow = !ON_PHONE || !!opts.unique;
+  mesh.frustumCulled = false;
+  // PedSystem freezes a pedestrian it is not animating this frame; the bone
+  // texture then keeps last frame's pose instead of being rebuilt and uploaded.
+  const sk = mesh.skeleton, skUpdate = sk.update;
+  sk.update = function () { if (!this.frozen) skUpdate.call(this); };
+
+  const g = new THREE.Group();
+  g.add(mesh);
+  // A woman's frame is ~0.93 of a man's height on average; 0.95 here, with the
+  // per-person spread on top, so a crowd is not one height.
+  const scale = opts.scale || (0.94 + hash2(seed, 5) * 0.14) * (geo.userData.fem ? 0.95 : 1);
+  g.scale.setScalar(scale);
+  return {
+    group: g, mesh, bones, height: 1.75 * scale, bob: 0, scale,
+    // Pooled variants are shared by every pedestrian using that look, so only a
+    // uniquely-built character may dispose its own geometry.
+    //
+    // The SKELETON is always per-instance, and three backs each one with a bone
+    // texture on the GPU. Not disposing it leaked one texture per pedestrian
+    // that walked out of range -- measured, `renderer.info.memory.textures` rose
+    // from 62 to 80 over two minutes of driving and never came down. Every
+    // spawn also uploads a fresh one, and a texture upload is a synchronous
+    // stall on the main thread, which is what the intermittent stutter while
+    // driving actually was: pedestrians churning in and out of the 150 m spawn
+    // radius, each one costing an upload.
+    dispose() {
+      if (!pooled) geo.dispose();
+      if (mesh.skeleton) mesh.skeleton.dispose();
+    },
+    gait: 0.92 + hash2(seed, 11) * 0.16,
+    lean: hash2(seed, 12) * 0.06,
+    swing: 0.8 + hash2(seed, 13) * 0.45,
+    t: hash2(seed, 14) * 10,
+    // so a crowd isn't marching in lockstep
+    phase: hash2(seed, 15) * Math.PI * 2,
+  };
+}
+
+const TAU = Math.PI * 2;
+// Scratch for the leg solve, reused so a crowd doesn't allocate per frame.
+const _v = new THREE.Vector3();
+const _w = new THREE.Vector3();
+const _inv = new THREE.Quaternion();
+const LEG = J.hip - J.ankle;
+const L_THIGH = J.hip - J.knee;
+const L_SHIN = J.knee - J.ankle;
+// Never ask the IK for a fully locked leg -- at full extension the knee angle
+// is stationary against distance and the solve jitters.
+// 0.998, not 0.99, and the hips' margin 3 mm, not 14: on a nearly straight
+// leg a sliver of length is a lot of knee. REACH_PLANT at 97.3 % of the leg
+// held every planted knee at 26 deg or more, and with the hips riding a fixed
+// bob over that the whole stance was spent at 30-45 deg -- the crouched,
+// Groucho walk. A real stance knee is 5 deg at heel strike and 10-20 through
+// loading. tools/gait.mjs still sees no jitter at full extension.
+const REACH = LEG * 0.998;
+// What the hips are allowed to assume the planted leg can span. It has to be
+// shorter than REACH, because the pelvis rolls and carries its sockets up with
+// it -- HIP_X * sin(roll) is nearly a centimetre at a sprint. Set the hips by
+// the full reach and that rise pushes the leg past its limit, so it comes up
+// short and the planted foot lifts clear of the ground.
+const REACH_PLANT = REACH - 0.003;   // at a walk; animateWalk adds a runner's
+
+/**
+ * How far the hips travel per step, with the per-person gait variation folded
+ * in. This is the ONE number the gait is built on -- see animateWalk.
+ */
+function stepLength(h, speed) {
+  // Fitted so cadence AND step length land inside published adult bands at
+  // every speed from a stroll to a sprint -- tools/gait.mjs checks all ten
+  // numbers. The old `0.62 + 0.14 v` over-strided a walk (0.93 m at 1.4 m/s,
+  // against a real 0.68-0.82) and under-strided a run, which is why the walk
+  // reached and the run took little quick steps.
+  // 0.40, not 0.45: 0.79 m at 1.4 m/s, the top of the band, planted the lead
+  // foot 0.39 m out in front of the hips (a person lands ~0.3 m out), and the
+  // scissored double support pulled the hips down into a crouch. 0.74 m and
+  // 113 steps a minute is the band's middle.
+  // Back to 0.45 across the gait switch, or a run's cadence ran past its band.
+  return clamp(0.40 + 0.05 * clamp((speed - 2.2) / 1.2, 0, 1) + 0.245 * speed, 0.42, 2.6) * h.gait;
+}
+
+/**
+ * Fraction of the cycle one foot is on the ground.
+ *
+ * Above 0.5 the two stances overlap and the character is in DOUBLE SUPPORT --
+ * both feet down, which a real walk is in for about a fifth of the cycle and
+ * which this model previously could not represent at all: stance was capped at
+ * exactly 0.5, so there was always precisely one foot on the ground. A walk
+ * without double support reads as a march.
+ */
+function dutyFactor(speed, runBlend = 0) {
+  // Minus 0.03 once running. With a real rolling foot, contact travel is
+  // 2 * step * duty of flat-foot origin, and at the mid-band duty that was
+  // 1.22 m at 5.5 m/s against a person's ~1.05: the leg could only span it by
+  // squatting (hips at 83%) and lunging the trailing leg out behind. The
+  // lower edge of each band is still inside it: jog 0.40, run 0.30, sprint 0.24.
+  return clamp(0.684 - 0.2055 * Math.log(Math.max(0.35, speed)) - 0.03 * runBlend, 0.22, 0.68);
+}
+
+/**
+ * Procedural walk/idle cycle. Hips bob and sway, knees and elbows actually
+ * bend, the chest counter-rotates against the pelvis and the head stays level.
+ *
+ * Feet are PLACED, not swung. Each leg alternates a stance half-cycle, where the
+ * foot holds a fixed spot on the ground and simply travels back under the
+ * character, and a swing half-cycle, where it arcs forward to the next plant;
+ * the knee is then solved to reach that target. Rotating the hip on a sine
+ * instead — which is what this did — cannot plant a foot: sized to cover the
+ * step length on average, the foot still sweeps ~57% faster than the body
+ * through mid-stance and slower at the ends, so it grinds forwards and
+ * backwards against the ground the entire time. Measured, the planted foot was
+ * moving 24 mm per frame while the body moved 25, i.e. barely holding at all,
+ * and legs paddling under a gliding body is what reads as flailing.
+ *
+ * `h.phase` lives on the character so the cycle can't be advanced by anything
+ * that doesn't also know the step length.
+ */
+export function animateWalk(h, amp, dt, speed) {
+  const b = h.bones;
+  h.t += dt || 0;
+  const A = amp * h.gait;
+  const spdIn = speed != null ? speed : amp * 4;
+  // The CYCLE runs on a smoothed speed. The player's own speed damps at rate 9
+  // -- a standstill to a run in about 0.3 s -- and step length, duty and
+  // runBlend all follow it, so the stride used to be re-shaped by half a metre
+  // a second every frame and the swing foot popped (14 cm of ankle
+  // acceleration in one frame, measured on the rig's speed ramp). A person
+  // changes stride over a step, not a frame. The feet stay planted regardless:
+  // they are locked to the world below, not to the cycle.
+  if (!dt || h.gspd == null) h.gspd = spdIn;
+  else h.gspd += (spdIn - h.gspd) * (1 - Math.exp(-6 * dt));
+  const spd = h.gspd;
+  const run = clamp(spd / 6, 0, 1);
+  // How much of a RUN this is, as opposed to how fast a walk. People switch
+  // gait around 2.5-3 m/s, and everything that distinguishes the two -- hip
+  // oscillation phase, foot clearance, lean -- has to key off this rather than
+  // off raw speed, or a brisk walk gets treated as a slow run.
+  const rb = clamp((spd - 2.2) / 1.2, 0, 1);
+  const runBlend = rb * rb * (3 - 2 * rb);
+
+  const step = stepLength(h, spd);
+  // pi of phase per step, so one full 2pi cycle is a left-right pair. Paired
+  // with a stance that runs linearly from +step/2 to -step/2, this makes the
+  // planted foot travel backwards at exactly `spd` -- no skate by construction.
+  h.phase = (h.phase || 0) + (dt || 0) * Math.PI * spd / step;
+  const phase = h.phase;
+  const s = Math.sin(phase), c = Math.cos(phase);
+  // fold the legs back under the hips as the character stops, since a frozen
+  // phase would otherwise leave them stranded mid-stride
+  const settle = clamp((spd - 0.15) / 0.5, 0, 1);
+
+  // legs: foot targets in character space, +z forward, y up from the ground.
+  // The bones are unscaled, so a step measured in world metres has to come back
+  // through the character's own scale or a tall pedestrian over-strides.
+  const sc = h.scale || 1;
+  // Ground contact is capped, so above a jog the step outgrows it and the duty
+  // factor falls below a half -- the legs stop overlapping and a flight phase
+  // opens up. Speeding up therefore buys cadence and air, not a wider split.
+  // A foot in stance must travel backwards by the whole distance the body
+  // covers while it is down, or it skates: cycle distance is 2 * step and the
+  // foot is down for `duty` of it. That is the no-skate identity, and it is
+  // what the old CONTACT_MAX broke -- it clamped the sweep to hold the bob
+  // down, which is the wrong lever (see the hip model and the foot roll below).
+  const duty = dutyFactor(spd, runBlend);
+  const swept = Math.min(2 * step * duty, REACH_PLANT * 1.94) / sc * settle;
+  // Swing clearance, and the main thing that sets how much the knee folds. A
+  // sprinter's heel comes most of the way to the backside, which is where the
+  // 120-155 deg of swing-phase knee flexion comes from.
+  // Measured against tools/gait.mjs, this was short at every pace above a
+  // walk: knee swing came out 59 deg at brisk (band 65-85), 105 at run
+  // (110-140) and 108 at sprint (120-155). Too little fold is a leg that
+  // swings through nearly straight, which is the stiff, skating look. The heel
+  // has to come much closer to the backside as the pace rises.
+  // 0.265, not 0.295: the higher clearance passed the knee-flexion bands but
+  // lifted the thigh past horizontal at a run -- a prancing high-knee drill,
+  // not someone crossing a street. 0.24 was tried and swung too far the other
+  // way (sprint knee 117 deg, under its 120 band). Measured at 0.265:
+  // jog/run/sprint 111/118/121, all in band.
+  // Peak ankle height ABOVE the straight line from toe-off to heel strike. The
+  // toe-off end is already raised by the heel lift, so this sits well under
+  // the old 0.105 + 0.265: kept at those values the knee folded 149-162 deg at
+  // jog/run/sprint, past every band.
+  // It also climbs with pace past the gait switch: keyed on runBlend alone it
+  // saturated at 3.4 m/s, so a jog folded its knee as far as a sprint (126 deg
+  // against a 90-120 band). And 0.085 at a walk, not 0.07: the toe cleared the
+  // pavement by 3 mm, against a real ~1.5 cm.
+  // 0.03 per m/s, not 0.02: at 0.02 a sprint folded its knee 117 deg, under the
+  // 120-155 band.
+  // 0.072 at a walk, not 0.085: with the toe's own clearance floor (below)
+  // doing the job it was raised for, the extra height only kicked the heel up
+  // behind to calf height -- a prancing walk at 1.4 m/s.
+  const lift = ((0.072 + runBlend * (0.113 + 0.03 * clamp(spd - 3.5, 0, 4))) / sc) * settle;
+  const stanceSpan = TAU * duty;
+  const swingSpan = TAU - stanceSpan;
+  // THE FOOT HAS LENGTH, AND IT ROLLS -- and the ankle has to follow from the
+  // roll, not be dialled in beside it.
+  //
+  // The hips are limited by a straight line from hip to ANKLE, but the ground
+  // contact is not the ankle: a stance foot lands on its heel, rolls flat and
+  // pushes off from its toe. Without modelling that, a 0.86 m leg is asked to
+  // span the whole 0.98 m stance sweep and the only way to do it is to squat
+  // (measured once: hips at 85% of standing walking, 69% sprinting).
+  //
+  // The previous version modelled the roll as two separate numbers -- an ankle
+  // excursion shortened by a fixed 0.22 m, and an ankle rise on a curve -- and
+  // pitched the foot on a third, whose sign was backwards: +x on the foot bone
+  // lowers the toe, and it was positive at heel strike, so every foot landed
+  // toe-first and pushed off rolling on its heel. Nothing tied the three
+  // together, so the sole could not stay on the ground: measured with the rig's
+  // sole probe, planted soles hovered or sank up to 8.6 cm, and the pitch sat on
+  // its clamp for 38-74% of every cycle.
+  //
+  // Now there is ONE flat-foot origin, which travels backwards at exactly body
+  // speed while down (the no-skate identity), ONE sole pitch, and the ankle is
+  // wherever a rigid foot pivoting on its heel or toe at that pitch puts it.
+  // The sole cannot float or sink by construction.
+  const SOLE = J.ankle - 0.0675;            // underside of the sole box in buildCharacter
+  const ANK_Y = J.ankle - SOLE;
+  const HEEL_Z = -0.056, TOE_Z = 0.156;     // sole ends, relative to the ankle
+  // Heel strike lands toes-up about 11 deg at a walk; a runner lands flatter.
+  // Toe-off peaks near 50 deg of heel lift -- it is what lets the trailing leg
+  // reach without dropping the hips.
+  const q0 = (0.20 - 0.12 * runBlend) * settle;
+  const pOff = (0.90 + 0.20 * runBlend) * settle;
+  const uLand = 0.15 - 0.07 * runBlend;     // rolled flat by here
+  const uHeel = 0.55 - 0.15 * runBlend;     // heel comes up from here
+  // A runner lands closer under the hips and pushes off further behind; the
+  // symmetric window had the leading leg out straight at touchdown, which is
+  // the lunging over-stride a player sees on every step.
+  // How far the stance window sits BEHIND the hips. It is not a tuning dial:
+  // it is chosen below so heel strike and toe-off limit the hips equally,
+  // which is the highest the hips can ride over that stride. A symmetric
+  // window had the leading leg out straight at touchdown -- the lunging
+  // over-stride in every run strip -- and a hand-set shift only balanced one
+  // speed. Toe-off carries the ankle up on a 50-60 deg heel lift, so the
+  // balanced window lands closer under the hips and pushes off further behind,
+  // which is what a runner does.
+  let back = 0;
+  // The margin grows with the run: a runner's pelvis rolls and carries its
+  // sockets up by most of a centimetre (see REACH_PLANT), a walker's by 3 mm.
+  const RP = REACH_PLANT - 0.011 * runBlend;
+  const rawHip = (t) => t.y + Math.sqrt(Math.max(0.04, RP * RP - t.z * t.z));
+  const pivot = (zf, p) => {
+    // rotation.x by p: y' = y cos p - z sin p, z' = y sin p + z cos p
+    const rz = p >= 0 ? -TOE_Z : -HEEL_Z;
+    const oz = zf + (p >= 0 ? TOE_Z : HEEL_Z);
+    return [oz + ANK_Y * Math.sin(p) + rz * Math.cos(p), SOLE + ANK_Y * Math.cos(p) - rz * Math.sin(p)];
+  };
+  const stanceAt = (u) => {
+    let p = 0;
+    if (u < uLand) { const k = 1 - u / uLand; p = -q0 * k * k; }
+    else if (u > uHeel) { const k = (u - uHeel) / (1 - uHeel); p = pOff * k * k; }
+    const zf = (0.5 - u) * swept - back;
+    const a = pivot(zf, p);
+    return { z: a[0], y: a[1], pitch: p, stance: true, zf, u };
+  };
+  // A foot rolling onto its toes can reach further than its fixed toe-off
+  // roll says: reachToe pivots it up to ~72 deg. So a foot past heel-off limits
+  // the hips by what it can reach at that pitch, not at the scheduled one --
+  // held to the schedule, a runner's hips sank 8 cm under a real runner's
+  // through every stance and the knee folded to 67 deg (real: 40-45).
+  const TOE_MAX = 1.40;
+  const toeAt = (t, p) => {
+    const tz = t.z - ANK_Y * Math.sin(t.pitch) + TOE_Z * Math.cos(t.pitch);
+    return { z: tz + ANK_Y * Math.sin(p) - TOE_Z * Math.cos(p), y: SOLE + ANK_Y * Math.cos(p) + TOE_Z * Math.sin(p) };
+  };
+  // How far this foot may roll: nothing extra before heel-off, all of it by
+  // toe-off, eased between. Switched on at heel-off instead, a foot locked far
+  // behind (speeding up from a stand) let the hips jump 22 cm in one frame.
+  const toeCap = (t) => (t.stance && t.u > uHeel
+    ? t.pitch + Math.max(0, TOE_MAX - t.pitch) * smoothT(clamp((t.u - uHeel) / (1 - uHeel), 0, 1)) : t.pitch);
+  const reachOf = (t) => {
+    const cap = toeCap(t);
+    return cap > t.pitch ? Math.max(rawHip(t), rawHip(toeAt(t, cap))) : rawHip(t);
+  };
+  // Bisect `back`: more back lifts the strike limit and lowers the toe-off
+  // one. Six steps put it inside a centimetre; it is a dozen trig calls.
+  // The bounds scale with the stride: fixed bounds let `back` snap to one of
+  // them as a character stopped -- with swept at 0 strike and toe-off are the
+  // same pose, the comparison ties, and every foot target jumped by up to
+  // 45 cm in one frame (the rig's speed ramp, at the stop).
+  {
+    let lo = -0.2 * swept, hi = 0.45 * swept;
+    for (let i = 0; i < 6; i++) {
+      back = (lo + hi) / 2;
+      if (rawHip(stanceAt(0)) < reachOf(stanceAt(1))) lo = back; else hi = back;
+    }
+    back = (lo + hi) / 2;
+  }
+  const toeOff = stanceAt(1), strike = stanceAt(0);
+  // Swing is a Hermite curve whose ends move the way stance does, backwards.
+  // A linear swing reversed the foot's velocity in a single frame at touchdown
+  // and toe-off -- a visible snap twice per step -- and the small backward
+  // slope at the far end is the late-swing retraction every real foot makes
+  // before it lands.
+  // Less of it at a run: the same slope left a runner's foot drifting on
+  // backwards after toe-off, the trailing leg lingering out behind.
+  const vz = (-swept / Math.max(0.3, stanceSpan)) * swingSpan * (0.35 - 0.20 * runBlend);
+  const swingAt = (u) => {
+    const u2 = u * u, u3 = u2 * u;
+    const z = (2 * u3 - 3 * u2 + 1) * toeOff.z + (u3 - 2 * u2 + u) * vz
+      + (-2 * u3 + 3 * u2) * strike.z + (u3 - u2) * vz;
+    // Clearance peaks early in swing (the heel kicks up behind), not halfway,
+    // and at a run it holds a flat top: a runner's foot stays up under a raised
+    // thigh until late swing and then drops to land. With a plain sine the
+    // leading foot hung a few centimetres off the pavement out in front for
+    // most of the flight phase, which read as reaching for the ground.
+    // Built from two smoothsteps so it leaves and meets the ground with ZERO
+    // vertical speed: a sine over u^p has infinite slope at toe-off, and the
+    // flat-topped version of it lifted a sprinting ankle 21 cm in one frame.
+    const rise = 0.40 - 0.15 * runBlend, fall = 0.50 - 0.15 * runBlend;
+    let y = toeOff.y + (strike.y - toeOff.y) * smoothT(u)
+      + lift * smoothT(clamp(u / rise, 0, 1)) * smoothT(clamp((1 - u) / fall, 0, 1));
+    const pitch = toeOff.pitch + (strike.pitch - toeOff.pitch) * smoothT(clamp(u * 1.6, 0, 1));
+    // Toe clearance is a floor, not a by-product. The ankle arc clears the
+    // ground, but the foot is still pitched toe-down from push-off through
+    // early swing, and the rig measured the lower of heel and toe skimming the
+    // pavement by 1-7 mm at every speed. Keep it ~2 cm up mid-swing; the ends
+    // are left alone so touchdown and toe-off still meet the ground.
+    const cpp = Math.cos(pitch), spp = Math.sin(pitch);
+    const low = y - ANK_Y * cpp - Math.max(TOE_Z * spp, HEEL_Z * spp);
+    const floor = SOLE + (0.02 / sc) * settle * Math.sin(Math.PI * u);
+    if (low < floor) y += floor - low;
+    return { z, y, pitch, stance: false, u };
+  };
+  // EACH FOOT FINISHES WHAT IT STARTED. Stance and swing are slices of one
+  // phase circle cut at `stanceSpan`, and that cut moves with speed: slowing
+  // raises duty, so a foot a fifth of the way into its swing could find itself
+  // re-classified as the END of stance and teleport back to the toe-off pose
+  // (the rig's speed ramp measured 24 cm of ankle acceleration in one frame at
+  // a steady 1.4 m/s, left over from a slow-down). A foot now keeps its own
+  // progress through the half-cycle it is in, only changes state once that is
+  // done, and catches up with the shared cycle a little each frame.
+  const dph = (dt || 0) * Math.PI * spd / step;
+  if (!dt) h.gst = null;
+  else if (!h.gst) h.gst = [null, null];
+  const footState = (k, ph) => {
+    const w = ((ph % TAU) + TAU) % TAU;
+    let st = w < stanceSpan;
+    let u = st ? w / stanceSpan : (w - stanceSpan) / swingSpan;
+    const G = h.gst && h.gst[k];
+    if (G) {
+      const adv = G.u + dph / (G.st ? stanceSpan : swingSpan);
+      if (st !== G.st && G.u < 0.97) { st = G.st; u = Math.min(1, adv); }
+      // A legitimate change of state begins the new half-cycle at its START,
+      // not wherever the shared cycle has got to. Taking the cycle's u there
+      // put a foot that had just finished a held swing at mid-stance: the rig
+      // trace caught the ankle jumping 57 cm (z +0.37 to -0.195) in one frame.
+      // From here the catch-up below closes the gap a little each frame, and
+      // the world lock keeps the planted foot still while it does.
+      else if (st !== G.st) u = clamp(adv - 1, 0, 0.04);
+      else u = clamp(u, adv - 0.04, adv + 0.04);
+      u = clamp(u, 0, 1);
+      G.st = st; G.u = u;
+    } else if (h.gst) h.gst[k] = { st, u };
+    return st ? stanceAt(u) : swingAt(u);
+  };
+  const tl = footState(0, phase), tr = footState(1, phase + Math.PI);
+  // FEET LAND NEAR THE MIDLINE, NOT UNDER THE HIP SOCKETS. A person's step
+  // width is ~10 cm between the feet's centre lines at a walk and closes to a
+  // few centimetres at a run -- the feet track along a line, and the thighs
+  // angle in to put them there. Planted straight under the sockets (17 cm
+  // apart) every speed was a wide-legged, cowboy gait, and from the chase
+  // camera both legs were two parallel posts. Standing still keeps the hip
+  // width, which is the natural relaxed stance. The swinging foot bows out a
+  // little as it passes the planted ankle, the way a real one clears it.
+  const footX = HIP_X - 0.030 * settle - 0.012 * runBlend;
+  tl.x = -footX; tr.x = footX;
+  if (!tl.stance) tl.x -= 0.014 * settle * Math.sin(Math.PI * tl.u);
+  if (!tr.stance) tr.x += 0.014 * settle * Math.sin(Math.PI * tr.u);
+
+  // FEET ARE LOCKED TO THE WORLD WHILE THEY ARE DOWN.
+  //
+  // The analytic stance target only travels at body speed while the speed is
+  // constant and the heading is fixed, and a player is almost never either.
+  // Step length, duty and settle all move with speed, so the same phase maps to
+  // a different spot next frame: the rig's speed ramp measured a planted sole
+  // slipping 15.6 cm in one frame while slowing to a stop. And turning at the
+  // player's 10 rad/s swings a foot planted 0.4 m ahead sideways by ~7 cm a
+  // frame -- skating on every corner. So a foot that touches down remembers
+  // WHERE, in world space, and the leg is solved to that spot until it lifts;
+  // whatever it ended up away from the analytic target fades out over the
+  // swing. Callers must place the group BEFORE calling this, or the lock is a
+  // frame behind the body.
+  // The furthest out from the hips this stride ever puts an ankle, plus a
+  // margin. A lock may not hold a foot beyond it: the hips ride the more
+  // extended planted foot, and a foot planted during a run and still locked
+  // after slowing to a walk sat 86 cm behind -- the rig trace had the hips
+  // squatting to 0.36 m and springing back 53 cm when it lifted. The 0.30
+  // floor keeps a stroll from dragging its feet.
+  const zLimit = Math.max(Math.abs(strike.z), Math.abs(toeOff.z), 0.22 / sc) + 0.08 / sc;
+  if (!dt) {
+    // Posing at an exact phase (the strip and portrait harnesses): no history.
+    h.locks = null;
+  } else {
+    const g = h.group;
+    g.updateMatrix();
+    const m = g.matrix.elements, s2 = m[0] * m[0] + m[2] * m[2] || 1;
+    if (!h.locks) h.locks = [{ on: false, wx: 0, wz: 0, ex: 0, ez: 0, ey: 0, ez2: 0, ep: 0 }, { on: false, wx: 0, wz: 0, ex: 0, ez: 0, ey: 0, ez2: 0, ep: 0 }];
+    for (let k = 0; k < 2; k++) {
+      const t = k === 0 ? tl : tr, L = h.locks[k];
+      if (t.stance) {
+        if (!L.on) {
+          L.on = true;
+          L.wx = m[0] * t.x + m[8] * t.zf + m[12];
+          L.wz = m[2] * t.x + m[10] * t.zf + m[14];
+        }
+        const dx = L.wx - m[12], dz = L.wz - m[14];
+        let ex = (dx * m[0] + dz * m[2]) / s2 - t.x;
+        let ez = (dx * m[8] + dz * m[10]) / s2 - t.zf;
+        // A warp, a car exit or walking into a wall: re-plant rather than
+        // stretch the leg after a body that has gone somewhere else.
+        // Past 0.5 -- a warp, a car exit, walking into a wall, stopping dead
+        // from a sprint -- the lock is DRAGGED after the body rather than
+        // re-planted: re-planting snapped the foot up to 62 cm in one frame on
+        // the rig's speed ramp, and a foot sliding the last few centimetres of
+        // a hard stop reads as a scuff, not a glitch. It cannot be much
+        // tighter: duty falls from 0.52 to 0.43 across 2.2-3.4 m/s, which moves
+        // a planted foot's analytic spot ~26 cm from where it really is.
+        const el = Math.hypot(ex, ez), EMAX = 0.5;
+        if (el > EMAX) {
+          ex *= EMAX / el; ez *= EMAX / el;
+          L.wx = m[0] * (t.x + ex) + m[8] * (t.zf + ez) + m[12];
+          L.wz = m[2] * (t.x + ex) + m[10] * (t.zf + ez) + m[14];
+        }
+        const zc = t.z + ez;
+        if (Math.abs(zc) > zLimit) {
+          ez += Math.sign(zc) * zLimit - zc;
+          L.wx = m[0] * (t.x + ex) + m[8] * (t.zf + ez) + m[12];
+          L.wz = m[2] * (t.x + ex) + m[10] * (t.zf + ez) + m[14];
+        }
+        // NEVER ACROSS THE BODY. A lock holds the foot while the body turns
+        // over it, and the stick turns the player at up to 10 rad/s even at a
+        // standstill: a light pull back (a reverse at walking pace, both feet
+        // down) swung the body round its planted feet and the right foot came
+        // to rest beside or past the left -- crossed legs, or one leg flopped
+        // diagonally, and standing still nothing lifted it again. A lock may
+        // hold a foot only so far sideways, and never over the midline; past
+        // that it is dragged, as past EMAX.
+        const side = k === 0 ? -1 : 1, XIN = 0.05 / sc, XOFF = 0.14 / sc;
+        let exc = clamp(ex, -XOFF, XOFF);
+        const xin = Math.min(XIN, side * t.x);   // never inside where it stands anyway
+        if (side * (t.x + exc) < xin) exc = side * xin - t.x;
+        if (exc !== ex) {
+          ex = exc;
+          L.wx = m[0] * (t.x + ex) + m[8] * (t.zf + ez) + m[12];
+          L.wz = m[2] * (t.x + ex) + m[10] * (t.zf + ez) + m[14];
+        }
+        // STANDING STILL, A FOOT OFF ITS SPOT STEPS BACK TO IT. Stopped, the
+        // cycle stops and no foot ever lifts, so whatever a turn or a stop left
+        // a lock holding was held for good. One foot at a time, the one further
+        // out first: lifted and set down on its spot over ~0.3 s.
+        if (h.gspd < 0.3) {
+          const el2 = Math.hypot(ex, ez);
+          if (h.settleK == null && el2 > 0.035 / sc) {
+            const o = h.locks[1 - k];
+            if (Math.hypot(o.ex, o.ez) <= el2 || h.settleK === undefined) h.settleK = k;
+          }
+          if (h.settleK === k) {
+            const f = Math.exp(-11 * dt);
+            ex *= f; ez *= f;
+            t.y += Math.min(0.07 / sc, el2 * 0.7);
+            if (Math.hypot(ex, ez) < 0.006 / sc) { ex = 0; ez = 0; h.settleK = null; }
+            L.wx = m[0] * (t.x + ex) + m[8] * (t.zf + ez) + m[12];
+            L.wz = m[2] * (t.x + ex) + m[10] * (t.zf + ez) + m[14];
+          }
+        } else h.settleK = null;
+        L.ex = ex; L.ez = ez;
+        t.x += ex; t.z += ez;
+      } else {
+        L.on = false;
+        const fade = 1 - smoothT(t.u);
+        t.x += L.ex * fade; t.z += L.ez * fade;
+      }
+    }
+  }
+
+  // The hips can only ride as high as the planted leg can reach, so the classic
+  // two-bob-per-cycle rise and fall falls out of the geometry instead of being
+  // dialled in: highest at mid-stance, lowest as the legs scissor apart. It has
+  // to come from the PLANTED foot -- take it from the airborne one and the
+  // stance leg is asked for a reach it hasn't got, and the foot skates instead.
+  // With duty above 0.5 both feet can be down at once, and then BOTH legs
+  // constrain the hips -- take the lower of the two, or the trailing leg is
+  // asked for a reach it hasn't got and its foot lifts.
+  // In double support the LEADING foot (the one earlier in its stance) holds the
+  // hips, and the trailing foot rolls further up onto its toes to keep reaching
+  // (reachToe, below). Pinned to the trailing leg's fixed toe-off roll, the
+  // hips sank through every weight acceptance and the new stance knee buckled
+  // to 38 deg at 10 % of the cycle, against a real 15-20.
+  const planted = tl.stance && tr.stance
+    ? (tl.u < tr.u ? tl : tr)
+    : (tl.stance ? tl : (tr.stance ? tr : null));
+  // Which foot is bearing weight: 0 left, 1 right, -1 airborne. Only the gait
+  // regression test reads it -- measuring skate needs the model's own idea of
+  // stance, or a flight phase gets counted as a foot sliding. See CLAUDE.md.
+  h.contact = tl.stance ? 0 : (tr.stance ? 1 : -1);
+  // Per-foot, because with double support the single index cannot say that
+  // both are down. The gait rig reads these to measure duty and skate.
+  h.contactL = tl.stance; h.contactR = tr.stance;
+  // (a centimetre under, at a walk, for a real 4 cm of bob over mid-stance)
+  const lowHip = Math.min(reachOf(toeOff), rawHip(strike)) - (0.01 / sc) * (1 - runBlend);
+  // A WALK AND A RUN BOB IN OPPOSITE PHASE.
+  //
+  // A straight planted leg puts the hips on a circle: highest at mid-stance,
+  // lowest as the legs scissor. Taken literally that is the "compass gait", and
+  // it bobs about 16 cm at walking speed against a real 4-5 cm -- people flatten
+  // it with stance-phase knee flexion. A walk keeps a little of that circle, so
+  // the hips still peak at mid-stance: an inverted pendulum vaulting over a
+  // stiff leg. A run's knee absorbs MORE than the circle rises, so the hips are
+  // at their LOWEST at mid-stance: a spring compressing under the body. Having
+  // one curve for both is why every speed here once bobbed an identical
+  // 13-14 cm and a run looked like a hurried walk.
+  //
+  // The phase inversion still holds; the AMOUNT is now explicit. A fixed
+  // `compress` factor on the circle was tolerable while the foot model cheated
+  // the stride short, but with a rigid rolling foot the circle between
+  // mid-stance and the scissored pose spans 7-25 cm, and the same factor bobbed
+  // a walk 9 cm and sank a run to 71% of standing height with the legs unable
+  // to reach the ground. A walk takes a fixed 4.5 cm of the circle; a run sinks
+  // a fixed 4.5 cm under the scissored height at mid-stance. Neither may ride
+  // above what the planted leg can reach.
+  const range = Math.max(1e-3, rawHip(stanceAt(0.5)) - lowHip);
+  const walkK = Math.min(1, (0.050 / sc) / range);
+  const sink = (0.010 / sc) * settle;
+  let hipY;
+  // With per-foot state a WALKING character can briefly have neither foot
+  // classed as down -- one finishing its swing while the cycle already says
+  // stance. A walk has no flight gap to arc over, and falling through to the
+  // airborne branch snapped the hips to lowHip in one frame (a 56 cm ankle pop
+  // on the rig's speed ramp at the stop). Ride the lower foot instead.
+  const pin = planted || (stanceSpan >= Math.PI - 1e-6 ? (tl.y < tr.y ? tl : tr) : null);
+  if (pin) {
+    // a walker's hips stay on the scheduled roll (reaching further would put
+    // them up on tiptoe mid-stride); a runner's may use the toe's reach
+    // Neither may the hips sink below the double-support height while the
+    // stance foot could still reach it by rolling on: that dip was the walk's
+    // extra bob (8.5 cm on the rig against a 3.5-6 band).
+    const raw = Math.max(rawHip(pin) + (reachOf(pin) - rawHip(pin)) * runBlend, Math.min(reachOf(pin), lowHip));
+    const e = clamp((raw - lowHip) / range, 0, 1);
+    hipY = Math.min(raw, lowHip + (raw - lowHip) * walkK * (1 - runBlend) - sink * e * runBlend);
+  } else {
+    // Airborne: nothing pins the hips, so arc over the gap. Both ends of a
+    // flight phase are the fully-scissored pose, so this stays continuous.
+    const gap = Math.PI - stanceSpan;
+    const w = ((phase % Math.PI) + Math.PI) % Math.PI;
+    const f = gap > 1e-6 ? clamp((w - stanceSpan) / gap, 0, 1) : 0;
+    hipY = lowHip + ((0.02 + 0.045 * runBlend) / sc) * Math.sin(Math.PI * f);
+  }
+
+  // The pelvis has to be posed BEFORE the legs are solved. It sways, rolls and
+  // twists, and the leg roots ride with it -- a roll of 0.09 rad lifts a hip
+  // socket by most of a centimetre. Solving against a character-space target and
+  // then moving the pelvis underneath leaves the foot floating and creeping;
+  // measured at a sprint that was 8 mm of float. So set it, then aim at the
+  // target through its inverse.
+  // Weight shift: the pelvis moves OVER the planted foot. The left leg roots
+  // at -X and is in stance while sin(phase) > 0, so the shift is -sin -- this
+  // was +sin, which swayed the pelvis AWAY from the foot that was bearing it,
+  // the exact opposite of weight, while the pelvic list below leaned the other
+  // way. The two fighting is the drunk wobble. It also narrows with pace:
+  // a runner's feet land nearer the midline, so there is less to shift over.
+  // The hips may not RISE faster than a body does (1.5 m/s). A foot still
+  // locked behind at toe-off holds them low, and the flight arc that follows
+  // is computed from the analytic stride: accelerating through the gait switch
+  // they snapped 10 cm up in one frame. Rising slower only bends a planted knee
+  // a little more; it cannot open a gap under a sole.
+  if (dt && h.hipY != null) hipY = Math.min(hipY, h.hipY + 1.5 * dt / sc);
+  h.hipY = dt ? hipY : null;
+  // Sway 0.11 A at a walk (2.5 cm), not 0.085: with the feet in nearer the
+  // midline the pelvis visibly rides over each one, which is most of what
+  // reads as weight from the chase camera.
+  // The pelvis TILTS forward with pace. Free for the legs: the sockets are
+  // level with the hips bone, so a pitch about it does not move them, and
+  // the solve below goes through the pelvis's inverse anyway. Lean put on
+  // the spine and chest alone bent a runner at the waist over an upright
+  // pelvis -- the bolt-upright "plank" over folding knees.
+  const tilt = 0.02 + 0.08 * runBlend + 0.06 * clamp((spd - 4) / 3.5, 0, 1);
+  // A WALK'S TWIST AND LIST ARE DRAWN LARGER THAN LIFE. The real ~4 deg of
+  // pelvic yaw and ~1.5 of list are there in the numbers and invisible at
+  // twenty pixels from the chase camera: the walk read as a plank on legs.
+  // Walking adds ~2.3 deg of yaw (the chest adds its own counter-twist,
+  // below) and ~1.7 of list, the swing side dropping. The list lifts the
+  // stance-side socket, so the hips come down by that much or the planted
+  // leg is asked for more than REACH_PLANT's 3 mm margin and the sole lifts.
+  const walkW = settle * (1 - runBlend);
+  const xList = 0.03 * walkW * s;
+  hipY -= HIP_X * Math.abs(Math.sin(xList));
+  b[B.hips].position.set(-s * A * (0.11 - 0.08 * runBlend), hipY, 0);
+  b[B.hips].rotation.set(tilt, -s * (A * 0.30 + 0.04 * walkW), -s * A * 0.11 - xList);
+  b[B.hips].updateMatrix();
+  _inv.copy(b[B.hips].quaternion).invert();
+
+  // two-bone IK, sagittal plane only: solve thigh and knee to hit the target
+  const solveLeg = (thigh, knee, foot, t) => {
+    // where this hip socket actually ended up, and the target seen from it
+    _v.copy(b[thigh].position).applyMatrix4(b[B.hips].matrix);
+    // Lateral too, now that a locked foot can sit off its own line (a turn,
+    // the pelvis swaying over it): the sagittal-only solve dragged the foot
+    // sideways with the hips, which is the same skate one axis over.
+    _w.set(t.x - _v.x, t.y - _v.y, t.z - _v.z).applyQuaternion(_inv);
+    const dz = _w.z, dy = -_w.y, dx = _w.x;
+    const D = clamp(Math.hypot(dz, dy, dx), Math.abs(L_THIGH - L_SHIN) + 1e-3, L_THIGH + L_SHIN - 1e-3);
+    const aim = Math.atan2(dz, dy); // target angle off straight-down, +z forward
+    const inner = Math.acos(clamp((L_THIGH * L_THIGH + L_SHIN * L_SHIN - D * D) / (2 * L_THIGH * L_SHIN), -1, 1));
+    // EXACT in three dimensions. The thigh's Euler order is XYZ, so its
+    // adduction (z) acts on the bent leg first and the flexion (x) after it;
+    // x preserves the lateral offset, which is therefore (thigh + shin's
+    // vertical share) * sin(z) and nothing else. The old in-plane solve with
+    // z = atan2(dx, |dy, dz|) was right only for a straight leg: with the
+    // feet brought in toward the midline, its error moved as the knee bent
+    // and the planted foot crept sideways a few millimetres a frame.
+    const kn = Math.PI - inner;
+    const P = Math.max(0.02, L_THIGH + L_SHIN * Math.cos(kn));
+    // Capped: with the heel folded up to the backside P is a few centimetres,
+    // and the exact answer splays the knee out sideways; a swinging foot a
+    // centimetre off its line shows nowhere, a flared knee everywhere.
+    const rz = Math.asin(clamp(dx / P, -0.3, 0.3));             // +z swings toward +X
+    b[thigh].rotation.x = Math.atan2(-L_SHIN * Math.sin(kn), P * Math.cos(rz)) - aim;
+    b[thigh].rotation.z = rz;
+    b[knee].rotation.x = kn;
+    b[foot].rotation.z = -b[thigh].rotation.z;              // sole stays level across
+    // keep the sole level through stance, toe up a little as it swings through
+    // Level the sole, but only as far as an ankle actually goes. Cancelling
+    // thigh+knee outright gave a 77-108 deg range against a real 25-30, which
+    // is a foot flapping on the end of the leg rather than pushing off one.
+    // (the pelvis's own forward tilt is in the chain too)
+    const level = -(b[B.hips].rotation.x + b[thigh].rotation.x + b[knee].rotation.x);
+    // The sole pitch comes from the roll model above, so the ankle target was
+    // computed FOR this pitch -- clamping it tight re-opens the gap between
+    // sole and ground. The limits are a real ankle's, about 45 deg of plantar
+    // flexion and 35 of dorsiflexion, and the rig reports how often they bind.
+    // -0.80 / +1.00, not -0.62 / +0.80: a runner's shin tips well forward over
+    // a flexed knee at mid-stance, and at the tighter limits the ankle bound on
+    // 46% of running frames, lifting the sole 3 cm off the pavement.
+    b[foot].rotation.x = clamp(level + t.pitch, -0.80, 1.00);
+  };
+  // A trailing stance foot the hips have outrun pivots further on its toe, as
+  // far as a heel really goes (~75 deg), until the ankle is back in reach. What
+  // it borrowed is carried into the swing and faded out there, like a lock.
+  const reachToe = (thigh, t, k) => {
+    const L = h.locks && h.locks[k];
+    const cap = toeCap(t);
+    if (t.stance && t.pitch >= 0 && cap > t.pitch) {
+      _v.copy(b[thigh].position).applyMatrix4(b[B.hips].matrix);
+      const far = (z, y) => Math.hypot(t.x - _v.x, y - _v.y, z - _v.z) > REACH - 0.002;
+      if (far(t.z, t.y)) {
+        const p0 = t.pitch;
+        const toeZ = t.z - ANK_Y * Math.sin(p0) + TOE_Z * Math.cos(p0);
+        const at = (p) => [toeZ + ANK_Y * Math.sin(p) - TOE_Z * Math.cos(p), SOLE + ANK_Y * Math.cos(p) + TOE_Z * Math.sin(p)];
+        let lo = p0, hi = cap;
+        for (let i = 0; i < 8; i++) { const m = (lo + hi) / 2, a = at(m); if (far(a[0], a[1])) lo = m; else hi = m; }
+        const a = at(hi);
+        if (L) { L.ey = a[1] - t.y; L.ez2 = a[0] - t.z; L.ep = hi - p0; }
+        t.z = a[0]; t.y = a[1]; t.pitch = hi;
+        return;
+      }
+      if (L) { L.ey = 0; L.ez2 = 0; L.ep = 0; }
+    } else if (!t.stance && L && L.ep) {
+      const fade = 1 - smoothT(clamp(t.u / 0.45, 0, 1));
+      t.z += L.ez2 * fade; t.y += L.ey * fade; t.pitch += L.ep * fade;
+    }
+  };
+  reachToe(B.thighL, tl, 0);
+  reachToe(B.thighR, tr, 1);
+  solveLeg(B.thighL, B.kneeL, B.footL, tl);
+  solveLeg(B.thighR, B.kneeR, B.footR, tr);
+  // Toes turn out a few degrees (a person's foot progression angle is 5-7 at
+  // a walk, nearer straight at a run). Dead-parallel feet are a robot's. It
+  // is a yaw about the ankle, so the sole's heel and toe stay on its line to
+  // within a millimetre and the roll model above is unchanged.
+  const toeOut = 0.09 - 0.05 * runBlend;
+  // And the pelvis's yaw is taken back out at the ankle: a planted foot
+  // does not turn with the hips (the thigh rotates in its socket instead).
+  // Riding the pelvis, the toe 16 cm out swung sideways through every
+  // stance -- the planted foot visibly twisting on the pavement.
+  // Exact only while the thigh and shin carry no yaw of their own
+  // (solveLeg sets x and z only): give them yaw and subtract it here too.
+  const py = b[B.hips].rotation.y;
+  b[B.footL].rotation.y = -toeOut - py; b[B.footR].rotation.y = toeOut - py;
+
+  // Arms. A walk has a loose 30-40 deg swing from a nearly straight arm; a run
+  // has an 80-90 deg elbow driving hard. Both the amplitude and the elbow have
+  // to move with the gait -- carrying one elbow angle across the whole range is
+  // what made a sprint read as a hurried walk with the arms along for the ride.
+  // Past a run the arms work harder still: a sprinter's shoulder sweeps
+  // ~90 deg, hand from behind the hip to chin height. Keyed on raw speed
+  // above the run, since runBlend has saturated by then; at 0.66 A alone a
+  // sprint swung 55 deg, the same as a jog, and from the chase camera the
+  // arms hung by the sides while the legs did everything.
+  const drive = clamp((spd - 4) / 3.5, 0, 1);
+  const armA = (0.11 * settle + A * 0.66 + 0.08 * settle * (1 - runBlend) + 0.26 * drive) * h.swing;
+  // A runner drives the arm BACK and lets it come forward only to about the
+  // ribs; swinging it forward as far as back put the hand out in front of the
+  // chest on every stride. +x swings backward, so the forward half is the
+  // negative one and is cut back as the pace rises -- and comes back as a
+  // sprint pumps the hand up toward the chin.
+  const fwd = (0.70 + 0.30 * runBlend) * (1 - 0.5 * runBlend) + 0.15 * drive;
+  // A walker's arm swings further BACK than forward (about 25 deg behind the
+  // hip, 10-15 ahead of it); symmetric, the backswing never cleared the hip.
+  const bk = 0.95 * (1.15 - 0.15 * runBlend);
+  const shL = armA * bk * s, shR = -armA * bk * s;
+  b[B.shoulderL].rotation.x = shL < 0 ? shL * fwd : shL;
+  b[B.shoulderR].rotation.x = shR < 0 ? shR * fwd : shR;
+  // Abduction keeps the hands clear of the thighs. Positive Z swings a limb
+  // toward +X, so the LEFT arm (at -X) needs a negative angle to move outward.
+  // Abduction keeps the hands off the thighs at a stroll, but it has to come
+  // BACK IN as the pace rises: a runner's arms track forward close to the ribs,
+  // and holding a walk's clearance at speed reads as flapping.
+  const abduct = 0.15 - 0.09 * runBlend + A * 0.04;
+  b[B.shoulderL].rotation.z = -abduct;
+  b[B.shoulderR].rotation.z = abduct;
+  // A touch of internal rotation so the forearms swing across the body rather
+  // than out to the sides, which is what the elbow bend does on its own.
+  b[B.shoulderL].rotation.y = 0.10 * runBlend;
+  b[B.shoulderR].rotation.y = -0.10 * runBlend;
+  // A street runner carries the elbow near 70 deg, not the 90-plus of someone
+  // racing, and does not hold the forearms up horizontal.
+  // The hand bones were never posed, so at a run the forward hand sat flat on
+  // the end of a horizontal forearm like a tray. Palms turn IN and curl a
+  // touch as the pace rises.
+  // (0.15, not 0.45: the palm is modelled facing the thigh now, and turning
+  // it further in rolled it to face backward.)
+  b[B.handL].rotation.y = 0.15 * runBlend;
+  b[B.handR].rotation.y = -0.15 * runBlend;
+  // A runner's hands close into a loose fist; walking, they hang in the
+  // relaxed curl the geometry is built in.
+  const fist = 0.55 * runBlend;
+  b[B.fingL].rotation.z = fist; b[B.fingR].rotation.z = -fist;
+  b[B.tipL].rotation.z = fist * 0.9; b[B.tipR].rotation.z = -fist * 0.9;
+  // +x, not -x: on a forearm carried forward, -x tipped the fingers UP and
+  // out, the flat "karate chop" hand in the run strips. +x lets them hang.
+  // A walker's wrist hangs a little flexed too: held straight on the end of a
+  // forward-swinging forearm, the curled fingers made a tray.
+  b[B.handL].rotation.x = 0.12 * settle + 0.10 * runBlend;
+  b[B.handR].rotation.x = 0.12 * settle + 0.10 * runBlend;
+  // 0.32 at a walk: a relaxed arm hangs 15-25 deg bent, never straight.
+  const elbowCarry = 0.32 + 0.73 * runBlend;
+  // The elbow folds as the arm swings FORWARD and opens as it drives back --
+  // watch anyone run. +x on a limb bone swings it backward, so the left arm is
+  // forward while s < 0; this flexed on s > 0, pumping the elbow on the
+  // backswing, which is what read as T-rex arms carried stiff in front.
+  // 0.55, not 1.1: at a run the extra fold took the leading elbow past 100 deg
+  // and lifted the forearm above level with the hand out in front, the
+  // "karate chop" in every run strip.
+  // Paired with the shortened forward shoulder swing above: the hand comes UP
+  // to the chest rather than OUT in front of it. 0.8 with the full forward
+  // swing lifted the hand toward the face; 0.55 with it left the forearm level
+  // and reaching.
+  // Less fold per radian of swing as a sprint's swing grows, or the leading
+  // elbow passes 100 deg again.
+  const fold = armA * (0.8 - 0.3 * drive);
+  b[B.elbowL].rotation.x = -elbowCarry - Math.max(0, -fold * s);
+  b[B.elbowR].rotation.x = -elbowCarry - Math.max(0, fold * s);
+
+  // Trunk lean. Kept on the spine and chest rather than the pelvis: the legs
+  // are solved against the pelvis, and pitching it would move the hip sockets
+  // out from under a solve that has already been given its ground targets.
+  // 0.24 at a run, not 0.19: with the stance window balanced behind the hips
+  // the legs work further back, and an upright trunk over them read as leaning
+  // away from the direction of travel.
+  // 0.14 at a run, not 0.24, now the pelvis tilts too: on the spine and
+  // chest alone the lean was a hunch at the waist and shoulders over a pelvis
+  // left behind ("sitting back"), 20 deg in all against a runner's ~10-15.
+  const lean = h.lean + 0.02 + 0.14 * runBlend;
+  // Pelvis was posed above, before the legs were solved against it.
+  b[B.spine].rotation.y = s * A * 0.16;
+  b[B.spine].rotation.x = lean * 0.45;
+  b[B.chest].rotation.y = s * (A * 0.45 + 0.07 * walkW);
+  b[B.chest].rotation.x = lean * 0.55 + A * 0.06;
+  b[B.chest].rotation.z = -c * A * 0.05;
+
+  // head stays level and pointed where the body is going
+  // The head stays up and looking ahead however far the trunk pitches over --
+  // a runner does not stare at their own feet. Cancel most of the lean the
+  // spine and chest just applied.
+  // 0.7, not 0.85: cancelling nearly all of the trunk lean tipped the chin up
+  // and he ran staring at the sky. A runner's head is level-ish, not craned.
+  b[B.neck].rotation.x = -(lean + tilt) * 0.70 - A * 0.05;
+  b[B.head].rotation.y = -s * A * 0.22 + Math.sin(h.t * 0.6) * 0.12 * (1 - run);
+  b[B.head].rotation.x = -A * 0.08 + Math.sin(h.t * 0.9) * 0.03;
+
+  // idle: breathing, a slow weight shift, and ASYMMETRY. A person at rest
+  // never mirrors themselves: one foot a little ahead, weight favouring one
+  // hip, one elbow more bent than the other. Perfect symmetry is the shop
+  // dummy, and it was scored as one. h.phase seeds the handedness so each
+  // pedestrian settles differently but the same one is consistent.
+  //
+  // BLENDED in, not switched. This used to be `if (A < 0.05)`, which swapped the
+  // whole body into the idle pose in one frame as a character slowed through
+  // ~0.3 m/s: the gait rig's speed ramp measured a planted sole jumping 14 cm in
+  // a single frame on every stop. The weight eases over the last half metre a
+  // second instead, and the handedness is fixed per character -- deriving it
+  // from h.phase flipped it whenever the cycle crept past an integer.
+  const idleW = 1 - smoothT(clamp((spd - 0.04) / 0.5, 0, 1));
+  if (h.handed == null) h.handed = (h.phase % 2) > 1 ? 1 : -1;
+  b[B.head].rotation.z = h.handed * 0.02 * idleW;
+  if (idleW > 0) {
+    const br = Math.sin(h.t * 1.5);
+    const handed = h.handed;
+    const mix = (bone, axis, v) => { bone.rotation[axis] += (v - bone.rotation[axis]) * idleW; };
+    mix(b[B.chest], 'x', h.lean + br * 0.02);
+    b[B.hips].position.x += (handed * 0.016 + Math.sin(h.t * 0.5) * 0.010 - b[B.hips].position.x) * idleW;
+    mix(b[B.hips], 'z', handed * 0.035 + Math.sin(h.t * 0.5) * 0.02);
+    mix(b[B.hips], 'y', handed * 0.08);
+    // one foot slightly ahead of the other, knees soft rather than locked
+    // The legs come in LATER than the upper body (idleW squared). Any leg pose
+    // blended in while a foot is still locked to the ground drags that foot
+    // across it; blended on idleW the rig measured a 9.3 cm slip on every stop.
+    const legW = idleW * idleW;
+    const mixL = (bone, axis, v) => { bone.rotation[axis] += (v - bone.rotation[axis]) * legW; };
+    mixL(b[B.thighL], 'x', handed * 0.055 - 0.02);
+    mixL(b[B.thighR], 'x', -handed * 0.055 - 0.02);
+    mixL(b[B.kneeL], 'x', 0.06 - handed * 0.02);
+    mixL(b[B.kneeR], 'x', 0.06 + handed * 0.02);
+    mixL(b[B.footL], 'x', -(b[B.hips].rotation.x + b[B.thighL].rotation.x + b[B.kneeL].rotation.x));
+    mixL(b[B.footR], 'x', -(b[B.hips].rotation.x + b[B.thighR].rotation.x + b[B.kneeR].rotation.x));
+    mix(b[B.shoulderL], 'x', br * 0.03 + handed * 0.07);
+    mix(b[B.shoulderR], 'x', -br * 0.03 - handed * 0.07);
+    mix(b[B.shoulderL], 'y', handed * 0.05);
+    mix(b[B.shoulderR], 'y', handed * 0.05);
+    mix(b[B.shoulderL], 'z', -0.12);
+    mix(b[B.shoulderR], 'z', 0.16);
+    // A relaxed arm is never straight: the elbows rest at ~20-30 deg. At -0.22
+    // on one side the arm hung like a stick in every portrait.
+    mix(b[B.elbowL], 'x', -0.50 + br * 0.02);
+    mix(b[B.elbowR], 'x', -0.36 - br * 0.02);
+  }
+  h.bob = 0;
+}
+
+// ---------------------------------------------------------------------------
+
+// A pavement with 26 people spread over a 150 m radius is a pavement with
+// nobody on it at any given moment. Characters are one draw call each -- the
+// cheapest population in the game -- so this is the least expensive density
+// there is to buy.
+const MAX_PEDS = 24;
+const PED_RADIUS = 150;   // where an officer may walk in from (cops only)
+
+// THE CROWD IS WHERE YOU ARE. 24 people spread over a 150 m radius left the
+// stretch of street you were standing on empty: measured at 30 sim-s, none
+// within 30 m of the player downtown or on Pike St, 1-2 within 40 m at Pike
+// Place and Westlake, none at Pioneer Square. A civilian now appears in a ring
+// round the player and is recycled when the player has left him behind, and
+// the spots in the ring are weighted: dense blocks (by the buildings round
+// them), plazas, parks and pier decks over empty suburb and long residential
+// streets. One more of the 24 already-built skinned figures, in a better place.
+const PLAN_AT = 13;                    // choose the way through a junction this far from it
+const RING_MIN = 15, RING_MAX = 60;   // appear no nearer than a stranger would (and not in view nearer than 45 m)
+const CULL_R = 90;                    // recycled beyond this
+const OPEN_SHARE = 0.25;              // of spawn attempts that look for a plaza / park / pier first
+const PAVE = 1.4;                     // the walking line: this far beyond the kerb
+// facade styles (citygen styleFor) as foot traffic: a tower's block is full, a
+// house's is not
+const STYLE_FOOT = { tower: 1.2, midrise: 1.0, brick: 0.9, lowrise: 0.7, campus: 0.4, house: 0.15, industrial: 0.1 };
+// planNode's scratch: the arms of the junction being walked through, and their
+// order round it (no allocation per junction)
+const ARMS = Array.from({ length: 8 }, () => ({ ei: 0, atA: false, ux: 0, uz: 0, hw: 0, ang: 0, d: 0 }));
+const ORD = new Int8Array(8);
+
+// CONTACT SHADOWS. On a phone a pedestrian casts no shadow at all (see
+// makeHumanoid), and on desktop the sun's 0.25 m texel smears a foot's shadow
+// into the pavement's: either way every figure stood a few millimetres above
+// the street, which is half of what made a crowd read as figurines set down
+// on a board. Each figure gets a soft dark blob under each foot and a fainter,
+// wider one under the body -- ambient occlusion where the body meets the
+// ground, not the sun's shadow. ALL of them are ONE InstancedMesh: one draw
+// for the whole crowd and the player, written in place each frame.
+const BLOB_MAX = (MAX_PEDS + 8) * 3;
+function blobTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  // Opaque grey, not white over transparent: an alphaMap reads the GREEN
+  // channel, and white at any alpha is green 255 -- a hard black disc.
+  g.fillStyle = '#000'; g.fillRect(0, 0, 64, 64);
+  const gr = g.createRadialGradient(32, 32, 0, 32, 32, 31);
+  // a soft core with a long falloff: occlusion has no edge
+  gr.addColorStop(0, '#fff'); gr.addColorStop(0.35, '#b3b3b3');
+  gr.addColorStop(0.7, '#333'); gr.addColorStop(1, '#000');
+  g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+  const t = new THREE.CanvasTexture(c);
+  return t;
+}
+function makeBlobs() {
+  const geo = new THREE.PlaneGeometry(1, 1);
+  geo.rotateX(-Math.PI / 2);
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0x000000, alphaMap: blobTexture(), transparent: true, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4, fog: false, toneMapped: false,
+  });
+  // the instance colour's red channel is the blob's strength (alpha)
+  mat.onBeforeCompile = (sh) => {
+    sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>',
+      '#if defined( USE_INSTANCING_COLOR )\n\tdiffuseColor.a *= vColor.r;\n#endif');
+  };
+  const m = new THREE.InstancedMesh(geo, mat, BLOB_MAX);
+  m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(BLOB_MAX * 3), 3);
+  m.instanceColor.setUsage(THREE.DynamicDrawUsage);
+  m.frustumCulled = false;
+  m.renderOrder = 1;
+  m.count = 0;
+  m.name = 'contactShadows';
+  return m;
+}
+
+/**
+ * An officer bringing his gun up, blended over the walk by `k` (0..1): the
+ * right arm straight out at shoulder height -- the carbine is modelled muzzle
+ * down along the arm, so it then points where he faces -- and, with a long
+ * gun, the left hand coming across to the handguard.
+ */
+export function aimPose(h, k, twoHand) {
+  const b = h.bones;
+  const mix = (bone, ax, v) => { bone.rotation[ax] += (v - bone.rotation[ax]) * k; };
+  mix(b[B.shoulderR], 'x', -1.45);
+  mix(b[B.shoulderR], 'z', 0.06);
+  mix(b[B.elbowR], 'x', -0.08);
+  if (twoHand) {
+    mix(b[B.shoulderL], 'x', -1.25);
+    mix(b[B.shoulderL], 'z', -0.42);
+    mix(b[B.elbowL], 'x', -0.55);
+  }
+}
+
+// A hit's stagger (s): the head snaps back and the trunk rocks back over the
+// hips, the arms come up, and it all eases out as the push dies away. Over
+// the walk's pose, on axes it writes every frame, so nothing is left behind.
+const STAG = 0.55;
+function recoil(h, left) {
+  const a = STAG - left, e = Math.min(1, a / 0.05) * Math.pow(left / STAG, 1.3);
+  const b = h.bones;
+  b[B.spine].rotation.x -= 0.30 * e;
+  b[B.chest].rotation.x -= 0.22 * e;
+  b[B.neck].rotation.x -= 0.15 * e;
+  b[B.head].rotation.x -= 0.40 * e;
+  // the arms fly out to the sides and a little up, elbows loose (forward,
+  // they reached out like a sleepwalker's)
+  b[B.shoulderL].rotation.x -= 0.25 * e; b[B.shoulderR].rotation.x -= 0.25 * e;
+  b[B.shoulderL].rotation.z -= 0.55 * e; b[B.shoulderR].rotation.z += 0.55 * e;
+  b[B.elbowL].rotation.x -= 0.45 * e; b[B.elbowR].rotation.x -= 0.45 * e;
+}
+
+// Floored backwards: arms flung up past the head, the knees giving (a body
+// that goes over straight-legged reads as a plank tipping), chin tucked.
+// Eased toward over the fall (k a frame).
+function sprawl(h, k) {
+  const b = h.bones;
+  const to = (bone, ax, v) => { bone.rotation[ax] += (v - bone.rotation[ax]) * k; };
+  to(b[B.shoulderL], 'x', -2.3); to(b[B.shoulderR], 'x', -2.1);
+  to(b[B.shoulderL], 'z', -0.55); to(b[B.shoulderR], 'z', 0.45);
+  to(b[B.elbowL], 'x', -0.5); to(b[B.elbowR], 'x', -0.7);
+  to(b[B.spine], 'x', 0); to(b[B.chest], 'x', 0);
+  to(b[B.thighL], 'x', -0.75); to(b[B.thighR], 'x', -0.35);
+  to(b[B.kneeL], 'x', 1.1); to(b[B.kneeR], 'x', 0.6);
+  to(b[B.head], 'x', 0.25);
+}
+
+/**
+ * A SKYDIVER'S BODY (parachute.js), eased toward over the frames (k), on
+ * every axis the walk would leave behind: the whole figure used to be tilted
+ * as it stood, frozen mid-stride, belly down in free fall and stiff as a post
+ * under the canopy.
+ *   'free'   the box position: back arched, head up looking ahead, arms out
+ *            and bent up toward the head, knees bent with the feet up, a
+ *            flutter in the wind;
+ *   'canopy' hanging in the harness: hands up on the toggles, legs together
+ *            and dangling a little forward, a slow sway;
+ *   'water'  treading water: arms out sculling, legs down.
+ */
+export function skydivePose(h, state, t, k) {
+  const b = h.bones;
+  const to = (bone, x, y, z) => {
+    const r = b[bone].rotation;
+    r.x += (x - r.x) * k; r.y += (y - r.y) * k; r.z += (z - r.z) * k;
+  };
+  const fl = Math.sin(t * 9.0) * 0.05, fl2 = Math.sin(t * 7.3 + 1.1) * 0.05;
+  if (state === 'free') {
+    to(B.spine, -0.28, 0, 0); to(B.chest, -0.22, 0, 0); to(B.neck, -0.35, 0, 0); to(B.head, -0.55, 0, 0);
+    to(B.shoulderL, -1.95 + fl, 0, -0.95); to(B.shoulderR, -1.95 + fl2, 0, 0.95);
+    to(B.elbowL, -1.05, 0, 0); to(B.elbowR, -1.05, 0, 0);
+    to(B.thighL, 0.18, 0, -0.22); to(B.thighR, 0.18, 0, 0.22);
+    to(B.kneeL, 1.25 + fl2, 0, 0); to(B.kneeR, 1.25 + fl, 0, 0);
+    to(B.footL, 0.45, 0, 0); to(B.footR, 0.45, 0, 0);
+  } else if (state === 'water') {
+    const w = Math.sin(t * 2.4) * 0.25;
+    to(B.spine, 0.05, 0, 0); to(B.chest, 0, 0, 0); to(B.neck, 0, 0, 0); to(B.head, -0.1, 0, 0);
+    to(B.shoulderL, -0.6, 0, -1.0 - w); to(B.shoulderR, -0.6, 0, 1.0 + w);
+    to(B.elbowL, -0.4, 0, 0); to(B.elbowR, -0.4, 0, 0);
+    to(B.thighL, -0.3 + w, 0, -0.1); to(B.thighR, -0.3 - w, 0, 0.1);
+    to(B.kneeL, 0.6, 0, 0); to(B.kneeR, 0.6, 0, 0); to(B.footL, 0.2, 0, 0); to(B.footR, 0.2, 0, 0);
+  } else {
+    const sw = Math.sin(t * 1.3) * 0.06;
+    to(B.spine, 0.02, 0, 0); to(B.chest, 0, 0, 0); to(B.neck, -0.05, 0, 0); to(B.head, -0.12, 0, 0);
+    to(B.shoulderL, -2.75, 0, -0.32); to(B.shoulderR, -2.75, 0, 0.32);
+    to(B.elbowL, -0.55, 0, 0); to(B.elbowR, -0.55, 0, 0);
+    to(B.thighL, -0.32 + sw, 0, -0.04); to(B.thighR, -0.28 - sw, 0, 0.04);
+    to(B.kneeL, 0.38, 0, 0); to(B.kneeR, 0.42, 0, 0);
+    to(B.footL, 0.35, 0, 0); to(B.footR, 0.35, 0, 0);
+  }
+}
+
+// A fare hailing: the right arm up and waving at the wrist (eased in by the
+// walk pose's own reset every posed frame, so this is set, not added).
+function hailPose(h, t) {
+  const b = h.bones, w = Math.sin(t * 7);
+  b[B.shoulderR].rotation.x = -2.55;
+  b[B.shoulderR].rotation.z = 0.25 + 0.12 * w;
+  b[B.elbowR].rotation.x = -0.5 - 0.35 * w;
+}
+
+/** What only the crowd's walkers use, on every pedestrian's record (one hidden class). */
+function crowdState(R, x, z) {
+  return {
+    pace: 1.25 + R.n() * 0.5,                          // his stroll, m/s
+    // the path through a junction (planNode): waypoints, the one he is
+    // walking to, a bit per leg for "this leg crosses a carriageway", and
+    // the seconds spent on it
+    path: new Float32Array(16), pn: 0, pi: 0, pcr: 0, pt: 0, ptMax: 45,
+    // crossing now / seconds waiting at the kerb / the gap check's timer /
+    // hurrying (a car coming)
+    cross: 0, wait: 0, gapT: 0, hurry: 0,
+    // seconds held by a wall or the water; a wanderer's heading and timer,
+    // standing about, and the spot he drifts round
+    blocked: 0, wanderT: 0, wanderH: 0, idle: false, hx: x, hz: z,
+    slideT: 0, slideS: 1,                              // an officer held by a wall: going along it, which way
+    near: true,                                        // within 50 m of the player: trunks and poles are tested for him
+    // a taxi fare (taxi.js): 0 not one, 1 hailing (stands, one arm up, faces
+    // the road), 2 walking to (fx, fz); the recycler and the scare leave him alone
+    fare: 0, fx: 0, fz: 0,
+  };
+}
+
+export class PedSystem {
+  constructor(scene, city, game) {
+    this.scene = scene;
+    this.city = city;
+    this.game = game;
+    this.peds = [];
+    this.R = rng(4242);
+    this.timer = 0;
+    this.camera = null;   // set by main.js; drives the animation LOD
+    this.waterAt = null;  // set by main.js: the drawn water surface at (x, z) or null
+    this.simT = 0;
+    this._sp = { x: 0, z: 0, y: 0, edge: -1, side: 1, dirSign: 1, t: 0 };
+    this._ring = { x: 1e9, z: 1e9, t: -9, list: [] };
+    this._frOK = false;
+    this._fill = false;
+    // where people are crossing a carriageway, for the cars to stop short of
+    // (read by traffic.js; x, z, y triples)
+    this.crossXZ = new Float32Array(48);
+    this.crossN = 0;
+    this._m = new THREE.Matrix4();
+    this._fr = new THREE.Frustum();
+    this._s = new THREE.Sphere();
+    this.blobs = makeBlobs();
+    scene.add(this.blobs);
+  }
+
+  /** Empty the contact-shadow list (update() does this every frame). */
+  clearContactShadows() { this.blobs.count = 0; }
+
+  /**
+   * Contact blobs for one figure: a wide faint one under the body, and one
+   * under each foot that shrinks and fades as the foot lifts. Feet are read
+   * off the foot bones' world matrices from the last render -- free, and a
+   * planted foot has not moved since; a lifted one is fading anyway.
+   */
+  addContactShadow(h, x, y, z, heading) {
+    const B2 = this.blobs, mA = B2.instanceMatrix.array, cA = B2.instanceColor.array;
+    const sc = h.scale || 1;
+    const put = (bx, bz, by, yaw, sx, sz, a) => {
+      const n = B2.count;
+      if (n >= BLOB_MAX || a <= 0.01) return;
+      const c = Math.cos(yaw), s = Math.sin(yaw), o = n * 16;
+      mA[o] = sx * c; mA[o + 1] = 0; mA[o + 2] = -sx * s; mA[o + 3] = 0;
+      mA[o + 4] = 0; mA[o + 5] = 1; mA[o + 6] = 0; mA[o + 7] = 0;
+      mA[o + 8] = sz * s; mA[o + 9] = 0; mA[o + 10] = sz * c; mA[o + 11] = 0;
+      mA[o + 12] = bx; mA[o + 13] = by; mA[o + 14] = bz; mA[o + 15] = 1;
+      cA[n * 3] = a; cA[n * 3 + 1] = a; cA[n * 3 + 2] = a;
+      B2.count = n + 1;
+    };
+    put(x, z, y + 0.02, heading, 0.62 * sc, 0.52 * sc, 0.30);
+    // hidden at the last render, its feet are wherever it was last drawn
+    // (build.js skipHiddenMatrices): the player getting out of a car
+    const sk = this.scene.userData.matrixSkipped;
+    if (!(sk && sk.has(h.group))) for (const fb of [h.bones[B.footL], h.bones[B.footR]]) {
+      const e = fb.matrixWorld.elements;
+      if (e[15] !== 1 || (e[12] === 0 && e[14] === 0)) continue;   // never rendered yet
+      // ankle height over the ground, less its standing height
+      const lift = e[13] - y - J.ankle * sc;
+      const k = clamp(1 - lift / 0.16, 0, 1);
+      // centred under the ball of the foot, not the ankle
+      const fx = e[12] + e[8] * 0.05, fz = e[14] + e[10] * 0.05;
+      put(fx, fz, y + 0.025, heading, (0.13 + 0.05 * k) * sc, (0.30 + 0.06 * k) * sc, 0.55 * k * k);
+    }
+    B2.instanceMatrix.needsUpdate = true;
+    B2.instanceColor.needsUpdate = true;
+  }
+
+  /**
+   * A new person. Civilians go to a weighted spot in the ring round (px, pz)
+   * (`_spot`; `avoidView` keeps them from appearing on screen nearer than
+   * 45 m). An officer keeps the old rule -- any pavement 20-150 m out --
+   * since he is meant to walk in from afar.
+   */
+  spawn(px, pz, cop, avoidView = false) {
+    if (cop) return this.spawnCop(px, pz);
+    const s = this._spot(px, pz, avoidView);
+    return s ? this._add(s.x, s.z, false, s.edge, s.side, s.dirSign, s.t, s.y) : null;
+  }
+
+  /** The record every pedestrian shares (one hidden class). */
+  _add(x, z, cop, edge, side, dirSign, t, y = this.city.groundAt(x, z, null)) {
+    const R = this.R;
+    const seed = (R.n() * 1e6) | 0;
+    const h = makeHumanoid({ seed, cop: !!cop });
+    const p = {
+      h, x, z, y, lift: 0, heading: R.n() * TAU,
+      edge, side, t, dirSign,
+      speed: 0, state: 'walk', timer: 0,
+      cop: !!cop, shootCd: 1 + R.n(), down: 0, hp: cop ? 60 : 30,
+      // set later; declared so every pedestrian keeps one hidden class
+      fleeX: 0, fleeZ: 0, fallDir: 0, animDt: 0,
+      // officers (police.js footOrders): which kind, the trigger's burst,
+      // the unit they came out of, how raised the gun is, the search point
+      kind: cop ? 'cop' : 'civ', burst: 0, car: null, aim: 0, leaveT: 0, searchX: 0, searchZ: 0,
+      // a punch or a shot that did not floor them: knocked back (stagger)
+      stag: 0, stagX: 0, stagZ: 0, fallBack: false,
+      ...crowdState(R, x, z),
+    };
+    this.scene.add(h.group);
+    this.peds.push(p);
+    if (cop && this.game.police) this.game.police.stats.spawned.cop++;
+    return p;
+  }
+
+  /**
+   * A taxi fare (taxi.js): a civilian on the pavement of a street 'minD'-'maxD'
+   * from (px, pz), facing the road with an arm up (`fare` 1). Not recycled,
+   * not scared; the taxi owns him until it lets go (`fare` 0 + reanchor).
+   * Streets the taxi can take only: ground level, not a freeway, ramp or bore.
+   */
+  spawnFare(px, pz, minD, maxD) {
+    const city = this.city, R = this.R;
+    const pool = city.edgesNear(px, pz, maxD + 40);
+    for (let k = 0; k < 80 && pool.length; k++) {
+      const ei = pool[Math.floor(R.n() * pool.length)], e = city.edges[ei];
+      if (!e || e.elev || e.tunnel || e.cls === 'hwy' || e.cls === 'ramp' || e.noTraffic || e.len < 24) continue;
+      const a = city.nodes[e.a], b = city.nodes[e.b];
+      const t = 0.3 + R.n() * 0.4, side = R.n() < 0.5 ? 1 : -1, off = e.hw + PAVE;
+      const cx = lerp(a.x, b.x, t), cz = lerp(a.z, b.z, t);
+      const x = cx - e.dz * off * side, z = cz + e.dx * off * side;
+      const d = Math.hypot(x - px, z - pz);
+      if (d < minD || d > maxD || !G.isBuildable(x, z)) continue;
+      const y = city.groundAt(x, z, lerp(a.y, b.y, t) + 1, city.roadLift(x, z));
+      if (city.insideBuilding(x, z, y, 0.6) || city.obstacleHit(x, z, 0.5, y)) continue;
+      const wl = this.waterAt ? this.waterAt(x, z) : null;
+      if (wl !== null && y < wl - 0.2) continue;
+      const p = this._add(x, z, false, ei, side, 1, t, y);
+      p.fare = 1; p.fx = cx; p.fz = cz;
+      p.heading = Math.atan2(cx - x, cz - z);
+      p.state = 'walk';
+      return p;
+    }
+    return null;
+  }
+
+  /** A fare getting out of the taxi: a civilian at (x, z), walking to (fx, fz)
+   *  (`fare` 2) -- placed by hand, no search, so it cannot fail. */
+  spawnFareAt(x, z, seedY, fx, fz) {
+    const y = this.city.groundAt(x, z, seedY, this.city.roadLift(x, z));
+    const p = this._add(x, z, false, -1, 1, 1, 0, y);
+    p.fare = 2; p.fx = fx; p.fz = fz;
+    p.heading = Math.atan2(fx - x, fz - z);
+    p.h.group.position.set(x, y, z);
+    return p;
+  }
+
+  /** The old civilian rule, for officers walking in: any pavement 20-150 m out. */
+  spawnCop(px, pz) {
+    const city = this.city;
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const eids = city.edgesNear(px, pz, PED_RADIUS);
+      if (!eids.length) return null;
+      const ei = eids[Math.floor(this.R.n() * eids.length)];
+      const e = city.edges[ei];
+      if (e.elev || e.cls === 'hwy' || e.cls === 'ramp') continue;
+      const a = city.nodes[e.a], b = city.nodes[e.b];
+      const t = 0.15 + this.R.n() * 0.7;
+      const side = this.R.n() < 0.5 ? 1 : -1;
+      const off = e.hw + PAVE;
+      const x = lerp(a.x, b.x, t) - e.dz * off * side;
+      const z = lerp(a.z, b.z, t) + e.dx * off * side;
+      const d = Math.hypot(x - px, z - pz);
+      if (d < 20 || d > PED_RADIUS) continue;
+      if (!G.isBuildable(x, z) || city.insideBuilding(x, z, city.groundAt(x, z, null), 0.4)) continue;
+      return this._add(x, z, true, ei, side, this.R.n() < 0.5 ? 1 : -1, t);
+    }
+    return null;
+  }
+
+  /**
+   * Where the next civilian goes: a spot in the ring RING_MIN..RING_MAX round
+   * (px, pz), kept or thrown back by how much foot traffic it is (`_footWeight`
+   * for a pavement, `_openWeight` for a plaza / park / pier deck, which are
+   * tried first on OPEN_SHARE of attempts). Returns the shared scratch record
+   * (x, z, y, edge -- -1 on open ground --, side, dirSign, t) or null.
+   */
+  _spot(px, pz, avoidView) {
+    const city = this.city, R = this.R, s = this._sp;
+    for (let k = 0; k < 14; k++) {
+      let x, z, edge = -1, side = 1, dirSign = 1, t = 0, y0 = null;
+      if (R.n() < OPEN_SHARE) {
+        const a = R.n() * TAU, r = Math.sqrt(RING_MIN * RING_MIN + R.n() * (RING_MAX * RING_MAX - RING_MIN * RING_MIN));
+        x = px + Math.cos(a) * r; z = pz + Math.sin(a) * r;
+        const w = this._openWeight(x, z);
+        if (w <= 0 || R.n() > w || city.onRoad(x, z, 1.5, false, false)) continue;
+      } else {
+        const list = this._ringEdges(px, pz);
+        if (!list.length) continue;
+        const ei = list[Math.floor(R.n() * list.length)];
+        const e = city.edges[ei], a = city.nodes[e.a], b = city.nodes[e.b];
+        t = 0.1 + R.n() * 0.8;
+        side = R.n() < 0.5 ? 1 : -1;
+        dirSign = R.n() < 0.5 ? 1 : -1;
+        // room to walk before the next junction: planNode wants the corner ahead
+        if ((dirSign > 0 ? 1 - t : t) * e.len < Math.min(e.len * 0.5, 12)) dirSign = -dirSign;
+        const off = e.hw + PAVE;
+        // (the walking code's side is across the way he GOES: a ped facing
+        // against the edge's own direction stands on the opposite side)
+        x = lerp(a.x, b.x, t) - e.dz * off * side * dirSign;
+        z = lerp(a.z, b.z, t) + e.dx * off * side * dirSign;
+        if (R.n() > this._footWeight(x, z) || !G.isBuildable(x, z)) continue;
+        edge = ei;
+        y0 = lerp(a.y, b.y, t) + 1;   // the street's own surface, not a viaduct over it
+      }
+      const d = Math.hypot(x - px, z - pz);
+      if (d < RING_MIN || d > RING_MAX) continue;
+      // the nearer half of the ring a little more often than the far
+      if (R.n() > 1.15 - ((d - RING_MIN) / (RING_MAX - RING_MIN)) * 0.6) continue;
+      const y = y0 === null ? city.groundAt(x, z, null) : city.groundAt(x, z, y0, city.roadLift(x, z));
+      if (city.insideBuilding(x, z, y, 0.5)) continue;
+      if (edge < 0) { const wl = this.waterAt ? this.waterAt(x, z) : null; if (wl !== null && y < wl - 0.2) continue; }
+      // (in view only near the ring's edge: at 45 m one appeared out of nothing)
+      if (avoidView && d < 52 && this._seen(x, y, z)) continue;
+      s.x = x; s.z = z; s.y = y; s.edge = edge; s.side = side; s.dirSign = dirSign; s.t = t;
+      return s;
+    }
+    return null;
+  }
+
+  /** On screen at the last render? (the animation LOD's frustum) */
+  _seen(x, y, z) {
+    if (!this.camera || !this._frOK) return false;
+    this._s.center.set(x, y + 0.9, z);
+    this._s.radius = 2.5;
+    return this._fr.intersectsSphere(this._s);
+  }
+
+  /** The streets a civilian may appear on: ground-level, with a pavement, in
+   *  reach of the ring. Refreshed every 2 s or 20 m. */
+  _ringEdges(px, pz) {
+    const c = this._ring;
+    if (c.t > this.simT - 2 && Math.abs(px - c.x) + Math.abs(pz - c.z) < 20) return c.list;
+    c.x = px; c.z = pz; c.t = this.simT;
+    const out = c.list, city = this.city;
+    out.length = 0;
+    const near = city.roadsNear(px, pz, RING_MAX + 12, false);
+    for (let i = 0; i < near.length; i++) {
+      const e = city.edges[near[i]];
+      if (e.cls === 'hwy' || e.cls === 'ramp' || e.tunnel || e.len < 6) continue;
+      out.push(near[i]);
+    }
+    return out;
+  }
+
+  /** Foot traffic of the pavement at (x, z), 0.12-1: the buildings round it
+   *  by what they are -- a tower's block is full, a house's is not. */
+  _footWeight(x, z) {
+    const near = this.city.buildingsNear(x, z, 30);
+    let s = 0;
+    for (let i = 0; i < near.length; i++) {
+      const b = near[i], dx = b.x - x, dz = b.z - z, r = 36 + Math.max(b.w, b.d) * 0.5;
+      if (dx * dx + dz * dz < r * r) s += STYLE_FOOT[b.style] || 0.3;
+    }
+    return 0.12 + 0.88 * Math.min(1, s / 6);
+  }
+
+  /** A plaza, a park or a pier deck: somewhere people stand about. 0 = no. */
+  _openWeight(x, z) {
+    const pl = this.city.platformAt(x, z);
+    if (pl !== null) return pl - G.terrainHeight(x, z) < 6 ? 1 : 0;   // (not a landmark's high deck)
+    if (G.lotAt(x, z) === 2) return 1;
+    return G.inPark(x, z) ? 0.5 : 0;
+  }
+
+  /**
+   * He has finished with the street he was on (a scare, a knock-back) and
+   * must be put back on a pavement: the walking line nearest him, going the
+   * way he faces. Further than 12 m from any, he is on open ground and
+   * wanders there.
+   */
+  reanchor(p) {
+    const city = this.city;
+    p.pn = 0; p.cross = 0; p.wait = 0; p.pt = 0;
+    const list = city.roadsNear(p.x, p.z, 30, false);
+    let best = -1, bd = 12;
+    for (let i = 0; i < list.length; i++) {
+      const e = city.edges[list[i]];
+      if (e.cls === 'hwy' || e.cls === 'ramp' || e.tunnel || e.len < 6) continue;
+      const a = city.nodes[e.a];
+      const t = clamp(((p.x - a.x) * e.dx + (p.z - a.z) * e.dz) / e.len, 0, 1);
+      const d = Math.abs(Math.hypot(a.x + e.dx * t * e.len - p.x, a.z + e.dz * t * e.len - p.z) - (e.hw + PAVE));
+      if (d < bd) { bd = d; best = list[i]; }
+    }
+    if (best < 0) { p.edge = -1; p.hx = p.x; p.hz = p.z; p.wanderT = 0; return; }
+    const e = city.edges[best], a = city.nodes[e.a];
+    const t = clamp(((p.x - a.x) * e.dx + (p.z - a.z) * e.dz) / e.len, 0, 1);
+    p.edge = best;
+    p.dirSign = Math.sin(p.heading) * e.dx + Math.cos(p.heading) * e.dz >= 0 ? 1 : -1;
+    // which side of the centreline, as the walking code counts it:
+    // perp = (-fz, fx) * side along the way he goes
+    const cx = p.x - (a.x + e.dx * t * e.len), cz = p.z - (a.z + e.dz * t * e.len);
+    p.side = (cx * -e.dz + cz * e.dx) * p.dirSign >= 0 ? 1 : -1;
+  }
+
+  /**
+   * He is within PLAN_AT of the end of his street (node `nodeId`): choose where
+   * he goes next and how, as a short path (p.path, p.pn waypoints, p.pcr a bit
+   * per waypoint for "this leg crosses a carriageway"). The junction is the
+   * node and the arms of the streets that meet there. He keeps to his side:
+   * the next arm round the node on that side is the corner he turns, along the
+   * pavement, where his walking line meets that arm's (`C`); or he CROSSES that
+   * arm, straight across at its mouth beside the corner, to the pavement on its
+   * far side, and then turns the next corner or carries on out along the arm.
+   * Pedestrians cut diagonally across the junction squares before this: 29 % of
+   * every sample, and with a random side picked at each node, half of all
+   * junctions took them across a whole carriageway and back.
+   *
+   * With `r` = which way round the node his side faces (+1 counter-clockwise
+   * in x/z), an arm's facing line is N + u a + n o with n = r (-uz, ux): the
+   * line he walks on. Arm B's line on the side that faces him is the other
+   * sign. Two lines meet at a = (-Rx Bz + Bx Rz) / det, b = (Ax Rz - Az Rx) /
+   * det, as citygen's `meet` has it.
+   */
+  planNode(p, nodeId) {
+    const city = this.city, R = this.R, node = city.nodes[nodeId];
+    let n = 0, self = -1;
+    for (let k = 0; k < node.e.length && n < ARMS.length; k++) {
+      const ei = node.e[k], e = city.edges[ei], mine = ei === p.edge;
+      if (!mine && (e.elev || e.tunnel || e.cls === 'hwy' || e.cls === 'ramp' || e.len < 4 || e.a === e.b)) continue;
+      const A = ARMS[n], atA = e.a === nodeId;
+      A.ei = ei; A.atA = atA; A.hw = e.hw;
+      A.ux = atA ? e.dx : -e.dx; A.uz = atA ? e.dz : -e.dz;
+      A.ang = Math.atan2(A.uz, A.ux);
+      if (mine) self = n;
+      n++;
+    }
+    if (self < 0) { this.reanchor(p); return; }
+    const A1 = ARMS[self], r = -p.side, path = p.path;
+    // the others in the order met going round on his side
+    let m = 0;
+    for (let k = 0; k < n; k++) {
+      if (k === self) continue;
+      let d = (ARMS[k].ang - A1.ang) * r;
+      d -= Math.floor(d / TAU) * TAU;
+      if (d < 0.2 || d > TAU - 0.2) continue;   // beside his own street: the same road twice
+      ARMS[k].d = d;
+      let j = m++;
+      while (j > 0 && ARMS[ORD[j - 1]].d > d) { ORD[j] = ORD[j - 1]; j--; }
+      ORD[j] = k;
+    }
+    let pn = 0, pcr = 0;
+    // (a waypoint inside a building -- a dead end's far side against a
+    // wall -- is dropped, and a crossing's flag passes to the next one)
+    let pend = false;
+    const put = (x, z, cross) => {
+      if (city.insideBuilding(x, z, p.y, 0.3)) { pend = pend || cross; return; }
+      path[pn * 2] = x; path[pn * 2 + 1] = z;
+      if (cross || pend) pcr |= 1 << pn;
+      pend = false; pn++;
+    };
+    const nx = node.x, nz = node.z;
+    if (m === 0) {
+      // a dead end: across the end of the street to the other pavement and back
+      const o = A1.hw + PAVE, nax = r * -A1.uz, naz = r * A1.ux;
+      put(nx + A1.ux * 1.5 + nax * o, nz + A1.uz * 1.5 + naz * o, false);
+      put(nx + A1.ux * 1.5 - nax * o, nz + A1.uz * 1.5 - naz * o, true);
+      p.dirSign = -p.dirSign;
+    } else {
+      // `from`'s facing line: the arm he is on, then each arm he crosses
+      let fu = A1.ux, fz = A1.uz, fo = A1.hw + PAVE;
+      let fin = -1, finSide = 0;
+      for (let h = 0; h < m; h++) {
+        const B = ARMS[ORD[h]], ob = B.hw + PAVE;
+        const fnx = r * -fz, fnz = r * fu;           // from's facing normal
+        const bnx = r * B.uz, bnz = r * -B.ux;       // B's line on the side facing him
+        const Rx = bnx * ob - fnx * fo, Rz = bnz * ob - fnz * fo;
+        const det = -fu * B.uz + B.ux * fz;
+        let a = 0, b = 0;
+        const ok = Math.abs(det) > 0.17;
+        if (ok) { a = (-Rx * B.uz + B.ux * Rz) / det; b = (fu * Rz - fz * Rx) / det; }
+        if (!ok) {
+          // straight on (the far side of a T, a road going through): the
+          // pavement runs on, shifting to the next street's width
+          put(nx + B.ux * 2 + bnx * ob, nz + B.uz * 2 + bnz * ob, false);
+        } else if (Math.abs(a) > 14 || Math.abs(b) > 14) {
+          // a corner too sharp to meet on the pavement: keep to the two lines
+          put(nx + fu * clamp(a, -14, 14) + fnx * fo, nz + fz * clamp(a, -14, 14) + fnz * fo, false);
+          put(nx + B.ux * clamp(b, -14, 14) + bnx * ob, nz + B.uz * clamp(b, -14, 14) + bnz * ob, false);
+        } else put(nx + fu * a + fnx * fo, nz + fz * a + fnz * fo, false);
+        const last = h === m - 1 || h >= 2;
+        if (last || !ok || b < 1.5 || B.hw > 16 || R.n() > (h === 0 ? 0.4 : 0.3)) { fin = ORD[h]; finSide = -r; break; }
+        // across B at its mouth, to the pavement on its far side
+        put(nx + B.ux * b - bnx * ob, nz + B.uz * b - bnz * ob, true);
+        fu = B.ux; fz = B.uz; fo = ob;
+        if (R.n() < 0.25) {
+          // ...and out along B on that side
+          put(nx + B.ux * (b + 3) - bnx * ob, nz + B.uz * (b + 3) - bnz * ob, false);
+          fin = ORD[h]; finSide = r; break;
+        }
+      }
+      const F = ARMS[fin];
+      p.edge = F.ei;
+      p.dirSign = F.atA ? 1 : -1;
+      p.side = finSide;
+    }
+    // the longest it may take: twice the walk, and a kerb wait per crossing
+    let walk = 0, cx = p.x, cz = p.z, nc = 0;
+    for (let k = 0; k < pn; k++) { walk += Math.hypot(path[k * 2] - cx, path[k * 2 + 1] - cz); cx = path[k * 2]; cz = path[k * 2 + 1]; nc += (pcr >> k) & 1; }
+    p.pn = pn; p.pi = 0; p.pcr = pcr; p.pt = 0; p.ptMax = walk * 1.5 + nc * 7 + 4; p.cross = 0; p.wait = 0; p.gapT = 0;
+  }
+
+  /**
+   * Is the strip from the pedestrian to (ex, ez) clear of moving cars for as
+   * long as it takes to cross it? Each car runs on at its speed along its
+   * heading; the pedestrian walks the strip at 1.9 m/s and then stands at its
+   * end. Both are straight lines in time, so the closest approach is solved,
+   * not sampled (a sampled step is longer than a car's reach at 15 m/s and
+   * steps over him) -- twice, for the walk and for the standing.
+   */
+  _crossClear(p, ex, ez, traffic) {
+    const L = Math.hypot(ex - p.x, ez - p.z) || 1, ux = (ex - p.x) / L, uz = (ez - p.z) / L;
+    const tL = L / 1.9, T = tL + 1;
+    const cars = traffic.cars;
+    for (let i = 0; i < cars.length; i++) {
+      const v = cars[i];
+      if (v.mode === 'parked' || v.mode === 'apron') continue;
+      if (dist2(v.x, v.z, p.x, p.z) > 80 * 80 || Math.abs(v.y - p.y) > 3) continue;
+      // (one standing in the way is waited out too -- it may go the moment he steps off)
+      const rr = v.halfLen + 1.5, fx = v.forward.x * v.vLong, fz = v.forward.z * v.vLong;
+      // walking: the car relative to him
+      const vx = fx - ux * 1.9, vz = fz - uz * 1.9, rx = v.x - p.x, rz = v.z - p.z, vv = vx * vx + vz * vz;
+      let t = vv > 1e-6 ? clamp(-(rx * vx + rz * vz) / vv, 0, tL) : 0;
+      if (dist2(rx + vx * t, rz + vz * t, 0, 0) < rr * rr) return false;
+      // standing at the far end
+      const sx = rx + vx * tL, sz = rz + vz * tL, ff = fx * fx + fz * fz;
+      t = ff > 1e-6 ? clamp(-(sx * fx + sz * fz) / ff, 0, T - tL) : 0;
+      if (dist2(sx + fx * t, sz + fz * t, 0, 0) < rr * rr) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Open ground -- a plaza, a park, a pier deck: stroll, stop, turn. Never
+   * onto a carriageway (looked for 2.4 m ahead, 4 times a second); the walls,
+   * the water's edge and the trunks are `_move`'s. Returns the speed; the
+   * heading wanted is p.wanderH.
+   */
+  _wander(p, dt) {
+    const city = this.city, R = this.R;
+    p.wanderT -= dt;
+    p.gapT -= dt;
+    if (p.blocked > 0.15) { p.wanderH = p.heading + Math.PI + (R.n() - 0.5) * 1.4; p.blocked = 0; p.wanderT = 2 + R.n() * 3; p.idle = false; }
+    if (p.wanderT <= 0) {
+      if (R.n() < 0.3) { p.idle = true; p.wanderT = 2 + R.n() * 4; }
+      else {
+        p.idle = false; p.wanderT = 3 + R.n() * 5;
+        // drifts about its spot: pulled home from 30 m
+        p.wanderH = Math.hypot(p.hx - p.x, p.hz - p.z) > 30 ? Math.atan2(p.hx - p.x, p.hz - p.z) + (R.n() - 0.5) * 0.8
+          : p.heading + (R.n() - 0.5) * 1.8;
+      }
+    }
+    if (p.idle) return 0;
+    if (p.gapT <= 0) {
+      p.gapT = 0.25;
+      if (city.onRoad(p.x + Math.sin(p.wanderH) * 2.4, p.z + Math.cos(p.wanderH) * 2.4, 0.6, false, false)) {
+        p.wanderH += (R.n() < 0.5 ? 1 : -1) * (2.2 + R.n() * 0.8);
+        p.wanderT = 2 + R.n() * 3;
+      }
+    }
+    return p.pace * 0.75;
+  }
+
+  /**
+   * One step along the heading, the way the player's own step is checked
+   * (Player.blocked, with the sliding): not into a building, not off into deep
+   * water or over a drop, trunks and poles pushed out of rather than stopped
+   * at. Tries the whole step, then each axis alone; with none free he is held
+   * (p.blocked counts how long) -- unless he already stands inside a building,
+   * when anything is better than staying. A stationary pedestrian costs
+   * nothing; one being driven back is re-grounded where he lands.
+   */
+  _move(p, dt) {
+    const s = p.speed * dt;
+    const nx = G.clampToMap(p.x + Math.sin(p.heading) * s), nz = G.clampToMap(p.z + Math.cos(p.heading) * s);
+    // (a slide along an axis the heading has no component on "succeeds" and
+    // moves nobody: it only counts if he went somewhere)
+    const ox = p.x, oz = p.z, eps = Math.min(1e-3, s * 0.2);
+    if (this._place(p, nx, nz, true) && Math.abs(p.x - ox) + Math.abs(p.z - oz) >= eps) { p.blocked = 0; return; }
+    if (this._place(p, nx, oz, true) && Math.abs(p.x - ox) >= eps) { p.blocked = 0; return; }
+    if (this._place(p, ox, nz, true) && Math.abs(p.z - oz) >= eps) { p.blocked = 0; return; }
+    p.x = ox; p.z = oz;
+    if (this.city.insideBuilding(p.x, p.z, p.y, 0.3)) { this._place(p, nx, nz, false); return; }
+    p.blocked += dt;
+    p.speed *= 0.6;
+  }
+
+  _place(p, x, z, walls) {
+    const city = this.city;
+    // (trunks and poles only where somebody can see him walk through one)
+    const o = p.near ? city.obstacleHit(x, z, 0.3, p.y) : null;
+    if (o) { x += o.nx * o.pen; z += o.nz * o.pen; }
+    // A standing vehicle is solid: out past its nearer long side, at most
+    // 0.2 m a step, so one that stops on top of him eases him out rather
+    // than popping him clear. A fare is getting into one.
+    if (walls && p.nearCar && !p.fare) {
+      const v = this._carAt(x, z, p.y, 0.3);
+      if (v) {
+        const f = v.forward, dx = x - v.x, dz = z - v.z;
+        const lat = dx * f.z - dz * f.x, hw = v.halfWid + 0.3;
+        const out = clamp((lat < 0 ? -hw : hw) - lat, -0.2, 0.2);
+        x += f.z * out; z -= f.x * out;
+      }
+    }
+    if (walls && city.insideBuilding(x, z, p.y, 0.3)) return false;
+    if (walls && p.nearCar && this.trainBlock && this.trainBlock(x, z, p.y, 0.3)) return false;   // a train is solid too
+    const lift = city.roadLift(x, z);
+    const y = city.groundAt(x, z, p.y + 1, lift);
+    if (walls) {
+      if (y < p.y - 1.4 || y > p.y + 1.0) return false;   // a sea wall, a bluff, a wall of earth
+      const wl = this.waterAt ? this.waterAt(x, z) : null;
+      if (wl !== null && y < wl - 0.2) return false;
+    }
+    p.x = x; p.z = z; p.lift = lift; p.y = y;
+    return true;
+  }
+
+  /** The standing vehicle whose body, grown by `r`, holds (x, z) at height y; or null. */
+  _carAt(x, z, y, r) {
+    const cars = this._solid;
+    if (!cars) return null;
+    for (let i = 0; i < cars.length; i++) {
+      const v = cars[i];
+      const dx = x - v.x, dz = z - v.z;
+      if (dx * dx + dz * dz > 400) continue;
+      if (y > v.y + (v.spec.roof || 1.6) || y < v.y - 1.2) continue;
+      const f = v.forward;
+      if (Math.abs(dx * f.x + dz * f.z) < v.halfLen + r && Math.abs(dx * f.z - dz * f.x) < v.halfWid + r) return v;
+    }
+    return null;
+  }
+
+  /**
+   * A heading round the standing vehicle a stride and a half along `desired`,
+   * or null when the way is clear: to a point beside its long side, 1.5 m
+   * further along it, so he walks the length of it and past its end, then
+   * back to his own line. The side is the one he is on unless a wall is
+   * there; held there anyway, he tries the other (update, `avFlip`).
+   */
+  _avoidCar(p, desired) {
+    const hx = Math.sin(desired), hz = Math.cos(desired);
+    const v = this._carAt(p.x + hx * 1.6, p.z + hz * 1.6, p.y, 0.5);
+    if (!v) { p.avCar = null; return null; }
+    const f = v.forward, qx = p.x - v.x, qz = p.z - v.z;
+    const pa = qx * f.x + qz * f.z, pl = qx * f.z - qz * f.x;
+    const off = v.halfWid + 0.75;
+    if (p.avCar !== v) {
+      p.avCar = v; p.avFlip = false;
+      p.avSide = pl >= 0 ? 1 : -1;
+      const sx = v.x + f.x * pa + f.z * p.avSide * off, sz = v.z + f.z * pa - f.x * p.avSide * off;
+      if (this.city.insideBuilding(sx, sz, p.y, 0.3)) p.avSide = -p.avSide;
+    }
+    const dirA = hx * f.x + hz * f.z >= 0 ? 1 : -1;
+    const ta = clamp(pa + dirA * 1.5, -v.halfLen - 1, v.halfLen + 1);
+    const tx = v.x + f.x * ta + f.z * p.avSide * off, tz = v.z + f.z * ta - f.x * p.avSide * off;
+    return Math.atan2(tx - p.x, tz - p.z);
+  }
+
+  /**
+   * An officer out of a unit's door at (x, z) (police.js deploy): 'cop' or
+   * 'swat'. Seeded at the car's own height -- a unit can stop on a deck or in
+   * a bore, where the highest surface is the wrong one.
+   */
+  spawnOfficer(x, z, kind, car) {
+    const city = this.city;
+    const seed = (this.R.n() * 1e6) | 0;
+    const swat = kind === 'swat';
+    const h = makeHumanoid({ seed, cop: !swat, swat });
+    const lift = city.roadLift(x, z);
+    const p = {
+      h, x, z, y: city.groundAt(x, z, (car ? car.y : 0) + 1, lift), lift, heading: car ? car.heading : 0,
+      edge: car && car.edge >= 0 ? car.edge : 0, side: 1, t: 0, dirSign: 1,
+      speed: 0, state: 'walk', timer: 0,
+      cop: true, shootCd: 0.6 + this.R.n(), down: 0, hp: swat ? 95 : 60,
+      fleeX: 0, fleeZ: 0, fallDir: 0, animDt: 0,
+      kind, burst: 0, car: car || null, aim: 0, leaveT: 0, searchX: 0, searchZ: 0,
+      stag: 0, stagX: 0, stagZ: 0, fallBack: false,
+      ...crowdState(this.R, x, z),
+    };
+    this.scene.add(h.group);
+    this.peds.push(p);
+    return p;
+  }
+
+  remove(p) {
+    const i = this.peds.indexOf(p);
+    if (i >= 0) this.peds.splice(i, 1);
+    // an officer out of a unit: one fewer of its crew (police.js)
+    if (p.car) { p.car.crew = Math.max(0, p.car.crew - 1); p.car = null; }
+    this.scene.remove(p.h.group);
+    p.h.dispose();
+  }
+
+  scare(x, z, radius) {
+    for (const p of this.peds) {
+      if (p.cop || p.fare || p.state === 'down') continue;
+      if (dist2(p.x, p.z, x, z) < radius * radius) {
+        p.state = 'flee';
+        p.timer = 4 + this.R.n() * 3;
+        p.fleeX = p.x - x;
+        p.fleeZ = p.z - z;
+        p.pn = 0; p.cross = 0; p.wait = 0;   // off his path: running
+      }
+    }
+  }
+
+  update(dt, px, pz, player, traffic) {
+    const city = this.city;
+    const game = this.game;
+    this.timer -= dt;
+    // Officers walked in from the pavement (police.js LEVELS `street`); the
+    // rest get out of the units' cars. Neither past the level's foot cap.
+    const lv = game.police ? game.police.level() : null;
+    let copCount = 0, streetCops = 0;
+    for (const p of this.peds) if (p.cop) { copCount++; if (!p.car) streetCops++; }
+    this.simT += dt;
+
+    if (this.timer <= 0) {
+      // (a long way short of full: fill quickly, and anywhere, not out of
+      // sight -- the player has just arrived. Past 12 m/s the crowd is a
+      // blur and a recycled figure a spawn's cost: slowly)
+      const civ = this.peds.length - copCount;
+      const pv = player && player.vehicle ? Math.abs(player.vehicle.vLong) : 0;
+      this._fill = civ < MAX_PEDS - 8;
+      this.timer = pv > 12 ? 0.5 : this._fill ? 0.12 : 0.2;
+      if (civ < MAX_PEDS) this.spawn(px, pz, false, !this._fill);
+      // (only to a target on foot or stopped: walked in toward a car going
+      // by at 30 m/s they were left behind and replaced, 53 spawns a minute)
+      if (lv && game.wanted > 0 && streetCops < lv.street && copCount < lv.foot + lv.swat && game.police.playerSlow && !game.police.searching) this.spawn(px, pz, true);
+    }
+
+    // Frustum for the animation LOD below: last frame's camera, which moves
+    // after this update, hence the margin on the test sphere.
+    const cam = this.camera;
+    if (cam) {
+      cam.updateMatrixWorld();
+      this._m.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+      this._fr.setFromProjectionMatrix(this._m);
+      this._frOK = true;
+    }
+    this._frame = (this._frame || 0) + 1;
+    this.blobs.count = 0;
+    if (player && player.onFoot && player.h && player.h.group.visible && !player.swimming && player.grounded) {
+      this.addContactShadow(player.h, player.x, player.y, player.z, player.heading);
+    }
+
+    // What can knock a pedestrian over: the vehicles moving faster than a
+    // walk, found once (nothing below moves them) rather than for every ped.
+    const movers = this._movers || (this._movers = []);
+    movers.length = 0;
+    for (const v of traffic.cars) if (v.mode !== 'parked' && Math.abs(v.vLong) >= 2.2) movers.push(v);
+    // ...and what a walker can't walk through: every vehicle standing or
+    // creeping, the player's own included. Only trunks, poles and buildings
+    // stopped anyone, so the crowd walked through a truck pulled onto the
+    // pavement. Found once a frame, round the player, for the near walkers
+    // (_avoidCar steers round one, _place keeps anyone out of one).
+    const solid = this._solid || (this._solid = []);
+    solid.length = 0;
+    for (const v of traffic.cars) {
+      if (v.dead || v.spec.rail || Math.abs(v.vLong) >= 2.2) continue;
+      if (dist2(v.x, v.z, px, pz) < 75 * 75) solid.push(v);
+    }
+
+    this.crossN = 0;
+    for (let i = this.peds.length - 1; i >= 0; i--) {
+      const p = this.peds[i];
+      const d2p = dist2(p.x, p.z, px, pz);
+      // (a civilian left behind is recycled into the ring; an officer is not)
+      if (!p.fare && d2p > (p.cop ? (PED_RADIUS + 90) * (PED_RADIUS + 90) : CULL_R * CULL_R)) { this.remove(p); continue; }
+
+      if (p.state === 'down') {
+        p.h.mesh.visible = true;
+        p.h.group.matrixWorldAutoUpdate = true;
+        p.h.mesh.skeleton.frozen = false;
+        p.down += dt;
+        let lift = 0;
+        if (p.fallBack) {
+          // floored by a punch or a shot: over backwards, away from it,
+          // arms thrown up (the group pivots on the soles, so it is lifted by
+          // the back's depth as it goes over or half the body is underground)
+          const k = 1 - Math.exp(-7 * dt), g = p.h.group;
+          g.rotation.x = lerp(g.rotation.x, -Math.PI / 2 * 0.97, k);
+          if (p.down < 0.45) {
+            const push = 2.6 * (1 - p.down / 0.45) ** 2 * dt;
+            if (!city.obstacleHit(p.x + p.stagX * push, p.z + p.stagZ * push, 0.3, p.y)) {
+              p.x += p.stagX * push; p.z += p.stagZ * push;
+              p.y = city.groundAt(p.x, p.z, p.y + 1, city.roadLift(p.x, p.z));
+            }
+          }
+          lift = 0.12 * Math.sin(-g.rotation.x);
+          if (p.down < 1) sprawl(p.h, k);
+        } else p.h.group.rotation.z = lerp(p.h.group.rotation.z, Math.PI / 2 * p.fallDir, 1 - Math.exp(-8 * dt));
+        p.h.group.position.set(p.x, p.y + lift, p.z);
+        if (p.down > 9) this.remove(p);
+        continue;
+      }
+
+      let targetSpeed = 1.35;
+      let desired = p.heading;
+      if (p.hurry > 0) p.hurry -= dt;
+      p.near = d2p < 2500;
+      // (a truck is seen further off than a trunk)
+      p.nearCar = d2p < 4900;
+
+      if (p.cop) {
+        // police.js decides: chase, search, arrest, shoot, get back in the car
+        const o = game.police ? game.police.footOrders(p, dt, px, pz, player)
+          : (game.wanted === 0 ? { remove: true } : { heading: Math.atan2(px - p.x, pz - p.z), speed: d2p > 81 ? 4.6 : 0, remove: false });
+        if (o.remove) { this.remove(p); continue; }
+        desired = o.heading;
+        // held by a wall for half a second: along it, toward whichever side
+        // runs on, for a second and a quarter (footOrders steers straight at
+        // the player and knows no walls)
+        if (p.slideT > 0) { p.slideT -= dt; desired += p.slideS * 1.2; }
+        else if (p.blocked > 0.5) { p.slideT = 1.25; p.slideS = this.R.n() < 0.5 ? 1 : -1; p.blocked = 0; }
+        targetSpeed = o.speed;
+      } else if (p.fare) {
+        // a taxi's fare: stands facing the road, or walks to (fx, fz) (taxi.js)
+        desired = Math.atan2(p.fx - p.x, p.fz - p.z);
+        targetSpeed = p.fare === 2 ? 2.3 : 0;
+      } else if (p.state === 'flee') {
+        p.timer -= dt;
+        // held by a wall: along it, not into it (the wall is _move's)
+        if (p.blocked > 0.25) {
+          const c = Math.cos(1.3), s = (this.R.n() < 0.5 ? 1 : -1) * Math.sin(1.3);
+          const fx = p.fleeX * c - p.fleeZ * s, fz = p.fleeX * s + p.fleeZ * c;
+          p.fleeX = fx; p.fleeZ = fz; p.blocked = 0;
+        }
+        const l = Math.hypot(p.fleeX, p.fleeZ) || 1;
+        desired = Math.atan2(p.fleeX / l, p.fleeZ / l);
+        targetSpeed = 5.2;
+        if (p.timer <= 0) { p.state = 'walk'; this.reanchor(p); }
+      } else if (p.edge < 0) {
+        // open ground: a plaza, a park, a pier deck
+        targetSpeed = this._wander(p, dt);
+        desired = p.wanderH;
+      } else {
+        // walk the pavement
+        const e = city.edges[p.edge];
+        if (!e) { this.remove(p); continue; }
+        targetSpeed = p.pace;
+        if (p.pn === 0) {
+          const a = city.nodes[p.dirSign > 0 ? e.a : e.b];
+          const b = city.nodes[p.dirSign > 0 ? e.b : e.a];
+          const dx = b.x - a.x, dz = b.z - a.z;
+          const len = Math.hypot(dx, dz) || 1;
+          const fx = dx / len, fz = dz / len;
+          const prog = (p.x - a.x) * fx + (p.z - a.z) * fz;
+          if (len - prog < PLAN_AT) this.planNode(p, p.dirSign > 0 ? e.b : e.a);
+          else {
+            const off = e.hw + PAVE;
+            const ap = clamp(prog + 4, 0, len);
+            const tx = a.x + fx * ap - fz * off * p.side;
+            const tz = a.z + fz * ap + fx * off * p.side;
+            desired = Math.atan2(tx - p.x, tz - p.z);
+          }
+        }
+        if (p.pn > 0) {
+          // a path through the junction: the corner, and any crossing
+          p.pt += dt;
+          const wx = p.path[p.pi * 2], wz = p.path[p.pi * 2 + 1];
+          const leg = (p.pcr >> p.pi) & 1;
+          desired = Math.atan2(wx - p.x, wz - p.z);
+          if (leg && !p.cross) {
+            // at the kerb: wait for a gap (6 s at most -- the cars stop for a
+            // person in the road, and a stream of them would hold him for ever)
+            p.wait += dt;
+            p.gapT -= dt;
+            if (p.gapT <= 0) { p.gapT = 0.25; if (p.wait > 6 || this._crossClear(p, wx, wz, traffic)) p.cross = 1; }
+            if (!p.cross) targetSpeed = 0;
+          }
+          if (p.cross) targetSpeed = p.hurry > 0 ? 3.8 : 1.9;
+          if (dist2(p.x, p.z, wx, wz) < (p.cross ? 0.36 : 0.64) || p.pt > p.ptMax) {
+            if (leg) { p.cross = 0; p.wait = 0; }
+            if (++p.pi >= p.pn || p.pt > p.ptMax) { p.pn = 0; p.pt = 0; p.cross = 0; p.wait = 0; }
+          }
+        }
+        // held by something for good (a wall of earth on a street): another place
+        if (p.blocked > 3) { this.remove(p); continue; }
+      }
+
+      // a vehicle standing across his way: round it, along whichever long
+      // side is open (an officer closes on you in one, a fare gets in one)
+      if (p.nearCar && !p.cop && !p.fare && targetSpeed > 0) {
+        const av = this._avoidCar(p, desired);
+        if (av !== null) desired = av;
+        if (p.avCar && p.blocked > 0.5 && !p.avFlip) { p.avSide = -p.avSide; p.avFlip = true; }
+      } else p.avCar = null;
+
+      if (p.stag > 0) {
+        // knocked back from a hit: facing whoever threw it, driven back
+        // ~0.4 m on a decaying push (the feet step after the body)
+        p.stag = Math.max(0, p.stag - dt);
+        desired = Math.atan2(-p.stagX, -p.stagZ);
+        targetSpeed = 0;
+        const k = p.stag / STAG, push = 2.4 * k * k * dt;
+        if (!city.obstacleHit(p.x + p.stagX * push, p.z + p.stagZ * push, 0.3, p.y)) { p.x += p.stagX * push; p.z += p.stagZ * push; }
+      }
+      p.heading += clamp(angleWrap(desired - p.heading), -7 * dt, 7 * dt);
+      p.speed = lerp(p.speed, targetSpeed, 1 - Math.exp(-7 * dt));
+      // (one standing still stays where he stands: no ground query for him)
+      if (p.speed > 0.03 || p.stag > 0) this._move(p, dt);
+
+      // Place the body BEFORE animating it: animateWalk locks planted feet to
+      // world positions, and solving against last frame's root puts every
+      // planted foot a frame (~2 cm at a stroll) behind.
+      p.h.group.position.set(p.x, p.y, p.z);
+      // (an Euler write is a quaternion recompute: only what changed)
+      if (p.h.group.rotation.y !== p.heading) p.h.group.rotation.y = p.heading;
+      if (p.h.group.rotation.z !== 0) p.h.group.rotation.z = 0;
+      // ANIMATION LOD. A pedestrian is 24 scene objects and a bone texture
+      // upload a frame, and skinned meshes are never frustum-culled (their
+      // bounds are the bind pose), so all of them were posed, multiplied out,
+      // uploaded and drawn every frame, on screen or behind the camera.
+      //   off screen (and casting no shadow -- every phone ped): hidden, not
+      //     posed, matrices frozen;
+      //   on screen past 40 m: posed every other frame, frozen in between
+      //     (one frame of lag at 40 m is under a pixel).
+      // Frozen means the group's matrices and the bone texture keep last
+      // frame's values, so it costs nothing but its draw.
+      let pose = true, show = true;
+      if (cam && !p.h.mesh.castShadow) {
+        this._s.center.set(p.x, p.y + 0.9, p.z);
+        this._s.radius = 2.5;
+        show = this._fr.intersectsSphere(this._s);
+      }
+      if (!show) pose = false;
+      else if (d2p > 40 * 40 && ((this._frame + i) & 1)) pose = false;
+      p.h.mesh.visible = show;
+      p.animDt = (p.animDt || 0) + dt;
+      p.h.group.matrixWorldAutoUpdate = pose;
+      p.h.mesh.skeleton.frozen = !pose;
+      if (pose) {
+        animateWalk(p.h, clamp(p.speed * 0.20, 0, 0.8), Math.min(p.animDt, 0.1), p.speed);
+        p.animDt = 0;
+        if (p.aim > 0.02) aimPose(p.h, p.aim, p.kind === 'swat');
+        if (p.fare === 1) hailPose(p.h, this.simT);
+        if (p.stag > 0) recoil(p.h, p.stag);
+      }
+      if (show && d2p < 70 * 70) this.addContactShadow(p.h, p.x, p.y, p.z, p.heading);
+
+      // in the road: the cars stop short of him (traffic.js), and he hurries
+      // when one is coming at him anyway
+      if (p.cross && this.crossN < 16) { const o = this.crossN * 3; this.crossXZ[o] = p.x; this.crossXZ[o + 1] = p.z; this.crossXZ[o + 2] = p.y; this.crossN++; }
+
+      // knocked over by traffic
+      for (const v of movers) {
+        const sp = Math.abs(v.vLong);
+        const rr = v.halfLen + 1.2;
+        const dd = dist2(v.x, v.z, p.x, p.z);
+        if (p.cross && dd < 22 * 22 && ((p.x - v.x) * v.forward.x + (p.z - v.z) * v.forward.z) * v.vLong > 0) p.hurry = 0.8;
+        if (dd > rr * rr) continue;
+        const n = v.nearest(p.x, p.z);
+        if (dist2(n.x, n.z, p.x, p.z) < 0.65) {
+          this.knockDown(p, v.forward, sp);
+          game.onPedHit(v === player.vehicle, p);
+          break;
+        }
+      }
+    }
+    traffic.crossN = this.crossN;
+    traffic.crossXZ = this.crossXZ;
+  }
+
+  knockDown(p, dir, force) {
+    if (p.fallBack) {
+      // over backwards needs the pitch about the body's own axis: yaw
+      // outermost (with x at 0 the two orders are the same matrix)
+      p.h.group.rotation.order = 'YXZ';
+      p.h.group.rotation.y = p.heading;
+    }
+    p.state = 'down';
+    p.down = 0;
+    p.fallDir = Math.random() < 0.5 ? 1 : -1;
+    p.x += dir.x * clamp(force * 0.12, 0.4, 3);
+    p.z += dir.z * clamp(force * 0.12, 0.4, 3);
+    p.y = this.city.groundAt(p.x, p.z, p.y + 1, this.city.roadLift(p.x, p.z));
+    p.h.group.position.set(p.x, p.y + (p.fallBack ? 0 : 0.3), p.z);
+  }
+
+  /**
+   * The first pedestrian within `radius` of (x, z) takes `damage`. With the
+   * attacker's position (fromX, fromZ) a survivor is knocked back from it
+   * (stagger) and one it floors goes over backwards, away from it. A shot
+   * passes `y`, where a pedestrian's feet should be along its line (the ground
+   * under that point, plus how high the shooter stands): one more than 1.2 m
+   * off, on another floor or a roof, is not hit.
+   */
+  hitAt(x, z, radius, damage, isPlayer, fromX, fromZ, y) {
+    for (const p of this.peds) {
+      if (p.state === 'down') continue;
+      if (y !== undefined && Math.abs(p.y - y) > 1.2) continue;
+      if (dist2(p.x, p.z, x, z) < radius * radius) return this.strike(p, damage, isPlayer, fromX != null ? fromX : null, fromZ != null ? fromZ : null, x, z);
+    }
+    return null;
+  }
+
+  /** `p` takes a hit (hitAt; a punch's soft lock names its pedestrian). */
+  strike(p, damage, isPlayer, fromX = null, fromZ = null, x = p.x, z = p.z) {
+    p.hp -= damage;
+    let dx = 0, dz = 0;
+    if (fromX !== null) {
+      dx = p.x - fromX; dz = p.z - fromZ;
+      const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+    }
+    if (p.hp <= 0) {
+      // (carried back over the fall in update, not moved here in one frame)
+      if (fromX !== null) { p.fallBack = true; p.heading = Math.atan2(-dx, -dz); p.stagX = dx; p.stagZ = dz; }
+      this.knockDown(p, { x: 0, z: 0 }, 0);
+      this.game.onPedKilled(p, isPlayer);
+    } else {
+      p.state = 'flee';
+      p.timer = 5;
+      p.fleeX = p.x - x;
+      p.fleeZ = p.z - z;
+      p.pn = 0; p.cross = 0; p.wait = 0;
+      if (fromX !== null) { p.stag = STAG; p.stagX = dx; p.stagZ = dz; }
+    }
+    return p;
+  }
+}

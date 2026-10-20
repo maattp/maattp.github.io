@@ -1,0 +1,1159 @@
+// The player: on foot, behind the wheel, and the chase camera that follows.
+
+import { Skydive } from './parachute.js';
+import * as THREE from './three.js';
+import { makeHumanoid, animateWalk, BONES } from './peds.js';
+import { poseSwim, PoseBlend, PRONE, UPRIGHT } from './swim.js';
+import { Fighter } from './melee.js';
+import { collideWithBuildings } from './traffic.js';
+import { clamp, lerp, angleWrap, damp, dist2, smooth, tierScale } from './util.js';
+import * as G from './geo.js';
+import { TUNNEL_H } from './citygen.js';
+
+// Swimming: water deeper than this (from surface to ground) takes you off
+// your feet; while swimming your feet ride this far under the surface.
+const SWIM_DEPTH = 1.3, SWIM_FEET = 0.18;
+// Treading water, upright: the feet this far down puts the surface across the
+// upper chest, the shoulders and sculling forearms at it.
+const SWIM_TREAD = 1.30;
+
+export class Player {
+  constructor(scene, city, game, world) {
+    this.scene = scene;
+    this.city = city;
+    this.game = game;
+    // Needed for `waterLevelAt`: drowning is against the local surface, and
+    // the lakes are not at sea level.
+    this.world = world;
+    this.h = makeHumanoid({ seed: 1, unique: true, shirt: [0.16, 0.2, 0.3], pants: [0.12, 0.13, 0.17], hair: [0.1, 0.08, 0.07], scale: 1.03 });
+    // Yaw outermost: the swimmer's and the skydiver's pitch is about the
+    // body's own left-right axis whatever the heading. In the default XYZ
+    // order the pitch came first, about WORLD x, and a swimmer heading west
+    // lay on his side, one heading south on his back (see CLAUDE.md,
+    // "Swimming"). With x and z at 0 the two orders are the same matrix.
+    this.h.group.rotation.order = 'YXZ';
+    scene.add(this.h.group);
+    this.x = G.SPAWN.x;
+    this.z = G.SPAWN.z;
+    this.y = city.groundAt(this.x, this.z, null);
+    this.heading = G.SPAWN_HEADING;
+    this.vy = 0;
+    this.grounded = true;
+    this.stuntCam = 0;   // 0..1, stunts.js: the chase camera pulls wide on a big jump
+    this.speed = 0;
+    this.onFoot = true;
+    this.vehicle = null;
+    this.health = 100;
+    this.armed = false;
+    this.ammo = 0;
+    this.attackCd = 0;
+    this.enterCd = 0;
+    this.lift = 0;
+    this.dead = false;
+    this.crashCd = 0; // see updateDrive: one wall scrape is one crash
+    this.scrapeT = 0; // seconds of wall contact left, for the scrape sound
+    this.fellFrom = 0; // height a fall started at, for landing damage
+    this.sky = null;   // a parachute jump in progress (parachute.js)
+    this.swimming = false;   // in deep water (updateSwim)
+    // the stroke's phase (cycles), sculling's, crawl 0..1 against treading,
+    // the body's pitch, and the bind height of the hips (swim.js poseSwim)
+    this.swimSt = { u: 0, tu: 0, w: 0, pitch: 0, plunge: 0, hipY: this.h.bones[BONES.hips].position.y };
+    this.poseBlend = new PoseBlend(this.h.bones.length);   // into and out of the water
+    this.hitCd = 0;    // seconds before a car can hurt you again (updateFoot)
+    this.lookT = 99;   // seconds since the look stick or drag last moved (a tank's camera stays put)
+    this.shake = 0;    // camera shake, decaying (a tank's gun, a blast)
+    // Punches and the pistol's aim, an overlay on the walk (melee.js), and
+    // the camera's flick when one lands
+    this.fighter = new Fighter(this.h);
+    this.camKick = 0;
+
+    this.camYaw = this.heading + Math.PI;
+    this.camPitch = 0.1;
+    this.camDist = 6.5;
+    this.camPos = new THREE.Vector3(this.x + Math.sin(this.camYaw) * 4.6, this.y + 1.6, this.z + Math.cos(this.camYaw) * 4.6);
+    this.camLook = new THREE.Vector3(this.x, this.y + 1.4, this.z);
+    this.camFloor = null; // smoothed floor for the camera clamp; see updateCamera
+  }
+
+  get position() {
+    return this.onFoot ? { x: this.x, y: this.y, z: this.z } : { x: this.vehicle.x, y: this.vehicle.y, z: this.vehicle.z };
+  }
+
+  /** A parachute jump ends without landing (a vehicle taken, a respawn). */
+  endSky() {
+    if (!this.sky) return;
+    this.sky.cancel(this);
+    this.sky = null;
+  }
+
+  enterVehicle(v) {
+    if (!v || v.dead) return false;
+    this.endSky();   // (the canopy is not a thing you carry into a seat)
+    this.vehicle = v;
+    // Remember it was parked BEFORE the mode is overwritten. `game.onEnterVehicle`
+    // tests `v.mode === 'parked' || v.wasParked` to decide whether this is theft
+    // -- but mode is set to 'free' on the line below, and nothing in the repo
+    // ever wrote `wasParked`, so taking a parked car has never added heat.
+    v.wasParked = v.mode === 'parked';
+    const wasMode = v.mode;
+    if (this.swimming) this.clearSwim();
+    this.fighter.reset();
+    v.mode = 'free';
+    v.setDetailed(true);
+    this.onFoot = false;
+    this.h.group.visible = false;
+    this.game.onEnterVehicle(v, wasMode);
+    return true;
+  }
+
+  /**
+   * Out of the vehicle. `force` (a wreck) always gets you out, wherever that
+   * is; otherwise a BOAT (or a floatplane on the water) only lets you step
+   * off onto something you can stand on -- a dock or the shore -- because
+   * the kerb-side default puts you in the lake, and the lake drowns you.
+   * Returns false when it refused.
+   */
+  exitVehicle(force = false) {
+    const v = this.vehicle;
+    if (!v) return false;
+    const f = v.forward;
+    // Out of an aircraft in the air: you JUMP (parachute.js). More than 12 m
+    // up, a plane, the helicopter or the balloon -- it used to put you
+    // straight down on the ground under it.
+    // (Over the ground or a roof: the balloon at rest on one is not in the air.)
+    if (v.spec.plane && !force && (v.airborne || v.spec.balloon)
+      && v.y - Math.max(this.city.groundAt(v.x, v.z, null), this.city.roofUnder(v.x, v.z, v.y + 1.2, 0.9)) > 12) {
+      const rx = f.z, rz = -f.x;
+      this.x = G.clampToMap(v.x - rx * (v.halfWid + 2.5)); this.z = G.clampToMap(v.z - rz * (v.halfWid + 2.5)); this.y = v.y - 1.5;
+      this.heading = v.heading;
+      this.onFoot = true; this.h.group.visible = true;
+      this.grounded = false; this.vy = 0; this.speed = 0; this.fellFrom = 0;
+      this.sky = new Skydive(this, v, this.h.group.parent);
+      v.mode = 'free';
+      v.setDetailed(false);
+      this.vehicle = null;
+      this.game.onExitVehicle(v);
+      if (this.game.onBailOut) this.game.onBailOut(v);
+      return true;
+    }
+    const rx = f.z, rz = -f.x;
+    let ox = v.x - rx * (v.halfWid + 1.1);
+    let oz = v.z - rz * (v.halfWid + 1.1);
+    let oy = v.y + 1.5;
+    if (v.spec.rail) {
+      // The doors open at a platform and nowhere else (monorail.js / link.js
+      // exitSpot): onto the platform at Seattle Center, down to the street at
+      // Westlake, out to a Link station's street entrance.
+      const spot = v.sys ? v.sys.exitSpot(v) : null;
+      if (!spot && !force) {
+        this.game.onNoLanding && this.game.onNoLanding(v);
+        return false;
+      }
+      if (spot) { ox = spot.x; oz = spot.z; oy = spot.y + 1.5; }
+    } else if (v.spec.boat || v.spec.floats || v.afloat) {
+      // Either beam, then over the bow and the stern, a little further out
+      // each ring: the first spot that is not water (a platform deck counts,
+      // groundAt answers it) and not inside a rail.
+      let spot = null;
+      for (const d of [1.1, 1.8, 2.6]) {
+        for (const [ux, uz, e] of [[-rx, -rz, v.halfWid], [rx, rz, v.halfWid], [f.x, f.z, v.halfLen], [-f.x, -f.z, v.halfLen]]) {
+          const x = v.x + ux * (e + d), z = v.z + uz * (e + d);
+          const gy = this.city.groundAt(x, z, v.y + 1.5);
+          const wl = this.world.waterLevelAt(x, z);
+          if (wl !== null && gy < wl - 0.2) continue;
+          if (this.city.obstacleHit(x, z, 0.3, gy)) continue;
+          spot = [x, z];
+          break;
+        }
+        if (spot) break;
+      }
+      // Nowhere dry to step: over the side, and swim (updateSwim).
+      if (!spot && !force) {
+        ox = v.x - rx * (v.halfWid + 1.3); oz = v.z - rz * (v.halfWid + 1.3);
+        const wl = this.waterAt(ox, oz);
+        oy = wl !== null ? wl + 0.4 : v.y + 1.5;
+        if (this.game.onJumpIn) this.game.onJumpIn(v);
+      }
+      if (spot) [ox, oz] = spot;
+    }
+    // Out onto whatever the vehicle stands on. Landed on a roof (a helicopter)
+    // or by a deck's edge, the door's side can be a drop: try the other side,
+    // the nose and the tail first, and step down only if all of them are.
+    const floorAt = (x, z) => Math.max(this.city.groundAt(x, z, oy), this.city.roofUnder(x, z, oy));
+    if (!v.spec.rail && !(v.spec.boat || v.spec.floats || v.afloat) && floorAt(ox, oz) < v.y - 1) {
+      for (const [ux, uz, e] of [[rx, rz, v.halfWid], [f.x, f.z, v.halfLen], [-f.x, -f.z, v.halfLen]]) {
+        const x = v.x + ux * (e + 1.1), z = v.z + uz * (e + 1.1);
+        if (floorAt(x, z) >= v.y - 1) { ox = x; oz = z; break; }
+      }
+    }
+    this.x = G.clampToMap(ox);
+    this.z = G.clampToMap(oz);
+    this.y = floorAt(this.x, this.z);
+    this.heading = v.heading;
+    this.onFoot = true;
+    this.h.group.visible = true;
+    // Step out with the vertical state the car had, not whatever was left over
+    // from before you got in -- jumping, entering and exiting used to launch you
+    // upward on the stale `vy`.
+    this.vy = 0;
+    this.speed = 0;
+    this.grounded = true;
+    this.fellFrom = 0;
+    v.mode = 'free';
+    v.setDetailed(false);
+    this.vehicle = null;
+    this.game.onExitVehicle(v);
+    return true;
+  }
+
+  update(dt, input, look, controls, traffic, peds) {
+    this.attackCd -= dt;
+    this.enterCd -= dt;
+    // the pistol is in the right hand while you have rounds for it, on foot
+    const F = this.fighter;
+    F.gun.visible = this.onFoot && this.armed && this.ammo > 0 && !this.swimming && !this.sky;
+
+    this.camYaw -= look.x;
+    // a raised gun follows the camera (after this frame's look, not a frame behind)
+    if (F.aimT > 0) F.aimYaw = this.camYaw + Math.PI;
+    this.camPitch = clamp(this.camPitch + look.y, -0.5, 1.15);
+    this.lookT = look.x || look.y ? 0 : this.lookT + dt;
+
+    if (this.onFoot) this.updateFoot(dt, input, traffic, peds);
+    else this.updateDrive(dt, input, traffic, peds);
+
+    const tap = controls.takeTap();
+    if (tap === 'enter' && this.enterCd <= 0) {
+      this.enterCd = 0.45;
+      if (this.onFoot && this.game.tryInteract && this.game.tryInteract(this)) {
+        // something on foot took the press (a fishing rod on a pier); it
+        // poses the arms itself, with empty hands
+        F.reset(); F.gun.visible = false;
+      } else if (this.onFoot) {
+        // A monorail at the platform beside you (or at Westlake's street
+        // door) before any car: see monorail.js boardable.
+        const m = (this.monorail && this.monorail.boardable(this.x, this.y, this.z))
+          || (this.link && this.link.boardable(this.x, this.y, this.z))
+          || (this.freight && this.freight.boardable(this.x, this.y, this.z))
+          || (this.counterbal && this.counterbal.boardable(this.x, this.y, this.z));
+        let v = m || traffic.nearestEnterable(this.x, this.z, 5.0);
+        // (nearestEnterable is flat: under a canopy only a vehicle at about
+        // your height counts, or free fall over a road car would seat you in it
+        // and skip the fall)
+        if (v && this.sky && Math.abs(v.y - this.y) > 6) v = null;
+        if (v) this.enterVehicle(v);
+        else if (this.link && this.link.onWait(this.x, this.z)) { /* told when the next trains are due */ }
+        else if (this.freight && this.freight.onWait(this.x, this.z)) { /* a freight is called into the yard */ }
+        else if (this.counterbal && this.counterbal.onWait(this.x, this.z)) { /* a streetcar is called to the stop */ }
+        else if (this.monorail && this.game.onMonorailWait) this.game.onMonorailWait(this.x, this.y, this.z);
+      } else this.exitVehicle();
+    }
+
+    if (input.attack && this.attackCd <= 0) this.attack(traffic, peds);
+    this.updateCamera(dt, input);
+  }
+
+  updateFoot(dt, input, traffic, peds) {
+    this._traffic = traffic;
+    // in the air after bailing out: the parachute has the frame (parachute.js)
+    if (this.sky) {
+      if (this.sky.update(this, dt, input)) return;
+      this.sky = null;
+    }
+    if (this.swimming && this.updateSwim(dt, input)) return;
+    const mag = Math.hypot(input.x, input.y);
+    // On-foot pace. The city is 10 km across, so these sit above real walking
+    // and jogging speeds -- crossing a block should not be a chore.
+    // 4.2 m/s is a 4:00/km jog and 7.5 is world-class sprinting -- at those
+    // speeds the gait correctly came out looking like track athletics. The
+    // character is a person moving around a city, so the speeds come down and
+    // the pose follows: 3.6 is an easy run, 5.4 a hard one.
+    // 3.6 / 5.4 was too slow to cross a city this size, and slowing the
+    // character down was the wrong lever anyway: it was done to stop the gait
+    // reading as track athletics, but the gait keys off runBlend and is judged
+    // by tools/gait.mjs against published bands at 1.4 / 3.5 / 7.5 m/s -- all
+    // of which it already passes. So the pose was never the speed's problem.
+    // 5.0 is a purposeful run and 7.2 a sprint, which is about where a game of
+    // this kind sits.
+    const run = input.sprint ? 7.2 : 5.0;
+    let target = 0;
+    // A punch turns you to the pedestrian it locked on to before it lands
+    // (melee.js); until then the stick moves you but does not steer.
+    const F = this.fighter;
+    const lockTurn = !!(F.cur && F.target && F.t < F.cur.hit);
+    if (mag > 0.12) {
+      // Stick is camera-relative. Note HEADING_SENSE: heading is three.js
+      // rotation.y, so a LARGER heading turns anticlockwise = left on screen.
+      // Pushing the stick right therefore has to subtract from the heading.
+      const ang = Math.atan2(-input.x, -input.y) + this.camYaw + Math.PI;
+      if (!lockTurn) this.heading += clamp(angleWrap(ang - this.heading), -10 * dt, 10 * dt);
+      target = run * clamp(mag, 0, 1);
+    }
+    let lx = 0, lz = 0;
+    if (lockTurn) {
+      const tx = F.target.x - this.x, tz = F.target.z - this.z;
+      const want = Math.atan2(tx, tz);
+      this.heading += clamp(angleWrap(want - this.heading), -20 * dt, 20 * dt);
+      // ...and steps in to them: a pedestrian knocked back by the last punch
+      // is out of reach of the next
+      const d = Math.hypot(tx, tz) || 1, step = clamp((d - 1.05) / Math.max(0.05, F.cur.hit - F.t), 0, 3.5) * dt;
+      lx = tx / d * step; lz = tz / d * step;
+    } else if (F.aimT > 0) {
+      // Aiming: standing, the body turns to the gun's line; moving, the trunk
+      // twists to it and the body follows only past 1.1 rad.
+      const rel = angleWrap(F.aimYaw - this.heading);
+      if (this.speed < 0.6) this.heading += clamp(rel, -14 * dt, 14 * dt);
+      else if (Math.abs(rel) > 1.1) this.heading += rel - Math.sign(rel) * 1.1;
+    }
+    this.speed = damp(this.speed, target, 9, dt);
+    const nx = this.x + Math.sin(this.heading) * this.speed * dt + lx;
+    const nz = this.z + Math.cos(this.heading) * this.speed * dt + lz;
+    // If we're already standing inside geometry -- put down in it, dumped out
+    // of a car into it, knocked into it -- then refusing to move traps the
+    // player permanently, walking on the spot with every direction blocked.
+    // Clipping out is always better than being stuck, so let them walk.
+    const stuck = this.blocked(this.x, this.z);
+    if (stuck || !this.blocked(nx, nz)) {
+      this.x = G.clampToMap(nx);
+      this.z = G.clampToMap(nz);
+    } else if (!this.blocked(nx, this.z)) this.x = G.clampToMap(nx);
+    else if (!this.blocked(this.x, nz)) this.z = G.clampToMap(nz);
+
+    // one paved-surface scan per frame, shared by the ground and camera queries
+    this.lift = this.city.roadLift(this.x, this.z);
+    // and a roof is somewhere to stand: out of a helicopter landed on one, or
+    // down on it under a parachute
+    const ground = Math.max(this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift),
+      this.city.roofUnder(this.x, this.z, this.y + 1.2));
+    if (input.jump && this.grounded) {
+      this.vy = 6.2;
+      this.grounded = false;
+    }
+    // Walk off an edge and you FALL.
+    //
+    // `grounded` was only ever cleared by jumping, so stepping off a viaduct or
+    // a sea wall eased you down on the same exponential the camera uses for
+    // kerbs -- measured, dropped 25 m the player descended smoothly with
+    // `grounded` still true the whole way. No arc, no fall, and nothing that
+    // could ever cost you health. Anything more than a kerb below your feet is
+    // air, and air is not something you stand on.
+    const KERB = 0.45;
+    if (this.grounded && this.y - ground > KERB) {
+      this.grounded = false;
+      this.vy = 0;
+      this.fellFrom = this.y;
+    }
+    if (!this.grounded) {
+      this.vy -= 20 * dt;
+      this.y += this.vy * dt;
+      if (this.y <= ground) {
+        // Landing. Below about four metres a person absorbs it; past that it
+        // hurts, and it scales with the square of the drop the way the energy
+        // does.
+        const drop = (this.fellFrom || this.y) - ground;
+        this.y = ground;
+        this.vy = 0;
+        this.grounded = true;
+        this.fellFrom = 0;
+        if (drop > 4.5) this.game.damagePlayer(Math.min(100, (drop - 4.5) ** 1.6 * 1.6), 'fall');
+        if (drop > 1.2 && this.game.onLand) this.game.onLand(drop);
+      }
+    } else {
+      // ON the ground, not easing toward it. The ease (rate 16) trailed the
+      // surface on every rise: measured walking up a Queen Anne street the feet
+      // ran 21 cm INTO the road (p10), 30 cm at worst, and every kerb stepped
+      // up through 17 cm of pavement -- the "sinking" when walking. The camera
+      // keeps its own smoothed height (camFootY), so kerbs still don't jolt it.
+      this.y = ground;
+    }
+    this.camFootY = this.camFootY == null || Math.abs(this.camFootY - this.y) > 3
+      ? this.y : damp(this.camFootY, this.y, 14, dt);
+
+    // Drowning is against the LOCAL water surface, not sea level.
+    //
+    // `y < -0.6` only ever describes the sea. Green Lake sits at 50 m and Lake
+    // Union at 5, so you could stand on a lake bed indefinitely -- and
+    // `world.waterLevelAt()`, written for exactly this, had no callers at all.
+    // ...and there you swim (updateSwim): deeper than your chest, you are off
+    // your feet. It used to be death.
+    const wl = this.waterAt(this.x, this.z);
+    if (wl !== null && ground < wl - SWIM_DEPTH && this.y < wl - 0.2) { this.startSwim(wl, !this.grounded); return; }
+
+    // Root first: animateWalk locks planted feet in world space (see peds.js).
+    this.h.group.position.set(this.x, this.y, this.z);
+    this.h.group.rotation.y = this.heading;
+    // Just out of the water: the walk poses upright and unblended (its locks
+    // read the group's matrix), then the cross-fade from the swim goes on top.
+    const blending = this.poseBlend.active;
+    F.restore();
+    if (blending) { this.poseBlend.restore(this.h); this.h.group.rotation.x = 0; }
+    animateWalk(this.h, clamp(this.speed * 0.16, 0, 0.85), dt, this.speed);
+    if (blending) this.poseBlend.apply(this.h, dt, 0);
+    // fists and the gun over the walk; the punch lands on its hit frame
+    F.apply(dt, this.speed, this.heading);
+    if (F.hitDue) this.landPunch(peds);
+
+    // Run over by a car: ONCE per hit, and thrown clear to the side. It was
+    // damage every frame of the overlap, with a push straight back along the
+    // car's own path -- so the car met you again the next frame, and one
+    // glancing hit chained into a death.
+    this.hitCd = Math.max(0, (this.hitCd || 0) - dt);
+    for (const v of traffic.cars) {
+      if (v.mode === 'parked' || Math.abs(v.vLong) < 3) continue;
+      if (Math.abs(v.y - this.y) > 2.5) continue;
+      const n = v.nearest(this.x, this.z);
+      if (dist2(n.x, n.z, this.x, this.z) < 0.8) {
+        if (this.hitCd <= 0) {
+          this.hitCd = 1;
+          this.game.damagePlayer(Math.abs(v.vLong) * 1.6, 'vehicle');
+        }
+        // out of its path, to whichever side you were already on
+        const f = v.forward, rx = this.x - v.x, rz = this.z - v.z;
+        const side = (rx * f.z - rz * f.x) >= 0 ? 1 : -1;
+        const out = v.halfWid + 0.9 - Math.abs(rx * f.z - rz * f.x);
+        if (out > 0) { this.x += f.z * side * (out + 0.3); this.z -= f.x * side * (out + 0.3); }
+      }
+    }
+  }
+
+  /** Where water is drawn at (x, z): its surface, or null. The boats' rule --
+   *  ground under the sea's plane is sea whatever the 10 m mask says. */
+  waterAt(x, z) {
+    const wl = this.world.waterLevelAt(x, z);
+    return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null;
+  }
+
+  /** The lowest the camera may go over the water at its own point, or null
+   *  when there is no water there or the player is under the surface. */
+  camWaterFloor(targetY) {
+    const wl = this.waterAt(this.camPos.x, this.camPos.z);
+    if (wl === null || (!this.swimming && targetY < wl - 0.5)) return null;
+    return wl + 0.4;
+  }
+
+  startSwim(wl, splash) {
+    this.swimming = true;
+    const st = this.swimSt;
+    st.u = 0.6; st.tu = 0; st.w = 0; st.pitch = this.h.group.rotation.x;
+    this.poseBlend.snap(this.h, 0.3);
+    // (after the snap: the blend starts from the pose you saw)
+    this.fighter.reset(); this.fighter.gun.visible = false;
+    // where you went in, not snapped to the swimming depth (standing on the
+    // water for the first frames); a fall carries you under (st.plunge)
+    this.y = Math.min(this.y, wl - SWIM_FEET);
+    st.plunge = Math.max(-8, Math.min(0, this.vy));
+    this.vy = 0; this.grounded = true; this.fellFrom = 0;
+    this.speed = Math.min(this.speed, 1.5);
+    this.h.locks = null;
+    if (splash && this.game.onSplash) this.game.onSplash(this.x, wl, this.z, 6);
+    if (this.game.onSwim) this.game.onSwim(true);
+  }
+
+  /**
+   * SWIMMING: in water deeper than your chest you are off your feet, lying
+   * along the surface at a front crawl -- 1.8 m/s, 2.8 sprinting -- steered
+   * like walking. You come out onto anything you can climb from the water: a
+   * shelving shore (it gets shallow and you stand), a dock's float or a boat
+   * landing within 1.3 m of the surface; a sea wall or a pier deck higher than
+   * that stops you. ENTER beside a boat climbs in, as on land. Returns false
+   * once you are on your feet again.
+   */
+  updateSwim(dt, input) {
+    const wl = this.waterAt(this.x, this.z);
+    if (wl === null) return this.endSwim(this.city.groundAt(this.x, this.z, this.y + 1));
+    const mag = Math.hypot(input.x, input.y);
+    let target = 0;
+    if (mag > 0.12) {
+      const ang = Math.atan2(-input.x, -input.y) + this.camYaw + Math.PI;
+      this.heading += clamp(angleWrap(ang - this.heading), -3 * dt, 3 * dt);
+      target = (input.sprint ? 2.8 : 1.8) * clamp(mag, 0, 1);
+    }
+    this.speed = damp(this.speed, target, 2.5, dt);
+    const nx = G.clampToMap(this.x + Math.sin(this.heading) * this.speed * dt);
+    const nz = G.clampToMap(this.z + Math.cos(this.heading) * this.speed * dt);
+    const wlN = this.waterAt(nx, nz);
+    const gN = this.city.groundAt(nx, nz, (wlN !== null ? wlN : wl) + 1.4);
+    if (wlN === null || gN > (wlN !== null ? wlN : wl) - SWIM_DEPTH) {
+      // shallows or something to climb onto: stand up there, if it is in reach
+      if (gN <= wl + 1.3) { this.x = nx; this.z = nz; return this.endSwim(gN); }
+      this.speed *= 0.5;
+    } else if (!this.blocked(nx, nz)) { this.x = nx; this.z = nz; }
+    else if (this.speed > 0.3) {
+      // A float's curb (a solid, so boats and walkers stop at it): swimming
+      // into it, you haul yourself over onto the deck behind it if that is in
+      // reach of the water.
+      const fx = Math.sin(this.heading), fz = Math.cos(this.heading);
+      for (const k of [0.9, 1.4, 2.0, 2.6]) {
+        const lx = this.x + fx * k, lz = this.z + fz * k, gl = this.city.groundAt(lx, lz, wl + 1.4);
+        if (gl > wl - 0.3 && gl <= wl + 1.3 && !this.blocked(lx, lz)) { this.x = lx; this.z = lz; return this.endSwim(gl); }
+      }
+    }
+    // lying along the surface to swim, upright with the head out to tread;
+    // `w` blends the two (it switched in one frame at 0.35 m/s)
+    const st = this.swimSt;
+    st.w = damp(st.w, smooth(clamp((this.speed - 0.2) / 0.5, 0, 1)), 3, dt);
+    st.plunge = damp(st.plunge || 0, 0, 6, dt);
+    this.y = damp(this.y + st.plunge * dt, wl - lerp(SWIM_TREAD, SWIM_FEET, st.w), 4, dt);
+    this.vy = 0; this.grounded = true;
+    // the camera follows the surface, not your feet (1.3 m down, treading)
+    this.camFootY = this.camFootY == null ? wl - SWIM_FEET : damp(this.camFootY, wl - SWIM_FEET, 10, dt);
+    const g = this.h.group;
+    g.position.set(this.x, this.y, this.z);
+    g.rotation.y = this.heading;
+    st.pitch = damp(st.pitch, lerp(UPRIGHT, PRONE, st.w), 4, dt);
+    g.rotation.x = st.pitch;
+    poseSwim(this.h, st, dt, wl, this.speed, this._onStroke || (this._onStroke = (x, z) => {
+      if (this.game.onSwimStroke) this.game.onSwimStroke(x, this.waterAt(x, z) ?? this.y, z);
+    }));
+    if (this.poseBlend.active) this.poseBlend.apply(this.h, dt, st.pitch);
+    return true;
+  }
+
+  endSwim(ground) {
+    this.poseBlend.snap(this.h, 0.3);
+    this.clearSwim(false);
+    this.y = ground; this.vy = 0; this.grounded = true;
+    this.speed = Math.min(this.speed, 1.2);
+    if (this.game.onSwim) this.game.onSwim(false);
+    return false;
+  }
+
+  /**
+   * Off the swim pose: upright, and every bone's rotation zeroed, because the
+   * walk does not write every axis of every bone (an elbow's twist, a
+   * thigh's) and would otherwise keep the last stroke's. `cancelBlend` drops
+   * any cross-fade too (into a vehicle, a respawn).
+   */
+  clearSwim(cancelBlend = true) {
+    this.swimming = false;
+    this.h.group.rotation.x = 0;
+    this.h.locks = null;
+    for (const bone of this.h.bones) bone.rotation.set(0, 0, 0);
+    this.h.bones[BONES.hips].position.set(0, this.swimSt.hipY, 0);
+    if (cancelBlend) this.poseBlend.t = this.poseBlend.dur;
+  }
+
+  /** Is airborne plane v inside a building (below its roof) or a landmark's
+   *  solid? Sampled at its nose, middle and tail. */
+  planeHits(v) {
+    const f = v.forward, hl = v.halfLen * 0.9;
+    for (const k of [1, 0, -1]) {
+      const x = v.x + f.x * hl * k, z = v.z + f.z * hl * k, y = v.y + (v.spec.roof || 2) * 0.4;
+      for (const b of this.city.buildingsNear(x, z, 40)) {
+        if (y > b.y + b.h || y < b.y - 2) continue;
+        const c = Math.cos(-b.rot), s = Math.sin(-b.rot), dx = x - b.x, dz = z - b.z;
+        if (Math.abs(dx * c - dz * s) < b.w / 2 + 0.6 && Math.abs(dx * s + dz * c) < b.d / 2 + 0.6) return true;
+      }
+      if (this.city.landmarkHit && this.city.landmarkHit(x, z, 1.2, y)) return true;
+    }
+    return false;
+  }
+
+  blocked(x, z) {
+    // Trunks and poles. `blocked` is tried on each axis separately by the
+    // caller, so a circle here lets you slide around a tree rather than
+    // sticking to it.
+    if (this.city.obstacleHit(x, z, 0.32, this.y)) return true;
+    // A CAR IS SOLID ON FOOT. Only trunks, poles and buildings stopped a
+    // walker, so you walked through every parked car and bus in the city.
+    // Each vehicle's body as its rectangle, grown by your 0.32 m, within its
+    // height; tried per axis by the caller, so you slide along a door.
+    const T = this._traffic;
+    if (T) for (const v of T.cars) {
+      if (v.spec.rail || v.dead) continue;
+      const dx = x - v.x, dz = z - v.z;
+      if (dx * dx + dz * dz > 400) continue;
+      if (this.y > v.y + (v.spec.roof || 1.6) || this.y < v.y - 1.2) continue;
+      const f = v.forward;
+      if (Math.abs(dx * f.x + dz * f.z) < v.halfLen + 0.32 && Math.abs(dx * f.z - dz * f.x) < v.halfWid + 0.32) return true;
+    }
+    // ...and so is a train (main.js trainBlock: freight, Link, the streetcar)
+    if (this.trainBlock && this.trainBlock(x, z, this.y, 0.32)) return true;
+    const near = this.city.buildingsNear(x, z, 6);
+    for (const b of near) {
+      const c = Math.cos(-b.rot), s = Math.sin(-b.rot);
+      const dx = x - b.x, dz = z - b.z;
+      const lx = dx * c - dz * s, lz = dx * s + dz * c;
+      // Below the base as well as above the roof: on foot in a bore under
+      // downtown, the buildings overhead are not walls. "Below" is judged
+      // against the ground under the PLAYER -- b.y is the footprint centroid's
+      // terrain, and a big box on a grade drops metres from centroid to corner.
+      const k = b.h > 55 ? tierScale(b, this.y) : 1;   // narrower over a setback
+      if (Math.abs(lx) < b.w * k / 2 + 0.35 && Math.abs(lz) < b.d * k / 2 + 0.35
+        && this.y < b.y + b.h - 0.5
+        && G.terrainRaw(x, z) - this.y < 2.5) return true;
+    }
+    return false;
+  }
+
+  updateDrive(dt, input, traffic, peds) {
+    const v = this.vehicle;
+    if (!v) { this.onFoot = true; this.h.group.visible = true; return; }
+    const steer = -input.x; // HEADING_SENSE: +steer raises heading, which is a left turn
+    // Analogue where the input is analogue. vehicles.js has always taken a
+    // continuous throttle; a trigger just stops throwing away the resolution,
+    // which is most of what makes a pad feel different from a touch button.
+    const throttle = input.gasAmt != null ? input.gasAmt : (input.gas ? 1 : 0);
+    const brake = input.brakeAmt != null ? input.brakeAmt : (input.brake ? 1 : 0);
+
+    // Water is against the LOCAL surface, the same law the on-foot path above
+    // already follows -- and this was the one place that never learned it. The
+    // test used to be `v.y < -1.2 && G.isWater(...)`, which only ever describes
+    // the sea: with Green Lake at 50.3 m and Lake Union at 5, a car on a lake
+    // bed never came close to tripping it, so you could drive the bottom of
+    // Green Lake at 200 km/h, dry and at full throttle.
+    //
+    // Sampled before the step, so an engine that has drowned cannot make power
+    // for the frame that put it under.
+    // BOTH tests, and the mask is the one that says whether this is water.
+    // waterLevelAt answers over a lake's axis-aligned BOUNDING BOX, so inside
+    // Green Lake's rectangle it reports 50.3 m for the dry park ringing it --
+    // the trap this file's own notes describe, which once deleted 105 real
+    // trees. Height alone would cut the engine on a street that happens to dip
+    // below the lake beside it. The level is a reference height, not a region.
+    const wl = this.world.waterLevelAt(v.x, v.z);
+    // A floatplane's pontoons make water a surface, not a hazard.
+    const wading = !v.spec.floats && !v.spec.boat && !v.spec.amphib && wl !== null && G.isWater(v.x, v.z) && v.y < wl - 0.35;
+
+    v.update(dt, {
+      // A drowned engine makes no power and the wheels find nothing to push
+      // against, which is what makes water read as water and not as a
+      // differently-coloured road.
+      throttle: wading ? 0 : throttle,
+      brake, steer, handbrake: input.hand ? 1 : 0,
+      // Planes read the stick's other axis: pull back (stick down, +y) to
+      // climb, aviation-style. Cars ignore it.
+      pitch: input.y || 0,
+      // A helicopter's collective: GAS / BRAKE on touch (relabelled UP /
+      // DOWN), the triggers on a pad, Q / Z on a keyboard -- whose W and S
+      // are already the stick. `pilot` spools the rotor.
+      lift: input.liftAmt != null ? input.liftAmt : throttle,
+      sink: input.sinkAmt != null ? input.sinkAmt : brake,
+      pilot: true,
+    });
+    if (v.wheelieDone) { if (this.game.onWheelie) this.game.onWheelie(v.wheelieDone); v.wheelieDone = 0; }
+    // A tank aims, fires, and flattens what it has driven into, before the
+    // buildings push back (tank.js).
+    if (v.spec.tank && this.game.onTankStep) this.game.onTankStep(v, dt, input);
+    if (wading) {
+      v.vLong -= v.vLong * Math.min(1, 2.6 * dt);
+      v.vLat -= v.vLat * Math.min(1, 2.6 * dt);
+    }
+    // Scraping a wall is many frames of contact, not many crashes. Debounced
+    // like vehicle-vehicle damage: unthrottled, holding the accelerator into a
+    // building killed the player in about a sixth of a second.
+    this.crashCd -= dt;
+    this.scrapeT -= dt;
+    // An airborne plane is not scraping along building WALLS -- the box test
+    // is 2D and would wreck it against towers it is far above. Overflight is
+    // handled by altitude; only a grounded plane collides like a vehicle.
+    // A helicopter always collides: it hovers among the towers at walking
+    // pace, and the test already frees anything above a roof.
+    // A monorail runs on its beam, 7 m over the street and through MoPOP: it
+    // collides with nothing but its buffers and the other train (monorail.js).
+    // A balloon's basket collides too, like the helicopter; its envelope is
+    // kept out of towers by updateBalloon.
+    const airborne = (v.spec.plane && v.airborne && !v.spec.heli && !v.spec.balloon) || v.spec.rail;
+    // ...BUT A PLANE THAT FLIES INTO A BUILDING HITS IT. With the wall test
+    // off in the air, a plane went straight through every tower downtown.
+    // Here the test is 3D: the nose, the middle and the tail against each
+    // footprint nearby AND below its roof, and against the landmarks' solids
+    // (the Needle, the stadiums), which carry their own height bands. A hit
+    // is the end of the airframe (main.js onCarDestroyed: the fireball).
+    if (v.spec.plane && v.airborne && !v.spec.heli && !v.spec.balloon && !v.dead && this.planeHits(v)) {
+      v.planeHit = true;   // before damage(): onCarDestroyed reads it
+      v.damage(1e4, true);
+      this.game.onCrash(60, false);
+    }
+    const impact = airborne ? 0 : collideWithBuildings(v, this.city, (imp) => {
+      if (this.crashCd > 0) return;
+      this.crashCd = 0.4;
+      this.game.onCrash(imp, false);
+      // an armoured body (spec.armor, the Wedge) takes the hit for you too
+      if (imp > 8) this.game.damagePlayer(imp * 0.5 * (v.spec.armor || 1), 'crash');
+    });
+    // A boat's shore is its wall: updateBoat refuses the move and leaves the
+    // impact, which is a crash like any other.
+    if ((v.spec.boat || v.afloat) && v.shoreHit > 3 && this.crashCd <= 0) {
+      this.crashCd = 0.4;
+      this.game.onCrash(v.shoreHit, false);
+      if (v.shoreHit > 9) this.game.damagePlayer(v.shoreHit * 0.4, 'crash');
+    }
+    // Contact, held briefly: the grinding loop follows it (see audio.js).
+    if (impact > 0 || ((v.spec.boat || v.afloat) && v.shoreHit > 0)) this.scrapeT = 0.15;
+    // Deep enough to be over the roof rather than merely through a ford. One
+    // test now, against the local surface, instead of a separate sea-only path.
+    if (wading && v.y < wl - 1.6) this.game.onCarSank(v);
+    if (v.dead) this.game.onCarDestroyed(v);
+  }
+
+  /**
+   * ATTACK. Armed, a shot along the camera's line from the barrel, the gun
+   * raised two-handed (melee.js). Unarmed, the next punch of the combo --
+   * jab, cross, hook -- soft-locked onto the nearest pedestrian within
+   * 2.2 m in front of the camera; the hit is dealt on the punch's hit frame
+   * (landPunch), not here. Nothing in the water or under a parachute.
+   */
+  attack(traffic, peds) {
+    if (this.onFoot) {
+      if (this.swimming || this.sky) { this.attackCd = 0.3; return; }
+      const F = this.fighter;
+      if (this.armed && this.ammo > 0) {
+        this.attackCd = 0.22;
+        this.ammo--;
+        const aim = this.camYaw + Math.PI;
+        const dir = { x: Math.sin(aim), z: Math.cos(aim) };
+        F.fire(aim);
+        // From the barrel once the gun is up; on the press that raises it,
+        // from where the barrel is going (shoulder height, an arm out).
+        const m = F.aimW > 0.85 && F.gun.visible ? F.muzzle(this._muz || (this._muz = new THREE.Vector3()))
+          : (this._muz || (this._muz = new THREE.Vector3())).set(this.x + dir.x * 0.75, this.y + 1.45 * this.h.scale, this.z + dir.z * 0.75);
+        this.game.onGunshot(m.x, m.y, m.z, dir);
+        this.camKick = Math.max(this.camKick, 0.3);
+        // hitscan against peds and cars, from the barrel -- as far as the
+        // first wall. The height test FOLLOWS THE GROUND: a target counts when
+        // its feet are within 1.2 m of the ground under it plus the height you
+        // stand above yours (a roof, a platform), so a hill street is
+        // shootable up and down it while a ped on another floor, a deck over
+        // you or a roof is not in the line. (A level test at the barrel's
+        // height missed anything more than ~1 m lower or 1.5 m higher: every
+        // slope of 6 % or more at 10 m.)
+        const reach = this.wallDist(m, dir, 60);
+        const city = this.city, stand = this.y - city.groundAt(this.x, this.z, this.y + 1);
+        for (let t = 0.6; t < reach; t += 1.2) {
+          const hx = m.x + dir.x * t, hz = m.z + dir.z * t;
+          const yRef = city.groundAt(hx, hz, m.y) + stand;
+          const p = peds.hitAt(hx, hz, 0.9, 34, true, this.x, this.z, yRef);
+          if (p) return;
+          for (const v of traffic.cars) {
+            if (dist2(v.x, v.z, hx, hz) < v.radius * v.radius && Math.abs(v.y - yRef) < 1.5) {
+              v.damage(9, true);
+              this.game.onShotVehicle(v, hx, hz);
+              return;
+            }
+          }
+        }
+      } else {
+        this.attackCd = F.punch(this.meleeTarget(peds));
+      }
+    } else {
+      this.attackCd = 0.4;
+      // in a tank ATTACK is the main gun (tank.js reads it)
+      if (!this.vehicle || !this.vehicle.spec.tank) this.game.onHorn();
+    }
+  }
+
+  /**
+   * How far a level shot from `m` along `dir` (unit, horizontal) gets before
+   * a building or a landmark's solid stops it, up to `max` metres. The
+   * buildings are the footprint boxes the tank's cast uses (tank.js
+   * rayBuilding): the slab test in each one's own frame, at the shot's height.
+   */
+  wallDist(m, dir, max) {
+    const city = this.city;
+    let best = max;
+    // the barrel's height over the terrain, so a building on a slope blocks
+    // at the same height of itself as one on the flat (only a shooter above
+    // the roofline, on a deck or a roof, fires over it)
+    const hs = m.y - G.terrainHeight(m.x, m.z);
+    for (const b of city.buildingsNear(m.x + dir.x * max * 0.5, m.z + dir.z * max * 0.5, max * 0.5 + 8)) {
+      if (hs > b.h) continue;
+      const c = Math.cos(-b.rot), s = Math.sin(-b.rot), px = m.x - b.x, pz = m.z - b.z;
+      const ox = px * c - pz * s, oz = px * s + pz * c, dx = dir.x * c - dir.z * s, dz = dir.x * s + dir.z * c;
+      let t0 = 0, t1 = best, hit = true;
+      for (let i = 0; i < 2 && hit; i++) {
+        const o = i ? oz : ox, d = i ? dz : dx, h = (i ? b.d : b.w) / 2;
+        if (Math.abs(d) < 1e-9) { if (o < -h || o > h) hit = false; continue; }
+        let a = (-h - o) / d, e = (h - o) / d;
+        if (a > e) { const q = a; a = e; e = q; }
+        if (a > t0) t0 = a;
+        if (e < t1) t1 = e;
+        if (t0 > t1) hit = false;
+      }
+      if (hit && t0 < best) best = t0;
+    }
+    if (city.landmarkHit) {
+      for (let t = 1; t < best; t += 1.5) {
+        const x = m.x + dir.x * t, z = m.z + dir.z * t;
+        if (city.landmarkHit(x, z, 0.15, G.terrainHeight(x, z) + hs)) { best = t; break; }
+      }
+    }
+    return best;
+  }
+
+  /** The punch's soft lock: the nearest pedestrian (or cop) on your feet's
+   *  level within 2.2 m, inside 60 deg either side of the camera's line. */
+  meleeTarget(peds) {
+    const cx = Math.sin(this.camYaw + Math.PI), cz = Math.cos(this.camYaw + Math.PI);
+    let best = null, bd = 2.2;
+    for (const p of peds.peds) {
+      if (p.state === 'down' || Math.abs(p.y - this.y) > 1.3) continue;
+      const dx = p.x - this.x, dz = p.z - this.z, d = Math.hypot(dx, dz);
+      if (d >= bd || d < 1e-3 || dx * cx + dz * cz < 0.5 * d) continue;
+      best = p; bd = d;
+    }
+    return best;
+  }
+
+  /** The hit frame: the locked pedestrian if the turn brought them in front
+   *  and in reach, else whoever is in front of the fist. */
+  landPunch(peds) {
+    const F = this.fighter, P = F.hitPunch;
+    const fx = Math.sin(this.heading), fz = Math.cos(this.heading);
+    let hit = null;
+    const t = F.target;
+    if (t && t.state !== 'down' && peds.peds.includes(t) && Math.abs(t.y - this.y) < 1.3) {
+      const dx = t.x - this.x, dz = t.z - this.z, d = Math.hypot(dx, dz);
+      if (d < 1.9 && dx * fx + dz * fz > 0.55 * d) hit = peds.strike(t, P.dmg, true, this.x, this.z);
+    }
+    if (!hit) hit = peds.hitAt(this.x + fx * 0.95, this.z + fz * 0.95, 0.75, P.dmg, true, this.x, this.z);
+    const fist = this.h.bones[P.arm > 0 ? BONES.handR : BONES.handL].getWorldPosition(this._fist || (this._fist = new THREE.Vector3()));
+    if (hit) this.camKick = Math.max(this.camKick, 0.6);
+    this.lastPunch = { name: P.name, hit, x: fist.x, y: fist.y, z: fist.z };
+    if (this.game.onPunch) this.game.onPunch(hit, fist.x, fist.y, fist.z);
+  }
+
+  updateCamera(dt, input) {
+    // the shake decays by time, not by frame (applyCamera draws it)
+    if (this.shake) this.shake *= Math.pow(0.86, dt * 60);
+    this.camKick *= Math.exp(-9 * dt);
+    // A vehicle with a rig of its own takes the camera when it wants it (a
+    // Link train in a bore: link.js camRig).
+    if (!this.onFoot && this.vehicle && this.vehicle.camRig && this.vehicle.camRig(this, dt)) return;
+    // A FIGHTER IN THE AIR GETS A CAMERA IN ITS OWN FRAME. Every other rig
+    // hangs off a yaw round the world's up, which through a loop swings the
+    // camera 180 degrees at the top and flips the horizon. This one sits
+    // behind and above the jet along ITS axes, with its up, damped, so a loop
+    // reads as the world wheeling round the cockpit.
+    if (!this.onFoot && this.vehicle.spec.fighter && this.vehicle.airborne && this.vehicle.q) {
+      const v = this.vehicle, q = v.q;
+      const F = new THREE.Vector3(0, 0, 1).applyQuaternion(q), U = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+      const dist = 17 + clamp(Math.abs(v.vLong) * 0.03, 0, 5);
+      const want = F.clone().multiplyScalar(-dist).addScaledVector(U, 4.2);
+      if (!this.camRel) this.camRel = new THREE.Vector3().subVectors(this.camPos, new THREE.Vector3(v.x, v.y, v.z));
+      this.camRel.lerp(want, 1 - Math.exp(-5 * dt));
+      this.camPos.set(v.x, v.y, v.z).add(this.camRel);
+      if (!this.camUp) this.camUp = new THREE.Vector3(0, 1, 0);
+      this.camUp.lerp(U, 1 - Math.exp(-4 * dt)).normalize();
+      this.camLook.set(v.x, v.y, v.z).addScaledVector(F, 14).addScaledVector(U, 1.6);
+      this.camYaw = Math.atan2(this.camRel.x, this.camRel.z);
+      const floor = this.city.groundAt(this.camPos.x, this.camPos.z, null, 0) + 1.5;
+      if (this.camPos.y < floor) this.camPos.y = floor;
+      const wf = this.camWaterFloor(v.y);
+      if (wf !== null && this.camPos.y < wf) this.camPos.y = wf;
+      this.camLookRel = null;
+      return;
+    }
+    this.camUp = null;
+    const target = new THREE.Vector3();
+    let dist, height, lookH;
+    // A plane's rig is RIGID IN TRANSLATION: the boom and look offsets are
+    // damped, the plane's own motion is followed exactly. Damping the world
+    // position instead leaves the camera trailing the plane, and how far
+    // depends on dt: at 116 m/s and a rate of 9 the lag is 12.0 m on a 16 ms
+    // frame and 9.7 m on a 60 ms hitch. A phone streaming chunks does not hold
+    // an even clock, so the boom surged in and out by metres with every hitch,
+    // which from the seat reads as the camera jumping about.
+    // a skydiver falls at 55 m/s: rigid like a plane, or the damped rig trails 10 m above them
+    const plane = (!this.onFoot && this.vehicle.spec.plane) || !!this.sky;
+    this.camClamp = null;
+    if (this.onFoot) {
+      target.set(this.x, this.camFootY != null ? this.camFootY : this.y, this.z);
+      dist = this.camShort || 4.6;
+      height = this.sky ? 4 : 1.55;
+      lookH = 1.45;
+      // Swimming, the body is a few centimetres proud of the water: a
+      // walker's rig looked 1.3 m over the surface and left the swimmer a
+      // smudge at the bottom of the frame. Closer, lower, looking at him.
+      if (this.swimming) { dist = this.camShort || 4.0; height = 1.5; lookH = 0.9; }
+    } else {
+      const v = this.vehicle;
+      target.set(v.x, v.y, v.z);
+      const sp = Math.abs(v.vLong);
+      dist = 7.6 + v.spec.len * 0.42 + clamp(sp * 0.09, 0, 3.4);
+      height = 3.2 + v.spec.roof * 0.42;
+      lookH = 1.05;
+      // an articulated bus's rear section reaches 13.5 m behind the front's
+      // centre: the boom clears it
+      if (v.spec.artic) { dist += 8; height += 1.2; }
+      // and a tiller's trailer 17 m behind its tractor's nose
+      else if (v.spec.towed) { dist += 10; height += 1.6; }
+      if (v.spec.balloon) {
+        // Far enough back to see the whole balloon -- 22 m of it over the
+        // basket -- and looking at the middle of it, so the basket sits low
+        // in the frame and the envelope fills the top.
+        dist = 30 + clamp(sp * 0.3, 0, 4);
+        height = 6.5;
+        lookH = 9.5;
+      } else if (v.spec.heli) {
+        // Closer than a plane's -- a helicopter is flown at a hover and at
+        // walking pace as often as flat out, and from 15 m back at a hover it
+        // is a speck -- lengthening with speed. The look point stays on the
+        // cabin, with a little of the climb in it like the planes'.
+        dist = 12.5 + clamp(sp * 0.07, 0, 4.5);
+        height = 3.4 - clamp((v.vy || 0) * 0.10, -1, 1);
+        lookH = 1.7 + clamp((v.vy || 0) * 0.12, -1, 1);
+      } else if (v.spec.bicycle) {
+        // close behind and over the rider's shoulder: a bicycle is small, and
+        // the car rig put it a speck in the middle of the screen
+        dist = 4.4 + clamp(sp * 0.08, 0, 1.2);
+        height = 1.9;
+        lookH = 1.15;
+      } else if (v.spec.freight) {
+        // over the lead locomotive, looking up the line: 360 m of train
+        // behind the cab, and a locomotive 4.8 m tall
+        dist = 21 + clamp(sp * 0.18, 0, 5);
+        height = 8.6;
+        lookH = 3.4;
+      } else if (v.spec.streetcar) {
+        // behind and over a 13 m streetcar, close enough to see the hill
+        // tilt it: the counterbalance is the view
+        dist = 11.5 + clamp(sp * 0.25, 0, 2.5);
+        height = 4.6;
+        lookH = 2.4;
+      } else if (v.spec.link) {
+        // over the lead car's roof, looking down the line: 118 m of train
+        // behind the cab
+        dist = 15 + clamp(sp * 0.12, 0, 4);
+        height = 7.2;
+        lookH = 2.6;
+      } else if (v.spec.monorail) {
+        // Over the roof of the leading car, looking down the beam ahead: a
+        // 37 m train behind the operator's seat, so any lower and the boom
+        // sits inside it.
+        dist = 12 + clamp(sp * 0.12, 0, 3.5);
+        height = 6.2;
+        lookH = 2.6;
+      } else if (v.spec.tank) {
+        // high and well back: you aim over the turret, and the crosshair
+        // must not sit behind it
+        dist = 12.5 + clamp(sp * 0.1, 0, 2);
+        height = 4.6;
+        lookH = 2.5;
+      } else if (v.spec.plane) {
+        // further back and higher, and the camera rides the CLIMB: keep some
+        // of the vertical velocity in the look target so pulling up reads as
+        // the horizon dropping, which is what flying looks like from a chase
+        // camera.
+        dist = 15.5 + clamp(sp * 0.05, 0, 3);
+        height = 4.6 - clamp((v.vy || 0) * 0.18, -1.6, 1.6);
+        lookH = 2.2 + clamp((v.vy || 0) * 0.22, -2, 2);
+        // an airliner is five light aircraft long: the rig scales with it
+        if (v.spec.len > 30) { const k = v.spec.len / 17; dist *= k; height *= k * 0.8; lookH *= k * 0.9; }
+      }
+      // A big stunt jump pulls the boom back and up a little, eased by
+      // stunts.js, so the landing zone comes into view before you reach it.
+      if (this.stuntCam > 0.001) { dist += 4.5 * this.stuntCam; height += 1.8 * this.stuntCam; }
+      if ((v.spec.heli || v.spec.balloon) && v.airborne && v.vLong > -2) {
+        // A helicopter yaws on the spot, and the stick flies it along the
+        // nose, so the camera has to come round behind a pedal turn at the
+        // hover as well -- or "forward" stops meaning up the screen. Slower
+        // at the hover (a turn reads as a turn), tighter with speed.
+        const d = angleWrap(v.heading + Math.PI - this.camYaw);
+        this.camYaw += d * clamp(dt * (1.1 + 1.4 * clamp(sp / 20, 0, 1)), 0, 0.25);
+      } else if (v.vLong > 3 && !(v.spec.tank && this.lookT < 3)) {
+        // ease the camera behind the car when driving forward (in a tank,
+        // only once you have stopped aiming: the turret follows the camera)
+        // in a slide (your car's tyres: vehicles.js _tyres) it looks half way
+        // along where the car is going, not only where its nose is -- a drift
+        // is framed from behind the line, not from behind the bonnet
+        const drift = v.dynW !== undefined && v.slipAngle ? clamp(v.slipAngle, -0.9, 0.9) * 0.5 : 0;
+        const want = v.heading + drift + Math.PI;
+        const d = angleWrap(want - this.camYaw);
+        this.camYaw += d * clamp(dt * 1.5 * clamp(sp / 12, 0, 1), 0, 0.25);
+      }
+    }
+    const cp = Math.cos(this.camPitch);
+    // Pull the camera in if a building sits between it and the player -- without
+    // this you spend half of downtown looking at the inside of a wall.
+    //
+    // Not for a plane in the air. Measured on a low pass over First Hill the
+    // boom snapped from 17 m to 1.5 m and back as each tower went by, 24 frames
+    // at a time -- a plane at 110 m/s passes a tower in a fraction of a second,
+    // so clipping one briefly is far less violent than slamming the camera into
+    // the tailplane. On the ground a plane taxis like a car and keeps the pull.
+    // A helicopter keeps the pull-in below 25 m/s: at a hover beside a tower
+    // the boom otherwise sits inside it, and the rigid rig below damps the
+    // change in boom length anyway.
+    const airPlane = !!this.sky || (plane && this.vehicle.airborne && !(this.vehicle.spec.heli && this.vehicle.speed < 25) && !this.vehicle.spec.balloon);
+    if (!airPlane) dist = this.clearCamDist(target, dist * cp, height) / Math.max(cp, 0.15);
+    const wanted = new THREE.Vector3(
+      target.x + Math.sin(this.camYaw) * dist * cp,
+      target.y + height + Math.sin(this.camPitch) * dist,
+      target.z + Math.cos(this.camYaw) * dist * cp
+    );
+    const rate = this.onFoot ? 14 : 9;
+    // Vertical follows far slower than horizontal. The ground under a walking
+    // player is a staircase -- 22 cm off a kerb, another step across a junction
+    // -- and a camera tracking it at the horizontal rate reproduces every one of
+    // those as a jolt. Horizontal has to stay tight or the camera feels loose,
+    // so the two rates are deliberately different.
+    const rateY = this.onFoot ? 4.5 : 7;
+    if (plane) {
+      // Damp the OFFSET, follow the plane. See the note at the top.
+      if (!this.camRel) this.camRel = new THREE.Vector3().subVectors(this.camPos, target);
+      this.camRel.x = damp(this.camRel.x, wanted.x - target.x, rate, dt);
+      this.camRel.y = damp(this.camRel.y, wanted.y - target.y, rateY, dt);
+      this.camRel.z = damp(this.camRel.z, wanted.z - target.z, rate, dt);
+      this.camPos.addVectors(target, this.camRel);
+    } else {
+      this.camRel = null;
+      this.camPos.x = damp(this.camPos.x, wanted.x, rate, dt);
+      this.camPos.y = damp(this.camPos.y, wanted.y, rateY, dt);
+      this.camPos.z = damp(this.camPos.z, wanted.z, rate, dt);
+    }
+    // Keep the camera out of the ground, but clamp against a SMOOTHED floor.
+    // The raw surface is discontinuous, so clamping straight to it turns every
+    // kerb the camera passes over into a snap of its own. It doesn't need 22 cm
+    // of kerb accuracy either, hence the zero lift.
+    //
+    // ASK FOR THE FLOOR THE PLAYER IS ON, not the highest one. `groundAt` with
+    // no reference height returns the HIGHEST deck at that point, which is the
+    // right answer for a spawn and completely wrong here: inside a bore the
+    // highest deck is the street overhead. Measured 150 m into the SR-99 tunnel
+    // -- deck 7.1, roof 12.5, ground above 31.5 -- the camera's floor came back
+    // as 31.5 and the clamp shoved the camera 20 m up through the roof and out
+    // onto the surface. Passing the target's height picks the deck the player
+    // is actually driving on.
+    const rawFloor = this.city.groundAt(this.camPos.x, this.camPos.z, target.y, 0) + 1.1;
+    this.camFloor = this.camFloor == null ? rawFloor : damp(this.camFloor, rawFloor, 8, dt);
+    if (this.camPos.y < this.camFloor) { this.camPos.y = this.camFloor; this.camClamp = 'floor'; }
+    // AND OVER THE WATER. The water planes are drawn from above only, so a boom
+    // dragged under the surface showed sky where the lake was and the boat
+    // flying through the air. While the player is at or over the surface (a
+    // boat, a swim, a floatplane, a bridge) the camera keeps over the water at
+    // the CAMERA's point; in a bore under the water the player is below it and
+    // nothing changes.
+    const camWater = this.camWaterFloor(target.y);
+    if (camWater !== null && this.camPos.y < camWater) { this.camPos.y = camWater; this.camClamp = 'water'; }
+    // AND UNDER THE CEILING. Nothing else stops it: clearCamDist only tests
+    // buildings, so a bore's walls and roof are invisible to the boom, and the
+    // rig rides 3.2 + roof*0.42 above the car plus sin(pitch)*dist -- looking
+    // up 15 deg adds about 3 m, which is more headroom than a 5.4 m bore has.
+    // Only clamp where there really is ground overhead, so an open road is
+    // untouched.
+    // Measured off the TARGET's deck, not the damped camera floor. camFloor
+    // lags by design -- that is what stops kerbs snapping the camera -- so a
+    // ceiling derived from it lags too, and the camera was still coming
+    // through the roof on 2 of 24 stations while the lag caught up.
+    //
+    // ONLY WHERE THE TARGET IS REALLY IN A BORE. "Ground above the camera is
+    // higher than a bore roof over the target's deck" is also true of any
+    // hillside behind a plane: for a plane 150 m up, `deckAt` is the terrain
+    // under it, so wherever the ground 17 m back stood 4.8 m higher the camera
+    // was put back on the hillside -- measured on the Boeing Field route, 246
+    // clamped frames in 12 bursts, the camera up to 187 m below the plane and
+    // 159 m of jump in a single frame, then springing back at 9 m a frame.
+    // A bore has ground over the TARGET and the target on its
+    // deck; both are asked. The hold carries the clamp ~1 s past the mouth on
+    // the way out, while the boom is still inside with the car already clear.
+    const deckAt = this.city.groundAt(target.x, target.z, target.y, 0);
+    const ceil = deckAt + TUNNEL_H - 0.6;
+    const inBore = target.y - deckAt < 2.5 && (G.terrainHeight(target.x, target.z) > deckAt + TUNNEL_H * 0.5
+      || (this.city.camBlockOver && this.city.camBlockOver(target.x, target.z, deckAt)));
+    this.camBoreHold = inBore ? 1 : Math.max(0, (this.camBoreHold || 0) - dt);
+    // RAW ground over the camera, not the carved: at a mouth the camera is
+    // over the cutting's dug end, where the carved ground is low but the
+    // headwall and its top slab stand -- the carved test let it rise into them
+    // with the car 15 m inside (the view went black).
+    if (this.camBoreHold > 0 && target.y - deckAt < 2.5
+      && G.terrainRaw(this.camPos.x, this.camPos.z) > ceil && this.camPos.y > ceil) {
+      this.camPos.y = ceil;
+      this.camClamp = 'ceil';
+    }
+    if (plane) {
+      // Clamps are real positions, so the next frame damps from where the
+      // camera actually ended up rather than from where it wanted to be.
+      this.camRel.subVectors(this.camPos, target);
+      // The look point rides the plane too; only its height offset is damped.
+      if (!this.camLookRel) this.camLookRel = new THREE.Vector3().subVectors(this.camLook, target);
+      this.camLookRel.x = damp(this.camLookRel.x, 0, 16, dt);
+      this.camLookRel.y = damp(this.camLookRel.y, lookH, 12, dt);
+      this.camLookRel.z = damp(this.camLookRel.z, 0, 16, dt);
+      this.camLook.addVectors(target, this.camLookRel);
+      return;
+    }
+    this.camLookRel = null;
+    this.camLook.set(
+      damp(this.camLook.x, target.x, 16, dt),
+      damp(this.camLook.y, target.y + lookH, this.onFoot ? 6 : 12, dt),
+      damp(this.camLook.z, target.z, 16, dt)
+    );
+  }
+
+  /** Longest horizontal boom length behind the target that stays out of geometry. */
+  clearCamDist(target, want, height) {
+    const ux = Math.sin(this.camYaw), uz = Math.cos(this.camYaw);
+    const near = this.city.buildingsNear(target.x, target.z, want + 8);
+    const nb = near.length;
+    // ...and portal walls (world._camBlock): the same boxes, but tested on
+    // their exact height band -- a camera in the bore passes under a lintel
+    const pg = this.city.camBlockGrid;
+    if (pg) {
+      const r = want + 8, seen = new Set();
+      for (let cx = Math.floor((target.x - r) / 32); cx <= Math.floor((target.x + r) / 32); cx++) {
+        for (let cz = Math.floor((target.z - r) / 32); cz <= Math.floor((target.z + r) / 32); cz++) {
+          const l = pg.get(cx * 100003 + cz);
+          if (l) for (const b of l) if (!seen.has(b)) { seen.add(b); near.push(b); }
+        }
+      }
+    }
+    if (!near.length) return want;
+    const camY = target.y + height;
+    for (let d = 1.6; d <= want; d += 0.7) {
+      const sx = target.x + ux * d, sz = target.z + uz * d;
+      for (let bi = 0; bi < near.length; bi++) {
+        const b = near[bi];
+        if (camY > b.y + b.h || camY < b.y - (bi < nb ? 3 : 0.3)) continue;
+        // a mouth card stops the boom only with the target inside the bore
+        if (b.card && (target.x - b.x) * b.card[0] + (target.z - b.z) * b.card[1] <= 0) continue;
+        const c = Math.cos(-b.rot), s = Math.sin(-b.rot);
+        const dx = sx - b.x, dz = sz - b.z;
+        const lx = dx * c - dz * s, lz = dx * s + dz * c;
+        if (Math.abs(lx) < b.w / 2 + 0.5 && Math.abs(lz) < b.d / 2 + 0.5) {
+          return Math.max(1.5, d - 0.9);
+        }
+      }
+    }
+    return want;
+  }
+
+  applyCamera(camera) {
+    camera.position.copy(this.camPos);
+    if (this.shake > 0.002) {
+      const k = this.shake * 0.35;
+      camera.position.x += (Math.random() - 0.5) * k;
+      camera.position.y += (Math.random() - 0.5) * k;
+      camera.position.z += (Math.random() - 0.5) * k;
+    } else this.shake = 0;
+    if (this.camUp) camera.up.copy(this.camUp); else camera.up.set(0, 1, 0);
+    // a punch landing (or a shot) flicks the view up and in a touch
+    const k = this.camKick * this.camKick;
+    if (k > 1e-4) {
+      const l = this._kickLook || (this._kickLook = new THREE.Vector3());
+      l.copy(this.camLook); l.y += 0.10 * k;
+      camera.position.lerp(this.camLook, 0.03 * k);
+      camera.lookAt(l);
+    } else camera.lookAt(this.camLook);
+  }
+
+  respawn(x, z) {
+    if (this.vehicle) {
+      this.vehicle.mode = 'free';
+      this.vehicle = null;
+    }
+    this.onFoot = true;
+    this.h.group.visible = true;
+    this.endSky();
+    if (this.swimming) this.clearSwim();
+    this.fighter.reset();
+    this.x = x;
+    this.z = z;
+    this.y = this.city.groundAt(x, z, null);
+    this.vy = 0;
+    this.speed = 0;
+    this.health = 100;
+    this.dead = false;
+    this.camPos.set(x + Math.sin(this.camYaw) * 4.6, this.y + 1.6, z + Math.cos(this.camYaw) * 4.6);
+  }
+}

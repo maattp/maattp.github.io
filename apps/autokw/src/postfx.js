@@ -1,0 +1,603 @@
+// A small hand-rolled post chain: bloom + FXAA + grade + vignette.
+//
+// Deliberately not three's EffectComposer -- this ships no addon files, and it
+// lets every render target be UnsignedByte. Half-float targets are unreliable
+// on iOS (silent black screens), so the scene is tone-mapped during the main
+// pass and everything downstream works in gamma space, which is also where you
+// want FXAA anyway.
+
+import * as THREE from './three.js';
+
+const QUAD = new THREE.PlaneGeometry(2, 2);
+const CAM = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+const VERT = `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}`;
+
+const BRIGHT = `
+uniform sampler2D tScene;
+uniform float threshold;
+uniform float softness;
+varying vec2 vUv;
+void main() {
+  vec3 c = texture2D(tScene, vUv).rgb;
+  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  float k = smoothstep(threshold, threshold + softness, l);
+  gl_FragColor = vec4(c * k, 1.0);
+}`;
+
+// Separable 9-tap gaussian, sampled with bilinear pairs.
+const BLUR = `
+uniform sampler2D tSrc;
+uniform vec2 dir;
+varying vec2 vUv;
+void main() {
+  vec3 sum = texture2D(tSrc, vUv).rgb * 0.2270270270;
+  sum += texture2D(tSrc, vUv + dir * 1.3846153846).rgb * 0.3162162162;
+  sum += texture2D(tSrc, vUv - dir * 1.3846153846).rgb * 0.3162162162;
+  sum += texture2D(tSrc, vUv + dir * 3.2307692308).rgb * 0.0702702703;
+  sum += texture2D(tSrc, vUv - dir * 3.2307692308).rgb * 0.0702702703;
+  gl_FragColor = vec4(sum, 1.0);
+}`;
+
+// Depth-aware blur, for the AO buffer only.
+//
+// The Gaussian above is depth-blind, so smoothing the AO with it drags a
+// building's contact darkening out over the road behind it. Each tap is
+// weighted by how close its LINEAR depth is to the centre's, relative to the
+// centre's distance.
+//
+// The old version weighted by exp(-|dz| * 0.02 / (1 - z)) on the device depth.
+// (z - zc) / (1 - zc) is already the relative distance difference, so that
+// weight was exp(-0.02 * dd/d): a tap twice as far away still counted 98 %.
+// The "depth-aware" blur was depth-blind, and it is what spread contact
+// darkening across the tarmac in front of every wall.
+const AOBLUR = `
+precision highp float;
+uniform sampler2D tSrc;
+uniform sampler2D tDepth;
+uniform vec2 dir;
+uniform vec2 dTexel;
+uniform float cNear;
+uniform float cFar;
+uniform float sharp;
+varying vec2 vUv;
+
+float dist(vec2 uv) {
+  // Read the full-res depth texel under this AO texel's centre, the same one
+  // the AO pass used, so the two agree on which surface a pixel is.
+  vec2 d = (floor(uv / dTexel) + 0.5) * dTexel;
+  float z = texture2D(tDepth, d).x;
+  return cNear * cFar / (cFar - z * (cFar - cNear));
+}
+
+void main() {
+  float dc = dist(vUv);
+  float sum = texture2D(tSrc, vUv).r * 0.2270270270;
+  float wsum = 0.2270270270;
+  for (int i = 0; i < 2; i++) {
+    float off = i == 0 ? 1.3846153846 : 3.2307692308;
+    float base = i == 0 ? 0.3162162162 : 0.0702702703;
+    for (int s = 0; s < 2; s++) {
+      vec2 uv = vUv + dir * off * (s == 0 ? 1.0 : -1.0);
+      float w = base * exp(-abs(dist(uv) - dc) / dc * sharp);
+      sum += texture2D(tSrc, uv).r * w;
+      wsum += w;
+    }
+  }
+  gl_FragColor = vec4(vec3(sum / wsum), 1.0);
+}`;
+
+const COMPOSITE = `
+uniform sampler2D tScene;
+uniform sampler2D tBloom;
+uniform vec2 texel;
+uniform float bloomStrength;
+uniform float vignette;
+uniform float grain;
+uniform float time;
+uniform float fxaa;
+uniform float grade;
+uniform float dither;
+uniform sampler2D tAO;
+uniform float aoAmount;
+uniform float aoBounce;
+varying vec2 vUv;
+
+// FXAA 3.11 console variant -- cheap, and plenty at phone resolutions.
+vec3 fxaaFilter(vec2 uv) {
+  vec3 rgbNW = texture2D(tScene, uv + vec2(-1.0, -1.0) * texel).rgb;
+  vec3 rgbNE = texture2D(tScene, uv + vec2( 1.0, -1.0) * texel).rgb;
+  vec3 rgbSW = texture2D(tScene, uv + vec2(-1.0,  1.0) * texel).rgb;
+  vec3 rgbSE = texture2D(tScene, uv + vec2( 1.0,  1.0) * texel).rgb;
+  vec3 rgbM  = texture2D(tScene, uv).rgb;
+  vec3 luma = vec3(0.299, 0.587, 0.114);
+  float lNW = dot(rgbNW, luma), lNE = dot(rgbNE, luma);
+  float lSW = dot(rgbSW, luma), lSE = dot(rgbSE, luma);
+  float lM = dot(rgbM, luma);
+  float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));
+  float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));
+  if (lMax - lMin < lMax * 0.18) return rgbM;
+  vec2 dir = vec2(-((lNW + lNE) - (lSW + lSE)), ((lNW + lSW) - (lNE + lSE)));
+  float reduce = max((lNW + lNE + lSW + lSE) * 0.03125, 0.0078125);
+  float rcpDir = 1.0 / (min(abs(dir.x), abs(dir.y)) + reduce);
+  dir = clamp(dir * rcpDir, -8.0, 8.0) * texel;
+  vec3 a = 0.5 * (texture2D(tScene, uv + dir * (1.0 / 3.0 - 0.5)).rgb +
+                  texture2D(tScene, uv + dir * (2.0 / 3.0 - 0.5)).rgb);
+  vec3 b = a * 0.5 + 0.25 * (texture2D(tScene, uv - dir * 0.5).rgb +
+                             texture2D(tScene, uv + dir * 0.5).rgb);
+  float lB = dot(b, luma);
+  return (lB < lMin || lB > lMax) ? a : b;
+}
+
+void main() {
+  vec3 c = fxaa > 0.5 ? fxaaFilter(vUv) : texture2D(tScene, vUv).rgb;
+  // AO before bloom: occlusion belongs to the surface, and applying it after
+  // would let bloom bleed back into the crevices it just darkened.
+  if (aoAmount > 0.0) {
+    float ao = mix(1.0, texture2D(tAO, vUv).r, aoAmount);
+    // Multi-bounce (Jimenez et al. 2016's fit), with the pixel's own value
+    // standing in for albedo: a bright surface gets light back from what
+    // occludes it, a dark one does not. This is also what keeps AO -- which
+    // here has to multiply sunlight as well as ambient -- from dimming sunlit
+    // pavement while it still deepens the shade.
+    float alb = clamp(dot(c, vec3(0.2126, 0.7152, 0.0722)), 0.0, 0.9) * aoBounce;
+    float A = 2.0404 * alb - 0.3324, B = -4.7951 * alb + 0.6417, C = 2.7552 * alb + 0.6903;
+    c *= max(ao, ((ao * A + B) * ao + C) * ao);
+  }
+  c += texture2D(tBloom, vUv).rgb * bloomStrength;
+
+  if (grade > 0.5) {
+  // Toe and shoulder.
+  //
+  // The grade was a smoothstep, which is symmetric: it pushed the shadows
+  // DOWN as hard as it pushed the highlights up. Road, glass and grazing-angle
+  // water all clamped to near zero and the tower tops all clamped near one, so
+  // both ends of the image carried no separation at all. A toe that only acts
+  // on the darkest values keeps detail out of the crush; a shoulder that only
+  // acts above the knee keeps the bright faces from flattening.
+  c += vec3(0.010) * pow(1.0 - c, vec3(4.0));
+  c -= vec3(0.09) * pow(max(c - 0.62, vec3(0.0)), vec3(1.5));
+  c = mix(c, c * c * (3.0 - 2.0 * c), 0.05);
+  // Saturation compensation for ACES.
+  //
+  // The curve desaturates saturated hues, and greens worst. Measured across
+  // the beauty set the moment tone mapping actually started running, mean
+  // frame saturation fell 32% in the park, 35% in the residential shot and
+  // 59% on the street -- foliage that had been tuned against no curve at all
+  // came out as pale sage. Every engine shipping ACES puts a boost after it
+  // for the same reason; this is not a look choice, it is paying the curve
+  // back what it took.
+  // 1.45 at first; 1.32 alongside the sun-side haze and the darker water
+  // -- at 1.45 the sky, lawns and paint all sat at one shouting intensity.
+  c = mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), c, 1.32);
+  // Split toning: warm the lit side, cool the shade.
+  //
+  // The old grade lifted blue across the WHOLE range and then warmed the whole
+  // range back, which nets out to a flat cast. A sunlit city separates by
+  // TEMPERATURE as much as by value -- the key is warm and the shade is lit by
+  // blue sky -- so the push is keyed to luminance: highlights toward amber,
+  // shadows toward the sky's blue, midtones untouched. Arithmetic only.
+  float gl = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c += vec3(0.022, 0.008, -0.018) * smoothstep(0.42, 0.92, gl);
+  c += vec3(-0.014, 0.002, 0.020) * (1.0 - smoothstep(0.04, 0.38, gl));
+  }
+
+  float d = distance(vUv, vec2(0.5));
+  c *= 1.0 - vignette * smoothstep(0.35, 0.95, d);
+
+  // Dither from PIXEL coordinates, not from uv.
+  //
+  // A sin-of-dot hash on uv is periodic along both screen axes, so it lays down
+  // a regular comb across the sky and a diagonal weave on the water -- an
+  // aligned pattern beating against a smooth gradient, which reads as a broken
+  // shader and is worse than the banding it was meant to hide. Hashing integer
+  // pixel coordinates with a per-frame offset gives actual noise, and the
+  // triangular PDF (two uniforms differenced) is what removes the banding
+  // rather than merely covering it.
+  vec2 px = vUv / texel + vec2(fract(time * 71.0) * 977.0, fract(time * 53.0) * 331.0);
+  float n1 = fract(sin(dot(floor(px), vec2(12.9898, 78.233))) * 43758.5453);
+  float n2 = fract(sin(dot(floor(px) + 17.0, vec2(39.3468, 11.135))) * 24634.6345);
+  c += dither * ((n1 - n2) * (0.5 / 255.0)) + (n1 - 0.5) * grain;
+
+  gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+}`;
+
+// Screen-space ambient occlusion.
+//
+// Reads the DEPTH TEXTURE the scene pass already filled -- an integer depth
+// attachment, not a half-float colour target, so it stays inside the rule that
+// keeps this chain working on iOS. It also costs no extra draw calls: the depth
+// is a by-product of the pass that was happening anyway.
+//
+// What it measures: for each pixel, the surface points ACTUALLY DRAWN within
+// `radius` of it (a 12-tap screen-space spiral, 8 on a phone), and how far
+// each rises above this pixel's tangent plane. The version this replaced asked
+// the opposite question -- "is a 3D sample point near the surface buried?" --
+// and at a grazing angle that is decided by which side of a pixel the sample
+// rounds to: one pixel of road 20 m out spans ~0.35 m of depth, far more than
+// any bias. Reconstructing the occluder's real position and projecting it onto
+// the normal makes a flat surface read exactly zero however it is viewed.
+//
+// Each tap contributes e^2 * falloff * heightGate:
+//   e          sine of the occluder's elevation above the tangent plane, minus
+//              `cosBias` (normal noise). SQUARED because cosine-weighted
+//              occlusion of a half-space blocked up to elevation t is
+//              sin^2(t)/2: a 30 cm step 1 m away blocks next to nothing, a wall
+//              blocks half the sky. Linear in e, a kerb scored half a wall.
+//   falloff    1 - d^2/R^2, the range check -- a pole 20 m in front of the road
+//              is not an occluder of the road.
+//   heightGate smoothstep(hMin, hMax, height above the plane). The paved lifts
+//              are not occluders: pavements stand 0.45-0.9 m proud of the
+//              terrain beside them (ROAD_LIFT, WALK_LIFT and the chord error on
+//              slopes), which is a rendering convenience, not a kerb, and scored
+//              honestly it drew a dark band along every verge. 0.7-1.2 m keeps
+//              car doors, walls and building bases and drops the steps.
+// The radius grows with distance (up to 3x) so building-to-street contact
+// still reads from an aerial, and the whole term fades out by `fadeFar`.
+const SSAO = `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D tDepth;
+uniform mat4 projInv;
+uniform vec2 dTexel;
+uniform vec2 aoTexel;
+uniform float radius;
+uniform float projScale;
+uniform float refDist;
+uniform float growMax;
+uniform float maxPx;
+uniform float strength;
+uniform float cosBias;
+uniform float hMin;
+uniform float hMax;
+uniform float fadeNear;
+uniform float fadeFar;
+
+vec3 viewPosZ(vec2 uv, float z) {
+  vec4 v = projInv * vec4(uv * 2.0 - 1.0, z * 2.0 - 1.0, 1.0);
+  return v.xyz / v.w;
+}
+vec3 viewPos(vec2 uv) { return viewPosZ(uv, texture2D(tDepth, uv).x); }
+// Every depth read is snapped to a texel CENTRE and unprojected there. The
+// depth texture is nearest-filtered, so an unsnapped uv reads the depth of one
+// point and unprojects it at another: at a grazing angle that puts the
+// "surface" up to half a pixel's depth span off its own plane.
+vec2 snapUv(vec2 uv) { return (floor(uv / dTexel) + 0.5) * dTexel; }
+
+vec3 viewNormal(vec2 uv, vec3 P) {
+  vec3 l = viewPos(uv - vec2(dTexel.x, 0.0));
+  vec3 r = viewPos(uv + vec2(dTexel.x, 0.0));
+  vec3 d = viewPos(uv - vec2(0.0, dTexel.y));
+  vec3 u = viewPos(uv + vec2(0.0, dTexel.y));
+  vec3 dx = abs(l.z - P.z) < abs(r.z - P.z) ? P - l : r - P;
+  vec3 dy = abs(d.z - P.z) < abs(u.z - P.z) ? P - d : u - P;
+  vec3 n = normalize(cross(dx, dy));
+  // Face the normal toward the CAMERA (-P), not toward +Z. The old test was
+  // n.z > 0, which is only the same thing when the camera looks level or
+  // down: pitch the view up by a degree and open ground has n.z < 0, so it
+  // was flipped to point INTO the road, every nearer ground sample counted
+  // as buried, and the tarmac went dark -- the grazing-angle clouds.
+  return dot(n, P) > 0.0 ? -n : n;
+}
+
+void main() {
+  vec2 ip = floor(gl_FragCoord.xy);
+  vec2 uv = snapUv(vUv);
+  float z = texture2D(tDepth, uv).x;
+  if (z >= 0.9999) { gl_FragColor = vec4(1.0); return; }
+  vec3 P = viewPosZ(uv, z);
+  float dist = -P.z;
+  float fade = 1.0 - smoothstep(fadeNear, fadeFar, dist);
+  if (fade <= 0.0) { gl_FragColor = vec4(1.0); return; }
+  vec3 N = viewNormal(uv, P);
+
+  float R = radius * clamp(dist / refDist, 1.0, growMax);
+  float rPx = min(R * projScale / dist, maxPx);
+  R = rPx * dist / projScale;
+  float R2 = R * R;
+
+  float noise = fract(52.9829189 * fract(dot(ip, vec2(0.06711056, 0.00583715))));
+  float ang0 = noise * 6.2831853;
+  float occ = 0.0;
+  for (int i = 0; i < SAMPLES; i++) {
+    float a = (float(i) + 0.5 + 0.5 * fract(noise * 7.13)) / float(SAMPLES);
+    float ang = ang0 + a * TURNS * 6.2831853;
+    vec2 suv = snapUv(uv + vec2(cos(ang), sin(ang)) * (rPx * a) * aoTexel);
+    if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) continue;
+    vec3 v = viewPos(suv) - P;
+    float vv = dot(v, v);
+    float vn = dot(v, N);
+    float c = vn * inversesqrt(vv + 1e-6);
+    float e = max(0.0, c - cosBias) / (1.0 - cosBias);
+    occ += e * e * max(0.0, 1.0 - vv / R2) * smoothstep(hMin, hMax, vn);
+  }
+  occ /= float(SAMPLES);
+  float ao = clamp(1.0 - occ * strength * fade, 0.0, 1.0);
+  gl_FragColor = vec4(vec3(ao), 1.0);
+}`;
+
+function pass(fragmentShader, uniforms) {
+  const mat = new THREE.ShaderMaterial({
+    uniforms, vertexShader: VERT, fragmentShader,
+    depthTest: false, depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(QUAD, mat);
+  mesh.frustumCulled = false;
+  // Each pass keeps its own scene. Re-parenting one quad between passes every
+  // frame is scene-graph churn on exactly the tiers trying to claw back time.
+  const scene = new THREE.Scene();
+  scene.add(mesh);
+  mesh.userData.scene = scene;
+  return mesh;
+}
+
+function makeRT(w, h, depth) {
+  const rt = new THREE.WebGLRenderTarget(Math.max(2, w), Math.max(2, h), {
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    type: THREE.UnsignedByteType, // never HalfFloat: iOS silently renders black
+    depthBuffer: !!depth,
+    stencilBuffer: false,
+  });
+  rt.texture.colorSpace = THREE.SRGBColorSpace;
+  rt.texture.generateMipmaps = false;
+  return rt;
+}
+
+export class PostFX {
+  constructor(renderer) {
+    this.renderer = renderer;
+    this.enabled = true;
+    this.scenePass = new THREE.Scene();
+    this.quadScene = new THREE.Scene();
+
+    this.fx = { bloom: true, ssao: true, grain: true, vignette: true, fxaa: true, grade: true, dither: true };
+    this.base = { bloom: 0.34, grain: 0.0025, vignette: 0.10, fxaa: 1, ao: 1.0 };
+    this.bloomPasses = 2;
+    // Set by the pause-menu switch; kept apart from the tier so a debug session
+    // survives an automatic quality change.
+    this.forceOff = false;
+    this._tierEnabled = true;
+    this.sceneRT = makeRT(2, 2, true);
+    // Make three tone-map INTO this target.
+    //
+    // WebGLRenderer applies `toneMapping` only when the current render target
+    // is null -- i.e. only when drawing straight to the canvas -- or when the
+    // target is flagged as an XR target:
+    //
+    //   if ( currentRenderTarget === null || currentRenderTarget.isXRRenderTarget === true )
+    //
+    // The whole scene is drawn into this target, so ACES and
+    // `toneMappingExposure` were never running at ALL. The consequences were
+    // everywhere and each was chased as something else: highlights had no
+    // shoulder and hard-clipped to flat 255 plateaus (read as missing
+    // textures on the glass towers), and exposure was a dial connected to
+    // nothing -- moving it 1.02 to 1.55 changed the output by less than a
+    // thousandth of a stop, which is what finally gave it away.
+    //
+    // The flag is the documented condition three tests, and it is the only
+    // way to get tone mapping applied before an 8-bit target quantises the
+    // highlights. Pinned to the vendored r160; re-check it on a three bump.
+    this.sceneRT.isXRRenderTarget = true;
+    // Integer depth attachment, filled by the scene pass at no extra cost. This
+    // is what SSAO reads; a separate depth prepass would double the draw calls.
+    this.sceneRT.depthTexture = new THREE.DepthTexture(2, 2);
+    this.sceneRT.depthTexture.type = THREE.UnsignedIntType;
+    this.bloomA = makeRT(2, 2, false);
+    this.bloomB = makeRT(2, 2, false);
+    this.aoA = makeRT(2, 2, false);
+    this.aoB = makeRT(2, 2, false);
+    this.ssaoOn = true;
+
+    this.bright = pass(BRIGHT, {
+      tScene: { value: null }, threshold: { value: 0.86 }, softness: { value: 0.22 },
+    });
+    this.blur = pass(BLUR, { tSrc: { value: null }, dir: { value: new THREE.Vector2() } });
+    this.aoBlur = pass(AOBLUR, {
+      tSrc: { value: null }, tDepth: { value: null },
+      dir: { value: new THREE.Vector2() }, dTexel: { value: new THREE.Vector2() },
+      cNear: { value: 0.5 }, cFar: { value: 9000 }, sharp: { value: 12 },
+    });
+    this.ssao = pass(SSAO, {
+      tDepth: { value: null },
+      projInv: { value: new THREE.Matrix4() },
+      dTexel: { value: new THREE.Vector2() },
+      aoTexel: { value: new THREE.Vector2() },
+      radius: { value: 2.0 },
+      projScale: { value: 1 },
+      refDist: { value: 25 },
+      growMax: { value: 3 },
+      maxPx: { value: 70 },
+      strength: { value: 14 },
+      cosBias: { value: 0.1 },
+      hMin: { value: 0.7 },
+      hMax: { value: 1.2 },
+      fadeNear: { value: 90 },
+      fadeFar: { value: 220 },
+    });
+    this.ssao.material.defines = { SAMPLES: 12, TURNS: '7.0' };
+    this.composite = pass(COMPOSITE, {
+      tScene: { value: null }, tBloom: { value: null },
+      texel: { value: new THREE.Vector2() },
+      bloomStrength: { value: 0.34 },
+      vignette: { value: 0.10 },
+      grain: { value: 0.0025 },
+      time: { value: 0 },
+      fxaa: { value: 1 },
+      grade: { value: 1 },
+      dither: { value: 1 },
+      tAO: { value: null },
+      aoAmount: { value: 1.0 },
+      aoBounce: { value: 1.0 },
+    });
+  }
+
+  setSize(w, h, pixelRatio) {
+    const W = Math.max(2, Math.floor(w * pixelRatio));
+    const H = Math.max(2, Math.floor(h * pixelRatio));
+    if (this._w === W && this._h === H) return;
+    this._w = W; this._h = H;
+    this.sceneRT.setSize(W, H);
+    const bw = Math.max(2, Math.floor(W / 4)), bh = Math.max(2, Math.floor(H / 4));
+    this.bloomA.setSize(bw, bh);
+    this.bloomB.setSize(bw, bh);
+    this.sceneRT.depthTexture.image.width = W;
+    this.sceneRT.depthTexture.image.height = H;
+    this.sceneRT.depthTexture.needsUpdate = true;
+    // Half res: AO is a low-frequency term and full res buys nothing visible.
+    const aw = Math.max(2, Math.floor(W / 2)), ah = Math.max(2, Math.floor(H / 2));
+    this.aoA.setSize(aw, ah);
+    this.aoB.setSize(aw, ah);
+    this.ssao.material.uniforms.aoTexel.value.set(1 / aw, 1 / ah);
+    this.ssao.material.uniforms.dTexel.value.set(1 / W, 1 / H);
+    this.aoBlur.material.uniforms.dTexel.value.set(1 / W, 1 / H);
+    this._aw = aw; this._ah = ah;
+    this.composite.material.uniforms.texel.value.set(1 / W, 1 / H);
+    this._bw = bw; this._bh = bh;
+  }
+
+  get target() {
+    return this.enabled ? this.sceneRT : null;
+  }
+
+  /** Run the chain. The scene must already have been rendered into `target`. */
+  render(time, camera) {
+    if (!this.enabled) return;
+    const r = this.renderer;
+    const draw = (mesh, rt) => {
+      r.setRenderTarget(rt);
+      r.render(mesh.userData.scene, CAM);
+    };
+
+    if (this.ssaoOn && this.fx.ssao && camera) {
+      const su = this.ssao.material.uniforms;
+      su.tDepth.value = this.sceneRT.depthTexture;
+      su.projInv.value.copy(camera.projectionMatrixInverse);
+      // AO-res pixels spanned by one metre at one metre's distance.
+      su.projScale.value = camera.projectionMatrix.elements[5] * 0.5 * this._ah;
+      draw(this.ssao, this.aoA);
+      // Two cheap separable passes: the sample kernel is noisy by design and
+      // unblurred AO reads as dirt on the lens.
+      const bu2 = this.aoBlur.material.uniforms;
+      bu2.tDepth.value = this.sceneRT.depthTexture;
+      bu2.cNear.value = camera.near;
+      bu2.cFar.value = camera.far;
+      bu2.tSrc.value = this.aoA.texture;
+      bu2.dir.value.set(1 / this._aw, 0);
+      draw(this.aoBlur, this.aoB);
+      bu2.tSrc.value = this.aoB.texture;
+      bu2.dir.value.set(0, 1 / this._ah);
+      draw(this.aoBlur, this.aoA);
+      this.composite.material.uniforms.tAO.value = this.aoA.texture;
+    }
+
+    if (this.fx.bloom) {
+    this.bright.material.uniforms.tScene.value = this.sceneRT.texture;
+    draw(this.bright, this.bloomA);
+
+    const bu = this.blur.material.uniforms;
+    for (let i = 0; i < this.bloomPasses; i++) {
+      const spread = 1 + i * 1.6;
+      bu.tSrc.value = this.bloomA.texture;
+      bu.dir.value.set(spread / this._bw, 0);
+      draw(this.blur, this.bloomB);
+      bu.tSrc.value = this.bloomB.texture;
+      bu.dir.value.set(0, spread / this._bh);
+      draw(this.blur, this.bloomA);
+    }
+    }
+
+    const cu = this.composite.material.uniforms;
+    cu.tScene.value = this.sceneRT.texture;
+    cu.tBloom.value = this.bloomA.texture;
+    cu.time.value = time;
+    r.setRenderTarget(null);
+    draw(this.composite, null);
+  }
+
+  dispose() {
+    for (const rt of [this.sceneRT, this.bloomA, this.bloomB, this.aoA, this.aoB]) rt.dispose();
+    for (const m of [this.bright, this.blur, this.aoBlur, this.composite, this.ssao]) m.material.dispose();
+    QUAD.dispose();
+  }
+
+  /**
+   * SSAO is ON at `high`, and only there.
+   *
+   * It shipped off for a long time because it roughly halved street-level
+   * brightness (street 0.156 -> 0.076 lower-half median) and laid dark clouds
+   * over open tarmac. Three bugs made that, each of which looked like "SSAO is
+   * just too strong": the depth-derived normal was flipped whenever the camera
+   * pitched up (so open ground occluded itself -- which is why the street,
+   * shopfront and facade shots, all looking slightly up, lost half their
+   * value while the residential shot, looking down, lost 9 %); the occlusion
+   * test was decided by pixel rounding at grazing angles; and the "bilateral"
+   * blur's depth weight was 50x too weak to reject anything. See the SSAO and
+   * AOBLUR comments above for each.
+   */
+
+  /**
+   * Individual effect switches, for finding out which pass is responsible for
+   * something. A single "post on/off" is no use when the question is *which*
+   * of eight screen-space passes is putting a haze over the picture -- the only
+   * way to answer that is to turn them off one at a time while looking at it.
+   *
+   * Quality sets the BASE strengths; these flags gate them. Keeping the two
+   * separate matters because `setQuality` runs on every tier change and would
+   * otherwise wipe whatever was being debugged.
+   */
+  /** Master switch for the whole chain, independent of the quality tier. */
+  setPostEnabled(on) {
+    this.forceOff = !on;
+    this.enabled = this._tierEnabled && !this.forceOff;
+  }
+
+  setFx(name, on) {
+    this.fx[name] = on;
+    this.applyFx();
+  }
+
+  applyFx() {
+    const cu = this.composite.material.uniforms;
+    const f = this.fx;
+    cu.bloomStrength.value = f.bloom ? this.base.bloom : 0;
+    cu.grain.value = f.grain ? this.base.grain : 0;
+    cu.vignette.value = f.vignette ? this.base.vignette : 0;
+    cu.fxaa.value = f.fxaa ? this.base.fxaa : 0;
+    cu.grade.value = f.grade ? 1 : 0;
+    cu.dither.value = f.dither ? 1 : 0;
+    cu.aoAmount.value = this.ssaoOn && f.ssao ? this.base.ao : 0;
+  }
+
+  setQuality(q, phone = false) {
+    this.enabled = q !== 'low' && !this.forceOff;
+    this._tierEnabled = q !== 'low';
+    // FXAA is a single fullscreen tap and the context has no MSAA, so keep it on
+    // for medium too -- dropping it entirely was a visible edge-quality cliff.
+    this.base.fxaa = q === 'low' ? 0 : 1;
+    this.base.bloom = q === 'high' ? 0.34 : 0.26;
+    // Three blur iterations is six fullscreen passes. Two is most of the look
+    // for two thirds of the fill cost, and fill is what a phone runs out of.
+    this.bloomPasses = q === 'high' ? 2 : 1;
+    // Film grain is separate from the dither and much larger; at 0.016 it was
+    // reading as texture across the sky now that the dither is per-pixel.
+    this.base.grain = q === 'high' ? 0.0025 : 0;
+    // SSAO is the most expensive pass here, so it is the first thing to go:
+    // `high` only. A phone at `high` takes 8 taps instead of 12 -- the AO is
+    // half res and blurred, and the spiral's coverage survives the cut; the
+    // taps are what cost, since each one is a dependent depth read.
+    this.ssaoOn = q === 'high';
+    const taps = phone ? 8 : 12;
+    const m = this.ssao.material;
+    if (m.defines.SAMPLES !== taps) {
+      m.defines = { SAMPLES: taps, TURNS: phone ? '5.0' : '7.0' };
+      m.needsUpdate = true;
+    }
+    this.applyFx();
+  }
+}

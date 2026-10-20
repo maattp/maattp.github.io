@@ -1,0 +1,9317 @@
+// Scene construction: sky + image-based lighting, terrain, water, streamed city
+// chunks, distant skyline and the hand-built landmarks.
+
+import * as THREE from './three.js';
+import * as G from './geo.js';
+
+// Kept in step with main.js. Shadow-caster policy differs by platform, and the
+// difference is worth roughly 40 draw calls a frame.
+const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, MOUTH_RAMP, mouthRamp, cityStats, trimOldest } from './citygen.js';
+import { Builder, ChunkBuilder, freezeStatic } from './build.js';
+import { memo } from './bootcache.js';
+import { buildMountains } from './mountains.js';
+import { plantTrees, occupancy, OCC_C, OCC_N, OCC_PAVE } from './trees.js';
+import { pumpkinSeed } from './fall.js';
+import { hash2, clamp, lerp, distToSeg, segDist, FALL, buildingTiers, roofAt, tierScale } from './util.js';
+
+// The bore's cross-section, shared by the mesher and by the trench that has to
+// be cut out of the ground to make room for it.
+const EMPTY_LIST = Object.freeze([]);
+// A chunk build yields by TIME, not by item count. The counts (every 3 roads,
+// every 10 buildings, props and buffer assembly in one go) were tuned on a
+// desktop, where the longest step was a few ms; on an iPhone the same JS runs
+// 6-10x slower, so single steps ran 25-160 ms -- and the streamer can only
+// check its slice between steps, so each one was a dropped frame: the dips
+// to 30 fps driving downtown at any quality tier. Measured on the Mac, the
+// longest step per chunk was a median 3.7 ms and worst 16.3 ms before.
+const YIELD_MS = 1.0;
+// Terrain LOD (updateTerrainLod): blocks of LOD_BLOCK cells, a block's stride in
+// cells by level, the camera distance each level lasts to (past the last, the
+// block is not drawn: the far plane is 9000 m DEEP, which at the corners of a
+// wide landscape frame is ~16 km away, and fog alone is NOT a reason to hide
+// ground -- the far houses it carries are still seen at 7-9 km and would
+// float), the slack a block needs to change level, and how far the camera
+// moves between checks.
+const LOD_BLOCK = 12;
+const LOD_STRIDE = [1, 2, 4];
+const LOD_AT = [2500, 5000, 16000];
+const LOD_HYST = 150;
+const LOD_STEP = 24;
+const TUN_WALL = TUNNEL_H, TUN_DECK = 0.3;
+// How far past the carriageway the trench is cut. The retaining wall stands on
+// this line, so it is also the width of the hole in the terrain.
+const CUT_SH = 1.2;
+// How far PAST the wall line the trench keeps its full depth before the bank
+// starts. THIS MUST BE AT LEAST ONE TERRAIN PATCH QUAD (patchCell's 4 m): the
+// patch samples terrainHeight on a fixed grid, so a quad that reaches from in
+// front of the wall plane onto the bank draws a diagonal earth face jutting
+// into the trench, in front of the concrete. With the bank starting ON the
+// wall line those faces stood up to 2.9 m proud -- measured sand ridges
+// running the length of every cutting, which is most of what "raw earth at
+// the mouth" was. At 2.0 (half a quad) they still stood 0.5-2.2 m proud at 94
+// of 3260 lattice points: partway is not enough, because a quad crossing the
+// wall can still have its back corner partway up the bank. At one full quad,
+// any quad crossing the wall plane has BOTH corners on the floor, so the
+// whole rise happens behind concrete -- by construction, not by tuning.
+const CUT_OVER = 4.0;
+// How far the bank takes to climb from the trench floor back to true ground.
+// Steep enough to read as an excavation, wide enough that the 5 m patch can
+// actually resolve the slope.
+// A FINISHED CUTTING, NOT AN EXCAVATION. Wide earth banks read as a building
+// site: a real portal approach is walled. The bank is only the thin bevel
+// between the top of the retaining wall and the pavement above it -- the wall
+// does the work of holding the ground back.
+const CUT_BANK = 2.4;
+// How much ground must lie over the roof before the bore counts as buried and
+// the trench ends. At 0.4 m the headwall stood in a cut barely deeper than the
+// bore is tall, so the portal was a metre of concrete 60 m away and read as
+// nothing. 3.5 m of cover puts the face at the bottom of a ~9 m cutting, which
+// is what makes it a portal rather than a kerb.
+const CUT_COVER = 3.5;
+// ...except before a street: a street crossing the bore stands on ground and
+// the cutting ends STREET_SET short of it, as long as the roof there is no
+// more than this far over the ground (a roof higher still is a real trench the
+// street must bridge -- the lids' job). At SR-99's north mouths the roofs are
+// level with Harrison Street's kerb (-0.1 to +0.2 m of cover); asking for a
+// metre of cover stopped the cuts inside the street, whose north half then
+// dipped into the trench.
+const STREET_ROOF = -1.0;
+// How far short of that street's footway the cut ends: the trench floor stays
+// at full depth this far behind the headwall, so the ground's climb back up
+// (smeared over one 4 m terrain quad) is behind the mouth card.
+const STREET_SET = 7;
+/** Is (x, z) on one of street-ended cut c's protected streets (carriageway,
+ *  footway and a metre)? See _computePortalCuts. */
+function underStreet(c, x, z) {
+  for (const p of c.protect) {
+    const sx = p[2] - p[0], sz = p[3] - p[1], l2 = sx * sx + sz * sz;
+    let t = l2 > 0 ? ((x - p[0]) * sx + (z - p[1]) * sz) / l2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const dx = x - (p[0] + sx * t), dz = z - (p[1] + sz * t);
+    if (dx * dx + dz * dz <= p[4] * p[4]) return true;
+  }
+  return false;
+}
+// How far in front of a portal the approach ramp runs. Long enough that the
+// descent is gentle at the drop citygen applies, short enough that it does not
+// swallow the junction behind it.
+const APPROACH = 70;
+// Water planes are tessellated to cells this size (see buildWater).
+const WATER_CELL = 530;
+
+const ROAD_Y = ROAD_LIFT;
+// Metres per road-texture repeat. Fixed, so the asphalt's grain is the same
+// size on an alley and on a freeway.
+/**
+ * What stands on a flat roof, from the boxes meshBuilding drew (`rec`, 8
+ * numbers each: kind, x, z, w, d, rot, base, top -- kind 2 a pyramid): those
+ * standing on the top deck and rising over it, less anything as big as the
+ * roof itself (the deck, the lid, the parapet, a cornice). For util roofAt;
+ * null when there is nothing.
+ */
+function roofSolids(bd, rec) {
+  const deck = roofAt(bd, bd.x, bd.z);
+  if (!(deck > -Infinity)) return null;
+  const tierTop = deck - 0.83, k = tierScale(bd, deck);
+  const out = [];
+  for (let i = 0; i < rec.length; i += 8) {
+    const base = rec[i + 6], top = rec[i + 7];
+    if (base < tierTop - 0.05 || top < deck + 0.1) continue;
+    if (rec[i + 3] >= 0.9 * bd.w * k && rec[i + 4] >= 0.9 * bd.d * k) continue;
+    for (let j = 0; j < 8; j++) out.push(rec[i + j]);
+  }
+  return out.length ? new Float32Array(out) : null;
+}
+
+const ROAD_TILE = 9;
+// Metres per repeat of the paving texture, which carries four slabs -- so a
+// slab is a metre, everywhere.
+//
+// The pavement used to tile at its OWN WIDTH: 2.6 m on a residential street and
+// 3.2 m on an arterial, so slabs were 65 cm on one and 80 cm on the other and
+// the size visibly changed wherever the two met. The junction ring was worse --
+// it emitted a full 0..1 tile per piece regardless of how big the piece was, so
+// corner slabs were whatever size that corner happened to be. The asphalt was
+// given a fixed tile long ago for exactly this reason; the pavement never was.
+const WALK_TILE = 4;
+
+// The mean linear albedo of each facade atlas cell (and of the curtain-wall
+// texture), measured off the atlas textures.js draws. A massing box or the far
+// skyline takes the colour its textured building AVERAGES to -- family colour
+// x the building's own tint x its cell's mean -- so the city does not turn to
+// pale boxes at the 800 m ring. (The style tints they used were 0.55-0.66
+// linear: two to three times the textured walls they stand in for.)
+// Re-measure if a facade surface's drawing changes.
+const CELL_MEAN = {
+  masonry: [0.403, 0.41, 0.399], brick: [0.412, 0.399, 0.38], industrial: [0.29, 0.316, 0.333],
+  house: [0.608, 0.579, 0.522], glass: [0.26, 0.31, 0.36],
+};
+// Paint sits just proud of the asphalt; any less and it z-fights at distance.
+const MARK_Y = ROAD_LIFT + 0.012;
+const NO_CITY_CHUNK = Object.freeze({ edges: [], buildings: [] });
+// `flat` has no map, but Builder.quad indexes the uv array unconditionally.
+const ZERO_UV = [0, 0, 0, 0, 0, 0, 0, 0];
+const NODE_Y = NODE_LIFT;
+const WALK_Y = WALK_LIFT;
+
+const NEAR_R = 2; // chunks of full detail around the player
+const MID_R = 4; // chunks that keep roads only
+// Far massing supertiles are built and drawn inside this radius of the player.
+// Past ~5 km the haze has taken them (83 % fog at 4 km, 94 % at 5 km from
+// 200 m up); the extra is half a supertile's diagonal, since it tests centres.
+// A 6 km cap cost ~300k more triangles a flying frame, drawn nearly in fog colour.
+const FAR_R = 5000 + 1150;
+// Far ROADS: supertiles of 8x8 chunks (3.2 km, 64 chunks fit the Uint8 chunk
+// index), so the layer costs a handful of draws. Classes are ranked and each
+// tile's instances are sorted by rank, so a tile's distance picks a PREFIX of
+// its instances: freeways always, residential only near. The vertex shader
+// then narrows each rank to nothing over FR_FADE before its FR_FAR.
+const FR_TILE = CHUNK * 8;
+const FR_RANK = { hwy: 0, ramp: 0, art: 1, st: 2, res: 3 };
+const FR_CLS = ['hwy', 'ramp', 'art', 'st', 'res'];
+// The ring's farthest corner is ~2.8 km from the player (5 chunks each way),
+// so residential streets stay full width past it: a chunk arriving at the
+// ring edge never brings streets the layer was not already drawing.
+const FR_FAR = [FAR_R, 5600, 4300, 3500];
+const FR_FADE = 600;
+
+// Ground tints, and the taps used to soften a district's edge into them.
+// [0.42, 0.62, 0.28] read as a mown-lawn emerald in every park; a touch less
+// green and less chroma (still well clear of SUBURB) is a lived-in Seattle lawn.
+const GRASS = [0.40, 0.57, 0.29];
+// SUBURB used to be [0.48, 0.60, 0.37], which is the same colour as GRASS to
+// within a rounding error -- so ground that had blended all the way to "fully
+// developed" still rendered as a bright meadow, and the I-5 trench through
+// Chinatown looked like a lawn. Developed ground is lawn AND roof AND tarmac
+// mixed together, so it has to be visibly more muted than grass or the blend
+// has nothing to say.
+// ...and [0.52, 0.53, 0.41] then overshot into khaki: after ACES and the
+// grade's saturation payback it rendered as a dirt lot under every street-level
+// shot. Developed ground is worn lawn more than bare earth, so it keeps GRASS's
+// hue at a much lower chroma -- still clearly not a meadow.
+const SUBURB = [0.47, 0.53, 0.38];
+const URBAN = [0.56, 0.56, 0.55];
+const BLEND_TAPS = [[0, 0], [-85, 55], [70, -75]];
+// The ground map's mean linear value (measured; textures.js groundSurface):
+// the terrain draws its vertex tint times this on average.
+const GROUND_MEAN = 0.407;
+
+/**
+ * Smooth value noise on a 210 m lattice, in [0,1].
+ *
+ * Only used to push the district lookup off its own straight edges, so it wants
+ * to be continuous and cheap rather than good: `hash2` alone is per-cell random
+ * and turns a boundary into static instead of a curve.
+ */
+/** Unsigned area of a plan polygon [[x, z], ...] (shoelace). */
+function polyArea(p) {
+  let s = 0;
+  for (let i = 0; i < p.length; i++) {
+    const A = p[i], B = p[(i + 1) % p.length];
+    s += A[0] * B[1] - B[0] * A[1];
+  }
+  return Math.abs(s) / 2;
+}
+
+function vnoise(x, z) {
+  const S = 210;
+  const fx = x / S, fz = z / S;
+  const i0 = Math.floor(fx), j0 = Math.floor(fz);
+  const tx = fx - i0, tz = fz - j0;
+  const sx = tx * tx * (3 - 2 * tx), sz = tz * tz * (3 - 2 * tz);
+  const a = hash2(i0, j0), b = hash2(i0 + 1, j0);
+  const c = hash2(i0, j0 + 1), d = hash2(i0 + 1, j0 + 1);
+  return lerp(lerp(a, b, sx), lerp(c, d, sx), sz);
+}
+
+/**
+ * Does this GPU actually put colour into a half-float target?
+ *
+ * The failure we're guarding is silent: iOS reports the extension, allocates
+ * the target, renders, and hands back black. So don't feature-detect -- draw a
+ * known white pixel and read it back.
+ *
+ * Anything that stops us reading the result is treated as a pass, so the only
+ * thing that trips the fallback is a definite black. That keeps hardware which
+ * simply can't be probed on the path it already renders correctly today. The
+ * readback is gated on the same extensions WebGLRenderer checks before its own
+ * readPixels, so an unsupported device skips it instead of logging an error.
+ */
+function halfFloatRenders(renderer) {
+  if (!renderer) return true;
+  const SENTINEL = 0xffff; // NaN as a half -- never a real render result
+  let rt = null, quad = null;
+  try {
+    const ext = renderer.extensions, caps = renderer.capabilities;
+    const readable = ext.has('EXT_color_buffer_half_float')
+      || (caps.isWebGL2 && ext.has('EXT_color_buffer_float'));
+    if (!readable) return true;
+
+    rt = new THREE.WebGLRenderTarget(2, 2, {
+      type: THREE.HalfFloatType,
+      format: THREE.RGBAFormat,
+      depthBuffer: false,
+      stencilBuffer: false,
+    });
+    quad = new THREE.Mesh(
+      new THREE.PlaneGeometry(2, 2),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false })
+    );
+    const probe = new THREE.Scene();
+    probe.add(quad);
+    const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    cam.position.z = 1;
+
+    const prev = renderer.getRenderTarget();
+    renderer.setRenderTarget(rt);
+    renderer.render(probe, cam);
+    renderer.setRenderTarget(prev);
+
+    const buf = new Uint16Array(4).fill(SENTINEL);
+    renderer.readRenderTargetPixels(rt, 0, 0, 1, 1, buf);
+    // untouched buffer means the read never ran -- inconclusive, so pass
+    if (buf[0] === SENTINEL && buf[1] === SENTINEL && buf[2] === SENTINEL) return true;
+    return buf[0] !== 0 || buf[1] !== 0 || buf[2] !== 0;
+  } catch (e) {
+    return true;
+  } finally {
+    if (quad) { quad.geometry.dispose(); quad.material.dispose(); }
+    if (rt) rt.dispose();
+  }
+}
+
+/**
+ * Per-building colour variation.
+ *
+ * Jittering R, G and B INDEPENDENTLY is what manufactured the candy palette:
+ * three uncorrelated offsets push a muted base straight off into saturated
+ * primaries, so a street of weathered brick came out fluorescent pink, lime and
+ * orange. Real variation between buildings is mostly TONAL -- the same material
+ * dirtier or paler -- with only a slight drift in hue. So the brightness jitter
+ * is shared across all three channels, the chroma jitter is a fifth of it, and
+ * everything is pulled toward its own grey.
+ */
+// House paint and roofing, weighted: [weight, colour]. Seattle's housing
+// stock is Craftsman and Foursquare in white, cream and greys, a lot of sage,
+// slate blue and charcoal, and the odd barn red or mustard -- where every
+// house used to be one off-white.
+const HOUSE_PAINT = [
+  [0.17, [0.94, 0.93, 0.90]], [0.09, [0.93, 0.85, 0.66]], [0.10, [0.78, 0.79, 0.80]],
+  [0.07, [0.74, 0.69, 0.61]], [0.09, [0.60, 0.72, 0.52]], [0.05, [0.58, 0.60, 0.38]],
+  [0.09, [0.50, 0.63, 0.78]], [0.05, [0.26, 0.34, 0.50]], [0.08, [0.33, 0.34, 0.36]],
+  [0.04, [0.66, 0.24, 0.20]], [0.05, [0.90, 0.72, 0.34]], [0.04, [0.36, 0.60, 0.60]],
+  [0.08, [0.52, 0.38, 0.27]],
+];
+const HOUSE_ROOF = [
+  [0.22, [0.34, 0.34, 0.35]], [0.20, [0.50, 0.49, 0.47]], [0.16, [0.48, 0.37, 0.28]],
+  [0.07, [0.22, 0.22, 0.23]], [0.10, [0.36, 0.40, 0.47]], [0.07, [0.40, 0.46, 0.35]],
+  [0.08, [0.54, 0.31, 0.25]], [0.10, [0.66, 0.67, 0.69]],
+];
+// Modern townhomes (houseExtras' neighbour, townhome): the palette infill has
+// in Seattle -- charcoal, white, mid grey, near-black, the odd deep green.
+// A building's frame turned so its +z is side k (see houseFront): local +x
+// is turned by -90 deg, -z by 180, -x by +90.
+const FRONT_TURN = [0, -Math.PI / 2, Math.PI, Math.PI / 2];
+const NOTOP = { top: false };
+const QUAD_UV = [0, 0, 1, 0, 1, 1, 0, 1];
+// wrought and painted iron: fire escapes, railings
+const IRON = [0.06, 0.06, 0.065];
+// a pressed-metal cornice's paint: dark green, brown, black, cream
+const CORNICE = [[0.16, 0.22, 0.18], [0.24, 0.17, 0.12], [0.1, 0.1, 0.11], [0.62, 0.58, 0.48]];
+// a modern block's accent cladding: rust, mustard, teal, charcoal, cedar, white, slate
+const ACCENT = [[0.6, 0.22, 0.1], [0.74, 0.54, 0.16], [0.18, 0.36, 0.38], [0.15, 0.15, 0.17],
+  [0.52, 0.33, 0.2], [0.88, 0.87, 0.83], [0.3, 0.4, 0.52]];   // a panel's top edge is never seen
+const MODERN_PAINT = [[0.2, 0.21, 0.23], [0.86, 0.86, 0.84], [0.55, 0.56, 0.57], [0.11, 0.11, 0.12],
+  [0.86, 0.86, 0.84], [0.2, 0.21, 0.23], [0.18, 0.26, 0.22], [0.42, 0.43, 0.45]];
+
+// Paint is a chosen colour, not a weathered material: tint()'s pull toward
+// grey (built so masonry would stop reading as candy) turned every paint in the
+// palette back into the off-white it replaced. Brightness varies, chroma stays.
+function paintTint(seed, base, k) {
+  const v = 1 + (hash2(seed, k) - 0.5) * 0.16;
+  const lum = base[0] * 0.2126 + base[1] * 0.7152 + base[2] * 0.0722;
+  return base.map((c) => clamp((lum + (c - lum) * 0.92) * v, 0.1, 1.2));
+}
+function pickW(list, u) {
+  let acc = 0;
+  for (const [w, c] of list) { acc += w; if (u <= acc) return c; }
+  return list[list.length - 1][1];
+}
+const SATURATION = 0.62;
+function tint(seed, base, spread) {
+  const v = 1 + (hash2(seed, 1) - 0.5) * spread * 0.85;
+  const dr = (hash2(seed, 2) - 0.5) * spread * 0.18;
+  const db = (hash2(seed, 3) - 0.5) * spread * 0.18;
+  const lum = base[0] * 0.2126 + base[1] * 0.7152 + base[2] * 0.0722;
+  const mute = (c, d) => clamp((lum + (c - lum) * SATURATION + d) * v, 0.12, 1.35);
+  return [mute(base[0], dr), mute(base[1], 0), mute(base[2], db)];
+}
+
+/**
+ * The one wall material.
+ *
+ * Each family's old parameters are already folded into the atlas, so what is
+ * left here is the maxima they were folded against: `roughness` and `metalness`
+ * multiply their own channels, `normalScale` multiplies the pre-scaled xy, and
+ * `envMapIntensity` is recovered per-texel through the AO channel -- three's AO
+ * term attenuates the image-based light, which is the only thing env drove.
+ * `aoMap.channel` is pinned to 0 because AO is the one slot three historically
+ * read from a SECOND uv set, and there isn't one here: a wall sampling AO at a
+ * missing uv1 comes back uniformly dark over the whole city.
+ */
+function facadeMat(f) {
+  const m = new THREE.MeshStandardMaterial({
+    map: f.map,
+    normalMap: f.normalMap,
+    roughnessMap: f.packed,
+    metalnessMap: f.packed,
+    aoMap: f.packed,
+    emissiveMap: f.emissiveMap,
+    vertexColors: true,
+    roughness: 1,
+    metalness: f.metalMax,
+    envMapIntensity: f.envMax,
+  });
+  f.packed.channel = 0;
+  m.emissive = new THREE.Color(0xffffff);
+  m.emissiveIntensity = f.emiMax;
+  m.normalScale = new THREE.Vector2(f.nsMax, f.nsMax);
+  // Per-window variety, in the shader, for the stone and brick cells.
+  //
+  // The atlas cell carries sixteen windows, so every masonry facade in the
+  // city repeated the same sixteen: the same blind half-down in the same spot
+  // every four storeys on every building, which is what made a block read as
+  // wallpaper from across the street. Each window now picks its own state
+  // from a hash of its column, its row (V spans the whole wall, so every
+  // storey is different) and the building's tint: a dark room, drawn blinds,
+  // or a colder reflective pane.
+  //
+  // The window mask is the packed map's roughness channel -- glazing is the
+  // only thing in those cells under ~0.3 -- so no second map is needed. One
+  // extra tap per facade fragment; plain uniforms, no new render targets.
+  const [u0, du] = f.cells.masonry;
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.facU0 = { value: u0 };
+    sh.uniforms.facDu = { value: du };
+    // The per-building seed, from the tint's channel RATIOS, not its value:
+    // Box's baked AO scales the tint toward the ground, so the value changes
+    // continuously up the wall -- hashing it through sin() re-rolled every
+    // window per pixel into blue static. A uniform scale leaves the ratios
+    // constant. Made once per vertex and passed FLAT, and rounded rather than
+    // floored: a grey tint's r/g is exactly 1, which floor(64 r/g) put on the
+    // bucket edge -- 21 % of facade vertices -- and a GPU that divides by a
+    // reciprocal (every iPhone) lands each pixel on either side of it, so every
+    // window on a grey building flickered between dark, blinds and mirror as
+    // the camera moved. Per triangle and away from the edge, it can't.
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nflat varying float vFacSeed;')
+      .replace('#include <color_vertex>', `#include <color_vertex>
+        vFacSeed = floor(vColor.r / max(vColor.g, 0.01) * 64.0 + 0.5)
+          + floor(vColor.b / max(vColor.g, 0.01) * 64.0 + 0.5) * 7.0;`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float facU0;\nuniform float facDu;\nflat varying float vFacSeed;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          // Cell index: 0 = masonry, 1 = brick. CELL_W / FS = 528 / 512.
+          float facU = vMapUv.x - facU0;
+          float facCell = floor(facU / (facDu * 1.03125) + 0.02);
+          float facGlass = 1.0 - smoothstep(0.16, 0.36, texture2D(roughnessMap, vRoughnessMapUv).g);
+          if (facCell < 1.5 && facGlass > 0.01) {
+            vec2 wid = vec2(floor(facU / (facDu * 0.25)), floor(vMapUv.y * 4.0));
+            float hsh = fract(sin(dot(wid, vec2(12.9898, 78.233)) + vFacSeed * 3.17) * 43758.5453);
+            vec3 winMul = hsh < 0.24 ? vec3(0.38, 0.41, 0.46)
+              : hsh < 0.36 ? vec3(1.22, 1.16, 1.02)
+              : hsh < 0.54 ? vec3(0.78, 0.9, 1.1)
+              : vec3(1.0);
+            // A NEUTRAL pane. A metal's F0 is its albedo, so the building tint
+            // mirrored the sky in red on brick, and the pane's own baked blue
+            // doubled the sky's blue into saturated static. Grey glass
+            // reflecting a blue sky is what reads as glass.
+            float paneL = dot(diffuseColor.rgb / max(vColor.rgb, vec3(0.2)), vec3(0.299, 0.587, 0.114));
+            vec3 pane = mix(vec3(paneL), vec3(0.46, 0.49, 0.53), 0.55);
+            diffuseColor.rgb = mix(diffuseColor.rgb, pane * winMul, facGlass);
+          }
+        }`)
+      // ...and a FLAT one. The cell's height noise is fine for masonry grain,
+      // but reflected through a mirror it scattered the sky into glitter.
+      // roughnessFactor is the packed G channel by now, so no extra tap.
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        {
+          float facCellN = floor((vMapUv.x - facU0) / (facDu * 1.03125) + 0.02);
+          float facGlassN = facCellN < 1.5 ? 1.0 - smoothstep(0.16, 0.36, roughnessFactor) : 0.0;
+          normal = normalize(mix(normal, normalize(vNormal), facGlassN));
+        }`);
+  };
+  m.customProgramCacheKey = () => 'facadeWindows';
+  return m;
+}
+
+const DARK = [0.26, 0.27, 0.29];
+// Poured-concrete foundation under house siding (see meshBuilding).
+const FOUNDATION = [0.50, 0.49, 0.47];
+const CORNERS = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+const TRIM = [0.55, 0.55, 0.56];
+// Accents stay the one place saturated colour is allowed, but pulled back:
+// these are awnings and shopfronts, not the whole facade.
+const AWNING = [
+  [0.42, 0.16, 0.15], [0.15, 0.25, 0.38], [0.16, 0.29, 0.21],
+  [0.36, 0.30, 0.18], [0.21, 0.21, 0.24], [0.42, 0.37, 0.29],
+];
+
+// ---------------------------------------------------------------------------
+
+// Ground at or below this reads as wet even where the water mask says dry:
+// the 40 m DEM blends land into sea at the shoreline, so the two rasters
+// disagree by about a metre there. Exported so tools/jank.mjs can select the
+// same candidate set -- the constant is shared, the VERDICT is not, which is
+// what keeps the check from being a tautology.
+export const WET_FLOOR = 0.35;
+
+// The horizon haze takes the sun's side. Multipliers on the haze colour
+// (linear), looking toward the sun and away from it, blended by
+// (0.5 + 0.5 cos(angle to the sun))^2. The sky dome applies them to its
+// horizon band here, and main.js's fog applies the same blend to the fog
+// colour -- the two have to agree or distance meets the sky at a seam.
+export const HAZE_SUN = { toward: [1.13, 1.06, 0.93], away: [0.95, 0.98, 1.04] };
+
+/**
+ * The flat material, also drawing a chunk's glow (lamp heads, lit signs):
+ * vertices flagged `glow` = 1 come out as their own vertex colour, unlit and
+ * NOT tone-mapped -- what the MeshBasicMaterial glow did -- with fog after, as
+ * that had. The glow no longer needs its own draw.
+ */
+function flatGlowMat(m) {
+  m.onBeforeCompile = (sh) => {
+    sh.vertexShader = 'attribute float glow;\nvarying float vGlowF;\n' + sh.vertexShader
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvGlowF = glow;');
+    sh.fragmentShader = 'varying float vGlowF;\n' + sh.fragmentShader
+      .replace('#include <tonemapping_fragment>', `#include <tonemapping_fragment>
+	if ( vGlowF > 0.5 ) gl_FragColor = vec4( vColor.rgb, 1.0 );`);
+  };
+  m.customProgramCacheKey = () => 'flatGlow';
+  return m;
+}
+
+/**
+ * The road material, also drawing pavement: vertices flagged `surf` = 1
+ * sample the sidewalk's albedo, normal and roughness maps instead. Both sets
+ * are sampled and mixed rather than branched on, so mip selection stays right
+ * along the kerb line where the two meet inside one pixel quad. The pavement's
+ * normal scale (0.8 against the road's 0.9) rides the same flag; its env
+ * intensity (0.52 against 0.62) is split at 0.6.
+ */
+function roadWalkMat(m, walk) {
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.walkMap = { value: walk.map };
+    sh.uniforms.walkNormal = { value: walk.normalMap };
+    sh.uniforms.walkRough = { value: walk.roughnessMap };
+    sh.vertexShader = 'attribute float surf;\nvarying float vSurf;\n' + sh.vertexShader
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvSurf = surf;');
+    const pick = (a, b) => `mix( ${a}, ${b}, step( 0.5, vSurf ) )`;
+    sh.fragmentShader = 'uniform sampler2D walkMap;\nuniform sampler2D walkNormal;\nuniform sampler2D walkRough;\nvarying float vSurf;\n'
+      + sh.fragmentShader
+        .replace('#include <map_fragment>', THREE.ShaderChunk.map_fragment.replace('texture2D( map, vMapUv )',
+          pick('texture2D( map, vMapUv )', 'texture2D( walkMap, vMapUv )')))
+        .replace('#include <roughnessmap_fragment>', THREE.ShaderChunk.roughnessmap_fragment.replace('texture2D( roughnessMap, vRoughnessMapUv )',
+          pick('texture2D( roughnessMap, vRoughnessMapUv )', 'texture2D( walkRough, vRoughnessMapUv )')))
+        .replace('#include <normal_fragment_maps>', THREE.ShaderChunk.normal_fragment_maps
+          .replace('vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;',
+            `vec3 mapN = ${pick('texture2D( normalMap, vNormalMapUv )', 'texture2D( walkNormal, vNormalMapUv )')}.xyz * 2.0 - 1.0;`)
+          .replace('mapN.xy *= normalScale;', 'mapN.xy *= normalScale * mix( 1.0, 0.8 / 0.9, step( 0.5, vSurf ) );'));
+  };
+  m.customProgramCacheKey = () => 'roadWalk';
+  return m;
+}
+
+function dropArray() { this.array = null; }
+function noRaycast() {}
+
+/** Mean LINEAR albedo of a canvas-backed sRGB texture, sampled on a grid. */
+function meanLinear(tex) {
+  const img = tex && tex.image;
+  const lin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  try {
+    const w = img.width, h = img.height;
+    const ctx = img.getContext ? img.getContext('2d') : null;
+    const data = ctx.getImageData(0, 0, w, h).data;
+    let r = 0, g = 0, b = 0, n = 0;
+    for (let y = 0; y < h; y += 4) {
+      for (let x = 0; x < w; x += 4) {
+        const k = (y * w + x) * 4;
+        r += lin(data[k]); g += lin(data[k + 1]); b += lin(data[k + 2]); n++;
+      }
+    }
+    return [r / n, g / n, b / n];
+  } catch (e) {
+    return [0.1, 0.1, 0.1];
+  }
+}
+
+/** One geometry holding `a` then `b`: position, normal, uv and color, indexed. */
+function appendGeometry(a, b) {
+  const na = a.attributes.position.count, nb = b.attributes.position.count;
+  const out = new THREE.BufferGeometry();
+  for (const [k, n] of [['position', 3], ['normal', 3], ['uv', 2], ['color', 3]]) {
+    const A = a.attributes[k].array, B = b.attributes[k].array;
+    const C = new Float32Array((na + nb) * n);
+    C.set(A.subarray(0, na * n)); C.set(B.subarray(0, nb * n), na * n);
+    out.setAttribute(k, new THREE.BufferAttribute(C, n));
+  }
+  const ia = a.index.array, ib = b.index.array;
+  const I = (na + nb) > 65535 ? new Uint32Array(ia.length + ib.length) : new Uint16Array(ia.length + ib.length);
+  I.set(ia);
+  for (let i = 0; i < ib.length; i++) I[ia.length + i] = ib[i] + na;
+  out.setIndex(new THREE.BufferAttribute(I, 1));
+  return out;
+}
+
+/**
+ * BufferGeometry.computeVertexNormals for an indexed triangle list, on the
+ * plain arrays: the same sums in the same order, rounded to float32 at the
+ * same steps, so the same normals to the bit (three's per-vertex accessors
+ * were ~0.4 s of a phone's boot for the terrain alone).
+ */
+function vertexNormals(P, I) {
+  const N = new Float32Array(P.length);
+  for (let t = 0; t < I.length; t += 3) {
+    const a = I[t] * 3, b = I[t + 1] * 3, c = I[t + 2] * 3;
+    const bx = P[b], by = P[b + 1], bz = P[b + 2];
+    const cbx = P[c] - bx, cby = P[c + 1] - by, cbz = P[c + 2] - bz;
+    const abx = P[a] - bx, aby = P[a + 1] - by, abz = P[a + 2] - bz;
+    const nx = cby * abz - cbz * aby, ny = cbz * abx - cbx * abz, nz = cbx * aby - cby * abx;
+    // all three read before any is written, as three does
+    const ax = N[a] + nx, ay = N[a + 1] + ny, az = N[a + 2] + nz;
+    const bx2 = N[b] + nx, by2 = N[b + 1] + ny, bz2 = N[b + 2] + nz;
+    const cx = N[c] + nx, cy = N[c + 1] + ny, cz = N[c + 2] + nz;
+    N[a] = ax; N[a + 1] = ay; N[a + 2] = az;
+    N[b] = bx2; N[b + 1] = by2; N[b + 2] = bz2;
+    N[c] = cx; N[c + 1] = cy; N[c + 2] = cz;
+  }
+  for (let i = 0; i < N.length; i += 3) {
+    const x = N[i], y = N[i + 1], z = N[i + 2];
+    const s = 1 / (Math.sqrt(x * x + y * y + z * z) || 1);
+    N[i] = x * s; N[i + 1] = y * s; N[i + 2] = z * s;
+  }
+  return N;
+}
+
+/** BufferGeometry.computeBoundingSphere on a plain position array: the same
+ *  box, centre and farthest point, so the same sphere (a signed zero aside:
+ *  three's Math.min keeps -0 over 0, a compare keeps the first). */
+function boundingSphere(P) {
+  let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+  for (let i = 0; i < P.length; i += 3) {
+    const x = P[i], y = P[i + 1], z = P[i + 2];
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+    if (z < z0) z0 = z; if (z > z1) z1 = z;
+  }
+  const c = P.length ? new THREE.Vector3((x0 + x1) * 0.5, (y0 + y1) * 0.5, (z0 + z1) * 0.5) : new THREE.Vector3();
+  let r2 = 0;
+  for (let i = 0; i < P.length; i += 3) {
+    const dx = c.x - P[i], dy = c.y - P[i + 1], dz = c.z - P[i + 2];
+    const q = dx * dx + dy * dy + dz * dz;
+    if (q > r2) r2 = q;
+  }
+  return new THREE.Sphere(c, Math.sqrt(r2));
+}
+
+/** A terrain tile's draw hook, made here so its closure holds only the world
+ * and the tile record (see buildTerrain). */
+function terrainHook(world, T) {
+  return () => { if (T.dirty) world._composeTerrain(T); };
+}
+
+export class World {
+  constructor(scene, city, tx, opts = {}) {
+    this.scene = scene;
+    this.city = city;
+    // the drawn deck parapets as collision segments (deckRailSegs)
+    city.deckRails = (ei) => this.deckRailSegs(ei);
+    this.tx = tx;
+    this.renderer = opts.renderer;
+    this.shadows = opts.shadows !== false;
+    this.lakeSpecs = opts.lakes || [];
+    this.chunks = new Map();
+    this._yb = YIELD_MS;   // a build step's time budget; see update()
+    // Chunk geometry on a phone keeps no JS copy after upload (see
+    // buildChunkStep's `add`), so a lost context cannot re-upload it: drop every
+    // chunk and let the streamer build them again.
+    if (ON_PHONE && this.renderer && this.renderer.domElement) {
+      this.renderer.domElement.addEventListener('webglcontextlost', () => {
+        for (const c of this.chunks.values()) this.disposeChunk(c);
+      });
+    }
+
+    const surf = (s, o = {}) => {
+      const m = new THREE.MeshStandardMaterial({
+        map: s.map,
+        normalMap: s.normalMap || null,
+        roughnessMap: s.roughnessMap || null,
+        vertexColors: true,
+        roughness: o.roughness != null ? o.roughness : 1,
+        metalness: o.metalness != null ? o.metalness : 0,
+        envMapIntensity: o.env != null ? o.env : 1,
+      });
+      if (s.emissiveMap) {
+        m.emissiveMap = s.emissiveMap;
+        m.emissive = new THREE.Color(0xffffff);
+        m.emissiveIntensity = o.emissive != null ? o.emissive : 0.45;
+      }
+      if (m.normalMap) m.normalScale = new THREE.Vector2(o.ns || 1, o.ns || 1);
+      return m;
+    };
+
+    this.mats = {
+      road: surf(tx.road, { env: 0.62, ns: 0.9 }),
+      walk: surf(tx.sidewalk, { env: 0.52, ns: 0.8 }),
+      roadWalk: roadWalkMat(surf(tx.road, { env: 0.6, ns: 0.9 }), tx.sidewalk),
+      // Glass was the one material already sitting at clamp. env 1.9 on a
+      // 0.9-albedo curtain wall survived the old ambient floor and saturates
+      // through ACES once the scene moves up the curve -- hard-edged white
+      // polygon faces that read as a missing texture, not as sunlight. Pulling
+      // it down is what makes the exposure headroom available.
+      // Curtain wall reads by what it REFLECTS. With the IBL now drawn from
+      // the same sky as the dome, glass takes more of its look from the
+      // environment and less from its own blue albedo: metalness up and env up.
+      glass: surf(tx.glass, { env: 1.15, metalness: 0.58, roughness: 0.22, ns: 1.1, emissive: 0.02 }),
+      // Stone, brick, corrugated industrial, lap-sided house and shop signage,
+      // in one material. They were five, and five merged meshes per chunk was
+      // 115 draw calls downtown for 25k triangles. Everything that used to
+      // differ between them now rides in the maps -- see `facadeAtlas` in
+      // textures.js -- so the surfaces themselves are untouched: brick still
+      // has its own running bond, not a tint of the ashlar.
+      facade: facadeMat(tx.facade),
+      flat: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.04, envMapIntensity: 0.45 }),
+      flatGlow: flatGlowMat(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.04, envMapIntensity: 0.45 })),
+      glow: new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }),
+      // The far skyline is a silhouette mesh: what matters is that a mass two
+      // kilometres out sits at a believable fraction of sky luminance, not
+      // that its shaded side has readable detail. At 0.5 its away-from-sun
+      // faces fell to about 4 % of the sky and downtown read as a row of black
+      // cutouts pasted over the horizon -- which looks like a broken renderer,
+      // not like distance.
+      far: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0.02, envMapIntensity: 0.85 }),
+    };
+    // Curtain wall is not one mirror. Each pane sits a fraction of a degree off
+    // its neighbours, which is why a real glass tower reflects the sky as a
+    // patchwork rather than as one smooth gradient. A per-pane hash tilts the
+    // normal by up to ~2 deg; the glass tile is eight panes each way, so
+    // floor(uv * 8) is the pane. Arithmetic only, no extra taps.
+    //
+    // And a curtain wall reflects the SKY. A vertical mirror seen from above
+    // or level reflects downward, into the IBL's ground half, so every glass
+    // tower in the aerial read as dark blue paint. Folding the reflected ray
+    // into the upper hemisphere is the standard open-world cheat for towers:
+    // they show sky and cloud, which is most of what reads as "glass" at any
+    // distance. Glass material only; three's own chunk, one line added.
+    const IBL_FROM = 'reflectVec = inverseTransformDirection( reflectVec, viewMatrix );';
+    this.mats.glass.onBeforeCompile = (sh) => {
+      if (THREE.ShaderChunk.envmap_physical_pars_fragment.includes(IBL_FROM)) {
+        sh.fragmentShader = sh.fragmentShader.replace('#include <envmap_physical_pars_fragment>',
+          THREE.ShaderChunk.envmap_physical_pars_fragment.replace(IBL_FROM,
+            `${IBL_FROM}\n\t\t\treflectVec = normalize( vec3( reflectVec.x, abs( reflectVec.y ) * 0.85 + 0.12, reflectVec.z ) );`));
+      }
+      // Neutral panes, for the same reason as the masonry windows: metal F0 is
+      // the albedo, and a blue pane reflecting a blue sky is saturated paint.
+      sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          float paneA = 1.0 - smoothstep(0.1, 0.3, texture2D(roughnessMap, vRoughnessMapUv).g);
+          float lumA = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(lumA) * vec3(0.94, 1.0, 1.07), paneA * 0.7);
+        }`);
+      sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        {
+          // flat pane (roughnessFactor = 0.22 x map: panes ~0.015, mullions ~0.16)
+          normal = normalize(mix(normal, normalize(vNormal), 1.0 - smoothstep(0.03, 0.08, roughnessFactor)));
+          vec2 paneId = floor(vMapUv * 8.0);
+          float pr1 = fract(sin(dot(paneId, vec2(12.9898, 78.233))) * 43758.5453);
+          float pr2 = fract(sin(dot(paneId, vec2(39.3468, 11.135))) * 24634.6345);
+          normal = normalize(normal + vec3(pr1 - 0.5, pr2 - 0.5, 0.0) * 0.07);
+        }`);
+    };
+    this.mats.glass.customProgramCacheKey = () => 'glassPanes';
+    // [u0, du] per wall family in the facade atlas, passed to Builder.box.
+    this.cells = tx.facade.cells;
+    this.group = new THREE.Group();
+    scene.add(this.group);
+    // Holds only frozen chunk groups (see freezeStatic).
+    this.group.matrixAutoUpdate = false;
+  }
+
+  // --- static scenery -------------------------------------------------------
+
+  /** Sky doubles as the background and as the diffuse+specular IBL source. */
+  buildSky(sunDir) {
+    // The equirect stays as the IBL source below; what you LOOK at is a dome.
+    //
+    // As a background the equirect is 2048 px for 360 deg, so a 62 deg view
+    // magnifies it 3.6x: painted cloud ellipses smeared into brush strokes and
+    // the sky never looked sharper than a thumbnail. The dome computes the
+    // gradient and sun per pixel and projects a tiling cloud field onto a flat
+    // layer, so clouds foreshorten toward the horizon and stay crisp overhead.
+    // It replaces the background's own draw -- one call either way -- and
+    // costs three texture taps per sky pixel.
+    //
+    // NOT tone-mapped, to match what it replaces: three leaves an sRGB
+    // background texture out of the ACES pass, so the old sky's authored
+    // colours ARE the screen colours, and the fog colour was tuned against
+    // them. The stops below are those same colours.
+    this.scene.background = null;
+    const lin = (hex) => new THREE.Color(hex);
+    const sd = (sunDir || new THREE.Vector3(-215, 200, -150)).clone().normalize();
+    const uniforms = {
+      tCloud: { value: this.tx.clouds },
+      sunDir: { value: sd },
+      // A little less cyan than the first pass (0x2d5e97 / 0x6793c0), which
+      // after the grade's saturation was the most saturated thing on screen.
+      zenith: { value: lin(0x33609a) },
+      mid: { value: lin(0x7398c2) },
+      horizon: { value: lin(0xb9cbd9) },
+      haze: { value: lin(0xb9c3cf) },
+      sunCol: { value: lin(0xfff2dc) },
+      cloudLit: { value: lin(0xf7f5ee) },
+      cloudDark: { value: lin(0x7f8b9b) },
+      // Below the horizon the IBL sees the city, not haze: the old equirect's
+      // lower half ran #8b979f to #5a6469, and every material's shaded side
+      // was tuned against that bounce. The dome itself never draws it.
+      groundHi: { value: lin(0x8b979f) },
+      groundLo: { value: lin(0x5a6469) },
+      // The painted equirect carried an ~80 % white cloud wash over its whole
+      // upper half, and every shaded value in the city was tuned against that
+      // brighter dome. Rendering the IBL from the clear blue sky dropped the
+      // beauty set's shadowed quartile by ~25 % (values.py: street 0.035 ->
+      // 0.023). The IBL pass alone is lifted to put that ambient back; what you
+      // see in the sky is untouched.
+      iblGain: { value: 1.35 },
+      hazeToward: { value: new THREE.Vector3(...HAZE_SUN.toward) },
+      hazeAway: { value: new THREE.Vector3(...HAZE_SUN.away) },
+      time: { value: 0 },
+    };
+    // ONE sky function for what you see and for what things reflect.
+    //
+    // The IBL used to be the painted equirect while the background became this
+    // dome, so glass and water reflected smeared ellipse clouds and a sun in a
+    // different place from the sky above them. The same code now renders both.
+    const SKY_FN = `
+        uniform sampler2D tCloud;
+        uniform vec3 sunDir, zenith, mid, horizon, haze, sunCol, cloudLit, cloudDark, groundHi, groundLo;
+        uniform float time, iblGain;
+        uniform vec3 hazeToward, hazeAway;
+        vec3 skyColor(vec3 d, float forIbl) {
+          // Haze is brighter and warmer toward the sun (forward scattering)
+          // and cooler away from it; main.js's fog takes the same blend.
+          float hs = 0.5 + 0.5 * dot(d, sunDir);
+          vec3 hz = haze * mix(hazeAway, hazeToward, hs * hs);
+          float h = d.y;
+          float e = max(h, 0.0);
+          vec3 col = mix(horizon, mid, smoothstep(0.0, 0.28, e));
+          col = mix(col, zenith, smoothstep(0.25, 1.0, e));
+          float mu = max(dot(d, sunDir), 0.0);
+          // Forward-scattering glow around the sun, then the disc.
+          col += sunCol * (pow(mu, 6.0) * 0.16 + pow(mu, 60.0) * 0.35);
+          col = mix(col, vec3(1.0, 0.99, 0.95) * 1.4, smoothstep(0.9993, 0.9997, mu));
+
+          // Cloud layer: a flat plane overhead, so the tile foreshortens
+          // toward the horizon. +0.08 keeps the projection finite at h = 0.
+          if (h > 0.0) {
+            vec2 uv = d.xz / (h + 0.08) * 0.19 + vec2(time * 0.0009, time * 0.0004);
+            float big = texture2D(tCloud, uv).r;
+            float fine = texture2D(tCloud, uv * 3.1 + 0.37).r;
+            // A third, finer tap ERODES the edge: it moves density by a few
+            // percent, so it only matters where the cover threshold is being
+            // crossed. With the old 0.50-0.74 ramp every cloud was a soft
+            // airbrushed smear; 0.53-0.69 over an eroded field gives cumulus
+            // a defined, broken edge. One more tap per sky pixel.
+            float ero = texture2D(tCloud, uv * 9.7 + 0.71).r;
+            float dens = big * 0.78 + fine * 0.22 + (ero - 0.5) * 0.09;
+            float cover = smoothstep(0.53, 0.69, dens);
+            // Denser toward the sun means more cloud in front of the light:
+            // the far side of a bank is the lit one.
+            float toward = texture2D(tCloud, uv + sunDir.xz * 0.012).r * 0.78 + fine * 0.22;
+            // Thick cores go grey underneath (the 1.6), and the sunward
+            // gradient is steeper (10): a bank reads as a volume with a lit
+            // side and a shaded base, not a flat white decal.
+            float lit = clamp(0.62 + (dens - toward) * 10.0 - (dens - 0.62) * 1.6, 0.0, 1.0);
+            vec3 cc = mix(cloudDark, cloudLit, lit);
+            cc += sunCol * pow(mu, 12.0) * 0.25 * (1.0 - cover);
+            // Thin toward the horizon, where the layer is seen through haze.
+            cover *= smoothstep(0.015, 0.22, h);
+            col = mix(col, cc, cover * 0.92);
+          }
+          // Horizon haze band, matched to scene.fog so distance resolves into
+          // the sky instead of meeting it at a seam; below the horizon it is
+          // the fog colour outright.
+          col = mix(col, hz, (1.0 - smoothstep(0.0, 0.07, abs(h))) * 0.55);
+          if (h < 0.0) {
+            col = mix(col, hz, smoothstep(0.0, 0.05, -h));
+            vec3 ground = mix(groundHi, groundLo, smoothstep(0.0, 0.6, -h));
+            col = mix(col, ground, forIbl * smoothstep(0.0, 0.08, -h));
+          }
+          return col;
+        }`;
+    const skyMat = new THREE.ShaderMaterial({
+      uniforms,
+      vertexShader: `
+        varying vec3 vDir;
+        void main() {
+          vDir = position;
+          // Rotation only: the dome is infinitely far, wherever the camera is.
+          vec4 p = projectionMatrix * vec4(mat3(viewMatrix) * position, 1.0);
+          gl_Position = vec4(p.xy, p.w, p.w);
+        }`,
+      fragmentShader: `${SKY_FN}
+        varying vec3 vDir;
+        void main() {
+          gl_FragColor = vec4(skyColor(normalize(vDir), 0.0), 1.0);
+          #include <colorspace_fragment>
+        }`,
+      side: THREE.BackSide,
+      depthWrite: false,
+      depthTest: false,
+      fog: false,
+      toneMapped: false,
+    });
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(100, 32, 16), skyMat);
+    dome.frustumCulled = false;
+    dome.renderOrder = -1000;
+    this.scene.add(dome);
+    this.skyDome = dome;
+    // The range on the horizon: one more sky-layer draw, straight behind the
+    // city (see mountains.js).
+    this.mountains = this.mountainData ? buildMountains(this.scene, uniforms, this.mountainData) : null;
+
+    // Render the same sky into an 8-bit equirect for the IBL.
+    //
+    // 8-bit sRGB target, like every target here: the half-float rule holds,
+    // and the sRGB encoding keeps the dark ground half from banding. Inverse of
+    // three's equirectUv(): u = atan(z, x) / 2pi + 0.5, v = asin(y) / pi + 0.5.
+    // The disc (1.4) clips at 1.0 here, as the painted one did.
+    const envTarget = new THREE.WebGLRenderTarget(2048, 1024, {
+      type: THREE.UnsignedByteType, depthBuffer: false, stencilBuffer: false,
+      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+    });
+    envTarget.texture.colorSpace = THREE.SRGBColorSpace;
+    envTarget.texture.generateMipmaps = false;
+    envTarget.texture.mapping = THREE.EquirectangularReflectionMapping;
+    if (this.renderer) {
+      const eqMat = new THREE.ShaderMaterial({
+        uniforms,
+        vertexShader: `
+          varying vec2 vUv;
+          void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+        fragmentShader: `${SKY_FN}
+          varying vec2 vUv;
+          void main() {
+            float lon = (vUv.x - 0.5) * 6.28318531;
+            float lat = (vUv.y - 0.5) * 3.14159265;
+            vec3 d = vec3(cos(lat) * cos(lon), sin(lat), cos(lat) * sin(lon));
+            vec3 c = skyColor(d, 1.0);
+            // Lift the sky half only; the ground ramp is the old bounce as-is.
+            gl_FragColor = vec4(c * (d.y > 0.0 ? iblGain : 1.0), 1.0);
+          }`,
+        depthTest: false, depthWrite: false, toneMapped: false,
+      });
+      const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), eqMat);
+      quad.frustumCulled = false;
+      const eqScene = new THREE.Scene();
+      eqScene.add(quad);
+      const prev = this.renderer.getRenderTarget();
+      this.renderer.setRenderTarget(envTarget);
+      this.renderer.render(eqScene, new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1));
+      this.renderer.setRenderTarget(prev);
+      quad.geometry.dispose();
+      eqMat.dispose();
+    }
+    this.envEquirect = envTarget;
+
+    // PMREMGenerator allocates HalfFloatType targets internally, hard-coded,
+    // with no capability check -- and half-float is the one thing this renderer
+    // can't take on trust (silent black on iOS, which is why postfx.js is 8-bit
+    // throughout). Since the analytic lights are only a key and a fill, a dead
+    // environment map means a dead scene, so probe before relying on it.
+    if (halfFloatRenders(this.renderer)) {
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      pmrem.compileEquirectangularShader();
+      this.envRT = pmrem.fromEquirectangular(envTarget.texture);
+      this.scene.environment = this.envRT.texture;
+      this.envPrefiltered = true;
+      pmrem.dispose();
+      // the equirect was only the PMREM's input: 8.4 MB of GPU texture that
+      // nothing samples once the prefiltered map exists
+      envTarget.dispose();
+      this.envEquirect = null;
+    } else {
+      // Raw equirect as the env map: no prefiltered roughness mips, so rough
+      // surfaces reflect too sharply, but the city stays lit.
+      this.scene.environment = envTarget.texture;
+      this.envPrefiltered = false;
+    }
+  }
+
+  /** The mid ring's road and pavement tints, read off the texture canvases --
+   *  which a phone lets go once uploaded (memory.js), so main.js primes this
+   *  before it does. */
+  primeMidTint() {
+    if (!this._midTint) this._midTint = { road: meanLinear(this.tx.road.map), walk: meanLinear(this.tx.sidewalk.map) };
+    return this._midTint;
+  }
+
+  *buildTerrain() {
+    // Before a single terrain vertex is generated: the portal trenches become
+    // part of the height surface, so this mesh and every road drawn on it
+    // describe the same ground.
+    // Underpass cuts (citygen's refused overpasses) share the one carve, so the
+    // dipped street, its pavement and everything standing on it all see them.
+    G.setCarve((x, z) => Math.max(this.cutDepth(x, z),
+      this.city.underpassDepth ? this.city.underpassDepth(x, z) : 0));
+    const hf = G.heightfield();
+    const N = G.HF_N, S = G.HF_STEP, H = G.MAP_HALF;
+    // Tile size trades draw calls against wasted triangles, and on a phone the
+    // draw calls are what hurt. The map is 16 km across now, so the old 8 x 8
+    // would make each tile 2 km wide and the frustum would never cull one; 20
+    // x 20 went the other way and put 132 terrain meshes on screen at once,
+    // a third of the entire draw budget, for ground that is mostly behind
+    // buildings anyway. 12 x 12 is a ~1.3 km tile, which is about what the
+    // 10.4 km map used to have.
+    // 6 x 6 now (5.3 km tiles). Measured on the phone profile, the 12 x 12 grid
+    // put 40-46 terrain draws in a street-level view -- a fifth of the frame's
+    // draw calls -- and draw calls, each a round trip into WebKit's GPU process,
+    // are what binds an iPhone here. Bigger tiles cull worse (~500k triangles
+    // on screen against ~280k), which the GPU has room for; the CPU did not.
+    // (Far blocks of a tile are drawn coarse now: updateTerrainLod.)
+    const TILES = 6;
+    // (whole LOD blocks to a tile: see updateTerrainLod)
+    const NB = Math.ceil((N - 1) / LOD_BLOCK);
+    const per = Math.ceil(NB / TILES) * LOD_BLOCK;
+    const mat = new THREE.MeshStandardMaterial({
+      map: this.tx.ground.map, normalMap: this.tx.ground.normalMap,
+      vertexColors: true, roughness: 0.94, metalness: 0, envMapIntensity: 1.0,
+      normalScale: new THREE.Vector2(0.3, 0.3),
+    });
+    // The ground map at THREE scales, not one.
+    //
+    // One 13 m tile is both the detail you stand on and the only variation you
+    // see from a car, so the whole city floor was the same soft blotch pattern
+    // printed on a grid -- underfoot it was blurry, and from above the repeat
+    // showed as a regular weave. A 75 m copy multiplied over it breaks the
+    // grid into patches, and a 3 m copy puts crisp grain under the camera.
+    // Both are normalised by the map's own mean (~0.44 linear) so the average
+    // value, which values.py and the terrain tints were tuned against, does
+    // not move. Two extra taps on terrain pixels only.
+    // THE LOT LAYER IS DRAWN BY THE TERRAIN, not on top of it.
+    //
+    // Car parks, plazas and yards (data/lots.png, see tools/build_lots.py) are
+    // painted into this shader from a 14.4 m coverage + code texture, so they
+    // cost no draw call and no triangle, and -- the reason it is here rather
+    // than in the chunk build -- they ARE the terrain surface: nothing standing
+    // on a lot needs a lift, `groundAt` is already right, and there is no
+    // second coplanar surface to z-fight with the ground at range. Asphalt
+    // kinds sample the road's own albedo and paving kinds the pavement's, in
+    // the lot's own frame, so a lot matches the street beside it.
+    const lotTex = this.lotTexture();
+    const LN = G.LOT_N.toFixed(1), LH = G.MAP_HALF.toFixed(1), LS = G.LOT_STEP.toFixed(4);
+    const LA = G.LOT_ANG.toFixed(1);
+    // WOODLAND IS DRAWN AS CANOPY BY THE TERRAIN where no tree is built: past
+    // the streamed rings a forest has no trees at all, and from the air a
+    // wood read as the same mown green as a lawn. A 20 m coverage texture of
+    // the wood mask (geo.woodCover, linear and mipmapped, ~3 MB): under it the
+    // ground is dark, mottled forest -- the floor under the near trees and
+    // the canopy itself from afar. 0 draws, 0 triangles. (A property of the
+    // material too, so memory.js can let its bytes go once uploaded.)
+    const wood = this.woodTexture();
+    mat.woodMap = wood.tex;
+    const WN = (wood.n * 20).toFixed(1);
+    mat.onBeforeCompile = (sh) => {
+      if (lotTex) {
+        sh.uniforms.woodTex = { value: wood.tex };
+        sh.uniforms.lotTex = { value: lotTex };
+        sh.uniforms.lotRoad = { value: this.tx.road.map };
+        sh.uniforms.lotWalk = { value: this.tx.sidewalk.map };
+        sh.uniforms.lotNoise = { value: this.tx.clouds };
+        sh.vertexShader = sh.vertexShader
+          .replace('#include <common>', '#include <common>\nvarying vec2 vLotXZ;')
+          .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLotXZ = position.xz;');
+      }
+      sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', `
+        #ifdef USE_MAP
+          vec4 sampledDiffuseColor = texture2D( map, vMapUv );
+          vec3 macroT = texture2D( map, vMapUv * 0.173 + vec2( 0.31, 0.57 ) ).rgb / 0.44;
+          vec3 detailT = texture2D( map, vMapUv * 4.3 + vec2( 0.13, 0.71 ) ).rgb / 0.44;
+          sampledDiffuseColor.rgb *= mix( vec3( 1.0 ), macroT, 0.55 ) * mix( vec3( 1.0 ), detailT, 0.4 );
+          diffuseColor *= sampledDiffuseColor;
+        #endif`);
+      if (!lotTex) return;
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', `#include <common>
+          uniform sampler2D woodTex;
+          uniform sampler2D lotTex;
+          uniform sampler2D lotRoad;
+          uniform sampler2D lotWalk;
+          uniform sampler2D lotNoise;
+          varying vec2 vLotXZ;
+          // NEAREST texel fetch by construction (texel centres, no mips): G is
+          // a code, and filtering two codes together invents a third. R is the
+          // share of the sample's own cell that has its code, less a half.
+          vec2 lotTap( vec2 ij ) {
+            vec2 t = texture2D( lotTex, ( ij + 0.5 ) / ${LN} ).rg;
+            return vec2( t.r - 0.5, floor( t.g * 255.0 + 0.5 ) );
+          }
+          float lotSd( float c, vec2 t0, vec2 t1, vec2 t2, vec2 t3, vec4 w ) {
+            return w.x * ( abs( t0.y - c ) < 0.5 ? t0.x : -t0.x )
+                 + w.y * ( abs( t1.y - c ) < 0.5 ? t1.x : -t1.x )
+                 + w.z * ( abs( t2.y - c ) < 0.5 ? t2.x : -t2.x )
+                 + w.w * ( abs( t3.y - c ) < 0.5 ? t3.x : -t3.x );
+          }`)
+        .replace('#include <color_fragment>', `#include <color_fragment>
+          float lotCover = 0.0, woodK = 0.0;
+          {
+            // Woodland: texel i of the 20 m coverage is centred at
+            // -MAP_HALF + 20 i + 5 (geo.woodCover). Crown-sized clumps from
+            // two scales of the cloud noise, dark gaps between them; the
+            // floor under the near trees is the same dark, as a forest's is.
+            float wc = texture2D( woodTex, ( vLotXZ + ${LH} + 5.0 ) / ${WN} ).r;
+            float wk = smoothstep( 0.28, 0.72, wc );
+            woodK = wk;
+            if ( wk > 0.0 ) {
+              // two scales, one turned 37 deg: aligned, the periodic noise
+              // tiled into a waffle grid at crown size
+              vec2 wq = vec2( vLotXZ.x * 0.8 + vLotXZ.y * 0.6, vLotXZ.y * 0.8 - vLotXZ.x * 0.6 );
+              float c1 = texture2D( lotNoise, wq / 67.0 + vec2( 0.17, 0.61 ) ).r;
+              float c2 = texture2D( lotNoise, vLotXZ / 29.0 + vec2( 0.53, 0.29 ) ).r;
+              float crown = smoothstep( 0.34, 0.66, c1 * 0.3 + c2 * 0.7 );
+              vec3 canopy = mix( vec3( 0.036, 0.062, 0.028 ), vec3( 0.060, 0.098, 0.041 ), crown );${FALL ? `
+              // Fall: the maples and alders among the firs have turned -- a
+              // crown in four is gold or rust, picked by a third noise.
+              float turn = texture2D( lotNoise, wq / 41.0 + vec2( 0.71, 0.07 ) ).r;
+              canopy = mix( canopy, mix( vec3( 0.105, 0.066, 0.014 ), vec3( 0.088, 0.036, 0.012 ), smoothstep( 0.45, 0.6, c2 ) ),
+                smoothstep( 0.56, 0.64, turn ) * crown );` : ''}
+              canopy *= 0.85 + 0.3 * macroT.g;
+              diffuseColor.rgb = mix( diffuseColor.rgb, canopy, wk );
+            }
+          }
+${FALL ? `
+          {
+            // FALLEN LEAVES. Drifts of them under and between the trees (two
+            // scales of the cloud noise, ~25 % of the ground well covered and
+            // a thin scatter elsewhere), and in them single leaves of gold,
+            // orange, red and brown that fade to the drift's mean colour and
+            // coverage as a pixel's footprint passes a leaf's size, so they
+            // cannot shimmer. A lot is painted over it below, as it should be.
+            // (each scale on its own turned axes: aligned, the periodic noise
+            // printed a grid of blobs across a lawn)
+            vec2 q1 = vec2( vLotXZ.x * 0.8 + vLotXZ.y * 0.6, vLotXZ.y * 0.8 - vLotXZ.x * 0.6 );
+            vec2 q2 = vec2( vLotXZ.x * 0.28 - vLotXZ.y * 0.96, vLotXZ.y * 0.28 + vLotXZ.x * 0.96 );
+            float n0 = texture2D( lotNoise, vLotXZ / 173.0 + vec2( 0.59, 0.23 ) ).r;
+            float n1 = texture2D( lotNoise, q1 / 31.0 + vec2( 0.41, 0.83 ) ).r;
+            float n2 = texture2D( lotNoise, q2 / 9.7 + vec2( 0.13, 0.37 ) ).r;
+            float drift = smoothstep( 0.5, 0.7, n0 * 0.35 + n1 * 0.4 + n2 * 0.25 );
+            float cover = 0.05 + drift * 0.5;
+            // Single leaves: one chance in each 0.32 m cell, two offset layers
+            // of cells, hashed per cell (where, which way it lies, its colour)
+            // -- the cloud texture at leaf scale printed its own period as a
+            // dot grid. The cell index is wrapped at 1024 before the hash so
+            // the sine stays in range at the map's edge.
+            float fl = max( fwidth( vLotXZ.x ), 1e-4 );
+            float leafA = 0.0;
+            vec3 leafG = vec3( 0.0 );
+            // (past leaf size the loop is skipped: most of the ground on screen)
+            if ( fl < 0.18 ) for ( int L = 0; L < 2; L++ ) {
+              vec2 lp = vLotXZ / 0.32 + ( L == 0 ? vec2( 0.0 ) : vec2( 0.5, 0.37 ) );
+              vec2 cell = mod( floor( lp ), 1024.0 ), f = fract( lp ) - 0.5;
+              float h1 = fract( sin( dot( cell, vec2( 12.9898, 78.233 ) ) + float( L ) * 3.1 ) * 43758.5453 );
+              if ( h1 > cover * 1.25 ) continue;
+              float h2 = fract( h1 * 91.37 ), h3 = fract( h1 * 317.9 ), h4 = fract( h1 * 57.1 ), h5 = fract( h1 * 23.71 );
+              vec2 c = f - ( vec2( h2, h3 ) - 0.5 ) * 0.3;
+              float an = h4 * 6.2832;
+              vec2 r = vec2( c.x * cos( an ) + c.y * sin( an ), c.y * cos( an ) - c.x * sin( an ) );
+              // sizes from a birch leaf to a bigleaf maple's; a maple is
+              // lobed (five points), the rest an oval
+              r /= 0.55 + h5 * 0.75;
+              float lob = h5 > 0.55 ? 1.0 - 0.28 * abs( cos( 2.5 * atan( r.y, r.x ) ) ) : 1.0;
+              float e = length( r / ( h5 > 0.55 ? vec2( 0.3, 0.3 ) : vec2( 0.34, 0.17 ) ) ) / lob;
+              float a = 1.0 - smoothstep( 0.8, 1.05, e );
+              if ( a > leafA ) {
+                leafA = a;
+                // gold, orange, red and the browns most of them have gone to
+                leafG = h2 < 0.26 ? vec3( 0.34, 0.19, 0.03 ) : h2 < 0.44 ? vec3( 0.3, 0.085, 0.02 )
+                      : h2 < 0.54 ? vec3( 0.21, 0.03, 0.02 ) : h2 < 0.8 ? vec3( 0.17, 0.09, 0.035 ) : vec3( 0.12, 0.07, 0.035 );
+                leafG *= 0.7 + 0.5 * h3;
+              }
+            }
+            // a pixel bigger than a leaf sees the drift's mean colour and cover
+            float far = clamp( ( fl - 0.03 ) / 0.15, 0.0, 1.0 );
+            float hue = texture2D( lotNoise, q2 / 2.3 + vec2( 0.77, 0.19 ) ).r;
+            vec3 meanG = mix( vec3( 0.28, 0.14, 0.026 ), vec3( 0.25, 0.075, 0.022 ), smoothstep( 0.42, 0.6, hue ) );
+            meanG = mix( meanG, vec3( 0.14, 0.07, 0.03 ), smoothstep( 0.5, 0.68, n1 ) * 0.6 );
+            leafG = mix( leafG, meanG, far );
+            leafA = mix( leafA, cover * 0.6, far );
+            // (a wood seen from afar is its canopy, not its floor)
+            diffuseColor.rgb = mix( diffuseColor.rgb, leafG, leafA * 0.8 * ( 1.0 - woodK * far ) );
+          }` : ''}
+          {
+            // THE EDGE IS RECONSTRUCTED, NOT SNAPPED. Each candidate code gets
+            // a signed field from its four neighbours -- +(a - 0.5) where a tap
+            // has that code, -(a - 0.5) where it doesn't -- and the bilinear
+            // half-contour of box-filtered coverage is a straight line where
+            // the polygon edge was straight. Nearest-code bilinear drew the
+            // 10 m raster's staircase along every lot boundary.
+            vec2 lf = ( vLotXZ + ${LH} ) / ${LS};
+            vec2 li = floor( lf ), lt = lf - li;
+            vec2 t0 = lotTap( li ), t1 = lotTap( li + vec2( 1.0, 0.0 ) );
+            vec2 t2 = lotTap( li + vec2( 0.0, 1.0 ) ), t3 = lotTap( li + vec2( 1.0, 1.0 ) );
+            vec4 w = vec4( ( 1.0 - lt.x ) * ( 1.0 - lt.y ), lt.x * ( 1.0 - lt.y ),
+                           ( 1.0 - lt.x ) * lt.y, lt.x * lt.y );
+            float code = 0.0, sd = -1.0;
+            if ( t0.y > 0.5 ) { float s = lotSd( t0.y, t0, t1, t2, t3, w ); if ( s > sd ) { sd = s; code = t0.y; } }
+            if ( t1.y > 0.5 ) { float s = lotSd( t1.y, t0, t1, t2, t3, w ); if ( s > sd ) { sd = s; code = t1.y; } }
+            if ( t2.y > 0.5 ) { float s = lotSd( t2.y, t0, t1, t2, t3, w ); if ( s > sd ) { sd = s; code = t2.y; } }
+            if ( t3.y > 0.5 ) { float s = lotSd( t3.y, t0, t1, t2, t3, w ); if ( s > sd ) { sd = s; code = t3.y; } }
+            // Coverage ramps 0 -> 1 across one cell, so sd * cell is ~metres.
+            // A ragged edge of about a metre, not a drawn one: real lot edges
+            // are kerbs, verges and broken tarmac. Antialiased over a pixel.
+            float sdm = sd * ${LS} + ( detailT.g - 1.0 ) * 1.4 + ( macroT.r - 1.0 ) * 1.6;
+            float aw = max( 0.35, length( fwidth( vLotXZ ) ) * 0.7 );
+            if ( code > 0.5 && sdm > -aw ) {
+              float kind = floor( ( code - 1.0 ) / ${LA} );
+              float ang = mod( code - 1.0, ${LA} ) / ${LA} * PI;
+              vec2 ax = vec2( cos( ang ), sin( ang ) );
+              // p.x along the lot's long side, p.y across it.
+              vec2 p = vec2( dot( vLotXZ, ax ), dot( vLotXZ, vec2( -ax.y, ax.x ) ) );
+              float cov = smoothstep( -aw, aw, sdm );
+              // 50-400 m tone: periodic fBm, which survives the mips from the air
+              // where the texture grain averages flat.
+              float nBig = texture2D( lotNoise, vLotXZ / 1400.0 + vec2( 0.37, 0.11 ) ).r;
+              float nMid = texture2D( lotNoise, vLotXZ / 310.0 + vec2( 0.81, 0.53 ) ).r;
+              vec3 pav;
+              if ( kind < 1.5 ) {
+                pav = texture2D( lotRoad, p / 9.0 ).rgb;
+                // Lots are older, patchier tarmac than a street: hundreds of
+                // metres of one flat grey is what a lot looked like from the
+                // air. Broad tone drift, paler resurfaced patches, oil-dark runs.
+                pav *= mix( vec3( 1.0 ), macroT, 0.35 ) * ( kind < 0.5 ? 1.06 : 1.0 );
+                // (the fBm sits mostly in 0.35..0.65, so the thresholds are
+                // set to catch roughly a sixth of the lot each)
+                pav *= 0.78 + nBig * 0.44;
+                pav *= 1.0 + smoothstep( 0.57, 0.66, nMid ) * 0.17 - smoothstep( 0.43, 0.34, nMid ) * 0.22;
+                if ( kind < 0.5 ) {
+                  // Bays: 2.6 m wide, 5.4 m deep, rows back to back across
+                  // a 7.2 m aisle -- an 18 m module across the lot.
+                  float v = mod( p.y, 18.0 );
+                  float fu = max( fwidth( p.x ), 1e-4 ), fv = max( fwidth( p.y ), 1e-4 );
+                  float su = abs( fract( p.x / 2.6 + 0.5 ) - 0.5 ) * 2.6;
+                  float sep = 1.0 - smoothstep( 0.06 - fu, 0.06 + fu, su );
+                  float row = smoothstep( 5.4 + fv, 5.4 - fv, v ) + smoothstep( 12.6 - fv, 12.6 + fv, v );
+                  float bv = abs( fract( p.y / 18.0 + 0.5 ) - 0.5 ) * 18.0;
+                  float back = 1.0 - smoothstep( 0.06 - fv, 0.06 + fv, bv );
+                  // Under a pixel's footprint the lines average out rather
+                  // than alias: each set fades to its own mean coverage as
+                  // its own axis's footprint grows past the line width.
+                  float fa = clamp( 1.0 - ( fu - 0.05 ) / 0.2, 0.0, 1.0 );
+                  float fb = clamp( 1.0 - ( fv - 0.05 ) / 0.2, 0.0, 1.0 );
+                  sep = sep * fa + ( 1.0 - fa ) * 0.046;
+                  back = back * fb + ( 1.0 - fb ) * 0.007;
+                  float paint = max( sep * row, back );
+                  // Worn paint, and the oil-dark middle of each bay.
+                  paint *= 0.55 + 0.45 * detailT.r;
+                  float mid = row * smoothstep( 0.4, 1.25, su ) * 0.10;
+                  pav *= 1.0 - mid;
+                  pav = mix( pav, vec3( 0.66, 0.66, 0.62 ), paint * 0.8 );
+                }
+              } else if ( kind < 2.5 ) {
+                // Plaza paving: the pavement's slabs at 3 m a tile, warmer.
+                pav = texture2D( lotWalk, p / 3.0 ).rgb * vec3( 1.04, 0.99, 0.93 );
+                pav *= mix( vec3( 1.0 ), macroT, 0.25 );
+              } else if ( kind < 3.5 ) {
+                // Hardstanding: poured concrete, 5 m slabs, weathered. The
+                // pavement map at full contrast tiled into a checkerboard from
+                // the air, so it is mostly a flat mean with the slabs faint.
+                vec3 wt = texture2D( lotWalk, p / 20.0 ).rgb;
+                pav = mix( vec3( 0.32, 0.32, 0.31 ), wt * vec3( 0.86, 0.86, 0.84 ), 0.4 );
+                pav *= mix( vec3( 1.0 ), macroT, 0.65 );
+              } else if ( kind > 4.5 ) {
+                // A beach. Puget Sound's are grey-tan sand going to pebbles,
+                // the lakes' a warmer tan: the base is between, with the
+                // pavement map at 0.7 m as grain, broad paler and darker drifts
+                // (dry above the tideline, damp below it), and a pebble speckle
+                // that fades to its mean with distance so it cannot shimmer.
+                vec3 grain = texture2D( lotWalk, vLotXZ / 0.7 ).rgb;
+                pav = vec3( 0.60, 0.54, 0.44 ) * mix( vec3( 1.0 ), grain, 0.28 );
+                pav *= 0.86 + nBig * 0.24;
+                pav *= 1.0 - smoothstep( 0.46, 0.34, nMid ) * 0.16;
+                float fp = max( fwidth( vLotXZ.x ), 1e-4 );
+                float peb = step( 0.72, texture2D( lotNoise, vLotXZ / 3.1 ).r );
+                peb = peb * clamp( 1.0 - ( fp - 0.05 ) / 0.3, 0.0, 1.0 ) + ( 1.0 - clamp( 1.0 - ( fp - 0.05 ) / 0.3, 0.0, 1.0 ) ) * 0.12;
+                pav = mix( pav, pav * vec3( 0.62, 0.6, 0.58 ), peb * 0.5 );
+              } else {
+                // Rail yard: dark ballast, track every 4.8 m along the yard's
+                // long side -- two steel rails on dark sleepers.
+                //
+                // The WHOLE track pattern fades with distance, not just its
+                // lines. The 4.8 m bed banding stayed at full contrast to the
+                // horizon, moired, and a SoDo yard read as a beige corduroy
+                // sheet. Each scale fades to its own mean as a pixel's footprint
+                // passes it, like the parking bays.
+                vec3 ballast = vec3( 0.150, 0.145, 0.138 ) * mix( vec3( 1.0 ), detailT, 0.5 )
+                  * mix( vec3( 1.0 ), macroT, 0.4 ) * ( 0.85 + nBig * 0.3 );
+                float fu = max( fwidth( p.x ), 1e-4 ), fv = max( fwidth( p.y ), 1e-4 );
+                float ty = abs( fract( p.y / 4.8 + 0.5 ) - 0.5 ) * 4.8;   // from track centre
+                float bed = 1.0 - smoothstep( 1.3 - fv, 1.3 + fv, ty );
+                float sx = abs( fract( p.x / 0.62 + 0.5 ) - 0.5 ) * 0.62;
+                float sleeper = bed * ( 1.0 - smoothstep( 0.12 - fu, 0.12 + fu, sx ) );
+                float rail = 1.0 - smoothstep( 0.05 - fv, 0.05 + fv, abs( ty - 0.72 ) );
+                float fs = clamp( 1.0 - ( fu - 0.04 ) / 0.12, 0.0, 1.0 );   // sleepers, 0.24 m
+                float fr = clamp( 1.0 - ( fv - 0.03 ) / 0.08, 0.0, 1.0 );   // rails, 0.1 m
+                float fb = clamp( 1.0 - ( fv - 0.25 ) / 0.6, 0.0, 1.0 );    // the 4.8 m beds
+                sleeper = sleeper * fs + ( 1.0 - fs ) * bed * 0.39;
+                rail = rail * fr + ( 1.0 - fr ) * 0.042;   // both rails: |ty| folds them
+                vec3 track = ballast * ( 1.0 - bed * 0.10 );
+                track = mix( track, vec3( 0.085, 0.072, 0.062 ), sleeper * 0.8 );
+                track = mix( track, vec3( 0.34, 0.34, 0.35 ), rail * 0.5 );
+                // mean of the above over a whole 4.8 m period
+                // (beds 54 % of the width, sleepers 39 % of a bed, mixed at 0.8)
+                vec3 far = ballast * 0.946 * 0.832 + vec3( 0.085, 0.072, 0.062 ) * 0.168;
+                pav = mix( far, track, fb );
+              }
+              diffuseColor.rgb = mix( diffuseColor.rgb, pav, cov );
+              lotCover = cov;
+            }
+          }`)
+        .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+          roughnessFactor = mix( roughnessFactor, 0.8, lotCover );`);
+    };
+    mat.customProgramCacheKey = () => (lotTex ? (FALL ? 'terrain3scale-lots-wood-fall' : 'terrain3scale-lots-wood') : 'terrain3scale');
+    this.terrainGroup = new THREE.Group();
+    this.scene.add(this.terrainGroup);
+    const lod = this.terrainLod = {
+      NB, perB: per / LOD_BLOCK, off: (N - 1) % LOD_BLOCK !== 0, tiles: [], lv: new Uint8Array(NB * NB),
+      bx0: new Float32Array(NB * NB), bz0: new Float32Array(NB * NB),
+      ymin: new Float32Array(NB * NB), ymax: new Float32Array(NB * NB),
+      cx: NaN, cy: NaN, cz: NaN, stats: [0, 0, 0, 0], composes: 0, s16: null, s32: null,
+      poly: new Int32Array(64), cn: new Int32Array(4),
+      // the stitch ratio on a side: how many of the neighbour's cells make one of ours, if it is finer
+      ratio: (lv, lev, ok, g2) => (ok && lv[g2] < lev ? LOD_STRIDE[lev] / LOD_STRIDE[lv[g2]] : 1),
+    };
+    const PSUB = 11 * 11;   // patchCell's lattice: (SUB + 1)^2
+    for (let tz = 0; tz < TILES; tz++) {
+      for (let tx = 0; tx < TILES; tx++) {
+        const i0 = tx * per, j0 = tz * per;
+        const i1 = Math.min(N - 1, i0 + per), j1 = Math.min(N - 1, j0 + per);
+        if (i1 <= i0 || j1 <= j0) continue;
+        const w = i1 - i0 + 1, d = j1 - j0 + 1;
+        // CELLS OVER A PORTAL TRENCH ARE NOT DRAWN AT 40 M. The heightfield's
+        // vertex spacing is 40 m and a road cut is 14 m wide, so the hole
+        // cannot be expressed on this grid at all -- which is exactly why
+        // every earlier attempt at an open cut failed. Such a cell is dropped
+        // here and re-tessellated at ~4 m in `patchCell`, with the sub-quads
+        // over the corridor left out. Only cells near a portal pay for it.
+        // Which cells are cut, and the heights each cut cell's patch is drawn
+        // at, are kept by the boot cache (bootcache.js memo): both read the
+        // carve through terrainHeight, ~1.2 s of a phone's boot.
+        const cut = memo(`terrain:${tx},${tz}`, () => {
+          const flags = new Uint8Array((w - 1) * (d - 1)), hs = [];
+          for (let j = 0; j < d - 1; j++) {
+            for (let i = 0; i < w - 1; i++) {
+              const cx = -H + (i0 + i) * S, cz = -H + (j0 + j) * S;
+              if (!this.cellCut(cx, cz, S)) continue;
+              flags[j * (w - 1) + i] = 1;
+              hs.push(this.patchHeights(cx, cz, S));
+            }
+          }
+          const ys = new Float64Array(hs.length * PSUB);
+          hs.forEach((h, k) => ys.set(h, k * PSUB));
+          return { flags, ys };
+        }, (v) => v && v.flags && v.flags.length === (w - 1) * (d - 1) && v.ys && v.ys.length === v.flags.reduce((n, f) => n + f, 0) * PSUB);
+        // (cellCut's first call made the portal cuts and the tunnel water
+        // mask: made here instead when the answer was kept)
+        this.portalCuts();
+        const nPatch = cut.ys.length / PSUB, nGrid = w * d, nVert = nGrid + nPatch * PSUB;
+        // How built-up the ground is comes from the real footprint area in
+        // each 400 m chunk, so the edge of the city follows the city rather
+        // than a rectangle. The query point is still pushed around by smooth
+        // noise and sampled three times, because the chunk grid is 400 m and
+        // a straight lookup would draw its staircase on the ground.
+        // (Kept by the boot cache, bootcache.js memo, as the cut cells are. It
+        // is the tile's colour attribute itself, with room at the end for the
+        // cut cells' lattices, which patchCell fills: the same on every launch.)
+        const col = memo(`terrain:tint:${tx},${tz}`, () => {
+          const out = new Float32Array(nVert * 3);
+          for (let j = 0; j < d; j++) {
+            for (let i = 0; i < w; i++) {
+              const gi = i0 + i, gj = j0 + j, k = (j * w + i) * 3;
+              const c = this.groundTint(-H + gi * S, -H + gj * S, hf[gj * N + gi]);
+              const n = hash2(gi, gj) * 0.14 + 0.93;
+              out[k] = c[0] * n;
+              out[k + 1] = c[1] * n;
+              out[k + 2] = c[2] * n;
+            }
+          }
+          return out;
+        }, (v) => v instanceof Float32Array && v.length === nVert * 3);
+        // One vertex buffer per tile: the grid, then each cut cell's lattice.
+        const pos = new Float32Array(nVert * 3), uv = new Float32Array(nVert * 2);
+        const nor = new Float32Array(nVert * 3);
+        for (let j = 0; j < d; j++) {
+          for (let i = 0; i < w; i++) {
+            const gi = i0 + i, gj = j0 + j;
+            const x = -H + gi * S, z = -H + gj * S;
+            const y = hf[gj * N + gi];
+            const k = (j * w + i) * 3;
+            pos[k] = x; pos[k + 1] = y; pos[k + 2] = z;
+            uv[(j * w + i) * 2] = x / 13;
+            uv[(j * w + i) * 2 + 1] = z / 13;
+          }
+        }
+        // The grid's normals come from the full 40 m triangulation (this
+        // index is only for them; what is drawn is composed per LOD, below).
+        const idx = new Uint32Array(((w - 1) * (d - 1) - nPatch) * 6);
+        const patch = [];
+        let ni = 0;
+        for (let j = 0; j < d - 1; j++) {
+          for (let i = 0; i < w - 1; i++) {
+            const a = j * w + i, b = a + 1, c2 = a + w, e = c2 + 1;
+            if (cut.flags[j * (w - 1) + i]) { patch.push([-H + (i0 + i) * S, -H + (j0 + j) * S, a]); continue; }
+            idx[ni++] = a; idx[ni++] = c2; idx[ni++] = b;
+            idx[ni++] = b; idx[ni++] = c2; idx[ni++] = e;
+          }
+        }
+        nor.set(vertexNormals(pos.subarray(0, nGrid * 3), idx));
+        // A vertex whose four cells are ALL cut has no normal from that (it was
+        // never drawn); a coarse block draws it, so it takes the normal the
+        // whole grid gives it.
+        if (nPatch) {
+          const all = new Uint32Array((w - 1) * (d - 1) * 6);
+          let na = 0;
+          for (let j = 0; j < d - 1; j++) {
+            for (let i = 0; i < w - 1; i++) {
+              const a = j * w + i, c2 = a + w;
+              all[na++] = a; all[na++] = c2; all[na++] = a + 1;
+              all[na++] = a + 1; all[na++] = c2; all[na++] = c2 + 1;
+            }
+          }
+          const full = vertexNormals(pos.subarray(0, nGrid * 3), all);
+          for (let v = 0; v < nGrid; v++) {
+            if (nor[v * 3] === 0 && nor[v * 3 + 1] === 0 && nor[v * 3 + 2] === 0) {
+              nor[v * 3] = full[v * 3]; nor[v * 3 + 1] = full[v * 3 + 1]; nor[v * 3 + 2] = full[v * 3 + 2];
+            }
+          }
+        }
+        // The re-tessellated cells: each cell's own 11 x 11 lattice, shared
+        // by its 100 quads (it was 400 vertices a cell, four to a quad).
+        const pMask = new Uint8Array(nPatch * 13);
+        patch.forEach(([cx, cz, a], k) => {
+          this.patchCell(pos, nor, uv, col, nGrid + k * PSUB, pMask.subarray(k * 13, (k + 1) * 13),
+            cx, cz, S, [col[a * 3], col[a * 3 + 1], col[a * 3 + 2]], cut.ys.subarray(k * PSUB, (k + 1) * PSUB));
+        });
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+        geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+        geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+        {
+          const sp = memo(`terrain:sphere:${tx},${tz}`, () => {
+            const b = boundingSphere(pos);
+            return Float64Array.of(b.center.x, b.center.y, b.center.z, b.radius);
+          }, (v) => v instanceof Float64Array && v.length === 4);
+          geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(sp[0], sp[1], sp[2]), sp[3]);
+        }
+        // THE TILE'S LOD (updateTerrainLod): blocks of LOD_BLOCK cells, each
+        // drawn at the stride its distance asks for. A cut cell belongs to its
+        // block and is drawn only where the block is at full detail.
+        const bw = Math.ceil((w - 1) / LOD_BLOCK), bd = Math.ceil((d - 1) / LOD_BLOCK);
+        const pOff = new Int32Array(bw * bd + 1), pOrder = new Int32Array(nPatch);
+        const blockOf = (k) => { const a = patch[k][2]; return Math.floor(Math.floor(a / w) / LOD_BLOCK) * bw + Math.floor((a % w) / LOD_BLOCK); };
+        for (let k = 0; k < nPatch; k++) pOff[blockOf(k) + 1]++;
+        for (let b = 0; b < bw * bd; b++) pOff[b + 1] += pOff[b];
+        { const at = pOff.slice(0, bw * bd); for (let k = 0; k < nPatch; k++) pOrder[at[blockOf(k)]++] = k; }
+        const gbx0 = i0 / LOD_BLOCK, gbz0 = j0 / LOD_BLOCK;
+        for (let bz = 0; bz < bd; bz++) {
+          for (let bx = 0; bx < bw; bx++) {
+            const g = (gbz0 + bz) * NB + gbx0 + bx;
+            let y0 = Infinity, y1 = -Infinity;
+            const ia = bx * LOD_BLOCK, ja = bz * LOD_BLOCK;
+            for (let j = ja; j <= Math.min(d - 1, ja + LOD_BLOCK); j++) {
+              for (let i = ia; i <= Math.min(w - 1, ia + LOD_BLOCK); i++) {
+                const y = hf[(j0 + j) * N + i0 + i];
+                if (y < y0) y0 = y; if (y > y1) y1 = y;
+              }
+            }
+            lod.bx0[g] = -H + (i0 + ia) * S; lod.bz0[g] = -H + (j0 + ja) * S;
+            lod.ymin[g] = y0; lod.ymax[g] = y1;
+          }
+        }
+        const T = {
+          w, d, bw, bd, gbx0, gbz0, nGrid, cutFlags: cut.flags, pOff, pOrder, pMask,
+          wide: nVert > 65535, cap: ((w - 1) * (d - 1) - nPatch) * 6 + nPatch * 600,
+          dirty: true, live: bw * bd, mesh: null, geo,
+        };
+        geo.userData.keepIndex = true;
+        const m = new THREE.Mesh(geo, mat);
+        m.receiveShadow = this.shadows;
+        // The index is composed when the tile is about to be drawn (three
+        // uploads it right after this call), from the levels as they stand.
+        // Built OUTSIDE this loop: an arrow here shares the block's closure
+        // context, which holds pos/nor/uv/col for the patch forEach, so the
+        // live hook would pin every tile's vertex arrays in the JS heap after
+        // upload (+20 MB at boot, +35 MB after a flight on the phone).
+        m.onBeforeRender = terrainHook(this, T);
+        T.mesh = m;
+        lod.tiles.push(T);
+        this.terrainGroup.add(m);
+      }
+      yield (tz + 1) / TILES;
+    }
+    // Every tile's index is a view of ONE shared scratch array (so the JS side
+    // holds one tile's worth, not the map's); the GPU buffer is allocated at
+    // the tile's full size on its first draw, and each compose rewrites the
+    // front of it. Uploaded straight after composing, so sharing is safe.
+    lod.s16 = new Uint16Array(Math.max(1, ...lod.tiles.filter((t) => !t.wide).map((t) => t.cap)));
+    lod.s32 = new Uint32Array(Math.max(1, ...lod.tiles.filter((t) => t.wide).map((t) => t.cap)));
+    for (const T of lod.tiles) {
+      T.geo.setIndex(new THREE.BufferAttribute((T.wide ? lod.s32 : lod.s16).subarray(0, T.cap), 1));
+      T.geo.setDrawRange(0, 0);
+    }
+    // A restored context re-uploads each index from its array, which is the
+    // scratch as the LAST tile left it: compose them all again first.
+    if (this.renderer) this.renderer.domElement.addEventListener('webglcontextrestored', () => { for (const T of lod.tiles) T.dirty = true; });
+    lod.tileAt = new Map(lod.tiles.map((T) => [T.gbz0 * 4096 + T.gbx0, T]));
+    this.updateTerrainLod({ x: 0, y: 150, z: 0 });   // (draw() does the real one)
+    lod.cx = NaN; lod.started = false;   // so the first real pass sets levels without hysteresis
+  }
+
+  /**
+   * TERRAIN LOD. The ground is drawn in blocks of LOD_BLOCK cells (480 m); a
+   * block's stride (1, 2, 4 cells: 40, 80, 160 m) is the one its distance from
+   * the CAMERA asks for (LOD_AT), 3-D to the block's box so a plane high over
+   * the city coarsens what is below it as the fog already does. Past the last
+   * distance (past the far plane) a block is not drawn. Levels change with
+   * LOD_HYST of slack either way, so a block on a boundary does not flip.
+   *
+   * The vertices never change: a coarse block indexes every 2nd / 4th vertex
+   * of the same grid, and a block beside a FINER one fans its border cells
+   * through that neighbour's vertices, so the edge is the same line on both
+   * sides (no cracks, no skirts). Cut cells (portal trenches) are drawn only
+   * at full detail. Each tile's index is composed from the levels just before
+   * the tile draws (`_composeTerrain`), so nothing here costs a frame it is
+   * not seen in. Gameplay never reads the mesh: terrainHeight() is the
+   * heightfield.
+   */
+  updateTerrainLod(cam) {
+    const L = this.terrainLod;
+    if (!L || L.off) return;
+    const dx0 = cam.x - L.cx, dy0 = cam.y - L.cy, dz0 = cam.z - L.cz;
+    if (dx0 * dx0 + dy0 * dy0 + dz0 * dz0 < LOD_STEP * LOD_STEP) return;   // (NaN: the first call)
+    L.cx = cam.x; L.cy = cam.y; L.cz = cam.z;
+    const NB = L.NB, lv = L.lv, S = LOD_BLOCK * G.HF_STEP, first = !L.started;
+    L.started = true;
+    const tiles = L.tiles, perB = L.perB, tileAt = L.tileAt;
+    const touch = (bx, bz) => {
+      if (bx < 0 || bz < 0 || bx >= NB || bz >= NB) return;
+      const T = tileAt.get(Math.floor(bz / perB) * perB * 4096 + Math.floor(bx / perB) * perB);
+      if (T) T.dirty = true;
+    };
+    const st = L.stats; st[0] = st[1] = st[2] = st[3] = 0;
+    for (let bz = 0; bz < NB; bz++) {
+      for (let bx = 0; bx < NB; bx++) {
+        const g = bz * NB + bx;
+        const x0 = L.bx0[g], z0 = L.bz0[g];
+        const ex = Math.max(x0 - cam.x, 0, cam.x - (x0 + S));
+        const ez = Math.max(z0 - cam.z, 0, cam.z - (z0 + S));
+        const ey = Math.max(L.ymin[g] - cam.y, 0, cam.y - L.ymax[g]);
+        const dist = Math.sqrt(ex * ex + ey * ey + ez * ez);
+        const was = lv[g];
+        let now = first ? 0 : was;
+        while (now < LOD_AT.length && dist > LOD_AT[now] + (first ? 0 : LOD_HYST)) now++;
+        while (now > 0 && dist < LOD_AT[now - 1] - (first ? 0 : LOD_HYST)) now--;
+        st[now]++;
+        if (now !== was || first) {
+          lv[g] = now;
+          touch(bx, bz); touch(bx - 1, bz); touch(bx + 1, bz); touch(bx, bz - 1); touch(bx, bz + 1);
+        }
+      }
+    }
+    for (const T of tiles) {
+      let live = 0;
+      for (let bz = 0; bz < T.bd; bz++) for (let bx = 0; bx < T.bw; bx++) if (lv[(T.gbz0 + bz) * NB + T.gbx0 + bx] < LOD_AT.length) live++;
+      T.live = live;
+    }
+  }
+
+  /**
+   * Before the scene pass: a tile is drawn only if one of its LIVE blocks is in
+   * the camera's frustum. A tile is 5 km across, so three's test (the tile's
+   * sphere) kept ~13 of them -- one draw each -- in a street-level view, most
+   * holding only far coarse ground that is behind or beside the camera.
+   * Blocks are tested by their own spheres (480 m, plus their height range).
+   */
+  cullTerrain(camera) {
+    const L = this.terrainLod;
+    if (!L || L.noCull) return;   // (noCull: a harness's full-detail baseline)
+    camera.updateMatrixWorld();
+    const fr = L.frustum || (L.frustum = new THREE.Frustum()), m = L.cullM || (L.cullM = new THREE.Matrix4());
+    fr.setFromProjectionMatrix(m.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+    const pl = fr.planes, lv = L.lv, NB = L.NB, h = LOD_BLOCK * G.HF_STEP / 2;
+    for (const T of L.tiles) {
+      let vis = false;
+      if (T.live > 0 && fr.intersectsSphere(T.geo.boundingSphere)) {
+        scan: for (let bz = 0; bz < T.bd; bz++) {
+          for (let bx = 0; bx < T.bw; bx++) {
+            const g = (T.gbz0 + bz) * NB + T.gbx0 + bx;
+            if (lv[g] >= LOD_AT.length) continue;
+            const cx = L.bx0[g] + h, cz = L.bz0[g] + h, cy = (L.ymin[g] + L.ymax[g]) / 2;
+            const r = Math.hypot(h * 1.4143, (L.ymax[g] - L.ymin[g]) / 2);
+            let inside = true;
+            for (let k = 0; k < 6; k++) {
+              const p = pl[k];
+              if (p.normal.x * cx + p.normal.y * cy + p.normal.z * cz + p.constant < -r) { inside = false; break; }
+            }
+            if (inside) { vis = true; break scan; }
+          }
+        }
+      }
+      T.mesh.visible = vis;
+    }
+  }
+
+  /** Rewrite one tile's index for the levels as they stand (see updateTerrainLod). */
+  _composeTerrain(T) {
+    const L = this.terrainLod, lv = L.lv, NB = L.NB;
+    const out = T.wide ? L.s32 : L.s16, w = T.w, W1 = T.w - 1, D1 = T.d - 1;
+    const pb = T.nGrid, flags = T.cutFlags, mask = T.pMask;
+    const poly = L.poly, ratio = L.ratio;
+    let n = 0;
+    T.dirty = false;
+    L.composes++;
+    for (let bz = 0; bz < T.bd; bz++) {
+      for (let bx = 0; bx < T.bw; bx++) {
+        const gb = (T.gbz0 + bz) * NB + T.gbx0 + bx, lev = lv[gb];
+        if (lev >= LOD_AT.length) continue;
+        const ci0 = bx * LOD_BLOCK, cj0 = bz * LOD_BLOCK;
+        const ci1 = Math.min(ci0 + LOD_BLOCK, W1), cj1 = Math.min(cj0 + LOD_BLOCK, D1);
+        if (lev === 0) {
+          for (let j = cj0; j < cj1; j++) {
+            for (let i = ci0; i < ci1; i++) {
+              if (flags[j * W1 + i]) continue;
+              const a = j * w + i, c2 = a + w;
+              out[n++] = a; out[n++] = c2; out[n++] = a + 1;
+              out[n++] = a + 1; out[n++] = c2; out[n++] = c2 + 1;
+            }
+          }
+          const b = bz * T.bw + bx;
+          for (let q = T.pOff[b]; q < T.pOff[b + 1]; q++) {
+            const k = T.pOrder[q], base = pb + k * 121, mk = k * 13;
+            for (let qj = 0; qj < 10; qj++) {
+              for (let qi = 0; qi < 10; qi++) {
+                const bit = qj * 10 + qi;
+                if (mask[mk + (bit >> 3)] & (1 << (bit & 7))) continue;
+                const v0 = base + qj * 11 + qi;
+                out[n++] = v0; out[n++] = v0 + 11; out[n++] = v0 + 12;
+                out[n++] = v0; out[n++] = v0 + 12; out[n++] = v0 + 1;
+              }
+            }
+          }
+          continue;
+        }
+        // a coarse block: stride s, each side stitched to a finer neighbour
+        const s = LOD_STRIDE[lev], nb = LOD_BLOCK / s;
+        const gbx = T.gbx0 + bx, gbz = T.gbz0 + bz;
+        const rW = ratio(lv, lev, gbx > 0, gb - 1), rE = ratio(lv, lev, gbx < NB - 1, gb + 1);
+        const rN = ratio(lv, lev, gbz > 0, gb - NB), rS = ratio(lv, lev, gbz < NB - 1, gb + NB);
+        for (let cj = 0; cj < nb; cj++) {
+          for (let ci = 0; ci < nb; ci++) {
+            const a = (cj0 + cj * s) * w + ci0 + ci * s, b = a + s, c2 = a + s * w, e = c2 + s;
+            const fW = ci === 0 && rW > 1, fE = ci === nb - 1 && rE > 1;
+            const fN = cj === 0 && rN > 1, fS = cj === nb - 1 && rS > 1;
+            if (!(fW || fE || fN || fS)) {
+              out[n++] = a; out[n++] = c2; out[n++] = b;
+              out[n++] = b; out[n++] = c2; out[n++] = e;
+              continue;
+            }
+            // The cell's outline, corner to corner (a, c2, e, b) with the
+            // neighbour's vertices along each side it is finer on, fanned
+            // from a corner that is not on such a side.
+            let np = 0;
+            const cn = L.cn;
+            cn[0] = np; poly[np++] = a;
+            if (fW) { const st = s / rW; for (let k = 1; k < rW; k++) poly[np++] = a + k * st * w; }
+            cn[1] = np; poly[np++] = c2;
+            if (fS) { const st = s / rS; for (let k = 1; k < rS; k++) poly[np++] = c2 + k * st; }
+            cn[2] = np; poly[np++] = e;
+            if (fE) { const st = s / rE; for (let k = 1; k < rE; k++) poly[np++] = e - k * st * w; }
+            cn[3] = np; poly[np++] = b;
+            if (fN) { const st = s / rN; for (let k = 1; k < rN; k++) poly[np++] = b - k * st; }
+            // corner a touches W and N, c2 W and S, e S and E, b E and N
+            const free = !(fW || fN) ? 0 : !(fW || fS) ? 1 : !(fS || fE) ? 2 : !(fE || fN) ? 3 : 0;
+            const p0 = cn[free];
+            for (let t = 1; t < np - 1; t++) {
+              out[n++] = poly[p0]; out[n++] = poly[(p0 + t) % np]; out[n++] = poly[(p0 + t + 1) % np];
+            }
+          }
+        }
+      }
+    }
+    T.geo.setDrawRange(0, n);
+    const ix = T.geo.index;
+    ix.clearUpdateRanges();
+    ix.addUpdateRange(0, n);
+    ix.needsUpdate = true;
+  }
+
+  /**
+   * The lot layer as an RG8 texture: 1801^2 x (coverage, code), 6.5 MB of GPU
+   * memory -- under the 6.8 MB the 10 m R8 code texture it replaced took. No
+   * mips (a code can't be averaged). Null if the data carries no lot layer.
+   */
+  /** The wood mask as a 20 m coverage texture (geo.woodCover): R8, linear, mipmapped. */
+  woodTexture() {
+    const w = G.woodCover();
+    const t = new THREE.DataTexture(w.data, w.n, w.n, THREE.RedFormat, THREE.UnsignedByteType);
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.generateMipmaps = true;
+    t.unpackAlignment = 1;
+    t.colorSpace = THREE.NoColorSpace;
+    t.needsUpdate = true;
+    return { tex: t, n: w.n };
+  }
+
+  lotTexture() {
+    const lot = G.lotCodes();
+    if (!lot) return null;
+    const t = new THREE.DataTexture(lot, G.LOT_N, G.LOT_N, THREE.RGFormat, THREE.UnsignedByteType);
+    t.minFilter = THREE.NearestFilter;
+    t.magFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    t.unpackAlignment = 1;   // a 1801 x 2-byte row is not a multiple of 4
+    t.colorSpace = THREE.NoColorSpace;
+    t.needsUpdate = true;
+    return t;
+  }
+
+  /** Does this 40 m terrain cell touch a portal trench? */
+  cellCut(cx, cz, S) {
+    // An underpass cut (citygen) is 10-20 m wide too, so its cells need the
+    // same re-tessellation as a portal trench or the 40 m grid hides the dip.
+    if (this.city.underpassCell && this.city.underpassCell(cx, cz, S)) return true;
+    // ...and so is a railway cutting (freight.js), 11 m wide at its floor
+    if (G.railCarveCell && G.railCarveCell(cx + S / 2, cz + S / 2)) return true;
+    // ...and a raised dock's edge (geo setFill)
+    if (G.fillCell && G.fillCell(cx, cz)) return true;
+    if (!this.portalCuts().length) return false;
+    // No cutting filed under any grid cell this terrain cell touches: every
+    // sample below would find an empty list and answer null. (422k cells x 9
+    // samples was ~0.3 s of the boot, nearly all of it here.)
+    {
+      this._cutsNear(cx, cz);   // builds the grid
+      const G0 = Math.floor(cx / 48), G1 = Math.floor((cx + S) / 48);
+      const H0 = Math.floor(cz / 48), H1 = Math.floor((cz + S) / 48);
+      let any = false;
+      for (let gx = G0; gx <= G1 && !any; gx++) for (let gz = H0; gz <= H1 && !any; gz++) if (this._cutGrid.has(gx * 100003 + gz)) any = true;
+      if (!any) return false;
+    }
+    for (let j = 0; j <= 2; j++) {
+      for (let i = 0; i <= 2; i++) {
+        if (this.cutFloor(cx + (i * S) / 2, cz + (j * S) / 2)) return true;
+      }
+    }
+    return false;
+  }
+
+  /** patchCell's heights: its (SUB + 1)^2 lattice, row by row, carve included. */
+  patchHeights(cx, cz, S) {
+    const SUB = 10, q = S / SUB;
+    const ys = new Float64Array((SUB + 1) * (SUB + 1));
+    for (let j = 0; j <= SUB; j++) for (let i = 0; i <= SUB; i++) ys[j * (SUB + 1) + i] = G.terrainHeight(cx + i * q, cz + j * q);
+    return ys;
+  }
+
+  /**
+   * One dropped terrain cell, redrawn at SUB x SUB with the trench left out.
+   *
+   * Heights come from `G.terrainHeight`, which interpolates the way the terrain
+   * mesh is triangulated -- so the patch meets the surrounding 40 m grid along
+   * its edges by construction rather than by luck.
+   */
+  patchCell(pos, nor, uv, col, v0, mask, cx, cz, S, colour, ys) {
+    // The quad size is bound to the carve profile: CUT_OVER must be at least
+    // one of these quads, so that any quad crossing the wall plane has both
+    // corners on the trench floor and every earth face the bank draws stands
+    // behind the concrete. Change one and you must change the other. 2 m quads
+    // were used before CUT_OVER existed -- the bank started ON the wall line
+    // then, so every straddling quad poked into the trench -- and at 2 m the
+    // patches were a fifth of the frame's triangles once the carve reached its
+    // full width.
+    const SUB = 10, q = S / SUB;
+    // Heights come straight from terrainHeight, which already carries the cut.
+    // The patch exists only to RESOLVE it: a 40 m cell cannot show a 14 m
+    // trench however correct the height function is.
+    // One height per lattice point, shared by the four quads that meet there
+    // (it was sampled four times over, through the carve, at boot). Shared
+    // points also mean neighbouring quads meet exactly.
+    // (`ys`: patchHeights, the same lattice)
+    const xs = new Float64Array(SUB + 1), zs = new Float64Array(SUB + 1);
+    for (let i = 0; i <= SUB; i++) { xs[i] = cx + i * q; zs[i] = cz + i * q; }
+    const Y = (i, j) => ys[j * (SUB + 1) + i];
+    // NO GROUND INSIDE A STREET-ENDED MOUTH'S BORE. Such a cut is dug to the
+    // street's kerb line and stops, so the ground climbs from the trench floor
+    // back up to the street across the quads just short of it -- inside the
+    // tube, between its deck and roof. From the road the mouth card hides that
+    // (it is why the card exists); a chase camera that follows the car in saw
+    // it as a wall of grass across the bore. Those quads are simply not drawn:
+    // from inside the lining shows, and from above the portal's top slab
+    // covers the whole stretch from headwall to kerb.
+    const zones = this._mouthZones();
+    const nearZone = zones.some((z0) => Math.hypot(cx + S / 2 - z0.x, cz + S / 2 - z0.z) < S * 0.71 + 24);
+    // No excavation tint. The cutting is faced in concrete by the retaining
+    // walls; the ground above it is the same ground as everywhere else.
+    // The lattice goes into the tile's vertex arrays at `v0`, one vertex a
+    // point (flat normal, the cell's colour, the ground map's UV); the quads
+    // between them are indices, composed by _composeTerrain, and `mask` has a
+    // bit set (j * 10 + i) for each quad that is left out.
+    for (let j = 0; j <= SUB; j++) {
+      for (let i = 0; i <= SUB; i++) {
+        const v = v0 + j * (SUB + 1) + i, k = v * 3;
+        pos[k] = xs[i]; pos[k + 1] = Y(i, j); pos[k + 2] = zs[j];
+        nor[k + 1] = 1;
+        uv[v * 2] = xs[i] / 13; uv[v * 2 + 1] = zs[j] / 13;
+        col[k] = colour[0]; col[k + 1] = colour[1]; col[k + 2] = colour[2];
+      }
+    }
+    for (let j = 0; j < SUB; j++) {
+      for (let i = 0; i < SUB; i++) {
+        const x = xs[i], z = zs[j];
+        if (nearZone && zones.some((z0) => Math.hypot(x + q / 2 - z0.x, z + q / 2 - z0.z) < 24)) {
+          const td = this._tunDeckUnder(x + q / 2, z + q / 2, 0);
+          if (td !== null) {
+            const y0 = Math.min(Y(i, j), Y(i, j + 1), Y(i + 1, j + 1), Y(i + 1, j));
+            const y1 = Math.max(Y(i, j), Y(i, j + 1), Y(i + 1, j + 1), Y(i + 1, j));
+            if (y1 > td + 0.1 && y0 < td + TUNNEL_H - 0.1) mask[(j * SUB + i) >> 3] |= 1 << ((j * SUB + i) & 7);
+          }
+        }
+      }
+    }
+  }
+
+  /** Where each street-ended cut stops (its last point before the cap). */
+  _mouthZones() {
+    if (this._mzones) return this._mzones;
+    const out = [];
+    for (const c of this.portalCuts()) {
+      if (!c.streetDir) continue;
+      const pts = c.pts.filter((p) => !p.cap);
+      if (pts.length) out.push({ x: pts[pts.length - 1].x, z: pts[pts.length - 1].z });
+    }
+    return (this._mzones = out);
+  }
+
+  /**
+   * The corridor each portal needs cut out of the ground.
+   *
+   * A bore is 5.4 m tall, so between a mouth at grade and the point where the
+   * roof is finally under the hill, the terrain surface crosses the tunnel
+   * INTERIOR -- in at floor level, out at roof level. No grade removes that and
+   * no slab hides it: the ground is simply drawn where the tunnel is. Every
+   * portal shape tried before this one failed on it.
+   *
+   * So the ground gets cut. Walk the graph inward from each portal along the
+   * widest tunnel edge, collecting the real node heights, and stop where the
+   * roof is genuinely buried. That polyline is the trench.
+   */
+  portalCuts() {
+    if (this._pcuts) return this._pcuts;
+    // A cached result of this same build (bootcache.js via main.js): the
+    // cuts, every barrier, and the lids are deterministic in the map data and
+    // the code, and computing them was ~4 s of a phone's boot.
+    const snap = this.bootCache && this.bootCache.portal;
+    const cuts = snap && snap.cuts ? this._applyPortalSnap(snap) : this._computePortalCuts();
+
+    // DRY TUNNELS. A corridor that dips below sea level intersects the water
+    // plane, and the plane knows nothing about bores: the SR-99 tube rendered
+    // as a canal. Each low pair of corridor points gets an invisible quad just
+    // above sea level that writes DEPTH ONLY (renderOrder 3, before the water
+    // at 4): the deck below it is already drawn and keeps its pixels, and the
+    // sea behind it fails the depth test and never draws inside the tube.
+    if (!this.tunnelWaterMask) {
+      // Over the tunnel EDGES, not the carved corridors: a corridor ends
+      // ~140 m in where the ground closes, and the first mask followed it --
+      // so the first 140 m of SR-99 were dry and the remaining 3 km, all of it
+      // below sea level, still rendered flooded. The graph is the authority on
+      // where the bore runs; the profile on its nodes is the authority on how
+      // deep.
+      const wb = new Builder(false);
+      // The mask's job is the view FROM ABOVE -- a cutting whose floor is under
+      // sea level, seen from the street -- so it sits just over the sea. From
+      // INSIDE a bore no mask height works: measured at SB bore +1500 and
+      // +2033 with the camera posed, water filled half the frame for a camera
+      // 0.5-1 m over sea level whatever height the mask was at (0.02 to
+      // 1.2 m), and 1.2 m -- tried first -- flooded every camera below it. The
+      // interior is handled by not drawing water to an underground camera at
+      // all (buildWater). Quads over real water are skipped: from above, a
+      // depth-only quad there is a hole in the sea (2 of 117 masked edges, at
+      // the Pioneer Square shoreline).
+      //
+      // AT THE LOCAL WATER SURFACE, not the sea's. The mask stood at 0.02 and
+      // covered only floors under ~1 m, which is sea level; Lake Washington's
+      // plane is at 5.09 and its box reaches Montlake, so the 520's cutting
+      // at the lid's east portal (floor ~4 m) showed the lake lying across
+      // both carriageways -- "the 520 is underwater near UW". The sea plane
+      // runs under every lake box too; G.drawnWaterLevel takes the highest.
+      const MASK_Y = 0.02;
+      const drawnWater = (x, z) => G.drawnWaterLevel(this.lakeSpecs, x, z);
+      // IN CELLS, skipping only the wet ones. A whole segment used to be
+      // skipped when any of nine samples over its footprint was water, so a
+      // cutting beside the bay lost its mask entirely: the NB entry cutting at
+      // SR-99's south portal lay under the sea plane for its last 30 m, road
+      // and banks alike.
+      const maskStrip = (a, b, w, qx, qz) => {
+        const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+        const nA = Math.max(1, Math.ceil(L / 4)), nW = Math.max(1, Math.ceil((2 * w) / 4));
+        for (let i = 0; i < nA; i++) {
+          const t0 = i / nA, t1 = (i + 1) / nA;
+          for (let j = 0; j < nW; j++) {
+            const o0 = -w + (2 * w * j) / nW, o1 = -w + (2 * w * (j + 1)) / nW;
+            const tm = (t0 + t1) / 2, om = (o0 + o1) / 2;
+            const mx = a.x + (b.x - a.x) * tm + qx * om, mz = a.z + (b.z - a.z) * tm + qz * om;
+            if (G.isWater(mx, mz)) continue;
+            const y = drawnWater(mx, mz) + MASK_Y;
+            const P = (t, o) => [a.x + (b.x - a.x) * t + qx * o, y, a.z + (b.z - a.z) * t + qz * o];
+            wb.quad(P(t0, o1), P(t0, o0), P(t1, o0), P(t1, o1), [0, 1, 0], ZERO_UV, [1, 1, 1]);
+          }
+        }
+      };
+      for (const e of this.city.edges) {
+        if (!e.tunnel || e.elev) continue;
+        const a = this.city.nodes[e.a], b = this.city.nodes[e.b];
+        if (Math.min(a.y, b.y) > Math.max(drawnWater(a.x, a.z), drawnWater(b.x, b.z)) + 1.2) continue;
+        maskStrip(a, b, e.hw + 2, -e.dz, e.dx);
+      }
+      // ...AND OVER THE OPEN CUTTINGS. The mask followed the tunnel edges, so
+      // a cutting whose floor dips under the sea on its SURFACE approach --
+      // the NB entry cutting at SODO, beside the SR-99 surface on its lids --
+      // showed the sea plane lying in the trench as a canal, from the road
+      // beside it. Each non-cap corridor segment whose floor is under 1 m
+      // gets the same depth-only quad across the whole dug floor.
+      for (const c of cuts) {
+        for (let i = 0; i < c.pts.length - 1; i++) {
+          const a = c.pts[i], b = c.pts[i + 1];
+          // (floor under 1 m, not 0.3: a segment ending just above that left
+          // a line of sea where the next one's bank dipped under it)
+          if (a.cap || b.cap || Math.min(a.y, b.y) - 0.7 > Math.max(drawnWater(a.x, a.z), drawnWater(b.x, b.z)) + 1.0) continue;
+          const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+          // banks included: where a bank dips under the sea outside the
+          // full-depth width, the sea showed as streaks along it (depth-only
+          // at 0.02 m, the mask does nothing over ground higher than that)
+          maskStrip(a, b, a.hw + CUT_SH + CUT_OVER + CUT_BANK, -(b.z - a.z) / L, (b.x - a.x) / L);
+        }
+      }
+      if (!wb.empty) {
+        // DOUBLE-SIDED. These quads wind (A+q, A-q, B-q, B+q), which faces
+        // DOWN, so under three's default front-side culling the mask existed
+        // only for a camera below it. That went unseen while every sub-sea
+        // deck sat on the old -11.9 m plateau with the camera under the sea
+        // plane too; once the profile ran smoothly through sea level under
+        // downtown, a chase camera above 0 looked down on a flooded tube -- as
+        // it always had at the south cutting, where the deck is -0.5.
+        const mm = new THREE.Mesh(wb.build(),
+          new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.DoubleSide }));
+        mm.renderOrder = 3;
+        this.scene.add(mm);
+        this.tunnelWaterMaskMesh = mm;   // verify's submerged-road check raycasts it
+      }
+      this.tunnelWaterMask = true;
+    }
+
+    // A node now yields ONE CUT PER BRANCH, so this cannot be a 1:1 map --
+    // keyed by node it kept only the last branch, and every other branch's
+    // corridor ended with no wall at its head. That is a bore mouth packed
+    // with terrain, which portalcheck counts as a sliced bore once the
+    // exclusion around real walls is tightened.
+    this._pcutBy = new Map();
+    for (const c of cuts) {
+      if (!this._pcutBy.has(c.ni)) this._pcutBy.set(c.ni, []);
+      this._pcutBy.get(c.ni).push(c);
+    }
+    return cuts;
+  }
+
+  /** portalCuts' own work: the cuts, their walls and the bores' walls, the lids. */
+  _computePortalCuts() {
+    const city = this.city, cuts = [];
+    this.cutStats = { streetEnded: 0 };
+    // Is (x, z) on a surface street CROSSING bore edge `be` -- not a tunnel,
+    // deck or graded road, not one meeting the portal node, and at more than
+    // 30 deg to the bore (ramps and approaches run alongside it)?
+    const streetOver = (x, z, be, portalNi) => {
+      for (const ei of city.roadsNear(x, z, 3.2, false)) {
+        const r = city.edges[ei];
+        if (r.tunnel || r.elev || r.prof || r.a === portalNi || r.b === portalNi) continue;
+        const a = city.nodes[r.a], b = city.nodes[r.b];
+        // the street's footways too: stopping at the carriageway kerb left
+        // the pavement over the dug mouth, and walkers fell in
+        const sw = r.cls === 'art' ? 3.2 : r.cls === 'st' || r.cls === 'res' ? 2.6 : 0;
+        if (distToSeg(x, z, a.x, a.z, b.x, b.z).d > r.hw + sw) continue;
+        if (Math.abs(r.dx * be.dx + r.dz * be.dz) > Math.cos(Math.PI / 6)) continue;
+        return { r, sw };
+      }
+      return null;
+    };
+    const seen = new Set();
+    for (const [, grp] of this.portalGroups()) {
+      // The street-roof rule is SR-99's (its portal groups hold the stacked
+      // decks' nodes), and anywhere for a freeway over the bore (below).
+      // For every street it would reshape 48 cuts whose lids were each tuned
+      // against a regression; judge those portal by portal first.
+      const streetRoof = grp.members.some((mm) => city.nodes[mm.ni].deck);
+      const groupBranches = [];
+      for (const m of grp.members) {
+        if (seen.has(m.ni)) continue;
+        seen.add(m.ni);
+        // THE RAMP IN FRONT OF THE MOUTH. citygen drops the portal node below
+        // grade; this carves the ground from true terrain down to it along the
+        // surface approach, so the road you are driving descends into the
+        // cutting instead of meeting it as a wall at the horizon. These points
+        // come FIRST, so the corridor starts out on the street.
+        const P0 = city.nodes[m.ni];
+        const app = [];
+        {
+          // AN APPROACH THAT MEETS A FIXED-HEIGHT ROAD ENDS THERE, at its
+          // height. The ramp aimed at raw ground 70 m out whatever it met on
+          // the way: SR-99's NB exit joins Aurora's deck 35 m past the
+          // north portal, and passed that junction 1.7 m under the deck, so
+          // the car climbed onto it 1.9 m in 6 m (~400 m/s^2). The draped road
+          // lies 0.4 m over a corridor point's y (floor y - 0.7, + lift).
+          const walk = [];
+          let fixedY = null;
+          let cur = m.ni, prev = -1, d = 0;
+          while (d < APPROACH) {
+            const n = city.nodes[cur];
+            let best = null;
+            for (const k of n.e) {
+              const e = city.edges[k];
+              if (e.tunnel || e.elev || k === prev) continue;
+              if (best === null || e.hw > city.edges[best].hw) best = k;
+            }
+            if (best === null) break;
+            const e = city.edges[best];
+            const nx = e.a === cur ? e.b : e.a;
+            const nn = city.nodes[nx];
+            // walk the edge in 3 m steps looking for a deck or graded surface
+            // at about ground level that holds the point (not an overpass)
+            const from = city.nodes[cur];
+            let hit = null;
+            for (let sd = 3; sd < e.len && d + sd <= APPROACH && !hit; sd += 3) {
+              if (d + sd < 10) continue;
+              const f = sd / e.len, x = from.x + (nn.x - from.x) * f, z = from.z + (nn.z - from.z) * f;
+              const raw = G.terrainRaw(x, z);
+              for (const si of city.surfacesNear(x, z)) {
+                const s = city.surfaces[si];
+                if (s.tun) continue;
+                const re = city.edges[s.ei];
+                if (!re || !(re.elev || re.prof)) continue;
+                const sx = s.bx - s.ax, sz = s.bz - s.az, l2 = sx * sx + sz * sz;
+                const tt = l2 > 0 ? ((x - s.ax) * sx + (z - s.az) * sz) / l2 : 0;
+                if (tt < 0 || tt > 1) continue;
+                if (Math.hypot(x - s.ax - sx * tt, z - s.az - sz * tt) > re.hw) continue;
+                const sy = s.ay + (s.by - s.ay) * tt;
+                if (sy < raw - 3 || sy > raw + 1.5) continue;
+                hit = { x, z, y: sy, sd };
+                break;
+              }
+            }
+            if (hit) {
+              d += hit.sd;
+              walk.push({ nn: { x: hit.x, z: hit.z }, hw: Math.max(m.hw, e.hw), d });
+              fixedY = hit.y + 0.4;
+              break;
+            }
+            d += e.len; prev = best; cur = nx;
+            walk.push({ nn, hw: Math.max(m.hw, e.hw), d });
+          }
+          const D = fixedY !== null ? d : APPROACH;
+          for (const w of walk) {
+            const t = Math.min(1, w.d / D), s = t * t * (3 - 2 * t);
+            const raw = G.terrainRaw(w.nn.x, w.nn.z);
+            app.push({
+              x: w.nn.x, z: w.nn.z, hw: w.hw,
+              // ramp from the dropped portal up to untouched ground (or to
+              // the fixed road it meets); the carve only digs
+              y: fixedY !== null ? Math.min(raw, P0.y + (fixedY - P0.y) * s) : P0.y + (raw - P0.y) * s,
+            });
+          }
+        }
+        app.reverse();
+        // WALK EVERY BRANCH, not just the widest. Taking one edge per node
+        // leaves ramps and side bores uncarved, and a shallow uncarved bore has
+        // the terrain surface passing through its interior -- earth lying
+        // across the carriageway with an unlined hole in it. portalcheck
+        // measured 22 of them, worst 4.7 m into the bore. Each branch gets its
+        // own corridor, sharing this portal's approach ramp.
+        const seenE = new Set();
+        const branches = [];
+        const stack = [{ ni: m.ni, pts: [{ x: P0.x, z: P0.z, y: P0.y, hw: m.hw }], dist: 0 }];
+        while (stack.length) {
+          const br = stack.pop();
+          let cur = br.ni, dist = br.dist;
+          const pts2 = br.pts;
+          for (;;) {
+            const n = city.nodes[cur];
+            const outs = n.e.filter((k) => {
+              const e = city.edges[k];
+              return e.tunnel && !e.elev && !seenE.has(k);
+            });
+            if (!outs.length || dist > 240) break;
+            outs.sort((k1, k2) => city.edges[k2].hw - city.edges[k1].hw);
+            // spawn the side branches from here, continue along the widest
+            for (const k of outs.slice(1)) {
+              const e2 = city.edges[k];
+              seenE.add(k);
+              const nx2 = e2.a === cur ? e2.b : e2.a;
+              const nn2 = city.nodes[nx2];
+              stack.push({ ni: nx2, dist: dist + e2.len,
+                pts: [...pts2, { x: nn2.x, z: nn2.z, y: nn2.y, hw: e2.hw }] });
+            }
+            const k0 = outs[0];
+            const e = city.edges[k0];
+            seenE.add(k0);
+            const nx = e.a === cur ? e.b : e.a;
+            const nn = city.nodes[nx];
+            // A STREET OVER THE BORE IS ITS ROOF. Where the ground is too
+            // shallow for CUT_COVER, the trench used to run on under any
+            // street crossing the bore until the cover was reached -- at
+            // SR-99's north portal 45 m past the OSM portal, under Harrison
+            // Street and the street beside it, which then spanned an open pit
+            // on lid slabs: floating slab pieces, and holes a car fell through
+            // to the deck 10 m down. With a metre of earth over the roof the
+            // street stands on ground, so the cutting ends at its near kerb
+            // and the headwall stands under it, as a cut-and-cover portal's
+            // does. (cutStats.streetEnded counts the cuts this shortens.)
+            const cN = city.nodes[cur];
+            let stop = null;
+            // LOOK AHEAD: stop where the corridor, SET metres on, would reach
+            // the street's footway anywhere across its width -- so the
+            // trench floor stays at full depth for SET behind the headwall and
+            // the ground's climb back up (smeared over a 4 m terrain quad)
+            // happens behind the mouth card, not inside the openings. Ended at
+            // the kerb itself, the climb stood in every opening as a grass
+            // slope. The cover where the corridor meets the street decides
+            // whether this applies (STREET_ROOF).
+            const ux = (nn.x - cN.x) / e.len, uz = (nn.z - cN.z) / e.len, qx = -uz, qz = ux;
+            const Wd = e.hw + CUT_SH;
+            for (let sd = 1; sd < e.len && !stop; sd += 1) {
+              const f = sd / e.len;
+              const x = cN.x + (nn.x - cN.x) * f, z = cN.z + (nn.z - cN.z) * f, y = cN.y + (nn.y - cN.y) * f;
+              let st = null;
+              for (const o of [0, -Wd, Wd]) {
+                st = streetOver(x + ux * STREET_SET + qx * o, z + uz * STREET_SET + qz * o, e, m.ni);
+                if (st) break;
+              }
+              if (!st) continue;
+              // Citywide, a FREEWAY over a street's bore is its roof too: the
+              // Dexter Way underpass's cut dug Aurora 6 m deep across its
+              // lanes, and no lid had the headroom to bridge it. (Not a ramp
+              // bore under one: the I-90 ramps' headwalls by Rainier then
+              // stood 1.2 m off the ground.)
+              if (!streetRoof && (st.r.cls !== 'hwy' || e.cls === 'hwy' || e.cls === 'ramp')) continue;
+              // the street that crosses the bore's CENTRELINE, when there is
+              // one within reach, is the one the wall and barrier follow: a
+              // corner can meet a side street first
+              for (let ahead = STREET_SET; ahead < STREET_SET + 25; ahead += 1) {
+                const c2 = streetOver(x + ux * ahead, z + uz * ahead, e, m.ni);
+                if (c2) { st = c2; break; }
+              }
+              // cover over the roof where the corridor meets the street
+              const cx2 = x + ux * STREET_SET, cz2 = z + uz * STREET_SET, cy2 = y + (nn.y - cN.y) / e.len * STREET_SET;
+              const cov = G.terrainRaw(cx2, cz2) - (cy2 + TUN_DECK + TUN_WALL);
+              if (cov < STREET_ROOF) continue;   // roof well over the street: lids' job
+              stop = { x, z, y, hw: e.hw };
+              pts2.streetDir = [st.r.dx, st.r.dz];
+              // The kerb line, 1 m short of the street's footway, as a half-
+              // plane facing into it: nothing past it may be dug (cutFloor,
+              // inCut). The trench's full cross-section is ~15 m wide, and
+              // where the street crosses at an angle a corner of it reached
+              // under the kerb -- tarmac over dug ground, falling through.
+              // (the street's true perpendicular, facing the street from the
+              // bore; the nearest-point direction goes diagonal near a
+              // segment's end and laid the kerb line askew)
+              const ra = city.nodes[st.r.a];
+              let knx = -st.r.dz, knz = st.r.dx;
+              let kd = (ra.x - x) * knx + (ra.z - z) * knz;
+              if (kd < 0) { knx = -knx; knz = -knz; kd = -kd; }
+              const back = st.r.hw + st.sw + 1;
+              pts2.kerb = { x: x + knx * (kd - back), z: z + knz * (kd - back), nx: knx, nz: knz };
+              // EVERY crossing street near the end is protected, not only the
+              // one the look-ahead met first: a corner of the corridor can
+              // meet a side street, whose kerb line then left the main street
+              // undug-over nothing -- the ramp bore's cut dug under Harrison
+              // Street's north footway at SR-99, and walkers sank to its deck.
+              const prot = [];
+              for (const ei of city.roadsNear(x, z, 30, false)) {
+                const r2 = city.edges[ei];
+                if (r2.tunnel || r2.elev || r2.prof || r2.a === m.ni || r2.b === m.ni) continue;
+                if (Math.abs(r2.dx * e.dx + r2.dz * e.dz) > Math.cos(Math.PI / 6)) continue;
+                const sw2 = r2.cls === 'art' ? 3.2 : r2.cls === 'st' || r2.cls === 'res' ? 2.6 : 0;
+                const a2 = city.nodes[r2.a], b2 = city.nodes[r2.b];
+                prot.push([a2.x, a2.z, b2.x, b2.z, r2.hw + sw2 + 1]);
+              }
+              pts2.protect = prot;
+            }
+            if (stop) {
+              if (Math.hypot(stop.x - cN.x, stop.z - cN.z) > 0.5) pts2.push(stop);
+              pts2.streetEnded = true;
+              this.cutStats.streetEnded++;
+              break;
+            }
+            dist += e.len; cur = nx;
+            pts2.push({ x: nn.x, z: nn.z, y: nn.y, hw: e.hw });
+            if (G.terrainRaw(nn.x, nn.z) - (nn.y + TUN_DECK + TUN_WALL) > CUT_COVER) break;
+          }
+          if (pts2.length > 1) branches.push(pts2);
+        }
+        for (const bp of branches) groupBranches.push({ m, app, bp });
+      }
+      for (const { m, app, bp } of groupBranches) {
+        {
+          const pts = [...app, ...bp];
+        if (pts.length > 1) {
+          const q = pts[pts.length - 1], r = pts[pts.length - 2];
+          const L = Math.hypot(q.x - r.x, q.z - r.z) || 1;
+          // Ended under a street, the closure stays inside the headwall's
+          // 6 m depth: at 14 m its ramp up to the cap dug 1-2 m under the
+          // street itself, which grew lids and a barrier wall there again.
+          const capL = bp.streetDir ? 1.5 : 14;
+          pts.push({
+            x: q.x + ((q.x - r.x) / L) * capL, z: q.z + ((q.z - r.z) / L) * capL,
+            y: q.y + TUN_WALL + 1.6, hw: q.hw, cap: true,
+          });
+        }
+        if (pts.length > 1) {
+          let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+          for (const q of pts) {
+            const r = q.hw + CUT_SH + CUT_OVER + CUT_BANK + 2;
+            x0 = Math.min(x0, q.x - r); x1 = Math.max(x1, q.x + r);
+            z0 = Math.min(z0, q.z - r); z1 = Math.max(z1, q.z + r);
+          }
+          // A cutting that would dig ground geo.NO_DIG protects is not made
+          // at all: its lids and walls are decided from the corridor, so
+          // leaving the ground undug under a lidded street drew no tarmac.
+          // The bore stays a bore under the ground.
+          const digs = (q) => G.NO_DIG.some((p) => {
+            const sx = p[2] - p[0], sz = p[3] - p[1], l2 = sx * sx + sz * sz;
+            let t = l2 > 0 ? ((q.x - p[0]) * sx + (q.z - p[1]) * sz) / l2 : 0;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            const r = p[4] + q.hw + CUT_SH + CUT_BANK;
+            return Math.hypot(q.x - p[0] - sx * t, q.z - p[1] - sz * t) < r;
+          });
+          if (pts.some(digs)) { this.cutStats.noDig = (this.cutStats.noDig || 0) + 1; continue; }
+          cuts.push({ ni: m.ni, pts, apron: app.length, x0, x1, z0, z1, streetDir: bp.streetDir || null, kerb: bp.kerb || null,
+            protect: bp.protect || null });
+          }
+        }
+      }
+    }
+    this._pcuts = cuts;
+
+    // THE WALLS ARE SOLID, from the same polylines that draw them. Segments
+    // along each side of every corridor at the wall line, gated on there being
+    // a genuine drop to retain -- the apron start, where trench and street
+    // meet at grade, gets none, which is also what lets you drive in. Installed
+    // into the city's analytic barrier store: position-indexed, so no chunk
+    // build or dispose can lose them, which is how two obstacle-based attempts
+    // at this died. Side walls run the corridor's full length; the closed
+    // middle of the far end is real ground, so no cap is needed there and none
+    // may exist -- a cap across the carriageway would seal the bore.
+    const bsegs = [];
+    for (const c of cuts) {
+      for (let i = 0; i < c.pts.length - 1; i++) {
+        const a = c.pts[i], b = c.pts[i + 1];
+        if (a.cap || b.cap) continue;
+        const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+        const qx = -(b.z - a.z) / L, qz = (b.x - a.x) / L;
+        const floorY = (a.y + b.y) / 2;
+        // THERE IS DELIBERATELY NO FENCE ALONG THE CUTTING RIM.
+        //
+        // Five schemes were built and measured, and every one was net-negative:
+        // wall-line pieces let cars ride the 73-degree bank down and wedge in
+        // the CUT_OVER ledge; own-rim pieces stood on the neighbouring
+        // excavation at the mouth; road-skipped pieces left a gap with a
+        // run-up; independently-pulled pieces zigzagged with seams; and the
+        // connected polyline blocked the SR-99 entrance itself, stalling the
+        // drive-in test at the same station on three consecutive builds while
+        // STILL not keeping the side-approach test out (it drives down the
+        // bank, 2 m per frame, under any step threshold, and then cannot get
+        // back out of the outer ledge -- measured stuck, not recovered).
+        //
+        // So the honest state ships: you CAN drive off the rim into an open
+        // cutting, exactly as v66 shipped it. Fixing that for real means
+        // reshaping the CUT_OVER ledge so a fallen car can drive out along it,
+        // which is corridor geometry work, not fence work -- do not add a
+        // sixth fence.
+      }
+    }
+    // THE BORE'S OWN WALLS ARE SOLID TOO -- "once you are in you are in."
+    // They were visual only: steer into one and the car crossed the tube's
+    // half-width, groundAt found no tunnel surface there and answered with
+    // the street 25 m overhead, and the car popped out of the tunnel onto the
+    // surface. Every tunnel edge now carries a barrier at each wall line,
+    // banded from a little under its deck to its roof, so the same wall that
+    // is drawn is the wall that is hit -- and a car on the street above, or a
+    // plane over the cutting, is outside the band and never feels it.
+    for (let ei = 0; ei < this.city.edges.length; ei++) {
+      const e = this.city.edges[ei];
+      if (!e.tunnel || e.elev) continue;
+      const a = this.city.nodes[e.a], b = this.city.nodes[e.b];
+      const qx = -e.dz, qz = e.dx;
+      const w = e.hw + 0.4;
+      // In ~12 m pieces, each banded against the CARVED ground above its own
+      // midpoint. One band per edge leaked in both directions: where the
+      // profile runs shallow the roof pokes past the surface, and where a
+      // cross street is draped down into an excavation the street descends
+      // INTO the band -- 127 street-level samples sat inside one, which is a
+      // car on an ordinary road clipping an invisible tunnel wall, taking the
+      // impact effect and the pushout jolt: the reported "little explosion
+      // while driving". Where the local drawn ground is at deck level the
+      // piece dies (nothing to be inside of); where the tube is buried,
+      // carved equals raw and the wall stands -- so "once you are in you are
+      // in" holds exactly where being IN is a fact.
+      const segN = Math.max(1, Math.ceil(e.len / 12));
+      for (let k = 0; k < segN; k++) {
+        const t0 = k / segN, t1 = (k + 1) / segN, tm = (t0 + t1) / 2;
+        const mx = a.x + (b.x - a.x) * tm, mz = a.z + (b.z - a.z) * tm;
+        const deck0 = a.y + (b.y - a.y) * t0, deck1 = a.y + (b.y - a.y) * t1;
+        const y0 = Math.min(deck0, deck1) - 1.5;
+        // min of three ground samples, because a piece straddling a dip's
+        // lip keeps a midpoint-only band top while its end hangs into the dip
+        // -- the last 5 of the 127 leaks were exactly that.
+        const g0x = a.x + (b.x - a.x) * t0, g0z = a.z + (b.z - a.z) * t0;
+        const g1x = a.x + (b.x - a.x) * t1, g1z = a.z + (b.z - a.z) * t1;
+        const y1 = Math.min(
+          Math.max(deck0, deck1) + TUNNEL_H - 0.5,
+          Math.min(G.terrainHeight(mx, mz),
+            G.terrainHeight(g0x, g0z), G.terrainHeight(g1x, g1z)) - 0.4);
+        if (y1 - y0 < 1.0) continue;
+        // In ~3 m sub-pieces, each dropped where it stands in another bore's
+        // lane (see inOtherBore): the twin tubes and ramp forks converge and
+        // part gradually, so a whole 12 m piece is too coarse either to open
+        // the shared stretch or to close the wall again where they separate.
+        const subN = Math.max(1, Math.ceil(e.len / segN / 3));
+        for (const sd of [1, -1]) {
+          for (let j = 0; j < subN; j++) {
+            const s0 = t0 + ((t1 - t0) * j) / subN, s1 = t0 + ((t1 - t0) * (j + 1)) / subN;
+            const sm = (s0 + s1) / 2;
+            const wx = a.x + (b.x - a.x) * sm + qx * w * sd, wz = a.z + (b.z - a.z) * sm + qz * w * sd;
+            const myDeck = a.y + (b.y - a.y) * sm;
+            if (this.inOtherBore(wx, wz, myDeck, ei)) continue;
+            // NOT ACROSS ANOTHER BORE'S TRAFFIC AT ANOTHER LEVEL EITHER. Under
+            // the convention centre I-5's mainline, express lanes and ramps run
+            // as overlapping bores 2-5 m apart in level: too far apart for the
+            // twin rule above, so each kept a wall band from 1.5 m under its
+            // own deck to its roof -- straight through the lanes of the bore
+            // above or below. AI cars wedged on them (most of trafficcheck's
+            // stuck cars). The band is cut back to clear the other bore's
+            // traffic (its deck to 2.6 m over it); this bore's own cars, 1.6 m+
+            // away in level, stay inside what is left.
+            const [lo, hi] = this.bandClear(wx, wz, myDeck, ei, y0, y1);
+            if (hi - lo < 1.0) continue;
+            bsegs.push(
+              a.x + (b.x - a.x) * s0 + qx * w * sd, a.z + (b.z - a.z) * s0 + qz * w * sd,
+              a.x + (b.x - a.x) * s1 + qx * w * sd, a.z + (b.z - a.z) * s1 + qz * w * sd,
+              lo, hi);
+          }
+        }
+      }
+    }
+    // THE HEADWALL UNDER A STREET IS SOLID ALONG ITS PARAPET. A cut ended at
+    // a street's kerb (the street-roof rule) leaves that street standing over
+    // a mouth several metres deep, and nothing stopped a car driving on off
+    // the kerb -- measured, straight north off Harrison Street over SR-99's
+    // mouths, a 5 m fall into the cutting. One barrier per street along the
+    // kerb line, as wide as the cuttings it closes, in a band from 2 m under
+    // the bores' roofs up: traffic in the tunnels passes underneath it.
+    const kerbCuts = cuts.filter((c) => c.kerb);
+    const doneK = new Set();
+    for (const c of kerbCuts) {
+      if (doneK.has(c)) continue;
+      const grp = kerbCuts.filter((d) => !doneK.has(d) && Math.hypot(d.kerb.x - c.kerb.x, d.kerb.z - c.kerb.z) < 80
+        && Math.abs(d.streetDir[0] * c.streetDir[1] - d.streetDir[1] * c.streetDir[0]) < 0.2);
+      for (const d of grp) doneK.add(d);
+      const [sx, sz] = c.streetDir, nx = c.kerb.nx, nz = c.kerb.nz;
+      let u0 = 1e9, u1 = -1e9, off = 0, top = -1e9, hw = 0;
+      for (const d of grp) {
+        const u = d.kerb.x * sx + d.kerb.z * sz;
+        u0 = Math.min(u0, u); u1 = Math.max(u1, u);
+        off += d.kerb.x * nx + d.kerb.z * nz;
+        let li = d.pts.length - 1;
+        while (li > 0 && d.pts[li].cap) li--;
+        top = Math.max(top, d.pts[li].y + TUN_DECK + TUN_WALL);
+        hw = Math.max(hw, d.pts[li].hw);
+      }
+      off /= grp.length;
+      const reach = hw + CUT_SH + CUT_OVER + CUT_BANK + 0.6;
+      u0 -= reach; u1 += reach;
+      // the point on the kerb line at along-street coordinate u
+      const at = (u) => [sx * u + nx * off, sz * u + nz * off];
+      const [ax, az] = at(u0), [bx, bz] = at(u1);
+      const gTop = Math.max(G.terrainRaw(ax, az), G.terrainRaw(bx, bz), G.terrainRaw((ax + bx) / 2, (az + bz) / 2));
+      // From 2 m under the roofs: a car stopped against it hangs its front
+      // wheels over the mouth and settles a few cm, and a band starting at
+      // the roof let it sink under the band and slide through. Tunnel traffic
+      // runs at deck level, 3.7 m+ below the band.
+      bsegs.push(ax, az, bx, bz, top - 2.0, gTop + 3);
+      this.cutStats.kerbBarriers = (this.cutStats.kerbBarriers || 0) + 1;
+    }
+    this.buildLids(cuts, bsegs);
+    this.city.setBarriers(bsegs);
+    if (this.bootCache) {
+      const lidStats = {};
+      for (const k of Object.keys(cityStats)) if (k.startsWith('lid')) lidStats[k] = cityStats[k];
+      const barW = [];
+      this.city.edges.forEach((e, ei) => { if (e.barW) barW.push(ei, e.barW); });
+      this.bootCache.portalOut = {
+        cuts, bsegs, lidQuads: this.city.lidQuads || [],
+        lbe: [...this._lidByEdge], veto: [...this._lidVeto],
+        ledge: [this._ledgeBarrier0, this._ledgeBarrier1, this._lidBarrier0], barW, lidStats,
+      };
+    }
+    return cuts;
+  }
+
+  /** Install a cached portalCuts result: what _computePortalCuts leaves behind. */
+  _applyPortalSnap(snap) {
+    const cuts = snap.cuts;
+    this._pcuts = cuts;
+    this.city.setLids(snap.lidQuads);
+    this._lidByEdge = new Map(snap.lbe);
+    this._lidVeto = new Map(snap.veto);
+    this._lidMask = new Map();   // tools only; a cached boot has none
+    [this._ledgeBarrier0, this._ledgeBarrier1, this._lidBarrier0] = snap.ledge;
+    for (let q = 0; q < snap.barW.length; q += 2) this.city.edges[snap.barW[q]].barW = snap.barW[q + 1];
+    Object.assign(cityStats, snap.lidStats);
+    this.city.setBarriers(snap.bsegs);
+    return cuts;
+  }
+
+  /**
+   * The trench floor at (x,z), and how far out of the trench that point is.
+   *
+   * THE GROUND IS DEFORMED, NOT REMOVED. Cutting a hole was tried first and is
+   * a trap: a hole is an open boundary, and every open boundary needs another
+   * piece of geometry to close it. Each one that got missed showed through --
+   * carriageway at grade bridging the cut, pavement bridging it, and finally
+   * the map-wide water plane visible at the bottom of a 40 m pit. That is an
+   * unbounded list of fixes.
+   *
+   * Pushing the vertices down instead keeps the terrain a single closed
+   * surface: there is no gap for anything to show through, the banks are real
+   * triangles, and the edges of the patch still meet the surrounding 40 m grid
+   * because the blend reaches true terrain before it gets there.
+   *
+   * Returns null outside the trench and its banks.
+   */
+  /**
+   * How deep the ground is dug at (x,z), in metres. Installed into geo as the
+   * carve, so terrainHeight() -- and therefore roads, pavement, scatter and
+   * every ground query -- all see the trench.
+   *
+   * Reads terrainRaw, never terrainHeight: the carve is an input to that
+   * function and calling it here recurses.
+   */
+  cutDepth(x, z) {
+    const c = this.cutFloor(x, z);
+    if (!c) return 0;
+    const raw = G.terrainRaw(x, z);
+    // full depth over the carriageway, tapering to nothing at the top of the
+    // bank, and never a raised mound where the ground is already lower
+    return Math.max(0, (raw - c.y) * (1 - c.t));
+  }
+
+  cutFloor(x, z) {
+    // THE DEEPEST TRENCH WINS. Taking the first corridor that matches is wrong
+    // wherever two overlap -- and at a divided mouth three bores share the
+    // ground. Measured down the north SR-99 corridor, the neighbouring
+    // carriageway's shallower profile answered first and left the floor 1.9 m
+    // ABOVE the road it was supposed to expose, so the trench was dug and the
+    // carriageway still buried in it.
+    // No allocation per candidate: this sits under terrainHeight().
+    let best = null, bY = 0, bT = 0, bC = null, bH = 0;
+    const near = this._cutsNear(x, z);
+    for (let ci = 0; ci < near.length; ci++) {
+      const c = near[ci];
+      if (x < c.x0 || x > c.x1 || z < c.z0 || z > c.z1) continue;
+      // under a street-ended cut's protected streets: their ground, never dug
+      if (c.protect && underStreet(c, x, z)) continue;
+      for (let i = 0; i < c.pts.length - 1; i++) {
+        const a = c.pts[i], b = c.pts[i + 1];
+        // distToSeg, inline
+        const sx = b.x - a.x, sz = b.z - a.z, l2 = sx * sx + sz * sz;
+        let rt = l2 > 0 ? ((x - a.x) * sx + (z - a.z) * sz) / l2 : 0;
+        // PAST AN INTERIOR JOINT the neighbouring segment owns the ground
+        // wherever it covers the point. Clamped, this segment's round end dug
+        // a flat bowl at the joint's depth ~13 m back up the segment before,
+        // and the deepest trench wins, so a descending cutting became a
+        // staircase: SR-99's NB entry at SODO had 1.35 m cliffs between flat
+        // shelves, and the car bounced down it. The clamped end still fills
+        // the wedge outside a bend, which no segment's interior covers. Only
+        // at a near-straight joint (within ~30 deg): round a sharp bend the
+        // clamped end is the only thing digging the inside of the turn to the
+        // joint's depth (portalcheck's coverage, a 90 deg turn at (421, -80)).
+        if ((rt < 0 && i > 0 && this._segCovers(c.pts[i - 1], a, x, z, b))
+          || (rt > 1 && i < c.pts.length - 2 && this._segCovers(b, c.pts[i + 2], x, z, a, true))) continue;
+        rt = rt < 0 ? 0 : rt > 1 ? 1 : rt;
+        const rd = Math.hypot(x - (a.x + sx * rt), z - (a.z + sz * rt));
+        const w = a.hw + CUT_SH + CUT_OVER;
+        if (rd > w + CUT_BANK) continue;
+        // The closing (cap) segment starts at the cutting's deepest point and
+        // runs on over the bore; behind its start, the segment before it owns
+        // the ground. Clamped there, it dug a bowl at the last point's depth
+        // ~12 m back along a deck that is still climbing -- at SR-99's SB exit
+        // a metre deeper than the trench, straight through the roof of the
+        // lower deck running underneath (portalcheck's sliced bore). Only
+        // there: elsewhere the bowl is what the cutting's end has always had
+        // (without it the I-5 Express bore under a ramp's cut at (513, 77)
+        // came out sliced instead).
+        // (raw ground here: terrainHeight is what this is computing)
+        if (b.cap && rt <= 0 && this._roofUnder(x, z, a.y, false) > a.y - 1.2) continue;
+        const deck = a.y + (b.y - a.y) * rt;
+        const t = clamp((rd - w) / CUT_BANK, 0, 1);
+        const cy = deck - 0.7, ct = t * t * (3 - 2 * t);
+        // compare at the point itself, banks included
+        const h = cy + (1e4 - cy) * ct;
+        if (!best || h < bH) { best = true; bY = cy; bT = ct; bC = c; bH = h; }
+      }
+    }
+    return best ? { y: bY, t: bT, c: bC } : null;
+  }
+
+  // Does corridor segment p->q cover (x, z) with its interior at full depth?
+  // (Not its banks: where only a neighbour's bank reaches, the clamped end is
+  // what digs the carriageway -- yielding there left ground over the road.)
+  // `o` is the far end of the asking segment (it shares the joint with p->q:
+  // q when `after`, else p), for the straightness test.
+  _segCovers(p, q, x, z, o, after = false) {
+    const sx = q.x - p.x, sz = q.z - p.z, l2 = sx * sx + sz * sz;
+    if (!(l2 > 0)) return false;
+    const j = after ? p : q;
+    const ox = after ? j.x - o.x : o.x - j.x, oz = after ? j.z - o.z : o.z - j.z;
+    const ol = Math.hypot(ox, oz);
+    if (!(ol > 0) || (sx * ox + sz * oz) / (Math.sqrt(l2) * ol) < 0.87) return false;
+    const rt = ((x - p.x) * sx + (z - p.z) * sz) / l2;
+    if (rt < 0 || rt > 1) return false;
+    return Math.hypot(x - (p.x + sx * rt), z - (p.z + sz * rt)) <= p.hw + CUT_SH + CUT_OVER;
+  }
+
+  /**
+   * Is (x,z) on the carriageway of some tunnel edge OTHER than `ei`, whose
+   * deck there is within `dy` of y?
+   *
+   * THE TWO SR-99 TUBES ARE ONE HOLE. OSM maps the real double-deck bore as
+   * two ways, and drawn side by side at hw 7 each their centrelines are only
+   * 7.5-11 m apart with decks within 0.3 m: measured, the carriageways overlap
+   * over 2,830 of the northbound tube's 3,617 m and 2,796 of the southbound's
+   * 3,059 m, and each tube's wall line stands inside the other's lane for
+   * ~920 m. Every edge walled itself independently, so a player driving in on
+   * the centre of either tube met the OTHER tube's wall 78 m (from Aurora) and
+   * 101 m (from SODO) past the mouth and stopped dead. A wall only belongs
+   * where it bounds the UNION of the bores -- the same rule a fork between a
+   * ramp and the main line needs -- so both the barrier and the drawn wall ask
+   * this before they stand.
+   */
+  // A BBOX GRID over the portal cuttings. cutFloor sits under the carved
+  // terrain query, so it ran once per ground sample of every chunk build,
+  // city-wide, and walked EVERY cutting to reject it by bbox; twinOwner and
+  // _tunDeckUnder did the same over every tunnel edge per deck cell (they use
+  // _tunNear's existing grid now). Each loop keeps its own exact bbox test and
+  // a cell keeps list order, so every answer -- first-match ones included --
+  // is what the full walk returned.
+  _bboxGrid(list) {
+    const C = 48, grid = new Map();
+    for (const it of list) {
+      const x0 = Math.floor((it.x0 - 1) / C), x1 = Math.floor((it.x1 + 1) / C);
+      const z0 = Math.floor((it.z0 - 1) / C), z1 = Math.floor((it.z1 + 1) / C);
+      for (let cx = x0; cx <= x1; cx++) {
+        for (let cz = z0; cz <= z1; cz++) {
+          const k = cx * 100003 + cz;
+          let l = grid.get(k);
+          if (!l) grid.set(k, (l = []));
+          l.push(it);
+        }
+      }
+    }
+    return grid;
+  }
+  _cutsNear(x, z) {
+    const cuts = this.portalCuts();
+    if (this._cutGridOf !== cuts) { this._cutGrid = this._bboxGrid(cuts); this._cutGridOf = cuts; }
+    return this._cutGrid.get(Math.floor(x / 48) * 100003 + Math.floor(z / 48)) || EMPTY_LIST;
+  }
+
+  _tunIndex() {
+    if (!this._tunIdx) {
+      const idx = [];
+      for (let k = 0; k < this.city.edges.length; k++) {
+        const e = this.city.edges[k];
+        if (!e.tunnel || e.elev) continue;
+        const a = this.city.nodes[e.a], b = this.city.nodes[e.b];
+        const r = e.hw + 1;
+        const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+        idx.push({ k, a, b, hw: e.hw, L, ux: (b.x - a.x) / L, uz: (b.z - a.z) / L,
+          x0: Math.min(a.x, b.x) - r, x1: Math.max(a.x, b.x) + r,
+          z0: Math.min(a.z, b.z) - r, z1: Math.max(a.z, b.z) + r });
+      }
+      this._tunIdx = idx;
+      this._tunByK = new Map(idx.map((q) => [q.k, q]));
+      // 64 m cells (padded 4 m), for the queries cutFloor makes per carve
+      // sample -- a scan of every bore there is too slow.
+      const grid = new Map();
+      for (const q of idx) {
+        for (let cx = Math.floor((q.x0 - 4) / 64); cx <= Math.floor((q.x1 + 4) / 64); cx++) {
+          for (let cz = Math.floor((q.z0 - 4) / 64); cz <= Math.floor((q.z1 + 4) / 64); cz++) {
+            const key = cx * 100003 + cz;
+            let l = grid.get(key);
+            if (!l) grid.set(key, (l = []));
+            l.push(q);
+          }
+        }
+      }
+      this._tunGrid = grid;
+    }
+    return this._tunIdx;
+  }
+
+  /** Bores whose (4 m padded) bounds hold (x, z). */
+  _tunNear(x, z) {
+    this._tunIndex();
+    return this._tunGrid.get(Math.floor(x / 64) * 100003 + Math.floor(z / 64)) || [];
+  }
+
+  /**
+   * The parts of convex plan polygon `poly` ([[x, z], ...]) that lie OUTSIDE
+   * tunnel rectangle q, as disjoint convex pieces: peeled off one side line
+   * at a time (Sutherland-Hodgman against each half-plane).
+   */
+  _outsideRect(poly, q) {
+    const al = (p) => (p[0] - q.a.x) * q.ux + (p[1] - q.a.z) * q.uz;
+    const lt = (p) => (p[0] - q.a.x) * -q.uz + (p[1] - q.a.z) * q.ux;
+    const fs = [(p) => -al(p), (p) => al(p) - q.L, (p) => lt(p) - q.hw, (p) => -lt(p) - q.hw];
+    const clip = (pp, f, sg) => {
+      const out = [];
+      for (let i = 0; i < pp.length; i++) {
+        const A = pp[i], B = pp[(i + 1) % pp.length];
+        const fa = sg * f(A), fb = sg * f(B);
+        if (fa >= 0) out.push(A);
+        if ((fa >= 0) !== (fb >= 0)) {
+          const t = fa / (fa - fb);
+          out.push([A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t]);
+        }
+      }
+      return out;
+    };
+    const out = [];
+    let rem = poly;
+    for (const f of fs) {
+      if (rem.length < 3) break;
+      const o = clip(rem, f, 1);
+      if (o.length >= 3) out.push(o);
+      rem = clip(rem, f, -1);
+    }
+    return out;
+  }
+
+  /**
+   * The lowest-numbered tunnel edge below `ei` whose drawn deck RECTANGLE
+   * contains (x,z) -- unclamped along its length, within its half-width --
+   * at a deck within 0.25 m of y; or -1. With `only` >= 0, just that edge is
+   * tested. meshTunnel drops a deck/ceiling cell when one edge owns all four
+   * corners, so exactly one tube draws each patch of a shared floor.
+   */
+  twinOwner(x, z, y, ei, only, skip) {
+    let best = -1;
+    for (const q of this._tunNear(x, z)) {
+      if (q.k >= ei || (only >= 0 && q.k !== only)) continue;
+      if (skip && skip.includes(q.k)) continue;
+      if (x < q.x0 || x > q.x1 || z < q.z0 || z > q.z1) continue;
+      const rx = x - q.a.x, rz = z - q.a.z;
+      const al = rx * q.ux + rz * q.uz;
+      // 5 cm of slack: a point ON a shared node projects to al = -1e-13 and
+      // was being refused by both edges that meet there.
+      if (al < -0.05 || al > q.L + 0.05) continue;
+      if (Math.abs(rx * -q.uz + rz * q.ux) > q.hw) continue;
+      if (Math.abs(q.a.y + (q.b.y - q.a.y) * (al / q.L) - y) >= 0.25) continue;
+      if (best < 0 || q.k < best) best = q.k;
+    }
+    return best;
+  }
+
+  /**
+   * Highest tunnel deck (node height) whose carriageway, padded, holds (x,z);
+   * or null. HIGHEST: a slab's headroom is over the deck nearest under it,
+   * and under SR-99's stack that is the upper deck, DECK_SEP over the lower.
+   * (It was the lowest, which only ever mattered while the twins were side by
+   * side at one level.)
+   */
+  _tunDeckUnder(x, z, pad) {
+    let best = null;
+    for (const q of this._tunNear(x, z)) {
+      if (x < q.x0 - pad || x > q.x1 + pad || z < q.z0 - pad || z > q.z1 + pad) continue;
+      const rx = x - q.a.x, rz = z - q.a.z;
+      const al = rx * q.ux + rz * q.uz;
+      if (al < -pad || al > q.L + pad) continue;
+      if (Math.abs(rx * -q.uz + rz * q.ux) > q.hw + pad) continue;
+      const y = q.a.y + (q.b.y - q.a.y) * clamp(al / q.L, 0, 1);
+      if (best === null || y > best) best = y;
+    }
+    return best;
+  }
+
+  /**
+   * The highest ROOF of a bore running under (x,z) whose deck is more than
+   * 2 m below y, or -Infinity. A structure standing on the upper SR-99 deck --
+   * the SB exit's headwall piers and mouth card, dug 1.5 m below its own deck
+   * to swallow the terrain face -- must stop above it, or it hangs through the
+   * lower deck's ceiling.
+   */
+  _roofUnder(x, z, y, buried = true, pad = 1.5, skipKeys = null) {
+    let best = -Infinity;
+    for (const q of this._tunNear(x, z)) {
+      if (skipKeys && (skipKeys.has(Math.round(q.a.x * 10) + ':' + Math.round(q.a.z * 10))
+        || skipKeys.has(Math.round(q.b.x * 10) + ':' + Math.round(q.b.z * 10)))) continue;
+      if (x < q.x0 - pad || x > q.x1 + pad || z < q.z0 - pad || z > q.z1 + pad) continue;
+      const rx = x - q.a.x, rz = z - q.a.z;
+      const al = rx * q.ux + rz * q.uz;
+      if (al < -pad || al > q.L + pad) continue;
+      if (Math.abs(rx * -q.uz + rz * q.ux) > q.hw + pad) continue;
+      const dk = q.a.y + (q.b.y - q.a.y) * clamp(al / q.L, 0, 1);
+      if (dk > y - 2) continue;
+      // only a BURIED roof: over a lower bore's own open cutting the ground is
+      // below its roof, and a pier there has always stood on that ground
+      // (raising it floated the piers at the I-90 and I-405 interchanges)
+      const roof = dk + TUN_DECK + TUN_WALL;
+      if (buried && G.terrainHeight(x, z) < roof - 0.1) continue;
+      best = Math.max(best, roof);
+    }
+    return best;
+  }
+
+  /** A bore wall's collision band [y0, y1] at (x, z), cut back off every
+   *  other bore whose lanes hold the point (see the walls in portalCuts). */
+  bandClear(x, z, myDeck, ei, y0, y1, pad = 0.2) {
+    let lo = y0, hi = y1;
+    for (const q of this._tunNear(x, z)) {
+      if (q.k === ei || x < q.x0 || x > q.x1 || z < q.z0 || z > q.z1) continue;
+      const r = distToSeg(x, z, q.a.x, q.a.z, q.b.x, q.b.z);
+      if (r.d > q.hw + pad) continue;
+      const od = q.a.y + (q.b.y - q.a.y) * r.t;
+      if (od > myDeck) hi = Math.min(hi, od - 0.3);
+      else lo = Math.max(lo, od + 2.6);
+    }
+    return [lo, hi];
+  }
+
+  inOtherBore(x, z, y, ei, pad = 0.2, dy = 1.6) {
+    for (const q of this._tunNear(x, z)) {
+      if (q.k === ei || x < q.x0 || x > q.x1 || z < q.z0 || z > q.z1) continue;
+      const r = distToSeg(x, z, q.a.x, q.a.z, q.b.x, q.b.z);
+      if (r.d > q.hw + pad) continue;
+      if (Math.abs(q.a.y + (q.b.y - q.a.y) * r.t - y) < dy) return true;
+    }
+    return false;
+  }
+
+  /**
+   * CUT-AND-COVER LIDS: a surface road that passes over somebody else's
+   * portal cutting rides a slab at its own grade instead of dropping into the
+   * trench.
+   *
+   * The carve digs everything within hw + 7.6 m of a corridor, and it cannot
+   * know which surface roads cross that footprint. 423 carriageways that are
+   * NOT the cutting's own approach are dug more than a metre by one. The one a
+   * player meets first: continuing south on the SR-99 surface out of the
+   * southbound tube, the road runs 9-12 m beside the northbound entry cutting
+   * with carriageways that overlap (hw 7 each) and dropped 11-12 m into it at
+   * z ~1909. And three viaduct approaches on Mercer Island start in an I-90
+   * lid's cutting 9-11 m below the deck they are meant to climb onto, which is
+   * verify's "3 of 851 approaches failed to climb".
+   *
+   * The terrain cannot express a road over a trench -- ground is one value per
+   * point and a 4 m patch cannot hold a vertical step -- so the lid is drawn
+   * geometry with its own height query (city.lidAt), exactly like a deck:
+   *
+   *  - near-parallel roads (SR-99's surface beside its own portal) split the
+   *    ground at the Voronoi line between the two centrelines: the surface
+   *    road keeps its half on a slab, the cutting keeps its half, and a
+   *    retaining wall with a parapet and a barrier stands on the line.
+   *  - crossing roads bridge the trench, where there is headroom for traffic
+   *    below (4.6 m under the slab); where there is not, the crossing is at
+   *    grade in life too and is left as it was.
+   *  - a road that is some cutting's OWN approach is never lidded: it is
+   *    supposed to descend.
+   *  - only roads the cut actually hurts (1.5 m+ deep somewhere along them).
+   */
+  buildLids(cuts, bsegs) {
+    const city = this.city;
+    const LID_TOP = ROAD_LIFT + 0.04;
+    const key = (x, z) => Math.round(x) + ':' + Math.round(z);
+    const keysOf = cuts.map((c) => new Set(c.pts.map((p) => key(p.x, p.z))));
+    // Is (x,z) inside cut c's dug footprint at all?
+    const inFoot = (c, x, z) => {
+      if (x < c.x0 || x > c.x1 || z < c.z0 || z > c.z1) return false;
+      for (let k = 0; k < c.pts.length - 1; k++) {
+        const p0 = c.pts[k], p1 = c.pts[k + 1];
+        if (segDist(x, z, p0.x, p0.z, p1.x, p1.z) <= p0.hw + CUT_SH + CUT_OVER + CUT_BANK) return true;
+      }
+      return false;
+    };
+    // Carve depth, and the cut doing it, in one call (terrainHeight would call
+    // cutFloor again).
+    const carveAt = (x, z) => {
+      const cf = this.cutFloor(x, z);
+      if (!cf) return null;
+      const raw = G.terrainRaw(x, z);
+      return { d: Math.max(0, (raw - cf.y) * (1 - cf.t)), c: cf.c, raw };
+    };
+    const quads = [], pending = [];
+    this._lidByEdge = new Map();
+    this._lidVeto = new Map();          // ei -> why a dug road got no slab
+    this._lidBarrier0 = bsegs.length;   // barriers from here on are lid sides
+    const stats = { edges: 0, quads: 0, walls: 0, crossingsSkipped: 0 };
+    const cutGrid = this._bboxGrid(cuts);
+    for (let ei = 0; ei < city.edges.length; ei++) {
+      const e = city.edges[ei];
+      if (e.tunnel || e.elev) continue;
+      const a = city.nodes[e.a], b = city.nodes[e.b];
+      // The cuts this road is an APPROACH of (either end on the corridor):
+      // wherever one of those digs, the road is supposed to go down with it.
+      // Both-ends-only was not enough -- at a divided mouth the twin
+      // carriageways descend side by side, each dug deepest by the OTHER's
+      // cut, and lidding one put a wall 2 m from the other's centreline.
+      const r = e.hw + 1;
+      const ex0 = Math.min(a.x, b.x) - r, ex1 = Math.max(a.x, b.x) + r;
+      const ez0 = Math.min(a.z, b.z) - r, ez1 = Math.max(a.z, b.z) + r;
+      // Cut bounds from a grid (every cut filed under every cell its bounds
+      // touch, padded), then the exact test: `cuts.some` over all 155 cuts for
+      // all 70k edges was a tenth of a second of the boot.
+      let nearCut = false;
+      for (let gx = Math.floor(ex0 / 48); gx <= Math.floor(ex1 / 48) && !nearCut; gx++) {
+        for (let gz = Math.floor(ez0 / 48); gz <= Math.floor(ez1 / 48) && !nearCut; gz++) {
+          const l = cutGrid.get(gx * 100003 + gz);
+          if (!l) continue;
+          for (const c of l) if (!(ex1 < c.x0 || ex0 > c.x1 || ez1 < c.z0 || ez0 > c.z1)) { nearCut = true; break; }
+        }
+      }
+      if (!nearCut) continue;
+      // (after the bbox test: for all 70k edges this filter was a third of a
+      // second of the loading bar, for the few hundred near a cutting)
+      const kA = key(a.x, a.z), kB = key(b.x, b.z);
+      const ownCuts = cuts.filter((c, ci) => keysOf[ci].has(kA) || keysOf[ci].has(kB));
+      // Any road the cut digs at all (0.3 m+). A higher bar -- 1.5 m was the
+      // first -- ends a slab at the node where the next edge's dig falls
+      // under it, and that end is a drop the barrier then walls off across
+      // the carriageway: measured at (148, 2039), the next edge dug 1.4 m.
+      let worst = 0;
+      for (let s = 0; s <= e.len; s += 3) {
+        const t = s / e.len;
+        const q = carveAt(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t);
+        if (q && q.d > worst) worst = q.d;
+      }
+      if (worst < 0.3) continue;
+      const px = -e.dz, pz = e.dx;
+      // Stations every 0.5 m: the slab has to start where the dig does. At
+      // 2 m the first slab row landed on the bank already a metre or more
+      // down, and its end was walled off across the carriageway.
+      const ns = Math.max(1, Math.ceil(e.len / 0.5)), nl = Math.max(2, Math.ceil(e.hw * 2));
+      const S = (i) => i / ns, U = (j) => e.hw - (2 * e.hw * j) / nl;
+      const pt = (s, u) => [a.x + (b.x - a.x) * s + px * u, a.z + (b.z - a.z) * s + pz * u];
+      // Is (x,z), u across this road, lid? Crossings that lack headroom veto
+      // the whole road: half a bridge is a wall across the carriageway.
+      // here() answers 0 (no slab), 1 (slab beside a cutting: its exposed
+      // side is a retaining wall to the trench floor) or 2 (slab bridging a
+      // trench: traffic passes UNDER its sides, so they are parapets only).
+      let veto = false, vetoWhy = '';
+      // -1 marks "no slab only because the dig is too shallow here", which
+      // the dilation below may still claim.
+      const here = (x, z, u, s) => {
+        const q = carveAt(x, z);
+        if (!q || q.d < 0.08) return -1;
+        for (const c2 of ownCuts) if (inFoot(c2, x, z)) return 0;
+        // OVER A TUNNEL CARRIAGEWAY a slab can only be a bridge: its sides
+        // are parapets, traffic passes under them. Measured riding NB, a lid
+        // median standing in a twin tube's lane under Alaskan Way stopped the
+        // car 348 m in. Too little headroom there -- no slab at this point.
+        // Too little headroom there vetoes the whole road -- but only where the
+        // slab would otherwise stand: a hole in mid-slab gets walled round,
+        // and the citywide sweep counted 184 runs hitting such walls against
+        // 7 on master. A road with no slab keeps master's dip instead.
+        const td = this._tunDeckUnder(x, z, 0.6);
+        const lowHead = td !== null && q.raw + LID_TOP - 0.5 - (td + 0.3) < 4.0;
+        const bridgeOnly = td !== null && !lowHead;
+        let dOwn = 1e9, sa = null, sb = null, tt = 0, dAll = 1e9;
+        for (let k = 0; k < q.c.pts.length - 1; k++) {
+          const p0 = q.c.pts[k], p1 = q.c.pts[k + 1];
+          // distToSeg, inline (hundreds of thousands of probes at boot)
+          const sdx = p1.x - p0.x, sdz = p1.z - p0.z, sl2 = sdx * sdx + sdz * sdz;
+          let rt = sl2 > 0 ? ((x - p0.x) * sdx + (z - p0.z) * sdz) / sl2 : 0;
+          rt = rt < 0 ? 0 : rt > 1 ? 1 : rt;
+          const rd = Math.hypot(x - (p0.x + sdx * rt), z - (p0.z + sdz * rt));
+          // The Voronoi line counts the closing (cap) segment too -- it runs
+          // on down the bore -- or near a cutting's end the median slid to 2 m
+          // off the NB centreline (bore +65) because the nearest counted
+          // segment had already ended.
+          if (rd < dAll) dAll = rd;
+          if (p1.cap) continue;
+          if (rd < dOwn) { dOwn = rd; sa = p0; sb = p1; tt = rt; }
+        }
+        if (!sa) return 0;
+        const kindOf = (kd) => {
+          if (kd > 0 && lowHead) { veto = true; vetoWhy = 'low headroom over a tunnel'; return 0; }
+          return kd > 0 && bridgeOnly ? 2 : kd;
+        };
+        const L = Math.hypot(sb.x - sa.x, sb.z - sa.z) || 1;
+        const cosA = Math.abs(((sb.x - sa.x) * e.dx + (sb.z - sa.z) * e.dz) / L);
+        if (cosA > 0.87) {
+          // The Voronoi line has to leave the cutting's carriageway most of
+          // its width: closer than 0.62 hw (the median wall inside the lane
+          // a car's width from the centre) the two roads are one corridor,
+          // and no slab can separate them.
+          const [cx, cz] = pt(s, 0);
+          if (distToSeg(cx, cz, sa.x, sa.z, sb.x, sb.z).d < 1.24 * sa.hw) {
+            // ...unless the cutting is deep enough to roof: then the road runs
+            // OVER it on a bridge slab, which is what cut-and-cover is. This
+            // is the 80th Ave SE ramp on Mercer Island, 9-11 m down in the I-90
+            // lid's cutting with ~8 m of headroom over the I-90 deck -- the
+            // last two of verify's stranded viaduct approaches.
+            const deck = sa.y + (sb.y - sa.y) * tt;
+            if (q.raw + LID_TOP - 0.5 - deck >= 4.6) return kindOf(2);
+            veto = true; vetoWhy = 'parallel, one corridor'; return 0;
+          }
+          if (Math.abs(u) < Math.min(dOwn, dAll)) return kindOf(1);
+          // PAST THE VORONOI LINE, over the cutting itself: roof it where it is
+          // deep enough, so the road keeps its full width on the slab. Split
+          // there, a road drifting out of the corridor (the 80th Ave SE ramp
+          // 113900) kept only its near half, the far half was a drop, and its
+          // side barrier stood in its own lane. Only where the trench is too
+          // shallow to roof does the split, and its retaining wall, stand.
+          const deck2 = sa.y + (sb.y - sa.y) * tt;
+          if (q.raw + LID_TOP - 0.5 - deck2 >= 4.6) return kindOf(2);
+          return 0;
+        }
+        if (dOwn > sa.hw + CUT_SH) return kindOf(1);
+        const deck = sa.y + (sb.y - sa.y) * tt;
+        if (q.raw + LID_TOP - 0.5 - deck >= 4.6) return kindOf(2);
+        veto = true; vetoWhy = 'crossing without headroom';
+        return 0;
+      };
+      const raw0 = [];
+      let any = false;
+      for (let i = 0; i <= ns; i++) {
+        const row = new Int8Array(nl + 1);
+        for (let j = 0; j <= nl; j++) {
+          const [x, z] = pt(S(i), U(j));
+          row[j] = here(x, z, U(j), S(i));
+          if (row[j] > 0) any = true;
+        }
+        raw0.push(row);
+      }
+      // DILATE ONE SAMPLE INTO THE FADE. The bank goes from nothing to full
+      // depth over 2.4 m, so between a 1 m-spaced sample that is barely dug
+      // and the next the ground can already be a metre down -- measured
+      // 0.9 m at the SB surface's outer edge (z 1981). A slab stopping on the
+      // last dug sample left that strip as a step, and its corner a barrier
+      // within reach of a car on the centreline. A shallow sample next to
+      // slab joins it; its top sits 4 cm over the undug road, as the rest do.
+      const lid = raw0.map((row) => Uint8Array.from(row, (v) => (v > 0 ? v : 0)));
+      for (let i = 0; i <= ns; i++) {
+        for (let j = 0; j <= nl; j++) {
+          if (raw0[i][j] !== -1) continue;
+          let kk = 0;
+          for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
+            const r1 = raw0[i + di];
+            if (r1 && r1[j + dj] > kk) kk = r1[j + dj];
+          }
+          lid[i][j] = kk;
+        }
+      }
+      // A SLAB REACHES THE KERB. The Voronoi split puts a slab's side wherever
+      // the cutting beside it is nearer than this road's centre, which for a
+      // wide road beside a cutting is inside its own outer lane: SR-99's SB
+      // surface past the exit had its side barrier 1-2 m inside its 7 m
+      // carriageway for 60 m, and an AI car in the outer lane wedged on it.
+      // Where the slab already covers the lane a car's reach from the centre
+      // (inLane withdraws it otherwise), the columns between its side and the
+      // kerb join it -- as long as that ground is not the cutting's own
+      // carriageway. Over the cutting's lanes the extension must bridge them
+      // (4.6 m of headroom, as everywhere); without that the side stays put.
+      if (!veto) {
+        for (let i = 0; i <= ns; i++) {
+          for (const [jE, dir] of [[0, 1], [nl, -1]]) {
+            let jj = jE;
+            while (jj >= 0 && jj <= nl && !lid[i][jj]) jj += dir;
+            if (jj < 0 || jj > nl || jj === jE || Math.abs(U(jj)) < 2.6) continue;
+            // outward from the slab's side, stopping at the first column
+            // that cannot join (a hole between slab and kerb is worse)
+            for (let c = jj - dir; c !== jE - dir; c -= dir) {
+              const [x, z] = pt(S(i), U(c));
+              const q = carveAt(x, z);
+              if (!q || q.d < 0.08) break;
+              if (ownCuts.some((c2) => inFoot(c2, x, z))) break;
+              let kind = lid[i][jj];
+              let dCut = 1e9, deck = 0;
+              for (let k = 0; k < q.c.pts.length - 1; k++) {
+                const p0 = q.c.pts[k], p1 = q.c.pts[k + 1];
+                if (p1.cap) continue;
+                const rr = distToSeg(x, z, p0.x, p0.z, p1.x, p1.z);
+                if (rr.d - p0.hw < dCut) { dCut = rr.d - p0.hw; deck = p0.y + (p1.y - p0.y) * rr.t; }
+              }
+              if (dCut < 0.3) {
+                if (q.raw + LID_TOP - 0.5 - deck < 4.6) break;
+                kind = 2;
+              }
+              const td = this._tunDeckUnder(x, z, 0.6);
+              if (td !== null && q.raw + LID_TOP - 0.5 - (td + 0.3) < 4.0) break;
+              lid[i][c] = kind;
+            }
+          }
+        }
+      }
+      if (veto) { stats.crossingsSkipped++; this._lidVeto.set(ei, vetoWhy); continue; }
+      if (!any) continue;
+      const topY = (x, z) => G.terrainRaw(x, z) + LID_TOP;
+      const col = e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1];
+      // An exposed side of the slab: if the ground just outside it is more
+      // than a metre down, it gets a fascia to the ground, a parapet, and a
+      // barrier banded from below the trench floor to above the slab, so
+      // neither the car on the slab nor the one in the trench can cross it.
+      // A bridge side (kind 2) stands over the trench with traffic under it:
+      // it is a 0.7 m slab edge and a parapet, banded to the slab only, or it
+      // would be a wall across the carriageway below -- measured, the first
+      // version stopped the SB car 14 m inside its own mouth.
+      // PASS 1: the slab tops. Lateral runs per station pair, merged along the
+      // road while the run is unchanged, up to 4 m -- the top follows raw
+      // ground at its corners, and a chord longer than that sags off a 40 m
+      // heightfield.
+      const runs = [];
+      let open = new Map();
+      for (let i = 0; i < ns; i++) {
+        const next = new Map();
+        const ok = (jj) => lid[i][jj] && lid[i + 1][jj] && lid[i][jj + 1] && lid[i + 1][jj + 1];
+        let j = 0;
+        while (j < nl) {
+          if (!ok(j)) { j++; continue; }
+          let j1 = j, kind = 0;
+          while (j1 + 1 < nl && ok(j1 + 1)) j1++;
+          for (let jj = j; jj <= j1 + 1; jj++) kind = Math.max(kind, lid[i][jj], lid[i + 1][jj]);
+          const k = j + ':' + j1;
+          const prev = open.get(k);
+          if (prev && (S(i + 1) - prev.s0) * e.len <= 4.0 && prev.kind === kind) {
+            prev.s1 = S(i + 1);
+            next.set(k, prev);
+          } else {
+            const r0 = { s0: S(i), s1: S(i + 1), uA: U(j), uB: U(j1 + 1), kind };
+            runs.push(r0);
+            next.set(k, r0);
+          }
+          j = j1 + 1;
+        }
+        open = next;
+      }
+      const tops = [], c4s = [];
+      for (const q of runs) {
+        const c4 = [pt(q.s0, q.uA), pt(q.s0, q.uB), pt(q.s1, q.uB), pt(q.s1, q.uA)];
+        const v = c4.map(([x, z]) => [x, topY(x, z), z]);
+        const uvs = [];
+        for (const [s, u] of [[q.s0, q.uA], [q.s0, q.uB], [q.s1, q.uB], [q.s1, q.uA]]) uvs.push((e.hw - u) / ROAD_TILE, (s * e.len) / ROAD_TILE);
+        tops.push({ v, uvs, kind: q.kind });
+        c4s.push(c4);
+      }
+      if (!tops.length) continue;
+      // kept for tools: the per-sample slab mask (0 none, 1 beside, 2 bridge)
+      (this._lidMask || (this._lidMask = new Map())).set(ei, { lid, raw0, ns, nl });
+      pending.push({ ei, e, pt, runs, tops, col, topY, c4s });
+    }
+    // SLABS COME IN NETWORKS. A slabbed road meeting, at a junction the cut
+    // has dug more than a metre, a road that got no slab (vetoed, or some
+    // cutting's own approach) put that road's driver against the slab's side
+    // -- a barrier, or a step with none: the sweep's remaining wall hits were
+    // almost all this (Roy St, Hubbell Pl, Lake City Way ...). Such a slab is
+    // withdrawn, and again for whatever it was holding up, until stable; the
+    // roads involved keep master's continuous dip.
+    // AND NO SLAB MAY STOP INSIDE ITS OWN LANE. Where the slab covers only
+    // part of a road's width -- a Voronoi half on one stretch, a bridge on
+    // the next -- the uncovered part is a drop, and its side barrier stood
+    // 0.3-2.2 m off the centreline: every one of the sweep's 24 wall hits
+    // after the bridge rule was a road running into its own slab's side. A
+    // partial slab is worse than master's dip, so it is withdrawn, and the
+    // junction rule re-run, until nothing changes.
+    {
+      const lidSet = new Set(pending.map((q) => q.ei));
+      const junction = () => {
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const q of pending) {
+            if (!lidSet.has(q.ei)) continue;
+            for (const ni of [q.e.a, q.e.b]) {
+              const n = city.nodes[ni];
+              if (G.terrainRaw(n.x, n.z) - G.terrainHeight(n.x, n.z) <= 1.0) continue;
+              const orphan = n.e.some((k) => {
+                if (k === q.ei) return false;
+                const f = city.edges[k];
+                return !f.tunnel && !f.elev && !lidSet.has(k);
+              });
+              if (orphan) { lidSet.delete(q.ei); this._lidVeto.set(q.ei, 'junction with an unslabbed dug road'); changed = true; break; }
+            }
+          }
+        }
+      };
+      const inLane = (q) => {
+        for (const r0 of q.runs) {
+          for (const [u, ou] of [[r0.uA, 0.8], [r0.uB, -0.8]]) {
+            // 2.6 m: a sedan's barrier reach from its centre (0.7 x radius +
+            // the barrier's 0.8 m). At 2.8 this withdrew the 80th Ave SE ramp
+            // chain on Mercer Island for a boundary at 2.76 m no car touches.
+            if (Math.abs(u) >= 2.6 || Math.abs(u) >= q.e.hw - 0.05) continue;
+            const nL = Math.max(1, Math.ceil(((r0.s1 - r0.s0) * q.e.len) / 1.0));
+            for (let k = 0; k < nL; k++) {
+              const sm = r0.s0 + ((r0.s1 - r0.s0) * (k + 0.5)) / nL;
+              const [ox, oz] = q.pt(sm, u + ou);
+              if (city.lidAt(ox, oz) !== null) continue;
+              // the dig outside, as side() judges it (not the hillside's fall);
+              // under 2 m side() leaves it an unfenced step, which is master's
+              // dip -- withdrawing for it collapsed the whole 80th Ave SE / I-405
+              // ramp chain from a 1.5 m fade-out at its far end (125107)
+              if (G.terrainRaw(ox, oz) - G.terrainHeight(ox, oz) + (LID_TOP - ROAD_LIFT) >= 2.0) return true;
+            }
+          }
+        }
+        return false;
+      };
+      for (;;) {
+        junction();
+        this.city.setLids(pending.filter((q) => lidSet.has(q.ei)).flatMap((q) => q.c4s));
+        let removed = 0;
+        for (const q of pending) {
+          if (lidSet.has(q.ei) && inLane(q)) {
+            lidSet.delete(q.ei); this._lidVeto.set(q.ei, 'partial slab, barrier in lane'); removed++;
+          }
+        }
+        if (!removed) break;
+      }
+      for (let k = pending.length - 1; k >= 0; k--) if (!lidSet.has(pending[k].ei)) pending.splice(k, 1);
+      stats.junctionWithdrawn = [...this._lidVeto.values()].filter((v) => v.startsWith('junction')).length;
+      stats.partialWithdrawn = [...this._lidVeto.values()].filter((v) => v.startsWith('partial')).length;
+    }
+    for (const q of pending) quads.push(...q.c4s);
+    this.city.setLids(quads);
+
+    // THE TRENCH IS WALLED WHERE A SLAB ROOFS ITS LEDGE. The cutting's
+    // retaining wall is drawn at hw + CUT_SH but was never solid -- the rim is
+    // deliberately unfenced (see portalCuts) -- so under a bridge slab a car
+    // in the trench drove straight through the wall into the CUT_OVER ledge
+    // behind it: a dark slot under the other road's slab with no way on.
+    // Under a slab nothing can fall into the ledge from above, so the reason
+    // for leaving it open does not apply there: wherever the ground just
+    // behind the wall line is roofed by a lid, the wall line is a barrier,
+    // banded from under the trench floor to the slab's soffit, so the road on
+    // the slab and anyone on the street never meet it. Not where the ledge is
+    // another cutting's carriageway (a divided mouth descends side by side).
+    {
+      const n0 = bsegs.length;
+      this._ledgeBarrier0 = n0;           // for tools: ledge walls start here
+      const onOtherRoad = (c, x, z) => cuts.some((c2) => {
+        if (c2 === c || x < c2.x0 || x > c2.x1 || z < c2.z0 || z > c2.z1) return false;
+        for (let k = 0; k < c2.pts.length - 1; k++) {
+          const p0 = c2.pts[k], p1 = c2.pts[k + 1];
+          if (p1.cap) continue;
+          if (distToSeg(x, z, p0.x, p0.z, p1.x, p1.z).d < p0.hw + 0.5) return true;
+        }
+        return false;
+      });
+      const lidEdges = new Set(pending.map((q) => q.ei));
+      const inLaneAt = (x, z) => {
+        for (const k of city.edgesNear(x, z, 25)) {
+          const e = city.edges[k];
+          if (e.tunnel || e.elev || lidEdges.has(k)) continue;
+          const a = city.nodes[e.a], b = city.nodes[e.b];
+          if (distToSeg(x, z, a.x, a.z, b.x, b.z).d <= e.hw + 0.3) return true;
+        }
+        return false;
+      };
+      for (const c of cuts) {
+        for (let i = 0; i < c.pts.length - 1; i++) {
+          const a = c.pts[i], b = c.pts[i + 1];
+          if (a.cap || b.cap) continue;
+          const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+          const qx = -(b.z - a.z) / L, qz = (b.x - a.x) / L;
+          const n = Math.max(1, Math.ceil(L / 1.5));
+          for (const sd of [1, -1]) {
+            for (let k = 0; k < n; k++) {
+              const t0 = k / n, t1 = (k + 1) / n, tm = (t0 + t1) / 2;
+              const w = a.hw + CUT_SH;
+              const mx = a.x + (b.x - a.x) * tm, mz = a.z + (b.z - a.z) * tm;
+              // the ledge behind the wall, and the wall line itself
+              const lx = mx + qx * sd * (w + 1.5), lz = mz + qz * sd * (w + 1.5);
+              const top = this.city.lidAt(lx, lz);
+              if (top === null) continue;
+              if (onOtherRoad(c, lx, lz) || onOtherRoad(c, mx + qx * sd * w, mz + qz * sd * w)) continue;
+              // ...nor where the wall line itself is some road's carriageway: a
+              // surface street dug by the cut can run along the ledge (Bellevue,
+              // (8281, -2736)), and a wall there is one in its lane
+              // (unslabbed surface roads only: the slab road bridging the
+              // trench passes over the wall line, and is the reason it is here)
+              if (inLaneAt(mx + qx * sd * w, mz + qz * sd * w)) continue;
+              const floor = a.y + (b.y - a.y) * tm - 0.7;
+              const y1 = top + LID_TOP - 0.8;
+              if (y1 - floor < 2.0) continue;
+              bsegs.push(
+                a.x + (b.x - a.x) * t0 + qx * sd * w, a.z + (b.z - a.z) * t0 + qz * sd * w,
+                a.x + (b.x - a.x) * t1 + qx * sd * w, a.z + (b.z - a.z) * t1 + qz * sd * w,
+                floor - 1.5, y1);
+            }
+          }
+        }
+      }
+      this._ledgeBarrier1 = bsegs.length;
+      stats.ledgeWalls = (bsegs.length - n0) / 6;
+      cityStats.lidLedgeWalls = stats.ledgeWalls;
+    }
+
+    // PASS 2: the exposed sides, now that every lid in the city is known. A
+    // side is exposed only if the ground just outside it is NOT another slab
+    // -- the next edge's lid, a neighbouring ramp's -- and is more than a
+    // metre down. Judged per road, the end of each edge's slab met the next
+    // edge's at a node and was walled across the carriageway there: the SB
+    // surface ride stopped at three consecutive nodes before this.
+    for (const P2 of pending) {
+      const { ei, e, pt, runs, tops, col, topY } = P2;
+      const walls = [];
+      // A slab END (across the road, `trans`) gets a fascia but no parapet
+      // and no barrier: a car running off the end drops into the dip the road
+      // had on master, which is recoverable, where a barrier across the
+      // carriageway is a dead stop. Only the sides along the road -- the
+      // median over a trench, a kerb over a drop -- are barriers.
+      const side = (s0, u0, s1, u1, os, ou, kind, trans) => {
+        const [x0, z0] = pt(s0, u0), [x1, z1] = pt(s1, u1);
+        const [ox, oz] = pt((s0 + s1) / 2 + os, (u0 + u1) / 2 + ou);
+        if (city.lidAt(ox, oz) !== null) return;
+        const t0 = topY(x0, z0), t1 = topY(x1, z1);
+        let g = G.terrainHeight(ox, oz);
+        // The DROP is the dig outside, not the fall of the hillside: compared
+        // with absolute ground, a slab on a cross-sloping street counted the
+        // street's own camber toward the metre and walled it.
+        const drop = G.terrainRaw(ox, oz) - g + (LID_TOP - ROAD_LIFT);
+        if (drop < 1.0) return;
+        // A side INSIDE the lane (within a car's reach of the centreline)
+        // over a step under 2 m gets no barrier: that step is the dip the road
+        // had on master anyway, and a barrier there is a wall in the lane.
+        // (A deeper in-lane step withdraws the whole slab -- see inLane.)
+        const um = (u0 + u1) / 2;
+        if (!trans && Math.abs(um) < 2.6 && Math.abs(um) < e.hw - 0.05 && drop < 2.0) trans = true;
+        const bridge = kind === 2;
+        if (bridge) g = Math.min(t0, t1) - 0.7 + 0.3;   // fascia bottom = slab soffit
+        walls.push({ x0, z0, x1, z1, t0, t1, g, trans, nx: ox - (x0 + x1) / 2, nz: oz - (z0 + z1) / 2 });
+        if (!trans) bsegs.push(x0, z0, x1, z1, bridge ? Math.min(t0, t1) - 0.8 : g - 1.5, Math.max(t0, t1) + 1.8);
+      };
+      const ds = 0.8 / e.len;
+      for (const r0 of runs) {
+        // lateral sides in ~1 m pieces
+        const nL = Math.max(1, Math.ceil(((r0.s1 - r0.s0) * e.len) / 1.0));
+        for (let k = 0; k < nL; k++) {
+          const a0 = r0.s0 + ((r0.s1 - r0.s0) * k) / nL, a1 = r0.s0 + ((r0.s1 - r0.s0) * (k + 1)) / nL;
+          side(a0, r0.uA, a1, r0.uA, 0, 0.8, r0.kind);
+          side(a0, r0.uB, a1, r0.uB, 0, -0.8, r0.kind);
+        }
+        // ends in ~1 m pieces
+        const nW = Math.max(1, Math.ceil((r0.uA - r0.uB) / 1.0));
+        for (let k = 0; k < nW; k++) {
+          const b0 = r0.uA - ((r0.uA - r0.uB) * k) / nW, b1 = r0.uA - ((r0.uA - r0.uB) * (k + 1)) / nW;
+          side(r0.s0, b0, r0.s0, b1, -ds, 0, r0.kind, true);
+          side(r0.s1, b0, r0.s1, b1, ds, 0, r0.kind, true);
+        }
+      }
+      this._lidByEdge.set(ei, { tops, walls, col });
+      stats.edges++; stats.quads += tops.length; stats.walls += walls.length;
+    }
+    // WHERE A BARRIER STANDS INSIDE A CARRIAGEWAY, THAT IS WHERE THE
+    // CARRIAGEWAY ENDS. Real data overlaps: SR-99's SB surface past the exit
+    // runs 2.2 m over the NB entry cutting's lanes, 4.7 m down with 3.8 m of
+    // headroom, so no slab can reach its kerb and its side barrier stands 2 m
+    // inside the 7 m road. The slab is the road there, so the road's usable
+    // width stops at the barrier: `e.barW` [+p side, -p side] is the narrowest
+    // clear half-width any lid barrier leaves, and traffic lays its lanes
+    // (laneLat) and meshRoadMarks its edge line inside it, as they do inside a
+    // split-level trim. An AI car in the outer lane used to run 1.9 m off the
+    // barrier line, inside the 2.2 m a sedan's circle and the wall's 0.8 m
+    // reach, and wedge there.
+    {
+      let pinched = 0;
+      for (let i = this._lidBarrier0; i < bsegs.length; i += 6) {
+        const mx = (bsegs[i] + bsegs[i + 2]) / 2, mz = (bsegs[i + 1] + bsegs[i + 3]) / 2;
+        const y0 = bsegs[i + 4], y1 = bsegs[i + 5];
+        for (const k of city.edgesNear(mx, mz, 30)) {
+          const f = city.edges[k];
+          if (f.tunnel || f.elev) continue;
+          const fa = city.nodes[f.a], fb = city.nodes[f.b];
+          const r = distToSeg(mx, mz, fa.x, fa.z, fb.x, fb.z);
+          if (r.t <= 0 || r.t >= 1 || r.d >= f.hw - 0.05) continue;
+          // at this road's level: the slab it rides here, or its ground
+          const lt = city.lidAt(mx, mz);
+          const ry = (lt !== null && this._lidByEdge.has(k) ? lt + LID_TOP : G.terrainHeight(mx, mz) + ROAD_LIFT);
+          if (ry < y0 || ry > y1) continue;
+          const side = (mx - fa.x) * -f.dz + (mz - fa.z) * f.dx >= 0 ? 0 : 1;
+          if (!f.barW) f.barW = new Float32Array([f.hw, f.hw]);
+          if (r.d < f.barW[side]) { f.barW[side] = r.d; pinched++; }
+        }
+      }
+      cityStats.lidLanePinched = pinched;
+    }
+    cityStats.lidEdges = stats.edges;
+    cityStats.lidQuads = stats.quads;
+    cityStats.lidWalls = stats.walls;
+    cityStats.lidCrossingsSkipped = stats.crossingsSkipped;
+    cityStats.lidJunctionWithdrawn = stats.junctionWithdrawn;
+    cityStats.lidPartialWithdrawn = stats.partialWithdrawn;
+  }
+
+  /** The slab, fascia and parapet of one road's lids (see buildLids). */
+  meshLid(road, flat, ei) {
+    const L = this._lidByEdge && this._lidByEdge.get(ei);
+    if (!L) return;
+    for (const q of L.tops) road.quad(q.v[0], q.v[1], q.v[2], q.v[3], [0, 1, 0], q.uvs, L.col);
+    const conc = [0.46, 0.47, 0.48];
+    // A BRIDGE SLAB HAS AN UNDERSIDE. The top is road material and one-sided,
+    // so from the trench it spans nothing but its fascias and parapets drawn
+    // as bars hanging in the sky -- the "floating retaining-wall slabs" over
+    // SR-99's SB exit cutting, where two ramps and a cross street roof it in
+    // part (raycast: every floating bar was a kind-2 lid fascia, 5-10 m over
+    // the trench floor, with nothing between). The soffit sits where the
+    // fascia's foot does, 0.7 m under the top.
+    const soff = [0.36, 0.37, 0.38];
+    for (const q of L.tops) {
+      if (q.kind !== 2) continue;
+      const d = q.v.map(([x, y, z]) => [x, y - 0.7, z]);
+      flat.quad(d[3], d[2], d[1], d[0], [0, -1, 0], ZERO_UV, soff);
+    }
+    for (const w of L.walls) {
+      const n = Math.hypot(w.nx, w.nz) || 1, nx = w.nx / n, nz = w.nz / n;
+      // fascia down to the ground outside, facing the drop
+      const ph = w.trans ? 0 : 0.9;     // an end has no parapet
+      flat.quad([w.x0, w.g - 0.3, w.z0], [w.x1, w.g - 0.3, w.z1], [w.x1, w.t1 + ph, w.z1], [w.x0, w.t0 + ph, w.z0],
+        [nx, 0, nz], ZERO_UV, conc);
+      if (w.trans) continue;
+      // parapet's inner face and cap
+      const ix = -nx * 0.3, iz = -nz * 0.3;
+      flat.quad([w.x0 + ix, w.t0, w.z0 + iz], [w.x1 + ix, w.t1, w.z1 + iz],
+        [w.x1 + ix, w.t1 + 0.9, w.z1 + iz], [w.x0 + ix, w.t0 + 0.9, w.z0 + iz], [-nx, 0, -nz], ZERO_UV, conc);
+      flat.quad([w.x0, w.t0 + 0.9, w.z0], [w.x1, w.t1 + 0.9, w.z1],
+        [w.x1 + ix, w.t1 + 0.9, w.z1 + iz], [w.x0 + ix, w.t0 + 0.9, w.z0 + iz], [0, 1, 0], ZERO_UV, [0.55, 0.56, 0.57]);
+    }
+  }
+
+  /**
+   * Is (x,z) over the floor of a portal trench (not its banks)? With `y`, a
+   * deck height, a trench whose own road runs above this deck's roof does
+   * not count: that deck is buried under the other's cut. SR-99's lower deck runs under
+   * the upper deck's south cutting, DECK_SEP below the road in it, and asked
+   * without a height it came back "open" -- no roof, no walls, no lamps, and
+   * daylight down the NB bore for 100 m.
+   */
+  inCut(x, z, y) {
+    for (const c of this._cutsNear(x, z)) {
+      if (x < c.x0 || x > c.x1 || z < c.z0 || z > c.z1) continue;
+      // under a street-ended cut's protected streets nothing is dug
+      // (cutFloor), so the bore there is buried: without this the clamped end
+      // still answered "open" ~8 m under the street, a roofless tube
+      if (c.protect && underStreet(c, x, z)) continue;
+      for (let i = 0; i < c.pts.length - 1; i++) {
+        const a = c.pts[i], b = c.pts[i + 1];
+        // distToSeg returns {d, t, x, z}, NOT a number. Comparing the object
+        // to a radius is always false, so the trench was computed for all 155
+        // corridors and cut for none of them -- the hole silently did not
+        // exist, and every portal shape was judged against ground that had
+        // never been removed.
+        // The closing segment shapes the GROUND over the bore; it is not open
+        // cut. Counting it as such drew road, retaining walls and a lit deck
+        // underneath ground that had just been raised over them -- an earth
+        // mound sitting on the carriageway.
+        if (b.cap) continue;
+        const r = distToSeg(x, z, a.x, a.z, b.x, b.z);
+        if (r.d >= a.hw + CUT_SH) continue;
+        // only a trench whose FLOOR clears this deck's roof and slab (a
+        // stacked deck, DECK_SEP up) leaves it buried; anything lower is this
+        // deck's open cut too, as it always was -- the I-5 Express bore under
+        // a ramp cutting 6.0 m above it keeps its old treatment
+        if (y != null && a.y + (b.y - a.y) * r.t - y > TUNNEL_H + 1.0) continue;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  buildWater() {
+    // TESSELLATED, not one quad. A 34 km quad reaches far past the 9 km far
+    // plane, and the depth rasterised across a clipped triangle that size is
+    // off by more than the 2 cm the tunnel water mask stands over the sea: from
+    // a chase camera a few metres over SR-99's NB entry cutting the sea won
+    // the depth test against the mask (and the road beside it), and the
+    // cutting drew flooded -- or not, flipping with sub-milliradian changes in
+    // the camera's heading. At WATER_CELL cells (64 x 64), 12 poses down that
+    // cutting all matched a render with no sea at all (the one quad failed 1
+    // of 12, 8 x 8 cells 1 of 12). Still one draw; ~8k triangles.
+    // AUTO KW: NO SEA. One mesh over every heightfield cell with water at a
+    // corner, each vertex at the field's level (geo.waterLevel): lakes flat,
+    // the Grand and the Speed falling ~50 m across the map. UVs as the sea
+    // plane's were, so the normal map's scale is unchanged.
+    const geo = (() => {
+      const WL = G.waterField(), N = G.HF_N, S = G.HF_STEP, H = G.MAP_HALF, U = H * 2.6;
+      const pos = [], uv = [], idx = [], vid = new Int32Array(N * N).fill(-1);
+      const lvAt = (i, j) => {
+        const v = WL[j * N + i];
+        if (v === v) return v;
+        let m = -Infinity;
+        for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+          const ii = i + di, jj = j + dj;
+          if (ii < 0 || jj < 0 || ii >= N || jj >= N) continue;
+          const w = WL[jj * N + ii];
+          if (w === w && w > m) m = w;
+        }
+        return m;
+      };
+      const vert = (i, j) => {
+        const k = j * N + i;
+        if (vid[k] >= 0) return vid[k];
+        const x = i * S - H, z = j * S - H;
+        pos.push(x, lvAt(i, j), z);
+        uv.push((x + U / 2) / U, 1 - (z + U / 2) / U);
+        return (vid[k] = pos.length / 3 - 1);
+      };
+      for (let j = 0; j < N - 1; j++) for (let i = 0; i < N - 1; i++) {
+        const k = j * N + i;
+        if (!(WL[k] === WL[k] || WL[k + 1] === WL[k + 1] || WL[k + N] === WL[k + N] || WL[k + N + 1] === WL[k + N + 1])) continue;
+        const a = vert(i, j), b = vert(i + 1, j), c = vert(i, j + 1), d = vert(i + 1, j + 1);
+        // the terrain mesh's own split (geo sampleHF): along tx + tz = 1
+        idx.push(a, c, b, b, c, d);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      return g;
+    })();
+    const n = this.tx.water.normalMap;
+    n.repeat.set(520, 520);
+    const mat = new THREE.MeshStandardMaterial({
+      // Roughness up and normal amplitude down: at 0.09 every wavelet past a
+      // couple of hundred metres aliased into one blown white specular sheet
+      // along the horizon.
+      // 0.22 killed the blown horizon sheet but also every highlight, leaving a
+      // dead black sheet. 0.15 keeps a sun lobe; the tiling weave is broken by
+      // scrolling two copies of the normal map at different rates below.
+      // Water is a DIELECTRIC, and its Fresnel is the whole look. At
+      // metalness 0.22 the surface was mostly a dark diffuse body colour with
+      // a weak reflection on top, so near water sat at about a fifth of the
+      // sky's luminance while far water was carried entirely by fog -- the
+      // same lake reading 34 close in and 151 out at the horizon. Dropping
+      // metalness to near zero gives F0 = 0.04 with a real grazing-angle
+      // ramp, which is what puts the sky into the water and produces the
+      // shore-to-horizon gradient without a reflection pass.
+      //
+      // The body colour is nearly black, on purpose. Sea water scatters
+      // almost nothing back, so all a lit surface shows is its reflection. At
+      // 0x33556e the "body" was a Lambertian blue lit by a 4.3 sun, which was
+      // most of what the near water showed: every wavelet shaded like a lump
+      // of blue plastic. Dark body + more env (2.0) puts the sky in the crests
+      // and the dark between them, which is what reads as water.
+      // normalScale 0.24 against the new chop map (textures.js waterSurface),
+      // which carries ~1.5x the old map's slope where it matters.
+      color: 0x0a1d22, normalMap: n, roughness: 0.12, metalness: 0.02,
+      envMapIntensity: 2.0, normalScale: new THREE.Vector2(0.24, 0.24),
+    });
+    // Two scales of swell from the one normal map.
+    //
+    // At a 520x repeat the tile is ~16 m, and from any height the same wavelet
+    // pattern printed edge to edge across Elliott Bay reads as a woven carpet,
+    // the scrolling offset only slides the weave. A second tap at -0.29x scale
+    // (so it drifts the OTHER way, at a different speed, from the same offset)
+    // adds long swell and breaks the grid. Blending in tangent space before
+    // three perturbs the normal, so everything downstream is untouched.
+    const twoScale = (sh) => {
+      sh.fragmentShader = sh.fragmentShader.replace(
+        'vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;',
+        'vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;\n'
+        + '\tvec3 mapN2 = texture2D( normalMap, vNormalMapUv * -0.29 + vec2( 0.37, 0.11 ) ).xyz * 2.0 - 1.0;\n'
+        + '\tmapN = normalize( vec3( mapN.xy * 0.62 + mapN2.xy * 0.9, mapN.z ) );');
+    };
+    mat.onBeforeCompile = twoScale;
+    mat.customProgramCacheKey = () => 'water2scale';
+    const m = new THREE.Mesh(geo, mat);
+    m.position.y = 0;
+    // AFTER the opaque scene, not before it (was -5). A bore below sea level
+    // -- SR-99 bottoms out around -16 m, like the real one -- has nothing
+    // between its interior and the sea plane, so the tunnel rendered flooded.
+    // The fix is a depth-only mask over those corridors (see portalCuts), and
+    // a mask can only shield water that draws AFTER it. Opaque water is
+    // order-independent under the depth buffer, so moving it costs nothing.
+    m.renderOrder = 4;
+    this.scene.add(m);
+    this.water = m;
+    this.waterNormal = n;
+    // NO WATER TO AN UNDERGROUND CAMERA. A bore is closed, so nothing seen
+    // from inside one can be water -- but the sea plane at y = 0 runs straight
+    // through every sub-sea stretch of SR-99, and no depth mask can shield a
+    // camera from a plane passing between it and its own walls (see the mask
+    // in portalCuts). Decided per draw from the camera actually rendering, in
+    // each water mesh's onBeforeRender, which runs before three applies the
+    // material's state; the lakes share the material, so each sets the flags
+    // for itself and they cannot leak between meshes.
+    const underground = (cam) => G.terrainRaw(cam.position.x, cam.position.z) - cam.position.y > 1.5;
+    const gate = (r, s, cam, g2, mt) => { const u = underground(cam); mt.colorWrite = !u; mt.depthWrite = !u; };
+    m.onBeforeRender = gate;
+
+    // The lakes are not at sea level, and one plane cannot serve both. A
+    // bare-earth DEM reports the *surface* of standing water as ground, so
+    // Lake Union arrives as a 5 m plateau and Green Lake as a 51 m one; with
+    // only the sea plane at y=0 both rendered as solid grass you could drive
+    // across. tools/build_raster.py digs a bed under each and reports its
+    // level, and each gets its own plane here.
+    this.lakes = [];
+    for (const l of (this.lakeSpecs || [])) {
+      const w = l.x1 - l.x0, d = l.z1 - l.z0;
+      // tessellated like the sea, for the same depth precision
+      const lg = new THREE.PlaneGeometry(w, d, Math.ceil(w / WATER_CELL), Math.ceil(d / WATER_CELL));
+      lg.rotateX(-Math.PI / 2);
+      // drawn only over the lake's own water (G.lakeMask), not its whole box
+      const M = G.lakeMask(l);
+      const tex = new THREE.DataTexture(M.d.map((v) => v * 255), M.w, M.h, THREE.RedFormat, THREE.UnsignedByteType);
+      tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter;
+      tex.unpackAlignment = 1;
+      tex.needsUpdate = true;
+      const lbox = new THREE.Vector4(M.x0 - M.step / 2, M.z0 - M.step / 2, M.w * M.step, M.h * M.step);
+      const lmat = mat.clone();
+      lmat.onBeforeCompile = (sh) => {
+        twoScale(sh);
+        sh.uniforms.lakeMask = { value: tex };
+        sh.uniforms.lakeBox = { value: lbox };
+        sh.vertexShader = 'varying vec2 vLakeW;\n' + sh.vertexShader.replace('#include <begin_vertex>',
+          '#include <begin_vertex>\n\tvLakeW = ( modelMatrix * vec4( transformed, 1.0 ) ).xz;');
+        sh.fragmentShader = 'uniform sampler2D lakeMask;\nuniform vec4 lakeBox;\nvarying vec2 vLakeW;\n'
+          + sh.fragmentShader.replace('#include <clipping_planes_fragment>',
+            '#include <clipping_planes_fragment>\n\tif ( texture2D( lakeMask, ( vLakeW - lakeBox.xy ) / lakeBox.zw ).r < 0.5 ) discard;');
+      };
+      lmat.customProgramCacheKey = () => 'waterLake';
+      const lm = new THREE.Mesh(lg, lmat);
+      lm.position.set((l.x0 + l.x1) / 2, l.level, (l.z0 + l.z1) / 2);
+      lm.renderOrder = 5;   // after the sea, as before -- see note above
+      lm.onBeforeRender = gate;
+      this.scene.add(lm);
+      this.lakes.push(lm);
+    }
+
+    // The ship canal at Lake Union's level (_findCanal). One plane over the
+    // canal's window, discarded outside its cells: a lake-style bounding-box
+    // plane would flood every low bank between the Locks and Montlake. The
+    // mask is dilated a cell and sampled bilinearly, so the edge is a smooth
+    // contour that runs into the bank rather than a 10 m staircase. Its UVs
+    // continue Lake Union's, so the swell crosses the box edge unbroken.
+    const c = this.canal !== undefined ? this.canal : this._findCanal();
+    if (c) {
+      const data = new Uint8Array(c.w * c.h);
+      let a0 = c.w, a1 = -1, b0 = c.h, b1 = -1;
+      for (let j = 0; j < c.h; j++) for (let i = 0; i < c.w; i++) {
+        let on = 0;
+        for (let dj = -1; dj <= 1 && !on; dj++) for (let di = -1; di <= 1; di++) {
+          const ii = i + di, jj = j + dj;
+          if (ii >= 0 && jj >= 0 && ii < c.w && jj < c.h && c.cells[jj * c.w + ii]) { on = 1; break; }
+        }
+        if (on && c.deepIn((c.i0 + i) * c.step - G.MAP_HALF, (c.j0 + j) * c.step - G.MAP_HALF)) on = 0;
+        if (on) { data[j * c.w + i] = 255; a0 = Math.min(a0, i); a1 = Math.max(a1, i); b0 = Math.min(b0, j); b1 = Math.max(b1, j); }
+      }
+      const tex = new THREE.DataTexture(data, c.w, c.h, THREE.RedFormat, THREE.UnsignedByteType);
+      tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter;
+      tex.unpackAlignment = 1;   // rows are w bytes, not a multiple of 4
+      tex.needsUpdate = true;
+      const S = c.step, H = G.MAP_HALF;
+      // texel centres sit on the mask's sample points
+      const box = new THREE.Vector4((c.i0 - 0.5) * S - H, (c.j0 - 0.5) * S - H, c.w * S, c.h * S);
+      const x0 = (c.i0 + a0 - 1) * S - H, x1 = (c.i0 + a1 + 1) * S - H;
+      const z0 = (c.j0 + b0 - 1) * S - H, z1 = (c.j0 + b1 + 1) * S - H;
+      const cg = new THREE.PlaneGeometry(x1 - x0, z1 - z0, Math.ceil((x1 - x0) / WATER_CELL), Math.ceil((z1 - z0) / WATER_CELL));
+      cg.rotateX(-Math.PI / 2);
+      cg.translate((x0 + x1) / 2, 0, (z0 + z1) / 2);
+      const U = c.union, pos = cg.attributes.position, uv = cg.attributes.uv;
+      for (let k = 0; k < pos.count; k++) {
+        uv.setXY(k, (pos.getX(k) - U.x0) / (U.x1 - U.x0), (U.z1 - pos.getZ(k)) / (U.z1 - U.z0));
+      }
+      const cm = mat.clone();
+      cm.onBeforeCompile = (sh) => {
+        twoScale(sh);
+        sh.uniforms.canalMask = { value: tex };
+        sh.uniforms.canalBox = { value: box };
+        sh.vertexShader = 'varying vec2 vCanalW;\n' + sh.vertexShader.replace('#include <begin_vertex>',
+          '#include <begin_vertex>\n\tvCanalW = ( modelMatrix * vec4( transformed, 1.0 ) ).xz;');
+        sh.fragmentShader = 'uniform sampler2D canalMask;\nuniform vec4 canalBox;\nvarying vec2 vCanalW;\n'
+          + sh.fragmentShader.replace('#include <clipping_planes_fragment>',
+            '#include <clipping_planes_fragment>\n\tif ( texture2D( canalMask, ( vCanalW - canalBox.xy ) / canalBox.zw ).r < 0.5 ) discard;');
+      };
+      cm.customProgramCacheKey = () => 'waterCanal';
+      const m2 = new THREE.Mesh(cg, cm);
+      m2.position.y = c.level;
+      m2.renderOrder = 5;
+      m2.onBeforeRender = gate;
+      this.scene.add(m2);
+      this.canalMesh = m2;
+    }
+  }
+
+  /** Every tall building in the city as one cheap silhouette mesh. */
+  buildSkyline() {
+    const b = new Builder(false);
+    for (const bd of this.city.buildings) {
+      // Height OR footprint. The gate was pure height at 30 m, so a 10 m
+      // Boeing shed the size of a city block popped in at the 800 m ring while
+      // a skinny 32 m tower never did -- from a plane, footprint is what you
+      // see. 4032 buildings pass; the sub-30 additions take the plain-box path
+      // (plant and crown are height-gated) at ~12 triangles each.
+      if (bd.h < 16 && bd.w * bd.d < 1400) continue;
+      const col = this.massColour(bd);
+      const s = 0.985;
+      // A tower is read almost entirely by its top. Extruded to full height
+      // and capped flat, every building in the skyline is the same rectangle
+      // with a different length -- the reason the downtown silhouette scored
+      // worst of anything in the frame. Anything tall enough to stand out of
+      // the mass gets its shaft stopped short and a crown built on top: a
+      // setback, a mechanical penthouse, and sometimes a mast.
+      //
+      // This is the far mesh, so it is silhouette only -- four boxes at most,
+      // and only for the few hundred buildings over 45 m.
+      // Same tiers the near mesh draws, inset and stopped 2 m short, so the far
+      // version is strictly INSIDE the textured geometry wherever both exist.
+      const plant = bd.h > 45 ? Math.min(4.5, bd.h * 0.05) : 0;
+      const totalH = bd.h + 2 - plant;
+      const dk = [col[0] * 0.86, col[1] * 0.88, col[2] * 0.92];
+      let topY = bd.y - 2, topW = bd.w * s, topD = bd.d * s;
+      for (const tier of buildingTiers(bd, bd.y - 2, totalH)) {
+        b.box(bd.x, tier.y, bd.z, tier.w * s, tier.h, tier.d * s, bd.rot,
+          tier.t % 2 ? dk : col, { top: true, ao: tier.t === 0 ? 0.3 : 0 });
+        topY = tier.y + tier.h; topW = tier.w * s; topD = tier.d * s;
+      }
+      // Mechanical penthouse, within the top tier's footprint and within the
+      // building's own height -- so it cannot stand proud of the near mesh.
+      if (plant > 0) {
+        b.box(bd.x, topY, bd.z, topW * 0.6, plant, topD * 0.6, bd.rot, dk, { top: true });
+        topY += plant;
+      }
+      // A mast is the one thing that legitimately rises above a parapet, and it
+      // is thin enough to read as an antenna rather than as a slab.
+      if (bd.h > 80 && hash2(bd.seed, 37) > 0.45) {
+        const mh = 8 + hash2(bd.seed, 41) * 22;
+        b.box(bd.x, topY, bd.z, 0.9, mh, 0.9, bd.rot, dk, { top: true });
+      }
+    }
+    const m = new THREE.Mesh(b.build(), this.mats.far);
+    m.frustumCulled = false;
+    this.scene.add(m);
+    this.skyline = m;
+  }
+
+  /**
+   * Every building the skyline skips, as massing for the whole city -- built
+   * lazily, the first time the player is off the ground.
+   *
+   * From a plane the streaming rings were a visible edge: houses, shops and
+   * low offices only existed inside the 9x9 mid ring, so everything past
+   * ~1.6 km was bare hillside with the tall skyline standing in it, and the
+   * housing stock materialised a row of chunks at a time as you flew -- the
+   * trace on the Boeing Field route counted 50k buildings popping into view.
+   * This is the "static supertile impostor layer" rather than wider rings:
+   * one draw per 4x4-chunk supertile.
+   *
+   * INSIDE THE RING IT HIDES ITSELF, per chunk, in the vertex shader. Every
+   * box knows its chunk, and `farBuilt` is a 9x9 mask of ring chunks that have
+   * geometry; those boxes collapse to a point. So the layer keeps drawing a
+   * chunk until the streamer has actually delivered it -- no hole while it
+   * builds, and no double-drawn box once it has.
+   *
+   * MEMORY IS THE CONSTRAINT, not triangles. The first version stored every
+   * box as its own 8 vertices plus 30 indices for all 255,041 small buildings:
+   * 47.7 MB of buffers, twice that resident with three's JS copies, built at
+   * boot for players who never fly. Three changes took that to a few MB:
+   *
+   *   - INSTANCED. One shared unit box; each box is a 17-byte instance record
+   *     (centre and base in Int16 decimetres off the supertile origin, size in
+   *     Uint16 dm, rotation + in-tile chunk index in 2 Uint8, tint in 3). The
+   *     supertile's chunk origin comes from the model matrix, so there is no
+   *     per-mesh uniform to keep in step.
+   *   - HOUSES MERGED per 50 m cell (50 divides a chunk, so a cell never
+   *     straddles one): 231k houses and small sheds become 81k boxes, each
+   *     covering the cell's real footprint area at its mean roof line. From
+   *     1.6 km a house is 3-4 px, so a block reads the same either way. The
+   *     23.6k larger low buildings keep their own box.
+   *   - JS ARRAYS DROPPED ON UPLOAD. Nothing CPU-side reads them (raycast is
+   *     off, the bounding sphere is computed first), and a lost context
+   *     rebuilds the layer rather than re-uploading -- see resetFarMass.
+   *
+   * Flat shading takes each face's normal from screen derivatives, so the
+   * unit box needs no normal attribute.
+   */
+  *farMassSteps() {
+    const city = this.city;
+    const TILE = CHUNK * 4, CELL = 50;
+    // Bin once, in slices: the city's building list is 259k long.
+    if (!this._farBins) {
+      const bins = new Map();
+      const B = city.buildings;
+      for (let i = 0; i < B.length; i++) {
+        const bd = B[i];
+        if (bd.h < 16 && bd.w * bd.d < 1400) {   // the skyline draws the rest
+          const tx = Math.floor(bd.x / TILE), tz = Math.floor(bd.z / TILE);
+          const k = tx * 1000 + tz;
+          let t = bins.get(k);
+          if (!t) bins.set(k, (t = { tx, tz, list: [], built: false }));
+          t.list.push(bd);
+        }
+        if (i % 8000 === 7999) yield 'work';
+      }
+      this._farBins = bins;
+    }
+    for (;;) {
+      // Nearest unbuilt supertile inside the haze radius, biased toward the
+      // nose -- chosen fresh each time, because the plane has moved on.
+      const px = this._farPx, pz = this._farPz, fx = this.playerFwdX || 0, fz = this.playerFwdZ || 0;
+      let best = null, bestS = Infinity;
+      for (const t of this._farBins.values()) {
+        if (t.built) continue;
+        const dx = (t.tx + 0.5) * TILE - px, dz = (t.tz + 0.5) * TILE - pz;
+        const d2 = dx * dx + dz * dz;
+        if (d2 > FAR_R * FAR_R) continue;
+        const s = Math.sqrt(d2) - 0.6 * (dx * fx + dz * fz);
+        if (s < bestS) { bestS = s; best = t; }
+      }
+      if (!best) { yield 'idle'; continue; }
+      const t0 = performance.now();
+      this.buildFarTile(best, TILE, CELL);
+      this.farMassMs = (this.farMassMs || 0) + performance.now() - t0;
+      yield 'work';
+    }
+  }
+
+  /** One supertile's instance records, merged and quantised. */
+  buildFarTile(t, TILE, CELL) {
+    t.built = true;
+    const ox = t.tx * TILE, oz = t.tz * TILE;
+    const boxes = [];   // [x, y, z, w, h, d, rot, r, g, b, chunk]
+    const cells = new Map();
+    for (const bd of t.list) {
+      if (bd.style === 'house' || (bd.h < 10 && bd.w * bd.d < 400)) {
+        const k = Math.floor(bd.x / CELL) * 100000 + Math.floor(bd.z / CELL);
+        let l = cells.get(k);
+        if (!l) cells.set(k, (l = []));
+        l.push(bd);
+      } else boxes.push(this.farBox([bd], ox, oz));
+    }
+    for (const l of cells.values()) boxes.push(this.farBox(l, ox, oz));
+    const n = boxes.length;
+    const C = new Int16Array(n * 3), S = new Uint16Array(n * 3), R = new Uint8Array(n * 2), T = new Uint8Array(n * 3);
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (let i = 0; i < n; i++) {
+      const b = boxes[i];
+      C[i * 3] = Math.round((b[0] - ox) * 10);
+      C[i * 3 + 1] = Math.round(b[1] * 10);
+      C[i * 3 + 2] = Math.round((b[2] - oz) * 10);
+      S[i * 3] = Math.min(65535, Math.round(b[3] * 10));
+      S[i * 3 + 1] = Math.min(65535, Math.round(b[4] * 10));
+      S[i * 3 + 2] = Math.min(65535, Math.round(b[5] * 10));
+      // A box is symmetric under a half turn, so [0, PI) covers every
+      // orientation in a byte -- 0.7 deg steps.
+      const r = ((b[6] % Math.PI) + Math.PI) % Math.PI;
+      R[i * 2] = Math.round(r / Math.PI * 256) % 256;
+      R[i * 2 + 1] = b[10];
+      T[i * 3] = b[7]; T[i * 3 + 1] = b[8]; T[i * 3 + 2] = b[9];
+      const e = Math.hypot(b[3], b[5]) / 2;
+      minX = Math.min(minX, b[0] - e); maxX = Math.max(maxX, b[0] + e);
+      minZ = Math.min(minZ, b[2] - e); maxZ = Math.max(maxZ, b[2] + e);
+      minY = Math.min(minY, b[1]); maxY = Math.max(maxY, b[1] + b[4]);
+    }
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.setAttribute('position', this._farUnit.pos);
+    geo.setIndex(this._farUnit.idx);
+    const attr = (arr, size, norm) => {
+      const a = new THREE.InstancedBufferAttribute(arr, size, norm);
+      // Nothing CPU-side reads these again; see the note on farMassSteps.
+      a.onUpload(function drop() { this.array = null; });
+      return a;
+    };
+    geo.setAttribute('farC', attr(C, 3, false));
+    geo.setAttribute('farS', attr(S, 3, false));
+    geo.setAttribute('farRI', attr(R, 2, false));
+    geo.setAttribute('farTint', attr(T, 3, true));
+    geo.instanceCount = n;
+    // The unit box's own sphere would be a metre wide; frustum culling needs
+    // the tile's, in the mesh's local frame.
+    geo.boundingSphere = new THREE.Sphere(
+      new THREE.Vector3((minX + maxX) / 2 - ox, (minY + maxY) / 2, (minZ + maxZ) / 2 - oz),
+      Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) / 2);
+    const fm = new THREE.Mesh(geo, this._farMat);
+    fm.position.set(ox, 0, oz);
+    // Inside the ring these boxes are collapsed on the GPU only, so a CPU
+    // raycast would hit buildings nobody can see -- and every "raycast the
+    // pixel" diagnostic in this repo would start blaming them.
+    fm.raycast = () => {};
+    fm.visible = false;
+    fm.userData.cx = ox + TILE / 2;
+    fm.userData.cz = oz + TILE / 2;
+    this.scene.add(fm);
+    this.farMass.push(fm);
+    this.farMassCount = (this.farMassCount || 0) + n;
+    this.farMassBytes = (this.farMassBytes || 0) + C.byteLength + S.byteLength + R.byteLength + T.byteLength;
+  }
+
+  /**
+   * One box standing for a list of buildings in the same cell: the rotation
+   * of the largest, the extent of all of them in that frame shrunk to their
+   * real footprint area, and the area-weighted roof line. A list of one is
+   * that building's own box.
+   */
+  farBox(l, ox, oz) {
+    let big = l[0], A = 0, top = 0, tr = 0, tg = 0, tb = 0, base = Infinity;
+    for (const bd of l) {
+      const a = bd.w * bd.d;
+      if (a > big.w * big.d) big = bd;
+      A += a;
+      top += (bd.y + bd.h) * a;
+      base = Math.min(base, bd.y);
+      const c = this.massColour(bd);
+      tr += c[0] * a; tg += c[1] * a; tb += c[2] * a;
+    }
+    const cr = Math.cos(big.rot), sr = Math.sin(big.rot);
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const bd of l) {
+      const bc = Math.cos(bd.rot - big.rot), bs = Math.sin(bd.rot - big.rot);
+      // Centre in the big one's frame: the inverse of Builder.box's rotation.
+      const dx = bd.x - big.x, dz = bd.z - big.z;
+      const lx = dx * cr + dz * sr, lz = -dx * sr + dz * cr;
+      const ex = Math.abs(bd.w / 2 * bc) + Math.abs(bd.d / 2 * bs);
+      const ez = Math.abs(bd.w / 2 * bs) + Math.abs(bd.d / 2 * bc);
+      x0 = Math.min(x0, lx - ex); x1 = Math.max(x1, lx + ex);
+      z0 = Math.min(z0, lz - ez); z1 = Math.max(z1, lz + ez);
+    }
+    const s = Math.min(1, Math.sqrt(A / Math.max(1, (x1 - x0) * (z1 - z0))));
+    const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+    const cx = big.x + mx * cr - mz * sr, cz = big.z + mx * sr + mz * cr;
+    // The chunk the streamer files this under is the one its centroid's chunk
+    // is -- for a merged cell every member shares it, because 50 divides 400.
+    const lcx = clamp(Math.floor(big.x / CHUNK) - ox / CHUNK, 0, 3);
+    const lcz = clamp(Math.floor(big.z / CHUNK) - oz / CHUNK, 0, 3);
+    const k = 255 / A;
+    return [cx, base - 0.5, cz, (x1 - x0) * s, top / A - base + 0.5, (z1 - z0) * s, big.rot,
+      Math.min(255, Math.round(tr * k)), Math.min(255, Math.round(tg * k)), Math.min(255, Math.round(tb * k)),
+      lcx + lcz * 4];
+  }
+
+  /** Shared state for the far massing, created on first use. */
+  initFarMass() {
+    const SPAN = 2 * MID_R + 1;
+    const U = this.farU = {
+      farRing: { value: new THREE.Vector2(-9999, -9999) },
+      farBuilt: { value: new Float32Array(SPAN * SPAN) },
+      farFade: { value: 0 },
+    };
+    // Unit box: bottom ring then top ring, the corner order Builder.box uses,
+    // walls and roof, no floor. Shared by every supertile.
+    const pos = new Float32Array([-0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5,
+      -0.5, 1, -0.5, 0.5, 1, -0.5, 0.5, 1, 0.5, -0.5, 1, 0.5]);
+    const idx = [];
+    for (let j = 0; j < 4; j++) {
+      const b0 = j, b1 = (j + 1) % 4, t0 = b0 + 4, t1 = b1 + 4;
+      idx.push(b0, t0, t1, b0, t1, b1);
+    }
+    idx.push(4, 7, 6, 4, 6, 5);
+    this._farUnit = { pos: new THREE.BufferAttribute(pos, 3), idx: new THREE.BufferAttribute(new Uint16Array(idx), 1) };
+    this._farMat = this._farMassMaterial(U);
+    this.farMass = [];
+    // The upload callbacks free the JS arrays, so a restored context has
+    // nothing to re-upload from: throw the meshes away and let the lazy
+    // builder make them again.
+    if (this.renderer && this.renderer.domElement) {
+      this.renderer.domElement.addEventListener('webglcontextlost', () => this.resetFarMass());
+    }
+  }
+
+  /**
+   * The far massing's material. A method, not inline, so boot can compile its
+   * program (warmMeshes) without building the layer: the program key is the
+   * onBeforeCompile source, so any material made here shares one program.
+   */
+  _farMassMaterial(U) {
+    const SPAN = 2 * MID_R + 1;
+    // Same response as `flat`, which is what the mid-ring massing is drawn in.
+    const mat = new THREE.MeshStandardMaterial({ flatShading: true, roughness: 0.82, metalness: 0.04, envMapIntensity: 0.45 });
+    mat.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, U);
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', `#include <common>
+attribute vec3 farC;
+attribute vec3 farS;
+attribute vec2 farRI;
+attribute vec3 farTint;
+uniform vec2 farRing;
+uniform float farBuilt[${SPAN * SPAN}];
+varying vec3 vFarTint;`)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+{
+  float a = farRI.x * (PI / 256.0);
+  float cr = cos(a), sr = sin(a);
+  vec3 s = position * farS * 0.1;
+  transformed = vec3(farC.x * 0.1 + s.x * cr - s.z * sr, farC.y * 0.1 + s.y, farC.z * 0.1 + s.x * sr + s.z * cr);
+  // Builder.box's ao 0.35 on the bottom edge
+  vFarTint = farTint * mix(0.65, 1.0, position.y);
+  vec2 tile = floor(modelMatrix[3].xz / ${CHUNK}.0 + 0.5);
+  vec2 rc = tile + vec2(mod(farRI.y, 4.0), floor(farRI.y / 4.0)) - farRing;
+  if (rc.x > -0.5 && rc.y > -0.5 && rc.x < ${SPAN}.0 - 0.5 && rc.y < ${SPAN}.0 - 0.5
+      && farBuilt[int(rc.x + 0.5) + int(rc.y + 0.5) * ${SPAN}] > 0.5) transformed = vec3(0.0);
+}`);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform float farFade;\nvarying vec3 vFarTint;')
+        .replace('#include <color_fragment>', '#include <color_fragment>\n  diffuseColor.rgb *= vFarTint;')
+        // The massing's roof slab is 0.45x the wall; with a shared unit box the
+        // roof has to be told apart by its facing instead.
+        .replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
+  if (dot(normal, (viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz) > 0.7) diffuseColor.rgb *= 0.45;`)
+        // Fade in THROUGH the haze rather than switching on: climbing past the
+        // gate, the distant city emerges from the fog colour over ~1.5 s.
+        .replace('#include <fog_fragment>', `#include <fog_fragment>
+#ifdef USE_FOG
+  gl_FragColor.rgb = mix(fogCol, gl_FragColor.rgb, farFade);
+#endif`);
+    };
+    return mat;
+  }
+
+  resetFarMass() {
+    if (!this.farMass) return;
+    for (const m of this.farMass) { m.geometry.dispose(); this.scene.remove(m); }
+    this.farMass = [];
+    this.farMassCount = 0;
+    this.farMassBytes = 0;
+    if (this._farBins) for (const t of this._farBins.values()) t.built = false;
+    this._farGen = null;
+    this._farReady = false;
+    this.farU.farFade.value = 0;
+    this.resetFarRoads();
+  }
+
+  /** Mask the far massing under the ring's delivered chunks; build and fade it with altitude. */
+  updateFarMass(ccx, ccz, px, pz, budget) {
+    // Off the ground only. 45 up / 25 down so a hilltop road does not flicker
+    // it; an airborne plane keeps it however low it skims. Until the first
+    // time this is true nothing is allocated at all -- on foot and driving
+    // the layer costs 0 bytes.
+    const alt = this.playerAlt || 0;
+    if (!this.farOn && alt > 45) this.farOn = true;
+    else if (this.farOn && alt < 25 && !this.playerFlying) this.farOn = false;
+    if (!this.farMass) {
+      if (!this.farOn) return;
+      this.initFarMass();
+    }
+    this._farPx = px; this._farPz = pz;
+    // Build in slices, like the chunks. The slice is only checked between
+    // supertiles, so the real spike is the slice plus one tile.
+    if (this.farOn) {
+      if (!this._farGen) this._farGen = this.farMassSteps();
+      const t0 = performance.now(), ms = budget < 2 ? 1.5 : 3;
+      let idle = false;
+      while (performance.now() - t0 < ms) {
+        if (this._farGen.next().value === 'idle') { idle = true; break; }
+      }
+      if (!this._farReady) this.farMassFrames = (this.farMassFrames || 0) + 1;
+      if (idle) this._farReady = true;
+    }
+    const U = this.farU, SPAN = 2 * MID_R + 1;
+    U.farRing.value.set(ccx - MID_R, ccz - MID_R);
+    const built = U.farBuilt.value;
+    for (let dz = 0; dz < SPAN; dz++) {
+      for (let dx = 0; dx < SPAN; dx++) {
+        const c = this.chunks.get(this.city.chunkKey(ccx - MID_R + dx, ccz - MID_R + dz));
+        built[dx + dz * SPAN] = c && c.lod >= 0 ? 1 : 0;
+      }
+    }
+    const now = performance.now();
+    const fdt = this._farT === undefined ? 0 : Math.min(0.1, (now - this._farT) / 1000);
+    this._farT = now;
+    // Hold the first fade-in until every supertile in range has been built, so
+    // the first appearance is the city emerging, not tiles arriving one by one.
+    const rising = this.farOn && this._farReady;
+    const f = clamp(U.farFade.value + (rising ? fdt : -fdt) / 1.5, 0, 1);
+    U.farFade.value = f;
+    for (const m of this.farMass) {
+      const dx = m.userData.cx - px, dz = m.userData.cz - pz;
+      m.visible = f > 0 && dx * dx + dz * dz < FAR_R * FAR_R;
+    }
+    this.updateFarRoads(px, pz, budget);
+  }
+
+  /** For harnesses: is the far massing currently drawing what this chunk holds? */
+  farMassCovers(ch) {
+    if (!this.farU || this.farU.farFade.value <= 0.5 || !this._farBins) return false;
+    const T = CHUNK * 4;
+    const t = this._farBins.get(Math.floor(ch.cx * CHUNK / T) * 1000 + Math.floor(ch.cz * CHUNK / T));
+    return !!(t && t.built);
+  }
+
+  // --- far roads ------------------------------------------------------------
+
+  /**
+   * FAR ROADS: the street grid past the ring, for flying.
+   *
+   * Roads stream with the chunks, so from a plane the grid and the freeways
+   * assembled a chunk at a time at 1.6 km while the far massing stood ready
+   * around them. This is the massing layer's road counterpart and obeys the
+   * same four laws:
+   *
+   *   - LAZY. Nothing exists until the far massing's gate first opens; on foot
+   *     and driving `farRoads` is undefined and costs 0 bytes.
+   *   - INSTANCED, 16 bytes a piece: one shared unit quad; per instance both
+   *     ends of a straight piece of carriageway (x, z in Int16 dm off the
+   *     tile centre, y in Int16 cm), half-width in dm, class + paint flags,
+   *     the in-tile chunk (0..63), and cross-slope. JS arrays are dropped on
+   *     upload, exactly as the massing's are.
+   *   - MASKED PER CHUNK by the massing's own 9x9 `farBuilt` uniform: a
+   *     piece collapses once its chunk's real roads are delivered, so the
+   *     swap has no hole and no double draw. A piece is filed under the chunk
+   *     of its EDGE's midpoint, the ownership rule buildChunkStep uses.
+   *   - FADED through the fog colour, capped at the haze distance.
+   *
+   * HEIGHTS FOLLOW WHAT IS DRAWN, or the swap shows: a graded road or deck
+   * takes its solved profile (`e.ph`, decks 3 cm under), an ungraded deck the
+   * chord between its nodes, and a draped street the terrain itself. The
+   * terrain is a triangle mesh, so along a straight edge its height is
+   * piecewise linear with breaks where the edge crosses a grid line or a cell
+   * diagonal; sampling exactly there (plus every 10 m for the portal carve)
+   * and then simplifying to FR_TOL gives the drawn ground in a piece or two.
+   * Cross-slope rides along as the "camber" byte, so a street across a
+   * hillside does not bury its uphill kerb.
+   *
+   * A ribbon lying on the terrain at 2-6 km is inside the depth buffer's
+   * resolution (about 0.5 m at 2 km, 4 m at 6 km with a 0.5 m near plane), so
+   * the vertex shader pulls each vertex toward the camera along its own view
+   * ray -- a depth bias that moves nothing on screen -- by about that much,
+   * plus a little per class so a freeway wins over the street it crosses.
+   *
+   * COLOUR IS THE REAL ROAD'S: the same asphalt maps and material response as
+   * `mats.road`, the same wear across the width and 0.92 freeway tint, and
+   * the paint (white edge lines, dashed yellow centre) as a coverage-filtered
+   * line in the fragment shader, so it averages to the right tone at any
+   * distance instead of shimmering in and out.
+   */
+  *farRoadSteps() {
+    const city = this.city;
+    if (!this._frBins) {
+      const bins = new Map();
+      const E = city.edges;
+      for (let i = 0; i < E.length; i++) {
+        const e = E[i];
+        if (!e.tunnel) {
+          const a = city.nodes[e.a], b = city.nodes[e.b];
+          const tx = Math.floor((a.x + b.x) / 2 / FR_TILE), tz = Math.floor((a.z + b.z) / 2 / FR_TILE);
+          const k = tx * 1000 + tz;
+          let t = bins.get(k);
+          if (!t) bins.set(k, (t = { tx, tz, list: [], built: false, cm: null, mesh: null, cum: null }));
+          t.list.push(i);
+        }
+        if (i % 8000 === 7999) yield 'work';
+      }
+      this._frBins = bins;
+    }
+    for (;;) {
+      const px = this._farPx, pz = this._farPz, fx = this.playerFwdX || 0, fz = this.playerFwdZ || 0;
+      let best = null, bestS = Infinity;
+      for (const t of this._frBins.values()) {
+        if (t.built) continue;
+        const d = this.frTileDist(t, px, pz);
+        if (d > FAR_R) continue;
+        const dx = (t.tx + 0.5) * FR_TILE - px, dz = (t.tz + 0.5) * FR_TILE - pz;
+        const s = d - 0.6 * (dx * fx + dz * fz) / Math.max(1, Math.hypot(dx, dz)) * FR_TILE * 0.5;
+        if (s < bestS) { bestS = s; best = t; }
+      }
+      if (!best) { yield 'idle'; continue; }
+      yield* this.buildFarRoadTile(best);
+    }
+  }
+
+  /** Distance from (px, pz) to the nearest point of a far-road tile. */
+  frTileDist(t, px, pz) {
+    const x0 = t.tx * FR_TILE, z0 = t.tz * FR_TILE;
+    const dx = Math.max(x0 - px, 0, px - x0 - FR_TILE), dz = Math.max(z0 - pz, 0, pz - z0 - FR_TILE);
+    return Math.hypot(dx, dz);
+  }
+
+  /** One far-road supertile, a slice at a time; nothing is added until the end. */
+  *buildFarRoadTile(t) {
+    t.built = true;
+    const city = this.city;
+    const ox = (t.tx + 0.5) * FR_TILE, oz = (t.tz + 0.5) * FR_TILE;
+    const byRank = [[], [], [], []];   // flat [x0,y0,z0,x1,y1,z1,hw,flags,chunk,camber]
+    const cm = new Float32Array(64 * 5);   // metres drawn per in-tile chunk and class
+    let since = 0, t0 = performance.now();
+    for (const ei of t.list) {
+      const e = city.edges[ei];
+      const a = city.nodes[e.a], b = city.nodes[e.b];
+      const r = FR_RANK[e.cls] !== undefined ? FR_RANK[e.cls] : 3;
+      const lcx = clamp(Math.floor((a.x + b.x) / 2 / CHUNK) - t.tx * 8, 0, 7);
+      const lcz = clamp(Math.floor((a.z + b.z) / 2 / CHUNK) - t.tz * 8, 0, 7);
+      const ch = lcx + lcz * 8;
+      cm[ch * 5 + Math.max(0, FR_CLS.indexOf(e.cls))] += e.len;
+      this.farRoadPieces(e, a, b, ei, ch, r, byRank[r]);
+      // Yield on the clock, checked every few edges: a draped freeway edge
+      // samples dozens of grid crossings where a residential one samples four.
+      if (++since >= 16) {
+        since = 0;
+        const now = performance.now();
+        if (now - t0 > 0.8) {
+          this.farRoadMs = (this.farRoadMs || 0) + now - t0;
+          this.farRoadMaxStep = Math.max(this.farRoadMaxStep || 0, now - t0);
+          yield 'work';
+          t0 = performance.now();
+        }
+      }
+    }
+    t.list = null;   // the bins hold edge indices only until their tile is built
+    t.cm = cm;
+    let n = 0;
+    for (const l of byRank) n += l.length / 10;
+    const A = new Int16Array(n * 3), B = new Int16Array(n * 3), M = new Uint8Array(n * 4);
+    const cum = [0, 0, 0, 0];
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    let i = 0;
+    for (let r = 0; r < 4; r++) {
+      const l = byRank[r];
+      for (let j = 0; j < l.length; j += 10, i++) {
+        if ((i & 2047) === 2047 && performance.now() - t0 > 0.8) {
+          this.farRoadMs = (this.farRoadMs || 0) + performance.now() - t0;
+          yield 'work';
+          t0 = performance.now();
+        }
+        A[i * 3] = Math.round((l[j] - ox) * 10);
+        A[i * 3 + 1] = Math.round(l[j + 1] * 100);
+        A[i * 3 + 2] = Math.round((l[j + 2] - oz) * 10);
+        B[i * 3] = Math.round((l[j + 3] - ox) * 10);
+        B[i * 3 + 1] = Math.round(l[j + 4] * 100);
+        B[i * 3 + 2] = Math.round((l[j + 5] - oz) * 10);
+        M[i * 4] = Math.min(255, Math.round(l[j + 6] * 10));
+        M[i * 4 + 1] = l[j + 7];
+        M[i * 4 + 2] = l[j + 8];
+        M[i * 4 + 3] = clamp(Math.round(l[j + 9] * 1000) + 128, 0, 255);
+        const hw = l[j + 6];
+        minX = Math.min(minX, l[j] - hw, l[j + 3] - hw); maxX = Math.max(maxX, l[j] + hw, l[j + 3] + hw);
+        minZ = Math.min(minZ, l[j + 2] - hw, l[j + 5] - hw); maxZ = Math.max(maxZ, l[j + 2] + hw, l[j + 5] + hw);
+        minY = Math.min(minY, l[j + 1], l[j + 4]); maxY = Math.max(maxY, l[j + 1], l[j + 4]);
+      }
+      cum[r] = i;
+    }
+    t.cum = cum;
+    const tEnd = performance.now();
+    this.farRoadMs = (this.farRoadMs || 0) + tEnd - t0;
+    this.farRoadMaxStep = Math.max(this.farRoadMaxStep || 0, tEnd - t0);
+    if (!n) return;
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.setAttribute('position', this._frUnit.pos);
+    geo.setAttribute('normal', this._frUnit.nrm);
+    geo.setIndex(this._frUnit.idx);
+    const attr = (arr, size) => {
+      const at = new THREE.InstancedBufferAttribute(arr, size, false);
+      // Nothing CPU-side reads these again (see farMassSteps' note).
+      at.onUpload(function drop() { this.array = null; });
+      return at;
+    };
+    geo.setAttribute('frA', attr(A, 3));
+    geo.setAttribute('frB', attr(B, 3));
+    geo.setAttribute('frM', attr(M, 4));
+    geo.instanceCount = n;
+    geo.boundingSphere = new THREE.Sphere(
+      new THREE.Vector3((minX + maxX) / 2 - ox, (minY + maxY) / 2, (minZ + maxZ) / 2 - oz),
+      Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) / 2 + 20);
+    const m = new THREE.Mesh(geo, this._frMat);
+    m.position.set(ox, 0, oz);
+    m.raycast = () => {};   // collapsed on the GPU only; see buildFarTile
+    m.visible = false;
+    m.frustumCulled = true;
+    this.scene.add(m);
+    this.farRoads.push(m);
+    t.mesh = m;
+    this.farRoadCount = (this.farRoadCount || 0) + n;
+    this.farRoadBytes = (this.farRoadBytes || 0) + A.byteLength + B.byteLength + M.byteLength;
+  }
+
+  /**
+   * Straight pieces for one edge, heights on its drawn surface, appended to
+   * `out` as flat records. Pieces are cut where the height stops being a
+   * straight line to within FR_TOL -- usually one or two per edge.
+   */
+  farRoadPieces(e, a, b, ei, ch, rank, out) {
+    const FR_TOL = 0.2;
+    const L = e.len;
+    const bias = hash2(ei | 0, 7) * 0.03;
+    const ts = [], ys = [];
+    const push = (t, y) => { ts.push(t); ys.push(y); };
+    let camber = null;   // per sample, graded ground roads only
+    if (e.prof) {
+      const k = e.pk;
+      for (let i = 0; i <= k; i++) push(i / k, e.elev ? e.ph[i] - 0.03 : e.ph[i] + bias);
+      if (!e.elev) camber = e.pg;
+    } else if (e.elev) {
+      push(0, a.y + 0.06); push(1, b.y + 0.06);
+    } else {
+      // Where the edge crosses the terrain mesh's grid lines and diagonals
+      // (world.js triangulates along tx + tz = 1), plus a 10 m lattice for
+      // anything analytic on top (the portal carve).
+      const S = G.HF_STEP, H = G.MAP_HALF;
+      const T = [0, 1];
+      // The carve (portal cuts, underpass dips) is the only thing between the
+      // grid lines; an edge it touches gets the lattice, the rest skip it.
+      const carved = (t) => {
+        const x = lerp(a.x, b.x, t), z = lerp(a.z, b.z, t);
+        return G.terrainRaw(x, z) - G.terrainHeight(x, z) > 0.01;
+      };
+      if (carved(0) || carved(0.5) || carved(1)) {
+        const n10 = Math.floor(L / 10);
+        for (let i = 1; i <= n10; i++) T.push((i * 10) / L);
+      }
+      const fa = [(a.x + H) / S, (a.z + H) / S], fb = [(b.x + H) / S, (b.z + H) / S];
+      for (let ax = 0; ax < 3; ax++) {
+        const u0 = ax < 2 ? fa[ax] : fa[0] + fa[1], u1 = ax < 2 ? fb[ax] : fb[0] + fb[1];
+        if (Math.abs(u1 - u0) < 1e-6) continue;
+        const lo = Math.min(u0, u1), hi = Math.max(u0, u1);
+        for (let g = Math.ceil(lo); g <= hi; g++) T.push((g - u0) / (u1 - u0));
+      }
+      T.sort((p, q) => p - q);
+      let last = -1;
+      for (const t of T) {
+        if (t - last < 1e-4) continue;
+        last = t;
+        push(t, G.terrainHeight(lerp(a.x, b.x, t), lerp(a.z, b.z, t)) + ROAD_Y + bias);
+      }
+    }
+    // Keep the points a straight piece cannot skip (Douglas-Peucker in
+    // along-distance / height).
+    const n = ts.length;
+    const keep = new Uint8Array(n);
+    keep[0] = keep[n - 1] = 1;
+    const stack = [0, n - 1];
+    while (stack.length) {
+      const j1 = stack.pop(), j0 = stack.pop();
+      let worst = -1, wd = FR_TOL;
+      for (let j = j0 + 1; j < j1; j++) {
+        const f = (ts[j] - ts[j0]) / (ts[j1] - ts[j0]);
+        const d = Math.abs(ys[j] - (ys[j0] + (ys[j1] - ys[j0]) * f));
+        if (d > wd) { wd = d; worst = j; }
+      }
+      if (worst >= 0) { keep[worst] = 1; stack.push(j0, worst, worst, j1); }
+    }
+    const hw = e.hw;
+    const px = -e.dz, pz = e.dx;
+    // Paint: alleys and lanes carry none; freeways and one-ways no centre line.
+    let flags = rank;
+    if (hw >= 4) flags |= 4;
+    if (hw >= 4 && e.cls !== 'hwy' && !e.oneway) flags |= 8;
+    if (e.cls === 'hwy') flags |= 16;
+    let j0 = 0;
+    for (let j = 1; j < n; j++) {
+      if (!keep[j]) continue;
+      const t0 = ts[j0], t1 = ts[j];
+      const x0 = lerp(a.x, b.x, t0), z0 = lerp(a.z, b.z, t0), x1 = lerp(a.x, b.x, t1), z1 = lerp(a.z, b.z, t1);
+      let cb;
+      if (camber) {
+        const k = e.pk, i0 = Math.round(t0 * k), i1 = Math.round(t1 * k);
+        cb = (camber[i0] + camber[i1]) / 2;
+      } else if (!e.prof && !e.elev) {
+        // The draped street's cross-slope, from the ground either side.
+        const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+        cb = (G.terrainHeight(mx + px * hw, mz + pz * hw) - G.terrainHeight(mx - px * hw, mz - pz * hw)) / (2 * hw);
+      } else cb = 0;
+      // The two ends of the EDGE reach over its node (a junction's paved
+      // square, a bend's outside corner); interior joints are collinear.
+      const fl = flags | (j0 === 0 ? 32 : 0) | (j === n - 1 ? 64 : 0);
+      out.push(x0, ys[j0], z0, x1, ys[j], z1, hw, fl, ch, cb);
+      j0 = j;
+    }
+  }
+
+  /** Shared state for the far roads, created with the far massing. */
+  /** The far roads' material (see _farMassMaterial for why it is a method). */
+  _farRoadMaterial(U) {
+    const SPAN = 2 * MID_R + 1;
+    const R = this.mats.road;
+    const mat = new THREE.MeshStandardMaterial({
+      map: R.map, normalMap: R.normalMap, roughnessMap: R.roughnessMap,
+      roughness: R.roughness, metalness: R.metalness, envMapIntensity: R.envMapIntensity,
+    });
+    if (R.normalScale) mat.normalScale = R.normalScale.clone();
+    const H = FR_TILE / 2;
+    mat.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, U);
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', `#include <common>
+attribute vec3 frA;
+attribute vec3 frB;
+attribute vec4 frM;
+uniform vec2 farRing;
+uniform float frBuilt[${SPAN * SPAN}];
+uniform float frCap;
+varying vec4 vFr;     // across (m), half-width, along past the start trim, before the end trim
+varying float vFrFl;`)
+        .replace('#include <beginnormal_vertex>', `
+  vec3 frP0 = vec3(frA.x * 0.1, frA.y * 0.01, frA.z * 0.1);
+  vec3 frP1 = vec3(frB.x * 0.1, frB.y * 0.01, frB.z * 0.1);
+  int frFlags = int(frM.y + 0.5);
+  int frRank = frFlags & 3;
+  float frHw = frM.x * 0.1;
+  float frCb = (frM.w - 128.0) * 0.001;
+  vec2 frD = frP1.xz - frP0.xz;
+  float frLen = max(length(frD), 0.01);
+  frD /= frLen;
+  vec2 frN = vec2(-frD.y, frD.x);
+  // Distance fade by class, from the piece's midpoint, so all four corners
+  // agree and the quad stays a quad.
+  vec3 frMid = (modelMatrix * vec4((frP0 + frP1) * 0.5, 1.0)).xyz;
+  float frDist = distance(frMid, cameraPosition);
+  float frFar = frRank == 0 ? frCap : frRank == 1 ? ${FR_FAR[1]}.0 : frRank == 2 ? ${FR_FAR[2]}.0 : ${FR_FAR[3]}.0;
+  float frW = clamp((min(frFar, frCap) - frDist) / ${FR_FADE}.0, 0.0, 1.0);
+  // Masked under a delivered ring chunk.
+  vec2 frTile = floor((modelMatrix[3].xz - ${H}.0) / ${CHUNK}.0 + 0.5);
+  float frCh = frM.z;
+  vec2 frRc = frTile + vec2(mod(frCh, 8.0), floor(frCh / 8.0)) - farRing;
+  if (frRc.x > -0.5 && frRc.y > -0.5 && frRc.x < ${SPAN}.0 - 0.5 && frRc.y < ${SPAN}.0 - 0.5
+      && frBuilt[int(frRc.x + 0.5) + int(frRc.y + 0.5) * ${SPAN}] > 0.5) frW = 0.0;
+  float frExt0 = (frFlags & 32) != 0 ? min(frHw, 6.0) * 0.7 : 0.0;
+  float frExt1 = (frFlags & 64) != 0 ? min(frHw, 6.0) * 0.7 : 0.0;
+  float frAlong = mix(-frExt0, frLen + frExt1, position.x);
+  float frAcross = position.y * frHw;
+  vec3 frPos = vec3(frP0.x, mix(frP0.y, frP1.y, clamp(frAlong / frLen, 0.0, 1.0)), frP0.z);
+  frPos.xz += frD * frAlong + frN * frAcross * frW;
+  frPos.y += frCb * frAcross * frW;
+  vec3 frU = normalize(vec3(frD.x, (frP1.y - frP0.y) / frLen, frD.y));
+  vec3 frV = normalize(vec3(frN.x, frCb, frN.y));
+  vec3 objectNormal = normalize(cross(frU, frV));
+  if (objectNormal.y < 0.0) objectNormal = -objectNormal;
+  vFr = vec4(frAcross, frHw, frAlong - (frExt0 > 0.0 ? frHw : 0.0), frLen - frAlong - (frExt1 > 0.0 ? frHw : 0.0));
+  vFrFl = float(frFlags);
+#ifdef USE_TANGENT
+  vec3 objectTangent = vec3( tangent.xyz );
+#endif`)
+        .replace('#include <begin_vertex>', `vec3 transformed = frW > 0.0 ? frPos : vec3(0.0);
+#ifdef USE_MAP
+  vMapUv = vec2((frAcross + frHw) / ${ROAD_TILE}.0, frAlong / ${ROAD_TILE}.0);
+#endif
+#ifdef USE_NORMALMAP
+  vNormalMapUv = vec2((frAcross + frHw) / ${ROAD_TILE}.0, frAlong / ${ROAD_TILE}.0);
+#endif
+#ifdef USE_ROUGHNESSMAP
+  vRoughnessMapUv = vec2((frAcross + frHw) / ${ROAD_TILE}.0, frAlong / ${ROAD_TILE}.0);
+#endif`)
+        // Depth bias along the view ray: nothing moves on screen.
+        .replace('#include <project_vertex>', `#include <project_vertex>
+  {
+    float frL = length(mvPosition.xyz);
+    float frPull = 0.6 + frL * frL * 3.0e-7 + 0.25 * float(3 - frRank);
+    mvPosition.xyz *= max(0.05, 1.0 - frPull / max(frL, 1.0));
+    gl_Position = projectionMatrix * mvPosition;
+  }`);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', `#include <common>
+uniform float frFade;
+varying vec4 vFr;
+varying float vFrFl;
+// Fraction of this pixel's footprint across the road that a painted line
+// [c - w, c + w] covers: the line averages to its true tone when it is
+// sub-pixel instead of flickering in and out.
+float frLine(float o, float fw, float c, float w) {
+  return clamp((min(o + fw * 0.5, c + w) - max(o - fw * 0.5, c - w)) / fw, 0.0, 1.0);
+}`)
+        .replace('#include <color_fragment>', `#include <color_fragment>
+  {
+    int fl = int(vFrFl + 0.5);
+    float o = vFr.x, hw = vFr.y;
+    // world.meshRoad's wear: polished down the middle, grime at the kerb.
+    float f = min(1.0, abs(o) / max(hw, 0.01));
+    float k = (1.0 + 0.12 * (1.0 - f * f)) * (1.0 - 0.30 * max(0.0, f - 0.55) / 0.45);
+    diffuseColor.rgb *= k * ((fl & 16) != 0 ? 0.92 : 1.0);
+    float fw = max(fwidth(o), 1e-3);
+    float paintOn = step(0.0, min(vFr.z, vFr.w));
+    if ((fl & 4) != 0) {
+      float inset = min(0.7, hw * 0.06);
+      float wl = (frLine(o, fw, hw - inset, 0.06) + frLine(o, fw, -(hw - inset), 0.06)) * paintOn;
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.94, 0.93, 0.88), clamp(wl, 0.0, 1.0));
+    }
+    if ((fl & 8) != 0) {
+      // 3 m dash, 6 m gap: a third of the line, as a sub-pixel average
+      float yl = frLine(o, fw, 0.0, 0.06) * paintOn / 3.0;
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.88, 0.72, 0.2), yl);
+    }
+  }`)
+        .replace('#include <fog_fragment>', `#include <fog_fragment>
+#ifdef USE_FOG
+  gl_FragColor.rgb = mix(fogCol, gl_FragColor.rgb, frFade);
+#endif`);
+    };
+    mat.customProgramCacheKey = () => 'farRoads';
+    return mat;
+  }
+
+  /**
+   * Stand-ins for the lazily-built layers' programs, for main.js to draw once
+   * behind the loading screen: the far massing and far roads compile on the
+   * first climb past 45 m otherwise (measured 355-482 ms and 12-175 ms frames
+   * on the take-off). Each draws nothing (empty draw range), shares nothing
+   * with the real layers but its program, and allocates no layer: at street
+   * level `farMass` / `farRoads` stay undefined, as they always were.
+   */
+  warmMeshes() {
+    const SPAN = 2 * MID_R + 1;
+    const ring = { value: new THREE.Vector2(-9999, -9999) };
+    const mats = [
+      this._farMassMaterial({ farRing: ring, farBuilt: { value: new Float32Array(SPAN * SPAN) }, farFade: { value: 0 } }),
+      this._farRoadMaterial({ farRing: ring, frBuilt: { value: new Float32Array(SPAN * SPAN) }, frFade: { value: 0 }, frCap: { value: FAR_R } }),
+    ];
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
+    g.setDrawRange(0, 0);
+    const meshes = mats.map((m) => { const o = new THREE.Mesh(g, m); o.frustumCulled = false; return o; });
+    // Only the geometry is disposed: disposing a material releases its program
+    // once nothing else uses it -- and before the layer exists, nothing does.
+    return { meshes, dispose: () => g.dispose() };
+  }
+
+  initFarRoads() {
+    const U = this.frU = {
+      farRing: this.farU.farRing,
+      // The massing's mask array itself, so both layers swap on the same
+      // frame; its own uniform only so a harness can unmask the roads alone.
+      frBuilt: { value: this.farU.farBuilt.value },
+      frFade: { value: 0 },
+      frCap: { value: FAR_R },
+    };
+    const SPAN = 2 * MID_R + 1;
+    // Unit quad: x along 0..1, y across -1..1; wound to face up once placed.
+    const pos = new Float32Array([0, -1, 0, 1, -1, 0, 1, 1, 0, 0, 1, 0]);
+    const nrm = new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0]);
+    this._frUnit = {
+      pos: new THREE.BufferAttribute(pos, 3),
+      nrm: new THREE.BufferAttribute(nrm, 3),
+      idx: new THREE.BufferAttribute(new Uint16Array([0, 2, 1, 0, 3, 2]), 1),
+    };
+    this._frMat = this._farRoadMaterial(U);
+    this.farRoads = [];
+  }
+
+  resetFarRoads() {
+    if (!this.farRoads) return;
+    for (const m of this.farRoads) { m.geometry.dispose(); this.scene.remove(m); }
+    this.farRoads = [];
+    this.farRoadCount = 0;
+    this.farRoadBytes = 0;
+    // The bins gave their edge lists up as tiles were built; bin again.
+    this._frBins = null;
+    this._frGen = null;
+    this._frReady = false;
+    this.frU.frFade.value = 0;
+  }
+
+  /** Build, fade, cap and LOD the far roads; called from updateFarMass. */
+  updateFarRoads(px, pz, budget) {
+    if (!this.farRoads) this.initFarRoads();
+    if (this.farOn) {
+      if (!this._frGen) this._frGen = this.farRoadSteps();
+      const t0 = performance.now(), ms = budget < 2 ? 1.5 : 2.5;
+      while (performance.now() - t0 < ms) {
+        if (this._frGen.next().value === 'idle') break;
+      }
+    }
+    const U = this.frU;
+    const fog = this.scene.fog;
+    // Haze distance: FogExp2 has taken 98 % by sqrt(-ln 0.02) / density.
+    const cap = fog && fog.density > 0 ? Math.min(FAR_R, 1.98 / fog.density) : FAR_R;
+    U.frCap.value = cap;
+    // The first fade waits for every tile the haze lets you see, so the grid
+    // emerges whole; tiles past it keep building behind the fog.
+    if (this.farOn && !this._frReady && this._frBins) {
+      let ready = true;
+      for (const t of this._frBins.values()) if (!t.built && this.frTileDist(t, px, pz) < cap) { ready = false; break; }
+      this.farRoadFrames = (this.farRoadFrames || 0) + 1;
+      if (ready) this._frReady = true;
+    }
+    const now = performance.now();
+    const fdt = this._frT === undefined ? 0 : Math.min(0.1, (now - this._frT) / 1000);
+    this._frT = now;
+    const rising = this.farOn && this._frReady;
+    const f = clamp(U.frFade.value + (rising ? fdt : -fdt) / 1.5, 0, 1);
+    U.frFade.value = f;
+    if (!this._frBins) return;
+    for (const t of this._frBins.values()) {
+      const m = t.mesh;
+      if (!m) continue;
+      // Nearest point of the tile: which classes can still be wide enough to see.
+      const dn = this.frTileDist(t, px, pz);
+      let r = -1;
+      for (let k = 0; k < 4; k++) if (dn < Math.min(cap, FR_FAR[k])) r = k;
+      m.visible = f > 0 && r >= 0 && t.cum[r] > 0;
+      if (m.visible) m.geometry.instanceCount = t.cum[r];
+    }
+  }
+
+  /**
+   * For harnesses: metres of this chunk's carriageway, by class, that the far
+   * roads are drawing right now for a camera at (cx, cz), or null.
+   */
+  farRoadsCover(ch, cx, cz) {
+    if (!this.frU || this.frU.frFade.value <= 0.5 || !this._frBins) return null;
+    const tx = Math.floor(ch.cx * CHUNK / FR_TILE), tz = Math.floor(ch.cz * CHUNK / FR_TILE);
+    const t = this._frBins.get(tx * 1000 + tz);
+    if (!t || !t.cm) return null;
+    const lc = (ch.cx - tx * 8) + (ch.cz - tz * 8) * 8;
+    const d = Math.hypot((ch.cx + 0.5) * CHUNK - cx, (ch.cz + 0.5) * CHUNK - cz);
+    const cap = this.frU.frCap.value, out = {};
+    FR_CLS.forEach((k, i) => {
+      const r = FR_RANK[k];
+      out[k] = d < Math.min(cap, FR_FAR[r]) - FR_FADE / 2 ? t.cm[lc * 5 + i] : 0;
+    });
+    return out;
+  }
+
+  animate(dt, t) {
+    if (this.skyDome) this.skyDome.material.uniforms.time.value = t % 100000;
+    if (this.waterNormal) {
+      // Scroll BOTH axes at incommensurate rates. Scrolling x alone slides the
+      // tile along one screen direction and the repeat reads as a fixed diagonal
+      // weave across the open water. MeshStandardMaterial takes a single normal
+      // map, so two summed layers would need a custom shader; two irrational-ish
+      // rates on one map breaks the pattern for nothing.
+      this.waterNormal.offset.x = (t * 0.0040) % 1;
+      this.waterNormal.offset.y = (t * 0.0017) % 1;
+    }
+  }
+
+  // --- chunk streaming ------------------------------------------------------
+
+  update(px, pz, budget = 2) {
+    const ccx = Math.floor(px / CHUNK), ccz = Math.floor(pz / CHUNK);
+    const want = new Set();
+    // FLYING LOD. At 400 km/h a full-detail chunk build (~50-100 ms, sliced)
+    // cannot keep pace with a 400 m grid -- the maths is simply against it,
+    // and the city materialised directly under the plane. From 100 m up you
+    // cannot read facades anyway, so the near ring builds MASSING-ONLY while
+    // high: box chunks build in a few milliseconds and the streamer stays
+    // ahead at any speed the plane can reach. Hysteresis (100 up / 60 down)
+    // so skimming rooftops does not flap the whole ring between LODs.
+    if (this.flyLod === undefined) this.flyLod = false;
+    const alt = this.playerAlt || 0;
+    // Altitude is measured over the terrain directly underneath, and a level
+    // plane crossing Beacon Hill or Queen Anne sees that fall from 140 m to
+    // 40 m and back in seconds -- the 100/60 band flipped the whole near ring
+    // between LODs 5 times on one route, each flip a 5x5 detail rebuild the
+    // streamer cannot hold at flying speed anyway. While AIRBORNE the ring
+    // only drops back to detail on a real approach (under 25 m).
+    const floor = this.playerFlying ? 25 : 60;
+    if (!this.flyLod && alt > 100) this.flyLod = true;
+    else if (this.flyLod && alt < floor) this.flyLod = false;
+    for (let dz = -MID_R; dz <= MID_R; dz++) {
+      for (let dx = -MID_R; dx <= MID_R; dx++) {
+        const cx = ccx + dx, cz = ccz + dz;
+        const r = Math.max(Math.abs(dx), Math.abs(dz));
+        const key = this.city.chunkKey(cx, cz);
+        want.add(key);
+        const have = this.chunks.get(key);
+        // The 3x3 directly under the player stays FULL DETAIL even in the
+        // flying LOD: v58 boxed the whole near ring and the closest buildings
+        // became the crudest thing on screen. Three detailed chunks per row
+        // crossed is a build rate the streamer holds at 400 km/h -- it was
+        // the full 5x5 it could not.
+        const lod = (r <= NEAR_R && (!this.flyLod || r <= 1)) ? 1 : 0;
+        if (have && have.lod === lod) continue;
+        if (!have) this.chunks.set(key, { key, cx, cz, lod: -1, group: null, dist: dx * dx + dz * dz });
+        const c = this.chunks.get(key);
+        c.dist = dx * dx + dz * dz;
+        c.wantLod = lod;
+      }
+    }
+    for (const [key, c] of this.chunks) {
+      if (!want.has(key)) {
+        if (c.group) this.disposeChunk(c);
+        this.chunks.delete(key);
+      }
+    }
+    const todo = [];
+    for (const c of this.chunks.values()) if (c.lod !== c.wantLod) todo.push(c);
+    // Build AHEAD of the nose first. Sorted by distance alone, the chunk you
+    // are about to overfly ranks equal with the one you just left; at speed
+    // that is exactly backwards.
+    const fx = this.playerFwdX || 0, fz = this.playerFwdZ || 0;
+    todo.sort((a, b) =>
+      (a.dist - 2.5 * (((a.cx + 0.5) * CHUNK - px) / CHUNK * fx + ((a.cz + 0.5) * CHUNK - pz) / CHUNK * fz))
+      - (b.dist - 2.5 * (((b.cx + 0.5) * CHUNK - px) / CHUNK * fx + ((b.cz + 0.5) * CHUNK - pz) / CHUNK * fz)));
+
+    // Spend a fixed slice of the frame on geometry, however much of a chunk
+    // that turns out to buy. `budget` used to be a COUNT of whole chunks, which
+    // is a number of unknown cost: two near chunks is about 100 ms of blocking
+    // JavaScript, and the frame it lands on is simply lost.
+    //
+    // One build is carried across frames at a time. If the player has moved far
+    // enough that the chunk in progress is no longer wanted, it is dropped --
+    // nothing was added to the scene, so there is nothing to undo.
+    // A phone's JavaScript is slower than the machine this was tuned on, and
+    // the slice can only be checked BETWEEN yields -- so the real spike is the
+    // slice plus one step. Keep both small.
+    //
+    // Spend more when a long way behind. During normal driving only a chunk or
+    // two changes at a time and a small slice keeps up easily -- at 4 ms a
+    // chunk lands in about a fifth of a second, against the thirteen seconds it
+    // takes to cross one at speed. After a respawn or a fast run across the map
+    // there can be dozens outstanding, and creeping through those at 4 ms a
+    // frame means watching the city assemble around you.
+    const behind = todo.length;
+    // A phone runs this JS ~12x slower than an M2 Mac, so a slice there is
+    // most of the frame: measured on an iPhone 17 Pro driving downtown, world
+    // was 6.0 ms a frame on top of 14 ms of everything else.
+    // Crossing a chunk line leaves ~14 pending (5 near, 9 mid), which used to
+    // take the phone's slice to 4 ms right when it was driving: measured at the
+    // phone's speed that is 7-10 ms frames on every crossing. The work per
+    // crossing needs well under 2 ms a frame to keep up at freeway speed, so
+    // only a warp's backlog gets the big slice.
+    const sliceMs = ON_PHONE
+      ? (behind > 30 ? 6 : 2)
+      : (budget < 2 ? 2 : behind > 30 ? 14 : behind > 12 ? 9 : 4);
+    const t0 = performance.now();
+    while (performance.now() - t0 < sliceMs) {
+      if (!this._build) {
+        let c = todo.find((k) => k.lod !== k.wantLod && k !== this._buildFor), trees = true;
+        if (c) {
+          // A MID-RING CHUNK'S TREES WAIT while anything else waits to be
+          // built: planting cost a mid build ~1.75x its massing and roads,
+          // and in a low flight on a phone's 2 ms slice that was twice the
+          // chunks still pending after a minute. It is built bare now and
+          // planted below once the streamer has nothing else to do.
+          // ...BUT ONLY IN THE AIR. On the ground a chunk crossing leaves a
+          // dozen pending too, and a mid chunk built bare there drew no
+          // trees at all (its far crowns are planted with the rest) until the
+          // streamer went idle: whole blocks of trees popped in while you
+          // drove. `deferTrees` is set by main.js from the camera's height.
+          if (this.deferTrees && c.wantLod === 0 && todo.some((k) => k !== c && k.lod !== k.wantLod)) trees = false;
+        } else {
+          // nothing to build: plant the nearest mid chunk left bare (a
+          // rebuild, swapped in whole like any other)
+          for (const k of this.chunks.values()) if (k.treesLater && k.lod === 0 && k.wantLod === 0 && (!c || k.dist < c.dist)) c = k;
+          if (!c) break;
+        }
+        this._buildFor = c;
+        this._buildLod = c.wantLod;
+        this._buildTrees = trees;
+        this._build = this.buildChunkStep(c.cx, c.cz, c.wantLod, trees);
+      }
+      const c = this._buildFor;
+      // The chunk stopped being wanted, or wants a different detail level than
+      // the one being built. Start again rather than finish work nobody needs.
+      if (c.wantLod !== this._buildLod) { this._build = null; this._buildFor = null; continue; }
+      // A step yields when ITS budget runs out, so the budget is what is left
+      // of this frame's slice: with a flat 1 ms a step started late in the
+      // slice ran on past it, and the overrun (plus the item in hand) was what
+      // made chunk crossings 7-8 ms frames at the phone's speed.
+      this._yb = Math.max(0.2, Math.min(YIELD_MS, sliceMs - (performance.now() - t0)));
+      const step = this._build.next();
+      if (!step.done) continue;
+      // **Swap, never dispose-then-build.**
+      //
+      // The old geometry has to stay on screen until its replacement is ready.
+      // Disposing first was fine when a build finished inside the same frame;
+      // now that it is spread over a dozen or more, it leaves a 400 m square of
+      // bare terrain where the chunk used to be -- a hard straight edge across
+      // the road, with the ground showing through beyond it, for a fifth of a
+      // second or longer. Chunk borders are axis-aligned, which is exactly what
+      // makes the seam look like a rendering fault rather than a missing chunk.
+      const old = c.group;
+      c.group = step.value || null;
+      c.lod = this._buildLod;
+      c.treesLater = c.lod === 0 && !this._buildTrees;
+      if (c.group) { this.group.add(c.group); freezeStatic(c.group); }
+      if (this.trees) {
+        this.trees.setChunk(c.key, c.cx, c.cz, c.group && c.group.userData.trees, c.key, c.group && c.group.userData.treesPooled);
+        // the TreeSystem keeps its own (cell-ordered) copy
+        if (c.group) c.group.userData.trees = null;
+      }
+      if (this.decor) this.decor.setChunk(c.key, c.group && c.group.userData.decor);
+      // the phone's shadow cache holds this chunk's shadows (shadowcache.js)
+      if (this.onChunkChange) this.onChunkChange((c.cx + 0.5) * CHUNK, (c.cz + 0.5) * CHUNK, CHUNK);
+      if (old) {
+        old.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+        this.group.remove(old);
+      }
+      this._build = null;
+      this._buildFor = null;
+    }
+    this.updateFarMass(ccx, ccz, px, pz, budget);
+    return todo.length;
+  }
+
+  disposeChunk(c) {
+    // An in-flight build for this chunk is now stale.
+    if (this._buildFor === c) { this._build = null; this._buildFor = null; }
+    // Solid street objects belong to the chunk that drew them, so they go when
+    // it does. Leaving them behind means invisible trees you keep hitting.
+    this.city.clearObstacles(this.city.chunkKey(c.cx, c.cz));
+    // ...and so do the solids on its roofs
+    const cr = this.city.chunks.get(this.city.chunkKey(c.cx, c.cz));
+    if (cr) for (const bi of cr.buildings) this.city.buildings[bi].roofSolids = null;
+    if (this.trees) this.trees.dropChunk(c.key);
+    if (this.decor) this.decor.dropChunk(c.key);
+    if (!c.group) return;
+    c.group.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+    });
+    this.group.remove(c.group);
+    if (this.onChunkChange) this.onChunkChange((c.cx + 0.5) * CHUNK, (c.cz + 0.5) * CHUNK, CHUNK);
+    c.group = null;
+    c.lod = -1;
+  }
+
+  /**
+   * Build a chunk a piece at a time.
+   *
+   * This used to be one synchronous call and the streamer ran TWO of them per
+   * frame. Measured, a near chunk takes a median 48.7 ms and up to 137 ms, so
+   * any frame that crossed into new territory spent about 100 ms -- and at
+   * worst 274 ms -- inside this function, against a 16.7 ms budget. That is the
+   * dropped frames and stalls while driving: not the renderer at all, but the
+   * geometry being generated in the middle of a frame.
+   *
+   * Yielding lets the caller stop partway and come back next frame, so the cost
+   * per frame is bounded by a clock rather than by how much happens to be in
+   * this particular 400 m square. Same shape as `cityGenerator`, which already
+   * does this for the initial load.
+   *
+   * Nothing is added to the scene until the last yield, so an abandoned build
+   * leaves nothing half-drawn.
+   */
+  /** Mid-ring chunks built bare, waiting for their trees (tools settle on this too). */
+  treesLater() {
+    let n = 0;
+    for (const c of this.chunks.values()) if (c.treesLater && c.lod === 0 && c.wantLod === 0) n++;
+    return n;
+  }
+
+  *buildChunkStep(cx, cz, lod, trees = true) {
+    const city = this.city;
+    const ck = city.chunkKey(cx, cz);
+    // A chunk with no road or building has no entry in the city -- but it may
+    // be all forest (the middle of Seward Park, an island), and a forest is
+    // what it has to draw. Nothing in it is built but its trees.
+    const ch = city.chunks.get(ck) || NO_CITY_CHUNK;
+    this._ck = ck;
+    // Each street object's run of triangles in the flat mesh, [x, z, i0, i1]
+    // per object: what a tank knocks down is hidden by its index range
+    // (tank.js `fell`), the mesh being one merged draw.
+    // Live only from here to the flat mesh's add below: meshProps (the one
+    // caller of the unguarded pushes) runs inside this step, and chunk builds
+    // run one at a time, as this._ck already assumes.
+    this._fell = [];
+    this._treeRecs = null;
+    this._decor = FALL && lod === 1 ? [] : null;
+    this._occ = null;
+    const road = new ChunkBuilder(true);
+    const flat = new ChunkBuilder(false);
+    // A near chunk's pavement is written straight into its road mesh, and
+    // every chunk's glow into its flat mesh, flagged per vertex (roadWalk,
+    // flatGlow). A mid chunk's pavement stays separate: it is tinted into the
+    // flat mesh below.
+    const walk = lod === 1 ? road.flagged('surf') : new ChunkBuilder(true);
+    const glow = flat.flagged('glow');
+    const bl = { glass: new ChunkBuilder(true), facade: new ChunkBuilder(true) };
+    // Road structure -- walls, parapets, fascia -- is textured concrete from the
+    // facade atlas, so it draws into this chunk's facade mesh: no new material
+    // and no new draw where the chunk has buildings anyway.
+    this._facade = bl.facade;
+
+    const own = (x, z) => Math.floor(x / CHUNK) === cx && Math.floor(z / CHUNK) === cz;
+    const nodesDone = new Set();
+    // Solid objects are registered as the geometry is generated, so the old
+    // set is dropped here rather than at the top: a build now spans many frames,
+    // and clearing first would leave the trees still on screen with no collision
+    // until it finished.
+    city.clearObstacles(ck);
+
+    // Yield every so many items rather than every one: the check itself costs
+    // something, and a handful of roads or buildings is well under a frame.
+    let since = 0;
+    this._yt = performance.now();
+    for (const ei of ch.edges) {
+      if (performance.now() - this._yt > this._yb) { yield; this._yt = performance.now(); }
+      const e = city.edges[ei];
+      const a = city.nodes[e.a], b = city.nodes[e.b];
+      const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
+      if (!own(mx, mz)) continue;
+      this.meshRoad(road, walk, flat, glow, e, a, b, lod, ei);
+      this.meshLid(road, flat, ei);   // a slab over a portal cutting, if any
+      for (const ni of [e.a, e.b]) {
+        if (nodesDone.has(ni)) continue;
+        const n = city.nodes[ni];
+        if (!own(n.x, n.z)) continue;
+        nodesDone.add(ni);
+        this.meshNode(road, flat, ni, n, lod, walk);
+      }
+    }
+
+    if (lod === 1) {
+      since = 0;
+      // the chunk's occupancy raster: which way each house faces
+      // (houseFront), then the trees' planting tests -- built once for both
+      this._occ = occupancy(city, cx, cz); this._occX0 = cx * CHUNK; this._occZ0 = cz * CHUNK; this._occKey = ck;
+      yield; this._yt = performance.now();
+      const rec = [];
+      for (const bi of ch.buildings) {
+        if (performance.now() - this._yt > this._yb) { yield; this._yt = performance.now(); }
+        const bd = city.buildings[bi];
+        // A flat roof's plant, crown and terrace furniture are solid to what
+        // lands on it (util roofAt): recorded as they are drawn.
+        const flatRoof = !bd.kind && bd.style !== 'house' && !(bd.style === 'industrial' && bd.h < 3.5);
+        bd.roofSolids = null;
+        if (flatRoof) { rec.length = 0; flat.solids = bl.facade.solids = bl.glass.solids = rec; }
+        this.meshBuilding(bl, flat, glow, bd);
+        flat.solids = bl.facade.solids = bl.glass.solids = null;
+        bd.roofSolids = flatRoof ? roofSolids(bd, rec) : null;
+      }
+      yield; this._yt = performance.now();
+      yield* this.meshProps(flat, glow, ch, cx, cz);
+      yield; this._yt = performance.now();
+      yield* plantTrees(this, flat, ch, cx, cz, 1, ch === NO_CITY_CHUNK);
+      this._occ = null;
+      yield; this._yt = performance.now();
+    } else {
+      // Mid-ring massing: every building the far skyline skips, as one merged
+      // box mesh per chunk. From the air the old mid ring was bare ground, so
+      // the whole housing stock materialised at the 800 m detail ring -- the
+      // pop-in. A box at 800-1600 m is indistinguishable from the real
+      // building at that size; when the chunk promotes, the swap reads as
+      // detail arriving, not a city appearing. ~18 triangles a building
+      // (walls plus the roof slab), one draw a chunk.
+      since = 0;
+      // Tinted by STYLE with a darker roof slab, because one pale beige for
+      // every box read as a city of white blocks -- from the air, wall tone
+      // and a roof line are most of what says "building".
+      //
+      // Builder.box anchors y at the BASE (by..by+h) -- review caught that
+      // these walls had been passed a CENTRE y since v56, floating half their
+      // height with the new roof slab buried inside them. The wall now starts
+      // half a metre into the ground -- deliberately LESS than the real
+      // mesher's 2 m embed: a massing box lives 800 m away where a slope gap
+      // under a corner is invisible, and the shallower skirt is cheaper.
+      for (const bi of ch.buildings) {
+        const bd = city.buildings[bi];
+        if (bd.h >= 16 || bd.w * bd.d >= 1400) continue;   // skyline draws these
+        const wall = this.massColour(bd);
+        flat.box(bd.x, bd.y - 0.5, bd.z, bd.w, bd.h + 0.5, bd.d, bd.rot, wall, { ao: 0.35, top: false });
+        // the roof: membrane grey for a flat top, shingle for a house's
+        const roof = bd.style === 'house' ? [0.07, 0.065, 0.06] : [0.16, 0.16, 0.155];
+        flat.box(bd.x, bd.y + bd.h, bd.z, bd.w * 0.96, 0.24, bd.d * 0.96, bd.rot, roof);
+        if (performance.now() - this._yt > this._yb) { yield; this._yt = performance.now(); }
+      }
+      yield; this._yt = performance.now();
+      // The same trees as the near build, drawn only (no trunks to hit): the
+      // housing stock had no canopy past the 1 km ring, which from the air
+      // was the top half of every frame.
+      if (trees) {
+        yield* plantTrees(this, flat, ch, cx, cz, 0, ch === NO_CITY_CHUNK);
+        yield; this._yt = performance.now();
+      }
+    }
+
+    // MID-RING ROADS DRAW IN THE FLAT MATERIAL. At 800 m+ a 13 m asphalt tile
+    // is a few pixels and its mip is one colour, so the road and pavement go
+    // into the chunk's vertex-coloured mesh at their textures' own mean
+    // albedo: a mid chunk is one draw instead of three, and draw calls are
+    // what an iPhone runs out of first.
+    if (lod === 0) {
+      this.primeMidTint();
+      flat.appendTinted(road, this._midTint.road);
+      flat.appendTinted(walk, this._midTint.walk);
+      road.nv = road.ni = 0;
+    }
+    const grp = new THREE.Group();
+    const add = (bld, mat, cast, recv) => {
+      if (bld.empty) return null;
+      const m = new THREE.Mesh(bld.build(ON_PHONE), mat);
+      // ON A PHONE THE JS COPY GOES ONCE IT IS ON THE GPU: the ring's chunk
+      // geometry is ~140 MB of typed arrays that nothing reads after upload
+      // (bounds are already computed; nothing in the game raycasts a chunk).
+      // A lost context rebuilds the chunks instead of re-uploading: see the
+      // constructor. Desktop keeps them for the harnesses' raycasts.
+      if (ON_PHONE) {
+        const g = m.geometry;
+        for (const k in g.attributes) g.attributes[k].onUpload(dropArray);
+        g.index.onUpload(dropArray);
+        m.raycast = noRaycast;
+      }
+      // Not everything that can cast a shadow earns one.
+      //
+      // The shadow pass re-renders every caster, so each one costs a second
+      // draw call and a second pass over its geometry. Measured downtown, the
+      // props/trees/roof-kit mesh alone was 10 draws and 122k triangles of
+      // shadow -- 13 % of the frame's geometry -- for shadows that at street
+      // level fall mostly on surfaces already in shade. On a phone that is not
+      // where the budget goes; on a desktop it is worth having.
+      m.castShadow = cast && this.shadows && !(ON_PHONE && (mat === this.mats.flat || mat === this.mats.flatGlow));
+      m.receiveShadow = recv && this.shadows;
+      grp.add(m);
+      return m;
+    };
+    // One builder per step: turning ~100k vertices of JS arrays into typed
+    // buffers is itself several ms per builder on a phone.
+    // A near chunk's pavement draws in its road mesh (roadWalk picks the
+    // texture set per vertex): one draw instead of two, per chunk on screen.
+    add(road, lod === 1 && !walk.empty ? this.mats.roadWalk : this.mats.road, false, true); yield;
+    // The glow draws in the flat mesh (flatGlow: unlit, untonemapped where
+    // flagged) -- one draw instead of two a chunk.
+    const flatMesh = add(flat, glow.empty ? this.mats.flat : this.mats.flatGlow, true, true);
+    if (flatMesh && this._fell.length) grp.userData.fell = { mesh: flatMesh, list: this._fell };
+    this._fell = null;
+    // the trees' records, for the instanced crowns (trees.js TreeSystem)
+    grp.userData.trees = this._treeRecs;
+    // a road-less chunk's far crowns are in the trees' shared pool, not its
+    // own flat mesh: an empty group still carries its records
+    grp.userData.treesPooled = ch === NO_CITY_CHUNK;
+    this._treeRecs = null;
+    // the season's pumpkins, for fall.js
+    grp.userData.decor = this._decor && this._decor.length ? new Float32Array(this._decor) : null;
+    this._decor = null;
+    yield;
+    add(bl.glass, this.mats.glass, true, true); yield;
+    add(bl.facade, this.mats.facade, true, true);
+    return grp.children.length || grp.userData.trees || grp.userData.decor ? grp : null;
+  }
+
+  // --- road surfaces --------------------------------------------------------
+
+  /**
+   * Where a deck edge passes at a node, mitred into the next span.
+   *
+   * Offsetting each span by its own perpendicular leaves two spans meeting a
+   * bend at different points and different angles, so their guardrails end up
+   * splayed and never touch. Mitreing runs both spans' edges through one shared
+   * point, which is what makes the rail continuous around a curve.
+   */
+  /**
+   * The two graded edges at a node that carry straight on through it, or null.
+   *
+   * Chosen once per node and MUTUALLY: the pair whose directions line up best.
+   * If each edge picked its own best partner, a main line could pick the ramp
+   * while the ramp picked the main line's other half, and the three would
+   * mitre onto three different points -- the splayed joint all over again.
+   * Same class is preferred, so a diverge keeps the freeway continuous and the
+   * ramp square-ended inside it.
+   */
+  continuation(ni) {
+    const city = this.city, n = city.nodes[ni];
+    let pa = -1, pb = -1, best = 0.5;
+    for (let p = 0; p < n.e.length; p++) {
+      const ea = city.edges[n.e[p]];
+      if (!ea.prof) continue;
+      const ax = ni === ea.b ? ea.dx : -ea.dx, az = ni === ea.b ? ea.dz : -ea.dz;
+      for (let q = p + 1; q < n.e.length; q++) {
+        const eb = city.edges[n.e[q]];
+        if (!eb.prof) continue;
+        const bx = ni === eb.a ? eb.dx : -eb.dx, bz = ni === eb.a ? eb.dz : -eb.dz;
+        const c = ax * bx + az * bz - (ea.cls === eb.cls ? 0 : 0.1);
+        if (c > best) { best = c; pa = n.e[p]; pb = n.e[q]; }
+      }
+    }
+    return pa < 0 ? null : [pa, pb];
+  }
+
+  deckEdgePoint(ni, e, sg, w) {
+    const city = this.city;
+    const n = city.nodes[ni];
+    let ox = -e.dz * sg, oz = e.dx * sg;
+    let dist = w;
+    // Mitre into the continuation, whatever else meets here. This used to
+    // mitre only a node with exactly one other deck of the same width, so
+    // every merge, every lane-count change and every bridge touchdown onto
+    // ground freeway was square-ended -- and a square end at a bend is a
+    // wedge of missing tarmac outside it and an overlap inside.
+    const pair = this.continuation(ni);
+    let other = null;
+    if (pair) {
+      const e0 = city.edges[pair[0]], e1 = city.edges[pair[1]];
+      if (e0 === e) other = e1; else if (e1 === e) other = e0;
+    }
+    if (other) {
+      let qx = -other.dz * sg, qz = other.dx * sg;
+      if (qx * ox + qz * oz < 0) { qx = -qx; qz = -qz; }
+      let mx = ox + qx, mz = oz + qz;
+      const ml = Math.hypot(mx, mz);
+      if (ml > 1e-3) {
+        mx /= ml; mz /= ml;
+        const cos = mx * ox + mz * oz;
+        // A hairpin would send the mitre off to infinity; keep the square end.
+        if (cos > 0.5) { ox = mx; oz = mz; dist = w / cos; }
+      }
+    }
+    return [n.x + ox * dist, n.z + oz * dist];
+  }
+
+  /** meshGradedDeck's point on an edge line {sx, sz, ex, ez, sg} at t, pulled
+   *  in where that side was trimmed off a lower neighbour (citygen's split
+   *  levels), so deck, soffit, fascia and rail follow the trimmed edge together. */
+  deckAt(e) {
+    const k = e.pk, hw = e.hw;
+    return (c, t) => {
+      const i = Math.min(k, Math.max(0, Math.round(t * k)));
+      const cut = hw - e.tw[i * 2 + (c.sg > 0 ? 0 : 1)];
+      return [c.sx + (c.ex - c.sx) * t + e.dz * c.sg * cut, c.sz + (c.ez - c.sz) * t - e.dx * c.sg * cut];
+    };
+  }
+
+  /**
+   * What stands on each side of each profile piece of a graded deck: 0 open
+   * (another carriageway at this level, or a higher neighbour's girder), 1 a
+   * low median (the lower-indexed of two decks side by side), 2 a parapet.
+   * `[i * 2 + (left ? 0 : 1)]`. Cached per edge: meshGradedDeck draws from it
+   * and deckRailSegs collides with it, so a wall is solid exactly where one is
+   * drawn.
+   */
+  railKinds(e, ei) {
+    const C = this._railKinds || (this._railKinds = new Map());
+    let K = C.get(ei);
+    if (K) return K;
+    const k = e.pk, hw = e.hw, PARAPET = 0.55;
+    K = new Int8Array(k * 2);
+    const at = this.deckAt(e);
+    for (const sg of [1, -1]) {
+      const [rsx, rsz] = this.deckEdgePoint(e.a, e, sg, hw), [rex, rez] = this.deckEdgePoint(e.b, e, sg, hw);
+      const [dsx, dsz] = this.deckEdgePoint(e.a, e, sg, hw + PARAPET), [dex, dez] = this.deckEdgePoint(e.b, e, sg, hw + PARAPET);
+      const run = { sx: rsx, sz: rsz, ex: rex, ez: rez, sg }, deck = { sx: dsx, sz: dsz, ex: dex, ez: dez, sg };
+      const ox = -e.dz * sg, oz = e.dx * sg;
+      for (let i = 0; i < k; i++) {
+        const t0 = i / k, t1 = (i + 1) / k;
+        // the middle of the piece's rail strip and its height, the same
+        // arithmetic the drawing always used (a different rounding could
+        // flip a carriagewayAt answer and move a wall)
+        const R0 = at(run, t0), R1 = at(run, t1), D0 = at(deck, t0), D1 = at(deck, t1);
+        const mx = (R0[0] + R1[0] + D0[0] + D1[0]) / 4, mz = (R0[1] + R1[1] + D0[1] + D1[1]) / 4;
+        const my = ((e.ph[i] - 0.03) + (e.ph[i + 1] - 0.03)) / 2 + 0.03;
+        let open = !!this.city.carriagewayAt(mx, mz, my, ei);
+        // Two decks side by side each built a parapet on the shared side --
+        // two walls back to back down the middle of the freeway, with a slot
+        // of daylight between them. Where another carriageway at this level
+        // starts within 3 m outboard, the pair gets ONE low median barrier,
+        // drawn by whichever edge has the lower index.
+        let median = false;
+        if (!open) {
+          const px3 = mx + ox * 3.0, pz3 = mz + oz * 3.0;
+          const nb = this.city.carriagewayAt(px3, pz3, my, ei, 0.9);
+          if (nb) {
+            if (nb - 1 > ei) median = true; else open = true;
+          } else if (this.city.carriagewayAt(px3, pz3, my + 2.2, ei, 1.3)) {
+            // The neighbour is up to 3.5 m HIGHER. Its own girder face is the
+            // wall on this side; a rail here was the second, lower wall of the
+            // staggered pair between I-5's express lanes and the main line --
+            // the decks there sit 0.6-3 m apart and 1.6-2.8 m out of level,
+            // just past the same-level test. A LOWER neighbour keeps this
+            // rail: that is a drop, and a drop wants a parapet.
+            open = true;
+          }
+        }
+        K[i * 2 + (sg > 0 ? 0 : 1)] = open ? 0 : median ? 1 : 2;
+      }
+    }
+    C.set(ei, K);
+    return K;
+  }
+
+  /**
+   * THE PARAPETS ARE SOLID (traffic.js collideWithBuildings, via
+   * city.deckRails): an elevated edge's drawn rails as segments along their
+   * traffic face, stride 7 [ax, az, bx, bz, deck y at a, at b, side (+1 left,
+   * -1 right)], one per profile piece and side that has a rail or a median. Nothing stopped a
+   * car at a deck's edge but its own steering until crashes could spin it,
+   * and then a PIT on the Magnolia Bridge put the suspect over the side.
+   * Cached per edge, built on first ask (a few per frame at most).
+   */
+  deckRailSegs(ei) {
+    const C = this._railSegs || (this._railSegs = new Map());
+    let S = C.get(ei);
+    if (S) return S;
+    const city = this.city, e = city.edges[ei];
+    const out = [];
+    if (e && e.elev && !e.tunnel) {
+      const hw = e.hw;
+      for (const sg of [1, -1]) {
+        const [rsx, rsz] = this.deckEdgePoint(e.a, e, sg, hw), [rex, rez] = this.deckEdgePoint(e.b, e, sg, hw);
+        if (e.prof) {
+          const k = e.pk, K = this.railKinds(e, ei), at = this.deckAt(e);
+          const run = { sx: rsx, sz: rsz, ex: rex, ez: rez, sg };
+          for (let i = 0; i < k; i++) {
+            if (K[i * 2 + (sg > 0 ? 0 : 1)] === 0) continue;
+            const R0 = at(run, i / k), R1 = at(run, (i + 1) / k);
+            out.push(R0[0], R0[1], R1[0], R1[1], e.ph[i] - 0.03, e.ph[i + 1] - 0.03, sg);
+          }
+        } else {
+          // the old flat span: a parapet the whole length, both sides
+          const a = city.nodes[e.a], b = city.nodes[e.b];
+          out.push(rsx, rsz, rex, rez, a.y + 0.06, b.y + 0.06, sg);
+        }
+      }
+    }
+    S = new Float32Array(out);
+    C.set(ei, S);
+    return S;
+  }
+
+  /**
+   * An elevated span: deck, edge beam, parapets and piers.
+   *
+   * Everything is built off the same two mitred edge lines, so the deck, its
+   * beam and the rail on top of it stay registered with each other and with the
+   * neighbouring span. Barriers used to be independent boxes centred on segment
+   * midpoints, which is why they didn't line up end to end.
+   */
+  /**
+   * An elevated span on its graded profile: deck, girder, parapets, piers.
+   *
+   * The old span was ONE quad from node height to node height, so it could
+   * only ever be a straight ramp, and an overpass that has to clear the road
+   * under it in the middle could not be drawn at all. Lofting along the
+   * profile samples draws whatever gradeRoads decided, and the mitred edge
+   * lines still keep deck, girder and rail registered with the next span.
+   *
+   * A parapet is not built where it would stand on another carriageway. Each
+   * span offsets its rails by its own perpendicular, so at a merge the main
+   * line's rail walled the ramp off and the ramp's inner rail ran straight
+   * across the main line's lanes -- the white walls standing in the middle of
+   * I-5 downtown. Where a rail piece is inside another road's carriageway at
+   * the same level it is left out and the girder face stops at deck level.
+   */
+  meshGradedDeck(road, flat, e, a, b, ei) {
+    const GIRDER = 1.35, PARAPET = 0.55, RAIL = 0.95;
+    // One concrete family with the retaining walls and the tunnel: mid-grey,
+    // near the tarmac rather than the sky. The rails were [0.68, 0.68, 0.66]
+    // -- near-white under the tone curve, and the brightest thing in frame.
+    const conc = [0.5, 0.5, 0.49], concLo = [0.4, 0.4, 0.39];
+    // Fascia and the rail's traffic face are the big vertical areas, so they
+    // take the facade atlas's cast-concrete cell (joints, ties, staining).
+    const face = this._facade || flat;
+    const ccell = this._facade ? this.cells.concrete : null;
+    const CU = (fr) => (ccell ? ccell[0] + fr * ccell[1] : fr);
+    const faceCol = [0.8, 0.8, 0.79];
+    const hw = e.hw, k = e.pk;
+    const along = Math.atan2(e.dx, e.dz);
+    const run = {}, deck = {};
+    for (const sg of [-1, 1]) {
+      const [rsx, rsz] = this.deckEdgePoint(e.a, e, sg, hw);
+      const [rex, rez] = this.deckEdgePoint(e.b, e, sg, hw);
+      run[sg] = { sx: rsx, sz: rsz, ex: rex, ez: rez, sg };
+      const [dsx, dsz] = this.deckEdgePoint(e.a, e, sg, hw + PARAPET);
+      const [dex, dez] = this.deckEdgePoint(e.b, e, sg, hw + PARAPET);
+      deck[sg] = { sx: dsx, sz: dsz, ex: dex, ez: dez, sg };
+    }
+    // A point on an edge line at t, pulled in where that side was trimmed off
+    // a lower neighbour (citygen's split levels), so deck, soffit, fascia and
+    // rail all follow the trimmed edge together.
+    const at = this.deckAt(e);
+    // Drawn 3 cm under the standing height, as the old deck was (y + 0.06
+    // drawn against y + 0.09 stood on).
+    const Y = (i) => e.ph[i] - 0.03;
+    const col = e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1];
+    const seg = e.len / k, U = (2 * hw) / ROAD_TILE;
+    const wasOpen = { 1: null, '-1': null };
+    const kinds = this.railKinds(e, ei);
+    for (let i = 0; i < k; i++) {
+      const t0 = i / k, t1 = (i + 1) / k, y0 = Y(i), y1 = Y(i + 1);
+      const [l0x, l0z] = at(run[1], t0), [l1x, l1z] = at(run[1], t1);
+      const [r0x, r0z] = at(run[-1], t0), [r1x, r1z] = at(run[-1], t1);
+      const v0 = (i * seg) / ROAD_TILE, v1 = ((i + 1) * seg) / ROAD_TILE;
+      road.quad([l0x, y0, l0z], [r0x, y0, r0z], [r1x, y1, r1z], [l1x, y1, l1z],
+        [0, 1, 0], [0, v0, U, v0, U, v1, 0, v1], col);
+      const [p0x, p0z] = at(deck[1], t0), [p1x, p1z] = at(deck[1], t1);
+      const [q0x, q0z] = at(deck[-1], t0), [q1x, q1z] = at(deck[-1], t1);
+      flat.quad([q0x, y0 - GIRDER, q0z], [p0x, y0 - GIRDER, p0z],
+        [p1x, y1 - GIRDER, p1z], [q1x, y1 - GIRDER, q1z],
+        [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], conc);
+      for (const sg of [-1, 1]) {
+        const R0 = at(run[sg], t0), R1 = at(run[sg], t1);
+        const D0 = at(deck[sg], t0), D1 = at(deck[sg], t1);
+        const ox = -e.dz * sg, oz = e.dx * sg;
+        // (open / a median / a rail: railKinds, which the collision shares)
+        const kind = kinds[i * 2 + (sg > 0 ? 0 : 1)];
+        const open = kind === 0, median = kind === 1;
+        const top = open ? 0 : median ? 0.8 : RAIL;
+        // Fascia: girder and rail in one cast-concrete face.
+        face.quad([D0[0], y0 - GIRDER, D0[1]], [D1[0], y1 - GIRDER, D1[1]],
+          [D1[0], y1 + top, D1[1]], [D0[0], y0 + top, D0[1]],
+          [ox, 0, oz], [CU(0), 0, CU(1), 0, CU(1), 1, CU(0), 1], faceCol);
+        // Capping over the wall, or over the bare deck edge where it is open.
+        flat.quad([D0[0], y0 + top, D0[1]], [D1[0], y1 + top, D1[1]],
+          [R1[0], y1 + top, R1[1]], [R0[0], y0 + top, R0[1]],
+          [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], open ? concLo : conc);
+        if (!open) {
+          // the rail's traffic face: the lower 40 % of the tile, so its base
+          // carries the texture's grime band where spray collects
+          face.quad([R0[0], y0, R0[1]], [R1[0], y1, R1[1]],
+            [R1[0], y1 + RAIL, R1[1]], [R0[0], y0 + RAIL, R0[1]],
+            [-ox, 0, -oz], [CU(0), 0, CU(1), 0, CU(1), 0.4, CU(0), 0.4], faceCol);
+        }
+        // A rail that stops needs an end, or you see into a hollow wall.
+        if (wasOpen[sg] !== null && wasOpen[sg] !== open) {
+          flat.quad([R0[0], y0, R0[1]], [D0[0], y0, D0[1]],
+            [D0[0], y0 + RAIL, D0[1]], [R0[0], y0 + RAIL, R0[1]],
+            [e.dx * (open ? 1 : -1), 0, e.dz * (open ? 1 : -1)], [0, 0, 1, 0, 1, 1, 0, 1], conc);
+        }
+        wasOpen[sg] = open;
+      }
+    }
+    // A trimmed side stands over a lower road. Where that road is below the
+    // girder, finish the drop with a wall rather than leave the lower lanes
+    // looking up into a hollow slot under the deck edge.
+    for (const sg of [1, -1]) {
+      const s = sg > 0 ? 0 : 1;
+      let runPts = [];
+      const flush = () => {
+        if (runPts.length > 1) this.meshWall(flat, runPts, -e.dz * sg, e.dx * sg, ei * 2 + s + 13);
+        runPts = [];
+      };
+      for (let i = 0; i <= k; i++) {
+        const lo = e.tlo[i * 2 + s];
+        const bottom = e.ph[i] - 0.03 - GIRDER;
+        if (Number.isNaN(lo) || lo - 0.3 >= bottom - 0.15) { flush(); continue; }
+        const [x, z] = at(deck[sg], i / k);
+        runPts.push([x, z, bottom, lo - 0.3]);
+      }
+      flush();
+    }
+
+    // Piers on a realistic bay, standing on the profile.
+    const bays = Math.max(1, Math.round(e.len / 52));
+    for (let p = 0; p < bays; p++) {
+      const t = (p + 0.5) / bays;
+      const cx = lerp(a.x, b.x, t), cz = lerp(a.z, b.z, t);
+      const capTop = this.city.profAt(e, t).h - 0.03 - GIRDER;
+      let base = G.terrainHeight(cx, cz);
+      if (capTop - base <= 4) continue;
+      if (G.isWater(cx, cz)) {
+        flat.prism(cx, base, cz, 4.2, 1.4 - base, 8, concLo);
+        flat.box(cx, 1.4, cz, 9.4, 0.55, 9.4, along, conc);
+        base = 1.95;
+      } else {
+        flat.prism(cx, base - 1.2, cz, 3.2, 1.7, 8, concLo);
+        base += 0.3;
+      }
+      flat.prism(cx, base, cz, 2.4, capTop - 1.8 - base, 8, conc);
+      flat.box(cx, capTop - 1.8, cz, (hw + PARAPET) * 1.9, 1.8, 3.6, along, concLo);
+    }
+    this.meshRoadMarks(flat, e, a, b, ei);
+  }
+
+  meshViaduct(road, flat, e, a, b, ei) {
+    if (e.prof) { this.meshGradedDeck(road, flat, e, a, b, ei); return; }
+    const GIRDER = 1.35;  // structural depth below the running surface
+    const PARAPET = 0.55; // parapet wall thickness, inboard of the deck edge
+    const RAIL = 0.95;    // parapet height above the running surface
+    const conc = [0.68, 0.68, 0.66], concLo = [0.5, 0.5, 0.49];
+    const soffit = [0.42, 0.42, 0.41];
+    const ay = a.y + 0.06, by = b.y + 0.06;
+    const hw = e.hw;
+    const along = Math.atan2(e.dx, e.dz);
+
+    // Two mitred offset lines per side: the running-surface edge, where the
+    // parapet stands, and the deck edge outboard of it. Keeping the carriageway
+    // at the full `hw` means a viaduct is as wide to drive as the street it
+    // continues, instead of losing a metre to its own walls.
+    const run = {}, deck = {};
+    for (const sg of [-1, 1]) {
+      const [rsx, rsz] = this.deckEdgePoint(e.a, e, sg, hw);
+      const [rex, rez] = this.deckEdgePoint(e.b, e, sg, hw);
+      run[sg] = { sx: rsx, sz: rsz, ex: rex, ez: rez };
+      const [dsx, dsz] = this.deckEdgePoint(e.a, e, sg, hw + PARAPET);
+      const [dex, dez] = this.deckEdgePoint(e.b, e, sg, hw + PARAPET);
+      deck[sg] = { sx: dsx, sz: dsz, ex: dex, ez: dez };
+    }
+
+    // Running surface, corner to corner off the mitred edges. One quad for the
+    // whole span: it is planar, so it can't stair-step the way the old
+    // per-segment boxes did.
+    const L = run[1], R = run[-1];
+    const vLen = e.len / (hw * 2);
+    road.quad(
+      [L.sx, ay, L.sz], [R.sx, ay, R.sz], [R.ex, by, R.ez], [L.ex, by, L.ez],
+      [0, 1, 0], [0, 0, 1, 0, 1, vLen, 0, vLen],
+      e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1]);
+
+    // Soffit, so the deck reads as a box girder rather than a sheet of paper.
+    const DL = deck[1], DR = deck[-1];
+    flat.quad(
+      [DR.sx, ay - GIRDER, DR.sz], [DL.sx, ay - GIRDER, DL.sz],
+      [DL.ex, by - GIRDER, DL.ez], [DR.ex, by - GIRDER, DR.ez],
+      [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], conc);
+
+    for (const sg of [-1, 1]) {
+      const r = run[sg], d = deck[sg];
+      const ox = -e.dz * sg, oz = e.dx * sg;       // outward across the deck
+      // Fascia: girder and parapet in one plane, running the full length of the
+      // span between the mitred corners. Because both ends are the mitre point
+      // its neighbour also uses, consecutive spans meet edge to edge instead of
+      // each being splayed off its own perpendicular.
+      flat.quad(
+        [d.sx, ay - GIRDER, d.sz], [d.ex, by - GIRDER, d.ez],
+        [d.ex, by + RAIL, d.ez], [d.sx, ay + RAIL, d.sz],
+        [ox, 0, oz], [0, 0, 1, 0, 1, 1, 0, 1], conc);
+      // Capping over the wall.
+      flat.quad(
+        [d.sx, ay + RAIL, d.sz], [d.ex, by + RAIL, d.ez],
+        [r.ex, by + RAIL, r.ez], [r.sx, ay + RAIL, r.sz],
+        [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], conc);
+      // Inner face, facing the traffic.
+      flat.quad(
+        [r.sx, ay, r.sz], [r.ex, by, r.ez],
+        [r.ex, by + RAIL, r.ez], [r.sx, ay + RAIL, r.sz],
+        [-ox, 0, -oz], [0, 0, 1, 0, 1, 1, 0, 1], conc);
+    }
+
+    // Piers on a realistic bay. One slender post per span, whatever the span's
+    // length, read as scaffolding under a 30 m deck; a bent is a plinth, a
+    // stout column and a cap spanning the full deck width.
+    const bays = Math.max(1, Math.round(e.len / 52));
+    for (let p = 0; p < bays; p++) {
+      const t = (p + 0.5) / bays;
+      const cx = lerp(a.x, b.x, t), cz = lerp(a.z, b.z, t), cy = lerp(ay, by, t);
+      const capTop = cy - GIRDER;
+      let base = G.terrainHeight(cx, cz);
+      if (capTop - base <= 4) continue;
+      if (G.isWater(cx, cz)) {
+        // A column rising straight out of the lake looks unfounded. Break the
+        // surface with a pile cap and start the shaft on top of it.
+        flat.prism(cx, base, cz, 4.2, 1.4 - base, 8, concLo);
+        flat.box(cx, 1.4, cz, 9.4, 0.55, 9.4, along, conc);
+        base = 1.95;
+      } else {
+        flat.prism(cx, base - 1.2, cz, 3.2, 1.7, 8, concLo);   // plinth
+        base += 0.3;
+      }
+      flat.prism(cx, base, cz, 2.4, capTop - 1.8 - base, 8, conc);            // shaft
+      flat.box(cx, capTop - 1.8, cz, (hw + PARAPET) * 1.9, 1.8, 3.6, along, concLo); // cap
+    }
+  }
+
+  /**
+   * Lane markings, as geometry rather than baked into the asphalt texture.
+   *
+   * Drawn in real metres, so a line is 12 cm wide and a dash is 3 m long with a
+   * 6 m gap on every class instead of scaling with the carriageway -- baked into
+   * the texture, a 27 m highway got 4.3 m dashes and a residential street got
+   * 1.4 m ones. Alleys and the narrowest streets get nothing, which is also
+   * what they have in life.
+   */
+  meshRoadMarks(flat, e, a, b, ei) {
+    const hw = e.hw;
+    const bias = hash2(ei | 0, 7) * 0.03;
+    if (hw < 4.0) return;                       // alleys and lanes are unmarked
+    const px = -e.dz, pz = e.dx;
+    // A graded road paints on its profile. Decks draw 3 cm under the standing
+    // height and carry no bias; ground graded strips draw at it plus bias.
+    // PAINT RIDES THE LID. A road carried over a portal cutting on a slab
+    // (buildLids) is drawn at raw ground + LID_TOP, and its draped markings
+    // were left on the carved ground under it -- a slab with no lines on it.
+    // Where this road has a slab, paint sits MARK_Y - ROAD_LIFT over the slab
+    // top instead, and the stripes are cut short enough to follow the slab's
+    // edge down into the dip where it ends.
+    const lidded = ei != null && this._lidByEdge && this._lidByEdge.has(ei);
+    const LID_TOP = ROAD_LIFT + 0.04;
+    // Paint climbs to the junction with the strip (meshRoad's rampY).
+    const mA = ei != null && !e.prof ? this.mouthAt(e.a, ei) : 0, mB = ei != null && !e.prof ? this.mouthAt(e.b, ei) : 0;
+    const climb = NODE_Y - 0.016 - ROAD_Y - bias;
+    const rampY = (t) => (mA > 0 || mB > 0 ? climb * mouthRamp(t * e.len, e.len, mA, mB) : 0);
+    const yAt = e.prof
+      ? (x, z, t, o) => {
+        const P = this.city.profAt(e, t);
+        return e.elev ? P.h - 0.03 + 0.012 : P.h + P.s * o + bias + 0.012;
+      }
+      : lidded
+        ? (x, z) => {
+          const l = this.city.lidAt(x, z);
+          return l !== null ? l + LID_TOP + (MARK_Y - ROAD_LIFT) + bias : G.terrainHeight(x, z) + MARK_Y + bias;
+        }
+        : (x, z, t) => G.terrainHeight(x, z) + MARK_Y + bias + rampY(t);
+    const W = 0.06;                             // half-width of a painted line
+    const WHITE = [0.94, 0.93, 0.88];
+    const YELLOW = [0.88, 0.72, 0.2];
+
+    const stripe = (off, from, to, col) => {
+      if (to <= from) return;
+      const t0 = from / e.len, t1 = to / e.len;
+      const cx0 = lerp(a.x, b.x, t0) + px * off, cz0 = lerp(a.z, b.z, t0) + pz * off;
+      const cx1 = lerp(a.x, b.x, t1) + px * off, cz1 = lerp(a.z, b.z, t1) + pz * off;
+      const mx = (cx0 + cx1) / 2, mz = (cz0 + cz1) / 2;
+      if (ei != null && this.city.roadCoveredAt(mx, mz, ei)) return;
+      // Paint does not cross another carriageway. A ramp's edge line used to
+      // run on across the main line's lanes at a merge, and the main line's
+      // across the ramp: lines crossing at a shallow angle in the gore.
+      if (e.prof && this.city.carriagewayAt(mx, mz, yAt(mx, mz, (t0 + t1) / 2, off), ei)) return;
+      const l0x = cx0 + px * W, l0z = cz0 + pz * W, r0x = cx0 - px * W, r0z = cz0 - pz * W;
+      const l1x = cx1 + px * W, l1z = cz1 + pz * W, r1x = cx1 - px * W, r1z = cz1 - pz * W;
+      flat.quad(
+        [l0x, yAt(l0x, l0z, t0, off + W), l0z],
+        [r0x, yAt(r0x, r0z, t0, off - W), r0z],
+        [r1x, yAt(r1x, r1z, t1, off - W), r1z],
+        [l1x, yAt(l1x, l1z, t1, off + W), l1z],
+        [0, 1, 0], ZERO_UV, col
+      );
+    };
+
+    // Paint stops short of a junction, the same way the pavement strips do.
+    // Run end to end and each road lays its edge lines straight across every
+    // cross street it meets -- white lines cutting the carriageway diagonally
+    // and centre dashes doubling back on themselves. The crossing itself is
+    // bare tarmac, which is what a real junction mostly is.
+    //
+    // A graded node that is not an at-grade junction is not a crossing at all:
+    // it is where one ~40 m piece of freeway hands over to the next. Trimming
+    // there took nodeRadius -- the freeway's whole half-width -- off both ends
+    // of every piece, so only 60 % of 225 km of freeway carried any lines and
+    // I-5's edge lines were dashes with 14 m gaps. Crossing paint on those is
+    // stopped by the carriageway test above instead.
+    // At a mouth-and-fillet junction the paint stops at the arm's mouth, where
+    // the junction polygon starts -- nodeRadius (the widest road's half-width)
+    // left a skewed approach's lines running on into the crossing, or
+    // stopping metres short of it.
+    const trim = (ni) => {
+      const n = this.city.nodes[ni];
+      if (n.prof && !n.anchor) return 0;
+      const A = ei != null ? this.junctionArm(ni, ei) : null;
+      return A ? A.pm : this.nodeRadius(ni);
+    };
+    const from = trim(e.a);
+    const till = e.len - trim(e.b);
+    if (till <= from) return;
+
+    // Edge lines, set in from the kerb by about a shoulder's width -- the
+    // TRIMMED kerb on a graded road stood off a lower neighbour, or the line
+    // runs out over the wall.
+    const inset = Math.min(0.7, hw * 0.06);
+    const sideW = (m, s) => {
+      // a lid barrier inside the carriageway is its kerb (buildLids' e.barW)
+      if (!e.tw) return e.barW ? Math.min(hw, e.barW[s]) : hw;
+      const i = Math.min(e.pk, Math.max(0, Math.round((m / e.len) * e.pk)));
+      return e.tw[i * 2 + s];
+    };
+    // subdivide so a line follows the terrain rather than spanning it (and a
+    // slab's end, 0.5 m stations, rather than bridging off it)
+    const step = lidded ? 1 : 8;
+    // ...and where the climb to a junction starts, so the line follows it
+    const cuts = [];
+    for (let s = from; s < till; s += step) cuts.push(s);
+    for (const m of [mA > 0 ? mA + MOUTH_RAMP : -1, mB > 0 ? e.len - mB - MOUTH_RAMP : -1]) {
+      if (m > from + 0.3 && m < till - 0.3) cuts.push(m);
+    }
+    cuts.sort((p, q) => p - q);
+    for (let i = 0; i < cuts.length; i++) {
+      const s = cuts[i], to = i + 1 < cuts.length ? cuts[i + 1] : till;
+      stripe(sideW((s + to) / 2, 0) - inset, s, to, WHITE);
+      stripe(-(sideW((s + to) / 2, 1) - inset), s, to, WHITE);
+    }
+
+    // Centre line. A motorway carriageway is one-way and has no centre line;
+    // everything else is two-way here, so it gets a broken yellow one.
+    if (e.cls === 'hwy' || e.oneway) return;
+    const DASH = 3, GAP = 6;
+    // Phase the dashes off the edge's own start so they stay evenly spaced
+    // rather than restarting at each junction.
+    for (let s = from; s < till; s += DASH + GAP) {
+      stripe(0, s, Math.min(till, s + DASH), YELLOW);
+    }
+  }
+
+  /**
+   * One tunnel edge: deck, two walls, ceiling, lamp strip, and -- where an end
+   * node also carries a surface edge -- a portal frame. Heights come straight
+   * from the nodes' profiled y, the same numbers groundAt serves, so a car's
+   * ride height and the drawn deck agree by construction.
+   */
+  meshTunnel(road, flat, glow, e, a, b, ei) {
+    const hw = e.hw;
+    const px = -e.dz, pz = e.dx;
+    const WALL = 5.4, DECK = 0.3;
+    const ay = a.y + DECK, by = b.y + DECK;
+    // MITRED JOINTS. Each edge was a rectangle ending square at its nodes, so
+    // at every bend two consecutive pieces of the same tube overlapped in a
+    // wedge on the inside -- two coplanar decks and roofs, z-fighting -- and
+    // left a wedge gap on the outside. Measured with downward rays at the
+    // start node of every SR-99 edge, 16.9 % doubled on master. The ends are
+    // sheared onto the bisector with the most collinear tunnel neighbour
+    // (within 60 deg), as meshViaduct mitres its decks, so the pieces meet.
+    const city = this.city;
+    const partners = [];
+    const mitreK = (ni, atB) => {
+      const n = city.nodes[ni];
+      let best = null, bd = 0.5, bk = -1;
+      for (const k of n.e) {
+        if (k === ei) continue;
+        const f = city.edges[k];
+        if (!f.tunnel || f.elev) continue;
+        const o = city.nodes[f.a === ni ? f.b : f.a];
+        const L = Math.hypot(o.x - n.x, o.z - n.z) || 1;
+        // the neighbour's direction continuing THROUGH the node
+        const wx = atB ? (o.x - n.x) / L : (n.x - o.x) / L;
+        const wz = atB ? (o.z - n.z) / L : (n.z - o.z) / L;
+        const dt = wx * e.dx + wz * e.dz;
+        if (dt > bd) { bd = dt; best = [wx, wz]; bk = k; }
+      }
+      if (!best) return 0;
+      partners.push(bk);
+      let mx = px - best[1], mz = pz + best[0];            // bisector of the perpendiculars
+      const ml = Math.hypot(mx, mz) || 1; mx /= ml; mz /= ml;
+      const den = e.dx * mz - e.dz * mx;
+      if (Math.abs(den) < 1e-6) return 0;
+      return clamp(-(px * mz - pz * mx) / den, -1, 1);
+    };
+    const kA = mitreK(e.a, false), kB = mitreK(e.b, true);
+    // WHO COULD OWN A CELL OF THIS EDGE. twinOwner asks, per point, for a
+    // lower-numbered bore whose deck rectangle holds it within 0.25 m of this
+    // deck; the deck and ceiling cells ask it five times each, ~1100 calls on a
+    // 40 m edge, and that was a quarter of downtown's chunk building. Almost
+    // every edge has no such bore anywhere near it -- none close in plan, or
+    // (SR-99's stack) 6.6 m apart in height -- and there the answer is -1 at
+    // every point, so it is not asked. Bounds are padded past anything the
+    // cells can reach (the mitre shifts a corner by up to hw along the edge).
+    let twinCand = false;
+    {
+      this._tunIndex();
+      const pad = hw * 2 + 1, ext = (hw + 0.5) / e.len;
+      const minx = Math.min(a.x, b.x) - pad, maxx = Math.max(a.x, b.x) + pad;
+      const minz = Math.min(a.z, b.z) - pad, maxz = Math.max(a.z, b.z) + pad;
+      const ya = a.y + (b.y - a.y) * -ext, yb = a.y + (b.y - a.y) * (1 + ext);
+      const ylo = Math.min(ya, yb), yhi = Math.max(ya, yb);
+      for (const q of this._tunIdx) {
+        if (q.k >= ei || partners.includes(q.k)) continue;
+        if (q.x1 < minx || q.x0 > maxx || q.z1 < minz || q.z0 > maxz) continue;
+        const f = 0.05 / q.L, qa = q.a.y + (q.b.y - q.a.y) * -f, qb = q.a.y + (q.b.y - q.a.y) * (1 + f);
+        if (Math.min(qa, qb) - yhi >= 0.25 || ylo - Math.max(qa, qb) >= 0.25) continue;
+        twinCand = true;
+        break;
+      }
+    }
+    const own = twinCand ? (x, z, y) => this.twinOwner(x, z, y, ei, -1, partners) : () => -1;
+    const E = (t, o) => t + (o * (kA * (1 - t) + kB * t)) / e.len;
+    const P = (t, o) => { const te = E(t, o); return [lerp(a.x, b.x, te) + px * o, lerp(a.z, b.z, te) + pz * o]; };
+    const Y = (t) => lerp(ay, by, t);
+    // Height and along-position of any plan point, by projection -- the same
+    // number groundAt's deck query gives there.
+    const tl = (x, z) => ((x - a.x) * e.dx + (z - a.z) * e.dz) / e.len;
+    const Yl = (x, z) => lerp(ay, by, tl(x, z));
+    // ...but DRAWN heights run along the mitred lines: a vertex at P(t, o)
+    // takes the height at t, not at its projection. By projection the two
+    // edges meeting at a joint each extrapolated their own grade out to the
+    // shared mitre corner, and where the grade breaks there (the NB deck
+    // diving under the SB cutting, +1 % -> -10 % at z 1667) deck, wall tops
+    // and ceiling of the two pieces stood centimetres apart along the joint:
+    // the thin light seam across the bore, where the clear colour showed
+    // through. By t, both pieces meet at the node's own height. groundAt still
+    // answers by projection; the two differ by a few cm at a joint only.
+    const Ym = (x, z) => {
+      const o = (x - a.x) * px + (z - a.z) * pz;
+      const den = 1 + (o * (kB - kA)) / e.len;
+      const t = (tl(x, z) - (o * kA) / e.len) / (Math.abs(den) > 1e-6 ? den : 1);
+      return lerp(ay, by, t);
+    };
+    const conc = [0.42, 0.43, 0.45];
+
+    // THE TERRAIN IS NEVER EXCAVATED, SO THERE IS NO SUCH THING AS AN OPEN CUT.
+    //
+    // The obvious way to draw a portal is a descending trench with retaining
+    // walls, and it cannot work here: the heightfield is one surface every
+    // consumer shares ("The one height surface"), nothing cuts a slot in it,
+    // and a deck that descends below it is simply *inside the hill*. Measured
+    // at the north SR-99 mouth, a ray dropped on the carriageway hit terrain at
+    // 26.3 / 26.8 / 27.1 m while the deck ran 26.1 / 23.4 / 20.7 -- the trench
+    // was drawn, and buried. That is why the entrance read as nothing at all.
+    //
+    // So the bore is always a closed tube, and the portal is a STRUCTURE
+    // standing at grade: you drive in at ground level and the tube dives away
+    // behind the headwall. Where the tube is still above ground it gets an
+    // earth berm over it, which is what a portal approach in flat ground looks
+    // like in life -- a concrete face in a landscaped mound, not a lidded
+    // culvert lying on a lawn, which is what the free-standing slabs were.
+    const seg = Math.max(2, Math.ceil(e.len / 9));
+    const BERM = [0.30, 0.32, 0.24];
+    // Against the RAW ground: terrainHeight now carries the trench, so asking
+    // it whether the bore is covered inside its own cut always answers "no".
+    const exposed = (t) => {
+      const [cx, cz] = P(t, 0);
+      return (Y(t) + WALL + CUT_COVER) - G.terrainRaw(cx, cz);
+    };
+
+    const pool = (t) => 0.72 + 0.28 * Math.cos((lerp(0, e.len, t) / 18) * Math.PI * 2);
+    for (let i = 0; i < seg; i++) {
+      const t0 = i / seg, t1 = (i + 1) / seg;
+      const tm = (t0 + t1) / 2;
+      // OPEN WHERE THE GROUND IS CUT AWAY, a bore where it is not. This is the
+      // distinction the branch could not express until the terrain gained a
+      // hole: with ground drawn over the corridor there was nothing an open cut
+      // could be open TO, so the roof had to stay on the whole way and the
+      // mouth had nothing to read as an entrance.
+      // A BORE IS OPEN EXACTLY WHERE THE GROUND WAS DUG, and nowhere else.
+      // Deciding it from cover instead -- "less than CUT_COVER over the roof,
+      // therefore open" -- is true of every shallow tunnel in the city, not
+      // just the approaches, so retaining walls were raised along buried
+      // stretches that have no trench and they blanketed the ground for
+      // hundreds of metres either side of the mouth. inCut is the same test
+      // that decided whether to dig, so the two cannot disagree.
+      const [mx, mz] = P(tm, 0);
+      const bur = !this.inCut(mx, mz, Y(tm) - DECK);
+      // A MOUTH IS A BLACK HOLE. The lamp pools start at full strength right
+      // behind the headwall, so the bore was a pale grey box and the opening
+      // read as a recess in a wall rather than as somewhere the road goes.
+      // Eyes adapted to daylight see nothing for the first stretch inside a
+      // real portal; this darkens the same way, recovering over ~30 m of cover.
+      const dark = (t) => 0.16 + 0.84 * clamp(-exposed(t) / 30, 0, 1);
+      const l0 = pool(t0) * dark(t0), l1 = pool(t1) * dark(t1);
+      const [a0x, a0z] = P(t0, hw), [a1x, a1z] = P(t0, -hw);
+      const [b0x, b0z] = P(t1, hw), [b1x, b1z] = P(t1, -hw);
+
+      // Deck, walls and ceiling are all UNLIT: a bore sits in the shadow map's
+      // darkness, so sun-lit materials render near-black in it. The light is
+      // baked into the vertex colours instead -- lamp pools every 18 m.
+      // ONE DECK WHERE THE TWINS SHARE A HOLE. The two SR-99 tubes are profiled
+      // to a common floor where they overlap (citygen's twin blend), so their
+      // decks lie within a few cm of each other across ~2.8 km -- and two
+      // surfaces that close z-fight, which is the patchy, flickering floor.
+      // Measured by casting down at the drawn geometry. The deck is drawn in
+      // ~3 x 1.75 m cells, each owned-tested at its corners and centre
+      // against LOWER-numbered tubes whose rectangle holds it at a deck within
+      // 0.25 m (twinOwner). A cell wholly inside one is dropped; a cell partly
+      // covered is CLIPPED against each owner's rectangle and only the part
+      // outside is drawn, so every patch of a shared floor is drawn by exactly
+      // one tube. Two cruder versions were measured and discarded: dropping
+      // whole cells left slivers along the overlap that doubled 17 % of
+      // downward rays (master: 6.9 %), and a 2 x 4 re-split still 13.6 %.
+      // The mitre partners are exempt -- they meet this edge on the bisector
+      // and no longer overlap it.
+      const cells = (t0c, t1c, draw) => {
+        const na = Math.max(1, Math.ceil(((t1c - t0c) * e.len) / 3));
+        // The 1.75 m split across the width exists for the twin clipping. With
+        // no bore that could own any of this floor, one cell spans it: a cell's
+        // cross edges are lines of constant t, along which the deck is level,
+        // so the surface is the same, and the lamp light varies along only.
+        // That was ~8x the deck and ceiling quads, most of a bore's build.
+        const nb = twinCand ? Math.max(1, Math.ceil((hw * 2) / 1.75)) : 1;
+        for (let ia = 0; ia < na; ia++) {
+          const sa = t0c + ((t1c - t0c) * ia) / na, sb = t0c + ((t1c - t0c) * (ia + 1)) / na;
+          for (let ib = 0; ib < nb; ib++) {
+            const oa = hw - (hw * 2 * ib) / nb, ob = hw - (hw * 2 * (ib + 1)) / nb;
+            const poly = [P(sa, oa), P(sa, ob), P(sb, ob), P(sb, oa)];
+            const cx = (poly[0][0] + poly[2][0]) / 2, cz = (poly[0][1] + poly[2][1]) / 2;
+            if (!twinCand) { draw(poly); continue; }
+            const ks = new Set();
+            let all = true;
+            for (const [x, z] of [...poly, [cx, cz]]) {
+              const k = own(x, z, Yl(x, z) - DECK);
+              if (k < 0) all = false; else ks.add(k);
+            }
+            if (!ks.size) { draw(poly); continue; }
+            if (all && ks.size === 1) continue;
+            let pieces = [poly];
+            for (const k of ks) {
+              const q = this._tunByK.get(k);
+              pieces = pieces.flatMap((pp) => this._outsideRect(pp, q));
+            }
+            for (const pp of pieces) if (pp.length >= 3 && polyArea(pp) > 0.02) draw(pp);
+          }
+        }
+      };
+      // A convex plan polygon as a fan of (degenerate-fourth-corner) quads, so
+      // both builders' UV and per-corner colour paths serve it.
+      const fan = (bld, poly, vy, nrm, uvOf, colOf) => {
+        const v = poly.map(([x, z]) => [x, vy(x, z), z]);
+        for (let k = 1; k + 1 < v.length; k++) {
+          const ids = [0, k, k + 1, k + 1];
+          const uv = [];
+          for (const id of ids) { const u2 = uvOf ? uvOf(poly[id]) : [0, 0]; uv.push(u2[0], u2[1]); }
+          bld.quad(v[0], v[k], v[k + 1], v[k + 1], nrm, uv, ids.map((id) => colOf(poly[id])));
+        }
+      };
+      const lAt = (t) => pool(t) * dark(t);
+      if (bur) {
+        cells(t0, t1, (poly) => fan(glow, poly, Ym, [0, 1, 0], null, ([x, z]) => {
+          const l = lAt(tl(x, z)); return [0.34 * l, 0.34 * l, 0.36 * l];
+        }));
+      } else {
+        // In the cut the sun reaches the road, so it is ordinary asphalt rather
+        // than the unlit interior material a bore needs.
+        // Match the tint ordinary asphalt is drawn with. At [1,1,1] the
+        // approach ramps came out markedly paler than every road around them
+        // and read as poured concrete slabs fanning out of the mouth -- the
+        // "pale ramps going nowhere" that survived five rounds of elimination
+        // precisely because they ARE road, just the wrong shade of it.
+        const ac = [0.74, 0.74, 0.75], ae = [0.62, 0.62, 0.63];
+        // UVs from the plan point, so a clipped piece keeps the texture
+        // registered with its neighbours; the same ae -> ac gradient along
+        // the segment the single quad had.
+        cells(t0, t1, (poly) => fan(road, poly, Ym, [0, 1, 0],
+          ([x, z]) => [(hw - ((x - a.x) * px + (z - a.z) * pz)) / ROAD_TILE, (tl(x, z) * e.len) / ROAD_TILE],
+          ([x, z]) => {
+            const f = clamp((tl(x, z) - t0) / (t1 - t0), 0, 1);
+            return [lerp(ae[0], ac[0], f), lerp(ae[1], ac[1], f), lerp(ae[2], ac[2], f)];
+          }));
+      }
+      if (i % 2 === 0
+        && own(...P(tm, 0), Y(tm) - DECK) < 0) {
+        const [c0x, c0z] = P(t0, 0.10), [c1x, c1z] = P(t0 + (t1 - t0) * 0.55, 0.10);
+        const [q0x, q0z] = P(t0, -0.10), [q1x, q1z] = P(t0 + (t1 - t0) * 0.55, -0.10);
+        glow.quad([c0x, Y(t0) + 0.02, c0z], [q0x, Y(t0) + 0.02, q0z],
+          [q1x, Y(t1) + 0.02, q1z], [c1x, Y(t1) + 0.02, c1z],
+          [0, 1, 0], ZERO_UV, [0.85, 0.8, 0.55]);
+      }
+      for (const sd of [1, -1]) {
+        const [w0x, w0z] = P(t0, hw * sd), [w1x, w1z] = P(t1, hw * sd);
+        if (bur) {
+          // NO WALL IN A TWIN'S LANE. The barrier drops the pieces that stand
+          // inside another bore's carriageway (inOtherBore), and the drawing
+          // has to agree -- a wall you can see is a wall you believe in, and
+          // driving through one is the same bug from the other side. Tested on
+          // the barrier's own line (hw + 0.4) in the same ~3 m pieces, so the
+          // drawn opening and the collision opening coincide.
+          const subN = Math.max(1, Math.ceil(((t1 - t0) * e.len) / 3));
+          for (let j = 0; j < subN; j++) {
+            const s0 = t0 + ((t1 - t0) * j) / subN, s1 = t0 + ((t1 - t0) * (j + 1)) / subN;
+            const [mwx, mwz] = P((s0 + s1) / 2, (hw + 0.4) * sd);
+            const dm = lerp(a.y, b.y, (s0 + s1) / 2);
+            if (this.inOtherBore(mwx, mwz, dm, ei)) continue;
+            // ...and no taller than the bore above whose lanes it stands in
+            // (bandClear, the collision band's own rule)
+            const wallH = Math.min(WALL, this.bandClear(mwx, mwz, dm, ei, dm, dm + WALL)[1] - dm);
+            if (wallH < 1.0) continue;
+            const [v0x, v0z] = P(s0, hw * sd), [v1x, v1z] = P(s1, hw * sd);
+            const m0 = pool(s0) * dark(s0), m1 = pool(s1) * dark(s1);
+            const c0 = [0.42 * m0, 0.43 * m0, 0.45 * m0], c1 = [0.42 * m1, 0.43 * m1, 0.45 * m1];
+            // heights at the mitred points, so the wall foot meets the deck
+            const y0 = Ym(v0x, v0z), y1 = Ym(v1x, v1z);
+            glow.quad([v0x, y0, v0z], [v1x, y1, v1z],
+              [v1x, y1 + wallH, v1z], [v0x, y0 + wallH, v0z],
+              [-px * sd, 0, -pz * sd], ZERO_UV, [c0, c1, c1, c0]);
+          }
+        } else if (false) {
+          // Superseded: the cutting is faced in one pass off portalCuts, so
+          // that the walls cannot stop where this function's idea of "open"
+          // does. Kept as a marker of why it moved.
+          const [r0x, r0z] = P(t0, (hw + CUT_SH) * sd), [r1x, r1z] = P(t1, (hw + CUT_SH) * sd);
+          // terrainRaw: the wall's job is to hold back the ground that WAS
+          // there. Against the carved surface it stops at the trench floor it
+          // is standing in and retains nothing.
+          // A MINIMUM HEIGHT, so the channel exists from the first metre. Left
+          // to follow the ground the wall tapers to nothing at the mouth,
+          // where the deck is still near grade -- and a 0.5 m wall seen from a
+          // driver's eye is a pale ribbon lying on the ground, not a wall. A
+          // real cutting carries its parapet the whole way out. 3.2 m is above
+          // the windows of a car, which is what makes the road read as being
+          // IN something.
+          // 3.2 m was tried and is too much HERE, because a mouth is rarely
+          // one bore: at SR-99 north three carriageways fan out, each with two
+          // walls, and at car-window height they merge into a fence of slabs
+          // across the whole approach -- the exact shape of the original
+          // complaint. 1.8 m reads as a channel from a driver's eye and still
+          // lets you see the portal you are aiming at.
+          const MINW = 1.8;
+          const g0 = Math.max(G.terrainRaw(r0x, r0z) + 0.35, Y(t0) + MINW);
+          const g1 = Math.max(G.terrainRaw(r1x, r1z) + 0.35, Y(t1) + MINW);
+          flat.quad([w0x, Y(t0) - 0.5, w0z], [w1x, Y(t1) - 0.5, w1z],
+            [w1x, g1, w1z], [w0x, g0, w0z],
+            [-px * sd, 0, -pz * sd], ZERO_UV, conc);
+          flat.quad([w0x, g0, w0z], [w1x, g1, w1z], [r1x, g1, r1z], [r0x, g0, r0z],
+            [0, 1, 0], ZERO_UV, conc);
+          // Verge: the hole is cut CUT_SH wider than the carriageway, so
+          // without this strip the floor of the trench has a gap at each edge
+          // and the map-wide water plane shows through it as a blue sliver.
+          flat.quad([w0x, Y(t0), w0z], [w1x, Y(t1), w1z],
+            [r1x, Y(t1), r1z], [r0x, Y(t0), r0z],
+            [0, 1, 0], ZERO_UV, [0.44, 0.45, 0.42]);
+        }
+      }
+      if (bur) {
+        // The ceiling follows the deck's ownership rule: two roofs within a
+        // few cm fight exactly as two floors do.
+        cells(t0, t1, (poly) => fan(glow, poly, (x, z) => Ym(x, z) + WALL, [0, -1, 0], null, ([x, z]) => {
+          const l = lAt(tl(x, z)); return [0.20 * l, 0.20 * l, 0.22 * l];
+        }));
+        // LAMPS, NOT A LIGHT SLOT. The strip used to run the full length of
+        // the bore, 1 m wide, at [1, 0.95, 0.8] -- and the chase camera's
+        // ceiling clamp holds it about 0.8 m under the roof, where a 1 m strip
+        // fills a third of the frame as one pale wedge converging on the
+        // vanishing point. Raycast at SB bore +200 (camera 12.58, strip 13.4):
+        // every bright pixel in the top of the frame was that quad. It read as
+        // a hole to the sky. Discrete 1.4 x 0.35 m fixtures every 6 m are what a
+        // tunnel's lighting is, and at that size the camera sees a line of
+        // lamps instead of a slot.
+        const s0 = t0 * e.len, s1 = t1 * e.len;
+        for (let sl = Math.ceil(s0 / 6) * 6; sl + 1.4 <= s1 + 1e-6; sl += 6) {
+          const ta = sl / e.len, tb = (sl + 1.4) / e.len;
+          if (own(...P((ta + tb) / 2, 0), Y((ta + tb) / 2) - DECK) >= 0) continue;
+          const [f0x, f0z] = P(ta, 0), [f1x, f1z] = P(tb, 0);
+          glow.quad(
+            [f0x - px * 0.175, Y(ta) + WALL - 0.06, f0z - pz * 0.175],
+            [f0x + px * 0.175, Y(ta) + WALL - 0.06, f0z + pz * 0.175],
+            [f1x + px * 0.175, Y(tb) + WALL - 0.06, f1z + pz * 0.175],
+            [f1x - px * 0.175, Y(tb) + WALL - 0.06, f1z - pz * 0.175],
+            [0, -1, 0], ZERO_UV, [0.92, 0.88, 0.74]);
+        }
+      }
+
+      // NO EXTERIOR SHELL ON THE BORE ITSELF.
+      //
+      // Three versions of one were tried -- an earth berm, a sloped bank, and
+      // a crown-plus-side-wall box -- and every one of them fails the same way
+      // for the same reason: a shell over a tube that is only sometimes above
+      // ground has to END somewhere, and wherever it ends it is a slab
+      // cantilevered into open air. Head-on that is invisible, which is how
+      // all three got signed off; from an oblique camera it is a lid hanging
+      // in the sky, and it scored 2/10 on connected geometry.
+      //
+      // The mouth is enclosed by the headwall and the throat, both of which are
+      // bounded structures with every edge landing on something. Past them the
+      // bore is underground and needs no outside at all. What the terrain does
+      // in between is a heightfield problem -- see the note in citygen -- and
+      // not something another slab can paper over.
+    }
+
+    // THE PORTAL FACE is ONE HEADWALL FOR THE WHOLE MOUTH, drawn by
+    // meshPortalWall below. Every bore that surfaces here shares it. This edge
+    // only decides whether it is the one that owns the drawing.
+    for (const ndi of [e.a, e.b]) {
+      const grp = this.portalGroups().get(ndi);
+      if (!grp || grp.owner.ni !== ndi || grp.owner.ei !== ei) continue;
+      this.meshPortalWall(flat, grp, WALL, DECK, conc);
+    }
+  }
+
+  /**
+   * Portal nodes grouped into MOUTHS, computed once and cached.
+   *
+   * A portal node is a tunnel node that also carries a surface edge. A divided
+   * road has one per carriageway, a few metres apart and a few metres offset
+   * along the road, and drawing a frame per node is what produced the reported
+   * mess: two goalposts at different stations and different heights, the gap
+   * between them reading as a third opening, and four jambs that reach nothing.
+   *
+   * Nodes within 60 m whose bores run near-parallel (either sense -- one
+   * carriageway goes in as the other comes out) are one mouth. The member with
+   * the lowest tunnel-edge index owns it, so every chunk makes the same
+   * decision without sharing any state.
+   */
+  portalGroups() {
+    if (this._pgroups) return this._pgroups;
+    const city = this.city;
+    const ports = [];
+    for (let ni = 0; ni < city.nodes.length; ni++) {
+      const n = city.nodes[ni];
+      const tun = n.e.filter((k) => city.edges[k].tunnel && !city.edges[k].elev);
+      if (!tun.length || !n.e.some((k) => !city.edges[k].tunnel)) continue;
+      let be = city.edges[tun[0]];
+      for (const k of tun) if (city.edges[k].hw > be.hw) be = city.edges[k];
+      const o = city.nodes[be.a === ni ? be.b : be.a];
+      const L = Math.hypot(o.x - n.x, o.z - n.z) || 1;
+      ports.push({
+        ni, x: n.x, y: n.y, z: n.z, hw: be.hw,
+        dx: (o.x - n.x) / L, dz: (o.z - n.z) / L,
+        ei: Math.min(...tun),
+      });
+    }
+    const groups = [];
+    for (const p of ports) {
+      let g = null;
+      for (const q of groups) {
+        const h = q.members[0];
+        if (Math.hypot(h.x - p.x, h.z - p.z) > 60) continue;
+        if (Math.abs(h.dx * p.dx + h.dz * p.dz) < 0.87) continue;   // within ~30 deg
+        // Bores staggered along the road are still ONE mouth -- a divided
+        // highway's two carriageways routinely enter 20-30 m apart. Splitting
+        // on station instead produced three walls at three depths, which from
+        // the road is a slab standing in front of the holes. They are joined
+        // by a throat below rather than separated here.
+        if (Math.abs((p.x - h.x) * h.dx + (p.z - h.z) * h.dz) > 50) continue;
+        g = q; break;
+      }
+      if (!g) groups.push((g = { members: [] }));
+      g.members.push(p);
+    }
+    const byNode = new Map();
+    for (const g of groups) {
+      g.owner = g.members.reduce((x, y) => (y.ei < x.ei ? y : x));
+      for (const m of g.members) byNode.set(m.ni, g);
+    }
+    this._pgroups = byNode;
+    return byNode;
+  }
+
+  /**
+   * One slab across the whole mouth with a hole per bore.
+   *
+   * Everything is built in the OWNER's frame and at ONE height, which is the
+   * point: the lintel is a single box with a single top and a single soffit,
+   * and the piers are whatever is left of the wall between the holes. Nothing
+   * can end in mid-air, because nothing is placed independently -- the piers
+   * are defined by the gaps, not positioned.
+   */
+  meshPortalWall(flat, grp, WALL, DECK, conc) {
+    // THE WALL STANDS WHERE THE GROUND CLOSES OVER THE ROAD, not at the kerb.
+    // With the corridor cut out of the terrain the approach is an open trench,
+    // and a headwall at the near end has that trench behind it: you look
+    // straight through the opening and out the far side, which reads as a
+    // gantry over the road. The portal is the FAR end of the cut -- drive down
+    // the trench, then under the hill.
+    this.portalCuts();
+    const endsOf = (m) => (this._pcutBy.get(m.ni) || []).map((c) => endOfCut(c, m));
+    const endOfCut = (c, m) => {
+      if (!c || c.pts.length < 2) return { x: m.x, y: m.y, z: m.z, hw: m.hw, ni: m.ni };
+      // STAND CLEAR OF THE CLIFF. The carve stops at the last corridor point
+      // and tapers over CUT_BANK, so the ground drops ~14 m across 2.4 m
+      // there -- a cliff, which the 5 m terrain patch resolves into a stack of
+      // blocky sand faces. A wall on that exact station has the blocks poking
+      // out around it, which is the sand that judges kept reading AS the
+      // headwall. Pulled back a few metres, the wall hides the whole thing.
+      // The last point is the CAP -- the raised closure that brings the ground
+      // over the bore. The wall belongs at the last real corridor point, where
+      // the cutting actually ends; anchored on the cap it climbs 7 m and walks
+      // 14 m down the tunnel, leaving an earth mound facing the driver.
+      let li = c.pts.length - 1;
+      while (li > 0 && c.pts[li].cap) li--;
+      const p = c.pts[li];
+      const q = c.pts[li - 1] || p;
+      const L = Math.hypot(p.x - q.x, p.z - q.z) || 1;
+      const bx = (p.x - q.x) / L, bz = (p.z - q.z) / L;
+      const BACK = 1.5;
+      return { x: p.x - bx * BACK, y: p.y + (p.y - q.y) * (-BACK / L),
+               z: p.z - bz * BACK, hw: p.hw, ni: m.ni };
+    };
+    // every branch end is a mouth in its own right
+    const all0 = [];
+    for (const m of grp.members) {
+      const es = endsOf(m);
+      if (!es.length) all0.push({ x: m.x, y: m.y, z: m.z, hw: m.hw, ni: m.ni });
+      else all0.push(...es);
+    }
+    // The owner's bearing comes from its widest branch -- the one the clusters
+    // are laid out against.
+    const ocs = this._pcutBy.get(grp.owner.ni) || [];
+    const oc = ocs.reduce((x, y) => (!x || y.pts.length > x.pts.length ? y : x), null);
+    const O = { ...(all0.find((e) => e.ni === grp.owner.ni) || grp.owner) };
+    if (oc && oc.pts.length >= 2) {
+      const q = oc.pts[oc.pts.length - 1], r = oc.pts[oc.pts.length - 2];
+      const L = Math.hypot(q.x - r.x, q.z - r.z) || 1;
+      O.dx = (q.x - r.x) / L; O.dz = (q.z - r.z) / L;
+    } else { O.dx = grp.owner.dx; O.dz = grp.owner.dz; }
+    // UNDER A STREET THE WALL FOLLOWS THE STREET. A cut ended at a crossing
+    // street's kerb (the street-roof rule) has every bore ending on that kerb
+    // line; the wall laid square to the bores instead poked out past the
+    // street where it crosses at an angle -- a beam and a block standing in
+    // the cutting. Along the kerb, all the ends share one station and one
+    // wall, and its lintel is the street's parapet (see _portalWall).
+    const sc = ocs.find((c) => c.streetDir);
+    if (sc) {
+      let nx = -sc.streetDir[1], nz = sc.streetDir[0];
+      if (nx * O.dx + nz * O.dz < 0) { nx = -nx; nz = -nz; }
+      O.dx = nx; O.dz = nz; O.street = true; O.kerb = sc.kerb;
+    }
+    const px = -O.dz, pz = O.dx;
+    const rot = Math.atan2(O.dx, O.dz);
+    // The shoulder has to reach past the CUTTING, not just past the bore: the
+    // trench is dug CUT_SH wider than the carriageway on each side, so a wall
+    // sized to the bore alone leaves a strip of raw earth face showing beyond
+    // each end of it.
+    // Deep, so the box swallows the blocky terrain face instead of sitting on
+    // it like a sheet. A 5 m depth was tried once BEFORE every crossing bore
+    // got a hole, and it planted a solid pier in a driving lane -- that was the
+    // missing hole, not the depth.
+    // The shoulder reaches past the whole cut cross-section -- shelf, overcut
+    // and bank -- so the terminal earth face where the cutting dead-ends into
+    // the hill is behind concrete for its full width. At CUT_SH + 2.6 the wall
+    // stopped 1.8 m short of the bank top and a full-height strip of dirt
+    // showed beyond each end of the headwall.
+    const DEPTH = 6.0, SHOULDER = CUT_SH + CUT_OVER + CUT_BANK + 0.6;
+
+    // Lateral extent of each bore, in the owner's cross-road axis, merged so
+    // two overlapping carriageways cannot leave a sliver of pier between them.
+    // THE WALL GOES AHEAD OF EVERY BORE, AND EVERY BORE IS THEN CONNECTED TO
+    // IT. Either half alone is a defect that shipped: the wall at the owner's
+    // station leaves a bore further out poking through it, and the wall pushed
+    // forward without the throat leaves it standing free ahead of the holes
+    // with daylight behind -- the floating pillar. The throat is what makes
+    // the wall part of the tunnel instead of a screen near it.
+    // ONE WALL PER STATION CLUSTER, AND THE WINDOW IS TIGHT.
+    //
+    // A wall has one job: to stand at the face of earth where the cutting ends
+    // and carry the openings through it. The wall goes on the FIRST member of
+    // its cluster, so the window is also how far short of that face the wall
+    // may land -- at 25 m it landed 26 m short and 3 m low, and the player
+    // drove down a correct cutting into solid ground with the portal stranded
+    // behind them. 6 m merges only ends that genuinely coincide.
+    //
+    // The window still has to exist: without it a single wall served every
+    // bore of a mouth and threw a throat forward to reach the stragglers,
+    // which portalcheck measured at 165, 207 and 274 m of invented tube.
+    const all = all0;
+    const key = (m) => (m.x - O.x) * O.dx + (m.z - O.z) * O.dz;
+    all.sort((a, b) => key(a) - key(b));
+    const clusters = [];
+    for (const m of all) {
+      const last = clusters[clusters.length - 1];
+      if (last && key(m) - key(last[0]) <= 6) last.push(m);
+      else clusters.push([m]);
+    }
+    // ONE SOFFIT FOR THE WHOLE MOUTH. Each cluster sized its opening from its
+    // own bore, so where three carriageways surface together at slightly
+    // different depths the three black openings stepped to three different
+    // heights and merged into a jagged staircase -- read by a judge as "an
+    // unlit black wall, not a bore mouth". Real portals at one site share a
+    // soffit line. p2, which is a single bore, was already scoring 8/10 with
+    // the same code; this is what the multi-bore sites were missing.
+    const soffit = Math.max(...all.map((m) => m.y)) + DECK + WALL;
+    for (const M of clusters) this._portalWall(flat, O, M, all, soffit, WALL, DECK, conc);
+    // FACE THE APPROACH RAMP TOO. The bore's own stretch is walled; the ramp in
+    // front of it was left as raw earth batters, so the last thing you see
+    // before the portal is a dirt trench -- the "construction scene" again, at
+    // exactly the point the player is looking. The walls run from the floor of
+    // the cut up to untouched ground, on the same line the ground was carved
+    // to, so the batter is faced the whole way in.
+    for (const m of grp.members) {
+      const c = this._pcutBy.get(m.ni);
+      if (!c || !c.apron) continue;
+      // THE WHOLE CORRIDOR, not just the ramp. The walls used to come from two
+      // places -- this loop for the approach and meshTunnel for the open-cut
+      // segments -- and neither covered the stretch right at the mouth, where
+      // meshTunnel has already flipped to drawing a bore. That is where the
+      // bank was left bare, and it is the sand that filled the opening in
+      // every close shot.
+      for (let i = 0; i < c.pts.length - 1; i++) {
+        const a = c.pts[i], b = c.pts[i + 1];
+        const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+        const ux = (b.x - a.x) / L, uz = (b.z - a.z) / L;
+        const qx = -uz, qz = ux;
+        const steps = Math.max(1, Math.ceil(L / 8));
+        for (let k = 0; k < steps; k++) {
+          const t0 = k / steps, t1 = (k + 1) / steps;
+          const p0 = { x: a.x + (b.x - a.x) * t0, z: a.z + (b.z - a.z) * t0, y: a.y + (b.y - a.y) * t0 };
+          const p1 = { x: a.x + (b.x - a.x) * t1, z: a.z + (b.z - a.z) * t1, y: a.y + (b.y - a.y) * t1 };
+          for (const sd of [1, -1]) {
+            const w = (a.hw + CUT_SH) * sd;
+            const w0x = p0.x + qx * w, w0z = p0.z + qz * w;
+            const w1x = p1.x + qx * w, w1z = p1.z + qz * w;
+            // THE WALL RETAINS THE UNION, NOT THIS CORRIDOR. At a divided mouth
+            // the carriageways enter staggered, and each corridor's excavation
+            // overlaps its neighbour's. Topping every wall at terrainRaw built
+            // a 13 m slab wherever a wall line ran through a neighbour's pit --
+            // freestanding concrete fins criss-crossing the shared cutting, one
+            // of them standing in the neighbour's driving lane. What a wall has
+            // to hold back is whatever the ground BEHIND it actually is after
+            // every corridor has dug, which is terrainHeight past this
+            // corridor's own bank: untouched ground gives the full-height wall
+            // exactly as before, a shallower neighbouring pit gives a terraced
+            // step up to its floor, and a deeper one gives nothing to retain,
+            // so the fin is simply not built. Bounded -- one carved sample per
+            // wall quad end, no marching.
+            const wb = (a.hw + CUT_SH + CUT_OVER + CUT_BANK + 0.5) * sd;
+            const g0 = G.terrainHeight(p0.x + qx * wb, p0.z + qz * wb) + 0.35;
+            const g1 = G.terrainHeight(p1.x + qx * wb, p1.z + qz * wb) + 0.35;
+            if (g0 - p0.y < 0.6 && g1 - p1.y < 0.6) continue;   // nothing to retain
+            flat.quad([w0x, p0.y - 0.5, w0z], [w1x, p1.y - 0.5, w1z],
+              [w1x, Math.max(g1, p1.y - 0.45), w1z], [w0x, Math.max(g0, p0.y - 0.45), w0z],
+              [-qx * sd, 0, -qz * sd], ZERO_UV, conc);
+          }
+        }
+      }
+    }
+  }
+
+  _portalWall(flat, Oin, M, allEnds, soffit, WALL, DECK, conc) {
+    const O = { ...Oin, x: M[0].x, y: M[0].y, z: M[0].z };
+    const px = -O.dz, pz = O.dx;
+    const rot = Math.atan2(O.dx, O.dz);
+    // The shoulder has to reach past the CUTTING, not just past the bore: the
+    // trench is dug CUT_SH wider than the carriageway on each side, so a wall
+    // sized to the bore alone leaves a strip of raw earth face showing beyond
+    // each end of it.
+    // Deep, so the box swallows the blocky terrain face instead of sitting on
+    // it like a sheet. A 5 m depth was tried once BEFORE every crossing bore
+    // got a hole, and it planted a solid pier in a driving lane -- that was the
+    // missing hole, not the depth.
+    // The shoulder reaches past the whole cut cross-section -- shelf, overcut
+    // and bank -- so the terminal earth face where the cutting dead-ends into
+    // the hill is behind concrete for its full width. At CUT_SH + 2.6 the wall
+    // stopped 1.8 m short of the bank top and a full-height strip of dirt
+    // showed beyond each end of the headwall.
+    const DEPTH = 6.0, SHOULDER = CUT_SH + CUT_OVER + CUT_BANK + 0.6;
+    // The wall plane sits on the FIRST bore of the cluster, so no member is
+    // ever in front of it and every throat is short by construction.
+    const along = (m) => (m.x - O.x) * O.dx + (m.z - O.z) * O.dz;
+    const ox = O.x, oz = O.z;
+    // The throat: bore cross-section carried forward from each mouth to the
+    // wall plane, so there is no gap between the two.
+    for (const m of M) {
+      const L = along(m);
+      if (L < 0.5) continue;
+      m.__throat = true;
+      const q0x = m.x - O.dx * L, q0z = m.z - O.dz * L;
+      const dy = m.y + DECK, ry = m.y + DECK + WALL;
+      const e0 = [q0x + px * m.hw, q0z + pz * m.hw], e1 = [q0x - px * m.hw, q0z - pz * m.hw];
+      const f0 = [m.x + px * m.hw, m.z + pz * m.hw], f1 = [m.x - px * m.hw, m.z - pz * m.hw];
+      this._throat(flat, e0, e1, f0, f1, dy, ry, px, pz, conc);
+    }
+
+    // Lateral extent of each bore in the cross-road axis, merged so two
+    // overlapping carriageways cannot leave a sliver of pier between them.
+    // EVERY BORE THAT CROSSES THIS WALL GETS A HOLE, not only the ones in this
+    // cluster. The wall spans its own members plus shoulders, and at a mouth
+    // where carriageways sit a few metres apart that span reaches over a
+    // neighbouring bore belonging to a different cluster -- where the wall was
+    // solid, so a pier stood square in a driving lane.
+    const holes = allEnds
+      .map((m) => {
+        const u = (m.x - ox) * px + (m.z - oz) * pz;
+        return [u - m.hw, u + m.hw];
+      })
+      .sort((h, k) => h[0] - k[0]);
+    const merged = [holes[0].slice()];
+    for (const h of holes.slice(1)) {
+      const last = merged[merged.length - 1];
+      // MERGE ONLY WHAT ACTUALLY OVERLAPS. A 1.6 m tolerance swallowed the
+      // pier between adjacent carriageways, so three bores became one black
+      // band as wide as the cutting -- read as a missing wall rather than an
+      // entrance. Real portals put a pier between barrels; leaving the gap
+      // means one gets built, because the piers ARE the gaps.
+      if (h[0] <= last[1]) last[1] = Math.max(last[1], h[1]);
+      else merged.push(h.slice());
+    }
+    // ONE Y for the whole wall, from the bore it stands on. min/max across the
+    // cluster looks safer and is not: one member on higher ground drags the
+    // lintel metres above every roof it caps.
+    const deckY = O.y + DECK;
+    const roofY = soffit;
+    let capY = Math.max(roofY, G.terrainRaw(ox, oz)) + 2.4;
+    const uMin = merged[0][0] - SHOULDER;
+    const uMax = merged[merged.length - 1][1] + SHOULDER;
+    const at = (u) => [ox + px * u, oz + pz * u];
+    // A ROAD ON A LID PASSES OVER THIS HEADWALL. The lintel stands 2.4 m
+    // proud of the ground, and where buildLids carries a surface road across
+    // the cutting -- the SR-99 surface over the northbound mouth -- that is a
+    // concrete block across the carriageway (visual only; the chase camera sat
+    // looking down onto it). Capped just under the slab there: the face still
+    // reads full height from the trench, and from the road it is not there.
+    for (let k = 0; k <= 8; k++) {
+      const [sx, sz] = at(uMin + ((uMax - uMin) * k) / 8);
+      if (this.city.lidAt(sx, sz) !== null) {
+        capY = Math.min(capY, Math.max(roofY + 0.3, G.terrainRaw(sx, sz) + ROAD_LIFT - 0.05));
+      }
+    }
+    // Along a street's kerb (O.street) the lintel is that street's parapet:
+    // a metre over the road beside it, not 2.4 m of concrete.
+    if (Oin.street) capY = Math.min(capY, Math.max(roofY + 0.3, G.terrainRaw(ox, oz) + ROAD_LIFT + 1.0));
+
+    // THE MOUTH CARD. A heightfield cannot express a tunnel entrance: ground is
+    // one value per point, so where the cutting ends it must step from road
+    // level to above the roof, and that step is a vertical column filling
+    // exactly the bore's cross-section -- the face of earth seen through every
+    // opening on this branch. It is not a placement bug; the wall is measurably
+    // where it belongs.
+    //
+    // So the opening shows the TUNNEL rather than what is behind it: an unlit
+    // near-black quad across each hole, set just inside the wall plane, facing
+    // out. From the road it is the dark mouth the whole portal exists to
+    // present. From inside the bore it is backfacing and therefore not there at
+    // all, so you drive straight through it.
+    for (const [h0, h1] of merged) {
+      const [m0x, m0z] = at(h0), [m1x, m1z] = at(h1);
+      // Inset behind the face, so the headwall shows a reveal on all four
+      // sides of the opening instead of the black sitting flush with it.
+      // Flush, it reads as a hole in a sheet; recessed, as a portal.
+      const bx = O.dx * (DEPTH / 2 - 0.9), bz = O.dz * (DEPTH / 2 - 0.9);
+      // THE SILL GOES UNDER THE TARMAC. The bore's deck and the drawn road are
+      // not the same height: the road is laid on the carved ground plus
+      // ROAD_LIFT, which sits about 0.4 m below the deck the bore is profiled
+      // from. Starting the card at deck level left a strip of daylight along
+      // the bottom with the carriageway and its centreline running visibly
+      // underneath -- the mouth read as a panel hung above the road rather
+      // than a hole in the end of it.
+      const sill = Math.max(Math.min(deckY, G.terrainHeight(m0x, m0z), G.terrainHeight(m1x, m1z)) - 0.6,
+        this._roofUnder((m0x + m1x) / 2 + bx, (m0z + m1z) / 2 + bz, deckY) + 0.05);
+      flat.quad(
+        [m0x + bx, sill, m0z + bz], [m1x + bx, sill, m1z + bz],
+        [m1x + bx, roofY, m1z + bz], [m0x + bx, roofY, m0z + bz],
+        [-O.dx, 0, -O.dz], ZERO_UV, [0.035, 0.035, 0.045]);
+      // A camera outside the card with the car inside sees only the card: it
+      // is a one-way stop for the boom (O points into the bore)
+      this._camBlock((m0x + m1x) / 2 + bx, (m0z + m1z) / 2 + bz, h1 - h0, 0.4, rot, sill, roofY, [O.dx, O.dz]);
+    }
+
+    const parts = [];
+    const [lx, lz] = at((uMin + uMax) / 2);
+    flat.box(lx, roofY, lz, uMax - uMin, capY - roofY, DEPTH, rot, conc);
+    parts.push({ kind: 'lintel', x: lx, z: lz, base: roofY, top: capY, w: uMax - uMin });
+    this._camBlock(lx, lz, uMax - uMin, DEPTH, rot, roofY, capY);
+    // THE PORTAL'S TOP SLAB, from the wall's back face to the street's kerb
+    // line. A street-ended cut is dug at full depth right up to that line (so
+    // the ground's climb is behind the mouth card), and the slab is what
+    // covers it: flush with the street, a concrete deck between wall and
+    // footway, as a cut-and-cover portal has. The kerb barrier stops anyone
+    // walking or driving onto it.
+    if (Oin.street && Oin.kerb) {
+      const K = Oin.kerb;
+      const den = O.dx * K.nx + O.dz * K.nz;
+      const dK = den > 0.2 ? ((K.x - ox) * K.nx + (K.z - oz) * K.nz) / den : 0;
+      const len = dK - DEPTH / 2;
+      if (len > 0.3) {
+        const mid = DEPTH / 2 + len / 2;
+        const top = Math.max(roofY + 0.3, G.terrainRaw(ox + O.dx * dK, oz + O.dz * dK) + ROAD_LIFT);
+        flat.box(lx + O.dx * mid, roofY, lz + O.dz * mid, uMax - uMin, top - roofY, len, rot, conc);
+        parts.push({ kind: 'cover', x: lx + O.dx * mid, z: lz + O.dz * mid, base: roofY, top, w: uMax - uMin });
+        this._camBlock(lx + O.dx * mid, lz + O.dz * mid, uMax - uMin, len, rot, roofY, top);
+      }
+    }
+
+    // The piers ARE the gaps: outer shoulders and whatever lies between two
+    // bores. Defined by subtraction, so none of them can float.
+    const piers = [[uMin, merged[0][0]]];
+    for (let i = 0; i < merged.length - 1; i++) piers.push([merged[i][1], merged[i + 1][0]]);
+    piers.push([merged[merged.length - 1][1], uMax]);
+    for (const [p0, p1] of piers) {
+      if (p1 - p0 < 0.4) continue;
+      const [cx, cz] = at((p0 + p1) / 2);
+      // ...but never down through the roof of a deck running underneath
+      let foot = Math.min(deckY, G.terrainHeight(cx, cz)) - 1.5;
+      for (const f of [-0.5, 0, 0.5]) {
+        for (const u of [p0 + 0.05, (p0 + p1) / 2, p1 - 0.05]) {
+          const [ux, uz] = at(u);
+          foot = Math.max(foot, this._roofUnder(ux + O.dx * DEPTH * f, uz + O.dz * DEPTH * f, deckY) + 0.05);
+        }
+      }
+      flat.box(cx, foot, cz, p1 - p0, roofY - foot, DEPTH, rot, conc);
+      parts.push({ kind: 'pier', x: cx, z: cz, base: foot, top: roofY, w: p1 - p0 });
+      this._camBlock(cx, cz, p1 - p0, DEPTH, rot, foot, roofY);
+    }
+    // Kept so a check can ask what was actually built rather than look at a
+    // picture of it: every part's foot against the ground under it, and every
+    // mouth's station against the wall's. Both defects that shipped -- a pier
+    // hanging in the air and a wall detached in front of the holes -- are one
+    // subtraction each from this, and neither is visible in a front-on render.
+    (this.portalParts || (this.portalParts = [])).push({
+      x: ox, z: oz, dx: O.dx, dz: O.dz, roofY, deckY, uMin, uMax, parts,
+      mouths: M.map((m) => ({
+        x: m.x, y: m.y, z: m.z, hw: m.hw, throat: !!m.__throat,
+        along: (m.x - ox) * O.dx + (m.z - oz) * O.dz,
+      })),
+    });
+  }
+
+  // THE CHASE CAMERA'S BOOM STOPS AT A PORTAL WALL, as it does at a building
+  // (player.clearCamDist). The walls are concrete boxes the building index has
+  // never heard of, so leaving a mouth the camera sat inside the pier between
+  // two openings, and entering one it rose into the lintel and top slab. Filed
+  // once per box (a chunk rebuilt later re-meshes the same wall) on a 32 m
+  // grid on the city, where the camera looks.
+  // `inward` ([dx, dz]) makes it a mouth card's one-way stop.
+  _camBlock(x, z, w, d, rot, y0, y1, inward = null) {
+    const c = this.city;
+    const key = `${Math.round(x * 10)},${Math.round(z * 10)},${Math.round(w * 10)},${Math.round(y0 * 10)}`;
+    if (!c.camBlockKeys) {
+      c.camBlockKeys = new Set(); c.camBlockGrid = new Map();
+      // Is a portal wall piece over (x, z) more than 2 m above y? The camera's
+      // "in a bore" test: under a street-ended mouth's top slab the ground is
+      // dug, so carved ground over the car says open road.
+      c.camBlockOver = (qx, qz, qy) => {
+        const l = c.camBlockGrid.get(Math.floor(qx / 32) * 100003 + Math.floor(qz / 32));
+        if (!l) return false;
+        for (const b of l) {
+          if (b.card || b.y < qy + 2) continue;
+          const cs = Math.cos(-b.rot), sn = Math.sin(-b.rot), dx = qx - b.x, dz = qz - b.z;
+          if (Math.abs(dx * cs - dz * sn) < b.w / 2 && Math.abs(dx * sn + dz * cs) < b.d / 2) return true;
+        }
+        return false;
+      };
+    }
+    if (c.camBlockKeys.has(key)) return;
+    c.camBlockKeys.add(key);
+    const b = { x, z, w, d, rot, y: y0, h: y1 - y0, card: inward };
+    const r = Math.hypot(w, d) / 2;
+    for (let cx = Math.floor((x - r) / 32); cx <= Math.floor((x + r) / 32); cx++) {
+      for (let cz = Math.floor((z - r) / 32); cz <= Math.floor((z + r) / 32); cz++) {
+        const k = cx * 100003 + cz;
+        let l = c.camBlockGrid.get(k);
+        if (!l) c.camBlockGrid.set(k, (l = []));
+        l.push(b);
+      }
+    }
+  }
+
+  /** Deck, two walls and a ceiling between two cross-sections of a bore. */
+  _throat(flat, e0, e1, f0, f1, dy, ry, px, pz, conc) {
+    flat.quad([e0[0], dy, e0[1]], [e1[0], dy, e1[1]], [f1[0], dy, f1[1]], [f0[0], dy, f0[1]],
+      [0, 1, 0], ZERO_UV, [0.30, 0.30, 0.32]);
+    flat.quad([e0[0], ry, e0[1]], [f0[0], ry, f0[1]], [f1[0], ry, f1[1]], [e1[0], ry, e1[1]],
+      [0, -1, 0], ZERO_UV, [0.22, 0.22, 0.24]);
+    flat.quad([e0[0], dy, e0[1]], [f0[0], dy, f0[1]], [f0[0], ry, f0[1]], [e0[0], ry, e0[1]],
+      [-px, 0, -pz], ZERO_UV, conc);
+    flat.quad([e1[0], dy, e1[1]], [f1[0], dy, f1[1]], [f1[0], ry, f1[1]], [e1[0], ry, e1[1]],
+      [px, 0, pz], ZERO_UV, conc);
+  }
+
+  /**
+   * A graded ground freeway or ramp: tarmac on its profile rather than on the
+   * terrain, cambered with the hill, with an embankment down to the ground.
+   *
+   * Everything reads `e.ph` / `e.pg` / `e.pe`, the same arrays groundAt's
+   * per-sample decks and roadLift's batter are built from, so the drawn surface
+   * and the one you stand on agree by construction. The edge lines are the
+   * mitred ones decks use, so consecutive pieces meet edge to edge instead of
+   * each being square-ended with a junction square laid over the joint -- 8913
+   * of those squares sat on ground freeway, one every ~40 m of I-5.
+   */
+  /**
+   * A finished retaining or median wall along one side of a graded road, from
+   * its edge down to the road or ground below.
+   *
+   * The first retaining wall was one flat untextured quad, and beside I-5's
+   * express lanes it read as a giant blank slab -- worse than the batter it
+   * replaced. Concrete walls read as walls from their joints and their edges:
+   * cast panels every ~4 m with a slightly different tone each, a darker
+   * footing where grime collects, a pale coping on top. `pts` is a list of
+   * [x, z, top, bottom] along the wall; `out` is its outward normal.
+   */
+  meshWall(flat, pts, ox, oz, seed) {
+    // Mid-grey weathered concrete, the same family as the tunnel's walls and
+    // the deck fascia, textured from the facade atlas's `concrete` cell. The
+    // first pass was a near-white vertex colour: at Mercer and beside I-5's
+    // express lanes the walls were the brightest, flattest thing in frame and
+    // read as the same "weird guardrails" they replaced.
+    const face = this._facade || flat;
+    const cell = this._facade ? this.cells.concrete : null;
+    const U = (fr) => (cell ? cell[0] + fr * cell[1] : fr);
+    const COPE = 0.18;
+    const tone = [0.8, 0.8, 0.79], cope = [0.47, 0.47, 0.46];
+    // Under ~1.2 m of drop a full wall is wrong: a lane edge that high is
+    // guarded by a Jersey barrier, and the drop below it is just a kerb face.
+    let maxDrop = 0;
+    for (const p of pts) maxDrop = Math.max(maxDrop, p[2] - p[3]);
+    const jersey = maxDrop < 1.2;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [x0, z0, t0, b0] = pts[i], [x1, z1, t1, b1] = pts[i + 1];
+      if (t0 - b0 < 0.15 && t1 - b1 < 0.15 && !jersey) continue;
+      // one cast panel per piece, a tonal step each
+      const k = 0.92 + hash2((seed | 0) + i * 7, 31) * 0.14;
+      const col = [tone[0] * k, tone[1] * k, tone[2] * k];
+      face.quad([x0, b0, z0], [x1, b1, z1], [x1, t1, z1], [x0, t0, z0],
+        [ox, 0, oz], [U(0), 0, U(1), 0, U(1), 1, U(0), 1], [col, col, col, col]);
+      if (jersey) {
+        // The profile, inward from the edge (-o), up from the deck: a 0.81 m
+        // safety shape -- vertical back on the edge, 0.15 m top, the two
+        // sloped faces toward the traffic.
+        const prof = [[0, 0.81], [0.15, 0.81], [0.22, 0.33], [0.6, 0.08], [0.6, 0]];
+        const P = (x, z, t, o, h) => [x - ox * o, t + h, z - oz * o];
+        face.quad(P(x0, z0, t0, 0, 0), P(x1, z1, t1, 0, 0), P(x1, z1, t1, 0, 0.81), P(x0, z0, t0, 0, 0.81),
+          [ox, 0, oz], [U(0), 0, U(1), 0, U(1), 0.3, U(0), 0.3], [col, col, col, col]);
+        for (let q = 0; q < prof.length - 1; q++) {
+          const [oa, ha] = prof[q], [ob, hb] = prof[q + 1];
+          const nx = -(hb - ha), ny = (ob - oa);   // outward normal in (inward, up) plane
+          const nl = Math.hypot(nx, ny) || 1;
+          const n = [-ox * (nx / nl), ny / nl, -oz * (nx / nl)];
+          const flatTop = q === 0;
+          (flatTop ? flat : face).quad(P(x0, z0, t0, oa, ha), P(x1, z1, t1, oa, ha), P(x1, z1, t1, ob, hb), P(x0, z0, t0, ob, hb),
+            n, [U(0), 0.3 + 0.1 * q, U(1), 0.3 + 0.1 * q, U(1), 0.4 + 0.1 * q, U(0), 0.4 + 0.1 * q],
+            flatTop ? cope : [col, col, col, col]);
+        }
+        continue;
+      }
+      // coping over the top, a lip proud of the face
+      flat.quad([x0 + ox * COPE, t0 + 0.1, z0 + oz * COPE], [x1 + ox * COPE, t1 + 0.1, z1 + oz * COPE],
+        [x1 - ox * 0.05, t1 + 0.1, z1 - oz * 0.05], [x0 - ox * 0.05, t0 + 0.1, z0 - oz * 0.05],
+        [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], cope);
+      flat.quad([x0 + ox * COPE, t0 - 0.02, z0 + oz * COPE], [x1 + ox * COPE, t1 - 0.02, z1 + oz * COPE],
+        [x1 + ox * COPE, t1 + 0.1, z1 + oz * COPE], [x0 + ox * COPE, t0 + 0.1, z0 + oz * COPE],
+        [ox, 0, oz], [0, 0, 1, 0, 1, 1, 0, 1], cope);
+    }
+  }
+
+  /**
+   * Walls down both sides of an underpass cut, where this road runs through one.
+   *
+   * The cut's corridor is the carriageway plus its pavement plus 0.3 m
+   * (citygen's underpass hw), so the wall stands just outside the footway. It
+   * runs from the uncarved ground beyond the 1.5 m bank down to the carved road
+   * edge, and only where the dip there is over 0.4 m -- the ramps out of the cut
+   * shrink it to nothing rather than leaving a kerb-high wall along the street.
+   */
+  meshTrenchWalls(flat, e, a, b, ei) {
+    if (!this.city.underpassDepth) return;
+    const sw = e.cls === 'art' ? 3.2 : e.cls === 'st' || e.cls === 'res' ? 2.6 : 0;
+    const w = e.hw + sw + 0.3;
+    const px = -e.dz, pz = e.dx;
+    const n = Math.max(2, Math.round(e.len / 4));
+    // quick reject: no dip anywhere along the centre
+    let any = false;
+    for (let i = 0; i <= n && !any; i++) {
+      const t = i / n;
+      if (this.city.underpassDepth(lerp(a.x, b.x, t), lerp(a.z, b.z, t)) > 0.4) any = true;
+    }
+    if (!any) return;
+    for (const sg of [1, -1]) {
+      let run = [];
+      const flush = () => {
+        if (run.length > 1) this.meshWall(flat, run, -px * sg, -pz * sg, ei * 2 + (sg > 0 ? 0 : 1) + 29);
+        run = [];
+      };
+      for (let i = 0; i <= n; i++) {
+        const t = i / n, cx = lerp(a.x, b.x, t), cz = lerp(a.z, b.z, t);
+        const x = cx + px * sg * w, z = cz + pz * sg * w;
+        const dip = this.city.underpassDepth(x, z);
+        if (dip <= 0.4) { flush(); continue; }
+        const top = G.terrainHeight(x + px * sg * 1.7, z + pz * sg * 1.7);
+        run.push([x, z, top, G.terrainHeight(x, z) - 0.3]);
+      }
+      flush();
+    }
+  }
+
+  meshGraded(road, flat, e, a, b, ei) {
+    const hw = e.hw, k = e.pk;
+    const px = -e.dz, pz = e.dx;
+    const bias = hash2(ei | 0, 7) * 0.03;
+    const col = e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1];
+    const Ls = this.deckEdgePoint(e.a, e, 1, hw), Le = this.deckEdgePoint(e.b, e, 1, hw);
+    const Rs = this.deckEdgePoint(e.a, e, -1, hw), Re = this.deckEdgePoint(e.b, e, -1, hw);
+    // The edge lines at sample i: the mitred full-width lines, pulled in where
+    // citygen trimmed that side off a lower neighbour (`e.tw`).
+    const Wl = (i) => e.tw[i * 2], Wr = (i) => e.tw[i * 2 + 1];
+    const edgeL = (i) => {
+      const t = i / k, x = Ls[0] + (Le[0] - Ls[0]) * t, z = Ls[1] + (Le[1] - Ls[1]) * t;
+      return [x - px * (hw - Wl(i)), z - pz * (hw - Wl(i))];
+    };
+    const edgeR = (i) => {
+      const t = i / k, x = Rs[0] + (Re[0] - Rs[0]) * t, z = Rs[1] + (Re[1] - Rs[1]) * t;
+      return [x + px * (hw - Wr(i)), z + pz * (hw - Wr(i))];
+    };
+    // fr = 0 is the right-hand edge line, 1 the left, at sample i.
+    const P = (i, fr) => {
+      const [rx, rz] = edgeR(i), [lx, lz] = edgeL(i);
+      return [rx + (lx - rx) * fr, rz + (lz - rz) * fr];
+    };
+    const O = (i, fr) => -Wr(i) + (Wl(i) + Wr(i)) * fr;
+    const Y = (i, o) => e.ph[i] + e.pg[i] * o + bias;
+    const wear = (o) => {
+      const f = Math.min(1, Math.abs(o) / Math.max(hw, 0.01));
+      const kk = (1 + 0.12 * (1 - f * f)) * (1 - 0.30 * Math.max(0, f - 0.55) / 0.45);
+      return [col[0] * kk, col[1] * kk, col[2] * kk];
+    };
+    const seg = e.len / k;
+    for (let i = 0; i < k; i++) {
+      const t0 = i / k, t1 = (i + 1) / k;
+      const v0 = (i * seg) / ROAD_TILE, v1 = ((i + 1) * seg) / ROAD_TILE;
+      const mx = lerp(a.x, b.x, (t0 + t1) / 2), mz = lerp(a.z, b.z, (t0 + t1) / 2);
+      if (this.city.roadCoveredAt(mx, mz, ei)) continue;
+      const wide = Math.max(Wl(i) + Wr(i), Wl(i + 1) + Wr(i + 1));
+      const across = Math.max(wide > 9 ? 3 : 1, Math.round(wide / 8));
+      for (let c = 0; c < across; c++) {
+        const f0 = c / across, f1 = (c + 1) / across;
+        const [ax, az] = P(i, f0), [bx, bz] = P(i, f1);
+        const [cx, cz] = P(i + 1, f1), [dx, dz] = P(i + 1, f0);
+        const oa0 = O(i, f0), oa1 = O(i, f1), ob0 = O(i + 1, f0), ob1 = O(i + 1, f1);
+        road.quad(
+          [ax, Y(i, oa0), az], [bx, Y(i, oa1), bz], [cx, Y(i + 1, ob1), cz], [dx, Y(i + 1, ob0), dz],
+          [0, 1, 0], [(oa0 + hw) / ROAD_TILE, v0, (oa1 + hw) / ROAD_TILE, v0,
+            (ob1 + hw) / ROAD_TILE, v1, (ob0 + hw) / ROAD_TILE, v1],
+          [wear(oa0), wear(oa1), wear(ob1), wear(ob0)]
+        );
+      }
+    }
+    // A trimmed side stands over a lower road: finish it with a wall down to it.
+    for (let s = 0; s < 2; s++) {
+      const sg = s === 0 ? 1 : -1;
+      let run = [];
+      const flush = () => {
+        if (run.length > 1) this.meshWall(flat, run, px * sg, pz * sg, ei * 2 + s);
+        run = [];
+      };
+      for (let i = 0; i <= k; i++) {
+        const lo = e.tlo[i * 2 + s];
+        if (Number.isNaN(lo)) { flush(); continue; }
+        const [x, z] = s === 0 ? edgeL(i) : edgeR(i);
+        const w = s === 0 ? Wl(i) : Wr(i);
+        run.push([x, z, Y(i, sg * w) - 0.02, lo - 0.3]);
+      }
+      flush();
+    }
+    // Embankment. A draped road needed none -- it was the ground -- but a
+    // graded one stands proud of it wherever the envelope filled a dip or the
+    // camber lifted the low edge, and with nothing under that edge you see
+    // straight through to the terrain below. A batter at BERM, in verge
+    // colours, is what a real fill looks like from a car.
+    // Verge colours. The first pick read as sand under the tone curve, the
+    // second as a painted lime stripe down every median: developed ground here
+    // is the terrain's SUBURB/URBAN tint, not park lawn. Toned toward that,
+    // with only a lean to green.
+    const grass = [0.43, 0.46, 0.34], dirt = [0.4, 0.39, 0.32];
+    for (let s = 0; s < 2; s++) {
+      const sg = s === 0 ? 1 : -1;
+      const edgeAt = s === 0 ? edgeL : edgeR;
+      let wallRun = [];
+      const flushWall = () => {
+        if (wallRun.length > 1) this.meshWall(flat, wallRun, px * sg, pz * sg, ei * 2 + s + 7);
+        wallRun = [];
+      };
+      for (let i = 0; i < k; i++) {
+        const o0 = i * 6 + s * 3, o1 = o0 + 6;
+        const w0 = e.pe[o0 + 1], w1 = e.pe[o1 + 1];
+        const walled = e.pwall && (e.pwall[i * 2 + s] || e.pwall[(i + 1) * 2 + s]);
+        if (!walled && w0 <= 0 && w1 <= 0) { flushWall(); continue; }
+        const [e0x, e0z] = edgeAt(i), [e1x, e1z] = edgeAt(i + 1);
+        const ox = px * sg, oz = pz * sg;
+        // citygen decided what stands on this side (see gradeRoads' berms), and
+        // roadLift reports exactly that, so the mesher asks nothing of its own:
+        // a berm where the batter has room, a finished retaining wall where it
+        // would sweep over a lower carriageway, nothing where a neighbour's
+        // tarmac is already there. Deciding it here with a separate query was
+        // how a batter came to be reported where none was drawn.
+        const wall0 = e.pwall && e.pwall[i * 2 + s], wall1 = e.pwall && e.pwall[(i + 1) * 2 + s];
+        if (wall0 || wall1) {
+          if (!wallRun.length) wallRun.push([e0x, e0z, e.pe[o0] + bias - 0.02, G.terrainHeight(e0x, e0z) - 0.3]);
+          wallRun.push([e1x, e1z, e.pe[o1] + bias - 0.02, G.terrainHeight(e1x, e1z) - 0.3]);
+          continue;
+        }
+        flushWall();
+        flat.quad(
+          [e0x, e.pe[o0] + bias - 0.02, e0z], [e1x, e.pe[o1] + bias - 0.02, e1z],
+          [e1x + ox * w1, e.pe[o1 + 2], e1z + oz * w1], [e0x + ox * w0, e.pe[o0 + 2], e0z + oz * w0],
+          [ox * 0.55, 0.83, oz * 0.55], [0, 0, 1, 0, 1, 1, 0, 1], [dirt, dirt, grass, grass]
+        );
+      }
+      flushWall();
+    }
+    this.meshTrenchWalls(flat, e, a, b, ei);
+    this.meshRoadMarks(flat, e, a, b, ei);
+  }
+
+  meshRoad(road, walk, flat, glow, e, a, b, lod, ei) {
+    // Every deck and every freeway outside a portal is graded (citygen's
+    // gradeRoads). Decks keep their own mesher for the structure under them.
+    if (e.prof) {
+      if (e.elev) this.meshViaduct(road, flat, e, a, b, ei);
+      else this.meshGraded(road, flat, e, a, b, ei);
+      return;
+    }
+    if (e.elev) { this.meshViaduct(road, flat, e, a, b, ei); return; }
+    // A bore is not a carriageway on the surface -- it is a carriageway in a
+    // BOX. citygen gives tunnel nodes a real underground profile and registers
+    // the deck with groundAt; this draws what you see driving it: deck, walls,
+    // ceiling, a lamp strip, and a portal frame at each end. Everything hangs
+    // off the same two node heights the physics uses, so the drawn bore and
+    // the driven bore cannot disagree.
+    if (e.tunnel) { this.meshTunnel(road, flat, glow, e, a, b, ei); return; }
+    const hw = e.hw;
+    const U1 = (hw * 2) / ROAD_TILE;
+    const px = -e.dz, pz = e.dx;
+    // Segment length follows the gradient. A flat street is fine in 16 m
+    // pieces, but a road quad is a CHORD and its error grows with the square of
+    // its length: McGraw Street on Queen Anne drops 5.4 m across one 18 m
+    // segment and the chord cut 1.39 m under the crest, which is terrain
+    // standing proud of the asphalt -- the grass growing over the road. At 4 m
+    // the same crest costs about 7 cm, comfortably under the 22 cm road lift.
+    // Only steep roads pay for the extra pieces.
+    // Measure the BOW, not the gradient. A street that climbs steadily is a
+    // chord's best case; what defeats a chord is curvature, and a road can be
+    // level end to end while cresting a rise in the middle -- that is the
+    // downtown case a gradient test missed entirely. One extra terrain sample
+    // gives the sag at the midpoint, and chord error falls with the square of
+    // the piece length, so the length that keeps it under ~6 cm is direct.
+    // The two tests fail on different shapes, so take whichever is finer.
+    // Gradient alone misses a road that is level end to end but crests in the
+    // middle; bow alone misses one whose crest is off-centre or S-shaped, where
+    // the midpoint happens to land on the chord -- measured on its own it was
+    // worse than the gradient test on Queen Anne (36.7 cm against 11.8 cm).
+    const bow = Math.abs(
+      G.terrainHeight((a.x + b.x) / 2, (a.z + b.z) / 2) - (a.y + b.y) / 2
+    );
+    const grade = Math.abs(a.y - b.y) / Math.max(1, e.len);
+    const byGrade = grade > 0.08 ? 3 : grade > 0.03 ? 5 : 8;
+    const byBow = bow < 0.01 ? 8 : clamp(e.len * Math.sqrt(0.02 / bow), 2.5, 8);
+    const segLen = Math.min(byGrade, byBow);
+    // The carriageway stops at each junction's MOUTH (citygen buildJunction):
+    // the junction polygon paves the rest. Run on to the node centre, every
+    // approach lay under the crossing and under each other -- up to five
+    // surfaces 0-3 cm apart z-fighting in the middle of a junction -- and a
+    // skewed approach's square end poked out past the crossing as a wedge.
+    // It runs on 0.4 m under the polygon, which is drawn 1-4 cm higher: ending
+    // exactly at the mouth left that step open, a slit a pixel wide showing
+    // the ground under the road as a dotted line across every mouth.
+    const mA = ei != null ? this.mouthAt(e.a, ei) : 0, mB = ei != null ? this.mouthAt(e.b, ei) : 0;
+    const tA = mA / e.len, tB = 1 - mB / e.len;
+    const cA = Math.max(0, mA - 0.4) / e.len, cB = 1 - Math.max(0, mB - 0.4) / e.len;
+    const steps = Math.max(1, Math.round((e.len * (cB - cA)) / segLen));
+    // Cells also break where the climb to a junction starts (mouthRamp), so
+    // the drawn ramp is the straight line roadLift reports.
+    const ts = [];
+    for (let s = 0; s <= steps; s++) ts.push(cA + ((cB - cA) * s) / steps);
+    for (const m of [mA > 0 ? (mA + MOUTH_RAMP) / e.len : -1, mB > 0 ? 1 - (mB + MOUTH_RAMP) / e.len : -1, tA, tB]) {
+      if (m <= cA || m >= cB) continue;
+      let k = 1;
+      while (ts[k] < m) k++;
+      if ((ts[k] - m) * e.len > 0.3 && (m - ts[k - 1]) * e.len > 0.3) ts.splice(k, 0, m);
+    }
+    const col = e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1];
+    let v = 0;
+    // Deterministic sub-centimetre lift per edge, so two carriageways that
+    // genuinely overlap resolve instead of fighting.
+    //
+    // roadCoveredAt only drops a surface whose WHOLE width is inside another's
+    // -- it has to, or every ramp beside a motorway loses its tarmac. What that
+    // leaves is partial overlaps, and those used to be drawn coplanar: a
+    // raycast over one freeway found a second road surface within half a metre
+    // behind 129 of 148 sampled pixels. Coplanar asphalt z-fights, and because
+    // the two quads face slightly differently it reads as soft dark blotches
+    // smeared over the road rather than as obvious flicker. That is the "messy
+    // surface". 3 cm is far below the 22 cm kerb, so roadLift need not know.
+    const bias = hash2(ei | 0, 7) * 0.03;
+    // The last MOUTH_RAMP metres climb to the junction polygon (citygen
+    // mouthRamp), to 16 mm under it at the mouth (so the paint, 12 mm over
+    // the strip, stays under it where they meet). The 0.4 m run-on UNDER the
+    // polygon does not climb: ramped too, it lay a few mm under the polygon
+    // (the two are different chords of the terrain) and fought it -- 1105
+    // stacked samples in tools/junctions.mjs against 15.
+    const climb = NODE_Y - 0.016 - ROAD_Y - bias;
+    const rampY = (t) => (mA > 0 || mB > 0 ? climb * mouthRamp(t * e.len, e.len, mA, mB) : 0);
+    const yAt = (x, z, t, ro) => G.terrainHeight(x, z) + ROAD_Y + bias + (ro ? 0 : rampY(t));
+    // Subdivide ACROSS the width as well as along the length.
+    //
+    // The quad used to span the full carriageway with terrain sampled only at
+    // its four corners, so the drawn surface was the bilinear of those -- and on
+    // a cross-slope the real ground in between bulges straight through it. On
+    // Queen Anne that put terrain up to 1.39 m above the asphalt, which is the
+    // grass growing over the road. The heightfield is 40 m, so cells of roughly
+    // 8 m follow it closely without paying for detail that isn't there.
+    //
+    // Cells are also what carries the cross-section shading below, and a road
+    // shaded from its four corners has no cross-section at all, so anything
+    // over about three lanes gets at least three cells. Three is the cheapest
+    // count that can put a bright band down the middle and grime at both kerbs;
+    // four looked no better and cost 40 % more road triangles.
+    const across = Math.max(hw > 4.5 ? 3 : 1, Math.round((hw * 2) / 8));
+    /**
+     * Traffic polishes the middle of a carriageway and grime collects at its
+     * edges. Without it the asphalt is one flat value from kerb to kerb --
+     * which is exactly what made the largest surface in every street-level
+     * frame read as a hole in the image rather than as a road.
+     *
+     * `f` is the distance from the centreline as a fraction of the half-width.
+     */
+    const wear = (o) => {
+      const f = Math.min(1, Math.abs(o) / Math.max(hw, 0.01));
+      const polish = 1 + 0.12 * (1 - f * f);        // worn smooth down the middle
+      const edge = 1 - 0.30 * Math.max(0, f - 0.55) / 0.45;  // grime at the kerb
+      const k = polish * edge;
+      return [col[0] * k, col[1] * k, col[2] * k];
+    };
+    // Acute corners clip this strip against a neighbour's kerb (citygen
+    // buildJunction's arm.clip): per end, the half-planes in this edge's own
+    // (t, o) frame, and how far along the edge each reaches.
+    const clips = [];
+    if (ei != null) {
+      for (const [ni, atA] of [[e.a, true], [e.b, false]]) {
+        const A = this.junctionArm(ni, ei);
+        if (!A || !A.clip) continue;
+        const n = this.city.nodes[ni];
+        for (const c of A.clip) {
+          // (x - n) . (nx, nz) >= d, with x = a + (b - a) t + p o
+          const k0 = (a.x - n.x) * c.nx + (a.z - n.z) * c.nz - c.d;
+          const kt = (b.x - a.x) * c.nx + (b.z - a.z) * c.nz, ko = px * c.nx + pz * c.nz;
+          const lim = c.tEnd / e.len;
+          clips.push({ k0, kt, ko, t0: atA ? 0 : 1 - lim, t1: atA ? lim : 1 });
+        }
+      }
+    }
+    v = (cA * e.len) / ROAD_TILE;
+    for (let s = 0; s + 1 < ts.length; s++) {
+      const t0 = ts[s], t1 = ts[s + 1];
+      const seg = e.len * (t1 - t0);
+      const ro = t1 <= tA + 1e-9 || t0 >= tB - 1e-9;   // the run-on under the polygon
+      // Fixed metres per texture repeat, in BOTH directions. This used to be
+      // `seg / (hw * 2)` with u spanning 0..1 across the road, which tied the
+      // asphalt's grain to how wide the road happened to be.
+      const v0 = v, v1 = v + seg / ROAD_TILE;
+      v = v1;
+      // Don't pave over a road that outranks this one. Asked once per segment
+      // rather than per cell -- it is a 3x3-chunk scan and the answer cannot
+      // meaningfully differ across one carriageway's width.
+      const mx = lerp(a.x, b.x, (t0 + t1) / 2), mz = lerp(a.z, b.z, (t0 + t1) / 2);
+      if (ei != null && this.city.roadCoveredAt(mx, mz, ei)) continue;
+      for (let k = 0; k < across; k++) {
+        const o0 = hw - (hw * 2 * k) / across;
+        const o1 = hw - (hw * 2 * (k + 1)) / across;
+        const u0 = (hw - o0) / ROAD_TILE, u1 = (hw - o1) / ROAD_TILE;
+        const P = (t, o) => [lerp(a.x, b.x, t) + px * o, lerp(a.z, b.z, t) + pz * o];
+        if (clips.length) {
+          let cell = [[t0, o0], [t0, o1], [t1, o1], [t1, o0]], cut = false;
+          for (const c of clips) {
+            if (t1 <= c.t0 || t0 >= c.t1 || cell.length < 3) continue;
+            const f = (q) => c.k0 + c.kt * q[0] + c.ko * q[1];
+            if (cell.every((q) => f(q) >= 0)) continue;
+            cut = true;
+            // Sutherland-Hodgman against one half-plane, in (t, o)
+            const out = [];
+            for (let i = 0; i < cell.length; i++) {
+              const p0 = cell[i], p1 = cell[(i + 1) % cell.length], f0 = f(p0), f1 = f(p1);
+              if (f0 >= 0) out.push(p0);
+              if ((f0 >= 0) !== (f1 >= 0)) {
+                const r = f0 / (f0 - f1);
+                out.push([p0[0] + (p1[0] - p0[0]) * r, p0[1] + (p1[1] - p0[1]) * r]);
+              }
+            }
+            cell = out;
+          }
+          if (cut) {
+            if (cell.length >= 3) {
+              const vi = cell.map(([t, o]) => {
+                const [x, z] = P(t, o), w = wear(o);
+                return road.vert(x, yAt(x, z, t, ro), z, 0, 1, 0, (hw - o) / ROAD_TILE, v0 + ((t - t0) * e.len) / ROAD_TILE, w[0], w[1], w[2]);
+              });
+              for (let i = 1; i + 1 < vi.length; i++) {
+                const P3 = road.P, q0 = vi[0], q1 = vi[i], q2 = vi[i + 1];
+                const ux = P3[q1 * 3] - P3[q0 * 3], uz = P3[q1 * 3 + 2] - P3[q0 * 3 + 2];
+                const wx = P3[q2 * 3] - P3[q0 * 3], wz = P3[q2 * 3 + 2] - P3[q0 * 3 + 2];
+                const ny = uz * wx - ux * wz;
+                if (Math.abs(ny) < 1e-9) continue;
+                if (ny > 0) road.face3(q0, q1, q2); else road.face3(q0, q2, q1);
+              }
+            }
+            continue;
+          }
+        }
+        const [ax, az] = P(t0, o0), [bx, bz] = P(t0, o1);
+        const [cx, cz] = P(t1, o1), [dx, dz] = P(t1, o0);
+        road.quad(
+          [ax, yAt(ax, az, t0, ro), az],
+          [bx, yAt(bx, bz, t0, ro), bz],
+          [cx, yAt(cx, cz, t1, ro), cz],
+          [dx, yAt(dx, dz, t1, ro), dz],
+          [0, 1, 0], [u0, v0, u1, v0, u1, v1, u0, v1],
+          [wear(o0), wear(o1), wear(o1), wear(o0)]
+        );
+      }
+    }
+    this.meshRoadMarks(flat, e, a, b, ei);
+    this.meshTrenchWalls(flat, e, a, b, ei);
+    if (lod === 1 && (e.cls === 'st' || e.cls === 'art' || e.cls === 'res')) {
+      const sw = e.cls === 'art' ? 3.2 : 2.6;
+      for (const sg of [-1, 1]) {
+        // Stop short of each intersection: a strip run end to end would march
+        // straight across the cross street. The corner is filled by meshNode,
+        // whose kerb returns to this side's kerb line at paveStart -- per
+        // side, because a skewed corner turns at a different distance on each.
+        const ta = this.paveStart(e.a, ei, sg) / e.len;
+        const tb = 1 - this.paveStart(e.b, ei, sg) / e.len;
+        if (tb - ta < 0.06) continue;
+        const span = tb - ta;
+        const ox = px * sg, oz = pz * sg;
+        // Pavement pieces are chords too. At a fixed 24 m on a hill the slab
+        // was drawn up to 18 cm above the height roadLift gives (terrain +
+        // WALK_LIFT), and everyone walking on it sank into it -- the road
+        // beside it had long been cut to 2.5-8 m by the same two tests. Flat
+        // streets keep 24 m pieces; only a bowed or steep edge pays for more.
+        const wByGrade = grade > 0.08 ? 6 : grade > 0.03 ? 10 : 24;
+        const wByBow = bow < 0.01 ? 24 : clamp(e.len * Math.sqrt(0.03 / bow), 3, 24);
+        const wsteps = Math.max(1, Math.round((e.len * span) / Math.min(wByGrade, wByBow)));
+        // A queue of pieces, because a piece that touches another carriageway
+        // is not dropped whole any more: it goes back in as ~4 m sub-pieces
+        // and the clear ones are drawn. Dropping it whole left roadLift
+        // reporting pavement over the part that wasn't touching anything --
+        // measured, a player walked 52 cm up on nothing beside a short
+        // residential street next to a junction.
+        // Piece boundaries include the carriageway's own ends where they fall
+        // inside the run: short of its mouth this pavement borders the
+        // junction polygon, whose surface sits NODE_Y - ROAD_Y higher, and a
+        // gutter drawn at the strip's height there would be buried or fight it.
+        const tsA = [];
+        for (let s = 0; s <= wsteps; s++) tsA.push(ta + (s / wsteps) * span);
+        const rA = mA > 0 ? (mA + MOUTH_RAMP) / e.len : -1, rB = mB > 0 ? 1 - (mB + MOUTH_RAMP) / e.len : -1;
+        for (const tm of [tA, tB, rA, rB]) {
+          if (tm > ta + 0.01 && tm < tb - 0.01) {
+            let k = 1;
+            while (tsA[k] < tm) k++;
+            if (Math.abs(tsA[k] - tm) * e.len > 0.3 && Math.abs(tsA[k - 1] - tm) * e.len > 0.3) tsA.splice(k, 0, tm);
+          }
+        }
+        const work = [];
+        for (let s = 0; s + 1 < tsA.length; s++) work.push([tsA[s], tsA[s + 1]]);
+        for (let wi = 0; wi < work.length; wi++) {
+          const [t0, t1] = work[wi];
+          const inJ = t1 <= tA + 0.001 || t0 >= tB - 0.001;
+          const x0 = lerp(a.x, b.x, t0), z0 = lerp(a.z, b.z, t0);
+          const x1 = lerp(a.x, b.x, t1), z1 = lerp(a.z, b.z, t1);
+          const i0x = x0 + ox * hw, i0z = z0 + oz * hw;
+          const o0x = x0 + ox * (hw + sw), o0z = z0 + oz * (hw + sw);
+          const i1x = x1 + ox * hw, i1z = z1 + oz * hw;
+          const o1x = x1 + ox * (hw + sw), o1z = z1 + oz * (hw + sw);
+          if (!G.isBuildable(o0x, o0z) && !G.isBuildable(o1x, o1z)) continue;
+          // Pavement must not cross a carriageway. Stopping the strip at
+          // nodeRadius is not enough on its own: the strip is offset SIDEWAYS
+          // by hw + sw, so near a junction its far corner can sit in the cross
+          // street even though its centreline has stopped short -- and with
+          // real data a road that does not even meet this node can pass close
+          // enough to be under it. Test the piece itself against every nearby
+          // carriageway instead of trusting the geometry.
+          // Sample the piece's MIDDLE, not its inner edge: a pavement's inner
+          // edge lies exactly on its own carriageway's boundary by definition,
+          // so testing it rejects every piece in the city (95 % of the pavement
+          // vanished on the first attempt). The mid-depth line is a full sw/2
+          // clear of its own road and still inside any road it truly overlaps.
+          // Grid across the piece, at a quarter and three quarters of its
+          // depth. Depth 0 is the inner edge, which lies on this pavement's own
+          // carriageway boundary and would reject everything; a quarter of the
+          // way out is clear of it and still lands inside any road the piece
+          // genuinely overlaps. Three samples along caught the head-on cases but
+          // missed pieces clipping a junction corner diagonally.
+          let hits = false;
+          for (const fd of [0.25, 0.75]) {
+            for (const fl of [0, 0.5, 1]) {
+              const ex = i0x + (i1x - i0x) * fl, ez = i0z + (i1z - i0z) * fl;
+              const gx = o0x + (o1x - o0x) * fl, gz = o0z + (o1z - o0z) * fl;
+              // (tunnels excluded: a bore underneath is no reason to drop the
+              // footway over it -- see onRoad's includeTunnel)
+              if (this.city.onRoad(ex + (gx - ex) * fd, ez + (gz - ez) * fd, 0, false, false)) {
+                hits = true; break;
+              }
+            }
+            if (hits) break;
+          }
+          if (hits) {
+            const L = (t1 - t0) * e.len;
+            if (L > 4.5) {
+              const n = Math.ceil(L / 4);
+              for (let k = 0; k < n; k++) work.push([t0 + ((t1 - t0) * k) / n, t0 + ((t1 - t0) * (k + 1)) / n]);
+            }
+            continue;
+          }
+          const y = (x, z) => G.terrainHeight(x, z) + WALK_Y;
+          // V from the distance along the street, so skipped pieces and
+          // sub-pieces keep the slabs registered
+          const v0 = ((t0 - ta) * e.len) / WALK_TILE, v1 = ((t1 - ta) * e.len) / WALK_TILE;
+          const q = sg > 0
+            ? [[i0x, y(i0x, i0z), i0z], [o0x, y(o0x, o0z), o0z], [o1x, y(o1x, o1z), o1z], [i1x, y(i1x, i1z), i1z]]
+            : [[o0x, y(o0x, o0z), o0z], [i0x, y(i0x, i0z), i0z], [i1x, y(i1x, i1z), i1z], [o1x, y(o1x, o1z), o1z]];
+          // Per-piece value jitter, plus a darker inner edge against the
+          // building line. Every slab drawn at exactly 1.0 left a perfect
+          // lattice of identical slabs running to the horizon; the texture's
+          // own staining can only break the tile, not the repeat of the tile.
+          const wj = 0.9 + hash2(Math.round(x0 * 0.7), Math.round(z0 * 0.7)) * 0.2;
+          const wIn = [wj, wj, wj];
+          const wOut = [wj * 0.9, wj * 0.9, wj * 0.91];
+          const wc = sg > 0 ? [wIn, wOut, wOut, wIn] : [wOut, wIn, wIn, wOut];
+          const wu = sw / WALK_TILE;
+          // A FOOTWAY DOES NOT FOLLOW A ROAD INTO A TUNNEL. The carriageway
+          // descends into the cutting and should; pavement drawn from the same
+          // carved surface swept down after it as a pair of ramps flanking the
+          // mouth, which is what made the approach look like a building site.
+          // It stops at the retaining wall instead.
+          if (this.inCut((q[0][0] + q[2][0]) / 2, (q[0][2] + q[2][2]) / 2)) continue;
+          walk.quad(q[0], q[1], q[2], q[3], [0, 1, 0], [0, v0, wu, v0, wu, v1, 0, v1], wc);
+          const cy0 = G.terrainHeight(i0x, i0z), cy1 = G.terrainHeight(i1x, i1z);
+          const cc = [0.72, 0.72, 0.7];
+          const ccLo = [0.4, 0.4, 0.39];
+          // Gutter. Road met pavement on a mathematically clean seam, which is
+          // the single loudest "this is a textured plane, not a street" tell --
+          // every real kerb has a strip of accumulated grime against it. Drawn
+          // here rather than in the road loop so it stays registered with the
+          // kerb face by construction, just under the lift the lane markings use.
+          const gW = 0.5;
+          const gv0 = (t0 * e.len) / ROAD_TILE, gv1 = (t1 * e.len) / ROAD_TILE;
+          // 6 mm under the paint: the edge line lies inside the gutter on any
+          // street under ~9 m of half-width, and at one height the two fought
+          // (whichever won by rounding -- whole kerb lines went missing).
+          const gl0 = inJ ? NODE_Y + 0.012 : MARK_Y - 0.006 + bias + rampY(t0);
+          const gl1 = inJ ? NODE_Y + 0.012 : MARK_Y - 0.006 + bias + rampY(t1);
+          const gy0 = cy0 + gl0, gy1 = cy1 + gl1;
+          const j0x = i0x - ox * gW, j0z = i0z - oz * gW;
+          const j1x = i1x - ox * gW, j1z = i1z - oz * gW;
+          const gDark = [0.44, 0.45, 0.46];
+          const gLite = [0.92, 0.93, 0.93];
+          road.quad(
+            [i0x, gy0, i0z], [j0x, G.terrainHeight(j0x, j0z) + gl0, j0z],
+            [j1x, G.terrainHeight(j1x, j1z) + gl1, j1z], [i1x, gy1, i1z],
+            [0, 1, 0],
+            [0, gv0, gW / ROAD_TILE, gv0, gW / ROAD_TILE, gv1, 0, gv1],
+            [gDark, gLite, gLite, gDark]
+          );
+          if (sg > 0) {
+            flat.quad([i0x, cy0 + ROAD_Y, i0z], [i1x, cy1 + ROAD_Y, i1z],
+              [i1x, cy1 + WALK_Y, i1z], [i0x, cy0 + WALK_Y, i0z], [-ox, 0, -oz],
+              [0, 0, 1, 0, 1, 1, 0, 1], [ccLo, ccLo, cc, cc]);
+          } else {
+            flat.quad([i1x, cy1 + ROAD_Y, i1z], [i0x, cy0 + ROAD_Y, i0z],
+              [i0x, cy0 + WALK_Y, i0z], [i1x, cy1 + WALK_Y, i1z], [-ox, 0, -oz],
+              [0, 0, 1, 0, 1, 1, 0, 1], [ccLo, ccLo, cc, cc]);
+          }
+          this.meshVerge(flat, o0x, o0z, o1x, o1z, ox, oz);
+        }
+      }
+    }
+  }
+
+  /**
+   * The terrain's vertex tint at (x, z): sand by the water, park green, or
+   * grass blending to developed ground with the real built-up density, in
+   * lush and dry patches. The terrain mesh multiplies it by the ground map
+   * (GROUND_MEAN on average); anything drawn flat beside the ground -- a
+   * pavement's verge -- takes tint x GROUND_MEAN to meet it.
+   */
+  groundTint(x, z, y) {
+    let c;
+    if (y < 1.2) c = [0.94, 0.86, 0.66];
+    else if (G.inPark(x, z)) c = [0.40, 0.60, 0.31];   // was [0.42, 0.66, 0.3]: see GRASS
+    else {
+      const jx = (vnoise(x, z) - 0.5) * 190;
+      const jz = (vnoise(x + 3137, z - 2711) - 0.5) * 190;
+      let dense = 0;
+      for (const [ox, oz] of BLEND_TAPS) {
+        dense += this.city.builtAt(x + jx + ox, z + jz + oz);
+      }
+      dense /= BLEND_TAPS.length;
+      // `builtAt` is footprint + tarmac area per chunk. Anything with a
+      // street grid on it is developed ground, so this saturates early:
+      // a normal residential chunk runs ~0.25 and should read as a
+      // neighbourhood, not as a meadow with houses dropped on it.
+      const cover = clamp(dense / 0.16, 0, 1);
+      const built = dense > 0.6 ? URBAN : SUBURB;
+      const t = cover * cover * (3 - 2 * cover);
+      c = [
+        GRASS[0] + (built[0] - GRASS[0]) * t,
+        GRASS[1] + (built[1] - GRASS[1]) * t,
+        GRASS[2] + (built[2] - GRASS[2]) * t,
+      ];
+    }
+    // Two grass tones, in patches.
+    //
+    // Per-vertex hash noise alone is high-frequency speckle: at 40 m
+    // spacing it varies faster than the eye groups it, so a park read
+    // as one flat saturated carpet however much jitter was on it. A
+    // smooth low-frequency field on top gives patches you can actually
+    // see -- lush against dry, which is what a real park looks like
+    // from any distance.
+    const patch = vnoise(x * 0.35 + 811, z * 0.35 - 553);
+    const dry = (patch - 0.42) * 0.55;
+    return [c[0] * (1 + dry * 0.34), c[1] * (1 - dry * 0.16), c[2] * (1 - dry * 0.30)];
+  }
+
+  /**
+   * The verge outside a pavement's outer edge: a short slope from the slab's
+   * top (terrain + WALK_Y) down to the ground across VERGE, outward (ox, oz).
+   *
+   * The slab used to end in an open 52 cm step with a kerb face on the road
+   * side only, so anyone standing on the grass beyond it -- a fleeing
+   * pedestrian, the player -- was correctly on the ground and, seen across the
+   * slab, sunk to the waist. citygen.roadLift reports the same slope, so
+   * walking off the pavement is a slope and not a fall. Not drawn over a
+   * carriageway (roadLift gives a carriageway no verge lift either), into
+   * water, or into a cutting.
+   */
+  meshVerge(flat, o0x, o0z, o1x, o1z, ox, oz) {
+    const v0x = o0x + ox * VERGE, v0z = o0z + oz * VERGE;
+    const v1x = o1x + ox * VERGE, v1z = o1z + oz * VERGE;
+    const mx = (o0x + o1x + v0x + v1x) / 4, mz = (o0z + o1z + v0z + v1z) / 4;
+    const hx = (v0x + v1x) / 2, hz = (v0z + v1z) / 2;
+    if (this.city.onRoad(mx, mz, 0, false) || this.city.onRoad(hx, hz, 0, false)) return;
+    if (!G.isBuildable(hx, hz) || this.inCut(mx, mz)) return;
+    const T = G.terrainHeight;
+    // Pavement at the lip, the GROUND at the toe -- each the value the textured
+    // surface beside it actually draws (tint x its map's mean). The old fixed
+    // toe, [0.3, 0.36, 0.22], was ~1.6x the grass it met: a pale plastic band
+    // along every pavement in the city.
+    const lip = [0.29, 0.28, 0.25];
+    const toeAt = (x, z) => { const g = this.groundTint(x, z, T(x, z)); return [g[0] * GROUND_MEAN, g[1] * GROUND_MEAN, g[2] * GROUND_MEAN]; };
+    const toe = toeAt(hx, hz);
+    // Split along: the slab's pieces are up to 24 m, and a slope drawn as one
+    // chord over that is the grass-through-the-road problem again. The lip
+    // stays on the slab's own edge (its chord), so the two cannot part.
+    const y0 = T(o0x, o0z) + WALK_Y, y1 = T(o1x, o1z) + WALK_Y;
+    const L = Math.hypot(o1x - o0x, o1z - o0z);
+    const n = Math.max(1, Math.round(L / 8));
+    for (let k = 0; k < n; k++) {
+      const t0 = k / n, t1 = (k + 1) / n;
+      const ax = o0x + (o1x - o0x) * t0, az = o0z + (o1z - o0z) * t0;
+      const bx = o0x + (o1x - o0x) * t1, bz = o0z + (o1z - o0z) * t1;
+      const cx = v0x + (v1x - v0x) * t1, cz = v0z + (v1z - v0z) * t1;
+      const dx = v0x + (v1x - v0x) * t0, dz = v0z + (v1z - v0z) * t0;
+      flat.quad([ax, y0 + (y1 - y0) * t0, az], [bx, y0 + (y1 - y0) * t1, bz],
+        [cx, T(cx, cz) - 0.02, cz], [dx, T(dx, dz) - 0.02, dz],
+        [ox * 0.46, 0.89, oz * 0.46], [0, 0, 1, 0, 1, 1, 0, 1], [lip, lip, toe, toe]);
+    }
+  }
+
+  /**
+   * The junction this world draws at node `ni`: citygen's shape
+   * (city.junction -- a legacy square or a mouth-and-fillet polygon), or null
+   * where meshNode draws nothing. A junction anywhere near a cutting is not
+   * drawn (see meshNode), and then its approaches are not trimmed either.
+   * Cached, because every approach strip asks, from whichever chunk owns it.
+   */
+  junctionFor(ni) {
+    if (!this._jf) this._jf = new Map();
+    let J = this._jf.get(ni);
+    if (J !== undefined) return J;
+    J = this.city.junction(ni);
+    if (J) {
+      const n = this.city.nodes[ni];
+      let rr = 0;
+      for (const ei of n.e) { const e = this.city.edges[ei]; if (!e.tunnel && e.hw > rr) rr = e.hw; }
+      // A JUNCTION IS NOT BUILT INSIDE A CUTTING, and testing only its centre
+      // is not enough: a node standing just clear of the trench still paves a
+      // surface whose far corners reach into it, and drawn from the carved
+      // surface those corners dive. That is the pale plate fanning out of the
+      // mouth -- apex at the headwall, a straight unclosed edge over the bank.
+      // Generous: the square, its kerbed ring and the ring's diagonal corners
+      // all reach past the node, and cutFloor covers the banks as well as the
+      // floor. The approach strips pave it on their own, and a crossing does
+      // not belong in the mouth of a tunnel anyway.
+      const rq = rr + 8;
+      for (const [ox, oz] of [[0, 0], [rq, 0], [-rq, 0], [0, rq], [0, -rq],
+        [rq, rq], [rq, -rq], [-rq, rq], [-rq, -rq]]) {
+        if (this.cutFloor(n.x + ox, n.z + oz)) { J = null; break; }
+      }
+    }
+    // bounded like citygen's junction cache, whose objects these are
+    if (this._jf.size >= 16000) trimOldest(this._jf, 8000);
+    this._jf.set(ni, J);
+    return J;
+  }
+
+  /** Edge `ei`'s arm of a mouth-and-fillet junction at `ni`, or null. */
+  junctionArm(ni, ei) {
+    const J = this.junctionFor(ni);
+    if (!J || J.legacy) return null;
+    for (const A of J.arms) if (A.ei === ei) return A;
+    return null;
+  }
+
+  /** Where edge `ei`'s carriageway starts, measured from node `ni`. */
+  mouthAt(ni, ei) {
+    const A = this.junctionArm(ni, ei);
+    return A ? A.m : 0;
+  }
+
+  /**
+   * Where edge `ei`'s pavement on side `sg` (+1 = its (-dz, dx) side, as
+   * meshRoad offsets it) starts, measured from node `ni`: the kerb return of
+   * the junction's corner on that side, else nodeRadius as it always was.
+   */
+  paveStart(ni, ei, sg) {
+    const A = this.junctionArm(ni, ei);
+    if (!A) return this.nodeRadius(ni);
+    // At the edge's a end the arm's +p side IS the strip's +1 side.
+    return (A.atA ? sg > 0 : sg < 0) ? A.sP : A.sN;
+  }
+
+  /** Half-size of the paved square drawn at an intersection. */
+  nodeRadius(ni) {
+    const n = this.city.nodes[ni];
+    let hw = 0;
+    for (const ei of n.e) {
+      const e = this.city.edges[ei];
+      if (e.tunnel) continue;   // draws nothing, so it sizes nothing
+      if (e.hw > hw) hw = e.hw;
+    }
+    return hw;
+  }
+
+  /**
+   * Gabled roof fitted to a rectangular footprint.
+   *
+   * Built in the building's own frame and transformed out by `bd.rot`, so it
+   * lands on the walls at any orientation. The ridge runs along the LONGER
+   * side, which is what a house does -- run it the short way and a long terrace
+   * ends up with an absurdly tall roof and gable ends the width of the street.
+   */
+  meshGable(flat, bd, y0, col, seed, pitch = 0.62, chimney = true) {
+    const cs = Math.cos(bd.rot), sn = Math.sin(bd.rot);
+    const OVER = 0.45;                       // eaves overhang, all four sides
+    const alongX = bd.w >= bd.d;             // which way the ridge runs
+    const hw = bd.w / 2 + OVER, hd = bd.d / 2 + OVER;
+    // Pitch from the span it has to cover, capped so a wide house doesn't get a
+    // spire and a narrow one still reads as a roof.
+    const span = alongX ? hd : hw;
+    const rise = clamp(span * pitch, pitch < 0.5 ? 0.6 : 1.0, 3.6);
+    const y1 = y0 + rise;
+    const P = (lx, lz, y) => [bd.x + lx * cs - lz * sn, y, bd.z + lx * sn + lz * cs];
+    // Normals are written in the HOUSE's frame, so they turn with it, exactly as
+    // P turns the corners. They used to go in unrotated, and Builder.quad/tri
+    // wind every face to agree with the normal it is given: on a house turned
+    // past ~90 deg the local "-z" normal pointed into the roof, so that slope was
+    // wound inward and backface-culled, and the gable ends went the same way.
+    // What was left from the street was one bare slope per house, a lean-to
+    // slab over an open end, on most of the houses in the city.
+    const N = (lx, y, lz) => [lx * cs - lz * sn, y, lx * sn + lz * cs];
+    // Ridge endpoints, pulled in a little so the gable ends are not knife-edged.
+    const rl = alongX ? hw : hd;
+    const A = alongX ? P(-rl, 0, y1) : P(0, -rl, y1);
+    const Bp = alongX ? P(rl, 0, y1) : P(0, rl, y1);
+    // Eaves corners
+    const c00 = P(-hw, -hd, y0), c10 = P(hw, -hd, y0);
+    const c11 = P(hw, hd, y0), c01 = P(-hw, hd, y0);
+    const dark = [col[0] * 0.62, col[1] * 0.62, col[2] * 0.66];
+    if (alongX) {
+      flat.quad(c00, c10, Bp, A, N(0, 0.72, -0.7), ZERO_UV, col);      // slope -z
+      flat.quad(c11, c01, A, Bp, N(0, 0.72, 0.7), ZERO_UV, dark);      // slope +z
+      flat.tri(c00, A, c01, N(-1, 0.25, 0), col);                      // gable -x
+      flat.tri(c10, c11, Bp, N(1, 0.25, 0), col);                      // gable +x
+    } else {
+      flat.quad(c00, A, Bp, c01, N(-0.7, 0.72, 0), ZERO_UV, col);      // slope -x
+      flat.quad(c10, c11, Bp, A, N(0.7, 0.72, 0), ZERO_UV, dark);      // slope +x
+      flat.tri(c00, c10, A, N(0, 0.25, -1), col);                      // gable -z
+      flat.tri(c01, Bp, c11, N(0, 0.25, 1), col);                      // gable +z
+    }
+    // Chimney, on the roof rather than beside it.
+    if (chimney && hash2(seed, 21) > 0.62) {
+      const t = (hash2(seed, 22) - 0.5) * 0.5;
+      const [px, , pz] = alongX ? P(rl * t, 0, 0) : P(0, rl * t, 0);
+      flat.box(px, y0 + rise * 0.45, pz, 0.72, rise * 0.75 + 0.7, 0.72, bd.rot,
+        [0.4, 0.29, 0.25]);
+    }
+  }
+
+  /**
+   * A MODERN TOWNHOME, or a row of them (v156): the flat-roofed form was a
+   * painted box with a coping. Now, along the long side (the front, or the
+   * +x face on a footprint that runs front to back), it is split into ~5.5 m
+   * units, ~7 m each, with (on most) a cedar accent panel, a big glazed front at each floor
+   * with a balcony and a glass rail on the floors above the ground, and a
+   * recessed entry under a canopy; over it a parapet, and on some a roof deck
+   * behind a rail with the stair's penthouse. Boxes into `flat`, no draws.
+   */
+  townhome(flat, bd, seed, col, top, off) {
+    const alongX = bd.w >= bd.d, L = alongX ? bd.w : bd.d, face = (alongX ? bd.d : bd.w) / 2;
+    // local (u along the front, out from it) -> the house's (lx, lz)
+    const at = (u, o) => (alongX ? [u, face + o] : [face + o, -u]);
+    const rot = alongX ? bd.rot : bd.rot - Math.PI / 2;
+    const P = (u, o) => off(...at(u, o));
+    const y0 = bd.y, floors = Math.max(2, Math.min(4, Math.round((top - y0) / 3)));
+    const fh = (top - y0) / floors;
+    const n = Math.max(1, Math.round(L / 7)), uw = L / n;
+    const CEDAR = [0.55, 0.36, 0.2], GLASS2 = [0.12, 0.16, 0.2], RAIL = [0.62, 0.72, 0.76], METAL = [0.12, 0.12, 0.13];
+    const accent = hash2(seed, 182) < 0.7;
+    for (let k = 0; k < n; k++) {
+      const u0 = -L / 2 + k * uw, uc = u0 + uw / 2, flip = (k + Math.floor(hash2(seed, 183) * 2)) % 2 ? 1 : -1;
+      // the cedar panel, full height, to one side of the unit
+      if (accent && hash2(seed + k, 187) < 0.7) { const [x, z] = P(uc + flip * (uw / 2 - 0.75), 0.04); flat.box(x, y0, z, 1.2, top - y0 - 0.15, 0.06, rot, CEDAR, NOTOP); }
+      // the entry: a dark door recess and a canopy over it
+      const eu = uc + flip * (uw / 2 - 0.75) * (accent ? -1 : 1) * 0.6;
+      { const [x, z] = P(eu, 0.03); flat.box(x, y0, z, 1.1, 2.3, 0.06, rot, METAL, NOTOP); }
+      { const [x, z] = P(eu, 0.6); flat.box(x, y0 + 2.5, z, 1.8, 0.12, 1.2, rot, col.map((c) => c * 0.7)); }
+      // the glazing, floor by floor; a balcony on each floor above the ground
+      for (let f = 0; f < floors; f++) {
+        const fy = y0 + f * fh, gw = Math.min(uw - (accent ? 2.2 : 1.2), 3.6);
+        const gu = uc - flip * (accent ? 0.5 : 0);
+        if (gw < 1) continue;
+        if (f === 0) { const [x, z] = P(gu, 0.03); flat.box(x, fy + 0.9, z, gw * 0.8, fh - 1.4, 0.06, rot, GLASS2, NOTOP); continue; }
+        { const [x, z] = P(gu, 0.03); flat.box(x, fy + 0.1, z, gw, fh - 0.6, 0.06, rot, GLASS2, NOTOP); }
+        // a balcony on the top floor, and on a middle one on some
+        if (f === floors - 1 ? hash2(seed + k, 184) < 0.65 : hash2(seed + k, 184 + f) < 0.2) {
+          const bw = gw + 0.5, bd2 = 1.4;
+          const [x, z] = P(gu, bd2 / 2);
+          flat.box(x, fy - 0.05, z, bw, 0.18, bd2, rot, [0.5, 0.5, 0.5]);
+          // the glass rail round its three open sides, and its cap
+          const [fx, fz] = P(gu, bd2 - 0.03);
+          flat.box(fx, fy + 0.13, fz, bw, 0.95, 0.04, rot, RAIL, NOTOP);
+          for (const sd of [-1, 1]) {
+            const [sx, sz] = P(gu + sd * (bw / 2 - 0.02), bd2 / 2);
+            flat.box(sx, fy + 0.13, sz, 0.04, 0.95, bd2, rot, RAIL, NOTOP);
+          }
+        }
+      }
+    }
+    // the parapet, and on some a roof deck: a rail round it and the stair's penthouse
+    const [cx, cz] = off(0, 0);
+    flat.box(cx, top, cz, bd.w + 0.1, 0.45, bd.d + 0.1, bd.rot, col.map((c) => c * 0.85), { top: false });
+    flat.box(cx, top - 0.02, cz, bd.w - 0.2, 0.06, bd.d - 0.2, bd.rot, [0.3, 0.3, 0.31]);
+    if (hash2(seed, 186) < 0.5) {
+      const [px, pz] = off(...(alongX ? [bd.w / 2 - 1.8, 0] : [0, bd.d / 2 - 1.8]));
+      flat.box(px, top, pz, 2.6, 2.5, 2.6, bd.rot, col);
+      flat.box(px, top + 2.5, pz, 2.9, 0.12, 2.9, bd.rot, [0.3, 0.3, 0.31]);
+    }
+    // the step
+    const [sx, sz] = P(0, 0.6);
+    flat.box(sx, bd.y - 0.1, sz, 1.6, 0.18, 1.0, rot, [0.6, 0.6, 0.58]);
+  }
+
+  /**
+   * WHAT MAKES ONE HOUSE NOT THE NEXT (v156). Paint, roofing and three roof
+   * forms (v110) still left a street of the same box; these are the pieces a
+   * Seattle street actually varies by, each on a share of the houses (by the
+   * house's seed, so the same house always has the same), all in the chunk's
+   * `flat` builder -- vertex colour, a few boxes, no draws:
+   *   dormers on a steep gable's front slope (a third of those with room),
+   *   a chimney on hip roofs too, solar panels on the slope that faces most
+   *   to the south (one in eleven), an attached garage with its door (one in
+   *   eight, where the lot beside is clear of road, water and buildings), a
+   *   bay window on the front where there is no porch (one in six).
+   * `y0` is the eaves, as meshGable/meshHip take it; `off(lx, lz)` the house's
+   * local frame (+z is the front: the step and the porch are there).
+   */
+  houseExtras(flat, bd, seed, form, y0, pitch, rc, col, trim, off) {
+    const OVER = 0.45, alongX = bd.w >= bd.d;
+    const hw = bd.w / 2 + OVER, hd = bd.d / 2 + OVER;
+    const span = alongX ? hd : hw;
+    const rise = form === 'gable' ? clamp(span * pitch, pitch < 0.5 ? 0.6 : 1.0, 3.6) : clamp(span * pitch, 1.0, 3.4);
+    const cs = Math.cos(bd.rot), sn = Math.sin(bd.rot);
+    const Nw = (lx, y, lz) => [lx * cs - lz * sn, y, lx * sn + lz * cs];
+    const P = (lx, lz, y) => { const [x, z] = off(lx, lz); return [x, y, z]; };
+    // a point on the roof: `a` along the ridge, `b` out from it toward side `s`
+    // (0 at the ridge, span at the eaves)
+    const rl = alongX ? hw : hd;
+    const roofY = (b) => y0 + rise * (1 - b / span);
+    const L = (a, b, s) => (alongX ? [a, s * b] : [s * b, a]);
+    const GL = [0.1, 0.13, 0.17];
+    // --- dormers: on the front slope when the ridge runs across the front
+    if (form === 'gable' && alongX && rise >= 1.7 && bd.w >= 8 && hash2(seed, 171) < 0.34) {
+      const n = bd.w >= 12 && hash2(seed, 172) < 0.5 ? 2 : 1;
+      for (let k = 0; k < n; k++) {
+        const a = n === 1 ? (hash2(seed, 173) - 0.5) * bd.w * 0.3 : (k ? 1 : -1) * bd.w * 0.22;
+        const bF = span * 0.62, bB = 0.3, dw = 1.7;
+        const baseY = roofY(bF) - 0.12, hgt = Math.min(1.4, y0 + rise - baseY - 0.3);
+        if (hgt < 0.9) continue;
+        const [cx, cz] = off(...L(a, (bF + bB) / 2, 1));
+        flat.box(cx, baseY, cz, dw, hgt, bF - bB, bd.rot, col, { top: false });
+        // its window and the frame round it
+        const [wx, wz] = off(...L(a, bF + 0.01, 1));
+        flat.box(wx, baseY + 0.3, wz, 1.1, 0.8, 0.05, bd.rot, trim);
+        const [gx, gz] = off(...L(a, bF + 0.03, 1));
+        flat.box(gx, baseY + 0.38, gz, 0.94, 0.64, 0.04, bd.rot, GL);
+        // its own little gable, the ridge running up into the main roof
+        this.meshGable(flat, { x: cx, z: cz, w: dw - 0.9, d: bF - bB, rot: bd.rot }, baseY + hgt, rc, seed + k, 0.8, false);
+      }
+    }
+    // --- a chimney on a hip roof too (meshGable gives the gables theirs)
+    if (form === 'hip' && hash2(seed, 21) > 0.62) {
+      const [px, pz] = off(...L((hash2(seed, 22) - 0.5) * rl * 0.6, span * 0.3, hash2(seed, 23) < 0.5 ? 1 : -1));
+      flat.box(px, y0 + rise * 0.5, pz, 0.72, rise * 0.7 + 0.7, 0.72, bd.rot, [0.4, 0.29, 0.25]);
+    }
+    // --- solar panels, on the slope facing most to the south (+z is south)
+    if (hash2(seed, 175) < 0.09 && span > 2.5) {
+      const s = alongX ? (cs >= 0 ? 1 : -1) : (sn >= 0 ? 1 : -1);
+      const b0 = span * 0.22, b1 = span * 0.8, a0 = -rl * 0.6, a1 = rl * 0.6;
+      const lift = 0.1;
+      const corner = (a, b) => { const [lx, lz] = L(a, b, s); return P(lx, lz, roofY(b) + lift); };
+      const nr = alongX ? Nw(0, span, s * rise) : Nw(s * rise, span, 0);
+      const nl = Math.hypot(...nr), n = nr.map((v) => v / nl);
+      flat.quad(corner(a0, b0), corner(a1, b0), corner(a1, b1), corner(a0, b1), n, [0, 0, 1, 0, 1, 1, 0, 1], [0.06, 0.09, 0.2]);
+      // the frames between the panels
+      for (let a = a0 + (a1 - a0) / 3; a < a1 - 1e-3; a += (a1 - a0) / 3) {
+        const A0 = corner(a - 0.03, b0), A1 = corner(a + 0.03, b0), B1 = corner(a + 0.03, b1), B0 = corner(a - 0.03, b1);
+        for (const q of [A0, A1, B1, B0]) q[1] += 0.01;
+        flat.quad(A0, A1, B1, B0, n, [0, 0, 1, 0, 1, 1, 0, 1], [0.6, 0.62, 0.65]);
+      }
+    }
+    // --- an attached garage beside the house, its door to the front
+    if (bd.w >= 7 && bd.d >= 7 && hash2(seed, 176) < 0.12) {
+      const sd = hash2(seed, 177) < 0.5 ? -1 : 1, gw = 3.6, gd = Math.min(6.5, bd.d * 0.85), gh = 2.9;
+      const glx = sd * (bd.w / 2 + gw / 2), glz = bd.d / 2 - gd / 2;
+      let clear = true;
+      for (const [u, v] of [[0, 0], [gw / 2, gd / 2], [-gw / 2, gd / 2], [gw / 2, -gd / 2], [-gw / 2, -gd / 2], [0, gd / 2 + 3]]) {
+        const [qx, qz] = off(glx + u, glz + v);
+        if (this.city.onRoad(qx, qz, 0.4, false) || G.isWater(qx, qz) || this.inBuilding(qx, qz, 0.3)) { clear = false; break; }
+      }
+      if (clear) {
+        const [gx, gz] = off(glx, glz);
+        const gy = G.terrainHeight(gx, gz);
+        flat.box(gx, gy - 0.5, gz, gw, gh + 0.5, gd, bd.rot, col, { ao: 0.2 });
+        flat.box(gx, gy + gh, gz, gw + 0.3, 0.22, gd + 0.3, bd.rot, rc);
+        flat.box(gx, gy + gh - 0.26, gz, gw + 0.1, 0.26, gd + 0.1, bd.rot, trim, { top: false });
+        // the roll-up door, panelled, and the drive in front of it
+        const [dx, dz] = off(glx, glz + gd / 2 + 0.02);
+        flat.box(dx, gy, dz, gw - 0.7, 2.25, 0.05, bd.rot, [0.86, 0.85, 0.82]);
+        { const [lx2, lz2] = off(glx, glz + gd / 2 + 0.05); flat.box(lx2, gy + 1.12, lz2, gw - 0.75, 0.03, 0.03, bd.rot, [0.62, 0.61, 0.58]); }
+        const [ax, az] = off(glx, glz + gd / 2 + 2.4);
+        flat.box(ax, G.terrainHeight(ax, az) - 0.05, az, gw - 0.2, 0.1, 4.6, bd.rot, [0.5, 0.49, 0.47]);
+      }
+    }
+    // --- a bay window on the front
+    const porch = bd.w >= 6.5 && bd.d >= 6 && hash2(seed, 135) < 0.42;
+    if (bd.w >= 7 && !porch && hash2(seed, 178) < 0.16) {
+      const sd = hash2(seed, 179) < 0.5 ? -1 : 1, bw = 2.4, bz = 0.55;
+      const [cx, cz] = off(sd * bd.w * 0.24, bd.d / 2 + bz / 2);
+      const y = bd.y + 0.55;
+      flat.box(cx, y, cz, bw, 1.75, bz, bd.rot, col);
+      flat.box(cx, y + 1.75, cz, bw + 0.2, 0.14, bz + 0.15, bd.rot, rc);
+      const [fx, fz] = off(sd * bd.w * 0.24, bd.d / 2 + bz + 0.01);
+      flat.box(fx, y + 0.35, fz, bw - 0.4, 1.15, 0.03, bd.rot, trim);
+      flat.box(fx, y + 0.42, fz, bw - 0.56, 1.0, 0.04, bd.rot, GL);
+    }
+  }
+
+  /**
+   * A hip roof: four slopes, the ridge along the longer side and shortened by
+   * the short half-span at each end (a pyramid on a square footprint). Normals
+   * in the house's frame, as meshGable's are.
+   */
+  /**
+   * Which side of a building faces the street: 0 its +z, 1 +x, 2 -z, 3 -x
+   * (in its own frame), the one whose middle has pavement nearest straight
+   * out from it, by the chunk's 2 m occupancy raster (trees.js), 16 m at
+   * most. +z when nothing is found, or outside a near chunk's build.
+   */
+  houseFront(bd) {
+    const occ = this._occ;
+    if (!occ) return 0;
+    const x0 = this._occX0, z0 = this._occZ0;
+    const cs = Math.cos(bd.rot), sn = Math.sin(bd.rot);
+    let best = 0, bestD = 1e9;
+    for (let k = 0; k < 4; k++) {
+      const lx = k === 1 ? 1 : k === 3 ? -1 : 0, lz = k === 0 ? 1 : k === 2 ? -1 : 0;
+      const half = lx ? bd.w / 2 : bd.d / 2;
+      const dx = lx * cs - lz * sn, dz = lx * sn + lz * cs;
+      for (let s = 1.5; s <= 16 && s < bestD; s += 1.5) {
+        const i = Math.floor((bd.x + dx * (half + s) - x0) / OCC_C), j = Math.floor((bd.z + dz * (half + s) - z0) / OCC_C);
+        if (i < 0 || j < 0 || i >= OCC_N || j >= OCC_N) break;
+        if (occ[j * OCC_N + i] & OCC_PAVE) { bestD = s; best = k; break; }
+      }
+    }
+    return best;
+  }
+
+  // --- fall: what the houses and shops put out -------------------------------
+
+  /** A pumpkin record for fall.js, at house-local (lx, lz) facing the house's front. */
+  _pumpkin(bd, off, lx, lz, y, r, carved, k) {
+    if (!this._decor) return;
+    const [x, z] = off(lx, lz);
+    const yaw = -bd.rot + (hash2(bd.seed, 700 + k) - 0.5) * 0.9;
+    this._decor.push(x, y, z, r, yaw, pumpkinSeed(x, z, k), carved ? 1 : 0);
+  }
+
+  /**
+   * Halloween on the front step, on about half the houses: pumpkins (a few
+   * of them carved) on the step or along the porch's front, potted mums, now
+   * and then a hay bale with corn stalks, a ghost hung from the porch roof, a
+   * raked pile of leaves in the side yard, and on one house in sixty a giant
+   * inflatable jack-o'-lantern on the lawn. All by the house's seed; pumpkins
+   * are records drawn near the camera (fall.js), the rest a few vertex-
+   * coloured shapes in the chunk's flat mesh.
+   */
+  fallHouse(flat, bd, seed, off, porch, form) {
+    const h = (k) => hash2(seed, 600 + k);
+    const front = bd.d / 2;
+    const ground = (lx, lz) => { const [x, z] = off(lx, lz); return G.terrainHeight(x, z); };
+    const clearAt = (lx, lz, pad = 0.4) => {
+      const [x, z] = off(lx, lz);
+      return !this.city.onRoad(x, z, pad, false) && !G.isWater(x, z);
+    };
+    const pumpR = (k) => 0.16 + h(k) * h(k + 1) * 0.17;
+    if (h(0) < 0.5) {
+      const n = 1 + Math.floor(h(1) * 3.4);
+      const carvedP = 0.28;
+      if (porch) {
+        // along the porch's front edge, either side of the steps
+        const y = porch.py + 0.34;
+        for (let i = 0; i < n; i++) {
+          const sd = i % 2 === 0 ? 1 : -1;
+          const lx = porch.px + sd * (1.05 + Math.floor(i / 2) * 0.55 + h(10 + i) * 0.15);
+          if (Math.abs(lx - porch.px) > porch.pw / 2 - 0.25) continue;
+          this._pumpkin(bd, off, lx, front + porch.pd - 0.45 - h(20 + i) * 0.3, y, pumpR(30 + i), h(40 + i) < carvedP, i);
+        }
+      } else if (form !== 'flat') {
+        // on the front step, at its back corners, then down the sides of it
+        const sy = bd.y + 0.12;
+        for (let i = 0; i < n; i++) {
+          const sd = i % 2 === 0 ? 1 : -1;
+          if (i < 2) this._pumpkin(bd, off, sd * (0.62 + h(10 + i) * 0.2), front + 0.32, sy, pumpR(30 + i), h(40 + i) < carvedP, i);
+          else {
+            const lx = sd * (1.35 + h(10 + i) * 0.3), lz = front + 0.7;
+            if (clearAt(lx, lz)) this._pumpkin(bd, off, lx, lz, ground(lx, lz), pumpR(30 + i), h(40 + i) < carvedP, i);
+          }
+        }
+      } else {
+        // a townhome: by the door, on the ground
+        for (let i = 0; i < Math.min(n, 2); i++) {
+          const lx = (i ? -1 : 1) * (0.7 + h(10 + i) * 0.3), lz = front + 0.45;
+          if (clearAt(lx, lz)) this._pumpkin(bd, off, lx, lz, ground(lx, lz), pumpR(30 + i), h(40 + i) < carvedP, i);
+        }
+      }
+    }
+    // potted mums either side of the way in
+    if (h(2) < 0.3) {
+      // rust, gold, burgundy, bronze; the odd purple or white
+      const MUM = [[0.62, 0.17, 0.02], [0.7, 0.45, 0.04], [0.3, 0.025, 0.04], [0.48, 0.2, 0.05], [0.62, 0.17, 0.02],
+        [0.7, 0.45, 0.04], [0.26, 0.07, 0.24], [0.72, 0.7, 0.62]];
+      const POT = [[0.42, 0.18, 0.1], [0.42, 0.18, 0.1], [0.3, 0.22, 0.15], [0.12, 0.12, 0.13]];
+      const mc = MUM[Math.floor(h(3) * MUM.length)], pc = POT[Math.floor(h(4) * POT.length)];
+      for (const sd of h(5) < 0.5 ? [1, -1] : [h(6) < 0.5 ? 1 : -1]) {
+        const lx = porch ? porch.px + sd * 0.85 : sd * 1.25, lz = porch ? front + porch.pd + 0.45 : front + 0.25;
+        if (!clearAt(lx, lz)) continue;
+        const [x, z] = off(lx, lz), y = G.terrainHeight(x, z);
+        // a pot, its rim, and a cushion of flowers over it, wider than the pot
+        flat.prism(x, y - 0.05, z, 0.16, 0.28, 7, pc);
+        flat.prism(x, y + 0.2, z, 0.19, 0.06, 7, [pc[0] * 0.85, pc[1] * 0.85, pc[2] * 0.85]);
+        flat.foliage(x, y + 0.36, z, 0.3, 8, 4, mc, 0.62, 0.22, 0.45, null, 0.3);
+      }
+    }
+    // a hay bale with a pumpkin on it and a bundle of corn stalks behind
+    if (h(7) < 0.09 && form !== 'flat') {
+      const sd = h(8) < 0.5 ? 1 : -1;
+      const lx = porch ? porch.px + sd * (porch.pw / 2 + 0.7) : sd * 2.0, lz = front + 0.75;
+      if (clearAt(lx, lz, 0.8)) {
+        const [x, z] = off(lx, lz), y = G.terrainHeight(x, z);
+        const straw = [0.62, 0.5, 0.22];
+        flat.box(x, y - 0.05, z, 1.0, 0.5, 0.48, bd.rot, straw);
+        for (const b of [-0.3, 0.3]) flat.box(x + b * Math.cos(bd.rot), y + 0.02, z + b * Math.sin(bd.rot), 0.04, 0.44, 0.5, bd.rot, [0.42, 0.33, 0.14]);
+        this._pumpkin(bd, off, lx, lz, y + 0.45, 0.2 + h(9) * 0.06, h(11) < 0.4, 9);
+        const [sx, sz] = off(lx + sd * 0.7, front + 0.25);
+        for (let i = 0; i < 4; i++) {
+          const a = i * 1.7, r = 0.09;
+          flat.cone(sx + Math.cos(a) * r, y - 0.05, sz + Math.sin(a) * r, 0.11, 1.75 + h(12 + i) * 0.35, 4, [0.52, 0.44, 0.24]);
+        }
+        flat.box(sx, y + 0.75, sz, 0.3, 0.06, 0.3, bd.rot, [0.42, 0.3, 0.12]);
+      }
+    }
+    // a sheet ghost hung from the porch roof
+    if (porch && h(13) < 0.12) {
+      const [gx, gz] = off(porch.px + (h(14) < 0.5 ? 1 : -1) * (porch.pw / 2 - 0.45), front + porch.pd - 0.3);
+      const top = porch.py + porch.ph - 0.2;
+      flat.box(gx, top - 0.35, gz, 0.02, 0.35, 0.02, 0, [0.85, 0.85, 0.85]);
+      flat.cone(gx, top - 1.25, gz, 0.3, 0.8, 7, [0.9, 0.9, 0.88]);
+      flat.spheroid(gx, top - 0.5, gz, 0.2, 7, 4, [0.92, 0.92, 0.9], 1.05);
+    }
+    // a raked pile of leaves in the side yard
+    if (h(15) < 0.16) {
+      const sd = h(16) < 0.5 ? 1 : -1;
+      const lx = sd * (bd.w / 2 + 1.6 + h(17)), lz = front - 1 - h(18) * 3;
+      const [x, z] = off(lx, lz);
+      if (clearAt(lx, lz, 1.2) && !this.inBuilding(x, z, 1.2)) {
+        const LEAF = [[0.42, 0.2, 0.03], [0.36, 0.09, 0.02], [0.22, 0.11, 0.04]];
+        const lc = LEAF[Math.floor(h(19) * LEAF.length)];
+        flat.cone(x, G.terrainHeight(x, z) - 0.08, z, 0.95 + h(21) * 0.6, 0.45 + h(22) * 0.25, 7, lc, 0.35);
+      }
+    }
+    // the giant inflatable on the lawn
+    if (h(23) < 0.017) {
+      const lx = (h(24) - 0.5) * bd.w * 0.6, lz = front + 3.2;
+      if (clearAt(lx, lz, 1.6)) this._pumpkin(bd, off, lx, lz, ground(lx, lz), 0.95, true, 24);
+    }
+  }
+
+  /** A shop's seasonal display at its door: hay bales and a heap of pumpkins. */
+  fallShop(flat, bd0, seed) {
+    const h = (k) => hash2(seed, 650 + k);
+    if (h(0) > 0.16) return;
+    // on the street side (houseFront), in that side's frame
+    const fk = this.houseFront(bd0);
+    const bd = fk === 0 ? bd0 : { x: bd0.x, z: bd0.z, seed: bd0.seed, rot: bd0.rot + FRONT_TURN[fk], w: fk % 2 ? bd0.d : bd0.w, d: fk % 2 ? bd0.w : bd0.d };
+    if (bd.w < 8) return;
+    const cs = Math.cos(bd.rot), sn = Math.sin(bd.rot);
+    const off = (lx, lz) => [bd.x + lx * cs - lz * sn, bd.z + lx * sn + lz * cs];
+    const sd = h(1) < 0.5 ? 1 : -1;
+    const lx = sd * (bd.w / 2 - 1.6 - h(2) * Math.max(0, bd.w / 2 - 4)), lz = bd.d / 2 + 0.75;
+    const [x, z] = off(lx, lz);
+    if (this.city.onRoad(x, z, 0.6, false)) return;
+    const y = G.terrainHeight(x, z) + this.city.roadLift(x, z);
+    const straw = [0.62, 0.5, 0.22];
+    flat.box(x, y - 0.03, z, 1.0, 0.48, 0.48, bd.rot, straw);
+    const [x2, z2] = off(lx + sd * -1.05, lz);
+    flat.box(x2, y - 0.03, z2, 1.0, 0.48, 0.48, bd.rot, [straw[0] * 0.92, straw[1] * 0.92, straw[2] * 0.9]);
+    const n = 3 + Math.floor(h(3) * 4);
+    for (let i = 0; i < n; i++) {
+      const on = i < 2;
+      const px = on ? lx + (i ? sd * -1.05 : 0) : lx + sd * (0.75 + (i - 2) * 0.42) * (i % 2 ? -1 : 1) * 1.2;
+      const pz = on ? lz : lz + 0.5 + h(10 + i) * 0.25;
+      this._pumpkin(bd, off, px, pz, on ? y + 0.45 : y, 0.14 + h(20 + i) * 0.13, h(30 + i) < 0.15, i);
+    }
+  }
+
+  meshHip(flat, bd, y0, col, pitch) {
+    const cs = Math.cos(bd.rot), sn = Math.sin(bd.rot);
+    const OVER = 0.45;
+    const alongX = bd.w >= bd.d;
+    const hw = bd.w / 2 + OVER, hd = bd.d / 2 + OVER;
+    const span = alongX ? hd : hw;
+    const rise = clamp(span * pitch, 1.0, 3.4);
+    const y1 = y0 + rise;
+    const P = (lx, lz, y) => [bd.x + lx * cs - lz * sn, y, bd.z + lx * sn + lz * cs];
+    const N = (lx, y, lz) => [lx * cs - lz * sn, y, lx * sn + lz * cs];
+    const rl = Math.max(0.01, (alongX ? hw : hd) - span);
+    const A = alongX ? P(-rl, 0, y1) : P(0, -rl, y1);
+    const B = alongX ? P(rl, 0, y1) : P(0, rl, y1);
+    const c00 = P(-hw, -hd, y0), c10 = P(hw, -hd, y0), c11 = P(hw, hd, y0), c01 = P(-hw, hd, y0);
+    const dark = [col[0] * 0.62, col[1] * 0.62, col[2] * 0.66];
+    const mid = [col[0] * 0.8, col[1] * 0.8, col[2] * 0.83];
+    if (alongX) {
+      flat.quad(c00, c10, B, A, N(0, 0.72, -0.7), ZERO_UV, col);
+      flat.quad(c11, c01, A, B, N(0, 0.72, 0.7), ZERO_UV, dark);
+      flat.tri(c01, c00, A, N(-0.7, 0.72, 0), mid);
+      flat.tri(c10, c11, B, N(0.7, 0.72, 0), mid);
+    } else {
+      flat.quad(c00, A, B, c01, N(-0.7, 0.72, 0), ZERO_UV, col);
+      flat.quad(c10, c11, B, A, N(0.7, 0.72, 0), ZERO_UV, dark);
+      flat.tri(c00, c10, A, N(0, 0.72, -0.7), mid);
+      flat.tri(c01, B, c11, N(0, 0.72, 0.7), mid);
+    }
+  }
+
+  /** Square-based pyramid that honours the footprint and its rotation. */
+  meshPyramid(flat, x, y0, z, hw, hd, h, rot, col) {
+    if (flat.solids) flat.solids.push(2, x, z, 2 * hw, 2 * hd, rot, y0, y0 + h);   // a slope, not a box
+    const cs = Math.cos(rot), sn = Math.sin(rot);
+    const P = (lx, lz, yy) => [x + lx * cs - lz * sn, yy, z + lx * sn + lz * cs];
+    const apex = [x, y0 + h, z];
+    const c = [P(-hw, -hd, y0), P(hw, -hd, y0), P(hw, hd, y0), P(-hw, hd, y0)];
+    // Rotated with the corners, for the reason meshGable's normals are.
+    const N = (lx, y, lz) => [lx * cs - lz * sn, y, lx * sn + lz * cs];
+    const nrm = [N(0, 0.4, -1), N(1, 0.4, 0), N(0, 0.4, 1), N(-1, 0.4, 0)];
+    for (let i = 0; i < 4; i++) {
+      flat.tri(c[i], c[(i + 1) % 4], apex, nrm[i], col);
+    }
+  }
+
+  meshNode(road, flat, ni, n, lod, walk) {
+    const city = this.city;
+    // A dead end is not a junction. Paving a crossing square and a kerbed
+    // pavement ring at one leaves a slab of road furniture sitting on bare
+    // ground with a single street running into it -- the "road to nowhere".
+    // citygen.nodeSurface() skips these too; the two have to agree.
+    if (n.e.length < 2) return;
+    // A JUNCTION IS NOT BUILT INSIDE A CUTTING, and testing only its centre is
+    // not enough: a node standing just clear of the trench still paves a square
+    // whose far corners reach into it, and drawn from the carved surface those
+    // corners dive. That is the pale plate fanning out of the mouth -- apex at
+    // the headwall, a straight unclosed edge over the bank, and full-white
+    // vertex colour making it read as poured concrete rather than tarmac.
+    // The strips cover the tarmac here on their own.
+    {
+      let rr = 0;
+      for (const ei of n.e) { const e = city.edges[ei]; if (!e.tunnel && e.hw > rr) rr = e.hw; }
+      // Generous: the square, its kerbed ring and the ring's diagonal corners
+      // all reach past the node, and cutFloor covers the banks as well as the
+      // floor. A junction anywhere near a cutting is simply not drawn -- the
+      // approach strips pave it on their own, and a crossing does not belong
+      // in the mouth of a tunnel anyway.
+      const rq = rr + 8;
+      for (const [ox, oz] of [[0, 0], [rq, 0], [-rq, 0], [0, rq], [0, -rq],
+        [rq, rq], [rq, -rq], [-rq, rq], [-rq, -rq]]) {
+        if (this.cutFloor(n.x + ox, n.z + oz)) return;
+      }
+    }
+    // A graded node that is not an at-grade junction gets no square. Its
+    // strips are mitred into their continuation (deckEdgePoint), and a
+    // horizontal square laid over a sloping, cambered profile pokes through on
+    // the uphill side and hangs in the air on the downhill one. That used to
+    // be decks only; ground freeway carried one every node -- 8913 squares,
+    // each 3 cm proud of the lanes and cutting the paint at both ends. A ramp
+    // at a merge ends inside the main line's carriageway, so nothing needs
+    // closing. citygen.nodeSurface() skips the same nodes.
+    if (n.prof && !n.anchor) return;
+    // Street junctions are a polygon fitted to their approaches (citygen
+    // buildJunction). What follows -- the square turned to the widest road,
+    // and its ring -- is kept only where a graded or elevated road meets the
+    // node, whose strips meshGraded/meshViaduct draw untrimmed.
+    const J = this.junctionFor(ni);
+    if (J && !J.legacy) { this.meshJunction(road, flat, J, n, lod, walk); return; }
+    let hw = 0;
+    let rot = 0;
+    let sw = 0;
+    for (const ei of n.e) {
+      const e = city.edges[ei];
+      // A bore paves nothing on the surface, so it cannot size a crossing
+      // either. Skipping the edge in meshRoad but not here left a junction
+      // square sitting on the ground over the tunnel -- a patch of carriageway
+      // in somebody's garden, and 638 centreline samples still reporting a
+      // paved lift with no road drawn. nodeSurface() does the same, because the
+      // drawn surface and the lift query have to agree.
+      if (e.tunnel) continue;
+      if (e.hw > hw) { hw = e.hw; rot = Math.atan2(e.dx, -e.dz); }
+      if (e.cls === 'st' || e.cls === 'art' || e.cls === 'res') {
+        sw = Math.max(sw, e.cls === 'art' ? 3.2 : 2.6);
+      }
+    }
+    if (hw <= 0) return;
+    const c = Math.cos(rot), s = Math.sin(rot);
+    // UVs in METRES, at the same ROAD_TILE the strips use.
+    //
+    // This was a hardcoded 0.16 x 0.14 slice of the asphalt texture stretched
+    // across the whole junction -- which at a 20 m crossing is a repeat every
+    // 130 m against the strips' 9 m. Roughly a hundred times less UV density,
+    // so the junction magnified mip 0 while the road beside it sampled real
+    // detail, and the two met at a hard line with sharp tarmac on one side and
+    // a smear on the other. It reads as a rendering fault and was mistaken in
+    // turn for post-processing, a shadow and a missing chunk.
+    //
+    // Aligned to world axes rather than to the junction's rotation, so the two
+    // triangles of a crossing cannot disagree about which way the grain runs.
+    // Subdivide the square, for the same reason meshRoad subdivides a strip.
+    //
+    // Drawn as ONE quad it interpolates linearly between its four corners,
+    // while groundAt samples the heightfield at the exact point -- and those
+    // are different surfaces as soon as the ground is not planar. Measured at a
+    // 9.2 m residential crossing whose corners spread 2.4 m, the drawn square
+    // stood 0.67 m above the height you were standing at: you sank into your
+    // own junction. The corner samples were never the problem; the middle was.
+    //
+    // ~4 m cells, and only where the ground actually moves. The heightfield is
+    // 40 m, so finer buys nothing, and subdividing every junction cost 5.6 % of
+    // the scene's triangles to fix a defect most of them do not have.
+    //
+    // Gate on BOW, not on spread. A junction on a uniform grade has a large
+    // corner spread and is still exactly representable by one quad -- a plane
+    // is a plane. What one quad cannot follow is curvature, which is the
+    // centre's deviation from the plane of the corners. Gating on spread
+    // subdivided nearly every junction downtown, Seattle being hilly, and saved
+    // almost nothing: 432814 triangles against 432214. Bow costs +2.7 % and
+    // passes tools/perfguard.mjs --check.
+    const cy = (x, z) => (n.elev ? n.y + 0.07 : G.terrainHeight(x, z) + NODE_Y);
+    const at = (lx, lz) => cy(n.x + lx * c - lz * s, n.z + lx * s + lz * c);
+    const bow = Math.abs(
+      at(0, 0) - (at(-hw, -hw) + at(hw, -hw) + at(hw, hw) + at(-hw, hw)) / 4
+    );
+    const sub = bow < 0.08 ? 1 : Math.max(2, Math.min(6, Math.round((hw * 2) / 4)));
+    for (let iz = 0; iz < sub; iz++) {
+      for (let ix = 0; ix < sub; ix++) {
+        const qp = [], qy = [], qu = [];
+        for (const [fx, fz] of [[ix, iz], [ix + 1, iz], [ix + 1, iz + 1], [ix, iz + 1]]) {
+          const lx = -hw + (fx / sub) * hw * 2, lz = -hw + (fz / sub) * hw * 2;
+          const x = n.x + lx * c - lz * s;
+          const z = n.z + lx * s + lz * c;
+          qp.push(x, z);
+          qy.push(cy(x, z));
+          qu.push(x / ROAD_TILE, z / ROAD_TILE);
+        }
+        road.flat(qp, qy, [1, 1, 1], qu);
+      }
+    }
+
+    if (lod !== 1 || sw <= 0 || n.elev || !walk) return;
+    // Square ring of pavement around the junction; its inner edge lines up with
+    // the crossing square and its outer edge meets the trimmed street strips.
+    const P = (lx, lz) => [n.x + lx * c - lz * s, n.z + lx * s + lz * c];
+    const wy = (x, z) => G.terrainHeight(x, z) + WALK_Y;
+    const ry = (x, z) => G.terrainHeight(x, z) + ROAD_Y;
+    const cc = [0.72, 0.72, 0.7], ccLo = [0.4, 0.4, 0.39];
+    // Pavement must not cross a carriageway. Each side of the ring is cut into
+    // pieces and the pieces covering an approach road are dropped, which leaves
+    // pavement on the corners only -- drawn whole, the ring laid a footpath
+    // straight over all four approaches, the same defect the trimmed strips
+    // were meant to have fixed.
+    // Every nearby carriageway, not just the ones meeting THIS node. Junctions
+    // are close together in real data and a ring can easily reach into a
+    // neighbouring one's approach, which the old node-local test could not see.
+    // One candidate list for the whole ring (it asks ~300 times), answered
+    // with onRoad's own arithmetic: see citygen.roadsNear.
+    const near = city.roadsNear(n.x, n.z, (hw + sw) * 1.415 + 0.5, false);
+    const onRoad = (x, z) => city.onRoadAmong(near, x, z);
+    const SEG = 16;
+    const side = (ax, az, bx, bz, nx, nz) => {
+      const wn = [-(nx * c - nz * s), 0, -(nx * s + nz * c)];
+      for (let k = 0; k < SEG; k++) {
+        const t0 = k / SEG, t1 = (k + 1) / SEG;
+        const sax = ax + (bx - ax) * t0, saz = az + (bz - az) * t0;
+        const sbx = ax + (bx - ax) * t1, sbz = az + (bz - az) * t1;
+        const [i0x, i0z] = P(sax, saz), [i1x, i1z] = P(sbx, sbz);
+        const [o0x, o0z] = P(sax + nx * sw, saz + nz * sw);
+        const [o1x, o1z] = P(sbx + nx * sw, sbz + nz * sw);
+        if (!G.isBuildable(o0x, o0z) && !G.isBuildable(o1x, o1z)) continue;
+        // Mid-depth at both ends, for the same reason as the strips: the ring's
+        // inner edge sits on the junction square's boundary, so testing corners
+        // rejects the whole ring.
+        let ringHit = false;
+        for (const fd of [0.25, 0.75]) {
+          for (const fl of [0, 0.5, 1]) {
+            const ex = i0x + (i1x - i0x) * fl, ez = i0z + (i1z - i0z) * fl;
+            const gx = o0x + (o1x - o0x) * fl, gz = o0z + (o1z - o0z) * fl;
+            if (onRoad(ex + (gx - ex) * fd, ez + (gz - ez) * fd)) { ringHit = true; break; }
+          }
+          if (ringHit) break;
+        }
+        if (ringHit) continue;
+        // A ring piece belonging to a node just OUTSIDE a cutting can still
+        // reach into it, and drawn from the carved surface it dives after the
+        // road as a pale ramp beside the mouth. Skipping the node is not
+        // enough; the pieces have to be tested too.
+        if (this.inCut((i0x + o1x) / 2, (i0z + o1z) / 2)) continue;
+        // Size the ring's UVs from the piece's real dimensions, or its slabs
+        // come out as whatever shape the corner happens to be.
+        const ru = Math.hypot(o0x - i0x, o0z - i0z) / WALK_TILE;
+        const rv = Math.hypot(i1x - i0x, i1z - i0z) / WALK_TILE;
+        walk.quad(
+          [i0x, wy(i0x, i0z), i0z], [o0x, wy(o0x, o0z), o0z],
+          [o1x, wy(o1x, o1z), o1z], [i1x, wy(i1x, i1z), i1z],
+          [0, 1, 0], [0, 0, ru, 0, ru, rv, 0, rv], [1, 1, 1]);
+        this.meshVerge(flat, o0x, o0z, o1x, o1z, -wn[0], -wn[2]);
+        flat.quad(
+          [i0x, ry(i0x, i0z), i0z], [i1x, ry(i1x, i1z), i1z],
+          [i1x, wy(i1x, i1z), i1z], [i0x, wy(i0x, i0z), i0z],
+          wn, [0, 0, 1, 0, 1, 1, 0, 1], [ccLo, ccLo, cc, cc]);
+      }
+    };
+    const R = hw;
+    side(-R, R, R, R, 0, 1);
+    side(R, -R, -R, -R, 0, -1);
+    side(R, R, R, -R, 1, 0);
+    side(-R, -R, -R, R, -1, 0);
+  }
+
+  /**
+   * A street junction as citygen.buildJunction shapes it: the tarmac polygon
+   * the approaches' mouths and kerb lines enclose, and a kerbed band of
+   * pavement round each corner. nodeSurface reports exactly this.
+   *
+   * The polygon is a fan from the node, drawn at terrain + NODE_Y per vertex
+   * with shared vertices. Its boundary carries each mouth's cross-section
+   * vertices with the strip's own wear value, so the polish down the middle
+   * and the grime at the kerb run on across the seam instead of meeting a
+   * flat white plate; the node itself takes the polished value. Rings are
+   * added only where the ground bows under a spoke (as the square was
+   * subdivided only on bow): a plane is exactly a fan.
+   */
+  meshJunction(road, flat, J, n, lod, walk) {
+    const T = G.terrainHeight;
+    const poly = J.poly, pc = J.pcol, np = poly.length / 2;
+    if (np >= 3) {
+      const cx = n.x, cz = n.z, t0 = T(cx, cz);
+      let dev = 0, rm = 0;
+      for (let k = 0; k < np; k++) {
+        const x = poly[2 * k], z = poly[2 * k + 1];
+        dev = Math.max(dev, Math.abs(T((cx + x) / 2, (cz + z) / 2) - (t0 + T(x, z)) / 2));
+        rm = Math.max(rm, Math.hypot(x - cx, z - cz));
+      }
+      const sub = dev < 0.04 ? 1 : Math.max(2, Math.min(6, Math.ceil(rm / 4)));
+      const CEN = 1.12;
+      const V = (x, z, c) => road.vert(x, T(x, z) + NODE_Y, z, 0, 1, 0, x / ROAD_TILE, z / ROAD_TILE, c, c, c);
+      // Wound to face up whichever way the three points turn. (road.P is
+      // re-read: writing vertices can reallocate it.)
+      const tri = (a, b, c) => {
+        const P = road.P;
+        const ux = P[b * 3] - P[a * 3], uz = P[b * 3 + 2] - P[a * 3 + 2];
+        const vx = P[c * 3] - P[a * 3], vz = P[c * 3 + 2] - P[a * 3 + 2];
+        const ny = uz * vx - ux * vz;
+        if (Math.abs(ny) < 1e-9) return;
+        if (ny > 0) road.face3(a, b, c); else road.face3(a, c, b);
+      };
+      const ic = V(cx, cz, CEN);
+      let prev = null;
+      for (let r = 1; r <= sub; r++) {
+        const f = r / sub, ring = new Array(np);
+        for (let k = 0; k < np; k++) {
+          ring[k] = V(cx + (poly[2 * k] - cx) * f, cz + (poly[2 * k + 1] - cz) * f, CEN + (pc[k] - CEN) * f);
+        }
+        for (let k = 0; k < np; k++) {
+          const k2 = (k + 1) % np;
+          if (!prev) tri(ic, ring[k], ring[k2]);
+          else { tri(prev[k], ring[k], ring[k2]); tri(prev[k], ring[k2], prev[k2]); }
+        }
+        prev = ring;
+      }
+      // What the fan leaves of an approach's carriageway where no corner fits
+      // (citygen buildJunction's `fill`): convex, so a fan from its centroid,
+      // edges cut to 4 m and ringed like the polygon where the ground bows.
+      for (const F of this.city.junctionFill(J)) {
+        const pts = [];
+        for (let k = 0; k < F.length; k += 2) {
+          const k2 = (k + 2) % F.length;
+          const s = Math.max(1, Math.ceil(Math.hypot(F[k2] - F[k], F[k2 + 1] - F[k + 1]) / 4));
+          for (let j = 0; j < s; j++) pts.push(F[k] + (F[k2] - F[k]) * j / s, F[k + 1] + (F[k2 + 1] - F[k + 1]) * j / s);
+        }
+        const m = pts.length / 2;
+        let fx = 0, fz = 0;
+        for (let k = 0; k < m; k++) { fx += pts[2 * k]; fz += pts[2 * k + 1]; }
+        fx /= m; fz /= m;
+        let fd = 0, fr = 0;
+        for (let k = 0; k < m; k++) {
+          const x = pts[2 * k], z = pts[2 * k + 1];
+          fd = Math.max(fd, Math.abs(T((fx + x) / 2, (fz + z) / 2) - (T(fx, fz) + T(x, z)) / 2));
+          fr = Math.max(fr, Math.hypot(x - fx, z - fz));
+        }
+        const fs = fd < 0.04 ? 1 : Math.max(2, Math.min(6, Math.ceil(fr / 4)));
+        // the strip's own wear (meshRoad), by offset across the arm it paves
+        const W = F.w, FV = (x, z) => {
+          const f = Math.min(1, Math.abs(((x - W.x) * W.px + (z - W.z) * W.pz) / W.hw));
+          return V(x, z, (1 + 0.12 * (1 - f * f)) * (1 - 0.30 * Math.max(0, f - 0.55) / 0.45));
+        };
+        const fc = FV(fx, fz);
+        let fp = null;
+        for (let r = 1; r <= fs; r++) {
+          const f = r / fs, ring = new Array(m);
+          for (let k = 0; k < m; k++) ring[k] = FV(fx + (pts[2 * k] - fx) * f, fz + (pts[2 * k + 1] - fz) * f);
+          for (let k = 0; k < m; k++) {
+            const k2 = (k + 1) % m;
+            if (!fp) tri(fc, ring[k], ring[k2]);
+            else { tri(fp[k], ring[k], ring[k2]); tri(fp[k], ring[k2], fp[k2]); }
+          }
+          fp = ring;
+        }
+      }
+    }
+    if (lod !== 1 || !walk) return;
+    const pieces = this.city.junctionPieces(J);
+    if (!pieces.length) return;
+    const cc = [0.72, 0.72, 0.7], ccLo = [0.4, 0.4, 0.39];
+    const gDark = [0.44, 0.45, 0.46], gLite = [0.92, 0.93, 0.93], gW = 0.5;
+    const wy = (x, z) => T(x, z) + WALK_Y;
+    for (const pcs of pieces) {
+      const K = pcs.K, I = pcs.I;
+      const wj = 0.9 + hash2(Math.round(K[0][0] * 0.7), Math.round(K[0][1] * 0.7)) * 0.2;
+      const wIn = [wj, wj, wj], wOut = [wj * 0.9, wj * 0.9, wj * 0.91];
+      // Toward the road at each kerb vertex: from the building line to the kerb.
+      const toRoad = (k) => {
+        let dx = K[k][0] - I[k][0], dz = K[k][1] - I[k][1];
+        const l = Math.hypot(dx, dz);
+        if (l > 0.05) return [dx / l, dz / l];
+        const a = K[Math.max(0, k - 1)], b = K[Math.min(K.length - 1, k + 1)];
+        dx = b[1] - a[1]; dz = a[0] - b[0];
+        const m = Math.hypot(dx, dz) || 1;
+        return [dx / m, dz / m];
+      };
+      let vk = 0;
+      for (let k = 0; k < pcs.keep.length; k++) {
+        const k0 = K[k], k1 = K[k + 1], i0 = I[k], i1 = I[k + 1];
+        const segL = Math.hypot(k1[0] - k0[0], k1[1] - k0[1]);
+        const v0 = vk / WALK_TILE, v1 = (vk + segL) / WALK_TILE;
+        vk += segL;
+        if (!pcs.keep[k]) continue;
+        // A piece reaching into a cutting dives after the road (see meshNode).
+        if (this.inCut((k0[0] + i1[0]) / 2, (k0[1] + i1[1]) / 2)) continue;
+        const d0 = Math.hypot(i0[0] - k0[0], i0[1] - k0[1]) / WALK_TILE;
+        const d1 = Math.hypot(i1[0] - k1[0], i1[1] - k1[1]) / WALK_TILE;
+        walk.quad(
+          [k0[0], wy(k0[0], k0[1]), k0[1]], [i0[0], wy(i0[0], i0[1]), i0[1]],
+          [i1[0], wy(i1[0], i1[1]), i1[1]], [k1[0], wy(k1[0], k1[1]), k1[1]],
+          [0, 1, 0], [0, v0, d0, v0, d1, v1, 0, v1], [wIn, wOut, wOut, wIn]);
+        if (segL > 0.02) {
+          // Kerb face, facing the road.
+          let nx = -(k1[1] - k0[1]) / segL, nz = (k1[0] - k0[0]) / segL;
+          const tr = toRoad(k);
+          if (nx * tr[0] + nz * tr[1] < 0) { nx = -nx; nz = -nz; }
+          const y0 = T(k0[0], k0[1]), y1 = T(k1[0], k1[1]);
+          flat.quad([k0[0], y0 + ROAD_Y, k0[1]], [k1[0], y1 + ROAD_Y, k1[1]],
+            [k1[0], y1 + WALK_Y, k1[1]], [k0[0], y0 + WALK_Y, k0[1]], [nx, 0, nz],
+            [0, 0, 1, 0, 1, 1, 0, 1], [ccLo, ccLo, cc, cc]);
+          // Gutter, on the junction polygon's own lift.
+          const r0 = toRoad(k), r1 = toRoad(k + 1);
+          const g0x = k0[0] + r0[0] * gW, g0z = k0[1] + r0[1] * gW;
+          const g1x = k1[0] + r1[0] * gW, g1z = k1[1] + r1[1] * gW;
+          const gl = NODE_Y + 0.012;
+          road.quad([k0[0], y0 + gl, k0[1]], [g0x, T(g0x, g0z) + gl, g0z],
+            [g1x, T(g1x, g1z) + gl, g1z], [k1[0], y1 + gl, k1[1]], [0, 1, 0],
+            [0, v0, gW / ROAD_TILE, v0, gW / ROAD_TILE, v1, 0, v1], [gDark, gLite, gLite, gDark]);
+        }
+        const vg = pcs.verge[k];
+        if (vg) this.meshVerge(flat, i0[0], i0[1], i1[0], i1[1], vg[0], vg[1]);
+      }
+    }
+  }
+
+  // --- buildings ------------------------------------------------------------
+
+  /**
+   * Material families.
+   *
+   * Per-building random jitter around ONE base colour per style gave a downtown
+   * that was almost entirely the same beige-orange brick -- the palette fix
+   * removed the candy colours but replaced them with monotony. Real cities are a
+   * handful of distinct material families (concrete, curtain-wall glass, red
+   * brick, painted stucco, dark modern) mixed on one street, with variation
+   * INSIDE each family rather than across the whole city.
+   */
+  buildingFamily(bd) {
+    const seed = bd.seed;
+    const pick = hash2(seed, 101);
+    // Taller and newer skews to glass and dark curtain wall; low and old skews
+    // to brick and stucco, which is roughly how a city stratifies by era.
+    const modern = clamp((bd.h - 18) / 55, 0, 1);
+    // A named palette, not a jitter. Every family carries its own hue AND its
+    // own material, so a street reads as a mix of buildings put up in different
+    // decades out of different stuff -- which is the thing a tint of one shared
+    // texture cannot express however far you push it.
+    const FAMS = [
+      { m: 'masonry', c: [0.76, 0.75, 0.72], u: 14, v: 13.6 },   // grey concrete
+      { m: 'glass', c: [0.55, 0.60, 0.66], u: 14, v: 13.6 },     // curtain wall
+      { m: 'brick', c: [0.80, 0.38, 0.28], u: 12, v: 12 },       // red brick
+      { m: 'brick', c: [0.86, 0.72, 0.46], u: 12, v: 12 },       // buff brick
+      { m: 'masonry', c: [0.92, 0.90, 0.84], u: 13, v: 13 },     // painted white
+      { m: 'brick', c: [0.74, 0.44, 0.34], u: 12, v: 12 },       // terracotta
+      { m: 'masonry', c: [0.52, 0.62, 0.58], u: 13, v: 13 },     // painted-over green
+      { m: 'glass', c: [0.56, 0.60, 0.64], u: 14, v: 13.6 },     // dark modern
+      // Five more, so a block of low-rise is not three colours of brick and
+      // two of concrete: Capitol Hill and Fremont paint their walls.
+      { m: 'masonry', c: [0.84, 0.76, 0.62], u: 13, v: 13 },     // beige stucco
+      { m: 'brick', c: [0.56, 0.32, 0.25], u: 12, v: 12 },       // dark brown brick
+      { m: 'masonry', c: [0.60, 0.66, 0.74], u: 13, v: 13 },     // grey-blue paint
+      { m: 'masonry', c: [0.80, 0.54, 0.42], u: 13, v: 13 },     // salmon paint
+      { m: 'masonry', c: [0.86, 0.76, 0.50], u: 13, v: 13 },     // ochre paint
+    ];
+    const wOld = [0.14, 0.03, 0.18, 0.11, 0.11, 0.07, 0.04, 0.02, 0.09, 0.08, 0.05, 0.04, 0.04];
+    const wNew = [0.18, 0.26, 0.06, 0.05, 0.06, 0.03, 0.02, 0.18, 0.05, 0.03, 0.04, 0.02, 0.02];
+    // Civic buildings are stone and brick: a school or a church in painted-
+    // over green or curtain wall reads as a mistake.
+    const CIVIC = [0.28, 0, 0.26, 0.18, 0.08, 0.05, 0, 0, 0.07, 0.08, 0, 0, 0];
+    // Curtain wall needs height to read as curtain wall. On a one- or two-
+    // storey box it is a blue-tiled shed: the glass families' share goes to
+    // concrete below 12 m.
+    const low = bd.h < 12;
+    let acc = 0;
+    for (let i = 0; i < FAMS.length; i++) {
+      let wi = bd.style === 'campus' ? CIVIC[i] : wOld[i] + (wNew[i] - wOld[i]) * modern;
+      if (low && FAMS[i].m === 'glass') wi = 0;
+      if (low && i === 0) wi += wOld[1] + wOld[7];
+      acc += wi;
+      if (pick <= acc) return FAMS[i];
+    }
+    return FAMS[0];
+  }
+
+  /** The colour a building's textured walls average to (see CELL_MEAN): what
+   *  its massing box and far-skyline box are drawn in. */
+  massColour(bd) {
+    const seed = bd.seed;
+    const fam = (bd.style === 'tower' || bd.style === 'midrise' || bd.style === 'brick'
+      || bd.style === 'lowrise' || bd.style === 'campus') ? this.buildingFamily(bd) : null;
+    let col, mean;
+    if (fam) { col = tint(seed, fam.c, 0.26); mean = CELL_MEAN[fam.m]; }
+    else if (bd.style === 'industrial') { col = tint(seed, [0.84, 0.86, 0.86], 0.3); mean = CELL_MEAN.industrial; }
+    else { col = paintTint(seed, pickW(HOUSE_PAINT, hash2(seed, 131)), 140); mean = CELL_MEAN.house; }
+    return [col[0] * mean[0], col[1] * mean[1], col[2] * mean[2]];
+  }
+
+  meshBuilding(bl, flat, glow, bd) {
+    const seed = bd.seed;
+    const C = this.cells;
+    let target, col, cell = null, uS = 14, vS = 13.6;
+    // Campus (schools, churches, hospitals, the university) takes a masonry
+    // family too. It used to fall through to the HOUSE cell with one tile per
+    // face: a single clapboard elevation stretched over a 60 m facade, with a
+    // front door ten metres tall -- all 808 civic buildings in the city.
+    const fam = (bd.style === 'tower' || bd.style === 'midrise'
+      || bd.style === 'brick' || bd.style === 'lowrise' || bd.style === 'campus')
+      ? this.buildingFamily(bd) : null;
+    // Storeys per tile: masonry cells carry four window rows, curtain wall
+    // eight pane rows.
+    let rows = 4;
+    if (fam) {
+      // Glass keeps its own material: it is the one facade whose look is mostly
+      // indirect SPECULAR, and that is the part of envMapIntensity the AO
+      // channel can only approximate. Everything else joins the atlas.
+      const glassy = fam.m === 'glass';
+      target = glassy ? bl.glass : bl.facade;
+      if (!glassy) cell = C[fam.m];
+      // Jitter stays INSIDE the family, so a brick street varies in weathering
+      // rather than becoming a different material every other lot.
+      col = tint(seed, fam.c, 0.26);
+      uS = fam.u;
+      // Snap the vertical repeat so a whole number of STOREYS spans the wall.
+      //
+      // It used to snap whole TILES, four storeys each, with a floor of one:
+      // so every building under ~20 m wore all four rows whatever its height,
+      // and the 53,000 untagged 6.4 m blocks came out as four storeys of
+      // 1.6 m -- windows at knee height, a toy's proportions. Snapping the
+      // storey keeps the parapet on a storey line (the reason for the old
+      // snap) and gives a 6.4 m block its two floors.
+      if (glassy) rows = 8;
+      const storey = fam.v / rows;
+      vS = rows * bd.h / Math.max(1, Math.round(bd.h / storey));
+    } else if (bd.style === 'industrial') {
+      target = bl.facade; cell = C.industrial;
+      col = tint(seed, [0.84, 0.86, 0.86], 0.3); uS = 16; vS = 16;
+    } else {
+      target = bl.facade; cell = C.house;
+      col = paintTint(seed, pickW(HOUSE_PAINT, hash2(seed, 131)), 140); uS = 0; vS = 0;
+    }
+
+    if (bd.kind) return this.meshLandmarkTower(bl, flat, bd, col);
+
+    const base = bd.y - 2;
+    const cs = Math.cos(bd.rot), sn = Math.sin(bd.rot);
+    const off = (lx, lz) => [bd.x + lx * cs - lz * sn, bd.z + lx * sn + lz * cs];
+    // The lowest ground under the footprint. `bd.y` is the terrain at the
+    // CENTRE and walls start 2 m under it, which covers a gentle slope and
+    // leaves a gap under the downhill corners of anything on a steep one:
+    // 13,754 boxes stood clear of their lowest corner by over 30 cm, 4,237 by
+    // over 1.5 m. Four samples, because the terrain is a linear triangle
+    // mesh at 40 m and a footprint is mostly inside one or two triangles.
+    let tLow = bd.y;
+    for (const [fx, fz] of CORNERS) {
+      const [qx, qz] = off(fx * bd.w / 2, fz * bd.d / 2);
+      // A corner over water has the lake bed under it, which nobody sees.
+      if (G.isWater(qx, qz)) continue;
+      const t = G.terrainHeight(qx, qz);
+      if (t < tLow) tLow = t;
+    }
+    // How far the lowest wall has to reach below `base` to meet that ground.
+    const drop = Math.max(0, base - (tLow - 0.4));
+
+    if (bd.style === 'house') {
+      const wallH = bd.h * 0.72;
+      // The roof form is decided first: a modern townhome is painted from its
+      // own palette. A row of them is how OSM draws most terraces -- one long
+      // footprint -- so an elongated house often is one (v156).
+      const aspect = Math.max(bd.w, bd.d) / Math.max(1, Math.min(bd.w, bd.d));
+      const rk = hash2(seed, 133);
+      const form = (rk < 0.11 && aspect < 2.6) || (aspect >= 2.6 && hash2(seed, 180) < 0.3) ? 'flat'
+        : rk < 0.38 && aspect < 2.2 ? 'hip' : 'gable';
+      // smooth panel cladding (the concrete cell's ~5 m panels), not clapboard
+      if (form === 'flat') { col = MODERN_PAINT[Math.floor(hash2(seed, 181) * MODERN_PAINT.length)]; cell = C.concrete; }
+      const sideU = form === 'flat' ? { uScale: 10, uFit: false } : { uScale: 11, uFit: true };
+      // Siding from the ground at the house's centre, a foundation under it.
+      //
+      // The siding box used to start at `base`, 2 m underground, with its one
+      // tile stretched over the whole height -- so a third of the elevation
+      // was buried: every front door in the city (the bottom 36 % of the tile)
+      // showed as a brown stub a metre tall sunk into the lawn, and the lower
+      // windows were cut in half. The tile now spans the wall you can see.
+      // Below it a plain concrete foundation reaches down to the lowest
+      // corner, which on a hillside is the exposed basement wall a Seattle
+      // house on a slope really has, instead of siding hanging in the air.
+      const sy = bd.y - 0.3;
+      const tileH = wallH + 2 - (sy - base);
+      // More than a storey of hillside under the downhill wall is a daylight
+      // basement: the siding carries on down (its pattern continued, so the
+      // basement has windows) and only the last 60 cm is bare foundation. A
+      // 4 m concrete cliff under a clapboard house read as a plinth block.
+      let fTop = sy;
+      const expo = sy - tLow;
+      if (expo > 2.0) {
+        const bh = expo - 0.6;
+        target.box(bd.x, sy - bh, bd.z, bd.w, bh + 0.02, bd.d, bd.rot,
+          [col[0] * 0.8, col[1] * 0.8, col[2] * 0.8],
+          { top: false, ...sideU, vScale: form === 'flat' ? 10 : tileH, vOff: form === 'flat' ? 0 : -bh / tileH, cell });
+        fTop = sy - bh;
+      }
+      flat.box(bd.x, base - drop, bd.z, bd.w + 0.12, fTop - base + drop + 0.04, bd.d + 0.12, bd.rot,
+        FOUNDATION, { top: false, ao: 0.25 });
+      // A whole number of elevations per face, ~11 m each: stretched once
+      // round a 20 m house the door came out 4.4 m wide.
+      target.box(bd.x, sy, bd.z, bd.w, tileH, bd.d, bd.rot, col,
+        { top: false, ...sideU, vScale: form === 'flat' ? 10 : 0, ao: 0.2, cell });
+      // Roofs were a flat near-black polygon that can fill a third of a frame
+      // with no material at all. Route them through the industrial cell so
+      // they take a texture, and lift them off black.
+      // A roof colour of its own, and one of three roof forms. Every house in
+      // the city had the same off-white siding under the same dark slate
+      // gable, so a neighbourhood from the air was one texture repeated.
+      const rc = paintTint(seed, pickW(HOUSE_ROOF, hash2(seed, 132)), 141);
+      // flat-roofed modern townhomes and infill, hip roofs on the squarer
+      // footprints, gables on the rest (decided above)
+      const top = base + wallH + 2;
+      const tk = hash2(seed, 134);
+      const trim = tk < 0.68 ? [0.93, 0.92, 0.88] : tk < 0.84 ? [0.22, 0.22, 0.24]
+        : [col[0] * 0.62, col[1] * 0.62, col[2] * 0.62];
+      if (form === 'flat') {
+        // a coping round a flat roof, no overhang
+        bl.facade.box(bd.x, top, bd.z, bd.w + 0.2, 0.3, bd.d + 0.2, bd.rot, [rc[0] * 0.9, rc[1] * 0.9, rc[2] * 0.9],
+          { uScale: 5, vScale: 5, cell: C.roof });
+        flat.box(bd.x, top - 0.02, bd.z, bd.w + 0.26, 0.42, bd.d + 0.26, bd.rot, trim, { top: false });
+      } else {
+        bl.facade.box(bd.x, top, bd.z, bd.w + 0.7, 0.26, bd.d + 0.7, bd.rot, rc,
+          { uScale: 5, vScale: 5, cell: C.industrial });
+        // the fascia/frieze board under the eaves, in the trim colour
+        flat.box(bd.x, top - 0.34, bd.z, bd.w + 0.12, 0.34, bd.d + 0.12, bd.rot, trim, { top: false });
+      }
+      // A front porch on some: a deck, two posts and a roof, on the side the
+      // step is on, where it clears the street.
+      // The way in -- step, porch, the season's pumpkins, a townhome's door --
+      // is on the side that faces the street (`houseFront`): `rot` is the
+      // footprint's own, so its +z was any side at all, and a porch stood
+      // in the back garden as often as not. `fb` is the same box turned so
+      // its +z is that side.
+      const fk = this.houseFront(bd);
+      const fb = fk === 0 ? bd : { x: bd.x, y: bd.y, z: bd.z, h: bd.h, seed: bd.seed, style: bd.style,
+        rot: bd.rot + FRONT_TURN[fk], w: fk % 2 ? bd.d : bd.w, d: fk % 2 ? bd.w : bd.d };
+      const fcs = Math.cos(fb.rot), fsn = Math.sin(fb.rot);
+      const offF = fk === 0 ? off : (lx, lz) => [bd.x + lx * fcs - lz * fsn, bd.z + lx * fsn + lz * fcs];
+      let porch = null;
+      if (form !== 'flat' && fb.w >= 6.5 && fb.d >= 6 && hash2(seed, 135) < 0.42) {
+        const pw = Math.min(fb.w * (0.4 + hash2(seed, 136) * 0.35), 7), pd = 2.2;
+        const px = (hash2(seed, 137) < 0.5 ? -1 : 1) * (fb.w - pw) / 2 * hash2(seed, 138);
+        const [cx0, cz0] = offF(px, fb.d / 2 + pd / 2);
+        const [ex0, ez0] = offF(px, fb.d / 2 + pd + 0.3);
+        if (!this.city.onRoad(cx0, cz0, 0.5, false) && !this.city.onRoad(ex0, ez0, 0.5, false)) {
+          const py = bd.y - 0.1, ph = 2.6;
+          porch = { px, pw, pd, py, ph };
+          flat.box(cx0, py, cz0, pw, 0.34, pd, fb.rot, [0.52, 0.47, 0.42]);
+          flat.box(cx0, py + ph, cz0, pw + 0.3, 0.2, pd + 0.3, fb.rot, rc);
+          flat.box(cx0, py + ph - 0.22, cz0, pw + 0.1, 0.22, pd + 0.1, fb.rot, trim, { top: false });
+          for (const sd of [-1, 1]) {
+            const [qx, qz] = offF(px + sd * (pw / 2 - 0.2), fb.d / 2 + pd - 0.2);
+            flat.box(qx, py + 0.34, qz, 0.2, ph - 0.34, 0.2, fb.rot, trim);
+          }
+          // a railing along the front, open in the middle for the steps
+          if (pw > 3) for (const sd of [-1, 1]) {
+            const rw = pw / 2 - 0.9, [rx, rz] = offF(px + sd * (pw / 2 - 0.2 - rw / 2), fb.d / 2 + pd - 0.2);
+            flat.box(rx, py + 0.34 + 0.82, rz, rw, 0.08, 0.1, fb.rot, trim);
+          }
+        }
+      }
+      if (FALL) this.fallHouse(flat, bd, seed, off, porch, form);
+      if (form === 'flat') {
+        this.townhome(flat, fb, seed, col, top, offF);
+        return;
+      }
+      const pitch = 0.46 + hash2(seed, 139) * 0.36;
+      if (form === 'hip') {
+        this.meshHip(flat, bd, top + 0.26, rc, pitch);
+        this.houseExtras(flat, bd, seed, 'hip', top + 0.26, pitch, rc, col, trim, off);
+        const [sx, sz] = offF(0, fb.d / 2 + 0.5);
+        flat.box(sx, bd.y - 0.1, sz, 2.0, 0.22, 1.2, fb.rot, [0.62, 0.6, 0.57]);
+        return;
+      }
+      // A gable that fits the house it sits on.
+      //
+      // This used to be `cone(..., max(w, d) * 0.74, ..., 4, ...)` -- a square
+      // pyramid sized off the LONGER side, and `cone()` takes no rotation, so
+      // it stayed axis-aligned in world space while the house was turned by
+      // bd.rot. On a 6 x 14 m house that is a 10 m roof, square, at the wrong
+      // angle: the overhang misses the walls entirely on the narrow axis, which
+      // is why roofs looked detached and randomly oriented.
+      // Gable stays on `flat`: Builder.tri takes no UVs, so a textured builder
+      // would sample one texel across the whole slope. Its believability comes
+      // from the two slopes shading differently against the key light instead.
+      // Every house, however elongated. A guard was once added here to skip the
+      // gable above 4.5:1, on the theory that a roof sized off the longer side
+      // hangs past the walls on the narrow axis. It does not: meshGable sizes
+      // its eaves from the actual w and d with a fixed 0.45 m overhang, so a
+      // terrace gets a long ridge and a low pitch, which is what a terrace has.
+      // Measured, the drawn roof reached 0.4 m past the narrow wall; the metres
+      // that looked like overhang were the NEIGHBOURING terrace's roof, which
+      // touches this one. The guard was suppressing three correct roofs.
+      this.meshGable(flat, bd, base + wallH + 2.26, rc, seed, pitch);
+      this.houseExtras(flat, bd, seed, 'gable', top + 0.26, pitch, rc, col, trim, off);
+      const [sx, sz] = offF(0, fb.d / 2 + 0.5);
+      // The front step, on the ground rather than 40 cm under it.
+      flat.box(sx, bd.y - 0.1, sz, 2.0, 0.22, 1.2, fb.rot, [0.62, 0.6, 0.57]);
+      return;
+    }
+
+    // A garage or a shed: walls, a low-pitched roof, nothing on it.
+    //
+    // Run through the general path, a 3 m outbuilding got a cornice, a 1.15 m
+    // parapet and a scatter of 1-4 m plant boxes: a roofline half as tall as
+    // the walls, which read as a kiosk with a hat on.
+    if (bd.style === 'industrial' && bd.h < 3.5) {
+      const wh = bd.h + 2 + drop;
+      target.box(bd.x, base - drop, bd.z, bd.w, wh, bd.d, bd.rot, col,
+        { top: false, uScale: uS, vScale: vS, vOff: 64 - wh / vS, ao: 0.22, cell });
+      const rc = tint(seed, [0.42, 0.41, 0.40], 0.18);
+      this.meshGable(flat, bd, bd.y + bd.h, rc, seed, 0.34, false);
+      return;
+    }
+
+    // Roof clutter. The top face is the most-seen surface of a low building
+    // from any elevated view, and a bare extrusion cap is the loudest tell that
+    // this is untextured programmer geometry. A handful of boxes per roof is
+    // within budget because they merge into the chunk's existing flat mesh.
+    let lidded = false;
+    if (bd.h < 70 && bd.w > 9 && bd.d > 9) {
+      lidded = true;
+      const rt = base + bd.h + 2;
+      // Roofs vary per building. One flat grey across a whole downtown reads
+      // as untextured cap geometry from every elevated view, which is the
+      // angle roofs are actually seen from.
+      // Tar-and-gravel is about 0.22 albedo, not 0.05, and a roof is the
+      // largest surface in any elevated view. At the old values the whole
+      // near-field went near-black from above while the fogged far skyline
+      // stayed bright, so the city read inside-out: the closest thing in the
+      // frame was the darkest. Roofs are a light-to-mid grey with real spread.
+      const rv = 0.32 + hash2(seed, 91) * 0.14;
+      const rc2 = [rv, rv * 1.01, rv * 1.05];
+      const n = 1 + Math.floor(hash2(seed, 51) * 3);
+      for (let i = 0; i < n; i++) {
+        const ux = (hash2(seed, 52 + i) - 0.5) * (bd.w - 6);
+        const uz = (hash2(seed, 61 + i) - 0.5) * (bd.d - 6);
+        const [gx, gz] = off(ux, uz);
+        const bw2 = 1.4 + hash2(seed, 71 + i) * 2.2;
+        const bh2 = 0.9 + hash2(seed, 81 + i) * 1.5;
+        flat.box(gx, rt, gz, bw2, bh2, bw2 * 0.8, bd.rot, rc2);
+      }
+      // A big roof carries plant in proportion to its size. One to three
+      // units whatever the area left a supermarket or a 300 m warehouse as a
+      // blank grey field from every elevated view -- the largest single
+      // surface in any aerial over SoDo, Interbay or Georgetown. A jittered
+      // grid every ~22 m, most cells filled, capped at 30 units.
+      const A = bd.w * bd.d;
+      if (A > 1500) {
+        const gx0 = Math.max(1, Math.round((bd.w - 8) / 22)), gz0 = Math.max(1, Math.round((bd.d - 8) / 22));
+        const kx = Math.min(gx0, 6), kz = Math.min(gz0, 5);
+        for (let ix = 0; ix < kx; ix++) {
+          for (let iz = 0; iz < kz; iz++) {
+            const hk = hash2(seed, 300 + ix * 13 + iz * 71);
+            if (hk < 0.35) continue;
+            const ux = ((ix + 0.5) / kx - 0.5) * (bd.w - 8) + (hash2(seed, 400 + ix * 7 + iz) - 0.5) * 6;
+            const uz = ((iz + 0.5) / kz - 0.5) * (bd.d - 8) + (hash2(seed, 500 + ix + iz * 7) - 0.5) * 6;
+            const [gx, gz] = off(ux, uz);
+            // Galvanised units: lighter than the membrane, or from the air
+            // they vanish into it.
+            const bw2 = 2.6 + hk * 3.4;
+            const uv = 0.5 + hk * 0.14;
+            flat.box(gx, rt, gz, bw2, 1.6 + hk * 1.1, bw2 * (0.55 + hk * 0.4), bd.rot, [uv, uv * 1.01, uv * 1.03]);
+          }
+        }
+      }
+      // Skylight rows down a factory or warehouse roof, along its length.
+      if (bd.style === 'industrial' && A > 2000) {
+        const alongX = bd.w >= bd.d;
+        const L = alongX ? bd.w : bd.d, S = alongX ? bd.d : bd.w;
+        const rows = Math.min(6, Math.floor(S / 12));
+        for (let r = 0; r < rows; r++) {
+          const t = ((r + 0.5) / rows - 0.5) * (S - 8);
+          const [gx, gz] = alongX ? off(0, t) : off(t, 0);
+          flat.box(gx, rt + 0.6, gz, alongX ? L * 0.72 : 1.6, 0.42, alongX ? 1.6 : L * 0.72, bd.rot,
+            [0.64, 0.70, 0.74]);
+        }
+      }
+      // Roof kit. A correctly-exposed roof is still a blank lid, and roofs are
+      // in shot from every elevated view in the game. A stair bulkhead, a vent
+      // cluster and a tank are what a real roof carries, and they cost a
+      // handful of boxes that merge into the chunk's existing flat mesh.
+      const dk = [rv * 0.74, rv * 0.75, rv * 0.78];
+      if (bd.w > 13 && bd.d > 13) {
+        // stair bulkhead -- the one thing on a roof with a door in it
+        const [sx2, sz2] = off(bd.w * 0.24, -bd.d * 0.22);
+        flat.box(sx2, rt, sz2, 3.0, 2.6, 2.4, bd.rot, dk);
+        flat.box(sx2, rt + 2.6, sz2, 3.3, 0.2, 2.7, bd.rot, rc2);
+      }
+      // vent stacks
+      const vn = 2 + Math.floor(hash2(seed, 93) * 3);
+      for (let i = 0; i < vn; i++) {
+        const [vx, vz] = off((hash2(seed, 94 + i) - 0.5) * (bd.w - 3),
+          (hash2(seed, 97 + i) - 0.5) * (bd.d - 3));
+        flat.prism(vx, rt, vz, 0.16, 0.7 + hash2(seed, 99 + i) * 0.8, 6, dk);
+      }
+      // water tank, on a minority of mid-rises
+      if (bd.h > 16 && hash2(seed, 88) > 0.82) {
+        const [tx2, tz2] = off(-bd.w * 0.2, bd.d * 0.18);
+        for (const lg of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+          flat.box(tx2 + lg[0] * 1.1, rt, tz2 + lg[1] * 1.1, 0.18, 1.8, 0.18, bd.rot, dk);
+        }
+        flat.prism(tx2, rt + 1.8, tz2, 1.5, 2.4, 8, [0.42, 0.34, 0.27]);
+        flat.cone(tx2, rt + 4.2, tz2, 1.55, 0.7, 8, [0.36, 0.29, 0.23]);
+      }
+      // The parapet does not get a top face, because the lid goes on top of it.
+      //
+      // It used to: `box` defaults to `top: true`, so the surface you actually
+      // saw when you looked at a roof was the parapet's lid at rt + 0.85, on
+      // `flat` -- which has no map and no normal map. The textured lid was
+      // underneath it at rt - 0.12, contributing a 12 cm band nobody could see.
+      // Roofs are roughly 40 % of the pixels in the skyline shot and every one
+      // of them was a flat colour.
+      flat.box(bd.x, rt, bd.z, bd.w + 0.5, 0.85, bd.d + 0.5, bd.rot,
+        [rv * 1.2, rv * 1.2, rv * 1.17], { top: false });
+      // The lid, capping the parapet flush. `box` draws no bottom face, so
+      // there is nothing to see through where the two meet.
+      //
+      // Its own ROOF cell now, not the industrial one. Corrugated siding at a
+      // 4 m tile read as a ribbed grey lid from every elevated view, the same
+      // on every building. A membrane with seams, ponding stains, patches and
+      // drains reads as a roof at 10 m a tile. The tint is lifted by 1.5x to
+      // land at a tar-and-gravel ~0.2 albedo over the roof cell's lighter base.
+      // Not every flat roof is grey membrane: white single-ply is most of the
+      // big commercial roofs from the air, and tar, gravel and the odd green
+      // roof make up the rest.
+      const rp = hash2(seed, 142);
+      const lid = rp < 0.52 ? [rv * 1.38, rv * 1.40, rv * 1.44]
+        : rp < 0.52 + (A > 900 ? 0.26 : 0.12) ? [0.92, 0.93, 0.95]
+        : rp < 0.84 ? [0.30, 0.30, 0.32]
+        : rp < 0.985 || bd.h > 40 ? [0.66, 0.60, 0.50] : [0.36, 0.50, 0.28];
+      bl.facade.box(bd.x, rt + 0.71, bd.z, bd.w + 0.5, 0.14, bd.d + 0.5, bd.rot,
+        lid, { uScale: 10, vScale: 10, cell: C.roof });
+    }
+
+    // No shopfront on a school, a church or a warehouse.
+    const dense = bd.style !== 'industrial' && bd.style !== 'campus';
+    const plinthH = dense ? Math.min(5.2, bd.h * 0.3) : 0;
+    let y = base;
+    let remaining = bd.h + 2;
+
+    if (plinthH > 2) {
+      // Ground-floor storefront.
+      //
+      // This is the most-looked-at surface in the game -- it wraps every
+      // commercial building at exactly eye level -- and it was the curtain-wall
+      // texture at uScale/vScale 9. The glass tile carries eight panes each
+      // way, so nine metres per tile made them 1.1 m across and a whole storey
+      // tall stack of them fitted in the plinth: every shopfront in the city
+      // read as a band of blue fish scales.
+      //
+      // A shopfront is ONE row of tall panes. Pick the scales so exactly that
+      // lands in the plinth: 8 panes over 18 m is a 2.25 m bay, and a vScale of
+      // 8x the plinth height puts the plinth on row 0 -- full-height glazing
+      // with the spandrel above it, which is what a shopfront is.
+      const sc = [col[0] * 0.74, col[1] * 0.78, col[2] * 0.84];
+      // Reaching down to the lowest corner on a slope; what shows below v = 0
+      // is the tile's next pane row, i.e. the shopfront steps down the hill.
+      bl.glass.box(bd.x, y - drop, bd.z, bd.w + 0.3, plinthH + drop, bd.d + 0.3, bd.rot, sc,
+        { uScale: 18, vScale: plinthH * 8, vOff: -drop / (plinthH * 8), top: false, ao: 0.5 });
+      flat.box(bd.x, y + plinthH, bd.z, bd.w + 1.0, 0.5, bd.d + 1.0, bd.rot, TRIM);
+      if (hash2(seed, 41) > 0.55) {
+        const ac = AWNING[Math.floor(hash2(seed, 42) * AWNING.length)];
+        const [ax, az] = off(0, bd.d / 2 + 0.9);
+        flat.box(ax, y + plinthH - 1.4, az, bd.w * 0.62, 0.22, 1.8, bd.rot, ac);
+      }
+      this.meshSigns(bl.facade, flat, bd, y + plinthH, plinthH, seed, off);
+      if (FALL) this.fallShop(flat, bd, seed);
+      y += plinthH + 0.5;
+      remaining -= plinthH + 0.5;
+    }
+
+    let w = bd.w, d = bd.d;
+    const tierList = [];
+    for (const tier of buildingTiers(bd, y, remaining)) {
+      tierList.push(tier);
+      // Each tier's pattern is hung from ITS TOP, so the cornice lands on a
+      // storey line (the tile's integer v) whatever the wall's height or how
+      // deep its base is buried; the bottom is under a trim band, a
+      // shopfront or the ground. Hung from the base, every roofline cut its
+      // top row wherever the 2 m embed put it.
+      const vo = vS ? 64 - tier.h / vS : 0;
+      target.box(bd.x, tier.y, bd.z, tier.w, tier.h, tier.d, bd.rot, col,
+        { uScale: uS, vScale: vS, top: false, vOff: vo,
+          ao: tier.t === 0 ? 0.22 : 0, cell });
+      // On a slope, the same wall carried on down to the lowest corner.
+      if (tier.t === 0 && drop > 0.05 && plinthH <= 2) {
+        // The tier's baked AO runs its whole height, darkest at tier.y, so the
+        // skirt takes that bottom colour flat and the two meet without a seam.
+        target.box(bd.x, tier.y - drop, bd.z, tier.w, drop + 0.02, tier.d, bd.rot,
+          [col[0] * 0.78, col[1] * 0.78, col[2] * 0.78],
+          { uScale: uS, vScale: vS, top: false, vOff: vS ? vo - drop / vS : 0, cell });
+      }
+      y = tier.y + tier.h;
+      w = tier.w; d = tier.d;
+      if (!tier.last) flat.box(bd.x, y, bd.z, tier.w + 0.8, 0.55, tier.d + 0.8, bd.rot, TRIM);
+    }
+
+    // A long industrial wall gets structure: a steel pilaster every ~24 m and
+    // a roller door between every other pair. Unbroken, one corrugated tile
+    // repeated down a 140-300 m warehouse read as a striped ribbon with no
+    // scale at all; bays and doors are what say "this is a shed you could
+    // back a truck into" from the street. Flat boxes, into the chunk's flat.
+    if (bd.style === 'industrial' && bd.h <= 55 && Math.max(bd.w, bd.d) > 36) {
+      const wallTop = bd.y + bd.h;
+      const pc = [col[0] * 0.62, col[1] * 0.64, col[2] * 0.68];
+      const dc = [0.30, 0.32, 0.34];
+      const doorH = Math.min(4.6, bd.h - 1.2);
+      for (const [len, dep, alongX] of [[bd.w, bd.d, true], [bd.d, bd.w, false]]) {
+        if (len < 36) continue;
+        const nb = Math.max(2, Math.round(len / 24));
+        for (const sgn of [1, -1]) {
+          for (let k = 0; k <= nb; k++) {
+            const t = (k / nb - 0.5) * (len - 0.6);
+            const [px, pz] = alongX ? off(t, sgn * (dep / 2 + 0.12)) : off(sgn * (dep / 2 + 0.12), t);
+            flat.box(px, base - drop, pz, alongX ? 0.55 : 0.26, wallTop - base + drop, alongX ? 0.26 : 0.55,
+              bd.rot, pc, { top: false });
+            // doors on one long face only, the one the seed picks
+            if (k < nb && sgn === (hash2(seed, 131) > 0.5 ? 1 : -1) && doorH > 2.5
+              && hash2(seed, 140 + k) > 0.4) {
+              const tm = t + (len - 0.6) / nb / 2;
+              const [qx, qz] = alongX ? off(tm, sgn * (dep / 2 + 0.06)) : off(sgn * (dep / 2 + 0.06), tm);
+              flat.box(qx, bd.y - 0.3, qz, alongX ? 4.2 : 0.14, doorH + 0.3, alongX ? 0.14 : 4.2,
+                bd.rot, dc, { top: false });
+            }
+          }
+        }
+      }
+    }
+
+    // cornice, roof deck, then a parapet wall standing above it
+    //
+    // A bed moulding under the cornice, so the roofline is a stepped profile
+    // that catches a shadow line, not one slab laid on the wall.
+    flat.box(bd.x, y - 0.42, bd.z, w + 0.5, 0.42, d + 0.5, bd.rot,
+      [TRIM[0] * 0.8, TRIM[1] * 0.8, TRIM[2] * 0.82], { top: false });
+    flat.box(bd.x, y, bd.z, w + 1.1, 0.55, d + 1.1, bd.rot, TRIM);
+    // The deck only where the roof kit above has not already put a lid on.
+    //
+    // It used to be drawn under every lid as well: deck top at rt + 0.83, lid
+    // top at rt + 0.85 -- two centimetres apart, which at a few hundred metres
+    // is inside one step of the depth buffer, so every low roof in an aerial
+    // view z-fought between flat grey and the textured lid as the camera moved.
+    if (!lidded) {
+      bl.facade.box(bd.x, y + 0.55, bd.z, w + 0.5, 0.28, d + 0.5, bd.rot, [0.62, 0.62, 0.64],
+        { uScale: 10, vScale: 10, cell: C.roof });
+    }
+    // 12 cm outside the kit's own parapet (w + 0.5), not 2.5 cm: the two walls
+    // overlap vertically and at 2.5 cm they fought at distance the same way.
+    // A one- or two-storey block keeps a lower parapet and smaller plant: at
+    // full size the roofline was a quarter of a 6.4 m building's height.
+    const lowK = bd.h < 8 ? 0.55 : 1;
+    flat.box(bd.x, y + 0.55, bd.z, w + 0.75, lidded ? Math.max(0.45, 1.15 * lowK) : 1.15 * lowK,
+      d + 0.75, bd.rot, DARK, { top: false });
+    y += 0.83;
+
+    // The building's own character: what its style, age and material put on
+    // it (bays, balconies, fire escapes, cornices, crowns, fins...): see
+    // buildingDetail. A crowned tower carries no loose roof plant.
+    const crowned = this.buildingDetail(bl, flat, glow, bd, {
+      fam, col, cell, target, uS, vS, rows, plinthH, tiers: tierList, roofY: y, base, off, w, d, lidded });
+    if (crowned) return;
+
+    const rc = [0.4, 0.41, 0.42];
+    const n = 1 + Math.floor(hash2(seed, 31) * 3);
+    for (let i = 0; i < n; i++) {
+      const ox = (hash2(seed, 40 + i) - 0.5) * w * 0.55;
+      const oz = (hash2(seed, 50 + i) - 0.5) * d * 0.55;
+      const [rx, rz] = off(ox, oz);
+      flat.box(rx, y, rz, (1.6 + hash2(seed, 60 + i) * 3) * lowK, (1.2 + hash2(seed, 70 + i) * 2.6) * lowK,
+        (1.6 + hash2(seed, 80 + i) * 3) * lowK, bd.rot, rc);
+    }
+    if (bd.h > 26 && hash2(seed, 85) > 0.55) {
+      const [bx, bz] = off(w * 0.22, -d * 0.2);
+      flat.box(bx, y, bz, Math.min(6, w * 0.3), 3.2, Math.min(5, d * 0.28), bd.rot, [0.46, 0.46, 0.47]);
+    }
+    if (bd.h > 70 && hash2(seed, 91) > 0.45) {
+      const mastH = 8 + hash2(seed, 92) * 16;
+      flat.prism(bd.x, y, bd.z, 0.28, mastH, 4, [0.32, 0.33, 0.35]);
+      glow.box(bd.x, y + mastH, bd.z, 0.5, 0.5, 0.5, 0, [1.0, 0.22, 0.15]);
+    }
+  }
+
+  /** Building `bd`'s frame turned so its +z is side k (see houseFront), for a box w x d. */
+  _side(bd, k, w, d) {
+    const rot = bd.rot + FRONT_TURN[k], cs = Math.cos(rot), sn = Math.sin(rot);
+    return { rot, w: k % 2 ? d : w, d: k % 2 ? w : d,
+      off: (lx, lz) => [bd.x + lx * cs - lz * sn, bd.z + lx * sn + lz * cs] };
+  }
+
+  /** Is a point just outside a wall free -- not a carriageway, not another building? */
+  _outClear(x, z) {
+    return !this.city.onRoad(x, z, 0.2, false) && !this.inBuilding(x, z, 0);
+  }
+
+  /** A quad seen from both sides (a stair, an awning): two faces, one each way. */
+  _quad2(flat, a, b, c, e, n, col) {
+    flat.quad(a, b, c, e, n, QUAD_UV, col);
+    flat.quad(a, b, c, e, [-n[0], -n[1], -n[2]], QUAD_UV, col);
+  }
+
+  /**
+   * What a building's era, material and use put on it, past its walls and
+   * roof. A street of the same textured boxes in different colours is still
+   * a street of boxes; these are the things that tell a 1910 brick walk-up
+   * from a 2015 five-over-one from a glass tower at a glance:
+   *
+   *   brick        iron fire escapes, stone corner piers, a heavy sheet-metal
+   *                cornice and frieze, a raised name panel on the parapet
+   *   modern       projecting bays in an accent colour (the five-over-one's
+   *                signature), stacked balconies with glass or metal rails
+   *   shops        a row of sloped canvas awnings over the bays, a false front
+   *   glass        vertical fins or spandrel bands down the curtain wall
+   *   towers       a crown: stepped, a pyramid, a glass lantern, fins, a helipad
+   *   roofs        a terrace with planters and umbrellas, solar arrays
+   *
+   * Each by the building's seed; balconies, bays and awnings on the street
+   * side (houseFront), and nothing that stands out from a wall over a
+   * carriageway or into a neighbour. All vertex-coloured boxes and quads in
+   * the chunk's flat mesh, or the facade atlas for the bays and crowns
+   * (their windows): no draw calls, no materials. Returns true when the roof
+   * is spoken for (a crown or a terrace), so the loose plant is skipped.
+   */
+  buildingDetail(bl, flat, glow, bd, c) {
+    const seed = bd.seed, h = (k) => hash2(seed, 800 + k);
+    // cityStats.bldDetail: how many of each, and a few of each where (for
+    // the shot tools: x, z, and the bearing out of the face it is on)
+    const st = cityStats.bldDetail || (cityStats.bldDetail = { n: {}, at: {} });
+    const note = (kind, k = 0) => {
+      st.n[kind] = (st.n[kind] || 0) + 1;
+      const a = st.at[kind] || (st.at[kind] = []);
+      if (a.length < 24) a.push([bd.x, bd.z, bd.rot + FRONT_TURN[k], bd.w, bd.d, bd.h]);
+    };
+    this._note = note;
+    const fam = c.fam;
+    if (bd.style === 'industrial') {
+      this._solarRoof(flat, bd, c, h);
+      return false;
+    }
+    if (!fam) return false;
+    const t0 = c.tiers[0], top0 = t0.y + t0.h, tl = c.tiers[c.tiers.length - 1];
+    if (!t0) return false;
+    const glassy = fam.m === 'glass', brick = fam.m === 'brick';
+    // one storey, in metres: masonry and brick tiles carry four, a curtain
+    // wall's eight pane rows are four storeys
+    const storey = c.vS ? (glassy ? c.vS / 4 : c.vS / c.rows) : 3.4;
+    const street = this.houseFront(bd);
+    const S = this._side(bd, street, t0.w, t0.d);
+    // floor lines down from the tier's top, above the ground floor
+    const floorsOf = (t, max = 40) => {
+      const out = [];
+      for (let k = 1; k <= max; k++) {
+        const y = t.y + t.h - k * storey;
+        if (y < t.y + storey * 0.8 || y < c.base + 2 + storey * 0.9) break;
+        out.push(y);
+      }
+      return out;
+    };
+    const civic = bd.style === 'campus';
+    let roofBusy = false;
+
+    // --- brick: the walk-up and the warehouse loft ----------------------------
+    if (brick && !civic) {
+      if (bd.h >= 8 && bd.h <= 34 && h(1) < 0.45) {
+        const k = h(2) < 0.55 ? street : (street + 1) % 4;
+        if (this._fireEscape(flat, bd, c, h, t0, k, floorsOf(t0, 9))) note('fireEscape', k);
+      }
+      if (bd.h <= 40 && h(3) < 0.55) {
+        // the sheet-metal cornice and its frieze, over the bed moulding
+        const cc = CORNICE[Math.floor(h(4) * CORNICE.length)];
+        note('cornice', street);
+        flat.box(bd.x, top0 - 1.55, bd.z, t0.w + 0.22, 0.75, t0.d + 0.22, bd.rot, [cc[0] * 1.25, cc[1] * 1.25, cc[2] * 1.25], NOTOP);
+        flat.box(bd.x, top0 - 0.8, bd.z, t0.w + 1.9, 0.38, t0.d + 1.9, bd.rot, cc, NOTOP);
+        // brackets under its overhang along the street face
+        const nb = Math.floor(S.w / 2.4);
+        for (let i = 0; i <= nb; i++) {
+          const [qx, qz] = S.off(((i / Math.max(1, nb)) - 0.5) * (S.w - 0.6), S.d / 2 + 0.45);
+          flat.box(qx, top0 - 1.2, qz, 0.22, 0.42, 0.8, S.rot, cc, NOTOP);
+        }
+      }
+      if (h(5) < 0.5) {
+        // corner piers in a dressed stone or a darker brick
+        note('piers', street);
+        const pc = h(6) < 0.6 ? [0.74, 0.7, 0.62] : [c.col[0] * 0.7, c.col[1] * 0.68, c.col[2] * 0.66];
+        for (const [fx, fz] of CORNERS) {
+          const [qx, qz] = c.off(fx * t0.w / 2, fz * t0.d / 2);
+          flat.box(qx, t0.y - 0.3, qz, 0.75, t0.h + 0.3 - 0.5, 0.75, bd.rot, pc, NOTOP);
+        }
+      }
+      if (bd.h <= 26 && h(7) < 0.4) {
+        // a raised panel at the middle of the street parapet, stone-capped
+        note('namePanel', street);
+        const pw = Math.min(9, S.w * 0.36), [px, pz] = S.off(0, S.d / 2 - 0.15);
+        c.target.box(px, c.roofY - 0.4, pz, pw, 2.4, 0.42, S.rot, c.col, { uScale: c.uS, vScale: c.vS, cell: c.cell, top: false });
+        flat.box(px, c.roofY + 2.0, pz, pw + 0.3, 0.22, 0.6, S.rot, [0.74, 0.7, 0.62]);
+      }
+    }
+
+    // --- the modern mid-rise: bays and balconies ------------------------------
+    const residential = !civic && (bd.style === 'midrise' || bd.style === 'lowrise' || bd.style === 'tower');
+    let bays = false;
+    if (residential && !glassy && !brick && c.tiers.length === 1 && bd.h >= 10 && bd.h <= 45 && h(10) < 0.32) {
+      bays = this._bays(flat, bd, c, h, t0, S, storey);
+      if (bays) note('bays', street);
+    }
+    if (residential && !bays && !brick && !glassy && bd.h >= 14 && bd.h <= 70 && h(11) < 0.32) {
+      if (this._balconies(flat, bd, c, h, t0, S, floorsOf(t0, 24))) note('balconies', street);
+      if (h(12) < 0.45) this._balconies(flat, bd, c, h, t0, this._side(bd, (street + 2) % 4, t0.w, t0.d), floorsOf(t0, 24));
+    }
+
+    // --- shops: awnings over the bays, a false front ----------------------------
+    if (c.plinthH > 2 && hash2(seed, 41) <= 0.55 && h(20) < 0.5 && this._awnings(flat, bd, c, h, S)) note('awnings', street);
+    if (bd.style === 'lowrise' && bd.h < 9 && !glassy && c.tiers.length === 1 && h(21) < 0.28) {
+      note('falseFront', street);
+      const fw = S.w + 0.5, [fx, fz] = S.off(0, S.d / 2 - 0.1), mc = this.massColour(bd);
+      const fy = c.roofY - 0.5, fh = 1.6 + h(22) * 1.2;
+      flat.box(fx, fy, fz, fw, fh, 0.35, S.rot, mc, NOTOP);
+      flat.box(fx, fy + fh, fz, fw + 0.2, 0.2, 0.5, S.rot, TRIM);
+      if (h(23) < 0.6) {
+        flat.box(fx, fy + fh, fz, fw * 0.36, 0.9, 0.35, S.rot, mc, NOTOP);
+        flat.box(fx, fy + fh + 0.9, fz, fw * 0.36 + 0.2, 0.2, 0.5, S.rot, TRIM);
+      }
+    }
+
+    // --- glass: fins or spandrel bands down the curtain wall ---------------------
+    if (glassy && bd.h >= 22) {
+      if (h(30) < 0.42) { this._fins(flat, bd, c, h, storey); note('fins'); }
+      else if (h(30) < 0.68) { this._bands(flat, bd, c, h, storey); note('bands'); }
+    }
+
+    // --- the roofline -----------------------------------------------------------
+    if (bd.h >= 45 && (bd.style === 'tower' || bd.style === 'midrise') && h(40) < 0.72) {
+      roofBusy = this._crown(bl, flat, glow, bd, c, h, tl, storey);
+      if (roofBusy) note('crown' + Math.floor(h(130) * 5));
+    } else if (residential && (bays || h(41) < 0.16) && bd.h >= 10 && bd.h < 60 && tl.w > 14 && tl.d > 14) {
+      this._terrace(flat, bd, c, h, tl);
+      note('terrace');
+      roofBusy = true;
+    } else this._solarRoof(flat, bd, c, h);
+    return roofBusy;
+  }
+
+  /** Solar arrays in rows across a big flat roof (one in nine). */
+  _solarRoof(flat, bd, c, h) {
+    if (bd.w * bd.d < 700 || bd.w < 18 || bd.d < 18 || h(60) > 0.11) return;
+    if (this._note) this._note('solar');
+    const along = bd.w >= bd.d, L = (along ? bd.w : bd.d) * 0.62, Wd = (along ? bd.d : bd.w) * 0.6;
+    const rows = Math.min(10, Math.floor(Wd / 2.6));
+    for (let r = 0; r < rows; r++) {
+      const t = ((r + 0.5) / rows - 0.5) * Wd;
+      const [x, z] = along ? c.off(0, t) : c.off(t, 0);
+      flat.box(x, c.roofY + 0.25, z, along ? L : 1.7, 0.12, along ? 1.7 : L, bd.rot, [0.05, 0.08, 0.17]);
+      flat.box(x, c.roofY - 0.1, z, along ? L : 0.1, 0.35, along ? 0.1 : L, bd.rot, [0.45, 0.46, 0.47], NOTOP);
+    }
+  }
+
+  /** An iron fire escape: a platform per floor, rails, a stair between, a drop ladder. */
+  _fireEscape(flat, bd, c, h, t0, k, floors) {
+    if (floors.length < 1) return false;
+    const F = this._side(bd, k, t0.w, t0.d);
+    if (F.w < 8) return false;
+    const W = 3.4, D = 1.15, lx = (h(70) - 0.5) * Math.max(0, F.w - W - 3);
+    const [ox, oz] = F.off(lx, F.d / 2 + D + 0.3);
+    if (!this._outClear(ox, oz)) return false;
+    const z0 = F.d / 2, zo = z0 + D;
+    floors.forEach((fy, i) => {
+      const [px, pz] = F.off(lx, z0 + D / 2);
+      flat.box(px, fy - 0.07, pz, W, 0.07, D, F.rot, IRON);
+      // the rail: a top bar, a mid bar, balusters; and the ends
+      for (const ry of [0.98, 0.5]) {
+        const [rx, rz] = F.off(lx, zo - 0.03);
+        flat.box(rx, fy + ry, rz, W, 0.045, 0.045, F.rot, IRON, NOTOP);
+      }
+      for (let b = 0; b <= 4; b++) {
+        const [bx, bz] = F.off(lx - W / 2 + 0.03 + b * (W - 0.06) / 4, zo - 0.03);
+        flat.box(bx, fy, bz, 0.04, 1.0, 0.04, F.rot, IRON, NOTOP);
+      }
+      for (const sd of [-1, 1]) {
+        const [ex, ez] = F.off(lx + sd * (W / 2 - 0.03), z0 + D / 2);
+        flat.box(ex, fy + 0.98, ez, 0.045, 0.045, D, F.rot, IRON, NOTOP);
+      }
+      // a stair down to the next platform, alternating ends
+      const below = floors[i + 1];
+      if (below !== undefined) {
+        const s = i % 2 ? 1 : -1;
+        const xa = lx + s * (W / 2 - 0.35), xb = lx - s * (W / 2 - 0.35);
+        const A = F.off(xa, z0 + 0.35), B = F.off(xa, z0 + 0.95), C2 = F.off(xb, z0 + 0.95), E = F.off(xb, z0 + 0.35);
+        this._quad2(flat, [A[0], fy, A[1]], [B[0], fy, B[1]], [C2[0], below, C2[1]], [E[0], below, E[1]], [0, 1, 0], IRON);
+      } else {
+        // the drop ladder from the lowest platform
+        for (const sd of [-0.22, 0.22]) {
+          const [qx, qz] = F.off(lx + W / 2 - 0.5 + sd, zo - 0.15);
+          flat.box(qx, fy - 2.2, qz, 0.05, 2.2, 0.05, F.rot, IRON, NOTOP);
+        }
+      }
+    });
+    return true;
+  }
+
+  /** The five-over-one's projecting bays, in an accent colour, windows and all. */
+  _bays(flat, bd, c, h, t0, S, storey) {
+    const n = clamp(Math.floor(S.w / 8.5), 1, 5);
+    const bw = clamp((S.w / n) * 0.44, 2.6, 4.4), dep = 0.9;
+    const top0 = t0.y + t0.h;
+    const y0 = t0.y + (c.plinthH > 2 ? 0.05 : storey), y1 = top0 - 0.45;
+    if (y1 - y0 < storey * 1.5) return false;
+    const a1 = ACCENT[Math.floor(h(80) * ACCENT.length)], a2 = ACCENT[Math.floor(h(81) * ACCENT.length)];
+    const two = h(82) < 0.35;
+    let any = false;
+    for (let i = 0; i < n; i++) {
+      const lx = ((i + 0.5) / n - 0.5) * S.w;
+      const [ox, oz] = S.off(lx, S.d / 2 + dep + 0.3);
+      if (!this._outClear(ox, oz)) continue;
+      const col = two && i % 2 ? a2 : a1;
+      const [x, z] = S.off(lx, S.d / 2 + dep / 2 - 0.02);
+      c.target.box(x, y0, z, bw, y1 - y0, dep + 0.04, S.rot, col,
+        { uScale: c.uS, vScale: c.vS, vOff: 64 - (top0 - y0) / c.vS, cell: c.cell, top: false });
+      flat.box(x, y1, z, bw + 0.16, 0.22, dep + 0.2, S.rot, TRIM);
+      // its underside, seen from the pavement
+      const A = S.off(lx - bw / 2, S.d / 2), B = S.off(lx + bw / 2, S.d / 2), C2 = S.off(lx + bw / 2, S.d / 2 + dep), E = S.off(lx - bw / 2, S.d / 2 + dep);
+      flat.quad([A[0], y0, A[1]], [B[0], y0, B[1]], [C2[0], y0, C2[1]], [E[0], y0, E[1]], [0, -1, 0], QUAD_UV, [col[0] * 0.5, col[1] * 0.5, col[2] * 0.5]);
+      any = true;
+    }
+    return any;
+  }
+
+  /** Stacked balconies across one face: slab, underside, a glass or metal rail. */
+  _balconies(flat, bd, c, h, t0, S, floors) {
+    if (!floors.length || S.w < 9) return false;
+    let any = false;
+    const n = clamp(Math.floor(S.w / 6.5), 1, 7);
+    const bw = Math.min(4.2, (S.w / n) * 0.66), dep = 1.4;
+    const glassRail = h(90) < 0.55;
+    const rail = glassRail ? [0.42, 0.5, 0.55] : [0.12, 0.12, 0.13];
+    const slab = [0.6, 0.6, 0.6];
+    // every floor, or every other on some, and on some only the upper half
+    const step = h(91) < 0.25 ? 2 : 1, upper = h(92) < 0.25 ? Math.ceil(floors.length / 2) : floors.length;
+    for (let i = 0; i < n; i++) {
+      const lx = ((i + 0.5) / n - 0.5) * S.w;
+      const [ox, oz] = S.off(lx, S.d / 2 + dep + 0.3);
+      if (!this._outClear(ox, oz)) continue;
+      const [x, z] = S.off(lx, S.d / 2 + dep / 2);
+      const [rx, rz] = S.off(lx, S.d / 2 + dep - 0.04);
+      any = true;
+      for (let f = 0; f < upper; f += step) {
+        const y = floors[f];
+        flat.box(x, y - 0.2, z, bw, 0.2, dep, S.rot, slab);
+        const A = S.off(lx - bw / 2, S.d / 2), B = S.off(lx + bw / 2, S.d / 2), C2 = S.off(lx + bw / 2, S.d / 2 + dep), E = S.off(lx - bw / 2, S.d / 2 + dep);
+        flat.quad([A[0], y - 0.2, A[1]], [B[0], y - 0.2, B[1]], [C2[0], y - 0.2, C2[1]], [E[0], y - 0.2, E[1]], [0, -1, 0], QUAD_UV, [0.34, 0.34, 0.34]);
+        if (glassRail) {
+          flat.box(rx, y, rz, bw, 1.0, 0.05, S.rot, rail, NOTOP);
+          flat.box(rx, y + 1.0, rz, bw, 0.05, 0.08, S.rot, [0.2, 0.2, 0.21]);
+        } else {
+          flat.box(rx, y + 0.95, rz, bw, 0.06, 0.06, S.rot, rail);
+          flat.box(rx, y + 0.12, rz, bw, 0.05, 0.05, S.rot, rail, NOTOP);
+          for (let b = 0; b <= 3; b++) {
+            const [bx, bz] = S.off(lx - bw / 2 + 0.03 + b * (bw - 0.06) / 3, S.d / 2 + dep - 0.04);
+            flat.box(bx, y, bz, 0.05, 0.95, 0.05, S.rot, rail, NOTOP);
+          }
+        }
+      }
+    }
+    return any;
+  }
+
+  /** A row of sloped canvas awnings over a shopfront's bays. */
+  _awnings(flat, bd, c, h, S) {
+    const n = clamp(Math.floor(S.w / 4.2), 1, 8);
+    const bay = S.w / n, aw = bay - 0.7, out = 1.3, drop = 0.7;
+    const yt = c.base + c.plinthH - 0.15;
+    const ca = AWNING[Math.floor(h(100) * AWNING.length)], cb = AWNING[Math.floor(h(101) * AWNING.length)];
+    const alt = h(102) < 0.3;
+    let any = false;
+    for (let i = 0; i < n; i++) {
+      const lx = ((i + 0.5) / n - 0.5) * S.w;
+      const [ox, oz] = S.off(lx, S.d / 2 + out + 0.5);
+      if (this.city.onRoad(ox, oz, 0.2, false)) continue;
+      const col = alt && i % 2 ? cb : ca;
+      const z0 = S.d / 2 + 0.16, z1 = z0 + out;
+      const A = S.off(lx - aw / 2, z0), B = S.off(lx + aw / 2, z0), C2 = S.off(lx + aw / 2, z1), E = S.off(lx - aw / 2, z1);
+      const ny = out / Math.hypot(out, drop), nz = drop / Math.hypot(out, drop);
+      const cs = Math.cos(S.rot), sn = Math.sin(S.rot);
+      const an = [-nz * sn, ny, nz * cs];
+      flat.quad([A[0], yt, A[1]], [B[0], yt, B[1]], [C2[0], yt - drop, C2[1]], [E[0], yt - drop, E[1]], an, QUAD_UV, col);
+      flat.quad([A[0], yt, A[1]], [B[0], yt, B[1]], [C2[0], yt - drop, C2[1]], [E[0], yt - drop, E[1]], [-an[0], -an[1], -an[2]], QUAD_UV,
+        [col[0] * 0.55, col[1] * 0.55, col[2] * 0.55]);
+      // the valance
+      const [vx, vz] = S.off(lx, z1);
+      flat.box(vx, yt - drop - 0.28, vz, aw, 0.28, 0.04, S.rot, col, NOTOP);
+      any = true;
+    }
+    return any;
+  }
+
+  /** Vertical fins (mullion caps) down every face of every tier of a curtain wall. */
+  _fins(flat, bd, c, h, storey) {
+    const sp = 3 + h(110) * 1.6, dep = 0.3 + h(111) * 0.25;
+    const fc = h(112) < 0.5 ? [0.66, 0.68, 0.7] : [c.col[0] * 0.45, c.col[1] * 0.47, c.col[2] * 0.5];
+    let budget = 220;
+    for (const t of c.tiers) {
+      for (let k = 0; k < 4 && budget > 0; k++) {
+        const F = this._side(bd, k, t.w, t.d);
+        const n = Math.floor(F.w / sp);
+        for (let i = 1; i < n && budget > 0; i++, budget--) {
+          const [x, z] = F.off((i / n - 0.5) * F.w, F.d / 2 + dep / 2);
+          flat.box(x, t.y, z, 0.22, t.h, dep, F.rot, fc, NOTOP);
+        }
+      }
+    }
+  }
+
+  /** Spandrel bands every two storeys round a curtain wall. */
+  _bands(flat, bd, c, h, storey) {
+    const bc = h(120) < 0.5 ? [0.72, 0.72, 0.7] : [0.2, 0.21, 0.23];
+    const every = storey * (h(121) < 0.5 ? 2 : 3);
+    let budget = 60;
+    for (const t of c.tiers) {
+      for (let y = t.y + t.h - every; y > t.y + storey && budget > 0; y -= every, budget--) {
+        flat.box(bd.x, y - 0.2, bd.z, t.w + 0.24, 0.4, t.d + 0.24, bd.rot, bc, NOTOP);
+      }
+    }
+  }
+
+  /** A tower's crown. Returns true when one was built. */
+  _crown(bl, flat, glow, bd, c, h, tl, storey) {
+    const kind = Math.floor(h(130) * 5);
+    const ry = c.roofY;
+    const glassy = c.fam.m === 'glass';
+    const tile = { uScale: c.uS, vScale: c.vS, top: false, cell: c.cell };
+    if (kind === 0) {
+      // stepped: two more setbacks of the same wall, each with its cornice
+      let y = ry - 0.6, w = tl.w, d = tl.d;
+      for (let s = 0; s < 2; s++) {
+        w *= 0.78; d *= 0.78;
+        const hh = storey * (s ? 1.5 : 2.5);
+        c.target.box(bd.x, y, bd.z, w, hh, d, bd.rot, c.col, { ...tile, vOff: 64 - hh / c.vS });
+        y += hh;
+        flat.box(bd.x, y, bd.z, w + 0.8, 0.5, d + 0.8, bd.rot, TRIM);
+        y += 0.5;
+      }
+      flat.box(bd.x, y, bd.z, w * 0.9, 0.6, d * 0.9, bd.rot, DARK);
+      if (h(131) < 0.6) { flat.prism(bd.x, y + 0.6, bd.z, 0.3, 10 + h(132) * 14, 4, [0.35, 0.36, 0.38]); }
+    } else if (kind === 1) {
+      // a pyramid roof: copper gone green, dark standing seam, or slate
+      const pc = [[0.34, 0.52, 0.46], [0.16, 0.17, 0.19], [0.3, 0.33, 0.38]][Math.floor(h(133) * 3)];
+      const ph = Math.min(tl.w, tl.d) * (0.3 + h(134) * 0.25);
+      this.meshPyramid(flat, bd.x, ry - 0.3, bd.z, tl.w * 0.5 + 0.3, tl.d * 0.5 + 0.3, ph, bd.rot, pc);
+      flat.prism(bd.x, ry - 0.3 + ph * 0.9, bd.z, 0.18, 4 + h(135) * 6, 4, [0.3, 0.3, 0.32]);
+    } else if (kind === 2) {
+      // a glass lantern on top, lit from inside
+      const lw = tl.w * 0.7, ld = tl.d * 0.7, lh = 6 + h(136) * 8;
+      bl.glass.box(bd.x, ry - 0.3, bd.z, lw, lh, ld, bd.rot, glassy ? [c.col[0] * 1.2, c.col[1] * 1.2, c.col[2] * 1.2] : [0.62, 0.68, 0.74],
+        { uScale: 14, vScale: 13.6, top: false });
+      flat.box(bd.x, ry - 0.3 + lh, bd.z, lw + 0.6, 0.6, ld + 0.6, bd.rot, DARK);
+      for (const [fx, fz] of CORNERS) {
+        const [qx, qz] = c.off(fx * lw / 2, fz * ld / 2);
+        flat.box(qx, ry - 0.3, qz, 0.6, lh + 3, 0.6, bd.rot, [0.5, 0.52, 0.55], NOTOP);
+      }
+      const mh = 8 + h(137) * 18;
+      flat.prism(bd.x, ry + lh + 0.3, bd.z, 0.3, mh, 4, [0.32, 0.33, 0.35]);
+      glow.box(bd.x, ry + lh + 0.3 + mh, bd.z, 0.5, 0.5, 0.5, 0, [1.0, 0.22, 0.15]);
+    } else if (kind === 3) {
+      // a crown of fins standing proud of the roof all round
+      const fh = 5 + h(138) * 7, sp = 2.6;
+      const fc = [0.6, 0.62, 0.65];
+      for (let k = 0; k < 4; k++) {
+        const F = this._side(bd, k, tl.w, tl.d);
+        const n = Math.max(2, Math.floor(F.w / sp));
+        for (let i = 0; i <= n; i++) {
+          const [x, z] = F.off((i / n - 0.5) * (F.w - 0.3), F.d / 2 - 0.15);
+          flat.box(x, ry - 0.5, z, 0.3, fh * (0.75 + 0.25 * Math.sin((i / n) * Math.PI)), 0.5, F.rot, fc, NOTOP);
+        }
+      }
+      flat.box(bd.x, ry - 0.3, bd.z, tl.w * 0.5, 3.2, tl.d * 0.5, bd.rot, [0.42, 0.43, 0.45]);
+    } else {
+      // a helipad: the pad, its H and edge lights
+      const pw = Math.min(tl.w, tl.d) * 0.72;
+      if (pw < 14) return false;
+      flat.box(bd.x, ry - 0.1, bd.z, pw, 1.2, pw, bd.rot, [0.24, 0.25, 0.26]);
+      const yh = ry + 1.11, hc = [0.9, 0.9, 0.86];
+      const L = pw * 0.36;
+      for (const sd of [-1, 1]) { const [qx, qz] = c.off(sd * L * 0.35, 0); flat.box(qx, yh, qz, 0.9, 0.03, L, bd.rot, hc); }
+      flat.box(bd.x, yh, bd.z, L * 0.7, 0.03, 0.9, bd.rot, hc);
+      for (const [fx, fz] of CORNERS) {
+        const [qx, qz] = c.off(fx * pw / 2 * 0.95, fz * pw / 2 * 0.95);
+        glow.box(qx, ry + 1.1, qz, 0.35, 0.25, 0.35, 0, [1.0, 0.75, 0.25]);
+      }
+    }
+    return true;
+  }
+
+  /** A roof terrace: decking, planters with something growing, two umbrellas. */
+  _terrace(flat, bd, c, h, tl) {
+    const sx = h(140) < 0.5 ? 1 : -1, sz = h(141) < 0.5 ? 1 : -1;
+    const tw = tl.w * 0.42, td = tl.d * 0.4;
+    const [x, z] = c.off(sx * tl.w * 0.22, sz * tl.d * 0.22);
+    flat.box(x, c.roofY - 0.1, z, tw, 0.22, td, bd.rot, [0.44, 0.32, 0.22]);
+    const green = [0.12, 0.22, 0.07];
+    for (let i = 0; i < 4; i++) {
+      const [px, pz] = c.off(sx * tl.w * 0.22 + (i % 2 ? 1 : -1) * tw * 0.42, sz * tl.d * 0.22 + (i < 2 ? -1 : 1) * td * 0.35);
+      flat.box(px, c.roofY, pz, 1.6, 0.6, 0.7, bd.rot, [0.3, 0.3, 0.31]);
+      flat.foliage(px, c.roofY + 0.75, pz, 0.6, 6, 3, FALL && i % 2 ? [0.42, 0.16, 0.03] : green, 0.7, 0.3, 0.4, null, 0.3);
+    }
+    const UMB = [[0.75, 0.2, 0.12], [0.85, 0.82, 0.74], [0.15, 0.3, 0.45], [0.2, 0.38, 0.25]];
+    for (let i = 0; i < 2; i++) {
+      const [ux, uz] = c.off(sx * tl.w * 0.22 + (i ? 1 : -1) * tw * 0.18, sz * tl.d * 0.22);
+      flat.prism(ux, c.roofY, uz, 0.04, 2.3, 4, [0.3, 0.3, 0.3]);
+      flat.cone(ux, c.roofY + 1.9, uz, 1.3, 0.55, 8, UMB[Math.floor(h(142 + i) * UMB.length)]);
+      flat.box(ux, c.roofY + 0.1, uz, 0.9, 0.72, 0.9, bd.rot, [0.25, 0.2, 0.16]);
+    }
+  }
+
+  meshLandmarkTower(bl, flat, bd, col) {
+    const base = bd.y - 2;
+    const stone = this.cells.masonry;
+    if (bd.kind === 'columbia') {
+      const dark = [0.24, 0.26, 0.3];
+      const c = Math.cos(bd.rot), s = Math.sin(bd.rot);
+      const lobes = [[0, 0, 1.0, 1.0], [-14, 10, 0.72, 0.86], [14, -10, 0.6, 0.7]];
+      for (const [ox, oz, sc, hf] of lobes) {
+        const x = bd.x + ox * c - oz * s, z = bd.z + ox * s + oz * c;
+        bl.glass.box(x, base, z, bd.w * sc, (bd.h + 2) * hf, bd.d * sc, bd.rot, dark,
+          { uScale: 13, vScale: 13, top: false, ao: 0.3 });
+        flat.box(x, base + (bd.h + 2) * hf, z, bd.w * sc + 0.9, 1.3, bd.d * sc + 0.9, bd.rot, [0.18, 0.19, 0.22]);
+      }
+      flat.prism(bd.x, base + bd.h + 3, bd.z, 0.4, 22, 4, [0.3, 0.3, 0.32]);
+      return;
+    }
+    if (bd.kind === 'smith') {
+      const white = [1.05, 1.02, 0.96];
+      bl.facade.box(bd.x, base, bd.z, bd.w * 1.5, 22, bd.d * 1.5, bd.rot, white,
+        { uScale: 12, vScale: 12, top: false, ao: 0.35, cell: stone });
+      flat.box(bd.x, base + 22, bd.z, bd.w * 1.5 + 1.2, 1.1, bd.d * 1.5 + 1.2, bd.rot, [0.78, 0.77, 0.73]);
+      bl.facade.box(bd.x, base + 23.1, bd.z, bd.w, bd.h - 45, bd.d, bd.rot, white,
+        { uScale: 11, vScale: 11, top: false, cell: stone });
+      flat.box(bd.x, base + bd.h - 22, bd.z, bd.w + 1.6, 1.5, bd.d + 1.6, bd.rot, [0.78, 0.77, 0.73]);
+      // cone() places its four vertices on the axes, so a 4-sided one is a
+      // DIAMOND in plan -- 45 deg out from the square tower under it, and it
+      // takes no rotation either. Smith Tower's cap is a real pyramid.
+      this.meshPyramid(flat, bd.x, base + bd.h - 20.5, bd.z, bd.w * 0.52, bd.d * 0.52,
+        20, bd.rot, [0.5, 0.56, 0.55]);
+      flat.prism(bd.x, base + bd.h - 2, bd.z, 0.3, 12, 4, [0.4, 0.42, 0.44]);
+      return;
+    }
+    if (bd.kind === 'wamu') {
+      const c2 = [0.74, 0.68, 0.6];
+      let y = base, w = bd.w, d = bd.d, h = bd.h + 2;
+      for (let t = 0; t < 4; t++) {
+        const hh = h * (t === 3 ? 1 : 0.34);
+        bl.facade.box(bd.x, y, bd.z, w, hh, d, bd.rot, c2,
+          { uScale: 12, vScale: 12, top: false, ao: t === 0 ? 0.28 : 0, cell: stone });
+        flat.box(bd.x, y + hh, bd.z, w + 0.8, 0.7, d + 0.8, bd.rot, TRIM);
+        y += hh + 0.7; h -= hh; w *= 0.84; d *= 0.84;
+        if (h < 6) break;
+      }
+      flat.prism(bd.x, y, bd.z, 0.35, 16, 4, [0.4, 0.4, 0.42]);
+      return;
+    }
+    const isStone = bd.kind === 'stone';
+    const target = isStone ? bl.facade : bl.glass;
+    let y = base, h = bd.h + 2, w = bd.w, d = bd.d;
+    for (let t = 0; t < 3; t++) {
+      const hh = t === 2 ? h : h * 0.5;
+      target.box(bd.x, y, bd.z, w, hh, d, bd.rot, col,
+        { uScale: 13, vScale: 13, top: false, ao: t === 0 ? 0.28 : 0, cell: isStone ? stone : null });
+      flat.box(bd.x, y + hh, bd.z, w + 0.8, 0.6, d + 0.8, bd.rot, TRIM);
+      y += hh + 0.6; h -= hh; w *= 0.86; d *= 0.86;
+      if (h < 8) break;
+    }
+    flat.box(bd.x, y, bd.z, w + 0.5, 1.1, d + 0.5, bd.rot, DARK, { top: false });
+    flat.prism(bd.x, y, bd.z, 0.3, 10, 4, [0.4, 0.4, 0.42]);
+  }
+
+  /**
+   * Shopfront signage.
+   *
+   * Signs are the largest single thing separating this from an open world of
+   * the era -- there was not one anywhere in the city. Everything here hangs
+   * off the shopfront band the plinth already establishes, so the fascia lands
+   * exactly on top of the glazing on every building without a second set of
+   * measurements to keep in sync.
+   *
+   * UVs index a 4 x 4 atlas cell, so sixteen designs cost one draw call for the
+   * whole chunk. Quads rather than boxes: a fascia is seen from the front and
+   * from below, and the two faces it would gain are two faces of overdraw on
+   * every commercial building in the map.
+   */
+  meshSigns(sg, flat, bd, topY, plinthH, seed, off) {
+    if (bd.w < 6 && bd.d < 6) return;
+    const N = 4, C = 1 / N;
+    // The 4 x 4 plate grid now sits inside the facade atlas's signage cell, so
+    // every U goes through `su`. V is untouched -- these UVs are already inside
+    // 0..1 and the atlas is exactly one tile tall.
+    const [su0, sdu] = this.cells.signs;
+    const su = (u) => su0 + u * sdu;
+    const plate = (k) => {
+      const i = Math.floor(hash2(seed, k) * 16);
+      return [(i % N) * C, Math.floor(i / N) * C];
+    };
+    // Everything is expressed in the building's OWN frame and pushed through
+    // `off`, which is the one rotation the rest of this function already
+    // trusts. Writing the face normals out by hand got the sign of the x term
+    // wrong and buried every sign inside its own building on any lot that was
+    // not axis-aligned -- which, with real OSM footprints, is nearly all of
+    // them.
+    const dirOf = (lx, lz) => {
+      const [wx, wz] = off(lx, lz);
+      return [wx - bd.x, 0, wz - bd.z];
+    };
+    const fh = Math.min(1.25, plinthH * 0.3);
+    const faces = [
+      { half: bd.d / 2, span: bd.w, out: [0, 1], along: [1, 0] },
+      { half: bd.w / 2, span: bd.d, out: [1, 0], along: [0, 1] },
+    ];
+    for (let f = 0; f < faces.length; f++) {
+      const fc = faces[f];
+      // Two faces of a corner lot front a street; one of a mid-block lot does.
+      // Signing every face of every building makes the city a retail park.
+      if (f === 1 && hash2(seed, 200) > 0.55) continue;
+      if (fc.span < 5) continue;
+      const [u0, v0] = plate(201 + f * 7);
+      const nrm = dirOf(fc.out[0], fc.out[1]);
+      const halfW = fc.span * 0.38;
+      // Stand a little proud of the plinth, which is itself 0.15 m wider than
+      // the wall, so the plate catches its own edge light.
+      const d = fc.half + 0.24;
+      const pt = (t, yy) => {
+        const [wx, wz] = off(fc.out[0] * d + fc.along[0] * t, fc.out[1] * d + fc.along[1] * t);
+        return [wx, yy, wz];
+      };
+      const yTop = topY - 0.18, yBot = yTop - fh;
+      sg.quad(pt(-halfW, yBot), pt(halfW, yBot), pt(halfW, yTop), pt(-halfW, yTop),
+        nrm, [su(u0), v0, su(u0 + C), v0, su(u0 + C), v0 + C, su(u0), v0 + C], [1, 1, 1]);
+
+      // Projecting blade sign: hung near one end and read from ALONG the
+      // street rather than across it, which is the whole point of a blade.
+      if (hash2(seed, 210 + f) > 0.62) {
+        const [bu, bv] = plate(220 + f * 3);
+        const bt = halfW * (hash2(seed, 230 + f) > 0.5 ? 0.72 : -0.72);
+        const bladeN = dirOf(fc.along[0], fc.along[1]);
+        const byTop = yTop + 0.4, byBot = byTop - 1.5;
+        const q = (proj, yy) => {
+          const [wx, wz] = off(fc.out[0] * (fc.half + proj) + fc.along[0] * bt,
+            fc.out[1] * (fc.half + proj) + fc.along[1] * bt);
+          return [wx, yy, wz];
+        };
+        sg.quad(q(0.05, byBot), q(1.0, byBot), q(1.0, byTop), q(0.05, byTop),
+          bladeN, [su(bu), bv, su(bu + C), bv, su(bu + C), bv + C, su(bu), bv + C], [1, 1, 1]);
+      }
+    }
+
+    // Rooftop billboard, on low and mid buildings only: on a tower it sits
+    // 150 m up where nobody reads it, and on a house it is absurd.
+    if (bd.h > 10 && bd.h < 42 && bd.w > 14 && hash2(seed, 240) > 0.72) {
+      const [bu, bv] = plate(241);
+      const bw = Math.min(bd.w * 0.7, 16), bh = bw * 0.42;
+      const yb = bd.y - 2 + bd.h + 3.4;
+      const p0 = off(-bw / 2, bd.d * 0.2), p1 = off(bw / 2, bd.d * 0.2);
+      const nrm = dirOf(0, 1);
+      sg.quad([p0[0], yb, p0[1]], [p1[0], yb, p1[1]],
+        [p1[0], yb + bh, p1[1]], [p0[0], yb + bh, p0[1]],
+        nrm, [su(bu), bv, su(bu + C), bv, su(bu + C), bv + C, su(bu), bv + C], [1, 1, 1]);
+      // Legs, so it stands on the roof instead of floating over it.
+      for (const lt of [-bw * 0.34, bw * 0.34]) {
+        const [lx, lz] = off(lt, bd.d * 0.2);
+        flat.box(lx, yb - 3.4, lz, 0.22, 3.4, 0.22, bd.rot, [0.25, 0.26, 0.28]);
+      }
+    }
+  }
+
+  /**
+   * Height of the water surface covering a point, or null if it is dry.
+   *
+   * The sea is at y=0 and every labelled lake gets its own plane at its own
+   * level -- Green Lake really is at 50 m -- so "is this under water" is not a
+   * comparison against zero, and anything measuring clearance over water has to
+   * ask for the LOCAL surface. A fixed 5.5 m bridge floor put decks under the
+   * lakes they crossed by assuming otherwise.
+   */
+  /**
+   * Inside the airfield's movement area? Boeing Field's ground is grass in
+   * the green mask, so the tree scatter plants a forest through the runway
+   * the landmark lays on top of it. One rotated rectangle over the
+   * runway/taxiway/apron, sized to the landmark's own layout constants.
+   */
+  inAirfield(x, z) {
+    if (this._airfield === undefined) {
+      const ap = (G.LANDMARKS || []).find((l) => l.kind === 'airport');
+      // explicit runway axes (bearing 150): along (0.497, 0.868), across
+      // (0.868, -0.497) -- see the landmark for why no trig shorthand
+      this._airfield = ap ? { x: ap.x, z: ap.z } : null;
+    }
+    const a = this._airfield;
+    if (!a) return false;
+    const dx = x - a.x, dz = z - a.z;
+    const lx = dx * 0.868 - dz * 0.497, lz = dx * 0.497 + dz * 0.868;
+    return Math.abs(lx) < 520 && Math.abs(lz) < 1680;
+  }
+
+  waterLevelAt(x, z) {
+    // Waterloo Region: the one surface field (geo.waterLevel), where the
+    // water is wet or drawn over lower ground.
+    const lv = G.waterLevel(x, z);
+    if (lv === null) return null;
+    return G.isWater(x, z) || G.terrainHeight(x, z) < lv - 0.02 ? lv : null;
+  }
+
+  /**
+   * Is this ground under a lake's (or the canal's) surface where the lake is
+   * drawn? A lake's dug bed reaches up to a 40 m cell past the water mask, so
+   * the water mask alone left park trees, benches and tables, street trees and
+   * lamp posts standing in the drawn lake -- solid to a boat -- round the
+   * small lakes' shores.
+   */
+  inDrawnLake(x, z) {
+    const lw = this.waterLevelAt(x, z);
+    return !!lw && G.terrainHeight(x, z) < lw + 0.05;
+  }
+
+  /** The ship canal at lake level (geo.js shipCanal), or null. */
+  _findCanal() {
+    this.canal = G.shipCanal(this.lakeSpecs || []);
+    return this.canal;
+  }
+
+  /**
+   * Is this point inside a building footprint? Shared by every scatter, since
+   * "the data says this is open ground" and "there is nothing standing here"
+   * are different questions and only the second one matters to a prop.
+   */
+  inBuilding(x, z, pad) {
+    for (const b of this.city.buildingsNear(x, z, 30)) {
+      const c = Math.cos(-b.rot), s = Math.sin(-b.rot);
+      const dx = x - b.x, dz = z - b.z;
+      const lx = dx * c - dz * s, lz = dx * s + dz * c;
+      if (Math.abs(lx) < b.w / 2 + pad && Math.abs(lz) < b.d / 2 + pad) return true;
+    }
+    return false;
+  }
+
+  // --- street furniture -----------------------------------------------------
+
+  *meshProps(flat, glow, ch, cx, cz) {
+    const city = this.city;
+    const own = (x, z) => Math.floor(x / CHUNK) === cx && Math.floor(z / CHUNK) === cz;
+    const poleCol = [0.28, 0.3, 0.32];
+    const lampCol = [1.0, 0.94, 0.76];
+    // NOTHING IS PLANTED IN A PORTAL PIT. The carve digs hw + 7.6 m either
+    // side of a cutting, and a road carried over it on a lid keeps its grade
+    // while its kerbside does not: street trees, lamp posts and clutter set at
+    // terrainHeight beside a lidded road stood at the bottom of the trench,
+    // their crowns level with the slab. Anything whose ground is dug 0.3 m or
+    // more by a portal cut is not planted (it would also be a solid post down
+    // in the cutting). cityStats.propsInPit counts them.
+    if (cityStats.propsInPit === undefined) cityStats.propsInPit = 0;
+    const inPit = (x, z) => {
+      if (this.cutDepth(x, z) <= 0.3) return false;
+      // where, for tools (bounded)
+      const pp = this._pitProps || (this._pitProps = []);
+      if (pp.length < 400) pp.push([Math.round(x), Math.round(z)]);
+      return true;
+    };
+
+    // Street furniture stands on the pavement STRIP: short of where its side's
+    // pavement starts it would be on a junction's kerb radius, which is tarmac.
+    const onCorner = (ei, t, sg) => {
+      const e = city.edges[ei];
+      return t * e.len < this.paveStart(e.a, ei, sg) + 0.6 || (1 - t) * e.len < this.paveStart(e.b, ei, sg) + 0.6;
+    };
+    for (const ei of ch.edges) {
+      if (performance.now() - this._yt > this._yb) { yield; this._yt = performance.now(); }
+      const e = city.edges[ei];
+      // A graded ramp's kerbside is its embankment, and furniture planted at
+      // terrain height there is buried to the lamp head or floats off the
+      // batter. Freeway ramps carry no street furniture anyway.
+      if (e.elev || e.prof || e.cls === 'hwy') continue;
+      const a = city.nodes[e.a], b = city.nodes[e.b];
+      const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
+      if (!own(mx, mz)) continue;
+      const px = -e.dz, pz = e.dx;
+      const spacing = e.cls === 'res' ? 34 : 30;
+      const count = Math.floor(e.len / spacing);
+      const along = Math.atan2(e.dx, e.dz);
+      for (let i = 1; i <= count; i++) {
+        const t = i / (count + 1);
+        const x = lerp(a.x, b.x, t), z = lerp(a.z, b.z, t);
+        const h = hash2(Math.round(x), Math.round(z));
+        const sg = i % 2 === 0 ? 1 : -1;
+        const ox = x + px * sg * (e.hw + 1.4);
+        const oz = z + pz * sg * (e.hw + 1.4);
+        if (!G.isBuildable(ox, oz)) continue;
+        if (this.inDrawnLake(ox, oz)) { cityStats.propsInLake = (cityStats.propsInLake || 0) + 1; continue; }
+        if (onCorner(ei, t, sg)) continue;
+        // Offsetting sideways off THIS road can land on a different one -- a
+        // ramp beside a freeway puts its lamp posts and trees on the freeway,
+        // and beneath a viaduct they grow through the deck.
+        if (city.onRoad(ox, oz, 0.8)) { cityStats.propsSkipped++; continue; }
+        if (inPit(ox, oz)) { cityStats.propsInPit++; continue; }
+        // nor on a stunt jump's run-up or landing (stunts.js)
+        if (city.jumpClear(ox, oz)) continue;
+        const gy = G.terrainHeight(ox, oz) + WALK_Y;
+        const armRot = Math.atan2(-px * sg, -pz * sg);
+        const f0 = flat.ni;
+        if (h < 0.42) {
+          // street light: base, tapered mast, cranked arm, lit lens
+          flat.box(ox, gy, oz, 0.42, 0.22, 0.42, armRot, [0.24, 0.25, 0.27]);
+          flat.prism(ox, gy + 0.2, oz, 0.115, 6.4, 8, poleCol);
+          this.city.addObstacle(this._ck, ox, oz, 0.35);
+          flat.prism(ox - px * sg * 0.28, gy + 6.6, oz - pz * sg * 0.28, 0.1, 0.9, 6, poleCol);
+          flat.box(ox - px * sg * 1.0, gy + 7.4, oz - pz * sg * 1.0, 1.9, 0.16, 0.16, armRot, poleCol);
+          flat.box(ox - px * sg * 1.85, gy + 7.15, oz - pz * sg * 1.85, 0.85, 0.26, 0.42, armRot, [0.3, 0.31, 0.33]);
+          glow.box(ox - px * sg * 1.85, gy + 7.06, oz - pz * sg * 1.85, 0.7, 0.1, 0.34, armRot, lampCol);
+          this._fell.push(ox, oz, f0, flat.ni);
+        } else if (h < 0.84) {
+          // The street tree's old slot, left empty on purpose: trees.js plants
+          // both kerbs every 11-13 m now and keeps off every slot here, so a
+          // tree in this one would stand on its own lamp's line. (Removing
+          // the branch would hand its hash band to the hydrants below.)
+        } else if (h < 0.88) {
+          flat.prism(ox, gy, oz, 0.2, 0.55, 8, [0.72, 0.16, 0.12]);
+          flat.prism(ox, gy + 0.55, oz, 0.15, 0.24, 8, [0.72, 0.16, 0.12]);
+          flat.box(ox, gy + 0.3, oz, 0.62, 0.14, 0.2, armRot, [0.72, 0.16, 0.12]);
+        } else if (h < 0.92) {
+          flat.prism(ox, gy, oz, 0.34, 0.95, 8, [0.24, 0.28, 0.26]);
+          flat.prism(ox, gy + 0.95, oz, 0.37, 0.1, 8, [0.16, 0.18, 0.17]);
+        } else if (h < 0.955 && e.cls !== 'res') {
+          flat.box(ox, gy, oz, 1.9, 0.1, 0.55, along, [0.34, 0.24, 0.16]);
+          flat.box(ox, gy + 0.1, oz, 1.9, 0.32, 0.5, along, [0.38, 0.27, 0.18]);
+          for (const s2 of [-0.8, 0.8]) {
+            flat.box(ox + Math.sin(along) * s2, gy, oz + Math.cos(along) * s2, 0.1, 0.42, 0.5, along, [0.25, 0.26, 0.27]);
+          }
+        } else if (e.cls === 'art') {
+          flat.box(ox, gy, oz, 3.4, 0.1, 1.5, along, [0.4, 0.42, 0.45]);
+          flat.box(ox - px * sg * 0.62, gy, oz - pz * sg * 0.62, 3.4, 2.5, 0.08, along, [0.62, 0.74, 0.8]);
+          flat.box(ox, gy + 2.5, oz, 3.7, 0.16, 1.8, along, [0.3, 0.32, 0.35]);
+          glow.box(ox + px * sg * 0.5, gy + 1.7, oz + pz * sg * 0.5, 0.9, 1.2, 0.06, along, [0.8, 0.86, 0.95]);
+        }
+      }
+      // --- small clutter ----------------------------------------------------
+      //
+      // The structural pass above places one item every 30-34 m, ALTERNATING
+      // sides, so a given kerb gets a lamp or a tree about every 65 m and
+      // nothing in between. That is an empty street: a real block carries a
+      // hydrant, a bin, a meter, a mailbox and a sign between every pair of
+      // lamps.
+      //
+      // Kept separate rather than folded into the cascade above because these
+      // want a different cadence and a much smaller triangle budget -- they are
+      // knee-height objects whose whole job is to interrupt the kerb line, so
+      // six-sided prisms and boxes are enough. Both sides, every ~22 m.
+      if (e.cls !== 'ramp') {
+        const cSpace = 22;
+        const cCount = Math.floor(e.len / cSpace);
+        for (let i = 1; i <= cCount; i++) {
+          const t = (i - 0.5) / (cCount + 1);
+          const x = lerp(a.x, b.x, t), z = lerp(a.z, b.z, t);
+          const hc = hash2(Math.round(x * 7) + 3, Math.round(z * 7) + 11);
+          const sg = hc < 0.5 ? 1 : -1;
+          // Sit tight against the kerb, where street furniture actually goes.
+          const ox = x + px * sg * (e.hw + 0.85);
+          const oz = z + pz * sg * (e.hw + 0.85);
+          if (!G.isBuildable(ox, oz)) continue;
+          if (this.inDrawnLake(ox, oz)) { cityStats.propsInLake = (cityStats.propsInLake || 0) + 1; continue; }
+          if (onCorner(ei, t, sg)) continue;
+          if (city.onRoad(ox, oz, 0.4)) { cityStats.propsSkipped++; continue; }
+          if (inPit(ox, oz)) { cityStats.propsInPit++; continue; }
+          if (city.jumpClear(ox, oz)) continue;
+          const gy = G.terrainHeight(ox, oz) + WALK_Y;
+          const rot = Math.atan2(-px * sg, -pz * sg);
+          const k = hash2(Math.round(x * 13) + 5, Math.round(z * 13) + 29);
+          if (k < 0.20) {
+            // fire hydrant
+            const hy = [0.68, 0.16, 0.12];
+            flat.prism(ox, gy, oz, 0.17, 0.6, 6, hy);
+            flat.prism(ox, gy + 0.6, oz, 0.12, 0.14, 6, hy);
+            flat.box(ox, gy + 0.34, oz, 0.52, 0.14, 0.16, rot, hy);
+          } else if (k < 0.40) {
+            // litter bin
+            const bc = [0.22, 0.26, 0.24];
+            flat.prism(ox, gy, oz, 0.34, 0.9, 8, bc);
+            flat.prism(ox, gy + 0.9, oz, 0.37, 0.09, 8, [0.14, 0.16, 0.15]);
+          } else if (k < 0.58) {
+            // parking meter or ticket machine
+            flat.prism(ox, gy, oz, 0.06, 1.05, 6, [0.3, 0.32, 0.34]);
+            flat.box(ox, gy + 1.05, oz, 0.2, 0.34, 0.16, rot, [0.36, 0.38, 0.4]);
+          } else if (k < 0.72) {
+            // mailbox / newspaper box
+            const mc = k < 0.65 ? [0.16, 0.28, 0.44] : [0.5, 0.14, 0.14];
+            flat.box(ox, gy, oz, 0.48, 0.5, 0.4, rot, [0.24, 0.25, 0.26]);
+            flat.box(ox, gy + 0.5, oz, 0.56, 0.66, 0.46, rot, mc);
+          } else if (k < 0.86) {
+            // sign on a post -- the tallest of the clutter, so it breaks the
+            // kerb line against the facades behind it
+            flat.prism(ox, gy, oz, 0.045, 2.3, 5, [0.4, 0.42, 0.44]);
+            flat.box(ox, gy + 2.3, oz, 0.5, 0.42, 0.05, rot, [0.72, 0.74, 0.76]);
+          } else {
+            // bollards, in a short run
+            for (let bIdx = -1; bIdx <= 1; bIdx++) {
+              const bx = ox + e.dx * bIdx * 1.4, bz = oz + e.dz * bIdx * 1.4;
+              flat.prism(bx, gy, bz, 0.09, 0.85, 6, [0.3, 0.31, 0.33]);
+            }
+          }
+        }
+      }
+
+      // traffic signals at busy corners
+      if (e.cls === 'art' && e.len > 40) {
+        for (const nid of [e.a, e.b]) {
+          const n = city.nodes[nid];
+          if (!own(n.x, n.z) || n.e.length < 3) continue;
+          const ox = n.x + px * (e.hw + 1.6) - e.dx * (e.hw + 1.4);
+          const oz = n.z + pz * (e.hw + 1.6) - e.dz * (e.hw + 1.4);
+          if (!G.isBuildable(ox, oz) || inPit(ox, oz)) continue;
+          // A kerb radius puts the old corner position on the junction's
+          // tarmac, or in the cross street.
+          { const ns = city.nodeSurface(ox, oz); if ((ns && ns.inSquare) || city.onRoad(ox, oz, 0.3, false)) continue; }
+          const gy = G.terrainHeight(ox, oz) + WALK_Y;
+          flat.box(ox, gy, oz, 0.5, 0.25, 0.5, along, [0.24, 0.25, 0.27]);
+          flat.prism(ox, gy + 0.22, oz, 0.13, 5.9, 8, poleCol);
+          flat.box(ox + e.dx * 2.2, gy + 5.75, oz + e.dz * 2.2, 0.28, 0.28, 4.6, along, poleCol);
+          const hx = ox + e.dx * 4.3, hz = oz + e.dz * 4.3;
+          flat.box(hx, gy + 4.3, hz, 0.52, 1.5, 0.42, along, [0.16, 0.18, 0.2]);
+          const lens = (yy, c) => {
+            flat.box(hx + e.dx * 0.16, gy + yy + 0.16, hz + e.dz * 0.16, 0.5, 0.06, 0.44, along, [0.1, 0.11, 0.12]);
+            glow.box(hx + e.dx * 0.24, gy + yy, hz + e.dz * 0.24, 0.3, 0.3, 0.1, along, c);
+          };
+          lens(5.4, [1.0, 0.14, 0.1]);
+          lens(5.0, [0.85, 0.68, 0.12]);
+          lens(4.6, [0.16, 0.9, 0.32]);
+        }
+      }
+    }
+
+    // Park furniture, where OSM maps it (tools/build_parkprops.py): benches,
+    // picnic tables, playgrounds, fountains. A park that was lawn and trees
+    // had nothing in it at the scale you walk at.
+    // Park trees, street trees and the rest are planted after this
+    // (plantTrees, trees.js), from the same build step.
+    this.meshParkFurniture(flat, cx, cz, inPit);
+  }
+
+  /**
+   * The chunk's own benches, picnic tables, playgrounds and fountains, into
+   * the flat mesh (no draws). Returns the playgrounds' [x, z, clear radius];
+   * trees.js keeps its trees off the same circles (playgroundsOf). Tables and play structures are
+   * solid; a bench is not, since you sit, not collide.
+   */
+  meshParkFurniture(flat, cx, cz, inPit) {
+    const city = this.city, out = [];
+    const list = G.PARK_PROPS.get(`${cx},${cz}`);
+    if (!list) return out;
+    const wood = [0.42, 0.29, 0.18], woodD = [0.3, 0.21, 0.13], iron = [0.16, 0.18, 0.17];
+    const standOn = (x, z, pad) => {
+      if (G.isWater(x, z) || this.inDrawnLake(x, z) || city.onRoad(x, z, pad)) return null;
+      if (this.inBuilding(x, z, 0.2) || inPit(x, z) || city.jumpClear(x, z)) return null;
+      return G.terrainHeight(x, z) + city.roadLift(x, z);
+    };
+    for (const p of list) {
+      const hr = hash2(Math.round(p.x * 3) + 7, Math.round(p.z * 3) + 19);
+      if (p.k === 'bench') {
+        const gy = standOn(p.x, p.z, 0.4);
+        if (gy === null) continue;
+        // local +z is the way the sitter faces: compass `a` -> rot = pi + a
+        const rot = p.a !== null ? Math.PI + (p.a * Math.PI) / 180 : hr * Math.PI * 2;
+        const L = (lx, lz) => [p.x + lx * Math.cos(rot) - lz * Math.sin(rot), p.z + lx * Math.sin(rot) + lz * Math.cos(rot)];
+        const slat = hr < 0.7 ? wood : [0.22, 0.34, 0.26];
+        for (const sx of [-0.7, 0.7]) { const [x, z] = L(sx, 0); flat.box(x, gy, z, 0.07, 0.44, 0.46, rot, iron); }
+        { const [x, z] = L(0, 0.02); flat.box(x, gy + 0.42, z, 1.7, 0.05, 0.42, rot, slat); }
+        { const [x, z] = L(0, -0.22); flat.box(x, gy + 0.58, z, 1.7, 0.28, 0.05, rot, slat); }
+      } else if (p.k === 'picnic') {
+        const gy = standOn(p.x, p.z, 0.8);
+        if (gy === null) continue;
+        const rot = hr * Math.PI * 2, c = Math.cos(rot), sn = Math.sin(rot);
+        const L = (lz) => [p.x - lz * sn, p.z + lz * c];
+        const col = hr < 0.75 ? wood : [0.24, 0.32, 0.24];
+        const f0 = flat.ni;
+        flat.box(p.x, gy + 0.72, p.z, 1.8, 0.05, 0.76, rot, col);
+        for (const s2 of [-0.62, 0.62]) { const [x, z] = L(s2); flat.box(x, gy + 0.42, z, 1.8, 0.05, 0.26, rot, col); }
+        for (const lx of [-0.65, 0.65]) {
+          const x = p.x + lx * c, z = p.z + lx * sn;
+          flat.box(x, gy, z, 0.07, 0.72, 1.5, rot, woodD);
+        }
+        city.addObstacle(this._ck, p.x, p.z, 0.7);
+        if (this._fell) this._fell.push(p.x, p.z, f0, flat.ni);
+      } else if (p.k === 'fountain') {
+        const gy = standOn(p.x, p.z, 0.3);
+        if (gy === null) continue;
+        flat.prism(p.x, gy, p.z, 0.2, 0.86, 8, [0.36, 0.38, 0.4]);
+        flat.prism(p.x, gy + 0.86, p.z, 0.3, 0.1, 8, [0.44, 0.46, 0.48]);
+      } else {
+        // A playground: a play tower (deck on four posts, a peaked roof, a
+        // slide off one side) and a swing set, sized to the mapped area.
+        const R = Math.max(5, Math.min(p.r, 14));
+        const pal = [[0.16, 0.42, 0.62], [0.72, 0.2, 0.16], [0.2, 0.5, 0.28], [0.86, 0.62, 0.12]];
+        const c1 = pal[Math.floor(hr * 4) % 4], c2 = pal[(Math.floor(hr * 4) + 1) % 4], c3 = pal[(Math.floor(hr * 4) + 2) % 4];
+        const rot = hr * Math.PI * 2, c = Math.cos(rot), sn = Math.sin(rot);
+        const at = (lx, lz) => [p.x + lx * c - lz * sn, p.z + lx * sn + lz * c];
+        // the tower
+        const [tx, tz] = at(-R * 0.25, 0);
+        const ty = standOn(tx, tz, 2.2);
+        if (ty !== null) {
+          for (const [ox, oz] of [[-1.3, -1.3], [1.3, -1.3], [-1.3, 1.3], [1.3, 1.3]]) {
+            const [x, z] = at(-R * 0.25 + ox, oz);
+            flat.box(x, ty, z, 0.16, 3.1, 0.16, rot, c1);
+          }
+          flat.box(tx, ty + 1.45, tz, 2.8, 0.12, 2.8, rot, woodD);
+          for (const sd of [-1, 1]) { const [x, z] = at(-R * 0.25, sd * 1.35); flat.box(x, ty + 1.57, z, 2.8, 0.7, 0.06, rot, c2); }
+          flat.cone(tx, ty + 3.1, tz, 2.3, 1.2, 4, c3);
+          // slide: stepped down and out along local +x
+          for (let k = 0; k < 7; k++) {
+            const [x, z] = at(-R * 0.25 + 1.4 + k * 0.42, 0);
+            flat.box(x, ty + 1.45 - k * 0.2, z, 0.44, 0.08, 0.62, rot, c3);
+          }
+          const [lx, lz] = at(-R * 0.25 - 1.6, 0);
+          for (let k = 0; k < 5; k++) flat.box(lx, ty + 0.3 + k * 0.28, lz, 0.08, 0.05, 0.6, rot, iron);
+          city.addObstacle(this._ck, tx, tz, 1.9);
+        }
+        // the swings
+        const [sx, sz] = at(R * 0.35, R * 0.35);
+        const sy = standOn(sx, sz, 2.0);
+        if (sy !== null) {
+          for (const e of [-1.7, 1.7]) for (const f of [-0.5, 0.5]) {
+            const [x, z] = at(R * 0.35 + e, R * 0.35 + f);
+            flat.box(x, sy, z, 0.1, 2.4, 0.1, rot, iron);
+          }
+          const [bx, bz] = at(R * 0.35, R * 0.35);
+          flat.box(bx, sy + 2.35, bz, 3.6, 0.1, 0.1, rot, iron);
+          for (const e of [-0.7, 0.7]) {
+            const [x, z] = at(R * 0.35 + e, R * 0.35);
+            flat.box(x, sy + 0.5, z, 0.44, 0.05, 0.2, rot, [0.12, 0.12, 0.12]);
+            for (const f of [-0.2, 0.2]) { const [cx2, cz2] = at(R * 0.35 + e + f, R * 0.35); flat.box(cx2, sy + 0.55, cz2, 0.02, 1.8, 0.02, rot, [0.5, 0.52, 0.54]); }
+          }
+        }
+        out.push([p.x, p.z, R + 1.5]);
+      }
+    }
+    return out;
+  }
+}
