@@ -717,8 +717,12 @@ async function boot() {
   const bootCache = { grade: bc.grade, buildings: bc.buildings };
   // The monorail from its data alone: citygen keeps buildings off its line.
   // Auto KW: no monorail, BNSF line or Link yet (ION comes as its own system)
-  monorail = null; link = null; freight = null;
-  md.monorailClear = md.linkClear = md.freightClear = [];
+  monorail = null; freight = null;
+  md.monorailClear = md.freightClear = [];
+  // ION light rail, Conestoga to Fairway: Seattle's Link system on ION's
+  // tracks (tools/kw/build_ion.py writes link.json in Link's format)
+  link = new Link(md.link, md, bc.link);
+  md.linkClear = link.clearZones();
   // Seattle's bike paths, from their data: the scatter keeps off them
   bikeNet = new BikeNet(md.bikepaths);
   // the ferry slips' roads, before the city reads them (ferry.js)
@@ -1020,13 +1024,16 @@ function installShadowFade() {
   // The Queen Anne Counterbalance's streetcar line, laid on the road graph
   // (counterbalance.js) before anything is placed by the kerb
   counterbal = null;
-  city.extraClear = (x, z) => bikeNet.keepClear(x, z) || chicopee.keepClear(x, z);
+  city.extraClear = (x, z) => link.keepClear(x, z) || bikeNet.keepClear(x, z) || chicopee.keepClear(x, z);
 
   await step(0.8, 'Building the skyline');
   world.buildSkyline();
 
   await step(0.86, 'Placing the landmarks');
+  link.attach(city);
+  city.bedQueries = [railBedSurface(Object.values(link.tracks).filter((t) => t.Y), 1.5, 2.4, -0.45)];
   lmRoot = buildLandmarks(scene, city, (x, z) => world.waterLevelAt(x, z), null);
+  link.build(scene, world);
   bikeNet.build(scene, city);
   chicopee.scene = scene;
   chicopee.build();
@@ -1075,6 +1082,7 @@ function installShadowFade() {
   renderer.domElement.addEventListener('webglcontextrestored', () => flight('webgl context restored', true));
   // Washington State Ferries' Seattle-Bainbridge run (ferry.js)
   ferry = null;
+  freezeStatic(link.group); freezeStatic(link.tunGroup);
   // the balloon's launch field: no park trees on it
   if (city.clearCircles && BALLOON_SITE) city.clearCircles.push([BALLOON_SITE.x, BALLOON_SITE.z, 26]);
   // the fire stations' aprons: where each rig stands, kept clear before any chunk is scattered
@@ -1090,11 +1098,12 @@ function installShadowFade() {
   // Phones draw the city's shadows once and copy them each frame; only what
   // moves is drawn into the shadow map every frame (shadowcache.js). The
   // desktop keeps three's pass: its 2048 map would make the cache ~4x larger.
+  link.makeTrains(scene);
   if (ON_PHONE && !window.__noShadowCache) {
     try {
       const ramps = scene.getObjectByName('stuntRamps');
       shadowCache = new ShadowCache(renderer, sun, { margin: 60,
-        statics: () => [world.group, lmRoot, ramps, world.trees.shadowGroup], keep: () => [],
+        statics: () => [world.group, lmRoot, ramps, link.group, world.trees.shadowGroup], keep: () => [],
         // every tree in the box, into the cache only (trees.js shadowFill): the
         // box is turned to the sun, so its world square is ~1.42x, plus the
         // shadows of the trees just outside it
@@ -1102,6 +1111,7 @@ function installShadowFade() {
         after: () => world.trees.shadowDone() });
       world.onChunkChange = (x, z, r) => shadowCache.chunkChanged(x, z, r);
       world.trees.onInvalidate = () => shadowCache.invalidate();
+      link.onChunkChange = (x, z, r) => shadowCache.chunkChanged(x, z, r);
     } catch (e) { blog(`shadow cache: ${e.message}`); shadowCache = null; }
   }
   if (world.terrainGroup) freezeStatic(world.terrainGroup);
@@ -1117,8 +1127,10 @@ function installShadowFade() {
   if (ON_PHONE && !window.__keepArrays) {
     // (Link's and freight's chunks are built as you come near: each drops
     // its arrays the same way when it is made)
+    link.dropArrays = true;
     let b = 0;
-    for (const r of [world.terrainGroup, world.skyline, lmRoot]) if (r) b += dropStaticArrays(r);
+    for (const r of [world.terrainGroup, world.skyline, lmRoot, link.group, link.tunGroup]) if (r) b += dropStaticArrays(r);
+    for (const t of link.trains) for (const m of t.meshes || []) b += dropStaticArrays(m);
     blog(`static geometry: ${(b / 1048576).toFixed(0)} MB of arrays go once uploaded`);
   }
 
@@ -1139,9 +1151,11 @@ function installShadowFade() {
   controls.bridge = () => [fishing, arcade, pinball, hockey, tower, coffee, hoops, pickle, golf, fishToss]
     .some((a) => a && a.active) || !!(wheelRide && wheelRide.busy);
   player = new Player(scene, city, game, world);
+  player.link = link;
 
   traffic = new TrafficSystem(scene, city, game);
   traffic.camera = camera;   // far-LOD instances are culled against it
+  traffic.link = link;       // cars stop for a train on a level crossing
   // where water is drawn (the boats' query): no car parks under it
   traffic.waterAt = (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; };
   // the cyclists on the bike paths, and the bike-share docks
@@ -1318,13 +1332,16 @@ function installShadowFade() {
     ...(lmRoot.userData.marinas || []).map((mr) => ({ x: mr.x, z: mr.z, kind: 'dock', name: mr.name, near: false,
       hello: mr.hello ? mr.hello : `${mr.name} — boats and jet skis. Walk out on the float and take one` })),
     ...kwPlaces(),
+    // ION: every station's street entrance
+    ...link.stations.map((st) => ({ x: st.ent.x, z: st.ent.z, kind: 'link', name: `ION · ${st.name}`, near: false,
+      hello: `${st.full} — ION light rail, Conestoga to Fairway. Tap ENTER here or on the platform to catch the next train and drive it` })),
     ...(chicopee.base() ? [{ x: chicopee.base().x, z: chicopee.base().z, kind: 'atv', name: 'Chicopee Bike Park', near: false, label: 'Chicopee',
       hello: 'Chicopee Bike Park — dirt bikes and mountain bikes. Ride a downhill, or walk to a chairlift and press ENTER to ride to the top' }] : []),
   ];
   { const k = kwData(); if (k && k.signStats) blog('kw signs: ' + JSON.stringify(k.signStats)); }
   peds = new PedSystem(scene, city, game);
   // trains are solid to anyone on foot (each system's blockAt)
-  player.trainBlock = peds.trainBlock = () => false;
+  player.trainBlock = peds.trainBlock = (x, z, y, r) => link.blockAt(x, z, y, r);
   peds.camera = camera;   // animation LOD culls against it
   peds.waterAt = (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; };   // the boats' rule (Player.waterAt)
   fx = new Effects(scene, tx);
@@ -1335,6 +1352,7 @@ function installShadowFade() {
   if (bc.map) { try { mapCanvas = await blobToCanvas(bc.map); } catch (e) { mapCanvas = null; blog('map: restore failed ' + e.message); } }
   if (!mapCanvas) { mapCanvas = buildMapCanvas(city); bcOut.mapCanvas = mapCanvas; }
   hud = new Hud(document.getElementById('app'), city, mapCanvas);
+  hud.link = link;
   // your car catching fire (vehicles.js Vehicle.damage): the frame burns it down
   VEHICLE_HOOKS.belly = () => hud.showToast('Belly landing — the gear was up!', 2400);
   VEHICLE_HOOKS.ignite = (v) => {
@@ -1351,6 +1369,7 @@ function installShadowFade() {
   if (wheelRide) wheelRide.o.hud = hud;
 
   cyclists.audio = audio;
+  link.bind({ game, hud, audio, player });
   {
     // One tap, never behind a menu: a lost run on a phone ends the session.
     const rb = document.getElementById('raceRestart');
@@ -1417,6 +1436,7 @@ function installShadowFade() {
   if (world.bootCache.portalOut) toKeep.push(['portal', () => world.bootCache.portalOut]);
   if (bootCache.buildingsOut) toKeep.push(['buildings', () => bootCache.buildingsOut]);
 
+  if (link.cacheOut && link.cacheOut.pre && link.cacheOut.post) toKeep.push(['link', () => link.cacheOut]);
   if (!bc.vehicles) toKeep.push(['vehicles', () => vehicleSnapshot()]);
   if (bcOut.texPlan) toKeep.push(['textures', () => encodeTextures(bcOut.texPlan)]);
   if (bcOut.mapCanvas) toKeep.push(['map', () => canvasToBlob(bcOut.mapCanvas)]);
@@ -1435,6 +1455,7 @@ function installShadowFade() {
     }
   }
   bootCache.gradeOut = bootCache.buildingsOut = null;
+  link.cacheOut = link.cache = null;
   world.bootCache = null;
 
   // What the cache handed in is spent, and so is what went out: `bc` lives in
@@ -1452,7 +1473,7 @@ function installShadowFade() {
   if (ON_PHONE && !window.__keepArrays) {
     world.primeMidTint();
     try {
-      const r = releaseTextureSources(renderer, scene, []);
+      const r = releaseTextureSources(renderer, scene, [link.bedMat, link.signMat, link.cardMat]);
       blog(`texture sources: ${r.released} let go (${(r.bytes / 1048576).toFixed(0)} MB), ${r.pending} after their first upload`);
     } catch (e) { blog('texture sources: ' + e.message); }
     // ...and the vehicle types' geometry once uploaded (the snapshot above

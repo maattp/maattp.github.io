@@ -124,8 +124,10 @@ export async function loadMapData(onStep) {
   const wp = await pixels('wlevel.png');
   const wlevel = new Float32Array(wp.w * wp.h);
   for (let i = 0, p = 0; i < wlevel.length; i++, p += 4) {
+    // only the WET vertices: a bank vertex's level (also in the file) would
+    // spread the drawn water a cell over dry ground
     const q = (wp.data[p] << 8) | wp.data[p + 1];
-    wlevel[i] = q ? q / 10 - 100 : NaN;
+    wlevel[i] = q && wp.data[p + 2] > 127 ? q / 10 - 100 : NaN;
   }
 
   step('Reading the shoreline');

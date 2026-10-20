@@ -50,15 +50,16 @@ export const LINK = {
   roofOut: 6.0,          // top of the box's roof slab over the rail head
   wire: 5.0,             // contact wire over the rail head (est.)
   platH: 0.36,           // platform over the rail head [ST]
-  platLen: 124,          // platform length: 380 ft and the ramps (est.)
-  carLen: 28.9, cars: 4, couple: 0.8, secA: 11.8, secC: 4.4,
+  platLen: 64,           // Auto KW: ION's platforms, sized for two cars coupled one day (est.)
+  // Auto KW: one Bombardier Flexity Freedom, ~41 m in three sections
+  carLen: 41.0, cars: 1, couple: 0.8, secA: 17.6, secC: 5.8,
   wid: 2.65, roof: 3.66,
   vMax: 24.6, vStreet: 15.6,
   acc: 1.3, brake: 1.3, brakeEmerg: 2.2,
   aLat: 1.0,             // unbalanced lateral acceleration in service (est.)
   dwell: 20,             // seconds at a platform (est.; ST schedules ~20-30)
-  perTrack: 14,          // trains on each 1 Line track (~2.3 km apart: 3-4 min headways)
-  perTrack2: 6,          // ...and each 2 Line track, sharing the 1 Line's rails north of the junction
+  perTrack: 5,           // Auto KW: ION, ~3 km apart on each track (8-10 min headways)
+  perTrack2: 0,          // (ION is one line: its sb2/nb2 are the same rails)
   floatDeck: 3.2,        // the rail head over Lake Washington on the I-90 floating bridge (est.)
 };
 LINK.len = LINK.cars * LINK.carLen + (LINK.cars - 1) * LINK.couple;
@@ -362,7 +363,7 @@ const C = {
   concrete: [0.50, 0.49, 0.46], concreteD: [0.36, 0.355, 0.34], concreteL: [0.62, 0.61, 0.58],
   railTop: [0.66, 0.66, 0.68], railSide: [0.30, 0.22, 0.17], steel: [0.36, 0.37, 0.38],
   paving: [0.20, 0.20, 0.21], plat: [0.58, 0.57, 0.54], tactile: [0.78, 0.66, 0.12],
-  canopy: [0.82, 0.84, 0.86], teal: [0.05, 0.50, 0.48], navy: [0.06, 0.13, 0.33],
+  canopy: [0.82, 0.84, 0.86], teal: [0.78, 0.07, 0.10], navy: [0.16, 0.17, 0.19],
   wire: [0.12, 0.12, 0.12], black: [0.02, 0.02, 0.025],
 };
 
@@ -409,11 +410,12 @@ function signAtlas(names) {
   };
   names.forEach((nm, k) => {
     cells[nm] = cell(k, (q, w, h) => {
-      q.fillStyle = '#0d2a55'; q.fillRect(0, 0, w, h);
-      q.fillStyle = '#1b9e8f'; q.fillRect(0, h - 7, w, 7);
-      q.fillStyle = '#ffffff'; q.beginPath(); q.arc(34, h / 2 - 3, 20, 0, Math.PI * 2); q.fill();
-      q.fillStyle = '#0d2a55'; q.font = '900 26px -apple-system, Helvetica, sans-serif'; q.textAlign = 'center'; q.textBaseline = 'middle';
-      q.fillText('1', 34, h / 2 - 2);
+      // Auto KW: ION's name boards, charcoal with the red band
+      q.fillStyle = '#26282b'; q.fillRect(0, 0, w, h);
+      q.fillStyle = '#d0202e'; q.fillRect(0, h - 7, w, 7);
+      q.fillStyle = '#d0202e'; q.beginPath(); q.arc(34, h / 2 - 3, 20, 0, Math.PI * 2); q.fill();
+      q.fillStyle = '#ffffff'; q.font = '900 15px -apple-system, Helvetica, sans-serif'; q.textAlign = 'center'; q.textBaseline = 'middle';
+      q.fillText('ION', 34, h / 2 - 2);
       q.fillStyle = '#ffffff'; q.textAlign = 'left';
       let fs = 34;
       q.font = `700 ${fs}px -apple-system, Helvetica, sans-serif`;
@@ -422,9 +424,9 @@ function signAtlas(names) {
     });
   });
   cells.__link = cell(names.length, (q, w, h) => {
-    q.fillStyle = '#1b9e8f'; q.fillRect(0, 0, w, h);
+    q.fillStyle = '#d0202e'; q.fillRect(0, 0, w, h);
     q.fillStyle = '#ffffff'; q.font = '900 40px -apple-system, Helvetica, sans-serif'; q.textAlign = 'center'; q.textBaseline = 'middle';
-    q.fillText('LINK  LIGHT RAIL', w / 2, h / 2 + 1);
+    q.fillText('ION  LIGHT RAIL', w / 2, h / 2 + 1);
   });
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -487,7 +489,9 @@ export class Link {
       }
       st.lines = [...new Set(Object.keys(st.s).map((k) => this.lineOf(k)))];
       // the track whose half of the station is DRAWN: a shared station is the 1 Line's
-      st.key = st.s.sb !== undefined ? 'sb' : 'sb2';
+      // (Auto KW: ION's split stations are on ONE track -- Waterloo Public
+      // Square on Caroline, Kitchener City Hall and Frederick on Charles)
+      st.key = ['sb', 'nb', 'sb2', 'nb2'].find((k) => st.s[k] !== undefined) || 'sb';
     }
     for (const k of this.keys) {
       const tr = this.tracks[k];
@@ -1377,10 +1381,9 @@ export class Link {
 
   /** Where a train is bound: '1 Line to Federal Way', '2 Line to Downtown Redmond'. */
   bound(t, full = false) {
-    const line = this.lineOf(t.track.key);
-    const to = t.dir < 0 ? (full ? 'Lynnwood City Center' : 'Lynnwood')
-      : line === 2 ? (full ? 'Downtown Redmond' : 'Redmond') : (full ? 'Federal Way Downtown' : 'Federal Way');
-    return `${line} Line to ${to}`;
+    // Auto KW: ION's two ends
+    const to = t.dir < 0 ? 'Conestoga' : 'Fairway';
+    return full ? `ION to ${to}` : `ION · ${to}`;
   }
 
   /** Where a station stops a train on track `tr`: its centre s. */
@@ -1519,7 +1522,7 @@ export class Link {
               this._hitCd = 1;
               if (this.game) { this.game.onCrash(sp * 3.2, false); this.game.damagePlayer(sp * 4.5, 'crash'); }
               if (pv.damage) pv.damage(sp * 6, true);
-              this.say('Hit by a Link train!');
+              this.say('Hit by an ION train!');
             }
           } else {
             p.x += lx * q.side * push; p.z += lz * q.side * push;
@@ -1700,7 +1703,8 @@ export class Link {
 // geometry skinned to twelve bones.
 
 const LIV = {
-  white: [0.90, 0.91, 0.90], navy: [0.05, 0.12, 0.32], teal: [0.04, 0.52, 0.49], pillar: [0.05, 0.055, 0.06],
+  // Auto KW: ION's Flexity Freedom -- white, a charcoal skirt, the red band
+  white: [0.90, 0.91, 0.90], navy: [0.10, 0.10, 0.11], teal: [0.78, 0.07, 0.10], pillar: [0.05, 0.055, 0.06],
   door: [0.78, 0.79, 0.80], roof: [0.66, 0.67, 0.68], under: [0.07, 0.07, 0.075], bogie: [0.12, 0.12, 0.13],
   seat: [0.10, 0.26, 0.48], floor: [0.30, 0.30, 0.31], liner: [0.80, 0.80, 0.78], ceil: [0.88, 0.88, 0.86],
   pole: [0.78, 0.78, 0.8], amber: [1.0, 0.62, 0.12], lamp: [1.0, 0.98, 0.9], red: [0.85, 0.08, 0.06], wheel: [0.22, 0.2, 0.19],

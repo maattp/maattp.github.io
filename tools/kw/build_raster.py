@@ -293,7 +293,11 @@ def carve_water(h, wet):
             mi0 = max(0, i * HF_STEP // k - 2)
             frac[j, i] = wet[mj0:mj1, mi0:min(MASK_N, mi0 + 5)].mean()
 
-    wetHF = frac > 0.05
+    # Drawn (and dug) only where a quarter of the 50 m round a vertex is wet.
+    # The surface is a 40 m mesh: a 5 m creek wetting one vertex came out as
+    # an 80 m pond -- Laurel Creek flooded UW's ION station. Creeks and ponds
+    # narrower than that are left as they are, dry.
+    wetHF = frac > 0.25
     # low reading per wet cell: min over its wet 3x3 neighbourhood
     BIG = 1e6
     hw = np.where(wetHF, h, BIG)
@@ -369,7 +373,7 @@ def carve_water(h, wet):
     Image.fromarray(img, "RGB").save(os.path.join(OUT, "wlevel.png"), optimize=True)
     print(f"wlevel.png: {int(wetHF.sum())} wet cells, {int(bank.sum())} bank cells")
     lake_level = np.where(wetHF, level, h)
-    return h, lake_level, frac
+    return h, lake_level, frac, (bank, lvl_near)
 
 
 LANDMARK_KEEP = 160.0   # metres round each landmark grade_streets leaves alone
@@ -411,7 +415,7 @@ if __name__ == "__main__":
     h, hires = build_height()
     wet = build_masks()
     h0 = h.copy()
-    h, lake_level, frac = carve_water(h, wet)
+    h, lake_level, frac, banks = carve_water(h, wet)
     air = np.zeros_like(h, dtype=bool)
     # Streets last. Never moved: the airfield, open water (over half the 50 m
     # round a vertex is wet), and the ground under the landmarks, which were
@@ -421,6 +425,14 @@ if __name__ == "__main__":
     soft = (frac > 0) & ~hard
     from grade_streets import grade_streets
     h = grade_streets(h, hard, soft, wet, lake_level, hires, MAP_HALF, HF_STEP)
+    # The banks again, after the streets: grading pulled creek-side vertices
+    # under the creek's level, and the water field's mesh (drawn a cell past
+    # the water) flooded the flats round them -- UW's ION station stood in a
+    # pond off Laurel Creek.
+    bank, lvl_near = banks
+    lifted = int((bank & (h < lvl_near + 0.3)).sum())
+    h = np.where(bank, np.maximum(h, lvl_near + 0.3), h)
+    print(f"  banks re-lifted over their water after grading: {lifted} vertices")
     save_height(h)
     ok = probe(h, wet)
     for fn in ("height.png", "surface.png"):

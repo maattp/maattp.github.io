@@ -13,7 +13,7 @@ const SCALE = MAP_PX / (G.MAP_HALF * 2);
  */
 function placeIcon(ctx, kind, x, y, r) {
   ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f'
-    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : kind === 'coffee' ? '#6a4a32' : kind === 'hydro' ? '#d8242c' : kind === 'link' ? '#3a9a44' : kind === 'link2' ? '#0082ca' : kind === 'freight' ? '#b8501c' : kind === 'streetcar' ? '#8c1f2b' : kind === 'ferry' ? '#0b6e4f' : kind === 'bike' ? '#57b83a' : kind === 'pickle' ? '#c8a21a'
+    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : kind === 'coffee' ? '#6a4a32' : kind === 'hydro' ? '#d8242c' : kind === 'link' ? '#d0202e' : kind === 'link2' ? '#0082ca' : kind === 'freight' ? '#b8501c' : kind === 'streetcar' ? '#8c1f2b' : kind === 'ferry' ? '#0b6e4f' : kind === 'bike' ? '#57b83a' : kind === 'pickle' ? '#c8a21a'
     : kind === 'gun' ? '#2f6fb8' : kind === 'health' ? '#2e9a56' : kind === 'clinic' ? '#d8343a' : kind === 'wedge' ? '#7f8b96' : kind === 'tank' ? '#5f6b3a' : kind === 'fire' ? '#c4141c'
     : kind === 'tims' ? '#c8102e' : kind === 'freshco' ? '#4c9a2a' : kind === 'school' ? '#123a6b' : kind === 'campus' ? '#330072' : kind === 'lm' ? '#6a4c9c' : '#e0782e';
   ctx.strokeStyle = '#ffffff';
@@ -126,7 +126,7 @@ function placeIcon(ctx, kind, x, y, r) {
     // a light-rail car's face: windscreen over its lamps, the pantograph
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(x - r * 0.36, y - r * 0.3, r * 0.72, r * 0.72);
-    ctx.fillStyle = kind === 'link2' ? '#0082ca' : '#3a9a44';
+    ctx.fillStyle = kind === 'link2' ? '#0082ca' : '#d0202e';
     ctx.fillRect(x - r * 0.26, y - r * 0.2, r * 0.52, r * 0.26);
     ctx.fillRect(x - r * 0.22, y + r * 0.2, r * 0.1, r * 0.08); ctx.fillRect(x + r * 0.12, y + r * 0.2, r * 0.1, r * 0.08);
     ctx.strokeStyle = '#ffffff'; ctx.lineWidth = r * 0.1;
@@ -466,7 +466,10 @@ export class Hud {
   /** Link: the 1 Line green (its tracks as one line), the 2 Line's branch
    *  blue, through `to(x, z)` -> canvas. */
   drawLink(ctx, to, w, near = null) {
-    this._drawLine(ctx, to, w, near, this.link.tracks.sb, 0, '#3a9a44', '_linkPts');
+    // Auto KW: ION, in its red; both tracks (they part through Uptown and downtown)
+    this._drawLine(ctx, to, w, near, this.link.tracks.sb, 0, '#d0202e', '_linkPts');
+    this._drawLine(ctx, to, w, near, this.link.tracks.nb, 0, '#d0202e', '_linkPtsN');
+    return;
     const b = this.link.tracks.sb2;
     if (b) this._drawLine(ctx, to, w, near, b, b.share.end, '#0082ca', '_link2Pts');
   }
