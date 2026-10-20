@@ -1,4 +1,4 @@
-// EMERALD CITY: a pinball table, its physics and its rules. No DOM, no THREE:
+// OKTOBERFEST: a pinball table, its physics and its rules. No DOM, no THREE:
 // pinball.js draws it and feeds it the buttons, and Node can play it.
 //
 // Table units, y DOWN the playfield (toward the flippers), 20 units to the
@@ -594,7 +594,7 @@ export class Table {
       this.events.push('jackpot');
     } else {
       this._score(PTS.ramp + 25000 * Math.min(this.rampCombo - 1, 4), 3);
-      this._msg('NEEDLE RAMP', `${(PTS.ramp + 25000 * Math.min(this.rampCombo - 1, 4)).toLocaleString('en-US')}`, 1.5);
+      this._msg('ION RAMP', `${(PTS.ramp + 25000 * Math.min(this.rampCombo - 1, 4)).toLocaleString('en-US')}`, 1.5);
       this.events.push('ramp');
     }
     if (this.rampCount >= this.ebAt) {

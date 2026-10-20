@@ -390,7 +390,7 @@ export function buildPolys(ctx) {
   const builders = new Map();
   let n = 0;
   for (const b of city.buildings) {
-    if (!b.kw || !b.kw.poly) continue;
+    if (!b.kw || !b.kw.poly || b.kw.skip) continue;
     const k = 'kwp' + Math.round(b.x / 1200) + ',' + Math.round(b.z / 1200);
     let B = builders.get(k);
     if (!B) builders.set(k, (B = new Builder(false)));
@@ -426,6 +426,26 @@ function polyFace(P, px, pz) {
     if (sc < bd) { bd = sc; best = { x: qx, z: qz, nx, nz, len: L, t, ux, uz, ax: a[0], az: a[1] }; }
   }
   return best;
+}
+
+/**
+ * Every wall of a footprint-drawn building as a face for a storefront
+ * (arcade.js streetFace): the point on it nearest (px, pz), kept `inset`
+ * from its ends, its outward normal and its length.
+ */
+export function polyFaces(P, px, pz, inset = 5) {
+  const pts = P.pts, n = pts.length, out = [];
+  for (let i = 0; i < n; i++) {
+    const a = pts[i], c = pts[(i + 1) % n];
+    const dx = c[0] - a[0], dz = c[1] - a[1], L = Math.hypot(dx, dz);
+    if (L < 3) continue;
+    const ux = dx / L, uz = dz / L;
+    let nx = uz, nz = -ux;
+    if (inPoly(pts, a[0] + dx / 2 + nx * 0.6, a[1] + dz / 2 + nz * 0.6)) { nx = -nx; nz = -nz; }
+    const lo = Math.min(inset, L / 2), t = Math.max(lo, Math.min(L - lo, (px - a[0]) * ux + (pz - a[1]) * uz));
+    out.push({ fx: a[0] + ux * t, fz: a[1] + uz * t, nx, nz, len: L });
+  }
+  return out;
 }
 
 // --- signs ------------------------------------------------------------------------

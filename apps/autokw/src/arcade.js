@@ -1,4 +1,4 @@
-// A BELLTOWN ARCADE: a storefront on 2nd Avenue with a neon sign and a
+// PIN UP ARCADE BAR, 247 King St N in Waterloo (Auto KW): a storefront with a neon sign and a
 // window full of cabinets, and inside, six classic games (arcadegames.js).
 //
 // The storefront is a glowing panel on the street face of a real building
@@ -14,8 +14,9 @@
 import * as THREE from './three.js';
 import * as G from './geo.js';
 import { GAMES, text } from './arcadegames.js';
+import { polyFaces } from './kw.js';
 
-const AT = G.toWorld(47.6143, -122.3450);        // 2nd Ave between Bell and Blanchard
+const AT = [-4117, -2675];                       // Pin Up Arcade Bar, 247 King St N, Waterloo (OSM)
 const STEP = 1 / 60;
 
 /** Square waves and noise for the cabinets (pinball.js adds its own sounds). */
@@ -114,6 +115,22 @@ export function streetFace(city, at, r = 70, want = null) {
     return Math.abs(dx * c + dz * s) < o.w / 2 && Math.abs(-dx * s + dz * c) < o.d / 2;
   });
   for (const b of city.buildingsNear(at[0], at[1], r)) {
+    // Auto KW: a building drawn from its footprint (kw.js buildPolys) has a
+    // flat box; its storefront goes on one of its real walls
+    if (b.kw && b.kw.poly) {
+      if (b.kw.poly.h < 4) continue;
+      for (const f of polyFaces(b.kw.poly, at[0], at[1])) {
+        if (f.len < 9) continue;
+        if (want && f.nx * want[0] + f.nz * want[1] < 0.8) continue;
+        // in front of a street or its car park
+        const out = city.onRoad(f.fx + f.nx * 7, f.fz + f.nz * 7, 0) || G.lotAt(f.fx + f.nx * 7, f.fz + f.nz * 7) >= 0;
+        if (!out || city.onRoad(f.fx + f.nx * 1.2, f.fz + f.nz * 1.2, 0)) continue;
+        if (blocked(f.fx + f.nx * 1.5, f.fz + f.nz * 1.5, b) || blocked(f.fx + f.nx * 4, f.fz + f.nz * 4, b)) continue;
+        const d = Math.hypot(f.fx - at[0], f.fz - at[1]);
+        if (!best || d < best.d) best = { d, fx: f.fx, fz: f.fz, nx: f.nx, nz: f.nz };
+      }
+      continue;
+    }
     const c = Math.cos(b.rot), s = Math.sin(b.rot);
     const faces = [[c, s, b.w / 2, b.d], [-c, -s, b.w / 2, b.d], [-s, c, b.d / 2, b.w], [s, -c, b.d / 2, b.w]];
     for (const [nx, nz, off, len] of faces) {
@@ -195,9 +212,10 @@ export class Arcade {
     g.fillStyle = '#4ae8ff'; g.font = '900 30px Helvetica, Arial, sans-serif'; g.textAlign = 'center'; g.fillText('OPEN', 635, 270);
     // the neon
     g.shadowColor = '#ff4ad8'; g.shadowBlur = 24; g.fillStyle = '#ff7ae8';
-    g.font = '900 96px Helvetica, Arial, sans-serif'; g.fillText('ARCADE', 384, 120);
+    g.font = '900 88px Helvetica, Arial, sans-serif'; g.fillText('PIN UP', 384, 92);
+    g.font = '900 44px Helvetica, Arial, sans-serif'; g.fillText('ARCADE BAR', 384, 140);
     g.shadowColor = '#4ae8ff'; g.fillStyle = '#9af4ff'; g.font = '800 30px Helvetica, Arial, sans-serif';
-    g.fillText('CLASSIC GAMES · $1 A PLAY', 384, 165);
+    g.fillText('CLASSIC GAMES · $1 A PLAY', 384, 172);
     g.shadowBlur = 0;
     const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
     const m = new THREE.Mesh(new THREE.PlaneGeometry(9, 6), new THREE.MeshStandardMaterial({ map: t, emissiveMap: t, emissive: 0xffffff, emissiveIntensity: 0.55, roughness: 0.7 }));
@@ -218,7 +236,7 @@ export class Arcade {
     const d = document.createElement('div');
     d.id = 'arcadeUi';
     d.innerHTML = `
-      <div class="aRoom"><div class="aHead">BELLTOWN ARCADE</div><div class="aSub"></div><div class="aRow"></div><button class="aLeave">Leave</button></div>
+      <div class="aRoom"><div class="aHead">PIN UP ARCADE</div><div class="aSub"></div><div class="aRow"></div><button class="aLeave">Leave</button></div>
       <div class="aCab"><div class="aMarq"></div><div class="aBezel"><canvas class="aScreen"></canvas><div class="aScan"></div><div class="aOver"></div></div>
         <div class="aDpad"><div class="aKnob"></div></div><button class="aB">B</button><button class="aA">A</button><button class="aBack">✕</button><div class="aHelp"></div></div>`;
     const st = document.createElement('style');

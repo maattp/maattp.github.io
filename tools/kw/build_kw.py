@@ -189,7 +189,25 @@ def main():
         schools.append({"key": key, "name": nm, "sub": sub, "bg": bg, "fg": fg, "x": sx, "z": sz, "pitches": pitches})
         print(f"  {nm}: {len(pitches)} pitches")
 
-    doc = {"named": named, "schools": schools, "shops": shops, "tims": tims, "freshco": fresh, "polys": polys, "aero": aero,
+    # Canadian flags (kwfun.js buildFlags): on the front lawns of the city
+    # halls, schools, fire halls, police, hospitals, libraries, post offices,
+    # community centres, the campuses and the Legions -- and the car dealers,
+    # whose flags are the biggest on any street
+    FLAG_AMENITY = {"townhall", "school", "fire_station", "police", "hospital", "post_office", "library",
+                    "community_centre", "college", "university"}
+    flags = []
+    for p in pois:
+        t = p["t"]
+        a = t.get("amenity")
+        kind = "car" if t.get("shop") == "car" else a if a in FLAG_AMENITY else "legion" if "Legion" in (p.get("n") or "") else None
+        if not kind or not inmap(p["x"], p["z"]):
+            continue
+        if any(math.hypot(f[0] - p["x"], f[1] - p["z"]) < (80 if kind == "car" else 40) for f in flags):
+            continue
+        flags.append([round(p["x"], 1), round(p["z"], 1), kind])
+    print(f"flags: {len(flags)} ({sum(1 for f in flags if f[2] == 'car')} at car dealers)")
+
+    doc = {"named": named, "flags": flags, "schools": schools, "shops": shops, "tims": tims, "freshco": fresh, "polys": polys, "aero": aero,
            "zones": [[nm, round(x), round(z), r] for nm, x, z, r in zones]}
     p = os.path.join(OUT, "kw.json")
     with open(p, "w") as f:

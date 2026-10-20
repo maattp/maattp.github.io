@@ -44,13 +44,14 @@ import { BONES } from './peds.js';
 import { setKwData, applyNamed, buildSigns, buildPolys, buildBunting, buildSchools, mapPlaces as kwPlaces, kwData } from './kw.js';
 import { addLandmarkExtra } from './landmarks.js';
 import { Chicopee } from './chicopee.js';
+import { prepFun, buildMarketTent, buildFlags, waveFlags, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, buildDome } from './kwfun.js';
 import { YKF } from './ykf.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings, warmLightBar } from './traffic.js';
 import { Police } from './police.js';
 import { PoliceMissions } from './policemissions.js';
 import { TaxiFares } from './taxi.js';
-import { TYPES as VEHICLE_TYPES, VEHICLE_HOOKS, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial, dropVehicleArrays } from './vehicles.js';
+import { Vehicle, TYPES as VEHICLE_TYPES, VEHICLE_HOOKS, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial, dropVehicleArrays } from './vehicles.js';
 
 // Aircraft come in their own colours, parked at Boeing Field or delivered.
 const AIRCRAFT_PAINT = {
@@ -90,14 +91,16 @@ const STAR_POINTS = [0, 30, 90, 190, 340, 560];
 const ATV_SPOTS = [];
 // Helicopters parked out where you might want one: [x, z, heading, colour, where]
 const HELI_SPOTS = [];
-// THE HOT AIR BALLOON: none yet in Waterloo Region (null: not spawned).
-const BALLOON_SITE = null;
+// THE HOT AIR BALLOON: on open grass by the St. Jacobs Farmers' Market,
+// found at boot (kwfun.js openGround); null until then, or if none is clear.
+let BALLOON_SITE = null;
+const BALLOON_NEAR = [-6250, -6900];
 // FISHING: a rod on a stand at the far end of a few real piers and floats.
 const FISHING_SITES = [];
 let fishing = null, fishSpots = [];
 let hoops = null;   // the basketball courts (hoops.js)
-let arcade = null;   // the Belltown arcade (arcade.js)
-let pinball = null;  // the pinball museum in the International District (pinball.js)
+let arcade = null;   // Pin Up Arcade Bar on King St N in Waterloo (arcade.js)
+let pinball = null;  // the pinball at AOK on King St W in Kitchener (pinball.js)
 let hockey = null;   // hockey night at Climate Pledge Arena (hockey.js)
 let tower = null;    // Boeing Field's control tower and FINAL APPROACH (atc.js)
 let duckTour = null; // the Duck Tour: kiosk, ducks, ramp and the tour (ducktour.js)
@@ -746,6 +749,13 @@ async function boot() {
   addLandmarkExtra(buildSigns);
   addLandmarkExtra(buildBunting);
   addLandmarkExtra(buildSchools);
+  // the St. Jacobs market's tent, Canadian flags everywhere (kwfun.js)
+  prepFun(city);
+  prepFord(city);
+  addLandmarkExtra(buildMarketTent);
+  addLandmarkExtra(buildDome);
+  addLandmarkExtra(buildFord);
+  addLandmarkExtra((ctx) => buildFlags(ctx, md.kw));
   chicopee = new Chicopee(md.chicopee, { scene: null, city });
   addLandmarkExtra((ctx) => chicopee.buildSign(ctx));
   ykf = new YKF(md.kw && md.kw.aero);
@@ -1094,6 +1104,8 @@ function installShadowFade() {
   ferry = null;
   freezeStatic(link.group); freezeStatic(link.tunGroup);
   // the balloon's launch field: no park trees on it
+  BALLOON_SITE = openGround(city, (x, z) => world.waterLevelAt(x, z), BALLOON_NEAR[0], BALLOON_NEAR[1], 700, 30);
+  if (BALLOON_SITE) blog(`balloon: launch field at ${BALLOON_SITE.x.toFixed(0)}, ${BALLOON_SITE.z.toFixed(0)}`);
   if (city.clearCircles && BALLOON_SITE) city.clearCircles.push([BALLOON_SITE.x, BALLOON_SITE.z, 26]);
   // the fire stations' aprons: where each rig stands, kept clear before any chunk is scattered
   try { fireStations = placeStations(city, world, (x, z) => world.waterLevelAt(x, z)); } catch (e) { blog(`fire stations: ${e.message}`); fireStations = []; }
@@ -1268,6 +1280,11 @@ function installShadowFade() {
     const e = ykf.runwayEnd('08/26');
     if (e) traffic.spawnAt(e.x, e.z, e.heading, 'fighter', 0x7b8590, 'apron').vLong = 0;
   }
+  // Parkway Ford Lincoln on King St N: the cars for sale on its lot
+  for (const [x, z, h, ty, col] of fordLot(city)) {
+    const v = traffic.spawnAt(x, z, h, ty, col, 'apron');
+    v.vLong = 0;
+  }
   // Chicopee's bikes, at the base and the summit
   for (const [ty, x, z, h] of chicopee.bikeSpots()) {
     const v = traffic.spawnAt(x, z, h, ty, ty === 'dirtbike' ? 0xd8462a : 0x2f8f4e, 'apron');
@@ -1290,7 +1307,23 @@ function installShadowFade() {
   // Auto KW: Seattle's venues are not here (arcade, pinball, hockey, ducks,
   // Seafair, First Cup, pickleball, islands, the tower, golf, the fish, the
   // Wheel and the Needle).
-  arcade = pinball = duckTour = seafair = coffee = pickle = islands = tower = golf = fishToss = null;
+  duckTour = seafair = coffee = pickle = islands = tower = golf = fishToss = null;
+  // Pin Up Arcade Bar on King St N in Uptown Waterloo, and the pinball at
+  // AOK Craft Beer + Arcade on King St W downtown Kitchener
+  arcade = new Arcade({
+    scene, city, world, audio,
+    money: () => game.money,
+    charge: (n) => { if (game.money < n) return false; game.money -= n; return true; },
+    onReward: (m) => { game.money += m; },
+    onEnd: () => { game.release('arcade'); },
+  });
+  pinball = new Pinball({
+    scene, city, world, audio,
+    money: () => game.money,
+    charge: (n) => { if (game.money < n) return false; game.money -= n; return true; },
+    onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`AOK paid $${m}`), 400); },
+    onEnd: () => { game.release('pinball'); },
+  });
   // Hockey night at the Aud: the Kitchener Rangers against the London Knights.
   // The marquee stands at the street nearest the Kitchener Memorial
   // Auditorium, facing it; ENTER anywhere round the building drops the puck.
@@ -1313,6 +1346,25 @@ function installShadowFade() {
     });
   }
   wheelRide = needleTop = null;
+  // KW Surplus on Victoria St N: its T-54 on the front lawn is the tank
+  // (tank.js reads TANK_SITE when it is made, below), and the Spitfire on its
+  // roof stands there for good -- a model, not a vehicle in the traffic.
+  const surplus = surplusSite(city);
+  if (surplus && surplus.tank) Object.assign(TANK_SITE, surplus.tank);
+  if (surplus && surplus.box && surplus.roofY) {
+    try {
+      const b = surplus.box, sp = new Vehicle(city, 'sportplane', 0x4d5a3c);
+      // along the building's long side, on the middle of its roof
+      const along = b.w >= b.d ? b.rot : b.rot + Math.PI / 2;
+      sp.place(b.x, b.z, Math.PI / 2 - along);
+      sp.y = surplus.roofY + 0.05; sp.pitch = 0; sp.roll = 0;
+      sp.sync();
+      scene.add(sp.group);
+      sp.group.name = 'spitfire';
+      sp.group.updateMatrixWorld(true);
+      blog(`kw surplus: tank at ${TANK_SITE.x.toFixed(0)}, ${TANK_SITE.z.toFixed(0)}; Spitfire on the roof at ${sp.y.toFixed(1)} m`);
+    } catch (e) { blog('kw surplus: ' + e.message); }
+  }
   // A CAR WORTH TAKING at the kerb in front of the spawn. Kerbside cars come
   // from a fixed hash of street slots, so the first car every player walked
   // up to was the same pickup -- and the nearest slot was usually out of the
@@ -1374,6 +1426,18 @@ function installShadowFade() {
     ...(lmRoot.userData.marinas || []).map((mr) => ({ x: mr.x, z: mr.z, kind: 'dock', name: mr.name, near: false,
       hello: mr.hello ? mr.hello : `${mr.name} — boats and jet skis. Walk out on the float and take one` })),
     ...kwPlaces(),
+    { x: arcade.spot.x, z: arcade.spot.z, kind: 'arcade', name: 'Pin Up Arcade Bar', near: false,
+      hello: 'Pin Up Arcade Bar — six classic cabinets, $1 a credit. Press ENTER at the door' },
+    { x: pinball.spot.x, z: pinball.spot.z, kind: 'pinball', name: 'AOK Craft Beer + Arcade', near: false,
+      hello: 'AOK Craft Beer + Arcade — OKTOBERFEST pinball, $1 a game. Press ENTER at the door' },
+    ...(surplus && surplus.tank ? [{ x: surplus.tank.x, z: surplus.tank.z, kind: 'tank', name: 'KW Surplus', near: false,
+      hello: 'KW Surplus — the T-54 on the lawn runs. Climb in. (The Spitfire on the roof is for looking at)' }] : []),
+    ...(fordSpot() ? [{ ...fordSpot(), kind: 'lm', label: 'Ford', name: 'Parkway Ford Lincoln', near: false,
+      hello: 'Parkway Ford Lincoln, 455 King St N — new trucks on the lot. Help yourself' }] : []),
+    { x: -6234, z: -6905, kind: 'golf', label: 'Market Sports', name: 'Market Sports KW', near: false,
+      hello: 'Market Sports — the dome by the St. Jacobs market: turf fields and golf' },
+    { x: -6532, z: -6670, kind: 'lm', label: 'Market', name: "St. Jacobs Farmers' Market", near: false,
+      hello: "St. Jacobs Farmers' Market — stalls under the big white tent" },
     { x: hockey.spot.x, z: hockey.spot.z, kind: 'hockey', name: 'The Aud', near: false,
       hello: 'The Aud — Kitchener Rangers hockey tonight against the London Knights. Press ENTER anywhere at the arena to drop the puck' },
     ...(ykf.runwayEnd() ? [{ x: 7228, z: -440, kind: 'jet', name: 'YKF Airport', near: false, label: 'YKF',
@@ -2735,6 +2799,7 @@ function frame(now) {
   last = now;
   if (dt > 0.06) dt = 0.06;
   if (dt <= 0) return;
+  waveFlags(now / 1000);
 
   frames++;
   accumFps += dt;

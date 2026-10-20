@@ -55,6 +55,19 @@ file and a guide disagree, this file wins.
   `world.inAirfield`; the field is graded in build_raster.py `grade_ykf`.
 - **ION is Seattle's link.js** on `data/link.json` from tools/kw/build_ion.py
   (one car, ION livery, one-track split stations: `st.key`).
+- **src/kwfun.js** (v11): the St. Jacobs market's tent and Market Sports'
+  dome (their boxes get `kw.skip`: world.js and buildPolys draw nothing for
+  them), Canadian flags (kw.json `flags` from build_kw.py; one material whose
+  vertex shader waves them, `waveFlags` each frame), KW Surplus (the tank on
+  its lawn: TANK_SITE is overwritten at boot; a static Spitfire model on its
+  roof), Parkway Ford Lincoln's showroom, signs and the cars on its lot, and
+  `openGround` (the balloon's field by the market). Pin Up Arcade Bar
+  (arcade.js) and AOK's OKTOBERFEST pinball (pinball.js) are Seattle's venues
+  moved; arcade.js `streetFace` can hang a storefront on a footprint building's
+  real wall (kw.js `polyFaces`).
+- **The headless profile keeps the boot cache** (`/tmp/autokw-shots-profile-<port>`,
+  keyed by the build number): after changing what a building looks like
+  without bumping the build, delete that folder or you shoot the cached city.
 - **Farmland:** surface.png blue outside the green = crop code / 30
   (build_wood.py), `geo.farmAt`, `world.groundTint`.
 - **Water:** only vertices with > 25 % of their 50 m wet are drawn and dug;

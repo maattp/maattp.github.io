@@ -1,5 +1,5 @@
-// THE PINBALL MUSEUM in the Chinatown-International District: a storefront
-// on Maynard Ave S, and inside, EMERALD CITY, a pinball table with real
+// PINBALL AT AOK, King St W in downtown Kitchener (Auto KW: the craft beer
+// bar with the machines), and inside, OKTOBERFEST, a pinball table with real
 // flipper physics (pinballtable.js has the physics and the rules).
 //
 // The storefront is a glowing panel on the street face of a real building
@@ -29,7 +29,7 @@ import {
   FLIP_LEN, FLIP_R0, FLIP_R1, rampAt,
 } from './pinballtable.js';
 
-const AT = G.toWorld(47.59857, -122.32556);      // 508 Maynard Ave S
+const AT = [-1408, 159];                         // AOK Craft Beer + Arcade, 165 King St W (OSM)
 const STEP = 1 / 60;
 const VIEW_H = 500;                              // table units on screen when it has to scroll
 
@@ -140,8 +140,9 @@ export class Pinball {
     // the neon
     g.shadowColor = '#ff5a3a'; g.shadowBlur = 24; g.fillStyle = '#ff8a6a';
     g.font = '900 92px Helvetica, Arial, sans-serif'; g.fillText('PINBALL', 384, 112);
+    g.font = '900 40px Georgia, serif'; g.fillStyle = '#ffd23a'; g.shadowColor = '#ffb000'; g.fillText('AOK', 640, 60);
     g.shadowColor = '#3ad8ff'; g.fillStyle = '#9aeeff'; g.font = '800 32px Helvetica, Arial, sans-serif';
-    g.fillText('M U S E U M', 384, 156);
+    g.fillText('C R A F T  B E E R  +  A R C A D E', 384, 156);
     g.shadowBlur = 0;
     const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
     const m = new THREE.Mesh(new THREE.PlaneGeometry(9, 6), new THREE.MeshStandardMaterial({ map: t, emissiveMap: t, emissive: 0xffffff, emissiveIntensity: 0.55, roughness: 0.7 }));
@@ -236,7 +237,7 @@ export class Pinball {
     if (!this.table) this.table = new Table();      // attract: a table standing idle
     this._fit();
     this._draw(0);
-    this._panel(`<div class="big">EMERALD CITY</div><div class="sub">PINBALL MUSEUM</div>
+    this._panel(`<div class="big">OKTOBERFEST</div><div class="sub">AOK · KING ST W</div>
       <div class="sm">Your cash $${this.o.money()} · $1 a game · three balls<br>${this.hi ? `High score ${this.hi.toLocaleString('en-US')}` : 'No high score yet'} · pays $1 per 100,000</div>
       <button class="go">PLAY $1</button><button class="back">LEAVE</button>`);
   }
@@ -279,7 +280,7 @@ export class Pinball {
     if (pay > 0 && this.o.onReward) this.o.onReward(pay);
     this.mode = 'over';
     this.lastPay = pay;
-    this._panel(`<div class="big">GAME OVER</div><div class="sm">SCORE ${sc.toLocaleString('en-US')}<br>${beat ? (prev > 0 ? 'NEW HIGH SCORE! +$50' : 'FIRST HIGH SCORE ON THIS MACHINE') : `HIGH SCORE ${prev.toLocaleString('en-US')}`}<br>${pay > 0 ? `The museum pays $${pay}` : ''}</div>
+    this._panel(`<div class="big">GAME OVER</div><div class="sm">SCORE ${sc.toLocaleString('en-US')}<br>${beat ? (prev > 0 ? 'NEW HIGH SCORE! +$50' : 'FIRST HIGH SCORE ON THIS MACHINE') : `HIGH SCORE ${prev.toLocaleString('en-US')}`}<br>${pay > 0 ? `AOK pays $${pay}` : ''}</div>
       <button class="go">PLAY AGAIN $1</button><button class="back">LEAVE</button>`);
   }
 
@@ -354,34 +355,35 @@ export class Pinball {
     cv.width = Math.round(W * k); cv.height = Math.round(H * k);
     const g = cv.getContext('2d');
     g.setTransform(k, 0, 0, k, 0, 0);
-    // the wood under the art, and the art: an emerald night over the Sound
+    // the wood under the art, and the art: a Bavarian-blue night over the Twin Cities
     const bgGrad = g.createLinearGradient(0, 0, 0, H);
-    bgGrad.addColorStop(0, '#08322a'); bgGrad.addColorStop(0.5, '#0d5040'); bgGrad.addColorStop(1, '#062a22');
+    bgGrad.addColorStop(0, '#0a2246'); bgGrad.addColorStop(0.5, '#123a70'); bgGrad.addColorStop(1, '#081a38');
     g.fillStyle = bgGrad; g.fillRect(0, 0, W, H);
-    // rain streaks
+    // bunting streaks
     g.strokeStyle = '#ffffff10'; g.lineWidth = 1;
     let sd = 7;
     const rnd = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
     for (let i = 0; i < 160; i++) { const x = rnd() * W, y = rnd() * H; g.beginPath(); g.moveTo(x, y); g.lineTo(x - 4, y + 14); g.stroke(); }
-    // Rainier behind the bumpers
+    // Chicopee behind the bumpers
     g.fillStyle = '#ffffff14';
     g.beginPath(); g.moveTo(90, 330); g.lineTo(170, 250); g.lineTo(196, 236); g.lineTo(222, 250); g.lineTo(310, 330); g.closePath(); g.fill();
     g.fillStyle = '#ffffff22';
     g.beginPath(); g.moveTo(170, 250); g.lineTo(196, 236); g.lineTo(222, 250); g.lineTo(208, 262); g.lineTo(196, 252); g.lineTo(184, 264); g.closePath(); g.fill();
-    // the skyline and the Needle, gold on green
+    // the skyline, gold on blue
     g.fillStyle = '#e8c35a26';
     const sky = [[70, 520], [70, 470], [92, 470], [92, 440], [110, 440], [110, 490], [128, 490], [128, 420], [150, 410], [150, 500], [236, 500], [236, 430], [256, 430], [256, 460], [276, 460], [276, 410], [296, 420], [296, 520]];
     g.beginPath(); g.moveTo(sky[0][0], sky[0][1]); for (const p of sky) g.lineTo(p[0], p[1]); g.closePath(); g.fill();
     g.fillStyle = '#e8c35a40';
-    g.beginPath(); g.moveTo(180, 520); g.lineTo(190, 430); g.lineTo(184, 400); g.lineTo(208, 400); g.lineTo(202, 430); g.lineTo(212, 520); g.closePath(); g.fill();
-    g.beginPath(); g.ellipse(196, 396, 30, 7, 0, 0, Math.PI * 2); g.fill();
-    g.fillRect(194, 370, 4, 22);
+    // a stein, Oktoberfest's, where Seattle's table had the Needle
+    g.fillRect(172, 410, 48, 108);
+    g.fillStyle = '#ffffff40'; g.beginPath(); g.ellipse(196, 410, 30, 12, 0, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = '#e8c35a40'; g.lineWidth = 9; g.beginPath(); g.arc(222, 462, 22, -Math.PI / 2, Math.PI / 2); g.stroke();
     // the title across the middle
     g.save(); g.translate(196, 548);
     g.font = '900 22px Georgia, "Times New Roman", serif'; g.textAlign = 'center';
-    g.fillStyle = '#00000060'; g.fillText('EMERALD CITY', 2, 2);
+    g.fillStyle = '#00000060'; g.fillText('OKTOBERFEST', 2, 2);
     const tg = g.createLinearGradient(0, -20, 0, 4); tg.addColorStop(0, '#fff6c8'); tg.addColorStop(1, '#e0a830');
-    g.fillStyle = tg; g.fillText('EMERALD CITY', 0, 0);
+    g.fillStyle = tg; g.fillText('OKTOBERFEST', 0, 0);
     g.restore();
     // the shooter lane's floor
     g.fillStyle = '#041a14'; g.fillRect(SHOOTER.x0, 240, SHOOTER.x1 - SHOOTER.x0, H - 240);
@@ -467,7 +469,7 @@ export class Pinball {
     lamp(SAUCER.x - 30, SAUCER.y + 26, 6, '#b04aff', t.ebLit && blink(2), 'EB');
     lamp(SAUCER.x + 30, SAUCER.y + 26, 6, '#3ad8ff', t.locked >= 1 || t.multiball, 'L1');
     // the ramp: RAMP / JACKPOT
-    arrow(RAMP_X0 + 28, 420, 0, t.jackpot ? '#ff3a5a' : '#3a8aff', t.jackpot ? blink(5) : (t.t < (t._comboEnd || 0) ? blink(4) : true), t.jackpot ? 'JACKPOT' : 'NEEDLE');
+    arrow(RAMP_X0 + 28, 420, 0, t.jackpot ? '#ff3a5a' : '#3a8aff', t.jackpot ? blink(5) : (t.t < (t._comboEnd || 0) ? blink(4) : true), t.jackpot ? 'JACKPOT' : 'ION');
     // the orbit
     arrow(ORBIT_X - 21, 452, 0, '#7aff5a', t.t < (t._comboEnd || 0) ? blink(4) : false, '');
     // kickback, shoot again
@@ -493,7 +495,7 @@ export class Pinball {
       const cg = g.createRadialGradient(m.x - 5, m.y - 6, 2, m.x, m.y, m.r - 5);
       cg.addColorStop(0, f ? '#ffffff' : '#ffe8a0'); cg.addColorStop(1, f ? '#ffd23a' : '#e0a830');
       g.fillStyle = cg; g.beginPath(); g.arc(m.x, m.y, m.r - 7, 0, Math.PI * 2); g.fill();
-      g.fillStyle = f ? '#c02838' : '#7a4a10'; g.font = '900 8px Helvetica, Arial, sans-serif'; g.textAlign = 'center'; g.fillText('RAIN', m.x, m.y + 3);
+      g.fillStyle = f ? '#c02838' : '#7a4a10'; g.font = '900 8px Helvetica, Arial, sans-serif'; g.textAlign = 'center'; g.fillText('PROST', m.x, m.y + 3);
     });
     // --- the slings' kickers ---
     SLINGS.forEach((sl, i) => {
@@ -558,7 +560,7 @@ export class Pinball {
       g.stroke();
     }
     // a decal on the ramp's crown
-    g.save(); g.translate(202, 30); g.fillStyle = '#fff'; g.font = '900 11px Helvetica, Arial, sans-serif'; g.textAlign = 'center'; g.fillText('THE NEEDLE', 0, 0); g.restore();
+    g.save(); g.translate(202, 30); g.fillStyle = '#fff'; g.font = '900 11px Helvetica, Arial, sans-serif'; g.textAlign = 'center'; g.fillText('THE ION', 0, 0); g.restore();
   }
 
   // --- the dot-matrix display ---------------------------------------------------------------
@@ -570,7 +572,7 @@ export class Pinball {
     this.dmdT = 0;
     const m = t.msgs.length ? t.msgs[t.msgs.length - 1] : null;
     let a, b;
-    if (this.mode === 'lobby') { a = this.hi ? this.hi.toLocaleString('en-US') : 'EMERALD CITY'; b = this.hi ? 'HIGH SCORE' : 'INSERT $1'; }
+    if (this.mode === 'lobby') { a = this.hi ? this.hi.toLocaleString('en-US') : 'OKTOBERFEST'; b = this.hi ? 'HIGH SCORE' : 'INSERT $1'; }
     else if (t.state === 'bonus') { a = (t.bonusShown || 0).toLocaleString('en-US'); b = m && m.b ? `${m.a} ${m.b}` : 'BONUS'; }
     else if (m && Math.floor(t.t * 4) % 6 !== 5) { a = m.a; b = m.b || t.score.toLocaleString('en-US'); }
     else { a = t.score.toLocaleString('en-US'); b = `BALL ${t.ball}${t.extra ? ' · SHOOT AGAIN' : ''}${t.tilted ? ' · TILT' : ''}`; }
