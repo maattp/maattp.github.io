@@ -5,3 +5,4 @@ SAP
 worker/.wrangler/
 tools/.venv/
 tools/__pycache__/
+tools/kw/data
