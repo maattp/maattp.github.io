@@ -33,6 +33,33 @@ file and a guide disagree, this file wins.
   GPU; `VIEW_PROBE='<js>'` evaluates once). It is tools/viewshots.mjs pointed
   at apps/autokw/, plus a `player: true` view (the game's own chase camera).
 
+## Auto KW's own layer (read before touching these)
+
+- **src/kw.js** + `data/kw.json` (tools/kw/build_kw.py): named buildings ->
+  their boxes (`bd.kw`), real looks (`LOOKS`, read by world.buildingFamily),
+  low commercial boxes as strip plazas (`world._stripMall`), schools /
+  campuses / arenas / civic buildings / the two plazas drawn from their OSM
+  POLYGONS (`buildPolys`; their box goes flat, h 0, and each wall is a
+  solid), every sign (Tims, FreshCo, storefronts in the zones, nameplates,
+  `LM_SIGNS`), Oktoberfest bunting, St. Matthew's and St. David's grounds.
+  All are landmarks.js extras (`addLandmarkExtra`), merged into its clusters.
+  **The landmark merge keeps vertex colours now (build.js mergeByMaterial);
+  author vertex colours in linear (pow 2.2 of sRGB).**
+- **Stores:** `tools/kw/kw_stores.json` is the official Tim Hortons and
+  FreshCo lists (Oct 2026), authoritative over OSM.
+- **The importer packs building rotation in the GAME's sense**
+  (build_buildings.py): min_area_rect's rot puts w along (sin, cos), the game
+  along (cos, sin). Seattle's tools/build_buildings.py has the same mismatch.
+- **src/chicopee.js** (data/chicopee.json): runs, lifts, chairs, bikes, downhills.
+- **src/ykf.js** (kw.json `aero`): YKF's pavement, `city.slabQuery`,
+  `world.inAirfield`; the field is graded in build_raster.py `grade_ykf`.
+- **ION is Seattle's link.js** on `data/link.json` from tools/kw/build_ion.py
+  (one car, ION livery, one-track split stations: `st.key`).
+- **Farmland:** surface.png blue outside the green = crop code / 30
+  (build_wood.py), `geo.farmAt`, `world.groundTint`.
+- **Water:** only vertices with > 25 % of their 50 m wet are drawn and dug;
+  banks are re-lifted over their water after street grading.
+
 ## Build number
 
 `<div id="build">vN</div>` in index.html and `CACHE = 'autokw-vN'` in sw.js
