@@ -32,6 +32,16 @@ const NO_KERB = (tn) => !!(TYPES[tn] && TYPES[tn].bus) || tn === 'garbage' || tn
 // though, like everyone, they may take an exit. Hashes, not this.R, so the
 // spawn stream after them is unchanged.
 const HWY_SEMI_P = 0.16, HWY_OPP_P = 0.03, OPP_MAX = 2;
+// Auto KW: what never drives a freeway or its ramps (spawned there it becomes
+// a sedan; routing, it keeps off them while it has any other way on).
+const FWY_BANNED = new Set(['bicycle', 'schoolbus', 'garbage', 'recycling']);
+// FREEWAY DRIVING (see "Freeway driving" in apps/autokw/CLAUDE.md): the share
+// of drivers who take a given exit, how far ahead it is decided, the lane
+// change's lateral speed, and MOBIL's thresholds -- the gain a pass must buy,
+// the loss keeping right may cost, and the hardest braking a change may ask of
+// the car it cuts in front of (or of itself behind the new leader).
+const EXIT_P = 0.3, EXIT_PLAN = [260, 1300], LC_TIME = 3.2, LC_GAIN = 0.25, LC_KEEP = 0.15, LC_SAFE = -2.5;
+const SEMI_V = 29.0;   // a semi's speed limiter: 105 km/h
 // A phone is draw-call bound, and the fleet was over half of it: an iPhone 17
 // Pro driving downtown showed 58 vehicles (3 draws each, plus shadows) and 9.6
 // ms of render submission. Parked cars are only drawn this close on a phone,
@@ -617,7 +627,21 @@ export class TrafficSystem {
     // where people are crossing a carriageway (peds.js writes these each frame)
     this.crossN = 0;
     this.crossXZ = null;
-    this.stats = { deadEnd: 0, deadEndDespawn: 0, fallbackTurn: 0, stuckRecycled: 0, yielded: 0 };
+    this.stats = { deadEnd: 0, deadEndDespawn: 0, fallbackTurn: 0, stuckRecycled: 0, yielded: 0,
+      laneChanges: 0, laneLeft: 0, laneRight: 0, laneMandatory: 0, mergeYields: 0, exitsPlanned: 0, exitsTaken: 0, exitsAborted: 0, fwySpawnBlocked: 0 };
+    // Auto KW: the freeway edges -- every 'hwy' carriageway and every ramp
+    // reachable from one through ramps (OSM's *_link is also a town's slip lane)
+    this.fwy = new Uint8Array(E.length);
+    {
+      const q = [], seen = new Uint8Array(city.nodes.length);
+      for (let i = 0; i < E.length; i++) if (E[i].cls === 'hwy') { this.fwy[i] = 1; q.push(E[i].a, E[i].b); }
+      while (q.length) {
+        const ni = q.pop();
+        if (seen[ni]) continue;
+        seen[ni] = 1;
+        for (const k of city.nodes[ni].e) if (E[k].cls === 'ramp' && !this.fwy[k]) { this.fwy[k] = 1; q.push(E[k].a, E[k].b); }
+      }
+    }
     this.sirenFrom = null;   // your police car, siren on (main.js): traffic ahead yields to it
     this._P = { x: 0, z: 0 };
     this._ps = new Float64Array(24);   // driveTraffic's path samples
@@ -960,6 +984,8 @@ export class TrafficSystem {
       const heading = Math.atan2(e.dx * sign, e.dz * sign);
       let tn = CIVILIAN_TYPES[Math.floor(this.R.n() * CIVILIAN_TYPES.length)];
       if (e.cls === 'res' && (NO_KERB(tn) || tn === 'boxtruck' || tn === 'uhaul')) tn = 'sedan';
+      // Auto KW: nothing that cannot hold 100 km/h on a freeway or its ramps
+      if (this.fwy[ei] && FWY_BANNED.has(tn)) tn = 'sedan';
       if (e.cls === 'hwy' && !TYPES[tn].bus) {
         const hh = hash2(ei + 4099, this._prio);
         if (hh < HWY_SEMI_P) tn = 'semi';
@@ -978,6 +1004,14 @@ export class TrafficSystem {
       if (!HEAVY.has(tn) && hash2(ei + 7919, this._prio) < HELLCAT_P && G.placeNameAt(x, z) === 'Belltown'
         && this.cars.filter((c) => c.spec.hellcat).length < HELLCAT_MAX) tn = 'hellcat';
       else if (!HEAVY.has(tn) && hash2(ei + 104729, this._prio) < WIENER_P && !this.cars.some((c) => c.spec.wiener)) tn = 'wiener';
+      // AUTO KW, A FREEWAY SPAWN: in a gap in its lane (none within 45 m
+      // ahead or behind), a semi in the right two lanes.
+      let fs = null;
+      if (this.fwy[ei] && e.oneway) {
+        fs = this.fwySpawn(ei, sign, laneU, tn, x, z);
+        if (!fs) continue;
+        lo.x = -e.dz * sign * fs.off; lo.z = e.dx * sign * fs.off;
+      }
       const v = this.spawnAt(x + lo.x, z + lo.z, heading, tn, randomCarColor((this.R.n() * 1e6) | 0), 'traffic');
       if (v.spec.hand === 'opp') {
         // the OPP on patrol: its light bar, dark (policeLights only runs for units)
@@ -997,7 +1031,7 @@ export class TrafficSystem {
       }
       v.edge = ei;
       v.dirSign = sign;
-      v.laneU = laneU;
+      v.laneU = fs ? fs.u : laneU;
       v.vLong = 6 + this.R.n() * 6;
       v.panic = 0;
       // Every driver keeps a pace of their own, +-8 % on the limit: a whole
@@ -1005,6 +1039,8 @@ export class TrafficSystem {
       v.drvK = 0.92 + 0.16 * hash2(ei, (x * 7) | 0);
       if (v.spec.hellcat) v.drvK = 1.35;   // and the Hellcat keeps nobody's pace
       if (v.spec.wiener) v.drvK = 0.9;     // the Hotdoggers drive it gently
+      // a freeway spawn joins at its own pace (fwySpawn chose its gap)
+      if (fs) v.vLong = Math.min(e.spd * v.drvK, v.spec.hand === 'semi' ? SEMI_V : Infinity) * 0.95;
       v.prio = ++this._prio;
       this.routeInit(v);
       return v;
@@ -1466,6 +1502,7 @@ export class TrafficSystem {
     if (!v.aiIn) v.aiIn = { throttle: 0, brake: 0, steer: 0, handbrake: 0, park: false };
     this.routeEntry(v, 0, v.edge, v.dirSign, v.laneU != null ? v.laneU : 0.5);
     v.rtN = 1;
+    v.lcShift = 0;
   }
 
   /** The lane fraction on one-way edge ei (driven `sign`) whose lane is
@@ -1681,6 +1718,15 @@ export class TrafficSystem {
     this.pathAhead(v, s0, L, P);
     // steering round a car standing in the lane (the scan below sets it)
     if (v.dodgeT > 0) { P.x -= rt[R_UZ] * v.dodge; P.z += rt[R_UX] * v.dodge; v.dodgeT -= dt; } else v.dodge = 0;
+    // A LANE CHANGE (fwyDecide): the route is already the new lane's, and
+    // lcShift is how far right of it the car still is; it runs out at lcRate
+    // m/s, and the pursuit point carries what is left by the time it is reached.
+    if (v.lcShift) {
+      const d = v.lcRate * dt;
+      v.lcShift = Math.abs(v.lcShift) <= d ? 0 : v.lcShift - Math.sign(v.lcShift) * d;
+      const lc = this.lcAt(v, L, sp);
+      P.x -= rt[R_UZ] * lc; P.z += rt[R_UX] * lc;
+    }
     const ddx = P.x - v.x, ddz = P.z - v.z, ld = Math.hypot(ddx, ddz) || 1;
     const alpha = angleWrap(Math.atan2(ddx, ddz) - v.heading);
     // Far off the path's heading (a U-turn, a car shunted round): full lock.
@@ -1714,7 +1760,8 @@ export class TrafficSystem {
         if (v.dodgeT <= 0 && city.edges[v.edge].cls !== 'res') { v.dodge = 0.7; v.dodgeT = 0.3; }
       }
     }
-    const v0 = v.unit ? v.pursuitV : rt[R_SPD] * v.drvK * (v.panic > 0 ? 1.5 : 1) * yieldK;
+    let v0 = v.unit ? v.pursuitV : rt[R_SPD] * v.drvK * (v.panic > 0 ? 1.5 : 1) * yieldK;
+    if (v.spec.hand === 'semi') v0 = Math.min(v0, SEMI_V);
     let aWant = Math.min(aRoad, Math.abs(alpha) > 1.3 ? (9 - sp * sp) / 6 : Infinity);
     const heavy = v.spec.bus || v.spec.cargo;
     // (a unit in pursuit puts its foot down; so does the Hellcat, always)
@@ -1730,6 +1777,7 @@ export class TrafficSystem {
     let np = 1;
     for (let D = step; np < 12 && D < scanLen + step; D += step, np++) {
       this.pathAhead(v, s0, D, P);
+      if (v.lcShift) { const lc = this.lcAt(v, D, sp); P.x -= rt[R_UZ] * lc; P.z += rt[R_UX] * lc; }
       ps[2 * np] = P.x; ps[2 * np + 1] = P.z;
     }
     // The sampled path's segments, once: every car near enough is projected
@@ -1774,6 +1822,19 @@ export class TrafficSystem {
       // its half-extent across my path, and along it
       const ext = o.halfWid * Math.abs(co) + o.halfLen * so;
       const wid = v.halfWid + ext + 0.35;
+      // A CAR CHANGING LANES INTO MINE (freeway, fwyDecide) is in my lane
+      // already: judged where it is going (its position less what is left of
+      // its shift), not where it is, so I ease off as it starts over.
+      if (best > wid * wid && o.lcShift && o.rt) {
+        const tx = o.x + o.rt[R_UZ] * o.lcShift, tz = o.z - o.rt[R_UX] * o.lcShift;
+        for (let k = 0; k < np - 1; k++) {
+          const ax = ps[2 * k], az = ps[2 * k + 1], sx = sg[3 * k], sz = sg[3 * k + 1], l = sg[3 * k + 2];
+          let t = ((tx - ax) * sx + (tz - az) * sz) / (l * l);
+          t = t < 0 ? 0 : t > 1 ? 1 : t;
+          const ex = tx - ax - sx * t, ez = tz - az - sz * t;
+          if (ex * ex + ez * ez <= wid * wid) { best = ex * ex + ez * ez; break; }
+        }
+      }
       if (best > wid * wid) {
         // CROSS TRAFFIC: a driven car crossing my path that will be where I
         // am going when I get there. Whoever gets there first goes; on a tie
@@ -1831,7 +1892,21 @@ export class TrafficSystem {
       const g = along - v.halfLen - (o.halfLen * Math.abs(co) + o.halfWid * so);
       if (g < gap) { gap = g; vLead = o.vLong * co; lead = o; }
     }
+    // ON A FREEWAY RAMP, the merge ahead: slot in behind whatever on the main
+    // line will reach the merge first (fwyMergeGap), as a leader.
+    if (this.fwy[v.edge] && this.city.edges[v.edge].cls === 'ramp' && !v.unit) {
+      const m = this.fwyMergeGap(v, sp);
+      if (m && m.gap < gap) { gap = m.gap; vLead = m.vL; this.stats.mergeYields += dt; }
+    }
+    // a freeway lane ending ahead with no gap to move over into (fwyDecide):
+    // its end is a standing leader until one opens
+    if (v.dropT > 0 && v.dropX != null) {
+      v.dropT -= dt;
+      const dd = (v.dropX - v.x) * rt[R_UX] + (v.dropZ - v.z) * rt[R_UZ];
+      if (dd > 0 && dd - v.halfLen - 2 < gap) { gap = dd - v.halfLen - 2; vLead = 0; this.stats.dropWaits = (this.stats.dropWaits || 0) + dt; }
+    }
     v.lead = lead;
+    v.leadGap = gap; v.leadV = vLead;
     // A Link train on (or coming to) the level crossing ahead: wait for it.
     const lk = this.link;
     const look = Math.max(scanLen * 0.5, 20);
@@ -1943,7 +2018,340 @@ export class TrafficSystem {
     // behind a wedge or a gridlock of three or more, and the queue goes with it.
     if (Math.abs(v.vLong) < 0.5) v.restT += dt; else v.restT = 0;
     if ((v.stuckT > 8 || v.restT > 20) && dist2(v.x, v.z, px, pz) > 120 * 120) { this.stats.stuckRecycled++; v.recycle = true; }
+    // FREEWAY DRIVING: lane changes, exits (fwyDecide), on freeway edges only
+    if (this.fwy[v.edge] && !v.unit) {
+      if (v.lcCool > 0) v.lcCool -= dt;
+      v.lcT = (v.lcT || 0) - dt;
+      if (v.lcT <= 0) {
+        v.lcT = 0.45 + 0.3 * hash2(v.prio, 17);
+        this.fwyDecide(v, s0, sp, v0, aMax);
+      }
+    }
     return inp;
+  }
+
+  // --- freeway driving (Auto KW) -------------------------------------------
+  //
+  // See "Freeway driving" in apps/autokw/CLAUDE.md. Everything here runs only
+  // for a traffic car on a freeway edge (this.fwy): city traffic is untouched.
+
+  /** Lane layout of one-way edge ei: lo, hi (a -> b right), count, width. */
+  laneInfo(ei) {
+    this.laneLatU(ei, 1, 0.5);
+    const L = this.lanes, k = ei * 3, n = L[k + 2];
+    return { lo: L[k], n, w: (L[k + 1] - L[k]) / n };
+  }
+
+  /** What is left of a lane change's shift D metres ahead at speed sp. */
+  lcAt(v, D, sp) {
+    const s = v.lcShift;
+    if (!s) return 0;
+    const rem = Math.abs(s) - (v.lcRate * D) / Math.max(sp, 4);
+    return rem > 0 ? Math.sign(s) * rem : 0;
+  }
+
+  /** A freeway spawn: the lane (a semi's among the right two), clear 45 m
+   *  ahead and behind (60 for a semi's trailer). { u, off } or null. */
+  fwySpawn(ei, sign, laneU, tn, x, z) {
+    const e = this.city.edges[ei], LI = this.laneInfo(ei);
+    let i = Math.min(LI.n - 1, Math.floor(laneU * LI.n));
+    if (tn === 'semi' && LI.n >= 3) {
+      const fromR = sign > 0 ? LI.n - 1 - i : i;
+      if (fromR > 1) { const r = this._prio & 1; i = sign > 0 ? LI.n - 1 - r : r; }
+    }
+    const off = (LI.lo + (i + 0.5) * LI.w) * sign;
+    const fx = e.dx * sign, fz = e.dz * sign, rx = -fz, rz = fx;
+    const qx = x + rx * off, qz = z + rz * off;
+    const back = tn === 'semi' ? 62 : 45;
+    for (const o of this.cars) {
+      const dx = o.x - qx, dz = o.z - qz;
+      if (dx * dx + dz * dz > 70 * 70) continue;
+      const al = dx * fx + dz * fz, lat = dx * rx + dz * rz;
+      if (al > -back && al < 45 && Math.abs(lat) < 3.2) { this.stats.fwySpawnBlocked++; return null; }
+    }
+    return { u: (i + 0.5) / LI.n, off };
+  }
+
+  /** The way on along the freeway from nodeId: the continuing carriageway
+   *  (at a fork of two, either, by a hash), or null to let pickNextEdge choose. */
+  fwyOn(v, fromEi, fromSign, nodeId) {
+    const city = this.city, fe = city.edges[fromEi];
+    const fx = fe.dx * fromSign, fz = fe.dz * fromSign, comp = this.comp[nodeId];
+    let best = null, bs = -Infinity;
+    for (const ei of city.nodes[nodeId].e) {
+      if (ei === fromEi) continue;
+      const ne = city.edges[ei];
+      if (ne.cls !== 'hwy' || ne.noTraffic) continue;
+      const sign = ne.a === nodeId ? 1 : -1;
+      if (!this.allowed(ei, sign) || this.comp[sign > 0 ? ne.b : ne.a] !== comp) continue;
+      const dot = ne.dx * sign * fx + ne.dz * sign * fz;
+      if (dot < 0.5) continue;
+      const sc = dot + hash2(ei, v.prio) * 0.4;
+      if (sc > bs) { bs = sc; best = { ei, sign }; }
+    }
+    return best;
+  }
+
+  /** The node at the end of route entry j. */
+  entryEnd(v, j) {
+    const e = this.city.edges[v.rt[j * RT_F + R_EI]];
+    return v.rt[j * RT_F + R_SG] > 0 ? e.b : e.a;
+  }
+
+  /** Cut v's route back so entry j is its last (it is planned on again from
+   *  the node at its end). */
+  cutRoute(v, j) {
+    if (j + 1 < v.rtN) { v.rtN = j + 1; v.rt[j * RT_F + R_END] = 0; }
+  }
+
+  /** Look down the freeway for the next diverge (a ramp leaving, the
+   *  carriageway going on) EXIT_PLAN m ahead, and decide once whether to take
+   *  it: EXIT_P of drivers do. */
+  fwyPlanExit(v, s0) {
+    const city = this.city, rt = v.rt;
+    let ei = rt[R_EI], sign = rt[R_SG];
+    let node = sign > 0 ? city.edges[ei].b : city.edges[ei].a;
+    let dist = rt[R_LEN] - s0;
+    for (let hop = 0; hop < 40 && dist < EXIT_PLAN[1]; hop++) {
+      const e = city.edges[ei], fx = e.dx * sign, fz = e.dz * sign, comp = this.comp[node];
+      let ramp = null;
+      for (const k of city.nodes[node].e) {
+        if (k === ei) continue;
+        const r = city.edges[k];
+        if (r.cls !== 'ramp' || !this.fwy[k] || r.noTraffic) continue;
+        const sg = r.a === node ? 1 : -1;
+        if (!this.allowed(k, sg) || this.comp[sg > 0 ? r.b : r.a] !== comp) continue;
+        const dot = r.dx * sg * fx + r.dz * sg * fz;
+        if (dot < 0.5) continue;
+        ramp = { ei: k, sign: sg, side: fx * r.dz * sg - fz * r.dx * sg > 0 ? 1 : -1 };
+      }
+      const on = this.fwyOn(v, ei, sign, node);
+      if (ramp && on) {
+        if (v.exitSeen === node) return;
+        v.exitSeen = node;
+        if (dist < EXIT_PLAN[0] || hash2(v.prio * 7 + 3, node) >= EXIT_P) return;
+        v.exitNode = node; v.exitEi = ramp.ei; v.exitSign = ramp.sign; v.exitSide = ramp.side;
+        this.stats.exitsPlanned++;
+        // the route may already run on past it
+        for (let j = 0; j < v.rtN; j++) if (this.entryEnd(v, j) === node) { this.cutRoute(v, j); break; }
+        return;
+      }
+      if (!on) return;
+      ei = on.ei; sign = on.sign;
+      node = sign > 0 ? city.edges[ei].b : city.edges[ei].a;
+      dist += city.edges[ei].len;
+    }
+  }
+
+  /** The cars around v on its carriageway: along (m ahead), lat (right of
+   *  v's edge's centreline, in v's own frame) and tgt (the offset they are
+   *  making for, in the same frame). Each is placed in v's frame through its
+   *  position relative to v, bent for the road's curve between them (the
+   *  centreline ahead is along x dtheta / 2 to the side, dtheta the turn from
+   *  v's edge to the other's), so a car 100 m round a bend is in its lane --
+   *  and not on an edge whose centreline OSM drew half a lane over. */
+  fwyNeighbours(v) {
+    const rt = v.rt, city = this.city, out = this._nb || (this._nb = []);
+    out.length = 0;
+    const ux = rt[R_UX], uz = rt[R_UZ];
+    const e = city.edges[rt[R_EI]], na = city.nodes[rt[R_SG] > 0 ? e.a : e.b];
+    const myLat = (v.x - na.x) * -uz + (v.z - na.z) * ux;
+    for (const o of this.cars) {
+      if (o === v || o.leader === v) continue;
+      if (o.mode === 'parked' || o.mode === 'apron' || o.mode === 'path' || o.mode === 'race') continue;
+      const dx = o.x - v.x, dz = o.z - v.z;
+      if (dx * dx + dz * dz > 140 * 140 || Math.abs(o.y - v.y) > 3) continue;
+      const fo = o.forward;
+      if (fo.x * ux + fo.z * uz < 0.6) continue;
+      const along = dx * ux + dz * uz;
+      const q = o.leader || o;   // a trailer goes where its tractor goes
+      const qe = q.rt && q.rtN && q.edge != null ? city.edges[q.edge] : null;
+      const rdx = qe ? qe.dx * q.dirSign : fo.x, rdz = qe ? qe.dz * q.dirSign : fo.z;
+      const dth = Math.asin(clamp(ux * rdz - uz * rdx, -1, 1));   // + = the road bends right
+      const lat = myLat + dx * -uz + dz * ux - (along * dth) / 2;
+      let tgt = lat;
+      if (qe && this.fwy[q.edge] && qe.oneway) {
+        const qa = city.nodes[q.dirSign > 0 ? qe.a : qe.b];
+        const qLat = (q.x - qa.x) * -rdz + (q.z - qa.z) * rdx;
+        tgt = lat + (q.rt[R_OFF] - qLat);
+      }
+      out.push({ o, along, lat, tgt, v: o.vLong, len: o.halfLen });
+    }
+    return out;
+  }
+
+  /** IDM acceleration at speed sp toward v0 behind a leader gap m ahead at vL. */
+  idm(sp, v0, aMax, gap, vL) {
+    const vr = sp / Math.max(0.5, v0);
+    let a = aMax * (1 - vr * vr * vr * vr);
+    if (gap < Infinity) {
+      const ss = IDM_S0 + Math.max(0, sp * IDM_T + (sp * (sp - vL)) / (2 * Math.sqrt(aMax * IDM_B)));
+      const r = ss / Math.max(gap, 0.1);
+      a -= aMax * r * r;
+    }
+    return a;
+  }
+
+  /** Lane target offset T (right of travel): is a change into it safe, and
+   *  what would v's acceleration be there? */
+  fwyLane(v, nb, T, w, myLat, sp, v0, aMax) {
+    let gA = Infinity, vA = 0, gB = Infinity, fB = null;
+    for (const n of nb) {
+      // (a car on an on-ramp beside the lane is about to be in it)
+      const q = n.o.leader || n.o, merging = q.edge != null && this.fwy[q.edge] && this.city.edges[q.edge].cls === 'ramp';
+      if (Math.abs(n.lat - T) > (merging ? 1.6 : 0.55) * w && Math.abs(n.tgt - T) > 0.55 * w) continue;
+      if (n.along >= 0) {
+        const g = n.along - v.halfLen - n.len;
+        if (g < gA) { gA = g; vA = n.v; }
+      } else {
+        const g = -n.along - v.halfLen - n.len;
+        if (g < gB) { gB = g; fB = n; }
+      }
+    }
+    // never alongside anything in the target lane
+    if (gA < 3 + sp * 0.25 || gB < 4) return null;
+    const aNew = this.idm(sp, v0, aMax, gA, vA);
+    if (aNew < LC_SAFE) return null;
+    if (fB) {
+      const o = fB.o.leader || fB.o, vF = Math.max(0, fB.v);
+      const vF0 = o.rt ? o.rt[R_SPD] * (o.drvK || 1) : vF + 3;
+      const aF = this.idm(vF, Math.max(vF0, 1), 2.0, gB, sp);
+      if (aF < LC_SAFE || gB < 4 + vF * 0.5) return null;
+    }
+    return { aNew, gA };
+  }
+
+  /** Change v's lane by one (+1 right of travel, -1 left). */
+  changeLane(v, dir, LI, i) {
+    const rt = v.rt, sign = rt[R_SG];
+    const ni = i + dir * sign;
+    if (ni < 0 || ni >= LI.n) return false;
+    const oldOff = rt[R_OFF];
+    const keep = rt.slice(V_K, RT_F);   // the vertex behind (the corner already turned)
+    this.routeEntry(v, 0, rt[R_EI], sign, (ni + 0.5) / LI.n);
+    rt.set(keep, V_K);
+    v.laneU = rt[R_U];
+    v.rtN = 1;
+    v.lcShift = (v.lcShift || 0) + oldOff - rt[R_OFF];
+    v.lcRate = Math.max(0.8, Math.abs(v.lcShift) / LC_TIME);
+    v.lcCool = 4 + 3 * hash2(v.prio, this.stats.laneChanges);
+    this.stats.laneChanges++;
+    if (dir > 0) this.stats.laneRight++; else this.stats.laneLeft++;
+    return true;
+  }
+
+  /** A freeway driver's decisions, every half second: plan an exit, move
+   *  over for it (or for a lane that ends, or a semi out of the left lanes),
+   *  pass on the left, keep right. */
+  fwyDecide(v, s0, sp, v0, aMax) {
+    const rt = v.rt, city = this.city, ei = rt[R_EI], e = city.edges[ei];
+    // a planned exit taken: done with it
+    if (v.exitNode != null && v.exitNode >= 0 && ei === v.exitEi) { v.exitNode = -1; this.stats.exitsTaken++; }
+    if (e.cls !== 'hwy' || !e.oneway || e.tunnel) return;
+    if (v.exitNode == null || v.exitNode < 0) this.fwyPlanExit(v, s0);
+    if (v.lcShift) return;
+    // still in the corner behind: its geometry is the old lane's
+    if (rt[V_K] === 1 && s0 < rt[V_B] + rt[V_T]) return;
+    const LI = this.laneInfo(ei), sign = rt[R_SG];
+    if (LI.n < 2 || !(LI.w > 2.5)) return;
+    const i = Math.min(LI.n - 1, Math.floor(rt[R_U] * LI.n));
+    const fromR = sign > 0 ? LI.n - 1 - i : i, fromL = LI.n - 1 - fromR;
+    const offOf = (j) => (LI.lo + (j + 0.5) * LI.w) * sign;
+    const na = city.nodes[sign > 0 ? e.a : e.b];
+    const myLat = (v.x - na.x) * -rt[R_UZ] + (v.z - na.z) * rt[R_UX];
+    // MANDATORY: the exit's lane, a lane ending ahead, a semi in the left lanes
+    let must = 0;
+    v.dropX = null;
+    if (v.exitNode == null) v.exitNode = -1;
+    if (v.exitNode >= 0) {
+      let dX = rt[R_LEN] - s0, found = this.entryEnd(v, 0) === v.exitNode;
+      for (let j = 1; j < v.rtN && !found; j++) { dX += rt[j * RT_F + R_LEN]; found = this.entryEnd(v, j) === v.exitNode; }
+      const inLane = v.exitSide > 0 ? fromR === 0 : fromL === 0;
+      if (!inLane) {
+        if (found && dX < 35) {
+          // too late to get over: carry on, and leave at the next one
+          v.exitSeen = v.exitNode; v.exitNode = -1; this.stats.exitsAborted++;
+          for (let j = 0; j < v.rtN; j++) if (this.entryEnd(v, j) === v.exitSeen) { this.cutRoute(v, j); break; }
+        } else must = v.exitSide;
+      }
+    }
+    if (!must) {
+      // a lane that ends within 250 m: the route jogs sideways at a node
+      let d = rt[R_LEN] - s0;
+      for (let j = 1; j < v.rtN && d < 250; j++) {
+        const p = (j - 1) * RT_F, q = j * RT_F;
+        const qe = city.edges[rt[q + R_EI]];
+        if (qe.cls !== 'hwy') break;
+        if (rt[p + R_UX] * rt[q + R_UX] + rt[p + R_UZ] * rt[q + R_UZ] < 0.94) break;
+        const ex = rt[p + R_QX] + rt[p + R_UX] * rt[p + R_LEN], ez = rt[p + R_QZ] + rt[p + R_UZ] * rt[p + R_LEN];
+        const jog = (rt[q + R_QX] - ex) * -rt[p + R_UZ] + (rt[q + R_QZ] - ez) * rt[p + R_UX];
+        if (Math.abs(jog) > 2.2) { must = Math.sign(jog); if (this.laneInfo(rt[q + R_EI]).n < LI.n) { v.dropX = ex; v.dropZ = ez; } break; }
+        d += rt[q + R_LEN];
+      }
+    }
+    if (!must && v.spec.hand === 'semi' && LI.n >= 3 && fromR > 1) must = 1;
+    const nb = this.fwyNeighbours(v);
+    if (must) {
+      if (i + must * sign < 0 || i + must * sign >= LI.n) return;
+      const ok = (v.lcCool <= 2 || v.exitNode >= 0) && this.fwyLane(v, nb, offOf(i + must * sign), LI.w, myLat, sp, v0, aMax);
+      if (ok && this.changeLane(v, must, LI, i)) { this.stats.laneMandatory++; v.dropT = 0; }
+      // a lane that ends with no gap beside it: the car slows for its end
+      // (driveTraffic) rather than swerving across at the node
+      else if (v.dropX != null && v.exitNode < 0) v.dropT = 1.2;
+      return;
+    }
+    if (v.lcCool > 0 || sp < 8) return;
+    // planned to exit and in its lane: stay there
+    if (v.exitNode >= 0) return;
+    const aCur = this.idm(sp, v0, aMax, v.leadGap != null ? v.leadGap : Infinity, v.leadV || 0);
+    // PASS ON THE LEFT: held up by a slower car, and the left lane is better
+    if (fromL > 0 && !(v.spec.hand === 'semi' && LI.n >= 3 && fromR >= 1)) {
+      const slow = v.leadGap < 90 && v.leadV < v0 - 1.5;
+      if (slow) {
+        const r = this.fwyLane(v, nb, offOf(i - sign), LI.w, myLat, sp, v0, aMax);
+        if (r && r.aNew - aCur > LC_GAIN) { this.changeLane(v, -1, LI, i); return; }
+      }
+    }
+    // KEEP RIGHT except to pass: back over once it costs nothing
+    if (fromR > 0) {
+      const r = this.fwyLane(v, nb, offOf(i + sign), LI.w, myLat, sp, v0, aMax);
+      if (r && r.aNew > -0.2 && r.aNew >= aCur - LC_KEEP && r.gA > sp * 2.5) this.changeLane(v, 1, LI, i);
+    }
+  }
+
+  /** On a freeway ramp: the merge into the main line ahead. The main-line car
+   *  in the lane this car will join that reaches the merge before it (or
+   *  within 1.5 s after) is a leader, its gap measured to the merge. */
+  fwyMergeGap(v, sp) {
+    const rt = v.rt, city = this.city;
+    let j = 1;
+    for (; j < v.rtN; j++) if (city.edges[rt[j * RT_F + R_EI]].cls === 'hwy') break;
+    if (j >= v.rtN) return null;
+    const q = j * RT_F, me = city.edges[rt[q + R_EI]], M = city.nodes[rt[q + R_SG] > 0 ? me.a : me.b];
+    const dM = Math.hypot(M.x - v.x, M.z - v.z);
+    if (dM > 170) return null;
+    const fx = rt[q + R_UX], fz = rt[q + R_UZ], T = rt[q + R_OFF];
+    const w = this.laneInfo(rt[q + R_EI]).w || 3.6;
+    const tMe = dM / Math.max(sp, 1);
+    let best = null;
+    for (const o of this.cars) {
+      if (o === v || o.leader === v || o.mode === 'parked' || o.mode === 'apron') continue;
+      if (Math.abs(o.y - v.y) > 4) continue;
+      const q2 = o.leader || o;
+      if (q2.edge != null && this.fwy[q2.edge] && city.edges[q2.edge].cls === 'ramp') continue;
+      const dx = M.x - o.x, dz = M.z - o.z;
+      if (dx * dx + dz * dz > 260 * 260) continue;
+      if (o.forward.x * fx + o.forward.z * fz < 0.7) continue;
+      const lat = (o.x - M.x) * -fz + (o.z - M.z) * fx;
+      if (Math.abs(lat - T) > (dM < 50 ? 1.15 : 0.6) * w) continue;   // (close in, an angled ramp sweeps the next lane too)
+      const dO = dx * fx + dz * fz;
+      if (dO < -40) continue;
+      const tO = dO / Math.max(o.vLong, 1);
+      if (tO > tMe + 1.5) continue;
+      const g = dM - dO - v.halfLen - o.halfLen - 3;
+      if (!best || g < best.gap) best = { gap: g, vL: o.vLong };
+    }
+    return best;
   }
 
   /** A traffic car back on the graph where it now stands, after a back-out:
@@ -1986,6 +2394,17 @@ export class TrafficSystem {
     // where a legal exit is only that sharp (a one-way street's end at a
     // hairpin), it is taken rather than stopping.
     const comp = this.comp[nodeId];
+    // AUTO KW, ON A FREEWAY: the planned exit (fwyPlanExit), else straight on
+    // along the freeway -- a car leaves only by an exit it planned for and
+    // moved over for, never across the lanes at the gore.
+    if (v.exitNode === nodeId && v.exitEi >= 0 && this.allowed(v.exitEi, v.exitSign) && this.comp[v.exitSign > 0 ? city.edges[v.exitEi].b : city.edges[v.exitEi].a] === comp) {
+      return { ei: v.exitEi, sign: v.exitSign };
+    }
+    if (fe.cls === 'hwy' && fe.oneway && !v.unit) {
+      const st = this.fwyOn(v, fromEi, fromSign, nodeId);
+      if (st) return st;
+    }
+    const banned = FWY_BANNED.has(v.typeName);
     let best = null, bestScore = -Infinity, sharp = null, sharpScore = -Infinity;
     for (const ei of node.e) {
       if (ei === fromEi) continue;
@@ -1996,7 +2415,7 @@ export class TrafficSystem {
       if (this.comp[sign > 0 ? ne.b : ne.a] !== comp) continue;
       const dx = ne.dx * sign, dz = ne.dz * sign;
       const dot = dx * fx + dz * fz;
-      const score = dot * 2 + hash2(ei, (v.x * 3) | 0) * 1.1 + (ne.cls === 'res' ? -0.6 : 0);
+      const score = dot * 2 + hash2(ei, (v.x * 3) | 0) * 1.1 + (ne.cls === 'res' ? -0.6 : 0) + (banned && this.fwy[ei] ? -20 : 0);
       if (dot < -0.5) {
         if (score > sharpScore) { sharpScore = score; sharp = { ei, sign }; }
         continue;
