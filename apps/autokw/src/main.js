@@ -40,6 +40,8 @@ import { HockeyNight } from './hockey.js';
 import { AudRink } from './audrink.js';
 import { Oktoberfest } from './oktoberfest.js';
 import { BigSplash } from './bigsplash.js';
+import { Skating } from './skating.js';
+import { prepBallpark, Derby } from './ballpark.js';
 import { RollUp } from './rollup.js';
 import { TowerGame } from './atc.js';
 import { DuckTour } from './ducktour.js';
@@ -128,6 +130,8 @@ let pinball = null;  // the pinball at AOK on King St W in Kitchener (pinball.js
 let hockey = null;   // hockey night at Climate Pledge Arena (hockey.js)
 let rollup = null;
 let fest = null;
+let derby = null;   // Auto KW: the Panthers' home run derby at Jack Couch Park (ballpark.js)
+let skating = null;   // Auto KW: skating on Waterloo Public Square's rink (skating.js)
 let splash = null;   // Auto KW: Bingemans Big Splash, the slides ridden (bigsplash.js)     // Auto KW: Oktoberfest -- the festhallen, the stein contest, the parade (oktoberfest.js)   // Roll Up the Rim at every Tim Hortons (rollup.js)
 let tower = null;    // Boeing Field's control tower and FINAL APPROACH (atc.js)
 let duckTour = null; // the Duck Tour: kiosk, ducks, ramp and the tour (ducktour.js)
@@ -137,7 +141,7 @@ let islands = null, pickle = null, piers = null, ferry = null, ferryPrev = null;
 let coffee = null;   // First Cup Coffee at 1912 Pike Place and MORNING RUSH (barista.js)
 let career = null;   // the saved wallet and the Seattle Passport (career.js)
 let seafair = null;  // hydroplane racing on Lake Washington (hydrorace.js)
-let golf = null;   // OSM's holes at Rockway and Westmount, three at a time (golf.js)
+let golf = null;   // OSM's holes at Rockway, Westmount, Conestoga, Grey Silo and Doon Valley, three at a time (golf.js)
 let wheelRide = null;   // the Great Wheel, turning, and its ride (wheelride.js)
 let fishToss = null;   // the flying fish at Pike Place Market (fishtoss.js)
 let needleTop = null;   // the Space Needle's elevator, deck and viewers (needletop.js)
@@ -413,6 +417,14 @@ class Game {
 
   /** ENTER on foot, before the cars: a fishing rod within reach? */
   tryInteract(pl) {
+    // Auto KW: lacing up on (or taking the skates off at) Waterloo Public Square's rink
+    if (skating && skating.tryInteract(pl)) return true;
+    // Auto KW: the gate at Jack Couch Park: the Panthers' home run derby
+    if (derby && !derby.active && derby.near(pl)) {
+      this.hold('derby');
+      derby.start();
+      return true;
+    }
     if (!fishing || fishing.active) return false;
     for (const sp of fishSpots) {
       if (Math.hypot(pl.x - sp.rx, pl.z - sp.rz) < 3.2 && Math.abs(pl.y - sp.y) < 2) {
@@ -865,6 +877,7 @@ async function boot() {
   { const k = prepDowntown(city); blog(`kw downtown: ${k.looks} looks, ${k.defaults} defaults, ${k.towers} tower boxes, ${k.custom} drawn specially`); }
   // the Grand's limestone banks and Galt's walls, the trails' bridges, signs and benches, Doon Pioneer Tower, the Kissing Bridge (kwnature.js: built inside buildSights)
   { const k = prepNature(city, bikeNet); blog(`kw nature: ${k.skipped} boxes drawn as nature`); }
+  { const k = prepBallpark(city); blog(`kw ballpark: ${k.skipped} boxes drawn as Jack Couch Park`); }
   // the villages' main streets, St. Jacobs' mill and the Village Silos (kwvillages.js)
   { const k = prepVillages(city, md.villages); blog(`kw villages: ${k.skipped} boxes drawn as main streets`); }
   addLandmarkExtra(buildVillages);
@@ -1579,6 +1592,16 @@ function installShadowFade() {
     splash = new BigSplash({ scene, city, camera, player, audio, hud: { get hud() { return hud; } }, onEnd: () => { game.release('splash'); } });
     if (!splash.ok) splash = null;
   } catch (e) { blog('bigsplash: ' + e.message); splash = null; }
+  // the rink at Waterloo Public Square (kwplaces.js drew it): skates, and skaters
+  try {
+    skating = new Skating({ scene, city, audio, controls, player, phone: ON_PHONE, get peds() { return peds; }, get fx() { return fx; }, hud: { get hud() { return hud; } } });
+    if (!skating.ok) skating = null;
+  } catch (e) { blog('skating: ' + e.message); skating = null; }
+  try {
+    derby = new Derby({ scene, camera, player, audio, renderer, controls, get peds() { return peds; }, hud: { get hud() { return hud; } },
+      onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Panthers home run derby paid $${m}`), 400); },
+      onEnd: () => { game.release('derby'); } });
+  } catch (e) { blog('derby: ' + e.message); derby = null; }
   // A CAR WORTH TAKING at the kerb in front of the spawn. Kerbside cars come
   // from a fixed hash of street slots, so the first car every player walked
   // up to was the same pickup -- and the nearest slot was usually out of the
@@ -1687,7 +1710,8 @@ function installShadowFade() {
     ...link.stations.map((st) => ({ x: st.ent.x, z: st.ent.z, kind: 'link', name: `ION · ${st.name}`, near: false,
       hello: `${st.full} — ION light rail, Conestoga to Fairway. Tap ENTER here or on the platform to catch the next train and drive it` })),
     ...(golf ? golf.firstTees.map((t) => ({ x: t.x, z: t.z, kind: 'golf', name: t.name, near: false, label: t.short,
-      hello: `${t.name} — press ENTER on the first tee to play 3 holes (every third tee starts three more)` })) : []),
+      hello: t.nine ? `${t.name} — one of the club's three nines: press ENTER on its first tee to play 3 holes (every third tee starts three more)`
+        : `${t.name} — press ENTER on the first tee to play 3 holes (every third tee starts three more)` })) : []),
     ...(chicopee.base() ? [{ x: chicopee.base().x, z: chicopee.base().z, kind: 'atv', name: 'Chicopee Bike Park', near: false, label: 'Chicopee',
       hello: 'Chicopee Bike Park — dirt bikes and mountain bikes. Ride a downhill, or walk to a chairlift and press ENTER to ride to the top' }] : []),
     // Auto KW: the farms' tractors and combines (crops.js)
@@ -1695,6 +1719,7 @@ function installShadowFade() {
     ...kartway.places(),
     ...(fest ? fest.places() : []),
     ...(splash ? splash.places() : []),
+    ...(skating ? skating.places() : []),
   ];
   { const k = kwData(); if (k && k.signStats) blog('kw signs: ' + JSON.stringify(k.signStats)); }
   if (shopStats()) blog('kw shops: ' + JSON.stringify(shopStats()));
@@ -1876,7 +1901,9 @@ function installShadowFade() {
   window.__dbg.selectEngine = selectEngine;
   window.__dbg.kart = kartRace;
   window.__dbg.fest = fest;
-  window.__dbg.splash = splash;   // Auto KW: Big Splash (bigsplash.js)   // Auto KW: Oktoberfest (oktoberfest.js)   // Auto KW: Erbsville Kartway (kartway.js)
+  window.__dbg.splash = splash;
+  window.__dbg.skating = skating;
+  window.__dbg.derby = derby;   // Auto KW: the Panthers' home run derby (ballpark.js)   // Auto KW: the rink at Waterloo Public Square (skating.js)   // Auto KW: Big Splash (bigsplash.js)   // Auto KW: Oktoberfest (oktoberfest.js)   // Auto KW: Erbsville Kartway (kartway.js)
   wireUi();
   career.start(hud);
   game.newTarget();
@@ -2734,7 +2761,7 @@ function interiorUp() {
 }
 
 function reapHolds() {
-  const live = { fishing, arcade, pinball, hockey, rollup, fest, splash, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace };
+  const live = { fishing, arcade, pinball, hockey, rollup, fest, splash, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace, derby };
   for (const who of game.holds) {
     if (who === 'seafair') { if (seafair && (seafair.state === 'menu' || seafair.state === 'done')) continue; }
     else if (live[who] && live[who].active) continue;
@@ -3097,6 +3124,7 @@ function frame(now) {
   if (fishing && fishing.active) fishing.update(dt);
   if (hoops && hoops.active) hoops.update(dt);
   if (golf && golf.active) golf.update(dt);
+  if (derby && derby.active) derby.update(dt);
   if (arcade && arcade.active) arcade.update(dt);
   if (pinball && pinball.active) pinball.update(dt);
   if (hockey && hockey.active) hockey.update(dt);
@@ -3193,6 +3221,7 @@ function frame(now) {
   if (counterbal) counterbal.update(dt, camera);
   if (chicopee) chicopee.update(dt, camera.position.x, camera.position.z);
   cyclists.update(dt, player);
+  if (skating) skating.update(dt, camera, player);
   if (buggies) buggies.update(dt, player, camera);
   if (air) air.update(dt, player, camera);   // YKF's air traffic (airtraffic.js)
   if (geese) geese.update(dt, player, camera);

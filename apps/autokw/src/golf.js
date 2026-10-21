@@ -1,8 +1,9 @@
 // GOLF AT WATERLOO REGION'S COURSES. Real holes from OpenStreetMap
-// (data/golf.json, tools/kw/build_golf.py): Rockway in Kitchener and
-// Westmount in Waterloo, all eighteen holes of each drawn and playable, three
-// at a time -- every third tee (1, 4, 7, ...) starts a round of the next
-// three. Each hole is OSM's: its par, the line from the tee to the green
+// (data/golf.json, tools/kw/build_golf.py): Rockway and Doon Valley's front
+// nine in Kitchener, Westmount and Grey Silo in Waterloo, and Conestoga's
+// three nines (The Village, The Moors, Goose Run) up by Conestogo, every
+// hole drawn and playable, three at a time -- every third tee (1, 4, 7, ...;
+// per nine at Conestoga) starts a round of the next three. Each hole is OSM's: its par, the line from the tee to the green
 // (doglegs and all), the tee box, the green, the fairways, the bunkers and
 // any water, laid on the real ground (the ball runs downhill).
 //
@@ -128,7 +129,9 @@ function makeCourse(c, world) {
     const cum = [0];
     for (let i = 1; i < line.length; i++) { L += Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]); cum.push(L); }
     const [ux, uz] = (() => { const a = line[0], b = line[1]; const l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; return [(b[0] - a[0]) / l, (b[1] - a[1]) / l]; })();
-    return { n: h.n, par: h.par, line, cum, L, ux, uz, tee: { x: h.tee[0], z: h.tee[1] }, pin: { x: h.pin[0], z: h.pin[1] }, d: h };
+    // a 27-hole club's nines (Conestoga): the hole is "THE MOORS 4"
+    const nine = h.nine || '', lab = nine ? `${nine.toUpperCase()} ${h.n}` : String(h.n);
+    return { n: h.n, nine, lab, key: nine ? `${nine}:${h.n}` : String(h.n), par: h.par, line, cum, L, ux, uz, tee: { x: h.tee[0], z: h.tee[1] }, pin: { x: h.pin[0], z: h.pin[1] }, d: h };
   });
   const polys = [];
   const add = (kind, pts, hole) => {
@@ -148,7 +151,9 @@ function makeCourse(c, world) {
     for (const p of d.water) add('water', p, h);
   }
   let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
-  for (const [x, z] of c.boundary) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+  // `more`: ground in play past OSM's boundary (Grey Silo's 1st and 18th)
+  const more = c.more || [];
+  for (const r of [c.boundary, ...more]) for (const [x, z] of r) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
   for (const p of polys) { x0 = Math.min(x0, p.x0); x1 = Math.max(x1, p.x1); z0 = Math.min(z0, p.z0); z1 = Math.max(z1, p.z1); }
   const nx = Math.ceil((x1 - x0) / CELL) + 1, nz = Math.ceil((z1 - z0) / CELL) + 1;
   const grid = new Map();
@@ -165,7 +170,7 @@ function makeCourse(c, world) {
   // water the world already draws (a pond in its water field) is not drawn again
   for (const p of polys) if (p.kind === 'water') { const [cx, cz] = centroid(p.pts); p.drawn = world && world.waterLevelAt ? world.waterLevelAt(cx, cz) !== null : false; }
   const short = c.name.replace(/ Golf.*$/, '');
-  return { id: c.id, name: c.name, short, boundary: c.boundary, holes, polys, grid, x0, z0, x1, z1, nx, nz };
+  return { id: c.id, name: c.name, short, boundary: c.boundary, more, holes, polys, grid, x0, z0, x1, z1, nx, nz };
 }
 
 /** Which surface is (x, z) on, on course C ('out' past its boundary)? */
@@ -179,7 +184,7 @@ function surfaceOf(C, x, z, poly = false) {
   }
   if (poly) return best;
   if (best) return best.kind;
-  return pip(C.boundary, x, z) ? 'rough' : 'out';
+  return pip(C.boundary, x, z) || C.more.some((r) => pip(r, x, z)) ? 'rough' : 'out';
 }
 
 export class Golf {
@@ -207,7 +212,12 @@ export class Golf {
     return b;
   }
   /** The tee each course's map marker stands at (its first hole's). */
-  get firstTees() { return this.courses.map((C) => ({ x: C.holes[0].tee.x, z: C.holes[0].tee.z, name: C.name, short: C.short, id: C.id })); }
+  get firstTees() {
+    // one marker a course, and one a nine at a 27-hole club (each nine's first tee)
+    return this.courses.flatMap((C) => C.holes.filter((h, k) => k === 0 || (h.nine && h.nine !== C.holes[k - 1].nine)).map((h) => ({
+      x: h.tee.x, z: h.tee.z, id: C.id, name: h.nine ? `${C.name} · ${h.nine}` : C.name,
+      short: h.nine ? `${C.short} · ${h.nine.replace(/^The /, '')}` : C.short, nine: h.nine })));
+  }
 
   /** Nothing grows on a tee, fairway, green or bunker, nor within 3 m of one (city.extraClear). */
   keepClear(x, z) {
@@ -473,7 +483,7 @@ export class Golf {
     this.wind = { x: Math.cos(wa) * ws, z: Math.sin(wa) * ws, s: ws };
     this._placeBall(h.tee.x, h.tee.z);
     this._cam = null;
-    this._msg(`HOLE ${h.n} · PAR ${h.par} · ${Math.round(h.L * YD)} YDS`, '#fff', 2.2);
+    this._msg(`HOLE ${h.lab} · PAR ${h.par} · ${Math.round(h.L * YD)} YDS`, '#fff', 2.2);
     this._ready();
   }
 
@@ -548,7 +558,7 @@ export class Golf {
   _hud() {
     const h = this.h, dist = Math.hypot(h.pin.x - this.bx, h.pin.z - this.bz);
     const c = CLUBS[this.clubI];
-    this.ui.hole.textContent = `${this.C.short.toUpperCase()} · HOLE ${h.n} · PAR ${h.par}`;
+    this.ui.hole.textContent = `${this.C.short.toUpperCase()} · ${h.nine ? h.nine.toUpperCase() + ' ' + h.n : 'HOLE ' + h.n} · PAR ${h.par}`;
     this.ui.shot.textContent = `STROKE ${this.strokes + 1}`;
     this.ui.dist.textContent = dist > 30 ? `${Math.round(dist * YD)} YDS` : `${dist.toFixed(1)} M`;
     this.ui.cn.textContent = c.name;
@@ -647,9 +657,11 @@ export class Golf {
       if (kind !== 'water') this.dry = { x: this.bx, z: this.bz };
       // a trunk in the way knocks it back
       const gy = G.terrainHeight(this.bx, this.bz) + LIFT[kind];
-      if (this.by - gy < 5) {
+      // (not in the first 1.5 m: a ball at rest against a trunk is chipped out past it)
+      if (this.by - gy < 5 && Math.hypot(this.bx - this.prev.x, this.bz - this.prev.z) > 1.5) {
         const hit = this.o.city.obstacleHit && this.o.city.obstacleHit(this.bx, this.bz, 0.05, this.by);
-        if (hit && hit.pen > 0) { P.x = hit.nx * Math.abs(P.x) * 0.3; P.z = hit.nz * Math.abs(P.z) * 0.3; P.y *= 0.4; this._sfx('thunk', 0.4, 1.4); }
+        // (only moving INTO it: a ball that came to rest against a trunk is played away from it)
+        if (hit && hit.pen > 0 && P.x * hit.nx + P.z * hit.nz < 0) { P.x = hit.nx * Math.abs(P.x) * 0.3; P.z = hit.nz * Math.abs(P.z) * 0.3; P.y *= 0.4; this._sfx('thunk', 0.4, 1.4); }
       }
       if (this.by <= gy + BALL_R && P.y < 0) {
         if (kind === 'water') { this._water(); return; }
@@ -762,12 +774,12 @@ export class Golf {
     const PAR = holes.reduce((a, h) => a + h.par, 0);
     const total = this.scores.reduce((a, b) => a + b, 0), rel = total - PAR;
     const pay = Math.max(0, 150 + (PAR - total) * 50) + this.aces * 500;
-    const key = String(holes[0].n), B = this.bests[this.C.id] || (this.bests[this.C.id] = {});
+    const key = holes[0].key, B = this.bests[this.C.id] || (this.bests[this.C.id] = {});
     if (!B[key] || total < B[key]) {
       B[key] = total;
       try { localStorage.setItem(`autokw-golf-${this.C.id}`, JSON.stringify(B)); } catch (e) { /* private */ }
     }
-    this.ui.cardC.textContent = `${this.C.name.toUpperCase()} · HOLES ${holes[0].n}-${holes[holes.length - 1].n}`;
+    this.ui.cardC.textContent = `${this.C.name.toUpperCase()} · ${holes[0].nine ? holes[0].nine.toUpperCase() + ' · ' : ''}HOLES ${holes[0].n}-${holes[holes.length - 1].n}`;
     this.ui.cardT.textContent = rel < 0 ? `${-rel} under par!` : rel === 0 ? 'Level par' : `${rel} over par`;
     this.ui.tab.innerHTML = `<tr><td>HOLE</td>${holes.map((h) => `<td>${h.n}</td>`).join('')}<td>TOTAL</td></tr>`
       + `<tr><td>PAR</td>${holes.map((h) => `<td>${h.par}</td>`).join('')}<td>${PAR}</td></tr>`

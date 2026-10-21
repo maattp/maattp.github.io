@@ -1,10 +1,13 @@
 // Auto KW: the KW fun things, played end to end through real input (CDP key
 // and mouse events, as a thumb or keyboard would): the Rangers at the Aud
 // (audrink.js + hockey.js), a festhalle's stein-holding contest and the
-// Thanksgiving Day parade (oktoberfest.js), and Big Splash's slide
-// (bigsplash.js: walk up the tower, ride, splash).
+// Thanksgiving Day parade (oktoberfest.js), Big Splash's slide
+// (bigsplash.js: walk up the tower, ride, splash), skating on Waterloo Public
+// Square's rink (skating.js: lace up, stride, glide, hockey stop, spin, the
+// boards, the skaters) and the Panthers' home run derby at Jack Couch Park
+// (ballpark.js: ENTER at the gate, ten pitches swung at by the timing).
 //
-//   node tools/kw/funprobe.mjs <outdir> [aud,fest,parade,splash]
+//   node tools/kw/funprobe.mjs <outdir> [aud,fest,parade,splash,skate,derby]
 //   AUTO_HTTP_PORT / AUTO_CDP_PORT / AUTO_GPU=1 / AUTO_PHONE=1 as kwshots.mjs
 //
 // Prints each step, the draws/triangles inside each interior, the city's
@@ -18,7 +21,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 const PORT = +process.env.AUTO_CDP_PORT || 9412;
 const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
 const OUT = process.argv[2] || 'tools/data/kw/funshots';
-const ONLY = process.argv[3] ? process.argv[3].split(',') : ['aud', 'fest', 'parade', 'splash'];
+const ONLY = process.argv[3] ? process.argv[3].split(',') : ['aud', 'fest', 'parade', 'splash', 'skate', 'derby'];
 const PHONE = process.env.AUTO_PHONE === '1';
 const [W, H] = PHONE ? [874, 402] : [1280, 720];
 
@@ -293,6 +296,168 @@ async function main() {
         check((await ev('window.__dbg.game.holds.size')) === 0, 'no hold left behind');
       }
     }
+    // ---------------------------------------------------------------- skating at Waterloo Public Square
+    if (ONLY.includes('skate')) {
+      console.log('SKATING');
+      const ok = await ev('!!window.__dbg.skating');
+      check(ok, 'skating.js is up');
+      if (ok) {
+        const R = await ev('(() => { const R = window.__dbg.skating.R; return { c: R.c, u: R.u, hl: R.hl, hw: R.hw, y: R.y }; })()');
+        const at = (u, v) => [R.c[0] + R.u[0] * u - R.u[1] * v, R.c[1] + R.u[1] * u + R.u[0] * v];
+        const yawU = Math.atan2(R.u[0], R.u[1]);
+        // the square from the north, with the skaters out (a posed camera)
+        const [sx, sz] = at(-11, 0);
+        await standAt(sx, sz, yawU);
+        check(await until('window.__dbg.skating.skaters.length >= 3', 20000), 'skaters come out onto the ice');
+        const sk0 = await ev(`(() => { const s = window.__dbg.skating; return s.skaters.map((q) => [q.p.x, q.p.z, q.p.y, s.onIce(q.p.x, q.p.z)]); })()`);
+        await sleep(2000);
+        const sk1 = await ev(`(() => { const s = window.__dbg.skating; return s.skaters.map((q) => [q.p.x, q.p.z, q.p.y, s.onIce(q.p.x, q.p.z)]); })()`);
+        const moved = sk1.filter((q, i) => sk0[i] && Math.hypot(q[0] - sk0[i][0], q[1] - sk0[i][1]) > 0.5).length;
+        console.log('  skaters:', sk1.length, 'on the ice:', sk1.filter((q) => q[3]).length, 'moving:', moved, 'peds:', await ev('window.__dbg.peds.peds.length'));
+        check(sk1.every((q) => q[3]) && moved >= Math.min(3, sk1.length), 'every skater is on the ice, skating');
+        await ev(`(() => { const d = window.__dbg, c = d.camera; d.game.paused = true;
+          const [x, z] = [${at(4, 21).join(',')}]; c.position.set(x, ${R.y} + 5.5, z); c.lookAt(${R.c[0]}, ${R.y}, ${R.c[1]}); c.updateMatrixWorld(true); })()`);
+        await sleep(2500); await shot('skate-rink');
+        console.log('  the square with skaters:', await cityCalls());
+        await ev('window.__dbg.game.paused = false');
+        await standAt(sx, sz, yawU);
+        check(await ev(`window.__dbg.skating.onIce(window.__dbg.player.x, window.__dbg.player.z, window.__dbg.player.y)`), 'standing on the ice');
+        await tap('KeyE');
+        check(await until('window.__dbg.skating.skating', 3000), 'ENTER on the ice laces up');
+        // stride down the rink: W held, the camera behind, until going well or near the far end
+        const st = () => ev(`(() => { const s = window.__dbg.skating, p = window.__dbg.player, m = s.me; if (!m) return null;
+          const [u, v] = s._uv(p.x, p.z); return { v: +Math.hypot(m.vx, m.vz).toFixed(2), u: +u.toFixed(1), w: +v.toFixed(1), hd: +m.hd.toFixed(2), spin: m.spin, y: +p.y.toFixed(2), d: +s._sdf(u, v).d.toFixed(2) }; })()`);
+        await ev(`window.__dbg.player.camYaw = ${yawU} + Math.PI`);
+        await down('KeyW');
+        let s1 = null;
+        for (let i = 0; i < 400; i++) { await sleep(30); s1 = await st(); if (!s1 || s1.v > 4.5 || s1.u > 6) break; }
+        await shot('skate-stride');
+        await up('KeyW');
+        console.log('  striding:', JSON.stringify(s1));
+        check(s1 && s1.v > 3, 'striding gets you going (> 3 m/s)');
+        // glide: no input; the speed holds (ice), measured over distance not time
+        const g0 = await st();
+        let g1 = g0;
+        for (let i = 0; i < 200; i++) { await sleep(30); g1 = await st(); if (Math.hypot(g1.u - g0.u, g1.w - g0.w) > 3 || g1.d > -0.6) break; }
+        console.log('  glide:', JSON.stringify(g0), '->', JSON.stringify(g1));
+        check(g1.v > g0.v * 0.85, 'gliding 3 m keeps the speed (blades on ice)');
+        // the hockey stop: J held until stopped
+        const a0 = await st();
+        await down('KeyJ');
+        let a1 = a0, sprayShot = false;
+        for (let i = 0; i < 200; i++) { await sleep(30); a1 = await st(); if (!sprayShot && a1.v < a0.v * 0.6) { await shot('skate-stop'); sprayShot = true; } if (a1.v < 0.2) break; }
+        await up('KeyJ');
+        const stopM = Math.hypot(a1.u - a0.u, a1.w - a0.w);
+        console.log('  hockey stop from', a0.v, 'm/s in', stopM.toFixed(2), 'm');
+        check(a1.v < 0.3 && stopM < 4, 'PUNCH is a hockey stop: stopped in under 4 m');
+        // a spin from standing
+        await tap('Space');
+        check(await until('window.__dbg.skating.me && window.__dbg.skating.me.spin > 0', 2000, 50), 'JUMP spins');
+        await until('window.__dbg.skating.me.spinA > 6', 8000, 50);
+        await shot('skate-spin');
+        check(await until('window.__dbg.skating.me && window.__dbg.skating.me.spin === 0', 15000), 'the spin winds down');
+        console.log('  spin:', JSON.stringify(await ev('({ best: window.__dbg.skating.best, stats: window.__dbg.skating.stats })')));
+        check((await ev('window.__dbg.skating.best.spin')) > 1.5, 'more than one and a half turns');
+        // into the boards: W across the rink at the side curb until it bounces
+        await ev(`window.__dbg.player.camYaw = ${yawU} + Math.PI / 2 + Math.PI`);
+        const b0 = await ev('window.__dbg.skating.stats.bounces');
+        await down('KeyW');
+        let worst = -9;
+        for (let i = 0; i < 300; i++) { await sleep(30); const q = await st(); worst = Math.max(worst, q.d); if ((await ev('window.__dbg.skating.stats.bounces')) > b0 && i > 20) break; }
+        await up('KeyW');
+        console.log('  the boards: deepest', worst.toFixed(2), 'm past the curb line; bounces', (await ev('window.__dbg.skating.stats.bounces')) - b0);
+        check(worst < -0.2, 'the curb keeps you on the ice');
+        // skates off
+        await tap('KeyE');
+        check(await until('!window.__dbg.skating.skating && !window.__dbg.player.skate', 3000), 'ENTER takes the skates off');
+        const w0 = await ev('[window.__dbg.player.x, window.__dbg.player.z]');
+        await hold(['KeyW'], 900);
+        const w1 = await ev('[window.__dbg.player.x, window.__dbg.player.z, window.__dbg.player.speed]');
+        check(Math.hypot(w1[0] - w0[0], w1[1] - w0[1]) > 0.3, 'walking again afterwards');
+        // gone far: the skaters are handed back to the crowd
+        await standAt(R.c[0] + 400, R.c[1], yawU);
+        check(await until('window.__dbg.skating.skaters.length === 0', 8000), 'the skaters are given back when you leave');
+        check((await ev('window.__dbg.game.holds.size')) === 0, 'no hold left behind');
+      }
+    }
+
+    // ---------------------------------------------------------------- the Panthers' home run derby at Jack Couch Park
+    if (ONLY.includes('derby')) {
+      console.log('JACK COUCH PARK: THE HOME RUN DERBY');
+      const ok = await ev('!!window.__dbg.derby');
+      check(ok, 'ballpark.js is up');
+      if (ok) {
+        const park = await ev('(() => { const d = window.__dbg.derby; return { gate: d.gate, home: [d.F.W(0, 0)[0], d.F.W(0, 0)[1]], d: d.F.d, p: d.F.p, stats: window.__ballpark }; })()');
+        console.log('  park:', JSON.stringify(park.stats));
+        check(park.stats && park.stats.lights >= 4 && park.stats.ft && park.stats.ft.length === 3, 'the park is drawn (fence, lights, distances)');
+        // the park: from the stands behind the plate, and from the air over centre field (posed cameras)
+        const pose = async (name, c, t) => {
+          await ev(`(() => { const d = window.__dbg, G = d.G, cam = d.camera; d.game.paused = true;
+            d.world.update(${c[0]}, ${c[1]}, 60); for (let i = 0; i < 400; i++) d.world.update(${c[0]}, ${c[1]}, 60);
+            cam.fov = 60; cam.updateProjectionMatrix();
+            cam.position.set(${c[0]}, G.terrainHeight(${c[0]}, ${c[1]}) + ${c[2]}, ${c[1]}); cam.lookAt(${t[0]}, G.terrainHeight(${t[0]}, ${t[1]}) + ${t[2]}, ${t[1]}); cam.updateMatrixWorld(true); })()`);
+          await sleep(3500); await shot(name);
+          console.log(`  ${name}:`, await cityCalls());
+        };
+        const H = park.home, D = park.d, P = park.p;
+        const at = (al, ac) => [H[0] + D[0] * al + P[0] * ac, H[1] + D[1] * al + P[1] * ac];
+        await standAt(park.gate[0], park.gate[1]);
+        await pose('derby-park-stands', [...at(-14, 16), 5.5], [...at(70, -8), 2]);
+        await pose('derby-park-air', [...at(165, 30), 70], [...at(45, 0), 0]);
+        await pose('derby-park-outfield', [...at(92, 8), 1.7], [...at(-5, 0), 4]);
+        await ev('window.__dbg.game.paused = false');
+        await standAt(park.gate[0], park.gate[1]);
+        console.log('  at the gate:', await cityCalls());
+        await tap('KeyE');
+        check(await until('window.__dbg.derby.active && !!window.__dbg.derby.g', 4000), 'ENTER at the gate starts the derby (built on entry)');
+        check(await ev('window.__dbg.game.holds.has("derby")'), 'the world is held');
+        await sleep(1800); await shot('derby-intro');
+        // twelve swings: watch each pitch and SWING (Space) by the ball's own clock -- the first is taken, the second swung early
+        const t0 = Date.now();
+        let pitches = 0, shotPitch = false, shotFly = false, shotHr = false;
+        while (Date.now() - t0 < 300000) {
+          const st = await ev("window.__dbg.derby.state");
+          if (st === 'card' || st === 'off') break;
+          if (st !== 'pitch') {
+            if (st === 'windup' && !shotPitch && pitches === 2) { await sleep(500); await shot('derby-windup'); shotPitch = true; }
+            if (st === 'fly' && !shotFly) { await sleep(250); await shot('derby-flight'); shotFly = true; }
+            if (st === 'fly' && !shotHr && (await ev('!!(window.__dbg.derby.fly && window.__dbg.derby.fly.hr)'))) { await sleep(400); await shot('derby-homerun'); shotHr = true; }
+            await sleep(30); continue;
+          }
+          const n = await ev('window.__dbg.derby.pitchN');
+          if (n === pitches) { await sleep(10); continue; }
+          pitches = n;
+          if (n === 1) { console.log('  pitch 1: taken'); await until("window.__dbg.derby.state !== 'pitch'", 5000, 20); continue; }
+          // the lead: SWING_T before the ball reaches the contact plane (less the poll's own latency)
+          const lead = n === 2 ? 0.30 : 0.18 + 0.012;
+          for (let i = 0; i < 400; i++) {
+            const r = await ev('(() => { const d = window.__dbg.derby; return d.state === "pitch" ? d.pb.tc - d.pb.t : -1; })()');
+            if (r < 0 || r <= lead) break;
+            await sleep(r - lead > 0.06 ? 15 : 2);
+          }
+          await tap('Space', 40);
+          await until("window.__dbg.derby.state !== 'pitch'", 5000, 20);
+        }
+        const res = await ev('(() => { const d = window.__dbg.derby; return { state: d.state, hr: d.hr, swings: d.swings, long: d.long, paid: d.paid, best: d.best, log: d.log }; })()');
+        console.log('  derby:', JSON.stringify({ ...res, log: undefined }));
+        for (const l of res.log) console.log('   ', JSON.stringify(l));
+        check(res.state === 'card' && res.swings === 12, 'twelve swings and the card');
+        check(res.log.some((l) => l.kind === 'TAKE'), 'a pitch taken costs no out');
+        check(res.log.filter((l) => l.kind && l.kind !== 'TAKE').length === 12, 'every swing is recorded');
+        check(res.hr >= 1 && res.long > 300, 'timed swings hit home runs over the fence');
+        check(res.paid === res.hr * 25 + (res.hr >= 5 ? 100 : 0), 'paid by the home runs');
+        await sleep(600); await shot('derby-card');
+        await click('#derbyUi .card .leave');
+        check(await until('!window.__dbg.derby.active', 3000), 'LEAVE ends it');
+        check(await ev('!window.__dbg.derby.g && !document.getElementById("derbyUi")'), 'the batter\'s things and the overlay are freed');
+        check((await ev('window.__dbg.game.holds.size')) === 0, 'no hold left behind');
+        const pl = await ev('(() => { const p = window.__dbg.player; return [p.onFoot, Math.hypot(p.x - window.__dbg.derby.gate[0], p.z - window.__dbg.derby.gate[1])]; })()');
+        check(pl[0] && pl[1] < 3, 'back on foot at the gate');
+        await sleep(1500);
+        console.log('  after, at the gate:', await cityCalls());
+      }
+    }
+
     console.log(`  exceptions: ${errs.length}${errs.length ? '\n    ' + errs.slice(0, 6).join('\n    ') : ''}`);
     if (errs.length) fails++;
     console.log(fails ? `FAILED ${fails}` : 'ALL OK');
