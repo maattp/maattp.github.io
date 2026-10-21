@@ -762,8 +762,7 @@ file and a guide disagree, this file wins.
   Phone (AUTO_PHONE=1, GPU): the spawn 210 / 1048k -> 212 / 1052k, in the
   car by the spawn 221 / 1059k -> 224 / 1055k (traffic and the new boom's
   framing; nothing new is drawn). Approximate: the jake is a voicing of the
-  engine model, not a recording; ION's are the only rails felt (no
-  freight lines are drawn in KW); a dented car's far LOD is clean; the
+  engine model, not a recording; a dented car's far LOD is clean; the
   dent ignores the wheels' own meshes (they keep turning true).
 - **Waterloo Region's traffic** (vehicles.js; docs/fleet-*.jpg). **Grand
   River Transit** (`grtLivery`, `spec.grt`; checked against Commons photos
@@ -1193,8 +1192,9 @@ file and a guide disagree, this file wins.
   - **Not done / approximate:** signal timing is fixed-time (no detectors);
     no-right-on-red signs are not read from OSM;
     approaches the matcher misses (52 signal clusters, 171 stops) stay
-    uncontrolled; the junction-polygon artefacts in big intersections are
-    master's; a two-way stop's side street can wait long on a busy arterial.
+    uncontrolled (a stop bar that would lie across another street's lanes
+    is stepped back or not painted: "Follow-ups after v49" below); a two-way
+    stop's side street can wait long on a busy arterial.
 - **The University of Waterloo** (src/uwcampus.js, `data/uw.json` from
   tools/kw/build_uw.py; docs/uw-*.jpg). build_uw.py takes every campus
   building from OSM (inside Ring Road, or a named university / college /
@@ -1872,10 +1872,9 @@ file and a guide disagree, this file wins.
   (the two one-way legs' crossings, each moved out to its own mouth):
   junctions.js `xingClash` draws only the lower edge's when the strips
   cross or overlap side by side. **(4) signal poles and stop signs in the
-  road** (above, Junctions). Seen, not fixed: a hairline of grass across
-  the road at some chunk boundaries (Galt, (12000, 8800)); a garage door
-  drawn over a facade window on some houses; rural fences through tree
-  trunks; "the gantry behind Conestoga's Rec Centre" from (5560, 6985) is
+  road** (above, Junctions). The grass hairline at Galt, the garage doors
+  over windows and the fences through trunks it saw are fixed in
+  "Follow-ups after v49" below; "the gantry behind Conestoga's Rec Centre" from (5560, 6985) is
   inside E Wing's box -- what floats there is E Wing's rooftop units seen
   from inside the building, not a sign.
 
@@ -2005,8 +2004,9 @@ file and a guide disagree, this file wins.
   landing free and its move safe, the block's occupants projected to where
   they are bound); the LAST free track of a passing place is kept for such a
   train (`_lastTrackOwed`, spawns too); and nothing new comes on a line
-  while a train on it has been held 45 s. A meet can still take minutes --
-  the block west of Kitchener is 14.8 km. Dispatch uses only passing places
+  while a train on it has been held 45 s. The timetable keeps meets short
+  (`_meetWait` and the entry rules in `_dispatch`: "Follow-ups after v49"
+  below) -- the block west of Kitchener is 14.8 km. Dispatch uses only passing places
   every train of the line fits (`line.disp`; the rest are drawn). `_rescue`
   acts only if a line's state is ever found UNSAFE (a bug; the probe fails
   on it). Compressed timetable (`_schedule`, `_retire`): 3 GO sets
@@ -2100,6 +2100,94 @@ file and a guide disagree, this file wins.
   OSM's water polygons at the 40 m water mesh; riffle places are noise, not
   surveyed; Galt's walls are one generic wall (heights from the bank, not
   measured).
+- **Follow-ups after v49** (docs/followup-*.jpg, before over after). Each at
+  the root, with the probe that shows it:
+  - **Heavy rail is felt** (roadfeel.js): `kwrail.feelTracks(x, z, R)` hands
+    roadfeel every track within 8 m as a local frame (`k`, X, Z, h, y,
+    `cross`): the running lines, a passing place's second track at its
+    `ppOff`, and the static spurs/yards (`_feelSegIndex`, 32 m cells built
+    the first time it is asked). The same rail-crossing test as ION's; a
+    crossing's panels 0.85, ballast 0.9, a spur set in the road 0.6.
+    feelprobe's `hrail` phase drives one crossing per line, a double-track
+    one and a spur's: 0 -> 4 hits a track (stats `hrails`).
+  - **A solo crash costs the car health** (player.js): over 5 m/s into a
+    wall, building, parapet or pole, `v.damage(0.7 x impact)` -- traffic.js
+    carPair's rule, through damage()'s debounce and your car's 60 %. A
+    60 km/h wall: 100 -> 88 (feelprobe `crash`), so the smoke (< 45 %), the
+    doubled smoke (< 25 %) and the misfire (< 33 %) come from solo crashes;
+    at 0 it burns for BURN_S and blows as before. Respawn is unchanged (you
+    leave the car; the next one is new).
+  - **The Guelph Sub's meets** (kwrail.js `_dispatch`): OSM maps no siding,
+    disused or not, west of Kitchener inside the map (CN's single main to
+    the edge; the `twins` are all at Kitchener and east), so the timetable
+    does it. A train is held off the map (`dueT`, counted in
+    `stats.meetHolds`) while: one bound the other way through its first
+    block would stand more than `MEET_SLACK` 150 s at the far end
+    (`_meetWait`: block length / 0.8 v against the other's arrival at 0.75
+    v plus its dwells; a westbound GO turns at Kitchener, so it is not one);
+    one bound the other way is standing for a block; the line has as many
+    trains out as passing places (Guelph 3, Galt 2); another due train has
+    waited longer; or it would take the last free track where a GO on its
+    way in turns. `MEET_HOLD` 900 s off the map overrides the first three.
+    GO sets come back every ~10 min (`_retire`, was 7). railprobe, 13 runs:
+    every one PASS, longest stand 385-431 s (was 378-904, 3 of 10 over the
+    10-minute limit with the first rules alone); calls GO 3-5, VIA 1-2.
+  - **Junction leftovers** (traffic.js, xing.js). Stop sign 3701 (Gildner
+    St onto Park St): a 100 deg left. A route moves on to its next entry
+    when the car passes the vertex along the old line, and on a corner over
+    90 deg the arc never gets there ((a - t) + R < a): the car circled the
+    junction for minutes until a car on Park St hit it. Over 90 deg it
+    moves on at the arc's middle. Signal 384 (Erb St W): two lanes into one
+    at a node, both cars' lines jumping to the one lane, abreast -- a car
+    whose lane line jumps > 0.9 m at the end of its (city, one-way) edge now
+    gives way to a car on the same edge bound for the same lane that is
+    ahead or abreast and older (`cityMerges`; freeways keep fwyDecide's
+    `dropT`). Signal 776's scrapes were the same >90 deg circling. Also
+    found: sig-1644's crash every 8 s was a heavy-rail crossing MAST in the
+    lanes of the street beside its road (xing.js now steps a mast out past
+    any carriageway, `o.onRoad`) and the back-out reversing at 6 m/s into
+    the queue (now at a walking pace). jcttraffic, base -> this: seeded 3
+    hits / 12 crashes -> 3 / 0, unseeded 3 / 3 -> 0 / 0; at signal 384, 2 x
+    300 s: 21 hits -> 9 (sig-384 site 0); at 776: 9 hits + 1 crash -> 0.
+    trafficbench hashes change at the city sites (meant: these change
+    traffic) and match base at the freeway ones; rail on = rail off;
+    hwytraffic 7 hits / 0 crashes = base. A U-turning car at the all-way
+    by (-2995, -1212) still bumps one turning right at a crawl (3 hits).
+  - **Grass hairlines across a road** (world.js meshRoad): two strips
+    meeting end to end at a node with no mouth (OSM's way split) each kept
+    their own 0-3 cm bias, a step with nothing drawn in it -- from the low
+    side the grass 0.3 m under the road, as a line (Galt, (11992, 8802),
+    just inside a chunk line: its node's chunk owned neither edge, so the
+    node was never meshed either). The bias fades to 0 over 3 m into such a
+    node (`biasT`, the paint too), and a node is meshed by its own chunk
+    whatever owns its edges.
+  - **Garage doors over windows** (world.js `_garageSpot`): the siding is a
+    composed ~11 m elevation (window at u 0.13-0.40, front door 0.595-0.86,
+    frames and sills included). The door slides up to 1.6 m to cover an
+    opening whole or miss it; else it keeps its end and a wall-coloured
+    infill closes the openings it cuts. Beechwood/Uptown/Fairview chunks:
+    3426 doors, 1039 slid, 1700 with infill, none lost (`cityStats.garages`).
+  - **Fences through trunks** (rural.js `clear(x, z, pad)`, trees.js): the
+    keep-clear zone ended 0.1 m inside the field-edge fence line, so a tree
+    could stand on it; trees now keep a 1.2 m pad past the zone, fencerow
+    trees start 0.6 m further out. `tools/kw/fenceprobe.js` (panel to trunk
+    within r + 0.6 m, six rural sites): 2 -> 0.
+  - **Stop bars in the intersection** (junctions.js `setback`,
+    `barAcross`): a bar that lies across another street's lanes (centre or
+    either end of its span) steps back along its arm, up to 12 m; if it
+    cannot clear (an approach that starts inside the intersection: the far
+    carriageway's node of a divided road) it is not painted (teeth too).
+    The AI's stop line moves with it. `tools/kw/stopbars.js`: painted bars
+    across another street 342 -> 0 (173 moved clear, 169 dropped).
+  - **Trail benches are solid** (kwnature.js): a landmark solid each (seat
+    and back as one box, knee-high to the back's top), added with
+    `city.addLandmarkSolids` (indexes only the new ones) when bikes.js asks
+    for the bench spots: 988 benches; a sedan at 8 m/s into one stops at
+    1.6 m/s.
+  Phone (AUTO_PHONE=1, GPU), base -> this: spawn 218/1084k -> 219/1085k
+  (traffic); Galt 197/716k =; Beechwood house 202/1080k =; Kitchener
+  station 374/1579k -> 376/1575k; 0 exceptions. drivetest identical;
+  ionprobe, funprobe PASS.
 
 ## Build number
 

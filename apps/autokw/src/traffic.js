@@ -1982,7 +1982,7 @@ export class TrafficSystem {
     // way to a car on the same edge bound for the same lane that is ahead of
     // it (or abreast and older): behind it as a leader, or abreast, stopped
     // short of the node until it has gone.
-    if (v.rtN >= 2 && this.flow[v.edge] !== 0 && !v.unit) {
+    if (v.rtN >= 2 && this.flow[v.edge] !== 0 && !v.unit && !this.fwy[v.edge]) {   // (freeway lanes that end: fwyDecide's dropT)
       const q = RT_F, toNode = rt[R_LEN] - s0;
       const jump = Math.abs(rt[q + R_OFF] - rt[R_OFF]);
       if (jump > 0.9 && toNode < 50 && toNode > -2 && rt[R_UX] * rt[q + R_UX] + rt[R_UZ] * rt[q + R_UZ] > 0.94) {
