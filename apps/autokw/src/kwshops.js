@@ -28,6 +28,8 @@ import { Builder } from './build.js';
 import { boxAt, faceFor, faceRoad, polyFace, polyMat, kwData } from './kw.js';
 
 let S = null;
+/** fn({ A, Gb, Lb, ctx, solid, txt, bg, brandOf, logoOf }) run inside buildShops, before the atlas is finished. */
+export const SHOP_HOOKS = [];
 export function setShopData(d) {
   // (window.__noShops before boot: none of this, for a before/after)
   S = typeof window !== 'undefined' && window.__noShops ? null : d;
@@ -264,7 +266,8 @@ class BrandAtlas {
   constructor() {
     this.W = 2048;
     this.c = document.createElement('canvas');
-    this.c.width = this.W; this.c.height = 2048;
+    // 2560 rows: the logos and plazas fill ~1900, kwhome.js's storefronts the rest (finish() crops to what is used)
+    this.c.width = this.W; this.c.height = 2560;
     this.g = this.c.getContext('2d');
     this.y = 0; this.row = 0; this.full = 0;
     this.shelves = [];
@@ -1142,6 +1145,12 @@ export function buildShops(ctx) {
     }
     solid({ x, z, hw: W / 2 + 0.4, hd: 0.45, rot, y0: y0 - 2, y1: y0 + leg + H + 0.7 });
     stats.plazaPylons++;
+  }
+
+  // other modules drawing into these clusters and this atlas (kwhome.js): the
+  // same two materials, so what they add costs no draws where kwshops already has some
+  for (const fn of SHOP_HOOKS) {
+    try { fn({ A, Gb, Lb, ctx, solid, txt, bg, brandOf, logoOf: (k) => A.logo(k) }); } catch (e) { console.warn('kwshops hook: ' + (e.stack || e.message)); }
   }
 
   const mat = A.finish();
