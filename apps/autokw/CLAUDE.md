@@ -652,6 +652,53 @@ file and a guide disagree, this file wins.
   e.g. on Ring Road under the bridge (c -5318,-2262 -> t -5272,-2228).
   Approximate: DC's vault is a box-fitted barrel; the colours of C2/ESC/
   B1/B2, AL, EV1, RCH and STC were not confirmed by photos.
+- **The generic city's look** (docs/look-*.jpg, before over after; judged
+  against Esri World Imagery and street views of Beechwood, Cherry Park,
+  Victoria Park, Northfield, Sunview, Hespeler). **The class comes from OSM's
+  landuse now:** 124k of the 190k footprints are bare `building=yes`, which
+  used to fall to "house" and then, over 260 m2, to a 'brick' box -- and
+  kw.js markStrips made every such box under 7.5 m a STRIP PLAZA, so two
+  thirds of Beechwood's double-garage houses were one-storey stores with
+  white flat roofs. `tools/kw/extract_looks.py` (one quick pass of
+  kw.osm.pbf -> `raw_looks.json`: landuse residential/commercial/retail/
+  industrial polygons, and roof:shape / building:material / building:colour
+  per building, keyed by the ring's first point) feeds build_buildings.py:
+  an untagged building in a residential zone is a house up to 460 m2 (a
+  long one up to 1600 m2 a townhouse row), else a 9.5 m walk-up (cls 1); in a
+  commercial/retail zone cls 2, industrial cls 3; outside every zone over
+  460 m2 it is **cls 5** (the old size rule in citygen styleFor); barns and
+  farm buildings are cls 3. **The class byte is packed:** low 3 bits class,
+  bits 3-4 the mapped roof (1 flat, 2 gable, 3 hip), bits 5-7 the wall
+  (1 red brick, 2 buff, 3 grey stone/block, 4 siding, 5 concrete/stucco,
+  6 metal, 7 glass); citygen unpacks it to `bd.look` (+32 when OSM says
+  apartments) and the building cache carries it. **world.js:** houses are
+  Ontario's -- 68 % brick (`HOUSE_BRICK`, on the new `brickhouse` atlas cell,
+  textures.js: the house elevation in a running bond, soldier courses and
+  sills; it is the LAST cell so facadeMat's masonry/brick indices hold) and
+  vinyl siding in beige/grey/white (`HOUSE_PAINT`); asphalt shingle roofs in
+  charcoal, grey and brown (`HOUSE_ROOF`); gables and hips about evenly, a
+  flat roof on ~2 % (Seattle's 11 % made every street a new build);
+  `houseWall` takes OSM's material first. Detached houses 9.5-24 m wide get
+  the garage door IN the footprint on the street face (a double on wide
+  ones) and a driveway to the kerb. Industrial walls are tilt-up beige/grey
+  and steel in white/blue-grey/tan (`INDUSTRIAL_WALL`), big flat roofs light
+  three times in four. `buildingFamily`: OSM's material first, then KW
+  weights (brick and precast low, white/grey precast high; apartment towers
+  over 30 m their own mix), and apartments get balconies on most (brick ones
+  included). **Overhead hydro** (`hydroEdge`, `hydroLine`): every arterial,
+  and the side streets of the old cores (`OLD_CORES`: downtown Kitchener,
+  Uptown, Bridgeport, Galt, Preston, Hespeler, St. Jacobs -- radii are a
+  judgement, not data); poles every 40 m on one side per street name (wood,
+  or spun concrete on some arterials), crossarm, three primaries + a lower
+  line, a transformer on one in five, the street light on a davit (the
+  street's own lamps are dropped). Poles sit on a lattice along the
+  street's direction so OSM's short edges join up; a span is strung only to
+  a pole that exists (`cityStats.hydro`). Phone (AUTO_PHONE=1, GPU), master
+  -> this: spawn 198/888k -> 196/932k; Beechwood aerial 305/1268k ->
+  307/1353k; Sunview 205/633k -> 205/686k; Northfield 126/639k -> 130/685k;
+  street level Beechwood 540/1231k -> 537/1290k, Sunview arterial 239/692k
+  -> 237/741k (max +8 % tris, draws flat). Re-run order after an OSM update:
+  `extract_looks.py` then `build_buildings.py`.
 
 ## Build number
 
