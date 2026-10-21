@@ -48,7 +48,24 @@ const WHITE = [1, 1, 1];
 // picked from the spawn colour, so an artic's two sections agree).
 const METRO_YELLOW = [0.86, 0.43, 0.02];
 const METRO_TOPS = [0x0f6e78, 0x1f4f9a, 0x2c6e3c];
-const ARTIC_LIVERIES = [0x0f6e78, 0x1f4f9a, 0x2c6e3c, 0xc41a24];
+// Auto KW: GRAND RIVER TRANSIT'S LIVERY (Commons photos of 21206, 21714,
+// 21759 and 22020, 2018-2023, and GRT's route list, Oct 2026): a white bus,
+// a royal-blue band under the windows with a thin gold line beneath it, the
+// GRT wordmark (blue italic capitals on a white panel, GRAND RIVER TRANSIT in
+// gold under them) breaking the band, "Grand River Transit" in white on the
+// band toward the rear, the Region of Waterloo's mark and the fleet number
+// over the front windows, dark tinted glass, a black bumper with a bike rack.
+// The ION Bus (302) is the same white bus with ION's blue front and roof and
+// the ion logo instead of the band. GRT runs no articulated buses; `artic`
+// wears the livery all the same (buildBus `spec.grt`, a fleet look per type).
+const GRT_WHITE = 0xf2f3f4;
+const GRT_BLUE = [0.030, 0.075, 0.36];      // the band, linear (sRGB ~#2f4da0)
+const GRT_GOLD = [0.78, 0.42, 0.06];        // the pinstripe and the small wordmark
+const GRT_PANEL = [0.86, 0.87, 0.88];       // the wordmark's white panel (matte)
+const ION_BLUE = [0.018, 0.10, 0.42];       // ION's blue (front cap, roof, logo)
+// LEDs are over-bright vertex colours in matte, so a sign in the shade still glows
+const LED_AMBER = [2.4, 1.15, 0.12], LED_WHITE = [2.0, 1.95, 1.8];
+const ARTIC_LIVERIES = [GRT_WHITE];
 /** A builder seen through one colour: every WHITE part handed to it comes out `col`. */
 function tinted(b, col) {
   return new Proxy(b, { get(t, k) {
@@ -389,12 +406,49 @@ export const TYPES = {
   jetski: deriveSpec({ wheelbase: 1.8, len: 3.20, wid: 1.20, wheelR: 0.20, sill: 0.3, belt: 0.6, roof: 1.05, cab: [-0.1, 0.1], hand: 'jetski', boat: true, jetski: true, minDepth: 0.12, mass: 0.4, acc: 7.5, topKph: 105, brakeM: 30, latG: 0.9 }),
   boat: deriveSpec({ wheelbase: 3.2, len: 5.70, wid: 2.20, wheelR: 0.30, sill: 0.4, belt: 0.7, roof: 1.45, cab: [-0.2, 0.1], hand: 'boat', boat: true, minDepth: 0.3, cockpit: [0.12, -2.2, 0.9, 0.86], mass: 1.1, acc: 3.0, topKph: 70, brakeM: 45, latG: 0.6 }),
   pickup: deriveSpec({ rwd: true, wheelbase: 3.68,len: 5.92, wid: 2.05, wheelR: 0.42, sill: 0.48, belt: 1.26, roof: 1.98, cab: [-0.15, 0.22], hand: 'pickup', mass: 1.4, acc: 4.4, topKph: 185, brakeM: 45, latG: 0.77 }),
+  // Auto KW: the Ontario fleet. The pickup with a cap over its bed; the
+  // minivan; the compact crossover (RAV4 / CR-V / Rogue); the Outback-ish
+  // wagon; the compact sedan (Civic / Corolla, Canada's best sellers).
+  pickupcap: deriveSpec({ rwd: true, wheelbase: 3.68,len: 5.92, wid: 2.05, wheelR: 0.42, sill: 0.48, belt: 1.26, roof: 1.98, cab: [-0.15, 0.22], hand: 'pickup', cap: true, mass: 1.45, acc: 4.4, topKph: 180, brakeM: 45, latG: 0.76 }),
+  minivan: deriveSpec({ wheelbase: 3.03, len: 5.15, wid: 1.99, wheelR: 0.36, sill: 0.33, belt: 1.06, roof: 1.78, cab: [-0.30, 0.18], hand: 'minivan', mass: 1.25, acc: 3.6, topKph: 185, brakeM: 42, latG: 0.80 }),
+  crossover: deriveSpec({ wheelbase: 2.69, len: 4.60, wid: 1.86, wheelR: 0.37, sill: 0.44, belt: 1.25, roof: 1.72, cab: [-0.34, 0.20], hand: 'crossover', mass: 1.15, acc: 3.9, topKph: 190, brakeM: 41, latG: 0.81 }),
+  wagon: deriveSpec({ wheelbase: 2.75, len: 4.87, wid: 1.86, wheelR: 0.355, sill: 0.36, belt: 1.03, roof: 1.62, cab: [-0.30, 0.15], hand: 'wagon', mass: 1.1, acc: 3.8, topKph: 195, brakeM: 41, latG: 0.84 }),
+  compsedan: deriveSpec({ wheelbase: 2.74, len: 4.66, wid: 1.80, wheelR: 0.32, sill: 0.29, belt: 1.03, roof: 1.42, cab: [-0.26, 0.10], hand: 'compsedan', mass: 0.95, acc: 3.7, topKph: 200, brakeM: 40, latG: 0.86 }),
+  // Auto KW, round two (real figures: L x W x H, kerb mass; `mass` 1.0 is a
+  // ~1,600 kg sedan). Three-row SUV: Highlander 4.95 x 1.93 x 1.73 / 1,885 kg,
+  // Explorer 5.05 x 2.00 x 1.78 / 1,970 kg, 0-100 ~7 s.
+  suv3: deriveSpec({ wheelbase: 2.93, len: 5.05, wid: 2.00, wheelR: 0.38, sill: 0.46, belt: 1.25, roof: 1.74, cab: [-0.34, 0.20], hand: 'suv3', mass: 1.25, acc: 4.1, topKph: 195, brakeM: 42, latG: 0.80 }),
+  // Model Y: 4.75 x 1.92 x 1.62, 2,000 kg, 0-100 ~5 s (dual motor)
+  evy: deriveSpec({ wheelbase: 3.04, len: 4.75, wid: 1.92, wheelR: 0.37, sill: 0.25, belt: 1.00, roof: 1.62, cab: [-0.28, 0.12], hand: 'evy', ev: true, mass: 1.25, acc: 6.2, topKph: 217, brakeM: 37, latG: 0.90 }),
+  // Civic hatchback (11th gen): 4.55 x 1.80 x 1.42, 1,380 kg, 0-100 ~7.5 s (1.5T)
+  civic: deriveSpec({ wheelbase: 2.735, len: 4.55, wid: 1.80, wheelR: 0.33, sill: 0.27, belt: 0.97, roof: 1.42, cab: [-0.28, 0.10], hand: 'civic', mass: 0.86, acc: 4.0, topKph: 200, brakeM: 38, latG: 0.90 }),
+  // Wrangler JL Unlimited: 4.88 x 1.89 x 1.85, 2,000 kg, 0-100 ~7.5 s, limited
+  // to ~160 on its mud tyres, which also give up the grip (offroad: the grade
+  // and the grass don't slow it as they do a car)
+  jeep: deriveSpec({ wheelbase: 3.01, len: 4.88, wid: 1.89, wheelR: 0.40, sill: 0.60, belt: 1.12, roof: 1.85, cab: [-0.30, 0.18], hand: 'jeep', offroad: true, mass: 1.30, acc: 4.0, topKph: 160, brakeM: 46, latG: 0.72 }),
+  // F-350 crew cab long box DRW: 6.76 x 2.44 x 2.07, 3,120 kg, 6.7 diesel,
+  // 0-100 ~7.5 s empty; 2.44 is over the flares (the body is 2.03)
+  dually: deriveSpec({ rwd: true, wheelbase: 4.20, len: 6.76, wid: 2.44, wheelR: 0.42, sill: 0.52, belt: 1.30, roof: 2.03, cab: [-0.15, 0.22], hand: 'dually', diesel: true, mass: 1.95, acc: 4.5, topKph: 160, brakeM: 49, latG: 0.72 }),
+  // U-Haul 15 ft: E-series cutaway, ~7.2 x 2.4 x 3.35 (its 11 ft clearance), 3,680 kg empty
+  uhaul: deriveSpec({ wheelbase: 4.0, len: 7.2, wid: 2.40, wheelR: 0.40, sill: 0.84, belt: 1.42, roof: 3.35, cab: [0.14, 0.46], cargo: 2.4, hand: 'uhaul', livery: 0xf4f4f2, boxy: 2, mass: 2.4, acc: 3.2, topKph: 130, brakeM: 50, latG: 0.66 }),
+  // the semi: a sleeper tractor (~8.0 x 2.5 x 4.0, 8,200 kg) and a loaded 53 ft
+  // van; Ontario governs trucks at 105 km/h. Tractor colours by `liveries`.
+  semi: deriveSpec({ wheelbase: 5.6, len: 8.0, wid: 2.50, wheelR: 0.53, sill: 1.05, belt: 2.10, roof: 4.0, cab: [0.14, 0.50], hand: 'semi', liveries: [0xf2f3f1, 0xf2f3f1, 0x8f1218, 0x102b52, 0x111214, 0x5b5f63, 0x2c5a2e, 0xbcc2c8, 0x1f4f9a, 0x6d0f14], diesel: true, cargo: 4.0, towed: 'semiTrailer', boxy: 2, mass: 9.0, acc: 1.0, topKph: 105, brakeM: 62, latG: 0.55, minTurnR: 7.0 }),
+  semiTrailer: deriveSpec({ wheelbase: 1.24, len: 16.15, wid: 2.59, wheelR: 0.50, sill: 1.24, belt: 2.0, roof: 4.11, cab: [-0.48, -0.40], hand: 'semiTrailer', livery: 0xf3f4f2, diesel: true, trailer: true, boxy: 2, mass: 8.0, acc: 1.15, topKph: 105, brakeM: 62, latG: 0.55 }),
+  // the OPP's Police Interceptor Utility: the three-row SUV, highways only (traffic.js)
+  opp: deriveSpec({ wheelbase: 2.93, len: 5.05, wid: 2.00, wheelR: 0.38, sill: 0.46, belt: 1.25, roof: 1.74, cab: [-0.34, 0.20], hand: 'opp', police: true, livery: 0xf2f4f6, finish: 'twotone', paintVC: true, mass: 1.30, acc: 5.4, topKph: 225, brakeM: 38, latG: 0.86 }),
+  // Region of Waterloo's collection (2026): Emterra's garbage and green bin
+  // carts (CNG side-loaders), Miller Waste's blue boxes for Circular Materials
+  recycling: deriveSpec({ wheelbase: 4.6,len: 8.1, wid: 2.48, wheelR: 0.50, sill: 0.66, belt: 1.62, roof: 2.6, cab: [0.20, 0.46], cargo: 2.5, hand: 'recycling', livery: 0xf2f3f1, fleet: 'miller', boxy: 2, mass: 4.0, acc: 1.45, topKph: 90, brakeM: 55, latG: 0.61 }),
   van: deriveSpec({ wheelbase: 3.5,len: 5.26, wid: 2.00, wheelR: 0.35, sill: 0.36, belt: 1.10, roof: 2.28, cab: [-0.44, 0.30], hand: 'van', boxy: 2, mass: 1.5, acc: 2.9, topKph: 155, brakeM: 47, latG: 0.73 }),
-  taxi: deriveSpec({ rwd: true, wheelbase: 2.98,len: 4.76, wid: 1.85, wheelR: 0.33, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', taxi: true, livery: 0xf0b40c, mass: 1.0, acc: 3.8, topKph: 195, brakeM: 41, latG: 0.85 }),
-  police: deriveSpec({ rwd: true, wheelbase: 2.95,len: 4.98, wid: 1.92, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', police: true, livery: 0xf2f4f6, mass: 1.1, acc: 5.6, topKph: 230, brakeM: 37, latG: 0.93 }),
+  // Auto KW: Canada Post's and Purolator's vans (vanLivery)
+  postvan: deriveSpec({ wheelbase: 3.5,len: 5.26, wid: 2.00, wheelR: 0.35, sill: 0.36, belt: 1.10, roof: 2.28, cab: [-0.44, 0.30], hand: 'van', fleet: 'post', livery: 0xf3f4f5, boxy: 2, mass: 1.5, acc: 2.9, topKph: 155, brakeM: 47, latG: 0.73 }),
+  purovan: deriveSpec({ wheelbase: 3.5,len: 5.26, wid: 2.00, wheelR: 0.35, sill: 0.36, belt: 1.10, roof: 2.28, cab: [-0.44, 0.30], hand: 'van', fleet: 'puro', livery: 0xf3f4f5, boxy: 2, mass: 1.5, acc: 2.9, topKph: 155, brakeM: 47, latG: 0.73 }),
+  taxi: deriveSpec({ rwd: true, wheelbase: 2.98,len: 4.76, wid: 1.85, wheelR: 0.33, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', taxi: true, livery: 0xf1f2f2, mass: 1.0, acc: 3.8, topKph: 195, brakeM: 41, latG: 0.85 }),
+  police: deriveSpec({ rwd: true, wheelbase: 2.95,len: 4.98, wid: 1.92, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', police: true, livery: 0xf2f4f6, finish: 'twotone', paintVC: true, mass: 1.1, acc: 5.6, topKph: 230, brakeM: 37, latG: 0.93 }),
   // the articulated bus: the front section and the trailing rear (buildArticFront)
-  artic: deriveSpec({ wheelbase: 5.9, len: 10.6, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'artic', liveries: ARTIC_LIVERIES, bus: true, artic: true, towed: 'articRear', boxy: 3, mass: 6.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
-  articRear: deriveSpec({ wheelbase: 6.4, len: 7.6, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'articRear', liveries: ARTIC_LIVERIES, bus: true, trailer: true, boxy: 3, mass: 3.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
+  artic: deriveSpec({ wheelbase: 5.9, len: 10.6, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'artic', liveries: ARTIC_LIVERIES, grt: { sign: '201 iXpress Fischer-Hallman', fleet: '22301' }, bus: true, artic: true, towed: 'articRear', boxy: 3, mass: 6.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
+  articRear: deriveSpec({ wheelbase: 6.4, len: 7.6, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'articRear', liveries: ARTIC_LIVERIES, grt: { fleet: '22301' }, bus: true, trailer: true, boxy: 3, mass: 3.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
   // an unlimited hydroplane: a turbine three-pointer that runs on its sponsons (updateHydro)
   hydro: deriveSpec({ wheelbase: 6.0, len: 9.6, wid: 4.4, wheelR: 0.3, sill: 0.2, belt: 0.6, roof: 1.3, cab: [0.1, 0.35], hand: 'hydro', boat: true, hydro: true, engine: 'turbine', mass: 3.0, acc: 12, topKph: 250, brakeM: 60, latG: 1.6 }),
   // the Duck Tour's amphibious DUKW: a truck on land, a boat in the water (updateDuck)
@@ -407,14 +461,20 @@ export const TYPES = {
   // at ~65 km/h, slow off the line; `offroad` because tracks do not bog down.
   // `len` is the HULL: the gun overhangs nothing it collides with.
   tank: deriveSpec({ wheelbase: 4.6, len: 7.93, wid: 3.66, wheelR: 0.32, sill: 0.48, belt: 1.42, roof: 2.44, cab: [0, 0.3], hand: 'tank', tank: true, offroad: true, engine: 'tank', livery: 0xb9a27a, armor: 0.12, mass: 40, acc: 2.0, topKph: 65, brakeM: 45, latG: 0.6 }),
-  bus: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', liveries: METRO_TOPS, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
+  // Grand River Transit's 40 ft buses (see GRT_WHITE): one type per sign, since a
+  // type's geometry is shared -- Route 7 King, an iXpress, and the ION Bus.
+  bus: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', livery: GRT_WHITE, grt: { sign: '7 King', led: 'amber', fleet: '21714' }, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
+  busx: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', livery: GRT_WHITE, grt: { sign: '202 iXpress University', fleet: '22015' }, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
+  // Auto KW: the yellow school bus (buildSchoolBus)
+  schoolbus: deriveSpec({ wheelbase: 6.1, len: 10.9, wid: 2.44, wheelR: 0.50, sill: 0.62, belt: 1.55, roof: 3.05, cab: [-0.48, 0.48], hand: 'schoolbus', livery: 0xf2a900, bus: true, diesel: true, boxy: 3, mass: 4.2, acc: 1.5, topKph: 100, brakeM: 52, latG: 0.62 }),
+  ionbus: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', livery: GRT_WHITE, grt: { sign: '302 ION Bus', fleet: '21759', ion: true }, finish: 'twotone', paintVC: true, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
   boxtruck: deriveSpec({ wheelbase: 4.3,len: 7.5, wid: 2.38, wheelR: 0.46, sill: 0.62, belt: 1.55, roof: 2.55, cab: [0.14, 0.46], cargo: 2.55, hand: 'boxtruck', boxy: 2, mass: 3.0, acc: 2.5, topKph: 125, brakeM: 51, latG: 0.66 }),
   ambulance: deriveSpec({ wheelbase: 3.9,len: 6.3, wid: 2.28, wheelR: 0.42, sill: 0.56, belt: 1.42, roof: 2.35, cab: [0.16, 0.46], cargo: 2.25, hand: 'ambulance', livery: 0xf4f4f0, boxy: 2, emergency: true, mass: 2.4, acc: 3.2, topKph: 155, brakeM: 48, latG: 0.72 }),
   // The police tactical van (wanted 4+, traffic.js spawnPolice 'swat'): heavy,
   // so its rams shove you, and quick enough to keep up on surface streets.
   // `police` gives it the cruiser's V8 and the MISSION button (police missions).
   swat: deriveSpec({ wheelbase: 3.9, len: 6.6, wid: 2.40, wheelR: 0.45, sill: 0.58, belt: 1.46, roof: 2.45, cab: [0.16, 0.46], cargo: 2.3, hand: 'swat', livery: 0x1b2331, boxy: 2, police: true, swat: true, mass: 3.2, acc: 3.9, topKph: 160, brakeM: 48, latG: 0.76 }),
-  garbage: deriveSpec({ wheelbase: 4.6,len: 8.1, wid: 2.48, wheelR: 0.50, sill: 0.66, belt: 1.62, roof: 2.6, cab: [0.20, 0.46], cargo: 2.5, hand: 'garbage', livery: 0x2e6a3f, boxy: 2, mass: 4.0, acc: 1.45, topKph: 90, brakeM: 55, latG: 0.61 }),
+  garbage: deriveSpec({ wheelbase: 4.6,len: 8.1, wid: 2.48, wheelR: 0.50, sill: 0.66, belt: 1.62, roof: 2.6, cab: [0.20, 0.46], cargo: 2.5, hand: 'garbage', livery: 0xf2f3f1, fleet: 'emterra', boxy: 2, mass: 4.0, acc: 1.45, topKph: 90, brakeM: 55, latG: 0.61 }),
   // Fire apparatus (buildFireEngine / buildTiller): Seattle Fire's red. `fire`
   // marks them for the water cannon, the station aprons and the fire calls
   // (firecalls.js); `diesel` gives them the heavy diesel and its air brakes.
@@ -494,26 +554,59 @@ function deriveSpec(s) {
  * what a Seattle street holds, and they should be most of what spawns.
  */
 export const CIVILIAN_TYPES = [
-  ...Array(9).fill('sedan'),
-  ...Array(8).fill('suv'),
-  ...Array(7).fill('pickup'),
-  ...Array(4).fill('compact'),
-  ...Array(4).fill('hatch'),
-  ...Array(3).fill('ev'),
-  // (one of the three taxi slots is the articulated bus: in place, so every
-  // other slot, and the hash-picked kerbside cars, keep their types)
-  ...Array(2).fill('taxi'), 'artic',
-  ...Array(3).fill('van'),
-  ...Array(2).fill('muscle'),
-  ...Array(2).fill('sports'),
-  ...Array(2).fill('cruiser'),
-  'convertible', 'sportbike', 'boxtruck', 'bus', 'garbage',
+  // Auto KW: what drives past in Waterloo Region, weighted like Canadian
+  // registrations -- crossovers and SUVs first, then pickups (a third of them
+  // with a cap), the Civic / Corolla compact sedans, minivans, a few hatches,
+  // wagons, EVs and vans, and the occasional courier, cab, bus and bike (it is
+  // October). Kerbside parking hashes into this array, so changing it moves
+  // the parked cars -- and every bus is kept off the kerb (traffic.js NO_KERB).
+  //
+  // Round two: the SUVs split into two-row (`suv`) and three-row (`suv3`), a
+  // Wrangler, a Model Y beside the Model 3 (`evy`, `ev`), the Civic hatch, a
+  // dually (farm country), a U-Haul (it is a student town), Miller's recycling
+  // truck beside Emterra's. **No `artic`**: GRT has never run articulated
+  // buses (its garage was built for them; none were bought), so its slot is
+  // another `bus`. Highway-only types (the semi, the OPP) are not here:
+  // traffic.js swaps them in on hwy edges.
+  ...Array(10).fill('crossover'),
+  ...Array(4).fill('suv'),
+  ...Array(3).fill('suv3'),
+  'jeep',
+  ...Array(6).fill('pickup'),
+  ...Array(3).fill('pickupcap'),
+  'dually',
+  ...Array(6).fill('compsedan'),
+  ...Array(3).fill('sedan'),
+  ...Array(5).fill('minivan'),
+  ...Array(2).fill('hatch'),
+  ...Array(2).fill('civic'),
+  'compact',
+  ...Array(2).fill('wagon'),
+  ...Array(2).fill('ev'), ...Array(2).fill('evy'),
+  ...Array(2).fill('van'), 'postvan', 'purovan', 'uhaul',
+  'muscle', 'sports', 'convertible', 'cruiser', 'sportbike',
+  'taxi', 'bus', 'busx', 'bus', 'schoolbus', 'boxtruck', 'garbage', 'recycling',
 ];
 
+// Auto KW: the colours of a Canadian car park (North American popularity
+// reports, 2023-25): white a quarter, black and grey a fifth each, silver,
+// then blue and red, a little brown/beige and green, almost nothing bright.
+// Weighted by repetition, 50 entries.
 export const CAR_COLORS = [
-  0x9fa4a9, 0x1b1d20, 0xe6e8ea, 0x6d0f14, 0x102b52, 0x14472f, 0x7a5a22,
-  0x2f3a44, 0x9c968c, 0x4a2058, 0xb85f0c, 0x0d5b66, 0x5b5f63, 0xbcc2c8,
-  0x243b6b, 0x7d2418,
+  // white 13: plain, pearl, ivory-ish
+  0xf2f3f1, 0xf2f3f1, 0xf2f3f1, 0xf2f3f1, 0xeeefec, 0xeeefec, 0xeeefec, 0xe9e8e2, 0xe9e8e2, 0xf5f5f3, 0xf5f5f3, 0xe4e5e2, 0xe4e5e2,
+  // black 10
+  0x111214, 0x111214, 0x111214, 0x16171a, 0x16171a, 0x16171a, 0x1b1d20, 0x1b1d20, 0x0d0e10, 0x0d0e10,
+  // grey 10: gunmetal to light
+  0x5b5f63, 0x5b5f63, 0x6e7276, 0x6e7276, 0x3e4246, 0x3e4246, 0x4a4e52, 0x4a4e52, 0x878b8e, 0x2f3236,
+  // silver 5
+  0xbcc2c8, 0xbcc2c8, 0xa9aeb3, 0xa9aeb3, 0x9fa4a9,
+  // blue 5: navy, steel, one bright
+  0x102b52, 0x243b6b, 0x1a2a40, 0x3a5577, 0x1f4f9a,
+  // red 4
+  0x6d0f14, 0x8f1218, 0x7d2418, 0x5a0d10,
+  // beige / brown 1, green 1, orange 1
+  0x7a6a55, 0x2c3b2e, 0xb85f0c,
 ];
 
 // ---------------------------------------------------------------------------
@@ -1239,7 +1332,7 @@ function buildSports(spec, paint, trim, matte) {
     trim.box(sx * 0.40, 0.605, rz - 0.03, 0.11, 0.05, 0.022, 0, WHITE);   // reversing lamp
     hole(trim, matte, sx * PIPE[0], PIPE[1], rz, 0.055, 0.12, -1);
   }
-  trim.box(0, 0.492, rz - 0.028, 0.42, 0.135, 0.02, 0, PLATE);
+  plateBox(trim, 0, 0.492, rz - 0.028, 0.42, 0.135, 0.02);
   // diffuser: a ramp under the tail with fins standing in it
   matte.patch([
     [[-0.56, 0.17, -1.82], [0, 0.17, -1.82], [0.56, 0.17, -1.82]],
@@ -1458,7 +1551,7 @@ function buildMuscle(spec, paint, trim, matte) {
   // Chrome bumper. A muscle car's is a separate bright bar standing off the
   // bodywork, not a colour-keyed moulding.
   trim.box(0, 0.372, nose + 0.012, 1.56, 0.098, 0.13, 0, CHROME);
-  trim.box(0, 0.400, nose + 0.05, 0.42, 0.135, 0.02, 0, PLATE);
+  plateBox(trim, 0, 0.400, nose + 0.05, 0.42, 0.135, 0.02);
 
   // --- rear ----------------------------------------------------------------
   for (const sx of [-1, 1]) {
@@ -1472,7 +1565,7 @@ function buildMuscle(spec, paint, trim, matte) {
     hole(trim, matte, sx * PIPE[0], PIPE[1], tail, 0.052, 0.12, -1);
   }
   trim.box(0, 0.372, tail - 0.012, 1.56, 0.098, 0.13, 0, CHROME);
-  trim.box(0, 0.560, tail - 0.028, 0.42, 0.135, 0.02, 0, PLATE);
+  plateBox(trim, 0, 0.560, tail - 0.028, 0.42, 0.135, 0.02);
   // ducktail lip along the trailing edge of the boot lid
   paint.box(0, beltY(-2.28) - 0.01, -2.30, geom(-2.30).tw * 1.9, 0.055, 0.20, 0, WHITE);
 
@@ -1675,7 +1768,7 @@ function buildSedan(spec, paint, trim, matte) {
   // low enough that the nose does not end in a shelf.
   trim.box(0, 0.610, nose - 0.005, 1.42, 0.026, 0.05, 0, CHROME);
   matte.box(0, 0.392, nose - 0.10, 1.54, 0.040, 0.24, 0, PLASTIC);
-  trim.box(0, 0.430, nose - 0.028, 0.42, 0.135, 0.02, 0, PLATE);
+  plateBox(trim, 0, 0.430, nose - 0.028, 0.42, 0.135, 0.02);
 
   // --- rear: one lamp panel across the full width --------------------------
   const tp = pocket(paint, matte, TAILBAR[0], TAILBAR[1], tail, TAILBAR[2], TAILBAR[3], 0.075, -1,
@@ -1690,7 +1783,7 @@ function buildSedan(spec, paint, trim, matte) {
   trim.box(0, 0.760, tail + 0.026, tp.hw * 0.62, 0.048, 0.03, 0, CHROME);
   pocket(paint, matte, PLATEREC[0], PLATEREC[1], tail, PLATEREC[2], PLATEREC[3], 0.05, -1,
     { rim: 0.024, rimCol: CHROME });
-  trim.box(0, 0.500, tail - 0.030, 0.42, 0.135, 0.02, 0, PLATE);
+  plateBox(trim, 0, 0.500, tail - 0.030, 0.42, 0.135, 0.02);
   matte.box(0, 0.392, tail + 0.10, 1.54, 0.040, 0.24, 0, PLASTIC);
   // Boot shut line across the deck, so the lid is a lid.
   matte.box(0, beltY(-1.86) + 0.002, -1.86, geom(-1.86).tw * 1.86, 0.008, 0.014, 0, [0.15, 0.16, 0.17]);
@@ -1969,7 +2062,7 @@ function buildCharger(spec, paint, trim, matte) {
   matte.box(0, 0.300, front.z - 0.09, 1.62, 0.022, 0.16, 0, PLASTIC);
 
   // --- rear: the plate, two big pipes, the ducktail -----------------------------
-  trim.box(0, 0.555, rear.z - 0.022, 0.42, 0.125, 0.02, 0, PLATE);
+  plateBox(trim, 0, 0.555, rear.z - 0.022, 0.42, 0.125, 0.02);
   for (const sx of [-1, 1]) hole(trim, matte, sx * 0.60, 0.40, rear.z - 0.004, 0.064, 0.12, -1, { seg: 16 });
   matte.box(0, 0.31, rear.z + 0.12, 1.50, 0.06, 0.22, 0, PLASTIC);   // diffuser
   paint.box(0, rear.top - 0.012, rear.z + 0.12, 1.42, 0.034, 0.09, 0, TIG_BLACK);
@@ -2552,7 +2645,7 @@ function buildSuv(spec, paint, trim, matte) {
   // gesture at the off-roader it is styled after.
   matte.box(0, 0.560, nose - 0.11, 1.62, 0.075, 0.26, 0, PLASTIC);
   trim.box(0, 0.508, nose - 0.16, 0.98, 0.030, 0.26, 0, [0.55, 0.57, 0.60]);
-  trim.box(0, 0.610, nose - 0.030, 0.42, 0.135, 0.02, 0, PLATE);
+  plateBox(trim, 0, 0.642, nose - 0.030, 0.42, 0.135, 0.02);   // (clear of the cladding under it)
 
   // --- rear: tall lamps up the corners of the tailgate ----------------------
   for (const sx of [-1, 1]) {
@@ -2563,7 +2656,7 @@ function buildSuv(spec, paint, trim, matte) {
   }
   pocket(paint, matte, TPLATE[0], TPLATE[1], tail, TPLATE[2], TPLATE[3], 0.05, -1,
     { rim: 0.024, rimCol: PLASTIC });
-  trim.box(0, 0.710, tail - 0.030, 0.42, 0.135, 0.02, 0, PLATE);
+  plateBox(trim, 0, 0.710, tail - 0.030, 0.42, 0.135, 0.02);
   matte.box(0, 0.560, tail + 0.11, 1.62, 0.075, 0.26, 0, PLASTIC);
   trim.box(0, 0.508, tail + 0.16, 0.98, 0.030, 0.26, 0, [0.55, 0.57, 0.60]);
   for (const sx of [-1, 1]) hole(trim, matte, sx * 0.420, 0.470, tail + 0.06, 0.045, 0.10, -1);
@@ -2791,8 +2884,8 @@ function buildPickup(spec, paint, trim, matte) {
   };
   stepBumper(nose, 1);
   stepBumper(tail, -1);
-  trim.box(0, 0.640, nose + 0.114, 0.44, 0.145, 0.02, 0, PLATE);
-  trim.box(0, 0.640, tail - 0.114, 0.44, 0.145, 0.02, 0, PLATE);
+  plateBox(trim, 0, 0.640, nose + 0.114, 0.44, 0.145, 0.02);
+  plateBox(trim, 0, 0.640, tail - 0.114, 0.44, 0.145, 0.02);
 
   // --- rear lamps: tall units up the corners, past the bed rail ------------
   for (const sx of [-1, 1]) {
@@ -2853,6 +2946,24 @@ function buildPickup(spec, paint, trim, matte) {
     matte.box(sx * (geom(-1.10).w + 0.004), 0.900, -1.10, 0.014, 0.150, 0.190, 0, [0.20, 0.21, 0.23]);
   }
 
+  // Auto KW: a fibreglass CAP over the bed (`spec.cap`), cab-high, in the
+  // truck's paint -- half the pickups on a Waterloo Region concession road
+  // carry one. Tinted side windows, a lift-up rear window, a third brake lamp.
+  if (spec.cap) {
+    const y0 = bedY + railH, y1 = spec.roof - 0.035, cx = wallX + 0.030;
+    const zf = bedF - 0.03, zr = bedR + 0.015, mid = (zf + zr) / 2, len = zf - zr;
+    paint.box(0, y0, mid, cx * 2, y1 - y0 - 0.05, len, 0, WHITE);
+    paint.box(0, y1 - 0.05, mid - 0.02, cx * 2 - 0.08, 0.05, len - 0.08, 0, WHITE);   // the roof's rounded shoulder, stepped
+    const UV = [0, 0, 1, 0, 1, 1, 0, 1], gy0 = y0 + 0.07, gy1 = y1 - 0.11;
+    for (const sx of [-1, 1]) {
+      const x = sx * (cx + 0.004);
+      trim.quad([x, gy0, zf - 0.20], [x, gy0, zr + 0.18], [x, gy1, zr + 0.24], [x, gy1, zf - 0.16], [sx, 0, 0], UV, GLASS_TINT);
+    }
+    const zb = zr - 0.004;
+    trim.quad([-cx + 0.07, gy0, zb], [cx - 0.07, gy0, zb], [cx - 0.09, gy1 + 0.04, zb], [-cx + 0.09, gy1 + 0.04, zb], [0, 0, -1], UV, GLASS_TINT);
+    trim.box(0, y1 - 0.045, zb - 0.006, 0.26, 0.035, 0.012, 0, TAILC);
+    matte.box(0, y0 - 0.004, mid, cx * 2 + 0.01, 0.012, len + 0.01, 0, PLASTIC);    // the seal on the rails
+  }
   return wheels;
 }
 
@@ -3073,7 +3184,7 @@ function buildCruiser(spec, paint, trim, matte) {
   // reaches -- placed by eye they hang in the air behind it.
   trim.box(0, 0.612, -1.198, 0.095, 0.060, 0.030, 0, TAILC);
   matte.box(0, 0.478, -1.205, 0.185, 0.125, 0.014, 0, PLASTIC);
-  trim.box(0, 0.482, -1.214, 0.160, 0.100, 0.014, 0, PLATE);
+  plateBox(trim, 0, 0.482, -1.214, 0.160, 0.100, 0.014);
 
   return wheels;
 }
@@ -3284,7 +3395,7 @@ function buildSportbike(spec, paint, trim, matte) {
   // Plate on a hanger off the swingarm side, which is where an undertail
   // exhaust leaves room for it.
   matte.tube([0, 0.930, -0.700], [0, 0.800, -0.775], 0.012, 6, PLASTIC, true);
-  trim.box(0, 0.760, -0.790, 0.115, 0.075, 0.012, 0, PLATE);
+  plateBox(trim, 0, 0.760, -0.790, 0.115, 0.075, 0.012);
 
   // --- single-sided swingarm, rear sets ------------------------------------
   // Only one arm, which is what the name means: from the other side the wheel
@@ -4316,7 +4427,7 @@ function buildConvertible(spec, paint, trim, matte) {
   }
   pocket(paint, matte, INTAKE[0], INTAKE[1], nose, INTAKE[2], INTAKE[3], 0.11, 1, { rim: 0.024 });
   trim.box(0, 0.370, nose + 0.008, 1.52, 0.085, 0.12, 0, CHROME);
-  trim.box(0, 0.395, nose + 0.046, 0.42, 0.135, 0.02, 0, PLATE);
+  plateBox(trim, 0, 0.395, nose + 0.046, 0.42, 0.135, 0.02);
 
   // --- rear ----------------------------------------------------------------
   for (const sx of [-1, 1]) {
@@ -4327,7 +4438,7 @@ function buildConvertible(spec, paint, trim, matte) {
     hole(trim, matte, sx * PIPE[0], PIPE[1], tail, 0.050, 0.12, -1);
   }
   trim.box(0, 0.370, tail - 0.008, 1.52, 0.085, 0.12, 0, CHROME);
-  trim.box(0, 0.560, tail - 0.026, 0.42, 0.135, 0.02, 0, PLATE);
+  plateBox(trim, 0, 0.560, tail - 0.026, 0.42, 0.135, 0.02);
 
   // --- flanks --------------------------------------------------------------
   for (const sx of [-1, 1]) {
@@ -5565,7 +5676,7 @@ function greenhouse(paint, trim, matte, g) {
   const {
     cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY,
     wScrB, wScrT, wRoof, wRearT, wRear, wGlassT, wGlassB,
-    sgFB, sgFT, sgRT, sgRB, deck,
+    sgFB, sgFT, sgRT, sgRB, deck, tintFrom = null,
     bPillars = [0.42], pillarInto = paint, pillarCol = WHITE, roofInto = paint, roofCol = WHITE,
     scrBow = 0.026, scrWrap = 0.085, rearBow = 0.012, rearWrap = 0.035, crown = 0.010,
   } = g;
@@ -5606,7 +5717,7 @@ function greenhouse(paint, trim, matte, g) {
     }
     rearRows.push(row);
   }
-  trim.patch(rearRows, GLASS, [0, 0.7, -1]);
+  trim.patch(rearRows, tintFrom !== null ? GLASS_TINT : GLASS, [0, 0.7, -1]);
   // A hatch's screen stops short of the deck and the tailgate carries on in
   // paint below it. Run the glass all the way down instead and the whole back
   // of the car is one black slab -- which is what the first pass of the
@@ -5627,18 +5738,23 @@ function greenhouse(paint, trim, matte, g) {
     [deck[0], Math.max(deck[1], rearY - 0.03), rearZ],
   ];
   for (const sx of [-1, 1]) {
-    const rows = [];
-    for (let i = 0; i <= 2; i++) {
-      const t = i / 2, row = [];
-      for (let j = 0; j <= 6; j++) {
-        const u = j / 6;
-        const bz = lp(sgFB[0], sgRB[0], u), by = lp(sgFB[1], sgRB[1], u);
-        const tz = lp(sgFT[0], sgRT[0], u), ty = lp(sgFT[1], sgRT[1], u);
-        row.push([sx * lp(wGlassB, wGlassT, t), lp(by, ty, t), lp(bz, tz, t)]);
+    // (Auto KW: `tintFrom` splits the side glass at that share of its length:
+    // clear ahead, privacy-tinted behind -- a minivan's)
+    const spans = tintFrom !== null ? [[0, tintFrom, GLASS], [tintFrom, 1, GLASS_TINT]] : [[0, 1, GLASS]];
+    for (const [u0, u1, gc] of spans) {
+      const rows = [], nj = Math.max(2, Math.round(6 * (u1 - u0)));
+      for (let i = 0; i <= 2; i++) {
+        const t = i / 2, row = [];
+        for (let j = 0; j <= nj; j++) {
+          const u = u0 + ((u1 - u0) * j) / nj;
+          const bz = lp(sgFB[0], sgRB[0], u), by = lp(sgFB[1], sgRB[1], u);
+          const tz = lp(sgFT[0], sgRT[0], u), ty = lp(sgFT[1], sgRT[1], u);
+          row.push([sx * lp(wGlassB, wGlassT, t), lp(by, ty, t), lp(bz, tz, t)]);
+        }
+        rows.push(row);
       }
-      rows.push(row);
+      trim.patch(rows, gc, [sx, 0, 0]);
     }
-    trim.patch(rows, GLASS, [sx, 0, 0]);
     for (const u of bPillars) {
       const bz0 = lp(sgFB[0], sgRB[0], u), bz1 = lp(sgFT[0], sgRT[0], u);
       matte.patch([
@@ -6005,6 +6121,70 @@ const SMALL_LOOKS = {
     },
     doors: [0.62, -0.60],
   },
+  // Auto KW: the MINIVAN -- Grand Caravan / Sienna / Odyssey, the family car
+  // of every Waterloo Region driveway: one box, a short sloped nose, a long
+  // greenhouse on three pillars, a near-vertical tailgate, three seat rows.
+  minivan: {
+    zF: 1.43, zR: -1.60,                       // 3.03 m wheelbase on 5.15 m
+    halfW: [[-2.575, 0.90], [-2.35, 0.97], [-1.60, 1.00], [-0.60, 0.98], [0.60, 0.98], [1.43, 1.00], [2.20, 0.95], [2.575, 0.86]],
+    sillY: [[-2.575, 0.45], [-2.30, 0.36], [-0.60, 0.33], [0.60, 0.33], [2.20, 0.36], [2.575, 0.42]],
+    beltY: [[-2.575, 1.05], [-2.30, 1.07], [-1.60, 1.07], [-0.50, 1.06], [0.50, 1.05], [1.00, 1.03], [1.50, 0.99], [2.10, 0.92], [2.575, 0.84]],
+    tuckAt: [[-2.575, 0.91], [-1.60, 0.96], [-0.60, 0.92], [0.60, 0.92], [1.43, 0.96], [2.575, 0.91]],
+    topAt: [[-2.575, 0.90], [-2.30, 0.95], [-1.20, 0.96], [1.00, 0.96], [1.70, 0.90], [2.20, 0.84], [2.575, 0.74]],
+    core: { archR: 0.55, archGap: 0.05, creaseAt: 0.55, tumble: 0.95, deckDrop: 0.028, lipOut: 0.030, endRound: 0.18, endMin: 0.90 },
+    tw: 0.235,
+    gh: {
+      cowlZ: 1.30, scrZ: 0.12, backZ: -2.30, rearZ: -2.47, rearY: 1.12,
+      wScrB: 0.84, wScrT: 0.74, wRoof: 0.765, wRearT: 0.74, wRear: 0.80, wGlassT: 0.76, wGlassB: 0.86,
+      sgFB: [1.15, 1.025], sgFT: [0.14, 1.735], sgRT: [-2.20, 1.730], sgRB: [-2.30, 1.080],
+      bPillars: [0.30, 0.68], rearWrap: 0.030, rows: [-0.15, -1.05, -1.85],
+      tintFrom: 0.30,                          // privacy glass behind the B-pillar, and the tailgate's
+    },
+    doors: [1.16, 0.10, -1.10],
+    slider: [0.10, -1.10],
+  },
+  // Auto KW: the WAGON -- an Outback, the other car of a Waterloo Region
+  // driveway: a long roof to the tailgate on rails, a raised stance, cladding.
+  wagon: {
+    zF: 1.35, zR: -1.40,                       // 2.75 m wheelbase on 4.87 m
+    halfW: [[-2.435, 0.88], [-2.20, 0.96], [-1.40, 1.00], [-0.50, 0.97], [0.50, 0.97], [1.35, 1.00], [2.00, 0.95], [2.435, 0.86]],
+    sillY: [[-2.435, 0.46], [-2.15, 0.38], [-0.60, 0.36], [0.60, 0.36], [2.00, 0.38], [2.435, 0.44]],
+    beltY: [[-2.435, 1.02], [-2.20, 1.04], [-1.40, 1.04], [-0.50, 1.02], [0.40, 1.005], [0.90, 0.99], [1.40, 0.95], [1.95, 0.88], [2.435, 0.82]],
+    tuckAt: [[-2.435, 0.90], [-1.40, 0.95], [-0.60, 0.90], [0.60, 0.90], [1.35, 0.95], [2.435, 0.90]],
+    topAt: [[-2.435, 0.88], [-2.20, 0.93], [-1.20, 0.95], [1.00, 0.95], [1.60, 0.90], [2.05, 0.84], [2.435, 0.74]],
+    core: { archR: 0.55, archGap: 0.06, archPow: 2.4, creaseAt: 0.58, tumble: 0.93, deckDrop: 0.028, lipOut: 0.040, endRound: 0.16, endMin: 0.90, lipCol: [0.11, 0.12, 0.13] },
+    tw: 0.225,
+    gh: {
+      cowlZ: 1.05, scrZ: 0.05, backZ: -1.85, rearZ: -2.22, rearY: 1.12,
+      wScrB: 0.79, wScrT: 0.67, wRoof: 0.69, wRearT: 0.66, wRear: 0.74, wGlassT: 0.665, wGlassB: 0.78,
+      sgFB: [0.98, 0.99], sgFT: [0.07, 1.575], sgRT: [-1.80, 1.570], sgRB: [-2.05, 1.045],
+      bPillars: [0.33, 0.70], rearWrap: 0.030, rows: [-0.20, -1.05],
+    },
+    doors: [1.00, -0.05, -1.10],
+    rails: true,
+  },
+  // Auto KW: the CIVIC HATCH (11th gen, 4.55 x 1.80 x 1.42): a long low nose,
+  // a fastback roof running into the hatch glass, a ducktail on the hatch, a
+  // black diffuser round a centre exhaust, black wheels -- the Sport.
+  civic: {
+    zF: 1.36, zR: -1.375,                      // 2.735 m wheelbase on 4.55 m
+    halfW: [[-2.275, 0.86], [-2.05, 0.95], [-1.375, 1.00], [-0.55, 0.965], [0.55, 0.965], [1.36, 1.00], [1.95, 0.94], [2.275, 0.84]],
+    sillY: [[-2.275, 0.40], [-1.95, 0.30], [-0.60, 0.27], [0.60, 0.27], [1.90, 0.30], [2.275, 0.35]],
+    beltY: [[-2.275, 0.97], [-2.00, 0.99], [-1.375, 0.99], [-0.50, 0.965], [0.40, 0.94], [0.90, 0.92], [1.40, 0.87], [1.90, 0.80], [2.275, 0.72]],
+    tuckAt: [[-2.275, 0.90], [-1.375, 0.95], [-0.60, 0.90], [0.60, 0.90], [1.36, 0.95], [2.275, 0.90]],
+    topAt: [[-2.275, 0.86], [-2.00, 0.93], [-1.00, 0.95], [0.90, 0.95], [1.50, 0.90], [1.95, 0.83], [2.275, 0.72]],
+    core: { archR: 0.51, archGap: 0.045, creaseAt: 0.62, tumble: 0.92, deckDrop: 0.028, lipOut: 0.030, endRound: 0.15, endMin: 0.90 },
+    tw: 0.225,
+    gh: {
+      cowlZ: 0.98, scrZ: -0.12, backZ: -0.78, rearZ: -1.98, rearY: 1.03,
+      wScrB: 0.76, wScrT: 0.63, wRoof: 0.645, wRearT: 0.62, wRear: 0.74, wGlassT: 0.615, wGlassB: 0.745,
+      sgFB: [0.88, 0.975], sgFT: [-0.08, 1.395], sgRT: [-0.86, 1.375], sgRB: [-1.68, 1.005],
+      bPillars: [0.43], rearWrap: 0.030, rows: [-0.22, -1.02],
+      pillarBlack: true,
+    },
+    doors: [0.88, -0.30, -1.22],
+    sport: true,
+  },
 };
 
 function buildSmallCar(spec, paint, trim, matte, S) {
@@ -6014,13 +6194,16 @@ function buildSmallCar(spec, paint, trim, matte, S) {
   const halfW = curve(S.halfW), sillY = curve(S.sillY), beltY = curve(S.beltY);
   const core = bodyCore(spec, paint, matte, {
     halfW, sillY, beltY, tuckAt: curve(S.tuckAt), topAt: curve(S.topAt), zF, zR, ...S.core,
+    ...(S.core.lipCol ? { lipInto: matte } : {}),   // clad arches (the wagon's)
   });
   const { geom, endProf } = core;
   const round = S === SMALL_LOOKS.compact;
 
   const tw = S.tw;
   const wx = geom(zF).wb - tw / 2 + 0.02, wxR = geom(zR).wb - tw / 2 + 0.02;
-  const wheels = [[-wx, wr, zF, wr, tw], [wx, wr, zF, wr, tw], [-wxR, wr, zR, wr, tw], [wxR, wr, zR, wr, tw]];
+  const wk = S.sport ? 'black' : undefined;
+  const wheels = [[-wx, wr, zF, wr, tw, undefined, false, wk], [wx, wr, zF, wr, tw, undefined, false, wk],
+    [-wxR, wr, zR, wr, tw, undefined, false, wk], [wxR, wr, zR, wr, tw, undefined, false, wk]];
 
   const G = S.gh;
   const BLACKOUT = [0.065, 0.07, 0.075];
@@ -6064,7 +6247,7 @@ function buildSmallCar(spec, paint, trim, matte, S) {
     pocket(paint, matte, 0, INTAKE[1], nose, INTAKE[2], INTAKE[3], 0.10, 1, { rim: 0.02, rimCol: PLASTIC });
   }
   matte.box(0, yN - 0.03, nose - 0.17, geom(nose - 0.17).wb * 1.6, 0.050, 0.20, 0, PLASTIC);   // chin, tucked under
-  trim.box(0, yN + 0.155, nose + 0.004, 0.40, 0.11, 0.02, 0, PLATE);
+  plateBox(trim, 0, yN + 0.155, nose + 0.004, 0.40, 0.11, 0.02);
 
   // --- rear -------------------------------------------------------------------
   const yT = sillY(tail), bT = beltY(tail);
@@ -6078,7 +6261,7 @@ function buildSmallCar(spec, paint, trim, matte, S) {
     hole(trim, matte, sx * 0.40, yT + 0.03, tail + 0.03, 0.036, 0.09, -1);
   }
   pocket(paint, matte, 0, TPLATE[1], tail, TPLATE[2], TPLATE[3], 0.04, -1, { rim: 0.018, rimCol: PLASTIC });
-  trim.box(0, TPLATE[1] - 0.062, tail - 0.024, 0.40, 0.12, 0.02, 0, PLATE);
+  plateBox(trim, 0, TPLATE[1] - 0.062, tail - 0.024, 0.40, 0.12, 0.02);
   matte.box(0, yT - 0.03, tail + 0.17, geom(tail + 0.17).wb * 1.6, 0.070, 0.20, 0, PLASTIC);    // valance, tucked under
   // Tailgate shut line across the back, and a spoiler over the screen.
   matte.box(0, bT - 0.004, tail + 0.03, geom(tail + 0.03).tw * 1.6, 0.010, 0.012, 0, [0.13, 0.14, 0.15]);
@@ -6096,6 +6279,32 @@ function buildSmallCar(spec, paint, trim, matte, S) {
     }
     doorMirror(paint, trim, sx, G.sgFB, G.wGlassB, 0.13);
     trim.box(sx * (geom(zF + 0.52).w + 0.004), geom(zF + 0.52).yc + 0.02, zF + 0.52, 0.01, 0.025, 0.07, 0, AMBER);
+  }
+  // Auto KW: the minivan's sliding-door track along the rear quarter, under
+  // the glass, and the wagon's roof rails standing on their feet.
+  if (S.slider) {
+    for (const sx of [-1, 1]) {
+      const [za, zb] = [S.slider[1] - 0.05, G.sgRB[0] + 0.12], y = G.sgRB[1] - 0.045;
+      matte.box(sx * (geom((za + zb) / 2).tw + 0.004), y, (za + zb) / 2, 0.012, 0.022, za - zb, 0, [0.08, 0.085, 0.09]);
+    }
+  }
+  if (S.rails) {
+    for (const sx of [-1, 1]) {
+      const rz = (G.scrZ + G.backZ) / 2, rl = (G.scrZ - G.backZ) * 0.92;
+      matte.box(sx * G.wRoof * 0.86, spec.roof + 0.018, rz, 0.045, 0.040, rl, 0, [0.15, 0.16, 0.17]);
+      for (const fz of [rz + rl / 2 - 0.06, rz - rl / 2 + 0.06]) matte.box(sx * G.wRoof * 0.86, spec.roof - 0.02, fz, 0.04, 0.042, 0.10, 0, [0.15, 0.16, 0.17]);
+    }
+  }
+  // Auto KW: the Civic's sport bits: the ducktail at the foot of the hatch
+  // glass, the black diffuser and its centre exhaust, the black side sills
+  if (S.sport) {
+    const zt = G.rearZ - 0.02, hw = geom(zt).tw * 0.95;
+    paint.patch([[[-hw, G.rearY - 0.005, zt + 0.05], [hw, G.rearY - 0.005, zt + 0.05]],
+      [[-hw, G.rearY + 0.035, zt - 0.06], [hw, G.rearY + 0.035, zt - 0.06]]], WHITE, [0, 1, -0.3]);
+    matte.box(0, yT + 0.02, tail + 0.05, geom(tail + 0.1).wb * 1.5, 0.09, 0.10, 0, [0.03, 0.03, 0.035]);
+    trim.tube([-0.09, yT + 0.08, tail + 0.12], [-0.09, yT + 0.08, tail - 0.01], 0.042, 10, CHROME, true);
+    trim.tube([0.09, yT + 0.08, tail + 0.12], [0.09, yT + 0.08, tail - 0.01], 0.042, 10, CHROME, true);
+    for (const sx of [-1, 1]) matte.box(sx * (geom(0).wb + 0.008), sillY(0) - 0.02, (zF + zR) / 2, 0.03, 0.06, (zF - zR) - 0.9, 0, [0.03, 0.03, 0.035]);
   }
   // Shark-fin aerial over the rear of the roof.
   for (const sx of [-1, 1]) {
@@ -6173,7 +6382,7 @@ function buildEv(spec, paint, trim, matte) {
   trim.box(0, LAMP_A[1] + 0.012, nose + 0.004, (LAMP_A[0] - LAMP_A[2]) * 2, 0.012, 0.010, 0, WHITE);   // light bar
   pocket(paint, matte, 0, INTAKE[1], nose, INTAKE[2], INTAKE[3], 0.08, 1, { rim: 0.016, rimCol: PLASTIC });
   matte.box(0, yN - 0.035, nose - 0.17, geom(nose - 0.17).wb * 1.5, 0.045, 0.20, 0, PLASTIC);
-  trim.box(0, yN + 0.150, nose + 0.004, 0.40, 0.11, 0.02, 0, PLATE);
+  plateBox(trim, 0, yN + 0.150, nose + 0.004, 0.40, 0.11, 0.02);
 
   // --- rear: one lamp bar across the tail, a ducktail over it ------------------
   const yT = sillY(tail), bT = beltY(tail);
@@ -6183,7 +6392,7 @@ function buildEv(spec, paint, trim, matte) {
   trim.box(0, TAILBAR[1] - tp.hh * 0.95, tail + 0.016, tp.hw * 1.96, tp.hh * 1.9, 0.020, 0, TAILC);
   for (const sx of [-1, 1]) onShell(core, trim, sx, tail + 0.02, tail + 0.14, 6, 8, TAILC, 0.006, 2);
   pocket(paint, matte, 0, TPLATE[1], tail, TPLATE[2], TPLATE[3], 0.04, -1, { rim: 0.016, rimCol: PLASTIC });
-  trim.box(0, TPLATE[1] - 0.062, tail - 0.022, 0.40, 0.12, 0.02, 0, PLATE);
+  plateBox(trim, 0, TPLATE[1] - 0.062, tail - 0.022, 0.40, 0.12, 0.02);
   // Ducktail rather than a wing -- it belongs to the bodywork, so it is painted
   // with the car instead of bolted on in a contrast colour.
   paint.box(0, beltY(tail + 0.14) - 0.012, tail + 0.13, geom(tail + 0.13).tw * 1.80, 0.034, 0.20, 0, WHITE);
@@ -6407,7 +6616,7 @@ function buildWedge(spec, paint, trim, matte) {
     matte.quad([-xl, 0.69, tail - 0.002], [xl, 0.69, tail - 0.002], [xl, 0.70, tail - 0.002], [-xl, 0.70, tail - 0.002],
       [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], WEDGE_SEAM);
   }
-  trim.box(0, 0.78, tail - 0.006, 0.31, 0.155, 0.012, 0, PLATE);
+  plateBox(trim, 0, 0.78, tail - 0.006, 0.31, 0.155, 0.012);
   wFacet(matte, [[-xs(TAIL_LO), TAIL_LO, tail], [xs(TAIL_LO), TAIL_LO, tail], [xs(SILL), SILL, BUMP], [-xs(SILL), SILL, BUMP]], WEDGE_CLAD, [0, -0.5, -1]);
 
   // --- underside, out to the wheel wells ---------------------------------------
@@ -6507,15 +6716,24 @@ function buildWedge(spec, paint, trim, matte) {
  * The wheels are scaled in POSITION only, because they are built round by
  * `addWheel` afterwards; squashing them would make them ellipses.
  */
-function scaledBuild(build, refLen, refWid) {
+//
+// Auto KW: `yFix` [y0, ky, refRoof] scales HEIGHT too, above y0 only
+// (y0 + (y - y0) * ky): the wheels, arches and sills stay where the wheels
+// are, and the body above them comes down (a RAV4 is 1.74 m, not the SUV's
+// 1.88) or goes up. The builder is handed its parent's roof (refRoof): the
+// spec's own is the scaled result.
+function scaledBuild(build, refLen, refWid, yFix = null) {
   return (spec, paint, trim, matte) => {
     const kx = spec.wid / refWid, kz = spec.len / refLen;
+    const [y0, ky, refRoof] = yFix || [0, 1, spec.roof];
     const bs = [paint, trim, matte, matte.crew].filter(Boolean), from = bs.map((b) => b.pos.length);
-    const wheels = build({ ...spec, len: refLen, wid: refWid }, paint, trim, matte);
+    const wheels = build({ ...spec, len: refLen, wid: refWid, roof: refRoof }, paint, trim, matte);
     bs.forEach((b, j) => {
       for (let i = from[j]; i < b.pos.length; i += 3) {
         b.pos[i] *= kx; b.pos[i + 2] *= kz;
-        const nx = b.nor[i] / kx, ny = b.nor[i + 1], nz = b.nor[i + 2] / kz;
+        const up = b.pos[i + 1] > y0;
+        if (up) b.pos[i + 1] = y0 + (b.pos[i + 1] - y0) * ky;
+        const nx = b.nor[i] / kx, ny = up ? b.nor[i + 1] / ky : b.nor[i + 1], nz = b.nor[i + 2] / kz;
         const l = Math.hypot(nx, ny, nz) || 1;
         b.nor[i] = nx / l; b.nor[i + 1] = ny / l; b.nor[i + 2] = nz / l;
       }
@@ -6530,6 +6748,7 @@ function scaledBuild(build, refLen, refWid) {
  * two vehicles a player sees most in a chase were the ugliest on the street.
  */
 function buildServiceSedan(spec, paint, trim, matte) {
+  const from = paint.pos.length;
   const wheels = scaledBuild(buildSedan, 5.06, 1.90)(spec, paint, trim, matte);
   const kx = spec.wid / 1.90, kz = spec.len / 5.06;
   const roofY = spec.roof;
@@ -6560,19 +6779,44 @@ function buildServiceSedan(spec, paint, trim, matte) {
     for (const sx of [-1, 1]) paint.box(sx * 0.43, roofY + 0.034, -0.55 * kz, 0.04, 0.17, 0.26, 0, WHITE);
     trim.box(0, roofY + 0.075, -0.435 * kz, 0.50, 0.09, 0.02, 0, [1.0, 0.97, 0.86]);
     trim.box(0, roofY + 0.075, -0.665 * kz, 0.50, 0.09, 0.02, 0, [1.0, 0.97, 0.86]);
-    const z0 = 0.95 * kz, z1 = -0.95 * kz, N = 18, h = 0.045;
-    for (let r = 0; r < 2; r++) {
-      for (let i = 0; i < N; i++) {
-        if ((i + r) % 2) continue;
-        const za = z0 + ((z1 - z0) * i) / N, zb = z0 + ((z1 - z0) * (i + 1)) / N;
-        doorBand(0.70 + r * h, 0.70 + (r + 1) * h, za, zb, [0.04, 0.04, 0.045], matte);
-      }
+    // Auto KW: a Waterloo Region cab -- white, the company and its number on
+    // the doors (Waterloo Taxi, 519-888-7777; the colours are unverified)
+    const x = 0.95 * 0.955 * kx + 0.010;
+    for (const sx of [-1, 1]) {
+      dotText(matte, 'WATERLOO TAXI', { c: [sx * x, 0.735, 0], u: [0, 0, -sx], h: 0.075, col: [0.02, 0.02, 0.025], bold: 0.45 });
+      dotText(matte, '519-888-7777', { c: [sx * x, 0.635, 0], u: [0, 0, -sx], h: 0.06, col: [0.55, 0.03, 0.02], bold: 0.35 });
     }
+    dotText(trim, 'TAXI', { c: [0, roofY + 0.12, -0.435 * kz + 0.0125], u: [1, 0, 0], h: 0.06, col: [0.03, 0.03, 0.035], bold: 0.4 });
+    dotText(trim, 'TAXI', { c: [0, roofY + 0.12, -0.665 * kz - 0.0125], u: [-1, 0, 0], h: 0.06, col: [0.03, 0.03, 0.035], bold: 0.4 });
   }
   if (spec.police) {
-    // Blue stripe the length of the doors, over a dark lower band.
-    doorBand(0.72, 0.79, 0.98 * kz, -0.98 * kz, [0.05, 0.10, 0.24], matte, 4);
-    doorBand(0.79, 0.805, 0.98 * kz, -0.98 * kz, [0.78, 0.62, 0.18], matte, 4);
+    // Auto KW: WATERLOO REGIONAL POLICE (Commons, WRPS_New_Car2; Wikipedia):
+    // a white car with the hood, trunk lid, front and rear quarters and the
+    // bumpers navy -- the doors and roof stay white -- a red line sweeping up
+    // the doors, WATERLOO REGIONAL over a big POLICE, the Maple Leaf on the
+    // front wing. The navy is the paint's vertex colour outside the doors.
+    const NAVY = [0.005, 0.009, 0.034], zDF = 0.97 * kz, zDR = -1.0 * kz;
+    for (let i = from; i < paint.pos.length; i += 3) {
+      const z = paint.pos[i + 2];
+      if ((z > zDF || z < zDR) && paint.col[i] > 0.99 && paint.col[i + 1] > 0.99 && paint.col[i + 2] > 0.99) {
+        paint.col[i] = NAVY[0]; paint.col[i + 1] = NAVY[1]; paint.col[i + 2] = NAVY[2];
+      }
+    }
+    const x = 0.95 * 0.955 * kx + 0.006, UV = [0, 0, 1, 0, 1, 1, 0, 1], RED = [0.70, 0.03, 0.03];
+    for (const sx of [-1, 1]) {
+      const X = sx * x;
+      // the red line, low at the front door, high at the back
+      matte.quad([X, 0.585, zDF], [X, 0.775, zDR], [X, 0.80, zDR], [X, 0.61, zDF], [sx, 0, 0], UV, RED);
+      dotText(matte, 'POLICE', { c: [X + sx * 0.004, 0.680, -0.03 * kz], u: [0, 0, -sx], h: 0.16, col: NAVY, bold: 0.6 });
+      dotText(matte, 'WATERLOO REGIONAL', { c: [X + sx * 0.004, 0.805, -0.03 * kz], u: [0, 0, -sx], h: 0.05, col: NAVY, bold: 0.4 });
+      // the Maple Leaf flag on the front wing: red, white (with a red leaf), red
+      const fz = 1.18 * kz, fy = 0.70, fx = X + sx * 0.004 - sx * 0.012;
+      for (const [a, b, col] of [[-0.05, -0.025, RED], [-0.025, 0.025, [0.9, 0.9, 0.9]], [0.025, 0.05, RED], [-0.008, 0.008, RED]]) {
+        const hh = col === RED && a > -0.01 && b < 0.01 ? 0.010 : 0.025;
+        matte.quad([fx + sx * (a === -0.008 ? 0.001 : 0), fy - hh, fz + a], [fx + sx * (a === -0.008 ? 0.001 : 0), fy - hh, fz + b],
+          [fx + sx * (a === -0.008 ? 0.001 : 0), fy + hh, fz + b], [fx + sx * (a === -0.008 ? 0.001 : 0), fy + hh, fz + a], [sx, 0, 0], UV, col);
+      }
+    }
     // Push bar: two uprights and a crossbar standing clear of the grille.
     const nz = spec.len / 2;
     for (const sx of [-1, 1]) {
@@ -6683,7 +6927,7 @@ function boxShell(into, cfg) {
 }
 
 /** A pane laid flat on a `boxShell`'s side between two stations. */
-function sideGlass(trim, shell, sx, zA, zB, yBot, yTopMax, d = 0.007, cols = 6) {
+function sideGlass(trim, shell, sx, zA, zB, yBot, yTopMax, d = 0.007, cols = 6, col = GLASS) {
   const bot = [], top = [];
   for (let j = 0; j <= cols; j++) {
     const z = zA + ((zB - zA) * j) / cols, g = shell.sec(z);
@@ -6691,7 +6935,7 @@ function sideGlass(trim, shell, sx, zA, zB, yBot, yTopMax, d = 0.007, cols = 6) 
     bot.push([sx * (g.w0 + d), yBot, z]);
     top.push([sx * (g.w0 + d), yt, z]);
   }
-  trim.patch([bot, top], GLASS, [sx, 0, 0]);
+  trim.patch([bot, top], col, [sx, 0, 0]);
 }
 
 /**
@@ -6838,7 +7082,7 @@ function buildVan(spec, paint, trim, matte) {
   }
   pocket(paint, matte, 0, INTAKE[1], nose, INTAKE[2], INTAKE[3], 0.08, 1, { rim: 0.02, rimCol: PLASTIC });
   matte.box(0, yN - 0.1, nose - 0.08, W(nose - 0.08) * 2.02, 0.2, 0.2, 0, PLASTIC);     // bumper
-  trim.box(0, yN - 0.02, nose + 0.03, 0.4, 0.11, 0.02, 0, PLATE);
+  plateBox(trim, 0, yN - 0.02, nose + 0.03, 0.4, 0.11, 0.02);
 
   // --- the rear: two flat doors from the bumper to the roof, each with its
   // glass, tall lamp clusters in the corners, the step bumper -----------------------
@@ -6857,11 +7101,77 @@ function buildVan(spec, paint, trim, matte) {
   }
   matte.box(0, SILL + 0.02, tail - 0.006, 0.014, roofY - SILL - 0.1, 0.012, 0, [0.12, 0.13, 0.14]);   // door split
   pocket(paint, matte, 0, TPLATE[1], tail, TPLATE[2], TPLATE[3], 0.04, -1, { rim: 0.016, rimCol: PLASTIC });
-  trim.box(0, TPLATE[1] - 0.062, tail - 0.022, 0.4, 0.12, 0.02, 0, PLATE);
+  plateBox(trim, 0, TPLATE[1] - 0.062, tail - 0.022, 0.4, 0.12, 0.02);
   matte.box(0, SILL - 0.14, tail + 0.04, W(tail) * 2.0, 0.18, 0.2, 0, PLASTIC);      // step bumper
   matte.box(0, SILL - 0.05, tail - 0.12, 0.7, 0.04, 0.16, 0, [0.2, 0.21, 0.22]);     // the step
   trim.box(0, roofY - 0.07, tail - 0.012, 0.3, 0.03, 0.02, 0, TAILC);               // high stop lamp
+  if (spec.fleet) vanLivery(spec, trim, matte, { sec, tail, zR, WIN0 });
   return wheels;
+}
+
+/**
+ * Auto KW: the courier vans on Waterloo Region's streets, on the panel van:
+ *   'post'  Canada Post -- white, a red block along the cargo side over a blue
+ *           stripe, the blue CANADA POST / POSTES CANADA panel (Commons:
+ *           Canada Post Honda CR-V and trucks, 2011-2019)
+ *   'puro'  Purolator -- white, the red italic wordmark behind its blue and
+ *           red slashes (Purolator's 2006 logo)
+ * In matte a few mm proud of the cargo box's flat flank (x follows the
+ * section, which leans in a little above the belt). Reads left to right from
+ * outside on both sides.
+ */
+const POST_RED = [0.62, 0.02, 0.02], POST_BLUE = [0.02, 0.06, 0.32], PURO_RED = [0.80, 0.06, 0.03], PURO_BLUE = [0.01, 0.12, 0.42];
+function vanLivery(spec, trim, matte, { sec, tail, zR, WIN0 }) {
+  const UV = [0, 0, 1, 0, 1, 1, 0, 1];
+  // the flank's x at height y, station z (the section is [x, y] pairs, bottom up)
+  const fx = (z, y) => {
+    const S = sec(z);
+    for (let k = 1; k < S.length; k++) {
+      if (S[k][1] >= y) { const t = (y - S[k - 1][1]) / Math.max(1e-6, S[k][1] - S[k - 1][1]); return S[k - 1][0] + (S[k][0] - S[k - 1][0]) * Math.min(1, Math.max(0, t)); }
+    }
+    return S[S.length - 1][0];
+  };
+  const panel = (sx, z0, z1, y0, y1, col, d = 0.008) => {
+    const n = Math.max(1, Math.ceil(Math.abs(z1 - z0) / 0.5));
+    for (let i = 0; i < n; i++) {
+      const za = z0 + ((z1 - z0) * i) / n, zb = z0 + ((z1 - z0) * (i + 1)) / n;
+      matte.quad([sx * (fx(za, y0) + d), y0, za], [sx * (fx(zb, y0) + d), y0, zb], [sx * (fx(zb, y1) + d), y1, zb], [sx * (fx(za, y1) + d), y1, za], [sx, 0, 0], UV, col);
+    }
+  };
+  const text = (sx, z, y, h, t, col, o = {}) => dotText(matte, t, { c: [sx * (fx(z, y) + (o.d || 0.012)), y, z], u: [0, 0, -sx], h, col, ...o });
+  const z0 = tail + 0.12, z1 = WIN0 - 0.10, zm = (z0 + z1) / 2;
+  for (const sx of [-1, 1]) {
+    if (spec.fleet === 'post') {
+      panel(sx, z0, z1, 1.18, 1.98, POST_RED);
+      panel(sx, z0, z1, 1.08, 1.18, POST_BLUE);
+      // the blue panel with white lettering, toward the front of the box
+      const pz = z1 - 0.95;
+      panel(sx, pz - 0.62, pz + 0.62, 1.40, 1.84, POST_BLUE, 0.011);
+      text(sx, pz, 1.725, 0.12, 'CANADA POST', WHITE, { d: 0.015, bold: 0.3 });
+      text(sx, pz, 1.515, 0.12, 'POSTES CANADA', WHITE, { d: 0.015, bold: 0.3 });
+    } else if (spec.fleet === 'puro') {
+      // the slashes, then the wordmark, read from the front of the van back
+      const y = 1.42, h = 0.34, w = dotCells('Purolator') * (h / 7);
+      const zt = zm + (sx > 0 ? -0.18 : 0.18);
+      text(sx, zt, y, h, 'Purolator', PURO_RED, { d: 0.012, bold: 0.6, slant: 0.28 });
+      const zs = zt + (sx > 0 ? 1 : -1) * (w / 2 + 0.16);   // ahead of the word, in the reading direction's start
+      for (const [k, col] of [[0, PURO_BLUE], [1, PURO_RED], [2, PURO_RED]]) {
+        const za = zs + (sx > 0 ? 1 : -1) * (k * 0.11), lean = (sx > 0 ? 1 : -1) * 0.16;
+        const yb = y - h / 2, yt = y + h / 2;
+        matte.quad([sx * (fx(za, yb) + 0.012), yb, za], [sx * (fx(za, yb) + 0.012), yb, za + (sx > 0 ? -1 : 1) * 0.06],
+          [sx * (fx(za, yt) + 0.012), yt, za + (sx > 0 ? -1 : 1) * 0.06 - lean], [sx * (fx(za, yt) + 0.012), yt, za - lean], [sx, 0, 0], UV, col);
+      }
+      panel(sx, z0, z1, 1.00, 1.05, PURO_BLUE);
+    }
+  }
+  // the back doors: the same marks, small
+  const zb = tail - 0.012;
+  if (spec.fleet === 'post') {
+    matte.quad([-0.95, 1.08, zb], [0.95, 1.08, zb], [0.95, 1.18, zb], [-0.95, 1.18, zb], [0, 0, -1], UV, POST_BLUE);
+    dotText(matte, 'CANADA POST', { c: [0, 1.30, zb - 0.002], u: [-1, 0, 0], h: 0.07, col: POST_BLUE, bold: 0.3 });
+  } else if (spec.fleet === 'puro') {
+    dotText(matte, 'Purolator', { c: [0, 1.30, zb - 0.002], u: [-1, 0, 0], h: 0.11, col: PURO_RED, bold: 0.5, slant: 0.28 });
+  }
 }
 
 /** Windscreen laid on a `boxShell`'s sloping top, from station zA (low) to zB (high). */
@@ -6952,6 +7262,11 @@ function truckMirror(trim, matte, sx, x, y, z) {
  * it, a roof brow, the front wheel UNDER the door, and a separate box behind a
  * visible gap, standing on a ladder chassis you can see daylight under.
  */
+/** A flat panel on a flank at x = sx * x: corners [z, y] round. */
+function flankPaneT(b, sx, x, pts, col) {
+  const P = pts.map(([z, y]) => [sx * x, y, z]);
+  b.quad(P[0], P[1], P[2], P[3], [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], col);
+}
 const TRUCK_LOOKS = {
   boxtruck: { ovF: 1.20, cabLen: 2.00, gap: 0.13, boxTop: 3.45, boxY: 1.12, packer: false },
   garbage: { ovF: 1.25, cabLen: 2.10, gap: 0.13, boxTop: 3.30, boxY: 1.15, packer: true },
@@ -6990,7 +7305,7 @@ function buildTruck(spec, paint, trim, matte, S) {
   matte.box(0, 1.47, nose + 0.004, fw * 2 + 0.06, 0.035, 0.02, 0, PLASTIC);
   for (const x of [-0.55, 0.25]) matte.tube([x, 1.54, nose + 0.024], [x + 0.42, 1.64, nose + 0.024], 0.011, 4, PLASTIC, true);
   matte.box(0, 0.42, nose + 0.05, cabW * 1.98, 0.28, 0.16, 0, PLASTIC);                      // bumper
-  trim.box(0, 0.47, nose + 0.135, 0.40, 0.12, 0.02, 0, PLATE);
+  plateBox(trim, 0, 0.47, nose + 0.135, 0.40, 0.12, 0.02);
   for (let i = -1; i <= 1; i++) trim.box(i * 0.26, roofY - 0.085, nose - 0.24, 0.09, 0.04, 0.06, 0, AMBER);   // cab markers
 
   // --- cab sides ----------------------------------------------------------------
@@ -7028,6 +7343,33 @@ function buildTruck(spec, paint, trim, matte, S) {
       }
       trim.tube([sx * (W + 0.03), y0 + 0.20, tail + 1.25], [sx * (W + 0.03), S.boxTop - 0.55, tail + 0.30], 0.055, 8, CHROME, true);
     }
+    // Auto KW: the Region's contractors (2026). Emterra runs garbage and the
+    // green bin from CNG side-loaders: white, the green wordmark, the arm on
+    // the kerb side (-x). Miller Waste runs the blue boxes: white, blue.
+    if (spec.fleet) {
+      const emt = spec.fleet === 'emterra';
+      const C1 = emt ? [0.025, 0.25, 0.05] : [0.01, 0.07, 0.36], C2 = emt ? [0.06, 0.07, 0.07] : [0.03, 0.30, 0.06];
+      const zc = (tail + 1.2 + bz1) / 2, Xo = W + 0.034;
+      for (const sx of [-1, 1]) {
+        const X = sx * Xo, u = [0, 0, -sx];
+        flankPaneT(matte, sx, W + 0.030, [[tail + 1.30, y0 + 0.16], [bz1 - 0.08, y0 + 0.16], [bz1 - 0.08, y0 + 0.36], [tail + 1.30, y0 + 0.36]], C1);
+        dotText(matte, emt ? 'emterra' : 'MILLER', { c: [X, y0 + 1.30, zc], u, h: 0.40, col: C1, bold: 0.7 });
+        dotText(matte, emt ? 'ENVIRONMENTAL' : 'WASTE SYSTEMS', { c: [X, y0 + 0.82, zc], u, h: 0.14, col: C2, bold: 0.5 });
+        // the cab door
+        dotText(matte, emt ? 'emterra' : 'MILLER', { c: [sx * (cab.sec(cz0 + 1.0).w0 + 0.008), 1.30, cz0 + 1.0], u, h: 0.12, col: C1, bold: 0.5 });
+      }
+      if (emt) {
+        // the automated arm, stowed: a boom along the frame and the gripper's two paddles
+        const ax = -(W + 0.10), az = bz1 - 0.55;
+        matte.box(ax + 0.04, 0.70, az, 0.20, 0.40, 0.60, 0, [0.10, 0.11, 0.12]);
+        matte.box(ax - 0.06, 0.62, az, 0.06, 0.60, 0.80, 0, [0.16, 0.17, 0.18]);
+        for (const dz of [-0.36, 0.36]) matte.box(ax - 0.10, 0.70, az + dz, 0.08, 0.42, 0.05, 0, [0.12, 0.13, 0.14]);
+        matte.tube([-0.6, 0.78, az], [ax + 0.10, 0.78, az], 0.05, 6, [0.10, 0.11, 0.12], true);
+      } else {
+        // the split body's two hoppers show as a seam down the sides
+        for (const sx of [-1, 1]) matte.box(sx * (W + 0.02), y0 + 0.05, (tail + bz1) / 2, 0.012, S.boxTop - y0 - 0.20, 0.03, 0, [0.10, 0.11, 0.12]);
+      }
+    }
     endFace(paint, tail, -1, body.prof(tail), [], WHITE);
     matte.box(0, 0.62, tail + 0.28, W * 1.94, 0.96, 0.62, 0, [0.12, 0.13, 0.14]);                 // hopper
     matte.box(0, 1.20, tail - 0.04, W * 1.60, 0.10, 0.06, 0, PLASTIC);
@@ -7059,7 +7401,7 @@ function buildTruck(spec, paint, trim, matte, S) {
       matte.box(sx * 0.62, 0.58, tail + 0.18, 0.08, 0.40, 0.06, 0, PLASTIC);
       trim.box(sx * 0.72, 0.52, tail + 0.095, 0.16, 0.06, 0.02, 0, TAILC);
     }
-    trim.box(0, 0.64, tail + 0.20, 0.40, 0.12, 0.02, 0, PLATE);
+    plateBox(trim, 0, 0.64, tail + 0.20, 0.40, 0.12, 0.02);
   }
   const twF = 0.30, twR = 0.44;
   const wxF = cab.sec(zF).w0 - 0.17, wxR = W - 0.26;
@@ -7072,6 +7414,137 @@ function buildTruck(spec, paint, trim, matte, S) {
 
 /** Half-width of a `boxShell` at a station. */
 function geom0(shell, z) { return shell.sec(z).w0; }
+
+/**
+ * Auto KW: the yellow SCHOOL BUS -- a Type C conventional (Blue Bird / Thomas /
+ * IC), as Student Transportation runs them for Waterloo Region's boards: a
+ * narrow bonnet in front of a long square body, chrome-yellow all over, black
+ * rub rails, a row of small windows, SCHOOL BUS over the screen and the back
+ * door between the red and amber warning lamps, the stop arm folded on the
+ * driver's side, the door on the kerb side just behind the front wheel.
+ */
+const BUS_BLACK = [0.035, 0.035, 0.04];
+function buildSchoolBus(spec, paint, trim, matte) {
+  const wr = spec.wheelR, W = spec.wid / 2, roofY = spec.roof;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = nose - 1.0, zR = zF - spec.wheelbase, zW = nose - 2.05;   // zW: the body's front (the screen)
+  const archR = wr + 0.16, archTop = wr * 2 + 0.08, floor = 0.66;
+  const liftR = archCut([zR], archR, archTop, 3.0);
+  const winB = 1.58, winT = 2.36, DOOR = [zW - 0.92, zW - 0.12];
+  const spans = (sx) => {
+    const out = [];
+    let z = tail + 0.95;
+    const end = zW - (sx < 0 ? 0.98 : 0.30);
+    while (z + 0.62 <= end) { out.push([z, z + 0.62]); z += 0.74; }
+    return out;
+  };
+  const windows = [];
+  for (const sx of [-1, 1]) for (const [a, b] of spans(sx)) windows.push({ sx, zA: a, zB: b, yBot: winB, yTopMax: winT, cols: 1 });
+  windows.push({ sx: -1, zA: DOOR[0], zB: DOOR[1], yBot: floor + 0.08, yTopMax: winT, cols: 1 });
+  const body = boxShell(paint, {
+    z0: tail, z1: zW, stations: 30, rr: 0.20, tumble: 0.03, crown: 0.05,
+    wAt: () => W, y0At: (z) => Math.max(floor, liftR(z)),
+    y1At: curve([[tail, roofY - 0.08], [tail + 0.3, roofY], [zW - 0.3, roofY], [zW, roofY - 0.08]]),
+    windows,
+  });
+  shellArch(matte, body, zR, wr, archR, archTop, floor);
+  // the bonnet: narrower, sloping to the grille
+  const { shell: hood } = truckCab(paint, matte, {
+    z0: zW - 0.02, z1: nose, W: 0.98, roofY: 1.62, zF, wr, archR, sill: floor,
+    bonnet: { scrTopZ: zW - 0.005, cowlZ: zW + 0.06, cowlY: 1.60, noseY: 1.38 },
+  });
+  const hs = hood.sec(nose);
+  // --- the front of the body: the screen, SCHOOL BUS, the warning lamps --------
+  const bs = body.sec(zW), fw = bs.w0 - 0.10, scrB = 1.66, scrT = 2.34;
+  endFace(paint, zW, 1, body.prof(zW), [[0, (scrB + scrT) / 2, fw, (scrT - scrB) / 2]], WHITE);
+  trim.patch([[[-fw, scrB, zW + 0.006], [0, scrB, zW + 0.006], [fw, scrB, zW + 0.006]],
+    [[-fw, scrT, zW + 0.006], [0, scrT, zW + 0.006], [fw, scrT, zW + 0.006]]], GLASS, [0, 0, 1]);
+  matte.box(0, scrB - 0.01, zW + 0.004, 0.012, scrT - scrB + 0.02, 0.02, 0, BUS_BLACK);       // centre post
+  matte.box(0, scrT + 0.05, zW + 0.006, 1.20, 0.30, 0.02, 0, BUS_BLACK);                        // sign surround
+  matte.box(0, scrT + 0.07, zW + 0.012, 1.12, 0.26, 0.02, 0, [0.95, 0.66, 0.05]);
+  dotText(matte, 'SCHOOL BUS', { c: [0, scrT + 0.20, zW + 0.024], u: [1, 0, 0], h: 0.15, col: BUS_BLACK, bold: 0.5 });
+  for (const sx of [-1, 1]) {
+    trim.tube([sx * (W - 0.20), scrT + 0.20, zW], [sx * (W - 0.20), scrT + 0.20, zW + 0.06], 0.085, 12, [1.0, 0.10, 0.06], true);
+    trim.tube([sx * (W - 0.44), scrT + 0.20, zW], [sx * (W - 0.44), scrT + 0.20, zW + 0.06], 0.075, 12, AMBER, true);
+  }
+  // the bonnet's face: black grille, round lamps, the bumper
+  const GR = [0, 0.98, hs.w0 * 0.62, 0.26], LA = [hs.w0 * 0.80, 1.06, 0.10, 0.10];
+  endFace(paint, nose, 1, hood.prof(nose), [GR, LA], WHITE);
+  const gp = pocket(paint, matte, 0, GR[1], nose, GR[2], GR[3], 0.10, 1, { rim: 0.03, rimCol: BUS_BLACK });
+  for (let i = 0; i < 6; i++) matte.box(0, GR[1] - GR[3] + 0.05 + i * 0.08, gp.z + 0.02, gp.hw * 1.9, 0.025, 0.04, 0, [0.10, 0.10, 0.11]);
+  for (const sx of [-1, 1]) {
+    pocket(paint, matte, sx * LA[0], LA[1], nose, LA[2], LA[3], 0.06, 1, { rim: 0.02, rimCol: BUS_BLACK });
+    trim.tube([sx * LA[0], LA[1], nose - 0.02], [sx * LA[0], LA[1], nose + 0.012], 0.075, 12, LAMP, true);
+    trim.box(sx * (LA[0] - 0.02), 0.82, nose - 0.01, 0.12, 0.06, 0.03, 0, AMBER);
+  }
+  matte.box(0, 0.48, nose + 0.06, W * 1.96, 0.24, 0.16, 0, BUS_BLACK);                          // bumper
+  plateBox(trim, 0, 0.52, nose + 0.145, 0.40, 0.12, 0.02);
+  matte.box(0, 1.385, nose - 0.75, 0.05, 0.03, 1.2, 0, BUS_BLACK);                               // the bonnet's centre seam
+  // --- the cabin, seen through the windows --------------------------------------
+  const x = W - 0.07, y = floor + 0.20;
+  matte.quad([-x, y, tail + 0.2], [x, y, tail + 0.2], [x, y, zW - 0.1], [-x, y, zW - 0.1], [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAB_FLOOR);
+  matte.quad([-x, roofY - 0.12, tail + 0.2], [x, roofY - 0.12, tail + 0.2], [x, roofY - 0.12, zW - 0.1], [-x, roofY - 0.12, zW - 0.1], [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAB_ROOF);
+  matte.box(0, y, zW - 0.30, x * 1.9, 0.75, 0.36, 0, CAB_DASH);
+  const sit = y + 0.42, Hs = 0.70;
+  for (let z = zW - 1.30; z > tail + 0.9; z -= 0.78) {
+    for (const sx of [-1, 1]) rakedBox(matte, sx * (x - 0.42), y - 0.02, z, 0.80, sit - y + 0.55 * Hs, 0.09, 0.06, [0.32, 0.12, 0.06]);   // the green-brown vinyl benches
+  }
+  const wheel = [0.55, sit + 0.05, zW - 0.45];
+  rakedBox(matte, 0.55, y - 0.02, zW - 1.0, 0.50, sit - y + 0.55 * Hs, 0.12, 0.05, CAB_SEAT);
+  wheelRim(matte, wheel[0], wheel[1], wheel[2], 0.24);
+  if (matte.crew) occupant(matte.crew, 0.55, sit, zW - 1.0, Hs, wheel);
+  // --- the sides: glass, rub rails, the door, the stop arm, the lettering --------
+  for (const sx of [-1, 1]) {
+    const run = spans(sx);
+    for (const [a, b] of run) sideGlass(trim, body, sx, a, b, winB, winT, 0.007, 1);
+    // black seals under and over the row of windows (the posts between are the body's yellow)
+    const r0 = run[0][0] - 0.06, r1 = run[run.length - 1][1] + 0.06;
+    for (const yy of [winB - 0.035, winT + 0.005]) matte.box(sx * (W + 0.006), yy, (r0 + r1) / 2, 0.01, 0.03, r1 - r0, 0, BUS_BLACK);
+    for (const yy of [0.86, 1.18, 1.46]) matte.box(sx * (W + 0.010), yy, (tail + zW) / 2 + (sx < 0 ? -0.5 : 0), 0.02, 0.07, zW - tail - (sx < 0 ? 1.2 : 0.2), 0, BUS_BLACK);
+    matte.box(sx * (W + 0.010), floor, (tail + zW) / 2, 0.02, 0.06, zW - tail - 0.1, 0, BUS_BLACK);
+    dotText(matte, 'STUDENT TRANSPORTATION', { c: [sx * (W + 0.025), 1.32, (tail + zW) / 2 - 0.4], u: [0, 0, -sx], h: 0.10, col: BUS_BLACK, bold: 0.4 });
+    trim.box(sx * (hood.sec(zW + 0.5).w0 + 0.01), 1.10, zW + 0.5, 0.02, 0.04, 0.08, 0, AMBER);
+    truckMirror(trim, matte, sx, W - 0.06, 2.10, zW + 0.05);
+  }
+  // the kerb-side door: two glass leaves to the step
+  const dw = W + 0.008;
+  trim.patch([[[-dw, floor + 0.08, DOOR[0]], [-dw, floor + 0.08, DOOR[1]]], [[-dw, winT, DOOR[0]], [-dw, winT, DOOR[1]]]], GLASS, [-1, 0, 0]);
+  for (const zc of [DOOR[0], (DOOR[0] + DOOR[1]) / 2, DOOR[1]]) matte.box(-(dw + 0.004), floor + 0.06, zc, 0.012, winT - floor - 0.04, 0.05, 0, BUS_BLACK);
+  // the stop arm on the driver's side, folded flat: a red octagon reading STOP
+  {
+    const sx = 1, px = W + 0.035, cy = 1.82, cz = zW - 0.55, r = 0.23, oct = [];
+    for (let i = 0; i < 8; i++) { const a = Math.PI / 8 + (i * Math.PI) / 4; oct.push([Math.cos(a) * r, Math.sin(a) * r]); }
+    for (let i = 0; i < 8; i++) {
+      const [a0, b0] = oct[i], [a1, b1] = oct[(i + 1) % 8];
+      trim.tri([px, cy, cz], [px, cy + b0, cz + a0], [px, cy + b1, cz + a1], [sx, 0, 0], [0.80, 0.04, 0.03]);
+    }
+    dotText(matte, 'STOP', { c: [px + 0.004, cy, cz], u: [0, 0, -1], h: 0.09, col: [0.95, 0.95, 0.95], bold: 0.5 });
+    matte.box(px - 0.02, cy - 0.04, cz + 0.30, 0.03, 0.08, 0.14, 0, BUS_BLACK);    // its hinge box
+  }
+  // --- the back: the emergency door, SCHOOL BUS, lamps --------------------------
+  const RW = [0, 1.98, 0.42, 0.34], TL = [W - 0.16, 1.05, 0.08, 0.10];
+  endFace(paint, tail, -1, body.prof(tail), [RW, TL], WHITE);
+  const wp = pocket(paint, matte, 0, RW[1], tail, RW[2], RW[3], 0.03, -1, { rim: 0.03, rimCol: BUS_BLACK });
+  trim.box(0, RW[1] - wp.hh, tail + 0.012, wp.hw * 2, wp.hh * 2, 0.010, 0, GLASS);
+  // the emergency door's outline: two posts and a head, and its handle
+  const dTop = RW[1] + RW[3] + 0.06;
+  for (const dx of [-0.49, 0.49]) matte.box(dx, floor + 0.04, tail - 0.008, 0.025, dTop - floor - 0.04, 0.012, 0, BUS_BLACK);
+  matte.box(0, dTop - 0.012, tail - 0.008, 1.0, 0.025, 0.012, 0, BUS_BLACK);
+  trim.box(0.30, 1.30, tail - 0.02, 0.18, 0.04, 0.03, 0, CHROME);
+  dotText(matte, 'SCHOOL BUS', { c: [0, roofY - 0.27, tail - 0.012], u: [-1, 0, 0], h: 0.14, col: BUS_BLACK, bold: 0.5 });
+  for (const sx of [-1, 1]) {
+    const tp = pocket(paint, matte, sx * TL[0], TL[1], tail, TL[2], TL[3], 0.04, -1, { rim: 0.016, rimCol: BUS_BLACK });
+    trim.box(sx * TL[0], TL[1] - tp.hh * 0.95, tail + 0.014, tp.hw * 1.9, tp.hh * 1.9, 0.020, 0, TAILC);
+    trim.tube([sx * (W - 0.20), roofY - 0.27, tail], [sx * (W - 0.20), roofY - 0.27, tail - 0.06], 0.085, 12, [1.0, 0.10, 0.06], true);
+    trim.tube([sx * (W - 0.44), roofY - 0.27, tail], [sx * (W - 0.44), roofY - 0.27, tail - 0.06], 0.075, 12, AMBER, true);
+  }
+  matte.box(0, 0.48, tail - 0.06, W * 1.96, 0.24, 0.16, 0, BUS_BLACK);
+  plateBox(trim, 0.55, 0.78, tail - 0.024, 0.40, 0.12, 0.02);
+  // --- chassis, wheels ----------------------------------------------------------
+  matte.box(0, 0.42, (tail + zW) / 2, W * 1.4, 0.24, zW - tail - 0.4, 0, PLASTIC);
+  const twF = 0.30, twR = 0.44, wxF = hood.sec(zF).w0 - 0.17, wxR = W - 0.24;
+  return [[-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF], [-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR]];
+}
 
 /**
  * Type III ambulance: a bonneted van cab with a tall square module behind it.
@@ -7104,7 +7577,7 @@ function buildAmbulance(spec, paint, trim, matte) {
     trim.box(sx * 0.20, 0.64, nose + 0.012, 0.10, 0.05, 0.02, 0, TAILC);                          // grille strobes
   }
   matte.box(0, 0.40, nose + 0.05, cabW * 1.96, 0.22, 0.16, 0, PLASTIC);
-  trim.box(0, 0.44, nose + 0.135, 0.40, 0.12, 0.02, 0, PLATE);
+  plateBox(trim, 0, 0.44, nose + 0.135, 0.40, 0.12, 0.02);
   const RED = [0.70, 0.06, 0.05];
   for (const sx of [-1, 1]) {
     sideGlass(trim, cab, sx, 0.84, 1.86, 1.38, spec.roof - 0.26);
@@ -7142,7 +7615,7 @@ function buildAmbulance(spec, paint, trim, matte) {
     [-(W - 0.08), 1.64, tail - 0.005], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], RED);
   matte.box(0, 0.62, tail - 0.004, 0.014, modTop - 0.75, 0.012, 0, [0.12, 0.13, 0.14]);          // door split
   matte.box(0, 0.44, tail + 0.05, W * 1.80, 0.16, 0.20, 0, PLASTIC);                                // step bumper
-  trim.box(0, 0.70, tail - 0.024, 0.40, 0.12, 0.02, 0, PLATE);
+  plateBox(trim, 0, 0.70, tail - 0.024, 0.40, 0.12, 0.02);
   matte.box(0, 0.62, (0.62 + nose - 1.6) / 2, 0.9, 0.22, 1.2, 0, PLASTIC);                          // chassis under the cab
 
   const twF = 0.26, twR = 0.36;
@@ -7225,7 +7698,7 @@ function buildSwat(spec, paint, trim, matte) {
   // Steel bumper and the ram bar: two uprights, two cross tubes and a skid
   // plate, standing 25 cm proud of the face.
   matte.box(0, 0.36, nose + 0.06, cabW * 2.04, 0.30, 0.20, 0, BLK);
-  trim.box(0, 0.44, nose + 0.165, 0.40, 0.12, 0.02, 0, PLATE);
+  plateBox(trim, 0, 0.44, nose + 0.165, 0.40, 0.12, 0.02);
   const rz = nose + 0.30;
   for (const sx of [-1, 1]) {
     matte.tube([sx * 0.52, 0.34, rz], [sx * 0.52, 1.20, rz - 0.04], 0.050, 8, BLK, true);
@@ -7286,7 +7759,7 @@ function buildSwat(spec, paint, trim, matte) {
   for (const lx of [0.42, 0.84]) matte.tube([lx, 0.72, tail - 0.08], [lx, modTop + 0.08, tail - 0.08], 0.022, 6, BLK, true);
   for (let y = 0.95; y < modTop; y += 0.32) matte.tube([0.42, y, tail - 0.08], [0.84, y, tail - 0.08], 0.018, 6, BLK, true);
   matte.box(0, 0.42, tail + 0.06, W * 1.86, 0.20, 0.24, 0, BLK);                                      // step bumper
-  trim.box(-0.5, 0.72, tail - 0.024, 0.40, 0.12, 0.02, 0, PLATE);
+  plateBox(trim, -0.5, 0.72, tail - 0.024, 0.40, 0.12, 0.02);
   matte.box(0, 0.62, (0.62 + nose - 1.6) / 2, 0.9, 0.22, 1.2, 0, PLASTIC);                           // chassis under the cab
 
   const twF = 0.30, twR = 0.40;
@@ -7316,8 +7789,10 @@ function buildBus(spec, paint, trim, matte, o = {}) {
   const zF = o.zF !== undefined ? o.zF : 3.45, zR = o.zR !== undefined ? o.zR : -2.55;   // 2.55 m front overhang, 3.45 m rear
   const frontEnd = o.frontEnd !== false, rearEnd = o.rearEnd !== false;
   const belt = 1.20;
-  // the lower body in Metro yellow, as matte (paint is the top's colour)
-  const lower = tinted(matte, METRO_YELLOW);
+  // Auto KW: GRT's bus is white all over, so the lower body is the paint too
+  // (Seattle's was Metro yellow, as matte under a coloured top).
+  const L = spec.grt || null;
+  const lower = L ? paint : tinted(matte, METRO_YELLOW);
   const core = bodyCore(spec, lower, matte, {
     halfW: curve([[tail, frontEnd || rearEnd ? (rearEnd ? 0.975 : 1.0) : 1.0], [tail + 0.4, 1.0], [nose - 0.4, 1.0], [nose, frontEnd ? 0.975 : 1.0]]),
     sillY: curve([[tail, rearEnd ? 0.52 : 0.42], [tail + 0.6, 0.42], [nose - 0.6, 0.42], [nose, frontEnd ? 0.46 : 0.42]]),
@@ -7353,7 +7828,7 @@ function buildBus(spec, paint, trim, matte, o = {}) {
   const sN = shell.sec(nose);
   if (frontEnd) {
     const scrTop = sN.side - 0.03;
-    endFace(paint, nose, 1, shell.prof(nose), [[0, (sN.y0 + scrTop) / 2 + 0.001, sN.w0 - 0.10, (scrTop - sN.y0) / 2]], WHITE);
+    endFace(L && L.ion ? tinted(paint, ION_BLUE) : paint, nose, 1, shell.prof(nose), [[0, (sN.y0 + scrTop) / 2 + 0.001, sN.w0 - 0.10, (scrTop - sN.y0) / 2]], WHITE);
     const LAMP_A = [0.90, 0.68, 0.17, 0.075];
     // the lower nose is the lower body: Metro yellow like the sides
     endFace(lower, nose, 1, endProf(nose), [LAMP_A], WHITE);
@@ -7371,10 +7846,16 @@ function buildBus(spec, paint, trim, matte, o = {}) {
       [0, 0, 1], [0, 0, 1, 0, 1, 1, 0, 1], CAB_DASH);
     busCabin(matte, shell, { belt, nose, tail, roofY });
     matte.box(0, sN.side - 0.02, nose + 0.004, fw * 2 + 0.08, 0.26, 0.03, 0, [0.04, 0.04, 0.045]);      // sign housing
-    trim.box(0, sN.side + 0.07, nose + 0.018, 1.30, 0.08, 0.012, 0, [1.0, 0.62, 0.12]);                 // route display
+    if (L) {
+      // the destination sign: route number and name in LEDs, sized to fit
+      const sw = fw * 2 - 0.14, h = Math.min(0.15, (sw / Math.max(1, dotCells(L.sign))) * 7);
+      dotText(matte, L.sign, { c: [0, sN.side - 0.015, nose + 0.036], u: [1, 0, 0], h, col: L.led === 'amber' ? LED_AMBER : LED_WHITE, led: true });
+      // the fleet number under the windscreen, and on the sign's corner
+      dotText(matte, L.fleet, { c: [0.66, 0.86, nose + 0.012], u: [1, 0, 0], h: 0.075, col: L.ion ? ION_BLUE : GRT_BLUE, bold: 0.35 });
+    } else trim.box(0, sN.side + 0.07, nose + 0.018, 1.30, 0.08, 0.012, 0, [1.0, 0.62, 0.12]);   // route display
     for (const x of [-0.70, 0.30]) matte.tube([x, 1.02, nose + 0.024], [x + 0.46, 1.36, nose + 0.024], 0.012, 4, PLASTIC, true);
     matte.box(0, 0.26, nose + 0.03, geom(nose).w * 1.92, 0.26, 0.16, 0, PLASTIC);                        // bumper
-    trim.box(0, 0.30, nose + 0.115, 0.40, 0.12, 0.02, 0, PLATE);
+    plateBox(trim, 0, 0.30, nose + 0.115, 0.40, 0.12, 0.02);
     // Folded bike rack on the nose -- the detail every Seattle bus carries.
     for (const sx of [-1, 1]) matte.tube([sx * 0.42, 0.40, nose + 0.12], [sx * 0.42, 0.92, nose + 0.12], 0.020, 5, PLASTIC, true);
     matte.tube([-0.42, 0.92, nose + 0.12], [0.42, 0.92, nose + 0.12], 0.020, 5, PLASTIC, true);
@@ -7392,12 +7873,16 @@ function buildBus(spec, paint, trim, matte, o = {}) {
 
   // --- sides: window band, doors on the kerb side ---------------------------------
   const BAND = [0.05, 0.30, 0.24];
+  if (L) {
+    grtLivery(spec, paint, trim, matte, shell, { L, belt, winY0, winY1, nose, tail, frontEnd, rearEnd, cuts: spansOf(-1).cuts,
+      logoZ: o.logoZ !== undefined ? o.logoZ : [1.0, 1.9] });
+  }
   for (const sx of [-1, 1]) {
     const { cuts, spans } = spansOf(sx);
     for (const [a, b] of spans) {
-      sideGlass(trim, shell, sx, a, b, winY0, winY1, 0.007, 2);
+      sideGlass(trim, shell, sx, a, b, winY0, winY1, 0.007, 2, L ? GLASS_TINT : GLASS);
       const g = shell.sec((a + b) / 2);
-      matte.quad([sx * (g.w0 + 0.006), belt - 0.02, a], [sx * (g.w0 + 0.006), belt - 0.02, b], [sx * (g.w0 + 0.006), belt + 0.07, b],
+      if (!L) matte.quad([sx * (g.w0 + 0.006), belt - 0.02, a], [sx * (g.w0 + 0.006), belt - 0.02, b], [sx * (g.w0 + 0.006), belt + 0.07, b],
         [sx * (g.w0 + 0.006), belt + 0.07, a], [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], BAND);
       for (let pz = a + 1.25; pz < b - 0.3; pz += 1.25) {
         matte.box(sx * (g.w0 + 0.012), winY0, pz, 0.010, winY1 - winY0, 0.07, 0, [0.07, 0.075, 0.08]);
@@ -7440,7 +7925,7 @@ function buildBus(spec, paint, trim, matte, o = {}) {
     }
     matte.box(0, 0.55, tail - 0.012, 1.40, 0.50, 0.02, 0, [0.10, 0.11, 0.12]);                           // engine grille
     matte.box(0, 0.26, tail - 0.03, geom(tail).w * 1.92, 0.24, 0.16, 0, PLASTIC);
-    trim.box(0, 0.42, tail - 0.045, 0.40, 0.12, 0.02, 0, PLATE);
+    plateBox(trim, 0, 0.42, tail - 0.045, 0.40, 0.12, 0.02);
   } else {
     const sT = shell.sec(tail);
     matte.box(0, sT.y0 - 0.2, tail + 0.02, sT.w0 * 2 + 0.04, sT.side - sT.y0 + 0.5, 0.06, 0, [0.07, 0.07, 0.08]);
@@ -7460,6 +7945,117 @@ function buildBus(spec, paint, trim, matte, o = {}) {
   const wheels = [[-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR]];
   // a trailing section has only its drive axle; it rides on the hitch at the front
   return o.noFrontAxle ? wheels : [[-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF], ...wheels];
+}
+
+/**
+ * Auto KW: Grand River Transit's livery on a `buildBus` body (see GRT_WHITE
+ * for the sources). The body is already white paint; this lays the band, the
+ * gold line, the wordmark, the fleet number and the Region's mark on its flat
+ * sides, a few mm proud, in matte -- or, on the ION Bus, the ion logo and a
+ * blue roof (its blue front face is buildBus's own). Every flank piece reads
+ * left to right from outside: on +x (the street side) that is toward -z.
+ */
+function grtLivery(spec, paint, trim, matte, shell, o) {
+  const { L, winY0, winY1, nose, tail, frontEnd, rearEnd, cuts } = o;
+  const UV = [0, 0, 1, 0, 1, 1, 0, 1];
+  const xAt = (z, d) => shell.sec(z).w0 + d;
+  // a strip on a flank from z0 to z1, y0..y1, `d` proud, kerb doors left open
+  const strip = (sx, z0, z1, y0, y1, d, col) => {
+    let spans = [[z0, z1]];
+    if (sx < 0) for (const [a, b] of cuts) {
+      spans = spans.flatMap(([p, q]) => (b + 0.03 <= p || a - 0.03 >= q ? [[p, q]] : [[p, a - 0.03], [b + 0.03, q]].filter(([u, v]) => v - u > 0.02)));
+    }
+    for (const [p, q] of spans) {
+      const n = Math.max(1, Math.ceil((q - p) / 0.8));
+      for (let i = 0; i < n; i++) {
+        const za = p + ((q - p) * i) / n, zb = p + ((q - p) * (i + 1)) / n;
+        const xa = sx * xAt(za, d), xb = sx * xAt(zb, d);
+        matte.quad([xa, y0, za], [xb, y0, zb], [xb, y1, zb], [xa, y1, za], [sx, 0, 0], UV, col);
+      }
+    }
+  };
+  const z0 = tail + (rearEnd ? 0.30 : 0.04), z1 = nose - (frontEnd ? 0.30 : 0.04);
+  const B0 = winY0 - 0.20, B1 = winY0 - 0.012;            // the band: 19 cm under the glass
+  const flank = (sx, z, y, h, text, col, opt = {}) =>
+    dotText(matte, text, { c: [sx * xAt(z, opt.d || 0.012), y, z], u: [0, 0, -sx], h, col, ...opt });
+  for (const sx of [-1, 1]) {
+    if (!L.ion) {
+      strip(sx, z0, z1, B0, B1, 0.006, GRT_BLUE);
+      strip(sx, z0, z1, B0 - 0.036, B0 - 0.010, 0.006, GRT_GOLD);
+      // "Grand River Transit" in white on the band toward the back
+      if (rearEnd) flank(sx, tail + 2.45, (B0 + B1) / 2, 0.105, 'Grand River Transit', GRT_PANEL, { d: 0.010 });
+      // the wordmark on its white panel, breaking the band
+      const lz = o.logoZ ? o.logoZ[sx < 0 ? 1 : 0] : null;
+      if (lz !== null && lz !== undefined) {
+        const px = xAt(lz, 0.010), yb = B0 - 0.15, yt = B1 + 0.015;
+        matte.quad([sx * px, yb, lz - 0.56], [sx * px, yb, lz + 0.56], [sx * px, yt, lz + 0.56], [sx * px, yt, lz - 0.56], [sx, 0, 0], UV, GRT_PANEL);
+        flank(sx, lz, B1 - 0.105, 0.20, 'GRT', GRT_BLUE, { d: 0.014, bold: 0.55, slant: 0.22 });
+        flank(sx, lz, yb + 0.05, 0.045, 'GRAND RIVER TRANSIT', GRT_GOLD, { d: 0.014, bold: 0.2 });
+      }
+    } else {
+      // the ION Bus: the ion logo behind the front door, a small GRT up at the back
+      if (frontEnd) flank(sx, nose - 4.0, B0 + 0.06, 0.30, 'ion', ION_BLUE, { d: 0.010, bold: 0.6 });
+      if (rearEnd) flank(sx, tail + 1.6, winY1 + 0.085, 0.10, 'GRT', GRT_BLUE, { d: 0.010, bold: 0.5, slant: 0.22 });
+    }
+    // over the front windows: the fleet number and the Region of Waterloo's mark
+    if (frontEnd) {
+      const y = winY1 + 0.085, h = 0.095, cell = h / 7;
+      const numW = dotCells(L.fleet) * cell, regW = dotCells('Region of Waterloo') * 0.05 / 7, vW = 0.13;
+      const seq = sx > 0 ? [['n', numW], ['v', vW], ['r', regW]] : [['v', vW], ['r', regW], ['n', numW]];
+      const total = seq.reduce((a, [, w]) => a + w + 0.08, -0.08);
+      // reading direction along z is -sx; start where the run must start
+      const s0 = nose - (L.ion ? 3.2 : 0.9);
+      let s = sx > 0 ? s0 : s0 - total;
+      for (const [k, w] of seq) {
+        const zc = sx > 0 ? s - w / 2 : s + w / 2;
+        if (k === 'n') flank(sx, zc, y, h, L.fleet, GRT_BLUE, { bold: 0.3 });
+        else if (k === 'r') flank(sx, zc, y, 0.05, 'Region of Waterloo', GRT_BLUE);
+        else {
+          // the Region's mark: a blue V under a gold tip
+          const px = sx * xAt(zc, 0.012), u = -sx, a = 0.060, t = 0.022;
+          for (const k2 of [-1, 1]) {
+            matte.quad([px, y - 0.055, zc + u * k2 * 0.004], [px, y - 0.055, zc + u * k2 * (0.004 + t)],
+              [px, y + 0.055, zc + u * k2 * (a + t)], [px, y + 0.055, zc + u * k2 * a], [sx, 0, 0], UV, GRT_BLUE);
+          }
+          matte.quad([px, y + 0.02, zc - 0.012], [px, y + 0.02, zc + 0.012], [px, y + 0.06, zc + 0.012], [px, y + 0.06, zc - 0.012], [sx, 0, 0], UV, GRT_GOLD);
+        }
+        s += sx > 0 ? -(w + 0.08) : w + 0.08;
+      }
+    }
+  }
+  if (rearEnd) {
+    // the back: the band across it under the rear window, the fleet number up top
+    const sT = shell.sec(tail), w = sT.w0 - 0.06, z = tail - 0.010;
+    if (!L.ion) {
+      matte.quad([-w, B0, z], [w, B0, z], [w, B1, z], [-w, B1, z], [0, 0, -1], UV, GRT_BLUE);
+      matte.quad([-w, B0 - 0.036, z], [w, B0 - 0.036, z], [w, B0 - 0.010, z], [-w, B0 - 0.010, z], [0, 0, -1], UV, GRT_GOLD);
+    }
+    dotText(matte, L.fleet, { c: [0, winY1 + 0.10, tail - 0.008], u: [-1, 0, 0], h: 0.09, col: L.ion ? ION_BLUE : GRT_BLUE, bold: 0.3 });
+  }
+  if (L.ion && frontEnd) {
+    // ION's blue sweeps back from the front corners and up over the roof
+    for (const sx of [-1, 1]) {
+      // the corner pillar ahead of the glass, belt to roof, then a wedge over
+      // the windows that runs back into the roof
+      const yt = shell.sec(nose - 0.5).side - 0.01;
+      const piece = (y0, y1, zb0, zb1) => {
+        const rows = [];
+        for (let i = 0; i <= 2; i++) {
+          const y = y0 + ((y1 - y0) * i) / 2, zb = zb0 + ((zb1 - zb0) * i) / 2, row = [];
+          for (let j = 0; j <= 5; j++) { const z = zb + ((nose - 0.10 - zb) * j) / 5; row.push([sx * xAt(z, 0.006), y, z]); }
+          rows.push(row);
+        }
+        matte.patch(rows, ION_BLUE, [sx, 0, 0]);
+      };
+      piece(o.belt, winY1 + 0.004, nose - 0.36, nose - 0.36);
+      piece(winY1 + 0.004, yt, nose - 1.0, nose - 2.9);
+    }
+    // ION's blue roof, laid on the crown from the front cap back 4 m
+    const g = shell.sec(nose - 1), xe = g.wT - g.r, xf = g.wT * 0.35, yE = g.y1 + 0.006, yF = g.y1 + 0.05 + 0.006;
+    const cols = [[-xe, yE], [-xf, yF], [xf, yF], [xe, yE]];
+    const zA = nose - 0.40, zB = nose - 4.4;
+    matte.patch([cols.map(([x, y]) => [x, y, zB]), cols.map(([x, y]) => [x, y, zA])], ION_BLUE, [0, 1, 0]);
+  }
 }
 
 /**
@@ -7527,10 +8123,10 @@ function updateBellows(m, lead, rear) {
 }
 function buildArticFront(spec, paint, trim, matte) {
   // front axle 2.6 m back from the nose; the middle axle 2.1 m ahead of the tail
-  return buildBus(spec, paint, trim, matte, { zF: 2.7, zR: -3.2, doors: [[3.55, 4.65], [-1.5, -0.4]], rearEnd: false, pod: -1.3 });
+  return buildBus(spec, paint, trim, matte, { zF: 2.7, zR: -3.2, doors: [[3.55, 4.65], [-1.5, -0.4]], rearEnd: false, pod: -1.3, logoZ: [0.3, 0.9] });
 }
 function buildArticRear(spec, paint, trim, matte) {
-  return buildBus(spec, paint, trim, matte, { zF: 1.6, zR: ARTIC.axleR, doors: [[1.1, 2.2]], frontEnd: false, pod: -0.6, noFrontAxle: true });
+  return buildBus(spec, paint, trim, matte, { zF: 1.6, zR: ARTIC.axleR, doors: [[1.1, 2.2]], frontEnd: false, pod: -0.6, noFrontAxle: true, logoZ: null });
 }
 
 // ---------------------------------------------------------------------------
@@ -7605,6 +8201,181 @@ function letter(b, text, sx, x, y, zc, h, col) {
   }
 }
 
+// Auto KW: A 5 x 7 DOT-MATRIX FONT for lettering that has to say something --
+// a bus's destination sign (which IS a dot matrix), fleet numbers, liveries,
+// licence plates. Rows top to bottom, five columns each. Geometry again (the
+// vehicle materials carry no map): `dotText` merges each row's lit pixels into
+// runs, so a character is ~5-9 quads.
+const DOT5 = {
+  A: '01110 10001 10001 10001 11111 10001 10001', B: '11110 10001 10001 11110 10001 10001 11110',
+  C: '01110 10001 10000 10000 10000 10001 01110', D: '11100 10010 10001 10001 10001 10010 11100',
+  E: '11111 10000 10000 11110 10000 10000 11111', F: '11111 10000 10000 11110 10000 10000 10000',
+  G: '01110 10001 10000 10111 10001 10001 01111', H: '10001 10001 10001 11111 10001 10001 10001',
+  I: '01110 00100 00100 00100 00100 00100 01110', J: '00111 00010 00010 00010 00010 10010 01100',
+  K: '10001 10010 10100 11000 10100 10010 10001', L: '10000 10000 10000 10000 10000 10000 11111',
+  M: '10001 11011 10101 10101 10001 10001 10001', N: '10001 10001 11001 10101 10011 10001 10001',
+  O: '01110 10001 10001 10001 10001 10001 01110', P: '11110 10001 10001 11110 10000 10000 10000',
+  Q: '01110 10001 10001 10001 10101 10010 01101', R: '11110 10001 10001 11110 10100 10010 10001',
+  S: '01111 10000 10000 01110 00001 00001 11110', T: '11111 00100 00100 00100 00100 00100 00100',
+  U: '10001 10001 10001 10001 10001 10001 01110', V: '10001 10001 10001 10001 10001 01010 00100',
+  W: '10001 10001 10001 10101 10101 10101 01010', X: '10001 10001 01010 00100 01010 10001 10001',
+  Y: '10001 10001 10001 01010 00100 00100 00100', Z: '11111 00001 00010 00100 01000 10000 11111',
+  a: '00000 00000 01110 00001 01111 10001 01111', b: '10000 10000 10110 11001 10001 10001 11110',
+  c: '00000 00000 01110 10000 10000 10001 01110', d: '00001 00001 01101 10011 10001 10001 01111',
+  e: '00000 00000 01110 10001 11111 10000 01110', f: '00110 01001 01000 11100 01000 01000 01000',
+  g: '00000 01111 10001 10001 01111 00001 01110', h: '10000 10000 10110 11001 10001 10001 10001',
+  i: '00100 00000 01100 00100 00100 00100 01110', j: '00010 00000 00110 00010 00010 10010 01100',
+  k: '10000 10000 10010 10100 11000 10100 10010', l: '01100 00100 00100 00100 00100 00100 01110',
+  m: '00000 00000 11010 10101 10101 10001 10001', n: '00000 00000 10110 11001 10001 10001 10001',
+  o: '00000 00000 01110 10001 10001 10001 01110', p: '00000 00000 11110 10001 11110 10000 10000',
+  q: '00000 00000 01101 10011 01111 00001 00001', r: '00000 00000 10110 11001 10000 10000 10000',
+  s: '00000 00000 01110 10000 01110 00001 11110', t: '01000 01000 11100 01000 01000 01001 00110',
+  u: '00000 00000 10001 10001 10001 10011 01101', v: '00000 00000 10001 10001 10001 01010 00100',
+  w: '00000 00000 10001 10001 10101 10101 01010', x: '00000 00000 10001 01010 00100 01010 10001',
+  y: '00000 00000 10001 10001 01111 00001 01110', z: '00000 00000 11111 00010 00100 01000 11111',
+  0: '01110 10001 10011 10101 11001 10001 01110', 1: '00100 01100 00100 00100 00100 00100 01110',
+  2: '01110 10001 00001 00010 00100 01000 11111', 3: '11111 00010 00100 00010 00001 10001 01110',
+  4: '00010 00110 01010 10010 11111 00010 00010', 5: '11111 10000 11110 00001 00001 10001 01110',
+  6: '00110 01000 10000 11110 10001 10001 01110', 7: '11111 00001 00010 00100 01000 01000 01000',
+  8: '01110 10001 10001 01110 10001 10001 01110', 9: '01110 10001 10001 01111 00001 00010 01100',
+  '-': '00000 00000 00000 11111 00000 00000 00000', '/': '00000 00001 00010 00100 01000 10000 00000',
+  '.': '00000 00000 00000 00000 00000 01100 01100', "'": '01100 00100 01000 00000 00000 00000 00000',
+  '&': '01100 10010 10100 01000 10101 10010 01101',
+};
+// the runs of each glyph, parsed once: [row, c0, c1] with c1 exclusive
+const DOT5_RUNS = {};
+for (const [ch, s] of Object.entries(DOT5)) {
+  const runs = [];
+  s.split(' ').forEach((row, r) => {
+    let c = 0;
+    while (c < 5) {
+      if (row[c] !== '1') { c++; continue; }
+      const c0 = c; while (c < 5 && row[c] === '1') c++;
+      runs.push([r, c0, c]);
+    }
+  });
+  DOT5_RUNS[ch] = runs;
+}
+/** Width of `text` in dotText cells (a cell is h / 7). */
+function dotCells(text) {
+  let n = 0;
+  for (const ch of text) n += ch === ' ' ? 4 : 6;
+  return Math.max(0, n - 1);
+}
+/**
+ * Letter `text` flat on a panel: centred on `c` (or starting there with
+ * `align: 'l'`), reading along the unit vector `u` (the viewer's right, seen
+ * from outside), `up` the panel's up, cap height `h`. `led` leaves a gap
+ * between the rows, which is what makes a destination sign read as LEDs;
+ * `bold` thickens every stroke by `bold` of a cell; `slant` leans it (italic).
+ */
+function dotText(b, text, { c, u, up = [0, 1, 0], h, col, led = false, bold = 0, slant = 0, align = 'c' }) {
+  const cell = h / 7, n = [u[1] * up[2] - u[2] * up[1], u[2] * up[0] - u[0] * up[2], u[0] * up[1] - u[1] * up[0]];
+  const W = dotCells(text) * cell;
+  let s0 = align === 'l' ? 0 : -W / 2;
+  const P = (s, y) => [c[0] + u[0] * (s + y * slant) + up[0] * y, c[1] + u[1] * (s + y * slant) + up[1] * y, c[2] + u[2] * (s + y * slant) + up[2] * y];
+  const uv = [0, 0, 1, 0, 1, 1, 0, 1], gy = led ? cell * 0.14 : 0;
+  for (const ch of text) {
+    const runs = DOT5_RUNS[ch] || DOT5_RUNS[ch.toUpperCase()];
+    if (runs) {
+      for (const [r, a0, a1] of runs) {
+        const y1 = h / 2 - r * cell - gy, y0 = h / 2 - (r + 1) * cell + gy;
+        const x0 = s0 + a0 * cell + (led ? cell * 0.08 : 0), x1 = s0 + a1 * cell + bold * cell - (led ? cell * 0.08 : 0);
+        b.quad(P(x0, y0), P(x1, y0), P(x1, y1), P(x0, y1), n, uv, col);
+      }
+    }
+    s0 += (ch === ' ' ? 4 : 6) * cell;
+  }
+  return W;
+}
+
+// Auto KW: ONTARIO PLATES. The passenger plate since its 2020 return: white,
+// ONTARIO across the top, a blue ABCD 123 serial with the crown between the
+// letters and the numbers, YOURS TO DISCOVER along the bottom. Front and back,
+// as Ontario issues them.
+//
+// EVERY CAR ITS OWN SERIAL, for no geometry and no draw: the plate's outer
+// face is one quad whose vertex colours are its UV (r, g) and a key in blue
+// (PLATE_KEY); tagGlass flags it (`glass` 4) and glassShader paints it from
+// PLATE_ATLAS (plateAtlas: PLATE_N serials, a canvas drawn once). WHICH
+// serial is the trim mesh's own: Vehicle sets `trimMesh.scale.x` to
+// 1 + k / PLATE_STEP (k < PLATE_N: under 0.4 %, 4 mm at a flank) and the
+// vertex shader reads k back from modelMatrix (x column over y column, so a
+// parent's uniform scale cancels). A per-mesh uniform would not do: the trim
+// material is shared, and three.js re-uploads a built-in material's uniforms
+// only when the material changes between draws.
+const PLATE_BLUE = [0.015, 0.05, 0.26];
+const PLATE_KEY = 0.3141;
+export const PLATE_N = 128, PLATE_STEP = 32768;
+const PLATE_COLS = 8, PLATE_CW = 128, PLATE_CH = 40;
+const PLATE_LETTERS = 'ABCDEFGHJKLMNPRSTVWXYZ';
+function plateSerial(seed) {
+  let h = (2166136261 ^ Math.imul(seed + 1, 2654435761)) >>> 0;
+  const r = () => { h = Math.imul(h ^ (h >>> 15), 2246822519) >>> 0; h = Math.imul(h ^ (h >>> 13), 3266489917) >>> 0; return (h ^ (h >>> 16)) >>> 0; };
+  // 2020s serials run C... to H...
+  let s = 'CDEFGH'[r() % 6];
+  for (let i = 0; i < 3; i++) s += PLATE_LETTERS[r() % PLATE_LETTERS.length];
+  return s + ' ' + String(100 + (r() % 900));
+}
+let PLATE_ATLAS = null;
+/** The plates' canvas: PLATE_N Ontario plates, PLATE_COLS across, at the plates' own 3.1 : 1. */
+function plateAtlas() {
+  if (PLATE_ATLAS || typeof document === 'undefined') return PLATE_ATLAS;
+  const rows = Math.ceil(PLATE_N / PLATE_COLS);
+  const cv = document.createElement('canvas');
+  cv.width = PLATE_COLS * PLATE_CW; cv.height = rows * PLATE_CH;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#eeeee6';
+  g.fillRect(0, 0, cv.width, cv.height);
+  const blue = '#1a3f8f';
+  for (let k = 0; k < PLATE_N; k++) {
+    const x0 = (k % PLATE_COLS) * PLATE_CW, y0 = Math.floor(k / PLATE_COLS) * PLATE_CH;
+    const W = PLATE_CW, H = PLATE_CH, cx = x0 + W / 2;
+    g.save();
+    g.beginPath(); g.rect(x0, y0, W, H); g.clip();
+    // a fine blue edge, the embossed rim
+    g.strokeStyle = 'rgba(26,63,143,0.55)'; g.lineWidth = 1.2;
+    g.strokeRect(x0 + 1.5, y0 + 1.5, W - 3, H - 3);
+    g.fillStyle = blue; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = 'bold 7px Arial, Helvetica, sans-serif';
+    g.fillText('ONTARIO', cx, y0 + 6.5);
+    g.font = 'italic 5.5px Arial, Helvetica, sans-serif';
+    g.fillText('YOURS TO DISCOVER', cx, y0 + H - 5.5);
+    // the serial: letters, the crown, numbers, condensed into the middle band
+    const [lets, nums] = plateSerial(k).split(' ');
+    g.font = 'bold 22px "Arial Narrow", Arial, Helvetica, sans-serif';
+    const wl = g.measureText(lets).width, wn = g.measureText(nums).width, crown = 9, gap = 3;
+    const total = wl + gap + crown + gap + wn, sx = Math.min(1, (W - 14) / total);
+    g.translate(cx, y0 + H / 2 + 1); g.scale(sx, 1);
+    let x = -total / 2;
+    g.textAlign = 'left';
+    g.fillText(lets, x, 0); x += wl + gap;
+    // the crown: a band and three points
+    g.fillRect(x, 3, crown, 2.5);
+    for (const [px, ht] of [[0.15, 5], [0.5, 7], [0.85, 5]]) {
+      g.beginPath(); g.moveTo(x + crown * px - 1.6, 3); g.lineTo(x + crown * px, 3 - ht); g.lineTo(x + crown * px + 1.6, 3); g.fill();
+    }
+    x += crown + gap;
+    g.fillText(nums, x, 0);
+    g.restore();
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  PLATE_ATLAS = tex;
+  return tex;
+}
+/** A licence plate: the box `trim.box(cx, by, cz, w, h, d, 0, PLATE)` drew, its outer face the serial (PLATE_ATLAS). */
+function plateBox(trim, cx, by, cz, w, h, d) {
+  trim.box(cx, by, cz, w, h, d, 0, PLATE);
+  if (w < 0.3) return;                       // a bike's: too small to letter
+  const dir = cz >= 0 ? 1 : -1, z = cz + dir * (d / 2 + 0.0015);
+  // u runs to the viewer's right (+x seen from the front, -x from behind)
+  const xl = cx - dir * w / 2, xr = cx + dir * w / 2;
+  trim.quad([xl, by, z], [xr, by, z], [xr, by + h, z], [xl, by + h, z], [0, 0, dir], [0, 0, 1, 0, 1, 1, 0, 1],
+    [[0, 0, PLATE_KEY], [1, 0, PLATE_KEY], [1, 1, PLATE_KEY], [0, 1, PLATE_KEY]]);
+}
+
 /** A roll-up aluminium compartment door on a flank, with its slats and lift bar. */
 function rollDoor(trim, matte, sx, x, y0, y1, za, zb) {
   const zc = (za + zb) / 2, len = Math.abs(zb - za);
@@ -7676,7 +8447,7 @@ function fireCab(spec, paint, trim, matte, o) {
   trim.box(0, 0.38, nose + 0.26, W * 2.02, 0.32, 0.50, 0, CHROME);
   matte.box(0, 0.69, nose + 0.26, W * 1.2, 0.012, 0.42, 0, FIRE_DIAMOND);
   matte.box(0, 0.70, nose + 0.26, W * 0.9, 0.06, 0.32, 0, [0.82, 0.70, 0.18]);   // a yellow trash line, folded
-  trim.box(0, 0.47, nose + 0.515, 0.40, 0.12, 0.02, 0, PLATE);
+  plateBox(trim, 0, 0.47, nose + 0.515, 0.40, 0.12, 0.02);
   // a Q2B: the mechanical siren on the bumper deck, chrome bell
   trim.prism(-0.62, 0.70, nose + 0.32, 0.12, 0.24, 10, CHROME);
   // the white cab roof (matte: paint cannot be white on a red truck)
@@ -7801,7 +8572,7 @@ function buildFireEngine(spec, paint, trim, matte) {
       [i * 0.24 + 0.06, 2.20, tail - 0.004], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], i % 2 ? FIRE_GOLD : [0.75, 0.10, 0.10]);
   }
   matte.box(0, 0.46, tail - 0.18, W * 1.9, 0.07, 0.40, 0, FIRE_DIAMOND);       // tailboard step
-  trim.box(0, 0.62, tail - 0.012, 0.40, 0.12, 0.02, 0, PLATE);
+  plateBox(trim, 0, 0.62, tail - 0.012, 0.40, 0.12, 0.02);
   // --- chassis ------------------------------------------------------------------
   matte.box(0, 0.62, (tail + nose) / 2 - 0.4, 0.98, 0.26, spec.len - 1.6, 0, PLASTIC);
   for (const sx of [-1, 1]) matte.box(sx * (W - 0.24), wr * 2 + 0.04, zR, 0.52, 0.04, wr * 2.3, 0, PLASTIC);
@@ -7823,7 +8594,7 @@ function buildFireEngine(spec, paint, trim, matte) {
 const TILLER = { hitchF: 1.75, hitchR: 5.55, axleR: -4.85, maxAngle: 1.10, rearSteer: 0.7, rearSteerRev: -1.5, rearLock: 0.55 };
 const LADDER_Y = 3.06;   // the bedded aerial's bottom chord, clear of the tiller cab's roof
 // Every trailer's hitch, by the trailer's type (Vehicle.follow, traffic.spawnAt).
-export const HITCH = { articRear: { ...ARTIC, rearSteer: 0, rearLock: 0 }, tillerRear: TILLER };
+export const HITCH = { articRear: { ...ARTIC, rearSteer: 0, rearLock: 0 }, tillerRear: TILLER, semiTrailer: null };
 function buildTiller(spec, paint, trim, matte) {
   const wr = spec.wheelR, W = spec.wid / 2;
   const nose = spec.len / 2, tail = -spec.len / 2;
@@ -7946,7 +8717,7 @@ function buildTillerRear(spec, paint, trim, matte) {
   }
   matte.box(0, 0.80, tail - 0.006, 0.86, 0.40, 0.012, 0, [0.07, 0.07, 0.08]);
   trim.box(0, 0.50, tail + 0.02, W * 1.6, 0.14, 0.06, 0, CHROME);
-  trim.box(0, 0.62, tail - 0.04, 0.40, 0.12, 0.02, 0, PLATE);
+  plateBox(trim, 0, 0.62, tail - 0.04, 0.40, 0.12, 0.02);
   for (let i = -4; i <= 4; i++) {
     matte.quad([i * 0.24 - 0.06, 0.66, tail - 0.012], [i * 0.24 + 0.06, 0.66, tail - 0.012], [i * 0.24 + 0.14, 1.26, tail - 0.012],
       [i * 0.24 + 0.02, 1.26, tail - 0.012], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], i % 2 ? FIRE_GOLD : [0.75, 0.10, 0.10]);
@@ -9611,6 +10382,479 @@ function buildCombine(spec, paint, trim, matte) {
 }
 
 /** Types with their own authored builder, keyed by `spec.hand`. */
+// ---------------------------------------------------------------------------
+// Auto KW: Waterloo Region's traffic, round two (see CLAUDE.md "Waterloo
+// Region's traffic"): the Wrangler, the dually, the U-Haul, the semi and its
+// 53 ft trailer, the OPP's Interceptor Utility. Hand-built from slabs: these
+// are boxy vehicles, and a slab with the right proportions is most of them.
+// ---------------------------------------------------------------------------
+const UV4 = [0, 0, 1, 0, 1, 1, 0, 1];
+/**
+ * A six-faced solid from its eight corners: four round the bottom, then the
+ * four above them in the same order. Each face's normal is its own (outward
+ * from the solid's centre), so a raked screen or a falling bonnet shades as
+ * the plane it is. `skip` names faces not to draw: 'bottom', 'top', or a side
+ * 0..3 (side k joins corners k and k + 1).
+ */
+function hexa(b, P, col, skip = null) {
+  const c = [0, 0, 0];
+  for (const p of P) { c[0] += p[0] / 8; c[1] += p[1] / 8; c[2] += p[2] / 8; }
+  const face = (a, bb, cc, d) => {
+    const u = [cc[0] - a[0], cc[1] - a[1], cc[2] - a[2]], v = [d[0] - bb[0], d[1] - bb[1], d[2] - bb[2]];
+    let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    const l = Math.hypot(n[0], n[1], n[2]);
+    if (l < 1e-9) return;
+    n = [n[0] / l, n[1] / l, n[2] / l];
+    const f = [(a[0] + bb[0] + cc[0] + d[0]) / 4 - c[0], (a[1] + bb[1] + cc[1] + d[1]) / 4 - c[1], (a[2] + bb[2] + cc[2] + d[2]) / 4 - c[2]];
+    if (n[0] * f[0] + n[1] * f[1] + n[2] * f[2] < 0) n = [-n[0], -n[1], -n[2]];
+    b.quad(a, bb, cc, d, n, UV4, col);
+  };
+  const [b0, b1, b2, b3, t0, t1, t2, t3] = P;
+  const S = skip || [];
+  if (!S.includes('bottom')) face(b0, b1, b2, b3);
+  if (!S.includes('top')) face(t0, t1, t2, t3);
+  const B = [b0, b1, b2, b3], T = [t0, t1, t2, t3];
+  for (let k = 0; k < 4; k++) if (!S.includes(k)) face(B[k], B[(k + 1) % 4], T[(k + 1) % 4], T[k]);
+}
+/**
+ * A slab across x0..x1 between two stations, each [z, yBottom, yTop]: a
+ * bonnet that falls toward the nose, a fender, a screen's raked face. `inset`
+ * pulls the top in at both sides.
+ */
+function slabZ(x0, x1, [z0, yb0, yt0], [z1, yb1, yt1], inset = 0) {
+  return [[x0, yb0, z0], [x1, yb0, z0], [x1, yb1, z1], [x0, yb1, z1],
+    [x0 + inset, yt0, z0], [x1 - inset, yt0, z0], [x1 - inset, yt1, z1], [x0 + inset, yt1, z1]];
+}
+/** A pane on a plane through two edges at heights: a raked screen from (zb, yb) up to (zt, yt), x +-hw, d proud. */
+function rakedPane(trim, hwB, hwT, zb, yb, zt, yt, d = 0.008, col = GLASS) {
+  const dy = yt - yb, dz = zt - zb, l = Math.hypot(dy, dz), ny = -dz / l, nz = dy / l;
+  trim.quad([-hwB, yb + ny * d, zb + nz * d], [hwB, yb + ny * d, zb + nz * d], [hwT, yt + ny * d, zt + nz * d], [-hwT, yt + ny * d, zt + nz * d], [0, ny, nz], UV4, col);
+}
+/** A flat pane on a flank at x = sx * x: corners [z, y] in any order round. */
+function flankPane(trim, sx, x, pts, col = GLASS) {
+  const P = pts.map(([z, y]) => [sx * x, y, z]);
+  trim.quad(P[0], P[1], P[2], P[3], [sx, 0, 0], UV4, col);
+}
+/** A spare wheel on a tailgate or a carrier: tyre, sidewall and a rim, its face toward -z. */
+function spareWheel(trim, matte, x, y, z0, r, w, rimCol = RIM) {
+  matte.tube([x, y, z0], [x, y, z0 - w], r, 18, TYRE, true);
+  matte.tube([x, y, z0 - w], [x, y, z0 - w - 0.012], r * 0.82, 18, [0.035, 0.035, 0.04], true);
+  trim.tube([x, y, z0 - w - 0.012], [x, y, z0 - w - 0.02], r * 0.58, 14, rimCol, true);
+  trim.tube([x, y, z0 - w - 0.02], [x, y, z0 - w - 0.04], r * 0.16, 8, HUB, true);
+}
+const ALU_C = [0.66, 0.67, 0.70];
+const DEEP = [0.035, 0.037, 0.040];
+
+/**
+ * The JEEP WRANGLER (JL Unlimited, 4.88 x 1.89 x 1.85 m with the spare): the
+ * seven-slot grille between round lamps, a flat bonnet between flat-topped
+ * black fenders standing clear of the tyres, a near-upright flat screen in a
+ * frame, a black hardtop, external door hinges, a tub with square cut-outs
+ * over the wheels, steel bumpers, rock rails, the spare on the tailgate.
+ */
+function buildJeep(spec, paint, trim, matte) {
+  const wr = spec.wheelR, roof = spec.roof;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = nose - 0.86, zR = zF - spec.wheelbase;
+  const W = 0.86, belt = 1.12, sill = 0.60, cut = wr * 2 + 0.08;   // the tub's cut-outs clear the tyres by 8 cm
+  const zCowl = 0.58, zBack = tail + 0.26, zGr = nose - 0.20;
+  const TOP = [0.030, 0.032, 0.035];
+  // --- the tub: full depth between the wheels and behind, cut out over them --
+  const tub = (z0, z1, y0) => paint.box(0, y0, (z0 + z1) / 2, W * 2, belt - y0, z1 - z0, 0, WHITE);
+  tub(zR + wr + 0.10, zCowl, sill);
+  tub(zR - wr - 0.10, zR + wr + 0.10, cut);
+  tub(zBack, zR - wr - 0.10, sill);
+  paint.box(0, belt, zCowl - 0.06, W * 1.96, 0.05, 0.14, 0, WHITE);                       // cowl
+  // bonnet: falls 5 cm to the grille, a little narrower on top
+  hexa(paint, slabZ(-0.80, 0.80, [zCowl, 0.86, belt + 0.02], [zGr, 0.86, belt - 0.03], 0.03), WHITE);
+  // under it, the engine bay is closed (no daylight through the fenders)
+  matte.box(0, 0.42, (zCowl + zGr) / 2, 1.30, 0.44, zGr - zCowl, 0, DEEP);
+  // --- grille: seven slots, the round lamps in the outer ones -----------------
+  paint.box(0, 0.60, zGr + 0.03, 1.62, belt - 0.03 - 0.60, 0.06, 0, WHITE);
+  const gz = zGr + 0.063;
+  for (let i = -3; i <= 3; i++) matte.box(i * 0.135, 0.70, gz, 0.068, 0.30, 0.008, 0, DEEP);
+  for (const sx of [-1, 1]) {
+    trim.tube([sx * 0.60, 0.86, gz - 0.006], [sx * 0.60, 0.86, gz + 0.012], 0.128, 16, CHROME, true);
+    trim.tube([sx * 0.60, 0.86, gz + 0.012], [sx * 0.60, 0.86, gz + 0.020], 0.105, 16, LAMP, true);
+  }
+  // --- flat-topped fenders, black, standing out over the tyres ----------------
+  for (const sx of [-1, 1]) {
+    const xi = sx * 0.76, xo = sx * 1.0;
+    const [a, b] = sx < 0 ? [xo, xi] : [xi, xo];
+    hexa(matte, slabZ(a, b, [zF - wr - 0.22, 0.95, 1.01], [zF + wr + 0.10, 0.93, 1.00]), DEEP);
+    hexa(matte, slabZ(a, b, [zF + wr + 0.10, 0.93, 1.00], [zGr + 0.10, 0.76, 0.84]), DEEP);
+    matte.box(sx * 0.88, sill - 0.02, zF - wr - 0.20, 0.24, 0.97 - sill + 0.02, 0.05, 0, DEEP);   // the fender's back, to the step
+    trim.box(sx * 0.95, 0.78, zGr + 0.065, 0.07, 0.035, 0.012, 0, AMBER);
+    // the rear flares, square over the cut-outs
+    const xr = sx * (W - 0.01), xro = sx * 1.0;
+    const [c, d] = sx < 0 ? [xro, xr] : [xr, xro];
+    hexa(matte, slabZ(c, d, [zR - wr - 0.18, cut - 0.10, cut + 0.02], [zR + wr + 0.18, cut - 0.10, cut + 0.02]), DEEP);
+    for (const ze of [zR - wr - 0.15, zR + wr + 0.15]) matte.box(sx * 0.93, sill + 0.02, ze, 0.13, cut - sill - 0.10, 0.06, 0, DEEP);
+  }
+  // --- screen: a flat pane in a frame, near upright ---------------------------
+  const sB = [zCowl - 0.02, belt + 0.05], sT = [zCowl - 0.31, belt + 0.60];
+  rakedPane(trim, 0.74, 0.72, sB[0], sB[1], sT[0], sT[1], 0.004);
+  for (const sx of [-1, 1]) paint.tube([sx * 0.80, sB[1] - 0.02, sB[0] + 0.01], [sx * 0.80, sT[1] + 0.02, sT[0] - 0.01], 0.042, 6, WHITE, true);
+  paint.tube([-0.82, sT[1] + 0.03, sT[0] - 0.01], [0.82, sT[1] + 0.03, sT[0] - 0.01], 0.045, 6, WHITE, true);
+  // --- the hardtop: roof, pillars, glass, black -------------------------------
+  const rz0 = sT[0] - 0.02;
+  matte.box(0, roof - 0.07, (rz0 + zBack) / 2, 1.70, 0.07, rz0 - zBack, 0, TOP);
+  const winT = roof - 0.12;
+  const posts = [[-0.58, 0.07], [-1.48, 0.08], [zBack + 0.05, 0.10]];
+  for (const sx of [-1, 1]) {
+    matte.box(sx * 0.835, winT, (rz0 + zBack) / 2, 0.05, roof - 0.07 - winT, rz0 - zBack, 0, TOP);   // the rail over the doors
+    for (const [z, d] of posts) matte.box(sx * 0.835, belt, z, 0.05, winT - belt, d, 0, TOP);
+    // door glass (the front's leading edge follows the screen frame), rear door, quarter
+    const e = (y) => sB[0] + (sT[0] - sB[0]) * (y - sB[1]) / (sT[1] - sB[1]) - 0.07;
+    flankPane(trim, sx, 0.862, [[e(belt + 0.04), belt + 0.04], [-0.53, belt + 0.04], [-0.53, winT - 0.01], [e(winT - 0.01), winT - 0.01]]);
+    flankPane(trim, sx, 0.862, [[-0.63, belt + 0.04], [-1.43, belt + 0.04], [-1.43, winT - 0.01], [-0.63, winT - 0.01]]);
+    flankPane(trim, sx, 0.862, [[-1.53, belt + 0.06], [zBack + 0.11, belt + 0.06], [zBack + 0.11, winT - 0.02], [-1.53, winT - 0.02]], GLASS_TINT);
+  }
+  matte.box(0, belt, zBack + 0.02, 1.70, 0.06, 0.04, 0, TOP);
+  matte.box(0, winT, zBack + 0.02, 1.70, roof - 0.07 - winT, 0.04, 0, TOP);
+  trim.quad([-0.70, belt + 0.07, zBack - 0.004], [0.70, belt + 0.07, zBack - 0.004], [0.70, winT - 0.02, zBack - 0.004], [-0.70, winT - 0.02, zBack - 0.004], [0, 0, -1], UV4, GLASS_TINT);
+  boxCabin(matte, { y: 0.66, sit: 1.0, x: 0.78, zR: zBack + 0.06, zF: zCowl - 0.04, top: roof - 0.08, rows: [-0.30, -1.25], wheelDz: 0.52 });
+  // --- doors: shut lines, the exposed hinges, handles, mirrors ----------------
+  for (const sx of [-1, 1]) {
+    const X = sx * (W + 0.003);
+    for (const z of [zCowl - 0.05, -0.58, -1.48]) matte.box(X, sill + 0.03, z, 0.006, belt - sill - 0.05, 0.012, 0, DEEP);
+    for (const z of [zCowl - 0.08, -0.61]) for (const y of [0.76, 1.02]) matte.box(sx * (W + 0.012), y, z, 0.022, 0.07, 0.09, 0, DEEP);
+    for (const z of [-0.50, -1.40]) matte.box(sx * (W + 0.010), 0.98, z, 0.016, 0.035, 0.12, 0, DEEP);
+    matte.tube([sx * 0.86, 1.10, zCowl - 0.12], [sx * 0.98, 1.16, zCowl - 0.16], 0.02, 5, DEEP, true);
+    matte.box(sx * 1.00, 1.10, zCowl - 0.17, 0.05, 0.19, 0.22, 0, DEEP);
+    trim.box(sx * 1.00, 1.115, zCowl - 0.28, 0.035, 0.16, 0.012, 0, MIRROR);
+    // rock rail between the wheels
+    matte.tube([sx * 0.93, 0.50, zR + wr + 0.25], [sx * 0.93, 0.50, zF - wr - 0.25], 0.045, 6, DEEP, true);
+    for (const z of [zR + wr + 0.40, (zR + zF) / 2, zF - wr - 0.40]) matte.box(sx * 0.89, 0.47, z, 0.10, 0.12, 0.05, 0, DEEP);
+  }
+  // --- bumpers, plates, the tail ------------------------------------------------
+  matte.box(0, 0.42, nose - 0.10, 1.96, 0.20, 0.20, 0, DEEP);
+  for (const sx of [-1, 1]) trim.box(sx * 0.55, 0.47, nose + 0.002, 0.08, 0.06, 0.01, 0, [0.62, 0.05, 0.04]);   // tow hooks
+  plateBox(trim, 0, 0.44, nose + 0.012, 0.40, 0.12, 0.02);
+  for (const sx of [-1, 1]) trim.box(sx * 0.77, 0.70, zBack - 0.008, 0.11, 0.30, 0.012, 0, TAILC);
+  matte.box(0, 0.42, zBack - 0.06, 1.86, 0.20, 0.16, 0, DEEP);
+  spareWheel(trim, matte, 0, 1.0, zBack - 0.03, wr - 0.01, 0.26);
+  matte.box(0, 0.86, zBack - 0.02, 0.36, 0.30, 0.05, 0, DEEP);                                // the carrier
+  plateBox(trim, -0.52, 0.64, zBack - 0.016, 0.40, 0.12, 0.02);
+  trim.box(0, roof - 0.04, zBack - 0.012, 0.30, 0.03, 0.012, 0, TAILC);                         // high stop lamp
+  // --- under: frame, solid axles, their pumpkins --------------------------------
+  for (const sx of [-1, 1]) matte.box(sx * 0.48, 0.36, (zF + zR) / 2, 0.10, 0.20, zF - zR + 1.2, 0, DEEP);
+  for (const z of [zF, zR]) {
+    matte.tube([-0.66, wr, z], [0.66, wr, z], 0.055, 8, DEEP, true);
+    matte.box(0.10, wr - 0.13, z, 0.30, 0.26, 0.28, 0, DEEP);
+  }
+  const wx = 0.80, tw = 0.30;
+  return [[-wx, wr, zF, wr, tw, undefined, true], [wx, wr, zF, wr, tw, undefined, true],
+    [-wx, wr, zR, wr, tw, undefined, true], [wx, wr, zR, wr, tw, undefined, true]];
+}
+
+/**
+ * The HEAVY-DUTY PICKUP: an F-350 crew cab, long box, dual rear wheels (6.76 x
+ * 2.44 x 2.07 m) -- the farm truck of the townships. The pickup's body at its
+ * size and a hair taller, and the duals standing out under fender flares,
+ * which are what the eye counts first; the cab's amber clearance lamps.
+ */
+function buildDually(spec, paint, trim, matte) {
+  const body = 2.03;
+  const wheels = scaledBuild(buildPickup, 5.92, 2.05, [1.0, 1.05, 1.98])({ ...spec, wid: body }, paint, trim, matte);
+  const out = [];
+  const wr = spec.wheelR, R = wr + 0.09, xi = 0.97, xo = spec.wid / 2;
+  for (const wl of wheels) {
+    if (wl[2] > 0) { out.push(wl); continue; }
+    const sx = Math.sign(wl[0]), tw = 0.255;
+    out.push([sx * (xo - 0.03 - tw / 2), wl[1], wl[2], wr, tw, sx]);
+    out.push([sx * (xo - 0.03 - tw * 1.5 - 0.02), wl[1], wl[2], wr, tw, sx]);
+  }
+  // the flares: an arch of the body's colour round each pair, open underneath
+  const zR = wheels.find((w) => w[2] < 0)[2], N = 12, T = 0.12;
+  for (const sx of [-1, 1]) {
+    const x0 = sx * xi, x1 = sx * xo;
+    for (let i = 0; i < N; i++) {
+      const a0 = (Math.PI * i) / N, a1 = (Math.PI * (i + 1)) / N;
+      const P = (a, r, x) => [x, wr + Math.sin(a) * r, zR + Math.cos(a) * r];
+      const n0 = [0, Math.sin((a0 + a1) / 2), Math.cos((a0 + a1) / 2)];
+      paint.quad(P(a0, R + T, x0), P(a1, R + T, x0), P(a1, R + T, x1), P(a0, R + T, x1), n0, UV4, WHITE);         // top
+      matte.quad(P(a0, R, x0), P(a1, R, x0), P(a1, R, x1), P(a0, R, x1), [0, -n0[1], -n0[2]], UV4, DEEP);          // liner
+      paint.quad(P(a0, R, x1), P(a1, R, x1), P(a1, R + T, x1), P(a0, R + T, x1), [sx, 0, 0], UV4, WHITE);          // face
+    }
+    trim.box(sx * (xo - 0.01), wr + R + T * 0.5, zR + 0.08, 0.012, 0.035, 0.07, 0, TAILC);
+    trim.box(sx * (xo - 0.01), wr + 0.10, zR + R + 0.06, 0.012, 0.035, 0.07, 0, AMBER);
+  }
+  for (let i = -2; i <= 2; i++) trim.box(i * 0.13, spec.roof + 0.005, 0.10, 0.07, 0.03, 0.05, 0, AMBER);   // cab clearance lamps
+  return out;
+}
+
+/**
+ * The U-HAUL 15 ft (a Ford E-series cutaway, 7.2 x 2.4 x 3.35 m): the van's
+ * short bonnet and cab under a white box with Mom's Attic over the cab, dual
+ * rears tucked under the box, a roll-up door and the loading ramp's step at
+ * the back. White, the orange U-HAUL on the box, MOVING & STORAGE under it,
+ * a province SuperGraphic toward the back (Ontario's), MOM'S ATTIC on the
+ * overhang.
+ */
+const UH_ORANGE = [0.89, 0.15, 0.02];
+function buildUhaul(spec, paint, trim, matte) {
+  const wr = spec.wheelR, roof = spec.roof, W = spec.wid / 2;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = nose - 0.95, zR = zF - spec.wheelbase;
+  const zCab = 1.30, zCowl = nose - 1.10, zBox = zCab - 0.05, deck = 0.95;
+  // --- cab: bonnet, cab sides, the raked screen -------------------------------
+  hexa(paint, slabZ(-1.0, 1.0, [zCowl, 0.86, 1.42], [nose - 0.12, 0.86, 1.20], 0.08), WHITE);
+  matte.box(0, 0.40, (zCowl + nose) / 2, 1.70, 0.46, nose - zCowl - 0.1, 0, DEEP);
+  paint.box(0, 0.70, (zCab + zF - wr - 0.06) / 2, 2.0, 1.42 - 0.70, zF - wr - 0.06 - zCab, 0, WHITE);
+  paint.box(0, wr * 2 + 0.06, (zF - wr - 0.06 + zCowl) / 2, 2.0, 1.42 - wr * 2 - 0.06, zCowl - (zF - wr - 0.06), 0, WHITE);
+  const sB = [zCowl, 1.42], sT = [zCowl - 0.52, 2.28];
+  hexa(paint, [[-1.0, 1.42, zCab], [1.0, 1.42, zCab], [1.0, 1.42, sB[0]], [-1.0, 1.42, sB[0]],
+    [-0.96, 2.32, zCab], [0.96, 2.32, zCab], [0.96, 2.32, sT[0] - 0.02], [-0.96, 2.32, sT[0] - 0.02]], WHITE);
+  rakedPane(trim, 0.90, 0.86, sB[0] - 0.03, sB[1] + 0.05, sT[0] + 0.02, sT[1] - 0.04);
+  for (const sx of [-1, 1]) {
+    const e = (y) => sB[0] + (sT[0] - sB[0]) * (y - sB[1]) / (sT[1] - sB[1]) - 0.08;
+    flankPane(trim, sx, 0.99, [[zCab + 0.30, 1.50], [e(1.50), 1.50], [e(2.18), 2.18], [zCab + 0.30, 2.18]]);
+    matte.box(sx * 1.003, 0.80, zCab + 0.24, 0.006, 0.62, 0.012, 0, DEEP);                   // the door's back edge
+    trim.box(sx * 1.005, 1.30, zCab + 0.40, 0.012, 0.03, 0.14, 0, CHROME);
+    truckMirror(trim, matte, sx, 0.98, 2.06, sB[0] - 0.10);
+    dotText(matte, 'U-HAUL', { c: [sx * 1.006, 1.08, (zCab + zF - wr) / 2 + 0.05], u: [0, 0, -sx], h: 0.10, col: UH_ORANGE, bold: 0.5 });
+  }
+  boxCabin(matte, { y: 0.92, sit: 1.40, x: 0.92, zR: zCab + 0.04, zF: sB[0] - 0.05, top: 2.26, rows: [zCab + 0.35], wheelDz: 0.55 });
+  // the face: dark grille in a bright surround, the lamps, the bumper
+  const fz = nose - 0.12;
+  matte.box(0, 0.80, fz, 1.10, 0.30, 0.03, 0, DEEP);
+  trim.box(0, 0.78, fz - 0.005, 1.18, 0.34, 0.02, 0, CHROME);
+  for (const sx of [-1, 1]) {
+    trim.box(sx * 0.76, 0.94, fz + 0.004, 0.36, 0.17, 0.02, 0, LAMP);
+    trim.box(sx * 0.76, 0.86, fz + 0.004, 0.36, 0.06, 0.02, 0, AMBER);
+  }
+  trim.box(0, 0.42, nose - 0.06, 2.02, 0.22, 0.14, 0, [0.60, 0.62, 0.65]);
+  plateBox(trim, 0, 0.45, nose + 0.024, 0.40, 0.12, 0.02);
+  // --- the box, and Mom's Attic over the cab --------------------------------------
+  paint.box(0, deck, (tail + zBox) / 2, W * 2, roof - deck, zBox - tail, 0, WHITE);
+  hexa(paint, [[-W, 2.42, zBox], [W, 2.42, zBox], [W, 2.42, zBox + 0.72], [-W, 2.42, zBox + 0.72],
+    [-W, roof, zBox], [W, roof, zBox], [W, roof - 0.06, zBox + 0.84], [-W, roof - 0.06, zBox + 0.84]], WHITE);
+  for (const sx of [-1, 1]) {
+    for (const [z, y0, y1] of [[tail + 0.03, deck, roof], [zBox - 0.03, deck, 2.42]]) trim.box(sx * (W - 0.02), y0, z, 0.06, y1 - y0, 0.07, 0, ALU_C);
+    trim.box(sx * (W + 0.004), deck, (tail + zBox) / 2, 0.012, 0.10, zBox - tail, 0, ALU_C);   // bottom rail
+    trim.box(sx * (W + 0.004), roof - 0.07, (tail + zBox + 0.8) / 2, 0.012, 0.07, zBox + 0.8 - tail, 0, ALU_C);
+    const X = sx * (W + 0.008), u = [0, 0, -sx];
+    dotText(matte, 'U-HAUL', { c: [X, 2.50, 0.05], u, h: 0.52, col: UH_ORANGE, bold: 0.75 });
+    dotText(matte, 'MOVING & STORAGE', { c: [X, 2.02, 0.05], u, h: 0.16, col: [0.03, 0.03, 0.035], bold: 0.5 });
+    dotText(matte, "MOM'S ATTIC", { c: [X, 2.88, zBox + 0.36], u, h: 0.14, col: UH_ORANGE, bold: 0.5 });
+    // the SuperGraphic: Ontario -- a lake under a big sky, the shore, a white pine
+    const za = -1.45, zb = tail + 0.30, ya = 1.12, yb = 3.10;
+    const band = (y0, y1, col) => flankPane(matte, sx, W + 0.006, [[za, y0], [zb, y0], [zb, y1], [za, y1]], col);
+    band(ya, ya + 0.35, [0.02, 0.10, 0.30]);
+    band(ya + 0.35, ya + 0.62, [0.03, 0.16, 0.05]);
+    band(ya + 0.62, yb, [0.24, 0.48, 0.80]);
+    const pz = za + (zb - za) * 0.72;
+    flankPane(matte, sx, W + 0.009, [[pz - 0.04, ya + 0.55], [pz + 0.04, ya + 0.55], [pz + 0.04, ya + 1.45], [pz - 0.04, ya + 1.45]], [0.04, 0.03, 0.02]);
+    for (const [dy, hw] of [[0.70, 0.45], [0.98, 0.32], [1.22, 0.22]]) {
+      flankPane(matte, sx, W + 0.010, [[pz - hw * 0.6, ya + dy], [pz + hw, ya + dy], [pz + hw * 0.8, ya + dy + 0.10], [pz - hw * 0.5, ya + dy + 0.10]], [0.01, 0.08, 0.03]);
+    }
+    dotText(matte, 'ONTARIO', { c: [X + sx * 0.003, 2.72, (za + zb) / 2], u, h: 0.24, col: [0.95, 0.95, 0.92], bold: 0.6 });
+  }
+  // the back: the roll-up door in its frame, the step and ramp, lamps, plate
+  const dW = W - 0.10, dTop = roof - 0.16;
+  trim.box(0, deck, tail - 0.004, W * 2 - 0.02, roof - deck, 0.008, 0, ALU_C);
+  matte.box(0, deck + 0.04, tail - 0.012, dW * 2, dTop - deck - 0.04, 0.008, 0, [0.80, 0.80, 0.78]);
+  for (let y = deck + 0.20; y < dTop; y += 0.20) matte.box(0, y, tail - 0.018, dW * 2, 0.012, 0.006, 0, [0.48, 0.48, 0.47]);
+  dotText(matte, 'U-HAUL', { c: [0, dTop - 0.30, tail - 0.020], u: [-1, 0, 0], h: 0.24, col: UH_ORANGE, bold: 0.6 });
+  matte.box(0, 0.48, tail - 0.10, W * 1.85, 0.32, 0.30, 0, DEEP);
+  for (const sx of [-1, 1]) trim.box(sx * (W - 0.12), deck + 0.08, tail - 0.016, 0.12, 0.24, 0.012, 0, TAILC);
+  plateBox(trim, -0.45, 0.54, tail - 0.26, 0.40, 0.12, 0.02);
+  // --- chassis: rails, tank, the duals under the box ---------------------------------
+  for (const sx of [-1, 1]) matte.box(sx * 0.45, 0.52, (tail + zF) / 2, 0.10, 0.22, zF - tail - 0.3, 0, DEEP);
+  matte.box(0, 0.84, (tail + zBox) / 2, W * 1.9, 0.11, zBox - tail - 0.1, 0, DEEP);
+  trim.tube([-0.80, 0.55, zR + 1.0], [-0.80, 0.55, zR + 1.7], 0.20, 10, ALU_C, true);
+  return [[-0.84, wr, zF, wr, 0.24], [0.84, wr, zF, wr, 0.24],
+    [-0.96, wr, zR, wr, 0.22, -1], [-0.71, wr, zR, wr, 0.22, -1], [0.71, wr, zR, wr, 0.22, 1], [0.96, wr, zR, wr, 0.22, 1]];
+}
+
+/**
+ * The SEMI: a Class 8 sleeper tractor (Cascadia-class conventional, 8.0 x 2.5
+ * x 4.0 m over the fairing) towing a 53 ft dry van (`semiTrailer`, 16.15 x
+ * 2.59 x 4.11 m). A long sloping bonnet over a tall bright grille, set-back
+ * fenders, a raked two-piece screen, the sleeper under a roof fairing, cab
+ * extenders closing the gap to the trailer, chassis skirts, chrome stacks,
+ * tandem drive axles on duals under the fifth wheel. The trailer rides on
+ * HITCH.semiTrailer, like the tiller's.
+ */
+function buildSemi(spec, paint, trim, matte) {
+  const wr = spec.wheelR, nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = nose - 1.05, zRc = zF - spec.wheelbase, zR1 = zRc + 0.65, zR2 = zRc - 0.65;
+  const W = 1.18, zCab = 1.40, zBk = -0.20, zSl = -2.15, cabY = 1.05;
+  // --- bonnet, grille, fenders, bumper -------------------------------------------
+  hexa(paint, slabZ(-0.66, 0.66, [zCab, 1.0, 2.06], [nose - 0.12, 1.0, 1.62], 0.07), WHITE);
+  trim.box(0, 1.00, nose - 0.13, 1.14, 0.58, 0.06, 0, CHROME);
+  for (let i = 0; i < 6; i++) matte.box(0, 1.06 + i * 0.085, nose - 0.098, 0.98, 0.035, 0.008, 0, DEEP);
+  for (const sx of [-1, 1]) {
+    const [a, b] = sx < 0 ? [-1.22, -0.62] : [0.62, 1.22];
+    hexa(paint, slabZ(a, b, [zF - wr - 0.12, 1.14, 1.42], [nose - 0.14, 1.04, 1.26], 0.04), WHITE);
+    trim.box(sx * 0.93, 1.07, nose - 0.135, 0.36, 0.13, 0.02, 0, LAMP);
+    trim.box(sx * 1.13, 1.07, nose - 0.135, 0.12, 0.08, 0.02, 0, AMBER);
+    matte.box(sx * 0.92, 0.95, zF - wr - 0.14, 0.60, 0.40, 0.04, 0, DEEP);                     // the fender's back, a splash guard
+  }
+  trim.box(0, 0.44, nose - 0.10, 2.44, 0.46, 0.20, 0, [0.62, 0.64, 0.67]);
+  plateBox(trim, 0, 0.52, nose + 0.012, 0.40, 0.12, 0.02);
+  // --- cab, screen, sleeper, fairing --------------------------------------------------
+  paint.box(0, cabY, (zBk + zCab) / 2, W * 2, 2.08 - cabY, zCab - zBk, 0, WHITE);
+  const sT = [0.98, 2.96];
+  hexa(paint, [[-W, 2.08, zBk], [W, 2.08, zBk], [W, 2.08, zCab], [-W, 2.08, zCab],
+    [-W, sT[1], zBk], [W, sT[1], zBk], [W, sT[1], sT[0]], [-W, sT[1], sT[0]]], WHITE);
+  rakedPane(trim, 1.07, 1.05, zCab - 0.03, 2.14, sT[0] + 0.03, sT[1] - 0.06);
+  {
+    const dy = sT[1] - 2.08, dz = sT[0] - zCab, l = Math.hypot(dy, dz), ny = -dz / l, nz = dy / l;
+    const at = (t, d) => [zCab + dz * t + nz * d, 2.08 + dy * t + ny * d];
+    const [z0, y0] = at(0.05, 0.012), [z1, y1] = at(0.95, 0.012);
+    matte.quad([-0.025, y0, z0], [0.025, y0, z0], [0.025, y1, z1], [-0.025, y1, z1], [0, ny, nz], UV4, DEEP);   // the screen's centre post
+  }
+  paint.box(0, cabY, (zSl + zBk) / 2, W * 2, 3.02 - cabY, zBk - zSl, 0, WHITE);
+  hexa(paint, [[-W + 0.03, 2.95, sT[0] - 0.03], [W - 0.03, 2.95, sT[0] - 0.03], [W, 2.95, zSl], [-W, 2.95, zSl],
+    [-W + 0.10, 4.0, -0.40], [W - 0.10, 4.0, -0.40], [W, 4.0, zSl], [-W, 4.0, zSl]], WHITE);
+  for (const sx of [-1, 1]) {
+    paint.box(sx * (W + 0.01), 1.30, zSl - 0.18, 0.03, 2.66, 0.38, 0, WHITE);                   // cab extender
+    // door glass, the leading edge along the screen
+    const e = (y) => zCab + (sT[0] - zCab) * (y - 2.08) / (sT[1] - 2.08) - 0.10;
+    flankPane(trim, sx, W + 0.006, [[0.12, 2.14], [e(2.14), 2.14], [e(2.84), 2.84], [0.12, 2.84]]);
+    flankPane(trim, sx, W + 0.006, [[-1.05, 2.40], [-0.80, 2.40], [-0.80, 2.58], [-1.05, 2.58]]);   // the bunk's little window
+    for (const z of [0.05, zCab - 0.04]) matte.box(sx * (W + 0.003), cabY + 0.05, z, 0.006, 1.80, 0.012, 0, DEEP);
+    trim.tube([sx * (W + 0.03), 1.30, 0.0], [sx * (W + 0.03), 2.30, 0.0], 0.018, 6, CHROME, true);   // grab handle
+    truckMirror(trim, matte, sx, W - 0.02, 2.86, zCab - 0.15);
+    // chassis skirts over the tanks, the steps let into them
+    paint.box(sx * (W - 0.06), 0.46, (zF - wr - 0.18 + zR1 + wr + 0.12) / 2, 0.12, cabY - 0.46, (zF - wr - 0.18) - (zR1 + wr + 0.12), 0, WHITE);
+    for (const y of [0.62, 0.86]) matte.box(sx * (W + 0.004), y, 0.65, 0.01, 0.10, 0.42, 0, DEEP);
+    // the stacks behind the sleeper
+    trim.tube([sx * 1.02, 1.25, zSl - 0.12], [sx * 1.02, 4.12, zSl - 0.12], 0.085, 10, CHROME, true);
+    // quarter fenders over the drives, the mud flaps
+    matte.box(sx * 0.95, wr * 2 + 0.06, zRc, 0.62, 0.03, 0.70, 0, DEEP);
+    matte.box(sx * 0.95, 0.18, zR2 - wr - 0.10, 0.56, 0.78, 0.02, 0, DEEP);
+    trim.box(sx * 0.62, 0.86, tail + 0.01, 0.20, 0.08, 0.02, 0, TAILC);
+  }
+  for (let i = -2; i <= 2; i++) trim.box(i * 0.22, 2.97, sT[0] - 0.04, 0.08, 0.04, 0.05, 0, AMBER);   // cab markers
+  boxCabin(matte, { y: 1.55, sit: 2.10, x: W - 0.12, zR: zBk + 0.04, zF: zCab - 0.06, top: 2.92, rows: [0.38], wheelDz: 0.62 });
+  // --- chassis: rails, fifth wheel, deck ------------------------------------------------
+  for (const sx of [-1, 1]) matte.box(sx * 0.44, 0.80, (tail + nose - 0.4) / 2, 0.12, 0.28, nose - 0.4 - tail, 0, DEEP);
+  matte.box(0, 1.04, zRc + 0.20, 1.20, 0.14, 1.10, 0, [0.09, 0.09, 0.10]);
+  matte.box(0, 1.06, zSl - 0.45, 2.0, 0.03, 0.55, 0, [0.30, 0.31, 0.32]);
+  for (const z of [zR1, zR2]) matte.tube([-0.66, wr, z], [0.66, wr, z], 0.07, 8, DEEP, true);
+  const tw = 0.28, wxF = 1.05;
+  const out = [[-wxF, wr, zF, wr, 0.30], [wxF, wr, zF, wr, 0.30]];
+  for (const z of [zR1, zR2]) for (const sx of [-1, 1]) out.push([sx * 1.10, wr, z, wr, tw, sx], [sx * 0.80, wr, z, wr, tw, sx]);
+  return out;
+}
+
+/** The semi's 53 ft dry van: white, aluminium posts and rails, conspicuity tape, skirts, swing doors. */
+function buildSemiTrailer(spec, paint, trim, matte) {
+  const wr = spec.wheelR, L = spec.len / 2, W = spec.wid / 2, top = spec.roof, floor = 1.24;
+  const zA1 = -L + 1.40, zA2 = zA1 + 1.24;
+  paint.box(0, floor, 0, W * 2, top - floor, L * 2, 0, WHITE);
+  const RED = [0.70, 0.03, 0.03], TAPE_W = [0.92, 0.92, 0.90];
+  for (const sx of [-1, 1]) {
+    const X = sx * (W + 0.004);
+    trim.box(X, floor - 0.02, 0, 0.012, 0.18, L * 2, 0, ALU_C);
+    trim.box(X, top - 0.12, 0, 0.012, 0.12, L * 2, 0, ALU_C);
+    for (let z = -L + 0.6; z < L - 0.3; z += 1.2) trim.box(X, floor + 0.16, z, 0.008, top - floor - 0.28, 0.05, 0, [0.80, 0.81, 0.83]);
+    let k = 0;
+    for (let z = -L + 0.25; z < L - 0.25; z += 0.6, k++) trim.box(sx * (W + 0.012), floor + 0.03, z, 0.004, 0.06, 0.28, 0, k % 2 ? TAPE_W : RED);
+    // aero skirt between the landing gear and the bogie
+    paint.box(sx * (W - 0.10), 0.40, (zA2 + wr + 0.4 + L - 4.0) / 2, 0.025, floor - 0.42, (L - 4.0) - (zA2 + wr + 0.4), 0, WHITE);
+    // landing gear
+    matte.box(sx * 0.82, 0.18, L - 3.4, 0.11, floor - 0.18, 0.11, 0, DEEP);
+    matte.box(sx * 0.82, 0.10, L - 3.4, 0.22, 0.08, 0.22, 0, DEEP);
+  }
+  matte.tube([-0.82, 0.70, L - 3.4], [0.82, 0.70, L - 3.4], 0.03, 5, DEEP, true);
+  // under: the main rails, cross members, the sliding bogie
+  for (const sx of [-1, 1]) matte.box(sx * 0.48, floor - 0.30, -L / 2 + 1, 0.10, 0.30, L + 2, 0, DEEP);
+  matte.box(0, floor - 0.08, 0, W * 1.9, 0.08, L * 2 - 0.2, 0, DEEP);
+  matte.box(0, floor - 0.40, (zA1 + zA2) / 2, 1.36, 0.32, 2.6, 0, DEEP);
+  for (const z of [zA1, zA2]) matte.tube([-0.66, wr, z], [0.66, wr, z], 0.065, 8, DEEP, true);
+  // the front: the gladhands, the kingpin plate
+  trim.box(-0.30, floor + 0.25, L + 0.005, 0.07, 0.07, 0.01, 0, RED);
+  trim.box(0.30, floor + 0.25, L + 0.005, 0.07, 0.07, 0.01, 0, [0.05, 0.10, 0.60]);
+  // the back: frame, two swing doors, four lock rods, hinges, tape, lamps, guard
+  const zb = -L - 0.006;
+  trim.box(0, floor - 0.20, -L - 0.03, W * 2, 0.22, 0.06, 0, ALU_C);
+  trim.box(0, top - 0.16, zb, W * 2, 0.16, 0.012, 0, ALU_C);
+  for (const sx of [-1, 1]) trim.box(sx * (W - 0.05), floor, zb, 0.10, top - floor, 0.012, 0, ALU_C);
+  matte.box(0, floor + 0.02, zb - 0.004, 0.012, top - floor - 0.2, 0.006, 0, DEEP);
+  for (const x of [-1.0, -0.30, 0.30, 1.0]) {
+    trim.tube([x, floor + 0.04, zb - 0.03], [x, top - 0.18, zb - 0.03], 0.017, 6, ALU_C, true);
+    trim.box(x + 0.06 * Math.sign(x), floor + 0.95, zb - 0.03, 0.14, 0.03, 0.03, 0, ALU_C);
+  }
+  for (const sx of [-1, 1]) for (const y of [floor + 0.4, floor + 1.4, top - 0.6]) matte.box(sx * (W - 0.02), y, zb - 0.01, 0.10, 0.06, 0.02, 0, DEEP);
+  for (let i = 0; i < 6; i++) {
+    const x = -W + 0.15 + i * ((W * 2 - 0.30) / 5);
+    trim.box(x, floor - 0.12, -L - 0.065, 0.24, 0.05, 0.004, 0, i % 2 ? TAPE_W : RED);
+  }
+  for (const sx of [-1, 1]) {
+    trim.box(sx * (W - 0.10), top - 0.30, zb - 0.008, 0.06, 0.24, 0.004, 0, TAPE_W);
+    trim.box(sx * (W - 0.22), top - 0.13, zb - 0.008, 0.24, 0.06, 0.004, 0, TAPE_W);
+    for (const dx of [0, 0.16]) trim.tube([sx * (W - 0.32 - dx), floor - 0.09, -L - 0.06], [sx * (W - 0.32 - dx), floor - 0.09, -L - 0.075], 0.05, 10, TAILC, true);
+  }
+  matte.box(0, 0.48, -L + 0.18, W * 1.85, 0.12, 0.10, 0, DEEP);
+  for (const sx of [-1, 1]) matte.box(sx * 0.70, 0.55, -L + 0.30, 0.08, floor - 0.62, 0.08, 0, DEEP);
+  plateBox(trim, 0.62, 0.66, -L + 0.12, 0.40, 0.12, 0.02);
+  const tw = 0.28, out = [];
+  for (const z of [zA1, zA2]) for (const sx of [-1, 1]) out.push([sx * 1.12, wr, z, wr, tw, sx], [sx * 0.82, wr, z, wr, tw, sx]);
+  return out;
+}
+// the semi's fifth wheel: back from the tractor's centre to the kingpin, the
+// trailer's centre forward to it, the trailer's axles (the tandem's middle)
+const SEMI_HITCH = { hitchF: 2.45, hitchR: 7.17, axleR: -6.13, maxAngle: 1.35, rearSteer: 0, rearLock: 0 };
+HITCH.semiTrailer = SEMI_HITCH;
+
+/**
+ * The OPP's Ford Police Interceptor Utility (an Explorer): the three-row SUV's
+ * body in the OPP's black and white -- black all over with the doors white
+ * (the scheme it went back to in 2007), the crest and O.P.P. on the front
+ * doors, POLICE on the back ones, black steel wheels, the push bar, an
+ * A-pillar spotlight. The light bar is traffic.js's (lightBar).
+ */
+function buildOpp(spec, paint, trim, matte) {
+  const from = paint.pos.length;
+  const wheels = HAND_BUILT.suv3(spec, paint, trim, matte);
+  const kz = spec.len / 4.94;
+  const zDF = 0.88 * kz, zDR = -1.10 * kz, beltTop = 1.0 + (1.30 - 1.0) * 0.84 - 0.01;
+  const BLK = [0.010, 0.010, 0.012];
+  for (let i = from; i < paint.pos.length; i += 3) {
+    const x = paint.pos[i], y = paint.pos[i + 1], z = paint.pos[i + 2];
+    const door = z < zDF && z > zDR && y < beltTop && y > 0.40 && Math.abs(x) > 0.78;
+    if (!door && paint.col[i] > 0.99 && paint.col[i + 1] > 0.99 && paint.col[i + 2] > 0.99) {
+      paint.col[i] = BLK[0]; paint.col[i + 1] = BLK[1]; paint.col[i + 2] = BLK[2];
+    }
+  }
+  const X = (spec.wid / 2) * 0.97 + 0.012, UV = UV4;
+  const NAVY = [0.006, 0.012, 0.06], GOLD = [0.72, 0.45, 0.06], RED = [0.62, 0.02, 0.02];
+  const zFd = (zDF + (-0.14 * kz)) / 2, zRd = (-0.14 * kz + zDR) / 2;
+  for (const sx of [-1, 1]) {
+    const Xs = sx * X, u = [0, 0, -sx];
+    // the crest: a navy shield in a gold edge, a red crown over it
+    const sh = (r, col, dx) => {
+      const c = [Xs + sx * dx, 0.88, zFd], P = [];
+      for (let k = 0; k < 8; k++) {
+        const a = (k / 8) * Math.PI * 2;
+        const yy = Math.sin(a) > 0 ? Math.sin(a) * r * 0.95 : Math.sin(a) * r * 1.25;
+        P.push([c[0], c[1] + yy, c[2] + Math.cos(a) * r * 0.85]);
+      }
+      for (let k = 0; k < 8; k += 2) matte.quad([c[0], c[1], c[2]], P[k], P[k + 1], P[(k + 2) % 8], [sx, 0, 0], UV, col);
+    };
+    sh(0.12, GOLD, 0.0);
+    sh(0.10, NAVY, 0.002);
+    matte.quad([Xs + sx * 0.003, 1.02, zFd - 0.05], [Xs + sx * 0.003, 1.02, zFd + 0.05], [Xs + sx * 0.003, 1.06, zFd + 0.05], [Xs + sx * 0.003, 1.06, zFd - 0.05], [sx, 0, 0], UV, RED);
+    dotText(matte, 'O.P.P.', { c: [Xs + sx * 0.002, 0.64, zFd], u, h: 0.10, col: [0.02, 0.02, 0.025], bold: 0.6 });
+    dotText(matte, 'POLICE', { c: [Xs + sx * 0.002, 0.80, zRd], u, h: 0.15, col: [0.02, 0.02, 0.025], bold: 0.7 });
+    dotText(matte, 'PROVINCIAL', { c: [Xs + sx * 0.002, 0.67, zRd], u, h: 0.05, col: [0.02, 0.02, 0.025], bold: 0.4 });
+  }
+  const nz = spec.len / 2;
+  for (const sx of [-1, 1]) {
+    matte.tube([sx * 0.32, 0.48, nz + 0.14], [sx * 0.32, 1.10, nz + 0.10], 0.032, 6, PLASTIC, true);
+    matte.tube([sx * 0.32, 0.56, nz - 0.02], [sx * 0.32, 0.56, nz + 0.14], 0.03, 6, PLASTIC, true);
+  }
+  matte.box(0, 0.68, nz + 0.14, 0.76, 0.06, 0.05, 0, PLASTIC);
+  matte.box(0, 0.96, nz + 0.12, 0.70, 0.05, 0.05, 0, PLASTIC);
+  trim.tube([0.86, 1.30, 0.95 * kz], [0.86, 1.30, 1.07 * kz], 0.05, 8, CHROME, true);
+  trim.tube([0.86, 1.30, 1.07 * kz], [0.86, 1.30, 1.08 * kz], 0.042, 8, LAMP, true);
+  return wheels.map((w) => [...w.slice(0, 5), w[5], w[6], 'black']);
+}
+
 const HAND_BUILT = {
   plane: buildPlane, twin: buildTwin, jet: buildJet, biplane: buildBiplane, heli: buildHeli, fighter: buildFighter, jumbo: buildJumbo, saucer: buildSaucer,
   airliner: buildAirliner,
@@ -9618,6 +10862,13 @@ const HAND_BUILT = {
   sedan: buildSedan, suv: buildSuv, pickup: buildPickup, charger: buildCharger, wiener: buildWiener,
   hatch: (s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.hatch),
   compact: (s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.compact),
+  minivan: (s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.minivan),
+  wagon: (s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.wagon),
+  // a compact crossover (RAV4 / CR-V / Rogue) and a compact sedan (Civic /
+  // Corolla): the SUV's and the sedan's bodies at their own sizes
+  // (real heights: a RAV4 1.74 m, a Civic sedan 1.42; the parents' 1.88 / 1.50)
+  crossover: scaledBuild(buildSuv, 4.94, 1.98, [1.0, 0.82, 1.88]),
+  compsedan: scaledBuild(buildSedan, 5.06, 1.90, [0.80, 0.886, 1.50]),
   ev: buildEv, service: buildServiceSedan, van: buildVan, bus: buildBus, ambulance: buildAmbulance,
   wedge: buildWedge,
   swat: buildSwat,
@@ -9630,6 +10881,15 @@ const HAND_BUILT = {
   kart: buildKart,
   fireengine: buildFireEngine, tiller: buildTiller, tillerRear: buildTillerRear,
   tractor: buildTractor, combine: buildCombine,
+  schoolbus: buildSchoolBus,
+  // Auto KW, round two: a three-row SUV (Highlander / Explorer: 5.05 x 2.00 x
+  // 1.78), a Model Y (the EV's body 1.62 m tall: the bonnet and the arches
+  // stay, the greenhouse grows), the Civic hatch, and the slab-built ones
+  suv3: scaledBuild(buildSuv, 4.94, 1.98, [1.0, 0.84, 1.88]),
+  evy: scaledBuild(buildEv, 4.62, 1.98, [0.62, 1.28, 1.40]),
+  civic: (s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.civic),
+  jeep: buildJeep, dually: buildDually, uhaul: buildUhaul, semi: buildSemi, semiTrailer: buildSemiTrailer, opp: buildOpp,
+  recycling: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.garbage),
 };
 
 /**
@@ -9650,6 +10910,9 @@ export function tagGlass(geo) {
     else if (Math.abs(col[i * 3] - GLASS_TINT[0]) < 1e-4 && Math.abs(col[i * 3 + 1] - GLASS_TINT[1]) < 1e-4
       && Math.abs(col[i * 3 + 2] - GLASS_TINT[2]) < 1e-4) flag[i] = 3;
     else if (Math.abs(col[i * 3 + 1] - SHADOW_G) < 1e-4 && Math.abs(col[i * 3 + 2] - SHADOW_B) < 1e-4) flag[i] = 2;
+    // a plate's face (plateBox): its UV in red and green, PLATE_KEY in blue
+    else if (Math.abs(col[i * 3 + 2] - PLATE_KEY) < 1e-5 && (col[i * 3] === 0 || col[i * 3] === 1)
+      && (col[i * 3 + 1] === 0 || col[i * 3 + 1] === 1)) flag[i] = 4;
   }
   geo.setAttribute('glass', new THREE.BufferAttribute(flag, 1));
   // Solid first, then the contact shadow on the road, then the panes.
@@ -9721,10 +10984,18 @@ const GLASS_IBL_FROM = 'reflectVec = inverseTransformDirection( reflectVec, view
  * Opaque trim has alpha 1 and so draws exactly as it did; only its pass moves.
  */
 function glassShader(sh) {
-  // glass 1 (clear) and 3 (tinted: GLASS_TINT) are glazing, 2 the contact shadow
-  sh.vertexShader = 'attribute float glass;\nvarying float vGlass;\nvarying float vShade;\nvarying float vTint;\n' + sh.vertexShader
-    .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvGlass = ( glass > 0.5 && glass < 1.5 ) || glass > 2.5 ? 1.0 : 0.0;\n\tvShade = glass > 1.5 && glass < 2.5 ? 1.0 : 0.0;\n\tvTint = glass > 2.5 ? 1.0 : 0.0;');
-  let fs = 'varying float vGlass;\nvarying float vShade;\nvarying float vTint;\n' + sh.fragmentShader;
+  // glass 1 (clear) and 3 (tinted: GLASS_TINT) are glazing, 2 the contact
+  // shadow, 4 a licence plate's face (plateBox; the serial is the mesh's own,
+  // read from its x scale: see PLATE_STEP)
+  sh.uniforms.plateTex = { value: plateAtlas() };
+  sh.vertexShader = 'attribute float glass;\nvarying float vGlass;\nvarying float vShade;\nvarying float vTint;\nvarying float vPlate;\nvarying float vPlateK;\n' + sh.vertexShader
+    .replace('#include <begin_vertex>', `#include <begin_vertex>
+	vGlass = ( glass > 0.5 && glass < 1.5 ) || ( glass > 2.5 && glass < 3.5 ) ? 1.0 : 0.0;
+	vShade = glass > 1.5 && glass < 2.5 ? 1.0 : 0.0;
+	vTint = glass > 2.5 && glass < 3.5 ? 1.0 : 0.0;
+	vPlate = glass > 3.5 ? 1.0 : 0.0;
+	vPlateK = mod( floor( ( length( modelMatrix[ 0 ].xyz ) / length( modelMatrix[ 1 ].xyz ) - 1.0 ) * ${PLATE_STEP.toFixed(1)} + 0.5 ), ${PLATE_N.toFixed(1)} );`);
+  let fs = 'varying float vGlass;\nvarying float vShade;\nvarying float vTint;\nvarying float vPlate;\nvarying float vPlateK;\nuniform sampler2D plateTex;\n' + sh.fragmentShader;
   if (THREE.ShaderChunk.envmap_physical_pars_fragment.includes(GLASS_IBL_FROM)) {
     fs = fs.replace('#include <envmap_physical_pars_fragment>',
       THREE.ShaderChunk.envmap_physical_pars_fragment.replace(GLASS_IBL_FROM, `${GLASS_IBL_FROM}
@@ -9734,7 +11005,12 @@ function glassShader(sh) {
   }
   fs = fs
     .replace('#include <color_fragment>', `#include <color_fragment>
-	diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.018, 0.022, 0.026 ), vGlass );`)
+	diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.018, 0.022, 0.026 ), vGlass );
+	if ( vPlate > 0.5 ) {
+		vec2 pc = vec2( mod( vPlateK, ${PLATE_COLS.toFixed(1)} ), floor( vPlateK / ${PLATE_COLS.toFixed(1)} ) );
+		vec2 puv = clamp( vColor.rg, 0.01, 0.99 );
+		diffuseColor.rgb = texture2D( plateTex, vec2( ( pc.x + puv.x ) / ${PLATE_COLS.toFixed(1)}, 1.0 - ( pc.y + 1.0 - puv.y ) / ${Math.ceil(PLATE_N / PLATE_COLS).toFixed(1)} ) ).rgb * 0.92;
+	}`)
     .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
 	metalnessFactor = mix( metalnessFactor, 0.0, vGlass );
 	roughnessFactor = mix( roughnessFactor, 0.05, vGlass );`)
@@ -9917,7 +11193,9 @@ let CACHE = null;
 export function vehicleAssets() {
   if (CACHE) return CACHE;
   const types = {};
-  for (const k of Object.keys(TYPES)) types[k] = PRE && PRE.types[k] ? restoreType(PRE.types[k], TYPES[k]) : buildType(TYPES[k]);
+  for (const k of Object.keys(TYPES)) {
+    types[k] = PRE && PRE.types[k] ? restoreType(PRE.types[k], TYPES[k]) : buildType(TYPES[k]);
+  }
   // The trim draw moves to the transparent pass for its glass (see
   // glassShader); depth writes stay on, so its opaque parts behave as before.
   const trimMat = new THREE.MeshStandardMaterial({
@@ -9972,6 +11250,13 @@ export function paintMaterial(color, finish = null) {
     m.vertexColors = true;
     m.onBeforeCompile = liveryShader;
     m.customProgramCacheKey = () => 'vehicleLivery';
+    return m;
+  }
+  // Auto KW: two-tone paint (WRPS's navy-and-white cruiser, ION's blue front):
+  // the material's colour times the vertex colours the builder painted.
+  if (finish === 'twotone') {
+    const m = paintMaterial(color);
+    m.vertexColors = true;
     return m;
   }
   if (finish === 'tiger') {
@@ -10360,8 +11645,8 @@ function clusterFar(parts) {
     const map = new Int32Array(pos.length / 3);
     for (let v = 0; v < map.length; v++) {
       const k3 = v * 3;
-      if (gls && gls[v] > 1.5) { map[v] = -1; continue; }   // contact shadow: not in the far LOD
-      const glass = gls && gls[v] > 0.5;
+      if (gls && gls[v] > 1.5 && gls[v] < 2.5) { map[v] = -1; continue; }   // contact shadow: not in the far LOD
+      const glass = gls && gls[v] > 0.5 && gls[v] < 3.5, plate = gls && gls[v] > 3.5;
       const pt = glass ? 'glass' : part;
       const nx = nor[k3], ny = nor[k3 + 1], nz = nor[k3 + 2];
       const key = `${pt}|${Math.round(pos[k3] / FAR_CELL)}|${Math.round(pos[k3 + 1] / FAR_CELL)}|${Math.round(pos[k3 + 2] / FAR_CELL)}`
@@ -10376,6 +11661,7 @@ function clusterFar(parts) {
       P[c * 3] += pos[k3]; P[c * 3 + 1] += pos[k3 + 1]; P[c * 3 + 2] += pos[k3 + 2];
       N[c * 3] += nx; N[c * 3 + 1] += ny; N[c * 3 + 2] += nz;
       if (glass) { C[c * 3] += 0.05; C[c * 3 + 1] += 0.06; C[c * 3 + 2] += 0.075; }
+      else if (plate) { C[c * 3] += PLATE[0]; C[c * 3 + 1] += PLATE[1]; C[c * 3 + 2] += PLATE[2]; }
       else if (col && (part !== 'paint' || vc)) { C[c * 3] += col[k3]; C[c * 3 + 1] += col[k3 + 1]; C[c * 3 + 2] += col[k3 + 2]; }
       else { C[c * 3] += 1; C[c * 3 + 1] += 1; C[c * 3 + 2] += 1; }
       cnt[c]++;
@@ -10485,6 +11771,7 @@ export function farLod(typeName) {
 // the rate ABOVE that is fed forward, so a steep street is held at 0.08 m.
 const FF_FREE = 1.5;
 
+let PLATE_SEQ = 0;
 export class Vehicle {
   constructor(city, typeName, color, opts = {}) {
     const A = vehicleAssets();
@@ -10507,6 +11794,9 @@ export class Vehicle {
     this.bodyMat = paintMaterial(this.color, t.spec.finish);
     const paintMesh = new THREE.Mesh(t.paintGeo, this.bodyMat);
     this.trimMesh = new THREE.Mesh(t.trimGeoW, A.trimMat);
+    // its own Ontario plate (see PLATE_STEP): which of the atlas's serials
+    this.plateK = (PLATE_SEQ = (PLATE_SEQ + 37) % PLATE_N);
+    this.trimMesh.scale.x = 1 + this.plateK / PLATE_STEP;
     this.matteMesh = new THREE.Mesh(t.matteGeoW, A.matteMat);
     paintMesh.castShadow = this.trimMesh.castShadow = this.matteMesh.castShadow = true;
     this.paintMesh = paintMesh;

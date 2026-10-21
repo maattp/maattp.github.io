@@ -1,7 +1,7 @@
 // Traffic, parked cars and the police response.
 
 import * as THREE from './three.js';
-import { Vehicle, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, makeBellows, HITCH } from './vehicles.js';
+import { Vehicle, TYPES, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, makeBellows, HITCH } from './vehicles.js';
 import { clamp, lerp, angleWrap, hash2, rng, dist2, tierScale } from './util.js';
 import * as G from './geo.js';
 import { memo } from './bootcache.js';
@@ -10,7 +10,8 @@ const TRAFFIC_TARGET = 26;
 // Parked cars only exist within this radius, and each is 3 draw calls, so this
 // is a draw-call dial as much as a distance one.
 const PARKED_RADIUS = 105;
-const LOT_TYPES = new Set(['sedan', 'suv', 'pickup', 'compact', 'hatch', 'ev', 'muscle', 'sports', 'convertible']);
+const LOT_TYPES = new Set(['sedan', 'suv', 'pickup', 'compact', 'hatch', 'ev', 'muscle', 'sports', 'convertible',
+  'crossover', 'compsedan', 'minivan', 'wagon', 'pickupcap', 'suv3', 'jeep', 'evy', 'civic', 'dually']);
 const DESPAWN = 520;
 // The Belltown Hellcat (vehicles.js `hellcat`): the chance a Belltown spawn is
 // one, and how many may be about at once.
@@ -20,7 +21,17 @@ const HELLCAT_P = 0.12, HELLCAT_MAX = 3;
 // spawned a car every ~110 m, so this is about one per 10 km driven. It goes
 // when it is left behind, as every car does.
 const WIENER_P = 0.01;
-const HEAVY = new Set(['bus', 'artic', 'boxtruck', 'garbage', 'pickup', 'van', 'cruiser', 'sportbike', 'bicycle']);
+const HEAVY = new Set(['bus', 'busx', 'ionbus', 'artic', 'schoolbus', 'boxtruck', 'garbage', 'recycling', 'pickup', 'pickupcap', 'van', 'postvan', 'purovan', 'cruiser', 'sportbike', 'bicycle',
+  'dually', 'jeep', 'uhaul', 'semi', 'opp']);
+// Auto KW: types that never park at a kerb and keep off residential streets
+// (every bus -- `spec.bus` -- the refuse and recycling trucks, the semi)
+const NO_KERB = (tn) => !!(TYPES[tn] && TYPES[tn].bus) || tn === 'garbage' || tn === 'recycling' || tn === 'semi';
+// Auto KW: the 401 and Hwy 8 / the Expressway: a share of every spawn on a
+// highway edge is a semi (a 53 ft van behind a sleeper tractor), a few are the
+// OPP (an Interceptor Utility, its light bar dark). Never off the highways --
+// though, like everyone, they may take an exit. Hashes, not this.R, so the
+// spawn stream after them is unchanged.
+const HWY_SEMI_P = 0.16, HWY_OPP_P = 0.03, OPP_MAX = 2;
 // A phone is draw-call bound, and the fleet was over half of it: an iPhone 17
 // Pro driving downtown showed 58 vehicles (3 draws each, plus shadows) and 9.6
 // ms of render submission. Parked cars are only drawn this close on a phone,
@@ -829,7 +840,7 @@ export class TrafficSystem {
         const z = lerp(a.z, b.z, t) + e.dx * off * side;
         if (!G.isBuildable(x, z) || city.jumpClear(x, z) || this.wet(x, z)) continue;
         const tn = CIVILIAN_TYPES[Math.floor(hash2(ei + s * 7, 11) * CIVILIAN_TYPES.length)];
-        if (tn === 'bus' || tn === 'artic' || tn === 'garbage') continue;
+        if (NO_KERB(tn)) continue;
         out.push({ key: ei * 64 + s, x, z, heading: Math.atan2(e.dx, e.dz) + (side > 0 ? 0 : Math.PI), tn, col: ei * 13 + s });
       }
     }
@@ -949,12 +960,19 @@ export class TrafficSystem {
       const lo = { x: -e.dz * sign * off, z: e.dx * sign * off };
       const heading = Math.atan2(e.dx * sign, e.dz * sign);
       let tn = CIVILIAN_TYPES[Math.floor(this.R.n() * CIVILIAN_TYPES.length)];
-      if (e.cls === 'res' && (tn === 'bus' || tn === 'artic' || tn === 'boxtruck' || tn === 'garbage')) tn = 'sedan';
+      if (e.cls === 'res' && (NO_KERB(tn) || tn === 'boxtruck' || tn === 'uhaul')) tn = 'sedan';
+      if (e.cls === 'hwy' && !TYPES[tn].bus) {
+        const hh = hash2(ei + 4099, this._prio);
+        if (hh < HWY_SEMI_P) tn = 'semi';
+        else if (hh < HWY_SEMI_P + HWY_OPP_P && this.cars.filter((c) => c.spec.hand === 'opp').length < OPP_MAX) tn = 'opp';
+      }
       // The Wedge drives past now and then: a quarter of the EVs, ~1.5 % of
       // traffic. Not a CIVILIAN_TYPES slot: that array is hashed for kerbside
       // parking, and appending would move every parked car in the city. A
       // hash, not this.R, so the spawn stream after it is unchanged.
       if (tn === 'ev' && hash2(ei, this._prio) < 0.25) tn = 'wedge';
+      // Auto KW: a third of the iXpress draws are the ION Bus (302) instead
+      else if (tn === 'busx' && hash2(ei + 31, this._prio) < 0.34) tn = 'ionbus';
       // The Belltown Hellcat: a few, and only in Belltown (the HUD's
       // neighbourhood). A car-sized draw there turns into one now and then,
       // never more than HELLCAT_MAX about at once. A hash again, not this.R.
@@ -962,6 +980,11 @@ export class TrafficSystem {
         && this.cars.filter((c) => c.spec.hellcat).length < HELLCAT_MAX) tn = 'hellcat';
       else if (!HEAVY.has(tn) && hash2(ei + 104729, this._prio) < WIENER_P && !this.cars.some((c) => c.spec.wiener)) tn = 'wiener';
       const v = this.spawnAt(x + lo.x, z + lo.z, heading, tn, randomCarColor((this.R.n() * 1e6) | 0), 'traffic');
+      if (v.spec.hand === 'opp') {
+        // the OPP on patrol: its light bar, dark (policeLights only runs for units)
+        this.lightBar(v);
+        for (const L of [v.lightL, v.lightR]) L.material.color.setHex(L.userData.cold);
+      }
       if (e.tunnel) {
         // IN the bore, not on the street over it. place() seeds groundAt with
         // no height, which takes the highest surface -- the street -- so every

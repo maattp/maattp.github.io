@@ -146,7 +146,7 @@ const WALK_TILE = 4;
 // Re-measure if a facade surface's drawing changes.
 const CELL_MEAN = {
   masonry: [0.403, 0.41, 0.399], brick: [0.412, 0.399, 0.38], industrial: [0.29, 0.316, 0.333],
-  house: [0.608, 0.579, 0.522], glass: [0.26, 0.31, 0.36],
+  house: [0.608, 0.579, 0.522], glass: [0.26, 0.31, 0.36], brickhouse: [0.54, 0.5, 0.46],
 };
 // Paint sits just proud of the asphalt; any less and it z-fights at distance.
 const MARK_Y = ROAD_LIFT + 0.012;
@@ -297,18 +297,72 @@ function halfFloatRenders(renderer) {
 // stock is Craftsman and Foursquare in white, cream and greys, a lot of sage,
 // slate blue and charcoal, and the odd barn red or mustard -- where every
 // house used to be one off-white.
+//
+// AUTO KW: Waterloo Region is not Seattle. Its houses are BRICK -- red-brown,
+// buff, brown and grey, the 1900s Kitchener cottage and the 1990s two-storey
+// alike -- with vinyl siding in beige, grey and white on the rest (and on the
+// upper storey and sides of many). Roofs are asphalt shingle in charcoal,
+// weathered grey and brown, which is what the aerial shows street after street.
+// HOUSE_BRICK tints the `brickhouse` cell, HOUSE_PAINT the clapboard `house`
+// cell; houseWall picks between them (OSM's building:material and
+// building:colour first, where mapped: bd.look).
+const HOUSE_BRICK = [
+  [0.26, [0.62, 0.27, 0.19]], [0.12, [0.48, 0.22, 0.16]], [0.10, [0.72, 0.36, 0.23]],
+  [0.18, [0.86, 0.70, 0.49]], [0.12, [0.74, 0.60, 0.46]], [0.12, [0.50, 0.35, 0.25]],
+  [0.10, [0.62, 0.60, 0.57]],
+];
 const HOUSE_PAINT = [
-  [0.17, [0.94, 0.93, 0.90]], [0.09, [0.93, 0.85, 0.66]], [0.10, [0.78, 0.79, 0.80]],
-  [0.07, [0.74, 0.69, 0.61]], [0.09, [0.60, 0.72, 0.52]], [0.05, [0.58, 0.60, 0.38]],
-  [0.09, [0.50, 0.63, 0.78]], [0.05, [0.26, 0.34, 0.50]], [0.08, [0.33, 0.34, 0.36]],
-  [0.04, [0.66, 0.24, 0.20]], [0.05, [0.90, 0.72, 0.34]], [0.04, [0.36, 0.60, 0.60]],
-  [0.08, [0.52, 0.38, 0.27]],
+  [0.28, [0.86, 0.80, 0.68]], [0.20, [0.72, 0.73, 0.72]], [0.18, [0.94, 0.93, 0.90]],
+  [0.12, [0.66, 0.60, 0.52]], [0.08, [0.62, 0.68, 0.74]], [0.06, [0.60, 0.66, 0.56]],
+  [0.08, [0.40, 0.42, 0.44]],
 ];
+const BRICK_SHARE = 0.68;
 const HOUSE_ROOF = [
-  [0.22, [0.34, 0.34, 0.35]], [0.20, [0.50, 0.49, 0.47]], [0.16, [0.48, 0.37, 0.28]],
-  [0.07, [0.22, 0.22, 0.23]], [0.10, [0.36, 0.40, 0.47]], [0.07, [0.40, 0.46, 0.35]],
-  [0.08, [0.54, 0.31, 0.25]], [0.10, [0.66, 0.67, 0.69]],
+  [0.30, [0.21, 0.21, 0.22]], [0.22, [0.36, 0.36, 0.37]], [0.18, [0.38, 0.28, 0.22]],
+  [0.10, [0.27, 0.21, 0.17]], [0.08, [0.14, 0.14, 0.15]], [0.07, [0.52, 0.52, 0.52]],
+  [0.05, [0.46, 0.26, 0.20]],
 ];
+// bd.look's wall code (tools/kw/build_buildings.py MAT_CODE) -> the brick it is
+const LOOK_BRICK = { 1: [0.62, 0.27, 0.19], 2: [0.86, 0.70, 0.49], 3: [0.62, 0.60, 0.57] };
+/** A house's wall: [colour, brick?]. OSM's material where mapped, else the mix. */
+function houseWall(bd) {
+  const seed = bd.seed, mat = (bd.look || 0) >> 2 & 7;
+  if (LOOK_BRICK[mat]) return [paintTint(seed, LOOK_BRICK[mat], 140), true];
+  if (mat === 4) return [paintTint(seed, pickW(HOUSE_PAINT, hash2(seed, 131)), 140), false];
+  if (mat === 5) return [paintTint(seed, [0.9, 0.88, 0.82], 140), false];
+  if (hash2(seed, 130) < BRICK_SHARE) return [paintTint(seed, pickW(HOUSE_BRICK, hash2(seed, 131)), 140), true];
+  return [paintTint(seed, pickW(HOUSE_PAINT, hash2(seed, 131)), 140), false];
+}
+// Industrial walls in the region's parks (Northfield, Bridge/Lancaster,
+// Huron, Hespeler Rd): tilt-up concrete panels in beige and grey, and pre-
+// finished steel cladding in white, blue-grey and tan -- not one white.
+const INDUSTRIAL_WALL = [
+  [0.26, [0.80, 0.76, 0.66]], [0.22, [0.72, 0.72, 0.70]], [0.18, [0.88, 0.89, 0.88]],
+  [0.14, [0.54, 0.62, 0.70]], [0.12, [0.74, 0.66, 0.52]], [0.08, [0.46, 0.48, 0.50]],
+];
+const industrialWall = (bd) => tint(bd.seed, pickW(INDUSTRIAL_WALL, hash2(bd.seed, 133)), 0.16);
+
+// AUTO KW: where the hydro is overhead. Every arterial and regional road;
+// and the side streets of the places built before the lines went under
+// (Kitchener and Waterloo from the 1970s on buried them): downtown
+// Kitchener and its first ring, Uptown, Bridgeport, Galt, Preston,
+// Hespeler and St. Jacobs. [x, z, radius] in world metres (tools/kw/proj.py).
+const OLD_CORES = [[-1376, 111, 2300], [-3845, -1444, 1250], [-648, -3111, 600], [13031, 10221, 1500],
+  [9794, 5888, 900], [13274, 2111, 800], [-6394, -9666, 450]];
+const strHash = (s) => { let h = 7; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; };
+/** 0: buried; else 1 wood poles, 2 concrete; the sign of the side in bit 2. */
+function hydroEdge(e, mx, mz) {
+  let on = e.cls === 'art';
+  if (!on && (e.cls === 'st' || e.cls === 'res')) {
+    for (const [x, z, r] of OLD_CORES) if ((mx - x) ** 2 + (mz - z) ** 2 < r * r) { on = true; break; }
+  }
+  if (!on) return 0;
+  // one side and one kind of pole down a whole street: by its name, or by
+  // its 400 m block where it has none
+  const k = e.name ? strHash(e.name) : (Math.floor(mx / 400) * 7919 + Math.floor(mz / 400));
+  const kind = e.cls === 'art' && hash2(k, 7) < 0.45 ? 2 : 1;
+  return kind | (hash2(k, 9) < 0.5 ? 4 : 0);
+}
 // Modern townhomes (houseExtras' neighbour, townhome): the palette infill has
 // in Seattle -- charcoal, white, mid grey, near-black, the odd deep green.
 // A building's frame turned so its +z is side k (see houseFront): local +x
@@ -5463,10 +5517,33 @@ float frLine(float o, float fw, float c, float w) {
       if (m > from + 0.3 && m < till - 0.3) cuts.push(m);
     }
     cuts.sort((p, q) => p - q);
+    // ONTARIO: a divided highway's LEFT edge line is yellow, its right white
+    // (OTM Book 11), and so is a ramp's -- the yellow is always on the
+    // driver's left. A carriageway is driven a -> b unless onewayRev, and +p
+    // is the right of a -> b, so the left is +p when it is driven b -> a.
+    const divided = (e.cls === 'hwy' && e.oneway) || e.cls === 'ramp';
+    const fwd = e.onewayRev ? -1 : 1;
+    const colP = divided && fwd < 0 ? YELLOW : WHITE, colM = divided && fwd > 0 ? YELLOW : WHITE;
     for (let i = 0; i < cuts.length; i++) {
       const s = cuts[i], to = i + 1 < cuts.length ? cuts[i + 1] : till;
-      stripe(sideW((s + to) / 2, 0) - inset, s, to, WHITE);
-      stripe(-(sideW((s + to) / 2, 1) - inset), s, to, WHITE);
+      stripe(sideW((s + to) / 2, 0) - inset, s, to, colP);
+      stripe(-(sideW((s + to) / 2, 1) - inset), s, to, colM);
+    }
+
+    // LANE LINES. A freeway carriageway had its two edge lines and nothing
+    // between them. White, broken 3 m / 6 m (Ontario's freeway pattern), at
+    // the boundaries of the very lanes traffic.js laneLatU lays: SHOULDER
+    // 0.8 m in from each side, floor(width / 3.6) lanes spread evenly.
+    if (e.cls === 'hwy' && e.oneway) {
+      const ph = hash2(ei | 0, 11) * 9;
+      for (let s = from + ph - 9; s < till; s += 9) {
+        const s0 = Math.max(from, s), s1 = Math.min(till, s + 3);
+        if (s1 - s0 < 0.5) continue;
+        const m = (s0 + s1) / 2;
+        const lo = -sideW(m, 1) + 0.8, hi = sideW(m, 0) - 0.8;
+        const n = Math.floor((hi - lo) / 3.6);
+        for (let k = 1; k < n; k++) stripe(lo + (k * (hi - lo)) / n, s0, s1, WHITE);
+      }
     }
 
     // Centre line. A motorway carriageway is one-way and has no centre line;
@@ -8174,8 +8251,29 @@ float frLine(float o, float fw, float c, float w) {
       { m: 'masonry', c: [0.80, 0.54, 0.42], u: 13, v: 13 },     // salmon paint
       { m: 'masonry', c: [0.86, 0.76, 0.50], u: 13, v: 13 },     // ochre paint
     ];
-    const wOld = [0.14, 0.03, 0.18, 0.11, 0.11, 0.07, 0.04, 0.02, 0.09, 0.08, 0.05, 0.04, 0.04];
-    const wNew = [0.18, 0.26, 0.06, 0.05, 0.06, 0.03, 0.02, 0.18, 0.05, 0.03, 0.04, 0.02, 0.02];
+    // AUTO KW: OSM's building:material / building:colour first (bd.look
+    // bits 2-4, tools/kw/build_buildings.py MAT_CODE): red brick, buff,
+    // grey stone/block, siding (painted), concrete/stucco, metal, glass.
+    const lm = (bd.look || 0) >> 2 & 7;
+    if (lm) return FAMS[[0, 2, 3, 0, 8, 4, 10, 1][lm]];
+    // An apartment tower (OSM building=apartments, over ~10 storeys): the
+    // student towers on Columbia, Lester, Sunview and King and the condos
+    // downtown are white and grey precast with window wall (ICON, Sage, One
+    // Victoria); the 1970s slabs among them buff and brown brick.
+    if (((bd.look || 0) & 32) && bd.h > 30 && bd.style !== 'campus') {
+      const T = [[0, 0.32], [4, 0.26], [1, 0.1], [7, 0.08], [3, 0.13], [9, 0.11]];
+      let a2 = 0;
+      for (const [i, wt] of T) { a2 += wt; if (pick <= a2) return FAMS[i]; }
+      return FAMS[0];
+    }
+    // Waterloo Region's weights. Low and old is red, buff and brown brick
+    // (Kitchener's factories and walk-ups, the 1960s-70s apartment slabs) and
+    // precast concrete; tall and new is the student and condo towers of
+    // Columbia, Lester, Sunview, King St and downtown Kitchener -- white and
+    // grey precast and window wall far more than blue curtain glass. Seattle's
+    // painted-over green, salmon and ochre walls are near enough gone.
+    const wOld = [0.17, 0.02, 0.22, 0.17, 0.08, 0.06, 0.01, 0.01, 0.07, 0.15, 0.02, 0.01, 0.01];
+    const wNew = [0.30, 0.13, 0.05, 0.08, 0.17, 0.02, 0.0, 0.11, 0.05, 0.05, 0.03, 0.0, 0.01];
     // Civic buildings are stone and brick: a school or a church in painted-
     // over green or curtain wall reads as a mistake.
     const CIVIC = [0.28, 0, 0.26, 0.18, 0.08, 0.05, 0, 0, 0.07, 0.08, 0, 0, 0];
@@ -8250,8 +8348,8 @@ float frLine(float o, float fw, float c, float w) {
       || bd.style === 'lowrise' || bd.style === 'campus') ? this.buildingFamily(bd) : null;
     let col, mean;
     if (fam) { col = tint(seed, fam.c, 0.26); mean = CELL_MEAN[fam.m]; }
-    else if (bd.style === 'industrial') { col = tint(seed, [0.84, 0.86, 0.86], 0.3); mean = CELL_MEAN.industrial; }
-    else { col = paintTint(seed, pickW(HOUSE_PAINT, hash2(seed, 131)), 140); mean = CELL_MEAN.house; }
+    else if (bd.style === 'industrial') { col = industrialWall(bd); mean = CELL_MEAN.industrial; }
+    else { const [hc, brick] = houseWall(bd); col = hc; mean = brick ? CELL_MEAN.brickhouse : CELL_MEAN.house; }
     return [col[0] * mean[0], col[1] * mean[1], col[2] * mean[2]];
   }
 
@@ -8293,10 +8391,11 @@ float frLine(float o, float fw, float c, float w) {
       vS = rows * bd.h / Math.max(1, Math.round(bd.h / storey));
     } else if (bd.style === 'industrial') {
       target = bl.facade; cell = C.industrial;
-      col = tint(seed, [0.84, 0.86, 0.86], 0.3); uS = 16; vS = 16;
+      col = industrialWall(bd); uS = 16; vS = 16;
     } else {
-      target = bl.facade; cell = C.house;
-      col = paintTint(seed, pickW(HOUSE_PAINT, hash2(seed, 131)), 140); uS = 0; vS = 0;
+      target = bl.facade;
+      const [hc, brick] = houseWall(bd);
+      col = hc; cell = brick ? C.brickhouse : C.house; uS = 0; vS = 0;
     }
 
     if (bd.kind) return this.meshLandmarkTower(bl, flat, bd, col);
@@ -8328,8 +8427,15 @@ float frLine(float o, float fw, float c, float w) {
       // footprint -- so an elongated house often is one (v156).
       const aspect = Math.max(bd.w, bd.d) / Math.max(1, Math.min(bd.w, bd.d));
       const rk = hash2(seed, 133);
-      const form = (rk < 0.11 && aspect < 2.6) || (aspect >= 2.6 && hash2(seed, 180) < 0.3) ? 'flat'
-        : rk < 0.38 && aspect < 2.2 ? 'hip' : 'gable';
+      // Auto KW: OSM's roof:shape where mapped (bd.look & 3: 1 flat, 2
+      // gabled, 3 hipped); else Ontario's mix -- gables and hips about evenly
+      // on detached houses, a flat roof only on the odd modern infill and on
+      // some of the newer stacked townhouse rows. (Seattle's 11 % flat-
+      // roofed houses made every Waterloo street look like a new build.)
+      const lr = (bd.look || 0) & 3;
+      const form = lr ? ['', 'flat', 'gable', 'hip'][lr]
+        : (rk < 0.025 && aspect < 2.6) || (aspect >= 2.6 && hash2(seed, 180) < 0.12) ? 'flat'
+          : rk < 0.46 && aspect < 2.2 ? 'hip' : 'gable';
       // smooth panel cladding (the concrete cell's ~5 m panels), not clapboard
       if (form === 'flat') { col = MODERN_PAINT[Math.floor(hash2(seed, 181) * MODERN_PAINT.length)]; cell = C.concrete; }
       const sideU = form === 'flat' ? { uScale: 10, uFit: false } : { uScale: 11, uFit: true };
@@ -8420,6 +8526,49 @@ float frLine(float o, float fw, float c, float w) {
           if (pw > 3) for (const sd of [-1, 1]) {
             const rw = pw / 2 - 0.9, [rx, rz] = offF(px + sd * (pw / 2 - 0.2 - rw / 2), fb.d / 2 + pd - 0.2);
             flat.box(rx, py + 0.34 + 0.82, rz, rw, 0.08, 0.1, fb.rot, trim);
+          }
+        }
+      }
+      // AUTO KW: THE GARAGE IS IN THE FOOTPRINT. A Waterloo Region house
+      // built after ~1965 has its garage under the same roof, its door on the
+      // street face beside the front door, and a driveway out to the street
+      // -- from the road the garage door is the biggest thing on the house.
+      // OSM's footprint already includes the garage, so this is a door on
+      // the front wall at one end (a double on a wide house) and the asphalt
+      // out from it, never a box added beside. Not on the narrow pre-war
+      // cottages (under 9.5 m of frontage) nor a terrace row's units.
+      if (form !== 'flat' && fb.w >= 9.5 && fb.w <= 24 && fb.d >= 7.5 && aspect < 2.6 && hash2(seed, 190) < 0.74) {
+        const gw = fb.w >= 12.5 && hash2(seed, 191) < 0.6 ? 4.9 : 2.7, gh = 2.2;
+        let sd = hash2(seed, 192) < 0.5 ? -1 : 1;
+        if (porch && Math.abs(porch.px - sd * (fb.w / 2 - gw / 2 - 0.5)) < (porch.pw + gw) / 2) sd = -sd;
+        const glx = sd * (fb.w / 2 - gw / 2 - 0.5);
+        if (!porch || Math.abs(porch.px - glx) >= (porch.pw + gw) / 2) {
+          const GD = [[0.9, 0.9, 0.88], [0.86, 0.82, 0.72], [0.42, 0.3, 0.22], [0.3, 0.31, 0.32]];
+          const gc = GD[hash2(seed, 193) < 0.62 ? 0 : hash2(seed, 194) < 0.4 ? 1 : hash2(seed, 195) < 0.6 ? 2 : 3];
+          const [dx, dz] = offF(glx, fb.d / 2 + 0.03);
+          flat.box(dx, bd.y - 0.15, dz, gw + 0.3, gh + 0.3, 0.06, fb.rot, trim, NOTOP);
+          const [ex, ez] = offF(glx, fb.d / 2 + 0.07);
+          flat.box(ex, bd.y - 0.15, ez, gw, gh + 0.15, 0.05, fb.rot, gc, NOTOP);
+          // the panel joints, three across
+          for (const k of [0.55, 1.1, 1.65]) {
+            const [jx, jz] = offF(glx, fb.d / 2 + 0.1);
+            flat.box(jx, bd.y + k, jz, gw - 0.1, 0.04, 0.02, fb.rot, [gc[0] * 0.72, gc[1] * 0.72, gc[2] * 0.72], NOTOP);
+          }
+          // the driveway: out to the kerb, or 8 m, on ground that does not fall away
+          let L = 0;
+          for (let s = 1; s <= 8; s += 1) {
+            const [qx, qz] = offF(glx, fb.d / 2 + s);
+            if (this.city.onRoad(qx, qz, 0.3, false) || G.isWater(qx, qz)) break;
+            L = s;
+          }
+          if (L >= 3) {
+            const [ax, az] = offF(glx, fb.d / 2 + L / 2);
+            const [bx0, bz0] = offF(glx, fb.d / 2 + L);
+            const y0d = G.terrainHeight(dx, dz), y1d = G.terrainHeight(bx0, bz0);
+            if (Math.abs(y0d - y1d) < 0.4) {
+              flat.box(ax, Math.min(y0d, y1d) - 0.12, az, gw + 0.6, Math.abs(y0d - y1d) / 2 + 0.2, L, fb.rot,
+                [0.24, 0.24, 0.25], { ao: 0 });
+            }
           }
         }
       }
@@ -8591,8 +8740,13 @@ float frLine(float o, float fw, float c, float w) {
       // Not every flat roof is grey membrane: white single-ply is most of the
       // big commercial roofs from the air, and tar, gravel and the odd green
       // roof make up the rest.
-      const rp = hash2(seed, 142);
-      const lid = rp < 0.52 ? [rv * 1.38, rv * 1.40, rv * 1.44]
+      // Auto KW: from the air, Waterloo Region's plazas, factories and
+      // warehouses are light -- pale grey gravel and white membrane -- so a
+      // big roof is light three times in four (the aerial over Northfield,
+      // Bridge/Lancaster and Hespeler Rd).
+      const rp = A > 900 ? (hash2(seed, 142) < 0.75 ? hash2(seed, 143) * 0.84 : 0.84 + hash2(seed, 144) * 0.16)
+        : hash2(seed, 142);
+      const lid = rp < 0.52 ? [rv * 1.38 + 0.08, rv * 1.40 + 0.08, rv * 1.44 + 0.08]
         : rp < 0.52 + (A > 900 ? 0.26 : 0.12) ? [0.92, 0.93, 0.95]
         : rp < 0.84 ? [0.30, 0.30, 0.32]
         : rp < 0.985 || bd.h > 40 ? [0.66, 0.60, 0.50] : [0.36, 0.50, 0.28];
@@ -8870,9 +9024,13 @@ float frLine(float o, float fw, float c, float w) {
       bays = this._bays(flat, bd, c, h, t0, S, storey);
       if (bays) note('bays', street);
     }
-    if (residential && !bays && !brick && !glassy && bd.h >= 14 && bd.h <= 70 && h(11) < 0.32) {
+    // Auto KW: a building OSM calls apartments (bd.look & 32) is the region's
+    // balcony slab -- the 1970s brick or concrete block with a balcony per
+    // unit up every floor -- on most of them, brick ones included.
+    const apt = ((bd.look || 0) & 32) !== 0;
+    if (residential && !bays && (!brick || apt) && !glassy && bd.h >= (apt ? 11 : 14) && bd.h <= 70 && h(11) < (apt ? 0.55 : 0.32)) {
       if (this._balconies(flat, bd, c, h, t0, S, floorsOf(t0, 24))) note('balconies', street);
-      if (h(12) < 0.45) this._balconies(flat, bd, c, h, t0, this._side(bd, (street + 2) % 4, t0.w, t0.d), floorsOf(t0, 24));
+      if (h(12) < (apt ? 0.3 : 0.45)) this._balconies(flat, bd, c, h, t0, this._side(bd, (street + 2) % 4, t0.w, t0.d), floorsOf(t0, 24));
     }
 
     // --- shops: awnings over the bays, a false front ----------------------------
@@ -9407,6 +9565,100 @@ float frLine(float o, float fw, float c, float w) {
 
   // --- street furniture -----------------------------------------------------
 
+  /**
+   * AUTO KW: AN OVERHEAD HYDRO LINE down one side of edge `e` (hydroEdge):
+   * a wood or spun-concrete pole every ~40 m at the kerb, a crossarm with the
+   * three primaries, a neutral and the telephone/cable line lower down, the
+   * street light on a davit arm out over the road. Poles stand on a lattice
+   * of the street's own direction (s = x ux + z uz in multiples of SPAN), so
+   * consecutive collinear edges -- OSM splits a street at every node -- put
+   * their poles on one line, and each pole strings its wires back to the
+   * previous lattice point when a pole stands there (on this edge, or on the
+   * collinear hydro edge continuing it). A skipped pole leaves a gap, never
+   * a wire into nothing. All in the chunk's flat/glow builders: no draws.
+   * Phone cost: ~170 triangles a pole with its span.
+   */
+  hydroLine(flat, glow, e, a, b, px, pz, hydro, onCorner, ei, inPit) {
+    const city = this.city, SPAN = 40;
+    // canonical direction, so both orientations of a street agree
+    let ux = e.dx, uz = e.dz;
+    if (ux < 0 || (ux === 0 && uz < 0)) { ux = -ux; uz = -uz; }
+    const flip = ux !== e.dx || uz !== e.dz;
+    const P0 = flip ? b : a, P1 = flip ? a : b;
+    const sd = hydro & 4 ? 1 : -1;
+    const qx = -uz * sd, qz = ux * sd;     // out from the centreline to the pole side
+    const off = e.hw + 1.5;
+    const wood = (hydro & 3) === 1;
+    const poleCol = wood ? [0.30, 0.24, 0.18] : [0.62, 0.61, 0.58];
+    const WIRE = [0.07, 0.07, 0.08];
+    const s0 = P0.x * ux + P0.z * uz, s1 = P1.x * ux + P1.z * uz;
+    // a pole's spot at lattice position s (on this edge's line), or null
+    const spot = (s) => {
+      const t = (s - s0) / (s1 - s0);
+      const x = P0.x + (P1.x - P0.x) * t + qx * off, z = P0.z + (P1.z - P0.z) * t + qz * off;
+      const HS = cityStats.hydro || (cityStats.hydro = { edges: 0, poles: 0, spans: 0, offRoad: 0, other: 0 });
+      if (city.onRoad(x, z, 0.8)) { HS.offRoad++; return null; }
+      if (!G.isBuildable(x, z) || this.inDrawnLake(x, z) || this.cutDepth(x, z) > 0.3 || city.jumpClear(x, z)) { HS.other++; return null; }
+      return [x, G.terrainHeight(x, z) + WALK_Y, z];
+    };
+    // does the street carry on, straight and overhead, past node n?
+    const carries = (n, ei0) => {
+      for (const ej of n.e || []) {
+        if (ej === ei0) continue;
+        const f = city.edges[ej];
+        if (!f || f.elev || f.prof) continue;
+        if (Math.abs(f.dx * ux + f.dz * uz) < 0.985) continue;
+        const fa = city.nodes[f.a], fb = city.nodes[f.b];
+        const h = hydroEdge(f, (fa.x + fb.x) / 2, (fa.z + fb.z) / 2);
+        // the same poles on the same side (both are taken against the
+        // canonical direction, so a reversed edge agrees)
+        if (h === hydro) return true;
+      }
+      return false;
+    };
+    const k0 = Math.ceil((s0 + 6) / SPAN), k1 = Math.floor((s1 - 6) / SPAN);
+    const back = carries(P0, ei);
+    cityStats.hydro = cityStats.hydro || { edges: 0, poles: 0, spans: 0, offRoad: 0, other: 0 };
+    cityStats.hydro.edges++;
+    const wireAt = [[0, 11.2], [1.15, 10.75], [-1.15, 10.75], [0, 7.4]];
+    for (let k = k0; k <= k1; k++) {
+      const p = spot(k * SPAN);
+      if (!p) continue;
+      const [ox, gy, oz] = p;
+      flat.prism(ox, gy - 0.3, oz, wood ? 0.15 : 0.17, 11.8, 6, poleCol);
+      cityStats.hydro.poles++;
+      this.city.addObstacle(this._ck, ox, oz, 0.3);
+      // crossarm, across the line
+      const xr = Math.atan2(qx, qz);
+      flat.box(ox, gy + 10.6, oz, 0.12, 0.12, 2.6, xr, wood ? [0.36, 0.3, 0.24] : [0.5, 0.5, 0.5]);
+      // the transformer on one pole in five
+      if (hash2(Math.round(ox), Math.round(oz)) < 0.2) {
+        flat.prism(ox - qx * 0.45, gy + 8.2, oz - qz * 0.45, 0.32, 1.2, 6, [0.46, 0.5, 0.48]);
+      }
+      // the street light: davit arm out over the road, cobra head, lens
+      const ar = Math.atan2(-qx, -qz);
+      flat.box(ox - qx * 1.1, gy + 8.7, oz - qz * 1.1, 0.1, 0.1, 2.2, ar, [0.55, 0.56, 0.57]);
+      flat.box(ox - qx * 2.35, gy + 8.55, oz - qz * 2.35, 0.36, 0.2, 0.75, ar, [0.6, 0.61, 0.62]);
+      glow.box(ox - qx * 2.35, gy + 8.47, oz - qz * 2.35, 0.28, 0.08, 0.55, ar, [1.0, 0.86, 0.6]);
+      // the span back to the previous pole
+      const sp = k * SPAN - SPAN;
+      if (sp < s0 + 6 && !back) continue;
+      const q = spot(sp);
+      if (!q) continue;
+      cityStats.hydro.spans++;
+      for (const [lo, hy] of wireAt) {
+        const A = [ox + qx * lo, gy + hy, oz + qz * lo], B = [q[0] + qx * lo, q[1] + hy, q[2] + qz * lo];
+        const M = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2 - 0.55, (A[2] + B[2]) / 2];
+        for (const [U, V] of [[A, M], [M, B]]) {
+          const t = 0.025;
+          this._quad2(flat, [U[0], U[1] - t, U[2]], [V[0], V[1] - t, V[2]], [V[0], V[1] + t, V[2]], [U[0], U[1] + t, U[2]], [qx, 0, qz], WIRE);
+          this._quad2(flat, [U[0] - qx * t, U[1], U[2] - qz * t], [V[0] - qx * t, V[1], V[2] - qz * t],
+            [V[0] + qx * t, V[1], V[2] + qz * t], [U[0] + qx * t, U[1], U[2] + qz * t], [0, 1, 0], WIRE);
+        }
+      }
+    }
+  }
+
   *meshProps(flat, glow, ch, cx, cz) {
     const city = this.city;
     const own = (x, z) => Math.floor(x / CHUNK) === cx && Math.floor(z / CHUNK) === cz;
@@ -9451,6 +9703,12 @@ float frLine(float o, float fw, float c, float w) {
       const spacing = e.cls === 'res' ? 34 : 30;
       const count = Math.floor(e.len / spacing);
       const along = Math.atan2(e.dx, e.dz);
+      // AUTO KW: overhead hydro. Ontario's arterials and its pre-1970 streets
+      // carry their distribution lines on poles down one side, the street
+      // light hung from the pole on a davit arm -- the most Ontario thing on a
+      // street, and Seattle's steel masts are not it. See hydroLine.
+      const hydro = hydroEdge(e, mx, mz);
+      if (hydro) this.hydroLine(flat, glow, e, a, b, px, pz, hydro, onCorner, ei, inPit);
       for (let i = 1; i <= count; i++) {
         const t = i / (count + 1);
         const x = lerp(a.x, b.x, t), z = lerp(a.z, b.z, t);
@@ -9471,7 +9729,9 @@ float frLine(float o, float fw, float c, float w) {
         const gy = G.terrainHeight(ox, oz) + WALK_Y;
         const armRot = Math.atan2(-px * sg, -pz * sg);
         const f0 = flat.ni;
-        if (h < 0.42) {
+        if (h < 0.42 && hydro) {
+          // the hydro poles carry this street's lights
+        } else if (h < 0.42) {
           // street light: base, tapered mast, cranked arm, lit lens
           flat.box(ox, gy, oz, 0.42, 0.22, 0.42, armRot, [0.24, 0.25, 0.27]);
           flat.prism(ox, gy + 0.2, oz, 0.115, 6.4, 8, poleCol);

@@ -127,8 +127,10 @@ async function main() {
         await sleep(+process.env.VIEW_WAIT || 6000);
         const { result } = await send('Page.captureScreenshot', { format: 'jpeg', quality: 85 });
         writeFileSync(`${OUT}/${V.name}.jpg`, Buffer.from(result.data, 'base64'));
+        const pc = await evaluate(`(() => { const d = window.__dbg;
+          return d.sceneStats ? d.sceneStats.calls + '  tris ' + Math.round(d.sceneStats.tris / 1000) + 'k' : -1; })()`);
         await evaluate('window.__dbg.game.paused = true');
-        console.log(`  ${OUT}/${V.name}.jpg  (player view)`);
+        console.log(`  ${OUT}/${V.name}.jpg  (player view)  calls ${pc}`);
         continue;
       }
       const res = await evaluate(`(() => {

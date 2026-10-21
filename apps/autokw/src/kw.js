@@ -385,11 +385,23 @@ function meshPoly(B, solids, b, P, city) {
 }
 
 let POLY_MAT = null;
+/** The footprint buildings' vertex-colour material: kwshops.js, uwcampus.js and highways.js share it so their geometry merges into the same draw. Surfaces that aren't logos must sample uv (0, 0), kwshops' white block. */
+/** A geometry for polyMat with no logos on it: every uv to (0, 0), kwshops' white block
+ *  (Builder.box / tube / spheroid write 0..1 uvs, which would sample the whole logo atlas). */
+export function plainUV(geo) {
+  const uv = geo.getAttribute('uv');
+  if (uv) { uv.array.fill(0); uv.needsUpdate = true; }
+  return geo;
+}
+export function polyMat() {
+  if (!POLY_MAT) POLY_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0 });
+  return POLY_MAT;
+}
 /** landmarks.js extra: every polygon building, merged per 1200 m cluster. */
 export function buildPolys(ctx) {
   if (!KW) return;
   const { addTo, city } = ctx;
-  if (!POLY_MAT) POLY_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0 });
+  polyMat();
   const builders = new Map();
   let n = 0;
   for (const b of city.buildings) {
@@ -411,7 +423,7 @@ export function buildPolys(ctx) {
 }
 
 /** The face of a polygon building nearest (px, pz): world point at the wall, outward normal, length. */
-function polyFace(P, px, pz) {
+export function polyFace(P, px, pz) {
   const pts = P.pts, n = pts.length;
   let best = null, bd = Infinity;
   for (let i = 0; i < n; i++) {
@@ -459,7 +471,7 @@ export function polyFaces(P, px, pz, inset = 5) {
  * its own door), the face nearest the road for a small one. Returns the
  * sign's world point at the wall, the outward normal, and the face's length.
  */
-function faceFor(city, b, px, pz, signW, roadOnly = false) {
+export function faceFor(city, b, px, pz, signW, roadOnly = false) {
   const [lx, lz] = toLocal(b, px, pz);
   const hw = b.w / 2, hd = b.d / 2;
   const faces = [
@@ -656,7 +668,7 @@ function smallStore(ctx, g, x, z, yaw, makePanel) {
 }
 
 /** The heading (rotation.y) from (x, z) to the nearest street, or null. */
-function faceRoad(city, x, z, r = 90) {
+export function faceRoad(city, x, z, r = 90) {
   let best = null, bd = r;
   for (const ei of city.edgesNear(x, z, r)) {
     const e = city.edges[ei];
@@ -765,6 +777,7 @@ export function buildSigns(ctx) {
   const seen = new Set();
   for (const [n, x, z, kind, brand] of KW.shops) {
     if (/tim horton|freshco/i.test(n)) continue;
+    if (KW.chainNames && (KW.chainNames.has(n.toLowerCase()) || (brand && KW.chainNames.has(brand.toLowerCase())))) continue;
     const k = n + Math.round(x / 20) + ',' + Math.round(z / 20);
     if (seen.has(k)) continue;
     seen.add(k);
@@ -776,7 +789,7 @@ export function buildSigns(ctx) {
   const plated = new Set();
   for (const b of city.buildings) {
     const S = b.kw && b.kw.name && LM_SIGNS[b.kw.name];
-    if (!S || plated.has(b)) continue;
+    if (!S || plated.has(b) || b.kw.skip) continue;   // drawn (and signed) by kwplaces / kwsights
     plated.add(b);
     const rd = faceRoad(city, b.x, b.z, 260);
     const tx = rd ? rd.qx : b.x + 100, tz = rd ? rd.qz : b.z;
