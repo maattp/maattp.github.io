@@ -112,7 +112,7 @@ let islands = null, pickle = null, piers = null, ferry = null, ferryPrev = null;
 let coffee = null;   // First Cup Coffee at 1912 Pike Place and MORNING RUSH (barista.js)
 let career = null;   // the saved wallet and the Seattle Passport (career.js)
 let seafair = null;  // hydroplane racing on Lake Washington (hydrorace.js)
-let golf = null;   // three holes at Interbay (golf.js)
+let golf = null;   // OSM's holes at Rockway and Westmount, three at a time (golf.js)
 let wheelRide = null;   // the Great Wheel, turning, and its ride (wheelride.js)
 let fishToss = null;   // the flying fish at Pike Place Market (fishtoss.js)
 let needleTop = null;   // the Space Needle's elevator, deck and viewers (needletop.js)
@@ -440,7 +440,7 @@ class Game {
       tower.start();
       return true;
     }
-    // the first tee at Interbay?
+    // a starting tee at one of the golf courses?
     if (golf && !golf.active && golf.near(pl)) {
       this.hold('golf');
       golf.start({ camera, player });
@@ -1062,7 +1062,7 @@ function installShadowFade() {
   // The Queen Anne Counterbalance's streetcar line, laid on the road graph
   // (counterbalance.js) before anything is placed by the kerb
   counterbal = null;
-  city.extraClear = (x, z) => link.keepClear(x, z) || bikeNet.keepClear(x, z) || chicopee.keepClear(x, z);
+  city.extraClear = (x, z) => link.keepClear(x, z) || bikeNet.keepClear(x, z) || chicopee.keepClear(x, z) || !!(golf && golf.keepClear(x, z));
 
   await step(0.8, 'Building the skyline');
   world.buildSkyline();
@@ -1323,9 +1323,9 @@ function installShadowFade() {
     onEnd: () => { game.release('hoops'); },
   });
   // Auto KW: Seattle's venues are not here (arcade, pinball, hockey, ducks,
-  // Seafair, First Cup, pickleball, islands, the tower, golf, the fish, the
+  // Seafair, First Cup, pickleball, islands, the tower, the fish, the
   // Wheel and the Needle).
-  duckTour = seafair = coffee = pickle = islands = tower = golf = fishToss = null;
+  duckTour = seafair = coffee = pickle = islands = tower = fishToss = null;
   // Pin Up Arcade Bar on King St N in Uptown Waterloo, and the pinball at
   // AOK Craft Beer + Arcade on King St W downtown Kitchener
   arcade = new Arcade({
@@ -1342,6 +1342,13 @@ function installShadowFade() {
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`AOK paid $${m}`), 400); },
     onEnd: () => { game.release('pinball'); },
   });
+  // Golf on real courses: OSM's holes at Rockway and Westmount (data/golf.json)
+  golf = md.golf ? new Golf(md.golf, {
+    scene, city, world, audio, controls,
+    onReward: (m, C) => { game.money += m; setTimeout(() => hud.showToast(`${C.short} Golf paid $${m}`), 400); },
+    onEnd: () => { game.release('golf'); },
+  }) : null;
+  if (golf && !golf.C) golf = null;
   // Hockey night at the Aud: the Kitchener Rangers against the London Knights.
   // The marquee stands at the street nearest the Kitchener Memorial
   // Auditorium, facing it; ENTER anywhere round the building drops the puck.
@@ -1472,6 +1479,8 @@ function installShadowFade() {
     // ION: every station's street entrance
     ...link.stations.map((st) => ({ x: st.ent.x, z: st.ent.z, kind: 'link', name: `ION · ${st.name}`, near: false,
       hello: `${st.full} — ION light rail, Conestoga to Fairway. Tap ENTER here or on the platform to catch the next train and drive it` })),
+    ...(golf ? golf.firstTees.map((t) => ({ x: t.x, z: t.z, kind: 'golf', name: t.name, near: false, label: t.short,
+      hello: `${t.name} — press ENTER on the first tee to play 3 holes (every third tee starts three more)` })) : []),
     ...(chicopee.base() ? [{ x: chicopee.base().x, z: chicopee.base().z, kind: 'atv', name: 'Chicopee Bike Park', near: false, label: 'Chicopee',
       hello: 'Chicopee Bike Park — dirt bikes and mountain bikes. Ride a downhill, or walk to a chairlift and press ENTER to ride to the top' }] : []),
   ];
