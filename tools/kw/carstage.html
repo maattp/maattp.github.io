@@ -65,7 +65,11 @@ function place(list) {
     v.sync();
     scene.add(v.group);
     cars.push(v);
-    out.push({ type: p.type, len: v.spec.len, tris: tri(v.paintMesh) + tri(v.trimMesh) + tri(v.matteMesh) });
+    // the body's real size (paint + matte, not the trim's contact shadow), level, at the origin
+    const bb = new THREE.Box3();
+    for (const m of [v.paintMesh, v.matteMesh]) { m.geometry.computeBoundingBox(); bb.union(m.geometry.boundingBox); }
+    out.push({ type: p.type, len: v.spec.len, tris: tri(v.paintMesh) + tri(v.trimMesh) + tri(v.matteMesh),
+      size: [bb.max.z - bb.min.z, bb.max.x - bb.min.x, bb.max.y].map((n) => +n.toFixed(2)) });
   }
   return out;
 }
