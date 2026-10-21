@@ -160,6 +160,7 @@ async function main() {
         await sleep(2500); await shot('fest-hall');
         console.log('  inside:', await ev(`(() => { const f = window.__dbg.fest; return f.lastCalls + ' draws, ' + Math.round(f.lastTris / 1000) + 'k tris, ' + JSON.stringify(window.__fest); })()`));
         // the stein contest: start it, then hold the stein level with the arrows against the wobble
+        check(await until("window.__dbg.fest.mode === 'menu'", 8000), 'walked in down the aisle and up onto the stage');
         await tap('Enter');
         check(await until("window.__dbg.fest.mode === 'hold'", 6000), 'the stein contest starts');
         await sleep(1500); await shot('fest-stein');
@@ -170,7 +171,7 @@ async function main() {
           if (!s || s[3] !== 'hold') { out = true; break; }
           lastHeld = s[2];
           const codes = [];
-          if (s[0] > 3) codes.push('ArrowRight'); else if (s[0] < -3) codes.push('ArrowLeft');
+          if (s[0] > 3) codes.push('ArrowLeft'); else if (s[0] < -3) codes.push('ArrowRight');
           if (s[1] < 0.75) codes.push('ArrowUp');
           await hold(codes, 110);
         }
@@ -199,6 +200,14 @@ async function main() {
       void cam;
       await sleep(3500);
       await shot('parade-street');
+      // and from a second-storey window over the kerb, looking down Weber at the column
+      await ev(`(() => { const d = window.__dbg, p = d.fest.parade, h = p.at(p.head - 34), a = p.at(p.head + 16);
+        const lx = Math.cos(a.h), lz = -Math.sin(a.h), cx = a.x + lx * 2.5, cz = a.z + lz * 2.5;
+        d.game.paused = true; d.camera.position.set(cx, d.city.groundAt(cx, cz, null) + 6.5, cz);
+        d.camera.lookAt(h.x, d.city.groundAt(h.x, h.z, null) + 1.5, h.z); d.camera.updateMatrixWorld(true); })()`);
+      await sleep(2500);
+      await shot('parade-column');
+      await ev('window.__dbg.game.paused = false');
       console.log('  parade on:', await cityCalls(), JSON.stringify(await ev('window.__dbg.fest.parade.stats')));
       await ev('window.__dbg.fest.parade.speedUp = 40');
       check(await until('!window.__dbg.fest.parade.active', 90000, 500), 'the parade finishes its route and goes');

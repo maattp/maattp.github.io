@@ -37,6 +37,7 @@ import { Arcade } from './arcade.js';
 import { Pinball } from './pinball.js';
 import { HockeyNight } from './hockey.js';
 import { AudRink } from './audrink.js';
+import { Oktoberfest } from './oktoberfest.js';
 import { RollUp } from './rollup.js';
 import { TowerGame } from './atc.js';
 import { DuckTour } from './ducktour.js';
@@ -113,7 +114,8 @@ let hoops = null;   // the basketball courts (hoops.js)
 let arcade = null;   // Pin Up Arcade Bar on King St N in Waterloo (arcade.js)
 let pinball = null;  // the pinball at AOK on King St W in Kitchener (pinball.js)
 let hockey = null;   // hockey night at Climate Pledge Arena (hockey.js)
-let rollup = null;   // Roll Up the Rim at every Tim Hortons (rollup.js)
+let rollup = null;
+let fest = null;     // Auto KW: Oktoberfest -- the festhallen, the stein contest, the parade (oktoberfest.js)   // Roll Up the Rim at every Tim Hortons (rollup.js)
 let tower = null;    // Boeing Field's control tower and FINAL APPROACH (atc.js)
 let duckTour = null; // the Duck Tour: kiosk, ducks, ramp and the tour (ducktour.js)
 let orcas = null;     // a pod off West Point, an Easter egg (orcas.js)
@@ -422,6 +424,14 @@ class Game {
     if (hockey && !hockey.active && hockey.near(pl)) {
       this.hold('hockey');
       hockey.start();
+      return true;
+    }
+    // Oktoberfest: a festhalle's door, or the parade's start on Weber St
+    const fh = fest && !fest.inside && fest.near(pl);
+    if (fh === 'parade') return fest.parade.begin();
+    if (fh) {
+      this.hold('fest');
+      fest.enter(fh);
       return true;
     }
     // a Tim Hortons door: Roll Up the Rim
@@ -1480,6 +1490,12 @@ function installShadowFade() {
     onToast: (t) => setTimeout(() => hud.showToast(t, 4200), 300),
     onEnd: () => { game.release('rollup'); },
   });
+  // Oktoberfest: the festhallen (Concordia Club, Bingemans' Marshall Hall, the Schwaben Club) and the parade up Weber St
+  try {
+    fest = new Oktoberfest({ scene, city, traffic, audio, renderer, phone: ON_PHONE, camera, hud: { get hud() { return hud; } },
+      onReward: (m, why) => { game.money += m; setTimeout(() => hud.showToast(`${why} — $${m}`), 400); },
+      onEnd: () => { game.release('fest'); } });
+  } catch (e) { blog('oktoberfest: ' + e.message); fest = null; }
   // A CAR WORTH TAKING at the kerb in front of the spawn. Kerbside cars come
   // from a fixed hash of street slots, so the first car every player walked
   // up to was the same pickup -- and the nearest slot was usually out of the
@@ -1592,6 +1608,7 @@ function installShadowFade() {
     // Auto KW: the farms' tractors and combines (crops.js)
     ...(crops ? crops.places() : []),
     ...kartway.places(),
+    ...(fest ? fest.places() : []),
   ];
   { const k = kwData(); if (k && k.signStats) blog('kw signs: ' + JSON.stringify(k.signStats)); }
   if (shopStats()) blog('kw shops: ' + JSON.stringify(shopStats()));
@@ -1757,7 +1774,8 @@ function installShadowFade() {
   window.__refreshJobs = refreshJobs;
   window.__dbg = { get air() { return air; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;   // Auto KW: the harvest (crops.js)
-  window.__dbg.kart = kartRace;   // Auto KW: Erbsville Kartway (kartway.js)
+  window.__dbg.kart = kartRace;
+  window.__dbg.fest = fest;   // Auto KW: Oktoberfest (oktoberfest.js)   // Auto KW: Erbsville Kartway (kartway.js)
   wireUi();
   career.start(hud);
   game.newTarget();
@@ -2609,11 +2627,11 @@ const POLICE_HQ = [43.4532, -80.4893];   // Waterloo Regional Police, Central Di
  */
 /** An interior scene owns the canvas (audrink.js, oktoberfest.js): main draws no city under it. */
 function interiorUp() {
-  return !!(hockey && hockey.active && hockey.view);
+  return !!(hockey && hockey.active && hockey.view) || !!(fest && fest.inside);
 }
 
 function reapHolds() {
-  const live = { fishing, arcade, pinball, hockey, rollup, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace };
+  const live = { fishing, arcade, pinball, hockey, rollup, fest, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace };
   for (const who of game.holds) {
     if (who === 'seafair') { if (seafair && (seafair.state === 'menu' || seafair.state === 'done')) continue; }
     else if (live[who] && live[who].active) continue;
@@ -2980,6 +2998,7 @@ function frame(now) {
   if (pinball && pinball.active) pinball.update(dt);
   if (hockey && hockey.active) hockey.update(dt);
   if (rollup && rollup.active) rollup.update(dt);
+  if (fest) fest.update(dt, game.paused && !fest.inside);
   if (tower && tower.active) tower.update(dt);
   if (coffee && coffee.active) coffee.update(dt);
   if (pickle) pickle.update(dt);

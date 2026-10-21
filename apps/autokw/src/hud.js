@@ -6,12 +6,33 @@ import { formatMoney, clamp } from './util.js';
 const MAP_PX = 2048;
 const SCALE = MAP_PX / (G.MAP_HALF * 2);
 
+/** Auto KW: Oktoberfest (a stein on Bavarian blue) and Big Splash (a wave). */
+function kwFunIcon(ctx, kind, x, y, r) {
+  ctx.fillStyle = kind === 'okt' ? '#1a5aa8' : '#0a9fd8';
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = r * 0.22;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#ffffff';
+  if (kind === 'okt') {
+    ctx.fillRect(x - r * 0.38, y - r * 0.4, r * 0.56, r * 0.8);                 // the stein
+    ctx.lineWidth = r * 0.14; ctx.beginPath(); ctx.arc(x + r * 0.2, y, r * 0.24, -Math.PI / 2, Math.PI / 2); ctx.stroke();
+    ctx.fillStyle = '#f2b830'; ctx.fillRect(x - r * 0.3, y - r * 0.18, r * 0.4, r * 0.5);
+  } else {
+    ctx.lineWidth = r * 0.18; ctx.lineCap = 'round';
+    for (const dy of [-0.25, 0.2]) {
+      ctx.beginPath(); ctx.moveTo(x - r * 0.55, y + r * dy);
+      ctx.quadraticCurveTo(x - r * 0.28, y + r * (dy - 0.3), x, y + r * dy); ctx.quadraticCurveTo(x + r * 0.28, y + r * (dy + 0.3), x + r * 0.55, y + r * dy);
+      ctx.stroke();
+    }
+  }
+}
+
 /**
  * A marked place's icon, centred on (x, y), `r` its radius in the canvas's
  * current units: the seaplane dock is an anchor on blue, a quad bike four
  * wheels on orange. Drawn, not typed -- an emoji's glyph depends on the font.
  */
 function placeIcon(ctx, kind, x, y, r) {
+  if (kind === 'okt' || kind === 'splash') { kwFunIcon(ctx, kind, x, y, r); return; }
   ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f'
     : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : kind === 'coffee' ? '#6a4a32' : kind === 'hydro' ? '#d8242c' : kind === 'link' ? '#d0202e' : kind === 'link2' ? '#0082ca' : kind === 'freight' ? '#b8501c' : kind === 'streetcar' ? '#8c1f2b' : kind === 'ferry' ? '#0b6e4f' : kind === 'bike' ? '#57b83a' : kind === 'pickle' ? '#c8a21a'
     : kind === 'gun' ? '#2f6fb8' : kind === 'health' ? '#2e9a56' : kind === 'clinic' ? '#d8343a' : kind === 'wedge' ? '#7f8b96' : kind === 'tank' ? '#5f6b3a' : kind === 'fire' ? '#c4141c'
