@@ -552,6 +552,8 @@ export class Activities {
       this.award(Math.round(kph), `TOP SPEED ${Math.round(kph)} km/h`);
     }
     if (v.spec.plane || v.spec.rail) { a.air = 0; a.drift = 0; return; }
+    // (a go-kart is in a race or practice at Erbsville: kartway.js times it, karts brush each other all lap)
+    if (v.spec.kart) { a.air = 0; a.drift = 0; return; }
 
     // AIRTIME
     // A stunt jump is scored by stunts.js, once, not again as airtime.

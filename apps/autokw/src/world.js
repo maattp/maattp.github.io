@@ -6864,8 +6864,10 @@ float frLine(float o, float fw, float c, float w) {
    */
   groundTint(x, z, y) {
     let c;
+    // (Auto KW: `keepGrass` is mown ground in the country -- Erbsville Kartway's infield, kartway.js)
+    const lawn = G.inPark(x, z) || !!(this.keepGrass && this.keepGrass(x, z));
     if (y < 1.2) c = [0.94, 0.86, 0.66];
-    else if (G.inPark(x, z)) c = [0.40, 0.60, 0.31];   // was [0.42, 0.66, 0.3]: see GRASS
+    else if (lawn) c = [0.40, 0.60, 0.31];   // was [0.42, 0.66, 0.3]: see GRASS
     else {
       const jx = (vnoise(x, z) - 0.5) * 190;
       const jz = (vnoise(x + 3137, z - 2711) - 0.5) * 190;
@@ -6905,7 +6907,7 @@ float frLine(float o, float fw, float c, float w) {
     // (geo.farmAt): corn standing tan, soy gone gold, stubble, ploughed
     // earth, hay, winter wheat up green, a farmyard's packed ground.
     const crop = G.farmAt(x, z);
-    if (crop && crop <= 7 && !G.inPark(x, z)) {
+    if (crop && crop <= 7 && !lawn) {
       const F = [null, [0.66, 0.55, 0.32], [0.74, 0.58, 0.30], [0.80, 0.72, 0.48], [0.40, 0.31, 0.22],
         [0.50, 0.58, 0.32], [0.36, 0.56, 0.24], [0.54, 0.50, 0.42]][crop];
       const v = 0.92 + vnoise(x * 0.9 + 191, z * 0.9 - 77) * 0.16;
@@ -6933,6 +6935,7 @@ float frLine(float o, float fw, float c, float w) {
    * below 0.42).
    */
   cropAt(x, z) {
+    if (this.keepGrass && this.keepGrass(x, z)) return 0;
     const crop = G.farmAt(x, z);
     if (crop) return crop <= 2 && !G.inPark(x, z) ? crop : 0;
     if (G.inPark(x, z)) return 0;

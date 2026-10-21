@@ -49,6 +49,7 @@ import { Chicopee } from './chicopee.js';
 import { prepFun, buildMarketTent, buildFlags, waveFlags, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, buildDome } from './kwfun.js';
 import { prepPlaces, buildPlaces, placesMap, placesStats, Geese } from './kwplaces.js';
 import { Crops } from './crops.js';
+import { Kartway, KartRace } from './kartway.js';
 import { YKF } from './ykf.js';
 import { AirTraffic } from './airtraffic.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
@@ -142,6 +143,7 @@ let ykf = null;        // the Region of Waterloo International Airport (ykf.js)
 let chicopee = null;   // Chicopee's bike park: trails, lifts, bikes (chicopee.js)
 let crops = null;      // Auto KW: standing corn and soy, the tractors and combines (crops.js)
 let air = null;        // Auto KW: YKF's air traffic, the Cessnas and the news helicopter (airtraffic.js)
+let kartway = null, kartRace = null;   // Auto KW: Erbsville Kartway, its circuit and its races (kartway.js)
 let fire = null, fireStations = [];   // Seattle Fire: the stations' rigs, the water cannon, fire calls (firecalls.js)
 
 /** The WASTED / BUSTED card. */
@@ -428,6 +430,8 @@ class Game {
     if (duckTour && !duckTour.tour && duckTour.near(pl)) return duckTour.start();
     // the race office at Stan Sayres Pits?
     if (seafair && seafair.state === 'idle' && seafair.near(pl)) { seafair.start(); return true; }
+    // the counter at Erbsville Kartway's clubhouse?
+    if (kartRace && kartRace.near(pl)) { kartRace.open(); return true; }
     // pickleball on Bainbridge, where it was invented?
     if (pickle && !pickle.active && pickle.near(pl)) {
       this.hold('pickleball');
@@ -789,6 +793,9 @@ async function boot() {
   addLandmarkExtra((ctx) => buildFlags(ctx, md.kw));
   chicopee = new Chicopee(md.chicopee, { scene: null, city });
   addLandmarkExtra((ctx) => chicopee.buildSign(ctx));
+  // Erbsville Kartway: the circuit, its surface (city.movers) and its scenery
+  kartway = new Kartway(md.kart, city);
+  addLandmarkExtra((ctx) => kartway.build(ctx));
   ykf = new YKF(md.kw && md.kw.aero);
   addLandmarkExtra((ctx) => ykf.build(ctx));
   ykf.prepTower(city, boxAt);   // YKF's control tower (FINAL APPROACH's door)
@@ -1045,6 +1052,7 @@ function installShadowFade() {
   postfx.setSize(viewW(), viewH(), renderer.getPixelRatio());
 
   world = new World(scene, city, tx, { shadows: true, renderer, lakes: md.lakes });
+  world.keepGrass = (x, z) => kartway.keepClear(x, z);   // Erbsville Kartway is mown, not a field
   // the trees keep off YKF's runways, taxiways and aprons
   world.inAirfield = (x, z) => ykf.inField(x, z);
   // The trees' mid and near crowns (trees.js): chosen from the chunks'
@@ -1077,7 +1085,7 @@ function installShadowFade() {
   // The Queen Anne Counterbalance's streetcar line, laid on the road graph
   // (counterbalance.js) before anything is placed by the kerb
   counterbal = null;
-  city.extraClear = (x, z) => link.keepClear(x, z) || bikeNet.keepClear(x, z) || chicopee.keepClear(x, z) || !!(golf && golf.keepClear(x, z));
+  city.extraClear = (x, z) => link.keepClear(x, z) || bikeNet.keepClear(x, z) || chicopee.keepClear(x, z) || !!(golf && golf.keepClear(x, z)) || kartway.keepClear(x, z);
 
   await step(0.8, 'Building the skyline');
   world.buildSkyline();
@@ -1328,6 +1336,10 @@ function installShadowFade() {
   crops = new Crops({ scene, city, world, game, phone: ON_PHONE,
     get hud() { return hud; }, get audio() { return audio; }, get fx() { return fx; } });
   crops.spawnFarms(traffic);
+  // Erbsville Kartway's rental karts and its race office (kartway.js)
+  kartRace = new KartRace({ track: kartway, scene, city, traffic, player, get game() { return game; }, get hud() { return hud; }, get audio() { return audio; }, camera,
+    onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Erbsville Kartway paid $${m}`), 600); } });
+  kartRace.spawnRentals();
   blog(`farms: ${crops.spots.length} machines parked in ${Math.round(crops.searchMs)} ms`);
   // --- end the harvest ---------------------------------------------------------
   // Chicopee's bikes, at the base and the summit
@@ -1526,6 +1538,7 @@ function installShadowFade() {
       hello: 'Chicopee Bike Park — dirt bikes and mountain bikes. Ride a downhill, or walk to a chairlift and press ENTER to ride to the top' }] : []),
     // Auto KW: the farms' tractors and combines (crops.js)
     ...(crops ? crops.places() : []),
+    ...kartway.places(),
   ];
   { const k = kwData(); if (k && k.signStats) blog('kw signs: ' + JSON.stringify(k.signStats)); }
   peds = new PedSystem(scene, city, game);
@@ -1690,6 +1703,7 @@ function installShadowFade() {
   window.__refreshJobs = refreshJobs;
   window.__dbg = { get air() { return air; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;   // Auto KW: the harvest (crops.js)
+  window.__dbg.kart = kartRace;   // Auto KW: Erbsville Kartway (kartway.js)
   wireUi();
   career.start(hud);
   game.newTarget();
@@ -2540,7 +2554,7 @@ const POLICE_HQ = [43.4532, -80.4893];   // Waterloo Regional Police, Central Di
  * hold with nothing behind it is let go.
  */
 function reapHolds() {
-  const live = { fishing, arcade, pinball, hockey, rollup, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops };
+  const live = { fishing, arcade, pinball, hockey, rollup, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace };
   for (const who of game.holds) {
     if (who === 'seafair') { if (seafair && (seafair.state === 'menu' || seafair.state === 'done')) continue; }
     else if (live[who] && live[who].active) continue;
@@ -3061,6 +3075,7 @@ function frame(now) {
   updateSiren(dt);
   if (duckTour) duckTour.update(dt);
   if (seafair) seafair.update(dt);
+  if (kartRace) kartRace.update(dt);   // Erbsville Kartway (kartway.js)
   if (!player.vehicle || !(player.vehicle.spec.boat || player.vehicle.afloat)) fx.wake(dt, null);
   if (player.vehicle && player.vehicle.spec.kayak && player.vehicle.kayak && player.vehicle.kayak.dip) {
     const v = player.vehicle, sd = v.kayak.dipSide, f = v.forward;
