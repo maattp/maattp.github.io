@@ -205,6 +205,8 @@ export async function loadMapData(onStep) {
   const shops = await opt('shops.json');
   // the freeways as signed: exits, speed limits, lighting (tools/kw/build_hwy.py; highways.js)
   const hwy = await opt('hwy.json');
+  // the University of Waterloo's campus, building by building (tools/kw/build_uw.py; uwcampus.js)
+  const uw = await opt('uw.json');
   // The Olympics, Rainier and the Cascades as seen from here (tools/build_mountains.py).
   // Scenery only: a failed fetch costs the view, never the boot.
   let mountains = null;
@@ -213,6 +215,6 @@ export async function loadMapData(onStep) {
   return {
     height, hfN: hp.w, wlevel,
     water, green, farm, maskN: sp.w, lot, lotN: lp.w,
-    roads, buildings, places, lakes, monorail, link, freight, beaches, parkprops, bikepaths, piers, ferry, mountains, trails, kw, chicopee, golf, kart, gravel, sights, shops, hwy,
+    roads, buildings, places, lakes, monorail, link, freight, beaches, parkprops, bikepaths, piers, ferry, mountains, trails, kw, chicopee, golf, kart, gravel, sights, shops, hwy, uw,
   };
 }

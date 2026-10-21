@@ -213,10 +213,20 @@ function styleFor(cls, h, w, d) {
   // "house" outright -- so a 30 m commercial block with no tags came out clad
   // in clapboard siding at domestic plank scale. Size overrides the tag: a
   // house is small AND low.
-  if (cls === 0 && (h > 11 || (w != null && w * d > 260))) {
+  //
+  // Auto KW: the importer decides that from OSM's landuse zones now
+  // (build_buildings.py): cls 0 is a house -- or a row of townhouses -- the
+  // data says is one, up to the size of a long terrace; cls 5 is the
+  // untagged box too big for a house that no zone explains, which keeps the
+  // old size rule. (At 260 m2 two-thirds of Beechwood's double-garage
+  // houses had turned into one-storey strip plazas: kw.js markStrips.)
+  if (cls === 0 && (h > 11 || (w != null && w * d > 2200))) {
     return h > 22 ? 'midrise' : 'brick';
   }
-  if (cls === 0) return 'house';
+  if (cls === 5 && (h > 11 || (w != null && w * d > 260))) {
+    return h > 22 ? 'midrise' : 'brick';
+  }
+  if (cls === 0 || cls === 5) return 'house';
   if (cls === 1) return h > 25 ? 'midrise' : 'lowrise';
   if (cls === 3) return 'industrial';
   if (cls === 4) return 'campus';
@@ -371,23 +381,23 @@ function packBuildings(buildings, built, stats) {
   const n = buildings.length;
   const X = new Float64Array(n), Z = new Float64Array(n), W = new Float64Array(n), D = new Float64Array(n);
   const R = new Float64Array(n), H = new Float64Array(n), Y = new Float64Array(n);
-  const seed = new Int32Array(n), style = new Uint8Array(n);
+  const seed = new Int32Array(n), style = new Uint8Array(n), look = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
     const b = buildings[i];
     if (b.kind !== null) return null;   // not a shape this cache knows
     X[i] = b.x; Z[i] = b.z; W[i] = b.w; D[i] = b.d; R[i] = b.rot; H[i] = b.h; Y[i] = b.y;
-    seed[i] = b.seed;
+    seed[i] = b.seed; look[i] = b.look || 0;
     const si = STYLES.indexOf(b.style);
     if (si < 0) return null;
     style[i] = si;
   }
-  return { X, Z, W, D, R, H, Y, seed, style, built, stats };
+  return { X, Z, W, D, R, H, Y, seed, style, look, built, stats };
 }
 function unpackBuildings(c) {
   const n = c.X.length, buildings = new Array(n);
   for (let i = 0; i < n; i++) {
     buildings[i] = { x: c.X[i], z: c.Z[i], w: c.W[i], d: c.D[i], rot: c.R[i], h: c.H[i], y: c.Y[i],
-      style: STYLES[c.style[i]], seed: c.seed[i], kind: null };
+      style: STYLES[c.style[i]], seed: c.seed[i], look: c.look ? c.look[i] : 0, kind: null };
   }
   return { buildings, built: c.built };
 }
@@ -2146,13 +2156,16 @@ export function* cityGenerator(md, cache = {}) {
           const w = B.blob.getUint16(o + 4, true) / 20;
           const d = B.blob.getUint16(o + 6, true) / 20;
           const rot = (B.blob.getUint8(o + 10) * Math.PI) / 256;
-          const cls = B.blob.getUint8(o + 11);
+          // Auto KW: class in the low 3 bits, the mapped roof and wall above
+          // (tools/kw/build_buildings.py look_of) -> bd.look for world.js
+          const cb = B.blob.getUint8(o + 11), cls = cb & 7;
           const h = untaggedHeight(cls, B.blob.getUint16(o + 8, true) / 20, w * d);
           area += w * d;
           buildings.push({
             x, z, w, d, rot, h,
             y: standY(x, z),
             style: styleFor(cls, h, w, d),
+            look: (cb >> 3) | (cls === 1 ? 32 : 0),   // 32: OSM says apartments
             seed: (hash2(Math.round(x), Math.round(z)) * 65536) | 0,
             kind: null,
           });

@@ -440,8 +440,10 @@ file and a guide disagree, this file wins.
   nose and the back. Types: `bus` (7 King, amber LEDs), `busx` (202 iXpress
   University), `ionbus` (302 ION Bus: no band, ION's blue front corners,
   windscreen frame and roof, the ion logo; a third of the `busx` draws in
-  traffic.js), `artic` (201 iXpress Fischer-Hallman -- **GRT runs no
-  articulated buses**; it wears the livery and keeps one CIVILIAN slot).
+  traffic.js), `artic` (201 iXpress Fischer-Hallman -- **GRT has never run
+  articulated buses**: its Northfield garage was built for them in ~2020 and
+  none were bought; 2024's business plan has them "on the back burner". It
+  wears the livery but is NOT in CIVILIAN_TYPES -- its slot became a `bus`).
   **Lettering is `dotText`**: a 5x7 dot-matrix font (`DOT5`, upper and
   lower case, digits, `- / . ' &`) merged into runs per row, flat on a
   panel by centre / right vector / up; `led` gaps the rows, `bold`,
@@ -449,8 +451,7 @@ file and a guide disagree, this file wins.
   matte, so a sign in the shade still reads -- in `trim` (metal) they were
   dark. **Ontario plates** (`plateBox`, every `trim.box(..., PLATE)`
   became one): white, a blue ABCD 123 serial with the crown between, and
-  hairlines for ONTARIO / YOURS TO DISCOVER; one serial per TYPE
-  (`plateSerial(name)`, set in `vehicleAssets`), ~280 triangles a car.
+  ONTARIO / YOURS TO DISCOVER; **a serial per CAR** (see round two).
   **New types:** `minivan` and `wagon` (SMALL_LOOKS tables through
   `buildSmallCar`: the slider track, roof rails, clad arches), `crossover`
   and `compsedan` (`scaledBuild` of the SUV and the sedan at RAV4 / Civic
@@ -482,6 +483,79 @@ file and a guide disagree, this file wins.
   and the type mix after 12 s of play. Phone: 16 vehicles parked in view
   cost +48 draws (3 each) and ~+8.5k triangles each (buses ~12-13k); the
   spawn frame (CLAUDE.md's 196 draws, 881k tris before) 199 draws, 889k tris.
+- **Waterloo Region's traffic, round two** (vehicles.js, traffic.js;
+  docs/fleet-carshow.jpg, fleet-trucks.jpg, fleet-highway.jpg,
+  fleet-plates.jpg).
+  - **Every car its own plate, for no draw and ~280 fewer triangles.** The
+    plate's face is ONE quad whose vertex colours are its UV (red, green)
+    and `PLATE_KEY` in blue; tagGlass flags it `glass` 4 and glassShader
+    paints it from `PLATE_ATLAS` (plateAtlas: 128 serials, `plateSerial(k)`,
+    a 1024 x 640 canvas drawn once at the plates' 3.1 : 1). WHICH serial is
+    per mesh: Vehicle sets `trimMesh.scale.x = 1 + k / PLATE_STEP` (32768;
+    k < 128, so under 0.4 %) and the vertex shader reads k back from
+    modelMatrix (x column's length over y's, so a parent's uniform scale
+    cancels). A per-mesh uniform cannot do it: trimMat is shared, and
+    three.js re-uploads a built-in material's uniforms only when the
+    material changes between draws. Anything that scales a trim mesh
+    non-uniformly gets a random serial (tank.js's crush does). The far LOD
+    draws plates plain white, and now keeps tinted glass (it dropped
+    `glass` 3 along with the contact shadow: holes in far buses).
+  - **Heights:** `scaledBuild(build, len, wid, [y0, ky, refRoof])` scales
+    height above y0 only (wheels, arches and sills stay) and hands the
+    builder its parent's roof. `crossover` 1.88 -> 1.72 m (RAV4 1.74),
+    `compsedan` 1.50 -> 1.42 (Civic 1.415). carshots now prints each body's
+    L x W x H (carstage `place` returns `size`); compare with the real car.
+  - **New types** (real L x W x H in TYPES' comments): `suv3`
+    (Highlander / Explorer: the SUV at 5.05 x 2.00 x 1.74), `evy` (Model Y:
+    the EV's body, greenhouse grown above 0.62 m to 1.62; `ev` is the
+    Model 3), `civic` (SMALL_LOOKS.civic: a fastback hatch, `sport`: the
+    ducktail, black diffuser and centre exhaust, black wheels), `jeep`
+    (buildJeep: Wrangler JL Unlimited from slabs -- `hexa` / `slabZ` are an
+    8-corner solid with true face normals -- seven slots between round
+    lamps, flat black fenders clear of the tyres, a near-upright framed
+    screen, black hardtop, exposed hinges, rock rails, the spare;
+    `offroad`), `dually` (buildDually: the pickup at F-350 size, duals
+    under body-colour flares, cab clearance lamps; 6 wheels), `uhaul`
+    (buildUhaul: E-series cutaway, Mom's Attic, white with the orange
+    U-HAUL, MOVING & STORAGE, an Ontario SuperGraphic -- a lake, a white
+    pine), `semi` + `semiTrailer` (buildSemi: a sleeper tractor -- long
+    falling bonnet, bright grille, set-back fenders, raked two-piece
+    screen, roof fairing, cab extenders, skirts, stacks, duals; buildSemiTrailer:
+    the 53 ft van, posts, red/white conspicuity tape, skirts, swing doors,
+    lock rods, ICC bar. The trailer is `towed` on `HITCH.semiTrailer`, the
+    tiller's machinery; tractor colours by `liveries`), `opp` (buildOpp:
+    `suv3` as the Police Interceptor Utility, the OPP's black with white
+    doors -- the scheme since 2007 -- a crest, O.P.P., POLICE, push bar,
+    spotlight, black steel wheels; `police: true`, so a player who takes
+    one has the siren), `recycling` (Miller Waste, blue). `garbage` is
+    now Emterra's (the Region's garbage / green bin contractor from
+    March 2026): white, the green wordmark, the cart arm on the kerb side.
+  - **Where they drive:** `CIVILIAN_TYPES` gains suv3 x3 (suv 6 -> 4),
+    jeep, dually, civic x2 (hatch 3 -> 2), evy x2 (ev 3 -> 2), uhaul,
+    recycling, and loses artic. **Highway only:** traffic.js turns
+    `HWY_SEMI_P` 16 % of non-bus spawns on `hwy` edges into a semi and
+    `HWY_OPP_P` 3 % into the OPP (at most `OPP_MAX` 2 about; its light bar
+    on and dark -- policeLights only runs for units). `NO_KERB` keeps the
+    semi and recycling off residential streets; LOT_TYPES / HEAVY know the
+    new names.
+  - **Handling** (drivetest.mjs, game 0-100 s / lat g @60 / circle m):
+    crossover 4.5 / 2.00 / 11.1, compsedan 4.5 / 2.13 / 11.2, suv3 4.3 /
+    1.98 / 12.1, civic 4.2 / 2.22 / 11.2, evy 2.2 / 2.23 / 12.2, jeep 4.8
+    / 1.78 / 12.2 (and 160 km/h on grass: `offroad`), dually 5.4 / 1.82 /
+    16.8, uhaul 8.6 / 1.26 / 17.4, semi 0-80 18.3 / 1.10 / 22.7 (105
+    km/h governed, as Ontario's trucks are), opp 3.1 / 2.10 / 12.1.
+  - **Verify:** `node tools/kw/carshots.mjs <dir> [shots.json]` (sizes and
+    triangles); `VIEWS=tools/kw/carshow.json` (the fleet at Conestoga, new
+    `carshow-trucks`); `VIEWS=tools/kw/highwayshow.json` (a staged 401
+    with semis, the OPP, a U-Haul; `hwy-401-live` drives you onto it);
+    `VIEW_PROBE_FILE=tools/kw/hwyprobe.js` (30 s on the 401: the type mix,
+    semis and trailers spawned, orphaned trailers -- 7 rigs, 1 OPP, 0
+    orphans, 0 exceptions). Triangles a type (occupied): jeep 5.6k, evy
+    6.5k, uhaul 6.7k, semi 7.5k + trailer 6.7k, recycling 7.0k, garbage
+    7.6k, dually 8.6k, civic 9.6k, opp 10.4k. Phone (AUTO_PHONE=1, GPU,
+    carprobe at the spawn): 208 draws / 934k tris before, 207 / 935k after
+    (traffic's own noise); each vehicle is still 3 draws (an OPP on patrol
+    +3, its light bar, as a unit's).
 - **The sights: src/kwsights.js** (`data/sights.json` from
   `tools/kw/build_sights.py`; docs/sights-*.jpg). Everything kwplaces.js
   does not: each landmark from its OSM footprint, found by centroid
@@ -601,6 +675,169 @@ file and a guide disagree, this file wins.
   the 401/8 interchange, no noise walls beyond OSM's two (the Parkway has
   many more, unmapped), no overhead lane-use arrows, and the AI does not
   change lanes or merge on its own (it holds the lane it spawned in).
+- **The University of Waterloo** (src/uwcampus.js, `data/uw.json` from
+  tools/kw/build_uw.py; docs/uw-*.jpg). build_uw.py takes every campus
+  building from OSM (inside Ring Road, or a named university / college /
+  dormitory / chapel / sports building in the box round it, or a V1/REV
+  block tagged building:colour #AE9183) with its levels / height / min_level
+  and its **building:part masses** (each part goes to the building its
+  centroid is in), the enclosed bridges, Ring Road and the campus's POI
+  nodes (the letters sculpture, the Plant Operations stack, the artworks).
+  `prepCampus` (after prepPlaces) flattens those buildings' boxes (`kw.skip`,
+  `kw.uw`) but leaves them a `kw.poly` of the real outline, so kw.js's
+  nameplates still find the street face. `buildCampus` draws each building
+  from its parts when they cover >= 70 % of the outline (else the outline +
+  the parts that rise above it or float), storey 3.95 m, in ITS look:
+  `BY` (by OSM ref) / `BY_NAME` / `PART_STY` (by part id) pick a style --
+  wall colour and a window treatment ('ribbon', 'slit', 'punch', 'hood',
+  'curtain', 'facet', 'stripe', 'hex', 'fins', 'arcade', 'none'). Colours
+  from photos (Commons, Oct 2026): the 1958-62 core (PHY, C2, ESC, B1/B2,
+  E2/E3, DWE, CPH) buff/tan brick; MC, NH, PAS pale precast; Dana Porter a
+  cream ribbed tower of staggered slits on a dark glass neck, a podium of
+  fins under a brown fascia, a ground floor of piers, a brown mechanical cap
+  and mast; Hagey Hall / SCH / the Arts dark brown brick; M3 orange-red
+  brick + teal glass; E5 white and E7 (the PEARL SULLIVAN ENGINEERING
+  BUILDING since Nov 2025 -- OSM's PSE) grey diamond-faceted panels with
+  glass bands, E6 dark panels; QNC's barcode stripes and the honeycomb wing;
+  DC tan wings, the teal glass barrel vault (OSM: roof:shape round) with
+  grey-green gooseneck ducts and red portals; EV3 grey with lime bands; V1 /
+  REV / MKV / the colleges red-brown brick, Grebel's stone chapel. `SIGS`
+  adds per-building signatures (DC, DP, Physics' dome, E5's penthouse, SCH's
+  chimney, Grebel's chapel gable, DC's bridge on red legs). **The E5 Bridge**
+  (OSM's 81 m corridor line) is a one-storey dark-blue glass tube with a
+  silver mullion grid, 6.8 m over the highest ground under it, on round
+  concrete columns kept off the carriageway, and no street tree under it
+  (`clearAt`); other enclosed bridges OSM draws only as lines get a glazed
+  link at the second floor, REV's a covered walkway on posts. Also: the
+  UNIVERSITY OF WATERLOO steel letters on their plinth, WATERLOO
+  ENGINEERING letters at E7, the gate signs (black, the gold shield) at
+  Ring Rd / University Ave, the boulder ring and five flagpoles in front of
+  SCH, the stack, Triad, the Obelisk, the Porcellino. **Draws:** the shell
+  is drawn in kw.js's `polyMat()` into buildPolys' `kwp` clusters (no draw
+  of its own; builders retire at 50k vertices so the merge keeps them);
+  detail (mullions, hoods, fins, sills, sculptures, lettering) goes to
+  `near:` clusters that landmarks.js hides past 520 m (updateLandmarkRange,
+  the beaches' rule). `window.__noCampus = true` before boot (kwshots
+  `VIEW_BOOT_JS`) for a before/after; `window.__uwCampus` has the counts
+  (~150k tris, ~85k of them near-only). Phone (AUTO_PHONE=1, GPU), before
+  -> after: from Uptown looking toward campus 225 -> 224 draws, 957k ->
+  958k tris; over the campus 160 -> 164, 639k -> 727k; under the E5
+  bridge 156 -> 159, 658k -> 741k; at Dana Porter 178 -> 182, 563k -> 650k. Verify with `VIEWS=<file> node tools/kw/kwshots.mjs`,
+  e.g. on Ring Road under the bridge (c -5318,-2262 -> t -5272,-2228).
+  Approximate: DC's vault is a box-fitted barrel; the colours of C2/ESC/
+  B1/B2, AL, EV1, RCH and STC were not confirmed by photos.
+- **The generic city's look** (docs/look-*.jpg, before over after; judged
+  against Esri World Imagery and street views of Beechwood, Cherry Park,
+  Victoria Park, Northfield, Sunview, Hespeler). **The class comes from OSM's
+  landuse now:** 124k of the 190k footprints are bare `building=yes`, which
+  used to fall to "house" and then, over 260 m2, to a 'brick' box -- and
+  kw.js markStrips made every such box under 7.5 m a STRIP PLAZA, so two
+  thirds of Beechwood's double-garage houses were one-storey stores with
+  white flat roofs. `tools/kw/extract_looks.py` (one quick pass of
+  kw.osm.pbf -> `raw_looks.json`: landuse residential/commercial/retail/
+  industrial polygons, and roof:shape / building:material / building:colour
+  per building, keyed by the ring's first point) feeds build_buildings.py:
+  an untagged building in a residential zone is a house up to 460 m2 (a
+  long one up to 1600 m2 a townhouse row), else a 9.5 m walk-up (cls 1); in a
+  commercial/retail zone cls 2, industrial cls 3; outside every zone over
+  460 m2 it is **cls 5** (the old size rule in citygen styleFor); barns and
+  farm buildings are cls 3. **The class byte is packed:** low 3 bits class,
+  bits 3-4 the mapped roof (1 flat, 2 gable, 3 hip), bits 5-7 the wall
+  (1 red brick, 2 buff, 3 grey stone/block, 4 siding, 5 concrete/stucco,
+  6 metal, 7 glass); citygen unpacks it to `bd.look` (+32 when OSM says
+  apartments) and the building cache carries it. **world.js:** houses are
+  Ontario's -- 68 % brick (`HOUSE_BRICK`, on the new `brickhouse` atlas cell,
+  textures.js: the house elevation in a running bond, soldier courses and
+  sills; it is the LAST cell so facadeMat's masonry/brick indices hold) and
+  vinyl siding in beige/grey/white (`HOUSE_PAINT`); asphalt shingle roofs in
+  charcoal, grey and brown (`HOUSE_ROOF`); gables and hips about evenly, a
+  flat roof on ~2 % (Seattle's 11 % made every street a new build);
+  `houseWall` takes OSM's material first. Detached houses 9.5-24 m wide get
+  the garage door IN the footprint on the street face (a double on wide
+  ones) and a driveway to the kerb. Industrial walls are tilt-up beige/grey
+  and steel in white/blue-grey/tan (`INDUSTRIAL_WALL`), big flat roofs light
+  three times in four. `buildingFamily`: OSM's material first, then KW
+  weights (brick and precast low, white/grey precast high; apartment towers
+  over 30 m their own mix), and apartments get balconies on most (brick ones
+  included). **Overhead hydro** (`hydroEdge`, `hydroLine`): every arterial,
+  and the side streets of the old cores (`OLD_CORES`: downtown Kitchener,
+  Uptown, Bridgeport, Galt, Preston, Hespeler, St. Jacobs -- radii are a
+  judgement, not data); poles every 40 m on one side per street name (wood,
+  or spun concrete on some arterials), crossarm, three primaries + a lower
+  line, a transformer on one in five, the street light on a davit (the
+  street's own lamps are dropped). Poles sit on a lattice along the
+  street's direction so OSM's short edges join up; a span is strung only to
+  a pole that exists (`cityStats.hydro`). Phone (AUTO_PHONE=1, GPU), v28
+  -> this, draws/tris: spawn 207/935k -> 204/975k; Beechwood aerial
+  323/1379k -> 320/1454k, low 374/1188k -> 371/1229k; Sunview low 213/667k
+  -> 213/716k; Northfield low 129/643k -> 132/685k (max +7.3 % tris, draws
+  flat). Re-run order after an OSM update:
+  `extract_looks.py` then `build_buildings.py`.
+- **The radio (src/audio.js `STATIONS`, `_makeLive`..`_watchLive`;
+  `node tools/kw/radiotest.mjs`).** Every station is LISTENED TO, not just
+  loaded: an earlier check only saw `currentTime` advance, and a stream that
+  loops "this stream is not available", or silence, or zeros through Web
+  Audio passes that. **Test from where the radio is played (Seattle):**
+  Canadian commercial streams -- Rogers' leanstream (CHYM, Country 106.7, 570
+  News, HLS and ICY alike), CJIQ's leanstream, Indie88 (streamb SB00348),
+  Stingray's Boom 97.3 -- answer 200 with audio and CORS, and the audio is
+  "The stream you are trying to access is not available at this time" /
+  "only available within Canada" on a loop. Corus `live.leanstream.co` is
+  not even audio. They were replaced by campus, community and public
+  stations that play here. CBC is its own HLS (`cbcradiolive.akamaized.net`,
+  the `adaptive_128/chunklist_ao.m3u8` MEDIA playlist: Chrome 155 plays HLS
+  media playlists but cannot parse CBC's master; K-W is `2040995/ES_R1EKW`,
+  the whole list is in https://www.cbc.ca/listen/live-radio's page source);
+  streamtheworld's MP3s close after 32 KB for any browser user agent.
+  **Two routes** (`_route`): every stream plays through a `crossOrigin`
+  element -> `createMediaElementSource` -> `radioGain` (= `stationNorm`, the
+  stream's measured `lufs` brought to `RADIO_REF` -14, +-12 dB) ->
+  `musicDuck`, so it is levelled, ducked and under the master volume on iOS
+  too (which ignores an element's `volume`). A station whose 'wa' load fails
+  (no CORS: `error 4`, a CORS header on a redirect missing, or sent twice --
+  AH.FM's fr. relay sends `*, *`), or whose media source gives exact zeros for
+  4 s while the element's clock runs (`_watchLive`; WebKit has done this for
+  HLS), moves to the plain `direct` element for the session (`_direct`), its
+  `volume` = `DIRECT_LEVEL` x norm where honoured. Then two reloads, then the
+  synth covers until a retune. **`stalled` is NOT a failure**: it fires every
+  few seconds on healthy HLS, and treating it as one threw BBC Radio 1 to the
+  synth while the stream played on under it; a clock stopped 15 s is.
+  `primeLive` unlocks BOTH elements in the gesture (WebKit unlocks media
+  elements one at a time). **The synth radio was 25 dB under the streams**
+  (musicBus 0.2: -42 to -44 dBFS RMS) -- the two synth stations and every
+  fallback were "just quiet"; `SYNTH_LEVEL` 3.2 puts it at -18 to -20.
+  radiotest: per station HTTP status and CORS as polkiewicz.com sees them;
+  ~50 s through ffmpeg (`tools/kw/radioprobe.py`: EBU R128 LUFS, % silent,
+  a loop score, and a faster-whisper transcript checked for "not
+  available" -- `RADIO_PY=<python with numpy + faster-whisper>`); then the
+  game in headless Chrome, in a car, `setStation(i)`, 8 s of RMS off an
+  analyser on `musicDuck` scaled by pre x master (= dBFS at the speakers).
+  Re-measure and update a station's `lufs` when the test notes a drift > 4 dB.
+  Last run (2026-10-20, from Seattle; `out` is game output RMS, dBFS):
+
+  | # | station | LUFS (set) | silent | transcript (start / end) | route | gain | out |
+  |---|---|---|---|---|---|---|---|
+  | 0 | Radio Waterloo 102.7 | -21.1 (-18.8) | 3.4% | "...the spiritual in the natural..." | wa | 1.74 | -18.9 |
+  | 1 | CKWR 98.5 Community | -12.2 (-12.8) | 0.8% | "Cup Champions. The time for you to be a champion..." | wa | 0.87 | -18.1 |
+  | 2 | CBC Radio One K-W 89.1 | -21.4 (-21) | 1.4% | "biodiversity loss in the UK..." | wa | 2.24 | -17.1 |
+  | 3 | The Grand 101 Fergus-Elora | -12.9 (-13) | 0% | "Back with more of Centre Wellington's best music" | wa | 0.89 | -17.0 |
+  | 4 | CFRU 93.3 Guelph | -14.8 (-16.8) | 0% | "I can't hide my feelings..." | wa | 1.38 | -15.8 |
+  | 5 | CKRZ 100.3 Voice of the Grand | -17.8 (-18.3) | 0% | "How important is the..." | wa | 1.64 | -15.8 |
+  | 6 | Vibe 105.5 York U | -13.9 (-14.7) | 0% | (lyrics) | wa | 1.08 | -15.1 |
+  | 7 | CIUT 89.5 U of T | -22.2 (-17, now -18.5) | 0.2% | "Everybody needs cash to spend..." | wa | 1.41 | -23.7 |
+  | 8 | JAZZ.FM91 | -22.9 (-24.5) | 0% | (instrumental) | wa | 3.35 | -16.4 |
+  | 9 | The New Classical 96.3 | -17.5 (-17.2) | 0% | (instrumental) | wa | 1.45 | -17.2 |
+  | 10 | CBC Music | -19.7 (-19.2) | 0% | "It's the world, yeah..." | wa | 1.82 | -16.0 |
+  | 11 | RdMix Classic Rock | -17.8 (-18.4) | 0% | (lyrics) | wa | 1.66 | -15.8 |
+  | 12 | NRJ Linkin Park | -15.9 (-15.6) | 0% | (lyrics) | wa | 1.20 | -16.4 |
+  | 13 | BBC Radio 1 | -17.3 (-17.5) | 0% | (lyrics) | wa | 1.50 | -15.7 |
+  | 14 | AH.FM Trance | -12.8 (-12.7) | 0% | (lyrics) | wa | 0.86 | -16.6 |
+  | 15 | Grand River FM | synth | - | - | synth | 3.2 | -19.8 |
+  | 16 | King St Radio | synth | - | - | synth | 3.2 | -18.2 |
+
+  All 200 with CORS ok, none looping or "not available", 0 exceptions.
+  Not covered headlessly: the iPhone. If a station is silent there, the
+  Debug readout's audio log says which route it took and why it moved.
 
 ## Build number
 

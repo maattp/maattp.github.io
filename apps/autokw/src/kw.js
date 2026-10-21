@@ -385,7 +385,14 @@ function meshPoly(B, solids, b, P, city) {
 }
 
 let POLY_MAT = null;
-/** The footprint buildings' vertex-colour material (kwshops.js shares it, so its geometry merges into the same draw). */
+/** The footprint buildings' vertex-colour material: kwshops.js, uwcampus.js and highways.js share it so their geometry merges into the same draw. Surfaces that aren't logos must sample uv (0, 0), kwshops' white block. */
+/** A geometry for polyMat with no logos on it: every uv to (0, 0), kwshops' white block
+ *  (Builder.box / tube / spheroid write 0..1 uvs, which would sample the whole logo atlas). */
+export function plainUV(geo) {
+  const uv = geo.getAttribute('uv');
+  if (uv) { uv.array.fill(0); uv.needsUpdate = true; }
+  return geo;
+}
 export function polyMat() {
   if (!POLY_MAT) POLY_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0 });
   return POLY_MAT;
