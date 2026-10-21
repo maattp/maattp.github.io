@@ -47,6 +47,7 @@ import { setKwData, applyNamed, buildSigns, buildPolys, buildBunting, buildSchoo
 import { addLandmarkExtra } from './landmarks.js';
 import { Chicopee } from './chicopee.js';
 import { prepFun, buildMarketTent, buildFlags, waveFlags, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, buildDome } from './kwfun.js';
+import { prepPlaces, buildPlaces, placesMap, placesStats, Geese } from './kwplaces.js';
 import { Crops } from './crops.js';
 import { YKF } from './ykf.js';
 import { AirTraffic } from './airtraffic.js';
@@ -624,6 +625,7 @@ let gpuLedger = null;
 let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, skidMarks, audio, game, marker, postfx, acts, stunts, monorail, link, freight, counterbal, bikeNet, cyclists, lmRoot, shadowCache = null;
 let pickups = [];
 let buggies = null;   // the horse and buggies (buggy.js)
+let geese = null;     // Canada geese in Waterloo Park and on campus (kwplaces.js)
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
 const LOOK_AHEAD = new THREE.Vector3();
 
@@ -778,6 +780,9 @@ async function boot() {
   // the St. Jacobs market's tent, Canadian flags everywhere (kwfun.js)
   prepFun(city);
   prepFord(city);
+  // Uptown, Waterloo Park, RIM Park and Conestoga Mall (kwplaces.js)
+  { const k = prepPlaces(city); blog(`kw places: ${k.skipped} boxes drawn as places`); }
+  addLandmarkExtra(buildPlaces);
   addLandmarkExtra(buildMarketTent);
   addLandmarkExtra(buildDome);
   addLandmarkExtra(buildFord);
@@ -1492,6 +1497,7 @@ function installShadowFade() {
     ...(lmRoot.userData.marinas || []).map((mr) => ({ x: mr.x, z: mr.z, kind: 'dock', name: mr.name, near: false,
       hello: mr.hello ? mr.hello : `${mr.name} — boats and jet skis. Walk out on the float and take one` })),
     ...kwPlaces(),
+    ...placesMap(),
     { x: arcade.spot.x, z: arcade.spot.z, kind: 'arcade', name: 'Pin Up Arcade Bar', near: false,
       hello: 'Pin Up Arcade Bar — six classic cabinets, $1 a credit. Press ENTER at the door' },
     { x: pinball.spot.x, z: pinball.spot.z, kind: 'pinball', name: 'AOK Craft Beer + Arcade', near: false,
@@ -1553,6 +1559,9 @@ function installShadowFade() {
 
   cyclists.audio = audio;
   buggies.audio = audio;
+  geese = new Geese({ scene, city, world, audio, hud });
+  window.__geese = geese;
+  blog('kw places built: ' + JSON.stringify(placesStats()));
   link.bind({ game, hud, audio, player });
   {
     // One tap, never behind a menu: a lost run on a phone ends the session.
@@ -2987,6 +2996,7 @@ function frame(now) {
   cyclists.update(dt, player);
   if (buggies) buggies.update(dt, player, camera);
   if (air) air.update(dt, player, camera);   // YKF's air traffic (airtraffic.js)
+  if (geese) geese.update(dt, player, camera);
   bikeNet.update(camera);
   piers.update(camera);
   if (wheelRide) wheelRide.update(dt, wheelRide.busy ? input : null, wheelRide.busy ? look : null, camera.position.x, camera.position.z);

@@ -148,6 +148,45 @@ file and a guide disagree, this file wins.
   axle). `Crops.spawnFarms` parks them at boot by a spiral search round
   `FARMS` (real places; ~15 ms) using tools/kw/proj.py's projection --
   **geo.toWorld still carries Seattle's LAT0/LON0**, so don't use it here.
+- **The places: src/kwplaces.js** (kw.json `places` from build_kw.py
+  `build_places`; docs/landmark-*.jpg): Uptown Waterloo, Waterloo Park, RIM
+  Park, Conestoga Mall. `prepPlaces` (before meshing) gives every footprint
+  it draws `kw.skip` + h 0; `buildPlaces` is one landmarks.js extra.
+  **Uptown:** every low building with a wall on King St between William and
+  Bridgeport (`places.king`: OSM footprint, levels, the shops OSM maps
+  inside it) is a heritage block -- brick in nine tones, a storefront per
+  shop on each street face (bulkhead, glass, recessed door, sign band with
+  the real name, ~60 % awnings, blade signs on pubs/restaurants), upper
+  windows with sills and arched lintels, string courses, a bracketed
+  cornice; party walls (inside a neighbour) get nothing. The Old Post Office
+  (35 King N) has its clock tower on the King/Dupont corner (`postOfficeTower`).
+  Lamp posts with UPTOWN WATERLOO banners every 30 m (`kingLamps`). Waterloo
+  Public Square: the 2023 slatted leaf shades (`LEAVES`) and the water wall
+  in front of Beertown (`WATERWALL`); the Town Square's signs; the Seagram
+  Lofts (buff, small windows, SEAGRAM DISTILLERS painted on No. 3's face
+  toward Uptown). **Waterloo Park:** footbridges (`BRIDGES`, OSM ways; decks
+  are `ctx.platforms`, walkable), the grist mill and wheel, the 1820 log
+  school, the Eby farmhouse/Potters' Workshop, barn and EMPTY paddocks (the
+  animal farm closed in 2024 -- don't put animals back), gazebos, the
+  Jubilee gate, the splash pad, the diamonds. **Geese** (`Geese`, updated
+  from main.js each frame, `window.__geese`): 7 flocks (park lawns, Silver
+  Lake, UW), 3 InstancedMeshes (stand / graze / fly), drawn within 260 m of
+  the camera; they flee someone on foot, the gander stands and honks
+  (`goose` in audio.js), a car within 16 m above 7 m/s puts them in the air.
+  **RIM Park:** every OSM pitch (`places.pitches`, a fan under its box is a
+  diamond) drawn by `field()` with light masts; the Elam Martin farmstead
+  (house, bank barn, silo); the sign at University Ave. **Conestoga Mall:**
+  the 168-point plan simplified (`simplify`), entrances at OSM's entrance
+  nodes, the anchors' raised parapets and signs (`MALL_ANCHORS`, 2026: the
+  Bay is Urban Behavior), Galaxy Cinemas' own block, the pylon on King St.
+  **Lettering is on its own canvas** (`PlaceAtlas`, 2048 x 1024): the
+  shared sign atlas is ~90 % full before these run and overflowed (blank
+  signs) when they shared it. Trees keep off the buildings and pitches
+  (`clearAt`). `window.__noPlaces = true` before boot turns it all off
+  (kwshots `VIEW_BOOT_JS`) for a before/after; `window.__kwPlaces` has the
+  triangle/solid counts. Phone (AUTO_PHONE=1, GPU), before -> after:
+  Uptown street 210 -> 225 draws, 829k -> 872k tris; Waterloo Park
+  191 -> 196, 710k -> 755k; RIM 118 -> 119; Conestoga 338 -> 346.
 
 - **Air traffic: src/airtraffic.js** (docs/air-takeoff.jpg, air-gate.jpg).
   No flight model: every movement is a `Track` -- waypoints with their
