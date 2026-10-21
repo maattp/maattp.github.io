@@ -6,7 +6,8 @@
 //
 // shots.json: [{ name, cars: [{ type, color, x, z, heading }], cam: { eye, at, fov }, size: [w, h] }]
 // Without one, the built-in shots below: the GRT buses and the KW fleet row.
-// Prints each placed vehicle's triangles (paint + trim + matte, occupied).
+// Prints each placed vehicle's triangles (paint + trim + matte, occupied) and
+// its body's length, width (mirrors and all) and height, to check against the real car's.
 
 import { launchChrome } from '../chrome.mjs';
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
@@ -75,7 +76,7 @@ async function main() {
       await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
       const info = await evaluate(`(() => { const s = window.stage; s.renderer.setSize(${w}, ${h}); s.camera.aspect = ${w / h};
         const r = s.place(${JSON.stringify(V.cars)}); s.shoot(${JSON.stringify(V.cam)}); return r; })()`);
-      for (const c of info) if (!seen.has(c.type)) { seen.add(c.type); console.log(`  ${c.type}: ${c.len} m, ${c.tris} tris`); }
+      for (const c of info) if (!seen.has(c.type)) { seen.add(c.type); console.log(`  ${c.type}: ${c.len} m, ${c.tris} tris, body L x W x H ${c.size.join(' x ')} m`); }
       const { result } = await send('Page.captureScreenshot', { format: 'png' });
       writeFileSync(`${OUT}/${V.name}.png`, Buffer.from(result.data, 'base64'));
       console.log(`  ${OUT}/${V.name}.png`);
