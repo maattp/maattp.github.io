@@ -628,7 +628,13 @@ export class TrafficSystem {
     this.crossN = 0;
     this.crossXZ = null;
     this.stats = { deadEnd: 0, deadEndDespawn: 0, fallbackTurn: 0, stuckRecycled: 0, yielded: 0,
-      laneChanges: 0, laneLeft: 0, laneRight: 0, laneMandatory: 0, mergeYields: 0, exitsPlanned: 0, exitsTaken: 0, exitsAborted: 0, fwySpawnBlocked: 0 };
+      laneChanges: 0, laneLeft: 0, laneRight: 0, laneMandatory: 0, mergeYields: 0, exitsPlanned: 0, exitsTaken: 0, exitsAborted: 0, fwySpawnBlocked: 0,
+      // Auto KW junction controls (junctions.js): seconds held at a red, a
+      // permissive left yielding, a roundabout entry yielding, a stop sign's
+      // queue; full stops made at stop signs
+      sigHolds: 0, leftYields: 0, rbYields: 0, stopWaits: 0, fullStops: 0 };
+    // the junction controls: signals, stop signs, roundabouts (junctions.js)
+    this.jc = city.jc || null;
     // Auto KW: the freeway edges -- every 'hwy' carriageway and every ramp
     // reachable from one through ramps (OSM's *_link is also a town's slip lane)
     this.fwy = new Uint8Array(E.length);
@@ -1016,6 +1022,22 @@ export class TrafficSystem {
         if (!fs) continue;
         lo.x = -e.dz * sign * fs.off; lo.z = e.dx * sign * fs.off;
       }
+      // AUTO KW, A CITY SPAWN: not on top of a car, and not at speed into
+      // the back of a queue (a red, a stop sign): within 50 m ahead in its
+      // direction the slowest car there sets its pace.
+      let cap = Infinity;
+      if (!fs) {
+        const sx = x + lo.x, sz = z + lo.z, fx = e.dx * sign, fz = e.dz * sign;
+        let clash = false;
+        for (const o of this.cars) {
+          const rx = o.x - sx, rz = o.z - sz, d2 = rx * rx + rz * rz;
+          if (d2 > 55 * 55) continue;
+          if (d2 < 15 * 15) { clash = true; break; }
+          const fwd = rx * fx + rz * fz;
+          if (fwd > 0 && Math.abs(rx * fz - rz * fx) < 3) cap = Math.min(cap, Math.max(0, Math.abs(o.vLong) + (fwd - 18) / 3));
+        }
+        if (clash) continue;
+      }
       const v = this.spawnAt(x + lo.x, z + lo.z, heading, tn, randomCarColor((this.R.n() * 1e6) | 0), 'traffic');
       if (v.spec.hand === 'opp') {
         // the OPP on patrol: its light bar, dark (policeLights only runs for units)
@@ -1036,7 +1058,7 @@ export class TrafficSystem {
       v.edge = ei;
       v.dirSign = sign;
       v.laneU = fs ? fs.u : laneU;
-      v.vLong = 6 + this.R.n() * 6;
+      v.vLong = Math.min(6 + this.R.n() * 6, cap);
       v.panic = 0;
       // Every driver keeps a pace of their own, +-8 % on the limit: a whole
       // street at exactly the limit drives in formation.
@@ -1311,6 +1333,7 @@ export class TrafficSystem {
   update(dt, px, pz, camDir, player) {
     const city = this.city;
     const game = this.game;
+    if (this.jc) this.jc.update(dt);   // the signals' clock
 
     this.updateParked(px, pz);
 
@@ -1844,7 +1867,8 @@ export class TrafficSystem {
         // am going when I get there. Whoever gets there first goes; on a tie
         // the older car. Predicted along its heading at 0.8 / 1.6 / 2.4 s.
         // (a unit with its lights on yields to nobody)
-        if (!v.unit && Math.abs(co) < 0.5 && Math.abs(o.vLong) > 1.5 && (o.mode === 'traffic' || o.mode === 'police' || o === player.vehicle)) {
+        // (one braking for its own red or stop sign is not crossing: ctlHold)
+        if (!v.unit && Math.abs(co) < 0.5 && Math.abs(o.vLong) > 1.5 && !(o.ctlHold && o.mode === 'traffic') && (o.mode === 'traffic' || o.mode === 'police' || o === player.vehicle)) {
           for (let tt = 0.8; tt < 2.5; tt += 0.8) {
             const qx = o.x + fo.x * o.vLong * tt, qz = o.z + fo.z * o.vLong * tt;
             let bq = Infinity, aq = 0, ac = 0;
@@ -1986,6 +2010,14 @@ export class TrafficSystem {
         if (g < sp * sp / 12 + 4) urgent = true;
       }
     }
+    // JUNCTION CONTROLS (junctions.js): a red, a stop sign, a roundabout's
+    // circulating traffic -- the next controlled junction on the route says
+    // where to stop, if anywhere.
+    v.ctlHold = false;
+    if (this.jc && !v.unit && v.mode === 'traffic') {
+      const g = this.junctionStop(v, s0, sp, player);
+      if (g < stopAt) { stopAt = g; v.ctlHold = true; }
+    }
     // IDM: free-road term plus the interaction with the leader.
     const vr = sp / Math.max(0.5, v0);
     let aIdm = aMax * (1 - vr * vr * vr * vr);
@@ -2020,7 +2052,8 @@ export class TrafficSystem {
     // ...and anything standing for 20 s out of sight, whatever it waits on:
     // there are no signals to wait at, so a car that long at rest is queued
     // behind a wedge or a gridlock of three or more, and the queue goes with it.
-    if (Math.abs(v.vLong) < 0.5) v.restT += dt; else v.restT = 0;
+    // (waiting at a red or a stop sign is not that: the light changes)
+    if (Math.abs(v.vLong) < 0.5) v.restT += v.ctlHold ? dt * 0.2 : dt; else v.restT = 0;
     if ((v.stuckT > 8 || v.restT > 20) && dist2(v.x, v.z, px, pz) > 120 * 120) { this.stats.stuckRecycled++; v.recycle = true; }
     // FREEWAY DRIVING: lane changes, exits (fwyDecide), on freeway edges only
     if (this.fwy[v.edge] && !v.unit) {
@@ -2032,6 +2065,67 @@ export class TrafficSystem {
       }
     }
     return inp;
+  }
+
+  // --- junction controls (Auto KW, junctions.js) ----------------------------
+  //
+  // See "Junctions" in apps/autokw/CLAUDE.md. Walks the planned route for the
+  // next node with a controller that this car ARRIVES at by one of its
+  // approaches (not from inside a signalled junction's own edges), and asks it
+  // whether to go. Returns the gap (nose to stop line) to stop in, or
+  // Infinity. A car that has decided to go on (crossed the line, an amber it
+  // could not stop for, its turn at a stop sign) is committed to that approach
+  // (`jcGo`) until the approach is behind it.
+  junctionStop(v, s0, sp, player) {
+    const jc = this.jc, rt = v.rt, city = this.city;
+    const horizon = Math.max(45, (sp * sp) / 3 + 30);
+    let d = rt[R_LEN] - s0, res = Infinity, seenGo = false;
+    if (v.jcGo == null) { v.jcGo = -1; v.jcStop = -1; }
+    for (let j = 0; j < v.rtN; j++) {
+      const o = j * RT_F;
+      if (j > 0) d += rt[o + R_LEN];
+      if (d - 40 > horizon) break;
+      const ei = rt[o + R_EI], sg = rt[o + R_SG], e = city.edges[ei];
+      const ni = sg > 0 ? e.b : e.a;
+      const ci = jc.ctl[ni];
+      if (ci < 0) continue;
+      const C = jc.list[ci], A = C.appr.get(ei * 2 + (sg > 0 ? 1 : 0));
+      if (!A) continue;
+      if (v.jcGo === A.id) { seenGo = true; continue; }
+      const gap = d - A.back - v.halfLen - 0.3;
+      if (gap < -2.5) continue;   // already over the line: in the box
+      const r = jc.decide(this, v, C, A, this.moveAt(v, j, C), gap, sp, player);
+      if (r === 1) {
+        if (gap < -0.6) { v.jcGo = A.id; seenGo = true; continue; }   // too late: through
+        res = Math.max(0, gap);
+        break;
+      }
+      if (r === 2 || gap < 0.6) { v.jcGo = A.id; seenGo = true; }
+      // nothing beyond this junction is decided before it is reached
+      break;
+    }
+    if (!seenGo) v.jcGo = -1;
+    return res;
+  }
+
+  /** The turn v makes at the end of route entry j ('L', 'S', 'R'): from
+   *  its direction there to the first entry that leaves controller C. */
+  moveAt(v, j, C) {
+    const rt = v.rt, o = j * RT_F;
+    let k = j + 1;
+    if (C.set) {
+      while (k < v.rtN) {
+        const e = this.city.edges[rt[k * RT_F + R_EI]];
+        if (!(C.set.has(e.a) && C.set.has(e.b))) break;
+        k++;
+      }
+    }
+    if (k >= v.rtN) { k = j + 1; if (k >= v.rtN) return 'S'; }
+    const q = k * RT_F;
+    const ux = rt[o + R_UX], uz = rt[o + R_UZ], nx = rt[q + R_UX], nz = rt[q + R_UZ];
+    const cos = ux * nx + uz * nz, crs = ux * nz - uz * nx;
+    if (cos > 0.7) return 'S';
+    return crs > 0 ? 'R' : 'L';
   }
 
   // --- freeway driving (Auto KW) -------------------------------------------

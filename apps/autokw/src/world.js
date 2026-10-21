@@ -181,6 +181,8 @@ const CELL_MEAN = {
 // Paint sits just proud of the asphalt; any less and it z-fights at distance.
 const MARK_Y = ROAD_LIFT + 0.012;
 const NO_CITY_CHUNK = Object.freeze({ edges: [], buildings: [] });
+// a roundabout's truck apron: the pavement's texture tinted to red-brown pavers
+const APRON = [0.78, 0.46, 0.36];
 // `flat` has no map, but Builder.quad indexes the uv array unconditionally.
 const ZERO_UV = [0, 0, 0, 0, 0, 0, 0, 0];
 const NODE_Y = NODE_LIFT;
@@ -4939,6 +4941,10 @@ float frLine(float o, float fw, float c, float w) {
       }
     }
 
+    // Auto KW: the junction controls' paint, poles, signs and roundabout
+    // islands (junctions.js), into this chunk's flat mesh
+    if (city.jc) city.jc.meshChunk(this, flat, cx, cz, lod);
+
     if (lod === 1) {
       since = 0;
       // the chunk's occupancy raster: which way each house faces
@@ -6999,6 +7005,7 @@ float frLine(float o, float fw, float c, float w) {
     this.meshTrenchWalls(flat, e, a, b, ei);
     if (lod === 1 && walkWidthOf(e) > 0) {
       const sw = walkWidthOf(e);
+      const apron = ei != null && this.city.jc ? this.city.jc.apronSide(ei) : 0;
       for (const sg of [-1, 1]) {
         // Stop short of each intersection: a strip run end to end would march
         // straight across the cross street. The corner is filled by meshNode,
@@ -7100,8 +7107,11 @@ float frLine(float o, float fw, float c, float w) {
           // lattice of identical slabs running to the horizon; the texture's
           // own staining can only break the tile, not the repeat of the tile.
           const wj = 0.9 + hash2(Math.round(x0 * 0.7), Math.round(z0 * 0.7)) * 0.2;
-          const wIn = [wj, wj, wj];
-          const wOut = [wj * 0.9, wj * 0.9, wj * 0.91];
+          // Auto KW: a roundabout's inner pavement is its truck apron, red
+          // pavers (junctions.js draws the island inside it)
+          const ap = apron === sg ? APRON : null;
+          const wIn = ap ? [wj * ap[0], wj * ap[1], wj * ap[2]] : [wj, wj, wj];
+          const wOut = ap ? [wj * ap[0] * 0.9, wj * ap[1] * 0.9, wj * ap[2] * 0.9] : [wj * 0.9, wj * 0.9, wj * 0.91];
           const wc = sg > 0 ? [wIn, wOut, wOut, wIn] : [wOut, wIn, wIn, wOut];
           const wu = sw / WALK_TILE;
           // A FOOTWAY DOES NOT FOLLOW A ROAD INTO A TUNNEL. The carriageway
@@ -10212,8 +10222,9 @@ float frLine(float o, float fw, float c, float w) {
         }
       }
 
-      // traffic signals at busy corners
-      if (e.cls === 'art' && e.len > 40) {
+      // traffic signals at busy corners (Auto KW: junctions.js draws OSM's
+      // real ones instead, and their heads change)
+      if (!city.jc && e.cls === 'art' && e.len > 40) {
         for (const nid of [e.a, e.b]) {
           const n = city.nodes[nid];
           if (!own(n.x, n.z) || n.e.length < 3) continue;
@@ -10375,6 +10386,7 @@ float frLine(float o, float fw, float c, float w) {
     for (const k of [0, 1]) {
       const end = C.ends[k], n = city.nodes[end.ni];
       if (n.e.length < 3) continue;
+      if (city.jc && city.jc.signedAt(end.ni)) continue;   // OSM's own sign (junctions.js)
       const mine = rank(city.edges[end.ei]);
       let top = 0;
       for (const o of n.e) if (city.edges[o].rc !== C.id) top = Math.max(top, rank(city.edges[o]));
