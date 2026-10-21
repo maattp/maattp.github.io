@@ -46,7 +46,23 @@ const WHITE = [1, 1, 1];
 // picked from the spawn colour, so an artic's two sections agree).
 const METRO_YELLOW = [0.86, 0.43, 0.02];
 const METRO_TOPS = [0x0f6e78, 0x1f4f9a, 0x2c6e3c];
-const ARTIC_LIVERIES = [0x0f6e78, 0x1f4f9a, 0x2c6e3c, 0xc41a24];
+// Auto KW: GRAND RIVER TRANSIT'S LIVERY (Commons photos of 21206, 21714,
+// 21759 and 22020, 2018-2023, and GRT's route list, Oct 2026): a white bus,
+// a royal-blue band under the windows with a thin gold line beneath it, the
+// GRT wordmark (blue italic capitals on a white panel, GRAND RIVER TRANSIT in
+// gold under them) breaking the band, "Grand River Transit" in white on the
+// band toward the rear, the Region of Waterloo's mark and the fleet number
+// over the front windows, dark tinted glass, a black bumper with a bike rack.
+// The ION Bus (302) is the same white bus with ION's blue front and roof and
+// the ion logo instead of the band. GRT runs no articulated buses; `artic`
+// wears the livery all the same (buildBus `spec.grt`, a fleet look per type).
+const GRT_WHITE = 0xf2f3f4;
+const GRT_BLUE = [0.030, 0.075, 0.36];      // the band, linear (sRGB ~#2f4da0)
+const GRT_GOLD = [0.78, 0.42, 0.06];        // the pinstripe and the small wordmark
+const GRT_PANEL = [0.86, 0.87, 0.88];       // the wordmark's white panel (matte)
+const ION_BLUE = [0.018, 0.10, 0.42];       // ION's blue (front cap, roof, logo)
+const LED_AMBER = [1.0, 0.56, 0.08], LED_WHITE = [0.95, 0.93, 0.86];
+const ARTIC_LIVERIES = [GRT_WHITE];
 /** A builder seen through one colour: every WHITE part handed to it comes out `col`. */
 function tinted(b, col) {
   return new Proxy(b, { get(t, k) {
@@ -334,8 +350,8 @@ export const TYPES = {
   taxi: deriveSpec({ rwd: true, wheelbase: 2.98,len: 4.76, wid: 1.85, wheelR: 0.33, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', taxi: true, livery: 0xf0b40c, mass: 1.0, acc: 3.8, topKph: 195, brakeM: 41, latG: 0.85 }),
   police: deriveSpec({ rwd: true, wheelbase: 2.95,len: 4.98, wid: 1.92, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', police: true, livery: 0xf2f4f6, mass: 1.1, acc: 5.6, topKph: 230, brakeM: 37, latG: 0.93 }),
   // the articulated bus: the front section and the trailing rear (buildArticFront)
-  artic: deriveSpec({ wheelbase: 5.9, len: 10.6, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'artic', liveries: ARTIC_LIVERIES, bus: true, artic: true, towed: 'articRear', boxy: 3, mass: 6.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
-  articRear: deriveSpec({ wheelbase: 6.4, len: 7.6, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'articRear', liveries: ARTIC_LIVERIES, bus: true, trailer: true, boxy: 3, mass: 3.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
+  artic: deriveSpec({ wheelbase: 5.9, len: 10.6, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'artic', liveries: ARTIC_LIVERIES, grt: { sign: '201 iXpress Fischer-Hallman', fleet: '22301' }, bus: true, artic: true, towed: 'articRear', boxy: 3, mass: 6.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
+  articRear: deriveSpec({ wheelbase: 6.4, len: 7.6, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'articRear', liveries: ARTIC_LIVERIES, grt: { fleet: '22301' }, bus: true, trailer: true, boxy: 3, mass: 3.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
   // an unlimited hydroplane: a turbine three-pointer that runs on its sponsons (updateHydro)
   hydro: deriveSpec({ wheelbase: 6.0, len: 9.6, wid: 4.4, wheelR: 0.3, sill: 0.2, belt: 0.6, roof: 1.3, cab: [0.1, 0.35], hand: 'hydro', boat: true, hydro: true, engine: 'turbine', mass: 3.0, acc: 12, topKph: 250, brakeM: 60, latG: 1.6 }),
   // the Duck Tour's amphibious DUKW: a truck on land, a boat in the water (updateDuck)
@@ -348,7 +364,11 @@ export const TYPES = {
   // at ~65 km/h, slow off the line; `offroad` because tracks do not bog down.
   // `len` is the HULL: the gun overhangs nothing it collides with.
   tank: deriveSpec({ wheelbase: 4.6, len: 7.93, wid: 3.66, wheelR: 0.32, sill: 0.48, belt: 1.42, roof: 2.44, cab: [0, 0.3], hand: 'tank', tank: true, offroad: true, engine: 'tank', livery: 0xb9a27a, armor: 0.12, mass: 40, acc: 2.0, topKph: 65, brakeM: 45, latG: 0.6 }),
-  bus: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', liveries: METRO_TOPS, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
+  // Grand River Transit's 40 ft buses (see GRT_WHITE): one type per sign, since a
+  // type's geometry is shared -- Route 7 King, an iXpress, and the ION Bus.
+  bus: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', livery: GRT_WHITE, grt: { sign: '7 King', led: 'amber', fleet: '21714' }, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
+  busx: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', livery: GRT_WHITE, grt: { sign: '202 iXpress University', fleet: '22015' }, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
+  ionbus: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', livery: GRT_WHITE, grt: { sign: '302 ION Bus', fleet: '21759', ion: true }, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
   boxtruck: deriveSpec({ wheelbase: 4.3,len: 7.5, wid: 2.38, wheelR: 0.46, sill: 0.62, belt: 1.55, roof: 2.55, cab: [0.14, 0.46], cargo: 2.55, hand: 'boxtruck', boxy: 2, mass: 3.0, acc: 2.5, topKph: 125, brakeM: 51, latG: 0.66 }),
   ambulance: deriveSpec({ wheelbase: 3.9,len: 6.3, wid: 2.28, wheelR: 0.42, sill: 0.56, belt: 1.42, roof: 2.35, cab: [0.16, 0.46], cargo: 2.25, hand: 'ambulance', livery: 0xf4f4f0, boxy: 2, emergency: true, mass: 2.4, acc: 3.2, topKph: 155, brakeM: 48, latG: 0.72 }),
   // The police tactical van (wanted 4+, traffic.js spawnPolice 'swat'): heavy,
@@ -6620,7 +6640,7 @@ function boxShell(into, cfg) {
 }
 
 /** A pane laid flat on a `boxShell`'s side between two stations. */
-function sideGlass(trim, shell, sx, zA, zB, yBot, yTopMax, d = 0.007, cols = 6) {
+function sideGlass(trim, shell, sx, zA, zB, yBot, yTopMax, d = 0.007, cols = 6, col = GLASS) {
   const bot = [], top = [];
   for (let j = 0; j <= cols; j++) {
     const z = zA + ((zB - zA) * j) / cols, g = shell.sec(z);
@@ -6628,7 +6648,7 @@ function sideGlass(trim, shell, sx, zA, zB, yBot, yTopMax, d = 0.007, cols = 6) 
     bot.push([sx * (g.w0 + d), yBot, z]);
     top.push([sx * (g.w0 + d), yt, z]);
   }
-  trim.patch([bot, top], GLASS, [sx, 0, 0]);
+  trim.patch([bot, top], col, [sx, 0, 0]);
 }
 
 /**
@@ -7253,8 +7273,10 @@ function buildBus(spec, paint, trim, matte, o = {}) {
   const zF = o.zF !== undefined ? o.zF : 3.45, zR = o.zR !== undefined ? o.zR : -2.55;   // 2.55 m front overhang, 3.45 m rear
   const frontEnd = o.frontEnd !== false, rearEnd = o.rearEnd !== false;
   const belt = 1.20;
-  // the lower body in Metro yellow, as matte (paint is the top's colour)
-  const lower = tinted(matte, METRO_YELLOW);
+  // Auto KW: GRT's bus is white all over, so the lower body is the paint too
+  // (Seattle's was Metro yellow, as matte under a coloured top).
+  const L = spec.grt || null;
+  const lower = L ? paint : tinted(matte, METRO_YELLOW);
   const core = bodyCore(spec, lower, matte, {
     halfW: curve([[tail, frontEnd || rearEnd ? (rearEnd ? 0.975 : 1.0) : 1.0], [tail + 0.4, 1.0], [nose - 0.4, 1.0], [nose, frontEnd ? 0.975 : 1.0]]),
     sillY: curve([[tail, rearEnd ? 0.52 : 0.42], [tail + 0.6, 0.42], [nose - 0.6, 0.42], [nose, frontEnd ? 0.46 : 0.42]]),
@@ -7290,7 +7312,7 @@ function buildBus(spec, paint, trim, matte, o = {}) {
   const sN = shell.sec(nose);
   if (frontEnd) {
     const scrTop = sN.side - 0.03;
-    endFace(paint, nose, 1, shell.prof(nose), [[0, (sN.y0 + scrTop) / 2 + 0.001, sN.w0 - 0.10, (scrTop - sN.y0) / 2]], WHITE);
+    endFace(L && L.ion ? tinted(paint, ION_BLUE) : paint, nose, 1, shell.prof(nose), [[0, (sN.y0 + scrTop) / 2 + 0.001, sN.w0 - 0.10, (scrTop - sN.y0) / 2]], WHITE);
     const LAMP_A = [0.90, 0.68, 0.17, 0.075];
     // the lower nose is the lower body: Metro yellow like the sides
     endFace(lower, nose, 1, endProf(nose), [LAMP_A], WHITE);
@@ -7308,7 +7330,13 @@ function buildBus(spec, paint, trim, matte, o = {}) {
       [0, 0, 1], [0, 0, 1, 0, 1, 1, 0, 1], CAB_DASH);
     busCabin(matte, shell, { belt, nose, tail, roofY });
     matte.box(0, sN.side - 0.02, nose + 0.004, fw * 2 + 0.08, 0.26, 0.03, 0, [0.04, 0.04, 0.045]);      // sign housing
-    trim.box(0, sN.side + 0.07, nose + 0.018, 1.30, 0.08, 0.012, 0, [1.0, 0.62, 0.12]);                 // route display
+    if (L) {
+      // the destination sign: route number and name in LEDs, sized to fit
+      const sw = fw * 2 - 0.14, h = Math.min(0.15, (sw / Math.max(1, dotCells(L.sign))) * 7);
+      dotText(trim, L.sign, { c: [0, sN.side - 0.015, nose + 0.036], u: [1, 0, 0], h, col: L.led === 'amber' ? LED_AMBER : LED_WHITE, led: true });
+      // the fleet number under the windscreen, and on the sign's corner
+      dotText(matte, L.fleet, { c: [0.66, 0.86, nose + 0.012], u: [1, 0, 0], h: 0.075, col: L.ion ? ION_BLUE : GRT_BLUE, bold: 0.35 });
+    } else trim.box(0, sN.side + 0.07, nose + 0.018, 1.30, 0.08, 0.012, 0, [1.0, 0.62, 0.12]);   // route display
     for (const x of [-0.70, 0.30]) matte.tube([x, 1.02, nose + 0.024], [x + 0.46, 1.36, nose + 0.024], 0.012, 4, PLASTIC, true);
     matte.box(0, 0.26, nose + 0.03, geom(nose).w * 1.92, 0.26, 0.16, 0, PLASTIC);                        // bumper
     trim.box(0, 0.30, nose + 0.115, 0.40, 0.12, 0.02, 0, PLATE);
@@ -7329,12 +7357,16 @@ function buildBus(spec, paint, trim, matte, o = {}) {
 
   // --- sides: window band, doors on the kerb side ---------------------------------
   const BAND = [0.05, 0.30, 0.24];
+  if (L) {
+    grtLivery(spec, paint, trim, matte, shell, { L, belt, winY0, winY1, nose, tail, frontEnd, rearEnd, cuts: spansOf(-1).cuts,
+      logoZ: o.logoZ !== undefined ? o.logoZ : [1.0, 1.9] });
+  }
   for (const sx of [-1, 1]) {
     const { cuts, spans } = spansOf(sx);
     for (const [a, b] of spans) {
-      sideGlass(trim, shell, sx, a, b, winY0, winY1, 0.007, 2);
+      sideGlass(trim, shell, sx, a, b, winY0, winY1, 0.007, 2, L ? GLASS_TINT : GLASS);
       const g = shell.sec((a + b) / 2);
-      matte.quad([sx * (g.w0 + 0.006), belt - 0.02, a], [sx * (g.w0 + 0.006), belt - 0.02, b], [sx * (g.w0 + 0.006), belt + 0.07, b],
+      if (!L) matte.quad([sx * (g.w0 + 0.006), belt - 0.02, a], [sx * (g.w0 + 0.006), belt - 0.02, b], [sx * (g.w0 + 0.006), belt + 0.07, b],
         [sx * (g.w0 + 0.006), belt + 0.07, a], [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], BAND);
       for (let pz = a + 1.25; pz < b - 0.3; pz += 1.25) {
         matte.box(sx * (g.w0 + 0.012), winY0, pz, 0.010, winY1 - winY0, 0.07, 0, [0.07, 0.075, 0.08]);
@@ -7397,6 +7429,117 @@ function buildBus(spec, paint, trim, matte, o = {}) {
   const wheels = [[-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR]];
   // a trailing section has only its drive axle; it rides on the hitch at the front
   return o.noFrontAxle ? wheels : [[-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF], ...wheels];
+}
+
+/**
+ * Auto KW: Grand River Transit's livery on a `buildBus` body (see GRT_WHITE
+ * for the sources). The body is already white paint; this lays the band, the
+ * gold line, the wordmark, the fleet number and the Region's mark on its flat
+ * sides, a few mm proud, in matte -- or, on the ION Bus, the ion logo and a
+ * blue roof (its blue front face is buildBus's own). Every flank piece reads
+ * left to right from outside: on +x (the street side) that is toward -z.
+ */
+function grtLivery(spec, paint, trim, matte, shell, o) {
+  const { L, winY0, winY1, nose, tail, frontEnd, rearEnd, cuts } = o;
+  const UV = [0, 0, 1, 0, 1, 1, 0, 1];
+  const xAt = (z, d) => shell.sec(z).w0 + d;
+  // a strip on a flank from z0 to z1, y0..y1, `d` proud, kerb doors left open
+  const strip = (sx, z0, z1, y0, y1, d, col) => {
+    let spans = [[z0, z1]];
+    if (sx < 0) for (const [a, b] of cuts) {
+      spans = spans.flatMap(([p, q]) => (b + 0.03 <= p || a - 0.03 >= q ? [[p, q]] : [[p, a - 0.03], [b + 0.03, q]].filter(([u, v]) => v - u > 0.02)));
+    }
+    for (const [p, q] of spans) {
+      const n = Math.max(1, Math.ceil((q - p) / 0.8));
+      for (let i = 0; i < n; i++) {
+        const za = p + ((q - p) * i) / n, zb = p + ((q - p) * (i + 1)) / n;
+        const xa = sx * xAt(za, d), xb = sx * xAt(zb, d);
+        matte.quad([xa, y0, za], [xb, y0, zb], [xb, y1, zb], [xa, y1, za], [sx, 0, 0], UV, col);
+      }
+    }
+  };
+  const z0 = tail + (rearEnd ? 0.30 : 0.04), z1 = nose - (frontEnd ? 0.30 : 0.04);
+  const B0 = winY0 - 0.20, B1 = winY0 - 0.012;            // the band: 19 cm under the glass
+  const flank = (sx, z, y, h, text, col, opt = {}) =>
+    dotText(matte, text, { c: [sx * xAt(z, opt.d || 0.012), y, z], u: [0, 0, -sx], h, col, ...opt });
+  for (const sx of [-1, 1]) {
+    if (!L.ion) {
+      strip(sx, z0, z1, B0, B1, 0.006, GRT_BLUE);
+      strip(sx, z0, z1, B0 - 0.036, B0 - 0.010, 0.006, GRT_GOLD);
+      // "Grand River Transit" in white on the band toward the back
+      if (rearEnd) flank(sx, tail + 2.45, (B0 + B1) / 2, 0.105, 'Grand River Transit', GRT_PANEL, { d: 0.010 });
+      // the wordmark on its white panel, breaking the band
+      const lz = o.logoZ ? o.logoZ[sx < 0 ? 1 : 0] : null;
+      if (lz !== null && lz !== undefined) {
+        const px = xAt(lz, 0.010), yb = B0 - 0.15, yt = B1 + 0.015;
+        matte.quad([sx * px, yb, lz - 0.56], [sx * px, yb, lz + 0.56], [sx * px, yt, lz + 0.56], [sx * px, yt, lz - 0.56], [sx, 0, 0], UV, GRT_PANEL);
+        flank(sx, lz, B1 - 0.105, 0.20, 'GRT', GRT_BLUE, { d: 0.014, bold: 0.55, slant: 0.22 });
+        flank(sx, lz, yb + 0.05, 0.045, 'GRAND RIVER TRANSIT', GRT_GOLD, { d: 0.014, bold: 0.2 });
+      }
+    } else {
+      // the ION Bus: the ion logo behind the front door, a small GRT up at the back
+      if (frontEnd) flank(sx, nose - 4.0, B0 + 0.06, 0.30, 'ion', ION_BLUE, { d: 0.010, bold: 0.6 });
+      if (rearEnd) flank(sx, tail + 1.6, winY1 + 0.085, 0.10, 'GRT', GRT_BLUE, { d: 0.010, bold: 0.5, slant: 0.22 });
+    }
+    // over the front windows: the fleet number and the Region of Waterloo's mark
+    if (frontEnd) {
+      const y = winY1 + 0.085, h = 0.095, cell = h / 7;
+      const numW = dotCells(L.fleet) * cell, regW = dotCells('Region of Waterloo') * 0.05 / 7, vW = 0.13;
+      const seq = sx > 0 ? [['n', numW], ['v', vW], ['r', regW]] : [['v', vW], ['r', regW], ['n', numW]];
+      const total = seq.reduce((a, [, w]) => a + w + 0.08, -0.08);
+      // reading direction along z is -sx; start where the run must start
+      const s0 = nose - (L.ion ? 3.2 : 0.9);
+      let s = sx > 0 ? s0 : s0 - total;
+      for (const [k, w] of seq) {
+        const zc = sx > 0 ? s - w / 2 : s + w / 2;
+        if (k === 'n') flank(sx, zc, y, h, L.fleet, GRT_BLUE, { bold: 0.3 });
+        else if (k === 'r') flank(sx, zc, y, 0.05, 'Region of Waterloo', GRT_BLUE);
+        else {
+          // the Region's mark: a blue V under a gold tip
+          const px = sx * xAt(zc, 0.012), u = -sx, a = 0.060, t = 0.022;
+          for (const k2 of [-1, 1]) {
+            matte.quad([px, y - 0.055, zc + u * k2 * 0.004], [px, y - 0.055, zc + u * k2 * (0.004 + t)],
+              [px, y + 0.055, zc + u * k2 * (a + t)], [px, y + 0.055, zc + u * k2 * a], [sx, 0, 0], UV, GRT_BLUE);
+          }
+          matte.quad([px, y + 0.02, zc - 0.012], [px, y + 0.02, zc + 0.012], [px, y + 0.06, zc + 0.012], [px, y + 0.06, zc - 0.012], [sx, 0, 0], UV, GRT_GOLD);
+        }
+        s += sx > 0 ? -(w + 0.08) : w + 0.08;
+      }
+    }
+  }
+  if (rearEnd) {
+    // the back: the band across it under the rear window, the fleet number up top
+    const sT = shell.sec(tail), w = sT.w0 - 0.06, z = tail - 0.010;
+    if (!L.ion) {
+      matte.quad([-w, B0, z], [w, B0, z], [w, B1, z], [-w, B1, z], [0, 0, -1], UV, GRT_BLUE);
+      matte.quad([-w, B0 - 0.036, z], [w, B0 - 0.036, z], [w, B0 - 0.010, z], [-w, B0 - 0.010, z], [0, 0, -1], UV, GRT_GOLD);
+    }
+    dotText(matte, L.fleet, { c: [0, winY1 + 0.10, tail - 0.008], u: [-1, 0, 0], h: 0.09, col: L.ion ? ION_BLUE : GRT_BLUE, bold: 0.3 });
+  }
+  if (L.ion && frontEnd) {
+    // ION's blue sweeps back from the front corners and up over the roof
+    for (const sx of [-1, 1]) {
+      // the corner pillar ahead of the glass, belt to roof, then a wedge over
+      // the windows that runs back into the roof
+      const yt = shell.sec(nose - 0.5).side - 0.01;
+      const piece = (y0, y1, zb0, zb1) => {
+        const rows = [];
+        for (let i = 0; i <= 2; i++) {
+          const y = y0 + ((y1 - y0) * i) / 2, zb = zb0 + ((zb1 - zb0) * i) / 2, row = [];
+          for (let j = 0; j <= 5; j++) { const z = zb + ((nose - 0.10 - zb) * j) / 5; row.push([sx * xAt(z, 0.006), y, z]); }
+          rows.push(row);
+        }
+        matte.patch(rows, ION_BLUE, [sx, 0, 0]);
+      };
+      piece(o.belt, winY1 + 0.004, nose - 0.36, nose - 0.36);
+      piece(winY1 + 0.004, yt, nose - 1.0, nose - 2.9);
+    }
+    // ION's blue roof, laid on the crown from the front cap back 4 m
+    const g = shell.sec(nose - 1), xe = g.wT - g.r, xf = g.wT * 0.35, yE = g.y1 + 0.006, yF = g.y1 + 0.05 + 0.006;
+    const cols = [[-xe, yE], [-xf, yF], [xf, yF], [xe, yE]];
+    const zA = nose - 0.40, zB = nose - 4.4;
+    matte.patch([cols.map(([x, y]) => [x, y, zB]), cols.map(([x, y]) => [x, y, zA])], ION_BLUE, [0, 1, 0]);
+  }
 }
 
 /**
@@ -7464,10 +7607,10 @@ function updateBellows(m, lead, rear) {
 }
 function buildArticFront(spec, paint, trim, matte) {
   // front axle 2.6 m back from the nose; the middle axle 2.1 m ahead of the tail
-  return buildBus(spec, paint, trim, matte, { zF: 2.7, zR: -3.2, doors: [[3.55, 4.65], [-1.5, -0.4]], rearEnd: false, pod: -1.3 });
+  return buildBus(spec, paint, trim, matte, { zF: 2.7, zR: -3.2, doors: [[3.55, 4.65], [-1.5, -0.4]], rearEnd: false, pod: -1.3, logoZ: [0.3, 0.9] });
 }
 function buildArticRear(spec, paint, trim, matte) {
-  return buildBus(spec, paint, trim, matte, { zF: 1.6, zR: ARTIC.axleR, doors: [[1.1, 2.2]], frontEnd: false, pod: -0.6, noFrontAxle: true });
+  return buildBus(spec, paint, trim, matte, { zF: 1.6, zR: ARTIC.axleR, doors: [[1.1, 2.2]], frontEnd: false, pod: -0.6, noFrontAxle: true, logoZ: null });
 }
 
 // ---------------------------------------------------------------------------
@@ -7540,6 +7683,94 @@ function letter(b, text, sx, x, y, zc, h, col) {
     }
     u += adv(ch);
   }
+}
+
+// Auto KW: A 5 x 7 DOT-MATRIX FONT for lettering that has to say something --
+// a bus's destination sign (which IS a dot matrix), fleet numbers, liveries,
+// licence plates. Rows top to bottom, five columns each. Geometry again (the
+// vehicle materials carry no map): `dotText` merges each row's lit pixels into
+// runs, so a character is ~5-9 quads.
+const DOT5 = {
+  A: '01110 10001 10001 10001 11111 10001 10001', B: '11110 10001 10001 11110 10001 10001 11110',
+  C: '01110 10001 10000 10000 10000 10001 01110', D: '11100 10010 10001 10001 10001 10010 11100',
+  E: '11111 10000 10000 11110 10000 10000 11111', F: '11111 10000 10000 11110 10000 10000 10000',
+  G: '01110 10001 10000 10111 10001 10001 01111', H: '10001 10001 10001 11111 10001 10001 10001',
+  I: '01110 00100 00100 00100 00100 00100 01110', J: '00111 00010 00010 00010 00010 10010 01100',
+  K: '10001 10010 10100 11000 10100 10010 10001', L: '10000 10000 10000 10000 10000 10000 11111',
+  M: '10001 11011 10101 10101 10001 10001 10001', N: '10001 10001 11001 10101 10011 10001 10001',
+  O: '01110 10001 10001 10001 10001 10001 01110', P: '11110 10001 10001 11110 10000 10000 10000',
+  Q: '01110 10001 10001 10001 10101 10010 01101', R: '11110 10001 10001 11110 10100 10010 10001',
+  S: '01111 10000 10000 01110 00001 00001 11110', T: '11111 00100 00100 00100 00100 00100 00100',
+  U: '10001 10001 10001 10001 10001 10001 01110', V: '10001 10001 10001 10001 10001 01010 00100',
+  W: '10001 10001 10001 10101 10101 10101 01010', X: '10001 10001 01010 00100 01010 10001 10001',
+  Y: '10001 10001 10001 01010 00100 00100 00100', Z: '11111 00001 00010 00100 01000 10000 11111',
+  a: '00000 00000 01110 00001 01111 10001 01111', b: '10000 10000 10110 11001 10001 10001 11110',
+  c: '00000 00000 01110 10000 10000 10001 01110', d: '00001 00001 01101 10011 10001 10001 01111',
+  e: '00000 00000 01110 10001 11111 10000 01110', f: '00110 01001 01000 11100 01000 01000 01000',
+  g: '00000 01111 10001 10001 01111 00001 01110', h: '10000 10000 10110 11001 10001 10001 10001',
+  i: '00100 00000 01100 00100 00100 00100 01110', j: '00010 00000 00110 00010 00010 10010 01100',
+  k: '10000 10000 10010 10100 11000 10100 10010', l: '01100 00100 00100 00100 00100 00100 01110',
+  m: '00000 00000 11010 10101 10101 10001 10001', n: '00000 00000 10110 11001 10001 10001 10001',
+  o: '00000 00000 01110 10001 10001 10001 01110', p: '00000 00000 11110 10001 11110 10000 10000',
+  q: '00000 00000 01101 10011 01111 00001 00001', r: '00000 00000 10110 11001 10000 10000 10000',
+  s: '00000 00000 01110 10000 01110 00001 11110', t: '01000 01000 11100 01000 01000 01001 00110',
+  u: '00000 00000 10001 10001 10001 10011 01101', v: '00000 00000 10001 10001 10001 01010 00100',
+  w: '00000 00000 10001 10001 10101 10101 01010', x: '00000 00000 10001 01010 00100 01010 10001',
+  y: '00000 00000 10001 10001 01111 00001 01110', z: '00000 00000 11111 00010 00100 01000 11111',
+  0: '01110 10001 10011 10101 11001 10001 01110', 1: '00100 01100 00100 00100 00100 00100 01110',
+  2: '01110 10001 00001 00010 00100 01000 11111', 3: '11111 00010 00100 00010 00001 10001 01110',
+  4: '00010 00110 01010 10010 11111 00010 00010', 5: '11111 10000 11110 00001 00001 10001 01110',
+  6: '00110 01000 10000 11110 10001 10001 01110', 7: '11111 00001 00010 00100 01000 01000 01000',
+  8: '01110 10001 10001 01110 10001 10001 01110', 9: '01110 10001 10001 01111 00001 00010 01100',
+  '-': '00000 00000 00000 11111 00000 00000 00000', '/': '00000 00001 00010 00100 01000 10000 00000',
+  '.': '00000 00000 00000 00000 00000 01100 01100', "'": '01100 00100 01000 00000 00000 00000 00000',
+  '&': '01100 10010 10100 01000 10101 10010 01101',
+};
+// the runs of each glyph, parsed once: [row, c0, c1] with c1 exclusive
+const DOT5_RUNS = {};
+for (const [ch, s] of Object.entries(DOT5)) {
+  const runs = [];
+  s.split(' ').forEach((row, r) => {
+    let c = 0;
+    while (c < 5) {
+      if (row[c] !== '1') { c++; continue; }
+      const c0 = c; while (c < 5 && row[c] === '1') c++;
+      runs.push([r, c0, c]);
+    }
+  });
+  DOT5_RUNS[ch] = runs;
+}
+/** Width of `text` in dotText cells (a cell is h / 7). */
+function dotCells(text) {
+  let n = 0;
+  for (const ch of text) n += ch === ' ' ? 4 : 6;
+  return Math.max(0, n - 1);
+}
+/**
+ * Letter `text` flat on a panel: centred on `c` (or starting there with
+ * `align: 'l'`), reading along the unit vector `u` (the viewer's right, seen
+ * from outside), `up` the panel's up, cap height `h`. `led` leaves a gap
+ * between the rows, which is what makes a destination sign read as LEDs;
+ * `bold` thickens every stroke by `bold` of a cell; `slant` leans it (italic).
+ */
+function dotText(b, text, { c, u, up = [0, 1, 0], h, col, led = false, bold = 0, slant = 0, align = 'c' }) {
+  const cell = h / 7, n = [u[1] * up[2] - u[2] * up[1], u[2] * up[0] - u[0] * up[2], u[0] * up[1] - u[1] * up[0]];
+  const W = dotCells(text) * cell;
+  let s0 = align === 'l' ? 0 : -W / 2;
+  const P = (s, y) => [c[0] + u[0] * (s + y * slant) + up[0] * y, c[1] + u[1] * (s + y * slant) + up[1] * y, c[2] + u[2] * (s + y * slant) + up[2] * y];
+  const uv = [0, 0, 1, 0, 1, 1, 0, 1], gy = led ? cell * 0.14 : 0;
+  for (const ch of text) {
+    const runs = DOT5_RUNS[ch] || DOT5_RUNS[ch.toUpperCase()];
+    if (runs) {
+      for (const [r, a0, a1] of runs) {
+        const y1 = h / 2 - r * cell - gy, y0 = h / 2 - (r + 1) * cell + gy;
+        const x0 = s0 + a0 * cell + (led ? cell * 0.08 : 0), x1 = s0 + a1 * cell + bold * cell - (led ? cell * 0.08 : 0);
+        b.quad(P(x0, y0), P(x1, y0), P(x1, y1), P(x0, y1), n, uv, col);
+      }
+    }
+    s0 += (ch === ' ' ? 4 : 6) * cell;
+  }
+  return W;
 }
 
 /** A roll-up aluminium compartment door on a flank, with its slats and lift bar. */

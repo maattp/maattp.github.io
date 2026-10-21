@@ -1,0 +1,80 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>car stage</title>
+<style>html,body{margin:0;background:#9fb8cf;overflow:hidden}canvas{display:block}</style></head>
+<body>
+<script type="module">
+// Auto KW's vehicles on a plain stage, for tools/kw/carshots.mjs: a lawn, a
+// road, a sky, the game's sun direction, and whatever `stage.place` parks.
+import * as THREE from '../../apps/autokw/src/three.js';
+import { Vehicle, TYPES } from '../../apps/autokw/src/vehicles.js';
+
+const W = innerWidth, H = innerHeight;
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(W, H);
+renderer.setPixelRatio(1);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fb8cf);
+{
+  const env = new THREE.Scene();
+  const g = new THREE.SphereGeometry(50, 32, 16);
+  const col = [];
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const y = p.getY(i) / 50;
+    const c = y > 0 ? new THREE.Color(0.55, 0.68, 0.85).lerp(new THREE.Color(0.95, 0.95, 0.98), 1 - y) : new THREE.Color(0.25, 0.27, 0.22);
+    col.push(c.r, c.g, c.b);
+  }
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  env.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide })));
+  const pm = new THREE.PMREMGenerator(renderer);
+  scene.environment = pm.fromScene(env, 0.02).texture;
+}
+scene.add(new THREE.HemisphereLight(0xcfe0ff, 0x4a5a3a, 0.9));
+const sun = new THREE.DirectionalLight(0xfff2dd, 2.6);
+sun.position.set(-30, 45, 35);
+sun.castShadow = true;
+sun.shadow.mapSize.set(4096, 4096);
+Object.assign(sun.shadow.camera, { left: -45, right: 45, top: 45, bottom: -45, near: 0.5, far: 140 });
+sun.shadow.bias = -0.0004;
+scene.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ color: 0x6f7a5e, roughness: 0.95 }));
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+const road = new THREE.Mesh(new THREE.PlaneGeometry(400, 16), new THREE.MeshStandardMaterial({ color: 0x55575a, roughness: 0.9 }));
+road.rotation.x = -Math.PI / 2; road.position.y = 0.005; road.receiveShadow = true;
+scene.add(road);
+
+const camera = new THREE.PerspectiveCamera(35, W / H, 0.1, 600);
+let cars = [];
+/** Park vehicles: [{ type, color, x, z, heading, mode }]; returns each one's length and triangles. */
+function place(list) {
+  for (const c of cars) scene.remove(c.group);
+  cars = [];
+  const out = [];
+  const tri = (m) => (m && m.geometry.index ? m.geometry.index.count / 3 : 0);
+  for (const p of list) {
+    const v = new Vehicle(null, p.type, p.color !== undefined ? p.color : 0x9fa4a9);
+    v.x = p.x || 0; v.y = 0; v.z = p.z || 0; v.heading = p.heading || 0;
+    v.mode = p.mode || 'traffic';
+    v.sync();
+    scene.add(v.group);
+    cars.push(v);
+    out.push({ type: p.type, len: v.spec.len, tris: tri(v.paintMesh) + tri(v.trimMesh) + tri(v.matteMesh) });
+  }
+  return out;
+}
+function shoot({ eye, at, fov = 35 }) {
+  camera.fov = fov; camera.updateProjectionMatrix();
+  camera.position.set(...eye);
+  camera.lookAt(...at);
+  renderer.render(scene, camera);
+}
+window.stage = { place, shoot, scene, camera, renderer, THREE, TYPES, get cars() { return cars; }, ready: true };
+</script>
+</body></html>

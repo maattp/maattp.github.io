@@ -1,7 +1,7 @@
 // Traffic, parked cars and the police response.
 
 import * as THREE from './three.js';
-import { Vehicle, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, makeBellows, HITCH } from './vehicles.js';
+import { Vehicle, TYPES, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, makeBellows, HITCH } from './vehicles.js';
 import { clamp, lerp, angleWrap, hash2, rng, dist2, tierScale } from './util.js';
 import * as G from './geo.js';
 import { memo } from './bootcache.js';
@@ -20,7 +20,10 @@ const HELLCAT_P = 0.12, HELLCAT_MAX = 3;
 // spawned a car every ~110 m, so this is about one per 10 km driven. It goes
 // when it is left behind, as every car does.
 const WIENER_P = 0.01;
-const HEAVY = new Set(['bus', 'artic', 'boxtruck', 'garbage', 'pickup', 'van', 'cruiser', 'sportbike', 'bicycle']);
+const HEAVY = new Set(['bus', 'busx', 'ionbus', 'artic', 'boxtruck', 'garbage', 'pickup', 'van', 'cruiser', 'sportbike', 'bicycle']);
+// Auto KW: types that never park at a kerb and keep off residential streets
+// (every bus -- `spec.bus` -- and the refuse truck)
+const NO_KERB = (tn) => !!(TYPES[tn] && TYPES[tn].bus) || tn === 'garbage';
 // A phone is draw-call bound, and the fleet was over half of it: an iPhone 17
 // Pro driving downtown showed 58 vehicles (3 draws each, plus shadows) and 9.6
 // ms of render submission. Parked cars are only drawn this close on a phone,
@@ -828,7 +831,7 @@ export class TrafficSystem {
         const z = lerp(a.z, b.z, t) + e.dx * off * side;
         if (!G.isBuildable(x, z) || city.jumpClear(x, z) || this.wet(x, z)) continue;
         const tn = CIVILIAN_TYPES[Math.floor(hash2(ei + s * 7, 11) * CIVILIAN_TYPES.length)];
-        if (tn === 'bus' || tn === 'artic' || tn === 'garbage') continue;
+        if (NO_KERB(tn)) continue;
         out.push({ key: ei * 64 + s, x, z, heading: Math.atan2(e.dx, e.dz) + (side > 0 ? 0 : Math.PI), tn, col: ei * 13 + s });
       }
     }
@@ -948,7 +951,7 @@ export class TrafficSystem {
       const lo = { x: -e.dz * sign * off, z: e.dx * sign * off };
       const heading = Math.atan2(e.dx * sign, e.dz * sign);
       let tn = CIVILIAN_TYPES[Math.floor(this.R.n() * CIVILIAN_TYPES.length)];
-      if (e.cls === 'res' && (tn === 'bus' || tn === 'artic' || tn === 'boxtruck' || tn === 'garbage')) tn = 'sedan';
+      if (e.cls === 'res' && (NO_KERB(tn) || tn === 'boxtruck')) tn = 'sedan';
       // The Wedge drives past now and then: a quarter of the EVs, ~1.5 % of
       // traffic. Not a CIVILIAN_TYPES slot: that array is hashed for kerbside
       // parking, and appending would move every parked car in the city. A
