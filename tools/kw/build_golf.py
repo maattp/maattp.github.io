@@ -40,10 +40,22 @@ CANDIDATES = [
     "Doon Valley Golf Course",
     "Conestoga Golf Course",
 ]
-# the two played: id, OSM name, the name on the board
+# the courses played: id, OSM name, the name on the board, options --
+#   nines: a 27-hole club's nines (OSM's hole `name`), in the order played;
+#          a hole is then keyed by its nine and ref, and carries `nine`
+#   ways:  only these golf=hole ways (Doon Valley: OSM numbers a par-3 course
+#          and part of the back nine 1-9 inside the same boundary)
+# A course mapped as a multipolygon is in pieces (Grey Silo's 1st and 18th are
+# across the creek from the rest): every outer ring is the course.
 PLAYED = [
-    ("rockway", "Rockway Municipal Golf Course", "Rockway Golf Course"),
-    ("westmount", "Westmount Golf & Country Club", "Westmount Golf & Country Club"),
+    ("rockway", "Rockway Municipal Golf Course", "Rockway Golf Course", {}),
+    ("westmount", "Westmount Golf & Country Club", "Westmount Golf & Country Club", {}),
+    ("conestoga", "Conestoga Golf Course", "Conestoga Golf Club",
+     {"nines": ["The Village", "The Moors", "Goose Run"]}),
+    ("greysilo", "Grey Silo Golf Course", "Grey Silo Golf Course", {}),
+    ("doon", "Doon Valley Golf Course", "Doon Valley Golf Course",
+     {"ways": [1451503428, 1451503429, 1451503430, 1451503431, 1451503432,
+               1451503433, 1451503611, 1451503612, 1451503613]}),
 ]
 AREA_KINDS = {"tee", "green", "fairway", "bunker", "water_hazard", "lateral_water_hazard", "rough"}
 REACH = 120     # a feature further than this from every hole line is not a hole's
@@ -122,9 +134,10 @@ def ring(pts, tol=0.4):
 class Reader(osmium.SimpleHandler):
     def __init__(self):
         super().__init__()
-        self.courses = {}     # name -> outer ring
+        self.courses = {}     # name -> its largest outer ring
+        self.outers = {}      # name -> every outer ring (a multipolygon course is in pieces)
         self.areas = []       # (kind, ring)
-        self.holes = []       # (tags, line)
+        self.holes = []       # (tags, line, way id)
         self.pins = []        # (x, z)
 
     def area(self, a):
@@ -137,6 +150,8 @@ class Reader(osmium.SimpleHandler):
             for outer in a.outer_rings():
                 pts = [list(to_world(n.lat, n.lon)) for n in outer]
                 if course:
+                    if t.get("name"):
+                        self.outers.setdefault(t["name"], []).append(pts)
                     if t.get("name") and (t["name"] not in self.courses or area(pts) > area(self.courses[t["name"]])):
                         self.courses[t["name"]] = pts
                 else:
@@ -152,29 +167,40 @@ class Reader(osmium.SimpleHandler):
         except osmium.InvalidLocationError:
             return
         if len(line) >= 2:
-            self.holes.append(({k.k: k.v for k in w.tags}, line))
+            self.holes.append(({k.k: k.v for k in w.tags}, line, w.id))
 
     def node(self, n):
         if n.tags.get("golf") == "pin":
             self.pins.append(list(to_world(n.location.lat, n.location.lon)))
 
 
-def in_course(boundary, pts):
+def in_course(boundary, pts, others=()):
     c = centroid(pts)
-    return pip(boundary, c[0], c[1])
+    return pip(boundary, c[0], c[1]) or any(pip(o, c[0], c[1]) for o in others)
 
 
-def course_holes(r, boundary):
+def course_holes(r, rings, opts=None):
+    opts = opts or {}
+    nines, ways = opts.get("nines"), opts.get("ways")
     holes = {}
-    for tags, line in r.holes:
-        if not pip(boundary, line[0][0], line[0][1]) and not pip(boundary, line[-1][0], line[-1][1]):
+    inside = lambda p: any(pip(b, p[0], p[1]) for b in rings)  # noqa: E731
+    for tags, line, wid in r.holes:
+        if ways is not None and wid not in ways:
+            continue
+        if not inside(line[0]) and not inside(line[-1]):
             continue
         ref = tags.get("ref", "")
         if not ref.isdigit() or not tags.get("par", "").isdigit():
             continue
         n = int(ref)
-        if n not in holes:      # the first mapped wins (a mis-tagged duplicate)
-            holes[n] = {"n": n, "par": int(tags["par"]), "line": line}
+        nine = tags.get("name") if nines else None
+        if nines and nine not in nines:
+            continue
+        key = (nines.index(nine) if nines else 0, n)
+        if key not in holes:      # the first mapped wins (a mis-tagged duplicate)
+            holes[key] = {"n": n, "par": int(tags["par"]), "line": line}
+            if nine:
+                holes[key]["nine"] = nine
     return [holes[k] for k in sorted(holes)]
 
 
@@ -189,18 +215,21 @@ def report(r):
         for kind, pts in r.areas:
             if in_course(b, pts):
                 cnt[kind] = cnt.get(kind, 0) + 1
-        holes = course_holes(r, b)
+        holes = course_holes(r, r.outers[name], next((c[3] for c in PLAYED if c[1] == name), {}))
         pins = sum(1 for p in r.pins if pip(b, p[0], p[1]))
         print(f"  {name}: {len(holes)} numbered holes with par {[h['n'] for h in holes]}, {pins} pins, "
               + ", ".join(f"{v} {k}" for k, v in sorted(cnt.items())))
 
 
-def build(r, cid, name, label):
+def build(r, cid, name, label, opts):
     boundary = r.courses[name]
-    holes = course_holes(r, boundary)
+    holes = course_holes(r, r.outers[name], opts)
     assert len(holes) >= 9, f"{name}: only {len(holes)} holes"
-    feats = [(k, p) for k, p in r.areas if in_course(boundary, p)]
-    pins = [p for p in r.pins if pip(boundary, p[0], p[1])]
+    # a multipolygon course's other pieces: in play, and their features its own
+    others = [p for p in r.outers.get(name, []) if p is not boundary]
+    more = [ring(p, 1.0) for p in others]
+    feats = [(k, p) for k, p in r.areas if in_course(boundary, p, others)]
+    pins = [p for p in r.pins if any(pip(b, p[0], p[1]) for b in [boundary] + others)]
     out = []
     for h in holes:
         h["fairways"], h["bunkers"], h["water"], h["rough"], h["tees"], h["greens"] = [], [], [], [], [], []
@@ -244,7 +273,7 @@ def build(r, cid, name, label):
         line = [tee_at] + line[1:-1] + [pin]
         rnd = lambda p: [round(p[0], 1), round(p[1], 1)]  # noqa: E731
         out.append({
-            "n": h["n"], "par": h["par"],
+            "n": h["n"], "par": h["par"], **({"nine": h["nine"]} if h.get("nine") else {}),
             "line": [rnd(p) for p in line],
             "tee": rnd(tee_at),
             "teePoly": ring(tee) if tee is not None else None,
@@ -260,7 +289,10 @@ def build(r, cid, name, label):
     L = lambda p: sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(p, p[1:]))  # noqa: E731
     print(f"  {label}: {len(out)} holes, par {sum(h['par'] for h in out)}; front three "
           + ", ".join(f"#{h['n']} par {h['par']} {L(h['line']) * 1.0936:.0f} yds" for h in out[:3]))
-    return {"id": cid, "name": label, "boundary": ring(boundary, 1.0), "holes": out}
+    doc = {"id": cid, "name": label, "boundary": ring(boundary, 1.0), "holes": out}
+    if more:
+        doc["more"] = more
+    return doc
 
 
 def main():

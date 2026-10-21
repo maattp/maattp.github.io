@@ -125,6 +125,10 @@ async function main() {
       await shot(`${tag}${C.id}-tee`);
       const money0 = start.money;
       let shotsTaken = 0, flightShot = false, puttShot = false, waterDone = !process.env.GOLF_WATER;
+      // a shot that comes back to where it was hit (out of bounds, a trunk
+      // right in front) is played again shorter and a little to one side, as a
+      // player would -- the same shot again loops for ever
+      let lastAt = null, retry = 0;
       for (let s = 0; s < 40; s++) {
         const st = await evaluate('window.__dbg.golf.state');
         if (st === 'card' || st === 'off') break;
@@ -136,7 +140,7 @@ async function main() {
           const d = putt ? dPin : (g.tgt ? g.tgt.d : dPin);
           const carry = [215, 195, 165, 145, 122, 105, 80][g.clubI] || 80;
           let p = putt ? (Math.sqrt(2 * (g.lie === 'green' ? 0.62 : 1.1) * dPin) * 1.04 - 0.5) / 6.2 : Math.min(1, (g.tgt && g.tgt.pin ? d * 0.88 : d) / carry);
-          return { hole: h.n, par: h.par, stroke: g.strokes + 1, lie: g.lie, club: ['DRIVER','3 WOOD','5 IRON','7 IRON','9 IRON','P WEDGE','S WEDGE','PUTTER'][g.clubI], dPin: +dPin.toFixed(1), d: +d.toFixed(1), p: +Math.max(0.03, Math.min(1, p)).toFixed(3), putt, at: [+g.bx.toFixed(1), +g.bz.toFixed(1)] }; })()`);
+          return { scores: g.scores.length, hole: h.lab || h.n, par: h.par, stroke: g.strokes + 1, lie: g.lie, club: ['DRIVER','3 WOOD','5 IRON','7 IRON','9 IRON','P WEDGE','S WEDGE','PUTTER'][g.clubI], dPin: +dPin.toFixed(1), d: +d.toFixed(1), p: +Math.max(0.03, Math.min(1, p)).toFixed(3), putt, at: [+g.bx.toFixed(1), +g.bz.toFixed(1)] }; })()`);
         if (!waterDone && plan.hole === 1 && plan.stroke === 1) {
           // a ball dropped into the water hazard nearest the tee and one off the course
           const r = await evaluate(`(() => { const g = window.__dbg.golf, C = g.C;
@@ -153,6 +157,14 @@ async function main() {
           console.log('  penalties:', JSON.stringify(r));
           waterDone = true;
           continue;
+        }
+        if (lastAt && Math.hypot(plan.at[0] - lastAt[0], plan.at[1] - lastAt[1]) < 6 && !plan.putt) retry++; else retry = 0;
+        lastAt = plan.at;
+        if (retry) {
+          plan.p = +(plan.p * Math.pow(0.78, retry)).toFixed(3);
+          const turn = (retry % 2 ? 1 : -1) * 0.3 * Math.ceil(retry / 2);
+          await evaluate(`(() => { const g = window.__dbg.golf; g.aim += ${turn}; g._hud && g._hud(); })()`);
+          console.log(`  (the last shot came back: power ${plan.p}, aim ${turn > 0 ? '+' : ''}${turn} rad)`);
         }
         await evaluate('__golfTap()');                 // aim -> power
         // run the meter up to the power wanted
@@ -177,7 +189,8 @@ async function main() {
         }
         const after = await evaluate(`(() => { const g = window.__dbg.golf, h = g.h;
           return { state: g.state, dPin: +Math.hypot(h.pin.x - g.bx, h.pin.z - g.bz).toFixed(1), lie: g.state === 'aim' ? g.lie : g._surf(g.bx, g.bz), strokes: g.strokes, scores: g.scores.slice() }; })()`);
-        console.log(`  hole ${plan.hole} (par ${plan.par}) stroke ${plan.stroke}: ${plan.club} from ${plan.lie} ${plan.dPin} m out, power ${plan.p} -> ${after.state === 'holed' || after.scores.length > 0 && after.state !== 'aim' ? 'HOLED' : after.lie + ' ' + after.dPin + ' m'}`);
+        const holed = after.state === 'holed' || after.state === 'card' || after.scores.length > plan.scores;
+        console.log(`  hole ${plan.hole} (par ${plan.par}) stroke ${plan.stroke}: ${plan.club} from ${plan.lie} ${plan.dPin} m out, power ${plan.p} -> ${holed ? 'HOLED' : after.lie + ' ' + after.dPin + ' m'}`);
         if (after.state === 'holed') await evaluate('__golfStep(200)');
       }
       const card = await evaluate(`(() => { const d = window.__dbg, g = d.golf; return { state: g.state, scores: g.scores, pars: g.holes.map((h) => h.par), paid: g.paid,

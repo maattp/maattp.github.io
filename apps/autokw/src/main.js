@@ -137,7 +137,7 @@ let islands = null, pickle = null, piers = null, ferry = null, ferryPrev = null;
 let coffee = null;   // First Cup Coffee at 1912 Pike Place and MORNING RUSH (barista.js)
 let career = null;   // the saved wallet and the Seattle Passport (career.js)
 let seafair = null;  // hydroplane racing on Lake Washington (hydrorace.js)
-let golf = null;   // OSM's holes at Rockway and Westmount, three at a time (golf.js)
+let golf = null;   // OSM's holes at Rockway, Westmount, Conestoga, Grey Silo and Doon Valley, three at a time (golf.js)
 let wheelRide = null;   // the Great Wheel, turning, and its ride (wheelride.js)
 let fishToss = null;   // the flying fish at Pike Place Market (fishtoss.js)
 let needleTop = null;   // the Space Needle's elevator, deck and viewers (needletop.js)
@@ -1687,7 +1687,8 @@ function installShadowFade() {
     ...link.stations.map((st) => ({ x: st.ent.x, z: st.ent.z, kind: 'link', name: `ION · ${st.name}`, near: false,
       hello: `${st.full} — ION light rail, Conestoga to Fairway. Tap ENTER here or on the platform to catch the next train and drive it` })),
     ...(golf ? golf.firstTees.map((t) => ({ x: t.x, z: t.z, kind: 'golf', name: t.name, near: false, label: t.short,
-      hello: `${t.name} — press ENTER on the first tee to play 3 holes (every third tee starts three more)` })) : []),
+      hello: t.nine ? `${t.name} — one of the club's three nines: press ENTER on its first tee to play 3 holes (every third tee starts three more)`
+        : `${t.name} — press ENTER on the first tee to play 3 holes (every third tee starts three more)` })) : []),
     ...(chicopee.base() ? [{ x: chicopee.base().x, z: chicopee.base().z, kind: 'atv', name: 'Chicopee Bike Park', near: false, label: 'Chicopee',
       hello: 'Chicopee Bike Park — dirt bikes and mountain bikes. Ride a downhill, or walk to a chairlift and press ENTER to ride to the top' }] : []),
     // Auto KW: the farms' tractors and combines (crops.js)
