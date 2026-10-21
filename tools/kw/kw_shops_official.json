@@ -1,0 +1,1915 @@
+{
+ "source": "AllThePlaces (alltheplaces.xyz) per-brand spiders scraped from official store locators, run 2026-10-10-13-32-41 unless noted; The Beer Store from thebeerstore.ca API 2026-10-20. Per-brand sources in \"_sources\". Box lat 43.3116..43.5924, lon -80.6677..-80.2823.",
+ "_sources": {
+  "LCBO": "AllThePlaces run 2026-10-10-13-32-41 spider lcbo_ca",
+  "The Beer Store": "thebeerstore.ca official store API (POST /api/store), fetched 2026-10-20",
+  "Walmart": "AllThePlaces run 2026-10-10-13-32-41 spider walmart_ca (walmart.ca store finder API)",
+  "Costco": "AllThePlaces run 2026-10-10-13-32-41 spider costco_ca_gb_us",
+  "Canadian Tire": "AllThePlaces run 2026-10-10-13-32-41 spider canadian_tire_ca (store numbers < 1000)",
+  "Canadian Tire Gas+": "AllThePlaces run 2026-10-10-13-32-41 spider canadian_tire_ca (store numbers >= 1000, presumed gas bars)",
+  "The Home Depot": "AllThePlaces run 2026-10-10-13-32-41 spider home_depot_ca",
+  "Lowe's": "none: Lowe's Canada stores were rebranded RONA+ (lowes_us/lowes_ca spiders have no Canadian stores)",
+  "RONA": "AllThePlaces run 2026-10-10-13-32-41 spider rona",
+  "Zehrs": "AllThePlaces run 2026-10-10-13-32-41 spider loblaws",
+  "No Frills": "AllThePlaces run 2026-10-10-13-32-41 spider loblaws",
+  "Real Canadian Superstore": "AllThePlaces run 2026-10-10-13-32-41 spider loblaws",
+  "Your Independent Grocer": "AllThePlaces run 2026-10-10-13-32-41 spider loblaws",
+  "Wholesale Club": "AllThePlaces run 2026-10-10-13-32-41 spider loblaws",
+  "Sobeys": "AllThePlaces run 2026-03-14-13-32-34 spider sobeys_ca (in-store pharmacy points; spider has returned 0 since 2026-04)",
+  "Shoppers Drug Mart": "AllThePlaces run 2026-10-10-13-32-41 spider shoppers_drug_mart_ca",
+  "Best Buy": "AllThePlaces run 2026-10-10-13-32-41 spider best_buy_ca",
+  "Best Buy Express": "AllThePlaces run 2026-10-10-13-32-41 spider best_buy_ca",
+  "Staples": "AllThePlaces run 2026-10-10-13-32-41 spider staples_ca",
+  "Winners": "AllThePlaces run 2026-10-10-13-32-41 spider tjx",
+  "HomeSense": "AllThePlaces run 2026-10-10-13-32-41 spider tjx",
+  "Marshalls": "AllThePlaces run 2026-10-10-13-32-41 spider tjx",
+  "Value Village": "AllThePlaces run 2026-10-10-13-32-41 spider savers_ca_us",
+  "Dollarama": "AllThePlaces run 2026-10-10-13-32-41 spider dollarama",
+  "Swiss Chalet": "AllThePlaces run 2026-10-10-13-32-41 spider recipe_unlimited",
+  "Montana's": "AllThePlaces run 2026-10-10-13-32-41 spider recipe_unlimited",
+  "East Side Mario's": "AllThePlaces run 2026-10-10-13-32-41 spider recipe_unlimited",
+  "Harvey's": "AllThePlaces run 2026-10-10-13-32-41 spider recipe_unlimited",
+  "Kelsey's": "AllThePlaces run 2026-10-10-13-32-41 spider recipe_unlimited",
+  "Boston Pizza": "AllThePlaces run 2026-10-10-13-32-41 spider boston_pizza",
+  "McDonald's": "AllThePlaces run 2026-10-10-13-32-41 spider mcdonalds",
+  "Starbucks": "AllThePlaces run 2026-10-10-13-32-41 spider starbucks_ca",
+  "Esso": "AllThePlaces run 2026-10-10-13-32-41 spider exxon_mobil (incomplete)",
+  "Shell": "AllThePlaces run 2026-10-10-13-32-41 spider shell",
+  "Pioneer": "AllThePlaces run 2026-10-10-13-32-41 spider pioneer_ca",
+  "TD": "AllThePlaces run 2026-10-10-13-32-41 spider td_bank (branches only, ATMs excluded)",
+  "RBC": "AllThePlaces run 2026-10-10-13-32-41 spider royal_bank_of_canada_ca (branches only, ATMs excluded)",
+  "CIBC": "AllThePlaces run 2026-10-10-13-32-41 spider cibc_ca (branches only, ATMs excluded)",
+  "BMO": "AllThePlaces run 2026-10-10-13-32-41 spider bmo_ca (branches only, ATMs excluded)",
+  "Scotiabank": "AllThePlaces run 2026-10-10-13-32-41 spider scotiabank (branches only, ATMs excluded)"
+ },
+ "LCBO": [
+  [
+   43.44953,
+   -80.44389,
+   "1005 Ottawa Street North, Kitchener"
+  ],
+  [
+   43.41944,
+   -80.32455,
+   "101 Holiday Inn Drive, Cambridge"
+  ],
+  [
+   43.39291,
+   -80.35223,
+   "1145 King Street East, Cambridge"
+  ],
+  [
+   43.46202,
+   -80.52175,
+   "115 King Street South, Waterloo"
+  ],
+  [
+   43.39329,
+   -80.431,
+   "123 Pioneer Drive, Kitchener"
+  ],
+  [
+   43.35709,
+   -80.28664,
+   "200 Franklin Boulevard, Cambridge"
+  ],
+  [
+   43.42541,
+   -80.55407,
+   "235 Ira Needles Boulevard, Kitchener"
+  ],
+  [
+   43.58268,
+   -80.56047,
+   "315 Arthur Street South, Elmira"
+  ],
+  [
+   43.43916,
+   -80.51,
+   "324 Highland Road West, Kitchener"
+  ],
+  [
+   43.45219,
+   -80.49546,
+   "340 King Street West, Kitchener"
+  ],
+  [
+   43.39094,
+   -80.32323,
+   "350 Hespeler Road, Cambridge"
+  ],
+  [
+   43.35269,
+   -80.32967,
+   "45 - 130 Cedar Street, Cambridge"
+  ],
+  [
+   43.46843,
+   -80.56861,
+   "450 Columbia Street West, Waterloo"
+  ],
+  [
+   43.50112,
+   -80.53391,
+   "571 King Street North, Waterloo"
+  ],
+  [
+   43.46062,
+   -80.47424,
+   "617 Victoria Street North, Kitchener"
+  ],
+  [
+   43.4192,
+   -80.45154,
+   "655 Fairway Road South, Kitchener"
+  ],
+  [
+   43.42426,
+   -80.48295,
+   "721 Ottawa Street South, Kitchener"
+  ],
+  [
+   43.52348,
+   -80.28746,
+   "995 Paisley Road, Guelph"
+  ]
+ ],
+ "The Beer Store": [
+  [
+   43.46719,
+   -80.45764,
+   "1120 Victoria St. N., Kitchener"
+  ],
+  [
+   43.43223,
+   -80.44302,
+   "1255 Weber St. E., Kitchener"
+  ],
+  [
+   43.39877,
+   -80.36542,
+   "140 Chopin Dr. S., Cambridge"
+  ],
+  [
+   43.41907,
+   -80.32549,
+   "150 Holiday Inn Dr., Cambridge"
+  ],
+  [
+   43.35712,
+   -80.28949,
+   "200 Franklin Blvd., Cambridge"
+  ],
+  [
+   43.41153,
+   -80.45832,
+   "250 Bleams Rd., Kitchener"
+  ],
+  [
+   43.50503,
+   -80.53636,
+   "624 King St. N., Waterloo"
+  ],
+  [
+   43.44565,
+   -80.57249,
+   "659 Erb St. W., Waterloo"
+  ],
+  [
+   43.47126,
+   -80.51295,
+   "70 Weber St. N., Waterloo"
+  ],
+  [
+   43.4311,
+   -80.52591,
+   "875 Highland Rd. W., Unit 80, Kitchener"
+  ]
+ ],
+ "Walmart": [
+  [
+   43.4334,
+   -80.55857,
+   "100 The Boardwalk, Kitchener"
+  ],
+  [
+   43.41599,
+   -80.51836,
+   "1400 Ottawa St S, Kitchener"
+  ],
+  [
+   43.41064,
+   -80.32643,
+   "22 Pinebush Rd, Cambridge"
+  ],
+  [
+   43.42553,
+   -80.43739,
+   "2960 Kingsway Dr, Kitchener"
+  ],
+  [
+   43.50865,
+   -80.54835,
+   "335 Farmers Market Rd Unit 101, Waterloo"
+  ],
+  [
+   43.4701,
+   -80.5165,
+   "70 Bridgeport Rd E, Waterloo"
+  ]
+ ],
+ "Costco": [
+  [
+   43.52251,
+   -80.29378,
+   "19 Elmira Rd S, Guelph"
+  ],
+  [
+   43.40708,
+   -80.39225,
+   "4438 King Ste East, Kitchener"
+  ],
+  [
+   43.44532,
+   -80.57917,
+   "930 Erb St W, Waterloo"
+  ]
+ ],
+ "Canadian Tire": [
+  [
+   43.44873,
+   -80.44451,
+   "1005 Ottawa Street North, Stanley Park Mall, Kitchener"
+  ],
+  [
+   43.41671,
+   -80.51328,
+   "1400 Ottawa Street South, Unit D1, Sunrise Shopping Center, Kitchener"
+  ],
+  [
+   43.58195,
+   -80.56059,
+   "325 Arthur Street South, Elmira"
+  ],
+  [
+   43.41996,
+   -80.44124,
+   "385 Fairway Road South, Kitchener"
+  ],
+  [
+   43.48524,
+   -80.52307,
+   "400 Weber Street North, Waterloo"
+  ],
+  [
+   43.40747,
+   -80.32384,
+   "65 Pinebush Road, Cambridge"
+  ],
+  [
+   43.44759,
+   -80.5738,
+   "656 Erb Street West, Waterloo"
+  ],
+  [
+   43.359,
+   -80.29224,
+   "75 Dundas Street, Highland Shopping Centre, Cambridge"
+  ]
+ ],
+ "Canadian Tire Gas+": [
+  [
+   43.46587,
+   -80.46018,
+   "1080 Victoria Street North, Kitchener"
+  ],
+  [
+   43.35791,
+   -80.29241,
+   "11 Dundas Street North, Highland Shopping Centre, Cambridge"
+  ],
+  [
+   43.41578,
+   -80.51325,
+   "1400 Ottawa Street South, Unit D2, Sunrise Shopping Center, Kitchener"
+  ],
+  [
+   43.39774,
+   -80.37069,
+   "239 Fountain Street South, Cambridge"
+  ],
+  [
+   43.42935,
+   -80.43574,
+   "2905 King Street East, Kitchener"
+  ],
+  [
+   43.48454,
+   -80.52452,
+   "400 Weber Street North, Waterloo"
+  ],
+  [
+   43.44669,
+   -80.57217,
+   "650 Erb Street West, Unit B, Waterloo"
+  ]
+ ],
+ "The Home Depot": [
+  [
+   43.40759,
+   -80.3881,
+   "100 Gateway Park Drive, Kitchener"
+  ],
+  [
+   43.41424,
+   -80.51675,
+   "1450 Ottawa Street South, Kitchener"
+  ],
+  [
+   43.40668,
+   -80.3263,
+   "35 Pine Bush Drive, Cambridge"
+  ],
+  [
+   43.50343,
+   -80.53512,
+   "600 King Street North, Waterloo"
+  ],
+  [
+   43.56236,
+   -80.28382,
+   "63 Woodlawn Road West, Guelph"
+  ]
+ ],
+ "Lowe's": [],
+ "RONA": [
+  [
+   43.43794,
+   -80.56462,
+   "345 The Boardwalk, Waterloo"
+  ],
+  [
+   43.40839,
+   -80.3196,
+   "575 Conestoga Boulevard, Cambridge"
+  ],
+  [
+   43.42619,
+   -80.48575,
+   "730 Ottawa street south, Kitchener"
+  ]
+ ],
+ "Zehrs": [
+  [
+   43.44988,
+   -80.44544,
+   "1005 Ottawa St N, Kitchener"
+  ],
+  [
+   43.52292,
+   -80.29004,
+   "1045 Paisley Rd, Guelph"
+  ],
+  [
+   43.39396,
+   -80.432,
+   "123 Pioneer Pk, Kitchener"
+  ],
+  [
+   43.4325,
+   -80.44088,
+   "1375 Weber St E, Kitchener"
+  ],
+  [
+   43.41582,
+   -80.32369,
+   "180 Holiday Inn Dr, Cambridge"
+  ],
+  [
+   43.3569,
+   -80.28929,
+   "200 Franklin Blvd, Cambridge"
+  ],
+  [
+   43.48433,
+   -80.50397,
+   "315 Lincoln Rd, Waterloo"
+  ],
+  [
+   43.39166,
+   -80.31612,
+   "400 Conestoga Blvd, Cambridge"
+  ],
+  [
+   43.45262,
+   -80.55481,
+   "450 Erb St W, Waterloo"
+  ],
+  [
+   43.49684,
+   -80.52475,
+   "555 Davenport Rd, Waterloo"
+  ],
+  [
+   43.42379,
+   -80.4874,
+   "750 Ottawa St S, Kitchener"
+  ]
+ ],
+ "No Frills": [
+  [
+   43.39002,
+   -80.34551,
+   "1515 King St E, Cambridge"
+  ],
+  [
+   43.48657,
+   -80.52457,
+   "24 Forwell Creek, Waterloo"
+  ],
+  [
+   43.41303,
+   -80.47884,
+   "700 Strasburg Rd, Kitchener"
+  ],
+  [
+   43.39307,
+   -80.30407,
+   "980 Franklin Blvd, Cambridge"
+  ]
+ ],
+ "Real Canadian Superstore": [
+  [
+   43.42933,
+   -80.52622,
+   "875 Highland Rd W, Kitchener"
+  ]
+ ],
+ "Your Independent Grocer": [
+  [
+   43.45728,
+   -80.47276,
+   "385 Frederick St, Kitchener"
+  ],
+  [
+   43.46363,
+   -80.52343,
+   "75 King St S, Waterloo"
+  ]
+ ],
+ "Wholesale Club": [
+  [
+   43.48657,
+   -80.52457,
+   "24 Forwell Creek Rd, Waterloo"
+  ]
+ ],
+ "Sobeys": [
+  [
+   43.4076,
+   -80.50125,
+   "1187 Fischer Hallman Road, Kitchener"
+  ],
+  [
+   43.43908,
+   -80.50867,
+   "274 Highland Road West, Kitchener"
+  ],
+  [
+   43.46836,
+   -80.5686,
+   "450 Columbia Street W, Waterloo"
+  ],
+  [
+   43.49886,
+   -80.54963,
+   "640 Parkside Drive, Waterloo"
+  ],
+  [
+   43.47035,
+   -80.51506,
+   "94 Bridgeport Road E, Waterloo"
+  ]
+ ],
+ "Shoppers Drug Mart": [
+  [
+   43.4491,
+   -80.44481,
+   "1005 Ottawa St. N, Kitchener"
+  ],
+  [
+   43.41947,
+   -80.32512,
+   "101 Holiday Inn Dr, Cambridge"
+  ],
+  [
+   43.35917,
+   -80.29423,
+   "115 Dundas Street North, Cambridge"
+  ],
+  [
+   43.4345,
+   -80.446,
+   "1221 Weber St, Kitchener"
+  ],
+  [
+   43.39371,
+   -80.43136,
+   "123b Pioneer Drive, Kitchener"
+  ],
+  [
+   43.3528,
+   -80.32863,
+   "130 Cedar St, Cambridge"
+  ],
+  [
+   43.36512,
+   -80.31508,
+   "137 Water Street N, Cambridge"
+  ],
+  [
+   43.4164,
+   -80.5132,
+   "1400 Ottawa Street South, Kitchener"
+  ],
+  [
+   43.38984,
+   -80.34691,
+   "1500 King St. E., Cambridge"
+  ],
+  [
+   43.49642,
+   -80.54903,
+   "190 Northfield Drive West, Waterloo"
+  ],
+  [
+   43.37667,
+   -80.4867,
+   "1950 Fischer-hallman Road, Kitchener"
+  ],
+  [
+   43.424,
+   -80.5538,
+   "235 Ira Needles, Kitchener"
+  ],
+  [
+   43.4514,
+   -80.4935,
+   "250 King St W, Kitchener"
+  ],
+  [
+   43.42169,
+   -80.44366,
+   "310 Fairway Road S, Kitchener"
+  ],
+  [
+   43.39871,
+   -80.32419,
+   "499 Hespeler Rd, Cambridge"
+  ],
+  [
+   43.4713,
+   -80.5118,
+   "50 Weber Street North, Waterloo"
+  ],
+  [
+   43.49804,
+   -80.52558,
+   "550 King St. N., Waterloo"
+  ],
+  [
+   43.4349,
+   -80.5149,
+   "563 Highland Road West, Kitchener"
+  ],
+  [
+   43.4717,
+   -80.5929,
+   "600 Laurelwood Drive, Waterloo"
+  ],
+  [
+   43.4465,
+   -80.5724,
+   "658 Erb St. W., Waterloo"
+  ],
+  [
+   43.4149,
+   -80.48,
+   "700 Strasburg Rd, Kitchener"
+  ],
+  [
+   43.4632,
+   -80.5227,
+   "75 King St. S., Waterloo"
+  ],
+  [
+   43.39173,
+   -80.30281,
+   "950 Franklin Blvd., Cambridge"
+  ]
+ ],
+ "Best Buy": [
+  [
+   43.42127,
+   -80.4372,
+   "215 Fairway Rd. S, Kitchener"
+  ],
+  [
+   43.4125,
+   -80.32529,
+   "28 Pinebush Rd., Cambridge"
+  ],
+  [
+   43.49722,
+   -80.526,
+   "550 King St. N, Unit H16, Waterloo"
+  ],
+  [
+   43.50151,
+   -80.5322,
+   "580 King St. N, Bldg. B, Waterloo"
+  ]
+ ],
+ "Best Buy Express": [
+  [
+   43.42437,
+   -80.4386,
+   "2960 Kingsway Dr Fairview Park, Kitchener"
+  ],
+  [
+   43.49771,
+   -80.52701,
+   "550 King St N Unit B18 Conestoga Mall, Entrance #4, Waterloo"
+  ]
+ ],
+ "Staples": [
+  [
+   43.42619,
+   -80.48717,
+   "245 Strasburg Road, Kitchener"
+  ],
+  [
+   43.41204,
+   -80.3261,
+   "26 Pinebush Road, Cambridge"
+  ],
+  [
+   43.43498,
+   -80.56268,
+   "5-225 The Boardwalk, Kitchener"
+  ],
+  [
+   43.50468,
+   -80.53525,
+   "620 King Street North, Waterloo"
+  ]
+ ],
+ "Winners": [
+  [
+   43.44485,
+   -80.57009,
+   "105 The Boardwalk, Kitchener"
+  ],
+  [
+   43.41658,
+   -80.51735,
+   "1400 Ottawa Street South, Unit A 17, Kitchener"
+  ],
+  [
+   43.40951,
+   -80.32729,
+   "18 Pinebush Road, SmartCentres Cambridge, Cambridge"
+  ],
+  [
+   43.42399,
+   -80.43717,
+   "2960 Kingsway Drive, Unit Y005, Fairview Park Mall, Kitchener"
+  ],
+  [
+   43.49837,
+   -80.52555,
+   "550 King Street North, Conestoga Mall, Waterloo"
+  ]
+ ],
+ "HomeSense": [
+  [
+   43.4339,
+   -80.56141,
+   "225 The Boardwalk, Unit #1, The Boardwalk - Strip Plaza, Kitchener"
+  ],
+  [
+   43.50099,
+   -80.53251,
+   "578 King St N, Waterloo"
+  ],
+  [
+   43.40494,
+   -80.32812,
+   "600 Hespeler Rd, Cambridge"
+  ],
+  [
+   43.41936,
+   -80.45275,
+   "655 Fairway Road S, Kitchener"
+  ]
+ ],
+ "Marshalls": [
+  [
+   43.4339,
+   -80.56141,
+   "225 The Boardwalk, Unit #1, The Boardwalk - Strip Plaza, Kitchener"
+  ],
+  [
+   43.39211,
+   -80.31974,
+   "355 Hespeler Rd., Cambridge Centre, Cambridge"
+  ],
+  [
+   43.41856,
+   -80.44883,
+   "655 Fairway Road South, Fairway Plaza, Kitchener"
+  ]
+ ],
+ "Value Village": [
+  [
+   43.54328,
+   -80.28468,
+   "214 Silvercreek Parkway North, Guelph"
+  ],
+  [
+   43.51109,
+   -80.54976,
+   "330 Farmers Market Road, Unit 100, Waterloo"
+  ],
+  [
+   43.39897,
+   -80.32581,
+   "480 Hespeler Rd, Cambridge"
+  ],
+  [
+   43.4084,
+   -80.3922,
+   "50 Gateway Park Drive, Kitchener"
+  ],
+  [
+   43.44478,
+   -80.57014,
+   "663A Erb St West, Waterloo"
+  ]
+ ],
+ "Dollarama": [
+  [
+   43.37403,
+   -80.31747,
+   "1 Hespeler Rd, Cambridge"
+  ],
+  [
+   43.45218,
+   -80.44435,
+   "1020 Ottawa St N, Kitchener"
+  ],
+  [
+   43.39339,
+   -80.43036,
+   "123 Pioneer Dr, Kitchener"
+  ],
+  [
+   43.40036,
+   -80.49569,
+   "1270 Fischer-Hallman Rd, Kitchener"
+  ],
+  [
+   43.35269,
+   -80.32838,
+   "130 Cedar St, Cambridge"
+  ],
+  [
+   43.43218,
+   -80.44152,
+   "1375 Weber St E, Kitchener"
+  ],
+  [
+   43.41581,
+   -80.51637,
+   "1400 Ottawa St S, Kitchener"
+  ],
+  [
+   43.45613,
+   -80.4302,
+   "1405 Ottawa St N, Kitchener"
+  ],
+  [
+   43.41737,
+   -80.3243,
+   "150 Holiday Inn Dr, Cambridge"
+  ],
+  [
+   43.35733,
+   -80.28808,
+   "200 Franklin Blvd, Cambridge"
+  ],
+  [
+   43.54314,
+   -80.28645,
+   "222 Silvercreek Pky N, Guelph"
+  ],
+  [
+   43.43907,
+   -80.5644,
+   "295 The Boardwalk, Waterloo"
+  ],
+  [
+   43.58587,
+   -80.56197,
+   "315 Arthur St S, Elmira"
+  ],
+  [
+   43.51156,
+   -80.55039,
+   "330 Farmer's Market Rd, Waterloo"
+  ],
+  [
+   43.39113,
+   -80.32205,
+   "355 Hespeler road, Cambridge"
+  ],
+  [
+   43.43819,
+   -80.5123,
+   "370 Highland Rd W, Kitchener"
+  ],
+  [
+   43.45724,
+   -80.47335,
+   "385 Frederick St, Kitchener"
+  ],
+  [
+   43.40931,
+   -80.32327,
+   "42 Pinebush Rd, Cambridge"
+  ],
+  [
+   43.45308,
+   -80.55586,
+   "450 Erb St W, Waterloo"
+  ],
+  [
+   43.48624,
+   -80.53941,
+   "462 Albert St, Waterloo"
+  ],
+  [
+   43.56321,
+   -80.28305,
+   "49 Woodlawn Rd W, Guelph"
+  ],
+  [
+   43.43503,
+   -80.51541,
+   "525 Highland Rd W, Kitchener"
+  ],
+  [
+   43.40222,
+   -80.32519,
+   "551 Hespeler Rd, Cambridge"
+  ],
+  [
+   43.49991,
+   -80.52987,
+   "564 King St N, Waterloo"
+  ],
+  [
+   43.47228,
+   -80.59344,
+   "600 Laurelwood Dr, Waterloo"
+  ],
+  [
+   43.44912,
+   -80.48842,
+   "61 King St E, Kitchener"
+  ],
+  [
+   43.41918,
+   -80.45175,
+   "655 Fairway Rd S, Kitchener"
+  ],
+  [
+   43.4474,
+   -80.57491,
+   "662 Erb St W, Waterloo"
+  ],
+  [
+   43.41944,
+   -80.50112,
+   "700 Westmount Rd E, Kitchener"
+  ],
+  [
+   43.46281,
+   -80.52309,
+   "85 Willis Way, Waterloo"
+  ],
+  [
+   43.42933,
+   -80.52622,
+   "875 Highland Rd W, Kitchener"
+  ],
+  [
+   43.39307,
+   -80.30407,
+   "980 Franklin Blvd, Cambridge"
+  ]
+ ],
+ "Swiss Chalet": [
+  [
+   43.35685,
+   -80.29032,
+   "101 Dundas St S, Cambridge"
+  ],
+  [
+   43.46614,
+   -80.45518,
+   "1151 Victoria St N, Kitchener"
+  ],
+  [
+   43.55812,
+   -80.28606,
+   "138 Woodlawn Road West, Guelph"
+  ],
+  [
+   43.47925,
+   -80.52173,
+   "267 Weber St N, Waterloo"
+  ],
+  [
+   43.58282,
+   -80.56175,
+   "315 Arthur Street S, Elmira"
+  ],
+  [
+   43.43863,
+   -80.56239,
+   "340 The Boardwalk, Waterloo"
+  ],
+  [
+   43.39924,
+   -80.32599,
+   "506 Hespeler Rd, Cambridge"
+  ],
+  [
+   43.43462,
+   -80.51497,
+   "525 Highland Rd W Unit 1, Kitchener"
+  ],
+  [
+   43.42057,
+   -80.44913,
+   "560 Fairway Rd S, Kitchener"
+  ]
+ ],
+ "Montana's": [
+  [
+   43.4377,
+   -80.56127,
+   "310 The Boardwalk, Waterloo"
+  ],
+  [
+   43.41139,
+   -80.32442,
+   "40 Pinebush Rd, Cambridge"
+  ],
+  [
+   43.42409,
+   -80.48546,
+   "740 Ottawa St S, Kitchener"
+  ]
+ ],
+ "East Side Mario's": [
+  [
+   43.39401,
+   -80.32128,
+   "355 Hespeler Road, Cambridge"
+  ],
+  [
+   43.48761,
+   -80.52623,
+   "450 King Street North, Waterloo"
+  ]
+ ],
+ "Harvey's": [
+  [
+   43.35689,
+   -80.29045,
+   "101 Dundas St S., Cambridge"
+  ],
+  [
+   43.4072,
+   -80.49912,
+   "1111 Westmount Road E., Kitchener"
+  ],
+  [
+   43.46675,
+   -80.4549,
+   "1157 Victoria St N, Kitchener"
+  ],
+  [
+   43.47186,
+   -80.53883,
+   "170 University Ave W Unit 10, Waterloo"
+  ],
+  [
+   43.55439,
+   -80.29304,
+   "223 Woodlawn Rd West, Guelph"
+  ],
+  [
+   43.42673,
+   -80.55306,
+   "235 Ira Needles Blvd, Kitchener"
+  ],
+  [
+   43.51073,
+   -80.5206,
+   "263 Northfield Dr. East Unit 1, Waterloo"
+  ],
+  [
+   43.58282,
+   -80.56175,
+   "315 Arthur Street S, Elmira"
+  ],
+  [
+   43.48473,
+   -80.5263,
+   "410 King St North, Waterloo"
+  ],
+  [
+   43.40729,
+   -80.3973,
+   "4355 King St East, Kitchener"
+  ],
+  [
+   43.42057,
+   -80.44913,
+   "560 Fairway Rd South, Kitchener"
+  ],
+  [
+   43.40438,
+   -80.32905,
+   "600 Hespeler Road, Cambridge"
+  ],
+  [
+   43.47375,
+   -80.52805,
+   "75 University Ave West, Waterloo"
+  ],
+  [
+   43.4358,
+   -80.51259,
+   "80 Westmount Rd West, Kitchener"
+  ]
+ ],
+ "Kelsey's": [
+  [
+   43.5586,
+   -80.28553,
+   "124 Woodlawn Road, Guelph"
+  ],
+  [
+   43.41436,
+   -80.51469,
+   "1440 South Ottawa Street, Kitchener"
+  ],
+  [
+   43.40033,
+   -80.32471,
+   "525 Hespeler Road, Cambridge"
+  ],
+  [
+   43.50023,
+   -80.531,
+   "576 King St North, Waterloo"
+  ]
+ ],
+ "Boston Pizza": [
+  [
+   43.40812,
+   -80.3273,
+   "14 Pinebush Road, Cambridge"
+  ],
+  [
+   43.35477,
+   -80.28728,
+   "205 Franklin Boulevard, Cambridge"
+  ],
+  [
+   43.47169,
+   -80.44957,
+   "425 Bingemans Centre Drive, Kitchener"
+  ],
+  [
+   43.50297,
+   -80.53486,
+   "597 King Street North, Waterloo"
+  ]
+ ],
+ "McDonald's": [
+  [
+   43.43324,
+   -80.55873,
+   "(Wal-Mart) 100 The Boardwalk, Kitchener"
+  ],
+  [
+   43.41043,
+   -80.32659,
+   "(Wal-Mart) 22 Pinebush Road, Cambridge"
+  ],
+  [
+   43.50851,
+   -80.54851,
+   "(Wal-Mart) 335 Farmers Market Road, Waterloo"
+  ],
+  [
+   43.41584,
+   -80.51877,
+   "(Wal-Mart) Kitchener, 1400 Ottawa Street S., Unit E, Kitchener"
+  ],
+  [
+   43.41791,
+   -80.30924,
+   "100 Jamieson Parkway, Cambridge"
+  ],
+  [
+   43.45191,
+   -80.44294,
+   "1020 Ottawa Street North, Kitchener"
+  ],
+  [
+   43.46705,
+   -80.45658,
+   "1138 Victoria St, Kitchener"
+  ],
+  [
+   43.38169,
+   -80.4878,
+   "1950 Fischer Hallmann Rd, Kitchener"
+  ],
+  [
+   43.38672,
+   -80.41387,
+   "2410 Homer Watson Boul., Kitchener"
+  ],
+  [
+   43.55346,
+   -80.29383,
+   "243 Woodlawn Road West, Guelph"
+  ],
+  [
+   43.4817,
+   -80.5257,
+   "362 King Street North, Waterloo"
+  ],
+  [
+   43.40806,
+   -80.39394,
+   "40 Sportsworld Drive, Kitchener"
+  ],
+  [
+   43.35785,
+   -80.29172,
+   "400 Main Street East, Cambridge"
+  ],
+  [
+   43.39485,
+   -80.32441,
+   "416 Hespeler Rd., Cambridge"
+  ],
+  [
+   43.43649,
+   -80.51255,
+   "431 Highland Road, Kitchener"
+  ],
+  [
+   43.58668,
+   -80.56103,
+   "45 Industrial Drive, Elmira"
+  ],
+  [
+   43.5038,
+   -80.52674,
+   "55 Northfield Dr East, Waterloo"
+  ],
+  [
+   43.42,
+   -80.4521,
+   "666 Fairway Rd, Kitchener"
+  ],
+  [
+   43.42487,
+   -80.48341,
+   "715 Ottawa Street South, Kitchener"
+  ],
+  [
+   43.44439,
+   -80.57978,
+   "928 Erb Street West, Waterloo"
+  ],
+  [
+   43.40557,
+   -80.4997,
+   "Fischer Hallman & Westmount, 1191 Fischer Hallman Road, Kitchener"
+  ]
+ ],
+ "Starbucks": [
+  [
+   43.37423,
+   -80.31818,
+   "1 Hespeler Road, Cambridge"
+  ],
+  [
+   43.4503,
+   -80.44602,
+   "1005 Ottawa Street North, Kitchener"
+  ],
+  [
+   43.52268,
+   -80.28854,
+   "1045 Paisley Rd, Guelph"
+  ],
+  [
+   43.46542,
+   -80.4597,
+   "1051 Victoria St N, Kitchener"
+  ],
+  [
+   43.40728,
+   -80.50034,
+   "1170 Fischer Hallman Road, Building 200, Unit 210, Kitchener"
+  ],
+  [
+   43.41518,
+   -80.51475,
+   "1400 Ottawa Street, Sunrise Centre, Unit 108, Kitchener"
+  ],
+  [
+   43.41603,
+   -80.32368,
+   "180 Holiday Inn Drive, Cambridge"
+  ],
+  [
+   43.451,
+   -80.49278,
+   "191 King St W, Kitchener"
+  ],
+  [
+   43.38133,
+   -80.48818,
+   "1950 Fischer Hallman Rd, 407, Kitchener"
+  ],
+  [
+   43.38178,
+   -80.48766,
+   "1950 Fisher Hallman Road, Kitchener"
+  ],
+  [
+   43.35624,
+   -80.28768,
+   "200 Franklin Blvd, Cambridge"
+  ],
+  [
+   43.47042,
+   -80.54326,
+   "200 University Ave W, Waterloo"
+  ],
+  [
+   43.4734,
+   -80.5461,
+   "200 University Ave W, Waterloo"
+  ],
+  [
+   43.41175,
+   -80.30978,
+   "210 Pinebush Road, Cambridge"
+  ],
+  [
+   43.47877,
+   -80.52099,
+   "265 Weber St N, Waterloo"
+  ],
+  [
+   43.42784,
+   -80.43518,
+   "30 Fairway Rd S, Kitchener"
+  ],
+  [
+   43.58341,
+   -80.56176,
+   "315 Arthur St S, Elmira"
+  ],
+  [
+   43.40746,
+   -80.39323,
+   "45 Sportsworld Drive, Kitchener"
+  ],
+  [
+   43.40117,
+   -80.32526,
+   "537 Hespeler Rd, Cambridge"
+  ],
+  [
+   43.49945,
+   -80.52768,
+   "550 King St N, N10, Waterloo"
+  ],
+  [
+   43.49708,
+   -80.52465,
+   "555 Davenport Rd, Waterloo"
+  ],
+  [
+   43.49997,
+   -80.53083,
+   "568 King St N, Waterloo"
+  ],
+  [
+   43.42024,
+   -80.44666,
+   "569-589 Fairway Road South, Kitchener"
+  ],
+  [
+   43.49795,
+   -80.55052,
+   "590 Weber Street North, 590 Weber Street North, Waterloo"
+  ],
+  [
+   43.44649,
+   -80.57196,
+   "650 Erb St W, Unit A, Waterloo"
+  ],
+  [
+   43.47362,
+   -80.52912,
+   "75 University Ave W, Waterloo"
+  ],
+  [
+   43.42402,
+   -80.48759,
+   "750 Ottawa Street South, Kitchener"
+  ],
+  [
+   43.46276,
+   -80.52186,
+   "95 King Street South, Waterloo"
+  ]
+ ],
+ "Esso": [
+  [
+   43.42319,
+   -80.32381,
+   "368 Queen St W, Cambridge"
+  ],
+  [
+   43.48922,
+   -80.49297,
+   "425 University Ave E, Waterloo"
+  ],
+  [
+   43.57745,
+   -80.28616,
+   "5471 Highway #6 Rr5, Guelph"
+  ]
+ ],
+ "Shell": [
+  [
+   43.35212,
+   -80.32427,
+   "140 St Andrews St, Cambridge"
+  ],
+  [
+   43.41901,
+   -80.46973,
+   "1450 Block Line Road., Kitchener"
+  ],
+  [
+   43.4236,
+   -80.55328,
+   "1500 Highland Road West, Kitchener"
+  ],
+  [
+   43.41116,
+   -80.30884,
+   "209 Pinebush Rd., Cambridge"
+  ],
+  [
+   43.38848,
+   -80.32144,
+   "277 Hespeler Road, Cambridge"
+  ],
+  [
+   43.477,
+   -80.53951,
+   "360 Phillip St, Waterloo"
+  ],
+  [
+   43.45892,
+   -80.4822,
+   "366 Victoria St, Kitchener"
+  ],
+  [
+   43.49594,
+   -80.50161,
+   "373 Bridge St W, Waterloo"
+  ],
+  [
+   43.39762,
+   -80.36229,
+   "406 King Street East, Cambridge"
+  ],
+  [
+   43.41086,
+   -80.40088,
+   "4195 King Street., Kitchener"
+  ],
+  [
+   43.40447,
+   -80.38539,
+   "4574 King St E, Kitchener"
+  ],
+  [
+   43.47612,
+   -80.48415,
+   "504 Lancaster St, Kitchener"
+  ],
+  [
+   43.50332,
+   -80.52803,
+   "55 Northfield Dr W, Waterloo"
+  ],
+  [
+   43.46298,
+   -80.53903,
+   "70 Westmount Rd N, Waterloo"
+  ],
+  [
+   43.37937,
+   -80.29898,
+   "800 Franklin Blvd, Cambridge"
+  ]
+ ],
+ "Pioneer": [
+  [
+   43.44145,
+   -80.47155,
+   "1105 King St E, Kitchener"
+  ],
+  [
+   43.40192,
+   -80.49744,
+   "1205 Fischer-Hallman Rd, Kitchener"
+  ],
+  [
+   43.37961,
+   -80.31901,
+   "145 Hespeler Rd, Cambridge"
+  ],
+  [
+   43.38587,
+   -80.41046,
+   "2480 Homer Watson Blvd, Kitchener"
+  ],
+  [
+   43.50316,
+   -80.38018,
+   "2900 Victoria St N, Breslau"
+  ],
+  [
+   43.42795,
+   -80.43202,
+   "3011 King St E, Kitchener"
+  ],
+  [
+   43.43964,
+   -80.52178,
+   "720 Victoria St S, Kitchener"
+  ],
+  [
+   43.4323,
+   -80.52529,
+   "780 Highland Rd W, Kitchener"
+  ]
+ ],
+ "TD": [
+  [
+   43.4187,
+   -80.45262,
+   "10 Manitou Drive #c1, Kitchener, On, N2c2n3, "
+  ],
+  [
+   43.44947,
+   -80.44492,
+   "1005 Ottawa Street North, Kitchener, On, N2a1h2, "
+  ],
+  [
+   43.40629,
+   -80.50054,
+   "1187 Fischer Hallman Rd U 200, Kitchener, On, N2e4h9, "
+  ],
+  [
+   43.39396,
+   -80.432,
+   "123 Pioneer Drive Unit 101, Kitchener, On, N2p2a3, "
+  ],
+  [
+   43.35221,
+   -80.32825,
+   "130 Cedar St Unit 1, Cambridge, On, N1s1w4, "
+  ],
+  [
+   43.46471,
+   -80.52257,
+   "15 King St S, Waterloo, On, N2j1n9, "
+  ],
+  [
+   43.41539,
+   -80.32427,
+   "180 Holiday Inn Dr @ Hwy 401, Cambridge, On, N3c3k1, "
+  ],
+  [
+   43.35624,
+   -80.28915,
+   "200 Franklin Blvd, Cambridge, On, N1r8n8, "
+  ],
+  [
+   43.44016,
+   -80.50872,
+   "272 Highland Rd W, Kitchener, On, N2m3c5, "
+  ],
+  [
+   43.43827,
+   -80.56185,
+   "320 The Boardwalk, Waterloo, On, N2t0a6, "
+  ],
+  [
+   43.45195,
+   -80.49622,
+   "381 King St W, Kitchener, On, N2g1b8, "
+  ],
+  [
+   43.41043,
+   -80.40014,
+   "4233 King St E, Kitchener, On, N2p2e9, "
+  ],
+  [
+   43.39615,
+   -80.32373,
+   "425 Hespeler Road, Cambridge, On, N1r6j2, "
+  ],
+  [
+   43.46701,
+   -80.56831,
+   "450 Columbia St W, Waterloo, On, N2t2w1, "
+  ],
+  [
+   43.45169,
+   -80.55654,
+   "460 Erb Street W, Waterloo, On, N2t1n5, "
+  ],
+  [
+   43.49549,
+   -80.54877,
+   "576 Weber St North, Waterloo, On, N2l5c6, "
+  ],
+  [
+   43.47822,
+   -80.52041,
+   "68 University Ave, Waterloo, On, N2j2v8, "
+  ],
+  [
+   43.42976,
+   -80.52513,
+   "875 Highland Road West, Kitchener, On, N2n2y2, "
+  ],
+  [
+   43.39163,
+   -80.30351,
+   "960 Franklin Blvd, Cambridge, On, N1r8r3, "
+  ],
+  [
+   43.52478,
+   -80.28731,
+   "963 Paisley Rd, Guelph, On, N1k1x6, "
+  ],
+  [
+   43.4981,
+   -80.52972,
+   "C1a-550 King Street North, Waterloo, On, N2l5w6, "
+  ]
+ ],
+ "RBC": [
+  [
+   43.41793,
+   -80.30874,
+   "100 Jamieson Pkwy, Cambridge"
+  ],
+  [
+   43.4516,
+   -80.44439,
+   "1020 Ottawa St N, Kitchener"
+  ],
+  [
+   43.45116,
+   -80.4918,
+   "180 King Street West, Kitchener"
+  ],
+  [
+   43.38233,
+   -80.48738,
+   "1950 Fischer Hallman Rd - Unit 309, Kitchener"
+  ],
+  [
+   43.42554,
+   -80.55375,
+   "235 Ira Needles Blvd, Kitchener"
+  ],
+  [
+   43.47606,
+   -80.52465,
+   "248 King St N, Waterloo"
+  ],
+  [
+   43.42398,
+   -80.43695,
+   "2960 Kingsway Dr - Unit Y008, Kitchener"
+  ],
+  [
+   43.35469,
+   -80.28681,
+   "311 Dundas St S, Cambridge"
+  ],
+  [
+   43.43679,
+   -80.51195,
+   "413 Highland Rd W, Kitchener"
+  ],
+  [
+   43.39821,
+   -80.32554,
+   "480 Hespeler Rd, Cambridge"
+  ],
+  [
+   43.49592,
+   -80.55068,
+   "585 Weber St N, Waterloo"
+  ],
+  [
+   43.44622,
+   -80.57267,
+   "652 Erb St W, Waterloo"
+  ],
+  [
+   43.46381,
+   -80.52176,
+   "70-74 King St S, Waterloo"
+  ],
+  [
+   43.41483,
+   -80.50999,
+   "715 Fischer Hallman Rd, Kitchener"
+  ],
+  [
+   43.35877,
+   -80.31343,
+   "73 Main St, Cambridge"
+  ],
+  [
+   43.47379,
+   -80.52929,
+   "75 University Ave W, Waterloo"
+  ],
+  [
+   43.52493,
+   -80.2863,
+   "975 Paisley Rd, Guelph"
+  ]
+ ],
+ "CIBC": [
+  [
+   43.44954,
+   -80.48913,
+   "1 King St. E., Kitchener"
+  ],
+  [
+   43.45165,
+   -80.44413,
+   "1020 Ottawa St. N., Kitchener"
+  ],
+  [
+   43.35882,
+   -80.31546,
+   "11 Main St., Cambridge"
+  ],
+  [
+   43.4521,
+   -80.55304,
+   "1188 Fischer-Hallman Rd., Kitchener"
+  ],
+  [
+   43.43474,
+   -80.55839,
+   "120 The Boardwalk, Kitchener"
+  ],
+  [
+   43.47025,
+   -80.55399,
+   "200 Uni. Ave. W., Waterloo"
+  ],
+  [
+   43.42613,
+   -80.48861,
+   "245 Strasburg Rd., Un. C, Kitchener"
+  ],
+  [
+   43.4658,
+   -80.52282,
+   "27 King St. N., Waterloo"
+  ],
+  [
+   43.4836,
+   -80.5069,
+   "315 Lincoln Rd., Waterloo"
+  ],
+  [
+   43.45703,
+   -80.47263,
+   "385 Frederick St., Kitchener"
+  ],
+  [
+   43.39402,
+   -80.3229,
+   "395 Hespeler Rd., Cambridge"
+  ],
+  [
+   43.46734,
+   -80.56836,
+   "450 Columbia St. W., Un. 22, Waterloo"
+  ],
+  [
+   43.49772,
+   -80.52672,
+   "550 King St. N., Waterloo"
+  ],
+  [
+   43.39677,
+   -80.35968,
+   "567 King St. E., Cambridge"
+  ],
+  [
+   43.35783,
+   -80.29214,
+   "75 Dundas St., Cambridge"
+  ]
+ ],
+ "BMO": [
+  [
+   43.44236,
+   -80.47173,
+   "1074 King St E, Kitchener"
+  ],
+  [
+   43.40036,
+   -80.49569,
+   "1270 Fischer-hallman Rd, Building E, Kitchener"
+  ],
+  [
+   43.43225,
+   -80.43989,
+   "1375 Weber St E, Kitchener"
+  ],
+  [
+   43.35989,
+   -80.29665,
+   "142 Dundas St, Cambridge"
+  ],
+  [
+   43.43099,
+   -80.31189,
+   "23 Queen St. W, Cambridge"
+  ],
+  [
+   43.47788,
+   -80.52568,
+   "255 King St N, Waterloo"
+  ],
+  [
+   43.46503,
+   -80.52252,
+   "3 King St S, Waterloo"
+  ],
+  [
+   43.35908,
+   -80.3143,
+   "44 Main St., Cambridge"
+  ],
+  [
+   43.40358,
+   -80.32786,
+   "600 Hespeler Road, Cambridge"
+  ],
+  [
+   43.44564,
+   -80.57428,
+   "664 Erb St W, Waterloo"
+  ],
+  [
+   43.42209,
+   -80.48922,
+   "795 Ottawa Street South, Kitchener"
+  ],
+  [
+   43.39522,
+   -80.35677,
+   "807 King St E, Cambridge-preston"
+  ],
+  [
+   43.42912,
+   -80.5265,
+   "875 Highland Rd. West, Kitchener"
+  ],
+  [
+   43.47161,
+   -80.51325,
+   "90 Weber St. North, Waterloo"
+  ],
+  [
+   43.45179,
+   -80.49533,
+   "Unit 101, 345 King Street West, Kitchener"
+  ],
+  [
+   43.49378,
+   -80.54841,
+   "Unit 4, 200 Northfield Dr W, Waterloo"
+  ]
+ ],
+ "Scotiabank": [
+  [
+   43.42178,
+   -80.4605,
+   "1144 Courtland Ave E, Kitchener"
+  ],
+  [
+   43.46262,
+   -80.52181,
+   "115 King St S Unit 90, Waterloo"
+  ],
+  [
+   43.45374,
+   -80.55431,
+   "14 Fischer- Hallman Road North, Waterloo"
+  ],
+  [
+   43.53956,
+   -80.5535,
+   "1410 King Street North, St. Jacobs"
+  ],
+  [
+   43.39394,
+   -80.3289,
+   "1490 Dunbar Road, Cambridge"
+  ],
+  [
+   43.38191,
+   -80.4882,
+   "1950 Fischer-Hallman Road Unit #401, Kitchener"
+  ],
+  [
+   43.35436,
+   -80.28806,
+   "270 Dundas Street South, Cambridge"
+  ],
+  [
+   43.44033,
+   -80.56387,
+   "420 The Boardwalk, Waterloo"
+  ],
+  [
+   43.43574,
+   -80.51418,
+   "491 Highland Road West, Kitchener"
+  ],
+  [
+   43.50109,
+   -80.53285,
+   "569 King Street North, Waterloo"
+  ],
+  [
+   43.45025,
+   -80.49026,
+   "64 King Street West, Kitchener"
+  ],
+  [
+   43.39077,
+   -80.30175,
+   "95 Saginaw Parkway, Cambridge"
+  ]
+ ],
+ "_notes": "Value Village 750 Ottawa St S removed: its locator point is 2.5 km off its address (OSM has the store)."
+}

@@ -48,6 +48,7 @@ import { addLandmarkExtra } from './landmarks.js';
 import { Chicopee } from './chicopee.js';
 import { prepFun, buildMarketTent, buildFlags, waveFlags, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, buildDome } from './kwfun.js';
 import { prepPlaces, buildPlaces, placesMap, placesStats, Geese } from './kwplaces.js';
+import { setShopData, prepShops, buildShops, shopPlaces, shopStats } from './kwshops.js';
 import { Crops } from './crops.js';
 import { Kartway, KartRace } from './kartway.js';
 import { YKF } from './ykf.js';
@@ -787,6 +788,10 @@ async function boot() {
   // Uptown, Waterloo Park, RIM Park and Conestoga Mall (kwplaces.js)
   { const k = prepPlaces(city); blog(`kw places: ${k.skipped} boxes drawn as places`); }
   addLandmarkExtra(buildPlaces);
+  // the chain stores, gas stations and plazas where they really are (kwshops.js)
+  setShopData(md.shops);
+  { const k = prepShops(city); blog(`kw shops: drawn here: ${k.bigbox} big boxes, ${k.units} stand-alone stores, ${k.strips} plaza buildings, ${k.canopies} gas canopies`); }
+  addLandmarkExtra(buildShops);
   addLandmarkExtra(buildMarketTent);
   addLandmarkExtra(buildDome);
   addLandmarkExtra(buildFord);
@@ -1529,6 +1534,7 @@ function installShadowFade() {
       hello: mr.hello ? mr.hello : `${mr.name} — boats and jet skis. Walk out on the float and take one` })),
     ...kwPlaces(),
     ...placesMap(),
+    ...shopPlaces(),
     { x: arcade.spot.x, z: arcade.spot.z, kind: 'arcade', name: 'Pin Up Arcade Bar', near: false,
       hello: 'Pin Up Arcade Bar — six classic cabinets, $1 a credit. Press ENTER at the door' },
     { x: pinball.spot.x, z: pinball.spot.z, kind: 'pinball', name: 'AOK Craft Beer + Arcade', near: false,
@@ -1560,6 +1566,7 @@ function installShadowFade() {
     ...kartway.places(),
   ];
   { const k = kwData(); if (k && k.signStats) blog('kw signs: ' + JSON.stringify(k.signStats)); }
+  if (shopStats()) blog('kw shops: ' + JSON.stringify(shopStats()));
   peds = new PedSystem(scene, city, game);
   // trains are solid to anyone on foot (each system's blockAt)
   player.trainBlock = peds.trainBlock = (x, z, y, r) => link.blockAt(x, z, y, r);

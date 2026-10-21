@@ -213,6 +213,49 @@ file and a guide disagree, this file wins.
   191 -> 196, 710k -> 755k; RIM 118 -> 119; Conestoga 338 -> 346. The
   square's rebuild, phone at the opening frame: 191 -> 196 draws, 852k ->
   881k tris (the old King St opening frame was 253 / 927k).
+- **The chain stores: src/kwshops.js** (`data/shops.json` from
+  tools/kw/extract_shops.py -> `raw_shops.json`, then tools/kw/build_shops.py;
+  docs/shops-*.jpg). Every store of ~50 brands (`BRANDS` / `GAS` in
+  build_shops.py: LCBO, Beer Store, Walmart, Costco, Canadian Tire, Home
+  Depot, RONA, Zehrs, Sobeys, Food Basics, No Frills, Shoppers, Dollarama,
+  Winners..., the restaurants, the banks, every gas brand), matched to its
+  building (the OSM polygon it is, else the one holding its node, else the
+  nearest shop-like one within 40 m) and its plaza (shop=mall / named
+  landuse=retail). `tools/kw/kw_shops_official.json` is the official lists
+  (AllThePlaces scrape of the store locators, Oct 2026; Beer Store from its
+  API): it adds stores OSM lacks and, for `AUTHORITATIVE` brands (LCBO, Beer
+  Store, Walmart, Costco, Home Depot, Zehrs), drops OSM stores it lacks (the
+  closed Beer Store on Cedar St). **Every logo is drawn once into ONE canvas
+  atlas** (`BrandAtlas`, shelf-packed, cropped; `B` holds each brand's
+  drawing) **and that texture is set as kw.js's footprint material's map**
+  (`polyMat`): plain surfaces carry uv (0, 0), a white block at the canvas's
+  bottom left, so buildings, canopies, pylons and logos are one material and
+  merge into the `kwp` clusters with kw.js buildPolys -- at most +1 draw a
+  cluster. **Buildings drawn here** (`prepShops`, before meshing: kw.skip +
+  `kw.shop`; the box keeps its height, so collision and roofs stay the
+  city's; a big box is raised to 9.2 m, a supermarket 7.8): `bigbox`
+  (split-face base, cladding, piers, accent band, reveal lines, stepped
+  parapet by the brand-colour entrance portal, glass vestibules, garden
+  centre with fence and half canopy, service bays, loading docks, white/grey
+  roof with rooftop units, cart corrals in the lot; per-brand `ARCH`; the
+  front is the face with the most car park, `frontFace`), `unit` (a
+  stand-alone LCBO / Beer Store), `strip` (every strip building in a plaza:
+  sidewalk arcade on brick piers under the sign fascia -- which stays 1.8 m
+  out, 3.2-4.45 m up, where kw.js hangs Tims signs -- parapet towers, back
+  doors; `PLAZA_PAL`). Gas stations: OSM's building=roof canopy box goes flat
+  and the canopy is drawn on its footprint in the brand's bands, with pump
+  islands, logos on its fascia and a price pylon at the road. Plazas with 3+
+  tenants get a pylon at their best road frontage listing up to 6 tenants
+  (logos, else lettering; anchors first). Map: Walmart/Costco/CT/HD/RONA/
+  Best Buy (`shop`), LCBO (`lcbo`), Beer Store (`beer`) icons with a hello on
+  foot, plazas (`plaza`, labelled when anchored). kw.js's zone storefronts
+  skip the chains (`KW.chainNames`). `window.__noShops = true` before boot
+  turns it all off (kwshots `VIEW_BOOT_JS`); `window.__kwShops` has stats and
+  the atlas. `tools/kw/aerial.py x z out.jpg` fetches Esri imagery of a spot
+  for checking roofs and layouts. Phone (AUTO_PHONE=1, GPU), before -> after:
+  spawn 195 -> 200 draws, 881k -> 917k tris; Boardwalk lot 66 -> 69; Sunrise
+  lot 172 -> 178; Fairview aerial 399 -> 409, 946k -> 1017k. ~155k tris
+  across the whole map.
 - **The spawn is on Waterloo Public Square** (`SPAWN_LL` in
   tools/kw/build_places.py, re-run it): on the courtyard north of the rink,
   looking south-west across it to the mall's entrance, the leaf shades and
