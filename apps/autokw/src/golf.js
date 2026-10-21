@@ -1,22 +1,32 @@
-// GOLF AT INTERBAY. Three par-3s on the green west of 15th Ave W, where the
-// Interbay Golf Center's executive course is: 126, 140 and 155 yards, laid
-// on the real ground (it falls 2-6 m across a hole, so the ball rolls
-// downhill), with tee boxes, mown fairways, greens, bunkers, the flag and the
-// cup drawn as one draped mesh.
+// GOLF AT WATERLOO REGION'S COURSES. Real holes from OpenStreetMap
+// (data/golf.json, tools/kw/build_golf.py): Rockway in Kitchener and
+// Westmount in Waterloo, all eighteen holes of each drawn and playable, three
+// at a time -- every third tee (1, 4, 7, ...) starts a round of the next
+// three. Each hole is OSM's: its par, the line from the tee to the green
+// (doglegs and all), the tee box, the green, the fairways, the bunkers and
+// any water, laid on the real ground (the ball runs downhill).
 //
-// ENTER on the first tee starts a round. Each shot: aim with the stick (or a
-// drag), pick a club (the right one is picked for you by the distance; CLUB
-// changes it), and SWING: the first tap stops the POWER meter, the second the
+// The course's surfaces are OSM's polygons, cut along the terrain mesh's own
+// triangles so they lie exactly on it (one draped mesh per course, a single
+// draw): fairway and tee mown in stripes, a fringe round each green, the
+// green, sand, water where the world draws none, a flagstick per hole.
+//
+// ENTER on a starting tee plays its three holes. Each shot: aim with the
+// stick (or a drag) -- it starts at the pin, or down the hole's line where the
+// pin is out of reach -- the club is picked by the distance (CLUB changes
+// it), and SWING: the first tap stops the POWER meter, the second the
 // ACCURACY needle as it sweeps back through the sweet spot -- early hooks it,
 // late slices it, and either costs a little distance. The ball flies on
 // ballistics with drag and a breeze (shown by the arrow), comes down, bounces
-// and rolls by what it lands on -- green, fringe, fairway, rough, sand -- and
-// down the slope. Trunks knock it back. On the green the putter comes out:
-// one tap for pace, and the cup takes a ball rolling slowly enough over it
-// (a fast one lips out). Walking between shots is done for you.
+// and rolls by what it lands on -- green, fringe, fairway, tee, rough, sand
+// -- and down the slope. Trunks knock it back. Water is a stroke and a drop
+// where it went in; off the course (past its boundary, a road, a building)
+// is a stroke and the shot again. On the green the putter comes out: one
+// tap for pace, and the cup takes a ball rolling slowly enough over it.
 //
-// Pays for the round against par (9): $300 for 3 under, $150 for par, less
-// above; a hole-in-one pays $500 on its own. Best round in localStorage.
+// Pays for the three holes against their par: $150 for level, $50 a stroke
+// either side, $500 more for a hole-in-one. Best round per course and start
+// in localStorage `autokw-golf-<course>`.
 
 import * as THREE from './three.js';
 import * as G from './geo.js';
@@ -25,212 +35,302 @@ import { clamp, damp } from './util.js';
 import { BONES, animateWalk } from './peds.js';
 import { solveArm } from './vehicles.js';
 
-// The course, relative to the Interbay Golf Center (47.6415 N, 122.3764 W).
-const ORIGIN = G.toWorld(47.6415, -122.3764);
-const HOLES = [
-  { tee: [-60, -215], green: [-66, -100], bunkers: [[-7, -4, 3.2, 2.2], [8, 6, 2.6, 2.0]] },
-  { tee: [-105, -85], green: [-225, -40], bunkers: [[-9, 2, 3.4, 2.4], [2, 11, 4.0, 1.8]] },
-  { tee: [-250, -115], green: [-205, -250], bunkers: [[8, -3, 3.0, 2.4], [-6, 10, 2.8, 2.0], [-2, -40, 5, 3]] },
-].map((h, i) => {
-  const tx = ORIGIN[0] + h.tee[0], tz = ORIGIN[1] + h.tee[1];
-  const gx = ORIGIN[0] + h.green[0], gz = ORIGIN[1] + h.green[1];
-  const L = Math.hypot(gx - tx, gz - tz);
-  const ux = (gx - tx) / L, uz = (gz - tz) / L;
-  // bunkers are [along the hole from the green, across, radius along, across]
-  const bunkers = h.bunkers.map(([a, c, ra, rc]) => ({ x: gx + ux * a + uz * c, z: gz + uz * a - ux * c, ra, rc, ux, uz }));
-  // the pin somewhere on the green, a little off-centre
-  const pin = { x: gx + ux * [2, -2.5, 1][i] + uz * [1.5, -1, -2][i], z: gz + uz * [2, -2.5, 1][i] - ux * [1.5, -1, -2][i] };
-  return { n: i + 1, par: 3, tee: { x: tx, z: tz }, green: { x: gx, z: gz, ra: 9, rc: 7 }, L, ux, uz, bunkers, pin };
-});
-const PAR = 9;
-const UV0 = [0, 0, 0, 0, 0, 0, 0, 0];
 const CUP_R = 0.054, BALL_R = 0.0214, BALL_DRAW = 0.045;
 const YD = 1.0936;
-// clubs: full carry in still air (m), launch angle, how much it runs out
+const ROUND = 3;                  // holes in a round
+// clubs: full carry in still air (m), launch angle, how much it runs out,
+// spin: how hard the ball checks when it lands (m/s2 for its first half second)
 const CLUBS = [
-  // spin: how hard the ball checks when it lands (m/s2 for its first half second)
-  { name: '7 IRON', carry: 140, angle: 20, roll: 0.9, spin: 2.2 },
-  { name: '9 IRON', carry: 118, angle: 27, roll: 0.7, spin: 3.4 },
-  { name: 'WEDGE', carry: 100, angle: 33, roll: 0.5, spin: 4.4 },
-  { name: 'SAND WEDGE', carry: 75, angle: 42, roll: 0.3, spin: 5.4 },
+  { name: 'DRIVER', carry: 215, angle: 14, roll: 1.6, spin: 0.8, tee: true },
+  { name: '3 WOOD', carry: 195, angle: 15, roll: 1.4, spin: 1.2 },
+  { name: '5 IRON', carry: 165, angle: 18, roll: 1.1, spin: 1.8 },
+  { name: '7 IRON', carry: 145, angle: 21, roll: 0.9, spin: 2.2 },
+  { name: '9 IRON', carry: 122, angle: 27, roll: 0.7, spin: 3.4 },
+  { name: 'P WEDGE', carry: 105, angle: 32, roll: 0.5, spin: 4.4 },
+  { name: 'S WEDGE', carry: 80, angle: 40, roll: 0.3, spin: 5.4 },
   { name: 'PUTTER', carry: 0, angle: 0, roll: 1, spin: 0 },
 ];
-// what the ball meets: bounce, how fast it stops rolling (m/s2), colour
+const PUTTER = CLUBS.length - 1;
+// what the ball meets: bounce, how fast it stops rolling (m/s2), colour (linear)
 const SURF = {
-  green: { e: 0.22, roll: 0.62, col: [0.36, 0.62, 0.3] },
-  fringe: { e: 0.25, roll: 1.1, col: [0.33, 0.55, 0.26] },
-  fairway: { e: 0.3, roll: 1.5, col: [0.34, 0.56, 0.24] },
-  tee: { e: 0.3, roll: 1.5, col: [0.35, 0.6, 0.27] },
-  bunker: { e: 0.02, roll: 9, col: [0.86, 0.79, 0.6] },
+  green: { e: 0.22, roll: 0.62, col: [0.1, 0.28, 0.05] },
+  fringe: { e: 0.25, roll: 1.1, col: [0.08, 0.2, 0.038] },
+  fairway: { e: 0.3, roll: 1.5, col: [0.085, 0.22, 0.04] },
+  tee: { e: 0.3, roll: 1.5, col: [0.09, 0.24, 0.045] },
+  bunker: { e: 0.02, roll: 9, col: [0.62, 0.52, 0.33] },
+  water: { e: 0, roll: 9, col: [0.06, 0.16, 0.2] },
   rough: { e: 0.16, roll: 3.4, col: null },
+  out: { e: 0.16, roll: 3.4, col: null },
 };
-const DRAG = 0.0042;      // quadratic drag, per m (tuned against the carries)
+// drawn over the terrain by: the ball rests at the same lift
+const LIFT = { fairway: 0.05, fringe: 0.08, tee: 0.1, green: 0.11, bunker: 0.13, water: 0.14, rough: 0, out: 0 };
+// which wins where two overlap
+const PRI = { rough: 1, fairway: 2, fringe: 3, tee: 4, green: 5, bunker: 6, water: 7 };
+const FLAG_COLS = [[0.75, 0.05, 0.03], [0.85, 0.6, 0.02], [0.03, 0.15, 0.7]];
+const DRAG = 0.0042;      // quadratic drag, per m (the clubs' launch speeds are bisected against it)
+const CELL = 16;          // the surface index's cell
 const ease = (u) => { u = clamp(u, 0, 1); return u * u * (3 - 2 * u); };
 
-/** Which surface is (x, z) on, for hole h? */
-function surfaceAt(h, x, z) {
-  const g = h.green;
-  const gu = (x - g.x) * h.ux + (z - g.z) * h.uz, gv = (x - g.x) * h.uz - (z - g.z) * h.ux;
-  const ge = (gu / g.ra) ** 2 + (gv / g.rc) ** 2;
-  for (const b of h.bunkers) {
-    const bu = (x - b.x) * b.ux + (z - b.z) * b.uz, bv = (x - b.x) * b.uz - (z - b.z) * b.ux;
-    if ((bu / b.ra) ** 2 + (bv / b.rc) ** 2 < 1) return 'bunker';
+function pip(p, x, z) {
+  let c = false;
+  for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
+    if ((p[i][1] > z) !== (p[j][1] > z) && x < ((p[j][0] - p[i][0]) * (z - p[i][1])) / (p[j][1] - p[i][1]) + p[i][0]) c = !c;
   }
-  if (ge < 1) return 'green';
-  if (ge < 1.35) return 'fringe';
-  const s = (x - h.tee.x) * h.ux + (z - h.tee.z) * h.uz, w = Math.abs((x - h.tee.x) * h.uz - (z - h.tee.z) * h.ux);
-  if (s > -4 && s < 4 && w < 3.2) return 'tee';
-  // the fairway: from 20 m out to the green, widest in the middle
-  const half = 11 + 3 * Math.sin(clamp((s - 20) / (h.L - 30), 0, 1) * Math.PI);
-  if (s > 20 && s < h.L - 4 && w < half) return 'fairway';
-  return 'rough';
+  return c;
+}
+function centroid(p) {
+  let a = 0, cx = 0, cz = 0;
+  for (let i = 0; i < p.length; i++) {
+    const [x0, z0] = p[i], [x1, z1] = p[(i + 1) % p.length], k = x0 * z1 - x1 * z0;
+    a += k; cx += (x0 + x1) * k; cz += (z0 + z1) * k;
+  }
+  return Math.abs(a) < 1e-6 ? p[0] : [cx / (3 * a), cz / (3 * a)];
+}
+/** The polygon grown outward by d (mitred, capped at 2d). */
+function grow(p, d) {
+  let a = 0;
+  for (let i = 0; i < p.length; i++) { const q = p[(i + 1) % p.length]; a += p[i][0] * q[1] - q[0] * p[i][1]; }
+  const s = a > 0 ? 1 : -1, n = p.length, out = [];
+  for (let i = 0; i < n; i++) {
+    const A = p[(i + n - 1) % n], B = p[i], C = p[(i + 1) % n];
+    const e1 = [B[0] - A[0], B[1] - A[1]], e2 = [C[0] - B[0], C[1] - B[1]];
+    const l1 = Math.hypot(...e1) || 1, l2 = Math.hypot(...e2) || 1;
+    // outward normal of a CCW (in x, z) ring is (dz, -dx) * s
+    const n1 = [(e1[1] / l1) * s, (-e1[0] / l1) * s], n2 = [(e2[1] / l2) * s, (-e2[0] / l2) * s];
+    let mx = n1[0] + n2[0], mz = n1[1] + n2[1];
+    const ml = Math.hypot(mx, mz) || 1; mx /= ml; mz /= ml;
+    const k = Math.min(2, 1 / Math.max(0.5, mx * n1[0] + mz * n1[1]));
+    out.push([B[0] + mx * d * k, B[1] + mz * d * k]);
+  }
+  return out;
+}
+/** Keep the part of a convex polygon where a x + b z + c >= 0. */
+function clipHalf(poly, a, b, c) {
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const P = poly[i], Q = poly[(i + 1) % poly.length];
+    const fp = a * P[0] + b * P[1] + c, fq = a * Q[0] + b * Q[1] + c;
+    if (fp >= 0) out.push(P);
+    if ((fp >= 0) !== (fq >= 0)) { const t = fp / (fp - fq); out.push([P[0] + (Q[0] - P[0]) * t, P[1] + (Q[1] - P[1]) * t]); }
+  }
+  return out;
+}
+const segT = (px, pz, a, b) => {
+  const dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx * dx + dz * dz || 1;
+  return clamp(((px - a[0]) * dx + (pz - a[1]) * dz) / L2, 0, 1);
+};
+
+/** One course from golf.json: its holes, its polygons and an index over them. */
+function makeCourse(c, world) {
+  const holes = c.holes.map((h) => {
+    const line = h.line;
+    let L = 0;
+    const cum = [0];
+    for (let i = 1; i < line.length; i++) { L += Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]); cum.push(L); }
+    const [ux, uz] = (() => { const a = line[0], b = line[1]; const l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; return [(b[0] - a[0]) / l, (b[1] - a[1]) / l]; })();
+    return { n: h.n, par: h.par, line, cum, L, ux, uz, tee: { x: h.tee[0], z: h.tee[1] }, pin: { x: h.pin[0], z: h.pin[1] }, d: h };
+  });
+  const polys = [];
+  const add = (kind, pts, hole) => {
+    if (!pts || pts.length < 3) return;
+    let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+    for (const [x, z] of pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+    polys.push({ kind, pts, hole, x0, z0, x1, z1 });
+  };
+  for (const h of holes) {
+    const d = h.d;
+    for (const p of d.fairways) add('fairway', p, h);
+    for (const p of d.rough) add('rough', p, h);
+    add('tee', d.teePoly, h);
+    for (const p of d.tees) add('tee', p, h);
+    for (const p of [d.green, ...d.greens]) { add('fringe', grow(p, 1.6), h); add('green', p, h); }
+    for (const p of d.bunkers) add('bunker', p, h);
+    for (const p of d.water) add('water', p, h);
+  }
+  let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+  for (const [x, z] of c.boundary) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+  for (const p of polys) { x0 = Math.min(x0, p.x0); x1 = Math.max(x1, p.x1); z0 = Math.min(z0, p.z0); z1 = Math.max(z1, p.z1); }
+  const nx = Math.ceil((x1 - x0) / CELL) + 1, nz = Math.ceil((z1 - z0) / CELL) + 1;
+  const grid = new Map();
+  for (const p of polys) {
+    for (let j = Math.floor((p.z0 - z0) / CELL); j <= Math.floor((p.z1 - z0) / CELL); j++) {
+      for (let i = Math.floor((p.x0 - x0) / CELL); i <= Math.floor((p.x1 - x0) / CELL); i++) {
+        const k = j * nx + i;
+        let l = grid.get(k);
+        if (!l) grid.set(k, (l = []));
+        l.push(p);
+      }
+    }
+  }
+  // water the world already draws (a pond in its water field) is not drawn again
+  for (const p of polys) if (p.kind === 'water') { const [cx, cz] = centroid(p.pts); p.drawn = world && world.waterLevelAt ? world.waterLevelAt(cx, cz) !== null : false; }
+  const short = c.name.replace(/ Golf.*$/, '');
+  return { id: c.id, name: c.name, short, boundary: c.boundary, holes, polys, grid, x0, z0, x1, z1, nx, nz };
+}
+
+/** Which surface is (x, z) on, on course C ('out' past its boundary)? */
+function surfaceOf(C, x, z, poly = false) {
+  if (x < C.x0 || z < C.z0 || x > C.x1 || z > C.z1) return poly ? null : 'out';
+  const l = C.grid.get(Math.floor((z - C.z0) / CELL) * C.nx + Math.floor((x - C.x0) / CELL));
+  let best = null;
+  if (l) for (const p of l) {
+    if (x < p.x0 || x > p.x1 || z < p.z0 || z > p.z1 || (best && PRI[p.kind] <= PRI[best.kind])) continue;
+    if (pip(p.pts, x, z)) best = p;
+  }
+  if (poly) return best;
+  if (best) return best.kind;
+  return pip(C.boundary, x, z) ? 'rough' : 'out';
 }
 
 export class Golf {
-  /** opts: { scene, city, world, audio, controls, onReward, onEnd } */
-  constructor(opts) {
+  /** data: golf.json; opts: { scene, city, world, audio, controls, onReward, onEnd } */
+  constructor(data, opts) {
     this.o = opts;
-    this.state = 'off';          // off | aim | power | accuracy | swing | fly | roll | holed | card
-    this.best = 0;
-    try { this.best = +localStorage.getItem('autokw-golf-best') || 0; } catch (e) { /* private */ }
-    this.holes = HOLES;
-    this.tee = { ...HOLES[0].tee };
-    this._keepClear();
-    this._buildCourse();
-    this._buildDom();
+    this.state = 'off';          // off | aim | power | accuracy | swing | fly | roll | rest | holed | card
+    this.courses = ((data && data.courses) || []).map((c) => makeCourse(c, opts.world));
+    this.bests = {};
+    for (const C of this.courses) {
+      try { this.bests[C.id] = JSON.parse(localStorage.getItem(`autokw-golf-${C.id}`) || '{}') || {}; } catch (e) { this.bests[C.id] = {}; }
+    }
+    this.C = this.courses[0] || null;
     this._v = new THREE.Vector3();
+    if (!this.C) return;
+    this._buildCourses();
+    this._buildDom();
   }
 
   get active() { return this.state !== 'off'; }
+  /** Fewest strokes of any round recorded (the passport counts > 0 as played). */
+  get best() {
+    let b = 0;
+    for (const id in this.bests) for (const k in this.bests[id]) { const s = this.bests[id][k]; if (s > 0 && (!b || s < b)) b = s; }
+    return b;
+  }
+  /** The tee each course's map marker stands at (its first hole's). */
+  get firstTees() { return this.courses.map((C) => ({ x: C.holes[0].tee.x, z: C.holes[0].tee.z, name: C.name, short: C.short, id: C.id })); }
 
-  _keepClear() {
-    // no park trees or benches on the tees, fairways and greens
-    const { city } = this.o;
-    const rects = HOLES.map((h) => {
-      const px = h.uz, pz = -h.ux;
-      return { x: h.tee.x, z: h.tee.z, dx: h.ux, dz: h.uz, px, pz, u0: -8, u1: h.L + 14, hw: 17, reach: h.L + 30 };
-    });
-    city.jumpClearRects = [...(city.jumpClearRects || []), ...rects];
+  /** Nothing grows on a tee, fairway, green or bunker, nor within 3 m of one (city.extraClear). */
+  keepClear(x, z) {
+    for (const C of this.courses) {
+      if (x < C.x0 - 3 || z < C.z0 - 3 || x > C.x1 + 3 || z > C.z1 + 3) continue;
+      for (const [dx, dz] of [[0, 0], [3, 0], [-3, 0], [0, 3], [0, -3]]) {
+        const p = surfaceOf(C, x + dx, z + dz, true);
+        if (p && p.kind !== 'rough') return true;
+      }
+    }
+    return false;
   }
 
-  _buildCourse() {
+  // --- the courses: one draped mesh each --------------------------------------------
+
+  _buildCourses() {
     const { scene } = this.o;
-    const b = new Builder(false);
-    const Y = (x, z) => G.terrainHeight(x, z);
-    for (const h of HOLES) {
-      // The course's ground is cut out of a 1 m grid by marching squares over
-      // signed distance fields -- the union of tee, fairway and fringe for the
-      // grass, each bunker for the sand drawn a little over it -- so edges
-      // follow the true shapes instead of stepping cell by cell. Each vertex
-      // is coloured by its surface (stripes on the fairway, tee and green),
-      // colour between surfaces blends across a cell, which reads as mowing.
-      const S0 = -8, S1 = h.L + 14, W = 17, STEP = 1;
-      const at = (s, w) => [h.tee.x + h.ux * s + h.uz * w, h.tee.z + h.uz * s - h.ux * w];
-      const colAt = (x, z, s, w) => {
-        let kind = surfaceAt(h, x, z);
-        if (kind === 'rough' || kind === 'bunker') kind = 'fringe';
-        let col = SURF[kind].col;
-        if (kind === 'fairway' || kind === 'green' || kind === 'tee') {
-          const band = kind === 'green' ? Math.floor(w / 2.2) : Math.floor(s / 7);
-          const k = band % 2 ? 1.06 : 0.94;
-          col = [col[0] * k, col[1] * k, col[2] * k];
-        }
-        return col;
-      };
-      // a triangle facing up, each corner its own colour
-      const tri = (A, B, C) => {
-        const ux = B.p[0] - A.p[0], uz = B.p[2] - A.p[2], vx = C.p[0] - A.p[0], vz = C.p[2] - A.p[2];
-        if (uz * vx - ux * vz < 0) { const t = B; B = C; C = t; }
-        const i = [A, B, C].map((q) => b.vert(q.p[0], q.p[1], q.p[2], 0, 1, 0, 0, 0, q.col[0], q.col[1], q.col[2]));
-        b.face3(i[0], i[1], i[2]);
-      };
-      const layer = (field, lift, colFn) => {
-        const nx = Math.round((S1 - S0) / STEP), nw = Math.round((2 * W) / STEP);
-        const F = [];
-        for (let i = 0; i <= nx; i++) { const r = []; for (let j = 0; j <= nw; j++) { const [x, z] = at(S0 + i * STEP, -W + j * STEP); r.push(field(x, z)); } F.push(r); }
-        for (let i = 0; i < nx; i++) for (let j = 0; j < nw; j++) {
-          const c = [[i, j], [i + 1, j], [i + 1, j + 1], [i, j + 1]];
-          const f = c.map(([a, bb]) => F[a][bb]);
-          if (f.every((v) => v <= 0)) continue;
-          // clip the cell to f > 0 (Sutherland-Hodgman against one implicit edge)
-          const poly = [];
-          for (let k = 0; k < 4; k++) {
-            const [ia, ja] = c[k], [ib, jb] = c[(k + 1) % 4], fa = f[k], fb = f[(k + 1) % 4];
-            if (fa > 0) poly.push([ia, ja]);
-            if ((fa > 0) !== (fb > 0)) { const t = fa / (fa - fb); poly.push([ia + (ib - ia) * t, ja + (jb - ja) * t]); }
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    this.courseMesh = new THREE.Group();
+    this.courseMesh.name = 'golf';
+    this.stats = { tris: 0 };
+    for (const C of this.courses) {
+      const b = new Builder(false);
+      // A polygon drawn ON the terrain: earcut into triangles, each cut along
+      // the terrain mesh's own 40 m cells and their diagonals (world.js
+      // splits each cell along tx + tz = 1), so every piece is a plane through
+      // the ground it lies on; then into mowing stripes along `st`.
+      const S = G.HF_STEP, H = G.MAP_HALF;
+      const drape = (pts, lift, col, st) => {
+        let tris;
+        try { tris = THREE.ShapeUtils.triangulateShape(pts.map((q) => new THREE.Vector2(q[0], q[1])), []); } catch (e) { return; }
+        const emit = (poly, c) => {
+          if (poly.length < 3) return;
+          const P = poly.map(([x, z]) => [x, G.terrainHeight(x, z) + lift, z]);
+          // the piece's plane: the ground's normal
+          const ax = P[1][0] - P[0][0], ay = P[1][1] - P[0][1], az = P[1][2] - P[0][2];
+          let nx = 0, ny = 1, nz = 0;
+          for (let k = 2; k < P.length; k++) {
+            const bx = P[k][0] - P[0][0], by = P[k][1] - P[0][1], bz = P[k][2] - P[0][2];
+            const cx = ay * bz - az * by, cy = az * bx - ax * bz, cz = ax * by - ay * bx, l = Math.hypot(cx, cy, cz);
+            if (l > 1e-4) { const sg = cy < 0 ? -1 : 1; nx = (cx / l) * sg; ny = (cy / l) * sg; nz = (cz / l) * sg; break; }
           }
-          if (poly.length < 3) continue;
-          const pts = poly.map(([pi, pj]) => {
-            const sv = S0 + pi * STEP, wv = -W + pj * STEP, [x, z] = at(sv, wv);
-            return { p: [x, G.terrainHeight(x, z) + lift, z], col: colFn(x, z, sv, wv) };
-          });
-          for (let k = 1; k < pts.length - 1; k++) tri(pts[0], pts[k], pts[k + 1]);
+          for (let k = 1; k < P.length - 1; k++) b.tri(P[0], P[k], P[k + 1], [nx, ny, nz], c);
+        };
+        for (const [i0, i1, i2] of tris) {
+          const T = [pts[i0], pts[i1], pts[i2]];
+          const tx0 = Math.min(T[0][0], T[1][0], T[2][0]), tx1 = Math.max(T[0][0], T[1][0], T[2][0]);
+          const tz0 = Math.min(T[0][1], T[1][1], T[2][1]), tz1 = Math.max(T[0][1], T[1][1], T[2][1]);
+          for (let j = Math.floor((tz0 + H) / S); j <= Math.floor((tz1 + H) / S); j++) {
+            for (let i = Math.floor((tx0 + H) / S); i <= Math.floor((tx1 + H) / S); i++) {
+              const x0 = -H + i * S, z0 = -H + j * S, dd = x0 + z0 + S;
+              const halves = [
+                clipHalf(clipHalf(clipHalf(T, 1, 0, -x0), 0, 1, -z0), -1, -1, dd),
+                clipHalf(clipHalf(clipHalf(T, -1, 0, x0 + S), 0, -1, z0 + S), 1, 1, -dd),
+              ];
+              for (const piece of halves) {
+                if (piece.length < 3) continue;
+                if (!st) { emit(piece, col); continue; }
+                let s0 = Infinity, s1 = -Infinity;
+                for (const [x, z] of piece) { const s = x * st.ux + z * st.uz; s0 = Math.min(s0, s); s1 = Math.max(s1, s); }
+                for (let k = Math.floor(s0 / st.w); k * st.w < s1; k++) {
+                  const band = clipHalf(clipHalf(piece, st.ux, st.uz, -k * st.w), -st.ux, -st.uz, (k + 1) * st.w);
+                  const m = k % 2 ? 1.1 : 0.9;
+                  emit(band, [col[0] * m, col[1] * m, col[2] * m]);
+                }
+              }
+            }
+          }
         }
       };
-      // grass: tee, fairway and the fringe round the green (the green is inside it)
-      const ell = (x, z, cx, cz, ra, rc, ux, uz) => {
-        const u = (x - cx) * ux + (z - cz) * uz, v = (x - cx) * uz - (z - cz) * ux;
-        return (1 - Math.hypot(u / ra, v / rc)) * Math.min(ra, rc);
+      const dirAt = (h, x, z) => {
+        // the hole's direction where (x, z) is: its nearest leg
+        let best = Infinity, ux = h.ux, uz = h.uz;
+        for (let i = 1; i < h.line.length; i++) {
+          const a = h.line[i - 1], c = h.line[i], t = segT(x, z, a, c);
+          const d = Math.hypot(x - (a[0] + (c[0] - a[0]) * t), z - (a[1] + (c[1] - a[1]) * t));
+          if (d < best) { best = d; const l = Math.hypot(c[0] - a[0], c[1] - a[1]) || 1; ux = (c[0] - a[0]) / l; uz = (c[1] - a[1]) / l; }
+        }
+        return [ux, uz];
       };
-      const grass = (x, z) => {
-        const s = (x - h.tee.x) * h.ux + (z - h.tee.z) * h.uz, w = Math.abs((x - h.tee.x) * h.uz - (z - h.tee.z) * h.ux);
-        const tee = Math.min(4 - Math.abs(s), 3.2 - w);
-        const half = 11 + 3 * Math.sin(clamp((s - 20) / (h.L - 30), 0, 1) * Math.PI);
-        const fw = Math.min(half - w, s - 20, h.L - 4 - s);
-        const fr = ell(x, z, h.green.x, h.green.z, h.green.ra * 1.162, h.green.rc * 1.162, h.ux, h.uz);
-        return Math.max(tee, fw, fr);
-      };
-      layer(grass, 0.045, colAt);
-      for (const bk of h.bunkers) layer((x, z) => ell(x, z, bk.x, bk.z, bk.ra, bk.rc, bk.ux, bk.uz), 0.06, () => SURF.bunker.col);
-      // the cup, the flagstick and its flag; tee markers
-      const py = Y(h.pin.x, h.pin.z) + 0.047;
-      const cup = [];
-      for (let k = 0; k <= 16; k++) { const t = (k / 16) * Math.PI * 2; cup.push([h.pin.x + Math.cos(t) * CUP_R * 1.4, py, h.pin.z + Math.sin(t) * CUP_R * 1.4]); }
-      for (let k = 0; k < 16; k++) b.tri([h.pin.x, py + 0.001, h.pin.z], cup[k], cup[k + 1], [0, 1, 0], [0.04, 0.04, 0.05]);
-      b.tube([h.pin.x, py - 0.1, h.pin.z], [h.pin.x, py + 2.2, h.pin.z], 0.012, 6, [0.95, 0.95, 0.92]);
-      for (const sd of [-1, 1]) {
-        const mx = h.tee.x + h.uz * sd * 2.6 + h.ux * 1.5, mz = h.tee.z - h.ux * sd * 2.6 + h.uz * 1.5;
-        b.spheroid(mx, Y(mx, mz) + 0.12, mz, 0.1, 8, 5, [0.9, 0.2, 0.15]);
+      const order = ['fairway', 'tee', 'fringe', 'green', 'bunker', 'water'];
+      for (const kind of order) {
+        for (const p of C.polys) {
+          if (p.kind !== kind || (kind === 'water' && p.drawn)) continue;
+          const [cx, cz] = centroid(p.pts);
+          const [ux, uz] = dirAt(p.hole, cx, cz);
+          const st = kind === 'fairway' ? { ux, uz, w: 12 } : kind === 'tee' ? { ux, uz, w: 3 } : kind === 'green' ? { ux: uz, uz: -ux, w: 3 } : null;
+          drape(p.pts, LIFT[kind], SURF[kind].col, st);
+        }
       }
-      // the hole's board by the tee
-      const sx = h.tee.x - h.uz * 5 - h.ux * 1, sz = h.tee.z + h.ux * 5 - h.uz * 1;
-      b.box(sx, Y(sx, sz), sz, 0.08, 1.2, 0.08, 0, [0.35, 0.26, 0.16]);
-      h.board = { x: sx, z: sz, y: Y(sx, sz) + 1.0 };
+      // the pins: the cup, the flagstick and its flag; the tee markers
+      const Y = (x, z) => G.terrainHeight(x, z);
+      for (const h of C.holes) {
+        const py = Y(h.pin.x, h.pin.z) + LIFT.green + 0.003;
+        const cup = [];
+        for (let k = 0; k <= 12; k++) { const t = (k / 12) * Math.PI * 2; cup.push([h.pin.x + Math.cos(t) * CUP_R * 1.4, py, h.pin.z + Math.sin(t) * CUP_R * 1.4]); }
+        for (let k = 0; k < 12; k++) b.tri([h.pin.x, py, h.pin.z], cup[k], cup[k + 1], [0, 1, 0], [0.01, 0.01, 0.012]);
+        b.tube([h.pin.x, py - 0.1, h.pin.z], [h.pin.x, py + 2.3, h.pin.z], 0.014, 5, [0.9, 0.9, 0.86]);
+        // the flag, both faces, blowing across the line of play
+        const fc = FLAG_COLS[(h.n - 1) % 3], fx = h.uz * 0.55, fz = -h.ux * 0.55;
+        const A = [h.pin.x, py + 2.3, h.pin.z], B = [h.pin.x, py + 1.92, h.pin.z], Cc = [h.pin.x + fx, py + 2.12, h.pin.z + fz];
+        b.tri(A, B, Cc, [h.ux, 0, h.uz], fc); b.tri(A, Cc, B, [-h.ux, 0, -h.uz], fc);
+        const sx = h.uz, sz = -h.ux;
+        for (const sd of [-1, 1]) {
+          const mx = h.tee.x + sx * sd * 2.4 + h.ux * 1.2, mz = h.tee.z + sz * sd * 2.4 + h.uz * 1.2;
+          b.box(mx, Y(mx, mz) + LIFT.tee, mz, 0.16, 0.16, 0.16, 0, h.n % 3 === 1 ? [0.75, 0.05, 0.03] : [0.85, 0.85, 0.82]);
+        }
+      }
+      const m = new THREE.Mesh(b.build(), mat);
+      m.receiveShadow = true;
+      m.name = `golf:${C.id}`;
+      const tris = m.geometry.index ? m.geometry.index.count / 3 : m.geometry.attributes.position.count / 3;
+      this.stats.tris += tris; this.stats[C.id] = tris;
+      this.courseMesh.add(m);
     }
-    this.courseMesh = new THREE.Mesh(b.build(), this.o.world.mats.flat);
-    this.courseMesh.receiveShadow = true;
-    this.courseMesh.name = 'golfCourse';
     scene.add(this.courseMesh);
-    // flags (cloth that can wave) and the hole boards (text)
-    this.flags = HOLES.map((h) => {
-      const f = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.34, 4, 1), new THREE.MeshStandardMaterial({ color: [0xd23a2a, 0xf0c020, 0x2a6fd2][h.n - 1], side: THREE.DoubleSide, roughness: 0.8 }));
-      f.geometry.translate(0.25, 0, 0);
-      f.position.set(h.pin.x, Y(h.pin.x, h.pin.z) + 2.05, h.pin.z);
-      f.userData.base = f.geometry.attributes.position.array.slice();
-      scene.add(f);
-      return f;
-    });
-    this.boards = HOLES.map((h) => {
-      const c = document.createElement('canvas'); c.width = 256; c.height = 128;
-      const g = c.getContext('2d');
-      g.fillStyle = '#1f4a2c'; g.fillRect(0, 0, 256, 128);
-      g.strokeStyle = '#e8e0c0'; g.lineWidth = 5; g.strokeRect(4, 4, 248, 120);
-      g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.font = '900 40px Helvetica, Arial, sans-serif'; g.fillText(`HOLE ${h.n}`, 128, 44);
-      g.font = '700 24px Helvetica, Arial, sans-serif'; g.fillText(`PAR 3 · ${Math.round(h.L * YD)} YDS`, 128, 92);
-      const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.5), new THREE.MeshStandardMaterial({ map: t, roughness: 0.8, side: THREE.DoubleSide }));
-      m.position.set(h.board.x, h.board.y + 0.25, h.board.z);
-      m.rotation.y = Math.atan2(-h.ux, -h.uz) + Math.PI / 2;
-      scene.add(m);
-      return m;
-    });
     // the ball, its trail, the aim marker, and the club
     this.ball = new THREE.Mesh(new THREE.SphereGeometry(BALL_DRAW, 12, 8), new THREE.MeshStandardMaterial({ color: 0xf8f8f4, roughness: 0.35 }));
     this.ball.castShadow = true;
     this.ball.visible = false;
     scene.add(this.ball);
-    const TR = 48;
+    const TR = 64;
     this.trailPos = new Float32Array(TR * 3);
     const tg = new THREE.BufferGeometry();
     tg.setAttribute('position', new THREE.BufferAttribute(this.trailPos, 3));
@@ -261,7 +361,7 @@ export class Golf {
       <div class="gMsg"></div>
       <button class="gSwing">SWING</button><button class="gClubBtn">CLUB</button><button class="gQuit">✕</button>
       <div class="gHint">Aim with the stick · SWING: tap for power, tap again in the white</div>
-      <div class="gCard"><div class="gCardT"></div><table class="gTab"></table><div class="gCardS"></div><button class="gAgain">Play again</button><button class="gDone">Done</button></div>`;
+      <div class="gCard"><div class="gCardC"></div><div class="gCardT"></div><table class="gTab"></table><div class="gCardS"></div><button class="gAgain">Play again</button><button class="gDone">Done</button></div>`;
     const st = document.createElement('style');
     st.textContent = `
       #golfUi { position: absolute; inset: 0; z-index: 35; display: none; pointer-events: none; font: 800 14px -apple-system, Helvetica, sans-serif; color: #fff; }
@@ -291,6 +391,7 @@ export class Golf {
       #golfUi .gHint { position: absolute; left: 0; right: 0; bottom: calc(52px + var(--safe-b, 0px)); text-align: center; font-size: 12px; opacity: .8; text-shadow: 0 1px 6px #000; }
       #golfUi .gCard { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: rgba(8,20,12,.6); pointer-events: auto; }
       #golfUi .gCard.on { display: flex; }
+      #golfUi .gCardC { font-size: 14px; letter-spacing: .08em; opacity: .85; }
       #golfUi .gCardT { font-size: 32px; font-weight: 900; }
       #golfUi .gTab { border-collapse: collapse; font-size: 15px; } #golfUi .gTab td { padding: 5px 12px; border: 1px solid #fff4; text-align: center; }
       #golfUi .gCardS { font-size: 14px; opacity: .88; margin-bottom: 6px; }
@@ -302,7 +403,7 @@ export class Golf {
     const q = (s) => d.querySelector(s);
     this.ui = { hole: q('.gHole'), shot: q('.gShot'), dist: q('.gDist'), arrow: q('.gArrow'), ws: q('.gWs'), cn: q('.gCn'), cc: q('.gCc'), lie: q('.gLie'),
       meter: q('.gMeter'), fill: q('.gFill'), sweet: q('.gSweet'), needle: q('.gNeedle'), msg: q('.gMsg'), hint: q('.gHint'),
-      card: q('.gCard'), cardT: q('.gCardT'), tab: q('.gTab'), cardS: q('.gCardS'), clubBtn: q('.gClubBtn') };
+      card: q('.gCard'), cardC: q('.gCardC'), cardT: q('.gCardT'), tab: q('.gTab'), cardS: q('.gCardS'), clubBtn: q('.gClubBtn') };
     q('.gSwing').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); this.tap(); });
     q('.gClubBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); this.nextClub(); });
     q('.gQuit').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); this.close(); });
@@ -327,42 +428,56 @@ export class Golf {
 
   // --- the round ----------------------------------------------------------------------
 
-  /** ENTER on foot on (or by) the first tee? */
+  /** ENTER on foot on (or by) a starting tee (holes 1, 4, 7, ...)? Remembers which. */
   near(pl) {
-    const t = HOLES[0].tee;
-    return Math.hypot(pl.x - t.x, pl.z - t.z) < 8 && Math.abs(pl.y - G.terrainHeight(t.x, t.z)) < 3;
+    for (const C of this.courses) {
+      if (pl.x < C.x0 - 20 || pl.z < C.z0 - 20 || pl.x > C.x1 + 20 || pl.z > C.z1 + 20) continue;
+      for (let k = 0; k < C.holes.length; k += ROUND) {
+        const t = C.holes[k].tee;
+        if (Math.hypot(pl.x - t.x, pl.z - t.z) < 8 && Math.abs(pl.y - G.terrainHeight(t.x, t.z)) < 3) { this._pick = { C, k }; return true; }
+      }
+    }
+    return false;
   }
 
   start(env) {
-    this.env = env;              // { camera, player, bones }
+    this.env = env;              // { camera, player }
     this.fov0 = env.camera.fov;
+    if (this._pick) { this.C = this._pick.C; this.k0 = this._pick.k; } else this.k0 = this.k0 || 0;
     document.body.classList.add('golfOn');
     this.el.classList.add('show');
     this.club.visible = true;
     this._round();
   }
 
+  /** The holes of this round. */
+  get holes() { return this.C ? this.C.holes.slice(this.k0 || 0, (this.k0 || 0) + ROUND) : []; }
+
   _round() {
     this.scores = [];
     this.holeIndex = 0;
     this.aces = 0;
+    this.paid = 0;
     this.ui.card.classList.remove('on');
     this._hole(0);
   }
 
   _hole(i) {
-    const h = HOLES[i];
+    const h = this.holes[i];
     this.h = h;
     this.holeIndex = i;
     this.strokes = 0;
+    this.spin = 0; this.check = 0;
     // a breeze for the hole: 0-6 m/s from anywhere
     const wa = Math.random() * Math.PI * 2, ws = Math.random() * 6;
     this.wind = { x: Math.cos(wa) * ws, z: Math.sin(wa) * ws, s: ws };
-    this._placeBall(h.tee.x + h.ux * 0.6, h.tee.z + h.uz * 0.6);
-    this.aim = Math.atan2(h.pin.x - this.bx, h.pin.z - this.bz);
-    this._msg(`HOLE ${h.n} · PAR 3 · ${Math.round(h.L * YD)} YDS`, '#fff', 2.2);
+    this._placeBall(h.tee.x, h.tee.z);
+    this._cam = null;
+    this._msg(`HOLE ${h.n} · PAR ${h.par} · ${Math.round(h.L * YD)} YDS`, '#fff', 2.2);
     this._ready();
   }
+
+  _surf(x, z) { return surfaceOf(this.C, x, z); }
 
   _placeBall(x, z) {
     this.bx = x; this.bz = z;
@@ -372,24 +487,53 @@ export class Golf {
   }
 
   _ground(x, z) {
-    const s = surfaceAt(this.h, x, z);
-    // what is drawn there: the grass layer at 4.5 cm, the sand over it at 6
-    return G.terrainHeight(x, z) + (s === 'rough' ? 0 : s === 'bunker' ? 0.06 : 0.045);
+    // what is drawn there: each surface at its lift over the terrain
+    return G.terrainHeight(x, z) + LIFT[this._surf(x, z)];
   }
 
-  /** Set up for the next stroke: pick the club, face the pin. */
+  /** Where to aim from the ball: the pin, or down the hole's line as far as a driver goes. */
+  _target() {
+    const h = this.h, reach = CLUBS[this.lie === 'tee' ? 0 : 1].carry * 0.97;
+    const dPin = Math.hypot(h.pin.x - this.bx, h.pin.z - this.bz);
+    if (dPin <= reach * 1.08) return { x: h.pin.x, z: h.pin.z, d: dPin, pin: true };
+    // the nearest point on the line, then on along it until a driver's reach away
+    let bi = 0, bt = 0, bd = Infinity;
+    for (let i = 1; i < h.line.length; i++) {
+      const a = h.line[i - 1], c = h.line[i], t = segT(this.bx, this.bz, a, c);
+      const d = Math.hypot(this.bx - (a[0] + (c[0] - a[0]) * t), this.bz - (a[1] + (c[1] - a[1]) * t));
+      if (d < bd) { bd = d; bi = i; bt = t; }
+    }
+    let s = h.cum[bi - 1] + (h.cum[bi] - h.cum[bi - 1]) * bt;
+    const at = (s0) => {
+      let i = 1;
+      while (i < h.line.length - 1 && h.cum[i] < s0) i++;
+      const a = h.line[i - 1], c = h.line[i], t = clamp((s0 - h.cum[i - 1]) / ((h.cum[i] - h.cum[i - 1]) || 1), 0, 1);
+      return [a[0] + (c[0] - a[0]) * t, a[1] + (c[1] - a[1]) * t];
+    };
+    for (; s < h.L; s += 2) {
+      const [x, z] = at(s);
+      if (Math.hypot(x - this.bx, z - this.bz) >= reach) return { x, z, d: Math.hypot(x - this.bx, z - this.bz), pin: false };
+    }
+    return { x: h.pin.x, z: h.pin.z, d: dPin, pin: true };
+  }
+
+  /** Set up for the next stroke: pick the club, face the target. */
   _ready() {
     const h = this.h;
     const dist = Math.hypot(h.pin.x - this.bx, h.pin.z - this.bz);
-    this.lie = surfaceAt(h, this.bx, this.bz);
-    if (this.lie === 'green' || (this.lie === 'fringe' && dist < 12)) this.clubI = 4;
-    else {
-      // the shortest club that carries the distance, leaving room for the run
-      this.clubI = 3;
-      for (let k = 0; k < 4; k++) if (CLUBS[k].carry * 0.93 <= dist + 4) { this.clubI = k; break; }
-      if (CLUBS[0].carry < dist) this.clubI = 0;
+    this.lie = this._surf(this.bx, this.bz);
+    if (this.lie === 'green' || (this.lie === 'fringe' && dist < 15)) {
+      this.clubI = PUTTER;
+      this.aim = Math.atan2(h.pin.x - this.bx, h.pin.z - this.bz);
+    } else {
+      const tg = this._target();
+      // the longest club that doesn't fly it much past, leaving room for the run;
+      // no driver off the deck
+      this.clubI = PUTTER - 1;
+      for (let k = this.lie === 'tee' ? 0 : 1; k < PUTTER; k++) if (CLUBS[k].carry * 0.93 <= tg.d + 4) { this.clubI = k; break; }
+      this.aim = Math.atan2(tg.x - this.bx, tg.z - this.bz);
+      this.tgt = tg;
     }
-    if (this.lie !== 'green') this.aim = Math.atan2(h.pin.x - this.bx, h.pin.z - this.bz);
     this.state = 'aim';
     this.power = 0; this.acc = 0; this.t = 0;
     this._hud();
@@ -404,7 +548,7 @@ export class Golf {
   _hud() {
     const h = this.h, dist = Math.hypot(h.pin.x - this.bx, h.pin.z - this.bz);
     const c = CLUBS[this.clubI];
-    this.ui.hole.textContent = `HOLE ${h.n} · PAR ${h.par}`;
+    this.ui.hole.textContent = `${this.C.short.toUpperCase()} · HOLE ${h.n} · PAR ${h.par}`;
     this.ui.shot.textContent = `STROKE ${this.strokes + 1}`;
     this.ui.dist.textContent = dist > 30 ? `${Math.round(dist * YD)} YDS` : `${dist.toFixed(1)} M`;
     this.ui.cn.textContent = c.name;
@@ -420,7 +564,7 @@ export class Golf {
     if (this.state === 'aim') { this.state = 'power'; this.t = 0; }
     else if (this.state === 'power') {
       this.power = this._meter();
-      if (this.clubI === 4) { this.acc = 0; this._swing(); }
+      if (this.clubI === PUTTER) { this.acc = 0; this._swing(); }
       else { this.state = 'accuracy'; this.t = 0; }
     } else if (this.state === 'accuracy') {
       this.acc = this._needle();
@@ -440,11 +584,12 @@ export class Golf {
   }
 
   _launch() {
-    const c = CLUBS[this.clubI], h = this.h;
+    const c = CLUBS[this.clubI];
     this.prev = { x: this.bx, z: this.bz };
+    this.dry = { x: this.bx, z: this.bz };
     // accuracy: 0.1 is dead on; early (above) hooks left, late (below) slices right
     const err = clamp((this.acc - 0.1) / 0.1, -1.6, 1.6);
-    if (this.clubI === 4) {
+    if (this.clubI === PUTTER) {
       // a putt: pace from the meter, straight along the aim
       const sp = 0.5 + this.power * 6.2;
       this.vel = new THREE.Vector3(Math.sin(this.aim) * sp, 0, Math.cos(this.aim) * sp);
@@ -463,13 +608,12 @@ export class Golf {
     this.state = 'fly'; this.t = 0;
     this.trailN = 0; this.trail.visible = true;
     this._sfx('punch', 0.55, 1.6);
-    void h;
   }
 
   /** Launch speed that carries a club its full distance in still air (bisected once and kept). */
   _speedFor(c) {
     if (c._v) return c._v;
-    let lo = 10, hi = 90;
+    let lo = 10, hi = 160;
     for (let it = 0; it < 30; it++) {
       const mid = (lo + hi) / 2;
       if (this._carry(mid, c.angle) < c.carry) lo = mid; else hi = mid;
@@ -479,7 +623,7 @@ export class Golf {
   _carry(v0, deg) {
     const a = deg * Math.PI / 180, dt = 1 / 120;
     let x = 0, y = 0, vx = Math.cos(a) * v0, vy = Math.sin(a) * v0;
-    for (let i = 0; i < 2000; i++) {
+    for (let i = 0; i < 4000; i++) {
       const v = Math.hypot(vx, vy);
       vx -= DRAG * v * vx * dt; vy -= (9.81 + DRAG * v * vy) * dt;
       x += vx * dt; y += vy * dt;
@@ -489,7 +633,7 @@ export class Golf {
   }
 
   _flyStep(dt) {
-    const h = this.h, P = this.vel, n = 4, sdt = dt / n;
+    const P = this.vel, n = 6, sdt = dt / n;
     for (let k = 0; k < n; k++) {
       // air-relative drag, a breeze that grows with height, the curve
       const lift = clamp((this.by - this._ground(this.bx, this.bz)) / 20, 0.3, 1);
@@ -499,15 +643,18 @@ export class Golf {
       const hv = Math.hypot(P.x, P.z) || 1;
       P.x += (P.z / hv) * this.spin * sdt; P.z -= (P.x / hv) * this.spin * sdt;
       this.bx += P.x * sdt; this.by += P.y * sdt; this.bz += P.z * sdt;
+      const kind = this._surf(this.bx, this.bz);
+      if (kind !== 'water') this.dry = { x: this.bx, z: this.bz };
       // a trunk in the way knocks it back
-      const gy = this._ground(this.bx, this.bz);
+      const gy = G.terrainHeight(this.bx, this.bz) + LIFT[kind];
       if (this.by - gy < 5) {
         const hit = this.o.city.obstacleHit && this.o.city.obstacleHit(this.bx, this.bz, 0.05, this.by);
         if (hit && hit.pen > 0) { P.x = hit.nx * Math.abs(P.x) * 0.3; P.z = hit.nz * Math.abs(P.z) * 0.3; P.y *= 0.4; this._sfx('thunk', 0.4, 1.4); }
       }
       if (this.by <= gy + BALL_R && P.y < 0) {
+        if (kind === 'water') { this._water(); return; }
         // down: bounce by the surface, then roll
-        const s = SURF[surfaceAt(h, this.bx, this.bz)];
+        const s = SURF[kind];
         this.by = gy + BALL_R;
         const c = CLUBS[this.clubI];
         P.y = -P.y * s.e;
@@ -533,10 +680,35 @@ export class Golf {
     }
   }
 
+  /** In the water: a stroke, and a drop where it went in (a little back toward the shot). */
+  _water() {
+    this.strokes++;
+    this._msg('WATER · +1', '#7ac8ff');
+    this._sfx('splash', 0.5, 1.4);
+    let { x, z } = this.dry;
+    const dx = this.prev.x - x, dz = this.prev.z - z, l = Math.hypot(dx, dz) || 1;
+    for (let k = 0; k < 40 && this._surf(x, z) === 'water'; k++) { x += (dx / l) * 1; z += (dz / l) * 1; }
+    x += (dx / l) * Math.min(2, l); z += (dz / l) * Math.min(2, l);
+    this._placeBall(x, z);
+    this.vel.set(0, 0, 0);
+    this.state = 'rest'; this.t = 0;
+  }
+
+  /** Off the course: a stroke, and the shot again from where it was hit. */
+  _out() {
+    this.strokes++;
+    this._msg('OUT OF BOUNDS · +1', '#ff8a6a');
+    this._placeBall(this.prev.x, this.prev.z);
+    this.vel.set(0, 0, 0);
+    this.state = 'rest'; this.t = 0;
+  }
+
   _rollStep(dt) {
     const h = this.h, P = this.vel, n = 4, sdt = dt / n;
     for (let k = 0; k < n; k++) {
-      const kind = surfaceAt(h, this.bx, this.bz), s = SURF[kind];
+      const kind = this._surf(this.bx, this.bz), s = SURF[kind];
+      if (kind === 'water') { this._water(); return; }
+      this.dry = { x: this.bx, z: this.bz };
       // downhill: the terrain's gradient
       const e = 0.5, g0 = G.terrainHeight(this.bx, this.bz);
       const gx = (G.terrainHeight(this.bx + e, this.bz) - g0) / e, gz = (G.terrainHeight(this.bx, this.bz + e) - g0) / e;
@@ -550,7 +722,7 @@ export class Golf {
       const nx = this.bx + P.x * sdt, nz = this.bz + P.z * sdt;
       // the cup: slow enough over it and it drops; faster lips out
       const cx = nx - h.pin.x, cz = nz - h.pin.z, cd = Math.hypot(cx, cz);
-      if (cd < CUP_R) {
+      if (cd < CUP_R + BALL_R * 0.6) {
         const spd = Math.hypot(P.x, P.z);
         if (spd < 1.6) { this.bx = h.pin.x; this.bz = h.pin.z; this._holed(); return; }
         // lip out: turned by the rim
@@ -558,46 +730,52 @@ export class Golf {
         P.x = Math.cos(t) * spd * 0.7; P.z = Math.sin(t) * spd * 0.7;
       }
       this.bx = nx; this.bz = nz;
-      // out of the course's ground (a road, a building): back where it was hit from, a stroke added
-      if (this.o.city.onRoad(this.bx, this.bz, 0) || (this.o.world.inBuilding && this.o.world.inBuilding(this.bx, this.bz, 0))) {
-        this.strokes++;
-        this._msg('OUT OF BOUNDS · +1', '#ff8a6a');
-        this._placeBall(this.prev.x, this.prev.z);
-        P.set(0, 0, 0);
-        this.state = 'rest'; this.t = 0;
-        return;
-      }
+      // onto a road or into a building: out of bounds
+      if (this.o.city.onRoad(this.bx, this.bz, 0) || (this.o.world.inBuilding && this.o.world.inBuilding(this.bx, this.bz, 0))) { this._out(); return; }
     }
     this.by = this._ground(this.bx, this.bz) + BALL_R;
     this.ball.position.set(this.bx, this.by + (BALL_DRAW - BALL_R), this.bz);
-    if (Math.hypot(P.x, P.z) < 0.03) { this.state = 'rest'; this.t = 0; }
+    if (Math.hypot(P.x, P.z) < 0.03) {
+      // at rest past the course's boundary: out of bounds
+      if (this._surf(this.bx, this.bz) === 'out') { this._out(); return; }
+      this.state = 'rest'; this.t = 0;
+    }
   }
 
   _holed() {
-    const s = this.strokes;
+    const s = this.strokes, par = this.h.par, rel = s - par;
     this.ball.visible = false;
     this.state = 'holed'; this.t = 0;
     this.scores.push(s);
-    const word = s === 1 ? 'HOLE IN ONE!!' : s === 2 ? 'BIRDIE!' : s === 3 ? 'PAR' : s === 4 ? 'BOGEY' : s === 5 ? 'DOUBLE BOGEY' : `${s} STROKES`;
-    const col = s <= 2 ? '#7dffa0' : s === 3 ? '#ffe066' : '#ff9a6a';
+    const word = s === 1 ? 'HOLE IN ONE!!' : rel <= -3 ? 'ALBATROSS!' : rel === -2 ? 'EAGLE!' : rel === -1 ? 'BIRDIE!' : rel === 0 ? 'PAR'
+      : rel === 1 ? 'BOGEY' : rel === 2 ? 'DOUBLE BOGEY' : `${s} STROKES`;
+    const col = rel < 0 ? '#7dffa0' : rel === 0 ? '#ffe066' : '#ff9a6a';
     if (s === 1) this.aces++;
     this._msg(word, col, 2.4);
-    this._sfx(s <= 2 ? 'pickup' : 'land', 0.5, s <= 2 ? 1 : 1.8);
+    this._sfx(rel < 0 ? 'pickup' : 'land', 0.5, rel < 0 ? 1 : 1.8);
     if (s === 1) this._sfx('cash', 0.6, 1);
   }
 
   _card() {
     this.state = 'card';
+    const holes = this.holes;
+    const PAR = holes.reduce((a, h) => a + h.par, 0);
     const total = this.scores.reduce((a, b) => a + b, 0), rel = total - PAR;
     const pay = Math.max(0, 150 + (PAR - total) * 50) + this.aces * 500;
-    if (!this.best || total < this.best) { this.best = total; try { localStorage.setItem('autokw-golf-best', String(total)); } catch (e) { /* private */ } }
+    const key = String(holes[0].n), B = this.bests[this.C.id] || (this.bests[this.C.id] = {});
+    if (!B[key] || total < B[key]) {
+      B[key] = total;
+      try { localStorage.setItem(`autokw-golf-${this.C.id}`, JSON.stringify(B)); } catch (e) { /* private */ }
+    }
+    this.ui.cardC.textContent = `${this.C.name.toUpperCase()} · HOLES ${holes[0].n}-${holes[holes.length - 1].n}`;
     this.ui.cardT.textContent = rel < 0 ? `${-rel} under par!` : rel === 0 ? 'Level par' : `${rel} over par`;
-    this.ui.tab.innerHTML = `<tr><td>HOLE</td>${HOLES.map((h) => `<td>${h.n}</td>`).join('')}<td>TOTAL</td></tr>`
-      + `<tr><td>PAR</td>${HOLES.map(() => '<td>3</td>').join('')}<td>${PAR}</td></tr>`
-      + `<tr><td>YOU</td>${this.scores.map((s) => `<td style="color:${s < 3 ? '#7dffa0' : s > 3 ? '#ff9a6a' : '#fff'}">${s}</td>`).join('')}<td>${total}</td></tr>`;
-    this.ui.cardS.textContent = `Paid $${pay} · best round ${this.best}`;
+    this.ui.tab.innerHTML = `<tr><td>HOLE</td>${holes.map((h) => `<td>${h.n}</td>`).join('')}<td>TOTAL</td></tr>`
+      + `<tr><td>PAR</td>${holes.map((h) => `<td>${h.par}</td>`).join('')}<td>${PAR}</td></tr>`
+      + `<tr><td>YOU</td>${this.scores.map((s, i) => `<td style="color:${s < holes[i].par ? '#7dffa0' : s > holes[i].par ? '#ff9a6a' : '#fff'}">${s}</td>`).join('')}<td>${total}</td></tr>`;
+    this.ui.cardS.textContent = `Paid $${pay} · best here ${B[key]}`;
     this.ui.card.classList.add('on');
-    if (pay > 0 && this.o.onReward) this.o.onReward(pay);
+    this.paid = pay;
+    if (pay > 0 && this.o.onReward) this.o.onReward(pay, this.C);
   }
 
   close() {
@@ -626,12 +804,12 @@ export class Golf {
   /** Stand the golfer at the ball and pose the swing (u: 0 address .. 1 finish). */
   _pose(u, dt) {
     const P = this.env.player;
-    const putt = this.clubI === 4;
+    const putt = this.clubI === PUTTER;
     // address: side-on to the aim, the ball in front of the feet
     const fx = Math.sin(this.aim), fz = Math.cos(this.aim), rx = fz, rz = -fx;
     const stand = putt ? 0.55 : 0.78;
     P.x = this.bx + rx * stand; P.z = this.bz + rz * stand;
-    P.y = G.terrainHeight(P.x, P.z);
+    P.y = this._ground(P.x, P.z);
     const face = Math.atan2(-rx, -rz);         // facing the ball, side-on to the line
     P.heading = face;
     P.h.group.position.set(P.x, P.y, P.z);
@@ -656,7 +834,6 @@ export class Golf {
     const r = putt ? 0.72 : 0.78;
     const cy = P.y + (putt ? 1.1 : 1.28);
     const gx = P.x + (this.bx - P.x) * 0.45, gz = P.z + (this.bz - P.z) * 0.45;
-    // in the golfer's frame: forward (toward the ball) is -local x of the aim line...
     const toBall = new THREE.Vector3(this.bx - P.x, 0, this.bz - P.z).normalize();
     const along = new THREE.Vector3(fx, 0, fz);      // toward the target
     const grip = new THREE.Vector3(gx, cy, gz)
@@ -681,13 +858,6 @@ export class Golf {
     const e = this.env, cam = e.camera, h = this.h;
     this.t += dt;
     if ((this._msgT -= dt) <= 0) this.ui.msg.classList.remove('on');
-    // wave the flags
-    for (const f of this.flags) {
-      const p = f.geometry.attributes.position, base = f.userData.base;
-      for (let i = 0; i < p.count; i++) { const x = base[i * 3]; p.setZ(i, Math.sin(this.t * 6 + x * 9) * 0.05 * x / 0.5); }
-      p.needsUpdate = true;
-      f.rotation.y = Math.atan2(this.wind.x, this.wind.z) - Math.PI / 2;
-    }
     const input = this.o.controls ? this.o.controls.read() : { x: 0 };
     const look = this.o.controls ? this.o.controls.takeLook() : { x: 0 };
     if (this.state === 'aim') {
@@ -703,11 +873,11 @@ export class Golf {
       m.needle.style.left = `calc(${clamp(n, -0.05, 1) * 100}% - 2px)`;
       if (n < -0.05) { this.acc = n; this._swing(); }
     }
-    if (this.state === 'aim') { m.fill.style.width = '0'; m.needle.style.display = 'none'; m.sweet.style.display = this.clubI === 4 ? 'none' : 'block'; }
+    if (this.state === 'aim') { m.fill.style.width = '0'; m.needle.style.display = 'none'; m.sweet.style.display = this.clubI === PUTTER ? 'none' : 'block'; }
     // the golfer
     let u = 0;
     if (this.state === 'swing') {
-      u = clamp(this.t / (this.clubI === 4 ? 0.8 : 1.1), 0, 1);
+      u = clamp(this.t / (this.clubI === PUTTER ? 0.8 : 1.1), 0, 1);
       if (u >= 0.52 && !this._hit) { this._hit = true; this._launch(); }
     } else if (this.state === 'fly' || this.state === 'roll') u = 1;
     if (this.state !== 'swing') this._hit = false;
@@ -717,7 +887,7 @@ export class Golf {
     else if (this.state === 'rest' && this.t > 0.9) { this.trail.visible = false; this._ready(); }
     else if (this.state === 'holed' && this.t > 2.4) {
       this.trail.visible = false;
-      if (this.holeIndex < HOLES.length - 1) this._hole(this.holeIndex + 1);
+      if (this.holeIndex < this.holes.length - 1) this._hole(this.holeIndex + 1);
       else this._card();
     }
     // the aim marker: where this club carries in still air, on the ground
@@ -727,8 +897,8 @@ export class Golf {
       const pw = this.state === 'aim' ? 1 : this.state === 'power' ? this._meter() : this.power;
       const dist = c.carry ? c.carry * Math.max(0.05, pw) : Math.min(Math.hypot(h.pin.x - this.bx, h.pin.z - this.bz), 30);
       const mx = this.bx + Math.sin(this.aim) * dist, mz = this.bz + Math.cos(this.aim) * dist;
-      this.marker.position.set(mx, G.terrainHeight(mx, mz) + 0.12, mz);
-      this.marker.scale.setScalar(c.carry ? 1 + dist / 60 : 0.35);
+      this.marker.position.set(mx, this._ground(mx, mz) + 0.12, mz);
+      this.marker.scale.setScalar(c.carry ? 1 + dist / 40 : 0.35);
       this.marker.visible = true;
     } else this.marker.visible = false;
     this._camera(dt, cam);
@@ -737,28 +907,32 @@ export class Golf {
   _camera(dt, cam) {
     const fx = Math.sin(this.aim), fz = Math.cos(this.aim);
     let px, py, pz, lx, ly, lz;
+    const putt = this.clubI === PUTTER;
     if (this.state === 'fly' || this.state === 'roll' || this.state === 'rest' || this.state === 'holed') {
-      // follow the ball from behind and above, looking down the flight
+      // follow the ball from behind and above, looking down the flight; further
+      // back the faster it goes, so a drive stays in the frame
       const vx = this.vel ? this.vel.x : fx, vz = this.vel ? this.vel.z : fz, hv = Math.hypot(vx, vz) || 1;
       const bx = this.state === 'fly' ? vx / hv : fx, bz = this.state === 'fly' ? vz / hv : fz;
-      const back = this.state === 'fly' ? 6 : 8;
-      px = this.bx - bx * back; pz = this.bz - bz * back; py = Math.max(this.by, G.terrainHeight(this.bx, this.bz)) + (this.state === 'fly' ? 2 : 4);
-      lx = this.bx + bx * 6; lz = this.bz + bz * 6; ly = this.by;
+      const back = this.state === 'fly' ? 7 + Math.min(9, hv * 0.15) : putt ? 4 : 9;
+      px = this.bx - bx * back; pz = this.bz - bz * back;
+      py = Math.max(this.by, G.terrainHeight(this.bx, this.bz)) + (this.state === 'fly' ? 3 : putt ? 1.8 : 4);
+      py = Math.max(py, G.terrainHeight(px, pz) + 1.5);
+      lx = this.bx + bx * 8; lz = this.bz + bz * 8; ly = this.by;
     } else {
-      // behind the golfer, down the line
-      const putt = this.clubI === 4;
-      px = this.bx - fx * (putt ? 3.2 : 4.4); pz = this.bz - fz * (putt ? 3.2 : 4.4);
-      py = this.by + (putt ? 1.35 : 1.9);
-      lx = this.bx + fx * (putt ? 5 : 25); lz = this.bz + fz * (putt ? 5 : 25);
-      ly = G.terrainHeight(lx, lz) + (putt ? 0 : 1.5);
+      // behind the golfer, down the line; a long shot looks further down it
+      const look = putt ? 5 : clamp((this.tgt ? this.tgt.d : 60) * 0.35, 25, 80);
+      px = this.bx - fx * (putt ? 3.2 : 4.6); pz = this.bz - fz * (putt ? 3.2 : 4.6);
+      py = this.by + (putt ? 1.35 : 2.0);
+      lx = this.bx + fx * look; lz = this.bz + fz * look;
+      ly = G.terrainHeight(lx, lz) + (putt ? 0 : 1.0);
     }
-    if (!this._cam) this._cam = { x: px, y: py, z: pz, lx, ly, lz };
-    const k = this.state === 'fly' ? 4 : 6, C = this._cam;
+    if (!this._cam || !Number.isFinite(this._cam.x + this._cam.lx)) this._cam = { x: px, y: py, z: pz, lx, ly, lz };
+    const k = this.state === 'fly' ? 9 : 6, C = this._cam;
     C.x = damp(C.x, px, k, dt); C.y = damp(C.y, py, k, dt); C.z = damp(C.z, pz, k, dt);
     C.lx = damp(C.lx, lx, k * 1.5, dt); C.ly = damp(C.ly, ly, k * 1.5, dt); C.lz = damp(C.lz, lz, k * 1.5, dt);
     cam.position.set(C.x, C.y, C.z);
     // a 4 cm ball is a pixel from 30 m: keep it visible, not true to scale
-    this.ball.scale.setScalar(Math.max(1, cam.position.distanceTo(this.ball.position) / 14));
+    this.ball.scale.setScalar(Math.max(1, cam.position.distanceTo(this.ball.position) / (this.state === 'fly' ? 5 : 10)));
     cam.up.set(0, 1, 0);
     cam.lookAt(C.lx, C.ly, C.lz);
     cam.updateMatrixWorld(true);

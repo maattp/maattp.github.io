@@ -59,6 +59,22 @@ file and a guide disagree, this file wins.
   (build_wood.py), `geo.farmAt`, `world.groundTint`.
 - **Water:** only vertices with > 25 % of their 50 m wet are drawn and dug;
   banks are re-lifted over their water after street grading.
+- **Golf** (src/golf.js, `data/golf.json` from tools/kw/build_golf.py):
+  Rockway and Westmount, all 18 holes each from OSM (golf=hole ref/par/line,
+  tee/green/fairway/bunker/water polygons; every feature goes to the hole
+  whose line is nearest). Rounds are three holes: ENTER on tee 1, 4, 7, ...
+  plays the next three; bests in `autokw-golf-<course>` keyed by first hole.
+  Surfaces are OSM's polygons earcut and **clipped along the terrain mesh's
+  own 40 m cells and tx + tz = 1 diagonals**, so each piece is a plane on the
+  ground (one mesh per course, ~16-19k tris); layers sit at `LIFT` over the
+  terrain and the ball rests at the same lift. `golf.keepClear` is in
+  `city.extraClear` (no trees on or within 3 m of a mown surface). Water the
+  world already draws is not drawn again; water is a stroke and a drop,
+  past the boundary / a road / a building a stroke and the shot again.
+  Verify: `node tools/kw/golfcheck.mjs <dir> [rockway,westmount]` plays a
+  round per course through ENTER and the SWING button (`GOLF_WATER=1` adds
+  the penalties). Other courses mapped well enough to add: Conestoga (27,
+  water), Grey Silo (16 of 18 numbered); Doon Valley is partial.
 
 ## Build number
 
@@ -150,7 +166,7 @@ src/barista.js              First Cup Coffee at 1912 Pike Place: storefront, the
 src/baristagame.js          MORNING RUSH itself: orders, recipes, the machine's timing, customers (no DOM)
 src/parachute.js            bailing out of an aircraft in the air: free fall, the canopy, landing
 src/hydrorace.js            Seafair: the Lake Washington course, pits, log boom, rooster tails, race rules, AI, the jets
-src/golf.js                 three par-3s at Interbay
+src/golf.js                 golf on OSM's real courses (Rockway, Westmount), three holes a round
 src/wheelride.js            the Great Wheel's turning half and the ride on it
 src/fishtoss.js             the fish stall at Pike Place Market + the catching game
 src/hoops.js                basketball courts in the parks + the free-throw game
