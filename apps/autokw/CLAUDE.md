@@ -149,6 +149,44 @@ file and a guide disagree, this file wins.
   `FARMS` (real places; ~15 ms) using tools/kw/proj.py's projection --
   **geo.toWorld still carries Seattle's LAT0/LON0**, so don't use it here.
 
+- **Air traffic: src/airtraffic.js** (docs/air-takeoff.jpg, air-gate.jpg).
+  No flight model: every movement is a `Track` -- waypoints with their
+  corners filleted into arcs, height and speed interpolated along it --
+  banked by the track's curvature, pitched by its climb. AIRLINERS
+  (`airliner` in vehicles.js, a 737-class twinjet; its paint is the
+  `'livery'` finish: magenta-flagged LIV vertices take the vehicle's colour,
+  so one type wears every tail -- WestJet, Flair, Porter, Sunwing, Air Canada
+  in plain text) fly straight in or downwind/base/final to the runway in use
+  (`rwId`, 26 most sessions, 08 otherwise), touch down 380 m in, roll out,
+  leave at the first exit they can make, taxi over `TaxiGraph` (OSM's
+  taxiways + the runways' centrelines, Dijkstra with runway edges x25) to
+  gates 1-3, turn round, are pushed back, taxi out, hold short 52 m off the
+  centreline, line up and climb out of the map. Chartright's bizjet does
+  the same to Apron VII; a WWFC Cessna flies touch-and-goes on 14/32 for
+  ever; another crosses the region; a news helicopter orbits Uptown,
+  downtown, the Aud, the 401... **The gates' stands 1-3 and 1A-3A are the
+  airliners'** (`air.reserved`, main.js's parked fleet skips them). The
+  player: a taxiing aircraft stops for you (nose 7 m short), a departure
+  holds short while you are on the runway, an arrival inside 1.7 km goes
+  around, the Cessna makes a low pass. None of them is in traffic.cars
+  (nothing collides with them). Phone: 1 airliner, the circuit and the
+  helicopter (no bizjet, no cross-country). Cost measured at the terminal
+  with 4 aircraft in view: +12 draws, +15k tris (phone and desktop alike);
+  live props/rotors/gear only inside 320 m (192 on a phone), shadows only
+  on the ground and near. Tower chatter is a toast within 3.2 km of the
+  field. Harness: `__dbg.air` (`advance(secs, player, camera)`, `state(c)`,
+  `stats`, `log`, `spawnArrival`, `runwayBusy`); a fixed `kwshots` view can
+  take `eval` returning `{ c, t }` (`VIEW_PRE_FILE` too).
+- **YKF's control tower and FINAL APPROACH** (docs/air-tower.jpg,
+  air-atc.jpg): `ykf.prepTower` flattens the stepped OSM footprint beside
+  New Germany Lane by the Airport Operations Centre (OSM does not tag it;
+  NAV CANADA's 2017 tower is "more central" than the 1969 one, and this
+  building has its own car park) and `buildTower` draws it (19.4 m to the
+  roof, a 26 m mast); the door faces the lane (`ykf.tower`). atc.js /
+  atcgame.js are Seattle's game re-themed: YKF's runways to scale on their
+  true bearings (jets land 26, props 32, floatplanes on the Grand). Pays $3
+  an aircraft (+$50 a new best).
+
 ## Build number
 
 `<div id="build">vN</div>` in index.html and `CACHE = 'autokw-vN'` in sw.js
