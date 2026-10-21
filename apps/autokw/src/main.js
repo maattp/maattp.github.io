@@ -141,7 +141,7 @@ let islands = null, pickle = null, piers = null, ferry = null, ferryPrev = null;
 let coffee = null;   // First Cup Coffee at 1912 Pike Place and MORNING RUSH (barista.js)
 let career = null;   // the saved wallet and the Seattle Passport (career.js)
 let seafair = null;  // hydroplane racing on Lake Washington (hydrorace.js)
-let golf = null;   // OSM's holes at Rockway, Westmount, Conestoga, Grey Silo and Doon Valley, three at a time (golf.js)
+let golf = null;   // OSM's holes at fourteen of the region's courses, three at a time (golf.js)
 let wheelRide = null;   // the Great Wheel, turning, and its ride (wheelride.js)
 let fishToss = null;   // the flying fish at Pike Place Market (fishtoss.js)
 let needleTop = null;   // the Space Needle's elevator, deck and viewers (needletop.js)
@@ -3632,6 +3632,7 @@ function draw(now) {
   const t0 = prof ? performance.now() : 0;
   if (lmRoot && updateLandmarkRange(lmRoot, camera.position) && shadowCache) shadowCache.invalidate();
   updateHighways(camera.position);
+  if (golf) golf.range(camera.position);
   if (signalHeads) {
     signalHeads.update(camera, draw.lastSig ? Math.min(0.1, (now - draw.lastSig) / 1000) : 0);
     draw.lastSig = now;

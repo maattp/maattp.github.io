@@ -113,13 +113,43 @@ file and a guide disagree, this file wins.
   `more` rings in play). A ball at rest against a trunk is not knocked back
   by it on the next swing (no trunk test in the first 1.5 m of flight, and
   only while moving into it).
-  Verify: `node tools/kw/golfcheck.mjs <dir> [rockway,westmount,conestoga,greysilo,doon]`
+  **Nine more: Dundee Country Club, Whistle Bear, Grand Valley, Deer
+  Ridge, Beaverdale, Rebel Creek, Galt Country Club, Savannah Golf Links (18
+  each) and Ariss Valley (9)**, the same path: `PLAYED` in build_golf.py.
+  New options there: `refs` {way id: hole} for a hole OSM numbers wrong
+  (Galt's 8th is ref=9 name="Hole 8"), `pars` {hole: par} for one OSM gives
+  no par (Savannah's 15th, a 4 on the club's card -- GolfPass's card matches
+  all 18), `short` (the HUD/map name: "Dundee", "Galt"). **An unnamed
+  boundary is `#<way id>`** (Galt CC is OSM 138183591, no name; 750
+  Coronation Blvd). A hole whose line ends near no green of its own borrows
+  the nearest green within 60 m (Savannah's 7th and 9th share one). The
+  build asserts every course lies inside the map. `tools/kw/build_golf.py`'s
+  report prints every candidate's mapping. **Skipped:** Elmira (z -17.5 km),
+  Cambridge Golf Club (x 18.5 km), Puslinch Lake, Foxwood (27 holes, nines
+  unnamed) and Cutten Fields are past the map's edge; RiverEdge (Doon's
+  par-3 boundary, 4 holes mapped), Merry Hill (OSM 39872940, unnamed, no
+  holes) and Bridgewater have no hole data; the red/gold nines OSM maps east
+  of Beaverdale (ways 1488001084..1488007311) have no boundary, refs like
+  "red 6" and most pars missing; Westmount and Rockway were already in.
+  **A green is played near level** (`GREEN_TILT` 0.03: the slope a ball
+  feels on a green or fringe, after the course-wide 0.4): the 40 m DEM puts
+  greens on 20-31 % (Deer Ridge's 1st, Galt, Savannah, Conestoga 18 %),
+  where 0.4 x g x slope beat the green's 0.62 m/s2 roll and no putt stopped
+  (golfcheck: Deer Ridge's 1st 12 strokes, 7 putts, before; 7 after).
+  **Courses are range-culled** (golf.js `range`, from main.js draw, as the
+  flags): a course's mesh draws only within `GOLF_RANGE` 2500 m of its
+  bounding sphere (or while it is being played). rangeab (`__abOld` =
+  `golf.rangeR = 1e9`), pixels changed / draws culled -> all drawn: spawn 0,
+  175 -> 177; air-uptown 20 (A/A 16); air-galt 50, 144 -> 145; air-region
+  814 of 737k, 218 -> 221; Westmount from the street 0, 141 -> 143.
+  Verify: `node tools/kw/golfcheck.mjs <dir> [rockway,westmount,conestoga,greysilo,doon,dundee,whistlebear,grandvalley,deerridge,beaverdale,rebelcreek,ariss,galt,savannah]`
   plays a round per course through ENTER and the SWING button (`GOLF_WATER=1`
   adds the penalties; a shot that comes back is re-played shorter and to one
-  side, as a player would). Phone cost: each course is one mesh (Conestoga
-  ~23k tris, Grey Silo ~23k, Doon ~10k), +1-3 draws where it is in view.
-  Also mapped well enough to add next: Dundee, Elmira, Whistle Bear, Grand
-  Valley, Deer Ridge, Beaverdale (18 numbered holes each).
+  side, as a player would). Phone cost: each course is one mesh (Whistle
+  Bear ~30k tris -- 117 bunkers -- Conestoga, Grey Silo, Deer Ridge ~23k,
+  Beaverdale / Ariss / Doon ~10k; 249k for all fourteen), +1-3 draws where
+  it is in view. Shots: docs/golf-<course>.jpg. golf.json is 645 KB (was
+  235).
 - **Horse and buggy** (src/buggy.js; `buggy` in vehicles.js TYPES, hooked in
   with four lines: HAND_BUILT, the constructor's `this.buggy`, `sync()`, and
   no tyre model / generic contact shadow). The CART is the vehicle's own
@@ -2402,7 +2432,7 @@ src/barista.js              First Cup Coffee at 1912 Pike Place: storefront, the
 src/baristagame.js          MORNING RUSH itself: orders, recipes, the machine's timing, customers (no DOM)
 src/parachute.js            bailing out of an aircraft in the air: free fall, the canopy, landing
 src/hydrorace.js            Seafair: the Lake Washington course, pits, log boom, rooster tails, race rules, AI, the jets
-src/golf.js                 golf on OSM's real courses (Rockway, Westmount, Conestoga, Grey Silo, Doon Valley), three holes a round
+src/golf.js                 golf on fourteen of OSM's real courses (data/golf.json), three holes a round
 src/skating.js              Auto KW: skating on Waterloo Public Square's rink, and the skaters
 src/ballpark.js             Auto KW: Jack Couch Park (the Kitchener Panthers) and its home run derby
 src/wheelride.js            the Great Wheel's turning half and the ride on it
