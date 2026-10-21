@@ -8334,8 +8334,8 @@ float frLine(float o, float fw, float c, float w) {
    * AUTO KW: the household's cars, parked nose to the garage door (one in
    * six backed in): a car in three driveways in four, a second beside it on
    * a double driveway one time in three, centred `lz` out from the house's
-   * middle. Records for kwdriveway.js (x, y, z, heading, type index into
-   * DCAR_TYPES, colour seed); the caller finds the 4.8 m slot.
+   * middle. Records for kwdriveway.js (x, y, z, heading, type byte for
+   * its fleet mix, colour seed); the caller finds the 4.8 m slot.
    */
   _driveCars(fb, offF, seed, glx, gw, lz) {
     if (!this._dcar || hash2(seed, 230) > 0.75) return;
@@ -8348,8 +8348,8 @@ float frLine(float o, float fw, float c, float w) {
       if (Math.abs(G.terrainHeight(fx, fz) - G.terrainHeight(rx, rz)) > 0.3) continue;
       let h = Math.atan2(hx - x, hz - z);
       if (hash2(seed, 233 + k) < 0.17) h += Math.PI;
-      const r = hash2(seed, 235 + k);
-      const type = r < 0.36 ? 0 : r < 0.62 ? 1 : r < 0.86 ? 2 : 3;
+      // the type: a byte kwdriveway.js maps to its fleet mix (sceneryType)
+      const type = Math.min(255, Math.floor(hash2(seed, 235 + k) * 256));
       this._dcar.push(x, G.terrainHeight(x, z) + 0.08, z, h, type, (seed * 7 + k * 131) | 0);
     }
   }

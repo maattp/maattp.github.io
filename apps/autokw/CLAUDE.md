@@ -583,9 +583,9 @@ file and a guide disagree, this file wins.
     it moves up. **They are scenery, not traffic**: `traffic.decor` (x, y,
     z, heading, type, colour) is drawn through the far LOD's InstancedMeshes
     (traffic.js `updateFarLod`, now also on desktop when there is decor;
-    the cars' own far pass is `_farCars`), frustum-culled per car, two types
-    (crossover, suv) so a screenful of lines costs at most two draws (often
-    none: far traffic of those types is already drawn). Nothing touches
+    the cars' own far pass is `_farCars`), frustum-culled per car; the
+    nearest in their detailed model and the driveways' type mix since the
+    scenery-cars entry (residential streets section). Nothing touches
     `traffic.cars`, its RNG or Math.random -- trafficbench hashes are
     unchanged.
   - **You in it**: in the lane (within 2.6 m, facing its way) the cars
@@ -2768,10 +2768,10 @@ file and a guide disagree, this file wins.
     driveways, a second on a double one time in 3, one in 6 backed in, none
     where the ground falls > 0.3 m under it. `DrivewayCars` keeps those within
     90 m (phone) / 140 m and pushes them into **traffic.decor** -- drawn
-    through the far LOD's InstancedMeshes like the drive-thru lines: no draws
-    of their own, never in traffic.cars, trafficbench hashes unchanged. A
-    phone uses the lines' two types (crossover, suv), so both draws are
-    shared; desktop adds sedan and minivan. Solid for the player (keepOut, in
+    through the far LOD's InstancedMeshes like the drive-thru lines (and,
+    since the scenery-cars entry below, the nearest in their detailed model):
+    no draws of their own, never in traffic.cars, trafficbench hashes
+    unchanged. Types: the `MIX` there (below). Solid for the player (keepOut, in
     a car or on foot). While paused (harness views) `posed()` chooses round
     the camera and refreshes the far-LOD frustum. `window.__noDriveCars`
     before boot turns it off; `__dbg.dcars`.
@@ -2797,8 +2797,9 @@ file and a guide disagree, this file wins.
     (rail off) hashes identical to master, funprobe 63 ok / ALL OK on both,
     drivetest output identical, 0 exceptions.
   - **Approximate / not done:** NEW_SUBDIVS radii; the far LOD car models
-    are the clustered ones (fine past ~10 m, blobby closer). The next entry
-    did the boulevard trees, the walkers, the lawn corners and the hydro.
+    are the clustered ones (fine past ~10 m, blobby closer: done in the
+    scenery-cars entry below). The next entry did the boulevard trees, the
+    walkers, the lawn corners and the hydro.
 
 - **The residential street by era: poles, lights, trees, walkers, corners**
   (docs/streets-era-old.jpg, streets-era-lights.jpg, streets-corners.jpg:
@@ -2880,6 +2881,53 @@ file and a guide disagree, this file wins.
     edge steps round parked cars but does not step up onto a walk where one
     starts mid-block; the slid poles' spans may meet a pole in the next chunk
     that did not slide (a driveway only one chunk knows).
+
+- **Scenery cars up close: the detailed model** (docs/scenery-cars-near.jpg:
+  master left, this right; bottom row the swap at 40 m). The driveways' cars
+  and the drive-through lines were drawn with the far LOD's clustered model
+  at every range: blobby next to a traffic car at 10 m.
+  - **Traffic does not batch its near cars**: each is its own paint / trim /
+    matte meshes, 3 draws (+3 in the shadow pass within SHADOW_NEAR). So the
+    scenery cars do not join traffic's near cars; they get their own LOD:
+    **vehicles.js `nearLod(type)`** is the type's own detailed parts (paint,
+    trim with the wheels baked, matte -- every vertex traffic draws) merged
+    into ONE geometry over the far LOD's material (`lodA`/`lodG` per vertex,
+    the instance colour on the paint only). One InstancedMesh per type
+    (`sceneryCars`, traffic.js `growNear`), casting the sun's shadow as a
+    traffic car does.
+  - **traffic.js `updateFarLod`**: the scenery cars in the frustum within
+    `DECOR_NEAR` of the CAMERA (40 m phone / 55 m desktop), the nearest
+    `DECOR_CAP` (10 / 18), go to their type's near mesh, the rest to the far
+    LOD as before. Same matrix (x, y + pivotY, z, yaw), same colour, same
+    material, so the swap changes only the mesh. `traffic.sceneryTypes(list)`
+    (main.js, right after the TrafficSystem) builds the types' near and far
+    LODs at boot, **before a phone drops the vehicle arrays**
+    (`dropVehicleArrays` drops the near geometries too once uploaded; ~0.8 MB
+    of GPU buffers per type, ~5 MB for the phone's six). Nothing here reads or
+    writes traffic.cars, its RNG or Math.random.
+  - **The mix** (kwdriveway.js `MIX`, `sceneryType(u)`): Canadian
+    registrations -- phone: crossover 33, suv 13, suv3 7, pickup 15,
+    compsedan 21, minivan 11 (six types: every type in view is a draw, near
+    and far); desktop adds jeep, pickupcap, sedan, hatch, evy, wagon, civic.
+    world.js `_driveCars` stores the draw as a byte (type slot of the record);
+    drivethru.js's lines take the same mix (were crossover/suv only).
+  - **Differences from a traffic car up close**: glass is the far LOD's opaque
+    sky-folded glass (no see-through), no contact-shadow blob (they cast the
+    sun's shadow), plates are plain plate colour, no dents.
+  - Phone (AUTO_PHONE=1, GPU), master -> this: spawn 176/1135k -> 177/1141k,
+    air views +1..+6 draws (more far types), 0 exceptions;
+    `tools/kw/streetdraws.js` westmount 297 = , mthope 266 -> 267, breithaupt
+    323 -> 320, doonsouth 192 -> 194, activa 110 -> 109, galt 137 -> 138
+    (`sceneryCars` 1-3, `farTraffic` down to match); driveway close-ups
+    +2..+4. Live (respawned there, unpaused): 1-4 near cars, +1..+3 draws in
+    the shadow pass (one per near type; `tools/kw/scenerycars.js`). trafficbench (rail off, phone)
+    hashes identical to master at all six sites; AUTO_GPU=1 funprobe ALL OK
+    (dthru: the line's cars detailed).
+  - **Approximate / not done:** the near/far swap at 40 m is visible in a
+    telephoto (wheels and glass go blocky) though not at the game's 62 deg;
+    the far scenery cars still cast no shadow, so a car's shadow appears at
+    the swap, as traffic's does at SHADOW_NEAR; the phone's type list is six
+    of the thirteen.
 
 ## Build number
 
