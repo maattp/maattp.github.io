@@ -1,0 +1,15 @@
+[
+  { "name": "fh-north", "eval": "__seat('Fischer-Hallman', -7149, -1428, 0.75, 70)" },
+  { "name": "fh-south", "eval": "__seat('Fischer-Hallman', -4295, 1860, 0.75, 70)" },
+  { "name": "homer", "eval": "__seat('Homer Watson', 3669, 6500, 0.75, 70)" },
+  { "name": "hespeler", "eval": "__seat('Hespeler', 11861, 4791, 0.75, 70)" },
+  { "name": "hespeler-twltl", "eval": "__seat('Hespeler', 12594, 8034, 0.75, 70)" },
+  { "name": "victoria", "eval": "__seat('Victoria Street', 1696, -1714, 0.75, 70)" },
+  { "name": "weber-n", "eval": "__seat('Weber Street North', -3786, -3128, 0.75, 70)" },
+  { "name": "weber-e", "eval": "__seat('Weber Street East', 1130, 1433, 0.75, 70)" },
+  { "name": "univ-w", "eval": "__seat('University Avenue West', -5271, -1656, 0.75, 70)" },
+  { "name": "ottawa", "eval": "__seat('Ottawa Street North', 1469, 403, 0.75, 70)" },
+  { "name": "king-n", "eval": "__seat('King Street North', -4607, -5391, 0.75, 70)" },
+  { "name": "highland", "eval": "__seat('Highland Road West', -3597, 1990, 0.75, 70)" },
+  { "name": "franklin", "eval": "__seat('Franklin Boulevard', 14017, 6975, 0.75, 70)" }
+]

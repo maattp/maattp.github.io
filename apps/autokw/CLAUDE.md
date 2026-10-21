@@ -2929,6 +2929,101 @@ file and a guide disagree, this file wins.
     the swap, as traffic's does at SHADOW_NEAR; the phone's type list is six
     of the thirteen.
 
+- **The arterials from the driver's seat** (docs/arterial-divided.jpg,
+  arterial-twoway.jpg, arterial-stops-lights.jpg: master left, this right).
+  Surveyed at 13 driver's-seat cameras (`VIEWS=tools/kw/arterialviews.json`
+  with `VIEW_PRE="$(cat tools/kw/artseat.js)"`: `__seat(street, x, z, u,
+  ahead, rev, up, tup)` puts the camera in traffic's own lane `u` on the
+  named street) on Fischer-Hallman, Homer Watson, Hespeler, Victoria,
+  Weber N/E, University W, Ottawa N, King N, Highland, Franklin, Ira Needles,
+  against OSM's tags. What read wrong: a 12 m divided carriageway with no
+  lane line though traffic drives two lanes on it, a 20 m two-way road with
+  one lane a way and a broken yellow dash, the wheel-track polish across
+  the lane lines, no bike lanes, the median the bare ground 30 cm under the
+  road (cars over it at 52), a hydro line IN the median, no bus stops.
+  - **`src/arterial.js` is the one layout**, read by traffic.js (where a
+    car drives) and world.js (where the paint goes), so they cannot
+    disagree: `edgeFlow` and `oneWaySpan` (laneLatU's one-way computation,
+    moved verbatim -- trafficbench hashes identical with the data off),
+    `twoWayLayout(e)`, `medianGaps(city, e)`, `alBike`. **Data:**
+    `tools/kw/build_artlanes.py` -> `data/artlanes.bin` (2 bytes an edge,
+    checked against roads.bin like sidewalks.bin -- **re-run after
+    build_roads.py**): lanes each way (`lanes:forward` / `backward`, or an
+    even `lanes`; **turn bays are not lanes** -- only `turn:lanes:*` entries
+    that go straight on count, else Victoria at Frederick was 4 + 2 for
+    30 m and the centre line jogged 5 m), the two-way left-turn lane
+    (`lanes:both_ways=1` + `turn:lanes:both_ways=left`), a painted bike lane
+    per side (`cycleway*=lane`). citygen's `e.al`. 93 km of art + 16 of st
+    are two-way multi-lane, 16 km TWLTL, ~290 km have a bike lane.
+  - **Two-way multi-lane traffic (deliberate):** laneLatU on a two-way edge
+    with `twoWayLayout` lays `nP` / `nM` lanes of `w` (2.9-3.7 m) out from
+    the centre `m` (the lane block centred in the kerbs: 0.5 m gutter, 2.1 m
+    with a bike lane; `c0` 0.2 double yellow, 1.75 TWLTL), lane floor(u n)
+    counted from the centre. A straight-on car keeps its lane
+    (nearestLaneU), a turn onto one takes the kerb lane (right) or the
+    inner lane (left), and the city lane-merge yield (`cityMerges`) covers
+    these edges. No kerbside parking in a bike lane, on a multi-lane
+    two-way edge or against a median (kerbSlots).
+  - **Paint** (world.js meshRoadMarks): one-way art/st -- broken white
+    3/6 m lines at oneWaySpan's lane boundaries, a YELLOW left edge line on
+    a divided road's carriageway; two-way multi-lane -- double yellow, or
+    the TWLTL's solid + broken yellow each side and pairs of opposed left
+    arrows every 45 m (`TWLTL_ARROW`), broken white between lanes; bike
+    lanes -- the solid white line at the traffic lanes' edge (no edge line
+    then), Ontario's bicycle + diamond every 60 m (`BIKE_MARK`, `markAt`).
+    Dashes and marks are phased off the street's own direction (`proj`), so
+    they run on across OSM's edge splits. **Asphalt strips** (`artStrips`):
+    one cell per lane on its own stretch of the texture between the
+    polished tracks, as freeways (`laneStrips`). `cityStats.roadMarks`.
+  - **Medians** (meshRoad's pavement loop): a one-way art/st side whose
+    opposing carriageway's kerb is under two pavements away is the
+    median's half, kerb to midline at WALK_Y (roadLift already said so):
+    concrete under `MEDIAN_CONC` 3.2 m (Hespeler, University, King N),
+    lawn wider; no verge.
+  - **Hydro and lights** (hydroEdge, `_artLights`, `_eraLamp` 4): a divided
+    road's carriageway whose pole side is its median strings no line (both
+    carriageways carry the name, so one line stood in the median); arterials
+    through the post-1985 subdivisions (`streetEra` >= 2) have none. Those
+    get galvanised ~10 m davit standards with LED heads on a 38 m lattice
+    down the street (`ART_LAMP`; staggered on a two-way road, the outer kerb
+    of a carriageway), which `hydroPoleNear` also answers so trees keep off.
+    An arterial's slot props (hydrants...) go to the outer kerb of a
+    carriageway; the generic Seattle bus shelter on arterials is gone.
+  - **GRT stops** (`tools/kw/build_grtstops.py` -> `data/grtstops.json`,
+    `world._grtStops`): OSM's 2,272 stops at the kerb of their nearest
+    street, the marker (blue band, orange local / green iXpress, white
+    strip; GRT's site: orange local, green express), and the glass shelter
+    behind the walk with a bench where shelter=yes (498), solid. No draws.
+  - **Verify** (sequential; master in a detached scratchpad worktree, same
+    commands): phone boot 0 exceptions, spawn 175 -> 178 draws (spawndraws,
+    two runs each: master 178/175, this 177/176; the chunk group 55 draws
+    both, +17k tris), 1132k -> 1156k tris; air views +0..+5; the 13 arterial
+    cameras (phone) draws equal or -5, tris +7..+22k. trafficbench (rail
+    off, phone): uptown-king and 401-hespeler = master; sig-1644,
+    pkwy-fairway, allway-28, rb-3lane change -- meant: each has two-way
+    multi-lane arterials (Weber, King E, Ottawa, Courtland, Fairway: 46-206
+    such edges within 600 m) where cars now use both lanes, and kerbs that
+    lost their parked cars. jcttraffic seeded 0 hits / 0 crashes / 1
+    recycled = master; unseeded 0 / 0 / 6 -> 0 / 0 / 9; hwytraffic seeded
+    5 / 0 = , unseeded 7 / 0 -> 6 / 0; at eight arterial sites (Victoria,
+    Weber N/E, Ottawa, Hespeler's TWLTL, Franklin, Fischer-Hallman, King E;
+    seeded) master 0 hits / 0 crashes, this 1 / 1: at Weber E's site a
+    sedan off the slip lane (1278, 1647) into King St E's one-way
+    carriageway hit a bus stopped in it -- neither edge's lanes changed (a
+    ramp merging into a city carriageway is not in cityMerges); the run
+    differs because the traffic round it does. (Before the turn-bay rule
+    Victoria at Frederick had 1 hit: two lanes into one.) poleprobe: 0 in
+    a lane, 0 trunks on a light (`lamp4` 249 at the default sites, 264 at
+    nine arterial ones); stopbars 8288 / 0 across = master; AUTO_GPU=1
+    funprobe ALL OK.
+  - **Approximate / not done:** turn bays are not drawn (the bay is kerb
+    width; no lane arrows -- cars do not choose lanes by their next turn,
+    so arrows would mislead them); one-way carriageways keep traffic's own
+    lane count (from the width), not OSM's; the double yellow on a 2-lane
+    arterial stays a broken yellow; the GRT marker has no stop number or
+    logo lettering; shelters are one design; median noses at junctions are
+    square; light standards on medians (Homer Watson's) are not drawn.
+
 ## Build number
 
 `<div id="build">vN</div>` in index.html and `CACHE = 'autokw-vN'` in sw.js

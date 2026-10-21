@@ -5,6 +5,7 @@ import { Vehicle, TYPES, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, 
 import { clamp, lerp, angleWrap, hash2, rng, dist2, tierScale } from './util.js';
 import * as G from './geo.js';
 import { memo } from './bootcache.js';
+import { edgeFlow, oneWaySpan, twoWayLayout, twoWayLaneOff, alBike, medianGaps, LANE_W } from './arterial.js';
 
 const TRAFFIC_TARGET = 26;
 // Parked cars only exist within this radius, and each is 3 draw calls, so this
@@ -415,12 +416,7 @@ export function collideWithBuildings(v, city, onHit, ai = false) {
 // test below is exact for this extract: every untagged motorway way is an
 // express way, and the only untagged links are the express ramps plus four
 // `oneway=no` ones, which lose nothing by being one-way.
-function edgeFlow(e) {
-  if (e.oneway) return e.onewayRev ? -1 : 1;
-  if (e.cls === 'ramp') return 1;
-  if (e.cls === 'hwy' && /Express|Ship Canal Bridge/.test(e.name || '')) return 1;
-  return 0;
-}
+// (edgeFlow is arterial.js's: world.js paints the lanes from the same answer)
 
 /**
  * Strongly connected components of the directed street graph (two-way edges
@@ -540,7 +536,7 @@ const MIN_COMPONENT = 60;
 // street with parking keeps 2.2 m clear at each kerb for the parked cars
 // (they sit at hw - 1.15, see updateParked); anything else keeps a 0.8 m
 // shoulder.
-const LANE_W = 3.6, PARK_EDGE = 2.2, SHOULDER = 0.8;
+// (LANE_W, PARK_EDGE, SHOULDER: arterial.js)
 
 /** ord[0..n) (indices) sorted by K[index] ascending, STABLE (equal keys keep
  *  their order): runs of 16 by insertion, then merged; tmp is scratch. */
@@ -772,58 +768,24 @@ export class TrafficSystem {
    *  counted from the left of a -> b. */
   laneLatU(ei, sign, u) {
     const e = this.city.edges[ei];
-    if (this.flow[ei] === 0) return e.hw * 0.48;
+    if (this.flow[ei] === 0) {
+      // A two-way arterial of two or more lanes a way (arterial.js
+      // twoWayLayout, from OSM's lanes:forward / backward): lane floor(u * n)
+      // of its side, counted from the centre. Else the old street: one lane
+      // a way, right of the centreline at 0.48 hw.
+      const T = twoWayLayout(e);
+      if (!T) return e.hw * 0.48;
+      const n = sign > 0 ? T.nP : T.nM;
+      return twoWayLaneOff(T, sign, Math.min(n - 1, Math.floor(u * n)));
+    }
     const L = this.lanes, k = ei * 3;
     if (Number.isNaN(L[k])) {
-      // A graded carriageway can be trimmed back where it runs over another
-      // (e.tw, per sample and side): lanes stay inside the narrowest point.
-      let w0 = e.hw, w1 = e.hw;
-      if (e.tw) {
-        for (let i = 0; i < e.tw.length; i += 2) {
-          if (e.tw[i] < w0) w0 = e.tw[i];
-          if (e.tw[i + 1] < w1) w1 = e.tw[i + 1];
-        }
-      }
-      // ...and inside any lid barrier standing in the carriageway (world
-      // buildLids' e.barW, [+p, -p] like e.tw): that is where the road ends.
-      if (e.barW) { w0 = Math.min(w0, e.barW[0]); w1 = Math.min(w1, e.barW[1]); }
-      // An OPPOSING carriageway overlapping this one owns its half of the
-      // overlap. SR-99's twin tubes are two 14 m roads with centrelines
-      // 7.5-11 m apart for ~2.8 km (see "SR-99" in CLAUDE.md); laid across
-      // the full width, each tube's left lane ran 1.3 m from the other tube's
-      // oncoming left lane, and the cars traded paint the whole way. The
-      // boundary is the midline between the two centrelines.
-      const my = this.flow[ei];
-      const na = this.city.nodes[e.a], nb = this.city.nodes[e.b];
-      const mx = (na.x + nb.x) / 2, mz = (na.z + nb.z) / 2;
-      for (const oi of this.city.edgesNear(mx, mz, e.len / 2 + 30)) {
-        if (oi === ei) continue;
-        const o = this.city.edges[oi];
-        const par = e.dx * o.dx + e.dz * o.dz;
-        if (Math.abs(par) < 0.9) continue;
-        const of = this.flow[oi];
-        if (of !== 0 && of * my * par > 0) continue; // same way: not opposing
-        const oa = this.city.nodes[o.a], ob = this.city.nodes[o.b];
-        for (let s = 0.1; s < 1; s += 0.2) {
-          const sx = na.x + (nb.x - na.x) * s, sz = na.z + (nb.z - na.z) * s;
-          const u = ((sx - oa.x) * o.dx + (sz - oa.z) * o.dz) / o.len;
-          if (u < 0 || u > 1) continue;
-          const qx = oa.x + o.dx * o.len * u, qz = oa.z + o.dz * o.len * u;
-          if (Math.abs((na.y + (nb.y - na.y) * s) - (oa.y + (ob.y - oa.y) * u)) > 3) continue;
-          const side = (qx - sx) * -e.dz + (qz - sz) * e.dx; // + = the a->b right side
-          const dd = Math.abs(side);
-          if (dd < 1 || dd > e.hw + o.hw) continue;
-          if (side > 0) w0 = Math.min(w0, dd / 2);
-          else w1 = Math.min(w1, dd / 2);
-        }
-      }
-      const parks = !(e.elev || e.cls === 'hwy' || e.cls === 'ramp');
-      const inset = parks ? PARK_EDGE : SHOULDER;
-      const lo = -w1 + inset, hi = w0 - inset;
-      const n = hi > lo ? Math.max(1, Math.floor((hi - lo) / LANE_W)) : 1;
-      L[k] = hi > lo ? lo : (lo + hi) / 2;
-      L[k + 1] = hi > lo ? hi : (lo + hi) / 2;
-      L[k + 2] = n;
+      // (arterial.js oneWaySpan: the narrowest point, lid barriers, an
+      // opposing carriageway's half of an overlap, the kerbs' parking)
+      const S = oneWaySpan(this.city, ei, (i) => this.flow[i]);
+      L[k] = S[0];
+      L[k + 1] = S[1];
+      L[k + 2] = S[2];
     }
     const n = L[k + 2];
     const i = Math.min(n - 1, Math.floor(u * n));
@@ -964,6 +926,9 @@ export class TrafficSystem {
         if (h > 0.30) continue;
         const t = s / slots;
         const side = h < 0.24 ? 1 : -1;
+        // (none in a painted bike lane, in the kerb lane of a multi-lane
+        // two-way arterial, or against a divided road's median: arterial.js)
+        if (alBike(e, side) || twoWayLayout(e) || medianGaps(city, e)[side > 0 ? 0 : 1] < 30) continue;
         const off = e.hw - 1.15;
         const x = lerp(a.x, b.x, t) - e.dz * off * side;
         const z = lerp(a.z, b.z, t) + e.dx * off * side;
@@ -1730,6 +1695,14 @@ export class TrafficSystem {
    *  nearest lateral offset `off`: a car carries on in ITS lane where the
    *  number of lanes changes, instead of keeping a fraction of the width. */
   nearestLaneU(ei, sign, off) {
+    if (this.flow[ei] === 0) {
+      // (a two-way arterial's lanes, counted from the centre: arterial.js)
+      const T = twoWayLayout(this.city.edges[ei]);
+      if (!T) return 0.5;
+      const n = sign > 0 ? T.nP : T.nM;
+      const i = clamp(Math.floor((off - (sign > 0 ? T.m : -T.m) - T.c0) / T.w), 0, n - 1);
+      return (i + 0.5) / n;
+    }
     this.laneLatU(ei, sign, 0.5);          // fills the lane cache
     const L = this.lanes, k = ei * 3, n = L[k + 2];
     const w = (L[k + 1] - L[k]) / n;
@@ -1752,7 +1725,14 @@ export class TrafficSystem {
     const cos = pux * nux + puz * nuz, crs = pux * nuz - puz * nux;
     // Straight on: the nearest lane. A turn: the same share of the width.
     let u = rt[o + R_U];
-    if (cos > 0.94 && this.flow[nx.ei] !== 0) u = this.nearestLaneU(nx.ei, nx.sign, rt[o + R_OFF]);
+    const tw2 = this.flow[nx.ei] === 0 ? twoWayLayout(ne) : null;
+    if (cos > 0.94 && (this.flow[nx.ei] !== 0 || tw2)) u = this.nearestLaneU(nx.ei, nx.sign, rt[o + R_OFF]);
+    else if (tw2) {
+      // ONTO A MULTI-LANE TWO-WAY ARTERIAL, by the rule of the road: a right
+      // turn into the kerb lane, a left turn into the lane nearest the centre
+      const n = nx.sign > 0 ? tw2.nP : tw2.nM;
+      u = crs > 0 ? (n - 0.5) / n : 0.5 / n;
+    }
     const q = o + RT_F;
     this.routeEntry(v, q, nx.ei, nx.sign, u);
     // THE VERTEX: where the two lanes' centre lines cross (a on the old line,
@@ -2136,7 +2116,8 @@ export class TrafficSystem {
     // way to a car on the same edge bound for the same lane that is ahead of
     // it (or abreast and older): behind it as a leader, or abreast, stopped
     // short of the node until it has gone.
-    if (v.rtN >= 2 && this.flow[v.edge] !== 0 && !v.unit && !this.fwy[v.edge]) {   // (freeway lanes that end: fwyDecide's dropT)
+    // (a multi-lane two-way arterial's lanes too: arterial.js twoWayLayout)
+    if (v.rtN >= 2 && (this.flow[v.edge] !== 0 || twoWayLayout(this.city.edges[v.edge])) && !v.unit && !this.fwy[v.edge]) {   // (freeway lanes that end: fwyDecide's dropT)
       const q = RT_F, toNode = rt[R_LEN] - s0;
       const jump = Math.abs(rt[q + R_OFF] - rt[R_OFF]);
       if (jump > 0.9 && toNode < 50 && toNode > -2 && rt[R_UX] * rt[q + R_UX] + rt[R_UZ] * rt[q + R_UZ] > 0.94) {
