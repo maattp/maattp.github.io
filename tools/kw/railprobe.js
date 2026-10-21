@@ -4,7 +4,10 @@
 // 1. THE SERVICE: two hours of it by the rail's own code (kwrail.update at
 //    0.5 s, the camera far from every line): trains on and off the map, GO's
 //    turns at Kitchener, VIA's calls, the WCR's four stations, the meets at
-//    passing places -- and NO TWO TRAINS EVER IN EACH OTHER on one track.
+//    passing places -- NO TWO TRAINS EVER IN EACH OTHER on one track, no
+//    train rescued from a stand (the dispatcher never locks), none waiting
+//    more than 12 minutes for the road (a meet across the 14.8 km block
+//    west of Kitchener takes ~11).
 // 2. THE CROSSINGS: at the busiest-road crossings of each running line (you
 //    stand by the road, traffic runs round you), a train is sent through:
 //    the lights come on, the gates come down, cars stop at the arms -- and
@@ -24,6 +27,7 @@
   const DT = 0.5, H = 2 * 3600;
   const seen = new Set(), calls = {}, collide = [];
   let maxOn = 0;
+  const longest = { t: 0, who: '-' };
   const wasState = new Map();
   for (let t = 0; t < H; t += DT) {
     R.update(DT, cam);
@@ -52,9 +56,12 @@
       }
     }
     maxOn = Math.max(maxOn, on);
+    for (const line of R.lines) for (const tr of line.trains) if (tr.holdT > longest.t) { longest.t = tr.holdT; longest.who = `${tr.cfg.id} on ${line.key} at ${Math.round(tr.lead)}`; }
   }
   const st = R.stats;
   say(`service, 2 h: ${st.spawns} trains on, ${seen.size} of ${R.fleet.length} ran, up to ${maxOn} out at once; ${st.meets} meets on a passing track, ${st.holds} holds, ${st.rescued} rescued from a stand`);
+  say(`longest stand waiting for the road: ${Math.round(longest.t)} s (${longest.who})`);
+  if (longest.t > 720) fail.push(`a train stood ${Math.round(longest.t)} s waiting for the road (${longest.who})`);
   say(`calls: ${Object.entries(calls).map(([k, v]) => `${k} ${v}`).join(', ')}`);
   if (collide.length) fail.push(`trains ran into each other: ${collide.join('; ')}`);
   if (seen.size < R.fleet.length) fail.push(`trains that never ran: ${R.fleet.filter((t) => !seen.has(t.cfg.id)).map((t) => t.cfg.id).join(', ')}`);
@@ -62,7 +69,7 @@
   if (!calls['via@Kitchener']) fail.push('no VIA train called at Kitchener');
   for (const nm of ['Waterloo', "Farmer's Market", 'St. Jacobs Village', 'Elmira']) if (!calls[`heritage@${nm}`]) fail.push(`the WCR never called at ${nm}`);
   if (st.rescueLog) say('rescued:\n  ' + st.rescueLog.slice(0, 6).join('\n  '));
-  if (st.rescued > 3) fail.push(`${st.rescued} trains had to be rescued from a stand (dispatcher deadlocks)`);
+  if (st.rescued > 0) fail.push(`${st.rescued} trains had to be rescued from a stand (dispatcher deadlocks)`);
 
   // --- 2. the crossings ------------------------------------------------------------
   const p = d.player, traffic = d.traffic;

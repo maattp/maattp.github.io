@@ -84,6 +84,8 @@ const FLEET = [
     consist: ['go647', ...Array(10).fill('goCoach'), '~goCab'], route: 'go' },
   { id: 'go2', line: 'guelph', kind: 'go', name: 'GO', vMax: 26.8, acc: 0.55, dec: 0.75,
     consist: ['go612', ...Array(10).fill('goCoach'), '~goCab'], route: 'go' },
+  { id: 'go3', line: 'guelph', kind: 'go', name: 'GO', vMax: 26.8, acc: 0.55, dec: 0.75,
+    consist: ['go660', ...Array(10).fill('goCoach'), '~goCab'], route: 'go' },
   // VIA: a Venture set (Charger, four cars, the cab car)
   { id: 'via', line: 'guelph', kind: 'via', name: 'VIA', vMax: 26.8, acc: 0.6, dec: 0.8,
     consist: ['viaCharger', 'viaCoach', 'viaCoach', 'viaCoach', 'viaCoach', '~viaCab'], route: 'through' },
@@ -959,7 +961,7 @@ export class KwRail {
       // arriving westbound (toward s = 0) it stops; it leaves eastbound
       if (go && this._placeAtStop(go, st, -1)) { go.state = 'dwell'; go.dwellT = 150; go.reverseAfter = true; }
     }
-    at('go2', 40); at('via', 200); at('cn1', 5); at('cn2', 330);
+    at('go2', 40); at('go3', 520); at('via', 200); at('cn1', 5); at('cn2', 330);
     const galt = this.byKey.galt;
     if (galt) {
       const t = T('cp1');
@@ -1000,10 +1002,6 @@ export class KwRail {
    *  first, else the main, else the passing track), or null. */
   _landing(p, t) {
     const st = t.line.stops.find((q) => q.pp === p && !t.served.has(q) && t.cfg.kind !== 'freight');
-    // ONE TRACK A DIRECTION: a passing place always keeps a track for a train
-    // the other way, or two waiting each way at the ends of one block wait for
-    // ever (the dispatcher's deadlock)
-    if (this._holders(p).some((u) => u && u !== t && u.d === t.d)) return null;
     for (const tk of st ? [st.track, 1 - st.track] : [0, 1]) if (!this._holder(p, tk) || p.hold[tk] === t) return tk;
     return null;
   }
@@ -1016,6 +1014,122 @@ export class KwRail {
     return u;
   }
   _holders(p) { return [this._holder(p, 0), this._holder(p, 1)]; }
+
+  /**
+   * THE SAFETY CHECK (the banker's algorithm). The line's state is safe when
+   * the trains on it can all be got off it -- out at the map's edge, a GO
+   * turned at Kitchener and gone back east -- in SOME order, each running
+   * alone while the others stand: through blocks no standing train is in, and
+   * passing places with a track no standing train holds. A train may enter a
+   * block, take a landing or come onto the map only if the state after is
+   * still safe. From a safe state the first train of that order can always
+   * make its next move and leave the state safe, so the line can never lock:
+   * no two trains ever wait on each other, and nothing is taken off.
+   */
+  _state(line, t) {
+    const N = line.disp.length, at = (p) => (p ? line.disp.indexOf(p) : -1);
+    const lo = Math.min(t.lead, t.tail), hi = Math.max(t.lead, t.tail);
+    const blocks = new Set();
+    for (let i = 0; i <= N; i++) { const [a, b] = this._blockRange(line, i); if (hi > a && lo < b) blocks.add(i); }
+    if (t.commit !== null && t.commit !== undefined && t.commit >= 0) blocks.add(t.commit);
+    const nodes = new Set();
+    for (const k of [at(t.pp), at(t.npp)]) if (k >= 0) nodes.add(k);
+    let fnode = -1;
+    for (let k = 0; k < N; k++) { const p = line.disp[k]; if (t.lead > p.s0 && t.lead < p.s1) fnode = k; }
+    let d = t.d, turnAt = -1;
+    if (t.cfg.route === 'go') {
+      const st = line.stops[0], kk = st && st.pp ? at(st.pp) : -1;
+      if (t.state === 'dwell' && t.reverseAfter) d = -d;
+      else if (st && !t.served.has(st) && d < 0) turnAt = kk;
+    }
+    return { t, d, lead: t.lead, lo, hi, blocks, nodes, fnode, fblock: fnode < 0 ? this._blockAt(line, t.lead) : -1, turnAt };
+  }
+
+  /** Can train S run off the line alone, every other train in `others` standing? */
+  _canRun(line, S, others) {
+    const N = line.disp.length;
+    const full = (k) => !S.nodes.has(k) && others.reduce((a, o) => a + (o.nodes.has(k) ? 1 : 0), 0) >= 2;
+    // a standing train in block b in the way: anywhere in it once we enter it,
+    // or ahead of our lead in the block we are in
+    const blocked = (b, d, from) => others.some((o) => o.blocks.has(b) && (from === null || (d > 0 ? o.hi > from : o.lo < from)));
+    const out = (k, d) => (k < 0 || k >= N ? line.ends[d > 0 ? 1 : 0] === 'edge' : null);
+    let d = S.d, turn = S.turnAt, k;
+    if (S.fnode >= 0) k = S.fnode;
+    else {
+      const b = S.fblock;
+      if (b < 0 || blocked(b, d, S.lead)) return false;
+      k = d > 0 ? b : b - 1;
+      const o = out(k, d);
+      if (o !== null) return o;
+      if (full(k)) return false;
+    }
+    for (let guard = 0; guard < 2 * N + 4; guard++) {
+      if (k === turn) { d = -d; turn = -1; }
+      const bb = k + (d > 0 ? 1 : 0);
+      if (blocked(bb, d, null)) return false;
+      const k2 = d > 0 ? bb : bb - 1;
+      const o = out(k2, d);
+      if (o !== null) return o;
+      if (full(k2)) return false;
+      k = k2;
+    }
+    return false;
+  }
+
+  /** Could waiting train u take the block it wants once that is clear: a
+   *  track for it at the far end, and the state after still safe? */
+  _couldGo(u) {
+    const line = u.line, pps = line.disp, ki = pps.indexOf(u.pp);
+    if (ki < 0 || u.npp) return false;
+    const kn = pps[ki + u.d];
+    const land = kn ? this._landing(kn, u) : -1;
+    if (land === null) return false;
+    // Its move as it will make it -- the block and the landing -- once the
+    // block is clear: the trains in it the other way are projected to the
+    // places they are bound for (their landings), out of the block.
+    const sv = [u.commit, u.npp, u.nTrack];
+    u.commit = u.wantBlk; if (kn) { u.npp = kn; u.nTrack = land; }
+    const st = line.trains.filter((q) => q.state !== 'idle').map((q) => this._state(line, q));
+    [u.commit, u.npp, u.nTrack] = sv;
+    for (const q of st) {
+      if (q.t === u || q.d === u.d || !q.blocks.has(u.wantBlk)) continue;
+      // (bound for: its landing, or -- its front out in the block -- the
+      // passing place it already holds ahead)
+      const dest = q.t.npp || (q.fnode < 0 ? q.t.pp : null);
+      const k = dest ? line.disp.indexOf(dest) : -1;
+      if (k < 0) return false;
+      q.blocks = new Set(); q.fnode = k; q.fblock = -1;
+    }
+    return this._safeStates(line, st);
+  }
+
+  /** Would `t` (bound d, waiting since `since`) taking a landing at p take
+   *  the last free track there from a train that has waited longer, bound
+   *  for p the other way, and could go now? */
+  _lastTrackOwed(line, p, t, d, since) {
+    if ([0, 1].filter((tk) => !this._holder(p, tk)).length !== 1) return false;
+    const pps = line.disp;
+    return line.trains.some((w) => w !== t && w.state !== 'idle' && w.d === -d && w.pp && w.wantBlk != null
+      && pps[pps.indexOf(w.pp) + w.d] === p && w.wantSince < since && this._couldGo(w));
+  }
+
+  /** Is the line's state safe (see _state)? */
+  _safe(line) {
+    const trs = line.trains.filter((u) => u.state !== 'idle');
+    if (trs.length < 2 || line.ends[0] !== 'edge' || line.ends[1] !== 'edge') return true;
+    return this._safeStates(line, trs.map((u) => this._state(line, u)));
+  }
+  _safeStates(line, rem) {
+    if (rem.length < 2 || line.ends[0] !== 'edge' || line.ends[1] !== 'edge') return true;
+    rem = rem.slice();
+    for (let progress = true; progress && rem.length;) {
+      progress = false;
+      for (let i = 0; i < rem.length; i++) {
+        if (this._canRun(line, rem[i], rem.filter((_, j) => j !== i))) { rem.splice(i, 1); progress = true; break; }
+      }
+    }
+    return rem.length === 0;
+  }
 
   /** Block index of s on `line` (between passing places), or -1 inside one. */
   _blockAt(line, s) {
@@ -1037,10 +1151,6 @@ export class KwRail {
     for (const u of line.trains) {
       if (u === me || u.state === 'off' || u.d === d) continue;
       if (u.commit === i) return false;
-      // a train already waiting for this block the other way has it next
-      // (first come): without this, a stream one way starved the other
-      // (only while it could go: a track waiting for it at the far end)
-      if (u.want === i && !(me && me.want === i && me.wantSince < u.wantSince) && (!u.wantLand || this._landing(u.wantLand, u) !== null)) return false;
       const lo = Math.min(u.lead, u.tail), hi = Math.max(u.lead, u.tail);
       if (hi > a && lo < b) return false;
     }
@@ -1065,6 +1175,10 @@ export class KwRail {
       if (t.cfg.route === 'go') d = -1;
       const endIdx = d > 0 ? 0 : 1;
       if (line.ends[endIdx] !== 'edge') { t.dueT = 30; continue; }
+      // NO STARVING: while a train on the line has been held 45 s, nothing new
+      // comes on. The state is safe, so with no arrivals every train on the
+      // line gets off it in turn -- the held one's way clears for certain.
+      if (line.trains.some((u) => u.state !== 'idle' && u.holdT > 45)) { t.dueT = 8; continue; }
       const blk = d > 0 ? 0 : line.disp.length;
       const s = d > 0 ? -t.len / 2 - 5 : tr.len + t.len / 2 + 5;
       // the way in is clear, nobody close behind the entry, and you are not
@@ -1075,11 +1189,17 @@ export class KwRail {
       const kn = line.disp[d > 0 ? 0 : line.disp.length - 1];
       t.served = new Set(); t.d = d;
       const land = kn ? this._landing(kn, t) : -1;
-      if (land === null) { t.dueT = 8; continue; }
-      t.npp = kn || null; t.nTrack = land; if (kn) kn.hold[land] = t;
+      if (land === null || (kn && this._lastTrackOwed(line, kn, t, d, Infinity))) { t.dueT = 8; continue; }
+      t.npp = kn || null; t.nTrack = land;
       t.d = d; t.ori = d; t.s = s; t.u = Math.min(t.cfg.vMax, line.vMax) * 0.85; t.state = 'run';
       t.pp = null; t.ppTrack = 0; t.commit = blk; t.reverseAfter = false; t.holdT = 0;
-      if (!line.trains.includes(t)) line.trains.push(t);
+      line.trains.push(t);
+      if (!this._safe(line)) {
+        line.trains.splice(line.trains.indexOf(t), 1);
+        t.state = 'idle'; t.npp = null; t.commit = null; t.dueT = 8;
+        continue;
+      }
+      if (kn) kn.hold[land] = t;
       this.stats.spawns++;
     }
   }
@@ -1088,7 +1208,7 @@ export class KwRail {
   _retire(t) {
     if (t.pp && t.pp.hold[t.ppTrack] === t) t.pp.hold[t.ppTrack] = null;
     if (t.npp && t.npp.hold[t.nTrack] === t) t.npp.hold[t.nTrack] = null;
-    t.pp = null; t.npp = null; t.commit = null; t.want = null; t.state = 'idle'; t.u = 0;
+    t.pp = null; t.npp = null; t.commit = null; t.want = null; t.wantBlk = null; t.state = 'idle'; t.u = 0;
     t.group.visible = false;
     const i = t.line.trains.indexOf(t);
     if (i >= 0) t.line.trains.splice(i, 1);
@@ -1098,12 +1218,14 @@ export class KwRail {
   }
 
   /**
-   * A train out of sight that has stood waiting ten minutes is taken off
-   * (a crossed pair of meets the dispatcher did not foresee); in sight, it
-   * waits, as a real one would.
+   * A LAST RESORT that should never act: a train out of sight that has stood
+   * ten minutes on a line whose state is NOT safe (see _state) is taken off.
+   * The dispatcher only ever makes safe moves, so this means a bug; the
+   * probe fails on it (stats.rescued). A long wait on a safe line is a meet
+   * -- the block west of Kitchener is 14.8 km -- and is left alone.
    */
   _rescue(t, cx, cz) {
-    if (t.holdT < 600 || t.distTo(cx, cz) < 1600) return;
+    if (t.holdT < 600 || t.distTo(cx, cz) < 1600 || this._safe(t.line)) return;
     this.stats.rescued++;
     const desc = (u) => `${u.cfg.id}(d ${u.d} lead ${Math.round(u.lead)} u ${u.u.toFixed(1)} ${u.state} pp ${u.pp ? Math.round(u.pp.s0) + '/' + u.ppTrack : '-'} npp ${u.npp ? Math.round(u.npp.s0) + '/' + u.nTrack : '-'} c ${u.commit} w ${u.want} hold ${Math.round(u.holdT)})`;
     (this.stats.rescueLog || (this.stats.rescueLog = [])).push(`t ${Math.round(this.time)} ${t.cfg.id}: ` + t.line.trains.map(desc).join(' '));
@@ -1474,7 +1596,14 @@ export class RailTrain {
     if (this.pp !== k && this.npp !== k) {
       // no track here yet (put on the line mid-block): take one now
       if (toEntry > look) return null;
-      const pick = toEntry < 5 ? (sys._holder(k, 0) ? null : 0) : sys._landing(k, this);
+      let pick = toEntry < 5 ? (sys._holder(k, 0) ? null : 0) : sys._landing(k, this);
+      if (pick !== null) {
+        const sv = [this.pp, this.ppTrack, this.npp, this.nTrack];
+        if (this.pp) { this.npp = k; this.nTrack = pick; } else { this.pp = k; this.ppTrack = pick; }
+        const ok = sys._safe(line);
+        [this.pp, this.ppTrack, this.npp, this.nTrack] = sv;
+        if (!ok) pick = null;
+      }
       if (pick === null) {
         if (!this._heldAt) { this._heldAt = k; sys.stats.holds++; }
         return entry - d * 15;
@@ -1492,18 +1621,32 @@ export class RailTrain {
       const nearExit = (exit - lead) * d < this.u * this.u / (2 * b) + 250;
       const st = this.cfg.kind !== 'freight' && line.stops.find((q) => q.pp === k && !this.served.has(q));
       if (!nearExit || st) return null;
-      if (sys._free(line, nextBlk, d, this)) {
-        const kn = pps[ki + d];
-        const land = kn ? sys._landing(kn, this) : -1;
-        if (land !== null) {
-          this.commit = nextBlk; this.want = null; this.wantSince = null; this.holdT = 0;
-          if (kn) { this.npp = kn; this.nTrack = land; kn.hold[land] = this; }
+      const kn = pps[ki + d];
+      let land = kn ? sys._landing(kn, this) : -1;
+      // THE LAST TRACK: we may not take the last free track at our landing
+      // from a train waiting longer there-bound the other way, that could go
+      // now (without this a stream one way kept refilling the passing place
+      // a train waiting the other way needed: GO stood 10 min at Kitchener)
+      if (kn && land !== null && sys._lastTrackOwed(line, kn, this, d, this.wantBlk === nextBlk ? this.wantSince : Infinity)) land = null;
+      // FIRST COME: a train waiting longer for this block the other way, that
+      // could take it as soon as it is clear (a track for it at its far end,
+      // and still safe), has it next. One that could not does not hold us up
+      // (our going may be what frees its track), so this never locks.
+      const rival = this.pp === k && line.trains.find((u) => u !== this && u.state !== 'idle' && u.d === -d && u.wantBlk === nextBlk
+        && u.wantSince < (this.wantBlk === nextBlk ? this.wantSince : Infinity) && sys._couldGo(u));
+      if (this.pp === k && !this.npp && !rival && land !== null && sys._free(line, nextBlk, d, this)) {
+        const sv = this.commit;
+        this.commit = nextBlk;
+        if (kn) { this.npp = kn; this.nTrack = land; }
+        if (sys._safe(line)) {
+          this.holdT = 0; this.wantBlk = null;
+          if (kn) kn.hold[land] = this;
           if (this.ppTrack === 1) sys.stats.meets++;
           return null;
         }
+        this.commit = sv; this.npp = null;
       }
-      if (this.want !== nextBlk) { this.want = nextBlk; this.wantSince = sys.time; }
-      this.wantLand = pps[ki + d] || null;
+      if (this.pp === k && this.wantBlk !== nextBlk) { this.wantBlk = nextBlk; this.wantSince = sys.time; }
       // not ours yet: wait in the passing place, clear of its far turnout
       return exit - d * (KWRAIL.ramp + 10);
     }
@@ -1517,14 +1660,11 @@ export class RailTrain {
       this.u = 0; this.notch = 0;
       this.standT += dt;
       this.bellOn = this.dwellT < 6;
-      // turning back: not while another train stands here bound the same way
-      // as we will be (one track a direction: see _landing)
-      if (this.dwellT <= 0 && this.reverseAfter && this.pp && sys._holders(this.pp).some((u) => u && u !== this && u.d === -this.d)) this.dwellT = 4;
       if (this.dwellT <= 0) {
         this.state = 'run';
         if (this.reverseAfter) {
           // the far end of the train leads back (push-pull; WCR runs the same)
-          this.d = -this.d; this.reverseAfter = false; this.commit = null; this.want = null;
+          this.d = -this.d; this.reverseAfter = false; this.commit = null; this.want = null; this.wantBlk = null;
           if (this.npp && this.npp.hold[this.nTrack] === this) this.npp.hold[this.nTrack] = null;
           this.npp = null;
           this.served = new Set(this.dwellStop ? [this.dwellStop] : []);
