@@ -370,9 +370,9 @@ file and a guide disagree, this file wins.
     an **unpaved road**: `data/gravel.json` (tools/kw/build_gravel.py: OSM
     surface=unpaved/compacted/gravel/... on the roads build_roads keeps, 181
     polylines, 135 km of the townships' concession roads), `src/gravel.js`
-    tags each edge along one (`e.gravel`: world.js draws it `GRAVEL_TINT`
-    with no paint, near, far and at all-gravel junctions; sidewalks stay --
-    they are citygen's and roadLift's) and gives `city.gravelAt(x, z)`
+    tags each edge along one (`e.gravel`, now from citygen, before the
+    country roads: see "The country roads" below -- a gravel road is a rural
+    one, no kerbs, crowned, tracked) and gives `city.gravelAt(x, z)`
     (asked every 0.12 s). The lock asks sqrt(mu) of the surface's grip, so a
     full lock on gravel pushes and slides. **Stability control on loose
     surfaces only**: the pull is held under what the driven tyres need for
@@ -838,6 +838,75 @@ file and a guide disagree, this file wins.
   All 200 with CORS ok, none looping or "not available", 0 exceptions.
   Not covered headlessly: the iPhone. If a station is silent there, the
   Debug readout's audio log says which route it took and why it moved.
+
+- **The country roads: src/rural.js** (docs/rural-gravel*.jpg,
+  rural-regional*.jpg: master before, this after, from the driver's seat).
+  **Rural is decided from the data** in citygen (step 2e, after the
+  buildings, before anything reads a pavement width): every gravel road
+  (gravel.js, tagged there now, not in main.js), and any other ground-level
+  res/st/art street whose 300 m window has < 3.5 building centres within
+  60 m, < 5 % built cover (citygen's `built`, the measure groundTint paints
+  fields by) and < 260 m of OTHER streets within 110 m (a subdivision with
+  no houses mapped is still a net of streets); runs under 160 m flip to
+  their neighbours. ~865 km, 1640 chains (`cityStats.rural`). **A rural
+  edge has no pavement or kerb: `walkWidthOf(e)` (citygen) is 0** -- every
+  sidewalk-width site goes through it (citygen's grading, cuts, junction
+  corners, liftGrid; world's meshRoad, trench walls, legacy nodes, portal
+  cuts). **Chains** run through PASS-THROUGH nodes (`n.rpass`: two rural
+  edges < 35 deg apart, OSM's ~50 m splits): no junction polygon there
+  (buildJunction null, meshNode returns), the strips are MITRED
+  (`world.ruralMitre`), paint is not trimmed, and the raise and the hydro
+  line run on by chain position `c = e.rs0 + e.rsd * s`.
+  **Cross-section** (`ditchLift`): the carriageway RAISED `RAISE` 0.42 m
+  over ROAD_LIFT (the terrain mesh is 40 m, so a ditch cannot be dug into
+  it -- the road and the field edge stand up round it instead), 0 at each
+  end junction past its mouth + MOUTH_RAMP, full RAMP 22 m on; gravel
+  shoulder SH 1.3, foreslope FS 1.7 to the bottom at BOT, bottom DB 0.9,
+  backslope BS 1.3 to the BERM 0.45, fade FD 2.4 to the ground (RW 7.6).
+  Crossings (`C.xing`: one farm lane per cluster of buildings within 150 m,
+  field entrances by hash, and paths/golf/kartway from `city.extraClear`,
+  lazily) fill the ditch level with the shoulder (`ruralLift`). **ONE
+  function, two consumers:** citygen.roadLift's rural branch (`ruralSide`,
+  `ruralRaise`, the gravel CROWN 7 cm) and world.meshDitch (bands of quads
+  whose vertex heights ARE `ruralSide`) -- so what is driven/walked is what
+  is drawn: `tools/kw/ruralprobe.js` (VIEW_PROBE_FILE) raycasts across
+  rural roads at five sites: carriageway 98.6 %, shoulder 99.2 %, ditch
+  98.9 %, berm 97.4 % within 4 cm, and rides chains for kinks (< 5.5 cm per
+  0.5 m^2). Two traps it caught: a round cap past an end measured from the
+  node and read the next strip's ditch as a berm (caps skipped off the
+  carriageway), and a cap on the carriageway held the end's raise flat
+  (past a pass-through end it takes the chain's raise there).
+  **Drawn** in the near chunk's road mesh (no draws): `surf` per vertex
+  (`SURF_GRASS`, `gravelSurf`, `surfMark`) puts the road material
+  (roadWalkMat) into a GRAVEL mode (the asphalt grain seen three times,
+  windrows on the crown and edges, two packed wheel tracks a lane, no
+  gloss) or a GRASS mode (vertex colour = albedo; straw slopes, a dark wet
+  bottom, the field's own tint at the toe). Farm lanes run to the house
+  (`meshLane`), culvert ends show in the fill (`meshCulvert`), a mailbox
+  and a green civic-number blade (Wellington County's style, which Woolwich
+  follows) at each farm lane. **meshRuralProps** (instead of the city's
+  kerb furniture): a wooden hydro line every 46 m on one side per chain,
+  on the berm (crossarm, three primaries, the lower phone line, wires
+  sagging; a transformer near some farms) -- the city's `hydroLine` no
+  longer strings a span into a rural edge; page-wire fences on T-posts or
+  cedar snake-rail at the field edge in 150 m runs; yellow-diamond horse
+  & buggy signs every ~1.3 km in `mennoniteCountry` (shared with buggy.js),
+  curve warnings 95 m before a bend > 24 deg, stop signs where the chain
+  meets a bigger road (half the even crossings). Poles, posts, signs and
+  mailboxes are solid and knock down (`_fell`). **Who else had to learn
+  it:** peds never spawn, plan into or re-anchor on a rural edge (fares
+  and walking cops neither); no kerbside parking (traffic.kerbSlots);
+  buggies drive only rural edges, half on the shoulder (gravel: hw - 1.0);
+  street trees give way to sparse fencerow trees past the ditch; crops,
+  forest trees and house driveway stubs keep out of `city.ruralClear`
+  (ditch zone and lanes); AI lanes are unchanged (0.48 hw). Dust: anything
+  over 6 m/s on gravel (you, and up to 8 cars within 200 m) trails a
+  limestone plume (main.js). Phone (AUTO_PHONE=1, GPU), master v31 -> this:
+  spawn 205/980k = ; Kressler Rd 86/513k -> 86/514k; Lobsinger Line
+  228/749k -> 227/765k; a gravel concession road 63/372k -> 60/369k.
+  **Not done:** road-name blades at rural junctions (needs lettering: the
+  sign atlases are full); the outside wedge of a bend at a pass-through
+  node reads ground in roadLift (mesh mitred: < 10 cm on gentle bends).
 
 ## Build number
 

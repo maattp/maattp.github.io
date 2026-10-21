@@ -817,7 +817,8 @@ export class TrafficSystem {
     if (out) return out;
     out = [];
     const city = this.city, e = city.edges[ei];
-    if (!(e.elev || e.cls === 'hwy' || e.cls === 'ramp' || e.noTraffic)) {
+    // (no kerbside parking on a country road: no kerb, a ditch -- rural.js)
+    if (!(e.elev || e.cls === 'hwy' || e.cls === 'ramp' || e.noTraffic || e.rural)) {
       const a = city.nodes[e.a], b = city.nodes[e.b];
       const slots = Math.floor(e.len / 13);
       for (let s = 1; s < slots; s++) {

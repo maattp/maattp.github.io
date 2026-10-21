@@ -344,6 +344,8 @@ export class Crops {
         const c = world.cropAt(x, z);
         if (!c) continue;
         if (G.isWater(x, z) || G.inLot(x, z) || city.onRoad(x, z, 1.5)) continue;
+        // not in a country road's ditch, on its berm or on a farm lane (rural.js)
+        if (city.ruralClear && city.ruralClear(x, z)) continue;
         if (world.inAirfield && world.inAirfield(x, z)) continue;
         const gy = G.terrainHeight(x, z);
         if (city.insideBuilding(x, z, gy, 1.5)) continue;

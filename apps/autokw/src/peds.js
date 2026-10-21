@@ -3646,7 +3646,7 @@ export class PedSystem {
     const pool = city.edgesNear(px, pz, maxD + 40);
     for (let k = 0; k < 80 && pool.length; k++) {
       const ei = pool[Math.floor(R.n() * pool.length)], e = city.edges[ei];
-      if (!e || e.elev || e.tunnel || e.cls === 'hwy' || e.cls === 'ramp' || e.noTraffic || e.len < 24) continue;
+      if (!e || e.elev || e.tunnel || e.cls === 'hwy' || e.cls === 'ramp' || e.noTraffic || e.rural || e.len < 24) continue;
       const a = city.nodes[e.a], b = city.nodes[e.b];
       const t = 0.3 + R.n() * 0.4, side = R.n() < 0.5 ? 1 : -1, off = e.hw + PAVE;
       const cx = lerp(a.x, b.x, t), cz = lerp(a.z, b.z, t);
@@ -3685,7 +3685,7 @@ export class PedSystem {
       if (!eids.length) return null;
       const ei = eids[Math.floor(this.R.n() * eids.length)];
       const e = city.edges[ei];
-      if (e.elev || e.cls === 'hwy' || e.cls === 'ramp') continue;
+      if (e.elev || e.cls === 'hwy' || e.cls === 'ramp' || e.rural) continue;
       const a = city.nodes[e.a], b = city.nodes[e.b];
       const t = 0.15 + this.R.n() * 0.7;
       const side = this.R.n() < 0.5 ? 1 : -1;
@@ -3769,7 +3769,7 @@ export class PedSystem {
     const near = city.roadsNear(px, pz, RING_MAX + 12, false);
     for (let i = 0; i < near.length; i++) {
       const e = city.edges[near[i]];
-      if (e.cls === 'hwy' || e.cls === 'ramp' || e.tunnel || e.len < 6) continue;
+      if (e.cls === 'hwy' || e.cls === 'ramp' || e.tunnel || e.rural || e.len < 6) continue;
       out.push(near[i]);
     }
     return out;
@@ -3808,7 +3808,7 @@ export class PedSystem {
     let best = -1, bd = 12;
     for (let i = 0; i < list.length; i++) {
       const e = city.edges[list[i]];
-      if (e.cls === 'hwy' || e.cls === 'ramp' || e.tunnel || e.len < 6) continue;
+      if (e.cls === 'hwy' || e.cls === 'ramp' || e.tunnel || e.rural || e.len < 6) continue;
       const a = city.nodes[e.a];
       const t = clamp(((p.x - a.x) * e.dx + (p.z - a.z) * e.dz) / e.len, 0, 1);
       const d = Math.abs(Math.hypot(a.x + e.dx * t * e.len - p.x, a.z + e.dz * t * e.len - p.z) - (e.hw + PAVE));
@@ -3849,7 +3849,7 @@ export class PedSystem {
     let n = 0, self = -1;
     for (let k = 0; k < node.e.length && n < ARMS.length; k++) {
       const ei = node.e[k], e = city.edges[ei], mine = ei === p.edge;
-      if (!mine && (e.elev || e.tunnel || e.cls === 'hwy' || e.cls === 'ramp' || e.len < 4 || e.a === e.b)) continue;
+      if (!mine && (e.elev || e.tunnel || e.cls === 'hwy' || e.cls === 'ramp' || e.rural || e.len < 4 || e.a === e.b)) continue;
       const A = ARMS[n], atA = e.a === nodeId;
       A.ei = ei; A.atA = atA; A.hw = e.hw;
       A.ux = atA ? e.dx : -e.dx; A.uz = atA ? e.dz : -e.dz;
