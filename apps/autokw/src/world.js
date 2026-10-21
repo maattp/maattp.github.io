@@ -191,7 +191,11 @@ const GRASS = [0.40, 0.57, 0.29];
 // grade's saturation payback it rendered as a dirt lot under every street-level
 // shot. Developed ground is worn lawn more than bare earth, so it keeps GRASS's
 // hue at a much lower chroma -- still clearly not a meadow.
-const SUBURB = [0.47, 0.53, 0.38];
+// Auto KW: a Waterloo Region subdivision in October is lawns, still green
+// (cool-season grass greens up again in the fall) -- at Seattle's
+// [0.47, 0.53, 0.38] Beechwood and Laurelwood read as dry khaki between the
+// houses. Greener, still well short of GRASS's chroma.
+const SUBURB = [0.45, 0.55, 0.35];
 const URBAN = [0.56, 0.56, 0.55];
 const BLEND_TAPS = [[0, 0], [-85, 55], [70, -75]];
 // The ground map's mean linear value (measured; textures.js groundSurface):
@@ -341,6 +345,46 @@ const INDUSTRIAL_WALL = [
   [0.14, [0.54, 0.62, 0.70]], [0.12, [0.74, 0.66, 0.52]], [0.08, [0.46, 0.48, 0.50]],
 ];
 const industrialWall = (bd) => tint(bd.seed, pickW(INDUSTRIAL_WALL, hash2(bd.seed, 133)), 0.16);
+
+// AUTO KW: the new towers. The student district round UW and Laurier
+// (Columbia, Lester, Sunview, Hickory, Regina, King N, Phillip -- ICON, Sage,
+// Luxe, One Columbia, the Houses on King) and downtown Kitchener's condos
+// (One Victoria, Charlie West, Young, DTK, City Centre) went up after 2008:
+// white and grey precast and window wall, panels in a second grey, and on
+// many a stack of coloured accent panels. [x0, x1, z0, z1] in world metres.
+const MODERN_ZONES = [[-5400, -3700, -3450, -2200], [-2100, -600, -500, 500]];
+/** An apartment tower of eight storeys or more in one of MODERN_ZONES, with no material from OSM. */
+function modernTower(bd) {
+  if (bd.style === 'campus' || bd.h < 24 || bd.kind || (bd.kw && (bd.kw.fam || bd.kw.poly || bd.kw.skip))) return false;
+  const lk = bd.look || 0;
+  if ((lk >> 2) & 7) return false;
+  if (!(lk & 32) && !(bd.kw && bd.kw.name && /Condos|Tower|House|Residence|Lofts/.test(bd.kw.name))) return false;
+  for (const [x0, x1, z0, z1] of MODERN_ZONES) if (bd.x > x0 && bd.x < x1 && bd.z > z0 && bd.z < z1) return true;
+  return false;
+}
+// white precast, light grey precast, window wall, charcoal panel
+const MODERN_FAMS = [
+  { m: 'masonry', c: [1.14, 1.14, 1.12], u: 13, v: 13 },
+  { m: 'masonry', c: [0.94, 0.94, 0.93], u: 14, v: 13.6 },
+  { m: 'glass', c: [0.66, 0.70, 0.73], u: 14, v: 13.6 },
+  { m: 'masonry', c: [0.42, 0.43, 0.45], u: 14, v: 13.6 },
+];
+// the second panel colour on each wall family, and the accents
+const MODERN_PANEL = [[0.46, 0.47, 0.49], [0.95, 0.95, 0.93], [0.93, 0.93, 0.91], [0.90, 0.90, 0.88]];
+const ACCENTS = [[0.88, 0.45, 0.16], [0.52, 0.74, 0.24], [0.78, 0.18, 0.16], [0.18, 0.48, 0.74], [0.95, 0.75, 0.15]];
+// a few by name: [family, accent index or -1]
+const TOWER_NAMED = { 'Sage II': [0, 0], 'Sage Condos I': [0, 0], 'Sage 5': [1, 0], 'Sage 6': [1, 0],
+  'Icon': [0, -1], 'Luxe Condos I': [3, -1], 'Luxe II': [3, -1], 'One Victoria': [2, -1], 'Charlie West': [0, -1],
+  'Duke Tower': [2, -1], 'Young Condos': [0, -1], 'City Centre Condos, Tower 1': [1, -1] };
+/** { fam, panel, accent|null } for a modernTower. */
+function towerLook(bd) {
+  if (bd._tl) return bd._tl;
+  const s = bd.seed, nm = bd.kw && bd.kw.name, N = nm && TOWER_NAMED[nm];
+  const p = hash2(s, 151);
+  const fam = N ? N[0] : p < 0.42 ? 0 : p < 0.66 ? 1 : p < 0.86 ? 2 : 3;
+  const ai = N ? N[1] : hash2(s, 152) < 0.5 ? Math.floor(hash2(s, 153) * ACCENTS.length) : -1;
+  return (bd._tl = { fam, panel: MODERN_PANEL[fam], accent: ai >= 0 ? ACCENTS[ai] : null });
+}
 
 // AUTO KW: where the hydro is overhead. Every arterial and regional road;
 // and the side streets of the places built before the lines went under
@@ -4887,6 +4931,7 @@ float frLine(float o, float fw, float c, float w) {
       }
       yield; this._yt = performance.now();
       yield* this.meshProps(flat, glow, ch, cx, cz);
+      if (ch !== NO_CITY_CHUNK) this.lotLights(flat, glow, cx, cz);
       yield; this._yt = performance.now();
       yield* plantTrees(this, flat, ch, cx, cz, 1, ch === NO_CITY_CHUNK);
       this._occ = null;
@@ -7677,6 +7722,122 @@ float frLine(float o, float fw, float c, float w) {
     return best;
   }
 
+  /**
+   * AUTO KW: the back yard's wood privacy fence, 1.8 m of cedar boards --
+   * between back yards it is everywhere in Waterloo Region, and from the air
+   * the fence lines are what draw the lots. There are no parcels, so the
+   * chunk's 2 m occupancy raster finds them: the back line halfway to the
+   * house behind (drawn by the one of the two with the lower seed, so it is
+   * one fence), 3 m short of a street the yard backs onto (an arterial's
+   * reverse frontage), 13 m out over open ground; the right-hand side line
+   * halfway to the next house (each house draws its right side only, so a
+   * row gets one fence between each pair), and a gate run across each side
+   * yard a metre behind the front of the back wall. Four double-sided quads,
+   * 16 triangles, on three houses in four. Not solid.
+   */
+  _yardFence(flat, bd, fb, offF, seed) {
+    const occ = this._occ;
+    if (!occ || hash2(seed, 210) > 0.76) return;
+    const x0 = this._occX0, z0 = this._occZ0;
+    // 0 open, 1 building, 2 pavement/road, 3 off the raster
+    const at = (lx, lz) => {
+      const [x, z] = offF(lx, lz);
+      const i = Math.floor((x - x0) / OCC_C), j = Math.floor((z - z0) / OCC_C);
+      if (i < 0 || j < 0 || i >= OCC_N || j >= OCC_N) return 3;
+      const o = occ[j * OCC_N + i];
+      return o & OCC_PAVE ? 2 : o & 1 ? 1 : G.isWater(x, z) ? 2 : 0;
+    };
+    const hw = fb.w / 2, hd = fb.d / 2;
+    // the back line: probe straight back from the middle of the back wall
+    let back = 13, owner = true;
+    // (from 3.5 m out: the raster's 2 m cells round the house's own walls)
+    for (let s = 3.5; s <= 30; s += 1) {
+      const o = at(0, -hd - s);
+      if (o === 0) continue;
+      if (o === 3) { back = Math.min(13, s - 1); break; }
+      if (o === 2) { back = Math.max(2, s - 3); break; }
+      // a building: whose? the lower seed draws the shared fence
+      back = s / 2;
+      const [px, pz] = offF(0, -hd - s);
+      for (const b of this.city.buildingsNear(px, pz, 30)) {
+        if (b === bd || b.style !== 'house') continue;
+        const c = Math.cos(b.rot), sn = Math.sin(b.rot), dx = px - b.x, dz = pz - b.z;
+        if (Math.abs(dx * c + dz * sn) <= b.w / 2 + 1.2 && Math.abs(-dx * sn + dz * c) <= b.d / 2 + 1.2) { owner = bd.seed < b.seed; break; }
+      }
+      break;
+    }
+    const FS = cityStats.fences || (cityStats.fences = { yards: 0 });
+    if (back < 3) { FS.short = (FS.short || 0) + 1; return; }
+    // the side yards: how far to the next thing, each way
+    const side = (sg) => {
+      for (let s = 2.5; s <= 12; s += 1) {
+        const o = at(sg * (hw + s), -hd + 1);
+        if (o === 1) return s / 2;
+        if (o >= 2) return Math.max(0.6, s - 2);
+      }
+      return 4;
+    };
+    const gr = side(1), gl = side(-1);
+    const H = 1.8, k = hash2(seed, 211);
+    const col = k < 0.45 ? [0.42, 0.31, 0.22] : k < 0.8 ? [0.38, 0.35, 0.31] : [0.29, 0.21, 0.15];
+    const T = G.terrainHeight;
+    const run = (ax, az, bx, bz) => {
+      const A = offF(ax, az), B = offF(bx, bz);
+      const ya = T(A[0], A[1]) - 0.1, yb = T(B[0], B[1]) - 0.1;
+      const dx = B[0] - A[0], dz = B[1] - A[1], L = Math.hypot(dx, dz);
+      if (L < 0.5) return;
+      this._quad2(flat, [A[0], ya, A[1]], [B[0], yb, B[1]], [B[0], yb + H + 0.1, B[1]], [A[0], ya + H + 0.1, A[1]], [dz / L, 0, -dx / L], col);
+    };
+    const zg = -hd + 1, zb = -hd - back;
+    const xr = hw + gr, xl = -hw - gl;
+    run(hw, zg, xr, zg);                 // the right-hand gate run
+    run(-hw, zg, xl, zg);                // the left-hand gate run
+    run(xr, zg, xr, zb);                 // the right-hand side line
+    if (owner) run(xr, zb, xl, zb);      // the back line
+    FS.yards++;
+  }
+
+  /**
+   * AUTO KW: what stands on a Waterloo Region driveway. The Region's blue
+   * box and green bin (and a grey garbage cart) out at the end of it on one
+   * in four -- collection day somewhere every day -- and a portable
+   * basketball net beside the garage on one in nine, its backboard over the
+   * driveway. Vertex-coloured boxes in the chunk's flat mesh: ~40 / ~50
+   * triangles.
+   */
+  _drivewayKit(flat, fb, offF, seed, glx, gw, sd, L, yEnd, yGar) {
+    const r = hash2(seed, 220);
+    const out = sd;   // the side away from the house's middle
+    if (r < 0.25 && L >= 4) {
+      const lx = glx + out * (gw / 2 + 0.05), lz = fb.d / 2 + L - 0.7;
+      const [bx, bz] = offF(lx, lz);
+      // the green bin: a wheeled cart, its lid a shade darker
+      flat.box(bx, yEnd - 0.05, bz, 0.5, 0.9, 0.6, fb.rot, [0.12, 0.38, 0.16]);
+      flat.box(bx, yEnd + 0.85, bz, 0.54, 0.08, 0.66, fb.rot, [0.08, 0.26, 0.11]);
+      // the blue box beside it, open-topped, a few bottles in it
+      const [qx, qz] = offF(lx - out * 0.75, lz);
+      flat.box(qx, yEnd - 0.05, qz, 0.62, 0.36, 0.42, fb.rot, [0.10, 0.28, 0.66], NOTOP);
+      flat.box(qx, yEnd + 0.12, qz, 0.5, 0.16, 0.32, fb.rot, [0.72, 0.74, 0.70]);
+      if (hash2(seed, 221) < 0.55) {
+        const [gx, gz] = offF(lx + out * 0.7, lz);
+        flat.box(gx, yEnd - 0.05, gz, 0.58, 1.0, 0.68, fb.rot, [0.26, 0.27, 0.29]);
+      }
+    } else if (r > 0.89 && L >= 5) {
+      // the net at the driveway's street end, its hoop facing the garage
+      const lx = glx + out * (gw / 2 + 0.45), lz = fb.d / 2 + L - 1.2;
+      const [px, pz] = offF(lx, lz);
+      flat.box(px, yEnd - 0.05, pz, 0.7, 0.35, 1.1, fb.rot, [0.12, 0.12, 0.13]);       // the base
+      flat.box(px, yEnd + 0.3, pz, 0.12, 2.95, 0.12, fb.rot, [0.16, 0.16, 0.17], NOTOP);
+      const [ax, az] = offF(lx - out * 0.45, lz - 0.45);
+      flat.box(ax, yEnd + 3.0, az, 0.1, 0.1, 0.95, fb.rot, [0.16, 0.16, 0.17]);
+      const [kx, kz] = offF(lx - out * 0.9, lz - 0.9);
+      flat.box(kx, yEnd + 2.75, kz, 1.1, 0.75, 0.05, fb.rot, [0.9, 0.91, 0.92]);        // the backboard
+      flat.box(kx, yEnd + 2.95, kz, 0.45, 0.32, 0.06, fb.rot, [0.75, 0.2, 0.15]);
+      const [hx, hz] = offF(lx - out * 0.9, lz - 1.15);
+      flat.box(hx, yEnd + 2.9, hz, 0.46, 0.03, 0.46, fb.rot, [0.85, 0.32, 0.12]);       // the rim
+    }
+  }
+
   // --- fall: what the houses and shops put out -------------------------------
 
   /** A pumpkin record for fall.js, at house-local (lx, lz) facing the house's front. */
@@ -8256,6 +8417,12 @@ float frLine(float o, float fw, float c, float w) {
     // grey stone/block, siding (painted), concrete/stucco, metal, glass.
     const lm = (bd.look || 0) >> 2 & 7;
     if (lm) return FAMS[[0, 2, 3, 0, 8, 4, 10, 1][lm]];
+    // The student towers round UW and Laurier and downtown Kitchener's new
+    // condos (modernTower): white and light-grey precast, a charcoal one, some
+    // window wall -- never the brown brick of the 1970s slabs, and not the
+    // deep blue curtain glass of an office tower. Their panels and accent
+    // colours are buildingDetail's (_towerPanels).
+    if (modernTower(bd)) return MODERN_FAMS[towerLook(bd).fam];
     // An apartment tower (OSM building=apartments, over ~10 storeys): the
     // student towers on Columbia, Lester, Sunview and King and the condos
     // downtown are white and grey precast with window wall (ICON, Sage, One
@@ -8304,8 +8471,12 @@ float frLine(float o, float fw, float c, float w) {
     const PAL = [[0.84, 0.78, 0.66], [0.78, 0.70, 0.60], [0.70, 0.52, 0.42], [0.80, 0.80, 0.78], [0.62, 0.58, 0.54], [0.88, 0.84, 0.74]];
     const col = tint(seed, PAL[Math.floor(hash2(seed, 801) * PAL.length)], 0.12);
     const wh = bd.h + 2 + drop;
-    // plain painted block / stucco: the facade cells all carry windows
-    flat.box(bd.x, base - drop, bd.z, bd.w, wh, bd.d, bd.rot, col, { ao: 0.25 });
+    // plain painted block / stucco: the facade cells all carry windows. No
+    // top: the far skyline (buildSkyline: every box over 1400 m2) caps this
+    // footprint at exactly bd.y + bd.h, and a roof there z-fought it in
+    // bands -- the striped tan-and-white plaza roofs. The roof is the lid
+    // below, inside the parapet and 0.3 m over the skyline's, as meshBuilding's is.
+    flat.box(bd.x, base - drop, bd.z, bd.w, wh, bd.d, bd.rot, col, { ao: 0.25, top: false });
     const c = Math.cos(bd.rot), sn = Math.sin(bd.rot);
     const off = (lx, lz) => [bd.x + lx * c - lz * sn, bd.z + lx * sn + lz * c];
     // the front: along u, out along n (both local), `len` long, at `dist` from the centre
@@ -8332,11 +8503,14 @@ float frLine(float o, float fw, float c, float w) {
     // a parapet all round, and the roof's plant
     const rt = bd.y + bd.h;
     flat.box(bd.x, rt, bd.z, bd.w + 0.25, 0.7, bd.d + 0.25, bd.rot, [col[0] * 0.9, col[1] * 0.9, col[2] * 0.9], NOTOP);
+    // the roof: white single-ply or pale gravel, as Waterloo Region's plazas are from the air
+    const rv = hash2(seed, 811) < 0.6 ? 0.86 + hash2(seed, 812) * 0.08 : 0.62 + hash2(seed, 813) * 0.1;
+    flat.box(bd.x, rt + 0.16, bd.z, bd.w + 0.1, 0.14, bd.d + 0.1, bd.rot, [rv, rv, rv * 0.98]);
     const nu = Math.min(12, Math.max(1, Math.round(bd.w * bd.d / 500)));
     for (let i = 0; i < nu; i++) {
       const [gx, gz] = off((hash2(seed, 820 + i) - 0.5) * (bd.w - 5), (hash2(seed, 840 + i) - 0.5) * (bd.d - 5));
       const k = 1.6 + hash2(seed, 860 + i) * 1.6;
-      flat.box(gx, rt, gz, k, 1.1 + hash2(seed, 880 + i), k * 0.7, bd.rot, [0.6, 0.61, 0.62]);
+      flat.box(gx, rt + 0.3, gz, k, 1.1 + hash2(seed, 880 + i), k * 0.7, bd.rot, [0.6, 0.61, 0.62]);
     }
   }
 
@@ -8568,10 +8742,12 @@ float frLine(float o, float fw, float c, float w) {
             if (Math.abs(y0d - y1d) < 0.4) {
               flat.box(ax, Math.min(y0d, y1d) - 0.12, az, gw + 0.6, Math.abs(y0d - y1d) / 2 + 0.2, L, fb.rot,
                 [0.24, 0.24, 0.25], { ao: 0 });
+              this._drivewayKit(flat, fb, offF, seed, glx, gw, sd, L, y1d, y0d);
             }
           }
         }
       }
+      if (aspect < 2.6 && fb.w >= 6.5 && fb.w <= 26) this._yardFence(flat, bd, fb, offF, seed);
       if (FALL) this.fallHouse(flat, bd, seed, off, porch, form);
       if (form === 'flat') {
         this.townhome(flat, fb, seed, col, top, offF);
@@ -9033,6 +9209,9 @@ float frLine(float o, float fw, float c, float w) {
       if (h(12) < (apt ? 0.3 : 0.45)) this._balconies(flat, bd, c, h, t0, this._side(bd, (street + 2) % 4, t0.w, t0.d), floorsOf(t0, 24));
     }
 
+    // Auto KW: the new towers' panels, slab edges and accent stacks
+    if (modernTower(bd)) { this._towerPanels(flat, bd, c, h, t0, street, floorsOf(t0, 40)); note('towerPanels', street); }
+
     // --- shops: awnings over the bays, a false front ----------------------------
     if (c.plinthH > 2 && hash2(seed, 41) <= 0.55 && h(20) < 0.5 && this._awnings(flat, bd, c, h, S)) note('awnings', street);
     if (bd.style === 'lowrise' && bd.h < 9 && !glassy && c.tiers.length === 1 && h(21) < 0.28) {
@@ -9147,6 +9326,38 @@ float frLine(float o, float fw, float c, float w) {
       any = true;
     }
     return any;
+  }
+
+  /**
+   * AUTO KW: a new tower's skin (modernTower / towerLook). Precast or charcoal
+   * walls carry full-height stacks of the second panel colour at every corner;
+   * window wall carries a white slab edge at every floor. Many have one stack
+   * of coloured accent panels down the street face and its back. ~8 triangles
+   * a box, all in the chunk's flat mesh.
+   */
+  _towerPanels(flat, bd, c, h, t0, street, floors) {
+    const L = towerLook(bd), y0 = t0.y + 3.2, y1 = t0.y + t0.h - 0.4;
+    if (y1 - y0 < 8) return;
+    if (L.fam === 2) {
+      for (const y of floors) flat.box(bd.x, y - 0.3, bd.z, t0.w + 0.24, 0.32, t0.d + 0.24, bd.rot, L.panel, NOTOP);
+    } else {
+      for (let k = 0; k < 4; k++) {
+        const S = this._side(bd, k, t0.w, t0.d);
+        if (S.w < 8) continue;
+        const pw = clamp(S.w * 0.14, 1.6, 4.2);
+        // one corner of each face (the next face's other corner makes the L)
+        const [x, z] = S.off(S.w / 2 - pw / 2 + 0.1, S.d / 2 + 0.1);
+        flat.box(x, y0, z, pw, y1 - y0, 0.2, S.rot, L.panel, NOTOP);
+      }
+    }
+    if (!L.accent) return;
+    for (const k of [street, (street + 2) % 4]) {
+      const S = this._side(bd, k, t0.w, t0.d);
+      if (S.w < 10) continue;
+      const aw = clamp(S.w * 0.12, 1.4, 3.2), lx = (h(140) - 0.5) * (S.w - aw - 6);
+      const [x, z] = S.off(lx, S.d / 2 + 0.12);
+      flat.box(x, y0 + 3, z, aw, y1 - y0 - 3, 0.24, S.rot, L.accent, NOTOP);
+    }
   }
 
   /** Stacked balconies across one face: slab, underside, a glass or metal rail. */
@@ -9578,6 +9789,69 @@ float frLine(float o, float fw, float c, float w) {
    * a wire into nothing. All in the chunk's flat/glow builders: no draws.
    * Phone cost: ~170 triangles a pole with its span.
    */
+  /**
+   * AUTO KW: light standards in the big car parks. Square steel poles ~9 m
+   * on a concrete pier, a crossbar with two LED shoebox heads (the plazas,
+   * Conestoga, Fairview, the big boxes from the air and street level). On
+   * the seam between back-to-back rows of the lot's bay grid (the shader's
+   * and traffic.updateLotParked's: 2.6 m bays, 18 m modules, in the lot's
+   * frame), every 13 bays and every other module, and only where the lot
+   * carries on 20 m round the spot -- a strip mall's apron gets none. ~50
+   * triangles a pole into the chunk's flat mesh; the head glows at night.
+   */
+  lotLights(flat, glow, cx, cz) {
+    const city = this.city, seen = new Set(), x0 = cx * CHUNK, z0 = cz * CHUNK;
+    const S = cityStats.lotLights || (cityStats.lotLights = { poles: 0 });
+    const POLE = [0.36, 0.37, 0.38], PIER = [0.62, 0.61, 0.58], HEAD = [0.24, 0.25, 0.26];
+    const CURB = [0.66, 0.65, 0.62], ISLE = [0.20, 0.24, 0.12];
+    const isles = [];
+    this._lotIslands = isles; this._lotIslandsKey = this._ck;
+    for (let x = x0 + 4.5; x < x0 + CHUNK; x += 9) {
+      for (let z = z0 + 4.5; z < z0 + CHUNK; z += 9) {
+        const code = G.lotCodeAt(x, z);
+        if (!code || ((code - 1) / G.LOT_ANG | 0) !== 0) continue;   // striped parking only
+        const ang = ((code - 1) % G.LOT_ANG) / G.LOT_ANG * Math.PI;
+        const ux = Math.cos(ang), uz = Math.sin(ang);
+        const pu = x * ux + z * uz, pv = -x * uz + z * ux;
+        const iu = Math.round(pu / 33.8), iv = Math.round(pv / 36);
+        const key = code * 1e8 + iu * 1e4 + iv;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        // the island's centre: the middle of bay 13 iu, on the seam
+        const cu = iu * 33.8 + 1.3, cv = iv * 36;
+        const wx = cu * ux - cv * uz, wz = cu * uz + cv * ux;
+        if (Math.floor(wx / CHUNK) !== cx || Math.floor(wz / CHUNK) !== cz) continue;
+        let big = G.lotCodeAt(wx, wz) === code;
+        for (const [du, dv] of [[20, 0], [-20, 0], [0, 14], [0, -14]]) {
+          if (!big) break;
+          big = G.lotCodeAt(wx + du * ux - dv * uz, wz + du * uz + dv * ux) === code;
+        }
+        if (!big || city.onRoad(wx, wz, 1.5) || this.inBuilding(wx, wz, 1.5) || city.jumpClear(wx, wz)
+          || this.cutDepth(wx, wz) > 0.3 || this.inDrawnLake(wx, wz)) continue;
+        const gy = G.terrainHeight(wx, wz);
+        // the kerbed island it stands in: one bay wide, across both rows
+        // (traffic.updateLotParked leaves that bay pair empty), a tree on most
+        flat.box(wx, gy - 0.25, wz, 2.3, 0.42, 10.2, ang, CURB, NOTOP);
+        flat.box(wx, gy + 0.15, wz, 2.0, 0.03, 9.9, ang, ISLE);
+        if (hash2(Math.round(wx), Math.round(wz) + 3) < 0.6) {
+          const t = hash2(Math.round(wx) + 5, Math.round(wz)) < 0.5 ? 3 : -3;
+          isles.push([wx - uz * t, wz + ux * t]);
+        }
+        flat.box(wx, gy - 0.1, wz, 0.5, 0.9, 0.5, ang, PIER, NOTOP);
+        flat.box(wx, gy + 0.8, wz, 0.2, 8.4, 0.2, ang, POLE, NOTOP);
+        flat.box(wx, gy + 9.1, wz, 2.6, 0.12, 0.12, ang, POLE);
+        for (const sg of [-1, 1]) {
+          const hx = wx + ux * sg * 1.25, hz = wz + uz * sg * 1.25;
+          flat.box(hx, gy + 8.95, hz, 0.75, 0.16, 0.5, ang, HEAD);
+          glow.box(hx, gy + 8.93, hz, 0.6, 0.03, 0.38, ang, [1.0, 0.97, 0.9]);
+        }
+        city.addObstacle(this._ck, wx, wz, 0.35);
+        for (const t of [-3.6, 3.6]) city.addObstacle(this._ck, wx - uz * t, wz + ux * t, 1.1);
+        S.poles++;
+      }
+    }
+  }
+
   hydroLine(flat, glow, e, a, b, px, pz, hydro, onCorner, ei, inPit) {
     const city = this.city, SPAN = 40;
     // canonical direction, so both orientations of a street agree

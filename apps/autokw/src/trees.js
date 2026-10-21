@@ -1385,5 +1385,13 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
       }
     }
   }
+  // AUTO KW: the car parks' kerbed islands (world.lotLights), one tree each:
+  // a young broadleaf, crown kept small so it overhangs no bay
+  if (lod === 1 && world._lotIslands && world._lotIslandsKey === ck) {
+    for (const [x, z] of world._lotIslands) {
+      const r = hash2(Math.round(x * 5) + 7, Math.round(z * 5) + 9);
+      plant(x, z, 6 + 3 * r, 2.0 + 0.8 * r, BROAD, T_STREET, 'street');
+    }
+  }
   world._treeRecs = recs.length ? Float32Array.from(recs) : null;
 }

@@ -43,7 +43,7 @@ import { CoffeeShop } from './barista.js';
 import { Seafair } from './hydrorace.js';
 import { FireService, placeStations } from './firecalls.js';
 import { BONES } from './peds.js';
-import { setKwData, applyNamed, buildSigns, buildPolys, buildBunting, buildSchools, mapPlaces as kwPlaces, kwData, boxAt } from './kw.js';
+import { setKwData, applyNamed, buildSigns, buildPolys, buildBunting, buildSchools, mapPlaces as kwPlaces, kwData, boxAt, dedupeFootprints } from './kw.js';
 import { addLandmarkExtra } from './landmarks.js';
 import { Chicopee } from './chicopee.js';
 import { prepFun, buildMarketTent, buildFlags, waveFlags, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, buildDome } from './kwfun.js';
@@ -817,6 +817,8 @@ async function boot() {
   ykf = new YKF(md.kw && md.kw.aero);
   addLandmarkExtra((ctx) => ykf.build(ctx));
   ykf.prepTower(city, boxAt);   // YKF's control tower (FINAL APPROACH's door)
+  // every module has claimed its boxes: one drawer per footprint (kw.js)
+  { const t0 = performance.now(), k = dedupeFootprints(city); k.ms = Math.round(performance.now() - t0); window.__kwDedupe = k; blog(`kw: ${k.pairs} doubly drawn footprints, ${k.flat} flattened, ${k.raised} raised (${Math.round(performance.now() - t0)} ms)`); }
   addLandmarkExtra((ctx) => ykf.buildTower(ctx));
   // the freeways as Ontario signs and builds them (highways.js, data/hwy.json)
   { const k = prepHighways(city, md.hwy); blog(`highways: ${k.edgesTimed} freeway edges timed from OSM maxspeed`); }
