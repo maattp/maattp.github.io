@@ -36,10 +36,30 @@
     { name: 'allway-28', x: -28, z: 399 },
     { name: 'allway-uptown', x: -3137, z: -1029 },
   ];
-  let crashes = 0;
+  let crashes = 0, measuring = false, siteName = '';
+  const crashLog = [];
   const oc = d.game.onTrafficCrash;
-  d.game.onTrafficCrash = (...a) => { crashes++; if (oc) return oc.apply(d.game, a); };
+  d.game.onTrafficCrash = (...a) => {
+    if (measuring) { crashes++; if (crashLog.length < 12) crashLog.push({ site: siteName, imp: +a[0].toFixed(1), at: [Math.round(a[1]), Math.round(a[2])] }); }
+    if (oc) return oc.apply(d.game, a);
+  };
   T.updateParked = () => {};
+  // why a car was recycled as stuck (stuckT: wanting to go and not moving;
+  // restT: standing)
+  const recLog = [];
+  const rm0 = T.remove.bind(T);
+  T.remove = (v) => {
+    if (measuring && v.mode === 'traffic' && (v.stuckT > 8 || v.restT > 20) && recLog.length < 20) {
+      let ob = null;
+      const l = c.obstacles && c.obstacles.get(c.chunkKey(Math.floor(v.x / 400), Math.floor(v.z / 400)));
+      if (l) for (let i = 0; i < l.length; i += 3) { const dd = Math.hypot(l[i] - v.x, l[i + 1] - v.z); if (!ob || dd < ob) ob = dd; }
+      const ce = c.edges[v.edge];
+      recLog.push({ site: siteName, at: [Math.round(v.x), Math.round(v.z)], ty: v.typeName, stuckT: +(v.stuckT || 0).toFixed(1), restT: +(v.restT || 0).toFixed(1),
+        hold: !!v.ctlHold, jcC: v.jcC, k: jc && v.jcC >= 0 && jc.list[v.jcC] ? jc.list[v.jcC].k : 0, lead: v.lead ? [v.lead.typeName, v.lead.mode, Math.round(v.leadGap)] : null,
+        cls: ce && ce.cls, obstacle: ob && +ob.toFixed(1) });
+    }
+    return rm0(v);
+  };
   const box = (a, b) => {
     const fa = a.forward, fb = b.forward, dx = b.x - a.x, dz = b.z - a.z;
     const ax = [fa.x, fa.z, fa.z, -fa.x, fb.x, fb.z, fb.z, -fb.x];
@@ -68,6 +88,7 @@
     const c0 = crashes, r0 = T.stats.stuckRecycled, pairs = new Map(), slow = new Map(), stuckSeen = new Set(), seen = new WeakSet();
     const lastGo = new WeakMap();
     let t = 0;
+    siteName = site.name; measuring = false;
     const steps = (cfg.warm + cfg.measure) * 60;
     for (let i = 0; i < steps; i++) {
       const ang = t * 0.2;
@@ -75,6 +96,7 @@
       if (i % 10 === 0) d.world.update(site.x, site.z, 2);
       t += dt;
       const meas = t >= cfg.warm;
+      measuring = meas;
       const cars = T.cars.filter((v) => v.mode === 'traffic' || v.mode === 'trailer');
       for (const v of cars) {
         if (v.mode !== 'traffic') continue;
@@ -142,5 +164,5 @@
     kmh: Math.round(S.kmh[0] / (S.kmh[1] || 1)), commits: S.commits });
   const st = {};
   for (const k of ['sigHolds', 'leftYields', 'rbYields', 'stopWaits', 'fullStops', 'stuckRecycled', 'yielded']) st[k] = +((T.stats[k] || 0) - (s0[k] || 0)).toFixed(1);
-  return JSON.stringify({ sites: out.map(fmt), total: fmt(Object.assign(tot, { name: 'total' })), stats: st, hitLog: tot.hitLog }, null, 1);
+  return JSON.stringify({ sites: out.map(fmt), total: fmt(Object.assign(tot, { name: 'total' })), stats: st, hitLog: tot.hitLog, crashLog, recLog }, null, 1);
 })()

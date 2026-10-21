@@ -40,7 +40,7 @@ const RANK = { hwy: 5, art: 4, ramp: 3, st: 2, res: 1 };
 // the deceleration a driver will brake at for an amber
 const AMBER_B = 3.2;
 // a two-way stop's gap: no major-road car may arrive within this (s)
-const GAP_T = 4.5;
+const GAP_T = 6;
 // a roundabout entry's gap to circulating traffic (s)
 const RB_GAP = 3.2;
 
@@ -59,6 +59,42 @@ function segDist2(px, pz, ax, az, bx, bz) {
   const t = clamp(((px - ax) * dx + (pz - az) * dz) / L2, 0, 1);
   const ex = px - ax - dx * t, ez = pz - az - dz * t;
   return { d2: ex * ex + ez * ez, t };
+}
+
+// traffic.js's route layout (v.rt: RT_F numbers an entry; R_EI, R_SG, the
+// lane line's start R_QX/R_QZ, direction R_UX/R_UZ and length R_LEN)
+const RT_F = 23, R_EI = 0, R_SG = 1, R_QX = 4, R_QZ = 5, R_UX = 6, R_UZ = 7, R_LEN = 8;
+const _rt = { d: 0, key: 0 };
+/** How far along car o's planned route node ni is, and the approach key it
+ *  arrives by, or null when its route does not reach ni. */
+function routeTo(city, o, ni) {
+  const rt = o.rt;
+  let d = rt[R_LEN] - ((o.x - rt[R_QX]) * rt[R_UX] + (o.z - rt[R_QZ]) * rt[R_UZ]);
+  for (let j = 0; j < o.rtN; j++) {
+    const q = j * RT_F;
+    if (j > 0) d += rt[q + R_LEN];
+    const ei = rt[q + R_EI], e = city.edges[ei];
+    if ((rt[q + R_SG] > 0 ? e.b : e.a) === ni) { _rt.d = d; _rt.key = ei * 2 + (rt[q + R_SG] > 0 ? 1 : 0); return _rt; }
+    if (d > 140) return null;
+  }
+  return null;
+}
+
+/** One way into a controlled junction: edge ei arriving at node ni. Its stop
+ *  line's setback (`back`) needs the junction's shape, so it is worked out
+ *  the first time anything asks (a car, the paint): ~5k stops at boot. */
+class Approach {
+  constructor(jc, id, c, ei, ni, u, e) {
+    this.jc = jc; this.id = id; this.c = c; this.ei = ei; this.ni = ni; this.ux = u[0]; this.uz = u[1];
+    this.cls = e.cls; this.hw = e.hw; this.two = flowOf(e) === 0;
+    this.kind = 'go'; this.grp = 0; this.left = false; this._b = -1;
+  }
+  get back() { if (this._b < 0) this._b = this.jc.setback(this.ni, this.ei); return this._b; }
+}
+/** A stop's box reaches its farthest stop line: worked out when first asked. */
+function lazyR(C) {
+  let r = -1;
+  Object.defineProperty(C, 'r', { get() { if (r < 0) { r = 0.5; for (const A of C.appr.values()) r = Math.max(r, A.back + 0.5); } return r; } });
 }
 
 export function prepJunctions(city, data) {
@@ -83,12 +119,14 @@ export class Junctions {
     this.stats = { sig: 0, sigNodes: 0, sigApproaches: 0, sigLeft: 0, stop: 0, allWay: 0, yieldNodes: 0, rb: 0, rbEntries: 0, mini: 0, xing: 0, unmatched: {} };
     this._appr = 0;
     this.crossOn = new Map();                 // edge -> [{s (m from a), k}]
-    this.matchCrossings(data.xing || []);
-    this.matchRings(data.rb || []);
-    this.matchSignals(data.sig || []);
-    this.matchStops(data.stop || []);
-    this.matchMini(data.mini || []);
-    this.planFurniture();
+    const ms = this.stats.phaseMs = {};
+    let t = performance.now();
+    const lap = (k) => { const n = performance.now(); ms[k] = Math.round(n - t); t = n; };
+    this.matchCrossings(data.xing || []); lap('xing');
+    this.matchRings(data.rb || []); lap('rb');
+    this.matchSignals(data.sig || []); lap('sig');
+    this.matchStops(data.stop || []); lap('stop');
+    this.matchMini(data.mini || []); lap('mini');
   }
 
   ok(ni) {
@@ -103,6 +141,19 @@ export class Junctions {
     let b = this.byChunk.get(k);
     if (!b) this.byChunk.set(k, (b = { paint: [], furn: [], heads: [] }));
     return b;
+  }
+
+  /** Where crossing X lies along its edge: OSM's spot, moved out of the
+   *  junction to just past its arm's mouth (OSM puts the crossing node a few
+   *  metres from the junction's; the drawn junction often reaches further).
+   *  Worked out when first asked: it needs the junction's shape. */
+  xingS(X) {
+    if (X.sc < 0) {
+      const e = this.city.edges[X.ei];
+      const lo = this.mouth(e.a, X.ei) + X.w / 2 + 0.3, hi = e.len - this.mouth(e.b, X.ei) - X.w / 2 - 0.3;
+      X.sc = lo > hi ? X.s0 : clamp(X.s0, lo, hi);
+    }
+    return X.sc;
   }
 
   /** Edge ei's mouth (where its own carriageway starts) at node ni. */
@@ -124,7 +175,7 @@ export class Junctions {
     const xs = this.crossOn.get(ei);
     if (xs) {
       for (const X of xs) {
-        const d = e.b === ni ? e.len - X.s : X.s;
+        const xs = this.xingS(X), d = e.b === ni ? e.len - xs : xs;
         if (d > m - 2 && d < m + 14) back = Math.max(back, d + X.w / 2 + 1.0);
       }
     }
@@ -133,8 +184,38 @@ export class Junctions {
 
   approach(C, ei, ni) {
     const e = this.city.edges[ei], u = dirInto(e, ni);
-    return { id: this._appr++, c: C.id, ei, ni, ux: u[0], uz: u[1], cls: e.cls, hw: e.hw, two: flowOf(e) === 0,
-      back: this.setback(ni, ei), kind: 'go', grp: 0, left: false };
+    return new Approach(this, this._appr++, C.id, ei, ni, u, e);
+  }
+
+  /** Edges whose segment passes within `r` of (x, z): a 32 m grid of this
+   *  module's own (city.edgesNear lists whole 400 m chunks, and the prep's
+   *  ~12k lookups through it were most of its boot time). */
+  edgesAround(x, z, r) {
+    const city = this.city, S = 32;
+    if (!this._eg) {
+      const g = this._eg = new Map();
+      for (let ei = 0; ei < city.edges.length; ei++) {
+        const e = city.edges[ei];
+        if (e.elev || e.tunnel || e.prof) continue;
+        const a = city.nodes[e.a], b = city.nodes[e.b];
+        const x0 = Math.floor(Math.min(a.x, b.x) / S), x1 = Math.floor(Math.max(a.x, b.x) / S);
+        const z0 = Math.floor(Math.min(a.z, b.z) / S), z1 = Math.floor(Math.max(a.z, b.z) / S);
+        for (let cx = x0; cx <= x1; cx++) for (let cz = z0; cz <= z1; cz++) {
+          const k = cx * 100003 + cz;
+          let l = g.get(k);
+          if (!l) g.set(k, (l = []));
+          l.push(ei);
+        }
+      }
+    }
+    const out = new Set();
+    for (let cx = Math.floor((x - r) / S); cx <= Math.floor((x + r) / S); cx++) {
+      for (let cz = Math.floor((z - r) / S); cz <= Math.floor((z + r) / S); cz++) {
+        const l = this._eg.get(cx * 100003 + cz);
+        if (l) for (const ei of l) out.add(ei);
+      }
+    }
+    return out;
   }
 
   add(C) {
@@ -152,7 +233,7 @@ export class Junctions {
     for (const X of xs) {
       const [x, z, dx, dz, fl] = X;
       let best = -1, bd = Infinity, bt = 0;
-      for (const ei of city.edgesNear(x, z, 30)) {
+      for (const ei of this.edgesAround(x, z, 14)) {
         const e = city.edges[ei];
         if (e.elev || e.tunnel || e.prof || e.cls === 'hwy') continue;
         // the road it crosses runs the way OSM's way does there (near a
@@ -168,13 +249,10 @@ export class Junctions {
       const s = bt * e.len;
       const w = fl & 1 ? 3.0 : 2.8;
       if (s < 1 || s > e.len - 1) { this.miss('xing'); continue; }
-      // not inside a junction (its own arm's mouth, less a little)
-      const mA = this.mouth(e.a, best), mB = this.mouth(e.b, best);
-      if (s < mA - 1.5 || s > e.len - mB + 1.5) { this.miss('xingInJunction'); continue; }
       let l = this.crossOn.get(best);
       if (!l) this.crossOn.set(best, (l = []));
-      if (l.some((o) => Math.abs(o.s - s) < 3)) continue;
-      const rec = { ei: best, s, w, ladder: !!(fl & 1), feet: !!(fl & 2), sig: !!(fl & 4) };
+      if (l.some((o) => Math.abs(o.s0 - s) < 3)) continue;
+      const rec = { ei: best, s0: s, sc: -1, w, ladder: !!(fl & 1), feet: !!(fl & 2), sig: !!(fl & 4) };
       l.push(rec);
       const a = city.nodes[e.a];
       this.bucket(a.x + e.dx * s, a.z + e.dz * s).paint.push({ t: 'xing', X: rec });
@@ -198,7 +276,7 @@ export class Junctions {
       };
       const id = this.rings.length + 1;
       const edges = [];
-      for (const ei of city.edgesNear(R.x, R.z, R.r + 30)) {
+      for (const ei of this.edgesAround(R.x, R.z, R.r + 6)) {
         const e = city.edges[ei];
         if (this.ring[ei] || e.elev || e.tunnel || e.prof || !e.oneway) continue;
         const a = city.nodes[e.a], b = city.nodes[e.b];
@@ -328,13 +406,18 @@ export class Junctions {
         if (A.left) this.stats.sigLeft++;
       }
       C.approaches = list;
-      // the box: how far out the junction reaches from its centre
-      let r = 0;
-      for (const A of list) {
-        const n = city.nodes[A.ni];
-        r = Math.max(r, Math.hypot(n.x - cx, n.z - cz) + A.back);
+      // the box: how far out the junction reaches from its centre (asked for
+      // when first needed: the stop lines need the junctions' shapes)
+      {
+        let r = -1;
+        Object.defineProperty(C, 'r', { get() {
+          if (r < 0) { r = 0; for (const A of list) { const n = city.nodes[A.ni]; r = Math.max(r, Math.hypot(n.x - cx, n.z - cz) + A.back); } }
+          return r;
+        } });
       }
-      C.r = r;
+      // its hardware and paint are planned when its chunk is first built
+      // or its heads first drawn (rigs())
+      this.bucket(cx, cz).heads.push(C);
       this.planCycle(C);
       this.stats.sig++; this.stats.sigNodes += nodes.length; this.stats.sigApproaches += list.length;
     }
@@ -416,7 +499,7 @@ export class Junctions {
         }
         if (Math.hypot(n.x - x, n.z - z) < 2) ei = -1;
       }
-      if (!C) C = this.add({ k: K_STOP, nodes: [ni], x: n.x, z: n.z, all: false, r: 0 });
+      if (!C) C = this.add({ k: K_STOP, nodes: [ni], x: n.x, z: n.z, all: false });
       if (fl & 1) C.all = true;
       if (ei < 0) continue;
       const e = city.edges[ei];
@@ -440,9 +523,8 @@ export class Junctions {
         }
       }
       if (!C.appr.size) { this.ctl[ni] = -1; C.dead = true; continue; }
-      let r = 0;
-      for (const A of C.appr.values()) r = Math.max(r, A.back);
-      C.r = r + 0.5;
+      // (its reach, from the stop lines: asked for when a car first needs it)
+      lazyR(C);
       if (C.all) this.stats.allWay++;
       else if ([...C.appr.values()].every((A) => A.kind === 'yield')) this.stats.yieldNodes++;
       else this.stats.stop++;
@@ -460,14 +542,15 @@ export class Junctions {
       const ni = city.nearestNode(M.x, M.z, 6);
       if (ni < 0 || !this.ok(ni) || city.nodes[ni].e.length < 3 || this.ctl[ni] >= 0) { this.miss('mini'); continue; }
       const n = city.nodes[ni];
-      const C = this.add({ k: K_MINI, nodes: [ni], x: n.x, z: n.z, all: true, r: 0 });
+      const C = this.add({ k: K_MINI, nodes: [ni], x: n.x, z: n.z, all: true });
+      lazyR(C);
       for (const ei of n.e) {
         const e = city.edges[ei];
         if (!into(e, ni)) continue;
         const A = this.approach(C, ei, ni);
         A.kind = 'yield';
         C.appr.set(akey(ei, ni, e), A);
-        C.r = Math.max(C.r, A.back);
+
         this.bucket(n.x, n.z).paint.push({ t: 'teeth', A });
         this.bucket(n.x, n.z).furn.push({ t: 'sign', A, all: false });
       }
@@ -484,10 +567,11 @@ export class Junctions {
    * arrow), a head on the pole, and pedestrian heads for the two crosswalks
    * that meet at that corner.
    */
-  planFurniture() {
+  rigs(C) {
+    if (C.rigs) return C.rigs;
     const city = this.city;
-    for (const C of this.list) {
-      if (C.k !== K_SIG) continue;
+    C.rigs = [];
+    {
       for (const A of C.approaches) {
         const n = city.nodes[A.ni], ux = A.ux, uz = A.uz, rx = -uz, rz = ux;
         // how far past the approach's node the junction reaches, along u
@@ -529,16 +613,14 @@ export class Junctions {
         rig.heads.push({ x: px - rx * 0.42, z: pz - rz * 0.42, y: gy + 3.6, kind: four ? 4 : 3, fx: -ux, fz: -uz });
         // pedestrian heads: walking along u (parallel to this approach), and
         // across it (parallel to the cross street)
-        rig.heads.push({ x: px + ux * 0.3, z: pz + uz * 0.3, y: gy + 2.75, kind: 6, fx: -ux, fz: -uz, pg: A.grp });
-        rig.heads.push({ x: px + rx * 0.3, z: pz + rz * 0.3, y: gy + 2.75, kind: 6, fx: -rx, fz: -rz, pg: 1 - A.grp });
+        // (beside the pole, not behind it, as each walker sees it)
+        rig.heads.push({ x: px + rx * 0.4, z: pz + rz * 0.4, y: gy + 2.75, kind: 6, fx: -ux, fz: -uz, pg: A.grp });
+        rig.heads.push({ x: px + ux * 0.4, z: pz + uz * 0.4, y: gy + 2.75, kind: 6, fx: -rx, fz: -rz, pg: 1 - A.grp });
         for (const h of rig.heads) h.rig = rig;
-        const b = this.bucket(px, pz);
-        b.furn.push({ t: 'pole', rig });
-        b.heads.push(rig);
-        const nb = this.bucket(n.x, n.z);
-        nb.paint.push({ t: 'bar', A });
+        C.rigs.push(rig);
       }
     }
+    return C.rigs;
   }
 
   // --- the clock ---------------------------------------------------------------
@@ -628,40 +710,50 @@ export class Junctions {
     if (this.boxBusy(T, v, C, player)) return true;
     for (const o of this.others(T, v, player)) {
       const dx = n.x - o.x, dz = n.z - o.z, D = Math.hypot(dx, dz);
-      if (D > 80 || D < 0.1) continue;
+      if (D > 110 || D < 0.1) continue;
       const sp = Math.abs(o.vLong);
       if (sp < 0.8) continue;
-      const f = o.forward;
-      if ((f.x * dx + f.z * dz) / D < 0.5) continue;   // not coming this way
-      // on a signed approach of this junction: it waits too
-      const oe = city.edges[o.edge];
-      if (oe && (oe.a === ni || oe.b === ni)) {
-        const B = C.appr.get(akey(o.edge, ni, oe));
-        if (B && B.kind !== 'go' && B !== A) continue;
-        if (B === A) continue;   // behind me in my own lane
+      // coming through this junction: on its planned route (a driven car:
+      // by its heading, and passing within a few metres of the node)
+      let Dr = D, B = null;
+      if (o.rt && o.rtN) {
+        const r = routeTo(city, o, ni);
+        if (!r) continue;
+        Dr = r.d; B = C.appr.get(r.key);
+      } else {
+        const f = o.forward;
+        if ((f.x * dx + f.z * dz) / D < 0.7 || Math.abs(f.x * dz - f.z * dx) > 8) continue;
       }
-      if ((D - C.r) / sp < GAP_T) return true;
+      // on a signed approach of this junction it waits too; mine is behind me
+      if (B && (B === A || B.kind !== 'go')) continue;
+      if ((Dr - C.r * 0.5) / sp < GAP_T) return true;
     }
     return false;
   }
 
   /** A permissive left: oncoming traffic within the gap, not itself turning left. */
   oncoming(T, v, C, A, player) {
+    const city = this.city;
     for (const o of this.others(T, v, player)) {
       const f = o.forward;
-      if (f.x * A.ux + f.z * A.uz > -0.6) continue;
-      const dx = C.x - o.x, dz = C.z - o.z, D = Math.hypot(dx, dz);
-      if (D > 90) continue;
+      if (f.x * A.ux + f.z * A.uz > -0.5) continue;
       const sp = Math.abs(o.vLong);
-      if (o.jcC === C.id && o.jcMv === 'L' && D > C.r * 0.5) continue;
-      // still coming (in front of the box's far side), or in the box moving
-      const ahead = (f.x * dx + f.z * dz);
-      if (ahead < -C.r * 0.3) continue;
-      if (D < C.r + 2 && sp > 0.5) return true;
-      if (sp > 1 && (D - C.r) / sp < 5) return true;
+      const dx = C.x - o.x, dz = C.z - o.z, D = Math.hypot(dx, dz);
+      if (D > 110) continue;
+      // in the box, moving: wait for it
+      if (D < C.r * 0.7 && sp > 0.5 && !(o.jcC === C.id && o.jcMv === 'L')) return true;
+      if (sp < 1 || !o.rt || !o.rtN) continue;
+      // coming through it from the opposite approach, not turning left itself
+      for (const ni of C.nodes) {
+        const r = routeTo(city, o, ni);
+        if (!r) continue;
+        const B = C.appr.get(r.key);
+        if (B && B.ux * A.ux + B.uz * A.uz < -0.6 && !(o.jcC === C.id && o.jcMv === 'L') && (r.d - B.back) / sp < 5) return true;
+      }
     }
     return false;
   }
+
 
   /** A roundabout entry: circulating traffic that will pass the entry within the gap. */
   ringBusy(T, v, C, A, player) {
@@ -708,7 +800,11 @@ export class Junctions {
   meshChunk(world, flat, cx, cz, lod) {
     const b = this.byChunk.get(this.city.chunkKey(cx, cz));
     if (!b) return;
-    const P = new Painter(this.city, flat);
+    const P = new Painter(this, flat);
+    for (const C of b.heads) for (const rig of this.rigs(C)) {
+      P.stopBar(rig.A);
+      if (lod === 1) meshPole(world, flat, rig);
+    }
     for (const it of b.paint) {
       if (it.t === 'xing') P.crossing(it.X);
       else if (it.t === 'bar') P.stopBar(it.A);
@@ -743,7 +839,7 @@ const WHITE = [0.94, 0.93, 0.88];
 const PAINT_DY = 0.016;
 
 class Painter {
-  constructor(city, flat) { this.city = city; this.flat = flat; }
+  constructor(jc, flat) { this.jc = jc; this.city = jc.city; this.flat = flat; }
   y(x, z) {
     const l = this.city.roadLift(x, z);
     return G.terrainHeight(x, z) + (l > 0.01 && l < WALK_LIFT - 0.05 ? l : ROAD_LIFT) + PAINT_DY;
@@ -769,7 +865,7 @@ class Painter {
   crossing(X) {
     const e = this.city.edges[X.ei], a = this.city.nodes[X.ei != null ? e.a : 0];
     const ux = e.dx, uz = e.dz, px = -uz, pz = ux;   // along the road, across it
-    const cx = a.x + ux * X.s, cz = a.z + uz * X.s, hw = e.hw - 0.15, h = X.w / 2;
+    const s = this.jc.xingS(X), cx = a.x + ux * s, cz = a.z + uz * s, hw = e.hw - 0.15, h = X.w / 2;
     if (X.ladder) {
       // continental bars along the traffic, between two side lines (ladder)
       for (let o = -hw + 0.5; o <= hw - 0.3; o += 1.05) this.rect(cx + px * o, cz + pz * o, ux, uz, h - 0.15, 0.24);
@@ -1086,7 +1182,7 @@ function meshIsland(world, flat, ring, jc) {
 // kinds: 3 (R, Y, G), 4 (R, Y, G, arrow: an approach with an advance),
 // 6 (pedestrian). The lens atlas's cells: 0 ball, 1 left arrow, 2 hand, 3 walker.
 const SEC = 0.36;
-const OFF = { r: [0.16, 0.02, 0.015], y: [0.16, 0.1, 0.01], g: [0.01, 0.12, 0.06], p: [0.07, 0.05, 0.04] };
+const OFF = { r: [0.06, 0.012, 0.01], y: [0.06, 0.04, 0.008], g: [0.008, 0.045, 0.03], p: [0.04, 0.03, 0.025] };
 const ON = { r: [1.6, 0.08, 0.04], y: [1.5, 0.75, 0.03], g: [0.15, 1.35, 0.7], hand: [1.5, 0.5, 0.08], walk: [1.4, 1.4, 1.3] };
 const LENSES = { 3: ['r', 'y', 'g'], 4: ['r', 'y', 'g', 'a'], 6: ['p'] };
 
@@ -1200,9 +1296,9 @@ export class SignalHeads {
     for (let cx = c0; cx <= c1; cx++) for (let cz = d0; cz <= d1; cz++) {
       const b = jc.byChunk.get(jc.city.chunkKey(cx, cz));
       if (!b) continue;
-      for (const rig of b.heads) {
-        if ((rig.x - x) ** 2 + (rig.z - z) ** 2 > HEAD_R * HEAD_R) continue;
-        for (const h of rig.heads) out.push(h);
+      for (const C of b.heads) {
+        if ((C.x - x) ** 2 + (C.z - z) ** 2 > HEAD_R * HEAD_R) continue;
+        for (const rig of jc.rigs(C)) for (const h of rig.heads) out.push(h);
       }
     }
     let nh = 0, nl = 0;

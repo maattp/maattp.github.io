@@ -2014,9 +2014,10 @@ export class TrafficSystem {
     // circulating traffic -- the next controlled junction on the route says
     // where to stop, if anywhere.
     v.ctlHold = false;
+    let jStop = Infinity;
     if (this.jc && !v.unit && v.mode === 'traffic') {
-      const g = this.junctionStop(v, s0, sp, player);
-      if (g < stopAt) { stopAt = g; v.ctlHold = true; }
+      jStop = this.junctionStop(v, s0, sp, player);
+      if (jStop < stopAt) v.ctlHold = true;
     }
     // IDM: free-road term plus the interaction with the leader.
     const vr = sp / Math.max(0.5, v0);
@@ -2028,13 +2029,21 @@ export class TrafficSystem {
     }
     aWant = Math.min(aWant, aIdm);
     if (stopAt < Infinity) aWant = Math.min(aWant, stopAt <= 0.3 ? -9 : -(sp * sp) / (2 * stopAt));
+    // A junction's line is driven UP TO, not just stopped short of: braking
+    // as for anything else ends wherever the speed runs out (metres short of
+    // a stop sign's line, where it never counts as stopped), so below the
+    // speed that can still stop at it (2 m/s^2) it creeps on.
+    if (jStop < Infinity) {
+      const vt = Math.sqrt(4 * Math.max(0, jStop - 0.4));
+      aWant = Math.min(aWant, jStop <= 0.3 ? -9 : sp > vt ? -(sp * sp) / (2 * Math.max(jStop, 0.31)) : Math.min(aMax, (vt - sp) * 1.2));
+    }
     if (urgent) aWant = Math.min(aWant, -v.spec.brakeA);
     aWant = Math.max(aWant, -v.spec.brakeA);
     // At a standstill the brake is reverse gear: a stopped car HOLDS (the
     // parking brake) until it wants to go again, with a little hysteresis.
     if (v.held ? aWant < 0.4 : (sp < 0.8 && aWant < 0)) { v.held = true; inp.park = true; }
     else { v.held = false; v.aiPedals(aWant, inp); }
-    v.wantGo = aWant > 0.5 && stopAt === Infinity;
+    v.wantGo = aWant > 0.5 && stopAt === Infinity && jStop === Infinity;
     // Wanting to go and not moving for a second: pressed against a post or a
     // wall, where a gentle throttle loses to the contact every frame. Floor it.
     if (v.wantGo && v.stuckT > 1) { inp.throttle = 1; inp.brake = 0; }
