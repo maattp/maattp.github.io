@@ -385,11 +385,14 @@ function meshPoly(B, solids, b, P, city) {
 }
 
 let POLY_MAT = null;
+/** The polygon buildings' vertex-coloured material: other extras share it so
+ *  their geometry merges into the same per-cluster draw (highways.js). */
+export const polyMat = () => POLY_MAT || (POLY_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0 }));
 /** landmarks.js extra: every polygon building, merged per 1200 m cluster. */
 export function buildPolys(ctx) {
   if (!KW) return;
   const { addTo, city } = ctx;
-  if (!POLY_MAT) POLY_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0 });
+  polyMat();
   const builders = new Map();
   let n = 0;
   for (const b of city.buildings) {

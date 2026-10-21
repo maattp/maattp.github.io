@@ -5410,10 +5410,33 @@ float frLine(float o, float fw, float c, float w) {
       if (m > from + 0.3 && m < till - 0.3) cuts.push(m);
     }
     cuts.sort((p, q) => p - q);
+    // ONTARIO: a divided highway's LEFT edge line is yellow, its right white
+    // (OTM Book 11), and so is a ramp's -- the yellow is always on the
+    // driver's left. A carriageway is driven a -> b unless onewayRev, and +p
+    // is the right of a -> b, so the left is +p when it is driven b -> a.
+    const divided = (e.cls === 'hwy' && e.oneway) || e.cls === 'ramp';
+    const fwd = e.onewayRev ? -1 : 1;
+    const colP = divided && fwd < 0 ? YELLOW : WHITE, colM = divided && fwd > 0 ? YELLOW : WHITE;
     for (let i = 0; i < cuts.length; i++) {
       const s = cuts[i], to = i + 1 < cuts.length ? cuts[i + 1] : till;
-      stripe(sideW((s + to) / 2, 0) - inset, s, to, WHITE);
-      stripe(-(sideW((s + to) / 2, 1) - inset), s, to, WHITE);
+      stripe(sideW((s + to) / 2, 0) - inset, s, to, colP);
+      stripe(-(sideW((s + to) / 2, 1) - inset), s, to, colM);
+    }
+
+    // LANE LINES. A freeway carriageway had its two edge lines and nothing
+    // between them. White, broken 3 m / 6 m (Ontario's freeway pattern), at
+    // the boundaries of the very lanes traffic.js laneLatU lays: SHOULDER
+    // 0.8 m in from each side, floor(width / 3.6) lanes spread evenly.
+    if (e.cls === 'hwy' && e.oneway) {
+      const ph = hash2(ei | 0, 11) * 9;
+      for (let s = from + ph - 9; s < till; s += 9) {
+        const s0 = Math.max(from, s), s1 = Math.min(till, s + 3);
+        if (s1 - s0 < 0.5) continue;
+        const m = (s0 + s1) / 2;
+        const lo = -sideW(m, 1) + 0.8, hi = sideW(m, 0) - 0.8;
+        const n = Math.floor((hi - lo) / 3.6);
+        for (let k = 1; k < n; k++) stripe(lo + (k * (hi - lo)) / n, s0, s1, WHITE);
+      }
     }
 
     // Centre line. A motorway carriageway is one-way and has no centre line;
