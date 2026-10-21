@@ -169,7 +169,7 @@ file and a guide disagree, this file wins.
   2023 rebuild -- the 2009 square plus the five leaf shades (2023) and the
   water feature. Drawn from OSM: the courtyard (`COURT`, pedestrian area
   760863913) paved in light slabs and a 6.2 m grid of dark bands; the rink
-  (`RINK`, 202051421) as the City's: a white sheet in a LOW white curb with
+  (`RINK`, at OSM 202051421's place and extent but a SYMMETRIC rounded rectangle, 31.4 x 19.8 m with 5 m corners -- OSM's outline is lopsided; the sheet is a fan from its middle, levelled on the courtyard's highest point under it so the paving can't show through) as the City's: a white sheet in a LOW white curb with
   a red stripe, a gap toward King -- "not designed for hockey", so no boards
   or nets (the ice is two platforms); the stage and two seat-steps along
   the courtyard's curved edge (`AMPHI`, `TIERS`) up to the terrace at

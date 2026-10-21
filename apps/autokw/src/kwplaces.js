@@ -756,10 +756,21 @@ function kingLamps(kit, ctx) {
 // The rink is the City's: public skating only, "not designed for hockey" --
 // a low white curb with a red stripe round a white sheet (2019 photographs).
 
-// the rink (OSM way 202051421, leisure=ice_rink): its rounded end toward
-// Willis Way (r ~9.9 m round (-3833.4, -1322)), its square end toward ION
-const RINK = [[-3843.5, -1321.9], [-3842.9, -1318.5], [-3841.1, -1315.6], [-3838.5, -1313.4], [-3835.2, -1312.2], [-3831.7, -1312.2],
-  [-3828.5, -1313.4], [-3825.8, -1315.7], [-3824.1, -1318.7], [-3823.5, -1322.1], [-3824.1, -1325.5], [-3827.7, -1344.9], [-3847.1, -1341.4]];
+// the rink (OSM way 202051421, leisure=ice_rink) is drawn as a symmetric
+// rounded rectangle on OSM's axis and extent: OSM's outline is lopsided (one
+// round end, skewed sides), the rink isn't. 31.4 m x 19.8 m, 5 m corners.
+const RINK_C = [-3834.48, -1327.70], RINK_U = [-0.186, -0.983], RINK_HL = 15.7, RINK_HW = 9.9, RINK_R = 5;
+const RINK = (() => {
+  const [ux, uz] = RINK_U, vx = -uz, vz = ux, pts = [];
+  for (const [su, sv, a0] of [[1, 1, 0], [-1, 1, Math.PI / 2], [-1, -1, Math.PI], [1, -1, Math.PI * 1.5]]) {
+    const cu = su * (RINK_HL - RINK_R), cv = sv * (RINK_HW - RINK_R);
+    for (let k = 0; k <= 4; k++) {
+      const a = a0 + k * Math.PI / 8, u = cu + Math.cos(a) * RINK_R, v = cv + Math.sin(a) * RINK_R;
+      pts.push([RINK_C[0] + ux * u + vx * v, RINK_C[1] + uz * u + vz * v]);
+    }
+  }
+  return pts;
+})();
 // the courtyard (OSM's pedestrian area, its north and King parts)
 const COURT = [[-3849.6, -1338.6], [-3846.4, -1319.6], [-3846.0, -1318.1], [-3845.2, -1315.1], [-3843.3, -1312.1], [-3841.2, -1309.5],
   [-3838.5, -1307.2], [-3835.4, -1305.4], [-3831.8, -1304.3], [-3828.0, -1303.2], [-3825.0, -1301.5], [-3821.5, -1300.0],
@@ -850,9 +861,17 @@ function rink(kit, ctx) {
   if (polyArea(pts) < 0) pts = pts.reverse();
   const [cx, cz] = centroid(pts);
   const B = kit.B(cx, cz);
-  const y = walkY(city, cx, cz), yi = y + 0.1;
+  // the courtyard falls toward King: level the sheet on its highest point, or
+  // the paving shows through it on the high side
+  let y = walkY(city, cx, cz);
+  for (const p of pts) y = Math.max(y, walkY(city, p[0], p[1]), walkY(city, (p[0] + cx) / 2, (p[1] + cz) / 2));
+  const yi = y + 0.1;
   const ICE = lin([0.90, 0.94, 0.97]), CURB = lin([0.95, 0.95, 0.93]), STRIPE = lin([0.80, 0.10, 0.12]);
-  roof(B, pts, yi, ICE);
+  // the sheet: a fan from the middle (it is convex), level everywhere
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    B.quad([cx, yi, cz], [b[0], yi, b[1]], [a[0], yi, a[1]], [cx, yi, cz], [0, 1, 0], U0, ICE);
+  }
   for (const e of edges(pts)) {
     const gate = e.L > 15 && e.nx > 0.5;   // the long side facing King St
     const segs = gate ? [[0, e.L / 2 - 1.1], [e.L / 2 + 1.1, e.L]] : [[0, e.L]];
@@ -865,12 +884,8 @@ function rink(kit, ctx) {
       if (gate) for (const t of [t0, t1]) B.quad(e.at(t, y - 0.2, -th), e.at(t, y - 0.2, 0), e.at(t, yi + h, 0), e.at(t, yi + h, -th), [e.ux, 0, e.uz], U0, CURB);
     }
   }
-  // the ice is walkable: the straight part and the round end as two flat platforms
-  const ux0 = -3837.4 - -3833.4, uz0 = -1343.2 - -1322, ul = Math.hypot(ux0, uz0), ux = ux0 / ul, uz = uz0 / ul;
-  for (const [u0, u1, hv] of [[0, ul - 0.2, 9.6], [-8.6, 0, 6.4]]) {
-    const m = [-3833.4 + ux * (u0 + u1) / 2, -1322 + uz * (u0 + u1) / 2];
-    ctx.platforms.push({ x: m[0], z: m[1], hw: (u1 - u0) / 2, hd: hv, rot: Math.atan2(uz, ux), y0: yi, y1: yi });
-  }
+  // the ice is walkable: one flat platform over the sheet
+  ctx.platforms.push({ x: RINK_C[0], z: RINK_C[1], hw: RINK_HL, hd: RINK_HW, rot: Math.atan2(RINK_U[1], RINK_U[0]), y0: yi, y1: yi });
   STATS.rink = { y: +yi.toFixed(2), boardH: 0.32 };
 }
 
