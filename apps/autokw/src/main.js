@@ -62,7 +62,7 @@ import { prepNature, groundDetail } from './kwnature.js';
 import { prepVillages, buildVillages, villagesMap } from './kwvillages.js';
 import { setShopData, prepShops, buildShops, shopPlaces, shopStats, driveThrus } from './kwshops.js';
 import { DriveThrus } from './drivethru.js';
-import { DrivewayCars } from './kwdriveway.js';
+import { DrivewayCars, SCENERY_TYPES } from './kwdriveway.js';
 import { prepHome, homeMap } from './kwhome.js';
 import { Crops } from './crops.js';
 import { Kartway, KartRace } from './kartway.js';
@@ -1359,6 +1359,8 @@ function installShadowFade() {
   if (city.jc) signalHeads = new SignalHeads(scene, city.jc);
   if (streetSigns) streetSigns.attach(scene, renderer, world);
   traffic.camera = camera;   // far-LOD instances are culled against it
+  // Auto KW: the scenery cars' near and far LODs (kwdriveway.js), now, before a phone drops the vehicle arrays
+  traffic.sceneryTypes(SCENERY_TYPES);
   traffic.link = link;       // cars stop for a train on a level crossing
   traffic.freight = kwrail;  // ...and at the heavy rail's gates (kwrail.blocks, xing.js)
   // where water is drawn (the boats' query): no car parks under it

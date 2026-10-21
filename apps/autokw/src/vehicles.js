@@ -11796,6 +11796,7 @@ export function dropVehicleArrays() {
     for (const g of geos) if (g && (farReady || !far.has(g))) bytes += dropGeometryArrays(g);
   }
   if (FAR) for (const g of FAR.geos.values()) bytes += dropGeometryArrays(g);
+  for (const g of NEAR.values()) bytes += dropGeometryArrays(g);
   // a cached launch's geometry is views of the boot cache's snapshot: let it
   // go too (every far LOD it could still give is built by now, or is built
   // from the types' own arrays, which a type without one keeps)
@@ -11822,6 +11823,70 @@ export function farLod(typeName) {
       { geo: t.matteGeoWE, part: 'matte' },
     ]);
     FAR.geos.set(typeName, geo);
+  }
+  return { geo, mat: FAR.mat };
+}
+
+/**
+ * Auto KW: the NEAR LOD for scenery cars (traffic.decor: the driveways'
+ * cars, the drive-through lines), { geo, mat }. The type's own detailed parts
+ * -- the paint, the trim with its wheels, the matte -- every vertex as traffic
+ * draws it, merged into ONE geometry over the far LOD's material (`lodA` /
+ * `lodG` per vertex, the instance colour on the paint only), so the few
+ * nearest scenery cars of a type are one instanced draw, and the swap to the
+ * far LOD changes the mesh and nothing else: same material, same matrix,
+ * same colour. Glass is opaque (the far LOD's sky-folded glass), and the
+ * contact shadow is left out (it is a blended layer; these cast the sun's).
+ * Built at boot, before a phone drops the types' arrays (traffic.js).
+ */
+const NEAR = new Map();
+export function nearLod(typeName) {
+  farLod(typeName);   // (makes FAR.mat)
+  let geo = NEAR.get(typeName);
+  if (!geo) {
+    const t = vehicleAssets().types[typeName];
+    const parts = [
+      { g: t.paintGeo, part: 'paint', vc: !!t.spec.paintVC },
+      { g: t.trimGeoW, part: 'trim' },
+      { g: t.matteGeoWE, part: 'matte' },
+    ];
+    let nv = 0;
+    for (const { g } of parts) nv += g.attributes.position.count;
+    const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), col = new Float32Array(nv * 3);
+    const lodA = new Float32Array(nv * 4), lodG = new Float32Array(nv);
+    const idx = [];
+    let base = 0;
+    for (const { g, part, vc } of parts) {
+      const P = g.attributes.position.array, N = g.attributes.normal.array;
+      const C = g.attributes.color ? g.attributes.color.array : null;
+      const Gs = g.attributes.glass ? g.attributes.glass.array : null;
+      const n = g.attributes.position.count;
+      pos.set(P, base * 3); nor.set(N, base * 3);
+      for (let v = 0; v < n; v++) {
+        const o = (base + v) * 3, gl = Gs ? Gs[v] : 0;
+        const glass = gl > 0.5 && gl < 3.5 && !(gl > 1.5 && gl < 2.5), plate = gl > 3.5;
+        const c = glass ? [0.05, 0.06, 0.075] : plate ? PLATE : C && (part !== 'paint' || vc) ? [C[v * 3], C[v * 3 + 1], C[v * 3 + 2]] : WHITE;
+        col[o] = c[0]; col[o + 1] = c[1]; col[o + 2] = c[2];
+        lodA.set(FAR_PARTS[glass ? 'glass' : part], (base + v) * 4);
+        lodG[base + v] = glass ? 1 : 0;
+      }
+      const I = g.index.array;
+      for (let i = 0; i < I.length; i += 3) {
+        // the contact shadow (glass 2) is not drawn here
+        if (Gs && Gs[I[i]] > 1.5 && Gs[I[i]] < 2.5) continue;
+        idx.push(I[i] + base, I[i + 1] + base, I[i + 2] + base);
+      }
+      base += n;
+    }
+    geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.setAttribute('lodA', new THREE.BufferAttribute(lodA, 4));
+    geo.setAttribute('lodG', new THREE.BufferAttribute(lodG, 1));
+    geo.setIndex(idx);
+    geo.computeBoundingSphere();
+    NEAR.set(typeName, geo);
   }
   return { geo, mat: FAR.mat };
 }

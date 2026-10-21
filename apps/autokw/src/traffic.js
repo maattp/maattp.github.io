@@ -1,7 +1,7 @@
 // Traffic, parked cars and the police response.
 
 import * as THREE from './three.js';
-import { Vehicle, TYPES, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, makeBellows, HITCH } from './vehicles.js';
+import { Vehicle, TYPES, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, nearLod, makeBellows, HITCH } from './vehicles.js';
 import { clamp, lerp, angleWrap, hash2, rng, dist2, tierScale } from './util.js';
 import * as G from './geo.js';
 import { memo } from './bootcache.js';
@@ -54,6 +54,13 @@ const SHADOW_NEAR = ON_PHONE ? 45 : Infinity;
 // far LOD (vehicles.js farLod): one draw per type on screen instead of three
 // per car. Beyond SHADOW_NEAR, so nothing that casts is ever instanced.
 const FAR_LOD = ON_PHONE ? 60 : Infinity;
+// Auto KW: the scenery cars (traffic.decor: the driveways', the drive-through
+// lines') this close to the camera, the nearest DECOR_CAP of them, are drawn
+// with their type's detailed model (vehicles.js nearLod: one instanced draw
+// per type in view, casting the sun's shadow as a traffic car this close
+// does); the rest through the far LOD as before. Inside SHADOW_NEAR.
+const DECOR_NEAR = ON_PHONE ? 40 : 55;
+const DECOR_CAP = ON_PHONE ? 10 : 18;
 
 /**
  * Free everything under a node.
@@ -672,6 +679,9 @@ export class TrafficSystem {
     // drawn through the far LOD's InstancedMeshes, near or far, on a phone or not -- a slot each,
     // no draws of their own. Not vehicles: nothing here drives, hits or hashes them.
     this.decor = [];
+    // ...and the nearest of them through their type's detailed model (sceneryTypes, updateFarLod)
+    this.nearMeshes = new Map();
+    this._near = [];
     // Every type's far LOD up front, on the loading screen: built on first use
     // it was a one-off 2-4 ms stall (40+ ms on a phone) the first time each
     // type drove past 60 m.
@@ -1352,19 +1362,48 @@ export class TrafficSystem {
     const lim = FAR_LOD * FAR_LOD;
     for (const e of this.farMeshes.values()) e.n = 0;
     if (FAR_LOD !== Infinity) this._farCars(px, pz, player, lim);
-    // the scenery cars, every one in the frustum
+    // the scenery cars, every one in the frustum: the nearest DECOR_CAP of
+    // them within DECOR_NEAR of the camera in their type's detailed model
+    // (nearLod), the rest in its far LOD -- same matrix, same colour, same
+    // material, so the swap changes the mesh only
     const cam = this.camera, fr = this._farFr, sph = this._farS, M = this._farM;
+    for (const e of this.nearMeshes.values()) e.n = 0;
+    const near = this._near;
+    near.length = 0;
+    const cx = cam ? cam.position.x : px, cz = cam ? cam.position.z : pz, nq = DECOR_NEAR * DECOR_NEAR;
     for (const d of this.decor) {
-      if (cam) { sph.center.set(d.x, d.y + 1, d.z); sph.radius = 9; if (!fr.intersectsSphere(sph)) continue; }
-      let e = this.farMeshes.get(d.type);
-      if (!e) this.farMeshes.set(d.type, (e = { mesh: null, cap: 0, n: 0 }));
-      if (e.n === e.cap) this.growFar(e, d.type);
+      d._fr = !cam || (sph.center.set(d.x, d.y + 1, d.z), sph.radius = 9, fr.intersectsSphere(sph));
+      d._d2 = (d.x - cx) ** 2 + (d.z - cz) ** 2;
+      if (d._fr && d._d2 < nq && this.nearMeshes.has(d.type)) near.push(d);
+      else d._d2 = -1;
+    }
+    if (near.length > DECOR_CAP) {
+      near.sort((a, b) => a._d2 - b._d2);
+      for (let i = DECOR_CAP; i < near.length; i++) near[i]._d2 = -1;
+      near.length = DECOR_CAP;
+    }
+    for (const d of this.decor) {
+      if (!d._fr) continue;
+      const nr = d._d2 >= 0;
+      const pool = nr ? this.nearMeshes : this.farMeshes;
+      let e = pool.get(d.type);
+      if (!e) pool.set(d.type, (e = { mesh: null, cap: 0, n: 0 }));
+      if (e.n === e.cap) (nr ? this.growNear : this.growFar).call(this, e, d.type);
       const c = Math.cos(d.h), s = Math.sin(d.h);
       // the group's (x, y, z, yaw) times the tilt's lift (pivotY): as a parked car's
       M.set(c, 0, s, d.x, 0, 1, 0, d.y + (d.pivotY || 0), -s, 0, c, d.z, 0, 0, 0, 1);
       e.mesh.setMatrixAt(e.n, M);
       e.mesh.setColorAt(e.n, d.col);
       e.n++;
+    }
+    for (const e of this.nearMeshes.values()) {
+      if (!e.mesh) continue;
+      e.mesh.count = e.n;
+      e.mesh.visible = e.n > 0;
+      if (!e.n) continue;
+      e.mesh.instanceMatrix.needsUpdate = true;
+      e.mesh.instanceColor.needsUpdate = true;
+      e.mesh.computeBoundingSphere();
     }
     for (const e of this.farMeshes.values()) {
       if (!e.mesh) continue;
@@ -1421,6 +1460,41 @@ export class TrafficSystem {
       e.mesh.setColorAt(e.n, v._farCol);
       e.n++;
     }
+  }
+
+  /**
+   * Auto KW: the scenery cars' types (kwdriveway.js SCENERY_TYPES, at boot,
+   * before a phone drops the vehicle arrays): each type's near LOD built now,
+   * and its far LOD if it was not.
+   */
+  sceneryTypes(list) {
+    const types = vehicleAssets().types;
+    for (const t of list) {
+      if (!types[t] || this.nearMeshes.has(t)) continue;
+      farLod(t); nearLod(t);
+      this.nearMeshes.set(t, { mesh: null, cap: 0, n: 0 });
+    }
+  }
+
+  /** growFar for the near LOD: casts the sun's shadow, as a traffic car's meshes do. */
+  growNear(e, typeName) {
+    const { geo, mat } = nearLod(typeName);
+    const cap = Math.max(4, e.cap * 2);
+    const m = new THREE.InstancedMesh(geo, mat, cap);
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    m.setColorAt(0, new THREE.Color(1, 1, 1));
+    m.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    if (e.mesh) {
+      m.instanceMatrix.array.set(e.mesh.instanceMatrix.array.subarray(0, e.n * 16));
+      m.instanceColor.array.set(e.mesh.instanceColor.array.subarray(0, e.n * 3));
+      this.scene.remove(e.mesh);
+      e.mesh.dispose();
+    }
+    m.castShadow = true;
+    m.name = 'sceneryCars';
+    this.scene.add(m);
+    e.mesh = m;
+    e.cap = cap;
   }
 
   growFar(e, typeName) {

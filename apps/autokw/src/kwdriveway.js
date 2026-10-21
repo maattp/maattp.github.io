@@ -6,9 +6,10 @@
 // world.js's house code (the garage in the footprint and the driveway out to
 // the kerb) leaves a record per parked car in its chunk (`userData.dcars`:
 // x, y, z, heading, type, colour seed); this keeps the ones within R of the
-// camera and hands them to traffic.decor each frame, which draws them through
-// the far LOD's InstancedMeshes as drivethru.js's lines are drawn: one draw
-// per car type for every scenery car and far car in view, none of their own.
+// camera and hands them to traffic.decor each frame, which draws them as
+// drivethru.js's lines are drawn (traffic.js updateFarLod): the nearest few in
+// their type's detailed model (vehicles.js nearLod), the rest through the far
+// LOD's InstancedMeshes -- one draw per car type in view, none of their own.
 // Nothing here touches traffic's cars, its random numbers or its hash.
 // Solid for the car you drive and for you on foot (pushed back out, as the
 // drive-thru lines' bumpers are).
@@ -16,13 +17,31 @@
 // Harness: __dbg.dcars (`shown`, `chunks`).
 
 import * as THREE from './three.js';
-import { vehicleAssets, farLod, randomCarColor } from './vehicles.js';
+import { vehicleAssets, randomCarColor } from './vehicles.js';
 
 const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
-// the household fleet: crossovers and SUVs most, then sedans and minivans
-// (the drive-thru lines' two types first, so a street and a Tims share draws)
-export const DCAR_TYPES = ['crossover', 'suv', 'sedan', 'minivan'];
+// THE HOUSEHOLD FLEET, by type: what stands in a Waterloo Region driveway
+// (Canadian registrations, 2020s: crossovers and SUVs about half, pickups and
+// the compact sedans about a sixth each, minivans in the family streets, a
+// few hatches, EVs, a Wrangler, a wagon). Weights per 100. A phone draws the
+// six most common: every type in view is a draw (its far LOD, and its near
+// LOD for the nearest cars), so the long tail is the desktop's.
+// The drive-through lines (drivethru.js) take the same mix.
+const MIX = ON_PHONE
+  ? [['crossover', 33], ['suv', 13], ['suv3', 7], ['pickup', 15], ['compsedan', 21], ['minivan', 11]]
+  : [['crossover', 28], ['suv', 10], ['suv3', 6], ['jeep', 2], ['pickup', 10], ['pickupcap', 4], ['compsedan', 14],
+    ['sedan', 6], ['minivan', 10], ['hatch', 3], ['evy', 3], ['wagon', 2], ['civic', 2]];
+const MIX_SUM = MIX.reduce((a, [, w]) => a + w, 0);
+export const SCENERY_TYPES = MIX.map(([t]) => t);
+/** The type for a uniform u in [0, 1): a draw from MIX. */
+export function sceneryType(u) {
+  let w = u * MIX_SUM;
+  for (const [t, k] of MIX) if ((w -= k) < 0) return t;
+  return MIX[0][0];
+}
+// world.js's records carry the draw as a byte (u * 256); a type per byte
+const BY_BYTE = Array.from({ length: 256 }, (_, i) => sceneryType((i + 0.5) / 256));
 export const DCAR_REC = 6;
 
 export class DrivewayCars {
@@ -39,16 +58,11 @@ export class DrivewayCars {
     this.base = 0;              // traffic.decor's length before ours went in
   }
 
-  /** The far LODs, once the vehicle assets exist (the first update). */
+  /** The types' sizes and lifts, once the vehicle assets exist (the first update). */
   _init(traffic) {
     this.traffic = traffic;
     const types = vehicleAssets().types;
-    // a phone draws the drive-thru lines' two types only (sedans as
-    // crossovers, minivans as SUVs): at most two draws, both shared with the
-    // lines and the far traffic; the sedan and minivan cost two more
-    const use = ON_PHONE ? ['crossover', 'suv', 'crossover', 'suv'] : DCAR_TYPES;
-    this.types = use.map((t) => (types[t] ? t : null));
-    for (const t of this.types) if (t) farLod(t);
+    this.types = BY_BYTE.map((t) => (types[t] ? t : null));
     this.pivot = this.types.map((t) => (t ? types[t].spec.pivotY || 0 : 0));
     this.half = this.types.map((t) => (t ? [types[t].spec.len / 2, types[t].spec.wid / 2] : [2.3, 0.9]));
   }

@@ -6,9 +6,11 @@
 //     the clock on your phone) is the longest, lunch and supper the others'.
 //     Every so often the car at the window pulls away and the rest creep up a
 //     car length. They are scenery, not traffic: traffic.decor draws them
-//     through the far LOD's InstancedMeshes (one draw per car type for all of
-//     them, near or far), so a line costs no draws of its own, and nothing
-//     here touches traffic's cars, its random numbers or its hash.
+//     (traffic.js updateFarLod: the nearest in their type's detailed model,
+//     the rest through the far LOD, one instanced draw per type for every
+//     scenery car in view), so a line costs no draws of its own, and nothing
+//     here touches traffic's cars, its random numbers or its hash. Their types
+//     are the driveways' mix (kwdriveway.js sceneryType).
 //   - YOU IN IT: drive into a lane and the cars behind you go, the ones ahead
 //     stay (solid: you stop against the bumper ahead) and are served quicker,
 //     so you are at the window in a minute, not ten.
@@ -21,12 +23,12 @@
 
 import * as THREE from './three.js';
 import * as G from './geo.js';
-import { vehicleAssets, farLod, randomCarColor } from './vehicles.js';
+import { vehicleAssets, randomCarColor } from './vehicles.js';
+import { SCENERY_TYPES, sceneryType } from './kwdriveway.js';
 import { hash2 } from './util.js';
 
 const GAP = 6.4;          // nose to nose in the line
 const NEAR = 230;         // lanes this close keep a line
-const TYPES = ['crossover', 'crossover', 'suv', 'crossover', 'suv'];   // two types: at most two instanced draws for every line in view
 // what each window sells for a couple of dollars (the wallet is whole dollars), and the health it gives
 const MENU = {
   mcd: ['a medium McCafé coffee', 2, 8], wendys: ['a small Frosty', 2, 8], harveys: ['an order of onion rings', 3, 12],
@@ -61,10 +63,9 @@ export class DriveThrus {
     this.decor = opts.traffic.decor;
     this.pool = [];
     this._col = new Map();
-    // the far LODs the line draws through, built now (on the loading screen) rather than on first sight
+    // (their near and far LODs are built at boot: main.js traffic.sceneryTypes)
     const types = vehicleAssets().types;
-    this.types = [...new Set(TYPES)].filter((t) => types[t]);
-    for (const t of this.types) farLod(t);
+    this.types = SCENERY_TYPES.filter((t) => types[t]);
     this.pivot = Object.fromEntries(this.types.map((t) => [t, types[t].spec.pivotY || 0]));
     this.half = Object.fromEntries(this.types.map((t) => [t, [types[t].spec.len / 2, types[t].spec.wid / 2]]));
     this.served = 0;
@@ -153,7 +154,7 @@ export class DriveThrus {
         if (d.you !== null && j >= 0 && s < d.you + 1) continue;   // behind you (or beside): gone
         if (s < -GAP * 2.5) continue;
         const [x, z, h] = this.at(d, s);
-        const type = TYPES[Math.floor(hash2(id, d.i * 7 + 1) * TYPES.length)];
+        const type = sceneryType(hash2(id, d.i * 7 + 1));
         if (!this.pivot.hasOwnProperty(type)) continue;
         const car = this.pool[this.decor.length] || (this.pool[this.decor.length] = {});
         car.type = type; car.x = x; car.z = z; car.h = h; car.y = G.terrainHeight(x, z); car.pivotY = this.pivot[type];
