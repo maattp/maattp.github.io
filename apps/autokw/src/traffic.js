@@ -186,6 +186,7 @@ function pairImpulse(a, b, nx, nz, cx, cz, ma, mb) {
 function wallImpulse(v, nx, nz, e, mu, linear = true) {
   const f = v.forward, g = CG_FWD * 2 * v.halfLen;
   const c = supportPoint(v, nx, nz);
+  v.hitX = c.x; v.hitZ = c.z;   // (your car's crumple goes here: Vehicle.dent)
   const rx = c.x - v.x - f.x * g, rz = c.z - v.z - f.z * g;
   const ii0 = invI(v), w = ii0 ? v.yawRate : 0;
   const vx = f.x * v.vLong + f.z * v.vLat + w * rz, vz = f.z * v.vLong - f.x * v.vLat - w * rx;
@@ -795,6 +796,7 @@ export class TrafficSystem {
     this.scene.remove(v.group);
     if (v.slot != null) this.parkedSlots.delete(v.slot);
     v.bodyMat.dispose();
+    if (v.dentTrim) { v.dentTrim.dispose(); v.dentMatte.dispose(); v.dentTrim = v.dentMatte = null; }
     if (v.extra) { if (!v.extra.userData.shared) disposeTree(v.extra); v.extra = null; }
   }
 
@@ -2886,6 +2888,7 @@ export class TrafficSystem {
     const total = ma + mb;
     // (where they touch, judged before they are pushed apart)
     const cp = pairContact(a, b, nx, nz, hit.refA), cx = cp.x, cz = cp.z;
+    a.hitX = b.hitX = cx; a.hitZ = b.hitZ = cz;
     a.x -= nx * pen * (mb / total);
     a.z -= nz * pen * (mb / total);
     b.x += nx * pen * (ma / total);

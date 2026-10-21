@@ -744,6 +744,42 @@ const SOUNDS = {
     k.ping(out, t + 0.006, 62 + R() * 10, 0.35, 0.12);
   } },
 
+  // A tyre over a steel rail (roadfeel.js: ION's rails, at a crossing or in
+  // the street): a short hard knock and the rail's own ring, quieter and
+  // higher than a deck's joint. Played per axle per rail.
+  railbump: { dur: 0.35, variants: 2, half: true, build(k, out, t, R) {
+    k.thump(out, t, 150 + R() * 30, 70, 0.03, 0.8, 0.025);
+    k.burst(out, 'pink', t, 'lowpass', 1100, 0.8, 0.55, 0.014, R);
+    const f = 1650 + R() * 300;
+    for (let i = 0; i < 4; i++) k.ping(out, t + 0.002, f * METAL[i], 0.07 / (i + 1), 0.05 / (1 + i * 0.6));
+  } },
+  // The suspension reaching its bump stop (Vehicle.update `bottomed`): a
+  // dull, heavy clunk through the body, no ring.
+  bottom: { dur: 0.45, variants: 2, half: true, build(k, out, t, R) {
+    k.thump(out, t, 95 + R() * 20, 42, 0.06, 1, 0.06);
+    k.burst(out, 'brown', t, 'lowpass', 420, 0.7, 0.9, 0.04, R);
+    k.burst(out, 'pink', t + 0.004, 'bandpass', 700 + R() * 200, 1.2, 0.25, 0.02, R);
+  } },
+  // A shoulder rumble strip under the tyres: Ontario's milled grooves every
+  // 0.3 m, so a hard 80 Hz train of knocks at 24 m/s -- the loop is played
+  // at speed / 0.3 / 80 (`loops.rumble`). Whole periods, so it loops clean.
+  rumblestrip: { dur: 1.0, loop: 0.05, half: true, build(k, out, t, R) {
+    const F = 80, n = F * 1.0;
+    const ng = k.gain(0);
+    k.noise('pink', t, 1.0, R).connect(k.filt('lowpass', 900, 0.8)).connect(ng).connect(out);
+    const tg = k.gain(0);
+    const o = k.osc('sawtooth', F, t, 1.0);
+    o.connect(k.filt('lowpass', 260, 1.2)).connect(tg).connect(out);
+    tg.gain.setValueAtTime(0.5, t);
+    ng.gain.setValueAtTime(0, t);
+    for (let i = 0; i < n; i++) {
+      const ti = t + i / F, pk = 0.75 + 0.25 * R();
+      ng.gain.setValueAtTime(0, ti);
+      ng.gain.linearRampToValueAtTime(pk, ti + 0.0012);
+      ng.gain.setTargetAtTime(0, ti + 0.0012, 0.0035);
+    }
+  } },
+
   // --- ambience: the world around you (see _ambience) -----------------------
   // The city's bed: the traffic of a few blocks around blurred into one sound
   // -- a low rumble that swells and settles, cars passing out of sight as
@@ -1555,6 +1591,42 @@ export const ENGINES = {
     idle: 650, redline: 2600, gears: [0.12, 0.2, 0.3, 0.44, 0.6, 0.78, 1.0],
     lp: [300, 1300, 1100], ex: [95, 2, 7], noise: { ratio: 90, q: 1.8, gain: 0.45, pulse: 0.85, order: 6 },
     whine: { hz0: 1800, hz1: 4200, gain: 0.04, load: 1 }, drive: 1.6, level: 0.62, jitter: 0.06, rough: 0.5, airbrake: true, clunk: 0.3 },
+  // Auto KW's types (selectEngine's HAND_ENGINE):
+  // `vtec`: the Civic's free-revving naturally aspirated four -- the i4's
+  // firing, a narrower pulse, a 7,400 redline, the intake's roar coming in
+  // hard over the top (the noise band rides higher), no turbo to muffle it.
+  vtec: { kind: 'car', stroke: 4, fire: [0, 0.25, 0.5, 0.75], amps: [1, 0.94, 1.05, 0.97], pw: 0.024,
+    idle: 800, redline: 7400, gears: [0.19, 0.33, 0.48, 0.64, 0.82, 1.04],
+    lp: [380, 2800, 1900], ex: [260, 2.6, 6], noise: { ratio: 40, q: 1.3, gain: 0.26, pulse: 0.42, order: 4 },
+    whine: null, drive: 2.1, level: 0.74, jitter: 0.04, rough: 0.22, blip: true },
+  // `pdiesel`: a heavy-duty pickup's turbo-diesel straight six (the dually:
+  // a Cummins / Duramax / Power Stroke class engine). The clatter is the
+  // injection knock: a narrow, hard band AM'd at the firing rate, loud at
+  // idle and under load; a turbo whistle with no blow-off; 3,200 rpm, a
+  // six-speed automatic; no air brakes (it is still a pickup).
+  pdiesel: { kind: 'car', stroke: 4, fire: [0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6], amps: [1, 0.86, 1.08, 0.9, 1.05, 0.93], pw: 0.048,
+    idle: 700, redline: 3200, gears: [0.17, 0.29, 0.44, 0.6, 0.8, 1.04],
+    lp: [280, 1250, 1200], ex: [110, 2.2, 7], noise: { ratio: 120, q: 2.4, gain: 0.5, pulse: 0.92, order: 6 },
+    whine: null, turbo: { hz0: 1500, hz1: 4300, gain: 0.07, lag: 1.1, hiss: 0.5, bov: false },
+    drive: 1.7, level: 0.64, jitter: 0.07, rough: 0.6, clunk: 0.1 },
+  // `bigdiesel`: a highway tractor's 15 L straight six (an X15 / DD15) --
+  // 600 rpm idle to a 2,100 governor, a ten-speed box run through every
+  // gear, the turbo's whine on the load, air brakes, and the ENGINE BRAKE
+  // (`jake`): off the throttle at speed the exhaust valves open at the top
+  // of compression and every cylinder barks -- EngineModel.jake, voiced in
+  // EngineVoice.apply, felt as a retarder in vehicles.js.
+  bigdiesel: { kind: 'car', stroke: 4, fire: [0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6], amps: [1, 0.9, 1.06, 0.92, 1.03, 0.95], pw: 0.055,
+    idle: 600, redline: 2100, gears: [0.075, 0.11, 0.16, 0.22, 0.29, 0.38, 0.49, 0.62, 0.79, 1.0],
+    lp: [220, 900, 1000], ex: [72, 1.8, 9], noise: { ratio: 80, q: 1.8, gain: 0.42, pulse: 0.85, order: 6 },
+    whine: { hz0: 1400, hz1: 3600, gain: 0.05, load: 1 }, drive: 1.7, level: 0.66, jitter: 0.06, rough: 0.5,
+    airbrake: true, clunk: 0.38, jake: true },
+  // `v8work`: a U-Haul's big gas V8 (Ford's 7.3 "Godzilla" in the E-450 /
+  // F-650 cutaways): the cross-plane burble, slower and darker than the
+  // muscle car's, no crackle, no rev-matching -- a work engine.
+  v8work: { kind: 'car', stroke: 4, fire: V8_PATTERN.fire, amps: V8_PATTERN.amps, pw: 0.044,
+    idle: 650, redline: 5400, gears: [0.17, 0.3, 0.45, 0.62, 0.8, 1.04],
+    lp: [230, 1250, 1500], ex: [92, 2.4, 7], noise: { ratio: 22, q: 0.9, gain: 0.2, pulse: 0.45, order: 8 },
+    whine: null, drive: 2.1, level: 0.54, jitter: 0.07, rough: 0.35, clunk: 0.06 },
   vtwin: { kind: 'car', stroke: 4, fire: [0, 0.4375], amps: [1, 0.88], pw: 0.045,
     idle: 950, redline: 5600, gears: [0.24, 0.4, 0.57, 0.76, 1.0],
     lp: [260, 1500, 1800], ex: [85, 2.4, 8], noise: { ratio: 30, q: 0.9, gain: 0.22, pulse: 0.6, order: 2 },
@@ -1645,9 +1717,20 @@ export const ENGINES = {
     whine: null, drive: 2.3, level: 0.72, jitter: 0.06, rough: 0.35 },
 };
 
+// Auto KW's own types, by `hand`, ahead of the flags (the dually and the
+// semi are `diesel`, the U-Haul `cargo`, the OPP `police`, and each of those
+// was the bus's or the muscle car's engine): the Civic's high-revving four,
+// the dually's pickup turbo-diesel, the tractor's big diesel and engine
+// brake, the U-Haul's gas V8, and the 3.6 / 3.5 V6s of the Wrangler, the
+// minivans, the three-row SUVs and the OPP's Interceptor Utility. The
+// crossover, compact sedan and wagon stay on the i4, the pickups on the V8,
+// the EVs on the motor.
+const HAND_ENGINE = { civic: 'vtec', dually: 'pdiesel', semi: 'bigdiesel', uhaul: 'v8work', jeep: 'v6', minivan: 'v6', suv3: 'v6', opp: 'v6' };
+
 export function selectEngine(spec) {
   if (!spec) return 'i4';
   if (spec.engine && ENGINES[spec.engine]) return spec.engine;
+  if (spec.hand && HAND_ENGINE[spec.hand]) return HAND_ENGINE[spec.hand];
   if (spec.heli) return 'heli';
   if (spec.boat) return 'outboard';
   if (spec.plane) return spec.turboprop || spec.jet ? 'turboprop' : 'piston';
@@ -1719,6 +1802,7 @@ export class EngineModel {
     this.downT = 0;     // downshift hold-off: one gear at a time, each heard
     this.lastV = 0;
     this.decel = 0;     // smoothed deceleration, m/s^2: braking, for the downshifts
+    this.jake = 0;      // 0..1 a `jake` engine's compression brake (off the throttle at speed)
   }
   setProfile(p, spec) {
     this.p = p;
@@ -1727,6 +1811,7 @@ export class EngineModel {
     this.boost = 0;
     this.blipT = 0;
     this.downT = 0;
+    this.jake = 0;
   }
   start(instant) {
     this.on = true;
@@ -1849,6 +1934,14 @@ export class EngineModel {
       let at = 0.05 + Math.random() * 0.1;
       this.bangQ.length = 0;
       for (let i = 0; i < n; i++) { this.bangQ.push(at); at += 0.16 + Math.random() * 0.2; }
+    }
+    // THE ENGINE BRAKE (`jake`): the driver's foot off at road speed, in gear,
+    // the revs over ~45 % -- the bark comes in over a tenth of a second and
+    // stops the moment the throttle is touched or the revs fall away.
+    if (p.jake) {
+      const want = this.on && !free && p.kind === 'car' && throttle < 0.05 && v > 8 && this.gear > 0
+        && this.shiftT <= 0 && this.rpm > p.redline * 0.45 ? 1 : 0;
+      this.jake += (want - this.jake) * (1 - Math.exp(-(want ? 9 : 14) * dt));
     }
     this.lastIn = throttle;
     // Turbo boost: load times revs past the boost threshold, lagging on the
@@ -1993,14 +2086,17 @@ class EngineVoice {
       setp(this.buzzG.gain, p.buzz.gain * (0.5 + 0.5 * load), t, 0.05);
     } else setp(this.buzzG.gain, 0, t, 0.05);
     const n = p.noise;
+    // a jake brake barks: every cylinder's released compression a hard,
+    // fully gated burst at the firing rate, through an opened filter
+    const jk = p.jake ? m.jake : 0;
     if (n.gain > 0) {
-      setp(this.nbp.frequency, clamp(cyc * n.ratio, 60, 7000), t, tc);
+      setp(this.nbp.frequency, clamp(cyc * (jk > 0.01 ? n.ratio + (34 - n.ratio) * jk : n.ratio), 60, 7000), t, tc);
       // under boost the intake roars: the turbo's compressor sucking air
       const amp = n.gain * (0.35 + 0.65 * load) * (0.45 + 0.55 * rn) * (p.turbo ? 1 + p.turbo.hiss * m.boost : 1);
-      setp(this.nG.gain, amp, t, 0.04);
+      setp(this.nG.gain, amp + 0.9 * jk, t, 0.04);
       setp(this.pulse.frequency, cyc * n.order, t, tc);
-      setp(this.pdepth.gain, n.pulse, t, 0.05);
-      setp(this.nam.gain, 1 - n.pulse * 0.85, t, 0.05);
+      setp(this.pdepth.gain, n.pulse + (1 - n.pulse) * jk, t, 0.05);
+      setp(this.nam.gain, (1 - n.pulse * 0.85) * (1 - jk), t, 0.05);
     } else setp(this.nG.gain, 0, t, 0.05);
     if (p.turbo) {
       // the turbo's whistle: pitch and level ride the boost, not the revs
@@ -2013,11 +2109,11 @@ class EngineVoice {
       setp(this.whine.frequency, w.hz0 + (w.hz1 - w.hz0) * wr, t, tc);
       setp(this.whineG.gain, w.gain * (p.kind === 'ev' ? (0.4 + 0.6 * load) * clamp(rn * 8, 0, 1) : (1 - w.load + w.load * load) * clamp(rn * 3, 0, 1)), t, 0.06);
     } else setp(this.whineG.gain, 0, t, 0.05);
-    setp(this.pre.gain, p.drive * (0.55 + 0.75 * load), t, 0.04);
-    setp(this.lp.frequency, clamp(p.lp[0] + p.lp[1] * rn + p.lp[2] * load, 80, 16000), t, 0.04);
+    setp(this.pre.gain, p.drive * (0.55 + 0.75 * Math.max(load, 0.8 * jk)), t, 0.04);
+    setp(this.lp.frequency, clamp(p.lp[0] + p.lp[1] * rn + p.lp[2] * load + 1600 * jk, 80, 16000), t, 0.04);
     // Off-throttle the note drops and darkens but does not vanish: engine braking.
     const run = p.kind === 'ev' ? clamp(0.25 + rn * 3, 0, 1) : clamp(rpm / Math.max(200, (p.idle || p.redline * 0.3) * 0.6), 0, 1);
-    let lvl = p.level * (0.42 + 0.58 * load) * (0.62 + 0.38 * rn) * run * gain;
+    let lvl = p.level * (0.42 + 0.58 * Math.max(load, 0.85 * jk)) * (0.62 + 0.38 * rn) * run * gain;
     if (t < this._duckTo) lvl *= DUCK;
     setp(this.out.gain, lvl, t, 0.03);
   }
@@ -2680,6 +2776,7 @@ export class Audio {
         city: new Tap(c, b.amb_city[0], this.ambBus),
         water: new Tap(c, b.amb_water[0], this.ambBus),
         tracks: b.tracks ? new Tap(c, b.tracks[0], this.worldBus) : null,
+        rumble: b.rumblestrip ? new Tap(c, b.rumblestrip[0], this.worldBus) : null,
       };
     };
     const t0 = performance.now();
@@ -3289,6 +3386,15 @@ export class Audio {
     }
   }
 
+  /** A bump under your road car (roadfeel.js): 'joint' (a deck's expansion
+   *  joint), 'rail' (a tyre over ION's rail), 'bottom' (the bump stop). */
+  roadHit(kind, gain, at = 0) {
+    if (!this.ready || !this.bank) return;
+    const heavy = !!(this._spec && (this._spec.mass || 1) > 2.5);
+    const name = kind === 'rail' ? 'railbump' : kind === 'bottom' ? 'bottom' : 'joint';
+    this.play(name, { gain: clamp(gain, 0, 1.2), rate: heavy ? 0.84 : 1, at, send: 0.05 });
+  }
+
   explosion(x, z) {
     const pos = x != null ? { x, z, ref: 25, maxD: 900 } : {};
     this.play('explosion', { ...pos, gain: 1, send: 0.45, duck: 0.8, duckHold: 1.6 });
@@ -3581,6 +3687,16 @@ export class Audio {
       this.play('airbrake', { gain: 0.45, send: 0.08 });
     }
     this._brakeWas = Math.abs(speed);
+    // a badly damaged engine stumbles: under a third of its health your
+    // car's engine misses now and then, more often the worse it gets
+    // (the duck a backfire uses, for a beat)
+    if (veh && veh.spec.roadCar && m.on && p.kind === 'car') {
+      const hk = veh.health / (veh.spec.hp || 100);
+      if (hk < 0.33 && Math.random() < dt * 2.4 * (1 - hk / 0.33) * (0.4 + 0.6 * thr)) {
+        this.eng.duck(this.now());
+        if (Math.random() < 0.3) this.play('backfire', { gain: 0.12, send: 0.05 });
+      }
+    }
     this.eng.apply(m, t, 1, 1);
 
     // road, tyres and wind
@@ -3610,7 +3726,9 @@ export class Audio {
     this._windHz = 350 + wsp * 18;
     // Expansion joints: on a bridge or a viaduct, ka-thunk, front axle then
     // rear, every ~32 m of deck.
-    if (inCar && onGround && deck && sp > 3) {
+    // (your road car's joints are roadfeel.js's: felt as well as heard, via roadHit)
+    if (s.feelJoints) this._jointD = 20;
+    else if (inCar && onGround && deck && sp > 3) {
       this._jointD += sp * dt;
       if (this._jointD > 32) {
         this._jointD = Math.random() * 4;
@@ -3640,8 +3758,13 @@ export class Audio {
         ? clamp((grunt - 4.5) / 4, 0.3, 1) * (1 - sp / 11) * 0.85 : 0;
       // a burnout (vehicles.js): the rears spinning on the spot, flat out
       const bo = inCar && s.burnout ? 0.95 : 0;
-      const sq = Math.max(lat, lock, spin, bo);
-      const sqRate = bo > 0 && sq === bo ? 1.02 : (sq === lock && lock > 0 ? 0.74 + clamp(sp / 80, 0, 0.2) : sq === spin && spin > 0 ? 0.95 + sp * 0.02 : 0.85 + clamp(sp / 40, 0, 0.35))
+      // ...and your car's tyres SING on asphalt as they come up to the limit
+      // (vehicles.js `gripUse`: 85 % of the grip and up), a thin, higher
+      // note under the full squeal that the slide itself makes
+      const edge = veh && !offroad && onGround ? clamp((veh.gripUse - 0.85) / 0.15, 0, 1) * clamp((sp - 7) / 8, 0, 1) * 0.42 : 0;
+      const sq = Math.max(lat, lock, spin, bo, edge);
+      const sqRate = bo > 0 && sq === bo ? 1.02 : (sq === lock && lock > 0 ? 0.74 + clamp(sp / 80, 0, 0.2) : sq === spin && spin > 0 ? 0.95 + sp * 0.02
+        : sq === edge && edge > lat ? 1.08 + clamp(sp / 60, 0, 0.12) : 0.85 + clamp(sp / 40, 0, 0.35))
         * (heavy ? 0.8 : 1);
       this.loops.squeal.set(sq * 0.22, t, 0.04, sqRate);
       const grav = surf === 'gravel' && onGround ? clamp(sp / 18, 0, 1) * 0.12 + skid * 0.15 : 0;
@@ -3654,6 +3777,12 @@ export class Audio {
       if (this.loops.tracks) {
         const tr = inCar && spec && spec.tank ? s.tracks || 0 : 0;
         this.loops.tracks.set(tr > 0.05 ? clamp(0.12 + tr / 9, 0, 1) * 0.3 : 0, t, 0.08, clamp(0.55 + tr / 10, 0.55, 2.2));
+      }
+      // a shoulder rumble strip (roadfeel.js): the grooves' knock rate is the
+      // speed over their 0.3 m pitch; louder for both sides than one
+      if (this.loops.rumble) {
+        const rb = inCar && onGround && sp > 3 ? clamp(s.rumble || 0, 0, 1.4) : 0;
+        this.loops.rumble.set(rb * (heavy ? 0.42 : 0.36) * clamp(sp / 14, 0.4, 1), t, 0.03, clamp(sp / 0.3 / 80, 0.25, 2.5));
       }
       const scr = inCar ? clamp(s.scrape || 0, 0, 1) : 0;
       this.loops.scrape.set(scr * 0.3, t, 0.03, 0.8 + clamp(sp / 25, 0, 0.5));

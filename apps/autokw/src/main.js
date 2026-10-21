@@ -86,8 +86,9 @@ import { Activities } from './activities.js';
 import { installRamps, buildRampMesh, StuntJumps } from './stunts.js';
 import { Effects } from './effects.js';
 import { SkidMarks } from './skidmarks.js';
+import { RoadFeel } from './roadfeel.js';
 import { TankSystem, TANK_SITE } from './tank.js';
-import { Audio, STATION_NAMES } from './audio.js';
+import { Audio, STATION_NAMES, selectEngine } from './audio.js';
 import { PostFX } from './postfx.js';
 import { clamp, lerp, rng, dist2, formatMoney, hash2, FALL, SUN_DIR } from './util.js';
 
@@ -245,7 +246,20 @@ class Game {
   // --- callbacks used by the simulation ------------------------------------
 
   onCrash(impact, isPolice, other) {
-    audio.crash(impact);
+    // HEARD BY ITS ENERGY, not its speed alone: the same closing speed is a
+    // bigger bang the more mass meets it -- the pair's reduced mass against
+    // two cars' (a wall stops all of yours), square-rooted, so a semi into a
+    // car crunches a tier up and a hatchback's kiss off a bus stays a knock.
+    const pv0 = player.vehicle;
+    let heard = impact;
+    if (pv0 && pv0.spec.roadCar) {
+      const m1 = pv0.mass || 1, m2 = other ? other.mass || 1 : Infinity;
+      const mu = m2 === Infinity ? m1 : (m1 * m2) / (m1 + m2);
+      heard = impact * clamp(Math.sqrt(mu / 0.55), 0.7, 1.8);
+      // and the body takes it: the crumple where it landed (Vehicle.dent)
+      if (impact > 7) pv0.dent(pv0.hitX, pv0.hitZ, impact);
+    }
+    audio.crash(heard);
     if (taxi) taxi.onCrash(impact);
     if (grt) grt.onCrash(impact);
     if (eats) eats.onCrash(impact);
@@ -663,6 +677,7 @@ let tanks = null;       // the tank at Sand Point and its guns (tank.js)
 let gpuLedger = null;
 let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, skidMarks, audio, game, marker, postfx, acts, stunts, monorail, link, freight, counterbal, bikeNet, cyclists, lmRoot, shadowCache = null;
 let pickups = [];
+let roadFeel = null;  // your road car over joints, rails and rumble strips (roadfeel.js)
 let buggies = null;   // the horse and buggies (buggy.js)
 let geese = null;     // Canada geese in Waterloo Park and on campus (kwplaces.js)
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
@@ -1828,6 +1843,8 @@ function installShadowFade() {
   window.__refreshJobs = refreshJobs;
   window.__dbg = { grt, eats, get air() { return air; }, get signalHeads() { return signalHeads; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;   // Auto KW: the harvest (crops.js)
+  Object.defineProperty(window.__dbg, 'roadFeel', { get() { return roadFeel; } });
+  window.__dbg.selectEngine = selectEngine;
   window.__dbg.kart = kartRace;
   window.__dbg.fest = fest;
   window.__dbg.splash = splash;   // Auto KW: Big Splash (bigsplash.js)   // Auto KW: Oktoberfest (oktoberfest.js)   // Auto KW: Erbsville Kartway (kartway.js)
@@ -3294,8 +3311,19 @@ function frame(now) {
             vy: 0.4, grav: 0.1, drag: 0.9, vx: -f.x * 2, vz: -f.z * 2 });
       } else fx.smoke(v.x - v.forward.x * v.halfLen, v.y + 0.15, v.z - v.forward.z * v.halfLen, 1);
     }
-    if (v.health < 0.45 * (v.spec.hp || 100) && Math.random() < 0.35) {
+    if (v.health < 0.45 * (v.spec.hp || 100) && Math.random() < (v.health < 0.25 * (v.spec.hp || 100) ? 0.7 : 0.35)) {
       fx.smoke(v.x + v.forward.x * v.halfLen, v.y + 0.9, v.z + v.forward.z * v.halfLen, 1);
+    }
+    // a holed radiator (Vehicle.dent, a hard hit on the nose): white steam
+    // from under the bonnet's front edge for a few seconds, thinning out
+    if (v.steamT > 0) {
+      v.steamT -= dt;
+      if (Math.random() < Math.min(1, v.steamT / 3) * 0.8) {
+        const f = v.forward, k = v.halfLen * 0.82;
+        fx.emit(v.x + f.x * k, v.y + (v.spec.belt || 1) * 0.85, v.z + f.z * k, 1,
+          { r: 0.93, g: 0.94, b: 0.95, size: 0.5, grow: 2.6, alpha: 0.42, life: 1.6, spread: 0.35, jitter: 0.2,
+            vy: 1.3, grav: 0.02, drag: 0.9, vx: f.x * 0.6 + v.forward.x * v.vLong * 0.3, vz: f.z * 0.6 + v.forward.z * v.vLong * 0.3 });
+      }
     }
     // A boat leaves a wake: a foam ribbon from the transom (one draw, only
     // while you are driving one) and spray off the bow once it is moving.
@@ -3370,6 +3398,9 @@ function frame(now) {
   placeSun(p.x, p.y, p.z);
   if (prof) lap('camera');
 
+  // your road car over the small things in the ground: felt, then heard
+  if (!roadFeel) roadFeel = new RoadFeel(audio, player);
+  roadFeel.update(dt, player.onFoot ? null : player.vehicle, surfNow, link);
   // audio state
   if (audio.ready) audio.update(dt, audioState(dt, input, p, camDir, buried));
 
@@ -3506,6 +3537,8 @@ function audioState(dt, input, p, camDir, buried) {
     water,
     impactSpeed: v ? Math.abs(v.vLong) + Math.abs(v.vy || 0) : Math.abs(player.vy || 0) + player.speed,
     surface: water > 0.05 ? 'water' : surfNow,
+    rumble: roadFeel ? roadFeel.rumble : 0,
+    feelJoints: !!(roadFeel && roadFeel.active),
     footL: h.contactL, footR: h.contactR,
     footSpeed: player.speed,
     falling: player.onFoot && !player.grounded,

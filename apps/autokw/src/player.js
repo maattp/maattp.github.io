@@ -10,6 +10,19 @@ import { clamp, lerp, angleWrap, damp, dist2, smooth, tierScale } from './util.j
 import * as G from './geo.js';
 import { TUNNEL_H } from './citygen.js';
 
+// The chase boom per road-car type, on top of the size rule in updateCamera
+// (m: d farther back, h higher, l the look point higher). The Civic sits low
+// and close, the sports car lower still; the U-Haul and the dually stand
+// back for their length's overhangs.
+const CAM_TYPE = {
+  civic: { d: -0.7, h: -0.5, l: -0.12 },
+  sports: { d: -0.6, h: -0.55, l: -0.12 },
+  hellcat: { d: -0.2, h: -0.15 },
+  jeep: { h: 0.15 },
+  uhaul: { d: 0.8, h: 0.4, l: 0.2 },
+  dually: { d: 0.5, h: 0.2 },
+};
+
 // Swimming: water deeper than this (from surface to ground) takes you off
 // your feet; while swimming your feet ride this far under the surface.
 const SWIM_DEPTH = 1.3, SWIM_FEET = 0.18;
@@ -218,6 +231,9 @@ export class Player {
     if (F.aimT > 0) F.aimYaw = this.camYaw + Math.PI;
     this.camPitch = clamp(this.camPitch + look.y, -0.5, 1.15);
     this.lookT = look.x || look.y ? 0 : this.lookT + dt;
+    // a finger on the look zone (or the mouse dragging it) is holding the
+    // view where it put it, moving or not (updateCamera's recentring waits)
+    this.lookHeld = !!(controls && controls._lookId !== null && controls._lookId !== undefined);
 
     if (this.onFoot) this.updateFoot(dt, input, traffic, peds);
     else this.updateDrive(dt, input, traffic, peds);
@@ -875,9 +891,27 @@ export class Player {
       dist = 7.6 + v.spec.len * 0.42 + clamp(sp * 0.09, 0, 3.4);
       height = 3.2 + v.spec.roof * 0.42;
       lookH = 1.05;
+      if (v.spec.roadCar && !v.spec.towed) {
+        // YOUR ROAD CAR'S BOOM, by its size (CAM_TYPE for the ones that
+        // differ by more than that): low and close behind a low car, the
+        // height following the roof more steeply than it did (3.2 + 0.42 x
+        // roof put a Civic and a pickup within 0.25 m of each other), the
+        // look point up with a tall body so a U-Haul's box does not fill
+        // the frame
+        const c = CAM_TYPE[v.spec.hand];
+        dist = 6.9 + v.spec.len * 0.5 + clamp(sp * 0.09, 0, 3.4) + (c ? c.d || 0 : 0);
+        height = 2.25 + v.spec.roof * 0.95 + (c ? c.h || 0 : 0);
+        lookH = 0.72 + v.spec.roof * 0.25 + (c ? c.l || 0 : 0);
+      }
       // an articulated bus's rear section reaches 13.5 m behind the front's
       // centre: the boom clears it
       if (v.spec.artic) { dist += 8; height += 1.2; }
+      // A tractor and its 53 ft trailer: 18 m of box behind the cab's
+      // centre, as tall as the cab. From low behind it the trailer is all
+      // there is, so the boom stands back 8 m past the doors and high enough
+      // to see the road ahead over the roof (the cab's top shows over its
+      // front edge, as a trucker's chase view does), looking over the cab.
+      else if (v.spec.towed === 'semiTrailer' && v.trailer) { dist = 26 + clamp(sp * 0.06, 0, 2); height = 6.6; lookH = 3.2; }
       // and a tiller's trailer 17 m behind its tractor's nose
       else if (v.spec.towed) { dist += 10; height += 1.6; }
       if (v.spec.balloon) {
@@ -959,7 +993,12 @@ export class Player {
         // at the hover (a turn reads as a turn), tighter with speed.
         const d = angleWrap(v.heading + Math.PI - this.camYaw);
         this.camYaw += d * clamp(dt * (1.1 + 1.4 * clamp(sp / 20, 0, 1)), 0, 0.25);
-      } else if (v.vLong > 3 && !(v.spec.tank && this.lookT < 3)) {
+      } else if (v.vLong > 3 && !(v.spec.tank && this.lookT < 3)
+        // a road car's view held by a finger (or let go under a second ago)
+        // stays put: the swing back used to start the moment a dragging
+        // finger stopped moving, so looking out of the side on a phone
+        // meant scrubbing the look zone to keep the view there
+        && !(v.spec.roadCar && (this.lookHeld || this.lookT < 0.9))) {
         // ease the camera behind the car when driving forward (in a tank,
         // only once you have stopped aiming: the turret follows the camera)
         // in a slide (your car's tyres: vehicles.js _tyres) it looks half way
@@ -969,6 +1008,10 @@ export class Player {
         const want = v.heading + drift + Math.PI;
         const d = angleWrap(want - this.camYaw);
         this.camYaw += d * clamp(dt * 1.5 * clamp(sp / 12, 0, 1), 0, 0.25);
+        // and a road car's view comes back DOWN to the chase height too, a
+        // couple of seconds after the last look (it stayed wherever a drag
+        // last left it, looking at the sky or the bonnet)
+        if (v.spec.roadCar && !this.lookHeld && this.lookT > 2) this.camPitch += (0.1 - this.camPitch) * clamp(dt * 1.2, 0, 0.2);
       }
     }
     const cp = Math.cos(this.camPitch);
@@ -1128,6 +1171,31 @@ export class Player {
 
   applyCamera(camera) {
     camera.position.copy(this.camPos);
+    // YOUR ROAD CAR AT SPEED: the view widens a little (+7 deg from ~70 to
+    // ~190 km/h, eased) and the camera picks up a fine, quick tremor --
+    // the road coming up through the body -- that grows past ~100 km/h and
+    // on a loose surface. Applied as an offset on whatever fov the camera
+    // has, so an activity that sets its own fov keeps it (`_fovSet`).
+    const v = !this.onFoot ? this.vehicle : null;
+    const rc = !!(v && v.spec.roadCar && v.detailedWheels);
+    const sp = rc ? Math.abs(v.vLong) : 0;
+    if (camera.fov !== this._fovSet) { this._fovBase = camera.fov; this._fovAdd = 0; }
+    const want = rc ? 7 * Math.pow(clamp((sp - 19) / 34, 0, 1), 1.3) : 0;
+    this._fovAdd = (this._fovAdd || 0) + (want - (this._fovAdd || 0)) * 0.06;
+    if (Math.abs(this._fovAdd) < 0.01 && want === 0) this._fovAdd = 0;
+    const fov = this._fovBase + this._fovAdd;
+    if (camera.fov !== fov) { camera.fov = fov; camera.updateProjectionMatrix(); }
+    this._fovSet = camera.fov;
+    if (rc && v.onGround !== false) {
+      const rough = v.surf === 'gravel' ? 2.2 : v.surf === 'grass' ? 2.8 : 1;
+      const a = 0.018 * clamp((sp - 22) / 28, 0, 1) * rough + (rough > 1 ? 0.006 * clamp(sp / 15, 0, 1) * rough : 0);
+      if (a > 0.0005) {
+        const T = performance.now() / 1000;
+        camera.position.y += a * (Math.sin(T * 61) * 0.6 + Math.sin(T * 37.3 + 1.3) * 0.4);
+        camera.position.x += a * 0.5 * Math.sin(T * 47.1 + 0.4);
+        camera.position.z += a * 0.5 * Math.sin(T * 53.7 + 2.1);
+      }
+    }
     if (this.shake > 0.002) {
       const k = this.shake * 0.35;
       camera.position.x += (Math.random() - 0.5) * k;
