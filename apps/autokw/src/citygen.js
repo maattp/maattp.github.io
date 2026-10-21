@@ -2102,6 +2102,12 @@ export function* cityGenerator(md, cache = {}) {
     na.e.push(i);
     nb.e.push(i);
   }
+  // Auto KW: each side's sidewalk from OSM (mapdata decodeSidewalks): `swk`
+  // bits 0-1 the +p side, 2-3 the -p side; world.js swSide reads it
+  if (md.sidewalks) {
+    const S = md.sidewalks;
+    for (let i = 0; i < R.edgeCount; i++) edges[i].swk = (S[i >> 1] >> ((i & 1) * 4)) & 15;
+  }
   const g = { nodes, edges };
   // One bore, two decks: SR-99's twin OSM ways onto a shared alignment.
   const stack = stackBores(g);

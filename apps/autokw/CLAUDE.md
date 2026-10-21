@@ -2729,6 +2729,79 @@ file and a guide disagree, this file wins.
     then differ by its presence). AUTO_GPU=1 funprobe ALL OK; phone boot 0
     exceptions, spawn 178 -> 177 draws (1114k -> 1111k tris).
 
+- **The residential street from the driver's seat** (docs/streets-*.jpg,
+  before over after: Doon South, Activa Ave, Breithaupt St). Surveyed at
+  street level in Westmount, Belmont, Mt Hope/Breithaupt, Laurelwood, Doon
+  South, Huron Park, Laurentian West, Galt and Hespeler. What changed:
+  - **No paint on a residential street** (world.js `unpainted`: an urban
+    `res` edge with hw <= 6.5 -- wider ones are OSM's collectors -- carries no
+    centre or edge lines, near (meshRoadMarks) or far (farRoadSteps flags)).
+    KW paints none on a local street; the yellow dashes were the loudest
+    "American suburb" tell. Country roads keep theirs.
+  - **Sidewalks per side, from OSM** (`tools/kw/build_sidewalks.py` ->
+    `data/sidewalks.bin`, 50 KB): KW maps ~2,600 km of footway=sidewalk as
+    separate ways. Each street edge's two sides are sampled every 5 m for a
+    parallel sidewalk within hw-1.5..hw+10 m: none (lawn to the kerb), against
+    the kerb, or behind a grass boulevard (median > 1 m behind the kerb line);
+    where none is mapped within 120 m the road's `sidewalk=` tag decides, else
+    UNKNOWN keeps the old full-width pavement. 4 bits an edge (`e.swk`,
+    citygen), checked against roads.bin's edge count and a+b sum -- **re-run it
+    after build_roads.py** or the game ignores it. Drawn in meshRoad's pavement
+    loop as bands of the existing strip: the walk 1.5 m in the road material's
+    pavement mode, the lawn in its grass mode (`SURF_GRASS`, the ground's own
+    tint). The strip's width, grading, peds and kerb are unchanged; no draws.
+    Res: none 35 %, kerb 5 %, boulevard 46 %, unknown 14 % (rural edges count
+    as none).
+  - **Driveways reach the street.** Garage driveways run to the kerb (up to
+    14 m, was 8) in ground-following <= 3 m pieces (`_driveStrip`), and
+    `_driveApron` climbs them over the pavement strip (WALK_Y, 0.52 m over
+    the ground) to the kerb -- the lawn boulevard otherwise left each one
+    ending at a grass bank. **Side driveways** (`_sideDrive`) for garage-less
+    houses 6-17 m wide (the 1950s bungalows): down whichever side yard is
+    clear of every other footprint 3.5 m out, the car parked beside the
+    house. Outside `OLD_CORES` a 7 m house gets its single garage (was
+    9.5 m: the 2000s subdivisions' narrow lots). `cityStats.drives` counts
+    (Westmount ~700 garage + ~530 side driveways in its near chunks).
+    The Region's carts and the net stand on the strip at the kerb end now.
+  - **Cars in the driveways: src/kwdriveway.js.** House code leaves records
+    (`userData.dcars`: x, y, z, heading, type, colour seed): a car in 3 of 4
+    driveways, a second on a double one time in 3, one in 6 backed in, none
+    where the ground falls > 0.3 m under it. `DrivewayCars` keeps those within
+    90 m (phone) / 140 m and pushes them into **traffic.decor** -- drawn
+    through the far LOD's InstancedMeshes like the drive-thru lines: no draws
+    of their own, never in traffic.cars, trafficbench hashes unchanged. A
+    phone uses the lines' two types (crossover, suv), so both draws are
+    shared; desktop adds sedan and minivan. Solid for the player (keepOut, in
+    a car or on foot). While paused (harness views) `posed()` chooses round
+    the camera and refreshes the far-LOD frustum. `window.__noDriveCars`
+    before boot turns it off; `__dbg.dcars`.
+  - **Canada Post.** `data/postboxes.json` (same script): OSM's 63 community
+    mailboxes and 280 red street letter boxes, each stood at its point, turned
+    to its nearest street, lifted onto the strip if it is on it
+    (`_postBoxes`, `_cmb`, `_letterBox`). Procedural community mailbox banks
+    (1-3 grey units with the red mark, on a pad on the boulevard, ~1 per
+    200 m of kerb) only inside `NEW_SUBDIVS` -- **a judgement list** of the
+    post-1985 subdivisions (Laurelwood, Clair Hills, Westvale, Eastbridge,
+    Williamsburg, Laurentian West, Country Hills, Huron Park/South, Doon South,
+    Deer Ridge, Lackner Woods, Hespeler SE, Saginaw...); OSM has no era data.
+  - **A residential kerb is hydrants and signs.** meshProps' small clutter
+    on a `res` edge drops the parking meters, litter bins, newspaper boxes
+    and bollards (downtown's); nothing stands on a driveway apron
+    (`_onApron`), lamps included.
+  - Phone (AUTO_PHONE=1, GPU), master -> this, player view after
+    `player.respawn` there (draws wobble +-3 with traffic): spawn 179/1134k ->
+    178/1151k; Westmount 147/940k -> 143/945k; Mt Hope 251/1409k ->
+    253/1453k; Doon South 107/857k -> 101/887k; Activa 97/918k -> 88/832k;
+    Galt 140/1106k -> 140/1111k. `tools/kw/streetdraws.js` (VIEW_PROBE_FILE)
+    attributes the scene pass at six driver's-seat cameras. trafficbench
+    (rail off) hashes identical to master, funprobe 63 ok / ALL OK on both,
+    drivetest output identical, 0 exceptions.
+  - **Approximate / not done:** NEW_SUBDIVS radii; boulevard trees still
+    stand behind the walk (trees.js), not in the boulevard; the junction
+    corner pavements stay concrete on a no-sidewalk side; peds still walk the
+    strip where it is lawn; the far LOD car models are the clustered ones
+    (fine past ~10 m, blobby closer); hydro lines are unchanged (OLD_CORES).
+
 ## Build number
 
 `<div id="build">vN</div>` in index.html and `CACHE = 'autokw-vN'` in sw.js

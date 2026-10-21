@@ -62,6 +62,7 @@ import { prepNature, groundDetail } from './kwnature.js';
 import { prepVillages, buildVillages, villagesMap } from './kwvillages.js';
 import { setShopData, prepShops, buildShops, shopPlaces, shopStats, driveThrus } from './kwshops.js';
 import { DriveThrus } from './drivethru.js';
+import { DrivewayCars } from './kwdriveway.js';
 import { prepHome, homeMap } from './kwhome.js';
 import { Crops } from './crops.js';
 import { Kartway, KartRace } from './kartway.js';
@@ -916,6 +917,8 @@ async function boot() {
   { const jc = prepJunctions(city, md.junctions); if (jc) { window.__junctions = jc.stats; blog('junctions: ' + JSON.stringify(jc.stats)); } }
   // the street-name blades at the corners and on the mast arms (streetsigns.js, data/streetsigns.json)
   if (!window.__noStreetSigns) streetSigns = prepStreetSigns(city, md.streetsigns);
+  // Canada Post's boxes, OSM's (world.js meshProps -> _postBoxes)
+  city.postBoxes = md.postboxes || null;
   window.__streetSigns = STREET_SIGN_STATS;
   city.slabQuery = (x, z) => ykf.surface(x, z);
   blog(`city: grading ${cityStats.gradeCached ? 'from cache' : 'computed'}, buildings ${bootCache.buildings ? 'from cache' : 'computed'}`);
@@ -1178,6 +1181,8 @@ function installShadowFade() {
   world.trees.city = city;
   // Fall: the pumpkins on the steps and the leaves coming down (fall.js)
   if (FALL) { world.decor = new FallDecor(scene); world.decor.trees = world.trees; }
+  // Auto KW: the cars in the driveways (kwdriveway.js), drawn through traffic's far LOD
+  if (!window.__noDriveCars) world.dcars = new DrivewayCars();
   // ...and its portal cuts, barriers and lids (the terrain's carve needs them).
   // Only with a cached grading: the lids were computed on those profiles.
   world.bootCache = { portal: bootCache.grade ? bc.portal : null };
@@ -1919,6 +1924,7 @@ function installShadowFade() {
   window.__dbg.splash = splash;
   window.__dbg.skating = skating;
   window.__dbg.dthru = dthru;   // Auto KW: the drive-throughs (drivethru.js)
+  window.__dbg.dcars = world.dcars || null;   // Auto KW: the cars in the driveways (kwdriveway.js)
   window.__dbg.derby = derby;   // Auto KW: the Panthers' home run derby (ballpark.js)   // Auto KW: the rink at Waterloo Public Square (skating.js)   // Auto KW: Big Splash (bigsplash.js)   // Auto KW: Oktoberfest (oktoberfest.js)   // Auto KW: Erbsville Kartway (kartway.js)
   wireUi();
   career.start(hud);
@@ -3253,6 +3259,7 @@ function frame(now) {
 
   if (prof) lap('misc');
   if (dthru) dthru.update(dt, p.x, p.z, player);
+  if (world.dcars) world.dcars.update(traffic, p.x, p.z, player, !dthru);
   traffic.update(dt, p.x, p.z, camDir, player);
   if (prof) lap('traffic');
   peds.update(dt, p.x, p.z, player, traffic);
@@ -3674,6 +3681,7 @@ function draw(now) {
     draw.lastT = now;
     world.decor.update(camera, dt || 0);
   }
+  if (world && world.dcars && game.paused && traffic) world.dcars.posed(traffic, camera, player);
   if (chunkCull) chunkCull.cull(camera);
   if (lmCull) lmCull.cull(camera);
   try { renderer.render(scene, camera); } finally { if (chunkCull) chunkCull.restore(); if (lmCull) lmCull.restore(); }
