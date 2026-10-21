@@ -15,6 +15,14 @@ file and a guide disagree, this file wins.
   `build_raster.py`, `build_roads.py`, `build_buildings.py`, `build_places.py`,
   `build_lots.py`, `build_wood.py`, `build_beaches.py`, `build_parkprops.py`,
   `build_bikepaths.py`, `build_piers.py`, `build_hwy.py`, `build_junctions.py` (all with `tools/.venv/bin/python`).
+- **A road segment under 4 m (`MIN_SEG`) is merged, never dropped**
+  (build_roads.py `merge_slivers`): its two ends become one node (one an
+  edge already used; the other stays in roads.bin unused, so every node and
+  edge index is what it was). Dropping it alone cut the way in two -- 616
+  places where a street ended in two dead ends a few metres apart, cars
+  U-turning into each other (Union St E by Lucan Ave). Graph quality, before
+  -> after: components 168 -> 21, dead ends inside the map 1867 -> 935,
+  stranded nodes 729 -> 60.
 - **Heights are ELEV_BASE (250 m) below sea level-referenced DEM heights**
   (`tools/kw/proj.py`), so the ground sits at ~5-175 m in the game as Seattle's did.
 - **There is no sea.** Water is ONE FIELD: `data/wlevel.png` (same encoding as
@@ -1276,9 +1284,9 @@ file and a guide disagree, this file wins.
   - **Not done / approximate:** signal timing is fixed-time (no detectors);
     no-right-on-red signs are not read from OSM;
     approaches the matcher misses (52 signal clusters, 171 stops) stay
-    uncontrolled (a stop bar that would lie across another street's lanes
-    is stepped back or not painted: "Follow-ups after v49" below); a two-way
-    stop's side street can wait long on a busy arterial.
+    uncontrolled; 2 stop lines of ~8.3k still lie across another street
+    wherever they go and are not painted ("Follow-ups after v55" below); a
+    two-way stop's side street can wait long on a busy arterial.
 - **The University of Waterloo** (src/uwcampus.js, `data/uw.json` from
   tools/kw/build_uw.py; docs/uw-*.jpg). build_uw.py takes every campus
   building from OSM (inside Ring Road, or a named university / college /
@@ -2434,7 +2442,8 @@ file and a guide disagree, this file wins.
     trafficbench hashes change at the city sites (meant: these change
     traffic) and match base at the freeway ones; rail on = rail off;
     hwytraffic 7 hits / 0 crashes = base. A U-turning car at the all-way
-    by (-2995, -1212) still bumps one turning right at a crawl (3 hits).
+    by (-2995, -1212) still bumps one turning right at a crawl (3 hits):
+    not an all-way at all, a gap in the graph ("Follow-ups after v55").
   - **Grass hairlines across a road** (world.js meshRoad): two strips
     meeting end to end at a node with no mouth (OSM's way split) each kept
     their own 0-3 cm bias, a step with nothing drawn in it -- from the low
@@ -2460,7 +2469,8 @@ file and a guide disagree, this file wins.
     cannot clear (an approach that starts inside the intersection: the far
     carriageway's node of a divided road) it is not painted (teeth too).
     The AI's stop line moves with it. `tools/kw/stopbars.js`: painted bars
-    across another street 342 -> 0 (173 moved clear, 169 dropped).
+    across another street 342 -> 0 (173 moved clear, 169 dropped). The 169
+    are painted since: "Follow-ups after v55".
   - **Trail benches are solid** (kwnature.js): a landmark solid each (seat
     and back as one box, knee-high to the back's top), added with
     `city.addLandmarkSolids` (indexes only the new ones) when bikes.js asks
@@ -2470,6 +2480,75 @@ file and a guide disagree, this file wins.
   (traffic); Galt 197/716k =; Beechwood house 202/1080k =; Kitchener
   station 374/1579k -> 376/1575k; 0 exceptions. drivetest identical;
   ionprobe, funprobe PASS.
+- **Follow-ups after v55** (docs/followup55-*.jpg, before over after): the
+  three junction leftovers v55 named, each traced to its root.
+  - **Every stop line on its approach** (junctions.js `chain`, `lineAt`,
+    `setback`, `noApproach`, matchSignals). The 169 bars v55 stopped
+    painting were not approaches that start inside the intersection: 147 of
+    them had a DEGREE-2 node 6-15 m out (OSM splits a way at a crosswalk, a
+    lane or name change, where a roundabout entry leaves its splitter
+    island), and the setback was clamped to the last EDGE (`e.len - 3`),
+    short of the crossing street's kerb. An approach is now a chain:
+    upstream through degree-2 nodes (not into a control, a ring, a deck or a
+    hairpin) to 45 m; the line is measured along it (the same measure as a
+    car's route distance, so junctionStop is unchanged) and painted, signed
+    and stopped at where it lands (`A.at(o)`). It may go to 3 m short of the
+    junction the chain starts at, 0.5 m short of anything else. The junction's
+    own crosswalk counts as before on the last edge (within 14 m of the
+    mouth), up the chain only at the mouth (+6 m): a roundabout's
+    splitter-island crossing a car length back is not the entry's, its yield
+    line stays at the ring. If the line behind a crosswalk is across another
+    street wherever it goes, it goes in front where it is clear. The rest:
+    a signal whose OSM nodes are on one carriageway now takes in the
+    junction an arm starts at when no line fits between them (16;
+    `stats.sigAbsorbed`), an arm whose chain leads back into the signal's
+    own nodes is not an approach, nor is a dead-end stub lying inside the
+    crossing street. `barAcross` uses the module's own 32 m grid
+    (`edgesAround`, now with graded edges; callers that must skip them do):
+    edgesNear lists whole chunks by edge centre and missed long edges.
+    `tools/kw/stopbars.js` (runs on master too): 8292 approaches, 0 across,
+    169 not painted -> 8288, 0 across, 2 not painted (both arms leaving a
+    Y with a ramp a few metres back: sig 496 at (12673, 8739), rb entry 215
+    at (2749, 9086)). Of the bars master did paint, 237 moved >= 0.3 m: on
+    master the edge clamp had put them on or in front of their crosswalk's
+    stripes (stop at (-2084, 1575): 5.3 m with the crosswalk at 6.6 m; now
+    9.2 m, behind it), or the merged slivers below lengthened their edge.
+  - **The "all-way" at (-2995, -1212) was a gap in the graph**
+    (tools/kw/build_roads.py `merge_slivers`, roads.bin rebuilt; see "What
+    is different from Seattle"). OSM's Union St E has a 3.4 m way there;
+    the importer dropped segments under 4 m and with it the joint, leaving
+    two dead ends 3.4 m apart: cars from each side U-turned there into each
+    other. 616 such places map-wide; merged, not dropped. The street's
+    trees and hydro line now run through (followup55-union-gap.jpg).
+  - **No-exit streets** (traffic.js `noExitTraps`, `CUL_MAX` 350 m). Stop
+    5558 (Braun St onto Linwood Ave) had nothing wrong with it: Linwood is a
+    real dead end past it (a path beyond), and routing took it straight on
+    as often as not, so cars queued at its end, U-turned into one another,
+    wedged and backed out. Per directed edge, propagated back from the dead
+    ends: a trap once every legal way on from its end (bar back along
+    itself) is one, with the longest drive to the turn. pickNextEdge scores
+    a two-way trap under 350 m -6 (taken only when nothing else is legal),
+    and no car spawns heading into one. It also catches Union St E
+    northbound at Willow St (closed beyond for its rebuild: Willow one-way
+    in) where the cars that did turn into the 18 m stub U-turned on the one
+    waiting at its stop line. 6918 trap directions, 4733 under 350 m; ~17 ms
+    on the desktop, kept by the boot cache (`traffic:noexit`). jcttraffic at
+    those two (seeded, 600 s each): master 41 hits (Linwood) + 21 hits / 12
+    recycled (Union) -> 0 + 0 / 0. **Approximate:** a whole pocket under
+    350 m that is all no-exit (Braun St / Linwood Ave beside the railway)
+    now gets no traffic at all -- nothing spawns into it, nothing turns in --
+    where life has a resident's car now and then.
+  - **Verify**, master -> this, identical commands: jcttraffic seeded 3 hits
+    / 0 crashes / 1 recycled -> 0 / 0 / 1, unseeded 0 / 0 / 8 -> 0 / 0 / 7;
+    hwytraffic seeded 5 / 0 and unseeded 7 / 0 both = master; trafficbench
+    (`window.__noRail=true`): 401-hespeler = master; the city sites change
+    (uptown-king, sig-1644, allway-28, rb-3lane: stop lines, the graph, the
+    routing), and so does pkwy-fairway, whose only difference is a city car
+    master spawned heading into a 17 m dead-end stub of King St E beside the
+    Conestoga (`dump: 299` shows car 206: master's civic on edge 16168, this
+    build's next spawn on the freeway instead; the freeway cars around it
+    then differ by its presence). AUTO_GPU=1 funprobe ALL OK; phone boot 0
+    exceptions, spawn 178 -> 177 draws (1114k -> 1111k tris).
 
 ## Build number
 

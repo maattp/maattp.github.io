@@ -475,6 +475,55 @@ function directedComponents(city, flow) {
   return { comp, sizes };
 }
 
+/**
+ * NO EXIT. Per directed edge (ei * 2 + (driven a -> b ? 1 : 0)): 0, or -- when
+ * every way on from its end, and from theirs, comes back to a dead end where
+ * the only move is to turn round -- the longest drive (m) from its start to
+ * that turn. A cul-de-sac, a court, a street that stops at the railway, or one
+ * whose only legal way on is into such a stub (Union St E northbound at
+ * Willow St, closed beyond for its rebuild: the one-way Willow comes in, it
+ * does not go out). Found by propagating back from the dead ends: a directed
+ * edge is a trap once every legal exit from its end node (other than back
+ * along itself) is one. A driver with no business there does not turn into
+ * one just to turn round at its end (pickNextEdge), and none is spawned
+ * heading into one: they met each other U-turning at the end, nose to nose,
+ * wedged and backed out (Linwood Ave off Braun St: 41 bumps in 10 minutes of
+ * traffic round it; the stub at Union St E and Willow St).
+ */
+function noExitTraps(city, flow) {
+  const E = city.edges, M = E.length * 2;
+  const ok = (ei, f) => { const e = E[ei]; return !e.noTraffic && e.a !== e.b && (flow[ei] === 0 || flow[ei] === (f ? 1 : -1)); };
+  const end = (s) => (s & 1 ? E[s >> 1].b : E[s >> 1].a);
+  const exits = new Int32Array(M), far = new Float32Array(M), trap = new Float32Array(M);
+  const q = [];
+  for (let s = 0; s < M; s++) {
+    if (!ok(s >> 1, s & 1)) continue;
+    let k = 0;
+    for (const ei of city.nodes[end(s)].e) {
+      if (ei === s >> 1) continue;
+      const e = E[ei], f = e.a === end(s) ? 1 : 0;
+      if (ok(ei, f)) k++;
+    }
+    exits[s] = k;
+    if (!k) { trap[s] = E[s >> 1].len; q.push(s); }
+  }
+  while (q.length) {
+    const t = q.pop(), ti = t >> 1, te = E[ti];
+    // the edges arriving where t starts: t was one of their ways on
+    const st = t & 1 ? te.a : te.b;
+    for (const ei of city.nodes[st].e) {
+      if (ei === ti) continue;
+      const e = E[ei], f = e.b === st ? 1 : 0, p = ei * 2 + f;
+      if (!ok(ei, f) || trap[p] > 0) continue;
+      if (trap[t] > far[p]) far[p] = trap[t];
+      if (--exits[p] === 0) { trap[p] = e.len + far[p]; q.push(p); }
+    }
+  }
+  return trap;
+}
+// a no-exit street at most this long is not turned into (traffic.pickNextEdge)
+const CUL_MAX = 350;
+
 // Spawns only go on components at least this big: a few-node loop is a car
 // circling one block forever.
 const MIN_COMPONENT = 60;
@@ -648,6 +697,9 @@ export class TrafficSystem {
       (v) => v && v.comp instanceof Int32Array && v.comp.length === city.nodes.length && Array.isArray(v.sizes));
     this.comp = cc.comp;
     this.compSize = cc.sizes;
+    // (~17 ms on the desktop: kept by the boot cache too)
+    this.cul = memo('traffic:noexit', () => noExitTraps(city, this.flow),
+      (v) => v instanceof Float32Array && v.length === E.length * 2);
     // Lane span per one-way edge, lazily: [lo, hi, lanes] in the edge's own
     // perpendicular (+ = the side to the right of a->b). NaN = not computed.
     this.lanes = new Float32Array(E.length * 3).fill(NaN);
@@ -1020,6 +1072,10 @@ export class TrafficSystem {
       if (!this.inComponent(ei)) continue;
       const draw = this.R.n();
       const sign = this.flow[ei] || (draw < 0.5 ? 1 : -1);
+      // ...and not heading into a short no-exit street (noExitTraps): its few
+      // cars are the residents', and one spawned there only U-turned at its end
+      const cul = this.cul[ei * 2 + (sign > 0 ? 1 : 0)];
+      if (cul > 0 && cul < CUL_MAX) continue;
       const laneU = this.R.n();
       const off = this.laneLat(ei, sign, { laneU });
       // right of travel: travelling (fx, fz), right is (-fz, fx)
@@ -2601,7 +2657,10 @@ export class TrafficSystem {
       if (this.comp[sign > 0 ? ne.b : ne.a] !== comp) continue;
       const dx = ne.dx * sign, dz = ne.dz * sign;
       const dot = dx * fx + dz * fz;
-      const score = dot * 2 + hash2(ei, (v.x * 3) | 0) * 1.1 + (ne.cls === 'res' ? -0.6 : 0) + (banned && this.fwy[ei] ? -20 : 0);
+      // (a short no-exit street: only if there is nothing else -- noExitTraps)
+      const cul = this.flow[ei] === 0 ? this.cul[ei * 2 + (sign > 0 ? 1 : 0)] : 0;
+      const score = dot * 2 + hash2(ei, (v.x * 3) | 0) * 1.1 + (ne.cls === 'res' ? -0.6 : 0) + (banned && this.fwy[ei] ? -20 : 0)
+        + (cul > 0 && cul < CUL_MAX ? -6 : 0);
       if (dot < -0.5) {
         if (score > sharpScore) { sharpScore = score; sharp = { ei, sign }; }
         continue;
