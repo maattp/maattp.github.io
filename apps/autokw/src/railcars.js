@@ -45,6 +45,10 @@ const C = {
   alu: lin(0xa5a7a8), aluD: lin(0x7d7f80), coal: lin(0x16161a), coalHi: lin(0x2c2c30),
   tank: lin(0x1b1b1c), tankD: lin(0x0f0f10),
   boxBnsf: lin(0x6b3a26), boxCn: lin(0x7a2a1c), boxRoof: lin(0x5a5a58), rust: lin(0x5a3a28),
+  // Auto KW
+  cpRed: lin(0xb3202b), kcGold: lin(0xd7a531), goGreen: lin(0x3b8a2e), goWhite: lin(0xeef0ee), goGrey: lin(0xb9bcbd),
+  viaGrey: lin(0xb4b8bb), viaDark: lin(0x1d1f22), viaYellow: lin(0xffc425), wcrGreen: lin(0x234a2d), wcrGold: lin(0xd8a83a),
+  arGrey: lin(0xc9cbcb), arBrown: lin(0x5b2c22), cpBox: lin(0x6a2a24), cpHopper: lin(0x9ea1a2),
   glassDark: lin(0x10181e), lamp: [1.0, 0.97, 0.88], red: [0.9, 0.05, 0.03], amber: [1.0, 0.6, 0.08],
 };
 export const RAIL_COLOURS = C;
@@ -59,11 +63,13 @@ export function railDecals() {
   const c = document.createElement('canvas'); c.width = ATLAS_W; c.height = ATLAS_H;
   const g = c.getContext('2d');
   const cells = {};
-  let x = 0, y = 0, rowH = 0;
+  let x = 0, y = 0, rowH = 0, usedH = 0;
   const cell = (name, w, h, draw) => {
     if (x + w > ATLAS_W) { x = 0; y += rowH + 4; rowH = 0; }
     g.save(); g.translate(x, y); g.beginPath(); g.rect(0, 0, w, h); g.clip(); draw(g, w, h); g.restore();
     cells[name] = [x / ATLAS_W, 1 - (y + h) / ATLAS_H, (x + w) / ATLAS_W, 1 - y / ATLAS_H];
+    if (y + h > ATLAS_H) console.warn(`railDecals: ${name} falls off the atlas (${y + h} > ${ATLAS_H})`);
+    usedH = Math.max(usedH, y + h);
     x += w + 4; rowH = Math.max(rowH, h);
   };
   const text = (q, s, px, py, size, col, weight = 900, font = 'Helvetica, Arial, sans-serif', align = 'left', scaleX = 1) => {
@@ -71,25 +77,6 @@ export function railDecals() {
     q.font = `${weight} ${size}px ${font}`; q.fillStyle = col; q.textAlign = align; q.textBaseline = 'middle';
     q.fillText(s, 0, 0); q.restore();
   };
-  // BNSF on a long hood: tall black letters, the swoosh-era wordmark
-  cell('bnsfHood', 900, 200, (q, w, h) => {
-    text(q, 'BNSF', w / 2, h / 2 + 6, 190, '#141414', 900, 'Helvetica, Arial, sans-serif', 'center', 1.18);
-  });
-  // BNSF on a freight car: black on the car's colour, with the circle-and-cross
-  cell('bnsfCar', 700, 160, (q, w, h) => {
-    q.fillStyle = '#f0f0ea';
-    text(q, 'BNSF', 300, h / 2 + 4, 150, '#f4f4ee', 900, 'Helvetica, Arial, sans-serif', 'center', 1.1);
-  });
-  cell('bnsfCarDark', 700, 160, (q, w, h) => {
-    text(q, 'BNSF', 300, h / 2 + 4, 150, '#161616', 900, 'Helvetica, Arial, sans-serif', 'center', 1.1);
-  });
-  // the BNSF circle-and-cross emblem
-  const emblem = (q, cx, cy, r, ring, fill) => {
-    q.fillStyle = fill; q.beginPath(); q.arc(cx, cy, r, 0, Math.PI * 2); q.fill();
-    q.strokeStyle = ring; q.lineWidth = r * 0.16; q.beginPath(); q.arc(cx, cy, r * 0.84, 0, Math.PI * 2); q.stroke();
-    q.fillStyle = ring; q.fillRect(cx - r * 0.84, cy - r * 0.1, r * 1.68, r * 0.2); q.fillRect(cx - r * 0.1, cy - r * 0.84, r * 0.2, r * 1.68);
-  };
-  cell('bnsfEmblem', 180, 180, (q, w, h) => emblem(q, w / 2, h / 2, 86, '#f2b705', '#e35a1c'));
   // CN's logo: one continuous stroke making the C and the N
   const cnLogo = (q, w, h, col) => {
     q.save();
@@ -122,20 +109,19 @@ export function railDecals() {
       text(q, 'PLATE C   RTG 286K', 300, 124, 18, col, 600);
     }
   });
-  marks('mkBnsf1', 'BNSF', '471832'); marks('mkBnsf2', 'BNSF', '626401'); marks('mkBnsf3', 'BNSF', '732115');
-  marks('mkBnsfD', 'BNSF', '403377', '#141414');
   marks('mkCn1', 'CN', '112345'); marks('mkCn2', 'CN', '407551'); marks('mkCn3', 'CN', '380942');
   marks('mkCnD', 'CN', '113028', '#141414');
   marks('mkUtlx', 'UTLX', '290114'); marks('mkTilx', 'TILX', '310578'); marks('mkGatx', 'GATX', '215870');
   // a locomotive's number: cab side and number boards
   const locoNum = (name, n, col) => cell(name, 260, 110, (q, w, h) => text(q, n, w / 2, h / 2 + 4, 96, col, 800, 'Helvetica, Arial, sans-serif', 'center'));
-  locoNum('n6603', '6603', '#141414'); locoNum('n6712', '6712', '#141414');
-  locoNum('n2871', '2871', '#f2f2ee'); locoNum('n2925', '2925', '#f2f2ee');
+  locoNum('n2871', '2871', '#f2f2ee'); locoNum('n2925', '2925', '#f2f2ee'); locoNum('n3004', '3004', '#f2f2ee');
+  locoNum('n9375', '9375', '#f2f2ee'); locoNum('n8781', '8781', '#f2f2ee'); locoNum('n1012', '1012', '#e2b23a');
+  locoNum('n647', '647', '#1f6b2a'); locoNum('n612', '612', '#1f6b2a'); locoNum('n660', '660', '#1f6b2a');
   const board = (name, n) => cell(name, 240, 70, (q, w, h) => {
     q.fillStyle = '#0c0c0c'; q.fillRect(0, 0, w, h);
     text(q, n, w / 2, h / 2 + 3, 58, '#f4f4f0', 800, 'Helvetica, Arial, sans-serif', 'center');
   });
-  board('b6603', '6603'); board('b6712', '6712'); board('b2871', '2871'); board('b2925', '2925');
+  board('b2871', '2871'); board('b2925', '2925'); board('b3004', '3004'); board('b9375', '9375'); board('b8781', '8781');
   // hazmat placards: flammable liquid, red, the UN number in a white panel
   const placard = (name, un) => cell(name, 150, 150, (q, w, h) => {
     q.save(); q.translate(w / 2, h / 2); q.rotate(Math.PI / 4);
@@ -146,24 +132,76 @@ export function railDecals() {
     text(q, un, w / 2, 77, 30, '#111', 800, 'Helvetica, Arial, sans-serif', 'center');
   });
   placard('un1267', '1267'); placard('un1987', '1987');
-  // the crossbuck, a white X with RAILROAD CROSSING
-  cell('xbuck', 480, 80, (q, w, h) => {
-    q.fillStyle = '#f2f2ee'; q.fillRect(0, 0, w, h);
-    q.strokeStyle = '#111'; q.lineWidth = 4; q.strokeRect(3, 3, w - 6, h - 6);
-    text(q, 'RAILROAD', w / 2, h / 2 + 3, 50, '#111', 800, 'Helvetica, Arial, sans-serif', 'center');
+  // --- Auto KW: Waterloo Region's railways ---------------------------------
+  // reporting marks for CPKC's cars, the autoracks' TTX marks
+  marks('mkCp1', 'CP', '381244'); marks('mkCp2', 'CP', '219460'); marks('mkCpD', 'CPKC', '650127', '#141414');
+  marks('mkTtgx', 'TTGX', '693318', '#141414');
+  // CPKC on a long hood: the beaver-and-shield, then CPKC in white [CPKC 2024]
+  const shield = (q, cx, cy, r, ring, fill) => {
+    q.save(); q.translate(cx, cy);
+    q.beginPath(); q.moveTo(-r, -r); q.lineTo(r, -r); q.lineTo(r, r * 0.2);
+    q.quadraticCurveTo(r, r * 0.9, 0, r * 1.25); q.quadraticCurveTo(-r, r * 0.9, -r, r * 0.2); q.closePath();
+    q.fillStyle = fill; q.fill(); q.lineWidth = r * 0.12; q.strokeStyle = ring; q.stroke();
+    // the beaver: a body, the head, the flat tail, on its log
+    q.fillStyle = ring;
+    q.beginPath(); q.ellipse(-r * 0.05, r * 0.05, r * 0.5, r * 0.3, -0.15, 0, Math.PI * 2); q.fill();
+    q.beginPath(); q.ellipse(r * 0.5, -r * 0.1, r * 0.18, r * 0.15, 0, 0, Math.PI * 2); q.fill();
+    q.beginPath(); q.ellipse(-r * 0.62, r * 0.3, r * 0.3, r * 0.1, 0.5, 0, Math.PI * 2); q.fill();
+    q.fillRect(-r * 0.7, r * 0.45, r * 1.4, r * 0.12);
+    q.restore();
+  };
+  cell('cpkcHood', 900, 220, (q, w, h) => {
+    shield(q, 110, 92, 78, '#f2f2ee', '#b8202a');
+    text(q, 'CPKC', 560, h / 2 + 6, 190, '#f4f4f0', 900, 'Helvetica, Arial, sans-serif', 'center', 1.05);
   });
-  cell('xbuck2', 480, 80, (q, w, h) => {
-    q.fillStyle = '#f2f2ee'; q.fillRect(0, 0, w, h);
-    q.strokeStyle = '#111'; q.lineWidth = 4; q.strokeRect(3, 3, w - 6, h - 6);
-    text(q, 'CROSSING', w / 2, h / 2 + 3, 50, '#111', 800, 'Helvetica, Arial, sans-serif', 'center');
+  cell('cpHood', 1000, 160, (q, w, h) => text(q, 'CANADIAN PACIFIC', w / 2, h / 2 + 4, 118, '#f4f4f0', 800, 'Helvetica, Arial, sans-serif', 'center', 0.92));
+  cell('cpShield', 220, 240, (q, w, h) => shield(q, w / 2, 100, 86, '#f2f2ee', '#b8202a'));
+  cell('cpkcNose', 300, 110, (q, w, h) => text(q, 'CPKC', w / 2, h / 2 + 4, 92, '#f4f4f0', 900, 'Helvetica, Arial, sans-serif', 'center'));
+  cell('cpCar', 520, 160, (q, w, h) => text(q, 'CPKC', w / 2, h / 2 + 4, 130, '#f0f0ea', 900, 'Helvetica, Arial, sans-serif', 'center'));
+  cell('cpCarDark', 520, 160, (q, w, h) => text(q, 'CPKC', w / 2, h / 2 + 4, 130, '#161616', 900, 'Helvetica, Arial, sans-serif', 'center'));
+  // GO Transit's logo: the white GO on its green [Metrolinx]
+  cell('goLogo', 300, 200, (q, w, h) => {
+    q.fillStyle = '#3b8a2e'; q.beginPath();
+    if (q.roundRect) q.roundRect(4, 4, w - 8, h - 8, 26); else q.rect(4, 4, w - 8, h - 8);
+    q.fill();
+    text(q, 'GO', w / 2, h / 2 + 8, 168, '#ffffff', 900, 'Helvetica, Arial, sans-serif', 'center', 0.95);
   });
-  // ES44 builder's plate and the cab-side "GE" / nose stripes
-  cell('wings', 400, 200, (q, w, h) => {
-    // the BNSF nose: yellow chevron wings on black
-    q.fillStyle = '#f2b705';
-    q.beginPath(); q.moveTo(0, h * 0.35); q.lineTo(w / 2, h * 0.85); q.lineTo(w, h * 0.35); q.lineTo(w, h * 0.5); q.lineTo(w / 2, h); q.lineTo(0, h * 0.5); q.closePath(); q.fill();
-    text(q, 'BNSF', w / 2, h * 0.28, 60, '#f2b705', 900, 'Helvetica, Arial, sans-serif', 'center', 1.1);
+  // VIA Rail: the wordmark, and the maple leaf
+  cell('viaLogo', 560, 220, (q, w, h) => {
+    text(q, 'VIA', 200, h / 2 + 8, 190, '#ffc425', 900, 'Helvetica, Arial, sans-serif', 'center', 1.0);
+    q.save(); q.translate(450, h / 2); q.scale(2.6, 2.6); q.fillStyle = '#d52b1e';
+    q.beginPath();
+    const leaf = [[0, -30], [6, -18], [14, -21], [11, -5], [22, -12], [20, -4], [28, 0], [10, 10], [12, 18], [2, 15], [2, 28], [-2, 28], [-2, 15], [-12, 18], [-10, 10], [-28, 0], [-20, -4], [-22, -12], [-11, -5], [-14, -21], [-6, -18]];
+    leaf.forEach(([x, y], i) => (i ? q.lineTo(x, y) : q.moveTo(x, y))); q.closePath(); q.fill(); q.restore();
   });
+  // the Waterloo Central Railway's lettering, gold on CN's 1950s green
+  cell('wcrHood', 1000, 130, (q, w, h) => text(q, 'WATERLOO CENTRAL', w / 2, h / 2 + 4, 104, '#e2b23a', 800, 'Georgia, Times, serif', 'center', 0.95));
+  cell('wcrCoach', 1200, 110, (q, w, h) => text(q, 'WATERLOO CENTRAL RAILWAY', w / 2, h / 2 + 4, 84, '#e2b23a', 700, 'Georgia, Times, serif', 'center', 0.95));
+  // CROSSBUCKS [TC]: white boards with a red border, RAILWAY CROSSING one way
+  // and TRAVERSE DE CHEMIN DE FER the other (bilingual)
+  const xb = (name, s, size) => cell(name, 480, 80, (q, w, h) => {
+    q.fillStyle = '#f4f4f0'; q.fillRect(0, 0, w, h);
+    q.strokeStyle = '#c8231e'; q.lineWidth = 9; q.strokeRect(5, 5, w - 10, h - 10);
+    text(q, s, w / 2, h / 2 + 3, size, '#111', 800, 'Helvetica, Arial, sans-serif', 'center', name === 'xbuckFr' ? 0.86 : 1);
+  });
+  xb('xbuckEn', 'RAILWAY CROSSING', 44); xb('xbuckFr', 'TRAVERSE DE CHEMIN DE FER', 34);
+  cell('xtracks2', 100, 70, (q, w, h) => {
+    q.fillStyle = '#f4f4f0'; q.fillRect(0, 0, w, h);
+    q.strokeStyle = '#c8231e'; q.lineWidth = 6; q.strokeRect(3, 3, w - 6, h - 6);
+    text(q, '2', w / 2, h / 2 + 3, 54, '#111', 900, 'Helvetica, Arial, sans-serif', 'center');
+  });
+  // station name boards: GO's at Kitchener, WCR's at its four stations
+  cell('stnKitchener', 512, 118, (q, w, h) => {
+    q.fillStyle = '#1d5b2a'; q.fillRect(0, 0, w, h);
+    q.fillStyle = '#3b8a2e'; q.fillRect(10, 14, 120, 90);
+    text(q, 'GO', 70, 62, 66, '#fff', 900, 'Helvetica, Arial, sans-serif', 'center');
+    text(q, 'Kitchener', 150, 62, 70, '#fff', 700, 'Helvetica, Arial, sans-serif', 'left');
+  });
+  ['WATERLOO', "ST. JACOBS FARMERS' MARKET", 'ST. JACOBS', 'ELMIRA'].forEach((nm, i) => cell(`stnWcr${i}`, 512, 118, (q, w, h) => {
+    q.fillStyle = '#ede3c4'; q.fillRect(0, 0, w, h);
+    q.strokeStyle = '#1f4a2c'; q.lineWidth = 8; q.strokeRect(6, 6, w - 12, h - 12);
+    text(q, nm, w / 2, h / 2 + 4, nm.length > 12 ? 40 : 64, '#1f4a2c', 800, 'Georgia, Times, serif', 'center', nm.length > 20 ? 0.9 : 1);
+  }));
   // weathering: grime streaks for a car side, grey on transparent
   cell('grime', 256, 256, (q, w, h) => {
     let seed = 5;
@@ -185,7 +223,7 @@ export function railDecals() {
   tex.generateMipmaps = true;
   const mat = new THREE.MeshStandardMaterial({ map: tex, transparent: true, alphaTest: 0.35, depthWrite: false,
     roughness: 0.7, metalness: 0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
-  _atlas = { tex, mat, cells };
+  _atlas = { tex, mat, cells, usedH };
   return _atlas;
 }
 
@@ -324,13 +362,18 @@ function buildLoco(road, num) {
   const L = 22.3, half = L / 2;
   const deck = 1.78, hoodW = 2.36, fullW = 3.12;
   const bn = road === 'bnsf';
-  const main = bn ? C.bnsfOrange : C.cnRed, roof = bn ? C.bnsfBlack : C.cnBlack;
-  const stripe = bn ? C.bnsfYellow : C.white;
+  // Auto KW: CPKC's units -- 'cpkc' (the 2024 livery: CP red, the beaver
+  // shield and CPKC on the hood, black and gold from the radiators back) and
+  // 'cp' (Canadian Pacific's 2012 scheme, still on most of the fleet)
+  const cp = road === 'cp' || road === 'cpkc', kc = road === 'cpkc';
+  const main = bn ? C.bnsfOrange : cp ? C.cpRed : C.cnRed, roof = bn ? C.bnsfBlack : cp ? C.cpRed : C.cnBlack;
+  const stripe = bn ? C.bnsfYellow : cp ? C.cpRed : C.white;
+  const rail = bn || cp ? C.bnsfYellow : C.white;
   // --- the frame and the deck ------------------------------------------------
   B.box(0, deck - 0.34, 0, fullW, 0.34, L - 1.2, 0, C.frame);
   B.box(0, deck - 0.02, 0, fullW, 0.08, L - 1.4, 0, C.dark);
   // the walkway's edge: a safety stripe down each side
-  for (const s of [1, -1]) B.box(s * (fullW / 2 - 0.01), deck - 0.34, 0, 0.06, 0.34, L - 1.3, 0, bn ? C.bnsfYellow : C.white);
+  for (const s of [1, -1]) B.box(s * (fullW / 2 - 0.01), deck - 0.34, 0, 0.06, 0.34, L - 1.3, 0, rail);
   // --- the fuel tank between the trucks -------------------------------------
   B.box(0, 0.62, 0, 2.7, 0.95, 6.6, 0, C.frame);
   for (const s of [1, -1]) B.box(s * 1.37, 0.66, 0, 0.04, 0.8, 6.2, 0, C.dark);
@@ -364,9 +407,12 @@ function buildLoco(road, num) {
   for (const s of [1, -1]) endDecal(D, cells, 'b' + num, 1, ws[1] + 0.03, s * 0.7, 4.58, 0.62, 0.18);
   // --- the nose: a short hood ahead of the cab, stepped down -----------------
   const noseZ0 = cabZ1, noseZ1 = half - 0.55;
-  band(noseZ0, noseZ1, 2.6, deck, 3.05, bn ? C.bnsfBlack : C.cnRed);
-  B.box(0, 3.05, (noseZ0 + noseZ1) / 2, 2.5, 0.12, noseZ1 - noseZ0 - 0.05, 0, bn ? C.bnsfBlack : C.cnRed);
+  const noseC = bn ? C.bnsfBlack : cp ? C.cpRed : C.cnRed;
+  band(noseZ0, noseZ1, 2.6, deck, 3.05, noseC);
+  B.box(0, 3.05, (noseZ0 + noseZ1) / 2, 2.5, 0.12, noseZ1 - noseZ0 - 0.05, 0, noseC);
   if (bn) endDecal(D, cells, 'wings', 1, noseZ1, 0, 2.35, 2.2, 1.1);
+  else if (kc) endDecal(D, cells, 'cpkcNose', 1, noseZ1, 0, 2.45, 1.5, 0.55);
+  else if (cp) endDecal(D, cells, 'cpShield', 1, noseZ1, 0, 2.4, 0.8, 0.87);
   else endDecal(D, cells, 'cnWhite', 1, noseZ1, 0, 2.45, 1.7, 0.9);
   // headlights high on the nose, ditch lights on the pilot
   for (const s of [1, -1]) {
@@ -385,7 +431,11 @@ function buildLoco(road, num) {
     B.box(s * (hoodW / 2 + 0.012), 3.7, (hoodZ0 + hoodZ1) / 2 - 1.5, 0.04, 0.45, 5.5, 0, C.grille);
     // the road name, big on the hood
     if (bn) sideDecal(D, cells, 'bnsfHood', s, hoodW / 2, (hoodZ0 + hoodZ1) / 2 + 0.6, 2.75, 5.4, 1.2);
-    else sideDecal(D, cells, 'cnWhite', s, hoodW / 2, (hoodZ0 + hoodZ1) / 2 + 0.4, 2.8, 3.2, 1.65);
+    else if (kc) sideDecal(D, cells, 'cpkcHood', s, hoodW / 2, (hoodZ0 + hoodZ1) / 2 + 0.4, 2.75, 5.6, 1.37);
+    else if (cp) {
+      sideDecal(D, cells, 'cpHood', s, hoodW / 2, (hoodZ0 + hoodZ1) / 2 - 0.4, 2.85, 6.6, 1.05);
+      sideDecal(D, cells, 'cpShield', s, fullW / 2 - 0.04, cabZ0 + 2.6, 2.5, 0.75, 0.82);
+    } else sideDecal(D, cells, 'cnWhite', s, hoodW / 2, (hoodZ0 + hoodZ1) / 2 + 0.4, 2.8, 3.2, 1.65);
     sideDecal(D, cells, 'grime', s, hoodW / 2, (hoodZ0 + hoodZ1) / 2, 2.6, hoodZ1 - hoodZ0, 1.9, 0.05);
   }
   // exhaust stack, the dynamic-brake blister, and the air intake
@@ -394,10 +444,11 @@ function buildLoco(road, num) {
   for (const s of [1, -1]) B.box(s * 0.8, 4.34, hoodZ1 - 1.2, 0.4, 0.22, 1.4, 0, C.grille);
   // --- the radiator cab at the rear: flared wings, the grille -----------------
   const radZ0 = -half + 0.7, radZ1 = hoodZ0;
-  band(radZ0, radZ1, hoodW + 0.1, deck, 3.55, main);
-  band(radZ0, radZ1, hoodW + 0.1, 3.55, 3.66, stripe);
+  band(radZ0, radZ1, hoodW + 0.1, deck, 3.55, kc ? C.cnBlack : main);
+  band(radZ0, radZ1, hoodW + 0.1, 3.55, 3.66, kc ? C.kcGold : stripe);
+  if (kc) band(radZ0, radZ1, hoodW + 0.12, 2.3, 2.5, C.kcGold);
   // the wings: full width up top, the radiators behind their grilles
-  B.box(0, 3.66, (radZ0 + radZ1) / 2, fullW, 0.95, radZ1 - radZ0, 0, roof);
+  B.box(0, 3.66, (radZ0 + radZ1) / 2, fullW, 0.95, radZ1 - radZ0, 0, kc ? C.cnBlack : roof);
   for (const s of [1, -1]) B.box(s * (fullW / 2 + 0.012), 3.75, (radZ0 + radZ1) / 2, 0.04, 0.75, radZ1 - radZ0 - 0.4, 0, C.grille);
   // radiator fans on the roof
   for (const dz of [-1, 1]) B.tube([0, 4.6, (radZ0 + radZ1) / 2 + dz], [0, 4.66, (radZ0 + radZ1) / 2 + dz], 0.62, 12, C.grille, true);
@@ -407,12 +458,12 @@ function buildLoco(road, num) {
   // --- handrails and stanchions along the walkways -----------------------------
   for (const s of [1, -1]) {
     const x = s * (fullW / 2 - 0.1);
-    for (let z = -half + 1.2; z <= cabZ0 + 0.1; z += 1.5) B.tube([x, deck, z], [x, deck + 1.05, z], 0.022, 4, bn ? C.bnsfYellow : C.white);
-    B.tube([x, deck + 1.05, -half + 1.2], [x, deck + 1.05, cabZ0], 0.024, 4, bn ? C.bnsfYellow : C.white);
-    B.tube([x, deck + 0.55, -half + 1.2], [x, deck + 0.55, cabZ0], 0.02, 4, bn ? C.bnsfYellow : C.white);
+    for (let z = -half + 1.2; z <= cabZ0 + 0.1; z += 1.5) B.tube([x, deck, z], [x, deck + 1.05, z], 0.022, 4, rail);
+    B.tube([x, deck + 1.05, -half + 1.2], [x, deck + 1.05, cabZ0], 0.024, 4, rail);
+    B.tube([x, deck + 0.55, -half + 1.2], [x, deck + 0.55, cabZ0], 0.02, 4, rail);
     // the nose's rail round the front platform
-    B.tube([x, deck + 1.05, noseZ1 - 0.1], [x, deck + 1.05, half - 0.3], 0.024, 4, bn ? C.bnsfYellow : C.white);
-    B.tube([x, deck, half - 0.3], [x, deck + 1.05, half - 0.3], 0.024, 4, bn ? C.bnsfYellow : C.white);
+    B.tube([x, deck + 1.05, noseZ1 - 0.1], [x, deck + 1.05, half - 0.3], 0.024, 4, rail);
+    B.tube([x, deck, half - 0.3], [x, deck + 1.05, half - 0.3], 0.024, 4, rail);
     // steps at the four corners, yellow-edged
     for (const e of [1, -1]) {
       const zs = e * (half - 0.9);
@@ -426,7 +477,7 @@ function buildLoco(road, num) {
     B.box(0, 0.3, z, fullW - 0.2, deck - 0.3, 0.3, 0, C.frame);
     if (e > 0) {
       // the snowplow: a wedge low across the front
-      B.quad([-1.5, 0.12, z + 0.2], [1.5, 0.12, z + 0.2], [1.5, 0.75, z + 0.05], [-1.5, 0.75, z + 0.05], [0, 0.3, 1], uv0, bn ? C.bnsfYellow : C.cnRed);
+      B.quad([-1.5, 0.12, z + 0.2], [1.5, 0.12, z + 0.2], [1.5, 0.75, z + 0.05], [-1.5, 0.75, z + 0.05], [0, 0.3, 1], uv0, bn ? C.bnsfYellow : cp ? C.cpRed : C.cnRed);
     }
     coupler(B, e * half, e);
     // the MU cables and hoses beside the coupler
@@ -450,7 +501,7 @@ function buildHopper(road, mark) {
   const { body: B, trim: T, decal: D } = makeB();
   const cells = railDecals().cells;
   const L = 18.2, half = L / 2, hw = 1.6, top = 4.6;
-  const col = road === 'cn' ? C.cnHopper : C.hopperGrey;
+  const col = road === 'cn' ? C.cnHopper : road === 'cp' ? C.cpHopper : C.hopperGrey;
   const colD = C.hopperGreyD;
   const slope0 = half - 1.6;   // where the end slope sheets start
   // the side sheets, from the bays' top to the roof's eave
@@ -463,7 +514,7 @@ function buildHopper(road, mark) {
     // the top chord and the side sill
     B.box(s * (hw + 0.03), top - 0.38, 0, 0.1, 0.12, L - 1.3, 0, colD);
     B.box(s * (hw + 0.03), 1.42, 0, 0.1, 0.16, 2 * slope0, 0, colD);
-    sideDecal(D, cells, road === 'cn' ? 'cnRed' : 'bnsfCarDark', s, hw + 0.06, road === 'cn' ? 1.2 : 1.5, 3.3, road === 'cn' ? 2.6 : 3.2, road === 'cn' ? 1.35 : 0.72);
+    sideDecal(D, cells, road === 'cn' ? 'cnRed' : road === 'cp' ? 'cpCarDark' : 'bnsfCarDark', s, hw + 0.06, road === 'cn' ? 1.2 : 1.5, 3.3, road === 'cn' ? 2.6 : 3.2, road === 'cn' ? 1.35 : road === 'cp' ? 0.98 : 0.72);
     sideDecal(D, cells, mark, s, hw + 0.06, road === 'cn' ? -5.0 : -4.6, 2.35, 3.2, 0.92);
     sideDecal(D, cells, 'grime', s, hw + 0.05, 0, 3.0, 2 * slope0, 3.0, 0.04);
   }
@@ -601,7 +652,7 @@ function buildBox(road, mark) {
   const { body: B, trim: T, decal: D } = makeB();
   const cells = railDecals().cells;
   const L = 17.4, half = L / 2, hw = 1.6, y0 = 1.25, top = 5.18;
-  const col = road === 'cn' ? C.boxCn : C.boxBnsf;
+  const col = road === 'cn' ? C.boxCn : road === 'cp' ? C.cpBox : C.boxBnsf;
   const dark = [col[0] * 0.7, col[1] * 0.7, col[2] * 0.7];
   for (const s of [1, -1]) {
     B.quad([s * hw, y0, -half + 0.35], [s * hw, y0, half - 0.35], [s * hw, top - 0.1, half - 0.35], [s * hw, top - 0.1, -half + 0.35], [s, 0, 0], uv0, col);
@@ -616,6 +667,7 @@ function buildBox(road, mark) {
     for (const dz of [-1.0, 0, 1.0]) B.tube([s * (hw + 0.13), y0 + 0.4, 0.3 + dz], [s * (hw + 0.13), top - 0.6, 0.3 + dz], 0.025, 4, C.steel);
     // the lettering: road name, the logo, marks and grime
     if (road === 'cn') sideDecal(D, cells, 'cnWhite', s, hw + 0.02, 4.7, 3.4, 3.4, 1.8);
+    else if (road === 'cp') sideDecal(D, cells, 'cpCar', s, hw + 0.02, 4.7, 3.7, 3.4, 1.05);
     else sideDecal(D, cells, 'bnsfCar', s, hw + 0.02, 4.9, 3.9, 4.2, 0.96);
     sideDecal(D, cells, mark, s, hw + 0.02, -4.8, 2.3, 3.4, 0.98);
     sideDecal(D, cells, 'grime', s, hw + 0.03, 0, 3.2, L - 1, 3.9, 0.04);
@@ -643,6 +695,410 @@ function buildBox(road, mark) {
   B.tube([0.6, 0.9, -2.5], [0.6, 0.9, -1.0], 0.22, 8, C.dark, true);
   freightTruck(B, 6.3); freightTruck(B, -6.3);
   return { B, T, D, L, truckC: 6.3, mass: 70, w: 3.2, h: top + 0.05, kind: 'box' };
+}
+
+// ---------------------------------------------------------------------------
+// Auto KW: Waterloo Region's passenger fleet, the autoracks and the WCR.
+//   [MP]   MotivePower MP40PH-3C: 68 ft 1 in long, 15 ft 6 in high, 10 ft 2 in
+//          wide, B-B, 4,000 hp (GO Transit 600-666)
+//   [BBD]  Bombardier BiLevel coach: 85 ft long, 9 ft 10 in wide, 15 ft 11 in
+//          high; the upper level's windows in the sloped sides
+//   [SIE]  Siemens Charger SCV-42 and Venture cars (VIA, 2022-): ~72 ft
+//          locomotive, ~85 ft low-floor cars, a cab car at the far end
+//   [GMD]  GMD-1 (GMD London, 1958-60): 54 ft, A1A-A1A, 1,200 hp; WCR 1012
+//          in CN's 1950s green and gold, lettered WATERLOO CENTRAL
+//   [TTX]  bi-level enclosed autorack: 89 ft 4 in, ~19 ft high, truck
+//          centres 64 ft
+//   est.   liveries are read off photographs (no published colour specs):
+//          GO's white with the green below, VIA's grey with the black window
+//          band and yellow, WCR's green with gold
+
+/** A two-axle passenger truck, centred at z. */
+function paxTruck(B, z, wb = 2.6, r = 0.457) {
+  wheelset(B, z - wb / 2, r); wheelset(B, z + wb / 2, r);
+  for (const s of [1, -1]) {
+    const x = s * 1.0;
+    B.box(x, 0.25, z, 0.16, 0.42, wb + 0.7, 0, C.truck);
+    B.box(x, 0.62, z, 0.2, 0.12, wb - 0.4, 0, C.truck);
+    for (const e of [-1, 1]) B.tube([x + s * 0.08, r, z + e * wb / 2], [x + s * 0.18, r, z + e * wb / 2], 0.11, 8, C.steel, true);
+    // the air spring over the bolster
+    B.tube([x * 0.9, 0.72, z], [x * 0.9, 0.98, z], 0.2, 8, C.dark, true);
+  }
+  B.box(0, 0.55, z, 2.0, 0.22, 0.5, 0, C.truck);
+}
+
+/** A two-axle locomotive truck (40 in wheels), centred at z. */
+function locoTruckB(B, z) {
+  const r = 0.508, wb = 2.74;
+  wheelset(B, z - wb / 2, r); wheelset(B, z + wb / 2, r);
+  for (const s of [1, -1]) {
+    const x = s * 1.05;
+    B.box(x, 0.28, z, 0.24, 0.6, wb + 1.1, 0, C.truck);
+    B.box(x, 0.88, z, 0.2, 0.24, wb + 0.4, 0, C.truck);
+    for (const e of [-1, 1]) {
+      B.tube([x + s * 0.12, r, z + e * wb / 2], [x + s * 0.21, r, z + e * wb / 2], 0.12, 8, C.steel, true);
+      for (const q of [-0.2, 0.2]) B.tube([x, 0.95, z + e * wb / 2 + q], [x, 1.2, z + e * wb / 2 + q], 0.07, 6, C.steel);
+    }
+  }
+  for (const e of [-1, 1]) B.box(0, 0.36, z + e * wb / 2 + 0.5, 1.1, 0.5, 0.5, 0, C.dark);
+}
+
+/** A profile (half, x >= 0, bottom to top) as a closed ring, mirrored. */
+function ring(half) {
+  const pts = half.map(([x, y]) => [x, y]);
+  for (let i = half.length - 1; i >= 0; i--) pts.push([-half[i][0], half[i][1]]);
+  return pts;
+}
+/** The faces of a profile swept straight from z0 to z1, each in its colour (flat shaded). */
+function sweep(B, half, z0, z1, cols) {
+  for (let i = 0; i < half.length - 1; i++) {
+    const [xa, ya] = half[i], [xb, yb] = half[i + 1];
+    const nx = yb - ya, ny = -(xb - xa), l = Math.hypot(nx, ny) || 1;
+    for (const s of [1, -1]) {
+      const n = [s * nx / l, ny / l, 0];
+      if (s < 0 && xa === 0 && xb === 0) continue;
+      B.quad([s * xa, ya, z0], [s * xa, ya, z1], [s * xb, yb, z1], [s * xb, yb, z0], n, uv0, cols[i] || cols[cols.length - 1]);
+    }
+  }
+}
+/** A flat end face across a profile at z, facing e. */
+function endFace(B, half, z, e, col) {
+  for (let i = 0; i < half.length - 1; i++) {
+    const [xa, ya] = half[i], [xb, yb] = half[i + 1];
+    B.quad([-xa, ya, z], [xa, ya, z], [xb, yb, z], [-xb, yb, z], [0, 0, e], uv0, col);
+  }
+}
+/** A glass pane on a side face of a profile segment (x at y linear between a and b). */
+function sidePane(T, a, b, s, y0, y1, z0, z1, out = 0.02) {
+  const xAt = (y) => a[0] + (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]);
+  const nx = b[1] - a[1], ny = -(b[0] - a[0]), l = Math.hypot(nx, ny) || 1;
+  const n = [s * nx / l, ny / l, 0];
+  const p = (y, z) => [s * (xAt(y) + out * nx / l), y + out * ny / l, z];
+  T.quad(p(y0, z0), p(y0, z1), p(y1, z1), p(y1, z0), n, uv0, GLASS);
+}
+
+/** GO Transit's MP40PH-3C [MP]: nose (the cab) at +z. */
+function buildGoLoco(num) {
+  const { body: B, trim: T, decal: D } = makeB();
+  const cells = railDecals().cells;
+  const L = 20.75, half = L / 2, W = 3.1, deck = 1.62, top = 4.5;
+  const hw = W / 2;
+  // the frame, the fuel tank, the battery boxes
+  B.box(0, deck - 0.34, 0, W, 0.34, L - 0.9, 0, C.frame);
+  B.box(0, 0.6, 0, 2.6, 0.95, 5.6, 0, C.frame);
+  for (const s of [1, -1]) B.box(s * 1.31, 0.66, 0, 0.04, 0.8, 5.2, 0, C.dark);
+  // the carbody: full width, green below 2.55 m and white above, a light grey roof
+  const zB = -half + 0.45, zC = half - 1.75;          // rear wall .. the windscreen's foot
+  B.box(0, deck, (zB + zC) / 2, W, 2.55 - deck, zC - zB, 0, C.goGreen);
+  B.box(0, 2.55, (zB + zC - 0.6) / 2, W, top - 2.55, zC - 0.6 - zB, 0, C.goWhite);
+  B.box(0, top, (zB + zC - 0.6) / 2, W - 0.5, 0.12, zC - 0.6 - zB - 0.3, 0, C.goGrey);
+  for (const s of [1, -1]) B.box(s * (hw - 0.2), top - 0.08, (zB + zC - 0.6) / 2, 0.42, 0.12, zC - 0.6 - zB, 0, C.goGrey);
+  // the windscreen raked back from the nose, and the nose's front face
+  const yW = 2.95;
+  for (const s of [1, -1]) {
+    T.quad([s * 0.06, yW + 0.12, zC + 0.02], [s * (hw - 0.12), yW + 0.12, zC + 0.02], [s * (hw - 0.15), top - 0.25, zC - 0.52], [s * 0.06, top - 0.25, zC - 0.52], [0, 0.6, 1], uv0, GLASS);
+    // the cheeks either side of the windscreen
+    B.tri([s * hw, yW, zC], [s * hw, top, zC - 0.6], [s * hw, yW, zC - 0.6], [s, 0, 0], C.goWhite);
+  }
+  B.quad([-hw, yW, zC], [hw, yW, zC], [hw, top, zC - 0.6], [-hw, top, zC - 0.6], [0, 0.6, 1], uv0, C.goWhite);
+  B.box(0, 2.55, zC - 0.3, W, yW - 2.55, 0.6, 0, C.goWhite);
+  // the nose ahead of the cab: green, stepped, the logo and the headlights
+  B.box(0, deck, (zC + half - 0.35) / 2, W - 0.1, yW - deck, half - 0.35 - zC, 0, C.goGreen);
+  B.box(0, yW, (zC + half - 0.35) / 2, W - 0.2, 0.06, half - 0.35 - zC, 0, C.goWhite);
+  endDecal(D, cells, 'goLogo', 1, half - 0.35, 0, 2.3, 0.95, 0.63);
+  for (const s of [1, -1]) {
+    T.spheroid(s * 0.7, 2.75, half - 0.33, 0.12, 8, 5, C.lamp, 0.6);
+    T.spheroid(s * 1.2, 1.25, half - 0.25, 0.1, 8, 5, C.lamp, 0.8);
+  }
+  // cab side windows and the number
+  for (const s of [1, -1]) {
+    sidePane(T, [hw, 2.5], [hw, 5], s, 3.1, 3.95, zC - 1.9, zC - 0.75, 0.03);
+    sideDecal(D, cells, 'n' + num, s, hw - 0.01, zC - 3.0, 3.35, 1.0, 0.42);
+    sideDecal(D, cells, 'goLogo', s, hw - 0.01, -1.5, 3.4, 1.8, 1.2);
+    // the radiator grilles at the rear, the engine-room doors' seams
+    B.box(s * (hw + 0.012), 3.4, -half + 2.6, 0.04, 0.85, 3.6, 0, C.grille);
+    for (let z = -half + 4.8; z < zC - 2.5; z += 1.1) B.box(s * (hw + 0.012), deck + 0.15, z, 0.03, 2.25, 0.03, 0, [0.04, 0.12, 0.03]);
+  }
+  // roof: the radiator fans, the HEP exhaust
+  for (const dz of [-1.4, 0.0]) B.tube([0, top + 0.05, -half + 2.6 + dz], [0, top + 0.12, -half + 2.6 + dz], 0.55, 12, C.grille, true);
+  B.box(0, top + 0.05, 1.5, 0.6, 0.3, 1.0, 0, C.dark);
+  // the rear end: a door, number boards, lights
+  endDecal(D, cells, 'goLogo', -1, -half + 0.44, 0, 3.6, 0.8, 0.53);
+  for (const s of [1, -1]) T.spheroid(s * 0.8, 3.9, -half + 0.43, 0.09, 8, 5, C.lamp, 0.8);
+  // pilots, the plow, couplers, steps
+  for (const e of [1, -1]) {
+    const z = e * (half - 0.5);
+    B.box(0, 0.3, z, W - 0.2, deck - 0.3, 0.3, 0, C.frame);
+    if (e > 0) B.quad([-1.45, 0.12, z + 0.25], [1.45, 0.12, z + 0.25], [1.45, 0.8, z + 0.05], [-1.45, 0.8, z + 0.05], [0, 0.3, 1], uv0, C.dark);
+    coupler(B, e * half, e);
+    for (const s of [1, -1]) for (let k = 0; k < 3; k++) B.box(s * (hw - 0.25), 0.45 + k * 0.38, e * (half - 1.0), 0.5, 0.05, 0.6, 0, k === 0 ? C.yellow : C.steel);
+  }
+  locoTruckB(B, 6.1); locoTruckB(B, -6.1);
+  // the horn on the cab roof
+  for (let k = 0; k < 3; k++) T.tube([-0.3 + k * 0.3, top + 0.15, zC - 1.5], [-0.3 + k * 0.3, top + 0.15, zC - 1.5 + 0.4 * (k % 2 ? 1 : -1)], 0.05, 6, C.steel);
+  return { B, T, D, L, truckC: 6.1, mass: 130, w: W, h: top + 0.2, kind: 'loco' };
+}
+
+/** A GO BiLevel coach [BBD], or the cab car (its cab at +z, upstairs). */
+function buildBilevel(cab) {
+  const { body: B, trim: T, decal: D } = makeB();
+  const cells = railDecals().cells;
+  const L = 25.9, half = L / 2;
+  const P = [[1.5, 0.95], [1.5, 3.05], [1.08, 4.5], [0.55, 4.84], [0, 4.84]];
+  const zE = half - 0.15;
+  sweep(B, P, -zE, zE, [C.goWhite, C.goWhite, C.goGrey, C.goGrey]);
+  // the green below the lower windows, and a pinstripe above the upper ones
+  for (const s of [1, -1]) {
+    B.box(s * 1.51, 0.95, 0, 0.03, 0.42, L - 0.4, 0, C.goGreen);
+    B.box(s * 1.51, 2.82, 0, 0.03, 0.08, L - 0.4, 0, C.goGreen);
+  }
+  // the skirt between the trucks (the lower level's floor is low)
+  for (const s of [1, -1]) B.box(s * 1.42, 0.55, 0, 0.06, 0.42, 13.2, 0, C.goGrey);
+  B.box(0, 0.55, 0, 2.8, 0.4, 13.0, 0, C.frame);
+  // windows: the lower level's between the doors, the upper level's in the slope
+  const doors = [-(half - 4.4), half - 4.4];
+  for (const s of [1, -1]) {
+    for (let z = -half + 6.2; z < half - 6.0; z += 2.05) sidePane(T, P[0], P[1], s, 1.55, 2.4, z, z + 1.6);
+    for (let z = -half + 2.4; z < half - 2.6; z += 2.05) {
+      if (cab && z > half - 4.2) continue;
+      sidePane(T, P[1], P[2], s, 3.3, 4.12, z, z + 1.6);
+    }
+    // the end windows over the trucks (the intermediate levels)
+    for (const e of [1, -1]) if (!(cab && e > 0)) sidePane(T, P[0], P[1], s, 2.05, 2.75, e * (half - 2.6) - 0.6, e * (half - 2.6) + 0.6);
+    // the doors: two leaves, their windows
+    for (const zd of doors) {
+      B.box(s * 1.515, 0.98, zd, 0.04, 1.95, 1.3, 0, C.goGrey);
+      B.box(s * 1.535, 0.98, zd, 0.01, 1.95, 0.04, 0, C.dark);
+      for (const q of [-0.32, 0.32]) sidePane(T, P[0], P[1], s, 1.75, 2.6, zd + q - 0.2, zd + q + 0.2, 0.06);
+    }
+    sideDecal(D, cells, 'goLogo', s, 1.51, cab ? -half + 7.5 : half - 7.0, 1.95, 0.9, 0.6);
+  }
+  // the ends: diaphragms, couplers; the cab car's cab
+  for (const e of [1, -1]) {
+    const z = e * zE;
+    if (cab && e > 0) {
+      // the cab: a green face, the windscreen upstairs, lights and the plow
+      endFace(B, P, z, 1, C.goWhite);
+      B.box(0, 0.95, z + 0.05, 3.0, 2.1, 0.1, 0, C.goGreen);
+      T.quad([-1.0, 3.35, z + 0.03], [1.0, 3.35, z + 0.03], [0.85, 4.25, z + 0.03], [-0.85, 4.25, z + 0.03], [0, 0, 1], uv0, GLASS);
+      endDecal(D, cells, 'goLogo', 1, z + 0.1, 0, 2.2, 0.9, 0.6);
+      for (const s of [1, -1]) {
+        T.spheroid(s * 0.5, 4.55, z + 0.04, 0.1, 8, 5, C.lamp, 0.6);
+        T.spheroid(s * 1.15, 1.25, z + 0.1, 0.1, 8, 5, C.lamp, 0.8);
+      }
+      B.quad([-1.4, 0.15, z + 0.35], [1.4, 0.15, z + 0.35], [1.4, 0.85, z + 0.1], [-1.4, 0.85, z + 0.1], [0, 0.3, 1], uv0, C.dark);
+      for (let k = 0; k < 3; k++) T.tube([-0.3 + k * 0.3, 4.9, z - 1.5], [-0.3 + k * 0.3, 4.9, z - 1.5 + 0.4 * (k % 2 ? 1 : -1)], 0.05, 6, C.steel);
+    } else {
+      endFace(B, P, z, e, C.goGrey);
+      B.box(0, 1.0, z + e * 0.06, 2.0, 3.0, 0.12, 0, C.dark);
+    }
+    coupler(B, e * half, e);
+  }
+  paxTruck(B, 9.3); paxTruck(B, -9.3);
+  return { B, T, D, L, truckC: 9.3, mass: 60, w: 3.0, h: 4.84, kind: 'coach' };
+}
+
+/** A streamlined nose loft: rings from the body's full section at z0 to the tip at z1. */
+function nose(B, z0, z1, W, H, y0, col, tipH = 0.6) {
+  const rings = [];
+  const N = 6;
+  for (let i = 0; i <= N; i++) {
+    const t = i / N, z = z0 + (z1 - z0) * t;
+    const h = y0 + (H - y0) * Math.sqrt(Math.max(0, 1 - t * t)) * (1 - tipH * t * t) + tipH * t * t * 0.2;
+    const w = W * (1 - 0.18 * t * t);
+    const top = Math.max(y0 + 0.4, h);
+    rings.push({ z, pts: ring([[w / 2, y0], [w / 2, top - 0.35], [w / 2 - 0.3, top], [0, top]]).filter((p, k, a) => k === 0 || Math.abs(p[0] - a[k - 1][0]) + Math.abs(p[1] - a[k - 1][1]) > 1e-6) });
+  }
+  B.loft(rings, col, { capEnd: true });
+  return rings;
+}
+
+/** VIA's Siemens Charger SCV-42 [SIE]: the nose at +z. */
+function buildCharger() {
+  const { body: B, trim: T, decal: D } = makeB();
+  const cells = railDecals().cells;
+  const L = 21.9, half = L / 2, W = 3.05, H = 4.27, y0 = 1.15, hw = W / 2;
+  const zN = half - 4.6;
+  const P = [[hw, y0], [hw, H - 0.35], [hw - 0.3, H], [0, H]];
+  sweep(B, P, -half + 0.4, zN, [C.viaGrey, C.viaGrey, C.viaGrey]);
+  endFace(B, P, -half + 0.4, -1, C.viaGrey);
+  // the nose: grey, its front dark round the windscreen, yellow low
+  nose(B, zN, half - 0.15, W, H, y0, C.viaDark, 0.5);
+  B.box(0, y0, half - 1.3, W * 0.86, 0.55, 2.2, 0, C.viaYellow);
+  for (const s of [1, -1]) {
+    // the windscreen
+    T.quad([s * 0.05, 2.75, half - 2.05], [s * 1.25, 2.7, half - 2.25], [s * 1.2, 3.55, half - 3.05], [s * 0.05, 3.62, half - 2.85], [0, 0.7, 0.7], uv0, GLASS);
+    T.spheroid(s * 0.95, 1.95, half - 0.75, 0.11, 8, 5, C.lamp, 0.6);
+    // the black band along the side to the cab, the yellow line under it
+    B.box(s * (hw + 0.01), 2.35, (zN - half + 0.4) / 2 + 0.6, 0.03, 0.75, zN + half - 1.6, 0, C.viaDark);
+    B.box(s * (hw + 0.01), 2.2, (zN - half + 0.4) / 2 + 0.6, 0.03, 0.08, zN + half - 1.6, 0, C.viaYellow);
+    sideDecal(D, cells, 'viaLogo', s, hw - 0.005, -2.5, 3.5, 2.2, 0.86);
+    // grilles, the cab door
+    B.box(s * (hw + 0.012), 1.4, -half + 3.0, 0.03, 0.8, 4.0, 0, C.grille);
+    B.box(s * (hw + 0.012), y0 + 0.05, zN - 0.8, 0.03, 2.0, 0.8, 0, [0.3, 0.31, 0.32]);
+  }
+  B.box(0, y0 - 0.32, 0, W - 0.1, 0.34, L - 1.0, 0, C.frame);
+  B.box(0, 0.55, 0, 2.5, 0.65, 6.0, 0, C.dark);
+  // roof equipment
+  B.box(0, H, -2.0, 1.8, 0.25, 5.0, 0, C.viaGrey);
+  for (const dz of [-6.5, -5.2]) B.tube([0, H, dz], [0, H + 0.1, dz], 0.45, 10, C.grille, true);
+  // the coupler behind its nose door; the rear
+  coupler(B, -half, -1);
+  for (const s of [1, -1]) T.spheroid(s * 0.8, 3.6, -half + 0.39, 0.09, 8, 5, C.red, 0.8);
+  locoTruckB(B, 5.9); locoTruckB(B, -5.9);
+  return { B, T, D, L, truckC: 5.9, mass: 120, w: W, h: H, kind: 'loco' };
+}
+
+/** A Venture car [SIE], or the cab car (the cab at +z). */
+function buildVenture(cab) {
+  const { body: B, trim: T, decal: D } = makeB();
+  const cells = railDecals().cells;
+  const L = 26.0, half = L / 2, hw = 1.5;
+  const P = [[hw, 0.75], [hw, 3.3], [1.3, 3.8], [0.8, 4.0], [0, 4.0]];
+  const z1 = cab ? half - 3.2 : half - 0.2;
+  sweep(B, P, -half + 0.2, z1, [C.viaGrey, C.viaGrey, C.viaGrey, C.viaGrey]);
+  if (!cab) endFace(B, P, z1, 1, C.viaGrey);
+  endFace(B, P, -half + 0.2, -1, C.viaGrey);
+  for (const s of [1, -1]) {
+    // the black window band, the yellow line, the dark skirt
+    B.box(s * (hw + 0.008), 1.62, (-half + z1) / 2, 0.025, 1.12, z1 + half - 0.6, 0, C.viaDark);
+    for (let z = -half + 1.6; z < z1 - 2.6; z += 1.9) sidePane(T, P[0], P[1], s, 1.72, 2.62, z, z + 1.5, 0.04);
+    B.box(s * (hw + 0.008), 1.5, (-half + z1) / 2, 0.025, 0.07, z1 + half - 0.6, 0, C.viaYellow);
+    B.box(s * (hw + 0.006), 0.75, (-half + z1) / 2, 0.02, 0.3, z1 + half - 0.6, 0, C.viaDark);
+    // the plug door near the B end
+    B.box(s * (hw + 0.03), 0.8, -half + 2.0, 0.04, 2.2, 1.0, 0, [0.62, 0.64, 0.66]);
+    sidePane(T, P[0], P[1], s, 1.75, 2.5, -half + 1.7, -half + 2.3, 0.07);
+    sideDecal(D, cells, 'viaLogo', s, hw + 0.01, cab ? -4 : 3.5, 3.0, 1.6, 0.63);
+  }
+  if (cab) {
+    nose(B, z1, half - 0.1, 3.0, 4.0, 0.75, C.viaDark, 0.45);
+    B.box(0, 0.75, half - 1.2, 2.6, 0.5, 2.0, 0, C.viaYellow);
+    for (const s of [1, -1]) {
+      T.quad([s * 0.05, 2.55, half - 1.35], [s * 1.2, 2.5, half - 1.55], [s * 1.15, 3.3, half - 2.3], [s * 0.05, 3.37, half - 2.1], [0, 0.7, 0.7], uv0, GLASS);
+      T.spheroid(s * 0.9, 1.7, half - 0.55, 0.1, 8, 5, C.lamp, 0.6);
+    }
+  } else {
+    B.box(0, 0.9, half - 0.12, 2.0, 2.9, 0.15, 0, C.dark);
+  }
+  B.box(0, 0.9, -half + 0.12, 2.0, 2.9, 0.15, 0, C.dark);
+  B.box(0, 0.45, 0, 2.6, 0.32, 14.0, 0, C.frame);
+  coupler(B, -half, -1, 0.9);
+  if (!cab) coupler(B, half, 1, 0.9);
+  paxTruck(B, 9.6, 2.5, 0.42); paxTruck(B, -9.6, 2.5, 0.42);
+  return { B, T, D, L, truckC: 9.6, mass: 50, w: 3.0, h: 4.0, kind: 'coach' };
+}
+
+/** The Waterloo Central's GMD-1 1012 [GMD]: short hood and cab at +z. */
+function buildGmd1() {
+  const { body: B, trim: T, decal: D } = makeB();
+  const cells = railDecals().cells;
+  const L = 16.5, half = L / 2, deck = 1.45, hoodW = 2.4, fullW = 3.05;
+  const G0 = C.wcrGreen, Au = C.wcrGold;
+  B.box(0, deck - 0.3, 0, fullW, 0.3, L - 0.8, 0, C.frame);
+  for (const s of [1, -1]) B.box(s * (fullW / 2 - 0.01), deck - 0.3, 0, 0.05, 0.3, L - 0.9, 0, Au);
+  B.box(0, 0.62, -1.0, 2.4, 0.75, 3.6, 0, C.frame);
+  const cab0 = half - 4.5, cab1 = half - 2.2;
+  // the long hood: green, a gold band at its foot, doors
+  B.box(0, deck, (-half + 0.8 + cab0) / 2, hoodW, 3.75 - deck, cab0 - (-half + 0.8), 0, G0);
+  B.box(0, deck, (-half + 0.8 + cab0) / 2, hoodW + 0.02, 0.16, cab0 - (-half + 0.8), 0, Au);
+  B.box(0, 3.75, (-half + 0.8 + cab0) / 2, hoodW - 0.2, 0.1, cab0 - (-half + 0.8) - 0.2, 0, C.dark);
+  for (const s of [1, -1]) {
+    for (let z = -half + 1.6; z < cab0 - 0.5; z += 1.0) B.box(s * (hoodW / 2 + 0.01), deck + 0.25, z, 0.03, 2.0, 0.03, 0, [0.03, 0.08, 0.04]);
+    sideDecal(D, cells, 'wcrHood', s, hoodW / 2 + 0.01, (-half + 0.8 + cab0) / 2, 3.0, 6.4, 0.83);
+  }
+  B.box(0, 3.85, cab0 - 3.0, 0.5, 0.35, 0.8, 0, C.dark);             // the stack
+  B.tube([0, 3.85, -half + 2.0], [0, 3.92, -half + 2.0], 0.6, 12, C.grille, true);
+  // the cab: green with the gold band under the windows, the number
+  B.box(0, deck, (cab0 + cab1) / 2, fullW - 0.1, 2.65, cab1 - cab0, 0, G0);
+  B.box(0, 2.9, (cab0 + cab1) / 2, fullW - 0.08, 0.14, cab1 - cab0, 0, Au);
+  B.box(0, deck + 2.65, (cab0 + cab1) / 2, fullW - 0.05, 0.12, cab1 - cab0 + 0.25, 0, C.dark);
+  for (const s of [1, -1]) {
+    T.quad([s * (fullW / 2 - 0.04), 3.1, cab0 + 0.4], [s * (fullW / 2 - 0.04), 3.1, cab1 - 0.3], [s * (fullW / 2 - 0.04), 3.85, cab1 - 0.3], [s * (fullW / 2 - 0.04), 3.85, cab0 + 0.4], [s, 0, 0], uv0, GLASS);
+    sideDecal(D, cells, 'n1012', s, fullW / 2 - 0.045, (cab0 + cab1) / 2, 2.45, 1.0, 0.42);
+  }
+  for (const e of [1, -1]) for (const s of [1, -1]) {
+    const zc = e > 0 ? cab1 : cab0;
+    T.quad([s * 0.15, 3.1, zc + e * 0.01], [s * 1.25, 3.1, zc + e * 0.01], [s * 1.25, 3.85, zc + e * 0.01], [s * 0.15, 3.85, zc + e * 0.01], [0, 0, e], uv0, GLASS);
+  }
+  // the short hood, the headlight, the gold nose stripes
+  B.box(0, deck, (cab1 + half - 0.5) / 2, hoodW, 3.1 - deck, half - 0.5 - cab1, 0, G0);
+  for (const k of [0, 1]) B.box(0, deck + 0.5 + k * 0.45, half - 0.49, hoodW - 0.3, 0.14, 0.02, 0, Au);
+  T.spheroid(0, 2.95, half - 0.48, 0.14, 8, 5, C.lamp, 0.6);
+  T.spheroid(0, 3.65, -half + 0.79, 0.12, 8, 5, C.lamp, 0.6);
+  // handrails in gold, the pilots, couplers
+  for (const s of [1, -1]) {
+    const x = s * (fullW / 2 - 0.1);
+    for (let z = -half + 0.9; z <= half - 0.6; z += 1.5) B.tube([x, deck, z], [x, deck + 1.0, z], 0.022, 4, Au);
+    B.tube([x, deck + 1.0, -half + 0.9], [x, deck + 1.0, cab0], 0.024, 4, Au);
+    B.tube([x, deck + 1.0, cab1], [x, deck + 1.0, half - 0.6], 0.024, 4, Au);
+  }
+  for (const e of [1, -1]) {
+    B.box(0, 0.3, e * (half - 0.45), fullW - 0.2, deck - 0.3, 0.3, 0, C.frame);
+    B.box(0, 0.35, e * (half - 0.3), fullW - 0.3, 0.12, 0.05, 0, Au);
+    coupler(B, e * half, e);
+  }
+  locoTruck(B, 5.0); locoTruck(B, -5.0);
+  T.spheroid(0.8, 4.0, cab0 + 0.6, 0.12, 8, 5, [0.55, 0.45, 0.2], 1.1);
+  return { B, T, D, L, truckC: 5.0, mass: 105, w: fullW, h: 4.0, kind: 'loco' };
+}
+
+/** A heritage coach, WCR green and gold (est.: 1950s CN-style heavyweight). */
+function buildHeritageCoach() {
+  const { body: B, trim: T, decal: D } = makeB();
+  const cells = railDecals().cells;
+  const L = 23.8, half = L / 2, hw = 1.53;
+  const P = [[hw, 1.15], [hw, 3.62], [1.25, 3.95], [0.7, 4.12], [0, 4.15]];
+  sweep(B, P, -half + 0.3, half - 0.3, [C.wcrGreen, C.dark, C.dark, C.dark]);
+  for (const e of [1, -1]) {
+    endFace(B, P, e * (half - 0.3), e, C.wcrGreen);
+    B.box(0, 1.15, e * (half - 0.2), 1.6, 2.4, 0.2, 0, C.dark);
+    coupler(B, e * half, e);
+  }
+  for (const s of [1, -1]) {
+    for (let z = -half + 2.4; z < half - 2.3; z += 1.45) sidePane(T, P[0], P[1], s, 2.15, 3.0, z, z + 0.95, 0.03);
+    B.box(s * (hw + 0.01), 3.18, 0, 0.02, 0.06, L - 1.0, 0, C.wcrGold);
+    B.box(s * (hw + 0.01), 1.95, 0, 0.02, 0.05, L - 1.0, 0, C.wcrGold);
+    sideDecal(D, cells, 'wcrCoach', s, hw + 0.015, 0, 3.42, 10.5, 0.5);
+    // vestibule doors at both ends
+    for (const e of [1, -1]) B.box(s * (hw + 0.02), 1.2, e * (half - 1.1), 0.04, 2.25, 0.85, 0, [0.12, 0.25, 0.15]);
+  }
+  B.box(0, 0.75, 0, 2.6, 0.4, L - 4.0, 0, C.frame);
+  for (const s of [1, -1]) for (const e of [1, -1]) for (let k = 0; k < 3; k++) B.box(s * 1.35, 0.4 + k * 0.28, e * (half - 1.1), 0.4, 0.04, 0.7, 0, C.steel);
+  paxTruck(B, 8.6, 2.9); paxTruck(B, -8.6, 2.9);
+  return { B, T, D, L, truckC: 8.6, mass: 70, w: 3.06, h: 4.15, kind: 'coach' };
+}
+
+/** A bi-level enclosed autorack [TTX]: `road` 'ttgx' (grey), 'cn', 'cp'. */
+function buildAutorack(road) {
+  const { body: B, trim: T, decal: D } = makeB();
+  const cells = railDecals().cells;
+  const L = 27.2, half = L / 2, hw = 1.6, y0 = 1.22, top = 5.8;
+  const col = road === 'cn' ? C.arBrown : road === 'cp' ? C.cpBox : C.arGrey;
+  const dark = [col[0] * 0.55, col[1] * 0.55, col[2] * 0.55];
+  // the flatcar underneath
+  B.box(0, y0 - 0.3, 0, 3.0, 0.3, L - 0.5, 0, C.frame);
+  B.box(0, 0.62, 0, 0.6, 0.4, L - 2.0, 0, C.frame);
+  // the side panels: perforated sheet between posts, three rails along
+  for (const s of [1, -1]) {
+    B.quad([s * hw, y0, -half + 0.6], [s * hw, y0, half - 0.6], [s * hw, top - 0.2, half - 0.6], [s * hw, top - 0.2, -half + 0.6], [s, 0, 0], uv0, col);
+    for (const y of [y0 + 0.15, y0 + 2.2, top - 0.35]) B.box(s * (hw + 0.03), y, 0, 0.06, 0.16, L - 1.2, 0, dark);
+    ribs(B, hw, -half + 0.7, half - 0.7, y0, top - 0.2, 1.36, 0.06, dark);
+    sideDecal(D, cells, 'mkTtgx', s, hw + 0.07, -half + 4.2, 1.85, 3.0, 0.86);
+    if (road === 'cn') sideDecal(D, cells, 'cnWhite', s, hw + 0.07, 4.0, 4.3, 2.6, 1.36);
+    else if (road === 'cp') sideDecal(D, cells, 'cpCar', s, hw + 0.07, 4.0, 4.3, 3.0, 0.92);
+    sideDecal(D, cells, 'grime', s, hw + 0.075, 0, 3.4, L - 1.5, 4.2, 0.04);
+  }
+  // the roof, the end doors
+  B.quad([-hw - 0.05, top - 0.2, -half + 0.5], [hw + 0.05, top - 0.2, -half + 0.5], [hw + 0.05, top - 0.2, half - 0.5], [-hw - 0.05, top - 0.2, half - 0.5], UP, uv0, C.arGrey);
+  B.box(0, top - 0.2, 0, 2.4, 0.15, L - 0.8, 0, C.arGrey);
+  for (const e of [1, -1]) {
+    B.quad([-hw, y0, e * (half - 0.6)], [hw, y0, e * (half - 0.6)], [hw, top - 0.2, e * (half - 0.6)], [-hw, top - 0.2, e * (half - 0.6)], [0, 0, e], uv0, dark);
+    B.box(0, y0, e * (half - 0.55), 0.04, top - y0 - 0.3, 0.06, 0, C.steel);
+    B.box(0, 1.0, e * (half - 0.25), 2.9, 0.06, 0.4, 0, C.steel);
+    coupler(B, e * half, e);
+  }
+  freightTruck(B, 9.75); freightTruck(B, -9.75);
+  return { B, T, D, L, truckC: 9.75, mass: 55, w: 3.2, h: top, kind: 'autorack' };
 }
 
 function mulberry(a) {
@@ -674,6 +1130,27 @@ const BUILDERS = {
   boxBnsf: () => buildBox('bnsf', 'mkBnsf1'),
   boxCn: () => buildBox('cn', 'mkCn1'),
   boxCn2: () => buildBox('cn', 'mkCn2'),
+  // Auto KW: Waterloo Region's fleet
+  cn3004: () => buildLoco('cn', '3004'),
+  cpkc9375: () => buildLoco('cpkc', '9375'),
+  cp8781: () => buildLoco('cp', '8781'),
+  hopperCp: () => buildHopper('cp', 'mkCpD'),
+  hopperCp2: () => buildHopper('cp', 'mkCpD'),
+  boxCp: () => buildBox('cp', 'mkCp1'),
+  boxCp2: () => buildBox('cp', 'mkCp2'),
+  autorackTtgx: () => buildAutorack('ttgx'),
+  autorackCn: () => buildAutorack('cn'),
+  autorackCp: () => buildAutorack('cp'),
+  go647: () => buildGoLoco('647'),
+  go612: () => buildGoLoco('612'),
+  go660: () => buildGoLoco('660'),
+  goCoach: () => buildBilevel(false),
+  goCab: () => buildBilevel(true),
+  viaCharger: () => buildCharger(),
+  viaCoach: () => buildVenture(false),
+  viaCab: () => buildVenture(true),
+  wcr1012: () => buildGmd1(),
+  wcrCoach: () => buildHeritageCoach(),
 };
 const _cars = {};
 /** The geometry of a car type: { body, trim, decal } BufferGeometries plus its numbers. */
