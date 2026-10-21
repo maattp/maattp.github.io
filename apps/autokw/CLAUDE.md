@@ -1199,6 +1199,76 @@ file and a guide disagree, this file wins.
   58/297k; St. Jacobs King St 77/419k -> 82/446k; Conestogo 77/343k ->
   87/376k (the villages extra's Kit + atlas in two clusters: +8);
   Heidelberg 51 -> 54; St. Clements 49 -> 52; Maryhill 57 -> 62. 0 exceptions.
+- **North-east Waterloo and Conestoga Doon: src/kwhome.js** (`data/home.json`
+  from tools/kw/build_home.py; docs/home-*.jpg, before over after). The places
+  the player grew up round, each from its OSM footprint laid against Esri
+  imagery (`tools/kw/aerial.py`) and Commons photos. **University & Bridge**
+  (425 University Ave E): the one 52-sided building in tan brick, storefronts
+  on the faces toward the lot, FreshCo's raised green entrance over a glass
+  vestibule (the bump in the aerial, `UB_FRESH`), Rexall at the north tip, a
+  walkway canopy on brick posts down the south-east wing, a sign per OSM shop
+  (Uncle's Shwarma, Subway's logo, New Orleans Pizza, Global Pet Foods,
+  Mediterraneo), loading docks behind FreshCo, a tenant pylon at the corner
+  (`pylon`, pushed off the carriageway). The Tims, 7-Eleven and Esso pads stay
+  kw.js's / kwshops.js's. **The student plaza at University W & Phillip**:
+  every OSM unit grouped as the building it is (`uwpGroup`: the 160 block,
+  the 170 row, Molly Bloom's, the 158/160 corner, Campus Court, the building
+  behind it) in red-brown brick; the roofs the aerial shows -- **Campus Court
+  and the one behind it are steep shingled mansards with gabled dormers round
+  a flat top** (their second storey is in the roof; `unionRing` chains the
+  units' outside edges into one outline, `mansardRing` mitres it), the 160
+  block a low brown hip, the rest flat behind a shingled mansard fascia; a
+  sign per OSM shop over its own unit, on the face toward its lot (`UWP_LOT`).
+  **Conestoga Doon**: the Recreation Centre's two dark barrel vaults
+  (`REC_VAULTS`, read off the aerial's two black roofs; Commons "Gymnasium
+  Corner") sunk in grass berms, the flat link and the two-storey glass front
+  with CONESTOGA / STUDENT RECREATION CENTRE; the polygon wings (A-D, Welcome
+  Centre...) red-brown brick at their storey heights (`CON_H`) -- **box wings
+  are left alone: a new family or height on a world box was +2 draws in its
+  chunk**; CONESTOGA high on B Wing toward the library pond; the Doon
+  residence (99 Conestoga College Blvd, the U-shaped building, 4 storeys --
+  storeys a guess). **The Bridgeport Bridge** (Bridge St E over the Grand; the
+  Region's 1934 five-span concrete bowstring arch, rehabilitated): five ribs a
+  side with hangers, parapet posts, four river piers, on OSM way 38742677.
+  **The schools** go into kw.js buildSchools' own per-school mesh through
+  `SCHOOL_HOOKS`: St. Matthew (1995, one storey, "brick and steel") in
+  red-brown brick with a buff band and blue coping, punched classroom windows,
+  the entrance canopy and lettering on the face toward the board's sign node,
+  the gym up through the roof, the roofs' solar arrays (aerial), the two
+  portables (OSM's small buildings) with ramps; St. David (unnamed in OSM: its
+  LOOKS by position, warm red brick from the 2009 Commons photo) gets its
+  two-tone round drum over the glazed entrance between concrete piers on the
+  east front (`STD_DRUM`, the circle in the aerial), the canopy, precast bands
+  and the long wing's sloped roof glazing. buildSchools itself: St. David's
+  track is BLACK with six lanes and the turf artificial (aerial), bleachers on
+  the school's side; St. Matthew's two small pitches are junior soccer (OSM
+  sport=soccer nodes; they were tennis courts by size), Auburn Park's diamond
+  (`AUBURN_HOME`, aerial) a skinned infield with bases and a backstop; the
+  monument sign stands at the board's OSM node when there is one, and **every
+  box there had its rotation wrong** (`-atan2(uz, ux)`: Builder.box's local x
+  is (cos rot, sin rot), so it is `atan2(uz, ux)`) -- the signs' brick bases,
+  the bleachers, crossbars and lamp heads ran crosswise. **Cost: no new
+  draws.** Everything is drawn through `SHOP_HOOKS` into kwshops.js's two
+  builders per cluster (kw.js's footprint material + the brand atlas, whose
+  canvas is 2560 tall now and crops to ~2300 used) or into the school's mesh;
+  Conestoga is keyed into the cluster of kwshops' Petro-Canada/Pioneer by
+  Homer Watson (`CON_KEY`). Phone (AUTO_PHONE=1, GPU), master -> this,
+  draws/tris (traffic makes draws wobble +-2): spawn 205/998k = ; UB lot
+  362/895k -> 361/901k; UB pylon 404/965k -> 403/968k; UW plaza from
+  University 226/746k -> 224/751k, Campus Court lot 179/933k = ; St. Matthew
+  front 455/1516k -> 451/1518k; St. David 155/703k -> 155/704k; Conestoga air
+  191/588k -> 192/592k, Rec Centre 160/568k -> 161/572k; Bridgeport Bridge
+  117/760k -> 117/763k. Cameras: `VIEWS=tools/kw/homeviews.json`.
+  `window.__kwHome` has the counts; `window.__noHome = true` before boot
+  turns it off. Re-run `build_home.py` after an OSM update (and `build_kw.py`
+  for the schools' pitch sports and sign node). **Approximate:** St.
+  Matthew's brick colour and gym size (no photo found; aerial only); the UW
+  plaza's wall brick and the UB plaza's tan brick (aerial shows roofs only);
+  which face UW plaza tenants open on where OSM's node is mid-building (the
+  lot side); the residence's storeys; Conestoga's dark metal upper storeys
+  are not drawn; the bridge's arch rise and rib size (no photo, the Region's
+  description only); E/F Wing and the other box-drawn Conestoga buildings keep
+  their generic look.
 
 ## Build number
 

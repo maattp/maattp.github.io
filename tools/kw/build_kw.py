@@ -172,12 +172,17 @@ def main():
 
     # the two schools that matter: their sports fields, for kw.js buildSchools
     green = json.load(open(os.path.join(DATA, "raw_green.json")))["green"]
+    # (St. David's colours are green, blue and white -- Wikipedia; St. Matthew's
+    # Wildcats -- the WCDSB's school page. The monument sign stands where the
+    # board's own OSM node puts it, when there is one.)
     SCHOOLS = [
-        ("stmatt", "ST. MATTHEW", "CATHOLIC ELEMENTARY SCHOOL · HOME OF THE WILDCATS", "#0b3a7a", "#f2c230", -1542, -4808),
-        ("stdavid", "ST. DAVID", "CATHOLIC SECONDARY SCHOOL · HOME OF THE CELTICS", "#0e6b3a", "#ffffff", -4399, -3569),
+        ("stmatt", "ST. MATTHEW", "CATHOLIC ELEMENTARY SCHOOL · HOME OF THE WILDCATS", "#0b3a7a", "#f2c230", -1542, -4808,
+         "St Matthew Catholic Elementary School Sign"),
+        ("stdavid", "ST. DAVID", "CATHOLIC SECONDARY SCHOOL · HOME OF THE CELTICS", "#0e6b3a", "#ffffff", -4399, -3569, None),
     ]
+    pitch_pois = [p for p in pois if p["t"].get("leisure") == "pitch" and p["t"].get("sport")]
     schools = []
-    for key, nm, sub, bg, fg, sx, sz in SCHOOLS:
+    for key, nm, sub, bg, fg, sx, sz, sign_name in SCHOOLS:
         pitches = []
         for g in green:
             if g.get("k") != "pitch":
@@ -185,9 +190,16 @@ def main():
             xs = [q[0] for q in g["o"]]; zs = [q[1] for q in g["o"]]
             cx, cz = sum(xs) / len(xs), sum(zs) / len(zs)
             if math.hypot(cx - sx, cz - sz) < 260:
-                pitches.append({"n": g.get("n") or "", "p": [[round(q[0], 1), round(q[1], 1)] for q in g["o"]]})
-        schools.append({"key": key, "name": nm, "sub": sub, "bg": bg, "fg": fg, "x": sx, "z": sz, "pitches": pitches})
-        print(f"  {nm}: {len(pitches)} pitches")
+                o = g["o"]
+                # the sport: OSM's pitch node inside it (St. Matthew's are nodes beside unnamed ways)
+                sp = next((p["t"]["sport"] for p in pitch_pois if _in_poly(o, p["x"], p["z"])), "")
+                pitches.append({"n": g.get("n") or "", "s": sp, "p": [[round(q[0], 1), round(q[1], 1)] for q in o]})
+        sc = {"key": key, "name": nm, "sub": sub, "bg": bg, "fg": fg, "x": sx, "z": sz, "pitches": pitches}
+        sn = next((p for p in pois if sign_name and p.get("n") == sign_name), None)
+        if sn:
+            sc["sign"] = [round(sn["x"], 1), round(sn["z"], 1)]
+        schools.append(sc)
+        print(f"  {nm}: {len(pitches)} pitches ({', '.join(p['s'] or '?' for p in pitches)})")
 
     # Canadian flags (kwfun.js buildFlags): on the front lawns of the city
     # halls, schools, fire halls, police, hospitals, libraries, post offices,

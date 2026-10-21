@@ -126,9 +126,10 @@ export const LOOKS = {
   'Clara Conrad Residence': { h: 12, fam: RED },
   'Little House Residence': { h: 12, fam: RED },
   'Willison Hall': { h: 12, fam: RED },
-  // the schools
-  'St. David Catholic Secondary School': { h: 9, fam: BUFF },
-  'St. Matthew Catholic Elementary School': { h: 6.5, fam: BUFF },
+  // the schools (OSM's footprints are unnamed: kwhome.js gives them these looks
+  // by position; St. David's warm red brick from the 2009 Commons photograph)
+  'St. David Catholic Secondary School': { h: 9, fam: { m: 'brick', c: [0.70, 0.40, 0.27], u: 12, v: 12 } },
+  'St. Matthew Catholic Elementary School': { h: 4.8, fam: { m: 'brick', c: [0.58, 0.34, 0.26], u: 12, v: 12 } },
 };
 
 // The region's landmarks, each with a big sign high on its street face.
@@ -1096,16 +1097,24 @@ function obb(pts) {
 
 /**
  * ST. MATTHEW AND ST. DAVID (kw.json schools): a monument sign at the
- * street in the school's colours, and their fields drawn -- St. David's
- * lit turf football field inside a running track with its bleachers and
- * five tennis courts, St. Matthew's soccer pitches with their goals.
+ * street in the school's colours (St. Matthew's where the board's own OSM
+ * node is), and their fields drawn -- St. David's lit artificial-turf
+ * football field inside its black running track (Esri imagery) with the home
+ * bleachers on the school's side and its tennis courts; St. Matthew's soccer
+ * pitch and two junior pitches (OSM's sport=soccer nodes: they were tennis
+ * courts by size before), and Auburn Park's softball diamond beside it.
+ * SCHOOL_HOOKS (kwhome.js) add the buildings into the same mesh.
  */
+export const SCHOOL_HOOKS = [];
+// Auburn Park's diamond, read off the aerial: home plate and the infield's centre
+const AUBURN_HOME = [-1484, -4703], AUBURN_MID = [-1491, -4688];
 export function buildSchools(ctx) {
   if (!KW || !KW.schools) return;
   const { addTo, city, atlas: AT } = ctx;
   const lin = (c) => [Math.pow(c[0], 2.2), Math.pow(c[1], 2.2), Math.pow(c[2], 2.2)];
   const TURF = lin([0.30, 0.52, 0.24]), LINE = lin([0.95, 0.95, 0.93]), TRACK = lin([0.62, 0.30, 0.22]);
   const COURT = lin([0.25, 0.42, 0.52]), COURTO = lin([0.30, 0.50, 0.32]), POST = lin([0.92, 0.78, 0.15]);
+  const BLACKTRACK = lin([0.17, 0.17, 0.18]), ARTTURF = lin([0.17, 0.36, 0.17]), DIRT = lin([0.70, 0.55, 0.40]), FENCE = lin([0.48, 0.50, 0.50]);
   const STEEL = lin([0.55, 0.56, 0.58]), BRICK = lin([0.62, 0.40, 0.30]);
   const U = [0, 0, 0, 0, 0, 0, 0, 0];
   for (const S of KW.schools) {
@@ -1131,6 +1140,49 @@ export function buildSchools(ctx) {
       const o = obb(pt.p);
       if (!o) continue;
       const area = o.hu * o.hv * 4;
+      if (S.key === 'stmatt' && !pt.s && !pt.n) {
+        // Auburn Park's softball diamond (the city's, beside the school): a skinned
+        // infield, the bases, a backstop and two benches behind home
+        const hx = AUBURN_HOME[0], hz = AUBURN_HOME[1];
+        const dx = AUBURN_MID[0] - hx, dz = AUBURN_MID[1] - hz, dl = Math.hypot(dx, dz), fx = dx / dl, fz = dz / dl;
+        const cxm = hx + fx * 16, czm = hz + fz * 16, R = 18;
+        for (let k = 0; k < 20; k++) {
+          const a0 = (k / 20) * Math.PI * 2, a1 = ((k + 1) / 20) * Math.PI * 2;
+          const P = (a) => { const x = cxm + Math.cos(a) * R, z = czm + Math.sin(a) * R; return [x, T(x, z) + 0.02, z]; };
+          B.tri([cxm, T(cxm, czm) + 0.02, czm], P(a1), P(a0), [0, 1, 0], DIRT);
+        }
+        const bx = (u, v) => [hx + fx * u - fz * v, hz + fz * u + fx * v];
+        // bases 60 ft apart: first and third at 45 degrees off the line to centre field
+        const bases = [[0, 0], [12.9, -12.9], [25.9, 0], [12.9, 12.9]];
+        for (const [u, v] of bases) { const [x, z] = bx(u, v); B.box(x, T(x, z), z, 0.4, 0.08, 0.4, Math.atan2(fz, fx) + Math.PI / 4, LINE); }
+        // the backstop: chain-link panels on posts in an arc behind home
+        let prev = null;
+        for (let k = -3; k <= 3; k++) {
+          const a = Math.atan2(-fz, -fx) + k * 0.28, x = hx + Math.cos(a) * 7, z = hz + Math.sin(a) * 7, y = T(x, z);
+          post({ x, z, ux: 1, uz: 0 }, 0, 0, 4.2, 0.1, FENCE);
+          if (prev) B.quad([prev[0], prev[1], prev[2]], [x, y, z], [x, y + 4.2, z], [prev[0], prev[1] + 4.2, prev[2]], [-fx, 0, -fz], U, FENCE);
+          if (prev) B.quad([x, y, z], [prev[0], prev[1], prev[2]], [prev[0], prev[1] + 4.2, prev[2]], [x, y + 4.2, z], [fx, 0, fz], U, FENCE);
+          prev = [x, y, z];
+        }
+        for (const sd of [-1, 1]) {
+          const [x, z] = bx(2, sd * 12);
+          B.box(x, T(x, z), z, 6, 0.45, 0.4, Math.atan2(fz, fx) + Math.PI / 4 * sd, STEEL);
+        }
+        continue;
+      }
+      if (pt.s === 'soccer' && area < 2500) {
+        // a junior soccer pitch: lines and small goals
+        const fu = o.hu - 1.2, fv = o.hv - 1.2;
+        for (const v of [-1, 1]) rect(o, 0, v * fv, fu, 0.06, LINE, 0.02);
+        for (const u of [-1, 1]) rect(o, u * fu, 0, 0.06, fv, LINE, 0.02);
+        rect(o, 0, 0, 0.06, fv, LINE, 0.02);
+        for (const u of [-1, 1]) {
+          for (const v of [-1.8, 1.8]) post(o, u * fu, v, 1.8, 0.1, LINE);
+          const x = o.x + o.ux * u * fu, z = o.z + o.uz * u * fu;
+          B.box(x, G.terrainHeight(x, z) + 1.8, z, 0.1, 0.1, 3.7, Math.atan2(o.uz, o.ux), LINE);
+        }
+        continue;
+      }
       if (area < 900) {
         // a tennis court: hard court, lines, a net, a fence round it
         rect(o, 0, 0, o.hu, o.hv, COURTO, 0.01);
@@ -1158,9 +1210,16 @@ export function buildSchools(ctx) {
             const x = o.x + o.ux * u - o.uz * v, z = o.z + o.uz * u + o.ux * v;
             return [x, T(x, z) + 0.02, z];
           };
-          B.quad(ring(ang, 0), ring(ang2, 0), ring(ang2, W), ring(ang, W), [0, 1, 0], U, TRACK);
+          B.quad(ring(ang, 0), ring(ang2, 0), ring(ang2, W), ring(ang, W), [0, 1, 0], U, BLACKTRACK);
+          // six lanes' white lines
+          for (let l = 1; l < 6; l++) {
+            const r0 = (l / 6) * W - 0.04, r1 = r0 + 0.08;
+            const p0 = ring(ang, r0), p1 = ring(ang2, r0), p2 = ring(ang2, r1), p3 = ring(ang, r1);
+            for (const q of [p0, p1, p2, p3]) q[1] += 0.008;
+            B.quad(p0, p1, p2, p3, [0, 1, 0], U, LINE);
+          }
         }
-        rect(o, 0, 0, ru, rv, TURF, 0.025);
+        rect(o, 0, 0, ru, rv, ARTTURF, 0.025);
         for (let y = -50; y <= 50; y += 10) rect(o, y * 0.9144, 0, 0.08, fv, LINE, 0.035);
         for (const v of [-1, 1]) rect(o, 0, v * fv, fu, 0.08, LINE, 0.035);
         for (const u of [-1, 1]) {
@@ -1168,18 +1227,19 @@ export function buildSchools(ctx) {
           post(o, ue, 0, 3, 0.25, POST);
           for (const v of [-2.8, 2.8]) post(o, ue, v, 9, 0.12, POST);
           const x = o.x + o.ux * ue, z = o.z + o.uz * ue, y = G.terrainHeight(x, z) + 3;
-          B.box(x, y, z, 0.15, 0.2, 5.8, -Math.atan2(o.uz, o.ux) + Math.PI / 2, POST);
+          B.box(x, y, z, 0.15, 0.2, 5.8, Math.atan2(o.uz, o.ux), POST);
         }
         for (const [u, v] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
           post(o, u * (ru - 8), v * (rv + W + 3), 20, 0.5, STEEL);
           const x = o.x + o.ux * u * (ru - 8) - o.uz * v * (rv + W + 3), z = o.z + o.uz * u * (ru - 8) + o.ux * v * (rv + W + 3);
-          B.box(x, G.terrainHeight(x, z) + 19, z, 3, 1.6, 1.2, -Math.atan2(o.uz, o.ux), lin([0.9, 0.9, 0.85]));
+          B.box(x, G.terrainHeight(x, z) + 19, z, 3, 1.6, 1.2, Math.atan2(o.uz, o.ux), lin([0.9, 0.9, 0.85]));
         }
-        // bleachers: five steps along the home side
+        // bleachers: five steps along the home side, the one toward the school (the aerial's stands)
+        const home = Math.sign(-(S.x - o.x) * o.uz + (S.z - o.z) * o.ux) || -1;
         for (let k = 0; k < 5; k++) {
-          const v = -(rv + W + 3 + k * 0.9);
+          const v = home * (rv + W + 3 + k * 0.9);
           const x = o.x - o.uz * v, z = o.z + o.ux * v;
-          B.box(x, G.terrainHeight(o.x, o.z) + k * 0.45, z, 50, 0.45 * (k + 1) + 0.3, 0.9, -Math.atan2(o.uz, o.ux), STEEL);
+          B.box(x, G.terrainHeight(o.x, o.z) + k * 0.45, z, 50, 0.45 * (k + 1) + 0.3, 0.9, Math.atan2(o.uz, o.ux), STEEL);
         }
         continue;
       }
@@ -1191,18 +1251,22 @@ export function buildSchools(ctx) {
       for (const u of [-1, 1]) {
         for (const v of [-3.6, 3.6]) post(o, u * fu, v, 2.4, 0.12, LINE);
         const x = o.x + o.ux * u * fu, z = o.z + o.uz * u * fu;
-        B.box(x, G.terrainHeight(x, z) + 2.4, z, 0.12, 0.12, 7.3, -Math.atan2(o.uz, o.ux) + Math.PI / 2, LINE);
+        B.box(x, G.terrainHeight(x, z) + 2.4, z, 0.12, 0.12, 7.3, Math.atan2(o.uz, o.ux), LINE);
       }
     }
     // the monument sign at the street: a brick base and the school's panel
-    const rd = faceRoad(city, S.x, S.z, 220);
+    const px = S.sign ? S.sign[0] : S.x, pz = S.sign ? S.sign[1] : S.z;
+    const rd = faceRoad(city, px, pz, 220);
     if (rd) {
-      const dx = (rd.qx - S.x) / rd.d, dz = (rd.qz - S.z) / rd.d;
-      const sx = rd.qx - dx * (rd.hw + 6), sz = rd.qz - dz * (rd.hw + 6), y = G.terrainHeight(sx, sz);
+      const dd = Math.hypot(rd.qx - px, rd.qz - pz) || 1;
+      const dx = (rd.qx - px) / dd, dz = (rd.qz - pz) / dd;
+      let sx = rd.qx - dx * (rd.hw + 6), sz = rd.qz - dz * (rd.hw + 6);
+      if (S.sign) { sx = S.sign[0]; sz = S.sign[1]; }
+      const y = G.terrainHeight(sx, sz);
       const yaw = Math.atan2(dx, dz);
-      B.box(sx, y - 0.5, sz, 5.2, 1.5, 0.8, -yaw + Math.PI / 2, BRICK);
-      B.box(sx, y + 2.9, sz, 5.4, 0.25, 0.9, -yaw + Math.PI / 2, BRICK);
-      for (const s2 of [-1, 1]) B.box(sx + Math.cos(yaw) * s2 * 2.45, y + 1.0, sz - Math.sin(yaw) * s2 * 2.45, 0.5, 1.9, 0.8, -yaw + Math.PI / 2, BRICK);
+      B.box(sx, y - 0.5, sz, 5.2, 1.5, 0.8, Math.atan2(-dx, dz), BRICK);
+      B.box(sx, y + 2.9, sz, 5.4, 0.25, 0.9, Math.atan2(-dx, dz), BRICK);
+      for (const s2 of [-1, 1]) B.box(sx + Math.cos(yaw) * s2 * 2.45, y + 1.0, sz - Math.sin(yaw) * s2 * 2.45, 0.5, 1.9, 0.8, Math.atan2(-dx, dz), BRICK);
       for (const side of [1, -1]) {
         const pnl = AT.panel(4.4, 1.85, 40, (q, W, H) => {
           q.fillStyle = S.bg; q.fillRect(0, 0, W, H);
@@ -1214,8 +1278,9 @@ export function buildSchools(ctx) {
         });
         hang(g, pnl, sx, y + 1.95, sz, dx * side, dz * side, 0.42);
       }
-      ctx.solids.push({ x: sx, z: sz, hw: 2.8, hd: 0.5, rot: -yaw + Math.PI / 2, y0: y - 1, y1: y + 3.2 });
+      ctx.solids.push({ x: sx, z: sz, hw: 2.8, hd: 0.5, rot: Math.atan2(-dx, dz), y0: y - 1, y1: y + 3.2 });
     }
+    for (const fn of SCHOOL_HOOKS) fn(S, { B, g, ctx, lin });
     const mesh = new THREE.Mesh(B.build(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85,
       polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 }));
     mesh.receiveShadow = true; mesh.castShadow = true;

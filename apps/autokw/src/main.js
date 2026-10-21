@@ -53,6 +53,7 @@ import { prepUptown } from './kwuptown.js';
 import { prepSights, buildSights, sightsMap } from './kwsights.js';
 import { prepVillages, buildVillages, villagesMap } from './kwvillages.js';
 import { setShopData, prepShops, buildShops, shopPlaces, shopStats } from './kwshops.js';
+import { prepHome, homeMap } from './kwhome.js';
 import { Crops } from './crops.js';
 import { Kartway, KartRace } from './kartway.js';
 import { prepHighways, buildHighways, addHighwaySolids, highwaysRoot, updateHighways, hwyKeepClear } from './highways.js';
@@ -808,6 +809,9 @@ async function boot() {
   // the villages' main streets, St. Jacobs' mill and the Village Silos (kwvillages.js)
   { const k = prepVillages(city, md.villages); blog(`kw villages: ${k.skipped} boxes drawn as main streets`); }
   addLandmarkExtra(buildVillages);
+  // north-east Waterloo's two plazas and two schools, Conestoga Doon, the Bridgeport Bridge (kwhome.js:
+  // drawn through kwshops.js's and buildSchools' builders, so before prepShops)
+  { const k = prepHome(city, md.home); blog(`kw home: ${k.skipped} boxes drawn as home places`); }
   // the chain stores, gas stations and plazas where they really are (kwshops.js)
   setShopData(md.shops);
   { const k = prepShops(city); blog(`kw shops: drawn here: ${k.bigbox} big boxes, ${k.units} stand-alone stores, ${k.strips} plaza buildings, ${k.canopies} gas canopies`); }
@@ -1567,6 +1571,7 @@ function installShadowFade() {
     ...placesMap(),
     ...sightsMap(),
     ...villagesMap(),
+    ...homeMap(),
     ...shopPlaces(),
     { x: arcade.spot.x, z: arcade.spot.z, kind: 'arcade', name: 'Pin Up Arcade Bar', near: false,
       hello: 'Pin Up Arcade Bar — six classic cabinets, $1 a credit. Press ENTER at the door' },
