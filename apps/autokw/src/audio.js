@@ -1329,6 +1329,18 @@ const SOUNDS = {
     k.thump(out, t + 0.74, 95, 55, 0.06, 0.8, 0.05);
     k.burst(out, 'brown', t + 0.74, 'lowpass', 400, 0.7, 0.7, 0.04, R);
   } },
+  // Auto KW: ION's doors (the Flexity Freedom's): opening, a soft rising
+  // two-note chime; closing, the falling warning chime and three quick beeps
+  ion_doors_open: { dur: 1.2, build(k, out, t, R) {
+    k.ping(out, t, 784, 0.32, 0.5, 0.006);
+    k.ping(out, t + 0.28, 1047, 0.3, 0.6, 0.006);
+  } },
+  ion_doors_close: { dur: 2.0, build(k, out, t, R) {
+    k.ping(out, t, 1319, 0.3, 0.45, 0.006);
+    k.ping(out, t + 0.26, 988, 0.3, 0.45, 0.006);
+    k.ping(out, t + 0.52, 784, 0.3, 0.55, 0.006);
+    for (let i = 0; i < 3; i++) k.ping(out, t + 1.1 + i * 0.22, 2093, 0.16, 0.08, 0.002);
+  } },
   ui_check: { dur: 0.5, build(k, out, t, R) {
     k.ping(out, t, 1568, 0.5, 0.13, 0.003);
     k.ping(out, t, 2093, 0.35, 0.11, 0.003);
