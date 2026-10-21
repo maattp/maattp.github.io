@@ -439,20 +439,44 @@ const OLD_CORES = [[-1376, 111, 2300], [-3845, -1444, 1250], [-648, -3111, 600],
 // Hills, Eastbridge, Beechwood West (Waterloo); Williamsburg, Laurentian West,
 // Country Hills (West), Huron Park and Huron South, Doon South, Deer Ridge,
 // Grand River South / Lackner Woods (Kitchener); Hespeler's south-east,
-// Saginaw / Fisher Mills (Cambridge).
+// Saginaw / Fisher Mills (Cambridge); Laurelwood's west end to Erbsville Rd.
 const NEW_SUBDIVS = [[-8446, -1950, 1100], [-8900, -800, 1000], [-6692, 978, 700], [-6900, 300, 600],
   [-10400, -400, 900], [-2696, -6364, 900], [-7400, -1900, 600], [-1743, 5584, 900], [-2900, 4700, 800],
   [-1066, 4688, 700], [161, 4222, 600], [-400, 7850, 900], [-3200, 7200, 1100], [3700, 8400, 1000],
-  [5239, 5112, 700], [4400, -900, 800], [13550, 600, 900], [13000, 6200, 1100]];
+  [5239, 5112, 700], [4400, -900, 800], [13550, 600, 900], [13000, 6200, 1100], [-9800, -2300, 800]];
 const inNewSubdiv = (x, z) => NEW_SUBDIVS.some(([cx, cz, r]) => (x - cx) ** 2 + (z - cz) ** 2 < r * r);
 const inOldCore = (x, z) => OLD_CORES.some(([cx, cz, r]) => (x - cx) ** 2 + (z - cz) ** 2 < r * r);
+// AUTO KW: the pre-1970 neighbourhoods outside those cores' circles, whose
+// side streets kept their poles too -- [x, z, radius] round OSM's place
+// nodes (a judgement, as OLD_CORES is): Westmount, Belmont Village and
+// Northdale (Waterloo), Victoria Hills and Forest Hills (Kitchener). Only
+// the hydro and the street lights read this; the garage rule keeps OLD_CORES.
+const OLD_HOODS = [[-4103, -6, 750], [-3477, -149, 450], [-4613, -2463, 650], [-3721, 1374, 550], [-2591, 2620, 600]];
+const inOldHood = (x, z) => OLD_HOODS.some(([cx, cz, r]) => (x - cx) ** 2 + (z - cz) ** 2 < r * r);
+/**
+ * AUTO KW: A STREET'S ERA, for its poles and lights. 0: built before the
+ * lines went under (OLD_CORES, OLD_HOODS) -- overhead hydro on wooden poles,
+ * a cobra head on a davit off each one; 1: 1970-85, underground, a grey
+ * direct-buried pole with a bracket arm and a cobra head; 2 and 3: the
+ * subdivisions since ~1985 (NEW_SUBDIVS), underground and short decorative
+ * standards -- 2 a black post-top coach lantern (Waterloo's west side and
+ * Eastbridge), 3 a black davit with a small LED head (Kitchener, Cambridge).
+ */
+function streetEra(x, z) {
+  if (inOldCore(x, z) || inOldHood(x, z)) return 0;
+  for (const [cx, cz, r] of NEW_SUBDIVS) if ((x - cx) ** 2 + (z - cz) ** 2 < r * r) return cx < -5000 || (cx === -2696 && cz === -6364) ? 2 : 3;
+  return 1;
+}
+// AUTO KW: tools/kw/poleprobe.js sets window.__logSolids = [] before boot;
+// every pole and street light planted, and every driveway apron, is logged.
+const logSolid = (kind, x, z, r) => { const L = globalThis.__logSolids; if (L) L.push(kind, x, z, r); };
+// a hydro pole's offset past the kerb line by that side's sidewalk (swk 0-3)
+const POLE_OFF = [0.8, 2.05, 0.55, 1.5];
 const strHash = (s) => { let h = 7; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; };
 /** 0: buried; else 1 wood poles, 2 concrete; the sign of the side in bit 2. */
 function hydroEdge(e, mx, mz) {
   let on = e.cls === 'art';
-  if (!on && (e.cls === 'st' || e.cls === 'res')) {
-    for (const [x, z, r] of OLD_CORES) if ((mx - x) ** 2 + (mz - z) ** 2 < r * r) { on = true; break; }
-  }
+  if (!on && (e.cls === 'st' || e.cls === 'res')) on = inOldCore(mx, mz) || inOldHood(mx, mz);
   if (!on) return 0;
   // one side and one kind of pole down a whole street: by its name, or by
   // its 400 m block where it has none
@@ -8289,7 +8313,7 @@ float frLine(float o, float fw, float c, float w) {
     if (sW < 0) return L;
     this._apronS = sW;
     // where it crosses the strip, for meshProps: nothing stands on a driveway
-    { const [qx, qz] = offF(glx, fb.d / 2 + (sW + L) / 2); if (this._aprons) this._aprons.push(qx, qz, (gw + 0.6) / 2 + 0.7); }
+    { const [qx, qz] = offF(glx, fb.d / 2 + (sW + L) / 2); if (this._aprons) this._aprons.push(qx, qz, (gw + 0.6) / 2 + 0.7); logSolid('apron', qx, qz, (gw + 0.6) / 2); }
     const sR = Math.max(0.3, sW - VERGE - 0.4);
     const hw = (gw + 0.6) / 2, T = G.terrainHeight, col = [0.24, 0.24, 0.25];
     const [tx, tz] = offF(glx, fb.d / 2 + sR), top = T(tx, tz) + 0.08;
@@ -8810,8 +8834,18 @@ float frLine(float o, float fw, float c, float w) {
     const cc = [0.72, 0.72, 0.7], ccLo = [0.4, 0.4, 0.39];
     const gDark = [0.44, 0.45, 0.46], gLite = [0.92, 0.93, 0.93], gW = 0.5;
     const wy = (x, z) => T(x, z) + WALK_Y;
+    // AUTO KW: a corner's half on a side OSM maps no sidewalk on (citygen
+    // `swk` 0) is lawn, as that side's strip is (meshRoad): a concrete
+    // corner turned a walk that is not there round to one that may not be.
+    const E = this.city.edges;
+    const swkOf = (ei, sg) => { const e = E[ei]; return !e || e.swk === undefined ? 3 : sg > 0 ? e.swk & 3 : (e.swk >> 2) & 3; };
+    const lawnAt = (x, z) => {
+      const g = this.groundTint(x, z, T(x, z));
+      return [g[0] * GROUND_MEAN, g[1] * GROUND_MEAN, g[2] * GROUND_MEAN];
+    };
     for (const pcs of pieces) {
       const K = pcs.K, I = pcs.I;
+      const sA = pcs.sd ? swkOf(pcs.sd[0], pcs.sd[1]) : 3, sB = pcs.sd ? swkOf(pcs.sd[2], pcs.sd[3]) : 3;
       const wj = 0.9 + hash2(Math.round(K[0][0] * 0.7), Math.round(K[0][1] * 0.7)) * 0.2;
       const wIn = [wj, wj, wj], wOut = [wj * 0.9, wj * 0.9, wj * 0.91];
       // Toward the road at each kerb vertex: from the building line to the kerb.
@@ -8835,10 +8869,14 @@ float frLine(float o, float fw, float c, float w) {
         if (this.inCut((k0[0] + i1[0]) / 2, (k0[1] + i1[1]) / 2)) continue;
         const d0 = Math.hypot(i0[0] - k0[0], i0[1] - k0[1]) / WALK_TILE;
         const d1 = Math.hypot(i1[0] - k1[0], i1[1] - k1[1]) / WALK_TILE;
-        walk.quad(
-          [k0[0], wy(k0[0], k0[1]), k0[1]], [i0[0], wy(i0[0], i0[1]), i0[1]],
-          [i1[0], wy(i1[0], i1[1]), i1[1]], [k1[0], wy(k1[0], k1[1]), k1[1]],
-          [0, 1, 0], [0, v0, d0, v0, d1, v1, 0, v1], [wIn, wOut, wOut, wIn]);
+        const QV = [[k0[0], wy(k0[0], k0[1]), k0[1]], [i0[0], wy(i0[0], i0[1]), i0[1]],
+          [i1[0], wy(i1[0], i1[1]), i1[1]], [k1[0], wy(k1[0], k1[1]), k1[1]]];
+        // (the kerb runs from arm A's side to arm B's: the first half is A's)
+        if (((k + 0.5) / pcs.keep.length < 0.5 ? sA : sB) === 0) {
+          const q0 = road.nv;
+          road.quad(QV[0], QV[1], QV[2], QV[3], [0, 1, 0], [0, v0, d0, v0, d1, v1, 0, v1], QV.map((p) => lawnAt(p[0], p[2])));
+          surfMark(road, q0, () => SURF_GRASS);
+        } else walk.quad(QV[0], QV[1], QV[2], QV[3], [0, 1, 0], [0, v0, d0, v0, d1, v1, 0, v1], [wIn, wOut, wOut, wIn]);
         if (segL > 0.02) {
           // Kerb face, facing the road.
           let nx = -(k1[1] - k0[1]) / segL, nz = (k1[0] - k0[0]) / segL;
@@ -10385,17 +10423,34 @@ float frLine(float o, float fw, float c, float w) {
     const P0 = flip ? b : a, P1 = flip ? a : b;
     const sd = hydro & 4 ? 1 : -1;
     const qx = -uz * sd, qz = ux * sd;     // out from the centreline to the pole side
-    const off = e.hw + 1.5;
+    // AUTO KW: the pole stands where that side's sidewalk leaves room (citygen
+    // `swk`): in the grass boulevard, behind a walk at the kerb, just off the
+    // kerb where there is none, else (not known) on the old pavement.
+    const poleSwk = (f) => {
+      if (f.swk === undefined) return 3;
+      const fl = f.dx * ux + f.dz * uz < 0;   // f runs against the canonical way
+      return (fl ? -sd : sd) > 0 ? f.swk & 3 : (f.swk >> 2) & 3;
+    };
+    const swk = poleSwk(e);
+    const off = e.hw + POLE_OFF[swk];
     const wood = (hydro & 3) === 1;
     const poleCol = wood ? [0.30, 0.24, 0.18] : [0.62, 0.61, 0.58];
     const WIRE = [0.07, 0.07, 0.08];
     const s0 = P0.x * ux + P0.z * uz, s1 = P1.x * ux + P1.z * uz;
     // a pole's spot at lattice position s (on this edge's line), or null
-    const spot = (s) => {
-      const t = (s - s0) / (s1 - s0);
-      const x = P0.x + (P1.x - P0.x) * t + qx * off, z = P0.z + (P1.z - P0.z) * t + qz * off;
+    // (a lattice spot on a driveway slides along the kerb to the first clear
+    // one within 5.5 m, the same answer from both poles of a span)
+    const SLIDE = [0, 3, -3, 5.5, -5.5];
+    const spot = (s0_) => {
+      let x, z, k = 0;
       const HS = cityStats.hydro || (cityStats.hydro = { edges: 0, poles: 0, spans: 0, offRoad: 0, other: 0 });
-      if (city.onRoad(x, z, 0.8)) { HS.offRoad++; return null; }
+      for (; k < SLIDE.length; k++) {
+        const t = (s0_ + SLIDE[k] - s0) / (s1 - s0);
+        x = P0.x + (P1.x - P0.x) * t + qx * off; z = P0.z + (P1.z - P0.z) * t + qz * off;
+        if (city.onRoad(x, z, Math.min(0.8, off - e.hw - 0.25))) { HS.offRoad++; return null; }
+        if (!this._onApron(x, z, 0.4)) break;
+      }
+      if (k === SLIDE.length) { HS.offRoad++; return null; }
       if (!G.isBuildable(x, z) || this.inDrawnLake(x, z) || this.cutDepth(x, z) > 0.3 || city.jumpClear(x, z)) { HS.other++; return null; }
       return [x, G.terrainHeight(x, z) + WALK_Y, z];
     };
@@ -10411,7 +10466,9 @@ float frLine(float o, float fw, float c, float w) {
         const h = hydroEdge(f, (fa.x + fb.x) / 2, (fa.z + fb.z) / 2);
         // the same poles on the same side (both are taken against the
         // canonical direction, so a reversed edge agrees)
-        if (h === hydro) return true;
+        // (and its poles on the same line: a span strung across to another
+        // offset would end beside its pole)
+        if (h === hydro && poleSwk(f) === swk) return true;
       }
       return false;
     };
@@ -10427,15 +10484,16 @@ float frLine(float o, float fw, float c, float w) {
       flat.prism(ox, gy - 0.3, oz, wood ? 0.15 : 0.17, 11.8, 6, poleCol);
       cityStats.hydro.poles++;
       this.city.addObstacle(this._ck, ox, oz, 0.3);
+      logSolid('pole', ox, oz, 0.3);
       // crossarm, across the line
-      const xr = Math.atan2(qx, qz);
+      const xr = Math.atan2(-qx, qz);   // (Builder.box turns the other way from a heading)
       flat.box(ox, gy + 10.6, oz, 0.12, 0.12, 2.6, xr, wood ? [0.36, 0.3, 0.24] : [0.5, 0.5, 0.5]);
       // the transformer on one pole in five
       if (hash2(Math.round(ox), Math.round(oz)) < 0.2) {
         flat.prism(ox - qx * 0.45, gy + 8.2, oz - qz * 0.45, 0.32, 1.2, 6, [0.46, 0.5, 0.48]);
       }
       // the street light: davit arm out over the road, cobra head, lens
-      const ar = Math.atan2(-qx, -qz);
+      const ar = Math.atan2(qx, -qz);
       flat.box(ox - qx * 1.1, gy + 8.7, oz - qz * 1.1, 0.1, 0.1, 2.2, ar, [0.55, 0.56, 0.57]);
       flat.box(ox - qx * 2.35, gy + 8.55, oz - qz * 2.35, 0.36, 0.2, 0.75, ar, [0.6, 0.61, 0.62]);
       glow.box(ox - qx * 2.35, gy + 8.47, oz - qz * 2.35, 0.28, 0.08, 0.55, ar, [1.0, 0.86, 0.6]);
@@ -10458,6 +10516,74 @@ float frLine(float o, float fw, float c, float w) {
     }
   }
 
+  /**
+   * AUTO KW: A STREET LIGHT OF ITS ERA (streetEra) at (x, gy, z), its arm
+   * toward the road (ax, az). 1: a grey direct-buried pole (concrete or
+   * fibreglass, no base plate) ~8 m with a straight bracket and a cobra head
+   * -- the 1970s-80s subdivisions; 2: a black fluted post ~4 m with a
+   * post-top coach lantern; 3: a black pole ~6.6 m with a short upswept davit
+   * and a small flat LED head. Into the chunk's flat / glow builders, solid.
+   */
+  _eraLamp(flat, glow, x, gy, z, ax, az, era) {
+    logSolid('lamp' + era, x, z, 0.3);
+    const rot = Math.atan2(-ax, az), BLACK = [0.07, 0.07, 0.08], LIT = [1.0, 0.94, 0.78];
+    if (era === 2) {
+      flat.prism(x, gy, z, 0.15, 0.7, 8, BLACK);
+      flat.prism(x, gy + 0.7, z, 0.075, 3.3, 8, BLACK);
+      flat.prism(x, gy + 3.95, z, 0.12, 0.12, 8, BLACK);
+      // the lantern: a frame round lit panes, a hipped cap and a finial
+      flat.box(x, gy + 4.05, z, 0.36, 0.06, 0.36, rot, BLACK);
+      for (const [u, v] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+        flat.box(x + (az * u - ax * v) * 0.17, gy + 4.1, z + (-ax * u - az * v) * 0.17, 0.035, 0.5, 0.035, rot, BLACK);
+      }
+      glow.box(x, gy + 4.12, z, 0.3, 0.44, 0.3, rot, LIT);
+      flat.prism(x, gy + 4.6, z, 0.3, 0.07, 4, BLACK, Math.PI / 4 + rot);
+      flat.prism(x, gy + 4.67, z, 0.18, 0.1, 4, BLACK, Math.PI / 4 + rot);
+      flat.prism(x, gy + 4.77, z, 0.035, 0.18, 6, BLACK);
+      this.city.addObstacle(this._ck, x, z, 0.25);
+      return;
+    }
+    if (era === 3) {
+      flat.box(x, gy, z, 0.3, 0.55, 0.3, rot, BLACK);
+      flat.prism(x, gy + 0.5, z, 0.085, 6.1, 8, BLACK);
+      // the davit: up and over in three pieces, the head hung at its end
+      flat.box(x + ax * 0.22, gy + 6.62, z + az * 0.22, 0.09, 0.09, 0.5, rot, BLACK);
+      flat.box(x + ax * 0.75, gy + 6.74, z + az * 0.75, 0.09, 0.09, 0.62, rot, BLACK);
+      flat.box(x + ax * 1.25, gy + 6.66, z + az * 1.25, 0.09, 0.09, 0.42, rot, BLACK);
+      flat.box(x + ax * 1.55, gy + 6.5, z + az * 1.55, 0.3, 0.12, 0.6, rot, [0.12, 0.12, 0.13]);
+      glow.box(x + ax * 1.55, gy + 6.44, z + az * 1.55, 0.22, 0.03, 0.48, rot, LIT);
+      this.city.addObstacle(this._ck, x, z, 0.3);
+      return;
+    }
+    const GREY = [0.6, 0.6, 0.58];
+    flat.prism(x, gy - 0.2, z, 0.13, 1.4, 8, GREY);
+    flat.prism(x, gy + 1.2, z, 0.105, 6.8, 8, GREY);
+    // the bracket: a tube out over the kerb and its brace under it
+    flat.box(x + ax * 1.1, gy + 7.8, z + az * 1.1, 0.08, 0.08, 2.1, rot, [0.56, 0.57, 0.58]);
+    flat.box(x + ax * 0.45, gy + 7.45, z + az * 0.45, 0.05, 0.6, 0.05, rot, [0.56, 0.57, 0.58]);
+    flat.box(x + ax * 2.35, gy + 7.68, z + az * 2.35, 0.36, 0.2, 0.78, rot, [0.6, 0.61, 0.62]);
+    glow.box(x + ax * 2.35, gy + 7.6, z + az * 2.35, 0.28, 0.06, 0.58, rot, LIT);
+    this.city.addObstacle(this._ck, x, z, 0.3);
+  }
+
+  /**
+   * AUTO KW: would a hydro pole of edge `e` (hydroLine's lattice: every 40 m
+   * of the street's canonical direction, on its pole side) stand within `r`
+   * metres along the street of (x, z), on that side? From the edge alone, so
+   * a mid-ring tree build (no poles planted) answers as the near one does.
+   */
+  hydroPoleNear(e, x, z, r) {
+    const a = this.city.nodes[e.a], b = this.city.nodes[e.b];
+    const hydro = hydroEdge(e, (a.x + b.x) / 2, (a.z + b.z) / 2);
+    if (!hydro || e.rural) return false;
+    let ux = e.dx, uz = e.dz;
+    if (ux < 0 || (ux === 0 && uz < 0)) { ux = -ux; uz = -uz; }
+    const sd = hydro & 4 ? 1 : -1;
+    if (((x - a.x) * -uz + (z - a.z) * ux) * sd <= 0) return false;
+    const s = x * ux + z * uz, m = s - Math.round(s / 40) * 40;
+    return Math.abs(m) < r;
+  }
+
   /** AUTO KW: is (x, z) within `pad` of a driveway's crossing of the pavement strip (_driveApron)? */
   _onApron(x, z, pad) {
     const A = this._aprons;
@@ -10474,7 +10600,7 @@ float frLine(float o, float fw, float c, float w) {
    * a concrete pad. ~100 triangles a unit; not solid, as a hydrant is not.
    */
   _cmb(flat, x, gy, z, nx, nz, n) {
-    const rot = Math.atan2(nx, nz), ux = nz, uz = -nx;   // along the kerb
+    const rot = Math.atan2(-nx, nz), ux = nz, uz = -nx;   // along the kerb (Builder.box's local x)
     const W = 0.78, D = 0.56, body = [0.6, 0.61, 0.59], dark = [0.42, 0.43, 0.42];
     flat.box(x, gy - 0.05, z, W * n + 0.7, 0.13, D + 0.7, rot, [0.56, 0.55, 0.52]);   // the pad
     for (let i = 0; i < n; i++) {
@@ -10492,7 +10618,7 @@ float frLine(float o, float fw, float c, float w) {
 
   /** AUTO KW: a red Canada Post street letter box (OSM's amenity=post_box), its face to the street. */
   _letterBox(flat, x, gy, z, nx, nz) {
-    const rot = Math.atan2(nx, nz), red = [0.7, 0.07, 0.06];
+    const rot = Math.atan2(-nx, nz), red = [0.7, 0.07, 0.06];
     for (const [a, b] of [[-0.2, -0.14], [0.2, -0.14], [-0.2, 0.14], [0.2, 0.14]]) {
       flat.box(x + nz * a + nx * b, gy, z - nx * a + nz * b, 0.05, 0.32, 0.05, rot, [0.1, 0.1, 0.11]);
     }
@@ -10546,7 +10672,6 @@ float frLine(float o, float fw, float c, float w) {
     const own = (x, z) => Math.floor(x / CHUNK) === cx && Math.floor(z / CHUNK) === cz;
     this._postBoxes(flat, cx, cz);
     const poleCol = [0.28, 0.3, 0.32];
-    const lampCol = [1.0, 0.94, 0.76];
     // NOTHING IS PLANTED IN A PORTAL PIT. The carve digs hw + 7.6 m either
     // side of a cutting, and a road carried over it on a lid keeps its grade
     // while its kerbside does not: street trees, lamp posts and clutter set at
@@ -10569,6 +10694,7 @@ float frLine(float o, float fw, float c, float w) {
       const e = city.edges[ei];
       return t * e.len < this.paveStart(e.a, ei, sg) + 0.6 || (1 - t) * e.len < this.paveStart(e.b, ei, sg) + 0.6;
     };
+    const lamps = [];
     for (const ei of ch.edges) {
       if (performance.now() - this._yt > this._yb) { yield; this._yt = performance.now(); }
       const e = city.edges[ei];
@@ -10590,7 +10716,7 @@ float frLine(float o, float fw, float c, float w) {
       // carry their distribution lines on poles down one side, the street
       // light hung from the pole on a davit arm -- the most Ontario thing on a
       // street, and Seattle's steel masts are not it. See hydroLine.
-      const hydro = hydroEdge(e, mx, mz);
+      const hydro = hydroEdge(e, mx, mz), era = streetEra(mx, mz);
       if (hydro) this.hydroLine(flat, glow, e, a, b, px, pz, hydro, onCorner, ei, inPit);
       for (let i = 1; i <= count; i++) {
         const t = i / (count + 1);
@@ -10616,15 +10742,21 @@ float frLine(float o, float fw, float c, float w) {
         if (h < 0.42 && hydro) {
           // the hydro poles carry this street's lights
         } else if (h < 0.42) {
-          // street light: base, tapered mast, cranked arm, lit lens
-          flat.box(ox, gy, oz, 0.42, 0.22, 0.42, armRot, [0.24, 0.25, 0.27]);
-          flat.prism(ox, gy + 0.2, oz, 0.115, 6.4, 8, poleCol);
-          this.city.addObstacle(this._ck, ox, oz, 0.35);
-          flat.prism(ox - px * sg * 0.28, gy + 6.6, oz - pz * sg * 0.28, 0.1, 0.9, 6, poleCol);
-          flat.box(ox - px * sg * 1.0, gy + 7.4, oz - pz * sg * 1.0, 1.9, 0.16, 0.16, armRot, poleCol);
-          flat.box(ox - px * sg * 1.85, gy + 7.15, oz - pz * sg * 1.85, 0.85, 0.26, 0.42, armRot, [0.3, 0.31, 0.33]);
-          glow.box(ox - px * sg * 1.85, gy + 7.06, oz - pz * sg * 1.85, 0.7, 0.1, 0.34, armRot, lampCol);
-          this._fell.push(ox, oz, f0, flat.ni);
+          // AUTO KW: the street light of the street's era (streetEra), in
+          // the boulevard where there is one, else behind a kerb-side walk
+          // or just off the kerb on a street with none (citygen `swk`)
+          const swk = e.swk === undefined ? 3 : sg > 0 ? e.swk & 3 : (e.swk >> 2) & 3;
+          const lo = e.hw + (swk === 2 ? 0.55 : swk === 1 ? 2.05 : swk === 0 ? 0.8 : 1.4);
+          const lx = x + px * sg * lo, lz = z + pz * sg * lo;
+          if (city.onRoad(lx, lz, 0.6) || this._onApron(lx, lz, 0.5) || !G.isBuildable(lx, lz)) continue;
+          // (two edges' slots can fall a few metres apart either side of a
+          // node: one light per 18 m of the chunk)
+          let near = false;
+          for (let q = 0; q < lamps.length; q += 2) if ((lamps[q] - lx) ** 2 + (lamps[q + 1] - lz) ** 2 < 324) { near = true; break; }
+          if (near) continue;
+          lamps.push(lx, lz);
+          this._eraLamp(flat, glow, lx, G.terrainHeight(lx, lz) + WALK_Y, lz, -px * sg, -pz * sg, e.cls === 'ramp' ? 1 : era);
+          this._fell.push(lx, lz, f0, flat.ni);
         } else if (h < 0.84) {
           // The street tree's old slot, left empty on purpose: trees.js plants
           // both kerbs every 11-13 m now and keeps off every slot here, so a

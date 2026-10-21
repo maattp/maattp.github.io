@@ -1196,7 +1196,7 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
     if (mode === VERGE_T && city.roadLift(x, z) > 0.02) return no('pavement');
     return mode !== OPEN && world.inBuilding(x, z, walk ? 0.6 : 1.0) ? no('building') : true;
   };
-  const plant = (x, z, th, cr, kind, tone, from) => {
+  const plant = (x, z, th, cr, kind, tone, from, rMax = 0.6) => {
     if (recs.length >= cap * REC) { st.treesCapped = (st.treesCapped || 0) + 1; return; }
     const gy = G.terrainHeight(x, z);
     const seed = hash2(Math.round(x * 4) + 101, Math.round(z * 4) - 77);
@@ -1205,13 +1205,14 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
     // a road-less chunk's far crowns go to the TreeSystem's pool instead
     if (!pooled) writeFarTree(flat, x, gy, z, th, cr, kind, seed, tone);
     if (solid) {
-      const r = kind === SHRUB ? 0.5 : clamp((kind === CONIFER ? 0.09 : 0.075) * cr + 0.12, 0.3, 0.6);
+      const r = kind === SHRUB ? 0.5 : clamp((kind === CONIFER ? 0.09 : 0.075) * cr + 0.12, Math.min(0.3, rMax), rMax);
       const l = city.obstacles.get(ck);
       obs = l ? l.length / 3 : 0;
       city.addObstacle(ck, x, z, r);
       if (world._fell && !pooled) world._fell.push(x, z, f0, flat.ni);
     }
     recs.push(x, gy, z, th, cr, kind, seed, tone, obs);
+    if (solid && globalThis.__logSolids) globalThis.__logSolids.push('tree:' + from, x, z, rMax);   // (tools/kw/poleprobe.js)
     st.treesPlanted++;
     st.treesByKind[from]++;
   };
@@ -1286,6 +1287,35 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
         const h = hash2(ei * 7 + Math.round(s), sg * 13 + 1);
         if (h > fill || thin(ei + Math.round(s), sg)) continue;
         const cxl = a.x + ux * s, czl = a.z + uz * s;
+        // (never on a hydro pole's spot: hydroLine plants them after nothing
+        // here, and a mid-ring build has no poles to test against)
+        if (world.hydroPoleNear(e, cxl + px * sg * (e.hw + 1), czl + pz * sg * (e.hw + 1), 1.6)) { no('pole'); continue; }
+        // AUTO KW: A BOULEVARD TREE STANDS IN THE BOULEVARD. Where OSM maps
+        // this side's walk behind a grass strip (citygen `swk` 2), the tree
+        // is in that strip, 0.6 m off the kerb line -- not behind the walk on
+        // the front lawn. Clear of the kerb furniture's slots, driveways,
+        // poles and anything else solid; its trunk's solid kept slim (0.28 m)
+        // so a car brushing the kerb is not hung on it.
+        const sk = e.swk === undefined ? 3 : sg > 0 ? e.swk & 3 : (e.swk >> 2) & 3;
+        if (sk === 2 && e.cls !== 'art') {
+          const bx = cxl + px * sg * (e.hw + 0.6), bz = czl + pz * sg * (e.hw + 0.6);
+          let slot = false;
+          for (let q = 0; q < slots.length; q += 2) if (slots[q + 1] === sg && Math.abs(slots[q] - s) < 2.8) { slot = true; break; }
+          if (slot) { no('kerbSlot'); continue; }
+          if (world._onApron(bx, bz, 1.2)) { no('apron'); continue; }
+          { const ns = city.nodeSurface(bx, bz); if (ns && ns.inSquare) { no('junction'); continue; } }
+          if (world.hydroPoleNear(e, bx, bz, 1.6)) { no('pole'); continue; }
+          // (a pole slid off a driveway, or a light: what the near build has
+          // planted already -- a mid build has none, and differs only there)
+          if (solid && city.obstacleHit(bx, bz, 0.9, G.terrainHeight(bx, bz) + 1)) { no('solid'); continue; }
+          if (!clear(bx, bz, 0.3, WALK)) continue;
+          const r = hash2(Math.round(bx * 5), Math.round(bz * 5) + 3);
+          const big = e.cls === 'res' ? leafy : 0.8;
+          if (r < 0.2) plant(bx, bz, 8 + 5 * sub(r, 3), 1.5 + 0.7 * sub(r, 4), COLUMNAR, T_STREET, 'street', 0.28);
+          else plant(bx, bz, (7 + 8 * sub(r, 3)) * (0.8 + 0.3 * big), (3 + 2.6 * sub(r, 4)) * (0.85 + 0.25 * big), BROAD, T_STREET, 'street', 0.28);
+          st.boulevardTrees = (st.boulevardTrees || 0) + 1;
+          continue;
+        }
         // past the pavement and its verge, on the grass in front of the
         // houses; where a building, a lot or a drive meets the pavement,
         // a grate on the pavement instead (arterials and minor streets)

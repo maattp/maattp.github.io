@@ -2796,11 +2796,90 @@ file and a guide disagree, this file wins.
     attributes the scene pass at six driver's-seat cameras. trafficbench
     (rail off) hashes identical to master, funprobe 63 ok / ALL OK on both,
     drivetest output identical, 0 exceptions.
-  - **Approximate / not done:** NEW_SUBDIVS radii; boulevard trees still
-    stand behind the walk (trees.js), not in the boulevard; the junction
-    corner pavements stay concrete on a no-sidewalk side; peds still walk the
-    strip where it is lawn; the far LOD car models are the clustered ones
-    (fine past ~10 m, blobby closer); hydro lines are unchanged (OLD_CORES).
+  - **Approximate / not done:** NEW_SUBDIVS radii; the far LOD car models
+    are the clustered ones (fine past ~10 m, blobby closer). The next entry
+    did the boulevard trees, the walkers, the lawn corners and the hydro.
+
+- **The residential street by era: poles, lights, trees, walkers, corners**
+  (docs/streets-era-old.jpg, streets-era-lights.jpg, streets-corners.jpg:
+  master left, this right). v59's leftovers.
+  - **`streetEra(x, z)`** (world.js): 0 pre-1970 = `OLD_CORES` + `OLD_HOODS`
+    (new judgement list round OSM's place nodes: Westmount, Belmont Village,
+    Northdale, Victoria Hills, Forest Hills -- the garage rule still reads
+    OLD_CORES only); 2/3 = `NEW_SUBDIVS` (post-1985; now also Laurelwood's
+    west end to Erbsville Rd); 1 everything else (1970-85). OSM has no era
+    data (45 dated buildings in the box); a top-down render of the
+    res/st edges coloured by era was the check. Era 0 side streets carry the
+    overhead hydro (`hydroEdge`), wood poles with the cobra head on a davit
+    and no street lights of their own, as before. Others get `_eraLamp` in
+    meshProps' old lamp slot (h < 0.42): **1** a grey direct-buried pole
+    (no base plate) ~8 m, straight bracket, cobra head; **2** a black fluted
+    post ~4 m with a post-top coach lantern (Waterloo's west side and
+    Eastbridge: NEW_SUBDIVS centres with x < -5000, and Eastbridge's);
+    **3** a black ~6.6 m pole with an upswept davit and a flat LED head
+    (Kitchener, Cambridge). Arterials keep their hydro. Seattle's tapered
+    mast with the cranked arm is gone from residential streets. One light per
+    18 m of a chunk (two edges' slots fell 4 m apart across a node). All into
+    the chunk's flat/glow builders: no draws. Which style each subdivision
+    has is a judgement too (no photo survey per street).
+  - **Where things stand on the strip, by the side's sidewalk** (`swk`):
+    a light at hw + 0.55 in a boulevard, + 2.05 behind a kerb walk, + 0.8
+    with none, + 1.4 not known; a hydro pole at `POLE_OFF` [0.8, 2.05, 0.55,
+    1.5] the same way. A pole's lattice spot that lands on a driveway apron
+    slides up to 5.5 m along the kerb; a span is strung back across a node
+    only to an edge whose poles stand on the same line (`poleSwk`).
+  - **Builder.box's rotation sense, again:** the hydro crossarm and davit,
+    and v59's community mailboxes and letter boxes, used `atan2(x, z)` for a
+    box whose length is along (x, z) -- mirrored, so on a diagonal street the
+    crossarm ran skew and the mailbox was turned off the kerb. A box's local
+    z is along (x, z) with `atan2(-x, z)`.
+  - **Boulevard trees stand in the boulevard** (trees.js): on a `swk` 2 side
+    a res/st street tree is planted 0.6 m off the kerb line, in the 1.1 m
+    grass band, not 4.1 m out on the front lawn; clear of the kerb furniture
+    slots, driveway aprons (1.2 m), the hydro lattice (`world.hydroPoleNear`:
+    from the edge alone, so a mid-ring build plants the same trees) and, in a
+    near build, any solid within 0.9 m (a slid pole, a light). Its trunk's
+    solid is capped at 0.28 m (`plant(..., rMax)`). Every street tree now
+    keeps 1.6 m off a hydro pole's lattice spot on its side (70 trunks stood
+    on poles in the probe's sites before). `cityStats.boulevardTrees`.
+  - **Pedestrians walk the walk** (peds.js `walkOff(e, sg)`, `SWK_OFF`):
+    the middle of OSM's walk -- 0.75 m past the kerb (kerb walk), 1.85
+    (boulevard) -- or the road's edge, 0.35 m in from the kerb, where a side
+    has none (people walk in the street there; standing cars are stepped
+    round by `_avoidCar`); 1.4 not known. Spawning, the walking line, a
+    reanchor and planNode's corners and crossings (`armOff`: each arm's line
+    on its own side) all use it. `tools/kw/pedline.js` (runs on master too):
+    no-sidewalk sides master 1.41 m past the kerb, 100 % on the lawn -> this
+    -0.31 m, 1 %; kerb walks 1.40 -> 0.75 m, 98 -> 100 % on the walk;
+    boulevards 1.41 -> 1.86 m (master's line was the boulevard's edge).
+  - **Lawn corners** (world.js meshJunction): citygen's junction pieces carry
+    `sd` (arm i's edge and +p side, arm i+1's edge and -p side); each corner
+    quad in the half belonging to a side with `swk` 0 is drawn as lawn (the
+    road material's grass mode, the ground's tint), the other half as before.
+    Heights are unchanged (nodeSurface still answers WALK_Y there).
+  - **Verify** (all sequential, never two harnesses at once):
+    `VIEW_BOOT_JS='window.__logSolids=[]' VIEW_PROBE_FILE=tools/kw/poleprobe.js
+    AUTO_PHONE=1 node tools/kw/kwshots.mjs /tmp/x` streams 18 residential
+    sites and checks every pole and light (world.js `logSolid`; trees.js logs
+    its near-build trees): 4776 poles, 470 lights, **0 in a lane**, 0 with a
+    trunk on them, 10 on a driveway (0.2 %: the apron belongs to a house in
+    the NEIGHBOURING chunk, which `_onApron` -- per chunk -- cannot see).
+    Phone (AUTO_PHONE=1, GPU), master -> this: spawn 177/1146k -> 176/1135k;
+    air-uptown 285 -> 287, air-river 209 = , air-galt 145 = , air-region 223
+    -> 220; streetdraws westmount 290/1622k -> 293/1629k, mthope 260 -> 262,
+    breithaupt 318 = , doonsouth 188/1310k -> 189/1295k, activa 106 -> 107,
+    galt 133 -> 134 (+1 everywhere is a walker's SkinnedMesh: the crowd
+    stands elsewhere now; triangles within 1 %). trafficbench (rail off,
+    phone) hashes identical to master at all six sites; AUTO_GPU=1 funprobe
+    63 ok / ALL OK; 0 exceptions.
+  - **Approximate / not done:** the era lists are judgement circles, and a
+    1970s pocket inside an OLD_CORES circle gets poles; the boulevard is the
+    strip's 1.1 m (the pavement strip is 2.6 m wide on every res street, so a
+    real 2-3 m boulevard is drawn narrower); a light or pole can still stand
+    on a driveway whose house is in the next chunk; a walker on the road's
+    edge steps round parked cars but does not step up onto a walk where one
+    starts mid-block; the slid poles' spans may meet a pole in the next chunk
+    that did not slide (a driveway only one chunk knows).
 
 ## Build number
 
