@@ -535,12 +535,108 @@ file and a guide disagree, this file wins.
     kwshops' tris map-wide 142k -> 269k. trafficbench hashes unchanged;
     funprobe ALL OK.
   - Not done: indoor mall tenants have no sign (no storefront to hang it
-    on); ~290 fronts outside the clusters stay world.js's boxes (on
-    Hespeler Rd: Tirecraft, Ontario Auto Market, Fix Auto, Car Match, past
-    their cluster's edge; dealers get 120 m, the rest 60); a pad is one box (no mansard, no real
-    drive-through lane); the 580 Hespeler row's storefront is a guess between
+    on); the fronts still outside every cluster stay world.js's boxes (the
+    next entry pulled in Hespeler Rd's Tirecraft, Ontario Auto Market, Fix
+    Auto and Car Match); the 580 Hespeler row's storefront is a guess between
     its lot and the road; OSM stores with no building (Action Auto Leasing)
     are not drawn.
+- **The drive-throughs, and the pads' silhouettes** (docs/dthru-*.jpg;
+  src/drivethru.js; kwshops.js `driveLane`, `padSilhouette`).
+  - **Data**: `tools/kw/extract_drivethru.py` pulls every OSM
+    highway=service + service=drive-through way (305) into
+    `raw_drivethru.json`; build_shops.py `drive_lane()` gives a food pad
+    (`f` front, tenant not drive_through=no) the lane passing closest to its
+    outline (within 9 m, 15-260 m long) as front[6], its points turned so the
+    building is on the driver's LEFT (mappers draw them either way, oneway or
+    not). 71 of the 166 pads, 27 of the 34 Tims pads. Re-run
+    extract_drivethru.py then build_shops.py (only `fronts` gains the lanes).
+  - **Drawn** (in the pad's own `kwp` cluster builder, no draws): the lane
+    resampled every 1.5 m; the WINDOW where it passes closest with the
+    building on the left (on that face: glass, frame, sill, a bump-out
+    canopy in the band colour), and the stop spot moved to the lane point
+    nearest the window as drawn (clamped off a corner); yellow edge lines
+    1.75 m either side (tangents across each sample, so corners close), a
+    white arrow every 13 m, a stop bar at the window -- none on the
+    building or a street (`city.onRoad`); the MENU BOARD ~16 m before the
+    window (13/19/10 if that spot is taken) 2.7 m to the driver's left:
+    posts, the board, its lit panels, a header in the band colour, a solid;
+    the SPEAKER POST just past it with its little canopy; a DRIVE THRU sign
+    (lettering atlas) where the lane starts. Paint is 5 cm over
+    terrainHeight on short segments (the one height surface).
+  - **Silhouettes** (`PAD_SIL`, over pad()'s box): Tims (current pads)
+    espresso fascia band with the red line, stone wainscot, base and piers,
+    a wood-brown entrance tower with a red cap and stone corners; McDonald's
+    grey box, the yellow eyebrow arch standing on the parapet near the
+    drive-through end, a wood-slat panel; Wendy's red sloped tower; Harvey's
+    red tower (yellow cap); A&W dark tower with the orange cap; Burger King
+    and Starbucks sloped towers; KFC red and white bucket stripes round the
+    parapet; DQ and Popeyes mansards (`mansard()`). Helpers: `slopeBlock`
+    (a block with a sloped top, from quads), `mansard`, `eyebrow`.
+  - **The line** (drivethru.js): each lane within 230 m keeps a queue back
+    from the window (6.4 m nose to nose) as long as the hour makes it
+    (`lineFor`: a Tims 7 at 6-10 am, 4 to 2 pm, 3, 2, 1 at night;
+    others 4 at lunch, 3 at supper, 1, none overnight; the phone's own
+    clock, `__dbg.dthru.hour` pins it), capped by the lane's length. Every
+    26 s (34 elsewhere; 5 with you in the lane) the car at the window pulls
+    away along the lane and the rest creep up a car length over 4 s. Car
+    identity is the cycle number, so colours and types stay with a car as
+    it moves up. **They are scenery, not traffic**: `traffic.decor` (x, y,
+    z, heading, type, colour) is drawn through the far LOD's InstancedMeshes
+    (traffic.js `updateFarLod`, now also on desktop when there is decor;
+    the cars' own far pass is `_farCars`), frustum-culled per car, two types
+    (crossover, suv) so a screenful of lines costs at most two draws (often
+    none: far traffic of those types is already drawn). Nothing touches
+    `traffic.cars`, its RNG or Math.random -- trafficbench hashes are
+    unchanged.
+  - **You in it**: in the lane (within 2.6 m, facing its way) the cars
+    behind you go, the ones ahead stay and are SOLID to your car
+    (`keepOut`: OBB push-out, the speed into it taken away, a bump not a
+    crash); the line serves every 5 s, so you reach the window in a minute.
+  - **The window**: stopped (under 2.5 m/s) within 6 m of it, ENTER
+    (main.js `tryDriveThru`, before getting out) orders: a Tims window is
+    Roll Up the Rim's drive-thru (rollup.js, as before); anywhere else
+    `MENU` -- McCafé medium $2, a Frosty $2, onion rings $3, a mug of root
+    beer $2, a Whopper Jr. $4, fries and gravy $4, Pike Place $3, Cajun
+    fries $3, a Blizzard $5 (whole dollars: the wallet is) -- charged to
+    game.money, +5..18 health, a toast. The next ENTER there gets you out
+    (`lock`). Slowing near a window toasts what it sells once a visit.
+  - **The Hespeler leftovers**: a front past M of its own cell's cluster is
+    now drawn when some cluster's extent -- its own cell's or a
+    NEIGHBOUR's -- is within `NEXT_M` (150 m); a neighbour's is merged into
+    via `b.kw.shop.ck` and buildShops' `key()` redirect (a 40 m grid of the
+    redirected buildings, so its geometry, logos and lettering all go to
+    that cluster; its road pylon is skipped). Fronts drawn map-wide 655 ->
+    748 (Tirecraft Cambridge, Ontario Auto Market, Fix Auto Cambridge, Car
+    Match on Hespeler Rd among them); frontprobe marks these NEXT.
+  - **561 Hespeler's light squares in the sky** were kw.js meshPoly's
+    rooftop units: placed between the outline's VERTEX centroid and a
+    corner, which for an L or a U is out over the car park -- grey boxes
+    6 m up over the lot. Each unit's corners are now tested inside the
+    outline (skipped if not); kwplaces.js's one unit at the centroid of a
+    big outline has the same test. `tools/kw/floatprobe.js` lists small
+    pieces in the landmark clusters standing in the air with no building
+    under them (noisy: plaza parapet towers and fascia signs list too;
+    look for the grey 0.4 boxes).
+  - Verify: `AUTO_GPU=1 node tools/kw/funprobe.mjs <dir> dthru` (lanes
+    drawn, a lunch line ahead of you with nobody behind, its bumper solid,
+    ordering at a window and the second ENTER out, a Tims window opening
+    Roll Up the Rim, the morning Tims line). Shots of the lines while the
+    game is paused (kwshots): pose them in a view's eval with
+    `d.dthru.hour = 8; d.dthru.update(0.016, x, z, null)` and
+    `traffic.updateFarLod(x, z, d.player)` with `traffic.camera = null`.
+  - Phone (AUTO_PHONE=1, GPU), master -> this: spawn 176/179 -> 178/178
+    draws, 1118-1126k -> 1129k tris; with no line (3 am) every view within
+    master's run-to-run drift (+0..+2 draws: Hespeler from the air 201/203
+    -> 203, 561 Hespeler's lot 174/194 -> 175/196); with the 8 am lines
+    +2..+5 by a Tims (at -2527, -404: 238/240 -> 247, drift included), tris +10..60k.
+    trafficbench hashes identical to master at all six sites.
+  - Not done: the queued cars are far-LOD models (fine at 10 m, plain up
+    close) and pass through pedestrians and other traffic; a car leaving the
+    window vanishes at the lane's end and a new one appears at the back;
+    pads with no OSM lane keep the side window with no lane (95 of 166);
+    the lane paint crosses the lot's painted stalls (the lot is the terrain
+    shader's); the McDonald's eyebrow is an arch on the parapet, not the
+    curved fascia of the newest pads.
 - **ION, as it is** (src/link.js on `data/link.json`; docs/ion-*.jpg).
   Sources (Oct 2026): Wikipedia "Ion rapid transit" (stations, 10-minute
   weekday headway, 70 km/h corridor / 50 street / 20-25 in pedestrian
