@@ -15,7 +15,8 @@ of the brands that matter most that OSM lacks. src/kwshops.js draws them.
   stores  [key, x, z, bx, bz, plaza, addr, name]   bx/bz: the building's centroid
                                                     (null: no building, kwshops builds one)
           for a gas station bx/bz is its CANOPY (OSM building=roof), else null
-  plazas  [{n, x, z, o: outline, ten: [tenant names, anchors first]}]
+  plazas  [{n, x, z, o: outline, ten: [tenant names, anchors first],
+           sh?: [[name, x, z], ...] the independents (no brand here) outside kw.js's zones: their fascia signs}]
   names   lowercase brand/name strings handled here (kw.js's zone storefronts skip them)
 """
 
@@ -50,12 +51,29 @@ BRANDS = {
     "giant": ["Giant Tiger"],
     "sportchek": ["Sport Chek"],
     "shoppers": ["Shoppers Drug Mart"],
+    "rexall": ["Rexall"],
+    "pharmasave": ["Pharmasave"],
+    "dollartree": ["Dollar Tree"],
+    "bulkbarn": ["Bulk Barn"],
+    "petvalu": ["Pet Valu"],
+    "petsmart": ["PetSmart"],
+    "michaels": ["Michaels"],
+    "marks": ["Mark's", "Mark's Work Wearhouse"],
+    "indigo": ["Indigo", "Chapters"],
+    "homehardware": ["Home Hardware", "Home Hardware Building Centre"],
+    "brick": ["The Brick"],
+    "leons": ["Leon's"],
+    "golftown": ["Golf Town"],
     # groceries
     "zehrs": ["Zehrs"],
     "sobeys": ["Sobeys"],
     "foodbasics": ["Food Basics"],
     "nofrills": ["No Frills"],
     "superstore": ["Real Canadian Superstore"],
+    "independent": ["Your Independent Grocer"],
+    "farmboy": ["Farm Boy"],
+    "longos": ["Longo's"],
+    "tnt": ["T&T Supermarket", "T&T", "大統華 T&T Supermarket"],
     # beer, wine and spirits
     "lcbo": ["LCBO"],
     "beer": ["The Beer Store", "Beer Store"],
@@ -91,8 +109,10 @@ GAS = {
 # a store inside another's (Costco's food court, Walmart's pharmacy): not a store of its own
 INSIDE = re.compile(r"Pharmacy|Food Court|Tire Centre|Garden Centre|Optical|Photo|Bakery|Auto Centre|Express$|Mobile$", re.I)
 # the brands a plaza's pylon lists first
-ANCHOR = ["walmart", "costco", "ct", "homedepot", "rona", "zehrs", "sobeys", "foodbasics", "nofrills", "superstore", "bestbuy",
-          "winners", "homesense", "marshalls", "staples", "lcbo", "beer", "shoppers", "valuevillage", "sportchek", "giant", "dollarama"]
+ANCHOR = ["walmart", "costco", "ct", "homedepot", "rona", "zehrs", "sobeys", "foodbasics", "nofrills", "superstore", "independent",
+          "farmboy", "longos", "tnt", "bestbuy", "winners", "homesense", "marshalls", "staples", "lcbo", "beer", "shoppers",
+          "valuevillage", "sportchek", "michaels", "petsmart", "marks", "indigo", "brick", "leons", "homehardware", "golftown",
+          "giant", "bulkbarn", "dollarama", "dollartree", "rexall", "pharmasave", "petvalu"]
 
 # brands whose official list is complete (kw_shops_official.json): OSM stores off it are closed
 AUTHORITATIVE = {"lcbo", "beer", "walmart", "costco", "homedepot", "zehrs"}
@@ -113,6 +133,9 @@ def table(d):
 
 
 BT, GT = table(BRANDS), table(GAS)
+# kw.js's detail zones (build_kw.py ZONES): their storefronts are signed there
+from build_kw import ZONES  # noqa: E402
+ZONES_W = [(*to_world(la, lo), r) for _, la, lo, r in ZONES]
 
 
 def classify(s):
@@ -252,7 +275,7 @@ def main():
         if not inmap(cx, cz):
             continue
         plazas.append({"n": p["n"], "x": round(cx, 1), "z": round(cz, 1), "o": [[round(q[0], 1), round(q[1], 1)] for q in simplify(p["o"])],
-                       "A": A, "ten": [], "_t": []})
+                       "A": A, "ten": [], "_t": [], "_s": []})
     plazas.sort(key=lambda p: p["A"])     # a point in two plazas belongs to the smaller
 
     def plaza_of(x, z):
@@ -274,6 +297,11 @@ def main():
             ten = plazas[pi]["_t"]
             if not any(norm(t[1]) == norm(nm) for t in ten):
                 ten.append((ANCHOR.index(k) if k in ANCHOR else 50 + (0 if k else 20), nm))
+            # the independents' storefront signs (kw.js signs the detail zones' own, and Tims and FreshCo)
+            if not k and len(nm) <= 30 and not re.search(r"Tim Horton|FreshCo", nm) and not any(math.hypot(x - zx, z - zz) < zr for zx, zz, zr in ZONES_W):
+                fas = plazas[pi]["_s"]
+                if not any(norm(f[0]) == norm(nm) for f in fas):
+                    fas.append([nm, round(x, 1), round(z, 1)])
         if not k:
             continue
         names.add(norm(s["t"].get("brand") or nm))
@@ -331,6 +359,9 @@ def main():
 
     for p in plazas:
         p["ten"] = [n for _, n in sorted(p.pop("_t"), key=lambda t: t[0])][:12]
+        fas = p.pop("_s")
+        if fas:
+            p["sh"] = fas[:18]
         p.pop("A")
     used = sorted({s["p"] for s in stores if s["p"] >= 0} | {i for i, p in enumerate(plazas) if len(p["ten"]) >= 3})
     remap = {o: i for i, o in enumerate(used)}
