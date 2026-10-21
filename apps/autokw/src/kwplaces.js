@@ -296,6 +296,7 @@ function gabled(B, o, y0, eave, ridge, wall, roofc, opts = {}) {
 
 const BRICK = [[0.60, 0.29, 0.21], [0.52, 0.25, 0.19], [0.68, 0.38, 0.27], [0.80, 0.68, 0.48], [0.47, 0.31, 0.24],
   [0.84, 0.80, 0.70], [0.40, 0.47, 0.42], [0.62, 0.60, 0.56], [0.72, 0.62, 0.46]];
+const STONES = [[0.69, 0.65, 0.56], [0.62, 0.59, 0.52], [0.74, 0.70, 0.60], [0.58, 0.55, 0.50], [0.66, 0.60, 0.50], [0.71, 0.68, 0.62]];
 const TRIMS = [[0.92, 0.90, 0.84], [0.20, 0.22, 0.20], [0.86, 0.80, 0.66], [0.18, 0.26, 0.20], [0.42, 0.14, 0.12]];
 const AWN = [['#1f4d36', null], ['#7a1f24', null], ['#1d2f55', null], ['#1a1a1a', null], ['#2f6b3b', '#f3efe2'],
   ['#8a2b1e', '#f3efe2'], ['#24476b', '#f3efe2'], ['#c46a1f', null], ['#5a2a4a', null]];
@@ -393,7 +394,9 @@ function meshKing(kit, ctx, r, idx) {
   const yb = lo - 1.2;
   const base = walkY(city, cx, cz);
   const yTop = base + (po ? 15.2 : H);
-  const wall = lin(po ? [0.62, 0.27, 0.20] : BRICK[Math.floor(hash2(seed, 1) * BRICK.length)]);
+  // Galt's blocks (kwsights.js, `pal` 'stone') are the Grand's grey-buff limestone
+  const PAL = r.pal === 'stone' ? (hash2(seed, 8) < 0.78 ? STONES : BRICK) : BRICK;
+  const wall = lin(po ? [0.62, 0.27, 0.20] : PAL[Math.floor(hash2(seed, 1) * PAL.length)]);
   const trim = lin(po ? [0.80, 0.70, 0.52] : TRIMS[Math.floor(hash2(seed, 2) * TRIMS.length)]);
   const dark = shade(wall, 0.72);
   const GLASS = lin([0.13, 0.17, 0.21]), GLASS2 = lin([0.22, 0.28, 0.33]);
@@ -2145,6 +2148,10 @@ const MALL_ANCHORS = [
   ['URBAN BEHAVIOR', '#111111', '#ffffff', -4240, -4938, 10, '800', SANS],
   ['The Pickle Barrel', '#2f5d2a', '#f4e7c3', -4291, -5086, 7, '700', SERIF],
 ];
+// skylights and Zehrs' solar roof, measured off the aerial (Esri World Imagery, 2026)
+const MALL_COURTS = [[-4241, -5125], [-4168, -5122]];
+const MALL_CLERESTORY = [[-4239, -5207, -5051]];
+const ZEHRS_SOLAR = [-4108, -5045, -4012, -4950];
 // OSM's entrance nodes; the first is the main entrance (ref 1) on the west, facing the ION
 const MALL_DOORS = [[-4297, -5125, 1], [-4126, -4911, 1], [-4131, -5154], [-4171, -5277], [-4275, -5211], [-4077, -5057], [-4171, -4954], [-4300, -4941], [-4269, -5313], [-4032, -5008]];
 
@@ -2170,17 +2177,30 @@ function mall(kit, ctx) {
     for (let t = 7; t < e.L - 1; t += 7.5) B.quad(e.at(t - 0.06, gy + 0.9, 0.04), e.at(t + 0.06, gy + 0.9, 0.04), e.at(t + 0.06, yTop - 1.4, 0.04), e.at(t - 0.06, yTop - 1.4, 0.04), N, U0, JOINT);
   }
   roof(B, pts, yTop, lin([0.62, 0.62, 0.60]));
-  // the concourse skylights: a row of glazed pyramids down the long axis
+  // the concourse skylights, from the aerial (Esri World Imagery, 2026): the
+  // two octagonal courts where the corridors cross, a glazed clerestory down
+  // the north-south corridor, and Zehrs' roof covered in solar panels
   const o = obb(pts);
-  const SKY = lin([0.40, 0.52, 0.60]);
-  for (let u = -o.hu + 15; u < o.hu - 15; u += 14) {
-    const x = o.x + o.ux * u, z = o.z + o.uz * u;
-    if (!inPoly(pts, x, z)) continue;
-    const s = 3.2, h = 2.4, rot = Math.atan2(o.uz, o.ux), c = Math.cos(rot), sn = Math.sin(rot);
-    const C = [[-s, -s], [s, -s], [s, s], [-s, s]].map(([a, b]) => [x + a * c - b * sn, yTop, z + a * sn + b * c]);
-    for (let i = 0; i < 4; i++) {
-      const a = C[i], b = C[(i + 1) % 4], mx = (a[0] + b[0]) / 2 - x, mz = (a[2] + b[2]) / 2 - z, ml = Math.hypot(mx, mz);
-      B.tri(a, b, [x, yTop + h, z], [mx / ml * 0.7, 0.7, mz / ml * 0.7], SKY);
+  const SKY = lin([0.34, 0.44, 0.50]), FRM = lin([0.80, 0.80, 0.78]);
+  for (const [x, z] of MALL_COURTS) {
+    B.prism(x, yTop, z, 6.2, 1.8, 8, FRM, Math.PI / 8);
+    B.cone(x, yTop + 1.8, z, 6.4, 3.4, 8, SKY);
+    B.cone(x, yTop + 1.79, z, 6.4, 0.01, 8, FRM);
+  }
+  for (const [x, z0, z1] of MALL_CLERESTORY) {
+    for (let z = z0; z < z1; z += 9) {
+      if (MALL_COURTS.some(([cx, cz]) => Math.hypot(cx - x, cz - z - 3.5) < 9)) continue;
+      B.box(x, yTop, z + 3.5, 4.5, 1.3, 7, 0, SKY);
+      B.box(x, yTop + 1.3, z + 3.5, 5, 0.25, 7.6, 0, FRM);
+    }
+  }
+  {
+    const [x0, z0, x1, z1] = ZEHRS_SOLAR, PV = lin([0.10, 0.13, 0.22]), PVF = lin([0.55, 0.56, 0.58]);
+    for (let z = z0; z < z1; z += 3.2) for (let x = x0; x < x1; x += 5.2) {
+      if (!inPoly(pts, x, z) || !inPoly(pts, x + 4.6, z + 2)) continue;
+      // a south-facing tilted panel row
+      B.quad([x, yTop + 0.4, z + 2], [x + 4.8, yTop + 0.4, z + 2], [x + 4.8, yTop + 1.1, z + 0.2], [x, yTop + 1.1, z + 0.2], [0, 0.93, 0.36], U0, PV);
+      B.quad([x, yTop + 0.02, z + 0.2], [x + 4.8, yTop + 0.02, z + 0.2], [x + 4.8, yTop + 1.1, z + 0.2], [x, yTop + 1.1, z + 0.2], [0, 0, -1], U0, PVF);
     }
   }
   // rooftop units
@@ -2669,3 +2689,11 @@ export class Geese {
     if (w !== null && g.st === 'graze') g.st = 'stand';   // no grazing afloat
   }
 }
+
+// The kit and helpers kwsights.js (downtown Kitchener, Cambridge, the malls...)
+// builds with: one shared pair of materials, so a cluster holding both stays
+// one draw per material.
+export {
+  inPoly, polyArea, centroid, obb, simplify, edges, street, walkY, hang, PlaceAtlas, Kit, roof, wallSolids, gabled,
+  lin, shade, hex, meshKing, KING_SKIP, signPanel, gazebo, tree, squareLight, SANS, SERIF, U0, T,
+};

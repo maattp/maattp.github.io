@@ -776,7 +776,7 @@ export function buildSigns(ctx) {
   const plated = new Set();
   for (const b of city.buildings) {
     const S = b.kw && b.kw.name && LM_SIGNS[b.kw.name];
-    if (!S || plated.has(b)) continue;
+    if (!S || plated.has(b) || b.kw.skip) continue;   // drawn (and signed) by kwplaces / kwsights
     plated.add(b);
     const rd = faceRoad(city, b.x, b.z, 260);
     const tx = rd ? rd.qx : b.x + 100, tz = rd ? rd.qz : b.z;
