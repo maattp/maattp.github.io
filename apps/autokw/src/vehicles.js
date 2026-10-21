@@ -15,6 +15,8 @@ import { clamp, lerp, hash2, damp } from './util.js';
 import * as G from './geo.js';
 import { buildBuggy, attachBuggy, syncBuggy } from './buggy.js';
 import { buildKart, KART_RIDER } from './kart.js';
+// your car's gearbox shifts where its engine's voice does (Vehicle._gearbox)
+import { ENGINES, selectEngine } from './audio.js';
 
 const TYRE = [0.05, 0.05, 0.055];
 const RIM = [0.80, 0.82, 0.85];
@@ -131,6 +133,21 @@ const STEER_BITE = 1.25;
 const TYRE_FROM = 2.5, TYRE_K = 1.2, SLIP_B = 14, SLIP_C = 1.4, FRONT_SHARE = 0.97;
 const DRIVE_EAT = 1.25, HAND_GRIP = 0.4;
 const tyreF = (a, D) => D * Math.sin(SLIP_C * Math.atan(SLIP_B * a));
+/**
+ * Your road car's tyres (spec.roadCar): the same curve to its peak and a
+ * little past it, then falling on to ~57 % of the peak for a tyre sliding
+ * sideways (20-50 deg): a slide is cheaper than grip, so a handbrake turn or
+ * a drift keeps its way on instead of scrubbing 2 g off. FRONT_ROAD: the
+ * fronts have 90 % of the rears' grip -- a road car is set up to push wide
+ * at its limit (understeer), so the tail stays behind you when you lift
+ * mid-bend rather than coming round (it tucks in, ~10 deg, and is caught).
+ * XFER_ROAD caps the load moved front/back by braking and the throttle.
+ */
+const FRONT_ROAD = 0.9, XFER_ROAD = 0.05;
+const tyreRoad = (a, D) => {
+  const x = Math.abs(a), k = x < 0.3 ? 1 : x > 0.9 ? 0.7 : 1 - 0.3 * ((x - 0.3) / 0.6) ** 2 * (3 - 2 * (x - 0.3) / 0.6);
+  return D * k * Math.sin(SLIP_C * Math.atan(SLIP_B * a));
+};
 
 /** A burnout's donut: its top yaw rate (rad/s, a turn in ~3.7 s) and how far
  *  inside the front axle it turns about (m). See Vehicle.update. */
@@ -147,7 +164,49 @@ const JET_FLAME_GEO = (() => { const g = new THREE.ConeGeometry(0.28, 1, 14, 1, 
 const JET_FLAME_MAT = new THREE.MeshBasicMaterial({ color: 0xff9248, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, side: THREE.DoubleSide });
 /** main.js's: `ignite(v)` when your car catches fire; `belly(v)` when a plane lands gear up. */
 export const VEHICLE_HOOKS = { ignite: null, belly: null };
+// (the kart's: your car's handling below replaced it for road cars)
 const PLAYER_BITE = 1.7;
+/**
+ * YOUR ROAD CAR'S HANDLING (spec.roadCar with detailedWheels: the car you
+ * drive; traffic, police and the AI keep STEER_BITE and the plain model).
+ * Measured with tools/kw/drivetest.mjs; the numbers are in CLAUDE.md
+ * ("Driving dynamics").
+ *
+ * PLAYER_GRIP: the tyres' peak in multiples of the class's real grip (latA).
+ *   It was 2.2 x 1.7 x 1.2 = 4.5 with a lock that asked for 3.7 of it, so a
+ *   sedan cornered at 3.2 g on rails and never reached its tyres' limit at
+ *   all. 2.75 is the AI's own (ARCADE_GRIP x STEER_BITE): you corner as hard
+ *   as the police, a sedan ~2.4 g -- still 2.7x a real one, which a city of
+ *   real street widths needs -- and at the limit the car now behaves like a
+ *   car (below).
+ * PLAYER_ASK: what the FULL lock asks of that peak at speed. 1: a touch stick
+ *   or a key pinned over at 100 km/h puts the car on the limit, where the
+ *   front (FRONT_SHARE) lets go first: the squeal, a little push wide and the
+ *   speed scrubbed off, rather than either rails or a spin.
+ * PLAYER_GRIP_HEAVY: a bus, a box truck (len > 7, no tyre model): the lock IS
+ *   the cornering, so their grip is their roll-over limit's game equivalent.
+ * MAX_STEER: the road wheels' lock at parking speed, which with the wheelbase
+ *   is the turning circle: 34 deg gives a sedan 11.8 m kerb to kerb (real
+ *   11.2-12.2), a city car 9.5 (9-10), a pickup 14.2 (13-15); a bus 31 deg,
+ *   25 m (23-25). It was one 4.5 m radius floor for every car.
+ */
+const PLAYER_GRIP = 3.0, PLAYER_ASK = 1.0, PLAYER_GRIP_HEAVY = 2.0;
+const MAX_STEER = 0.62, MAX_STEER_HEAVY = 0.58;
+/**
+ * WHAT THE TYRES ARE ON (your road car: Vehicle.surf / mu). `mu` scales the
+ * grip, braking and traction; `roll`/`drag` are rolling resistance (m/s^2 per
+ * m/s and per (m/s)^2) on top of the road's; `rough` the ride's ruts.
+ * Gravel: OSM's unpaved roads (data/gravel.json, the townships' concession
+ * roads), the rail lots and the sand. Grass: anywhere off the paving. Road
+ * tyres on gravel hold ~60 % of their asphalt grip, on dry grass ~50 %.
+ */
+export const SURFACES = {
+  gravel: { mu: 0.62, roll: 0.03, drag: 0.0003, rough: 0.45 },
+  grass: { mu: 0.5, roll: 0, drag: 0, rough: 1 },
+};
+// a car turning hard, braking or squatting: the body's lean at the limit, by
+// how tall it is (deg; see the suspension in Vehicle.update)
+const DEG = Math.PI / 180;
 
 // Braking was the one axis left at real-world scale, and that is why it felt
 // slow: you accelerated 2.4x harder than the spec sheet and cornered at 2.2x
@@ -417,6 +476,10 @@ function deriveSpec(s) {
     * ARCADE_BRAKE;
   // Lateral limit in m/s^2, which is what the friction circle below compares.
   s.latA = s.latG * 9.81;
+  // a road car with four wheels and a driver: your car's handling (steerLock,
+  // update, _tyres) when you drive it
+  s.roadCar = !(s.plane || s.boat || s.moto || s.atv || s.bicycle || s.buggy || s.kart || s.tank || s.ag
+    || s.balloon || s.kayak || s.hydro || s.heli || s.trailer);
   return s;
 }
 
@@ -11799,9 +11862,66 @@ export class Vehicle {
   /** The steering lock (rad) at road speed `sp`: the radius the tyres can
    *  hold, r = v^2 / a, floored at the class's tightest turn. The derivation
    *  is in update(), which is its main caller. */
+  /**
+   * YOUR CAR'S GEARBOX (road cars with an engine that has gears: audio.js
+   * ENGINES, the same profile its voice uses, so the shift you feel is the
+   * shift you hear -- audio's EngineModel follows `gbox` instead of guessing).
+   * An automatic: up at 52-94 % of the redline by throttle (never while
+   * braking), down one gear at a time as the revs fall, kicking down for a
+   * floored pedal. Returns the drive's multiplier: the engine's torque curve
+   * at the revs this gear puts it at (normalised to ~1 across a pull, so the
+   * class's 0-100 is unchanged but each gear surges and fades), and 0.12
+   * while a shift goes through (0.16 s, 0.32 s for a diesel's box): the
+   * nose lifts as the drive drops out, the car settles and pulls again.
+   * `gbox.r` is the revs as a share of the redline (engine braking).
+   */
+  _gearbox(dt, throttle, brake) {
+    let gb = this.gbox;
+    if (gb === undefined) {
+      const p = this.spec.ev || this.spec.noEngine ? null : ENGINES[selectEngine(this.spec)];
+      gb = this.gbox = p && p.kind === 'car' && p.gears && p.gears.length > 1
+        ? { p, vmax: this.spec.topKph / 3.6, gear: 0, shiftT: 0, downT: 0, r: 0, rpm: p.idle } : null;
+    }
+    if (!gb) return 1;
+    const p = gb.p, G1 = p.gears, last = G1.length - 1, v = Math.max(0, this.vLong);
+    const rAt = (g) => v / (gb.vmax * G1[g]);
+    gb.downT -= dt;
+    if (gb.shiftT > 0) gb.shiftT = Math.max(0, gb.shiftT - dt);
+    else if (this.vLong < 0.5 && throttle === 0) gb.gear = 0;
+    else {
+      const r = rAt(gb.gear);
+      if (r > 0.52 + 0.42 * throttle && gb.gear < last && brake === 0) {
+        gb.gear++;
+        gb.shiftT = p.redline < 3000 ? 0.32 : 0.16;
+      } else if (gb.gear > 0 && gb.downT <= 0 && r < (throttle > 0.9 ? 0.55 : 0.3 + 0.16 * throttle) && rAt(gb.gear - 1) < 0.9) {
+        gb.gear--;
+        gb.downT = 0.3;
+      }
+    }
+    // revs: the wheels' through this gear, held up by the clutch / converter off the line
+    const r = Math.max(rAt(gb.gear), gb.gear === 0 ? 0.25 + 0.2 * throttle : 0, p.idle / p.redline);
+    gb.r = Math.min(r, 1);
+    gb.rpm = gb.r * p.redline;
+    if (gb.shiftT > 0) return 0.12;
+    // a torque curve peaking at ~70 % of the redline, ~0.82 at 30 % and ~0.94 at the top
+    const tq = 1 - 1.1 * (Math.min(r, 1.05) - 0.7) ** 2;
+    // the limiter, in top gear past the redline
+    return (tq / 0.965) * (r > 1.0 && gb.gear === last ? clamp((1.04 - r) / 0.04, 0, 1) : 1);
+  }
+
   steerLock(sp) {
     const spec = this.spec;
     const wheelbase = spec.wheelbase || spec.len * 0.62;
+    // YOUR road car (PLAYER_GRIP / PLAYER_ASK / MAX_STEER): the lock asks for
+    // the grip the tyres have on what they are on -- on gravel or grass a
+    // little more than that (sqrt of the surface's mu, not all of it), so a
+    // full lock there pushes and slides rather than turning clean and wide.
+    if (this.detailedWheels && spec.roadCar) {
+      const heavy = spec.len > 7;
+      const floor = Math.max(spec.minTurnR || 0, wheelbase / Math.tan(heavy || spec.bus ? MAX_STEER_HEAVY : MAX_STEER));
+      const a = spec.latA * (heavy ? PLAYER_GRIP_HEAVY : PLAYER_GRIP) * PLAYER_ASK * Math.sqrt(this.mu || 1);
+      return Math.min(0.62, Math.atan(wheelbase / Math.max(floor, (sp * sp) / a)));
+    }
     const agility = clamp(spec.latG / 0.88, 0.70, 1.32);
     // Your own car bites harder at speed (PLAYER_BITE): at STEER_BITE a
     // sedan at 110 km/h asked for a 38 m radius, and a city corner taken
@@ -11954,6 +12074,14 @@ export class Vehicle {
 
     const top = spec.fadeTop;
     let acc = 0;
+    // YOUR road car (spec.roadCar, detailedWheels): a gearbox, traction, ABS
+    // and the surface. `driveA` / `brakeD` are kept apart so the traction and
+    // ABS limits below can trim them once the surface is known.
+    const rc = !!(this.detailedWheels && spec.roadCar);
+    // the gearbox: the torque each gear makes at its revs, nothing while a
+    // shift is going through (_gearbox); 1 for everyone else
+    const gearK = rc ? this._gearbox(dt, throttle, brake) : 1;
+    let driveA = 0, brakeD = 0;
     if (throttle > 0) {
       // A combustion car has to wind up to make power, so its pull fades
       // linearly with speed. An electric motor is at full torque from zero and
@@ -11961,7 +12089,8 @@ export class Vehicle {
       // thing -- squaring the falloff is what makes it leap off the line and
       // still feel like it runs out of road rather than out of revs.
       const fade = 1 - clamp(this.vLong / top, 0, 1);
-      acc += spec.acc * throttle * (spec.ev ? Math.sqrt(fade) : fade);
+      driveA = spec.acc * throttle * (spec.ev ? Math.sqrt(fade) : fade) * gearK;
+      acc += driveA;
       if (this.vLong < -0.5) acc += spec.acc * 1.4 * throttle;
     }
     if (brake > 0) {
@@ -11969,7 +12098,7 @@ export class Vehicle {
       // tyre -- and it was applied to the refuse truck and the sports car
       // alike, so every vehicle in the game stopped from 100 km/h in exactly
       // 21.6 m. `brakeA` comes from the declared 100-0 distance.
-      if (this.vLong > 0.4) acc -= spec.brakeA * brake;
+      if (this.vLong > 0.4) { brakeD = spec.brakeA * brake; acc -= brakeD; }
       else acc -= spec.acc * 0.55 * brake * (1 - clamp(-this.vLong / (top * 0.42), 0, 1));
     }
     // slope. Not for a distant AI car (lowDetail, a phone past 60 m): its
@@ -11991,20 +12120,85 @@ export class Vehicle {
       // coasting after being left): traffic keeps to the roads. "Paved" is a
       // road's lift, a deck or lid (the ground there is not the terrain), or
       // a lot, which the terrain shader paints as tarmac.
-      if (this._mode === 'free' && this.lift < 0.02 && Math.abs(gy - G.terrainHeight(this.x, this.z)) < 0.05
-        && !G.inLot(this.x, this.z)) {
+      // (`surfForce`: tools/kw/drivetest.mjs pins the surface on its flat bench)
+      // (A rail or sand lot is GRAVEL, not paving, under your road car; and
+      // so is an unpaved road: `city.gravelAt`, data/gravel.json.)
+      let surf = null;
+      if (this.surfForce) surf = this.surfForce === 'asphalt' ? null : this.surfForce;
+      else if (this._mode === 'free' && this.lift < 0.02 && Math.abs(gy - G.terrainHeight(this.x, this.z)) < 0.05) {
+        const lot = G.lotAt(this.x, this.z);
+        surf = lot < 0 ? 'grass' : rc && (G.LOT_KINDS[lot] === 'rail' || G.LOT_KINDS[lot] === 'sand') ? 'gravel' : null;
+      } else if (rc && this.city.gravelAt && Math.abs(gy - G.terrainHeight(this.x, this.z)) < 0.6) {
+        // (a road's own lift: the unpaved roads are draped, never decks)
+        if ((this._gravT = (this._gravT || 0) - dt) <= 0) { this._gravT = 0.12; this._onGravel = this.city.gravelAt(this.x, this.z); }
+        if (this._onGravel) surf = 'gravel';
+      }
+      if (surf === 'grass') {
         rough = clamp(sp / 8, 0, 1);
         // Rolling resistance on turf: a sedan tops out near 110 km/h on a
         // lawn instead of 205, and a quad does not notice.
         if (!spec.offroad) acc -= this.vLong * Math.abs(this.vLong) * 0.0055 + this.vLong * 0.25;
+      } else if (surf === 'gravel' && rc) {
+        const S = SURFACES.gravel;
+        rough = clamp(sp / 8, 0, 1) * S.rough;
+        acc -= this.vLong * Math.abs(this.vLong) * S.drag + this.vLong * S.roll;
       }
+      if (rc) { this.surf = surf; this.mu = surf ? SURFACES[surf].mu : 1; }
     }
+    if (!rc) { this.surf = null; this.mu = 1; }
+    // TRACTION and ABS (your road car). The driven wheels can put down only
+    // what their share of the load times the surface's grip allows -- a
+    // rear-drive car's rears carry half of it, more as it squats -- and past
+    // that they spin (`wheelspin`: the squeal, the marks, a slide if you are
+    // turning); a sports car lights them up off the line, anything does on
+    // gravel or grass. The brakes are held under what the tyres have left
+    // after cornering (the friction circle), which is what ABS does: a stop
+    // in a bend still steers, and on gravel the stop is half as long again.
+    this.wheelspin = 0;
+    if (rc && this.onGround !== false) {
+      const L = spec.wheelbase || spec.len * 0.62;
+      const grip = spec.latA * (spec.len > 7 ? PLAYER_GRIP_HEAVY : PLAYER_GRIP) * this.mu;
+      const xfer = clamp((this.susAx || 0) / 9.81 * (spec.roof || 1.5) * 0.36 / L, -0.1, 0.1);
+      const rear = spec.rwd || spec.bus || spec.cargo || spec.diesel;
+      const load = spec.ev ? 1 : rear ? 0.5 + xfer : 0.6 - xfer;
+      const Dd = grip * load, cap = Dd * 1.1;
+      let put = driveA;
+      if (driveA > cap && this.vLong > -0.5) {
+        // (on a loose surface the traction control trims it to a scrabble)
+        this.wheelspin = clamp((driveA - cap) / Math.max(cap, 1) * 2.5, 0, 1) * (this.mu < 1 ? 0.6 : 1);
+        acc -= (driveA - cap) * 0.85;
+        put = cap;
+      }
+      // On a loose surface the stability control keeps back what the driven
+      // tyres need for the bend (the friction circle), so a floored GAS on a
+      // gravel road -- the only throttle a touch button has -- slides the car
+      // a little and does not spin it. On asphalt the pull is the driver's:
+      // a rear-drive car's tail still comes out under power (_tyres).
+      if (this.mu < 1) {
+        // (the tyre model spends DRIVE_EAT of the pull on the circle; the
+        // bend is what the car does or what the wheel asks, the larger --
+        // a front-drive car pushing wide on the throttle is held back too)
+        const ask = this.vLong * this.vLong * Math.abs(Math.tan(this.steer || 0)) / L;
+        const need = 0.6 * Math.max(Math.abs(this.latAcc || 0), Math.min(ask, grip));
+        const esc = Math.max(0.2 * Dd, Math.sqrt(Math.max(0, Dd * Dd - need * need)) / DRIVE_EAT);
+        if (put > esc) { acc -= put - esc; put = esc; }
+        this._drvDemand = put;
+      } else this._drvDemand = driveA;
+      if (brakeD > 0) {
+        const used = clamp(Math.abs(this.latAcc || 0) / Math.max(grip, 1), 0, 1);
+        const room = spec.brakeA * this.mu * Math.sqrt(Math.max(0.3, 1 - used * used));
+        this.abs = brakeD > room;
+        if (this.abs) acc += brakeD - room;
+      } else this.abs = false;
+    } else this._drvDemand = driveA;
 
     acc -= this.vLong * Math.abs(this.vLong) * DRAG; // aero
     acc -= this.vLong * ROLL; // rolling resistance
     if (throttle === 0 && brake === 0 && Math.abs(this.vLong) > 0.3) {
-      // engine braking, or regen -- which bites noticeably harder
-      acc -= Math.sign(this.vLong) * (spec.ev ? 4.6 : 2.4);
+      // engine braking, or regen -- which bites noticeably harder. In your
+      // car, by the revs: hard in a low gear, a long coast in top.
+      const gb = rc && this.gbox;
+      acc -= Math.sign(this.vLong) * (spec.ev ? 4.6 : gb ? 1.2 + 2.6 * Math.pow(gb.r, 1.5) : 2.4);
     }
     // (your car's tyre model slides the locked rears instead: half the bite,
     // so a handbrake turn keeps its way on -- _tyres)
@@ -12134,6 +12328,11 @@ export class Vehicle {
     // burnout, a slide or a handbrake turn, the fronts pushing wide or locked
     this.markR = this.burnout ? 1 : dyn ? this.tyreMarkR : this.detailedWheels && hand > 0.5 && sp > 6 ? 0.8 : 0;
     this.markF = dyn ? this.tyreMarkF : 0;
+    // wheelspin (traction, above) marks the road and squeals like a slide
+    if (this.wheelspin > 0) {
+      this.skid = Math.max(this.skid, this.wheelspin);
+      this.markR = Math.max(this.markR, this.wheelspin * 0.9);
+    }
 
     const f = this.forward;
     const rx = f.z, rz = -f.x;
@@ -12346,10 +12545,20 @@ export class Vehicle {
       const ax = dt > 0 ? (this.vLong - (this._vlWas !== undefined ? this._vlWas : this.vLong)) / dt : 0;
       this._vlWas = this.vLong;
       this.susAx = lerp(this.susAx || 0, clamp(ax, -30, 30), 1 - Math.exp(-12 * dt));
-      // tall and soft (vans, SUVs, pickups, buses) lean more, a sports car less
-      const soft = clamp(((spec.roof || 1.5) - 1.2) / 0.6, 0.6, 1.6);
-      const rollT = this.onGround ? 0.06 * soft * Math.tanh((this.latAcc || 0) / 24) : 0;
-      const pitchT = this.onGround ? -0.04 * soft * Math.tanh(this.susAx / 16) : 0;
+      // Tall and soft (vans, SUVs, pickups, buses) lean more, a sports car
+      // less. By how much of the GRIP is in use, not by raw g: the arcade
+      // grip is ~2.7x real, and the body should show what the tyres are
+      // doing -- at the limit a sedan leans ~3.4 deg, a sports car 2, a
+      // pickup or a bus 6.5 (real cars: 3-7 deg at their own limit), and it
+      // dives ~2.5 deg under a full stop, squats ~60 % of that on a launch.
+      // (It used to be 1.8 deg at the limit whatever the car, 1.4 deg dive.)
+      const roof = spec.roof || 1.5;
+      const rollMax = clamp(1.6 + (roof - 1.2) * 6, 2, 6.5) * DEG;
+      const pitchMax = clamp(1.6 + (roof - 1.2) * 3, 1.2, 3.5) * DEG;
+      const latCap = spec.latA * (spec.roadCar ? (spec.len > 7 ? PLAYER_GRIP_HEAVY : PLAYER_GRIP) : ARCADE_GRIP * PLAYER_BITE);
+      const rollT = this.onGround ? rollMax * Math.tanh(1.15 * (this.latAcc || 0) / latCap) : 0;
+      const sa = this.susAx;
+      const pitchT = this.onGround ? -pitchMax * Math.tanh(1.2 * sa / (sa < 0 ? spec.brakeA : spec.acc * 1.6)) * (sa < 0 ? 1 : 0.6) : 0;
       const K = 95, C = 9;          // ~1.5 Hz, ~45 % damped
       this.susRollV = (this.susRollV || 0) + (K * (rollT - (this.susRoll || 0)) - C * (this.susRollV || 0)) * dt;
       this.susRoll = clamp((this.susRoll || 0) + this.susRollV * dt, -0.12, 0.12);
@@ -12420,7 +12629,8 @@ export class Vehicle {
     const hcg = (spec.roof || 1.5) * 0.36;                         // centre of gravity height
     let u = this.vLong, v = this.vLat;
     // grip: the steering lock's, with a little downforce at speed
-    let D = spec.latA * ARCADE_GRIP * PLAYER_BITE * TYRE_K * (1 + clamp((u - 20) / 40, 0, 0.25));
+    // (a road car: PLAYER_GRIP on the surface it is on; the kart keeps the old bite)
+    let D = spec.latA * (spec.roadCar ? PLAYER_GRIP * (this.mu || 1) : ARCADE_GRIP * PLAYER_BITE * TYRE_K) * (1 + clamp((u - 20) / 40, 0, 0.25));
     if (this.slide > 0) {
       // knocked loose by a hit (traffic.js kick): the tyres bite again over SLIDE_T
       D *= 1 - 0.55 * Math.min(1, this.slide);
@@ -12430,8 +12640,9 @@ export class Vehicle {
     // (capped at 7 % of the load each way: more, and braking hard on lock at
     // 100 km/h lightened the rear enough to spin the car -- ABS-era cars
     // rotate a little under trail-braking, they do not swap ends)
-    const sf = 0.5 - clamp((this.susAx || 0) / 9.81 * hcg / L, -0.07, 0.07);
-    const Df0 = D * sf * 2 * 0.5 * FRONT_SHARE, Dr0 = D * (1 - sf) * 2 * 0.5;
+    const road = !!spec.roadCar, xf = road ? XFER_ROAD : 0.07, tf = road ? tyreRoad : tyreF;
+    const sf = 0.5 - clamp((this.susAx || 0) / 9.81 * hcg / L, -xf, xf);
+    const Df0 = D * sf * 2 * 0.5 * (road ? FRONT_ROAD : FRONT_SHARE), Dr0 = D * (1 - sf) * 2 * 0.5;
     // the longitudinal force each axle carries, out of the same grip
     const fade = 1 - clamp(u / spec.fadeTop, 0, 1);
     // Past ~25 deg of drift the pull's bite on the rears fades (a traction
@@ -12439,7 +12650,8 @@ export class Vehicle {
     // full lock on full throttle out of a junction in a muscle car, without
     // it, spun it every time.
     const tc = clamp(1 - (Math.abs(this.slipAngle || 0) - 0.35) / 0.25, 0.2, 1);
-    const drv = throttle > 0 ? spec.acc * throttle * (spec.ev ? Math.sqrt(fade) : fade) * DRIVE_EAT * tc : 0;
+    // (a road car: what the engine asks of the driven tyres through this gear, before traction)
+    const drv = throttle > 0 ? (spec.roadCar ? this._drvDemand || 0 : spec.acc * throttle * (spec.ev ? Math.sqrt(fade) : fade)) * DRIVE_EAT * tc : 0;
     const rearShare = spec.rwd ? 1 : spec.ev ? 0.55 : 0;
     const brk = brake > 0 ? spec.brakeA * brake : 0;
     const fxF = drv * (1 - rearShare) + brk * 0.68;
@@ -12453,8 +12665,8 @@ export class Vehicle {
     for (let i = 0; i < n; i++) {
       aF = Math.atan2(v + w * a, u) - d;
       aR = Math.atan2(v - w * b, u) - dr;
-      fyF = -tyreF(aF, Df);
-      fyR = -tyreF(aR, Dr);
+      fyF = -tf(aF, Df);
+      fyR = -tf(aR, Dr);
       // body frame: the sideways forces, the steered front's drag, and the
       // turn carrying each velocity component into the other
       v += (fyF * Math.cos(d) + fyR - u * w) * h;

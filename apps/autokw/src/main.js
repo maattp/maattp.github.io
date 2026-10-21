@@ -4,6 +4,7 @@ import * as THREE from './three.js';
 import * as G from './geo.js';
 import { cityGenerator, cityStats } from './citygen.js';
 import { loadMapData } from './mapdata.js';
+import { tagGravel } from './gravel.js';
 import { buildTextures, planTextures, encodeTextures, restoreTextures, canvasToBlob, blobToCanvas, within } from './textures.js';
 import { World, WET_FLOOR, HAZE_SUN } from './world.js';
 import { buildLandmarks, updateLandmarkRange, SEAPLANE_DOCK, airportSurface } from './landmarks.js';
@@ -774,6 +775,8 @@ async function boot() {
   }
   const city = r.value;
   cityRef = city;
+  // the unpaved roads: drawn as gravel, driven as gravel (gravel.js)
+  { const k = tagGravel(city, md.gravel); blog(`gravel: ${k.edges} edges, ${k.km} km`); }
   // Auto KW: names and real looks onto the boxes, before anything is meshed
   setKwData(md.kw);
   { const k = applyNamed(city); blog(`kw: ${k.named} named buildings, ${k.looks} with their own look, ${k.polys} drawn from their footprints, ${k.strips} strip stores`); }
@@ -3140,7 +3143,13 @@ function frame(now) {
             vy: 0.3, grav: 0.16, drag: 0.95, vx: -f.x * 3.5, vz: -f.z * 3.5 });
       }
     } else if (v.skid > 0.35 && Math.random() < 0.5) {
-      fx.smoke(v.x - v.forward.x * v.halfLen, v.y + 0.15, v.z - v.forward.z * v.halfLen, 1);
+      // (on gravel or grass the tyres throw dust, not rubber smoke)
+      if (v.surf && v.detailedWheels) {
+        const f = v.forward, g = v.surf === 'gravel';
+        fx.emit(v.x - f.x * v.halfLen, v.y + 0.2, v.z - f.z * v.halfLen, 2,
+          { r: g ? 0.66 : 0.42, g: g ? 0.6 : 0.38, b: g ? 0.5 : 0.26, size: 1.0, grow: 2.6, alpha: 0.5, life: 2.2, spread: 0.7, jitter: 0.3,
+            vy: 0.4, grav: 0.1, drag: 0.9, vx: -f.x * 2, vz: -f.z * 2 });
+      } else fx.smoke(v.x - v.forward.x * v.halfLen, v.y + 0.15, v.z - v.forward.z * v.halfLen, 1);
     }
     if (v.health < 0.45 * (v.spec.hp || 100) && Math.random() < 0.35) {
       fx.smoke(v.x + v.forward.x * v.halfLen, v.y + 0.9, v.z + v.forward.z * v.halfLen, 1);
@@ -3281,7 +3290,7 @@ function surfaceAt(x, y, z) {
     if (ei && !cityRef.edges[ei - 1].elev) return 'hard';
     return 'deck';
   }
-  if (cityRef.onRoad(x, z, 2.5)) return 'hard';
+  if (cityRef.onRoad(x, z, 2.5)) return cityRef.gravelAt && cityRef.gravelAt(x, z) ? 'gravel' : 'hard';
   const lot = G.lotAt(x, z);
   // ballast and beach sand crunch; every other lot is paved
   if (lot >= 0) return G.LOT_KINDS[lot] === 'rail' || G.LOT_KINDS[lot] === 'sand' ? 'gravel' : 'hard';

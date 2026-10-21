@@ -197,6 +197,8 @@ export async function loadMapData(onStep) {
   const golf = await opt('golf.json');
   // Erbsville Kartway's circuit and property (tools/kw/build_kart.py; kart.js)
   const kart = await opt('kart.json');
+  // the townships' unpaved roads (tools/kw/build_gravel.py; gravel.js)
+  const gravel = await opt('gravel.json');
   // The Olympics, Rainier and the Cascades as seen from here (tools/build_mountains.py).
   // Scenery only: a failed fetch costs the view, never the boot.
   let mountains = null;
@@ -205,6 +207,6 @@ export async function loadMapData(onStep) {
   return {
     height, hfN: hp.w, wlevel,
     water, green, farm, maskN: sp.w, lot, lotN: lp.w,
-    roads, buildings, places, lakes, monorail, link, freight, beaches, parkprops, bikepaths, piers, ferry, mountains, trails, kw, chicopee, golf, kart,
+    roads, buildings, places, lakes, monorail, link, freight, beaches, parkprops, bikepaths, piers, ferry, mountains, trails, kw, chicopee, golf, kart, gravel,
   };
 }
