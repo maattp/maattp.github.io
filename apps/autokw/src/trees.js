@@ -1183,8 +1183,9 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
     if (city.onRoad(x, z, pad)) return no('road');
     if (world.inAirfield(x, z)) return no('airfield');
     if (city.jumpClear(x, z)) return no('keepClear');
-    // a country road's ditch and berm, a farm lane (rural.js)
-    if (city.ruralClear && city.ruralClear(x, z)) return no('rural');
+    // a country road's ditch and berm, a farm lane (rural.js), and the
+    // field-edge fence just past them: a trunk 1.2 m clear of its line
+    if (city.ruralClear && city.ruralClear(x, z, 1.2)) return no('rural');
     if (city.treeClear && city.treeClear(x, z)) return no('lawn');
     for (let q = 0; q < playgrounds.length; q++) {
       const p = playgrounds[q];
@@ -1231,7 +1232,7 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
         for (let s = 4 + hash2(ei, sg + 9) * 8; s < e.len - 4; s += 9 + 6 * hash2(Math.round(s * 10), ei + sg)) {
           const cx0 = a.x + e.dx * s, cz0 = a.z + e.dz * s;
           if (field(cx0 + sg * 37, cz0 - sg * 53, 230, 11) < 0.76 || hash2(ei * 5 + Math.round(s), sg + 2) > 0.55) continue;
-          const off = e.hw + 7.6 + 1.6 + 2.2 * hash2(Math.round(s * 3), ei);
+          const off = e.hw + 7.6 + 2.2 + 2.2 * hash2(Math.round(s * 3), ei);   // (past the fence: ruralClear's pad)
           const x = cx0 + px * sg * off, z = cz0 + pz * sg * off;
           if (!clear(x, z, 3, OPEN)) continue;
           const r = hash2(Math.round(x * 5), Math.round(z * 5) + 3);

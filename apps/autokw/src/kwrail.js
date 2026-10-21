@@ -68,6 +68,10 @@ export const KWRAIL = {
 // per line: track speed (m/s), and near the station
 const LINE_V = { guelph: 26.8, galt: 22.4, wsub: 11.2, spur: 6.7 };
 const STATION_V = 13.4, STATION_R = 1300;
+// the timetable's meets (_meetWait): a train is not sent into a line's end
+// block if one bound the other way through it would then stand more than
+// MEET_SLACK s at its far end -- unless it has waited MEET_HOLD s off the map
+const MEET_SLACK = 150, MEET_HOLD = 900;
 
 const ON_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 const RANGE = ON_PHONE ? { flat: 1600, bed: 900, near: 380, train: 1300, gate: 260 }
@@ -1186,6 +1190,19 @@ export class KwRail {
       const ex = tr.x(d > 0 ? 0 : tr.len), ez = tr.z(d > 0 ? 0 : tr.len);
       const crowd = line.trains.some((u) => u !== t && u.state !== 'off' && u.state !== 'idle' && Math.abs(u.s - s) < t.len + u.len + 500);
       if (!this._free(line, blk, d, t) || crowd || Math.hypot(ex - cx, ez - cz) < 300) { t.dueT = 8; continue; }
+      // THE TIMETABLE MEETS TRAINS WHERE THERE IS ROOM. Its first block is
+      // the longest single track on the line (the Guelph Sub's 14.8 km west
+      // of Kitchener: OSM maps no siding, disused or not, on it inside the
+      // map -- the CN main is single to the west edge): a train sent into it just
+      // before one the other way reaches its far end made that one stand
+      // up to 13 minutes on Kitchener's double track (and a GO behind it,
+      // its platform taken). So a train is sent in only if every train
+      // bound the other way through that block will still be short of it
+      // when this one is out (`_meetWait`), give or take MEET_SLACK; past
+      // MEET_HOLD of waiting off the map it goes anyway.
+      t.dueWait = (t.dueWait || 0) + 8;
+      if (t.dueWait < MEET_HOLD && this._meetWait(line, t, d, blk) > MEET_SLACK) { t.dueT = 8; this.stats.meetHolds = (this.stats.meetHolds || 0) + 1; continue; }
+      t.dueWait = 0;
       const kn = line.disp[d > 0 ? 0 : line.disp.length - 1];
       t.served = new Set(); t.d = d;
       const land = kn ? this._landing(kn, t) : -1;
@@ -1202,6 +1219,38 @@ export class KwRail {
       if (kn) kn.hold[land] = t;
       this.stats.spawns++;
     }
+  }
+
+  /**
+   * How long a train bound the other way would stand at the far end of block
+   * `blk` if `t` came on now moving d (s; <= 0: none would). `t` is out of
+   * the block when it has run its length and its own (at 0.8 of its speed,
+   * for the station limits); one bound through it the other way reaches the
+   * block's mouth at 0.75 of its speed plus the dwells on its way (a GO
+   * turns at Kitchener and never comes into a block past it).
+   */
+  _meetWait(line, t, d, blk) {
+    const pps = line.disp;
+    if (!pps.length) return 0;
+    const [a, b] = this._blockRange(line, blk);
+    const far = d > 0 ? b : a;                 // where this one leaves the block
+    if (!Number.isFinite(far)) return 0;
+    const v = Math.min(t.cfg.vMax, line.vMax);
+    const s0 = d > 0 ? 0 : line.tr.len;
+    const tOut = (Math.abs(far - s0) + t.len) / (0.8 * v);
+    let worst = 0;
+    for (const u of line.trains) {
+      if (u === t || u.state === 'idle' || u.d !== -d || u.cfg.route === 'go') continue;
+      const toMouth = (far - u.lead) * u.d;   // its lead to the block's mouth (our far end)
+      if (toMouth < 0) continue;              // in the block already: _free said no
+      let tIn = toMouth / (0.75 * Math.min(u.cfg.vMax, line.vMax));
+      if (u.state === 'dwell') tIn += Math.max(0, u.dwellT);
+      if (u.cfg.kind !== 'freight') {
+        for (const st of line.stops) if (!u.served.has(st) && (st.s - far) * u.d < 0 && (st.s - u.lead) * u.d > 0) tIn += u.cfg.kind === 'via' ? 75 : 40;
+      }
+      worst = Math.max(worst, tOut - tIn);
+    }
+    return worst;
   }
 
   /** A train has left the map: idle until it is due back, from the end it left by. */
@@ -1309,6 +1358,81 @@ export class KwRail {
 
   onGradeCorridor(x, z) {
     return !!this.gradeCells && this.gradeCells.has(Math.floor(x / 50) * 100003 + Math.floor(z / 50));
+  }
+
+  /**
+   * THE RAILS UNDER A CAR (roadfeel.js): every track within `R` m of (x, z)
+   * as a local frame -- `k` a key stable along the track, (X, Z) a point on
+   * its centreline, `h` its heading (lateral = (x - X) cos h - (z - Z) sin h,
+   * + to the left), `y` the rail head, `cross` on a level crossing's panels.
+   * The running lines (and a passing place's second track, at its offset)
+   * and every static track (spurs, yards: flush across a road).
+   */
+  feelTracks(x, z, R = 8) {
+    const out = [];
+    for (const line of this.lines) {
+      const tr = line.tr, q = tr.nearest(x, z, R + 8);
+      if (!q) continue;
+      const i = tr.idx(q.s), h = tr.H[i], y = tr.Y[i];
+      const cross = tr.KD ? tr.KD[i] === CROSS : false;
+      if (q.d < R) out.push({ k: line.key, X: tr.X[i], Z: tr.Z[i], h, y, cross });
+      const o = ppOff(this.ppAt(line, q.s), q.s);
+      if (Math.abs(o) > 0.05 && Math.abs(q.side * q.d - o) < R) {
+        out.push({ k: line.key + ':pp', X: tr.X[i] + Math.cos(h) * o, Z: tr.Z[i] - Math.sin(h) * o, h, y, cross });
+      }
+    }
+    if (!this._feelSeg) this._feelSegIndex();
+    const l = this._feelSeg.get(Math.floor(x / 32) * 100003 + Math.floor(z / 32));
+    if (l) {
+      // per static piece, its nearest segment within R
+      let best = null;
+      for (const [pi, si] of l) {
+        const pts = this.statics[pi], [ax, az] = pts[si], [bx, bz] = pts[si + 1];
+        const sx = bx - ax, sz = bz - az, L2 = sx * sx + sz * sz || 1;
+        const t = clamp(((x - ax) * sx + (z - az) * sz) / L2, 0, 1);
+        const d = Math.hypot(ax + sx * t - x, az + sz * t - z);
+        if (d >= R) continue;
+        if (!best) best = new Map();
+        const b = best.get(pi);
+        if (!b || d < b.d) best.set(pi, { d, ax, az, h: Math.atan2(sx, sz) });
+      }
+      if (best) for (const [pi, b] of best) out.push({ k: 'st' + pi, X: b.ax, Z: b.az, h: b.h, y: G.terrainHeight(x, z), cross: true, flat: true });
+    }
+    return out;
+  }
+
+  /** Static track segments (those _buildStatic draws: not along a running line) in 32 m cells, with R's margin. */
+  _feelSegIndex() {
+    const M = new Map(), CELL = 32;
+    this.statics.forEach((pts, pi) => {
+      for (let si = 0; si < pts.length - 1; si++) {
+        const [ax, az] = pts[si], [bx, bz] = pts[si + 1];
+        const L = Math.hypot(bx - ax, bz - az);
+        if (L < 0.5) continue;
+        const mx = (ax + bx) / 2, mz = (az + bz) / 2;
+        const onLine = this.lines.some((line) => {
+          const q = line.tr.nearest(mx, mz, 6);
+          if (!q) return false;
+          const o = ppOff(this.ppAt(line, q.s), q.s), lat = q.side * q.d;
+          return Math.min(Math.abs(lat), Math.abs(lat - o)) < 3.0;
+        });
+        if (onLine) continue;
+        const seen = new Set();
+        for (let d = 0; d <= L; d += 8) {
+          const px = ax + (bx - ax) * d / L, pz = az + (bz - az) * d / L;
+          const c0 = Math.floor((px - 10) / CELL), c1 = Math.floor((px + 10) / CELL);
+          const e0 = Math.floor((pz - 10) / CELL), e1 = Math.floor((pz + 10) / CELL);
+          for (let cx = c0; cx <= c1; cx++) for (let cz = e0; cz <= e1; cz++) {
+            const k = cx * 100003 + cz;
+            if (seen.has(k)) continue;
+            seen.add(k);
+            if (!M.has(k)) M.set(k, []);
+            M.get(k).push([pi, si]);
+          }
+        }
+      }
+    });
+    this._feelSeg = M;
   }
 
   /** For traffic.js: is (x, z) between a crossing's gates while its lights are on? (xing.js) */

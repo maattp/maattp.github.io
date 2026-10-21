@@ -706,6 +706,18 @@ export const groundDetail = {
     if (typeof window !== 'undefined' && window.__noNature) return new Set();
     const t0 = performance.now();
     BENCHES = NET ? benchSpots(size) : new Map();
+    // the benches are solid (a landmark solid each: seat and back as one
+    // box, knee-high to the back's top), joined after the landmarks' and the
+    // freeways' -- a bench is never on a carriageway (benchSpots)
+    if (CITY && CITY.addLandmarkSolids) {
+      const sol = [];
+      for (const l of BENCHES.values()) for (const { x, z, ax, az, lx, lz } of l) {
+        const y = T(x, z);
+        sol.push({ x: x + lx * 0.1, z: z + lz * 0.1, hw: 0.95, hd: 0.34, rot: Math.atan2(az, ax), y0: y - 0.1, y1: y + 0.95 });
+      }
+      CITY.addLandmarkSolids(sol);
+      STATS.benchSolids = sol.length;
+    }
     const k = shoreChunks(size);
     for (const b of BENCHES.keys()) k.add(b);
     for (const d of DEFER) { d.key = `${Math.floor(d.x / size)},${Math.floor(d.z / size)}`; k.add(d.key); }

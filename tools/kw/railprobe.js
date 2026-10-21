@@ -27,7 +27,7 @@
   const DT = 0.5, H = 2 * 3600;
   const seen = new Set(), calls = {}, collide = [];
   let maxOn = 0;
-  const longest = { t: 0, who: '-' };
+  const longest = { t: 0, who: '-' }, stands = [];
   const wasState = new Map();
   for (let t = 0; t < H; t += DT) {
     R.update(DT, cam);
@@ -56,11 +56,19 @@
       }
     }
     maxOn = Math.max(maxOn, on);
-    for (const line of R.lines) for (const tr of line.trains) if (tr.holdT > longest.t) { longest.t = tr.holdT; longest.who = `${tr.cfg.id} on ${line.key} at ${Math.round(tr.lead)}`; }
+    for (const line of R.lines) for (const tr of line.trains) {
+      if (tr.holdT > longest.t) { longest.t = tr.holdT; longest.who = `${tr.cfg.id} on ${line.key} at ${Math.round(tr.lead)}`; }
+      // a stand past 5 min: who else is on the line (what it is waiting for)
+      if (tr.holdT >= 300 && tr.holdT - DT < 300 && stands.length < 8) {
+        const q = (u) => `${u.cfg.id}(d ${u.d} lead ${Math.round(u.lead)} ${u.state} pp ${u.pp ? Math.round(u.pp.s0) + '/' + u.ppTrack : '-'} c ${u.commit} want ${u.wantBlk})`;
+        stands.push(`t ${Math.round(t)} s ${tr.cfg.id} on ${line.key}: ` + line.trains.map(q).join(' '));
+      }
+    }
   }
   const st = R.stats;
   say(`service, 2 h: ${st.spawns} trains on, ${seen.size} of ${R.fleet.length} ran, up to ${maxOn} out at once; ${st.meets} meets on a passing track, ${st.holds} holds, ${st.rescued} rescued from a stand`);
   say(`longest stand waiting for the road: ${Math.round(longest.t)} s (${longest.who})`);
+  if (stands.length) say('stands over 5 min:\n  ' + stands.join('\n  '));
   if (longest.t > 600) fail.push(`a train stood ${Math.round(longest.t)} s waiting for the road (${longest.who})`);
   say(`calls: ${Object.entries(calls).map(([k, v]) => `${k} ${v}`).join(', ')}`);
   if (collide.length) fail.push(`trains ran into each other: ${collide.join('; ')}`);

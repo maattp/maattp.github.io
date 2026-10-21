@@ -3424,7 +3424,7 @@ function frame(now) {
 
   // your road car over the small things in the ground: felt, then heard
   if (!roadFeel) roadFeel = new RoadFeel(audio, player);
-  roadFeel.update(dt, player.onFoot ? null : player.vehicle, surfNow, link);
+  roadFeel.update(dt, player.onFoot ? null : player.vehicle, surfNow, link, kwrail);
   // audio state
   if (audio.ready) audio.update(dt, audioState(dt, input, p, camDir, buried));
 

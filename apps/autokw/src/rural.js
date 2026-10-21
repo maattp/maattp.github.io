@@ -41,6 +41,7 @@ import { memo } from './bootcache.js';
 // the cross-section (m beyond the carriageway edge)
 export const SH = 1.3, FS = 1.7, DB = 0.9, BS = 1.3, FD = 2.4;
 export const RW = SH + FS + DB + BS + FD;          // 7.6: the whole reach
+const CLEAR_PAD = 1.5;                              // the most rural0.clear's `pad` may add
 export const PROF_M = [0, SH, SH + FS, SH + FS + DB, SH + FS + DB + BS, RW];
 export const RAISE = 0.42;     // the carriageway over ROAD_LIFT, at full raise
 export const RAMP = 22;        // metres the raise takes to come up off a junction
@@ -395,17 +396,20 @@ export function tagRural(g, buildings, builtAt) {
     const e = edges[i];
     if (!e.rural) continue;
     const a = nodes[e.a], b = nodes[e.b];
-    file(a.x, a.z, b.x, b.z, e.hw + RW + 0.6, [a.x, a.z, b.x, b.z, e.hw + RW + 0.6]);
+    file(a.x, a.z, b.x, b.z, e.hw + RW + 0.6 + CLEAR_PAD, [a.x, a.z, b.x, b.z, e.hw + RW + 0.6]);
   }
-  for (const L of lanes) file(L[0], L[1], L[2], L[3], L[4] + 0.8, [L[0], L[1], L[2], L[3], L[4] + 0.8]);
-  rural0.clear = (x, z) => {
+  for (const L of lanes) file(L[0], L[1], L[2], L[3], L[4] + 0.8 + CLEAR_PAD, [L[0], L[1], L[2], L[3], L[4] + 0.8]);
+  // `pad`: more room past the zone (<= CLEAR_PAD) -- trees.js asks for the
+  // field-edge fence's line too (world.meshRuralProps: RW + 0.5 out from the
+  // carriageway, +-0.45 m where a snake rail zigzags), or a trunk stood in it
+  rural0.clear = (x, z, pad = 0) => {
     const l = kgrid.get(Math.floor(x / KC) * 65536 + Math.floor(z / KC));
     if (!l) return false;
     for (const s of l) {
       const dx = s[2] - s[0], dz = s[3] - s[1], L2 = dx * dx + dz * dz;
       let t = L2 > 0 ? ((x - s[0]) * dx + (z - s[1]) * dz) / L2 : 0;
       t = t < 0 ? 0 : t > 1 ? 1 : t;
-      if ((x - s[0] - dx * t) ** 2 + (z - s[1] - dz * t) ** 2 < s[4] * s[4]) return true;
+      if ((x - s[0] - dx * t) ** 2 + (z - s[1] - dz * t) ** 2 < (s[4] + pad) * (s[4] + pad)) return true;
     }
     return false;
   };

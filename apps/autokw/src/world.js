@@ -5016,9 +5016,17 @@ float frLine(float o, float fw, float c, float w) {
       const e = city.edges[ei];
       const a = city.nodes[e.a], b = city.nodes[e.b];
       const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
-      if (!own(mx, mz)) continue;
-      this.meshRoad(road, walk, flat, glow, e, a, b, lod, ei);
-      this.meshLid(road, flat, ei);   // a slab over a portal cutting, if any
+      // A NODE IS MESHED BY ITS OWN CHUNK even when every edge at it is owned
+      // (by its midpoint) by a neighbour: such a node sat in no chunk's loop,
+      // so its junction disc was never drawn and the two strips' square ends
+      // met at an angle with a hairline of grass between them -- always just
+      // inside a chunk line (Galt, (11992, 8802): one node, two 35 m edges
+      // whose middles fell in the chunks either side of it).
+      const mine = own(mx, mz);
+      if (mine) {
+        this.meshRoad(road, walk, flat, glow, e, a, b, lod, ei);
+        this.meshLid(road, flat, ei);   // a slab over a portal cutting, if any
+      }
       for (const ni of [e.a, e.b]) {
         if (nodesDone.has(ni)) continue;
         const n = city.nodes[ni];
@@ -5646,7 +5654,8 @@ float frLine(float o, float fw, float c, float w) {
           const l = this.city.lidAt(x, z);
           return l !== null ? l + LID_TOP + (MARK_Y - ROAD_LIFT) + bias : G.terrainHeight(x, z) + MARK_Y + bias;
         }
-        : (x, z, t) => G.terrainHeight(x, z) + MARK_Y + bias + rampY(t) + (e.rural ? RU.RAISE * this.city.ruralRaise(e, t * e.len) : 0);
+        : (x, z, t) => G.terrainHeight(x, z) + MARK_Y + bias * Math.min(1, mA > 0 ? 1 : (t * e.len) / 3, mB > 0 ? 1 : ((1 - t) * e.len) / 3)
+          + rampY(t) + (e.rural ? RU.RAISE * this.city.ruralRaise(e, t * e.len) : 0);   // (meshRoad's biasT)
     const W = 0.06;                             // half-width of a painted line
     const WHITE = [0.94, 0.93, 0.88];
     const YELLOW = [0.88, 0.72, 0.2];
@@ -6960,7 +6969,14 @@ float frLine(float o, float fw, float c, float w) {
     // junction) and a gravel one is crowned
     const raiseY = e.rural ? (t) => RU.RAISE * this.city.ruralRaise(e, t * e.len) : () => 0;
     const crownY = e.gravel ? (o) => RU.CROWN * (1 - (o / hw) * (o / hw)) : () => 0;
-    const yAt = (x, z, t, ro, o = hw) => G.terrainHeight(x, z) + ROAD_Y + bias + (ro ? 0 : rampY(t)) + raiseY(t) + crownY(o);
+    // ...EXCEPT WHERE TWO STRIPS MEET END TO END. At a node with no mouth
+    // (a street cut in two by OSM, mA / mB 0) there is no junction polygon
+    // to run on under, so each strip's own bias left a step of up to 3 cm
+    // across the road with nothing drawn in it: from the low side a hairline
+    // of the grass 0.3 m below (Galt, (11992, 8802)). The bias fades to 0
+    // over the last 3 m into such a node, so both strips end on one line.
+    const biasT = (t) => bias * Math.min(1, mA > 0 ? 1 : (t * e.len) / 3, mB > 0 ? 1 : ((1 - t) * e.len) / 3);
+    const yAt = (x, z, t, ro, o = hw) => G.terrainHeight(x, z) + ROAD_Y + biasT(t) + (ro ? 0 : rampY(t)) + raiseY(t) + crownY(o);
     // Subdivide ACROSS the width as well as along the length.
     //
     // The quad used to span the full carriageway with terrain sampled only at
@@ -7221,8 +7237,8 @@ float frLine(float o, float fw, float c, float w) {
           // 6 mm under the paint: the edge line lies inside the gutter on any
           // street under ~9 m of half-width, and at one height the two fought
           // (whichever won by rounding -- whole kerb lines went missing).
-          const gl0 = inJ ? NODE_Y + 0.012 : MARK_Y - 0.006 + bias + rampY(t0);
-          const gl1 = inJ ? NODE_Y + 0.012 : MARK_Y - 0.006 + bias + rampY(t1);
+          const gl0 = inJ ? NODE_Y + 0.012 : MARK_Y - 0.006 + biasT(t0) + rampY(t0);
+          const gl1 = inJ ? NODE_Y + 0.012 : MARK_Y - 0.006 + biasT(t1) + rampY(t1);
           const gy0 = cy0 + gl0, gy1 = cy1 + gl1;
           const j0x = i0x - ox * gW, j0z = i0z - oz * gW;
           const j1x = i1x - ox * gW, j1z = i1z - oz * gW;
@@ -7996,6 +8012,60 @@ float frLine(float o, float fw, float c, float w) {
     run(xr, zg, xr, zb);                 // the right-hand side line
     if (owner) run(xr, zb, xl, zb);      // the back line
     FS.yards++;
+  }
+
+  /**
+   * AUTO KW: WHERE A HOUSE'S GARAGE DOOR GOES on its front wall (fb's +z),
+   * as fb-local x, or null. The siding is one composed elevation per ~11 m
+   * (`uScale` 11, `uFit`: a whole number of tiles a face) with a ground-floor
+   * window at u 0.13-0.40 and the front door at 0.595-0.86 of each tile
+   * (textures.js houseSurface / brickHouseSurface, frames included); a door
+   * drawn over part of one left a sliver of window or door beside it. The
+   * face's u runs as Builder.box lays it on the facade box (bd's frame), so
+   * each opening is found in fb's x, and the door (with its 0.15 m trim) is
+   * slid in from its end (`sd`) until it covers each opening whole or misses
+   * it -- missing all is best, a window covered next, a door covered last.
+   */
+  _garageSpot(bd, fb, offF, sd, gw, porch) {
+    const OPEN = [[0.13, 0.40, 1], [0.595, 0.86, 3]];
+    const cs = Math.cos(bd.rot), sn = Math.sin(bd.rot);
+    const toBd = (x, z) => { const dx = x - bd.x, dz = z - bd.z; return [dx * cs + dz * sn, -dx * sn + dz * cs]; };
+    // which face of the facade box the front is, and u along it at fb-local x
+    const [fx0, fz0] = toBd(...offF(0, fb.d / 2));
+    const hw = bd.w / 2, hd = bd.d / 2;
+    const zFace = Math.abs(fz0) / hd > Math.abs(fx0) / hw;
+    const len = zFace ? bd.w : bd.d, n = Math.max(1, Math.round(len / 11));
+    const tOf = (lx) => {
+      const [bx, bz] = toBd(...offF(lx, fb.d / 2));
+      return zFace ? (fz0 > 0 ? (bx + hw) / bd.w : (hw - bx) / bd.w) : (fx0 > 0 ? (hd - bz) / bd.d : (bz + hd) / bd.d);
+    };
+    // the openings along the wall as fb-local x intervals (t is linear in lx)
+    const t0 = tOf(-fb.w / 2), t1 = tOf(fb.w / 2), k = (t1 - t0) / fb.w;
+    if (Math.abs(k) < 1e-6) return null;
+    const opens = [];
+    for (let i = 0; i < n; i++) for (const [a, b, c] of OPEN) {
+      const xa = ((i + a) / n - t0) / k - fb.w / 2, xb = ((i + b) / n - t0) / k - fb.w / 2;
+      opens.push([Math.min(xa, xb), Math.max(xa, xb), c]);
+    }
+    const half = gw / 2 + 0.15, edge = fb.w / 2 - gw / 2 - 0.5;
+    let best = null, bc = Infinity;
+    for (let s = 0; s <= edge * 2; s += 0.1) {
+      const glx = sd * (edge - s);
+      if (porch && Math.abs(porch.px - glx) < (porch.pw + gw) / 2) continue;
+      let cost = s / fb.w, ok = true;
+      for (const [a, b, c] of opens) {
+        const lo = Math.max(a, glx - half), hi = Math.min(b, glx + half);
+        if (hi <= lo) continue;
+        if (glx - half <= a + 0.02 && glx + half >= b - 0.02) cost += c;
+        else { ok = false; break; }
+      }
+      if (ok && cost < bc) { bc = cost; best = glx; }
+      if (bc < 1) break;   // a spot that misses every opening, nearest the end
+    }
+    const GS = cityStats.garages || (cityStats.garages = { doors: 0, slid: 0, none: 0 });
+    if (best === null) GS.none++;
+    else { GS.doors++; if (Math.abs(best - sd * edge) > 0.05) GS.slid++; }
+    return best;
   }
 
   /**
@@ -8920,12 +8990,18 @@ float frLine(float o, float fw, float c, float w) {
       // the front wall at one end (a double on a wide house) and the asphalt
       // out from it, never a box added beside. Not on the narrow pre-war
       // cottages (under 9.5 m of frontage) nor a terrace row's units.
-      if (form !== 'flat' && fb.w >= 9.5 && fb.w <= 24 && fb.d >= 7.5 && aspect < 2.6 && hash2(seed, 190) < 0.74) {
-        const gw = fb.w >= 12.5 && hash2(seed, 191) < 0.6 ? 4.9 : 2.7, gh = 2.2;
+      // The door must not cut one of the elevation's own openings (the siding
+      // tile is a composed front -- windows and a door at fixed places,
+      // `houseSurface`): it slides along the wall until it covers an opening
+      // whole or misses it (`_garageSpot`), and stays under the upper
+      // windows' sills on a low house.
+      const ghMax = 0.55 * tileH - 0.5;
+      if (form !== 'flat' && fb.w >= 9.5 && fb.w <= 24 && fb.d >= 7.5 && aspect < 2.6 && hash2(seed, 190) < 0.74 && ghMax >= 1.95) {
+        const gw = fb.w >= 12.5 && hash2(seed, 191) < 0.6 ? 4.9 : 2.7, gh = Math.min(2.2, ghMax);
         let sd = hash2(seed, 192) < 0.5 ? -1 : 1;
         if (porch && Math.abs(porch.px - sd * (fb.w / 2 - gw / 2 - 0.5)) < (porch.pw + gw) / 2) sd = -sd;
-        const glx = sd * (fb.w / 2 - gw / 2 - 0.5);
-        if (!porch || Math.abs(porch.px - glx) >= (porch.pw + gw) / 2) {
+        const glx = this._garageSpot(bd, fb, offF, sd, gw, porch);
+        if (glx !== null) {
           const GD = [[0.9, 0.9, 0.88], [0.86, 0.82, 0.72], [0.42, 0.3, 0.22], [0.3, 0.31, 0.32]];
           const gc = GD[hash2(seed, 193) < 0.62 ? 0 : hash2(seed, 194) < 0.4 ? 1 : hash2(seed, 195) < 0.6 ? 2 : 3];
           const [dx, dz] = offF(glx, fb.d / 2 + 0.03);
