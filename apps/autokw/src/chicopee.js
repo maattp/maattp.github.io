@@ -15,6 +15,7 @@
 
 import * as THREE from './three.js';
 import * as G from './geo.js';
+import { mergeByMaterial } from './build.js';
 
 const DIRT = [0.30, 0.20, 0.12], DIRT2 = [0.38, 0.26, 0.16];
 const CHAIR_GAP = 16;       // m between chairs on a line
@@ -171,6 +172,7 @@ export class Chicopee {
     const steel = new THREE.MeshStandardMaterial({ color: 0x6a6f74, roughness: 0.5, metalness: 0.6 });
     const cableM = new THREE.MeshStandardMaterial({ color: 0x222426, roughness: 0.6, metalness: 0.4 });
     const shed = new THREE.MeshStandardMaterial({ color: 0x2a4a7a, roughness: 0.7 });
+    const deckM = new THREE.MeshStandardMaterial({ color: 0x8a8a84, roughness: 0.9 });
     const parts = [];
     const H = 9;    // tower height over the ground
     for (const l of this.liftLines) {
@@ -212,11 +214,23 @@ export class Chicopee {
           post.position.set(cx + u * Math.cos(yaw) + v * Math.sin(yaw), y + (H + 1.2) / 2, cz - u * Math.sin(yaw) + v * Math.cos(yaw)); parts.push(post);
         }
         // the loading ramp, a deck you walk onto
-        const deck = new THREE.Mesh(new THREE.BoxGeometry(7, 0.4, 9), new THREE.MeshStandardMaterial({ color: 0x8a8a84, roughness: 0.9 }));
+        const deck = new THREE.Mesh(new THREE.BoxGeometry(7, 0.4, 9), deckM);
         deck.position.set(cx - dx * o * 1.2, y + 0.2, cz - dz * o * 1.2); deck.rotation.y = yaw; parts.push(deck);
       }
     }
-    for (const m of parts) { m.castShadow = true; m.receiveShadow = true; this.group.add(m); }
+    // ONE MESH PER MATERIAL (steel, rope, roofs, decks): the towers, ropes and
+    // stations were 136 meshes -- 136 draws (and shadow casts) wherever the
+    // hill is in view, from the Parkway and Hwy 8, and 136 frustum tests and
+    // matrix updates a frame everywhere else. Same geometry, baked in place.
+    const lifts = new THREE.Group();
+    for (const m of parts) lifts.add(m);
+    const merged = mergeByMaterial(lifts);
+    for (const m of [...merged.children]) {
+      m.castShadow = true; m.receiveShadow = true; m.name = 'chicopee:lifts';
+      m.matrixAutoUpdate = false; m.updateMatrix();
+      this.group.add(m);
+    }
+    for (const m of parts) m.geometry.dispose();
 
     // --- the chairs: one instanced mesh, moved round each line ----------------
     const chairGeo = (() => {

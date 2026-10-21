@@ -1680,6 +1680,65 @@ file and a guide disagree, this file wins.
   trailers, freeway lanes); the freeways' build (~1.9 s at 8x) and the
   landmark merge (~1.3 s) are geometry, too big for the memo; landmark
   arrays not yet drawn (+34 MB) are held until their first upload.
+- **The phone audit, round two: traffic CPU and Chicopee** (both exact).
+  **Where traffic's time went:** not the freeway lanes or the junctions
+  (fwyDecide ~1 %, junctionStop + jc.decide ~3 % of traffic.update) but
+  the ~180 APRON vehicles (bike docks, the dealer's lot, farms, fire halls):
+  the bench without them is 0.39 ms an update at 4x against 0.82 with. Past
+  300 m an apron vehicle's `_still` is 0, so it is not 'still' to the
+  collision sweep, and every pair in a cluster was tested every frame
+  (~1,000 tests, each a dozen megamorphic property reads). **The sweep now
+  reads typed arrays** (x, z, height, radius, still flag; read again after
+  any contact) and hands a pair to `carPair` only when the arrays say
+  carPair's own first tests pass; the x order is `sortByKey`, a stable
+  merge sort giving Array.sort's permutation without ~1,500 comparator
+  calls. Plus: update's loop reads `v.mode` once, only an apron vehicle
+  inside 300 m evaluates 'settles', the trailer pass walks `_rigs`, the
+  neighbour scan reads the driver's own position once. Not done (tried or
+  judged): skipping `sync()` for unchanged vehicles (the field comparison
+  cost what sync does -- reverted); skipping it for hidden parked/apron
+  vehicles (~0.07 ms at 8x, but kartway/hydrorace set `group.visible`
+  after traffic.update); a spatial prefilter for driveTraffic's neighbour
+  scan (exactness needs its live-list order).
+  **Proof it is the same traffic:** `VIEW_PROBE_FILE=tools/kw/trafficbench.js
+  AUTO_PHONE=1 node tools/kw/kwshots.mjs x` pins every source of run-to-run
+  difference (Math.random, traffic.R, the signals' clock, **`_prio`, which
+  is hashed into a freeway spawn's type**, the culling camera, the
+  streamer settled, kerb-slot cache cleared) and hashes every vehicle after
+  1,500 fixed-dt updates at six sites; master hashes the same run after
+  run, and this build hashes the same as master. The fuzz probes take
+  `seed: true` (`window.__hwyt` / `window.__jct`) for the same pinning:
+  seeded hwytraffic and jcttraffic print byte-identical output on master
+  and this. kwshots' `VIEW_THROTTLE=8` / `VIEW_PROFILE=f.cpuprofile` run
+  and profile a probe; `node tools/kw/profsub.mjs f.cpuprofile 'update
+  src/traffic.js' --frames=N --lines` splits one function's subtree.
+  **Chicopee's lifts** (chicopee.js): towers, arms, ropes, stations were
+  136 meshes, so 136 draws and shadow casts wherever the hill is in view
+  (the Parkway, Fairway Plaza, even Ring Road) and 136 frustum tests a frame
+  everywhere else -- `perfaudit --census` (the scene walked as projectObject
+  does, per top-level group) found them as 136 of the ~200 meshes three
+  culls at the spawn. Now `mergeByMaterial`: 4 meshes, screenshots identical.
+  The census found nothing else worth it: highways' cells and the signal
+  heads are one mesh each already, landmark and chunk groups are culled
+  whole, vehicles are 1-28 culled meshes a view. perfaudit also has an
+  `arterial` view (signals west of Uptown) and `--prof-out=DIR`.
+
+  | 8x, views only, mean of two runs (each run) | master v41 | this |
+  |---|---|---|
+  | spawn: CPU ms, traffic, draws, tris | 11.2 (12.4/9.9), 2.96, 207, 1046k | 12.6 (13.8/11.4), 2.83, 207, 1046k |
+  | King St: | 15.1 (16.7/13.4), 3.26, 262, 1080k | 12.6 (14.1/11.0), 2.57, 263, 1087k |
+  | Parkway: | 14.3 (14.3/14.2), 2.67, 439, 943k | 11.7 (10.9/12.6), 2.27, 309, 946k |
+  | plaza: | 10.7 (10.5/11.0), 2.04, 381, 677k | 8.2 (6.9/9.5), 1.58, 249, 677k |
+  | campus: | 17.0 (17.2/16.7), 2.71, 505, 1291k | 15.1 (12.2/18.1), 2.28, 408, 1293k |
+  | country: | 6.7 (6.4/7.0), 1.81, 75, 345k | 5.8 (4.9/6.6), 1.26, 72, 334k |
+
+  Noise is the +-20 % of round one (the spawn read 9.9 and 12.4 on master).
+  Traffic is 13-30 % lower in every view; the bench's profile at 4x, which
+  is steadier: traffic.update 0.78 -> 0.66 ms, the sweep 0.12 -> 0.05.
+  **Left as it is (would change a look):** the +110-290k triangles per
+  view are mostly landmark clusters (the census: 105-265 landmark meshes
+  drawn per view, the campus most); a LOD for them is a look change and
+  needs its own build and a before/after of each place.
 
 - **QA sweep after v22-v39** (docs/qa-*.jpg, before over after).
   `tools/kw/sweeppick.js` picks ~60 road points (fixed spots: Uptown,

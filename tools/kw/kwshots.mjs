@@ -5,6 +5,7 @@
 //   VIEWS=file.json     replaces the built-in views
 //   VIEW_WAIT=ms        settle time before each shot (default 4000)
 //   VIEW_PROBE='<js>'   evaluate once on the booted page and print it, no shots
+//                       (VIEW_THROTTLE=8 CPU-throttles it, VIEW_PROFILE=f.cpuprofile profiles it)
 //   VIEW_PRE='<js>'     evaluate once before the shots (e.g. hide a layer to see what draws what)
 //   VIEW_BOOT_JS='<js>' run before the page's own scripts (e.g. window.__noPlaces = true for a before/after)
 //   `calls` in the output is the scene pass's draw count, `tris` its triangles
@@ -109,7 +110,13 @@ async function main() {
     if (process.env.VIEW_PRE) await evaluate(process.env.VIEW_PRE);
     if (process.env.VIEW_PROBE_FILE) process.env.VIEW_PROBE = readFileSync(process.env.VIEW_PROBE_FILE, 'utf8');
     if (process.env.VIEW_PROBE) {
+      // VIEW_THROTTLE=8: the probe runs under CDP CPU throttling (the phone
+      // stand-in); VIEW_PROFILE=f.cpuprofile: a sampling CPU profile of it
+      // (tools/kw/profsub.mjs reads one)
+      if (+process.env.VIEW_THROTTLE > 1) await send('Emulation.setCPUThrottlingRate', { rate: +process.env.VIEW_THROTTLE });
+      if (process.env.VIEW_PROFILE) { await send('Profiler.enable'); await send('Profiler.setSamplingInterval', { interval: 250 }); await send('Profiler.start'); }
       const v = await evaluate(process.env.VIEW_PROBE, true);
+      if (process.env.VIEW_PROFILE) writeFileSync(process.env.VIEW_PROFILE, JSON.stringify((await send('Profiler.stop')).result.profile));
       console.log(typeof v === 'string' ? v : JSON.stringify(v, null, 1));
       console.log(`  exceptions: ${errs.length}${errs.length ? '\n    ' + errs.slice(0, 5).join('\n    ') : ''}`);
       return;
