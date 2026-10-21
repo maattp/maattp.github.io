@@ -18,8 +18,9 @@ of the brands that matter most that OSM lacks. src/kwshops.js draws them.
   plazas  [{n, x, z, o: outline, ten: [tenant names, anchors first],
            sh?: [[name, x, z], ...] the independents (no brand here) outside kw.js's zones: their fascia signs}]
   names   lowercase brand/name strings handled here (kw.js's zone storefronts skip them)
-  fronts  [[bx, bz, kind, [[name, x, z], ...], who, [dx, dz] toward the street it faces or null], ...] every other building with a store in it,
-          outside the plazas and kw.js's zones (storefronts(): Hespeler Rd's strip, the pads, the dealers)
+  fronts  [[bx, bz, kind, [[name, x, z], ...], who, [dx, dz] toward the street it faces or null, lane?], ...] every other building with a store in it,
+          outside the plazas and kw.js's zones (storefronts(): Hespeler Rd's strip, the pads, the dealers);
+          lane: a pad's OSM drive-through lane, [[x, z], ...] as the cars drive (drive_lane; extract_drivethru.py)
 """
 
 import json
@@ -288,7 +289,7 @@ def storefronts(raw, blds, BG, plazas, used, inmap):
         g = groups.setdefault(bi, {"t": [], "kinds": []})
         if any(norm(q[0]) == norm(nm) for q in g["t"]):
             continue
-        g["t"].append([nm, round(x, 1), round(z, 1), classify(s) or "", t.get("shop") or t.get("amenity") or "", t.get("brand", ""), t.get("addr:street", "")])
+        g["t"].append([nm, round(x, 1), round(z, 1), classify(s) or "", t.get("shop") or t.get("amenity") or "", t.get("brand", ""), t.get("addr:street", ""), t.get("drive_through", "")])
     # the gas stations' kiosks: the small building by each station's canopy
     for s in raw["stores"]:
         if s["t"].get("amenity") != "fuel" or not inmap(s["x"], s["z"]):
@@ -343,9 +344,62 @@ def storefronts(raw, blds, BG, plazas, used, inmap):
         streets = [q[6] for q in ten if q[6]]
         d = toward(cx, cz, max(set(streets), key=streets.count) if streets else None)
         rec.append([round(d[0], 2), round(d[1], 2)] if d else None)
+        if kind == "f" and ten[0][7] != "no":
+            ln = drive_lane(b["o"])
+            if ln:
+                rec.append(ln)
         out.append(rec)
     out.sort(key=lambda r: (r[0], r[1]))
     return out
+
+
+LANES = None
+
+
+def drive_lane(o):
+    """The OSM drive-through lane (service=drive-through, raw_drivethru.json) wrapping a pad's outline o:
+    the one passing closest to its walls (within 9 m) of those 15-260 m long, its points in the order the cars
+    drive -- turned round if it would keep the building on the right (the window is on the driver's side: the
+    building on the left). None if none."""
+    global LANES
+    if LANES is None:
+        try:
+            LANES = json.load(open(os.path.join(DATA, "raw_drivethru.json")))["lanes"]
+        except FileNotFoundError:
+            print("  (no raw_drivethru.json: run extract_drivethru.py for the drive-through lanes)")
+            LANES = []
+    cx, cz = cen(o)
+    best, bd = None, 9.0
+    for ln in LANES:
+        p = ln["p"]
+        if min(math.hypot(q[0] - cx, q[1] - cz) for q in p) > 90:
+            continue
+        L = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(p, p[1:]))
+        if not 15 < L < 260:
+            continue
+        d = min(edge_dist(o, q[0], q[1]) for q in p)
+        # (a lane's points can be far apart: test its segments' midpoints too)
+        d = min(d, min(edge_dist(o, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2) for a, b in zip(p, p[1:])))
+        if d < bd and not any(in_poly(o, q[0], q[1]) for q in p[1:-1]):
+            best, bd = ln, d
+    if not best:
+        return None
+    p = [list(q) for q in best["p"]]
+    if best["oneway"] == -1:
+        p.reverse()
+    # which side the building is on, summed along the lane near it
+    side = 0.0
+    for a, b in zip(p, p[1:]):
+        mx, mz = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+        if edge_dist(o, mx, mz) > 14:
+            continue
+        dx, dz = b[0] - a[0], b[1] - a[1]
+        side += dx * (cz - mz) - dz * (cx - mx)
+    # x east, z south (to_world): side > 0 is the building on the driver's right. A Canadian window is on the
+    # left, so that is a lane drawn backwards (oneway=yes on it too: mappers draw these either way round)
+    if side > 0:
+        p.reverse()
+    return [[round(q[0], 1), round(q[1], 1)] for q in p]
 
 
 ABBR = {"rd": "road", "st": "street", "dr": "drive", "ave": "avenue", "av": "avenue", "blvd": "boulevard", "cres": "crescent",
