@@ -18,6 +18,8 @@ of the brands that matter most that OSM lacks. src/kwshops.js draws them.
   plazas  [{n, x, z, o: outline, ten: [tenant names, anchors first],
            sh?: [[name, x, z], ...] the independents (no brand here) outside kw.js's zones: their fascia signs}]
   names   lowercase brand/name strings handled here (kw.js's zone storefronts skip them)
+  fronts  [[bx, bz, kind, [[name, x, z], ...], who, [dx, dz] toward the street it faces or null], ...] every other building with a store in it,
+          outside the plazas and kw.js's zones (storefronts(): Hespeler Rd's strip, the pads, the dealers)
 """
 
 import json
@@ -229,6 +231,176 @@ class Grid:
         return out
 
 
+# --- the storefronts outside the plazas ----------------------------------------
+# Every building with a store in it that no named plaza holds (Hespeler Rd's
+# strip, the fast-food pads, the dealers on the auto rows, the banks on their
+# pads, the gas stations' kiosks): the building, what kind of front it has
+# and its tenants' names, so kwshops.js draws it as a one-storey store with
+# glass, a door and its signs instead of world.js's office or flats.
+FRONT_BT = {"yes", "retail", "commercial", "supermarket", "shop", "kiosk", "service", "industrial", "warehouse"}
+FOOD = {"fast_food", "cafe", "ice_cream"}
+AUTO = {"car_repair", "tyres", "car_wash"}
+
+
+def storefronts(raw, blds, BG, plazas, used, inmap):
+    """[[bx, bz, kind, tenants, who, facing]] kind: s strip, f food pad, b bank, c dealer, a auto service, k gas kiosk.
+    tenants: [[name, x, z], ...] the ones with no brand drawn here (they are lettered).
+    who: a dealer's make (OSM brand, else its name), a kiosk's gas brand key, a pad's brand key or name."""
+    def bld_at(x, z, r=12.0):
+        best, bd = None, 1e9
+        for i in BG.near(x, z, r + 5):
+            b = blds[i]
+            if b["A"] < 40 or b["A"] > 16000:
+                continue
+            if in_poly(b["o"], x, z):
+                d = -1.0 / b["A"]
+            else:
+                d = edge_dist(b["o"], x, z)
+                if d > r:
+                    continue
+            if d < bd:
+                best, bd = i, d
+        return best
+
+    def ok_bld(b):
+        if b.get("bt", "yes") not in FRONT_BT:
+            return False
+        try:
+            if float(str(b.get("lv", "1")).split(";")[0]) >= 3:
+                return False
+        except ValueError:
+            pass
+        return not re.search(r"Motel|Hotel|Inn\b|Suites|Church|School|Hospital|Clinic|Centre for|Office|Tower|Apartments", b.get("n", ""))
+
+    groups = {}
+    in_used_plaza = lambda x, z: any(i in used and in_poly(plazas[i]["o"], x, z) for i in range(len(plazas)))
+    for s in raw["stores"]:
+        x, z, t, nm = s["x"], s["z"], s["t"], s["n"]
+        if not inmap(x, z) or t.get("amenity") in ("atm",) or t.get("shop") in ("vacant", "mall") or len(nm) > 30:
+            continue
+        if any(math.hypot(x - zx, z - zz) < zr for zx, zz, zr in ZONES_W) or in_used_plaza(x, z):
+            continue
+        if INSIDE.search(nm):
+            continue
+        bi = bld_at(x, z)
+        if bi is None or not ok_bld(blds[bi]):
+            continue
+        g = groups.setdefault(bi, {"t": [], "kinds": []})
+        if any(norm(q[0]) == norm(nm) for q in g["t"]):
+            continue
+        g["t"].append([nm, round(x, 1), round(z, 1), classify(s) or "", t.get("shop") or t.get("amenity") or "", t.get("brand", ""), t.get("addr:street", "")])
+    # the gas stations' kiosks: the small building by each station's canopy
+    for s in raw["stores"]:
+        if s["t"].get("amenity") != "fuel" or not inmap(s["x"], s["z"]):
+            continue
+        x, z = s["x"], s["z"]
+        best, bd = None, 46.0
+        for i in BG.near(x, z, 50):
+            b = blds[i]
+            if b.get("bt", "yes") in ("roof", "house", "residential", "garage", "garages", "shed", "carport") or not (35 < b["A"] < 800):
+                continue
+            cx, cz = cen(b["o"])
+            d = math.hypot(cx - x, cz - z)
+            if d < bd and ok_bld(b):
+                best, bd = i, d
+        if best is None:
+            continue
+        g = groups.setdefault(best, {"t": [], "kinds": []})
+        g["gas"] = GT.get(norm(s["t"].get("brand"))) or GT.get(norm(s["n"])) or ""
+    out = []
+    for bi, g in groups.items():
+        b = blds[bi]
+        ten = g["t"]
+        kinds = [q[4] for q in ten]
+        if "gas" in g and len(ten) <= 2:
+            kind = "k"
+        elif "car" in kinds:
+            kind = "c"
+        elif len(ten) == 1 and kinds[0] == "bank" and b["A"] < 1400:
+            kind = "b"
+        elif len(ten) == 1 and b["A"] < 900 and (kinds[0] in FOOD or (kinds[0] == "restaurant" and b["A"] < 520)):
+            kind = "f"
+        elif ten and all(k in AUTO for k in kinds) and b["A"] < 3000:
+            kind = "a"
+        else:
+            kind = "s"
+        if kind == "s" and not ten:
+            continue
+        cx, cz = cen(b["o"])
+        sh = [q[:3] for q in ten if not q[3] and not re.search(r"Tim Horton|FreshCo", q[0])]
+        rec = [round(cx, 1), round(cz, 1), kind, sh]
+        if kind == "c":
+            car = next(q for q in ten if q[4] == "car")
+            rec.append(car[5] or car[0])
+        elif kind == "k":
+            rec.append(g["gas"])
+        elif kind in "fba":
+            # a pad's one tenant: its brand drawn here (its colours), else its name
+            rec.append(ten[0][3] or ten[0][0])
+        else:
+            rec.append("")
+        # the street it faces: its tenants' addr:street, else the nearest street -- (dx, dz) toward it
+        streets = [q[6] for q in ten if q[6]]
+        d = toward(cx, cz, max(set(streets), key=streets.count) if streets else None)
+        rec.append([round(d[0], 2), round(d[1], 2)] if d else None)
+        out.append(rec)
+    out.sort(key=lambda r: (r[0], r[1]))
+    return out
+
+
+ABBR = {"rd": "road", "st": "street", "dr": "drive", "ave": "avenue", "av": "avenue", "blvd": "boulevard", "cres": "crescent",
+        "ct": "court", "pkwy": "parkway", "hwy": "highway", "n": "north", "s": "south", "e": "east", "w": "west"}
+
+
+def street_key(s):
+    return " ".join(ABBR.get(w, w) for w in re.sub(r"[.,]", " ", norm(s)).split())
+
+
+ROADS = None
+
+
+def toward(x, z, street, r_named=250.0, r_any=120.0):
+    """Unit (dx, dz) from (x, z) to the nearest point of the street of that name, else of any street; None if none near."""
+    global ROADS
+    if ROADS is None:
+        rs = json.load(open(os.path.join(DATA, "raw_roads.json")))["roads"]
+        keep = {"primary", "secondary", "tertiary", "unclassified", "residential", "trunk", "living_street"}
+        ROADS = {"seg": [], "grid": {}}
+        for r in rs:
+            if r["cls"] not in keep:
+                continue
+            k = street_key(r.get("name") or "")
+            for a, b in zip(r["p"], r["p"][1:]):
+                i = len(ROADS["seg"])
+                ROADS["seg"].append((a, b, k))
+                for gx in range(int(min(a[0], b[0]) // 100), int(max(a[0], b[0]) // 100) + 1):
+                    for gz in range(int(min(a[1], b[1]) // 100), int(max(a[1], b[1]) // 100) + 1):
+                        ROADS["grid"].setdefault((gx, gz), []).append(i)
+    want = street_key(street) if street else None
+    best = {}
+    R = int(r_named // 100) + 1
+    seen = set()
+    for gx in range(int(x // 100) - R, int(x // 100) + R + 1):
+        for gz in range(int(z // 100) - R, int(z // 100) + R + 1):
+            for i in ROADS["grid"].get((gx, gz), ()):
+                if i in seen:
+                    continue
+                seen.add(i)
+                a, b, k = ROADS["seg"][i]
+                dx, dz = b[0] - a[0], b[1] - a[1]
+                L2 = dx * dx + dz * dz or 1.0
+                t = max(0.0, min(1.0, ((x - a[0]) * dx + (z - a[1]) * dz) / L2))
+                qx, qz = a[0] + dx * t, a[1] + dz * t
+                d = math.hypot(qx - x, qz - z)
+                for tag in (("named",) if want and k == want else ()) + ("any",):
+                    if d < best.get(tag, (1e9,))[0]:
+                        best[tag] = (d, qx, qz)
+    hit = best.get("named") if "named" in best and best["named"][0] < r_named else best.get("any") if "any" in best and best["any"][0] < r_any else None
+    if not hit or hit[0] < 1:
+        return None
+    return ((hit[1] - x) / hit[0], (hit[2] - z) / hit[0])
+
+
 def main():
     raw = json.load(open(os.path.join(DATA, "raw_shops.json")))
     blds = [b for b in json.load(open(os.path.join(DATA, "raw_buildings.json")))["buildings"] if len(b["o"]) >= 3]
@@ -366,12 +538,13 @@ def main():
     used = sorted({s["p"] for s in stores if s["p"] >= 0} | {i for i, p in enumerate(plazas) if len(p["ten"]) >= 3})
     remap = {o: i for i, o in enumerate(used)}
     out_plazas = [plazas[i] for i in used]
+    fronts = storefronts(raw, blds, BG, plazas, set(used), inmap)
     out = []
     for s in stores:
         b = s["b"]
         out.append([s["k"], round(s["x"], 1), round(s["z"], 1), round(b[0][0], 1) if b else None, round(b[0][1], 1) if b else None,
                     remap.get(s["p"], -1), s["addr"], s["n"]])
-    doc = {"stores": out, "plazas": out_plazas, "names": sorted(names)}
+    doc = {"stores": out, "plazas": out_plazas, "names": sorted(names), "fronts": fronts}
     with open(OUT, "w") as f:
         json.dump(doc, f, separators=(",", ":"), ensure_ascii=False)
     by = {}
@@ -380,6 +553,10 @@ def main():
     print(f"shops.json {os.path.getsize(OUT) // 1024} KB: {len(out)} stores in {len(by)} brands, {len(out_plazas)} plazas; "
           f"{sum(1 for s in out if s[3] is None)} with no building")
     print("  " + ", ".join(f"{k} {v}" for k, v in sorted(by.items(), key=lambda kv: -kv[1])))
+    fk = {}
+    for f in fronts:
+        fk[f[2]] = fk.get(f[2], 0) + 1
+    print(f"  storefronts outside the plazas: {len(fronts)} buildings ({fk}), {sum(len(f[3]) for f in fronts)} names to letter")
     if added:
         print("  from the official lists: " + ", ".join(f"{k} +{v}" for k, v in added.items()))
     for k in ("lcbo", "beer", "walmart"):
