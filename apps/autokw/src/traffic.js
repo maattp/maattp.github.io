@@ -10,7 +10,8 @@ const TRAFFIC_TARGET = 26;
 // Parked cars only exist within this radius, and each is 3 draw calls, so this
 // is a draw-call dial as much as a distance one.
 const PARKED_RADIUS = 105;
-const LOT_TYPES = new Set(['sedan', 'suv', 'pickup', 'compact', 'hatch', 'ev', 'muscle', 'sports', 'convertible']);
+const LOT_TYPES = new Set(['sedan', 'suv', 'pickup', 'compact', 'hatch', 'ev', 'muscle', 'sports', 'convertible',
+  'crossover', 'compsedan', 'minivan', 'wagon', 'pickupcap']);
 const DESPAWN = 520;
 // The Belltown Hellcat (vehicles.js `hellcat`): the chance a Belltown spawn is
 // one, and how many may be about at once.
@@ -20,7 +21,7 @@ const HELLCAT_P = 0.12, HELLCAT_MAX = 3;
 // spawned a car every ~110 m, so this is about one per 10 km driven. It goes
 // when it is left behind, as every car does.
 const WIENER_P = 0.01;
-const HEAVY = new Set(['bus', 'busx', 'ionbus', 'artic', 'boxtruck', 'garbage', 'pickup', 'van', 'cruiser', 'sportbike', 'bicycle']);
+const HEAVY = new Set(['bus', 'busx', 'ionbus', 'artic', 'boxtruck', 'garbage', 'pickup', 'pickupcap', 'van', 'postvan', 'purovan', 'cruiser', 'sportbike', 'bicycle']);
 // Auto KW: types that never park at a kerb and keep off residential streets
 // (every bus -- `spec.bus` -- and the refuse truck)
 const NO_KERB = (tn) => !!(TYPES[tn] && TYPES[tn].bus) || tn === 'garbage';
@@ -957,6 +958,8 @@ export class TrafficSystem {
       // parking, and appending would move every parked car in the city. A
       // hash, not this.R, so the spawn stream after it is unchanged.
       if (tn === 'ev' && hash2(ei, this._prio) < 0.25) tn = 'wedge';
+      // Auto KW: a third of the iXpress draws are the ION Bus (302) instead
+      else if (tn === 'busx' && hash2(ei + 31, this._prio) < 0.34) tn = 'ionbus';
       // The Belltown Hellcat: a few, and only in Belltown (the HUD's
       // neighbourhood). A car-sized draw there turns into one now and then,
       // never more than HELLCAT_MAX about at once. A hash again, not this.R.
