@@ -37,7 +37,7 @@
 import * as THREE from './three.js';
 import * as G from './geo.js';
 import { hash2 } from './util.js';
-import { Builder } from './build.js';
+import { Builder, cropAtlas } from './build.js';
 import { boxAt, kwData } from './kw.js';
 
 const U0 = [0, 0, 0, 0, 0, 0, 0, 0];
@@ -195,6 +195,8 @@ class PlaceAtlas {
     this.x += w + 2; this.row = Math.max(this.row, h);
     return at;
   }
+  /** Done drawing: cut the unused rows (build.js cropAtlas) and upload. */
+  finish() { this.cut = cropAtlas(this.tex, this.y + this.row); this.tex.needsUpdate = true; return this.cut; }
   panel(w, h, px, draw) {
     const W = Math.min(1024, Math.max(32, Math.round(w * px))), H = Math.min(512, Math.max(16, Math.round(h * px)));
     const [x, y] = this.alloc(W, H);
@@ -2455,8 +2457,8 @@ export function buildPlaces(ctx) {
   });
   run('mall', () => mall(kit, ctx));
   STATS.ms = Math.round(performance.now() - t0);
-  PA.tex.needsUpdate = true;
   STATS.atlas = { y: PA.y + PA.row, full: PA.full };
+  PA.finish();
   if (typeof window !== 'undefined') window.__kwPlaces = STATS;   // harness probes
 }
 export function placesStats() { return STATS; }

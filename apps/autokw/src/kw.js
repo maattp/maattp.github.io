@@ -19,6 +19,7 @@ import * as THREE from './three.js';
 import * as G from './geo.js';
 import { hash2 } from './util.js';
 import { Builder } from './build.js';
+import { memoPeek, memoPut } from './bootcache.js';
 
 let KW = null;
 export function setKwData(d) { KW = d; }
@@ -312,6 +313,23 @@ const RANK = { shop: 3, poly: 2, strip: 1, world: 0 };
  * meet.
  */
 export function dedupeFootprints(city) {
+  // What it did is a pure function of the data, so an earlier launch of this
+  // build hands over its list of changes (bootcache.js memo), replayed in the
+  // same order: [building index, op, metres] -- 0 a house gone flat, 1 a
+  // footprint gone flat, 2 an outline raised, 3 a box raised.
+  const B = city.buildings;
+  const kept = memoPeek('kw:dedupe', (v) => v && v.ops instanceof Float64Array && v.n === B.length);
+  if (kept) {
+    const o3 = kept.ops;
+    for (let k = 0; k < o3.length; k += 3) {
+      const o = B[o3[k]], op = o3[k + 1], by = o3[k + 2];
+      if (op <= 1) { o.h = 0; if (!o.kw) o.kw = {}; o.kw.skip = true; if (op === 1) { o.kw.strip = null; o.kw.shop = null; } }
+      else if (op === 2) o.kw.poly.h += by; else o.h += by;
+    }
+    return { ...kept.r, cached: true };
+  }
+  const ops = [], idx = new Map();
+  B.forEach((b, i) => idx.set(b, i));
   const r = { flat: 0, raised: 0, pairs: 0 };
   const items = [];
   for (const b of city.buildings) {
@@ -361,6 +379,7 @@ export function dedupeFootprints(city) {
         && ov(sm, big) >= 0.85) {
         const o = sm.b;
         o.h = 0; if (!o.kw) o.kw = {}; o.kw.skip = true;
+        ops.push(idx.get(o), 0, 0);
         r.flat++; r.houses = (r.houses || 0) + 1;
         continue;
       }
@@ -380,15 +399,17 @@ export function dedupeFootprints(city) {
         o.kw.skip = true;
         o.kw.strip = null;
         o.kw.shop = null;
+        ops.push(idx.get(o), 1, 0);
         r.flat++;
       } else {
         const by = Math.max(0, footTop(big.b, foot(big)) - footTop(sm.b, foot(sm))) + 0.6;
         const o = sm.b;
-        if (o.kw && o.kw.poly && !o.kw.shop) o.kw.poly.h += by; else o.h += by;
+        if (o.kw && o.kw.poly && !o.kw.shop) { o.kw.poly.h += by; ops.push(idx.get(o), 2, by); } else { o.h += by; ops.push(idx.get(o), 3, by); }
         r.raised++;
       }
     }
   }
+  memoPut('kw:dedupe', { n: B.length, ops: Float64Array.from(ops), r: { ...r } });
   return r;
 }
 

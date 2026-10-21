@@ -180,6 +180,35 @@ export function dropGeometryArrays(g) {
 }
 const dropArray = function () { this.array = null; };
 
+/**
+ * A lettering atlas's canvas, cut to the rows its panels used, before its
+ * first upload: every texel that was drawn stays where it was on screen.
+ * The canvas is a shelf filled from the top, so only empty rows at the
+ * bottom go, in whole `STEP` (64) blocks, and the map's transform stretches v
+ * back (v' = v * H / H' + 1 - H / H'): mip levels 0-6 are built from exactly
+ * the same texel blocks as before (the canvas's bottom row is texture row
+ * 0, so a cut of a multiple of 64 keeps their alignment); only the 128 px+
+ * levels, a sign a few pixels across, can differ. GPU memory and the canvas
+ * shrink by the rows cut. `usedH` = the shelf's bottom (y + row). Returns
+ * the rows cut. Nothing may draw into or allocate from the atlas after.
+ */
+export function cropAtlas(tex, usedH, STEP = 64) {
+  const c = tex.image;
+  if (!c || typeof document === 'undefined' || !c.getContext) return 0;
+  const H = c.height, cut = Math.floor((H - Math.ceil(usedH)) / STEP) * STEP;
+  if (!(cut > 0)) return 0;
+  const H2 = H - cut;
+  const n = document.createElement('canvas');
+  n.width = c.width; n.height = H2;
+  n.getContext('2d').drawImage(c, 0, 0);
+  c.width = 0; c.height = 0;
+  tex.image = n;
+  tex.repeat.set(1, H / H2);
+  tex.offset.set(0, 1 - H / H2);
+  tex.needsUpdate = true;
+  return cut;
+}
+
 export class Builder {
   constructor(useUV = true) {
     this.solids = null;

@@ -224,8 +224,8 @@ export function buildVillages(ctx) {
   if (ctx.clearAt) for (const r of V.main) { const o = obb(r.p); if (o) ctx.clearAt.push([o.x, o.z, Math.min(o.hu, o.hv) + 2]); }
   run('main', () => V.main.forEach((r, i) => (r.kind === 'block' ? meshKing(kit, ctx, { ...r, ht: null }, 900 + i) : mainHouse(kit, ctx, r))));
   run('mill', () => mill(kit, ctx));
-  atlas.tex.needsUpdate = true;
   STATS.atlas = { y: atlas.y + atlas.row, full: atlas.full };
+  atlas.finish();
   STATS.ms = Math.round(performance.now() - t0);
   if (typeof window !== 'undefined') window.__kwVillages = STATS;
 }

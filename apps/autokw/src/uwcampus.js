@@ -21,7 +21,7 @@
 import * as THREE from './three.js';
 import * as G from './geo.js';
 import { hash2 } from './util.js';
-import { Builder } from './build.js';
+import { Builder, cropAtlas } from './build.js';
 import { LOOKS, polyMat, plainUV } from './kw.js';
 
 const U0 = [0, 0, 0, 0, 0, 0, 0, 0];
@@ -1169,6 +1169,8 @@ class Atlas {
     for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) ? u1 : u0, uv.getY(i) ? v1 : v0);
     return new THREE.Mesh(geo, this.mat);
   }
+  /** Done drawing: cut the unused rows (build.js cropAtlas) and upload. */
+  finish() { this.cut = cropAtlas(this.tex, this.y + this.row); this.tex.needsUpdate = true; return this.cut; }
 }
 const SANS = 'Helvetica, Arial, sans-serif';
 /** Brushed-steel letters on nothing (the sculptures). */
@@ -1683,7 +1685,7 @@ export function buildCampus(ctx) {
   try { bridges(kit, ctx); } catch (e) { warn('bridges: ' + e.message); }
   try { landmarks(kit, ctx, A); } catch (e) { warn('landmarks: ' + e.message); }
   try { laurier(kit, ctx, A); } catch (e) { warn('laurier: ' + e.message); }
-  A.tex.needsUpdate = true;
+  A.finish();
   kit.flush(ctx);
   STATS.tris = kit.tris;
   STATS.nearTris = kit.near || 0;

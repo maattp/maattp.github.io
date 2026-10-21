@@ -770,10 +770,15 @@ export class Hud {
     if (this.monorail) this.drawMonorail(ctx, toMap, 2.2 / zoom);
     // Marked places (the seaplane dock, the quads), upright whatever the
     // dial's rotation, so the anchor reads as an anchor.
+    // Only those whose icon can reach the dial (radius `half` in these units;
+    // the biggest icon is 6.5 / zoom plus its stroke): the dial is clipped to
+    // that circle, and the S-square test drew ~10x as many as show -- 364
+    // places since the chain stores and plazas came.
+    const reach = (half + 9 / zoom) * (half + 9 / zoom);
     for (const pl of (this.places || [])) {
       if (pl.off) continue;   // a pickup that has been taken
       const [bx, bz] = toMap(pl.x, pl.z);
-      if (Math.abs(bx) > S || Math.abs(bz) > S) continue;
+      if (bx * bx + bz * bz > reach) continue;
       ctx.save();
       ctx.translate(bx, bz);
       ctx.rotate(-player.camYaw);

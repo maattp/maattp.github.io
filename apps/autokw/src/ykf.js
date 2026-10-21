@@ -53,20 +53,31 @@ export class YKF {
     for (const ap of this.a.aprons) ap.p.forEach(grow);
     this.x0 = x0 - 200; this.z0 = z0 - 200; this.x1 = x1 + 200; this.z1 = z1 + 200;
     this.nx = Math.ceil((this.x1 - this.x0) / CELL); this.nz = Math.ceil((this.z1 - this.z0) / CELL);
+    // Each shape rasterised over the cells of its own box only (a cell is
+    // paved if ANY runway, taxiway or apron covers its centre, by the same
+    // tests): the same raster as testing every shape at every cell, which on
+    // a phone was ~0.8 s of every launch (6.6 s at the 8x stand-in).
     const pave = new Uint8Array(this.nx * this.nz);
-    for (let j = 0; j < this.nz; j++) {
-      const z = this.z0 + (j + 0.5) * CELL;
-      for (let i = 0; i < this.nx; i++) {
-        const x = this.x0 + (i + 0.5) * CELL;
-        let on = 0;
-        for (const r of this.a.runways) if (segDist(x, z, r.p[0], r.p[1]) < r.w / 2 + 3) on = 1;
-        if (!on) for (const t of this.a.taxiways) {
-          for (let k = 1; k < t.p.length && !on; k++) if (segDist(x, z, t.p[k - 1], t.p[k]) < 10.5) on = 1;
-          if (on) break;
+    const nx = this.nx, nz = this.nz, X0 = this.x0, Z0 = this.z0;
+    const cells = (bx0, bz0, bx1, bz1, test) => {
+      const i0 = Math.max(0, Math.floor((bx0 - X0) / CELL - 0.5)), i1 = Math.min(nx - 1, Math.ceil((bx1 - X0) / CELL - 0.5));
+      const j0 = Math.max(0, Math.floor((bz0 - Z0) / CELL - 0.5)), j1 = Math.min(nz - 1, Math.ceil((bz1 - Z0) / CELL - 0.5));
+      for (let j = j0; j <= j1; j++) {
+        const z = Z0 + (j + 0.5) * CELL;
+        for (let i = i0; i <= i1; i++) {
+          const k = j * nx + i;
+          if (!pave[k] && test(X0 + (i + 0.5) * CELL, z)) pave[k] = 1;
         }
-        if (!on) for (const ap of this.a.aprons) if (pointInPoly(ap.p, x, z)) { on = 1; break; }
-        pave[j * this.nx + i] = on;
       }
+    };
+    const seg = (a, b, r) => cells(Math.min(a[0], b[0]) - r, Math.min(a[1], b[1]) - r, Math.max(a[0], b[0]) + r, Math.max(a[1], b[1]) + r,
+      (x, z) => segDist(x, z, a, b) < r);
+    for (const r of this.a.runways) seg(r.p[0], r.p[1], r.w / 2 + 3);
+    for (const t of this.a.taxiways) for (let k = 1; k < t.p.length; k++) seg(t.p[k - 1], t.p[k], 10.5);
+    for (const ap of this.a.aprons) {
+      let ax0 = Infinity, ax1 = -Infinity, az0 = Infinity, az1 = -Infinity;
+      for (const q of ap.p) { ax0 = Math.min(ax0, q[0]); ax1 = Math.max(ax1, q[0]); az0 = Math.min(az0, q[1]); az1 = Math.max(az1, q[1]); }
+      cells(ax0, az0, ax1, az1, (x, z) => pointInPoly(ap.p, x, z));
     }
     this.pave = pave;
   }
