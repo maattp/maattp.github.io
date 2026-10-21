@@ -120,6 +120,9 @@ def main():
     # the universities and colleges, and the stores in the two plazas that
     # matter most. Everything else stays a box.
     POLY_ZONES = [z for z in zones if z[0] in ("University of Waterloo Plaza", "University & Bridge")]
+    # (an untagged building=yes L with stores in it is a plaza too: 600 Hespeler Rd's HomeSense / PetSmart row)
+    sp = os.path.join(DATA, "raw_shops.json")
+    store_pts = [(s["x"], s["z"]) for s in json.load(open(sp))["stores"]] if os.path.exists(sp) else []
     polys = []
     for b in blds:
         bt = str(b.get("bt", "")).lower()
@@ -135,6 +138,12 @@ def main():
             or re.search(r"School|Collegiate|College|University|Campus|Hall\b|Library|Centre for", n) \
             or (bt in ("retail", "commercial", "supermarket", "yes") and any(math.hypot(cx - zx, cz - zz) < r for _, zx, zz, r in POLY_ZONES)) \
             or _swallowing_box(b["o"], bt)
+        # an untagged (building=yes) L or U with a row of stores in it is a plaza too (600 and 561 Hespeler Rd):
+        # drawn as retail; a hotel, a tower or anything over two storeys is not
+        if not keep and bt in ("", "yes") and str(b.get("lv") or "1")[:1] in "12" and len(str(b.get("lv") or "1")) == 1 \
+                and not re.search(r"Hotel|Inn\b|Suites|Crowne|Tower|Apartment|Condo|Church", n) \
+                and _swallowing_box(b["o"], "retail") and _holds_store(b["o"], store_pts):
+            keep, bt = True, "retail"
         if not keep:
             continue
         pts = []
@@ -290,6 +299,15 @@ def _swallowing_box(o, bt):
         return False
     A = abs(_area(o))
     return 1500 <= A <= 40000 and A / _min_rect_area(o) < 0.62
+
+
+def _holds_store(o, pts, n=2):
+    """Two stores' nodes (raw_shops.json) inside outline o: a row of shops, not a
+    building with a cafe in it (one store alone: a pad, left to its box)."""
+    xs = [q[0] for q in o]
+    zs = [q[1] for q in o]
+    x0, x1, z0, z1 = min(xs), max(xs), min(zs), max(zs)
+    return sum(1 for x, z in pts if x0 <= x <= x1 and z0 <= z <= z1 and _in_poly(o, x, z)) >= n
 
 
 def _seg_dist(px, pz, a, b):

@@ -15,7 +15,12 @@
 //     maps one: that box goes flat here and the canopy is drawn on its
 //     footprint), pump islands, and a PRICE PYLON at the road;
 //   - every plaza (shop=mall / named landuse=retail) a PYLON at its road
-//     entrance listing its real tenants, anchors first.
+//     entrance listing its real tenants, anchors first;
+//   - every other building with a store in it (data `fronts`: Hespeler Rd's
+//     strip, the fast-food pads, the banks, the dealers, the lube bays, the
+//     gas kiosks) one storey with its storefront, drawn by its kind;
+//   - every independent's name LETTERED on its fascia, from a one-channel
+//     lettering atlas the same material reads (TextAtlas).
 //
 // Cost: all geometry is vertex-coloured into kw.js's footprint material and
 // every logo into the atlas material, per 1200 m cluster (`kwp` keys, the
@@ -310,9 +315,9 @@ class BrandAtlas {
   constructor() {
     this.W = 2048;
     this.c = document.createElement('canvas');
-    // 2816 rows: the logos and plazas fill ~2000, kwhome.js's storefronts ~400, the plazas'
-    // independents' lettering the rest (finish() crops to what is used)
-    this.c.width = this.W; this.c.height = 2816;
+    // 2304 rows: the logos, price signs and kwhome.js's cells use ~1660 (the lettering is
+    // TextAtlas's now); finish() crops to what is used
+    this.c.width = this.W; this.c.height = 2304;
     this.g = this.c.getContext('2d');
     this.y = 0; this.row = 0; this.full = 0;
     this.shelves = [];
@@ -396,9 +401,10 @@ class BrandAtlas {
    * hand the texture to kw.js's footprint material: every vertex-coloured
    * surface there has uv (0, 0), the WHITE block kept at the canvas's bottom
    * left (a constant uv has no derivative, so it always samples mip 0), so
-   * buildings and logos are one material and one draw a cluster.
+   * buildings and logos are one material and one draw a cluster. T: the
+   * lettering (TextAtlas), finished here and patched into the same material.
    */
-  finish() {
+  finish(TA) {
     const used = Math.min(this.c.height, Math.ceil((this.y + this.row + 2 + WHITE) / 64) * 64);
     if (used < this.c.height) {
       const c2 = document.createElement('canvas');
@@ -409,14 +415,137 @@ class BrandAtlas {
     const H = this.c.height;
     const g = this.c.getContext('2d');
     g.fillStyle = '#ffffff'; g.fillRect(0, H - WHITE, this.W, WHITE);
-    for (const Bd of this.builders) for (let i = 1; i < Bd.uv.length; i += 2) Bd.uv[i] = 1 + Bd.uv[i] / H;
+    const Ht = TA ? TA.finish() : 1;
+    // a vertex's u says which atlas it reads: under 1 this one (v from the canvas's
+    // bottom: flipY), 2 and up the lettering's (v from its top row: a DataTexture)
+    for (const Bd of this.builders) for (let i = 1; i < Bd.uv.length; i += 2) Bd.uv[i] = Bd.uv[i - 1] >= 1.5 ? -Bd.uv[i] / Ht : 1 + Bd.uv[i] / H;
     this.tex = new THREE.CanvasTexture(this.c);
     this.tex.colorSpace = THREE.SRGBColorSpace;
     this.tex.anisotropy = 8;
     const m = polyMat();
     m.map = this.tex;
+    if (TA && TA.tex) TA.patch(m);
     m.needsUpdate = true;
     return m;
+  }
+  /** GPU bytes of this atlas (RGBA, mipmapped). */
+  get bytes() { return Math.round(this.W * this.c.height * 4 * 4 / 3); }
+}
+
+// --- the lettering: one-channel, in its own texture, read by the same material ---------
+//
+// Every plaza tenant, every storefront outside the plazas, every pylon's
+// lettered row and every plaza's name is a NAME in one colour on a panel
+// of another: what the atlas needs to hold is only the letters' shape. So
+// the lettering is a MASK, white letters on black in one byte a pixel (an
+// R8 texture: a quarter of the logo atlas's RGBA a pixel), each name drawn
+// once whatever its colours, measured to its own width. A lettered quad
+// carries the panel's colour as its vertex colour and the letters' as an
+// index into a 16-colour uniform, in its u: u = 2 (index + 1) + the cell's
+// u. polyMat's map_fragment is patched to tell the two atlases apart by u
+// (under 1: the logos; 2 and up: the lettering) and to mix the panel and
+// letter colours by the mask, so the lettering stays in kw.js's footprint
+// material and adds no draw. All ~1950 names map-wide fit in 2048 x ~2.3k
+// bytes (~6 MB with mips), where 330 of them did not fit in the RGBA atlas.
+
+class TextAtlas {
+  constructor() {
+    this.W = 2048; this.Hmax = 4096;
+    this.y = 0; this.full = 0;
+    this.shelves = [];
+    this.cells = new Map();
+    this.fg = [];             // the letters' colours (hex), the uniform's order
+    this.m = document.createElement('canvas').getContext('2d');
+  }
+  /** The cell of name s lettered h px tall (bold sans, 0.6 h), cached by s and h: a pixel rect, or null when full. */
+  cell(s, h = 22, maxW = 420) {
+    const key = h + '|' + s;
+    let c = this.cells.get(key);
+    if (c !== undefined) return c;
+    this.m.font = `700 ${Math.round(h * 0.6)}px ${SANS}`;
+    const w = Math.min(maxW, Math.max(h * 1.6, Math.ceil(this.m.measureText(s).width + h * 0.7)));
+    let sh = this.shelves.find((q) => q.h === h && q.x + w <= this.W);
+    if (!sh) {
+      if (this.y + h > this.Hmax) { this.full++; this.cells.set(key, null); return null; }
+      sh = { y: this.y, h, x: 0 };
+      this.shelves.push(sh);
+      this.y += h + 2;
+    }
+    c = { x: sh.x, y: sh.y, w, h, a: w / h, s };
+    sh.x += w + 2;
+    this.cells.set(key, c);
+    return c;
+  }
+  fgIndex(hex) {
+    let i = this.fg.indexOf(hex);
+    if (i >= 0) return i;
+    if (this.fg.length < 16) { this.fg.push(hex); return this.fg.length - 1; }
+    // full: the nearest
+    const a = lin(hex);
+    let bi = 0, bd = Infinity;
+    this.fg.forEach((h2, j) => { const b = lin(h2); const d = (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2; if (d < bd) { bd = d; bi = j; } });
+    return bi;
+  }
+  /** A quad showing cell c, letters fg on panel bgc, centred at (x, y, z) facing (nx, nz), w x h metres, into Bd (registered with atlas A). */
+  quad(A, Bd, c, fg, bgc, x, y, z, nx, nz, w, h) {
+    if (!c) return;
+    const rx = nz, rz = -nx, hw = w / 2, hh = h / 2;
+    const k = 2 * (this.fgIndex(fg) + 1);
+    const u0 = k + (c.x + 0.5) / this.W, u1 = k + (c.x + c.w - 0.5) / this.W;
+    const vT = -(c.y + 0.5), vB = -(c.y + c.h - 0.5);   // pixels from the top, made v at finish()
+    const col = lin(bgc);
+    Bd.quad([x - rx * hw, y - hh, z - rz * hw], [x + rx * hw, y - hh, z + rz * hw], [x + rx * hw, y + hh, z + rz * hw], [x - rx * hw, y + hh, z - rz * hw],
+      [nx, 0, nz], [u0, vB, u1, vB, u1, vT, u0, vT], [col[0] * LOGO_LIT[0], col[1] * LOGO_LIT[1], col[2] * LOGO_LIT[2]]);
+    if (!A.builders.includes(Bd)) A.builders.push(Bd);
+  }
+  /** Letter every cell into a canvas of the height used, keep its red channel: the R8 texture. Returns its height. */
+  finish() {
+    if (!this.cells.size) return 1;
+    const H = Math.max(4, Math.ceil(this.y / 4) * 4);
+    const cv = document.createElement('canvas');
+    cv.width = this.W; cv.height = H;
+    const g = cv.getContext('2d', { willReadFrequently: true });
+    g.fillStyle = '#000000'; g.fillRect(0, 0, this.W, H);
+    g.fillStyle = '#ffffff'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    for (const c of this.cells.values()) {
+      if (!c) continue;
+      g.font = `700 ${Math.round(c.h * 0.6)}px ${SANS}`;
+      g.fillText(c.s, c.x + c.w / 2, c.y + c.h * 0.54, c.w - c.h * 0.4);
+    }
+    const px = g.getImageData(0, 0, this.W, H).data;
+    const r = new Uint8Array(this.W * H);
+    for (let i = 0, j = 0; i < r.length; i++, j += 4) r[i] = px[j];
+    this.tex = new THREE.DataTexture(r, this.W, H, THREE.RedFormat, THREE.UnsignedByteType);
+    this.tex.minFilter = THREE.LinearMipmapLinearFilter;
+    this.tex.magFilter = THREE.LinearFilter;
+    this.tex.generateMipmaps = true;
+    this.tex.anisotropy = 8;
+    this.tex.needsUpdate = true;
+    this.H = H;
+    return H;
+  }
+  get bytes() { return this.tex ? Math.round(this.W * this.H * 4 / 3) : 0; }
+  /** polyMat reads the lettering too: its map chunk picks the atlas by u, its colour chunk moves into it. */
+  patch(m) {
+    const fg = new Float32Array(48);
+    this.fg.forEach((h, i) => { const c = lin(h); for (let j = 0; j < 3; j++) fg[i * 3 + j] = c[j] * LOGO_LIT[j]; });
+    const tex = this.tex;
+    m.onBeforeCompile = (sh) => {
+      sh.uniforms.kwText = { value: tex };
+      sh.uniforms.kwFg = { value: fg };
+      sh.fragmentShader = 'uniform sampler2D kwText;\nuniform vec3 kwFg[16];\n' + sh.fragmentShader
+        .replace('#include <map_fragment>', `#ifdef USE_MAP
+  float kwK = floor(vMapUv.x * 0.5);
+  vec4 sampledDiffuseColor = texture2D(map, vMapUv);
+  float kwM = texture2D(kwText, vec2(vMapUv.x - 2.0 * kwK, vMapUv.y)).r;
+  if (kwK > 0.5) diffuseColor.rgb *= mix(vColor, kwFg[int(kwK) - 1], kwM);
+  else diffuseColor *= sampledDiffuseColor * vec4(vColor, 1.0);
+#else
+  diffuseColor.rgb *= vColor;
+#endif`)
+        .replace('#include <color_fragment>', '');
+    };
+    m.customProgramCacheKey = () => 'kwtext';
   }
 }
 
@@ -534,9 +663,158 @@ export function prepShops(city) {
       r.strips++;
     }
   });
+  // every other building with a store in it (S.fronts, build_shops.py
+  // storefronts): Hespeler Rd's strip, the fast-food pads, the banks, the
+  // dealers, the lube bays, the gas stations' kiosks. world.js would draw a 9 m
+  // one as a three-storey office; it is a one-storey store facing its lot.
+  // Only inside what the footprint clusters already draw: a front is merged
+  // into its 1200 m cluster (kw.js buildPolys' and this file's `kwp` keys),
+  // which three culls by its bounding sphere, so a front where the cluster
+  // has nothing yet would add a draw, and one far out on its edge would swell
+  // the sphere into views that never saw it. Those stay world.js's boxes.
+  const ckey = (x, z) => Math.round(x / 1200) * 1000 + Math.round(z / 1200);
+  const ext = new Map();
+  const grow = (x, z, r) => {
+    const k = ckey(x, z);
+    let e = ext.get(k);
+    if (!e) ext.set(k, (e = [Infinity, -Infinity, Infinity, -Infinity]));
+    e[0] = Math.min(e[0], x - r); e[1] = Math.max(e[1], x + r); e[2] = Math.min(e[2], z - r); e[3] = Math.max(e[3], z + r);
+  };
+  // (kw.js's outlines, the boxes marked here, the gas canopies, and the chain stores'
+  // buildings -- their signs; a store with no building of its own can fail to draw)
+  for (const b of city.buildings) if (b.kw && ((b.kw.poly && !b.kw.skip) || b.kw.shop || b.kw.canopy)) grow(b.x, b.z, Math.max(b.w, b.d) / 2);
+  for (const s of S.stores) if (s[3] !== null) grow(s[3], s[4], 10);
+  r.fronts = 0; r.frontsOut = 0;
+  (S.fronts || []).forEach((F, fi) => {
+    const [bx, bz, kind] = F;
+    const b = boxAt(city, bx, bz, 1);
+    if (!free(b) || b.h < 2.5 || b.h > 12.5 || b.w < 5 || b.d < 5) return;
+    // (a dealer, a big lot on an auto row, a little further)
+    const e = ext.get(ckey(b.x, b.z)), M = kind === 'c' ? 120 : 60;
+    if (!e || b.x < e[0] - M || b.x > e[1] + M || b.z < e[2] - M || b.z > e[3] + M) { r.frontsOut++; return; }
+    const A = b.w * b.d;
+    if (A < 40 || A > 16000) return;
+    // a store in a house (a salon in a bungalow) stays a house; a pad or a kiosk the data says is one does not
+    if (!(PLAIN_STYLES.has(b.style) || (b.style === 'house' && kind !== 's'))) return;
+    const fr = frameOf(b);
+    // its storefront: the face toward the street it is addressed on (F[5]), with the most car park, not backing on a road
+    let face = 0, best = -Infinity;
+    for (let f = 0; f < 4; f++) {
+      const N = fr.N(f), q = fr.P(f, 0, 0, 6);
+      const s = lotShare(city, fr, f) + (F[5] ? 0.6 * Math.max(0, N[0] * F[5][0] + N[2] * F[5][1]) : 0)
+        + (city.onRoad(q[0], q[2], 4, false) ? -0.5 : 0) + fr.F[f].len * 0.002;
+      if (s > best) { best = s; face = f; }
+    }
+    // two storeys with no lot in front is a main street's shop with flats over it: left as it is
+    if (b.h > 7.5 && kind === 's' && lotShare(city, fr, face) < 0.2) return;
+    if (!b.kw) b.kw = {};
+    b.kw.strip = { face };
+    b.kw.skip = true;
+    b.kw.shop = { fmt: 'strip', plaza: -1, front: fi, kind };
+    // one storey and its parapet: a pad 5-6 m, a kiosk under its canopy's height, a showroom's double height
+    const H = { s: 7.2, f: 5.8, b: 6.4, a: 6.2, k: 4.9, c: 7.6 }[kind] || 7.2;
+    if (kind === 's') { if (b.h > 7.5 && A < 6000) b.h = 7.2; b.h = Math.max(b.h, 5.0); } else b.h = H;
+    r.fronts++;
+  });
   return r;
 }
+/** The share of the ground in front of face fi (7 x 8 m deep, 7 across) that is car park. */
+function lotShare(city, fr, fi) {
+  const L = fr.F[fi].len;
+  let park = 0, n = 0;
+  for (let k = 1; k <= 7; k++) for (let j = -3; j <= 3; j++) {
+    const p = fr.P(fi, (j / 3.5) * L / 2, 0, k * 8);
+    n++;
+    if (G.lotAt(p[0], p[2]) >= 0 && !city.onRoad(p[0], p[2], 0, false)) park++;
+  }
+  return park / n;
+}
 const PLAIN_STYLES = new Set(['brick', 'lowrise', 'industrial']);
+
+// --- the storefronts' colours -------------------------------------------------------------
+// The chains with no logo here lettered in their own colours, [panel, letters]
+// (the colour they read as from the road); everything else from SIGN_PAL by name.
+const CHAIN_COL = [
+  [/^Chick-fil-A/i, '#ffffff', '#dd0031'], [/^Taco Bell/i, '#702082', '#ffffff'], [/^Pizza Hut/i, '#ee3124', '#ffffff'],
+  [/^Mary Brown/i, '#c8102e', '#ffffff'], [/^Domino/i, '#006491', '#ffffff'], [/^Little Caesars/i, '#ff6600', '#ffffff'],
+  [/^Papa John/i, '#ffffff', '#c8102e'], [/^Mr\.? Sub/i, '#ffffff', '#d2232a'], [/^Quiznos/i, '#1d1d1b', '#e31837'],
+  [/^BarBurrito/i, '#111111', '#ffd200'], [/^Pita Pit/i, '#00543c', '#ffffff'], [/^Freshii/i, '#7ac143', '#ffffff'],
+  [/^Booster Juice/i, '#ffffff', '#e31837'], [/^Osmow/i, '#111111', '#ffffff'], [/^Baskin/i, '#ffffff', '#c8102e'],
+  [/^Country Style/i, '#c8102e', '#ffffff'], [/^Circle K/i, '#ee2e24', '#ffffff'], [/UPS Store/i, '#351c15', '#ffb500'],
+  [/^M&M/i, '#c8102e', '#ffffff'], [/^Sleep Country/i, '#003da5', '#ffffff'], [/^Goodyear/i, '#004b8d', '#ffdd00'],
+  [/^Midas/i, '#ffd200', '#111111'], [/^Mr\.? Lube/i, '#ffffff', '#c8102e'], [/^Jiffy Lube/i, '#c8102e', '#ffffff'],
+  [/^Meineke/i, '#ffd200', '#111111'], [/^Speedy/i, '#111111', '#ffd200'], [/^Kal Tire/i, '#00843d', '#ffffff'],
+  [/^Tirecraft/i, '#111111', '#ffffff'], [/^PartSource/i, '#e31837', '#ffffff'], [/^NAPA/i, '#0a2240', '#ffc72c'],
+  [/^Bell\b/i, '#00549a', '#ffffff'], [/^Rogers/i, '#da291c', '#ffffff'], [/^Telus/i, '#4b286d', '#ffffff'],
+  [/^Freedom Mobile/i, '#111111', '#ff6600'], [/^Money Mart/i, '#00843d', '#ffffff'], [/^easy(home|financial)/i, '#00843d', '#ffffff'],
+  [/^Party City/i, '#5b2c83', '#ffffff'], [/^Benjamin Moore/i, '#111111', '#ffffff'], [/^Sherwin/i, '#0067a5', '#ffffff'],
+  [/^Healthy Planet/i, '#7ac143', '#ffffff'], [/^Goodness Me/i, '#00843d', '#ffffff'], [/^Canada Computers/i, '#002f6c', '#ffffff'],
+  [/^Guardian/i, '#ffffff', '#0b3e8a'], [/^Global Pet/i, '#ffffff', '#00843d'], [/^Stag Shop/i, '#111111', '#c8102e'],
+  [/^Wild Wing/i, '#111111', '#ffd200'], [/^Sunset Grill/i, '#0b3e8a', '#ffd200'], [/^Chuck's/i, '#3d2b1f', '#f4d58d'],
+  [/^Moores/i, '#1d3557', '#ffffff'], [/^Old Navy/i, '#003764', '#ffffff'], [/^Texas Chicken/i, '#d6001c', '#ffffff'],
+  [/^Pizzaville|^Pizza Nova|^Gino's|^Pizza Depot|^Pizza Hut/i, '#ffffff', '#c8102e'], [/^Lazeez/i, '#111111', '#ffd200'],
+  [/^Hasty Market/i, '#c8102e', '#ffffff'], [/^Short Stop|^Little Short Stop/i, '#0b3e8a', '#ffffff'], [/^Daisy Mart/i, '#ffd200', '#0b3e8a'],
+  [/^Mac's|^Couche-Tard/i, '#ee2e24', '#ffffff'], [/^Quickie/i, '#c8102e', '#ffffff'], [/^Fiddleheads/i, '#2e6b30', '#ffffff'],
+  [/^Wimpy/i, '#c8102e', '#ffffff'], [/^Twice the Deal/i, '#c8102e', '#ffd200'], [/^Mucho Burrito/i, '#111111', '#ffd200'],
+  [/^Fresh Burrito/i, '#00843d', '#ffffff'], [/^Burger Factory/i, '#111111', '#ffd200'], [/^Cobbs/i, '#5b2c14', '#f4d58d'],
+  [/Credit Union|^Libro/i, '#00843d', '#ffffff'], [/^Desjardins/i, '#00874e', '#ffffff'], [/^Meridian/i, '#e35205', '#ffffff'],
+  [/^HSBC/i, '#db0011', '#ffffff'], [/^National Bank/i, '#c8102e', '#ffffff'], [/^Tangerine/i, '#ff6200', '#ffffff'],
+  [/^Fairstone/i, '#00843d', '#ffffff'], [/^Cash ?Money|^Cash 4 You/i, '#ffd200', '#111111'], [/^Lend Direct/i, '#0b3e8a', '#ffffff'],
+  [/^First Choice Hair/i, '#ffffff', '#c8102e'], [/^Magicuts/i, '#111111', '#ffffff'], [/^Great Clips/i, '#0b3e8a', '#ffffff'],
+  [/^Massage Addict/i, '#00a3ad', '#ffffff'], [/^Access Storage/i, '#ffd200', '#c8102e'], [/^The Beat Goes On/i, '#111111', '#ffffff'],
+  [/^Microplay/i, '#0b3e8a', '#ffffff'], [/^EB Games/i, '#c8102e', '#ffffff'], [/^Value Buds|^Tokyo Smoke|cannabis/i, '#111111', '#ffffff'],
+  [/^Shoppers|^Dollarama/i, '#d71920', '#ffffff'],
+];
+const SIGN_PAL = [['#1f2a36', '#ffffff'], ['#7a1f24', '#ffffff'], ['#f4efe4', '#2a2a2a'], ['#21543d', '#ffffff'],
+  ['#2c3e66', '#f0d36a'], ['#111111', '#e8c46a'], ['#c84b1e', '#ffffff'], ['#e9e1cf', '#7a1f24'], ['#ffffff', '#b5121b'], ['#4a2a5a', '#ffffff']];
+function nameHash(s) { let h = 7; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
+/** [panel, letters] for a name: its chain's colours, else one of SIGN_PAL by name. */
+function chainCol(name) {
+  const n = name || '';
+  for (const [re, p, l] of CHAIN_COL) if (re.test(n)) return [p, l];
+  return SIGN_PAL[nameHash(n) % SIGN_PAL.length];
+}
+// a fast-food pad's walls, colour band and its trim: the chains' own
+const FOOD_LOOK = {
+  mcd: { wall: '#5d5f61', band: '#2b2b2b', accent: '#ffc72c' }, tims: { wall: '#8a5a3c', band: '#c8102e', accent: '#e9e2d4' },
+  harveys: { wall: '#ece5d6', band: '#e21836', accent: '#ffd400' }, aw: { wall: '#d2b48c', band: '#f26522', accent: '#5b2c14' },
+  wendys: { wall: '#6f7276', band: '#e2203d', accent: '#ffffff' }, bk: { wall: '#d9c2a2', band: '#502314', accent: '#ff8732' },
+  kfc: { wall: '#f1f0ee', band: '#e4002b', accent: '#ffffff' }, dq: { wall: '#f2eee6', band: '#ee3e42', accent: '#1d5baa' },
+  starbucks: { wall: '#5b4a3e', band: '#00704a', accent: '#d4c6b2' }, popeyes: { wall: '#efe7da', band: '#f15a22', accent: '#ffffff' },
+  subway: { wall: '#e9e4d8', band: '#008c15', accent: '#ffc600' }, pizzapizza: { wall: '#efe9dd', band: '#ee3124', accent: '#ffffff' },
+  swiss: { wall: '#d9cbb2', band: '#c8102e', accent: '#ffffff' }, bp: { wall: '#c9b9a3', band: '#1a1a1a', accent: '#e4002b' },
+  montanas: { wall: '#8b6a4f', band: '#3b2314', accent: '#e0452b' }, esm: { wall: '#e8dfcf', band: '#ce2b37', accent: '#009246' },
+};
+const PAD_WALLS = ['#e2dccf', '#d6c7ae', '#cfc6b2', '#c9c4bb', '#b9a48a', '#8e4b3a'];
+/** A pad with no look of its own: walls by name, the band and trim its lettering's colours. */
+function chainLook(name) {
+  const [p, l] = chainCol(name);
+  const band = p === '#ffffff' || p === '#f4efe4' || p === '#e9e1cf' ? l : p;
+  return { wall: PAD_WALLS[nameHash(name || '') % PAD_WALLS.length], band, accent: band === l ? '#3a3f45' : l };
+}
+const BANK_LOOK = {
+  td: { wall: '#d8d2c4', band: '#008a00', accent: '#ffffff' }, rbc: { wall: '#d6d3cc', band: '#005daa', accent: '#ffd200' },
+  cibc: { wall: '#cfc8bb', band: '#c41f3e', accent: '#8b1d2c' }, bmo: { wall: '#d8d4cb', band: '#0079c1', accent: '#e1251b' },
+  scotia: { wall: '#d9d3c6', band: '#ec111a', accent: '#ffffff' },
+};
+// a dealer's make: [match, the make lettered, its portal, the letters]
+const MAKES = [
+  [/Ford|Lincoln/i, 'FORD', '#003478', '#ffffff'], [/Toyota/i, 'TOYOTA', '#e9e9e9', '#eb0a1e'], [/Lexus/i, 'LEXUS', '#1d1d1b', '#ffffff'],
+  [/Honda/i, 'HONDA', '#e9e9e9', '#cc0000'], [/Acura/i, 'ACURA', '#1d1d1b', '#ffffff'], [/Kia/i, 'KIA', '#05141f', '#ffffff'],
+  [/Hyundai/i, 'HYUNDAI', '#002c5f', '#ffffff'], [/Genesis/i, 'GENESIS', '#1d1d1b', '#ffffff'], [/Nissan/i, 'NISSAN', '#c3c5c8', '#c3002f'],
+  [/Infiniti/i, 'INFINITI', '#1d1d1b', '#ffffff'], [/Mazda/i, 'MAZDA', '#2b2b2b', '#ffffff'], [/Volkswagen|\bVW\b/i, 'VOLKSWAGEN', '#001e50', '#ffffff'],
+  [/Audi/i, 'AUDI', '#1d1d1b', '#ffffff'], [/Subaru/i, 'SUBARU', '#013c74', '#ffffff'], [/Mitsubishi/i, 'MITSUBISHI', '#e60012', '#ffffff'],
+  [/Chrysler|Dodge|Jeep|\bRam\b/i, 'CHRYSLER', '#1d1d1b', '#ffffff'], [/GMC/i, 'GMC', '#c8102e', '#ffffff'],
+  [/Chevrolet|Chevy/i, 'CHEVROLET', '#2b2b2b', '#d6a52d'], [/Buick/i, 'BUICK', '#2b2b2b', '#ffffff'], [/Cadillac/i, 'CADILLAC', '#1d1d1b', '#ffffff'],
+  [/BMW/i, 'BMW', '#1c69d4', '#ffffff'], [/Mercedes/i, 'MERCEDES-BENZ', '#1d1d1b', '#ffffff'], [/Volvo/i, 'VOLVO', '#003057', '#ffffff'],
+  [/Jaguar|Land Rover/i, 'JAGUAR', '#1d1d1b', '#ffffff'], [/Tesla/i, 'TESLA', '#e9e9e9', '#cc0000'], [/Porsche/i, 'PORSCHE', '#1d1d1b', '#ffffff'],
+];
+/** The make a dealer sells (OSM's brand, else its name): its lettering and colours; a used-car lot its own name. */
+function makeOf(brand, name) {
+  for (const [re, t, c, fg] of MAKES) if (re.test(brand) || re.test(name || '')) return { t, c, fg };
+  const [p, l] = chainCol(name || brand);
+  return { t: (name || brand || 'AUTO SALES').toUpperCase(), c: p === '#ffffff' ? '#3a4048' : p, fg: p === '#ffffff' ? '#ffffff' : l };
+}
 
 /**
  * The storefront of a stand-alone store: the face with the most car park in
@@ -672,6 +950,9 @@ export function buildShops(ctx) {
   if (!S) return;
   const { addTo, city } = ctx;
   const A = new BrandAtlas();
+  const TX = new TextAtlas();
+  // what hangs on each storefront's fascia already: [t0, t1] along it (fasciaUse)
+  const fascia = new Map();
   const key = (x, z) => 'kwp' + Math.round(x / 1200) + ',' + Math.round(z / 1200);
   const geo = new Map(), logo = new Map();
   const bOf = (m, x, z, uv) => { const k = key(x, z); let b = m.get(k); if (!b) m.set(k, (b = new Builder(uv))); return b; };
@@ -794,7 +1075,7 @@ export function buildShops(ctx) {
   };
 
   // --- the formats' buildings (prepShops marked them)
-  const gardenSign = A.text('GARDEN CENTRE', '#ffffff', '#2f6b3a', 236, 46);
+  const gardenSign = TX.cell('GARDEN CENTRE', 46);
   /** On local face fi of frame fr: the t of the corner with face `se`'s outward side. */
   const cornerT = (fr, fi, se) => {
     const nf = fr.F[fi].n, al = fr.F[se].al;
@@ -901,7 +1182,7 @@ export function buildShops(ctx) {
         // GARDEN CENTRE over the yard's gate, on the side toward the lot
         const [gx, , gz] = fr.P(se, tF + 0.02 * dir, 0, GD / 2);
         const Nf = fr.N(fi);
-        A.quad(Lb(gx, gz), gardenSign, gx + Nf[0] * 0.15, gy + 5.6, gz + Nf[2] * 0.15, Nf[0], Nf[2], 5.6, 0.95);
+        if (gardenSign) TX.quad(A, Lb(gx, gz), gardenSign, '#ffffff', '#2f6b3a', gx + Nf[0] * 0.15, gy + 5.6, gz + Nf[2] * 0.15, Nf[0], Nf[2], Math.min(5.6, 0.95 * gardenSign.a), 0.95);
         fr.box(Bd, se, tF + dir * 0.0, GD / 2, 0.2, 6.2, gy + 5.05, 1.1, lin(Ar.cap));
         solid(fr.solid(se, tF + dir * GL / 2, GD / 2, GL, GD, gy - 2, gy + 5.4));
         gardenSide = sg;
@@ -971,7 +1252,7 @@ export function buildShops(ctx) {
   /** A plaza's strip building: the arcade, the parapet towers, the storefronts. */
   const stripBld = (b) => {
     const fi = b.kw.strip.face, fr = frameOf(b), L = fr.F[fi].len, Bd = Gb(b.x, b.z);
-    const pi = b.kw.shop.plaza;
+    const pi = b.kw.shop.plaza >= 0 ? b.kw.shop.plaza : b.kw.shop.front * 3 + 1;
     const pal = PLAZA_PAL[(pi * 7 + 3) % PLAZA_PAL.length];
     const Ar = { wall: pal[0], base: pal[1], pier: pal[2], cap: pal[4], roof: pal[5] };
     const { gy, pt } = shell(Bd, b, fr, fi, Ar, { pierEvery: 8, maxUnits: 5, noPiers: true });
@@ -1006,7 +1287,166 @@ export function buildShops(ctx) {
     stats.strips = (stats.strips || 0) + 1;
   };
 
-  for (const b of city.buildings) if (b.kw && b.kw.shop && b.kw.shop.fmt === 'strip') stripBld(b);
+  // --- the storefronts outside the plazas (prepShops marked them from S.fronts)
+  //
+  //   s  a strip: stripBld's arcade, as the plazas'
+  //   f  a fast-food or coffee pad: glass across the front, the brand's colour
+  //      band wrapping the building under the parapet, the drive-through
+  //      window and its canopy on one side, its pylon at the road
+  //   b  a bank on its pad: stone pilasters, tall glass, the bank's band
+  //   a  a lube shop / garage: overhead bay doors across the front, the office's glass at one end
+  //   k  a gas station's kiosk: the brand's walls and stripes, glass, the logo
+  //   c  a dealer: the showroom's double-height glass, the make's portal and
+  //      its name, the dealer's name along the parapet, service bays at the side
+  const letter = (Bd, c, fg, bgc, x, y, z, nx, nz, wMax, hMax) => {
+    if (!c) return null;
+    let lh = hMax, lw = hMax * c.a;
+    if (lw > wMax) { lw = wMax; lh = wMax / c.a; }
+    TX.quad(A, Bd, c, fg, bgc, x, y, z, nx, nz, lw, lh);
+    return { lw, lh };
+  };
+  const pad = (b, look, opts = {}) => {
+    const fi = b.kw.strip.face, fr = frameOf(b), L = fr.F[fi].len, Bd = Gb(b.x, b.z), h = L / 2;
+    const Ar = { wall: look.wall, base: look.base || '#6f6a62', cap: look.cap || look.band, roof: '#c9cac9', pier: look.pier };
+    const { gy, top, pt } = shell(Bd, b, fr, fi, Ar, { par: 0.8, maxUnits: 3, noPiers: !look.pier, pierEvery: 5, skipPier: (fj, t) => fj === fi && Math.abs(t) < h - 1.2 });
+    // the front's glass, its mullions, the door
+    const g0 = -h + 0.7, g1 = h - 0.7, gt = gy + (opts.glassTop || 3.05);
+    fr.rect(Bd, fi, g0, g1, gy + 0.45, gt, 0.06, GLASS);
+    const nm = Math.max(1, Math.round((g1 - g0) / 2.4));
+    for (let i = 0; i <= nm; i++) { const t = g0 + ((g1 - g0) * i) / nm; fr.rect(Bd, fi, t - 0.06, t + 0.06, gy + 0.45, gt, 0.1, FRAME); }
+    fr.rect(Bd, fi, -0.95, 0.95, gy, gy + 2.4, 0.11, shade(GLASS, 0.6));
+    // the fascia: a canopy band where every sign here hangs (1.8 m out, 3.2-4.45 m up)
+    fr.box(Bd, fi, 0, 0.92, L + 0.2, 1.84, gy + 3.2, 1.25, lin(look.band));
+    Bd.quad(fr.P(fi, -h, gy + 3.19, 0), fr.P(fi, h, gy + 3.19, 0), fr.P(fi, h, gy + 3.19, 1.8), fr.P(fi, -h, gy + 3.19, 1.8), [0, -1, 0], U0, SOFFIT);
+    fr.rect(Bd, fi, -h - 0.1, h + 0.1, gy + 4.33, gy + 4.45, 1.86, lin(look.accent || look.band));
+    // the band wraps the sides and the back
+    for (let fj = 0; fj < 4; fj++) if (fj !== fi) { const hs = fr.F[fj].len / 2; fr.rect(Bd, fj, -hs, hs, gy + 3.3, Math.min(gy + 4.4, top - 0.1), 0.05, lin(look.band)); }
+    return { fr, fi, L, gy, top, pt, Bd };
+  };
+  const frontBld = (b, sh, F) => {
+    const kind = sh.kind, who = (F && F[4]) || '';
+    const st = stats.fronts || (stats.fronts = {});
+    st[kind] = (st[kind] || 0) + 1;
+    if (kind === 'f') {
+      const k = B[who] ? who : null;
+      const look = FOOD_LOOK[k || (/Tim Horton/.test(who) ? 'tims' : '')] || chainLook(who);
+      const { fr, fi, gy, Bd } = pad(b, look);
+      // a side's windows, the other side's drive-through window under its canopy
+      const [s1, s2] = fr.sides(fi);
+      const l1 = fr.F[s1].len / 2;
+      if (l1 > 2.5) fr.rect(Bd, s1, -l1 + 1.2, l1 - 1.2, gy + 0.8, gy + 2.9, 0.06, GLASS);
+      fr.rect(Bd, s2, -0.8, 0.8, gy + 0.9, gy + 2.2, 0.07, GLASS);
+      fr.box(Bd, s2, 0, 0.6, 3.2, 1.2, gy + 2.6, 0.25, lin(look.band));
+      // a brand's pylon at the road (store() signs its fascia); a pad with no logo here its lettered one
+      // (in the pad's own cluster: a pylon over the line would start a cluster, a draw, of its own)
+      let sp = roadSpot(b.x, b.z, 70);
+      if (sp && key(sp.x, sp.z) !== key(b.x, b.z)) sp = null;
+      if (sp && k && B[k].fmt === 'food') pylonAt(k, sp.x, sp.z, sp.yaw);
+      else if (sp && !k && who && !/Tim Horton/.test(who)) textPylon(who, sp.x, sp.z, sp.yaw);
+      return;
+    }
+    if (kind === 'b') {
+      const look = BANK_LOOK[who] || { wall: '#d6d1c4', band: chainCol(who)[0], accent: '#3a3f45' };
+      pad(b, Object.assign({ base: '#6d6a64', pier: '#bfb8a8' }, look), { glassTop: 3.1 });
+      return;
+    }
+    if (kind === 'k') {
+      const br = B[who];
+      const c3 = br && br.canopy ? br.canopy : ['#e8e6e1', '#3a3f45', '#3a3f45'];
+      const band = c3[1] === '#ffffff' ? c3[0] : c3[1];
+      const { fr, fi, L, gy } = pad(b, { wall: c3[0] === '#ffffff' ? '#ecebe7' : c3[0], band, accent: c3[2], base: '#6f6a62' });
+      if (br) {
+        // the station's logo at one end of the kiosk's fascia (the convenience store's name signs the rest)
+        const c = A.logo(who);
+        if (c) {
+          const lh = 0.95, lw = Math.min(lh * c.a, L * 0.4), t = L / 2 - lw / 2 - 0.6;
+          const [x, , z] = fr.P(fi, t, 0, 1.9), N = fr.N(fi);
+          if (t - lw / 2 > -L / 2 + 0.4) { putLogo(who, x, gy + 3.82, z, N[0], N[2], lw, lh); fasciaUse(b, x, z, lw); }
+        }
+      }
+      return;
+    }
+    if (kind === 'a') {
+      const col = chainCol(who);
+      const fi = b.kw.strip.face, fr = frameOf(b), L = fr.F[fi].len, Bd = Gb(b.x, b.z), h = L / 2;
+      const { gy, top } = shell(Bd, b, fr, fi, { wall: '#d2cfc8', base: '#7a766f', cap: '#4a4e53', roof: '#c4c5c4' }, { par: 0.7, maxUnits: 2, noPiers: true });
+      // the office's glass at one end, the bays across the rest
+      const off = Math.min(5, L * 0.3);
+      fr.rect(Bd, fi, -h + 0.5, -h + off, gy + 0.5, gy + 2.9, 0.06, GLASS);
+      fr.rect(Bd, fi, -h + off - 1.6, -h + off - 0.6, gy, gy + 2.3, 0.08, shade(GLASS, 0.6));
+      const n = Math.max(1, Math.min(5, Math.floor((L - off - 1) / 4.2)));
+      const pitch = (L - off - 1.2) / n;
+      for (let i = 0; i < n; i++) {
+        const t = -h + off + 0.6 + pitch * (i + 0.5);
+        fr.rect(Bd, fi, t - 1.6, t + 1.6, gy, gy + 3.2, 0.06, BAYDOOR);
+        fr.rect(Bd, fi, t - 1.45, t + 1.45, gy + 1.9, gy + 2.3, 0.08, GLASS);
+        for (let y = gy + 0.5; y < gy + 3.1; y += 0.55) fr.rect(Bd, fi, t - 1.6, t + 1.6, y, y + 0.04, 0.08, shade(BAYDOOR, 0.8));
+      }
+      // the sign band over the doors, flat on the wall (sh.sy / sh.so: where its lettering goes)
+      fr.rect(Bd, fi, -h, h, gy + 3.45, Math.min(gy + 4.75, top - 0.05), 0.12, lin(col[0]));
+      sh.sy = 4.1; sh.so = 0.2;
+      return;
+    }
+    if (kind === 'c') { dealer(b, F); return; }
+    stripBld(b);
+  };
+  // a pad's own name on a pylon by the road: a cabinet in its colour on two posts
+  const textPylon = (name, x, z, yaw) => {
+    const [bgc, fg] = chainCol(name);
+    const c = TX.cell(name, 22);
+    if (!c) return;
+    const y0 = T(x, z), nx = Math.sin(yaw), nz = Math.cos(yaw), rot = rotOf(nx, nz), ux = nz, uz = -nx;
+    const lh = 1.0, lw = Math.min(4.2, lh * c.a), ph = 5.0;
+    const Bd = Gb(x, z);
+    for (const s of [-1, 1]) Bd.box(x + ux * s * (lw / 2 - 0.25), y0 - 0.5, z + uz * s * (lw / 2 - 0.25), 0.22, ph + 0.5, 0.22, rot, STEEL);
+    Bd.box(x, y0 + ph, z, lw + 0.3, lh + 0.3, 0.4, rot, lin(bgc));
+    for (const s of [1, -1]) TX.quad(A, Lb(x, z), c, fg, bgc, x + nx * s * 0.205, y0 + ph + 0.15 + lh / 2, z + nz * s * 0.205, nx * s, nz * s, lw, lh);
+    solid({ x, z, r: 0.4, y0: y0 - 2, y1: y0 + ph + lh });
+    stats.pylons++;
+  };
+  const dealer = (b, F) => {
+    const name = (F && F[3][0] && F[3][0][0]) || '', make = makeOf((F && F[4]) || name, name);
+    const fi = b.kw.strip.face, fr = frameOf(b), L = fr.F[fi].len, Bd = Gb(b.x, b.z), h = L / 2, N = fr.N(fi);
+    const { gy, top, pt } = shell(Bd, b, fr, fi, { wall: '#d9dbdc', base: '#5d6166', cap: '#9ea3a8', roof: '#cfd0cf' }, { par: 0.9, maxUnits: 6, noPiers: true });
+    // the make's portal at one end of the front, the showroom's glass across the rest
+    const PW = Math.max(5, Math.min(10, L * 0.24));
+    const tp = h - PW / 2 - Math.min(3, L * 0.06);
+    const g0 = -h + 0.8, g1 = tp - PW / 2 - 0.4, gt = Math.min(top - 1.6, gy + 5.2);
+    if (g1 - g0 > 3) {
+      fr.rect(Bd, fi, g0, g1, gy + 0.2, gt, 0.06, GLASS);
+      const nm = Math.max(1, Math.round((g1 - g0) / 3));
+      for (let i = 0; i <= nm; i++) { const t = g0 + ((g1 - g0) * i) / nm; fr.rect(Bd, fi, t - 0.07, t + 0.07, gy + 0.2, gt, 0.1, FRAME); }
+      fr.rect(Bd, fi, g0, g1, gy + 2.85, gy + 2.97, 0.1, FRAME);
+    }
+    const ph = pt - gy + 1.6;
+    fr.box(Bd, fi, tp, 1.0, PW, 2.0, gy - 0.5, ph + 0.5, lin(make.c));
+    fr.rect(Bd, fi, tp - 1.6, tp + 1.6, gy, gy + 3.0, 2.02, shade(GLASS, 0.7));
+    solid(fr.solid(fi, tp, 1.0, PW, 2.0, gy - 2, gy + ph));
+    // the make, lettered high on the portal; the dealer's own name along the parapet over the glass
+    const [mx, , mz] = fr.P(fi, tp, 0, 2.04);
+    letter(Lb(mx, mz), TX.cell(make.t, 40), make.fg, make.c, mx, gy + ph - 1.3, mz, N[0], N[2], PW - 0.8, 1.5);
+    if (name && name.toUpperCase() !== make.t && g1 - g0 > 6) {
+      const tm = (g0 + g1) / 2, [nx2, , nz2] = fr.P(fi, tm, 0, 0.16);
+      const y1 = Math.min(top + 0.6, gt + 2.0);
+      fr.rect(Bd, fi, g0, g1, gt + 0.15, y1, 0.1, lin('#3a3f45'));
+      letter(Lb(nx2, nz2), TX.cell(name, 32), '#ffffff', '#3a3f45', nx2, (gt + 0.15 + y1) / 2, nz2, N[0], N[2], g1 - g0 - 1, Math.min(1.3, y1 - gt - 0.4));
+    }
+    // the service bays on the side away from the portal
+    const se = fr.end(fi, -1), SL = fr.F[se].len, tF = cornerT(fr, fi, se), dir = -Math.sign(tF);
+    const n = Math.max(1, Math.min(4, Math.floor((SL - 6) / 5)));
+    for (let i = 0; i < n; i++) {
+      const t = tF + dir * (4.5 + i * 5);
+      fr.rect(Bd, se, t - 1.9, t + 1.9, gy, gy + 4.2, 0.06, BAYDOOR);
+      fr.rect(Bd, se, t - 1.7, t + 1.7, gy + 2.6, gy + 3.1, 0.08, GLASS);
+    }
+  };
+
+  for (const b of city.buildings) {
+    const sh = b.kw && b.kw.shop;
+    if (!sh || sh.fmt !== 'strip') continue;
+    if (sh.front === undefined) stripBld(b);
+    else frontBld(b, sh, S.fronts[sh.front]);
+  }
 
   // --- a store on its building
   const store = (k, x, z, bx, bz) => {
@@ -1106,7 +1546,9 @@ export function buildShops(ctx) {
       stats.walls++;
     } else if (f.strip) {
       // on the strip's fascia (world._stripMall / kw.js meshPoly: 1.8 m out, 3.2-4.45 m up)
-      const lh = fmt === 'groc' || fmt === 'big' ? 1.1 : 1.0;
+      // (a pad's one sign fills its canopy band)
+      const pad1 = b.kw.shop && b.kw.shop.kind && b.kw.shop.kind !== 's';
+      const lh = fmt === 'groc' || fmt === 'big' || pad1 ? 1.12 : 1.0;
       const lw = Math.min(lh * (A.logo(k) || { a: 3 }).a, f.len - 0.8, 9);
       fit(lw);
       putLogo(k, sx + nx * 1.9, gy + 3.82, sz + nz * 1.9, nx, nz, lw, lh);
@@ -1137,13 +1579,15 @@ export function buildShops(ctx) {
   // what hangs on each plaza storefront's fascia already: [t0, t1] along it.
   // A storefront: a strip box's arcade face, or one wall of a store kw.js
   // draws from its outline (its own fascia, the same 1.8 m out, 3.2-4.45 m up)
-  const fascia = new Map();
   function boxFront(b) {
     const fr = frameOf(b), fi = b.kw.strip.face, L = fr.F[fi].len, N = fr.N(fi);
-    return { key: b, lo: -L / 2, hi: L / 2, nx: N[0], nz: N[2], y: b.y, tOf: (x, z) => fr.tOf(fi, x, z), at: (t, o) => { const p = fr.P(fi, t, 0, o); return [p[0], p[2]]; } };
+    const sh = b.kw.shop || {};
+    // sy / so: where a sign's centre is, up from the floor and out from the wall (the fascia's face, else a flat band's)
+    return { key: b, lo: -L / 2, hi: L / 2, nx: N[0], nz: N[2], y: b.y, sy: sh.sy || 3.82, so: sh.so || 1.9, one: !!sh.kind && sh.kind !== 's',
+      tOf: (x, z) => fr.tOf(fi, x, z), at: (t, o) => { const p = fr.P(fi, t, 0, o); return [p[0], p[2]]; } };
   }
   function polyFront(f) {
-    return { key: f.ax.toFixed(1) + ',' + f.az.toFixed(1), lo: 0, hi: f.len, nx: f.nx, nz: f.nz, y: T(f.x + f.nx * 2, f.z + f.nz * 2),
+    return { key: f.ax.toFixed(1) + ',' + f.az.toFixed(1), lo: 0, hi: f.len, nx: f.nx, nz: f.nz, y: T(f.x + f.nx * 2, f.z + f.nz * 2), sy: 3.82, so: 1.9,
       tOf: (x, z) => (x - f.ax) * f.ux + (z - f.az) * f.uz, at: (t, o) => [f.ax + f.ux * t + f.nx * o, f.az + f.uz * t + f.nz * o] };
   }
   function fasciaUse(b, x, z, w) {
@@ -1224,10 +1668,9 @@ export function buildShops(ctx) {
     stats.tenants = (stats.tenants || 0) + 1;
   }
 
+
   // --- the plazas' pylons
   const pylons = [];
-  // every plaza's name first: the lettering that must not run out of atlas
-  for (const P of S.plazas || []) if (P.ten && P.ten.length >= 3) A.text(P.n.toUpperCase(), '#ffffff', '#1d2a3a', 220, 40);
   for (const P of S.plazas || []) {
     if (!P.ten || P.ten.length < 3) continue;
     const o = P.o, n = o.length;
@@ -1260,35 +1703,43 @@ export function buildShops(ctx) {
     }
   }
   function plazaPylon(P, x, z, yaw) {
-    // each tenant's panel: its logo, else its name lettered (rows the atlas has no room for are left off)
+    // each tenant's panel: its logo, else its name lettered
     const ten = [];
     let lettered = 0;
     for (const t of P.ten) {
       if (ten.length >= 6) break;
       const k = brandOf(t);
       if (!k && lettered >= 3) continue;
-      const c = k ? A.logo(k) : A.text(t, '#ffffff', '#2a2c30');
+      const c = k ? A.logo(k) : TX.cell(t, 22);
       if (!k) lettered++;
       if (c) ten.push({ t, k, c });
     }
-    const hc = A.text(P.n.toUpperCase(), '#ffffff', '#1d2a3a', 220, 40);
+    const hc = TX.cell(P.n.toUpperCase(), 32, 560);
     if (!hc || ten.length < 2) return;
     const y0 = T(x, z), nx = Math.sin(yaw), nz = Math.cos(yaw), rot = rotOf(nx, nz), ux = nz, uz = -nx;
     const W = 3.6, rowH = 0.78, headH = 1.15, gap = 0.1, leg = 1.6;
     const H = headH + ten.length * (rowH + gap) + 0.3;
     const Bd = Gb(x, z);
-    const FRAME = lin('#3b3f45'), CAP = lin('#c9c3b5');
+    const FRAME = lin('#3b3f45'), CAP = lin('#c9c3b5'), HEAD = '#1d2a3a', ROW = '#2a2c30';
     for (const s of [-1, 1]) Bd.box(x + ux * s * (W / 2 + 0.15), y0 - 0.5, z + uz * s * (W / 2 + 0.15), 0.42, leg + H + 0.9, 0.62, rot, CAP);
     Bd.box(x, y0 + leg, z, W, H, 0.4, rot, FRAME);
     Bd.box(x, y0 + leg + H + 0.4, z, W + 1.0, 0.35, 0.75, rot, CAP);
     let y = y0 + leg + H - 0.15 - headH / 2;
-    for (const s of [1, -1]) A.quad(Lb(x, z), hc, x + nx * s * 0.21, y, z + nz * s * 0.21, nx * s, nz * s, W - 0.2, headH - 0.1);
+    // a lettered panel: its colour behind, the lettering at its own aspect on it
+    const panel = (c, fg, bgc, w, h, pw, ph) => {
+      for (const s of [1, -1]) Bd.quad(...rowQuad(x, y, z, nx * s, nz * s, pw, ph, 0.205), [nx * s, 0, nz * s], U0, lin(bgc));
+      let lw = w, lh = w / c.a;
+      if (lh > h) { lh = h; lw = h * c.a; }
+      for (const s of [1, -1]) TX.quad(A, Lb(x, z), c, fg, bgc, x + nx * s * 0.215, y, z + nz * s * 0.215, nx * s, nz * s, lw, lh);
+    };
+    panel(hc, '#ffffff', HEAD, W - 0.4, headH * 0.62, W - 0.2, headH - 0.1);
     y -= headH / 2 + gap + rowH / 2;
     for (const { k, c } of ten) {
-      let lw = W - 0.3, lh = rowH;
-      if (k) { lw = Math.min(W - 0.3, rowH * c.a); lh = lw / c.a; }
-      if (k) for (const s of [1, -1]) Bd.quad(...rowQuad(x, y, z, nx * s, nz * s, W - 0.3, rowH, 0.205), [nx * s, 0, nz * s], [0, 0, 0, 0, 0, 0, 0, 0], lin('#f4f4f2'));
-      for (const s of [1, -1]) A.quad(Lb(x, z), c, x + nx * s * 0.215, y, z + nz * s * 0.215, nx * s, nz * s, lw, lh);
+      if (k) {
+        const lw = Math.min(W - 0.3, rowH * c.a), lh = lw / c.a;
+        for (const s of [1, -1]) Bd.quad(...rowQuad(x, y, z, nx * s, nz * s, W - 0.3, rowH, 0.205), [nx * s, 0, nz * s], U0, lin('#f4f4f2'));
+        for (const s of [1, -1]) A.quad(Lb(x, z), c, x + nx * s * 0.215, y, z + nz * s * 0.215, nx * s, nz * s, lw, lh);
+      } else panel(c, '#ffffff', ROW, W - 0.5, rowH * 0.8, W - 0.3, rowH);
       y -= rowH + gap;
     }
     solid({ x, z, hw: W / 2 + 0.4, hd: 0.45, rot, y0: y0 - 2, y1: y0 + leg + H + 0.7 });
@@ -1301,27 +1752,31 @@ export function buildShops(ctx) {
     try { fn({ A, Gb, Lb, ctx, solid, txt, bg, brandOf, logoOf: (k) => A.logo(k) }); } catch (e) { console.warn('kwshops hook: ' + (e.stack || e.message)); }
   }
 
-  // the independents' signs on the plazas' fascias (plaza.sh: every tenant OSM
-  // names with no brand drawn here, outside kw.js's detail zones): lettering in
-  // the atlas, after everything else in it, round-robin across the plazas so
-  // every plaza gets its first few before any gets its last, until the atlas is full
+  // the independents' signs: the plazas' tenants (plaza.sh) on their strips'
+  // and outline-drawn stores' fascias, and every storefront's outside the
+  // plazas (S.fronts) on its own -- every tenant OSM names with no brand drawn
+  // here, outside kw.js's detail zones. Lettering (TextAtlas) in the chain's
+  // colours, else a pair by name; each at the free spot on its fascia nearest
+  // where the store really is (a pad's one tenant: the middle).
   {
-    const PAL = [['#1f2a36', '#ffffff'], ['#7a1f24', '#ffffff'], ['#f4efe4', '#2a2a2a'], ['#21543d', '#ffffff'],
-      ['#2c3e66', '#f0d36a'], ['#111111', '#e8c46a'], ['#c84b1e', '#ffffff'], ['#e9e1cf', '#7a1f24'], ['#ffffff', '#b5121b'], ['#4a2a5a', '#ffffff']];
     const rows = [];
-    (S.plazas || []).forEach((P, pi) => (P.sh || []).forEach((r, i) => rows.push([i, pi, ...r])));
-    rows.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-    let signed = 0, noRoom = 0;
+    (S.plazas || []).forEach((P, pi) => (P.sh || []).forEach((r, i) => rows.push([i, pi, -1, ...r])));
+    (S.fronts || []).forEach((F, fi) => { if (F[2] !== 'c') F[3].forEach((r, i) => rows.push([i, -1, fi, ...r])); });
+    rows.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+    let signed = 0, noRoom = 0, noFront = 0, plazaSigned = 0;
+    const miss = [];
     const plazaPoly = (o) => o.kw.poly.pts;
-    for (const [, pi, nm, x, z] of rows) {
-      // the plaza building it is in, else the nearest one: one of its strips,
-      // or a store kw.js draws from its outline (an L- or U-shaped plaza)
+    for (const [i, pi, fi, nm, x, z] of rows) {
+      // a plaza's: the plaza building it is in, else the nearest one -- one of
+      // its strips, or a store kw.js draws from its outline (an L- or U-shaped
+      // plaza); a storefront's: its own building, else a store drawn from its outline
       let sf = null, bd = 30;
       for (const o of city.buildingsNear(x, z, 90)) {
-        if (o.kw && o.kw.shop && o.kw.shop.fmt === 'strip' && o.kw.shop.plaza === pi && o.kw.strip) {
+        const sh = o.kw && o.kw.shop;
+        if (sh && sh.fmt === 'strip' && o.kw.strip && (pi >= 0 ? sh.plaza === pi : sh.front === fi)) {
           const dx = x - o.x, dz = z - o.z, c = Math.cos(o.rot), sn = Math.sin(o.rot);
           const lx = Math.abs(dx * c + dz * sn) - o.w / 2, lz = Math.abs(-dx * sn + dz * c) - o.d / 2;
-          const d = Math.hypot(Math.max(0, lx), Math.max(0, lz));
+          const d = pi >= 0 ? Math.hypot(Math.max(0, lx), Math.max(0, lz)) : -1;
           if (d < bd) { bd = d; sf = boxFront(o); }
         } else if (o.kw && o.kw.poly && o.kw.poly.retail && !o.kw.skip && !o.kw.shop) {
           // (an L's centroid can lie outside it and outside the plaza: the tenant's 30 m decides)
@@ -1331,34 +1786,42 @@ export function buildShops(ctx) {
           if (d < bd) { bd = d; sf = polyFront(f); }
         }
       }
-      if (!sf) continue;
-      const cw = nm.length > 16 ? 148 : nm.length > 9 ? 118 : 88, lh = 0.92, lw = (lh * cw) / 22;
-      const half = lw / 2 + 0.3;
-      if (sf.hi - sf.lo < lw + 1.2) continue;
+      if (!sf) { noFront++; if (pi >= 0) miss.push(nm + "@" + Math.round(x) + "," + Math.round(z) + ":front"); continue; }
+      const c = TX.cell(nm, 22);
+      if (!c) break;      // the lettering is full: the rest go unsigned
+      const room = sf.hi - sf.lo - 1.2;
+      let lh = sf.one ? 1.0 : 0.92, lw = lh * c.a;
+      if (lw > Math.min(9, room)) { lw = Math.min(9, room); lh = lw / c.a; }
+      if (lh < 0.5) { noRoom++; if (pi >= 0) miss.push(nm + ":small"); continue; }
       let u = fascia.get(sf.key);
       if (!u) fascia.set(sf.key, (u = []));
-      const want = sf.tOf(x, z);
-      let t = null;
-      for (let d = 0; d < sf.hi - sf.lo && t === null; d += 0.75) {
-        for (const sg of d ? [1, -1] : [1]) {
-          const c0 = want + sg * d;
-          if (c0 - half < sf.lo + 0.4 || c0 + half > sf.hi - 0.4 || u.some(([a, b2]) => c0 + half > a && c0 - half < b2)) continue;
-          t = c0; break;
+      const want = sf.one && i === 0 ? (sf.lo + sf.hi) / 2 : sf.tOf(x, z);
+      // the free spot nearest the store; a full fascia (a long row of small
+      // units) takes its last names smaller, two-thirds size, packed closer
+      let t = null, half = 0;
+      for (const k of [1, 0.66]) {
+        half = (lw * k) / 2 + 0.3 * k;
+        for (let d = 0; d < sf.hi - sf.lo && t === null; d += 0.5) {
+          for (const sg of d ? [1, -1] : [1]) {
+            const c0 = want + sg * d;
+            if (c0 - half < sf.lo + 0.4 || c0 + half > sf.hi - 0.4 || u.some(([a, b2]) => c0 + half > a && c0 - half < b2)) continue;
+            t = c0; break;
+          }
         }
+        if (t !== null) { lw *= k; lh *= k; break; }
       }
-      if (t === null) { noRoom++; continue; }
-      const col = PAL[Math.floor(hashI(x * 0.37, z * 0.53) * PAL.length)];
-      const c = A.text(nm, col[1], col[0], cw, 22);
-      if (!c) break;      // the atlas is full: the rest go unsigned
+      if (t === null) { noRoom++; if (pi >= 0) miss.push(nm + "@" + Math.round(x) + "," + Math.round(z) + ":full"); continue; }
+      const [bgc, fg] = chainCol(nm);
       u.push([t - half, t + half]);
-      const [px, pz] = sf.at(t, 1.9);
-      A.quad(Lb(px, pz), c, px, sf.y + 3.82, pz, sf.nx, sf.nz, lw, lh);
-      signed++;
+      const [px, pz] = sf.at(t, sf.so);
+      TX.quad(A, Lb(px, pz), c, fg, bgc, px, sf.y + sf.sy, pz, sf.nx, sf.nz, lw, lh);
+      signed++; if (pi >= 0) plazaSigned++;
     }
-    stats.independents = { signed, noRoom, of: rows.length };
+    stats.independents = { signed, noRoom, noFront, of: rows.length, plaza: [plazaSigned, rows.filter((q) => q[1] >= 0).length], miss };
   }
 
-  const mat = A.finish();
+
+  const mat = A.finish(TX);
   const pm = polyMat();
   for (const [k, Bd] of geo) {
     if (Bd.empty) continue;
@@ -1372,9 +1835,13 @@ export function buildShops(ctx) {
     g.add(new THREE.Mesh(Bd.build(), mat));
     addTo(k, g);
   }
-  stats.atlas = { h: A.c.height, cells: A.cells.size, full: A.full };
+  // GPU bytes with mips: the logos' RGBA atlas and the lettering's R8 one
+  stats.atlas = { h: A.c.height, cells: A.cells.size, full: A.full, mb: +(A.bytes / 1048576).toFixed(1),
+    text: { h: TX.H || 0, cells: TX.cells.size, full: TX.full, colours: TX.fg.length, mb: +(TX.bytes / 1048576).toFixed(1) } };
   stats.tris = 0;
   for (const m of [geo, logo]) for (const Bd of m.values()) stats.tris += Bd.idx.length / 3;
+  // (build.js mergeByMaterial leaves a mesh of over 60k vertices unmerged: a draw of its own)
+  stats.maxVerts = Math.max(0, ...[...geo.values()].map((Bd) => Bd.pos.length / 3));
   S.built = out;
   S.stats = stats;
   if (typeof window !== "undefined") window.__kwShops = { stats, built: out, atlas: A };

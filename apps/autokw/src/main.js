@@ -886,7 +886,7 @@ async function boot() {
   { const k = prepHome(city, md.home); blog(`kw home: ${k.skipped} boxes drawn as home places`); }
   // the chain stores, gas stations and plazas where they really are (kwshops.js)
   setShopData(md.shops);
-  { const k = prepShops(city); blog(`kw shops: drawn here: ${k.bigbox} big boxes, ${k.units} stand-alone stores, ${k.strips} plaza buildings, ${k.canopies} gas canopies`); }
+  { const k = prepShops(city); blog(`kw shops: drawn here: ${k.bigbox} big boxes, ${k.units} stand-alone stores, ${k.strips} plaza buildings, ${k.canopies} gas canopies, ${k.fronts} storefronts (${k.frontsOut} outside the clusters)`); }
   addLandmarkExtra(buildShops);
   addLandmarkExtra(buildMarketTent);
   addLandmarkExtra(buildDome);

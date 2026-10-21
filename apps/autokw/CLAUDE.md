@@ -449,9 +449,90 @@ file and a guide disagree, this file wins.
     Indigo, Home Hardware, The Brick, Leon's, Golf Town (656 stores, 69
     brands). Phone spawn 176/1112k -> 177/1113k draws/tris; trafficbench
     hashes unchanged; shops' tris 155k -> 142k (the slabs went).
-  - Not done: Hespeler Rd's stores outside a named plaza keep their
-    defaults; Stanley Park and Frederick Mall are boxes (their OSM outline is
-    the building); kw.js's 9 m non-plaza retail boxes are still offices.
+  - Not done: Stanley Park and Frederick Mall are boxes (their OSM outline is
+    the building). (Hespeler Rd and the non-plaza retail boxes: the next entry.)
+- **The storefronts outside the plazas, and the lettering atlas**
+  (docs/shops-fronts-*.jpg; `tools/kw/frontprobe.js` lists every front in a
+  box -- Hespeler Rd, 401 to Dundas, by default -- as DRAWN or why not:
+  `out` / `poly` / `shop:..` / `h..`, with its tenants and the atlases' sizes).
+  - **Data**: build_shops.py `storefronts()` writes shops.json `fronts`:
+    every building (raw_buildings, bt yes/retail/commercial/..., under 3
+    storeys, not a motel/church/office by name) holding a store (raw_shops,
+    by containing polygon else the nearest edge within 12 m) that is in no
+    used plaza and outside kw.js's ZONES, plus each gas station's kiosk (the
+    nearest small non-roof building within 46 m of amenity=fuel). Each:
+    `[bx, bz, kind, [[name, x, z], ...] (the names with no brand here),
+    who, [dx, dz]]` -- kind `s` strip, `f` fast-food / coffee pad (one
+    tenant, under 900 m2), `b` bank pad, `a` lube / tire / repair, `k` gas
+    kiosk, `c` dealer (shop=car); who = the pad's brand key or name, the
+    kiosk's gas brand, the dealer's make (OSM brand, else name); [dx, dz]
+    points at the street its tenants are addressed on (`toward()`, raw_roads
+    by name with Rd/St/Dr... expanded), else the nearest street. 1068 fronts,
+    1362 names. build_kw.py also sends an untagged (building=yes) L or U with
+    a store in it to the polygons (`_holds_store`: 657 -> 680; 600 and 561
+    Hespeler Rd, the Goodyear/Meineke row).
+  - **Runtime**: prepShops marks a front's box (free, brick/lowrise/
+    industrial, or a house-style box when the data says pad/kiosk/dealer;
+    2.5-12.5 m; a two-storey `s` with under 20% lot in front is a main
+    street's shop-with-flats and is left) as `kw.shop = { fmt: 'strip',
+    plaza: -1, front, kind }` with its storefront the face toward its street
+    (+0.6 x the dot with [dx, dz]) with the most car park and not backing on
+    a road, and cuts it to one storey (s 7.2 if over 7.5; f 5.8, b 6.4, a
+    6.2, k 4.9, c 7.6). **Only inside what the `kwp` clusters already draw**
+    (each 1200 m key's extent of kw.js's polys, the boxes marked here, the gas canopies and the chain stores' buildings, +60 m, +120 for a dealer): a
+    front with no cluster to merge into would add a draw, and one far off a
+    cluster's edge would swell its bounding sphere into more views; those
+    stay world.js's boxes (`frontsOut`, at most ~290 map-wide, mostly rural; 655 of the 1068 are drawn). Drawers
+    (`frontBld`): `s` stripBld's arcade; `f` pad() -- glass across the front,
+    the fascia canopy (the same 1.8 m out, 3.2-4.45 m up every logo, kw.js's
+    Tims sign and the lettering hang on), the brand band wrapping the
+    building (`FOOD_LOOK`: McD's charcoal and yellow, Tims' red, Harvey's,
+    A&W, Wendy's...; else `chainLook` from the name's colours), side windows,
+    the drive-through window and its canopy, the brand's pylon (or a
+    lettered `textPylon`) at the road; `b` pad() in `BANK_LOOK` with stone
+    pilasters; `k` pad() in the gas brand's canopy colours, its logo at one
+    end of the fascia; `a` bay doors across the front, the office glass at
+    one end, a flat sign band (`sh.sy`/`sh.so`: the lettering's height and
+    offset); `c` the showroom's double-height glass, the make's portal
+    (`MAKES`: Ford blue, Toyota/Honda white with red, Kia black...) with the
+    make lettered on it, the dealer's name on a band over the glass, service
+    bays on the far side. Brand logos on fronts come from store() as before
+    (the box is a strip, so they go on the fascia).
+  - **The lettering is a second atlas in the same material** (`TextAtlas`):
+    every independent's name, the fronts' names, the pylons' lettered rows
+    and the plazas' names are drawn ONCE each (by name and cell height,
+    whatever the colours), white on black, measured to their own width, into
+    a one-byte-a-pixel R8 DataTexture (2048 x ~2.3k). A lettered quad's
+    vertex colour is the panel colour and its u is 2 x (letter colour index
+    + 1) + the cell's u; polyMat's `map_fragment` is patched (`patch()`,
+    customProgramCacheKey 'kwtext') to read the logo atlas under u 1 and the
+    mask above it, mixing panel and letter colours (16 letter colours, a
+    uniform; `CHAIN_COL` gives the chains with no logo here their colours,
+    e.g. Chick-fil-A, Taco Bell, Pizza Hut, Mary Brown's, Goodyear, Midas,
+    Mr. Lube, M&M, Sleep Country, the credit unions; else SIGN_PAL by name).
+    So the lettering adds no material and no draw. The logo atlas crops to
+    ~1660 rows. GPU (with mips): master's RGBA atlas 2816 rows 30.8 MB ->
+    logos 17.3 MB + lettering 5.9 MB R8 (23.2 MB, -7.6 MB). **Plaza independents signed 261 ->
+    462 of 591** (the rest: ~95 are indoor mall tenants with no storefront
+    building -- Fairview, Cambridge Centre, Conestoga -- and ~30 whose fascia
+    is full even at two-thirds size); 1285 names signed map-wide.
+  - Phone (AUTO_PHONE=1, GPU), master -> this, two interleaved runs each
+    (kwshots' `calls` drift +-3 run to run on master alone, every view
+    together, so compare runs side by side): spawn 176/179 -> 178/179 draws,
+    1110-1117k -> 1121-1125k tris; Hespeler Rd from the air 172/174 ->
+    173/174, 637-645k -> 658-661k; 561 Hespeler 123/125 -> 125/126; Fairway
+    173/175 -> 174/175; Victoria St plaza aerial 245/244 -> 245/246, 1272k ->
+    1327k. Offline over 14,720 street cameras the landmark meshes in the
+    frustum rose 139.49 -> 139.66 (one new cluster, Hanlon's Freshii row).
+    kwshops' tris map-wide 142k -> 269k. trafficbench hashes unchanged;
+    funprobe ALL OK.
+  - Not done: indoor mall tenants have no sign (no storefront to hang it
+    on); ~290 fronts outside the clusters stay world.js's boxes (on
+    Hespeler Rd: Tirecraft, Ontario Auto Market, Fix Auto, Car Match, past
+    their cluster's edge; dealers get 120 m, the rest 60); a pad is one box (no mansard, no real
+    drive-through lane); the 580 Hespeler row's storefront is a guess between
+    its lot and the road; OSM stores with no building (Action Auto Leasing)
+    are not drawn.
 - **ION, as it is** (src/link.js on `data/link.json`; docs/ion-*.jpg).
   Sources (Oct 2026): Wikipedia "Ion rapid transit" (stations, 10-minute
   weekday headway, 70 km/h corridor / 50 street / 20-25 in pedestrian
