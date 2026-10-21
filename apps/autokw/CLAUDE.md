@@ -149,6 +149,48 @@ file and a guide disagree, this file wins.
   `FARMS` (real places; ~15 ms) using tools/kw/proj.py's projection --
   **geo.toWorld still carries Seattle's LAT0/LON0**, so don't use it here.
 
+- **Erbsville Kartway** (src/kartway.js, src/kart.js, `data/kart.json` from
+  tools/kw/build_kart.py; docs/kart-*.jpg). OSM's `highway=raceway` centreline
+  (CanVec's, ~970 m) is a FIGURE EIGHT: the `bridge=yes` way closes the loop
+  over the lower track. Chaikin x2, resampled every metre; `E[i]` is the
+  bridge's height profile (3.6 m deck, 7 m flat each side of the crossing,
+  40 m smoothstep ramps). **The surface is a `city.movers` entry
+  (`deckAt`, the nearest-layer rule)**: terrain + `LIFT` (0.08: over the
+  0.05 the grass test uses, so the asphalt is paved and the grass drags) + E;
+  the kerbs and the paddock apron too. Under the bridge the lower layer wins
+  for a kart at ground level. Parapets/abutments are landmark solids whose
+  height bands miss the other layer (`y0 - 2.5` rule: keep the deck > 3 m).
+  Tyre walls: offset to the outside of each turn (`zone`), pulled in to
+  half way where another part of the track is close, left out where they
+  fold into their own turn, on the ramps and by the paddock; ~30 tris a
+  stack. The property is lawn and clear of trees and crops:
+  `kartway.keepClear` is in `city.extraClear` and is `world.keepGrass`
+  (world.js groundTint / cropAt: the township fields used to plant corn on
+  the track). The clubhouse is OSM's small building by the parking (its box
+  goes flat, drawn here with the sign); buildings the track crosses go flat.
+  Phone cost at the track: 3 draws (asphalt, structures, fence) + the
+  start lights (1, within 260 m), ~54k tris (tyres ~37k); a kart is 3 draws
+  and ~4.8k tris, +1 for its driver. **The race (KartRace):** ENTER on foot
+  within 5 m of the counter (`clubFront`) holds the world (`'kart'`, in
+  reapHolds' `live`) and opens the panel: RACE (3 laps, 5 AI, the player
+  5th on a 2 x 3 grid), PRACTICE (a rental kart, laps timed), LEAVE. Lights
+  one a second, out together at a random 5.4-6.3 s. AI (`_decide`): pure
+  pursuit of the racing line (the centreline relaxed toward least curvature,
+  `O`) at `V` (speed profile: aLat 21, brake 9, drive 3.6) x pace, pulling
+  out to the side with room to pass, with mistakes (run wide / lift) by
+  `temper`. Progress is projected per layer (`project` with y); a lap is
+  `prog` past each multiple of L. **A cut**: off the asphalt, then back on
+  more than 1.3 x the distance driven + 12 m further round = +2-10 s and the
+  lap is not a clean lap. Purse 250/150/100/60/40/25 by place (with
+  penalties); best clean lap, races and wins in localStorage
+  `autokw-kart-best`. `kart` in vehicles.js is hooked in by five small
+  edits (import, TYPES, RIDERS, HAND_BUILT, the rider's visibility); its
+  sound is audio.js ENGINES `kart` (one gear on a centrifugal clutch); the
+  helmet is `matte.crew` round the posed rider's head. Harness:
+  `__dbg.kart.autopilot = true` (+ `autoPace`) drives the player's kart
+  through `player.autoDrive`; a full race through the panel's buttons
+  takes ~3 min of wall clock with AUTO_GPU=1.
+
 ## Build number
 
 `<div id="build">vN</div>` in index.html and `CACHE = 'autokw-vN'` in sw.js

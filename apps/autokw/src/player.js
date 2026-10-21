@@ -589,6 +589,8 @@ export class Player {
   updateDrive(dt, input, traffic, peds) {
     const v = this.vehicle;
     if (!v) { this.onFoot = true; this.h.group.visible = true; return; }
+    // a harness's autopilot (kartway.js KartRace.autopilot) drives instead of the controls
+    if (this.autoDrive) input = this.autoDrive(input, dt) || input;
     const steer = -input.x; // HEADING_SENSE: +steer raises heading, which is a left turn
     // Analogue where the input is analogue. vehicles.js has always taken a
     // continuous throttle; a trigger just stops throwing away the resolution,
@@ -899,6 +901,12 @@ export class Player {
         dist = 4.4 + clamp(sp * 0.08, 0, 1.2);
         height = 1.9;
         lookH = 1.15;
+      } else if (v.spec.kart) {
+        // Auto KW: low and close behind a go-kart, the driver's helmet in
+        // the bottom third and the next corner over it
+        dist = 4.3 + clamp(sp * 0.06, 0, 1.1);
+        height = 1.75;
+        lookH = 0.75;
       } else if (v.spec.freight) {
         // over the lead locomotive, looking up the line: 360 m of train
         // behind the cab, and a locomotive 4.8 m tall

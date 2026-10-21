@@ -1503,6 +1503,15 @@ export const ENGINES = {
     idle: 1400, redline: 8800, gears: [0.24, 0.42, 0.6, 0.8, 1.0],
     lp: [420, 2600, 2000], ex: [240, 2.2, 6], noise: { ratio: 26, q: 1, gain: 0.26, pulse: 0.6, order: 1 },
     whine: null, drive: 2.4, level: 0.75, jitter: 0.08, rough: 0.4, clunk: 0.16 },
+  // Auto KW: a rental kart's 9 hp Honda-style single (`engine: 'kart'`).
+  // One gear on a centrifugal clutch, so the revs climb with road speed all
+  // the way down the straight and sit at the governor at the end of it; a
+  // flat, wide exhaust pulse and a tinny little can: the lawnmower note
+  // everyone remembers, not the quad's buzz.
+  kart: { kind: 'car', stroke: 4, fire: [0], amps: [1], pw: 0.07,
+    idle: 1500, redline: 4300, gears: [1],
+    lp: [300, 1700, 1400], ex: [190, 2.8, 7], noise: { ratio: 22, q: 1.3, gain: 0.3, pulse: 0.75, order: 1 },
+    whine: { hz0: 380, hz1: 1300, gain: 0.012, load: 0.2 }, drive: 2.8, level: 0.68, jitter: 0.09, rough: 0.5 },
   ev: { kind: 'ev', stroke: 2, fire: [0], amps: [1], pw: 0.6, harm: [1, 0.12, 0.3, 0.05, 0.08],
     idle: 0, redline: 36000, gears: [1],
     lp: [2500, 5000, 1500], ex: [1800, 1.5, 3], noise: { ratio: 0, q: 1, gain: 0, pulse: 0, order: 1 },

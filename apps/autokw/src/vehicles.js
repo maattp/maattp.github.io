@@ -14,6 +14,7 @@ import { makeHumanoid, buildCharacter, BONES, gripHands } from './peds.js';
 import { clamp, lerp, hash2, damp } from './util.js';
 import * as G from './geo.js';
 import { buildBuggy, attachBuggy, syncBuggy } from './buggy.js';
+import { buildKart, KART_RIDER } from './kart.js';
 
 const TYRE = [0.05, 0.05, 0.055];
 const RIM = [0.80, 0.82, 0.85];
@@ -315,6 +316,12 @@ export const TYPES = {
   // canter, slow off the mark and gentle to steer; noEngine (the hooves are
   // its sound), offroad (a horse does not bog down on grass), all but unbreakable.
   buggy: deriveSpec({ wheelbase: 3.2, len: 6.3, wid: 1.66, wheelR: 0.5, sill: 0.8, belt: 1.3, roof: 2.3, cab: [-0.6, 0.2], hand: 'buggy', buggy: true, noEngine: true, offroad: true, livery: 0x141518, armor: 0.001, showR: 320, minTurnR: 3.8, mass: 0.9, acc: 0.8, topKph: 32, brakeM: 26, latG: 0.45 }),
+  // Auto KW: a rental go-kart at Erbsville Kartway (kart.js, kartway.js): a
+  // 9 hp single on a centrifugal clutch (`engine: 'kart'`), ~65 km/h, quick
+  // off the line, grippy and quick to turn; the driver is a rider (`kart`).
+  // Not offroad: on the grass it bogs down. Karts trade paint all race, so
+  // they all but ignore damage.
+  kart: deriveSpec({ wheelbase: 1.04, len: 1.9, wid: 1.4, wheelR: 0.14, sill: 0.06, belt: 0.36, roof: 1.0, cab: [-0.3, 0.1], hand: 'kart', kart: true, engine: 'kart', armor: 0.02, showR: 140, minTurnR: 2.4, mass: 0.17, acc: 3.3, topKph: 65, brakeM: 30, latG: 1.15 }),
   jetski: deriveSpec({ wheelbase: 1.8, len: 3.20, wid: 1.20, wheelR: 0.20, sill: 0.3, belt: 0.6, roof: 1.05, cab: [-0.1, 0.1], hand: 'jetski', boat: true, jetski: true, minDepth: 0.12, mass: 0.4, acc: 7.5, topKph: 105, brakeM: 30, latG: 0.9 }),
   boat: deriveSpec({ wheelbase: 3.2, len: 5.70, wid: 2.20, wheelR: 0.30, sill: 0.4, belt: 0.7, roof: 1.45, cab: [-0.2, 0.1], hand: 'boat', boat: true, minDepth: 0.3, cockpit: [0.12, -2.2, 0.9, 0.86], mass: 1.1, acc: 3.0, topKph: 70, brakeM: 45, latG: 0.6 }),
   pickup: deriveSpec({ rwd: true, wheelbase: 3.68,len: 5.92, wid: 2.05, wheelR: 0.42, sill: 0.48, belt: 1.26, roof: 1.98, cab: [-0.15, 0.22], hand: 'pickup', mass: 1.4, acc: 4.4, topKph: 185, brakeM: 45, latG: 0.77 }),
@@ -3883,6 +3890,7 @@ function buildBoat(spec, paint, trim, matte) {
  * toward +X, which is the vehicle's left.
  */
 const RIDERS = {
+  kart: KART_RIDER,
   // Sitting up, hands out on pullback bars, feet on forward controls -- so the
   // legs are nearly straight and the reach is almost horizontal.
   cruiser: {
@@ -9433,6 +9441,7 @@ const HAND_BUILT = {
   atv: buildAtv, bicycle: buildBicycle, boat: buildBoat, duck: buildDuck, hydro: buildHydro, jetski: buildJetski, kayak: buildKayak, artic: buildArticFront, articRear: buildArticRear, balloon: buildBalloon,
   tank: buildTank,
   buggy: buildBuggy,
+  kart: buildKart,
   fireengine: buildFireEngine, tiller: buildTiller, tillerRear: buildTillerRear,
   tractor: buildTractor, combine: buildCombine,
 };
@@ -10313,7 +10322,7 @@ export class Vehicle {
     // A bike carries its rider. He goes in the tilt group, so he leans with it
     // -- parented to `group` instead he would stay bolt upright through every
     // corner while the bike went over underneath him.
-    this.rider = this.spec.moto || this.spec.bicycle || this.spec.atv || this.spec.jetski || this.spec.kayak || this.spec.balloon ? makeRider(this.spec.hand) : null;
+    this.rider = this.spec.moto || this.spec.bicycle || this.spec.atv || this.spec.jetski || this.spec.kayak || this.spec.balloon || this.spec.kart ? makeRider(this.spec.hand) : null;
     if (this.rider) this.tilt.add(this.rider.group);
     this.wheelMeshes = [];
     this.shadowTilt = null;   // the player's contact shadow (setDetailed)
@@ -10440,7 +10449,7 @@ export class Vehicle {
     }
     // A quad's rider is there only when someone is riding it. (The bikes
     // keep theirs as they always have: traffic is all they ever are.)
-    if (this.rider && (this.spec.atv || this.spec.bicycle || this.spec.hand === 'dirtbike' || this.spec.jetski || this.spec.kayak || this.spec.balloon)) this.rider.group.visible = this.detailedWheels || !empty;
+    if (this.rider && (this.spec.atv || this.spec.bicycle || this.spec.hand === 'dirtbike' || this.spec.jetski || this.spec.kayak || this.spec.balloon || this.spec.kart)) this.rider.group.visible = this.detailedWheels || !empty;
   }
 
   /** The player's own car gets steerable, spinning wheel meshes; traffic doesn't. */
@@ -10469,7 +10478,7 @@ export class Vehicle {
     // re-applies its own rule once you leave the car
     if (on) this._cast = undefined;
     if (!on) this.mode = this._mode;
-    if (this.rider && (this.spec.atv || this.spec.bicycle || this.spec.hand === 'dirtbike' || this.spec.jetski || this.spec.kayak || this.spec.balloon)) this.rider.group.visible = on || this._mode === 'traffic' || this._mode === 'path';
+    if (this.rider && (this.spec.atv || this.spec.bicycle || this.spec.hand === 'dirtbike' || this.spec.jetski || this.spec.kayak || this.spec.balloon || this.spec.kart)) this.rider.group.visible = on || this._mode === 'traffic' || this._mode === 'path';
     // the kayak's paddle, in the paddler's hands (updateKayak)
     if (this.spec.kayak) {
       if (on && !this.paddle) { this.paddle = kayakPaddle(); this.tilt.add(this.paddle); }
