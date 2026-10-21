@@ -467,6 +467,9 @@ const AWNING = [
 // same candidate set -- the constant is shared, the VERDICT is not, which is
 // what keeps the check from being a tautology.
 export const WET_FLOOR = 0.35;
+// An unpaved road's colour over the asphalt maps (meshRoad, the far roads):
+// the townships' crushed-limestone gravel, a light warm grey (gravel.js)
+const GRAVEL_TINT = [2.6, 2.28, 1.66];
 
 // The horizon haze takes the sun's side. Multipliers on the haze colour
 // (linear), looking toward the sun and away from it, blended by
@@ -4212,9 +4215,10 @@ varying vec3 vFarTint;`)
     const px = -e.dz, pz = e.dx;
     // Paint: alleys and lanes carry none; freeways and one-ways no centre line.
     let flags = rank;
-    if (hw >= 4) flags |= 4;
-    if (hw >= 4 && e.cls !== 'hwy' && !e.oneway) flags |= 8;
+    if (hw >= 4 && !e.gravel) flags |= 4;
+    if (hw >= 4 && e.cls !== 'hwy' && !e.oneway && !e.gravel) flags |= 8;
     if (e.cls === 'hwy') flags |= 16;
+    if (e.gravel) flags |= 128;   // unpaved (gravel.js): GRAVEL_TINT, no paint
     let j0 = 0;
     for (let j = 1; j < n; j++) {
       if (!keep[j]) continue;
@@ -4335,7 +4339,7 @@ float frLine(float o, float fw, float c, float w) {
     // world.meshRoad's wear: polished down the middle, grime at the kerb.
     float f = min(1.0, abs(o) / max(hw, 0.01));
     float k = (1.0 + 0.12 * (1.0 - f * f)) * (1.0 - 0.30 * max(0.0, f - 0.55) / 0.45);
-    diffuseColor.rgb *= k * ((fl & 16) != 0 ? 0.92 : 1.0);
+    diffuseColor.rgb *= k * ((fl & 16) != 0 ? vec3(0.92) : (fl & 128) != 0 ? vec3(${GRAVEL_TINT.join(', ')}) : vec3(1.0));
     float fw = max(fwidth(o), 1e-3);
     float paintOn = step(0.0, min(vFr.z, vFr.w));
     if ((fl & 4) != 0) {
@@ -6557,7 +6561,9 @@ float frLine(float o, float fw, float c, float w) {
       while (ts[k] < m) k++;
       if ((ts[k] - m) * e.len > 0.3 && (m - ts[k - 1]) * e.len > 0.3) ts.splice(k, 0, m);
     }
-    const col = e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1];
+    // (an unpaved road, gravel.js: the asphalt's grain lifted to crushed
+    // limestone's light warm grey, and no paint -- meshRoadMarks below)
+    const col = e.gravel ? GRAVEL_TINT : e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1];
     let v = 0;
     // Deterministic sub-centimetre lift per edge, so two carriageways that
     // genuinely overlap resolve instead of fighting.
@@ -6697,7 +6703,7 @@ float frLine(float o, float fw, float c, float w) {
         );
       }
     }
-    this.meshRoadMarks(flat, e, a, b, ei);
+    if (!e.gravel) this.meshRoadMarks(flat, e, a, b, ei);
     this.meshTrenchWalls(flat, e, a, b, ei);
     if (lod === 1 && (e.cls === 'st' || e.cls === 'art' || e.cls === 'res')) {
       const sw = e.cls === 'art' ? 3.2 : 2.6;
@@ -7626,7 +7632,7 @@ float frLine(float o, float fw, float c, float w) {
           qy.push(cy(x, z));
           qu.push(x / ROAD_TILE, z / ROAD_TILE);
         }
-        road.flat(qp, qy, [1, 1, 1], qu);
+        road.flat(qp, qy, n.e.every((k) => city.edges[k].gravel) ? GRAVEL_TINT : [1, 1, 1], qu);
       }
     }
 
@@ -7726,7 +7732,10 @@ float frLine(float o, float fw, float c, float w) {
       }
       const sub = dev < 0.04 ? 1 : Math.max(2, Math.min(6, Math.ceil(rm / 4)));
       const CEN = 1.12;
-      const V = (x, z, c) => road.vert(x, T(x, z) + NODE_Y, z, 0, 1, 0, x / ROAD_TILE, z / ROAD_TILE, c, c, c);
+      // (every arm unpaved, gravel.js: the crossing is gravel too)
+      const GT = n.e.every((k) => this.city.edges[k].gravel) ? GRAVEL_TINT : null;
+      const V = GT ? (x, z, c) => road.vert(x, T(x, z) + NODE_Y, z, 0, 1, 0, x / ROAD_TILE, z / ROAD_TILE, c * GT[0], c * GT[1], c * GT[2])
+        : (x, z, c) => road.vert(x, T(x, z) + NODE_Y, z, 0, 1, 0, x / ROAD_TILE, z / ROAD_TILE, c, c, c);
       // Wound to face up whichever way the three points turn. (road.P is
       // re-read: writing vertices can reallocate it.)
       const tri = (a, b, c) => {

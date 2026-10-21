@@ -301,6 +301,94 @@ file and a guide disagree, this file wins.
   through `player.autoDrive`; a full race through the panel's buttons
   takes ~3 min of wall clock with AUTO_GPU=1.
 
+- **Driving dynamics: YOUR road car** (vehicles.js; docs/drive-gravel.jpg,
+  drive-grass-slide.jpg). Everything here is gated on `rc` =
+  `detailedWheels && spec.roadCar` (deriveSpec: four wheels and a driver --
+  not a bike, quad, kart, buggy, tank, tractor/combine, aircraft or boat),
+  so **traffic, police, suspects and every AI driver keep the old model**
+  (STEER_BITE lock, aiSteer/aiPedals unchanged); only player.enterVehicle
+  sets detailedWheels on a road car. The parts:
+  - **Grip** `PLAYER_GRIP` 3.0 x latA on the tyres, the full lock asking
+    `PLAYER_ASK` 1.0 of it (steerLock), `FRONT_ROAD` 0.9: at the limit the
+    front lets go first (understeer: the squeal, the push, speed scrubbed),
+    lifting mid-bend tucks the nose in ~20 % and is caught, it does not spin.
+    It was a 4.5x tyre under a 3.7x lock: a sedan sat on rails at 3.2 g and
+    never reached its limit. Now ~2.3 g -- the police's own (2.75 x latA lock).
+    `tyreRoad`: past ~17 deg of slip a sliding tyre falls to ~57 % of its peak,
+    so a handbrake turn keeps some way on. Heavies (len > 7: bus, trucks) have
+    no tyre model; their lock is `PLAYER_GRIP_HEAVY` 2.0 (a bus ~1.2 g).
+  - **Turning circle** from the wheelbase: `MAX_STEER` 0.62 rad (0.58 heavy)
+    replaces one 4.5 m floor for every car: a city car 9.9 m kerb to kerb
+    (real 9-10), a sedan 12.2 (11.2-12.2), a pickup 14.6, a bus 25.6.
+    The lock is speed-sensitive by construction (r = v^2 / grip): a touch
+    stick or key at full deflection is the grip limit at any speed.
+  - **Surfaces** (`SURFACES`, `v.surf` / `v.mu`): gravel mu 0.62 (+ rolling
+    drag, ruts), grass 0.5 (+ the old turf drag). Gravel is a rail/sand lot or
+    an **unpaved road**: `data/gravel.json` (tools/kw/build_gravel.py: OSM
+    surface=unpaved/compacted/gravel/... on the roads build_roads keeps, 181
+    polylines, 135 km of the townships' concession roads), `src/gravel.js`
+    tags each edge along one (`e.gravel`: world.js draws it `GRAVEL_TINT`
+    with no paint, near, far and at all-gravel junctions; sidewalks stay --
+    they are citygen's and roadLift's) and gives `city.gravelAt(x, z)`
+    (asked every 0.12 s). The lock asks sqrt(mu) of the surface's grip, so a
+    full lock on gravel pushes and slides. **Stability control on loose
+    surfaces only**: the pull is held under what the driven tyres need for
+    the bend (`latAcc` or the wheel's ask), so a floored touch GAS slides, it
+    does not spin; on asphalt a rear-drive car's tail still comes out under
+    power, as before. main.js's `surfaceAt` says 'gravel' on those roads
+    (the crunch loop) and the skid emits dust there and on grass.
+  - **Traction**: the driven axle's load share (RWD 0.5 + squat, FWD 0.6 -
+    squat, EV all four) x grip caps the drive; past it `v.wheelspin` (the
+    squeal in audio.js reads it now, not a power guess; marks; dust). A sports
+    car lights its rears off the line, anything does on gravel or grass.
+  - **ABS**: the brake is held under the friction circle left after the
+    cornering (`v.abs`); a stop in a bend still steers, gravel stops ~50 %
+    longer, and an ABS stop chirps rather than howls.
+  - **Gearbox** (`_gearbox`, `v.gbox`): the car's engine profile's own gears
+    (audio.js ENGINES via selectEngine -- vehicles.js imports them), up at
+    52-94 % of the redline by throttle, kick-down, a torque curve per gear
+    (normalised so the class's 0-100 barely moves: +0.3 s for the shifts)
+    and 0.16 s with no drive per upshift (0.32 diesel): the squat lets go and
+    comes back. Engine braking by the revs. **audio.js EngineModel follows
+    `gbox`** (step's `gb`), so the shift you hear is the one you feel.
+  - **Body**: roll at the limit by roof height (sedan ~3.4 deg, sports 2,
+    pickup/van/bus 6.5) as a share of the grip in use, not raw g; dive
+    ~2.5 deg under a full stop, squat 60 % of it.
+  - **Acceleration stays arcade** (ARCADE_PUNCH 2.4, shared with the AI and
+    the police, so chases stay balanced): 0-100 is ~half the real figure
+    for every class, the ratios real. Braking likewise (ARCADE_BRAKE 2.2).
+
+  Measured with **`node tools/kw/drivetest.mjs [types] [--json f] [--compare f]`**
+  (flat ground, fixed 60 Hz, `v.update` with the player's detailed model;
+  `surfForce` pins grass/gravel; `DRIVE_TRACE=type,surface,kmh` prints a
+  full-lock hold frame by frame; `--live` drives the real loop on a gravel
+  road with GAS held and real D-key events, printing gear / audio gear /
+  surface). Before -> after (game numbers; real road-test figures in
+  brackets; lat g at FULL lock with the speed held; handbrake = 0.5 s pull
+  with full lock at 60 km/h, then 1 s straight):
+
+  | | sedan | sports | pickup | compact | bus |
+  |---|---|---|---|---|---|
+  | 0-100 s (bus 0-80) | 3.75 -> 4.02 (6.5-8.5) | 1.90 -> 2.20 (3.5-4.5) | 3.68 -> 3.95 (6-8) | 5.58 -> 6.00 (10-14) | 13.9 -> 15.7 (20-30) |
+  | top km/h | 205 -> 204 (200-240) | 275 -> 272 (280-310) | 185 -> 185 (170-180) | 170 -> 170 (155-175) | 95 -> 94 (90-105) |
+  | 100-0 m | 18.4 = (36-41) | 15.2 = (31-34) | 20.7 = (40-46) | 19.8 = (39-44) | 24.0 = |
+  | dive / squat deg | 1.4 / 0.8 -> 2.4 / 1.0 | 1.5 / 1.2 -> 1.9 / 0.8 | 2.8 / 1.9 -> 3.4 / 1.4 | 1.3 / 0.6 -> 2.3 / 1.0 | 3.2 / 0.8 -> 3.4 / 1.4 |
+  | lat g @60 (radius m) | 3.16 (9.0) -> 2.24 (12.6) | 3.57 (8.0) -> 2.58 (11.0) | 2.76 (10.4) -> 1.96 (14.5) | 2.96 (9.4) -> 2.05 (13.6) | 2.32 (12.2) -> 1.24 (22.9) |
+  | lat g @120 [real skidpad] | 3.23 -> 2.33 [0.85-0.92] | 3.69 -> 2.68 [1.0-1.1] | 2.83 -> 2.06 [0.72-0.8] | 2.99 -> 2.08 [0.78-0.84] | -- [0.4-0.5] |
+  | roll @60 deg | 1.8 -> 2.6 | 1.9 -> 1.7 | 3.6 -> 4.7 | 1.7 -> 2.4 | 4.1 -> 5.3 |
+  | turning circle m | 12.8 -> 12.2 (11.2-12.2) | 11.3 -> 11.2 (10.6-11.4) | 14.6 -> 14.6 (13-15) | 12.6 -> 9.9 (9-10) | 24.2 -> 25.6 (23-25) |
+  | full-lock step @80: yaw t90 ms / overshoot | 167 / 0 % -> 200 / 2 % | 150 / 0 -> 183 / 1 | 183 / 0 -> 233 / 1 | 150 / 2 -> 167 / 5 | -- |
+  | lift-off at the limit @90: drift deg, yaw | 2.7 -> 5.1, +25 % -> 3.2 -> 5.5, +20 % | 2.6 -> 5.1, +28 % -> 3.2 -> 5.5, +22 % | 2.7 -> 5.0 -> 3.3 -> 5.4 | 2.6 -> 5.6 -> 2.9 -> 5.6 | -- |
+  | handbrake: deg turned, km/h after | 107, 10 -> 88, 21 | 127, 3 -> 135, 6 | 64, 20 -> 44, 30 | 117, 1 -> 125, 4 | -- |
+  | grass: top, 100-0, lat (held km/h) | 69, 14.1, 2.56 (40) -> 54, 22.7, 0.92 (24) | 103, 12.0, 3.11 -> 67, 20.0, 1.11 (25) | 69, 15.4, 2.25 -> 50, 24.5, 0.80 (24) | 55, 14.9, 2.29 -> 55, 23.8, 0.68 (22) | 29, 17.2 -> 28, 26.8 |
+  | gravel: top, 100-0, lat @40 | 205, 18.4, 2.68 -> 166, 27.8, 1.22 | 275, 15.2, 3.02 -> 232, 23.2, 1.38 | 185, 20.7, 2.32 -> 155, 31.1, 1.08 | 170, 19.8, 2.56 -> 136, 29.8, 1.06 | 95, 24.0, 1.42 -> 76, 35.7, 0.98 |
+
+  A hard hit (spin 2.8 rad/s, 6 m/s sideways at 54 km/h) settles in
+  1.4-1.6 s (was 1.5-1.8) and turns the car ~150 deg (was ~210). Phone
+  (AUTO_PHONE=1, GPU) at the opening frame: 198 -> 199 draws, 892k tris both
+  (nothing new is drawn; the gravel tint is vertex colour and one shader
+  branch).
+
 ## Build number
 
 `<div id="build">vN</div>` in index.html and `CACHE = 'autokw-vN'` in sw.js
