@@ -60,7 +60,8 @@ file and a guide disagree, this file wins.
 - **src/kwfun.js** (v11): the St. Jacobs market's tent and Market Sports'
   dome (their boxes get `kw.skip`: world.js and buildPolys draw nothing for
   them), Canadian flags (kw.json `flags` from build_kw.py; one material whose
-  vertex shader waves them, `waveFlags` each frame), KW Surplus (the tank on
+  vertex shader waves them, `waveFlags` each frame; a small flag's cell is a
+  'flags:' cluster, drawn within landmarks.js `FLAG_RANGE`), KW Surplus (the tank on
   its lawn: TANK_SITE is overwritten at boot; a static Spitfire model on its
   roof), Parkway Ford Lincoln's showroom, signs and the cars on its lot, and
   `openGround` (the balloon's field by the market). Pin Up Arcade Bar
@@ -1943,6 +1944,59 @@ file and a guide disagree, this file wins.
   view are mostly landmark clusters (the census: 105-265 landmark meshes
   drawn per view, the campus most); a LOD for them is a look change and
   needs its own build and a before/after of each place.
+
+- **The phone audit, round three: the spawn's draws** (v41 207 -> v51 225
+  -> 173-178; screenshots identical apart from what moves). **Every draw
+  attributed:** `tools/kw/spawndraws.js` (VIEW_PROBE_FILE) hooks
+  `renderer.renderBufferDirect` for one frame of the player view and groups
+  the scene pass, the shadow pass and the post chain by owner (any Object3D
+  two property hops from `__dbg`, then the nearest name), flagging
+  zero-instance, zero-count and invisible-material draws (`__sdFull` lists
+  each). `tools/kw/drawpixels.js` hides each scene-pass draw in turn and counts
+  the pixels it changes in a frozen frame; `tools/kw/rangeab.js` is an A/B
+  of one behaviour inside one boot, to the pixel, over a list of views;
+  `tools/kw/frameshot.js` prints a frozen frame as PNG for comparing builds.
+  All four freeze what moves while paused: `world.animate` (sky, water) and
+  `world.trees.timeU` (the sway); kwshots' `VIEW_BOOT_FILE=tools/kw/seedrandom.js`
+  pins Math.random from boot. The phone's frame is 1267 x 582 (DPR 1.45),
+  1.86 mrad a pixel row.
+  **What each build added at the spawn** (seeded, phone): v45 ION +4 (the
+  gates, crossing lamps and catenary poles, one InstancedMesh each, and a
+  third car body section); v47 +2 (a `near:nature` cluster, the river
+  valley's trail furniture); v48 heavy rail +5 (`kwrail:` the Waterloo Spur's
+  near and bed meshes beside the square and the far chunk at -7,0); v50 +1
+  (the street-name lettering, one mesh); v51 +4 (skaters: crowd peds, each a
+  SkinnedMesh, now on the rink in view; they take crowd slots, so the total is
+  the same elsewhere). The delivery/taxi pillar (+1) and farTraffic (+-1)
+  come and go with the game's state. No empty draws (no zero-instance mesh,
+  no zero-opacity material); the shadow pass is 24 draws in every build.
+  **The cut: the small flags.** 49 of the spawn's 225 draws make a pixel
+  (the square is walled in); the biggest group that never can was the
+  Canadian flags, a pole mesh and a cloth mesh in every 1200 m cell that has
+  one, ~50 draws in every view of the region (the 1.8 m cloth is under a
+  pixel past ~1 km). Small flags are now 'flags:' clusters (kwfun.js) drawn
+  within landmarks.js `FLAG_RANGE` 1000 m of their bounding sphere
+  (`updateLandmarkRange`, as the beaches); a dealer's 9 m flag stays in its
+  cell. rangeab, flags drawn everywhere vs range-culled, pixels changed (A/A
+  noise in brackets) / draws old -> new: spawn 0 (0) 223 -> 175; air-uptown
+  26 (23) 317 -> 271; air-river 66 (66) 257 -> 207; air-galt 1 (1) 160 -> 144;
+  air-region 18 (17) 316 -> 220; King St Uptown 0 (0) 419 -> 339; a post
+  office from 300 / 900 / 1300 m 2 (1) / 5 (5) / 0 (0), 227 -> 191 / 270 ->
+  228 / 327 -> 279; Fairway Plaza 0 (0) 233 -> 195; Ring Road 0 (1) 446 ->
+  350; the country 0 (0) 248 -> 190. frameshot, master vs this at the spawn:
+  only the clouds (the sky's time differs by boot), the skaters, the player's
+  idle and its shadow differ -- master vs master differs in the same places
+  (docs/spawndraws-diff.jpg, magenta). trafficbench (rail off) and ionprobe
+  print the same as master; railprobe PASSes on both (its service differs
+  run to run on master too: boot timing); funprobe 54/54 on both, its city
+  draws master -> this: Aud 227 -> 169, Weber & Frederick 230 -> 178, the
+  parade 328 -> 290, Big Splash 318 -> 235, the rink 216 -> 176, the derby
+  park 226-364 -> 201-290.
+  **Left as it is:** the skaters (skinned: one draw each, no batching short of
+  a merged skeleton); ION's three instanced meshes and the rail's near/bed
+  meshes (in view, a few pixels each); Tim Hortons' pylons and wall signs
+  (`kw` clusters, 2.7-5 km away at the spawn, ~12 draws: the small stores
+  built in the same clusters are buildings, which must not pop).
 
 - **QA sweep after v22-v39** (docs/qa-*.jpg, before over after).
   `tools/kw/sweeppick.js` picks ~60 road points (fixed spots: Uptown,

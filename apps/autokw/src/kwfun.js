@@ -282,7 +282,11 @@ export function buildFlags(ctx, kw) {
     if (!s || G.waterLevel(s.x, s.z) > 0) continue;
     if (placed.some(([px, pz]) => Math.hypot(px - s.x, pz - s.z) < (big ? 60 : 25))) continue;
     placed.push([s.x, s.z]);
-    const k = ckey(s.x, s.z);
+    // a small flag is under a pixel past ~1 km (the cloth 1.8 m, the pole
+    // 0.14 m) yet was a draw or two in every 1200 m cell from end to end of
+    // the map: 'flags:' clusters are range-culled (landmarks.js FLAG_RANGE).
+    // A dealer's 9 m flag stays in its cell's cluster, seen from afar.
+    const k = big ? ckey(s.x, s.z) : 'flags:' + ckey(s.x, s.z);
     let P = poles.get(k); if (!P) poles.set(k, (P = new Builder(false)));
     let C = cloth.get(k); if (!C) cloth.set(k, (C = new Builder(true)));
     const y0 = G.terrainHeight(s.x, s.z);

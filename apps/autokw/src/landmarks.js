@@ -61,6 +61,11 @@ import { spaceNeedle, NEEDLE_MATS, needleSolids, needleDecks } from './needle.js
 import { memo } from './bootcache.js';
 import { makeDowntown } from './lmdowntown.js';
 
+// A small flag's cluster (kwfun.js, 'flags:' keys) is drawn while the camera is
+// within this of its bounding sphere: past ~1 km the 1.8 m cloth is under a
+// pixel at the phone's 582-row frame, the 0.14 m pole a fraction of one.
+const FLAG_RANGE = 1000;
+
 // --- materials -----------------------------------------------------------------
 //
 // Physically shaded, shared by colour, so every landmark's pieces fall into a
@@ -3360,6 +3365,8 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
       if (key.startsWith('beach')) near.push({ o, s: o.geometry.boundingSphere, r: 700 });
       // an extra's fine detail (uwcampus.js: mullions, hoods, fins) in a 'near:' group
       else if (key.startsWith('near:')) near.push({ o, s: o.geometry.boundingSphere, r: 520 });
+      // a cell's small flags (kwfun.js buildFlags): under a pixel past FLAG_RANGE
+      else if (key.startsWith('flags:')) near.push({ o, s: o.geometry.boundingSphere, r: FLAG_RANGE });
       const ok = !(o.material.userData && o.material.userData.noShadow) && !o.material.transparent && !o.material.isMeshBasicMaterial;
       o.castShadow = ok;
       o.receiveShadow = ok || o.material.isMeshStandardMaterial;
