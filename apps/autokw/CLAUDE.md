@@ -53,8 +53,9 @@ file and a guide disagree, this file wins.
 - **src/chicopee.js** (data/chicopee.json): runs, lifts, chairs, bikes, downhills.
 - **src/ykf.js** (kw.json `aero`): YKF's pavement, `city.slabQuery`,
   `world.inAirfield`; the field is graded in build_raster.py `grade_ykf`.
-- **ION is Seattle's link.js** on `data/link.json` from tools/kw/build_ion.py
-  (one car, ION livery, one-track split stations: `st.key`).
+- **ION is Seattle's link.js engine** on `data/link.json` from
+  tools/kw/build_ion.py, made ION's: the car, stations, track, catenary,
+  crossings and timetable are in "ION, as it is" below.
 - **src/kwfun.js** (v11): the St. Jacobs market's tent and Market Sports'
   dome (their boxes get `kw.skip`: world.js and buildPolys draw nothing for
   them), Canadian flags (kw.json `flags` from build_kw.py; one material whose
@@ -310,6 +311,117 @@ file and a guide disagree, this file wins.
   spawn 195 -> 200 draws, 881k -> 917k tris; Boardwalk lot 66 -> 69; Sunrise
   lot 172 -> 178; Fairview aerial 399 -> 409, 946k -> 1017k. ~155k tris
   across the whole map.
+- **ION, as it is** (src/link.js on `data/link.json`; docs/ion-*.jpg).
+  Sources (Oct 2026): Wikipedia "Ion rapid transit" (stations, 10-minute
+  weekday headway, 70 km/h corridor / 50 street / 20-25 in pedestrian
+  areas, the 12 gated crossings), the Commons categories "Bombardier Flexity
+  Freedom of Ion rapid transit" and "Ion rapid transit stations" (cars
+  504-515, Mill, Queen, Kitchener City Hall, Fairway, UW).
+  - **Data**: `tools/kw/extract_ion.py` (platforms, level-crossing nodes,
+    embedded_rails streets -> `raw_ion.json`), then `build_ion.py`, which now
+    writes only `sb`/`nb` (no 2 Line copies), each station's OSM `plats`
+    (outline or edge line) and the line's `crossings` (gate / bell / light).
+  - **The car** (`buildLRVGeometry`, `FF`): ONE 30.2 m five-section Flexity
+    Freedom (A cab, suspended F1, centre C on the middle bogie, F2, B cab;
+    0.5 m black articulations; four double doors a side). ION runs single
+    cars -- the platforms were built for two and the second car's canopy was
+    left for later -- so `cars: 1` (`cars: 2` couples them; SECTIONS are
+    general). Livery: grey skirt, white body, dark window band, white band,
+    ION blue roof line running down the cab corners (the swoosh), black
+    windscreen cap and lamp band. Three draws a train as before: body (with
+    the open doorways on per-section DOOR bones, scaled to nothing while
+    shut), trim (glass, lamps), and the lettering -- one 1024 x 1024 atlas
+    (`decalTexture`, 2 x 4 blocks) of which each train's texture clone is
+    OFFSET to its block: column = destination ("301 to Conestoga" lit on cab
+    A leading toward -s, "301 to Fairway" on cab B; a dark sign on the
+    trailing cab), row = fleet number (504/507/510/514 A and B). The
+    lettering draw is hidden past 260 m.
+  - **Stations** (`_stationPlan`, `_buildStation`): each track's platform
+    from its OSM outline -- side (and which side) or CENTRE (the other track
+    just past it: e1 is half way, built once), its ends along the track --
+    else the old guess (`osm: false`). 16 of the 19 are from OSM; Conestoga,
+    Borden and Fairway fall back to the guess. Trains stop at `st.stop`
+    (the platform's centre clamped so the car stays on the rails: both
+    termini's platforms end the track). A canopy over one car's length about
+    the stop: fritted blue glass (the `frit` cell, drawn unlit in the sign
+    material, so its underside is never in shade) on grey round posts --
+    cantilevered from the back of a side platform and rising toward the
+    track, a butterfly on posts down a centre platform -- with the black
+    name fascia (the station board, both edges of a centre platform); the
+    station's coloured feature wall (`FEATURE`, the ion mark, the name, GRT;
+    Queen's orange is real, the others are stand-ins); the ticket machine,
+    two PRESTO validators, the next-train LED sign, a glass shelter with
+    its bench, benches; name totems at both ends; ramps down to the ground.
+    Seattle's entrance canopies and pylons are gone (`_buildEntrance` draws
+    nothing; `st.ent` still anchors the map icon and boarding). You step off
+    ONTO the platform (`platformSpot`). Waterloo Public Square's platform is
+    OSM's, west of the square behind the mall; it ends where kwplaces.js's
+    hedge begins (no overlap with the square).
+  - **Track**: `tr.ST` (`_streetMask`: a carriageway within 9 m, or under the
+    track, for runs of 60 m or more) is where ION runs in the street: there
+    the bed is a concrete trackway with the rails flush and grooved, kerbed
+    down to the road -- at LINK.lift still (0.36 sank it under the city's
+    sidewalks, which stand ~0.5 m over the smoothed ground). Elsewhere
+    ballast, and a black chain-link fence 3.75 m out on the corridor's outer
+    sides (not at platforms, within 18 m of a crossing, on a road or water):
+    the fence is the RIGHT half of the bed texture, cut out by the bed
+    material's alphaTest (the ballast is the left half, `BED_U`), so it adds
+    no draws; its posts are in the near chunks.
+  - **Catenary** (`_buildPoles`, `_polesUpdate`): round grey poles with a
+    two-tube cantilever, stay and insulators, every ~48 m (34 on curves):
+    a centre pole between tracks 3-6.5 m apart (two instances, an arm each
+    way), else a side pole 3 m off; never on a carriageway, on the far side
+    of a side platform. ONE InstancedMesh (castShadow off), refilled with the
+    poles within RANGE.near + 60 m whenever the camera moves 25 m; the arm
+    length rides in the `armK` instance attribute (onBeforeCompile scales
+    only x > 0.2, so the pole keeps its girth). ~610 poles, ~50-60 drawn.
+    The contact wire and messenger with droppers stay in the near chunks.
+  - **Crossings** (`_findCrossings`, `_buildCrossing`, `_crossingsUpdate`,
+    `crossingClosed`): CROSS runs merged across both tracks; signals where
+    OSM has a barrier or light on the line within 16 m (in the street only a
+    ROAD crossing's own). 11 found, all gated: Northfield, Bearinger,
+    Columbia, University, Seagram, Erb, Ottawa, Block Line, Courtland (x2),
+    Wilson. Canada's: white mast, the red-bordered white crossbuck, two red
+    lamps on a black backboard, the bell, the gate (arms and lit lamps are
+    two InstancedMeshes, hidden while empty). Down from 3 s after a train is
+    within ~22 s; `xing_bell` near; `blocks()` (traffic.js) stops cars at
+    the arm.
+  - **Service**: speed limits 70 km/h, 40 in the street, 25 through Uptown
+    and downtown Kitchener (`vSlow`, within 420 m of those stations), dwell
+    22 s. THE TIMETABLE (`makeTrains`): one train is run alone over each
+    track (`_tripProfile`, the service's own code on a ghost) to time the
+    trips (~33 min south, ~35 north; ION schedules 46 with its traffic
+    signals); the trains are as many as fill the round trip with
+    `LINK.turn` at each end at a `LINK.headway` of 10 min (8 now), each
+    placed at its phase of the cycle. At the terminus a train changes ends
+    onto the other platform (`_turnBack`) as soon as it is clear and waits
+    there, doors open, for its slot: a headway after that terminus's last
+    departure. Seattle's 6x far service while you wait is gone (it would
+    break the headway); ENTER on a platform still calls the next train in.
+    Doors: `ion_doors_open` / `ion_doors_close` (audio.js) for anyone near or
+    aboard; aboard, "Next stop: X" as the doors close and "X" coming in
+    (`announce`: the toast, and speechSynthesis en-CA where there is one;
+    `window.__noSpeech` silences it). The readout is in km/h.
+  - **Verify**: `VIEW_PROBE_FILE=tools/kw/ionprobe.js node tools/kw/kwshots.mjs
+    <dir>` -- four hours of service (headways at nine stations: 10.0 min,
+    min = max), every trip terminus to terminus (16 stops each way), and a
+    RIDE: board at Conestoga from the platform, drive to Fairway stopping at
+    all 15 platforms, step off onto Fairway's; prints PASS. Shots: kwshots
+    with views on the tracks (`link.tracks[k]`, `st.plan`, `st.stop`); a
+    paused harness must call `link.update(dt, { position })` at the view or
+    the lazy chunks there are never built. Phone (AUTO_PHONE=1, GPU), before
+    -> after: the spawn 206 -> 212 draws, 1042k -> 1053k tris; Waterloo
+    Public Square 443 -> 448; Kitchener City Hall 433 -> 431; a train at
+    Laurier 167 -> 170, 718k -> 776k; the corridor 525 -> 534; Columbia's
+    crossing 349 -> 353; 0 exceptions.
+  - Not done / approximate: the feature walls' colours (but Queen's) and
+    patterns; the canopy is one design (the real ones vary a little, and
+    UW's has its big name box); no wire stagger, span wires or feeder
+    cables; the crossing gates have no pedestrian gates; two-car trains are
+    supported but not run; the timetable is always the weekday daytime one;
+    water drawn round University of Waterloo station (the wlevel field) is
+    not ION's.
+
 - **The spawn is on Waterloo Public Square** (`SPAWN_LL` in
   tools/kw/build_places.py, re-run it): on the courtyard north of the rink,
   looking south-west across it to the mall's entrance, the leaf shades and

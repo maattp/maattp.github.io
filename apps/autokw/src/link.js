@@ -1,3 +1,11 @@
+// AUTO KW: THIS IS ION, Waterloo Region's light rail (route 301, Conestoga
+// to Fairway, 19 stations), on Seattle's Link engine: the profile, the
+// lazy chunks and the driving are Link's; the car (ION's Flexity Freedom),
+// the stations (OSM's platforms, ION's canopies and signs), the street and
+// corridor track, the catenary poles, the gated crossings and the 10-minute
+// timetable are ION's -- see apps/autokw/CLAUDE.md, "ION". Seattle's notes
+// follow.
+//
 // LINK LIGHT RAIL: the 1 Line across the whole map -- from the Lynnwood
 // extension at the north edge, over the Northgate guideway, 13 km of bored
 // tunnel under Roosevelt, the U District, the Montlake Cut, Capitol Hill and
@@ -362,6 +370,8 @@ export class LinkTrack {
 // Geometry helpers along a track.
 
 const uv0 = [0, 0, 1, 0, 1, 1, 0, 1];
+/** A quad's uvs (corners a, b, c, d) mirrored left to right: a and b swap, c and d. */
+const mirrorUV = (u) => [u[2], u[3], u[0], u[1], u[6], u[7], u[4], u[5]];
 /** A frame at s: rail-head point, forward and left (horizontal). */
 function frame(tr, s) {
   const h = tr.heading(s);
@@ -462,13 +472,6 @@ function signAtlas(names) {
     q.restore();
   };
   const fit = (q, txt, wt, size, maxW) => { let fs = size; q.font = font(wt, fs); while (q.measureText(txt).width > maxW && fs > 10) { fs -= 1; q.font = font(wt, fs); } };
-  // the name boards: black, the ion mark in ION blue, the name in white
-  names.forEach((nm) => cell(nm, 384, 48, (q, w, h) => {
-    q.fillStyle = '#0d0e10'; q.fillRect(0, 0, w, h);
-    ion(q, 10, 8, 32, '#3f86e0');
-    q.fillStyle = '#ffffff'; q.textAlign = 'left'; q.textBaseline = 'middle';
-    fit(q, nm, 700, 28, w - 76); q.fillText(nm, 66, h / 2 + 1);
-  }));
   // the feature walls: the station's colour, a pattern of its stripes, the
   // ion mark, the name down a white band, GRT at the foot
   names.forEach((nm, i) => cell('fw:' + nm, 96, 240, (q, w, h) => {
@@ -514,6 +517,15 @@ function signAtlas(names) {
     q.fillStyle = '#2b6fd6'; q.fillRect(18, 40, w - 36, 40);
     q.fillStyle = '#2a2d31'; q.fillRect(20, 96, w - 40, 10); q.fillRect(30, 116, w - 60, 26);
   });
+  // (packed last: the tall cells fill the first two rows)
+  // the name boards: black, the ion mark in ION blue, the name in white
+  names.forEach((nm) => cell(nm, 384, 48, (q, w, h) => {
+    q.fillStyle = '#0d0e10'; q.fillRect(0, 0, w, h);
+    ion(q, 10, 8, 32, '#3f86e0');
+    q.fillStyle = '#ffffff'; q.textAlign = 'left'; q.textBaseline = 'middle';
+    fit(q, nm, 700, 28, w - 76); q.fillText(nm, 66, h / 2 + 1);
+  }));
+  if (y + rowH > H) console.warn('ION sign atlas overflows: ' + (y + rowH) + ' > ' + H);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
@@ -1070,6 +1082,7 @@ export class Link {
       }
     }
     m.count = n;
+    m.visible = n > 0;             // (an empty instanced draw is still a draw)
     m.instanceMatrix.needsUpdate = true;
     arm.needsUpdate = true;
   }
@@ -1275,6 +1288,7 @@ export class Link {
     if (this.armMesh) {
       this.armMesh.count = nArm; this.armMesh.instanceMatrix.needsUpdate = true;
       this.lampMesh.count = nLamp; this.lampMesh.instanceMatrix.needsUpdate = true;
+      this.armMesh.visible = nArm > 0; this.lampMesh.visible = nLamp > 0;
     }
   }
 
@@ -1796,7 +1810,7 @@ export class Link {
         // reads left to right seen from the track: +f runs right when the face looks -left
         const flip = sd > 0;
         const a = [cx - P.fx * w / 2, y, cz - P.fz * w / 2], bb = [cx + P.fx * w / 2, y, cz + P.fz * w / 2];
-        const U = flip ? [sign[2], sign[1], sign[0], sign[1], sign[0], sign[3], sign[2], sign[3]] : sign;
+        const U = flip ? mirrorUV(sign) : sign;
         c.sign.quad(a, bb, [bb[0], y + h, bb[2]], [a[0], y + h, a[2]], n, U, [1, 1, 1]);
       }
     }
@@ -1843,7 +1857,7 @@ export class Link {
       const fxn = P.lx * fsn, fzn = P.lz * fsn;
       const cx = x + fxn * 0.31, cz = z + fzn * 0.31;
       c.sign.quad([cx - P.fx * 0.36, y + 0.2, cz - P.fz * 0.36], [cx + P.fx * 0.36, y + 0.2, cz + P.fz * 0.36],
-        [cx + P.fx * 0.36, y + 1.75, cz + P.fz * 0.36], [cx - P.fx * 0.36, y + 1.75, cz - P.fz * 0.36], [fxn, 0, fzn], fsn > 0 ? [tv[2], tv[1], tv[0], tv[1], tv[0], tv[3], tv[2], tv[3]] : tv, [1, 1, 1]);
+        [cx + P.fx * 0.36, y + 1.75, cz + P.fz * 0.36], [cx - P.fx * 0.36, y + 1.75, cz - P.fz * 0.36], [fxn, 0, fzn], fsn > 0 ? mirrorUV(tv) : tv, [1, 1, 1]);
       this.solids.push({ x, z, r: 0.45, y0: y, y1: y + 1.9 });
       for (const ds of [2.2, 3.4]) {
         const V = frame(tr, sT - tr.dir * ds);
@@ -1877,7 +1891,7 @@ export class Link {
         const n = [P.lx * -sg * fs, 0, P.lz * -sg * fs];
         const a = [x - P.fx * 1.1 + n[0] * 0.07, y + 2.4, z - P.fz * 1.1 + n[2] * 0.07], bb = [x + P.fx * 1.1 + n[0] * 0.07, y + 2.4, z + P.fz * 1.1 + n[2] * 0.07];
         const flip = sg * fs < 0;
-        const U = flip ? [sign[2], sign[1], sign[0], sign[1], sign[0], sign[3], sign[2], sign[3]] : sign;
+        const U = flip ? mirrorUV(sign) : sign;
         c.sign.quad(a, bb, [bb[0], y + 2.95, bb[2]], [a[0], y + 2.95, a[2]], n, U, [1, 1, 1]);
       }
       this.solids.push({ x, z, r: 0.15, y0: y, y1: y + 3 });
@@ -2145,7 +2159,8 @@ export class Link {
       const buried = t.buried();
       const vis = t.state !== 'off' && (t.driver === 'player' || (d < RANGE.train && (this.tunnelMode ? d < 900 : !buried)));
       t.group.visible = vis;
-      if (vis) t.pose();
+      // the lettering is a draw of its own: only near (it is unreadable past ~250 m)
+      if (vis) { t.meshes[2].visible = d < 260 || t.driver === 'player'; t.pose(); }
     }
     // a called train: board it when its doors open, if you are still there
     const pd = this.pending;

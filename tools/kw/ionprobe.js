@@ -56,7 +56,7 @@
     if (Math.abs(mean - tt.H) > 30 || mx - mn > 90) fail.push(`headway at ${id}`);
   }
   const full = done.filter((q) => q.stops[0] === (q.key === 'sb' ? 'Conestoga' : 'Fairway'));
-  for (const q of full.slice(0, 2).concat(full.filter((q) => q.key === 'nb').slice(0, 1))) say(`  trip #${q.id} ${q.key}: ${q.stops.length} stops in ${q.mins.toFixed(1)} min: ${q.stops.join(' > ')}`);
+  for (const q of [full.find((r) => r.key === 'sb'), full.find((r) => r.key === 'nb')].filter(Boolean)) say(`  trip #${q.id} ${q.key}: ${q.stops.length} stops in ${q.mins.toFixed(1)} min from reaching its first platform: ${q.stops.join(' > ')}`);
   for (const q of full) { const want = L.stations.filter((st) => st.s[q.key] !== undefined).length; if (q.stops.length !== want) fail.push(`trip #${q.id} ${q.key} made ${q.stops.length} stops of ${want}`); }
   if (!full.length) fail.push('no complete trips');
   const onLine = L.trains.filter((q) => q.state !== 'off').length;

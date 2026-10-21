@@ -1,6 +1,6 @@
 """ION light rail, Conestoga to Fairway -> apps/autokw/data/link.json.
 
-    tools/.venv/bin/python tools/kw/build_ion.py      (after extract_rail.py)
+    tools/.venv/bin/python tools/kw/build_ion.py      (after extract_rail.py and extract_ion.py)
 
 Same format as Seattle's Link (tools/build_link.py; src/link.js reads it):
 two tracks `sb` and `nb` as [x, z, flag] points (ION is one line: no 2 Line
