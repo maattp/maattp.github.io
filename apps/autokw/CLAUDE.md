@@ -693,11 +693,11 @@ file and a guide disagree, this file wins.
   line, a transformer on one in five, the street light on a davit (the
   street's own lamps are dropped). Poles sit on a lattice along the
   street's direction so OSM's short edges join up; a span is strung only to
-  a pole that exists (`cityStats.hydro`). Phone (AUTO_PHONE=1, GPU), master
-  -> this: spawn 198/888k -> 196/932k; Beechwood aerial 305/1268k ->
-  307/1353k; Sunview 205/633k -> 205/686k; Northfield 126/639k -> 130/685k;
-  street level Beechwood 540/1231k -> 537/1290k, Sunview arterial 239/692k
-  -> 237/741k (max +8 % tris, draws flat). Re-run order after an OSM update:
+  a pole that exists (`cityStats.hydro`). Phone (AUTO_PHONE=1, GPU), v28
+  -> this, draws/tris: spawn 207/935k -> 204/975k; Beechwood aerial
+  323/1379k -> 320/1454k, low 374/1188k -> 371/1229k; Sunview low 213/667k
+  -> 213/716k; Northfield low 129/643k -> 132/685k (max +7.3 % tris, draws
+  flat). Re-run order after an OSM update:
   `extract_looks.py` then `build_buildings.py`.
 
 ## Build number
