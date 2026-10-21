@@ -69,6 +69,8 @@ import { TrafficSystem, collideWithBuildings, warmLightBar } from './traffic.js'
 import { Police } from './police.js';
 import { PoliceMissions } from './policemissions.js';
 import { TaxiFares } from './taxi.js';
+import { GrtBus, LedPanel } from './grtbus.js';
+import { KwEats } from './kweats.js';
 import { Vehicle, TYPES as VEHICLE_TYPES, VEHICLE_HOOKS, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial, dropVehicleArrays } from './vehicles.js';
 
 // Aircraft come in their own colours, parked at Boeing Field or delivered.
@@ -245,6 +247,8 @@ class Game {
   onCrash(impact, isPolice, other) {
     audio.crash(impact);
     if (taxi) taxi.onCrash(impact);
+    if (grt) grt.onCrash(impact);
+    if (eats) eats.onCrash(impact);
     const p = player.position;
     fx.sparks(p.x, p.y + 0.8, p.z, Math.min(14, Math.round(impact)));
     // A police mission's suspect is yours to ram.
@@ -266,6 +270,7 @@ class Game {
   onPedHit(byPlayer, ped) {
     audio.pedHit();
     if (taxi) taxi.onPedHit(byPlayer);
+    if (grt) grt.onPedHit(byPlayer);
     fx.blood(ped.x, ped.y + 1, ped.z);
     peds.scare(ped.x, ped.z, 30);
     if (byPlayer) this.addHeat(22);
@@ -636,6 +641,7 @@ class Game {
 let chunkCull = null, lmCull = null;   // chunkcull.js: the city's chunks, the landmark clusters
 let police = null, missions = null;   // the wanted levels (police.js) and police missions (policemissions.js)
 let taxi = null;                      // taxi fares (taxi.js)
+let grt = null, eats = null;          // the GRT bus job (grtbus.js) and KW Eats deliveries (kweats.js)
 const burning = new Set();             // cars on fire (VEHICLE_HOOKS.ignite)
 let moorings = null, mooringT = 0;    // private boats at the lakes' docks (privateMoorings)
 let nearShadow = null;  // nearshadow.js
@@ -1271,7 +1277,7 @@ function installShadowFade() {
   game = new Game();
   // the wallet comes back from the last launch (career.js); the passport reads the rest
   career = new Career(game, () => ({
-    acts, stunts, islands, missions, seafair, arcade, taxi,
+    acts, stunts, islands, missions, seafair, arcade, taxi, grt, eats,
     // a best on the board = played (golf's is a stroke count, so lower is better; any is a round)
     games: [['fishing', fishing], ['fishtoss', fishToss], ['hoops', hoops], ['pinball', pinball], ['tower', tower], ['coffee', coffee], ['pickle', pickle], ['golf', golf]]
       .map(([id, g]) => ({ id, best: g ? +(g.best || g.hi || 0) : 0 })),
@@ -1733,6 +1739,15 @@ function installShadowFade() {
   game.setSiren = (v, on) => { traffic.lightBar(v); setSiren(v, on); };
   taxi = new TaxiFares({ scene, city, game, traffic, peds, hud, audio, root: controls.root });
   taxi.warm();
+  // the jobs only Waterloo Region has: drive a GRT route section, deliver for KW Eats
+  // (window.__noJobs before boot leaves them out, for a before/after)
+  if (!window.__noJobs) {
+    const panel = new LedPanel(document.getElementById('app'));
+    grt = new GrtBus({ scene, city, game, traffic, peds, hud, audio, data: md.grt, panel });
+    grt.spawnBuses();
+    eats = new KwEats({ scene, city, game, hud, audio, data: md.eats, panel });
+    hud.places.push(...grt.places(), ...eats.places());
+  }
 
   // delivery marker
   const mg = new THREE.CylinderGeometry(6, 6, 26, 18, 1, true);
@@ -1811,7 +1826,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { get air() { return air; }, get signalHeads() { return signalHeads; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { grt, eats, get air() { return air; }, get signalHeads() { return signalHeads; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;   // Auto KW: the harvest (crops.js)
   window.__dbg.kart = kartRace;
   window.__dbg.fest = fest;
@@ -1886,6 +1901,7 @@ function installShadowFade() {
       for (const m of police.warmMeshes()) warm.add(m);
       for (const m of missions.warmMeshes()) warm.add(m);
       for (const m of taxi.warmMeshes()) warm.add(m);
+      if (eats) for (const m of eats.warmMeshes()) warm.add(m);
       if (fx.lines) { fx.lines.visible = true; lazy.linesWere = true; }
       if (fx.wakeMesh) fx.wakeMesh.visible = true;
       // the trees' instanced crowns: at least one instance each, so their
@@ -2271,7 +2287,8 @@ function refreshJobs() {
   for (const b of document.querySelectorAll('.buy')) b.disabled = game.money < +b.dataset.cost;
   if (!list) return;
   const COL = { gold: '#f4c542', silver: '#c8d0d8', bronze: '#c0763c' };
-  list.innerHTML = s.rows.map((r) => `<div class="jobRow"><span class="nm">${r.name}</span>`
+  const rows = [...(grt ? grt.jobRows() : []), ...(eats ? eats.jobRows() : []), ...s.rows];
+  list.innerHTML = rows.map((r) => `<div class="jobRow"><span class="nm">${r.name}</span>`
     + `<span class="bt">${r.best || '--'}`
     + (r.medal && r.medal !== 'none' ? `<i class="md" style="background:${COL[r.medal]}"></i>` : '')
     + '</span></div>').join('');
@@ -3153,6 +3170,8 @@ function frame(now) {
   if (acts) acts.update(dt, player);
   if (missions) missions.update(dt, player);
   if (taxi) taxi.update(dt, player);
+  if (grt) grt.update(dt, player);
+  if (eats) eats.update(dt, player);
   if (crops) crops.update(dt, player);   // the harvest (crops.js)
   // Say hello once per approach to anything the map marks (the dock, the
   // quads): the map is how you find them, this is how you know you have.

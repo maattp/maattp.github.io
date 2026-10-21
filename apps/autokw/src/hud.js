@@ -37,7 +37,8 @@ function placeIcon(ctx, kind, x, y, r) {
     : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : kind === 'coffee' ? '#6a4a32' : kind === 'hydro' ? '#d8242c' : kind === 'link' ? '#d0202e' : kind === 'link2' ? '#0082ca' : kind === 'freight' ? '#b8501c' : kind === 'streetcar' ? '#8c1f2b' : kind === 'ferry' ? '#0b6e4f' : kind === 'bike' ? '#57b83a' : kind === 'pickle' ? '#c8a21a'
     : kind === 'gun' ? '#2f6fb8' : kind === 'health' ? '#2e9a56' : kind === 'clinic' ? '#d8343a' : kind === 'wedge' ? '#7f8b96' : kind === 'tank' ? '#5f6b3a' : kind === 'fire' ? '#c4141c'
     : kind === 'tims' ? '#c8102e' : kind === 'freshco' ? '#4c9a2a' : kind === 'school' ? '#123a6b' : kind === 'campus' ? '#330072' : kind === 'lm' ? '#6a4c9c'
-    : kind === 'lcbo' ? '#007a3d' : kind === 'beer' ? '#00438c' : kind === 'shop' ? '#1f5fa8' : kind === 'plaza' ? '#5a6470' : '#e0782e';
+    : kind === 'lcbo' ? '#007a3d' : kind === 'beer' ? '#00438c' : kind === 'shop' ? '#1f5fa8' : kind === 'plaza' ? '#5a6470'
+    : kind === 'grt' ? '#0b4ea2' : kind === 'eats' ? '#e8442a' : '#e0782e';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = r * 0.22;
   ctx.beginPath();
@@ -63,6 +64,24 @@ function placeIcon(ctx, kind, x, y, r) {
     ctx.fill();
     ctx.strokeStyle = '#ffffff'; ctx.lineWidth = r * 0.1;
     ctx.beginPath(); ctx.arc(x - r * 0.02, y + r * 0.02, r * 0.14, 0, Math.PI); ctx.stroke();
+  } else if (kind === 'grt') {
+    // a bus nose-on: body, windscreen, wheels (the GRT bus job, grtbus.js)
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x - r * 0.42, y - r * 0.5, r * 0.84, r * 0.86);
+    ctx.fillStyle = '#0b4ea2';
+    ctx.fillRect(x - r * 0.32, y - r * 0.36, r * 0.64, r * 0.34);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x - r * 0.4, y + r * 0.36, r * 0.18, r * 0.16);
+    ctx.fillRect(x + r * 0.22, y + r * 0.36, r * 0.18, r * 0.16);
+  } else if (kind === 'eats') {
+    // a takeout bag with a handle (KW Eats, kweats.js)
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(x - r * 0.42, y - r * 0.2); ctx.lineTo(x + r * 0.42, y - r * 0.2);
+    ctx.lineTo(x + r * 0.34, y + r * 0.52); ctx.lineTo(x - r * 0.34, y + r * 0.52); ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = r * 0.12;
+    ctx.beginPath(); ctx.arc(x, y - r * 0.2, r * 0.22, Math.PI, 0); ctx.stroke();
   } else if (kind === 'dock') {
     ctx.moveTo(x, y - r * 0.42); ctx.lineTo(x, y + r * 0.55);
     ctx.moveTo(x - r * 0.3, y - r * 0.2); ctx.lineTo(x + r * 0.3, y - r * 0.2);

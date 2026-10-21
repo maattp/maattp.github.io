@@ -213,6 +213,9 @@ export async function loadMapData(onStep) {
   const uw = await opt('uw.json');
   // signals, stop signs, roundabouts, crossings (tools/kw/build_junctions.py; junctions.js)
   const junctions = await opt('junctions.json');
+  // GRT route sections and KW Eats' restaurants and doors (tools/kw/build_grt.py, build_eats.py)
+  const grt = await opt('grt.json');
+  const eats = await opt('eats.json');
   // The Olympics, Rainier and the Cascades as seen from here (tools/build_mountains.py).
   // Scenery only: a failed fetch costs the view, never the boot.
   let mountains = null;
@@ -221,6 +224,6 @@ export async function loadMapData(onStep) {
   return {
     height, hfN: hp.w, wlevel,
     water, green, farm, maskN: sp.w, lot, lotN: lp.w,
-    roads, buildings, places, lakes, monorail, link, freight, beaches, parkprops, bikepaths, piers, ferry, mountains, trails, kw, chicopee, golf, kart, gravel, sights, villages, shops, hwy, uw, home, junctions,
+    roads, buildings, places, lakes, monorail, link, freight, beaches, parkprops, bikepaths, piers, ferry, mountains, trails, kw, chicopee, golf, kart, gravel, sights, villages, shops, hwy, uw, home, junctions, grt, eats,
   };
 }
