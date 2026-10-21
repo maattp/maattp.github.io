@@ -59,6 +59,31 @@ file and a guide disagree, this file wins.
   (build_wood.py), `geo.farmAt`, `world.groundTint`.
 - **Water:** only vertices with > 25 % of their 50 m wet are drawn and dug;
   banks are re-lifted over their water after street grading.
+- **The harvest: src/crops.js** (docs/combine.jpg, harvest.jpg, tractor.jpg).
+  `world.cropAt` says what STANDS (1 corn, 2 soy): OSM's farmland crop, else
+  the open country's township parcels -- it must agree with `groundTint`,
+  which paints the same fields. Crops are PLANT CELLS on the township grid
+  (rows along w = 0.6x + 0.8z, 1.52 m apart, cells 2 m along a row), in
+  tiles of 16 x 12 cells built a few a frame round the CAMERA (`stream`,
+  called from draw(), so paused harness views get them too). Drawn as two
+  InstancedMeshes, one alpha-tested material over a canvas atlas (corn left
+  half, soy right, `aSoy` per instance; normals tipped up so both faces of a
+  card light alike): within NEAR (56 m phone / 80 desktop) three crossed
+  cards a cell (12 tris); out to FAR (150 / 210) one textured 6 m block per
+  4 x 3 cells. No shadow casting. Phone, in a corn field: +2 draws, +29-37k
+  tris (desktop +35-72k). **The cut record** is a Set of cell keys kept in
+  sessionStorage `autokw-crops`: the combine's header (`COMBINE_HEADER`)
+  cuts what it passes over into the tank (300 bu, corn $5.20, soy $13.40),
+  any other vehicle you drive flattens its own width. Stop the combine
+  within 40 m of a farm's spot (or on an OSM farmyard) to sell. The reel
+  (`spinPart` axis 'x') and the grain heap (axis 'g', narrow and buried in
+  the body until there is grain) are live parts crops.js moves.
+  **The machines** are `tractor` and `combine` in vehicles.js (`ag`: lugged
+  `agWheel`s, each wheel spun by its own radius; the combine `rws`: rear
+  wheels steer against the turn and the body swings out round the drive
+  axle). `Crops.spawnFarms` parks them at boot by a spiral search round
+  `FARMS` (real places; ~15 ms) using tools/kw/proj.py's projection --
+  **geo.toWorld still carries Seattle's LAT0/LON0**, so don't use it here.
 
 ## Build number
 

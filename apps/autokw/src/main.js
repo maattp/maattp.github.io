@@ -44,6 +44,7 @@ import { BONES } from './peds.js';
 import { setKwData, applyNamed, buildSigns, buildPolys, buildBunting, buildSchools, mapPlaces as kwPlaces, kwData } from './kw.js';
 import { addLandmarkExtra } from './landmarks.js';
 import { Chicopee } from './chicopee.js';
+import { Crops } from './crops.js';
 import { YKF } from './ykf.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings, warmLightBar } from './traffic.js';
@@ -131,6 +132,7 @@ const RESPAWN_SITES = [
 let respawns = [];   // [{ name, x, z, node }] (buildRespawns)
 let ykf = null;        // the Region of Waterloo International Airport (ykf.js)
 let chicopee = null;   // Chicopee's bike park: trails, lifts, bikes (chicopee.js)
+let crops = null;      // Auto KW: standing corn and soy, the tractors and combines (crops.js)
 let fire = null, fireStations = [];   // Seattle Fire: the stations' rigs, the water cannon, fire calls (firecalls.js)
 
 /** The WASTED / BUSTED card. */
@@ -1268,6 +1270,14 @@ function installShadowFade() {
     const e = ykf.runwayEnd('08/26');
     if (e) traffic.spawnAt(e.x, e.z, e.heading, 'fighter', 0x7b8590, 'apron').vLong = 0;
   }
+  // --- Auto KW: the harvest (crops.js) ------------------------------------
+  // Standing corn and soy drawn near the camera; tractors and combines
+  // parked at farms round Waterloo, found by a search at boot.
+  crops = new Crops({ scene, city, world, game, phone: ON_PHONE,
+    get hud() { return hud; }, get audio() { return audio; }, get fx() { return fx; } });
+  crops.spawnFarms(traffic);
+  blog(`farms: ${crops.spots.length} machines parked in ${Math.round(crops.searchMs)} ms`);
+  // --- end the harvest ---------------------------------------------------------
   // Chicopee's bikes, at the base and the summit
   for (const [ty, x, z, h] of chicopee.bikeSpots()) {
     const v = traffic.spawnAt(x, z, h, ty, ty === 'dirtbike' ? 0xd8462a : 0x2f8f4e, 'apron');
@@ -1383,6 +1393,8 @@ function installShadowFade() {
       hello: `${st.full} — ION light rail, Conestoga to Fairway. Tap ENTER here or on the platform to catch the next train and drive it` })),
     ...(chicopee.base() ? [{ x: chicopee.base().x, z: chicopee.base().z, kind: 'atv', name: 'Chicopee Bike Park', near: false, label: 'Chicopee',
       hello: 'Chicopee Bike Park — dirt bikes and mountain bikes. Ride a downhill, or walk to a chairlift and press ENTER to ride to the top' }] : []),
+    // Auto KW: the farms' tractors and combines (crops.js)
+    ...(crops ? crops.places() : []),
   ];
   { const k = kwData(); if (k && k.signStats) blog('kw signs: ' + JSON.stringify(k.signStats)); }
   peds = new PedSystem(scene, city, game);
@@ -1542,6 +1554,7 @@ function installShadowFade() {
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
   window.__dbg = { get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg.crops = crops;   // Auto KW: the harvest (crops.js)
   wireUi();
   career.start(hud);
   game.newTarget();
@@ -2866,6 +2879,7 @@ function frame(now) {
   if (acts) acts.update(dt, player);
   if (missions) missions.update(dt, player);
   if (taxi) taxi.update(dt, player);
+  if (crops) crops.update(dt, player);   // the harvest (crops.js)
   // Say hello once per approach to anything the map marks (the dock, the
   // quads): the map is how you find them, this is how you know you have.
   // One at a time, in list order, so the dock is never talked over by the
@@ -3207,6 +3221,7 @@ function draw(now) {
     if (pv && !game.paused) world.trees.cut(camera.position, pv.x, (pv.y || 0) + (player.vehicle ? 1.6 : 1.4), pv.z, player.vehicle ? 3.2 : 2.2);
     else world.trees.cut(camera.position, 0, 0, 0, 0);
   }
+  if (crops) crops.stream(camera);   // the standing crop near the camera (crops.js)
   if (world && world.decor) {
     const dt = game.paused || !draw.lastT ? 0 : Math.min(0.06, (now - draw.lastT) / 1000);
     draw.lastT = now;
