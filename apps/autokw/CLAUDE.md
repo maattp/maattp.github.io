@@ -92,7 +92,11 @@ file and a guide disagree, this file wins.
   `__dbg.rollup.rig = 'car' | 'c100' | 'lose' | ...` forces the next cup,
   `__dbg.rollup._roll(dp)` rolls. Shots: `docs/rollup-*.png`.
 - **Golf** (src/golf.js, `data/golf.json` from tools/kw/build_golf.py):
-  Rockway and Westmount, all 18 holes each from OSM (golf=hole ref/par/line,
+  Rockway, Westmount, Grey Silo (18), Conestoga (27: The Village, The Moors,
+  Goose Run -- OSM's hole `name` is the nine; holes are keyed nine + ref,
+  labelled "THE MOORS 4", bests keyed `nine:ref`, a map marker per nine) and
+  Doon Valley's front nine (by way id in `PLAYED`: OSM numbers a par-3 course
+  1-9 inside the same boundary), each hole from OSM (golf=hole ref/par/line,
   tee/green/fairway/bunker/water polygons; every feature goes to the hole
   whose line is nearest). Rounds are three holes: ENTER on tee 1, 4, 7, ...
   plays the next three; bests in `autokw-golf-<course>` keyed by first hole.
@@ -103,10 +107,18 @@ file and a guide disagree, this file wins.
   `city.extraClear` (no trees on or within 3 m of a mown surface). Water the
   world already draws is not drawn again; water is a stroke and a drop,
   past the boundary / a road / a building a stroke and the shot again.
-  Verify: `node tools/kw/golfcheck.mjs <dir> [rockway,westmount]` plays a
-  round per course through ENTER and the SWING button (`GOLF_WATER=1` adds
-  the penalties). Other courses mapped well enough to add: Conestoga (27,
-  water), Grey Silo (16 of 18 numbered); Doon Valley is partial.
+  **Every outer ring of a course's multipolygon is the course** (Grey Silo's
+  1st and 18th are a separate piece across the creek: holes, features and
+  `more` rings in play). A ball at rest against a trunk is not knocked back
+  by it on the next swing (no trunk test in the first 1.5 m of flight, and
+  only while moving into it).
+  Verify: `node tools/kw/golfcheck.mjs <dir> [rockway,westmount,conestoga,greysilo,doon]`
+  plays a round per course through ENTER and the SWING button (`GOLF_WATER=1`
+  adds the penalties; a shot that comes back is re-played shorter and to one
+  side, as a player would). Phone cost: each course is one mesh (Conestoga
+  ~23k tris, Grey Silo ~23k, Doon ~10k), +1-3 draws where it is in view.
+  Also mapped well enough to add next: Dundee, Elmira, Whistle Bear, Grand
+  Valley, Deer Ridge, Beaverdale (18 numbered holes each).
 - **Horse and buggy** (src/buggy.js; `buggy` in vehicles.js TYPES, hooked in
   with four lines: HAND_BUILT, the constructor's `this.buggy`, `sync()`, and
   no tyre model / generic contact shadow). The CART is the vehicle's own
@@ -1601,6 +1613,86 @@ file and a guide disagree, this file wins.
   starts on demand, not at 9:30 on Thanksgiving Monday; seats/banners at
   the Aud are not traced from photos; the slides' layout is still
   kwsights' procedural fan, not Big Splash's real plan.
+- **More to do: skating, the Panthers** (docs/fun-skate.jpg, fun-jackcouch.jpg,
+  fun-derby.jpg; `node tools/kw/funprobe.mjs <dir> skate,derby` plays both
+  through real keys, with the four above still passing).
+  - **Skating on Waterloo Public Square's rink** (src/skating.js). The rink's
+    look is kwplaces.js's, untouched; it only exports `rinkData()` (outline,
+    centre, axis, half sizes, corner radius, ice y). ENTER on the ice laces up
+    (main.js tryInteract asks skating FIRST -- its `fishing` guard returns
+    early otherwise); `player.skate` hands player.updateFoot's frame to
+    `Skating.step`: the stick is where you want to go (camera-relative), the
+    body turns at 2.9 rad/s slowing to 1.3 at speed, strides push along the
+    way you face (2.3 m/s2, 3.4 with RUN; top 6.2 / 8.8 m/s), the blades turn
+    the velocity toward the skates' line (forwards or backwards) at 3.2 rad/s
+    with a little scrub, ice friction 0.11 m/s2 + drag (a 3 m glide keeps
+    > 97 %); PUNCH (attack; player.attack is skipped on skates) is a hockey
+    stop -- body side-on, 7.5 m/s2, snow (`fx.emit`) and a scrape (stops from
+    4.5 m/s in 1.5 m); JUMP from < 3.2 m/s a scratch spin (10-13 rad/s winding
+    down, ~3 turns, arms hugged, free leg up). The curb is the boards: a
+    rounded-rect SDF inset by the body (0.38 m), a rebound and a thunk. The
+    pose is `skatePose(h, s)` (absolute bone eulers: crouch, push leg out and
+    back, arm swing, lean = v x yaw rate / g as the group's roll), CROUCH
+    lowers the body 7 cm. The blades' hiss is looped band-passed noise by
+    speed. ENTER again (or a respawn, or leaving) takes them off. Bests
+    (`spin`, `kmh`) in `autokw-skate`. **Ambient skaters are the crowd's own
+    pedestrians**: `peds.spawnTrail` (within MAX_PEDS, giving up the farthest
+    pavement walker) then `p.skate = driver`; peds.js skips steering /
+    `_move` / animateWalk for them and calls `driver.drive(p, dt)` and
+    `driver.pose(h, p, dt)` (they are not scared, and keep their roll). Each
+    has a lane (an n=4 superellipse inset in the rink), pace and phase,
+    counter-clockwise, easing behind anyone ahead (you included); one in five
+    wobbles. 7 (4 on a phone) while the camera is within 140 m, handed back
+    (removed) past 190 m. Always on: the rink is drawn as ice in every season.
+  - **Jack Couch Park, the Kitchener Panthers' home** (src/ballpark.js;
+    400 East Ave, across the car park from the Aud). OSM has the field as
+    leisure=pitch 134225852 (named "Peter Couch Ball Park" there); the frame
+    is read off Esri's aerial: home at the field's NW corner (`HOME`), the
+    foul lines at 45 deg either side of the bisector of OSM's two far corners,
+    the fence along OSM's east / south-east edges (325 / 380 / 325 ft drawn on
+    it, computed). Drawn (a kwsights.js extra via `addSights('ballpark')`,
+    its Kit and atlas, so no draws of its own; `prepBallpark` flattens the
+    building's box): mown outfield arcs, the warning track, the skinned infield
+    (the 95 ft arc from the rubber, in rings so it follows the ground; the
+    grass square over it; decal lifts 0.04 / 0.09 / 0.13 / 0.17 m -- at 1 cm
+    apart they z-fought), the mound, bases, plate, boxes, chalk, on-deck
+    circles; the green outfield fence with a gold cap and black/gold panels;
+    yellow foul poles; the 60 ft backstop (posts and rails) and low fences
+    down the lines; block dugouts (gold roof on third); aluminium bleachers
+    down both lines and behind the plate (the long run on first is the
+    aerial's); the building behind home (concession, press box glass,
+    KITCHENER PANTHERS to the field, JACK COUCH PARK / HOME OF THE KITCHENER
+    PANTHERS to the car park), the dedication rock; six 24 m light standards;
+    the scoreboard in left-centre. `window.__ballpark` has the stats;
+    `window.__noBallpark` before boot turns it off. **The home run derby**
+    (`Derby`): ENTER at the gate (`gate()`, map marker 'ball'). The world is
+    held ('derby', in reapHolds' live list), the HUD hidden (interior.js
+    setInterior), crowd figures within 140 m hidden; the camera sits behind
+    the catcher. The BP pitcher (a crowd look) winds up and throws 56-66 mph
+    to a random spot; SWING (button, Space / J / Enter, a tap on the canvas)
+    starts a 0.18 s swing, and the error against the ball reaching the
+    contact plane is everything: |e| > 95 ms misses; exit velocity 48 m/s
+    falling off past 15 ms, spray 7.5 rad/s x e (early pulls to left, past
+    45 deg is foul), launch 27 deg + the pitch's height + a grounder's
+    penalty; flight with drag 0.0062 and backspin lift 0.0028 (/m: ~400 ft at
+    105 mph / 28 deg); over the fence's top (2.4 m) a home run, its distance
+    the flight carried on to the ground. Twelve swings (takes are free); $25 a
+    home run, +$100 for five; best HR / longest in `autokw-derby`. Your own
+    humanoid bats (solveArm grips, the bat swept round from -d through +p),
+    the bat, ball, trail, pitcher and overlay are built on ENTER and freed on
+    LEAVE (draws at the gate 283 before, 280 after in the probe).
+  - Phone (AUTO_PHONE=1, GPU), master -> this, draws / tris: spawn 218/1089k
+    -> 224/1115k (the skaters come out at once where the crowd fills over
+    seconds; they are crowd slots, so a full crowd costs the same); the rink
+    from King St 278/1228k -> 283/1255k; Jack Couch from the stands 214/1075k
+    -> 224/1118k, from the air 403/1648k -> 415/1729k; over Conestoga 70/344k
+    -> 77/386k, over Grey Silo 70/408k -> 77/452k (the courses' meshes,
+    ~23k tris each, and paused-harness traffic noise); 0 exceptions.
+  - Approximate: the Panthers' kit and the batter's clothes are not modelled
+    (crowd looks); the fence's colour and panels, the scoreboard's place and
+    the light standards' count are not traced (only the aerial's shadows);
+    no fielders, catcher or umpire; skaters wear their street shoes; the
+    rink is open all year (the real one is a winter rink).
 - **Farmsteads and churches: src/farmstead.js** (docs/farm-lane.jpg,
   farm-mennonite.jpg, village-steeple.jpg: master over this). **Two new
   classes in buildings.bin** (tools/kw/build_buildings.py): **cls 6 a farm
@@ -2256,7 +2348,9 @@ src/barista.js              First Cup Coffee at 1912 Pike Place: storefront, the
 src/baristagame.js          MORNING RUSH itself: orders, recipes, the machine's timing, customers (no DOM)
 src/parachute.js            bailing out of an aircraft in the air: free fall, the canopy, landing
 src/hydrorace.js            Seafair: the Lake Washington course, pits, log boom, rooster tails, race rules, AI, the jets
-src/golf.js                 golf on OSM's real courses (Rockway, Westmount), three holes a round
+src/golf.js                 golf on OSM's real courses (Rockway, Westmount, Conestoga, Grey Silo, Doon Valley), three holes a round
+src/skating.js              Auto KW: skating on Waterloo Public Square's rink, and the skaters
+src/ballpark.js             Auto KW: Jack Couch Park (the Kitchener Panthers) and its home run derby
 src/wheelride.js            the Great Wheel's turning half and the ride on it
 src/fishtoss.js             the fish stall at Pike Place Market + the catching game
 src/hoops.js                basketball courts in the parks + the free-throw game
