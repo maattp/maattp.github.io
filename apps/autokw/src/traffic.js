@@ -1988,7 +1988,7 @@ export class TrafficSystem {
     const fr = this.freight;
     if (fr && fr.crossCells) {
       for (let d = 3; d <= look + 6; d += 3) {
-        if (fr.blocks(v.x + f.x * d, v.z + f.z * d, v.y)) { stopAt = Math.min(stopAt, d - 4); break; }
+        if (fr.blocks(v.x + f.x * d, v.z + f.z * d, v.y, v)) { stopAt = Math.min(stopAt, d - 4); break; }
       }
     }
     // A streetcar standing at its stop, or crossing ahead: queue behind it

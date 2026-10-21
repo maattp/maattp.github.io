@@ -177,6 +177,9 @@ export async function loadMapData(onStep) {
   const link = await opt('link.json');
   // BNSF's main line through Seattle and Balmer Yard (tools/build_freight.py)
   const freight = await opt('freight.json');
+  // Auto KW: the heavy rail -- the Guelph, Galt and Waterloo subs, the
+  // Waterloo Spur, every other track in the box (tools/kw/build_rail.py)
+  const rail = await opt('rail.json');
   // OSM's beaches, for what stands on them (tools/build_beaches.py)
   const beaches = (await (await fetch(new URL('beaches.json', BASE))).json()).beaches;
   // benches, picnic tables, playgrounds and fountains (tools/build_parkprops.py)
@@ -224,6 +227,6 @@ export async function loadMapData(onStep) {
   return {
     height, hfN: hp.w, wlevel,
     water, green, farm, maskN: sp.w, lot, lotN: lp.w,
-    roads, buildings, places, lakes, monorail, link, freight, beaches, parkprops, bikepaths, piers, ferry, mountains, trails, kw, chicopee, golf, kart, gravel, sights, villages, shops, hwy, uw, home, junctions, grt, eats,
+    roads, buildings, places, lakes, monorail, link, freight, rail, beaches, parkprops, bikepaths, piers, ferry, mountains, trails, kw, chicopee, golf, kart, gravel, sights, villages, shops, hwy, uw, home, junctions, grt, eats,
   };
 }
