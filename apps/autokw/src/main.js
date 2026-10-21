@@ -53,7 +53,7 @@ import { prepSights, buildSights, sightsMap } from './kwsights.js';
 import { setShopData, prepShops, buildShops, shopPlaces, shopStats } from './kwshops.js';
 import { Crops } from './crops.js';
 import { Kartway, KartRace } from './kartway.js';
-import { prepHighways, buildHighways, addHighwaySolids, highwaysRoot, updateHighways } from './highways.js';
+import { prepHighways, buildHighways, addHighwaySolids, highwaysRoot, updateHighways, hwyKeepClear } from './highways.js';
 import { YKF } from './ykf.js';
 import { AirTraffic } from './airtraffic.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
@@ -1108,7 +1108,7 @@ function installShadowFade() {
   // The Queen Anne Counterbalance's streetcar line, laid on the road graph
   // (counterbalance.js) before anything is placed by the kerb
   counterbal = null;
-  city.extraClear = (x, z) => link.keepClear(x, z) || bikeNet.keepClear(x, z) || chicopee.keepClear(x, z) || !!(golf && golf.keepClear(x, z)) || kartway.keepClear(x, z);
+  city.extraClear = (x, z) => link.keepClear(x, z) || bikeNet.keepClear(x, z) || chicopee.keepClear(x, z) || !!(golf && golf.keepClear(x, z)) || kartway.keepClear(x, z) || hwyKeepClear(x, z);
   // open lawns round the campus buildings: trees only (uwcampus.js)
   city.treeClear = campusKeepClear;
 

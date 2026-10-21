@@ -23,6 +23,11 @@
 //  - MAXIMUM speed signs (OSM maxspeed: 90 on the Conestoga, 100 on Hwy 8,
 //    110 on the 401) and route reassurance shields after each entrance.
 //
+//  - ROUND TWO: the mown right-of-way (hwyKeepClear, in city.extraClear),
+//    steel beam guide rail on high fills and bridge approaches, high masts
+//    over the freeway-to-freeway interchanges, right-shoulder rumble strips,
+//    and the Parkway's unmapped noise walls (PKWY_WALLS, from aerials).
+//
 // It also sets each freeway edge's traffic speed from its maxspeed (+10 km/h,
 // how a 400-series highway actually flows): prepHighways, before traffic.
 
@@ -63,7 +68,7 @@ const AXIS = {
   '7': [-0.29, -0.96, 'EAST', 'WEST'], '85': [0, -1, 'NORTH', 'SOUTH'], '24': [0, -1, 'NORTH', 'SOUTH'],
 };
 
-export const STATS = { noise: 0, views: [], why: { near: 0, road: 0, walk: 0, nomain: 0 }, wall: 0, paved: 0, poles: 0, signs: 0, gantries: 0, speed: 0, shields: 0, exits: 0, tris: 0, edgesTimed: 0, atlas: null };
+export const STATS = { rail: 0, railPosts: 0, masts: 0, rumble: 0, noise: 0, views: [], why: { near: 0, road: 0, walk: 0, nomain: 0 }, wall: 0, paved: 0, poles: 0, signs: 0, gantries: 0, speed: 0, shields: 0, exits: 0, tris: 0, edgesTimed: 0, atlas: null };
 
 let HW = null;            // hwy.json
 let HWY_SOLIDS = [];      // the walls and posts, added after the landmark solids' road test
@@ -148,7 +153,73 @@ export function prepHighways(city, hwy) {
     // How a 400-series actually flows: about 10 km/h over the posted limit.
     if (sp >= 60 && sp <= 120) { e.spd = (sp + 10) / 3.6; STATS.edgesTimed++; }
   });
+  CLEAR_CITY = city;   // the zone is built on first use: after the grading has set e.pbw
   return STATS;
+}
+
+// ---------------------------------------------------------------------------
+// THE RIGHT-OF-WAY. A 400-series highway (and the Conestoga, and the trunk
+// sections) runs through a mown clear zone: grass and ditch, no tree for
+// 10-15 m past the shoulder (MTO's Roadside Design Manual clear zone is 9-13 m
+// at 100-110 km/h), and the infield of every interchange loop mown too. The
+// forest and the street trees grew right to the 401's shoulder. keepClear is
+// in city.extraClear, which trees.js and world.js's scatter both ask.
+const CLEAR_MAIN = 15, CLEAR_RAMP = 9, CZ = 50;
+let CLEAR = null, CLEAR_CITY = null;   // 50 m cell -> Float32Array runs of [ax, az, bx, bz, r]
+/** The ramps that are a freeway's: every 'ramp' edge (OSM's *_link, which
+ *  includes a town's slip lanes) reachable from a freeway node through ramps. */
+function freewayRamps(city) {
+  const seen = new Uint8Array(city.edges.length), q = [];
+  city.edges.forEach((e) => { if (e.cls === 'hwy') q.push(e.a, e.b); });
+  const done = new Uint8Array(city.nodes.length);
+  while (q.length) {
+    const ni = q.pop();
+    if (done[ni]) continue;
+    done[ni] = 1;
+    for (const k of city.nodes[ni].e) {
+      const f = city.edges[k];
+      if (f.cls !== 'ramp' || seen[k]) continue;
+      seen[k] = 1;
+      q.push(f.a, f.b);
+    }
+  }
+  return seen;
+}
+function buildClearZone(city) {
+  const cells = new Map();
+  const fr = freewayRamps(city);
+  city.edges.forEach((e, ei) => {
+    if (e.cls !== 'hwy' && !(e.cls === 'ramp' && fr[ei])) return;
+    if (e.tunnel) return;
+    const a = city.nodes[e.a], b = city.nodes[e.b];
+    const r = e.hw + Math.max(e.pbw || 0, e.cls === 'hwy' ? CLEAR_MAIN : CLEAR_RAMP);
+    const x0 = Math.floor((Math.min(a.x, b.x) - r) / CZ), x1 = Math.floor((Math.max(a.x, b.x) + r) / CZ);
+    const z0 = Math.floor((Math.min(a.z, b.z) - r) / CZ), z1 = Math.floor((Math.max(a.z, b.z) + r) / CZ);
+    for (let i = x0; i <= x1; i++) for (let j = z0; j <= z1; j++) {
+      const k = i * 100003 + j;
+      let l = cells.get(k);
+      if (!l) cells.set(k, (l = []));
+      l.push(a.x, a.z, b.x, b.z, r);
+    }
+  });
+  CLEAR = new Map();
+  for (const [k, l] of cells) CLEAR.set(k, Float32Array.from(l));
+  STATS.clearCells = CLEAR.size;
+}
+/** Inside a freeway's or ramp's mown right-of-way (city.extraClear)? */
+export function hwyKeepClear(x, z) {
+  if (!CLEAR) { if (!CLEAR_CITY) return false; buildClearZone(CLEAR_CITY); }
+  const l = CLEAR.get(Math.floor(x / CZ) * 100003 + Math.floor(z / CZ));
+  if (!l) return false;
+  for (let q = 0; q < l.length; q += 5) {
+    const ax = l[q], az = l[q + 1], sx = l[q + 2] - ax, sz = l[q + 3] - az, r = l[q + 4];
+    const l2 = sx * sx + sz * sz;
+    let t = l2 > 0 ? ((x - ax) * sx + (z - az) * sz) / l2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const dx = ax + sx * t - x, dz = az + sz * t - z;
+    if (dx * dx + dz * dz < r * r) return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -249,6 +320,10 @@ const COL = {
   lens: lin([0.92, 0.90, 0.80]),
   noise: lin([0.60, 0.57, 0.52]),     // a precast noise wall's panels
   noiseCap: lin([0.48, 0.46, 0.43]),
+  rail: lin([0.70, 0.72, 0.73]),      // galvanized W-beam, weathered bright
+  railPost: lin([0.52, 0.53, 0.54]),
+  mast: lin([0.62, 0.63, 0.64]),      // a high mast's galvanized shaft
+  rumble: lin([0.22, 0.22, 0.23]),    // a milled groove's shadowed floor
 };
 
 /** A builder that paints everything it is handed in one colour. */
@@ -256,6 +331,7 @@ class Tint {
   constructor(b, col) { this.b = b; this.col = col; }
   box(cx, by, cz, w, h, d, rot) { this.b.box(cx, by, cz, w, h, d, rot, this.col); }
   quad(a, b, c, d, n, uvs) { this.b.quad(a, b, c, d, n, uvs, this.col); }
+  prism(cx, by, cz, r, h, sides) { this.b.prism(cx, by, cz, r, h, sides, this.col); }
 }
 
 class Kit {
@@ -564,6 +640,58 @@ function post(K, solids, x, z, y0, h, w = 0.2) {
   solids.push({ x, z, r: Math.max(0.2, w * 0.7), y0, y1: y0 + h });
 }
 
+// THE CONESTOGA PARKWAY'S NOISE WALLS. OSM maps two; the Parkway has more
+// along its residential stretches. These are read off Esri World Imagery
+// (tools/kw/aerial.py: the wall's shadow line along the shoulder, the houses
+// behind it) as [x0, z0, x1, z1, side]: the stretch, and the side it stands
+// on ('N' / 'S'; the Parkway runs ~WSW-ENE here). Each is laid 3 m past the
+// outer carriageway's edge (4.5 m, clear of the signs) on that side, following it, broken where a ramp
+// crosses its line.
+const PKWY_WALLS = [
+  [-3040, 3600, -2510, 3365, 'S'],   // Forest Heights, west of Westmount Rd: south side
+  [-2030, 3070, -1770, 2985, 'N'],   // east of Westmount Rd: north side
+  [-2040, 3175, -1770, 3055, 'S'],   // ...and the townhouses on the south side
+  [-1610, 2880, -1130, 2750, 'N'],   // Ottawa St S to Homer Watson: north side
+  [-760, 2590, -280, 2505, 'N'],     // east of Homer Watson, by Kingsdale: north side
+];
+function parkwayWalls(city, idx, onCw) {
+  const out = [];
+  for (const [x0, z0, x1, z1, side] of PKWY_WALLS) {
+    const L = Math.hypot(x1 - x0, z1 - z0), n = Math.ceil(L / 8);
+    const sz = side === 'N' ? -1 : 1;
+    let run = [];
+    const flush = () => {
+      if (run.length > 4) {
+        out.push({ h: '4.2', p: run });
+        const m = run[run.length >> 1];
+        STATS.views.push({ name: `noise${out.length - 1}`, c: [+run[0][0].toFixed(1), +(run[0][1] - sz * 14).toFixed(1), 1.5], t: [+m[0].toFixed(1), +m[1].toFixed(1), 2.5], fov: 55 });
+      }
+      run = [];
+    };
+    for (let i = 0; i <= n; i++) {
+      const x = x0 + ((x1 - x0) * i) / n, z = z0 + ((z1 - z0) * i) / n;
+      // the outermost main carriageway on that side within 60 m
+      let best = null;
+      for (const ei of idx.near(x, z)) {
+        const e = city.edges[ei], a = city.nodes[e.a];
+        const t = Math.max(0, Math.min(1, ((x - a.x) * e.dx + (z - a.z) * e.dz) / e.len));
+        const qx = a.x + e.dx * e.len * t, qz = a.z + e.dz * e.len * t;
+        if (Math.hypot(qx - x, qz - z) > 60) continue;
+        if (!best || qz * sz > best.qz * sz) best = { e, t, qx, qz };
+      }
+      if (!best) { flush(); continue; }
+      const e = best.e, sg = e.dx * sz >= 0 ? 1 : -1;   // +p = (-dz, dx): its z part is dx
+      const tw = e.tw ? e.tw[Math.min(e.pk, Math.round(best.t * e.pk)) * 2 + (sg > 0 ? 0 : 1)] : e.hw;
+      const off = tw + 4.5;
+      const wx = best.qx - e.dz * sg * off, wz = best.qz + e.dx * sg * off;
+      if (onCw(wx, wz, 1.5)) { flush(); continue; }
+      run.push([wx, wz]);
+    }
+    flush();
+  }
+  return out;
+}
+
 export function buildHighways(ctx) {
   const city = ctx.city;
   if (!HW || !city || (typeof window !== 'undefined' && window.__noHwy)) return;
@@ -722,7 +850,7 @@ export function buildHighways(ctx) {
   // ---- noise walls: OSM's wall=noise_barrier lines -----------------------
   // Precast panels between steel H-posts every 4 m, as MTO builds them; the
   // height is OSM's, else 4 m. Each panel is a solid.
-  for (const w of HW.noise || []) {
+  for (const w of [...(HW.noise || []), ...parkwayWalls(city, idx, onCw)]) {
     const H = parseFloat(w.h) || 4.0;
     for (let i = 0; i + 1 < w.p.length; i++) {
       const [ax, az] = w.p[i], [bx, bz] = w.p[i + 1];
@@ -740,6 +868,216 @@ export function buildHighways(ctx) {
         K.B(x0, z0, 'steel').box(x0, y0, z0, 0.22, H + 0.45, 0.3, rot);
         solids.push({ x: mx, z: mz, hw: l / 2, hd: 0.12, rot, y0, y1: y0 + H + 0.3 });
         STATS.noise += l;
+      }
+    }
+  }
+
+  // ---- steel beam guide rail ----------------------------------------------
+  // Ontario's W-beam on posts every 1.9 m, its face at the shoulder's outer
+  // edge: on a high fill (the batter drops more than RAIL_DROP from the
+  // shoulder), on every bridge approach (BRIDGE_RUN m either side of a deck,
+  // tied into its parapet) and along the gore of each exit. Not on a left
+  // shoulder with the tall wall beyond it. Each 2-post piece is a landmark
+  // solid (`mono`: lane-following traffic never reaches it).
+  const fr = freewayRamps(city);
+  const railEdge = (ei) => { const e = city.edges[ei]; return (isMain(e) || (e.cls === 'ramp' && fr[ei])) && e.prof && !e.elev && !e.tunnel; };
+  // how far each node is (along freeway carriageways and ramps) from a deck's end
+  const BRIDGE_RUN = 60, RAIL_DROP = 2.6;
+  const bd = new Map(), bq = [];
+  city.edges.forEach((e, ei) => {
+    if (!e.elev || !(e.cls === 'hwy' || e.cls === 'ramp')) return;
+    for (const ni of [e.a, e.b]) if (!bd.has(ni) && city.nodes[ni].e.some((k) => railEdge(k))) { bd.set(ni, 0); bq.push(ni); }
+  });
+  for (let h = 0; h < bq.length; h++) {
+    const ni = bq[h], d0 = bd.get(ni);
+    for (const k of city.nodes[ni].e) {
+      if (!railEdge(k)) continue;
+      const f = city.edges[k], o = f.a === ni ? f.b : f.a, d = d0 + f.len;
+      if (d < BRIDGE_RUN && (!bd.has(o) || bd.get(o) > d)) { bd.set(o, d); bq.push(o); }
+    }
+  }
+  const wallFine = new Map();
+  for (const [x, z] of wallAt) {
+    const k = `${Math.floor(x / 10)},${Math.floor(z / 10)}`;
+    let l = wallFine.get(k);
+    if (!l) wallFine.set(k, (l = []));
+    l.push(x, z);
+  }
+  const wallWithin = (x, z, r) => {
+    const cx = Math.floor(x / 10), cz = Math.floor(z / 10);
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+      const l = wallFine.get(`${cx + a},${cz + b}`);
+      if (l) for (let q = 0; q < l.length; q += 2) if ((l[q] - x) ** 2 + (l[q + 1] - z) ** 2 < r * r) return true;
+    }
+    return false;
+  };
+  const R_LO = 0.43, R_HI = 0.76, R_OUT = 0.5;
+  /** A guide rail along `pts` ([x, z, yRoad, nx, nz]: the road-side face's foot,
+   *  the outward normal), posts every ~1.9 m on the slope behind it. */
+  const railRun = (pts) => {
+    if (pts.length < 2) return;
+    // a viewpoint down the first few long runs (hwyshots: 'rail' views)
+    if (pts.length > 10 && STATS.views.filter((v) => v.name.startsWith('rail')).length < 6 && hash2(Math.round(pts[0][0]), Math.round(pts[0][1])) < 0.08) {
+      const m = pts[pts.length >> 1], p0 = pts[0];
+      const ax = m[0] - p0[0], az = m[1] - p0[1], al = Math.hypot(ax, az) || 1;
+      STATS.views.push({ name: `rail${STATS.views.filter((v) => v.name.startsWith('rail')).length}`,
+        c: [+(p0[0] - m[3] * 5 - (ax / al) * 25).toFixed(1), +(p0[1] - m[4] * 5 - (az / al) * 25).toFixed(1), 1.4],
+        t: [+m[0].toFixed(1), +m[1].toFixed(1), 0.6], fov: 55 });
+    }
+    let since = 0;
+    for (let q = 0; q + 1 < pts.length; q++) {
+      const [x0, z0, y0, nx0, nz0] = pts[q], [x1, z1, y1, nx1, nz1] = pts[q + 1];
+      const L = Math.hypot(x1 - x0, z1 - z0);
+      if (L < 0.05 || L > 30) continue;
+      const B = K.B(x0, z0, 'rail');
+      // the W: two folds facing the road, a lip on top
+      const fold = (h0, h1, d0, d1, ny) => B.quad(
+        [x0 - nx0 * d0, y0 + h0, z0 - nz0 * d0], [x1 - nx1 * d0, y1 + h0, z1 - nz1 * d0],
+        [x1 - nx1 * d1, y1 + h1, z1 - nz1 * d1], [x0 - nx0 * d1, y0 + h1, z0 - nz0 * d1],
+        [-(nx0 + nx1) / 2, ny, -(nz0 + nz1) / 2], NOUV);
+      const hm = (R_LO + R_HI) / 2;
+      fold(R_LO, hm, 0.0, 0.08, -0.35);
+      fold(hm, R_HI, 0.08, 0.0, 0.35);
+      B.quad([x0, y0 + R_HI, z0], [x1, y1 + R_HI, z1], [x1 + nx1 * 0.12, y1 + R_HI - 0.02, z1 + nz1 * 0.12], [x0 + nx0 * 0.12, y0 + R_HI - 0.02, z0 + nz0 * 0.12], [0, 1, 0], NOUV);
+      // posts behind the beam (blockouts), on the batter
+      const P = K.B(x0, z0, 'railPost');
+      for (since += L; since >= 1.9; since -= 1.9) {
+        const f = 1 - (since - 1.9) / L;
+        const px = x0 + (x1 - x0) * f + nx0 * 0.22, pz = z0 + (z1 - z0) * f + nz0 * 0.22, py = y0 + (y1 - y0) * f;
+        const g = Math.min(py, G.terrainHeight(px, pz));
+        P.box(px, g - 0.4, pz, 0.15, py + R_HI - 0.05 - (g - 0.4), 0.15, Math.atan2(nz0, nx0));
+        STATS.railPosts++;
+      }
+      solids.push({ x: (x0 + x1) / 2 + nx0 * 0.1, z: (z0 + z1) / 2 + nz0 * 0.1, hw: L / 2 + 0.05, hd: 0.12,
+        rot: Math.atan2(z1 - z0, x1 - x0), y0: Math.min(y0, y1) - 0.2, y1: Math.max(y0, y1) + R_HI, mono: true });
+      STATS.rail += L;
+    }
+  };
+  city.edges.forEach((e, ei) => {
+    if (!railEdge(ei) || !e.pe || e.len < 2) return;
+    const k = e.pk, a = city.nodes[e.a];
+    const px = -e.dz, pz = e.dx;
+    const dA = bd.has(e.a) ? bd.get(e.a) : Infinity, dB = bd.has(e.b) ? bd.get(e.b) : Infinity;
+    for (let s = 0; s < 2; s++) {
+      const sg = s === 0 ? 1 : -1;
+      // which side of travel this is: a one-way's left shoulder (the median's) is
+      // railed only where no tall wall stands beyond it
+      const leftSide = fwdOf(e) * sg < 0;
+      let run = [];
+      const flush = () => { railRun(run); run = []; };
+      for (let i = 0; i <= k; i++) {
+        const t = i / k;
+        const ey = e.pe[i * 6 + s * 3], w = e.pe[i * 6 + s * 3 + 1], ty = e.pe[i * 6 + s * 3 + 2];
+        const drop = w > 0 ? ey - ty : 0;
+        const nearBridge = Math.min(dA + t * e.len, dB + (1 - t) * e.len) < BRIDGE_RUN;
+        const tw = e.tw[i * 2 + s];
+        const off = tw + R_OUT;
+        const x = a.x + e.dx * e.len * t + px * sg * off, z = a.z + e.dz * e.len * t + pz * sg * off;
+        const want = (drop > RAIL_DROP || nearBridge) && tw > e.hw - 0.5
+          && !(leftSide && wallWithin(x, z, 12)) && !onCw(x, z, 0.2);
+        if (!want) { flush(); continue; }
+        run.push([x, z, ey, px * sg, pz * sg]);
+      }
+      flush();
+    }
+  });
+
+  // ---- high-mast lighting ---------------------------------------------------
+  // The freeway-to-freeway interchanges are lit from 30 m galvanized masts
+  // with a ring of luminaires (MTO's high-mast standard), stood in the
+  // infields and verges among the ramps: the 401 / Hwy 8 interchange and Hwy 8
+  // at the Conestoga. Where: exits whose destination is the other freeway
+  // (hwy.json) mark each interchange; masts on a ~150 m lattice over it, each
+  // 12-60 m from a carriageway and on none (nor in a building or water).
+  const IC = [['401', '8'], ['8', '7'], ['8', '85'], ['7;8', '8'], ['7', '8']];
+  const centres = [];
+  for (const x of HW.exits || []) {
+    const refs = (x.dref || []).map((r) => (/^\s*(\d+)/.exec(r) || [])[1]).filter(Boolean);
+    if (!IC.some(([m, d]) => (x.main === m || x.main === `ON ${m}`) && refs.includes(d))) continue;
+    let c = centres.find((q) => Math.hypot(q.x - x.x, q.z - x.z) < 1400);
+    if (!c) centres.push((c = { x: 0, z: 0, n: 0, pts: [] }));
+    c.pts.push([x.x, x.z]); c.n++;
+    c.x = c.pts.reduce((s2, p) => s2 + p[0], 0) / c.n; c.z = c.pts.reduce((s2, p) => s2 + p[1], 0) / c.n;
+  }
+  const masts = [];
+  const nearCw = (x, z, r) => {
+    let best = Infinity;
+    for (const ei of city.edgesNear(x, z, r)) {
+      const e = city.edges[ei];
+      if (!(e.cls === 'hwy' || (e.cls === 'ramp' && fr[ei]))) continue;
+      const A = city.nodes[e.a], Bn = city.nodes[e.b];
+      const sx = Bn.x - A.x, sz = Bn.z - A.z, l2 = sx * sx + sz * sz;
+      let t = l2 > 0 ? ((x - A.x) * sx + (z - A.z) * sz) / l2 : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      best = Math.min(best, Math.hypot(A.x + sx * t - x, A.z + sz * t - z) - e.hw);
+    }
+    return best;
+  };
+  for (const c of centres) {
+    const R = Math.min(750, 250 + Math.max(...c.pts.map((p) => Math.hypot(p[0] - c.x, p[1] - c.z))));
+    const cand = [];
+    for (let gx = -R; gx <= R; gx += 25) for (let gz = -R; gz <= R; gz += 25) {
+      if (gx * gx + gz * gz > R * R) continue;
+      const x = c.x + gx, z = c.z + gz;
+      const d = nearCw(x, z, 70);
+      if (d < 12 || d > 60) continue;
+      if (city.onRoad(x, z, 4) || G.isWater(x, z) || (city.insideBuilding && city.insideBuilding(x, z, G.terrainHeight(x, z), 3))) continue;
+      cand.push([x, z, d]);
+    }
+    // from the interchange's heart outward, ~160 m apart, a dozen at most
+    cand.sort((p, q) => Math.hypot(p[0] - c.x, p[1] - c.z) - Math.hypot(q[0] - c.x, q[1] - c.z));
+    let n = 0;
+    for (const [x, z] of cand) {
+      if (n >= 12) break;
+      if (masts.some(([mx, mz]) => (mx - x) ** 2 + (mz - z) ** 2 < 160 * 160)) continue;
+      masts.push([x, z]); n++;
+    }
+  }
+  for (const [x, z] of masts) {
+    const y = G.terrainHeight(x, z) - 0.3, H = 30;
+    if (STATS.masts < 3) STATS.views.push({ name: `mast${STATS.masts}`, c: [x + 110, z + 110, 25], t: [x, z, 14], fov: 55 });
+    const M = K.B(x, z, 'mast');
+    K.B(x, z, 'concDark').box(x, y, z, 1.4, 0.8, 1.4, 0);                  // the footing
+    M.prism(x, y + 0.8, z, 0.6, H * 0.4, 8);                                // the shaft, tapering
+    M.prism(x, y + 0.8 + H * 0.4, z, 0.45, H * 0.6 - 0.8, 8);
+    M.box(x, y + H - 0.25, z, 3.8, 0.35, 3.8, 0);                           // the ring
+    for (let q = 0; q < 6; q++) {
+      const ang = (q / 6) * Math.PI * 2, lx = x + Math.cos(ang) * 1.8, lz = z + Math.sin(ang) * 1.8;
+      K.B(x, z, 'lamp').box(lx, y + H - 0.85, lz, 0.8, 0.6, 1.1, ang);
+      K.B(x, z, 'lens').box(lx, y + H - 0.9, lz, 0.65, 0.06, 0.9, ang);
+    }
+    solids.push({ x, z, r: 0.6, y0: y, y1: y + H });
+    STATS.masts++;
+  }
+
+  // ---- shoulder rumble strips ------------------------------------------------
+  // Milled into the paved right shoulder of the 400-series and the Parkway,
+  // just outside the edge line: grooves 0.18 m long and 0.4 m wide every
+  // 0.3 m, drawn as one every 0.9 m (the pattern reads the same from a car,
+  // for a third of the triangles: ~7k a 1.5 km cell). In the furniture cells.
+  for (let ei = 0; ei < city.edges.length; ei++) {
+    const e = city.edges[ei];
+    if (!isMain(e) || e.elev || !e.prof || e.len < 4) continue;
+    const info = INFO.get(ei);
+    if (!info || !/^(401|8|7;8|7|85)$/.test(info.ref || '')) continue;
+    const a = city.nodes[e.a], px = -e.dz, pz = e.dx;
+    const inset = Math.min(0.7, e.hw * 0.06);
+    {
+      const s = fwdOf(e) > 0 ? 0 : 1, sg = s === 0 ? 1 : -1;   // the right of travel
+      for (let d = 0.3; d < e.len - 0.3; d += 0.9) {
+        const t = d / e.len;
+        const i = Math.min(e.pk, Math.round(t * e.pk));
+        const tw = e.tw[i * 2 + s];
+        if (tw < e.hw - 0.5) continue;
+        const o = tw - inset + 0.28;      // just outside the edge line, on the shoulder
+        const cx = a.x + e.dx * d + px * sg * o, cz = a.z + e.dz * d + pz * sg * o;
+        if (onCw(cx + px * sg * 0.6, cz + pz * sg * 0.6, -0.4)) continue;
+        const P = city.profAt(e, t);
+        const y = P.h + P.s * sg * o + 0.045;
+        const ux = e.dx * 0.09, uz = e.dz * 0.09, wx = px * sg * 0.2, wz = pz * sg * 0.2;
+        K.B(cx, cz, 'rumble').quad([cx - ux - wx, y, cz - uz - wz], [cx + ux - wx, y, cz + uz - wz],
+          [cx + ux + wx, y, cz + uz + wz], [cx - ux + wx, y, cz - uz + wz], [0, 1, 0], NOUV);
+        STATS.rumble++;
       }
     }
   }
@@ -872,6 +1210,6 @@ export function buildHighways(ctx) {
   STATS.atlas = { full: atlas.full, rows: atlas.y + atlas.row, panels: atlas.cache.size };
   K.flush(atlas.mat);
   STATS.ms = Math.round(performance.now() - t0);
-  STATS.wall = Math.round(STATS.wall); STATS.paved = Math.round(STATS.paved);
+  STATS.wall = Math.round(STATS.wall); STATS.paved = Math.round(STATS.paved); STATS.rail = Math.round(STATS.rail);
   if (typeof window !== 'undefined') window.__hwy = STATS;
 }

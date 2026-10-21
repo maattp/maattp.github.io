@@ -6,7 +6,8 @@
 #
 # Prefixes: '<route>-<exit>-<street>' for the overhead signs (e.g. 401-282,
 # 8--Fairway, '7;8--Homer'), adv (1 km signs), gore, spd (MAXIMUM), route
-# (reassurance shields), air. Needs the http server; AUTO_HTTP_PORT /
+# (reassurance shields), rail (guide rail runs), mast (high masts), noise
+# (Parkway noise walls), air. Needs the http server; AUTO_HTTP_PORT /
 # AUTO_CDP_PORT / AUTO_GPU / AUTO_PHONE pass through to kwshots.mjs. Pass 1
 # boots once and reads the viewpoints highways.js recorded (window.__hwy.views);
 # pass 2 shoots them. The boot cache is cleared first (geometry changes

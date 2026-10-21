@@ -125,6 +125,38 @@ def main():
         mask = (~grn) & (~wet) & (farm > 0)
         b[mask] = farm[mask]
         print(f"fields: {nf} farm polygons, {mask.mean() * 100:.1f} % of the map")
+        # THE FREEWAYS' RIGHT-OF-WAY, 240 (geo.farmAt 8): mown grass, no
+        # crop. OSM's farmland polygons run to the highway's centreline, so
+        # standing corn and soy (crops.js, whose far blocks are flat-topped
+        # beige walls) grew to the edge of Hwy 7/8's embankment -- "the beige
+        # slab beside Hwy 7/8 west" -- and the open country's township parcels
+        # (world.groundTint) did the same where OSM maps no field. A 400-series
+        # highway's fence is ~15 m past the shoulder (highways.js's clear zone,
+        # CLEAR_MAIN / CLEAR_RAMP, is the same band for the trees); the strip
+        # inside it is mown verge. Widths as build_roads.py's half_width.
+        ROW = {"motorway": (7.0, 6, 15.0), "trunk": (7.0, 6, 15.0),
+               "motorway_link": (3.4, 1, 9.0), "trunk_link": (3.4, 1, 9.0)}
+        rim = Image.new("L", (MASK_N, MASK_N), 0)
+        rd = ImageDraw.Draw(rim)
+        nrow = 0
+        for r in json.load(open(os.path.join(DATA, "raw_roads.json")))["roads"]:
+            if r["cls"] not in ROW or r.get("tn") in ("yes", "building_passage"):
+                continue
+            mn, dl, clear = ROW[r["cls"]]
+            try:
+                ln = float(str(r.get("ln", dl)).split(";")[0])
+            except ValueError:
+                ln = dl
+            hw = max(mn, min(20.0, ln * 1.8 + 1.0))
+            px = (hw + clear) / MASK_STEP
+            pts = tx(r["p"])
+            rd.line(pts, fill=255, width=max(1, int(round(2 * px))))
+            for x, y in pts:
+                rd.ellipse([x - px, y - px, x + px, y + px], fill=255)
+            nrow += 1
+        row = (np.asarray(rim) > 0) & (~grn) & (~wet)
+        b[row] = 240
+        print(f"right-of-way: {nrow} freeway ways, {row.mean() * 100:.2f} % of the map kept mown")
     surf[:, :, 2] = b
     Image.fromarray(surf, "RGB").save(os.path.join(OUT, "surface.png"), optimize=True)
 
