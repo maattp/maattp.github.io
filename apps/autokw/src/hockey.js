@@ -23,8 +23,9 @@
 
 import * as THREE from './three.js';
 import { text } from './arcadegames.js';
+import { setInterior } from './interior.js';
 import { Beeper } from './arcade.js';
-import { Hockey, RINK, TEAMS, PERIOD_S } from './hockeygame.js';
+import { Hockey, RINK, TEAMS, PERIOD_S, RIVALS, setRival } from './hockeygame.js';
 
 const VW = 400, VH = 225;
 const S = 3;              // pixels per foot along the rink
@@ -115,6 +116,12 @@ export class HockeyNight {
     this.acc = 0;
     this.camX = 0;
     this.flash = 0;
+    // Auto KW: the Aud's bowl in 3D (audrink.js), built when the doors open and
+    // freed when you leave; the 400 x 225 canvas then carries only the HUD
+    this.view = opts.view3d || null;
+    this.periodS = opts.periodS || 0;      // 0: hockeygame's PERIOD_S
+    this.speed = 1;                        // harness: sim steps a frame x speed
+    this.nGames = Math.floor(Math.random() * RIVALS.length);
   }
 
   get active() { return this.mode !== 'off'; }
@@ -140,7 +147,7 @@ export class HockeyNight {
     g.shadowBlur = 16; g.shadowColor = '#6fd3e8'; g.fillStyle = '#bff4ff';
     g.font = '900 64px Helvetica, Arial, sans-serif'; g.fillText('HOCKEY', 256, 92);
     g.shadowColor = '#ffd23a'; g.fillStyle = '#ffe89a'; g.font = '900 34px Helvetica, Arial, sans-serif'; g.fillText('TONIGHT', 256, 134);
-    g.shadowColor = '#ff5a3a'; g.fillStyle = '#ffffff'; g.font = '800 26px Helvetica, Arial, sans-serif'; g.fillText('RANGERS vs KNIGHTS', 256, 188);
+    g.shadowColor = '#ff5a3a'; g.fillStyle = '#ffffff'; g.font = '800 26px Helvetica, Arial, sans-serif'; g.fillText(this.o.view3d ? 'RANGERS · OHL' : 'RANGERS vs KNIGHTS', 256, 188);
     g.shadowBlur = 0; g.fillStyle = '#8aa'; g.font = '700 18px Helvetica, Arial, sans-serif'; g.fillText('PUCK DROP · PRESS ENTER', 256, 228);
     const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
     const grp = new THREE.Group();
@@ -195,6 +202,7 @@ export class HockeyNight {
       #hockeyUi { position: absolute; inset: 0; z-index: 40; display: none; background: #000; user-select: none; -webkit-user-select: none; touch-action: none;
         font: 800 14px -apple-system, Helvetica, sans-serif; color: #fff; }
       #hockeyUi.show { display: block; }
+      #hockeyUi.v3d { background: transparent; }
       #hockeyUi .hScreen { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
       #hockeyUi button { -webkit-tap-highlight-color: transparent; touch-action: none; border: none; color: #fff; font: 900 14px -apple-system, Helvetica, sans-serif; letter-spacing: .04em; }
       #hockeyUi .hShoot, #hockeyUi .hPass { position: absolute; width: 78px; height: 78px; border-radius: 50%; opacity: .82; }
@@ -273,6 +281,7 @@ export class HockeyNight {
 
   start() {
     this.el.classList.add('show');
+    if (this.view) { this.el.classList.add('v3d'); this.view.open(); setInterior(true); }
     this.snd = this.snd || new RinkSound(this.o.audio && this.o.audio.ctx, this.o.audio && this.o.audio.master);
     this._fit();
     if (!this.rink) this._drawRink();
@@ -280,7 +289,9 @@ export class HockeyNight {
   }
 
   _newGame() {
-    this.game = new Hockey({ humanTeam: 0 });
+    if (this.view) setRival(this.nGames++);
+    this.game = new Hockey({ humanTeam: 0, periodS: this.periodS || undefined });
+    if (this.view) this.view.newGame(this.game);
     this.mode = 'intro';
     this.introT = 0;
     this.paid = false;
@@ -315,6 +326,7 @@ export class HockeyNight {
     this.ui.panel.classList.remove('on');
     this.keys = {}; this.btn = { shoot: false, pass: false };
     if (this.snd) this.snd.mute();
+    if (this.view) { this.view.close(); this.el.classList.remove('v3d'); setInterior(false); }
     if (this.o.onEnd) this.o.onEnd();
   }
 
@@ -324,7 +336,7 @@ export class HockeyNight {
     const pay = (g.result === 'win' ? 250 : g.result === 'tie' ? 100 : 25) + 25 * a;
     if (!this.paid) { this.paid = true; if (this.o.onReward) this.o.onReward(pay); }
     this.mode = 'final';
-    const head = g.result === 'win' ? 'RANGERS WIN!' : g.result === 'tie' ? 'A TIE' : 'LONDON WINS';
+    const head = g.result === 'win' ? 'RANGERS WIN!' : g.result === 'tie' ? 'A TIE' : `${TEAMS[1].name} WINS`;
     this._panel(`<div class="big">${head}</div><div class="sm">FINAL${g.period > 3 ? ' (OT)' : ''} · ${TEAMS[0].abbr} ${a} – ${b} ${TEAMS[1].abbr}<br>
       SHOTS ${g.shots[0]} – ${g.shots[1]} · ONE-TIMERS ${g.stats.oneTimers[0]} · CHECKS ${g.stats.checks[0]}<br>The arena pays $${pay}</div>
       <button class="go">PLAY AGAIN</button><button class="back">LEAVE THE ARENA</button>`, () => this._newGame(), () => this.close());
@@ -346,9 +358,9 @@ export class HockeyNight {
     const g = this.game;
     if (this.mode === 'intro') {
       this.introT += dt;
-      if (this.introT > 2.2) this.mode = 'play';
+      if (this.introT > (this.view ? 3.6 : 2.2)) this.mode = 'play';
     } else if (this.mode === 'play' && !this.frozen) {
-      this.acc = Math.min(this.acc + dt, 0.1);
+      this.acc = Math.min(this.acc + dt * this.speed, 0.1 * this.speed);
       while (this.acc >= STEP) {
         this.acc -= STEP;
         g.step(STEP, this._input());
@@ -464,6 +476,13 @@ export class HockeyNight {
   _draw(dt) {
     const g = this.g, gm = this.game;
     if (!gm || !this.rink) return;
+    if (this.view) {
+      // the bowl draws itself on the game's canvas; this one carries the HUD
+      g.clearRect(0, 0, VW, VH);
+      this.view.render(gm, dt, { flash: this.flash, intro: this.mode === 'intro' ? this.introT : -1 });
+      this._hud();
+      return;
+    }
     // the camera leads the puck along the rink
     const pk = gm.puck;
     const want = Math.max(-(RINK.hx + 10) + VW / 2 / S, Math.min(RINK.hx + 10 - VW / 2 / S, pk.x + pk.vx * 0.25));
@@ -630,9 +649,9 @@ export class HockeyNight {
     const g = this.g, gm = this.game;
     // the scoreboard
     g.fillStyle = '#000000c0'; g.fillRect(4, 4, 142, 13);
-    text(g, TEAMS[0].abbr, 8, 8, 1, '#6fd3e8');
+    text(g, TEAMS[0].abbr, 8, 8, 1, this.view ? '#ff8a8a' : '#6fd3e8');
     text(g, String(gm.score[0]), 24, 8, 1, '#ffffff');
-    text(g, TEAMS[1].abbr, 36, 8, 1, '#7ae88a');
+    text(g, TEAMS[1].abbr, 36, 8, 1, TEAMS[1].hud || '#7ae88a');
     text(g, String(gm.score[1]), 52, 8, 1, '#ffffff');
     const per = gm.period > 3 ? 'OT' : ['1ST', '2ND', '3RD'][gm.period - 1];
     const c = Math.max(0, Math.ceil(gm.clock)), mm = Math.floor(c / 60), ss = String(c % 60).padStart(2, '0');
@@ -647,7 +666,7 @@ export class HockeyNight {
       text(g, s, 7, VH - 11, 1, '#ffe83a');
     }
     // messages
-    const m = this.mode === 'intro' ? { text: 'HOCKEY NIGHT', sub: 'RANGERS VS KNIGHTS' } : gm.msg;
+    const m = this.mode === 'intro' ? { text: 'HOCKEY NIGHT', sub: `RANGERS VS ${TEAMS[1].nick || 'KNIGHTS'}` } : gm.msg;
     if (m && m.text) {
       const big = m.text === 'GOAL!' ? 5 : 3;
       if (m.text !== 'GOAL!' || Math.floor(gm.t * 5) % 2 === 0) {

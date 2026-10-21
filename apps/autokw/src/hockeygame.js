@@ -33,6 +33,14 @@ export const TEAMS = [
   { name: 'KITCHENER', abbr: 'KIT', jersey: '#c8102e', trim: '#ffffff', pants: '#0b2350', helmet: '#0b2350', num: '#ffffff' },
   { name: 'LONDON', abbr: 'LDN', jersey: '#00703c', trim: '#fdb913', pants: '#00351c', helmet: '#00703c', num: '#fdb913' },
 ];
+// the visitors at the Aud, in turn: OHL rivals down the 401 and up Hwy 7.
+// TEAMS[1] takes one's colours for a game (hockey.js setRival).
+export const RIVALS = [
+  { name: 'LONDON', abbr: 'LDN', nick: 'KNIGHTS', city: 'LONDON', jersey: '#00703c', trim: '#fdb913', pants: '#00351c', helmet: '#00703c', num: '#fdb913', hud: '#7ae88a' },
+  // Guelph in their road whites: crimson and black (Wikipedia: crimson, white, black)
+  { name: 'GUELPH', abbr: 'GUE', nick: 'STORM', city: 'GUELPH', jersey: '#f2f2ee', trim: '#9b1b30', pants: '#141414', helmet: '#141414', num: '#9b1b30', hud: '#ff8a9a' },
+];
+export function setRival(i) { Object.assign(TEAMS[1], RIVALS[((i % RIVALS.length) + RIVALS.length) % RIVALS.length]); return TEAMS[1]; }
 const ROLES = ['C', 'LW', 'RW', 'LD', 'RD', 'G'];
 const NUMS = [[19, 11, 27, 4, 44, 31], [9, 17, 22, 3, 55, 35]];
 const NAMES = [['BAUMAN', 'SCHNEIDER', 'OKAFOR', 'MARTIN', 'WEBER', 'BRUBACHER'], ['TREMBLAY', 'SINGH', 'KOVAC', 'MACLEOD', 'NAKAMURA', 'ROY']];
@@ -67,10 +75,11 @@ export class Hockey {
   constructor(opts = {}) {
     this.rng = opts.rng || Math.random;
     this.human = opts.humanTeam === undefined ? 0 : opts.humanTeam;
+    this.periodS = opts.periodS || PERIOD_S;   // the Aud plays a short game (hockey.js)
     this.score = [0, 0];
     this.shots = [0, 0];
     this.period = 1;
-    this.clock = PERIOD_S;
+    this.clock = this.periodS;
     this.over = false;
     this.t = 0;
     this.events = [];
@@ -820,7 +829,7 @@ export class Hockey {
     if (this.period >= 3 && this.score[0] !== this.score[1]) { this._final(); return; }
     if (this.period >= 4) { this._final(); return; }
     this.period++;
-    this.clock = PERIOD_S;
+    this.clock = this.periodS;
     this.state = 'intermission'; this.stateT = 0;
     this.msg = { text: this.period === 4 ? 'OVERTIME' : `END OF PERIOD ${this.period - 1}`, sub: `${TEAMS[0].abbr} ${this.score[0]}  ${TEAMS[1].abbr} ${this.score[1]}`, t: 3 };
     for (const p of this.players) { p.hasPuck = false; p.vx = 0; p.vy = 0; }

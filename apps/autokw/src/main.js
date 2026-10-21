@@ -36,6 +36,9 @@ import { Golf } from './golf.js';
 import { Arcade } from './arcade.js';
 import { Pinball } from './pinball.js';
 import { HockeyNight } from './hockey.js';
+import { AudRink } from './audrink.js';
+import { Oktoberfest } from './oktoberfest.js';
+import { BigSplash } from './bigsplash.js';
 import { RollUp } from './rollup.js';
 import { TowerGame } from './atc.js';
 import { DuckTour } from './ducktour.js';
@@ -116,7 +119,9 @@ let hoops = null;   // the basketball courts (hoops.js)
 let arcade = null;   // Pin Up Arcade Bar on King St N in Waterloo (arcade.js)
 let pinball = null;  // the pinball at AOK on King St W in Kitchener (pinball.js)
 let hockey = null;   // hockey night at Climate Pledge Arena (hockey.js)
-let rollup = null;   // Roll Up the Rim at every Tim Hortons (rollup.js)
+let rollup = null;
+let fest = null;
+let splash = null;   // Auto KW: Bingemans Big Splash, the slides ridden (bigsplash.js)     // Auto KW: Oktoberfest -- the festhallen, the stein contest, the parade (oktoberfest.js)   // Roll Up the Rim at every Tim Hortons (rollup.js)
 let tower = null;    // Boeing Field's control tower and FINAL APPROACH (atc.js)
 let duckTour = null; // the Duck Tour: kiosk, ducks, ramp and the tour (ducktour.js)
 let orcas = null;     // a pod off West Point, an Easter egg (orcas.js)
@@ -426,6 +431,20 @@ class Game {
     if (hockey && !hockey.active && hockey.near(pl)) {
       this.hold('hockey');
       hockey.start();
+      return true;
+    }
+    // the top of Big Splash's tower: down the slide you face
+    if (splash && !splash.riding && splash.onTop(pl)) {
+      this.hold('splash');
+      if (splash.start(pl)) return true;
+      this.release('splash');
+    }
+    // Oktoberfest: a festhalle's door, or the parade's start on Weber St
+    const fh = fest && !fest.inside && fest.near(pl);
+    if (fh === 'parade') return fest.parade.begin();
+    if (fh) {
+      this.hold('fest');
+      fest.enter(fh);
       return true;
     }
     // a Tim Hortons door: Roll Up the Rim
@@ -1460,6 +1479,8 @@ function installShadowFade() {
     const door = best ? { x: best.qx - dx * (best.hw + 7), z: best.qz - dz * (best.hw + 7), yaw: Math.atan2(dx, dz) } : { x: AUD.x, z: AUD.z + 90, yaw: 0 };
     hockey = new HockeyNight({
       scene, city, world, audio, arena: { x: AUD.x, y: G.terrainHeight(AUD.x, AUD.z), z: AUD.z, r: 135, door },
+      // inside the Aud's bowl in 3D (audrink.js: built on entry, freed on the way out), a short game
+      view3d: new AudRink({ renderer, phone: ON_PHONE }), periodS: 80,
       onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`The Rangers paid $${m}`), 400); },
       onEnd: () => { game.release('hockey'); },
     });
@@ -1493,6 +1514,17 @@ function installShadowFade() {
     onToast: (t) => setTimeout(() => hud.showToast(t, 4200), 300),
     onEnd: () => { game.release('rollup'); },
   });
+  // Oktoberfest: the festhallen (Concordia Club, Bingemans' Marshall Hall, the Schwaben Club) and the parade up Weber St
+  try {
+    fest = new Oktoberfest({ scene, city, traffic, audio, renderer, phone: ON_PHONE, camera, hud: { get hud() { return hud; } },
+      onReward: (m, why) => { game.money += m; setTimeout(() => hud.showToast(`${why} — $${m}`), 400); },
+      onEnd: () => { game.release('fest'); } });
+  } catch (e) { blog('oktoberfest: ' + e.message); fest = null; }
+  // Big Splash's slides (kwsights.js drew them and their stairs)
+  try {
+    splash = new BigSplash({ scene, city, camera, player, audio, hud: { get hud() { return hud; } }, onEnd: () => { game.release('splash'); } });
+    if (!splash.ok) splash = null;
+  } catch (e) { blog('bigsplash: ' + e.message); splash = null; }
   // A CAR WORTH TAKING at the kerb in front of the spawn. Kerbside cars come
   // from a fixed hash of street slots, so the first car every player walked
   // up to was the same pickup -- and the nearest slot was usually out of the
@@ -1592,7 +1624,7 @@ function installShadowFade() {
       hello: "St. Jacobs Farmers' Market — stalls under the big white tent" },
     ...buggies.places(),
     { x: hockey.spot.x, z: hockey.spot.z, kind: 'hockey', name: 'The Aud', near: false,
-      hello: 'The Aud — Kitchener Rangers hockey tonight against the London Knights. Press ENTER anywhere at the arena to drop the puck' },
+      hello: 'The Aud — Kitchener Rangers hockey tonight, the London Knights or the Guelph Storm in town. Press ENTER at the arena to go in and drop the puck' },
     ...(tower ? [{ x: tower.spot.x, z: tower.spot.z, kind: 'tower', name: 'YKF Control Tower', near: false,
       hello: "YKF's control tower. Press ENTER at the door to take the field" }] : []),
     ...(ykf.runwayEnd() ? [{ x: 7228, z: -440, kind: 'jet', name: 'YKF Airport', near: false, label: 'YKF',
@@ -1607,6 +1639,8 @@ function installShadowFade() {
     // Auto KW: the farms' tractors and combines (crops.js)
     ...(crops ? crops.places() : []),
     ...kartway.places(),
+    ...(fest ? fest.places() : []),
+    ...(splash ? splash.places() : []),
   ];
   { const k = kwData(); if (k && k.signStats) blog('kw signs: ' + JSON.stringify(k.signStats)); }
   if (shopStats()) blog('kw shops: ' + JSON.stringify(shopStats()));
@@ -1772,7 +1806,9 @@ function installShadowFade() {
   window.__refreshJobs = refreshJobs;
   window.__dbg = { get air() { return air; }, get signalHeads() { return signalHeads; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;   // Auto KW: the harvest (crops.js)
-  window.__dbg.kart = kartRace;   // Auto KW: Erbsville Kartway (kartway.js)
+  window.__dbg.kart = kartRace;
+  window.__dbg.fest = fest;
+  window.__dbg.splash = splash;   // Auto KW: Big Splash (bigsplash.js)   // Auto KW: Oktoberfest (oktoberfest.js)   // Auto KW: Erbsville Kartway (kartway.js)
   wireUi();
   career.start(hud);
   game.newTarget();
@@ -2622,8 +2658,13 @@ const POLICE_HQ = [43.4532, -80.4893];   // Waterloo Regional Police, Central Di
  * world for good, because Resume cannot clear a hold by design. Each frame, a
  * hold with nothing behind it is let go.
  */
+/** An interior scene owns the canvas (audrink.js, oktoberfest.js): main draws no city under it. */
+function interiorUp() {
+  return !!(hockey && hockey.active && hockey.view) || !!(fest && fest.inside);
+}
+
 function reapHolds() {
-  const live = { fishing, arcade, pinball, hockey, rollup, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace };
+  const live = { fishing, arcade, pinball, hockey, rollup, fest, splash, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace };
   for (const who of game.holds) {
     if (who === 'seafair') { if (seafair && (seafair.state === 'menu' || seafair.state === 'done')) continue; }
     else if (live[who] && live[who].active) continue;
@@ -2990,6 +3031,8 @@ function frame(now) {
   if (pinball && pinball.active) pinball.update(dt);
   if (hockey && hockey.active) hockey.update(dt);
   if (rollup && rollup.active) rollup.update(dt);
+  if (fest) fest.update(dt, game.paused && !fest.inside);
+  if (splash) splash.update(dt);
   if (tower && tower.active) tower.update(dt);
   if (coffee && coffee.active) coffee.update(dt);
   if (pickle) pickle.update(dt);
@@ -3017,6 +3060,8 @@ function frame(now) {
     // (the fishing game's screen covers the city too, once it is up)
     const idle = game.mapOpen || pauseMenuEl.classList.contains('show') || (fishing && fishing.el.classList.contains('show'))
       || (arcade && arcade.active) || (pinball && pinball.active) || (hockey && hockey.active) || (rollup && rollup.active) || (tower && tower.active) || (coffee && coffee.active) || (pickle && pickle.active);
+    // an interior (the Aud's bowl, a festhalle) draws its own scene on the canvas: the city draws nothing
+    if (interiorUp()) { idleDrawn = 2; return; }
     if (!idle || idleDrawn < 2 || idleRedraw) { draw(now); idleDrawn++; idleRedraw = false; }
     return;
   }
