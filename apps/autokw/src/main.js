@@ -919,6 +919,8 @@ async function boot() {
   if (!window.__noStreetSigns) streetSigns = prepStreetSigns(city, md.streetsigns);
   // Canada Post's boxes, OSM's (world.js meshProps -> _postBoxes)
   city.postBoxes = md.postboxes || null;
+  // GRT's bus stops, OSM's (world.js meshProps -> _grtStops)
+  city.grtStops = md.grtstops || null;
   window.__streetSigns = STREET_SIGN_STATS;
   city.slabQuery = (x, z) => ykf.surface(x, z);
   blog(`city: grading ${cityStats.gradeCached ? 'from cache' : 'computed'}, buildings ${bootCache.buildings ? 'from cache' : 'computed'}`);

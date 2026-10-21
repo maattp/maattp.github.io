@@ -16,6 +16,7 @@ import { buildMountains } from './mountains.js';
 import { plantTrees, occupancy, OCC_C, OCC_N, OCC_PAVE } from './trees.js';
 import { pumpkinSeed } from './fall.js';
 import { hash2, clamp, lerp, distToSeg, segDist, FALL, buildingTiers, roofAt, tierScale } from './util.js';
+import { edgeFlow, oneWaySpan, twoWayLayout, medianGaps, alBike } from './arterial.js';
 
 // The bore's cross-section, shared by the mesher and by the trench that has to
 // be cut out of the ground to make room for it.
@@ -157,6 +158,39 @@ function laneStrips(e) {
   }
   return (e._lst = out);
 }
+// AUTO KW: AN ARTERIAL'S ASPHALT IN STRIPS TOO, one per lane of the layout
+// traffic drives on it (arterial.js: a one-way carriageway's oneWaySpan, a
+// multi-lane two-way one's twoWayLayout) and one per kerb zone and centre,
+// each on its own stretch of the texture between the polished tracks, as
+// laneStrips lays a freeway's. Laid across the carriageway at the road
+// tile's 9 m, the two tracks fell wherever the tile put them -- a bright
+// band down a lane line, another across the median edge. [lo, hi, index]
+// in +p, covering -hw..hw; null for any other street (meshRoad's 8 m cells).
+function artStrips(city, e, ei) {
+  if (e._ast !== undefined) return e._ast;
+  let out = null;
+  if ((e.cls === 'art' || e.cls === 'st') && !e.rural && !e.tunnel && !e.gravel && !e.prof && ei != null) {
+    const cuts = [];
+    if (e.oneway) {
+      const [lo, hi, n] = oneWaySpan(city, ei, (i) => edgeFlow(city.edges[i]));
+      if (hi - lo > 2) for (let k = 0; k <= n; k++) cuts.push(lo + (k * (hi - lo)) / n);
+    } else {
+      const T = twoWayLayout(e);
+      if (T) {
+        for (let k = T.nM; k >= 0; k--) cuts.push(T.m - T.c0 - k * T.w);
+        for (let k = 0; k <= T.nP; k++) cuts.push(T.m + T.c0 + k * T.w);
+      }
+    }
+    if (cuts.length) {
+      const xs = [-e.hw];
+      for (const c of cuts) if (c > xs[xs.length - 1] + 0.05 && c < e.hw - 0.05) xs.push(c);
+      xs.push(e.hw);
+      out = [];
+      for (let i = 0; i + 1 < xs.length; i++) out.push([xs[i], xs[i + 1], i]);
+    }
+  }
+  return (e._ast = out);
+}
 // Metres per repeat of the paving texture, which carries four slabs -- so a
 // slab is a metre, everywhere.
 //
@@ -167,6 +201,12 @@ function laneStrips(e) {
 // corner slabs were whatever size that corner happened to be. The asphalt was
 // given a fixed tile long ago for exactly this reason; the pavement never was.
 const WALK_TILE = 4;
+// Auto KW: a divided arterial's median narrower than this is a raised
+// concrete one, wider a lawn (world.js meshRoad; arterial.js medianGaps)
+const MEDIAN_CONC = 3.2;
+const MEDIAN_TINT = [0.86, 0.86, 0.84];
+// Auto KW: an unwired arterial's light standards, every this many metres (world.js _artLights)
+const ART_LAMP = 38;
 
 // The mean linear albedo of each facade atlas cell (and of the curtain-wall
 // texture), measured off the atlas textures.js draws. A massing box or the far
@@ -473,16 +513,37 @@ const logSolid = (kind, x, z, r) => { const L = globalThis.__logSolids; if (L) L
 // a hydro pole's offset past the kerb line by that side's sidewalk (swk 0-3)
 const POLE_OFF = [0.8, 2.05, 0.55, 1.5];
 const strHash = (s) => { let h = 7; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; };
-/** 0: buried; else 1 wood poles, 2 concrete; the sign of the side in bit 2. */
-function hydroEdge(e, mx, mz) {
+/** 0: buried; else 1 wood poles, 2 concrete; the sign of the side in bit 2
+ *  (against the street's canonical direction: hydroLine). `city` lets a
+ *  divided arterial's carriageway see its median (arterial.js medianGaps). */
+function hydroEdge(e, mx, mz, city) {
   let on = e.cls === 'art';
   if (!on && (e.cls === 'st' || e.cls === 'res')) on = inOldCore(mx, mz) || inOldHood(mx, mz);
   if (!on) return 0;
+  // AUTO KW, THE ARTERIALS: through the subdivisions built since ~1985
+  // (streetEra 2 and 3) an arterial's lines are buried too -- Fischer-Hallman
+  // south of Highland, Ira Needles, Columbia St W, Erbsville Rd, Homer
+  // Watson by Doon South: light standards both sides (_eraLamp 4), no poles
+  if (e.cls === 'art' && streetEra(mx, mz) >= 2) return 0;
   // one side and one kind of pole down a whole street: by its name, or by
   // its 400 m block where it has none
   const k = e.name ? strHash(e.name) : (Math.floor(mx / 400) * 7919 + Math.floor(mz / 400));
   const kind = e.cls === 'art' && hash2(k, 7) < 0.45 ? 2 : 1;
-  return kind | (hash2(k, 9) < 0.5 ? 4 : 0);
+  const out = kind | (hash2(k, 9) < 0.5 ? 4 : 0);
+  // A DIVIDED ROAD HAS ONE LINE, down its outer side. Both carriageways
+  // carry the street's name, so both picked the same side of the street --
+  // which is the outer kerb of one and the MEDIAN of the other: a second
+  // pole line stood in the median (or in the far carriageway's lanes). The
+  // carriageway whose pole side is its median strings none.
+  if (city && e.oneway && e.cls === 'art') {
+    const g = medianGaps(city, e);
+    if (g[0] < 30 || g[1] < 30) {
+      const flip = e.dx < 0 || (e.dx === 0 && e.dz < 0);
+      const pSide = (out & 4 ? 1 : -1) * (flip ? -1 : 1);   // the pole side, in the edge's +p terms
+      if (g[pSide > 0 ? 0 : 1] < 30) return 0;
+    }
+  }
+  return out;
 }
 // AUTO KW: A RESIDENTIAL STREET IS UNPAINTED. Kitchener, Waterloo and
 // Cambridge paint no centre line and no edge lines on a local street -- the
@@ -490,6 +551,32 @@ function hydroEdge(e, mx, mz) {
 // American suburb from the driver's seat. A wide one (hw > 6.5: OSM's lanes
 // or width made it a collector) and a country road keep theirs.
 const unpainted = (e) => e.cls === 'res' && !e.rural && e.hw <= 6.5;
+// Auto KW: road markings drawn as line segments [x0, y0, x1, y1] in a mark's
+// own frame (X to the right of its travel, Y along it; world.js meshRoadMarks
+// markAt). The bicycle is upright to a rider coming up the lane, as painted:
+// its wheels side by side across the lane, 1.7 m along it, the reserved-lane
+// diamond ahead of it.
+const ellipse = (cx, cy, rx, ry, n = 10) => {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const a0 = (i / n) * Math.PI * 2, a1 = ((i + 1) / n) * Math.PI * 2;
+    out.push([cx + Math.cos(a0) * rx, cy + Math.sin(a0) * ry, cx + Math.cos(a1) * rx, cy + Math.sin(a1) * ry]);
+  }
+  return out;
+};
+const BIKE_MARK = [
+  ...ellipse(-0.34, 0, 0.24, 0.42), ...ellipse(0.34, 0, 0.24, 0.42),
+  [-0.34, 0, 0.0, 0.05], [0.0, 0.05, -0.12, 0.72], [-0.34, 0, -0.12, 0.72],   // chain stay, seat tube, seat stay
+  [0.0, 0.05, 0.22, 0.66], [-0.12, 0.72, 0.22, 0.66], [0.22, 0.66, 0.34, 0],   // down tube, top tube, fork
+  [0.22, 0.66, 0.3, 0.86], [0.3, 0.86, 0.42, 0.86], [-0.22, 0.8, -0.02, 0.8],  // stem, bars, saddle
+  // the diamond, ahead
+  [0, 1.35, 0.32, 1.95], [0.32, 1.95, 0, 2.55], [0, 2.55, -0.32, 1.95], [-0.32, 1.95, 0, 1.35],
+].map((q) => q.map((v) => v * 1.3));   // (the bicycle ~1.7 m along the lane, 1.2 m across)
+// a two-way left-turn lane's arrow: up the lane, then off to the left, the head
+const TWLTL_ARROW = [
+  [0.3, -1.8, 0.3, 0.4], [0.3, 0.4, 0.05, 0.9], [0.05, 0.9, -0.6, 1.25],
+  [-0.75, 1.3, -0.3, 1.65], [-0.75, 1.3, -0.45, 0.85],   // the head
+].map((q) => q.map((v) => v * 1.35));   // (~4.7 m end to end)
 // Modern townhomes (houseExtras' neighbour, townhome): the palette infill has
 // in Seattle -- charcoal, white, mid grey, near-black, the odd deep green.
 // A building's frame turned so its +z is side k (see houseFront): local +x
@@ -5790,17 +5877,46 @@ float frLine(float o, float fw, float c, float w) {
       if (m > from + 0.3 && m < till - 0.3) cuts.push(m);
     }
     cuts.sort((p, q) => p - q);
+    // AUTO KW, THE ARTERIALS (arterial.js; CLAUDE.md "The arterials from the
+    // driver's seat"): a one-way art / st carriageway is painted at the
+    // lanes traffic lays on it (oneWaySpan), a two-way one with two or more
+    // lanes a way at its twoWayLayout -- the very offsets laneLatU drives.
+    const city = this.city;
+    const artCls = (e.cls === 'art' || e.cls === 'st') && !e.rural && !e.tunnel;
+    const S1 = artCls && e.oneway && ei != null ? oneWaySpan(city, ei, (i) => edgeFlow(city.edges[i])) : null;
+    const med = S1 ? medianGaps(city, e) : null;
+    const T2 = artCls && !e.oneway ? twoWayLayout(e) : null;
+    // The bike lanes, per side: [the line's offset, the kerb's edge-line
+    // offset, the riders' direction]. Where one is painted the line IS the
+    // edge of the traffic lanes; there is no edge line at the kerb.
+    const fwd = e.onewayRev ? -1 : 1;
+    let bikeP = null, bikeM = null;
+    if (S1) {
+      if (alBike(e, 1)) bikeP = [S1[1], hw - inset, fwd];
+      if (alBike(e, -1)) bikeM = [S1[0], -(hw - inset), fwd];
+    } else if (T2) {
+      if (T2.bP) bikeP = [T2.m + T2.c0 + T2.nP * T2.w, hw - inset, 1];
+      if (T2.bM) bikeM = [T2.m - T2.c0 - T2.nM * T2.w, -(hw - inset), -1];
+    } else if (artCls && !e.oneway) {
+      // one lane a way: clear of the cars (traffic drives at 0.48 hw)
+      const off = Math.max(hw * 0.48 + 1.0, hw - 2.0);
+      if (alBike(e, 1)) bikeP = [off, hw - inset, 1];
+      if (alBike(e, -1)) bikeM = [-off, -(hw - inset), -1];
+    }
+    if (bikeP && Math.abs(bikeP[1] - bikeP[0]) < 1.2) bikeP = null;
+    if (bikeM && Math.abs(bikeM[1] - bikeM[0]) < 1.2) bikeM = null;
     // ONTARIO: a divided highway's LEFT edge line is yellow, its right white
     // (OTM Book 11), and so is a ramp's -- the yellow is always on the
     // driver's left. A carriageway is driven a -> b unless onewayRev, and +p
     // is the right of a -> b, so the left is +p when it is driven b -> a.
-    const divided = (e.cls === 'hwy' && e.oneway) || e.cls === 'ramp';
-    const fwd = e.onewayRev ? -1 : 1;
+    // A divided arterial's carriageway too: the one with an opposing
+    // carriageway across a median on its left (medianGaps).
+    const divided = (e.cls === 'hwy' && e.oneway) || e.cls === 'ramp' || (!!med && (fwd > 0 ? med[1] : med[0]) < 30);
     const colP = divided && fwd < 0 ? YELLOW : WHITE, colM = divided && fwd > 0 ? YELLOW : WHITE;
     for (let i = 0; i < cuts.length; i++) {
       const s = cuts[i], to = i + 1 < cuts.length ? cuts[i + 1] : till;
-      stripe(sideW((s + to) / 2, 0) - inset, s, to, colP);
-      stripe(-(sideW((s + to) / 2, 1) - inset), s, to, colM);
+      if (!bikeP) stripe(sideW((s + to) / 2, 0) - inset, s, to, colP);
+      if (!bikeM) stripe(-(sideW((s + to) / 2, 1) - inset), s, to, colM);
     }
 
     // LANE LINES. A freeway carriageway had its two edge lines and nothing
@@ -5819,9 +5935,114 @@ float frLine(float o, float fw, float c, float w) {
       }
     }
 
+    // A solid line down the edge's paintable run (the cuts, so it follows
+    // the ground), and a broken one 3 m / 6 m, phased off the line's
+    // projection on the street's own direction so a street's dashes run on
+    // evenly across its edges, whichever way each is stored.
+    const solid = (off, col) => {
+      for (let i = 0; i < cuts.length; i++) stripe(off, cuts[i], i + 1 < cuts.length ? cuts[i + 1] : till, col);
+    };
+    const proj = (a.x * e.dx + a.z * e.dz) * (Math.abs(e.dx) >= Math.abs(e.dz) ? Math.sign(e.dx) : Math.sign(e.dz));
+    const sgn = Math.abs(e.dx) >= Math.abs(e.dz) ? Math.sign(e.dx) : Math.sign(e.dz);
+    const broken = (off, col, dash = 3, gap = 6) => {
+      const P = dash + gap;
+      // along-street coordinate q = proj + s * sgn; a dash wherever q mod P < dash
+      for (let s = from - P; s < till; s += P) {
+        const q0 = proj + s * sgn, k = Math.floor(q0 / P);
+        // the dash's start in s, for the dash cycle k
+        const sd = sgn > 0 ? k * P - proj : proj - (k * P + dash);
+        const s0 = Math.max(from, sd), s1 = Math.min(till, sd + dash);
+        if (s1 - s0 > 0.3) stripe(off, s0, s1, col);
+      }
+    };
+    // a painted mark at (along s, offset o) on the edge, in its own frame:
+    // X to the right of `dir`'s travel, Y along it; segments are [x0, y0,
+    // x1, y1] of half-width hwM
+    const markAt = (s, o, dir, segs, hwM, col) => {
+      const ux = e.dx * dir, uz = e.dz * dir, rx = -uz, rz = ux;
+      const cx = a.x + e.dx * s + px * o, cz = a.z + e.dz * s + pz * o;
+      if (ei != null && city.roadCoveredAt(cx, cz, ei)) return;
+      const MS = cityStats.roadMarks || (cityStats.roadMarks = { bike: 0, twltl: 0 });
+      MS[segs === BIKE_MARK ? 'bike' : 'twltl']++;
+      const t = s / e.len;
+      for (const [x0, y0, x1, y1] of segs) {
+        const ax_ = cx + rx * x0 + ux * y0, az_ = cz + rz * x0 + uz * y0;
+        const bx_ = cx + rx * x1 + ux * y1, bz_ = cz + rz * x1 + uz * y1;
+        const L = Math.hypot(bx_ - ax_, bz_ - az_) || 1;
+        const nx = (-(bz_ - az_) / L) * hwM, nz = ((bx_ - ax_) / L) * hwM;
+        const o0 = (ax_ - a.x) * px + (az_ - a.z) * pz, o1 = (bx_ - a.x) * px + (bz_ - a.z) * pz;
+        flat.quad(
+          [ax_ + nx, yAt(ax_ + nx, az_ + nz, t, o0), az_ + nz],
+          [ax_ - nx, yAt(ax_ - nx, az_ - nz, t, o0), az_ - nz],
+          [bx_ - nx, yAt(bx_ - nx, bz_ - nz, t, o1), bz_ - nz],
+          [bx_ + nx, yAt(bx_ + nx, bz_ + nz, t, o1), bz_ + nz],
+          [0, 1, 0], ZERO_UV, col
+        );
+      }
+    };
+    // marks every `every` m along the street (the same projection), kept
+    // `keep` m clear of the paint's ends
+    const marksAlong = (every, keep, fn) => {
+      for (let s = from - every; s < till; s += every) {
+        const k = Math.floor((proj + s * sgn) / every);
+        const sm = sgn > 0 ? k * every - proj : proj - k * every;
+        if (sm >= from + keep && sm <= till - keep) fn(sm);
+      }
+    };
+    // A BIKE LANE: the solid white line at the traffic lanes' edge, and the
+    // bicycle with the diamond over it (Ontario's reserved-lane marking),
+    // upright to a rider coming up the lane (`dir` its travel).
+    const bikeLane = (B) => {
+      if (!B) return;
+      const [lineOff, edgeOff, dir] = B;
+      solid(lineOff, WHITE);
+      const mid = (lineOff + edgeOff) / 2;
+      marksAlong(60, 4, (sm) => markAt(sm - 1.2, mid, dir, BIKE_MARK, 0.055, WHITE));
+    };
+
+    if (S1) {
+      // A ONE-WAY ARTERIAL (a divided road's carriageway, or a one-way
+      // street): broken white lines between its lanes, and its bike lane
+      const [lo, hi, n] = S1;
+      const lw = (hi - lo) / n;
+      if (n >= 2 && lw > 2.7) for (let k = 1; k < n; k++) broken(lo + k * lw, WHITE);
+      bikeLane(bikeP);
+      bikeLane(bikeM);
+      return;
+    }
+    if (e.cls === 'hwy' || e.oneway) return;
+    if (T2) {
+      // A MULTI-LANE TWO-WAY ARTERIAL: a double yellow down the middle (two
+      // solid lines), or the two-way left-turn lane (a solid yellow line on
+      // each side of it, a broken one inside, and the pairs of opposed left
+      // arrows), broken white between the lanes each way, the bike lanes.
+      const { m, c0, w, nP, nM } = T2;
+      if (T2.twl) {
+        for (const sd of [1, -1]) {
+          solid(m + sd * (c0 - 0.06), YELLOW);
+          broken(m + sd * (c0 - 0.34), YELLOW);
+        }
+        marksAlong(45, 6, (sm) => {
+          markAt(sm - 3.2, m, 1, TWLTL_ARROW, 0.075, WHITE);
+          markAt(sm + 3.2, m, -1, TWLTL_ARROW, 0.075, WHITE);
+        });
+      } else {
+        solid(m + 0.12, YELLOW);
+        solid(m - 0.12, YELLOW);
+      }
+      for (let k = 1; k < nP; k++) broken(m + c0 + k * w, WHITE);
+      for (let k = 1; k < nM; k++) broken(m - c0 - k * w, WHITE);
+      bikeLane(bikeP);
+      bikeLane(bikeM);
+      return;
+    }
+    // a two-way arterial of one lane a way: its bike lanes clear of the cars
+    // (traffic drives at 0.48 hw), then the broken yellow centre
+    bikeLane(bikeP);
+    bikeLane(bikeM);
+
     // Centre line. A motorway carriageway is one-way and has no centre line;
     // everything else is two-way here, so it gets a broken yellow one.
-    if (e.cls === 'hwy' || e.oneway) return;
     const DASH = 3, GAP = 6;
     // Phase the dashes off the edge's own start so they stay evenly spaced
     // rather than restarting at each junction.
@@ -7054,6 +7275,7 @@ float frLine(float o, float fw, float c, float w) {
     // count that can put a bright band down the middle and grime at both kerbs;
     // four looked no better and cost 40 % more road triangles.
     const across = Math.max(e.gravel ? 2 : hw > 4.5 ? 3 : 1, Math.round((hw * 2) / 8));
+    const AS = artStrips(this.city, e, ei);
     /**
      * Traffic polishes the middle of a carriageway and grime collects at its
      * edges. Without it the asphalt is one flat value from kerb to kerb --
@@ -7102,10 +7324,13 @@ float frLine(float o, float fw, float c, float w) {
       // meaningfully differ across one carriageway's width.
       const mx = lerp(a.x, b.x, (t0 + t1) / 2), mz = lerp(a.z, b.z, (t0 + t1) / 2);
       if (ei != null && this.city.roadCoveredAt(mx, mz, ei)) continue;
-      for (let k = 0; k < across; k++) {
-        const o0 = hw - (hw * 2 * k) / across;
-        const o1 = hw - (hw * 2 * (k + 1)) / across;
-        const u0 = (hw - o0) / ROAD_TILE, u1 = (hw - o1) / ROAD_TILE;
+      for (let k = 0; k < (AS ? AS.length : across); k++) {
+        // (an arterial: one cell per lane strip, artStrips, U between the tracks)
+        const As = AS ? AS[AS.length - 1 - k] : null;
+        const o0 = As ? As[1] : hw - (hw * 2 * k) / across;
+        const o1 = As ? As[0] : hw - (hw * 2 * (k + 1)) / across;
+        const uOf = As ? (o) => As[2] + 0.31 + (0.38 * (o0 - o)) / Math.max(0.01, o0 - o1) : (o) => (hw - o) / ROAD_TILE;
+        const u0 = uOf(o0), u1 = uOf(o1);
         const P = (t, o) => (MA && t <= 0 ? [a.x + MA[0] * o, a.z + MA[1] * o]
           : MB && t >= 1 ? [b.x + MB[0] * o, b.z + MB[1] * o]
             : [lerp(a.x, b.x, t) + px * o, lerp(a.z, b.z, t) + pz * o]);
@@ -7132,7 +7357,7 @@ float frLine(float o, float fw, float c, float w) {
             if (cell.length >= 3) {
               const vi = cell.map(([t, o]) => {
                 const [x, z] = P(t, o), w = wear(o);
-                return road.vert(x, yAt(x, z, t, ro, o), z, 0, 1, 0, (hw - o) / ROAD_TILE, v0 + ((t - t0) * e.len) / ROAD_TILE, w[0], w[1], w[2]);
+                return road.vert(x, yAt(x, z, t, ro, o), z, 0, 1, 0, uOf(o), v0 + ((t - t0) * e.len) / ROAD_TILE, w[0], w[1], w[2]);
               });
               if (e.gravel) surfMark(road, vi[0], (i) => gravelSurf(((road.P[i * 3] - a.x) * px + (road.P[i * 3 + 2] - a.z) * pz) / hw));
               for (let i = 1; i + 1 < vi.length; i++) {
@@ -7169,7 +7394,7 @@ float frLine(float o, float fw, float c, float w) {
     if (e.rural && lod === 1) this.meshDitch(road, flat, e, a, b, ei, MA, MB);
     this.meshTrenchWalls(flat, e, a, b, ei);
     if (lod === 1 && walkWidthOf(e) > 0) {
-      const sw = walkWidthOf(e);
+      const sw0 = walkWidthOf(e);
       const lawnAt = (x, z) => {
         const g = this.groundTint(x, z, G.terrainHeight(x, z));
         return [g[0] * GROUND_MEAN, g[1] * GROUND_MEAN, g[2] * GROUND_MEAN];
@@ -7187,6 +7412,19 @@ float frLine(float o, float fw, float c, float w) {
         const ox = px * sg, oz = pz * sg;
         // this side's sidewalk (citygen `swk`; 3 = not known: the old pavement)
         const swk = e.swk === undefined ? 3 : sg > 0 ? e.swk & 3 : (e.swk >> 2) & 3;
+        // AUTO KW, A DIVIDED ARTERIAL'S MEDIAN (arterial.js medianGaps): where
+        // the opposing carriageway is closer than two pavements, this side's
+        // strip is the median's half, kerb to midline, at the pavement's
+        // height -- what roadLift has always reported there -- concrete when
+        // it is under MEDIAN_CONC across (the raised medians of Hespeler Rd,
+        // King St N, University Ave E), lawn wider. Before, both strips were
+        // dropped (they lay over the other carriageway) and the median was
+        // the bare ground 30 cm under the road, the cars over it at 52.
+        let sw = sw0, median = 0;
+        if (e.oneway && (e.cls === 'art' || e.cls === 'st') && !e.rural && ei != null) {
+          const g = medianGaps(this.city, e)[sg > 0 ? 0 : 1];
+          if (g < 2 * sw0 && g >= 0.4) { sw = g / 2; median = g < MEDIAN_CONC ? 1 : 2; }
+        }
         // Pavement pieces are chords too. At a fixed 24 m on a hill the slab
         // was drawn up to 18 cm above the height roadLift gives (terrain +
         // WALK_LIFT), and everyone walking on it sank into it -- the road
@@ -7291,7 +7529,8 @@ float frLine(float o, float fw, float c, float w) {
           // mouth, which is what made the approach look like a building site.
           // It stops at the retaining wall instead.
           if (this.inCut((q[0][0] + q[2][0]) / 2, (q[0][2] + q[2][2]) / 2)) continue;
-          if (swk === 3 || ap) walk.quad(q[0], q[1], q[2], q[3], [0, 1, 0], [0, v0, wu, v0, wu, v1, 0, v1], wc);
+          if (median === 1) walk.quad(q[0], q[1], q[2], q[3], [0, 1, 0], [0, v0, wu, v0, wu, v1, 0, v1], MEDIAN_TINT);
+          else if (swk === 3 || ap) walk.quad(q[0], q[1], q[2], q[3], [0, 1, 0], [0, v0, wu, v0, wu, v1, 0, v1], wc);
           else {
             // AUTO KW: the sidewalk as OSM maps it (build_sidewalks.py): none
             // (lawn to the kerb), 1.5 m against the kerb with lawn behind, or
@@ -7312,7 +7551,7 @@ float frLine(float o, float fw, float c, float w) {
               surfMark(road, q0, () => SURF_GRASS);
             };
             const fw = Math.min(1, 1.5 / sw);   // the walk: 1.5 m
-            if (swk === 0) band(0, 1, true);
+            if (swk === 0 || median) band(0, 1, true);
             else if (swk === 1) { band(0, fw, false); band(fw, 1, true); }
             else { band(0, 1 - fw, true); band(1 - fw, 1, false); }
           }
@@ -7352,7 +7591,8 @@ float frLine(float o, float fw, float c, float w) {
               [i0x, cy0 + WALK_Y, i0z], [i1x, cy1 + WALK_Y, i1z], [-ox, 0, -oz],
               [0, 0, 1, 0, 1, 1, 0, 1], [ccLo, ccLo, cc, cc]);
           }
-          this.meshVerge(flat, o0x, o0z, o1x, o1z, ox, oz);
+          // (a median's half meets the other's at the midline: no verge)
+          if (!median) this.meshVerge(flat, o0x, o0z, o1x, o1z, ox, oz);
         }
       }
     }
@@ -10463,7 +10703,7 @@ float frLine(float o, float fw, float c, float w) {
         if (!f || f.elev || f.prof || f.rural) continue;
         if (Math.abs(f.dx * ux + f.dz * uz) < 0.985) continue;
         const fa = city.nodes[f.a], fb = city.nodes[f.b];
-        const h = hydroEdge(f, (fa.x + fb.x) / 2, (fa.z + fb.z) / 2);
+        const h = hydroEdge(f, (fa.x + fb.x) / 2, (fa.z + fb.z) / 2, city);
         // the same poles on the same side (both are taken against the
         // canonical direction, so a reversed edge agrees)
         // (and its poles on the same line: a span strung across to another
@@ -10527,6 +10767,25 @@ float frLine(float o, float fw, float c, float w) {
   _eraLamp(flat, glow, x, gy, z, ax, az, era) {
     logSolid('lamp' + era, x, z, 0.3);
     const rot = Math.atan2(-ax, az), BLACK = [0.07, 0.07, 0.08], LIT = [1.0, 0.94, 0.78];
+    if (era === 4) {
+      // AUTO KW: AN ARTERIAL'S LIGHT STANDARD (no hydro line to hang it
+      // from): a galvanised steel pole ~10 m on its anchor-bolt base, a long
+      // davit arm rising out over the lanes and a flat LED cobra head -- the
+      // Region's standard down Fischer-Hallman, Ira Needles, Homer Watson
+      const GALV = [0.66, 0.67, 0.66], GALV2 = [0.58, 0.59, 0.58];
+      flat.box(x, gy, z, 0.42, 0.22, 0.42, rot, [0.6, 0.6, 0.58]);
+      flat.prism(x, gy + 0.2, z, 0.13, 0.5, 8, GALV2);
+      flat.prism(x, gy + 0.7, z, 0.11, 4.6, 8, GALV);
+      flat.prism(x, gy + 5.3, z, 0.085, 4.6, 8, GALV);
+      // the davit: out and up, then level, the head at its end
+      flat.box(x + ax * 0.45, gy + 9.95, z + az * 0.45, 0.09, 0.09, 0.9, rot, GALV);
+      flat.box(x + ax * 1.5, gy + 10.15, z + az * 1.5, 0.08, 0.08, 1.25, rot, GALV);
+      flat.box(x + ax * 2.55, gy + 10.15, z + az * 2.55, 0.08, 0.08, 0.9, rot, GALV);
+      flat.box(x + ax * 3.15, gy + 10.0, z + az * 3.15, 0.36, 0.13, 0.8, rot, [0.5, 0.51, 0.52]);
+      glow.box(x + ax * 3.15, gy + 9.93, z + az * 3.15, 0.28, 0.03, 0.62, rot, [1.0, 0.97, 0.9]);
+      this.city.addObstacle(this._ck, x, z, 0.3);
+      return;
+    }
     if (era === 2) {
       flat.prism(x, gy, z, 0.15, 0.7, 8, BLACK);
       flat.prism(x, gy + 0.7, z, 0.075, 3.3, 8, BLACK);
@@ -10574,8 +10833,23 @@ float frLine(float o, float fw, float c, float w) {
    */
   hydroPoleNear(e, x, z, r) {
     const a = this.city.nodes[e.a], b = this.city.nodes[e.b];
-    const hydro = hydroEdge(e, (a.x + b.x) / 2, (a.z + b.z) / 2);
-    if (!hydro || e.rural) return false;
+    const hydro = hydroEdge(e, (a.x + b.x) / 2, (a.z + b.z) / 2, this.city);
+    if (e.rural) return false;
+    if (!hydro) {
+      // AUTO KW: an arterial with no line has its light standards on
+      // _artLights' lattice instead: the same answer for them
+      if (e.cls !== 'art' || e.elev || e.prof) return false;
+      let ux = e.dx, uz = e.dz;
+      const flip = ux < 0 || (ux === 0 && uz < 0);
+      if (flip) { ux = -ux; uz = -uz; }
+      const s = x * ux + z * uz, k = Math.round(s / ART_LAMP);
+      if (Math.abs(s - k * ART_LAMP) >= r) return false;
+      let sg = (k & 1) ? 1 : -1;
+      if (flip) sg = -sg;
+      const mg = e.oneway ? medianGaps(this.city, e) : null;
+      if (mg) { if (mg[0] < 30) sg = -1; else if (mg[1] < 30) sg = 1; }
+      return ((x - a.x) * -e.dz + (z - a.z) * e.dx) * sg > 0;
+    }
     let ux = e.dx, uz = e.dz;
     if (ux < 0 || (ux === 0 && uz < 0)) { ux = -ux; uz = -uz; }
     const sd = hydro & 4 ? 1 : -1;
@@ -10667,10 +10941,146 @@ float frLine(float o, float fw, float c, float w) {
     }
   }
 
+  /**
+   * AUTO KW: GRT'S BUS STOPS (data/grtstops.json, tools/kw/build_grtstops.py:
+   * OSM's highway=bus_stop nodes, ~2,400 in the square) in chunk (cx, cz).
+   * Each stands at the kerb of its nearest street, on the side OSM's point
+   * is: the stop marker on a galvanised post at the kerb (GRT's flag -- the
+   * blue band, orange for a local stop, green for an iXpress one, white
+   * below), and where OSM says shelter=yes the glass shelter behind the
+   * walk, its back to the property line, a bench in it. Into the chunk's flat
+   * builder: no draws. The post and the shelter are solid (addObstacle).
+   */
+  _grtStops(flat, cx, cz) {
+    const S = this.city.grtStops;
+    if (!S || !S.s) return;
+    if (!S.byChunk) {
+      S.byChunk = new Map();
+      for (const r of S.s) {
+        const k = Math.floor(r[0] / CHUNK) * 100003 + Math.floor(r[1] / CHUNK);
+        if (!S.byChunk.has(k)) S.byChunk.set(k, []);
+        S.byChunk.get(k).push(r);
+      }
+    }
+    const list = S.byChunk.get(cx * 100003 + cz);
+    if (!list) return;
+    const city = this.city, E = city.edges, N = city.nodes;
+    const GS = cityStats.grtStops || (cityStats.grtStops = { stops: 0, shelters: 0, skipped: 0 });
+    for (const [x0, z0, fl] of list) {
+      let best = null, bd = 25;
+      for (const ei of city.roadsNear(x0, z0, 25, false)) {
+        const e = E[ei];
+        if (e.cls === 'hwy' || e.cls === 'ramp' || e.elev || e.tunnel || e.rural) continue;
+        const a = N[e.a], b = N[e.b], vx = b.x - a.x, vz = b.z - a.z, l2 = vx * vx + vz * vz || 1;
+        const t = Math.max(0, Math.min(1, ((x0 - a.x) * vx + (z0 - a.z) * vz) / l2));
+        if (t <= 0 || t >= 1) continue;
+        const qx = a.x + vx * t, qz = a.z + vz * t, d = Math.hypot(x0 - qx, z0 - qz) - e.hw;
+        if (d < bd) { bd = d; best = { e, qx, qz }; }
+      }
+      if (!best) { GS.skipped++; continue; }
+      const { e, qx, qz } = best, dd = Math.hypot(x0 - qx, z0 - qz);
+      if (dd < 0.5) { GS.skipped++; continue; }
+      const nx = (x0 - qx) / dd, nz = (z0 - qz) / dd;   // out from the street
+      const ux = -nz, uz = nx;                           // along the kerb
+      const sw = walkWidthOf(e) || 2.6;
+      // the post: just behind the kerb
+      const px = qx + nx * (e.hw + 0.55), pz = qz + nz * (e.hw + 0.55);
+      if (!G.isBuildable(px, pz) || city.onRoad(px, pz, 0.3, false) || this._onApron(px, pz, 0.4)) { GS.skipped++; continue; }
+      const gy = G.terrainHeight(px, pz) + WALK_Y;
+      const rot = Math.atan2(-nx, nz);
+      const GALV = [0.62, 0.63, 0.62];
+      flat.prism(px, gy - 0.1, pz, 0.045, 3.0, 6, GALV);
+      // the flag, off the post toward the street's traffic, square to the kerb
+      const fx = px - nx * 0.28, fz = pz - nz * 0.28;
+      const band = (y0, h, col) => flat.box(fx, gy + y0, fz, 0.025, h, 0.46, rot, col);
+      band(2.62, 0.22, [0.08, 0.2, 0.5]);                                     // the GRT band
+      band(2.12, 0.5, fl & 4 ? [0.18, 0.56, 0.24] : [0.95, 0.47, 0.08]);      // local / iXpress
+      band(1.94, 0.18, [0.93, 0.93, 0.9]);                                   // the stop number's strip
+      flat.box(fx, gy + 2.46, fz, 0.03, 0.12, 0.26, rot, [0.95, 0.95, 0.93]); // (the logo, white)
+      city.addObstacle(this._ck, px, pz, 0.12);
+      GS.stops++;
+      if (!(fl & 1)) continue;
+      // THE SHELTER, behind the walk: 3.4 m along the kerb, 1.5 m deep
+      const so = e.hw + sw + 0.95;
+      const sx = qx + nx * so + ux * 1.6, sz = qz + nz * so + uz * 1.6;
+      let clear = G.isBuildable(sx, sz);
+      for (const [a1, b1] of [[-1.8, -0.8], [1.8, -0.8], [-1.8, 0.8], [1.8, 0.8], [0, 0]]) {
+        const x = sx + ux * a1 + nx * b1, z = sz + uz * a1 + nz * b1;
+        if (!clear || city.onRoad(x, z, 0.3, false) || this._onApron(x, z, 0.3) || this.inBuilding(x, z, 0.6)) { clear = false; break; }
+      }
+      if (!clear) continue;
+      const sy = G.terrainHeight(sx, sz) + WALK_Y;
+      const FRAME = [0.16, 0.17, 0.18], GLASS = [0.5, 0.58, 0.62], ROOF = [0.22, 0.24, 0.26];
+      const at = (a1, b1) => [sx + ux * a1 + nx * b1, sz + uz * a1 + nz * b1];
+      flat.box(sx, sy - 0.05, sz, 3.6, 0.1, 1.7, rot + Math.PI / 2, [0.6, 0.6, 0.57]);   // pad
+      for (const [a1, b1] of [[-1.7, -0.7], [1.7, -0.7], [-1.7, 0.7], [1.7, 0.7]]) {
+        const [x, z] = at(a1, b1);
+        flat.box(x, sy, z, 0.07, 2.35, 0.07, rot, FRAME);
+      }
+      // glass: the back (toward the property), the two ends; open to the street
+      { const [x, z] = at(0, 0.7); flat.box(x, sy + 0.15, z, 0.03, 2.0, 3.36, rot, GLASS); }
+      for (const a1 of [-1.7, 1.7]) { const [x, z] = at(a1, 0.05); flat.box(x, sy + 0.15, z, 1.2, 2.0, 0.03, rot, GLASS); }
+      // the roof, and its GRT fascia toward the street
+      flat.box(sx, sy + 2.35, sz, 1.8, 0.12, 3.7, rot, ROOF);
+      { const [x, z] = at(0, -0.92); flat.box(x, sy + 2.2, z, 0.03, 0.2, 3.6, rot, [0.08, 0.2, 0.5]); }
+      // the bench along the back
+      { const [x, z] = at(0, 0.42); flat.box(x, sy + 0.42, z, 0.36, 0.06, 2.2, rot, [0.3, 0.3, 0.31]); }
+      for (const [a1, b1] of [[-1.7, 0], [0, 0.7], [1.7, 0]]) {
+        const [x, z] = at(a1 * 0.9, b1);
+        city.addObstacle(this._ck, x, z, 0.5);
+      }
+      GS.shelters++;
+    }
+  }
+
+  /**
+   * AUTO KW: AN ARTERIAL'S LIGHT STANDARDS (_eraLamp 4) where it has no
+   * hydro line: on a lattice every ART_LAMP m of the street's canonical
+   * direction (as hydroLine's poles, so OSM's short edges -- an arterial is
+   * split at every crosswalk and driveway, and most of its edges had no slot
+   * at all -- don't matter), staggered side to side on a two-way road, all
+   * on the outer kerb of a divided road's carriageway. Each stands where its
+   * side's sidewalk leaves room, off every carriageway and driveway; solid.
+   */
+  _artLights(flat, glow, e, ei, a, b, px, pz, lamps, onCorner, inPit) {
+    const city = this.city;
+    let ux = e.dx, uz = e.dz;
+    const flip = ux < 0 || (ux === 0 && uz < 0);
+    if (flip) { ux = -ux; uz = -uz; }
+    const mg = e.oneway ? medianGaps(city, e) : null;
+    const s0 = a.x * ux + a.z * uz, s1 = b.x * ux + b.z * uz;
+    const lo = Math.min(s0, s1), hi = Math.max(s0, s1);
+    for (let k = Math.ceil((lo + 4) / ART_LAMP); k * ART_LAMP <= hi - 4; k++) {
+      const t = (k * ART_LAMP - s0) / (s1 - s0);
+      if (!(t > 0 && t < 1)) continue;
+      // the side: a divided carriageway's outer kerb, else alternating by k
+      let sg = (k & 1) ? 1 : -1;
+      if (flip) sg = -sg;   // (+p of the canonical direction, as the edge has it)
+      if (mg) { if (mg[0] < 30) sg = -1; else if (mg[1] < 30) sg = 1; }
+      if (onCorner(ei, t, sg)) continue;
+      const swk = e.swk === undefined ? 3 : sg > 0 ? e.swk & 3 : (e.swk >> 2) & 3;
+      const off = e.hw + (swk === 2 ? 0.55 : swk === 1 ? 2.05 : swk === 0 ? 1.3 : 1.4);
+      const x = lerp(a.x, b.x, t), z = lerp(a.z, b.z, t);
+      const lx = x + px * sg * off, lz = z + pz * sg * off;
+      if (!G.isBuildable(lx, lz) || this.inDrawnLake(lx, lz) || city.onRoad(lx, lz, 0.6) || this._onApron(lx, lz, 0.5)) continue;
+      if (inPit(lx, lz) || city.jumpClear(lx, lz)) continue;
+      let near = false;
+      for (let q = 0; q < lamps.length; q += 2) if ((lamps[q] - lx) ** 2 + (lamps[q + 1] - lz) ** 2 < 144) { near = true; break; }
+      if (near) continue;
+      lamps.push(lx, lz);
+      const f0 = flat.ni;
+      this._eraLamp(flat, glow, lx, G.terrainHeight(lx, lz) + WALK_Y, lz, -px * sg, -pz * sg, 4);
+      this._fell.push(lx, lz, f0, flat.ni);
+      const AL = cityStats.artLights || (cityStats.artLights = { n: 0 });
+      AL.n++;
+    }
+  }
+
   *meshProps(flat, glow, ch, cx, cz) {
     const city = this.city;
     const own = (x, z) => Math.floor(x / CHUNK) === cx && Math.floor(z / CHUNK) === cz;
     this._postBoxes(flat, cx, cz);
+    this._grtStops(flat, cx, cz);
     const poleCol = [0.28, 0.3, 0.32];
     // NOTHING IS PLANTED IN A PORTAL PIT. The carve digs hw + 7.6 m either
     // side of a cutting, and a road carried over it on a lid keeps its grade
@@ -10716,13 +11126,26 @@ float frLine(float o, float fw, float c, float w) {
       // carry their distribution lines on poles down one side, the street
       // light hung from the pole on a davit arm -- the most Ontario thing on a
       // street, and Seattle's steel masts are not it. See hydroLine.
-      const hydro = hydroEdge(e, mx, mz), era = streetEra(mx, mz);
+      const hydro = hydroEdge(e, mx, mz, city), era = streetEra(mx, mz);
+      // an arterial with no hydro line is lit by its own standards on a
+      // lattice down the street (artLights), not in these slots
+      const artLit = e.cls === 'art' && !hydro;
+      const lampP = artLit ? 0 : 0.42;
       if (hydro) this.hydroLine(flat, glow, e, a, b, px, pz, hydro, onCorner, ei, inPit);
+      else if (artLit) this._artLights(flat, glow, e, ei, a, b, px, pz, lamps, onCorner, inPit);
       for (let i = 1; i <= count; i++) {
         const t = i / (count + 1);
         const x = lerp(a.x, b.x, t), z = lerp(a.z, b.z, t);
         const h = hash2(Math.round(x), Math.round(z));
-        const sg = i % 2 === 0 ? 1 : -1;
+        let sg = i % 2 === 0 ? 1 : -1;
+        // AUTO KW: an arterial's slots alternate by the edge too (most edges
+        // are under 60 m: one slot, always the -p side -- a divided road's
+        // median side, where nothing stands), and a divided carriageway's
+        // are all on its outer kerb (arterial.js medianGaps)
+        if (e.cls === 'art') {
+          const mg = medianGaps(city, e);
+          sg = mg[0] < 30 ? -1 : mg[1] < 30 ? 1 : (i + ei) % 2 === 0 ? 1 : -1;
+        }
         const ox = x + px * sg * (e.hw + 1.4);
         const oz = z + pz * sg * (e.hw + 1.4);
         if (!G.isBuildable(ox, oz)) continue;
@@ -10741,7 +11164,7 @@ float frLine(float o, float fw, float c, float w) {
         const f0 = flat.ni;
         if (h < 0.42 && hydro) {
           // the hydro poles carry this street's lights
-        } else if (h < 0.42) {
+        } else if (h < lampP) {
           // AUTO KW: the street light of the street's era (streetEra), in
           // the boulevard where there is one, else behind a kerb-side walk
           // or just off the kerb on a street with none (citygen `swk`)
@@ -10755,7 +11178,7 @@ float frLine(float o, float fw, float c, float w) {
           for (let q = 0; q < lamps.length; q += 2) if ((lamps[q] - lx) ** 2 + (lamps[q + 1] - lz) ** 2 < 324) { near = true; break; }
           if (near) continue;
           lamps.push(lx, lz);
-          this._eraLamp(flat, glow, lx, G.terrainHeight(lx, lz) + WALK_Y, lz, -px * sg, -pz * sg, e.cls === 'ramp' ? 1 : era);
+          this._eraLamp(flat, glow, lx, G.terrainHeight(lx, lz) + WALK_Y, lz, -px * sg, -pz * sg, e.cls === 'ramp' ? 1 : e.cls === 'art' ? 4 : era);
           this._fell.push(lx, lz, f0, flat.ni);
         } else if (h < 0.84) {
           // The street tree's old slot, left empty on purpose: trees.js plants
@@ -10775,12 +11198,9 @@ float frLine(float o, float fw, float c, float w) {
           for (const s2 of [-0.8, 0.8]) {
             flat.box(ox + Math.sin(along) * s2, gy, oz + Math.cos(along) * s2, 0.1, 0.42, 0.5, along, [0.25, 0.26, 0.27]);
           }
-        } else if (e.cls === 'art') {
-          flat.box(ox, gy, oz, 3.4, 0.1, 1.5, along, [0.4, 0.42, 0.45]);
-          flat.box(ox - px * sg * 0.62, gy, oz - pz * sg * 0.62, 3.4, 2.5, 0.08, along, [0.62, 0.74, 0.8]);
-          flat.box(ox, gy + 2.5, oz, 3.7, 0.16, 1.8, along, [0.3, 0.32, 0.35]);
-          glow.box(ox + px * sg * 0.5, gy + 1.7, oz + pz * sg * 0.5, 0.9, 1.2, 0.06, along, [0.8, 0.86, 0.95]);
         }
+        // (an arterial's old generic bus shelter, here, is gone: GRT's real
+        // stops and shelters are OSM's, _grtStops)
       }
       // --- small clutter ----------------------------------------------------
       //

@@ -2108,6 +2108,13 @@ export function* cityGenerator(md, cache = {}) {
     const S = md.sidewalks;
     for (let i = 0; i < R.edgeCount; i++) edges[i].swk = (S[i >> 1] >> ((i & 1) * 4)) & 15;
   }
+  // ...and its lanes across, from OSM (mapdata decodeArtLanes): `al`, read
+  // by arterial.js (byte 0 lanes each way / left-turn lane / matched, byte 1
+  // the bike lanes); only matched art / st edges carry one
+  if (md.artlanes) {
+    const A = md.artlanes;
+    for (let i = 0; i < R.edgeCount; i++) if (A[i * 2] & 128) edges[i].al = A[i * 2] | (A[i * 2 + 1] << 8);
+  }
   const g = { nodes, edges };
   // One bore, two decks: SR-99's twin OSM ways onto a shared alignment.
   const stack = stackBores(g);
