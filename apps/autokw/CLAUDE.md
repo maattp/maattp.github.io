@@ -1135,7 +1135,13 @@ file and a guide disagree, this file wins.
 - **KW fun things: the Aud, Oktoberfest, Big Splash** (docs/fun-*.jpg;
   `node tools/kw/funprobe.mjs <dir> [aud,fest,parade,splash]` plays each end
   to end through real CDP key and mouse input and checks build-on-entry /
-  free-on-exit, holds and exceptions). **Interiors are their own
+  free-on-exit, holds and exceptions). **The probe waits on game state, never
+  on wall clock** (a held W is released by the player's real distance to the
+  next landing; the ride is checked by distance down the flume): under
+  SwiftShader (no AUTO_GPU, ~5 fps, dt clamped) game time runs at a third of
+  real time, and the first version's timed holds stopped on the ground and
+  checked the ride 0.7 m in. `FUN_THROTTLE=4` slows the CPU to prove it.
+  **Interiors are their own
   THREE.Scene**, built on entry, rendered by the game's renderer while the
   city draws NOTHING (main.js `interiorUp()` returns before draw in the
   paused branch), every geometry/material/texture disposed on exit;

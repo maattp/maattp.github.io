@@ -90,6 +90,8 @@ async function main() {
       await send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 3, mobile: true, screenWidth: W, screenHeight: H, screenOrientation: { type: 'landscapePrimary', angle: 90 } });
       await send('Emulation.setUserAgentOverride', { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1', platform: 'iPhone' });
     }
+    // FUN_THROTTLE=4: the CPU slowed, to prove the checks hold on a loaded machine
+    if (process.env.FUN_THROTTLE) await send('Emulation.setCPUThrottlingRate', { rate: +process.env.FUN_THROTTLE });
     await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.__noAutoQuality = true;' });
     await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/autokw/` });
     if (!(await until('!!(window.__dbg && window.__dbg.world && window.__dbg.applyQuality)', 200000, 500))) throw new Error('never booted: ' + errs.slice(0, 3).join(' | '));
@@ -235,13 +237,28 @@ async function main() {
         await standAt(st.foot.x, st.foot.z, st.legs[0].h);
         // walk up: toward each waypoint (landings, the deck) with W held, the camera turned to it as a
         // player would; closed loop -- each leg re-aims from where you actually are
+        // Closed loop on the player's real position, not on time: W is held, the camera re-aimed at the
+        // waypoint every poll, and W let go on arrival (or when the distance starts to grow). A held key
+        // covers as much ground as the frame rate allows, so a loaded or throttled machine walks slower,
+        // and timing the hold from 5 m/s (the first version) stopped short of the landings there.
+        const aim = (wx, wz) => ev(`(() => { const p = window.__dbg.player, dx = ${wx} - p.x, dz = ${wz} - p.z;
+          p.camYaw = Math.atan2(dx, dz) + Math.PI; return [Math.hypot(dx, dz), +p.y.toFixed(2)]; })()`);
         for (const [wx, wz] of st.pts) {
-          for (let k = 0; k < 3; k++) {
-            const r = await ev(`(() => { const p = window.__dbg.player, dx = ${wx} - p.x, dz = ${wz} - p.z, d = Math.hypot(dx, dz);
-              const h = Math.atan2(dx, dz); p.camYaw = h + Math.PI; return [d, +p.y.toFixed(2)]; })()`);
-            if (r[0] < 0.35) break;
-            await hold(['KeyW'], Math.max(40, r[0] / 5 * 1000 - 60));
-            await sleep(250);
+          for (let k = 0; k < 4; k++) {
+            let r = await aim(wx, wz);
+            if (process.env.FUN_TRACE) console.log('    leg to', Math.round(wx), Math.round(wz), 'dist', r[0].toFixed(2), 'y', r[1]);
+            if (r[0] < 0.45) break;
+            let best = r[0];
+            await down('KeyW');
+            const t0 = Date.now();
+            while (Date.now() - t0 < 20000) {
+              await sleep(30);
+              r = await aim(wx, wz);
+              if (r[0] < 0.45 || r[0] > best + 0.3) break;
+              best = Math.min(best, r[0]);
+            }
+            await up('KeyW');
+            await sleep(300);
           }
         }
         const top = await ev('(() => { const p = window.__dbg.player, s = window.__dbg.splash; return { y: +p.position.y.toFixed(2), top: +s.topY.toFixed(2), on: s.onTop(p) }; })()');
@@ -249,15 +266,28 @@ async function main() {
         if (!top.on) { await ev('(() => { const s = window.__dbg.splash, p = window.__dbg.player; p.respawn(s.tower.x, s.tower.z); })()'); await sleep(800); console.log('  (placed on the platform to go on)'); }
         check(top.on, 'walked up the stairs to the top platform');
         await shot('splash-top');
+        // turn to face the green slide's mouth, as a player would before ENTER (W held until faced)
+        const g = await ev('(() => { const s = window.__dbg.splash, p = s.paths.find((q) => q.sl.name === "green") || s.paths[0]; return p.F[0].p; })()');
+        await down('KeyW');
+        for (let i = 0; i < 40; i++) {
+          const dh = await ev(`(() => { const p = window.__dbg.player, h = Math.atan2(${g[0]} - p.x, ${g[2]} - p.z); p.camYaw = h + Math.PI;
+            return Math.abs(Math.atan2(Math.sin(h - p.heading), Math.cos(h - p.heading))); })()`);
+          if (dh < 0.15) break;
+          await sleep(25);
+        }
+        await up('KeyW');
+        await sleep(400);
         await tap('KeyE');
         check(await until('window.__dbg.splash.riding', 3000), 'ENTER at the top sets off down a slide');
-        await sleep(1800); await shot('splash-ride');
+        // by distance down the flume, not wall-clock: a slow frame rate slides in slow motion
+        await until('window.__dbg.splash.ride && window.__dbg.splash.ride.s > 9', 60000, 50);
+        await shot('splash-ride');
         const mid = await ev('(() => { const s = window.__dbg.splash; return { v: +s.ride.v.toFixed(1), s: +s.ride.s.toFixed(1), L: +s.ride.pa.L.toFixed(1), slide: s.ride.pa.sl.name, bank: +s.ride.bank.toFixed(2) }; })()');
         console.log('  mid-ride:', JSON.stringify(mid));
         check(mid.v > 3, 'sliding at speed');
-        check(await until('window.__dbg.splash.ride && window.__dbg.splash.ride.phase === "splash"', 30000, 100), 'splashes into the pool');
+        check(await until('window.__dbg.splash.ride && window.__dbg.splash.ride.phase === "splash"', 120000, 100), 'splashes into the pool');
         await sleep(300); await shot('splash-splash');
-        check(await until('!window.__dbg.splash.riding', 8000), 'out of the pool on foot');
+        check(await until('!window.__dbg.splash.riding', 30000), 'out of the pool on foot');
         const end = await ev('(() => { const s = window.__dbg.splash; return { best: s.best, last: s.last, splash: s.lastSplash }; })()');
         console.log('  run:', JSON.stringify(end));
         check((await ev('window.__dbg.game.holds.size')) === 0, 'no hold left behind');
