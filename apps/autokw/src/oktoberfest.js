@@ -405,7 +405,7 @@ export class Oktoberfest {
     // Onkel Hans by the band, waving at the room
     onkelHans(B, STAGE_X + 2.6, STAGE_Y, 8.2, 1.15, -Math.PI / 2);
     // waitresses in dirndls with steins, in the aisles
-    for (const [wx, wz] of [[-12, -3.6], [-2, 3.6], [6, -3.6]]) {
+    for (const [wx, wz] of [[-12, 3.6], [-2, 3.6], [6, 3.6]]) {
       B.box(wx, 0, wz, 0.5, 0.95, 0.5, 0, lin('#1d4fa0')); B.box(wx, 0.5, wz, 0.52, 0.42, 0.52, 0, [0.95, 0.95, 0.95]);
       B.box(wx, 0.95, wz, 0.36, 0.5, 0.26, 0, lin('#1a1a1a')); B.box(wx, 1.2, wz, 0.38, 0.22, 0.28, 0, [0.95, 0.95, 0.95]);
       B.box(wx, 1.45, wz, 0.2, 0.24, 0.21, 0, SKIN[0]); B.box(wx, 1.62, wz, 0.23, 0.1, 0.24, 0, lin('#c89a40'));

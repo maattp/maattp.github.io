@@ -1004,6 +1004,77 @@ file and a guide disagree, this file wins.
   gate / tie / vault / Science Building ones, are `VIEWS=tools/kw/campusviews.json`). `__uwCampus.wluSigns`
   has the signs. Approximate: the hawk and scoreboard wording are generic,
   not traced; the track's curved edge is stepped at 2.5 m.
+- **KW fun things: the Aud, Oktoberfest, Big Splash** (docs/fun-*.jpg;
+  `node tools/kw/funprobe.mjs <dir> [aud,fest,parade,splash]` plays each end
+  to end through real CDP key and mouse input and checks build-on-entry /
+  free-on-exit, holds and exceptions). **Interiors are their own
+  THREE.Scene**, built on entry, rendered by the game's renderer while the
+  city draws NOTHING (main.js `interiorUp()` returns before draw in the
+  paused branch), every geometry/material/texture disposed on exit;
+  `interior.js setInterior` hides the game's HUD under them.
+  - **The Rangers at the Aud** (src/audrink.js; hockey.js `view3d`): the
+    same hockeygame.js sim drawn in the Aud's bowl -- 22 steep rows (0.58 m
+    rise / 0.85 m row) right round the ice, ~7,000 instanced fans (one draw,
+    a shader bob that jumps on a goal; 4,150 on a phone), the barrel roof on
+    arch ribs, centre-hung clock (canvas, redrawn on change), board ads, and
+    the banners over the far stands: OHL champions 1981, 1982, 2003, 2008,
+    Memorial Cups 1982 and 2003, and #1 for the fans (Stadium Journey /
+    the OHL arena guide; an unconfirmed 2026 Memorial Cup is NOT hung). A
+    broadcast camera high in the near stands leads the puck; the intro walks
+    in through a portal. The 2D canvas carries only the HUD. Short game:
+    3 x 1:20 (`periodS`); the visitors alternate London Knights (green) and
+    Guelph Storm in road whites (crimson/black; hockeygame.js `RIVALS`,
+    `setRival`). `hockey.speed` steps the sim faster for harnesses. Inside,
+    phone: 36 draws, ~91k tris (desktop 34 / 139k), built in ~10 ms.
+  - **Oktoberfest** (src/oktoberfest.js): festhallen at Concordia Club,
+    Bingemans' Marshall Hall and the Schwaben Club (kw.json named buildings;
+    the door is marched out of the box toward the nearest street). ENTER
+    walks you in (camera down the aisle, onto the stage): long tables, a
+    seated crowd swaying (schunkeln, a shader), the band, Onkel Hans
+    (`onkelHans()`), bunting, banners; one label atlas. MASSKRUGSTEMMEN on the
+    stage: left/right (A/D, drag) against a wobble that grows (`_stepContest`:
+    three sines x (18 + t) deg/s^2, kicks, an unstable lean), Up (W/Space,
+    drag up) against a sag that outgrows the lift by ~53 s; out at 24 deg or
+    1 s under the judge's line. Four rivals drop out at drawn times (last one
+    40-70 s); $20 a rival beaten, +$100 to win; best in `autokw-stein`.
+    Phone inside: 14 draws, 22k tris. **The parade** (`Parade`): the real
+    route -- Weber St from Frederick St toward Waterloo (oktoberfest.ca: the
+    2025 and 2026 parades ran up Weber to Bridgeport, NOT King St) -- found
+    by walking `Weber Street*` edges from the Frederick junction toward the
+    spawn, ~1.5 km. ENTER at its marker starts it (`begin()`; `start` is the
+    junction's position): Onkel Hans' float, a 16-piece band (instanced,
+    stepping), barrel, Miss Oktoberfest, pretzel, Bavarian house, at 1.8 m/s,
+    the crowd up to three deep on both kerbs (cheering where the column is:
+    per-instance route position `aS` vs `uS0..uS1`). Weber's edges get
+    `noTraffic` (no routing, no spawns) and their kerb slots are held in
+    `traffic.reservedSlots`; cars on it are removed out of sight. Everything
+    is disposed and Weber reopened when the tail passes the end. Phone at
+    the kerb: crowd 2,666, ~+66k tris, draws flat (the floats' ~13 draws
+    offset by the cars taken off Weber). Music: `Band`, an ORIGINAL oom-pah
+    waltz synthesised note by note (no recording; Ein Prosit / the Chicken
+    Dance deliberately not used), levelled by distance to the band.
+  - **Big Splash** (src/bigsplash.js; kwsights.js `bingemans`,
+    `splashRide()`): the tower got stairs -- three quarters of a square
+    spiral from the uphill side, every flight a SLOPED city platform and
+    every corner a landing (they never overlap in plan: `platformAt` takes
+    the highest), a bridge onto the deck (a platform); the solid tower box
+    became four post solids. The slides are open flumes now (`trough`, both
+    faces), the run-out pools raised basins past each flume's end, and the
+    wave pool moved to the uphill side (it used to sit under the green
+    slide's run-out). ENTER on the deck rides the slide you face: a
+    Catmull-Rom of the flume every 0.25 m, gravity / water friction (0.035)
+    / drag, the rider up the outside wall by atan(v^2 k / g), a rider's-eye
+    camera (C: one behind), shot into the pool at 55 % speed with a splash
+    (points + foam ring), out on foot beside it. ~48 m, ~46 km/h on the
+    green one; best top speed in `autokw-splash`. Phone at Bingemans
+    90 -> 91 draws, 335k -> 340k tris.
+  Phone (AUTO_PHONE=1, GPU), master -> this: spawn 205/998k = 205/998k;
+  the Aud from the air 164/883k -> 164/887k. 0 exceptions. Approximate:
+  the festhalle is one generic hall for all three clubs (signed with each
+  name); the Transylvania Club is not on OSM and not drawn; the parade
+  starts on demand, not at 9:30 on Thanksgiving Monday; seats/banners at
+  the Aud are not traced from photos; the slides' layout is still
+  kwsights' procedural fan, not Big Splash's real plan.
 
 ## Build number
 
