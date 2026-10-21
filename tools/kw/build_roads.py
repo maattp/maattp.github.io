@@ -32,7 +32,7 @@ MASK_STEP, MASK_N = 10, (MAP_HALF * 2) // 10 + 1
 RIM = MAP_HALF - 40          # matches geo.clampToMap: the drivable rim
 SIMPLIFY = 1.0               # metres of Douglas-Peucker tolerance
 MAX_SEG = 50.0               # split long straights, so node spacing stays game-like
-MIN_SEG = 4.0                # citygen's addEdge drops slivers below this anyway
+MIN_SEG = 4.0                # shorter: its two ends are merged into one node (Builder.edge)
 
 # OSM highway= -> the game's five classes.
 CLS = {
@@ -195,6 +195,7 @@ class Builder:
         self.nodes = []                 # [x, z, y, elev]
         self.index = {}                 # rounded coord -> node id
         self.edges = []                 # [a, b, cls, flags, hw, name_id]
+        self.slivers = []               # (a, b): segments under MIN_SEG, merged later
         self.names = {}
         self.name_list = []
 
@@ -231,8 +232,53 @@ class Builder:
         ax, az = self.nodes[a][0], self.nodes[a][1]
         bx, bz = self.nodes[b][0], self.nodes[b][1]
         if math.hypot(bx - ax, bz - az) < MIN_SEG:
+            # A SLIVER. Too short for an edge, but it still joins its two
+            # ends: dropping it alone cut the road in two there -- two dead
+            # ends a few metres apart (616 of them), where cars from both
+            # sides U-turned into each other (Union St E by Lucan Ave). Its
+            # ends become one node: merge_slivers().
+            self.slivers.append((a, b))
             return
         self.edges.append([a, b, CLASS_ID[cls], flags, hw, name])
+
+    def merge_slivers(self):
+        """Merge each sliver's two ends into one node and point every edge at
+        it. The node kept is one an edge already used (the lower index of
+        those), and the merged one stays in the table unused (pack keeps it),
+        so every node and edge index in roads.bin is what it was before."""
+        self.used0 = set()
+        for e in self.edges:
+            self.used0.add(e[0])
+            self.used0.add(e[1])
+        alias = {}
+
+        def find(i):
+            while i in alias:
+                i = alias[i]
+            return i
+        for a, b in self.slivers:
+            ra, rb = find(a), find(b)
+            if ra == rb:
+                continue
+            ua, ub = ra in self.used0, rb in self.used0
+            if not ua and not ub:
+                continue                     # (a lone sliver: nothing to join)
+            keep = min(ra, rb) if ua and ub else (ra if ua else rb)
+            alias[rb if keep == ra else ra] = keep
+        moved = loops = 0
+        keep_e = []
+        for e in self.edges:
+            a, b = find(e[0]), find(e[1])
+            if (a, b) != (e[0], e[1]):
+                moved += 1
+            if a == b:
+                loops += 1
+                continue
+            e[0], e[1] = a, b
+            keep_e.append(e)
+        self.edges = keep_e
+        print(f"slivers: {len(self.slivers)} under {MIN_SEG} m, {len(alias)} ends merged, "
+              f"{moved} edges rewired, {loops} collapsed")
 
 
 def half_width(cls, tags):
@@ -327,6 +373,7 @@ def main():
                     b.edge(prev, cur_id, cls, flags, hw, nid)
                     prev = cur_id
 
+    b.merge_slivers()
     print(f"dropped classes: {dict(sorted(dropped_cls.items(), key=lambda x: -x[1])[:6])}")
     print(f"{len(b.nodes)} nodes, {len(b.edges)} edges, {tunnels} tunnel ways, "
           f"{len(b.name_list)} names")
@@ -586,7 +633,7 @@ def crossing_without_node(b):
 # ---------------------------------------------------------------------------
 
 def pack(b):
-    used = set()
+    used = set(b.used0)      # (a sliver's merged end too: indices stay put)
     for e in b.edges:
         used.add(e[0])
         used.add(e[1])
