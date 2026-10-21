@@ -26,7 +26,7 @@ import sys
 import osmium
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from proj import to_world  # noqa: E402
+from proj import MAP_HALF, to_world  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data")
@@ -39,12 +39,31 @@ CANDIDATES = [
     "Grey Silo Golf Course",
     "Doon Valley Golf Course",
     "Conestoga Golf Course",
+    "Dundee Country Club",
+    "Whistle Bear Golf",
+    "Grand Valley Golf Course",
+    "Deer Ridge Golf Course",
+    "Beaverdale Golf Club",
+    "Rebel Creek",
+    "Ariss Valley Golf and Country Club",
+    "#138183591",
+    "Savannah Golf Links",
 ]
 # the courses played: id, OSM name, the name on the board, options --
 #   nines: a 27-hole club's nines (OSM's hole `name`), in the order played;
 #          a hole is then keyed by its nine and ref, and carries `nine`
 #   ways:  only these golf=hole ways (Doon Valley: OSM numbers a par-3 course
 #          and part of the back nine 1-9 inside the same boundary)
+#   refs:  {way id: hole number} for a hole OSM numbers wrong (Galt's 8th is
+#          ref=9 name="Hole 8")
+#   pars:  {hole number: par} for a hole OSM gives no par (Savannah's 15th,
+#          a par 4 on the club's card)
+#   short: the course on the HUD and the map, where the words before "Golf"
+#          in its name are not it
+# A course whose boundary has no name in OSM is "#<way id>" (Galt Country
+# Club's, 138183591). A course is played only if every hole has a green
+# mapped and the course lies inside the map (Elmira, Cambridge Golf Club,
+# Puslinch Lake, Foxwood and Cutten Fields are past its edge).
 # A course mapped as a multipolygon is in pieces (Grey Silo's 1st and 18th are
 # across the creek from the rest): every outer ring is the course.
 PLAYED = [
@@ -56,6 +75,15 @@ PLAYED = [
     ("doon", "Doon Valley Golf Course", "Doon Valley Golf Course",
      {"ways": [1451503428, 1451503429, 1451503430, 1451503431, 1451503432,
                1451503433, 1451503611, 1451503612, 1451503613]}),
+    ("dundee", "Dundee Country Club", "Dundee Country Club", {"short": "Dundee"}),
+    ("whistlebear", "Whistle Bear Golf", "Whistle Bear Golf Club", {}),
+    ("grandvalley", "Grand Valley Golf Course", "Grand Valley Golf Course", {}),
+    ("deerridge", "Deer Ridge Golf Course", "Deer Ridge Golf Club", {}),
+    ("beaverdale", "Beaverdale Golf Club", "Beaverdale Golf Club", {}),
+    ("rebelcreek", "Rebel Creek", "Rebel Creek Golf Club", {}),
+    ("ariss", "Ariss Valley Golf and Country Club", "Ariss Valley Golf & Country Club", {}),
+    ("galt", "#138183591", "Galt Country Club", {"short": "Galt", "refs": {1035796504: 8}}),
+    ("savannah", "Savannah Golf Links", "Savannah Golf Links", {"pars": {15: 4}}),
 ]
 AREA_KINDS = {"tee", "green", "fairway", "bunker", "water_hazard", "lateral_water_hazard", "rough"}
 REACH = 120     # a feature further than this from every hole line is not a hole's
@@ -150,10 +178,11 @@ class Reader(osmium.SimpleHandler):
             for outer in a.outer_rings():
                 pts = [list(to_world(n.lat, n.lon)) for n in outer]
                 if course:
-                    if t.get("name"):
-                        self.outers.setdefault(t["name"], []).append(pts)
-                    if t.get("name") and (t["name"] not in self.courses or area(pts) > area(self.courses[t["name"]])):
-                        self.courses[t["name"]] = pts
+                    # an unnamed course is known by its way id
+                    nm = t.get("name") or f"#{a.orig_id()}"
+                    self.outers.setdefault(nm, []).append(pts)
+                    if nm not in self.courses or area(pts) > area(self.courses[nm]):
+                        self.courses[nm] = pts
                 else:
                     self.areas.append((golf, pts))
         except osmium.InvalidLocationError:
@@ -182,6 +211,7 @@ def in_course(boundary, pts, others=()):
 def course_holes(r, rings, opts=None):
     opts = opts or {}
     nines, ways = opts.get("nines"), opts.get("ways")
+    refs, pars = opts.get("refs", {}), opts.get("pars", {})
     holes = {}
     inside = lambda p: any(pip(b, p[0], p[1]) for b in rings)  # noqa: E731
     for tags, line, wid in r.holes:
@@ -189,16 +219,20 @@ def course_holes(r, rings, opts=None):
             continue
         if not inside(line[0]) and not inside(line[-1]):
             continue
-        ref = tags.get("ref", "")
-        if not ref.isdigit() or not tags.get("par", "").isdigit():
+        ref = str(refs.get(wid, tags.get("ref", "")))
+        if not ref.isdigit():
             continue
         n = int(ref)
+        par = tags.get("par", "")
+        par = int(par) if par.isdigit() else pars.get(n)
+        if not par:
+            continue
         nine = tags.get("name") if nines else None
         if nines and nine not in nines:
             continue
         key = (nines.index(nine) if nines else 0, n)
         if key not in holes:      # the first mapped wins (a mis-tagged duplicate)
-            holes[key] = {"n": n, "par": int(tags["par"]), "line": line}
+            holes[key] = {"n": n, "par": par, "line": line}
             if nine:
                 holes[key]["nine"] = nine
     return [holes[k] for k in sorted(holes)]
@@ -263,6 +297,14 @@ def build(r, cid, name, label, opts):
         green = next((g for g in h["greens"] if pip(g, e[0], e[1])), None)
         if green is None and h["greens"]:
             green = min(h["greens"], key=lambda g: math.hypot(centroid(g)[0] - e[0], centroid(g)[1] - e[1]))
+        if green is None:
+            # a green two holes share (Savannah's 7th and 9th): the nearest
+            # green of any hole, if the line ends within 60 m of it
+            allg = [p for k, p in feats if k == "green"]
+            if allg:
+                g = min(allg, key=lambda g: math.hypot(centroid(g)[0] - e[0], centroid(g)[1] - e[1]))
+                if math.hypot(centroid(g)[0] - e[0], centroid(g)[1] - e[1]) < 60:
+                    green = g
         assert green is not None, f"{name} hole {h['n']}: no green"
         pin = next((p for p in pins if pip(green, p[0], p[1])), None)
         if pin is None:
@@ -290,6 +332,10 @@ def build(r, cid, name, label, opts):
     print(f"  {label}: {len(out)} holes, par {sum(h['par'] for h in out)}; front three "
           + ", ".join(f"#{h['n']} par {h['par']} {L(h['line']) * 1.0936:.0f} yds" for h in out[:3]))
     doc = {"id": cid, "name": label, "boundary": ring(boundary, 1.0), "holes": out}
+    if opts.get("short"):
+        doc["short"] = opts["short"]
+    edge = max(abs(v) for r_ in [boundary] + others for p in r_ for v in p)
+    assert edge < MAP_HALF - 50, f"{name}: past the map's edge"
     if more:
         doc["more"] = more
     return doc

@@ -1,7 +1,10 @@
 // GOLF AT WATERLOO REGION'S COURSES. Real holes from OpenStreetMap
 // (data/golf.json, tools/kw/build_golf.py): Rockway and Doon Valley's front
 // nine in Kitchener, Westmount and Grey Silo in Waterloo, and Conestoga's
-// three nines (The Village, The Moors, Goose Run) up by Conestogo, every
+// three nines (The Village, The Moors, Goose Run) up by Conestogo; Deer
+// Ridge, Grand Valley and Whistle Bear by the Grand south of Kitchener,
+// Dundee and Rebel Creek out west, Beaverdale and Galt Country Club in
+// Cambridge, Savannah south-east of it, Ariss Valley's nine up north-east -- every
 // hole drawn and playable, three at a time -- every third tee (1, 4, 7, ...;
 // per nine at Conestoga) starts a round of the next three. Each hole is OSM's: its par, the line from the tee to the green
 // (doglegs and all), the tee box, the green, the fairways, the bunkers and
@@ -70,6 +73,12 @@ const PRI = { rough: 1, fairway: 2, fringe: 3, tee: 4, green: 5, bunker: 6, wate
 const FLAG_COLS = [[0.75, 0.05, 0.03], [0.85, 0.6, 0.02], [0.03, 0.15, 0.7]];
 const DRAG = 0.0042;      // quadratic drag, per m (the clubs' launch speeds are bisected against it)
 const CELL = 16;          // the surface index's cell
+// A course's mesh is drawn while the camera is within this of its bounding
+// sphere (`range`, from main.js draw): mown grass on grass, a few pixels past
+// it, and fourteen courses round the region were a draw each in any wide view.
+const GOLF_RANGE = 2500;
+// the steepest slope a ball feels on a green or fringe (_rollStep)
+const GREEN_TILT = 0.03;
 const ease = (u) => { u = clamp(u, 0, 1); return u * u * (3 - 2 * u); };
 
 function pip(p, x, z) {
@@ -169,7 +178,7 @@ function makeCourse(c, world) {
   }
   // water the world already draws (a pond in its water field) is not drawn again
   for (const p of polys) if (p.kind === 'water') { const [cx, cz] = centroid(p.pts); p.drawn = world && world.waterLevelAt ? world.waterLevelAt(cx, cz) !== null : false; }
-  const short = c.name.replace(/ Golf.*$/, '');
+  const short = c.short || c.name.replace(/ Golf.*$/, '');
   return { id: c.id, name: c.name, short, boundary: c.boundary, more, holes, polys, grid, x0, z0, x1, z1, nx, nz };
 }
 
@@ -205,6 +214,17 @@ export class Golf {
   }
 
   get active() { return this.state !== 'off'; }
+
+  /** Show only the courses within `GOLF_RANGE` of the camera (and the one being played). */
+  range(cam) {
+    if (!this.courseMesh) return;
+    const R = this.rangeR !== undefined ? this.rangeR : GOLF_RANGE;
+    for (const m of this.courseMesh.children) {
+      const s = m.geometry.boundingSphere || (m.geometry.computeBoundingSphere(), m.geometry.boundingSphere);
+      const d = Math.hypot(cam.x - s.center.x, cam.y - s.center.y, cam.z - s.center.z) - s.radius;
+      m.visible = d < R || (this.active && m.name === `golf:${this.C.id}`);
+    }
+  }
   /** Fewest strokes of any round recorded (the passport counts > 0 as played). */
   get best() {
     let b = 0;
@@ -724,8 +744,13 @@ export class Golf {
       // downhill: the terrain's gradient
       const e = 0.5, g0 = G.terrainHeight(this.bx, this.bz);
       const gx = (G.terrainHeight(this.bx + e, this.bz) - g0) / e, gz = (G.terrainHeight(this.bx, this.bz + e) - g0) / e;
-      // (0.4: the course is shaped flatter than the 40 m terrain under it)
-      P.x -= 9.81 * gx * 0.4 * sdt; P.z -= 9.81 * gz * 0.4 * sdt;
+      // (0.4: the course is shaped flatter than the 40 m terrain under it;
+      // a green or its fringe is built near level -- a real one breaks 1-4 %
+      // -- whatever the DEM under it does: Deer Ridge's 1st sits on 20 %,
+      // Galt's and Savannah's steepest on 31 %, where no putt ever stopped)
+      let k = 0.4;
+      if (kind === 'green' || kind === 'fringe') { const gl = Math.hypot(gx, gz) * 0.4; if (gl > GREEN_TILT) k = 0.4 * GREEN_TILT / gl; }
+      P.x -= 9.81 * gx * k * sdt; P.z -= 9.81 * gz * k * sdt;
       const sp = Math.hypot(P.x, P.z);
       const checkDec = this.check > 0 ? CLUBS[this.clubI].spin * (kind === 'rough' ? 0.5 : 1) : 0;
       this.check -= sdt;
