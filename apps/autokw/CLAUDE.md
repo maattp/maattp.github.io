@@ -907,6 +907,73 @@ file and a guide disagree, this file wins.
   **Not done:** road-name blades at rural junctions (needs lettering: the
   sign atlases are full); the outside wedge of a bend at a pass-through
   node reads ground in roadLift (mesh mitred: < 10 cm on gentle bends).
+- **Farmsteads and churches: src/farmstead.js** (docs/farm-lane.jpg,
+  farm-mennonite.jpg, village-steeple.jpg: master over this). **Two new
+  classes in buildings.bin** (tools/kw/build_buildings.py): **cls 6 a farm
+  building, whose roof bits (3-4) say WHICH** -- 0 barn, 1 outbuilding,
+  2 silo, 3 farmhouse (`farm_kinds`; citygen `farmStyle`) -- and **cls 7 a
+  church** (a Christian place of worship: tools/kw/extract_rural.py ->
+  raw_rural.json `worship` / `pow_nodes`; mosques and temples stay civic).
+  A farm building is one OSM tags so (barn, farm_auxiliary, silo...), or an
+  untagged one in a landuse=farmyard, or in open country (no landuse zone,
+  <= 12 buildings within 150 m); round = silo, long = shed, big = barn, and
+  only the biggest barn of a farmstead (and any within 55 % of it) stays a
+  barn -- the rest of farm_auxiliary is sheds; a house-sized one is the
+  farmhouse only with a barn or silo within 170 m. 163 `man_made=silo`
+  POINTS stand up as 6 m silos, and two in five 350-1500 m2 barns with no
+  mapped silo near get one (a few two) off a gable end (`barn_silos`, clear
+  of roads and footprints: a judgement -- most real silos are unmapped).
+  ~1,000 barns, ~880 sheds, ~400 silos, ~600 farmhouses, 242 churches.
+  **citygen** gives a cls-6 box its height from what will be drawn
+  (`farmHeight`) and STYLES grew five names (the building cache packs the
+  index). **world.meshBuilding** hands those styles to `meshFarmBuilding`
+  first: everything goes into the chunk's `flat` and facade builders, NO new
+  materials or draws. Bank barns: a stone stable storey, board walls on the
+  facade atlas's industrial cell (tinted per channel by `ind()`, or its
+  blue-grey cast turns red barns plum), gambrel (42 %) or steep gable in
+  galvanised / charcoal / red / green steel, the earth ramp up to the big
+  doors on the UPHILL long side (white X on a red barn), stable windows on
+  the low side, ridge ventilators; > 1500 m2 or long: the modern free-stall
+  / poultry barn (white steel, curtain sides, shallow roof, ridge vent).
+  Silos: concrete stave (hoops, dome, chute), blue Harvestore, bare
+  concrete, or (> 8.4 m across) a corrugated grain bin. Sheds: steel drive
+  sheds with open bays or a slider, small board sheds, the odd white
+  coverall. Farmhouses: two storeys of buff / red brick (brickhouse cell) or
+  white (house cell), steep gable, chimneys, a verandah toward the road,
+  and on long footprints the doddy house -- a lower narrower wing at one end.
+  In `mennoniteCountry`: a steel windmill (no hydro) and a washing line in
+  plain-dress colours out back (`window.__farmstead` counts them). Yard
+  maples round farmhouses (trees.js). Churches: nave under a steep roof,
+  lancet windows, the tower at the end nearest a street (`frontSide`) with
+  a louvred belfry, an eight-sided spire and a cross, a clock on some; red /
+  buff brick, limestone or white clapboard (OSM's material first). **The
+  steeples are in the skyline mesh** (`steepleMass`, inset inside the near
+  mesh) so every village's spire stands on the horizon. util.roofAt treats
+  the five styles as pitched (`PITCHED`).
+- **The villages: src/kwvillages.js** (data/villages.json from
+  tools/kw/build_villages.py; docs/village-stjacobs.jpg). Each village's
+  main street (`VILLAGES`: St. Jacobs' King St N -- every building with a
+  wall on it; Conestogo, Heidelberg, St. Clements, Maryhill, Breslau -- only
+  where OSM maps a shop): >= 330 m2 is a brick commercial block through
+  kwplaces.js `meshKing` (storefronts with the real names), smaller is a
+  converted house (`mainHouse`: gable, shop windows either side of the door,
+  a sign board, a FALSE FRONT on half the gable-fronted ones, verandahs).
+  St. Jacobs' mill at the King St bridge (OSM's untagged footprint: brick
+  wings, the board-over-brick four-storey mill house) and the five Village
+  Silos at King and Front (`SILOS`, placed off Esri imagery, copper cap on
+  the inner one). The Mennonite Story is in the market's log cabin now
+  (kwfun's market), not on King St. `window.__noVillages = true` before boot
+  for a before/after; `window.__kwVillages` has stats. **Off the map**
+  (it ends 15.6 km out): Elmira, Wellesley, New Hamburg, Baden (Castle
+  Kilbride is ~210 m past the west edge), Ayr, Linwood. Re-run order after
+  an OSM update: `extract_rural.py`, `build_buildings.py`, `build_villages.py`.
+  Verify: `VIEWS=tools/kw/villageviews.json node tools/kw/kwshots.mjs <dir>`
+  (farm lanes, St. Jacobs, five villages). Phone (AUTO_PHONE=1, GPU), master
+  v32 -> this, draws/tris: spawn 205/980k -> 205/989k; farm lane 52/271k ->
+  58/295k; Mennonite farm 33/218k -> 38/235k; bank-barn farm 58/282k ->
+  58/297k; St. Jacobs King St 77/419k -> 82/446k; Conestogo 77/343k ->
+  87/376k (the villages extra's Kit + atlas in two clusters: +8);
+  Heidelberg 51 -> 54; St. Clements 49 -> 52; Maryhill 57 -> 62. 0 exceptions.
 
 ## Build number
 
