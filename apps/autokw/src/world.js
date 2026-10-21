@@ -6925,6 +6925,28 @@ float frLine(float o, float fw, float c, float w) {
   }
 
   /**
+   * Auto KW: what is STANDING in the field at (x, z), for crops.js: 1 corn,
+   * 2 soybeans, 0 nothing (stubble, ploughing, hay, a yard, or not a field).
+   * It must agree with groundTint above, which paints the same fields: an
+   * OSM-mapped field's crop, else the open country's township parcels where
+   * their tint is full strength (corn below 0.22 of the parcel hash, soy
+   * below 0.42).
+   */
+  cropAt(x, z) {
+    const crop = G.farmAt(x, z);
+    if (crop) return crop <= 2 && !G.inPark(x, z) ? crop : 0;
+    if (G.inPark(x, z)) return 0;
+    const jx = (vnoise(x, z) - 0.5) * 190;
+    const jz = (vnoise(x + 3137, z - 2711) - 0.5) * 190;
+    let dense = 0;
+    for (const [ox, oz] of BLEND_TAPS) dense += this.city.builtAt(x + jx + ox, z + jz + oz);
+    if (dense / BLEND_TAPS.length >= 0.065) return 0;
+    const u = x * 0.8 - z * 0.6, w = x * 0.6 + z * 0.8;
+    const k = hash2(Math.floor(u / 260) * 7 + 3, Math.floor(w / 410) * 13 + 1);
+    return k < 0.22 ? 1 : k < 0.42 ? 2 : 0;
+  }
+
+  /**
    * The verge outside a pavement's outer edge: a short slope from the slab's
    * top (terrain + WALK_Y) down to the ground across VERGE, outward (ox, oz).
    *

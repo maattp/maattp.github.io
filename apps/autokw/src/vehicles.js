@@ -354,6 +354,17 @@ export const TYPES = {
   fireengine: deriveSpec({ wheelbase: 5.1, len: 10.0, wid: 2.50, wheelR: 0.52, sill: 0.62, belt: 1.70, roof: 3.05, cab: [0.17, 0.50], hand: 'fireengine', livery: 0xb3121b, diesel: true, fire: true, showR: 340, boxy: 2, mass: 5.5, acc: 2.0, topKph: 112, brakeM: 50, latG: 0.64, minTurnR: 6.0 }),
   tiller: deriveSpec({ wheelbase: 4.3, len: 6.9, wid: 2.50, wheelR: 0.52, sill: 0.62, belt: 1.70, roof: 3.05, cab: [0.17, 0.50], hand: 'tiller', livery: 0xb3121b, diesel: true, fire: true, showR: 340, towed: 'tillerRear', boxy: 2, mass: 5.0, acc: 1.7, topKph: 105, brakeM: 55, latG: 0.62, minTurnR: 5.2 }),
   tillerRear: deriveSpec({ wheelbase: 4.0, len: 13.0, wid: 2.50, wheelR: 0.52, sill: 0.66, belt: 1.70, roof: 3.58, cab: [-0.48, -0.36], hand: 'tillerRear', livery: 0xb3121b, diesel: true, fire: true, trailer: true, boxy: 2, mass: 6.0, acc: 1.7, topKph: 105, brakeM: 55, latG: 0.62 }),
+  // Auto KW: THE HARVEST (crops.js). A 200 hp row-crop tractor in green with
+  // yellow wheels, and a class 8 combine in red with a 30 ft draper header.
+  // `ag` gives each wheel its own spin rate (a 1.24 m front tyre turns faster
+  // than a 1.84 m rear: Vehicle.sync) and lugged tyres (agWheel); `offroad`
+  // because fields are where they work. Governed slow and strong, like the
+  // real ones: ~40 km/h on the road, the combine ~25. The combine steers
+  // with its REAR wheels (`rws`: the tail swings out round the drive axle),
+  // and `len`/`wid` are its body -- the 9.1 m header in front of it cuts the
+  // crop (crops.js) but collides with nothing.
+  tractor: deriveSpec({ wheelbase: 2.8, len: 4.9, wid: 2.50, wheelR: 0.92, sill: 0.62, belt: 1.92, roof: 3.0, cab: [-0.3, 0.3], hand: 'tractor', ag: true, offroad: true, diesel: true, mass: 7.5, acc: 2.6, topKph: 40, brakeM: 34, latG: 0.55, minTurnR: 5.2, showR: 500 }),
+  combine: deriveSpec({ wheelbase: 3.9, len: 8.6, wid: 3.50, wheelR: 0.95, sill: 0.9, belt: 2.6, roof: 3.95, cab: [0.25, 0.35], hand: 'combine', ag: true, combine: true, rws: true, offroad: true, diesel: true, mass: 16, acc: 1.5, topKph: 25, brakeM: 40, latG: 0.42, minTurnR: 6.0, showR: 700 }),
 };
 
 /**
@@ -456,6 +467,7 @@ export const CAR_COLORS = [
  */
 function addWheel(trim, matte, cx, cy, cz, r, w, out = 1, knobby = false, kind = null) {
   if (kind === 'bike') { bikeWheel(trim, matte, cx, cy, cz, r, w); return; }
+  if (kind === 'agY' || kind === 'agR') { agWheel(trim, matte, cx, cy, cz, r, w, out, kind); return; }
   // (the Belltown Hellcat's are rounder: three of it about at most)
   // 'polish' (the Wienermobile): the fleet's five spokes, polished, and as round as 'black'
   const SEG = kind === 'black' || kind === 'polish' ? 30 : 18;
@@ -8951,6 +8963,460 @@ function buildSaucer(spec, paint, trim, matte) {
   return [];
 }
 
+// ---------------------------------------------------------------------------
+// FARM MACHINES (Auto KW): the tractor and the combine (crops.js harvests)
+// ---------------------------------------------------------------------------
+
+const AG_TYRE = [0.04, 0.04, 0.043];
+const AG_YELLOW = linRgb(0xf2be00);    // the tractor's rims and seat piping
+const AG_BLACK = [0.03, 0.032, 0.035];
+const AG_DARK = [0.075, 0.078, 0.085];
+const AG_GREY = [0.36, 0.37, 0.38];
+const AG_CREAM = linRgb(0xd9d2bf);
+const AG_STEEL = [0.55, 0.56, 0.57];
+const AG_GRAIN = linRgb(0xd8a84a);
+
+/**
+ * A farm tyre on its rim: a tall, bulging sidewall and a tread of CHEVRON
+ * LUGS -- bars from the crown out over the shoulder, each side's lugs on the
+ * other's half-pitch, raked back so the pair make a V. A road tyre on a
+ * tractor reads as a toy at once; the lugs are what say "field". The rim is
+ * a deep dish (`kind` 'agY' yellow, 'agR' the combine's grey) with a bolt
+ * circle and a dark hub. Lug tops are at `r`, so the wheel still stands on
+ * its radius as the ground solve assumes.
+ */
+function agWheel(trim, matte, cx, cy, cz, r, w, out, kind) {
+  const SEG = 24, hw = w / 2, lug = r * 0.075, rc = r - lug;
+  const bead = r * 0.6;
+  const rimC = kind === 'agR' ? AG_GREY : AG_YELLOW;
+  const ang = (i) => (i / SEG) * Math.PI * 2;
+  const band = (b, x0, r0, x1, r1, col, hint) => {
+    let nx = -(r1 - r0), nr = x1 - x0;
+    const l = Math.hypot(nx, nr) || 1;
+    nx /= l; nr /= l;
+    if (nx * hint[0] + nr * hint[1] < 0) { nx = -nx; nr = -nr; }
+    for (let i = 0; i < SEG; i++) {
+      const a0 = ang(i), a1 = ang(i + 1);
+      const c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
+      b.quad([cx + x0, cy + c0 * r0, cz + s0 * r0], [cx + x0, cy + c1 * r0, cz + s1 * r0],
+        [cx + x1, cy + c1 * r1, cz + s1 * r1], [cx + x1, cy + c0 * r1, cz + s0 * r1],
+        [[nx, nr * c0, nr * s0], [nx, nr * c1, nr * s1], [nx, nr * c1, nr * s1], [nx, nr * c0, nr * s0]],
+        [0, 0, 1, 0, 1, 1, 0, 1], col);
+    }
+  };
+  const disc = (b, x, r0, r1, dir, col) => {
+    for (let i = 0; i < SEG; i++) {
+      const a0 = ang(i), a1 = ang(i + 1);
+      b.quad([cx + x, cy + Math.cos(a0) * r0, cz + Math.sin(a0) * r0], [cx + x, cy + Math.cos(a1) * r0, cz + Math.sin(a1) * r0],
+        [cx + x, cy + Math.cos(a1) * r1, cz + Math.sin(a1) * r1], [cx + x, cy + Math.cos(a0) * r1, cz + Math.sin(a0) * r1],
+        [dir, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], col);
+    }
+  };
+  // carcass: a crowned tread under the lugs, sidewalls bulging out to the bead
+  band(matte, -hw, rc * 0.975, hw, rc * 0.975, AG_TYRE, [0, 1]);
+  for (const sx of [-1, 1]) {
+    band(matte, sx * hw, rc * 0.975, sx * hw * 1.07, rc * 0.86, AG_TYRE, [sx, 0.5]);
+    band(matte, sx * hw * 1.07, rc * 0.86, sx * hw * 0.98, bead, AG_TYRE, [sx, 0.2]);
+    band(matte, sx * hw * 0.98, bead, sx * hw * 0.80, bead * 0.985, rimC, [0, 1]);    // rim flange
+  }
+  // the lugs: N a side, raked back by `lean` from the crown to the shoulder
+  const N = Math.max(12, Math.round(r * 19)), lean = 0.30, da = 0.05 / r;
+  const P = (x, rr, a) => [cx + x, cy + Math.cos(a) * rr, cz + Math.sin(a) * rr];
+  const uv = [0, 0, 1, 0, 1, 1, 0, 1];
+  for (let i = 0; i < N * 2; i++) {
+    const s = i % 2 ? 1 : -1, a0 = (i / (N * 2)) * Math.PI * 2;
+    const x0 = s * hw * 0.05, x1 = s * hw * 1.03;
+    const aIn = a0, aOut = a0 + lean;
+    const rt = r, rb = rc * 0.97;
+    const A0 = P(x0, rt, aIn - da), A1 = P(x0, rt, aIn + da), B0 = P(x1, rt * 0.985, aOut - da), B1 = P(x1, rt * 0.985, aOut + da);
+    const a0b = P(x0, rb, aIn - da), a1b = P(x0, rb, aIn + da), b0b = P(x1, rb * 0.99, aOut - da), b1b = P(x1, rb * 0.99, aOut + da);
+    const am = (aIn + aOut) / 2;
+    matte.quad(A0, B0, B1, A1, [0, Math.cos(am), Math.sin(am)], uv, AG_TYRE);
+    matte.quad(A1, B1, b1b, a1b, [0, -Math.sin(am + da), Math.cos(am + da)], uv, AG_TYRE);
+    matte.quad(A0, B0, b0b, a0b, [0, Math.sin(am - da), -Math.cos(am - da)], uv, AG_TYRE);
+    matte.quad(B0, B1, b1b, b0b, [s, 0, 0], uv, AG_TYRE);
+  }
+  // the dish: a face set in from the flange, a step, the centre plate, bolts, hub
+  const dress = (o) => {
+    const face = o * hw * 0.62;
+    disc(matte, o * hw * 0.80, bead * 0.985, bead * 0.90, o, rimC);
+    band(matte, o * hw * 0.80, bead * 0.90, face, bead * 0.86, rimC, [-o, 0.4]);
+    disc(matte, face, bead * 0.86, bead * 0.48, o, rimC);
+    band(matte, face, bead * 0.48, face * 0.7, bead * 0.40, rimC, [o, 0.3]);
+    disc(matte, face * 0.7, bead * 0.40, r * 0.13, o, rimC);
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2;
+      trim.tube(P(face * 0.7, r * 0.19, a), P(face * 0.7 + o * 0.025, r * 0.19, a), 0.017, 6, AG_STEEL, true);
+    }
+    matte.tube([cx + face * 0.7, cy, cz], [cx + face * 0.7 + o * 0.07, cy, cz], r * 0.12, 10, AG_DARK, true);
+    // the slots between the dish and the centre plate (dark, so the dish reads deep)
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * Math.PI * 2 + 0.26, d = 0.17;
+      const rr0 = bead * 0.55, rr1 = bead * 0.78;
+      matte.quad(P(face + o * 0.004, rr0, a - d), P(face + o * 0.004, rr0, a + d), P(face + o * 0.004, rr1, a + d * 0.8), P(face + o * 0.004, rr1, a - d * 0.8),
+        [o, 0, 0], uv, AG_BLACK);
+    }
+  };
+  dress(out || 1);
+  disc(matte, -(out || 1) * hw * 0.7, bead * 0.985, r * 0.15, -(out || 1), [rimC[0] * 0.5, rimC[1] * 0.5, rimC[2] * 0.5]);
+}
+
+/** A rounded rectangle's outline in (x, y), anticlockwise from the bottom
+ *  right: `rb` rounds the bottom corners, `rt` the top, `n` steps each, and
+ *  the top may be narrower than the bottom (`thw`). For Builder.loft. */
+function rrRing(hw, y0, y1, rt, rb = 0.02, n = 3, thw = hw) {
+  const p = [];
+  const arc = (cx, cy, r, a0, a1) => { for (let i = 0; i <= n; i++) { const a = a0 + ((a1 - a0) * i) / n; p.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); } };
+  arc(hw - rb, y0 + rb, rb, -Math.PI / 2, 0);
+  arc(thw - rt, y1 - rt, rt, 0, Math.PI / 2);
+  arc(-thw + rt, y1 - rt, rt, Math.PI / 2, Math.PI);
+  arc(-hw + rb, y0 + rb, rb, Math.PI, Math.PI * 1.5);
+  return p;
+}
+
+/** A window pane, flat, in `trim` (GLASS: see-through), from four corners. */
+function pane(trim, a, b, c, d, n) {
+  trim.quad(a, b, c, d, n, [0, 0, 1, 0, 1, 1, 0, 1], GLASS);
+}
+
+/** An open-topped bin's walls and floor seen from inside (a grain tank). */
+function binInside(b, x0, x1, y0, y1, z0, z1, col) {
+  const uv = [0, 0, 1, 0, 1, 1, 0, 1];
+  b.quad([x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [1, 0, 0], uv, col);
+  b.quad([x1, y0, z0], [x1, y0, z1], [x1, y1, z1], [x1, y1, z0], [-1, 0, 0], uv, col);
+  b.quad([x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [0, 0, 1], uv, col);
+  b.quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [0, 0, -1], uv, col);
+  b.quad([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], [0, 1, 0], uv, [col[0] * 0.6, col[1] * 0.6, col[2] * 0.6]);
+}
+
+/**
+ * A 200 hp row-crop tractor (after a John Deere 6R / a Case Puma: the shapes,
+ * none of the badges): 1.84 m rear and 1.24 m front tyres on yellow dished
+ * rims, a long rounded bonnet over a dark engine frame, a black grille with
+ * the lamps in it, a stack of front weights, a four-post cab glazed all round
+ * with its roof overhanging, an exhaust stack and air intake up the front
+ * pillars, broad rear fenders, and a three-point hitch behind.
+ *
+ * `paint` is the livery green (bonnet, fenders, cab base, roof), `matte` the
+ * frame, tyres, rims, grille and cab posts, `trim` the glass and lamps.
+ */
+function buildTractor(spec, paint, trim, matte) {
+  const RR = spec.wheelR, RW = 0.56, RZ = -1.40, RX = 0.98;
+  const FR = 0.62, FW = 0.42, FZ = 1.40, FX = 0.90;
+  const wheels = [
+    [FX, FR, FZ, FR, FW, 1, 0, 'agY'], [-FX, FR, FZ, FR, FW, -1, 0, 'agY'],
+    [RX, RR, RZ, RR, RW, 1, 0, 'agY'], [-RX, RR, RZ, RR, RW, -1, 0, 'agY'],
+  ];
+  const uv = [0, 0, 1, 0, 1, 1, 0, 1];
+  // --- frame, engine, axles -------------------------------------------------
+  matte.box(0, 0.48, 0.45, 0.60, 0.56, 3.5, 0, AG_DARK);                 // engine block / frame rails
+  matte.box(0, 0.42, -1.25, 0.78, 0.86, 1.5, 0, AG_DARK);                // transmission case
+  matte.box(0, 0.50, FZ, 0.34, 0.24, 0.32, 0, AG_DARK);                  // front axle pivot
+  matte.tube([-FX + 0.16, FR, FZ], [FX - 0.16, FR, FZ], 0.075, 8, AG_DARK, true);
+  for (const s of [-1, 1]) {
+    matte.tube([s * 0.30, RR, RZ], [s * (RX - 0.22), RR, RZ], 0.12, 10, AG_DARK, true);   // rear axle housing
+    matte.tube([s * (RX - 0.30), RR, RZ], [s * (RX - 0.18), RR, RZ], 0.20, 10, AG_DARK, true);
+  }
+  // --- bonnet ----------------------------------------------------------------
+  const hood = [
+    { z: -0.22, pts: rrRing(0.44, 0.98, 1.93, 0.16, 0.02, 3, 0.38) },
+    { z: 0.60, pts: rrRing(0.44, 0.98, 1.91, 0.16, 0.02, 3, 0.38) },
+    { z: 1.50, pts: rrRing(0.43, 0.98, 1.86, 0.16, 0.02, 3, 0.37) },
+    { z: 2.02, pts: rrRing(0.42, 0.98, 1.80, 0.16, 0.02, 3, 0.36) },
+    { z: 2.14, pts: rrRing(0.40, 1.00, 1.76, 0.15, 0.02, 3, 0.33) },
+    { z: 2.19, pts: rrRing(0.37, 1.02, 1.72, 0.13, 0.02, 3, 0.30) },
+  ];
+  paint.loft(hood, WHITE, { capStart: true });
+  // grille: the black nose, with the lamps set in it and bars across
+  matte.box(0, 1.02, 2.20, 0.66, 0.66, 0.05, 0, AG_BLACK);
+  for (let k = 0; k < 6; k++) trim.box(0, 1.10 + k * 0.09, 2.226, 0.58, 0.012, 0.01, 0, [0.16, 0.17, 0.18]);
+  for (const s of [-1, 1]) {
+    matte.box(s * 0.24, 1.47, 2.215, 0.20, 0.12, 0.03, 0, [0.02, 0.02, 0.022]);
+    trim.box(s * 0.24, 1.48, 2.232, 0.16, 0.08, 0.01, 0, LAMP);
+    // side vents down the bonnet, and the panel line under the crown
+    matte.box(s * 0.437, 1.10, 1.25, 0.012, 0.42, 1.30, 0, AG_BLACK);
+    for (let k = 0; k < 5; k++) paint.box(s * 0.444, 1.14 + k * 0.08, 1.25, 0.008, 0.02, 1.26, 0, WHITE);
+  }
+  // front weights: a stack of slabs on a bracket ahead of the axle
+  matte.box(0, 0.62, 2.28, 0.50, 0.32, 0.16, 0, AG_DARK);
+  for (let k = 0; k < 7; k++) matte.box(-0.42 + k * 0.14, 0.50, 2.46, 0.125, 0.52, 0.22, 0, k % 2 ? [0.06, 0.062, 0.068] : [0.09, 0.093, 0.1]);
+  // --- fenders -------------------------------------------------------------------
+  for (const s of [-1, 1]) {
+    fenderAt(paint, s * FX, FR, FZ, FR + 0.08, FW * 0.62, -0.80, 1.00, WHITE);
+    fenderAt(paint, s * RX, RR, RZ, RR + 0.10, RW * 0.64, -1.25, 1.25, WHITE);
+    trim.box(s * (RX + 0.18), 1.18, RZ - 0.92, 0.10, 0.07, 0.02, 0, TAILC);   // tail lamps on the fenders' backs
+    trim.box(s * (RX + 0.18), 1.28, RZ - 0.88, 0.10, 0.05, 0.02, 0, AMBER);
+  }
+  // --- cab ---------------------------------------------------------------------------
+  const CF = 1.30, CT = 2.84, CZ0 = -1.95, CZ1 = -0.30, CX = 0.60;
+  paint.box(0, 0.98, (CZ0 + CZ1) / 2, CX * 2 + 0.04, CF - 0.98 + 0.12, CZ1 - CZ0 + 0.04, 0, WHITE);   // cab base
+  paint.box(0, CF + 0.10, CZ1 + 0.01, CX * 2, 1.93 - CF - 0.10, 0.05, 0, WHITE);   // scuttle under the screen
+  for (const [px, pz] of [[-CX, CZ0], [CX, CZ0], [-CX, CZ1], [CX, CZ1], [-CX, -1.20], [CX, -1.20]]) {
+    matte.box(px, CF + 0.10, pz, 0.07, CT - CF - 0.08, 0.07, 0, AG_BLACK);
+  }
+  for (const s of [-1, 1]) {
+    pane(trim, [s * CX, CF + 0.12, CZ0], [s * CX, CF + 0.12, CZ1], [s * CX, CT, CZ1], [s * CX, CT, CZ0], [s, 0, 0]);
+    matte.box(s * CX, CF + 0.98, (CZ0 + CZ1) / 2, 0.02, 0.03, CZ1 - CZ0, 0, AG_BLACK);    // door rail
+  }
+  pane(trim, [-CX, 1.93, CZ1 + 0.03], [CX, 1.93, CZ1 + 0.03], [CX, CT, CZ1 - 0.04], [-CX, CT, CZ1 - 0.04], [0, 0.05, 1]);
+  pane(trim, [-CX, CF + 0.30, CZ0], [CX, CF + 0.30, CZ0], [CX, CT, CZ0], [-CX, CT, CZ0], [0, 0, -1]);
+  // the roof, overhanging, crowned, with its rim and the work lamps along the front
+  paint.box(0, CT, (CZ0 + CZ1) / 2 + 0.05, CX * 2 + 0.26, 0.16, CZ1 - CZ0 + 0.40, 0, WHITE);
+  paint.box(0, CT + 0.16, (CZ0 + CZ1) / 2 + 0.05, CX * 2 + 0.06, 0.06, CZ1 - CZ0 + 0.20, 0, WHITE);
+  matte.box(0, CT - 0.02, (CZ0 + CZ1) / 2 + 0.05, CX * 2 + 0.28, 0.03, CZ1 - CZ0 + 0.42, 0, AG_BLACK);
+  for (const x of [-0.52, -0.22, 0.22, 0.52]) {
+    matte.box(x, CT + 0.02, CZ1 + 0.24, 0.15, 0.09, 0.05, 0, AG_BLACK);
+    trim.box(x, CT + 0.035, CZ1 + 0.266, 0.12, 0.06, 0.01, 0, LAMP);
+  }
+  trim.prism(-0.45, CT + 0.22, CZ0 + 0.25, 0.06, 0.12, 8, AMBER);           // beacon
+  // inside: floor, dash, seat, wheel, the right-hand console, the headliner
+  matte.quad([-CX, CF, CZ0], [CX, CF, CZ0], [CX, CF, CZ1], [-CX, CF, CZ1], [0, 1, 0], uv, CAB_FLOOR);
+  matte.box(0, CF, CZ1 - 0.18, 0.9, 0.42, 0.28, 0, CAB_DASH);
+  matte.tube([0, CF + 0.40, CZ1 - 0.30], [0, CF + 0.74, CZ1 - 0.50], 0.04, 6, CAB_DASH, true);
+  wheelRim(matte, 0, CF + 0.76, CZ1 - 0.52, 0.19);
+  seat(matte, 0, CF + 0.48, CZ0 + 0.42, 0.56, 0.86, false, 0.40);
+  matte.box(0.40, CF, CZ0 + 0.80, 0.2, 0.62, 0.70, 0, CAB_DASH);
+  matte.quad([-CX, CT - 0.01, CZ0], [CX, CT - 0.01, CZ0], [CX, CT - 0.01, CZ1], [-CX, CT - 0.01, CZ1], [0, -1, 0], uv, CAB_ROOF);
+  occupant(matte.crew, 0, CF + 0.48, CZ0 + 0.42, 0.86, [0, CF + 0.76, CZ1 - 0.52]);
+  // --- stacks, steps, mirrors ----------------------------------------------------
+  matte.tube([0.47, 1.70, -0.14], [0.47, 3.22, -0.14], 0.062, 10, AG_BLACK, true);       // exhaust
+  matte.tube([0.47, 1.95, -0.14], [0.47, 2.65, -0.14], 0.085, 10, [0.12, 0.125, 0.13], true);   // its heat shield
+  matte.tube([-0.47, 1.75, -0.14], [-0.47, 2.55, -0.14], 0.085, 10, AG_BLACK, true);     // air intake
+  matte.tube([-0.47, 2.55, -0.14], [-0.47, 2.68, -0.14], 0.12, 10, AG_BLACK, true);
+  for (let k = 0; k < 3; k++) matte.box(-CX - 0.14, 0.42 + k * 0.30, CZ1 + 0.02, 0.26, 0.04, 0.26, 0, AG_DARK);
+  matte.tube([-CX - 0.27, 0.40, CZ1 + 0.14], [-CX - 0.27, 1.40, CZ1 + 0.14], 0.02, 6, AG_DARK, true);
+  for (const s of [-1, 1]) {
+    matte.tube([s * CX, 2.55, CZ1 - 0.05], [s * (CX + 0.36), 2.62, CZ1 - 0.05], 0.018, 6, AG_BLACK, true);
+    matte.box(s * (CX + 0.40), 2.42, CZ1 - 0.05, 0.16, 0.30, 0.04, 0, AG_BLACK);
+    trim.box(s * (CX + 0.40), 2.44, CZ1 - 0.073, 0.13, 0.26, 0.006, 0, MIRROR);
+  }
+  // --- three-point hitch and the PTO ----------------------------------------------
+  for (const s of [-1, 1]) {
+    matte.tube([s * 0.34, 0.62, -1.95], [s * 0.42, 0.48, -2.40], 0.045, 6, AG_DARK, true);
+    matte.tube([s * 0.30, 1.05, -1.90], [s * 0.38, 0.60, -2.20], 0.03, 6, AG_DARK, true);
+  }
+  matte.tube([0, 1.10, -1.95], [0, 0.98, -2.38], 0.04, 6, AG_DARK, true);
+  matte.tube([0, 0.62, -1.98], [0, 0.62, -2.12], 0.035, 8, AG_STEEL, true);
+  return wheels;
+}
+
+/** Where the combine's reel turns (its axle), and its radius: crops.js spins it. */
+export const COMBINE_REEL = { at: [0, 1.50, 5.78], r: 0.62 };
+/** The combine's header, in its own frame: the cutterbar's z and half-width. */
+export const COMBINE_HEADER = { z0: 4.6, z1: 6.45, hw: 4.55 };
+/** The grain in the tank: a 'g' part crops.js raises as it fills. Built
+ *  narrow (`widen` restores the tank's width) and parked inside the body,
+ *  so the parked combine's baked copy is hidden; with grain aboard its foot
+ *  is at the tank's floor (`floor`), and full, it heaps `rise` higher. */
+export const COMBINE_GRAIN = { at: [0, 2.86, -0.15], floor: 3.31, rise: 0.45, widen: 1.32 };
+
+/**
+ * A class 8 combine harvester with a 30 ft draper header (after a Case IH
+ * Axial-Flow / a John Deere S-series, no badges): 1.9 m drive tyres at the
+ * front, 1.3 m steering tyres behind, a tall body with the engine deck at
+ * the back and its rotary screen, the grain tank on top with its flared
+ * extensions (the grain inside rises as it fills: COMBINE_GRAIN), the glazed
+ * cab up front on its platform with a ladder down, the unloading auger
+ * folded forward along the left, the feeder house down to the header, and
+ * the header itself: 9.1 m of cutterbar, belts and end dividers, with the
+ * REEL over it -- six bats of tines on spiders -- a live part
+ * (spinPart, axis x) that crops.js turns while you harvest.
+ *
+ * `paint` is the red (body, tank, cab roof, feeder, header, auger), `matte`
+ * the black and grey, the belts, the tyres; `trim` the glass and lamps.
+ */
+function buildCombine(spec, paint, trim, matte) {
+  const FR = spec.wheelR, FW = 0.70, FZ = 1.35, FX = 1.40;
+  const RR = 0.66, RW = 0.50, RZ = -2.55, RX = 1.10;
+  const wheels = [
+    [FX, FR, FZ, FR, FW, 1, 0, 'agR'], [-FX, FR, FZ, FR, FW, -1, 0, 'agR'],
+    [RX, RR, RZ, RR, RW, 1, 0, 'agR'], [-RX, RR, RZ, RR, RW, -1, 0, 'agR'],
+  ];
+  const uv = [0, 0, 1, 0, 1, 1, 0, 1];
+  // --- body ---------------------------------------------------------------------
+  matte.box(0, 0.62, -1.05, 1.30, 0.86, 5.6, 0, AG_DARK);                       // the lower frame and cleaning shoe
+  paint.box(0, 1.42, -1.0, 1.96, 1.55, 5.8, 0, WHITE);                          // the separator's sides
+  paint.box(0, 1.10, -1.0, 1.50, 0.40, 5.6, 0, WHITE);
+  paint.loft([
+    { z: -4.15, pts: rrRing(0.92, 2.96, 3.38, 0.18, 0.02, 3, 0.86) },
+    { z: -4.05, pts: rrRing(0.94, 2.96, 3.42, 0.20, 0.02, 3, 0.88) },
+    { z: -1.70, pts: rrRing(0.94, 2.96, 3.42, 0.20, 0.02, 3, 0.88) },
+  ], WHITE, { capStart: true, capEnd: true });                                  // the engine deck
+  for (const s of [-1, 1]) {
+    // a cream band down each side, the black skirt over the shoe, louvres by the engine
+    matte.box(s * 0.985, 2.48, -1.0, 0.012, 0.10, 5.7, 0, AG_CREAM);
+    matte.box(s * 0.985, 1.42, -1.0, 0.012, 0.16, 5.7, 0, AG_BLACK);
+    for (let k = 0; k < 7; k++) matte.box(s * 0.96, 3.02 + k * 0.05, -3.0, 0.03, 0.02, 1.9, 0, AG_BLACK);
+    // final drives, and the steering axle's knuckles
+    matte.tube([s * 0.65, FR, FZ], [s * (FX - 0.25), FR, FZ], 0.20, 10, AG_DARK, true);
+    matte.tube([s * 0.5, RR, RZ], [s * (RX - 0.20), RR, RZ], 0.09, 8, AG_DARK, true);
+    // fenders over the drive tyres
+    fenderAt(paint, s * FX, FR, FZ, FR + 0.10, FW * 0.60, -0.55, 0.70, WHITE);
+  }
+  // the rotary air screen on the right of the engine, a dark disc with a hub
+  matte.tube([0.95, 3.12, -2.75], [1.02, 3.12, -2.75], 0.42, 16, AG_DARK, true);
+  matte.tube([1.0, 3.12, -2.75], [1.06, 3.12, -2.75], 0.10, 10, AG_STEEL, true);
+  matte.tube([0.55, 3.38, -3.35], [0.55, 4.05, -3.35], 0.07, 10, AG_BLACK, true);  // exhaust
+  // the straw chopper and spreader at the back
+  matte.box(0, 0.62, -4.10, 1.70, 0.82, 0.42, 0, AG_BLACK);
+  for (const s of [-1, 1]) matte.tube([s * 0.42, 0.58, -4.45], [s * 0.42, 0.66, -4.45], 0.34, 12, AG_DARK, true);
+  for (const s of [-1, 1]) {
+    trim.box(s * 0.80, 2.05, -3.92, 0.14, 0.08, 0.02, 0, TAILC);
+    trim.box(s * 0.80, 2.16, -3.92, 0.14, 0.06, 0.02, 0, AMBER);
+  }
+  // --- grain tank -----------------------------------------------------------------
+  const TX = 1.30, TZ0 = -1.75, TZ1 = 1.45, TY = 3.42;
+  paint.box(0, 2.94, (TZ0 + TZ1) / 2, TX * 2, TY - 2.94, TZ1 - TZ0, 0, WHITE, { top: false });
+  paint.quad([-TX, 2.94, TZ0], [TX, 2.94, TZ0], [TX, 2.94, TZ1], [-TX, 2.94, TZ1], [0, -1, 0], uv, WHITE);   // its underside
+  matte.box(0, 2.94, (TZ0 + TZ1) / 2, TX * 2 + 0.02, 0.06, TZ1 - TZ0 + 0.02, 0, AG_BLACK, { top: false });
+  // the extensions, flared, open at the top: outside, top rim, and inside
+  const EX = 1.40, EY = 3.86;
+  const ext = (x0, z0, x1, z1, n, o0, o1) => {
+    matte.quad([x0, TY, z0], [x1, TY, z1], [x1 + o1[0], EY, z1 + o1[1]], [x0 + o0[0], EY, z0 + o0[1]], n, uv, AG_GREY);
+  };
+  const dx = EX - TX;
+  ext(TX, TZ0, TX, TZ1, [1, 0.2, 0], [dx, -dx], [dx, dx]);
+  ext(-TX, TZ0, -TX, TZ1, [-1, 0.2, 0], [-dx, -dx], [-dx, dx]);
+  ext(-TX, TZ1, TX, TZ1, [0, 0.2, 1], [-dx, dx], [dx, dx]);
+  ext(-TX, TZ0, TX, TZ0, [0, 0.2, -1], [-dx, -dx], [dx, -dx]);
+  binInside(matte, -TX + 0.03, TX - 0.03, 2.99, TY, TZ0 + 0.03, TZ1 - 0.03, [0.20, 0.17, 0.13]);
+  {
+    const q = (x0, z0, x1, z1, o0, o1, n) => matte.quad([x0, TY, z0], [x1, TY, z1], [x1 + o1[0], EY, z1 + o1[1]], [x0 + o0[0], EY, z0 + o0[1]], n, uv, [0.16, 0.14, 0.11]);
+    q(TX - 0.02, TZ0, TX - 0.02, TZ1, [dx, -dx], [dx, dx], [-1, 0, 0]);
+    q(-TX + 0.02, TZ0, -TX + 0.02, TZ1, [-dx, -dx], [-dx, dx], [1, 0, 0]);
+    q(-TX, TZ1 - 0.02, TX, TZ1 - 0.02, [-dx, dx], [dx, dx], [0, 0, -1]);
+    q(-TX, TZ0 + 0.02, TX, TZ0 + 0.02, [-dx, -dx], [dx, -dx], [0, 0, 1]);
+  }
+  // the grain itself: a mound filling the tank, its own part (crops.js lifts it)
+  {
+    const gb = new Builder(false), GA = COMBINE_GRAIN.at;
+    const NXg = 6, NZg = 8, rows = [];
+    for (let j = 0; j <= NZg; j++) {
+      const row = [], z = TZ0 + 0.05 + ((TZ1 - TZ0 - 0.1) * j) / NZg;
+      for (let i = 0; i <= NXg; i++) {
+        const x = (-TX + 0.05 + ((TX * 2 - 0.1) * i) / NXg) / COMBINE_GRAIN.widen;
+        const m = 1 - Math.max(Math.abs(x * COMBINE_GRAIN.widen) / TX, Math.abs(z - (TZ0 + TZ1) / 2) / ((TZ1 - TZ0) / 2)) ** 2;
+        row.push([x - GA[0], -0.32 + 0.30 * m, z - GA[2]]);
+      }
+      rows.push(row);
+    }
+    gb.patch(rows, AG_GRAIN, [0, 1, 0]);
+    spinPart(matte, GA, 'g', gb);
+  }
+  // --- cab ----------------------------------------------------------------------------
+  const CF = 2.55, CT = 3.86, CX = 0.88, CZ0 = 1.55, CZ1 = 3.05, CZF = 3.38;
+  matte.box(0, 2.38, 2.5, 2.7, 0.12, 2.2, 0, AG_DARK);                          // the platform
+  for (let k = 0; k < 9; k++) matte.box(-0.6 - k * 0.09, 2.505, 2.5, 0.02, 0.01, 2.1, 0, AG_BLACK);   // its grating
+  paint.box(0, CF - 0.20, (CZ0 + CZF) / 2, CX * 2, 0.24, CZF - CZ0, 0, WHITE);  // cab floor pan
+  for (const [px, pz] of [[-CX, CZ0], [CX, CZ0]]) matte.box(px, CF, pz, 0.08, CT - CF, 0.08, 0, AG_BLACK);
+  for (const s of [-1, 1]) {
+    // front pillars, raked: from the floor's front corner up to the roof's
+    matte.tube([s * CX, CF, CZF], [s * CX, CT, CZ1], 0.045, 6, AG_BLACK, true);
+    pane(trim, [s * CX, CF + 0.02, CZ0 + 0.05], [s * CX, CF + 0.02, CZF - 0.02], [s * CX, CT - 0.02, CZ1 - 0.02], [s * CX, CT - 0.02, CZ0 + 0.05], [s, 0, 0]);
+  }
+  pane(trim, [-CX, CF + 0.02, CZF], [CX, CF + 0.02, CZF], [CX, CT - 0.02, CZ1], [-CX, CT - 0.02, CZ1], [0, (CZF - CZ1) / (CT - CF), 1]);
+  paint.box(0, CF, CZ0 - 0.02, CX * 2, CT - CF, 0.06, 0, WHITE);                  // back wall, against the tank
+  // roof: overhanging, red, a black visor, lamps along the front and the back
+  paint.box(0, CT, (CZ0 + CZ1) / 2 + 0.08, CX * 2 + 0.30, 0.20, CZ1 - CZ0 + 0.52, 0, WHITE);
+  matte.box(0, CT - 0.03, (CZ0 + CZ1) / 2 + 0.08, CX * 2 + 0.32, 0.05, CZ1 - CZ0 + 0.54, 0, AG_BLACK);
+  for (let k = 0; k < 6; k++) {
+    const x = -0.80 + k * 0.32;
+    matte.box(x, CT + 0.03, CZ1 + 0.36, 0.17, 0.10, 0.05, 0, AG_BLACK);
+    trim.box(x, CT + 0.045, CZ1 + 0.388, 0.14, 0.07, 0.01, 0, LAMP);
+  }
+  trim.prism(0.7, CT + 0.20, CZ0 + 0.15, 0.07, 0.13, 8, AMBER);
+  trim.prism(-0.7, CT + 0.20, CZ0 + 0.15, 0.07, 0.13, 8, AMBER);
+  // inside: floor, console and joystick, seat, wheel, headliner, the operator
+  matte.quad([-CX, CF + 0.04, CZ0], [CX, CF + 0.04, CZ0], [CX, CF + 0.04, CZF], [-CX, CF + 0.04, CZF], [0, 1, 0], uv, CAB_FLOOR);
+  matte.box(0.45, CF, 2.15, 0.22, 0.62, 0.75, 0, CAB_DASH);
+  matte.tube([0.42, CF + 0.62, 2.35], [0.42, CF + 0.78, 2.40], 0.03, 6, AG_BLACK, true);
+  matte.tube([0, CF + 0.10, 2.95], [0, CF + 0.72, 2.75], 0.045, 6, CAB_DASH, true);
+  wheelRim(matte, 0, CF + 0.74, 2.73, 0.19);
+  seat(matte, 0, CF + 0.48, 1.85, 0.58, 0.9, false, 0.44);
+  matte.quad([-CX, CT - 0.01, CZ0], [CX, CT - 0.01, CZ0], [CX, CT - 0.01, CZ1], [-CX, CT - 0.01, CZ1], [0, -1, 0], uv, CAB_ROOF);
+  occupant(matte.crew, 0, CF + 0.48, 1.85, 0.9, [0, CF + 0.74, 2.73]);
+  // the platform's railing on the left, and the ladder down ahead of the wheel
+  matte.tube([-1.33, 3.30, 1.45], [-1.33, 3.30, 3.55], 0.025, 6, AG_DARK, true);
+  for (const z of [1.5, 2.5, 3.5]) matte.tube([-1.33, 2.44, z], [-1.33, 3.30, z], 0.022, 6, AG_DARK, true);
+  for (const s of [-1, 1]) matte.tube([-1.30 + s * 0.20, 2.40, 3.55], [-1.42 + s * 0.20, 0.35, 3.95], 0.025, 6, AG_DARK, true);
+  for (let k = 0; k < 6; k++) {
+    const t = (k + 0.5) / 6;
+    matte.box(-1.36 + t * -0.12, 2.40 - t * 2.05, 3.55 + t * 0.40, 0.42, 0.03, 0.14, 0, AG_DARK);
+  }
+  // --- the unloading auger, folded forward along the left --------------------------
+  const AU0 = [-1.60, 3.55, -2.0], AU1 = [-1.68, 3.62, 3.30];
+  paint.tube([-1.60, 1.90, -2.0], AU0, 0.20, 12, WHITE, true);
+  matte.tube([-0.98, 2.30, -2.0], [-1.45, 2.30, -2.0], 0.06, 8, AG_DARK, true);     // its bracket
+  paint.tube(AU0, AU1, 0.20, 12, WHITE, true);
+  matte.tube(AU1, [AU1[0], 3.18, 3.48], 0.15, 10, AG_BLACK, true);                  // spout
+  matte.tube([-1.33, 3.30, 3.0], [-1.62, 3.42, 3.0], 0.03, 6, AG_DARK, true);       // its rest
+  for (let k = 1; k < 5; k++) {
+    const t = k / 5, at = (d) => [AU0[0] + (AU1[0] - AU0[0]) * (t + d), AU0[1] + (AU1[1] - AU0[1]) * (t + d), AU0[2] + (AU1[2] - AU0[2]) * (t + d)];
+    matte.tube(at(-0.006), at(0.006), 0.215, 12, AG_DARK, true);                     // collars
+  }
+  // --- feeder house ------------------------------------------------------------------
+  {
+    const rings = [];
+    for (let k = 0; k <= 4; k++) {
+      const t = k / 4, z = 1.95 + t * 2.62;
+      rings.push({ z, pts: rrRing(0.70, 1.02 - t * 0.66, 2.25 - t * 0.85, 0.08, 0.05, 2) });
+    }
+    paint.loft(rings, WHITE, { capStart: true });
+    for (const s of [-1, 1]) matte.tube([s * 0.55, 1.05, 2.1], [s * 0.6, 0.62, 3.55], 0.06, 8, AG_STEEL, true);   // lift cylinders
+  }
+  // --- the header ----------------------------------------------------------------------
+  const H = COMBINE_HEADER, HZ = 4.55, HF = H.z1;
+  paint.box(0, 0.26, HZ, H.hw * 2, 1.0, 0.16, 0, WHITE);                           // back sheet
+  paint.tube([-H.hw, 1.28, HZ - 0.02], [H.hw, 1.28, HZ - 0.02], 0.09, 8, WHITE, true);
+  // the deck from the back sheet down to the cutterbar, the belts on it, their slats
+  matte.quad([-H.hw, 0.30, HZ + 0.09], [H.hw, 0.30, HZ + 0.09], [H.hw, 0.10, HF - 0.12], [-H.hw, 0.10, HF - 0.12], [0, 1, 0.1], uv, AG_GREY);
+  const deckY = (z) => 0.30 + (0.10 - 0.30) * (z - HZ - 0.09) / (HF - 0.12 - HZ - 0.09);
+  for (const [x0, x1] of [[-H.hw + 0.12, -0.78], [0.78, H.hw - 0.12], [-0.70, 0.70]]) {
+    matte.quad([x0, deckY(HZ + 0.15) + 0.03, HZ + 0.15], [x1, deckY(HZ + 0.15) + 0.03, HZ + 0.15], [x1, deckY(HF - 0.2) + 0.03, HF - 0.2], [x0, deckY(HF - 0.2) + 0.03, HF - 0.2], [0, 1, 0.1], uv, [0.05, 0.06, 0.09]);
+    for (let x = x0 + 0.2; x < x1 - 0.1; x += 0.45) {
+      matte.tube([x, deckY(HZ + 0.15) + 0.05, HZ + 0.15], [x, deckY(HF - 0.2) + 0.05, HF - 0.2], 0.018, 4, [0.62, 0.62, 0.6], false);
+    }
+  }
+  trim.box(0, 0.06, HF - 0.06, H.hw * 2, 0.08, 0.14, 0, AG_STEEL);                 // cutterbar
+  for (let x = -H.hw + 0.15; x < H.hw; x += 0.3) matte.box(x, 0.07, HF + 0.04, 0.05, 0.04, 0.16, 0, [0.20, 0.21, 0.22]);   // knife guards
+  for (const s of [-1, 1]) {
+    // end sheets, both faces, and the pointed crop dividers ahead of them
+    const X = s * H.hw;
+    const e = [[X, 0.06, HZ - 0.06], [X, 0.06, HF], [X, 0.70, HF - 0.42], [X, 1.36, HZ - 0.06]];
+    paint.quad(e[0], e[1], e[2], e[3], [s, 0, 0], uv, WHITE);
+    paint.quad(e[0], e[1], e[2], e[3], [-s, 0, 0], uv, WHITE);
+    const tip = [X, 0.18, HF + 0.55], b = [[X - 0.09, 0.05, HF], [X + 0.09, 0.05, HF], [X + 0.09, 0.42, HF - 0.1], [X - 0.09, 0.42, HF - 0.1]];
+    for (let k = 0; k < 4; k++) {
+      const p = b[k], q2 = b[(k + 1) % 4];
+      const mx = (p[0] + q2[0]) / 2 - X, my = (p[1] + q2[1]) / 2 - 0.22;
+      paint.tri(p, q2, tip, [mx * 4, my * 4, 0.4], WHITE);
+    }
+    matte.box(X, 0.0, HZ + 0.6, 0.12, 0.08, 1.2, 0, AG_DARK);                      // skid shoe
+  }
+  // the reel's arms from the back sheet out over the deck, and their cylinders
+  const RA = COMBINE_REEL.at;
+  for (const x of [-H.hw + 0.06, 0, H.hw - 0.06]) {
+    paint.tube([x, 1.30, HZ], [x, RA[1] + 0.12, RA[2] + 0.10], 0.06, 8, WHITE, true);
+    matte.tube([x + 0.1, 0.70, HZ + 0.06], [x + 0.1, 1.32, RA[2] - 0.55], 0.035, 6, AG_STEEL, true);
+  }
+  // the reel itself: tube, three spiders, six bats of tines -- one live part
+  {
+    const rb = new Builder(false), R = COMBINE_REEL.r, L = H.hw - 0.14;
+    const BAT = [0.80, 0.70, 0.18], TINE = [0.12, 0.12, 0.13], ARM = [0.40, 0.05, 0.05];
+    rb.tube([-L, 0, 0], [L, 0, 0], 0.10, 10, [0.30, 0.04, 0.04], true);
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * Math.PI * 2, cy = Math.cos(a) * R, cz = Math.sin(a) * R;
+      rb.tube([-L, cy, cz], [L, cy, cz], 0.04, 6, BAT, true);
+      for (const x of [-L + 0.05, 0, L - 0.05]) rb.tube([x, 0, 0], [x, cy * 1.02, cz * 1.02], 0.028, 5, ARM, false);
+      // tines: from the bat, out and swept back (against the turn)
+      const tx = Math.cos(a + 0.7), tz = Math.sin(a + 0.7);
+      for (let x = -L + 0.1; x < L; x += 0.30) rb.tube([x, cy, cz], [x, cy + tx * 0.22, cz + tz * 0.22], 0.011, 3, TINE, false);
+    }
+    spinPart(matte, RA, 'x', rb);
+  }
+  return wheels;
+}
+
 /** Types with their own authored builder, keyed by `spec.hand`. */
 const HAND_BUILT = {
   plane: buildPlane, twin: buildTwin, jet: buildJet, biplane: buildBiplane, heli: buildHeli, fighter: buildFighter, jumbo: buildJumbo, saucer: buildSaucer,
@@ -8968,6 +9434,7 @@ const HAND_BUILT = {
   tank: buildTank,
   buggy: buildBuggy,
   fireengine: buildFireEngine, tiller: buildTiller, tillerRear: buildTillerRear,
+  tractor: buildTractor, combine: buildCombine,
 };
 
 /**
@@ -10028,6 +10495,8 @@ export class Vehicle {
         g.position.set(wx, wy, wz);
         g.userData.front = wz > 0;
         g.userData.y0 = wy;
+        // a farm machine's wheels differ in size, so in spin (spec.ag)
+        g.userData.k = this.spec.ag ? (this.assets.wheelR || wy) / wy : 1;
         this.tilt.add(g);
         this.wheelMeshes.push(g);
       }
@@ -11518,8 +11987,13 @@ export class Vehicle {
 
     const f = this.forward;
     const rx = f.z, rz = -f.x;
-    let dx = (f.x * this.vLong + rx * this.vLat) * dt;
-    let dz = (f.z * this.vLong + rz * this.vLat) * dt;
+    // REAR-WHEEL STEERING (spec.rws, the combine): the machine turns about
+    // its drive axle, so the body's middle swings out of the turn by the
+    // yaw times its distance behind that axle -- the tail sweeps wide, the
+    // way a combine's does at the end of a pass.
+    const vSwing = spec.rws ? -this.yawRate * (this.assets.wheels.length ? Math.max(0, this.assets.wheels[0][2]) : 0) : 0;
+    let dx = (f.x * this.vLong + rx * (this.vLat + vSwing)) * dt;
+    let dz = (f.z * this.vLong + rz * (this.vLat + vSwing)) * dt;
 
     this.x += dx;
     this.z += dz;
@@ -12089,8 +12563,9 @@ export class Vehicle {
         // wheel tumbles instead of rolling, which is the visible wobble.
         // 'YXZ' gives Ry*Rx: roll on the axle first, then steer the whole thing.
         if (m.rotation.order !== 'YXZ') m.rotation.order = 'YXZ';
-        m.rotation.x = m.userData.front ? this.wheelSpin : this.wheelSpin + (this.boSpin || 0);
-        m.rotation.y = m.userData.front ? this.steer : this.rearSteer;
+        m.rotation.x = m.userData.front ? this.wheelSpin * m.userData.k : (this.wheelSpin + (this.boSpin || 0)) * m.userData.k;
+        // the combine steers with its rear wheels (spec.rws), against the turn
+        m.rotation.y = this.spec.rws ? (m.userData.front ? 0 : -this.steer) : m.userData.front ? this.steer : this.rearSteer;
         // the suspension's lean is the body's: each wheel is held down to
         // where it was, so a leaning car keeps all four on the road
         m.position.y = m.userData.y0 + m.position.z * spch - m.position.x * sr;

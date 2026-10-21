@@ -2,7 +2,8 @@
 // tools/ and the "Where the map comes from" section of apps/auto/CLAUDE.md.
 //
 // World frame: +X = east, +Z = south, Y = up, 1 unit = 1 metre.
-// Origin (0,0) = Westlake Center, 4th Ave & Pine St (47.61134 N, 122.33790 W).
+// Origin (0,0) = the middle of the map, Kitchener's east side (43.452 N, 80.475 W):
+// tools/kw/proj.py's LAT0 / LON0, which this must match.
 //
 // The projection is a local equirectangular about that origin, matching
 // tools/proj.py exactly. Over the 8 km half-width the distortion is under 0.1 %,
@@ -17,8 +18,8 @@ import { clamp } from './util.js';
 
 export const MAP_HALF = 15600; // world spans -15600..15600 on both axes (31.2 km)
 
-export const LAT0 = 47.61134;
-export const LON0 = -122.33790;
+export const LAT0 = 43.45200;
+export const LON0 = -80.47500;
 const RAD = Math.PI / 180;
 export const M_LAT = 111132.92 - 559.82 * Math.cos(2 * LAT0 * RAD)
   + 1.175 * Math.cos(4 * LAT0 * RAD) - 0.0023 * Math.cos(6 * LAT0 * RAD);

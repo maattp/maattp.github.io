@@ -1332,7 +1332,7 @@ export class TrafficSystem {
       // apron vehicles since the docks, and within 300 m each ran the whole
       // driving model every frame to stand still.
       // (a fire rig on its station apron too: its trailer is placed by follow below)
-      const settles = v.spec.atv || v.spec.tank || v.spec.bicycle || v.spec.fire || (v.spec.plane && !v.airborne) || (v.spec.boat && d2 > 120 * 120);
+      const settles = v.spec.atv || v.spec.tank || v.spec.bicycle || v.spec.fire || v.spec.ag || (v.spec.plane && !v.airborne) || (v.spec.boat && d2 > 120 * 120);
       if (v.mode === 'apron' && settles && d2 < 300 * 300 && Math.abs(v.vLong) < 0.05 && Math.abs(v.vLat) < 0.05) {
         v.group.visible = show;
         if (v._still < 3) v._still++;

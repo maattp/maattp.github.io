@@ -47,6 +47,7 @@ import { setKwData, applyNamed, buildSigns, buildPolys, buildBunting, buildSchoo
 import { addLandmarkExtra } from './landmarks.js';
 import { Chicopee } from './chicopee.js';
 import { prepFun, buildMarketTent, buildFlags, waveFlags, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, buildDome } from './kwfun.js';
+import { Crops } from './crops.js';
 import { YKF } from './ykf.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings, warmLightBar } from './traffic.js';
@@ -137,6 +138,7 @@ const RESPAWN_SITES = [
 let respawns = [];   // [{ name, x, z, node }] (buildRespawns)
 let ykf = null;        // the Region of Waterloo International Airport (ykf.js)
 let chicopee = null;   // Chicopee's bike park: trails, lifts, bikes (chicopee.js)
+let crops = null;      // Auto KW: standing corn and soy, the tractors and combines (crops.js)
 let fire = null, fireStations = [];   // Seattle Fire: the stations' rigs, the water cannon, fire calls (firecalls.js)
 
 /** The WASTED / BUSTED card. */
@@ -1307,6 +1309,14 @@ function installShadowFade() {
     const v = traffic.spawnAt(x, z, h, ty, col, 'apron');
     v.vLong = 0;
   }
+  // --- Auto KW: the harvest (crops.js) ------------------------------------
+  // Standing corn and soy drawn near the camera; tractors and combines
+  // parked at farms round Waterloo, found by a search at boot.
+  crops = new Crops({ scene, city, world, game, phone: ON_PHONE,
+    get hud() { return hud; }, get audio() { return audio; }, get fx() { return fx; } });
+  crops.spawnFarms(traffic);
+  blog(`farms: ${crops.spots.length} machines parked in ${Math.round(crops.searchMs)} ms`);
+  // --- end the harvest ---------------------------------------------------------
   // Chicopee's bikes, at the base and the summit
   for (const [ty, x, z, h] of chicopee.bikeSpots()) {
     const v = traffic.spawnAt(x, z, h, ty, ty === 'dirtbike' ? 0xd8462a : 0x2f8f4e, 'apron');
@@ -1490,6 +1500,8 @@ function installShadowFade() {
       hello: `${t.name} — press ENTER on the first tee to play 3 holes (every third tee starts three more)` })) : []),
     ...(chicopee.base() ? [{ x: chicopee.base().x, z: chicopee.base().z, kind: 'atv', name: 'Chicopee Bike Park', near: false, label: 'Chicopee',
       hello: 'Chicopee Bike Park — dirt bikes and mountain bikes. Ride a downhill, or walk to a chairlift and press ENTER to ride to the top' }] : []),
+    // Auto KW: the farms' tractors and combines (crops.js)
+    ...(crops ? crops.places() : []),
   ];
   { const k = kwData(); if (k && k.signStats) blog('kw signs: ' + JSON.stringify(k.signStats)); }
   peds = new PedSystem(scene, city, game);
@@ -1650,6 +1662,7 @@ function installShadowFade() {
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
   window.__dbg = { get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg.crops = crops;   // Auto KW: the harvest (crops.js)
   wireUi();
   career.start(hud);
   game.newTarget();
@@ -1820,18 +1833,17 @@ function buildPickups(scene, city) {
   // Anchored to real places so they stay spread across the map and stay put
   // between sessions, then nudged to the nearest spot that is dry land, off the
   // carriageway and not inside a building. The first fifteen alternate pistol /
-  // first aid round the middle of Seattle; the rest reach the parts of the map
+  // first aid round the middle of the map; the rest reach the parts of the map
   // it grew into (lat, lon, kind).
   const FAR = [
-    [47.6246, -122.5190, 'gun'], [47.6062, -122.5370, 'health'],   // Winslow; Lynwood Center (Bainbridge)
-    [47.5070, -122.4650, 'gun'],                                   // Vashon's north end
-    [47.6150, -122.2010, 'gun'], [47.5770, -122.1700, 'health'],   // downtown Bellevue; Factoria
-    [47.6770, -122.2060, 'gun'], [47.5710, -122.2240, 'health'],   // Kirkland; Mercer Island
-    [47.5790, -122.4100, 'gun'], [47.5170, -122.3550, 'health'],   // Alki; White Center
-    [47.7060, -122.3260, 'gun'], [47.7190, -122.2960, 'health'],   // Northgate; Lake City
-    [47.6680, -122.3850, 'gun'],                                   // Ballard
-    [47.5480, -122.3220, 'gun'], [47.5220, -122.2700, 'gun'],      // Georgetown; Rainier Beach
-    [47.5600, -122.2870, 'health'],                                // Columbia City
+    [43.5380, -80.5530, 'gun'], [43.4700, -80.4130, 'health'],     // St. Jacobs; Breslau
+    [43.3580, -80.3140, 'gun'], [43.4320, -80.3100, 'health'],     // Galt; Hespeler
+    [43.3950, -80.3500, 'gun'], [43.4370, -80.5900, 'health'],     // Preston; Petersburg
+    [43.5080, -80.4450, 'gun'], [43.5480, -80.4950, 'health'],     // Bloomingdale; Conestogo
+    [43.3960, -80.4320, 'gun'], [43.4750, -80.6000, 'health'],     // Doon; Erbsville
+    [43.4240, -80.4400, 'gun'],                                    // Fairview Park
+    [43.4900, -80.5650, 'gun'], [43.5090, -80.4950, 'health'],     // Laurel Creek; RIM Park
+    [43.3600, -80.3900, 'gun'], [43.4230, -80.5500, 'health'],     // Blair; Forest Heights
   ];
   const anchors = [
     [-1150, -900], [240, 1400], [-2200, 1100], [900, -1400], [1500, -2400],
@@ -2492,7 +2504,7 @@ function wireUi() {
 
 // Seattle Police headquarters, the Justice Center at 5th and Cherry: where
 // you are released after a bust.
-const POLICE_HQ = [47.6043, -122.3296];
+const POLICE_HQ = [43.4532, -80.4893];   // Waterloo Regional Police, Central Division, Frederick St
 
 /**
  * Insurance for game.hold: a hold whose activity is no longer running (its
@@ -2536,7 +2548,7 @@ function doRespawn() {
     const sp = cityRef.respawnPointNear(hx, hz) || HOSPITAL;
     player.respawn(sp.x, sp.z);
     controls.setMode('foot');
-    hud.showToast(`Released from the Justice Center — ${formatMoney(fine)} fine${had ? ', weapon confiscated' : ''}`, 3600);
+    hud.showToast(`Released from Central Division — ${formatMoney(fine)} fine${had ? ', weapon confiscated' : ''}`, 3600);
     return;
   }
   game.money = Math.max(0, game.money - 200);
@@ -2977,6 +2989,7 @@ function frame(now) {
   if (acts) acts.update(dt, player);
   if (missions) missions.update(dt, player);
   if (taxi) taxi.update(dt, player);
+  if (crops) crops.update(dt, player);   // the harvest (crops.js)
   // Say hello once per approach to anything the map marks (the dock, the
   // quads): the map is how you find them, this is how you know you have.
   // One at a time, in list order, so the dock is never talked over by the
@@ -3318,6 +3331,7 @@ function draw(now) {
     if (pv && !game.paused) world.trees.cut(camera.position, pv.x, (pv.y || 0) + (player.vehicle ? 1.6 : 1.4), pv.z, player.vehicle ? 3.2 : 2.2);
     else world.trees.cut(camera.position, 0, 0, 0, 0);
   }
+  if (crops) crops.stream(camera);   // the standing crop near the camera (crops.js)
   if (world && world.decor) {
     const dt = game.paused || !draw.lastT ? 0 : Math.min(0.06, (now - draw.lastT) / 1000);
     draw.lastT = now;

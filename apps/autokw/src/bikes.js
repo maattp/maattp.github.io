@@ -34,17 +34,17 @@ const DOCK_COLOR = 0x57b83a;
 // Bike-share docks, at trailheads and parks along the paths (snapped to the
 // nearest drawn path at boot).
 export const DOCK_SITES = [
-  { name: 'Gas Works Park', lat: 47.6457, lon: -122.3350 },
-  { name: 'Fremont', lat: 47.6484, lon: -122.3480 },
-  { name: 'Myrtle Edwards Park', lat: 47.6195, lon: -122.3590 },
-  { name: 'Alki', lat: 47.5810, lon: -122.4060 },
-  { name: 'Green Lake', lat: 47.6795, lon: -122.3265 },
-  { name: 'Westlake Park', lat: 47.6108, lon: -122.3372 },
-  { name: 'U District', lat: 47.6560, lon: -122.3120 },
-  { name: 'Seward Park', lat: 47.5510, lon: -122.2570 },
-  { name: 'Magnuson Park', lat: 47.6830, lon: -122.2560 },
-  { name: 'Golden Gardens', lat: 47.6905, lon: -122.4020 },
-  { name: 'Mount Baker Beach', lat: 47.5880, lon: -122.2860 },
+  { name: 'Waterloo Park', lat: 43.4650, lon: -80.5290 },
+  { name: 'Waterloo Public Square', lat: 43.4645, lon: -80.5225 },
+  { name: 'Laurel Trail at UW', lat: 43.4700, lon: -80.5420 },
+  { name: 'Columbia Lake', lat: 43.4770, lon: -80.5550 },
+  { name: 'Victoria Park', lat: 43.4470, lon: -80.4990 },
+  { name: 'Iron Horse Trail', lat: 43.4405, lon: -80.4955 },
+  { name: 'Kitchener City Hall', lat: 43.4510, lon: -80.4920 },
+  { name: 'Bechtel Park', lat: 43.4895, lon: -80.4920 },
+  { name: 'Walter Bean Trail', lat: 43.4560, lon: -80.4180 },
+  { name: 'Huron Natural Area', lat: 43.4010, lon: -80.4730 },
+  { name: 'Riverside Park', lat: 43.3940, lon: -80.3460 },
 ];
 
 export class BikeNet {

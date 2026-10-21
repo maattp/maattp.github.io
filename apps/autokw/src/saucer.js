@@ -1,4 +1,4 @@
-// THE SAUCER: sometimes, a flying saucer is parked in one of Seattle's open
+// THE SAUCER: sometimes, a flying saucer is parked in one of Waterloo Region's open
 // meadows (an Easter egg). Walk up, ENTER, and fly it (vehicles.js 'saucer':
 // the helicopter's hover model with none of its limits).
 //
@@ -20,12 +20,12 @@ import * as G from './geo.js';
 // Meadows (lat, lon, name): each is searched at boot for a flat, open, dry
 // circle 16 m across, clear of buildings, trees and posts.
 const SITES = [
-  [47.6588, -122.4092, 'the meadow at Discovery Park'],
-  [47.6820, -122.2595, 'the playfields at Magnuson Park'],
-  [47.5312, -122.3955, 'the meadow at Lincoln Park'],
-  [47.6935, -122.4000, 'the meadow above Golden Gardens'],
-  [47.5515, -122.2560, 'the lawn at Seward Park'],
-  [47.6300, -122.3150, 'the lawn at Volunteer Park'],
+  [43.4900, -80.5650, 'the meadow at Laurel Creek'],
+  [43.5085, -80.4960, 'the playfields at RIM Park'],
+  [43.4010, -80.4730, 'the meadow at Huron Natural Area'],
+  [43.4895, -80.4920, 'the fields at Bechtel Park'],
+  [43.4560, -80.4180, 'the lawn at Kiwanis Park'],
+  [43.3940, -80.3460, 'the lawn at Riverside Park'],
 ];
 const PARKED_S = [240, 360], GONE_S = [180, 480], FIRST_S = 90;
 
