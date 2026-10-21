@@ -94,8 +94,9 @@ export function treeAlbedo(kind, seed, tone, out) {
   const v = 0.8 + a * 0.42;
   let r, g, bl;
   if (kind === CONIFER) {
-    if (b < 0.3) { r = 0.1; g = 0.232; bl = 0.088; }      // cedar: a touch yellower
-    else { r = 0.082; g = 0.205; bl = 0.098; }             // Douglas fir, hemlock
+    if (b < 0.3) { r = 0.1; g = 0.232; bl = 0.088; }      // eastern white cedar: a touch yellower
+    else if (b > 0.8) { r = 0.07; g = 0.19; bl = 0.115; }  // white spruce, blue-green
+    else { r = 0.082; g = 0.205; bl = 0.098; }             // white pine, hemlock
   } else if (tone === T_STREET && b < 0.03) { r = 0.16; g = 0.095; bl = 0.095; }
   else if (b < 0.12 && tone !== T_FOREST) { r = 0.155; g = 0.26; bl = 0.09; }   // birch, locust: yellow-green
   else if (b > 0.9) { r = 0.11; g = 0.235; bl = 0.13; }   // blue-green
@@ -106,23 +107,26 @@ export function treeAlbedo(kind, seed, tone, out) {
 }
 
 /**
- * October's foliage (linear albedo). The firs and cedars stay as they are --
- * that dark evergreen is most of what makes the colour read against it.
- * Street trees are the planted maples, sweetgums, cherries and plums: the
- * most colour, red and orange as much as yellow. A park is mostly gold and
- * russet, a forest's broadleaf is bigleaf maple and alder, yellow going
- * brown, some still green. Each tree's share of each is by its seed.
+ * October's foliage (linear albedo): Waterloo Region in mid-October, at or
+ * just past the peak (Grand River valley and KW woodlot photos, Oct 10-25).
+ * The pines and cedars stay as they are -- that dark evergreen is what makes
+ * the colour read against it. Street trees are the planted Norway, sugar and
+ * red maples, honey locust, lindens, the odd burning bush and crabapple: red
+ * and orange as much as yellow. A woodlot is sugar maple and beech, red oak,
+ * ash, basswood and ironwood: orange and gold first, russet oaks (the last
+ * to turn), some scarlet red maple in the wet ground, a little still green.
+ * Each tree's share of each is by its seed.
  *   [weight street, park, forest, shrub, maple], rgb -- a maple (isMaple) is
  * scarlet, orange or gold, whatever it stands in
  */
 const FALL_PAL = [
-  [[0.22, 0.25, 0.38, 0.10, 0.20], [0.50, 0.29, 0.025]],   // gold (bigleaf maple, ginkgo, birch)
-  [[0.20, 0.17, 0.08, 0.20, 0.30], [0.52, 0.15, 0.018]],   // orange (sugar maple, sweetgum)
-  [[0.22, 0.13, 0.02, 0.34, 0.32], [0.37, 0.035, 0.022]],  // scarlet (red maple, burning bush)
-  [[0.09, 0.05, 0.00, 0.14, 0.10], [0.20, 0.022, 0.035]],  // crimson (Japanese maple, plum)
-  [[0.11, 0.17, 0.17, 0.10, 0.00], [0.25, 0.085, 0.022]],  // russet (oak, alder going brown)
-  [[0.10, 0.14, 0.22, 0.08, 0.06], [0.26, 0.27, 0.045]],   // half-turned, yellow-green
-  [[0.06, 0.09, 0.13, 0.04, 0.02], [0.13, 0.22, 0.075]],   // still green
+  [[0.24, 0.26, 0.26, 0.10, 0.18], [0.50, 0.29, 0.025]],   // gold (sugar maple, beech, ash, birch, poplar, locust)
+  [[0.20, 0.20, 0.22, 0.20, 0.36], [0.52, 0.15, 0.018]],   // orange (sugar maple)
+  [[0.20, 0.13, 0.10, 0.34, 0.30], [0.37, 0.035, 0.022]],  // scarlet (red maple, sumac, burning bush)
+  [[0.08, 0.05, 0.03, 0.14, 0.08], [0.20, 0.022, 0.035]],  // crimson (red maple, crabapple, purple ash)
+  [[0.11, 0.15, 0.17, 0.10, 0.00], [0.25, 0.085, 0.022]],  // russet (red and bur oak, beech going bronze)
+  [[0.10, 0.12, 0.13, 0.08, 0.06], [0.26, 0.27, 0.045]],   // half-turned, yellow-green (willow, Manitoba maple)
+  [[0.07, 0.09, 0.09, 0.04, 0.02], [0.13, 0.22, 0.075]],   // still green
 ];
 function fallAlbedo(kind, seed, tone, out) {
   const col = kind === SHRUB ? 3 : isMaple(kind, seed, tone) ? 4 : tone === T_STREET ? 0 : tone === T_PARK ? 1 : 2;
@@ -487,9 +491,9 @@ function noMaple(ib) {
   return g;
 }
 
-/** Is this tree a maple? Most planted street trees are; fewer in a park or a wood (bigleaf). */
+/** Is this tree a maple? Most planted street trees are, and a KW woodlot is sugar maple first. */
 export function isMaple(kind, seed, tone) {
-  return kind === BROAD && sub(seed, 5) < (tone === T_STREET ? 0.5 : tone === T_PARK ? 0.38 : 0.3);
+  return kind === BROAD && sub(seed, 5) < (tone === T_STREET ? 0.5 : tone === T_PARK ? 0.42 : 0.42);
 }
 
 /** writeFarTree's three-sided trunk spike, from below the ground to `top`. */
@@ -1360,8 +1364,15 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
       if (gk === G.GREEN_WOOD) {
         if (h > 0.8) continue;
         if (!clear(x, z, 2.5, OPEN)) continue;
-        // stands: some mostly fir, some mostly maple and alder
-        const pc = 0.22 + 0.5 * field(x, z, 240, 11);
+        // Auto KW: a Waterloo Region woodlot is broadleaf -- sugar maple,
+        // beech, oak, ash -- with white pine, hemlock and cedar in it, here
+        // and there a pine plantation or a cedar swamp (the stands where the
+        // field runs high); the floodplain forest by the Grand and the
+        // creeks (silver maple, willow, cottonwood) has almost none.
+        // (Seattle's mix, 22-72 % conifer, made every KW wood a fir forest.)
+        const fl = field(x, z, 240, 11);
+        let pc = 0.07 + 0.16 * fl + (fl > 0.78 ? 0.5 * (fl - 0.78) / 0.22 : 0);
+        if (G.waterLevel(x + 50, z) !== null || G.waterLevel(x - 50, z) !== null || G.waterLevel(x, z + 50) !== null || G.waterLevel(x, z - 50) !== null) pc *= 0.25;
         const r = hash2(Math.round(x * 5) + 1, Math.round(z * 5) + 2), sz = sub(r, 3);
         if (r < pc) plant(x, z, 18 + 17 * sz, 4.4 + 2.0 * sz + 1.2 * sub(r, 4), CONIFER, T_FOREST, 'forest');
         else if (r < pc + 0.07) plant(x, z, 3 + 2.5 * sz, 2 + 1.2 * sub(r, 4), SHRUB, T_FOREST, 'forest');
@@ -1382,7 +1393,7 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
         if (h > p) continue;
         if (!clear(x, z, 2.5, OPEN)) continue;
         const r = hash2(Math.round(x * 5) + 1, Math.round(z * 5) + 2);
-        if (r < 0.34) plant(x, z, 14 + 14 * sub(r, 3), 3 + 1.6 * sub(r, 4), CONIFER, T_PARK, 'park');
+        if (r < 0.2) plant(x, z, 14 + 14 * sub(r, 3), 3 + 1.6 * sub(r, 4), CONIFER, T_PARK, 'park');
         else plant(x, z, 9 + 9 * sub(r, 3), 3.6 + 2.6 * sub(r, 4), BROAD, T_PARK, 'park');
       }
     }
