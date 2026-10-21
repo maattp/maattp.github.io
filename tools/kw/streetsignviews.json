@@ -1,0 +1,19 @@
+[
+  { "name": "ss-uptown-erb-drive", "eval": "window.__ssView('King Street', 'Erb Street', -3834, -1465, { arm: 'Erb Street West', back: 40, over: true, fov: 50 })" },
+  { "name": "ss-uptown-erb-over", "eval": "window.__ssView('King Street', 'Erb Street', -3834, -1465, { arm: 'Erb Street West', back: 40, over: true, fov: 20 })" },
+  { "name": "ss-uptown-erb-close", "eval": "window.__ssView('King Street', 'Erb Street', -3834, -1465, { close: 6 })" },
+  { "name": "ss-dtk-king-cedar-drive", "eval": "window.__ssView('King Street East', 'Cedar Street', -685, 517, { arm: 'Cedar Street North', back: 22, lane: 2, fov: 50 })" },
+  { "name": "ss-dtk-king-cedar-close", "eval": "window.__ssView('King Street East', 'Cedar Street', -685, 517, { close: 6 })" },
+  { "name": "ss-suburb-whiteelm-drive", "eval": "window.__ssView('White Elm', 'Butternut', -9217, -1473, { arm: 'White Elm', back: 18, fov: 50 })" },
+  { "name": "ss-suburb-whiteelm-close", "eval": "window.__ssView('White Elm', 'Butternut', -9217, -1473, { close: 5 })" },
+  { "name": "ss-suburb-prosperity-close", "eval": "window.__ssView('Prosperity', 'Indigo', -4255, 4336, { close: 5 })" },
+  { "name": "ss-rural-woolwich-drive", "eval": "window.__ssView('New Jerusalem', 'Northfield', -3027, -9133, { arm: 'New Jerusalem', back: 26, fov: 50 })" },
+  { "name": "ss-rural-woolwich-close", "eval": "window.__ssView('New Jerusalem', 'Northfield', -3027, -9133, { close: 5 })" },
+  { "name": "ss-rural-wilmot-drive", "eval": "window.__ssView('Snyder', 'Sandhills', -14207, 5054, { arm: 'Sandhills', back: 24, fov: 50 })" },
+  { "name": "ss-rural-wilmot-close", "eval": "window.__ssView('Snyder', 'Sandhills', -14207, 5054, { close: 5 })" },
+  { "name": "ss-rr-westmount-drive", "eval": "window.__ssView('Westmount Road South', 'Alexandra', -4558, -539, { arm: 'Alexandra', back: 22, fov: 50 })" },
+  { "name": "ss-rr-westmount-close", "eval": "window.__ssView('Westmount Road South', 'Alexandra', -4558, -539, { close: 5 })" },
+  { "name": "ss-cambridge-ainslie-drive", "eval": "window.__ssView('Main Street', 'Ainslie Street', 13064, 10343, { arm: 'Main Street', back: 34, over: true, fov: 50 })" },
+  { "name": "ss-cambridge-ainslie-over", "eval": "window.__ssView('Main Street', 'Ainslie Street', 13064, 10343, { arm: 'Main Street', back: 34, over: true, fov: 22 })" },
+  { "name": "ss-cambridge-ainslie-close", "eval": "window.__ssView('Main Street', 'Ainslie Street', 13064, 10343, { close: 6 })" }
+]

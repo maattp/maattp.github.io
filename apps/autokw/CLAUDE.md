@@ -1312,8 +1312,8 @@ file and a guide disagree, this file wins.
   limestone plume (main.js). Phone (AUTO_PHONE=1, GPU), master v31 -> this:
   spawn 205/980k = ; Kressler Rd 86/513k -> 86/514k; Lobsinger Line
   228/749k -> 227/765k; a gravel concession road 63/372k -> 60/369k.
-  **Not done:** road-name blades at rural junctions (needs lettering: the
-  sign atlases are full); the outside wedge of a bend at a pass-through
+  Road-name blades at rural junctions: see "Street-name signs" (their own
+  atlas). **Not done:** the outside wedge of a bend at a pass-through
   node reads ground in roadLift (mesh mitred: < 10 cm on gentle bends).
 - **The generic look, round two** (docs/look2-*.jpg, before over after).
   **Striped plaza roofs:** world.js `_stripMall`'s roof sat at exactly
@@ -1907,6 +1907,71 @@ file and a guide disagree, this file wins.
   OSM's water polygons at the 40 m water mesh; riffle places are noise, not
   surveyed; Galt's walls are one generic wall (heights from the bank, not
   measured).
+- **Street-name signs** (src/streetsigns.js, `data/streetsigns.json` from
+  tools/kw/build_streetsigns.py; docs/streetsigns-*.jpg). The designs were
+  checked against photos and the City of Waterloo's standard drawing CW-611
+  (2023), not guessed: **Waterloo** green between two 25 mm white stripes,
+  mixed-case Clearview with the abbreviation smaller, no full stops ("White
+  Elm Blvd"); **Kitchener and Cambridge** green with a white border, mixed
+  case, "St." ("Queen St.", "Ainslie St.", photos at Weber/Queen, Courtland/
+  Sydney, Main/Ainslie); **downtown Kitchener** the white arched blade, black
+  capitals, maroon band with the district ("KING ST.E / MARKET DISTRICT",
+  photo at King/Cedar; the four districts and their centres are from the
+  City's Downtown Districts map, their reach `DISTRICTS` read off it by eye;
+  only the Market District's blade was photographed -- the other three are
+  assumed to match); **the townships** green, white border, CAPITALS on wooden
+  posts (Elmira's "ARTHUR ST", Wilmot's "SANDHILLS RD."), **Wilmot's** with
+  the civic numbers each way ("<- 2962   2983 ->", from OSM addresses, back
+  face swapped); **Regional Roads** the white WATERLOO / n / REGION flowerpot
+  (OSM `ref` "RR n") on the blade post, one-sided, facing the junction;
+  **mast arms**: a big green sign naming the cross street on every signal
+  approach's arm (Kitchener, Waterloo and Cambridge all do; not downtown
+  Kitchener). Municipality = OSM admin_level 8 polygon at the corner;
+  anything outside the Region's three cities gets the township blade.
+  **Where:** every junction node (>= 3 edges, no ramps/freeways/elevated/
+  roundabout rings) with two street names; nodes joined by edges < 32 m are
+  one intersection (a divided road), drawn by its lowest node. One corner,
+  or two diagonally opposite when a street is art/st; the corner is between
+  two neighbouring arms of DIFFERENT streets, the post on the bisector, out
+  past the kerb until `onRoad` (pad 0.7), buildings and water say clear; each
+  blade names the arm beside it and is parallel to it. At a signal the
+  blades go on two of its poles (`jc.rigs`, 4.35 m) instead. **Drawing:**
+  posts, blade extrusions, the mast-arm sign's aluminium back and shield
+  plates are in the near chunk's flat mesh (`meshChunk`, called from
+  world.js after junctions', after a yield: no draws; far off a blade is a
+  green bar). The LETTERING is one mesh of quads within `LETTER_R` (150 m
+  phone / 240) and `OVER_R` (230 / 330) for the mast-arm signs, rebuilt every
+  0.5 s or 25 m (`gather`) over ONE atlas of 512 x 64 slots (2048 x 512 on a
+  phone, 32 slots, ~5.6 MB with mips; 2048 x 1024 desktop) paged LRU by art
+  key: a new name is drawn into a 512 x 64 scratch canvas and copied into its
+  slot with `renderer.copyTextureToTexture` (one slot's upload; mips once per
+  rebuild), at most `UPLOADS` (2 phone / 8) a rebuild, the rest next frame.
+  Corners are worked out lazily per chunk and kept. `window.__noStreetSigns
+  = true` (VIEW_BOOT_JS) turns it all off for a before/after;
+  `window.__streetSigns` has the counts. **Verify:**
+  `VIEW_PRE_FILE=tools/kw/streetsignpre.js VIEWS=tools/kw/streetsignviews.json
+  node tools/kw/kwshots.mjs <dir>` (`__ssView(a, b, x, z, {arm, back, over,
+  close})` frames a corner by its street names); `tools/kw/streetsignfixed.json`
+  is the same views baked to cameras (for before/after);
+  `tools/kw/streetsignprobe.js` dumps what a few corners got;
+  `tools/kw/streetsigndrive.js` (VIEW_THROTTLE=8) times it down King St.
+  Phone (AUTO_PHONE=1, GPU), off -> on, two runs each: spawn 212-213/1047-1051k
+  -> 214-215/1056-1064k; Uptown King/Erb 300-304 -> 300-305, +9-14k tris;
+  King/Cedar 213-214 -> 214-216; Laurelwood suburb 96-97 -> 97-99; Woolwich
+  rural 166-167 -> 167-169; Wilmot 69-70 -> 70-72; Westmount/Alexandra
+  277 -> 278-279; Galt Main/Ainslie 99-100 -> 100-102; 0 exceptions (the
+  lettering is exactly one draw; the rest is run-to-run noise). 8x CPU down
+  King St (3 km, Uptown to the market): a rebuild 0.9 ms mean, 9.5 ms worst
+  (the uploads; GPU-side), corners ~3-5 ms a chunk inside the chunk build.
+  **Not done / approximate:** no block numbers on city blades (the photos
+  show none; Wilmot's numbers are the nearest OSM address each way, not the
+  block's first); one Kitchener photo shows a BLUE "YOUNG ST" blade on a
+  signal pole at Weber -- not modelled; North Dumfries' and Wellesley's
+  blades were not photographed (township design assumed); Woolwich's small
+  logo at the blade's left end is not drawn; township road numbers ("WILMOT
+  16 TWP" on Wilmot's blades) are not in OSM; the font is Helvetica, not
+  Clearview; blades sit on their own post, never on a stop sign's or a hydro
+  pole (as many real ones do); unlit (MeshBasic, like the freeway signs).
 
 ## Build number
 

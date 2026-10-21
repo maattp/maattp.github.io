@@ -63,6 +63,7 @@ import { Crops } from './crops.js';
 import { Kartway, KartRace } from './kartway.js';
 import { prepHighways, buildHighways, addHighwaySolids, highwaysRoot, updateHighways, hwyKeepClear } from './highways.js';
 import { prepJunctions, SignalHeads } from './junctions.js';
+import { prepStreetSigns, STATS as STREET_SIGN_STATS } from './streetsigns.js';
 import { YKF } from './ykf.js';
 import { AirTraffic } from './airtraffic.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
@@ -158,6 +159,7 @@ const RESPAWN_SITES = [
 let respawns = [];   // [{ name, x, z, node }] (buildRespawns)
 let ykf = null;        // the Region of Waterloo International Airport (ykf.js)
 let signalHeads = null;   // the signal heads near the camera (junctions.js)
+let streetSigns = null;   // the street-name signs' lettering near the camera (streetsigns.js)
 let chicopee = null;   // Chicopee's bike park: trails, lifts, bikes (chicopee.js)
 let crops = null;      // Auto KW: standing corn and soy, the tractors and combines (crops.js)
 let air = null;        // Auto KW: YKF's air traffic, the Cessnas and the news helicopter (airtraffic.js)
@@ -869,6 +871,9 @@ async function boot() {
   addLandmarkExtra(buildHighways);
   // signals, stop signs, roundabouts and crossings, from OSM (junctions.js, data/junctions.json)
   { const jc = prepJunctions(city, md.junctions); if (jc) { window.__junctions = jc.stats; blog('junctions: ' + JSON.stringify(jc.stats)); } }
+  // the street-name blades at the corners and on the mast arms (streetsigns.js, data/streetsigns.json)
+  if (!window.__noStreetSigns) streetSigns = prepStreetSigns(city, md.streetsigns);
+  window.__streetSigns = STREET_SIGN_STATS;
   city.slabQuery = (x, z) => ykf.surface(x, z);
   blog(`city: grading ${cityStats.gradeCached ? 'from cache' : 'computed'}, buildings ${bootCache.buildings ? 'from cache' : 'computed'}`);
 
@@ -1298,6 +1303,7 @@ function installShadowFade() {
 
   traffic = new TrafficSystem(scene, city, game);
   if (city.jc) signalHeads = new SignalHeads(scene, city.jc);
+  if (streetSigns) streetSigns.attach(scene, renderer, world);
   traffic.camera = camera;   // far-LOD instances are culled against it
   traffic.link = link;       // cars stop for a train on a level crossing
   // where water is drawn (the boats' query): no car parks under it
@@ -1831,7 +1837,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { grt, eats, get air() { return air; }, get signalHeads() { return signalHeads; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { grt, eats, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;   // Auto KW: the harvest (crops.js)
   window.__dbg.kart = kartRace;
   window.__dbg.fest = fest;
@@ -3548,6 +3554,10 @@ function draw(now) {
   if (signalHeads) {
     signalHeads.update(camera, draw.lastSig ? Math.min(0.1, (now - draw.lastSig) / 1000) : 0);
     draw.lastSig = now;
+  }
+  if (streetSigns) {
+    streetSigns.update(camera, draw.lastSt ? Math.min(0.1, (now - draw.lastSt) / 1000) : 0);
+    draw.lastSt = now;
   }
   renderer.setRenderTarget(postfx.target);
   if (world) { world.updateTerrainLod(camera.position); world.cullTerrain(camera); }
