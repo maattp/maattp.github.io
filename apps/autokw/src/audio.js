@@ -2003,6 +2003,8 @@ const STATIONS = [
   // and from further away
   { name: 'RdMix Classic Rock', root: 52, style: 'rock',
     stream: 'https://cast1.torontocast.com:4610/stream' },
+  { name: 'NRJ Linkin Park', root: 50, style: 'rock',
+    stream: 'https://streaming.nrjaudio.fm/ouvfbfoarp52' },
   { name: 'BBC Radio 1', root: 60, style: 'pop',
     stream: 'https://as-hls-ww.live.cf.md.bbci.co.uk/pool_01505109/live/ww/bbc_radio_one/bbc_radio_one.isml/bbc_radio_one-audio%3d96000.norewind.m3u8',
     hls: true },
