@@ -57,6 +57,7 @@ import { prepHome, homeMap } from './kwhome.js';
 import { Crops } from './crops.js';
 import { Kartway, KartRace } from './kartway.js';
 import { prepHighways, buildHighways, addHighwaySolids, highwaysRoot, updateHighways, hwyKeepClear } from './highways.js';
+import { prepJunctions, SignalHeads } from './junctions.js';
 import { YKF } from './ykf.js';
 import { AirTraffic } from './airtraffic.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
@@ -147,6 +148,7 @@ const RESPAWN_SITES = [
 ];
 let respawns = [];   // [{ name, x, z, node }] (buildRespawns)
 let ykf = null;        // the Region of Waterloo International Airport (ykf.js)
+let signalHeads = null;   // the signal heads near the camera (junctions.js)
 let chicopee = null;   // Chicopee's bike park: trails, lifts, bikes (chicopee.js)
 let crops = null;      // Auto KW: standing corn and soy, the tractors and combines (crops.js)
 let air = null;        // Auto KW: YKF's air traffic, the Cessnas and the news helicopter (airtraffic.js)
@@ -834,6 +836,8 @@ async function boot() {
   // the freeways as Ontario signs and builds them (highways.js, data/hwy.json)
   { const k = prepHighways(city, md.hwy); blog(`highways: ${k.edgesTimed} freeway edges timed from OSM maxspeed`); }
   addLandmarkExtra(buildHighways);
+  // signals, stop signs, roundabouts and crossings, from OSM (junctions.js, data/junctions.json)
+  { const jc = prepJunctions(city, md.junctions); if (jc) { window.__junctions = jc.stats; blog('junctions: ' + JSON.stringify(jc.stats)); } }
   city.slabQuery = (x, z) => ykf.surface(x, z);
   blog(`city: grading ${cityStats.gradeCached ? 'from cache' : 'computed'}, buildings ${bootCache.buildings ? 'from cache' : 'computed'}`);
 
@@ -1257,6 +1261,7 @@ function installShadowFade() {
   player.link = link;
 
   traffic = new TrafficSystem(scene, city, game);
+  if (city.jc) signalHeads = new SignalHeads(scene, city.jc);
   traffic.camera = camera;   // far-LOD instances are culled against it
   traffic.link = link;       // cars stop for a train on a level crossing
   // where water is drawn (the boats' query): no car parks under it
@@ -1765,7 +1770,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { get air() { return air; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { get air() { return air; }, get signalHeads() { return signalHeads; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;   // Auto KW: the harvest (crops.js)
   window.__dbg.kart = kartRace;   // Auto KW: Erbsville Kartway (kartway.js)
   wireUi();
@@ -3464,6 +3469,10 @@ function draw(now) {
   const t0 = prof ? performance.now() : 0;
   if (lmRoot && updateLandmarkRange(lmRoot, camera.position) && shadowCache) shadowCache.invalidate();
   updateHighways(camera.position);
+  if (signalHeads) {
+    signalHeads.update(camera, draw.lastSig ? Math.min(0.1, (now - draw.lastSig) / 1000) : 0);
+    draw.lastSig = now;
+  }
   renderer.setRenderTarget(postfx.target);
   if (world) { world.updateTerrainLod(camera.position); world.cullTerrain(camera); }
   if (world && world.trees) {
