@@ -31,7 +31,7 @@ import * as G from './geo.js';
 import { hash2 } from './util.js';
 import { Builder } from './build.js';
 import { ROAD_LIFT } from './citygen.js';
-import { polyMat } from './kw.js';
+import { polyMat, plainUV } from './kw.js';
 
 const ckey = (x, z) => `${Math.round(x / 1500)},${Math.round(z / 1500)}`;
 // NOT landmark clusters: a cluster draws wherever it is in the frustum, and
@@ -273,7 +273,7 @@ class Kit {
       for (const [kind, b] of m) {
         if (b.empty) continue;
         STATS.tris += b.idx.length / 3;
-        const mesh = new THREE.Mesh(b.build(), kind === 'sign' ? atlasMat : polyMat());
+        const mesh = new THREE.Mesh(kind === 'sign' ? b.build() : plainUV(b.build()), kind === 'sign' ? atlasMat : polyMat());
         mesh.name = `highways:${key}:${kind}`;
         // no shadow casting: the phone's shadow cache would be redrawn every
         // time a cell comes into range (and a 1 m wall casts little anyway)
