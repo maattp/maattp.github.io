@@ -3516,7 +3516,7 @@ function crowdState(R, x, z) {
     // the path through a junction (planNode): waypoints, the one he is
     // walking to, a bit per leg for "this leg crosses a carriageway", and
     // the seconds spent on it
-    path: new Float32Array(16), pn: 0, pi: 0, pcr: 0, pt: 0, ptMax: 45,
+    path: new Float32Array(16), pn: 0, pi: 0, pcr: 0, pt: 0, ptMax: 45, jn: -1,
     // crossing now / seconds waiting at the kerb / the gap check's timer /
     // hurrying (a car coming)
     cross: 0, wait: 0, gapT: 0, hurry: 0,
@@ -3846,6 +3846,7 @@ export class PedSystem {
    */
   planNode(p, nodeId) {
     const city = this.city, R = this.R, node = city.nodes[nodeId];
+    p.jn = nodeId;   // the junction, for its pedestrian signals
     let n = 0, self = -1;
     for (let k = 0; k < node.e.length && n < ARMS.length; k++) {
       const ei = node.e[k], e = city.edges[ei], mine = ei === p.edge;
@@ -4293,7 +4294,21 @@ export class PedSystem {
           const wx = p.path[p.pi * 2], wz = p.path[p.pi * 2 + 1];
           const leg = (p.pcr >> p.pi) & 1;
           desired = Math.atan2(wx - p.x, wz - p.z);
-          if (leg && !p.cross) {
+          const jc = leg && !p.cross ? city.jc : null, ci = jc && p.jn >= 0 ? jc.ctl[p.jn] : -1;
+          const SC = ci >= 0 ? jc.list[ci] : null;
+          if (SC && SC.k === 1) {
+            // a signalled corner (junctions.js): wait on the hand, cross on the
+            // walking person -- and then still not under a car that has not
+            // stopped (2.5 s into the walk, it will). The wait is not the
+            // path's time: a red can be most of a minute.
+            p.pt -= dt;
+            if (jc.walkState(SC, jc.walkGroup(SC, wx - p.x, wz - p.z)) === 'walk') {
+              p.wait += dt;
+              p.gapT -= dt;
+              if (p.gapT <= 0) { p.gapT = 0.25; if (p.wait > 2.5 || this._crossClear(p, wx, wz, traffic)) p.cross = 1; }
+            } else p.wait = 0;
+            if (!p.cross) targetSpeed = 0;
+          } else if (leg && !p.cross) {
             // at the kerb: wait for a gap (6 s at most -- the cars stop for a
             // person in the road, and a stream of them would hold him for ever)
             p.wait += dt;
