@@ -265,7 +265,7 @@ export class Player {
       } else if (!(this.game.tryDriveThru && this.game.tryDriveThru(this))) this.exitVehicle();
     }
 
-    if (input.attack && this.attackCd <= 0) this.attack(traffic, peds);
+    if (input.attack && this.attackCd <= 0 && !this.skate) this.attack(traffic, peds);   // (on skates the button stops you)
     this.updateCamera(dt, input);
   }
 
@@ -277,6 +277,8 @@ export class Player {
       this.sky = null;
     }
     if (this.swimming && this.updateSwim(dt, input)) return;
+    // Auto KW: on skates on Waterloo Public Square's rink, skating.js has the frame
+    if (this.skate && this.skate.step(this, dt, input)) return;
     const mag = Math.hypot(input.x, input.y);
     // On-foot pace. The city is 10 km across, so these sit above real walking
     // and jogging speeds -- crossing a block should not be a chore.
@@ -1222,6 +1224,7 @@ export class Player {
     this.h.group.visible = true;
     this.endSky();
     if (this.swimming) this.clearSwim();
+    if (this.skate) this.skate.stop(this, true);
     this.fighter.reset();
     this.x = x;
     this.z = z;

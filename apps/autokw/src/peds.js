@@ -3530,6 +3530,9 @@ function crowdState(R, x, z) {
     fare: 0, fx: 0, fz: 0,
     // Auto KW: out for a walk on a trail (spawnTrail): { x, z, speed } ahead, or null
     trail: null,
+    // Auto KW: skating on Waterloo Public Square's rink (skating.js): its driver
+    // ({ drive(p, dt), pose(h, p, dt) }) moves and poses him, or null
+    skate: null,
   };
 }
 
@@ -4153,7 +4156,7 @@ export class PedSystem {
 
   scare(x, z, radius) {
     for (const p of this.peds) {
-      if (p.cop || p.fare || p.state === 'down') continue;
+      if (p.cop || p.fare || p.skate || p.state === 'down') continue;
       if (dist2(p.x, p.z, x, z) < radius * radius) {
         p.state = 'flee';
         p.timer = 4 + this.R.n() * 3;
@@ -4278,6 +4281,9 @@ export class PedSystem {
         // a taxi's fare: stands facing the road, or walks to (fx, fz) (taxi.js)
         desired = Math.atan2(p.fx - p.x, p.fz - p.z);
         targetSpeed = p.fare === 2 ? 2.3 : 0;
+      } else if (p.skate) {
+        // skating on the rink: skating.js places him (x, y, z, heading, speed)
+        p.skate.drive(p, dt);
       } else if (p.trail && p.state !== 'flee') {
         // out for a walk on a trail: toward the point ahead bikes.js gives
         desired = Math.atan2(p.trail.x - p.x, p.trail.z - p.z);
@@ -4359,7 +4365,7 @@ export class PedSystem {
 
       // a vehicle standing across his way: round it, along whichever long
       // side is open (an officer closes on you in one, a fare gets in one)
-      if (p.nearCar && !p.cop && !p.fare && targetSpeed > 0) {
+      if (p.nearCar && !p.cop && !p.fare && !p.skate && targetSpeed > 0) {
         const av = this._avoidCar(p, desired);
         if (av !== null) desired = av;
         if (p.avCar && p.blocked > 0.5 && !p.avFlip) { p.avSide = -p.avSide; p.avFlip = true; }
@@ -4374,10 +4380,12 @@ export class PedSystem {
         const k = p.stag / STAG, push = 2.4 * k * k * dt;
         if (!city.obstacleHit(p.x + p.stagX * push, p.z + p.stagZ * push, 0.3, p.y)) { p.x += p.stagX * push; p.z += p.stagZ * push; }
       }
-      p.heading += clamp(angleWrap(desired - p.heading), -7 * dt, 7 * dt);
-      p.speed = lerp(p.speed, targetSpeed, 1 - Math.exp(-7 * dt));
-      // (one standing still stays where he stands: no ground query for him)
-      if (p.speed > 0.03 || p.stag > 0) this._move(p, dt);
+      if (!p.skate) {
+        p.heading += clamp(angleWrap(desired - p.heading), -7 * dt, 7 * dt);
+        p.speed = lerp(p.speed, targetSpeed, 1 - Math.exp(-7 * dt));
+        // (one standing still stays where he stands: no ground query for him)
+        if (p.speed > 0.03 || p.stag > 0) this._move(p, dt);
+      }
 
       // Place the body BEFORE animating it: animateWalk locks planted feet to
       // world positions, and solving against last frame's root puts every
@@ -4385,7 +4393,7 @@ export class PedSystem {
       p.h.group.position.set(p.x, p.y, p.z);
       // (an Euler write is a quaternion recompute: only what changed)
       if (p.h.group.rotation.y !== p.heading) p.h.group.rotation.y = p.heading;
-      if (p.h.group.rotation.z !== 0) p.h.group.rotation.z = 0;
+      if (p.h.group.rotation.z !== 0 && !p.skate) p.h.group.rotation.z = 0;
       // ANIMATION LOD. A pedestrian is 24 scene objects and a bone texture
       // upload a frame, and skinned meshes are never frustum-culled (their
       // bounds are the bind pose), so all of them were posed, multiplied out,
@@ -4409,7 +4417,8 @@ export class PedSystem {
       p.h.group.matrixWorldAutoUpdate = pose;
       p.h.mesh.skeleton.frozen = !pose;
       if (pose) {
-        animateWalk(p.h, clamp(p.speed * 0.20, 0, 0.8), Math.min(p.animDt, 0.1), p.speed);
+        if (p.skate) p.skate.pose(p.h, p, Math.min(p.animDt, 0.1));
+        else animateWalk(p.h, clamp(p.speed * 0.20, 0, 0.8), Math.min(p.animDt, 0.1), p.speed);
         p.animDt = 0;
         if (p.aim > 0.02) aimPose(p.h, p.aim, p.kind === 'swat');
         if (p.fare === 1) hailPose(p.h, this.simT);

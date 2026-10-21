@@ -2695,6 +2695,10 @@ export function buildPlaces(ctx) {
   if (typeof window !== 'undefined') window.__kwPlaces = STATS;   // harness probes
 }
 export function placesStats() { return STATS; }
+/** Waterloo Public Square's rink for skating.js: the outline, centre, long axis, half sizes, corner radius and the ice's height. */
+export function rinkData() {
+  return { pts: RINK, c: RINK_C, u: RINK_U, hl: RINK_HL, hw: RINK_HW, r: RINK_R, y: STATS.rink ? STATS.rink.y : null };
+}
 
 /** The map's marks and hellos. */
 export function placesMap() {
