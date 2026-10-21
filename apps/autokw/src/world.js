@@ -8030,8 +8030,12 @@ float frLine(float o, float fw, float c, float w) {
     const PAL = [[0.84, 0.78, 0.66], [0.78, 0.70, 0.60], [0.70, 0.52, 0.42], [0.80, 0.80, 0.78], [0.62, 0.58, 0.54], [0.88, 0.84, 0.74]];
     const col = tint(seed, PAL[Math.floor(hash2(seed, 801) * PAL.length)], 0.12);
     const wh = bd.h + 2 + drop;
-    // plain painted block / stucco: the facade cells all carry windows
-    flat.box(bd.x, base - drop, bd.z, bd.w, wh, bd.d, bd.rot, col, { ao: 0.25 });
+    // plain painted block / stucco: the facade cells all carry windows. No
+    // top: the far skyline (buildSkyline: every box over 1400 m2) caps this
+    // footprint at exactly bd.y + bd.h, and a roof there z-fought it in
+    // bands -- the striped tan-and-white plaza roofs. The roof is the lid
+    // below, inside the parapet and 0.3 m over the skyline's, as meshBuilding's is.
+    flat.box(bd.x, base - drop, bd.z, bd.w, wh, bd.d, bd.rot, col, { ao: 0.25, top: false });
     const c = Math.cos(bd.rot), sn = Math.sin(bd.rot);
     const off = (lx, lz) => [bd.x + lx * c - lz * sn, bd.z + lx * sn + lz * c];
     // the front: along u, out along n (both local), `len` long, at `dist` from the centre
@@ -8058,11 +8062,14 @@ float frLine(float o, float fw, float c, float w) {
     // a parapet all round, and the roof's plant
     const rt = bd.y + bd.h;
     flat.box(bd.x, rt, bd.z, bd.w + 0.25, 0.7, bd.d + 0.25, bd.rot, [col[0] * 0.9, col[1] * 0.9, col[2] * 0.9], NOTOP);
+    // the roof: white single-ply or pale gravel, as Waterloo Region's plazas are from the air
+    const rv = hash2(seed, 811) < 0.6 ? 0.86 + hash2(seed, 812) * 0.08 : 0.62 + hash2(seed, 813) * 0.1;
+    flat.box(bd.x, rt + 0.16, bd.z, bd.w + 0.1, 0.14, bd.d + 0.1, bd.rot, [rv, rv, rv * 0.98]);
     const nu = Math.min(12, Math.max(1, Math.round(bd.w * bd.d / 500)));
     for (let i = 0; i < nu; i++) {
       const [gx, gz] = off((hash2(seed, 820 + i) - 0.5) * (bd.w - 5), (hash2(seed, 840 + i) - 0.5) * (bd.d - 5));
       const k = 1.6 + hash2(seed, 860 + i) * 1.6;
-      flat.box(gx, rt, gz, k, 1.1 + hash2(seed, 880 + i), k * 0.7, bd.rot, [0.6, 0.61, 0.62]);
+      flat.box(gx, rt + 0.3, gz, k, 1.1 + hash2(seed, 880 + i), k * 0.7, bd.rot, [0.6, 0.61, 0.62]);
     }
   }
 
