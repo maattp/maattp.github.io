@@ -68,7 +68,17 @@ ANG = 50   # geo.js LOT_ANG
 # Drawn in this order, so later kinds win where polygons overlap: a car park
 # mapped inside a retail landuse is a car park, a plaza inside a commercial
 # block is a plaza.
-ORDER = ["hard", "rail", "asphalt_landuse", "aisle", "asphalt", "courts", "plaza", "parking"]
+ORDER = ["hard", "lu_parking", "rail", "asphalt_landuse", "aisle", "asphalt", "courts", "plaza", "parking"]
+# AUTO KW: a plaza's car park is mostly NOT mapped as one. Waterloo Region's
+# retail and commercial landuse is the plazas and big boxes -- buildings
+# standing in striped tarmac -- and drawn as concrete hardstanding it read as
+# a bare slab from the street and the air. A retail/commercial polygon this
+# big is striped car park in its own orientation, with a concrete sidewalk
+# STOREFRONT_M wide round every building in it (a mapped car park, square or
+# plaza still wins). Smaller ones (a corner lot, a downtown frontage) stay hard.
+LU_PARKING = {"retail", "commercial"}
+LU_PARKING_M2 = 3000
+STOREFRONT_M = 4.5
 # Only these may pave over the park mask. A park's own car park is real tarmac,
 # and so is a court or a square mapped as a park with a paved `surface`; a
 # `landuse=commercial` polygon drawn loosely over a green is not.
@@ -220,6 +230,23 @@ def aprons():
     return g
 
 
+def storefronts():
+    """A concrete ring STOREFRONT_M wide round every non-house building (lu_parking's sidewalks)."""
+    raw = json.load(open(os.path.join(DATA, "raw_buildings.json")))["buildings"]
+    img = Image.new("L", (N, N), 0)
+    d = ImageDraw.Draw(img)
+    w = max(1, round(2 * STOREFRONT_M / STEP))
+    for p in raw:
+        a = area(p["o"])
+        if a < 150 or p.get("bt") in ("house", "detached", "semidetached_house", "garage", "shed", "roof"):
+            continue
+        c = code("hard", orientation(p["o"]))
+        px = to_px(p["o"])
+        d.polygon(px, fill=c)
+        d.line(px + [px[0]], fill=c, width=w, joint="curve")
+    return np.asarray(img, dtype=np.uint8)
+
+
 # A downtown "park" is usually a paved square. Occidental Square, Westlake Park
 # and Pioneer Square are all `leisure=park` with no surface tag, so the only
 # thing that says they are hardscape is where they are: small, and ringed by
@@ -270,7 +297,9 @@ def bake(wet, green):
             continue
         if k == "hard" and p.get("lu") == "railway":
             k = "rail"   # an older raw_lots.json called rail land `hard`
-        if k == "asphalt" and p.get("lu"):
+        if k == "hard" and p.get("lu") in LU_PARKING and area(p["o"]) >= LU_PARKING_M2:
+            groups["lu_parking"].append(p)
+        elif k == "asphalt" and p.get("lu"):
             groups["asphalt_landuse"].append(p)
         elif k == "asphalt" and p.get("sf") in PAVED_SURFACE and p.get("le"):
             if area(p["o"]) <= SURFACE_MAX_M2:
@@ -286,7 +315,7 @@ def bake(wet, green):
     stats = {}
     layer_over = Image.new("L", (N, N), 0)
     for g in ORDER:
-        kind = "asphalt" if g in ("asphalt_landuse", "aisle", "courts") else g
+        kind = "asphalt" if g in ("asphalt_landuse", "aisle", "courts") else "parking" if g == "lu_parking" else g
         dst = layer_over if g in OVER_GREEN else None
         n = 0
         if g == "aisle":
@@ -310,6 +339,17 @@ def bake(wet, green):
             merged = np.where(aisle_any > 0, aisle_any,
                               np.where((aisle_dev > 0) & (cur > 0), aisle_dev, cur))
             img = Image.fromarray(merged.astype(np.uint8), "L")
+        elif g == "lu_parking":
+            # its own layer, so the storefront sidewalks can be cut into it alone
+            lp = Image.new("L", (N, N), 0)
+            for p in groups[g]:
+                paint(lp, p, code("parking", orientation(p["o"])))
+                n += 1
+            lp = np.asarray(lp, dtype=np.uint8)
+            walk = storefronts()
+            lp = np.where((lp > 0) & (walk > 0), walk, lp).astype(np.uint8)
+            cur = np.asarray(img, dtype=np.uint8)
+            img = Image.fromarray(np.where(lp > 0, lp, cur).astype(np.uint8), "L")
         else:
             for p in groups[g]:
                 if area(p["o"]) < 60:
