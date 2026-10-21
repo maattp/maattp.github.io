@@ -385,11 +385,16 @@ function meshPoly(B, solids, b, P, city) {
 }
 
 let POLY_MAT = null;
+/** The footprint buildings' vertex-colour material (kwshops.js shares it, so its geometry merges into the same draw). */
+export function polyMat() {
+  if (!POLY_MAT) POLY_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0 });
+  return POLY_MAT;
+}
 /** landmarks.js extra: every polygon building, merged per 1200 m cluster. */
 export function buildPolys(ctx) {
   if (!KW) return;
   const { addTo, city } = ctx;
-  if (!POLY_MAT) POLY_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0 });
+  polyMat();
   const builders = new Map();
   let n = 0;
   for (const b of city.buildings) {
@@ -411,7 +416,7 @@ export function buildPolys(ctx) {
 }
 
 /** The face of a polygon building nearest (px, pz): world point at the wall, outward normal, length. */
-function polyFace(P, px, pz) {
+export function polyFace(P, px, pz) {
   const pts = P.pts, n = pts.length;
   let best = null, bd = Infinity;
   for (let i = 0; i < n; i++) {
@@ -459,7 +464,7 @@ export function polyFaces(P, px, pz, inset = 5) {
  * its own door), the face nearest the road for a small one. Returns the
  * sign's world point at the wall, the outward normal, and the face's length.
  */
-function faceFor(city, b, px, pz, signW, roadOnly = false) {
+export function faceFor(city, b, px, pz, signW, roadOnly = false) {
   const [lx, lz] = toLocal(b, px, pz);
   const hw = b.w / 2, hd = b.d / 2;
   const faces = [
@@ -656,7 +661,7 @@ function smallStore(ctx, g, x, z, yaw, makePanel) {
 }
 
 /** The heading (rotation.y) from (x, z) to the nearest street, or null. */
-function faceRoad(city, x, z, r = 90) {
+export function faceRoad(city, x, z, r = 90) {
   let best = null, bd = r;
   for (const ei of city.edgesNear(x, z, r)) {
     const e = city.edges[ei];
@@ -765,6 +770,7 @@ export function buildSigns(ctx) {
   const seen = new Set();
   for (const [n, x, z, kind, brand] of KW.shops) {
     if (/tim horton|freshco/i.test(n)) continue;
+    if (KW.chainNames && (KW.chainNames.has(n.toLowerCase()) || (brand && KW.chainNames.has(brand.toLowerCase())))) continue;
     const k = n + Math.round(x / 20) + ',' + Math.round(z / 20);
     if (seen.has(k)) continue;
     seen.add(k);
