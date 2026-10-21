@@ -16,6 +16,7 @@ import { distToSeg, segDist, clamp, hash2, roofAt } from './util.js';
 import { memo } from './bootcache.js';
 import { tagGravel } from './gravel.js';
 import { tagRural, chainRaise, ruralLift, chainPoint, RW, RAISE, CROWN } from './rural.js';
+import { farmStyle, farmHeight } from './farmstead.js';
 
 export const CHUNK = 400;
 
@@ -380,7 +381,7 @@ export const BERM = 1.5;
 // --- the building cache -----------------------------------------------------
 // The fitted building list as columns (Float64, so shrunk boxes keep every
 // bit) plus the per-chunk cover it was read with. See cityGenerator.
-const STYLES = ['house', 'brick', 'lowrise', 'midrise', 'tower', 'industrial', 'campus'];
+const STYLES = ['house', 'brick', 'lowrise', 'midrise', 'tower', 'industrial', 'campus', 'barn', 'shed', 'silo', 'farmhouse', 'church'];
 function packBuildings(buildings, built, stats) {
   const n = buildings.length;
   const X = new Float64Array(n), Z = new Float64Array(n), W = new Float64Array(n), D = new Float64Array(n);
@@ -2163,14 +2164,18 @@ export function* cityGenerator(md, cache = {}) {
           // Auto KW: class in the low 3 bits, the mapped roof and wall above
           // (tools/kw/build_buildings.py look_of) -> bd.look for world.js
           const cb = B.blob.getUint8(o + 11), cls = cb & 7;
-          const h = untaggedHeight(cls, B.blob.getUint16(o + 8, true) / 20, w * d);
+          let h = untaggedHeight(cls, B.blob.getUint16(o + 8, true) / 20, w * d);
           area += w * d;
+          const seed = (hash2(Math.round(x), Math.round(z)) * 65536) | 0;
+          // cls 6 a farm building (its sub-kind in the roof bits), cls 7 a church: farmstead.js
+          const style = cls === 6 ? farmStyle(cb >> 3) : cls === 7 ? 'church' : styleFor(cls, h, w, d);
+          if (cls === 6) h = farmHeight(style, { w, d, h, seed });
           buildings.push({
             x, z, w, d, rot, h,
             y: standY(x, z),
-            style: styleFor(cls, h, w, d),
+            style,
             look: (cb >> 3) | (cls === 1 ? 32 : 0),   // 32: OSM says apartments
-            seed: (hash2(Math.round(x), Math.round(z)) * 65536) | 0,
+            seed,
             kind: null,
           });
         }

@@ -201,6 +201,8 @@ export async function loadMapData(onStep) {
   const gravel = await opt('gravel.json');
   // downtown Kitchener, Cambridge, the malls... (tools/kw/build_sights.py; kwsights.js)
   const sights = await opt('sights.json');
+  // the villages' main streets, St. Jacobs' mill and silos (tools/kw/build_villages.py; kwvillages.js)
+  const villages = await opt('villages.json');
   // the chain stores, gas stations and plazas (tools/kw/build_shops.py; kwshops.js)
   const shops = await opt('shops.json');
   // the freeways as signed: exits, speed limits, lighting (tools/kw/build_hwy.py; highways.js)
@@ -215,6 +217,6 @@ export async function loadMapData(onStep) {
   return {
     height, hfN: hp.w, wlevel,
     water, green, farm, maskN: sp.w, lot, lotN: lp.w,
-    roads, buildings, places, lakes, monorail, link, freight, beaches, parkprops, bikepaths, piers, ferry, mountains, trails, kw, chicopee, golf, kart, gravel, sights, shops, hwy, uw,
+    roads, buildings, places, lakes, monorail, link, freight, beaches, parkprops, bikepaths, piers, ferry, mountains, trails, kw, chicopee, golf, kart, gravel, sights, villages, shops, hwy, uw,
   };
 }

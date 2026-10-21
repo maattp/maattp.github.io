@@ -9,6 +9,7 @@ import * as G from './geo.js';
 const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, MOUTH_RAMP, mouthRamp, cityStats, trimOldest, walkWidthOf, FWY_DIP_OVER } from './citygen.js';
 import * as RU from './rural.js';
+import { FARM_STYLES, meshFarmBuilding, farmMass, steepleMass } from './farmstead.js';
 import { Builder, ChunkBuilder, freezeStatic } from './build.js';
 import { memo } from './bootcache.js';
 import { buildMountains } from './mountains.js';
@@ -3751,8 +3752,10 @@ ${FALL ? `
       // a skinny 32 m tower never did -- from a plane, footprint is what you
       // see. 4032 buildings pass; the sub-30 additions take the plain-box path
       // (plant and crown are height-gated) at ~12 triangles each.
-      if (bd.h < 16 && bd.w * bd.d < 1400) continue;
       if (bd.kw && (bd.kw.poly || bd.kw.skip)) continue;   // Auto KW: drawn from its footprint (kw.js), or by kwfun.js
+      // Auto KW: a church's steeple is the village skyline from every concession road
+      if (bd.style === 'church' && !bd.kind) { steepleMass(b, bd, this.city, this.massColour(bd)); continue; }
+      if (bd.h < 16 && bd.w * bd.d < 1400) continue;
       const col = this.massColour(bd);
       const s = 0.985;
       // A tower is read almost entirely by its top. Extruded to full height
@@ -4952,7 +4955,7 @@ float frLine(float o, float fw, float c, float w) {
         if (bd.kw && (bd.kw.poly || bd.kw.skip)) continue;   // Auto KW: drawn from its footprint (kw.js), or by kwfun.js
         // A flat roof's plant, crown and terrace furniture are solid to what
         // lands on it (util roofAt): recorded as they are drawn.
-        const flatRoof = !bd.kind && bd.style !== 'house' && !(bd.style === 'industrial' && bd.h < 3.5);
+        const flatRoof = !bd.kind && bd.style !== 'house' && !FARM_STYLES.has(bd.style) && !(bd.style === 'industrial' && bd.h < 3.5);
         bd.roofSolids = null;
         if (flatRoof) { rec.length = 0; flat.solids = bl.facade.solids = bl.glass.solids = rec; }
         this.meshBuilding(bl, flat, glow, bd);
@@ -8621,6 +8624,7 @@ float frLine(float o, float fw, float c, float w) {
   /** The colour a building's textured walls average to (see CELL_MEAN): what
    *  its massing box and far-skyline box are drawn in. */
   massColour(bd) {
+    if (FARM_STYLES.has(bd.style)) return farmMass(bd);
     const seed = bd.seed;
     const fam = (bd.style === 'tower' || bd.style === 'midrise' || bd.style === 'brick'
       || bd.style === 'lowrise' || bd.style === 'campus') ? this.buildingFamily(bd) : null;
@@ -8632,6 +8636,8 @@ float frLine(float o, float fw, float c, float w) {
   }
 
   meshBuilding(bl, flat, glow, bd) {
+    // Auto KW: barns, sheds, silos, farmhouses and churches (farmstead.js)
+    if (FARM_STYLES.has(bd.style) && !bd.kind) { meshFarmBuilding(this, bl, flat, bd); return; }
     const seed = bd.seed;
     const C = this.cells;
     let target, col, cell = null, uS = 14, vS = 13.6;

@@ -200,6 +200,9 @@ export function* buildingTiers(bd, baseY, totalH) {
   }
 }
 
+// Auto KW: farmstead.js's styles have pitched roofs (or a silo's dome), no parapet
+const PITCHED = new Set(['barn', 'shed', 'silo', 'farmhouse', 'church']);
+
 /**
  * The tiers the near mesh draws a building's walls in (world.js
  * meshBuilding): a shopfront plinth on anything but a warehouse, a school or a
@@ -224,7 +227,7 @@ export function roofAt(b, x, z, pad = 0, maxY = Infinity) {
   const c = Math.cos(-b.rot), s = Math.sin(-b.rot), dx = x - b.x, dz = z - b.z;
   const lx = Math.abs(dx * c - dz * s), lz = Math.abs(dx * s + dz * c);
   if (lx > b.w / 2 + pad || lz > b.d / 2 + pad) return -Infinity;
-  if (b.kind || b.style === 'house' || (b.style === 'industrial' && b.h < 3.5)) return b.y + b.h <= maxY ? b.y + b.h : -Infinity;
+  if (b.kind || b.style === 'house' || (b.style === 'industrial' && b.h < 3.5) || PITCHED.has(b.style)) return b.y + b.h <= maxY ? b.y + b.h : -Infinity;
   let top = -Infinity;
   for (const t of drawnTiers(b)) {
     if (lx > t.w / 2 + pad || lz > t.d / 2 + pad) break;
