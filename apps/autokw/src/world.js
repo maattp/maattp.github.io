@@ -5031,6 +5031,12 @@ float frLine(float o, float fw, float c, float w) {
     // Auto KW: the junction controls' paint, poles, signs and roundabout
     // islands (junctions.js), into this chunk's flat mesh
     if (city.jc) city.jc.meshChunk(this, flat, cx, cz, lod);
+    // ...and the street-name signs' posts and blades (streetsigns.js; working
+    // out a chunk's corners is a few ms on a phone: a step of its own)
+    if (city.streetSigns && !window.__noStreetSigns && lod === 1) {
+      yield; this._yt = performance.now();
+      city.streetSigns.meshChunk(this, flat, cx, cz, lod);
+    }
 
     if (lod === 1) {
       since = 0;
