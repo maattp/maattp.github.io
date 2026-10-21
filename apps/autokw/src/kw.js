@@ -77,7 +77,7 @@ export const LOOKS = {
   'Engineering 3': { h: 13, fam: BUFF },
   'Engineering 5': { h: 25, fam: { m: 'glass', c: [0.74, 0.76, 0.78], u: 14, v: 13.6 } },
   'Engineering 6': { h: 25, fam: GLASS },
-  'Engineering 7': { h: 32, fam: { m: 'glass', c: [0.78, 0.80, 0.82], u: 14, v: 13.6 } },
+  // E7, renamed the Pearl Sullivan Engineering Building in Nov 2025 (OSM has the new name)
   'Pearl Sullivan Engineering Building': { h: 32, fam: { m: 'glass', c: [0.78, 0.80, 0.82], u: 14, v: 13.6 } },
   'Physics': { h: 13, fam: BRUT },
   'Biology 1': { h: 13, fam: BRUT },

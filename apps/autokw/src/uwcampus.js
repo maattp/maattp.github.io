@@ -941,11 +941,13 @@ const SIGS = {
   // Laurier's Science Building: the octagonal brick corner tower, its
   // cream bands, a grey metal hipped cap (Commons "Science Building WLU")
   'Science Building'(kit, ctx, b, B, masses) {
+    // the far (west) end of the long wing from King St, which ends in the
+    // round bay OSM draws: the photo is from the lot by Alumni Field, the
+    // tower at the building's left end
     const r = towardRoad(ctx.city, b.cx, b.cz, 160);
     if (!r) return;
-    // the corner of the outline nearest the street
-    let q = null, qs = -Infinity;
-    for (const p of b.r.p) { const s = (p[0] - b.cx) * r.nx + (p[1] - b.cz) * r.nz; if (s > qs) { qs = s; q = p; } }
+    let q = null, qs = Infinity;
+    for (const p of b.r.p) { const s = (p[0] - b.cx) * r.nx + (p[1] - b.cz) * r.nz; if (s < qs) { qs = s; q = p; } }
     const [cx, cz] = q, g = T(cx, cz) - 0.5, H = 5 * ST, R = 5.2;
     B.prism(cx, g, cz, R, H, 8, lin(WRB), Math.PI / 8);
     for (let k = 1; k < 5; k++) B.d.prism(cx, b.base + k * ST + 0.4, cz, R + 0.06, 0.55, 8, lin(CREAM), Math.PI / 8);
@@ -1643,7 +1645,7 @@ function clearIndex() {
   };
   for (const b of BLD) for (let i = 0; i < b.r.p.length; i++) add(b.r.p[i], b.r.p[(i + 1) % b.r.p.length], 24, false);
   const ring = U.ring || [];
-  for (let i = 0; i + 1 < ring.length; i++) add(ring[i], ring[i + 1], 14, true);
+  for (let i = 0; i + 1 < ring.length; i++) add(ring[i], ring[i + 1], 18, true);
   CLR.fields = Object.values((U.wlu && U.wlu.fields) || {}).filter((f) => f.n !== 'University Stadium').map((f) => f.p);
 }
 export function campusKeepClear(x, z) {
@@ -1660,7 +1662,7 @@ export function campusKeepClear(x, z) {
   if (db < 10) return true;
   const h = hash2(Math.round(x * 2) + 17, Math.round(z * 2) - 5);
   if (db < 24 && h < 0.6) return true;
-  if (dr < 14 && h < 0.65) return true;
+  if (dr < 18 && h < 0.8) return true;
   for (const p of CLR.fields) if (inPoly(p, x, z)) return true;
   return false;
 }

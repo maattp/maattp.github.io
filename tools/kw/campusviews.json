@@ -1,0 +1,16 @@
+[
+ {"name": "spawn", "eval": "(() => { const c = window.__dbg.camera, d = c.position.clone(); c.getWorldDirection(d); return { c: [c.position.x, c.position.z, 2.5], t: [c.position.x + d.x * 100, c.position.z + d.z * 100, 2] }; })()", "fov": 62},
+ {"name": "uptown-campus", "c": [-4000, -1500, 30], "t": [-5300, -2100, 10], "fov": 62},
+ {"name": "over-uw", "c": [-5300, -1700, 160], "t": [-5550, -2200, 0], "fov": 62},
+ {"name": "dc-ring", "c": [-5440, -2420, 1.7], "t": [-5436, -2300, 8], "fov": 62},
+ {"name": "e5-bridge", "c": [-5318, -2262, 1.7], "t": [-5272, -2228, 4], "fov": 62},
+ {"name": "wlu-sign", "c": [-4054, -2682, 1.7], "t": [-4060, -2660, 1.6], "fov": 62},
+ {"name": "over-wlu", "c": [-4150, -1950, 200], "t": [-4300, -2400, 0], "fov": 62},
+ {"name": "stadium", "c": [-4380, -1940, 30], "t": [-4460, -2030, 0], "fov": 62},
+ {"name": "colgate", "eval": "(() => { const g = window.__uwCampus.gates[1]; return { c: [g[0] - 26, g[1] - 18, 1.7], t: [g[0], g[1], 1.5] }; })()", "fov": 55},
+ {"name": "colgate2", "eval": "(() => { const g = window.__uwCampus.gates[1]; return { c: [g[0] + 30, g[1] - 22, 1.7], t: [g[0], g[1], 1.5] }; })()", "fov": 55},
+ {"name": "tie", "eval": "(() => { const t = window.__uwCampus.tie; return { c: [t[0] + t[3] * 90 - t[4] * 25, t[1] + t[4] * 90 + t[3] * 25, 1.7], t: [t[0], t[1], 15] }; })()", "fov": 58},
+ {"name": "dc-vault", "c": [-5520, -2420, 28], "t": [-5436, -2290, 12], "fov": 58},
+ {"name": "wlu-sci", "c": [-4110, -2440, 1.7], "t": [-4110, -2380, 8], "fov": 62},
+ {"name": "wlu-air2", "c": [-4560, -2560, 150], "t": [-4280, -2380, 0], "fov": 60}
+]
