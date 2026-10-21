@@ -2000,54 +2000,82 @@ class EngineVoice {
 // keeps its synth voice so the radio still works with the aeroplane on, which
 // is the whole point of an offline-first PWA. The last two are synth only.
 //
-// Streams come from radio-browser.info (the search /apps/radio uses), each
-// checked to answer over HTTPS with audio and CORS for polkiewicz.com. BBC
-// Radio 1 is HLS: its master playlist points at an http:// variant, which an
-// https page may not load, so this is that variant over https. Safari plays
-// HLS in an <audio>; a browser that cannot (`canPlayType`) skips the station.
+// Every stream here was LISTENED TO, not just loaded (tools/kw/radiotest.mjs:
+// a minute of each through ffmpeg -- loudness, silence, a looping message,
+// a whisper transcript -- then tuned in the game and its output measured).
+// The test runs from Seattle, which is where the radio is played: Canadian
+// commercial streams (Rogers' leanstream CHYM / Country 106.7 / 570 News,
+// Conestoga's CJIQ on leanstream, Indie88 and Stingray's Boom 97.3) answer
+// 200 with audio and CORS -- and the audio is "The stream you are trying to
+// access is not available at this time" or "only available within Canada" on
+// a loop. They are gone; campus, community and public stations replace them.
+//
+// `lufs` is each stream's measured integrated loudness (EBU R128): the radio
+// brings every station to RADIO_REF (`stationNorm`), so none is "just quiet".
+// CBC is its own HLS (cbcradiolive, a media playlist: Chrome cannot parse the
+// master, Safari plays either). streamtheworld's MP3s close after 32 KB for a
+// browser user agent. BBC Radio 1's master points at http://, so this is its
+// variant over https. Radio Waterloo is its Icecast server itself:
+// radiowaterloo.ca/stream reaches it through two redirects that send no CORS
+// header, which fails a crossOrigin load. AH.FM's fr. relay sends its CORS
+// header twice ("*, *"), which a browser rejects; us. sends it once. A browser whose `canPlayType` says no to HLS skips the
+// `hls` stations (`playable`). `direct: true` would keep a station off Web
+// Audio (see _makeLive); none needs it.
 const STATIONS = [
-  // Waterloo Region's own first: UW's campus station, Conestoga College's,
-  // community radio, CBC's local morning show, the Rogers stations
-  { name: 'Radio Waterloo 102.7', root: 55, style: 'indie',
-    stream: 'https://radiowaterloo.ca/stream' },
-  { name: 'CJIQ 88.3 Conestoga', root: 58, style: 'pop',
-    stream: 'https://conestoga.leanstream.co/CJIQFM' },
-  { name: 'CKWR 98.5 Community', root: 50, style: 'lofi',
+  // Waterloo Region's own first: UW's campus station, community radio, CBC
+  // K-W's own feed, then the neighbours up and down the Grand
+  { name: 'Radio Waterloo 102.7', root: 55, style: 'indie', lufs: -18.8,
+    stream: 'https://studio.radiowaterloo.ca:8443/radiowaterloo' },
+  { name: 'CKWR 98.5 Community', root: 50, style: 'lofi', lufs: -12.8,
     stream: 'https://stream2.statsradio.com:8150/stream' },
-  { name: 'CBC Radio One K-W 89.1', root: 53, style: 'lofi',
-    stream: 'https://playerservices.streamtheworld.com/api/livestream-redirect/CBLAFM2_CBC_SC' },
-  { name: 'CHYM 96.7', root: 57, style: 'pop',
-    stream: 'https://rogers.leanstream.co/rogers/kit967.stream/icy?environment=tunein&args=tunein_01' },
-  { name: 'Country 106.7', root: 52, style: 'rock',
-    stream: 'https://rogers.leanstream.co/rogers/kit1067.stream/icy?environment=tunein&args=tunein_01' },
-  { name: '570 News', root: 48, style: 'lofi',
-    stream: 'https://rogers.leanstream.co/rogers/kit570.stream/icy?environment=tunein&args=tunein_01' },
+  { name: 'CBC Radio One K-W 89.1', root: 53, style: 'lofi', lufs: -21, hls: true,
+    stream: 'https://cbcradiolive.akamaized.net/hls/live/2040995/ES_R1EKW/adaptive_128/chunklist_ao.m3u8' },
+  { name: 'The Grand 101 Fergus-Elora', root: 57, style: 'pop', lufs: -13,
+    stream: 'https://stream2.statsradio.com:8130/stream' },
+  { name: 'CFRU 93.3 Guelph', root: 58, style: 'indie', lufs: -16.8,
+    stream: 'https://listen.cfru.ca/' },
+  { name: 'CKRZ 100.3 Voice of the Grand', root: 52, style: 'rock', lufs: -18.3,
+    stream: 'https://stream2.statsradio.com:8132/stream' },
   // down the 401 in Toronto
-  { name: 'Indie88 Toronto', root: 55, style: 'indie',
-    stream: 'https://localradio.streamb.live/SB00348' },
-  { name: 'Boom 97.3', root: 57, style: 'synthwave',
-    stream: 'https://newcap.leanstream.co/CHBMFM' },
-  { name: 'CIUT 89.5 U of T', root: 60, style: 'house',
+  { name: 'Vibe 105.5 York U', root: 55, style: 'house', lufs: -14.7,
+    stream: 'https://ice7.securenetsystems.net/CHRY' },
+  { name: 'CIUT 89.5 U of T', root: 60, style: 'house', lufs: -18.5,
     stream: 'https://ice23.securenetsystems.net/CIUT' },
-  { name: 'JAZZ.FM91', root: 53, style: 'jazz',
+  { name: 'JAZZ.FM91', root: 53, style: 'jazz', lufs: -24.5,
     stream: 'https://jazzfm91.streamb.live/SB00009' },
-  { name: 'The New Classical 96.3', root: 48, style: 'classical',
+  { name: 'The New Classical 96.3', root: 48, style: 'classical', lufs: -17.2,
     stream: 'https://live.amperwave.net/direct/mzmedia-cfmzfmmp3-ibc2' },
-  { name: 'CBC Music', root: 50, style: 'indie',
-    stream: 'https://playerservices.streamtheworld.com/api/livestream-redirect/CBLFM_CBC_SC' },
+  { name: 'CBC Music', root: 50, style: 'indie', lufs: -19.2, hls: true,
+    stream: 'https://cbcradiolive.akamaized.net/hls/live/2041057/ES_R2ETR/adaptive_128/chunklist_ao.m3u8' },
   // and from further away
-  { name: 'RdMix Classic Rock', root: 52, style: 'rock',
+  { name: 'RdMix Classic Rock', root: 52, style: 'rock', lufs: -18.4,
     stream: 'https://cast1.torontocast.com:4610/stream' },
-  { name: 'NRJ Linkin Park', root: 50, style: 'rock',
+  { name: 'NRJ Linkin Park', root: 50, style: 'rock', lufs: -15.6,
     stream: 'https://streaming.nrjaudio.fm/ouvfbfoarp52' },
-  { name: 'BBC Radio 1', root: 60, style: 'pop',
-    stream: 'https://as-hls-ww.live.cf.md.bbci.co.uk/pool_01505109/live/ww/bbc_radio_one/bbc_radio_one.isml/bbc_radio_one-audio%3d96000.norewind.m3u8',
-    hls: true },
+  { name: 'BBC Radio 1', root: 60, style: 'pop', lufs: -17.5, hls: true,
+    stream: 'https://as-hls-ww.live.cf.md.bbci.co.uk/pool_01505109/live/ww/bbc_radio_one/bbc_radio_one.isml/bbc_radio_one-audio%3d96000.norewind.m3u8' },
+  { name: 'AH.FM Trance', root: 57, style: 'synthwave', lufs: -12.7,
+    stream: 'https://us.ah.fm/mobile' },
   // synth only: they play with no network at all
   { name: 'Grand River FM', root: 49, style: 'lofi' },
   { name: 'King St Radio', root: 62, style: 'house' },
 ];
-/** The station list, for the menu's picker: [{ name, live }]. */
+/** The loudness every station is brought to before the mix (LUFS). */
+const RADIO_REF = -14;
+/** A direct element's volume for a RADIO_REF stream at the default master volume 0.8:
+ *  what the 'wa' route's pre (0.9) and master (0.8) gains give. */
+const DIRECT_LEVEL = 0.72;
+/** The synth radio's bus gain. It was 0.2, "trimmed to the old radio's level",
+ *  and came out at -42 to -44 dBFS RMS -- 25 dB under the streams, which is
+ *  what an offline car, a dead stream's fallback and the two synth-only
+ *  stations sounded like: quiet. radiotest.mjs measures it with the streams. */
+const SYNTH_LEVEL = 3.2;
+/** Station st's gain to RADIO_REF, from its measured loudness (+-12 dB at most). */
+export function stationNorm(st) {
+  const l = st && typeof st.lufs === 'number' ? st.lufs : RADIO_REF;
+  return clamp(Math.pow(10, (RADIO_REF - l) / 20), 0.25, 4);
+}
+export { STATIONS };
 export const STATION_NAMES = STATIONS.map((s) => ({ name: s.name, live: !!s.stream, style: s.style }));
 
 // KEXP's now-playing feed, the one /apps/radio uses. The other stations
@@ -2294,13 +2322,15 @@ export class Audio {
     this.musicOn = true;
     this.station = 0;
     this.volume = 0.8;
-    this.musicVolume = 0.55;
     this.bank = null;       // name -> [AudioBuffer], filled asynchronously
     this._simT = null;      // offline previews drive time explicitly
 
     // Live radio state. `_liveFailed` latches for the session once the stream
     // has proved unavailable, so a car with no signal doesn't retry every frame.
-    this._live = null;
+    this._live = null;      // the element playing the current station (one of _els)
+    this._els = {};         // 'wa' (through Web Audio) and 'direct' media elements
+    this._direct = new Set(); // stations the 'wa' route failed this session
+    this._retries = 0;
     this._liveState = 'idle';
     this._liveFailed = false;
     this._livePrimed = false;
@@ -2386,9 +2416,18 @@ export class Audio {
     this.worldBus.connect(this.sfxBus);
     this._held = false;
     this.musicBus = c.createGain();
-    this.musicBus.gain.value = 0.22;
+    this.musicBus.gain.value = SYNTH_LEVEL;
     this.musicDuck = c.createGain();
     this.musicBus.connect(this.musicDuck).connect(this.pre);
+    // The live stream's 'wa' route: its media source -> radioGain (the
+    // station's level, stationNorm) -> musicDuck, so it ducks with the synth
+    // and sits under the master volume. radioMeter listens for a stream that
+    // plays zeros (_watchLive).
+    this.radioGain = c.createGain();
+    this.radioGain.connect(this.musicDuck);
+    this.radioMeter = c.createAnalyser();
+    this.radioMeter.fftSize = 512;
+    this.radioGain.connect(this.radioMeter);
 
     // One reverb for the whole game: gunshots and crashes echo down the
     // street, and in a bore everything does.
@@ -2608,58 +2647,98 @@ export class Audio {
   // Everything about it is written to fail back to the synthesised station
   // rather than to silence: no network, a blocked autoplay, a dead stream and a
   // stall all end with `_liveFailed` set and `scheduleMusic()` taking over.
+  //
+  // TWO media elements, two routes to the speakers:
+  //   'wa'      crossOrigin, through createMediaElementSource -> radioGain ->
+  //             musicDuck: levelled per station (`lufs`), ducked, under the
+  //             master volume -- on iOS too, where an element's `volume` is
+  //             ignored, which is why it is the default for every stream that
+  //             sends CORS (they all do; tools/kw/radiotest.mjs checks).
+  //   'direct'  no crossOrigin, the element plays on its own (`volume` levels
+  //             it where the browser honours it): any station the 'wa' route
+  //             failed. A stream without CORS headers either refuses to load
+  //             with crossOrigin or, through a media source, plays ZEROS --
+  //             "quiet" -- and WebKit has given zeros for HLS through a media
+  //             source too; the watchdog that hears nothing for 4 s while the
+  //             element's clock runs moves the station here for the session.
 
-  _makeLive() {
-    if (this._live || typeof window === 'undefined' || !window.Audio) return this._live;
+  /** How station i's stream reaches the speakers: 'wa' or 'direct'. */
+  _route(i = this.station) {
+    const st = STATIONS[i];
+    if (!st || !st.stream || st.direct || this._direct.has(i) || this._waNotAllowed) return 'direct';
+    if (!this.ctx || !this.ctx.createMediaElementSource || !this.radioGain) return 'direct';
+    return 'wa';
+  }
+
+  _makeLive(kind = 'direct') {
+    if (typeof window === 'undefined' || !window.Audio) return null;
+    if (this._els[kind]) return this._els[kind];
+    if (kind === 'wa' && (!this.ctx || !this.ctx.createMediaElementSource || !this.radioGain)) return null;
     // `window.Audio`, not `Audio` -- this module exports a class of that name,
     // so the bare identifier resolves to us, not to the DOM constructor.
     const el = new window.Audio();
     el.preload = 'none';
-    // No crossOrigin: nothing reads the samples (the stream is not routed
-    // through Web Audio), and asking for CORS only lets a station fail.
     // Streams have no duration to seek in, and iOS otherwise offers scrubbing.
     el.loop = false;
-    el.volume = 0;
+    if (kind === 'wa') {
+      el.crossOrigin = 'anonymous';
+      try {
+        this.ctx.createMediaElementSource(el).connect(this.radioGain);
+      } catch (e) { this._log('radio: no media source (' + (e && e.name) + ')'); return null; }
+      el.volume = 1;
+    } else {
+      el.volume = 0;
+    }
+    el._kind = kind;
     // THE RADIO PLAYS ONLY WHEN THE GAME WANTS IT. The element can be started
     // by other things than startLive(): primeLive's unlock, iOS's lock-screen
     // and headphone controls, the end of a phone call. It used to take any
     // 'playing' as the radio being on and never heard about the pause, so
     // `liveOn` stayed true on foot -- and resume(), run on every unpause and
     // every return from the home screen, started the stream again while you
-    // were walking. Anything the game did not ask for is paused on the spot.
+    // were walking. Anything the game did not ask for is paused on the spot
+    // (and so is the element that is not the current route).
     el.addEventListener('playing', () => {
-      if (!this._liveWanted || this._priming) {
+      if (el !== this._live || !this._liveWanted || this._priming) {
         if (!this._priming) { try { el.pause(); } catch (e) { /* gone */ } }
         return;
       }
       this._liveState = 'playing';
       this._liveFailed = false;
+      this._retries = 0;
+      this._playingAt = Date.now();
       el.muted = false;
       this._pollNowPlaying();
     });
     el.addEventListener('play', () => {
-      if (!this._liveWanted && !this._priming) { try { el.pause(); } catch (e) { /* gone */ } }
+      if ((el !== this._live || !this._liveWanted) && !this._priming) { try { el.pause(); } catch (e) { /* gone */ } }
     });
     el.addEventListener('pause', () => {
-      if (this._liveState === 'playing') this._liveState = 'idle';
+      if (el === this._live && this._liveState === 'playing') this._liveState = 'idle';
     });
-    // The lock screen's play button asks the page, not the element, when a
-    // handler is set: honour it only in a car.
-    try {
-      if (navigator.mediaSession) {
-        navigator.mediaSession.setActionHandler('play', () => { if (this._liveWanted) this.startLive(); });
-        navigator.mediaSession.setActionHandler('pause', () => this.stopLive());
-      }
-    } catch (e) { /* no media session */ }
-    for (const ev of ['error', 'stalled', 'ended']) {
+    // A dead stream errors or ends. NOT 'stalled': that fires every few
+    // seconds on a healthy HLS stream between segments (and on a slow
+    // Icecast one), and treating it as fatal threw the station to the synth
+    // while the stream played on underneath. A stream that really stops is
+    // the progress watchdog's (_watchLive).
+    for (const ev of ['error', 'ended']) {
       el.addEventListener(ev, () => {
-        // Don't thrash a dead network: give up on the live feed for this drive
-        // and let the synth station cover, rather than retrying every frame.
-        if (this._liveState !== 'idle') this._liveFailed = true;
-        this._liveState = 'idle';
+        if (el !== this._live || this._liveState === 'idle' || this._priming) return;
+        this._liveTrouble(ev + (el.error ? ' ' + el.error.code : ''));
       });
     }
-    this._live = el;
+    if (!this._sessionSet) {
+      this._sessionSet = true;
+      // The lock screen's play button asks the page, not the element, when a
+      // handler is set: honour it only in a car.
+      try {
+        if (navigator.mediaSession) {
+          navigator.mediaSession.setActionHandler('play', () => { if (this._liveWanted) this.startLive(); });
+          navigator.mediaSession.setActionHandler('pause', () => this.stopLive());
+        }
+      } catch (e) { /* no media session */ }
+    }
+    this._els[kind] = el;
     return el;
   }
 
@@ -2668,17 +2747,24 @@ export class Audio {
    *
    * Getting into a car happens inside the frame loop, one or more rAF ticks
    * after the button was pressed, so a play() there is not a gesture-initiated
-   * call and Safari rejects it. Starting (and immediately pausing) the element
-   * during the same gesture that boots the AudioContext marks it as unlocked
-   * for the rest of the session.
+   * call and Safari rejects it. Starting (and immediately pausing) each
+   * element during the same gesture that boots the AudioContext marks it as
+   * unlocked for the rest of the session -- both of them: WebKit unlocks
+   * media elements one at a time.
    */
   primeLive() {
-    const el = this._makeLive();
-    if (!el || this._livePrimed) return;
-    // The real stream already has the element (loading or playing): it is
+    // Each element is primed once; `_livePrimed` (main.js's gate) once both are.
+    const els = ['direct', 'wa'].map((k) => this._makeLive(k)).filter((el) => el && !el._primed);
+    if (!els.length) return;
+    // The real stream already has an element (loading or playing): it is
     // unlocked by definition, and priming it now would mute and then pause it.
-    if (this._liveState === 'loading' || this._liveState === 'playing') { this._livePrimed = true; return; }
-    this._livePrimed = true;
+    if (this._liveState === 'loading' || this._liveState === 'playing') {
+      for (const el of els) el._primed = true;
+      this._livePrimed = !!this._els.wa;
+      return;
+    }
+    for (const el of els) el._primed = true;
+    this._livePrimed = !!this._els.wa;
     // MUTED, not volume 0: iOS ignores `volume` on media elements (it is
     // always 1 there), so the unlock played the stream out loud on the first
     // tap -- on foot. `muted` it does honour.
@@ -2687,62 +2773,95 @@ export class Audio {
     // taken the element over (startLive supersedes it): its pause() then
     // stopped the radio 0.1 s in.
     const tok = this._primeTok = (this._primeTok || 0) + 1;
-    const done = () => {
+    let left = els.length;
+    const done = (el) => {
       if (tok !== this._primeTok) return;
-      this._priming = false;
+      if (el._kind === 'wa') this._waNotAllowed = false;
       try { el.pause(); } catch (e) { /* gone */ }
+      if (--left > 0) return;
+      this._priming = false;
       this._log('radio unlocked');
       // ...and if starting it knocked the context over, start that again
       if (this.ctx && this.ctx.state !== 'running') this.resume('after the radio unlock');
     };
-    try {
-      // A SILENT CLIP, not the stream. Priming used to point the element at a
-      // live station: every launch opened a radio stream on foot, and play()
-      // only resolved once it had buffered -- 13 s and more for some
-      // stations, never for one that did not answer -- and on iOS a media
-      // element starting up shares the audio session with Web Audio. A clip
-      // in memory unlocks the element just the same, at once, with no network.
-      el.muted = true;
-      el.src = SILENT_WAV;
-      el.volume = 0;
-      const p = el.play();
-      // Rejected for want of a gesture the browser accepts: not primed after
-      // all, so the next gesture tries again instead of never. (An AbortError
-      // is the real stream's load() taking over -- that one is fine.)
-      if (p && p.then) {
-        p.then(done).catch((err) => {
-          if (tok !== this._primeTok) return;
-          this._priming = false;
-          if (err && err.name === 'NotAllowedError') this._livePrimed = false;
-          if (err && err.name !== 'AbortError') this._log('radio unlock: ' + err.name);
-        });
-      }
-      else done();
-    } catch (e) { this._priming = false; /* no autoplay, no live radio -- the synth still plays */ }
+    for (const el of els) {
+      try {
+        // A SILENT CLIP, not the stream. Priming used to point the element at
+        // a live station: every launch opened a radio stream on foot, and
+        // play() only resolved once it had buffered -- 13 s and more for some
+        // stations, never for one that did not answer -- and on iOS a media
+        // element starting up shares the audio session with Web Audio. A clip
+        // in memory unlocks the element just the same, at once, with no network.
+        el.muted = true;
+        el.src = SILENT_WAV;
+        el._src = null;
+        if (el._kind !== 'wa') el.volume = 0;
+        const p = el.play();
+        // Rejected for want of a gesture the browser accepts: not primed after
+        // all, so the next gesture tries again instead of never. (An AbortError
+        // is the real stream's load() taking over -- that one is fine.)
+        if (p && p.then) {
+          p.then(() => done(el)).catch((err) => {
+            if (tok !== this._primeTok) return;
+            this._priming = false;
+            if (err && err.name === 'NotAllowedError') { el._primed = false; this._livePrimed = false; }
+            if (err && err.name !== 'AbortError') this._log('radio unlock: ' + err.name);
+          });
+        } else done(el);
+      } catch (e) { this._priming = false; /* no autoplay, no live radio -- the synth still plays */ }
+    }
   }
 
   startLive() {
     if (this._liveFailed || navigator.onLine === false) return;
-    const el = this._makeLive();
-    if (!el) return;
     if (this._liveState === 'playing' || this._liveState === 'loading') return;
+    const el = this._makeLive(this._route()) || this._makeLive('direct');
+    if (!el) return;
+    // only one element sounds: the other route's stops
+    for (const k in this._els) {
+      const o = this._els[k];
+      if (o && o !== el) { try { o.pause(); } catch (e) { /* gone */ } }
+    }
+    this._live = el;
+    this._liveRoute = el._kind;
     this._liveState = 'loading';
-    this._liveLoadAt = Date.now();
+    this._liveLoadAt = this._ctAt = Date.now();
+    this._ctLast = -1;
+    this._loudAt = 0;
+    this._playingAt = 0;
     // the real stream supersedes any priming play still in flight
     this._primeTok = (this._primeTok || 0) + 1;
     this._priming = false;
     try {
       const src = this._stream();
-      if (this._liveSrc !== src) { el.src = src; this._liveSrc = src; }
+      if (el._src !== src) { el.src = src; el._src = src; }
       // A live stream that has been paused for a while resumes where it left
       // off, i.e. behind. Reloading puts us back at the live edge.
       el.load();
       el.muted = false;
-      el.volume = this.musicVolume;
+      this._levelLive(1);
+      // A rejected play() of a load that has since been retried or
+      // superseded says nothing about the current one: the token drops it
+      // (a dead stream's 'error' and its play() rejection are one failure).
+      const tok = this._loadTok = (this._loadTok || 0) + 1;
       const p = el.play();
-      if (p && p.catch) p.catch((err) => this._liveDown(err));
+      if (p && p.catch) p.catch((err) => { if (tok === this._loadTok && !el.error) this._liveDown(err, el); });
     } catch (e) {
-      this._liveDown(e);
+      this._liveDown(e, el);
+    }
+  }
+
+  /** The station's level: its stream's measured loudness brought to RADIO_REF. */
+  _levelLive(dk) {
+    const el = this._live;
+    if (!el) return;
+    const n = stationNorm(STATIONS[this.station]);
+    if (this._liveRoute === 'wa') {
+      el.volume = 1;
+      if (this.radioGain) this.radioGain.gain.value = n;
+    } else {
+      // iOS ignores this (always 1): there a direct station plays at its own level
+      el.volume = clamp(DIRECT_LEVEL * n * dk * (this.volume / 0.8), 0, 1);
     }
   }
 
@@ -2753,19 +2872,75 @@ export class Audio {
    * the browser has not seen a gesture it will accept yet, which is temporary
    * and self-healing: the next time the player gets into a car they will have
    * pressed something. Latching on that would kill the radio for the whole
-   * session on the very platform this feature is for. Anything else (no
-   * network, dead stream) latches, so a car with no signal is not retrying the
-   * stream every frame.
+   * session on the very platform this feature is for. (On the 'wa' element it
+   * means that element is not unlocked yet: the direct one plays meanwhile.)
+   * Anything else (no network, dead stream, no CORS) goes to _liveTrouble.
    */
-  _liveDown(err) {
+  _liveDown(err, el) {
+    if (el && el !== this._live) return;
+    if (err && err.name === 'AbortError') return;     // superseded by a newer load
+    if (err && err.name === 'NotAllowedError') {
+      this._liveState = 'idle';
+      if (this._liveRoute === 'wa') { this._waNotAllowed = true; this.startLive(); }
+      return;
+    }
+    this._liveTrouble('play() ' + (err && err.name));
+  }
+
+  /**
+   * Something is wrong with the stream. Through Web Audio first: try the same
+   * stream on the direct element (no CORS needed, and it cannot play zeros).
+   * Then reload it twice. Then the synth voice covers, until a retune.
+   */
+  _liveTrouble(why, fatal = false) {
+    const st = STATIONS[this.station];
+    this._log(`radio ${st.name}: ${why} [${this._liveRoute}]`);
+    if (this._live) { try { this._live.pause(); } catch (e) { /* gone */ } }
     this._liveState = 'idle';
-    if (!err || err.name !== 'NotAllowedError') this._liveFailed = true;
+    if (this._liveRoute === 'wa' && !this._direct.has(this.station)) {
+      this._direct.add(this.station);
+      this.startLive();
+      return;
+    }
+    if (!fatal && this._retries < 2) {
+      this._retries++;
+      if (this._live) this._live._src = null;
+      this.startLive();
+      return;
+    }
+    this._liveFailed = true;
+  }
+
+  /**
+   * Each frame while the stream plays: is it really playing, and can we hear
+   * it? A clock that stops for 15 s is a dead stream; a 'wa' stream whose
+   * clock runs while the media source gives exact zeros for 4 s is a stream
+   * Web Audio may not hear (no CORS, or WebKit) -- move it to the direct route.
+   */
+  _watchLive() {
+    const el = this._live;
+    if (!el) return;
+    const now = Date.now();
+    if (el.currentTime !== this._ctLast) { this._ctLast = el.currentTime; this._ctAt = now; }
+    else if (now - this._ctAt > 15000) { this._liveTrouble('no progress for 15 s'); return; }
+    if (this._liveRoute !== 'wa' || !this.radioMeter || !this.ctx || this.ctx.state !== 'running' || el.paused) return;
+    if (now - (this._meterAt || 0) < 250) return;
+    this._meterAt = now;
+    const b = this._meterBuf || (this._meterBuf = new Float32Array(this.radioMeter.fftSize));
+    this.radioMeter.getFloatTimeDomainData(b);
+    let pk = 0;
+    for (let i = 0; i < b.length; i++) pk = Math.max(pk, Math.abs(b[i]));
+    if (pk > 1e-5) this._loudAt = now;
+    else if (now - Math.max(this._loudAt, this._playingAt) > 4000 && now - this._ctAt < 1000) {
+      this._liveTrouble('Web Audio hears nothing');
+    }
   }
 
   stopLive() {
     this._liveState = 'idle';
-    if (this._live) {
-      try { this._live.pause(); } catch (e) { /* already gone */ }
+    for (const k in this._els) {
+      const o = this._els[k];
+      if (o) { try { o.pause(); } catch (e) { /* already gone */ } }
     }
   }
 
@@ -3280,14 +3455,15 @@ export class Audio {
     // that says it can play HLS and then does not -- is silence forever. 20 s
     // without sound and the synth voice takes over for this station.
     if (this._liveState === 'loading' && Date.now() - this._liveLoadAt > 20000) {
-      this._liveFailed = true;
-      this.stopLive();
+      this._liveTrouble('no sound in 20 s', true);
     }
     if (this.liveOn) {
-      // iOS ignores `volume` on a media element, so there the duck cannot
-      // reach the stream; elsewhere it rides the same envelope.
+      // The 'wa' route ducks through musicDuck itself. A direct element
+      // rides the same envelope on its `volume` -- except on iOS, which
+      // ignores `volume`: there a direct (HLS) station is not ducked.
       const dk = this._duckUntil && t < this._duckUntil ? this.musicDuck.gain.value : 1;
-      this._live.volume = clamp(this.musicVolume * dk, 0, 1);
+      if (this._liveRoute === 'direct') this._levelLive(dk);
+      this._watchLive();
       this._pollNowPlaying();
       // The synth station and the real one must never play together.
       setp(this.musicBus.gain, 0, t, 0.3);
@@ -3970,7 +4146,7 @@ export class Audio {
   scheduleMusic() {
     if (!this.radio) this.radio = new SynthRadio(this.ctx, this.musicBus, this.noise);
     const now = this.now();
-    setp(this.musicBus.gain, 0.2, now, 0.4);
+    setp(this.musicBus.gain, SYNTH_LEVEL, now, 0.4);
     this.radio.schedule(STATIONS[this.station], now);
   }
 
@@ -3997,7 +4173,7 @@ export class Audio {
     // stream is only given up on for the station it died on.
     this._liveWanted = false;
     this._liveFailed = false;
-    this._liveSrc = null;
+    this._retries = 0;
     this.stopLive();
     this._nowPlaying = null;
     this._nowPlayingAt = 0;
