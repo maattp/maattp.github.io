@@ -184,10 +184,12 @@ file and a guide disagree, this file wins.
   banners and baskets; the event trailer and the hedge by the station. The
   Shops at Waterloo Town Square: grey precast, glass, THE SHOPS / 75 KING
   over the glass-canopied entrance, SHOPPERS DRUG MART, BEERTOWN, PIPER ARMS.
-  Also drawn here now: the **Marsland Centre** (the BMO tower, 52 m, tan
-  fins, BMO signs; `MARSLAND*`) and the **Uptown Parkade** across King
-  (`PARKADE`, five open decks). The Seagram Lofts (buff, small windows,
-  SEAGRAM DISTILLERS painted on No. 3's face toward Uptown). **Waterloo Park:** footbridges (`BRIDGES`, OSM ways; decks
+  Also drawn here now: the **Marsland Centre** (the BMO tower, 52 m, maroon
+  and beige fins, the BMO box sign at the top; `MARSLAND*`) and the **Uptown
+  Parkade** across King (`PARKADE`: buff brick, cream arches, the blue glass
+  stair tower). The Seagram Lofts (buff, shuttered windows, the penthouse
+  floors, SEAGRAM / DISTILLERS on No. 3's east face). **Each King St block's
+  real look is in src/kwuptown.js** (next entry). **Waterloo Park:** footbridges (`BRIDGES`, OSM ways; decks
   are `ctx.platforms`, walkable), the grist mill and wheel, the 1820 log
   school, the Eby farmhouse/Potters' Workshop, barn and EMPTY paddocks (the
   animal farm closed in 2024 -- don't put animals back), gazebos, the
@@ -213,6 +215,58 @@ file and a guide disagree, this file wins.
   191 -> 196, 710k -> 755k; RIM 118 -> 119; Conestoga 338 -> 346. The
   square's rebuild, phone at the opening frame: 191 -> 196 draws, 852k ->
   881k tris (the old King St opening frame was 253 / 927k).
+- **Uptown, building by building: src/kwuptown.js** (docs/uptown-king-erb.jpg,
+  uptown-huether.jpg, uptown-king-s.jpg, uptown-buildings.jpg). `LOOKS` gives
+  each King St footprint (matched by centroid within 4 m, the OSM address in
+  `addr`) its look, read by kwplaces.js `meshKing` through `r.look`: wall /
+  trim / sill / band / quoin colours, storeys and parapet height, windows
+  across the main face (`win.n`, `head` seg / round / hood / flat, `pair`),
+  cornice (bracket / corbel / plain / none), a raised name panel (1890, 1930,
+  CENTRAL BLOCK 1881), `ground: 'bank'` (ashlar, tall windows, `sign`) or
+  `'none'`, the shops as they read (`shops` on the main face, `side`; colours,
+  awnings, blade signs, `f` shares, `flip`) and an `extra(info)` for the rest.
+  **Sources** (Oct 2026): the City's Heritage Register and its June 2026
+  Notices of Intention to Designate (15, 16-24, 23-25 King N, 36-40 King S),
+  historicwaterloo.ca / historicplaces.ca, Commons photos 2010-2026; colours are
+  hex estimates read off those photos. Drawn specially: the **Huether** (OSM's
+  one footprint split three ways along Princess: the 1880 corner hotel to 17 m
+  -- buff brick, paired round-headed windows, the slate mansard and gabled
+  dormers, rust awnings on King, the Lion Brewery disc and Café 1842's board at
+  the corner, the marquee post, the fire escape on Princess -- a stucco part
+  with HUETHER HOTEL down it, and the old brewery holding the **Original
+  Princess Cinema**: the white portal with PRINCESS, the lightbox, BREWERY);
+  the **Waterloo Hotel** (buff, 8 bays, the 1890 pavilion, navy awnings, PÜR &
+  SIMPLE at the corner); the **Old Post Office** (red brick over sandstone, its
+  tower at OSM's tower part, 23 m to the tip); **Princess Twin** (fieldstone
+  piers, the perforated screen with PRINCESS TWIN / CINEMAS, the marquee,
+  Princess Cafe); the 1936 **Waterloo Theatre** (16-24 King N, hexagonal
+  lights, the cast-stone centre bay); **28 King N** (the Chainsaw until 2020,
+  Revive Karaoke now); the **Conrad Block**, the **Roos Building**, the
+  **Commercial Block** (2-10 King S), the **Letter Block** (TRIO), the **Duke of
+  Wellington** (1930 datestone, quoins, paired windows, the green oval sign);
+  the **Molsons Bank / BMO** (Ionic columns, THE MOLSONS BANK frieze). Blocks
+  with no photograph found get `UNKNOWN` (buff, red, painted, stucco -- never
+  the old green / purple tones). `BUILDINGS` draws Uptown's others from their
+  OSM footprints with kwsights.js `block()` (now exported): **Waterloo City
+  Centre** (tan brick, green glass, the drum with WATERLOO CITY CENTRE), the
+  **library** (fieldstone, beige fascia, brown roof), **57 Erb St W** (the
+  Seagram barrel warehouse / museum: buff, shutters), **95 King S** (red brick,
+  the aluminium rotunda, STARBUCKS COFFEE, green umbrellas), **Fourteen
+  Princess** (blue glass, tan bands). `bikeLanes`: King St N, Erb to
+  Bridgeport, black bollards with white bands every 3.5 m and green paint
+  across each side street and the queue boxes at Erb. Not found / not done:
+  Morty's is at 272 King N (outside Uptown); there is no Starbucks at King &
+  Erb (it is at 95 King S); no big UPTOWN gateway sign exists, and the BIA
+  banner art was not found (the banners are white / teal / blue stand-ins);
+  the Barrel Yards towers (Onyx, Cooperage, Staves, Bevel), Circa 1877, 45 /
+  55 Caroline N stay generic -- their colours were not found. Everything is
+  built inside kwplaces.js's uptown run (`addUptown`), so it adds no draws.
+  `window.__kwUptown` has the counts (looks, defaults, bollards). Phone
+  (AUTO_PHONE=1, GPU), before -> after: the spawn 205 -> 205 draws, 981k ->
+  989k tris; King & Erb 232 -> 233, 961k -> 974k; King & William 276 -> 276;
+  King & Bridgeport 355 -> 357; 0 exceptions. Verify: kwshots with views at
+  the intersections (e.g. `{c: [-3828, -1438, 1.6], t: [-3858, -1585, 6]}`
+  up King N from Erb) and close-ups per building.
 - **The chain stores: src/kwshops.js** (`data/shops.json` from
   tools/kw/extract_shops.py -> `raw_shops.json`, then tools/kw/build_shops.py;
   docs/shops-*.jpg). Every store of ~50 brands (`BRANDS` / `GAS` in
