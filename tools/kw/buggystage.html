@@ -1,0 +1,88 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>buggy stage</title>
+<style>html,body{margin:0;background:#9fb8cf;overflow:hidden}canvas{display:block}</style></head>
+<body>
+<script type="module">
+// Auto KW's horse and buggy on a plain stage, for tools/kw/buggyshots.mjs:
+// a lawn, a sky, the game's sun direction, one Vehicle of type 'buggy'.
+import * as THREE from '../../apps/autokw/src/three.js';
+import { Vehicle } from '../../apps/autokw/src/vehicles.js';
+
+const W = innerWidth, H = innerHeight;
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(W, H);
+renderer.setPixelRatio(1);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fb8cf);
+// an environment for the paint and trim: a gradient sky over a dim ground
+{
+  const env = new THREE.Scene();
+  const g = new THREE.SphereGeometry(50, 32, 16);
+  const col = [];
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const y = p.getY(i) / 50;
+    const c = y > 0 ? new THREE.Color(0.55, 0.68, 0.85).lerp(new THREE.Color(0.95, 0.95, 0.98), 1 - y) : new THREE.Color(0.25, 0.27, 0.22);
+    col.push(c.r, c.g, c.b);
+  }
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  env.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide })));
+  const pm = new THREE.PMREMGenerator(renderer);
+  scene.environment = pm.fromScene(env, 0.02).texture;
+}
+scene.add(new THREE.HemisphereLight(0xcfe0ff, 0x4a5a3a, 0.9));
+const sun = new THREE.DirectionalLight(0xfff2dd, 2.6);
+sun.position.set(-6, 9, 7);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -6, right: 6, top: 6, bottom: -6, near: 0.5, far: 40 });
+sun.shadow.bias = -0.0004;
+scene.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), new THREE.MeshStandardMaterial({ color: 0x6f7a5e, roughness: 0.95 }));
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+// a strip of road under it
+const road = new THREE.Mesh(new THREE.PlaneGeometry(7, 80), new THREE.MeshStandardMaterial({ color: 0x55575a, roughness: 0.9 }));
+road.rotation.x = -Math.PI / 2; road.position.y = 0.005; road.receiveShadow = true;
+scene.add(road);
+
+const camera = new THREE.PerspectiveCamera(35, W / H, 0.1, 200);
+const v = new Vehicle(null, 'buggy', 0x141518);
+v.x = 0; v.y = 0; v.z = 0; v.heading = 0;
+v.mode = 'path';
+scene.add(v.group);
+
+/**
+ * Pose the rig: speed m/s, stride phase 0..1, at dt = 0 (no smoothing).
+ * `art` sets the cart's angle by placing its rear axle; `mode` the occupancy.
+ */
+function pose({ speed = 0, ph = 0, art = 0, mode = 'path', still = 0, steer = 0 } = {}) {
+  const R = v.buggy;
+  v.mode = mode;
+  v.vLong = speed;
+  R.gait = speed > 5.6 ? 2 : speed > 2.3 ? 1 : 0;
+  R.ph = ph; R.t = -1; R.mv = 0; R.rest = 0; R.still = still;
+  R.turn = steer;
+  // the rear axle where an articulation of `art` puts it
+  const K = -0.8, L = 1.65;
+  const kx = v.x + Math.sin(v.heading) * K, kz = v.z + Math.cos(v.heading) * K;
+  const psi = v.heading + art;
+  R.ax = kx - Math.sin(psi) * L; R.az = kz - Math.cos(psi) * L;
+  R.px = v.x; R.pz = v.z; R.h0 = v.heading;
+  v.sync();
+}
+function shoot({ eye, at, fov = 35 }) {
+  camera.fov = fov; camera.updateProjectionMatrix();
+  camera.position.set(...eye);
+  camera.lookAt(...at);
+  renderer.render(scene, camera);
+}
+window.stage = { v, pose, shoot, scene, camera, renderer, THREE, ready: true };
+</script>
+</body></html>

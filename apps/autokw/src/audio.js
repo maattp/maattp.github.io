@@ -1089,6 +1089,74 @@ const SOUNDS = {
   bike_bell: { dur: 0.9, build(k, out, t, R) {
     for (const t0 of [t, t + 0.16]) METAL.slice(0, 4).forEach((r, i) => k.ping(out, t0, 2350 * r, 0.26 / (1 + i), 0.32 / (1 + i * 0.6), 0.001));
   } },
+  // AUTO KW'S HORSE AND BUGGY (buggy.js plays them, one a footfall).
+  // A shod hoof on tarmac: the steel shoe's click, the hollow knock of the
+  // hoof wall (the "clop", pitched per variant), a dull thump under it, and a
+  // little grit as it slides. buggy.js plays fore hooves a shade higher.
+  hoof: { dur: 0.22, variants: 4, build(k, out, t, R) {
+    k.burst(out, 'white', t, 'bandpass', 2600 + R() * 1400, 2.2, 0.55, 0.006 + R() * 0.003, R, 0.0006);
+    const f = 380 + R() * 160;
+    k.ping(out, t + 0.002, f, 0.5, 0.028);
+    k.ping(out, t + 0.002, f * 2.3, 0.18, 0.012);
+    k.burst(out, 'pink', t, 'bandpass', f * 1.2, 3, 0.35, 0.03, R, 0.001);
+    k.thump(out, t, 130, 70, 0.04, 0.4, 0.03);
+    const g = k.gain(0);
+    k.noise('white', t + 0.01, 0.12, R).connect(k.filt('highpass', 3000)).connect(g).connect(out);
+    k.grains(g.gain, t + 0.01, 0.06, 5, R, 0.12, 0.001, 0.004);
+  } },
+  // ...and on grass or gravel: a muffled thud and a scuff
+  hoof_soft: { dur: 0.22, variants: 3, build(k, out, t, R) {
+    k.thump(out, t, 110 + R() * 30, 55, 0.05, 0.75, 0.04);
+    k.burst(out, 'brown', t, 'lowpass', 420 + R() * 200, 0.8, 0.7, 0.035, R, 0.002);
+    const g = k.gain(0);
+    k.noise('pink', t + 0.005, 0.15, R).connect(k.filt('bandpass', 1800, 0.8)).connect(g).connect(out);
+    k.grains(g.gain, t + 0.005, 0.09, 9, R, 0.18, 0.002, 0.008);
+  } },
+  // A snort: air blown hard through the nostrils, which flutter (~35 Hz),
+  // twice, the second shorter.
+  snort: { dur: 0.9, build(k, out, t, R) {
+    for (const [t0, len, pk] of [[0, 0.42, 0.9], [0.5, 0.22, 0.55]]) {
+      const g = k.gain(0), am = k.gain(0.5);
+      k.noise('pink', t + t0, len + 0.05, R).connect(k.filt('bandpass', 900 + R() * 300, 0.9)).connect(k.filt('lowpass', 2600)).connect(am).connect(g).connect(out);
+      const lfo = k.osc('sine', 30 + R() * 10, t + t0, len + 0.05), lg = k.gain(0.45);
+      lfo.connect(lg).connect(am.gain);
+      g.gain.setValueAtTime(0, t + t0);
+      g.gain.linearRampToValueAtTime(pk, t + t0 + 0.03);
+      g.gain.setTargetAtTime(0, t + t0 + len * 0.45, len * 0.25);
+    }
+  } },
+  // A whinny: a voiced call that leaps up, quavers (the horse's 10-12 Hz
+  // trill, in pitch and in level) and slides down in a falling run of
+  // pulses, through two formants, with breath under it.
+  whinny: { dur: 1.7, build(k, out, t, R) {
+    const T = 1.45, o = k.osc('sawtooth', 520, t, T);
+    const fq = o.frequency;
+    fq.setValueAtTime(520, t);
+    fq.linearRampToValueAtTime(1050, t + 0.12);
+    fq.linearRampToValueAtTime(900, t + 0.55);
+    fq.linearRampToValueAtTime(640, t + 1.0);
+    fq.exponentialRampToValueAtTime(330, t + T);
+    const vib = k.osc('sine', 11, t, T), vg = k.gain(38);
+    vib.connect(vg).connect(fq);
+    const trem = k.osc('sine', 11.5, t, T), tg = k.gain(0.45), am = k.gain(0.55);
+    trem.connect(tg).connect(am.gain);
+    const env = k.gain(0);
+    const f1 = k.filt('bandpass', 1100, 2.5), f2 = k.filt('bandpass', 2600, 4);
+    const mix = k.gain(1);
+    o.connect(f1).connect(mix);
+    o.connect(f2).connect(mix);
+    mix.connect(am).connect(env).connect(k.shaper(1.6)).connect(out);
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(0.9, t + 0.06);
+    env.gain.setValueAtTime(0.9, t + 0.7);
+    env.gain.linearRampToValueAtTime(0.5, t + 1.1);
+    env.gain.linearRampToValueAtTime(0, t + T);
+    const bg = k.gain(0);
+    k.noise('pink', t, T, R).connect(k.filt('bandpass', 1600, 0.7)).connect(bg).connect(out);
+    bg.gain.setValueAtTime(0, t);
+    bg.gain.linearRampToValueAtTime(0.12, t + 0.1);
+    bg.gain.linearRampToValueAtTime(0, t + T);
+  } },
   // A level crossing's electronic bell: a hard little strike, about twice a
   // second (freight.js paces it), bright and a touch inharmonic.
   xing_bell: { dur: 0.5, build(k, out, t, R) {

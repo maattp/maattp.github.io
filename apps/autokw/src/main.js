@@ -16,6 +16,7 @@ import { Freight } from './freight.js';
 import { Counterbalance } from './counterbalance.js';
 import { Ferry, fixTerminals } from './ferry.js';
 import { BikeNet, Cyclists } from './bikes.js';
+import { Buggies, buggyHorn, BUGGY_SPOTS } from './buggy.js';
 import { Islands } from './islands.js';
 import { Orcas } from './orcas.js';
 import { Saucer } from './saucer.js';
@@ -293,6 +294,8 @@ class Game {
   onHorn() {
     // in a duck, the horn is the passengers' quackers
     if (player.vehicle && player.vehicle.spec.amphib && duckTour) { duckTour.quack(player.vehicle); peds.scare(player.position.x, player.position.z, 6); return; }
+    // a horse and buggy's horn is the horse
+    if (player.vehicle && player.vehicle.buggy) { buggyHorn(player.vehicle, audio); peds.scare(player.position.x, player.position.z, 8); return; }
     // a light-rail car rings its bell
     if (player.vehicle && player.vehicle.spec.bicycle) { if (audio.ready) audio.play('bike_bell', { gain: 0.9 }); peds.scare(player.position.x, player.position.z, 5); return; }
     // a streetcar's gong: the motorman's foot on the plunger, clang-clang
@@ -616,6 +619,7 @@ let tanks = null;       // the tank at Sand Point and its guns (tank.js)
 let gpuLedger = null;
 let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, skidMarks, audio, game, marker, postfx, acts, stunts, monorail, link, freight, counterbal, bikeNet, cyclists, lmRoot, shadowCache = null;
 let pickups = [];
+let buggies = null;   // the horse and buggies (buggy.js)
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
 const LOOK_AHEAD = new THREE.Vector3();
 
@@ -1308,6 +1312,8 @@ function installShadowFade() {
     const v = traffic.spawnAt(x, z, h, ty, ty === 'dirtbike' ? 0xd8462a : 0x2f8f4e, 'apron');
     v.vLong = 0;
   }
+  // horse and buggies: parked at the St. Jacobs market and the farms, a few on the country roads
+  buggies = new Buggies(traffic, city, BUGGY_SPOTS);
   fishSpots = fishingSpots();
   fishing = new Fishing({
     audio,
@@ -1472,6 +1478,7 @@ function installShadowFade() {
       hello: 'Market Sports — the dome by the St. Jacobs market: turf fields and golf' },
     { x: -6532, z: -6670, kind: 'lm', label: 'Market', name: "St. Jacobs Farmers' Market", near: false,
       hello: "St. Jacobs Farmers' Market — stalls under the big white tent" },
+    ...buggies.places(),
     { x: hockey.spot.x, z: hockey.spot.z, kind: 'hockey', name: 'The Aud', near: false,
       hello: 'The Aud — Kitchener Rangers hockey tonight against the London Knights. Press ENTER anywhere at the arena to drop the puck' },
     ...(ykf.runwayEnd() ? [{ x: 7228, z: -440, kind: 'jet', name: 'YKF Airport', near: false, label: 'YKF',
@@ -1515,6 +1522,7 @@ function installShadowFade() {
   if (wheelRide) wheelRide.o.hud = hud;
 
   cyclists.audio = audio;
+  buggies.audio = audio;
   link.bind({ game, hud, audio, player });
   {
     // One tap, never behind a menu: a lost run on a phone ends the session.
@@ -2947,6 +2955,7 @@ function frame(now) {
   if (counterbal) counterbal.update(dt, camera);
   if (chicopee) chicopee.update(dt, camera.position.x, camera.position.z);
   cyclists.update(dt, player);
+  if (buggies) buggies.update(dt, player, camera);
   bikeNet.update(camera);
   piers.update(camera);
   if (wheelRide) wheelRide.update(dt, wheelRide.busy ? input : null, wheelRide.busy ? look : null, camera.position.x, camera.position.z);
