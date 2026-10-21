@@ -56,7 +56,7 @@ export const RAIL_COLOURS = C;
 // ---------------------------------------------------------------------------
 // The lettering atlas: every logo, mark and placard on one canvas.
 
-const ATLAS_W = 2048, ATLAS_H = 1536;   // every cell must fit: the last row ends at ~1455
+const ATLAS_W = 2048, ATLAS_H = 2176;   // every cell must fit (Auto KW: ~2140 with the KW fleet; kwrail.js atlasUsedH)
 let _atlas = null;
 export function railDecals() {
   if (_atlas) return _atlas;

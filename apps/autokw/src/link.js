@@ -39,6 +39,7 @@
 // runs toward +s, `nb` the eastern toward -s. A train's local frame has +z
 // toward +s and y = 0 on the rail head.
 
+import { buildXingMast, XingSignals, xingIndex, xingClosed } from './xing.js';
 import * as THREE from './three.js';
 import * as G from './geo.js';
 import { Builder, ChunkBuilder, SinkBuilder, LazyChunks, dropStaticArrays } from './build.js';
@@ -1145,102 +1146,31 @@ export class Link {
       c.active = false; c.arm = 0; c.flash = 0; c.bellT = 0; c.lightT = 0;
     }
     this.crossings = out.filter((c) => c.road && c.lights);
-    this.crossCells = new Map();
-    this.crossings.forEach((c, i) => {
-      const cx = Math.floor(c.x / 50), cz = Math.floor(c.z / 50);
-      for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
-        const kk = (cx + dx) * 100003 + cz + dz;
-        if (!this.crossCells.has(kk)) this.crossCells.set(kk, []);
-        this.crossCells.get(kk).push(i);
-      }
-    });
+    this.crossCells = xingIndex(this.crossings);
   }
 
   /** A crossing's signal masts (static parts), and its arms' pivots: Canada's
    *  -- a white mast, the red-bordered white crossbuck at its head, two red
    *  lamps on a black backboard, the bell, the gate's mechanism. */
   _buildCrossing(c, chunk) {
-    const e = c.road, ch = chunk(c.x, c.z);
-    const rdx = e.dx, rdz = e.dz;
-    const tdx = Math.sin(c.h), tdz = Math.cos(c.h);
-    const sinA = Math.abs(rdx * tdz - rdz * tdx) || 1;
-    const clear = (c.spread / 2 + 4.4) / sinA;
-    const hw = e.hw;
-    const xb = this._cellUV('xbuck');
-    const WHITE = [0.85, 0.86, 0.87], BLACK = [0.02, 0.02, 0.025], GREY = [0.32, 0.33, 0.35];
-    c.gates = [];
-    for (const a of [1, -1]) {
-      // traffic coming toward the tracks from +a along the road keeps right:
-      // its signal stands at its right kerb and its arm reaches the centreline
-      const hx = -a * rdx, hz = -a * rdz;
-      const rx = -hz, rz = hx;
-      const mx = c.x + a * rdx * clear + rx * (hw + 0.9), mz = c.z + a * rdz * clear + rz * (hw + 0.9);
-      const gy = this.city.groundAt ? this.city.groundAt(mx, mz, null) : G.terrainHeight(mx, mz);
-      ch.flat.box(mx, gy, mz, 0.16, 4.4, 0.16, 0, WHITE);
-      ch.flat.box(mx, gy, mz, 0.6, 0.3, 0.6, 0, C.concrete);
-      const face = Math.atan2(-hx, -hz);
-      const fx = -hx, fz = -hz, ux = Math.cos(face), uz = -Math.sin(face);
-      // the lamps' backboard: black with a white edge, a lamp at each end with its hood
-      ch.flat.box(mx + fx * 0.1, gy + 2.36, mz + fz * 0.1, 1.2, 0.44, 0.04, -face, WHITE);
-      ch.flat.box(mx + fx * 0.12, gy + 2.38, mz + fz * 0.12, 1.14, 0.4, 0.04, -face, BLACK);
-      for (const s of [1, -1]) {
-        const lx = mx + ux * 0.38 * s + fx * 0.16, lz = mz + uz * 0.38 * s + fz * 0.16;
-        ch.flat.box(lx, gy + 2.43, lz, 0.3, 0.3, 0.08, -face, [0.12, 0.02, 0.02]);
-        ch.flat.box(lx + fx * 0.12, gy + 2.73, lz + fz * 0.12, 0.32, 0.03, 0.22, -face, BLACK);
-      }
-      // the bell on the mast's top, the crossbuck under it, facing the traffic
-      ch.flat.spheroid(mx, gy + 4.5, mz, 0.16, 8, 4, BLACK, 0.7);
-      for (const rot of [0.785, -0.785]) {
-        const cx = mx + fx * 0.12, cz = mz + fz * 0.12, cy = gy + 3.75;
-        const w = 1.22, h = 0.21, ca = Math.cos(rot), sa = Math.sin(rot);
-        const P = (u, v) => [cx + ux * (u * ca - v * sa), cy + (u * sa + v * ca), cz + uz * (u * ca - v * sa)];
-        ch.sign.quad(P(-w / 2, -h / 2), P(w / 2, -h / 2), P(w / 2, h / 2), P(-w / 2, h / 2), [fx, 0, fz], xb, [1, 1, 1]);
-      }
-      if (c.gate) {
-        ch.flat.box(mx - rx * 0.32, gy, mz - rz * 0.32, 0.5, 1.2, 0.5, 0, GREY);
-        this.solids.push({ x: mx, z: mz, r: 0.35, y0: gy, y1: gy + 4.4 });
-        const len = Math.max(3, hw + 0.4);
-        c.gates.push({ px: mx - rx * 0.32, py: gy + 0.95, pz: mz - rz * 0.32, dx: -rx, dz: -rz, len, lx: mx + fx * 0.16, ly: gy + 2.43, lz: mz + fz * 0.16, face, ux, uz });
-      } else {
-        this.solids.push({ x: mx, z: mz, r: 0.3, y0: gy, y1: gy + 4.4 });
-        c.gates.push({ px: null, lx: mx + fx * 0.16, ly: gy + 2.43, lz: mz + fz * 0.16, face, ux, uz });
-      }
-    }
+    const ch = chunk(c.x, c.z);
+    buildXingMast(c, ch.flat, ch.sign, this._cellUV('xbuck'), {
+      groundAt: (x, z) => (this.city.groundAt ? this.city.groundAt(x, z, null) : G.terrainHeight(x, z)),
+      solids: this.solids,
+    });
   }
 
-  /** Every gate arm and every lit lamp in one instanced draw each, posed near you. */
+  /** Every gate arm and every lit lamp in one instanced draw each, posed near you (xing.js). */
   _buildGateArms(scene) {
-    const n = this.crossings.reduce((a, c) => a + (c.gates ? c.gates.length : 0), 0);
-    if (!n) return;
-    // a unit arm along +x: red and white stripes, three lamps along its top
-    const b = new Builder(false);
-    const N = 8;
-    for (let i = 0; i < N; i++) b.box((i + 0.5) / N, -0.05, 0, 1 / N, 0.1, 0.1, 0, i % 2 ? [0.75, 0.04, 0.04] : [0.86, 0.86, 0.86]);
-    b.box(-0.08, -0.14, 0, 0.18, 0.26, 0.24, 0, [0.25, 0.26, 0.28]);
-    this.armMesh = new THREE.InstancedMesh(b.build(), this.world.mats.flat, n);
-    this.armMesh.name = 'link:gates';
-    this.armMesh.frustumCulled = false;
-    this.armMesh.count = 0;
-    scene.add(this.armMesh);
-    const lb = new Builder(false);
-    lb.box(0, -0.13, 0, 0.26, 0.26, 0.04, 0, [1.0, 0.08, 0.04]);
-    this.lampMesh = new THREE.InstancedMesh(lb.build(), this.world.mats.glow, n * 2);
-    this.lampMesh.name = 'link:xlamps';
-    this.lampMesh.frustumCulled = false;
-    this.lampMesh.count = 0;
-    scene.add(this.lampMesh);
-    this._m4 = new THREE.Matrix4(); this._q = new THREE.Quaternion(); this._e = new THREE.Euler(0, 0, 0, 'YZX');
-    this._v = new THREE.Vector3(); this._sc = new THREE.Vector3(); this._up = new THREE.Vector3(0, 1, 0);
+    this.xsig = new XingSignals(scene, this.world.mats, this.crossings || [], 'link');
+    this.armMesh = this.xsig.armMesh; this.lampMesh = this.xsig.lampMesh;
   }
 
   /** Gates down, lights flashing and the bell ringing for any train near. */
   _crossingsUpdate(dt, cx, cz) {
-    if (!this.crossings) return;
-    let nArm = 0, nLamp = 0;
-    const m = this._m4, q = this._q, e = this._e, v = this._v, scl = this._sc;
-    for (const c of this.crossings) {
+    if (!this.crossings || !this.xsig) return;
+    this.xsig.update(this.crossings, dt, cx, cz, RANGE.near, this.audio, (c) => {
       // active: a train will be on it within ~22 s (or 110 m), or is on it
-      let act = false;
       for (const t of this.trains) {
         if (t.state === 'off') continue;
         const s = c.s[t.track.key];
@@ -1249,64 +1179,15 @@ export class Link {
         const sp = Math.abs(t.u);
         // standing at a platform short of it (a dwell), the circuit times out
         const reach = sp < 0.05 ? 12 : Math.max(110, sp * 22);
-        if (ahead > -2 && ahead < reach) { act = true; break; }
-        if (ahead <= 0 && behindTail >= -6) { act = true; break; }
+        if (ahead > -2 && ahead < reach) return true;
+        if (ahead <= 0 && behindTail >= -6) return true;
       }
-      c.active = act;
-      c.lightT = act ? c.lightT + dt : 0;
-      const want = act && c.lightT > 3 ? 1 : 0;
-      c.arm = want ? Math.min(1, c.arm + dt / 7) : Math.max(0, c.arm - dt / 5);
-      if (!this.armMesh || !c.gates || Math.hypot(c.x - cx, c.z - cz) > RANGE.near) continue;
-      const flashing = act || c.arm > 0.02;
-      c.flash = (c.flash + dt * 1.6) % 2;
-      for (const g of c.gates) {
-        if (g.px !== null && c.gate) {
-          const ang = (1 - c.arm) * 1.48;
-          const yaw = Math.atan2(g.dx, g.dz) - Math.PI / 2;
-          e.set(0, yaw, ang); q.setFromEuler(e);
-          scl.set(g.len, 1, 1); v.set(g.px, g.py, g.pz);
-          m.compose(v, q, scl);
-          this.armMesh.setMatrixAt(nArm++, m);
-        }
-        if (flashing) {
-          const s = c.flash < 1 ? 1 : -1;
-          q.setFromAxisAngle(this._up, g.face);
-          scl.set(1, 1, 1);
-          v.set(g.lx + g.ux * 0.38 * s + Math.sin(g.face) * 0.05, g.ly + 0.13, g.lz + g.uz * 0.38 * s + Math.cos(g.face) * 0.05);
-          m.compose(v, q, scl);
-          this.lampMesh.setMatrixAt(nLamp++, m);
-        }
-      }
-      if (flashing && this.audio && this.audio.ready) {
-        c.bellT -= dt;
-        if (c.bellT <= 0) {
-          c.bellT = 0.52;
-          if (Math.hypot(c.x - cx, c.z - cz) < 170) this.audio.play('xing_bell', { gain: 0.5, x: c.x, y: G.terrainHeight(c.x, c.z) + 3, z: c.z, ref: 10, maxD: 200, jitter: false });
-        }
-      }
-    }
-    if (this.armMesh) {
-      this.armMesh.count = nArm; this.armMesh.instanceMatrix.needsUpdate = true;
-      this.lampMesh.count = nLamp; this.lampMesh.instanceMatrix.needsUpdate = true;
-      this.armMesh.visible = nArm > 0; this.lampMesh.visible = nLamp > 0;
-    }
+      return false;
+    });
   }
 
   /** Is (x, z) between a crossing's gates while they are coming down (or a train is on it)? */
-  crossingClosed(x, z) {
-    if (!this.crossCells) return false;
-    const l = this.crossCells.get(Math.floor(x / 50) * 100003 + Math.floor(z / 50));
-    if (!l) return false;
-    for (const i of l) {
-      const c = this.crossings[i];
-      if (!c.active && c.arm < 0.05) continue;
-      const dx = x - c.x, dz = z - c.z;
-      if (dx * dx + dz * dz > 900) continue;
-      const perp = Math.abs(dx * Math.cos(c.h) - dz * Math.sin(c.h));
-      if (perp < c.spread / 2 + 4.8) return true;
-    }
-    return false;
-  }
+  crossingClosed(x, z) { return xingClosed(this.crossCells, this.crossings, x, z, 4.8); }
 
   /** What LazyChunks.stream drives: replay an op (the pass's other output --
    *  solids, platforms -- was kept at boot, so the replay's is thrown away),

@@ -13,6 +13,7 @@ import { FallDecor } from './fall.js';
 import { Monorail } from './monorail.js';
 import { Link, railBedSurface } from './link.js';
 import { Freight } from './freight.js';
+import { KwRail } from './kwrail.js';
 import { Counterbalance } from './counterbalance.js';
 import { Ferry, fixTerminals } from './ferry.js';
 import { BikeNet, Cyclists } from './bikes.js';
@@ -157,6 +158,7 @@ const RESPAWN_SITES = [
 let respawns = [];   // [{ name, x, z, node }] (buildRespawns)
 let ykf = null;        // the Region of Waterloo International Airport (ykf.js)
 let signalHeads = null;   // the signal heads near the camera (junctions.js)
+let kwrail = null;     // Auto KW: the heavy rail -- GO, VIA, CN, CPKC, the WCR (kwrail.js)
 let chicopee = null;   // Chicopee's bike park: trails, lifts, bikes (chicopee.js)
 let crops = null;      // Auto KW: standing corn and soy, the tractors and combines (crops.js)
 let air = null;        // Auto KW: YKF's air traffic, the Cessnas and the news helicopter (airtraffic.js)
@@ -795,6 +797,13 @@ async function boot() {
   // tracks (tools/kw/build_ion.py writes link.json in Link's format)
   link = new Link(md.link, md, bc.link);
   md.linkClear = link.clearZones();
+  // the heavy rail: the Guelph, Galt and Waterloo subs and the Waterloo Spur,
+  // every other track in the box (kwrail.js). Its beds are cut into the
+  // ground here, before the city reads it (geo.setRailCarve).
+  if (md.rail && !window.__noRail) {
+    kwrail = new KwRail(md.rail, md);
+    md.freightClear = kwrail.clearZones();
+  }
   // Seattle's bike paths, from their data: the scatter keeps off them
   bikeNet = new BikeNet(md.bikepaths);
   // the ferry slips' roads, before the city reads them (ferry.js)
@@ -1151,7 +1160,7 @@ function installShadowFade() {
   // The Queen Anne Counterbalance's streetcar line, laid on the road graph
   // (counterbalance.js) before anything is placed by the kerb
   counterbal = null;
-  city.extraClear = (x, z) => link.keepClear(x, z) || bikeNet.keepClear(x, z) || chicopee.keepClear(x, z) || !!(golf && golf.keepClear(x, z)) || kartway.keepClear(x, z) || hwyKeepClear(x, z);
+  city.extraClear = (x, z) => link.keepClear(x, z) || !!(kwrail && kwrail.keepClear(x, z)) || bikeNet.keepClear(x, z) || chicopee.keepClear(x, z) || !!(golf && golf.keepClear(x, z)) || kartway.keepClear(x, z) || hwyKeepClear(x, z);
   // open lawns round the campus buildings: trees only (uwcampus.js)
   city.treeClear = campusKeepClear;
 
@@ -1160,13 +1169,16 @@ function installShadowFade() {
 
   await step(0.86, 'Placing the landmarks');
   link.attach(city);
+  if (kwrail) kwrail.attach(city, (x, z) => world.waterLevelAt(x, z));
   city.bedQueries = [railBedSurface(Object.values(link.tracks).filter((t) => t.Y), 1.5, 2.4, -0.45)];
+  if (kwrail) city.bedQueries.push(railBedSurface(kwrail.lines.map((l) => l.tr), 1.7, 3.6, -0.62));
   lmRoot = buildLandmarks(scene, city, (x, z) => world.waterLevelAt(x, z), null);
   // the median walls and sign posts stand on freeway embankments, which the
   // landmark solids' on-road test counts as road: they join after it
   addHighwaySolids(city);
   scene.add(highwaysRoot());
   link.build(scene, world);
+  if (kwrail) kwrail.build(scene, world);
   bikeNet.build(scene, city);
   chicopee.scene = scene;
   chicopee.build();
@@ -1234,11 +1246,12 @@ function installShadowFade() {
   // moves is drawn into the shadow map every frame (shadowcache.js). The
   // desktop keeps three's pass: its 2048 map would make the cache ~4x larger.
   link.makeTrains(scene);
+  if (kwrail) kwrail.makeTrains(scene);
   if (ON_PHONE && !window.__noShadowCache) {
     try {
       const ramps = scene.getObjectByName('stuntRamps');
       shadowCache = new ShadowCache(renderer, sun, { margin: 60,
-        statics: () => [world.group, lmRoot, ramps, link.group, world.trees.shadowGroup], keep: () => [],
+        statics: () => [world.group, lmRoot, ramps, link.group, kwrail && kwrail.group, world.trees.shadowGroup].filter(Boolean), keep: () => [],
         // every tree in the box, into the cache only (trees.js shadowFill): the
         // box is turned to the sun, so its world square is ~1.42x, plus the
         // shadows of the trees just outside it
@@ -1247,6 +1260,7 @@ function installShadowFade() {
       world.onChunkChange = (x, z, r) => shadowCache.chunkChanged(x, z, r);
       world.trees.onInvalidate = () => shadowCache.invalidate();
       link.onChunkChange = (x, z, r) => shadowCache.chunkChanged(x, z, r);
+      if (kwrail) kwrail.onChunkChange = link.onChunkChange;
     } catch (e) { blog(`shadow cache: ${e.message}`); shadowCache = null; }
   }
   if (world.terrainGroup) freezeStatic(world.terrainGroup);
@@ -1266,6 +1280,7 @@ function installShadowFade() {
     // (Link's and freight's chunks are built as you come near: each drops
     // its arrays the same way when it is made)
     link.dropArrays = true;
+    if (kwrail) kwrail.dropArrays = true;
     let b = 0;
     // (the freeways' furniture and signs too: their own group, highways.js)
     for (const r of [world.terrainGroup, world.skyline, lmRoot, highwaysRoot(), link.group, link.tunGroup]) if (r) b += dropStaticArrays(r);
@@ -1296,6 +1311,7 @@ function installShadowFade() {
   if (city.jc) signalHeads = new SignalHeads(scene, city.jc);
   traffic.camera = camera;   // far-LOD instances are culled against it
   traffic.link = link;       // cars stop for a train on a level crossing
+  traffic.freight = kwrail;  // ...and at the heavy rail's gates (kwrail.blocks, xing.js)
   // where water is drawn (the boats' query): no car parks under it
   traffic.waterAt = (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; };
   // the cyclists on the bike paths, and the bike-share docks
@@ -1659,7 +1675,7 @@ function installShadowFade() {
   if (shopStats()) blog('kw shops: ' + JSON.stringify(shopStats()));
   peds = new PedSystem(scene, city, game);
   // trains are solid to anyone on foot (each system's blockAt)
-  player.trainBlock = peds.trainBlock = (x, z, y, r) => link.blockAt(x, z, y, r);
+  player.trainBlock = peds.trainBlock = (x, z, y, r) => link.blockAt(x, z, y, r) || !!(kwrail && kwrail.blockAt(x, z, y, r));
   peds.camera = camera;   // animation LOD culls against it
   peds.waterAt = (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; };   // the boats' rule (Player.waterAt)
   fx = new Effects(scene, tx);
@@ -1692,6 +1708,7 @@ function installShadowFade() {
   window.__geese = geese;
   blog('kw places built: ' + JSON.stringify(placesStats()));
   link.bind({ game, hud, audio, player });
+  if (kwrail) kwrail.bind({ game, hud, audio, player });
   {
     // One tap, never behind a menu: a lost run on a phone ends the session.
     const rb = document.getElementById('raceRestart');
@@ -1827,7 +1844,8 @@ function installShadowFade() {
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
   window.__dbg = { grt, eats, get air() { return air; }, get signalHeads() { return signalHeads; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
-  window.__dbg.crops = crops;   // Auto KW: the harvest (crops.js)
+  window.__dbg.crops = crops;
+  window.__dbg.rail = kwrail;   // Auto KW: the heavy rail (kwrail.js)   // Auto KW: the harvest (crops.js)
   window.__dbg.kart = kartRace;
   window.__dbg.fest = fest;
   window.__dbg.splash = splash;   // Auto KW: Big Splash (bigsplash.js)   // Auto KW: Oktoberfest (oktoberfest.js)   // Auto KW: Erbsville Kartway (kartway.js)
@@ -3121,6 +3139,7 @@ function frame(now) {
   if (monorail) monorail.update(dt);
   if (link) link.update(dt, camera);
   if (freight) freight.update(dt, camera);
+  if (kwrail) kwrail.update(dt, camera);
   // A car on fire (VEHICLE_HOOKS.ignite): smoke and flame from under the
   // bonnet for BURN_S, then the blast -- yours if you are still in it, and
   // some of it if you are standing beside it.
@@ -3514,7 +3533,7 @@ function audioState(dt, input, p, camDir, buried) {
     amb: ambient,
     listener,
     cars: withTrains(traffic.cars),
-    freight: freight ? freight.trains : null,
+    freight: kwrail ? kwrail.audible : freight ? freight.trains : null,
     streetcars: counterbal && counterbal.ok ? counterbal.cars : null,
     ferry: ferry ? ferry.boats : null,
     heli: hp,
@@ -3554,6 +3573,7 @@ function draw(now) {
     else world.trees.cut(camera.position, 0, 0, 0, 0);
   }
   if (crops) crops.stream(camera);   // the standing crop near the camera (crops.js)
+  if (kwrail && game.paused) kwrail.view(camera);   // posed shots: the rail streams and poses (kwrail.js)
   if (world && world.decor) {
     const dt = game.paused || !draw.lastT ? 0 : Math.min(0.06, (now - draw.lastT) / 1000);
     draw.lastT = now;

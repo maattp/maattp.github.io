@@ -53,6 +53,7 @@ import { vehicleAssets, tagGlass } from './vehicles.js';
 import { railCar, railDecals } from './railcars.js';
 import { clamp } from './util.js';
 import { memo } from './bootcache.js';
+import { buildXingMast, XingSignals, xingIndex, xingClosed, xingStart } from './xing.js';
 
 const { TUN, BOX, DECK, FILL, CROSS } = KIND;
 const _fw = new THREE.Vector3();
@@ -60,7 +61,7 @@ const _fw = new THREE.Vector3();
 export const KWRAIL = {
   gauge: 1.435,
   lift: 0.55, liftX: 0.36, deck: 5.0, cover: 9.0,
-  grade: 0.012,          // the subs' ruling grades are ~1 % (est.)
+  grade: 0.02,           // the subs' ruling grades are ~1 %; 2 % lets the bed follow the 40 m DEM (est.)
   aLat: 0.7,             // unbalanced lateral acceleration in a curve
   ramp: 45,              // a passing place's turnout: the offset eases in over this
 };
@@ -83,8 +84,6 @@ const FLEET = [
     consist: ['go647', ...Array(10).fill('goCoach'), '~goCab'], route: 'go' },
   { id: 'go2', line: 'guelph', kind: 'go', name: 'GO', vMax: 26.8, acc: 0.55, dec: 0.75,
     consist: ['go612', ...Array(10).fill('goCoach'), '~goCab'], route: 'go' },
-  { id: 'go3', line: 'guelph', kind: 'go', name: 'GO', vMax: 26.8, acc: 0.55, dec: 0.75,
-    consist: ['go660', ...Array(10).fill('goCoach'), '~goCab'], route: 'go' },
   // VIA: a Venture set (Charger, four cars, the cab car)
   { id: 'via', line: 'guelph', kind: 'via', name: 'VIA', vMax: 26.8, acc: 0.6, dec: 0.8,
     consist: ['viaCharger', 'viaCoach', 'viaCoach', 'viaCoach', 'viaCoach', '~viaCab'], route: 'through' },
@@ -202,7 +201,7 @@ export class KwRail {
       tr.line = line;
       this.lines.push(line);
       this.byKey[ld.key] = line;
-      line.pps = this._passingPlaces(tr, ld.twins || []);
+      line.pps = line.disp = this._passingPlaces(tr, ld.twins || []);
     }
     // the profile, the crossings and the kinds: deterministic for a build, so
     // a later launch restores them (bootcache.js memo)
@@ -212,6 +211,7 @@ export class KwRail {
       const prof = memo(`kwrail:prof:${k}`, () => {
         this._rawCrossings(tr, roads);
         tr.setHeights([], tr._XW);
+        for (let k = 0; k < 4; k++) this._pinCrossings(tr);   // (neighbours pull each other: settle)
         tr.KD = new Uint8Array(tr.n);
         this._kinds(tr);
         return { Y: tr.Y.slice(), GR: tr.GR.slice(), KD: tr.KD.slice(), X: tr._X.slice(), XW: tr._XW.slice() };
@@ -278,7 +278,7 @@ export class KwRail {
     const out = [];
     for (const r of runs) {
       const p = out[out.length - 1];
-      if (p && Math.sign(p.off) === Math.sign(r.off) && r.s0 < p.s1 + 120) {
+      if (p && Math.sign(p.off) === Math.sign(r.off) && r.s0 < p.s1 + 260) {
         const w0 = p.s1 - p.s0, w1 = r.s1 - r.s0;
         p.off = (p.off * w0 + r.off * w1) / (w0 + w1);
         p.s1 = Math.max(p.s1, r.s1);
@@ -326,6 +326,32 @@ export class KwRail {
           for (let j = Math.max(0, m - half - 10); j <= Math.min(tr.n - 1, m + half + 10); j++) tr._XW[j] = 1;
         }
       }
+    }
+  }
+
+  /**
+   * EVERY LEVEL CROSSING MEETS ITS ROAD. setHeights pins a crossing to the
+   * ground, but its envelopes at the ruling grade can still lift it clear of
+   * the road where the line is on a fill either side; here each crossing is
+   * set to the road (raw ground + liftX) and the profile eased to it.
+   */
+  _pinCrossings(tr) {
+    const Y = tr.Y, n = tr.n;
+    for (let i = 0; i < n;) {
+      if (!tr._X[i]) { i++; continue; }
+      let j = i;
+      while (j < n && tr._X[j]) j++;
+      const m = (i + j - 1) >> 1;
+      const want = Math.max(G.terrainRaw(tr.X[m], tr.Z[m]), tr.GR[m]) + this.P.liftX;
+      const dl = want - Y[m];
+      if (Math.abs(dl) > 0.05) {
+        const R = Math.max(60, Math.abs(dl) / 0.02) + (j - i) / 2;
+        for (let k = Math.max(0, Math.floor(m - R)); k <= Math.min(n - 1, Math.ceil(m + R)); k++) {
+          const t = Math.abs(k - m) <= (j - i) / 2 ? 1 : Math.max(0, 1 - (Math.abs(k - m) - (j - i) / 2) / (R - (j - i) / 2));
+          Y[k] += dl * t * t * (3 - 2 * t);
+        }
+      }
+      i = j;
     }
   }
 
@@ -540,9 +566,8 @@ export class KwRail {
         i = j;
         if (!road) continue;
         // a crossing's every track; the spur's quiet country roads get lights only
-        const gated = line.key !== 'spur' || road.hw > 3.4;
-        out.push({ line, s: m, x: F.x, z: F.z, h: tr.H[m], road, spread: Math.abs(o), gated, passive: false,
-          active: false, arm: 0, flash: 0, bellT: 0, lightT: 0, gates: [] });
+        const gate = line.key !== 'spur' || road.hw > 3.4;
+        out.push(xingStart({ line, s: m, x: F.x, z: F.z, h: tr.H[m], road, spread: Math.abs(o), gate, passive: false, gates: [] }));
       }
     }
     this.crossings = out;
@@ -564,7 +589,7 @@ export class KwRail {
           const h = Math.atan2(bx - ax, bz - az);
           const road = this._roadAt(x, z, h);
           if (!road) continue;
-          found.push({ line: null, s: 0, x, z, h, road, spread: 0, gated: false, passive: true, active: false, arm: 0, gates: [] });
+          found.push(xingStart({ line: null, s: 0, x, z, h, road, spread: 0, gate: false, passive: true, gates: [] }));
         }
       }
     });
@@ -573,16 +598,8 @@ export class KwRail {
   }
 
   _indexCrossings() {
-    this.crossCells = new Map();
-    this.crossings.forEach((c, i) => {
-      if (c.passive) return;
-      const cx = Math.floor(c.x / 50), cz = Math.floor(c.z / 50);
-      for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
-        const kk = (cx + dx) * 100003 + cz + dz;
-        if (!this.crossCells.has(kk)) this.crossCells.set(kk, []);
-        this.crossCells.get(kk).push(i);
-      }
-    });
+    this.active = this.crossings.filter((c) => !c.passive);
+    this.crossCells = xingIndex(this.active);
   }
 
   // --- the structure ------------------------------------------------------------
@@ -590,6 +607,8 @@ export class KwRail {
   build(scene, world) {
     this.world = world;
     this.scene = scene;
+    // (the lettering atlas must hold every cell: railcars.js ATLAS_H)
+    this.atlasUsedH = railDecals().usedH;
     this.bedMat = new THREE.MeshStandardMaterial({ map: bedTexture(), vertexColors: true, roughness: 0.95, metalness: 0, envMapIntensity: 0.5 });
     const L = this.lazy = new LazyChunks(CHUNK, (sink) => {
       const mk = (uv) => (sink ? new SinkBuilder() : new ChunkBuilder(uv, 64));
@@ -797,63 +816,44 @@ export class KwRail {
   }
 
   /**
-   * A crossing's masts: flashing lights, the gate mechanism (where gated), the
-   * bilingual crossbuck [TC] and the number of tracks under it; on a spur only
-   * the crossbuck on its post.
+   * A crossing's signals: the shared Canadian mast (xing.js, ION's too) with
+   * the bilingual crossbuck [TC] and the number of tracks under it where
+   * there are two; on a spur, only a crossbuck on its post.
    */
   _buildCrossing(c, chunk) {
-    const e = c.road, ch = chunk(c.x, c.z);
-    const rdx = e.dx, rdz = e.dz;
+    const ch = chunk(c.x, c.z), cells = railDecals().cells;
+    const uv = (k) => { const cl = cells[k]; return [cl[0], cl[1], cl[2], cl[1], cl[2], cl[3], cl[0], cl[3]]; };
+    const tracks = c.spread > 2 && cells.xtracks2 ? uv('xtracks2') : null;
+    if (!c.passive) {
+      buildXingMast(c, ch.flat, ch.dec, [uv('xbuckEn'), uv('xbuckFr')], {
+        groundAt: (x, z) => (this.city.groundAt ? this.city.groundAt(x, z, null) : G.terrainHeight(x, z)),
+        solids: this.solids,
+        under: tracks && ((mx, gy, mz, fx, fz, ux, uz) => {
+          const cx = mx + fx * 0.11, cz = mz + fz * 0.11, cy = gy + 3.18;
+          const Pq = (u, v) => [cx + ux * u, cy + v, cz + uz * u];
+          ch.dec.quad(Pq(-0.24, -0.17), Pq(0.24, -0.17), Pq(0.24, 0.17), Pq(-0.24, 0.17), [fx, 0, fz], tracks, [1, 1, 1]);
+        }),
+      });
+      return;
+    }
+    // a spur's crossing: a crossbuck on a post each way
+    const e = c.road;
     const tdx = Math.sin(c.h), tdz = Math.cos(c.h);
-    const sinA = Math.abs(rdx * tdz - rdz * tdx) || 1;
-    const clear = (c.spread / 2 + 4.2) / sinA;
-    const hw = e.hw;
-    const cells = railDecals().cells;
+    const sinA = Math.abs(e.dx * tdz - e.dz * tdx) || 1;
+    const clear = 4.2 / sinA;
     c.gates = [];
     for (const a of [1, -1]) {
-      const hx = -a * rdx, hz = -a * rdz;
-      const rx = -hz, rz = hx;
-      const mx = c.x + a * rdx * clear + rx * (hw + 0.9), mz = c.z + a * rdz * clear + rz * (hw + 0.9);
-      const gy = G.terrainHeight(mx, mz) + (c.passive ? 0 : 0.3);
-      const face = Math.atan2(-hx, -hz);
-      const fx = -hx, fz = -hz;
-      const ux = Math.cos(face), uz = -Math.sin(face);
-      let top;
-      if (c.passive) {
-        ch.flat.box(mx, gy, mz, 0.1, 3.1, 0.1, -face, C.white);
-        top = gy + 2.75;
-      } else {
-        ch.flat.box(mx, gy, mz, 0.2, 4.3, 0.2, 0, C.white);
-        ch.flat.box(mx, gy, mz, 0.6, 0.35, 0.6, 0, C.concrete);
-        for (const s of [1, -1]) {
-          const lx = mx + ux * 0.38 * s, lz = mz + uz * 0.38 * s;
-          ch.flat.box(lx, gy + 2.55, lz, 0.36, 0.36, 0.12, -face, C.black);
-          ch.flat.box(lx + fx * 0.12, gy + 2.86, lz + fz * 0.12, 0.34, 0.03, 0.2, -face, C.black);
-        }
-        ch.flat.box(mx, gy + 2.72, mz, 1.0, 0.06, 0.06, -face, C.black);
-        top = gy + 3.7;
-      }
-      // the crossbuck: two boards in an X facing the traffic, RAILWAY CROSSING
-      // one way and TRAVERSE DE CHEMIN DE FER the other
-      for (const [cell, rot] of [['xbuckEn', 0.785], ['xbuckFr', -0.785]]) {
-        const cl = cells[cell];
-        if (!cl) continue;
-        const cx = mx + fx * 0.14, cz = mz + fz * 0.14, cy = top;
-        const w = 1.22, h = 0.23, ca = Math.cos(rot), sa = Math.sin(rot);
+      const hx = -a * e.dx, hz = -a * e.dz, rx = -hz, rz = hx;
+      const mx = c.x + a * e.dx * clear + rx * (e.hw + 0.9), mz = c.z + a * e.dz * clear + rz * (e.hw + 0.9);
+      const gy = G.terrainHeight(mx, mz);
+      const face = Math.atan2(-hx, -hz), fx = -hx, fz = -hz, ux = Math.cos(face), uz = -Math.sin(face);
+      ch.flat.box(mx, gy, mz, 0.1, 3.1, 0.1, -face, C.white);
+      [['xbuckEn', 0.785], ['xbuckFr', -0.785]].forEach(([cell, rot]) => {
+        const cx = mx + fx * 0.07, cz = mz + fz * 0.07, cy = gy + 2.75;
+        const w = 1.22, h = 0.21, ca = Math.cos(rot), sa = Math.sin(rot);
         const Pq = (u, v) => [cx + ux * (u * ca - v * sa), cy + (u * sa + v * ca), cz + uz * (u * ca - v * sa)];
-        ch.dec.quad(Pq(-w / 2, -h / 2), Pq(w / 2, -h / 2), Pq(w / 2, h / 2), Pq(-w / 2, h / 2), [fx, 0, fz], [cl[0], cl[1], cl[2], cl[1], cl[2], cl[3], cl[0], cl[3]], [1, 1, 1]);
-      }
-      // more than one track: the number under the crossbuck
-      if (c.spread > 2 && cells.xtracks2) {
-        const cl = cells.xtracks2, cx = mx + fx * 0.13, cz = mz + fz * 0.13, cy = top - (c.passive ? 0.85 : 0.62);
-        const Pq = (u, v) => [cx + ux * u, cy + v, cz + uz * u];
-        ch.dec.quad(Pq(-0.24, -0.17), Pq(0.24, -0.17), Pq(0.24, 0.17), Pq(-0.24, 0.17), [fx, 0, fz], [cl[0], cl[1], cl[2], cl[1], cl[2], cl[3], cl[0], cl[3]], [1, 1, 1]);
-      }
-      if (c.passive) continue;
-      if (c.gated) ch.flat.box(mx - rx * 0.3, gy + 0.7, mz - rz * 0.3, 0.45, 0.8, 0.45, 0, C.steelD);
-      this.solids.push({ x: mx, z: mz, r: 0.35, y0: gy, y1: gy + 4.3 });
-      const len = Math.max(3, hw + 0.4);
-      c.gates.push({ px: mx - rx * 0.3, py: gy + 1.1, pz: mz - rz * 0.3, dx: -rx, dz: -rz, len, lx: mx, ly: gy + 2.55, lz: mz, face, arm: c.gated });
+        ch.dec.quad(Pq(-w / 2, -h / 2), Pq(w / 2, -h / 2), Pq(w / 2, h / 2), Pq(-w / 2, h / 2), [fx, 0, fz], uv(cell), [1, 1, 1]);
+      });
     }
   }
 
@@ -918,28 +918,9 @@ export class KwRail {
     }
   }
 
-  /** Every gate arm and lamp in one instanced draw each; posed per frame near you. */
+  /** Every gate arm and lit lamp in one instanced draw each (xing.js). */
   _buildGateArms(scene) {
-    const n = this.crossings.reduce((a, c) => a + c.gates.length, 0);
-    if (!n) return;
-    const b = new Builder(false);
-    const N = 8;
-    for (let i = 0; i < N; i++) b.box((i + 0.5) / N, -0.05, 0, 1 / N, 0.1, 0.1, 0, i % 2 ? C.red : C.white);
-    b.box(-0.08, -0.12, 0, 0.16, 0.24, 0.22, 0, C.steelD);
-    this.armMesh = new THREE.InstancedMesh(b.build(), this.world.mats.flat, n);
-    this.armMesh.name = 'kwrail:gates';
-    this.armMesh.frustumCulled = false;
-    this.armMesh.count = 0;
-    scene.add(this.armMesh);
-    const lb = new Builder(false);
-    lb.box(0, -0.13, 0, 0.26, 0.26, 0.04, 0, [1.0, 0.1, 0.05]);
-    this.lampMesh = new THREE.InstancedMesh(lb.build(), this.world.mats.glow, n * 2);
-    this.lampMesh.name = 'kwrail:lamps';
-    this.lampMesh.frustumCulled = false;
-    this.lampMesh.count = 0;
-    scene.add(this.lampMesh);
-    this._m4 = new THREE.Matrix4(); this._q = new THREE.Quaternion(); this._e = new THREE.Euler(0, 0, 0, 'YZX');
-    this._v = new THREE.Vector3(); this._sc = new THREE.Vector3(); this._up = new THREE.Vector3(0, 1, 0);
+    this.xsig = new XingSignals(scene, this.world.mats, this.active, 'kwrail');
   }
 
   // --- trains -------------------------------------------------------------------
@@ -952,6 +933,14 @@ export class KwRail {
     this.decMat = railDecals().mat;
     this.fleet = FLEET.filter((f) => this.byKey[f.line]).map((f, i) => new RailTrain(this, i, this.byKey[f.line], f));
     for (const t of this.fleet) { scene.add(t.group); t.group.visible = false; }
+    // the passing places the dispatcher uses: those every train of the line
+    // fits on, clear of both turnouts (the rest are only drawn); a station's
+    // platform track is a passing place's only if that one is used
+    for (const line of this.lines) {
+      const maxLen = Math.max(0, ...this.fleet.filter((t) => t.line === line).map((t) => t.len));
+      line.disp = line.pps.filter((p) => p.s1 - p.s0 - 2 * KWRAIL.ramp - 30 >= maxLen);
+      for (const st of line.stops) if (st.pp && !line.disp.includes(st.pp)) { st.pp = null; st.track = 0; }
+    }
     this._schedule();
     return this.fleet;
   }
@@ -970,7 +959,7 @@ export class KwRail {
       // arriving westbound (toward s = 0) it stops; it leaves eastbound
       if (go && this._placeAtStop(go, st, -1)) { go.state = 'dwell'; go.dwellT = 150; go.reverseAfter = true; }
     }
-    at('go2', 40); at('go3', 520); at('via', 200); at('cn1', 5); at('cn2', 330);
+    at('go2', 40); at('via', 200); at('cn1', 5); at('cn2', 330);
     const galt = this.byKey.galt;
     if (galt) {
       const t = T('cp1');
@@ -989,8 +978,8 @@ export class KwRail {
   _placeRun(t, s, d) {
     t.d = d; t.s = s; t.u = Math.min(t.cfg.vMax, t.line.vMax) * 0.8; t.state = 'run';
     t.ori = d; t.served = new Set();
-    const pp = this.ppAt(t.line, s);
-    t.pp = pp; t.ppTrack = 0; if (pp) pp.hold[0] = t;
+    const pp = t.line.disp.find((p) => s > p.s0 && s < p.s1) || null;
+    t.pp = pp; t.ppTrack = 0; t.npp = null; if (pp) pp.hold[0] = t;
     t.commit = this._blockAt(t.line, s);
     if (!t.line.trains.includes(t)) t.line.trains.push(t);
     this.stats.spawns++;
@@ -1001,23 +990,44 @@ export class KwRail {
     t.d = d; t.ori = t.cfg.kind === 'heritage' ? 1 : d; t.s = clamp(st.mid, t.len / 2 + 3, t.line.tr.len - t.len / 2 - 3); t.u = 0; t.state = 'run';
     t.served = new Set([st]); t.dwellStop = st;
     if (!t.line.trains.includes(t)) t.line.trains.push(t);
-    t.pp = st.pp || null; t.ppTrack = st.pp ? st.track : 0;
+    t.pp = st.pp || null; t.ppTrack = st.pp ? st.track : 0; t.npp = null;
     if (t.pp) t.pp.hold[t.ppTrack] = t;
     t.commit = null;
     return true;
   }
 
+  /** A free track for `t` at passing place p (its station's platform track
+   *  first, else the main, else the passing track), or null. */
+  _landing(p, t) {
+    const st = t.line.stops.find((q) => q.pp === p && !t.served.has(q) && t.cfg.kind !== 'freight');
+    // ONE TRACK A DIRECTION: a passing place always keeps a track for a train
+    // the other way, or two waiting each way at the ends of one block wait for
+    // ever (the dispatcher's deadlock)
+    if (this._holders(p).some((u) => u && u !== t && u.d === t.d)) return null;
+    for (const tk of st ? [st.track, 1 - st.track] : [0, 1]) if (!this._holder(p, tk) || p.hold[tk] === t) return tk;
+    return null;
+  }
+  /** Who holds track tk of p -- a train still out there with p as its
+   *  passing place or its landing on that track; a stale entry is cleared. */
+  _holder(p, tk) {
+    const u = p.hold[tk];
+    if (!u) return null;
+    if (u.state === 'idle' || !((u.pp === p && u.ppTrack === tk) || (u.npp === p && u.nTrack === tk))) { p.hold[tk] = null; return null; }
+    return u;
+  }
+  _holders(p) { return [this._holder(p, 0), this._holder(p, 1)]; }
+
   /** Block index of s on `line` (between passing places), or -1 inside one. */
   _blockAt(line, s) {
     let i = 0;
-    for (const p of line.pps) {
+    for (const p of line.disp) {
       if (s > p.s0 && s < p.s1) return -1;
       if (s >= p.s1) i++;
     }
     return i;
   }
   _blockRange(line, i) {
-    const pp = line.pps;
+    const pp = line.disp;
     return [i === 0 ? -Infinity : pp[i - 1].s1, i === pp.length ? Infinity : pp[i].s0];
   }
 
@@ -1027,6 +1037,10 @@ export class KwRail {
     for (const u of line.trains) {
       if (u === me || u.state === 'off' || u.d === d) continue;
       if (u.commit === i) return false;
+      // a train already waiting for this block the other way has it next
+      // (first come): without this, a stream one way starved the other
+      // (only while it could go: a track waiting for it at the far end)
+      if (u.want === i && !(me && me.want === i && me.wantSince < u.wantSince) && (!u.wantLand || this._landing(u.wantLand, u) !== null)) return false;
       const lo = Math.min(u.lead, u.tail), hi = Math.max(u.lead, u.tail);
       if (hi > a && lo < b) return false;
     }
@@ -1051,15 +1065,20 @@ export class KwRail {
       if (t.cfg.route === 'go') d = -1;
       const endIdx = d > 0 ? 0 : 1;
       if (line.ends[endIdx] !== 'edge') { t.dueT = 30; continue; }
-      const blk = d > 0 ? 0 : line.pps.length;
+      const blk = d > 0 ? 0 : line.disp.length;
       const s = d > 0 ? -t.len / 2 - 5 : tr.len + t.len / 2 + 5;
       // the way in is clear, nobody close behind the entry, and you are not
       // standing at the edge to watch it appear
       const ex = tr.x(d > 0 ? 0 : tr.len), ez = tr.z(d > 0 ? 0 : tr.len);
       const crowd = line.trains.some((u) => u !== t && u.state !== 'off' && u.state !== 'idle' && Math.abs(u.s - s) < t.len + u.len + 500);
       if (!this._free(line, blk, d, t) || crowd || Math.hypot(ex - cx, ez - cz) < 300) { t.dueT = 8; continue; }
+      const kn = line.disp[d > 0 ? 0 : line.disp.length - 1];
+      t.served = new Set(); t.d = d;
+      const land = kn ? this._landing(kn, t) : -1;
+      if (land === null) { t.dueT = 8; continue; }
+      t.npp = kn || null; t.nTrack = land; if (kn) kn.hold[land] = t;
       t.d = d; t.ori = d; t.s = s; t.u = Math.min(t.cfg.vMax, line.vMax) * 0.85; t.state = 'run';
-      t.served = new Set(); t.pp = null; t.ppTrack = 0; t.commit = blk; t.reverseAfter = false; t.holdT = 0;
+      t.pp = null; t.ppTrack = 0; t.commit = blk; t.reverseAfter = false; t.holdT = 0;
       if (!line.trains.includes(t)) line.trains.push(t);
       this.stats.spawns++;
     }
@@ -1067,8 +1086,9 @@ export class KwRail {
 
   /** A train has left the map: idle until it is due back, from the end it left by. */
   _retire(t) {
-    if (t.pp) { t.pp.hold[t.ppTrack] = t.pp.hold[t.ppTrack] === t ? null : t.pp.hold[t.ppTrack]; }
-    t.pp = null; t.commit = null; t.state = 'idle'; t.u = 0;
+    if (t.pp && t.pp.hold[t.ppTrack] === t) t.pp.hold[t.ppTrack] = null;
+    if (t.npp && t.npp.hold[t.nTrack] === t) t.npp.hold[t.nTrack] = null;
+    t.pp = null; t.npp = null; t.commit = null; t.want = null; t.state = 'idle'; t.u = 0;
     t.group.visible = false;
     const i = t.line.trains.indexOf(t);
     if (i >= 0) t.line.trains.splice(i, 1);
@@ -1078,13 +1098,15 @@ export class KwRail {
   }
 
   /**
-   * A train out of sight that has stood waiting four minutes is taken off
+   * A train out of sight that has stood waiting ten minutes is taken off
    * (a crossed pair of meets the dispatcher did not foresee); in sight, it
    * waits, as a real one would.
    */
   _rescue(t, cx, cz) {
-    if (t.holdT < 240 || t.distTo(cx, cz) < 1600) return;
+    if (t.holdT < 600 || t.distTo(cx, cz) < 1600) return;
     this.stats.rescued++;
+    const desc = (u) => `${u.cfg.id}(d ${u.d} lead ${Math.round(u.lead)} u ${u.u.toFixed(1)} ${u.state} pp ${u.pp ? Math.round(u.pp.s0) + '/' + u.ppTrack : '-'} npp ${u.npp ? Math.round(u.npp.s0) + '/' + u.nTrack : '-'} c ${u.commit} w ${u.want} hold ${Math.round(u.holdT)})`;
+    (this.stats.rescueLog || (this.stats.rescueLog = [])).push(`t ${Math.round(this.time)} ${t.cfg.id}: ` + t.line.trains.map(desc).join(' '));
     this._retire(t);
   }
 
@@ -1101,6 +1123,16 @@ export class KwRail {
         if (t.state !== 'idle') this._rescue(t, cx, cz);
       }
     }
+    this.view(camera, dt);
+    if (this.player) this._guard(dt, this.player);
+    this._announce(dt);
+  }
+
+  /** What is drawn: the structure streamed round the camera, the trains posed,
+   *  the crossings' arms and lamps (also called while paused: main.js draw). */
+  view(camera, dt = 0) {
+    if (!this.fleet) return;
+    const cx = camera.position.x, cz = camera.position.z;
     const BUILD_R = Math.max(RANGE.flat, 900) + 300;
     this.lazy.stream(cx, cz, RANGE.near + 200, BUILD_R, BUILD_R + 700, CHUNK * 0.71, ON_PHONE ? 1.5 : 3, this._lazySys());
     for (const t of this.fleet) {
@@ -1112,8 +1144,6 @@ export class KwRail {
       else if (!t._geoReady && d < RANGE.train + 1500) t.stepGeometry(ON_PHONE ? 1.5 : 3);
     }
     this._crossingsUpdate(dt, cx, cz);
-    if (this.player) this._guard(dt, this.player);
-    this._announce(dt);
   }
 
   /** On foot by a platform as a passenger train comes in: what it is. */
@@ -1138,84 +1168,29 @@ export class KwRail {
     }
   }
 
-  /** Gates down for any train near: arms, lamps, the bell. */
+  /** Gates down for any train near: arms, lamps, the bell (xing.js). */
   _crossingsUpdate(dt, cx, cz) {
-    let nArm = 0, nLamp = 0;
-    const m = this._m4, q = this._q, e = this._e, v = this._v, scl = this._sc;
-    for (const c of this.crossings) {
-      if (c.passive) continue;
-      let act = false;
+    if (!this.xsig) return;
+    this.xsig.update(this.active, dt, cx, cz, RANGE.gate, this.audio, (c) => {
       for (const t of c.line.trains) {
-        if (t.state === 'off' || t.state === 'idle') continue;
+        if (t.state === 'idle') continue;
         const ahead = (c.s - t.lead) * t.d, behindTail = (c.s - t.tail) * t.d;
         const sp = t.u;
         // a train standing 15 s short of the crossing lets the gates up
         const reach = sp < 0.05 && t.standT > 15 ? 15 : Math.max(120, sp * 25);
-        if (ahead > -2 && ahead < reach) { act = true; break; }
-        if (ahead <= 0 && behindTail >= -6) { act = true; break; }
+        if (ahead > -2 && ahead < reach) return true;
+        if (ahead <= 0 && behindTail >= -6) return true;
       }
-      c.active = act;
-      c.lightT = act ? c.lightT + dt : 0;
-      const want = act && c.lightT > 3 ? 1 : 0;
-      c.arm = want ? Math.min(1, c.arm + dt / 7) : Math.max(0, c.arm - dt / 5);
-      const d = Math.hypot(c.x - cx, c.z - cz);
-      if (d > RANGE.gate || !this.armMesh) continue;
-      const flashing = act || c.arm > 0.02;
-      c.flash = (c.flash + dt * 1.6) % 2;
-      for (const g of c.gates) {
-        if (g.arm) {
-          const ang = (1 - c.arm) * 1.48;
-          e.set(0, Math.atan2(g.dx, g.dz) - Math.PI / 2, ang);
-          q.setFromEuler(e);
-          scl.set(g.len, 1, 1);
-          v.set(g.px, g.py, g.pz);
-          m.compose(v, q, scl);
-          this.armMesh.setMatrixAt(nArm++, m);
-        }
-        if (flashing) {
-          const sgn = c.flash < 1 ? -1 : 1;
-          const lx = g.lx + Math.cos(g.face) * 0.38 * sgn, lz = g.lz - Math.sin(g.face) * 0.38 * sgn;
-          const fx = Math.sin(g.face + Math.PI), fz = Math.cos(g.face + Math.PI);
-          q.setFromAxisAngle(this._up, g.face);
-          scl.set(1, 1, 1);
-          v.set(lx + fx * 0.07, g.ly + 0.18, lz + fz * 0.07);
-          m.compose(v, q, scl);
-          this.lampMesh.setMatrixAt(nLamp++, m);
-        }
-      }
-      if (flashing && this.audio && this.audio.ready) {
-        c.bellT -= dt;
-        if (c.bellT <= 0) {
-          c.bellT = 0.52;
-          if (d < 170) this.audio.play('xing_bell', { gain: 0.55, x: c.x, y: G.terrainHeight(c.x, c.z) + 3, z: c.z, ref: 10, maxD: 200, jitter: false });
-        }
-      }
-    }
-    if (this.armMesh) {
-      this.armMesh.count = nArm; this.armMesh.instanceMatrix.needsUpdate = true;
-      this.lampMesh.count = nLamp; this.lampMesh.instanceMatrix.needsUpdate = true;
-    }
+      return false;
+    }, 0.55);
   }
 
   onGradeCorridor(x, z) {
     return !!this.gradeCells && this.gradeCells.has(Math.floor(x / 50) * 100003 + Math.floor(z / 50));
   }
 
-  /** For traffic.js: is (x, z) inside a crossing whose lights are on (or a train on it)? */
-  blocks(x, z) {
-    if (!this.crossCells) return false;
-    const l = this.crossCells.get(Math.floor(x / 50) * 100003 + Math.floor(z / 50));
-    if (!l) return false;
-    for (const i of l) {
-      const c = this.crossings[i];
-      if (!c.active && c.arm < 0.05) continue;
-      const dx = x - c.x, dz = z - c.z;
-      if (dx * dx + dz * dz > 900) continue;
-      const perp = Math.abs(dx * Math.cos(c.h) - dz * Math.sin(c.h));
-      if (perp < c.spread / 2 + 4.6) return true;
-    }
-    return false;
-  }
+  /** For traffic.js: is (x, z) between a crossing's gates while its lights are on? (xing.js) */
+  blocks(x, z, y, car = null) { return xingClosed(this.crossCells, this.active, x, z, 4.6, car); }
 
   /** A TRAIN IS SOLID ON FOOT (main.js trainBlock). */
   blockAt(x, z, y, r) {
@@ -1278,17 +1253,17 @@ export class KwRail {
   }
 
   /** Harness: bring a train of `line` toward crossing `ci` from ~`dist` m out (probe). */
-  sendTo(ci, dist = 900) {
-    const c = this.crossings[ci];
+  sendTo(ci, dist = 900, id = null, dir = 0) {
+    const c = typeof ci === 'number' ? this.crossings[ci] : ci;
     if (!c || c.passive) return null;
     const line = c.line, tr = line.tr;
-    const t = this.fleet.find((u) => u.line === line && u.state === 'idle') || line.trains[0];
+    const t = (id && this.fleet.find((u) => u.cfg.id === id)) || this.fleet.find((u) => u.line === line && u.state === 'idle') || line.trains[0];
     if (!t) return null;
     for (const u of line.trains.slice()) if (u !== t) this._retire(u);
-    const d = c.s > tr.len / 2 ? 1 : -1;
+    const d = dir || (c.s > tr.len / 2 ? 1 : -1);
     if (t.state !== 'idle') this._retire(t);
-    t.d = d; t.ori = d; t.s = clamp(c.s - d * (dist + t.len / 2), t.len / 2 + 1, tr.len - t.len / 2 - 1);
-    t.u = Math.min(t.cfg.vMax, line.vMax) * 0.8; t.state = 'run'; t.served = new Set(line.stops); t.pp = null; t.commit = this._blockAt(line, t.s);
+    t.d = d; t.ori = t.cfg.route === 'go' ? -1 : d; t.s = clamp(c.s - d * (dist + t.len / 2), t.len / 2 + 1, tr.len - t.len / 2 - 1);
+    t.u = Math.min(t.cfg.vMax, line.vMax) * 0.8; t.state = 'run'; t.served = new Set(line.stops); t.pp = null; t.npp = null; t.commit = this._blockAt(line, t.s);
     t.reverseAfter = false; t.holdT = 0;
     line.trains.push(t);
     return t;
@@ -1328,7 +1303,7 @@ export class RailTrain {
     this._fwd = { x: 0, z: 1 };
     this.s = 0; this.u = 0; this.d = 1; this.ori = 1;
     this.state = 'idle'; this.dueT = 1e9; this.dwellT = 0; this.standT = 0; this.holdT = 0;
-    this.pp = null; this.ppTrack = 0; this.commit = null; this.served = new Set();
+    this.pp = null; this.ppTrack = 0; this.commit = null; this.want = null; this.wantSince = null; this.served = new Set();
     this.reverseAfter = false; this.obstructAt = Infinity;
     this.horn = { seq: null, forS: null, urgent: false };
     this.hornOn = false; this.bellOn = false; this.bellT = 0;
@@ -1390,7 +1365,11 @@ export class RailTrain {
   }
 
   /** This train's track offset at s (a passing place's track, if it is on one). */
-  offAt(s) { return this.pp && this.ppTrack === 1 ? ppOff(this.pp, s) : 0; }
+  offAt(s) {
+    if (this.pp && s > this.pp.s0 && s < this.pp.s1) return this.ppTrack === 1 ? ppOff(this.pp, s) : 0;
+    if (this.npp && s > this.npp.s0 && s < this.npp.s1) return this.nTrack === 1 ? ppOff(this.npp, s) : 0;
+    return 0;
+  }
 
   distTo(x, z) {
     const tr = this.track;
@@ -1417,6 +1396,7 @@ export class RailTrain {
   /** Each car on its trucks; a car beyond the line's end (coming on, going off) hidden. */
   pose() {
     const tr = this.track;
+    { const sc = clamp(this.s, 0, tr.len); this.cx = tr.x(sc); this.cz = tr.z(sc); }
     for (let i = 0; i < this.cars.length; i++) {
       const c = this.cars[i], bone = this.bones[i];
       const sc = this.s + this.ori * (this.len / 2 - c.off);
@@ -1464,7 +1444,9 @@ export class RailTrain {
    */
   _plan() {
     const sys = this.sys, line = this.line, d = this.d, lead = this.lead, b = this.cfg.dec * 0.6;
-    // release the passing place once the tail is past it
+    const pps = line.disp;
+    // the passing place we are leaving is let go once the tail is past it,
+    // and the one we were bound for (our landing) becomes ours
     if (this.pp) {
       const p = this.pp, exit = d > 0 ? p.s1 : p.s0;
       if ((this.tail - exit) * d > 0) {
@@ -1472,40 +1454,57 @@ export class RailTrain {
         this.pp = null; this.ppTrack = 0;
       }
     }
-    // the next passing place: the one the lead is in, or the first ahead
-    let k = null;
-    for (const p of (d > 0 ? line.pps : [...line.pps].reverse())) {
-      const exit = d > 0 ? p.s1 : p.s0;
-      if ((exit - lead) * d > 0) { k = p; break; }
+    if (!this.pp && this.npp) { this.pp = this.npp; this.ppTrack = this.nTrack; this.npp = null; }
+    // a block is ours only until we are out of it
+    if (this.commit !== null && this.commit !== undefined && this.commit >= 0) {
+      const [a, b2] = sys._blockRange(line, this.commit);
+      const lo = Math.min(this.lead, this.tail), hi = Math.max(this.lead, this.tail);
+      if (!(hi > a && lo < b2) && (d > 0 ? lo >= b2 : hi <= a)) this.commit = null;
     }
-    if (!k) { this.holdT = 0; return null; }
+    // the next passing place: the one the lead is in, or the first ahead
+    let ki = -1;
+    if (d > 0) { for (let i = 0; i < pps.length; i++) if (pps[i].s1 > lead) { ki = i; break; } }
+    else { for (let i = pps.length - 1; i >= 0; i--) if (pps[i].s0 < lead) { ki = i; break; } }
+    if (ki < 0) { this.holdT = 0; return null; }
+    const k = pps[ki];
     const entry = d > 0 ? k.s0 : k.s1, exit = d > 0 ? k.s1 : k.s0;
     const toEntry = (entry - lead) * d;
-    const nextBlk = line.pps.indexOf(k) + (d > 0 ? 1 : 0);
+    const nextBlk = ki + (d > 0 ? 1 : 0);
     const look = this.u * this.u / (2 * b) + 400;
-    if (this.pp !== k) {
+    if (this.pp !== k && this.npp !== k) {
+      // no track here yet (put on the line mid-block): take one now
       if (toEntry > look) return null;
-      // our station stop is here: its platform's track
-      const st = line.stops.find((q) => q.pp === k && !this.served.has(q));
-      const clearNow = this.commit === nextBlk || sys._free(line, nextBlk, d, this);
-      // (already past the turnout -- just put on the line here -- the main only)
-      let want = toEntry < 5 ? [0] : st ? [st.track, 1 - st.track] : clearNow ? [0, 1] : [1, 0];
-      const pick = want.find((tk) => !k.hold[tk]);
-      if (pick === undefined) {
+      const pick = toEntry < 5 ? (sys._holder(k, 0) ? null : 0) : sys._landing(k, this);
+      if (pick === null) {
         if (!this._heldAt) { this._heldAt = k; sys.stats.holds++; }
         return entry - d * 15;
       }
       this._heldAt = null;
-      this.pp = k; this.ppTrack = pick; k.hold[pick] = this;
-      if (pick === 1 && !st) sys.stats.meets++;
+      if (this.npp && this.npp !== k && this.npp.hold[this.nTrack] === this) this.npp.hold[this.nTrack] = null;
+      if (this.pp) { this.npp = k; this.nTrack = pick; } else { this.pp = k; this.ppTrack = pick; }
+      k.hold[pick] = this;
     }
-    // in the passing place (or coming to it): is the block beyond ours?
+    // leaving it: the block beyond must be ours, and a track waiting for us
+    // at the far end of that block (THE LANDING: a train is never in a block
+    // without somewhere to stand at its end, so two can't meet head-on in one
+    // with nowhere to pass)
     if (this.commit !== nextBlk) {
       const nearExit = (exit - lead) * d < this.u * this.u / (2 * b) + 250;
-      const st = line.stops.find((q) => q.pp === k && !this.served.has(q));
-      if (nearExit && !st && sys._free(line, nextBlk, d, this)) { this.commit = nextBlk; this.holdT = 0; return null; }
+      const st = this.cfg.kind !== 'freight' && line.stops.find((q) => q.pp === k && !this.served.has(q));
       if (!nearExit || st) return null;
-      // not ours: wait in the passing place, clear of its far turnout
+      if (sys._free(line, nextBlk, d, this)) {
+        const kn = pps[ki + d];
+        const land = kn ? sys._landing(kn, this) : -1;
+        if (land !== null) {
+          this.commit = nextBlk; this.want = null; this.wantSince = null; this.holdT = 0;
+          if (kn) { this.npp = kn; this.nTrack = land; kn.hold[land] = this; }
+          if (this.ppTrack === 1) sys.stats.meets++;
+          return null;
+        }
+      }
+      if (this.want !== nextBlk) { this.want = nextBlk; this.wantSince = sys.time; }
+      this.wantLand = pps[ki + d] || null;
+      // not ours yet: wait in the passing place, clear of its far turnout
       return exit - d * (KWRAIL.ramp + 10);
     }
     return null;
@@ -1518,11 +1517,16 @@ export class RailTrain {
       this.u = 0; this.notch = 0;
       this.standT += dt;
       this.bellOn = this.dwellT < 6;
+      // turning back: not while another train stands here bound the same way
+      // as we will be (one track a direction: see _landing)
+      if (this.dwellT <= 0 && this.reverseAfter && this.pp && sys._holders(this.pp).some((u) => u && u !== this && u.d === -this.d)) this.dwellT = 4;
       if (this.dwellT <= 0) {
         this.state = 'run';
         if (this.reverseAfter) {
           // the far end of the train leads back (push-pull; WCR runs the same)
-          this.d = -this.d; this.reverseAfter = false; this.commit = null;
+          this.d = -this.d; this.reverseAfter = false; this.commit = null; this.want = null;
+          if (this.npp && this.npp.hold[this.nTrack] === this) this.npp.hold[this.nTrack] = null;
+          this.npp = null;
           this.served = new Set(this.dwellStop ? [this.dwellStop] : []);
         }
         this.bellT = 5;
@@ -1548,18 +1552,19 @@ export class RailTrain {
     const endTurn = this.cfg.route === 'shuttle' && !line.stops.length && line.ends[d > 0 ? 1 : 0] === 'end';
     if (endTurn) take(d > 0 ? tr.len - 25 : 25);
     take(this._plan());
-    // the train ahead, on the same track here
+    // the train ahead: the first point of it on the track we will be on there
     for (const o of line.trains) {
       if (o === this || o.state === 'idle') continue;
       const lo = Math.min(o.lead, o.tail), hi = Math.max(o.lead, o.tail);
-      const gapS = d > 0 ? lo - this.lead : this.lead - hi;
-      if (gapS < -2 || gapS > 1500) continue;
-      // in the same passing place on different tracks, or one standing clear
-      // on a passing track the other is not taking: they pass
-      if (o.pp && o.pp === this.pp && o.ppTrack !== this.ppTrack) continue;
-      if (o.ppTrack === 1 && o.pp && inside(o, o.pp) && !(this.pp === o.pp && this.ppTrack === 1)) continue;
-      if (this.ppTrack === 1 && this.pp && inside(this, this.pp) && !(o.pp === this.pp && o.ppTrack === 1)) continue;
-      take(this.lead + d * (gapS - (o.d === d ? 60 : 120)));
+      if (d > 0 ? hi < this.lead - 1 || lo - this.lead > 1500 : lo > this.lead + 1 || this.lead - hi > 1500) continue;
+      let hit = null;
+      for (let q = 0; q <= o.len + 5; q += 8) {
+        const sq = d > 0 ? lo + Math.min(q, o.len) : hi - Math.min(q, o.len);
+        if ((sq - this.lead) * d < -1) continue;
+        if (Math.abs(o.offAt(sq) - this.offAt(sq)) < 2.5) { hit = sq; break; }
+      }
+      if (hit === null) continue;
+      take(hit - d * (o.d === d ? 60 : 120));
     }
     let vAllow = this.allowed(stopLead, this.cfg.dec * 0.6);
     let emerg = false;
@@ -1593,7 +1598,7 @@ export class RailTrain {
       this.dwellStop = stop;
       sys.stats.dwells++;
       const terminus = this.cfg.route === 'go' || (this.cfg.route === 'shuttle' && stop === (d > 0 ? line.stops[line.stops.length - 1] : line.stops[0]));
-      this.dwellT = this.cfg.kind === 'go' ? 180 : this.cfg.kind === 'via' ? 75 : terminus ? 150 : 40;
+      this.dwellT = this.cfg.kind === 'go' ? 120 : this.cfg.kind === 'via' ? 75 : terminus ? 150 : 40;
       this.reverseAfter = terminus;
       if (sys.audio && sys.audio.ready) sys.audio.play('airbrake', { gain: 0.6, x: this.x, y: this.y + 2, z: this.z, ref: 14 });
     } else if (endTurn && this.u < 0.05 && Math.abs(this.lead - (d > 0 ? tr.len - 25 : 25)) < 3) {
