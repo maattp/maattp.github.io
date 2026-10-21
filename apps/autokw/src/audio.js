@@ -1697,7 +1697,9 @@ export class EngineModel {
   }
   stop() { this.on = false; }
 
-  step(dt, speed, throttle, free) {
+  /** `gb`: the player's car's own gearbox (vehicles.js Vehicle._gearbox) --
+   *  when given, the gear and the shift's cut are its, not guessed here. */
+  step(dt, speed, throttle, free, gb = null) {
     const p = this.p;
     this.event = null;
     this.bov = 0;
@@ -1731,7 +1733,16 @@ export class EngineModel {
       const gTop = this.vmax * gears[this.gear];
       let wheel = p.redline * v / gTop;
       this.downT -= dt;
-      if (this.shiftT > 0) {
+      if (gb && !free && gb.p === p) {
+        // the car's gearbox shifts; the voice follows it
+        if (gb.gear !== this.gear) {
+          this.event = gb.gear > this.gear ? 'up' : 'down';
+          if (this.event === 'down' && p.blip && thr < 0.3 && v > 3) this.blipT = 0.17;
+          this.gear = Math.min(gb.gear, last);
+        }
+        this.shiftT = gb.shiftT;
+        if (gb.shiftT > 0) thr = Math.min(thr, 0.08);
+      } else if (this.shiftT > 0) {
         this.shiftT -= dt;
         thr = Math.min(thr, 0.08);
       } else if (!free) {
@@ -3333,7 +3344,8 @@ export class Audio {
     // wheels off the ground (a jump, a ford) free-rev; planes and rotors
     // handle "air" themselves
     const free = inCar && p.kind === 'car' && (s.carAirborne || s.wading);
-    m.step(dt, speed, thr, free);
+    const veh = inCar ? s.vehicle : null;
+    m.step(dt, speed, thr, free, veh && veh.detailedWheels && veh.gbox ? veh.gbox : null);
     if (m.event === 'pop' && this._popCd <= 0) {
       this._popCd = 0.07;
       this.play(p.bang ? 'bang' : 'backfire', { gain: p.bang ? 1.1 + Math.random() * 0.4 : 0.25 + Math.random() * 0.25, send: 0.15 });
@@ -3402,10 +3414,15 @@ export class Audio {
       const skid = onGround ? clamp(s.skid || 0, 0, 1) : 0;
       const lat = offroad ? 0 : skid * clamp(sp / 6, 0, 1);
       const brk = s.brake || 0;
+      // Your road car says what its tyres are doing (vehicles.js): wheelspin
+      // where the driven wheels really break traction, and ABS -- a stop
+      // that holds the tyres at the edge of locking chirps, it does not howl.
+      const veh = inCar && s.vehicle && s.vehicle.detailedWheels && s.vehicle.spec.roadCar ? s.vehicle : null;
       const lock = onGround && !offroad && speed > 4 && brk > 0.55 && p.kind !== 'boat' && !(spec && spec.tank)
-        ? clamp((brk - 0.55) / 0.45, 0, 1) * clamp((sp - 4) / 16, 0, 1) * 0.8 : 0;
+        ? clamp((brk - 0.55) / 0.45, 0, 1) * clamp((sp - 4) / 16, 0, 1) * (veh ? (veh.abs ? 0.55 : 0.3) : 0.8) : 0;
       const grunt = spec ? spec.acc || 3 : 3;
-      const spin = onGround && !offroad && speed > -0.5 && sp < 11 && thr > 0.8 && grunt >= 5.5 && (p.kind === 'car' || p.kind === 'ev')
+      const spin = veh ? (onGround && !offroad ? clamp(veh.wheelspin || 0, 0, 1) * 0.85 : 0)
+        : onGround && !offroad && speed > -0.5 && sp < 11 && thr > 0.8 && grunt >= 5.5 && (p.kind === 'car' || p.kind === 'ev')
         ? clamp((grunt - 4.5) / 4, 0.3, 1) * (1 - sp / 11) * 0.85 : 0;
       // a burnout (vehicles.js): the rears spinning on the spot, flat out
       const bo = inCar && s.burnout ? 0.95 : 0;
