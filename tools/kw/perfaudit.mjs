@@ -7,6 +7,7 @@
 //        [--label=master] [--throttle=8] [--secs=20] [--json=out.json]
 //        [--views=spawn,king,pkwy,plaza,campus,country] [--no-boot] [--no-views]
 //        [--boot-prof] [--view-prof] [--top=25] [--shots=DIR] [--boot-probe=FILE.js]
+//        [--pre='<js>']
 //
 // Two parts, each in a FRESH profile (the boot cache is IndexedDB, per profile):
 //
@@ -491,6 +492,8 @@ try {
       await ev(`(() => { const d = window.__dbg; d.applyQuality('high', true);
         for (const k of ['pad','stickZone','lookZone','rotate']) { const e = document.getElementById(k); if (e) e.style.display = 'none'; } })()`);
       await ev(`(${pageInstall.toString()})()`);
+      // --pre='<js>': evaluated once before the views (switch something off for an A/B in one build)
+      if (arg('pre', '')) console.log('  pre: ' + JSON.stringify(await ev(arg('pre', ''))));
       out.bootHeapMB = await heap();
       for (const v of VIEWS) {
         await send('Emulation.setCPUThrottlingRate', { rate: 1 });

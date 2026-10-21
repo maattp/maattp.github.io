@@ -1145,6 +1145,60 @@ file and a guide disagree, this file wins.
   58/297k; St. Jacobs King St 77/419k -> 82/446k; Conestogo 77/343k ->
   87/376k (the villages extra's Kit + atlas in two clusters: +8);
   Heidelberg 51 -> 54; St. Clements 49 -> 52; Maryhill 57 -> 62. 0 exceptions.
+- **The phone audit: `tools/kw/perfaudit.mjs`** (the sum of v21 -> v36's
+  realism pass, measured; the iPhone profile, Mac GPU, 8x CPU throttle).
+  `AUTO_CDP_PORT=9505 node tools/kw/perfaudit.mjs --url=http://localhost:<port>/apps/autokw/`
+  boots cold then warm (boot cache) THROTTLED in a fresh profile -- first
+  frame, the boot log's slowest steps, `lmRoot.userData.extraMs` (each
+  landmark extra's build ms), heap, GPU ledger; `--boot-prof` a CPU profile,
+  `--boot-probe=f.js` a hash after each launch -- then drives six views with
+  real input for `--secs` each (spawn, King St Uptown, the Parkway at 27 m/s,
+  Fairway Plaza on foot, Ring Road, a concession road): frame CPU, draws,
+  tris, shadow-pass draws, ms per system, heap, GPU; `--view-prof`,
+  `--shots=DIR`, `--pre='<js>'` (an A/B inside one build). To compare builds
+  serve detached worktrees side by side (`git worktree add --detach`) and
+  run them ONE AFTER ANOTHER, twice: run-to-run noise at 8x is +-20 % on a
+  view (the Parkway read 19.8 and 31.5 ms on the same build). What the audit
+  changed (all exact: the same geometry hashes, draws and triangles, cold and
+  warm launches hash the same, screenshots differ from master no more than
+  master from itself):
+  - **Boot cache memo** for the rural decision (`rural:tag`, rural.js) and
+    the footprint dedupe (`kw:dedupe`, an op list replayed in order, kw.js);
+    **YKF's pavement raster per shape** over each shape's box (ykf.js: 6.6 s
+    of the 8x warm boot, a fifth of it, since v11); `onCw` in highways.js
+    through a per-chunk 25 m grid of the same chunk's edges.
+  - **The freeway group drops its arrays once uploaded** on a phone (32 MB
+    held for ever before: `highwaysRoot()` was not in main.js's drop list).
+  - **`cropAtlas`** (build.js; each atlas's `finish()`): the places,
+    sights, villages, campus and shared sign atlases lose their unused
+    bottom rows in 64-row steps, v stretched back by the map's transform, so
+    mip levels 0-6 are built from the same texel blocks. Any NEW drawing into
+    an atlas must happen before its `finish()`.
+  - **Landmark clusters culled whole** (`lmCull`, chunkcull.js on lmRoot):
+    ~450 groups, ~1,200 meshes. Draws and triangles identical at 20 camera
+    poses.
+  - **Minimap place icons only inside the dial's circle** (hud.js): 364
+    places since the shops and plazas; the square test drew ~10x what shows.
+
+  | 8x, mean of two runs each | v21 | master v36 | this |
+  |---|---|---|---|
+  | first frame cold / warm | 42.6 / 20.0 s | 58.2 / 27.6 s | 47.1 / 22.3 s |
+  | heap after boot / GPU (textures) | 448 MB / 278 (160) | 590 / 349 (216) | 581 / 342 (209) |
+  | spawn: CPU ms, draws, tris | 14.0, 200, 899k | 18.2, 206, 1012k | 19.3, 206, 1010k |
+  | King St: | 17.5, 250, 932k | 22.6, 262, 1056k | 21.4, 261, 1054k |
+  | Parkway: | 23.1, 404, 754k | 24.4, 437, 920k | 25.6, 438, 920k |
+  | plaza: | 17.6, 355, 532k | 20.7, 379, 667k | 16.4, 378, 670k |
+  | campus: | 24.7, 475, 982k | 24.4, 504, 1268k | 25.2, 508, 1272k |
+  | country: | 16.2, 76, 321k | 15.8, 70, 322k | 8.9, 70, 324k |
+
+  In one build, lmCull off -> on in the country: 12.7 -> 9.8 ms. **Left as
+  it is** (each would change a look or needs its own build): +110-290k
+  triangles per view (the campus +29 %), +2 ms of render at the spawn; the
+  logo atlas (2048 x 1984) and the freeway sign atlas are full -- shrinking
+  them halves their lettering; traffic +0.5-1 ms (the fleet, semis with
+  trailers, freeway lanes); the freeways' build (~1.9 s at 8x) and the
+  landmark merge (~1.3 s) are geometry, too big for the memo; landmark
+  arrays not yet drawn (+34 MB) are held until their first upload.
 
 ## Build number
 
