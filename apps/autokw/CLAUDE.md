@@ -26,7 +26,8 @@ file and a guide disagree, this file wins.
 - **Storage is prefixed `autokw-`** (localStorage, sessionStorage, the boot
   cache's IndexedDB, the SW's caches). The two games share an origin: an
   `auto-` key here would read Seattle's saves and boot cache.
-- Seattle-only systems are switched off in main.js (monorail, Link, BNSF,
+- Seattle-only systems are switched off in main.js (monorail, Link, BNSF --
+  KW's own heavy rail is kwrail.js, below --
   the Counterbalance, the ferry, the islands, orcas, Seattle's venues and
   minigames); their modules are still in src/ for reuse.
 - Verify with `node tools/kw/kwshots.mjs <outdir> [views]` (AUTO_GPU=1 for the
@@ -1780,6 +1781,74 @@ file and a guide disagree, this file wins.
   934k both; Conestoga Station with the 7 and 201 buses parked in view
   124 -> 130, 395k -> 418k. A run adds the sign and doorway quads (2 draws,
   your bus only), KW Eats one pillar.
+- **Heavy rail: src/kwrail.js** on `data/rail.json` (tools/kw/build_rail.py,
+  after extract_rail.py; docs/rail-*.jpg). Four lines trains RUN on, each one
+  track walked on OSM's nodes: `guelph` (the Guelph Sub, CN west of Kitchener,
+  Metrolinx east, edge to edge, 34 km), `galt` (CPKC's Galt Sub through
+  Cambridge, edge to edge; OSM's named ways stop 900 m short of the south
+  edge, so the crop CLIPS a segment at the box instead of dropping it, and an
+  end short of the edge is carried straight on to it), `wsub` (CPKC's Waterloo
+  Sub, Galt to Kitchener, ends in the map) and `spur` (the Waterloo Spur from
+  WCR's Waterloo station at Northfield north to Elmira -- south of Northfield
+  it is ION's track, so it is not drawn twice). `twins` (OSM tracks beside a
+  line for >= 250 m: the double track through Kitchener, sidings) become
+  PASSING PLACES (`pp`: s0, s1, lateral `off`, eased in over `KWRAIL.ramp`);
+  `static` is every other track in the box (yards, the Huron Park and Fergus
+  spurs, the freight-only spur through Kitchener to Uptown): drawn on the
+  ground, flush across roads, never run on, in <= 300 m pieces for the lazy
+  chunks. The beds are carved as freight.js's (`geo.setRailCarve`, set in the
+  constructor, BEFORE citygen; profile memoized per build -- delete the
+  shots profile after changing it), at a 2 % grade; `_pinCrossings` then sets
+  every level crossing to its road (the 1 % envelopes left one 4 m over Bingemans
+  Centre Dr). **Crossings are shared with ION: src/xing.js** (the Canadian
+  mast, `XingSignals` = arms + lamps in one instanced draw each, `xingClosed`
+  = the AI stop; link.js uses the same code). Heavy rail's masts carry the
+  bilingual crossbuck (RAILWAY CROSSING / TRAVERSE DE CHEMIN DE FER) and a
+  "2" plate where two tracks cross; the spur's narrow country roads get
+  lights only; static-track crossings get a crossbuck post. traffic.js calls
+  `kwrail.blocks(x, z, y, car)` (as `traffic.freight`): a car already between
+  the gates drives on clear instead of stopping on the tracks.
+  **The fleet** (railcars.js, atlas now 2048 x 2176, `atlasUsedH` ~2140; BNSF's
+  hood/wing cells are gone): GO MP40PH-3C 647/612 + ten BiLevels + cab car
+  (loco at the WEST end, `ori` -1: it leads into Kitchener and pushes back to
+  Union), VIA Siemens Charger + 4 Venture cars + cab car, CN ES44AC freights
+  with CN/TTGX autoracks, CPKC (ES44AC 9375 in the 2024 CPKC livery, 8781 in
+  CP's 2012 scheme, a trailing unit `~` turned) with CPKC boxcars/hoppers,
+  autoracks, tank cars, and WCR's GMD-1 1012 (green and gold) with three
+  heritage coaches. A train is freight.js's SkinnedMesh (3 draws, a bone a
+  car; cars off the line's ends hidden by bone scale 0, so trains drive on
+  and off the map); passenger stock is not weathered. Liveries are read off
+  photos (est.), see railcars.js's header.
+  **The dispatcher**: blocks between passing places; a train enters a block
+  only if no train is in it or committed to it the other way (`_free`), and
+  only with a LANDING -- a track reserved at the passing place at the far end
+  (`npp`). A passing place holds at most one train per direction
+  (`_landing`), a train waiting for a block has it next (`want`, first come,
+  only while it could land), GO turns at Kitchener only when no train bound
+  its new way stands there, and dispatch uses only passing places every train
+  of the line fits (`line.disp`; the rest are drawn). Residual multi-train
+  locks are broken by `_rescue`: a train standing 10 min OUT OF SIGHT goes
+  back to the yard. Compressed timetable (`_schedule`, `_retire`): 2 GO sets
+  (in from the east, 2 min at Kitchener, back east), VIA alternating ends,
+  2 CN, 3 CPKC on the Galt Sub, the CPKC local shuttling the Waterloo Sub,
+  WCR shuttling Waterloo - Farmers' Market - St. Jacobs - Elmira (40 s
+  calls, 150 s at the ends). Horn: CROR 14(l) long-long-short-long before
+  each crossing; bells; urgent blasts and braking for you on the track, and
+  a hit if you stay. audio.js hears `kwrail.audible` through its freight
+  voices. `window.__noRail = true` before boot turns it all off.
+  **Verify**: `VIEW_PROBE_FILE=tools/kw/railprobe.js node tools/kw/kwshots.mjs
+  <dir>` -- two hours of service (no two trains in each other, every train
+  runs, GO/VIA call at Kitchener, WCR at all four, <= 3 rescues) and five
+  crossings with traffic round you (lights >= 15 s before the train, gates
+  down, cars held, none on the tracks under the train, none past a lowered
+  gate); `tools/kw/ionprobe.js` must still PASS (xing.js is ION's too).
+  Last run: 29 trains on in 2 h, 17 meets, 3 rescues; every crossing held
+  2-10 cars, 0 violations. Phone (AUTO_PHONE=1, GPU), rail off -> on: spawn
+  212/1052k -> 217/1086k; Kitchener station 280/1196k -> 303/1266k (a GO
+  set in view); Galt Sub 159/491k -> 174/549k. Not done: the GO layover yard
+  and Kitchener's second platform (trains turn on the platform track),
+  Waterloo Spur freight (CN's night locals) and freight south of Northfield
+  on ION's track, CN locals on the spurs, real day-of-week WCR service.
 
 ## Build number
 

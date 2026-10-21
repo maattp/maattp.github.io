@@ -157,8 +157,8 @@ export function railDecals() {
   cell('cpHood', 1000, 160, (q, w, h) => text(q, 'CANADIAN PACIFIC', w / 2, h / 2 + 4, 118, '#f4f4f0', 800, 'Helvetica, Arial, sans-serif', 'center', 0.92));
   cell('cpShield', 220, 240, (q, w, h) => shield(q, w / 2, 100, 86, '#f2f2ee', '#b8202a'));
   cell('cpkcNose', 300, 110, (q, w, h) => text(q, 'CPKC', w / 2, h / 2 + 4, 92, '#f4f4f0', 900, 'Helvetica, Arial, sans-serif', 'center'));
-  cell('cpCar', 520, 160, (q, w, h) => text(q, 'CPKC', w / 2, h / 2 + 4, 130, '#f0f0ea', 900, 'Helvetica, Arial, sans-serif', 'center'));
-  cell('cpCarDark', 520, 160, (q, w, h) => text(q, 'CPKC', w / 2, h / 2 + 4, 130, '#161616', 900, 'Helvetica, Arial, sans-serif', 'center'));
+  cell('cpCar', 520, 160, (q, w, h) => text(q, 'CPKC', w / 2, h / 2 + 4, 112, '#f0f0ea', 900, 'Helvetica, Arial, sans-serif', 'center'));
+  cell('cpCarDark', 520, 160, (q, w, h) => text(q, 'CPKC', w / 2, h / 2 + 4, 112, '#161616', 900, 'Helvetica, Arial, sans-serif', 'center'));
   // GO Transit's logo: the white GO on its green [Metrolinx]
   cell('goLogo', 300, 200, (q, w, h) => {
     q.fillStyle = '#3b8a2e'; q.beginPath();
