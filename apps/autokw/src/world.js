@@ -8558,7 +8558,7 @@ float frLine(float o, float fw, float c, float w) {
           let L = 0;
           for (let s = 1; s <= 8; s += 1) {
             const [qx, qz] = offF(glx, fb.d / 2 + s);
-            if (this.city.onRoad(qx, qz, 0.3, false) || G.isWater(qx, qz)) break;
+            if (this.city.onRoad(qx, qz, 0.3, false) || G.isWater(qx, qz) || this.city.ruralClear(qx, qz)) break;
             L = s;
           }
           if (L >= 3) {
@@ -9606,7 +9606,8 @@ float frLine(float o, float fw, float c, float w) {
       for (const ej of n.e || []) {
         if (ej === ei0) continue;
         const f = city.edges[ej];
-        if (!f || f.elev || f.prof) continue;
+        // (a country road strings its own line: rural.js, meshRuralProps)
+        if (!f || f.elev || f.prof || f.rural) continue;
         if (Math.abs(f.dx * ux + f.dz * uz) < 0.985) continue;
         const fa = city.nodes[f.a], fb = city.nodes[f.b];
         const h = hydroEdge(f, (fa.x + fb.x) / 2, (fa.z + fb.z) / 2);
