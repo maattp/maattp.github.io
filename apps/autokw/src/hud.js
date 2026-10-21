@@ -499,9 +499,9 @@ export class Hud {
   /** Link: the 1 Line green (its tracks as one line), the 2 Line's branch
    *  blue, through `to(x, z)` -> canvas. */
   drawLink(ctx, to, w, near = null) {
-    // Auto KW: ION, in its red; both tracks (they part through Uptown and downtown)
-    this._drawLine(ctx, to, w, near, this.link.tracks.sb, 0, '#d0202e', '_linkPts');
-    this._drawLine(ctx, to, w, near, this.link.tracks.nb, 0, '#d0202e', '_linkPtsN');
+    // Auto KW: ION, in its blue; both tracks (they part through Uptown and downtown)
+    this._drawLine(ctx, to, w, near, this.link.tracks.sb, 0, '#1f5bb0', '_linkPts');
+    this._drawLine(ctx, to, w, near, this.link.tracks.nb, 0, '#1f5bb0', '_linkPtsN');
     return;
     const b = this.link.tracks.sb2;
     if (b) this._drawLine(ctx, to, w, near, b, b.share.end, '#0082ca', '_link2Pts');

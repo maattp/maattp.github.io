@@ -3,8 +3,9 @@
     tools/.venv/bin/python tools/kw/build_ion.py      (after extract_rail.py)
 
 Same format as Seattle's Link (tools/build_link.py; src/link.js reads it):
-two tracks `sb` and `nb` as [x, z, flag] points, `sb2`/`nb2` the same rails
-(ION has one line), and the stations at their s along each track.
+two tracks `sb` and `nb` as [x, z, flag] points (ION is one line: no 2 Line
+`sb2`/`nb2`), and the stations at their s along each track, with their OSM
+platforms, and the level crossings on the line.
 
 ION's two tracks are not two clean OSM networks the way Link's are: north of
 Uptown long stretches are mapped as one way per track that meet the other at
@@ -116,7 +117,7 @@ def main():
         sb, nb = p2, p1    # p2 lies to p1's right
     else:
         sb, nb = p1, p2
-    out = {"sb": sb, "nb": nb, "sb2": sb, "nb2": nb}
+    out = {"sb": sb, "nb": nb}
 
     def near(track, x, z):
         best, bs, acc = 1e18, 0, 0
@@ -138,7 +139,7 @@ def main():
     for name, ss in by.items():
         x = sum(s["x"] for s in ss) / len(ss); z = sum(s["z"] for s in ss) / len(ss)
         st = {"name": name, "x": round(x, 1), "z": round(z, 1)}
-        for k in ("sb", "nb", "sb2", "nb2"):
+        for k in ("sb", "nb"):
             dk, sk = near(out[k], x, z)
             if dk < 90:
                 st["s_" + k] = round(sk, 1)
@@ -146,6 +147,43 @@ def main():
             stations.append(st)
     stations.sort(key=lambda s: s.get("s_sb", s.get("s_nb", 0)))
     out["stations"] = stations
+    # Each station's platforms as OSM draws them (extract_ion.py): a closed
+    # way is the platform's outline, an open one its edge line. link.js works
+    # out from these which side of each track its platform is on, whether it
+    # is a centre platform between the two, and how long and wide it is.
+    raw_ion = os.path.join(HERE, "data", "raw_ion.json")
+    ri = json.load(open(raw_ion)) if os.path.exists(raw_ion) else {"platforms": [], "crossings": []}
+    for st in stations:
+        pl = []
+        for p in ri["platforms"]:
+            t = p["t"]
+            if t.get("bus") == "yes" or (t.get("railway") != "platform" and t.get("light_rail") != "yes"):
+                continue
+            cx = sum(q[0] for q in p["p"]) / len(p["p"]); cz = sum(q[1] for q in p["p"]) / len(p["p"])
+            if math.hypot(cx - st["x"], cz - st["z"]) > 90:
+                continue
+            d = min(near(out[k], cx, cz)[0] for k in ("sb", "nb") if "s_" + k in st)
+            if d > 14:
+                continue
+            pl.append({"p": [[round(a, 1), round(b, 1)] for a, b in p["p"]], "area": bool(p["closed"])})
+        if pl:
+            st["plats"] = pl
+    print(sum(1 for s in stations if "plats" in s), "stations with OSM platforms")
+    # Level crossings ON the line (a node of an ION way): their barriers,
+    # bells and lights. A road crossing the track at one of these gets gates.
+    ion_nodes = set()
+    for w in lr:
+        ion_nodes.update(w["ids"])
+    xs = []
+    for c in ri["crossings"]:
+        if c["id"] not in ion_nodes:
+            continue
+        t = c["t"]
+        xs.append({"x": c["x"], "z": c["z"], "road": t.get("railway") == "level_crossing",
+                   "gate": t.get("crossing:barrier") in ("yes", "full", "half", "double_half"),
+                   "bell": t.get("crossing:bell") == "yes", "light": t.get("crossing:light") == "yes"})
+    out["crossings"] = xs
+    print(len(xs), "crossings on the line,", sum(1 for x in xs if x["gate"]), "with gates")
     for k in ("sb", "nb"):
         L = sum(math.hypot(a[0] - b[0], a[1] - b[1]) for a, b in zip(out[k], out[k][1:]))
         print(k, len(out[k]), "pts", round(L), "m")
