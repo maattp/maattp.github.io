@@ -29,6 +29,7 @@ import * as THREE from './three.js';
 import { Builder } from './build.js';
 import { clamp, damp, angleWrap, hash2 } from './util.js';
 import * as G from './geo.js';
+import { mennoniteCountry } from './rural.js';
 
 const ON_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '');
 
@@ -1085,7 +1086,8 @@ export function buggyHorn(v, audio) {
 
 // The country north and west of Waterloo, where the buggies are: around St.
 // Jacobs, Conestogo, Heidelberg, St. Clements. Not the city, not a freeway.
-const rural = (x, z) => (z < -6200 && x < -4200) || (z < -4800 && x < -7200);
+// (rural.js: the buggy warning signs go up in the same country)
+const rural = mennoniteCountry;
 const ROAD_CLS = { res: 1, st: 1, art: 1 };
 const POOL = ON_PHONE ? 3 : 5, SPAWN_R = [140, 460], DROP_R = 700;
 const SHOW_R = ON_PHONE ? 220 : 320;
@@ -1122,7 +1124,8 @@ export class Buggies {
   /** Can a buggy drive this edge? A ground-level two-way country road. */
   ok(ei) {
     const e = this.city.edges[ei];
-    if (!e || e.elev || e.tunnel || e.oneway || !ROAD_CLS[e.cls] || e.noTraffic) return false;
+    // (a country road from the data -- rural.js -- in the Mennonite country)
+    if (!e || e.elev || e.tunnel || e.oneway || !ROAD_CLS[e.cls] || e.noTraffic || !e.rural) return false;
     const a = this.city.nodes[e.a], b = this.city.nodes[e.b];
     return rural((a.x + b.x) / 2, (a.z + b.z) / 2);
   }
@@ -1182,7 +1185,9 @@ export class Buggies {
     const e = this.city.edges[r.ei], A = this.city.nodes[r.dir > 0 ? e.a : e.b];
     const dx = e.dx * r.dir, dz = e.dz * r.dir;
     const h = Math.atan2(dx, dz);
-    const off = clamp(e.hw - 1.3, 1.6, 4.2);
+    // a country road (rural.js): half on its gravel shoulder, keeping right;
+    // a gravel road has no shoulder to speak of
+    const off = e.rural ? (e.gravel ? e.hw - 1.0 : e.hw - 0.3) : clamp(e.hw - 1.3, 1.6, 4.2);
     return { x: A.x + dx * r.t - Math.cos(h) * off, z: A.z + dz * r.t + Math.sin(h) * off, h };
   }
 

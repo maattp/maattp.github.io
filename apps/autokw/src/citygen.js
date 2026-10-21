@@ -14,6 +14,8 @@ import { CLS_NAME, F_ELEV, F_TUNNEL, F_ONEWAY, F_ONEWAY_REV } from './mapdata.js
 import { LANDMARK_CLEAR } from './landmarks.js';
 import { distToSeg, segDist, clamp, hash2, roofAt } from './util.js';
 import { memo } from './bootcache.js';
+import { tagGravel } from './gravel.js';
+import { tagRural, chainRaise, ruralLift, chainPoint, RW, RAISE, CROWN } from './rural.js';
 
 export const CHUNK = 400;
 
@@ -106,6 +108,8 @@ export const DECK_SEP = TUNNEL_H + 1.2;
 const CLASS_SPEED = { hwy: 30, art: 17, st: 12, res: 9, ramp: 14 };
 
 const walkWidth = (cls) => (cls === 'st' || cls === 'res' ? 2.6 : cls === 'art' ? 3.2 : 0);
+/** An edge's pavement width: its class's, or none on a rural road (rural.js). */
+export const walkWidthOf = (e) => (e.rural ? 0 : walkWidth(e.cls));
 
 // The importer's default height for an untagged industrial footprint
 // (CLS_DEFAULT_H[3] in tools/build_buildings.py), exactly as the blob stores it.
@@ -1344,7 +1348,7 @@ function gradeRoads(nodes, edges) {
             if (!ok) break;
             for (const oi of cand) {
               const o = edges[oi], oa = nodes[o.a], ob = nodes[o.b];
-              const dd = segDist(SX[j], SZ[j], oa.x, oa.z, ob.x, ob.z) - hwOf[j] - o.hw - walkWidth(o.cls);
+              const dd = segDist(SX[j], SZ[j], oa.x, oa.z, ob.x, ob.z) - hwOf[j] - o.hw - walkWidthOf(o);
               // Over the freeway's own lanes: nothing can be done. Beside
               // them, on the trench's bank (the crossing street running on
               // past a deck that ends at the kerb, mostly), the carve is
@@ -1461,7 +1465,7 @@ function gradeRoads(nodes, edges) {
       if (blocked) break;
     }
     if (blocked || pts.length < 2) { upNoRoom++; continue; }
-    const hw = B.hw + walkWidth(B.cls) + 0.3;
+    const hw = B.hw + walkWidthOf(B) + 0.3;
     // A cut must not reach under a bridge's landing. The carve is a footprint,
     // not a road: by the West Seattle bridge it caught the street climbing to
     // another deck's anchor and dropped it 5 m under that deck.
@@ -1533,7 +1537,7 @@ function gradeRoads(nodes, edges) {
       const prot = [];
       for (const oi of dipProtect) {
         const o = edges[oi], oa = nodes[o.a], ob = nodes[o.b];
-        const r = o.hw + walkWidth(o.cls) + 0.3;
+        const r = o.hw + walkWidthOf(o) + 0.3;
         if (Math.max(oa.x, ob.x) + r < x0 || Math.min(oa.x, ob.x) - r > x1) continue;
         if (Math.max(oa.z, ob.z) + r < z0 || Math.min(oa.z, ob.z) - r > z1) continue;
         prot.push(oa.x, oa.z, ob.x, ob.z, r);
@@ -2371,6 +2375,20 @@ export function* cityGenerator(md, cache = {}) {
       { shrunk: cityStats.buildingsShrunk, dropped: cityStats.buildingsDropped, cleared: cityStats.landmarkCleared });
   }
 
+  // --- 2e. The country roads (gravel.js, rural.js) --------------------------
+  // Before anything reads a pavement width (walkWidthOf): a rural road has
+  // none. Footprint cover only here -- the tarmac pass below adds to `built`.
+  {
+    tagGravel(g, md.gravel);
+    const bAt = (x, z) => {
+      const ci = Math.floor((x + G.MAP_HALF) / CHUNK), cj = Math.floor((z + G.MAP_HALF) / CHUNK);
+      return ci < 0 || ci >= B.nx || cj < 0 || cj >= B.nz ? 0 : built[cj * B.nx + ci];
+    };
+    const builtSoft = (x, z) => (bAt(x, z) * 2 + bAt(x + 150, z + 90) + bAt(x - 150, z - 90) + bAt(x + 90, z - 150) + bAt(x - 90, z + 150)) / 6;
+    const st = tagRural(g, buildings, builtSoft).stats;
+    cityStats.rural = st;
+  }
+
   yield { p: 0.88, msg: 'Indexing the city' };
 
   // --- 3. Chunk index ------------------------------------------------------
@@ -2988,7 +3006,7 @@ export function* cityGenerator(md, cache = {}) {
         // A tunnel draws no surface and a deck lifts nothing here (both answer
         // through groundAt), so neither is a candidate -- as in the old scan.
         if (e.elev || e.tunnel) continue;
-        const reach = (e.prof ? e.hw + (e.pbw || 0) : e.hw + walkWidth(e.cls) + VERGE) + 0.01;
+        const reach = (e.prof ? e.hw + (e.pbw || 0) : e.rural ? e.hw + RW : e.hw + walkWidthOf(e) + VERGE) + 0.01;
         const a = g.nodes[e.a], b = g.nodes[e.b];
         const x0 = Math.floor((Math.min(a.x, b.x) - reach) / LIFT_CELL);
         const x1 = Math.floor((Math.max(a.x, b.x) + reach) / LIFT_CELL);
@@ -3086,7 +3104,7 @@ export function* cityGenerator(md, cache = {}) {
     let hw = 0, sw = 0, tm = 0;
     for (const ei of g.nodes[ni].e) {
       const e = g.edges[ei];
-      hw = Math.max(hw, e.hw); sw = Math.max(sw, walkWidth(e.cls));
+      hw = Math.max(hw, e.hw); sw = Math.max(sw, walkWidthOf(e));
       tm = Math.max(tm, Math.min(e.len * 0.42, JT_MAX));
     }
     r = Math.hypot(Math.max(tm, 4 * hw), hw + sw + 3.2) + VERGE + 0.5;
@@ -3118,6 +3136,9 @@ export function* cityGenerator(md, cache = {}) {
     // world.meshNode draws nothing at a graded node that is not an at-grade
     // junction (the strips are mitred into one another there), nor at a dead end.
     if (n.elev || (n.prof && !n.anchor) || n.e.length < 2) return null;
+    // nor where a country road only passes through (rural.js): the two strips
+    // are mitred into each other there (world.meshRoad)
+    if (n.rpass) return null;
     let hw = 0, rot = 0, sw = 0, legacy = false;
     const arms = [];
     for (const ei of n.e) {
@@ -3126,7 +3147,7 @@ export function* cityGenerator(md, cache = {}) {
       // anything standing on it.
       if (e.tunnel) continue;
       if (e.hw > hw) { hw = e.hw; rot = Math.atan2(e.dx, -e.dz); }
-      const w = walkWidth(e.cls);
+      const w = walkWidthOf(e);
       sw = Math.max(sw, w);
       if (e.prof || e.elev || e.a === e.b || e.len < 1) legacy = true;
       const atA = e.a === ni;
@@ -3674,9 +3695,65 @@ export function* cityGenerator(md, cache = {}) {
   };
   const drawnY = (e, x, z) => (e.prof ? gradedY(e, x, z) : G.terrainHeight(x, z) + ROAD_LIFT);
 
-  return {
+  // --- The country roads' heights (rural.js) --------------------------------
+  // A chain's raise comes down to 0 short of each end junction: out past the
+  // end edge's mouth and its MOUTH_RAMP climb, so the junction polygon and
+  // the strip's climb to it are exactly as on any other street.
+  const RURAL = g.rural;
+  let cityOut = null;
+  const chainOf = (e) => {
+    const C = RURAL.chains[e.rc];
+    if (C.m0 < 0) {
+      const mc = stripMouths(C.ends[0].ei);
+      C.m0 = mc[C.ends[0].ei * 2 + C.ends[0].k] + MOUTH_RAMP + 1.5;
+      C.m1 = mc[C.ends[1].ei * 2 + C.ends[1].k] + MOUTH_RAMP + 1.5;
+    }
+    // Paths, golf, the kartway... (city.extraClear, set by main.js after
+    // this returns) cross the ditch on a fill, as a lane does. Not cached
+    // until extraClear exists.
+    if (!C.bikeDone && cityOut && cityOut.extraClear) {
+      C.bikeDone = true;
+      const mm = 1.3 + 1.7 + 0.45;   // the ditch's middle (SH + FS + DB / 2)
+      for (const sg of [1, -1]) {
+        let run = -1;
+        for (let c = 0; c <= C.len + 1.9; c += 2) {
+          const cc = Math.min(c, C.len), P = chainPoint(g, C, cc);
+          const w = g.edges[P.ei].hw + mm;
+          const hit = !!cityOut.extraClear(P.x + P.px * sg * w, P.z + P.pz * sg * w);
+          if (hit && run < 0) run = cc;
+          if ((!hit || c + 2 > C.len + 1.9) && run >= 0) {
+            const c1 = hit ? cc : cc - 2;
+            C.xing.push({ c: (run + c1) / 2, sg, hw: Math.max(0, c1 - run) / 2 + 1.6, kind: 'path', tx: null, tz: null, b: -1 });
+            run = -1;
+          }
+        }
+      }
+      C.xing.sort((p, q) => p.c - q.c);
+    }
+    return C;
+  };
+  /** The raise (0..1) of edge e's carriageway at s metres along it. */
+  const ruralRaise = (e, s) => (e.rural ? chainRaise(chainOf(e), e.rs0 + e.rsd * s) : 0);
+  /** The ground lift beside rural edge e: at s along it, side sg (+1 its
+   *  (-dz, dx) side), m metres out from its carriageway edge. */
+  const ruralSide = (e, s, sg, m) => {
+    const C = chainOf(e), c = e.rs0 + e.rsd * s;
+    const f = chainRaise(C, c);
+    return ruralLift(C, c, sg * e.rsd, m, ROAD_LIFT + RAISE * f, f);
+  };
+
+  cityOut = {
     nodes: g.nodes,
     edges: g.edges,
+    /** On an unpaved road's carriageway (gravel.js)? */
+    gravelAt: g.gravelAt,
+    /** The country roads: chains, crossings, lanes, stats (rural.js). */
+    rural: RURAL,
+    /** In a rural road's ditch zone or on a farm lane: no trees, crops or props. */
+    ruralClear: RURAL.clear,
+    ruralRaise,
+    ruralSide,
+    ruralChain: chainOf,
     buildings,
     chunks,
     chunkKey: ck,
@@ -3807,6 +3884,7 @@ export function* cityGenerator(md, cache = {}) {
             // distToSeg inline: no object per edge in the hottest loop.
             const sx = b.x - a.x, sz = b.z - a.z, l2 = sx * sx + sz * sz;
             let rt = l2 > 0 ? ((x - a.x) * sx + (z - a.z) * sz) / l2 : 0;
+            const rtRaw = rt;
             rt = rt < 0 ? 0 : rt > 1 ? 1 : rt;
             const rx = a.x + sx * rt, rz = a.z + sz * rt;
             const rd = Math.hypot(x - rx, z - rz);
@@ -3829,10 +3907,39 @@ export function* cityGenerator(md, cache = {}) {
               if (l > lift) lift = l;
               continue;
             }
-            const ww = walkWidth(e.cls), outer = e.hw + ww;
+            const ww = walkWidthOf(e), outer = e.hw + ww;
             // (interior only: past an end the clamped distance is a round cap,
             // which the junction square and ring already answer for)
             if (rd <= e.hw && rt > 0 && rt < 1) onCw = true;
+            if (e.rural) {
+              // A country road (rural.js): the carriageway raised on its
+              // embankment (gravel crowned), then shoulder, ditch and berm --
+              // exactly what world.meshRoad / meshDitch draw. The ditch is a
+              // verge to the rules below: it lifts no other carriageway.
+              if (rd > e.hw + RW) continue;
+              const s = rt * e.len;
+              if (rd <= e.hw) {
+                const mc = stripMouths(cand[q]), ei2 = cand[q] * 2;
+                // past a pass-through end the round cap is the NEXT strip's
+                // ground: its raise is the chain's there, not this end's
+                // (held flat, it stood 11 cm proud of a falling raise)
+                const sr = (rtRaw < 0 && g.nodes[e.a].rpass) || (rtRaw > 1 && g.nodes[e.b].rpass) ? rtRaw * e.len : s;
+                let rl = ROAD_LIFT + (NODE_LIFT - ROAD_LIFT) * mouthRamp(s, e.len, mc[ei2], mc[ei2 + 1]) + RAISE * ruralRaise(e, sr);
+                if (e.gravel) rl += CROWN * (1 - (rd / e.hw) * (rd / e.hw));
+                if (rl > lift) lift = rl;
+                continue;
+              }
+              // Not past an end: the round cap there measures from the node,
+              // so beside the NEXT strip it read that strip's ditch as this
+              // one's berm (40 cm over the drawn bottom). The next strip
+              // answers there; only the thin wedge outside a bend at a
+              // pass-through node is left to the ground (mesh: mitred).
+              if (rt <= 0 || rt >= 1) continue;
+              const sd = ((x - rx) * -e.dz + (z - rz) * e.dx) >= 0 ? 1 : -1;
+              const dl = ruralSide(e, s, sd, rd - e.hw);
+              if (dl > vlift) vlift = dl;
+              continue;
+            }
             if (ww > 0) {
               // A pavement is flat to its outer edge and then comes down to
               // the ground on the verge world.meshRoad draws: WALK_LIFT to 0
@@ -5040,4 +5147,5 @@ export function* cityGenerator(md, cache = {}) {
       return out;
     },
   };
+  return cityOut;
 }

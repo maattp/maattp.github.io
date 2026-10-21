@@ -4,7 +4,6 @@ import * as THREE from './three.js';
 import * as G from './geo.js';
 import { cityGenerator, cityStats } from './citygen.js';
 import { loadMapData } from './mapdata.js';
-import { tagGravel } from './gravel.js';
 import { buildTextures, planTextures, encodeTextures, restoreTextures, canvasToBlob, blobToCanvas, within } from './textures.js';
 import { World, WET_FLOOR, HAZE_SUN } from './world.js';
 import { buildLandmarks, updateLandmarkRange, SEAPLANE_DOCK, airportSurface } from './landmarks.js';
@@ -776,7 +775,8 @@ async function boot() {
   const city = r.value;
   cityRef = city;
   // the unpaved roads: drawn as gravel, driven as gravel (gravel.js)
-  { const k = tagGravel(city, md.gravel); blog(`gravel: ${k.edges} edges, ${k.km} km`); }
+  // (tagged in citygen, with the country roads: rural.js)
+  blog(`rural roads: ${JSON.stringify(cityStats.rural)}`);
   // Auto KW: names and real looks onto the boxes, before anything is meshed
   setKwData(md.kw);
   { const k = applyNamed(city); blog(`kw: ${k.named} named buildings, ${k.looks} with their own look, ${k.polys} drawn from their footprints, ${k.strips} strip stores`); }
@@ -3107,6 +3107,31 @@ function frame(now) {
   }
   fx.update(dt);
   skidMarks.update(dt);
+
+  // GRAVEL DUST: anything at speed on a gravel road (gravel.js, rural.js)
+  // trails a plume of limestone dust -- your car, and the traffic near you.
+  if (cityRef.gravelAt && !game.paused) {
+    const dust = (v) => {
+      const sp = Math.abs(v.vLong || 0);
+      if (sp < 6 || v.afloat || v.spec.boat || v.spec.air) { v._dust = 0; return; }
+      if (!(v === player.vehicle ? v.surf === 'gravel' : cityRef.gravelAt(v.x, v.z))) return;
+      v._dust = (v._dust || 0) + dt * Math.min(14, (sp - 5) * 0.9);
+      const n = Math.floor(v._dust);
+      if (!n) return;
+      v._dust -= n;
+      const f = v.forward, back = v.halfLen * 0.9;
+      fx.emit(v.x - f.x * back, v.y + 0.35, v.z - f.z * back, n,
+        { r: 0.8, g: 0.75, b: 0.64, size: 1.3, grow: 3.4, alpha: 0.32, life: 3.2, spread: 0.9, jitter: 0.4,
+          vy: 0.55, grav: 0.05, drag: 0.92, vx: -f.x * sp * 0.22, vz: -f.z * sp * 0.22 });
+    };
+    if (player.vehicle) dust(player.vehicle);
+    let k = 0;
+    for (const v of traffic.cars) {
+      if (v === player.vehicle || (v.x - player.position.x) ** 2 + (v.z - player.position.z) ** 2 > 200 * 200) continue;
+      dust(v);
+      if (++k >= 8) break;
+    }
+  }
 
   // engine smoke / skid marks
   if (player.vehicle) {
