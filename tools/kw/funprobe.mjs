@@ -5,9 +5,11 @@
 // (bigsplash.js: walk up the tower, ride, splash), skating on Waterloo Public
 // Square's rink (skating.js: lace up, stride, glide, hockey stop, spin, the
 // boards, the skaters) and the Panthers' home run derby at Jack Couch Park
-// (ballpark.js: ENTER at the gate, ten pitches swung at by the timing).
+// (ballpark.js: ENTER at the gate, ten pitches swung at by the timing) and
+// the drive-throughs (drivethru.js: the lunch line in a lane, its bumper,
+// ordering at a window, a Tims window's Roll Up the Rim, the morning line).
 //
-//   node tools/kw/funprobe.mjs <outdir> [aud,fest,parade,splash,skate,derby]
+//   node tools/kw/funprobe.mjs <outdir> [aud,fest,parade,splash,skate,derby,dthru]
 //   AUTO_HTTP_PORT / AUTO_CDP_PORT / AUTO_GPU=1 / AUTO_PHONE=1 as kwshots.mjs
 //
 // Prints each step, the draws/triangles inside each interior, the city's
@@ -21,7 +23,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 const PORT = +process.env.AUTO_CDP_PORT || 9412;
 const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
 const OUT = process.argv[2] || 'tools/data/kw/funshots';
-const ONLY = process.argv[3] ? process.argv[3].split(',') : ['aud', 'fest', 'parade', 'splash', 'skate', 'derby'];
+const ONLY = process.argv[3] ? process.argv[3].split(',') : ['aud', 'fest', 'parade', 'splash', 'skate', 'derby', 'dthru'];
 const PHONE = process.env.AUTO_PHONE === '1';
 const [W, H] = PHONE ? [874, 402] : [1280, 720];
 
@@ -455,6 +457,82 @@ async function main() {
         check(pl[0] && pl[1] < 3, 'back on foot at the gate');
         await sleep(1500);
         console.log('  after, at the gate:', await cityCalls());
+      }
+    }
+
+    // ---------------------------------------------------------------- the drive-throughs
+    if (ONLY.includes('dthru')) {
+      console.log('THE DRIVE-THROUGHS');
+      const info = await ev(`(() => { const D = window.__dbg.dthru; if (!D) return null;
+        const pick = (f) => D.list.find((d) => f(d) && d.sM !== null && d.sW > 30);
+        const a = pick((d) => !d.tims && d.k), t = pick((d) => d.tims);
+        return { n: D.list.length, tims: D.list.filter((d) => d.tims).length, a: a && a.i, ak: a && a.k, t: t && t.i }; })()`);
+      console.log('  lanes:', JSON.stringify(info));
+      check(info && info.n > 40 && info.tims > 20, 'OSM drive-through lanes drawn at the pads (Tims among them)');
+      if (info && info.a !== null && info.t !== null) {
+        // a lane's line at lunch, from the window's side
+        const pose = (i, s, hour) => ev(`(() => { const d = window.__dbg, D = d.dthru, L = D.list[${i}];
+          D.hour = ${hour}; d.game.paused = false;
+          const [x, z, h] = D.at(L, ${s});
+          const p = d.player; if (!p.onFoot && p.exitVehicle) p.exitVehicle();
+          p.respawn(x, z); d.world.update(x, z, 60);
+          const v = d.traffic.spawnAt(x, z, h, 'compsedan', 0x3060a0, 'free');
+          p.enterVehicle(v); v.vLong = 0; v.vLat = 0;
+          return [x, z, h]; })()`);
+        await pose(info.a, 2, 12);
+        await sleep(2500);
+        const q = await ev(`(() => { const d = window.__dbg, D = d.dthru, L = D.list[${info.a}];
+          const mine = d.traffic.decor.filter((c) => c.lane === L);
+          return { you: L.you, n: mine.length, ahead: mine.filter((c) => D.project(L, c.x, c.z, 4) && D.project(L, c.x, c.z, 4).s > L.you).length }; })()`);
+        console.log('  in the lane at lunch:', JSON.stringify(q));
+        check(q.you !== null && q.n >= 2 && q.ahead === q.n, 'a line ahead of you in the lane at lunch, nobody behind');
+        await shot('dthru-line');
+        // drive into the back of the line: held off its bumper. Posed with the world held (the line
+        // creeps away from you in real time): nose 0.5 m into the last car's tail at 6 m/s, one update
+        const bump = await ev(`(() => { const d = window.__dbg, D = d.dthru, L = D.list[${info.a}], v = d.player.vehicle;
+          d.game.paused = true;
+          D.update(0, v.x, v.z, d.player);
+          const mine = d.traffic.decor.filter((c) => c.lane === L).map((c) => ({ c, s: D.project(L, c.x, c.z, 4).s })).sort((a, b) => a.s - b.s);
+          const back = mine[0], type = back.c.type, need = v.halfLen + D.half[type][0];
+          const [x, z, h] = D.at(L, back.s - (need - 0.5));
+          v.x = x; v.z = z; v.heading = h; v.vLong = 6; v.vLat = 0;
+          D.update(0, v.x, v.z, d.player);
+          // (the line's car objects are a pool, reused update to update: the nearest one now)
+          let dd = Infinity;
+          for (const c of d.traffic.decor) { const e = Math.hypot(v.x - c.x, v.z - c.z); if (c.lane === L && e < dd) dd = e; }
+          d.game.paused = false;
+          return { gap: +dd.toFixed(2), vLong: +v.vLong.toFixed(2), need: +need.toFixed(2) }; })()`);
+        console.log('  into the car ahead:', JSON.stringify(bump));
+        check(bump.gap >= bump.need - 0.35 && bump.vLong < 3, 'the car ahead is solid: stopped against its bumper');
+        // at the window with no line (3 am): ENTER orders, ENTER again gets out
+        await pose(info.a, (await ev(`window.__dbg.dthru.list[${info.a}].sW`)), 3);
+        await ev(`(() => { const d = window.__dbg; d.game.money = 50; d.player.health = 60; })()`);
+        await sleep(800);
+        await tap('KeyE');
+        await sleep(600);
+        const o = await ev(`(() => { const d = window.__dbg; return { money: d.game.money, health: d.player.health, onFoot: d.player.onFoot, last: d.dthru.last, served: d.dthru.served }; })()`);
+        console.log('  ordered:', JSON.stringify(o));
+        check(o.served === 1 && !o.onFoot && o.last && o.money === 50 - o.last.price && o.health === 60 + o.last.health, `ENTER at the ${info.ak} window buys ${o.last && o.last.item} and heals`);
+        await shot('dthru-window');
+        await tap('KeyE');
+        check(await until('window.__dbg.player.onFoot', 3000), 'ENTER again at the window gets you out');
+        // a Tims window: Roll Up the Rim's drive-thru
+        await pose(info.t, (await ev(`window.__dbg.dthru.list[${info.t}].sW`)), 8);
+        await sleep(800);
+        await tap('KeyE');
+        check(await until('window.__dbg.rollup.active && window.__dbg.rollup.drive', 4000), "ENTER at a Tims window opens Roll Up the Rim's drive-thru");
+        await sleep(800); await shot('dthru-tims');
+        await click('#rollupUi .ruX');
+        check(await until('!window.__dbg.rollup.active', 3000), 'leaving the counter closes it');
+        await sleep(300);
+        check((await ev('window.__dbg.game.holds.size')) === 0, 'no hold left behind');
+        // the morning line at the Tims, from the air
+        await ev(`(() => { const d = window.__dbg, p = d.player; if (!p.onFoot) p.exitVehicle(); })()`);
+        const mq = await ev(`(() => { const d = window.__dbg, D = d.dthru, L = D.list[${info.t}]; D.hour = 8; D.update(0.016, L.x, L.z, null);
+          return d.traffic.decor.filter((c) => c.lane === L).length; })()`);
+        console.log('  the Tims line at 8 am:', mq);
+        check(mq >= 3, 'a morning line at the Tims');
+        await ev('window.__dbg.dthru.hour = null');
       }
     }
 

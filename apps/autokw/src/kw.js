@@ -555,13 +555,18 @@ function meshPoly(B, solids, b, P, city) {
     const A = pts[i], Bq = pts[j], C = pts[k];
     B.tri([A[0], yTop, A[1]], [Bq[0], yTop, Bq[1]], [C[0], yTop, C[1]], [0, 1, 0], RC);
   }
-  // plant on the roof: a few units inside the footprint
+  // plant on the roof: a few units inside the footprint. Each between the
+  // vertex centroid and a corner -- and the unit's own corners tested against
+  // the outline: an L's or a U's centroid is out over its car park, and 561
+  // Hespeler Rd's units stood in the air over the lot.
   const nu = Math.min(8, Math.max(1, Math.round(Math.abs(polyArea(pts)) / 700)));
   for (let u = 0; u < nu; u++) {
     const q = pts[Math.floor(hash2(seed, 40 + u) * n)];
     const t = 0.35 + hash2(seed, 60 + u) * 0.4;
     const ux = cx + (q[0] - cx) * t, uz = cz + (q[1] - cz) * t;
-    B.box(ux, yTop, uz, 2 + hash2(seed, 80 + u) * 2, 1.2 + hash2(seed, 90 + u), 1.6, 0, lin([0.66, 0.67, 0.68]));
+    const w = 2 + hash2(seed, 80 + u) * 2, hw = w / 2 + 0.6, hd = 0.8 + 0.6;
+    if (![[0, 0], [hw, hd], [-hw, hd], [hw, -hd], [-hw, -hd]].every(([dx, dz]) => inPoly(pts, ux + dx, uz + dz))) continue;
+    B.box(ux, yTop, uz, w, 1.2 + hash2(seed, 90 + u), 1.6, 0, lin([0.66, 0.67, 0.68]));
   }
 }
 

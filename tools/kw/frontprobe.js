@@ -6,7 +6,8 @@
 //   is Hespeler Rd, Highway 401 to Dundas St)
 //
 // One line a front: its kind (s strip, f food pad, b bank, a auto service,
-// k gas kiosk, c dealer), DRAWN (kwshops draws it), else why not -- `out`
+// k gas kiosk, c dealer), DRAWN (kwshops draws it; NEXT: merged into the
+// neighbouring cell's cluster, prepShops NEXT_M), else why not -- `out`
 // (no footprint cluster there to merge into: prepShops' extents), `poly` /
 // `fam` / `skip` / `shop` (another drawer has the box), `style` (a house or
 // a tower), `size` -- and its tenants. Then the totals, the lettering and
@@ -30,7 +31,7 @@
     if (bx < x0 || bx > x1 || bz < z0 || bz > z1) return;
     const b = boxAt(bx, bz, 1);
     const k = (b && b.kw) || {};
-    let why = 'DRAWN';
+    let why = k.shop && k.shop.front === fi && k.shop.ck ? 'NEXT' : 'DRAWN';
     if (!b) why = 'nobox';
     else if (!(k.shop && k.shop.front === fi)) {
       why = k.poly ? 'poly' : k.fam ? 'fam' : k.shop ? 'shop:' + k.shop.fmt : k.skip ? 'skip' : (b.h > 12.5 || b.h < 2.5) ? `h${b.h.toFixed(0)}` : /brick|lowrise|industrial|house/.test(b.style) ? 'out' : 'style:' + b.style;

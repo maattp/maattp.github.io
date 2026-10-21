@@ -60,7 +60,8 @@ import { prepSights, buildSights, sightsMap } from './kwsights.js';
 import { prepDowntown } from './kwdowntown.js';
 import { prepNature, groundDetail } from './kwnature.js';
 import { prepVillages, buildVillages, villagesMap } from './kwvillages.js';
-import { setShopData, prepShops, buildShops, shopPlaces, shopStats } from './kwshops.js';
+import { setShopData, prepShops, buildShops, shopPlaces, shopStats, driveThrus } from './kwshops.js';
+import { DriveThrus } from './drivethru.js';
 import { prepHome, homeMap } from './kwhome.js';
 import { Crops } from './crops.js';
 import { Kartway, KartRace } from './kartway.js';
@@ -129,6 +130,7 @@ let arcade = null;   // Pin Up Arcade Bar on King St N in Waterloo (arcade.js)
 let pinball = null;  // the pinball at AOK on King St W in Kitchener (pinball.js)
 let hockey = null;   // hockey night at Climate Pledge Arena (hockey.js)
 let rollup = null;
+let dthru = null;    // Auto KW: the fast-food drive-throughs' lines and windows (drivethru.js)
 let fest = null;
 let derby = null;   // Auto KW: the Panthers' home run derby at Jack Couch Park (ballpark.js)
 let skating = null;   // Auto KW: skating on Waterloo Public Square's rink (skating.js)
@@ -547,6 +549,10 @@ class Game {
 
   /** ENTER in a car stopped by a Tims: the drive-thru (player.js, before getting out). */
   tryDriveThru(pl) {
+    // at a window (drivethru.js): served there, or a Tims' (Roll Up the Rim, below)
+    const at = dthru && dthru.order(pl);
+    if (at === true) return true;
+    if (at === 'out') return false;
     const tims = rollup && !rollup.active && rollup.driveThru(pl);
     if (!tims) return false;
     this.hold('rollup');
@@ -886,7 +892,7 @@ async function boot() {
   { const k = prepHome(city, md.home); blog(`kw home: ${k.skipped} boxes drawn as home places`); }
   // the chain stores, gas stations and plazas where they really are (kwshops.js)
   setShopData(md.shops);
-  { const k = prepShops(city); blog(`kw shops: drawn here: ${k.bigbox} big boxes, ${k.units} stand-alone stores, ${k.strips} plaza buildings, ${k.canopies} gas canopies, ${k.fronts} storefronts (${k.frontsOut} outside the clusters)`); }
+  { const k = prepShops(city); blog(`kw shops: drawn here: ${k.bigbox} big boxes, ${k.units} stand-alone stores, ${k.strips} plaza buildings, ${k.canopies} gas canopies, ${k.fronts} storefronts (${k.frontsNear || 0} within 150 m of a cluster's edge, ${k.frontsNext} of them merged into the next cell's, ${k.frontsOut} outside the clusters)`); }
   addLandmarkExtra(buildShops);
   addLandmarkExtra(buildMarketTent);
   addLandmarkExtra(buildDome);
@@ -1581,6 +1587,15 @@ function installShadowFade() {
     onToast: (t) => setTimeout(() => hud.showToast(t, 4200), 300),
     onEnd: () => { game.release('rollup'); },
   });
+  // the drive-throughs (kwshops.js drew OSM's lanes): the lines in them, and ordering at the window
+  try {
+    dthru = new DriveThrus(driveThrus(), {
+      traffic, audio, hud: { showToast: (t, ms) => hud.showToast(t, ms) },
+      charge: (n) => { if (game.money < n) return false; game.money -= n; return true; },
+      heal: (n) => { player.health = Math.min(100, player.health + n); },
+    });
+    blog(`drive-throughs: ${dthru.list.length} lanes`);
+  } catch (e) { blog('drivethru: ' + e.message); dthru = null; }
   // Oktoberfest: the festhallen (Concordia Club, Bingemans' Marshall Hall, the Schwaben Club) and the parade up Weber St
   try {
     fest = new Oktoberfest({ scene, city, traffic, audio, renderer, phone: ON_PHONE, camera, hud: { get hud() { return hud; } },
@@ -1903,6 +1918,7 @@ function installShadowFade() {
   window.__dbg.fest = fest;
   window.__dbg.splash = splash;
   window.__dbg.skating = skating;
+  window.__dbg.dthru = dthru;   // Auto KW: the drive-throughs (drivethru.js)
   window.__dbg.derby = derby;   // Auto KW: the Panthers' home run derby (ballpark.js)   // Auto KW: the rink at Waterloo Public Square (skating.js)   // Auto KW: Big Splash (bigsplash.js)   // Auto KW: Oktoberfest (oktoberfest.js)   // Auto KW: Erbsville Kartway (kartway.js)
   wireUi();
   career.start(hud);
@@ -3236,6 +3252,7 @@ function frame(now) {
   camDir.x /= cl; camDir.z /= cl;
 
   if (prof) lap('misc');
+  if (dthru) dthru.update(dt, p.x, p.z, player);
   traffic.update(dt, p.x, p.z, camDir, player);
   if (prof) lap('traffic');
   peds.update(dt, p.x, p.z, player, traffic);
