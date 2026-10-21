@@ -602,6 +602,76 @@ function houseSurface() {
   return { albedo: a.c, height: hgt.c, rough: rgh.c, emissive: emi.c, nrm: 2.4 };
 }
 
+/**
+ * AUTO KW: A BRICK HOUSE. Waterloo Region's houses are brick far more than
+ * they are siding -- red-brown, buff and grey, from the 1900s Kitchener
+ * worker's cottage to the 1990s Laurelwood two-storey -- so they get the house
+ * cell's elevation (same windows, same door, so `houseSurface`'s layout and
+ * every tile scale stay valid) in a running bond at real scale (6 px courses
+ * over a ~6.5 m tile is ~8 cm), with a soldier-course lintel over each
+ * opening and a stone sill under each window. Drawn neutral and light: the
+ * house's tint is the brick's colour.
+ */
+function brickHouseSurface() {
+  const S = 512;
+  const a = canvas(S, S), hgt = canvas(S, S), rgh = canvas(S, S), emi = canvas(S, S);
+  const r = mulberry32(83);
+  a.g.fillStyle = '#d2cbc4'; a.g.fillRect(0, 0, S, S);
+  hgt.g.fillStyle = grey(0.7); hgt.g.fillRect(0, 0, S, S);
+  rgh.g.fillStyle = grey(0.9); rgh.g.fillRect(0, 0, S, S);
+  emi.g.fillStyle = '#000'; emi.g.fillRect(0, 0, S, S);
+  const course = 6, bw = 16, mortar = '#ebe6dc';
+  for (let y = 0, row = 0; y < S; y += course, row++) {
+    a.g.fillStyle = mortar;
+    a.g.fillRect(0, y + course - 1, S, 1);
+    hgt.g.fillStyle = grey(0.5); hgt.g.fillRect(0, y + course - 1, S, 1);
+    const off = (row % 2) * (bw / 2);
+    for (let x = -bw; x < S + bw; x += bw) {
+      a.g.fillStyle = mortar;
+      a.g.fillRect(x + off, y, 1, course);
+      const v = r();
+      a.g.fillStyle = v > 0.5 ? `rgba(255,255,255,${0.02 + r() * 0.08})` : `rgba(40,20,10,${0.03 + r() * 0.1})`;
+      a.g.fillRect(x + off + 1, y, bw - 1, course - 1);
+    }
+  }
+  const win = (x, y, w, h, lit) => {
+    // the soldier course over it, the stone sill under it
+    a.g.fillStyle = 'rgba(60,30,20,0.18)'; a.g.fillRect(x - 10, y - 18, w + 20, 12);
+    for (let k = x - 10; k < x + w + 10; k += 5) { a.g.fillStyle = mortar; a.g.fillRect(k, y - 18, 1, 12); }
+    a.g.fillStyle = '#e2ddd2'; a.g.fillRect(x - 12, y + h + 4, w + 24, 10);
+    hgt.g.fillStyle = grey(0.95); hgt.g.fillRect(x - 12, y + h + 4, w + 24, 10);
+    // white vinyl frame, the recess, the glass
+    a.g.fillStyle = '#f4f2ec'; a.g.fillRect(x - 5, y - 5, w + 10, h + 10);
+    hgt.g.fillStyle = grey(0.3); hgt.g.fillRect(x - 5, y - 5, w + 10, h + 10);
+    hgt.g.fillStyle = grey(0.16); hgt.g.fillRect(x, y, w, h);
+    rgh.g.fillStyle = grey(0.1); rgh.g.fillRect(x, y, w, h);
+    a.g.fillStyle = '#28323d'; a.g.fillRect(x, y, w, h);
+    const grad = a.g.createLinearGradient(x, y, x, y + h);
+    grad.addColorStop(0, 'rgba(206,228,244,0.66)');
+    grad.addColorStop(1, 'rgba(16,26,36,0.55)');
+    a.g.fillStyle = grad; a.g.fillRect(x, y, w, h);
+    if (lit) {
+      a.g.fillStyle = 'rgba(255,226,164,0.7)'; a.g.fillRect(x, y, w, h);
+      emi.g.fillStyle = 'rgb(252,206,140)'; emi.g.fillRect(x, y, w, h);
+    }
+    a.g.fillStyle = '#f4f2ec';
+    a.g.fillRect(x + w / 2 - 3, y, 6, h);
+    hgt.g.fillStyle = grey(0.8); hgt.g.fillRect(x + w / 2 - 3, y, 6, h);
+  };
+  win(80, 92, 112, 124, false);
+  win(320, 92, 112, 124, true);
+  win(80, 320, 112, 124, false);
+  // the front door under its soldier course, a porch light beside it
+  a.g.fillStyle = 'rgba(60,30,20,0.18)'; a.g.fillRect(306, 282, 132, 12);
+  a.g.fillStyle = '#f4f2ec'; a.g.fillRect(310, 294, 124, 190);
+  a.g.fillStyle = '#5a3a2a'; a.g.fillRect(318, 302, 108, 182);
+  hgt.g.fillStyle = grey(0.3); hgt.g.fillRect(318, 302, 108, 182);
+  a.g.fillStyle = 'rgba(255,255,255,0.2)'; a.g.fillRect(332, 318, 80, 50);
+  a.g.fillStyle = '#d8c07a'; a.g.fillRect(446, 360, 12, 14);
+  noise(a.g, S, S, 9, 17);
+  return { albedo: a.c, height: hgt.c, rough: rgh.c, emissive: emi.c, nrm: 2.0 };
+}
+
 // ---------------------------------------------------------------------------
 // Ground surfaces
 // ---------------------------------------------------------------------------
@@ -1187,6 +1257,9 @@ export function buildTextures() {
       { name: 'roof', s: roofSurface(), env: 0.5, ns: 1.2, rough: 1, metal: 0, emissive: 0 },
       // retaining walls, parapets and fascia (world.meshWall)
       { name: 'concrete', s: concreteSurface(), env: 0.5, ns: 1.4, rough: 1, metal: 0, emissive: 0 },
+      // Auto KW: brick houses (world.js HOUSE_WALL). LAST, so the masonry and
+      // brick cells keep indices 0 and 1 (facadeMat's per-window shader)
+      { name: 'brickhouse', s: brickHouseSurface(), env: 0.45, ns: 1.6, rough: 1, metal: 0, emissive: 0.015 },
     ]),
     road: roadSurface(),
     sidewalk: sidewalkSurface(),

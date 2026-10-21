@@ -20,7 +20,13 @@ Format (little-endian):
       u16 w, u16 d            0.05 m
       u16 h                   0.05 m
       u8  rot                 rot * 256 / pi   (a box is symmetric under pi)
-      u8  cls
+      u8  cls | roof << 3 | mat << 5      (Auto KW: the LOOK, see look_of)
+
+The class byte's low 3 bits are the class (CLS below, + 5: an untagged box
+too big for a house that no zone explains); bits 3-4 the roof OSM maps (0 not
+mapped, 1 flat, 2 gabled, 3 hipped) and bits 5-7 the wall (0 not mapped,
+1 red brick, 2 buff brick, 3 grey stone/block, 4 siding/wood, 5 concrete/
+stucco, 6 metal cladding, 7 glass). citygen.js unpacks them into bd.look.
 """
 
 import json
@@ -56,7 +62,9 @@ TYPE_CLS = {
     "hospital": 4, "public": 4, "government": 4, "train_station": 4, "stadium": 4,
     "museum": 4, "chapel": 4, "sports_centre": 4, "fire_station": 4,
 }
-CLS_STOREY_H = {0: 3.1, 1: 3.1, 2: 3.9, 3: 5.2, 4: 4.4}
+CLS_STOREY_H = {0: 3.1, 1: 3.1, 2: 3.9, 3: 5.2, 4: 4.4, 5: 3.1}
+# farm buildings: barns, drive sheds and greenhouses are not houses
+FARM_BT = {"barn", "farm_auxiliary", "greenhouse", "cowshed", "stable", "silo", "sty", "farm"}
 # PARK BUILDINGS ARE LOW. OSM's beach bathhouses are bare building=yes with a
 # name, which made them commercial at 11 m: Golden Gardens' 1929 bathhouse, the
 # Green Lake Bath House and Madison's stood four storeys over the sand. An
@@ -67,7 +75,7 @@ PARK_LOW_NAME = re.compile(r"bath ?house|comfort station|restroom|toilet|shelter
 PARK_LOW_H = 5.0
 PARK_SMALL_M2 = 1500
 PARK_KINDS = {"park", "garden", "recreation_ground", "nature_reserve", "beach", "golf_course"}
-CLS_DEFAULT_H = {0: 6.4, 1: 12.5, 2: 11.0, 3: 8.5, 4: 10.0}
+CLS_DEFAULT_H = {0: 6.4, 1: 12.5, 2: 11.0, 3: 8.5, 4: 10.0, 5: 6.4}
 
 
 def poly_area(p):
@@ -170,6 +178,60 @@ def height_of(b, cls, area):
     return CLS_DEFAULT_H[cls]
 
 
+# --- Auto KW: the look -------------------------------------------------------
+# An untagged box too big to be a house, in no zone: the game decides by size
+# (citygen.js styleFor), as it always did.
+CLS_UNKNOWN = 5
+ZONE_CODE = {"residential": 1, "commercial": 2, "retail": 2, "industrial": 3}
+# A building=yes in a residential zone is a house up to this footprint: KW's
+# two-storey houses with a double garage are 200-400 m2 of roof.
+HOUSE_MAX_M2 = 460
+ROOF_CODE = {"flat": 1, "gabled": 2, "gambrel": 2, "saltbox": 2, "double_saltbox": 2,
+             "quadruple_saltbox": 2, "crosspitched": 2, "half-hipped": 3, "hipped": 3,
+             "pyramidal": 3, "hipped-and-gabled": 3, "mansard": 3}
+MAT_CODE = {"brick": 1, "stone": 3, "limestone": 3, "sandstone": 3, "granite": 3,
+            "concrete": 5, "stucco": 5, "plaster": 5, "cement_block": 3,
+            "wood": 4, "timber_framing": 4, "siding": 4, "vinyl": 4, "plastic": 4,
+            "metal": 6, "metal_plates": 6, "steel": 6, "glass": 7, "mirror": 7}
+# building:colour, when the material says nothing finer (or nothing)
+COL_CODE = {"red": 1, "brown": 1, "darkred": 1, "maroon": 1, "#ae9183": 1,
+            "beige": 2, "yellow": 2, "tan": 2, "#ffffcc": 2, "#c3b091": 2, "#f4a460": 2, "cream": 2,
+            "grey": 3, "gray": 3, "darkgrey": 3, "darkgray": 3,
+            "white": 5, "lightgrey": 5, "lightgray": 5, "silver": 6}
+
+
+def look_of(t):
+    """(roof, mat) codes from a raw_looks.json entry."""
+    if not t:
+        return 0, 0
+    roof = ROOF_CODE.get(str(t.get("rs", "")).lower(), 0)
+    mat = MAT_CODE.get(str(t.get("mat", "")).lower(), 0)
+    col = COL_CODE.get(str(t.get("col", "")).split(",")[0].strip().lower(), 0)
+    # brick in a buff or grey colour is buff or grey brick
+    if mat == 1 and col in (2, 3):
+        mat = col
+    elif not mat:
+        mat = col
+    return roof, mat
+
+
+def zone_mask():
+    """10 m raster of OSM's landuse zones (raw_looks.json): ZONE_CODE values;
+    the biggest drawn first, so a retail parcel inside a residential area wins."""
+    from PIL import Image, ImageDraw
+    n = int(MAP_HALF * 2 / 10) + 1
+    img = Image.new("L", (n, n), 0)
+    p = os.path.join(DATA, "raw_looks.json")
+    if not os.path.exists(p):
+        print("  (no raw_looks.json: run extract_looks.py -- untagged buildings keep the old rule)")
+        return img, n, {}
+    L = json.load(open(p))
+    d = ImageDraw.Draw(img)
+    for z in sorted(L["zones"], key=lambda q: -poly_area(q["o"])):
+        d.polygon([((x + MAP_HALF) / 10, (zz + MAP_HALF) / 10) for x, zz in z["o"]], fill=ZONE_CODE[z["k"]])
+    return img, n, L["tags"]
+
+
 def park_mask():
     """10 m raster of the mapped parks (raw_green.json), for park_low."""
     from PIL import Image, ImageDraw
@@ -189,6 +251,8 @@ def main():
     raw = json.load(open(os.path.join(DATA, "raw_buildings.json")))["buildings"]
     print(f"{len(raw)} raw footprints")
     parks, pn = park_mask()
+    zones, zn, looks = zone_mask()
+    zoned = {}
     low_named = low_park = 0
 
     chunks = defaultdict(list)
@@ -208,10 +272,33 @@ def main():
         if abs(cx) >= MAP_HALF - 5 or abs(cz) >= MAP_HALF - 5:
             outside += 1
             continue
-        cls = TYPE_CLS.get(str(b.get("bt", "")).lower(), 2 if b.get("n") else 0)
+        bt = str(b.get("bt", "")).lower()
+        cls = TYPE_CLS.get(bt, 2 if b.get("n") else 0)
+        flat_apt = False
+        if not bt and not b.get("n"):
+            # Auto KW: a bare building=yes is what its landuse zone says
+            zi, zj = int((cx + MAP_HALF) / 10), int((cz + MAP_HALF) / 10)
+            zc = zones.getpixel((zi, zj)) if 0 <= zi < zn and 0 <= zj < zn else 0
+            if zc == 1:
+                # a house; a long one a row of townhouses; else a walk-up
+                if area <= HOUSE_MAX_M2 or (max(w, d) / max(1.0, min(w, d)) >= 2.2 and area <= 1600):
+                    cls = 0
+                else:
+                    cls, flat_apt = 1, True
+            elif zc in (2, 3):
+                cls = zc
+            elif area > HOUSE_MAX_M2:
+                cls = CLS_UNKNOWN
+            zoned[(zc, cls)] = zoned.get((zc, cls), 0) + 1
+        elif bt in FARM_BT:
+            cls = 3
         if b.get("ht") or b.get("lv"):
             tagged += 1
         h = height_of(b, cls, area)
+        if flat_apt and not (b.get("ht") or b.get("lv")):
+            h = 9.5   # three storeys: a walk-up, a seniors' home, a co-op
+        roof, mat = look_of(looks.get(f"{b['o'][0][0]},{b['o'][0][1]}"))
+        cls |= roof << 3 | mat << 5
         if not (b.get("ht") or b.get("lv")):
             i, j = int((cx + MAP_HALF) / 10), int((cz + MAP_HALF) / 10)
             in_park = 0 <= i < pn and 0 <= j < pn and parks.getpixel((i, j))
@@ -231,6 +318,8 @@ def main():
     print(f"{kept} kept ({dropped_small} under {MIN_AREA:.0f} m2, {outside} off-map), "
           f"{tagged} with a tagged height ({tagged/max(1,kept)*100:.0f}%)")
     print(f"tallest: {tallest[1]} at {tallest[0]:.0f} m")
+    print("untagged by (zone, class):", dict(sorted(zoned.items())))
+    print(f"with a mapped look: {sum(1 for v in chunks.values() for q in v if q[6] >> 3)}")
     print(f"park buildings one storey: {low_named} by name, {low_park} small untagged ones in parks")
 
     blob = bytearray()
