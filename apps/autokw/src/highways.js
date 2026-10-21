@@ -68,7 +68,7 @@ const AXIS = {
   '7': [-0.29, -0.96, 'EAST', 'WEST'], '85': [0, -1, 'NORTH', 'SOUTH'], '24': [0, -1, 'NORTH', 'SOUTH'],
 };
 
-export const STATS = { rail: 0, railPosts: 0, masts: 0, rumble: 0, noise: 0, views: [], why: { near: 0, road: 0, walk: 0, nomain: 0 }, wall: 0, paved: 0, poles: 0, signs: 0, gantries: 0, speed: 0, shields: 0, exits: 0, tris: 0, edgesTimed: 0, atlas: null };
+export const STATS = { rail: 0, railPosts: 0, masts: 0, rumble: 0, noise: 0, views: [], why: { near: 0, road: 0, walk: 0, nomain: 0 }, wall: 0, paved: 0, poles: 0, signs: 0, gantries: 0, gantryAt: [], speed: 0, shields: 0, exits: 0, tris: 0, edgesTimed: 0, atlas: null };
 
 let HW = null;            // hwy.json
 let HWY_SOLIDS = [];      // the walls and posts, added after the landmark solids' road test
@@ -1109,6 +1109,18 @@ export function buildHighways(ctx) {
   }
 
   // ---- signs ---------------------------------------------------------------
+  // A sign stands on the ground beside the carriageway: never where the
+  // carriageway is a deck (a bridge, a viaduct), nor where the ground at its
+  // posts has fallen away more than STAND_DROP below the road (a high fill's
+  // batter). The 401's exit 278A gantry stood on its bridge over the Grand
+  // with a 19 m post down to the river bed, the panel hanging over the valley;
+  // three ground signs did the same off other decks.
+  const STAND_DROP = 4.5;
+  const standOk = (f, x, z, yr) => {
+    if (f.e.elev || f.e.tunnel) { STATS.why.deck = (STATS.why.deck || 0) + 1; return false; }
+    if (yr - G.terrainHeight(x, z) > STAND_DROP) { STATS.why.drop = (STATS.why.drop || 0) + 1; return false; }
+    return true;
+  };
   const placed = [];   // [x, z] of every sign standing, to keep them apart
   const clear = (x, z, r) => !placed.some(([a, b]) => (a - x) * (a - x) + (b - z) * (b - z) < r * r);
 
@@ -1119,6 +1131,7 @@ export function buildHighways(ctx) {
     if (!clear(x, z, 25)) { STATS.why.near++; return false; }
     if (onCw(x, z, 0.6)) { STATS.why.road++; return false; }
     const yr = f.y(off > 0 ? f.wr : -f.wl);
+    if (!standOk(f, x, z, yr)) return false;
     const yg = Math.min(yr, G.terrainHeight(x, z));
     let yb = yr + lift;
     // a distance plate under the sign ("1 km"), the sign above it
@@ -1149,6 +1162,7 @@ export function buildHighways(ctx) {
     if (!clear(x, z, 30)) return false;
     if (onCw(x, z, 0.6)) { STATS.why.road++; return false; }
     const yr = f.y(f.wr);
+    if (!standOk(f, x, z, yr)) return false;
     const yb = Math.max(yr, f.y(0)) + 5.4;
     const yg = Math.min(yr, G.terrainHeight(x, z));
     const cR = f.wr - 0.8 - Math.max(1.8, P.w / 2 - 0.4);   // the sign's centre, right of the centreline
@@ -1168,6 +1182,7 @@ export function buildHighways(ctx) {
     }
     placed.push([x, z]);
     STATS.gantries++;
+    STATS.gantryAt.push([+x.toFixed(1), +z.toFixed(1), +yb.toFixed(1), +yg.toFixed(1), f.ei, f.e.cls, !!f.e.elev, !!f.e.prof]);
     return true;
   };
 
@@ -1193,9 +1208,12 @@ export function buildHighways(ctx) {
           break;
         }
       }
-      // the advance sign at 1 km, where the carriageway is that long
-      const f = walk(city, m.ei, m.t, -1000);
-      if (f) ground(f, P, f.wr + 1.6 + P.w / 2, 1.6, kmPanel(atlas), 'adv');
+      // the advance sign at 1 km, where the carriageway is that long (or
+      // a little either side, off a bridge)
+      for (const d of [1000, 940, 1060, 880]) {
+        const f = walk(city, m.ei, m.t, -d);
+        if (f && ground(f, P, f.wr + 1.6 + P.w / 2, 1.6, kmPanel(atlas), 'adv')) break;
+      }
     }
     // the EXIT sign in the gore, on the side the ramp leaves by
     const GP = goreExit(atlas, x.ref, left);
@@ -1224,10 +1242,11 @@ export function buildHighways(ctx) {
     const ax = AXIS[ref];
     if (ax) {
       const nums = ref.split(';');
-      const f0 = walk(city, m.ei, m.t, 420);
-      if (f0) {
+      for (const d of [420, 480, 360]) {
+        const f0 = walk(city, m.ei, m.t, d);
+        if (!f0) continue;
         const dir = f0.ux * ax[0] + f0.uz * ax[1] >= 0 ? ax[2] : ax[3];
-        if (ground(f0, routePanel(atlas, nums, dir), f0.wr + 2.2, 1.8, null, 'route')) STATS.shields++;
+        if (ground(f0, routePanel(atlas, nums, dir), f0.wr + 2.2, 1.8, null, 'route')) { STATS.shields++; break; }
       }
     }
   }

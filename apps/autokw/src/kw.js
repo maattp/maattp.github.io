@@ -604,9 +604,9 @@ export function buildPolys(ctx) {
 }
 
 /** The face of a polygon building nearest (px, pz): world point at the wall, outward normal, length. */
-export function polyFace(P, px, pz) {
+export function polyFace(P, px, pz, solid = null) {
   const pts = P.pts, n = pts.length;
-  let best = null, bd = Infinity;
+  let best = null, bd = Infinity, any = null, ad = Infinity;
   for (let i = 0; i < n; i++) {
     const a = pts[i], c = pts[(i + 1) % n];
     const dx = c[0] - a[0], dz = c[1] - a[1], L = Math.hypot(dx, dz);
@@ -619,9 +619,18 @@ export function polyFace(P, px, pz) {
     // a store's face is one in front of a lot (the storefront): prefer those
     const front = G.lotAt(a[0] + dx / 2 + nx * 12, a[1] + dz / 2 + nz * 12) >= 0;
     const sc = d + (P.retail && !front ? 60 : 0);
-    if (sc < bd) { bd = sc; best = { x: qx, z: qz, nx, nz, len: L, t, ux, uz, ax: a[0], az: a[1] }; }
+    const f = { x: qx, z: qz, nx, nz, len: L, t, ux, uz, ax: a[0], az: a[1] };
+    if (sc < ad) { ad = sc; any = f; }
+    // a wall a sign can hang on stands on the ground: not the side of a
+    // narrow arm of the outline (an enclosed bridge OSM draws as part of the
+    // building -- E3's to E5 over Ring Road: "Engineering 3" hung in the air
+    // over the road), nor one over a road (`solid`, the caller's test)
+    const mx = Math.max(L * 0.15, Math.min(L * 0.85, t));
+    const wx = a[0] + ux * mx, wz = a[1] + uz * mx;
+    if (!inPoly(pts, wx - nx * 3.5, wz - nz * 3.5) || (solid && !solid(wx - nx * 1.2, wz - nz * 1.2))) continue;
+    if (sc < bd) { bd = sc; best = f; }
   }
-  return best;
+  return best || any;
 }
 
 /**
@@ -1016,7 +1025,7 @@ export function buildSigns(ctx) {
     if (b.kw.poly) {
       // on the face nearest a street
       const rd = faceRoad(city, b.x, b.z, 200);
-      const f = polyFace(b.kw.poly, rd ? rd.qx : b.x, rd ? rd.qz : b.z);
+      const f = polyFace(b.kw.poly, rd ? rd.qx : b.x, rd ? rd.qz : b.z, (x, z) => !city.onRoad(x, z, 0.5, true, false));
       if (!f || f.len < w + 0.6) continue;
       const t = Math.max(w / 2 + 0.3, Math.min(f.len - w / 2 - 0.3, f.t));
       const sx = f.ax + f.ux * t, sz = f.az + f.uz * t;

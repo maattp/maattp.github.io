@@ -43,6 +43,17 @@ const AMBER_B = 3.2;
 const GAP_T = 6;
 // a roundabout entry's gap to circulating traffic (s)
 const RB_GAP = 3.2;
+// a signal's mast arm: at most this long (m; the Region's run 9-17)
+const MAST_MAX = 17;
+// where a signal pole may stand, relative to its nominal kerb corner: i m
+// further out to the right, j m along the road; cheapest first
+const POLE_SEARCH = [];
+for (let i = 0; i <= 16; i++) for (let j = -6; j <= 10; j++) POLE_SEARCH.push([i * 0.7, j * 0.7, i * 0.7 + Math.abs(j * 0.7) * (j < 0 ? 1.4 : 0.8)]);
+POLE_SEARCH.sort((a, b) => a[2] - b[2]);
+// a stop or yield sign's post: i m out to the right, j m back from its line
+const SIGN_SEARCH = [];
+for (let i = 0; i <= 10; i++) for (let j = -2; j <= 8; j++) SIGN_SEARCH.push([i * 0.6, j * 0.6, i * 0.6 + Math.abs(j * 0.6) * (j < 0 ? 2 : 0.7)]);
+SIGN_SEARCH.sort((a, b) => a[2] - b[2]);
 
 const flowOf = (e) => (e.oneway ? (e.onewayRev ? -1 : 1) : e.cls === 'ramp' ? 1 : 0);
 /** May traffic arrive at node ni along edge e? */
@@ -154,6 +165,36 @@ export class Junctions {
       X.sc = lo > hi ? X.s0 : clamp(X.s0, lo, hi);
     }
     return X.sc;
+  }
+
+  /** Does crossing X (centred at cx, cz) overlap the painted strip of a
+   *  crossing on another edge that wins (the lower edge index)? */
+  xingClash(X, cx, cz) {
+    const city = this.city, e = city.edges[X.ei], R = e.hw + X.w;
+    for (const oi of this.edgesAround(cx, cz, 14)) {
+      if (oi >= X.ei) continue;
+      const l = this.crossOn.get(oi);
+      if (!l) continue;
+      const o = city.edges[oi], oa = city.nodes[o.a];
+      for (const Y of l) {
+        const s = this.xingS(Y), ox = oa.x + o.dx * s, oz = oa.z + o.dz * s;
+        const dx = cx - ox, dz = cz - oz;
+        if (dx * dx + dz * dz > (R + o.hw + Y.w) ** 2) continue;
+        // the two strips as segments across their roads: do they come within
+        // the widths of each other?
+        const ax0 = cx + e.dz * e.hw, az0 = cz - e.dx * e.hw, ax1 = cx - e.dz * e.hw, az1 = cz + e.dx * e.hw;
+        const bx0 = ox + o.dz * o.hw, bz0 = oz - o.dx * o.hw, bx1 = ox - o.dz * o.hw, bz1 = oz + o.dx * o.hw;
+        const near = Math.min(
+          segDist2(ax0, az0, bx0, bz0, bx1, bz1).d2, segDist2(ax1, az1, bx0, bz0, bx1, bz1).d2,
+          segDist2(bx0, bz0, ax0, az0, ax1, az1).d2, segDist2(bx1, bz1, ax0, az0, ax1, az1).d2);
+        const cross = ((ax1 - ax0) * (bz0 - az0) - (az1 - az0) * (bx0 - ax0)) * ((ax1 - ax0) * (bz1 - az0) - (az1 - az0) * (bx1 - ax0)) < 0
+          && ((bx1 - bx0) * (az0 - bz0) - (bz1 - bz0) * (ax0 - bx0)) * ((bx1 - bx0) * (az1 - bz0) - (bz1 - bz0) * (ax1 - bx0)) < 0;
+        // (at a corner two arms' crosswalks end near each other: not a clash
+        // unless they cross, or run side by side over each other)
+        if (cross || (near < ((X.w + Y.w) / 2) ** 2 && Math.abs(e.dx * o.dx + e.dz * o.dz) > 0.9)) return true;
+      }
+    }
+    return false;
   }
 
   /** Edge ei's mouth (where its own carriageway starts) at node ni. */
@@ -399,6 +440,7 @@ export class Junctions {
       // the phase groups: along the top-ranked approach's axis, and across it
       let ref = list[0];
       for (const A of list) if ((RANK[A.cls] || 0) * 100 + A.hw > (RANK[ref.cls] || 0) * 100 + ref.hw) ref = A;
+      C.refU = [ref.ux, ref.uz];
       for (const A of list) {
         A.grp = Math.abs(A.ux * ref.ux + A.uz * ref.uz) > 0.6 ? 0 : 1;
         A.kind = 'sig';
@@ -453,6 +495,28 @@ export class Junctions {
     for (const p of C.phases) if (tt < p.t0 + p.d) return { p, rem: p.t0 + p.d - tt, el: tt - p.t0 };
     const p = C.phases[C.phases.length - 1];
     return { p, rem: 0, el: p.d };
+  }
+
+  /**
+   * The pedestrian signal for walking along phase group `pg`'s axis:
+   * 'walk' (the walking person: the group's green, its first 55 %), 'flash'
+   * (the flashing hand: the rest of that green -- don't start) or 'hand'. In a
+   * one-group signal's pedestrian phase the walk is across the road (the
+   * other axis).
+   */
+  walkState(C, pg) {
+    const { p, el } = this.phase(C);
+    let g = -2;
+    if (p.k === 'grn') g = p.g;
+    else if (p.k === 'ped') g = 1 - C.phases[0].g;
+    if (g !== pg) return 'hand';
+    return el < p.d * 0.55 ? 'walk' : 'flash';
+  }
+
+  /** The phase group a walker going (wx, wz) across signal C walks with. */
+  walkGroup(C, wx, wz) {
+    const u = C.refU || [1, 0], L = Math.hypot(wx, wz) || 1;
+    return Math.abs(u[0] * wx + u[1] * wz) / L > 0.707 ? 0 : 1;
   }
 
   /**
@@ -584,12 +648,21 @@ export class Junctions {
             if (Math.abs(e.dx * ux + e.dz * uz) < 0.6) cross = Math.max(cross, e.hw);
           }
         }
-        let df = far + Math.max(cross, 4) + 2.2;
-        let lat = A.hw + 1.7;
-        let px = n.x + ux * df + rx * lat, pz = n.z + uz * df + rz * lat;
-        for (let k = 0; k < 6 && city.onRoad(px, pz, 0.5, false, false); k++) {
-          px += rx * 0.8 + ux * 0.6; pz += rz * 0.8 + uz * 0.6; lat += 0.8; df += 0.6;
+        const df0 = far + Math.max(cross, 4) + 2.2, lat0 = A.hw + 1.7;
+        // the kerb corner: the nearest spot off every carriageway (and out of
+        // any building) to the nominal one, searched out to the right and
+        // along the road either way. It used to step diagonally six times and
+        // give up IN the road (95 of 1701 poles: the far carriageway of a
+        // divided road, a slip lane), the arm reaching over from a pole that
+        // stood in the traffic or behind it.
+        let px = n.x + ux * df0 + rx * lat0, pz = n.z + uz * df0 + rz * lat0, best = Infinity;
+        for (const [i, j, cost] of POLE_SEARCH) {
+          if (cost >= best) break;
+          const qx = n.x + ux * (df0 + j) + rx * (lat0 + i), qz = n.z + uz * (df0 + j) + rz * (lat0 + i);
+          if (city.onRoad(qx, qz, 0.5, false, false) || city.insideBuilding(qx, qz, G.terrainHeight(qx, qz) + 1, 0.4)) continue;
+          best = cost; px = qx; pz = qz;
         }
+        const lat = (px - n.x) * rx + (pz - n.z) * rz;
         const gy = G.terrainHeight(px, pz) + Math.max(0, city.roadLift(px, pz));
         // lane centres to hang heads over, measured right of the centreline
         const offs = A.two
@@ -597,15 +670,18 @@ export class Junctions {
           : (A.hw >= 5 ? [-A.hw * 0.45, A.hw * 0.45] : [0]);
         const leftOff = A.left ? (A.two ? Math.max(0.6, A.hw * 0.1) : -A.hw * 0.72) : null;
         const minOff = Math.min(...offs, leftOff === null ? Infinity : leftOff);
-        const mast = clamp(lat - minOff + 0.7, 3, 16);
+        const mast = clamp(lat - minOff + 0.7, 3, MAST_MAX);
         const rig = { A, C, x: px, z: pz, y: gy, ux, uz, rx, rz, mast, heads: [] };
         const H = 5.55;   // head centre on the arm
         const four = A.left;   // Ontario's advance: a fourth section, the arrow
+        // (a head past the arm's end would hang from nothing: those lanes
+        // make do with the pole's head and the far side's)
+        const reach = (d) => d <= mast - 0.3;
         for (const o of offs) {
           const d = lat - o;
-          rig.heads.push({ x: px - rx * d, z: pz - rz * d, y: gy + H, kind: four ? 4 : 3, fx: -ux, fz: -uz });
+          if (reach(d)) rig.heads.push({ x: px - rx * d, z: pz - rz * d, y: gy + H, kind: four ? 4 : 3, fx: -ux, fz: -uz });
         }
-        if (leftOff !== null && !offs.some((o) => Math.abs(o - leftOff) < 1.6)) {
+        if (leftOff !== null && !offs.some((o) => Math.abs(o - leftOff) < 1.6) && reach(lat - leftOff)) {
           const d = lat - leftOff;
           rig.heads.push({ x: px - rx * d, z: pz - rz * d, y: gy + H, kind: 4, fx: -ux, fz: -uz });
         }
@@ -636,7 +712,16 @@ export class Junctions {
     v.jcC = C.id; v.jcMv = move;
     if (C.k === K_SIG) {
       const L = this.light(C, A, move);
-      if (L.s === 'R') { T.stats.sigHolds += 1 / 60; return 1; }
+      if (L.s === 'R') {
+        // Ontario: a right turn on red after a full stop, yielding to the
+        // traffic that has the green and to anyone on foot (HTA s.144(19))
+        if (move === 'R' && !A.noRtor) {
+          if (v.jcRtor !== A.id) {
+            if (gap < 2.2 && sp < 0.35) { v.jcRtor = A.id; v.jcArr = this.t; }
+          } else if (this.t - v.jcArr > 1.2 && !this.rtorBusy(T, v, C, A, player)) { T.stats.rtor = (T.stats.rtor || 0) + 1; return 2; }
+        }
+        T.stats.sigHolds += 1 / 60; return 1;
+      }
       if (L.s === 'Y' || (L.prot && L.rem < 2.5)) {
         // amber (or the arrow about to end): stop if it can be done gently
         const tReach = gap / Math.max(sp, 1);
@@ -712,7 +797,11 @@ export class Junctions {
       const dx = n.x - o.x, dz = n.z - o.z, D = Math.hypot(dx, dz);
       if (D > 110 || D < 0.1) continue;
       const sp = Math.abs(o.vLong);
-      if (sp < 0.8) continue;
+      // (one standing on the major road right by the junction -- queued behind
+      // a turning car, giving way to someone on foot -- pulls away the moment
+      // it can: a side-street car that went because it read 0 m/s was T-boned
+      // by it at 4-8 m/s)
+      if (sp < 0.8 && !(o.rt && o.rtN && D < C.r + 14 && !o.ctlHold)) continue;
       // coming through this junction: on its planned route (a driven car:
       // by its heading, and passing within a few metres of the node)
       let Dr = D, B = null;
@@ -726,7 +815,48 @@ export class Junctions {
       }
       // on a signed approach of this junction it waits too; mine is behind me
       if (B && (B === A || B.kind !== 'go')) continue;
-      if ((Dr - C.r * 0.5) / sp < GAP_T) return true;
+      if (sp < 0.8 ? Dr - C.r < 12 : (Dr - C.r * 0.5) / sp < GAP_T) return true;
+    }
+    return false;
+  }
+
+  /**
+   * A right turn on red: anything moving in the box, anyone on foot crossing
+   * near it, or a car on an approach that has a light (green, amber, an
+   * advance arrow) that will reach the junction within the gap -- or is
+   * standing at its line, about to go.
+   */
+  rtorBusy(T, v, C, A, player) {
+    if (this.boxBusy(T, v, C, player)) return true;
+    const city = this.city, { p } = this.phase(C);
+    const live = p.k === 'grn' || p.k === 'amb' || p.k === 'adv';
+    const R2 = (C.r + 9) ** 2;
+    for (let q = 0; q < (T.crossN || 0); q++) {
+      const x = T.crossXZ[q * 3], z = T.crossXZ[q * 3 + 1];
+      if ((x - C.x) ** 2 + (z - C.z) ** 2 < R2) return true;
+    }
+    if (!live) return false;
+    for (const o of this.others(T, v, player)) {
+      const dx = C.x - o.x, dz = C.z - o.z, D = Math.hypot(dx, dz);
+      if (D > 120) continue;
+      const sp = Math.abs(o.vLong);
+      let B = null, Dr = D;
+      if (o.rt && o.rtN) {
+        for (const ni of C.nodes) {
+          const r = routeTo(city, o, ni);
+          if (r && C.appr.get(r.key)) { B = C.appr.get(r.key); Dr = r.d; break; }
+        }
+        if (!B) continue;
+      } else {
+        // a driven car: heading at the junction
+        const f = o.forward;
+        if (sp < 1 || (f.x * dx + f.z * dz) / Math.max(D, 0.1) < 0.7) continue;
+        if ((D - C.r) / sp < GAP_T) return true;
+        continue;
+      }
+      if (B === A || B.grp !== p.g) continue;
+      const toLine = Dr - B.back;
+      if (sp < 0.8 ? toLine < 12 : (toLine - 2) / sp < GAP_T) return true;
     }
     return false;
   }
@@ -869,6 +999,10 @@ class Painter {
     // two OSM crossings on one arm moved out to the same mouth: draw one
     for (const o of this.jc.crossOn.get(X.ei)) { if (o === X) break; if (Math.abs(this.jc.xingS(o) - s) < 3.5) return; }
     const cx = a.x + ux * s, cz = a.z + uz * s, hw = e.hw - 0.15, h = X.w / 2;
+    // ...and two on different edges that overlap where they were moved to
+    // (the two one-way legs of a split approach converging at its mouth --
+    // two ladders crossed over each other at an angle): the lower edge's only
+    if (this.jc.xingClash(X, cx, cz)) return;
     if (X.ladder) {
       // continental bars along the traffic, between two side lines (ladder)
       for (let o = -hw + 0.5; o <= hw - 0.3; o += 1.05) this.rect(cx + px * o, cz + pz * o, ux, uz, h - 0.15, 0.24);
@@ -1015,10 +1149,17 @@ const oct = (r) => { const o = []; for (let i = 0; i < 8; i++) { const a = Math.
 function meshStopSign(world, flat, A, all, C) {
   const city = world.city, n = city.nodes[A.ni], ux = A.ux, uz = A.uz, rx = -uz, rz = ux;
   // on the right, at the stop line, a pace past the kerb
-  let off = A.hw + 0.9;
-  let x = n.x - ux * (A.back - 0.4) + rx * off, z = n.z - uz * (A.back - 0.4) + rz * off;
-  for (let k = 0; k < 4 && city.onRoad(x, z, 0.3, false, false); k++) { x += rx * 0.6; z += rz * 0.6; off += 0.6; }
-  if (!G.isBuildable(x, z)) return;
+  // (the nearest spot off every carriageway, out to the right or back from
+  // the line: four steps out and then standing in the road anyway left ten
+  // posts in the lanes for traffic to wedge against; none found, no sign)
+  const bx = n.x - ux * (A.back - 0.4) + rx * (A.hw + 0.9), bz = n.z - uz * (A.back - 0.4) + rz * (A.hw + 0.9);
+  let x = 0, z = 0, found = false;
+  for (const [i, j] of SIGN_SEARCH) {
+    const qx = bx + rx * i - ux * j, qz = bz + rz * i - uz * j;
+    if (city.onRoad(qx, qz, 0.3, false, false)) continue;
+    x = qx; z = qz; found = true; break;
+  }
+  if (!found || !G.isBuildable(x, z)) return;
   const gy = G.terrainHeight(x, z) + Math.max(0, city.roadLift(x, z));
   const yieldSign = A.kind === 'yield';
   const H = yieldSign ? 2.1 : 2.15;
@@ -1347,13 +1488,13 @@ export class SignalHeads {
     let cellDirty = false;
     for (let i = 0; i < this.lens.count; i++) {
       const h = this.lenses[2 * i], k = this.lenses[2 * i + 1], rig = h.rig, C = rig.C;
-      const { p, el } = jc.phase(C);
+      const { p } = jc.phase(C);
       let c;
       if (k === 'p') {
         // the walk signal: the group's green, for its first 55 %
-        const g = p.g === h.pg && p.k === 'grn';
-        const walk = g && el < p.d * 0.55;
-        const hand = !walk && (!g || blink);
+        const ws = jc.walkState(C, h.pg);
+        const walk = ws === 'walk';
+        const hand = ws === 'hand' || (ws === 'flash' && blink);
         const want = walk ? 3 : 2;
         if (cell[i] !== want) { cell[i] = want; cellDirty = true; }
         c = walk ? ON.walk : hand ? ON.hand : OFF.p;

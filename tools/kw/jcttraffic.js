@@ -17,7 +17,7 @@
 //   recycled  traffic.stats.stuckRecycled during the site (stuck out of sight)
 //   commits   cars going on past a controlled junction's line, by what they
 //             saw: signal G / Y / R (R only if it had passed the line when it
-//             turned), stop signs after a full stop / without one, roundabout
+//             turned), rtor (a right turn on red after a full stop), stop signs after a full stop / without one, roundabout
 //             entries clear / busy
 //   island    car-frames with a body corner inside a roundabout's island
 //   kmh       mean speed of traffic cars within 150 m of the site
@@ -40,7 +40,16 @@
   const crashLog = [];
   const oc = d.game.onTrafficCrash;
   d.game.onTrafficCrash = (...a) => {
-    if (measuring) { crashes++; if (crashLog.length < 12) crashLog.push({ site: siteName, imp: +a[0].toFixed(1), at: [Math.round(a[1]), Math.round(a[2])] }); }
+    if (measuring) {
+      crashes++;
+      if (crashLog.length < 12) {
+        // the two cars nearest the contact, and what each was doing
+        const near = T.cars.filter((v) => v.mode !== 'parked').map((v) => [Math.hypot(v.x - a[1], v.z - a[2]), v]).sort((x, y) => x[0] - y[0]).slice(0, 2);
+        crashLog.push({ site: siteName, imp: +a[0].toFixed(1), at: [Math.round(a[1]), Math.round(a[2])],
+          cars: near.map(([dd, v]) => ({ ty: v.typeName, mode: v.mode, v: +v.vLong.toFixed(1), hd: Math.round(Math.atan2(v.forward.x, -v.forward.z) * 57.3), cls: c.edges[v.edge] && c.edges[v.edge].cls,
+            jc: v.jcC, k: jc && v.jcC >= 0 && jc.list[v.jcC] ? jc.list[v.jcC].k : 0, go: v.jcGo, stop: v.jcStop, mv: v.jcMv, hold: !!v.ctlHold, panic: +(v.panic || 0).toFixed(1) })) });
+      }
+    }
     if (oc) return oc.apply(d.game, a);
   };
   T.updateParked = () => {};
@@ -77,7 +86,7 @@
   const dt = 1 / 60;
   const NOBODY = { vehicle: null, onFoot: false, x: 1e6, y: 0, z: 1e6, speed: 0, heading: 0 };
   const zero = () => ({ t: 0, hits: 0, crashes: 0, stuck: 0, recycled: 0, island: 0, cars: 0, kmh: [0, 0],
-    commits: { G: 0, Y: 0, R: 0, leftArrow: 0, leftPermissive: 0, stopFull: 0, stopRolled: 0, rbClear: 0, rbBusy: 0, mini: 0 }, hitLog: [] });
+    commits: { G: 0, Y: 0, R: 0, rtor: 0, leftArrow: 0, leftPermissive: 0, stopFull: 0, stopRolled: 0, rbClear: 0, rbBusy: 0, mini: 0 }, hitLog: [] });
   const tot = zero(), out = [];
   for (const site of sites) {
     for (const v of [...T.cars]) if (v.mode !== 'apron') T.remove(v);
@@ -109,7 +118,9 @@
           if (C && A) {
             if (C.k === 1) {
               const L = jc.light(C, A, v.jcMv);
-              m.commits[L.s]++;
+              // a right turn on red after its full stop is not running the red
+              if (L.s === 'R' && v.jcRtor === A.id) m.commits.rtor++;
+              else m.commits[L.s]++;
               if (v.jcMv === 'L') m.commits[L.prot ? 'leftArrow' : 'leftPermissive']++;
             }
             else if (C.k === 3) m.commits[jc.ringBusy(T, v, C, A, NOBODY) ? 'rbBusy' : 'rbClear']++;
@@ -163,6 +174,6 @@
   const fmt = (S) => ({ name: S.name, t: Math.round(S.t), hits: S.hits, crashes: S.crashes, stuck: S.stuck, recycled: S.recycled, island: S.island, cars: S.cars,
     kmh: Math.round(S.kmh[0] / (S.kmh[1] || 1)), commits: S.commits });
   const st = {};
-  for (const k of ['sigHolds', 'leftYields', 'rbYields', 'stopWaits', 'fullStops', 'stuckRecycled', 'yielded']) st[k] = +((T.stats[k] || 0) - (s0[k] || 0)).toFixed(1);
+  for (const k of ['sigHolds', 'leftYields', 'rbYields', 'stopWaits', 'fullStops', 'stuckRecycled', 'yielded', 'rtor']) st[k] = +((T.stats[k] || 0) - (s0[k] || 0)).toFixed(1);
   return JSON.stringify({ sites: out.map(fmt), total: fmt(Object.assign(tot, { name: 'total' })), stats: st, hitLog: tot.hitLog, crashLog, recLog }, null, 1);
 })()
