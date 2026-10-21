@@ -699,6 +699,52 @@ file and a guide disagree, this file wins.
   -> 213/716k; Northfield low 129/643k -> 132/685k (max +7.3 % tris, draws
   flat). Re-run order after an OSM update:
   `extract_looks.py` then `build_buildings.py`.
+- **The generic look, round two** (docs/look2-*.jpg, before over after).
+  **Striped plaza roofs:** world.js `_stripMall`'s roof sat at exactly
+  `bd.y + bd.h`, coplanar with `buildSkyline`'s always-drawn far box (every
+  footprint over 1400 m2 or 16 m), and the two z-fought in tan/white bands.
+  The strip's box has no top now; its white/pale-grey lid sits inside the
+  parapet, 0.16 m over the skyline's, as meshBuilding's lid always did.
+  **Any near roof at exactly `bd.y + bd.h` on a skyline-sized box is this
+  bug again.** The same class across drawers: `kw.dedupeFootprints` (main.js,
+  after every module's prep) finds every pair of drawn footprints
+  (world.js box, strip, kw.js poly, kwshops shop) that overlap with roofs
+  within 1 m: the plainer drawer goes flat (kw.skip) when 70 % of it is
+  inside the other, else the smaller roof is lifted 0.6 m; a house box
+  inside a store 8x its size goes flat at any height (St. Jacobs Outlets).
+  `window.__kwDedupe` has the counts (~170 pairs, ~50 flat, ~90 ms
+  desktop); `VIEW_PROBE_FILE=tools/kw/doubleprobe.js node tools/kw/kwshots.mjs x`
+  lists every overlapping pair by drawer, SAME-ROOF (< 0.4 m apart: a
+  z-fight) or step -- 247 overlaps before, 0-1 SAME-ROOF after.
+  **The new towers** (world.js `modernTower` / `towerLook` / `_towerPanels`):
+  an apartment (OSM apartments, or a name with Condos/Tower/House/Residence)
+  of 24 m+ inside `MODERN_ZONES` (the UW/Laurier student district box and
+  downtown Kitchener) with no OSM material takes white or light-grey precast,
+  window wall (white slab edge every floor) or charcoal panel, full-height
+  stacks of a second panel colour at the corners, and on half a stack of
+  accent panels (orange, lime, red, blue, yellow) down the street face and
+  its back; `TOWER_NAMED` pins Sage, ICON, Luxe, One Victoria, Charlie West,
+  Duke Tower, Young. **Car parks:** build_lots.py bakes retail/commercial
+  landuse >= 3000 m2 as striped parking in the polygon's orientation, with a
+  4.5 m concrete storefront ring round each building in it (`LU_PARKING`;
+  12.5 -> 17.5 km2 striped); world.js `lotLights` puts, in lots that carry on
+  20 m round the spot, a kerbed island (one bay, across both rows of a seam)
+  with a 9 m light standard (two LED heads, glowing at night) every 13 bays
+  on every other seam of the shader's bay grid, and a young tree on 60 %
+  (trees.js reads `world._lotIslands`); traffic.updateLotParked leaves those
+  bays empty; poles and islands are obstacles. Cart corrals stay kwshops'.
+  **Yards:** `_yardFence` -- cedar privacy fences round 3 back yards in 4
+  from the occupancy raster (back line halfway to the house behind, drawn
+  by the lower seed; right side only, so a row has one fence per pair;
+  gate runs across both side yards), 16 tris a yard, not solid;
+  `cityStats.fences`. `_drivewayKit`: green bin + blue box (+ grey cart)
+  at the end of one driveway in four, a portable net on one in nine.
+  **Palette:** SUBURB a touch greener (KW lawns stay green in October); the
+  sky was left alone. Phone (AUTO_PHONE=1, GPU), v29 -> this, draws/tris:
+  spawn 206/979k -> 205/997k; Beechwood aerial 364/1284k -> 363/1308k;
+  street 326/1132k -> 326/1152k; student towers 181/761k -> 181/777k; plaza
+  lot aerial 348/1119k -> 348/1141k, low 449/935k -> 451/974k (+4.2 %, the
+  most); St. Jacobs 75/304k -> 75/308k.
 
 ## Build number
 
