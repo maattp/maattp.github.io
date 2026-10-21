@@ -8171,48 +8171,89 @@ function dotText(b, text, { c, u, up = [0, 1, 0], h, col, led = false, bold = 0,
 
 // Auto KW: ONTARIO PLATES. The passenger plate since its 2020 return: white,
 // ONTARIO across the top, a blue ABCD 123 serial with the crown between the
-// letters and the numbers, YOURS TO DISCOVER along the bottom (a hairline
-// here: at 1.5 cm it reads as one). Front and back, as Ontario issues them.
-// The serial is per TYPE (the geometry is shared), from the type's name.
+// letters and the numbers, YOURS TO DISCOVER along the bottom. Front and back,
+// as Ontario issues them.
+//
+// EVERY CAR ITS OWN SERIAL, for no geometry and no draw: the plate's outer
+// face is one quad whose vertex colours are its UV (r, g) and a key in blue
+// (PLATE_KEY); tagGlass flags it (`glass` 4) and glassShader paints it from
+// PLATE_ATLAS (plateAtlas: PLATE_N serials, a canvas drawn once). WHICH
+// serial is the trim mesh's own: Vehicle sets `trimMesh.scale.x` to
+// 1 + k / PLATE_STEP (k < PLATE_N: under 0.4 % -- 3.8 mm across a car) and the
+// vertex shader reads k back from modelMatrix (x column over y column, so a
+// parent's uniform scale cancels). A per-mesh uniform would not do: the trim
+// material is shared, and three.js re-uploads a built-in material's uniforms
+// only when the material changes between draws.
 const PLATE_BLUE = [0.015, 0.05, 0.26];
-let PLATE_SERIAL = 'CKBX 482';
-function plateSerial(name) {
-  let h = 2166136261;
-  for (const ch of name) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
-  const L = 'ABCDEFGHJKLMNPRSTVWXYZ', r = () => { h = Math.imul(h ^ (h >>> 15), 2246822519) >>> 0; return h; };
+const PLATE_KEY = 0.3141;
+export const PLATE_N = 128, PLATE_STEP = 16384;
+const PLATE_COLS = 8, PLATE_CW = 128, PLATE_CH = 40;
+const PLATE_LETTERS = 'ABCDEFGHJKLMNPRSTVWXYZ';
+function plateSerial(seed) {
+  let h = (2166136261 ^ Math.imul(seed + 1, 2654435761)) >>> 0;
+  const r = () => { h = Math.imul(h ^ (h >>> 15), 2246822519) >>> 0; h = Math.imul(h ^ (h >>> 13), 3266489917) >>> 0; return (h ^ (h >>> 16)) >>> 0; };
   // 2020s serials run C... to H...
   let s = 'CDEFGH'[r() % 6];
-  for (let i = 0; i < 3; i++) s += L[r() % L.length];
+  for (let i = 0; i < 3; i++) s += PLATE_LETTERS[r() % PLATE_LETTERS.length];
   return s + ' ' + String(100 + (r() % 900));
 }
-/** A licence plate: the box `trim.box(cx, by, cz, w, h, d, 0, PLATE)` drew, lettered on its outer face. */
+let PLATE_ATLAS = null;
+/** The plates' canvas: PLATE_N Ontario plates, PLATE_COLS across, at the plates' own 3.1 : 1. */
+function plateAtlas() {
+  if (PLATE_ATLAS || typeof document === 'undefined') return PLATE_ATLAS;
+  const rows = Math.ceil(PLATE_N / PLATE_COLS);
+  const cv = document.createElement('canvas');
+  cv.width = PLATE_COLS * PLATE_CW; cv.height = rows * PLATE_CH;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#eeeee6';
+  g.fillRect(0, 0, cv.width, cv.height);
+  const blue = '#1a3f8f';
+  for (let k = 0; k < PLATE_N; k++) {
+    const x0 = (k % PLATE_COLS) * PLATE_CW, y0 = Math.floor(k / PLATE_COLS) * PLATE_CH;
+    const W = PLATE_CW, H = PLATE_CH, cx = x0 + W / 2;
+    g.save();
+    g.beginPath(); g.rect(x0, y0, W, H); g.clip();
+    // a fine blue edge, the embossed rim
+    g.strokeStyle = 'rgba(26,63,143,0.55)'; g.lineWidth = 1.2;
+    g.strokeRect(x0 + 1.5, y0 + 1.5, W - 3, H - 3);
+    g.fillStyle = blue; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = 'bold 7px Arial, Helvetica, sans-serif';
+    g.fillText('ONTARIO', cx, y0 + 6.5);
+    g.font = 'italic 5.5px Arial, Helvetica, sans-serif';
+    g.fillText('YOURS TO DISCOVER', cx, y0 + H - 5.5);
+    // the serial: letters, the crown, numbers, condensed into the middle band
+    const [lets, nums] = plateSerial(k).split(' ');
+    g.font = 'bold 22px "Arial Narrow", Arial, Helvetica, sans-serif';
+    const wl = g.measureText(lets).width, wn = g.measureText(nums).width, crown = 9, gap = 3;
+    const total = wl + gap + crown + gap + wn, sx = Math.min(1, (W - 14) / total);
+    g.translate(cx, y0 + H / 2 + 1); g.scale(sx, 1);
+    let x = -total / 2;
+    g.textAlign = 'left';
+    g.fillText(lets, x, 0); x += wl + gap;
+    // the crown: a band and three points
+    g.fillRect(x, 3, crown, 2.5);
+    for (const [px, ht] of [[0.15, 5], [0.5, 7], [0.85, 5]]) {
+      g.beginPath(); g.moveTo(x + crown * px - 1.6, 3); g.lineTo(x + crown * px, 3 - ht); g.lineTo(x + crown * px + 1.6, 3); g.fill();
+    }
+    x += crown + gap;
+    g.fillText(nums, x, 0);
+    g.restore();
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  PLATE_ATLAS = tex;
+  return tex;
+}
+/** A licence plate: the box `trim.box(cx, by, cz, w, h, d, 0, PLATE)` drew, its outer face the serial (PLATE_ATLAS). */
 function plateBox(trim, cx, by, cz, w, h, d) {
   trim.box(cx, by, cz, w, h, d, 0, PLATE);
   if (w < 0.3) return;                       // a bike's: too small to letter
-  const dir = cz >= 0 ? 1 : -1, z = cz + dir * (d / 2 + 0.0015), u = [dir, 0, 0], yc = by + h / 2;
-  const [lets, nums] = PLATE_SERIAL.split(' ');
-  const cells = dotCells(lets) + dotCells(nums) + 5 + 6;
-  const th = Math.min(h * 0.46, ((w * 0.86) / cells) * 7), cell = th / 7, gap = cell * 3;
-  const wl = dotCells(lets) * cell, wn = dotCells(nums) * cell, crown = cell * 5, total = wl + gap + crown + gap + wn;
-  const sAt = (s) => [cx + u[0] * s, 0, z];
-  let s = -total / 2;
-  const at = (s, y) => { const p = sAt(s); return [p[0], y, z]; };
-  dotText(trim, lets, { c: at(s + wl / 2, yc - h * 0.03), u, h: th, col: PLATE_BLUE, bold: 0.25 });
-  s += wl + gap;
-  // the crown: a band and three points
-  const cy0 = yc - h * 0.03 - th * 0.25, n = [0, 0, dir], UV = [0, 0, 1, 0, 1, 1, 0, 1];
-  trim.quad(at(s, cy0), at(s + crown, cy0), at(s + crown, cy0 + th * 0.18), at(s, cy0 + th * 0.18), n, UV, PLATE_BLUE);
-  for (const k of [0, 0.5, 1]) {
-    const px = s + crown * (0.12 + k * 0.76);
-    trim.quad(at(px - cell * 0.5, cy0 + th * 0.18), at(px + cell * 0.5, cy0 + th * 0.18), at(px + cell * 0.5, cy0 + th * (k === 0.5 ? 0.62 : 0.48)), at(px - cell * 0.5, cy0 + th * (k === 0.5 ? 0.62 : 0.48)), n, UV, PLATE_BLUE);
-  }
-  s += crown + gap;
-  dotText(trim, nums, { c: at(s + wn / 2, yc - h * 0.03), u, h: th, col: PLATE_BLUE, bold: 0.25 });
-  // ONTARIO and YOURS TO DISCOVER are ~2 cm tall: lettered, ONTARIO alone
-  // cost 70 triangles a plate for a smudge, so both are hairlines
-  for (const [yy, sw] of [[by + h * 0.82, w * 0.17], [by + h * 0.09, w * 0.32]]) {
-    trim.quad(at(-sw, yy), at(sw, yy), at(sw, yy + h * 0.045), at(-sw, yy + h * 0.045), n, UV, PLATE_BLUE);
-  }
+  const dir = cz >= 0 ? 1 : -1, z = cz + dir * (d / 2 + 0.0015);
+  // u runs to the viewer's right (+x seen from the front, -x from behind)
+  const xl = cx - dir * w / 2, xr = cx + dir * w / 2;
+  trim.quad([xl, by, z], [xr, by, z], [xr, by + h, z], [xl, by + h, z], [0, 0, dir], [0, 0, 1, 0, 1, 1, 0, 1],
+    [[0, 0, PLATE_KEY], [1, 0, PLATE_KEY], [1, 1, PLATE_KEY], [0, 1, PLATE_KEY]]);
 }
 
 /** A roll-up aluminium compartment door on a flank, with its slats and lift bar. */
@@ -10267,6 +10308,9 @@ export function tagGlass(geo) {
     else if (Math.abs(col[i * 3] - GLASS_TINT[0]) < 1e-4 && Math.abs(col[i * 3 + 1] - GLASS_TINT[1]) < 1e-4
       && Math.abs(col[i * 3 + 2] - GLASS_TINT[2]) < 1e-4) flag[i] = 3;
     else if (Math.abs(col[i * 3 + 1] - SHADOW_G) < 1e-4 && Math.abs(col[i * 3 + 2] - SHADOW_B) < 1e-4) flag[i] = 2;
+    // a plate's face (plateBox): its UV in red and green, PLATE_KEY in blue
+    else if (Math.abs(col[i * 3 + 2] - PLATE_KEY) < 1e-5 && (col[i * 3] === 0 || col[i * 3] === 1)
+      && (col[i * 3 + 1] === 0 || col[i * 3 + 1] === 1)) flag[i] = 4;
   }
   geo.setAttribute('glass', new THREE.BufferAttribute(flag, 1));
   // Solid first, then the contact shadow on the road, then the panes.
@@ -10338,10 +10382,18 @@ const GLASS_IBL_FROM = 'reflectVec = inverseTransformDirection( reflectVec, view
  * Opaque trim has alpha 1 and so draws exactly as it did; only its pass moves.
  */
 function glassShader(sh) {
-  // glass 1 (clear) and 3 (tinted: GLASS_TINT) are glazing, 2 the contact shadow
-  sh.vertexShader = 'attribute float glass;\nvarying float vGlass;\nvarying float vShade;\nvarying float vTint;\n' + sh.vertexShader
-    .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvGlass = ( glass > 0.5 && glass < 1.5 ) || glass > 2.5 ? 1.0 : 0.0;\n\tvShade = glass > 1.5 && glass < 2.5 ? 1.0 : 0.0;\n\tvTint = glass > 2.5 ? 1.0 : 0.0;');
-  let fs = 'varying float vGlass;\nvarying float vShade;\nvarying float vTint;\n' + sh.fragmentShader;
+  // glass 1 (clear) and 3 (tinted: GLASS_TINT) are glazing, 2 the contact
+  // shadow, 4 a licence plate's face (plateBox; the serial is the mesh's own,
+  // read from its x scale: see PLATE_STEP)
+  sh.uniforms.plateTex = { value: plateAtlas() };
+  sh.vertexShader = 'attribute float glass;\nvarying float vGlass;\nvarying float vShade;\nvarying float vTint;\nvarying float vPlate;\nvarying float vPlateK;\n' + sh.vertexShader
+    .replace('#include <begin_vertex>', `#include <begin_vertex>
+	vGlass = ( glass > 0.5 && glass < 1.5 ) || ( glass > 2.5 && glass < 3.5 ) ? 1.0 : 0.0;
+	vShade = glass > 1.5 && glass < 2.5 ? 1.0 : 0.0;
+	vTint = glass > 2.5 && glass < 3.5 ? 1.0 : 0.0;
+	vPlate = glass > 3.5 ? 1.0 : 0.0;
+	vPlateK = mod( floor( ( length( modelMatrix[ 0 ].xyz ) / length( modelMatrix[ 1 ].xyz ) - 1.0 ) * ${PLATE_STEP.toFixed(1)} + 0.5 ), ${PLATE_N.toFixed(1)} );`);
+  let fs = 'varying float vGlass;\nvarying float vShade;\nvarying float vTint;\nvarying float vPlate;\nvarying float vPlateK;\nuniform sampler2D plateTex;\n' + sh.fragmentShader;
   if (THREE.ShaderChunk.envmap_physical_pars_fragment.includes(GLASS_IBL_FROM)) {
     fs = fs.replace('#include <envmap_physical_pars_fragment>',
       THREE.ShaderChunk.envmap_physical_pars_fragment.replace(GLASS_IBL_FROM, `${GLASS_IBL_FROM}
@@ -10351,7 +10403,12 @@ function glassShader(sh) {
   }
   fs = fs
     .replace('#include <color_fragment>', `#include <color_fragment>
-	diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.018, 0.022, 0.026 ), vGlass );`)
+	diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.018, 0.022, 0.026 ), vGlass );
+	if ( vPlate > 0.5 ) {
+		vec2 pc = vec2( mod( vPlateK, ${PLATE_COLS.toFixed(1)} ), floor( vPlateK / ${PLATE_COLS.toFixed(1)} ) );
+		vec2 puv = clamp( vColor.rg, 0.01, 0.99 );
+		diffuseColor.rgb = texture2D( plateTex, vec2( ( pc.x + puv.x ) / ${PLATE_COLS.toFixed(1)}, 1.0 - ( pc.y + 1.0 - puv.y ) / ${Math.ceil(PLATE_N / PLATE_COLS).toFixed(1)} ) ).rgb * 0.92;
+	}`)
     .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
 	metalnessFactor = mix( metalnessFactor, 0.0, vGlass );
 	roughnessFactor = mix( roughnessFactor, 0.05, vGlass );`)
@@ -10535,7 +10592,6 @@ export function vehicleAssets() {
   if (CACHE) return CACHE;
   const types = {};
   for (const k of Object.keys(TYPES)) {
-    PLATE_SERIAL = plateSerial(k);   // Auto KW: each type's own Ontario plate (plateBox)
     types[k] = PRE && PRE.types[k] ? restoreType(PRE.types[k], TYPES[k]) : buildType(TYPES[k]);
   }
   // The trim draw moves to the transparent pass for its glass (see
@@ -10987,8 +11043,8 @@ function clusterFar(parts) {
     const map = new Int32Array(pos.length / 3);
     for (let v = 0; v < map.length; v++) {
       const k3 = v * 3;
-      if (gls && gls[v] > 1.5) { map[v] = -1; continue; }   // contact shadow: not in the far LOD
-      const glass = gls && gls[v] > 0.5;
+      if (gls && gls[v] > 1.5 && gls[v] < 2.5) { map[v] = -1; continue; }   // contact shadow: not in the far LOD
+      const glass = gls && gls[v] > 0.5 && gls[v] < 3.5, plate = gls && gls[v] > 3.5;
       const pt = glass ? 'glass' : part;
       const nx = nor[k3], ny = nor[k3 + 1], nz = nor[k3 + 2];
       const key = `${pt}|${Math.round(pos[k3] / FAR_CELL)}|${Math.round(pos[k3 + 1] / FAR_CELL)}|${Math.round(pos[k3 + 2] / FAR_CELL)}`
@@ -11003,6 +11059,7 @@ function clusterFar(parts) {
       P[c * 3] += pos[k3]; P[c * 3 + 1] += pos[k3 + 1]; P[c * 3 + 2] += pos[k3 + 2];
       N[c * 3] += nx; N[c * 3 + 1] += ny; N[c * 3 + 2] += nz;
       if (glass) { C[c * 3] += 0.05; C[c * 3 + 1] += 0.06; C[c * 3 + 2] += 0.075; }
+      else if (plate) { C[c * 3] += PLATE[0]; C[c * 3 + 1] += PLATE[1]; C[c * 3 + 2] += PLATE[2]; }
       else if (col && (part !== 'paint' || vc)) { C[c * 3] += col[k3]; C[c * 3 + 1] += col[k3 + 1]; C[c * 3 + 2] += col[k3 + 2]; }
       else { C[c * 3] += 1; C[c * 3 + 1] += 1; C[c * 3 + 2] += 1; }
       cnt[c]++;
@@ -11112,6 +11169,7 @@ export function farLod(typeName) {
 // the rate ABOVE that is fed forward, so a steep street is held at 0.08 m.
 const FF_FREE = 1.5;
 
+let PLATE_SEQ = 0;
 export class Vehicle {
   constructor(city, typeName, color, opts = {}) {
     const A = vehicleAssets();
@@ -11134,6 +11192,9 @@ export class Vehicle {
     this.bodyMat = paintMaterial(this.color, t.spec.finish);
     const paintMesh = new THREE.Mesh(t.paintGeo, this.bodyMat);
     this.trimMesh = new THREE.Mesh(t.trimGeoW, A.trimMat);
+    // its own Ontario plate (see PLATE_STEP): which of the atlas's serials
+    this.plateK = (PLATE_SEQ = (PLATE_SEQ + 37) % PLATE_N);
+    this.trimMesh.scale.x = 1 + this.plateK / PLATE_STEP;
     this.matteMesh = new THREE.Mesh(t.matteGeoW, A.matteMat);
     paintMesh.castShadow = this.trimMesh.castShadow = this.matteMesh.castShadow = true;
     this.paintMesh = paintMesh;
