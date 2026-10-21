@@ -878,8 +878,40 @@ file and a guide disagree, this file wins.
     signal 310 -> 312; a signalled arterial 103 -> 105, 665k -> 674k; its
     aerial 189 -> 191; roundabout entry 163 -> 165; roundabout aerial 248 ->
     247; all-way 449 -> 449, 1228k -> 1249k; stop 457 -> 459. 0 exceptions.
-  - **Not done / approximate:** pedestrians ignore the signals (peds.js);
-    no right turn on red; signal timing is fixed-time (no detectors);
+  - **Right turn on red, walk signals** (QA pass after v39): a car whose
+    move is 'R' at a red stops at the line (< 0.35 m/s within 2.2 m,
+    `v.jcRtor`), waits 1.2 s, then goes if `rtorBusy` is clear: nothing
+    moving in the box, nobody on foot crossing within the box + 9 m
+    (traffic's `crossXZ`), and no car on an approach whose group has the
+    light (green, amber, advance) reaching the line within `GAP_T` or
+    standing within 12 m of it. `A.noRtor` (unset: OSM's no-right-on-red
+    signs are not extracted) forbids it. `T.stats.rtor` counts them; the
+    fuzz probe's `commits.rtor`. **Pedestrians at a signalled corner**
+    (peds.js, the crossing wait): `jc.walkState(C, jc.walkGroup(C, dx, dz))`
+    -- the same answer the pedestrian heads show (`walkState`; a one-group
+    signal's ped phase walks ACROSS the road) -- they wait on the hand and the
+    flashing hand, step off on the walking person (still giving a moving car
+    2.5 s), and the wait does not count against the path's time. Verify with
+    `VIEW_PROBE_FILE=tools/kw/pedsignal.js node tools/kw/kwshots.mjs /tmp/x`
+    (steps traffic + peds at four signals and classifies every step off the
+    kerb from the phase alone, so it runs on master): master 9 walk / 8
+    flash / 23 hand, this 35 / 1 / 4 (the 4: a corner the probe attributes to
+    a neighbouring signal); mean kerb wait 0.7 -> 13.7 s.
+  - **Signal poles stand on the kerb corner** (`rigs`, `POLE_SEARCH`): the
+    nearest spot off every carriageway and out of buildings, searched out to
+    the right and along the road. The old six diagonal steps gave up in the
+    road for 95 of 1701 poles (12 now); a pole in the lanes is a collision
+    obstacle, cars wedged on it, backed out and hit the car behind -- the
+    "all-way" hotspot at (-316, 428) was signal 560's two poles in its lanes:
+    master 4 crashes in 2 x 600 s of traffic there, 0 after. Mast arms run
+    to `MAST_MAX` 17 m and a lane head past the arm's end is dropped (it hung
+    from nothing). Stop/yield sign posts search the same way
+    (`SIGN_SEARCH`) or are not planted. `tools/kw/roadclutter.js` counts
+    collision obstacles standing on a carriageway round 12 sites: master
+    19, this 2. A two-way stop also waits for a car standing on the major
+    road within 12 m of the junction (it pulls away the moment it can).
+  - **Not done / approximate:** signal timing is fixed-time (no detectors);
+    no-right-on-red signs are not read from OSM;
     approaches the matcher misses (52 signal clusters, 171 stops) stay
     uncontrolled; the junction-polygon artefacts in big intersections are
     master's; a two-way stop's side street can wait long on a busy arterial.
@@ -1349,6 +1381,33 @@ file and a guide disagree, this file wins.
   are not drawn; the bridge's arch rise and rib size (no photo, the Region's
   description only); E/F Wing and the other box-drawn Conestoga buildings keep
   their generic look.
+
+- **QA sweep after v22-v39** (docs/qa-*.jpg, before over after).
+  `tools/kw/sweeppick.js` picks ~60 road points (fixed spots: Uptown,
+  downtown, Galt, St. Jacobs, UW, WLU, Conestoga, plazas; the rest a seeded
+  draw by road class) and prints a VIEWS list, four driver's-eye shots a
+  point (recipe in the file; ~25 min for 240 shots). Found and fixed at the
+  root: **(1) wall signs on bridge arms** -- OSM draws E3's enclosed bridge
+  to E5 as part of E3's outline, and the nameplate went on the face nearest
+  the street: the bridge's side, 3.2 m over Ring Road, mirrored from the
+  approach. kw.js `polyFace` now only offers walls backed by 3.5 m of the
+  outline (not a narrow arm) and, for nameplates, not over a road.
+  **(2) freeway signs off decks** -- highways.js `standOk`: no sign where
+  its frame is on a deck (`e.elev`) or the ground at its posts is more than
+  `STAND_DROP` 4.5 m below the road: exit 278A's gantry stood on the 401's
+  Grand River bridge with a 19 m post to the river bed, three ground signs
+  did the same; advance signs and route markers now try a few distances
+  (50 gantries before and after; shields 51 -> 56, speed signs 62 -> 60).
+  **(3) crosswalks crossed over each other** at a split approach's mouth
+  (the two one-way legs' crossings, each moved out to its own mouth):
+  junctions.js `xingClash` draws only the lower edge's when the strips
+  cross or overlap side by side. **(4) signal poles and stop signs in the
+  road** (above, Junctions). Seen, not fixed: a hairline of grass across
+  the road at some chunk boundaries (Galt, (12000, 8800)); a garage door
+  drawn over a facade window on some houses; rural fences through tree
+  trunks; "the gantry behind Conestoga's Rec Centre" from (5560, 6985) is
+  inside E Wing's box -- what floats there is E Wing's rooftop units seen
+  from inside the building, not a sign.
 
 ## Build number
 
