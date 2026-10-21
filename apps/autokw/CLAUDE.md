@@ -14,7 +14,7 @@ file and a guide disagree, this file wins.
   `cut_extract.py` (Ontario .pbf -> the box, once) then `osm_extract.py`,
   `build_raster.py`, `build_roads.py`, `build_buildings.py`, `build_places.py`,
   `build_lots.py`, `build_wood.py`, `build_beaches.py`, `build_parkprops.py`,
-  `build_bikepaths.py`, `build_piers.py` (all with `tools/.venv/bin/python`).
+  `build_bikepaths.py`, `build_piers.py`, `build_hwy.py` (all with `tools/.venv/bin/python`).
 - **Heights are ELEV_BASE (250 m) below sea level-referenced DEM heights**
   (`tools/kw/proj.py`), so the ground sits at ~5-175 m in the game as Seattle's did.
 - **There is no sea.** Water is ONE FIELD: `data/wlevel.png` (same encoding as
@@ -300,6 +300,58 @@ file and a guide disagree, this file wins.
   `__dbg.kart.autopilot = true` (+ `autoPace`) drives the player's kart
   through `player.autoDrive`; a full race through the panel's buttons
   takes ~3 min of wall clock with AUTO_GPU=1.
+
+- **The freeways** (src/highways.js, `data/hwy.json` from tools/kw/build_hwy.py;
+  docs/hwy-*.jpg): the Conestoga Parkway (7/8, 7, 85), Hwy 8, the 401, Hwy 7/8
+  west, as Ontario builds and signs them. hwy.json is OSM's: every
+  motorway/trunk carriageway (ref, maxspeed, lit), every EXIT (a link leaving a
+  motorway: junction:ref -- the 401's 268-286; **the Conestoga's exits are
+  unnumbered**, `noref` -- destination, destination:ref, destination:street,
+  from the ramp or the ramps it splits into, and the side it leaves by) and
+  every entrance. Re-run build_hwy.py after a new cut of kw.osm.pbf.
+  `prepHighways` (before traffic) matches each `hwy` edge to its carriageway
+  (`INFO`) and sets `e.spd` = maxspeed + 10 km/h (90 Conestoga, 100 Hwy 8,
+  110 on the 401). `buildHighways` (a landmarks.js extra, but its meshes go in
+  its OWN group, `highwaysRoot()`, in 1.5 km cells shown only within
+  `FURN_R` 1200 / `SIGN_R` 900 m of the camera by `updateHighways` in
+  draw(): as landmark clusters it cost +76 draws looking down Hwy 8, as
+  every cluster in the frustum drew it). Its geometry is vertex-coloured in
+  kw.js's `polyMat()` (one material, no casting); signs are one more draw a
+  cell, from their own 2048 x 1024 canvas (`SignAtlas`; the small panels
+  are drawn first so a full atlas can only cost a guide sign).
+  **The median:** every 10 m of a one-way `hwy` edge, the opposing
+  carriageway to its left (`gap` = inner edge to inner edge); 1-18 m apart
+  gets the paved median and the 1.07 m Ontario Tall Wall on the midline,
+  drawn by the lower edge index of the pair (each sample decides, so pieces
+  can meet with a seam). Not on Hwy 85 north of z -2150 (the barrier ends
+  "just past Lancaster", Wikipedia; a grass median after). The walls are
+  landmark solids with `mono` (AI traffic is not shoved by them) added
+  AFTER buildLandmarks (`addHighwaySolids`): its on-road test counts a
+  freeway's embankment (`pbw`) as road and dropped them. Twin davit poles
+  every 50 m on the wall where OSM says lit=yes, else single ones off the
+  right shoulder. **Signs:** per exit an overhead cantilever 300 m before
+  the diverge (exit tab, King's crown shields for provincial routes, the
+  white flowerpot for Regional Roads, the direction once after a
+  concurrency -- "7 8 WEST" -- the streets and control cities, abbreviated),
+  the same panel on posts at 1 km over a "1 km" plate, and the green EXIT
+  sign in the gore (the first spot 60-240 m on clear of every carriageway,
+  `onCw`: city.onRoad counts the embankment). After each entrance a MAXIMUM
+  sign at ~180 m and a route marker at 420 m (`AXIS`: which way is EAST /
+  NORTH per route). OSM's two `wall=noise_barrier` lines are noise walls.
+  **Paint (world.js meshRoadMarks):** broken white 3 m / 6 m lane lines at
+  the boundaries of the lanes traffic.js `laneLatU` lays (0.8 m in, floor(w
+  / 3.6) lanes), a yellow left edge line on every one-way `hwy` edge and
+  every ramp. Verify: `sh tools/kw/hwyshots.sh <dir> [prefixes]` (boots
+  once for `window.__hwy.views` -- each sign's viewpoint -- then shoots
+  them; `window.__hwy` has the counts; `window.__noHwy = true` before boot
+  turns the furniture off for a before/after). Phone (AUTO_PHONE=1, GPU),
+  __noHwy before -> after: Conestoga at Fairway 200 -> 203 draws, 584k ->
+  586k tris; Hwy 8 at King 405 -> 405; Hwy 85 at King N 235 -> 240; the 401
+  at Hespeler 116 -> 121. Build ~50-70 ms on the Mac. Not done: the Ontario
+  "tall wall" ends with no crash cushion, there are no high-mast lights at
+  the 401/8 interchange, no noise walls beyond OSM's two (the Parkway has
+  many more, unmapped), no overhead lane-use arrows, and the AI does not
+  change lanes or merge on its own (it holds the lane it spawned in).
 
 ## Build number
 

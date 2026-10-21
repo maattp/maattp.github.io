@@ -63,7 +63,7 @@ const AXIS = {
   '7': [-0.29, -0.96, 'EAST', 'WEST'], '85': [0, -1, 'NORTH', 'SOUTH'], '24': [0, -1, 'NORTH', 'SOUTH'],
 };
 
-export const STATS = { views: [], why: { near: 0, road: 0, walk: 0, nomain: 0 }, wall: 0, paved: 0, poles: 0, signs: 0, gantries: 0, speed: 0, shields: 0, exits: 0, tris: 0, edgesTimed: 0, atlas: null };
+export const STATS = { noise: 0, views: [], why: { near: 0, road: 0, walk: 0, nomain: 0 }, wall: 0, paved: 0, poles: 0, signs: 0, gantries: 0, speed: 0, shields: 0, exits: 0, tris: 0, edgesTimed: 0, atlas: null };
 
 let HW = null;            // hwy.json
 let HWY_SOLIDS = [];      // the walls and posts, added after the landmark solids' road test
@@ -247,6 +247,8 @@ const COL = {
   back: lin([0.52, 0.54, 0.56]),
   lamp: lin([0.20, 0.21, 0.22]),
   lens: lin([0.92, 0.90, 0.80]),
+  noise: lin([0.60, 0.57, 0.52]),     // a precast noise wall's panels
+  noiseCap: lin([0.48, 0.46, 0.43]),
 };
 
 /** A builder that paints everything it is handed in one colour. */
@@ -423,6 +425,11 @@ function exitContent(x) {
     const m = /(North|South|East|West)\s*$/i.exec(d);
     if (m && shields.length === 1 && !shields[0].dir) shields[0].dir = m[1].toUpperCase();
   }
+  // "7 & 8 WEST": a concurrency signed with one direction shares it, and
+  // the word is written once, after the last of them
+  const dirs = new Set(shields.map((q) => q.dir).filter(Boolean));
+  if (dirs.size === 1) { const d = [...dirs][0]; for (const q of shields) q.dir = d; }
+  shields.forEach((q, i) => { q.say = q.dir && !(shields[i + 1] && shields[i + 1].dir === q.dir); });
   return { shields, lines };
 }
 
@@ -432,18 +439,18 @@ function guidePanel(atlas, x, dist) {
   if (!shields.length && !lines.length) return null;
   const PPM = 30;
   const tab = x.ref ? `EXIT ${x.ref}` : null;
-  const SH = 46, LH = 26, PAD = 10, TAB = tab ? 22 : 0;
+  const SH = 46, LH = 26, PAD = 10, TAB = tab ? 28 : 0;
   const mg = document.createElement('canvas').getContext('2d');
   mg.font = `500 ${LH * 0.82}px ${FONT}`;
   let w = 0;
   for (const l of lines) w = Math.max(w, mg.measureText(l).width);
   let sw = 0;
   mg.font = `bold ${SH * 0.42}px ${FONT}`;
-  for (const s of shields) sw += SH * 0.86 + (s.dir ? mg.measureText(s.dir).width + 10 : 0) + 18;
+  for (const s of shields) sw += SH * 0.86 + (s.say ? mg.measureText(s.dir).width + 10 : 0) + 18;
   w = Math.max(w, sw, dist ? 120 : 0, 150) + PAD * 2;
   const body = PAD * 2 + (shields.length ? SH + 8 : 0) + lines.length * LH + (dist ? LH * 0.9 : 0) - 6;
   const Wpx = Math.ceil(w), Hpx = Math.ceil(body + TAB);
-  const key = `g|${tab}|${shields.map((s) => s.num + s.dir).join(',')}|${lines.join(',')}|${dist || ''}`;
+  const key = `g|${tab}|${shields.map((s) => s.num + (s.say ? s.dir : '')).join(',')}|${lines.join(',')}|${dist || ''}`;
   const P = atlas.get(key, Wpx, Hpx, PPM, (g, W, H) => {
     g.clearRect(0, 0, W, H);
     if (tab) {
@@ -460,12 +467,12 @@ function guidePanel(atlas, x, dist) {
     if (shields.length) {
       g.font = `bold ${SH * 0.42}px ${FONT}`;
       let tot = 0;
-      for (const s of shields) tot += SH * 0.86 + (s.dir ? g.measureText(s.dir).width + 10 : 0) + 18;
+      for (const s of shields) tot += SH * 0.86 + (s.say ? g.measureText(s.dir).width + 10 : 0) + 18;
       let cx = (W - tot + 18) / 2;
       for (const s of shields) {
         const sw2 = s.king ? kingShield(g, cx + SH * 0.43, y, SH, s.num) : potShield(g, cx + SH * 0.43, y + 4, SH - 8, s.num);
         cx += sw2 + 10;
-        if (s.dir) {
+        if (s.say) {
           g.fillStyle = '#fff'; g.font = `bold ${SH * 0.42}px ${FONT}`; g.textAlign = 'left'; g.textBaseline = 'middle';
           g.fillText(s.dir, cx, y + SH * 0.6);
           cx += g.measureText(s.dir).width + 18;
@@ -575,10 +582,7 @@ export function buildHighways(ctx) {
       let t = l2 > 0 ? ((x - a.x) * sx + (z - a.z) * sz) / l2 : 0;
       t = t < 0 ? 0 : t > 1 ? 1 : t;
       const r = e.hw + pad;
-      if ((a.x + sx * t - x) ** 2 + (a.z + sz * t - z) ** 2 <= r * r) {
-        if ((STATS.fails ||= []).length < 12) STATS.fails.push([Math.round(x), Math.round(z), e.cls, e.hw, +Math.sqrt((a.x + sx * t - x) ** 2 + (a.z + sz * t - z) ** 2).toFixed(1), e.elev ? 1 : 0]);
-        return true;
-      }
+      if ((a.x + sx * t - x) ** 2 + (a.z + sz * t - z) ** 2 <= r * r) return true;
     }
     return false;
   };
@@ -715,6 +719,31 @@ export function buildHighways(ctx) {
     }
   });
 
+  // ---- noise walls: OSM's wall=noise_barrier lines -----------------------
+  // Precast panels between steel H-posts every 4 m, as MTO builds them; the
+  // height is OSM's, else 4 m. Each panel is a solid.
+  for (const w of HW.noise || []) {
+    const H = parseFloat(w.h) || 4.0;
+    for (let i = 0; i + 1 < w.p.length; i++) {
+      const [ax, az] = w.p[i], [bx, bz] = w.p[i + 1];
+      const L = Math.hypot(bx - ax, bz - az);
+      if (L < 0.3) continue;
+      const n = Math.max(1, Math.round(L / 4));
+      for (let k = 0; k < n; k++) {
+        const x0 = ax + ((bx - ax) * k) / n, z0 = az + ((bz - az) * k) / n;
+        const x1 = ax + ((bx - ax) * (k + 1)) / n, z1 = az + ((bz - az) * (k + 1)) / n;
+        const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2, l = L / n;
+        const y0 = Math.min(G.terrainHeight(x0, z0), G.terrainHeight(x1, z1)) - 0.3;
+        const rot = Math.atan2(z1 - z0, x1 - x0);
+        K.B(mx, mz, 'noise').box(mx, y0, mz, l, H + 0.3, 0.2, rot);
+        K.B(mx, mz, 'noiseCap').box(mx, y0 + H + 0.3, mz, l, 0.12, 0.26, rot);
+        K.B(x0, z0, 'steel').box(x0, y0, z0, 0.22, H + 0.45, 0.3, rot);
+        solids.push({ x: mx, z: mz, hw: l / 2, hd: 0.12, rot, y0, y1: y0 + H + 0.3 });
+        STATS.noise += l;
+      }
+    }
+  }
+
   // ---- signs ---------------------------------------------------------------
   const placed = [];   // [x, z] of every sign standing, to keep them apart
   const clear = (x, z, r) => !placed.some(([a, b]) => (a - x) * (a - x) + (b - z) * (b - z) < r * r);
@@ -733,7 +762,7 @@ export function buildHighways(ctx) {
     face(K, f, 0, off, yb, P);
     for (const s of P.w > 1.4 ? [-1, 1] : [0]) {
       const px = x + f.rx * s * P.w * 0.3 + f.ux * 0.12, pz = z + f.rz * s * P.w * 0.3 + f.uz * 0.12;
-      post(K, solids, px, pz, yg - 0.3, yb + P.h - yg + 0.2, 0.12);
+      post(K, solids, px, pz, yg - 0.3, yb + P.h - (P.tab || 0) - yg + 0.1, 0.12);
     }
     placed.push([x, z]);
     if (view) {
