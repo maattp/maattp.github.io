@@ -5263,9 +5263,22 @@ float frLine(float o, float fw, float c, float w) {
         if (!open) {
           // the rail's traffic face: the lower 40 % of the tile, so its base
           // carries the texture's grime band where spray collects
-          face.quad([R0[0], y0, R0[1]], [R1[0], y1, R1[1]],
-            [R1[0], y1 + RAIL, R1[1]], [R0[0], y0 + RAIL, R0[1]],
-            [-ox, 0, -oz], [CU(0), 0, CU(1), 0, CU(1), 0.4, CU(0), 0.4], faceCol);
+          // ...as the F-shape a parapet is cast in: a 75 mm toe, the sloped
+          // lower face to 330 mm, the near-vertical wall above it. One flat
+          // slab read as a blue-grey board in shade; the slope catches the
+          // sky the way a concrete barrier does. (Median and rail heights:
+          // the face stops at `top`, the cap above.)
+          const F = [[0, 0.22], [0.075, 0.22], [0.33, 0.06], [top, 0]];
+          const at2 = (P, h, w) => [P[0] - ox * w, h, P[1] - oz * w];
+          const slope = [0.66, 0.66, 0.64];
+          for (let q = 0; q + 1 < F.length; q++) {
+            const [h0, w0] = F[q], [h1, w1] = F[q + 1];
+            const nl = Math.hypot(h1 - h0, w0 - w1) || 1;
+            const n = [-ox * ((h1 - h0) / nl), (w0 - w1) / nl, -oz * ((h1 - h0) / nl)];
+            const A = at2(R0, y0 + h0, w0), Bq = at2(R1, y1 + h0, w0), C = at2(R1, y1 + h1, w1), Dq = at2(R0, y0 + h1, w1);
+            if (q === 2) face.quad(A, Bq, C, Dq, n, [CU(0), 0.1, CU(1), 0.1, CU(1), 0.4, CU(0), 0.4], faceCol);
+            else flat.quad(A, Bq, C, Dq, n, [0, 0, 1, 0, 1, 1, 0, 1], slope);
+          }
         }
         // A rail that stops needs an end, or you see into a hollow wall.
         if (wasOpen[sg] !== null && wasOpen[sg] !== open) {

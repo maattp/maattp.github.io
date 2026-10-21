@@ -635,6 +635,58 @@ function post(K, solids, x, z, y0, h, w = 0.2) {
   solids.push({ x, z, r: Math.max(0.2, w * 0.7), y0, y1: y0 + h });
 }
 
+// THE CONESTOGA PARKWAY'S NOISE WALLS. OSM maps two; the Parkway has more
+// along its residential stretches. These are read off Esri World Imagery
+// (tools/kw/aerial.py: the wall's shadow line along the shoulder, the houses
+// behind it) as [x0, z0, x1, z1, side]: the stretch, and the side it stands
+// on ('N' / 'S'; the Parkway runs ~WSW-ENE here). Each is laid 3 m past the
+// outer carriageway's edge (4.5 m, clear of the signs) on that side, following it, broken where a ramp
+// crosses its line.
+const PKWY_WALLS = [
+  [-3040, 3600, -2510, 3365, 'S'],   // Forest Heights, west of Westmount Rd: south side
+  [-2030, 3070, -1770, 2985, 'N'],   // east of Westmount Rd: north side
+  [-2040, 3175, -1770, 3055, 'S'],   // ...and the townhouses on the south side
+  [-1610, 2880, -1130, 2750, 'N'],   // Ottawa St S to Homer Watson: north side
+  [-760, 2590, -280, 2505, 'N'],     // east of Homer Watson, by Kingsdale: north side
+];
+function parkwayWalls(city, idx, onCw) {
+  const out = [];
+  for (const [x0, z0, x1, z1, side] of PKWY_WALLS) {
+    const L = Math.hypot(x1 - x0, z1 - z0), n = Math.ceil(L / 8);
+    const sz = side === 'N' ? -1 : 1;
+    let run = [];
+    const flush = () => {
+      if (run.length > 4) {
+        out.push({ h: '4.2', p: run });
+        const m = run[run.length >> 1];
+        STATS.views.push({ name: `noise${out.length - 1}`, c: [+run[0][0].toFixed(1), +(run[0][1] - sz * 14).toFixed(1), 1.5], t: [+m[0].toFixed(1), +m[1].toFixed(1), 2.5], fov: 55 });
+      }
+      run = [];
+    };
+    for (let i = 0; i <= n; i++) {
+      const x = x0 + ((x1 - x0) * i) / n, z = z0 + ((z1 - z0) * i) / n;
+      // the outermost main carriageway on that side within 60 m
+      let best = null;
+      for (const ei of idx.near(x, z)) {
+        const e = city.edges[ei], a = city.nodes[e.a];
+        const t = Math.max(0, Math.min(1, ((x - a.x) * e.dx + (z - a.z) * e.dz) / e.len));
+        const qx = a.x + e.dx * e.len * t, qz = a.z + e.dz * e.len * t;
+        if (Math.hypot(qx - x, qz - z) > 60) continue;
+        if (!best || qz * sz > best.qz * sz) best = { e, t, qx, qz };
+      }
+      if (!best) { flush(); continue; }
+      const e = best.e, sg = e.dx * sz >= 0 ? 1 : -1;   // +p = (-dz, dx): its z part is dx
+      const tw = e.tw ? e.tw[Math.min(e.pk, Math.round(best.t * e.pk)) * 2 + (sg > 0 ? 0 : 1)] : e.hw;
+      const off = tw + 4.5;
+      const wx = best.qx - e.dz * sg * off, wz = best.qz + e.dx * sg * off;
+      if (onCw(wx, wz, 1.5)) { flush(); continue; }
+      run.push([wx, wz]);
+    }
+    flush();
+  }
+  return out;
+}
+
 export function buildHighways(ctx) {
   const city = ctx.city;
   if (!HW || !city || (typeof window !== 'undefined' && window.__noHwy)) return;
@@ -793,7 +845,7 @@ export function buildHighways(ctx) {
   // ---- noise walls: OSM's wall=noise_barrier lines -----------------------
   // Precast panels between steel H-posts every 4 m, as MTO builds them; the
   // height is OSM's, else 4 m. Each panel is a solid.
-  for (const w of HW.noise || []) {
+  for (const w of [...(HW.noise || []), ...parkwayWalls(city, idx, onCw)]) {
     const H = parseFloat(w.h) || 4.0;
     for (let i = 0; i + 1 < w.p.length; i++) {
       const [ax, az] = w.p[i], [bx, bz] = w.p[i + 1];
@@ -978,16 +1030,16 @@ export function buildHighways(ctx) {
   }
   for (const [x, z] of masts) {
     const y = G.terrainHeight(x, z) - 0.3, H = 30;
-    if (STATS.masts < 3) STATS.views.push({ name: `mast${STATS.masts}`, c: [x + 90, z + 60, 2], t: [x, z, 18], fov: 55 });
+    if (STATS.masts < 3) STATS.views.push({ name: `mast${STATS.masts}`, c: [x + 110, z + 110, 25], t: [x, z, 14], fov: 55 });
     const M = K.B(x, z, 'mast');
     K.B(x, z, 'concDark').box(x, y, z, 1.4, 0.8, 1.4, 0);                  // the footing
-    M.prism(x, y + 0.8, z, 0.42, H * 0.5, 8);                               // the shaft, tapering
-    M.prism(x, y + 0.8 + H * 0.5, z, 0.3, H * 0.5 - 0.8, 8);
-    M.box(x, y + H - 0.2, z, 3.2, 0.25, 3.2, 0);                            // the ring
+    M.prism(x, y + 0.8, z, 0.6, H * 0.4, 8);                                // the shaft, tapering
+    M.prism(x, y + 0.8 + H * 0.4, z, 0.45, H * 0.6 - 0.8, 8);
+    M.box(x, y + H - 0.25, z, 3.8, 0.35, 3.8, 0);                           // the ring
     for (let q = 0; q < 6; q++) {
-      const ang = (q / 6) * Math.PI * 2, lx = x + Math.cos(ang) * 1.5, lz = z + Math.sin(ang) * 1.5;
-      K.B(x, z, 'lamp').box(lx, y + H - 0.75, lz, 0.6, 0.5, 0.9, ang);
-      K.B(x, z, 'lens').box(lx, y + H - 0.8, lz, 0.5, 0.06, 0.75, ang);
+      const ang = (q / 6) * Math.PI * 2, lx = x + Math.cos(ang) * 1.8, lz = z + Math.sin(ang) * 1.8;
+      K.B(x, z, 'lamp').box(lx, y + H - 0.85, lz, 0.8, 0.6, 1.1, ang);
+      K.B(x, z, 'lens').box(lx, y + H - 0.9, lz, 0.65, 0.06, 0.9, ang);
     }
     solids.push({ x, z, r: 0.6, y0: y, y1: y + H });
     STATS.masts++;
