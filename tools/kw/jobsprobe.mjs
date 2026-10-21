@@ -90,6 +90,7 @@ window.__auto = (() => {
   };
 })();`;
 
+let closing = false;
 async function main() {
   const chrome = launchChrome({ port: PORT, profile: `/tmp/autokw-jobs-profile-${PORT}`, width: 1280, height: 720,
     extra: ['--autoplay-policy=no-user-gesture-required'] });
@@ -102,9 +103,13 @@ async function main() {
     const ws = new WebSocket(page.webSocketDebuggerUrl);
     await new Promise((r, j) => { ws.addEventListener('open', r); ws.addEventListener('error', j); });
     let id = 0; const pend = new Map(); const errs = [];
+    // a closed socket (the page or Chrome gone) leaves every pending call
+    // unresolved and node would exit 0 with nothing said: say so and fail
+    ws.addEventListener('close', () => { if (closing) return; console.log('FAIL: the DevTools socket closed (page or Chrome gone)'); process.exit(1); });
     ws.addEventListener('message', (ev) => {
       const m = JSON.parse(ev.data);
       if (m.id && pend.has(m.id)) { pend.get(m.id)(m); pend.delete(m.id); }
+      if (m.method === 'Inspector.targetCrashed') { console.log('FAIL: the page crashed'); process.exit(1); }
       if (m.method === 'Runtime.exceptionThrown') errs.push(m.params.exceptionDetails?.exception?.description || 'exception');
       if (m.method === 'Runtime.consoleAPICalled' && m.params.type === 'error') errs.push('console.error: ' + (m.params.args || []).map((a) => a.value || a.description).join(' '));
     });
@@ -321,6 +326,7 @@ async function main() {
     console.log(`exceptions: ${errs.length}${errs.length ? '\n  ' + errs.slice(0, 8).join('\n  ') : ''}`);
     if (errs.length || bad) process.exitCode = 1;
   } finally {
+    closing = true;
     chrome.kill();
   }
 }

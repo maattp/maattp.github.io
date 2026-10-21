@@ -610,7 +610,19 @@ file and a guide disagree, this file wins.
   drive, the kitchen and the door. It sets `Emulation.setFocusEmulationEnabled`:
   without it the headless page went `document.hidden` on entering a
   vehicle, which pauses the game (visibilitychange) and stops its frames.
-  Sounds: `bus_chime`, `bus_doors` in audio.js SOUNDS.
+  Sounds: `bus_chime`, `bus_doors` in audio.js SOUNDS. Both jobs read the
+  ride through `Feel` (grtbus.js): fore-aft from d(vLong)/dt and sideways
+  from vLong x yaw rate, smoothed ~0.2 s -- the world velocity's derivative
+  read 1-2 m/s^2 of phantom sideways g from the slip angle flickering under
+  keyboard steering. Grade: stops (130 each) + smoothness worth 35 % of
+  them. Probe results (autopilot, so the smoothness is the autopilot's):
+  57 Blair 10/10 served and on time, held for time at the timepoints, 3 kerb
+  strikes and 3 pedestrians clipped on the way, $230; KW Eats Campus Pizza
+  -> 23 Dunbar Rd N, 1.1 km, 3:57 against a 3:19 quote, pizza 51 %. Phone
+  (AUTO_PHONE=1, GPU), jobs off -> on: Uptown street 223 -> 223 draws,
+  934k both; Conestoga Station with the 7 and 201 buses parked in view
+  124 -> 130, 395k -> 418k. A run adds the sign and doorway quads (2 draws,
+  your bus only), KW Eats one pillar.
 
 ## Build number
 

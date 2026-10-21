@@ -398,8 +398,10 @@ export class GrtBus {
     const n = run.results.length;
     const stopPts = run.results.reduce((a, r) => a + r.pts, 0);
     const smooth = Math.max(0, Math.round(run.smooth));
-    const score = Math.round(stopPts + smooth * 2);
-    const max = (rt.stops.length - 1) * 130 + 200;
+    // smoothness is worth a third as much as the stops together
+    const sMax = (rt.stops.length - 1) * 130 * 0.35;
+    const score = Math.round(stopPts + smooth / 100 * sMax);
+    const max = Math.round((rt.stops.length - 1) * 130 + sMax);
     const f = score / max;
     const grade = f > 0.86 ? 'A' : f > 0.72 ? 'B' : f > 0.55 ? 'C' : f > 0.35 ? 'D' : 'F';
     const pay = Math.round(run.served * BASE_PAY + score / 10);
