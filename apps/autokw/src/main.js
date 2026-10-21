@@ -36,6 +36,7 @@ import { Golf } from './golf.js';
 import { Arcade } from './arcade.js';
 import { Pinball } from './pinball.js';
 import { HockeyNight } from './hockey.js';
+import { AudRink } from './audrink.js';
 import { RollUp } from './rollup.js';
 import { TowerGame } from './atc.js';
 import { DuckTour } from './ducktour.js';
@@ -1444,6 +1445,8 @@ function installShadowFade() {
     const door = best ? { x: best.qx - dx * (best.hw + 7), z: best.qz - dz * (best.hw + 7), yaw: Math.atan2(dx, dz) } : { x: AUD.x, z: AUD.z + 90, yaw: 0 };
     hockey = new HockeyNight({
       scene, city, world, audio, arena: { x: AUD.x, y: G.terrainHeight(AUD.x, AUD.z), z: AUD.z, r: 135, door },
+      // inside the Aud's bowl in 3D (audrink.js: built on entry, freed on the way out), a short game
+      view3d: new AudRink({ renderer, phone: ON_PHONE }), periodS: 80,
       onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`The Rangers paid $${m}`), 400); },
       onEnd: () => { game.release('hockey'); },
     });
@@ -1574,7 +1577,7 @@ function installShadowFade() {
       hello: "St. Jacobs Farmers' Market — stalls under the big white tent" },
     ...buggies.places(),
     { x: hockey.spot.x, z: hockey.spot.z, kind: 'hockey', name: 'The Aud', near: false,
-      hello: 'The Aud — Kitchener Rangers hockey tonight against the London Knights. Press ENTER anywhere at the arena to drop the puck' },
+      hello: 'The Aud — Kitchener Rangers hockey tonight, the London Knights or the Guelph Storm in town. Press ENTER at the arena to go in and drop the puck' },
     ...(tower ? [{ x: tower.spot.x, z: tower.spot.z, kind: 'tower', name: 'YKF Control Tower', near: false,
       hello: "YKF's control tower. Press ENTER at the door to take the field" }] : []),
     ...(ykf.runwayEnd() ? [{ x: 7228, z: -440, kind: 'jet', name: 'YKF Airport', near: false, label: 'YKF',
@@ -2604,6 +2607,11 @@ const POLICE_HQ = [43.4532, -80.4893];   // Waterloo Regional Police, Central Di
  * world for good, because Resume cannot clear a hold by design. Each frame, a
  * hold with nothing behind it is let go.
  */
+/** An interior scene owns the canvas (audrink.js, oktoberfest.js): main draws no city under it. */
+function interiorUp() {
+  return !!(hockey && hockey.active && hockey.view);
+}
+
 function reapHolds() {
   const live = { fishing, arcade, pinball, hockey, rollup, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace };
   for (const who of game.holds) {
@@ -2999,6 +3007,8 @@ function frame(now) {
     // (the fishing game's screen covers the city too, once it is up)
     const idle = game.mapOpen || pauseMenuEl.classList.contains('show') || (fishing && fishing.el.classList.contains('show'))
       || (arcade && arcade.active) || (pinball && pinball.active) || (hockey && hockey.active) || (rollup && rollup.active) || (tower && tower.active) || (coffee && coffee.active) || (pickle && pickle.active);
+    // an interior (the Aud's bowl, a festhalle) draws its own scene on the canvas: the city draws nothing
+    if (interiorUp()) { idleDrawn = 2; return; }
     if (!idle || idleDrawn < 2 || idleRedraw) { draw(now); idleDrawn++; idleRedraw = false; }
     return;
   }
