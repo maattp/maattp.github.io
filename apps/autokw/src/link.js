@@ -1,3 +1,11 @@
+// AUTO KW: THIS IS ION, Waterloo Region's light rail (route 301, Conestoga
+// to Fairway, 19 stations), on Seattle's Link engine: the profile, the
+// lazy chunks and the driving are Link's; the car (ION's Flexity Freedom),
+// the stations (OSM's platforms, ION's canopies and signs), the street and
+// corridor track, the catenary poles, the gated crossings and the 10-minute
+// timetable are ION's -- see apps/autokw/CLAUDE.md, "ION". Seattle's notes
+// follow.
+//
 // LINK LIGHT RAIL: the 1 Line across the whole map -- from the Lynnwood
 // extension at the north edge, over the Northgate guideway, 13 km of bored
 // tunnel under Roosevelt, the U District, the Montlake Cut, Capitol Hill and
@@ -51,31 +59,50 @@ export const LINK = {
   wire: 5.0,             // contact wire over the rail head (est.)
   platH: 0.36,           // platform over the rail head [ST]
   platLen: 64,           // Auto KW: ION's platforms, sized for two cars coupled one day (est.)
-  // Auto KW: one Bombardier Flexity Freedom, ~41 m in three sections
-  carLen: 41.0, cars: 1, couple: 0.8, secA: 17.6, secC: 5.8,
-  wid: 2.65, roof: 3.66,
-  vMax: 24.6, vStreet: 15.6,
-  acc: 1.3, brake: 1.3, brakeEmerg: 2.2,
+  // Auto KW: ONE Bombardier (Alstom) Flexity Freedom: 30.2 m, 2.65 m wide,
+  // five sections -- the two cabs and the centre on bogies, the two short
+  // sections between them suspended [WP Ion rapid transit; Flexity Freedom].
+  // ION runs them singly: the platforms were built for two coupled, but the
+  // second car's canopy and wall were left for "when two-car trains become
+  // the norm" [WP]. `cars: 2` couples them (the code is general).
+  carLen: 30.2, cars: 1, couple: 0.8,
+  wid: 2.65, roof: 3.42,
+  // 70 km/h on the rail corridor, 50 in the street [WP]
+  vMax: 19.4, vStreet: 11.1, vSlow: 6.9,   // ... 40 in most of the street, 25 through Uptown and downtown Kitchener
+  acc: 1.2, brake: 1.2, brakeEmerg: 2.4,
   aLat: 1.0,             // unbalanced lateral acceleration in service (est.)
-  dwell: 20,             // seconds at a platform (est.; ST schedules ~20-30)
-  perTrack: 5,           // Auto KW: ION, ~3 km apart on each track (8-10 min headways)
+  dwell: 22,             // seconds at a platform (est.: ION's are ~20-30)
+  headway: 600,          // every 10 minutes, weekdays 6 am - 10 pm [WP]: the game is always daytime
+  turn: 75,              // the least a train stands at a terminus between trips (est.)
+  perTrack: 0,           // (ION: the train count comes from the headway, makeTrains)
   perTrack2: 0,          // (ION is one line: its sb2/nb2 are the same rails)
   floatDeck: 3.2,        // the rail head over Lake Washington on the I-90 floating bridge (est.)
 };
 LINK.len = LINK.cars * LINK.carLen + (LINK.cars - 1) * LINK.couple;
 
-// The twelve sections of a train, [z0, z1] in its local frame: per car the
-// long A section, the short centre C and the long B section.
+// A Flexity Freedom's five sections, car-local z (the car centred on 0, +z
+// its B end): cab A, the suspended F1, the centre C over the middle bogie,
+// F2, cab B -- with a 0.5 m articulation between each [photos: Commons
+// "Ion Flexity Freedom 514 service livery", "ION 505 Kitchener City Hall"].
+const FF = (() => {
+  const h = LINK.carLen / 2, J = 0.5, cab = 8.05, f = 4.05;
+  const A = [-h, -h + cab], F1 = [A[1] + J, A[1] + J + f], B = [h - cab, h], F2 = [B[0] - J - f, B[0] - J];
+  return { J, sec: [A, F1, [F1[1] + J, F2[0] - J], F2, B], doors: [-h + 6.65, F1[0] + 2.75, F2[1] - 2.75, h - 6.65] };
+})();
+// The sections of a whole train, [z0, z1] in its local frame, car by car.
 const SECTIONS = (() => {
   const out = [];
   for (let c = 0; c < LINK.cars; c++) {
-    const zc = -LINK.len / 2 + LINK.carLen / 2 + c * (LINK.carLen + LINK.couple), h = LINK.carLen / 2;
-    out.push([zc - h, zc - h + LINK.secA], [zc - LINK.secC / 2, zc + LINK.secC / 2], [zc + h - LINK.secA, zc + h]);
+    const zc = -LINK.len / 2 + LINK.carLen / 2 + c * (LINK.carLen + LINK.couple);
+    for (const [a, b] of FF.sec) out.push([zc + a, zc + b]);
   }
   return out;
 })();
 
 const STEP = 1;
+// ION's colours (linear): the blue of the cars' roof line and of the
+// canopies' frit, the grey steel of the poles and canopies
+const ION_BLUE = [0.018, 0.10, 0.42];
 const _lfw = new THREE.Vector3();
 const ON_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 // how far each part is drawn: the structure, the ballast bed, the near
@@ -343,6 +370,8 @@ export class LinkTrack {
 // Geometry helpers along a track.
 
 const uv0 = [0, 0, 1, 0, 1, 1, 0, 1];
+/** A quad's uvs (corners a, b, c, d) mirrored left to right: a and b swap, c and d. */
+const mirrorUV = (u) => [u[2], u[3], u[0], u[1], u[6], u[7], u[4], u[5]];
 /** A frame at s: rail-head point, forward and left (horizontal). */
 function frame(tr, s) {
   const h = tr.heading(s);
@@ -365,69 +394,138 @@ const C = {
   paving: [0.20, 0.20, 0.21], plat: [0.58, 0.57, 0.54], tactile: [0.78, 0.66, 0.12],
   canopy: [0.82, 0.84, 0.86], teal: [0.78, 0.07, 0.10], navy: [0.16, 0.17, 0.19],
   wire: [0.12, 0.12, 0.12], black: [0.02, 0.02, 0.025],
+  slab: [0.60, 0.59, 0.56], post: [0.05, 0.05, 0.055], pole: [0.40, 0.43, 0.46],
 };
 
-/** The ballast-and-sleepers texture: u across the 3 m bed, v along 2.4 m. */
+/** The ballast-and-sleepers texture, u 0..0.5 across the 3 m bed, v along
+ *  2.4 m; and in u 0.5..1 the corridor's black chain-link fence (u up its
+ *  1.8 m, v along it), cut out by the material's alphaTest. */
 function bedTexture() {
-  const W = 128, H = 256;
+  const W = 256, H = 256, BW = 128;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const g = c.getContext('2d');
   let seed = 7;
   const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-  g.fillStyle = '#6b655c'; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#6b655c'; g.fillRect(0, 0, BW, H);
   for (let k = 0; k < 2600; k++) {
     const v = 70 + rnd() * 70;
     g.fillStyle = `rgb(${v + 6},${v},${v - 8})`;
-    g.fillRect(rnd() * W, rnd() * H, 1 + rnd() * 2.5, 1 + rnd() * 2);
+    g.fillRect(rnd() * BW, rnd() * H, 1 + rnd() * 2.5, 1 + rnd() * 2);
   }
   // four concrete sleepers a repeat (0.6 m), 2.6 m of the 3 m
   for (let t = 0; t < 4; t++) {
     const y = t * H / 4 + 10;
-    g.fillStyle = '#9d9a92'; g.fillRect(W * 0.065, y, W * 0.87, H * 0.1);
-    g.fillStyle = '#b3b0a8'; g.fillRect(W * 0.065, y, W * 0.87, H * 0.02);
-    g.fillStyle = '#56534e'; g.fillRect(W * 0.065, y + H * 0.085, W * 0.87, H * 0.015);
+    g.fillStyle = '#9d9a92'; g.fillRect(BW * 0.065, y, BW * 0.87, H * 0.1);
+    g.fillStyle = '#b3b0a8'; g.fillRect(BW * 0.065, y, BW * 0.87, H * 0.02);
+    g.fillStyle = '#56534e'; g.fillRect(BW * 0.065, y + H * 0.085, BW * 0.87, H * 0.015);
     // rail seats (fastenings) under each rail
-    for (const u of [0.26, 0.74]) { g.fillStyle = '#2c2a28'; g.fillRect(W * u - 6, y + 2, 12, H * 0.1 - 4); }
+    for (const u of [0.26, 0.74]) { g.fillStyle = '#2c2a28'; g.fillRect(BW * u - 6, y + 2, 12, H * 0.1 - 4); }
   }
+  // the chain-link: diamonds ~9 cm, a top and bottom tension wire
+  g.clearRect(BW, 0, W - BW, H);
+  g.strokeStyle = '#141516'; g.lineWidth = 1.6;
+  const step = 8;
+  g.beginPath();
+  for (let k = -H; k < H + W; k += step) {
+    g.moveTo(BW + 0, k); g.lineTo(BW + (W - BW), k + (W - BW));
+    g.moveTo(BW + 0, k); g.lineTo(BW + (W - BW), k - (W - BW));
+  }
+  g.stroke();
+  g.fillStyle = '#141516'; g.fillRect(BW, 0, 4, H); g.fillRect(W - 5, 0, 5, H);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = THREE.ClampToEdgeWrapping; tex.wrapT = THREE.RepeatWrapping;
   tex.anisotropy = 8;
   return tex;
 }
+const BED_U = 0.5;                       // the ballast's share of the bed texture's width
 
-/** Station name boards (and the LINK roundel), one canvas. */
+/** Each station's colour: the feature wall at its platform's end (ION gives
+ *  every station its own colour scheme and pattern there -- Queen's is orange
+ *  and blue; the rest are stand-ins in the same spirit). sRGB hex. */
+const FEATURE = ['#e8742c', '#2a8fd0', '#7bb342', '#c2185b', '#f2b51d', '#00897b', '#5e35b1', '#d84315', '#1e88e5',
+  '#8d6e63', '#43a047', '#fb8c00', '#3949ab', '#e53935', '#00acc1', '#7cb342', '#ab47bc', '#f4511e', '#26a69a'];
+
+/** ION's lettering for the line: station name boards (black, the ion mark,
+ *  the name in white), each station's feature-wall panel, the platform LED
+ *  next-train signs, the Canadian crossbuck. One canvas, shelf-packed. */
 function signAtlas(names) {
-  const W = 1024, CH = 64, cols = 2;
-  const rows = Math.ceil((names.length + 1) / cols);
-  const c = document.createElement('canvas'); c.width = W; c.height = 64 * Math.max(8, rows);
+  const W = 2048, H = 640;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
   const g = c.getContext('2d');
   const cells = {};
-  const cell = (k, draw) => {
-    const x = (k % cols) * (W / cols), y = Math.floor(k / cols) * CH;
-    g.save(); g.translate(x, y); draw(g, W / cols, CH); g.restore();
-    return [x / W, 1 - (y + CH) / c.height, (x + W / cols) / W, 1 - y / c.height];
+  let x = 0, y = 0, rowH = 0;
+  const cell = (name, w, h, draw) => {
+    if (x + w > W) { x = 0; y += rowH + 4; rowH = 0; }
+    g.save(); g.translate(x, y); g.beginPath(); g.rect(0, 0, w, h); g.clip(); draw(g, w, h); g.restore();
+    cells[name] = [(x + 0.5) / W, 1 - (y + h - 0.5) / H, (x + w - 0.5) / W, 1 - (y + 0.5) / H];
+    x += w + 4; rowH = Math.max(rowH, h);
   };
-  names.forEach((nm, k) => {
-    cells[nm] = cell(k, (q, w, h) => {
-      // Auto KW: ION's name boards, charcoal with the red band
-      q.fillStyle = '#26282b'; q.fillRect(0, 0, w, h);
-      q.fillStyle = '#d0202e'; q.fillRect(0, h - 7, w, 7);
-      q.fillStyle = '#d0202e'; q.beginPath(); q.arc(34, h / 2 - 3, 20, 0, Math.PI * 2); q.fill();
-      q.fillStyle = '#ffffff'; q.font = '900 15px -apple-system, Helvetica, sans-serif'; q.textAlign = 'center'; q.textBaseline = 'middle';
-      q.fillText('ION', 34, h / 2 - 2);
-      q.fillStyle = '#ffffff'; q.textAlign = 'left';
-      let fs = 34;
-      q.font = `700 ${fs}px -apple-system, Helvetica, sans-serif`;
-      while (q.measureText(nm).width > w - 84 && fs > 16) { fs -= 2; q.font = `700 ${fs}px -apple-system, Helvetica, sans-serif`; }
-      q.fillText(nm, 66, h / 2 - 2);
-    });
+  const font = (wt, s) => `${wt} ${s}px -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif`;
+  const ion = (q, x0, y0, h, col) => {
+    q.save(); q.translate(x0, y0); q.fillStyle = col; q.strokeStyle = col;
+    const s = h / 100; q.lineWidth = 17 * s; q.lineCap = 'round';
+    q.beginPath(); q.arc(10 * s, 18 * s, 10 * s, 0, Math.PI * 2); q.fill();
+    q.beginPath(); q.moveTo(10 * s, 44 * s); q.lineTo(10 * s, 92 * s); q.stroke();
+    q.beginPath(); q.arc(58 * s, 68 * s, 24 * s, 0, Math.PI * 2); q.stroke();
+    q.beginPath(); q.moveTo(103 * s, 92 * s); q.lineTo(103 * s, 66 * s); q.arc(127 * s, 66 * s, 24 * s, Math.PI, 0); q.lineTo(151 * s, 92 * s); q.stroke();
+    q.restore();
+  };
+  const fit = (q, txt, wt, size, maxW) => { let fs = size; q.font = font(wt, fs); while (q.measureText(txt).width > maxW && fs > 10) { fs -= 1; q.font = font(wt, fs); } };
+  // the feature walls: the station's colour, a pattern of its stripes, the
+  // ion mark, the name down a white band, GRT at the foot
+  names.forEach((nm, i) => cell('fw:' + nm, 96, 240, (q, w, h) => {
+    const col = FEATURE[i % FEATURE.length];
+    q.fillStyle = col; q.fillRect(0, 0, w, h);
+    q.fillStyle = 'rgba(255,255,255,0.18)';
+    for (let k = 0; k < 9; k++) q.fillRect(((k * 37) % 80), 150 + (k * 11) % 70, 10 + (k % 3) * 6, 4);
+    q.fillStyle = '#ffffff'; q.fillRect(0, 70, w, 72);
+    ion(q, 14, 14, 42, '#ffffff');
+    q.fillStyle = '#16181b'; q.textAlign = 'center'; q.textBaseline = 'middle';
+    const words = nm.split(' ');
+    const lines = nm.includes(' - ') ? nm.split(' - ') : words.length > 2 ? [words.slice(0, Math.ceil(words.length / 2)).join(' '), words.slice(Math.ceil(words.length / 2)).join(' ')] : words.length === 2 && nm.length > 9 ? words : [nm];
+    lines.forEach((ln, j) => { fit(q, ln, 800, 20, w - 8); q.fillText(ln, w / 2, 106 + (j - (lines.length - 1) / 2) * 24); });
+    q.fillStyle = '#ffffff'; q.font = `italic ${font(900, 22)}`; q.fillText('GRT', w / 2, h - 22);
+  }));
+  // the platform's next-train sign, one per direction
+  for (const [k, to, m] of [['led:sb', 'Fairway', '3 min'], ['led:nb', 'Conestoga', '4 min']]) cell(k, 384, 48, (q, w, h) => {
+    q.fillStyle = '#060606'; q.fillRect(0, 0, w, h);
+    q.fillStyle = '#ffa514'; q.font = font(700, 24); q.textBaseline = 'middle'; q.textAlign = 'left';
+    q.fillText(`301 ${to}`, 12, h / 2 + 1);
+    q.textAlign = 'right'; q.fillText(m, w - 12, h / 2 + 1);
   });
-  cells.__link = cell(names.length, (q, w, h) => {
-    q.fillStyle = '#d0202e'; q.fillRect(0, 0, w, h);
-    q.fillStyle = '#ffffff'; q.font = '900 40px -apple-system, Helvetica, sans-serif'; q.textAlign = 'center'; q.textBaseline = 'middle';
-    q.fillText('ION  LIGHT RAIL', w / 2, h / 2 + 1);
+  // the crossbuck: Canada's white X with a red border (one board of it)
+  cell('xbuck', 384, 64, (q, w, h) => {
+    q.fillStyle = '#c8102e'; q.fillRect(0, 0, w, h);
+    q.fillStyle = '#ffffff'; q.fillRect(7, 7, w - 14, h - 14);
   });
+  // the canopies' glass: pale blue, fritted with a scatter of white
+  // rectangles (Mill's, Kitchener City Hall's), drawn unlit -- it is lit
+  // through, so its underside is never in shade
+  cell('frit', 128, 128, (q, w, h) => {
+    q.fillStyle = '#9ec3e6'; q.fillRect(0, 0, w, h);
+    let sd = 11;
+    const r = () => ((sd = (sd * 16807) % 2147483647) / 2147483647);
+    for (let k = 0; k < 140; k++) { q.fillStyle = r() < 0.5 ? 'rgba(255,255,255,0.75)' : 'rgba(40,90,170,0.35)'; q.fillRect(r() * w, r() * h, 3 + r() * 6, 2 + r() * 2); }
+  });
+  // a validator's screen and the ticket machine's face
+  cell('tvm', 96, 160, (q, w, h) => {
+    q.fillStyle = '#9aa0a6'; q.fillRect(0, 0, w, h);
+    q.fillStyle = '#1f5bb0'; q.fillRect(0, 0, w, 26);
+    q.fillStyle = '#ffffff'; q.font = font(800, 16); q.textAlign = 'center'; q.textBaseline = 'middle'; q.fillText('TICKETS', w / 2, 13);
+    q.fillStyle = '#101418'; q.fillRect(14, 36, w - 28, 48);
+    q.fillStyle = '#2b6fd6'; q.fillRect(18, 40, w - 36, 40);
+    q.fillStyle = '#2a2d31'; q.fillRect(20, 96, w - 40, 10); q.fillRect(30, 116, w - 60, 26);
+  });
+  // (packed last: the tall cells fill the first two rows)
+  // the name boards: black, the ion mark in ION blue, the name in white
+  names.forEach((nm) => cell(nm, 384, 48, (q, w, h) => {
+    q.fillStyle = '#0d0e10'; q.fillRect(0, 0, w, h);
+    ion(q, 10, 8, 32, '#3f86e0');
+    q.fillStyle = '#ffffff'; q.textAlign = 'left'; q.textBaseline = 'middle';
+    fit(q, nm, 700, 28, w - 76); q.fillText(nm, 66, h / 2 + 1);
+  }));
+  if (y + rowH > H) console.warn('ION sign atlas overflows: ' + (y + rowH) + ' > ' + H);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
@@ -492,6 +590,18 @@ export class Link {
       // (Auto KW: ION's split stations are on ONE track -- Waterloo Public
       // Square on Caroline, Kitchener City Hall and Frederick on Charles)
       st.key = ['sb', 'nb', 'sb2', 'nb2'].find((k) => st.s[k] !== undefined) || 'sb';
+      // where a train stands: the platform's centre, but never with its
+      // ends off the rails (both termini's platforms end the track)
+      st.stop = {};
+      for (const k of Object.keys(st.s)) st.stop[k] = clamp(st.s[k], LINK.len / 2 + 1, this.tracks[k].len - LINK.len / 2 - 1);
+      st.plats = data.stations[st.i].plats || [];
+    }
+    // the termini: the last station each track's trains run to
+    for (const k of this.keys) {
+      const tr = this.tracks[k], on = this.stations.filter((st) => st.s[k] !== undefined);
+      if (!on.length) continue;
+      tr.to = on.reduce((a, b) => ((b.s[k] - a.s[k]) * tr.dir > 0 ? b : a));
+      tr.from = on.reduce((a, b) => ((b.s[k] - a.s[k]) * tr.dir < 0 ? b : a));
     }
     for (const k of this.keys) {
       const tr = this.tracks[k];
@@ -591,6 +701,11 @@ export class Link {
       // the rail stays down for a few metres either side of the paving
       const XW = new Uint8Array(n);
       for (let i = 0; i < n; i++) if (X[i]) for (let j = Math.max(0, i - 6); j <= Math.min(n - 1, i + 6); j++) XW[j] = 1;
+      // Auto KW: where ION runs in the street (embedded track on a raised
+      // trackway; its height stays LINK.lift: the city's sidewalks beside it
+      // stand ~0.5 m over the smoothed ground, and a lower trackway sank
+      // under them)
+      if (city) tr.ST = this._streetMask(tr, city);
       tr._X = X; tr._XW = XW;
       tr.setHeights(tr.zones, XW);
       tr.KD = KD;
@@ -615,11 +730,38 @@ export class Link {
     this._joinShared();
   }
 
+  /**
+   * Where a track RUNS IN THE STREET (King St, Charles St, Northfield Dr...):
+   * at grade with a carriageway beside it within 9 m, or under the track
+   * itself for 11 m either way -- sampled every 10 m, and only runs of 60 m
+   * or more (a road crossing the corridor is a crossing, not a street).
+   */
+  _streetMask(tr, city) {
+    const n = tr.n, m = Math.ceil(n / 10), R = new Uint8Array(m), out = new Uint8Array(n);
+    for (let j = 0; j < m; j++) {
+      const i = Math.min(n - 1, j * 10);
+      if (tr.F[i] !== 0) continue;
+      const h = tr.H[i], lx = Math.cos(h), lz = -Math.sin(h), fx = Math.sin(h) * 11, fz = Math.cos(h) * 11;
+      const x = tr.X[i], z = tr.Z[i];
+      let on = false;
+      for (const o of [-9, 9]) if (city.onRoad(x + lx * o, z + lz * o, 2, false, false)) on = true;
+      if (!on && city.onRoad(x, z, 0.6, false, false) && city.onRoad(x + fx, z + fz, 0, false, false) && city.onRoad(x - fx, z - fz, 0, false, false)) on = true;
+      R[j] = on ? 1 : 0;
+    }
+    for (let j = 0; j < m;) {
+      let k = j;
+      while (k < m && R[k] === R[j]) k++;
+      if (R[j] && k - j >= 6) out.fill(1, j * 10, Math.min(n, k * 10));
+      j = k;
+    }
+    return out;
+  }
+
   /** Everything _profile leaves on the tracks, for the boot cache. */
   _snapshot() {
     const out = {};
     for (const [k, tr] of Object.entries(this.tracks)) {
-      out[k] = { Y: tr.Y.slice(), KD: tr.KD.slice(), GR: tr.GR.slice(), X: tr._X.slice(), XW: tr._XW.slice(),
+      out[k] = { Y: tr.Y.slice(), KD: tr.KD.slice(), GR: tr.GR.slice(), X: tr._X.slice(), XW: tr._XW.slice(), ST: tr.ST ? tr.ST.slice() : null,
         zones: tr.zones.map((z) => [z.level === undefined ? null : z.level, z.length > 2 ? z[2] : null]) };
     }
     return out;
@@ -637,7 +779,7 @@ export class Link {
     }
     for (const [k, tr] of Object.entries(this.tracks)) {
       const q = snap[k];
-      tr.Y = q.Y; tr.KD = q.KD; tr.GR = q.GR; tr._X = q.X; tr._XW = q.XW;
+      tr.Y = q.Y; tr.KD = q.KD; tr.GR = q.GR; tr._X = q.X; tr._XW = q.XW; if (q.ST) tr.ST = q.ST;
       tr.zones.forEach((z, i) => {
         z.length = 2; delete z.level;
         if (q.zones[i][1] !== null) z[2] = q.zones[i][1];
@@ -703,13 +845,17 @@ export class Link {
     if (this.cacheOut) this.cacheOut.post = this._snapshot();
     for (const tr of Object.values(this.tracks)) {
       const n = tr.n, KD = tr.KD, LIM = new Float32Array(n);
-      // Speed limits: 35 mph where the track runs in a street (a road within
-      // 9 m either side), 55 elsewhere; curves at aLat.
+      // Speed limits (Auto KW, ION's): 70 km/h on the rail corridor, 40 in
+      // the street, 25 where the pedestrians are -- through Uptown Waterloo
+      // and downtown Kitchener [WP: "as low as 20-25 km/h"] -- 40 over a
+      // level crossing; curves at aLat.
+      if (!tr.ST) tr.ST = this._streetMask(tr, city);
+      const slow = this.stations.filter((st) => /Willis Way|Public Square|City Hall|Victoria Park|Queen|Frederick/.test(st.name));
       for (let i = 0; i < n; i += 10) {
         let v = LINK.vMax;
-        if (KD[i] === FILL || KD[i] === CROSS) {
-          const h = tr.H[i], lx = Math.cos(h), lz = -Math.sin(h);
-          for (const o of [-9, 9]) if (city.onRoad(tr.X[i] + lx * o, tr.Z[i] + lz * o, 2, false, false)) v = LINK.vStreet;
+        if (tr.ST[i] || KD[i] === CROSS) {
+          v = LINK.vStreet;
+          if (tr.ST[i] && slow.some((st) => Math.hypot(tr.X[i] - st.x, tr.Z[i] - st.z) < 420)) v = LINK.vSlow;
         }
         let k = 0;
         for (let j = Math.max(0, i - 20); j <= Math.min(n - 1, i + 20); j++) k = Math.max(k, Math.abs(tr.K[j]));
@@ -770,7 +916,7 @@ export class Link {
    *  (rails, wires) and the bores switched separately. */
   build(scene, world) {
     this.world = world;
-    this.bedMat = new THREE.MeshStandardMaterial({ map: bedTexture(), vertexColors: true, roughness: 0.95, metalness: 0, envMapIntensity: 0.5 });
+    this.bedMat = new THREE.MeshStandardMaterial({ map: bedTexture(), vertexColors: true, roughness: 0.95, metalness: 0, envMapIntensity: 0.5, alphaTest: 0.5, side: THREE.DoubleSide });
     this.cardMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
     const sign = signAtlas(this.stations.map((s) => s.name));
     this.signMat = sign.mat; this.signCells = sign.cells;
@@ -782,6 +928,9 @@ export class Link {
       return { bed: mk(true), flat: mk(false), near: mk(false), tun: mk(false), card: mk(false), sign: mk(true) };
     });
     const chunk = L.record;
+    // each station's platforms first: the track pass keeps its ballast and
+    // fences off them, the poles go round them
+    for (const st of this.stations) for (const k of this.keys) if (st.s[k] !== undefined) this._stationPlan(st, this.tracks[k]);
     for (const tr of Object.values(this.tracks)) this._buildTrack(tr, chunk, null, L);
     // each track's half of each station it serves -- a shared station once,
     // by the 1 Line's tracks
@@ -794,6 +943,8 @@ export class Link {
       }
     });
     this.stations.forEach((st, si) => { L.op({ ent: si }); this._buildEntrance(st, chunk); });
+    this._findCrossings();
+    this.crossings.forEach((c, ci) => { L.op({ cross: ci }); this._buildCrossing(c, chunk); });
     L.op(null);
     // meshes
     this.group = new THREE.Group(); this.group.name = 'link';
@@ -804,12 +955,357 @@ export class Link {
     }
     scene.add(this.group);
     scene.add(this.tunGroup);
+    this._buildPoles(scene);
+    this._buildGateArms(scene);
     if (this.city && this.city.setLandmarkSolids && this.solids.length) {
       this.city.setLandmarkSolids([...(this.city.landmarkSolids || []), ...this.solids]);
     }
     if (this.city && this.city.setPlatforms && this.platforms && this.platforms.length) {
       this.city.setPlatforms([...(this.city.platforms || []), ...this.platforms]);
     }
+  }
+
+  // --- the overhead line's poles ---------------------------------------------------
+
+  /**
+   * THE POLES, as ION's: round grey steel, a cantilever of two tubes over the
+   * track (the messenger's support over the registration arm) with a stay,
+   * the insulators by the pole. A centre pole between the two tracks where
+   * they run 3-6.5 m apart (an arm each way -- two instances), else a side
+   * pole 3 m off the outer rail; ~50 m apart (35 on curves), never on a
+   * carriageway. All of them are ONE InstancedMesh, refilled with the poles
+   * within RANGE.near of the camera (update, _polesUpdate): one draw.
+   * An instance's arm length rides in `armK` (the arm, not the pole, scales).
+   */
+  _buildPoles(scene) {
+    const city = this.city, poles = [];
+    const ok = (x, z) => !city.onRoad(x, z, 0.5, false, false) && !G.isWater(x, z);
+    for (const k of ['sb', 'nb']) {
+      const tr = this.tracks[k];
+      if (!tr) continue;
+      const other = tr.other;
+      let next = 20;
+      for (let s = 20; s < tr.len - 10; s += 2) {
+        if (s < next) continue;
+        const kd = tr.kind(s);
+        if (kd === TUN || kd === BOX || kd === DECK) continue;
+        if (tr._X && tr._X[tr.idx(s)]) continue;                 // not in the road at a crossing
+        const P = frame(tr, s);
+        const q = other.nearest(P.x, P.z, 20);
+        const d = q ? q.d : 99;
+        const toward = q ? ((other.x(q.s) - P.x) * P.lx + (other.z(q.s) - P.z) * P.lz >= 0 ? 1 : -1) : 1;
+        // the platform's side at a station: the pole goes on the other side (or between, at a centre platform)
+        const st = this.stations.find((c) => c.plan && c.plan[k] && s > c.plan[k].a0 - 3 && s < c.plan[k].a1 + 3);
+        const pl = st && st.plan[k];
+        let placed = false;
+        if (d > 3 && d < 6.5 && (!pl || pl.island)) {
+          // a centre pole: placed by sb only, between the two
+          if (k === 'sb') {
+            const x = P.x + P.lx * toward * d / 2, z = P.z + P.lz * toward * d / 2;
+            if (ok(x, z)) {
+              const ang = Math.atan2(P.lx * toward, P.lz * toward);    // local +x toward the other track
+              poles.push({ x, z, y: P.y, ang, arm: d / 2 }, { x, z, y: P.y, ang: ang + Math.PI, arm: d / 2 });
+              placed = true;
+            }
+          } else placed = true;
+        } else if (d >= 6.5 || !pl || !pl.island) {
+          const sides = pl ? [-pl.sg] : d < 6.5 ? [-toward] : [-toward, toward];
+          for (const sg of sides) {
+            const x = P.x + P.lx * 3.0 * sg, z = P.z + P.lz * 3.0 * sg;
+            if (!ok(x, z)) continue;
+            poles.push({ x, z, y: P.y, ang: Math.atan2(-P.lx * sg, -P.lz * sg), arm: 3.0 });
+            placed = true;
+            break;
+          }
+        }
+        next = s + (placed ? (Math.abs(tr.curv(s)) > 1 / 400 ? 34 : 48) : 6);
+      }
+    }
+    this.poles = poles;
+    // the pole and its cantilever, local +x toward the track, y = 0 the rail head
+    const b = new Builder(false), STEEL = C.pole, INS = [0.42, 0.24, 0.13];
+    b.tube([0, -4.0, 0], [0, 7.0, 0], 0.13, 8, STEEL, true);
+    b.tube([0, 6.55, 0], [3.25, 6.0, 0], 0.035, 5, STEEL);            // the stay over the messenger's support
+    b.tube([0.12, 6.0, 0], [3.3, 6.0, 0], 0.04, 6, STEEL);            // the messenger's support
+    b.tube([0.12, 5.25, 0], [2.6, 5.12, 0], 0.035, 5, STEEL);         // the registration tube
+    b.tube([2.55, 5.12, 0], [3.0, LINK.wire + 0.02, 0], 0.018, 4, STEEL);
+    for (const y of [6.0, 5.22]) b.tube([0.2, y, 0], [0.62, y, 0], 0.07, 6, INS);
+    b.box(0.12, 4.0, 0, 0.12, 0.6, 0.34, 0, [0.30, 0.32, 0.34]);          // the switch box
+    const geo = b.build();
+    const n = Math.max(1, poles.length);
+    geo.setAttribute('armK', new THREE.InstancedBufferAttribute(new Float32Array(n), 1));
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.35, envMapIntensity: 0.6 });
+    mat.onBeforeCompile = (sh) => {
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float armK;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\n  if (transformed.x > 0.2) transformed.x = 0.2 + (transformed.x - 0.2) * armK;');
+    };
+    mat.customProgramCacheKey = () => 'ionPoleArm';
+    const mesh = new THREE.InstancedMesh(geo, mat, n);
+    mesh.name = 'link:poles';
+    mesh.frustumCulled = false;
+    mesh.castShadow = false; mesh.receiveShadow = true;
+    mesh.count = 0;
+    scene.add(mesh);
+    this.poleMesh = mesh;
+    // a grid of 200 m cells for the range query
+    this.poleCells = new Map();
+    poles.forEach((p, i) => {
+      const kk = Math.floor(p.x / 200) * 100003 + Math.floor(p.z / 200);
+      if (!this.poleCells.has(kk)) this.poleCells.set(kk, []);
+      this.poleCells.get(kk).push(i);
+    });
+    this._poleAt = null;
+  }
+
+  /** Refill the poles' instances with those near the camera (every 25 m it moves). */
+  _polesUpdate(cx, cz) {
+    const m = this.poleMesh;
+    if (!m) return;
+    if (this._poleAt && Math.hypot(cx - this._poleAt[0], cz - this._poleAt[1]) < 25) return;
+    this._poleAt = [cx, cz];
+    const R = RANGE.near + 60, c0x = Math.floor((cx - R) / 200), c1x = Math.floor((cx + R) / 200);
+    const c0z = Math.floor((cz - R) / 200), c1z = Math.floor((cz + R) / 200);
+    const M = new THREE.Matrix4(), arm = m.geometry.attributes.armK;
+    let n = 0;
+    for (let gx = c0x; gx <= c1x; gx++) for (let gz = c0z; gz <= c1z; gz++) {
+      const l = this.poleCells.get(gx * 100003 + gz);
+      if (!l) continue;
+      for (const i of l) {
+        const p = this.poles[i];
+        if ((p.x - cx) ** 2 + (p.z - cz) ** 2 > R * R) continue;
+        // local +x along `ang` (a compass-style angle: x = sin, z = cos)
+        const s = Math.sin(p.ang), c = Math.cos(p.ang);
+        M.set(s, 0, -c, p.x, 0, 1, 0, p.y, c, 0, s, p.z, 0, 0, 0, 1);
+        m.setMatrixAt(n, M);
+        arm.array[n] = p.arm / 3.0;
+        n++;
+      }
+    }
+    m.count = n;
+    m.visible = n > 0;             // (an empty instanced draw is still a draw)
+    m.instanceMatrix.needsUpdate = true;
+    arm.needsUpdate = true;
+  }
+
+  // --- level crossings -------------------------------------------------------------
+
+  /**
+   * The level crossings: runs of CROSS on either track, merged where both
+   * tracks cross the same road, each with the road it carries. Gates where
+   * OSM has crossing:barrier on the line within 16 m (Northfield, Bearinger,
+   * Columbia, University, Seagram, Erb, Ottawa, Mill, Hayward, Block Line,
+   * Courtland, Wilson... -- ION's gated crossings), flashing lights alone
+   * where it has only crossing:light; nothing in the street (signals there).
+   */
+  _findCrossings() {
+    const city = this.city, pts = [];
+    for (const k of ['sb', 'nb']) {
+      const tr = this.tracks[k];
+      if (!tr || !tr._X) continue;
+      for (let i = 0; i < tr.n;) {
+        if (!tr._X[i]) { i++; continue; }
+        let j = i;
+        while (j < tr.n && tr._X[j]) j++;
+        const m = (i + j - 1) >> 1;
+        pts.push({ k, s: m, x: tr.X[m], z: tr.Z[m], h: tr.H[m], street: !!(tr.ST && tr.ST[m]) });
+        i = j;
+      }
+    }
+    const out = [];
+    for (const p of pts) {
+      let c = out.find((q) => Math.hypot(q.x - p.x, q.z - p.z) < 16);
+      if (!c) { c = { x: p.x, z: p.z, h: p.h, s: {}, street: p.street }; out.push(c); }
+      c.s[p.k] = p.s;
+    }
+    const osm = this.data.crossings || [];
+    for (const c of out) {
+      for (const k of ['sb', 'nb']) {
+        if (c.s[k] === undefined) { const q = this.tracks[k].nearest(c.x, c.z, 14); if (q) c.s[k] = q.s; }
+      }
+      // in the street only a ROAD crossing's own gates and lights count (a
+      // signalised junction has neither; a footpath's gates are its own)
+      const near = osm.filter((o) => Math.hypot(o.x - c.x, o.z - c.z) < 16);
+      c.gate = near.some((o) => o.gate && (o.road || !c.street));
+      c.lights = c.gate || near.some((o) => (o.light || o.bell) && (o.road || !c.street));
+      // the road: the nearest carriageway crossing the track at 25 deg or more
+      let best = null, bd = 1e9;
+      for (const ei of city.edgesNear(c.x, c.z, 30)) {
+        const e = city.edges[ei];
+        if (e.tunnel || e.elev || e.prof) continue;
+        const a = city.nodes[e.a], b = city.nodes[e.b];
+        const sx = b.x - a.x, sz = b.z - a.z, l2 = sx * sx + sz * sz || 1;
+        const t = clamp(((c.x - a.x) * sx + (c.z - a.z) * sz) / l2, 0, 1);
+        const d = Math.hypot(a.x + sx * t - c.x, a.z + sz * t - c.z);
+        const cr = Math.abs(e.dx * Math.cos(c.h) - e.dz * Math.sin(c.h));
+        if (d < e.hw + 2 && cr > 0.42 && d < bd) { bd = d; best = e; }
+      }
+      c.road = best;
+      const q0 = this.tracks.sb.nearest(c.x, c.z, 20), q1 = this.tracks.nb.nearest(c.x, c.z, 20);
+      c.spread = q0 && q1 ? Math.hypot(this.tracks.sb.x(q0.s) - this.tracks.nb.x(q1.s), this.tracks.sb.z(q0.s) - this.tracks.nb.z(q1.s)) : 0;
+      c.active = false; c.arm = 0; c.flash = 0; c.bellT = 0; c.lightT = 0;
+    }
+    this.crossings = out.filter((c) => c.road && c.lights);
+    this.crossCells = new Map();
+    this.crossings.forEach((c, i) => {
+      const cx = Math.floor(c.x / 50), cz = Math.floor(c.z / 50);
+      for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+        const kk = (cx + dx) * 100003 + cz + dz;
+        if (!this.crossCells.has(kk)) this.crossCells.set(kk, []);
+        this.crossCells.get(kk).push(i);
+      }
+    });
+  }
+
+  /** A crossing's signal masts (static parts), and its arms' pivots: Canada's
+   *  -- a white mast, the red-bordered white crossbuck at its head, two red
+   *  lamps on a black backboard, the bell, the gate's mechanism. */
+  _buildCrossing(c, chunk) {
+    const e = c.road, ch = chunk(c.x, c.z);
+    const rdx = e.dx, rdz = e.dz;
+    const tdx = Math.sin(c.h), tdz = Math.cos(c.h);
+    const sinA = Math.abs(rdx * tdz - rdz * tdx) || 1;
+    const clear = (c.spread / 2 + 4.4) / sinA;
+    const hw = e.hw;
+    const xb = this._cellUV('xbuck');
+    const WHITE = [0.85, 0.86, 0.87], BLACK = [0.02, 0.02, 0.025], GREY = [0.32, 0.33, 0.35];
+    c.gates = [];
+    for (const a of [1, -1]) {
+      // traffic coming toward the tracks from +a along the road keeps right:
+      // its signal stands at its right kerb and its arm reaches the centreline
+      const hx = -a * rdx, hz = -a * rdz;
+      const rx = -hz, rz = hx;
+      const mx = c.x + a * rdx * clear + rx * (hw + 0.9), mz = c.z + a * rdz * clear + rz * (hw + 0.9);
+      const gy = this.city.groundAt ? this.city.groundAt(mx, mz, null) : G.terrainHeight(mx, mz);
+      ch.flat.box(mx, gy, mz, 0.16, 4.4, 0.16, 0, WHITE);
+      ch.flat.box(mx, gy, mz, 0.6, 0.3, 0.6, 0, C.concrete);
+      const face = Math.atan2(-hx, -hz);
+      const fx = -hx, fz = -hz, ux = Math.cos(face), uz = -Math.sin(face);
+      // the lamps' backboard: black with a white edge, a lamp at each end with its hood
+      ch.flat.box(mx + fx * 0.1, gy + 2.36, mz + fz * 0.1, 1.2, 0.44, 0.04, -face, WHITE);
+      ch.flat.box(mx + fx * 0.12, gy + 2.38, mz + fz * 0.12, 1.14, 0.4, 0.04, -face, BLACK);
+      for (const s of [1, -1]) {
+        const lx = mx + ux * 0.38 * s + fx * 0.16, lz = mz + uz * 0.38 * s + fz * 0.16;
+        ch.flat.box(lx, gy + 2.43, lz, 0.3, 0.3, 0.08, -face, [0.12, 0.02, 0.02]);
+        ch.flat.box(lx + fx * 0.12, gy + 2.73, lz + fz * 0.12, 0.32, 0.03, 0.22, -face, BLACK);
+      }
+      // the bell on the mast's top, the crossbuck under it, facing the traffic
+      ch.flat.spheroid(mx, gy + 4.5, mz, 0.16, 8, 4, BLACK, 0.7);
+      for (const rot of [0.785, -0.785]) {
+        const cx = mx + fx * 0.12, cz = mz + fz * 0.12, cy = gy + 3.75;
+        const w = 1.22, h = 0.21, ca = Math.cos(rot), sa = Math.sin(rot);
+        const P = (u, v) => [cx + ux * (u * ca - v * sa), cy + (u * sa + v * ca), cz + uz * (u * ca - v * sa)];
+        ch.sign.quad(P(-w / 2, -h / 2), P(w / 2, -h / 2), P(w / 2, h / 2), P(-w / 2, h / 2), [fx, 0, fz], xb, [1, 1, 1]);
+      }
+      if (c.gate) {
+        ch.flat.box(mx - rx * 0.32, gy, mz - rz * 0.32, 0.5, 1.2, 0.5, 0, GREY);
+        this.solids.push({ x: mx, z: mz, r: 0.35, y0: gy, y1: gy + 4.4 });
+        const len = Math.max(3, hw + 0.4);
+        c.gates.push({ px: mx - rx * 0.32, py: gy + 0.95, pz: mz - rz * 0.32, dx: -rx, dz: -rz, len, lx: mx + fx * 0.16, ly: gy + 2.43, lz: mz + fz * 0.16, face, ux, uz });
+      } else {
+        this.solids.push({ x: mx, z: mz, r: 0.3, y0: gy, y1: gy + 4.4 });
+        c.gates.push({ px: null, lx: mx + fx * 0.16, ly: gy + 2.43, lz: mz + fz * 0.16, face, ux, uz });
+      }
+    }
+  }
+
+  /** Every gate arm and every lit lamp in one instanced draw each, posed near you. */
+  _buildGateArms(scene) {
+    const n = this.crossings.reduce((a, c) => a + (c.gates ? c.gates.length : 0), 0);
+    if (!n) return;
+    // a unit arm along +x: red and white stripes, three lamps along its top
+    const b = new Builder(false);
+    const N = 8;
+    for (let i = 0; i < N; i++) b.box((i + 0.5) / N, -0.05, 0, 1 / N, 0.1, 0.1, 0, i % 2 ? [0.75, 0.04, 0.04] : [0.86, 0.86, 0.86]);
+    b.box(-0.08, -0.14, 0, 0.18, 0.26, 0.24, 0, [0.25, 0.26, 0.28]);
+    this.armMesh = new THREE.InstancedMesh(b.build(), this.world.mats.flat, n);
+    this.armMesh.name = 'link:gates';
+    this.armMesh.frustumCulled = false;
+    this.armMesh.count = 0;
+    scene.add(this.armMesh);
+    const lb = new Builder(false);
+    lb.box(0, -0.13, 0, 0.26, 0.26, 0.04, 0, [1.0, 0.08, 0.04]);
+    this.lampMesh = new THREE.InstancedMesh(lb.build(), this.world.mats.glow, n * 2);
+    this.lampMesh.name = 'link:xlamps';
+    this.lampMesh.frustumCulled = false;
+    this.lampMesh.count = 0;
+    scene.add(this.lampMesh);
+    this._m4 = new THREE.Matrix4(); this._q = new THREE.Quaternion(); this._e = new THREE.Euler(0, 0, 0, 'YZX');
+    this._v = new THREE.Vector3(); this._sc = new THREE.Vector3(); this._up = new THREE.Vector3(0, 1, 0);
+  }
+
+  /** Gates down, lights flashing and the bell ringing for any train near. */
+  _crossingsUpdate(dt, cx, cz) {
+    if (!this.crossings) return;
+    let nArm = 0, nLamp = 0;
+    const m = this._m4, q = this._q, e = this._e, v = this._v, scl = this._sc;
+    for (const c of this.crossings) {
+      // active: a train will be on it within ~22 s (or 110 m), or is on it
+      let act = false;
+      for (const t of this.trains) {
+        if (t.state === 'off') continue;
+        const s = c.s[t.track.key];
+        if (s === undefined) continue;
+        const ahead = (s - t.lead) * t.dir, behindTail = (s - t.tail) * t.dir;
+        const sp = Math.abs(t.u);
+        // standing at a platform short of it (a dwell), the circuit times out
+        const reach = sp < 0.05 ? 12 : Math.max(110, sp * 22);
+        if (ahead > -2 && ahead < reach) { act = true; break; }
+        if (ahead <= 0 && behindTail >= -6) { act = true; break; }
+      }
+      c.active = act;
+      c.lightT = act ? c.lightT + dt : 0;
+      const want = act && c.lightT > 3 ? 1 : 0;
+      c.arm = want ? Math.min(1, c.arm + dt / 7) : Math.max(0, c.arm - dt / 5);
+      if (!this.armMesh || !c.gates || Math.hypot(c.x - cx, c.z - cz) > RANGE.near) continue;
+      const flashing = act || c.arm > 0.02;
+      c.flash = (c.flash + dt * 1.6) % 2;
+      for (const g of c.gates) {
+        if (g.px !== null && c.gate) {
+          const ang = (1 - c.arm) * 1.48;
+          const yaw = Math.atan2(g.dx, g.dz) - Math.PI / 2;
+          e.set(0, yaw, ang); q.setFromEuler(e);
+          scl.set(g.len, 1, 1); v.set(g.px, g.py, g.pz);
+          m.compose(v, q, scl);
+          this.armMesh.setMatrixAt(nArm++, m);
+        }
+        if (flashing) {
+          const s = c.flash < 1 ? 1 : -1;
+          q.setFromAxisAngle(this._up, g.face);
+          scl.set(1, 1, 1);
+          v.set(g.lx + g.ux * 0.38 * s + Math.sin(g.face) * 0.05, g.ly + 0.13, g.lz + g.uz * 0.38 * s + Math.cos(g.face) * 0.05);
+          m.compose(v, q, scl);
+          this.lampMesh.setMatrixAt(nLamp++, m);
+        }
+      }
+      if (flashing && this.audio && this.audio.ready) {
+        c.bellT -= dt;
+        if (c.bellT <= 0) {
+          c.bellT = 0.52;
+          if (Math.hypot(c.x - cx, c.z - cz) < 170) this.audio.play('xing_bell', { gain: 0.5, x: c.x, y: G.terrainHeight(c.x, c.z) + 3, z: c.z, ref: 10, maxD: 200, jitter: false });
+        }
+      }
+    }
+    if (this.armMesh) {
+      this.armMesh.count = nArm; this.armMesh.instanceMatrix.needsUpdate = true;
+      this.lampMesh.count = nLamp; this.lampMesh.instanceMatrix.needsUpdate = true;
+      this.armMesh.visible = nArm > 0; this.lampMesh.visible = nLamp > 0;
+    }
+  }
+
+  /** Is (x, z) between a crossing's gates while they are coming down (or a train is on it)? */
+  crossingClosed(x, z) {
+    if (!this.crossCells) return false;
+    const l = this.crossCells.get(Math.floor(x / 50) * 100003 + Math.floor(z / 50));
+    if (!l) return false;
+    for (const i of l) {
+      const c = this.crossings[i];
+      if (!c.active && c.arm < 0.05) continue;
+      const dx = x - c.x, dz = z - c.z;
+      if (dx * dx + dz * dz > 900) continue;
+      const perp = Math.abs(dx * Math.cos(c.h) - dz * Math.sin(c.h));
+      if (perp < c.spread / 2 + 4.8) return true;
+    }
+    return false;
   }
 
   /** What LazyChunks.stream drives: replay an op (the pass's other output --
@@ -826,6 +1322,10 @@ export class Link {
           if (o.seg) this._buildTrack(this.tracks[o.t], fn, o);
           else if (o.st !== undefined) this._buildStation(this.stations[o.st], this.tracks[o.t], fn);
           else if (o.ent !== undefined) this._buildEntrance(this.stations[o.ent], fn);
+          else if (o.cross !== undefined) {
+            const c = this.crossings[o.cross], gates = c.gates;
+            try { this._buildCrossing(c, fn); } finally { c.gates = gates; }
+          }
         } finally { this.solids = keep[0]; this.platforms = keep[1]; }
       },
       finish: (e, B) => {
@@ -898,16 +1398,34 @@ export class Link {
         return dx * A.lx + dz * A.lz >= 0 ? 1 : -1;
       })() : 1;
       outer.push(-towardOther);
-      const inStation = this.stations.some((st) => Math.abs(st.s[tr.key] - sm) < LINK.platLen / 2 + 2);
+      const inStation = this.stations.some((st) => {
+        const p = st.plan && st.plan[tr.key];
+        return p ? sm > p.a0 - 2 && sm < p.a1 + 2 : Math.abs(st.s[tr.key] - sm) < LINK.platLen / 2 + 2;
+      });
+      // running in the street (tr.ST, attach): embedded track on its own
+      // curbed concrete trackway, no ballast and no fence
+      const ist = tr.idx(sm), street = !!(tr.ST && tr.ST[ist]);
       // an underground station's hall replaces the bore round it (_buildStation)
       const inHall = kind === TUN && this.stations.some((st) => Math.abs(st.s[tr.key] - sm) < LINK.platLen / 2 + 6);
       const bedB = kind === TUN ? c.tun : c.bed;
       const railB = kind === TUN ? c.tun : c.near;
       // --- the bed -------------------------------------------------------------
       const v0 = s0 / 2.4, v1 = s1 / 2.4;
-      if (kind === CROSS) {
+      if (kind === CROSS && !street) {
         // a level crossing: paved flush with the rail heads
         band(c.flat, A, B, -2.2, -0.03, 2.2, -0.03, UP, C.paving);
+      } else if (street && (kind === FILL || kind === CROSS)) {
+        // EMBEDDED TRACK: concrete flush with the rail heads, out to meet the
+        // other track's where they run together, a kerb down to the street
+        const wi = otherD < 6.5 ? otherD / 2 + 0.03 : 1.8, wo = 1.8;
+        const oi = wi * towardOther, oo = -wo * towardOther;
+        band(c.flat, A, B, oo, -0.025, oi, -0.025, UP, kind === CROSS ? C.paving : C.slab);
+        if (kind !== CROSS) {
+          band(c.flat, A, B, oo, -0.025, oo, -LINK.liftX - 0.25, side(A, -towardOther), C.concreteD);
+          if (otherD >= 6.5) band(c.flat, A, B, oi, -0.025, oi, -LINK.liftX - 0.25, side(A, towardOther), C.concreteD);
+          // the joints across the slab, every 4 m
+          band(c.flat, A, frame(tr, s0 + 0.08), oo, -0.02, oi, -0.02, UP, C.concreteD);
+        }
       } else if (kind === TUN) {
         band(bedB, A, B, -1.5, -0.17, 1.5, -0.17, UP, [0.1, 0.1, 0.1]);
         // sleepers as darker bars, one a metre (unlit, no texture here)
@@ -916,13 +1434,13 @@ export class Link {
           band(bedB, T, T2, -1.3, -0.15, 1.3, -0.15, UP, [0.19, 0.185, 0.18]);
         }
       } else {
-        bedB.quad(at(A, -1.5, -0.17), at(A, 1.5, -0.17), at(B, 1.5, -0.17), at(B, -1.5, -0.17), UP, [0, v0, 1, v0, 1, v1, 0, v1], [1, 1, 1]);
+        bedB.quad(at(A, -1.5, -0.17), at(A, 1.5, -0.17), at(B, 1.5, -0.17), at(B, -1.5, -0.17), UP, [0, v0, BED_U, v0, BED_U, v1, 0, v1], [1, 1, 1]);
         if (kind === FILL || kind === BOX) {
           // ballast shoulders down to the ground (plain ballast: the texture's edge)
           for (const sg of [1, -1]) {
             const gA = G.terrainHeight(A.x + A.lx * 2.4 * sg, A.z + A.lz * 2.4 * sg), gB = G.terrainHeight(B.x + B.lx * 2.4 * sg, B.z + B.lz * 2.4 * sg);
             const yA = Math.min(A.y - 0.45, Math.max(gA, A.y - 1.2)), yB = Math.min(B.y - 0.45, Math.max(gB, B.y - 1.2));
-            bedB.quad(at(A, 1.5 * sg, -0.17), atY(A, 2.4 * sg, yA), atY(B, 2.4 * sg, yB), at(B, 1.5 * sg, -0.17), [A.lx * sg * 0.4, 1, A.lz * sg * 0.4], [0.02, v0, 0.05, v0, 0.05, v1, 0.02, v1], [0.92, 0.9, 0.86]);
+            bedB.quad(at(A, 1.5 * sg, -0.17), atY(A, 2.4 * sg, yA), atY(B, 2.4 * sg, yB), at(B, 1.5 * sg, -0.17), [A.lx * sg * 0.4, 1, A.lz * sg * 0.4], [0.01, v0, 0.025, v0, 0.025, v1, 0.01, v1], [0.92, 0.9, 0.86]);
             // on a fill higher than its shoulder: a retaining wall to the ground
             const dA = yA - gA, dB = yB - gB;
             if (kind === FILL && (dA > 0.25 || dB > 0.25) && !inStation) {
@@ -932,9 +1450,32 @@ export class Link {
           }
         }
       }
+      // --- the corridor's fence --------------------------------------------------
+      // black chain-link along the rail corridor's edge (the far side of the
+      // pair), not at platforms or within 18 m of a crossing (bed texture's
+      // right half, cut out by the bed material's alphaTest)
+      if (kind === FILL && !street && !inStation && tr._X) {
+        let nearX = false;
+        for (let j = Math.max(0, ist - 18); j <= Math.min(tr.n - 1, ist + 18) && !nearX; j += 2) if (tr._X[j]) nearX = true;
+        if (!nearX) {
+          for (const sg of otherD < 9 ? [-towardOther] : [1, -1]) {
+            const pA = at(A, 3.75 * sg, 0), pB = at(B, 3.75 * sg, 0);
+            if (G.isWater(pA[0], pA[2]) || this.city.onRoad(pA[0], pA[2], 0.8, false, false) || this.city.onRoad(pB[0], pB[2], 0.8, false, false)) continue;
+            const gA = G.terrainHeight(pA[0], pA[2]), gB = G.terrainHeight(pB[0], pB[2]);
+            if (Math.abs(gA - A.y) > 3) continue;
+            c.bed.quad([pA[0], gA - 0.05, pA[2]], [pB[0], gB - 0.05, pB[2]], [pB[0], gB + 1.8, pB[2]], [pA[0], gA + 1.8, pA[2]], side(A, -sg),
+              [0.505, v0, 0.505, v1, 0.995, v1, 0.995, v0], [1, 1, 1]);
+            const sp = Math.ceil(s0 / 3) * 3;
+            if (sp < s1) {
+              const T = frame(tr, sp), px = T.x + T.lx * 3.75 * sg, pz = T.z + T.lz * 3.75 * sg, gy = G.terrainHeight(px, pz);
+              c.near.box(px, gy - 0.1, pz, 0.06, 1.95, 0.06, -T.h, C.post);
+            }
+          }
+        }
+      }
       // --- rails ---------------------------------------------------------------
       for (const o of [-gauge, gauge]) {
-        if (kind === CROSS) {
+        if (kind === CROSS || (street && kind === FILL)) {
           band(railB, A, B, o - 0.035, 0.0, o + 0.035, 0.0, UP, C.railTop);
           band(railB, A, B, o - 0.1, -0.012, o - 0.035, -0.012, UP, C.black);
           continue;
@@ -1059,26 +1600,15 @@ export class Link {
       if (kind === BOX && (kNext === FILL || kNext === DECK || kNext === CROSS)) this._headwall(tr, s1, c, -1);
       if (kind === BOX && kNext === TUN) this._card(tr, s1, c, 1);
       if (kind === BOX && kPrev === TUN) this._card(tr, s0, c, -1);
-      // --- catenary, open track ---------------------------------------------------
-      if (kind !== TUN && kind !== BOX && sm >= pole) {
-        pole = sm + (Math.abs(tr.curv(sm)) > 1 / 500 ? 36 : 52);
-        const P = frame(tr, sm), sg = -towardOther;
-        const po = otherD < 9 ? 2.9 : 2.9;
-        const px = P.x + P.lx * po * sg, pz = P.z + P.lz * po * sg;
-        if (!(kind === FILL || kind === CROSS) || !this.city.onRoad(px, pz, 0.3, false, false)) {
-          const base = kind === DECK ? P.y - 0.18 : G.terrainHeight(px, pz) - 0.2;
-          c.near.box(px, base, pz, 0.26, P.y + 6.1 - base, 0.26, -P.h, C.steel);
-          // the cantilever over the track and its registration arm
-          c.near.tube([px, P.y + 5.9, pz], [P.x - P.lx * 0.4 * sg, P.y + 5.75, P.z - P.lz * 0.4 * sg], 0.045, 5, C.steel);
-          c.near.tube([px, P.y + 5.25, pz], [P.x, P.y + LINK.wire + 0.02, P.z], 0.03, 4, C.steel);
-          c.near.tube([P.x + P.lx * 0.3 * sg, P.y + 5.75, P.z + P.lz * 0.3 * sg], [P.x + P.lx * 0.3 * sg, P.y + LINK.wire, P.z + P.lz * 0.3 * sg], 0.012, 3, C.wire);
-        }
-      }
+      // --- catenary: the poles are one instanced mesh (_buildPoles) ------------------
       if (kind !== TUN && kind !== BOX) {
-        // contact wire and messenger
+        // contact wire and, over it, the messenger, with a dropper every 9 m
         band(c.near, A, B, -0.02, LINK.wire, 0.02, LINK.wire, DOWN, C.wire);
         band(c.near, A, B, -0.02, LINK.wire, 0.02, LINK.wire, UP, C.wire);
-        band(c.near, A, B, 0.28, 5.72, 0.31, 5.72, DOWN, C.wire);
+        band(c.near, A, B, -0.018, LINK.wire + 1.0, 0.018, LINK.wire + 1.0, DOWN, C.wire);
+        band(c.near, A, B, -0.018, LINK.wire + 1.0, 0.018, LINK.wire + 1.0, UP, C.wire);
+        const dp = Math.ceil(s0 / 9) * 9;
+        if (dp < s1) { const T = frame(tr, dp); band(c.near, T, frame(tr, dp + 0.02), 0, LINK.wire, 0, LINK.wire + 1.0, side(T, 1), C.wire); }
       }
       return F1;
     };
@@ -1114,126 +1644,257 @@ export class Link {
     c.card.quad(at(P, -W, -0.4), at(P, W, -0.4), at(P, W, LINK.boreH), at(P, -W, LINK.boreH), n, uv0, [0, 0, 0]);
   }
 
-  /** One track's half of a station: the platform beside it, the canopy, the
-   *  boards; underground, the hall round it. */
+  /**
+   * One track's platform at a station, from OSM's platform ways (build_ion.py
+   * `plats`): the side of the track it is on (`sg`, +1 = the track's left),
+   * its edge and back (`e0`, `e1`, metres off the track), whether it is a
+   * CENTRE platform shared with the other track (`island`; then e1 is half
+   * way to it and only one of the two tracks builds it, `builds`), and its
+   * ends along the track (`a0`, `a1`). Without an OSM platform: the old
+   * guess (a centre platform when the tracks are 8.4-22 m apart).
+   */
+  _stationPlan(st, tr) {
+    st.plan = st.plan || {};
+    if (st.plan[tr.key]) return st.plan[tr.key];
+    const k = tr.key, sC = st.s[k], other = tr.other;
+    const P0 = frame(tr, sC);
+    const q = other.nearest(P0.x, P0.z, 60);
+    const d = q ? q.d : 99;
+    const toward = q ? ((other.x(q.s) - P0.x) * P0.lx + (other.z(q.s) - P0.z) * P0.lz >= 0 ? 1 : -1) : 1;
+    let best = null;
+    for (const pl of st.plats || []) {
+      let l0 = Infinity, l1 = -Infinity, a0 = Infinity, a1 = -Infinity, ok = true;
+      for (const [x, z] of pl.p) {
+        const r = tr.nearest(x, z, 40);
+        if (!r || Math.abs(r.s - sC) > 90) { ok = false; break; }
+        const lat = r.d * r.side;
+        l0 = Math.min(l0, lat); l1 = Math.max(l1, lat); a0 = Math.min(a0, r.s); a1 = Math.max(a1, r.s);
+      }
+      if (!ok || (l0 < -0.6 && l1 > 0.6)) continue;
+      const side = l0 + l1 > 0 ? 1 : -1, near = side > 0 ? Math.max(0, l0) : Math.max(0, -l1);
+      if (near > 8 || a1 - a0 < 12) continue;
+      if (!best || near < best.near) best = { side, near, w: pl.area ? clamp(l1 - l0, 2.4, 9) : 3.4, a0, a1 };
+    }
+    const e0 = 1.45;
+    let plan;
+    if (best) {
+      const sg = best.side;
+      // a centre platform: the other track is on the platform's side, just past it
+      const island = !!q && toward === sg && d < e0 + best.w + e0 + 2.5;
+      let e1 = island ? d / 2 : e0 + best.w;
+      if (!island && q && toward === sg) e1 = Math.min(e1, d - e0 - 0.3);
+      let a0 = Math.max(best.a0, sC - 48), a1 = Math.min(best.a1, sC + 48);
+      const sp = st.stop[k];
+      a0 = Math.max(0, Math.min(a0, sp - LINK.len / 2 - 3)); a1 = Math.min(tr.len, Math.max(a1, sp + LINK.len / 2 + 3));
+      plan = { sg, e0, e1, island, a0, a1, d, osm: true };
+    } else {
+      const island = d >= 8.4 && d < 22;
+      const sp = st.stop[k];
+      plan = { sg: island ? toward : -toward, e0, e1: island ? d / 2 : e0 + 3.6, island, a0: Math.max(0, sp - LINK.platLen / 2), a1: Math.min(tr.len, sp + LINK.platLen / 2), d, osm: false };
+    }
+    // a centre platform is built once, by the first track (its outline covers both edges)
+    plan.builds = !plan.island || k === 'sb' || st.s.sb === undefined;
+    st.plan[k] = plan;
+    return plan;
+  }
+
+  /** Where you step off a train standing at `st`: onto its platform, beside the middle door. */
+  platformSpot(st, t) {
+    const tr = t.track, pl = this._stationPlan(st, tr);
+    const F = frame(tr, t.s), o = (pl.e0 + Math.min(pl.e1, pl.e0 + 2.2)) / 2 * pl.sg;
+    return { x: F.x + F.lx * o, z: F.z + F.lz * o, y: F.y + LINK.platH };
+  }
+
+  /**
+   * One track's platform at a station, ION's way (Commons photographs of
+   * Mill, Queen, Kitchener City Hall, Fairway, University of Waterloo): a
+   * concrete platform at the low floor's height with the yellow tactile edge;
+   * a canopy of blue-fritted glass on slim grey steel posts over the length
+   * of one car -- on a side platform cantilevered from posts along its back,
+   * rising toward the track; on a centre platform a butterfly on posts down
+   * its middle -- with the black name fascia along its edge; the station's
+   * coloured feature wall at the canopy's end; the ticket machine, the PRESTO
+   * validators, the next-train sign, benches in a glass shelter, the name
+   * totems at the platform's ends, and ramps down to the street.
+   */
   _buildStation(st, tr, chunk) {
-    const sC = st.s[tr.key], other = tr.other;
-    const L = LINK.platLen, s0 = sC - L / 2, s1 = sC + L / 2;
+    const pl = this._stationPlan(st, tr);
+    if (!pl.builds) return;
+    const sC = st.s[tr.key], sp = st.stop[tr.key];
     const c = chunk(tr.x(sC), tr.z(sC));
     const kind = tr.kind(sC);
     const under = kind === TUN || kind === BOX;
     const b = under ? c.tun : c.flat;
-    const q = other.nearest(tr.x(sC), tr.z(sC), 60);
-    const d = q ? q.d : 99;
-    const P0 = frame(tr, sC);
-    const toward = q ? ((other.x(q.s) - P0.x) * P0.lx + (other.z(q.s) - P0.z) * P0.lz >= 0 ? 1 : -1) : 1;
-    const island = d >= 8.4 && d < 22;
-    const sg = island ? toward : -toward;          // the platform's side of this track
-    // platform edge and back, off this track (an island's halves overlap a
-    // little underground, where they share a level: no seam down the middle)
-    const e0 = 1.45, e1 = island ? d / 2 + (under ? 0.3 : 0) : 5.9;
-    const H = LINK.platH;
-    const plat = under ? [0.36, 0.35, 0.33] : C.plat;
-    const DS = 4;
+    const { sg, e0, island } = pl;
+    // a centre platform reaches the other track's edge: its far edge is d - e0
+    const eFar = island ? pl.d - e0 : pl.e1;
+    const H = LINK.platH, DS = 4;
+    const CONC = [0.56, 0.55, 0.52], CONC_D = [0.36, 0.355, 0.34], STEEL = [0.30, 0.32, 0.34], DARK = [0.08, 0.085, 0.09];
+    const s0 = pl.a0, s1 = pl.a1;
+    if (!this.platforms) this.platforms = [];
     for (let s = s0; s < s1 - 0.01; s += DS) {
       const A = frame(tr, s), B = frame(tr, Math.min(s1, s + DS));
-      band(b, A, B, e0 * sg, H, e1 * sg, H, UP, plat);
-      band(b, A, B, e0 * sg, H, (e0 + 0.6) * sg, H + 0.015, UP, under ? [0.5, 0.42, 0.1] : C.tactile);
-      band(b, A, B, e0 * sg, -0.2, e0 * sg, H, side(A, -sg), under ? [0.2, 0.2, 0.2] : C.concreteD);
-      if (!island) {
-        // the back edge: underground a wall, in the open a railing
-        if (under) band(b, A, B, e1 * sg, H, e1 * sg, H + 1.1, side(A, -sg), [0.34, 0.34, 0.33]);
-        else {
-          band(b, A, B, (e1 - 0.05) * sg, H + 1.02, (e1 + 0.02) * sg, H + 1.02, UP, C.steel);
-          band(b, A, B, (e1 + 0.02) * sg, H + 0.97, (e1 + 0.02) * sg, H + 1.02, side(A, sg), C.steel);
-          band(b, A, B, (e1 - 0.05) * sg, H + 0.97, (e1 - 0.05) * sg, H + 1.02, side(A, -sg), C.steel);
-          b.box(A.x + A.lx * (e1 - 0.02) * sg, A.y + H, A.z + A.lz * (e1 - 0.02) * sg, 0.06, 1.0, 0.06, -A.h, C.steel);
+      band(b, A, B, e0 * sg, H, eFar * sg, H, UP, CONC);
+      // the tactile strip along the track's edge (both edges of a centre platform)
+      band(b, A, B, e0 * sg, H + 0.012, (e0 + 0.6) * sg, H + 0.012, UP, C.tactile);
+      band(b, A, B, e0 * sg, -0.25, e0 * sg, H, side(A, -sg), CONC_D);
+      if (island) {
+        band(b, A, B, (eFar - 0.6) * sg, H + 0.012, eFar * sg, H + 0.012, UP, C.tactile);
+        band(b, A, B, eFar * sg, -0.25, eFar * sg, H, side(A, sg), CONC_D);
+      } else {
+        // the back: a guard rail on a low kerb, and the face down to the ground
+        band(b, A, B, (eFar - 0.05) * sg, H + 1.02, (eFar + 0.02) * sg, H + 1.02, UP, STEEL);
+        band(b, A, B, (eFar + 0.02) * sg, H + 0.97, (eFar + 0.02) * sg, H + 1.02, side(A, sg), STEEL);
+        b.box(A.x + A.lx * (eFar - 0.03) * sg, A.y + H, A.z + A.lz * (eFar - 0.03) * sg, 0.06, 1.0, 0.06, -A.h, STEEL);
+        const gA = G.terrainHeight(A.x + A.lx * eFar * sg, A.z + A.lz * eFar * sg);
+        if (A.y + H - gA > 0.05) band(b, A, B, eFar * sg, Math.min(-0.25, gA - A.y - 0.3), eFar * sg, H, side(A, sg), CONC_D);
+      }
+      const mx = (A.x + B.x) / 2 + A.lx * ((e0 + eFar) / 2) * sg, mz = (A.z + B.z) / 2 + A.lz * ((e0 + eFar) / 2) * sg;
+      if (!under) this.platforms.push({ x: mx, z: mz, hw: (eFar - e0) / 2, hd: DS / 2 + 0.05, rot: -A.h, y0: (A.y + B.y) / 2 + H, y1: (A.y + B.y) / 2 + H });
+    }
+    // the ends: a ramp down to the ground, and the end faces
+    for (const [s, dn] of [[s0, -1], [s1, 1]]) {
+      const P = frame(tr, s), Q = frame(tr, clamp(s + dn * 5, 0, tr.len));
+      const gy = G.terrainHeight(Q.x + Q.lx * (e0 + eFar) / 2 * sg, Q.z + Q.lz * (e0 + eFar) / 2 * sg);
+      const yq = Math.max(gy, Q.y - 0.3);
+      b.quad(at(P, e0 * sg, H), at(P, eFar * sg, H), atY(Q, eFar * sg, yq), atY(Q, e0 * sg, yq), UP, uv0, CONC);
+      for (const o of [e0, eFar]) b.quad(at(P, o * sg, H), atY(Q, o * sg, yq), atY(Q, o * sg, yq - 0.4), at(P, o * sg, -0.25), side(P, o === e0 ? -sg : sg), uv0, CONC_D);
+    }
+    if (under) return;
+    // --- the canopy, over one car's length about where the train stops -----------
+    const CL = 26, c0 = clamp(sp - CL / 2, s0 + 1, s1 - CL - 1), c1 = c0 + CL;
+    const mid = (e0 + eFar) / 2;
+    // its section across the platform: [offset, height over the platform]
+    const roofAt = island
+      ? (o) => 3.25 + 0.45 * Math.abs(o - mid) / Math.max(1, (eFar - e0) / 2)       // a butterfly, low over the middle
+      : (o) => 3.3 + 0.45 * (eFar - o) / Math.max(1, eFar - e0);                    // rising toward the track
+    const r0 = e0 + 0.35, r1 = island ? eFar - 0.35 : eFar + 0.15;
+    const posts = island ? [mid] : [eFar - 0.45];
+    const sign = this._cellUV(st.name), frit = this._cellUV('frit');
+    for (let s = c0; s < c1 - 0.01; s += 3.25) {
+      const A = frame(tr, s), B = frame(tr, Math.min(c1, s + 3.25));
+      // the glass in two pieces across a butterfly (its valley in the middle)
+      const cuts = island ? [r0, mid, r1] : [r0, r1];
+      // (the sign material is double-sided and unlit: one quad is both faces)
+      for (let i = 0; i < cuts.length - 1; i++) {
+        const o0 = cuts[i], o1 = cuts[i + 1];
+        c.sign.quad(at(A, o0 * sg, H + roofAt(o0)), at(A, o1 * sg, H + roofAt(o1)), at(B, o1 * sg, H + roofAt(o1)), at(B, o0 * sg, H + roofAt(o0)), UP, frit, [1, 1, 1]);
+      }
+      // a cross beam under the glass at each bay, the posts every other bay
+      const bi = Math.round((s - c0) / 3.25);
+      for (let i = 0; i < cuts.length - 1; i++) {
+        const o0 = cuts[i], o1 = cuts[i + 1];
+        b.quad(at(A, o0 * sg, H + roofAt(o0) - 0.06), at(A, o1 * sg, H + roofAt(o1) - 0.06), at(A, o1 * sg, H + roofAt(o1) - 0.3), at(A, o0 * sg, H + roofAt(o0) - 0.3), [A.fx, 0, A.fz], uv0, STEEL);
+      }
+      if (bi % 2 === 0) {
+        for (const o of posts) {
+          const x = A.x + A.lx * o * sg, z = A.z + A.lz * o * sg;
+          b.tube([x, A.y + H, z], [x, A.y + H + roofAt(o) - 0.2, z], 0.11, 8, STEEL);
+          this.solids.push({ x, z, r: 0.2, y0: A.y + H, y1: A.y + H + roofAt(o) });
         }
       }
-      // walkable: a platform per 4 m slice
-      if (!this.platforms) this.platforms = [];
-      const mx = (A.x + B.x) / 2 + A.lx * ((e0 + e1) / 2) * sg, mz = (A.z + B.z) / 2 + A.lz * ((e0 + e1) / 2) * sg;
-      if (!under) this.platforms.push({ x: mx, z: mz, hw: (e1 - e0) / 2, hd: DS / 2 + 0.05, rot: -A.h, y0: (A.y + B.y) / 2 + H, y1: (A.y + B.y) / 2 + H });
-      if (!under && tr.kind(s) === FILL) {
-        // the platform's front face down to the ground on a slope
-        const gA = G.terrainHeight(A.x + A.lx * e1 * sg, A.z + A.lz * e1 * sg);
-        if (A.y + H - gA > 0.3 && !island) band(b, A, B, e1 * sg, -1.5, e1 * sg, H, side(A, sg), C.concrete);
+      // the fascia along the track side: a black band (the name on it, below)
+      for (const o of island ? [r0, r1] : [r0]) {
+        const sd = o === r0 ? -sg : sg, y = H + roofAt(o);
+        b.quad(at(A, o * sg, y + 0.06), at(B, o * sg, y + 0.06), at(B, o * sg, y - 0.42), at(A, o * sg, y - 0.42), side(A, sd), uv0, DARK);
+        b.quad(at(A, o * sg, y - 0.42), at(B, o * sg, y - 0.42), at(B, (o - 0.25 * sd * sg) * sg, y - 0.42), at(A, (o - 0.25 * sd * sg) * sg, y - 0.42), DOWN, uv0, DARK);
       }
     }
-    // the canopy: posts down the middle of the platform and a roof over it
-    // (an island's canopy is built once, by the western track)
-    const doCanopy = !under && (!island || tr.key === 'sb');
-    if (doCanopy) {
-      const cm = island ? d / 2 * sg : (e0 + e1) / 2 * sg;
-      const cw = island ? d / 2 - 0.4 : (e1 - e0) / 2 + 0.3;
-      for (let s = s0 + 8; s < s1 - 6; s += 12) {
-        const P = frame(tr, s);
-        b.box(P.x + P.lx * cm, P.y + H, P.z + P.lz * cm, 0.24, 3.6, 0.24, -P.h, C.steel);
-        // a bench and a wind screen between posts
-        if (((s - s0) / 12 | 0) % 2 === 0) {
-          const bo = cm + 0.9 * (island ? 0 : sg);
-          b.box(P.x + P.lx * bo + P.fx * 4, P.y + H, P.z + P.lz * bo + P.fz * 4, 0.5, 0.45, 1.8, -P.h, C.steel);
-          b.box(P.x + P.lx * bo + P.fx * 4, P.y + H + 0.42, P.z + P.lz * bo + P.fz * 4, 0.55, 0.06, 1.9, -P.h, [0.34, 0.22, 0.14]);
-        }
-      }
-      for (let s = s0 + 2; s < s1 - 2; s += DS) {
-        const A = frame(tr, s), B = frame(tr, Math.min(s1 - 2, s + DS));
-        band(b, A, B, cm - cw, H + 3.9, cm + cw, H + 3.6, UP, C.canopy);
-        band(b, A, B, cm - cw, H + 3.78, cm + cw, H + 3.48, DOWN, [0.5, 0.52, 0.55]);
-        // a lit strip under the canopy
-        band(c.sign, A, B, cm - 0.12, H + 3.46, cm + 0.12, H + 3.46, DOWN, [1, 1, 1], this._cellUV('__link', 0.9));
-      }
-    }
-    // Underground: the hall -- wider, lighter, with a lit ceiling -- round the
-    // track and its platform.
-    if (under) {
-      // an island's hall is two halves meeting over its middle: no wall there
-      const W = island ? d / 2 + 0.05 : Math.max(LINK.boreW, e1 + 0.3), top = 7.2;
-      for (let s = s0 - 6; s < s1 + 6 - 0.01; s += DS) {
-        const A = frame(tr, s), B = frame(tr, s + DS);
-        const k = (t) => { const d = Math.abs(((t % 8) + 8) % 8 - 4) / 4; return 0.8 + 0.2 * d; };
-        const kA = k(s), kB = k(s + DS);
-        if (!island) band(c.tun, A, B, (W) * sg, -0.3, (W) * sg, top, side(A, -sg), [0.36 * kA, 0.35 * kA, 0.33 * kA]);
-        band(c.tun, A, B, -LINK.boreW * sg, LINK.boreH, W * sg, top, DOWN, [0.3, 0.3, 0.29]);
-        band(c.tun, A, B, -LINK.boreW * sg, -0.3, -LINK.boreW * sg, LINK.boreH, side(A, sg), [0.3 * kA, 0.29 * kA, 0.28 * kA]);
-        // the hall's floor, under and past the platform
-        band(c.tun, A, B, 1.5 * sg, -0.25, W * sg, -0.25, UP, [0.08, 0.08, 0.08]);
-        // the floor on the far side of the track, and a walkway there
-        band(c.tun, A, B, -1.5 * sg, -0.25, -1.9 * sg, -0.25, UP, [0.08, 0.08, 0.08]);
-        band(c.tun, A, B, -1.9 * sg, -0.25, -1.9 * sg, 0.55, side(A, sg), [0.13, 0.13, 0.13]);
-        band(c.tun, A, B, -1.9 * sg, 0.55, -LINK.boreW * sg, 0.55, UP, [0.22, 0.22, 0.21]);
-        // light strips over the platform
-        band(c.tun, A, B, (e0 + 0.8) * sg, top - 0.05, (e0 + 1.1) * sg, top - 0.05, DOWN, [1.0, 0.97, 0.9]);
-        band(c.tun, A, B, (e1 - 1.1) * sg, top - 0.05, (e1 - 0.8) * sg, top - 0.05, DOWN, [1.0, 0.97, 0.9]);
-      }
-      // hall ends
-      for (const [s, dn] of [[s0 - 6, 1], [s1 + 6, -1]]) {
-        const P = frame(tr, s);
-        const n = [P.fx * dn, 0, P.fz * dn];
-        // over the bore, and beside it out to the hall's side
-        c.tun.quad(at(P, -LINK.boreW * sg, LINK.boreH), at(P, LINK.boreW * sg, LINK.boreH), at(P, LINK.boreW * sg, top), at(P, -LINK.boreW * sg, top), n, uv0, [0.24, 0.24, 0.23]);
-        if (W > LINK.boreW) c.tun.quad(at(P, LINK.boreW * sg, -0.3), at(P, W * sg, -0.3), at(P, W * sg, top), at(P, LINK.boreW * sg, top), n, uv0, [0.24, 0.24, 0.23]);
-      }
-    }
-    // boards: at both ends and the middle, hanging over the platform
-    for (const s of [s0 + 14, sC, s1 - 14]) {
+    // the name on the fascia, twice along it, both faces of each edge
+    for (const s of [c0 + CL * 0.27, c0 + CL * 0.73]) {
       const P = frame(tr, s);
-      const o = (e0 + (island ? (e1 - e0) * 0.5 : 1.6)) * sg;
-      const y = P.y + H + (under ? 3.1 : 2.8);
-      const w = 3.6, h = 0.45;
-      const cx = P.x + P.lx * o, cz = P.z + P.lz * o;
-      for (const fs of [1, -1]) {
-        const n = [P.lx * -sg * fs, 0, P.lz * -sg * fs];
-        // the board faces across the track (and, back to back, the platform)
-        const off = 0.03 * fs;
-        const a = [cx - P.fx * w / 2 + n[0] * off, y, cz - P.fz * w / 2 + n[2] * off], bb = [cx + P.fx * w / 2 + n[0] * off, y, cz + P.fz * w / 2 + n[2] * off];
-        const uvs = this._cellUV(st.name);
-        // mirror the uv on the side where +f runs right to left
-        const flip = sg * fs > 0;
-        const U = flip ? [uvs[2], uvs[1], uvs[0], uvs[1], uvs[0], uvs[3], uvs[2], uvs[3]] : uvs;
+      for (const o of island ? [r0, r1] : [r0]) {
+        const sd = o === r0 ? -sg : sg, y = P.y + H + roofAt(o) - 0.39, h = 0.4, w = 3.2;
+        const n = [P.lx * sd, 0, P.lz * sd];
+        const cx = P.x + P.lx * (o * sg + sd * 0.012), cz = P.z + P.lz * (o * sg + sd * 0.012);
+        // reads left to right seen from the track: +f runs right when the face looks -left
+        const flip = sd > 0;
+        const a = [cx - P.fx * w / 2, y, cz - P.fz * w / 2], bb = [cx + P.fx * w / 2, y, cz + P.fz * w / 2];
+        const U = flip ? mirrorUV(sign) : sign;
         c.sign.quad(a, bb, [bb[0], y + h, bb[2]], [a[0], y + h, a[2]], n, U, [1, 1, 1]);
       }
-      b.box(cx, y + h, cz, 0.08, (under ? 7.2 : 3.9) + P.y + H - y - h - (under ? 0 : 0.2), 0.08, -P.h, C.steel);
+    }
+    // the next-train sign hung under the canopy's edge, facing along the platform
+    {
+      const P = frame(tr, c0 + CL * 0.5), o = island ? mid : r0 + 1.0, y = P.y + H + roofAt(o) - 0.85;
+      const cx = P.x + P.lx * o * sg, cz = P.z + P.lz * o * sg, w = 1.7, h = 0.24;
+      b.box(cx, y - 0.04, cz, 0.36, h + 0.08, 0.14, -P.h + Math.PI / 2, DARK);
+      for (const fs of [1, -1]) {
+        // seen from +f the track's left (+l) is on the viewer's right
+        const n = [P.fx * fs, 0, P.fz * fs], rx = P.lx * fs, rz = P.lz * fs;
+        const fx = cx + P.fx * 0.075 * fs, fz = cz + P.fz * 0.075 * fs;
+        const L2 = this._cellUV(tr.dir > 0 ? 'led:sb' : 'led:nb');
+        const a = [fx - rx * w / 2, y, fz - rz * w / 2], bb = [fx + rx * w / 2, y, fz + rz * w / 2];
+        c.sign.quad(a, bb, [bb[0], y + h, bb[2]], [a[0], y + h, a[2]], n, L2, [1, 1, 1]);
+      }
+      b.tube([cx, y + h + 0.04, cz], [cx, P.y + H + roofAt(o) - 0.3, cz], 0.02, 4, STEEL);
+    }
+    // the feature wall at the canopy's far end, square to the track
+    {
+      const sw = tr.dir > 0 ? c1 + 1.2 : c0 - 1.2, P = frame(tr, sw);
+      const o = island ? mid : Math.max(e0 + 1.4, eFar - 0.9), wW = island ? Math.min(1.6, eFar - e0 - 2.4) : 1.3;
+      const x = P.x + P.lx * o * sg, z = P.z + P.lz * o * sg, y = P.y + H;
+      b.box(x, y, z, Math.max(0.6, wW), 3.0, 0.32, -P.h, C.concreteD);
+      this.solids.push({ x, z, r: 0.7, y0: y, y1: y + 3 });
+      const fwc = this._cellUV('fw:' + st.name);
+      for (const fs of [1, -1]) {
+        const n = [P.fx * fs, 0, P.fz * fs], cx = x + P.fx * 0.17 * fs, cz = z + P.fz * 0.17 * fs;
+        const hw = Math.max(0.6, wW) / 2 - 0.05, ux = P.lx, uz = P.lz;
+        // seen from +f, the track's left (+l) is on the viewer's right
+        const a = [cx - ux * hw * fs, y + 0.15, cz - uz * hw * fs], bb = [cx + ux * hw * fs, y + 0.15, cz + uz * hw * fs];
+        c.sign.quad(a, bb, [bb[0], y + 2.9, bb[2]], [a[0], y + 2.9, a[2]], n, fwc, [1, 1, 1]);
+      }
+    }
+    // the ticket machine and the PRESTO validators by the feature wall, a
+    // glass shelter with its bench mid-canopy, two benches
+    {
+      const sT = tr.dir > 0 ? c1 - 2.2 : c0 + 2.2, P = frame(tr, sT);
+      const o = island ? mid + 0.9 : Math.min(eFar - 0.7, e0 + 2.6);
+      const x = P.x + P.lx * o * sg, z = P.z + P.lz * o * sg, y = P.y + H;
+      b.box(x, y, z, 0.6, 1.8, 0.75, -P.h, [0.52, 0.54, 0.57]);
+      b.box(x, y + 1.8, z, 0.62, 0.08, 0.77, -P.h, ION_BLUE);
+      const tv = this._cellUV('tvm'), fsn = -sg;           // its face looks across the platform toward the track
+      const fxn = P.lx * fsn, fzn = P.lz * fsn;
+      const cx = x + fxn * 0.31, cz = z + fzn * 0.31;
+      c.sign.quad([cx - P.fx * 0.36, y + 0.2, cz - P.fz * 0.36], [cx + P.fx * 0.36, y + 0.2, cz + P.fz * 0.36],
+        [cx + P.fx * 0.36, y + 1.75, cz + P.fz * 0.36], [cx - P.fx * 0.36, y + 1.75, cz - P.fz * 0.36], [fxn, 0, fzn], fsn > 0 ? mirrorUV(tv) : tv, [1, 1, 1]);
+      this.solids.push({ x, z, r: 0.45, y0: y, y1: y + 1.9 });
+      for (const ds of [2.2, 3.4]) {
+        const V = frame(tr, sT - tr.dir * ds);
+        const vx = V.x + V.lx * o * sg, vz = V.z + V.lz * o * sg;
+        b.box(vx, y, vz, 0.12, 1.12, 0.12, -V.h, DARK);
+        b.box(vx, y + 1.12, vz, 0.2, 0.3, 0.16, -V.h, [0.05, 0.05, 0.055]);
+        b.box(vx + V.lx * -sg * 0.09, y + 1.22, vz + V.lz * -sg * 0.09, 0.03, 0.12, 0.1, -V.h, [0.25, 0.85, 0.35]);
+      }
+      // the shelter: a glass box's frame and its roof, a bench inside
+      const sS = sp, S = frame(tr, sS), so = island ? mid : Math.min(eFar - 1.0, e0 + 2.9);
+      const sx = S.x + S.lx * so * sg, sz = S.z + S.lz * so * sg;
+      const sh = 2.3, sl = 4.2, swd = island ? 1.5 : 1.6;
+      for (const a of [-sl / 2, sl / 2]) for (const l of [-swd / 2, swd / 2]) {
+        b.box(sx + S.fx * a + S.lx * l * sg, y, sz + S.fz * a + S.lz * l * sg, 0.07, sh, 0.07, -S.h, STEEL);
+      }
+      b.box(sx, y + sh, sz, swd + 0.1, 0.08, sl + 0.1, -S.h, STEEL);
+      b.box(sx, y + 0.08, sz, swd + 0.02, 0.05, sl, -S.h, STEEL);
+      b.box(sx + S.lx * (swd / 2 - 0.35) * sg, y, sz + S.lz * (swd / 2 - 0.35) * sg, 0.45, 0.46, 3.0, -S.h, [0.20, 0.30, 0.55]);
+      for (const ds of [-9, 9]) {
+        const Bn = frame(tr, sS + ds), bo = island ? mid : Math.min(eFar - 0.7, e0 + 2.7);
+        b.box(Bn.x + Bn.lx * bo * sg, y, Bn.z + Bn.lz * bo * sg, 0.5, 0.45, 1.8, -Bn.h, STEEL);
+        b.box(Bn.x + Bn.lx * bo * sg, y + 0.42, Bn.z + Bn.lz * bo * sg, 0.55, 0.06, 1.9, -Bn.h, [0.34, 0.22, 0.14]);
+      }
+    }
+    // the name totems at the platform's ends: a pole with the board at its head
+    for (const s of [s0 + 4, s1 - 4]) {
+      const P = frame(tr, s), o = island ? mid : eFar - 0.35;
+      const x = P.x + P.lx * o * sg, z = P.z + P.lz * o * sg, y = P.y + H;
+      b.box(x, y, z, 0.12, 2.95, 0.12, -P.h, STEEL);
+      for (const fs of [1, -1]) {
+        const n = [P.lx * -sg * fs, 0, P.lz * -sg * fs];
+        const a = [x - P.fx * 1.1 + n[0] * 0.07, y + 2.4, z - P.fz * 1.1 + n[2] * 0.07], bb = [x + P.fx * 1.1 + n[0] * 0.07, y + 2.4, z + P.fz * 1.1 + n[2] * 0.07];
+        const flip = sg * fs < 0;
+        const U = flip ? mirrorUV(sign) : sign;
+        c.sign.quad(a, bb, [bb[0], y + 2.95, bb[2]], [a[0], y + 2.95, a[2]], n, U, [1, 1, 1]);
+      }
+      this.solids.push({ x, z, r: 0.15, y0: y, y1: y + 3 });
     }
   }
 
@@ -1245,44 +1906,11 @@ export class Link {
     return [u0 + iu, v0 + iv, u1 - iu, v0 + iv, u1 - iu, v1 - iv, u0 + iu, v1 - iv];
   }
 
-  /** The street entrance: a canopy over the way down (or up), and a pylon
-   *  with the station's name. ENTER here boards the train at the platform. */
-  _buildEntrance(st, chunk) {
-    const e = st.ent, c = chunk(e.x, e.z);
-    const h = e.h, fx = Math.sin(h), fz = Math.cos(h), lx = Math.cos(h), lz = -Math.sin(h);
-    const y = e.y;
-    // pylon
-    const px = e.x + lx * 2.2, pz = e.z + lz * 2.2;
-    c.flat.box(px, y, pz, 0.7, 4.6, 0.7, -h, C.navy);
-    for (const sn of [1, -1]) {
-      const n = [fx * -sn, 0, fz * -sn];
-      const cx = px - fx * 0.36 * sn, cz = pz - fz * 0.36 * sn;
-      // the name board, turned to read down the pylon's face
-      const uvs = this._cellUV(st.name);
-      const w = 0.66, top = y + 4.4, bot = y + 1.2;
-      // vertical text: run the cell's u along the height
-      const a = [cx - lx * w / 2 * sn, bot, cz - lz * w / 2 * sn], b = [cx + lx * w / 2 * sn, bot, cz + lz * w / 2 * sn];
-      c.sign.quad(a, b, [b[0], top, b[2]], [a[0], top, a[2]], n, [uvs[0], uvs[3], uvs[0], uvs[1], uvs[2], uvs[1], uvs[2], uvs[3]], [1, 1, 1]);
-      const lu = this._cellUV('__link');
-      c.sign.quad([cx - lx * w / 2 * sn, top + 0.02, cz - lz * w / 2 * sn], [cx + lx * w / 2 * sn, top + 0.02, cz + lz * w / 2 * sn],
-        [cx + lx * w / 2 * sn, top + 0.18, cz + lz * w / 2 * sn], [cx - lx * w / 2 * sn, top + 0.18, cz - lz * w / 2 * sn], n, lu, [1, 1, 1]);
-    }
-    this.solids.push({ x: px, z: pz, r: 0.5, y0: y, y1: y + 4.6 });
-    // the entrance itself: a glass canopy over stairs going down (a hall
-    // underground) or a gate (at grade and up top)
-    const ex = e.x - lx * 1.2, ez = e.z - lz * 1.2;
-    for (const o of [-1.5, 1.5]) for (const f of [-2.2, 2.2]) c.flat.box(ex + lx * o + fx * f, y, ez + lz * o + fz * f, 0.14, 3.1, 0.14, -h, C.steel);
-    c.flat.box(ex, y + 3.1, ez, 3.6, 0.16, 5.0, -h, C.canopy);
-    c.flat.box(ex, y + 3.26, ez, 3.4, 0.05, 4.8, -h, C.teal);
-    if (st.under) {
-      // the stairwell: a dark opening in the ground with its side walls
-      c.flat.box(ex, y + 0.02, ez, 2.4, 0.04, 3.6, -h, [0.03, 0.03, 0.035]);
-      for (const o of [-1.3, 1.3]) c.flat.box(ex + lx * o, y, ez + lz * o, 0.2, 1.0, 3.8, -h, C.concreteL);
-    } else {
-      // fare readers either side of the way in
-      for (const o of [-0.9, 0.9]) c.flat.box(ex + lx * o + fx * 1.8, y, ez + lz * o + fz * 1.8, 0.28, 1.2, 0.3, -h, C.teal);
-    }
-  }
+  /** A station's way in from the street. ION's are at grade: you walk up the
+   *  ramp at a platform's end, so nothing is drawn here (Seattle's glass
+   *  entrance canopies and pylons were Link's); `st.ent` stays the spot the
+   *  map icon and the boarding test use. */
+  _buildEntrance(st, chunk) { /* nothing to draw */ }
 
   // --- trains -----------------------------------------------------------------
 
@@ -1292,25 +1920,90 @@ export class Link {
     const A = vehicleAssets();
     this.bodyMat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.2, roughness: 0.42, envMapIntensity: 1.1 });
     this.trimMat = A.trimMat;
-    let id = 0;
-    for (const k of this.keys) {
-      const tr = this.tracks[k];
-      // a 2 Line train starts out on its own branch, clear of the shared rails
-      const n = tr.share ? LINK.perTrack2 : LINK.perTrack, s0 = tr.share ? tr.share.end + 300 : 0;
-      for (let i = 0; i < n; i++) {
-        const t = new LinkTrain(this, id++, tr);
-        const s = s0 + ((i + 0.5) / n) * (tr.len - s0);
-        t.place(clamp(s, LINK.len / 2 + 5, tr.len - LINK.len / 2 - 5), tr.dir);
-        this.trains.push(t);
-        scene.add(t.group);
+    // the lettering: per train a clone of this (its own texture offset)
+    this.decMat = new THREE.MeshStandardMaterial({ vertexColors: true, map: decalTexture(), alphaTest: 0.5, metalness: 0.1, roughness: 0.5,
+      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+    this.decMat.userData.noShadow = true;
+    // THE TIMETABLE. Route 301 every LINK.headway seconds each way: a trip
+    // takes Tsb Conestoga -> Fairway and Tnb back (timed by running one
+    // train alone, _tripProfile), and the trains in service are as many as
+    // fill the round trip with at least LINK.turn at each terminus. Each
+    // starts at its own phase of the cycle, one headway apart.
+    const sb = this.tracks.sb, nb = this.tracks.nb;
+    const P = { sb: this._tripProfile(sb), nb: this._tripProfile(nb) };
+    const T = P.sb.T + P.nb.T, H = LINK.headway;
+    const N = Math.max(2, Math.ceil((T + 2 * LINK.turn) / H));
+    const lay = (N * H - T) / 2;
+    this.timetable = { N, H, Tsb: P.sb.T, Tnb: P.nb.T, layover: lay, cycle: N * H };
+    this.clock = 0;
+    // each terminus's last departure, by the track it leaves on (_turnBack)
+    this.lastDep = { sb: -Infinity, nb: -Infinity };
+    const dep = (k, at) => { this.lastDep[k] = Math.max(this.lastDep[k], at); };
+    for (let i = 0; i < N; i++) {
+      const t = new LinkTrain(this, i, sb);
+      const put = (k, q) => {
+        t.track = this.tracks[k]; t.place(q.s, t.track.dir); t.u = q.u;
+        t.state = q.state; t.timer = q.timer; t.station = q.st; t.lastStop = q.last; t.doors = q.state === 'dwell';
+      };
+      // where in the cycle: the sb trip, the layover at Fairway (standing at
+      // the nb platform), the nb trip, the layover at Conestoga
+      let tau = (i * H) % (N * H);
+      if (tau < P.sb.T) { put('sb', P.sb.at(tau)); dep('sb', -tau); } else if ((tau -= P.sb.T) < lay) {
+        const st = nb.from; put('nb', { s: st.stop.nb, u: 0, state: 'dwell', timer: lay - tau, st, last: st }); dep('nb', lay - tau);
+      } else if ((tau -= lay) < P.nb.T) { put('nb', P.nb.at(tau)); dep('nb', -tau); } else {
+        tau -= P.nb.T;
+        const st = sb.from; put('sb', { s: st.stop.sb, u: 0, state: 'dwell', timer: lay - tau, st, last: st }); dep('sb', lay - tau);
       }
+      this.trains.push(t);
+      scene.add(t.group);
     }
-    // the junction a northbound train merges through, one at a time
-    if (this.tracks.nb2) this.merge = { E: this.tracks.nb2.share.end, owner: null };
-    // settle the service: four minutes of it, at a coarse step
-    for (let k = 0; k < 960; k++) this._service(0.25, true);
-    for (const t of this.trains) t.group.visible = false;
+    for (const t of this.trains) { t.setSign(); t.group.visible = false; }
     return this.trains;
+  }
+
+  /**
+   * One train alone on track `tr`, from its first platform to its last, by
+   * the service's own code at a coarse step: how long the trip takes (T) and
+   * where the train is at any time into it (at(t)).
+   */
+  _tripProfile(tr) {
+    const ghost = Object.create(LinkTrain.prototype);
+    const sys = Object.create(this);
+    Object.assign(sys, { trains: [], player: null, audio: null, merge: null, onDoors() {} });
+    Object.assign(ghost, { sys, track: tr, dir: tr.dir, _fwd: { x: 0, z: 1 }, driver: null, obstructAt: Infinity, hornT: 0, held: 0, id: -1, doors: false, ghost: true });
+    const st0 = tr.from;
+    ghost.place(st0.stop[tr.key], tr.dir);
+    ghost.state = 'run'; ghost.lastStop = st0; ghost.station = null; ghost.timer = 0;
+    const snaps = [], DT = 0.5, EVERY = 4;
+    let t = 0;
+    for (let i = 0; i < 20000; i++) {
+      if (i % EVERY === 0) snaps.push({ s: ghost.s, u: ghost.u, state: ghost.state, timer: ghost.timer, st: ghost.station, last: ghost.lastStop });
+      ghost.service(DT);
+      t += DT;
+      if (ghost.state === 'dwell' && ghost.station === tr.to) break;
+    }
+    return { T: t, at: (tt) => snaps[Math.min(snaps.length - 1, Math.max(0, Math.round(tt / (DT * EVERY))))] };
+  }
+
+  /**
+   * AT THE TERMINUS: its passengers off, the train changes ends onto the
+   * other track's platform (the crossover is beside the platforms) as soon as
+   * that platform is clear, and stands there doors open until its slot: a
+   * headway after that terminus's last departure, and never less than
+   * LINK.turn after it arrived. False while it must wait.
+   */
+  _turnBack(t) {
+    const nt = t.track.other, k = nt.key, st = t.track.to;
+    if (nt.from !== st || st.stop[k] === undefined) return false;
+    const s = st.stop[k];
+    for (const o of this.trains) if (o !== t && o.track === nt && o.state !== 'off' && Math.abs(o.s - s) < LINK.len + 6) return false;
+    const due = Math.max(this.lastDep[k] + LINK.headway, this.clock + LINK.turn - LINK.dwell);
+    this.lastDep[k] = due;
+    t.track = nt; t.dir = nt.dir; t.place(s, nt.dir);
+    t.state = 'dwell'; t.station = st; t.lastStop = st; t.held = 0; t.doors = true;
+    t.timer = Math.max(LINK.dwell, due - this.clock);
+    t.setSign();
+    return true;
   }
 
   /** Hooks into the game. */
@@ -1391,18 +2084,17 @@ export class Link {
 
   _service(dt, boot = false) {
     const p = this.player, pos = p ? p.position : null;
-    const waiting = !boot && p && p.onFoot && this.waitingAt(pos.x, pos.z);
+    // the service's clock: the timetable's departures are on it (_turnBack)
+    this.clock = (this.clock || 0) + dt;
     this._tick = (this._tick || 0) + 1;
     for (const t of this.trains) {
       if (t.driver === 'player') continue;
-      // far from you, while you wait at a station, the service runs fast
-      let k = 1;
+      // (Seattle ran the far service 6x while you waited: ION keeps its
+      // timetable, and ENTER at a platform calls the next train in instead)
       const far = pos && Math.hypot(t.x - pos.x, t.z - pos.z);
-      if (waiting && far > 1400) k = 6;
       // More than 2 km off, a train is run every fourth frame on the time it
-      // has saved up (round robin, by id): with the 2 Line there are 40 of
-      // them, and their planning was ~0.4 ms a frame on the phone profile.
-      t._acc = (t._acc || 0) + dt * k;
+      // has saved up (round robin, by id).
+      t._acc = (t._acc || 0) + dt;
       if (!boot && far > 2000 && (this._tick + t.id) % 4 !== 0) continue;
       let left = t._acc;
       t._acc = 0;
@@ -1460,12 +2152,15 @@ export class Link {
     // range at once, out to the flat range a slice a frame, let go 700 m past.
     const R = RANGE, pad = CHUNK * 0.71, BUILD_R = Math.max(R.flat, 900) + 300;
     this.lazy.stream(cx, cz, R.near + 200, BUILD_R, BUILD_R + 700, pad, ON_PHONE ? 1.5 : 3, this._lazySys());
+    this._polesUpdate(cx, cz);
+    this._crossingsUpdate(dt, cx, cz);
     for (const t of this.trains) {
       const d = Math.hypot(t.cx - cx, t.cz - cz);
       const buried = t.buried();
       const vis = t.state !== 'off' && (t.driver === 'player' || (d < RANGE.train && (this.tunnelMode ? d < 900 : !buried)));
       t.group.visible = vis;
-      if (vis) t.pose();
+      // the lettering is a draw of its own: only near (it is unreadable past ~250 m)
+      if (vis) { t.meshes[2].visible = d < 260 || t.driver === 'player'; t.pose(); }
     }
     // a called train: board it when its doors open, if you are still there
     const pd = this.pending;
@@ -1548,6 +2243,8 @@ export class Link {
    */
   blocks(x, z, y) {
     if (!this.onGradeCorridor(x, z)) return false;
+    // a crossing's gates coming down: stop at the arm
+    if (this.crossingClosed(x, z)) return true;
     for (const k of this.keys) {
       const tr = this.tracks[k];
       const q = tr.nearest(x, z, 6);
@@ -1590,8 +2287,8 @@ export class Link {
   call(st) {
     let best = null;
     for (const k of this.keys) {
-      if (st.s[k] === undefined) continue;
-      const tr = this.tracks[k], sS = st.s[k];
+      if (st.stop[k] === undefined) continue;
+      const tr = this.tracks[k], sS = st.stop[k];
       for (const t of this.trains) {
         if (t.track !== tr || t.driver || t.state === 'off') continue;
         const d = (sS - t.s) * t.dir;
@@ -1600,7 +2297,7 @@ export class Link {
       }
     }
     if (!best) return null;
-    const { t, d, k } = best, tr = this.tracks[k], sS = st.s[k];
+    const { t, d, k } = best, tr = this.tracks[k], sS = st.stop[k];
     if (d > 190) {
       const s = sS - t.dir * 180;
       let clear = s > LINK.len && s < tr.len - LINK.len;
@@ -1619,8 +2316,8 @@ export class Link {
   nextAt(st) {
     const out = {};
     for (const k of this.keys) {
-      if (st.s[k] === undefined) continue;
-      const tr = this.tracks[k], sS = st.s[k];
+      if (st.stop[k] === undefined) continue;
+      const tr = this.tracks[k], sS = st.stop[k];
       let best = null;
       for (const t of this.trains) {
         if (t.track !== tr || t.state === 'off') continue;
@@ -1628,7 +2325,7 @@ export class Link {
         if (d < -5) continue;
         if (t.state === 'dwell' && t.station === st) { best = 0; break; }
         // ~13 m/s running average plus the stops between
-        const stops = this.stations.filter((q) => { const e = (q.s[k] - t.s) * t.dir; return e > 5 && e < d - 5; }).length;
+        const stops = this.stations.filter((q) => { const e = (q.stop[k] - t.s) * t.dir; return e > 5 && e < d - 5; }).length;
         const eta = d / 13 + stops * (LINK.dwell + 12) + (t.state === 'dwell' ? t.timer : 0);
         if (best === null || eta < best) best = eta;
       }
@@ -1652,6 +2349,8 @@ export class Link {
   exitSpot(t) {
     const st = t.stationHere();
     if (!st) return null;
+    // ION's platforms are at grade: you step off onto the platform
+    if (!st.under && st.s[t.track.key] !== undefined) return this.platformSpot(st, t);
     return { x: st.ent.x, z: st.ent.z, y: st.ent.y };
   }
   get noExitMsg() { return 'The doors only open at a station — stop at a platform'; }
@@ -1671,8 +2370,35 @@ export class Link {
     if (this.hud) this.hud.setObjective(this._objBefore || '');
     this.camUnder = false;
   }
+  /** The doors: their chime (a rising pair opening, the falling warning
+   *  closing), for anyone near or aboard; aboard, the next stop announced
+   *  as the train leaves. */
   onDoors(t, open) {
-    if (this.audio && this.audio.chime && this.player && Math.hypot(this.player.position.x - t.x, this.player.position.z - t.z) < 90) this.audio.chime(open);
+    const p = this.player, aboard = p && p.vehicle === t;
+    const a = this.audio;
+    if (a && a.ready && p && (aboard || Math.hypot(p.position.x - t.x, p.position.z - t.z) < 90)) {
+      a.play(open ? 'ion_doors_open' : 'ion_doors_close', aboard ? { gain: 0.7 } : { gain: 0.8, x: t.cx, y: t.y + 2, z: t.cz, ref: 8, maxD: 120 });
+    }
+    if (aboard && !open) {
+      const nx = t.nextStation();
+      if (nx) { t._announced = null; this.announce(`Next stop: ${nx.full}`, nx === t.track.to ? `${nx.full}. This is the last stop` : null); }
+    }
+  }
+
+  /** ION's on-board announcements: the toast, and the voice (the platform's
+   *  speech synthesis, where there is one) -- "Next stop: Waterloo Public
+   *  Square". `extra` is said after, on the toast only. */
+  announce(text, extra = null) {
+    this.say(extra ? `${text} · ${extra}` : text, 4200);
+    try {
+      const ss = typeof window !== 'undefined' && window.speechSynthesis;
+      if (!ss || !this.audio || !this.audio.enabled || window.__noSpeech) return;
+      ss.cancel();
+      const u = new SpeechSynthesisUtterance(text.replace(':', ','));
+      u.lang = 'en-CA'; u.rate = 0.95; u.pitch = 1.0; u.volume = 0.9;
+      ss.speak(u);
+    } catch (e) { /* no voice: the toast says it */ }
+    this.lastAnnounce = text;
   }
   onArrive(t, st, err, secs) {
     const e = Math.abs(err);
@@ -1695,38 +2421,122 @@ export class Link {
 }
 
 // ---------------------------------------------------------------------------
-// The car: a low-floor three-section LRV, a cab at each end, as Link's
-// Series 2 cars look [S70][ST]: white over a navy skirt with a teal line, a
-// dark window band, four double doors a side, the pantograph over the short
-// centre section. Built once in car-local metres (+z toward the B end, y = 0
-// on the rail head, x to the left), then copied four times into one train
-// geometry skinned to twelve bones.
+// The car: ION's Bombardier Flexity Freedom, from the Commons photographs of
+// cars 504-515 in service (2018-2026). A low-floor car in five sections:
+// light grey skirt; a white body; a dark window band of big panes between
+// black pillars; a white band over it and ION's BLUE along the roof line,
+// which runs down the cab's corners in the blue swoosh either side of the
+// black windscreen cap. Tall black articulations between the sections. The
+// front: a black cap over a raked windscreen with the amber destination sign
+// ("301 to Conestoga" / "301 to Fairway") at its top, the lower nose white
+// with a black band holding two pairs of headlamps and the red tail lamps,
+// the fleet number in white on that band. Four glazed double doors a side
+// (one on each cab section near its back, one on each suspended section
+// next to the centre), the ion logo low on the cabs, the Region of
+// Waterloo's mark over the windows behind the cab, GRT on the centre
+// section, the pantograph on the centre section. Built once in car-local
+// metres (+z toward the B end, y = 0 on the rail head, x to the left) into
+// three geometries skinned to the sections' bones: the body (vertex
+// colours), the trim (glass and lamps, the vehicles' glass material) and
+// the decals (the lettering atlas: per train, its destination and number).
 
 const LIV = {
-  // Auto KW: ION's Flexity Freedom -- white, a charcoal skirt, the red band
-  white: [0.90, 0.91, 0.90], navy: [0.10, 0.10, 0.11], teal: [0.78, 0.07, 0.10], pillar: [0.05, 0.055, 0.06],
-  door: [0.78, 0.79, 0.80], roof: [0.66, 0.67, 0.68], under: [0.07, 0.07, 0.075], bogie: [0.12, 0.12, 0.13],
-  seat: [0.10, 0.26, 0.48], floor: [0.30, 0.30, 0.31], liner: [0.80, 0.80, 0.78], ceil: [0.88, 0.88, 0.86],
-  pole: [0.78, 0.78, 0.8], amber: [1.0, 0.62, 0.12], lamp: [1.0, 0.98, 0.9], red: [0.85, 0.08, 0.06], wheel: [0.22, 0.2, 0.19],
-  bellows: [0.09, 0.09, 0.1], green: [0.2, 0.9, 0.35],
+  white: [0.86, 0.87, 0.88], skirt: [0.50, 0.52, 0.54], blue: ION_BLUE, black: [0.025, 0.026, 0.03],
+  pillar: [0.03, 0.032, 0.036], roof: [0.62, 0.63, 0.64], under: [0.06, 0.06, 0.065], bogie: [0.10, 0.10, 0.11],
+  seat: [0.07, 0.17, 0.42], floor: [0.24, 0.25, 0.26], liner: [0.80, 0.80, 0.78], ceil: [0.88, 0.88, 0.86],
+  pole: [0.85, 0.66, 0.05], lamp: [1.0, 0.98, 0.9], red: [0.85, 0.05, 0.04], wheel: [0.22, 0.2, 0.19],
+  bellows: [0.03, 0.03, 0.035], green: [0.2, 0.9, 0.35], doorway: [0.05, 0.05, 0.055], step: [0.4, 0.4, 0.4],
 };
 const HW = LINK.wid / 2;
-// the half-section, bottom to top: [y, half-width, band colour above]
+// the half-section, bottom to top: [y, half-width, band above]
 const LPROF = [
-  [0.16, HW - 0.07, 'navy'], [0.32, HW - 0.02, 'navy'], [0.84, HW, 'teal'], [0.92, HW, 'white'], [1.06, HW, 'win'],
-  [2.26, HW - 0.04, 'white'], [2.62, HW - 0.075, 'white'], [3.02, HW - 0.14, 'roof'], [3.34, HW - 0.33, 'roof'], [3.56, 0.66, 'roof'], [LINK.roof, 0, 'end'],
+  [0.18, HW - 0.09, 'skirt'], [0.36, HW - 0.02, 'skirt'], [0.64, HW, 'white'], [1.0, HW, 'win'],
+  [2.2, HW - 0.035, 'white'], [2.5, HW - 0.07, 'blue'], [2.84, HW - 0.17, 'roof'], [3.16, HW - 0.42, 'roof'],
+  [3.36, 0.72, 'roof'], [LINK.roof, 0, 'end'],
 ];
-const bandCol = (t) => t === 'navy' ? LIV.navy : t === 'teal' ? LIV.teal : t === 'roof' ? LIV.roof : LIV.white;
-const DOORS = [-10.3, -5.4, 5.4, 10.3];        // door centres, car-local z (on the A and B sections)
-const NOSE = 1.25;                              // how far the cab's nose runs past its body sides
+const bandCol = (t) => t === 'skirt' ? LIV.skirt : t === 'blue' ? LIV.blue : t === 'roof' ? LIV.roof : LIV.white;
+const NOSE = 1.35;                              // how far the cab's nose runs past its body sides
+const DOOR_W = 1.3;
+
+/** The cars' lettering: one canvas of 8 blocks, 2 across (the destination:
+ *  bound for Conestoga | for Fairway) by 4 down (four fleet numbers). Every
+ *  block holds the same cells at the same place, so a train picks its block
+ *  with its texture's offset and its geometry never changes. */
+const DEC = { W: 1024, H: 1024, BW: 512, BH: 256, cells: {} };
+const FLEET = ['504', '507', '510', '514'];
+let _decTex = null;
+function decalTexture() {
+  if (_decTex) return _decTex;
+  const c = document.createElement('canvas'); c.width = DEC.W; c.height = DEC.H;
+  const g = c.getContext('2d');
+  // cells inside a block: [x, y, w, h]
+  const CELL = {
+    signA: [4, 4, 300, 40], signB: [4, 48, 300, 40], side: [310, 4, 196, 30],
+    ion: [4, 96, 170, 74], grt: [180, 96, 150, 50], region: [4, 176, 330, 44], numA: [340, 96, 160, 40], numB: [340, 140, 160, 40],
+    numA2: [340, 184, 160, 34], numB2: [340, 220, 160, 34],
+  };
+  const font = (w, s) => `${w} ${s}px -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif`;
+  const ionLogo = (q, x, y, h, col) => {
+    // the lowercase ion wordmark: a dotted i, an o and an n, heavy and round
+    q.save(); q.translate(x, y); q.fillStyle = col; q.strokeStyle = col;
+    const s = h / 100;
+    q.lineWidth = 17 * s; q.lineCap = 'round';
+    q.beginPath(); q.arc(10 * s, 18 * s, 10 * s, 0, Math.PI * 2); q.fill();
+    q.beginPath(); q.moveTo(10 * s, 44 * s); q.lineTo(10 * s, 92 * s); q.stroke();
+    q.beginPath(); q.arc(58 * s, 68 * s, 24 * s, 0, Math.PI * 2); q.stroke();
+    q.beginPath(); q.moveTo(103 * s, 92 * s); q.lineTo(103 * s, 66 * s); q.arc(127 * s, 66 * s, 24 * s, Math.PI, 0); q.lineTo(151 * s, 92 * s); q.stroke();
+    q.restore();
+  };
+  for (let bx = 0; bx < 2; bx++) for (let by = 0; by < 4; by++) {
+    const ox = bx * DEC.BW, oy = by * DEC.BH;
+    const at = (k) => { const [x, y, w, h] = CELL[k]; return [ox + x, oy + y, w, h]; };
+    // the destination signs: amber LEDs on black; the trailing cab's is dark
+    const sign = (k, txt) => {
+      const [x, y, w, h] = at(k);
+      g.fillStyle = '#050505'; g.fillRect(x, y, w, h);
+      if (!txt) return;
+      g.fillStyle = '#ffae1a'; g.font = font(700, 30); g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(txt, x + w / 2, y + h / 2 + 1, w - 10);
+    };
+    sign('signA', bx === 0 ? '301 to Conestoga' : '');
+    sign('signB', bx === 1 ? '301 to Fairway' : '');
+    sign('side', bx === 0 ? '301 Conestoga' : '301 Fairway');
+    { const [x, y, , h] = at('ion'); ionLogo(g, x + 4, y + 2, h - 4, '#1f5bb0'); }
+    { const [x, y, w, h] = at('grt');
+      g.fillStyle = '#1f5bb0'; g.font = `italic ${font(900, 46)}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('GRT', x + w / 2, y + h / 2 + 2); }
+    { const [x, y, w, h] = at('region');
+      // the Region's mark (a stylised blue V of leaves) and its name
+      g.fillStyle = '#1f5bb0';
+      g.beginPath(); g.moveTo(x + 4, y + 6); g.lineTo(x + 22, y + h - 6); g.lineTo(x + 40, y + 6); g.lineTo(x + 30, y + 6); g.lineTo(x + 22, y + 24); g.lineTo(x + 14, y + 6); g.closePath(); g.fill();
+      g.fillStyle = '#3a3d42'; g.font = font(600, 26); g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillText('Region of Waterloo', x + 50, y + h / 2 + 1); }
+    const num = (k, t, col, bg) => { const [x, y, w, h] = at(k); if (bg) { g.fillStyle = bg; g.fillRect(x, y, w, h); }
+      g.fillStyle = col; g.font = font(800, h - 8); g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(t, x + w / 2, y + h / 2 + 1); };
+    num('numA', FLEET[by] + 'A', '#f2f2f2', '#060606'); num('numB', FLEET[by] + 'B', '#f2f2f2', '#060606');
+    num('numA2', FLEET[by] + 'A', '#202226', null); num('numB2', FLEET[by] + 'B', '#202226', null);
+  }
+  // uv of each cell in block (0, 0); a train's texture offset moves the block
+  for (const [k, [x, y, w, h]] of Object.entries(CELL)) DEC.cells[k] = [(x + 1) / DEC.W, 1 - (y + h - 1) / DEC.H, (x + w - 1) / DEC.W, 1 - (y + 1) / DEC.H];
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  _decTex = tex;
+  return tex;
+}
+/** uvs for a quad a, b, c, d (bottom-left, bottom-right, top-right, top-left as seen) over a cell. */
+function cellQuad(k, flip = false) {
+  const [u0, v0, u1, v1] = DEC.cells[k];
+  return flip ? [u1, v0, u0, v0, u0, v1, u1, v1] : [u0, v0, u1, v0, u1, v1, u0, v1];
+}
 
 function buildLRVGeometry() {
-  // Build one car into per-section builders, then copy it.
-  const body = [0, 1, 2].map(() => new Builder(false)), trim = [0, 1, 2].map(() => new Builder(false));
-  // the doorways, open (the leaves slid back): drawn only while the doors are
-  const open = [0, 1, 2].map(() => new Builder(false));
+  decalTexture();
+  const NS = FF.sec.length;
+  // per section: body, trim, decals, and the open doorways (on the doors' bones)
+  const body = FF.sec.map(() => new Builder(false)), trim = FF.sec.map(() => new Builder(false));
+  const dec = FF.sec.map(() => new Builder(true)), open = FF.sec.map(() => new Builder(false));
   const half = LINK.carLen / 2;
-  const secZ = [[-half, -half + LINK.secA], [-LINK.secC / 2, LINK.secC / 2], [half - LINK.secA, half]];
+  const sec = FF.sec;
+  const secOf = (z) => sec.findIndex(([a, b]) => z >= a - 0.01 && z <= b + 0.01);
 
   // the sides of a stretch z0..z1 of section k, with its doors
   const sides = (k, z0, z1, doors) => {
@@ -1736,71 +2546,60 @@ function buildLRVGeometry() {
         const [ya, wa, tag] = LPROF[i], [yb, wb] = LPROF[i + 1];
         const nn = (() => { const nx = sd * (yb - ya), ny = -(wb - wa), l = Math.hypot(nx, ny) || 1; return [nx / l, ny / l, 0]; })();
         const A = (z, y, w) => [sd * w, y, z];
-        // pieces along z: door leaves take the door colour below the roofline
         let zc = z0;
-        const cuts = [];
-        for (const d of doors) cuts.push([d - 0.68, d + 0.68]);
-        cuts.sort((p, q) => p[0] - q[0]);
+        const cuts = doors.map((d) => [d - DOOR_W / 2, d + DOOR_W / 2]).sort((p, q) => p[0] - q[0]);
         const pieces = [];
         for (const [c0, c1] of cuts) { if (c0 > zc) pieces.push([zc, c0, false]); pieces.push([c0, c1, true]); zc = c1; }
         if (zc < z1) pieces.push([zc, z1, false]);
         for (const [p0, p1, isDoor] of pieces) {
-          if (isDoor && ya >= 0.3 && yb <= 2.3) {
-            // a door: two leaves, glazed from 1.12 to 2.18, a dark seam down the middle
-            if (tag === 'win') {
-              const m = (p0 + p1) / 2;
-              for (const [g0, g1] of [[p0 + 0.08, m - 0.05], [m + 0.05, p1 - 0.08]]) T.quad(A(g0, ya + 0.06, wa - 0.02), A(g1, ya + 0.06, wa - 0.02), A(g1, yb - 0.08, wb - 0.02), A(g0, yb - 0.08, wb - 0.02), nn, uv0, GLASS);
-              B.quad(A(p0, ya, wa), A(p0 + 0.08, ya, wa), A(p0 + 0.08, yb, wb), A(p0, yb, wb), nn, uv0, LIV.pillar);
-              B.quad(A(p1 - 0.08, ya, wa), A(p1, ya, wa), A(p1, yb, wb), A(p1 - 0.08, yb, wb), nn, uv0, LIV.pillar);
-              B.quad(A(m - 0.05, ya, wa), A(m + 0.05, ya, wa), A(m + 0.05, yb, wb), A(m - 0.05, yb, wb), nn, uv0, LIV.pillar);
-              B.quad(A(p0, ya, wa), A(p1, ya, wa), A(p1, ya + 0.06, wa), A(p0, ya + 0.06, wa), nn, uv0, LIV.door);
-              B.quad(A(p0, yb - 0.08, wb), A(p1, yb - 0.08, wb), A(p1, yb, wb), A(p0, yb, wb), nn, uv0, LIV.door);
-            } else {
-              B.quad(A(p0, ya, wa), A(p1, ya, wa), A(p1, yb, wb), A(p0, yb, wb), nn, uv0, LIV.door);
+          if (isDoor && ya >= 0.3 && yb <= 2.21) {
+            // a door: two leaves glazed nearly to the floor in black frames
+            const m = (p0 + p1) / 2;
+            for (const [g0, g1] of [[p0 + 0.09, m - 0.06], [m + 0.06, p1 - 0.09]]) {
+              T.quad(A(g0, Math.max(ya, 0.42), wa - 0.02), A(g1, Math.max(ya, 0.42), wa - 0.02), A(g1, Math.min(yb, 2.08), wb - 0.02), A(g0, Math.min(yb, 2.08), wb - 0.02), nn, uv0, GLASS);
             }
+            B.quad(A(p0, ya, wa), A(p1, ya, wa), A(p1, yb, wb), A(p0, yb, wb), nn, uv0, LIV.black);
             continue;
           }
           if (tag === 'win') {
-            // panes between black pillars, ~1.5 m a pane
-            const len = p1 - p0, nP = Math.max(1, Math.round(len / 1.5)), w = len / nP;
+            // big panes between black pillars, ~1.7 m a pane
+            const len = p1 - p0, nP = Math.max(1, Math.round(len / 1.7)), w = len / nP;
+            B.quad(A(p0, ya, wa), A(p1, ya, wa), A(p1, yb, wb), A(p0, yb, wb), nn, uv0, LIV.pillar);
             for (let j = 0; j < nP; j++) {
-              const g0 = p0 + j * w + 0.07, g1 = p0 + (j + 1) * w - 0.07;
-              T.quad(A(g0, ya, wa - 0.015), A(g1, ya, wa - 0.015), A(g1, yb, wb - 0.015), A(g0, yb, wb - 0.015), nn, uv0, GLASS);
-              B.quad(A(p0 + j * w, ya, wa), A(g0, ya, wa), A(g0, yb, wb), A(p0 + j * w, yb, wb), nn, uv0, LIV.pillar);
-              B.quad(A(g1, ya, wa), A(p0 + (j + 1) * w, ya, wa), A(p0 + (j + 1) * w, yb, wb), A(g1, yb, wb), nn, uv0, LIV.pillar);
+              const g0 = p0 + j * w + 0.08, g1 = p0 + (j + 1) * w - 0.08;
+              T.quad(A(g0, ya + 0.06, wa + 0.004), A(g1, ya + 0.06, wa + 0.004), A(g1, yb - 0.06, wb + 0.004), A(g0, yb - 0.06, wb + 0.004), nn, uv0, GLASS);
             }
             continue;
           }
           B.quad(A(p0, ya, wa), A(p1, ya, wa), A(p1, yb, wb), A(p0, yb, wb), nn, uv0, bandCol(tag));
         }
       }
-      // door details: the open-door buttons, lit green, and the step plate
+      // the open doorways (drawn while the doors are open), the green
+      // open-door buttons, the step plate
       for (const d of doors) {
-        open[k].quad([sd * (HW + 0.025), 0.34, d - 0.64], [sd * (HW + 0.025), 0.34, d + 0.64], [sd * (HW + 0.025), 2.2, d + 0.64], [sd * (HW + 0.025), 2.2, d - 0.64], [sd, 0, 0], uv0, [0.05, 0.05, 0.055]);
-        open[k].quad([sd * (HW + 0.03), 0.3, d - 0.64], [sd * (HW + 0.03), 0.3, d + 0.64], [sd * (HW + 0.03), 0.35, d + 0.64], [sd * (HW + 0.03), 0.35, d - 0.64], [sd, 0, 0], uv0, [0.9, 0.75, 0.1]);
-        T.quad([sd * (HW + 0.02), 1.18, d - 0.78], [sd * (HW + 0.02), 1.18, d - 0.7], [sd * (HW + 0.02), 1.26, d - 0.7], [sd * (HW + 0.02), 1.26, d - 0.78], [sd, 0, 0], uv0, LIV.green);
-        B.quad([sd * (HW - 0.02), 0.3, d - 0.7], [sd * (HW + 0.03), 0.3, d - 0.7], [sd * (HW + 0.03), 0.3, d + 0.7], [sd * (HW - 0.02), 0.3, d + 0.7], UP, uv0, [0.4, 0.4, 0.4]);
+        const x = sd * (HW + 0.025);
+        open[k].quad([x, 0.36, d - 0.62], [x, 0.36, d + 0.62], [x, 2.12, d + 0.62], [x, 2.12, d - 0.62], [sd, 0, 0], uv0, LIV.doorway);
+        open[k].quad([sd * (HW + 0.03), 0.33, d - 0.62], [sd * (HW + 0.03), 0.33, d + 0.62], [sd * (HW + 0.03), 0.37, d + 0.62], [sd * (HW + 0.03), 0.37, d - 0.62], [sd, 0, 0], uv0, [0.9, 0.75, 0.1]);
+        T.quad([sd * (HW + 0.02), 1.15, d - DOOR_W / 2 - 0.12], [sd * (HW + 0.02), 1.15, d - DOOR_W / 2 - 0.04], [sd * (HW + 0.02), 1.23, d - DOOR_W / 2 - 0.04], [sd * (HW + 0.02), 1.23, d - DOOR_W / 2 - 0.12], [sd, 0, 0], uv0, LIV.green);
       }
       // the underframe inside the skirt
-      B.quad([sd * (HW - 0.12), 0.16, z0], [sd * (HW - 0.12), 0.16, z1], [sd * (HW - 0.12), 0.34, z1], [sd * (HW - 0.12), 0.34, z0], [-sd, 0, 0], uv0, LIV.under);
+      B.quad([sd * (HW - 0.14), 0.12, z0], [sd * (HW - 0.14), 0.12, z1], [sd * (HW - 0.14), 0.36, z1], [sd * (HW - 0.14), 0.36, z0], [-sd, 0, 0], uv0, LIV.under);
     }
-    B.quad([-(HW - 0.12), 0.34, z0], [HW - 0.12, 0.34, z0], [HW - 0.12, 0.34, z1], [-(HW - 0.12), 0.34, z1], DOWN, uv0, LIV.under);
+    B.quad([-(HW - 0.12), 0.36, z0], [HW - 0.12, 0.36, z0], [HW - 0.12, 0.36, z1], [-(HW - 0.12), 0.36, z1], DOWN, uv0, LIV.under);
     // inside: floor, liners, ceiling, seats and poles
     const lin = HW - 0.1, fl = LINK.platH;
     B.quad([-lin, fl, z0], [lin, fl, z0], [lin, fl, z1], [-lin, fl, z1], UP, uv0, LIV.floor);
-    B.quad([-(lin - 0.2), 2.42, z0], [lin - 0.2, 2.42, z0], [lin - 0.2, 2.42, z1], [-(lin - 0.2), 2.42, z1], DOWN, uv0, LIV.ceil);
+    B.quad([-(lin - 0.2), 2.4, z0], [lin - 0.2, 2.4, z0], [lin - 0.2, 2.4, z1], [-(lin - 0.2), 2.4, z1], DOWN, uv0, LIV.ceil);
     for (const sd of [1, -1]) {
-      B.quad([sd * lin, fl, z0], [sd * lin, fl, z1], [sd * lin, 1.06, z1], [sd * lin, 1.06, z0], [-sd, 0, 0], uv0, LIV.liner);
-      B.quad([sd * lin, 2.26, z0], [sd * lin, 2.26, z1], [sd * (lin - 0.2), 2.42, z1], [sd * (lin - 0.2), 2.42, z0], [-sd, -0.6, 0], uv0, LIV.liner);
-      // a lit strip down each side of the ceiling
-      T.quad([sd * (lin - 0.35), 2.41, z0 + 0.2], [sd * (lin - 0.2), 2.41, z0 + 0.2], [sd * (lin - 0.2), 2.41, z1 - 0.2], [sd * (lin - 0.35), 2.41, z1 - 0.2], DOWN, uv0, LIV.lamp);
+      B.quad([sd * lin, fl, z0], [sd * lin, fl, z1], [sd * lin, 1.0, z1], [sd * lin, 1.0, z0], [-sd, 0, 0], uv0, LIV.liner);
+      B.quad([sd * lin, 2.2, z0], [sd * lin, 2.2, z1], [sd * (lin - 0.2), 2.4, z1], [sd * (lin - 0.2), 2.4, z0], [-sd, -0.6, 0], uv0, LIV.liner);
+      T.quad([sd * (lin - 0.35), 2.39, z0 + 0.2], [sd * (lin - 0.2), 2.39, z0 + 0.2], [sd * (lin - 0.2), 2.39, z1 - 0.2], [sd * (lin - 0.35), 2.39, z1 - 0.2], DOWN, uv0, LIV.lamp);
     }
-    // seats: facing pairs in the bays between doors, a pole at each
+    // seats: facing pairs in the bays between doors, a yellow pole at each
     const bays = [];
-    let zc = z0 + 0.4;
-    const cuts = doors.map((d) => [d - 0.95, d + 0.95]).sort((p, q) => p[0] - q[0]);
-    for (const [c0, c1] of cuts) { if (c0 - zc > 1.4) bays.push([zc, c0]); zc = Math.max(zc, c1); }
-    if (z1 - 0.4 - zc > 1.4) bays.push([zc, z1 - 0.4]);
+    let zc = z0 + 0.3;
+    for (const [c0, c1] of doors.map((d) => [d - 0.95, d + 0.95]).sort((p, q) => p[0] - q[0])) { if (c0 - zc > 1.3) bays.push([zc, c0]); zc = Math.max(zc, c1); }
+    if (z1 - 0.3 - zc > 1.3) bays.push([zc, z1 - 0.3]);
     for (const [b0, b1] of bays) {
       for (let z = b0 + 0.45; z < b1 - 0.4; z += 0.85) {
         for (const sd of [1, -1]) {
@@ -1809,23 +2608,21 @@ function buildLRVGeometry() {
           B.box(x, fl + 0.44, z + 0.19, 0.9, 0.55, 0.08, 0, LIV.seat);
         }
       }
-      T.tube([0.35, fl, (b0 + b1) / 2], [0.35, 2.42, (b0 + b1) / 2], 0.02, 5, LIV.pole);
-      T.tube([-0.35, fl, (b0 + b1) / 2], [-0.35, 2.42, (b0 + b1) / 2], 0.02, 5, LIV.pole);
+      T.tube([0.4, fl, (b0 + b1) / 2], [0.4, 2.4, (b0 + b1) / 2], 0.02, 5, LIV.pole);
     }
-    for (const d of doors) for (const sd of [1, -1]) T.tube([sd * (lin - 0.1), fl, d - 0.8], [sd * (lin - 0.1), 2.3, d - 0.8], 0.02, 5, LIV.pole);
+    for (const d of doors) for (const sd of [1, -1]) T.tube([sd * (lin - 0.12), fl, d - 0.8], [sd * (lin - 0.12), 2.3, d - 0.8], 0.02, 5, LIV.pole);
   };
 
-  // the roof between z0 and z1 is the profile's top bands (done in sides);
-  // equipment on it
-  const roofBox = (k, z, len, w, h, col) => body[k].box(0, LINK.roof - 0.1, z, w, h + 0.1, len, 0, col);
+  const roofBox = (k, z, len, w, h, col) => body[k].box(0, LINK.roof - 0.12, z, w, h + 0.12, len, 0, col);
 
-  // A cab nose: the profile swept round a superellipse in plan, longest at
-  // the bumper and raking back up the windscreen; the windscreen wraps the
-  // front, the destination sign is over it, lamps low. `dir` +1: the +z end.
+  // A cab nose: the profile swept round a superellipse in plan, longest at the
+  // bumper and raking back up the windscreen. Columns 0..1 of the sweep are the
+  // cab's corners (the blue swoosh above the waist), the rest its front. `dir`
+  // +1: the +z end.
   const cab = (k, z0, dir) => {
-    const B = body[k], T = trim[k];
-    const LEN = (y) => y < 0.9 ? NOSE * (0.86 + 0.14 * (y / 0.9)) : y < 1.06 ? NOSE : NOSE - Math.pow((y - 1.06) / (LINK.roof - 1.06), 1.25) * (NOSE - 0.12);
-    const N = 10, EXP = 3.2;
+    const B = body[k], T = trim[k], D = dec[k];
+    const LEN = (y) => y < 0.64 ? NOSE * (0.9 + 0.1 * (y / 0.64)) : y < 1.0 ? NOSE : NOSE - Math.pow((y - 1.0) / (LINK.roof - 1.0), 1.15) * (NOSE - 0.2);
+    const N = 10, EXP = 3.0, CORNER = 2;
     const rows = LPROF.map(([y, w]) => {
       const row = [];
       for (let j = 0; j <= N; j++) {
@@ -1841,107 +2638,151 @@ function buildLRVGeometry() {
       for (let i = 0; i < up.length - 1; i++) {
         const tag = LPROF[i][2], y = LPROF[i][0];
         const r0 = up[i], r1 = up[i + 1];
-        const cut = 3;
+        const side = (c) => B.patch([r0.slice(0, CORNER + 1), r1.slice(0, CORNER + 1)], c, out);
+        const front = (b, c, j0 = CORNER) => b.patch([r0.slice(j0), r1.slice(j0)], c, out);
+        if (tag === 'skirt') { B.patch([r0, r1], LIV.skirt, out); continue; }
+        if (tag === 'white' && y < 0.9) {
+          // the lower nose: white at the corners, the black lamp band across the front
+          side(LIV.white); front(B, LIV.black);
+          continue;
+        }
         if (tag === 'win') {
-          B.patch([r0.slice(0, cut + 1), r1.slice(0, cut + 1)], LIV.pillar, out);
-          T.patch([r0.slice(cut).map(([x, yy, z]) => [x * 0.995, yy, z - dir * 0.01]), r1.slice(cut).map(([x, yy, z]) => [x * 0.995, yy, z - dir * 0.01])], GLASS, out);
-        } else if (tag === 'white' && y > 2.2 && y < 2.3) {
-          // the destination sign over the windscreen, lit amber
-          B.patch([r0.slice(0, 5), r1.slice(0, 5)], LIV.pillar, out);
-          T.patch([r0.slice(4).map(([x, yy, z]) => [x, yy, z + dir * 0.004]), r1.slice(4).map(([x, yy, z]) => [x, yy, z + dir * 0.004])], LIV.amber, out);
-        } else if (tag === 'teal' || tag === 'navy') {
-          B.patch([r0, r1], bandCol(tag), out);
-        } else B.patch([r0, r1], bandCol(tag), out);
+          // the swoosh down the corner, the windscreen's black frame, the glass
+          side(LIV.blue);
+          B.patch([r0.slice(CORNER, CORNER + 2), r1.slice(CORNER, CORNER + 2)], LIV.black, out);
+          T.patch([r0.slice(CORNER + 1).map(([x, yy, z]) => [x * 0.996, yy, z + dir * 0.006]), r1.slice(CORNER + 1).map(([x, yy, z]) => [x * 0.996, yy, z + dir * 0.006])], GLASS, out);
+          continue;
+        }
+        // over the windscreen: blue corners, the black cap; the roof's grey
+        // goes black too where it meets the cap
+        side(tag === 'roof' && y > 2.9 ? LIV.roof : LIV.blue);
+        front(B, LIV.black);
       }
-      // lamps: headlamp pair and a red marker, low on the nose
-      const lz = (y) => z0 + dir * (LEN(y) - 0.02);
-      T.spheroid(sd * 0.78, 0.66, lz(0.66) - dir * 0.06, 0.1, 8, 5, LIV.lamp, 1);
-      T.spheroid(sd * 1.02, 0.66, lz(0.66) - dir * 0.16, 0.06, 6, 4, LIV.red, 1);
-      T.spheroid(sd * 0.55, 0.66, lz(0.66) - dir * 0.02, 0.07, 6, 4, LIV.lamp, 1);
-      // the camera-mirror arm at the cab corner
-      T.tube([sd * (HW - 0.05), 2.3, z0 + dir * 0.35], [sd * (HW + 0.22), 2.34, z0 + dir * 0.45], 0.025, 4, LIV.pillar);
-      B.box(sd * (HW + 0.24), 2.2, z0 + dir * 0.46, 0.1, 0.2, 0.14, 0, LIV.pillar);
+      // headlamps: two pairs in the black band, the red tail lamps outboard
+      const lz = (y) => z0 + dir * (LEN(y) - 0.015);
+      for (const [x, r, col] of [[0.52, 0.085, LIV.lamp], [0.74, 0.085, LIV.lamp], [0.96, 0.06, LIV.red]]) {
+        T.spheroid(sd * x, 0.78, lz(0.78) - dir * (x > 0.9 ? 0.18 : x > 0.7 ? 0.09 : 0.04), r, 8, 5, col, 1);
+      }
+      // the mirror-camera arm at the cab corner
+      T.tube([sd * (HW - 0.05), 2.22, z0 + dir * 0.3], [sd * (HW + 0.2), 2.26, z0 + dir * 0.42], 0.025, 4, LIV.pillar);
+      B.box(sd * (HW + 0.22), 2.1, z0 + dir * 0.43, 0.09, 0.2, 0.14, 0, LIV.pillar);
     }
-    // the anticlimber and coupler cover, and the cab's console behind the glass
-    B.box(0, 0.2, z0 + dir * (NOSE * 0.86 - 0.05), 1.9, 0.3, 0.14, 0, LIV.under);
-    B.box(0, 0.42, z0 + dir * (NOSE * 0.86 + 0.02), 0.5, 0.26, 0.2, 0, LIV.pillar);
-    B.box(0, LINK.platH, z0 + dir * 0.45, 2.2, 0.9, 0.6, 0, [0.2, 0.21, 0.22]);
-    B.box(-0.55, LINK.platH, z0 - dir * 0.4, 0.55, 0.6, 0.55, 0, LIV.seat);
-    // the cab's back wall, so the saloon reads as a separate room
-    B.quad([-(HW - 0.1), LINK.platH, z0 - dir * 1.1], [HW - 0.1, LINK.platH, z0 - dir * 1.1], [HW - 0.1, 2.42, z0 - dir * 1.1], [-(HW - 0.1), 2.42, z0 - dir * 1.1], [0, 0, dir], uv0, LIV.liner);
+    // the destination sign at the top of the windscreen, the fleet number
+    // in the lamp band: decals just proud of the nose
+    {
+      const y0 = 2.0, y1 = 2.32, za = z0 + dir * (LEN(y0) + 0.02), zb = z0 + dir * (LEN(y1) + 0.02), w = 0.62;
+      const q = [[-w, y0, za], [w, y0, za], [w, y1, zb], [-w, y1, zb]];
+      // seen from the front, +x is on the left for the +z end: flip the cell there
+      D.quad(q[0], q[1], q[2], q[3], [0, 0.29, dir * 0.96], cellQuad(dir > 0 ? 'signB' : 'signA', dir < 0), [2.2, 2.2, 2.2]);
+      const ny0 = 0.7, ny1 = 0.82, zn = z0 + dir * (NOSE + 0.012), nw = 0.2;
+      D.quad([-nw, ny0, zn], [nw, ny0, zn], [nw, ny1, zn], [-nw, ny1, zn], [0, 0, dir], cellQuad(dir > 0 ? 'numB' : 'numA', dir < 0), [1, 1, 1]);
+    }
+    // the anticlimber, and the cab's console behind the glass
+    B.box(0, 0.16, z0 + dir * (NOSE * 0.9 - 0.06), 1.9, 0.24, 0.14, 0, LIV.under);
+    B.box(0, LINK.platH, z0 + dir * 0.4, 2.2, 0.85, 0.55, 0, [0.16, 0.17, 0.18]);
+    B.box(-0.5, LINK.platH, z0 - dir * 0.35, 0.55, 0.6, 0.55, 0, LIV.seat);
+    // the cab's back wall
+    B.quad([-(HW - 0.1), LINK.platH, z0 - dir * 1.0], [HW - 0.1, LINK.platH, z0 - dir * 1.0], [HW - 0.1, 2.4, z0 - dir * 1.0], [-(HW - 0.1), 2.4, z0 - dir * 1.0], [0, 0, dir], uv0, LIV.liner);
   };
 
-  // an articulation: the bulkheads and the bellows between two sections
+  // an articulation: the end walls of a section, and on one side of each
+  // joint the tall black bellows across the gap
   const joint = (k, z, dir, bellows) => {
     const B = body[k];
     for (let i = 0; i < LPROF.length - 1; i++) {
       const [ya, wa] = LPROF[i], [yb, wb] = LPROF[i + 1];
-      B.quad([-wa, ya, z], [wa, ya, z], [wb, yb, z], [-wb, yb, z], [0, 0, dir], uv0, LIV.liner);
+      B.quad([-wa, ya, z], [wa, ya, z], [wb, yb, z], [-wb, yb, z], [0, 0, dir], uv0, LIV.black);
     }
     if (bellows) {
-      const b0 = z, b1 = z + dir * (LINK.carLen - LINK.secA * 2 - LINK.secC) / 2;
-      for (let r = 0; r < 5; r++) {
-        const zz = b0 + (b1 - b0) * (r + 0.5) / 5;
-        B.box(0, 0.3, zz, 2.46 - (r % 2) * 0.05, 3.08, Math.abs(b1 - b0) / 5 + 0.01, 0, r % 2 ? LIV.bellows : [0.14, 0.14, 0.15]);
+      const b0 = z, b1 = z + dir * FF.J;
+      for (let r = 0; r < 4; r++) {
+        const zz = b0 + (b1 - b0) * (r + 0.5) / 4;
+        B.box(0, 0.24, zz, 2 * HW - 0.06 - (r % 2) * 0.05, 3.1, FF.J / 4 + 0.01, 0, r % 2 ? LIV.bellows : [0.06, 0.06, 0.065]);
       }
     }
   };
 
-  // a bogie: frame, springs, four wheels on the rail heads
+  // a bogie: frame, four wheels on the rail heads
   const bogie = (k, z, motor) => {
     const B = body[k];
-    B.box(0, 0.28, z, 2.0, 0.22, 2.3, 0, LIV.bogie);
+    B.box(0, 0.26, z, 1.9, 0.2, 2.1, 0, LIV.bogie);
     for (const sd of [1, -1]) {
-      B.box(sd * 0.92, 0.2, z, 0.16, 0.34, 2.6, 0, LIV.bogie);
+      B.box(sd * 0.92, 0.18, z, 0.16, 0.32, 2.4, 0, LIV.bogie);
       for (const az of [-0.9, 0.9]) {
-        B.tube([sd * 0.66, 0.33, z + az], [sd * 0.8, 0.33, z + az], 0.33, 12, LIV.wheel, true);
-        B.tube([sd * 0.8, 0.33, z + az], [sd * 0.86, 0.33, z + az], 0.12, 8, [0.5, 0.5, 0.52], true);
+        B.tube([sd * 0.66, 0.3, z + az], [sd * 0.8, 0.3, z + az], 0.3, 12, LIV.wheel, true);
+        B.tube([sd * 0.8, 0.3, z + az], [sd * 0.86, 0.3, z + az], 0.11, 8, [0.5, 0.5, 0.52], true);
       }
-      if (motor) B.box(sd * 0.3, 0.22, z, 0.5, 0.3, 1.1, 0, [0.16, 0.16, 0.17]);
+      if (motor) B.box(sd * 0.3, 0.2, z, 0.5, 0.28, 1.0, 0, [0.16, 0.16, 0.17]);
     }
   };
 
-  // A section: sides with its doors, roof bands included; cabs, joints and
-  // bogies at its ends.
-  // A: -half .. -half + secA, cab at -z, doors DOORS[0..1]; C centre; B mirror.
-  sides(0, secZ[0][0] + NOSE, secZ[0][1], DOORS.slice(0, 2));
-  cab(0, secZ[0][0] + NOSE, -1);
-  joint(0, secZ[0][1], 1, true);
-  sides(1, secZ[1][0], secZ[1][1], []);
-  joint(1, secZ[1][0], -1, false);
-  joint(1, secZ[1][1], 1, false);
-  sides(2, secZ[2][0], secZ[2][1] - NOSE, DOORS.slice(2));
-  cab(2, secZ[2][1] - NOSE, 1);
-  joint(2, secZ[2][0], -1, true);
-  bogie(0, secZ[0][0] + 2.6, true);
-  bogie(1, 0, false);
-  bogie(2, secZ[2][1] - 2.6, true);
-  // roof equipment: an air-conditioning unit on each long section, the
-  // traction gear, and the pantograph over the centre section
-  for (const k of [0, 2]) {
-    const zc = (secZ[k][0] + secZ[k][1]) / 2;
-    roofBox(k, zc + (k ? 1.2 : -1.2), 3.2, 1.7, 0.36, [0.74, 0.75, 0.76]);
-    roofBox(k, zc + (k ? -2.8 : 2.8), 2.0, 1.3, 0.3, [0.6, 0.61, 0.62]);
+  // the lettering on both sides, at a section-local z
+  const decal = (k, z, y, w, h, cell) => {
+    for (const sd of [1, -1]) {
+      const x = sd * (HW + 0.012);
+      // the side reads left to right: on the +x side that runs toward -z
+      const a = [x, y, z + (sd > 0 ? w / 2 : -w / 2)], b = [x, y, z - (sd > 0 ? w / 2 : -w / 2)];
+      dec[k].quad(a, b, [b[0], y + h, b[2]], [a[0], y + h, a[2]], [sd, 0, 0], cellQuad(cell), cell === 'side' ? [2.0, 2.0, 2.0] : [1, 1, 1]);
+    }
+  };
+
+  // The five sections. Cab A: -z end. Doors at FF.doors.
+  const doorsIn = (k) => FF.doors.filter((d) => secOf(d) === k);
+  sides(0, sec[0][0] + NOSE, sec[0][1], doorsIn(0));
+  cab(0, sec[0][0] + NOSE, -1);
+  joint(0, sec[0][1], 1, true);
+  for (const k of [1, 2, 3]) {
+    sides(k, sec[k][0], sec[k][1], doorsIn(k));
+    joint(k, sec[k][0], -1, false);
+    joint(k, sec[k][1], 1, true);
   }
+  sides(4, sec[4][0], sec[4][1] - NOSE, doorsIn(4));
+  cab(4, sec[4][1] - NOSE, 1);
+  joint(4, sec[4][0], -1, false);
+  bogie(0, sec[0][0] + NOSE + 2.4, true);
+  bogie(2, 0, false);
+  bogie(4, sec[4][1] - NOSE - 2.4, true);
+  // decals: ion low on the cab sections behind the door, the Region's mark
+  // over the windows behind the cab, GRT over the centre section's windows,
+  // the fleet number by the cab door, the side destination sign in the
+  // window band beside the first door
+  for (const [k, sgn] of [[0, -1], [4, 1]]) {
+    const zd = FF.doors[sgn < 0 ? 0 : 3];
+    decal(k, zd + sgn * 2.0, 0.62, 0.8, 0.35, 'ion');
+    decal(k, zd + sgn * 3.6, 2.24, 1.9, 0.25, 'region');
+    decal(k, zd - sgn * 1.05, 2.24, 0.42, 0.11, sgn < 0 ? 'numA2' : 'numB2');
+    decal(k, zd + sgn * 1.25, 1.84, 0.9, 0.14, 'side');
+  }
+  decal(2, 0, 2.23, 0.86, 0.29, 'grt');
+  decal(2, 0.2, 0.62, 0.7, 0.3, 'ion');
+  // roof equipment: the air-conditioning on the cab sections, traction gear
+  // on the suspended ones, the pantograph on the centre section
+  for (const k of [0, 4]) {
+    const zc = (sec[k][0] + sec[k][1]) / 2;
+    roofBox(k, zc + (k ? 0.6 : -0.6), 3.0, 1.6, 0.34, [0.74, 0.75, 0.76]);
+  }
+  for (const k of [1, 3]) roofBox(k, (sec[k][0] + sec[k][1]) / 2, 2.4, 1.4, 0.3, [0.6, 0.61, 0.62]);
   {
-    const B = body[1], T = trim[1], y0 = LINK.roof;
-    B.box(0, y0 - 0.05, 0, 1.4, 0.18, 1.6, 0, [0.5, 0.5, 0.52]);
-    for (const x of [-0.5, 0.5]) for (const z of [-0.6, 0.6]) T.tube([x, y0 + 0.12, z], [x, y0 + 0.3, z], 0.05, 6, [0.72, 0.4, 0.2]);
-    // the arms: lower arm up and back, upper arm forward to the head
+    const B = body[2], T = trim[2], y0 = LINK.roof;
+    B.box(0, y0 - 0.05, 0, 1.3, 0.16, 1.5, 0, [0.5, 0.5, 0.52]);
+    for (const x of [-0.45, 0.45]) for (const z of [-0.55, 0.55]) T.tube([x, y0 + 0.1, z], [x, y0 + 0.26, z], 0.05, 6, [0.72, 0.4, 0.2]);
     const hy = LINK.wire - 0.02;
-    T.tube([0, y0 + 0.3, -0.5], [0, y0 + (hy - y0) * 0.5, 0.55], 0.04, 5, LIV.pole);
-    T.tube([0, y0 + (hy - y0) * 0.5, 0.55], [0, hy - 0.1, -0.05], 0.03, 5, LIV.pole);
-    T.tube([-0.3, y0 + 0.3, -0.5], [0.3, y0 + 0.3, -0.5], 0.04, 5, LIV.pole);
-    B.box(0, hy - 0.1, -0.05, 1.7, 0.08, 0.28, 0, [0.15, 0.15, 0.16]);
+    T.tube([0, y0 + 0.26, -0.5], [0, y0 + (hy - y0) * 0.5, 0.5], 0.04, 5, [0.7, 0.7, 0.7]);
+    T.tube([0, y0 + (hy - y0) * 0.5, 0.5], [0, hy - 0.1, -0.05], 0.03, 5, [0.7, 0.7, 0.7]);
+    T.tube([-0.3, y0 + 0.26, -0.5], [0.3, y0 + 0.26, -0.5], 0.04, 5, [0.7, 0.7, 0.7]);
+    B.box(0, hy - 0.1, -0.05, 1.6, 0.07, 0.26, 0, [0.15, 0.15, 0.16]);
   }
 
-  // copy the car four times into train geometries skinned to 12 bones
-  const assemble = (list) => {
+  // copy the car into train geometries skinned to the sections' bones; the
+  // open doorways ride a second bone per section (DOOR bones, scaled to
+  // nothing while the doors are shut)
+  const assemble = (list, boneOff = 0) => {
     const parts = list.map((b) => b.build());
     let nv = 0, ni = 0;
     for (const g of parts) { nv += g.attributes.position.count; ni += g.index.count; }
     nv *= LINK.cars; ni *= LINK.cars;
-    const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), col = new Float32Array(nv * 3);
+    const uvOn = !!parts[0].attributes.uv;
+    const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), col = new Float32Array(nv * 3), uv = uvOn ? new Float32Array(nv * 2) : null;
     const idx = nv > 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
     const si = new Uint16Array(nv * 4), sw = new Float32Array(nv * 4);
     let v = 0, q = 0;
@@ -1949,12 +2790,14 @@ function buildLRVGeometry() {
       const dz = -LINK.len / 2 + LINK.carLen / 2 + c * (LINK.carLen + LINK.couple);
       parts.forEach((g, k) => {
         const P = g.attributes.position.array, Nn = g.attributes.normal.array, Cc = g.attributes.color.array, I = g.index.array;
+        const U = uvOn ? g.attributes.uv.array : null;
         const n = g.attributes.position.count;
         for (let i = 0; i < n; i++) {
           pos[(v + i) * 3] = P[i * 3]; pos[(v + i) * 3 + 1] = P[i * 3 + 1]; pos[(v + i) * 3 + 2] = P[i * 3 + 2] + dz;
           nor[(v + i) * 3] = Nn[i * 3]; nor[(v + i) * 3 + 1] = Nn[i * 3 + 1]; nor[(v + i) * 3 + 2] = Nn[i * 3 + 2];
           col[(v + i) * 3] = Cc[i * 3]; col[(v + i) * 3 + 1] = Cc[i * 3 + 1]; col[(v + i) * 3 + 2] = Cc[i * 3 + 2];
-          si[(v + i) * 4] = c * 3 + k; sw[(v + i) * 4] = 1;
+          if (U) { uv[(v + i) * 2] = U[i * 2]; uv[(v + i) * 2 + 1] = U[i * 2 + 1]; }
+          si[(v + i) * 4] = boneOff + c * NS + k; sw[(v + i) * 4] = 1;
         }
         for (let i = 0; i < I.length; i++) idx[q + i] = I[i] + v;
         v += n; q += I.length;
@@ -1964,12 +2807,29 @@ function buildLRVGeometry() {
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    if (uv) geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
     geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
     geo.setIndex(new THREE.BufferAttribute(idx, 1));
     return geo;
   };
-  const geo = { body: assemble(body), trim: assemble(trim), open: assemble(open) };
+  // the body and the open doorways in one draw: the doorways on the door bones
+  const merged = (() => {
+    const a = assemble(body), b = assemble(open, SECTIONS.length);
+    const g = new THREE.BufferGeometry();
+    for (const name of ['position', 'normal', 'color', 'skinIndex', 'skinWeight']) {
+      const A = a.attributes[name].array, Bb = b.attributes[name].array;
+      const out = new A.constructor(A.length + Bb.length); out.set(A); out.set(Bb, A.length);
+      g.setAttribute(name, new THREE.BufferAttribute(out, a.attributes[name].itemSize));
+    }
+    const na = a.attributes.position.count, IA = a.index.array, IB = b.index.array;
+    const n = na + b.attributes.position.count;
+    const idx = n > 65535 ? new Uint32Array(IA.length + IB.length) : new Uint16Array(IA.length + IB.length);
+    idx.set(IA); for (let i = 0; i < IB.length; i++) idx[IA.length + i] = IB[i] + na;
+    g.setIndex(new THREE.BufferAttribute(idx, 1));
+    return g;
+  })();
+  const geo = { body: merged, trim: assemble(trim), dec: assemble(dec) };
   tagGlass(geo.trim);
   return geo;
 }
@@ -2009,22 +2869,41 @@ export class LinkTrain {
       b.position.set(0, 0, (SECTIONS[k][0] + SECTIONS[k][1]) / 2);
       this.bones.push(b);
     }
+    // a DOOR bone per section, its child: the open doorways hang on these,
+    // scaled to nothing while the doors are shut (pose)
+    this.doorBones = this.bones.map((p) => { const b = new THREE.Bone(); p.add(b); return b; });
     this.group = new THREE.Group();
     this.group.name = `link:train${id}`;
     for (const b of this.bones) this.group.add(b);
     this.group.updateMatrixWorld(true);
-    const skel = new THREE.Skeleton(this.bones);
-    this.meshes = [[g.body, sys.bodyMat], [g.trim, sys.trimMat], [g.open, sys.bodyMat]].map(([geo, m]) => {
+    const skel = new THREE.Skeleton([...this.bones, ...this.doorBones]);
+    // the lettering: this train's own copy of the decal texture (one image
+    // on the GPU), offset to its block -- its destination and fleet number
+    this.decTex = decalTexture().clone();
+    this.decTex.needsUpdate = false;
+    this.decMat = sys.decMat.clone();
+    this.decMat.map = this.decTex;
+    this.decTex.offset.set(0, -(id % FLEET.length) * DEC.BH / DEC.H);
+    this._signDir = 0;
+    this.meshes = [[g.body, sys.bodyMat], [g.trim, sys.trimMat], [g.dec, this.decMat]].map(([geo, m], i) => {
       const mesh = new THREE.SkinnedMesh(geo, m);
       mesh.bind(skel, new THREE.Matrix4());
-      mesh.castShadow = true;
+      mesh.castShadow = i < 2;
       mesh.receiveShadow = true;
       mesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(), LINK.len / 2 + 4);
       this.group.add(mesh);
       return mesh;
     });
+    this.setSign();
     this._m = new THREE.Matrix4();
     this._x = new THREE.Vector3(); this._y = new THREE.Vector3(); this._z = new THREE.Vector3();
+  }
+
+  /** The destination signs: "301 to Conestoga" on cab A leading toward -s,
+   *  "301 to Fairway" on cab B leading toward +s (the decal block's column). */
+  setSign() {
+    this._signDir = this.dir;
+    this.decTex.offset.x = this.dir > 0 ? DEC.BW / DEC.W : 0;
   }
 
   get lead() { return this.s + this.dir * LINK.len / 2; }
@@ -2048,7 +2927,7 @@ export class LinkTrain {
   /** The station it is standing at (centre within 12 m, stopped), or null. */
   stationHere() {
     if (Math.abs(this.u) > 0.1) return null;
-    for (const st of this.sys.stations) if (Math.abs(st.s[this.track.key] - this.s) < 12) return st;
+    for (const st of this.sys.stations) if (Math.abs(st.stop[this.track.key] - this.s) < 12) return st;
     return null;
   }
 
@@ -2079,7 +2958,9 @@ export class LinkTrain {
     this.group.updateMatrixWorld(true);
     for (const m of this.meshes) m.boundingSphere.center.set(this.cx, tr.y(this.s) + 1.8, this.cz);
     // the doors: open while it stands at a platform
-    this.meshes[2].visible = !!this.doors;
+    const ds = this.doors ? 1 : 1e-4;
+    for (const b of this.doorBones) b.scale.setScalar(ds);
+    if (this._signDir !== this.dir) this.setSign();
   }
 
   /** Speed limit at s for the run (and the whole train must be under it). */
@@ -2154,7 +3035,7 @@ export class LinkTrain {
     let best = null, bd = Infinity;
     for (const st of this.sys.stations) {
       if (st === this.lastStop) continue;
-      const d = (st.s[this.track.key] - this.s) * this.dir;
+      const d = (st.stop[this.track.key] - this.s) * this.dir;
       if (d > -6 && d < bd) { bd = d; best = st; }
     }
     return best;
@@ -2185,6 +3066,12 @@ export class LinkTrain {
         this.timer = 2; this.held += dt;
       }
       if (this.timer <= 0) {
+        // the end of the line: change ends for the trip back (or wait for
+        // the other platform to clear)
+        if (this.station && this.station === tr.to && !this.ghost && sys._turnBack) {
+          if (!sys._turnBack(this)) { this.timer = 2; if (this.doors) { this.doors = false; sys.onDoors(this, false); } }
+          return;
+        }
         this.state = 'run'; this.doors = false;
         sys.onDoors(this, false);
       }
@@ -2192,7 +3079,7 @@ export class LinkTrain {
       return;
     }
     const st = this.nextStation();
-    let stopLead = st ? st.s[tr.key] + this.dir * LINK.len / 2 : null;
+    let stopLead = st ? st.stop[tr.key] + this.dir * LINK.len / 2 : null;
     // the merge south of International District: a signal 25 m short of it
     // until this train has the junction
     const M = sys.merge;
@@ -2233,7 +3120,7 @@ export class LinkTrain {
     if (left < 0.3 || emerg) { power = 0; brake = 1; }
     else if (left < 4 && v < 0.8 && (!o || (oTail - this.lead) * this.dir > 32)) power = 0.35;
     this.step(dt, power, brake);
-    if (st && Math.abs(this.u) < 0.05 && left < 0.8 && (st.s[tr.key] + this.dir * LINK.len / 2 - this.lead) * this.dir < 0.8) {
+    if (st && Math.abs(this.u) < 0.05 && left < 0.8 && (st.stop[tr.key] + this.dir * LINK.len / 2 - this.lead) * this.dir < 0.8) {
       this.u = 0;
       this.state = 'dwell'; this.timer = LINK.dwell; this.station = st; this.held = 0; this.doors = true; this.lastStop = st;
       sys.onDoors(this, true);
@@ -2280,8 +3167,8 @@ export class LinkTrain {
   readout() {
     const sys = this.sys;
     const here = this.stationHere();
-    const mph = (v) => Math.round(v * 2.237);
-    const lim = mph(Math.min(...[0, 20, 40, 60].map((d) => this.limitAt(this.lead + this.dir * d))));
+    const kph = (v) => Math.round(v * 3.6);
+    const lim = kph(Math.min(...[0, 20, 40, 60].map((d) => this.limitAt(this.lead + this.dir * d))));
     const bound = sys.bound(this);
     if (here && this.doors) return `${bound} · ${here.full} Station — doors open · POWER to depart`;
     const st = this.nextStation();
@@ -2292,9 +3179,9 @@ export class LinkTrain {
     const ahead = gap < stopD ? ` · STOP — TRAIN AHEAD ${Math.max(0, Math.round(gap))} m` : gap < 600 ? ` · train ahead ${Math.round(gap)} m` : '';
     const M = sys.merge;
     const sig = M && this.dir < 0 && this.lead > M.E && this.lead - M.E < 400 && !(M.owner === this || sys.mergeFree(this)) ? ` · JUNCTION SIGNAL STOP ${Math.round(this.lead - M.E)} m` : '';
-    if (!st) return `${bound} · end of the map ahead · limit ${lim} mph${ahead}${sig}`;
-    const left = (st.s[this.track.key] + this.dir * LINK.len / 2 - this.lead) * this.dir;
-    return `${sys.lineOf(this.track.key) === 2 ? '2 Line · ' : ''}Next: ${st.full} ${Math.max(0, left).toFixed(left < 30 ? 1 : 0)} m · limit ${lim} mph${ahead}${sig}`;
+    if (!st) return `${bound} · end of the map ahead · limit ${lim} km/h${ahead}${sig}`;
+    const left = (st.stop[this.track.key] + this.dir * LINK.len / 2 - this.lead) * this.dir;
+    return `${sys.lineOf(this.track.key) === 2 ? '2 Line · ' : ''}Next: ${st.full} ${Math.max(0, left).toFixed(left < 30 ? 1 : 0)} m · limit ${lim} km/h${ahead}${sig}`;
   }
 
   /** player.js calls this as it calls any vehicle's update. */
@@ -2325,6 +3212,12 @@ export class LinkTrain {
     if (power !== 0 && this.doors) { this.doors = false; sys.onDoors(this, false); }
     const ev = this.step(dt, power, power < 0 ? 0 : brk);
     if (this.arrival) this.arrival.t += dt;
+    // the next stop called as you come into it
+    const nx = this.nextStation();
+    if (nx && nx !== this._announced && Math.abs(this.u) > 1) {
+      const togo = (nx.stop[this.track.key] + this.dir * LINK.len / 2 - this.lead) * this.dir;
+      if (togo < 220 && togo > 8) { this._announced = nx; sys.announce(nx.full); }
+    }
     if (ev.end > 1.5) sys.onEnd(this);
     else if (ev.end !== undefined && this.warned <= 0) { sys.onEnd(this); this.warned = 6; }
     if (ev.collide) sys.onCollide(this, ev.collide);
@@ -2339,7 +3232,7 @@ export class LinkTrain {
     if (Math.abs(this.u) < 0.02 && this.arrival && !this.arrival.rated) {
       let st = null, err = 0;
       for (const q of sys.stations) {
-        const e = (q.s[tr.key] - this.s) * this.dir;     // + short of the mark
+        const e = (q.stop[tr.key] - this.s) * this.dir;     // + short of the mark
         if (Math.abs(e) < 12) { st = q; err = e; }
       }
       if (st && st !== this.arrival.from) {
