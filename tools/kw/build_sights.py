@@ -57,6 +57,12 @@ SIGHTS = {
     "cmillpav": (12856, 9757),     # its pavilion
     "opo": (12908, 10406),         # Idea Exchange, the Old Post Office (1885)
     "forbes": (12492, 2740),       # Forbes Textile Mill, Hespeler
+    # the second pass (src/kwdowntown.js)
+    "kpl": (-911, -77),            # Kitchener Public Library, 85 Queen St N (2014 glass front)
+    "gci": (12637, 9222),          # Galt Collegiate Institute, 200 Water St N (the 1852 stone school)
+    "cpres": (12820, 10276),       # Central Presbyterian Church, 7 Queen's Square, Galt
+    "galthall": (13135, 10213),    # Galt Town Hall, 46 Dickson St (1858)
+    "ccentre": (12546, 6507),      # Cambridge Centre, 355 Hespeler Rd
 }
 
 # Main streets drawn as heritage blocks: (name, streets, bbox x0 z0 x1 z1, palette)
@@ -64,7 +70,17 @@ MAIN_STREETS = [
     ("kitchener", ("King Street West", "King Street East", "King Street"), (-1900, -350, -350, 700), "brick"),
     ("galt", ("Main Street", "Water Street North", "Water Street South", "Ainslie Street North",
               "Ainslie Street South", "Dickson Street"), (12780, 10150, 13250, 10560), "stone"),
+    ("preston", ("King Street East",), (9290, 6080, 9600, 6360), "brick"),
+    ("hespeler", ("Queen Street East", "Queen Street West"), (13130, 2150, 13530, 2420), "brick"),
 ]
+# drawn as main-street blocks whatever their size or height: the Walper Hotel
+# (20 Queen St S, five storeys, its footprint over the size cut), the 1931
+# Public Utilities building (191 King W, OSM government) and THEMUSEUM (10
+# King W, the old Goudies, OSM public); Galt's Main St rows that OSM traces as
+# one outline each (south side Water-Ainslie and Ainslie-Wellington, north
+# side Ainslie-Wellington: kwdowntown.js SPLITS cuts them back into their
+# storefronts)
+KING_FORCE = [(-1180, 258), (-1447, 120), (-1168, 200), (12985, 10370), (13142, 10374), (13129, 10316)]
 DOON = (2740, 5440, 3070, 5700)
 
 
@@ -101,17 +117,19 @@ def main():
             cx, cz = cen(o)
             if not (x0 < cx < x1 and z0 < cz < z1):
                 continue
+            force = any(math.hypot(cx - fx, cz - fz) < 6 for fx, fz in KING_FORCE)
             bt = str(b.get("bt", "yes")).lower()
-            if bt in ("parking", "roof", "garage", "garages", "service", "church", "shed", "civic", "public", "government"):
+            if bt in ("parking", "roof", "garage", "garages", "service", "church", "shed", "civic", "public", "government",
+                      "house", "detached", "semidetached_house") and not force:
                 continue
             lv = _levels(b.get("lv"))
-            if lv and lv > 5:
+            if lv and lv > 5 and not force:
                 continue
             pts = _clean(o)
             if len(pts) < 3 or any(_in_poly(t, cx, cz) for t in taken):
                 continue
             A = abs(_area(pts))
-            if A < 40 or A > 1600:
+            if (A < 40 or A > 1600) and not force:
                 continue
             if min(_seg_dist(q[0], q[1], a, c) for q in pts for a, c in segs) > 22:
                 continue

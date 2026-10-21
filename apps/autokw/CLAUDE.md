@@ -267,6 +267,62 @@ file and a guide disagree, this file wins.
   King & Bridgeport 355 -> 357; 0 exceptions. Verify: kwshots with views at
   the intersections (e.g. `{c: [-3828, -1438, 1.6], t: [-3858, -1585, 6]}`
   up King N from Erb) and close-ups per building.
+- **Downtown Kitchener and Cambridge, building by building: src/kwdowntown.js**
+  (docs/downtown2-*.jpg). The second pass on kwsights.js's v25 work, done as
+  kwuptown.js did Uptown. `prepDowntown` (main.js, right after prepSights)
+  gives every `sights.king` block a look (`LOOKS`, matched by centroid within
+  4 m; `__kwDowntown.miss` lists any that matched nothing; per-town `UNKNOWN`
+  palettes otherwise -- Galt grey limestone, Preston/Hespeler red and yellow
+  brick); cuts Galt's Main St rows that OSM traces as ONE outline back into
+  storefronts (`SPLITS`); takes the specially drawn blocks out of meshKing's
+  run (`SPECIAL_KING`: the Farmers' Market); and sets `bd.kw.tower` on the
+  towers' boxes (`TOWERS`), which world.js `modernTower` / `towerLook` /
+  `buildingFamily` honour as the real cladding (c, panel, glass). Everything
+  else is built inside buildSights through `addSights` (kwsights.js: same
+  Kit, same atlas, now 2048 x 2048 -- it overflowed at 1536 once Preston and
+  Hespeler's signs came). **Data** (tools/kw/build_sights.py): MAIN_STREETS
+  gained Preston's King St E and Hespeler's Queen St (houses skipped);
+  `KING_FORCE` puts the Walper (5 storeys, over the size cut), the 1931 PUC
+  building, THEMUSEUM and Galt's three long rows on the main street; SIGHTS
+  gained `kpl`, `gci`, `cpres`, `galthall`, `ccentre`. **Drawn:** King St's
+  Walper (red-orange brick, cream bracketed cornice, THE WALPER banners, the
+  W disc), the Weber Block's Ionic loggia, Knell Hardware, 73 King W, the
+  2024-designated 83-109 King W row, the Simpson Block (1895), the PUC
+  building, Weber Chambers (name panel), One Young (glass), 165 King W
+  (ribbed metal), the Germania Block / CIBC, THEMUSEUM (the old Goudies: the
+  black M panel), Scotiabank (limestone and green granite), the 1959 TD /
+  Crabby Joe's fins, New City Supermarket and Hong Kong Plaza's gables;
+  DTK, Charlie West, One Victoria, Young Condos, Garment St and Union Towers
+  in their colours; the library's green glass front with the white name and
+  pinwheel. Galt: the Galt Collegiate Institute (crow-stepped slate ranges,
+  two towers with the copper caps the aerial sees, the 1963 brick wing),
+  Central Presbyterian (nave, transept, 56 m spire), the 1858 Town Hall
+  (clocks, open belfry, mansard cap), the Farmers' Market (buff brick, red
+  quoins, hip roof, the red entrance tower, verandah). Hespeler: 18-24 Queen
+  W's mansard and round dormers, the 1928 post office. **Cambridge Centre**
+  from the aerial: the Bay's box painted red (closed June 2025), the south
+  anchor's Mark's / Sport Chek / Marshalls, skylights, the cinema roof, doors,
+  the pylon on Hespeler Rd. Sources in the file header (historicplaces.ca,
+  the City of Kitchener designated/listed indexes, Commons photos). **Not
+  done:** the Preston Springs Hotel was demolished in Jan 2021 (its lot at
+  King & Fountain is empty; nothing is drawn); Preston's King St blocks have
+  no researched looks (defaults); Market Square's green glass and clock, 55
+  King W's granite tower, the 44-storey tower at King & Francis and Station
+  Park's later phases are untouched; Hespeler Rd's big boxes stay kwshops'.
+  `window.__noDowntown = true` before boot turns the looks/towers/specials off
+  (sights.json's new blocks still draw with meshKing's defaults; the five
+  new sights' boxes stay flat and undrawn, so it is a debug switch, not a
+  before). Phone
+  (AUTO_PHONE=1, GPU), before -> after, draws / tris: spawn 208/1046k ->
+  207/1042k; King at Water 353 -> 349; King at Young 426 -> 425; King at
+  Cedar 396 -> 389; Galt Main St 113/956k -> 113/963k; Central Pres 205 ->
+  211; GCI 159 -> 158; Dickson St 114 -> 114; Preston King St 184/926k ->
+  190/940k; Hespeler Queen St 113 -> 113; Cambridge Centre 114 -> 117; 0
+  exceptions. Verify: `tools/kw/probe_blocks.py` dumps every footprint in a
+  box with all its OSM tags (address, colour); kwshots views from across the
+  street, e.g. `{c: [-1138.7, 238.2, 1.6], t: [-1177, 256, 10]}` (the
+  Walper), `{c: [12905, 10345, 1.6], t: [12820, 10276, 14]}` (Central Pres),
+  `{c: [12760, 9135, 1.6], t: [12637, 9222, 10]}` (GCI from Water St).
 - **The chain stores: src/kwshops.js** (`data/shops.json` from
   tools/kw/extract_shops.py -> `raw_shops.json`, then tools/kw/build_shops.py;
   docs/shops-*.jpg). Every store of ~50 brands (`BRANDS` / `GAS` in

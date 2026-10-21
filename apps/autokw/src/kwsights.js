@@ -1596,7 +1596,7 @@ export function buildSights(ctx) {
   if (!S) return;
   const t0 = performance.now();
   const kit = new Kit();
-  const atlas = new PlaceAtlas(2048, 1536);
+  const atlas = new PlaceAtlas(2048, 2048);
   kit.atlas = atlas;
   ctx = { ...ctx, atlas };
   const run = (name, fn) => {
@@ -1626,12 +1626,19 @@ export function buildSights(ctx) {
   run('museum', () => museum(kit, ctx));
   run('toyota', () => toyota(kit, ctx));
   run('cambridge', () => cambridge(kit, ctx));
+  // the second, building-by-building pass (kwdowntown.js): same kit, same atlas
+  for (const [name, fn] of EXTRA) run(name, () => fn(kit, ctx));
+  atlas.tex.needsUpdate = true;
   STATS.atlas = { y: atlas.y + atlas.row, full: atlas.full };
   atlas.finish();
   STATS.ms = Math.round(performance.now() - t0);
   if (typeof window !== 'undefined') window.__kwSights = STATS;
 }
 export function sightsStats() { return STATS; }
+// other modules' buildings, built inside buildSights with its kit and atlas (kwdowntown.js)
+const EXTRA = [], MAP_EXTRA = [];
+export function addSights(name, fn, map = null) { EXTRA.push([name, fn]); if (map) MAP_EXTRA.push(map); }
+export function sightsData() { return S; }
 
 /** The map's marks and hellos. */
 export function sightsMap() {
@@ -1661,8 +1668,9 @@ export function sightsMap() {
     m('opo', 'Galt', 'Idea Exchange Old Post Office', 'Idea Exchange, Old Post Office (1885) — the clock tower, and the glass reading room hung over the Grand'),
     m([12880, 10338], false, 'Main Street Bridge', 'The Main Street Bridge (1931): two bowstring arches over the Grand'),
     m('forbes', false, 'Forbes Textile Mill', 'The Forbes mill, Hespeler — once Canada\'s biggest woollen mill'),
+    ...MAP_EXTRA.flatMap((f) => f(m)),
   ];
 }
 
 // kwuptown.js builds Uptown's other buildings with the same kit
-export { block, frontEdge, text, onWall, clockFace, pyramid };
+export { block, frontEdge, text, onWall, clockFace, pyramid, hipRoof, B4, nearestEdge, entrance, atriumEntrance, storeFront, pylon, brandPanel, BRANDS };

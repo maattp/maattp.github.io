@@ -54,6 +54,7 @@ import { prepPlaces, buildPlaces, placesMap, placesStats, Geese } from './kwplac
 import { setUwData, prepCampus, buildCampus, campusKeepClear } from './uwcampus.js';
 import { prepUptown } from './kwuptown.js';
 import { prepSights, buildSights, sightsMap } from './kwsights.js';
+import { prepDowntown } from './kwdowntown.js';
 import { prepVillages, buildVillages, villagesMap } from './kwvillages.js';
 import { setShopData, prepShops, buildShops, shopPlaces, shopStats } from './kwshops.js';
 import { prepHome, homeMap } from './kwhome.js';
@@ -827,6 +828,8 @@ async function boot() {
   // downtown Kitchener, Victoria Park, the Aud, the malls, Bingemans, Doon, Cambridge, Toyota (kwsights.js)
   { const k = prepSights(city, md.sights); blog(`kw sights: ${k.skipped} boxes drawn as sights`); }
   addLandmarkExtra(buildSights);
+  // downtown Kitchener and Cambridge building by building (kwdowntown.js: built inside buildSights)
+  { const k = prepDowntown(city); blog(`kw downtown: ${k.looks} looks, ${k.defaults} defaults, ${k.towers} tower boxes, ${k.custom} drawn specially`); }
   // the villages' main streets, St. Jacobs' mill and the Village Silos (kwvillages.js)
   { const k = prepVillages(city, md.villages); blog(`kw villages: ${k.skipped} boxes drawn as main streets`); }
   addLandmarkExtra(buildVillages);

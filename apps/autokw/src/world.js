@@ -388,6 +388,8 @@ const industrialWall = (bd) => tint(bd.seed, pickW(INDUSTRIAL_WALL, hash2(bd.see
 const MODERN_ZONES = [[-5400, -3700, -3450, -2200], [-2100, -600, -500, 500]];
 /** An apartment tower of eight storeys or more in one of MODERN_ZONES, with no material from OSM. */
 function modernTower(bd) {
+  // a tower whose real cladding is known (kwdowntown.js TOWERS: bd.kw.tower)
+  if (bd.kw && bd.kw.tower && !bd.kw.skip && !bd.kw.poly && bd.h >= 12) return true;
   if (bd.style === 'campus' || bd.h < 24 || bd.kind || (bd.kw && (bd.kw.fam || bd.kw.poly || bd.kw.skip))) return false;
   const lk = bd.look || 0;
   if ((lk >> 2) & 7) return false;
@@ -412,6 +414,8 @@ const TOWER_NAMED = { 'Sage II': [0, 0], 'Sage Condos I': [0, 0], 'Sage 5': [1, 
 /** { fam, panel, accent|null } for a modernTower. */
 function towerLook(bd) {
   if (bd._tl) return bd._tl;
+  const RT = bd.kw && bd.kw.tower;
+  if (RT) return (bd._tl = { fam: RT.glass ? 2 : 0, panel: RT.panel || RT.c, accent: RT.accent || null, real: RT });
   const s = bd.seed, nm = bd.kw && bd.kw.name, N = nm && TOWER_NAMED[nm];
   const p = hash2(s, 151);
   const fam = N ? N[0] : p < 0.42 ? 0 : p < 0.66 ? 1 : p < 0.86 ? 2 : 3;
@@ -8532,6 +8536,11 @@ float frLine(float o, float fw, float c, float w) {
     // AUTO KW: OSM's building:material / building:colour first (bd.look
     // bits 2-4, tools/kw/build_buildings.py MAT_CODE): red brick, buff,
     // grey stone/block, siding (painted), concrete/stucco, metal, glass.
+    // a tower whose real cladding is known (kwdowntown.js): its own family
+    if (bd.kw && bd.kw.tower && modernTower(bd)) {
+      const RT = bd.kw.tower;
+      return RT._fam || (RT._fam = { m: RT.glass ? 'glass' : 'masonry', c: RT.c, u: 14, v: 13.6 });
+    }
     const lm = (bd.look || 0) >> 2 & 7;
     if (lm) return FAMS[[0, 2, 3, 0, 8, 4, 10, 1][lm]];
     // The student towers round UW and Laurier and downtown Kitchener's new
