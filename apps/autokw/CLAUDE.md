@@ -440,8 +440,10 @@ file and a guide disagree, this file wins.
   nose and the back. Types: `bus` (7 King, amber LEDs), `busx` (202 iXpress
   University), `ionbus` (302 ION Bus: no band, ION's blue front corners,
   windscreen frame and roof, the ion logo; a third of the `busx` draws in
-  traffic.js), `artic` (201 iXpress Fischer-Hallman -- **GRT runs no
-  articulated buses**; it wears the livery and keeps one CIVILIAN slot).
+  traffic.js), `artic` (201 iXpress Fischer-Hallman -- **GRT has never run
+  articulated buses**: its Northfield garage was built for them in ~2020 and
+  none were bought; 2024's business plan has them "on the back burner". It
+  wears the livery but is NOT in CIVILIAN_TYPES -- its slot became a `bus`).
   **Lettering is `dotText`**: a 5x7 dot-matrix font (`DOT5`, upper and
   lower case, digits, `- / . ' &`) merged into runs per row, flat on a
   panel by centre / right vector / up; `led` gaps the rows, `bold`,
@@ -449,8 +451,7 @@ file and a guide disagree, this file wins.
   matte, so a sign in the shade still reads -- in `trim` (metal) they were
   dark. **Ontario plates** (`plateBox`, every `trim.box(..., PLATE)`
   became one): white, a blue ABCD 123 serial with the crown between, and
-  hairlines for ONTARIO / YOURS TO DISCOVER; one serial per TYPE
-  (`plateSerial(name)`, set in `vehicleAssets`), ~280 triangles a car.
+  ONTARIO / YOURS TO DISCOVER; **a serial per CAR** (see round two).
   **New types:** `minivan` and `wagon` (SMALL_LOOKS tables through
   `buildSmallCar`: the slider track, roof rails, clad arches), `crossover`
   and `compsedan` (`scaledBuild` of the SUV and the sedan at RAV4 / Civic
@@ -482,6 +483,79 @@ file and a guide disagree, this file wins.
   and the type mix after 12 s of play. Phone: 16 vehicles parked in view
   cost +48 draws (3 each) and ~+8.5k triangles each (buses ~12-13k); the
   spawn frame (CLAUDE.md's 196 draws, 881k tris before) 199 draws, 889k tris.
+- **Waterloo Region's traffic, round two** (vehicles.js, traffic.js;
+  docs/fleet-carshow.jpg, fleet-trucks.jpg, fleet-highway.jpg,
+  fleet-plates.jpg).
+  - **Every car its own plate, for no draw and ~280 fewer triangles.** The
+    plate's face is ONE quad whose vertex colours are its UV (red, green)
+    and `PLATE_KEY` in blue; tagGlass flags it `glass` 4 and glassShader
+    paints it from `PLATE_ATLAS` (plateAtlas: 128 serials, `plateSerial(k)`,
+    a 1024 x 640 canvas drawn once at the plates' 3.1 : 1). WHICH serial is
+    per mesh: Vehicle sets `trimMesh.scale.x = 1 + k / PLATE_STEP` (32768;
+    k < 128, so under 0.4 %) and the vertex shader reads k back from
+    modelMatrix (x column's length over y's, so a parent's uniform scale
+    cancels). A per-mesh uniform cannot do it: trimMat is shared, and
+    three.js re-uploads a built-in material's uniforms only when the
+    material changes between draws. Anything that scales a trim mesh
+    non-uniformly gets a random serial (tank.js's crush does). The far LOD
+    draws plates plain white, and now keeps tinted glass (it dropped
+    `glass` 3 along with the contact shadow: holes in far buses).
+  - **Heights:** `scaledBuild(build, len, wid, [y0, ky, refRoof])` scales
+    height above y0 only (wheels, arches and sills stay) and hands the
+    builder its parent's roof. `crossover` 1.88 -> 1.72 m (RAV4 1.74),
+    `compsedan` 1.50 -> 1.42 (Civic 1.415). carshots now prints each body's
+    L x W x H (carstage `place` returns `size`); compare with the real car.
+  - **New types** (real L x W x H in TYPES' comments): `suv3`
+    (Highlander / Explorer: the SUV at 5.05 x 2.00 x 1.74), `evy` (Model Y:
+    the EV's body, greenhouse grown above 0.62 m to 1.62; `ev` is the
+    Model 3), `civic` (SMALL_LOOKS.civic: a fastback hatch, `sport`: the
+    ducktail, black diffuser and centre exhaust, black wheels), `jeep`
+    (buildJeep: Wrangler JL Unlimited from slabs -- `hexa` / `slabZ` are an
+    8-corner solid with true face normals -- seven slots between round
+    lamps, flat black fenders clear of the tyres, a near-upright framed
+    screen, black hardtop, exposed hinges, rock rails, the spare;
+    `offroad`), `dually` (buildDually: the pickup at F-350 size, duals
+    under body-colour flares, cab clearance lamps; 6 wheels), `uhaul`
+    (buildUhaul: E-series cutaway, Mom's Attic, white with the orange
+    U-HAUL, MOVING & STORAGE, an Ontario SuperGraphic -- a lake, a white
+    pine), `semi` + `semiTrailer` (buildSemi: a sleeper tractor -- long
+    falling bonnet, bright grille, set-back fenders, raked two-piece
+    screen, roof fairing, cab extenders, skirts, stacks, duals; buildSemiTrailer:
+    the 53 ft van, posts, red/white conspicuity tape, skirts, swing doors,
+    lock rods, ICC bar. The trailer is `towed` on `HITCH.semiTrailer`, the
+    tiller's machinery; tractor colours by `liveries`), `opp` (buildOpp:
+    `suv3` as the Police Interceptor Utility, the OPP's black with white
+    doors -- the scheme since 2007 -- a crest, O.P.P., POLICE, push bar,
+    spotlight, black steel wheels; `police: true`, so a player who takes
+    one has the siren), `recycling` (Miller Waste, blue). `garbage` is
+    now Emterra's (the Region's garbage / green bin contractor from
+    March 2026): white, the green wordmark, the cart arm on the kerb side.
+  - **Where they drive:** `CIVILIAN_TYPES` gains suv3 x3 (suv 6 -> 4),
+    jeep, dually, civic x2 (hatch 3 -> 2), evy x2 (ev 3 -> 2), uhaul,
+    recycling, and loses artic. **Highway only:** traffic.js turns
+    `HWY_SEMI_P` 16 % of non-bus spawns on `hwy` edges into a semi and
+    `HWY_OPP_P` 3 % into the OPP (at most `OPP_MAX` 2 about; its light bar
+    on and dark -- policeLights only runs for units). `NO_KERB` keeps the
+    semi and recycling off residential streets; LOT_TYPES / HEAVY know the
+    new names.
+  - **Handling** (drivetest.mjs, game 0-100 s / lat g @60 / circle m):
+    crossover 4.5 / 2.00 / 11.1, compsedan 4.5 / 2.13 / 11.2, suv3 4.3 /
+    1.98 / 12.1, civic 4.2 / 2.22 / 11.2, evy 2.2 / 2.23 / 12.2, jeep 4.8
+    / 1.78 / 12.2 (and 160 km/h on grass: `offroad`), dually 5.4 / 1.82 /
+    16.8, uhaul 8.6 / 1.26 / 17.4, semi 0-80 18.3 / 1.10 / 22.7 (105
+    km/h governed, as Ontario's trucks are), opp 3.1 / 2.10 / 12.1.
+  - **Verify:** `node tools/kw/carshots.mjs <dir> [shots.json]` (sizes and
+    triangles); `VIEWS=tools/kw/carshow.json` (the fleet at Conestoga, new
+    `carshow-trucks`); `VIEWS=tools/kw/highwayshow.json` (a staged 401
+    with semis, the OPP, a U-Haul; `hwy-401-live` drives you onto it);
+    `VIEW_PROBE_FILE=tools/kw/hwyprobe.js` (30 s on the 401: the type mix,
+    semis and trailers spawned, orphaned trailers -- 7 rigs, 1 OPP, 0
+    orphans, 0 exceptions). Triangles a type (occupied): jeep 5.6k, evy
+    6.5k, uhaul 6.7k, semi 7.5k + trailer 6.7k, recycling 7.0k, garbage
+    7.6k, dually 8.6k, civic 9.6k, opp 10.4k. Phone (AUTO_PHONE=1, GPU,
+    carprobe at the spawn): 208 draws / 934k tris before, 207 / 935k after
+    (traffic's own noise); each vehicle is still 3 draws (an OPP on patrol
+    +3, its light bar, as a unit's).
 - **The sights: src/kwsights.js** (`data/sights.json` from
   `tools/kw/build_sights.py`; docs/sights-*.jpg). Everything kwplaces.js
   does not: each landmark from its OSM footprint, found by centroid

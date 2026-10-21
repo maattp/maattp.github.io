@@ -8299,14 +8299,14 @@ function dotText(b, text, { c, u, up = [0, 1, 0], h, col, led = false, bold = 0,
 // (PLATE_KEY); tagGlass flags it (`glass` 4) and glassShader paints it from
 // PLATE_ATLAS (plateAtlas: PLATE_N serials, a canvas drawn once). WHICH
 // serial is the trim mesh's own: Vehicle sets `trimMesh.scale.x` to
-// 1 + k / PLATE_STEP (k < PLATE_N: under 0.4 % -- 3.8 mm across a car) and the
+// 1 + k / PLATE_STEP (k < PLATE_N: under 0.4 %, 4 mm at a flank) and the
 // vertex shader reads k back from modelMatrix (x column over y column, so a
 // parent's uniform scale cancels). A per-mesh uniform would not do: the trim
 // material is shared, and three.js re-uploads a built-in material's uniforms
 // only when the material changes between draws.
 const PLATE_BLUE = [0.015, 0.05, 0.26];
 const PLATE_KEY = 0.3141;
-export const PLATE_N = 128, PLATE_STEP = 16384;
+export const PLATE_N = 128, PLATE_STEP = 32768;
 const PLATE_COLS = 8, PLATE_CW = 128, PLATE_CH = 40;
 const PLATE_LETTERS = 'ABCDEFGHJKLMNPRSTVWXYZ';
 function plateSerial(seed) {
