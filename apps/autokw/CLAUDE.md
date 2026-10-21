@@ -325,7 +325,11 @@ file and a guide disagree, this file wins.
   `buildSmallCar`: the slider track, roof rails, clad arches), `crossover`
   and `compsedan` (`scaledBuild` of the SUV and the sedan at RAV4 / Civic
   size -- y is not scaled, so they keep their parents' heights), `pickupcap`
-  (`spec.cap`: a cab-high cap over the bed), `postvan` and `purovan`
+  (`spec.cap`: a cab-high cap over the bed), `schoolbus` (buildSchoolBus:
+  a Type C conventional, chrome yellow, black rub rails, SCHOOL BUS and the
+  red/amber lamps front and back, the stop arm on the driver's side, the door
+  behind the front wheel, STUDENT TRANSPORTATION on the sides; one CIVILIAN
+  slot, never parked), `postvan` and `purovan`
   (`vanLivery`: Canada Post's red block, blue stripe and CANADA POST /
   POSTES CANADA panel; Purolator's slashes and red italic wordmark).
   **Two-tone paint**: `finish: 'twotone'` (+ `paintVC` for the far LOD)
@@ -347,7 +351,7 @@ file and a guide disagree, this file wins.
   `bus-*`); `VIEW_PROBE_FILE=tools/kw/carprobe.js` reports draws, triangles
   and the type mix after 12 s of play. Phone: 16 vehicles parked in view
   cost +48 draws (3 each) and ~+8.5k triangles each (buses ~12-13k); the
-  spawn frame 196 -> 198 draws, 881k -> 884k tris.
+  spawn frame (CLAUDE.md's 196 draws, 881k tris before) 199 draws, 889k tris.
 
 ## Build number
 

@@ -380,6 +380,8 @@ export const TYPES = {
   // type's geometry is shared -- Route 7 King, an iXpress, and the ION Bus.
   bus: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', livery: GRT_WHITE, grt: { sign: '7 King', led: 'amber', fleet: '21714' }, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
   busx: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', livery: GRT_WHITE, grt: { sign: '202 iXpress University', fleet: '22015' }, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
+  // Auto KW: the yellow school bus (buildSchoolBus)
+  schoolbus: deriveSpec({ wheelbase: 6.1, len: 10.9, wid: 2.44, wheelR: 0.50, sill: 0.62, belt: 1.55, roof: 3.05, cab: [-0.48, 0.48], hand: 'schoolbus', livery: 0xf2a900, bus: true, diesel: true, boxy: 3, mass: 4.2, acc: 1.5, topKph: 100, brakeM: 52, latG: 0.62 }),
   ionbus: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', livery: GRT_WHITE, grt: { sign: '302 ION Bus', fleet: '21759', ion: true }, finish: 'twotone', paintVC: true, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
   boxtruck: deriveSpec({ wheelbase: 4.3,len: 7.5, wid: 2.38, wheelR: 0.46, sill: 0.62, belt: 1.55, roof: 2.55, cab: [0.14, 0.46], cargo: 2.55, hand: 'boxtruck', boxy: 2, mass: 3.0, acc: 2.5, topKph: 125, brakeM: 51, latG: 0.66 }),
   ambulance: deriveSpec({ wheelbase: 3.9,len: 6.3, wid: 2.28, wheelR: 0.42, sill: 0.56, belt: 1.42, roof: 2.35, cab: [0.16, 0.46], cargo: 2.25, hand: 'ambulance', livery: 0xf4f4f0, boxy: 2, emergency: true, mass: 2.4, acc: 3.2, topKph: 155, brakeM: 48, latG: 0.72 }),
@@ -482,7 +484,7 @@ export const CIVILIAN_TYPES = [
   ...Array(3).fill('ev'),
   ...Array(2).fill('van'), 'postvan', 'purovan',
   'muscle', 'sports', 'convertible', 'cruiser', 'sportbike',
-  'taxi', 'bus', 'busx', 'artic', 'boxtruck', 'garbage',
+  'taxi', 'bus', 'busx', 'artic', 'schoolbus', 'boxtruck', 'garbage',
 ];
 
 // Auto KW: the colours of a Canadian car park (North American popularity
@@ -7231,6 +7233,137 @@ function buildTruck(spec, paint, trim, matte, S) {
 function geom0(shell, z) { return shell.sec(z).w0; }
 
 /**
+ * Auto KW: the yellow SCHOOL BUS -- a Type C conventional (Blue Bird / Thomas /
+ * IC), as Student Transportation runs them for Waterloo Region's boards: a
+ * narrow bonnet in front of a long square body, chrome-yellow all over, black
+ * rub rails, a row of small windows, SCHOOL BUS over the screen and the back
+ * door between the red and amber warning lamps, the stop arm folded on the
+ * driver's side, the door on the kerb side just behind the front wheel.
+ */
+const BUS_BLACK = [0.035, 0.035, 0.04];
+function buildSchoolBus(spec, paint, trim, matte) {
+  const wr = spec.wheelR, W = spec.wid / 2, roofY = spec.roof;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = nose - 1.0, zR = zF - spec.wheelbase, zW = nose - 2.05;   // zW: the body's front (the screen)
+  const archR = wr + 0.16, archTop = wr * 2 + 0.08, floor = 0.66;
+  const liftR = archCut([zR], archR, archTop, 3.0);
+  const winB = 1.58, winT = 2.36, DOOR = [zW - 0.92, zW - 0.12];
+  const spans = (sx) => {
+    const out = [];
+    let z = tail + 0.95;
+    const end = zW - (sx < 0 ? 0.98 : 0.30);
+    while (z + 0.62 <= end) { out.push([z, z + 0.62]); z += 0.74; }
+    return out;
+  };
+  const windows = [];
+  for (const sx of [-1, 1]) for (const [a, b] of spans(sx)) windows.push({ sx, zA: a, zB: b, yBot: winB, yTopMax: winT, cols: 1 });
+  windows.push({ sx: -1, zA: DOOR[0], zB: DOOR[1], yBot: floor + 0.08, yTopMax: winT, cols: 1 });
+  const body = boxShell(paint, {
+    z0: tail, z1: zW, stations: 30, rr: 0.20, tumble: 0.03, crown: 0.05,
+    wAt: () => W, y0At: (z) => Math.max(floor, liftR(z)),
+    y1At: curve([[tail, roofY - 0.08], [tail + 0.3, roofY], [zW - 0.3, roofY], [zW, roofY - 0.08]]),
+    windows,
+  });
+  shellArch(matte, body, zR, wr, archR, archTop, floor);
+  // the bonnet: narrower, sloping to the grille
+  const { shell: hood } = truckCab(paint, matte, {
+    z0: zW - 0.02, z1: nose, W: 0.98, roofY: 1.62, zF, wr, archR, sill: floor,
+    bonnet: { scrTopZ: zW - 0.005, cowlZ: zW + 0.06, cowlY: 1.60, noseY: 1.38 },
+  });
+  const hs = hood.sec(nose);
+  // --- the front of the body: the screen, SCHOOL BUS, the warning lamps --------
+  const bs = body.sec(zW), fw = bs.w0 - 0.10, scrB = 1.66, scrT = 2.34;
+  endFace(paint, zW, 1, body.prof(zW), [[0, (scrB + scrT) / 2, fw, (scrT - scrB) / 2]], WHITE);
+  trim.patch([[[-fw, scrB, zW + 0.006], [0, scrB, zW + 0.006], [fw, scrB, zW + 0.006]],
+    [[-fw, scrT, zW + 0.006], [0, scrT, zW + 0.006], [fw, scrT, zW + 0.006]]], GLASS, [0, 0, 1]);
+  matte.box(0, scrB - 0.01, zW + 0.004, 0.012, scrT - scrB + 0.02, 0.02, 0, BUS_BLACK);       // centre post
+  matte.box(0, scrT + 0.05, zW + 0.006, 1.20, 0.30, 0.02, 0, BUS_BLACK);                        // sign surround
+  matte.box(0, scrT + 0.07, zW + 0.012, 1.12, 0.26, 0.02, 0, [0.95, 0.66, 0.05]);
+  dotText(matte, 'SCHOOL BUS', { c: [0, scrT + 0.20, zW + 0.024], u: [1, 0, 0], h: 0.15, col: BUS_BLACK, bold: 0.5 });
+  for (const sx of [-1, 1]) {
+    trim.tube([sx * (W - 0.20), scrT + 0.20, zW], [sx * (W - 0.20), scrT + 0.20, zW + 0.06], 0.085, 12, [1.0, 0.10, 0.06], true);
+    trim.tube([sx * (W - 0.44), scrT + 0.20, zW], [sx * (W - 0.44), scrT + 0.20, zW + 0.06], 0.075, 12, AMBER, true);
+  }
+  // the bonnet's face: black grille, round lamps, the bumper
+  const GR = [0, 0.98, hs.w0 * 0.62, 0.26], LA = [hs.w0 * 0.80, 1.06, 0.10, 0.10];
+  endFace(paint, nose, 1, hood.prof(nose), [GR, LA], WHITE);
+  const gp = pocket(paint, matte, 0, GR[1], nose, GR[2], GR[3], 0.10, 1, { rim: 0.03, rimCol: BUS_BLACK });
+  for (let i = 0; i < 6; i++) matte.box(0, GR[1] - GR[3] + 0.05 + i * 0.08, gp.z + 0.02, gp.hw * 1.9, 0.025, 0.04, 0, [0.10, 0.10, 0.11]);
+  for (const sx of [-1, 1]) {
+    pocket(paint, matte, sx * LA[0], LA[1], nose, LA[2], LA[3], 0.06, 1, { rim: 0.02, rimCol: BUS_BLACK });
+    trim.tube([sx * LA[0], LA[1], nose - 0.02], [sx * LA[0], LA[1], nose + 0.012], 0.075, 12, LAMP, true);
+    trim.box(sx * (LA[0] - 0.02), 0.82, nose - 0.01, 0.12, 0.06, 0.03, 0, AMBER);
+  }
+  matte.box(0, 0.48, nose + 0.06, W * 1.96, 0.24, 0.16, 0, BUS_BLACK);                          // bumper
+  plateBox(trim, 0, 0.52, nose + 0.145, 0.40, 0.12, 0.02);
+  matte.box(0, 1.385, nose - 0.75, 0.05, 0.03, 1.2, 0, BUS_BLACK);                               // the bonnet's centre seam
+  // --- the cabin, seen through the windows --------------------------------------
+  const x = W - 0.07, y = floor + 0.20;
+  matte.quad([-x, y, tail + 0.2], [x, y, tail + 0.2], [x, y, zW - 0.1], [-x, y, zW - 0.1], [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAB_FLOOR);
+  matte.quad([-x, roofY - 0.12, tail + 0.2], [x, roofY - 0.12, tail + 0.2], [x, roofY - 0.12, zW - 0.1], [-x, roofY - 0.12, zW - 0.1], [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAB_ROOF);
+  matte.box(0, y, zW - 0.30, x * 1.9, 0.75, 0.36, 0, CAB_DASH);
+  const sit = y + 0.42, Hs = 0.70;
+  for (let z = zW - 1.30; z > tail + 0.9; z -= 0.78) {
+    for (const sx of [-1, 1]) rakedBox(matte, sx * (x - 0.42), y - 0.02, z, 0.80, sit - y + 0.55 * Hs, 0.09, 0.06, [0.32, 0.12, 0.06]);   // the green-brown vinyl benches
+  }
+  const wheel = [0.55, sit + 0.05, zW - 0.45];
+  rakedBox(matte, 0.55, y - 0.02, zW - 1.0, 0.50, sit - y + 0.55 * Hs, 0.12, 0.05, CAB_SEAT);
+  wheelRim(matte, wheel[0], wheel[1], wheel[2], 0.24);
+  if (matte.crew) occupant(matte.crew, 0.55, sit, zW - 1.0, Hs, wheel);
+  // --- the sides: glass, rub rails, the door, the stop arm, the lettering --------
+  for (const sx of [-1, 1]) {
+    const run = spans(sx);
+    for (const [a, b] of run) sideGlass(trim, body, sx, a, b, winB, winT, 0.007, 1);
+    // black seals under and over the row of windows (the posts between are the body's yellow)
+    const r0 = run[0][0] - 0.06, r1 = run[run.length - 1][1] + 0.06;
+    for (const yy of [winB - 0.035, winT + 0.005]) matte.box(sx * (W + 0.006), yy, (r0 + r1) / 2, 0.01, 0.03, r1 - r0, 0, BUS_BLACK);
+    for (const yy of [0.86, 1.18, 1.46]) matte.box(sx * (W + 0.010), yy, (tail + zW) / 2 + (sx < 0 ? -0.5 : 0), 0.02, 0.07, zW - tail - (sx < 0 ? 1.2 : 0.2), 0, BUS_BLACK);
+    matte.box(sx * (W + 0.010), floor, (tail + zW) / 2, 0.02, 0.06, zW - tail - 0.1, 0, BUS_BLACK);
+    dotText(matte, 'STUDENT TRANSPORTATION', { c: [sx * (W + 0.025), 1.32, (tail + zW) / 2 - 0.4], u: [0, 0, -sx], h: 0.10, col: BUS_BLACK, bold: 0.4 });
+    trim.box(sx * (hood.sec(zW + 0.5).w0 + 0.01), 1.10, zW + 0.5, 0.02, 0.04, 0.08, 0, AMBER);
+    truckMirror(trim, matte, sx, W - 0.06, 2.10, zW + 0.05);
+  }
+  // the kerb-side door: two glass leaves to the step
+  const dw = W + 0.008;
+  trim.patch([[[-dw, floor + 0.08, DOOR[0]], [-dw, floor + 0.08, DOOR[1]]], [[-dw, winT, DOOR[0]], [-dw, winT, DOOR[1]]]], GLASS, [-1, 0, 0]);
+  for (const zc of [DOOR[0], (DOOR[0] + DOOR[1]) / 2, DOOR[1]]) matte.box(-(dw + 0.004), floor + 0.06, zc, 0.012, winT - floor - 0.04, 0.05, 0, BUS_BLACK);
+  // the stop arm on the driver's side, folded flat: a red octagon reading STOP
+  {
+    const sx = 1, px = W + 0.035, cy = 1.82, cz = zW - 0.55, r = 0.23, oct = [];
+    for (let i = 0; i < 8; i++) { const a = Math.PI / 8 + (i * Math.PI) / 4; oct.push([Math.cos(a) * r, Math.sin(a) * r]); }
+    for (let i = 0; i < 8; i++) {
+      const [a0, b0] = oct[i], [a1, b1] = oct[(i + 1) % 8];
+      trim.tri([px, cy, cz], [px, cy + b0, cz + a0], [px, cy + b1, cz + a1], [sx, 0, 0], [0.80, 0.04, 0.03]);
+    }
+    dotText(matte, 'STOP', { c: [px + 0.004, cy, cz], u: [0, 0, -1], h: 0.09, col: [0.95, 0.95, 0.95], bold: 0.5 });
+    matte.box(px - 0.02, cy - 0.04, cz + 0.30, 0.03, 0.08, 0.14, 0, BUS_BLACK);    // its hinge box
+  }
+  // --- the back: the emergency door, SCHOOL BUS, lamps --------------------------
+  const RW = [0, 1.98, 0.42, 0.34], TL = [W - 0.16, 1.05, 0.08, 0.10];
+  endFace(paint, tail, -1, body.prof(tail), [RW, TL], WHITE);
+  const wp = pocket(paint, matte, 0, RW[1], tail, RW[2], RW[3], 0.03, -1, { rim: 0.03, rimCol: BUS_BLACK });
+  trim.box(0, RW[1] - wp.hh, tail + 0.012, wp.hw * 2, wp.hh * 2, 0.010, 0, GLASS);
+  // the emergency door's outline: two posts and a head, and its handle
+  const dTop = RW[1] + RW[3] + 0.06;
+  for (const dx of [-0.49, 0.49]) matte.box(dx, floor + 0.04, tail - 0.008, 0.025, dTop - floor - 0.04, 0.012, 0, BUS_BLACK);
+  matte.box(0, dTop - 0.012, tail - 0.008, 1.0, 0.025, 0.012, 0, BUS_BLACK);
+  trim.box(0.30, 1.30, tail - 0.02, 0.18, 0.04, 0.03, 0, CHROME);
+  dotText(matte, 'SCHOOL BUS', { c: [0, roofY - 0.27, tail - 0.012], u: [-1, 0, 0], h: 0.14, col: BUS_BLACK, bold: 0.5 });
+  for (const sx of [-1, 1]) {
+    const tp = pocket(paint, matte, sx * TL[0], TL[1], tail, TL[2], TL[3], 0.04, -1, { rim: 0.016, rimCol: BUS_BLACK });
+    trim.box(sx * TL[0], TL[1] - tp.hh * 0.95, tail + 0.014, tp.hw * 1.9, tp.hh * 1.9, 0.020, 0, TAILC);
+    trim.tube([sx * (W - 0.20), roofY - 0.27, tail], [sx * (W - 0.20), roofY - 0.27, tail - 0.06], 0.085, 12, [1.0, 0.10, 0.06], true);
+    trim.tube([sx * (W - 0.44), roofY - 0.27, tail], [sx * (W - 0.44), roofY - 0.27, tail - 0.06], 0.075, 12, AMBER, true);
+  }
+  matte.box(0, 0.48, tail - 0.06, W * 1.96, 0.24, 0.16, 0, BUS_BLACK);
+  plateBox(trim, 0.55, 0.78, tail - 0.024, 0.40, 0.12, 0.02);
+  // --- chassis, wheels ----------------------------------------------------------
+  matte.box(0, 0.42, (tail + zW) / 2, W * 1.4, 0.24, zW - tail - 0.4, 0, PLASTIC);
+  const twF = 0.30, twR = 0.44, wxF = hood.sec(zF).w0 - 0.17, wxR = W - 0.24;
+  return [[-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF], [-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR]];
+}
+
+/**
  * Type III ambulance: a bonneted van cab with a tall square module behind it.
  * The module is wider and taller than the cab and carries its own arch, a red
  * band and a light at every corner -- the corners are what a player reads at a
@@ -10050,6 +10183,7 @@ const HAND_BUILT = {
   kart: buildKart,
   fireengine: buildFireEngine, tiller: buildTiller, tillerRear: buildTillerRear,
   tractor: buildTractor, combine: buildCombine,
+  schoolbus: buildSchoolBus,
 };
 
 /**

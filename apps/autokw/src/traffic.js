@@ -21,7 +21,7 @@ const HELLCAT_P = 0.12, HELLCAT_MAX = 3;
 // spawned a car every ~110 m, so this is about one per 10 km driven. It goes
 // when it is left behind, as every car does.
 const WIENER_P = 0.01;
-const HEAVY = new Set(['bus', 'busx', 'ionbus', 'artic', 'boxtruck', 'garbage', 'pickup', 'pickupcap', 'van', 'postvan', 'purovan', 'cruiser', 'sportbike', 'bicycle']);
+const HEAVY = new Set(['bus', 'busx', 'ionbus', 'artic', 'schoolbus', 'boxtruck', 'garbage', 'pickup', 'pickupcap', 'van', 'postvan', 'purovan', 'cruiser', 'sportbike', 'bicycle']);
 // Auto KW: types that never park at a kerb and keep off residential streets
 // (every bus -- `spec.bus` -- and the refuse truck)
 const NO_KERB = (tn) => !!(TYPES[tn] && TYPES[tn].bus) || tn === 'garbage';
