@@ -719,9 +719,11 @@ export function buildSigns(ctx) {
   for (const [x, z, addr] of KW.tims) {
     const mk = (w, h) => timsPanel(L, w, h);
     const r = storeSign(x, z, 5.2, 1.15, mk);
-    let at = { x, z };
+    let at = { x, z }, door = null;
     if (r) {
       stats.tims++;
+      // the door (rollup.js): in front of the sign, on the street side
+      door = { x: r.f.x + r.f.nx * 1.6, z: r.f.z + r.f.nz * 1.6 };
       signedBoxes.add(r.b);
       // a stand-alone Tims (a box under ~700 m2) gets its pylon at the road
       if (r.b.w * r.b.d < 700) {
@@ -740,13 +742,14 @@ export function buildSigns(ctx) {
       if (rd && !city.onRoad(x, z, 9, true) && !boxAt(city, x, z, 9)) {
         const s = smallStore(ctx, grp(x, z), x, z, rd.yaw, mk);
         at = s; stats.timsBuilt++;
+        door = { x: x + Math.sin(rd.yaw) * 7.1, z: z + Math.cos(rd.yaw) * 7.1 };
       } else if (rd) {
         // in a lot or a forecourt: a pylon by the road says it is here
         const px = rd.qx - Math.sin(rd.yaw) * (rd.hw + 3.2), pz = rd.qz - Math.cos(rd.yaw) * (rd.hw + 3.2);
         if (!boxAt(city, px, pz, 1.5) && !city.onRoad(px, pz, 1.2, true)) pylon(ctx, grp(px, pz), px, pz, rd.yaw + Math.PI / 2, 5.5, mk);
       }
     }
-    out.tims.push({ x: at.x, z: at.z, addr });
+    out.tims.push({ x: at.x, z: at.z, addr, door });
   }
   // FreshCo
   for (const [x, z, addr] of KW.freshco) {
@@ -1051,7 +1054,7 @@ export function mapPlaces() {
   if (!KW || !KW.built) return [];
   return [
     ...KW.built.tims.map((t) => ({ x: t.x, z: t.z, kind: 'tims', name: 'Tim Hortons', near: false, foot: true,
-      hello: `Tim Hortons${t.addr ? `, ${t.addr}` : ''}. Double-double?` })),
+      hello: `Tim Hortons${t.addr ? `, ${t.addr}` : ''}. Double-double? It's Roll Up the Rim season: ENTER at the door (or stop at the drive-thru)` })),
     ...(KW.schools || []).map((sc) => ({ x: sc.x, z: sc.z, kind: 'school', name: sc.name === 'ST. MATTHEW' ? "St. Matt's" : 'St. David', near: false, label: true,
       hello: sc.name === 'ST. MATTHEW' ? 'St. Matthew Catholic Elementary School, 405 Pastern Trail — home of the Wildcats'
         : 'St. David Catholic Secondary School, 4 High St — home of the Celtics' })),

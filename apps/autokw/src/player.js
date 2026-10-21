@@ -246,7 +246,7 @@ export class Player {
         else if (this.freight && this.freight.onWait(this.x, this.z)) { /* a freight is called into the yard */ }
         else if (this.counterbal && this.counterbal.onWait(this.x, this.z)) { /* a streetcar is called to the stop */ }
         else if (this.monorail && this.game.onMonorailWait) this.game.onMonorailWait(this.x, this.y, this.z);
-      } else this.exitVehicle();
+      } else if (!(this.game.tryDriveThru && this.game.tryDriveThru(this))) this.exitVehicle();
     }
 
     if (input.attack && this.attackCd <= 0) this.attack(traffic, peds);
