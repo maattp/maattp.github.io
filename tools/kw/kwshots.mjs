@@ -8,6 +8,7 @@
 //                       (VIEW_THROTTLE=8 CPU-throttles it, VIEW_PROFILE=f.cpuprofile profiles it)
 //   VIEW_PRE='<js>'     evaluate once before the shots (e.g. hide a layer to see what draws what)
 //   VIEW_BOOT_JS='<js>' run before the page's own scripts (e.g. window.__noPlaces = true for a before/after)
+//   VIEW_BOOT_FILE=f.js the same from a file (tools/kw/seedrandom.js pins Math.random)
 //   `calls` in the output is the scene pass's draw count, `tris` its triangles
 //   VIEW_SIZE=874x402   window size (default 1280x720; 874x402 is the phone's landscape)
 //
@@ -83,6 +84,7 @@ async function main() {
       await send('Emulation.setDeviceMetricsOverride', { width: 874, height: 402, deviceScaleFactor: 3, mobile: true, screenWidth: 874, screenHeight: 402, screenOrientation: { type: 'landscapePrimary', angle: 90 } });
       await send('Emulation.setUserAgentOverride', { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1', platform: 'iPhone' });
     }
+    if (process.env.VIEW_BOOT_FILE) process.env.VIEW_BOOT_JS = (process.env.VIEW_BOOT_JS || '') + readFileSync(process.env.VIEW_BOOT_FILE, 'utf8');
     await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.__noAutoQuality = true;' + (process.env.VIEW_BOOT_JS || '') });
     await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/${process.env.AUTO_APP || 'autokw'}/` });
     let up = false;
