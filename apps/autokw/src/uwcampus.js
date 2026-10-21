@@ -226,24 +226,34 @@ const STY = {
   red: S({ wall: C.redBrick, win: 'punch', ww: 1.5, wh: 1.7, sp: 3.2, trim: [0.80, 0.78, 0.74] }),
   res: S({ wall: C.v1Brick, win: 'punch', ww: 1.1, wh: 1.4, sp: 3.0, trim: [0.78, 0.76, 0.72], parapet: 0.9 }),
   glass: S({ wall: C.silver, win: 'curtain', glass: C.glassBlue, frame: C.silver, mp: 1.6, parapet: 0.3 }),
+  bio: S({ wall: [0.86, 0.85, 0.81], win: 'hood', ww: 1.0, wh: 2.3, sp: 1.55, trim: [0.93, 0.92, 0.89], glass: [0.16, 0.20, 0.26] }),
 };
 // Per building, by OSM ref (else name).
 const BY = {
   // the precast core
-  MC: S({ wall: C.buffConc, win: 'hood', ww: 1.15, wh: 1.45, sp: 1.75, trim: [0.84, 0.80, 0.73] }),
+  MC: S({ wall: C.buffConc, win: 'hood', ww: 1.15, wh: 1.45, sp: 1.75, trim: [0.84, 0.80, 0.73], mcBase: true }),
   NH: S({ wall: [0.86, 0.84, 0.78], win: 'ribbon', wf: 0.40, mp: 1.5 }),
   LIB: S({ wall: C.dpTower, win: 'slit', sw: 0.55, sp: 1.55, wf: 0.55 }),
   PAS: S({ wall: [0.80, 0.77, 0.70], win: 'ribbon', wf: 0.34, mp: 0, trim: [0.86, 0.83, 0.77] }),
   BMH: STY.conc,
   ML: S({ wall: C.buffConc, win: 'slit', sw: 0.9, sp: 2.6, wf: 0.5 }),
-  // buff brick: the 1958-62 core (physics, chemistry, biology, engineering)
-  C2: STY.buff, ESC: STY.buff, PHY: STY.buff, B1: STY.buff, B2: STY.buff, CPH: STY.buff,
+  // buff brick: the 1958-62 core (physics, chemistry, engineering)
+  C2: STY.buff, PHY: STY.buff, CPH: STY.buff,
+  // the biology / earth sciences block (Commons "BIO Connection"): white
+  // precast, each pair of tall windows in a deep projecting frame
+  B1: STY.bio, B2: STY.bio, ESC: STY.bio,
   // dark brick: the humanities
   HH: STY.brown, AL: STY.brown, EV1: STY.brown, OPT: STY.brown,
   EV2: S({ wall: [0.70, 0.38, 0.26], win: 'ribbon', wf: 0.34, mp: 1.6 }),
-  SCH: S({ wall: [0.45, 0.27, 0.20], win: 'ribbon', wf: 0.36, mp: 1.6, trim: [0.90, 0.88, 0.80], parapet: 0.9 }),
-  PAC: S({ wall: C.brownBrick, win: 'none', trim: [0.66, 0.62, 0.56] }),
-  SLC: S({ wall: C.brownBrick, win: 'curtain', glass: C.glassBlue, frame: [0.78, 0.79, 0.80], mp: 1.5, parapet: 0.5 }),
+  SCH: S({ wall: [0.45, 0.27, 0.20], win: 'ribbon', wf: 0.36, mp: 1.6, trim: [0.90, 0.88, 0.80], parapet: 0.9, fascia: 1.1 }),
+  // the PAC (1969): SCH's language -- dark brown brick, blank gym walls
+  // between brick pilasters, a deep white precast fascia round every roof;
+  // the low wings get a band of windows
+  PAC: S({ wall: [0.42, 0.27, 0.21], win: 'none', trim: [0.88, 0.87, 0.82], parapet: 0.2, fascia: 1.5, pil: 5.4,
+    low: S({ wall: [0.42, 0.27, 0.21], win: 'ribbon', wf: 0.38, mp: 1.8, glass: C.glassDark, trim: [0.88, 0.87, 0.82], parapet: 0.2, fascia: 1.1 }) }),
+  // the SLC: brown brick and tan split-face block, the Great Hall's curved
+  // two-storey wall of blue glass on the courtyard (PART_STY)
+  SLC: S({ wall: [0.46, 0.30, 0.22], win: 'ribbon', wf: 0.40, mp: 1.6, glass: C.glassBlue, trim: [0.80, 0.72, 0.58], parapet: 0.4, fascia: 0.8 }),
   E2: STY.buff, E3: STY.buff, DWE: STY.buff, RCH: STY.buff, ERC: STY.buff, CSB: STY.buff, GSC: STY.red, COM: STY.buff,
   FED: STY.red, HS: STY.buff, UC: STY.brown, AHS: STY.red, LHI: STY.red, TH: STY.res,
   // glass and metal
@@ -255,11 +265,14 @@ const BY = {
   QNC: S({ wall: [0.58, 0.65, 0.72], win: 'stripe', glass: [0.12, 0.13, 0.15], frame: [0.36, 0.27, 0.22], parapet: 0.3 }),
   M3: S({ wall: [0.74, 0.36, 0.22], win: 'curtain', glass: C.glassTeal, frame: [0.80, 0.82, 0.82], mp: 1.5, parapet: 0.4 }),
   EIT: S({ wall: C.brownBrick, win: 'curtain', glass: C.glassGreen, frame: [0.62, 0.62, 0.60], mp: 1.8 }),
-  STC: S({ wall: [0.82, 0.80, 0.76], win: 'curtain', glass: C.glassGreen, frame: [0.84, 0.84, 0.82], mp: 1.4 }),
+  // STC (2011): buff brick, teal-green glazing, grey metal-panel upper storey
+  STC: S({ wall: [0.80, 0.70, 0.54], win: 'ribbon', wf: 0.52, mp: 1.4, glass: C.glassTeal, frame: [0.78, 0.80, 0.80], trim: [0.70, 0.72, 0.74] }),
   // EV3: warm grey panels, a lime-green band under each ribbon window
   EV3: S({ wall: [0.80, 0.78, 0.74], win: 'ribbon', wf: 0.42, mp: 1.2, glass: [0.22, 0.27, 0.33], frame: [0.40, 0.37, 0.34], trim: [0.62, 0.78, 0.18], parapet: 0.4 }),
   TC: S({ wall: C.redBrick, win: 'ribbon', wf: 0.30, mp: 2.0 }),
-  CIF: S({ wall: [0.86, 0.87, 0.86], win: 'none', trim: [0.36, 0.38, 0.42], parapet: 0.3 }),
+  // the CIF (Commons CIF_01-04): cream brick, a clerestory of glass under a
+  // white metal fascia, red steel along its covered walkways (SIGS)
+  CIF: S({ wall: [0.84, 0.78, 0.64], win: 'clere', glass: [0.30, 0.40, 0.46], frame: [0.88, 0.89, 0.90], trim: [0.92, 0.93, 0.94], parapet: 0.2, fascia: 1.0 }),
   ECH: S({ wall: [0.80, 0.80, 0.78], win: 'ribbon', wf: 0.3, mp: 0 }),
   // residences
   V1: STY.res, REV: STY.res, MHR: STY.res,
@@ -281,7 +294,41 @@ const BY_NAME = {
   'Brubacher House': S({ wall: [0.86, 0.80, 0.62], win: 'punch', ww: 0.9, wh: 1.5, sp: 3.0 }),
 };
 
+// WILFRID LAURIER UNIVERSITY, by OSM name. Photos (Commons, Oct 2026): the
+// 1990s-2000s buildings (Bricker Academic, the Science Building, the Woods
+// building) are red brick banded in cream precast, a band under every row of
+// windows; Lazaridis Hall (2015) a big box of blue-grey glass on a dark frame;
+// the residences red brick with white trim; Martin Luther's seminary
+// limestone; the older core (the Arts wings, FNCC, the library) darker
+// red-brown brick.
+const WRB = [0.58, 0.29, 0.22], CREAM = [0.88, 0.85, 0.76], OLD = [0.56, 0.31, 0.24];
+const WBAND = S({ wall: WRB, win: 'banded', wf: 0.5, ww: 2.5, sp: 3.0, trim: CREAM, glass: [0.14, 0.17, 0.21], parapet: 0.5, fascia: 0.7 });
+const WRES = S({ wall: WRB, win: 'punch', ww: 1.2, wh: 1.5, sp: 3.0, trim: CREAM, parapet: 0.6 });
+const WOLD = S({ wall: OLD, win: 'punch', ww: 1.7, wh: 1.6, sp: 2.6, trim: [0.86, 0.84, 0.78], parapet: 0.6 });
+const WLU = {
+  'Bricker Academic Building': WBAND,
+  'Science Building': WBAND,
+  'Science Research Building': WBAND,
+  'Dr. Alvin Woods Building': WBAND,
+  'Schlegel Building': WBAND,
+  'Laurier Library': S({ wall: [0.56, 0.30, 0.22], win: 'slit', sw: 1.0, sp: 3.4, wf: 0.62, trim: CREAM, parapet: 0.6, fascia: 0.9 }),
+  'Arts Building - A Wing': WOLD, 'Arts Building - C Wing': WOLD, 'Arts Building - E Wing': WOLD,
+  'Frank C. Peters Building': S({ wall: [0.72, 0.71, 0.68], win: 'ribbon', wf: 0.42, mp: 1.6, glass: C.glassDark, trim: [0.80, 0.79, 0.76], parapet: 0.5 }),
+  'Fred Nichols Campus Centre': S({ wall: [0.50, 0.30, 0.23], win: 'ribbon', wf: 0.38, mp: 1.8, glass: C.glassDark, trim: CREAM, parapet: 0.6, fascia: 0.8 }),
+  'Lazaridis Hall': S({ wall: [0.24, 0.25, 0.28], win: 'curtain', glass: [0.30, 0.40, 0.48], frame: [0.20, 0.21, 0.23], mp: 1.5, parapet: 0.4 }),
+  'Solarium': S({ wall: [0.70, 0.73, 0.75], win: 'curtain', glass: [0.42, 0.52, 0.56], frame: [0.86, 0.87, 0.88], mp: 1.4, parapet: 0, glassRoof: true }),
+  'John Aird Centre': S({ wall: [0.84, 0.76, 0.62], win: 'ribbon', wf: 0.36, mp: 1.8, trim: [0.92, 0.90, 0.84], parapet: 0.6 }),
+  'Theatre Auditorium': S({ wall: OLD, win: 'none', trim: CREAM, fascia: 1.2, pil: 4.5 }),
+  'Athletics Complex': S({ wall: [0.60, 0.33, 0.25], win: 'clere', glass: [0.20, 0.24, 0.30], frame: CREAM, trim: CREAM, parapet: 0.2, fascia: 1.2, pil: 6 }),
+  'Martin Luther University College': S({ wall: [0.80, 0.74, 0.62], win: 'slit', sw: 0.7, sp: 3.4, wf: 0.75, trim: [0.86, 0.82, 0.72], parapet: 0.3 }),
+  'King Street Residence': WRES, 'Bricker Residence': WRES, 'Clara Conrad Residence': WRES, 'Willison Residence': WRES,
+  'Little House Residence': WRES, 'Bouckaert Residence': WRES, 'Leopold Residence': WRES, 'Euler Residence': WRES,
+  'MacDonald House': WRES, 'Waterloo College Hall': WRES, 'Regina Residence': WRES,
+  'Stadium Building': S({ wall: [0.70, 0.70, 0.68], win: 'none', parapet: 0.3 }),
+};
+
 function styleOf(r) {
+  if (r.campus === 'wlu') return WLU[r.name] || (r.building === 'grandstand' ? WLU['Stadium Building'] : WOLD);
   if (r.ref && BY[r.ref]) return BY[r.ref];
   if (r.name && BY_NAME[r.name]) return BY_NAME[r.name];
   if (r.building === 'chapel') return S({ wall: [0.50, 0.46, 0.42], win: 'slit', sw: 0.5, sp: 3.0, wf: 0.6, parapet: 0 });  // Grebel's rubble stone
@@ -308,6 +355,12 @@ const PART_STY = {
   // DC: the teal glass barrel vault and the glazed atrium
   692354659: S({ wall: C.glassTeal, win: 'curtain', glass: C.glassTeal, frame: [0.62, 0.70, 0.70], mp: 1.8, vault: true, parapet: 0 }),
   692354651: S({ wall: C.glassTeal, win: 'curtain', glass: C.glassTeal, frame: [0.62, 0.70, 0.70], mp: 1.8, vault: true, parapet: 0 }),
+  // the SLC's Great Hall: the curved two-storey wall of blue glass round its
+  // east side (OSM's curved parts), silver mullions, a tan block fascia;
+  // the glass link to MC
+  1027588307: S({ wall: [0.80, 0.72, 0.58], win: 'curtain', glass: [0.22, 0.34, 0.50], frame: [0.84, 0.85, 0.86], mp: 1.4, parapet: 0.4, fascia: 0.6 }),
+  951370624: S({ wall: [0.80, 0.72, 0.58], win: 'curtain', glass: [0.22, 0.34, 0.50], frame: [0.84, 0.85, 0.86], mp: 1.4, parapet: 0.3, fascia: 0.5 }),
+  1027588308: S({ wall: C.silver, win: 'curtain', glass: [0.26, 0.36, 0.46], frame: [0.84, 0.85, 0.86], mp: 1.6, parapet: 0.3 }),
 };
 
 // --- walls, windows, roofs ---------------------------------------------------------------
@@ -351,7 +404,7 @@ function windows(B, e, ya, k, st, cols, nFloors) {
     case 'punch': case 'hood': {
       const n = Math.floor((L - 0.8) / st.sp);
       if (n < 1) return;
-      if (st.win === 'hood' && k === 0) {
+      if (st.win === 'hood' && k === 0 && st.mcBase) {
         // MC's ground floor: brown brick infill between precast piers
         B.quad(at(0.4, ya, O * 0.6), at(L - 0.4, ya, O * 0.6), at(L - 0.4, ya + ST - 0.3, O * 0.6), at(0.4, ya + ST - 0.3, O * 0.6), N, U0, cols.infill);
         const np = Math.max(1, Math.floor(L / 6));
@@ -378,6 +431,22 @@ function windows(B, e, ya, k, st, cols, nFloors) {
         } else if (trim) {
           B.d.quad(at(a - 0.1, y - 0.12, O * 2), at(b + 0.1, y - 0.12, O * 2), at(b + 0.1, y, O * 2), at(a - 0.1, y, O * 2), N, U0, trim);
         }
+      }
+      return;
+    }
+    case 'banded': {
+      // Laurier's red brick: a cream precast band the length of the face
+      // under every row of windows, the windows in pairs between brick piers
+      if (L < 3) return;
+      const h = ST * st.wf, y = ya + (ST - h) * 0.55;
+      B.quad(at(0, y - 0.6, O * 2), at(L, y - 0.6, O * 2), at(L, y, O * 2), at(0, y, O * 2), N, U0, trim);
+      const n = Math.floor((L - 1) / st.sp);
+      if (n < 1) return;
+      const t0 = (L - n * st.sp) / 2;
+      for (let m = 0; m < n; m++) {
+        const a = t0 + m * st.sp + (st.sp - st.ww) / 2, b = a + st.ww;
+        B.quad(at(a, y, O), at(b, y, O), at(b, y + h, O), at(a, y + h, O), N, U0, glass);
+        B.d.quad(at((a + b) / 2 - 0.05, y, O * 2), at((a + b) / 2 + 0.05, y, O * 2), at((a + b) / 2 + 0.05, y + h, O * 2), at((a + b) / 2 - 0.05, y + h, O * 2), N, U0, frame);
       }
       return;
     }
@@ -462,6 +531,33 @@ function mass(B, solids, pts, base, y0, y1, st, opts = {}) {
         B.d.quad(e.at(t - 0.12, y0 + 1, O), e.at(t + 0.12, y0 + 1, O), e.at(t + 0.12, y1, O), e.at(t - 0.12, y1, O), N, U0, dk);
       }
     }
+    if (st.fascia && e.L > 1) {
+      // a precast (or metal) band round the roof, standing proud of the wall
+      const P = 0.35, ft = y1 + par + 0.05, fb = ft - st.fascia;
+      B.quad(e.at(-P, fb, P), e.at(e.L + P, fb, P), e.at(e.L + P, ft, P), e.at(-P, ft, P), N, U0, trim);
+      B.quad(e.at(-P, fb, 0), e.at(e.L + P, fb, 0), e.at(e.L + P, fb, P), e.at(-P, fb, P), [0, -1, 0], U0, shade(trim, 0.6));
+      B.quad(e.at(-P, ft, 0), e.at(e.L + P, ft, 0), e.at(e.L + P, ft, P), e.at(-P, ft, P), [0, 1, 0], U0, trim);
+    }
+    if (st.pil && e.L > st.pil * 1.5) {
+      // brick pilasters, a shade darker, the wall's height
+      const n = Math.floor(e.L / st.pil), dk = shade(wall, 0.8), top = y1 + par - (st.fascia || 0);
+      for (let m = 1; m < n; m++) {
+        const t = (m / n) * e.L;
+        B.d.quad(e.at(t - 0.45, y0 + 1, 0.22), e.at(t + 0.45, y0 + 1, 0.22), e.at(t + 0.45, top, 0.22), e.at(t - 0.45, top, 0.22), N, U0, dk);
+      }
+    }
+    if (st.win === 'clere') {
+      // a clerestory: one band of glass high on the wall, under the fascia
+      if (e.L < 4 || y1 - y0 < 5) continue;
+      const yt = y1 + par - (st.fascia || 0) - 0.25, yb = yt - 1.8;
+      B.quad(e.at(0.6, yb, O), e.at(e.L - 0.6, yb, O), e.at(e.L - 0.6, yt, O), e.at(0.6, yt, O), N, U0, cols.glass);
+      const n = Math.min(60, Math.floor(e.L / 2.4));
+      for (let m = 1; m < n; m++) {
+        const t = (m / n) * e.L;
+        B.d.quad(e.at(t - 0.07, yb, O * 2), e.at(t + 0.07, yb, O * 2), e.at(t + 0.07, yt, O * 2), e.at(t - 0.07, yt, O * 2), N, U0, cols.frame);
+      }
+      continue;
+    }
     if (st.win === 'none') continue;
     if (st.win === 'curtain' || st.win === 'stripe' || st.win === 'hex') { facade(B, e, base, y0, y1, st, cols, f0, f1); continue; }
     for (let k = f0; k < f1; k++) {
@@ -479,6 +575,7 @@ function mass(B, solids, pts, base, y0, y1, st, opts = {}) {
     }
   }
   if (st.vault) vault(B, pts, y1, cols);
+  else if (st.glassRoof) glassRoof(B, pts, y1, cols);
   else flatPoly(B, pts, y1, lin(st.roof || C.roof));
   if (!ground) flatPoly(B, pts, y0, shade(wall, 0.85), true);
 }
@@ -538,37 +635,96 @@ function facade(B, e, base, y0, y1, st, cols, f0, f1) {
   }
 }
 
-/** A glass barrel vault over a part's oriented box (DC), ribbed. */
+/** Where the line u = const (in obb o's frame) crosses polygon pts: [vmin, vmax], or null. */
+function spanAt(pts, o, u) {
+  const vx = -o.uz, vz = o.ux;
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    const ua = (a[0] - o.x) * o.ux + (a[1] - o.z) * o.uz, ub = (b[0] - o.x) * o.ux + (b[1] - o.z) * o.uz;
+    if ((ua > u) === (ub > u)) continue;
+    const t = (u - ua) / (ub - ua);
+    const va = (a[0] - o.x) * vx + (a[1] - o.z) * vz, vb = (b[0] - o.x) * vx + (b[1] - o.z) * vz;
+    const v = va + (vb - va) * t;
+    lo = Math.min(lo, v); hi = Math.max(hi, v);
+  }
+  return hi - lo > 1 ? [lo, hi] : null;
+}
+
+/**
+ * DC's glass vault, fitted to the part's real outline: slices every ~3 m
+ * along its long axis, each as wide as the outline is there, so the slanted
+ * ends of OSM's parallelogram are followed rather than boxed. The section
+ * is DC's own (Commons photos): the glazed wall turns over in a tight
+ * rounded eave (~3.4 m) into a shallow crown, not a half-round -- the whole
+ * vault rises ~5 m over the walls, not the 9 a Quonset of that span would.
+ */
 function vault(B, pts, y, cols) {
   const o = obb(pts);
   if (!o) return;
-  const vx = -o.uz, vz = o.ux, R = o.hv, rise = Math.min(R * 0.55, 9);
+  const vx = -o.uz, vz = o.ux;
   const P = (u, v, h) => [o.x + o.ux * u + vx * v, y + h, o.z + o.uz * u + vz * v];
-  const n = 8, prof = [];
+  const Nw = (nv, nh) => [vx * nv, nh, vz * nv];
+  // the section across [v0, v1]: points [v, h] and their normals [nv, nh]
+  const section = (v0, v1) => {
+    const W = v1 - v0, re = Math.min(3.4, W * 0.2), rc = Math.min(1.6, W * 0.05), out = [];
+    for (const a of [Math.PI, Math.PI * 5 / 6, Math.PI * 2 / 3, Math.PI / 2]) out.push([v0 + re + Math.cos(a) * re, Math.sin(a) * re, Math.cos(a), Math.sin(a)]);
+    for (const s of [0.25, 0.5, 0.75]) {
+      const d = rc * Math.PI * Math.cos(Math.PI * s) / Math.max(1, W - 2 * re), l = Math.hypot(d, 1);
+      out.push([v0 + re + (W - 2 * re) * s, re + rc * Math.sin(Math.PI * s), -d / l, 1 / l]);
+    }
+    for (const a of [Math.PI / 2, Math.PI / 3, Math.PI / 6, 0]) out.push([v1 - re + Math.cos(a) * re, Math.sin(a) * re, Math.cos(a), Math.sin(a)]);
+    return out;
+  };
+  const n = Math.max(2, Math.ceil((o.hu * 2) / 3));
+  const rows = [];
   for (let i = 0; i <= n; i++) {
-    const a = Math.PI * (i / n);
-    prof.push([-Math.cos(a) * R, Math.sin(a) * rise, -Math.cos(a), Math.sin(a) * R / rise]);
+    const u = -o.hu + 0.05 + (i / n) * (o.hu * 2 - 0.1);
+    const s = spanAt(pts, o, u);
+    if (s) rows.push({ u, s, p: section(s[0], s[1]) });
   }
-  for (let i = 0; i < n; i++) {
-    const [v0, h0, nv0, nh0] = prof[i], [v1, h1, nv1, nh1] = prof[i + 1];
-    const nm = [vx * (nv0 + nv1) * 0.5, (nh0 + nh1) * 0.5, vz * (nv0 + nv1) * 0.5];
-    const l = Math.hypot(...nm) || 1;
-    B.quad(P(-o.hu, v0, h0), P(o.hu, v0, h0), P(o.hu, v1, h1), P(-o.hu, v1, h1), [nm[0] / l, nm[1] / l, nm[2] / l], U0, cols.glass);
+  for (let i = 0; i + 1 < rows.length; i++) {
+    const A = rows[i], Bq = rows[i + 1];
+    for (let k = 0; k + 1 < A.p.length; k++) {
+      const a0 = A.p[k], a1 = A.p[k + 1], b0 = Bq.p[k], b1 = Bq.p[k + 1];
+      B.quad(P(A.u, a0[0], a0[1]), P(Bq.u, b0[0], b0[1]), P(Bq.u, b1[0], b1[1]), P(A.u, a1[0], a1[1]),
+        [Nw(a0[2], a0[3]), Nw(b0[2], b0[3]), Nw(b1[2], b1[3]), Nw(a1[2], a1[3])], U0, cols.glass);
+    }
   }
-  // the end walls (glass) and the ribs across, every 4 m
-  for (const s of [-1, 1]) for (let i = 0; i < n; i++) {
-    B.tri(P(s * o.hu, prof[i][0], prof[i][1]), P(s * o.hu, prof[i + 1][0], prof[i + 1][1]), P(s * o.hu, 0, 0), [o.ux * s, 0, o.uz * s], cols.glass);
+  // the end walls (glass), and a rib every other slice
+  for (const [r, s] of [[rows[0], -1], [rows[rows.length - 1], 1]]) {
+    if (!r) continue;
+    const mid = (r.s[0] + r.s[1]) / 2;
+    for (let k = 0; k + 1 < r.p.length; k++) B.tri(P(r.u, r.p[k][0], r.p[k][1]), P(r.u, r.p[k + 1][0], r.p[k + 1][1]), P(r.u, mid, 0), [o.ux * s, 0, o.uz * s], cols.glass);
   }
-  const nr = Math.floor(o.hu * 2 / 4);
-  for (let r = 0; r <= nr; r++) {
-    const u = -o.hu + (r / Math.max(1, nr)) * o.hu * 2;
-    for (let i = 0; i < n; i++) {
-      const a = P(u, prof[i][0] * 1.01, prof[i][1] * 1.01 + 0.04), b = P(u, prof[i + 1][0] * 1.01, prof[i + 1][1] * 1.01 + 0.04);
+  for (let i = 0; i < rows.length; i += 2) {
+    const r = rows[i];
+    for (let k = 0; k + 1 < r.p.length; k++) {
+      const a = P(r.u, r.p[k][0], r.p[k][1] + 0.05), b = P(r.u, r.p[k + 1][0], r.p[k + 1][1] + 0.05);
       B.d.quad([a[0] - o.ux * 0.1, a[1], a[2] - o.uz * 0.1], [a[0] + o.ux * 0.1, a[1], a[2] + o.uz * 0.1],
-        [b[0] + o.ux * 0.1, b[1], b[2] + o.uz * 0.1], [b[0] - o.ux * 0.1, b[1], b[2] - o.uz * 0.1], [0, 1, 0], U0, cols.frame);
+        [b[0] + o.ux * 0.1, b[1], b[2] + o.uz * 0.1], [b[0] - o.ux * 0.1, b[1], b[2] - o.uz * 0.1], Nw(r.p[k][2], r.p[k][3]), U0, cols.frame);
     }
   }
   return o;
+}
+
+/** A hipped glass roof on a light frame (Laurier's solarium). */
+function glassRoof(B, pts, y, cols) {
+  const o = obb(pts);
+  if (!o) return;
+  flatPoly(B, pts, y, shade(cols.frame, 0.8));
+  const r = Math.min(3, o.hv * 0.45), hu = Math.max(0, o.hu - o.hv);
+  const P = (u, v, h) => [o.x + o.ux * u - o.uz * v, y + h, o.z + o.uz * u + o.ux * v];
+  const c = [P(-o.hu, -o.hv, 0.1), P(o.hu, -o.hv, 0.1), P(o.hu, o.hv, 0.1), P(-o.hu, o.hv, 0.1)], t0 = P(-hu, 0, r), t1 = P(hu, 0, r);
+  B.quad(c[0], c[1], t1, t0, [o.uz * 0.6, 0.8, -o.ux * 0.6], U0, cols.glass);
+  B.quad(c[2], c[3], t0, t1, [-o.uz * 0.6, 0.8, o.ux * 0.6], U0, cols.glass);
+  B.tri(c[1], c[2], t1, [o.ux * 0.6, 0.8, o.uz * 0.6], cols.glass);
+  B.tri(c[3], c[0], t0, [-o.ux * 0.6, 0.8, -o.uz * 0.6], cols.glass);
+  const n = Math.max(2, Math.round(o.hu / 1.6));
+  for (let i = 0; i <= n; i++) {
+    const u = -o.hu + (i / n) * o.hu * 2, ur = Math.max(-hu, Math.min(hu, u));
+    for (const s of [-1, 1]) B.d.tube(P(u, s * o.hv, 0.15), P(ur, 0, r + 0.05), 0.05, 4, cols.frame);
+  }
 }
 
 // --- heights -------------------------------------------------------------------------
@@ -602,7 +758,7 @@ export function prepCampus(city) {
   if (typeof window !== 'undefined' && window.__noCampus) return { buildings: 0, boxes: 0 };
   if (!U) return { buildings: 0, boxes: 0 };
   let boxes = 0;
-  for (const r of U.b) {
+  for (const r of [...U.b, ...((U.wlu && U.wlu.b) || [])]) {
     const [cx, cz] = centroid(r.p);
     const A = Math.abs(polyArea(r.p));
     const hit = new Set();
@@ -628,6 +784,9 @@ export function prepCampus(city) {
 
 function drawBuilding(kit, ctx, b) {
   const { r, cx, cz, base } = b;
+  // University Stadium: the grandstand is drawn as one (laurierFields); OSM's
+  // Stadium Building is the space under it (layer -1)
+  if (r.campus === 'wlu' && (r.building === 'grandstand' || r.name === 'Stadium Building')) return;
   const B = kit.B(cx, cz);
   const st = styleOf(r);
   const parts = r.parts || [];
@@ -650,13 +809,14 @@ function drawBuilding(kit, ctx, b) {
     mass(B, ctx.solids, m.p, base, y0, base + m.sp[1], m.st, { floating });
     STATS.parts++;
   }
-  const sig = SIGS[r.ref] || SIGS[r.name] || SIGS[r.id];
+  const sig = (r.campus !== 'wlu' && SIGS[r.ref]) || SIGS[r.name] || SIGS[r.id];
   if (sig) sig(kit, ctx, b, B, masses);
 }
 
 /** A part's own material where OSM gives one (DC's metal and glass, a glazed link). */
 function partStyle(p, st) {
   const m = p['building:material'];
+  if (st.low && (num(p['building:levels']) || 0) <= 2) return st.low;
   if (m === 'glass') return p['building:colour'] === 'teal' ? PART_STY[692354651] : STY.glass;
   if (m === 'metal' && st === BY.DC) return S({ wall: [0.74, 0.70, 0.60], win: 'ribbon', wf: 0.22, mp: 0, glass: C.glassDark, trim: [0.40, 0.40, 0.40] });
   return st;
@@ -677,11 +837,15 @@ const SIGS = {
     if (!v) return;
     const o = obb(v.p), y = b.base + v.sp[1];
     const vx = -o.uz, vz = o.ux, duct = lin([0.52, 0.62, 0.58]), red = lin(C.red);
+    // up the glass wall, over the eave and down onto the crown (the vault's
+    // own section: eave radius ~3.4 m, crown ~3.4-5 m up)
     for (const s of [-1, 1]) for (let i = 0; i < 3; i++) {
-      const u = -o.hu * 0.7 + i * o.hu * 0.7;
-      const P = (dv, h) => [o.x + o.ux * u + vx * s * (o.hv + dv), y + h, o.z + o.uz * u + vz * s * (o.hv + dv)];
-      const pts = [P(2.4, -y + b.base - 0.5 + (y - b.base) * 0.3), P(2.4, 1.0), P(2.2, 3.2), P(1.2, 4.6), P(-0.6, 5.0), P(-2.4, 4.4)];
-      pipe(B, pts, 0.75, duct);
+      const u = -o.hu * 0.6 + i * o.hu * 0.6, sp = spanAt(v.p, o, u);
+      if (!sp) continue;
+      const ve = s < 0 ? sp[0] : sp[1];
+      const P = (dv, h) => [o.x + o.ux * u + vx * (ve + s * dv), y + h, o.z + o.uz * u + vz * (ve + s * dv)];
+      const pts = [P(1.6, -(y - b.base) * 0.55), P(1.6, 1.0), P(1.4, 3.4), P(0.4, 4.7), P(-1.6, 5.0), P(-3.6, 4.2)];
+      pipe(B, pts, 0.7, duct);
     }
     // red portals at both ends of the vault
     for (const s of [-1, 1]) {
@@ -718,6 +882,118 @@ const SIGS = {
       if (ctx.city.onRoad(x, z, 0.5, false)) continue;
       B.tube([x, T(x, z) - 0.2, z], [x, y, z], 0.2, 8, red);
     }
+  },
+  // MC: THE PINK TIE (the Math Faculty's emblem, Commons "UW-MathFaculty-
+  // PinkTie"): ~12 m of pink tie hung down a fluted stair tower, on the
+  // tower face Ring Road sees best
+  MC(kit, ctx, b, B, masses) {
+    const ring = U.ring || [];
+    let best = null;
+    for (const m of masses) {
+      if (![664040399, 664040401, 664040406, 664040408].includes(m.id)) continue;
+      for (const e of edges(m.p)) {
+        if (e.L < 5) continue;
+        // not against another of MC's masses
+        const tx = e.mx + e.nx * 2.5, tz = e.mz + e.nz * 2.5;
+        if (masses.some((o) => o !== m && o.sp[1] > m.sp[1] * 0.5 && inPoly(o.p, tx, tz))) continue;
+        let rq = null, rd = Infinity;
+        for (const q of ring) { const d = Math.hypot(q[0] - e.mx, q[1] - e.mz); if (d < rd) { rd = d; rq = q; } }
+        if (!rq) continue;
+        // the open ground in front of the face (a tie nobody can see is no tie), then Ring Road
+        let open = 4;
+        while (open < 120 && !insideAny(e.mx + e.nx * open, e.mz + e.nz * open)) open += 4;
+        const s = open + 20 * (e.nx * (rq[0] - e.mx) + e.nz * (rq[1] - e.mz)) / rd;
+        if (!best || s > best.s) best = { s, e, top: b.base + m.sp[1] };
+      }
+    }
+    if (!best) return;
+    const e = best.e, tc = e.L / 2, yt = best.top - 4.5, D = 0.32;
+    const pink = lin([0.93, 0.36, 0.53]), knot = lin([0.82, 0.28, 0.44]), N = [e.nx, 0, e.nz];
+    const at = (t, y) => e.at(tc + t, y, D);
+    B.quad(at(-1.1, yt), at(1.1, yt), at(0.75, yt - 1.8), at(-0.75, yt - 1.8), N, U0, knot);
+    B.quad(at(-0.75, yt - 1.85), at(0.75, yt - 1.85), at(1.9, yt - 10.4), at(-1.9, yt - 10.4), N, U0, pink);
+    B.tri(at(-1.9, yt - 10.4), at(1.9, yt - 10.4), at(0, yt - 12.4), N, pink);
+    STATS.tie = [Math.round(e.mx), Math.round(e.mz), Math.round(yt - b.base), +e.nx.toFixed(2), +e.nz.toFixed(2)];
+  },
+  // the CIF: red steel columns and beams along its walkway faces, the
+  // walkway roof a sheet of white metal on them (Commons CIF_01-03)
+  CIF(kit, ctx, b, B) {
+    const red = lin([0.62, 0.12, 0.10]), roof = lin([0.86, 0.87, 0.88]);
+    const r = towardRoad(ctx.city, b.cx, b.cz, 160);
+    for (const e of edges(b.r.p)) {
+      if (e.L < 24) continue;
+      if (r && e.nx * r.nx + e.nz * r.nz < 0.3) continue;
+      const g = T(e.mx + e.nx * 3, e.mz + e.nz * 3), h = 4.2, D = 3.2;
+      const n = Math.max(2, Math.round(e.L / 7.5));
+      for (let m = 0; m <= n; m++) {
+        const t = 1 + (m / n) * (e.L - 2), p = e.at(t, 0, D);
+        B.tube([p[0], g - 0.3, p[2]], [p[0], g + h, p[2]], 0.2, 6, red);
+        const w0 = e.at(t, g + h, 0), w1 = e.at(t, g + h + 0.6, D + 0.4);
+        B.d.tube(w0, w1, 0.14, 5, red);
+        ctx.solids.push({ x: p[0], z: p[2], r: 0.25, y0: g - 1, y1: g + h });
+      }
+      const a = e.at(0.6, g + h + 0.6, D + 0.6), c = e.at(e.L - 0.6, g + h + 0.6, D + 0.6), a0 = e.at(0.6, g + h, 0), c0 = e.at(e.L - 0.6, g + h, 0);
+      B.quad(a0, c0, c, a, [0, 1, 0], U0, roof);
+      B.quad(a0, c0, c, a, [0, -1, 0], U0, shade(roof, 0.55));
+      B.quad(e.at(0.6, g + h + 0.3, D + 0.62), e.at(e.L - 0.6, g + h + 0.3, D + 0.62), c, a, [e.nx, 0, e.nz], U0, red);
+    }
+  },
+  // Laurier's Science Building: the octagonal brick corner tower, its
+  // cream bands, a grey metal hipped cap (Commons "Science Building WLU")
+  'Science Building'(kit, ctx, b, B, masses) {
+    // the far (west) end of the long wing from King St, which ends in the
+    // round bay OSM draws: the photo is from the lot by Alumni Field, the
+    // tower at the building's left end
+    const r = towardRoad(ctx.city, b.cx, b.cz, 160);
+    if (!r) return;
+    let q = null, qs = Infinity;
+    for (const p of b.r.p) { const s = (p[0] - b.cx) * r.nx + (p[1] - b.cz) * r.nz; if (s < qs) { qs = s; q = p; } }
+    const [cx, cz] = q, g = T(cx, cz) - 0.5, H = 5 * ST, R = 5.2;
+    B.prism(cx, g, cz, R, H, 8, lin(WRB), Math.PI / 8);
+    for (let k = 1; k < 5; k++) B.d.prism(cx, b.base + k * ST + 0.4, cz, R + 0.06, 0.55, 8, lin(CREAM), Math.PI / 8);
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2 + Math.PI / 8 + Math.PI / 8;
+      for (let f = 0; f < 5; f++) {
+        const y = b.base + f * ST + 1.1, ux = -Math.sin(a), uz = Math.cos(a);
+        const px = cx + Math.cos(a) * (R * 0.93 + 0.05), pz = cz + Math.sin(a) * (R * 0.93 + 0.05);
+        B.quad([px - ux * 0.7, y, pz - uz * 0.7], [px + ux * 0.7, y, pz + uz * 0.7], [px + ux * 0.7, y + 1.9, pz + uz * 0.7], [px - ux * 0.7, y + 1.9, pz - uz * 0.7], [Math.cos(a), 0, Math.sin(a)], U0, lin([0.14, 0.17, 0.21]));
+      }
+    }
+    B.cone(cx, g + H, cz, R + 0.6, 4.2, 8, lin([0.58, 0.60, 0.60]));
+    ctx.solids.push({ x: cx, z: cz, r: R, y0: g, y1: g + H });
+  },
+  // Bricker Academic: the stair tower of dark glass up the middle of its
+  // street face, standing a little proud and a storey taller
+  'Bricker Academic Building'(kit, ctx, b, B, masses) {
+    const r = towardRoad(ctx.city, b.cx, b.cz, 160);
+    if (!r) return;
+    let best = null;
+    for (const e of edges(b.r.p)) { const s = (e.nx * r.nx + e.nz * r.nz) * e.L; if (!best || s > best.s) best = { s, e }; }
+    const e = best.e, y0 = lowest(b.r.p) - 1, y1 = b.base + span(b.r, 20)[1] + 2.5;
+    const w = 7, t0 = e.L / 2 - w / 2, t1 = e.L / 2 + w / 2, D = 1.2, N = [e.nx, 0, e.nz];
+    const gl = lin([0.10, 0.12, 0.15]), fr = lin([0.30, 0.32, 0.34]);
+    B.quad(e.at(t0, y0, D), e.at(t1, y0, D), e.at(t1, y1, D), e.at(t0, y1, D), N, U0, gl);
+    for (const t of [t0, t1]) B.quad(e.at(t, y0, 0), e.at(t, y0, D), e.at(t, y1, D), e.at(t, y1, 0), [e.ux * (t === t0 ? -1 : 1), 0, e.uz * (t === t0 ? -1 : 1)], U0, gl);
+    B.quad(e.at(t0, y1, 0), e.at(t1, y1, 0), e.at(t1, y1, D), e.at(t0, y1, D), [0, 1, 0], U0, fr);
+    for (let y = b.base + ST; y < y1 - 1; y += ST) B.d.quad(e.at(t0, y, D + 0.05), e.at(t1, y, D + 0.05), e.at(t1, y + 0.3, D + 0.05), e.at(t0, y + 0.3, D + 0.05), N, U0, fr);
+    for (const t of [t0 + w / 3, t0 + 2 * w / 3]) B.d.quad(e.at(t - 0.06, y0, D + 0.05), e.at(t + 0.06, y0, D + 0.05), e.at(t + 0.06, y1, D + 0.05), e.at(t - 0.06, y1, D + 0.05), N, U0, fr);
+  },
+  // Martin Luther University College: the seminary's bell tower -- two tall
+  // pale concrete piers, three bells between them, a cross on top
+  'Martin Luther University College'(kit, ctx, b, B) {
+    const r = towardRoad(ctx.city, b.cx, b.cz, 160);
+    if (!r) return;
+    let best = null;
+    for (const e of edges(b.r.p)) { const s = e.nx * r.nx + e.nz * r.nz; if (e.L > 8 && (!best || s > best.s)) best = { s, e }; }
+    if (!best) return;
+    const e = best.e, p = e.at(2.5, 0, 4), g = T(p[0], p[2]), conc = lin([0.86, 0.84, 0.78]), rot = Math.atan2(e.uz, e.ux);
+    const H = 20;
+    for (const s of [-1, 1]) B.box(p[0] + e.ux * s * 1.5, g - 0.3, p[2] + e.uz * s * 1.5, 0.7, H, 1.2, rot, conc);
+    for (const y of [H * 0.55, H * 0.8, H - 0.6]) B.box(p[0], g + y, p[2], 3.6, 0.5, 1.2, rot, conc);
+    for (const y of [H * 0.6, H * 0.67, H * 0.74]) B.d.cone(p[0], g + y, p[2], 0.45, 0.8, 8, lin([0.42, 0.34, 0.20]));
+    B.box(p[0], g + H - 0.1, p[2], 0.22, 4.2, 0.22, rot, conc);
+    B.box(p[0], g + H + 2.6, p[2], 1.8, 0.22, 0.22, rot, conc);
+    ctx.solids.push({ x: p[0], z: p[2], hw: 2, hd: 0.7, rot, y0: g - 1, y1: g + H });
   },
   // Physics: the white observatory dome on the roof
   PHY(kit, ctx, b, B, masses) {
@@ -1030,19 +1306,32 @@ function landmarks(kit, ctx, A) {
     }
   }
   // the gate signs: black with the gold shield, where Ring Road meets
-  // University Ave (by Seagram Dr) and Columbia St
-  for (const [gx, gz] of [[-5232, -1868], [-5772, -2508]]) {
-    const r = towardRoad(city, gx, gz, 40);
-    if (!r) continue;
-    let sx = null, sz = null;
-    for (const off of [7, 9, 11, 13]) {
-      for (const sgn of [1, -1]) {
-        const cx = r.qx - r.nx * (r.hw + off) + r.nz * sgn * 6, cz = r.qz - r.nz * (r.hw + off) - r.nx * sgn * 6;
-        if (!city.onRoad(cx, cz, 3, false) && !insideAny(cx, cz)) { sx = cx; sz = cz; break; }
+  // University Ave (by Seagram Dr), and the north gate where North Campus
+  // Road leaves Columbia St (on the corner toward campus, facing Columbia)
+  const gates = [];
+  {
+    const r = towardRoad(city, -5232, -1868, 40);
+    if (r) {
+      for (const off of [7, 9, 11, 13]) {
+        for (const sgn of [1, -1]) {
+          const cx = r.qx - r.nx * (r.hw + off) + r.nz * sgn * 6, cz = r.qz - r.nz * (r.hw + off) - r.nx * sgn * 6;
+          if (gates.length < 1 && !city.onRoad(cx, cz, 3, false) && !insideAny(cx, cz)) gates.push([cx, cz, r.nx, r.nz]);
+        }
       }
-      if (sx !== null) break;
     }
-    if (sx === null) continue;
+    const q = junction(city, 'Columbia Street West', 'North Campus Road', -5800, -2560, 300);
+    STATS.northGate = q ? [Math.round(q.x), Math.round(q.z)] : null;
+    if (q) {
+      const s = cornerSpot(city, q, q.x + 94, q.z + 33, 10);
+      if (s) {
+        // face up Columbia St: square to the street, not to the corner
+        const c = towardRoad(city, s[0], s[1], 40);
+        gates.push([s[0], s[1], c && /Columbia/.test(c.name) ? c.nx : s[2], c && /Columbia/.test(c.name) ? c.nz : s[3]]);
+      }
+    }
+  }
+  for (const [sx, sz, nx, nz] of gates) {
+    const r = { nx, nz };
     const g = T(sx, sz), B = kit.B(sx, sz), grp = kit.grp(sx, sz);
     const rot = Math.atan2(r.nx, r.nz), ux = Math.cos(rot), uz = -Math.sin(rot);
     B.box(sx, g - 0.4, sz, 7.0, 2.4, 0.9, Math.atan2(uz, ux), lin([0.56, 0.52, 0.47]));
@@ -1074,6 +1363,310 @@ function landmarks(kit, ctx, A) {
   }
 }
 
+// --- Wilfrid Laurier University --------------------------------------------------------------------
+
+const PURPLE = '#4f2683', GOLD = '#f2a900';
+
+/** The LAURIER sign's face (Commons "WLU 2014 Sign"): white, LAURIER and the maple leaf in purple, the name in white on dark stone below. */
+function laurierPanel(A, w, h) {
+  return A.panel(w, h, 48, (g, W, H) => {
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H * 0.66);
+    g.fillStyle = '#2d2a2e'; g.fillRect(0, H * 0.66, W, H * 0.34);
+    g.fillStyle = PURPLE; g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+    g.font = `700 ${H * 0.36}px ${SANS}`;
+    g.fillText('LAURIER', W * 0.05, H * 0.43, W * 0.62);
+    g.font = `italic 400 ${H * 0.11}px Georgia, serif`;
+    g.fillText('Inspiring Lives.', W * 0.30, H * 0.58, W * 0.4);
+    // the maple leaf: eleven points round a centre, a short stem
+    const cx = W * 0.82, cy = H * 0.30, R = H * 0.25;
+    g.beginPath();
+    const pts = [[0, -1], [0.18, -0.62], [0.42, -0.72], [0.36, -0.3], [0.84, -0.42], [0.72, -0.14], [0.98, 0.06], [0.5, 0.3], [0.56, 0.52], [0.08, 0.42], [0.06, 0.82],
+      [-0.06, 0.82], [-0.08, 0.42], [-0.56, 0.52], [-0.5, 0.3], [-0.98, 0.06], [-0.72, -0.14], [-0.84, -0.42], [-0.36, -0.3], [-0.42, -0.72], [-0.18, -0.62]];
+    pts.forEach(([x, y], i) => (i ? g.lineTo(cx + x * R, cy + y * R) : g.moveTo(cx + x * R, cy + y * R)));
+    g.closePath(); g.fill();
+    g.fillStyle = '#ffffff'; g.textAlign = 'center';
+    g.font = `700 ${H * 0.15}px ${SANS}`;
+    g.fillText('WILFRID LAURIER UNIVERSITY', W / 2, H * 0.88, W * 0.9);
+  });
+}
+/** University Stadium's scoreboard: Laurier purple, GOLDEN HAWKS in gold over the score. */
+function scorePanel(A, w, h) {
+  return A.panel(w, h, 36, (g, W, H) => {
+    g.fillStyle = PURPLE; g.fillRect(0, 0, W, H);
+    g.fillStyle = GOLD; g.fillRect(0, H * 0.36, W, H * 0.03);
+    g.fillStyle = GOLD; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = `800 ${H * 0.24}px ${SANS}`;
+    g.fillText('LAURIER GOLDEN HAWKS', W / 2, H * 0.19, W * 0.92);
+    g.fillStyle = '#111111';
+    for (const x of [0.08, 0.62]) g.fillRect(W * x, H * 0.5, W * 0.3, H * 0.38);
+    g.fillStyle = '#ffffff'; g.font = `700 ${H * 0.12}px ${SANS}`;
+    g.fillText('HAWKS', W * 0.23, H * 0.45); g.fillText('VISITOR', W * 0.77, H * 0.45);
+    g.fillStyle = '#ffb000'; g.font = `700 ${H * 0.3}px ${SANS}`;
+    g.fillText('00', W * 0.23, H * 0.7); g.fillText('00', W * 0.77, H * 0.7);
+  });
+}
+/** The golden hawk painted at centre field: a gold bird, wings spread, on transparent turf. */
+function hawkPanel(A, w, h) {
+  return A.panel(w, h, 14, (g, W, H) => {
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = GOLD;
+    const P = (x, y) => [W * x, H * y];
+    g.beginPath();
+    // a stylised hawk in flight: swept wings, fanned tail, hooked head to the left
+    for (const [i, q] of [[0, P(0.03, 0.40)], [1, P(0.30, 0.30)], [1, P(0.40, 0.08)], [1, P(0.50, 0.30)], [1, P(0.62, 0.26)], [1, P(0.98, 0.10)],
+      [1, P(0.70, 0.45)], [1, P(0.95, 0.70)], [1, P(0.66, 0.62)], [1, P(0.58, 0.95)], [1, P(0.46, 0.62)], [1, P(0.22, 0.52)], [1, P(0.10, 0.50)]]) {
+      if (i) g.lineTo(...q); else g.moveTo(...q);
+    }
+    g.closePath(); g.fill();
+    g.fillStyle = PURPLE; g.beginPath(); g.arc(W * 0.15, H * 0.42, H * 0.03, 0, 7); g.fill();
+  });
+}
+
+/** (x, z) in field frame o: u along the field, v across. */
+const FP = (o, u, v) => [o.x + o.ux * u - o.uz * v, o.z + o.uz * u + o.ux * v];
+
+/**
+ * A Canadian football field on its OSM pitch: 110 yd between the goal
+ * lines, 20 yd end zones, 65 yd wide, scaled down to fit a smaller pitch;
+ * artificial turf laid on the terrain in 10 m tiles, the yard lines every
+ * 5 yd, hash marks, the goal posts. End zones in Laurier purple at the stadium.
+ */
+function gridiron(kit, ctx, pts, opts = {}) {
+  const o = obb(pts);
+  if (!o) return null;
+  const YD = 0.9144, s = Math.min(1, (o.hu * 2 - 6) / (150 * YD), (o.hv * 2 - 6) / (65 * YD));
+  const hu = 75 * YD * s, hv = 32.5 * YD * s, gl = 55 * YD * s;
+  const B = kit.B(o.x, o.z), D = B.d;
+  const TURF = lin([0.21, 0.40, 0.21]), TURF2 = lin([0.24, 0.44, 0.23]), LINE = lin([0.95, 0.95, 0.92]), EZ = lin(opts.ez || [0.20, 0.42, 0.20]);
+  const Y = (u, v, l) => { const [x, z] = FP(o, u, v); return [x, T(x, z) + l, z]; };
+  // the turf (and the apron round it, a shade darker), tiled so it follows the ground
+  const tile = (u0, u1, v0, v1, col, l) => {
+    const n = Math.max(1, Math.ceil((u1 - u0) / 10)), m = Math.max(1, Math.ceil((v1 - v0) / 10));
+    for (let i = 0; i < n; i++) for (let j = 0; j < m; j++) {
+      const a0 = u0 + (u1 - u0) * i / n, a1 = u0 + (u1 - u0) * (i + 1) / n, b0 = v0 + (v1 - v0) * j / m, b1 = v0 + (v1 - v0) * (j + 1) / m;
+      B.quad(Y(a0, b0, l), Y(a1, b0, l), Y(a1, b1, l), Y(a0, b1, l), [0, 1, 0], U0, col);
+    }
+  };
+  tile(-o.hu + 1, o.hu - 1, -o.hv + 1, o.hv - 1, TURF, 0.10);
+  for (let k = 0; k < 11; k++) if (k % 2) tile(-gl + (k * 10 * YD * s), -gl + ((k + 1) * 10 * YD * s), -hv, hv, TURF2, 0.13);
+  for (const sg of [-1, 1]) tile(sg > 0 ? gl : -hu, sg > 0 ? hu : -gl, -hv, hv, EZ, 0.13);
+  // lines: the sidelines and end lines, every 5 yd, short hash marks
+  const strip = (u0, v0, u1, v1, w) => {
+    const L = Math.hypot(u1 - u0, v1 - v0), n = Math.max(1, Math.ceil(L / 10));
+    const du = (u1 - u0) / L, dv = (v1 - v0) / L, pu = -dv * w, pv = du * w;
+    for (let i = 0; i < n; i++) {
+      const a = i / n, c = (i + 1) / n;
+      const ua = u0 + (u1 - u0) * a, va = v0 + (v1 - v0) * a, uc = u0 + (u1 - u0) * c, vc = v0 + (v1 - v0) * c;
+      D.quad(Y(ua - pu, va - pv, 0.17), Y(uc - pu, vc - pv, 0.17), Y(uc + pu, vc + pv, 0.17), Y(ua + pu, va + pv, 0.17), [0, 1, 0], U0, LINE);
+    }
+  };
+  for (const sg of [-1, 1]) { strip(-hu, sg * hv, hu, sg * hv, 0.1); strip(sg * hu, -hv, sg * hu, hv, 0.1); }
+  for (let k = 0; k <= 22; k++) {
+    const u = -gl + k * 5 * YD * s;
+    strip(u, -hv, u, hv, k === 0 || k === 22 ? 0.12 : 0.06);
+    for (const v of [-hv * 0.36, hv * 0.36]) for (let m = 1; m < 5; m++) strip(u + m * YD * s - 0.3, v, u + m * YD * s + 0.3, v, 0.05);
+  }
+  // goal posts on the goal lines (Canadian), gold
+  const post = lin([0.95, 0.80, 0.15]);
+  for (const sg of [-1, 1]) {
+    const [x, z] = FP(o, sg * gl, 0), g = T(x, z);
+    B.tube([x, g, z], [x, g + 3.0, z], 0.12, 6, post);
+    const [ax, az] = FP(o, sg * gl, -2.8), [bx, bz] = FP(o, sg * gl, 2.8);
+    B.tube([ax, g + 3.0, az], [bx, g + 3.0, bz], 0.08, 5, post);
+    for (const [px, pz] of [[ax, az], [bx, bz]]) B.tube([px, g + 3.0, pz], [px, g + 12, pz], 0.06, 5, post);
+    ctx.solids.push({ x, z, r: 0.25, y0: g - 1, y1: g + 3 });
+  }
+  if (ctx.clearAt) ctx.clearAt.push([o.x, o.z, Math.min(o.hu, o.hv) + 2]);
+  return { o, hu, hv };
+}
+
+/** The running track: every 2.5 m cell of the track polygon outside the field, terracotta, on the ground. */
+function trackRing(kit, pts, f) {
+  const o = obb(pts);
+  if (!o) return;
+  const B = kit.B(o.x, o.z), RED = lin([0.54, 0.25, 0.19]), c = 2.5;
+  const Y = (u, v) => { const [x, z] = FP(o, u, v); return [x, T(x, z) + 0.07, z]; };
+  for (let u = -o.hu; u < o.hu; u += c) for (let v = -o.hv; v < o.hv; v += c) {
+    const [x, z] = FP(o, u + c / 2, v + c / 2);
+    if (!inPoly(pts, x, z)) continue;
+    if (f) {
+      const lu = (x - f.o.x) * f.o.ux + (z - f.o.z) * f.o.uz, lv = -(x - f.o.x) * f.o.uz + (z - f.o.z) * f.o.ux;
+      if (Math.abs(lu) < f.o.hu - 1 && Math.abs(lv) < f.o.hv - 1) continue;
+    }
+    B.quad(Y(u, v), Y(u + c, v), Y(u + c, v + c), Y(u, v + c), [0, 1, 0], U0, RED);
+  }
+}
+
+/** University Stadium's grandstand from its OSM footprint: concrete rows rising away from the field, purple seats, a press box on top. */
+function grandstand(kit, ctx, r, field) {
+  const o = obb(r.p);
+  if (!o || !field) return;
+  // which long side faces the field
+  const sg = ((field.o.x - o.x) * -o.uz + (field.o.z - o.z) * o.ux) > 0 ? 1 : -1;
+  const B = kit.B(o.x, o.z), CONC = lin([0.72, 0.71, 0.68]), SEAT = lin([0.31, 0.15, 0.51]), GLASS = lin([0.16, 0.20, 0.26]);
+  const g = lowest(r.p), H = 9.5, front = 1.4, rows = 14, dep = o.hv * 2 - 1;
+  const P = (u, v, y) => { const [x, z] = FP(o, u, v); return [x, y, z]; };
+  const vf = sg * (o.hv - 0.5);   // the front edge's v; rows go toward -sg
+  for (let i = 0; i < rows; i++) {
+    const v0 = vf - sg * (i / rows) * dep, v1 = vf - sg * ((i + 1) / rows) * dep;
+    const y0 = g + front + (i / rows) * (H - front), y1 = g + front + ((i + 1) / rows) * (H - front);
+    B.quad(P(-o.hu, v0, y0), P(o.hu, v0, y0), P(o.hu, v0, y1), P(-o.hu, v0, y1), [-o.uz * sg, 0, o.ux * sg], U0, CONC);
+    B.quad(P(-o.hu, v0, y1), P(o.hu, v0, y1), P(o.hu, v1, y1), P(-o.hu, v1, y1), [0, 1, 0], U0, i % 2 ? CONC : SEAT);
+  }
+  const vb = vf - sg * dep;
+  B.quad(P(-o.hu, vb, g - 0.5), P(o.hu, vb, g - 0.5), P(o.hu, vb, g + H), P(-o.hu, vb, g + H), [o.uz * sg, 0, -o.ux * sg], U0, CONC);
+  for (const s of [-1, 1]) {
+    B.quad(P(s * o.hu, vf, g - 0.5), P(s * o.hu, vb, g - 0.5), P(s * o.hu, vb, g + H), P(s * o.hu, vf, g + front), [o.ux * s, 0, o.uz * s], U0, CONC);
+  }
+  // the press box along the top
+  const pb = vb + sg * 4, pw = o.hu * 0.45;
+  const [bx, bz] = FP(o, 0, (pb + vb) / 2);
+  B.box(bx, g + H, bz, pw * 2, 3.4, 4, Math.atan2(o.uz, o.ux), lin([0.80, 0.79, 0.76]));
+  B.quad(P(-pw + 0.4, pb + sg * 0.03, g + H + 0.8), P(pw - 0.4, pb + sg * 0.03, g + H + 0.8), P(pw - 0.4, pb + sg * 0.03, g + H + 2.8), P(-pw + 0.4, pb + sg * 0.03, g + H + 2.8), [-o.uz * sg, 0, o.ux * sg], U0, GLASS);
+  ctx.solids.push({ x: o.x, z: o.z, hw: o.hu, hd: o.hv, rot: Math.atan2(o.uz, o.ux), y0: g - 1, y1: g + H });
+}
+
+/** The node where streets named a and b meet, nearest (x, z). */
+function junction(city, a, b, x, z, r = 300) {
+  const na = new Set(), nb = new Set();
+  for (const ei of city.edgesNear(x, z, r)) {
+    const e = city.edges[ei], n = e.name || '';
+    if (n.includes(a)) { na.add(e.a); na.add(e.b); }
+    if (n.includes(b)) { nb.add(e.a); nb.add(e.b); }
+  }
+  let best = null, bd = Infinity;
+  for (const i of na) if (nb.has(i)) { const q = city.nodes[i], d = Math.hypot(q.x - x, q.z - z); if (d < bd) { bd = d; best = q; } }
+  return best;
+}
+/** A spot on the corner of junction q toward (tx, tz), clear of the road and of buildings. */
+function cornerSpot(city, q, tx, tz, k0 = 14) {
+  const a0 = Math.atan2(tz - q.z, tx - q.x);
+  for (const da of [0, 0.35, -0.35, 0.7, -0.7, 1.05, -1.05]) {
+    const dx = Math.cos(a0 + da), dz = Math.sin(a0 + da);
+    for (let k = k0; k < k0 + 24; k += 2) {
+      const x = q.x + dx * k, z = q.z + dz * k;
+      if (!city.onRoad(x, z, 3, false) && !insideAny(x, z)) return [x, z, -dx, -dz];
+    }
+  }
+  return null;
+}
+/** A sign on a low stone plinth at (x, z) facing (nx, nz), both faces. */
+function plinthSign(kit, ctx, panel, x, z, nx, nz, w, h) {
+  const g = T(x, z), B = kit.B(x, z), grp = kit.grp(x, z);
+  const rot = Math.atan2(nx, nz), ux = Math.cos(rot), uz = -Math.sin(rot);
+  B.box(x, g - 0.4, z, w + 0.6, 1.1, 1.0, Math.atan2(uz, ux), lin([0.42, 0.40, 0.38]));
+  B.box(x, g + 0.7, z, w + 0.1, h, 0.5, Math.atan2(uz, ux), lin([0.30, 0.29, 0.30]));
+  hang(grp, panel(), x, g + 0.7 + h / 2, z, nx, nz, 0.27);
+  hang(grp, panel(), x, g + 0.7 + h / 2, z, -nx, -nz, 0.27);
+  // boulders and a bed of flowers in front
+  for (let k = 0; k < 5; k++) {
+    const t = (k - 2) * (w / 4.5), px = x + ux * t + nx * 1.6, pz = z + uz * t + nz * 1.6;
+    B.d.spheroid(px, g + 0.15, pz, 0.45 + hash2(k, 31) * 0.25, 6, 3, lin([0.74, 0.72, 0.68]), 0.6, 0.15);
+  }
+  ctx.solids.push({ x, z, hw: w / 2 + 0.3, hd: 0.5, rot: Math.atan2(uz, ux), y0: g - 0.4, y1: g + 0.7 + h });
+}
+
+function laurier(kit, ctx, A) {
+  const W = U.wlu;
+  if (!W) return;
+  const city = ctx.city, F = W.fields || {};
+  // Alumni Field, mid-campus: artificial turf, lit
+  let alumni = null, stadium = null;
+  if (F.alumni) {
+    alumni = gridiron(kit, ctx, F.alumni.p, {});
+    if (alumni) {
+      const o = obb(F.alumni.p), B = kit.B(o.x, o.z), steel = lin([0.62, 0.64, 0.66]);
+      for (const su of [-0.6, 0.6]) for (const sv of [-1, 1]) {
+        const [x, z] = FP(o, su * o.hu, sv * (o.hv + 2)), g = T(x, z);
+        if (city.onRoad(x, z, 1) || insideAny(x, z)) continue;
+        B.prism(x, g - 0.5, z, 0.28, 20, 6, steel);
+        B.box(x, g + 19, z, 3.4, 1.8, 0.5, Math.atan2(o.uz, o.ux), steel);
+        ctx.solids.push({ x, z, r: 0.35, y0: g - 1, y1: g + 20 });
+      }
+    }
+  }
+  // University Stadium: Knight-Newbrough Field, purple end zones, the
+  // golden hawk at centre field, the track round it, the grandstand
+  if (F.stadium) {
+    stadium = gridiron(kit, ctx, F.stadium.p, { ez: [0.31, 0.15, 0.51] });
+    if (stadium) {
+      const o = stadium.o, [x, z] = [o.x, o.z], grp = kit.grp(x, z);
+      const m = hawkPanel(A, 18, 12);
+      m.rotation.order = 'YXZ';
+      m.rotation.y = -Math.atan2(o.uz, o.ux);
+      m.rotation.x = -Math.PI / 2;
+      m.position.set(x, T(x, z) + 0.2, z);
+      grp.add(m);
+      // the scoreboard beyond the north-west end zone
+      const [sx, sz] = FP(o, -(o.hu + 9), 0), g = T(sx, sz);
+      if (!city.onRoad(sx, sz, 2) && !insideAny(sx, sz)) {
+        const B = kit.B(sx, sz), steel = lin([0.30, 0.30, 0.32]), rot = Math.atan2(o.uz, o.ux);
+        for (const s of [-1, 1]) { const [px, pz] = FP(o, -(o.hu + 9), s * 4); B.tube([px, g - 0.3, pz], [px, g + 7, pz], 0.25, 6, steel); }
+        B.box(sx, g + 6, sz, 1.0, 5.4, 11, rot, steel);
+        hang(grp, scorePanel(A, 10.4, 4.8), sx, g + 8.7, sz, o.ux, o.uz, 0.52);
+        ctx.solids.push({ x: sx, z: sz, hw: 0.6, hd: 5.5, rot, y0: g - 1, y1: g + 11 });
+      }
+    }
+  }
+  if (F.track) trackRing(kit, F.track.p, stadium);
+  for (const r of W.b) if (r.building === 'grandstand') { try { grandstand(kit, ctx, r, stadium); } catch (e) { warn('grandstand: ' + e.message); } }
+  // the LAURIER signs: at King and University (by the Athletic Complex),
+  // and at the main entrance on University Ave at Hazel St
+  const mid = [-4250, -2380];
+  for (const [a, b, x, z] of [['University Avenue', 'King Street North', -4044, -2683], ['University Avenue West', 'Hazel Street', -4292, -2562]]) {
+    const q = junction(city, a, b, x, z, 120);
+    if (!q) continue;
+    const s = cornerSpot(city, q, mid[0], mid[1]);
+    if (!s) continue;
+    plinthSign(kit, ctx, () => laurierPanel(A, 6.4, 2.6), s[0], s[1], s[2], s[3], 6.4, 2.6);
+    (STATS.wluSigns = STATS.wluSigns || []).push([Math.round(s[0]), Math.round(s[1])]);
+  }
+}
+
+/**
+ * Open lawns: nothing grows against a campus facade (10 m), trees are
+ * thinned in front of one (to 24 m) and along Ring Road's verges, and none
+ * on Laurier's fields -- real UW is lawns and walkways round its buildings,
+ * and a tree on every verge hid them from the road (city.extraClear).
+ */
+let CLR = null;
+const CLR_C = 40;
+function clearIndex() {
+  CLR = new Map();
+  const add = (a, b, R, ring) => {
+    const x0 = Math.floor((Math.min(a[0], b[0]) - R) / CLR_C), x1 = Math.floor((Math.max(a[0], b[0]) + R) / CLR_C);
+    const z0 = Math.floor((Math.min(a[1], b[1]) - R) / CLR_C), z1 = Math.floor((Math.max(a[1], b[1]) + R) / CLR_C);
+    for (let i = x0; i <= x1; i++) for (let j = z0; j <= z1; j++) {
+      const k = i * 100000 + j;
+      let l = CLR.get(k);
+      if (!l) CLR.set(k, (l = []));
+      l.push([a[0], a[1], b[0], b[1], ring]);
+    }
+  };
+  for (const b of BLD) for (let i = 0; i < b.r.p.length; i++) add(b.r.p[i], b.r.p[(i + 1) % b.r.p.length], 24, false);
+  const ring = U.ring || [];
+  for (let i = 0; i + 1 < ring.length; i++) add(ring[i], ring[i + 1], 18, true);
+  CLR.fields = Object.values((U.wlu && U.wlu.fields) || {}).filter((f) => f.n !== 'University Stadium').map((f) => f.p);
+}
+export function campusKeepClear(x, z) {
+  if (!BLD.length || x < -6700 || x > -3400 || z < -3200 || z > -1300) return false;
+  if (!CLR) clearIndex();
+  const l = CLR.get(Math.floor(x / CLR_C) * 100000 + Math.floor(z / CLR_C));
+  let db = Infinity, dr = Infinity;
+  if (l) for (const [ax, az, bx, bz, ring] of l) {
+    const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz || 1;
+    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2));
+    const d = Math.hypot(x - ax - dx * t, z - az - dz * t);
+    if (ring) dr = Math.min(dr, d); else db = Math.min(db, d);
+  }
+  if (db < 10) return true;
+  const h = hash2(Math.round(x * 2) + 17, Math.round(z * 2) - 5);
+  if (db < 24 && h < 0.6) return true;
+  if (dr < 18 && h < 0.8) return true;
+  for (const p of CLR.fields) if (inPoly(p, x, z)) return true;
+  return false;
+}
+
 // --- the extra -----------------------------------------------------------------------------------
 
 function warn(m) { console.warn('uwcampus ' + m); (STATS.errors = STATS.errors || []).push(m); }
@@ -1083,12 +1676,13 @@ export function buildCampus(ctx) {
   if (!U || !BLD.length) return;
   const t0 = performance.now();
   const kit = new Kit();
-  const A = new Atlas(1024, 256);
+  const A = new Atlas(1024, 1024);
   for (const b of BLD) {
     try { drawBuilding(kit, ctx, b); STATS.buildings++; } catch (e) { warn((b.r.ref || b.r.name || b.r.id) + ': ' + e.message); }
   }
   try { bridges(kit, ctx); } catch (e) { warn('bridges: ' + e.message); }
   try { landmarks(kit, ctx, A); } catch (e) { warn('landmarks: ' + e.message); }
+  try { laurier(kit, ctx, A); } catch (e) { warn('laurier: ' + e.message); }
   A.tex.needsUpdate = true;
   kit.flush(ctx);
   STATS.tris = kit.tris;

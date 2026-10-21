@@ -48,7 +48,7 @@ import { addLandmarkExtra } from './landmarks.js';
 import { Chicopee } from './chicopee.js';
 import { prepFun, buildMarketTent, buildFlags, waveFlags, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, buildDome } from './kwfun.js';
 import { prepPlaces, buildPlaces, placesMap, placesStats, Geese } from './kwplaces.js';
-import { setUwData, prepCampus, buildCampus } from './uwcampus.js';
+import { setUwData, prepCampus, buildCampus, campusKeepClear } from './uwcampus.js';
 import { prepSights, buildSights, sightsMap } from './kwsights.js';
 import { setShopData, prepShops, buildShops, shopPlaces, shopStats } from './kwshops.js';
 import { Crops } from './crops.js';
@@ -1109,6 +1109,8 @@ function installShadowFade() {
   // (counterbalance.js) before anything is placed by the kerb
   counterbal = null;
   city.extraClear = (x, z) => link.keepClear(x, z) || bikeNet.keepClear(x, z) || chicopee.keepClear(x, z) || !!(golf && golf.keepClear(x, z)) || kartway.keepClear(x, z);
+  // open lawns round the campus buildings: trees only (uwcampus.js)
+  city.treeClear = campusKeepClear;
 
   await step(0.8, 'Building the skyline');
   world.buildSkyline();

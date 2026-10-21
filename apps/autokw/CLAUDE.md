@@ -953,6 +953,57 @@ file and a guide disagree, this file wins.
   street 326/1132k -> 326/1152k; student towers 181/761k -> 181/777k; plaza
   lot aerial 348/1119k -> 348/1141k, low 449/935k -> 451/974k (+4.2 %, the
   most); St. Jacobs 75/304k -> 75/308k.
+  **Round two** (docs/uw-davis-vault.jpg, uw-pinktie.jpg): DC's vault is
+  fitted to OSM's outline (`vault`: slices every ~3 m along the part's long
+  axis, each as wide as `spanAt` finds the outline there) with DC's own
+  section, a ~3.4 m rounded eave into a shallow crown (~5 m over the walls,
+  not a 9 m Quonset); the ducts follow it. The PAC in SCH's language (dark
+  brown brick, pilasters `pil`, a deep white precast `fascia`; its <= 2-storey
+  parts take `low`); the CIF cream brick with a `clere`story under a white
+  metal fascia and red steel walkways on its road faces; the SLC brown brick,
+  its curved east parts (OSM 1027588307 / 951370624) the Great Hall's blue
+  glass, 1027588308 the glass link to MC; B1/B2/ESC white precast with deep
+  window frames (`STY.bio`, Commons "BIO Connection"); STC buff brick and
+  teal glass. THE PINK TIE: ~12 m of pink tie down the MC stair tower face
+  with the most open ground in front of it (`SIGS.MC`, `__uwCampus.tie`).
+  The north gate sign stands on the corner where North Campus Road meets
+  Columbia St (`junction` + `cornerSpot`; `__uwCampus.gates[1]`). **Open
+  lawns:** `campusKeepClear` (city.treeClear, read by trees.js only -- not
+  jumpClear, which would also clear kerb props and parked cars): no tree
+  within 10 m of a campus facade (UW or Laurier), 60 % fewer to 24 m, 80 %
+  fewer on Ring Road's verges, none on Laurier's fields.
+  Still approximate: C2, AL, EV1, RCH and GSC colours are unconfirmed (no
+  usable photos on Commons); the PAC's look is inferred from SCH, not a photo.
+- **Wilfrid Laurier University** (uwcampus.js again; uw.json `wlu` from
+  build_uw.py `laurier()`; docs/wlu-stadium.jpg, wlu-sign.jpg). Every
+  building inside OSM's campus outline (way 226405688) or operated by Laurier
+  in the box round it, with its parts, goes through the same prepCampus /
+  drawBuilding (`r.campus === 'wlu'`, styled by name in `WLU`). From Commons
+  photos: Bricker Academic, the Science Building, the Science Research
+  Building and Alvin Woods red brick banded in cream (`'banded'`: a precast
+  band under every row of windows), Bricker's dark-glass stair tower and the
+  Science Building's octagonal tower with its grey cap at the west end
+  (SIGS); Lazaridis Hall a box of blue-grey glass on a dark frame; the
+  library, Arts wings, FNCC, Peters, John Aird, the residences; the solarium
+  a hipped glass roof (`glassRoof`; OSM's "Solarium" -- the Concourse itself
+  isn't a separate OSM building, so it is not drawn apart); Martin Luther's
+  limestone and its two-pier bell tower. Fields (`laurier`): Alumni Field and
+  Knight-Newbrough Field as Canadian football fields (`gridiron`: 150 x 65 yd
+  scaled to fit the pitch, turf tiled on the terrain, 5-yd lines, goal posts
+  on the goal lines; the stadium's end zones purple, the golden hawk at
+  centre field on the atlas), the track (`trackRing`, 2.5 m cells), the
+  grandstand from OSM's footprint (rows, purple seats, press box; OSM's
+  Stadium Building is the space under it and is not drawn), a LAURIER GOLDEN
+  HAWKS scoreboard, light masts at Alumni Field, and the LAURIER signs
+  (white, purple maple leaf, WILFRID LAURIER UNIVERSITY on dark stone) on the
+  campus corners of King/University and University/Hazel. Phone (AUTO_PHONE=1,
+  GPU), master -> this: spawn 202 -> 204 draws, 915k -> 924k tris; over UW
+  189 -> 191, 794k -> 829k; DC on Ring Road 305 -> 306, 1067k -> 1095k; at the
+  King/University sign 360 -> 363, 1260k -> 1296k; over Laurier 198 -> 203,
+  748k -> 790k; the stadium 176 -> 179, 717k -> 749k (those cameras, and the
+  gate / tie / vault / Science Building ones, are `VIEWS=tools/kw/campusviews.json`). `__uwCampus.wluSigns`
+  has the signs. Approximate: the hawk and scoreboard wording are generic,
+  not traced; the track's curved edge is stepped at 2.5 m.
 
 ## Build number
 
