@@ -1190,7 +1190,7 @@ function installShadowFade() {
       .map(([id, g]) => ({ id, best: g ? +(g.best || g.hi || 0) : 0 })),
   }));
   audio = new Audio();
-  // KEXP's now-playing feed drives a toast, so the radio names its own tracks.
+  // a now-playing feed (none of the KW stations has one yet) drives a toast
   audio.onTrack = (label) => { if (hud) hud.showToast(`♪ ${label}`); };
   controls = new Controls(document.getElementById('app'));
   // an open minigame takes the pad as keys (controls.js PAD_KEYS)

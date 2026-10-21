@@ -1,5 +1,5 @@
 // The synthesised radio: a station's music when its stream is offline, dead
-// or not there at all (Rain City FM and Pike St Radio have none).
+// or not there at all (Grand River FM and King St Radio have none).
 //
 // It used to be one loop for every station: a sawtooth bass on the root, a
 // minor triad stab, a random pentatonic note on any eighth and kick, snare,
@@ -43,7 +43,7 @@ const CALM_FORM = [['intro', 4], ['verse', 8], ['chorus', 8], ['bridge', 4], ['v
  * beat. `lead` is the lead voice's register (MIDI of its tonic) and density.
  */
 const STYLES = {
-  // KEXP, Rock Antenne Alternative: jangly indie rock
+  // Radio Waterloo, Indie88, CBC Music: jangly indie rock
   indie: {
     tempo: [112, 132], minor: 0.35, form: FORM,
     maj: { verse: [[0, 4, 5, 3], [0, 3, 0, 4], [5, 3, 0, 4]], chorus: [[3, 0, 4, 5], [0, 4, 5, 3], [3, 4, 0, 0]], bridge: [[5, 3, 4, 4], [3, 4, 5, 4]] },
@@ -64,7 +64,7 @@ const STYLES = {
     min: { verse: [[0, 5, 2, 6], [0, 3, 5, 4]], chorus: [[5, 2, 6, 0], [5, 6, 0, 0]], bridge: [[3, 4, 2, 5]] },
     drums: 'pop', bass: 'pop', comp: 'keys', lead: 'pluck', leadAt: 72, density: 0.6, sixteenths: true,
   },
-  // C89.5, Pike St Radio: house
+  // CIUT, King St Radio: house
   house: {
     tempo: [120, 126], minor: 0.6, form: FORM,
     maj: { verse: [[0, 0, 3, 3], [0, 5, 3, 4]], chorus: [[3, 4, 5, 5], [0, 4, 5, 3]], bridge: [[1, 1, 4, 4]] },
@@ -78,20 +78,20 @@ const STYLES = {
     min: { verse: [[0, 5, 2, 6], [0, 6, 5, 6], [0, 3, 5, 6]], chorus: [[5, 6, 0, 0], [5, 2, 6, 0]], bridge: [[3, 5, 6, 6]] },
     drums: 'synthwave', bass: 'pulse', comp: 'arp', lead: 'synth', leadAt: 69, density: 0.45,
   },
-  // KNKX: small-group jazz, swung
+  // JAZZ.FM91: small-group jazz, swung
   jazz: {
     tempo: [116, 152], minor: 0, form: JAZZ_FORM, sevenths: true, swing: 0.16,
     maj: { verse: [[1, 4, 0, 5], [0, 5, 1, 4], [2, 5, 1, 4]], chorus: [[3, 6, 2, 5], [1, 4, 0, 0]], bridge: [[3, 3, 2, 5]] },
     drums: 'jazz', bass: 'walk', comp: 'rhodes', lead: 'vibes', leadAt: 72, density: 0.6,
   },
-  // Classical KING FM: strings over a harp
+  // The New Classical 96.3: strings over a harp
   classical: {
     tempo: [66, 84], minor: 0.4, form: CALM_FORM, harmonic: true,
     maj: { verse: [[0, 3, 4, 0], [0, 5, 1, 4], [0, 4, 5, 3]], chorus: [[3, 4, 0, 5], [5, 1, 4, 0]], bridge: [[5, 2, 3, 4]] },
     min: { verse: [[0, 3, 4, 0], [0, 5, 3, 4]], chorus: [[5, 3, 4, 0], [2, 5, 4, 0]], bridge: [[3, 4, 5, 4]] },
     drums: null, bass: 'cello', comp: 'harp', lead: 'violin', leadAt: 72, density: 0.5,
   },
-  // Rain City FM: lo-fi, rainy
+  // Grand River FM, CKWR, CBC Radio One, 570 News: lo-fi, rainy
   lofi: {
     tempo: [70, 86], minor: 0.5, form: CALM_FORM, sevenths: true, swing16: 0.2, dorian: true,
     maj: { verse: [[0, 2, 5, 3], [3, 2, 1, 4], [0, 5, 1, 4]], chorus: [[3, 4, 2, 5], [1, 4, 0, 5]], bridge: [[3, 3, 2, 2]] },

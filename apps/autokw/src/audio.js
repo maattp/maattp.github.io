@@ -12,7 +12,7 @@
 //              every frame through AudioParams -- nothing is allocated per
 //              frame. Idle ones are DISCONNECTED from the mix, which is what
 //              stops the audio thread rendering them (see `Tap`).
-//   THE RADIO  the live KEXP stream and the synthesised stations, unchanged in
+//   THE RADIO  the live stations' streams and the synthesised stations, unchanged in
 //              behaviour, now under a ducker so a big hit cuts through it.
 //
 // Everything runs into one limiter before the volume control, so nothing the
@@ -1971,29 +1971,44 @@ class EngineVoice {
 // https page may not load, so this is that variant over https. Safari plays
 // HLS in an <audio>; a browser that cannot (`canPlayType`) skips the station.
 const STATIONS = [
-  { name: 'KEXP 90.3', root: 55, style: 'indie',
-    stream: 'https://kexp.streamguys1.com/kexp160.aac', nowPlaying: 'kexp' },
+  // Waterloo Region's own first: UW's campus station, Conestoga College's,
+  // community radio, CBC's local morning show, the Rogers stations
+  { name: 'Radio Waterloo 102.7', root: 55, style: 'indie',
+    stream: 'https://radiowaterloo.ca/stream' },
+  { name: 'CJIQ 88.3 Conestoga', root: 58, style: 'pop',
+    stream: 'https://conestoga.leanstream.co/CJIQFM' },
+  { name: 'CKWR 98.5 Community', root: 50, style: 'lofi',
+    stream: 'https://stream2.statsradio.com:8150/stream' },
+  { name: 'CBC Radio One K-W 89.1', root: 53, style: 'lofi',
+    stream: 'https://playerservices.streamtheworld.com/api/livestream-redirect/CBLAFM2_CBC_SC' },
+  { name: 'CHYM 96.7', root: 57, style: 'pop',
+    stream: 'https://rogers.leanstream.co/rogers/kit967.stream/icy?environment=tunein&args=tunein_01' },
+  { name: 'Country 106.7', root: 52, style: 'rock',
+    stream: 'https://rogers.leanstream.co/rogers/kit1067.stream/icy?environment=tunein&args=tunein_01' },
+  { name: '570 News', root: 48, style: 'lofi',
+    stream: 'https://rogers.leanstream.co/rogers/kit570.stream/icy?environment=tunein&args=tunein_01' },
+  // down the 401 in Toronto
+  { name: 'Indie88 Toronto', root: 55, style: 'indie',
+    stream: 'https://localradio.streamb.live/SB00348' },
+  { name: 'Boom 97.3', root: 57, style: 'synthwave',
+    stream: 'https://newcap.leanstream.co/CHBMFM' },
+  { name: 'CIUT 89.5 U of T', root: 60, style: 'house',
+    stream: 'https://ice23.securenetsystems.net/CIUT' },
+  { name: 'JAZZ.FM91', root: 53, style: 'jazz',
+    stream: 'https://jazzfm91.streamb.live/SB00009' },
+  { name: 'The New Classical 96.3', root: 48, style: 'classical',
+    stream: 'https://live.amperwave.net/direct/mzmedia-cfmzfmmp3-ibc2' },
+  { name: 'CBC Music', root: 50, style: 'indie',
+    stream: 'https://playerservices.streamtheworld.com/api/livestream-redirect/CBLFM_CBC_SC' },
+  // and from further away
   { name: 'RdMix Classic Rock', root: 52, style: 'rock',
     stream: 'https://cast1.torontocast.com:4610/stream' },
   { name: 'BBC Radio 1', root: 60, style: 'pop',
     stream: 'https://as-hls-ww.live.cf.md.bbci.co.uk/pool_01505109/live/ww/bbc_radio_one/bbc_radio_one.isml/bbc_radio_one-audio%3d96000.norewind.m3u8',
     hls: true },
-  { name: 'Top 100 Charts', root: 57, style: 'pop',
-    stream: 'https://breakz-high.rautemusik.fm/' },
-  { name: 'NRJ Linkin Park', root: 50, style: 'rock',
-    stream: 'https://streaming.nrjaudio.fm/ouvfbfoarp52' },
-  { name: 'Rock Antenne Alternative', root: 55, style: 'indie',
-    stream: 'https://stream.rockantenne.de/alternative' },
-  { name: '80s Drive', root: 57, style: 'synthwave',
-    stream: 'https://samcloud.spacial.com/api/listen?sid=111415&m=sc&rid=293634&t=ssl' },
-  { name: 'C89.5 Seattle', root: 58, style: 'house',
-    stream: 'https://knhc-ice.streamguys1.com/live' },
-  { name: 'KNKX 88.5 Jazz', root: 53, style: 'jazz',
-    stream: 'https://knkx-live-a.edge.audiocdn.com/6284_128k' },
-  { name: 'Classical KING FM', root: 48, style: 'classical',
-    stream: 'https://classicalking.streamguys1.com/king-fm-aac-128k' },
-  { name: 'Rain City FM', root: 49, style: 'lofi' },
-  { name: 'Pike St Radio', root: 62, style: 'house' },
+  // synth only: they play with no network at all
+  { name: 'Grand River FM', root: 49, style: 'lofi' },
+  { name: 'King St Radio', root: 62, style: 'house' },
 ];
 /** The station list, for the menu's picker: [{ name, live }]. */
 export const STATION_NAMES = STATIONS.map((s) => ({ name: s.name, live: !!s.stream, style: s.style }));
