@@ -2,8 +2,9 @@
 //
 //   VIEW_PROBE_FILE=tools/kw/hwytraffic.js AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. \
 //     node tools/kw/kwshots.mjs /tmp/x
-//   (HWYT_WARM / HWYT_MEASURE seconds per site: set window.__hwyt = {...} in
-//   VIEW_BOOT_JS, default 20 / 150)
+//   (options: VIEW_BOOT_JS='window.__hwyt = { warm: 20, measure: 150, sites:
+//   [{ name, x, z }], all: true }' -- seconds per site, the sites, and
+//   `all` to spawn on every road, for a city before/after)
 //
 // The game paused, traffic.update is stepped at a FIXED dt of 1/60 s (rAF in a
 // headless page runs at whatever pace it likes, which is why speeds measured
@@ -65,10 +66,12 @@
   const out = { sites: [], total: null };
   const tot = { flat: 0, dbg: [], byType: {}, own: [0, 0], t: 0, hits: 0, crashes: 0, stuck: 0, lanes: {}, semiLanes: {}, spd: [0, 0], free: [0, 0], kmh: [0, 0], hitLog: [] };
   const dt = 1 / 60;
+  // the player out of the picture: traffic is handed a stand-in (the real
+  // one with no vehicle and not on foot breaks everything else that asks)
+  const NOBODY = { vehicle: null, onFoot: false, x: 1e6, y: 0, z: 1e6, speed: 0, heading: 0 };
   for (const site of sites) {
     for (const v of [...T.cars]) if (v.mode !== 'apron') T.remove(v);
     p.respawn(site.x, site.z);
-    p.onFoot = false; p.vehicle = null;
     d.game.wanted = 0;
     const m = { name: site.name, t: 0, hits: 0, crashes: 0, stuck: 0, lanes: {}, semiLanes: {}, spd: [0, 0], free: [0, 0], kmh: [0, 0], cars: 0 };
     const c0 = crashes, pairs = new Map(), slow = new Map(), stuckSeen = new Set(), seen = new WeakSet();
@@ -76,7 +79,7 @@
     const steps = (cfg.warm + cfg.measure) * 60;
     for (let i = 0; i < steps; i++) {
       const ang = t * 0.2;
-      T.update(dt, site.x, site.z, { x: Math.sin(ang), z: Math.cos(ang) }, p);
+      T.update(dt, site.x, site.z, { x: Math.sin(ang), z: Math.cos(ang) }, NOBODY);
       if (i % 10 === 0) d.world.update(site.x, site.z, 2);
       t += dt;
       if (t < cfg.warm) continue;

@@ -670,11 +670,85 @@ file and a guide disagree, this file wins.
   turns the furniture off for a before/after). Phone (AUTO_PHONE=1, GPU),
   __noHwy before -> after: Conestoga at Fairway 200 -> 203 draws, 584k ->
   586k tris; Hwy 8 at King 405 -> 405; Hwy 85 at King N 235 -> 240; the 401
-  at Hespeler 116 -> 121. Build ~50-70 ms on the Mac. Not done: the Ontario
-  "tall wall" ends with no crash cushion, there are no high-mast lights at
-  the 401/8 interchange, no noise walls beyond OSM's two (the Parkway has
-  many more, unmapped), no overhead lane-use arrows, and the AI does not
-  change lanes or merge on its own (it holds the lane it spawned in).
+  at Hespeler 116 -> 121. Build ~50-70 ms on the Mac (~230 ms with round
+  two's rails and rumble strips). Not done: the Ontario "tall wall" ends with
+  no crash cushion, and there are no overhead lane-use arrows.
+- **The freeways, round two** (docs/hwy-pkwy-noisewall-traffic.jpg,
+  hwy-85-cutting-bridgeport.jpg, hwy-8-guiderail-rumble.jpg,
+  hwy-pkwy-parapets.jpg):
+  - **The right-of-way is mown.** `hwyKeepClear` (highways.js, in
+    `city.extraClear`) keeps every tree 15 m past a freeway's shoulder (9 m
+    past a freeway ramp's -- `freewayRamps`: ramps reachable from an `hwy`
+    edge, not a town's slip lanes). build_wood.py paints the same band into
+    surface.png as farm code 240 (`geo.farmAt` 8): no crop (crops.js, whose
+    far blocks are flat-topped beige walls -- "the beige slab beside Hwy 7/8
+    west") and no township parcel grows to the embankment; groundTint and
+    cropAt skip code 8, so it is plain verge grass.
+  - **Guide rail, masts, rumble strips** (buildHighways, furniture cells):
+    W-beam on posts every 1.9 m at the shoulder's edge where the batter drops
+    more than `RAIL_DROP` 2.6 m and within `BRIDGE_RUN` 60 m of a deck (along
+    freeway edges from every deck end), never on a left shoulder with the
+    tall wall beyond it; each piece a `mono` landmark solid. High masts (30
+    m, a ring of six luminaires) over the freeway-to-freeway interchanges,
+    found from hwy.json's exits whose destination is the other freeway
+    (401/8, 8/Conestoga): a dozen per interchange, 12-60 m off the
+    carriageways, ~160 m apart. Right-shoulder rumble strips (one groove
+    drawn per 0.9 m) on the 401, 8, 7/8, 7 and 85.
+  - **Parkway noise walls** read off Esri imagery (`PKWY_WALLS`: stretch +
+    side, laid 4.5 m off the outer carriageway's edge, broken at ramps):
+    Forest Heights, both sides east of Westmount, Ottawa St S to Homer
+    Watson, by Kingsdale. Views `noise0..` in hwyshots.
+  - **Deck parapets are F-shape concrete** (world.js meshGradedDeck): toe,
+    sloped lower face, near-vertical wall; one flat slab read as a blue-grey
+    board in shade.
+  - **Three old bugs, root causes:** (1) grass spikes along both walls of
+    Hwy 85's cutting at Bridgeport (-770, -2400): a freeway dip's carve
+    started its bank ON the wall line, so terrain patch quads (4 m) straddling
+    the wall drew grass faces in front of it -- citygen `FWY_DIP_OVER` keeps
+    full depth one quad past the wall (world.js's CUT_OVER, same law), the
+    wall's top is the ground past the ledge, a verge cap closes the ledge.
+    (2) the bright band down Hwy 8 by King St: the road texture's polished
+    wheel tracks (roughness map, 26 % / 74 % of a 9 m two-lane tile) laid
+    across a 4-lane carriageway reflected the low sun -- freeway asphalt is now
+    laid in one strip per lane and shoulder, each on the texture BETWEEN the
+    tracks (`laneStrips`, world.js), shoulders a shade darker. (3) the beige
+    slab: crops, above.
+  - **Freeway AI** (traffic.js "freeway driving", gated on `traffic.fwy`:
+    every `hwy` edge and the ramps reachable from one; city traffic runs
+    the same code as before): every ~0.5 s a freeway driver (`fwyDecide`)
+    may plan an exit (`fwyPlanExit`: the next diverge 260-1300 m ahead, 30 %
+    of drivers take it; otherwise `pickNextEdge` keeps a freeway car on the
+    freeway, `fwyOn`), move over for it, for a lane that ends (the route jogs
+    > 2.2 m sideways at a node into fewer lanes; with no gap the lane's end is
+    a standing leader, `dropT`) or for a semi in the left lanes (semis keep
+    to the right two, capped at 105 km/h), pass on the left when held up
+    (MOBIL gain `LC_GAIN`), and keep right when it costs nothing. Safety is
+    IDM braking: no change asks more than `LC_SAFE` 2.5 m/s^2 of the new
+    follower or of the car itself. Neighbours are put in the driver's own
+    edge frame, bent for the curve (`fwyNeighbours`). A change re-plans the
+    route in the new lane and carries `lcShift` (the old offset) that runs
+    out over `LC_TIME` 3.2 s, applied to the pursuit point and to the scan
+    path; a car changing INTO a lane is a leader there from the start. On a
+    ramp the merge yields (`fwyMergeGap`): the main-line car in the lane
+    joined that will reach the merge first (or within 1.5 s after) is a
+    leader with its gap measured to the merge. Freeway spawns land in a gap
+    at their own pace. Bicycles, school buses and refuse trucks never spawn
+    on a freeway or its ramps and route off them (`FWY_BANNED`).
+  - **Verify:** `sh tools/kw/hwyshots.sh <dir> rail,mast,noise,air` and the
+    fuzz probe: `VIEW_PROBE_FILE=tools/kw/hwytraffic.js node
+    tools/kw/kwshots.mjs /tmp/x` (fixed dt 1/60, the game paused, spawns held
+    to freeway edges, six sites x 150 s; `window.__hwyt = {all: true, sites:
+    [...]}` in VIEW_BOOT_JS for city traffic). Master vs this: AI-AI body
+    overlaps 36 -> 3-5 (all at ramp merge/diverge geometry: the 401 at
+    Hespeler's ramps, the Parkway at Fairway, Hwy 85's ramps), crashes 7 ->
+    0, stuck 0 -> 0, mean freeway speed 70 -> 92 km/h (free-flowing cars
+    0.86 of the edge's traffic speed), right lane ~55 % of car-time on a
+    3-lane carriageway (was 31 %), semis in the right two lanes 100 %. City
+    sites (uptown, downtown, Fairview): 5 -> 4 overlaps, unchanged. Phone
+    (AUTO_PHONE=1, GPU), master -> this: spawn 204 -> 205 draws; Parkway
+    noise wall 428 -> 428, 1157k -> 1153k; 401 at Hespeler 310 -> 309, 460k
+    -> 473k; the 401/8 masts 366 -> 366, 497k -> 535k; Hwy 8 at King 173 ->
+    173, 542k -> 560k; Fairway aerial 219 -> 219. 0 exceptions.
 - **The University of Waterloo** (src/uwcampus.js, `data/uw.json` from
   tools/kw/build_uw.py; docs/uw-*.jpg). build_uw.py takes every campus
   building from OSM (inside Ring Road, or a named university / college /

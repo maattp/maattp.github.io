@@ -23,6 +23,11 @@
 //  - MAXIMUM speed signs (OSM maxspeed: 90 on the Conestoga, 100 on Hwy 8,
 //    110 on the 401) and route reassurance shields after each entrance.
 //
+//  - ROUND TWO: the mown right-of-way (hwyKeepClear, in city.extraClear),
+//    steel beam guide rail on high fills and bridge approaches, high masts
+//    over the freeway-to-freeway interchanges, right-shoulder rumble strips,
+//    and the Parkway's unmapped noise walls (PKWY_WALLS, from aerials).
+//
 // It also sets each freeway edge's traffic speed from its maxspeed (+10 km/h,
 // how a 400-series highway actually flows): prepHighways, before traffic.
 
