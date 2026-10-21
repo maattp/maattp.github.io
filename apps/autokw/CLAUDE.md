@@ -411,6 +411,47 @@ file and a guide disagree, this file wins.
   spawn 195 -> 200 draws, 881k -> 917k tris; Boardwalk lot 66 -> 69; Sunrise
   lot 172 -> 178; Fairview aerial 399 -> 409, 946k -> 1017k. ~155k tris
   across the whole map.
+- **The plazas audit** (docs/shops-plazas-*.jpg; `tools/kw/plazaprobe.js`
+  prints every plaza's buildings by drawer -- strip / big / unit / poly /
+  PLAIN, the white box to hunt -- its painted-lot share and its stores
+  drawn/listed; `tools/kw/plazaviews.js` prints storefront-facing views of
+  them for kwshots `VIEWS=`). Four fixes, all data-driven:
+  - **L- and U-shaped plazas are drawn from their outline**: build_kw.py
+    `_swallowing_box` sends every retail/commercial footprint of 1500-40,000
+    m2 that fills under 62% of its min-area rectangle to kw.js's polys (603
+    -> 657). Their box was a slab over the car park they wrap (St. Jacobs
+    Outlets: 180 x 102 m over the L's lawn; Laurelwood, Westmount Place,
+    Westgate, Forest Glen, Ottawa Lackner...). Fairview, Conestoga and
+    Cambridge Centre are over the cap (their modules draw them).
+  - **Plain boxes in a plaza become plaza buildings** (prepShops): a
+    brick/lowrise/industrial box of 220-16,000 m2 in a named plaza (not a
+    Downtown/Village/Station one) that world.js would draw as a 9 m
+    three-storey office or flats gets `kw.strip` (its storefront the face
+    with the most lot, `lotFront`) and kwshops' arcade; under 6000 m2 and
+    over 7.5 m it is cut to one storey, 7.2 m (Williamsburg, Victoria Street
+    Plaza, Eastwood Square, Westmount Place's strips).
+  - **A big box's other tenants sign its front** (`tenants` in buildShops):
+    an LCBO, bank or Subway whose store matched an anchor's box (one OSM
+    footprint for the Zehrs and the LCBO beside it) gets glass, a door, a
+    canopy and its logo on a band out past the piers, at the free spot
+    nearest where it really is (`sh.used`: the portal, the grocery glass,
+    the vestibules). Pioneer Park's and Westgate's LCBOs had no sign before.
+  - **The independents sign the fascias**: shops.json plazas carry `sh`
+    (build_shops.py: every tenant with no brand here, outside kw.js's detail
+    zones, up to 18 a plaza); buildShops letters them (88/118/148 x 22 px
+    cells) on the strip arcades and the outline-drawn stores' fascias,
+    round-robin across plazas, after kwhome's hooks, until the atlas is full
+    (~260 of 591; the canvas is now 2816 rows). Chain logos, Tims and FreshCo
+    reserve their fascia spans first (`fascia`, keyed by storefront).
+  - 17 more brands with logos (small 72 px cells, `px`): Your Independent
+    Grocer, Farm Boy, Longo's, T&T (grocery big boxes, ARCH), Rexall,
+    Pharmasave, Dollar Tree, Bulk Barn, Pet Valu, PetSmart, Michaels, Mark's,
+    Indigo, Home Hardware, The Brick, Leon's, Golf Town (656 stores, 69
+    brands). Phone spawn 176/1112k -> 177/1113k draws/tris; trafficbench
+    hashes unchanged; shops' tris 155k -> 142k (the slabs went).
+  - Not done: Hespeler Rd's stores outside a named plaza keep their
+    defaults; Stanley Park and Frederick Mall are boxes (their OSM outline is
+    the building); kw.js's 9 m non-plaza retail boxes are still offices.
 - **ION, as it is** (src/link.js on `data/link.json`; docs/ion-*.jpg).
   Sources (Oct 2026): Wikipedia "Ion rapid transit" (stations, 10-minute
   weekday headway, 70 km/h corridor / 50 street / 20-25 in pedestrian

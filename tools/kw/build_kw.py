@@ -133,7 +133,8 @@ def main():
                       "sports_hall", "civic", "public", "government", "townhall") \
             or re.search(r"Arena|Auditorium|Sportsplex|Recreation Complex|City Hall|Market|Perimeter|CIGI|Tannery|Google|Mill|Museum", n) \
             or re.search(r"School|Collegiate|College|University|Campus|Hall\b|Library|Centre for", n) \
-            or (bt in ("retail", "commercial", "supermarket", "yes") and any(math.hypot(cx - zx, cz - zz) < r for _, zx, zz, r in POLY_ZONES))
+            or (bt in ("retail", "commercial", "supermarket", "yes") and any(math.hypot(cx - zx, cz - zz) < r for _, zx, zz, r in POLY_ZONES)) \
+            or _swallowing_box(b["o"], bt)
         if not keep:
             continue
         pts = []
@@ -260,6 +261,35 @@ PLACE_BLDGS = {
 # Where the playing fields are drawn: RIM Park and Waterloo Park (x0, z0, x1, z1)
 PITCH_BOXES = {"rim": (-2900, -7750, -1600, -6900), "wpark": (-4950, -2080, -4300, -1450)}
 PLACE_SHOP_AMENITY = SHOP_AMENITY | {"nightclub", "theatre", "arts_centre", "bar", "fast_food", "bank", "cinema"}
+
+
+def _min_rect_area(p):
+    """The area of the smallest rectangle round p (one side along an edge)."""
+    best = float("inf")
+    for i in range(len(p)):
+        a, b = p[i], p[(i + 1) % len(p)]
+        dx, dz = b[0] - a[0], b[1] - a[1]
+        L = math.hypot(dx, dz)
+        if L < 1e-6:
+            continue
+        ux, uz = dx / L, dz / L
+        us = [q[0] * ux + q[1] * uz for q in p]
+        vs = [-q[0] * uz + q[1] * ux for q in p]
+        best = min(best, (max(us) - min(us)) * (max(vs) - min(vs)))
+    return best
+
+
+def _swallowing_box(o, bt):
+    """An L- or U-shaped plaza (St. Jacobs Outlets, Laurelwood, Westmount
+    Place, Forest Glen...): its box, the outline's min-area rectangle, fills
+    in its own car park (St. Jacobs Outlets: a 180 x 102 m white slab over
+    the lot the L wraps). Drawn from its outline instead. The malls other
+    modules draw from their own plans (Fairview, Conestoga, Cambridge Centre:
+    over 40,000 m2) are left out."""
+    if bt not in ("retail", "commercial", "supermarket") or len(o) < 5:
+        return False
+    A = abs(_area(o))
+    return 1500 <= A <= 40000 and A / _min_rect_area(o) < 0.62
 
 
 def _seg_dist(px, pz, a, b):

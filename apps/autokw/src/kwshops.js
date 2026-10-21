@@ -153,6 +153,50 @@ brand('nofrills', { n: 'No Frills', fmt: 'groc', a: 3.2, portal: '#ffe600', trim
 brand('superstore', { n: 'Real Canadian Superstore', fmt: 'groc', a: 3.6, portal: '#ffffff', trim: '#e31837', band: '#e31837',
   draw: (g, W, H) => { bg(g, W, H, '#ffffff'); txt(g, 'real canadian', W / 2, H * 0.24, H * 0.2, '#e31837', { w: 700 });
     txt(g, 'SUPERSTORE', W / 2, H * 0.62, H * 0.48, '#e31837', { w: 900, max: W * 0.92 }); } });
+// the second tier of anchors and plaza tenants (smaller atlas cells: `px`)
+brand('independent', { n: 'Your Independent Grocer', fmt: 'groc', a: 3.4, px: 72, portal: '#f4f1ea', trim: '#d7282f', band: '#d7282f',
+  draw: (g, W, H) => { bg(g, W, H, '#ffffff'); txt(g, 'your', W * 0.12, H * 0.3, H * 0.26, '#222222', { w: 700, align: 'left' });
+    txt(g, 'independent', W / 2, H * 0.58, H * 0.42, '#d7282f', { w: 900, max: W * 0.9 }); txt(g, 'grocer', W * 0.88, H * 0.86, H * 0.2, '#222222', { w: 700, align: 'right' }); } });
+brand('farmboy', { n: 'Farm Boy', fmt: 'groc', a: 3, px: 72, portal: '#c8102e', trim: '#2e7d32', band: '#c8102e',
+  draw: (g, W, H) => { bg(g, W, H, '#ffffff'); txt(g, 'Farm Boy', W / 2, H * 0.5, H * 0.62, '#c8102e', { w: 900, italic: true, font: SERIF, max: W * 0.9 });
+    g.fillStyle = '#2e7d32'; g.fillRect(W * 0.1, H * 0.84, W * 0.8, H * 0.07); } });
+brand('longos', { n: "Longo's", fmt: 'groc', a: 3, px: 72, portal: '#1f6b35', trim: '#e8e2cf', band: '#1f6b35',
+  draw: (g, W, H) => { bg(g, W, H, '#1f6b35'); txt(g, "Longo's", W / 2, H * 0.54, H * 0.66, '#ffffff', { w: 800, font: SERIF, max: W * 0.9 }); } });
+brand('tnt', { n: 'T&T Supermarket', fmt: 'groc', a: 3, px: 72, portal: '#e60012', trim: '#ffffff', band: '#e60012',
+  draw: (g, W, H) => { bg(g, W, H, '#e60012'); txt(g, 'T&T', W * 0.3, H * 0.54, H * 0.66, '#ffffff', { w: 900 });
+    txt(g, '大統華', W * 0.72, H * 0.54, H * 0.46, '#ffffff', { w: 700, max: W * 0.44 }); } });
+brand('rexall', { n: 'Rexall', fmt: 'store', a: 3, px: 72, band: '#ffffff',
+  draw: (g, W, H) => { bg(g, W, H, '#ffffff'); txt(g, 'Rexall', W / 2, H * 0.52, H * 0.66, '#d6001c', { w: 900, max: W * 0.9 });
+    g.fillStyle = '#0b3e8a'; g.fillRect(W * 0.12, H * 0.84, W * 0.76, H * 0.07); } });
+brand('pharmasave', { n: 'Pharmasave', fmt: 'store', a: 3.6, px: 72, band: '#ffffff',
+  draw: (g, W, H) => { bg(g, W, H, '#ffffff'); txt(g, 'PHARMASAVE', W / 2, H * 0.54, H * 0.5, '#d6001c', { w: 900, max: W * 0.92 }); } });
+brand('dollartree', { n: 'Dollar Tree', fmt: 'store', a: 3.4, px: 72, band: '#ffffff',
+  draw: (g, W, H) => { bg(g, W, H, '#ffffff'); txt(g, 'Dollar Tree', W * 0.56, H * 0.54, H * 0.56, '#00843d', { w: 900, max: W * 0.78 });
+    g.fillStyle = '#00843d'; g.beginPath(); g.arc(W * 0.09, H * 0.42, H * 0.24, 0, 7); g.fill(); g.fillRect(W * 0.085, H * 0.5, W * 0.014, H * 0.36); } });
+brand('bulkbarn', { n: 'Bulk Barn', fmt: 'store', a: 3, px: 72, band: '#b5121b',
+  draw: (g, W, H) => { bg(g, W, H, '#b5121b'); txt(g, 'BULK BARN', W / 2, H * 0.56, H * 0.5, '#ffffff', { w: 900, max: W * 0.9 });
+    g.fillStyle = '#ffffff'; g.fillRect(W * 0.1, H * 0.12, W * 0.8, H * 0.05); } });
+brand('petvalu', { n: 'Pet Valu', fmt: 'store', a: 3, px: 72, band: '#00824a',
+  draw: (g, W, H) => { bg(g, W, H, '#00824a'); txt(g, 'Pet Valu', W * 0.46, H * 0.54, H * 0.62, '#ffffff', { w: 900, max: W * 0.74 });
+    g.fillStyle = '#f7941d'; g.beginPath(); g.arc(W * 0.9, H * 0.5, H * 0.17, 0, 7); g.fill(); } });
+brand('petsmart', { n: 'PetSmart', fmt: 'store', a: 3.4, px: 72, band: '#ffffff',
+  draw: (g, W, H) => { bg(g, W, H, '#ffffff'); txt(g, 'PETSMART', W / 2, H * 0.54, H * 0.6, '#e31837', { w: 900, max: W * 0.92 }); } });
+brand('michaels', { n: 'Michaels', fmt: 'store', a: 3.2, px: 72, band: '#ffffff',
+  draw: (g, W, H) => { bg(g, W, H, '#ffffff'); txt(g, 'Michaels', W / 2, H * 0.54, H * 0.66, '#cc0000', { w: 700, italic: true, font: SERIF, max: W * 0.9 }); } });
+brand('marks', { n: "Mark's", fmt: 'store', a: 2.6, px: 72, band: '#c8102e',
+  draw: (g, W, H) => { bg(g, W, H, '#c8102e'); txt(g, "Mark's", W / 2, H * 0.54, H * 0.66, '#ffffff', { w: 900, max: W * 0.88 }); } });
+brand('indigo', { n: 'Indigo', fmt: 'store', a: 3, px: 72, band: '#2b2b2b',
+  draw: (g, W, H) => { bg(g, W, H, '#2b2b2b'); txt(g, 'indigo', W / 2, H * 0.5, H * 0.7, '#ffffff', { w: 400, font: SERIF, max: W * 0.88 }); } });
+brand('homehardware', { n: 'Home Hardware', fmt: 'store', a: 3.6, px: 72, band: '#d71920',
+  draw: (g, W, H) => { bg(g, W, H, '#d71920'); g.fillStyle = '#ffffff';
+    g.beginPath(); g.moveTo(H * 0.14, H * 0.52); g.lineTo(H * 0.5, H * 0.16); g.lineTo(H * 0.86, H * 0.52); g.lineTo(H * 0.76, H * 0.52); g.lineTo(H * 0.76, H * 0.86); g.lineTo(H * 0.24, H * 0.86); g.lineTo(H * 0.24, H * 0.52); g.closePath(); g.fill();
+    txt(g, 'HOME HARDWARE', H + (W - H) / 2, H * 0.55, H * 0.36, '#ffffff', { w: 900, max: W - H * 1.15 }); } });
+brand('brick', { n: 'The Brick', fmt: 'store', a: 3, px: 72, band: '#d6001c',
+  draw: (g, W, H) => { bg(g, W, H, '#d6001c'); txt(g, 'the brick', W / 2, H * 0.52, H * 0.6, '#ffffff', { w: 900, max: W * 0.9 }); } });
+brand('leons', { n: "Leon's", fmt: 'store', a: 3, px: 72, band: '#ffffff',
+  draw: (g, W, H) => { bg(g, W, H, '#ffffff'); txt(g, "LEON'S", W / 2, H * 0.54, H * 0.64, '#c8102e', { w: 900, max: W * 0.9 }); } });
+brand('golftown', { n: 'Golf Town', fmt: 'store', a: 3.4, px: 72, band: '#00573f',
+  draw: (g, W, H) => { bg(g, W, H, '#00573f'); txt(g, 'GOLF TOWN', W / 2, H * 0.54, H * 0.54, '#ffffff', { w: 900, max: W * 0.92 }); } });
 brand('lcbo', { n: 'LCBO', fmt: 'lcbo', a: 2.4, band: '#2b2b2b', portal: '#2b2b2b', trim: '#007a3d',
   draw: (g, W, H) => { bg(g, W, H, '#007a3d'); txt(g, 'LCBO', W / 2, H * 0.55, H * 0.74, '#ffffff', { w: 900, max: W * 0.86 }); } });
 brand('beer', { n: 'The Beer Store', fmt: 'lcbo', a: 3, band: '#00438c', portal: '#00438c', trim: '#ffc72c',
@@ -266,8 +310,9 @@ class BrandAtlas {
   constructor() {
     this.W = 2048;
     this.c = document.createElement('canvas');
-    // 2560 rows: the logos and plazas fill ~1900, kwhome.js's storefronts the rest (finish() crops to what is used)
-    this.c.width = this.W; this.c.height = 2560;
+    // 2816 rows: the logos and plazas fill ~2000, kwhome.js's storefronts ~400, the plazas'
+    // independents' lettering the rest (finish() crops to what is used)
+    this.c.width = this.W; this.c.height = 2816;
     this.g = this.c.getContext('2d');
     this.y = 0; this.row = 0; this.full = 0;
     this.shelves = [];
@@ -302,7 +347,7 @@ class BrandAtlas {
   logo(k) {
     const br = B[k];
     if (!br) return null;
-    const h = br.a < 1.8 ? 136 : 96;
+    const h = br.px || (br.a < 1.8 ? 136 : 96);
     return this.cell('logo:' + k, Math.min(640, h * br.a), h, br.draw);
   }
   /** A gas price sign: the logo over three grades of LED prices. */
@@ -407,6 +452,10 @@ const ARCH = {
   sobeys: { wall: '#d6d1c3', base: '#6b5d4c', pier: '#8c6a4f', band: '#0e5a19', cap: '#0e5a19', roof: '#cfd0cf', vest: 1, glass: true, corral: '#0e5a19' },
   foodbasics: { wall: '#ddd5c3', base: '#7d7363', pier: '#a89a83', band: '#ffcd00', cap: '#00843d', roof: '#cfd0cf', vest: 1, glass: true, corral: '#ffcd00' },
   nofrills: { wall: '#e4e0d5', base: '#6f6b64', pier: '#bdb7aa', band: '#ffe600', cap: '#2a2a2a', roof: '#cfd0cf', vest: 1, glass: true, corral: '#ffe600' },
+  independent: { wall: '#e0dbd0', base: '#6f6a62', pier: '#a8452f', band: '#d7282f', cap: '#3a3a3a', roof: '#cfd0cf', vest: 1, glass: true, corral: '#d7282f' },
+  farmboy: { wall: '#e6dfcd', base: '#6b5d4c', pier: '#8c3a2a', band: '#2e7d32', cap: '#c8102e', roof: '#cfd0cf', vest: 1, glass: true, corral: '#c8102e' },
+  longos: { wall: '#ddd6c4', base: '#5f5a50', pier: '#7a6a55', band: '#1f6b35', cap: '#1f6b35', roof: '#cfd0cf', vest: 1, glass: true, corral: '#1f6b35' },
+  tnt: { wall: '#e4e1da', base: '#6d6b67', pier: '#b9b4aa', band: '#e60012', cap: '#e60012', roof: '#d0d1d0', vest: 1, glass: true, corral: '#e60012' },
   superstore: { wall: '#dedad2', base: '#7c7871', pier: '#b9b2a5', band: '#e31837', cap: '#e31837', roof: '#d6d6d3', vest: 2, glass: true, corral: '#e31837', garden: '#2b2d2f' },
   lcbo: { wall: '#a77b62', base: '#5a5550', pier: '#7d5a48', band: '#2b2b2b', cap: '#007a3d', roof: '#bdbebe', glass: true },
   beer: { wall: '#e8e4da', base: '#7a7770', pier: '#cfcabe', band: '#00438c', cap: '#ffc72c', roof: '#cfd0cf', glass: true },
@@ -460,19 +509,55 @@ export function prepShops(city) {
       r.units++;
     }
   }
-  // every strip building in a named plaza
+  // every strip building in a named plaza -- and every other plain store box
+  // in one: world.js would draw a 9 m one as a three-storey brick office or
+  // flats (Williamsburg, Westmount Place, Victoria Street Plaza, Eastwood
+  // Square), where it is a one-storey plaza whose storefront faces its lot
+  r.plain = 0;
   (S.plazas || []).forEach((P, pi) => {
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
     for (const q of P.o) { x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); z0 = Math.min(z0, q[1]); z1 = Math.max(z1, q[1]); }
     const rad = Math.hypot(x1 - x0, z1 - z0) / 2 + 20;
+    const town = /^Downtown|Village|Station/.test(P.n);    // a main street's old blocks are not a plaza
     for (const b of city.buildingsNear((x0 + x1) / 2, (z0 + z1) / 2, rad)) {
-      if (!b.kw || !b.kw.strip || !free(b) || !inPoly(P.o, b.x, b.z)) continue;
+      if (!free(b) || !inPoly(P.o, b.x, b.z)) continue;
+      if (!(b.kw && b.kw.strip)) {
+        if (town || b.h < 3 || b.h > 12.5 || !PLAIN_STYLES.has(b.style) || b.w < 9 || b.d < 9 || b.w * b.d < 220 || b.w * b.d > 16000) continue;
+        if (!b.kw) b.kw = {};
+        b.kw.strip = { face: lotFront(city, b, frameOf(b)) };
+        // one storey and its parapet, as the plazas round it (OSM's 2-level default is the office)
+        if (b.h > 7.5 && b.w * b.d < 6000) b.h = 7.2;
+        r.plain++;
+      }
       b.kw.skip = true;
       b.kw.shop = { fmt: 'strip', plaza: pi };
       r.strips++;
     }
   });
   return r;
+}
+const PLAIN_STYLES = new Set(['brick', 'lowrise', 'industrial']);
+
+/**
+ * The storefront of a stand-alone store: the face with the most car park in
+ * front of it (a big box's front is its lot; the street usually passes a
+ * side or the back), a face right on a street counted down.
+ */
+function lotFront(city, b, fr) {
+  let best = 0, bs = -Infinity;
+  for (let fi = 0; fi < 4; fi++) {
+    const L = fr.F[fi].len;
+    let park = 0, n = 0;
+    for (let k = 1; k <= 7; k++) for (let j = -3; j <= 3; j++) {
+      const p = fr.P(fi, (j / 3.5) * L / 2, 0, k * 8);
+      n++;
+      if (G.lotAt(p[0], p[2]) >= 0 && !city.onRoad(p[0], p[2], 0, false)) park++;
+    }
+    const q = fr.P(fi, 0, 0, 6);
+    const s = park / n + (city.onRoad(q[0], q[2], 4, false) ? -0.5 : 0) + L * 0.002;
+    if (s > bs) { bs = s; best = fi; }
+  }
+  return best;
 }
 
 // --- the stores ------------------------------------------------------------------------
@@ -717,27 +802,7 @@ export function buildShops(ctx) {
   };
   const roomFor = (b, pts, pad) => pts.every(([x, z]) => !city.onRoad(x, z, pad, true) && (() => { const o = boxAt(city, x, z, 1); return !o || o === b; })());
 
-  /**
-   * The storefront of a stand-alone store: the face with the most car park in
-   * front of it (a big box's front is its lot; the street usually passes a
-   * side or the back), a face right on a street counted down.
-   */
-  const frontFace = (b, fr) => {
-    let best = 0, bs = -Infinity;
-    for (let fi = 0; fi < 4; fi++) {
-      const L = fr.F[fi].len;
-      let park = 0, n = 0;
-      for (let k = 1; k <= 7; k++) for (let j = -3; j <= 3; j++) {
-        const p = fr.P(fi, (j / 3.5) * L / 2, 0, k * 8);
-        n++;
-        if (G.lotAt(p[0], p[2]) >= 0 && !city.onRoad(p[0], p[2], 0, false)) park++;
-      }
-      const q = fr.P(fi, 0, 0, 6);
-      const s = park / n + (city.onRoad(q[0], q[2], 4, false) ? -0.5 : 0) + L * 0.002;
-      if (s > bs) { bs = s; best = fi; }
-    }
-    return best;
-  };
+  const frontFace = (b, fr) => lotFront(city, b, fr);
 
   const bigBox = (b, k) => {
     const Ar = ARCH[k], br = B[k], sh = b.kw.shop;
@@ -876,6 +941,11 @@ export function buildShops(ctx) {
       stats.corrals = (stats.corrals || 0) + nc;
     }
     stats.bigbox = (stats.bigbox || 0) + 1;
+    // where the plaza's other tenants in this box can sign: its front, clear of the portal
+    const G2w = Ar.glass ? Math.min(L * 0.24, 28) : 0;
+    sh.front = fi; sh.gy = gy; sh.top = top;
+    sh.used = [[tP - Math.max(PW / 2 + 1, G2w + 0.5), tP + Math.max(PW / 2 + 1, G2w + 0.5)]];
+    for (const t0 of vts) { const t = Math.max(-L / 2 + 6, Math.min(L / 2 - 6, t0)); sh.used.push([t - 5.2, t + 5.2]); }
     const [dx, , dz] = fr.P(fi, tP, 0, face0 + 4.5);
     return { x: dx, z: dz, door: { x: dx, z: dz } };
   };
@@ -945,7 +1015,10 @@ export function buildShops(ctx) {
     if (b && b.kw && b.kw.skip && !b.kw.shop) { stats.skipped++; return null; }      // a place kwplaces.js draws itself
     if (b && b.kw && b.kw.shop && (b.kw.shop.fmt === 'bigbox' || b.kw.shop.fmt === 'unit')) {
       if (b.kw.shop.k !== k || b.kw.shop.done) {
-        // another brand's store inside a big box (a bank, a Tims): a sign by its door
+        // another brand's store inside a big box (the LCBO beside the Zehrs, the
+        // bank and the Subway in the Sobeys' row): its sign and storefront on the
+        // front, once the box is drawn
+        if (b.kw.shop.fmt === 'bigbox' && b.kw.shop.k !== k) { tenants.push({ k, x, z, b }); return { x, z, later: true }; }
         return null;
       }
       b.kw.shop.done = true;
@@ -1037,6 +1110,7 @@ export function buildShops(ctx) {
       const lw = Math.min(lh * (A.logo(k) || { a: 3 }).a, f.len - 0.8, 9);
       fit(lw);
       putLogo(k, sx + nx * 1.9, gy + 3.82, sz + nz * 1.9, nx, nz, lw, lh);
+      fasciaUse(b, sx, sz, lw);
       stats.fascia++;
     } else {
       // a wall sign; a store standing alone (an LCBO, a Beer Store, a bank) has its colour band
@@ -1060,12 +1134,42 @@ export function buildShops(ctx) {
     return res;
   };
 
+  // what hangs on each plaza storefront's fascia already: [t0, t1] along it.
+  // A storefront: a strip box's arcade face, or one wall of a store kw.js
+  // draws from its outline (its own fascia, the same 1.8 m out, 3.2-4.45 m up)
+  const fascia = new Map();
+  function boxFront(b) {
+    const fr = frameOf(b), fi = b.kw.strip.face, L = fr.F[fi].len, N = fr.N(fi);
+    return { key: b, lo: -L / 2, hi: L / 2, nx: N[0], nz: N[2], y: b.y, tOf: (x, z) => fr.tOf(fi, x, z), at: (t, o) => { const p = fr.P(fi, t, 0, o); return [p[0], p[2]]; } };
+  }
+  function polyFront(f) {
+    return { key: f.ax.toFixed(1) + ',' + f.az.toFixed(1), lo: 0, hi: f.len, nx: f.nx, nz: f.nz, y: T(f.x + f.nx * 2, f.z + f.nz * 2),
+      tOf: (x, z) => (x - f.ax) * f.ux + (z - f.az) * f.uz, at: (t, o) => [f.ax + f.ux * t + f.nx * o, f.az + f.uz * t + f.nz * o] };
+  }
+  function fasciaUse(b, x, z, w) {
+    let sf = null;
+    if (b.kw && b.kw.shop && b.kw.shop.fmt === 'strip' && b.kw.strip) sf = boxFront(b);
+    else if (b.kw && b.kw.poly && b.kw.poly.retail) { const f = polyFace(b.kw.poly, x, z); if (f) sf = polyFront(f); }
+    if (!sf) return;
+    const t = sf.tOf(x, z);
+    let u = fascia.get(sf.key);
+    if (!u) fascia.set(sf.key, (u = []));
+    u.push([t - w / 2 - 0.3, t + w / 2 + 0.3]);
+  }
+  {
+    // kw.js's Tim Hortons and FreshCo signs (drawn later, from the same spots)
+    const K = kwData();
+    for (const [list, w] of [[K && K.tims, 5.2], [K && K.freshco, 9]]) for (const [x, z] of list || []) { const b = boxAt(city, x, z, 3); if (b) fasciaUse(b, x, z, w); }
+  }
+  const tenants = [];
   for (const [k, x, z, bx, bz, pi, addr, name] of S.stores) {
     const br = B[k];
     if (!br) continue;
     const r = br.fmt === 'gas' ? gas(k, x, z, bx, bz) : store(k, x, z, bx, bz);
     stats.stores++;
-    out.push({ k, x: r ? r.x : x, z: r ? r.z : z, addr, name, plaza: pi, drawn: !!r });
+    const o = { k, x: r ? r.x : x, z: r ? r.z : z, addr, name, plaza: pi, drawn: !!r };
+    if (r && r.later) tenants[tenants.length - 1].r = o;
+    out.push(o);
   }
 
   // a marked building whose store matched a different box still gets drawn
@@ -1074,6 +1178,50 @@ export function buildShops(ctx) {
     if (!sh || sh.done || (sh.fmt !== 'bigbox' && sh.fmt !== 'unit')) continue;
     sh.done = true;
     if (sh.fmt === 'bigbox') bigBox(b, sh.k); else unit(b, sh.k);
+  }
+
+  // the tenants of the big boxes' rows: each a glass storefront and its lit sign
+  // in its band, on the anchor's front where the store is (shifted clear of the
+  // portal and of each other), the sign board under the parapet's accent band
+  for (const tn of tenants) {
+    const { k, x, z, b } = tn, sh = b.kw.shop, br = B[k];
+    tn.r.drawn = false;
+    if (sh.front === undefined) continue;
+    const c = A.logo(k);
+    if (!c) continue;
+    const fr = frameOf(b), fi = sh.front, L = fr.F[fi].len, gy = sh.gy;
+    const lh = br.fmt === 'groc' || br.fmt === 'big' || br.fmt === 'lcbo' ? 1.5 : 1.15;
+    const lw = Math.min(lh * c.a, 9);
+    const half = lw / 2 + 0.6;
+    const want = fr.tOf(fi, x, z);
+    // the free spot nearest where the store really is
+    let t = null;
+    for (let d = 0; d < L; d += 1.5) {
+      for (const sg of d ? [1, -1] : [1]) {
+        const c0 = want + sg * d;
+        if (Math.abs(c0) + half > L / 2 - 1.5) continue;
+        if (sh.used.some(([a, b2]) => c0 + half > a && c0 - half < b2)) continue;
+        t = c0; break;
+      }
+      if (t !== null) break;
+    }
+    if (t === null) continue;
+    sh.used.push([t - half - 0.4, t + half + 0.4]);
+    const Bd = Gb(b.x, b.z), N = fr.N(fi);
+    const ys = Math.min(sh.top - 2.2, gy + 5.4);
+    // the sign band, the logo on it
+    // (out past the piers' faces, 0.35 m, so a pier never cuts a sign)
+    fr.box(Bd, fi, t, 0.21, 2 * half, 0.42, ys - lh / 2 - 0.25, lh + 0.5, lin(br.band || '#2a2c30'));
+    const [sx, sy, sz] = fr.P(fi, t, ys, 0.46);
+    putLogo(k, sx, sy, sz, N[0], N[2], lw, lh);
+    // the storefront: glass, mullions, the door, a canopy
+    fr.rect(Bd, fi, t - half, t + half, gy + 0.3, gy + 3.2, 0.07, GLASS);
+    for (let q = t - half; q <= t + half + 0.01; q += Math.max(1.5, (2 * half) / Math.round(2 * half / 2.4))) fr.rect(Bd, fi, q - 0.06, q + 0.06, gy + 0.3, gy + 3.2, 0.1, FRAME);
+    fr.rect(Bd, fi, t - 0.9, t + 0.9, gy, gy + 2.5, 0.11, shade(GLASS, 0.6));
+    fr.box(Bd, fi, t, 0.9, 2 * half, 1.8, gy + 3.3, 0.3, lin(br.band && br.band !== '#ffffff' ? br.band : '#3a3f45'));
+    const [dx, , dz] = fr.P(fi, t, 0, 2.4);
+    tn.r.x = dx; tn.r.z = dz; tn.r.drawn = true;
+    stats.tenants = (stats.tenants || 0) + 1;
   }
 
   // --- the plazas' pylons
@@ -1153,6 +1301,63 @@ export function buildShops(ctx) {
     try { fn({ A, Gb, Lb, ctx, solid, txt, bg, brandOf, logoOf: (k) => A.logo(k) }); } catch (e) { console.warn('kwshops hook: ' + (e.stack || e.message)); }
   }
 
+  // the independents' signs on the plazas' fascias (plaza.sh: every tenant OSM
+  // names with no brand drawn here, outside kw.js's detail zones): lettering in
+  // the atlas, after everything else in it, round-robin across the plazas so
+  // every plaza gets its first few before any gets its last, until the atlas is full
+  {
+    const PAL = [['#1f2a36', '#ffffff'], ['#7a1f24', '#ffffff'], ['#f4efe4', '#2a2a2a'], ['#21543d', '#ffffff'],
+      ['#2c3e66', '#f0d36a'], ['#111111', '#e8c46a'], ['#c84b1e', '#ffffff'], ['#e9e1cf', '#7a1f24'], ['#ffffff', '#b5121b'], ['#4a2a5a', '#ffffff']];
+    const rows = [];
+    (S.plazas || []).forEach((P, pi) => (P.sh || []).forEach((r, i) => rows.push([i, pi, ...r])));
+    rows.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    let signed = 0, noRoom = 0;
+    const plazaPoly = (o) => o.kw.poly.pts;
+    for (const [, pi, nm, x, z] of rows) {
+      // the plaza building it is in, else the nearest one: one of its strips,
+      // or a store kw.js draws from its outline (an L- or U-shaped plaza)
+      let sf = null, bd = 30;
+      for (const o of city.buildingsNear(x, z, 90)) {
+        if (o.kw && o.kw.shop && o.kw.shop.fmt === 'strip' && o.kw.shop.plaza === pi && o.kw.strip) {
+          const dx = x - o.x, dz = z - o.z, c = Math.cos(o.rot), sn = Math.sin(o.rot);
+          const lx = Math.abs(dx * c + dz * sn) - o.w / 2, lz = Math.abs(-dx * sn + dz * c) - o.d / 2;
+          const d = Math.hypot(Math.max(0, lx), Math.max(0, lz));
+          if (d < bd) { bd = d; sf = boxFront(o); }
+        } else if (o.kw && o.kw.poly && o.kw.poly.retail && !o.kw.skip && !o.kw.shop) {
+          // (an L's centroid can lie outside it and outside the plaza: the tenant's 30 m decides)
+          const f = polyFace(o.kw.poly, x, z);
+          if (!f) continue;
+          const d = inPoly(plazaPoly(o), x, z) ? 0 : Math.hypot(x - f.x, z - f.z);
+          if (d < bd) { bd = d; sf = polyFront(f); }
+        }
+      }
+      if (!sf) continue;
+      const cw = nm.length > 16 ? 148 : nm.length > 9 ? 118 : 88, lh = 0.92, lw = (lh * cw) / 22;
+      const half = lw / 2 + 0.3;
+      if (sf.hi - sf.lo < lw + 1.2) continue;
+      let u = fascia.get(sf.key);
+      if (!u) fascia.set(sf.key, (u = []));
+      const want = sf.tOf(x, z);
+      let t = null;
+      for (let d = 0; d < sf.hi - sf.lo && t === null; d += 0.75) {
+        for (const sg of d ? [1, -1] : [1]) {
+          const c0 = want + sg * d;
+          if (c0 - half < sf.lo + 0.4 || c0 + half > sf.hi - 0.4 || u.some(([a, b2]) => c0 + half > a && c0 - half < b2)) continue;
+          t = c0; break;
+        }
+      }
+      if (t === null) { noRoom++; continue; }
+      const col = PAL[Math.floor(hashI(x * 0.37, z * 0.53) * PAL.length)];
+      const c = A.text(nm, col[1], col[0], cw, 22);
+      if (!c) break;      // the atlas is full: the rest go unsigned
+      u.push([t - half, t + half]);
+      const [px, pz] = sf.at(t, 1.9);
+      A.quad(Lb(px, pz), c, px, sf.y + 3.82, pz, sf.nx, sf.nz, lw, lh);
+      signed++;
+    }
+    stats.independents = { signed, noRoom, of: rows.length };
+  }
+
   const mat = A.finish();
   const pm = polyMat();
   for (const [k, Bd] of geo) {
@@ -1195,6 +1400,7 @@ Object.assign(NAME_KEY, {
   'walmart supercentre': 'walmart', 'canadian tire': 'ct', 'the home depot': 'homedepot', rona: 'rona', 'rona+': 'rona', 'td': 'td',
   'rbc': 'rbc', 'rbc royal bank': 'rbc', 'the beer store': 'beer', "montana's bbq & bar": 'montanas', 'popeyes louisiana kitchen': 'popeyes',
   'td canada trust': 'td', 'bmo bank of montreal': 'bmo', 'costco wholesale': 'costco', 'canadian tire gas+': 'ctgas',
+  '大統華 t&t supermarket': 'tnt', 't&t': 'tnt', chapters: 'indigo', 'home hardware building centre': 'homehardware', "mark's work wearhouse": 'marks',
 });
 function brandOf(name) { return NAME_KEY[(name || '').toLowerCase()] || null; }
 
@@ -1213,7 +1419,7 @@ export function shopPlaces() {
   }
   for (const P of S.plazas || []) {
     if (!P.ten || P.ten.length < 4) continue;
-    const anchors = P.ten.filter((t) => MAJOR.has(brandOf(t)) || /Zehrs|Sobeys|Food Basics|No Frills|Superstore/.test(t));
+    const anchors = P.ten.filter((t) => MAJOR.has(brandOf(t)) || /Zehrs|Sobeys|Food Basics|No Frills|Superstore|Independent|Farm Boy|Longo|T&T/.test(t));
     out.push({ x: P.x, z: P.z, kind: 'plaza', name: P.n, near: false, label: anchors.length ? P.n : false,
       hello: `${P.n} — ${P.ten.slice(0, 6).join(', ')}` });
   }
