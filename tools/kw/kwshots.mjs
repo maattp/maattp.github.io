@@ -6,6 +6,8 @@
 //   VIEW_WAIT=ms        settle time before each shot (default 4000)
 //   VIEW_PROBE='<js>'   evaluate once on the booted page and print it, no shots
 //   VIEW_PRE='<js>'     evaluate once before the shots (e.g. hide a layer to see what draws what)
+//   VIEW_BOOT_JS='<js>' run before the page's own scripts (e.g. window.__noPlaces = true for a before/after)
+//   `calls` in the output is the scene pass's draw count, `tris` its triangles
 //   VIEW_SIZE=874x402   window size (default 1280x720; 874x402 is the phone's landscape)
 //
 // Boot recipe as verify.mjs / landmarkshots.mjs: service worker bypassed,
@@ -79,7 +81,7 @@ async function main() {
       await send('Emulation.setDeviceMetricsOverride', { width: 874, height: 402, deviceScaleFactor: 3, mobile: true, screenWidth: 874, screenHeight: 402, screenOrientation: { type: 'landscapePrimary', angle: 90 } });
       await send('Emulation.setUserAgentOverride', { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1', platform: 'iPhone' });
     }
-    await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.__noAutoQuality = true;' });
+    await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.__noAutoQuality = true;' + (process.env.VIEW_BOOT_JS || '') });
     await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/${process.env.AUTO_APP || 'autokw'}/` });
     let up = false;
     for (let i = 0; i < 400; i++) {
@@ -158,7 +160,7 @@ async function main() {
       await sleep(+process.env.VIEW_WAIT || 4000);
       const calls = await evaluate(`(() => {
         const d = window.__dbg, m = d.world.mountains;
-        const a = d.sceneStats ? d.sceneStats.calls : -1;
+        const a = d.sceneStats ? d.sceneStats.calls + '  tris ' + Math.round(d.sceneStats.tris / 1000) + 'k' : -1;
         return a;
       })()`);
       const { result } = await send('Page.captureScreenshot', { format: 'jpeg', quality: 85 });

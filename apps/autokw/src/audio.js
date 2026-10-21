@@ -1157,6 +1157,32 @@ const SOUNDS = {
     bg.gain.linearRampToValueAtTime(0.12, t + 0.1);
     bg.gain.linearRampToValueAtTime(0, t + T);
   } },
+  // A Canada goose's "ah-HONK" (kwplaces.js Geese): a short low syllable,
+  // then the honk -- a nasal, buzzy call that rises and breaks, through a
+  // goose's two narrow formants, with a rasp of breath.
+  goose: { dur: 0.7, variants: 3, build(k, out, t, R) {
+    const calls = [[0, 0.1, 290 + R() * 40, 320, 0.45], [0.13, 0.24, 470 + R() * 70, 400 + R() * 30, 0.95]];
+    if (R() < 0.4) calls.push([0.42, 0.18, 440 + R() * 50, 380, 0.7]);
+    for (const [t0, len, f0, f1, pk] of calls) {
+      const o = k.osc('sawtooth', f0, t + t0, len + 0.03);
+      o.frequency.setValueAtTime(f0, t + t0);
+      o.frequency.linearRampToValueAtTime(f0 * 1.12, t + t0 + len * 0.3);
+      o.frequency.linearRampToValueAtTime(f1, t + t0 + len);
+      const env = k.gain(0), mix = k.gain(1);
+      o.connect(k.filt('bandpass', 1050 + R() * 120, 4)).connect(mix);
+      o.connect(k.filt('bandpass', 2500, 6)).connect(mix);
+      mix.connect(env).connect(k.shaper(2.2)).connect(out);
+      env.gain.setValueAtTime(0, t + t0);
+      env.gain.linearRampToValueAtTime(pk, t + t0 + 0.02);
+      env.gain.setValueAtTime(pk, t + t0 + len * 0.7);
+      env.gain.linearRampToValueAtTime(0, t + t0 + len);
+      const bg = k.gain(0);
+      k.noise('pink', t + t0, len, R).connect(k.filt('bandpass', 1800, 1.2)).connect(bg).connect(out);
+      bg.gain.setValueAtTime(0, t + t0);
+      bg.gain.linearRampToValueAtTime(0.08 * pk, t + t0 + 0.02);
+      bg.gain.linearRampToValueAtTime(0, t + t0 + len);
+    }
+  } },
   // A level crossing's electronic bell: a hard little strike, about twice a
   // second (freight.js paces it), bright and a touch inharmonic.
   xing_bell: { dur: 0.5, build(k, out, t, R) {

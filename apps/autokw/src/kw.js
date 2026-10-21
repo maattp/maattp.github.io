@@ -150,6 +150,9 @@ export const LM_SIGNS = {
   'Ken Seiling Waterloo Region Museum': { text: 'WATERLOO REGION MUSEUM', bg: '#4a2a5a', fg: '#ffffff', w: 14 },
   'Galt Arena Gardens': { text: 'GALT ARENA GARDENS', bg: '#7a1f24', fg: '#ffffff', w: 12 },
   'Manulife Financial Sportsplex': { text: 'RIM PARK', sub: 'MANULIFE SPORTSPLEX', bg: '#0b3e8a', fg: '#ffffff', w: 14 },
+  'Waterloo City Centre': { text: 'WATERLOO CITY HALL', sub: '100 REGINA ST S', bg: '#0d2f5f', fg: '#ffffff', w: 14 },
+  'Waterloo Public Library - Main': { text: 'WATERLOO PUBLIC LIBRARY', bg: '#ffffff', fg: '#0d2f5f', w: 12 },
+  'Canadian Clay and Glass Gallery': { text: 'CANADIAN CLAY & GLASS GALLERY', bg: '#1d1d1d', fg: '#ffffff', w: 12 },
   'Conestoga Student Recreation Centre': { text: 'CONESTOGA COLLEGE', sub: 'RECREATION CENTRE', bg: '#0b2d4a', fg: '#ffffff', w: 14 },
 };
 

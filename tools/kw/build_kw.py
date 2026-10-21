@@ -207,8 +207,10 @@ def main():
         flags.append([round(p["x"], 1), round(p["z"], 1), kind])
     print(f"flags: {len(flags)} ({sum(1 for f in flags if f[2] == 'car')} at car dealers)")
 
+    places = build_places(blds, pois, green)
+
     doc = {"named": named, "flags": flags, "schools": schools, "shops": shops, "tims": tims, "freshco": fresh, "polys": polys, "aero": aero,
-           "zones": [[nm, round(x), round(z), r] for nm, x, z, r in zones]}
+           "places": places, "zones": [[nm, round(x), round(z), r] for nm, x, z, r in zones]}
     p = os.path.join(OUT, "kw.json")
     with open(p, "w") as f:
         json.dump(doc, f, separators=(",", ":"), ensure_ascii=False)
@@ -217,6 +219,165 @@ def main():
           f"{len(shops)} zone shops, {len(tims)} Tim Hortons, {len(fresh)} FreshCo")
     assert len(tims) > 40, "Tim Hortons missing"
     assert len(fresh) >= 4, "FreshCo missing"
+
+
+# --- the places (src/kwplaces.js) -------------------------------------------------------
+
+# King Street's centreline through Uptown Waterloo, William St (south) to past
+# Bridgeport Rd (north), from OSM's King Street ways.
+UPTOWN_KING = [(-3756, -1073), (-3772, -1150), (-3800, -1291), (-3813, -1356), (-3820, -1391), (-3834, -1465),
+               (-3845, -1519), (-3855, -1557), (-3880, -1691), (-3889, -1738), (-3902, -1802)]
+# Footprints kwplaces.js draws itself, by the OSM centroid each one has (+-4 m)
+PLACE_BLDGS = {
+    "townsq": (-3932, -1302),        # The Shops at Waterloo Town Square
+    "mall": (-4177, -5080),          # Conestoga Mall
+    "cinema": (-4110, -4930),        # Galaxy Cinemas Waterloo
+    "seagram3": (-4024, -1154),      # Seagram Lofts, 3 Father David Bauer Dr (1905 barrel warehouse)
+    "seagram5": (-4081, -1152),      # Seagram Lofts, 5 Father David Bauer Dr (1907)
+    "school": (-4440, -1679),        # First School House in Waterloo (1820, log)
+    "mill": (-4132, -1536),          # the Grist Mill replica (1998), Silver Lake's east end
+    "potters": (-4420, -1759),       # Eby farmhouse, now the Waterloo Potters' Workshop
+    "ebybarn": (-4586, -1692),       # the Eby Farmstead's barn
+    "parkinn": (-4434, -1644),       # Park Inn concession
+    "gazeboE": (-4271, -1662),       # East Gazebo
+    "gazeboT": (-4403, -1491),       # Trans Canada Trail Pavilion
+    "gazeboW": (-5046, -1399),       # Gazebo West
+    "martinHouse": (-1618, -7177),   # Elam Martin farmstead: the house (1856) and the doddy house
+    "martinBarn": (-1568, -7208),    # its bank barn
+}
+# Where the playing fields are drawn: RIM Park and Waterloo Park (x0, z0, x1, z1)
+PITCH_BOXES = {"rim": (-2900, -7750, -1600, -6900), "wpark": (-4950, -2080, -4300, -1450)}
+PLACE_SHOP_AMENITY = SHOP_AMENITY | {"nightclub", "theatre", "arts_centre", "bar", "fast_food", "bank", "cinema"}
+
+
+def _seg_dist(px, pz, a, b):
+    dx, dz = b[0] - a[0], b[1] - a[1]
+    L2 = dx * dx + dz * dz or 1.0
+    t = max(0.0, min(1.0, ((px - a[0]) * dx + (pz - a[1]) * dz) / L2))
+    return math.hypot(px - a[0] - dx * t, pz - a[1] - dz * t)
+
+
+def _in_poly(p, x, z):
+    c = False
+    j = len(p) - 1
+    for i in range(len(p)):
+        if (p[i][1] > z) != (p[j][1] > z) and x < (p[j][0] - p[i][0]) * (z - p[i][1]) / (p[j][1] - p[i][1]) + p[i][0]:
+            c = not c
+        j = i
+    return c
+
+
+def _area(p):
+    a = 0.0
+    for i in range(len(p)):
+        j = (i + 1) % len(p)
+        a += p[i][0] * p[j][1] - p[j][0] * p[i][1]
+    return a / 2
+
+
+def _clean(o):
+    pts = []
+    for q in o:
+        if not pts or math.hypot(q[0] - pts[-1][0], q[1] - pts[-1][1]) > 0.4:
+            pts.append([round(q[0], 1), round(q[1], 1)])
+    if len(pts) > 2 and pts[0] == pts[-1]:
+        pts.pop()
+    return pts
+
+
+def _levels(lv):
+    try:
+        return float(str(lv).split(";")[0]) if lv else None
+    except ValueError:
+        return None
+
+
+def build_places(blds, pois, green):
+    out = {}
+    cen = lambda o: (sum(q[0] for q in o) / len(o), sum(q[1] for q in o) / len(o))
+    # named footprints, by their centroid (the nearest within 12 m: OSM's way
+    # centroid counts the closing node, ours may not)
+    near = {}
+    for b in blds:
+        cx, cz = cen(b["o"])
+        for key, (px, pz) in PLACE_BLDGS.items():
+            d = math.hypot(cx - px, cz - pz)
+            if d < 12 and (key not in near or d < near[key][0]):
+                near[key] = (d, b)
+    for key, (d, b) in near.items():
+        out[key] = {"p": _clean(b["o"]), "lv": _levels(b.get("lv")), "n": b.get("n") or ""}
+    missing = [k for k in PLACE_BLDGS if k not in out]
+    assert not missing, f"place footprints not found: {missing}"
+
+    # Uptown's King Street: every low building with a wall on the street, and
+    # the shops OSM maps inside it
+    shops = [p for p in pois if p.get("n") and (p["t"].get("shop") or p["t"].get("amenity") in PLACE_SHOP_AMENITY)
+             and -4000 < p["x"] < -3650 and -1850 < p["z"] < -1000]
+    king = []
+    for b in blds:
+        o = b["o"]
+        cx, cz = cen(o)
+        if not (-3990 < cx < -3680 and -1830 < cz < -1040):
+            continue
+        bt = str(b.get("bt", "yes")).lower()
+        n = b.get("n") or ""
+        if bt in ("parking", "roof", "garage", "garages", "service", "church", "shed") or "Town Square" in n:
+            continue
+        lv = _levels(b.get("lv"))
+        if lv and lv > 5:
+            continue
+        pts = _clean(o)
+        if len(pts) < 3:
+            continue
+        A = abs(_area(pts))
+        if A < 40 or A > 1600:
+            continue
+        d = min(_seg_dist(q[0], q[1], UPTOWN_KING[i], UPTOWN_KING[i + 1]) for q in pts for i in range(len(UPTOWN_KING) - 1))
+        if d > 24:
+            continue
+        inside = []
+        for p in shops:
+            if p["t"].get("shop") == "vacant":
+                continue
+            if _in_poly(pts, p["x"], p["z"]) or min(math.hypot(p["x"] - q[0], p["z"] - q[1]) for q in pts) < 2.5:
+                k = p["t"].get("shop") or p["t"].get("amenity")
+                if p["n"] not in [s[0] for s in inside]:
+                    inside.append([p["n"], k, p["t"].get("brand", "")])
+        king.append({"p": pts, "lv": lv, "ht": b.get("ht"), "n": n, "bt": bt, "s": inside})
+    out["king"] = king
+    print(f"  uptown: {len(king)} King St buildings, {sum(len(k['s']) for k in king)} shops in them")
+
+    # the playing fields: soccer pitches (rectangles) and ball diamonds (fans:
+    # the polygon fills well under its oriented box)
+    def obb_fill(pts):
+        best = None
+        for i in range(len(pts)):
+            a, c = pts[i], pts[(i + 1) % len(pts)]
+            L = math.hypot(c[0] - a[0], c[1] - a[1])
+            if L < 1:
+                continue
+            ux, uz = (c[0] - a[0]) / L, (c[1] - a[1]) / L
+            us = [q[0] * ux + q[1] * uz for q in pts]
+            vs = [-q[0] * uz + q[1] * ux for q in pts]
+            Ab = (max(us) - min(us)) * (max(vs) - min(vs))
+            if best is None or Ab < best:
+                best = Ab
+        return abs(_area(pts)) / best if best else 1
+    pitches = {k: [] for k in PITCH_BOXES}
+    for g in green:
+        if g.get("k") != "pitch":
+            continue
+        cx, cz = cen(g["o"])
+        for key, (x0, z0, x1, z1) in PITCH_BOXES.items():
+            if x0 < cx < x1 and z0 < cz < z1:
+                pts = _clean(g["o"])
+                A = abs(_area(pts))
+                if A < 1500 or re.search(r"Skatepark|Bike Park", g.get("n") or ""):
+                    continue
+                pitches[key].append({"n": g.get("n") or "", "p": pts, "d": obb_fill(pts) < 0.86 and 6 < len(pts) <= 14})
+    out["pitches"] = pitches
+    print(f"  fields: " + ", ".join(f"{k} {len(v)} ({sum(1 for p in v if p['d'])} diamonds)" for k, v in pitches.items()))
+    return out
 
 
 if __name__ == "__main__":
