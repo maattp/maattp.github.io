@@ -707,7 +707,8 @@ function meshKing(kit, ctx, r, idx) {
   }
   roof(B, pts, yTop, lin([0.36, 0.35, 0.34]));
   // some plant on the bigger roofs
-  if (Math.abs(polyArea(pts)) > 300) {
+  // (where it is on the roof: the vertex centroid of an L is off it, over the yard)
+  if (Math.abs(polyArea(pts)) > 300 && [[0, 0], [1.8, 1.8], [-1.8, 1.8], [1.8, -1.8], [-1.8, -1.8]].every(([dx, dz]) => inPoly(pts, cx + dx, cz + dz))) {
     B.box(cx, yTop, cz, 2.2, 1.3, 1.6, hash2(seed, 30) * 3, lin([0.62, 0.63, 0.64]));
   }
   // the Old Post Office's clock tower, on its King and Dupont corner
