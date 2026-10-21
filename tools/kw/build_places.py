@@ -26,8 +26,13 @@ LANDMARKS = [
 
 # Where the player starts, and where the hospital puts them back. Both are real
 # places, and citygen keeps buildings off them (G.KEEP_CLEAR).
-SPAWN_LL = (43.46447, -80.52207)     # King St S by Erb St, Uptown Waterloo (the east sidewalk)
-SPAWN_HEADING = 3.33                  # north up King St to Erb (rotation.y)
+# Waterloo Public Square, on the courtyard by the rink's north end, looking
+# south-west across the rink to the Shops at Waterloo Town Square's main
+# entrance, the leaf shades and Beertown (kwplaces.js draws the square). The
+# red coupe is at the nearest kerb, King St's west side (main.js).
+# (Not on OSM's drinking fountain at (-3825.8, -1348.0), which it first was.)
+SPAWN_LL = (43.464151, -80.522312)
+SPAWN_HEADING = -0.72                 # rotation.y: toward the mall's entrance (-3857.7, -1316.1)
 RESPAWN_LL = (43.45680, -80.51060)   # Grand River Hospital, KW campus
 
 

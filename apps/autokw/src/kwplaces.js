@@ -177,7 +177,7 @@ function hang(g, mesh, x, y, z, nx, nz, off = 0.06) {
  * FreshCo and storefront in the region is on it.
  */
 class PlaceAtlas {
-  constructor(w = 2048, h = 1024) {
+  constructor(w = 2048, h = 1280) {
     this.c = document.createElement('canvas');
     this.c.width = w; this.c.height = h;
     this.g = this.c.getContext('2d');
@@ -356,6 +356,8 @@ export function prepPlaces(city) {
   for (const r of P.king) { n += skipBox(city, r.p); KING_SKIP.push(r.p); }
   for (const k of ['townsq', 'mall', 'cinema', 'seagram3', 'seagram5', 'school', 'mill', 'potters', 'ebybarn', 'parkinn',
     'gazeboE', 'gazeboT', 'gazeboW', 'martinHouse', 'martinBarn']) if (P[k]) n += skipBox(city, P[k].p);
+  // Uptown's two big neighbours of the square, drawn from their OSM plans here
+  for (const p of [MARSLAND, MARSLAND_W, MARSLAND_E, PARKADE]) n += skipBox(city, p);
   return { skipped: n };
 }
 
@@ -683,9 +685,15 @@ function kingLamps(kit, ctx) {
         const B = kit.B(x, z);
         B.box(x, y - 0.2, z, 0.42, 0.9, 0.42, 0, POST);
         B.prism(x, y + 0.6, z, 0.085, 5.2, 6, POST);
-        B.box(x, y + 5.8, z, 0.3, 0.12, 0.3, 0, POST);
-        B.prism(x, y + 5.92, z, 0.2, 0.55, 6, GLOBE);
-        B.box(x, y + 6.47, z, 0.48, 0.1, 0.48, 0, POST);
+        // the ornamental head: a crossarm along the street and two globes
+        B.box(x, y + 5.8, z, 1.3, 0.08, 0.08, Math.atan2(k.ez, k.ex), POST);
+        for (const s of [-0.6, 0.6]) {
+          const gx = x + k.ex * s, gz = z + k.ez * s;
+          B.prism(gx, y + 5.84, gz, 0.07, 0.12, 6, POST);
+          B.spheroid(gx, y + 6.18, gz, 0.22, 8, 5, GLOBE);
+          B.box(gx, y + 6.38, gz, 0.2, 0.08, 0.2, 0, POST);
+        }
+        B.prism(x, y + 5.8, z, 0.06, 0.75, 6, POST);
         // the banner arms reach out over the kerb; the banner hangs between
         // them, its faces up and down the street to the traffic
         for (const yy of [3.45, 4.95]) B.box(x - nx * 0.36, y + yy, z - nz * 0.36, 0.72, 0.05, 0.05, Math.atan2(nz, nx), POST);
@@ -696,103 +704,566 @@ function kingLamps(kit, ctx) {
       }
     }
   }
+  // street trees in grates half way between the lamps (the 2019 streetscape),
+  // where the pavement has room: not on a road, in a building or on the square
+  let nt = 0;
+  for (let i = 0; i < UPTOWN_KING.length - 1; i++) {
+    const a = UPTOWN_KING[i], b = UPTOWN_KING[i + 1];
+    const dx = b[0] - a[0], dz = b[1] - a[1], len = Math.hypot(dx, dz);
+    for (let t = 27; t < len - 4; t += 30) {
+      const k = street(city, a[0] + dx * t / len, a[1] + dz * t / len, 30, /^King Street/);
+      if (!k) continue;
+      for (const sd of [-1, 1]) {
+        const off = k.hw + 1.25, nx = -k.ez * sd, nz = k.ex * sd;
+        const x = k.qx + nx * off, z = k.qz + nz * off;
+        if (inPoly(COURT, x, z) || city.onRoad(x, z, 0.9, false, false)) continue;
+        if (boxAt(city, x, z, 1.2) && boxAt(city, x, z, 1.2).h > 0.5) continue;
+        if (KING_SKIP.some((p) => inPoly(p, x, z) || segDist(x, z, p.concat([p[0]])) < 1.6)) continue;
+        const y = walkY(city, x, z), B = kit.B(x, z);
+        B.box(x, y - 0.17, z, 1.3, 0.2, 1.3, Math.atan2(k.ez, k.ex), lin([0.18, 0.18, 0.18]));
+        tree(B, x, y, z, 6 + hash2(x, z) * 1.5, Math.round(x * 3 + z), ctx.solids);
+        nt++;
+      }
+    }
+  }
+  STATS.kingTrees = nt;
   return n;
 }
 
 // --- Uptown: Waterloo Public Square and the Town Square ----------------------------------
+//
+// WATERLOO PUBLIC SQUARE (2009, on the mall's old parking lot; OSM way
+// 62299949). King St S runs down its east side, Willis Way cuts its south
+// corner on a diagonal, the ION track and Waterloo Public Square station (one
+// platform, northbound) close its north side, and the Shops at Waterloo Town
+// Square front it on the west. From the City's site plan (July 2026), its
+// 2012 photographs and OSM's pedestrian area (760863913):
+//   - a flat concrete courtyard on King (light grey slabs in a big grid of
+//     darker bands) with the rink's rounded rectangle in the middle;
+//   - round its south-west side a curved raised stage and seat-steps that rise
+//     to an upper terrace (the mall's floor, ~1.35 m up: twelve steps in OSM
+//     from the main entrance down to the courtyard);
+//   - on that terrace the five leaf shade structures (2023): a curved steel
+//     spine each with timber slats stacked up it, ~8 m tall, lit from below;
+//   - the water feature in front of Beertown's patio: a water wall and pools
+//     cascading north beside a stepped walk (OSM 760863914, steps 2-2-4);
+//   - the Waterloo Bell (Royden Rabinowitch, 2009, Corten) on its round
+//     plinth at the foot of the seat-steps;
+//   - a planted triangle with a grove of trees along Willis Way, young trees
+//     in grates, concrete benches and the GRT shelter along King, tall grey
+//     light poles with banners and hanging baskets, the event trailer and a
+//     hedge on the fire route by the station.
+// The rink is the City's: public skating only, "not designed for hockey" --
+// a low white curb with a red stripe round a white sheet (2019 photographs).
 
-// Waterloo Public Square (OSM way 62299949) and the water wall's line along
-// its west edge, in front of Beertown (75 King St S)
-const SQUARE = [[-3863.5, -1351.3], [-3832.0, -1359.6], [-3819.6, -1356.5], [-3810.9, -1299.7], [-3843.0, -1277.4], [-3849.7, -1272.5], [-3861.9, -1343.6]];
-const WATERWALL = [[-3855.0, -1318.5], [-3857.4, -1333.5]];
-// the shade structures (2023): "large leaf-like structures with wood slats
-// on steel posts" -- [x, z, yaw (rad, the leaf's long axis), length, width]
-const LEAVES = [[-3829, -1289, 0.95, 11, 5.5], [-3843, -1297, 2.3, 9.5, 5], [-3820, -1312, 1.45, 9, 4.6], [-3848, -1281, 0.35, 8, 4.4], [-3823, -1349, 1.5, 8, 4]];
+// the rink (OSM way 202051421, leisure=ice_rink): its rounded end toward
+// Willis Way (r ~9.9 m round (-3833.4, -1322)), its square end toward ION
+const RINK = [[-3843.5, -1321.9], [-3842.9, -1318.5], [-3841.1, -1315.6], [-3838.5, -1313.4], [-3835.2, -1312.2], [-3831.7, -1312.2],
+  [-3828.5, -1313.4], [-3825.8, -1315.7], [-3824.1, -1318.7], [-3823.5, -1322.1], [-3824.1, -1325.5], [-3827.7, -1344.9], [-3847.1, -1341.4]];
+// the courtyard (OSM's pedestrian area, its north and King parts)
+const COURT = [[-3849.6, -1338.6], [-3846.4, -1319.6], [-3846.0, -1318.1], [-3845.2, -1315.1], [-3843.3, -1312.1], [-3841.2, -1309.5],
+  [-3838.5, -1307.2], [-3835.4, -1305.4], [-3831.8, -1304.3], [-3828.0, -1303.2], [-3825.0, -1301.5], [-3821.5, -1300.0],
+  [-3815.1, -1296.7], [-3810.9, -1299.7], [-3819.6, -1356.5], [-3825.6, -1359.3], [-3832.0, -1359.6], [-3852.2, -1356.8],
+  [-3851.6, -1353.7], [-3863.5, -1351.3], [-3861.2, -1340.1], [-3853.5, -1340.6]];
+// the seat-steps' foot: the courtyard's curved edge, from the entrance stair round to Willis Way
+const AMPHI = [[-3845.2, -1315.1], [-3843.3, -1312.1], [-3841.2, -1309.5], [-3838.5, -1307.2], [-3835.4, -1305.4], [-3831.8, -1304.3],
+  [-3828.0, -1303.2], [-3825.0, -1301.5], [-3821.5, -1300.0], [-3818.5, -1298.6]];
+// [from, to, height]: the stage, two rows of seat-steps, the terrace's edge
+const TIERS = [[0, 2.4, 0.45], [2.4, 3.3, 0.9], [3.3, 5.4, 1.35]];
+const TERRACE = 1.35;
+// the King St edge of the square, south to north
+const KING_EDGE = [[-3810.9, -1299.7], [-3819.6, -1356.5]];
+// the mall's wall on the square, Willis Way to the north end
+const MALL_FRONT = [[-3850.7, -1273.6], [-3857.7, -1316.1], [-3861.8, -1339.6]];
+// the water feature (OSM 760863914): four pools stepping down north, the walk beside them
+const POOLS = [[-1320.5, -1326.0, 1.2], [-1326.0, -1330.7, 0.88], [-1330.7, -1335.4, 0.56], [-1335.4, -1340.0, 0.24]];
+// the walk beside the pools: [z north, z south, y at the north end, y at the south end]
+const WALK = [[-1325.4, -1320.0, 1.35, 1.35], [-1327.0, -1325.4, 1.0, 1.35], [-1330.3, -1327.0, 1.0, 1.0], [-1331.7, -1330.3, 0.68, 1.0],
+  [-1335.1, -1331.7, 0.68, 0.68], [-1338.1, -1335.1, 0, 0.68]];
+const WALK_X = [-3852.3, -3849.6];
+// the planted beds on the terrace (OSM gardens 760863915-7) and the triangle on Willis Way (202051422)
+const BEDS = [[[-3852.4, -1303.2], [-3853.6, -1310.5], [-3850.3, -1305.4], [-3849.3, -1304.5], [-3849.9, -1304.0]],
+  [[-3841.9, -1298.3], [-3838.6, -1296.7], [-3840.6, -1291.4], [-3843.4, -1292.4], [-3844.1, -1294.8]],
+  [[-3850.0, -1288.9], [-3848.8, -1289.2], [-3842.6, -1286.5], [-3847.3, -1275.4]]];
+const GROVE = [[-3843.0, -1277.4], [-3815.1, -1296.7], [-3820.3, -1295.6], [-3828.9, -1294.3], [-3835.7, -1295.9]];
+const BELL = [-3827.4, -1304.6];   // The Waterloo Bell (OSM node 1583470085)
+const SHELTER = [-3814.5, -1316.8]; // GRT's stop on King (OSM node 502854873)
 
-function publicSquare(kit, ctx) {
+/** A polyline offset by d along its (mitred) normals, the side away from `away`. */
+function offsetLine(pts, d, away) {
+  const n = pts.map((p, i) => {
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+    const tx = b[0] - a[0], tz = b[1] - a[1], tl = Math.hypot(tx, tz) || 1;
+    let nx = -tz / tl, nz = tx / tl;
+    if ((p[0] - away[0]) * nx + (p[1] - away[1]) * nz < 0) { nx = -nx; nz = -nz; }
+    return [nx, nz];
+  });
+  return pts.map((p, i) => [p[0] + n[i][0] * d, p[1] + n[i][1] * d]);
+}
+function segDist(px, pz, pts) {
+  let best = Infinity;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1], dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx * dx + dz * dz || 1;
+    const t = Math.max(0, Math.min(1, ((px - a[0]) * dx + (pz - a[1]) * dz) / L2));
+    best = Math.min(best, Math.hypot(px - a[0] - dx * t, pz - a[1] - dz * t));
+  }
+  return best;
+}
+/** A street tree: a trunk and a lumpy crown in its fall colour. */
+function tree(B, x, y, z, h, seed, solids) {
+  const FALL = [[0.80, 0.42, 0.10], [0.86, 0.62, 0.14], [0.62, 0.20, 0.12], [0.55, 0.60, 0.22], [0.90, 0.72, 0.20]];
+  const c = lin(FALL[Math.floor(hash2(seed, 41) * FALL.length)]);
+  B.prism(x, y - 0.2, z, 0.11, h * 0.62, 6, lin([0.30, 0.24, 0.19]));
+  // a young street tree: an upright crown of three lumps, not a ball
+  const r = h * 0.17;
+  for (let k = 0; k < 3; k++) {
+    const a = hash2(seed, k) * 6.28, o = k ? r * 0.55 : 0;
+    B.spheroid(x + Math.cos(a) * o, y + h * (0.62 + 0.12 * k), z + Math.sin(a) * o, r * (1 - 0.15 * k), 6, 4, shade(c, 0.9 + 0.12 * k), 1.35, 0.35);
+  }
+  if (solids) solids.push({ x, z, r: 0.2, y0: y - 1, y1: y + h * 0.55 });
+}
+/** A tall grey square light: banner arms, a hanging basket, a lantern on an arm. */
+function squareLight(B, g, ctx, x, y, z, ax, az, banner) {
+  const POLE = lin([0.55, 0.56, 0.57]);
+  B.prism(x, y - 0.2, z, 0.11, 8.6, 8, POLE);
+  B.box(x, y - 0.2, z, 0.4, 0.7, 0.4, 0, POLE);
+  B.tube([x, y + 8.2, z], [x + ax * 1.3, y + 8.5, z + az * 1.3], 0.05, 5, POLE);
+  B.box(x + ax * 1.3, y + 8.05, z + az * 1.3, 0.5, 0.35, 0.3, Math.atan2(az, ax), lin([0.25, 0.26, 0.27]));
+  B.box(x + ax * 1.3, y + 7.98, z + az * 1.3, 0.42, 0.07, 0.24, Math.atan2(az, ax), lin([1.0, 0.95, 0.80]));
+  // the hanging basket (red geraniums) off the other side
+  B.tube([x, y + 4.6, z], [x - ax * 0.6, y + 4.6, z - az * 0.6], 0.03, 4, POLE);
+  B.spheroid(x - ax * 0.6, y + 4.0, z - az * 0.6, 0.38, 6, 4, lin([0.70, 0.10, 0.12]), 0.8, 0.35);
+  if (banner) {
+    for (const yy of [5.6, 7.3]) B.tube([x, y + yy, z], [x + ax * 0.65, y + yy, z + az * 0.65], 0.025, 4, POLE);
+    for (const s of [1, -1]) hang(g, banner.clone(), x + ax * 0.34, y + 6.45, z + az * 0.34, -az * s, ax * s, 0.02);
+  }
+  ctx.solids.push({ x, z, r: 0.22, y0: y - 1, y1: y + 8.6 });
+}
+
+/**
+ * The rink: a white sheet on the courtyard inside a low white curb with a red
+ * stripe along its top, one gap toward King St. Walkable (two platforms).
+ */
+function rink(kit, ctx) {
   const city = ctx.city;
-  const STEEL = lin([0.24, 0.25, 0.27]), WOOD = lin([0.66, 0.47, 0.29]), WOOD2 = lin([0.56, 0.38, 0.22]);
-  for (const [x, z, yaw, Lf, Wf] of LEAVES) {
-    const B = kit.B(x, z);
-    const ux = Math.cos(yaw), uz = Math.sin(yaw), vx = -uz, vz = ux;
-    const y = walkY(city, x, z), h = 4.4;
-    // two raked steel posts and a spine
-    for (const s of [-0.28, 0.28]) {
-      const px = x + ux * Lf * s, pz = z + uz * Lf * s;
-      B.tube([px, y - 0.3, pz], [px + ux * s * 0.6, y + h + Math.abs(s) * 0.6, pz + uz * s * 0.6], 0.13, 6, STEEL);
-      ctx.solids.push({ x: px, z: pz, r: 0.22, y0: y - 1, y1: y + h });
-    }
-    B.tube([x - ux * Lf * 0.48, y + h + 0.55, z - uz * Lf * 0.48], [x + ux * Lf * 0.48, y + h + 0.75, z + uz * Lf * 0.48], 0.09, 6, STEEL);
-    // the slats across the leaf, the outline an ellipse, the leaf cambered
-    for (let u = -Lf / 2 + 0.25; u < Lf / 2 - 0.2; u += 0.4) {
-      const f = 1 - Math.pow(2 * u / Lf, 2);
-      const hv = (Wf / 2) * Math.sqrt(Math.max(0, f));
-      if (hv < 0.3) continue;
-      const yy = y + h + 0.5 + 0.35 * f + u * 0.02;
-      const cxs = x + ux * u, czs = z + uz * u;
-      B.box(cxs, yy, czs, 0.14, 0.07, hv * 2, yaw, Math.round(u / 0.4) % 3 ? WOOD : WOOD2);
+  let pts = RINK.slice();
+  if (polyArea(pts) < 0) pts = pts.reverse();
+  const [cx, cz] = centroid(pts);
+  const B = kit.B(cx, cz);
+  const y = walkY(city, cx, cz), yi = y + 0.1;
+  const ICE = lin([0.90, 0.94, 0.97]), CURB = lin([0.95, 0.95, 0.93]), STRIPE = lin([0.80, 0.10, 0.12]);
+  roof(B, pts, yi, ICE);
+  for (const e of edges(pts)) {
+    const gate = e.L > 15 && e.nx > 0.5;   // the long side facing King St
+    const segs = gate ? [[0, e.L / 2 - 1.1], [e.L / 2 + 1.1, e.L]] : [[0, e.L]];
+    for (const [t0, t1] of segs) {
+      const h = 0.32, th = 0.1;
+      B.quad(e.at(t0, y - 0.2), e.at(t1, y - 0.2), e.at(t1, yi + h - 0.07), e.at(t0, yi + h - 0.07), [e.nx, 0, e.nz], U0, CURB);
+      B.quad(e.at(t0, yi + h - 0.07), e.at(t1, yi + h - 0.07), e.at(t1, yi + h), e.at(t0, yi + h), [e.nx, 0, e.nz], U0, STRIPE);
+      B.quad(e.at(t1, yi, -th), e.at(t0, yi, -th), e.at(t0, yi + h, -th), e.at(t1, yi + h, -th), [-e.nx, 0, -e.nz], U0, CURB);
+      B.quad(e.at(t0, yi + h, 0), e.at(t1, yi + h, 0), e.at(t1, yi + h, -th), e.at(t0, yi + h, -th), [0, 1, 0], U0, STRIPE);
+      if (gate) for (const t of [t0, t1]) B.quad(e.at(t, y - 0.2, -th), e.at(t, y - 0.2, 0), e.at(t, yi + h, 0), e.at(t, yi + h, -th), [e.ux, 0, e.uz], U0, CURB);
     }
   }
-  // the water wall: a granite wall, a sheet of water down its face, three
-  // pools stepping down into the square (off for the winter; October still runs)
-  const [a, b] = WATERWALL;
-  const dx = b[0] - a[0], dz = b[1] - a[1], Lw = Math.hypot(dx, dz);
-  const ux = dx / Lw, uz = dz / Lw;
-  // the square side is east (+x)
-  let nx = uz, nz = -ux;
-  if (nx < 0) { nx = -nx; nz = -nz; }
-  const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2, y = walkY(city, mx + nx * 3, mz + nz * 3);
-  const B = kit.B(mx, mz);
-  const GRANITE = lin([0.30, 0.30, 0.32]), RIM = lin([0.62, 0.61, 0.58]), WATER = lin([0.36, 0.56, 0.68]), SHEET = lin([0.80, 0.88, 0.93]);
-  const rot = Math.atan2(uz, ux);
-  B.box(mx, y - 0.3, mz, Lw, 2.2, 0.6, rot, GRANITE);
-  const at = (t, yy, o) => [a[0] + ux * t + nx * o, yy, a[1] + uz * t + nz * o];
-  B.quad(at(0.6, y + 0.3, 0.32), at(Lw - 0.6, y + 0.3, 0.32), at(Lw - 0.6, y + 1.75, 0.32), at(0.6, y + 1.75, 0.32), [nx, 0, nz], U0, [WATER, WATER, SHEET, SHEET]);
-  ctx.solids.push({ x: mx, z: mz, hw: Lw / 2, hd: 0.3, rot, y0: y - 1, y1: y + 1.9 });
-  for (let k = 0; k < 3; k++) {
-    const o0 = 0.3 + k * 1.6, o1 = o0 + 1.6, top = 0.5 - k * 0.15;
-    const t0 = 0.4 + k * 0.6, t1 = Lw - 0.4 - k * 0.6;
-    const cxp = mx + nx * (o0 + o1) / 2, czp = mz + nz * (o0 + o1) / 2;
-    B.box(cxp, y - 0.3, czp, t1 - t0, top + 0.3, 1.6, rot, RIM);
-    B.quad(at(t0 + 0.15, y + top + 0.01, o0 + 0.1), at(t1 - 0.15, y + top + 0.01, o0 + 0.1), at(t1 - 0.15, y + top + 0.01, o1 - 0.15), at(t0 + 0.15, y + top + 0.01, o1 - 0.15), [0, 1, 0], U0, WATER);
-    // the spill over each lip
-    B.quad(at(t0 + 0.3, y + top, o1 + 0.01), at(t1 - 0.3, y + top, o1 + 0.01), at(t1 - 0.3, y + top - 0.15, o1 + 0.01), at(t0 + 0.3, y + top - 0.15, o1 + 0.01), [nx, 0, nz], U0, SHEET);
+  // the ice is walkable: the straight part and the round end as two flat platforms
+  const ux0 = -3837.4 - -3833.4, uz0 = -1343.2 - -1322, ul = Math.hypot(ux0, uz0), ux = ux0 / ul, uz = uz0 / ul;
+  for (const [u0, u1, hv] of [[0, ul - 0.2, 9.6], [-8.6, 0, 6.4]]) {
+    const m = [-3833.4 + ux * (u0 + u1) / 2, -1322 + uz * (u0 + u1) / 2];
+    ctx.platforms.push({ x: m[0], z: m[1], hw: (u1 - u0) / 2, hd: hv, rot: Math.atan2(uz, ux), y0: yi, y1: yi });
+  }
+  STATS.rink = { y: +yi.toFixed(2), boardH: 0.32 };
+}
+
+/** The seat-steps, the stage, the terrace, the entrance stair and the stepped walk by the water. */
+function terraces(kit, ctx, y) {
+  const away = [-3833, -1325];
+  const B = kit.B(-3840, -1305);
+  const CONC = lin([0.74, 0.73, 0.70]), STEP = lin([0.80, 0.79, 0.76]), RISER = lin([0.58, 0.57, 0.55]), STONE = lin([0.48, 0.48, 0.49]);
+  // the tiers: each a band between two offsets of the foot, flat on top, a riser in front
+  let hPrev = 0;
+  for (const [d0, d1, h] of TIERS) {
+    const A = offsetLine(AMPHI, d0, away), Bn = offsetLine(AMPHI, Math.min(d1, 4.2), away);
+    for (let i = 0; i < AMPHI.length - 1; i++) {
+      const a0 = A[i], a1 = A[i + 1], b0 = Bn[i], b1 = Bn[i + 1];
+      const tx = a1[0] - a0[0], tz = a1[1] - a0[1], tl = Math.hypot(tx, tz) || 1;
+      const nI = [-(b0[0] - a0[0]), 0, -(b0[1] - a0[1])], nl = Math.hypot(nI[0], nI[2]) || 1;
+      B.quad([a0[0], y + h, a0[1]], [a1[0], y + h, a1[1]], [b1[0], y + h, b1[1]], [b0[0], y + h, b0[1]], [0, 1, 0], U0, d0 === 0 ? CONC : STEP);
+      B.quad([a0[0], y + hPrev - (d0 ? 0 : 0.2), a0[1]], [a1[0], y + hPrev - (d0 ? 0 : 0.2), a1[1]], [a1[0], y + h, a1[1]], [a0[0], y + h, a0[1]], [nI[0] / nl, 0, nI[2] / nl], U0, RISER);
+      // walkable: a flat platform over the band (the terrace's own band runs on under the terrace)
+      const mA = [(a0[0] + a1[0]) / 2, (a0[1] + a1[1]) / 2];
+      const Bp = offsetLine(AMPHI, d1, away), mB = [(Bp[i][0] + Bp[i + 1][0]) / 2, (Bp[i][1] + Bp[i + 1][1]) / 2];
+      ctx.platforms.push({ x: (mA[0] + mB[0]) / 2, z: (mA[1] + mB[1]) / 2, hw: tl / 2 + 0.25, hd: (d1 - d0) / 2, rot: Math.atan2(tz, tx), y0: y + h, y1: y + h });
+    }
+    // the band's two ends
+    for (const i of [0, AMPHI.length - 1]) {
+      const a = A[i], b = Bn[i], tx = AMPHI[i === 0 ? 1 : i - 1][0] - AMPHI[i][0], tz = AMPHI[i === 0 ? 1 : i - 1][1] - AMPHI[i][1], tl = Math.hypot(tx, tz);
+      B.quad([a[0], y - 0.2, a[1]], [b[0], y - 0.2, b[1]], [b[0], y + h, b[1]], [a[0], y + h, a[1]], [-tx / tl, 0, -tz / tl], U0, RISER);
+    }
+    hPrev = h;
+  }
+  // the terrace: from the seat-steps back to the mall and Willis Way
+  const top = offsetLine(AMPHI, 4.2, away);
+  let TP = [...top, [-3843.0, -1277.4], [-3849.7, -1272.5], [-3856.9, -1316.1]];
+  if (polyArea(TP) < 0) TP = TP.reverse();
+  roof(B, TP, y + TERRACE, CONC);
+  // the entrance landing, north of the terrace's edge (1 cm under it where they meet)
+  B.box(-3854.3, y - 0.2, -1317.9, 7.2, TERRACE + 0.19, 4.4, 0, CONC);
+  for (const e of edges(TP)) {
+    // the Willis Way side is a stone retaining wall (the mall and the tiers close the rest)
+    if (segDist(e.mx, e.mz, [[-3820.3, -1294.8], [-3843.0, -1277.4], [-3849.7, -1272.5]]) > 1) continue;
+    B.quad(e.at(0, y - 0.3), e.at(e.L, y - 0.3), e.at(e.L, y + TERRACE + 0.45), e.at(0, y + TERRACE + 0.45), [e.nx, 0, e.nz], U0, STONE);
+    B.quad(e.at(0, y + TERRACE + 0.45), e.at(e.L, y + TERRACE + 0.45), e.at(e.L, y + TERRACE + 0.45, -0.4), e.at(0, y + TERRACE + 0.45, -0.4), [0, 1, 0], U0, RISER);
+    ctx.solids.push({ x: e.mx - e.nx * 0.2, z: e.mz - e.nz * 0.2, hw: e.L / 2 + 0.2, hd: 0.3, rot: Math.atan2(e.uz, e.ux), y0: y - 1, y1: y + TERRACE + 0.45 });
+  }
+  // the terrace is walkable: 1.5 m cells over it, clear of the tiers (which carry their own)
+  let n = 0;
+  for (let x = -3860; x < -3812; x += 1.5) {
+    for (let z = -1322; z < -1270; z += 1.5) {
+      if (!inPoly(TP, x, z) || segDist(x, z, AMPHI) < 5.3) continue;
+      ctx.platforms.push({ x, z, hw: 0.8, hd: 0.8, rot: 0, y0: y + TERRACE, y1: y + TERRACE });
+      n++;
+    }
+  }
+  // the entrance landing, the stair down to the courtyard (nine risers), Beertown's patio
+  ctx.platforms.push({ x: -3854.6, z: -1316.8, hw: 3.9, hd: 4.4, rot: 0, y0: y + TERRACE, y1: y + TERRACE });
+  const sx0 = -3850.7, sx1 = -3846.2, sz0 = -1319.6, sz1 = -1315.4;
+  for (let k = 0; k < 9; k++) {
+    const xa = sx0 + (sx1 - sx0) * k / 9, xb = sx0 + (sx1 - sx0) * (k + 1) / 9;
+    const hk = TERRACE * (9 - k) / 9;
+    B.box((xa + xb) / 2, y - 0.2, (sz0 + sz1) / 2, Math.abs(xb - xa), hk + 0.2, sz1 - sz0, 0, k % 2 ? STEP : CONC);
+  }
+  // the stair is a slope to the walker: a platform rising west (local v runs along -x)
+  ctx.platforms.push({ x: (sx0 + sx1) / 2, z: (sz0 + sz1) / 2, hw: (sz1 - sz0) / 2, hd: (sx1 - sx0) / 2, rot: Math.PI / 2, y0: y + 0.08, y1: y + TERRACE });
+  // handrails up the middle and the sides
+  const RAIL = lin([0.70, 0.71, 0.72]);
+  for (const z of [sz0 + 0.1, (sz0 + sz1) / 2, sz1 - 0.1]) {
+    B.tube([sx1, y + 0.95, z], [sx0, y + TERRACE + 0.95, z], 0.03, 5, RAIL);
+    for (const x of [sx1, (sx0 + sx1) / 2, sx0]) {
+      const yy = y + TERRACE * (x - sx1) / (sx0 - sx1);
+      B.tube([x, yy, z], [x, yy + 0.95, z], 0.025, 4, RAIL);
+    }
+  }
+  // the walk beside the pools, stepping down north
+  for (const [z0, z1, y0, y1] of WALK) {
+    const steps = Math.max(1, Math.round(Math.abs(y1 - y0) / 0.17));
+    for (let k = 0; k < steps; k++) {
+      const za = z0 + (z1 - z0) * k / steps, zb = z0 + (z1 - z0) * (k + 1) / steps;
+      const hk = y0 + (y1 - y0) * (k + 1) / steps;
+      B.box((WALK_X[0] + WALK_X[1]) / 2, y - 0.2, (za + zb) / 2, WALK_X[1] - WALK_X[0], Math.max(0.05, hk + 0.2), zb - za, 0, k % 2 ? STEP : CONC);
+    }
+    ctx.platforms.push({ x: (WALK_X[0] + WALK_X[1]) / 2, z: (z0 + z1) / 2, hw: (WALK_X[1] - WALK_X[0]) / 2, hd: (z1 - z0) / 2, rot: 0, y0: y + y0, y1: y + y1 });
+    // its edge to the courtyard is a wall to anyone below
+    if (Math.max(y0, y1) > 0.5) ctx.solids.push({ x: WALK_X[1] - 0.15, z: (z0 + z1) / 2, hw: 0.15, hd: (z1 - z0) / 2, rot: 0, y0: y - 1, y1: y + Math.min(y0, y1) - 0.3 });
+  }
+  return n;
+}
+
+/** The water feature: a granite water wall at Beertown's patio and four pools stepping down north. */
+function waterFeature(kit, ctx, y) {
+  const B = kit.B(-3856, -1330);
+  const GRANITE = lin([0.30, 0.30, 0.32]), RIM = lin([0.62, 0.61, 0.58]), WATER = lin([0.30, 0.50, 0.62]), SHEET = lin([0.80, 0.88, 0.93]);
+  const wallX = (z) => -3855.4 + (z + 1320.5) * (3.6 / 19.5);   // the pools' west edge (OSM)
+  for (const [z0, z1, h] of POOLS) {
+    const xa = wallX((z0 + z1) / 2), xb = WALK_X[0];
+    const cx = (xa + xb) / 2, cz = (z0 + z1) / 2, w = xb - xa, d = z0 - z1;
+    B.box(cx, y - 0.2, cz, w, h + 0.2, d, 0, RIM);
+    B.box(cx, y + h, cz, w - 0.5, 0.02, d - 0.4, 0, WATER);
+    // the spill over its north lip
+    B.quad([xa + 0.3, y + h, z1 - 0.01], [xb - 0.3, y + h, z1 - 0.01], [xb - 0.3, y + h - 0.24, z1 - 0.01], [xa + 0.3, y + h - 0.24, z1 - 0.01], [0, 0, -1], U0, SHEET);
+  }
+  // the water wall along the patio's edge, a sheet of water down its east face
+  const za = -1320.5, zb = -1340.0, xa = wallX(za), xb = wallX(zb);
+  const rot = Math.atan2(zb - za, xb - xa), L = Math.hypot(xb - xa, zb - za);
+  B.box((xa + xb) / 2, y - 0.2, (za + zb) / 2, L, TERRACE + 0.65, 0.5, rot, GRANITE);
+  const nx = -(zb - za) / L, nz = (xb - xa) / L, s = nx > 0 ? 1 : -1;
+  const at = (t, yy) => [xa + (xb - xa) * t + nx * s * 0.27, yy, za + (zb - za) * t + nz * s * 0.27];
+  B.quad(at(0.04, y + 0.5), at(0.96, y + 0.5), at(0.96, y + TERRACE + 0.4), at(0.04, y + TERRACE + 0.4), [nx * s, 0, nz * s], U0, [WATER, WATER, SHEET, SHEET]);
+  ctx.solids.push({ x: (xa + xb) / 2, z: (za + zb) / 2, hw: L / 2, hd: 0.3, rot, y0: y - 1, y1: y + TERRACE + 1.0 });
+  // and the pools themselves, to a walker on the courtyard or the walk
+  ctx.solids.push({ x: (xa + WALK_X[0]) / 2 + 0.3, z: (za + zb) / 2, hw: (WALK_X[0] - xa) / 2 - 0.3, hd: L / 2, rot: 0, y0: y - 1, y1: y + 0.3 });
+  // Beertown's patio on the terrace between the mall and the water wall: a railing, tables
+  {
+    const [a, b] = [[-3857.7, -1320.6], [-3861.6, -1339.4]], Lp = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const ux = (b[0] - a[0]) / Lp, uz = (b[1] - a[1]) / Lp;
+    const ex = -uz, ez = ux;   // toward the square
+    ctx.platforms.push({ x: (a[0] + b[0]) / 2 + ex * 1.5, z: (a[1] + b[1]) / 2 + ez * 1.5, hw: Lp / 2, hd: 1.6, rot: Math.atan2(uz, ux), y0: y + TERRACE, y1: y + TERRACE });
+    const yp = y + TERRACE;
+    B.quad([a[0], yp, a[1]], [b[0], yp, b[1]], [b[0] + ex * 3.1, yp, b[1] + ez * 3.1], [a[0] + ex * 3.1, yp, a[1] + ez * 3.1], [0, 1, 0], U0, lin([0.52, 0.30, 0.22]));
+    // its railing over the water
+    const RAIL = lin([0.12, 0.12, 0.13]);
+    B.tube([a[0] + ex * 3.0, yp + 1.0, a[1] + ez * 3.0], [b[0] + ex * 3.0, yp + 1.0, b[1] + ez * 3.0], 0.03, 5, RAIL);
+    for (let t = 0; t <= Lp; t += 2.4) B.tube([a[0] + ux * t + ex * 3.0, yp, a[1] + uz * t + ez * 3.0], [a[0] + ux * t + ex * 3.0, yp + 1.0, a[1] + uz * t + ez * 3.0], 0.025, 4, RAIL);
+    // a few of the patio's tables under red umbrellas
+    for (let t = 3; t < Lp - 2; t += 5) {
+      const px = a[0] + ux * t + ex * 1.4, pz = a[1] + uz * t + ez * 1.4;
+      B.prism(px, yp, pz, 0.04, 2.2, 5, RAIL);
+      B.cone(px, yp + 1.95, pz, 1.3, 0.45, 8, lin([0.78, 0.12, 0.12]));
+      B.prism(px, yp + 0.7, pz, 0.45, 0.05, 8, RAIL);
+    }
   }
 }
 
-/** The Shops at Waterloo Town Square: brick piers, glass, a metal cornice, and their signs. */
+/**
+ * The five leaf shade structures (2023): each a dark steel spine rising out
+ * of the terrace and curving back over it, with reclaimed-arena timber slats
+ * stacked up it -- a tall leaf face-on to the courtyard, ~8 m high.
+ */
+function leaves(kit, ctx, y) {
+  const away = [-3833, -1325];
+  const STEEL = lin([0.18, 0.19, 0.21]), WOOD = lin([0.80, 0.62, 0.42]), WOOD2 = lin([0.72, 0.54, 0.35]);
+  // along the tiers' foot, two staggered rows on the terrace (site plan)
+  const spots = [[0.10, 6.0, 7.6], [0.22, 8.8, 8.3], [0.34, 6.2, 8.0], [0.46, 9.0, 7.4], [0.58, 6.4, 7.8]];
+  const Ls = [0];
+  for (let i = 1; i < AMPHI.length; i++) Ls.push(Ls[i - 1] + Math.hypot(AMPHI[i][0] - AMPHI[i - 1][0], AMPHI[i][1] - AMPHI[i - 1][1]));
+  const total = Ls[Ls.length - 1];
+  for (const [f, off, H] of spots) {
+    const s = f * total;
+    let i = 0;
+    while (i < AMPHI.length - 2 && Ls[i + 1] < s) i++;
+    const t = (s - Ls[i]) / (Ls[i + 1] - Ls[i]);
+    const a = AMPHI[i], b = AMPHI[i + 1];
+    const px = a[0] + (b[0] - a[0]) * t, pz = a[1] + (b[1] - a[1]) * t;
+    const tl = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    let rx = -(b[1] - a[1]) / tl, rz = (b[0] - a[0]) / tl;
+    if ((px - away[0]) * rx + (pz - away[1]) * rz < 0) { rx = -rx; rz = -rz; }
+    const sx = -rz, sz = rx;   // the leaf's face runs along the tiers
+    const bx = px + rx * off, bz = pz + rz * off, by = y + TERRACE;
+    const B = kit.B(bx, bz);
+    const lean = 2.6;   // how far the top curls back over the terrace
+    const spine = (u) => [bx + rx * lean * u * u, by + H * u, bz + rz * lean * u * u];
+    const NS = 12;
+    for (let k = 0; k < NS; k++) B.tube(spine(k / NS), spine((k + 1) / NS), k < 3 ? 0.16 : 0.12, 6, STEEL);
+    // the slats: each a board across the face, the leaf widest two-thirds up
+    const N = 30;
+    for (let k = 2; k <= N; k++) {
+      const u = k / N, p = spine(u);
+      const w = 0.7 + 2.5 * Math.pow(Math.sin(Math.PI * (0.1 + 0.78 * u)), 0.7);
+      B.box(p[0] - rx * 0.12, p[1], p[2] - rz * 0.12, w, 0.15, 0.42,Math.atan2(sz, sx), k % 3 ? WOOD : WOOD2);
+    }
+    B.box(bx, by - 0.2, bz, 0.7, 0.32, 0.7, 0, lin([0.40, 0.40, 0.41]));
+    ctx.solids.push({ x: bx, z: bz, r: 0.3, y0: by - 1, y1: by + H });
+  }
+}
+
+/** The Waterloo Bell (Royden Rabinowitch, 2009): a Corten bell on a round plinth. */
+function waterlooBell(kit, ctx, y) {
+  const [x, z] = BELL;
+  const B = kit.B(x, z);
+  const CORTEN = lin([0.40, 0.21, 0.12]), CORT2 = lin([0.34, 0.17, 0.10]), PLINTH = lin([0.62, 0.61, 0.58]);
+  B.prism(x, y - 0.2, z, 1.6, 0.65, 16, PLINTH);
+  roof(B, Array.from({ length: 16 }, (_, i) => [x + Math.cos(i * Math.PI / 8) * 1.6, z + Math.sin(i * Math.PI / 8) * 1.6]), y + 0.45, PLINTH);
+  // the bell's profile: lip, waist, shoulder, crown
+  const prof = [[1.05, 0], [0.98, 0.15], [0.80, 0.55], [0.66, 1.2], [0.64, 1.75], [0.55, 2.05], [0.32, 2.22], [0, 2.26]];
+  const n = 18, y0 = y + 0.45;
+  for (let k = 0; k < prof.length - 1; k++) {
+    const [r0, h0] = prof[k], [r1, h1] = prof[k + 1];
+    for (let i = 0; i < n; i++) {
+      const a0 = i / n * Math.PI * 2, a1 = (i + 1) / n * Math.PI * 2, am = (a0 + a1) / 2;
+      const ny = (r0 - r1), nr = (h1 - h0), nl = Math.hypot(ny, nr) || 1;
+      B.quad([x + Math.cos(a0) * r0, y0 + h0, z + Math.sin(a0) * r0], [x + Math.cos(a1) * r0, y0 + h0, z + Math.sin(a1) * r0],
+        [x + Math.cos(a1) * r1, y0 + h1, z + Math.sin(a1) * r1], [x + Math.cos(a0) * r1, y0 + h1, z + Math.sin(a0) * r1],
+        [Math.cos(am) * nr / nl, ny / nl, Math.sin(am) * nr / nl], U0, k % 2 ? CORT2 : CORTEN);
+    }
+  }
+  ctx.solids.push({ x, z, r: 1.6, y0: y - 1, y1: y + 2.7 });
+}
+
+/** The square's furniture: trees, benches, lights, the GRT shelter, the trailer, the hedge, the beds. */
+function squareFurniture(kit, ctx, y) {
+  const city = ctx.city, L = ctx.atlas;
+  const B = kit.B(-3830, -1320), g = kit.grp(-3830, -1320);
+  const BENCH = lin([0.66, 0.65, 0.62]), BIN = lin([0.10, 0.10, 0.11]);
+  const banner = L.panel(0.62, 1.5, 60, (q, W, H) => {
+    q.fillStyle = '#f2b51c'; q.fillRect(0, 0, W, H);
+    q.fillStyle = '#16346b'; q.fillRect(0, H * 0.8, W, H * 0.2);
+    q.fillStyle = '#16346b'; q.textAlign = 'center'; q.textBaseline = 'middle';
+    q.font = `800 ${W * 0.22}px ${SANS}`;
+    q.fillText('WATERLOO', W / 2, H * 0.24, W * 0.92);
+    q.fillText('PUBLIC', W / 2, H * 0.42, W * 0.92);
+    q.fillText('SQUARE', W / 2, H * 0.60, W * 0.92);
+    q.fillStyle = '#ffffff'; q.font = `700 ${W * 0.13}px ${SANS}`;
+    q.fillText('UPTOWN', W / 2, H * 0.9, W * 0.92);
+  });
+  // along King: trees in grates, concrete benches, bins, the shelter
+  const [k0, k1] = KING_EDGE;
+  const kL = Math.hypot(k1[0] - k0[0], k1[1] - k0[1]), kux = (k1[0] - k0[0]) / kL, kuz = (k1[1] - k0[1]) / kL;
+  const knx = kuz, knz = -kux;   // into the square (west)
+  const K = (t, o) => [k0[0] + kux * t + knx * o, k0[1] + kuz * t + knz * o];
+  let seed = 7;
+  for (const t of [7, 26, 37, 48]) {
+    const [x, z] = K(t, 4.6);
+    B.box(x, y - 0.18, z, 1.4, 0.2, 1.4, Math.atan2(kuz, kux), lin([0.22, 0.22, 0.22]));
+    tree(B, x, y, z, 6.5, seed++, ctx.solids);
+  }
+  for (const t of [12, 31.5, 42.5]) {
+    const [x, z] = K(t, 4.4);
+    B.box(x, y - 0.1, z, 2.4, 0.55, 0.6, Math.atan2(kuz, kux), BENCH);
+    ctx.solids.push({ x, z, hw: 1.2, hd: 0.3, rot: Math.atan2(kuz, kux), y0: y - 1, y1: y + 0.45 });
+  }
+  for (const t of [22, 29.5]) {
+    const [x, z] = K(t, 3.2);
+    B.prism(x, y - 0.1, z, 0.3, 1.0, 8, BIN);
+  }
+  {
+    // GRT's glass shelter (the square's own, by the stop)
+    const [x, z] = K(17.3, 3.2);
+    const rot = Math.atan2(kuz, kux), GL = lin([0.32, 0.42, 0.46]), FR = lin([0.30, 0.32, 0.33]);
+    B.box(x - knx * 0.7, y - 0.05, z - knz * 0.7, 4.4, 0.05, 1.8, rot, FR);
+    B.box(x + knx * 0.2, y, z + knz * 0.2, 4.2, 2.3, 0.06, rot, GL);          // back pane
+    for (const s of [-1, 1]) B.box(x + kux * s * 2.1 - knx * 0.4, y, z + kuz * s * 2.1 - knz * 0.4, 0.06, 2.3, 1.2, rot, GL);
+    B.box(x - knx * 0.5, y + 2.35, z - knz * 0.5, 4.6, 0.1, 1.9, rot, lin([0.40, 0.62, 0.62]));
+    B.box(x + kux * 2.3 - knx * 0.6, y, z + kuz * 2.3 - knz * 0.6, 0.12, 2.6, 0.12, rot, FR);
+    ctx.solids.push({ x: x + knx * 0.2, z: z + knz * 0.2, hw: 2.2, hd: 0.15, rot, y0: y - 1, y1: y + 2.3 });
+  }
+  // the square's lights: down the King side, round the courtyard, on the terrace
+  const lights = [[...K(2, 2.0)], [...K(19.5, 2.0)], [...K(36, 2.0)], [...K(53, 2.0)],
+    [-3848.4, -1342], [-3836, -1352.5], [-3847, -1323.5]];
+  for (const [x, z] of lights) {
+    const ax = -3833 - x, az = -1325 - z, al = Math.hypot(ax, az) || 1;
+    squareLight(B, g, ctx, x, walkY(city, x, z), z, ax / al, az / al, banner);
+  }
+  for (const p of offsetLine([AMPHI[1], AMPHI[4], AMPHI[7]], 7.2, [-3833, -1325])) {
+    const ax = -3833 - p[0], az = -1325 - p[1], al = Math.hypot(ax, az);
+    squareLight(B, g, ctx, p[0], y + TERRACE, p[1], ax / al, az / al, banner);
+  }
+  // the event trailer and the hedge on the fire route, by the station
+  {
+    const x = -3844, z = -1351.0, rot = Math.atan2(-1359.6 - -1356.8, -3832.0 - -3852.2);
+    B.box(x, y + 0.45, z, 6.4, 2.4, 2.4, rot, lin([0.93, 0.93, 0.91]));
+    B.box(x, y + 2.85, z, 6.4, 0.08, 2.4, rot, lin([0.80, 0.80, 0.79]));
+    for (const s of [-0.9, 0.9]) B.box(x + Math.cos(rot) * 0.3 * s - Math.sin(rot) * s * 1.1, y, z + Math.sin(rot) * 0.3 * s + Math.cos(rot) * s * 1.1, 0.7, 0.7, 0.25, rot, lin([0.08, 0.08, 0.08]));
+    ctx.solids.push({ x, z, hw: 3.3, hd: 1.25, rot, y0: y - 1, y1: y + 2.9 });
+    const HEDGE = lin([0.16, 0.30, 0.13]);
+    for (const [a, b] of [[[-3851.6, -1355.4], [-3832.0, -1358.4]], [[-3832.0, -1358.4], [-3822.0, -1357.0]]]) {
+      const Lh = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      B.box((a[0] + b[0]) / 2, y - 0.1, (a[1] + b[1]) / 2, Lh, 1.15, 0.9, Math.atan2(b[1] - a[1], b[0] - a[0]), HEDGE);
+    }
+  }
+  // the planted beds on the terrace and the grove on Willis Way
+  const SOIL = lin([0.22, 0.30, 0.14]), EDGE = lin([0.55, 0.55, 0.54]);
+  for (const bed of BEDS) {
+    const p = polyArea(bed) < 0 ? bed.slice().reverse() : bed;
+    roof(B, p, y + TERRACE + 0.45, SOIL);
+    for (const e of edges(p)) B.quad(e.at(0, y + TERRACE), e.at(e.L, y + TERRACE), e.at(e.L, y + TERRACE + 0.45), e.at(0, y + TERRACE + 0.45), [e.nx, 0, e.nz], U0, EDGE);
+    const [cx, cz] = centroid(p);
+    for (let k = 0; k < 4; k++) B.spheroid(cx + (hash2(k, cx) - 0.5) * 2.2, y + TERRACE + 0.75, cz + (hash2(k, cz) - 0.5) * 2.2, 0.55, 6, 4, lin(k % 2 ? [0.30, 0.42, 0.18] : [0.62, 0.40, 0.20]), 0.8, 0.3);
+    wallSolids(ctx.solids, p, y - 1, y + TERRACE + 0.45);
+  }
+  {
+    const p = polyArea(GROVE) < 0 ? GROVE.slice().reverse() : GROVE;
+    roof(B, p, y + TERRACE + 0.12, SOIL);
+    let s = 31;
+    for (let k = 0; k < 40 && s < 43; k++) {
+      const x = -3843 + hash2(k, 5) * 28, z = -1296.5 + hash2(k, 9) * 19;
+      if (!inPoly(p, x, z) || segDist(x, z, p.concat([p[0]])) < 1.4) continue;
+      tree(B, x, y + TERRACE, z, 7 + hash2(k, 3) * 2.5, s++, ctx.solids);
+    }
+  }
+  // the paving: big light slabs in a grid of darker bands, square to King
+  const D = kit.B(-3830, -1320, true), BAND = lin([0.50, 0.50, 0.49]);
+  const court = polyArea(COURT) < 0 ? COURT.slice().reverse() : COURT;
+  for (const along of [true, false]) {
+    for (let o = -60; o <= 60; o += 6.2) {
+      for (let t = -10; t < 80; t += 1.5) {
+        const cxa = along ? K(t + 0.75, o) : K(o, t + 0.75);
+        if (!inPoly(court, cxa[0], cxa[1]) || inPoly(RINK, cxa[0], cxa[1])) continue;
+        if ((city.roadLift(cxa[0], cxa[1]) || 0) > 0.05) continue;
+        const yy = T(cxa[0], cxa[1]) + 0.025;
+        const a = along ? K(t, o - 0.22) : K(o - 0.22, t), b = along ? K(t + 1.5, o - 0.22) : K(o - 0.22, t + 1.5);
+        const c2 = along ? K(t + 1.5, o + 0.22) : K(o + 0.22, t + 1.5), d2 = along ? K(t, o + 0.22) : K(o + 0.22, t);
+        D.quad([a[0], yy, a[1]], [b[0], yy, b[1]], [c2[0], yy, c2[1]], [d2[0], yy, d2[1]], [0, 1, 0], U0, BAND);
+      }
+    }
+  }
+}
+
+function publicSquare(kit, ctx) {
+  const city = ctx.city;
+  // the courtyard's level: King's side of it, at the rink
+  const y = walkY(city, -3833, -1328);
+  rink(kit, ctx);
+  STATS.terraceCells = terraces(kit, ctx, y);
+  waterFeature(kit, ctx, y);
+  leaves(kit, ctx, y);
+  waterlooBell(kit, ctx, y);
+  squareFurniture(kit, ctx, y);
+}
+
+/**
+ * The Shops at Waterloo Town Square (2006, the old mall converted): one tall
+ * storey of grey precast panels and big glass storefronts; on the square the
+ * main entrance under its glass canopy at the top of the stair (THE SHOPS,
+ * 75 KING), Shoppers Drug Mart south of it, Beertown's patio and the Piper
+ * Arms, the mall's floor a terrace above the courtyard.
+ */
 function townSquare(kit, ctx) {
   const city = ctx.city, L = ctx.atlas;
   let pts = simplify(P.townsq.p, 0.6);
   if (polyArea(pts) < 0) pts = pts.slice().reverse();
   const [cx, cz] = centroid(pts);
   const B = kit.B(cx, cz), g = kit.grp(cx, cz);
-  const base = walkY(city, cx, cz), yTop = base + 8.4;
+  const sqY = walkY(city, -3833, -1328);
+  const floor = sqY + TERRACE, yTop = floor + 7.6;
   let lo = Infinity;
   for (const q of pts) lo = Math.min(lo, T(q[0], q[1]));
-  const BR = lin([0.55, 0.30, 0.22]), MET = lin([0.30, 0.32, 0.34]), GL = lin([0.16, 0.21, 0.26]), GL2 = lin([0.30, 0.38, 0.44]);
+  const PRE = lin([0.72, 0.71, 0.68]), PRE2 = lin([0.56, 0.56, 0.55]), MET = lin([0.30, 0.31, 0.33]), GL = lin([0.16, 0.21, 0.26]), GL2 = lin([0.34, 0.42, 0.48]);
   const signs = [];
   for (const e of edges(pts)) {
     const N = [e.nx, 0, e.nz];
-    B.quad(e.at(0, lo - 1.2), e.at(e.L, lo - 1.2), e.at(e.L, yTop + 0.6), e.at(0, yTop + 0.6), N, U0, BR);
-    B.quad(e.at(0, yTop - 1.6, 0.25), e.at(e.L, yTop - 1.6, 0.25), e.at(e.L, yTop + 0.6, 0.25), e.at(0, yTop + 0.6, 0.25), N, U0, MET);
+    const onSquare = e.nx > 0.8 && e.mx > -3866 && e.mz > -1345 && e.mz < -1270;
+    B.quad(e.at(0, lo - 1.2), e.at(e.L, lo - 1.2), e.at(e.L, yTop + 0.6), e.at(0, yTop + 0.6), N, U0, PRE);
+    // the dark metal fascia and the coping
+    B.quad(e.at(0, yTop - 1.3, 0.25), e.at(e.L, yTop - 1.3, 0.25), e.at(e.L, yTop + 0.6, 0.25), e.at(0, yTop + 0.6, 0.25), N, U0, onSquare ? PRE2 : MET);
     B.quad(e.at(0, yTop + 0.6, 0.25), e.at(e.L, yTop + 0.6, 0.25), e.at(e.L, yTop + 0.6, 0), e.at(0, yTop + 0.6, 0), [0, 1, 0], U0, MET);
     ctx.solids.push({ x: e.mx, z: e.mz, hw: e.L / 2 + 0.2, hd: 0.35, rot: Math.atan2(e.uz, e.ux), y0: lo - 1.2, y1: yTop + 0.6 });
     if (e.L < 6) continue;
-    const gy = walkY(city, e.mx + e.nx * 1.5, e.mz + e.nz * 1.5);
-    // glass bays between brick piers, on every face but the loading side
+    const gy = onSquare ? floor : walkY(city, e.mx + e.nx * 1.5, e.mz + e.nz * 1.5);
+    // glass storefronts between precast piers, a transom bar, mullions
     const nb = Math.floor(e.L / 6);
     for (let k = 0; k < nb; k++) {
-      const t0 = (e.L - nb * 6) / 2 + k * 6 + 0.5, t1 = t0 + 5;
-      B.quad(e.at(t0, gy - 0.2, 0.04), e.at(t1, gy - 0.2, 0.04), e.at(t1, gy + 5.6, 0.04), e.at(t0, gy + 5.6, 0.04), N, U0, [GL, GL, GL2, GL2]);
-      B.quad(e.at(t0, gy + 2.9, 0.06), e.at(t1, gy + 2.9, 0.06), e.at(t1, gy + 3.05, 0.06), e.at(t0, gy + 3.05, 0.06), N, U0, MET);
-      for (const t of [t0 + 1.66, t0 + 3.33]) B.quad(e.at(t - 0.05, gy - 0.2, 0.06), e.at(t + 0.05, gy - 0.2, 0.06), e.at(t + 0.05, gy + 5.6, 0.06), e.at(t - 0.05, gy + 5.6, 0.06), N, U0, MET);
+      const t0 = (e.L - nb * 6) / 2 + k * 6 + 0.6, t1 = t0 + 4.8;
+      B.quad(e.at(t0, gy - 0.1, 0.04), e.at(t1, gy - 0.1, 0.04), e.at(t1, gy + 4.6, 0.04), e.at(t0, gy + 4.6, 0.04), N, U0, [GL, GL, GL2, GL2]);
+      B.quad(e.at(t0, gy + 3.0, 0.06), e.at(t1, gy + 3.0, 0.06), e.at(t1, gy + 3.12, 0.06), e.at(t0, gy + 3.12, 0.06), N, U0, MET);
+      for (const t of [t0 + 1.6, t0 + 3.2]) B.quad(e.at(t - 0.04, gy - 0.1, 0.06), e.at(t + 0.04, gy - 0.1, 0.06), e.at(t + 0.04, gy + 4.6, 0.06), e.at(t - 0.04, gy + 4.6, 0.06), N, U0, MET);
+      // a dark awning band over every other one, as the photographs
+      if (k % 2 === 0 && !onSquare) B.quad(e.at(t0, gy + 3.2, 0.05), e.at(t1, gy + 3.2, 0.05), e.at(t1, gy + 2.9, 1.0), e.at(t0, gy + 2.9, 1.0), [e.nx * 0.4, 0.9, e.nz * 0.4], U0, lin([0.16, 0.16, 0.17]));
+    }
+    if (onSquare) {
+      // the main entrance (OSM's entrance node): a taller glass bay, its canopy, the doors
+      const te = (-3857.7 - e.a[0]) * e.ux + (-1316.1 - e.a[1]) * e.uz;
+      if (te > 3 && te < e.L - 3) {
+        B.quad(e.at(te - 3.2, gy - 0.1, 0.08), e.at(te + 3.2, gy - 0.1, 0.08), e.at(te + 3.2, yTop + 0.4, 0.08), e.at(te - 3.2, yTop + 0.4, 0.08), N, U0, [GL, GL, GL2, GL2]);
+        for (const t of [te - 1.1, te + 1.1]) B.quad(e.at(t - 0.05, gy - 0.1, 0.1), e.at(t + 0.05, gy - 0.1, 0.1), e.at(t + 0.05, gy + 2.5, 0.1), e.at(t - 0.05, gy + 2.5, 0.1), N, U0, MET);
+        B.quad(e.at(te - 2.3, gy + 2.5, 0.1), e.at(te + 2.3, gy + 2.5, 0.1), e.at(te + 2.3, gy + 2.62, 0.1), e.at(te - 2.3, gy + 2.62, 0.1), N, U0, MET);
+        const cy = gy + 4.0, CAN = lin([0.62, 0.74, 0.78]);
+        B.quad(e.at(te - 3.8, cy, 0.1), e.at(te + 3.8, cy, 0.1), e.at(te + 3.8, cy, 3.4), e.at(te - 3.8, cy, 3.4), [0, 1, 0], U0, CAN);
+        B.quad(e.at(te - 3.8, cy - 0.02, 3.4), e.at(te + 3.8, cy - 0.02, 3.4), e.at(te + 3.8, cy - 0.02, 0.1), e.at(te - 3.8, cy - 0.02, 0.1), [0, -1, 0], U0, shade(CAN, 0.7));
+        for (const t of [te - 3.6, te + 3.6]) {
+          const p = e.at(t, gy - 0.2, 3.2);
+          B.box(p[0], p[1], p[2], 0.14, cy - gy + 0.2, 0.14, 0, MET);
+        }
+        const m = L.panel(4.6, 1.2, 50, (q, W, H) => {
+          q.clearRect(0, 0, W, H);
+          q.fillStyle = '#ffffff'; q.textAlign = 'center'; q.textBaseline = 'middle';
+          q.font = `italic 700 ${H * 0.62}px ${SERIF}`; q.fillText('The Shops', W / 2, H * 0.36, W * 0.94);
+          q.font = `600 ${H * 0.22}px ${SANS}`; q.fillText('AT WATERLOO TOWN SQUARE', W / 2, H * 0.82, W * 0.94);
+        });
+        const p = e.at(te, yTop - 0.7, 0.3);
+        hang(g, m, p[0], p[1], p[2], e.nx, e.nz, 0.02);
+        const k75 = L.panel(1.9, 0.55, 50, (q, W, H) => {
+          q.clearRect(0, 0, W, H);
+          q.fillStyle = '#f4f4f4'; q.textAlign = 'center'; q.textBaseline = 'middle';
+          q.font = `700 ${H * 0.75}px ${SANS}`; q.fillText('75 KING', W / 2, H * 0.55, W * 0.94);
+        });
+        const p2 = e.at(te - 5.6, yTop - 0.7, 0.3);
+        hang(g, k75, p2[0], p2[1], p2[2], e.nx, e.nz, 0.02);
+      }
     }
     signs.push(e);
   }
-  roof(B, pts, yTop, lin([0.42, 0.42, 0.41]));
-  // the signs: the centre's name to the square, the grocer to its lot, Beertown by its door
-  const put = (text, sub, bg, fg, w, h, px, pz, font) => {
+  roof(B, pts, yTop, lin([0.46, 0.46, 0.45]));
+  // the stores' signs, on the face nearest each store
+  const put = (text, sub, bg, fg, w, h, px, pz, font, face) => {
     let best = null, bd = Infinity;
     for (const e of signs) {
       const t = Math.max(w / 2 + 0.3, Math.min(e.L - w / 2 - 0.3, (px - e.a[0]) * e.ux + (pz - e.a[1]) * e.uz));
@@ -802,20 +1273,154 @@ function townSquare(kit, ctx) {
     }
     if (!best) return;
     const { e, t } = best;
-    const p = e.at(t, yTop - 0.5, 0.27);
+    const p = e.at(t, yTop - 0.65, 0.27);
     const m = L.panel(w, h, 40, (q, W, H) => {
       if (bg) { q.fillStyle = bg; q.fillRect(0, 0, W, H); } else q.clearRect(0, 0, W, H);
       q.fillStyle = fg; q.textAlign = 'center'; q.textBaseline = 'middle';
-      q.font = `${font || '700'} ${H * (sub ? 0.5 : 0.7)}px ${SANS}`;
+      q.font = `${font || '700'} ${H * (sub ? 0.5 : 0.7)}px ${face || SANS}`;
       q.fillText(text, W / 2, H * (sub ? 0.38 : 0.54), W * 0.94);
       if (sub) { q.font = `600 ${H * 0.26}px ${SANS}`; q.fillText(sub, W / 2, H * 0.8, W * 0.94); }
     });
     hang(g, m, p[0], p[1], p[2], e.nx, e.nz, 0.02);
   };
-  put('WATERLOO TOWN SQUARE', null, null, '#f2f2f2', 13, 1.25, -3855, -1300, '700');
+  put('SHOPPERS DRUG MART', null, null, '#d6202a', 8.5, 0.95, -3855.5, -1302.3, '800');
+  put('BEERTOWN', 'PUBLIC HOUSE', '#141414', '#d9b25a', 6, 1.4, -3860, -1331, '800');
+  put('PIPER ARMS', null, null, '#f1ead6', 6, 0.9, -3852, -1281, '700', SERIF);
   put('your independent grocer', null, '#ffffff', '#d21f26', 9, 1.25, -3954, -1325, '800');
-  put('BEERTOWN', 'PUBLIC HOUSE', '#141414', '#d9b25a', 6, 1.4, -3862, -1331, '800');
+  put('WATERLOO TOWN SQUARE', null, null, '#f2f2f2', 13, 1.25, -3925, -1230, '700');
 }
+
+// THE MARSLAND CENTRE, 20 Erb St W (Carl Rieder, 1971-74; OSM 89585912):
+// Uptown's tower, 13 storeys and 52 m (OSM), the BMO tower to everyone --
+// tan precast fins running the full height over dark brown spandrels, the
+// BMO roundel near the top, a two-storey wing west and a four-storey east.
+const MARSLAND = [[-3978.3, -1476.1], [-3966.0, -1456.2], [-3937.8, -1472.9], [-3950.1, -1492.8]];
+const MARSLAND_W = [[-3986.0, -1471.6], [-3978.3, -1476.1], [-3966.0, -1456.2], [-3974.0, -1451.5], [-3982.4, -1465.6]];
+const MARSLAND_E = [[-3950.1, -1492.8], [-3938.6, -1499.7], [-3926.6, -1479.5], [-3937.8, -1472.9]];
+// The Uptown Waterloo Parkade, 60 King St S (OSM 149976265): five levels, across King from the square
+const PARKADE = [[-3748.9, -1310.3], [-3716.5, -1316.8], [-3723.7, -1352.5], [-3725.7, -1362.1], [-3789.1, -1349.4], [-3788.2, -1344.9],
+  [-3792.9, -1343.9], [-3786.7, -1313.1], [-3757.3, -1319.0], [-3754.6, -1319.5], [-3751.0, -1320.3]];
+
+/** A plain block of `floors` storeys with a dark window band per floor (the Marsland's wings). */
+function bandBlock(B, ctx, pts, y0, floors, st, wall, win) {
+  const yTop = y0 + floors * st + 0.6;
+  for (const e of edges(pts)) {
+    const N = [e.nx, 0, e.nz];
+    B.quad(e.at(0, y0 - 1.2), e.at(e.L, y0 - 1.2), e.at(e.L, yTop), e.at(0, yTop), N, U0, wall);
+    for (let f = 0; f < floors; f++) {
+      const ya = y0 + f * st + (f ? 1.0 : 0.6);
+      B.quad(e.at(0.4, ya, 0.03), e.at(e.L - 0.4, ya, 0.03), e.at(e.L - 0.4, ya + st * 0.5, 0.03), e.at(0.4, ya + st * 0.5, 0.03), N, U0, win);
+    }
+    ctx.solids.push({ x: e.mx, z: e.mz, hw: e.L / 2 + 0.2, hd: 0.35, rot: Math.atan2(e.uz, e.ux), y0: y0 - 1.2, y1: yTop });
+  }
+  roof(B, pts, yTop, lin([0.36, 0.35, 0.34]));
+}
+
+function marsland(kit, ctx) {
+  const L = ctx.atlas;
+  let pts = MARSLAND.slice();
+  if (polyArea(pts) < 0) pts.reverse();
+  const [cx, cz] = centroid(pts);
+  const B = kit.B(cx, cz), g = kit.grp(cx, cz);
+  let lo = Infinity;
+  for (const q of [...MARSLAND, ...MARSLAND_W, ...MARSLAND_E]) lo = Math.min(lo, T(q[0], q[1]));
+  const y0 = lo, H = 52, yTop = y0 + H;
+  const BROWN = lin([0.30, 0.19, 0.16]), FIN = lin([0.78, 0.69, 0.55]), FIN2 = lin([0.66, 0.58, 0.46]), LOBBY = lin([0.14, 0.17, 0.20]);
+  for (const e of edges(pts)) {
+    const N = [e.nx, 0, e.nz];
+    B.quad(e.at(0, y0 - 1.2), e.at(e.L, y0 - 1.2), e.at(e.L, yTop), e.at(0, yTop), N, U0, BROWN);
+    // the lobby glass, then the fins from the second floor to the crown
+    B.quad(e.at(0.8, y0, 0.05), e.at(e.L - 0.8, y0, 0.05), e.at(e.L - 0.8, y0 + 4.2, 0.05), e.at(0.8, y0 + 4.2, 0.05), N, U0, LOBBY);
+    const nf = Math.round(e.L / 1.55);
+    for (let k = 0; k <= nf; k++) {
+      const t = e.L * k / nf, w = k === 0 || k === nf ? 0.9 : 0.42;
+      const ta = Math.max(0, t - w / 2), tb = Math.min(e.L, t + w / 2);
+      B.quad(e.at(ta, y0 + 4.2, 0.38), e.at(tb, y0 + 4.2, 0.38), e.at(tb, yTop - 2.2, 0.38), e.at(ta, yTop - 2.2, 0.38), N, U0, FIN);
+      B.quad(e.at(ta, y0 + 4.2, 0), e.at(ta, y0 + 4.2, 0.38), e.at(ta, yTop - 2.2, 0.38), e.at(ta, yTop - 2.2, 0), [-e.ux, 0, -e.uz], U0, FIN2);
+      B.quad(e.at(tb, y0 + 4.2, 0.38), e.at(tb, y0 + 4.2, 0), e.at(tb, yTop - 2.2, 0), e.at(tb, yTop - 2.2, 0.38), [e.ux, 0, e.uz], U0, FIN2);
+    }
+    // the crown: a tan band round the top, the second-floor band over the lobby
+    B.quad(e.at(-0.4, yTop - 2.2, 0.4), e.at(e.L + 0.4, yTop - 2.2, 0.4), e.at(e.L + 0.4, yTop + 0.3, 0.4), e.at(-0.4, yTop + 0.3, 0.4), N, U0, FIN);
+    B.quad(e.at(-0.4, y0 + 4.2, 0.4), e.at(e.L + 0.4, y0 + 4.2, 0.4), e.at(e.L + 0.4, y0 + 5.0, 0.4), e.at(-0.4, y0 + 5.0, 0.4), N, U0, FIN);
+    ctx.solids.push({ x: e.mx, z: e.mz, hw: e.L / 2 + 0.2, hd: 0.4, rot: Math.atan2(e.uz, e.ux), y0: y0 - 1.2, y1: yTop });
+    // the BMO sign high on the two long faces
+    if (e.L > 25) {
+      const m = L.panel(5.4, 1.9, 40, (q, W, Hh) => {
+        q.fillStyle = '#0079c1'; q.fillRect(0, 0, W, Hh);
+        q.fillStyle = '#d6202a'; q.beginPath(); q.arc(Hh * 0.55, Hh / 2, Hh * 0.36, 0, Math.PI * 2); q.fill();
+        q.fillStyle = '#ffffff'; q.font = `800 ${Hh * 0.42}px ${SANS}`; q.textBaseline = 'middle'; q.textAlign = 'center';
+        q.fillText('M', Hh * 0.55, Hh * 0.53);
+        q.font = `800 ${Hh * 0.62}px ${SANS}`; q.fillText('BMO', W * 0.62, Hh * 0.54);
+      });
+      const p = e.at(e.L * 0.78, yTop - 1.0, 0.42);
+      hang(g, m, p[0], p[1], p[2], e.nx, e.nz, 0.02);
+    }
+  }
+  roof(B, pts, yTop + 0.3, lin([0.34, 0.33, 0.32]));
+  B.box(cx, yTop + 0.3, cz, 10, 3.2, 7, Math.atan2(pts[1][1] - pts[0][1], pts[1][0] - pts[0][0]), lin([0.60, 0.55, 0.48]));
+  const WING = lin([0.48, 0.30, 0.24]), WIN = lin([0.15, 0.17, 0.20]);
+  for (const [p, fl] of [[MARSLAND_W, 2], [MARSLAND_E, 4]]) {
+    const q = polyArea(p) < 0 ? p.slice().reverse() : p;
+    bandBlock(kit.B(...centroid(q)), ctx, q, y0, fl, 3.8, WING, WIN);
+  }
+}
+
+/** The Uptown Waterloo Parkade: five open decks of precast, spandrels and columns, a P on King. */
+function parkade(kit, ctx) {
+  const city = ctx.city, L = ctx.atlas;
+  let pts = PARKADE.slice();
+  if (polyArea(pts) < 0) pts.reverse();
+  const [cx, cz] = centroid(pts);
+  const B = kit.B(cx, cz), g = kit.grp(cx, cz);
+  let lo = Infinity;
+  for (const q of pts) lo = Math.min(lo, T(q[0], q[1]));
+  const y0 = lo, st = 3.0, lv = 5, yTop = y0 + (lv - 1) * st + 1.1;
+  const CON = lin([0.76, 0.75, 0.72]), CON2 = lin([0.62, 0.61, 0.59]), DARK = lin([0.10, 0.10, 0.11]);
+  for (const e of edges(pts)) {
+    const N = [e.nx, 0, e.nz];
+    // the dark inside, seen through the openings
+    B.quad(e.at(0, y0 - 1.2, -0.6), e.at(e.L, y0 - 1.2, -0.6), e.at(e.L, yTop, -0.6), e.at(0, yTop, -0.6), N, U0, DARK);
+    for (let k = 0; k < lv; k++) {
+      // each level's spandrel (the top one is the roof's parapet)
+      const ya = y0 + k * st + (k ? 0 : -1.2), yb = y0 + k * st + 1.1;
+      B.quad(e.at(0, ya), e.at(e.L, ya), e.at(e.L, yb), e.at(0, yb), N, U0, k % 2 ? CON2 : CON);
+      B.quad(e.at(0, yb), e.at(e.L, yb), e.at(e.L, yb, -0.3), e.at(0, yb, -0.3), [0, 1, 0], U0, CON2);
+    }
+    const nc = Math.max(1, Math.round(e.L / 8));
+    for (let c = 0; c <= nc; c++) {
+      const t = e.L * c / nc, ta = Math.max(0, t - 0.3), tb = Math.min(e.L, t + 0.3);
+      B.quad(e.at(ta, y0, 0.02), e.at(tb, y0, 0.02), e.at(tb, yTop, 0.02), e.at(ta, yTop, 0.02), N, U0, CON);
+    }
+    ctx.solids.push({ x: e.mx, z: e.mz, hw: e.L / 2 + 0.2, hd: 0.4, rot: Math.atan2(e.uz, e.ux), y0: y0 - 1.2, y1: yTop });
+    // the P on the face toward King
+    const s = street(city, e.mx + e.nx * 3, e.mz + e.nz * 3, 30, /^King Street/);
+    if (s && e.L > 20) {
+      const m = L.panel(2.2, 2.2, 50, (q, W, Hh) => {
+        q.fillStyle = '#1b4f9c'; q.fillRect(0, 0, W, Hh);
+        q.fillStyle = '#ffffff'; q.font = `800 ${Hh * 0.75}px ${SANS}`; q.textAlign = 'center'; q.textBaseline = 'middle';
+        q.fillText('P', W / 2, Hh * 0.55);
+      });
+      const p = e.at(e.L * 0.5, y0 + 2 * st + 0.55, 0.05);
+      hang(g, m, p[0], p[1], p[2], e.nx, e.nz, 0.02);
+      const w = L.panel(7, 0.8, 40, (q, W, Hh) => {
+        q.clearRect(0, 0, W, Hh);
+        q.fillStyle = '#ffffff'; q.font = `700 ${Hh * 0.62}px ${SANS}`; q.textAlign = 'center'; q.textBaseline = 'middle';
+        q.fillText('UPTOWN PARKADE', W / 2, Hh * 0.55, W * 0.95);
+      });
+      const p2 = e.at(e.L * 0.5, y0 + 3 * st + 0.55, 0.05);
+      hang(g, w, p2[0], p2[1], p2[2], e.nx, e.nz, 0.02);
+    }
+  }
+  roof(B, pts, y0 + (lv - 1) * st, lin([0.44, 0.44, 0.43]));
+  // light standards on the roof deck
+  const o = obb(pts);
+  for (const u of [-0.6, 0, 0.6]) {
+    const x = o.x + o.ux * o.hu * u, z = o.z + o.uz * o.hu * u;
+    B.prism(x, y0 + (lv - 1) * st, z, 0.08, 6, 6, lin([0.5, 0.5, 0.5]));
+    B.box(x, y0 + (lv - 1) * st + 6, z, 0.6, 0.2, 0.3, 0, lin([0.3, 0.3, 0.3]));
+  }
+}
+
 
 /**
  * THE SEAGRAM LOFTS, 3 and 5 Father David Bauer Dr: Seagram's barrel
@@ -1777,6 +2382,8 @@ export function buildPlaces(ctx) {
     publicSquare(kit, ctx);
     townSquare(kit, ctx);
     seagram(kit, ctx);
+    marsland(kit, ctx);
+    parkade(kit, ctx);
   });
   // open ground the tree scatter keeps off (landmarks.js clearAt -> city.clearCircles)
   const keep = (pts, pad) => {

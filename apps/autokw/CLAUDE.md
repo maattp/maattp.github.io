@@ -160,11 +160,34 @@ file and a guide disagree, this file wins.
   windows with sills and arched lintels, string courses, a bracketed
   cornice; party walls (inside a neighbour) get nothing. The Old Post Office
   (35 King N) has its clock tower on the King/Dupont corner (`postOfficeTower`).
-  Lamp posts with UPTOWN WATERLOO banners every 30 m (`kingLamps`). Waterloo
-  Public Square: the 2023 slatted leaf shades (`LEAVES`) and the water wall
-  in front of Beertown (`WATERWALL`); the Town Square's signs; the Seagram
-  Lofts (buff, small windows, SEAGRAM DISTILLERS painted on No. 3's face
-  toward Uptown). **Waterloo Park:** footbridges (`BRIDGES`, OSM ways; decks
+  Double-globe lamp posts with UPTOWN WATERLOO banners every 30 m and street
+  trees in grates half way between them (`kingLamps`, `STATS.kingTrees`).
+  **Waterloo Public Square** (docs/uptown-*.jpg; sources: the City's site
+  plan PDF, July 2026, and the 2012/2019/2024 Commons and Flickr photos):
+  King St is its EAST side, Willis Way its SOUTH, ION and the one-platform
+  station (northbound only) its NORTH, the mall its WEST. There was no
+  2023 rebuild -- the 2009 square plus the five leaf shades (2023) and the
+  water feature. Drawn from OSM: the courtyard (`COURT`, pedestrian area
+  760863913) paved in light slabs and a 6.2 m grid of dark bands; the rink
+  (`RINK`, 202051421) as the City's: a white sheet in a LOW white curb with
+  a red stripe, a gap toward King -- "not designed for hockey", so no boards
+  or nets (the ice is two platforms); the stage and two seat-steps along
+  the courtyard's curved edge (`AMPHI`, `TIERS`) up to the terrace at
+  `TERRACE` 1.35 m (the mall's floor: OSM has 12 steps from the main
+  entrance), the terrace itself a grid of 1.5 m platforms; the entrance
+  stair (a sloped platform, rails); the water wall and four pools stepping
+  north beside the stepped walk (`POOLS`, `WALK`); Beertown's patio with red
+  umbrellas; the five vertical leaf shades (`leaves`: a steel spine curling
+  back over the terrace, timber slats, ~8 m); the Corten Waterloo Bell on
+  its plinth (`BELL`); the planted beds and the Willis Way grove; trees,
+  benches, bins and the GRT shelter along King; tall grey lights with
+  banners and baskets; the event trailer and the hedge by the station. The
+  Shops at Waterloo Town Square: grey precast, glass, THE SHOPS / 75 KING
+  over the glass-canopied entrance, SHOPPERS DRUG MART, BEERTOWN, PIPER ARMS.
+  Also drawn here now: the **Marsland Centre** (the BMO tower, 52 m, tan
+  fins, BMO signs; `MARSLAND*`) and the **Uptown Parkade** across King
+  (`PARKADE`, five open decks). The Seagram Lofts (buff, small windows,
+  SEAGRAM DISTILLERS painted on No. 3's face toward Uptown). **Waterloo Park:** footbridges (`BRIDGES`, OSM ways; decks
   are `ctx.platforms`, walkable), the grist mill and wheel, the 1820 log
   school, the Eby farmhouse/Potters' Workshop, barn and EMPTY paddocks (the
   animal farm closed in 2024 -- don't put animals back), gazebos, the
@@ -179,14 +202,24 @@ file and a guide disagree, this file wins.
   the 168-point plan simplified (`simplify`), entrances at OSM's entrance
   nodes, the anchors' raised parapets and signs (`MALL_ANCHORS`, 2026: the
   Bay is Urban Behavior), Galaxy Cinemas' own block, the pylon on King St.
-  **Lettering is on its own canvas** (`PlaceAtlas`, 2048 x 1024): the
+  **Lettering is on its own canvas** (`PlaceAtlas`, 2048 x 1280; at 1024 it
+  overflowed by 3 px once the square's signs came, `STATS.atlas.full`): the
   shared sign atlas is ~90 % full before these run and overflowed (blank
   signs) when they shared it. Trees keep off the buildings and pitches
   (`clearAt`). `window.__noPlaces = true` before boot turns it all off
   (kwshots `VIEW_BOOT_JS`) for a before/after; `window.__kwPlaces` has the
   triangle/solid counts. Phone (AUTO_PHONE=1, GPU), before -> after:
   Uptown street 210 -> 225 draws, 829k -> 872k tris; Waterloo Park
-  191 -> 196, 710k -> 755k; RIM 118 -> 119; Conestoga 338 -> 346.
+  191 -> 196, 710k -> 755k; RIM 118 -> 119; Conestoga 338 -> 346. The
+  square's rebuild, phone at the opening frame: 191 -> 196 draws, 852k ->
+  881k tris (the old King St opening frame was 253 / 927k).
+- **The spawn is on Waterloo Public Square** (`SPAWN_LL` in
+  tools/kw/build_places.py, re-run it): on the courtyard north of the rink,
+  looking south-west across it to the mall's entrance, the leaf shades and
+  Beertown -- 3.7 m off OSM's drinking fountain, which the first try stood
+  on. Off the street there is no kerb ahead, so main.js's red coupe falls
+  back to the nearest kerb within 60 m (King's west kerb by the square,
+  ~15 m away); short edges count, since crossings cut King into pieces.
 
 - **Air traffic: src/airtraffic.js** (docs/air-takeoff.jpg, air-gate.jpg).
   No flight model: every movement is a `Track` -- waypoints with their

@@ -1453,7 +1453,8 @@ function installShadowFade() {
   // up to was the same pickup -- and the nearest slot was usually out of the
   // opening frame. A red sports coupe is parked for good (apron: never
   // despawned, like the quads) at the right-hand kerb ~14 m ahead, facing up
-  // the street, and any kerbside car in that spot gives up its slot.
+  // the street (or at the nearest kerb, below), and any kerbside car in that
+  // spot gives up its slot.
   {
     traffic.updateParked(G.SPAWN.x, G.SPAWN.z);
     const fx = Math.sin(G.SPAWN_HEADING), fz = Math.cos(G.SPAWN_HEADING);
@@ -1474,6 +1475,24 @@ function installShadowFade() {
       // the outermost right-hand kerb (a divided street has a median kerb too)
       const right = (x - G.SPAWN.x) * -fz + (z - G.SPAWN.z) * fx;
       if (!spot || right > spot.right) spot = { x, z, heading: Math.atan2(dx, dz), right, t, len: e.len, es: sg };
+    }
+    // A spawn off the street (Waterloo Public Square) has no kerb ahead: the
+    // coupe goes to the nearest kerb of a real street within a short walk, on
+    // the side facing the spawn, pointing the way traffic on that side runs.
+    for (const ei of spot ? [] : city.edgesNear(G.SPAWN.x, G.SPAWN.z, 70)) {
+      const e = city.edges[ei];
+      // (a street beside a square is cut short by its crossings: any edge a car fits on, clear of the ends)
+      if (e.elev || e.tunnel || e.prof || e.cls === 'hwy' || e.cls === 'ramp' || e.len < 13) continue;
+      const n0 = city.nodes[e.a], m = Math.min(11, e.len / 2);
+      const t = Math.max(m, Math.min(e.len - m, (G.SPAWN.x - n0.x) * e.dx + (G.SPAWN.z - n0.z) * e.dz));
+      const cx = n0.x + e.dx * t, cz = n0.z + e.dz * t;
+      // the kerb on the spawn's side is on the right of travel along sg * (dx, dz)
+      const sg = (G.SPAWN.x - cx) * -e.dz + (G.SPAWN.z - cz) * e.dx >= 0 ? 1 : -1;
+      const dx = e.dx * sg, dz = e.dz * sg;
+      const x = cx - dz * (e.hw - 1.15), z = cz + dx * (e.hw - 1.15);
+      const d = Math.hypot(x - G.SPAWN.x, z - G.SPAWN.z);
+      if (d > 60 || (spot && d >= spot.d)) continue;
+      spot = { x, z, heading: Math.atan2(dx, dz), d, t, len: e.len, es: sg };
     }
     if (spot) {
       // The Wedge stands behind it on the same kerb, or ahead of it, wherever
