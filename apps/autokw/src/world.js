@@ -8015,19 +8015,23 @@ float frLine(float o, float fw, float c, float w) {
   }
 
   /**
-   * AUTO KW: WHERE A HOUSE'S GARAGE DOOR GOES on its front wall (fb's +z),
-   * as fb-local x, or null. The siding is one composed elevation per ~11 m
-   * (`uScale` 11, `uFit`: a whole number of tiles a face) with a ground-floor
-   * window at u 0.13-0.40 and the front door at 0.595-0.86 of each tile
-   * (textures.js houseSurface / brickHouseSurface, frames included); a door
-   * drawn over part of one left a sliver of window or door beside it. The
-   * face's u runs as Builder.box lays it on the facade box (bd's frame), so
-   * each opening is found in fb's x, and the door (with its 0.15 m trim) is
-   * slid in from its end (`sd`) until it covers each opening whole or misses
-   * it -- missing all is best, a window covered next, a door covered last.
+   * AUTO KW: WHERE A HOUSE'S GARAGE DOOR GOES on its front wall (fb's +z):
+   * { glx, cover } -- the door's fb-local x, and the stretch [x0, x1] of the
+   * ground floor a wall-coloured infill must close (null: none). The siding
+   * is one composed elevation per ~11 m (`uScale` 11, `uFit`: a whole number
+   * of tiles a face) with a ground-floor window at u 0.13-0.40 and the front
+   * door at 0.595-0.86 of each tile (textures.js houseSurface /
+   * brickHouseSurface, frames and sills included); a door drawn over part of
+   * one left a sliver of window or door frame beside it. The face's u runs
+   * as Builder.box lays it on the facade box (bd's frame), so each opening is
+   * found in fb's x. The door slides in from its end (`sd`) up to SLIDE m to
+   * a spot that covers each opening whole or misses it (missing all best, a
+   * window covered next, the front door last); where none is that close (the
+   * openings are ~3 m on an 11 m tile, the door 3-5 m), it keeps its end and
+   * the openings it cuts are closed by the infill.
    */
   _garageSpot(bd, fb, offF, sd, gw, porch) {
-    const OPEN = [[0.13, 0.40, 1], [0.595, 0.86, 3]];
+    const OPEN = [[0.13, 0.40, 1], [0.595, 0.86, 3]], SLIDE = 1.6;
     const cs = Math.cos(bd.rot), sn = Math.sin(bd.rot);
     const toBd = (x, z) => { const dx = x - bd.x, dz = z - bd.z; return [dx * cs + dz * sn, -dx * sn + dz * cs]; };
     // which face of the facade box the front is, and u along it at fb-local x
@@ -8039,41 +8043,45 @@ float frLine(float o, float fw, float c, float w) {
       const [bx, bz] = toBd(...offF(lx, fb.d / 2));
       return zFace ? (fz0 > 0 ? (bx + hw) / bd.w : (hw - bx) / bd.w) : (fx0 > 0 ? (hd - bz) / bd.d : (bz + hd) / bd.d);
     };
+    const edge = fb.w / 2 - gw / 2 - 0.5, half = gw / 2 + 0.15;
+    const end = sd * edge;
+    const clear = (glx) => !porch || Math.abs(porch.px - glx) >= (porch.pw + gw) / 2;
     // the openings along the wall as fb-local x intervals (t is linear in lx)
     const t0 = tOf(-fb.w / 2), t1 = tOf(fb.w / 2), k = (t1 - t0) / fb.w;
-    if (Math.abs(k) < 1e-6) return null;
+    const GS = cityStats.garages || (cityStats.garages = { doors: 0, slid: 0, infill: 0, none: 0 });
+    if (Math.abs(k) < 1e-6) { if (!clear(end)) { GS.none++; return null; } GS.doors++; return { glx: end, cover: null }; }
     const opens = [];
     for (let i = 0; i < n; i++) for (const [a, b, c] of OPEN) {
       const xa = ((i + a) / n - t0) / k - fb.w / 2, xb = ((i + b) / n - t0) / k - fb.w / 2;
       opens.push([Math.min(xa, xb), Math.max(xa, xb), c]);
     }
-    const half = gw / 2 + 0.15, edge = fb.w / 2 - gw / 2 - 0.5;
     let best = null, bc = Infinity;
-    for (let s = 0; s <= edge * 2; s += 0.1) {
+    for (let s = 0; s <= Math.min(SLIDE, edge * 2) + 1e-6; s += 0.1) {
       const glx = sd * (edge - s);
-      if (porch && Math.abs(porch.px - glx) < (porch.pw + gw) / 2) continue;
+      if (!clear(glx)) continue;
       let cost = s / fb.w, ok = true;
       for (const [a, b, c] of opens) {
-        const lo = Math.max(a, glx - half), hi = Math.min(b, glx + half);
-        if (hi <= lo) continue;
+        if (Math.min(b, glx + half) <= Math.max(a, glx - half)) continue;
         if (glx - half <= a + 0.02 && glx + half >= b - 0.02) cost += c;
         else { ok = false; break; }
       }
       if (ok && cost < bc) { bc = cost; best = glx; }
       if (bc < 1) break;   // a spot that misses every opening, nearest the end
     }
-    const GS = cityStats.garages || (cityStats.garages = { doors: 0, slid: 0, none: 0 });
-    if (best === null) GS.none++;
-    else {
+    if (best !== null) {
       GS.doors++;
-      if (Math.abs(best - sd * edge) > 0.05) {
-        GS.slid++;
-        // (a few, for a camera: the door's middle and the way the front faces)
-        if (!GS.ex) GS.ex = [];
-        if (GS.ex.length < 16) { const [qx, qz] = offF(best, fb.d / 2); GS.ex.push([+qx.toFixed(1), +qz.toFixed(1), +(-Math.sin(fb.rot)).toFixed(3), +Math.cos(fb.rot).toFixed(3), +(best - sd * edge).toFixed(1)]); }
-      }
+      if (Math.abs(best - end) > 0.05) GS.slid++;
+      return { glx: best, cover: null };
     }
-    return best;
+    if (!clear(end)) { GS.none++; return null; }
+    // at its end, the openings it cuts closed: the door's span widened to theirs
+    let x0 = end - half, x1 = end + half;
+    for (const [a, b] of opens) if (Math.min(b, end + half) > Math.max(a, end - half)) { x0 = Math.min(x0, a - 0.05); x1 = Math.max(x1, b + 0.05); }
+    x0 = Math.max(x0, -fb.w / 2 + 0.05); x1 = Math.min(x1, fb.w / 2 - 0.05);
+    GS.doors++; GS.infill++;
+    if (!GS.ex) GS.ex = [];
+    if (GS.ex.length < 16) { const [qx, qz] = offF(end, fb.d / 2); GS.ex.push([+qx.toFixed(1), +qz.toFixed(1), +(-Math.sin(fb.rot)).toFixed(3), +Math.cos(fb.rot).toFixed(3)]); }
+    return { glx: end, cover: [x0, x1] };
   }
 
   /**
@@ -9008,11 +9016,20 @@ float frLine(float o, float fw, float c, float w) {
         const gw = fb.w >= 12.5 && hash2(seed, 191) < 0.6 ? 4.9 : 2.7, gh = Math.min(2.2, ghMax);
         let sd = hash2(seed, 192) < 0.5 ? -1 : 1;
         if (porch && Math.abs(porch.px - sd * (fb.w / 2 - gw / 2 - 0.5)) < (porch.pw + gw) / 2) sd = -sd;
-        const glx = this._garageSpot(bd, fb, offF, sd, gw, porch);
-        if (glx !== null) {
+        const spot = this._garageSpot(bd, fb, offF, sd, gw, porch);
+        if (spot !== null) {
+          const glx = spot.glx;
           const GD = [[0.9, 0.9, 0.88], [0.86, 0.82, 0.72], [0.42, 0.3, 0.22], [0.3, 0.31, 0.32]];
           const gc = GD[hash2(seed, 193) < 0.62 ? 0 : hash2(seed, 194) < 0.4 ? 1 : hash2(seed, 195) < 0.6 ? 2 : 3];
           const [dx, dz] = offF(glx, fb.d / 2 + 0.03);
+          if (spot.cover) {
+            // the infill over the cut openings: the wall's own colour (its
+            // tint over the cell's mean, lifted for the windows that mean
+            // averages in: CELL_MEAN)
+            const [cx0, cz0] = offF((spot.cover[0] + spot.cover[1]) / 2, fb.d / 2 + 0.015);
+            const m = cell === C.brickhouse ? CELL_MEAN.brickhouse : CELL_MEAN.house;
+            flat.box(cx0, bd.y - 0.3, cz0, spot.cover[1] - spot.cover[0], gh + 0.62, 0.04, fb.rot, [col[0] * m[0] * 1.12, col[1] * m[1] * 1.12, col[2] * m[2] * 1.12], NOTOP);
+          }
           flat.box(dx, bd.y - 0.15, dz, gw + 0.3, gh + 0.3, 0.06, fb.rot, trim, NOTOP);
           const [ex, ez] = offF(glx, fb.d / 2 + 0.07);
           flat.box(ex, bd.y - 0.15, ez, gw, gh + 0.15, 0.05, fb.rot, gc, NOTOP);

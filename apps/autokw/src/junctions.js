@@ -220,7 +220,38 @@ export class Junctions {
         if (d > m - 2 && d < m + 14) back = Math.max(back, d + X.w / 2 + 1.0);
       }
     }
-    return clamp(back, 2.5, Math.max(2.5, e.len - 3));
+    back = clamp(back, 2.5, Math.max(2.5, e.len - 3));
+    // NOT IN ANOTHER STREET'S LANES. Where the graph's node is not where the
+    // carriageways meet -- the far carriageway of a divided road, a skewed
+    // crossing, a slip lane beside the arm -- the mouth is short of the road
+    // the arm crosses and the bar (and the line cars stop at) lay across that
+    // road's lanes, in the middle of the intersection. Stepped back along
+    // the arm until the bar's middle and both ends are clear.
+    for (let k = 0; k < 24 && back + 0.5 <= e.len - 3 && this.barAcross(ni, ei, back); k++) back += 0.5;
+    return back;
+  }
+
+  /** Does the bar of approach (ei into ni) at setback `back` lie across
+   *  another street's lanes (its middle or either end of its span)? */
+  barAcross(ni, ei, back) {
+    const city = this.city, e = city.edges[ei], n = city.nodes[ni];
+    const u = dirInto(e, ni), ux = u[0], uz = u[1];
+    const across = (x, z) => {
+      for (const oi of city.edgesNear(x, z, 30)) {
+        if (oi === ei) continue;
+        const o = city.edges[oi];
+        if (o.elev || o.tunnel || Math.abs(o.dx * ux + o.dz * uz) > 0.7) continue;
+        const a = city.nodes[o.a], t = (x - a.x) * o.dx + (z - a.z) * o.dz;
+        if (t < 1 || t > o.len - 1) continue;
+        if (Math.abs((x - a.x) * -o.dz + (z - a.z) * o.dx) < o.hw - 0.3) return true;
+      }
+      return false;
+    };
+    const cx = n.x - ux * (back - 0.25), cz = n.z - uz * (back - 0.25);
+    // (a two-way arm's bar spans its own half: Painter.stopBar's o0..o1)
+    const lo = flowOf(e) === 0 ? 0.15 : -(e.hw - 0.3), hi = e.hw - 0.3;
+    for (const o of [lo, (lo + hi) / 2, hi]) if (across(cx - uz * o, cz + ux * o)) return true;
+    return false;
   }
 
   approach(C, ei, ni) {
@@ -1024,6 +1055,10 @@ class Painter {
   }
   /** Across an approach's own lanes at its stop line (0.45 m: Ontario's 30-60 cm). */
   stopBar(A) {
+    // still across another street where the arm runs out (an approach that
+    // starts inside the intersection: the matcher took the far carriageway's
+    // node of a divided road): no bar rather than one in the middle of it
+    if (this.jc.barAcross(A.ni, A.ei, A.back)) return;
     const n = this.city.nodes[A.ni], ux = A.ux, uz = A.uz, rx = -uz, rz = ux;
     const cx = n.x - ux * (A.back - 0.25), cz = n.z - uz * (A.back - 0.25);
     const o0 = A.two ? 0.15 : -A.hw + 0.3, o1 = A.hw - 0.3;
@@ -1031,6 +1066,7 @@ class Painter {
   }
   /** A yield line: "shark's teeth" pointing at the oncoming driver. */
   teeth(A) {
+    if (this.jc.barAcross(A.ni, A.ei, A.back)) return;   // (as stopBar)
     const n = this.city.nodes[A.ni], ux = A.ux, uz = A.uz, rx = -uz, rz = ux;
     const cx = n.x - ux * (A.back - 0.3), cz = n.z - uz * (A.back - 0.3);
     const o0 = A.two ? 0.9 : -A.hw + 0.4, o1 = A.hw - 0.4;

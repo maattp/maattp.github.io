@@ -10,7 +10,7 @@
 // another node's polygon, or across another street's lanes, is a stray: it
 // is painted in the middle of the intersection. Prints counts by kind and
 // the first examples (with a camera for kwshots), so a before/after is
-// `stray` on master against this.
+// `stray` on master against this (`dropped`: bars this build no longer paints).
 (() => {
   const d = window.__dbg, c = d.city, jc = c.jc;
   if (!jc) return 'no junctions';
@@ -50,16 +50,21 @@
         const J = c.junction ? c.junction(nj) : null;
         if (J && J.poly && J.poly.length >= 6 && inPoly(J.poly, cx, cz)) { why = 'poly'; break; }
       }
-      const oe = why ? -1 : onOther(cx, cz, A);
+      // (the bar spans the approach's own lanes: Painter.stopBar's o0..o1)
+      const lo = A.two ? 0.15 : -A.hw + 0.3, hi = A.hw - 0.3;
+      let oe = -1;
+      if (!why) for (const o of [lo, (lo + hi) / 2, hi]) { oe = onOther(cx - A.uz * o, cz + A.ux * o, A); if (oe >= 0) break; }
       if (!why && oe >= 0) why = 'street';
       if (!why) continue;
+      // (junctions.js barAcross: such a bar is not painted at all now)
+      if (why === 'street' && jc.barAcross && jc.barAcross(A.ni, A.ei, A.back)) { out.dropped = (out.dropped || 0) + 1; continue; }
       out.stray++;
       out[why === 'poly' ? 'inPoly' : 'onOther']++;
       const k = ['', 'sig', 'stop', 'rb', 'mini'][C.k] || C.k;
       out.byKind[k] = (out.byKind[k] || 0) + 1;
-      if (out.ex.length < 12) out.ex.push({ C: C.id, k, why, A: A.id, ei: A.ei, ni: A.ni, back: +back.toFixed(1), at: [+cx.toFixed(1), +cz.toFixed(1)], other: oe,
+      if (out.ex.filter((q) => q.k === k).length < 6) out.ex.push({ C: C.id, k, why, A: A.id, ei: A.ei, ni: A.ni, back: +back.toFixed(1), at: [+cx.toFixed(1), +cz.toFixed(1)], other: oe,
         view: { name: `bar-${C.id}-${A.id}`, c: [+(cx - A.ux * 22 - A.uz * 2).toFixed(1), +(cz - A.uz * 22 + A.ux * 2).toFixed(1), 6], t: [+(cx + A.ux * 6).toFixed(1), +(cz + A.uz * 6).toFixed(1), 0], fov: 55 } });
     }
   }
-  return JSON.stringify(out, null, 1);
+  return JSON.stringify(out);
 })()
