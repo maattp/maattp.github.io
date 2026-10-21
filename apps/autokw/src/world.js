@@ -3577,11 +3577,59 @@ ${FALL ? `
         // the terrain mesh's own split (geo sampleHF): along tx + tz = 1
         idx.push(a, c, b, b, c, d);
       }
+      // Auto KW: WHAT KIND OF WATER each vertex is (riverWater below): a
+      // river (the field slopes) or a lake (flat), how shallow (next to the
+      // bank), where the riffles are, and which way is downstream.
+      const nv = pos.length / 3, riv = new Float32Array(nv * 3), flow = new Float32Array(nv * 2);
+      // which water is a river: as build_raster.py decided, by body -- a
+      // connected wet region whose level falls > 1.5 m across it (5th-95th
+      // percentile) is a river, the rest lakes and ponds (their level is
+      // one flat median). The local slope alone came and went along the
+      // Grand in patches.
+      const isRiver = G.riverField ? G.riverField() : null;
+      for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+        const v = vid[j * N + i];
+        if (v < 0) continue;
+        const L = (ii, jj) => (ii < 0 || jj < 0 || ii >= N || jj >= N ? NaN : WL[jj * N + ii]);
+        // the slope from whichever neighbours are wet, over a 2-cell baseline
+        let gx = 0, gz = 0, nx = 0, nz = 0, dry = 0;
+        for (const [a, b, sx, sz] of [[2, 0, 1, 0], [0, 2, 0, 1]]) {
+          for (let k = -4; k <= 4; k++) {
+            const ii = i + (sz ? k : 0), jj = j + (sx ? k : 0);
+            const p0 = L(ii - a / 2 * 2, jj - b / 2 * 2), p1 = L(ii + a / 2 * 2, jj + b / 2 * 2);
+            if (p0 === p0 && p1 === p1) { if (sx) { gx += (p1 - p0) / (4 * S); nx++; } else { gz += (p1 - p0) / (4 * S); nz++; } }
+          }
+        }
+        if (nx) gx /= nx;
+        if (nz) gz /= nz;
+        for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) { const w = L(i + di, j + dj); if (w !== w) dry++; }
+        let dry2 = 0;
+        for (let dj = -2; dj <= 2; dj++) for (let di = -2; di <= 2; di++) { const w = L(i + di, j + dj); if (w !== w) dry2++; }
+        const g = Math.hypot(gx, gz);
+        let river = 0;
+        if (isRiver) { for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) { const ii = i + di, jj = j + dj; if (ii >= 0 && jj >= 0 && ii < N && jj < N && isRiver[jj * N + ii]) river = 1; } }
+        else river = clamp((g - 0.0002) / 0.0006, 0, 1);
+        const shallow = dry ? 1 : dry2 ? 0.45 : 0;
+        const x = i * S - H, z = j * S - H;
+        // riffles: patches along the river (a broken bar of limestone across
+        // it, every few hundred metres -- the Grand between Doon and Galt is
+        // more riffle than pool) and its shallow margins
+        const nz1 = vnoise(x * 1.6 + 911, z * 1.6 - 377), nz2 = vnoise(x * 4.1 - 51, z * 4.1 + 233);
+        const riff = river * clamp(clamp((nz1 - 0.72) / 0.12, 0, 1) * (0.5 + 0.6 * nz2), 0, 1);
+        riv[v * 3] = river; riv[v * 3 + 1] = shallow; riv[v * 3 + 2] = riff;
+        const fl = g > 1e-6 ? 1 / g : 0;
+        flow[v * 2] = -gx * fl; flow[v * 2 + 1] = -gz * fl;
+      }
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      g.setAttribute('aRiv', new THREE.Float32BufferAttribute(riv, 3));
+      g.setAttribute('aFlow', new THREE.Float32BufferAttribute(flow, 2));
       g.setIndex(idx);
       g.computeVertexNormals();
+      let nr = 0, nf = 0;
+      for (let k = 0; k < nv; k++) { if (riv[k * 3] > 0.5) nr++; if (riv[k * 3 + 2] > 0.3) nf++; }
+      this.waterStats = { verts: nv, river: nr, riffle: nf };
       return g;
     })();
     const n = this.tx.water.normalMap;
@@ -3628,8 +3676,39 @@ ${FALL ? `
         + '\tvec3 mapN2 = texture2D( normalMap, vNormalMapUv * -0.29 + vec2( 0.37, 0.11 ) ).xyz * 2.0 - 1.0;\n'
         + '\tmapN = normalize( vec3( mapN.xy * 0.62 + mapN2.xy * 0.9, mapN.z ) );');
     };
-    mat.onBeforeCompile = twoScale;
-    mat.customProgramCacheKey = () => 'water2scale';
+    // Auto KW: THE GRAND IS NOT THE SEA. A river's water is a green-brown
+    // tea you can see the limestone through at the edges, not Elliott Bay's
+    // black: the body colour goes to it where the field slopes (aRiv.x), and
+    // lighter and browner toward the bank (aRiv.y). In the riffles (aRiv.z)
+    // the surface breaks: white streaks drawn out downstream (aFlow) and
+    // moving with the current, rougher and choppier than the pools.
+    const waterT = { value: 0 };
+    this._waterT = waterT;
+    const riverWater = (sh) => {
+      twoScale(sh);
+      sh.uniforms.uWT = waterT;
+      sh.vertexShader = 'attribute vec3 aRiv;\nattribute vec2 aFlow;\nvarying vec3 vRiv;\nvarying vec2 vFlow;\nvarying vec2 vWXZ;\n'
+        + sh.vertexShader.replace('#include <begin_vertex>',
+          '#include <begin_vertex>\n\tvRiv = aRiv; vFlow = aFlow; vWXZ = ( modelMatrix * vec4( transformed, 1.0 ) ).xz;');
+      sh.fragmentShader = 'uniform float uWT;\nvarying vec3 vRiv;\nvarying vec2 vFlow;\nvarying vec2 vWXZ;\n' + sh.fragmentShader
+        .replace('#include <color_fragment>', `#include <color_fragment>
+	vec3 rivBody = mix( vec3( 0.010, 0.016, 0.007 ), vec3( 0.030, 0.028, 0.014 ), vRiv.y * 0.5 );
+	diffuseColor.rgb = mix( diffuseColor.rgb, rivBody, clamp( vRiv.x * 1.2, 0.0, 1.0 ) );
+	vec2 fdir = length( vFlow ) > 0.01 ? normalize( vFlow ) : vec2( 1.0, 0.0 );
+	vec2 fp = vec2( dot( vWXZ, fdir ), dot( vWXZ, vec2( -fdir.y, fdir.x ) ) );
+	// white streaks drawn out along the current and carried down it, broken up by the chop
+	float wa = texture2D( normalMap, vec2( fp.x * 0.011 - uWT * 0.01, fp.y * 0.027 ) ).r;
+	float wb = texture2D( normalMap, vec2( fp.x * 0.031 - uWT * 0.03, fp.y * 0.083 + 0.4 ) ).g;
+	float st = sin( fp.y * 1.3 + sin( fp.x * 0.11 - uWT * 0.1 ) * 2.0 + wa * 9.0 ) * sin( fp.x * 0.16 - uWT * 0.22 + fp.y * 0.35 + wb * 7.0 );
+	float foam = smoothstep( 0.42, 0.92, st ) * smoothstep( 0.15, 0.7, vRiv.z ) * smoothstep( 0.3, 0.6, wa + wb * 0.4 - 0.15 );
+	foam *= clamp( 1.0 - length( fwidth( vWXZ ) ) / 2.5, 0.0, 1.0 );   // (gone before the streaks alias)
+	diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.46, 0.48, 0.46 ), foam * 0.7 );`)
+        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n\troughnessFactor = mix( roughnessFactor, 0.5, foam );')
+        .replace('mapN = normalize( vec3( mapN.xy * 0.62 + mapN2.xy * 0.9, mapN.z ) );',
+          'mapN = normalize( vec3( ( mapN.xy * 0.62 + mapN2.xy * 0.9 ) * ( 1.0 + vRiv.z * 1.6 ), mapN.z ) );');
+    };
+    mat.onBeforeCompile = riverWater;
+    mat.customProgramCacheKey = () => 'water2scale-river';
     const m = new THREE.Mesh(geo, mat);
     m.position.y = 0;
     // AFTER the opaque scene, not before it (was -5). A bore below sea level
@@ -4679,6 +4758,7 @@ float frLine(float o, float fw, float c, float w) {
       this.waterNormal.offset.x = (t * 0.0040) % 1;
       this.waterNormal.offset.y = (t * 0.0017) % 1;
     }
+    if (this._waterT) this._waterT.value = t % 2000;
   }
 
   // --- chunk streaming ------------------------------------------------------

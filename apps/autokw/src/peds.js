@@ -3528,6 +3528,8 @@ function crowdState(R, x, z) {
     // a taxi fare (taxi.js): 0 not one, 1 hailing (stands, one arm up, faces
     // the road), 2 walking to (fx, fz); the recycler and the scare leave him alone
     fare: 0, fx: 0, fz: 0,
+    // Auto KW: out for a walk on a trail (spawnTrail): { x, z, speed } ahead, or null
+    trail: null,
   };
 }
 
@@ -3673,6 +3675,31 @@ export class PedSystem {
     const p = this._add(x, z, false, -1, 1, 1, 0, y);
     p.fare = 2; p.fx = fx; p.fz = fz;
     p.heading = Math.atan2(fx - x, fz - z);
+    p.h.group.position.set(x, y, z);
+    return p;
+  }
+
+  /** Auto KW: someone out for a walk on a trail (bikes.js Cyclists' walkers):
+   *  placed by hand at (x, z); bikes.js steers him each frame through
+   *  `p.trail` ({ x, z, speed }: the point ahead on the trail) and removes him
+   *  out of range -- the ring neither recycles nor re-anchors him. */
+  spawnTrail(x, z, seedY, heading, px = x, pz = z) {
+    // within the crowd's own cap (MAX_PEDS): a full crowd gives up its
+    // farthest pavement walker for him, or he does not come -- a trail
+    // walker costs what a pedestrian costs, never one more
+    let civ = 0, far = null, fd = 60 * 60;
+    for (const q of this.peds) {
+      if (q.cop) continue;
+      civ++;
+      if (q.fare || q.trail || q.state === 'down') continue;
+      const d = dist2(q.x, q.z, px, pz);
+      if (d > fd) { fd = d; far = q; }
+    }
+    if (civ >= MAX_PEDS) { if (!far) return null; this.remove(far); }
+    const y = this.city.groundAt(x, z, seedY);
+    const p = this._add(x, z, false, -1, 1, 1, 0, y);
+    p.trail = { x, z, speed: 1.3 };
+    p.heading = heading;
     p.h.group.position.set(x, y, z);
     return p;
   }
@@ -4199,7 +4226,7 @@ export class PedSystem {
       const p = this.peds[i];
       const d2p = dist2(p.x, p.z, px, pz);
       // (a civilian left behind is recycled into the ring; an officer is not)
-      if (!p.fare && d2p > (p.cop ? (PED_RADIUS + 90) * (PED_RADIUS + 90) : CULL_R * CULL_R)) { this.remove(p); continue; }
+      if (!p.fare && !p.trail && d2p > (p.cop ? (PED_RADIUS + 90) * (PED_RADIUS + 90) : CULL_R * CULL_R)) { this.remove(p); continue; }
 
       if (p.state === 'down') {
         p.h.mesh.visible = true;
@@ -4251,6 +4278,10 @@ export class PedSystem {
         // a taxi's fare: stands facing the road, or walks to (fx, fz) (taxi.js)
         desired = Math.atan2(p.fx - p.x, p.fz - p.z);
         targetSpeed = p.fare === 2 ? 2.3 : 0;
+      } else if (p.trail && p.state !== 'flee') {
+        // out for a walk on a trail: toward the point ahead bikes.js gives
+        desired = Math.atan2(p.trail.x - p.x, p.trail.z - p.z);
+        targetSpeed = p.trail.speed;
       } else if (p.state === 'flee') {
         p.timer -= dt;
         // held by a wall: along it, not into it (the wall is _move's)
