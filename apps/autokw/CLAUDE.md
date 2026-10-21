@@ -301,6 +301,58 @@ file and a guide disagree, this file wins.
   through `player.autoDrive`; a full race through the panel's buttons
   takes ~3 min of wall clock with AUTO_GPU=1.
 
+- **The University of Waterloo** (src/uwcampus.js, `data/uw.json` from
+  tools/kw/build_uw.py; docs/uw-*.jpg). build_uw.py takes every campus
+  building from OSM (inside Ring Road, or a named university / college /
+  dormitory / chapel / sports building in the box round it, or a V1/REV
+  block tagged building:colour #AE9183) with its levels / height / min_level
+  and its **building:part masses** (each part goes to the building its
+  centroid is in), the enclosed bridges, Ring Road and the campus's POI
+  nodes (the letters sculpture, the Plant Operations stack, the artworks).
+  `prepCampus` (after prepPlaces) flattens those buildings' boxes (`kw.skip`,
+  `kw.uw`) but leaves them a `kw.poly` of the real outline, so kw.js's
+  nameplates still find the street face. `buildCampus` draws each building
+  from its parts when they cover >= 70 % of the outline (else the outline +
+  the parts that rise above it or float), storey 3.95 m, in ITS look:
+  `BY` (by OSM ref) / `BY_NAME` / `PART_STY` (by part id) pick a style --
+  wall colour and a window treatment ('ribbon', 'slit', 'punch', 'hood',
+  'curtain', 'facet', 'stripe', 'hex', 'fins', 'arcade', 'none'). Colours
+  from photos (Commons, Oct 2026): the 1958-62 core (PHY, C2, ESC, B1/B2,
+  E2/E3, DWE, CPH) buff/tan brick; MC, NH, PAS pale precast; Dana Porter a
+  cream ribbed tower of staggered slits on a dark glass neck, a podium of
+  fins under a brown fascia, a ground floor of piers, a brown mechanical cap
+  and mast; Hagey Hall / SCH / the Arts dark brown brick; M3 orange-red
+  brick + teal glass; E5 white and E7 (the PEARL SULLIVAN ENGINEERING
+  BUILDING since Nov 2025 -- OSM's PSE) grey diamond-faceted panels with
+  glass bands, E6 dark panels; QNC's barcode stripes and the honeycomb wing;
+  DC tan wings, the teal glass barrel vault (OSM: roof:shape round) with
+  grey-green gooseneck ducts and red portals; EV3 grey with lime bands; V1 /
+  REV / MKV / the colleges red-brown brick, Grebel's stone chapel. `SIGS`
+  adds per-building signatures (DC, DP, Physics' dome, E5's penthouse, SCH's
+  chimney, Grebel's chapel gable, DC's bridge on red legs). **The E5 Bridge**
+  (OSM's 81 m corridor line) is a one-storey dark-blue glass tube with a
+  silver mullion grid, 6.8 m over the highest ground under it, on round
+  concrete columns kept off the carriageway, and no street tree under it
+  (`clearAt`); other enclosed bridges OSM draws only as lines get a glazed
+  link at the second floor, REV's a covered walkway on posts. Also: the
+  UNIVERSITY OF WATERLOO steel letters on their plinth, WATERLOO
+  ENGINEERING letters at E7, the gate signs (black, the gold shield) at
+  Ring Rd / University Ave, the boulder ring and five flagpoles in front of
+  SCH, the stack, Triad, the Obelisk, the Porcellino. **Draws:** the shell
+  is drawn in kw.js's `polyMat()` into buildPolys' `kwp` clusters (no draw
+  of its own; builders retire at 50k vertices so the merge keeps them);
+  detail (mullions, hoods, fins, sills, sculptures, lettering) goes to
+  `near:` clusters that landmarks.js hides past 520 m (updateLandmarkRange,
+  the beaches' rule). `window.__noCampus = true` before boot (kwshots
+  `VIEW_BOOT_JS`) for a before/after; `window.__uwCampus` has the counts
+  (~150k tris, ~85k of them near-only). Phone (AUTO_PHONE=1, GPU), before
+  -> after: from Uptown looking toward campus 225 -> 224 draws, 957k ->
+  958k tris; over the campus 160 -> 164, 639k -> 727k; under the E5
+  bridge 156 -> 159, 658k -> 741k; at Dana Porter 178 -> 182, 563k -> 650k. Verify with `VIEWS=<file> node tools/kw/kwshots.mjs`,
+  e.g. on Ring Road under the bridge (c -5318,-2262 -> t -5272,-2228).
+  Approximate: DC's vault is a box-fitted barrel; the colours of C2/ESC/
+  B1/B2, AL, EV1, RCH and STC were not confirmed by photos.
+
 ## Build number
 
 `<div id="build">vN</div>` in index.html and `CACHE = 'autokw-vN'` in sw.js

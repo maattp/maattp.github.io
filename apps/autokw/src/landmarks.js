@@ -3348,6 +3348,8 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
       // A beach's umbrellas and towels are a few pixels past 700 m; eleven far
       // beaches in one downtown view cost a draw each (updateLandmarkRange).
       if (key.startsWith('beach')) near.push({ o, s: o.geometry.boundingSphere, r: 700 });
+      // an extra's fine detail (uwcampus.js: mullions, hoods, fins) in a 'near:' group
+      else if (key.startsWith('near:')) near.push({ o, s: o.geometry.boundingSphere, r: 520 });
       const ok = !(o.material.userData && o.material.userData.noShadow) && !o.material.transparent && !o.material.isMeshBasicMaterial;
       o.castShadow = ok;
       o.receiveShadow = ok || o.material.isMeshStandardMaterial;

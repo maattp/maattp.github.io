@@ -1,0 +1,1099 @@
+// THE UNIVERSITY OF WATERLOO'S MAIN CAMPUS, building by building.
+//
+// data/uw.json (tools/kw/build_uw.py) is OSM's campus: every building's
+// outline, levels and building:part masses (Dana Porter's stepped tower, MC's
+// stair towers, DC's sloped glass), the enclosed bridges, Ring Road and the
+// campus's own landmarks. This module draws all of it -- the boxes those
+// buildings became go flat (prepCampus) -- each building in ITS look
+// (STYLES, keyed by OSM ref), with the signatures that make it recognisable
+// (SIGS): the E5 bridge over Ring Road, Dana Porter's white precast tower,
+// MC's slit windows, DC's tan block with its stepped glass and ducts, QNC's
+// honeycomb, the Arts quad's buff brick, Village 1's brown brick blocks, the
+// UNIVERSITY OF WATERLOO letters at the main gate ...
+//
+// One landmarks.js extra (buildCampus). The shell (walls, glass, roofs) is
+// drawn in kw.js's footprint material into buildPolys' own 'kwp' clusters,
+// so it costs no draw of its own; the fine detail (mullions, MC's hoods, DP's
+// fins, sills, sculptures, lettering) goes to 'near:' clusters that
+// landmarks.js hides past ~520 m (updateLandmarkRange). Lettering is on a
+// small atlas of its own.
+
+import * as THREE from './three.js';
+import * as G from './geo.js';
+import { hash2 } from './util.js';
+import { Builder } from './build.js';
+import { LOOKS, polyMat } from './kw.js';
+
+const U0 = [0, 0, 0, 0, 0, 0, 0, 0];
+const lin = (c) => [Math.pow(c[0], 2.2), Math.pow(c[1], 2.2), Math.pow(c[2], 2.2)];
+const shade = (c, k) => [c[0] * k, c[1] * k, c[2] * k];
+const ckey = (x, z) => `${Math.round(x / 1200)},${Math.round(z / 1200)}`;
+const T = (x, z) => G.terrainHeight(x, z);
+
+const ST = 3.95;          // a storey, metres (UW's 1960s blocks: ~13 ft floor to floor)
+
+let U = null;             // uw.json
+const BLD = [];           // what prepCampus found: { r (record), base, boxes }
+const STATS = { buildings: 0, parts: 0, bridges: 0, tris: 0, solids: 0 };
+export function setUwData(d) { U = d; }
+export function campusStats() { return STATS; }
+
+// --- geometry helpers -------------------------------------------------------------
+
+function inPoly(p, x, z) {
+  let c = false;
+  for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
+    if ((p[i][1] > z) !== (p[j][1] > z) && x < ((p[j][0] - p[i][0]) * (z - p[i][1])) / (p[j][1] - p[i][1]) + p[i][0]) c = !c;
+  }
+  return c;
+}
+function polyArea(p) {
+  let a = 0;
+  for (let i = 0; i < p.length; i++) { const j = (i + 1) % p.length; a += p[i][0] * p[j][1] - p[j][0] * p[i][1]; }
+  return a / 2;
+}
+function centroid(p) {
+  let x = 0, z = 0;
+  for (const q of p) { x += q[0]; z += q[1]; }
+  return [x / p.length, z / p.length];
+}
+/** Each edge of a footprint: ends, unit direction, outward normal, length, and a point-at helper. */
+function edges(pts) {
+  const out = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], c = pts[(i + 1) % pts.length];
+    const dx = c[0] - a[0], dz = c[1] - a[1], L = Math.hypot(dx, dz);
+    if (L < 0.25) continue;
+    const ux = dx / L, uz = dz / L;
+    let nx = uz, nz = -ux;
+    if (inPoly(pts, a[0] + dx / 2 + nx * 0.3, a[1] + dz / 2 + nz * 0.3)) { nx = -nx; nz = -nz; }
+    out.push({ a, c, ux, uz, nx, nz, L, mx: a[0] + dx / 2, mz: a[1] + dz / 2,
+      at: (t, y, off = 0) => [a[0] + ux * t + nx * off, y, a[1] + uz * t + nz * off] });
+  }
+  return out;
+}
+/** A polygon's oriented box: centre, half-sizes along u (the long side) and v, u's direction. */
+function obb(pts) {
+  let best = null;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (L < 1) continue;
+    const ux = (b[0] - a[0]) / L, uz = (b[1] - a[1]) / L;
+    let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    for (const q of pts) {
+      const u = q[0] * ux + q[1] * uz, v = -q[0] * uz + q[1] * ux;
+      u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v);
+    }
+    const A = (u1 - u0) * (v1 - v0);
+    if (!best || A < best.A) {
+      const cu = (u0 + u1) / 2, cv = (v0 + v1) / 2;
+      best = { A, x: cu * ux - cv * uz, z: cu * uz + cv * ux, hu: (u1 - u0) / 2, hv: (v1 - v0) / 2, ux, uz };
+    }
+  }
+  if (best && best.hv > best.hu) {
+    const t = best.hu; best.hu = best.hv; best.hv = t;
+    const ux = best.ux; best.ux = -best.uz; best.uz = ux;
+  }
+  return best;
+}
+/** Shrink (or grow, d < 0) a CCW-or-CW polygon by d metres (mitred, clamped). */
+function inset(pts, d) {
+  const n = pts.length, out = [];
+  const s = polyArea(pts) > 0 ? 1 : -1;
+  for (let i = 0; i < n; i++) {
+    const p = pts[(i + n - 1) % n], q = pts[i], r = pts[(i + 1) % n];
+    const ax = q[0] - p[0], az = q[1] - p[1], la = Math.hypot(ax, az) || 1;
+    const bx = r[0] - q[0], bz = r[1] - q[1], lb = Math.hypot(bx, bz) || 1;
+    // inward normals of the two edges (left of travel for a CCW ring in x/z with this area sign)
+    const n1x = -az / la * s, n1z = ax / la * s, n2x = -bz / lb * s, n2z = bx / lb * s;
+    let mx = n1x + n2x, mz = n1z + n2z;
+    const ml = Math.hypot(mx, mz) || 1;
+    mx /= ml; mz /= ml;
+    const cosh = Math.max(0.35, mx * n1x + mz * n1z);
+    out.push([q[0] + mx * d / cosh, q[1] + mz * d / cosh]);
+  }
+  return out;
+}
+function triangulate(pts) {
+  try { return THREE.ShapeUtils.triangulateShape(pts.map((q) => new THREE.Vector2(q[0], q[1])), []); } catch (e) { return []; }
+}
+function flatPoly(B, pts, y, col, down = false) {
+  for (const [i, j, k] of triangulate(pts)) {
+    B.tri([pts[i][0], y, pts[i][1]], [pts[j][0], y, pts[j][1]], [pts[k][0], y, pts[k][1]], [0, down ? -1 : 1, 0], col);
+  }
+}
+function lowest(pts) {
+  let lo = Infinity;
+  for (const q of pts) lo = Math.min(lo, T(q[0], q[1]));
+  return lo;
+}
+
+// --- one builder per cluster per material ---------------------------------------------
+
+class Kit {
+  constructor() { this.b = new Map(); this.g = new Map(); this.tris = 0; }
+  /**
+   * The cluster's builder for the shell (walls, roofs, glass: drawn at any
+   * distance); its `.d` is the cluster's DETAIL builder (mullions, hoods,
+   * fins, sills, sculptures), a landmark group of its own ('near:' key) that
+   * landmarks.js hides past NEAR_R from the camera.
+   */
+  B(x, z) {
+    // the shell joins kw.js buildPolys' clusters ('kwp' keys, the same
+    // material), so a cluster's footprint buildings and the campus are one
+    // draw; a builder is retired at 50k vertices (mergeByMaterial leaves a
+    // mesh over 60k as a draw of its own) and the next merges with it
+    const k = ckey(x, z);
+    let b = this.b.get(k);
+    if (!b || b.pos.length > 150000) {
+      const n = (this.n = (this.n || 0) + 1);
+      const d = b ? b.d : new Builder(false);
+      b = new Builder(false);
+      b.d = d;
+      this.b.set(k, b);
+      this.all = this.all || [];
+      this.all.push(['kwp' + k, b]);
+      if (!d.on) { d.on = true; this.all.push(['near:' + k, d]); }
+    }
+    // the detail likewise
+    if (b.d.pos.length > 150000) {
+      b.d = new Builder(false);
+      this.all.push(['near:' + k, b.d]);
+    }
+    return b;
+  }
+  grp(x, z) {
+    const k = 'near:' + ckey(x, z);
+    let g = this.g.get(k);
+    if (!g) this.g.set(k, (g = new THREE.Group()));
+    return g;
+  }
+  flush(ctx) {
+    const M = polyMat();
+    for (const [key, b] of this.all || []) {
+      if (b.empty) continue;
+      this.tris += b.idx.length / 3;
+      if (key.startsWith('near:')) this.near = (this.near || 0) + b.idx.length / 3;
+      const m = new THREE.Mesh(b.build(), M);
+      let g = this.g.get(key);
+      if (!g) this.g.set(key, (g = new THREE.Group()));
+      g.add(m);
+    }
+    for (const [k, g] of this.g) ctx.addTo(k, g);
+    this.b.clear(); this.g.clear(); this.all = [];
+  }
+}
+
+// --- palettes (sRGB; lin() at use) ----------------------------------------------------
+
+const C = {
+  buffConc: [0.79, 0.75, 0.67],     // the 1960s precast: warm grey-buff aggregate (MC, NH, the sciences)
+  dpTower: [0.86, 0.83, 0.76],      // Dana Porter's ribbed cream panels
+  buffBrick: [0.76, 0.66, 0.51],    // DWE, E2, E3, the sciences: buff / tan brick
+  brownBrick: [0.47, 0.30, 0.22],   // Hagey Hall, PAS, the Arts and Environment buildings
+  redBrick: [0.66, 0.33, 0.22],     // M3, Tatham, MKV, Fed Hall
+  v1Brick: [0.58, 0.40, 0.33],      // Village 1 / REV: red-brown brick (OSM building:colour #AE9183)
+  dcTan: [0.74, 0.69, 0.58],        // DC's ribbed metal and concrete wings
+  white: [0.90, 0.91, 0.91],        // E5's faceted panels
+  charcoal: [0.30, 0.31, 0.33],     // E7's dark faceted panels
+  silver: [0.70, 0.72, 0.74],
+  glassBlue: [0.16, 0.24, 0.36],
+  glassDark: [0.12, 0.15, 0.19],
+  glassTeal: [0.34, 0.47, 0.49],
+  glassGreen: [0.30, 0.46, 0.44],
+  frameWhite: [0.86, 0.87, 0.88],
+  frameDark: [0.20, 0.21, 0.22],
+  roof: [0.55, 0.55, 0.53],
+  roofDark: [0.36, 0.36, 0.36],
+  red: [0.78, 0.10, 0.10],          // DC's portal frames
+  duct: [0.50, 0.55, 0.57],
+};
+
+// A style: wall, trim (cap / sills), roof, and the window treatment:
+//   'ribbon' a band of glass per storey (wf of it, mullions every mp),
+//   'slit' narrow verticals (sw wide every sp, wf of the storey high),
+//   'punch' ww x wh every sp, 'hood' MC's windows each in a projecting
+//   precast frame, 'curtain' all glass (mullions every mp, a spandrel per
+//   floor), 'facet' E5 / E7's diamond-faceted panels with glass bands,
+//   'stripe' QNC's vertical panels in two tones, 'none'.
+const S = (o) => ({ wall: C.buffConc, trim: null, roof: C.roof, glass: C.glassDark, frame: C.frameDark, win: 'ribbon', wf: 0.42,
+  parapet: 0.6, mp: 0, sp: 2.4, sw: 0.6, ww: 1.4, wh: 1.6, ...o });
+const STY = {
+  conc: S({ wall: C.buffConc, win: 'ribbon', wf: 0.38, mp: 2.0 }),
+  brown: S({ wall: C.brownBrick, win: 'ribbon', wf: 0.34, mp: 1.6, trim: [0.72, 0.68, 0.62] }),
+  buff: S({ wall: C.buffBrick, win: 'ribbon', wf: 0.40, mp: 1.4, trim: [0.82, 0.80, 0.74] }),
+  red: S({ wall: C.redBrick, win: 'punch', ww: 1.5, wh: 1.7, sp: 3.2, trim: [0.80, 0.78, 0.74] }),
+  res: S({ wall: C.v1Brick, win: 'punch', ww: 1.1, wh: 1.4, sp: 3.0, trim: [0.78, 0.76, 0.72], parapet: 0.9 }),
+  glass: S({ wall: C.silver, win: 'curtain', glass: C.glassBlue, frame: C.silver, mp: 1.6, parapet: 0.3 }),
+};
+// Per building, by OSM ref (else name).
+const BY = {
+  // the precast core
+  MC: S({ wall: C.buffConc, win: 'hood', ww: 1.15, wh: 1.45, sp: 1.75, trim: [0.84, 0.80, 0.73] }),
+  NH: S({ wall: [0.86, 0.84, 0.78], win: 'ribbon', wf: 0.40, mp: 1.5 }),
+  LIB: S({ wall: C.dpTower, win: 'slit', sw: 0.55, sp: 1.55, wf: 0.55 }),
+  PAS: S({ wall: [0.80, 0.77, 0.70], win: 'ribbon', wf: 0.34, mp: 0, trim: [0.86, 0.83, 0.77] }),
+  BMH: STY.conc,
+  ML: S({ wall: C.buffConc, win: 'slit', sw: 0.9, sp: 2.6, wf: 0.5 }),
+  // buff brick: the 1958-62 core (physics, chemistry, biology, engineering)
+  C2: STY.buff, ESC: STY.buff, PHY: STY.buff, B1: STY.buff, B2: STY.buff, CPH: STY.buff,
+  // dark brick: the humanities
+  HH: STY.brown, AL: STY.brown, EV1: STY.brown, OPT: STY.brown,
+  EV2: S({ wall: [0.70, 0.38, 0.26], win: 'ribbon', wf: 0.34, mp: 1.6 }),
+  SCH: S({ wall: [0.45, 0.27, 0.20], win: 'ribbon', wf: 0.36, mp: 1.6, trim: [0.90, 0.88, 0.80], parapet: 0.9 }),
+  PAC: S({ wall: C.brownBrick, win: 'none', trim: [0.66, 0.62, 0.56] }),
+  SLC: S({ wall: C.brownBrick, win: 'curtain', glass: C.glassBlue, frame: [0.78, 0.79, 0.80], mp: 1.5, parapet: 0.5 }),
+  E2: STY.buff, E3: STY.buff, DWE: STY.buff, RCH: STY.buff, ERC: STY.buff, CSB: STY.buff, GSC: STY.red, COM: STY.buff,
+  FED: STY.red, HS: STY.buff, UC: STY.brown, AHS: STY.red, LHI: STY.red, TH: STY.res,
+  // glass and metal
+  DC: S({ wall: C.dcTan, win: 'ribbon', wf: 0.30, mp: 0, glass: C.glassDark, trim: [0.62, 0.60, 0.55] }),
+  E5: S({ wall: C.white, win: 'facet', glass: C.glassBlue, frame: C.frameWhite, parapet: 0.4 }),
+  PSE: S({ wall: [0.44, 0.45, 0.47], win: 'facet', glass: C.glassDark, frame: [0.22, 0.22, 0.23], parapet: 0.4 }),
+  E6: S({ wall: [0.34, 0.37, 0.42], win: 'curtain', glass: C.glassBlue, frame: [0.30, 0.32, 0.36], mp: 1.5, parapet: 0.4 }),
+  // QNC's IQC bar: a barcode of silver-blue glass and bronze-to-black panels
+  QNC: S({ wall: [0.58, 0.65, 0.72], win: 'stripe', glass: [0.12, 0.13, 0.15], frame: [0.36, 0.27, 0.22], parapet: 0.3 }),
+  M3: S({ wall: [0.74, 0.36, 0.22], win: 'curtain', glass: C.glassTeal, frame: [0.80, 0.82, 0.82], mp: 1.5, parapet: 0.4 }),
+  EIT: S({ wall: C.brownBrick, win: 'curtain', glass: C.glassGreen, frame: [0.62, 0.62, 0.60], mp: 1.8 }),
+  STC: S({ wall: [0.82, 0.80, 0.76], win: 'curtain', glass: C.glassGreen, frame: [0.84, 0.84, 0.82], mp: 1.4 }),
+  // EV3: warm grey panels, a lime-green band under each ribbon window
+  EV3: S({ wall: [0.80, 0.78, 0.74], win: 'ribbon', wf: 0.42, mp: 1.2, glass: [0.22, 0.27, 0.33], frame: [0.40, 0.37, 0.34], trim: [0.62, 0.78, 0.18], parapet: 0.4 }),
+  TC: S({ wall: C.redBrick, win: 'ribbon', wf: 0.30, mp: 2.0 }),
+  CIF: S({ wall: [0.86, 0.87, 0.86], win: 'none', trim: [0.36, 0.38, 0.42], parapet: 0.3 }),
+  ECH: S({ wall: [0.80, 0.80, 0.78], win: 'ribbon', wf: 0.3, mp: 0 }),
+  // residences
+  V1: STY.res, REV: STY.res, MHR: STY.res,
+  MKV: S({ wall: C.redBrick, win: 'punch', ww: 1.0, wh: 1.4, sp: 3.4, trim: [0.80, 0.80, 0.78] }),
+  // the colleges
+  REN: S({ wall: [0.76, 0.66, 0.52], win: 'ribbon', wf: 0.36, mp: 1.4, trim: [0.84, 0.80, 0.72] }),   // beige block, split-face stone
+  STJ: S({ wall: [0.52, 0.34, 0.25], win: 'punch', ww: 1.4, wh: 1.6, sp: 3.2, trim: [0.80, 0.78, 0.72] }),
+  CGR: S({ wall: [0.56, 0.32, 0.24], win: 'punch', ww: 1.4, wh: 1.7, sp: 3.0, trim: [0.90, 0.90, 0.88] }),
+  UTD: S({ wall: [0.56, 0.32, 0.24], win: 'punch', ww: 1.3, wh: 1.6, sp: 3.0, trim: [0.86, 0.84, 0.80] }),
+};
+const BY_NAME = {
+  'United College Green Wing': STY.glass,
+  "St. Jerome's Academic Centre SJ2": S({ wall: [0.30, 0.30, 0.32], win: 'curtain', glass: C.glassDark, frame: [0.30, 0.30, 0.32], mp: 1.2 }),
+  "St. Jerome's University Residence Buildings": S({ wall: [0.58, 0.40, 0.30], win: 'punch', ww: 1.2, wh: 1.6, sp: 3.0 }),
+  'Resurrection College': STY.buff,
+  'Feridun Hamdullahpur Field House': S({ wall: [0.82, 0.84, 0.86], win: 'none', trim: [0.20, 0.22, 0.30], parapet: 0.3 }),
+  'Bright Starts Co-operative Early Learning Centre': S({ wall: [0.90, 0.89, 0.85], win: 'punch', ww: 1.6, wh: 1.4, sp: 3.0 }),
+  'Skén:nen Tsi Nón:we Tewaya’taróroks': S({ wall: [0.62, 0.48, 0.34], win: 'curtain', glass: C.glassDark, frame: [0.50, 0.38, 0.26], mp: 1.2 }),
+  'Brubacher House': S({ wall: [0.86, 0.80, 0.62], win: 'punch', ww: 0.9, wh: 1.5, sp: 3.0 }),
+};
+
+function styleOf(r) {
+  if (r.ref && BY[r.ref]) return BY[r.ref];
+  if (r.name && BY_NAME[r.name]) return BY_NAME[r.name];
+  if (r.building === 'chapel') return S({ wall: [0.50, 0.46, 0.42], win: 'slit', sw: 0.5, sp: 3.0, wf: 0.6, parapet: 0 });  // Grebel's rubble stone
+  if ((r['building:colour'] || '').toUpperCase() === '#AE9183') return STY.res;
+  if (r.building === 'dormitory') return STY.res;
+  if (r.building === 'bridge' || r['building:material'] === 'glass') return STY.glass;
+  return STY.conc;
+}
+
+// Parts with a look of their own (OSM building:part ids).
+const PART_STY = {
+  // Dana Porter: the recessed ground floor of arches, the podium's band of
+  // fins under a dark fascia, the dark glass neck, the ribbed tower
+  1028136267: S({ wall: [0.20, 0.22, 0.24], win: 'arcade', glass: C.glassDark, trim: C.buffConc, parapet: 0 }),
+  1028136266: S({ wall: C.dpTower, win: 'fins', glass: C.glassDark, trim: [0.24, 0.20, 0.17], sp: 1.6 }),
+  1028136268: S({ wall: C.glassDark, win: 'none', parapet: 0, trim: C.glassDark }),
+  513745232: S({ wall: C.dpTower, win: 'slit', sw: 0.42, sp: 1.6, wf: 0.62, ribs: true, parapet: 0.3, trim: [0.90, 0.88, 0.82] }),
+  // MC's blank stair towers
+  664040399: S({ wall: [0.76, 0.72, 0.64], win: 'none', flutes: true }), 664040401: S({ wall: [0.76, 0.72, 0.64], win: 'none', flutes: true }),
+  664040406: S({ wall: [0.76, 0.72, 0.64], win: 'none', flutes: true }),
+  // QNC: the honeycomb wing; its dark brick base
+  1027581491: S({ wall: C.glassDark, win: 'hex', glass: [0.20, 0.26, 0.32], frame: [0.80, 0.82, 0.84], parapet: 0.3 }),
+  1027581490: S({ wall: [0.24, 0.22, 0.22], win: 'ribbon', wf: 0.3, mp: 0, glass: C.glassDark }),
+  // DC: the teal glass barrel vault and the glazed atrium
+  692354659: S({ wall: C.glassTeal, win: 'curtain', glass: C.glassTeal, frame: [0.62, 0.70, 0.70], mp: 1.8, vault: true, parapet: 0 }),
+  692354651: S({ wall: C.glassTeal, win: 'curtain', glass: C.glassTeal, frame: [0.62, 0.70, 0.70], mp: 1.8, vault: true, parapet: 0 }),
+};
+
+// --- walls, windows, roofs ---------------------------------------------------------------
+
+const O = 0.05;   // windows stand this far off the wall
+
+/** One storey's windows on edge e, the storey's floor at ya. */
+function windows(B, e, ya, k, st, cols, nFloors) {
+  const L = e.L, N = [e.nx, 0, e.nz];
+  const { glass, frame, trim, wall } = cols;
+  const at = e.at;
+  const e0 = Math.min(1.0, L * 0.12);
+  switch (st.win) {
+    case 'ribbon': {
+      if (L < 3) return;
+      const h = ST * st.wf, y = ya + (ST - h) * 0.55;
+      B.quad(at(e0, y, O), at(L - e0, y, O), at(L - e0, y + h, O), at(e0, y + h, O), N, U0, glass);
+      if (st.mp) {
+        const n = Math.min(60, Math.floor((L - 2 * e0) / Math.max(2.4, st.mp)));
+        for (let m = 1; m < n; m++) {
+          const t = e0 + (m / n) * (L - 2 * e0);
+          B.d.quad(at(t - 0.06, y, O * 2), at(t + 0.06, y, O * 2), at(t + 0.06, y + h, O * 2), at(t - 0.06, y + h, O * 2), N, U0, frame);
+        }
+      }
+      if (trim) B.d.quad(at(e0, y - 0.14, O * 3), at(L - e0, y - 0.14, O * 3), at(L - e0, y, O * 3), at(e0, y, O * 3), N, U0, trim);
+      return;
+    }
+    case 'slit': {
+      const n = Math.floor((L - 0.6) / st.sp);
+      if (n < 1) return;
+      const h = ST * st.wf, y = ya + (ST - h) * 0.5, t0 = (L - n * st.sp) / 2 + st.sp / 2;
+      // DP's tower: the slits stagger floor to floor
+      const sh = st.ribs && k % 2 ? st.sp * 0.5 : 0;
+      for (let m = 0; m < n; m++) {
+        const t = t0 + m * st.sp + sh;
+        if (t + st.sw / 2 > L - 0.3) continue;
+        B.quad(at(t - st.sw / 2, y, O), at(t + st.sw / 2, y, O), at(t + st.sw / 2, y + h, O), at(t - st.sw / 2, y + h, O), N, U0, glass);
+      }
+      return;
+    }
+    case 'punch': case 'hood': {
+      const n = Math.floor((L - 0.8) / st.sp);
+      if (n < 1) return;
+      if (st.win === 'hood' && k === 0) {
+        // MC's ground floor: brown brick infill between precast piers
+        B.quad(at(0.4, ya, O * 0.6), at(L - 0.4, ya, O * 0.6), at(L - 0.4, ya + ST - 0.3, O * 0.6), at(0.4, ya + ST - 0.3, O * 0.6), N, U0, cols.infill);
+        const np = Math.max(1, Math.floor(L / 6));
+        for (let m = 0; m <= np; m++) {
+          const t = 0.4 + (m / np) * (L - 0.8);
+          B.d.box(...pt(at(t, ya, 0.25)), 0.9, ST - 0.3, 0.5, Math.atan2(e.uz, e.ux), wall);
+        }
+        return;
+      }
+      const t0 = (L - n * st.sp) / 2 + st.sp / 2;
+      const y = ya + (ST - st.wh) * 0.55;
+      for (let m = 0; m < n; m++) {
+        const t = t0 + m * st.sp, a = t - st.ww / 2, b = t + st.ww / 2;
+        B.quad(at(a, y, O), at(b, y, O), at(b, y + st.wh, O), at(a, y + st.wh, O), N, U0, glass);
+        if (st.win === 'hood') {
+          // a precast frame standing 0.4 m proud: its two cheeks, its head and its sill
+          const P = 0.42, c = trim;
+          B.d.quad(at(a - 0.12, y - 0.12, P), at(b + 0.12, y - 0.12, P), at(b + 0.12, y + st.wh + 0.12, P), at(a - 0.12, y + st.wh + 0.12, P), N, U0, c);
+          // the opening through it (dark), so the frame reads as a hood
+          B.d.quad(at(a, y, P + 0.01), at(b, y, P + 0.01), at(b, y + st.wh, P + 0.01), at(a, y + st.wh, P + 0.01), N, U0, glass);
+          B.d.quad(at(a - 0.12, y + st.wh + 0.12, 0), at(b + 0.12, y + st.wh + 0.12, 0), at(b + 0.12, y + st.wh + 0.12, P), at(a - 0.12, y + st.wh + 0.12, P), [0, 1, 0], U0, c);
+          B.d.quad(at(a - 0.12, y - 0.12, 0), at(a - 0.12, y - 0.12, P), at(a - 0.12, y + st.wh + 0.12, P), at(a - 0.12, y + st.wh + 0.12, 0), [-e.ux, 0, -e.uz], U0, shade(c, 0.8));
+          B.d.quad(at(b + 0.12, y - 0.12, 0), at(b + 0.12, y - 0.12, P), at(b + 0.12, y + st.wh + 0.12, P), at(b + 0.12, y + st.wh + 0.12, 0), [e.ux, 0, e.uz], U0, shade(c, 0.8));
+        } else if (trim) {
+          B.d.quad(at(a - 0.1, y - 0.12, O * 2), at(b + 0.1, y - 0.12, O * 2), at(b + 0.1, y, O * 2), at(a - 0.1, y, O * 2), N, U0, trim);
+        }
+      }
+      return;
+    }
+    case 'facet': {
+      // E5 / E7: the lowest two storeys glazed, above them diamond-faceted
+      // panels, a band of glass every other floor
+      if (k < 2) {
+        B.quad(at(0.2, ya + 0.1, O), at(L - 0.2, ya + 0.1, O), at(L - 0.2, ya + ST - 0.3, O), at(0.2, ya + ST - 0.3, O), N, U0, glass);
+        const n = Math.min(40, Math.floor(L / 1.6));
+        for (let m = 1; m < n; m++) {
+          const t = (m / n) * L;
+          B.d.quad(at(t - 0.05, ya, O * 2), at(t + 0.05, ya, O * 2), at(t + 0.05, ya + ST, O * 2), at(t - 0.05, ya + ST, O * 2), N, U0, frame);
+        }
+        return;
+      }
+      if (k % 2 === 1 && k < nFloors - 1) {
+        B.quad(at(0.3, ya + 0.9, O), at(L - 0.3, ya + 0.9, O), at(L - 0.3, ya + ST - 0.6, O), at(0.3, ya + ST - 0.6, O), N, U0, glass);
+        return;
+      }
+      const pw = 3.0, n = Math.max(1, Math.round(L / pw)), w = L / n, D = 0.45;
+      const lite = shade(wall, 1.12), dark = shade(wall, 0.72), mid = shade(wall, 0.9);
+      for (let m = 0; m < n; m++) {
+        const t0 = m * w, t1 = t0 + w, tc = t0 + w / 2, y0 = ya, y1 = ya + ST, yc = ya + ST * 0.5;
+        const ctr = at(tc, yc, D);
+        // four triangles round a point pushed out: lit from above, dark below
+        B.tri(at(t0, y1, O), at(t1, y1, O), ctr, [e.nx * 0.6, 0.8, e.nz * 0.6], lite);
+        B.tri(at(t1, y0, O), at(t0, y0, O), ctr, [e.nx * 0.6, -0.8, e.nz * 0.6], dark);
+        B.tri(at(t0, y0, O), at(t0, y1, O), ctr, [e.nx * 0.7 - e.ux * 0.7, 0, e.nz * 0.7 - e.uz * 0.7], mid);
+        B.tri(at(t1, y1, O), at(t1, y0, O), ctr, [e.nx * 0.7 + e.ux * 0.7, 0, e.nz * 0.7 + e.uz * 0.7], mid);
+      }
+      return;
+    }
+    case 'fins': {
+      // DP's podium: a dark glass storey behind slender precast fins
+      B.quad(at(0, ya + 0.2, O), at(L, ya + 0.2, O), at(L, ya + ST * 0.85, O), at(0, ya + ST * 0.85, O), N, U0, glass);
+      const n = Math.floor(L / st.sp);
+      for (let m = 0; m <= n; m++) {
+        const t = (m / Math.max(1, n)) * L;
+        B.d.box(...pt(at(t, ya + 0.2, 0.35)), 0.35, ST * 0.65, 0.7, Math.atan2(e.uz, e.ux), wall);
+      }
+      return;
+    }
+    case 'arcade': {
+      // DP's ground floor: glass behind a row of concrete arches
+      B.quad(at(0, ya, -1.2), at(L, ya, -1.2), at(L, ya + ST, -1.2), at(0, ya + ST, -1.2), N, U0, glass);
+      const n = Math.max(1, Math.round(L / 7.5)), w = L / n;
+      for (let m = 0; m <= n; m++) B.box(...pt(at(m * w, ya, 0.3)), 1.1, ST, 1.1, Math.atan2(e.uz, e.ux), trim);
+      return;
+    }
+    default:
+  }
+}
+const pt = (p) => [p[0], p[1], p[2]];
+
+/**
+ * One prism of a building: its walls from y0 to y1 (and a parapet), the
+ * windows of each storey whose floor (base + k * ST) is inside it, the cap,
+ * the roof; a soffit when it floats (a bridge, an overhang).
+ */
+function mass(B, solids, pts, base, y0, y1, st, opts = {}) {
+  const E = edges(pts);
+  const wall = lin(st.wall), trim = st.trim ? lin(st.trim) : shade(wall, 1.08);
+  const cols = { wall, trim, glass: lin(st.glass), frame: lin(st.frame), infill: lin(C.brownBrick) };
+  const ground = !opts.floating;
+  const par = st.vault ? 0 : st.parapet;
+  const foot = ground ? shade(wall, 0.7) : wall;
+  const f0 = Math.max(0, Math.ceil((y0 - base) / ST - 0.25)), f1 = Math.floor((y1 - base) / ST + 0.05);
+  const nFloors = f1;
+  for (const e of E) {
+    const N = [e.nx, 0, e.nz];
+    B.quad(e.at(0, y0, 0), e.at(e.L, y0, 0), e.at(e.L, y1 + par, 0), e.at(0, y1 + par, 0), N, U0, [foot, foot, wall, wall]);
+    if (par > 0) {
+      B.quad(e.at(0, y1, -0.3), e.at(e.L, y1, -0.3), e.at(e.L, y1 + par, -0.3), e.at(0, y1 + par, -0.3), [-e.nx, 0, -e.nz], U0, shade(wall, 0.8));
+      B.quad(e.at(0, y1 + par, 0.04), e.at(e.L, y1 + par, 0.04), e.at(e.L, y1 + par, -0.3), e.at(0, y1 + par, -0.3), [0, 1, 0], U0, trim);
+    }
+    if (ground && solids) solids.push({ x: e.mx, z: e.mz, hw: e.L / 2 + 0.2, hd: 0.35, rot: Math.atan2(e.uz, e.ux), y0: y0, y1: y1 + par });
+    if (st.flutes) {
+      // MC's stair towers: finely fluted ("corduroy") precast
+      const n = Math.min(120, Math.floor(e.L / 0.7)), dk = shade(wall, 0.78);
+      for (let m = 1; m < n; m++) {
+        const t = (m / n) * e.L;
+        B.d.quad(e.at(t - 0.12, y0 + 1, O), e.at(t + 0.12, y0 + 1, O), e.at(t + 0.12, y1, O), e.at(t - 0.12, y1, O), N, U0, dk);
+      }
+    }
+    if (st.win === 'none') continue;
+    if (st.win === 'curtain' || st.win === 'stripe' || st.win === 'hex') { facade(B, e, base, y0, y1, st, cols, f0, f1); continue; }
+    for (let k = f0; k < f1; k++) {
+      const ya = base + k * ST;
+      if (ya < y0 - 0.1 || ya + ST > y1 + 0.2) continue;
+      windows(B, e, ya, k, st, cols, nFloors);
+    }
+    // DP's ribs: a light fin every bay, the tower's full height
+    if (st.ribs) {
+      const n = Math.floor(e.L / st.sp);
+      for (let m = 1; m < n; m++) {
+        const t = (m / n) * e.L;
+        B.d.quad(e.at(t - 0.32, y0, 0.32), e.at(t + 0.32, y0, 0.32), e.at(t + 0.32, y1, 0.32), e.at(t - 0.32, y1, 0.32), N, U0, trim);
+      }
+    }
+  }
+  if (st.vault) vault(B, pts, y1, cols);
+  else flatPoly(B, pts, y1, lin(st.roof || C.roof));
+  if (!ground) flatPoly(B, pts, y0, shade(wall, 0.85), true);
+}
+
+/** Whole-face treatments: a curtain wall, QNC's stripes, QNC's honeycomb. */
+function facade(B, e, base, y0, y1, st, cols, f0, f1) {
+  const L = e.L, N = [e.nx, 0, e.nz], at = e.at;
+  if (L < 1.5) return;
+  const ya = Math.max(y0, base + f0 * ST) + 0.1, yb = y1 - 0.15;
+  if (yb - ya < 1) return;
+  if (st.win === 'stripe') {
+    // vertical panels: silver, dark glass, bronze, in a rhythm that does not repeat
+    const n = Math.max(2, Math.round(L / 1.15)), w = L / n;
+    const tones = [cols.wall, cols.glass, cols.frame, cols.glass, shade(cols.wall, 0.82), cols.frame, cols.glass];
+    for (let m = 0; m < n; m++) {
+      const c = tones[Math.floor(hash2(m * 7 + Math.round(e.mx), 3) * tones.length)];
+      B.quad(at(m * w, ya, O), at((m + 1) * w, ya, O), at((m + 1) * w, yb, O), at(m * w, yb, O), N, U0, c);
+    }
+    return;
+  }
+  B.quad(at(0.1, ya, O), at(L - 0.1, ya, O), at(L - 0.1, yb, O), at(0.1, yb, O), N, U0, cols.glass);
+  if (st.win === 'hex') {
+    // the honeycomb: a steel line round each 5.6 m hexagon, rows offset
+    const hw = 2.8, hh = 2.6, f = cols.frame, th = 0.16;
+    const seg = (t0, v0, t1, v1) => {
+      const dt = t1 - t0, dv = v1 - v0, l = Math.hypot(dt, dv) || 1, ot = -dv / l * th, ov = dt / l * th;
+      B.d.quad(at(t0 - ot, v0 - ov, O * 3), at(t1 - ot, v1 - ov, O * 3), at(t1 + ot, v1 + ov, O * 3), at(t0 + ot, v0 + ov, O * 3), N, U0, f);
+    };
+    let row = 0;
+    for (let v = ya; v < yb - 0.5; v += hh, row++) {
+      const off = row % 2 ? hw * 0.75 : 0;
+      for (let t = off; t < L - 0.5; t += hw * 1.5) {
+        const v1 = Math.min(yb, v + hh);
+        seg(t, v, t + hw * 0.25, v + hh * 0.5);
+        seg(t + hw * 0.25, v + hh * 0.5, t, v1);
+        seg(Math.min(L, t + hw * 0.25), v + hh * 0.5, Math.min(L, t + hw * 0.75), v + hh * 0.5);
+      }
+    }
+    return;
+  }
+  // mullions the full height, a spandrel at each floor
+  if (st.mp) {
+    const n = Math.min(80, Math.floor(L / Math.max(2.2, st.mp)));
+    for (let m = 1; m < n; m++) {
+      const t = (m / n) * L;
+      B.d.quad(at(t - 0.06, ya, O * 2), at(t + 0.06, ya, O * 2), at(t + 0.06, yb, O * 2), at(t - 0.06, yb, O * 2), N, U0, cols.frame);
+    }
+  }
+  for (let k = Math.max(1, f0); k < f1; k++) {
+    const y = base + k * ST;
+    if (y < ya + 0.5 || y > yb - 0.5) continue;
+    B.quad(at(0.1, y - 0.45, O * 2), at(L - 0.1, y - 0.45, O * 2), at(L - 0.1, y + 0.15, O * 2), at(0.1, y + 0.15, O * 2), N, U0, cols.frame);
+  }
+  // a curtain wall on a brick building: brick piers at its ends
+  if (st.wall !== st.glass && st.win === 'curtain' && L > 12) {
+    for (const t of [0.8, L - 0.8]) B.quad(at(t - 0.8, y0, O * 3), at(t + 0.8, y0, O * 3), at(t + 0.8, y1, O * 3), at(t - 0.8, y1, O * 3), N, U0, cols.wall);
+  }
+}
+
+/** A glass barrel vault over a part's oriented box (DC), ribbed. */
+function vault(B, pts, y, cols) {
+  const o = obb(pts);
+  if (!o) return;
+  const vx = -o.uz, vz = o.ux, R = o.hv, rise = Math.min(R * 0.55, 9);
+  const P = (u, v, h) => [o.x + o.ux * u + vx * v, y + h, o.z + o.uz * u + vz * v];
+  const n = 8, prof = [];
+  for (let i = 0; i <= n; i++) {
+    const a = Math.PI * (i / n);
+    prof.push([-Math.cos(a) * R, Math.sin(a) * rise, -Math.cos(a), Math.sin(a) * R / rise]);
+  }
+  for (let i = 0; i < n; i++) {
+    const [v0, h0, nv0, nh0] = prof[i], [v1, h1, nv1, nh1] = prof[i + 1];
+    const nm = [vx * (nv0 + nv1) * 0.5, (nh0 + nh1) * 0.5, vz * (nv0 + nv1) * 0.5];
+    const l = Math.hypot(...nm) || 1;
+    B.quad(P(-o.hu, v0, h0), P(o.hu, v0, h0), P(o.hu, v1, h1), P(-o.hu, v1, h1), [nm[0] / l, nm[1] / l, nm[2] / l], U0, cols.glass);
+  }
+  // the end walls (glass) and the ribs across, every 4 m
+  for (const s of [-1, 1]) for (let i = 0; i < n; i++) {
+    B.tri(P(s * o.hu, prof[i][0], prof[i][1]), P(s * o.hu, prof[i + 1][0], prof[i + 1][1]), P(s * o.hu, 0, 0), [o.ux * s, 0, o.uz * s], cols.glass);
+  }
+  const nr = Math.floor(o.hu * 2 / 4);
+  for (let r = 0; r <= nr; r++) {
+    const u = -o.hu + (r / Math.max(1, nr)) * o.hu * 2;
+    for (let i = 0; i < n; i++) {
+      const a = P(u, prof[i][0] * 1.01, prof[i][1] * 1.01 + 0.04), b = P(u, prof[i + 1][0] * 1.01, prof[i + 1][1] * 1.01 + 0.04);
+      B.d.quad([a[0] - o.ux * 0.1, a[1], a[2] - o.uz * 0.1], [a[0] + o.ux * 0.1, a[1], a[2] + o.uz * 0.1],
+        [b[0] + o.ux * 0.1, b[1], b[2] + o.uz * 0.1], [b[0] - o.ux * 0.1, b[1], b[2] - o.uz * 0.1], [0, 1, 0], U0, cols.frame);
+    }
+  }
+  return o;
+}
+
+// --- heights -------------------------------------------------------------------------
+
+const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+/** [bottom, top] of a building or part, metres over its floor 0. */
+function span(r, dflt) {
+  const lv = num(r['building:levels']), mlv = num(r['building:min_level']);
+  const h = num(r.height), mh = num(r.min_height);
+  const top = h ?? (lv !== null ? lv * ST + 0.4 : dflt);
+  const bot = mh ?? (mlv !== null ? mlv * ST : 0);
+  return [bot, Math.max(bot + 2.5, top)];
+}
+function defaultTop(r) {
+  const L = r.name && LOOKS[r.name];
+  if (L && L.h) return L.h;
+  if (r.building === 'dormitory') return 4 * ST + 0.4;
+  if (r.building === 'chapel') return 6;
+  return 3 * ST + 0.4;
+}
+
+// --- before meshing ----------------------------------------------------------------------
+
+/**
+ * Every campus building's box goes flat and is skipped by world.js and
+ * kw.js buildPolys (kw.skip); it keeps a `kw.poly` of the real outline, so
+ * kw.js's nameplates and stores still find the wall nearest the street.
+ */
+export function prepCampus(city) {
+  BLD.length = 0;
+  if (typeof window !== 'undefined' && window.__noCampus) return { buildings: 0, boxes: 0 };
+  if (!U) return { buildings: 0, boxes: 0 };
+  let boxes = 0;
+  for (const r of U.b) {
+    const [cx, cz] = centroid(r.p);
+    const A = Math.abs(polyArea(r.p));
+    const hit = new Set();
+    for (const o of city.buildingsNear(cx, cz, 120)) {
+      if (inPoly(r.p, o.x, o.z) && o.w * o.d < A * 3 + 300) hit.add(o);
+    }
+    const [, top] = span(r, defaultTop(r));
+    for (const o of hit) {
+      o.h = 0;
+      if (!o.kw) o.kw = {};
+      o.kw.skip = true;
+      o.kw.uw = true;
+      if (r.name && !o.kw.name) o.kw.name = r.name;
+      o.kw.poly = { pts: r.p, h: top, n: r.name || '', bt: r.building, retail: false, arena: false, civic: false, fam: null };
+      boxes++;
+    }
+    BLD.push({ r, cx, cz, base: T(cx, cz), A });
+  }
+  return { buildings: BLD.length, boxes };
+}
+
+// --- the buildings ---------------------------------------------------------------------------
+
+function drawBuilding(kit, ctx, b) {
+  const { r, cx, cz, base } = b;
+  const B = kit.B(cx, cz);
+  const st = styleOf(r);
+  const parts = r.parts || [];
+  const pa = parts.reduce((s, p) => s + Math.abs(polyArea(p.p)), 0);
+  const [ob, ot] = span(r, defaultTop(r));
+  const masses = [];
+  if (parts.length && pa >= 0.7 * b.A) {
+    for (const p of parts) masses.push({ p: p.p, sp: span(p, ot), st: PART_STY[p.id] || partStyle(p, st), id: p.id });
+  } else {
+    masses.push({ p: r.p, sp: [ob, ot], st, id: r.id });
+    for (const p of parts) {
+      const s = span(p, ot);
+      if (s[0] > 0.5 || s[1] > ot + 0.5) masses.push({ p: p.p, sp: [Math.max(s[0], s[0] > 0.5 ? s[0] : ot), s[1]], st: PART_STY[p.id] || partStyle(p, st), id: p.id });
+    }
+  }
+  for (const m of masses) {
+    if (Math.abs(polyArea(m.p)) < 6) continue;
+    const floating = m.sp[0] > 0.5;
+    const y0 = floating ? base + m.sp[0] : lowest(m.p) - 1.2;
+    mass(B, ctx.solids, m.p, base, y0, base + m.sp[1], m.st, { floating });
+    STATS.parts++;
+  }
+  const sig = SIGS[r.ref] || SIGS[r.name] || SIGS[r.id];
+  if (sig) sig(kit, ctx, b, B, masses);
+}
+
+/** A part's own material where OSM gives one (DC's metal and glass, a glazed link). */
+function partStyle(p, st) {
+  const m = p['building:material'];
+  if (m === 'glass') return p['building:colour'] === 'teal' ? PART_STY[692354651] : STY.glass;
+  if (m === 'metal' && st === BY.DC) return S({ wall: [0.74, 0.70, 0.60], win: 'ribbon', wf: 0.22, mp: 0, glass: C.glassDark, trim: [0.40, 0.40, 0.40] });
+  return st;
+}
+
+// --- signatures ----------------------------------------------------------------------------
+
+/** A tube bent through points (DC's ducts), r metres round. */
+function pipe(B, pts, r, col) {
+  for (let i = 0; i + 1 < pts.length; i++) B.tube(pts[i], pts[i + 1], r, 8, col, i === 0);
+}
+
+const SIGS = {
+  // DC: grey-green gooseneck ducts rising beside the glass vault and arching
+  // over onto it, red steel portal frames at the entrances
+  DC(kit, ctx, b, B, masses) {
+    const v = masses.find((m) => m.id === 692354659);
+    if (!v) return;
+    const o = obb(v.p), y = b.base + v.sp[1];
+    const vx = -o.uz, vz = o.ux, duct = lin([0.52, 0.62, 0.58]), red = lin(C.red);
+    for (const s of [-1, 1]) for (let i = 0; i < 3; i++) {
+      const u = -o.hu * 0.7 + i * o.hu * 0.7;
+      const P = (dv, h) => [o.x + o.ux * u + vx * s * (o.hv + dv), y + h, o.z + o.uz * u + vz * s * (o.hv + dv)];
+      const pts = [P(2.4, -y + b.base - 0.5 + (y - b.base) * 0.3), P(2.4, 1.0), P(2.2, 3.2), P(1.2, 4.6), P(-0.6, 5.0), P(-2.4, 4.4)];
+      pipe(B, pts, 0.75, duct);
+    }
+    // red portals at both ends of the vault
+    for (const s of [-1, 1]) {
+      const ex = o.x + o.ux * s * (o.hu + 3), ez = o.z + o.uz * s * (o.hu + 3), g = T(ex, ez);
+      for (const k of [-1, 1]) {
+        const px = ex + vx * k * 3.2, pz = ez + vz * k * 3.2;
+        B.tube([px, g - 0.2, pz], [px, g + 9, pz], 0.22, 8, red);
+      }
+      B.box(ex, g + 8.6, ez, 7.2, 0.6, 0.45, Math.atan2(vz, vx), red);
+      B.box(ex, g + 4.2, ez, 6.6, 0.35, 0.35, Math.atan2(vz, vx), red);
+    }
+  },
+  // Dana Porter: the dark brown mechanical cap on the tower, and its mast
+  LIB(kit, ctx, b, B, masses) {
+    const t = masses.find((m) => m.id === 513745232);
+    if (!t) return;
+    const o = obb(t.p), y = b.base + t.sp[1] + 0.3, brown = lin([0.26, 0.20, 0.16]);
+    const P = (u, v, h) => [o.x + o.ux * u - o.uz * v, y + h, o.z + o.uz * u + o.ux * v];
+    const a = o.hu * 0.55, c = o.hv * 0.55, h = 3.2;
+    B.quad(P(-a, -c, 0), P(a, -c, 0), P(a * 0.6, -c * 0.6, h), P(-a * 0.6, -c * 0.6, h), [0, 0.6, -0.8], U0, brown);
+    B.quad(P(a, c, 0), P(-a, c, 0), P(-a * 0.6, c * 0.6, h), P(a * 0.6, c * 0.6, h), [0, 0.6, 0.8], U0, brown);
+    B.quad(P(a, -c, 0), P(a, c, 0), P(a * 0.6, c * 0.6, h), P(a * 0.6, -c * 0.6, h), [0.8, 0.6, 0], U0, shade(brown, 0.85));
+    B.quad(P(-a, c, 0), P(-a, -c, 0), P(-a * 0.6, -c * 0.6, h), P(-a * 0.6, c * 0.6, h), [-0.8, 0.6, 0], U0, shade(brown, 0.85));
+    B.quad(P(-a * 0.6, -c * 0.6, h), P(a * 0.6, -c * 0.6, h), P(a * 0.6, c * 0.6, h), P(-a * 0.6, c * 0.6, h), [0, 1, 0], U0, brown);
+    B.tube(P(0, 0, h), P(0, 0, h + 9), 0.15, 5, lin([0.5, 0.5, 0.5]));
+  },
+  // DC's glass bridge over the lane to EIT, on red steel pipe legs
+  1028424096(kit, ctx, b, B, masses) {
+    const m = masses[0];
+    if (!m) return;
+    const o = obb(m.p), y = b.base + m.sp[0], red = lin(C.red);
+    for (const su of [-0.6, 0.6]) for (const sv of [-1, 1]) {
+      const x = o.x + o.ux * su * o.hu - o.uz * sv * (o.hv - 0.3), z = o.z + o.uz * su * o.hu + o.ux * sv * (o.hv - 0.3);
+      if (ctx.city.onRoad(x, z, 0.5, false)) continue;
+      B.tube([x, T(x, z) - 0.2, z], [x, y, z], 0.2, 8, red);
+    }
+  },
+  // Physics: the white observatory dome on the roof
+  PHY(kit, ctx, b, B, masses) {
+    const m = masses.reduce((a, c) => (c.sp[1] > a.sp[1] ? c : a), masses[0]);
+    const [x, z] = centroid(m.p), y = b.base + m.sp[1];
+    B.prism(x, y, z, 2.8, 2.2, 12, lin([0.86, 0.86, 0.84]));
+    B.spheroid(x, y + 2.2, z, 2.8, 12, 5, lin([0.94, 0.94, 0.93]));
+  },
+  // E5: the bronze penthouse band and its two rooftop masts
+  E5(kit, ctx, b, B, masses) {
+    const m = masses.reduce((a, c) => (Math.abs(polyArea(c.p)) > Math.abs(polyArea(a.p)) ? c : a), masses[0]);
+    const y = b.base + m.sp[1];
+    const pts = inset(m.p, 6);
+    if (Math.abs(polyArea(pts)) < 40) return;
+    mass(B, null, pts, b.base, y, y + 3.6, S({ wall: [0.30, 0.24, 0.19], win: 'none', parapet: 0.2 }), { floating: false });
+    const o = obb(pts);
+    for (const s of [-1, 1]) B.tube([o.x + o.ux * s * o.hu * 0.6, y + 3.6, o.z + o.uz * s * o.hu * 0.6], [o.x + o.ux * s * o.hu * 0.6, y + 9, o.z + o.uz * s * o.hu * 0.6], 0.12, 5, lin([0.85, 0.85, 0.85]));
+  },
+  // SCH: the tall brick chimney on its roof
+  SCH(kit, ctx, b, B, masses) {
+    const [x, z] = centroid(b.r.p), y = b.base + span(b.r, 12)[1];
+    B.box(x + 6, y - 1, z - 4, 2.2, 6, 2.2, 0.3, lin([0.45, 0.27, 0.20]));
+  },
+  // Conrad Grebel's chapel: rubble stone under a gabled roof, a cross on the gable
+  'Conrad Grebel University College'(kit, ctx, b, B) {
+    if (b.r.building !== 'chapel') return;
+    const o = obb(b.r.p), y = b.base + 6, stone = lin([0.50, 0.46, 0.42]), roof = lin([0.30, 0.30, 0.31]);
+    const P = (u, v, h) => [o.x + o.ux * u - o.uz * v, y + h, o.z + o.uz * u + o.ux * v];
+    const R = 4.5;
+    for (const s of [-1, 1]) {
+      B.quad(P(-o.hu - 0.4, s * (o.hv + 0.4), -0.2), P(o.hu + 0.4, s * (o.hv + 0.4), -0.2), P(o.hu + 0.4, 0, R), P(-o.hu - 0.4, 0, R), [-o.uz * s * 0.7, 0.7, o.ux * s * 0.7], U0, roof);
+      B.tri(P(s * o.hu, -o.hv, 0), P(s * o.hu, o.hv, 0), P(s * o.hu, 0, R), [o.ux * s, 0, o.uz * s], stone);
+    }
+    const c = P(o.hu + 0.1, 0, R);
+    B.box(c[0], c[1], c[2], 0.25, 2.2, 0.25, 0, lin([0.9, 0.9, 0.88]));
+    B.box(c[0], c[1] + 1.3, c[2], 0.25, 0.25, 1.2, Math.atan2(o.uz, o.ux), lin([0.9, 0.9, 0.88]));
+  },
+};
+
+// --- the bridges ---------------------------------------------------------------------------
+
+/** A box along a polyline: glass sides on a mullion grid, a light soffit and roof edge. */
+function tubeBox(B, line, y0, y1, w, cols) {
+  const { glass, frame, skin } = cols;
+  for (let i = 0; i + 1 < line.length; i++) {
+    const a = line[i], c = line[i + 1];
+    const dx = c[0] - a[0], dz = c[1] - a[1], L = Math.hypot(dx, dz);
+    if (L < 0.3) continue;
+    const ux = dx / L, uz = dz / L, nx = uz, nz = -ux;
+    // run each segment w/2 past its ends so the bends close
+    const e0 = i === 0 ? 0 : w / 2, e1 = i + 2 === line.length ? 0 : w / 2;
+    const at = (t, y, v) => [a[0] + ux * t + nx * v, y, a[1] + uz * t + nz * v];
+    const t0 = -e0, t1 = L + e1, h = w / 2;
+    for (const s of [-1, 1]) {
+      const N = [nx * s, 0, nz * s];
+      B.quad(at(t0, y0, s * h), at(t1, y0, s * h), at(t1, y0 + 0.7, s * h), at(t0, y0 + 0.7, s * h), N, U0, skin);
+      B.quad(at(t0, y0 + 0.7, s * h), at(t1, y0 + 0.7, s * h), at(t1, y1 - 0.5, s * h), at(t0, y1 - 0.5, s * h), N, U0, glass);
+      B.quad(at(t0, y1 - 0.5, s * h), at(t1, y1 - 0.5, s * h), at(t1, y1, s * h), at(t0, y1, s * h), N, U0, skin);
+      const n = Math.max(1, Math.round((t1 - t0) / 1.6));
+      for (let m = 0; m <= n; m++) {
+        const t = t0 + (m / n) * (t1 - t0);
+        B.d.quad(at(t - 0.06, y0 + 0.7, s * (h + 0.04)), at(t + 0.06, y0 + 0.7, s * (h + 0.04)), at(t + 0.06, y1 - 0.5, s * (h + 0.04)), at(t - 0.06, y1 - 0.5, s * (h + 0.04)), N, U0, frame);
+      }
+    }
+    B.quad(at(t0, y1, -h), at(t1, y1, -h), at(t1, y1, h), at(t0, y1, h), [0, 1, 0], U0, shade(skin, 0.8));
+    B.quad(at(t0, y0, -h), at(t1, y0, -h), at(t1, y0, h), at(t0, y0, h), [0, -1, 0], U0, skin);
+  }
+}
+function lineLen(l) {
+  let s = 0;
+  for (let i = 0; i + 1 < l.length; i++) s += Math.hypot(l[i + 1][0] - l[i][0], l[i + 1][1] - l[i][1]);
+  return s;
+}
+/** The point `d` metres along a polyline. */
+function along(l, d) {
+  for (let i = 0; i + 1 < l.length; i++) {
+    const L = Math.hypot(l[i + 1][0] - l[i][0], l[i + 1][1] - l[i][1]);
+    if (d <= L || i + 2 === l.length) {
+      const t = L > 0 ? Math.min(1, d / L) : 0;
+      return [l[i][0] + (l[i + 1][0] - l[i][0]) * t, l[i][1] + (l[i + 1][1] - l[i][1]) * t];
+    }
+    d -= L;
+  }
+  return l[l.length - 1];
+}
+function insideAny(x, z) {
+  for (const b of BLD) if (Math.abs(b.cx - x) < 200 && Math.abs(b.cz - z) < 200 && inPoly(b.r.p, x, z)) return true;
+  return false;
+}
+
+function bridges(kit, ctx) {
+  const city = ctx.city;
+  for (const br of U.bridges) {
+    const l = br.l, L = lineLen(l);
+    const mid = along(l, L / 2);
+    const B = kit.B(mid[0], mid[1]);
+    let tmax = -Infinity;
+    for (let d = 0; d <= L; d += 4) { const p = along(l, d); tmax = Math.max(tmax, T(p[0], p[1])); }
+    if (br.n === 'E5 Bridge') {
+      // THE E5 BRIDGE: one storey of dark blue glass on a silver mullion grid,
+      // ~7 m over Ring Road and the ION tracks, on round grey columns, from
+      // E5 to E3's third floor
+      const y0 = tmax + 6.8, y1 = y0 + 4.4;
+      tubeBox(B, l, y0, y1, 4.6, { glass: lin([0.10, 0.17, 0.30]), frame: lin([0.74, 0.76, 0.78]), skin: lin([0.84, 0.85, 0.85]) });
+      const conc = lin([0.70, 0.70, 0.68]);
+      // no street tree grows up through it
+      if (ctx.clearAt) for (let d = 0; d <= L; d += 6) { const p = along(l, d); ctx.clearAt.push([p[0], p[1], 7]); }
+      for (let d = 14; d < L - 8; d += 17) {
+        const p = along(l, d);
+        if (city.onRoad(p[0], p[1], 1.2, false) || insideAny(p[0], p[1])) continue;
+        const g = T(p[0], p[1]);
+        B.tube([p[0], g - 0.3, p[1]], [p[0], y0, p[1]], 0.6, 10, conc);
+        ctx.solids.push({ x: p[0], z: p[1], hw: 0.6, hd: 0.6, rot: 0, y0: g - 0.3, y1: y0 });
+      }
+      STATS.e5 = { len: Math.round(L), y0: +(y0 - tmax).toFixed(1) };
+      STATS.bridges++;
+      continue;
+    }
+    if (br.n === 'REV') {
+      // REV's covered walkway over Laurel Creek: a flat roof on posts
+      const y0 = Math.max(T(l[0][0], l[0][1]), T(l[l.length - 1][0], l[l.length - 1][1])) + 0.2;
+      const brick = lin(C.v1Brick), roof = lin([0.30, 0.30, 0.31]);
+      for (let i = 0; i + 1 < l.length; i++) {
+        const a = l[i], c = l[i + 1], dx = c[0] - a[0], dz = c[1] - a[1], Ls = Math.hypot(dx, dz);
+        const rot = Math.atan2(dz, dx);
+        B.box((a[0] + c[0]) / 2, y0 + 2.7, (a[1] + c[1]) / 2, Ls, 0.35, 3.6, rot, roof);
+        B.box((a[0] + c[0]) / 2, y0 - 0.25, (a[1] + c[1]) / 2, Ls, 0.25, 2.6, rot, lin([0.6, 0.6, 0.58]));
+        const ux = dx / Ls, uz = dz / Ls;
+        for (let d = 0; d <= Ls; d += 4.5) for (const s of [-1, 1]) {
+          B.box(a[0] + ux * d - uz * s * 1.5, y0, a[1] + uz * d + ux * s * 1.5, 0.45, 2.7, 0.45, rot, brick);
+        }
+      }
+      STATS.bridges++;
+      continue;
+    }
+    // the rest: a one-storey glazed link at the second floor, unless OSM
+    // already draws it as a building (a building=bridge or a raised part)
+    if (L < 6 || insideAny(mid[0], mid[1])) continue;
+    const y0 = tmax + ST * Math.max(1, Math.min(2, br.layer)) - 0.3;
+    tubeBox(B, l, y0, y0 + 3.6, 3.6, { glass: lin([0.18, 0.25, 0.30]), frame: lin([0.80, 0.81, 0.82]), skin: lin([0.80, 0.80, 0.78]) });
+    STATS.bridges++;
+  }
+}
+
+// --- lettering --------------------------------------------------------------------------------
+
+class Atlas {
+  constructor(w = 1024, h = 512) {
+    this.c = document.createElement('canvas');
+    this.c.width = w; this.c.height = h;
+    this.g = this.c.getContext('2d');
+    this.x = 0; this.y = 0; this.row = 0; this.full = 0;
+    this.tex = new THREE.CanvasTexture(this.c);
+    this.tex.colorSpace = THREE.SRGBColorSpace;
+    this.tex.anisotropy = 8;
+    this.mat = new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, alphaTest: 0.04, side: THREE.DoubleSide, forceSinglePass: true, toneMapped: false });
+    this.mat.userData.noShadow = true;
+  }
+  panel(w, h, px, draw) {
+    const W = Math.min(1024, Math.round(w * px)), H = Math.min(256, Math.round(h * px));
+    if (this.x + W > this.c.width) { this.x = 0; this.y += this.row + 2; this.row = 0; }
+    if (this.y + H > this.c.height) this.full++;
+    const x = this.x, y = this.y;
+    this.x += W + 2; this.row = Math.max(this.row, H);
+    const g = this.g;
+    g.save(); g.translate(x, y); g.beginPath(); g.rect(0, 0, W, H); g.clip();
+    draw(g, W, H);
+    g.restore();
+    const geo = new THREE.PlaneGeometry(w, h);
+    const uv = geo.attributes.uv;
+    const u0 = (x + 0.5) / this.c.width, u1 = (x + W - 0.5) / this.c.width;
+    const v0 = 1 - (y + H - 0.5) / this.c.height, v1 = 1 - (y + 0.5) / this.c.height;
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) ? u1 : u0, uv.getY(i) ? v1 : v0);
+    return new THREE.Mesh(geo, this.mat);
+  }
+}
+const SANS = 'Helvetica, Arial, sans-serif';
+/** Brushed-steel letters on nothing (the sculptures). */
+function steelLetters(A, lines, w, h) {
+  return A.panel(w, h, 40, (g, W, H) => {
+    g.clearRect(0, 0, W, H);
+    const fs = (H / lines.length) * 0.8;
+    g.font = `800 ${fs}px ${SANS}`;
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    lines.forEach((t, i) => {
+      const y = (H / lines.length) * (i + 0.52);
+      const gr = g.createLinearGradient(0, y - fs / 2, 0, y + fs / 2);
+      gr.addColorStop(0, '#f2f3f4'); gr.addColorStop(0.5, '#a9adb1'); gr.addColorStop(1, '#d8dadc');
+      g.lineWidth = fs * 0.06; g.strokeStyle = '#3a3c3e';
+      g.strokeText(t, W / 2, y, W * 0.98);
+      g.fillStyle = gr; g.fillText(t, W / 2, y, W * 0.98);
+    });
+  });
+}
+/** The gate sign's face: black, the gold shield, UNIVERSITY OF WATERLOO in white. */
+function gatePanel(A, w, h) {
+  return A.panel(w, h, 48, (g, W, H) => {
+    g.fillStyle = '#121212'; g.fillRect(0, 0, W, H);
+    g.fillStyle = '#fed34c'; g.fillRect(0, H * 0.86, W, H * 0.14);
+    // the shield: gold, a black chevron, three red lions (as dots)
+    const sx = H * 0.12, sw = H * 0.5, sy = H * 0.12, sh = H * 0.62;
+    g.fillStyle = '#fed34c';
+    g.beginPath(); g.moveTo(sx, sy); g.lineTo(sx + sw, sy); g.lineTo(sx + sw, sy + sh * 0.6);
+    g.quadraticCurveTo(sx + sw, sy + sh, sx + sw / 2, sy + sh); g.quadraticCurveTo(sx, sy + sh, sx, sy + sh * 0.6); g.closePath(); g.fill();
+    g.strokeStyle = '#121212'; g.lineWidth = sw * 0.14;
+    g.beginPath(); g.moveTo(sx + sw * 0.08, sy + sh * 0.62); g.lineTo(sx + sw / 2, sy + sh * 0.32); g.lineTo(sx + sw * 0.92, sy + sh * 0.62); g.stroke();
+    g.fillStyle = '#c8102e';
+    for (const [px, py] of [[0.25, 0.2], [0.75, 0.2], [0.5, 0.78]]) { g.beginPath(); g.arc(sx + sw * px, sy + sh * py, sw * 0.09, 0, 7); g.fill(); }
+    g.fillStyle = '#ffffff'; g.textAlign = 'left'; g.textBaseline = 'middle';
+    g.font = `700 ${H * 0.2}px ${SANS}`;
+    g.fillText('UNIVERSITY OF', sx + sw + H * 0.14, H * 0.3, W - sx - sw - H * 0.2);
+    g.font = `800 ${H * 0.32}px ${SANS}`;
+    g.fillText('WATERLOO', sx + sw + H * 0.12, H * 0.6, W - sx - sw - H * 0.2);
+  });
+}
+function hang(g, mesh, x, y, z, nx, nz, off = 0.06) {
+  mesh.position.set(x + nx * off, y, z + nz * off);
+  mesh.rotation.y = Math.atan2(nx, nz);
+  g.add(mesh);
+}
+
+/** The direction from (x, z) to the nearest street's kerb, and how far. */
+function towardRoad(city, x, z, r = 80) {
+  let best = null;
+  for (const ei of city.edgesNear(x, z, r)) {
+    const e = city.edges[ei];
+    if (e.elev || e.tunnel) continue;
+    const a = city.nodes[e.a];
+    const t = Math.max(0, Math.min(e.len, (x - a.x) * e.dx + (z - a.z) * e.dz));
+    const qx = a.x + e.dx * t, qz = a.z + e.dz * t, d = Math.hypot(x - qx, z - qz);
+    if (!best || d < best.d) best = { d, nx: (qx - x) / (d || 1), nz: (qz - z) / (d || 1), qx, qz, hw: e.hw, name: e.name || '' };
+  }
+  return best;
+}
+
+// --- the campus's things -----------------------------------------------------------------------
+
+function landmarks(kit, ctx, A) {
+  const P = U.pois || {}, city = ctx.city;
+  // UNIVERSITY OF WATERLOO: the steel letters on their plinth by the main gate
+  if (P.letters) {
+    const [x, z] = P.letters, g = T(x, z), B = kit.B(x, z), grp = kit.grp(x, z);
+    const r = towardRoad(city, x, z) || { nx: 0, nz: 1 };
+    const rot = Math.atan2(r.nx, r.nz);
+    const ux = Math.cos(rot), uz = -Math.sin(rot);
+    B.box(x, g - 0.3, z, 17.5, 0.9, 1.4, Math.atan2(uz, ux), lin([0.62, 0.61, 0.58]));
+    hang(grp, steelLetters(A, ['UNIVERSITY OF WATERLOO'], 17, 1.7), x, g + 1.45, z, r.nx, r.nz, 0.0);
+    ctx.solids.push({ x, z, hw: 8.8, hd: 0.7, rot: Math.atan2(uz, ux), y0: g - 0.3, y1: g + 2.3 });
+  }
+  // the Plant Operations stack: a tall, slightly tapered round brown-brick chimney
+  if (P.stack) {
+    const [x, z] = P.stack, g = T(x, z), B = kit.B(x, z), brick = lin([0.50, 0.38, 0.30]);
+    const H = 46, n = 6;
+    for (let i = 0; i < n; i++) {
+      const r0 = 2.2 - (i / n) * 0.7, r1 = 2.2 - ((i + 1) / n) * 0.7;
+      const y0 = g - 0.5 + (i / n) * H, y1 = g - 0.5 + ((i + 1) / n) * H;
+      // a frustum ring of 12 quads
+      for (let k = 0; k < 12; k++) {
+        const a0 = (k / 12) * Math.PI * 2, a1 = ((k + 1) / 12) * Math.PI * 2, am = (a0 + a1) / 2;
+        B.quad([x + Math.cos(a0) * r0, y0, z + Math.sin(a0) * r0], [x + Math.cos(a1) * r0, y0, z + Math.sin(a1) * r0],
+          [x + Math.cos(a1) * r1, y1, z + Math.sin(a1) * r1], [x + Math.cos(a0) * r1, y1, z + Math.sin(a0) * r1], [Math.cos(am), 0.02, Math.sin(am)], U0, i === n - 1 ? shade(brick, 0.55) : brick);
+      }
+    }
+    ctx.solids.push({ x, z, hw: 2.2, hd: 2.2, rot: 0, y0: g - 1, y1: g + H });
+  }
+  // Ron Baird's Triad (1965): two tall grey steel posts with a starburst on top
+  if (P.triad) {
+    const [x, z] = P.triad, g = T(x, z), B = kit.B(x, z), steel = lin([0.52, 0.54, 0.56]);
+    B.d.box(x, g - 0.2, z, 2.2, 0.6, 1.4, 0.4, lin([0.70, 0.69, 0.66]));
+    for (const s of [-0.5, 0.5]) B.d.box(x + s * 0.9, g + 0.4, z + s * 0.4, 0.25, 4.5, 0.25, 0.4, steel);
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2;
+      B.d.tube([x, g + 5.0, z], [x + Math.cos(a) * 1.3, g + 5.0 + Math.sin(a) * 1.3, z + 0.2], 0.08, 4, steel);
+    }
+  }
+  // Bachinski's Obelisk (1975) by the SLC
+  if (P.obelisk) {
+    const [x, z] = P.obelisk, g = T(x, z), B = kit.B(x, z);
+    B.d.box(x, g - 0.2, z, 1.0, 0.6, 1.0, 0.3, lin([0.66, 0.65, 0.62]));
+    B.d.prism(x, g + 0.4, z, 0.42, 5.2, 4, lin([0.30, 0.25, 0.20]), Math.PI / 4);
+    B.d.cone(x, g + 5.6, z, 0.42, 0.7, 4, lin([0.30, 0.25, 0.20]));
+  }
+  // the Porcellino: a bronze boar on a stone plinth
+  if (P.boar) {
+    const [x, z] = P.boar, g = T(x, z), B = kit.B(x, z), br = lin([0.36, 0.26, 0.16]);
+    B.d.box(x, g - 0.2, z, 1.6, 1.0, 0.8, 0, lin([0.62, 0.62, 0.60]));
+    B.d.spheroid(x, g + 1.25, z, 0.55, 8, 5, br, 0.7);
+    B.d.box(x + 0.62, g + 1.05, z, 0.42, 0.34, 0.34, 0, br);
+    for (const dx of [-0.32, 0.32]) for (const dz of [-0.16, 0.16]) B.d.box(x + dx, g + 0.8, z + dz, 0.12, 0.35, 0.12, 0, br);
+  }
+  // grey limestone boulders: the campus's edging, round the gate's flagpoles in front of SCH
+  const sch = BLD.find((b) => b.r.ref === 'SCH');
+  if (sch) {
+    const r = towardRoad(city, sch.cx, sch.cz, 120);
+    if (r) {
+      const fx = r.qx - r.nx * (r.hw + 9), fz = r.qz - r.nz * (r.hw + 9);
+      if (!insideAny(fx, fz)) {
+        const B = kit.B(fx, fz), stone = lin([0.78, 0.77, 0.74]), g = T(fx, fz);
+        for (let k = 0; k < 14; k++) {
+          const a = (k / 14) * Math.PI * 2, rr = 4.6;
+          B.d.spheroid(fx + Math.cos(a) * rr, g + 0.2, fz + Math.sin(a) * rr, 0.55 + hash2(k, 9) * 0.3, 6, 3, shade(stone, 0.9 + hash2(k, 4) * 0.15), 0.6, 0.15);
+        }
+        for (let k = 0; k < 5; k++) {
+          const a = (k / 5) * Math.PI * 2 + 0.3;
+          const px = fx + Math.cos(a) * 1.8, pz = fz + Math.sin(a) * 1.8;
+          B.d.tube([px, g, pz], [px, g + 12, pz], 0.08, 5, lin([0.82, 0.83, 0.84]));
+        }
+        STATS.gate = [Math.round(fx), Math.round(fz)];
+      }
+    }
+  }
+  // the gate signs: black with the gold shield, where Ring Road meets
+  // University Ave (by Seagram Dr) and Columbia St
+  for (const [gx, gz] of [[-5232, -1868], [-5772, -2508]]) {
+    const r = towardRoad(city, gx, gz, 40);
+    if (!r) continue;
+    let sx = null, sz = null;
+    for (const off of [7, 9, 11, 13]) {
+      for (const sgn of [1, -1]) {
+        const cx = r.qx - r.nx * (r.hw + off) + r.nz * sgn * 6, cz = r.qz - r.nz * (r.hw + off) - r.nx * sgn * 6;
+        if (!city.onRoad(cx, cz, 3, false) && !insideAny(cx, cz)) { sx = cx; sz = cz; break; }
+      }
+      if (sx !== null) break;
+    }
+    if (sx === null) continue;
+    const g = T(sx, sz), B = kit.B(sx, sz), grp = kit.grp(sx, sz);
+    const rot = Math.atan2(r.nx, r.nz), ux = Math.cos(rot), uz = -Math.sin(rot);
+    B.box(sx, g - 0.4, sz, 7.0, 2.4, 0.9, Math.atan2(uz, ux), lin([0.56, 0.52, 0.47]));
+    B.box(sx, g + 2.0, sz, 7.2, 0.2, 1.0, Math.atan2(uz, ux), lin([0.40, 0.38, 0.35]));
+    hang(grp, gatePanel(A, 5.6, 1.5), sx, g + 1.0, sz, r.nx, r.nz, 0.47);
+    hang(grp, gatePanel(A, 5.6, 1.5), sx, g + 1.0, sz, -r.nx, -r.nz, 0.47);
+    ctx.solids.push({ x: sx, z: sz, hw: 3.5, hd: 0.45, rot: Math.atan2(uz, ux), y0: g - 0.4, y1: g + 2.2 });
+    (STATS.gates = STATS.gates || []).push([Math.round(sx), Math.round(sz)]);
+  }
+  // WATERLOO ENGINEERING: polished-steel letters at E7, toward Ring Road
+  const e7 = BLD.find((b) => b.r.ref === 'PSE');
+  if (e7) {
+    const r = towardRoad(city, e7.cx, e7.cz, 120);
+    if (r) {
+      // the wall of E7 facing that road, and 4 m in front of it
+      let best = null;
+      for (const e of edges(e7.r.p)) {
+        const s = e.nx * r.nx + e.nz * r.nz;
+        if (e.L > 14 && (!best || s > best.s)) best = { e, s };
+      }
+      if (best) {
+        const e = best.e, x = e.mx + e.nx * 4, z = e.mz + e.nz * 4, g = T(x, z);
+        const B = kit.B(x, z), grp = kit.grp(x, z);
+        B.box(x, g - 0.3, z, 10, 0.75, 1.0, Math.atan2(e.uz, e.ux), lin([0.74, 0.73, 0.70]));
+        hang(grp, steelLetters(A, ['WATERLOO', 'ENGINEERING'], 9.4, 3.0), x, g + 1.95, z, e.nx, e.nz, 0);
+        ctx.solids.push({ x, z, hw: 5, hd: 0.55, rot: Math.atan2(e.uz, e.ux), y0: g - 0.3, y1: g + 3.5 });
+      }
+    }
+  }
+}
+
+// --- the extra -----------------------------------------------------------------------------------
+
+function warn(m) { console.warn('uwcampus ' + m); (STATS.errors = STATS.errors || []).push(m); }
+
+/** landmarks.js extra: the whole campus. */
+export function buildCampus(ctx) {
+  if (!U || !BLD.length) return;
+  const t0 = performance.now();
+  const kit = new Kit();
+  const A = new Atlas(1024, 256);
+  for (const b of BLD) {
+    try { drawBuilding(kit, ctx, b); STATS.buildings++; } catch (e) { warn((b.r.ref || b.r.name || b.r.id) + ': ' + e.message); }
+  }
+  try { bridges(kit, ctx); } catch (e) { warn('bridges: ' + e.message); }
+  try { landmarks(kit, ctx, A); } catch (e) { warn('landmarks: ' + e.message); }
+  A.tex.needsUpdate = true;
+  kit.flush(ctx);
+  STATS.tris = kit.tris;
+  STATS.nearTris = kit.near || 0;
+  STATS.atlasFull = A.full;
+  STATS.ms = Math.round(performance.now() - t0);
+  if (typeof window !== 'undefined') window.__uwCampus = STATS;
+}

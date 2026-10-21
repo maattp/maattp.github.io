@@ -48,6 +48,7 @@ import { addLandmarkExtra } from './landmarks.js';
 import { Chicopee } from './chicopee.js';
 import { prepFun, buildMarketTent, buildFlags, waveFlags, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, buildDome } from './kwfun.js';
 import { prepPlaces, buildPlaces, placesMap, placesStats, Geese } from './kwplaces.js';
+import { setUwData, prepCampus, buildCampus } from './uwcampus.js';
 import { Crops } from './crops.js';
 import { Kartway, KartRace } from './kartway.js';
 import { YKF } from './ykf.js';
@@ -787,6 +788,10 @@ async function boot() {
   // Uptown, Waterloo Park, RIM Park and Conestoga Mall (kwplaces.js)
   { const k = prepPlaces(city); blog(`kw places: ${k.skipped} boxes drawn as places`); }
   addLandmarkExtra(buildPlaces);
+  // the University of Waterloo's campus, building by building (uwcampus.js)
+  setUwData(md.uw);
+  { const k = prepCampus(city); blog(`uw campus: ${k.buildings} buildings, ${k.boxes} boxes drawn as campus`); }
+  addLandmarkExtra(buildCampus);
   addLandmarkExtra(buildMarketTent);
   addLandmarkExtra(buildDome);
   addLandmarkExtra(buildFord);

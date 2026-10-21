@@ -385,11 +385,16 @@ function meshPoly(B, solids, b, P, city) {
 }
 
 let POLY_MAT = null;
+/** The footprint buildings' one material (uwcampus.js draws in it too, so a cluster stays one draw). */
+export function polyMat() {
+  if (!POLY_MAT) POLY_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0 });
+  return POLY_MAT;
+}
 /** landmarks.js extra: every polygon building, merged per 1200 m cluster. */
 export function buildPolys(ctx) {
   if (!KW) return;
   const { addTo, city } = ctx;
-  if (!POLY_MAT) POLY_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0 });
+  polyMat();
   const builders = new Map();
   let n = 0;
   for (const b of city.buildings) {
