@@ -43,7 +43,11 @@ export class DrivewayCars {
   _init(traffic) {
     this.traffic = traffic;
     const types = vehicleAssets().types;
-    this.types = DCAR_TYPES.map((t) => (types[t] ? t : null));
+    // a phone draws the drive-thru lines' two types only (sedans as
+    // crossovers, minivans as SUVs): at most two draws, both shared with the
+    // lines and the far traffic; the sedan and minivan cost two more
+    const use = ON_PHONE ? ['crossover', 'suv', 'crossover', 'suv'] : DCAR_TYPES;
+    this.types = use.map((t) => (types[t] ? t : null));
     for (const t of this.types) if (t) farLod(t);
     this.pivot = this.types.map((t) => (t ? types[t].spec.pivotY || 0 : 0));
     this.half = this.types.map((t) => (t ? [types[t].spec.len / 2, types[t].spec.wid / 2] : [2.3, 0.9]));
