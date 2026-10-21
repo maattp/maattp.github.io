@@ -4,7 +4,8 @@
 //     node tools/kw/kwshots.mjs /tmp/x
 //   (options: VIEW_BOOT_JS='window.__hwyt = { warm: 20, measure: 150, sites:
 //   [{ name, x, z }], all: true }' -- seconds per site, the sites, and
-//   `all` to spawn on every road, for a city before/after)
+//   `all` to spawn on every road, for a city before/after; `seed: true`
+//   pins every random source, for an exact A/B -- see below)
 //
 // The game paused, traffic.update is stepped at a FIXED dt of 1/60 s (rAF in a
 // headless page runs at whatever pace it likes, which is why speeds measured
@@ -26,6 +27,21 @@
 (async () => {
   const d = window.__dbg, T = d.traffic, c = d.city, p = d.player;
   const cfg = Object.assign({ warm: 20, measure: 150 }, window.__hwyt || {});
+  // `seed: true`: every source of run-to-run difference pinned first (as
+  // tools/kw/trafficbench.js does): Math.random, traffic's rng, the signals'
+  // clock, the spawn counter (hashed into a freeway spawn's type), the
+  // trains, streetcars and crossings off. Two builds that print the same
+  // numbers then drove the same cars the same way -- for a change that must
+  // not change behaviour. (Without it the numbers move a little run to run.)
+  if (cfg.seed) {
+    const mk = (s) => { let a = s >>> 0; return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
+    const f = mk(99);
+    T.R = { f, n: () => f(), range: (a, b) => a + (b - a) * f(), int: (a, b) => Math.min(b, a + Math.floor(f() * (b - a + 1))), pick: (arr) => arr[Math.min(arr.length - 1, Math.floor(f() * arr.length))], chance: (q) => f() < q, sign: () => (f() < 0.5 ? -1 : 1) };
+    Math.random = mk(12345);
+    if (c.jc) c.jc.t = 0;
+    T.spawnTimer = 0; T._tick = 0; T.copTimer = 0; T.crossN = 0; T._prio = 100000; T.link = null; T.freight = null; T.streetcars = null;
+    for (const v of [...T.cars]) if (v.mode === 'traffic' || v.mode === 'police' || v.mode === 'trailer') T.remove(v);
+  }
   const sites = cfg.sites || [
     { name: '401-hespeler', x: 10950, z: 4250 },
     { name: '401-hwy8', x: 8000, z: 5400 },

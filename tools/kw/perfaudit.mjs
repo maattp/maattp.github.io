@@ -6,7 +6,7 @@
 //   AUTO_CDP_PORT=9505 node tools/kw/perfaudit.mjs --url=http://localhost:8105/apps/autokw/
 //        [--label=master] [--throttle=8] [--secs=20] [--json=out.json]
 //        [--views=spawn,king,pkwy,plaza,campus,country] [--no-boot] [--no-views]
-//        [--boot-prof] [--view-prof] [--top=25] [--shots=DIR] [--boot-probe=FILE.js]
+//        [--boot-prof] [--view-prof] [--prof-out=DIR] [--census] [--top=25] [--shots=DIR] [--boot-probe=FILE.js]
 //        [--pre='<js>']
 //
 // Two parts, each in a FRESH profile (the boot cache is IndexedDB, per profile):
@@ -156,6 +156,41 @@ function pageInstall() {
       if (S.on) { S.sys.shadow = (S.sys.shadow || 0) + performance.now() - t0; S.shadowCalls += d.renderer.info.render.calls - c0; }
     }
   };
+  // THE SCENE CENSUS (--census): on the next scene pass, after chunkCull /
+  // lmCull hid what they hide, walk the scene as three's projectObject does:
+  // objects visited (an invisible one counts, its subtree does not), meshes
+  // frustum-tested (and how many of those pass), meshes drawn untested
+  // (frustumCulled off), per top-level group (scene child / grandchild).
+  // Tested-and-culled meshes in one group are what a whole-group cull saves.
+  const rnd = d.renderer.render;
+  S.census = () => new Promise((res) => { S._census = res; });
+  d.renderer.render = function (scene, camera, ...a) {
+    if (S._census && scene === d.scene) {
+      const res = S._census; S._census = null;
+      const T3 = d.THREE, fr = new T3.Frustum().setFromProjectionMatrix(new T3.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+      const by = new Map(), tot = { visited: 0, tested: 0, passed: 0, untested: 0 };
+      const walk = (o, k, depth) => {
+        tot.visited++;
+        let g = by.get(k);
+        if (!g) by.set(k, (g = { k, visited: 0, tested: 0, passed: 0, untested: 0 }));
+        g.visited++;
+        if (o.visible === false) return;
+        if (o.layers.test(camera.layers) && (o.isMesh || o.isLine || o.isPoints || o.isSprite)) {
+          if (!o.frustumCulled) { g.untested++; tot.untested++; }
+          else {
+            g.tested++; tot.tested++;
+            if (o.isSprite ? fr.intersectsSprite(o) : fr.intersectsObject(o)) { g.passed++; tot.passed++; }
+          }
+        }
+        const ch = o.children;
+        for (let i = 0; i < ch.length; i++) walk(ch[i], depth === 0 ? (ch[i].name || ch[i].type) : depth === 1 ? k + '/' + (ch[i].name || ch[i].type) : k, depth + 1);
+      };
+      walk(scene, 'scene', 0);
+      const top = [...by.values()].sort((x, y) => (y.tested - y.passed) - (x.tested - x.passed) || y.visited - x.visited).slice(0, 14);
+      res({ ...tot, culled: tot.tested - tot.passed, top });
+    }
+    return rnd.call(this, scene, camera, ...a);
+  };
   const RAF0 = window.requestAnimationFrame.bind(window);
   let lastSys = {};
   window.requestAnimationFrame = (cb) => RAF0((ts) => {
@@ -225,6 +260,9 @@ function pageInstall() {
     // Fairway Plaza (kwshops' plazas): the lot in front of the stores, looking at them
     plaza: { foot: [2250, 3604], lot: true },
     campus: { speed: 9, route: () => buildRoute(-5440, -2420, (e) => /^Ring Road/.test(e.name || ''), 2400) },
+    // (not in the default list) a signalled arterial: 'art' streets from the
+    // signal at (-1644, -157) west of Uptown, through its lights at ~15 m/s
+    arterial: { speed: 15, route: () => buildRoute(-1644, -157, (e) => street(e) && e.cls === 'art', 2400) },
     country: { speed: 20, route: () => buildRoute(-8768, -11050, (e) => street(e) && e.len > 15, 4000) },
   };
 
@@ -358,6 +396,7 @@ function pageInstall() {
     for (const [k, v] of Object.entries(S.sys)) out.sys[k] = +(v / Math.max(1, n)).toFixed(2);
     out.gpu = window.__glMem.read();
     out.programs = d.renderer.info.programs ? d.renderer.info.programs.length : 0;
+    if (S.wantCensus) out.scene = await S.census();
     return out;
   };
   return true;
@@ -493,6 +532,7 @@ try {
         for (const k of ['pad','stickZone','lookZone','rotate']) { const e = document.getElementById(k); if (e) e.style.display = 'none'; } })()`);
       await ev(`(${pageInstall.toString()})()`);
       // --pre='<js>': evaluated once before the views (switch something off for an A/B in one build)
+      if (flag('census')) await ev('window.__pa.wantCensus = true');
       if (arg('pre', '')) console.log('  pre: ' + JSON.stringify(await ev(arg('pre', ''))));
       out.bootHeapMB = await heap();
       for (const v of VIEWS) {
@@ -502,7 +542,13 @@ try {
         await send('Emulation.setCPUThrottlingRate', { rate: THROTTLE });
         if (flag('view-prof')) { await send('Profiler.enable'); await send('Profiler.setSamplingInterval', { interval: 500 }); await send('Profiler.start'); }
         const T = await ev(`window.__pa.time(${SECS})`);
-        if (flag('view-prof')) T.profile = profileTop((await send('Profiler.stop')).result.profile, TOP);
+        if (flag('view-prof')) {
+          const prof = (await send('Profiler.stop')).result.profile;
+          T.profile = profileTop(prof, TOP);
+          // --prof-out=DIR: the raw profile too (DevTools opens .cpuprofile;
+          // tools/kw/profsub.mjs breaks one function's subtree down)
+          if (arg('prof-out', '')) { mkdirSync(arg('prof-out', ''), { recursive: true }); writeFileSync(`${arg('prof-out', '')}/${v}.cpuprofile`, JSON.stringify(prof)); }
+        }
         await send('Emulation.setCPUThrottlingRate', { rate: 1 });
         if (SHOTS) {
           const { result } = await send('Page.captureScreenshot', { format: 'jpeg', quality: 70 });
@@ -517,6 +563,11 @@ try {
         console.log(`  frame CPU mean ${T.cpuMean}  median ${T.cpuMed}  p90 ${T.cpu90}  p99 ${T.cpu99} ms  (${T.n} frames in ${T.secs} s)`);
         console.log(`  draws ${T.draws}  tris ${T.trisK}k  shadow-pass draws ${T.shadowDraws}  programs ${T.programs}`);
         console.log(`  by system (ms/frame; render includes shadow): ${sys}`);
+        if (T.scene) {
+          const C = T.scene;
+          console.log(`  scene census: ${C.visited} objects visited, ${C.tested} meshes frustum-tested (${C.passed} pass, ${C.culled} culled), ${C.untested} untested`);
+          for (const g of C.top) console.log(`    ${String(g.tested - g.passed).padStart(5)} culled ${String(g.passed).padStart(4)} drawn ${String(g.untested).padStart(4)} untested ${String(g.visited).padStart(6)} visited  ${g.k}`);
+        }
         if (T.profile) {
           const pf = (l) => l.map((t) => `    ${(t.ms / T.n).toFixed(2).padStart(6)}  ${String(t.pct).padStart(5)}%  ${t.fn}`).join('\n');
           console.log('  hottest (self ms/frame):\n' + pf(T.profile.self));

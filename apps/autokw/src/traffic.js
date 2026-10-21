@@ -485,7 +485,32 @@ const MIN_COMPONENT = 60;
 // shoulder.
 const LANE_W = 3.6, PARK_EDGE = 2.2, SHOULDER = 0.8;
 
-const byX = (a, b) => a.x - b.x;
+/** ord[0..n) (indices) sorted by K[index] ascending, STABLE (equal keys keep
+ *  their order): runs of 16 by insertion, then merged; tmp is scratch. */
+function sortByKey(ord, tmp, K, n) {
+  const RUN = 16;
+  for (let lo = 0; lo < n; lo += RUN) {
+    const hi = Math.min(lo + RUN, n);
+    for (let i = lo + 1; i < hi; i++) {
+      const x = ord[i], kx = K[x];
+      let j = i - 1;
+      while (j >= lo && K[ord[j]] > kx) { ord[j + 1] = ord[j]; j--; }
+      ord[j + 1] = x;
+    }
+  }
+  let src = ord, dst = tmp;
+  for (let w = RUN; w < n; w *= 2) {
+    for (let lo = 0; lo < n; lo += 2 * w) {
+      const mid = Math.min(lo + w, n), hi = Math.min(lo + 2 * w, n);
+      let i = lo, j = mid, k = lo;
+      while (i < mid && j < hi) dst[k++] = K[src[j]] < K[src[i]] ? src[j++] : src[i++];
+      while (i < mid) dst[k++] = src[i++];
+      while (j < hi) dst[k++] = src[j++];
+    }
+    const t = src; src = dst; dst = t;
+  }
+  if (src !== ord) ord.set(src.subarray(0, n));
+}
 
 // THE AI'S ROUTE (see "How the AI drives"): RT_MAX entries of RT_F numbers in
 // v.rt. An entry is an edge, its direction and lane, and its lane's centre
@@ -589,6 +614,9 @@ export class TrafficSystem {
     this.city = city;
     this.game = game;
     this.cars = [];
+    // the vehicles in `cars` towing something (spawnAt sets v.trailer, remove
+    // clears it): update's follow pass walks these, not all ~220
+    this._rigs = [];
     this.farMeshes = new Map();
     // Every type's far LOD up front, on the loading screen: built on first use
     // it was a one-off 2-4 ms stall (40+ ms on a phone) the first time each
@@ -759,6 +787,8 @@ export class TrafficSystem {
   remove(v) {
     // an articulated bus goes as one: its rear section and bellows with it
     if (v.trailer) { const r = v.trailer; v.trailer = null; r.leader = null; this.remove(r); }
+    const ri = this._rigs.indexOf(v);
+    if (ri >= 0) this._rigs.splice(ri, 1);
     if (v.bellows) { this.scene.remove(v.bellows); v.bellows.geometry.dispose(); v.bellows = null; }
     const i = this.cars.indexOf(v);
     if (i >= 0) this.cars.splice(i, 1);
@@ -790,6 +820,7 @@ export class TrafficSystem {
       const f = v.forward, H = HITCH[v.spec.towed], back = H.hitchF + H.hitchR;
       r.place(x - f.x * back, z - f.z * back, heading);
       r.leader = v; v.trailer = r;
+      this._rigs.push(v);
       this.add(r, 'trailer');
       if (v.spec.artic) {
         v.bellows = makeBellows();
@@ -1269,7 +1300,8 @@ export class TrafficSystem {
       // Nothing of a far car's own is drawn, and a settled parked car does not
       // move: neither needs three to recompute its five matrices every frame.
       // (A shunt makes a parked car 'free', which thaws it.)
-      const frozen = v !== player.vehicle && (far || ((v.mode === 'parked' || v.mode === 'apron') && v._still >= 3));
+      let frozen = far;
+      if (!far && v !== player.vehicle) { const m = v.mode; frozen = (m === 'parked' || m === 'apron') && v._still >= 3; }
       if (v.group.matrixWorldAutoUpdate === frozen) {
         v.group.matrixWorldAutoUpdate = !frozen;
         // FREEZE WHAT IS THERE NOW. A frozen car keeps the world matrices it
@@ -1340,8 +1372,9 @@ export class TrafficSystem {
     // maintain traffic population
     let trafficCount = 0, policeCount = 0;
     for (const v of this.cars) {
-      if (v.mode === 'traffic') trafficCount++;
-      else if (v.mode === 'police') policeCount++;
+      const m = v.mode;
+      if (m === 'traffic') trafficCount++;
+      else if (m === 'police') policeCount++;
     }
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0) {
@@ -1382,19 +1415,22 @@ export class TrafficSystem {
     for (let i = this.cars.length - 1; i >= 0; i--) {
       const v = this.cars[i];
       if (v === player.vehicle) continue;
+      // (its mode read once: a getter, and ~220 vehicles a frame asked it up
+      // to nine times each; nothing below changes it before the driver runs)
+      const md = v.mode;
       // an articulated bus's rear section is placed by its front (below)
-      if (v.mode === 'trailer') { if (!v.leader) this.remove(v); continue; }
+      if (md === 'trailer') { if (!v.leader) this.remove(v); continue; }
       const d2 = dist2(v.x, v.z, px, pz);
       // 'apron' is the airport's planes: player-flyable set dressing that has
       // to still be there when you drive back an hour later.
       // 'race': the hydroplane race's boats (hydrorace.js drives them)
       // 'path': a cyclist on the bike paths (bikes.js rides them)
-      if (v.mode === 'race' || v.mode === 'path') continue;
+      if (md === 'race' || md === 'path') continue;
       // (a police mission's suspect is policemissions.js's to end)
-      if (d2 > DESPAWN * DESPAWN && v.mode !== 'parked' && v.mode !== 'apron' && v.mode !== 'suspect') { this.remove(v); continue; }
-      if (v.mode === 'police' && game.wanted === 0 && d2 > 140 * 140) { this.remove(v); continue; }
+      if (d2 > DESPAWN * DESPAWN && md !== 'parked' && md !== 'apron' && md !== 'suspect') { this.remove(v); continue; }
+      if (md === 'police' && game.wanted === 0 && d2 > 140 * 140) { this.remove(v); continue; }
 
-      if (v.mode === 'parked') {
+      if (md === 'parked') {
         v.group.visible = d2 < PARKED_SHOW * PARKED_SHOW;
         if (v._still < 3) v._still++;   // settled: updateFarLod freezes its matrices
         continue;
@@ -1411,15 +1447,16 @@ export class TrafficSystem {
       // 460 m, a quad to 160 m -- and never closer than a parked car does.
       // (`showR` caps it: a fire rig is three draws, six with its trailer, and a
       // dozen stations' aprons would otherwise draw from 800 m)
-      const show = v.mode !== 'apron' || d2 < (v.spec.showR || Math.max(PARKED_SHOW, v.spec.len * 80, v.spec.seeFar || 0)) ** 2;
+      const show = md !== 'apron' || d2 < (v.spec.showR || Math.max(PARKED_SHOW, v.spec.len * 80, v.spec.seeFar || 0)) ** 2;
       // ...and so, once settled, is anything else standing on an apron: the
       // bike-share bikes, the airfield's aircraft, a moored boat (except one
       // within 120 m, which bobs). 114 of the 158 vehicles in the list are
       // apron vehicles since the docks, and within 300 m each ran the whole
       // driving model every frame to stand still.
       // (a fire rig on its station apron too: its trailer is placed by follow below)
-      const settles = v.spec.atv || v.spec.tank || v.spec.bicycle || v.spec.fire || v.spec.ag || (v.spec.plane && !v.airborne) || (v.spec.boat && d2 > 120 * 120);
-      if (v.mode === 'apron' && settles && d2 < 300 * 300 && Math.abs(v.vLong) < 0.05 && Math.abs(v.vLat) < 0.05) {
+      // (only an apron vehicle inside 300 m asks whether it settles)
+      if (md === 'apron' && d2 < 300 * 300 && (v.spec.atv || v.spec.tank || v.spec.bicycle || v.spec.fire || v.spec.ag || (v.spec.plane && !v.airborne) || (v.spec.boat && d2 > 120 * 120))
+        && Math.abs(v.vLong) < 0.05 && Math.abs(v.vLat) < 0.05) {
         v.group.visible = show;
         if (v._still < 3) v._still++;
         else continue;
@@ -1427,7 +1464,7 @@ export class TrafficSystem {
       v.group.visible = show;
       // The airport's planes sit where place() put them, as parked cars do, and
       // from downtown all eight used to run the driving model every frame.
-      if (v.mode === 'apron' && d2 > 300 * 300) continue;
+      if (md === 'apron' && d2 > 300 * 300) continue;
       // Distant AI cars take one ground sample instead of four (Vehicle.update).
       v.lowDetail = ON_PHONE && d2 > 60 * 60;
       if (SHADOW_NEAR !== Infinity) {
@@ -1442,7 +1479,7 @@ export class TrafficSystem {
       let vdt = dt;
       v._acc += dt;
       // (a police unit too, 120 m+ off: it drives the same driver now)
-      if (ON_PHONE && cam && (v.mode === 'traffic' || (v.unit && v.mode === 'police' && d2 > 120 * 120)) && d2 > 80 * 80) {
+      if (ON_PHONE && cam && (md === 'traffic' || (v.unit && md === 'police' && d2 > 120 * 120)) && d2 > 80 * 80) {
         sph.center.set(v.x, v.y + 1, v.z);
         sph.radius = v.halfLen + 8;
         if (!fr.intersectsSphere(sph) && ((this._tick + i) & 1)) continue;
@@ -1451,13 +1488,13 @@ export class TrafficSystem {
       v._acc = 0;
 
       let input;
-      if (v.mode === 'traffic') {
+      if (md === 'traffic') {
         input = this.driveTraffic(v, vdt, px, pz, player);
         if (v.recycle) { this.remove(v); continue; }
       }
-      else if (v.mode === 'police') input = this.drivePolice(v, vdt, px, pz, player);
+      else if (md === 'police') input = this.drivePolice(v, vdt, px, pz, player);
       // a police mission's fleeing suspect (policemissions.js)
-      else if (v.mode === 'suspect' && this.suspectDriver) input = this.suspectDriver(v, vdt, px, pz, player);
+      else if (md === 'suspect' && this.suspectDriver) input = this.suspectDriver(v, vdt, px, pz, player);
       // shunted, abandoned or parked on an apron: nobody at the wheel, so the
       // parking brake (Vehicle.update `park`); aircraft and boats keep their old coast
       // (shared: Vehicle.update only reads its input)
@@ -1469,7 +1506,8 @@ export class TrafficSystem {
 
     this.resolveCarCollisions(dt, player);
     // articulated buses: each rear section follows its front, the player's too
-    for (const v of this.cars) {
+    // (each rig moves only its own trailer, so the order is free)
+    for (const v of this._rigs) {
       if (!v.trailer) continue;
       if (v.bellows) v.bellows.visible = v.group.visible && dist2(v.x, v.z, px, pz) < 150 * 150;
       // (a rig standing on its apron has not moved its trailer either)
@@ -1818,6 +1856,9 @@ export class TrafficSystem {
     let gap = Infinity, vLead = 0, lead = null;
     let stopAt = Infinity;   // distance to stop short of something that is not a car in the lane
     const reach2 = (scanLen + 8) * (scanLen + 8);
+    // (the driver's own position and heading, read once: nothing in the scan
+    // moves it, and this loop runs over all ~220 vehicles for every driver)
+    const vx = v.x, vy = v.y, vz = v.z, fx = f.x, fz = f.z;
     for (const o of this.cars) {
       if (o === v) continue;
       // A car on another deck is not ahead of you. In SR-99's stacked bore the
@@ -1825,17 +1866,17 @@ export class TrafficSystem {
       // line, and the plan-only scan braked every car for oncoming traffic on
       // the other deck: stopped queues mid-bore. Same 3 m band the car-car
       // collision uses.
-      if (Math.abs(o.y - v.y) > 3) continue;
-      const rx = o.x - v.x, rz = o.z - v.z;
+      if (Math.abs(o.y - vy) > 3) continue;
+      const rx = o.x - vx, rz = o.z - vz;
       if (rx * rx + rz * rz > reach2) continue;
-      const fwd = rx * f.x + rz * f.z;
+      const fwd = rx * fx + rz * fz;
       if (fwd < -2) continue;
       // Something standing still (a kerbside car, a settled apron vehicle)
       // only matters close in, to be dodged: most of the list is parked
       // cars, and walking the path for each one was the cost of this scan.
       if (fwd > 25 && (o.mode === 'parked' || o.mode === 'apron' || (o.mode === 'free' && Math.abs(o.vLong) < 0.5))) continue;
       // nearest point of the sampled path: how far along it, how far off it
-      let best = Infinity, along = 0, acc = 0, sdx = f.x, sdz = f.z, sax = v.x, saz = v.z;
+      let best = Infinity, along = 0, acc = 0, sdx = fx, sdz = fz, sax = vx, saz = vz;
       for (let k = 0; k < np - 1; k++) {
         const ax = ps[2 * k], az = ps[2 * k + 1], sx = sg[3 * k], sz = sg[3 * k + 1], l = sg[3 * k + 2];
         let t = ((o.x - ax) * sx + (o.z - az) * sz) / (l * l);
@@ -2764,77 +2805,118 @@ export class TrafficSystem {
     // is only looked at while their x ranges can overlap, and two vehicles
     // that are standing still (parked, or a settled apron one) never can
     // start to.
-    const n = this.cars.length, all = this._colOrd || (this._colOrd = []);
+    //
+    // THE SWEEP READS ARRAYS. Auto KW has ~180 apron vehicles in clusters
+    // (bike docks, a dealer's lot, farms, fire halls), and past 300 m they
+    // are not 'still' (their _still is only counted inside 300 m), so every
+    // pair in a cluster was tested every frame: ~1,000 tests a frame in town,
+    // each a dozen property reads on vehicles of many shapes (two of them the
+    // mode getter) to find two bodies metres apart -- the biggest part of
+    // traffic's cost at 8x. Each body's x, z, height, radius and still flag
+    // are read once into arrays here; a pair goes to carPair (every test it
+    // ever made, in the same order) only when the arrays say their circles
+    // meet within 3 m of height, which are carPair's own first tests, with no
+    // side effects to skip. A contact can move anything (its callbacks), so
+    // after one the arrays are read again. The same pairs: the same frame.
+    const cars = this.cars, n = cars.length, all = this._colOrd || (this._colOrd = []);
+    if (!this._colX || this._colX.length < n) {
+      const m = n + 64;
+      this._colX = new Float64Array(m); this._colZ = new Float64Array(m); this._colY = new Float64Array(m);
+      this._colR = new Float64Array(m); this._colK = new Float64Array(m); this._colS = new Uint8Array(m);
+    }
+    if (!this._colI || this._colI.length < n) { this._colI = new Int32Array(n + 64); this._colT = new Int32Array(n + 64); }
+    const X = this._colX, Z = this._colZ, Y = this._colY, R = this._colR, K = this._colK, S = this._colS, ord = this._colI;
+    // The order `all.sort((a, b) => a.x - b.x)` gave: Array.sort is stable,
+    // so that is the vehicles by x, ties in list order -- which sortByKey
+    // gives too, without ~1,500 calls of a comparator (a tenth of the sweep).
+    // (a NaN or infinite x has no such order: the old sort, as it was)
+    let finite = true;
+    for (let k = 0; k < n; k++) { ord[k] = k; const x = cars[k].x; K[k] = x; if (!(x - x === 0)) finite = false; }
+    if (finite) sortByKey(ord, this._colT, K, n);
+    else { const o = Array.from({ length: n }, (_, k) => k).sort((p, q) => K[p] - K[q]); for (let k = 0; k < n; k++) ord[k] = o[k]; }
     all.length = n;
     let rMax = 0;
-    for (let k = 0; k < n; k++) { const v = this.cars[k]; all[k] = v; const r = bodyR(v); if (r > rMax) rMax = r; }
-    all.sort(byX);
+    for (let k = 0; k < n; k++) { const v = cars[ord[k]]; all[k] = v; const r = bodyR(v); R[k] = r; if (r > rMax) rMax = r; }
     const still = (v) => v !== player.vehicle && (v.mode === 'parked' || (v.mode === 'apron' && v._still >= 3));
+    const read = () => {
+      for (let k = 0; k < n; k++) { const v = all[k]; X[k] = v.x; Z[k] = v.z; Y[k] = v.y || 0; S[k] = still(v) ? 1 : 0; }
+    };
+    read();
     for (let i = 0; i < n; i++) {
-      const a = all[i], sa = still(a), reach = a.x + bodyR(a) + rMax;
+      const sa = S[i] === 1, ra = R[i], reach = X[i] + ra + rMax;
+      let xa = X[i], za = Z[i], ya = Y[i];
       for (let j = i + 1; j < n; j++) {
-        const b = all[j];
-        if (b.x > reach) break;
-        if (sa && still(b)) continue;
-        // The test is 2D, so gate on height or a plane at 200 m gets shunted
-        // by the traffic it overflies -- the "invisible collision in the air".
-        // Also stops a viaduct car trading paint with the street below it.
-        if (Math.abs((a.y || 0) - (b.y || 0)) > 3) continue;
-        // Two parked cars never move, so they cannot start overlapping.
-        if (a.mode === 'parked' && b.mode === 'parked') continue;
-        // an articulated bus's two sections are one vehicle
-        if (a.leader === b || b.leader === a) continue;
-        // a car flattened by a tank is driven over, not shunted (tank.js)
-        if (a.crushed || b.crushed) continue;
-        const dx = b.x - a.x, dz = b.z - a.z;
-        const rr = bodyR(a) + bodyR(b);
-        const d2 = dx * dx + dz * dz;
+        if (X[j] > reach) break;
+        if (sa && S[j] === 1) continue;
+        if (Math.abs(ya - Y[j]) > 3) continue;
+        const dx = X[j] - xa, dz = Z[j] - za, rr = ra + R[j], d2 = dx * dx + dz * dz;
         if (d2 > rr * rr || d2 < 1e-6) continue;
-        // THE BODIES, NOT CIRCLES: two oriented rectangles, separated along
-        // the axis of least overlap. Circles of 0.42 x length (2 m for a
-        // sedan) touched two cars abreast in 3.6 m lanes and shoved them
-        // apart the whole way, which is why lanes used to be 4.2 m and a
-        // 3-lane freeway carried 2.
-        const hit = boxOverlap(a, b, dx, dz);
-        if (!hit) continue;
-        const nx = hit.nx, nz = hit.nz, pen = hit.pen;
-        // a rear section is placed by its front, so it does not give way
-        const ma = a.mode === 'trailer' ? 1e6 : a.mass, mb = b.mode === 'trailer' ? 1e6 : b.mass;
-        const total = ma + mb;
-        // (where they touch, judged before they are pushed apart)
-        const cp = pairContact(a, b, nx, nz, hit.refA), cx = cp.x, cz = cp.z;
-        a.x -= nx * pen * (mb / total);
-        a.z -= nz * pen * (mb / total);
-        b.x += nx * pen * (ma / total);
-        b.z += nz * pen * (ma / total);
-        // THE IMPULSE AT THE CONTACT (pairImpulse, above): both velocities,
-        // along and across each car, and both yaws through the lever arm, so
-        // a T-bone shoves and spins the car it hits, an offset shunt turns
-        // both, and a glancing one deflects. It replaced each car taking its
-        // share along its own heading only -- which itself replaced a
-        // `b.vLong += ...` unprojected that pushed a head-on car forward into
-        // the other (SR-99, an AI car 41 -> 110 m/s in four frames). The
-        // impulse is along the contact normal by construction, so neither
-        // can come back.
-        const rel = pairImpulse(a, b, nx, nz, cx, cz, ma, mb);
-        if (rel > 0) {
-          const impact = rel;
-          if (impact > 4) {
-            a.damage(impact * 0.7);
-            b.damage(impact * 0.7);
-            if (b.mode === 'traffic') b.panic = 4;
-            if (a.mode === 'traffic') a.panic = 4;
-            if (a === player.vehicle || b === player.vehicle) {
-              this.game.onCrash(impact, b.mode === 'police' || a.mode === 'police', a === player.vehicle ? b : a);
-            } else if (impact > 6 && this.game.onTrafficCrash) {
-              this.game.onTrafficCrash(impact, (a.x + b.x) / 2, (a.z + b.z) / 2);
-            }
-          }
-        }
-        if (a.mode === 'parked') a.mode = 'free';
-        if (b.mode === 'parked') b.mode = 'free';
+        if (this.carPair(all[i], all[j], player)) { read(); xa = X[i]; za = Z[i]; ya = Y[i]; }
       }
     }
+  }
+
+  /** One pair of the sweep (resolveCarCollisions): pushed apart and the
+   *  impulse applied if their bodies overlap. True if anything changed. */
+  carPair(a, b, player) {
+    // The test is 2D, so gate on height or a plane at 200 m gets shunted
+    // by the traffic it overflies -- the "invisible collision in the air".
+    // Also stops a viaduct car trading paint with the street below it.
+    if (Math.abs((a.y || 0) - (b.y || 0)) > 3) return false;
+    // Two parked cars never move, so they cannot start overlapping.
+    if (a.mode === 'parked' && b.mode === 'parked') return false;
+    // an articulated bus's two sections are one vehicle
+    if (a.leader === b || b.leader === a) return false;
+    // a car flattened by a tank is driven over, not shunted (tank.js)
+    if (a.crushed || b.crushed) return false;
+    const dx = b.x - a.x, dz = b.z - a.z;
+    const rr = bodyR(a) + bodyR(b);
+    const d2 = dx * dx + dz * dz;
+    if (d2 > rr * rr || d2 < 1e-6) return false;
+    // THE BODIES, NOT CIRCLES: two oriented rectangles, separated along
+    // the axis of least overlap. Circles of 0.42 x length (2 m for a
+    // sedan) touched two cars abreast in 3.6 m lanes and shoved them
+    // apart the whole way, which is why lanes used to be 4.2 m and a
+    // 3-lane freeway carried 2.
+    const hit = boxOverlap(a, b, dx, dz);
+    if (!hit) return false;
+    const nx = hit.nx, nz = hit.nz, pen = hit.pen;
+    // a rear section is placed by its front, so it does not give way
+    const ma = a.mode === 'trailer' ? 1e6 : a.mass, mb = b.mode === 'trailer' ? 1e6 : b.mass;
+    const total = ma + mb;
+    // (where they touch, judged before they are pushed apart)
+    const cp = pairContact(a, b, nx, nz, hit.refA), cx = cp.x, cz = cp.z;
+    a.x -= nx * pen * (mb / total);
+    a.z -= nz * pen * (mb / total);
+    b.x += nx * pen * (ma / total);
+    b.z += nz * pen * (ma / total);
+    // THE IMPULSE AT THE CONTACT (pairImpulse, above): both velocities,
+    // along and across each car, and both yaws through the lever arm, so
+    // a T-bone shoves and spins the car it hits, an offset shunt turns
+    // both, and a glancing one deflects. It replaced each car taking its
+    // share along its own heading only -- which itself replaced a
+    // `b.vLong += ...` unprojected that pushed a head-on car forward into
+    // the other (SR-99, an AI car 41 -> 110 m/s in four frames). The
+    // impulse is along the contact normal by construction, so neither
+    // can come back.
+    const rel = pairImpulse(a, b, nx, nz, cx, cz, ma, mb);
+    if (rel > 0) {
+      const impact = rel;
+      if (impact > 4) {
+        a.damage(impact * 0.7);
+        b.damage(impact * 0.7);
+        if (b.mode === 'traffic') b.panic = 4;
+        if (a.mode === 'traffic') a.panic = 4;
+        if (a === player.vehicle || b === player.vehicle) {
+          this.game.onCrash(impact, b.mode === 'police' || a.mode === 'police', a === player.vehicle ? b : a);
+        } else if (impact > 6 && this.game.onTrafficCrash) {
+          this.game.onTrafficCrash(impact, (a.x + b.x) / 2, (a.z + b.z) / 2);
+        }
+      }
+    }
+    if (a.mode === 'parked') a.mode = 'free';
+    if (b.mode === 'parked') b.mode = 'free';
+    return true;
   }
 
   /** Nearest vehicle the player can climb into. */
