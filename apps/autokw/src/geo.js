@@ -352,6 +352,47 @@ export function waterLevel(x, z) {
 export function waterField() { return WL; }
 
 /**
+ * Auto KW: which heightfield vertices are RIVER water (Uint8Array, 1 = a
+ * river): each connected wet body of the field (8-neighbour) whose level
+ * falls more than 1.5 m across it (5th to 95th percentile) and has more than
+ * 40 vertices -- tools/kw/build_raster.py's own rule, which flattened the
+ * rest into lakes. Computed once (world.js's water mesh, kwnature.js's banks).
+ */
+let RIVER = null;
+export function riverField() {
+  if (RIVER || !WL) return RIVER;
+  const N = HF_N, lab = new Int32Array(N * N).fill(-1), out = new Uint8Array(N * N);
+  const stack = new Int32Array(N * N);
+  let id = 0;
+  for (let s0 = 0; s0 < N * N; s0++) {
+    if (lab[s0] >= 0 || WL[s0] !== WL[s0]) continue;
+    let sp = 0, n = 0;
+    const cells = [];
+    stack[sp++] = s0; lab[s0] = id;
+    while (sp) {
+      const k = stack[--sp];
+      cells.push(k); n++;
+      const i = k % N, j = (k - i) / N;
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+        const ii = i + di, jj = j + dj;
+        if (ii < 0 || jj < 0 || ii >= N || jj >= N) continue;
+        const q = jj * N + ii;
+        if (lab[q] >= 0 || WL[q] !== WL[q]) continue;
+        lab[q] = id; stack[sp++] = q;
+      }
+    }
+    if (n > 40) {
+      const lv = cells.map((k) => WL[k]).sort((a, b) => a - b);
+      const fall = lv[Math.floor(lv.length * 0.95)] - lv[Math.floor(lv.length * 0.05)];
+      if (fall > 1.5) for (const k of cells) out[k] = 1;
+    }
+    id++;
+  }
+  RIVER = out;
+  return RIVER;
+}
+
+/**
  * The height of the water DRAWN over (x, z), wet or dry: the sea plane runs
  * under the whole map at 0, and a lake's plane covers its whole bounding box,
  * dry banks included, at the lake's level; the ship canal's plane sits at

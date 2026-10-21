@@ -1839,6 +1839,74 @@ file and a guide disagree, this file wins.
   934k both; Conestoga Station with the 7 and 201 buses parked in view
   124 -> 130, 395k -> 418k. A run adds the sign and doorway quads (2 draws,
   your bus only), KW Eats one pillar.
+- **The Grand River valley: src/kwnature.js, the trails, the woods**
+  (docs/nature-*.jpg). **The river:** `geo.riverField()` marks the wet
+  vertices of every body whose level falls > 1.5 m across it (build_raster's
+  own river/lake rule); world.js's water mesh carries `aRiv` (river, next to
+  the bank, riffle) and `aFlow` (downstream) per vertex, and its shader turns
+  a river's body olive-brown instead of the sea's black and breaks the
+  riffles (value-noise patches along the rivers, ~15 % of river vertices)
+  into white streaks drawn out and carried downstream, rougher and choppier.
+  Still one water draw. **The banks:** kwnature `forShore` finds every river
+  shoreline exactly where the meshes meet -- the zero of (terrain - water)
+  on their shared triangles -- and lays a 1.6-4 m limestone shelf up the
+  bank with limestone blocks along the water line; downtown Galt (`GALT`
+  box) gets a coursed limestone retaining wall with a cope and the paved
+  riverwalk behind it instead (solids). **The trails** (bikes.js; data from
+  tools/kw/build_bikepaths.py, re-run it after an OSM update): flags now say
+  what each is made of -- 4 earth, 8 stone dust (fine_gravel / compacted /
+  gravel / unpaved: most of the Walter Bean and the rail trails), 16
+  boardwalk, 32 foot only -- and the named walking trails and boardwalks
+  are in (497 km, was ~430): drawn without painted lines, the edges going to
+  grass, a boardwalk as a raised deck over marsh or water (Huron Natural
+  Area, Laurel Creek). **Walkers:** `Cyclists` keeps 3 (phone) / 6 people out
+  for a walk on the trails (not street cycle tracks): peds.js `spawnTrail`,
+  steered through `p.trail` each frame; they count against the crowd's
+  MAX_PEDS (a full crowd gives up its farthest pavement walker). **Trail
+  furniture:** 97 trail bridges no one else drew (a road bridge's own footway
+  is the road import's, Waterloo Park's kwplaces') as walkable decks
+  (platforms; `P.deck` makes them rideable/walkable, cyclists stand on
+  `city.platformAt`), with 5.4 m over any road they cross and no pier in a
+  lane; ~80 trail signs (the trails over 2 km long, where they meet a road,
+  one per 700 m: green, the Trans Canada red); ~990 benches. **Doon Pioneer
+  Memorial Tower** (OSM 827907152: fieldstone hexagon, white-columned
+  lookout, concave copper roof, wagon vane; its footprint box is skipped)
+  and **the West Montrose Covered Bridge** (OSM 35928828 -- it is on the
+  map, 750 m inside the north edge: red pine boards, cedar shingles, the
+  pier, raised on steel cribbing and fenced with BRIDGE CLOSED, because it
+  is: closed Aug 2025 for the Region's rehabilitation, reopening spring
+  2027; walkable). **Where it draws (phone):** tower, covered bridge and
+  Galt walls in kwsights' Kit (`addSights`); the signs in `near:nature:`
+  clusters; banks, benches and trail bridges INTO bikes.js's lazily built
+  1 km ground chunks (`bikeNet.ground = groundDetail`; bridges are recorded
+  at landmark time for their platforms and replayed into the chunk). In
+  the landmark clusters they were +50-100 draws in a wide view -- a merged
+  cluster mesh over 60k vertices is a stray of its own, so every flush is a
+  draw. **The woods:** trees.js's palette is KW in mid-October (sugar
+  maple orange and gold, red maple scarlet, oak russet; white pine, cedar,
+  spruce), a woodlot 7-23 % conifer (a plantation or cedar swamp where the
+  stand field runs high), a quarter of that within 50 m of water (the
+  floodplain forest), park conifers 20 % (were 34), maples 42 % of a wood.
+  Phone (AUTO_PHONE=1, GPU), master -> this, draws/tris: spawn 206/1042k ->
+  209/1045k; Bridgeport Bridge down the Grand 423/857k -> 424/895k; the
+  Walter Bean at Bridgeport 330/697k -> 333/747k; the Iron Horse 420 -> 423;
+  Galt Main St bridge 262/923k -> 267/951k; Galt riverwalk 124 -> 128; the
+  tower 135/648k -> 138/702k; Kissing Bridge 46/291k -> 50/314k; Laurel
+  Creek air 98 -> 99; Doon air 180/674k -> 185/719k; 0 exceptions. (Paused
+  harness views keep last frame's walkers -- skinned meshes, never
+  frustum-culled -- which is most of the +3.) Verify: kwshots views need
+  `eval: "(()=>{const b=d.bikeNet; b._tick=0; b.update({position:{x:V.c[0],z:V.c[1]}}); for (const n of d.lmRoot.userData.near) n.o.visible=true;})()"`
+  -- a paused game builds no bike chunk and updates no 'near:' range, so
+  without it banks, benches, bridges and signs are missing from the shot.
+  `tools/kw/drawprobe.js` (VIEW_PROBE_FILE; `window.__probeViews`) lists the
+  draws in a view by mesh name; `tools/kw/trailprobe.js` puts you on a trail
+  (`__trailAt`) and reports the walkers. **Not done:** Laurel Creek's
+  reservoir beach (OSM maps no beach there), McLennan Park's hill is the
+  DEM's own (~30 m, no toboggan run or ski hill drawn), Bechtel Park and
+  Snyder's Flats are their OSM green and water only; the Grand's width is
+  OSM's water polygons at the 40 m water mesh; riffle places are noise, not
+  surveyed; Galt's walls are one generic wall (heights from the bank, not
+  measured).
 
 ## Build number
 

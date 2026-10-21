@@ -55,6 +55,7 @@ import { setUwData, prepCampus, buildCampus, campusKeepClear } from './uwcampus.
 import { prepUptown } from './kwuptown.js';
 import { prepSights, buildSights, sightsMap } from './kwsights.js';
 import { prepDowntown } from './kwdowntown.js';
+import { prepNature, groundDetail } from './kwnature.js';
 import { prepVillages, buildVillages, villagesMap } from './kwvillages.js';
 import { setShopData, prepShops, buildShops, shopPlaces, shopStats } from './kwshops.js';
 import { prepHome, homeMap } from './kwhome.js';
@@ -836,6 +837,8 @@ async function boot() {
   addLandmarkExtra(buildSights);
   // downtown Kitchener and Cambridge building by building (kwdowntown.js: built inside buildSights)
   { const k = prepDowntown(city); blog(`kw downtown: ${k.looks} looks, ${k.defaults} defaults, ${k.towers} tower boxes, ${k.custom} drawn specially`); }
+  // the Grand's limestone banks and Galt's walls, the trails' bridges, signs and benches, Doon Pioneer Tower, the Kissing Bridge (kwnature.js: built inside buildSights)
+  { const k = prepNature(city, bikeNet); blog(`kw nature: ${k.skipped} boxes drawn as nature`); }
   // the villages' main streets, St. Jacobs' mill and the Village Silos (kwvillages.js)
   { const k = prepVillages(city, md.villages); blog(`kw villages: ${k.skipped} boxes drawn as main streets`); }
   addLandmarkExtra(buildVillages);
@@ -1167,6 +1170,7 @@ function installShadowFade() {
   addHighwaySolids(city);
   scene.add(highwaysRoot());
   link.build(scene, world);
+  bikeNet.ground = groundDetail;   // Auto KW: the river banks' stone and the benches (kwnature.js)
   bikeNet.build(scene, city);
   chicopee.scene = scene;
   chicopee.build();
@@ -1687,6 +1691,7 @@ function installShadowFade() {
   if (wheelRide) wheelRide.o.hud = hud;
 
   cyclists.audio = audio;
+  cyclists.peds = peds;   // Auto KW: people out for a walk on the trails
   buggies.audio = audio;
   geese = new Geese({ scene, city, world, audio, hud });
   window.__geese = geese;
