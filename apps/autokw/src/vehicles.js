@@ -13,6 +13,7 @@ import { Builder, dropGeometryArrays } from './build.js';
 import { makeHumanoid, buildCharacter, BONES, gripHands } from './peds.js';
 import { clamp, lerp, hash2, damp } from './util.js';
 import * as G from './geo.js';
+import { buildBuggy, attachBuggy, syncBuggy } from './buggy.js';
 
 const TYRE = [0.05, 0.05, 0.055];
 const RIM = [0.80, 0.82, 0.85];
@@ -310,6 +311,10 @@ export const TYPES = {
   // Auto KW: a hardtail for Chicopee: the bicycle on knobblies, `offroad`,
   // quicker downhill than up.
   mtb: deriveSpec({ wheelbase: 1.06, len: 1.80, wid: 0.72, wheelR: 0.345, sill: 0.3, belt: 1.0, roof: 1.15, cab: [-0.2, 0.1], hand: 'bicycle', moto: true, bicycle: true, noEngine: true, offroad: true, mass: 0.11, acc: 2.0, topKph: 48, brakeM: 11, latG: 0.95 }),
+  // Auto KW: a Mennonite horse and buggy (buggy.js): one horse, ~32 km/h at a
+  // canter, slow off the mark and gentle to steer; noEngine (the hooves are
+  // its sound), offroad (a horse does not bog down on grass), all but unbreakable.
+  buggy: deriveSpec({ wheelbase: 3.2, len: 6.3, wid: 1.66, wheelR: 0.5, sill: 0.8, belt: 1.3, roof: 2.3, cab: [-0.6, 0.2], hand: 'buggy', buggy: true, noEngine: true, offroad: true, livery: 0x141518, armor: 0.001, showR: 320, minTurnR: 3.8, mass: 0.9, acc: 0.8, topKph: 32, brakeM: 26, latG: 0.45 }),
   jetski: deriveSpec({ wheelbase: 1.8, len: 3.20, wid: 1.20, wheelR: 0.20, sill: 0.3, belt: 0.6, roof: 1.05, cab: [-0.1, 0.1], hand: 'jetski', boat: true, jetski: true, minDepth: 0.12, mass: 0.4, acc: 7.5, topKph: 105, brakeM: 30, latG: 0.9 }),
   boat: deriveSpec({ wheelbase: 3.2, len: 5.70, wid: 2.20, wheelR: 0.30, sill: 0.4, belt: 0.7, roof: 1.45, cab: [-0.2, 0.1], hand: 'boat', boat: true, minDepth: 0.3, cockpit: [0.12, -2.2, 0.9, 0.86], mass: 1.1, acc: 3.0, topKph: 70, brakeM: 45, latG: 0.6 }),
   pickup: deriveSpec({ rwd: true, wheelbase: 3.68,len: 5.92, wid: 2.05, wheelR: 0.42, sill: 0.48, belt: 1.26, roof: 1.98, cab: [-0.15, 0.22], hand: 'pickup', mass: 1.4, acc: 4.4, topKph: 185, brakeM: 45, latG: 0.77 }),
@@ -8961,6 +8966,7 @@ const HAND_BUILT = {
   convertible: buildConvertible, cruiser: buildCruiser, sportbike: buildSportbike, dirtbike: buildDirtbike,
   atv: buildAtv, bicycle: buildBicycle, boat: buildBoat, duck: buildDuck, hydro: buildHydro, jetski: buildJetski, kayak: buildKayak, artic: buildArticFront, articRear: buildArticRear, balloon: buildBalloon,
   tank: buildTank,
+  buggy: buildBuggy,
   fireengine: buildFireEngine, tiller: buildTiller, tillerRear: buildTillerRear,
 };
 
@@ -9123,7 +9129,7 @@ function buildType(spec) {
   // a wheelie lifted the patch off the road with the nose, and a jump carried
   // it up into the air under the car.
   const shadow = new Builder(false);
-  if (!spec.plane && !spec.boat) contactShadow(shadow, spec);
+  if (!spec.plane && !spec.boat && !spec.buggy) contactShadow(shadow, spec);   // (a buggy's turns with its cart: buildBuggy)
   const trimW = clone(trim), matteW = clone(matte);
   {
     const base = trimW.pos.length / 3;
@@ -9948,6 +9954,8 @@ export class Vehicle {
     // (updateWreck): no longer a car anyone drives or collides with as one.
     this.crushed = false;
     this.wreck = null;
+    // a horse and buggy's horse, wheels and articulation (buggy.js)
+    this.buggy = t.spec.buggy ? attachBuggy(this) : null;
   }
 
   // `mode` decides whether anyone is at the wheel. Traffic and police are
@@ -11419,7 +11427,7 @@ export class Vehicle {
     this.boYaw = bo ? damp(this.boYaw || 0, steerIn * BO_YAW, 2.6, dt) : 0;
     // your road car above walking pace, on the ground: the tyre model
     // (not a bus or a truck: 12 m of bus does not drift, it goes where it is steered)
-    const dyn = this.detailedWheels && !spec.tank && !light && !spec.bicycle && !bo && spec.len < 7
+    const dyn = this.detailedWheels && !spec.tank && !light && !spec.bicycle && !spec.buggy && !bo && spec.len < 7
       && this.onGround !== false && this.vLong > TYRE_FROM;
     if (!dyn) this.dynW = undefined;
     const yawRate = dyn ? this._tyres(dt, wheelbase, throttle, brake, hand, rsAgainst)
@@ -12032,6 +12040,7 @@ export class Vehicle {
 
   sync() {
     if (this.spec.bicycle) this._pedal();
+    if (this.buggy) syncBuggy(this);
     const T = this.tank;
     // A wheelie turns the body about the rear axle: nose up, and the centre
     // lifted so the back wheel stays on the ground.

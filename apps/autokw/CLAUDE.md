@@ -59,6 +59,24 @@ file and a guide disagree, this file wins.
   (build_wood.py), `geo.farmAt`, `world.groundTint`.
 - **Water:** only vertices with > 25 % of their 50 m wet are drawn and dug;
   banks are re-lifted over their water after street grading.
+- **Horse and buggy** (src/buggy.js; `buggy` in vehicles.js TYPES, hooked in
+  with four lines: HAND_BUILT, the constructor's `this.buggy`, `sync()`, and
+  no tyre model / generic contact shadow). The CART is the vehicle's own
+  paint/trim/matte (driver in `matte.crew`), turned about the front axle's
+  kingpin every sync like a trailer (`CART.kz`, rear axle dragged after it).
+  The HORSE, harness, shafts, front axle and all four wheels are ONE
+  SkinnedMesh (22 bones, `v.extra`, so traffic's far LOD never replaces it);
+  legs are two-bone IK on hooves (walk < 8.3 km/h < trot < 20 < canter, with
+  hysteresis, cross-faded), the trunk dips where a planted leg needs it. The
+  gait phase advances by DISTANCE moved, blends by wall-clock dt (sync runs
+  more than once a frame). Parked at the St. Jacobs market's horse shed and
+  four farmyards (`BUGGY_SPOTS`); `Buggies` drives 3-5 ('path' mode, like the
+  cyclists) on two-way country roads in `rural()`, on the right shoulder at
+  ~12 km/h, easing behind anything ahead. Sounds: `hoof`, `hoof_soft`,
+  `snort`, `whinny` in audio.js SOUNDS (played from buggy.js per footfall;
+  the horn whinnies). Verify the model with `node tools/kw/buggyshots.mjs
+  <dir> [views]` (a plain stage, seconds; prints fetlock contact per gait and
+  the sounds' levels). Phone cost: 5 draws and ~9k triangles a buggy in view.
 
 ## Build number
 

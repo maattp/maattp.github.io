@@ -103,6 +103,7 @@ async function main() {
     })()`);
 
     if (process.env.VIEW_PRE) await evaluate(process.env.VIEW_PRE);
+    if (process.env.VIEW_PROBE_FILE) process.env.VIEW_PROBE = readFileSync(process.env.VIEW_PROBE_FILE, 'utf8');
     if (process.env.VIEW_PROBE) {
       const v = await evaluate(process.env.VIEW_PROBE, true);
       console.log(typeof v === 'string' ? v : JSON.stringify(v, null, 1));
