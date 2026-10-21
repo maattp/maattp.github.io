@@ -628,7 +628,9 @@ file and a guide disagree, this file wins.
     draws, 1118-1126k -> 1129k tris; with no line (3 am) every view within
     master's run-to-run drift (+0..+2 draws: Hespeler from the air 201/203
     -> 203, 561 Hespeler's lot 174/194 -> 175/196); with the 8 am lines
-    +2..+5 by a Tims (at -2527, -404: 238/240 -> 247, drift included), tris +10..60k.
+    +2 by a lane over master's higher run (the Tims at -2527, -404: 238/240
+    -> 242; Hespeler's Tims from the air 100/102 -> 104, from its lot
+    123/125 -> 127; a McDonald's 205/207 -> 209), tris +30..60k.
     trafficbench hashes identical to master at all six sites.
   - Not done: the queued cars are far-LOD models (fine at 10 m, plain up
     close) and pass through pedestrians and other traffic; a car leaving the
