@@ -49,6 +49,7 @@ import { Chicopee } from './chicopee.js';
 import { prepFun, buildMarketTent, buildFlags, waveFlags, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, buildDome } from './kwfun.js';
 import { prepPlaces, buildPlaces, placesMap, placesStats, Geese } from './kwplaces.js';
 import { setUwData, prepCampus, buildCampus, campusKeepClear } from './uwcampus.js';
+import { prepUptown } from './kwuptown.js';
 import { prepSights, buildSights, sightsMap } from './kwsights.js';
 import { prepVillages, buildVillages, villagesMap } from './kwvillages.js';
 import { setShopData, prepShops, buildShops, shopPlaces, shopStats } from './kwshops.js';
@@ -794,6 +795,8 @@ async function boot() {
   prepFord(city);
   // Uptown, Waterloo Park, RIM Park and Conestoga Mall (kwplaces.js)
   { const k = prepPlaces(city); blog(`kw places: ${k.skipped} boxes drawn as places`); }
+  // Uptown building by building: King St's real looks, City Centre, the library, the towers (kwuptown.js)
+  { const k = prepUptown(city); blog(`kw uptown: ${k.looks} King St looks, ${k.skipped} boxes drawn as Uptown`); }
   addLandmarkExtra(buildPlaces);
   // the University of Waterloo's campus, building by building (uwcampus.js)
   setUwData(md.uw);

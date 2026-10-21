@@ -312,16 +312,25 @@ const BRAND_SIGN = {
 const SERIF = 'Georgia, "Times New Roman", serif';
 const SANS = 'Helvetica, Arial, sans-serif';
 
-function signPanel(L, name, brand, w, h, seed) {
-  const col = BRAND_SIGN[brand] || BRAND_SIGN[name] || SIGN_PAL[Math.floor(hash2(seed, 11) * SIGN_PAL.length)];
-  const serif = !BRAND_SIGN[brand] && !BRAND_SIGN[name] && hash2(seed, 12) < 0.55;
+/**
+ * A shop's sign band. `sty` (a researched look's shop, kwuptown.js) overrides
+ * the hashed palette: { bg, fg, serif, wt, k, frame: false, text }.
+ */
+function signPanel(L, name, brand, w, h, seed, sty = null) {
+  const col = sty && sty.bg ? [sty.bg, sty.fg || '#ffffff'] : BRAND_SIGN[brand] || BRAND_SIGN[name] || SIGN_PAL[Math.floor(hash2(seed, 11) * SIGN_PAL.length)];
+  const serif = sty && sty.serif !== undefined ? sty.serif : !BRAND_SIGN[brand] && !BRAND_SIGN[name] && hash2(seed, 12) < 0.55;
+  const label = (sty && sty.text) || name;
   return L.panel(w, h, 30, (g, W, H) => {
-    g.fillStyle = col[0]; g.fillRect(0, 0, W, H);
-    g.strokeStyle = col[1]; g.globalAlpha = 0.6; g.lineWidth = Math.max(1, H * 0.05);
-    g.strokeRect(H * 0.08, H * 0.08, W - H * 0.16, H - H * 0.16); g.globalAlpha = 1;
+    if (col[0] === 'none') g.clearRect(0, 0, W, H);
+    else { g.fillStyle = col[0]; g.fillRect(0, 0, W, H); }
+    if (!sty || sty.frame !== false) {
+      g.strokeStyle = col[1]; g.globalAlpha = 0.6; g.lineWidth = Math.max(1, H * 0.05);
+      g.strokeRect(H * 0.08, H * 0.08, W - H * 0.16, H - H * 0.16); g.globalAlpha = 1;
+    }
     g.fillStyle = col[1]; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.font = `${serif ? 'italic 700' : '700'} ${H * 0.55}px ${serif ? SERIF : SANS}`;
-    g.fillText(name, W / 2, H * 0.54, W * 0.9);
+    const wt = (sty && sty.wt) || (serif ? 'italic 700' : '700');
+    g.font = `${wt} ${H * ((sty && sty.k) || 0.55)}px ${serif ? SERIF : SANS}`;
+    g.fillText(label, W / 2, H * 0.54, W * 0.9);
   });
 }
 
@@ -387,29 +396,34 @@ function meshKing(kit, ctx, r, idx) {
   const seed = Math.round(cx * 13 + cz * 7);
   const B = kit.B(cx, cz), g = kit.grp(cx, cz);
   const po = /Old Post Office/.test(r.n);
-  const lv = Math.max(1, Math.min(5, Math.round(r.lv || 2)));
-  const H = r.ht ? Math.min(+r.ht, 30) : lv === 1 ? 5.8 : 4.6 + (lv - 1) * 3.7 + 0.5;
+  // a researched look (kwuptown.js UPTOWN_LOOKS): real colours, heights, windows, cornice, signs
+  const lk = r.look || null;
+  const lc = (k, f) => (lk && lk[k] ? lin(hex(lk[k])) : f);
+  const lv = lk && lk.lv ? lk.lv : Math.max(1, Math.min(5, Math.round(r.lv || 2)));
+  const H = lk && lk.H ? lk.H : r.ht ? Math.min(+r.ht, 30) : lv === 1 ? 5.8 : 4.6 + (lv - 1) * 3.7 + 0.5;
   let lo = Infinity;
   for (const q of pts) lo = Math.min(lo, T(q[0], q[1]));
   const yb = lo - 1.2;
   const base = walkY(city, cx, cz);
-  const yTop = base + (po ? 15.2 : H);
+  const yTop = base + (po && !(lk && lk.H) ? 15.2 : H);
   // Galt's blocks (kwsights.js, `pal` 'stone') are the Grand's grey-buff limestone
   const PAL = r.pal === 'stone' ? (hash2(seed, 8) < 0.78 ? STONES : BRICK) : BRICK;
-  const wall = lin(po ? [0.62, 0.27, 0.20] : PAL[Math.floor(hash2(seed, 1) * PAL.length)]);
-  const trim = lin(po ? [0.80, 0.70, 0.52] : TRIMS[Math.floor(hash2(seed, 2) * TRIMS.length)]);
+  const wall = lc('wall', lin(po ? [0.62, 0.27, 0.20] : PAL[Math.floor(hash2(seed, 1) * PAL.length)]));
+  const trim = lc('trim', lin(po ? [0.80, 0.70, 0.52] : TRIMS[Math.floor(hash2(seed, 2) * TRIMS.length)]));
   const dark = shade(wall, 0.72);
   const GLASS = lin([0.13, 0.17, 0.21]), GLASS2 = lin([0.22, 0.28, 0.33]);
-  const FRAME = lin(hash2(seed, 3) < 0.5 ? [0.16, 0.16, 0.15] : [0.90, 0.88, 0.82]);
-  const BULK = lin(TRIMS[Math.floor(hash2(seed, 4) * TRIMS.length)]);
-  const STONE = lin([0.78, 0.69, 0.53]);
+  const FRAME = lc('frame', lin(hash2(seed, 3) < 0.5 ? [0.16, 0.16, 0.15] : [0.90, 0.88, 0.82]));
+  const BULK = lc('bulk', lin(TRIMS[Math.floor(hash2(seed, 4) * TRIMS.length)]));
+  const STONE = lc('stone', lin([0.78, 0.69, 0.53]));
+  const SILL = lc('sill', trim);
+  const BAND = lc('band', trim);
   const E = edges(pts);
   // which faces front a street, and which is on King
   const fronts = [];
   for (const e of E) {
     if (e.L < 2.5) continue;
     const s = street(city, e.mx + e.nx * 1.5, e.mz + e.nz * 1.5, 40);
-    if (!s || s.kerb > 7.5) continue;
+    if (!s || s.kerb > ((lk && lk.reach) || 7.5)) continue;
     const tx = s.qx - e.mx, tz = s.qz - e.mz, tl = Math.hypot(tx, tz) || 1;
     if ((tx * e.nx + tz * e.nz) / tl < 0.45) continue;
     if (partyWall(pts, e.mx + e.nx * 1.2, e.mz + e.nz * 1.2)) continue;
@@ -418,22 +432,29 @@ function meshKing(kit, ctx, r, idx) {
     fronts.push(e);
   }
   fronts.sort((a, b) => (b.king - a.king) || (b.L - a.L));
-  // the shops, King's face first
+  // the shops, King's face first (a look's own list replaces OSM's on the main face)
   const shops = r.s.slice();
   for (const e of fronts) e.shops = [];
   if (fronts.length) {
-    shops.forEach((s, i) => {
-      const e = fronts.length > 1 && i >= Math.ceil(shops.length * fronts[0].L / fronts.reduce((a, f) => a + f.L, 0)) ? fronts[1] : fronts[0];
-      e.shops.push(s);
-    });
+    if (lk && lk.shops) {
+      fronts[0].shops = lk.shops.map((s) => [s.n, s.k || 'shop', '', s]);
+      if (lk.side && fronts[1]) fronts[1].shops = lk.side.map((s) => [s.n, s.k || 'shop', '', s]);
+    } else {
+      shops.forEach((s, i) => {
+        const e = fronts.length > 1 && i >= Math.ceil(shops.length * fronts[0].L / fronts.reduce((a, f) => a + f.L, 0)) ? fronts[1] : fronts[0];
+        e.shops.push(s);
+      });
+    }
   }
-  const residential = /apartments|residential|house/.test(r.bt) && !r.s.length;
+  const residential = /apartments|residential|house/.test(r.bt) && !r.s.length && !(lk && lk.shops);
+  const W = (lk && lk.win) || {};
+  const cornice = (lk && lk.cornice) || 'bracket';
   for (const e of E) {
     const N = [e.nx, 0, e.nz];
     // the wall to the parapet, its inside face over the roof, the coping
     B.quad(e.at(0, yb), e.at(e.L, yb), e.at(e.L, yTop + 0.9), e.at(0, yTop + 0.9), N, U0, [dark, dark, wall, wall]);
     B.quad(e.at(0, yTop, -0.01), e.at(e.L, yTop, -0.01), e.at(e.L, yTop + 0.9, -0.01), e.at(0, yTop + 0.9, -0.01), [-e.nx, 0, -e.nz], U0, dark);
-    B.quad(e.at(0, yTop + 0.9, 0.15), e.at(e.L, yTop + 0.9, 0.15), e.at(e.L, yTop + 1.0, 0), e.at(0, yTop + 1.0, 0), [0, 1, 0], U0, trim);
+    B.quad(e.at(0, yTop + 0.9, 0.15), e.at(e.L, yTop + 0.9, 0.15), e.at(e.L, yTop + 1.0, 0), e.at(0, yTop + 1.0, 0), [0, 1, 0], U0, cornice === 'corbel' ? shade(wall, 0.9) : trim);
     ctx.solids.push({ x: e.mx, z: e.mz, hw: e.L / 2 + 0.2, hd: 0.35, rot: Math.atan2(e.uz, e.ux), y0: yb, y1: yTop + 0.9 });
     if (e.L < 3) continue;
     const gy = walkY(city, e.mx + e.nx * 1.4, e.mz + e.nz * 1.4);
@@ -441,49 +462,141 @@ function meshKing(kit, ctx, r, idx) {
     if (party) continue;
     const front = !!e.front;
     // upper storeys: windows
-    const gfH = lv === 1 ? 0 : 4.6;
+    const gfH = lv === 1 ? 0 : (lk && lk.gf) || 4.6;
     const upper = po ? 2 : lv - 1;
-    const spacing = front ? 2.3 : 3.4;
-    const nw = Math.floor((e.L - 1.2) / spacing);
+    const fp = (lk && lk.fp) || 3.7;
+    const main = front && fronts[0] === e;
+    let spacing = front ? 2.3 : 3.4;
+    let nw = Math.floor((e.L - 1.2) / spacing);
+    if (lk && front && (main ? W.n : W.ns)) { nw = main ? W.n : W.ns; spacing = (e.L - (W.m ?? 1.4)) / nw; }
+    else if (lk && W.sp) { spacing = front ? W.sp : W.sp * 1.4; nw = Math.floor((e.L - 1.2) / spacing); }
     if (nw >= 1 && (front || e.L > 6)) {
       const pad = (e.L - nw * spacing) / 2;
       for (let k = 0; k < upper; k++) {
-        const y0 = gy + gfH + (po ? 1.3 : 0) + k * 3.7 + 0.75, wh = k === 0 ? 2.0 : 1.8, ww = 1.05;
+        const y0 = gy + gfH + (po ? 1.3 : 0) + k * fp + 0.75, wh = W.h ? (k === 0 ? W.h : W.h * 0.92) : k === 0 ? 2.0 : 1.8;
+        const ww = W.w || 1.05;
         if (y0 + wh > yTop - 0.4) break;
         for (let i = 0; i < nw; i++) {
-          const t = pad + spacing * (i + 0.5);
-          B.quad(e.at(t - ww / 2 - 0.1, y0 - 0.08, 0.02), e.at(t + ww / 2 + 0.1, y0 - 0.08, 0.02), e.at(t + ww / 2 + 0.1, y0 + wh + 0.08, 0.02), e.at(t - ww / 2 - 0.1, y0 + wh + 0.08, 0.02), N, U0, FRAME);
-          B.quad(e.at(t - ww / 2, y0, 0.04), e.at(t + ww / 2, y0, 0.04), e.at(t + ww / 2, y0 + wh, 0.04), e.at(t - ww / 2, y0 + wh, 0.04), N, U0, [GLASS, GLASS, GLASS2, GLASS2]);
-          B.quad(e.at(t - ww / 2, y0 + wh * 0.55, 0.05), e.at(t + ww / 2, y0 + wh * 0.55, 0.05), e.at(t + ww / 2, y0 + wh * 0.55 + 0.06, 0.05), e.at(t - ww / 2, y0 + wh * 0.55 + 0.06, 0.05), N, U0, FRAME);
-          // sill, and a lintel (a segmental arch in the brick on the old blocks)
-          B.quad(e.at(t - ww / 2 - 0.18, y0 - 0.2, 0.1), e.at(t + ww / 2 + 0.18, y0 - 0.2, 0.1), e.at(t + ww / 2 + 0.18, y0 - 0.08, 0.1), e.at(t - ww / 2 - 0.18, y0 - 0.08, 0.1), N, U0, trim);
-          B.quad(e.at(t - ww / 2 - 0.18, y0 - 0.08, 0.1), e.at(t + ww / 2 + 0.18, y0 - 0.08, 0.1), e.at(t + ww / 2 + 0.18, y0 - 0.08, 0), e.at(t - ww / 2 - 0.18, y0 - 0.08, 0), [0, 1, 0], U0, trim);
-          if (front && (po || hash2(seed, 20) < 0.6)) {
-            B.quad(e.at(t - ww / 2 - 0.15, y0 + wh + 0.08, 0.03), e.at(t + ww / 2 + 0.15, y0 + wh + 0.08, 0.03), e.at(t + ww / 2, y0 + wh + 0.42, 0.03), e.at(t - ww / 2, y0 + wh + 0.42, 0.03), N, U0, po ? STONE : shade(wall, 0.8));
-            B.tri(e.at(t - ww / 2, y0 + wh + 0.42, 0.035), e.at(t + ww / 2, y0 + wh + 0.42, 0.035), e.at(t, y0 + wh + 0.62, 0.035), N, po ? STONE : shade(wall, 0.8));
+          const tc = pad + spacing * (i + 0.5);
+          // a pair shares one opening's head, split by a pier
+          if (W.shape === 'hex' && main) {
+            // the Art Deco theatre's hexagonal lights: a frame ring and the glass
+            const rr = ww / 2, yc0 = y0 + wh / 2;
+            for (let s = 0; s < 6; s++) {
+              const a0 = Math.PI / 3 * s, a1 = Math.PI / 3 * (s + 1);
+              B.tri(e.at(tc, yc0, 0.04), e.at(tc + Math.cos(a0) * rr, yc0 + Math.sin(a0) * rr, 0.04), e.at(tc + Math.cos(a1) * rr, yc0 + Math.sin(a1) * rr, 0.04), N, GLASS2);
+              B.quad(e.at(tc + Math.cos(a0) * rr, yc0 + Math.sin(a0) * rr, 0.035), e.at(tc + Math.cos(a1) * rr, yc0 + Math.sin(a1) * rr, 0.035), e.at(tc + Math.cos(a1) * (rr + 0.18), yc0 + Math.sin(a1) * (rr + 0.18), 0.035), e.at(tc + Math.cos(a0) * (rr + 0.18), yc0 + Math.sin(a0) * (rr + 0.18), 0.035), N, U0, FRAME);
+            }
+            continue;
+          }
+          for (const t of W.pair ? [tc - ww / 2 - 0.12, tc + ww / 2 + 0.12] : [tc]) {
+            B.quad(e.at(t - ww / 2 - 0.1, y0 - 0.08, 0.02), e.at(t + ww / 2 + 0.1, y0 - 0.08, 0.02), e.at(t + ww / 2 + 0.1, y0 + wh + 0.08, 0.02), e.at(t - ww / 2 - 0.1, y0 + wh + 0.08, 0.02), N, U0, FRAME);
+            B.quad(e.at(t - ww / 2, y0, 0.04), e.at(t + ww / 2, y0, 0.04), e.at(t + ww / 2, y0 + wh, 0.04), e.at(t - ww / 2, y0 + wh, 0.04), N, U0, [GLASS, GLASS, GLASS2, GLASS2]);
+            B.quad(e.at(t - ww / 2, y0 + wh * 0.55, 0.05), e.at(t + ww / 2, y0 + wh * 0.55, 0.05), e.at(t + ww / 2, y0 + wh * 0.55 + 0.06, 0.05), e.at(t - ww / 2, y0 + wh * 0.55 + 0.06, 0.05), N, U0, FRAME);
+            // sill
+            B.quad(e.at(t - ww / 2 - 0.18, y0 - 0.2, 0.1), e.at(t + ww / 2 + 0.18, y0 - 0.2, 0.1), e.at(t + ww / 2 + 0.18, y0 - 0.08, 0.1), e.at(t - ww / 2 - 0.18, y0 - 0.08, 0.1), N, U0, SILL);
+            B.quad(e.at(t - ww / 2 - 0.18, y0 - 0.08, 0.1), e.at(t + ww / 2 + 0.18, y0 - 0.08, 0.1), e.at(t + ww / 2 + 0.18, y0 - 0.08, 0), e.at(t - ww / 2 - 0.18, y0 - 0.08, 0), [0, 1, 0], U0, SILL);
+          }
+          // the head: a look's own (seg / round / flat / hood), else hashed
+          const hw = W.pair ? ww + 0.12 : ww / 2;
+          const head = lk && W.head ? W.head : front && (po || hash2(seed, 20) < 0.6) ? 'seg' : 'flat';
+          const HC = W.hc ? lin(hex(W.hc)) : po ? STONE : head === 'flat' ? SILL : shade(wall, 0.8);
+          const yh = y0 + wh + 0.08;
+          if (head === 'seg') {
+            B.quad(e.at(tc - hw - 0.15, yh, 0.03), e.at(tc + hw + 0.15, yh, 0.03), e.at(tc + hw, yh + 0.34, 0.03), e.at(tc - hw, yh + 0.34, 0.03), N, U0, HC);
+            B.tri(e.at(tc - hw, yh + 0.34, 0.035), e.at(tc + hw, yh + 0.34, 0.035), e.at(tc, yh + 0.54, 0.035), N, HC);
+          } else if (head === 'round') {
+            // a semicircular brick arch over the opening (the glass fills it)
+            for (let s = 0; s < 6; s++) {
+              const a0 = Math.PI * s / 6, a1 = Math.PI * (s + 1) / 6, rr = hw;
+              B.tri(e.at(tc, yh - 0.08, 0.04), e.at(tc + Math.cos(a0) * rr, yh - 0.08 + Math.sin(a0) * rr, 0.04), e.at(tc + Math.cos(a1) * rr, yh - 0.08 + Math.sin(a1) * rr, 0.04), N, GLASS2);
+              const o0 = [tc + Math.cos(a0) * (rr + 0.24), yh - 0.08 + Math.sin(a0) * (rr + 0.24)], o1 = [tc + Math.cos(a1) * (rr + 0.24), yh - 0.08 + Math.sin(a1) * (rr + 0.24)];
+              B.quad(e.at(tc + Math.cos(a0) * rr, yh - 0.08 + Math.sin(a0) * rr, 0.035), e.at(tc + Math.cos(a1) * rr, yh - 0.08 + Math.sin(a1) * rr, 0.035), e.at(o1[0], o1[1], 0.035), e.at(o0[0], o0[1], 0.035), N, U0, HC);
+            }
+          } else if (head === 'hood') {
+            // a projecting label moulding (an Italianate hood) over the head
+            B.quad(e.at(tc - hw - 0.22, yh, 0.12), e.at(tc + hw + 0.22, yh, 0.12), e.at(tc + hw + 0.22, yh + 0.3, 0.12), e.at(tc - hw - 0.22, yh + 0.3, 0.12), N, U0, HC);
+            B.quad(e.at(tc - hw - 0.22, yh, 0), e.at(tc + hw + 0.22, yh, 0), e.at(tc + hw + 0.22, yh, 0.12), e.at(tc - hw - 0.22, yh, 0.12), [0, -1, 0], U0, shade(HC, 0.6));
           } else {
-            B.quad(e.at(t - ww / 2 - 0.12, y0 + wh + 0.08, 0.03), e.at(t + ww / 2 + 0.12, y0 + wh + 0.08, 0.03), e.at(t + ww / 2 + 0.12, y0 + wh + 0.3, 0.03), e.at(t - ww / 2 - 0.12, y0 + wh + 0.3, 0.03), N, U0, trim);
+            B.quad(e.at(tc - hw - 0.12, yh, 0.03), e.at(tc + hw + 0.12, yh, 0.03), e.at(tc + hw + 0.12, yh + 0.22, 0.03), e.at(tc - hw - 0.12, yh + 0.22, 0.03), N, U0, HC);
           }
         }
         // a string course at each floor line on the street
-        if (front && k > 0) {
-          const ys = gy + gfH + (po ? 1.3 : 0) + k * 3.7 + 0.2;
-          B.quad(e.at(0, ys, 0.06), e.at(e.L, ys, 0.06), e.at(e.L, ys + 0.18, 0.06), e.at(0, ys + 0.18, 0.06), N, U0, trim);
+        if (front && k > 0 && !(lk && lk.noBands)) {
+          const ys = gy + gfH + (po ? 1.3 : 0) + k * fp + 0.2;
+          B.quad(e.at(0, ys, 0.06), e.at(e.L, ys, 0.06), e.at(e.L, ys + 0.18, 0.06), e.at(0, ys + 0.18, 0.06), N, U0, BAND);
         }
       }
     }
     if (!front) continue;
-    // the cornice: a projecting band with brackets under it
+    // stone quoins up the street face's corners
+    if (lk && lk.quoin) {
+      const Q = lin(hex(lk.quoin));
+      for (let y = gy + gfH; y < yTop - 0.5; y += 0.6) {
+        const w2 = (Math.round((y - gy) / 0.6) % 2) ? 0.55 : 0.85;
+        for (const [ta, tb] of [[0, w2], [e.L - w2, e.L]]) B.quad(e.at(ta, y, 0.05), e.at(tb, y, 0.05), e.at(tb, y + 0.5, 0.05), e.at(ta, y + 0.5, 0.05), N, U0, Q);
+      }
+    }
+    // the cornice
     const yc = yTop - 0.15;
-    B.quad(e.at(-0.25, yc, 0.42), e.at(e.L + 0.25, yc, 0.42), e.at(e.L + 0.25, yc + 0.55, 0.42), e.at(-0.25, yc + 0.55, 0.42), N, U0, trim);
-    B.quad(e.at(-0.25, yc, 0), e.at(e.L + 0.25, yc, 0), e.at(e.L + 0.25, yc, 0.42), e.at(-0.25, yc, 0.42), [0, -1, 0], U0, shade(trim, 0.6));
-    B.quad(e.at(-0.25, yc + 0.55, 0.42), e.at(e.L + 0.25, yc + 0.55, 0.42), e.at(e.L + 0.25, yc + 0.55, 0), e.at(-0.25, yc + 0.55, 0), [0, 1, 0], U0, trim);
-    // brackets: a face and an underside each (all anyone sees from the street)
-    for (let t = 0.5; t < e.L - 0.3; t += 1.25) {
-      B.quad(e.at(t - 0.09, yc - 0.45, 0.32), e.at(t + 0.09, yc - 0.45, 0.32), e.at(t + 0.09, yc, 0.32), e.at(t - 0.09, yc, 0.32), N, U0, trim);
-      B.quad(e.at(t - 0.09, yc - 0.45, 0), e.at(t + 0.09, yc - 0.45, 0), e.at(t + 0.09, yc - 0.45, 0.32), e.at(t - 0.09, yc - 0.45, 0.32), [0, -1, 0], U0, shade(trim, 0.6));
+    if (cornice === 'bracket') {
+      // a projecting band with brackets under it
+      B.quad(e.at(-0.25, yc, 0.42), e.at(e.L + 0.25, yc, 0.42), e.at(e.L + 0.25, yc + 0.55, 0.42), e.at(-0.25, yc + 0.55, 0.42), N, U0, trim);
+      B.quad(e.at(-0.25, yc, 0), e.at(e.L + 0.25, yc, 0), e.at(e.L + 0.25, yc, 0.42), e.at(-0.25, yc, 0.42), [0, -1, 0], U0, shade(trim, 0.6));
+      B.quad(e.at(-0.25, yc + 0.55, 0.42), e.at(e.L + 0.25, yc + 0.55, 0.42), e.at(e.L + 0.25, yc + 0.55, 0), e.at(-0.25, yc + 0.55, 0), [0, 1, 0], U0, trim);
+      // brackets: a face and an underside each (all anyone sees from the street)
+      for (let t = 0.5; t < e.L - 0.3; t += 1.25) {
+        B.quad(e.at(t - 0.09, yc - 0.45, 0.32), e.at(t + 0.09, yc - 0.45, 0.32), e.at(t + 0.09, yc, 0.32), e.at(t - 0.09, yc, 0.32), N, U0, trim);
+        B.quad(e.at(t - 0.09, yc - 0.45, 0), e.at(t + 0.09, yc - 0.45, 0), e.at(t + 0.09, yc - 0.45, 0.32), e.at(t - 0.09, yc - 0.45, 0.32), [0, -1, 0], U0, shade(trim, 0.6));
+      }
+    } else if (cornice === 'corbel') {
+      // corbelled brick: three courses stepping out, a dentil row under them
+      const CB = lk && lk.trim ? trim : shade(wall, 1.05);
+      for (let s = 0; s < 3; s++) {
+        const y = yc - 0.25 - s * 0.22, d = 0.12 * (3 - s);
+        B.quad(e.at(0, y, d), e.at(e.L, y, d), e.at(e.L, y + 0.22, d), e.at(0, y + 0.22, d), N, U0, s ? CB : shade(CB, 1.1));
+        B.quad(e.at(0, y, 0), e.at(e.L, y, 0), e.at(e.L, y, d), e.at(0, y, d), [0, -1, 0], U0, shade(CB, 0.6));
+      }
+      for (let t = 0.2; t < e.L - 0.2; t += 0.45) {
+        B.quad(e.at(t, yc - 1.15, 0.1), e.at(t + 0.2, yc - 1.15, 0.1), e.at(t + 0.2, yc - 0.91, 0.1), e.at(t, yc - 0.91, 0.1), N, U0, CB);
+      }
+    } else if (cornice === 'plain') {
+      B.quad(e.at(-0.1, yc - 0.1, 0.2), e.at(e.L + 0.1, yc - 0.1, 0.2), e.at(e.L + 0.1, yc + 0.5, 0.2), e.at(-0.1, yc + 0.5, 0.2), N, U0, trim);
+      B.quad(e.at(-0.1, yc - 0.1, 0), e.at(e.L + 0.1, yc - 0.1, 0), e.at(e.L + 0.1, yc - 0.1, 0.2), e.at(-0.1, yc - 0.1, 0.2), [0, -1, 0], U0, shade(trim, 0.6));
+    }
+    // a raised name panel (pediment) at the middle of the main face's parapet
+    if (lk && lk.name && main) {
+      const pw = Math.min(e.L - 1, lk.nameW || 6), ph = lk.nameH || 1.3, tm = e.L / 2;
+      B.quad(e.at(tm - pw / 2, yTop + 0.9, 0), e.at(tm + pw / 2, yTop + 0.9, 0), e.at(tm + pw / 2, yTop + 0.9 + ph, 0), e.at(tm - pw / 2, yTop + 0.9 + ph, 0), N, U0, wall);
+      B.quad(e.at(tm - pw / 2, yTop + 0.9, -0.3), e.at(tm + pw / 2, yTop + 0.9, -0.3), e.at(tm + pw / 2, yTop + 0.9 + ph, -0.3), e.at(tm - pw / 2, yTop + 0.9 + ph, -0.3), [-e.nx, 0, -e.nz], U0, dark);
+      B.quad(e.at(tm - pw / 2 - 0.1, yTop + 0.9 + ph, 0.12), e.at(tm + pw / 2 + 0.1, yTop + 0.9 + ph, 0.12), e.at(tm + pw / 2 + 0.1, yTop + 1.05 + ph, -0.3), e.at(tm - pw / 2 - 0.1, yTop + 1.05 + ph, -0.3), [0, 1, 0], U0, trim);
+      const m = L.panel(pw - 0.6, ph * 0.62, 40, (q, Wd, Hd) => {
+        q.fillStyle = lk.nameBg || '#d9cfb8'; q.fillRect(0, 0, Wd, Hd);
+        q.fillStyle = lk.nameFg || '#3a2a20'; q.textAlign = 'center'; q.textBaseline = 'middle';
+        q.font = `700 ${Hd * 0.66}px ${SERIF}`;
+        q.fillText(lk.name, Wd / 2, Hd * 0.54, Wd * 0.92);
+      });
+      const p = e.at(tm, yTop + 0.9 + ph * 0.48, 0.02);
+      hang(g, m, p[0], p[1], p[2], e.nx, e.nz, 0.02);
     }
     // the ground floor
+    if (lk && lk.ground === 'none') continue;
+    if (lk && lk.ground === 'bank') {
+      // a bank's ashlar ground floor: a plinth, tall windows, the door in the middle
+      B.quad(e.at(0, gy - 0.3, 0.06), e.at(e.L, gy - 0.3, 0.06), e.at(e.L, gy + 0.9, 0.06), e.at(0, gy + 0.9, 0.06), N, U0, shade(wall, 0.85));
+      const na = Math.max(1, Math.floor(e.L / 3.0)), pd = (e.L - na * 3.0) / 2;
+      for (let i = 0; i < na; i++) {
+        const t = pd + 3.0 * (i + 0.5), door = main && i === Math.floor(na / 2);
+        const ya = door ? gy : gy + 1.2, yz = gy + 3.9;
+        B.quad(e.at(t - 0.75, ya, 0.07), e.at(t + 0.75, ya, 0.07), e.at(t + 0.75, yz, 0.07), e.at(t - 0.75, yz, 0.07), N, U0, door ? shade(FRAME, 0.6) : [GLASS, GLASS, GLASS2, GLASS2]);
+        B.quad(e.at(t - 0.95, yz, 0.09), e.at(t + 0.95, yz, 0.09), e.at(t + 0.95, yz + 0.35, 0.09), e.at(t - 0.95, yz + 0.35, 0.09), N, U0, trim);
+      }
+      if (main && lk.sign) {
+        const sp = e.at(e.L / 2, gy + 4.75, 0.12);
+        hang(g, signPanel(L, lk.sign.n, '', lk.sign.w || 3, 0.8, seed, lk.sign), sp[0], sp[1], sp[2], e.nx, e.nz, 0.02);
+      }
+      continue;
+    }
     if (po) {
       // sandstone, round-arched openings
       B.quad(e.at(0, gy - 0.3, 0.05), e.at(e.L, gy - 0.3, 0.05), e.at(e.L, gy + 4.9, 0.05), e.at(0, gy + 4.9, 0.05), N, U0, STONE);
@@ -509,41 +622,57 @@ function meshKing(kit, ctx, r, idx) {
       continue;
     }
     const nShops = e.shops.length;
-    const nb = Math.max(1, Math.min(Math.max(nShops, Math.round(e.L / 8)), Math.floor(e.L / 3.4)));
-    const bw = e.L / nb;
+    const nb = lk && lk.shops && main ? Math.max(1, nShops) : Math.max(1, Math.min(Math.max(nShops, Math.round(e.L / 8)), Math.floor(e.L / 3.4)));
+    // a look's shops may say how much of the face each takes (`f`, fractions)
+    const fr = e.shops.map((s) => (s[3] && s[3].f) || 0), fsum = fr.reduce((a, b) => a + b, 0);
+    const span = (k) => {
+      if (main && lk && lk.shops && fsum > 0) {
+        let a = 0;
+        for (let i = 0; i < k; i++) a += fr[i] || (1 - fsum) / Math.max(1, fr.filter((x) => !x).length);
+        const w = fr[k] || (1 - fsum) / Math.max(1, fr.filter((x) => !x).length);
+        return [a * e.L, (a + w) * e.L];
+      }
+      return [k * e.L / nb, (k + 1) * e.L / nb];
+    };
     for (let k = 0; k < nb; k++) {
-      const t0 = k * bw + 0.3, t1 = (k + 1) * bw - 0.3, tm = (t0 + t1) / 2;
+      let [s0, s1] = span(k);
+      if (main && lk && lk.flip) [s0, s1] = [e.L - s1, e.L - s0];   // the look's shops run the other way along the face
+      const t0 = s0 + 0.3, t1 = s1 - 0.3, tm = (t0 + t1) / 2;
       const sd = seed + k * 31;
+      const shop = e.shops[k];
+      const sty = shop && shop[3] ? shop[3] : null;
+      const PIER = lk && lk.pier ? lin(hex(lk.pier)) : trim;
       // piers between the shopfronts
-      for (const t of (k === 0 ? [0, bw] : [(k + 1) * bw])) {
+      for (const t of (k === 0 ? [s0, s1] : [s1])) {
         const ta = Math.max(0, t - 0.3), tb = Math.min(e.L, t + 0.3);
-        B.quad(e.at(ta, gy - 0.3, 0.22), e.at(tb, gy - 0.3, 0.22), e.at(tb, gy + 3.2, 0.22), e.at(ta, gy + 3.2, 0.22), N, U0, trim);
-        B.quad(e.at(ta, gy - 0.3, 0), e.at(ta, gy - 0.3, 0.22), e.at(ta, gy + 3.2, 0.22), e.at(ta, gy + 3.2, 0), [-e.ux, 0, -e.uz], U0, shade(trim, 0.8));
-        B.quad(e.at(tb, gy - 0.3, 0.22), e.at(tb, gy - 0.3, 0), e.at(tb, gy + 3.2, 0), e.at(tb, gy + 3.2, 0.22), [e.ux, 0, e.uz], U0, shade(trim, 0.8));
+        B.quad(e.at(ta, gy - 0.3, 0.22), e.at(tb, gy - 0.3, 0.22), e.at(tb, gy + 3.2, 0.22), e.at(ta, gy + 3.2, 0.22), N, U0, PIER);
+        B.quad(e.at(ta, gy - 0.3, 0), e.at(ta, gy - 0.3, 0.22), e.at(ta, gy + 3.2, 0.22), e.at(ta, gy + 3.2, 0), [-e.ux, 0, -e.uz], U0, shade(PIER, 0.8));
+        B.quad(e.at(tb, gy - 0.3, 0.22), e.at(tb, gy - 0.3, 0), e.at(tb, gy + 3.2, 0), e.at(tb, gy + 3.2, 0.22), [e.ux, 0, e.uz], U0, shade(PIER, 0.8));
       }
       // bulkhead, glass, a mullion, the transom bar, and the recessed door
       const doorL = hash2(sd, 5) < 0.5;
       const dA = doorL ? t0 + 0.15 : t1 - 1.25, dB = dA + 1.1;
-      B.quad(e.at(t0, gy - 0.3, 0.04), e.at(t1, gy - 0.3, 0.04), e.at(t1, gy + 0.55, 0.04), e.at(t0, gy + 0.55, 0.04), N, U0, BULK);
+      const SB = sty && sty.bulk ? lin(hex(sty.bulk)) : BULK;
+      B.quad(e.at(t0, gy - 0.3, 0.04), e.at(t1, gy - 0.3, 0.04), e.at(t1, gy + 0.55, 0.04), e.at(t0, gy + 0.55, 0.04), N, U0, SB);
       B.quad(e.at(t0, gy + 0.55, 0.03), e.at(t1, gy + 0.55, 0.03), e.at(t1, gy + 3.05, 0.03), e.at(t0, gy + 3.05, 0.03), N, U0, [GLASS, GLASS, GLASS2, GLASS2]);
-      B.quad(e.at(dA, gy - 0.3, 0.05), e.at(dB, gy - 0.3, 0.05), e.at(dB, gy + 2.45, 0.05), e.at(dA, gy + 2.45, 0.05), N, U0, shade(BULK, 0.55));
+      B.quad(e.at(dA, gy - 0.3, 0.05), e.at(dB, gy - 0.3, 0.05), e.at(dB, gy + 2.45, 0.05), e.at(dA, gy + 2.45, 0.05), N, U0, shade(SB, 0.55));
       B.quad(e.at(dA + 0.15, gy + 0.9, 0.06), e.at(dB - 0.15, gy + 0.9, 0.06), e.at(dB - 0.15, gy + 2.2, 0.06), e.at(dA + 0.15, gy + 2.2, 0.06), N, U0, GLASS2);
       B.quad(e.at(t0, gy + 2.45, 0.06), e.at(t1, gy + 2.45, 0.06), e.at(t1, gy + 2.55, 0.06), e.at(t0, gy + 2.55, 0.06), N, U0, FRAME);
       const mid = doorL ? (dB + t1) / 2 : (t0 + dA) / 2;
       B.quad(e.at(mid - 0.05, gy + 0.55, 0.06), e.at(mid + 0.05, gy + 0.55, 0.06), e.at(mid + 0.05, gy + 3.05, 0.06), e.at(mid - 0.05, gy + 3.05, 0.06), N, U0, FRAME);
       // the sign band
-      const band = lin(TRIMS[Math.floor(hash2(sd, 6) * TRIMS.length)]);
+      const band = sty && sty.band ? lin(hex(sty.band)) : lk && lk.signBand ? lin(hex(lk.signBand)) : lin(TRIMS[Math.floor(hash2(sd, 6) * TRIMS.length)]);
       B.quad(e.at(t0 - 0.3, gy + 3.05, 0.12), e.at(t1 + 0.3, gy + 3.05, 0.12), e.at(t1 + 0.3, gy + 4.15, 0.12), e.at(t0 - 0.3, gy + 4.15, 0.12), N, U0, band);
       B.quad(e.at(t0 - 0.3, gy + 4.15, 0.12), e.at(t1 + 0.3, gy + 4.15, 0.12), e.at(t1 + 0.3, gy + 4.15, 0), e.at(t0 - 0.3, gy + 4.15, 0), [0, 1, 0], U0, band);
-      const shop = e.shops[k];
-      if (shop) {
-        const sw = Math.min(t1 - t0 - 0.1, Math.max(2.4, shop[0].length * 0.32 + 1));
+      if (shop && shop[0]) {
+        const sw = Math.min(t1 - t0 - 0.1, sty && sty.w ? sty.w : Math.max(2.4, shop[0].length * 0.32 + 1));
         const sp = e.at(tm, gy + 3.6, 0.14);
-        hang(g, signPanel(L, shop[0], shop[2], sw, 0.78, seed + k), sp[0], sp[1], sp[2], e.nx, e.nz, 0.02);
+        hang(g, signPanel(L, shop[0], shop[2], sw, 0.78, seed + k, sty), sp[0], sp[1], sp[2], e.nx, e.nz, 0.02);
         // a blade sign over the pavement for the pubs and restaurants
-        if (/pub|bar|restaurant|cafe|nightclub|cinema/.test(shop[1]) && hash2(sd, 9) < 0.7) {
+        const blade = sty ? sty.blade : /pub|bar|restaurant|cafe|nightclub|cinema/.test(shop[1]) && hash2(sd, 9) < 0.7;
+        if (blade) {
           const bp = e.at(doorL ? t0 + 0.3 : t1 - 0.3, gy + 4.9, 0.75);
-          const bl = signPanel(L, shop[0], shop[2], 0.95, 0.95, seed + k + 99);
+          const bl = signPanel(L, sty && sty.bladeText || shop[0], shop[2], 0.95, 0.95, seed + k + 99, sty);
           // two faces back to back (opaque, so neither shows the other mirrored)
           hang(g, bl, bp[0], bp[1], bp[2], e.ux, e.uz, 0.03);
           hang(g, bl.clone(), bp[0], bp[1], bp[2], -e.ux, -e.uz, 0.03);
@@ -551,9 +680,12 @@ function meshKing(kit, ctx, r, idx) {
           B.box(bb[0], bb[1], bb[2], 0.05, 0.05, 0.85, Math.atan2(e.nz, e.nx) + Math.PI / 2, lin([0.1, 0.1, 0.1]));
         }
       }
-      // an awning
-      if (hash2(sd, 7) < 0.62) {
-        const [ac, as] = AWN[Math.floor(hash2(sd, 8) * AWN.length)];
+      // an awning: a look's shop says its colour (or false), else hashed
+      const awn = sty ? sty.awn : lk && lk.awn === false ? null
+        : lk && lk.awnPal ? (hash2(sd, 7) < (lk.awnP ?? 0.3) ? lk.awnPal[Math.floor(hash2(sd, 8) * lk.awnPal.length)] : null)
+          : hash2(sd, 7) < 0.62 ? AWN[Math.floor(hash2(sd, 8) * AWN.length)] : null;
+      if (awn) {
+        const [ac, as] = Array.isArray(awn) ? awn : [awn, null];
         const A = lin(hex(ac)), S = as ? lin(hex(as)) : null;
         const D = 1.55, y1 = gy + 3.0, y2 = gy + 2.35;
         const strips = S ? Math.max(2, Math.round((t1 - t0) / 0.5)) : 1;
@@ -577,7 +709,11 @@ function meshKing(kit, ctx, r, idx) {
     B.box(cx, yTop, cz, 2.2, 1.3, 1.6, hash2(seed, 30) * 3, lin([0.62, 0.63, 0.64]));
   }
   // the Old Post Office's clock tower, on its King and Dupont corner
-  if (po) postOfficeTower(kit, ctx, pts, base, yTop, wall, STONE);
+  if (po) postOfficeTower(kit, ctx, pts, base, yTop, wall, STONE, lk && lk.tower);
+  // whatever else a researched building carries (kwuptown.js): a tower, a sign, a marquee
+  if (lk && lk.extra) {
+    try { lk.extra({ kit, ctx, B, g, L, pts, E, fronts, base, yTop, wall, trim, dark, cx, cz }); } catch (err) { console.warn('uptown look ' + (lk.addr || '') + ': ' + err.message); }
+  }
 }
 
 /**
@@ -586,7 +722,7 @@ function meshKing(kit, ctx, r, idx) {
  * Dupont that commands Uptown's skyline. The tower came down in 1956 and was
  * rebuilt in 1991, the clock in 2003. OSM gives the building 23 m.
  */
-function postOfficeTower(kit, ctx, pts, base, yTop, wall, STONE) {
+function postOfficeTower(kit, ctx, pts, base, yTop, wall, STONE, at = null) {
   const city = ctx.city;
   // the corner: the footprint's vertex nearest both King St and Dupont St
   let best = null, bs = Infinity;
@@ -600,12 +736,14 @@ function postOfficeTower(kit, ctx, pts, base, yTop, wall, STONE) {
   // the tower stands inside the corner, its sides square to the King face
   const k = street(city, best[0], best[1], 60, /^King Street/);
   const ux = k ? k.ex : 1, uz = k ? k.ez : 0;
-  const S = 5.6;
+  const S = at ? at[2] : 5.6;
   const ix = cx - best[0], iz = cz - best[1], il = Math.hypot(ix, iz) || 1;
-  const tx = best[0] + (ix / il) * S * 0.62, tz = best[1] + (iz / il) * S * 0.62;
+  // OSM maps the tower as its own part (way 682351484): a researched look passes its centre and size
+  const tx = at ? at[0] : best[0] + (ix / il) * S * 0.62, tz = at ? at[1] : best[1] + (iz / il) * S * 0.62;
   const B = kit.B(tx, tz), g = kit.grp(tx, tz);
   const rot = Math.atan2(uz, ux);
-  const top = base + 21.5;
+  // OSM's tower part is 23 m to the tip of its pyramid (the 1987 rebuild to full height)
+  const top = base + 17.6;
   B.box(tx, base - 1, tz, S, top - base + 1, S, rot, wall);
   B.box(tx, base - 1, tz, S + 0.3, 5.9, S + 0.3, rot, STONE);
   // the belfry stage: a stone band, corner piers, the clock faces, a pyramid roof
@@ -614,14 +752,14 @@ function postOfficeTower(kit, ctx, pts, base, yTop, wall, STONE) {
   const RF = lin([0.30, 0.36, 0.34]);
   const c = Math.cos(rot), s = Math.sin(rot), hs = S / 2 + 0.3;
   const corner = (a, b) => [tx + a * c - b * s, top + 0.5, tz + a * s + b * c];
-  const apex = [tx, top + 6.5, tz];
+  const apex = [tx, top + 5.4, tz];
   const C = [corner(-hs, -hs), corner(hs, -hs), corner(hs, hs), corner(-hs, hs)];
   for (let i = 0; i < 4; i++) {
     const a = C[i], b = C[(i + 1) % 4];
     const mx = (a[0] + b[0]) / 2 - tx, mz = (a[2] + b[2]) / 2 - tz, ml = Math.hypot(mx, mz);
     B.tri(a, b, apex, [mx / ml * 0.8, 0.6, mz / ml * 0.8], RF);
   }
-  B.box(tx, top + 6.4, tz, 0.12, 1.4, 0.12, rot, lin([0.2, 0.2, 0.2]));
+  B.box(tx, top + 5.3, tz, 0.12, 1.2, 0.12, rot, lin([0.2, 0.2, 0.2]));
   // the clock, all four faces
   const clock = ctx.atlas.panel(2.6, 2.6, 60, (q, W, H) => {
     q.clearRect(0, 0, W, H);
@@ -657,15 +795,17 @@ function postOfficeTower(kit, ctx, pts, base, yTop, wall, STONE) {
 /** Black lamp posts down both sides of King St, each with two Uptown banners. */
 function kingLamps(kit, ctx) {
   const city = ctx.city, L = ctx.atlas;
+  // the banners: white, teal and blue as they hung in May 2026 (Commons); the
+  // BIA's artwork itself was not found, so the lettering is a stand-in
   const banner = L.panel(0.62, 1.5, 60, (q, W, H) => {
-    q.fillStyle = '#16346b'; q.fillRect(0, 0, W, H);
-    q.fillStyle = '#e8b830'; q.fillRect(0, H * 0.84, W, H * 0.05);
-    q.fillStyle = '#ffffff'; q.textAlign = 'center'; q.textBaseline = 'middle';
-    q.font = `800 ${W * 0.62}px ${SERIF}`;
-    q.fillText('W', W / 2, H * 0.26);
-    q.font = `700 ${W * 0.19}px ${SANS}`;
-    q.fillText('UPTOWN', W / 2, H * 0.55, W * 0.92);
-    q.fillText('WATERLOO', W / 2, H * 0.68, W * 0.92);
+    q.fillStyle = '#ffffff'; q.fillRect(0, 0, W, H);
+    q.fillStyle = '#1a9a9a'; q.beginPath(); q.moveTo(0, H * 0.62); q.quadraticCurveTo(W * 0.5, H * 0.5, W, H * 0.6); q.lineTo(W, H); q.lineTo(0, H); q.fill();
+    q.fillStyle = '#1f4fa0'; q.beginPath(); q.moveTo(0, H * 0.8); q.quadraticCurveTo(W * 0.5, H * 0.7, W, H * 0.78); q.lineTo(W, H); q.lineTo(0, H); q.fill();
+    q.fillStyle = '#1f4fa0'; q.textAlign = 'center'; q.textBaseline = 'middle';
+    q.font = `800 ${W * 0.2}px ${SANS}`;
+    q.fillText('UPTOWN', W / 2, H * 0.2, W * 0.92);
+    q.font = `700 ${W * 0.15}px ${SANS}`;
+    q.fillText('WATERLOO', W / 2, H * 0.32, W * 0.92);
   });
   const POST = lin([0.08, 0.09, 0.09]), GLOBE = lin([0.95, 0.93, 0.84]);
   let n = 0;
@@ -1343,47 +1483,72 @@ function marsland(kit, ctx) {
   let lo = Infinity;
   for (const q of [...MARSLAND, ...MARSLAND_W, ...MARSLAND_E]) lo = Math.min(lo, T(q[0], q[1]));
   const y0 = lo, H = 52, yTop = y0 + H;
-  const BROWN = lin([0.30, 0.19, 0.16]), FIN = lin([0.78, 0.69, 0.55]), FIN2 = lin([0.66, 0.58, 0.46]), LOBBY = lin([0.14, 0.17, 0.20]);
+  // Commons (BMOTower-Waterloo.jpg, 2013; the 2025 station photo): precast
+  // fins running the full height, alternately maroon-brown and light beige,
+  // with dark slit windows between them; the BMO box sign at the top corner
+  const SLIT = lin([0.16, 0.16, 0.18]), MAROON = lin(hex('#6f4846')), BEIGE = lin(hex('#c9c2b2')), LOBBY = lin([0.14, 0.17, 0.20]);
+  const signs = [];
   for (const e of edges(pts)) {
     const N = [e.nx, 0, e.nz];
-    B.quad(e.at(0, y0 - 1.2), e.at(e.L, y0 - 1.2), e.at(e.L, yTop), e.at(0, yTop), N, U0, BROWN);
-    // the lobby glass, then the fins from the second floor to the crown
+    B.quad(e.at(0, y0 - 1.2), e.at(e.L, y0 - 1.2), e.at(e.L, yTop), e.at(0, yTop), N, U0, SLIT);
     B.quad(e.at(0.8, y0, 0.05), e.at(e.L - 0.8, y0, 0.05), e.at(e.L - 0.8, y0 + 4.2, 0.05), e.at(0.8, y0 + 4.2, 0.05), N, U0, LOBBY);
-    const nf = Math.round(e.L / 1.55);
+    const nf = Math.round(e.L / 1.45);
     for (let k = 0; k <= nf; k++) {
-      const t = e.L * k / nf, w = k === 0 || k === nf ? 0.9 : 0.42;
+      const t = e.L * k / nf, end = k === 0 || k === nf, w = end ? 1.1 : 0.8;
+      const col = end || k % 2 ? MAROON : BEIGE;
       const ta = Math.max(0, t - w / 2), tb = Math.min(e.L, t + w / 2);
-      B.quad(e.at(ta, y0 + 4.2, 0.38), e.at(tb, y0 + 4.2, 0.38), e.at(tb, yTop - 2.2, 0.38), e.at(ta, yTop - 2.2, 0.38), N, U0, FIN);
-      B.quad(e.at(ta, y0 + 4.2, 0), e.at(ta, y0 + 4.2, 0.38), e.at(ta, yTop - 2.2, 0.38), e.at(ta, yTop - 2.2, 0), [-e.ux, 0, -e.uz], U0, FIN2);
-      B.quad(e.at(tb, y0 + 4.2, 0.38), e.at(tb, y0 + 4.2, 0), e.at(tb, yTop - 2.2, 0), e.at(tb, yTop - 2.2, 0.38), [e.ux, 0, e.uz], U0, FIN2);
+      B.quad(e.at(ta, y0 + 4.2, 0.32), e.at(tb, y0 + 4.2, 0.32), e.at(tb, yTop + 0.3, 0.32), e.at(ta, yTop + 0.3, 0.32), N, U0, col);
+      B.quad(e.at(ta, y0 + 4.2, 0), e.at(ta, y0 + 4.2, 0.32), e.at(ta, yTop + 0.3, 0.32), e.at(ta, yTop + 0.3, 0), [-e.ux, 0, -e.uz], U0, shade(col, 0.8));
+      B.quad(e.at(tb, y0 + 4.2, 0.32), e.at(tb, y0 + 4.2, 0), e.at(tb, yTop + 0.3, 0), e.at(tb, yTop + 0.3, 0.32), [e.ux, 0, e.uz], U0, shade(col, 0.8));
     }
-    // the crown: a tan band round the top, the second-floor band over the lobby
-    B.quad(e.at(-0.4, yTop - 2.2, 0.4), e.at(e.L + 0.4, yTop - 2.2, 0.4), e.at(e.L + 0.4, yTop + 0.3, 0.4), e.at(-0.4, yTop + 0.3, 0.4), N, U0, FIN);
-    B.quad(e.at(-0.4, y0 + 4.2, 0.4), e.at(e.L + 0.4, y0 + 4.2, 0.4), e.at(e.L + 0.4, y0 + 5.0, 0.4), e.at(-0.4, y0 + 5.0, 0.4), N, U0, FIN);
+    // the fins stand on a maroon band over the lobby; a maroon coping
+    B.quad(e.at(-0.3, y0 + 4.2, 0.36), e.at(e.L + 0.3, y0 + 4.2, 0.36), e.at(e.L + 0.3, y0 + 5.0, 0.36), e.at(-0.3, y0 + 5.0, 0.36), N, U0, MAROON);
+    B.quad(e.at(-0.3, yTop + 0.3, 0.36), e.at(e.L + 0.3, yTop + 0.3, 0.36), e.at(e.L + 0.3, yTop + 0.3, 0), e.at(-0.3, yTop + 0.3, 0), [0, 1, 0], U0, MAROON);
     ctx.solids.push({ x: e.mx, z: e.mz, hw: e.L / 2 + 0.2, hd: 0.4, rot: Math.atan2(e.uz, e.ux), y0: y0 - 1.2, y1: yTop });
-    // the BMO sign high on the two long faces
-    if (e.L > 25) {
-      const m = L.panel(5.4, 1.9, 40, (q, W, Hh) => {
-        q.fillStyle = '#0079c1'; q.fillRect(0, 0, W, Hh);
-        q.fillStyle = '#d6202a'; q.beginPath(); q.arc(Hh * 0.55, Hh / 2, Hh * 0.36, 0, Math.PI * 2); q.fill();
-        q.fillStyle = '#ffffff'; q.font = `800 ${Hh * 0.42}px ${SANS}`; q.textBaseline = 'middle'; q.textAlign = 'center';
-        q.fillText('M', Hh * 0.55, Hh * 0.53);
-        q.font = `800 ${Hh * 0.62}px ${SANS}`; q.fillText('BMO', W * 0.62, Hh * 0.54);
-      });
-      const p = e.at(e.L * 0.78, yTop - 1.0, 0.42);
-      hang(g, m, p[0], p[1], p[2], e.nx, e.nz, 0.02);
-    }
+    signs.push(e);
+  }
+  // the BMO box sign at the top of the face toward King (the east), near its north corner, and round it
+  signs.sort((a, b) => (b.nx * 1 + b.nz * 0) - (a.nx * 1 + a.nz * 0));
+  for (const [e, tf] of [[signs[0], 0.8], [signs[1], 0.2]]) {
+    if (!e) continue;
+    const m = L.panel(6.4, 2.2, 36, (q, W, Hh) => {
+      q.fillStyle = '#0079c1'; q.fillRect(0, 0, W, Hh);
+      q.fillStyle = '#ffffff'; q.font = `800 ${Hh * 0.6}px ${SANS}`; q.textBaseline = 'middle'; q.textAlign = 'center';
+      q.fillText('BMO', W * 0.42, Hh * 0.55);
+      q.fillStyle = '#e31837'; q.beginPath(); q.arc(W * 0.78, Hh / 2, Hh * 0.3, 0, Math.PI * 2); q.fill();
+      q.fillStyle = '#ffffff'; q.font = `800 ${Hh * 0.34}px ${SANS}`; q.fillText('M', W * 0.78, Hh * 0.53);
+    });
+    const p = e.at(Math.min(e.L - 3.6, Math.max(3.6, e.L * tf)), yTop - 1.4, 0.45);
+    B.box(p[0], yTop - 2.6, p[2], 6.6, 2.4, 0.3, Math.atan2(e.uz, e.ux), lin(hex('#0079c1')));
+    hang(g, m, p[0], p[1], p[2], e.nx, e.nz, 0.17);
   }
   roof(B, pts, yTop + 0.3, lin([0.34, 0.33, 0.32]));
-  B.box(cx, yTop + 0.3, cz, 10, 3.2, 7, Math.atan2(pts[1][1] - pts[0][1], pts[1][0] - pts[0][0]), lin([0.60, 0.55, 0.48]));
-  const WING = lin([0.48, 0.30, 0.24]), WIN = lin([0.15, 0.17, 0.20]);
+  B.box(cx, yTop + 0.3, cz, 10, 3.2, 7, Math.atan2(pts[1][1] - pts[0][1], pts[1][0] - pts[0][0]), lin([0.40, 0.33, 0.30]));
+  // the wings: dark mirror glass (BMO Nesbitt Burns on the east one)
+  const WING = lin([0.20, 0.22, 0.24]), WIN = lin([0.34, 0.40, 0.45]);
   for (const [p, fl] of [[MARSLAND_W, 2], [MARSLAND_E, 4]]) {
     const q = polyArea(p) < 0 ? p.slice().reverse() : p;
     bandBlock(kit.B(...centroid(q)), ctx, q, y0, fl, 3.8, WING, WIN);
   }
+  const qe = polyArea(MARSLAND_E) < 0 ? MARSLAND_E.slice().reverse() : MARSLAND_E;
+  const ee = edges(qe).sort((a, b) => b.nx - a.nx)[0];
+  if (ee) {
+    const m = L.panel(5, 0.6, 40, (q, W, Hh) => {
+      q.fillStyle = '#0079c1'; q.fillRect(0, 0, W, Hh);
+      q.fillStyle = '#ffffff'; q.font = `700 ${Hh * 0.6}px ${SANS}`; q.textBaseline = 'middle'; q.textAlign = 'center';
+      q.fillText('BMO Nesbitt Burns', W / 2, Hh * 0.55, W * 0.94);
+    });
+    const p = ee.at(ee.L / 2, y0 + 4 * 3.8 - 0.2, 0.05);
+    hang(g, m, p[0], p[1], p[2], ee.nx, ee.nz, 0.03);
+  }
 }
 
-/** The Uptown Waterloo Parkade: five open decks of precast, spandrels and columns, a P on King. */
+/**
+ * The Uptown Waterloo Parkade (Commons UptownParkade-Waterloo.jpg): buff brick
+ * on every face, cream precast pilasters and the cream arches of the top deck,
+ * square openings on the decks below, and at the King St face's south end the
+ * blue glass stair tower with its pyramid cap and UPTOWN PARKADE on a blue fascia.
+ */
 function parkade(kit, ctx) {
   const city = ctx.city, L = ctx.atlas;
   let pts = PARKADE.slice();
@@ -1392,128 +1557,191 @@ function parkade(kit, ctx) {
   const B = kit.B(cx, cz), g = kit.grp(cx, cz);
   let lo = Infinity;
   for (const q of pts) lo = Math.min(lo, T(q[0], q[1]));
-  const y0 = lo, st = 3.0, lv = 5, yTop = y0 + (lv - 1) * st + 1.1;
-  const CON = lin([0.76, 0.75, 0.72]), CON2 = lin([0.62, 0.61, 0.59]), DARK = lin([0.10, 0.10, 0.11]);
+  const y0 = lo, st = 3.0, lv = 5, yTop = y0 + (lv - 1) * st + 1.4;
+  const BUFF = lin(hex('#d3ae7d')), CREAM = lin(hex('#e8dcc2')), DARK = lin([0.10, 0.10, 0.11]), BLUE = lin(hex('#2f5fa8'));
+  let kingE = null;
   for (const e of edges(pts)) {
     const N = [e.nx, 0, e.nz];
-    // the dark inside, seen through the openings
-    B.quad(e.at(0, y0 - 1.2, -0.6), e.at(e.L, y0 - 1.2, -0.6), e.at(e.L, yTop, -0.6), e.at(0, yTop, -0.6), N, U0, DARK);
-    for (let k = 0; k < lv; k++) {
-      // each level's spandrel (the top one is the roof's parapet)
-      const ya = y0 + k * st + (k ? 0 : -1.2), yb = y0 + k * st + 1.1;
-      B.quad(e.at(0, ya), e.at(e.L, ya), e.at(e.L, yb), e.at(0, yb), N, U0, k % 2 ? CON2 : CON);
-      B.quad(e.at(0, yb), e.at(e.L, yb), e.at(e.L, yb, -0.3), e.at(0, yb, -0.3), [0, 1, 0], U0, CON2);
-    }
-    const nc = Math.max(1, Math.round(e.L / 8));
-    for (let c = 0; c <= nc; c++) {
-      const t = e.L * c / nc, ta = Math.max(0, t - 0.3), tb = Math.min(e.L, t + 0.3);
-      B.quad(e.at(ta, y0, 0.02), e.at(tb, y0, 0.02), e.at(tb, yTop, 0.02), e.at(ta, yTop, 0.02), N, U0, CON);
-    }
+    B.quad(e.at(0, y0 - 1.2), e.at(e.L, y0 - 1.2), e.at(e.L, yTop), e.at(0, yTop), N, U0, BUFF);
+    B.quad(e.at(-0.2, yTop, 0.25), e.at(e.L + 0.2, yTop, 0.25), e.at(e.L + 0.2, yTop + 0.5, 0.25), e.at(-0.2, yTop + 0.5, 0.25), N, U0, CREAM);
     ctx.solids.push({ x: e.mx, z: e.mz, hw: e.L / 2 + 0.2, hd: 0.4, rot: Math.atan2(e.uz, e.ux), y0: y0 - 1.2, y1: yTop });
-    // the P on the face toward King
+    if (e.L < 4) continue;
     const s = street(city, e.mx + e.nx * 3, e.mz + e.nz * 3, 30, /^King Street/);
-    if (s && e.L > 20) {
-      const m = L.panel(2.2, 2.2, 50, (q, W, Hh) => {
-        q.fillStyle = '#1b4f9c'; q.fillRect(0, 0, W, Hh);
-        q.fillStyle = '#ffffff'; q.font = `800 ${Hh * 0.75}px ${SANS}`; q.textAlign = 'center'; q.textBaseline = 'middle';
-        q.fillText('P', W / 2, Hh * 0.55);
-      });
-      const p = e.at(e.L * 0.5, y0 + 2 * st + 0.55, 0.05);
-      hang(g, m, p[0], p[1], p[2], e.nx, e.nz, 0.02);
-      const w = L.panel(7, 0.8, 40, (q, W, Hh) => {
-        q.clearRect(0, 0, W, Hh);
-        q.fillStyle = '#ffffff'; q.font = `700 ${Hh * 0.62}px ${SANS}`; q.textAlign = 'center'; q.textBaseline = 'middle';
-        q.fillText('UPTOWN PARKADE', W / 2, Hh * 0.55, W * 0.95);
-      });
-      const p2 = e.at(e.L * 0.5, y0 + 3 * st + 0.55, 0.05);
-      hang(g, w, p2[0], p2[1], p2[2], e.nx, e.nz, 0.02);
+    const onKing = s && e.L > 20 && s.kerb < 14 && ((s.qx - e.mx) * e.nx + (s.qz - e.mz) * e.nz) / (Math.hypot(s.qx - e.mx, s.qz - e.mz) || 1) > 0.6;
+    if (onKing && (!kingE || e.L > kingE.L)) kingE = e;
+    // bays between cream pilasters; openings per deck, arches on the top one
+    const nb = Math.max(1, Math.round(e.L / 8.5)), bw = e.L / nb;
+    for (let k = 0; k <= nb; k++) {
+      const t = k * bw, ta = Math.max(0, t - 0.45), tb = Math.min(e.L, t + 0.45);
+      B.quad(e.at(ta, y0 - 0.5, 0.18), e.at(tb, y0 - 0.5, 0.18), e.at(tb, yTop, 0.18), e.at(ta, yTop, 0.18), N, U0, CREAM);
+    }
+    for (let k = 0; k < nb; k++) {
+      const a = k * bw + 0.8, b2 = (k + 1) * bw - 0.8;
+      for (let l = 0; l < lv - 1; l++) {
+        const ya = y0 + l * st + 1.0, yb = ya + 1.5;
+        const n = Math.max(1, Math.round((b2 - a) / 1.8));
+        for (let i = 0; i < n; i++) {
+          const ca = a + (b2 - a) * i / n + 0.25, cb = a + (b2 - a) * (i + 1) / n - 0.25;
+          B.quad(e.at(ca, ya, 0.03), e.at(cb, ya, 0.03), e.at(cb, yb, 0.03), e.at(ca, yb, 0.03), N, U0, DARK);
+        }
+      }
+      // the top deck: a cream arch over the bay, open below it
+      const ya = y0 + (lv - 1) * st - 1.6, tm = (a + b2) / 2, r = (b2 - a) / 2;
+      B.quad(e.at(a, ya, 0.03), e.at(b2, ya, 0.03), e.at(b2, ya + 1.3, 0.03), e.at(a, ya + 1.3, 0.03), N, U0, DARK);
+      for (let i = 0; i < 8; i++) {
+        const a0 = Math.PI * i / 8, a1 = Math.PI * (i + 1) / 8;
+        B.tri(e.at(tm, ya + 1.3, 0.03), e.at(tm + Math.cos(a0) * r, ya + 1.3 + Math.sin(a0) * r * 0.55, 0.03), e.at(tm + Math.cos(a1) * r, ya + 1.3 + Math.sin(a1) * r * 0.55, 0.03), N, DARK);
+        const o0 = [tm + Math.cos(a0) * (r + 0.5), ya + 1.3 + Math.sin(a0) * (r * 0.55 + 0.5)], o1 = [tm + Math.cos(a1) * (r + 0.5), ya + 1.3 + Math.sin(a1) * (r * 0.55 + 0.5)];
+        B.quad(e.at(tm + Math.cos(a0) * r, ya + 1.3 + Math.sin(a0) * r * 0.55, 0.06), e.at(tm + Math.cos(a1) * r, ya + 1.3 + Math.sin(a1) * r * 0.55, 0.06), e.at(o1[0], o1[1], 0.06), e.at(o0[0], o0[1], 0.06), N, U0, CREAM);
+      }
     }
   }
   roof(B, pts, y0 + (lv - 1) * st, lin([0.44, 0.44, 0.43]));
-  // light standards on the roof deck
-  const o = obb(pts);
-  for (const u of [-0.6, 0, 0.6]) {
-    const x = o.x + o.ux * o.hu * u, z = o.z + o.uz * o.hu * u;
-    B.prism(x, y0 + (lv - 1) * st, z, 0.08, 6, 6, lin([0.5, 0.5, 0.5]));
-    B.box(x, y0 + (lv - 1) * st + 6, z, 0.6, 0.2, 0.3, 0, lin([0.3, 0.3, 0.3]));
+  // the stair tower at the King face's south end
+  if (kingE) {
+    const tS = kingE.at(3.2, 0)[2] > kingE.at(kingE.L - 3.2, 0)[2] ? 3.2 : kingE.L - 3.2;   // larger z is south
+    const p = kingE.at(tS, 0, 1.6), rot = Math.atan2(kingE.uz, kingE.ux);
+    const yT = yTop + 5.5;
+    B.box(p[0], y0 - 1, p[2], 5.4, yT - y0 + 1, 3.6, rot, BLUE);
+    for (const d of [-2.95, 2.95]) {
+      const q = kingE.at(tS + d, 0, 1.6);
+      B.box(q[0], y0 - 1, q[2], 0.9, yT - y0 + 1.3, 3.9, rot, BUFF);
+    }
+    // mullions on the glass
+    for (let y = y0 + 4.6; y < yT; y += 1.4) {
+      const q = kingE.at(tS, 0, 3.42);
+      B.box(q[0], y, q[2], 5.2, 0.08, 0.05, rot, lin([0.75, 0.80, 0.86]));
+    }
+    // the pyramid cap
+    const c = Math.cos(rot), sn = Math.sin(rot), hx = 3.2, hz = 2.2;
+    const P = (lx, lz, y) => [p[0] + lx * c - lz * sn, y, p[2] + lx * sn + lz * c];
+    const apex = P(0, 0, yT + 2.6), Cs = [P(-hx, -hz, yT + 0.3), P(hx, -hz, yT + 0.3), P(hx, hz, yT + 0.3), P(-hx, hz, yT + 0.3)];
+    for (let i = 0; i < 4; i++) {
+      const a = Cs[i], b2 = Cs[(i + 1) % 4], mx = (a[0] + b2[0]) / 2 - p[0], mz = (a[2] + b2[2]) / 2 - p[2], ml = Math.hypot(mx, mz) || 1;
+      B.tri(a, b2, apex, [mx / ml * 0.7, 0.7, mz / ml * 0.7], lin(hex('#3a6ab0')));
+    }
+    B.box(p[0], yT, p[2], 6.6, 0.3, 4.6, rot, BUFF);
+    // the fascia
+    const f = kingE.at(tS, 0, 3.5), gy = walkY(city, f[0] + kingE.nx, f[2] + kingE.nz);
+    B.box(f[0], gy + 3.4, f[2], 6.2, 0.9, 0.5, rot, lin(hex('#1d4f9c')));
+    const w = L.panel(5.8, 0.75, 40, (q, W, Hh) => {
+      q.fillStyle = '#1d4f9c'; q.fillRect(0, 0, W, Hh);
+      q.fillStyle = '#ffffff'; q.font = `800 ${Hh * 0.62}px ${SANS}`; q.textAlign = 'center'; q.textBaseline = 'middle';
+      q.fillText('UPTOWN PARKADE', W / 2, Hh * 0.55, W * 0.95);
+    });
+    hang(g, w, f[0], gy + 3.85, f[2], kingE.nx, kingE.nz, 0.27);
+    ctx.solids.push({ x: p[0], z: p[2], hw: 2.8, hd: 1.9, rot, y0: y0 - 1, y1: yT });
   }
 }
 
 
 /**
  * THE SEAGRAM LOFTS, 3 and 5 Father David Bauer Dr: Seagram's barrel
- * warehouses (1905 and 1907) in buff Waterloo brick, their "pint-sized"
- * windows that vented the ageing whisky, lofts since 2001; the painted
- * SEAGRAM sign on No. 3.
+ * warehouses (1905 and 1907) in buff Waterloo brick, lofts since 2001 (Commons
+ * Category:Seagram Lofts, 2004-2025; the Heritage Register): rows of small
+ * segmental-headed windows with blue-grey shutters, a corbelled brick cornice,
+ * and on top the 2001 penthouse floors in beige stucco, set back behind a
+ * railing, with black steel pergola frames. The painted sign -- two navy
+ * bands, SEAGRAM / DISTILLERS / SINCE 1857 in gold, a protected heritage
+ * feature -- is high on No. 3's east face, toward Caroline St.
  */
 function seagram(kit, ctx) {
-  const city = ctx.city, L = ctx.atlas;
-  const BUFF = lin([0.80, 0.69, 0.50]), DARK = lin([0.62, 0.52, 0.37]), WIN = lin([0.14, 0.15, 0.16]), SILL = lin([0.86, 0.82, 0.72]);
+  const L = ctx.atlas;
+  const BUFF = lin(hex('#bdb196')), DARK = lin(hex('#a09479')), WIN = lin([0.14, 0.15, 0.16]), SILL = lin(hex('#d6ccb4'));
+  const SHUT = lin(hex('#4f6c78')), STUCCO = lin(hex('#cdb98f')), STEEL = lin([0.06, 0.06, 0.06]);
   for (const key of ['seagram3', 'seagram5']) {
     let pts = P[key].p;
     if (polyArea(pts) < 0) pts = pts.slice().reverse();
     const [cx, cz] = centroid(pts);
     const B = kit.B(cx, cz), g = kit.grp(cx, cz);
-    const fl = P[key].lv || 6, st = 3.3;
-    const base = T(cx, cz), yTop = base + fl * st + 1;
+    const st = 3.3, brick = key === 'seagram3' ? 5 : 6, pent = key === 'seagram3' ? 2 : 3;
+    const base = T(cx, cz), yTop = base + brick * st + 1.4;
     let lo = Infinity;
     for (const q of pts) lo = Math.min(lo, T(q[0], q[1]));
     const E = edges(pts);
-    // the painted sign: on No. 3's long face that looks toward Uptown
+    // the painted sign: No. 3's face toward Caroline St (east of it)
     let signE = null, sk = -Infinity;
     if (key === 'seagram3') {
-      const longest = Math.max(...E.map((e) => e.L));
-      const ux = -3840 - cx, uz = -1400 - cz, ul = Math.hypot(ux, uz);
       for (const e of E) {
-        if (e.L < longest * 0.8) continue;
-        const k = (e.nx * ux + e.nz * uz) / ul;
+        if (e.L < 8) continue;
+        const k = e.nx;   // east
         if (k > sk) { sk = k; signE = e; }
       }
     }
     for (const e of E) {
       const N = [e.nx, 0, e.nz];
-      B.quad(e.at(0, lo - 1.2), e.at(e.L, lo - 1.2), e.at(e.L, yTop + 0.8), e.at(0, yTop + 0.8), N, U0, [DARK, DARK, BUFF, BUFF]);
-      B.quad(e.at(0, yTop + 0.8, 0.12), e.at(e.L, yTop + 0.8, 0.12), e.at(e.L, yTop + 0.9, 0), e.at(0, yTop + 0.9, 0), [0, 1, 0], U0, SILL);
-      ctx.solids.push({ x: e.mx, z: e.mz, hw: e.L / 2 + 0.2, hd: 0.35, rot: Math.atan2(e.uz, e.ux), y0: lo - 1.2, y1: yTop + 0.8 });
-      const gy = T(e.mx + e.nx * 2, e.mz + e.nz * 2);
-      // brick pilasters every 4.5 m, small windows between them on every floor
-      const nb = Math.max(1, Math.floor(e.L / 4.5));
-      const bw = e.L / nb;
-      for (let k = 0; k <= nb; k++) {
-        const p = e.at(k * bw, gy - 0.5, 0.08);
-        B.box(p[0], p[1], p[2], 0.7, yTop - gy + 0.5, 0.2, Math.atan2(e.uz, e.ux), DARK);
+      B.quad(e.at(0, lo - 1.2), e.at(e.L, lo - 1.2), e.at(e.L, yTop + 0.6), e.at(0, yTop + 0.6), N, U0, [DARK, DARK, BUFF, BUFF]);
+      // the corbelled cornice: three courses stepping out
+      for (let s = 0; s < 3; s++) {
+        const y = yTop - 0.9 + s * 0.25, d = 0.1 * (s + 1);
+        B.quad(e.at(0, y, d), e.at(e.L, y, d), e.at(e.L, y + 0.25, d), e.at(0, y + 0.25, d), N, U0, s === 2 ? BUFF : DARK);
       }
+      ctx.solids.push({ x: e.mx, z: e.mz, hw: e.L / 2 + 0.2, hd: 0.35, rot: Math.atan2(e.uz, e.ux), y0: lo - 1.2, y1: yTop + 0.6 });
+      const gy = T(e.mx + e.nx * 2, e.mz + e.nz * 2);
       const sgn = e === signE;
-      for (let f = 0; f < fl; f++) {
-        const y0 = gy + 1.2 + f * st;
-        if (y0 + 1.1 > yTop - 0.5) break;
-        if (sgn && f >= fl - 3) continue;   // the painted sign's field
-        for (let k = 0; k < nb * 2; k++) {
-          const t = (Math.floor(k / 2) + (k % 2 ? 0.7 : 0.3)) * bw;
-          B.quad(e.at(t - 0.4, y0, 0.04), e.at(t + 0.4, y0, 0.04), e.at(t + 0.4, y0 + 1.1, 0.04), e.at(t - 0.4, y0 + 1.1, 0.04), N, U0, WIN);
-          B.quad(e.at(t - 0.5, y0 - 0.14, 0.07), e.at(t + 0.5, y0 - 0.14, 0.07), e.at(t + 0.5, y0, 0.07), e.at(t - 0.5, y0, 0.07), N, U0, SILL);
-          B.quad(e.at(t - 0.5, y0 + 1.1, 0.06), e.at(t + 0.5, y0 + 1.1, 0.06), e.at(t + 0.5, y0 + 1.3, 0.06), e.at(t - 0.5, y0 + 1.3, 0.06), N, U0, DARK);
+      const nw = Math.max(1, Math.floor((e.L - 1.5) / 2.6)), pad = (e.L - nw * 2.6) / 2;
+      for (let f = 0; f < brick; f++) {
+        const y0 = gy + 1.0 + f * st;
+        if (y0 + 1.5 > yTop - 1.0) break;
+        if (sgn && f >= brick - 2) continue;   // the painted sign's field
+        for (let i = 0; i < nw; i++) {
+          const t = pad + 2.6 * (i + 0.5);
+          B.quad(e.at(t - 0.42, y0, 0.04), e.at(t + 0.42, y0, 0.04), e.at(t + 0.42, y0 + 1.45, 0.04), e.at(t - 0.42, y0 + 1.45, 0.04), N, U0, WIN);
+          B.tri(e.at(t - 0.55, y0 + 1.45, 0.05), e.at(t + 0.55, y0 + 1.45, 0.05), e.at(t, y0 + 1.75, 0.05), N, DARK);
+          B.quad(e.at(t - 0.52, y0 - 0.12, 0.07), e.at(t + 0.52, y0 - 0.12, 0.07), e.at(t + 0.52, y0, 0.07), e.at(t - 0.52, y0, 0.07), N, U0, SILL);
+          for (const s of [-1, 1]) B.quad(e.at(t + s * 0.46, y0, 0.08), e.at(t + s * 0.88, y0, 0.08), e.at(t + s * 0.88, y0 + 1.45, 0.08), e.at(t + s * 0.46, y0 + 1.45, 0.08), N, U0, SHUT);
         }
       }
       if (sgn) {
-        const w = Math.min(e.L - 3, 26), h = st * 2.6;
+        const w = Math.min(e.L - 2, 24), h = st * 1.9;
         const m = L.panel(w, h, 14, (q, W, H) => {
-          q.fillStyle = '#9a7c55'; q.fillRect(0, 0, W, H);
-          q.fillStyle = 'rgba(245,238,220,0.92)'; q.textAlign = 'center'; q.textBaseline = 'middle';
-          q.font = `800 ${H * 0.36}px ${SERIF}`;
-          q.fillText('SEAGRAM', W / 2, H * 0.36, W * 0.94);
-          q.font = `700 ${H * 0.2}px ${SERIF}`;
-          q.fillText('DISTILLERS  LIMITED', W / 2, H * 0.74, W * 0.94);
+          q.clearRect(0, 0, W, H);
+          q.fillStyle = '#2e3550';
+          q.fillRect(0, 0, W, H * 0.44); q.fillRect(0, H * 0.5, W, H * 0.5);
+          q.fillStyle = '#c9a44c'; q.textAlign = 'center'; q.textBaseline = 'middle';
+          q.font = `800 ${H * 0.34}px ${SERIF}`;
+          q.fillText('SEAGRAM', W / 2, H * 0.24, W * 0.92);
+          q.fillText('DISTILLERS', W / 2, H * 0.7, W * 0.92);
+          q.font = `700 ${H * 0.09}px ${SERIF}`;
+          q.fillText('SINCE 1857', W / 2, H * 0.93, W * 0.5);
         });
-        const p = e.at(e.L / 2, yTop - 0.4 - h / 2, 0.2);
+        const p = e.at(e.L / 2, yTop - 1.1 - h / 2, 0.12);
         hang(g, m, p[0], p[1], p[2], e.nx, e.nz, 0.02);
         STATS.seagramSign = [Math.round(p[0]), Math.round(p[1]), Math.round(p[2]), +e.nx.toFixed(2), +e.nz.toFixed(2), w, h];
       }
     }
-    roof(B, pts, yTop, lin([0.34, 0.33, 0.32]));
+    roof(B, pts, yTop + 0.6, lin([0.34, 0.33, 0.32]));
+    // the penthouse floors: set back 1.8 m, beige stucco, big lofts' windows, a railing, black pergola frames
+    const o = obb(pts);
+    if (o) {
+      const hu = o.hu - 1.8, hv = o.hv - 1.8, rot = Math.atan2(o.uz, o.ux);
+      const yP = yTop + 0.6, hP = pent * 3.2;
+      B.box(o.x, yP, o.z, hu * 2, hP, hv * 2, rot, STUCCO);
+      const vx = -o.uz, vz = o.ux;
+      const faces = [[vx, vz, o.ux, o.uz, hv, hu], [-vx, -vz, o.ux, o.uz, hv, hu], [o.ux, o.uz, vx, vz, hu, hv], [-o.ux, -o.uz, vx, vz, hu, hv]];
+      for (const [nx, nz, ax, az, d, len] of faces) {
+        for (let f = 0; f < pent; f++) {
+          for (let t = -len + 2.5; t < len - 2.0; t += 5.0) {
+            const px = o.x + nx * (d + 0.03) + ax * t, pz = o.z + nz * (d + 0.03) + az * t, y = yP + 0.7 + f * 3.2;
+            B.quad([px - ax * 0.9, y, pz - az * 0.9], [px + ax * 0.9, y, pz + az * 0.9], [px + ax * 0.9, y + 1.9, pz + az * 0.9], [px - ax * 0.9, y + 1.9, pz - az * 0.9], [nx, 0, nz], U0, WIN);
+          }
+        }
+        // the railing at the setback's edge, pergola posts and beams on the terrace
+        const rx = o.x + nx * (d + 1.7), rz = o.z + nz * (d + 1.7), L2 = (len + 1.8) * 2;
+        B.box(rx, yP + 1.0, rz, L2, 0.06, 0.06, Math.atan2(az, ax), STEEL);
+        for (let t = -len + 1; t < len - 0.5; t += 4.5) {
+          const px = o.x + nx * (d + 1.0) + ax * t, pz = o.z + nz * (d + 1.0) + az * t;
+          B.box(px, yP, pz, 0.2, 3.0, 0.2, 0, STEEL);
+          B.box(px - nx * 0.5, yP + 2.9, pz - nz * 0.5, 0.18, 0.2, 0.18, 0, STEEL);
+          B.box(o.x + nx * (d + 0.5) + ax * t, yP + 2.95, o.z + nz * (d + 0.5) + az * t, 0.16, 0.16, 0.16, 0, STEEL);
+        }
+        // a beam along the pergola line
+        B.box(o.x + nx * (d + 1.0), yP + 2.95, o.z + nz * (d + 1.0), len * 2, 0.16, 0.16, Math.atan2(az, ax), STEEL);
+      }
+      ctx.solids.push({ x: o.x, z: o.z, hw: hu, hd: hv, rot, y0: yP, y1: yP + hP });
+    }
   }
 }
-
 // --- Waterloo Park --------------------------------------------------------------------
 
 // Footbridges (OSM ways): the steel one by the grist mill (917459902), the
@@ -2397,6 +2625,10 @@ function mall(kit, ctx) {
 // --- the extra --------------------------------------------------------------------------
 
 const STATS = {};
+// Uptown's researched buildings (kwuptown.js) build inside the uptown run: same kit, same atlas, no new draws
+const UPTOWN_EXTRA = [];
+export function addUptown(fn) { UPTOWN_EXTRA.push(fn); }
+export function placesData() { return P; }
 /** landmarks.js extra: all four places. */
 export function buildPlaces(ctx) {
   if (!P) return;
@@ -2419,6 +2651,7 @@ export function buildPlaces(ctx) {
     seagram(kit, ctx);
     marsland(kit, ctx);
     parkade(kit, ctx);
+    for (const fn of UPTOWN_EXTRA) fn(kit, ctx);
   });
   // open ground the tree scatter keeps off (landmarks.js clearAt -> city.clearCircles)
   const keep = (pts, pad) => {
