@@ -10,7 +10,9 @@
 //   - `surface(x, z)` is the pavement's top for city.slabQuery, so wheels,
 //     feet and parked aircraft stand on what is drawn;
 //   - `inField(x, z)` keeps the trees off the airfield;
-//   - `stands()` is where the aircraft wait.
+//   - `stands()` is where the aircraft wait; `runway(id)` a runway from the
+//     end it is used from (airtraffic.js);
+//   - the control tower (prepTower / buildTower), FINAL APPROACH's door.
 
 import * as THREE from './three.js';
 import * as G from './geo.js';
@@ -22,6 +24,9 @@ const U0 = [0, 0, 0, 0, 0, 0, 0, 0];
 const lin = (c) => [Math.pow(c[0], 2.2), Math.pow(c[1], 2.2), Math.pow(c[2], 2.2)];
 const ASPHALT = lin([0.24, 0.24, 0.25]), TAXI = lin([0.30, 0.30, 0.31]), APRON = lin([0.56, 0.56, 0.54]);
 const WHITE = lin([0.93, 0.93, 0.92]), YELLOW = lin([0.92, 0.74, 0.12]);
+// the control tower: its centre, its axes (A along the runway, B toward New
+// Germany Lane, where the door is) and the base's half-width
+const TOWER = { x: 7946.8, z: -877.4, ax: 0.909, az: -0.417, bx: 0.417, bz: 0.909, half: 6.5 };
 
 function pointInPoly(p, x, z) {
   let c = false;
@@ -185,6 +190,95 @@ export class YKF {
       const [a, b] = s.p;
       return [b[0], b[1], Math.atan2(a[0] - b[0], a[1] - b[1]), s.ref];
     });
+  }
+
+  /**
+   * A runway by its ref ('08/26') or either end's designator ('26'): the end
+   * it is used FROM (`t` the threshold, `u` the landing direction, `h` that
+   * as a heading), its far end, length, width and the pavement's height.
+   */
+  runway(id) {
+    if (!this.a) return null;
+    const r = this.a.runways.find((q) => q.ref === id || q.ref.split('/').includes(id));
+    if (!r) return null;
+    const [d0, d1] = r.ref.split('/');
+    const rev = id === d1;
+    const [a, b] = rev ? [r.p[1], r.p[0]] : r.p;
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]), ux = (b[0] - a[0]) / L, uz = (b[1] - a[1]) / L;
+    const y = this.surface((a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+    return { ref: r.ref, id: rev ? d1 : d0, t: a, e: b, ux, uz, L, w: r.w, h: Math.atan2(ux, uz),
+      y: y !== null ? y : G.terrainHeight((a[0] + b[0]) / 2, (a[1] + b[1]) / 2) };
+  }
+
+  // --- the control tower -------------------------------------------------------------
+  // NAV CANADA's 2017 tower, 19.4 m to its roof, built more central than the
+  // 1969 one after 08/26 grew east. Placed on the stepped OSM footprint beside
+  // New Germany Lane, by the Airport Operations Centre (an estimate: OSM does
+  // not tag it): a two-storey base, a square shaft, an eight-sided glass cab
+  // leaning out, the roof and a mast. Its door faces the lane.
+
+  /** Before anything is meshed: the footprint's box goes flat (the tower is drawn here). */
+  prepTower(city, boxAt) {
+    const T = TOWER;
+    this.tower = null;
+    if (!this.a) return;
+    const b = boxAt(city, T.x, T.z, 3);
+    if (b && b.w * b.d < 600) { b.h = 0; if (!b.kw) b.kw = {}; b.kw.skip = true; }
+    const y = G.terrainHeight(T.x, T.z);
+    const dx = T.x + T.bx * (T.half + 1.6), dz = T.z + T.bz * (T.half + 1.6);
+    this.tower = { x: dx, y: G.terrainHeight(dx, dz), z: dz, shaft: [T.x, T.z], cabY: y + 17.5, ground: y };
+  }
+
+  /** landmarks.js extra: the tower. */
+  buildTower(ctx) {
+    if (!this.tower) return;
+    const T = TOWER, y0 = this.tower.ground - 0.3, rot = Math.atan2(T.az, T.ax);
+    const B = new Builder(false), Gl = new Builder(false);
+    const CLAD = lin([0.80, 0.81, 0.82]), SHAFT = lin([0.90, 0.90, 0.88]), TRIM = lin([0.42, 0.44, 0.47]);
+    const DARK = lin([0.10, 0.12, 0.15]), GLASSC = lin([0.20, 0.28, 0.34]), RED = lin([0.95, 0.12, 0.08]);
+    const at = (a, b) => [T.x + T.ax * a + T.bx * b, T.z + T.az * a + T.bz * b];
+    const box = (bld, a, b, y, w, h, d, col, r = rot) => { const [x, z] = at(a, b); bld.box(x, y0 + y, z, w, h, d, r, col); };
+    const S = T.half * 2;
+    // the base: two storeys, a band of windows round each, a parapet
+    box(B, 0, 0, 0, S, 6.8, S, CLAD);
+    box(B, 0, 0, 6.8, S + 0.3, 0.45, S + 0.3, TRIM);
+    for (const [y, h] of [[1.2, 1.3], [4.3, 1.3]]) {
+      box(Gl, 0, 0, y, S + 0.08, h, S - 1.2, GLASSC);
+      box(Gl, 0, 0, y, S - 1.2, h, S + 0.08, GLASSC);
+    }
+    // the door, its glass and a canopy over it
+    box(Gl, 0, T.half + 0.02, 0.3, 2.0, 2.4, 0.08, DARK);
+    box(B, 0, T.half + 0.9, 2.9, 3.2, 0.18, 1.8, TRIM);
+    // the shaft, with a stair slot up its face
+    box(B, 0, 0, 7.2, 5.4, 8.6, 5.4, SHAFT);
+    box(Gl, 0, 2.72, 8, 0.9, 7.2, 0.06, DARK);
+    // the cab's floor and lower wall: an octagon of two boxes
+    for (const r of [rot, rot + Math.PI / 4]) box(B, 0, 0, 15.8, 7.9, 0.9, 7.9, TRIM, r);
+    // the glass, leaning out: eight panes from radius 4.15 at 16.7 to 4.75 at 19.6
+    const [cx, cz] = at(0, 0);
+    const ring = (r, y) => Array.from({ length: 8 }, (_, k) => {
+      const q = rot + (k + 0.5) * Math.PI / 4;
+      return [cx + Math.cos(q) * r, y0 + y, cz + Math.sin(q) * r];
+    });
+    const lo = ring(4.15, 16.7), hi = ring(4.75, 19.6);
+    for (let k = 0; k < 8; k++) {
+      const k2 = (k + 1) % 8, q = rot + (k + 1) * Math.PI / 4;
+      Gl.quad(lo[k], lo[k2], hi[k2], hi[k], [Math.cos(q), 0.2, Math.sin(q)], U0, GLASSC);
+      B.tube(lo[k], hi[k], 0.09, 4, DARK);
+    }
+    // the roof: a broad octagon over the glass, a drum, the mast and its light
+    for (const r of [rot, rot + Math.PI / 4]) box(B, 0, 0, 19.6, 10.2, 0.55, 10.2, TRIM, r);
+    box(B, 0, 0, 20.15, 3.2, 1.0, 3.2, SHAFT);
+    B.tube([cx + 0.8, y0 + 21, cz], [cx + 0.8, y0 + 26.5, cz], 0.07, 5, DARK);
+    B.box(cx + 0.8, y0 + 26.5, cz, 0.3, 0.3, 0.3, 0, RED);
+    const g = new THREE.Group();
+    const opaque = new THREE.Mesh(B.build(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.78, metalness: 0 }));
+    const glass = new THREE.Mesh(Gl.build(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.12, metalness: 0.65, envMapIntensity: 1.4 }));
+    opaque.castShadow = opaque.receiveShadow = true;
+    g.add(opaque, glass);
+    ctx.addTo('ykf', g);
+    const [bx, bz] = at(0, 0);
+    ctx.solids.push({ x: bx, z: bz, hw: T.half, hd: T.half, rot, y0: y0 - 1, y1: y0 + 21 });
   }
 
   /** Where a plane waits for take-off on 08: short of the threshold. */

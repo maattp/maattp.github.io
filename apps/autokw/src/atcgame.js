@@ -1,4 +1,4 @@
-// FINAL APPROACH: the game in Boeing Field's control tower, after the touch-
+// FINAL APPROACH: the game in YKF's control tower, after the touch-
 // screen classic where you draw each aircraft's path to its runway. No DOM:
 // atc.js draws it and hands it the finger, and Node can play it.
 //
@@ -8,10 +8,13 @@
 // ends in the landing zone of the right runway, heading the right way, lands
 // the aircraft when it gets there:
 //
-//   red jets        the long runway (14R), from its north-west end
-//   yellow props    the short runway (14L), from its south-east end
+//   red jets        the long runway, 26, from its east end
+//   yellow props    the short runway, 32, from its south-east end
 //   blue helicopters the pad, from any direction
-//   green seaplanes the Duwamish, from its south (from the 12th landing)
+//   green floatplanes the Grand River, from its south (from the 12th landing)
+//
+// The runways are YKF's, drawn to scale (0.206 px a metre, north up): 08/26
+// on its true 065/245 and 14/32 on 128/308, crossing 336 m in from 08's end.
 //
 // Aircraft never leave: at the edge they turn back in. Two airborne aircraft
 // closer than their radii collide and the shift is over; closer than twice
@@ -25,11 +28,11 @@ export const WW = 1000, WH = 560;
 const RAD = Math.PI / 180;
 // runways: centre, heading of the landing roll (radians, screen), length, width
 export const RUNWAYS = {
-  red: { x: 520, y: 290, a: -18 * RAD, len: 400, w: 30, name: '14R', col: '#e8453a' },
-  yellow: { x: 610, y: 410, a: 162 * RAD, len: 250, w: 22, name: '14L', col: '#f2c230' },
+  red: { x: 540, y: 240, a: 155.15 * RAD, len: 440, w: 30, name: '26', col: '#e8453a' },
+  yellow: { x: 410, y: 309, a: -141.57 * RAD, len: 258, w: 24, name: '32', col: '#f2c230' },
 };
-export const PAD = { x: 250, y: 140, r: 26, col: '#3a8ae8' };
-// the river: a band down the left, landing on it heading north
+export const PAD = { x: 860, y: 300, r: 26, col: '#3a8ae8' };
+// the Grand River: a band down the left, landing on it heading north
 export const RIVER = { pts: [[150, 600], [138, 470], [120, 360], [112, 250], [128, 130], [170, 20], [200, -40]], w: 46, land: { x: 128, y: 420, a: -96 * RAD }, col: '#3ac878' };
 
 export const KINDS = {

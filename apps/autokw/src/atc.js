@@ -1,9 +1,9 @@
-// BOEING FIELD TOWER: ENTER at the control tower's door and you are in the
+// YKF TOWER: ENTER at the control tower's door and you are in the
 // cab, playing FINAL APPROACH (atcgame.js has the rules): draw each arriving
 // aircraft's path to its runway with a finger, and keep them apart.
 //
 // The field is drawn top-down in the bright, clean style of the touch-screen
-// original: mown grass, the Duwamish down the west side, two runways with
+// original: mown grass, the Grand River down the west side, YKF's two runways with
 // their thresholds painted in the colour of the traffic they take, the
 // helicopter pad, taxiways, hangars and trees. Aircraft are drawn from paths
 // with a shadow that closes in as they come down; a path is a trail of dots
@@ -153,9 +153,9 @@ export class TowerGame {
     this.game = new Atc({ h: this.worldH });
     this.mode = 'brief';
     const key = (c, t) => `<span><i style="background:${c}"></i>${t}</span>`;
-    this._panel(`<div class="big">BOEING FIELD TOWER</div>
+    this._panel(`<div class="big">YKF TOWER</div>
       <div class="sm">You have the field. Draw a path from each aircraft to where it lands, and keep them apart.</div>
-      <div class="keys">${key(COLS.red, 'jets: runway 14R')}${key(COLS.yellow, 'props: runway 14L')}${key(COLS.blue, 'helicopters: the pad')}${key(COLS.green, 'seaplanes: the river')}</div>
+      <div class="keys">${key(COLS.red, 'jets: runway 26')}${key(COLS.yellow, 'props: runway 32')}${key(COLS.blue, 'helicopters: the pad')}${key(COLS.green, 'floatplanes: the Grand')}</div>
       <div class="sm">Land on the arrow, heading the way it points.${this.best ? ` Best shift: ${this.best}.` : ''}</div>
       <button class="go">TAKE THE FIELD</button><button class="back">LEAVE</button>`, () => this._newGame(), () => this.close());
   }
@@ -248,7 +248,7 @@ export class TowerGame {
     let sd = 5;
     const rnd = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
     for (let i = 0; i < 160; i++) { g.fillStyle = rnd() < 0.5 ? '#4e9a40' : '#68b858'; g.beginPath(); g.ellipse(X0 + rnd() * (X1 - X0), Y0 + rnd() * (Y1 - Y0), 6 + rnd() * 16, 3 + rnd() * 8, rnd() * 3, 0, Math.PI * 2); g.fill(); }
-    // the Duwamish
+    // the Grand River
     const river = (w, col) => { g.strokeStyle = col; g.lineWidth = w; g.lineCap = 'round'; g.lineJoin = 'round'; g.beginPath(); RIVER.pts.forEach((p, i) => (i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]))); g.stroke(); };
     river(RIVER.w + 16, '#7a8a4a'); river(RIVER.w + 6, '#c8b888'); river(RIVER.w, '#3a86b8'); river(RIVER.w * 0.55, '#4a96c8');
     // the landing lane on the river: buoys and an arrow
@@ -259,18 +259,22 @@ export class TowerGame {
     const rw = RUNWAYS.red, ry = RUNWAYS.yellow;
     const AY = Math.min(440, this.worldH - 118);      // the apron keeps to the bottom edge
     const along = (r, t) => [r.x + Math.cos(r.a) * r.len / 2 * t, r.y + Math.sin(r.a) * r.len / 2 * t];
-    for (const [a, b] of [[along(rw, 0.6), along(ry, -0.8)], [along(rw, -0.2), along(ry, 0.6)], [along(ry, 0), [860, AY + 30]], [along(rw, 0.95), [860, AY + 30]]]) { g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke(); }
+    // Alpha, the parallel taxiway south of 08/26, its stubs, and the links to the terminal's apron
+    const S = (p) => [p[0] + 0.4202 * 24, p[1] + 0.9074 * 24];
+    const TX = [[S(along(rw, -0.92)), S(along(rw, 0.85))], [along(rw, -0.92), S(along(rw, -0.92))], [along(rw, 0.85), S(along(rw, 0.85))],
+      [along(rw, -0.35), S(along(rw, -0.35))], [S(along(rw, -0.35)), [700, AY + 8]], [along(ry, -0.9), [612, AY + 40]], [along(rw, 0.3), S(along(rw, 0.3))]];
+    for (const [a, b] of TX) { g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke(); }
     g.strokeStyle = '#f2d24a'; g.lineWidth = 1; g.setLineDash([6, 6]);
-    for (const [a, b] of [[along(rw, 0.6), along(ry, -0.8)], [along(rw, -0.2), along(ry, 0.6)], [along(ry, 0), [860, AY + 30]], [along(rw, 0.95), [860, AY + 30]]]) { g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke(); }
+    for (const [a, b] of TX) { g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke(); }
     g.setLineDash([]);
-    // the apron and hangars, bottom right
-    g.fillStyle = '#9a9ea2'; g.fillRect(800, AY, 190, 130);
-    for (const [hx, hy, hw, hh, c] of [[815, AY + 30, 60, 40, '#d8d0c4'], [885, AY + 22, 70, 48, '#c8ccd0'], [960, AY + 40, 36, 60, '#b89878']]) {
+    // the terminal's apron, the terminal and the hangars, south of the field
+    g.fillStyle = '#9a9ea2'; g.fillRect(590, AY, 200, 130);
+    for (const [hx, hy, hw, hh, c] of [[605, AY + 30, 60, 40, '#d8d0c4'], [675, AY + 22, 70, 48, '#c8ccd0'], [750, AY + 40, 36, 60, '#b89878']]) {
       g.fillStyle = '#0003'; g.fillRect(hx + 4, hy + 5, hw, hh);
       g.fillStyle = c; g.fillRect(hx, hy, hw, hh);
       g.fillStyle = '#0000001a'; for (let i = 0; i < hw; i += 6) g.fillRect(hx + i, hy, 2, hh);
     }
-    g.fillStyle = '#ffffffc0'; g.font = '900 13px -apple-system, Helvetica, sans-serif'; g.textAlign = 'center'; g.fillText('BOEING FIELD', 890, AY + 94);
+    g.fillStyle = '#ffffffc0'; g.font = '900 13px -apple-system, Helvetica, sans-serif'; g.textAlign = 'center'; g.fillText('YKF', 690, AY + 94);
     // runways
     for (const key of ['red', 'yellow']) {
       const r = RUNWAYS[key];
@@ -298,7 +302,7 @@ export class TowerGame {
     for (let i = 0; i < 70; i++) {
       let x = X0 + rnd() * (X1 - X0), y = Y0 + rnd() * (Y1 - Y0);
       if (x > 60 && x < WW - 60 && y > 50 && y < this.worldH - 50) continue;
-      if (Math.hypot(x - 130, y - 300) < 70 || (x > 780 && y > AY - 20)) continue;
+      if (Math.hypot(x - 130, y - 300) < 70 || (x > 570 && x < 810 && y > AY - 20)) continue;
       const r = 8 + rnd() * 9;
       g.fillStyle = '#0003'; g.beginPath(); g.arc(x + 3, y + 4, r, 0, 7); g.fill();
       g.fillStyle = rnd() < 0.5 ? '#2f7a36' : '#3a8a3e'; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();

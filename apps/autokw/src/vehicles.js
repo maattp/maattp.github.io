@@ -204,6 +204,11 @@ export const TYPES = {
     // climbBase 7 -> 16: pulling back near rotation speed (little excess)
     // asked for ~7.6 m/s and felt like nothing happened
     fly: { vr: 72, stall: 58, bank: 0.55, turn: 0.34, climb: 36, climbBase: 16, vne: 150, thrustK: 0.62, pitchK: 3.2 } }),
+  // Auto KW: a 737-800-class narrowbody (buildAirliner), YKF's airline
+  // traffic (airtraffic.js flies it; nobody parks one). 'livery' paint: the
+  // vehicle's colour is its tail, cheatline and nacelles, the body white.
+  airliner: deriveSpec({ retract: true, wheelbase: 15.6, len: 39.5, wid: 3.76, wheelR: 0.56, sill: 1.35, belt: 3.3, roof: 5.2, cab: [0.9, 0.3], hand: 'airliner', plane: true, jet: true, finish: 'livery', mass: 9, acc: 6.5, topKph: 600, brakeM: 150, latG: 0.45, seeFar: 7000,
+    fly: { vr: 72, stall: 56, bank: 0.55, turn: 0.38, climb: 36, climbBase: 14, vne: 150, thrustK: 0.75, pitchK: 3.2 } }),
   // Boeing-Stearman Model 75: the biplane Boeing built, and the one hanging
   // in the Museum of Flight next door. A taildragger: it sits 11 degrees nose
   // up on its tailwheel until the tail lifts at ~15 m/s (`taildragger` is the
@@ -5067,6 +5072,123 @@ function buildJumbo(spec, paint, trim, matte) {
 }
 
 /**
+ * A narrowbody twinjet, 737-800 proportions (Auto KW's airliners at YKF,
+ * flown by airtraffic.js): 39.5 m, 35.8 m span with winglets, a 12.5 m fin,
+ * two CFM56-style nacelles slung low and flat-bottomed under the wing, ~70
+ * cabin windows a side, two doors a side and the over-wing exits, a flight
+ * deck behind its windscreen. Its paint is the LIVERY finish (paintMaterial
+ * 'livery'): white body in the vertex colours, and every part coloured LIV
+ * -- the fin, the cheatline, the nacelles, the winglets -- takes the
+ * vehicle's own colour, so one type wears every airline's tail.
+ */
+const LIV = [1, 0, 1];   // the livery flag (liveryShader): this part takes the vehicle's colour
+function buildAirliner(spec, paint, trim, matte) {
+  const H = spec.len / 2;                    // 19.75
+  const ST = [
+    [H, 0.06, 0.06, 0.06, 3.0], [H - 0.35, 0.55, 0.6, 0.5, 3.05], [H - 1.1, 1.05, 1.15, 0.98, 3.12],
+    [H - 2.2, 1.45, 1.55, 1.42, 3.18], [H - 3.5, 1.74, 1.82, 1.72, 3.23], [H - 5.0, 1.87, 1.94, 1.86, 3.25],
+    [H - 6.5, 1.88, 1.95, 1.88, 3.25], [-9.5, 1.88, 1.95, 1.88, 3.25], [-12.5, 1.76, 1.86, 1.5, 3.45],
+    [-15.2, 1.38, 1.55, 0.95, 3.85], [-17.6, 0.86, 1.06, 0.45, 4.3], [-19.2, 0.42, 0.55, 0.2, 4.62],
+    [-H, 0.16, 0.22, 0.1, 4.72],
+  ];
+  const hull = hullTable(ST), { rings, skinX } = hull;
+  const BODY = [0.93, 0.935, 0.94], BELLY = [0.74, 0.76, 0.79], DOOR = [0.80, 0.82, 0.85], WING = [0.70, 0.72, 0.75];
+  hullLoft(rings, (i, k, zm) => {
+    if (k < 0) return i === -1 ? [paint, BODY] : [matte, [0.35, 0.36, 0.38]];
+    const s = hullSide(k);
+    if (zm < H - 1.9 && zm > H - 3.0 && (s === 6 || s === 7)) return [trim, GLASS];   // the windscreen
+    if (zm < H - 3.0 && zm > H - 3.9 && s === 6) return [trim, GLASS];                // the side windows
+    if (s <= 2) return [paint, BELLY];
+    return [paint, BODY];
+  });
+  flightDeck(matte, trim, hull, H - 5.2, H - 2.0, { floorY: 2.55, panelZ: H - 2.35, seatZ: H - 3.45, halfW: 1.0, headY: 3.95, pilotX: 0.5 });
+  const skinPatch = (b, sd, zc, yc, w, h, col, d) => {
+    const rows = [];
+    for (const z of [zc - w / 2, zc + w / 2]) rows.push([yc - h / 2, yc + h / 2].map((y) => [sd * (skinX(z, y) + d), y, z]));
+    b.patch(rows, col, [sd, 0, 0]);
+  };
+  const DOORS = [H - 6.0, -13.2], EXITS = [0.9, -0.1];
+  for (const sd of [-1, 1]) {
+    for (let z = H - 7.2; z > -12.2; z -= 0.51) {
+      if (EXITS.some((dz) => Math.abs(z - dz) < 0.3)) continue;
+      skinWindow(trim, matte, skinX, sd, z, 3.62, 0.25, 0.36);
+    }
+    for (const dz of DOORS) {
+      skinPatch(paint, sd, dz, 3.25, 0.95, 1.85, DOOR, 0.004);
+      skinWindow(trim, matte, skinX, sd, dz, 3.75, 0.2, 0.26);
+    }
+    for (const dz of EXITS) {
+      skinPatch(paint, sd, dz, 3.4, 0.55, 0.95, DOOR, 0.004);
+      skinWindow(trim, matte, skinX, sd, dz, 3.62, 0.25, 0.36);
+    }
+    // the cheatline under the windows, sweeping up the tail cone to the fin
+    hullBand(paint, hull, sd, H - 1.2, -17.5, -0.06, -0.24, LIV);
+    hullBand(paint, hull, sd, -9.5, -18.8, 0.3, -0.06, LIV);
+  }
+  // --- wings ---------------------------------------------------------------------------
+  const WST = (sd) => [
+    { x: sd * 1.7, y: 2.02, zLE: 5.4, c: 7.4 }, { x: sd * 6.2, y: 2.5, zLE: 2.2, c: 4.4 },
+    { x: sd * 16.9, y: 3.62, zLE: -4.2, c: 1.5 },
+  ];
+  const wingAt = (sd, x) => {
+    const st = WST(sd), ax = Math.abs(x);
+    for (let i = 1; i < st.length; i++) {
+      if (ax <= Math.abs(st[i].x)) {
+        const a = st[i - 1], b = st[i], t = (ax - Math.abs(a.x)) / (Math.abs(b.x) - Math.abs(a.x));
+        return { y: lerp(a.y, b.y, t), zLE: lerp(a.zLE, b.zLE, t), c: lerp(a.c, b.c, t) };
+      }
+    }
+    return st[st.length - 1];
+  };
+  for (const sd of [-1, 1]) {
+    aerofoil(matte, WING, WST(sd), { thick: 0.12, n: 9 });
+    // the winglet, in the livery
+    aerofoil(paint, LIV, [{ x: sd * 16.9, y: 3.6, zLE: -4.2, c: 1.5 }, { x: sd * 17.1, y: 5.9, zLE: -5.7, c: 0.6 }], { thick: 0.08, n: 5, vertical: true });
+    trim.box(sd * 16.95, 3.62, -4.35, 0.06, 0.1, 0.2, 0, sd > 0 ? NAV_R : NAV_G);
+    // flap-track canoes
+    for (const x of [4.0, 8.5, 12.0]) {
+      const w = wingAt(sd, x);
+      matte.box(sd * x, w.y - 0.4, w.zLE - w.c * 0.6 - 0.6, 0.32, 0.36, w.c * 0.65, 0, [0.80, 0.82, 0.84]);
+    }
+    // --- the engine: a CFM56 nacelle forward of and under the wing ---------------------
+    const ex = 5.0, w = wingAt(sd, ex), x = sd * ex, yc = 1.48, z0 = w.zLE + 2.3;
+    const ES = [[z0, 0.86, 0.88, 0.74, yc], [z0 - 0.35, 0.98, 0.98, 0.84, yc], [z0 - 1.6, 1.0, 1.0, 0.86, yc],
+      [z0 - 3.0, 0.88, 0.88, 0.76, yc], [z0 - 3.6, 0.62, 0.62, 0.56, yc], [z0 - 4.3, 0.38, 0.38, 0.38, yc]];
+    const er = ES.map(([z, rw, ht, hb, y]) => { const r = hullRing(z, rw, ht, hb, y); return { z, pts: r.pts.map(([px, py]) => [px + x, py]) }; });
+    hullLoft(er, (i, k) => (i === -1 ? [matte, CAVITY] : k < 0 ? [matte, [0.2, 0.19, 0.18]] : [paint, LIV]));
+    trim.tube([x, yc, z0 + 0.04], [x, yc, z0 - 0.1], 0.86, 18, CHROME, false);
+    trim.tube([x, yc, z0 - 0.25], [x, yc, z0 - 0.7], 0.26, 10, CHROME, true);           // the spinner
+    matte.tube([x, yc, z0 - 0.2], [x, yc, z0 - 0.22], 0.8, 18, [0.18, 0.18, 0.2], true);  // the fan face
+    matte.tube([x, yc, z0 - 4.2], [x, yc, z0 - 4.9], 0.28, 10, [0.3, 0.28, 0.26], true);  // the core nozzle and plug
+    aerofoil(matte, WING, [{ x, y: yc + 0.85, zLE: z0 - 1.0, c: 3.6 }, { x, y: w.y - 0.05, zLE: w.zLE + 0.3, c: 3.0 }], { thick: 0.14, n: 5, vertical: true });
+  }
+  // wing-to-body fairing under the centre section
+  matte.box(0, 1.25, 1.6, 3.4, 0.55, 8.5, 0, BELLY);
+  // --- the tail: the fin in the livery, the tailplane ------------------------------
+  aerofoil(paint, LIV, [{ x: 0, y: 4.9, zLE: -11.0, c: 7.6 }, { x: 0, y: 8.6, zLE: -15.0, c: 4.4 }, { x: 0, y: 12.4, zLE: -18.4, c: 2.4 }], { thick: 0.1, n: 7, vertical: true });
+  for (const sd of [-1, 1]) {
+    aerofoil(matte, WING, [{ x: sd * 0.7, y: 4.45, zLE: -14.6, c: 4.3 }, { x: sd * 6.5, y: 4.95, zLE: -18.3, c: 1.5 }], { thick: 0.09, n: 6 });
+  }
+  trim.box(0, 12.3, -20.6, 0.1, 0.1, 0.15, 0, WHITE);
+  trim.box(0, 5.25, 4, 0.12, 0.1, 0.3, 0, TAILC);              // the beacon on the crown
+  trim.box(0, 1.33, 0, 0.12, 0.1, 0.3, 0, TAILC);              // and under the belly
+  // --- the gear: two nosewheels, two two-wheel mains --------------------------------
+  const R = spec.wheelR;
+  for (const sd of [-1, 1]) {
+    gearPart(matte, [sd * 2.9, 2.0, -0.35], (t, m) => {
+      m.tube([sd * 2.9, 2.0, -0.35], [sd * 2.9, R, -0.35], 0.13, 10, ALU, false);
+      for (const dx of [-0.34, 0.34]) airWheel(t, m, sd * 2.9 + dx, R, -0.35, R, 0.34);
+    });
+  }
+  gearPart(matte, [0, 1.6, H - 4.45], (t, m) => {
+    m.tube([0, 1.6, H - 4.45], [0, R * 0.7, H - 4.5], 0.1, 10, ALU, false);
+    for (const dx of [-0.24, 0.24]) airWheel(t, m, dx, R * 0.7, H - 4.5, R * 0.7, 0.24);
+  });
+  trim.box(0, 0.9, H - 4.1, 0.25, 0.12, 0.18, 0, LAMP);
+  return [];
+}
+
+/**
  * A single-seat twin-engined fighter, F/A-18-ish: a pointed nose, a bubble
  * canopy, side intakes under swept wings, twin canted fins and twin nozzles,
  * sitting tall on its gear. Navy grey (the livery comes from the spawn).
@@ -9420,6 +9542,7 @@ function buildCombine(spec, paint, trim, matte) {
 /** Types with their own authored builder, keyed by `spec.hand`. */
 const HAND_BUILT = {
   plane: buildPlane, twin: buildTwin, jet: buildJet, biplane: buildBiplane, heli: buildHeli, fighter: buildFighter, jumbo: buildJumbo, saucer: buildSaucer,
+  airliner: buildAirliner,
   sports: buildSports, muscle: buildMuscle,
   sedan: buildSedan, suv: buildSuv, pickup: buildPickup, charger: buildCharger, wiener: buildWiener,
   hatch: (s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.hatch),
@@ -9769,6 +9892,16 @@ export function paintMaterial(color, finish = null) {
     m.customProgramCacheKey = () => 'vehicleWiener';
     return m;
   }
+  // An airline livery (the airliner): the vertex colours are the airframe's,
+  // and every part flagged LIV takes the material's colour instead
+  // (liveryShader). Same lacquer as any paint.
+  if (finish === 'livery') {
+    const m = paintMaterial(color);
+    m.vertexColors = true;
+    m.onBeforeCompile = liveryShader;
+    m.customProgramCacheKey = () => 'vehicleLivery';
+    return m;
+  }
   if (finish === 'tiger') {
     const m = paintMaterial(color);
     m.vertexColors = true;                 // the panel flags (TIG_*)
@@ -10001,6 +10134,14 @@ function wienerAtlas() {
  * lamps and the lettering; the tail lamps; the plates' faces. The lamps are
  * chrome and lit, the grille matte, without the lacquer.
  */
+/** The livery finish: LIV-flagged vertices (magenta) wear the material's colour, the rest their own. */
+function liveryShader(sh) {
+  sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', `#ifdef USE_COLOR
+	float livK = step( 0.9, vColor.r ) * step( vColor.g, 0.1 ) * step( 0.9, vColor.b );
+	diffuseColor.rgb = mix( vColor.rgb, diffuseColor.rgb, livK );
+#endif`);
+}
+
 function wienerShader(sh) {
   sh.uniforms.wmMap = { value: wienerAtlas() };
   const f = (v) => v.toFixed(4);

@@ -43,12 +43,13 @@ import { CoffeeShop } from './barista.js';
 import { Seafair } from './hydrorace.js';
 import { FireService, placeStations } from './firecalls.js';
 import { BONES } from './peds.js';
-import { setKwData, applyNamed, buildSigns, buildPolys, buildBunting, buildSchools, mapPlaces as kwPlaces, kwData } from './kw.js';
+import { setKwData, applyNamed, buildSigns, buildPolys, buildBunting, buildSchools, mapPlaces as kwPlaces, kwData, boxAt } from './kw.js';
 import { addLandmarkExtra } from './landmarks.js';
 import { Chicopee } from './chicopee.js';
 import { prepFun, buildMarketTent, buildFlags, waveFlags, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, buildDome } from './kwfun.js';
 import { Crops } from './crops.js';
 import { YKF } from './ykf.js';
+import { AirTraffic } from './airtraffic.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings, warmLightBar } from './traffic.js';
 import { Police } from './police.js';
@@ -139,6 +140,7 @@ let respawns = [];   // [{ name, x, z, node }] (buildRespawns)
 let ykf = null;        // the Region of Waterloo International Airport (ykf.js)
 let chicopee = null;   // Chicopee's bike park: trails, lifts, bikes (chicopee.js)
 let crops = null;      // Auto KW: standing corn and soy, the tractors and combines (crops.js)
+let air = null;        // Auto KW: YKF's air traffic, the Cessnas and the news helicopter (airtraffic.js)
 let fire = null, fireStations = [];   // Seattle Fire: the stations' rigs, the water cannon, fire calls (firecalls.js)
 
 /** The WASTED / BUSTED card. */
@@ -784,6 +786,8 @@ async function boot() {
   addLandmarkExtra((ctx) => chicopee.buildSign(ctx));
   ykf = new YKF(md.kw && md.kw.aero);
   addLandmarkExtra((ctx) => ykf.build(ctx));
+  ykf.prepTower(city, boxAt);   // YKF's control tower (FINAL APPROACH's door)
+  addLandmarkExtra((ctx) => ykf.buildTower(ctx));
   city.slabQuery = (x, z) => ykf.surface(x, z);
   blog(`city: grading ${cityStats.gradeCached ? 'from cache' : 'computed'}, buildings ${bootCache.buildings ? 'from cache' : 'computed'}`);
 
@@ -1293,16 +1297,20 @@ function installShadowFade() {
     v.vLong = 0;
   }
   if (BALLOON_SITE) spawnBalloon();
-  // YKF: aircraft on the terminal's stands, and a fighter on 08's threshold
+  // YKF: aircraft on the terminal's stands, and a fighter on 08's threshold;
+  // the gates by the terminal are the airliners' (airtraffic.js)
+  air = new AirTraffic({ scene, city, ykf, phone: ON_PHONE, get hud() { return hud; } });
   {
     const fleet = ['jet', 'twin', 'plane', 'sportplane', 'plane', 'heli', 'biplane', 'twin', 'sportplane'];
-    ykf.stands().forEach(([x, z, h], i) => {
+    ykf.stands().forEach(([x, z, h, ref], i) => {
+      if (air.reserved(ref)) return;
       const ty = fleet[i % fleet.length];
       const v = traffic.spawnAt(x, z, h, ty, AIRCRAFT_PAINT[ty], 'apron');
       v.vLong = 0;
     });
     const e = ykf.runwayEnd('08/26');
     if (e) traffic.spawnAt(e.x, e.z, e.heading, 'fighter', 0x7b8590, 'apron').vLong = 0;
+    if (air.ok) air.spawnAtGate('airliner', null, 40);
   }
   // Parkway Ford Lincoln on King St N: the cars for sale on its lot
   for (const [x, z, h, ty, col] of fordLot(city)) {
@@ -1342,6 +1350,14 @@ function installShadowFade() {
   // Seafair, First Cup, pickleball, islands, the tower, the fish, the
   // Wheel and the Needle).
   duckTour = seafair = coffee = pickle = islands = tower = fishToss = null;
+  // YKF's control tower: FINAL APPROACH (atc.js), at its door
+  if (ykf.tower) {
+    tower = new TowerGame({
+      scene, city, world, audio, tower: ykf.tower,
+      onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`YKF Tower paid $${m}`), 400); },
+      onEnd: () => { game.release('atc'); },
+    });
+  }
   // Pin Up Arcade Bar on King St N in Uptown Waterloo, and the pinball at
   // AOK Craft Beer + Arcade on King St W downtown Kitchener
   arcade = new Arcade({
@@ -1491,6 +1507,8 @@ function installShadowFade() {
     ...buggies.places(),
     { x: hockey.spot.x, z: hockey.spot.z, kind: 'hockey', name: 'The Aud', near: false,
       hello: 'The Aud — Kitchener Rangers hockey tonight against the London Knights. Press ENTER anywhere at the arena to drop the puck' },
+    ...(tower ? [{ x: tower.spot.x, z: tower.spot.z, kind: 'tower', name: 'YKF Control Tower', near: false,
+      hello: "YKF's control tower. Press ENTER at the door to take the field" }] : []),
     ...(ykf.runwayEnd() ? [{ x: 7228, z: -440, kind: 'jet', name: 'YKF Airport', near: false, label: 'YKF',
       hello: 'Region of Waterloo International Airport — planes on the stands and a fighter on runway 08. Climb in' }] : []),
     // ION: every station's street entrance
@@ -1661,7 +1679,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { get air() { return air; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;   // Auto KW: the harvest (crops.js)
   wireUi();
   career.start(hud);
@@ -2968,6 +2986,7 @@ function frame(now) {
   if (chicopee) chicopee.update(dt, camera.position.x, camera.position.z);
   cyclists.update(dt, player);
   if (buggies) buggies.update(dt, player, camera);
+  if (air) air.update(dt, player, camera);   // YKF's air traffic (airtraffic.js)
   bikeNet.update(camera);
   piers.update(camera);
   if (wheelRide) wheelRide.update(dt, wheelRide.busy ? input : null, wheelRide.busy ? look : null, camera.position.x, camera.position.z);
@@ -3233,6 +3252,7 @@ function withTrains(cars) {
   if (monorail && monorail.trains) for (const t of Object.values(monorail.trains)) if (t !== player.vehicle) audioCars.push(t);
   if (link) for (const t of link.trains) if (t !== player.vehicle && t.group.visible) audioCars.push(t);
   if (counterbal) for (const t of counterbal.cars) if (t !== player.vehicle && t.group.visible) audioCars.push(t);
+  if (air) air.audible(audioCars, camera.position.x, camera.position.z);
   return audioCars;
 }
 function audioState(dt, input, p, camDir, buried) {
@@ -3261,7 +3281,8 @@ function audioState(dt, input, p, camDir, buried) {
     listener.vz = Math.cos(player.heading) * player.speed;
   }
   const h = player.h;
-  const hp = police ? police.nearestHeli(camera.position.x, camera.position.z) : null;
+  const hp = (police ? police.nearestHeli(camera.position.x, camera.position.z) : null)
+    || (air ? air.nearestHeli(camera.position.x, camera.position.z) : null);
   return {
     inCar: !player.onFoot,
     onFoot: player.onFoot,

@@ -15,6 +15,7 @@
 //       (x, z) -- or `alt` absolute -- looking along a compass bearing (deg,
 //       0 = north, 90 = east) and pitch (deg up)
 //   { name, t: [x, z, h], c: [x, z, h], cy, fov }   look-at a point from a point
+//   either with `eval: '<js>'`, run first (pose the world); returning { c, t } frames it
 // `calls` in the output is the scene pass's draw count.
 
 import { launchChrome } from '../chrome.mjs';
@@ -102,6 +103,7 @@ async function main() {
       d.game.paused = true;
     })()`);
 
+    if (process.env.VIEW_PRE_FILE) process.env.VIEW_PRE = readFileSync(process.env.VIEW_PRE_FILE, 'utf8');
     if (process.env.VIEW_PRE) await evaluate(process.env.VIEW_PRE);
     if (process.env.VIEW_PROBE_FILE) process.env.VIEW_PROBE = readFileSync(process.env.VIEW_PROBE_FILE, 'utf8');
     if (process.env.VIEW_PROBE) {
@@ -130,6 +132,8 @@ async function main() {
       const res = await evaluate(`(() => {
         const d = window.__dbg, V = ${JSON.stringify(V)};
         let cx, cz, cy, tx, ty, tz;
+        // V.eval runs first; returning { c, t } (and fov) frames the view from it
+        if (V.eval) { const r = eval(V.eval); if (r && r.c) Object.assign(V, r); }
         if (V.at) {
           [cx, cz] = V.at;
           const b = V.bearing * Math.PI / 180, p = (V.pitch || 0) * Math.PI / 180;
