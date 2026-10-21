@@ -241,6 +241,8 @@ export async function loadMapData(onStep) {
   // which side of each street has a sidewalk, and a boulevard (tools/kw/build_sidewalks.py)
   let sidewalks = null;
   try { sidewalks = decodeSidewalks(await bytes('sidewalks.bin'), roads); } catch (e) { sidewalks = null; }
+  // Canada Post's community mailboxes and red letter boxes from OSM (the same script)
+  const postboxes = await opt('postboxes.json');
   // The Olympics, Rainier and the Cascades as seen from here (tools/build_mountains.py).
   // Scenery only: a failed fetch costs the view, never the boot.
   let mountains = null;
@@ -249,6 +251,6 @@ export async function loadMapData(onStep) {
   return {
     height, hfN: hp.w, wlevel,
     water, green, farm, maskN: sp.w, lot, lotN: lp.w,
-    roads, buildings, places, lakes, monorail, link, freight, rail, beaches, parkprops, bikepaths, piers, ferry, mountains, trails, kw, chicopee, golf, kart, gravel, sights, villages, shops, hwy, uw, home, junctions, grt, eats, streetsigns, sidewalks,
+    roads, buildings, places, lakes, monorail, link, freight, rail, beaches, parkprops, bikepaths, piers, ferry, mountains, trails, kw, chicopee, golf, kart, gravel, sights, villages, shops, hwy, uw, home, junctions, grt, eats, streetsigns, sidewalks, postboxes,
   };
 }

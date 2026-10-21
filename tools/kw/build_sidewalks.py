@@ -25,9 +25,16 @@ Writes apps/autokw/data/sidewalks.bin:
     (+p = (-dz, dx) of a -> b, world.js's sg = +1), bits 2-3 the -p side;
     0 none, 1 against the kerb, 2 behind a boulevard, 3 unknown.
 
+Also writes apps/autokw/data/postboxes.json: OSM's Canada Post boxes in the
+square, `c` the community mailboxes (post_box:type=community -- the grey
+banks of locked boxes in the post-1985 subdivisions; OSM has ~65, most in
+Hespeler's south-east and Guelph's south end) and `s` the red street letter
+boxes (every other amenity=post_box), [x, z] each to 0.1 m.
+
 Re-run after build_roads.py (the edge indices are roads.bin's).
 """
 
+import json
 import math
 import os
 import struct
@@ -84,11 +91,20 @@ def sample_line(pts, step):
 
 def main():
     walks = defaultdict(list)     # cell -> [(x, z, dx, dz)]
+    boxes = {"c": [], "s": []}
     tags = defaultdict(list)      # cell -> [(x, z, dx, dz, tag)]
     nwalk = ntag = 0
     lim = MAP_HALF + 200
     fp = osmium.FileProcessor(PBF).with_locations()
     for w in fp:
+        if isinstance(w, osmium.osm.Node):
+            t = w.tags
+            if t.get("amenity") == "post_box" and t.get("operator", "Canada Post") == "Canada Post":
+                x, z = to_world(w.location.lat, w.location.lon)
+                if abs(x) < MAP_HALF and abs(z) < MAP_HALF:
+                    k = "c" if (t.get("post_box:type") or "").lower() == "community" else "s"
+                    boxes[k].append([round(x, 1), round(z, 1)])
+            continue
         if not isinstance(w, osmium.osm.Way):
             continue
         t = w.tags
@@ -222,6 +238,9 @@ def main():
     p = os.path.join(OUT, "sidewalks.bin")
     open(p, "wb").write(blob)
     print(f"wrote {p} ({len(blob) / 1000:.0f} KB, {ne} edges)")
+    p = os.path.join(OUT, "postboxes.json")
+    json.dump(boxes, open(p, "w"), separators=(",", ":"))
+    print(f"wrote {p}: {len(boxes['c'])} community mailboxes, {len(boxes['s'])} street letter boxes")
 
 
 if __name__ == "__main__":

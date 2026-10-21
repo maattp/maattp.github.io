@@ -430,6 +430,22 @@ function towerLook(bd) {
 // Hespeler and St. Jacobs. [x, z, radius] in world metres (tools/kw/proj.py).
 const OLD_CORES = [[-1376, 111, 2300], [-3845, -1444, 1250], [-648, -3111, 600], [13031, 10221, 1500],
   [9794, 5888, 900], [13274, 2111, 800], [-6394, -9666, 450]];
+// AUTO KW: the subdivisions built since ~1985, where Canada Post delivers to
+// community mailboxes, not the door -- [x, z, radius], centred on OSM's
+// place nodes where it has one (tools/kw/proj.py). Which neighbourhoods and
+// how far each reaches are a judgement, not data (OSM maps ~65 of the
+// region's boxes, all but a few in Hespeler's south-east and Guelph):
+// Laurelwood, Clair Hills / Columbia Forest, Westvale, Rummelhardt and Vista
+// Hills, Eastbridge, Beechwood West (Waterloo); Williamsburg, Laurentian West,
+// Country Hills (West), Huron Park and Huron South, Doon South, Deer Ridge,
+// Grand River South / Lackner Woods (Kitchener); Hespeler's south-east,
+// Saginaw / Fisher Mills (Cambridge).
+const NEW_SUBDIVS = [[-8446, -1950, 1100], [-8900, -800, 1000], [-6692, 978, 700], [-6900, 300, 600],
+  [-10400, -400, 900], [-2696, -6364, 900], [-7400, -1900, 600], [-1743, 5584, 900], [-2900, 4700, 800],
+  [-1066, 4688, 700], [161, 4222, 600], [-400, 7850, 900], [-3200, 7200, 1100], [3700, 8400, 1000],
+  [5239, 5112, 700], [4400, -900, 800], [13550, 600, 900], [13000, 6200, 1100]];
+const inNewSubdiv = (x, z) => NEW_SUBDIVS.some(([cx, cz, r]) => (x - cx) ** 2 + (z - cz) ** 2 < r * r);
+const inOldCore = (x, z) => OLD_CORES.some(([cx, cz, r]) => (x - cx) ** 2 + (z - cz) ** 2 < r * r);
 const strHash = (s) => { let h = 7; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; };
 /** 0: buried; else 1 wood poles, 2 concrete; the sign of the side in bit 2. */
 function hydroEdge(e, mx, mz) {
@@ -4915,6 +4931,7 @@ float frLine(float o, float fw, float c, float w) {
         if (c.group) c.group.userData.trees = null;
       }
       if (this.decor) this.decor.setChunk(c.key, c.group && c.group.userData.decor);
+      if (this.dcars) this.dcars.setChunk(c.key, c.group && c.group.userData.dcars);
       // the phone's shadow cache holds this chunk's shadows (shadowcache.js)
       if (this.onChunkChange) this.onChunkChange((c.cx + 0.5) * CHUNK, (c.cz + 0.5) * CHUNK, CHUNK);
       if (old) {
@@ -4939,6 +4956,7 @@ float frLine(float o, float fw, float c, float w) {
     if (cr) for (const bi of cr.buildings) this.city.buildings[bi].roofSolids = null;
     if (this.trees) this.trees.dropChunk(c.key);
     if (this.decor) this.decor.dropChunk(c.key);
+    if (this.dcars) this.dcars.dropChunk(c.key);
     if (!c.group) return;
     c.group.traverse((o) => {
       if (o.geometry) o.geometry.dispose();
@@ -4991,6 +5009,8 @@ float frLine(float o, float fw, float c, float w) {
     this._fell = [];
     this._treeRecs = null;
     this._decor = FALL && lod === 1 ? [] : null;
+    this._dcar = lod === 1 ? [] : null;
+    this._aprons = [];
     this._occ = null;
     const road = new ChunkBuilder(true);
     const flat = new ChunkBuilder(false);
@@ -5178,10 +5198,14 @@ float frLine(float o, float fw, float c, float w) {
     // the season's pumpkins, for fall.js
     grp.userData.decor = this._decor && this._decor.length ? new Float32Array(this._decor) : null;
     this._decor = null;
+    // the cars in the driveways, for kwdriveway.js
+    grp.userData.dcars = this._dcar && this._dcar.length ? new Float32Array(this._dcar) : null;
+    this._dcar = null;
+    this._aprons = null;
     yield;
     add(bl.glass, this.mats.glass, true, true); yield;
     add(bl.facade, this.mats.facade, true, true);
-    return grp.children.length || grp.userData.trees || grp.userData.decor ? grp : null;
+    return grp.children.length || grp.userData.trees || grp.userData.decor || grp.userData.dcars ? grp : null;
   }
 
   // --- road surfaces --------------------------------------------------------
@@ -8138,6 +8162,10 @@ float frLine(float o, float fw, float c, float w) {
    */
   _drivewayKit(flat, fb, offF, seed, glx, gw, sd, L, yEnd, yGar) {
     const r = hash2(seed, 220);
+    // AUTO KW: the street end of a driveway that reaches the kerb is on the
+    // pavement strip (_driveApron), WALK_Y over the ground: the carts and the
+    // net stand on it there, not sunk in it
+    if (this._apronS > 0) yEnd += WALK_Y;
     const out = sd;   // the side away from the house's middle
     if (r < 0.25 && L >= 4) {
       const lx = glx + out * (gw / 2 + 0.05), lz = fb.d / 2 + L - 0.7;
@@ -8166,6 +8194,139 @@ float frLine(float o, float fw, float c, float w) {
       flat.box(kx, yEnd + 2.95, kz, 0.45, 0.32, 0.06, fb.rot, [0.75, 0.2, 0.15]);
       const [hx, hz] = offF(lx - out * 0.9, lz - 1.15);
       flat.box(hx, yEnd + 2.9, hz, 0.46, 0.03, 0.46, fb.rot, [0.85, 0.32, 0.12]);       // the rim
+    }
+  }
+
+  /**
+   * AUTO KW: THE SIDE DRIVEWAY. A house with no garage in its footprint --
+   * the 1950s bungalows of Westmount, Belmont, Rosemount, the old cores'
+   * frame houses -- still has a driveway: down one side of the house, the
+   * car parked beside it, its nose by the back corner. Where the side yard
+   * is clear of every other footprint 3.5 m out and the ground does not
+   * fall away, a 3 m asphalt strip from 6 m behind the front wall
+   * to the kerb (or 14 m), the apron over the boulevard, the Region's carts,
+   * a car (_driveCars). ~12 triangles and a record.
+   */
+  _sideDrive(flat, fb, offF, seed, bd) {
+    const DS = cityStats.drives || (cityStats.drives = { side: 0, sideTried: 0, noSide: 0, short: 0, steep: 0 });
+    DS.sideTried++;
+    if (hash2(seed, 240) > 0.85) return;
+    const hw = fb.w / 2, hd = fb.d / 2, back = Math.min(6.5, fb.d - 1);
+    // the strip beside the house must miss every other footprint (by 0.3 m)
+    // and the water: sampled every metre along it, at its middle and edges
+    const [cx0, cz0] = offF(0, hd - back / 2);
+    const near = this.city.buildingsNear(cx0, cz0, hw + back + 12).filter((b) => b !== bd);
+    const inB = (x, z) => {
+      for (const b of near) {
+        const c = Math.cos(b.rot), sn = Math.sin(b.rot), dx = x - b.x, dz = z - b.z;
+        if (Math.abs(dx * c + dz * sn) <= b.w / 2 + 0.3 && Math.abs(-dx * sn + dz * c) <= b.d / 2 + 0.3) return true;
+      }
+      return false;
+    };
+    const clear = (sg) => {
+      for (const o of [0.4, 1.8, 3.2]) {
+        for (let lz = hd - back; lz <= hd + 0.01; lz += 1) {
+          const [x, z] = offF(sg * (hw + o), lz);
+          if (inB(x, z) || G.isWater(x, z) || this.city.onRoad(x, z, 0.5, false)) return false;
+        }
+      }
+      return true;
+    };
+    let sd = hash2(seed, 241) < 0.5 ? -1 : 1;
+    if (!clear(sd)) { sd = -sd; if (!clear(sd)) { DS.noSide++; return; } }
+    const glx = sd * (hw + 1.8), gw = 2.4;   // (3 m wide: hw + 0.3 .. hw + 3.3)
+    let L = 0;
+    for (let s = 1; s <= 14; s += 1) {
+      const [qx, qz] = offF(glx, hd + s);
+      if (this.city.onRoad(qx, qz, 0.3, false) || G.isWater(qx, qz) || this.city.ruralClear(qx, qz)) break;
+      L = s;
+    }
+    if (L < 2) { DS.short++; return; }
+    const [rx, rz] = offF(glx, hd - back), [ex, ez] = offF(glx, hd + L);
+    const y0d = G.terrainHeight(rx, rz), y1d = G.terrainHeight(ex, ez);
+    if (Math.abs(y0d - y1d) > 1.4) { DS.steep++; return; }
+    DS.side++;
+    this._driveStrip(flat, fb, offF, glx, gw + 0.6, hd - back, hd + L);
+    this._driveApron(flat, fb, offF, glx, gw, L);
+    this._drivewayKit(flat, fb, offF, seed, glx, gw, sd, L, y1d, y0d);
+    this._driveCars(fb, offF, seed, glx, 0, hd - back + 0.5 + 2.4);
+  }
+
+  /** A driveway's asphalt from fb-local z0 to z1, `w` wide, in <= 3 m boxes that follow the ground. */
+  _driveStrip(flat, fb, offF, glx, w, z0, z1) {
+    const n = Math.max(1, Math.ceil((z1 - z0) / 3)), T = G.terrainHeight;
+    for (let k = 0; k < n; k++) {
+      const a = z0 + ((z1 - z0) * k) / n, b = z0 + ((z1 - z0) * (k + 1)) / n;
+      const [ax, az] = offF(glx, a), [bx, bz] = offF(glx, b), [mx, mz] = offF(glx, (a + b) / 2);
+      const ya = T(ax, az), yb = T(bx, bz), lo = Math.min(ya, yb);
+      flat.box(mx, lo - 0.12, mz, w, Math.abs(ya - yb) / 2 + 0.2, b - a + 0.02, fb.rot, [0.24, 0.24, 0.25], { ao: 0 });
+    }
+  }
+
+  /**
+   * AUTO KW: THE DRIVEWAY CROSSES THE BOULEVARD. The pavement strip stands
+   * WALK_Y over the ground and the driveway ~0.1 m, so where the strip is
+   * lawn (a boulevard, or no sidewalk: build_sidewalks.py) the driveway
+   * stopped at a grass bank short of the street. From where the strip
+   * starts (its verge's toe) the driveway climbs to the strip's height and
+   * runs on over it to the kerb. Returns the driveway's length short of the
+   * climb: what is the house's to park on.
+   */
+  _driveApron(flat, fb, offF, glx, gw, L) {
+    const city = this.city, E = city.edges, N = city.nodes;
+    let sW = -1;
+    this._apronS = -1;
+    for (let s = 0.5; s <= L + 0.01 && sW < 0; s += 0.25) {
+      const [qx, qz] = offF(glx, fb.d / 2 + s);
+      for (const ei of city.roadsNear(qx, qz, 3.2, false)) {
+        const e = E[ei], sw = walkWidthOf(e);
+        if (!sw) continue;
+        const a = N[e.a], b = N[e.b], vx = b.x - a.x, vz = b.z - a.z, l2 = vx * vx + vz * vz || 1;
+        const t = Math.max(0, Math.min(1, ((qx - a.x) * vx + (qz - a.z) * vz) / l2));
+        if (Math.hypot(a.x + vx * t - qx, a.z + vz * t - qz) <= e.hw + sw + 0.05) { sW = s; break; }
+      }
+    }
+    if (sW < 0) return L;
+    this._apronS = sW;
+    // where it crosses the strip, for meshProps: nothing stands on a driveway
+    { const [qx, qz] = offF(glx, fb.d / 2 + (sW + L) / 2); if (this._aprons) this._aprons.push(qx, qz, (gw + 0.6) / 2 + 0.7); }
+    const sR = Math.max(0.3, sW - VERGE - 0.4);
+    const hw = (gw + 0.6) / 2, T = G.terrainHeight, col = [0.24, 0.24, 0.25];
+    const [tx, tz] = offF(glx, fb.d / 2 + sR), top = T(tx, tz) + 0.08;
+    const P = (lx, s, y) => { const [x, z] = offF(glx + lx, fb.d / 2 + s); return [x, y === undefined ? T(x, z) + WALK_Y + 0.015 : y, z]; };
+    // the climb, from the driveway's top to the strip's
+    const r0 = P(-hw, sR, top), r1 = P(hw, sR, top), r2 = P(hw, sW), r3 = P(-hw, sW);
+    flat.quad(r0, r1, r2, r3, [0, 1, 0], ZERO_UV, col);
+    // over the strip to the kerb
+    const n = Math.max(1, Math.round((L + 0.3 - sW) / 2));
+    for (let k = 0; k < n; k++) {
+      const s0 = sW + ((L + 0.3 - sW) * k) / n, s1 = sW + ((L + 0.3 - sW) * (k + 1)) / n;
+      flat.quad(P(-hw, s0), P(hw, s0), P(hw, s1), P(-hw, s1), [0, 1, 0], ZERO_UV, col);
+    }
+    return sR;
+  }
+
+  /**
+   * AUTO KW: the household's cars, parked nose to the garage door (one in
+   * six backed in): a car in three driveways in four, a second beside it on
+   * a double driveway one time in three, centred `lz` out from the house's
+   * middle. Records for kwdriveway.js (x, y, z, heading, type index into
+   * DCAR_TYPES, colour seed); the caller finds the 4.8 m slot.
+   */
+  _driveCars(fb, offF, seed, glx, gw, lz) {
+    if (!this._dcar || hash2(seed, 230) > 0.75) return;
+    const xs = gw > 4 ? (hash2(seed, 231) < 0.34 ? [-1.25, 1.25] : [hash2(seed, 232) < 0.5 ? -1.2 : 1.2]) : [0];
+    for (let k = 0; k < xs.length; k++) {
+      const [x, z] = offF(glx + xs[k], lz);
+      const [hx, hz] = offF(glx + xs[k], lz - 1);   // toward the garage
+      // level enough for a car drawn level (yaw only): 0.3 m over its length
+      const [fx, fz] = offF(glx + xs[k], lz - 2.2), [rx, rz] = offF(glx + xs[k], lz + 2.2);
+      if (Math.abs(G.terrainHeight(fx, fz) - G.terrainHeight(rx, rz)) > 0.3) continue;
+      let h = Math.atan2(hx - x, hz - z);
+      if (hash2(seed, 233 + k) < 0.17) h += Math.PI;
+      const r = hash2(seed, 235 + k);
+      const type = r < 0.36 ? 0 : r < 0.62 ? 1 : r < 0.86 ? 2 : 3;
+      this._dcar.push(x, G.terrainHeight(x, z) + 0.08, z, h, type, (seed * 7 + k * 131) | 0);
     }
   }
 
@@ -9056,7 +9217,10 @@ float frLine(float o, float fw, float c, float w) {
       // whole or misses it (`_garageSpot`), and stays under the upper
       // windows' sills on a low house.
       const ghMax = 0.55 * tileH - 0.5;
-      if (form !== 'flat' && fb.w >= 9.5 && fb.w <= 24 && fb.d >= 7.5 && aspect < 2.6 && hash2(seed, 190) < 0.74 && ghMax >= 1.95) {
+      let drove = false;
+      // (outside the old cores a 7 m house has its single garage too: the
+      // 1990s-2000s subdivisions' narrow lots, a garage door and a door)
+      if (form !== 'flat' && fb.w >= (inOldCore(bd.x, bd.z) ? 9.5 : 7) && fb.w <= 24 && fb.d >= 7.5 && aspect < 2.6 && hash2(seed, 190) < 0.74 && ghMax >= 1.95) {
         const gw = fb.w >= 12.5 && hash2(seed, 191) < 0.6 ? 4.9 : 2.7, gh = Math.min(2.2, ghMax);
         let sd = hash2(seed, 192) < 0.5 ? -1 : 1;
         if (porch && Math.abs(porch.px - sd * (fb.w / 2 - gw / 2 - 0.5)) < (porch.pw + gw) / 2) sd = -sd;
@@ -9082,25 +9246,31 @@ float frLine(float o, float fw, float c, float w) {
             const [jx, jz] = offF(glx, fb.d / 2 + 0.1);
             flat.box(jx, bd.y + k, jz, gw - 0.1, 0.04, 0.02, fb.rot, [gc[0] * 0.72, gc[1] * 0.72, gc[2] * 0.72], NOTOP);
           }
-          // the driveway: out to the kerb, or 8 m, on ground that does not fall away
+          // the driveway: out to the kerb, or 14 m, on ground that does not fall away
           let L = 0;
-          for (let s = 1; s <= 8; s += 1) {
+          for (let s = 1; s <= 14; s += 1) {
             const [qx, qz] = offF(glx, fb.d / 2 + s);
             if (this.city.onRoad(qx, qz, 0.3, false) || G.isWater(qx, qz) || this.city.ruralClear(qx, qz)) break;
             L = s;
           }
           if (L >= 3) {
-            const [ax, az] = offF(glx, fb.d / 2 + L / 2);
             const [bx0, bz0] = offF(glx, fb.d / 2 + L);
             const y0d = G.terrainHeight(dx, dz), y1d = G.terrainHeight(bx0, bz0);
-            if (Math.abs(y0d - y1d) < 0.4) {
-              flat.box(ax, Math.min(y0d, y1d) - 0.12, az, gw + 0.6, Math.abs(y0d - y1d) / 2 + 0.2, L, fb.rot,
-                [0.24, 0.24, 0.25], { ao: 0 });
+            // (in pieces that follow the ground: 14 m of driveway on one
+            // flat box sank or floated by half its fall)
+            if (Math.abs(y0d - y1d) < (L > 8 ? 1.2 : 0.4)) {
+              this._driveStrip(flat, fb, offF, glx, gw + 0.6, fb.d / 2, fb.d / 2 + L);
+              const own = this._driveApron(flat, fb, offF, glx, gw, L);
               this._drivewayKit(flat, fb, offF, seed, glx, gw, sd, L, y1d, y0d);
+              if (own >= 5.6) this._driveCars(fb, offF, seed, glx, gw, fb.d / 2 + 3.0);
+              drove = true;
+              const DS = cityStats.drives || (cityStats.drives = { side: 0, sideTried: 0, noSide: 0, short: 0, steep: 0 });
+              DS.garage = (DS.garage || 0) + 1;
             }
           }
         }
       }
+      if (!drove && form !== 'flat' && fb.w >= 6 && fb.w <= 17 && fb.d >= 6 && aspect < 2.6) this._sideDrive(flat, fb, offF, seed, bd);
       if (aspect < 2.6 && fb.w >= 6.5 && fb.w <= 26) this._yardFence(flat, bd, fb, offF, seed);
       if (FALL) this.fallHouse(flat, bd, seed, off, porch, form);
       if (form === 'flat') {
@@ -10288,9 +10458,93 @@ float frLine(float o, float fw, float c, float w) {
     }
   }
 
+  /** AUTO KW: is (x, z) within `pad` of a driveway's crossing of the pavement strip (_driveApron)? */
+  _onApron(x, z, pad) {
+    const A = this._aprons;
+    if (!A) return false;
+    for (let i = 0; i < A.length; i += 3) if ((A[i] - x) ** 2 + (A[i + 1] - z) ** 2 < (A[i + 2] + pad) ** 2) return true;
+    return false;
+  }
+
+  /**
+   * AUTO KW: a bank of Canada Post community mailboxes on the boulevard: `n`
+   * units side by side along the kerb, each a light grey cabinet ~1.6 m tall
+   * on a black plinth, a sloped lid, the red Canada Post mark high on the
+   * face toward the street (nx, nz: the outward normal, away from it), all on
+   * a concrete pad. ~100 triangles a unit; not solid, as a hydrant is not.
+   */
+  _cmb(flat, x, gy, z, nx, nz, n) {
+    const rot = Math.atan2(nx, nz), ux = nz, uz = -nx;   // along the kerb
+    const W = 0.78, D = 0.56, body = [0.6, 0.61, 0.59], dark = [0.42, 0.43, 0.42];
+    flat.box(x, gy - 0.05, z, W * n + 0.7, 0.13, D + 0.7, rot, [0.56, 0.55, 0.52]);   // the pad
+    for (let i = 0; i < n; i++) {
+      const o = (i - (n - 1) / 2) * (W + 0.03), bx = x + ux * o, bz = z + uz * o;
+      flat.box(bx, gy + 0.08, bz, W - 0.06, 0.16, D - 0.08, rot, [0.08, 0.08, 0.09]);   // plinth
+      flat.box(bx, gy + 0.24, bz, W, 1.28, D, rot, body);
+      flat.box(bx, gy + 1.52, bz, W + 0.06, 0.08, D + 0.1, rot, dark);                     // the lid
+      // the doors' seam and the red mark, on the street face
+      const fx = bx - nx * (D / 2 + 0.006), fz = bz - nz * (D / 2 + 0.006);
+      flat.box(fx, gy + 0.3, fz, 0.02, 1.08, 0.012, rot, dark);
+      flat.box(fx + ux * 0.2, gy + 1.28, fz + uz * 0.2, 0.2, 0.13, 0.014, rot, [0.74, 0.08, 0.07]);
+      flat.box(fx + ux * 0.2 - nx * 0.004, gy + 1.31, fz + uz * 0.2 - nz * 0.004, 0.09, 0.05, 0.012, rot, [0.92, 0.92, 0.9]);
+    }
+  }
+
+  /** AUTO KW: a red Canada Post street letter box (OSM's amenity=post_box), its face to the street. */
+  _letterBox(flat, x, gy, z, nx, nz) {
+    const rot = Math.atan2(nx, nz), red = [0.7, 0.07, 0.06];
+    for (const [a, b] of [[-0.2, -0.14], [0.2, -0.14], [-0.2, 0.14], [0.2, 0.14]]) {
+      flat.box(x + nz * a + nx * b, gy, z - nx * a + nz * b, 0.05, 0.32, 0.05, rot, [0.1, 0.1, 0.11]);
+    }
+    flat.box(x, gy + 0.3, z, 0.56, 0.86, 0.44, rot, red);
+    flat.box(x, gy + 1.16, z, 0.6, 0.1, 0.48, rot, red);
+    flat.box(x, gy + 1.26, z, 0.5, 0.05, 0.38, rot, red);
+    // the slot and the white POSTES CANADA POST panel, on the street face
+    const fx = x - nx * 0.226, fz = z - nz * 0.226;
+    flat.box(fx, gy + 0.98, fz, 0.32, 0.04, 0.012, rot, [0.08, 0.08, 0.08]);
+    flat.box(fx, gy + 0.62, fz, 0.36, 0.16, 0.012, rot, [0.9, 0.9, 0.88]);
+  }
+
+  /** AUTO KW: OSM's Canada Post boxes in chunk (cx, cz), each turned to its nearest street and stood on its surface. */
+  _postBoxes(flat, cx, cz) {
+    const P = this.city.postBoxes;
+    if (!P) return;
+    const city = this.city, E = city.edges, N = city.nodes;
+    for (const [kind, list] of [['c', P.c], ['s', P.s]]) {
+      for (const [x0, z0] of list || []) {
+        if (Math.floor(x0 / CHUNK) !== cx || Math.floor(z0 / CHUNK) !== cz) continue;
+        let best = null, bd = 30;
+        for (const ei of city.roadsNear(x0, z0, 25, false)) {
+          const e = E[ei];
+          if (e.cls === 'hwy' || e.cls === 'ramp') continue;
+          const a = N[e.a], b = N[e.b], vx = b.x - a.x, vz = b.z - a.z, l2 = vx * vx + vz * vz || 1;
+          const t = Math.max(0, Math.min(1, ((x0 - a.x) * vx + (z0 - a.z) * vz) / l2));
+          const qx = a.x + vx * t, qz = a.z + vz * t, d = Math.hypot(x0 - qx, z0 - qz) - e.hw;
+          if (d < bd) { bd = d; best = { e, qx, qz }; }
+        }
+        let x = x0, z = z0, nx = 1, nz = 0, gy;
+        if (best) {
+          const { e, qx, qz } = best, dd = Math.hypot(x0 - qx, z0 - qz) || 1;
+          nx = (x0 - qx) / dd; nz = (z0 - qz) / dd;
+          const sw = walkWidthOf(e);
+          // off the carriageway, onto the kerbside strip where OSM's point is short of it
+          const off = Math.max(dd, e.hw + (sw ? Math.min(0.9, sw / 2) : 1.2));
+          x = qx + nx * off; z = qz + nz * off;
+          gy = G.terrainHeight(x, z) + (sw && off <= e.hw + sw ? WALK_Y : 0);
+        } else gy = G.terrainHeight(x, z);
+        if (!G.isBuildable(x, z) || city.onRoad(x, z, 0.3, false)) continue;
+        if (kind === 'c') this._cmb(flat, x, gy, z, nx, nz, 2 + (Math.round(x0 + z0) & 1));
+        else this._letterBox(flat, x, gy, z, nx, nz);
+        const PS = cityStats.postBoxes || (cityStats.postBoxes = { c: 0, s: 0 });
+        PS[kind]++;
+      }
+    }
+  }
+
   *meshProps(flat, glow, ch, cx, cz) {
     const city = this.city;
     const own = (x, z) => Math.floor(x / CHUNK) === cx && Math.floor(z / CHUNK) === cz;
+    this._postBoxes(flat, cx, cz);
     const poleCol = [0.28, 0.3, 0.32];
     const lampCol = [1.0, 0.94, 0.76];
     // NOTHING IS PLANTED IN A PORTAL PIT. The carve digs hw + 7.6 m either
@@ -10348,6 +10602,7 @@ float frLine(float o, float fw, float c, float w) {
         if (!G.isBuildable(ox, oz)) continue;
         if (this.inDrawnLake(ox, oz)) { cityStats.propsInLake = (cityStats.propsInLake || 0) + 1; continue; }
         if (onCorner(ei, t, sg)) continue;
+        if (this._onApron(ox, oz, 0.5)) continue;
         // Offsetting sideways off THIS road can land on a different one -- a
         // ramp beside a freeway puts its lamp posts and trees on the freeway,
         // and beneath a viaduct they grow through the deck.
@@ -10424,9 +10679,22 @@ float frLine(float o, float fw, float c, float w) {
           if (city.onRoad(ox, oz, 0.4)) { cityStats.propsSkipped++; continue; }
           if (inPit(ox, oz)) { cityStats.propsInPit++; continue; }
           if (city.jumpClear(ox, oz)) continue;
+          if (this._onApron(ox, oz, 0.6)) continue;
           const gy = G.terrainHeight(ox, oz) + WALK_Y;
           const rot = Math.atan2(-px * sg, -pz * sg);
           const k = hash2(Math.round(x * 13) + 5, Math.round(z * 13) + 29);
+          // AUTO KW: A RESIDENTIAL STREET'S KERB is a hydrant now and then, a
+          // sign, and in the newer subdivisions Canada Post's community
+          // mailboxes -- no parking meters, litter bins, newspaper boxes or
+          // bollards (downtown's, which every street had)
+          if (e.cls === 'res') {
+            if (k >= 0.20 && k < 0.58) continue;
+            if (k >= 0.58 && k < 0.72) {
+              if (k < 0.69 && inNewSubdiv(ox, oz)) this._cmb(flat, ox, gy, oz, px * sg, pz * sg, 1 + Math.floor(hash2(Math.round(x), 41) * 3));
+              continue;
+            }
+            if (k >= 0.86) continue;
+          }
           if (k < 0.20) {
             // fire hydrant
             const hy = [0.68, 0.16, 0.12];
