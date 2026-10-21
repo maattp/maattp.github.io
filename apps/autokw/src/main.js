@@ -53,6 +53,7 @@ import { prepSights, buildSights, sightsMap } from './kwsights.js';
 import { setShopData, prepShops, buildShops, shopPlaces, shopStats } from './kwshops.js';
 import { Crops } from './crops.js';
 import { Kartway, KartRace } from './kartway.js';
+import { prepHighways, buildHighways, addHighwaySolids, highwaysRoot, updateHighways } from './highways.js';
 import { YKF } from './ykf.js';
 import { AirTraffic } from './airtraffic.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
@@ -812,6 +813,9 @@ async function boot() {
   addLandmarkExtra((ctx) => ykf.build(ctx));
   ykf.prepTower(city, boxAt);   // YKF's control tower (FINAL APPROACH's door)
   addLandmarkExtra((ctx) => ykf.buildTower(ctx));
+  // the freeways as Ontario signs and builds them (highways.js, data/hwy.json)
+  { const k = prepHighways(city, md.hwy); blog(`highways: ${k.edgesTimed} freeway edges timed from OSM maxspeed`); }
+  addLandmarkExtra(buildHighways);
   city.slabQuery = (x, z) => ykf.surface(x, z);
   blog(`city: grading ${cityStats.gradeCached ? 'from cache' : 'computed'}, buildings ${bootCache.buildings ? 'from cache' : 'computed'}`);
 
@@ -1106,6 +1110,10 @@ function installShadowFade() {
   link.attach(city);
   city.bedQueries = [railBedSurface(Object.values(link.tracks).filter((t) => t.Y), 1.5, 2.4, -0.45)];
   lmRoot = buildLandmarks(scene, city, (x, z) => world.waterLevelAt(x, z), null);
+  // the median walls and sign posts stand on freeway embankments, which the
+  // landmark solids' on-road test counts as road: they join after it
+  addHighwaySolids(city);
+  scene.add(highwaysRoot());
   link.build(scene, world);
   bikeNet.build(scene, city);
   chicopee.scene = scene;
@@ -3408,6 +3416,7 @@ function draw(now) {
   }
   const t0 = prof ? performance.now() : 0;
   if (lmRoot && updateLandmarkRange(lmRoot, camera.position) && shadowCache) shadowCache.invalidate();
+  updateHighways(camera.position);
   renderer.setRenderTarget(postfx.target);
   if (world) { world.updateTerrainLod(camera.position); world.cullTerrain(camera); }
   if (world && world.trees) {
