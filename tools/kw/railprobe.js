@@ -6,7 +6,7 @@
 //    turns at Kitchener, VIA's calls, the WCR's four stations, the meets at
 //    passing places -- NO TWO TRAINS EVER IN EACH OTHER on one track, no
 //    train rescued from a stand (the dispatcher never locks), none waiting
-//    more than 12 minutes for the road (a meet across the 14.8 km block
+//    more than 10 minutes for the road (a meet across the 14.8 km block
 //    west of Kitchener takes ~11).
 // 2. THE CROSSINGS: at the busiest-road crossings of each running line (you
 //    stand by the road, traffic runs round you), a train is sent through:
@@ -61,7 +61,7 @@
   const st = R.stats;
   say(`service, 2 h: ${st.spawns} trains on, ${seen.size} of ${R.fleet.length} ran, up to ${maxOn} out at once; ${st.meets} meets on a passing track, ${st.holds} holds, ${st.rescued} rescued from a stand`);
   say(`longest stand waiting for the road: ${Math.round(longest.t)} s (${longest.who})`);
-  if (longest.t > 720) fail.push(`a train stood ${Math.round(longest.t)} s waiting for the road (${longest.who})`);
+  if (longest.t > 600) fail.push(`a train stood ${Math.round(longest.t)} s waiting for the road (${longest.who})`);
   say(`calls: ${Object.entries(calls).map(([k, v]) => `${k} ${v}`).join(', ')}`);
   if (collide.length) fail.push(`trains ran into each other: ${collide.join('; ')}`);
   if (seen.size < R.fleet.length) fail.push(`trains that never ran: ${R.fleet.filter((t) => !seen.has(t.cfg.id)).map((t) => t.cfg.id).join(', ')}`);

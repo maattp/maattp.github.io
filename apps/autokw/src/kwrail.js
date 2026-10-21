@@ -1093,9 +1093,9 @@ export class KwRail {
     [u.commit, u.npp, u.nTrack] = sv;
     for (const q of st) {
       if (q.t === u || q.d === u.d || !q.blocks.has(u.wantBlk)) continue;
-      // (bound for: its landing, or -- its front out in the block -- the
-      // passing place it already holds ahead)
-      const dest = q.t.npp || (q.fnode < 0 ? q.t.pp : null);
+      // (bound for: its landing, or the passing place it already holds
+      // ahead -- its front out in the block or already in it)
+      const dest = q.t.npp || q.t.pp;
       const k = dest ? line.disp.indexOf(dest) : -1;
       if (k < 0) return false;
       q.blocks = new Set(); q.fnode = k; q.fblock = -1;

@@ -1868,7 +1868,7 @@ file and a guide disagree, this file wins.
   `kwrail.blocks(x, z, y, car)` (as `traffic.freight`): a car already between
   the gates drives on clear instead of stopping on the tracks.
   **The fleet** (railcars.js, atlas now 2048 x 2176, `atlasUsedH` ~2140; BNSF's
-  hood/wing cells are gone): GO MP40PH-3C 647/612 + ten BiLevels + cab car
+  hood/wing cells are gone): GO MP40PH-3C 647/612/660 + ten BiLevels + cab car
   (loco at the WEST end, `ori` -1: it leads into Kitchener and pushes back to
   Union), VIA Siemens Charger + 4 Venture cars + cab car, CN ES44AC freights
   with CN/TTGX autoracks, CPKC (ES44AC 9375 in the 2024 CPKC livery, 8781 in
@@ -1878,16 +1878,27 @@ file and a guide disagree, this file wins.
   car; cars off the line's ends hidden by bone scale 0, so trains drive on
   and off the map); passenger stock is not weathered. Liveries are read off
   photos (est.), see railcars.js's header.
-  **The dispatcher**: blocks between passing places; a train enters a block
-  only if no train is in it or committed to it the other way (`_free`), and
-  only with a LANDING -- a track reserved at the passing place at the far end
-  (`npp`). A passing place holds at most one train per direction
-  (`_landing`), a train waiting for a block has it next (`want`, first come,
-  only while it could land), GO turns at Kitchener only when no train bound
-  its new way stands there, and dispatch uses only passing places every train
-  of the line fits (`line.disp`; the rest are drawn). Residual multi-train
-  locks are broken by `_rescue`: a train standing 10 min OUT OF SIGHT goes
-  back to the yard. Compressed timetable (`_schedule`, `_retire`): 2 GO sets
+  **The dispatcher cannot lock** (the banker's algorithm, `_state` /
+  `_canRun` / `_safe`): the line's state is SAFE when its trains could all be
+  got off it in some order, each running alone while the others stand
+  (through blocks no standing train is in, passing places with a track no
+  standing train holds; a GO's turn at Kitchener is part of its run). Every
+  decision is a move checked safe before it is made: entering a block (with
+  `_free`: nobody in it or committed to it the other way) together with its
+  LANDING (a track reserved at the passing place at the block's far end,
+  `npp`), taking a track mid-line, and coming onto the map. From a safe
+  state the first train of that order can always make its next move, so no
+  two trains ever wait on each other. Fairness on top (`wantBlk` /
+  `wantSince`, first come): a block goes to the train waiting longest for it
+  the other way if that one could go once the block clears (`_couldGo`: its
+  landing free and its move safe, the block's occupants projected to where
+  they are bound); the LAST free track of a passing place is kept for such a
+  train (`_lastTrackOwed`, spawns too); and nothing new comes on a line
+  while a train on it has been held 45 s. A meet can still take minutes --
+  the block west of Kitchener is 14.8 km. Dispatch uses only passing places
+  every train of the line fits (`line.disp`; the rest are drawn). `_rescue`
+  acts only if a line's state is ever found UNSAFE (a bug; the probe fails
+  on it). Compressed timetable (`_schedule`, `_retire`): 3 GO sets
   (in from the east, 2 min at Kitchener, back east), VIA alternating ends,
   2 CN, 3 CPKC on the Galt Sub, the CPKC local shuttling the Waterloo Sub,
   WCR shuttling Waterloo - Farmers' Market - St. Jacobs - Elmira (40 s
@@ -1897,11 +1908,13 @@ file and a guide disagree, this file wins.
   voices. `window.__noRail = true` before boot turns it all off.
   **Verify**: `VIEW_PROBE_FILE=tools/kw/railprobe.js node tools/kw/kwshots.mjs
   <dir>` -- two hours of service (no two trains in each other, every train
-  runs, GO/VIA call at Kitchener, WCR at all four, <= 3 rescues) and five
+  runs, GO/VIA call at Kitchener, WCR at all four, NO rescue, no train held
+  over 10 min) and five
   crossings with traffic round you (lights >= 15 s before the train, gates
   down, cars held, none on the tracks under the train, none past a lowered
   gate); `tools/kw/ionprobe.js` must still PASS (xing.js is ION's too).
-  Last run: 29 trains on in 2 h, 17 meets, 3 rescues; every crossing held
+  Last runs (7): 26-28 trains on in 2 h, 20-24 meets, 0 rescues, longest
+  hold 378-559 s; every crossing held
   2-10 cars, 0 violations. Phone (AUTO_PHONE=1, GPU), rail off -> on: spawn
   212/1052k -> 217/1086k; Kitchener station 280/1196k -> 303/1266k (a GO
   set in view); Galt Sub 159/491k -> 174/549k. Not done: the GO layover yard
