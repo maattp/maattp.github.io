@@ -1179,6 +1179,7 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
     if (city.onRoad(x, z, pad)) return no('road');
     if (world.inAirfield(x, z)) return no('airfield');
     if (city.jumpClear(x, z)) return no('keepClear');
+    if (city.treeClear && city.treeClear(x, z)) return no('lawn');
     for (let q = 0; q < playgrounds.length; q++) {
       const p = playgrounds[q];
       if ((p[0] - x) ** 2 + (p[1] - z) ** 2 < p[2] * p[2]) return no('playground');

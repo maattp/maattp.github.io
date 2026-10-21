@@ -21,6 +21,13 @@ it draws from, all from OSM:
 A building is campus if it is inside Ring Road, or a named university /
 college / dormitory / chapel / sports building in the box round it, or one of
 Village 1 / REV's residence blocks (OSM tags them building:colour #AE9183).
+
+  wlu      WILFRID LAURIER UNIVERSITY's Waterloo campus, the same way: every
+           building inside OSM's campus outline (amenity=university way
+           226405688) or operated by Laurier in the box round it (the
+           residences, the Athletic Complex, Martin Luther's seminary), with
+           their parts; Alumni Field, University Stadium's field and track and
+           the campus outline itself.
 """
 
 import json
@@ -82,13 +89,36 @@ def in_poly(p, x, z):
     return c
 
 
+# Laurier: the lat/lon box round the Waterloo campus (University Ave to
+# Seagram Dr, Albert St to Regina St) and OSM's own campus outline
+WS, WW, WN, WE = 43.468, -80.533, 43.479, -80.519
+WLU_CAMPUS = 226405688
+WLU_PITCH = {167410366: "alumni", 304036552: "stadium", 4051240: "track", 13694855: "bowl"}
+WLU_HOUSE = {"house", "detached", "semidetached_house", "garage", "garages", "shed", "retail", "commercial", "roof"}
+
+
+def inw(la, lo):
+    return WS < la < WN and WW < lo < WE
+
+
 class Grab(osmium.SimpleHandler):
     def __init__(self):
         super().__init__()
         self.areas, self.ways, self.nodes = [], [], {}
+        self.wlu, self.wlu_out, self.wlu_pitch = [], None, {}
 
     def area(self, a):
         t = {k.k: k.v for k in a.tags}
+        oid = a.orig_id()
+        if (oid == WLU_CAMPUS and t.get("amenity") == "university") or (oid in WLU_PITCH and t.get("leisure")):
+            for ring in a.outer_rings():
+                p = [[round(c, 2) for c in to_world(n.lat, n.lon)] for n in ring][:-1]
+                if oid == WLU_CAMPUS:
+                    self.wlu_out = p
+                else:
+                    self.wlu_pitch[WLU_PITCH[oid]] = {"p": p, "n": t.get("name", ""), "sport": t.get("sport", "")}
+                break
+            return
         if not (t.get("building") or t.get("building:part")):
             return
         try:
@@ -98,6 +128,8 @@ class Grab(osmium.SimpleHandler):
                     continue
                 la = sum(q[0] for q in pts) / len(pts)
                 lo = sum(q[1] for q in pts) / len(pts)
+                if inw(la, lo):
+                    self.wlu.append({"id": oid, "t": t, "p": [[round(c, 2) for c in to_world(*q)] for q in pts[:-1]]})
                 if not inb(la, lo):
                     return
                 p = [[round(c, 2) for c in to_world(*q)] for q in pts[:-1]]
@@ -148,6 +180,44 @@ def chain(ways):
             changed = True
             break
     return loop
+
+
+def laurier(g):
+    """Wilfrid Laurier's Waterloo campus: its buildings (with parts), fields and outline."""
+    camp = g.wlu_out or []
+    blds = [a for a in g.wlu if a["t"].get("building") and not a["t"].get("building:part")]
+    parts = [a for a in g.wlu if a["t"].get("building:part")]
+    out = []
+    for b in blds:
+        t = b["t"]
+        x, z = cen(b["p"])
+        op = t.get("operator", "") + " " + t.get("office", "")
+        laur = "Laurier" in op or "WLU" in op or "wilfrid" in op.lower() or "Martin Luther" in op
+        inside = bool(camp) and in_poly(camp, x, z)
+        if t.get("building") in WLU_HOUSE:
+            continue
+        if not (laur or inside or t.get("name") == "Martin Luther University College"):
+            continue
+        if abs(area(b["p"])) < 40:
+            continue
+        rec = {"id": b["id"], "p": b["p"] if area(b["p"]) > 0 else b["p"][::-1], "campus": "wlu"}
+        rec.update({k: t[k] for k in KEEP if k in t})
+        rec["parts"] = []
+        out.append(rec)
+    for p in parts:
+        x, z = cen(p["p"])
+        best = None
+        for b in out:
+            if in_poly(b["p"], x, z) and (best is None or abs(area(b["p"])) < abs(area(best["p"]))):
+                best = b
+        if best is None:
+            continue
+        rec = {"id": p["id"], "p": p["p"] if area(p["p"]) > 0 else p["p"][::-1]}
+        rec.update({k: p["t"][k] for k in KEEP if k in p["t"]})
+        best["parts"].append(rec)
+    print(f"  Laurier: {len(out)} buildings ({sum(1 for b in out if b.get('name'))} named, "
+          f"{sum(len(b['parts']) for b in out)} parts), fields {sorted(g.wlu_pitch)}, outline {len(camp)} pts")
+    return {"b": out, "fields": g.wlu_pitch, "outline": camp}
 
 
 def main():
@@ -210,7 +280,7 @@ def main():
         if L < 5:
             continue
         bridges.append({"id": w["id"], "n": t.get("name", ""), "layer": lay, "l": w["l"]})
-    doc = {"b": out, "bridges": bridges, "ring": ring, "pois": g.nodes}
+    doc = {"b": out, "bridges": bridges, "ring": ring, "pois": g.nodes, "wlu": laurier(g)}
     os.makedirs(OUT, exist_ok=True)
     with open(os.path.join(OUT, "uw.json"), "w") as f:
         json.dump(doc, f, separators=(",", ":"))
