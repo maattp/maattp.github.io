@@ -49,6 +49,7 @@ import { addLandmarkExtra } from './landmarks.js';
 import { Chicopee } from './chicopee.js';
 import { prepFun, buildMarketTent, buildFlags, waveFlags, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, buildDome } from './kwfun.js';
 import { prepPlaces, buildPlaces, placesMap, placesStats, Geese } from './kwplaces.js';
+import { prepSights, buildSights, sightsMap } from './kwsights.js';
 import { Crops } from './crops.js';
 import { Kartway, KartRace } from './kartway.js';
 import { YKF } from './ykf.js';
@@ -790,6 +791,9 @@ async function boot() {
   // Uptown, Waterloo Park, RIM Park and Conestoga Mall (kwplaces.js)
   { const k = prepPlaces(city); blog(`kw places: ${k.skipped} boxes drawn as places`); }
   addLandmarkExtra(buildPlaces);
+  // downtown Kitchener, Victoria Park, the Aud, the malls, Bingemans, Doon, Cambridge, Toyota (kwsights.js)
+  { const k = prepSights(city, md.sights); blog(`kw sights: ${k.skipped} boxes drawn as sights`); }
+  addLandmarkExtra(buildSights);
   addLandmarkExtra(buildMarketTent);
   addLandmarkExtra(buildDome);
   addLandmarkExtra(buildFord);
@@ -1532,6 +1536,7 @@ function installShadowFade() {
       hello: mr.hello ? mr.hello : `${mr.name} — boats and jet skis. Walk out on the float and take one` })),
     ...kwPlaces(),
     ...placesMap(),
+    ...sightsMap(),
     { x: arcade.spot.x, z: arcade.spot.z, kind: 'arcade', name: 'Pin Up Arcade Bar', near: false,
       hello: 'Pin Up Arcade Bar — six classic cabinets, $1 a credit. Press ENTER at the door' },
     { x: pinball.spot.x, z: pinball.spot.z, kind: 'pinball', name: 'AOK Craft Beer + Arcade', near: false,
