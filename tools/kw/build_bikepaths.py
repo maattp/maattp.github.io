@@ -10,12 +10,21 @@ Painted lanes on a road (cycleway=lane) are the road's and are not here.
 
 Each way is cropped to the map, simplified to ~0.8 m, and written as
 {p: [[x, z], ...], a: first node id, b: last node id, n: name index,
-f: flags} -- flags 1 bridge, 2 tunnel, 4 unpaved -- so bikes.js can join the
-ways at shared end nodes into a network.
+f: flags} -- flags 1 bridge, 2 tunnel, 4 natural ground (dirt, grass, mud),
+8 stone dust (fine_gravel, compacted, gravel, unpaved: the crushed limestone
+most of the Walter Bean and the rail trails are), 16 boardwalk / wood deck,
+32 foot only -- so bikes.js can join the ways at shared end nodes into a
+network.
+
+Auto KW: also the named walking trails (a path or footway whose name says
+Trail, Loop, Boardwalk...: the Huron Natural Area's, Laurel Creek's, the
+Avon and Grand Valley trails) and every boardwalk, flagged foot only (32):
+the walkers walk them, the cyclists keep to the rest.
 """
 
 import json
 import math
+import re
 import os
 import sys
 
@@ -31,7 +40,9 @@ OUT = os.environ.get("AUTO_DATA_OUT") or os.path.join(HERE, "..", "..", "apps", 
 S, W, N, E = bbox(500)
 EDGE = MAP_HALF - 50.0
 PATHS = {"path", "footway", "track", "bridleway", "pedestrian"}
-UNPAVED = {"unpaved", "gravel", "fine_gravel", "dirt", "ground", "compacted", "grass", "sand", "wood", "mud"}
+NATURAL = {"dirt", "ground", "grass", "sand", "mud", "earth", "woodchips", "rock"}
+STONE = {"unpaved", "gravel", "fine_gravel", "compacted", "pebblestone", "crushed_stone"}
+TRAILWORD = re.compile(r"\b(trail|trails|loop|boardwalk|trailway|path)\b", re.I)
 
 
 def rdp(pts, eps):
@@ -58,10 +69,15 @@ class Grab(osmium.SimpleHandler):
     def way(self, w):
         t = w.tags
         hw = t.get("highway")
+        foot = 0
+        boardwalk = t.get("bridge") == "boardwalk" or (t.get("surface") == "wood" and hw in PATHS)
         if hw == "cycleway":
             pass
         elif hw in PATHS and t.get("bicycle") == "designated":
             pass
+        elif hw in ("path", "footway") and t.get("footway") not in ("sidewalk", "crossing", "access_aisle") \
+                and (boardwalk or TRAILWORD.search(t.get("name") or "")):
+            foot = 0 if t.get("bicycle") in ("yes", "designated") else 32
         else:
             return
         if t.get("area") == "yes" or t.get("access") in ("private", "no"):
@@ -73,8 +89,12 @@ class Grab(osmium.SimpleHandler):
         if not any(S < la < N and W < lo < E for la, lo in ll):
             return
         pts = [to_world(la, lo) for la, lo in ll]
-        f = (1 if t.get("bridge") not in (None, "no") else 0) | (2 if t.get("tunnel") not in (None, "no") else 0) \
-            | (4 if t.get("surface") in UNPAVED else 0)
+        sf = t.get("surface")
+        f = (1 if t.get("bridge") not in (None, "no", "boardwalk") else 0) | (2 if t.get("tunnel") not in (None, "no") else 0) \
+            | (4 if sf in NATURAL else 0) | (8 if sf in STONE else 0) | (16 if boardwalk else 0) | foot
+        # a named footway with no surface tag through the woods is a dirt trail
+        if foot and not sf and not boardwalk and hw == "path":
+            f |= 4
         self.ways.append({"ids": [w.nodes[0].ref, w.nodes[-1].ref], "p": pts, "name": t.get("name"), "f": f})
 
 
