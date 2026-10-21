@@ -148,7 +148,7 @@ def main():
             if abs(_area(pts)) < 400:
                 continue
             ins = [p["n"] for p in shops if _in_poly(pts, p["x"], p["z"]) and p["n"] != b.get("n")]
-            if b.get("n") or ins:
+            if b.get("n") or ins or abs(_area(pts)) > 1200:
                 bw.append({"p": pts, "n": b.get("n") or "", "s": ins})
     out["boardwalk"] = bw
     print(f"  boardwalk: {len(bw)} named stores: " + ", ".join(b["n"] + str(b["s"]) for b in bw))

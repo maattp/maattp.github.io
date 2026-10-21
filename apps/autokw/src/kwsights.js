@@ -944,7 +944,7 @@ function fairview(kit, ctx) {
   }
   // the red paving and the roundabout plaza before the south entrance
   {
-    const D = kit.B(2822, 3205, true), py = walkY(city, 2822, 3205) + 0.07, n = 18;
+    const D = kit.B(2822, 3205), py = walkY(city, 2822, 3205) + 0.12, n = 18;   // a slab, not a decal: no extra draw
     for (let i = 0; i < n; i++) {
       const a0 = (i / n) * Math.PI * 2, a1 = ((i + 1) / n) * Math.PI * 2;
       D.tri([2822, py, 3205], [2822 + Math.cos(a0) * 11, py, 3205 + Math.sin(a0) * 11], [2822 + Math.cos(a1) * 11, py, 3205 + Math.sin(a1) * 11], [0, 1, 0], lin([0.55, 0.30, 0.24]));
@@ -1007,7 +1007,7 @@ function storeFront(kit, ctx, e, t, yTop, name, w, wallc, style, opts = {}) {
     const dw = Math.min(tw - 2, 5);
     B4(B, e, t - dw / 2, t + dw / 2, gy - 0.2, gy + 3.2, d + 0.08, N, lin([0.18, 0.24, 0.30]));
     B4(B, e, t - dw / 2 - 0.2, t + dw / 2 + 0.2, gy + 3.2, gy + 3.5, d + 0.1, N, lin([0.15, 0.15, 0.15]));
-    onWall(kit, e, t, (gy + 3.5 + top - 0.5) / 2 + 0.3, brandPanel(ctx.atlas, name, Math.min(w, tw - 1), h), d + 0.1);
+    if (name) onWall(kit, e, t, (gy + 3.5 + top - 0.5) / 2 + 0.3, brandPanel(ctx.atlas, name, Math.min(w, tw - 1), h), d + 0.1);
     const c = e.at(t, 0, d / 2);
     ctx.solids.push({ x: c[0], z: c[2], hw: tw / 2, hd: d / 2, rot: Math.atan2(e.uz, e.ux), y0: gy - 1, y1: top });
     return;
@@ -1083,21 +1083,31 @@ function boardwalk(kit, ctx) {
       if (sc > fs) { fs = sc; f = e; }
     }
     if (!f) continue;
-    const names = st.n && !/Columbia Lake/.test(st.n) ? [st.n] : st.s.slice(0, Math.max(1, Math.floor(f.L / 16)));
-    const n = names.length, bay = f.L / n;
+    // (a strip OSM names no tenant in still gets its towers, unsigned)
+    const names = st.n && !/Columbia Lake/.test(st.n) ? [st.n] : st.s.length ? st.s.slice(0, Math.max(1, Math.floor(f.L / 16))) : new Array(Math.max(1, Math.floor(f.L / 28))).fill(null);
+    // every face turned the same way as the front shares the stores, in order along the strip
+    const fronts = r.E.filter((e) => e.L >= 8 && e.nx * f.nx + e.nz * f.nz > 0.8);
+    const total = fronts.reduce((a, e) => a + e.L, 0);
+    const n = names.length, bay = total / n;
+    const at = (p) => { for (const e of fronts) { if (p <= e.L) return [e, p]; p -= e.L; } const e = fronts[fronts.length - 1]; return [e, e.L / 2]; };
     const roofc = lin(BW_ROOFS[i % BW_ROOFS.length]);
     names.forEach((nm, k) => {
-      const t = bay * (k + 0.5), w = Math.min(bay - 3, n === 1 ? Math.min(isWal ? 16 : 12, f.L * 0.4) : 6.5);
+      const [fe, t0] = at(bay * (k + 0.5));
+      const w = Math.min(bay - 3, n === 1 ? Math.min(isWal ? 16 : 12, f.L * 0.4) : 6.5, fe.L - 4);
+      const t = Math.max(w / 2 + 2, Math.min(fe.L - w / 2 - 2, t0));
       if (w < 2.5) return;
       if (isWal) {
-        onWall(kit, f, t, r.yTop - 1.6, brandPanel(ctx.atlas, 'Walmart', w, w * 0.2), 0.1);
-        for (const s of [-1, 1]) entrance(kit, ctx, f, t + s * Math.min(24, f.L / 2 - 6), 9, 4.2, null, { can: lin([0.00, 0.33, 0.64]), d: 4.5 });
+        onWall(kit, fe, t, r.yTop - 1.6, brandPanel(ctx.atlas, 'Walmart', w, w * 0.2), 0.1);
+        for (const s of [-1, 1]) entrance(kit, ctx, fe, t + s * Math.min(24, fe.L / 2 - 6), 9, 4.2, null, { can: lin([0.00, 0.33, 0.64]), d: 4.5 });
         return;
       }
-      storeFront(kit, ctx, f, t, r.yTop, nm, w, wall, 'tower', { roofc: k % 2 ? lin(BW_ROOFS[(i + 1) % BW_ROOFS.length]) : roofc, towerc: shade(k % 2 ? wall : upper, 0.95) });
+      storeFront(kit, ctx, fe, t, r.yTop, nm, w, wall, 'tower', { roofc: k % 2 ? lin(BW_ROOFS[(i + 1) % BW_ROOFS.length]) : roofc, towerc: shade(k % 2 ? wall : upper, 0.95) });
       // shop windows either side of the tower
-      const gy = T(f.mx + f.nx * 2, f.mz + f.nz * 2), gw = Math.min(bay / 2 - w / 2 - 2, 7);
-      if (gw > 1.5) for (const sd of [-1, 1]) B4(r.B, f, t + sd * (w / 2 + 2.5 + gw / 2) - gw / 2, t + sd * (w / 2 + 2.5 + gw / 2) + gw / 2, gy + 0.4, gy + 3.0, 0.05, [f.nx, 0, f.nz], lin([0.18, 0.24, 0.30]));
+      const gy = T(fe.mx + fe.nx * 2, fe.mz + fe.nz * 2), gw = Math.min(bay / 2 - w / 2 - 2, 7);
+      if (gw > 1.5) for (const sd of [-1, 1]) {
+        const c = t + sd * (w / 2 + 2.5 + gw / 2);
+        if (c - gw / 2 > 0.5 && c + gw / 2 < fe.L - 0.5) B4(r.B, fe, c - gw / 2, c + gw / 2, gy + 0.4, gy + 3.0, 0.05, [fe.nx, 0, fe.nz], lin([0.18, 0.24, 0.30]));
+      }
     });
     // stone pilasters down every face, a bay apart
     for (const e of r.E) {
@@ -1131,10 +1141,10 @@ function boardwalk(kit, ctx) {
       B.cone(x, y + 1.1, z, 0.5, 2.6, 6, lin([0.92, 0.95, 0.97]));
       for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4; B.cone(x + Math.cos(a) * 3.6, y + 0.5, z + Math.sin(a) * 3.6, 0.12, 1.4, 4, lin([0.92, 0.95, 0.97])); }
       ctx.solids.push({ x, z, r: 6, y0: y - 1, y1: y + 0.6 });
-      const D = kit.B(x, z, true), n = 20;
+      const D = kit.B(x, z), n = 20;
       for (let i = 0; i < n; i++) {
         const a0 = (i / n) * Math.PI * 2, a1 = ((i + 1) / n) * Math.PI * 2;
-        D.tri([x, y + 0.06, z], [x + Math.cos(a0) * 14, y + 0.06, z + Math.sin(a0) * 14], [x + Math.cos(a1) * 14, y + 0.06, z + Math.sin(a1) * 14], [0, 1, 0], lin([0.58, 0.34, 0.27]));
+        D.tri([x, y + 0.12, z], [x + Math.cos(a0) * 14, y + 0.12, z + Math.sin(a0) * 14], [x + Math.cos(a1) * 14, y + 0.12, z + Math.sin(a1) * 14], [0, 1, 0], lin([0.58, 0.34, 0.27]));
       }
       if (ctx.clearAt) ctx.clearAt.push([x, z, 9]);
     }

@@ -301,6 +301,75 @@ file and a guide disagree, this file wins.
   through `player.autoDrive`; a full race through the panel's buttons
   takes ~3 min of wall clock with AUTO_GPU=1.
 
+- **The sights: src/kwsights.js** (`data/sights.json` from
+  `tools/kw/build_sights.py`; docs/sights-*.jpg). Everything kwplaces.js
+  does not: each landmark from its OSM footprint, found by centroid
+  (`SIGHTS`, nearest within 12 m; the script asserts all are found).
+  `prepSights` flattens every box under a footprint it draws (`kw.skip`,
+  h 0, and `kw.poly` deleted so no storefront sign hangs on an undrawn face;
+  kw.js's `LM_SIGNS` loop now skips `kw.skip` boxes); `buildSights` is one
+  landmarks.js extra built with **kwplaces.js's `Kit`** (exported at the end
+  of kwplaces.js: the same two vertex-coloured materials, so a cluster
+  holding both modules' pieces is still one draw each) and its **own
+  `PlaceAtlas` (2048 x 1536)** -- the places atlas is full. Keep panels at
+  ~24-26 px/m (`text`, `brandPanel`); a tall panel (a stack's letters, a
+  banner) sets its whole atlas row's height, so give those ~13-16 px/m.
+  `__kwSights.atlas.full` must be 0 and `__kwSights.err` empty.
+  `block()` is the generic footprint building (walls, parapet, cornice,
+  plinth, windows `punch` / `grid` / `ribbon` / `curtain`); `frontEdge()`
+  finds the face toward a named street. What is drawn, and from what:
+  **Kitchener City Hall** (KPMB 1993: red Indian sandstone over a green
+  stone band, the Civic Rotunda's drum with its frosted ring in green
+  copper, the Berlin Tower's open steel cube and beacon mast; Carl Zehr
+  Square's granite and the fountain pool OSM maps in it -- no clock: the
+  clock tower people remember is the 1924 hall's, in Victoria Park);
+  **King St downtown and Galt's Main / Water / Ainslie St** go through
+  kwplaces.js `meshKing` (`sights.king`, the shops OSM maps in each; Galt's
+  have `pal: 'stone'`, the limestone `STONES`); the **Market** (brick, the
+  glazed atrium on King); **Centre in the Square** (fly tower); the
+  **Breithaupt Block** (Google's four-colour wordmark on the 1903 factory
+  and the 11-storey tower); the **Tannery** (arched windows, the 55 m stack
+  off Joseph St, LANG TANNING CO. painted on the brick, Communitech);
+  **Kaufman Lofts** (Kahn's concrete grid over red brick, the carved
+  KAUFMAN RUBBER CO. LTD. frieze, the KAUFMAN stack -- the stack's lettering
+  is from memory, unconfirmed); **Bauer Lofts**; **Victoria Park** (the
+  clock tower at OSM's clock node by the Gaukel St gate, its fountain, the
+  pavilion's hipped roof, the boathouse, the island shelter, Queen
+  Victoria); **Schneider Haus**; **the Aud** (concrete, barrel roofs over
+  its two lobes, KITCHENER MEMORIAL AUDITORIUM on the East Ave face, THE AUD
+  over a red canopy, Rangers banners); **CF Fairview Park** and **the
+  Boardwalk**, both checked against the Esri World Imagery aerial (2026):
+  Fairview's zones (`FAIR_WALMART` / `FAIR_BAY` / `FAIR_SEARS` quads off the
+  aerial: Walmart's grey front under a blue fascia, the Bay's empty dark
+  brick box, the Sears wing split into Winners / Sport Chek / Mark's / RBC),
+  the clerestory down the concourse with glass pyramids over the courts,
+  the glazed main entrances (`atriumEntrance`), the red paving at the south
+  doors, the pylon on Fairway Rd; the Boardwalk's two-tone stucco on a
+  stone base, an entrance tower with a hipped metal roof per store
+  (`storeFront(..., 'tower')`), pergola walks on the strips, the fountain
+  court; **Bingemans** (the conference centre; Big Splash's wave pool,
+  tower and six slides fanning DOWNHILL -- the direction is found from the
+  terrain); the **Waterloo Region Museum** (white roof; the 16-colour
+  glass quilt on every face toward Homer Watson Blvd) and **Doon Heritage
+  Village** (every small unnamed building in `DOON` as clapboard / brick /
+  red barn); **Homer Watson House**; **Toyota** (white panels, rooftop
+  plant, the red TOYOTA logo toward Fountain St, the gate's monument);
+  **Cambridge**: the Mill, the Old Post Office (mansard, the copper clock
+  tower, the 2018 glass pavilion on the river side), the Main St bridge's
+  bowstring arches (on the deck's edges, no solids), the Forbes mill.
+  **Conestoga Mall** (kwplaces.js) got the same aerial check: the two
+  octagonal courts (`MALL_COURTS`), the corridor clerestory and Zehrs'
+  solar roof (`ZEHRS_SOLAR`). `sightsMap()` adds every one to the map.
+  `window.__noSights = true` before boot (kwshots `VIEW_BOOT_JS`) turns it
+  all off for a before/after. To check a place against the aerial:
+  `tools/kw/aerial.py <out.jpg> x z [half] [zoom]` (Esri World Imagery,
+  north up, the game's grid marked). Phone (AUTO_PHONE=1, GPU), off -> on:
+  the spawn 196 -> 196 draws; City Hall from across King 200 -> 206 draws,
+  896k -> 949k tris; King St downtown 376 -> 397, 977k -> 1018k;
+  Fairview 368 -> 394, 994k -> 1080k (a wide view: three new materials in
+  each 1200 m cluster it sees -- the pieces, the decals, the atlas); Galt
+  141 -> 146, 621k -> 659k; the Boardwalk 74 -> 77. 0 exceptions.
+
 ## Build number
 
 `<div id="build">vN</div>` in index.html and `CACHE = 'autokw-vN'` in sw.js
