@@ -3504,7 +3504,10 @@ export function* cityGenerator(md, cache = {}) {
       const K = c.PK || c.K, I = c.PI || c.I;
       if (!c.pave || K.length < 2) continue;
       for (const p of I) R = Math.max(R, Math.hypot(p[0] - n.x, p[1] - n.z) + VERGE);
-      raw.push({ K, I, arc: c.arc });
+      // (which side of which street each end of it is: arm i's +p side, the
+      // next arm's -p side, as world.meshJunction's sidewalk choice reads them)
+      const A = arms[i], B = arms[(i + 1) % N];
+      raw.push({ K, I, arc: c.arc, sd: [A.ei, A.atA ? 1 : -1, B.ei, B.atA ? -1 : 1] });
     }
     return { legacy: false, ni, x: n.x, z: n.z, hw, sw, arms, poly, pcol, fillRaw: fill, fill: fill.length ? null : fill, raw, pieces: null,
       R2: (R + 0.1) * (R + 0.1) };
@@ -3579,7 +3582,7 @@ export function* cityGenerator(md, cache = {}) {
     if (J.pieces) return J.pieces;
     const own = J.arms.map((A) => A.ei);
     const pieces = [];
-    for (const { K, I, arc } of J.raw) {
+    for (const { K, I, arc, sd } of J.raw) {
       const keep = [], verge = [];
       for (let k = 0; k + 1 < K.length; k++) {
         const k0 = K[k], k1 = K[k + 1], i0 = I[k], i1 = I[k + 1];
@@ -3611,7 +3614,7 @@ export function* cityGenerator(md, cache = {}) {
         verge.push(vg);
       }
       if (!keep.some(Boolean)) continue;
-      pieces.push({ K, I, keep, verge, arc });
+      pieces.push({ K, I, keep, verge, arc, sd });
     }
     J.pieces = pieces;
     return pieces;

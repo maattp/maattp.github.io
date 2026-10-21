@@ -3349,6 +3349,14 @@ const RING_MIN = 15, RING_MAX = 60;   // appear no nearer than a stranger would 
 const CULL_R = 90;                    // recycled beyond this
 const OPEN_SHARE = 0.25;              // of spawn attempts that look for a plaza / park / pier first
 const PAVE = 1.4;                     // the walking line: this far beyond the kerb
+// AUTO KW: the walking line on side `sg` of edge e (+1 = the side (-dz, dx),
+// as world.js draws it), from that side's sidewalk (citygen `swk`): the
+// middle of OSM's walk -- against the kerb 0.75 m out, behind a grass
+// boulevard 1.85 m -- or, on a side with none, the road's edge 0.35 m in
+// from the kerb (people walk in the street there, never on the lawn); not
+// known: PAVE, the old full-width pavement.
+const SWK_OFF = [-0.35, 0.75, 1.85, PAVE];
+const walkOff = (e, sg) => e.hw + (e.swk === undefined ? PAVE : SWK_OFF[sg > 0 ? e.swk & 3 : (e.swk >> 2) & 3]);
 // facade styles (citygen styleFor) as foot traffic: a tower's block is full, a
 // house's is not
 const STYLE_FOOT = { tower: 1.2, midrise: 1.0, brick: 0.9, lowrise: 0.7, campus: 0.4, house: 0.15, industrial: 0.1 };
@@ -3653,7 +3661,7 @@ export class PedSystem {
       const ei = pool[Math.floor(R.n() * pool.length)], e = city.edges[ei];
       if (!e || e.elev || e.tunnel || e.cls === 'hwy' || e.cls === 'ramp' || e.noTraffic || e.rural || e.len < 24) continue;
       const a = city.nodes[e.a], b = city.nodes[e.b];
-      const t = 0.3 + R.n() * 0.4, side = R.n() < 0.5 ? 1 : -1, off = e.hw + PAVE;
+      const t = 0.3 + R.n() * 0.4, side = R.n() < 0.5 ? 1 : -1, off = walkOff(e, side);
       const cx = lerp(a.x, b.x, t), cz = lerp(a.z, b.z, t);
       const x = cx - e.dz * off * side, z = cz + e.dx * off * side;
       const d = Math.hypot(x - px, z - pz);
@@ -3719,7 +3727,7 @@ export class PedSystem {
       const a = city.nodes[e.a], b = city.nodes[e.b];
       const t = 0.15 + this.R.n() * 0.7;
       const side = this.R.n() < 0.5 ? 1 : -1;
-      const off = e.hw + PAVE;
+      const off = walkOff(e, side);
       const x = lerp(a.x, b.x, t) - e.dz * off * side;
       const z = lerp(a.z, b.z, t) + e.dx * off * side;
       const d = Math.hypot(x - px, z - pz);
@@ -3756,7 +3764,7 @@ export class PedSystem {
         dirSign = R.n() < 0.5 ? 1 : -1;
         // room to walk before the next junction: planNode wants the corner ahead
         if ((dirSign > 0 ? 1 - t : t) * e.len < Math.min(e.len * 0.5, 12)) dirSign = -dirSign;
-        const off = e.hw + PAVE;
+        const off = walkOff(e, side * dirSign);
         // (the walking code's side is across the way he GOES: a ped facing
         // against the edge's own direction stands on the opposite side)
         x = lerp(a.x, b.x, t) - e.dz * off * side * dirSign;
@@ -3841,7 +3849,8 @@ export class PedSystem {
       if (e.cls === 'hwy' || e.cls === 'ramp' || e.tunnel || e.rural || e.len < 6) continue;
       const a = city.nodes[e.a];
       const t = clamp(((p.x - a.x) * e.dx + (p.z - a.z) * e.dz) / e.len, 0, 1);
-      const d = Math.abs(Math.hypot(a.x + e.dx * t * e.len - p.x, a.z + e.dz * t * e.len - p.z) - (e.hw + PAVE));
+      const qx = p.x - (a.x + e.dx * t * e.len), qz = p.z - (a.z + e.dz * t * e.len);
+      const d = Math.abs(Math.hypot(qx, qz) - walkOff(e, qx * -e.dz + qz * e.dx >= 0 ? 1 : -1));
       if (d < bd) { bd = d; best = list[i]; }
     }
     if (best < 0) { p.edge = -1; p.hx = p.x; p.hz = p.z; p.wanderT = 0; return; }
@@ -3913,18 +3922,21 @@ export class PedSystem {
       pend = false; pn++;
     };
     const nx = node.x, nz = node.z;
+    // an arm's walking line on the side r (-uz, ux) * s of it (walkOff's
+    // sign is the edge's own: the arm runs along it from its `a` end or not)
+    const armOff = (A, sg) => walkOff(city.edges[A.ei], A.atA ? sg : -sg);
     if (m === 0) {
       // a dead end: across the end of the street to the other pavement and back
-      const o = A1.hw + PAVE, nax = r * -A1.uz, naz = r * A1.ux;
+      const o = armOff(A1, r), o2 = armOff(A1, -r), nax = r * -A1.uz, naz = r * A1.ux;
       put(nx + A1.ux * 1.5 + nax * o, nz + A1.uz * 1.5 + naz * o, false);
-      put(nx + A1.ux * 1.5 - nax * o, nz + A1.uz * 1.5 - naz * o, true);
+      put(nx + A1.ux * 1.5 - nax * o2, nz + A1.uz * 1.5 - naz * o2, true);
       p.dirSign = -p.dirSign;
     } else {
       // `from`'s facing line: the arm he is on, then each arm he crosses
-      let fu = A1.ux, fz = A1.uz, fo = A1.hw + PAVE;
+      let fu = A1.ux, fz = A1.uz, fo = armOff(A1, r);
       let fin = -1, finSide = 0;
       for (let h = 0; h < m; h++) {
-        const B = ARMS[ORD[h]], ob = B.hw + PAVE;
+        const B = ARMS[ORD[h]], ob = armOff(B, -r), obF = armOff(B, r);
         const fnx = r * -fz, fnz = r * fu;           // from's facing normal
         const bnx = r * B.uz, bnz = r * -B.ux;       // B's line on the side facing him
         const Rx = bnx * ob - fnx * fo, Rz = bnz * ob - fnz * fo;
@@ -3944,11 +3956,11 @@ export class PedSystem {
         const last = h === m - 1 || h >= 2;
         if (last || !ok || b < 1.5 || B.hw > 16 || R.n() > (h === 0 ? 0.4 : 0.3)) { fin = ORD[h]; finSide = -r; break; }
         // across B at its mouth, to the pavement on its far side
-        put(nx + B.ux * b - bnx * ob, nz + B.uz * b - bnz * ob, true);
-        fu = B.ux; fz = B.uz; fo = ob;
+        put(nx + B.ux * b - bnx * obF, nz + B.uz * b - bnz * obF, true);
+        fu = B.ux; fz = B.uz; fo = obF;
         if (R.n() < 0.25) {
           // ...and out along B on that side
-          put(nx + B.ux * (b + 3) - bnx * ob, nz + B.uz * (b + 3) - bnz * ob, false);
+          put(nx + B.ux * (b + 3) - bnx * obF, nz + B.uz * (b + 3) - bnz * obF, false);
           fin = ORD[h]; finSide = r; break;
         }
       }
@@ -4318,7 +4330,7 @@ export class PedSystem {
           const prog = (p.x - a.x) * fx + (p.z - a.z) * fz;
           if (len - prog < PLAN_AT) this.planNode(p, p.dirSign > 0 ? e.b : e.a);
           else {
-            const off = e.hw + PAVE;
+            const off = walkOff(e, p.side * p.dirSign);
             const ap = clamp(prog + 4, 0, len);
             const tx = a.x + fx * ap - fz * off * p.side;
             const tz = a.z + fz * ap + fx * off * p.side;
