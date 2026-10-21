@@ -668,6 +668,10 @@ export class TrafficSystem {
     // clears it): update's follow pass walks these, not all ~220
     this._rigs = [];
     this.farMeshes = new Map();
+    // Cars that are only scenery (drivethru.js's queues): { type, x, y, z, h, col: THREE.Color },
+    // drawn through the far LOD's InstancedMeshes, near or far, on a phone or not -- a slot each,
+    // no draws of their own. Not vehicles: nothing here drives, hits or hashes them.
+    this.decor = [];
     // Every type's far LOD up front, on the loading screen: built on first use
     // it was a one-off 2-4 ms stall (40+ ms on a phone) the first time each
     // type drove past 60 m.
@@ -1343,9 +1347,38 @@ export class TrafficSystem {
    * the instanced mesh stands in for it.
    */
   updateFarLod(px, pz, player) {
-    if (FAR_LOD === Infinity) return;
+    if (FAR_LOD === Infinity && !this.decor.length && !this._decorWas) return;
+    this._decorWas = this.decor.length > 0;
     const lim = FAR_LOD * FAR_LOD;
     for (const e of this.farMeshes.values()) e.n = 0;
+    if (FAR_LOD !== Infinity) this._farCars(px, pz, player, lim);
+    // the scenery cars, every one in the frustum
+    const cam = this.camera, fr = this._farFr, sph = this._farS, M = this._farM;
+    for (const d of this.decor) {
+      if (cam) { sph.center.set(d.x, d.y + 1, d.z); sph.radius = 9; if (!fr.intersectsSphere(sph)) continue; }
+      let e = this.farMeshes.get(d.type);
+      if (!e) this.farMeshes.set(d.type, (e = { mesh: null, cap: 0, n: 0 }));
+      if (e.n === e.cap) this.growFar(e, d.type);
+      const c = Math.cos(d.h), s = Math.sin(d.h);
+      // the group's (x, y, z, yaw) times the tilt's lift (pivotY): as a parked car's
+      M.set(c, 0, s, d.x, 0, 1, 0, d.y + (d.pivotY || 0), -s, 0, c, d.z, 0, 0, 0, 1);
+      e.mesh.setMatrixAt(e.n, M);
+      e.mesh.setColorAt(e.n, d.col);
+      e.n++;
+    }
+    for (const e of this.farMeshes.values()) {
+      if (!e.mesh) continue;
+      e.mesh.count = e.n;
+      e.mesh.visible = e.n > 0;
+      if (!e.n) continue;
+      e.mesh.instanceMatrix.needsUpdate = true;
+      e.mesh.instanceColor.needsUpdate = true;
+      e.mesh.computeBoundingSphere();
+    }
+  }
+
+  /** updateFarLod's traffic: every car past FAR_LOD into its type's InstancedMesh. */
+  _farCars(px, pz, player, lim) {
     // An InstancedMesh culls as ONE object, so every slot in it would be drawn
     // whenever any is on screen. Cull per car here instead, against last
     // frame's camera (the camera moves after traffic), with a margin for it.
@@ -1387,15 +1420,6 @@ export class TrafficSystem {
       if (!v._farCol) v._farCol = new THREE.Color(v.color);
       e.mesh.setColorAt(e.n, v._farCol);
       e.n++;
-    }
-    for (const e of this.farMeshes.values()) {
-      if (!e.mesh) continue;
-      e.mesh.count = e.n;
-      e.mesh.visible = e.n > 0;
-      if (!e.n) continue;
-      e.mesh.instanceMatrix.needsUpdate = true;
-      e.mesh.instanceColor.needsUpdate = true;
-      e.mesh.computeBoundingSphere();
     }
   }
 

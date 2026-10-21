@@ -684,14 +684,29 @@ export function prepShops(city) {
   // buildings -- their signs; a store with no building of its own can fail to draw)
   for (const b of city.buildings) if (b.kw && ((b.kw.poly && !b.kw.skip) || b.kw.shop || b.kw.canopy)) grow(b.x, b.z, Math.max(b.w, b.d) / 2);
   for (const s of S.stores) if (s[3] !== null) grow(s[3], s[4], 10);
-  r.fronts = 0; r.frontsOut = 0;
+  r.fronts = 0; r.frontsOut = 0; r.frontsNext = 0;
+  const outBy = (e, x, z) => (e ? Math.max(e[0] - x, x - e[1], e[2] - z, z - e[3]) : Infinity);
   (S.fronts || []).forEach((F, fi) => {
     const [bx, bz, kind] = F;
     const b = boxAt(city, bx, bz, 1);
     if (!free(b) || b.h < 2.5 || b.h > 12.5 || b.w < 5 || b.d < 5) return;
     // (a dealer, a big lot on an auto row, a little further)
-    const e = ext.get(ckey(b.x, b.z)), M = kind === 'c' ? 120 : 60;
-    if (!e || b.x < e[0] - M || b.x > e[1] + M || b.z < e[2] - M || b.z > e[3] + M) { r.frontsOut++; return; }
+    const M = kind === 'c' ? 120 : 60;
+    let ck = null;
+    if (outBy(ext.get(ckey(b.x, b.z)), b.x, b.z) > M) {
+      // past its own cell's cluster: merged into the nearest cell's (its own or a NEIGHBOUR's) when that one's
+      // drawn extent is within NEXT_M of it (a store just over a 1200 m line, on a row the
+      // next cluster already draws: Hespeler Rd's Tirecraft, Ontario Auto Market, Fix Auto)
+      // (or its own cell's, a little further out than M)
+      const kx = Math.round(b.x / 1200), kz = Math.round(b.z / 1200);
+      let bd = NEXT_M, near = false;
+      for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+        const d = outBy(ext.get((kx + i) * 1000 + (kz + j)), b.x, b.z);
+        if (d < bd) { bd = d; near = true; ck = i || j ? [(kx + i) * 1200, (kz + j) * 1200] : null; }
+      }
+      if (!near) { r.frontsOut++; return; }
+      r.frontsNear = (r.frontsNear || 0) + 1;
+    }
     const A = b.w * b.d;
     if (A < 40 || A > 16000) return;
     // a store in a house (a salon in a bungalow) stays a house; a pad or a kiosk the data says is one does not
@@ -711,6 +726,7 @@ export function prepShops(city) {
     b.kw.strip = { face };
     b.kw.skip = true;
     b.kw.shop = { fmt: 'strip', plaza: -1, front: fi, kind };
+    if (ck) { b.kw.shop.ck = ck; r.frontsNext++; }
     // one storey and its parapet: a pad 5-6 m, a kiosk under its canopy's height, a showroom's double height
     const H = { s: 7.2, f: 5.8, b: 6.4, a: 6.2, k: 4.9, c: 7.6 }[kind] || 7.2;
     if (kind === 's') { if (b.h > 7.5 && A < 6000) b.h = 7.2; b.h = Math.max(b.h, 5.0); } else b.h = H;
@@ -719,6 +735,8 @@ export function prepShops(city) {
   return r;
 }
 /** The share of the ground in front of face fi (7 x 8 m deep, 7 across) that is car park. */
+// how far past a cell's drawn extent (its own, or the next one's) a front past M may be, to be merged into it
+const NEXT_M = 150;
 function lotShare(city, fr, fi) {
   const L = fr.F[fi].len;
   let park = 0, n = 0;
@@ -776,7 +794,8 @@ function chainCol(name) {
 }
 // a fast-food pad's walls, colour band and its trim: the chains' own
 const FOOD_LOOK = {
-  mcd: { wall: '#5d5f61', band: '#2b2b2b', accent: '#ffc72c' }, tims: { wall: '#8a5a3c', band: '#c8102e', accent: '#e9e2d4' },
+  mcd: { wall: '#5d5f61', band: '#2b2b2b', accent: '#ffc72c' },
+  tims: { wall: '#7d5236', band: '#3d2a1f', accent: '#c8102e', pier: '#b5a891', base: '#a2967f' },
   harveys: { wall: '#ece5d6', band: '#e21836', accent: '#ffd400' }, aw: { wall: '#d2b48c', band: '#f26522', accent: '#5b2c14' },
   wendys: { wall: '#6f7276', band: '#e2203d', accent: '#ffffff' }, bk: { wall: '#d9c2a2', band: '#502314', accent: '#ff8732' },
   kfc: { wall: '#f1f0ee', band: '#e4002b', accent: '#ffffff' }, dq: { wall: '#f2eee6', band: '#ee3e42', accent: '#1d5baa' },
@@ -885,6 +904,123 @@ function frameOf(b) {
 
 const hashI = (a, b) => { const s = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return s - Math.floor(s); };
 
+// --- a fast-food pad's silhouette ---------------------------------------------------------
+// The chains' current pads, each by what reads from the road: Tims' espresso
+// fascia with its red line, stone base and piers and a wood-clad entrance
+// tower; McDonald's grey box with the yellow "eyebrow" arch over the roof;
+// Wendy's, Harvey's, A&W, Burger King and Starbucks' entrance towers (sloped
+// where theirs are); KFC's red and white bucket stripes; DQ's and Popeyes'
+// mansards. All of it into the pad's own cluster builder (no draw of its own).
+const PAD_SIL = {
+  tims: { stone: '#b5a891', tower: { w: 5.4, up: 1.8, slope: 0, col: '#6b4329', cap: '#c8102e', stone: true } },
+  mcd: { eyebrow: '#ffbc0d', wood: '#8a5b3a' },
+  wendys: { tower: { w: 4.2, up: 2.4, slope: 1.3, col: '#e2203d', cap: '#2b2b2b' } },
+  harveys: { tower: { w: 4.8, up: 1.9, slope: 0.9, col: '#e21836', cap: '#ffd400' } },
+  aw: { tower: { w: 4.8, up: 1.9, slope: 0, col: '#3d2b1f', cap: '#f26522' }, wood: '#7a5234' },
+  bk: { tower: { w: 4.8, up: 1.6, slope: 0.8, col: '#502314', cap: '#ff8732' } },
+  kfc: { stripes: ['#e4002b', '#f4f4f2'] },
+  starbucks: { tower: { w: 3.8, up: 2.8, slope: 1.6, col: '#3b302a', cap: '#00704a' }, wood: '#8a6a4c' },
+  dq: { mansard: '#c8102e' }, popeyes: { mansard: '#c8481c' },
+};
+const UP = [0, 1, 0];
+const nrm = (x, y, z) => { const l = Math.hypot(x, y, z) || 1; return [x / l, y / l, z / l]; };
+/**
+ * A block on face fi from t0 to t1 along it and o0 to o1 out, from y0 up to a
+ * top that runs from ya (at t0) to yb (at t1): a tower, or a sloped one.
+ */
+function slopeBlock(Bd, fr, fi, t0, t1, o0, o1, y0, ya, yb, col, sides = true) {
+  const N = fr.N(fi), p0 = fr.P(fi, 0, 0, 0), p1 = fr.P(fi, 1, 0, 0);
+  const al = [p1[0] - p0[0], 0, p1[2] - p0[2]];
+  const yAt = (t) => ya + ((yb - ya) * (t - t0)) / (t1 - t0);
+  for (const [o, s] of [[o1, 1], [o0, -1]]) {
+    Bd.quad(fr.P(fi, t0, y0, o), fr.P(fi, t1, y0, o), fr.P(fi, t1, yb, o), fr.P(fi, t0, ya, o), [N[0] * s, 0, N[2] * s], U0, s > 0 ? col : shade(col, 0.8));
+  }
+  if (sides) {
+    for (const [t, s] of [[t0, -1], [t1, 1]]) {
+      const yt = yAt(t);
+      Bd.quad(fr.P(fi, t, y0, o0), fr.P(fi, t, y0, o1), fr.P(fi, t, yt, o1), fr.P(fi, t, yt, o0), [al[0] * s, 0, al[2] * s], U0, shade(col, 0.88));
+    }
+  }
+  const sl = (yb - ya) / (t1 - t0);
+  Bd.quad(fr.P(fi, t0, ya, o0), fr.P(fi, t1, yb, o0), fr.P(fi, t1, yb, o1), fr.P(fi, t0, ya, o1), nrm(-al[0] * sl, 1, -al[2] * sl), U0, shade(col, 1.05));
+}
+/** A mansard round the whole box: from `out` past the walls at y0 up and in to `inn` inside them at y1. */
+function mansard(Bd, fr, y0, y1, out, inn, col) {
+  for (let fi = 0; fi < 4; fi++) {
+    const h = fr.F[fi].len / 2, N = fr.N(fi);
+    Bd.quad(fr.P(fi, -h - out, y0, out), fr.P(fi, h + out, y0, out), fr.P(fi, h - inn, y1, -inn), fr.P(fi, -h + inn, y1, -inn),
+      nrm(N[0] * (y1 - y0), out + inn, N[2] * (y1 - y0)), U0, col);
+    // its soffit
+    Bd.quad(fr.P(fi, -h - out, y0, out), fr.P(fi, h + out, y0, out), fr.P(fi, h, y0, 0), fr.P(fi, -h, y0, 0), [0, -1, 0], U0, shade(col, 0.55));
+  }
+}
+/**
+ * McDonald's eyebrow: a yellow arch standing on the parapet, `W` across at t
+ * tc on face fi, rising `rise`, its band `th` deep (radially) and o0..o1 out.
+ */
+function eyebrow(Bd, fr, fi, tc, W, rise, yb, th, o0, o1, col) {
+  const N = fr.N(fi), p0 = fr.P(fi, 0, 0, 0), p1 = fr.P(fi, 1, 0, 0);
+  const al = [p1[0] - p0[0], p1[2] - p0[2]];
+  const n = 12, R = W / 2;
+  const pt = (k, inner) => { const a = (Math.PI * k) / n, r = inner ? R - th : R, h = inner ? rise - th : rise;
+    return [tc - r * Math.cos(a), yb + h * Math.sin(a), -Math.cos(a) / r, Math.sin(a) / h]; };
+  for (let k = 0; k < n; k++) {
+    const A = pt(k, false), B2 = pt(k + 1, false), a = pt(k, true), b2 = pt(k + 1, true);
+    for (const [o, s] of [[o1, 1], [o0, -1]]) {
+      Bd.quad(fr.P(fi, A[0], A[1], o), fr.P(fi, B2[0], B2[1], o), fr.P(fi, b2[0], b2[1], o), fr.P(fi, a[0], a[1], o), [N[0] * s, 0, N[2] * s], U0, s > 0 ? col : shade(col, 0.8));
+    }
+    // the outer (top) and inner (under) surfaces, normals out from the arch's centre
+    const mo = nrm(al[0] * (A[2] + B2[2]), A[3] + B2[3], al[1] * (A[2] + B2[2]));
+    Bd.quad(fr.P(fi, A[0], A[1], o0), fr.P(fi, B2[0], B2[1], o0), fr.P(fi, B2[0], B2[1], o1), fr.P(fi, A[0], A[1], o1), mo, U0, shade(col, 1.05));
+    Bd.quad(fr.P(fi, a[0], a[1], o0), fr.P(fi, b2[0], b2[1], o0), fr.P(fi, b2[0], b2[1], o1), fr.P(fi, a[0], a[1], o1), [-mo[0], -mo[1], -mo[2]], U0, shade(col, 0.7));
+  }
+}
+/** The chain's silhouette on a pad pad() drew: g = { fr, fi, L, gy, top, pt, Bd }. */
+function padSilhouette(g, k) {
+  const sil = PAD_SIL[k];
+  if (!sil) return;
+  const { fr, fi, L, gy, top, pt, Bd } = g, h = L / 2, back = fr.opp(fi);
+  if (sil.stone) {
+    // the stone wainscot all round (the piers are pad()'s, in the stone)
+    const st = lin(sil.stone);
+    for (let fj = 0; fj < 4; fj++) { const hs = fr.F[fj].len / 2; fr.rect(Bd, fj, -hs, hs, gy, gy + (fj === fi ? 0.45 : 1.25), 0.07, st); }
+  }
+  if (sil.wood) {
+    // a wood-clad panel beside the glass at the far end of the front, under the fascia
+    const wd = lin(sil.wood), t1 = h - 0.35, t0 = Math.max(-h + 2, h - Math.min(3.2, L * 0.22));
+    fr.rect(Bd, fi, t0, t1, gy + 0.45, gy + 3.2, 0.12, wd);
+    for (let t = t0 + 0.3; t < t1; t += 0.3) fr.rect(Bd, fi, t - 0.02, t + 0.02, gy + 0.45, gy + 3.2, 0.13, shade(wd, 0.7));
+  }
+  if (sil.stripes) {
+    // the bucket's stripes round the parapet, above the fascia
+    const cs = sil.stripes.map(lin);
+    for (let fj = 0; fj < 4; fj++) {
+      if (fj === back) continue;
+      const hs = fr.F[fj].len / 2, n = Math.max(2, Math.round((2 * hs) / 0.8));
+      for (let i = 0; i < n; i++) fr.rect(Bd, fj, -hs + (2 * hs * i) / n, -hs + (2 * hs * (i + 1)) / n, gy + 4.5, pt - 0.32, 0.1, cs[i & 1]);
+    }
+  }
+  if (sil.mansard) mansard(Bd, fr, top - 0.55, pt + 0.55, 0.95, 0.35, lin(sil.mansard));
+  if (sil.tower) {
+    const T0 = sil.tower, w = Math.min(T0.w, L - 2), c = lin(T0.col), cap = lin(T0.cap);
+    const ya = pt + T0.up, yb = ya + T0.slope;
+    slopeBlock(Bd, fr, fi, -w / 2, w / 2, -0.6, 1.0, gy + 3.1, ya, yb, c);
+    // the cap line along its top, on the face
+    const N = fr.N(fi);
+    Bd.quad(fr.P(fi, -w / 2, ya - 0.32, 1.02), fr.P(fi, w / 2, yb - 0.32, 1.02), fr.P(fi, w / 2, yb, 1.02), fr.P(fi, -w / 2, ya, 1.02), N, U0, cap);
+    if (T0.stone) {
+      // stone-clad corners down the tower's face (Tims)
+      const st = lin(sil.stone);
+      for (const s of [-1, 1]) fr.box(Bd, fi, s * (w / 2 - 0.35), 1.0, 0.7, 0.3, gy + 4.45, ya - 0.32 - gy - 4.45, st, { top: false });
+    }
+  }
+  if (sil.eyebrow) {
+    // the arch over the roof at the drive-through end of the front, standing on the parapet
+    const W = Math.min(10, L * 0.55), tc = h - W / 2 - Math.min(2.5, L * 0.1);
+    eyebrow(Bd, fr, fi, tc, W, 2.2, pt - 0.1, 0.7, -0.4, 0.35, lin(sil.eyebrow));
+  }
+}
+
 /**
  * The shell every format shares: walls, base, piers, accent band, parapet and
  * its coping, the roof and its rooftop units. `front` is the storefront face.
@@ -953,13 +1089,34 @@ export function buildShops(ctx) {
   const TX = new TextAtlas();
   // what hangs on each storefront's fascia already: [t0, t1] along it (fasciaUse)
   const fascia = new Map();
-  const key = (x, z) => 'kwp' + Math.round(x / 1200) + ',' + Math.round(z / 1200);
+  // a front merged into the next cell's cluster (prepShops `ck`): everything drawn on or by its
+  // building goes to that cluster's builders (a 40 m grid of them, the building's reach)
+  const redir = new Map();
+  for (const b of city.buildings) {
+    const ck = b.kw && b.kw.shop && b.kw.shop.ck;
+    if (!ck) continue;
+    const r = Math.max(b.w, b.d) / 2 + 3, k = 'kwp' + Math.round(ck[0] / 1200) + ',' + Math.round(ck[1] / 1200);
+    for (let gx = Math.floor((b.x - r) / 40); gx <= Math.floor((b.x + r) / 40); gx++) for (let gz = Math.floor((b.z - r) / 40); gz <= Math.floor((b.z + r) / 40); gz++) {
+      const g = gx * 100000 + gz;
+      let l = redir.get(g);
+      if (!l) redir.set(g, (l = []));
+      l.push({ b, r, k });
+    }
+  }
+  const key = (x, z) => {
+    if (redir.size) {
+      const l = redir.get(Math.floor(x / 40) * 100000 + Math.floor(z / 40));
+      if (l) for (const q of l) if (Math.abs(x - q.b.x) < q.r && Math.abs(z - q.b.z) < q.r) return q.k;
+    }
+    return 'kwp' + Math.round(x / 1200) + ',' + Math.round(z / 1200);
+  };
   const geo = new Map(), logo = new Map();
   const bOf = (m, x, z, uv) => { const k = key(x, z); let b = m.get(k); if (!b) m.set(k, (b = new Builder(uv))); return b; };
   const Gb = (x, z) => bOf(geo, x, z, false);
   const Lb = (x, z) => bOf(logo, x, z, true);
   const stats = { stores: 0, portals: 0, walls: 0, fascia: 0, pylons: 0, built: 0, canopies: 0, osmCanopies: 0, prices: 0, plazaPylons: 0, skipped: 0, solids: 0 };
   const out = [];
+  const dts = [];     // the drive-throughs (driveLane), for drivethru.js
   const solid = (s) => { ctx.solids.push(s); stats.solids++; };
   const rotOf = (nx, nz) => Math.atan2(-nx, nz);   // a box whose local z is (nx, nz)
 
@@ -1323,20 +1480,174 @@ export function buildShops(ctx) {
     for (let fj = 0; fj < 4; fj++) if (fj !== fi) { const hs = fr.F[fj].len / 2; fr.rect(Bd, fj, -hs, hs, gy + 3.3, Math.min(gy + 4.4, top - 0.1), 0.05, lin(look.band)); }
     return { fr, fi, L, gy, top, pt, Bd };
   };
+  // --- the drive-through: OSM's lane (service=drive-through, shops.json front[6]) painted
+  // round the pad, the window where it passes closest, the menu board and the speaker
+  // post before it, the DRIVE THRU sign where it starts. Returns what drivethru.js needs, or null.
+  const PAINT = lin('#e9e7df'), PAINTY = lin('#e3bf3c');
+  const flat = (Bd, a, b2, c, d, col) => {
+    const y = (p) => [p[0], T(p[0], p[1]) + 0.05, p[1]];
+    Bd.quad(y(a), y(b2), y(c), y(d), UP, U0, col);
+  };
+  const driveLane = (b, fr, fi, raw, gy, look, k, who) => {
+    // resampled every ~1.5 m: x, z, s (metres along), tangent
+    const P = [];
+    let s = 0;
+    for (let i = 0; i + 1 < raw.length; i++) {
+      const [ax, az] = raw[i], [bx, bz] = raw[i + 1], l = Math.hypot(bx - ax, bz - az);
+      if (l < 0.05) continue;
+      const n = Math.max(1, Math.ceil(l / 1.5));
+      for (let j = 0; j < n; j++) P.push({ x: ax + ((bx - ax) * j) / n, z: az + ((bz - az) * j) / n, s: s + (l * j) / n, tx: (bx - ax) / l, tz: (bz - az) / l });
+      s += l;
+    }
+    if (P.length < 4 || s < 15) return null;
+    const last = raw[raw.length - 1], pl = P[P.length - 1];
+    P.push({ x: last[0], z: last[1], s, tx: pl.tx, tz: pl.tz });
+    // the tangent across each sample (its neighbours'), so the edge lines turn a corner without a gap
+    for (let i = 1; i + 1 < P.length; i++) {
+      const dx = P[i + 1].x - P[i - 1].x, dz = P[i + 1].z - P[i - 1].z, l = Math.hypot(dx, dz);
+      if (l > 0.01) { P[i].ux = dx / l; P[i].uz = dz / l; }
+    }
+    for (const p of P) if (p.ux === undefined) { p.ux = p.tx; p.uz = p.tz; }
+    const len = s;
+    // the box's local frame: how far outside it a point is
+    const cr = Math.cos(b.rot), sr = Math.sin(b.rot);
+    const loc = (x, z) => { const dx = x - b.x, dz = z - b.z; return [dx * cr + dz * sr, -dx * sr + dz * cr]; };
+    const outside = (x, z) => { const [lx, lz] = loc(x, z); return Math.hypot(Math.max(0, Math.abs(lx) - b.w / 2), Math.max(0, Math.abs(lz) - b.d / 2)); };
+    const inside = (x, z, pad) => { const [lx, lz] = loc(x, z); return Math.abs(lx) < b.w / 2 + pad && Math.abs(lz) < b.d / 2 + pad; };
+    // the window: where the lane passes closest, with the building on the driver's (left) side
+    let wi = -1, wd = 7.5;
+    for (let i = 1; i < P.length - 1; i++) {
+      const p = P[i], d = outside(p.x, p.z);
+      const left = (p.tz * (b.x - p.x) - p.tx * (b.z - p.z)) > 0;
+      if (left && d < wd) { wd = d; wi = i; }
+    }
+    if (wi < 0 || P[wi].s < 8) return null;
+    let W = P[wi];
+    const [wlx, wlz] = loc(W.x, W.z);
+    const face = Math.abs(wlx) - b.w / 2 > Math.abs(wlz) - b.d / 2 ? (wlx > 0 ? 0 : 1) : (wlz > 0 ? 2 : 3);
+    const FL = fr.F[face].len / 2;
+    const tw = Math.max(-FL + 1.1, Math.min(FL - 1.1, fr.tOf(face, W.x, W.z)));
+    // where a car stops for it: the lane's point nearest the window itself (it can be clamped off a corner)
+    { const [qx, , qz] = fr.P(face, tw, 0, 0); let bd = Infinity;
+      for (let i = Math.max(1, wi - 12); i < Math.min(P.length - 1, wi + 13); i++) { const e = Math.hypot(P[i].x - qx, P[i].z - qz); if (e < bd) { bd = e; W = P[i]; } } }
+    const Bd = Gb(b.x, b.z), band = lin(look.band), N = fr.N(face);
+    // the window, its frame and sill, and its canopy (a bump-out in the band's colour)
+    fr.rect(Bd, face, tw - 0.85, tw + 0.85, gy + 0.95, gy + 2.25, 0.08, GLASS);
+    fr.rect(Bd, face, tw - 0.95, tw + 0.95, gy + 0.85, gy + 0.95, 0.1, STEEL);
+    for (const e of [-0.9, 0, 0.9]) fr.rect(Bd, face, tw + e - 0.04, tw + e + 0.04, gy + 0.95, gy + 2.25, 0.1, FRAME);
+    fr.box(Bd, face, tw, 0.75, 3.8, 1.5, gy + 2.75, 0.32, band);
+    fr.rect(Bd, face, tw - 1.9, tw + 1.9, gy + 2.75, gy + 2.84, 1.51, lin(look.accent || look.band));
+    const [wx, , wz] = fr.P(face, tw, 0, 0.1);
+    // the lane: its edge lines, arrows, and a stop bar at the window (off the building and off the street)
+    const Gl = Bd;
+    const ok = (x, z) => !inside(x, z, 0.3) && !city.onRoad(x, z, 0.2, true);
+    for (const side of [1, -1]) {
+      for (let i = 0; i + 1 < P.length; i++) {
+        const p = P[i], q = P[i + 1];
+        const lx0 = -p.uz * side * 1.75, lz0 = p.ux * side * 1.75, lx1 = -q.uz * side * 1.75, lz1 = q.ux * side * 1.75;
+        const a = [p.x + lx0, p.z + lz0], c = [q.x + lx1, q.z + lz1];
+        if (!ok(a[0], a[1]) || !ok(c[0], c[1])) continue;
+        const ox = -p.uz * 0.07, oz = p.ux * 0.07, ox2 = -q.uz * 0.07, oz2 = q.ux * 0.07;
+        flat(Gl, [a[0] - ox, a[1] - oz], [c[0] - ox2, c[1] - oz2], [c[0] + ox2, c[1] + oz2], [a[0] + ox, a[1] + oz], PAINTY);
+      }
+    }
+    for (let sa = 5; sa < len - 3; sa += 13) {
+      const i = P.findIndex((p) => p.s >= sa);
+      if (i < 0 || Math.abs(sa - W.s) < 4) continue;
+      const p = P[i], fx = p.tx, fz = p.tz, rx = -fz, rz = fx;
+      const at = (f, r) => [p.x + fx * f + rx * r, p.z + fz * f + rz * r];
+      if (!ok(...at(-1, 0)) || !ok(...at(1.4, 0))) continue;
+      flat(Gl, at(-1.1, -0.13), at(0.5, -0.13), at(0.5, 0.13), at(-1.1, 0.13), PAINT);
+      const h0 = at(0.5, -0.45), h1 = at(0.5, 0.45), h2 = at(1.45, 0);
+      Gl.tri([h0[0], T(h0[0], h0[1]) + 0.05, h0[1]], [h1[0], T(h1[0], h1[1]) + 0.05, h1[1]], [h2[0], T(h2[0], h2[1]) + 0.05, h2[1]], UP, PAINT);
+    }
+    { const rx = -W.tz, rz = W.tx, fx = W.tx * 2.4, fz = W.tz * 2.4;
+      const a = [W.x + fx - rx * 1.6, W.z + fz - rz * 1.6], c = [W.x + fx + rx * 1.6, W.z + fz + rz * 1.6];
+      if (ok(...a) && ok(...c)) flat(Gl, [a[0] - W.tx * 0.15, a[1] - W.tz * 0.15], [c[0] - W.tx * 0.15, c[1] - W.tz * 0.15], [c[0] + W.tx * 0.15, c[1] + W.tz * 0.15], [a[0] + W.tx * 0.15, a[1] + W.tz * 0.15], PAINT); }
+    // the menu board ~16 m before the window and the speaker post at it, on the driver's side
+    let menu = null;
+    for (const back of [16, 13, 19, 10]) {
+      const sm = W.s - back;
+      if (sm < 2.5) continue;
+      const i = P.findIndex((p) => p.s >= sm), p = P[i];
+      const lx = p.tz, lz = -p.tx;                         // the driver's left
+      const mx = p.x + lx * 2.7, mz = p.z + lz * 2.7;
+      if (inside(mx, mz, 0.8) || city.onRoad(mx, mz, 1.2, true)) continue;
+      menu = { x: mx, z: mz, s: p.s, nx: -lx, nz: -lz, px: p.x, pz: p.z };
+      break;
+    }
+    if (menu) {
+      const { x: mx, z: mz, nx, nz } = menu, y0 = T(mx, mz), rot = rotOf(nx, nz), ux = nz, uz = -nx;
+      const B2 = Gb(b.x, b.z), Wd = 2.3, Hh = 1.6, yb = y0 + 0.85;
+      for (const s2 of [-1, 1]) B2.box(mx + ux * s2 * (Wd / 2 - 0.15), y0 - 0.3, mz + uz * s2 * (Wd / 2 - 0.15), 0.16, 1.2, 0.16, rot, FRAME);
+      B2.box(mx, yb, mz, Wd + 0.16, Hh + 0.16, 0.3, rot, BLACK);
+      B2.box(mx, yb + Hh + 0.08, mz, Wd + 0.3, 0.32, 0.4, rot, band);
+      // the lit menu: four columns of photos and prices, brighter than the board
+      const panel = (t0, t1, y1, y2, col) => B2.quad([mx + nx * 0.16 + ux * t0, y1, mz + nz * 0.16 + uz * t0], [mx + nx * 0.16 + ux * t1, y1, mz + nz * 0.16 + uz * t1],
+        [mx + nx * 0.16 + ux * t1, y2, mz + nz * 0.16 + uz * t1], [mx + nx * 0.16 + ux * t0, y2, mz + nz * 0.16 + uz * t0], [nx, 0, nz], U0, col);
+      panel(-Wd / 2 + 0.06, Wd / 2 - 0.06, yb + 0.06, yb + Hh - 0.06, lin('#2b2b2b'));
+      const pcs = [lin('#f2e7d0'), lin('#d9a441'), lin('#c8573a'), lin('#efe9df')];
+      for (let c = 0; c < 4; c++) for (let r = 0; r < 3; r++) {
+        const t0 = -Wd / 2 + 0.12 + c * ((Wd - 0.24) / 4), t1 = t0 + (Wd - 0.24) / 4 - 0.07;
+        const y1 = yb + 0.12 + r * ((Hh - 0.24) / 3), y2 = y1 + (Hh - 0.24) / 3 - 0.08;
+        B2.quad([mx + nx * 0.17 + ux * t0, y1, mz + nz * 0.17 + uz * t0], [mx + nx * 0.17 + ux * t1, y1, mz + nz * 0.17 + uz * t1],
+          [mx + nx * 0.17 + ux * t1, y2, mz + nz * 0.17 + uz * t1], [mx + nx * 0.17 + ux * t0, y2, mz + nz * 0.17 + uz * t0], [nx, 0, nz], U0, shade(pcs[(c + r * 3 + (k ? k.length : 0)) % 4], 1.6));
+      }
+      solid({ x: mx, z: mz, hw: Wd / 2 + 0.1, hd: 0.25, rot, y0: y0 - 2, y1: yb + Hh + 0.3 });
+      // the speaker post just past the board, its little canopy in the band's colour
+      const i = P.findIndex((p) => p.s >= menu.s + 3.2), p = P[Math.max(0, i)];
+      const sx = p.x + p.tz * 2.1, sz = p.z - p.tx * 2.1;
+      if (!inside(sx, sz, 0.5) && !city.onRoad(sx, sz, 0.8, true)) {
+        const sy = T(sx, sz);
+        B2.box(sx, sy - 0.3, sz, 0.14, 1.55, 0.14, rot, FRAME);
+        B2.box(sx, sy + 0.95, sz, 0.42, 0.55, 0.3, rot, BLACK);
+        B2.box(sx, sy + 2.3, sz, 1.1, 0.12, 1.1, rot, band);
+        B2.box(sx - nx * 0.4, sy - 0.3, sz - nz * 0.4, 0.1, 2.7, 0.1, rot, FRAME);
+        solid({ x: sx, z: sz, r: 0.3, y0: sy - 2, y1: sy + 2.4 });
+      }
+    }
+    // DRIVE THRU at the lane's start, on a small sign to the driver's right
+    const dtc = TX.cell('DRIVE THRU', 22);
+    if (dtc) {
+      const p = P[Math.min(P.length - 1, 2)], rx = -p.tz, rz = p.tx;
+      const qx = p.x + rx * 2.6, qz = p.z + rz * 2.6;
+      if (!inside(qx, qz, 0.8) && !city.onRoad(qx, qz, 0.8, true) && key(qx, qz) === key(b.x, b.z)) {
+        const y0 = T(qx, qz), nx = -p.tx, nz = -p.tz, rot = rotOf(nx, nz), bgc = look.band;
+        const B2 = Gb(b.x, b.z);
+        B2.box(qx, y0 - 0.3, qz, 0.12, 1.6, 0.12, rot, STEEL);
+        B2.box(qx, y0 + 1.25, qz, 1.5, 0.5, 0.12, rot, lin(bgc));
+        letter(Lb(qx, qz), dtc, '#ffffff', bgc, qx + nx * 0.07, y0 + 1.5, qz + nz * 0.07, nx, nz, 1.36, 0.36);
+        solid({ x: qx, z: qz, r: 0.2, y0: y0 - 2, y1: y0 + 1.8 });
+      }
+    }
+    stats.lanes = (stats.lanes || 0) + 1;
+    // for drivethru.js: the lane every 1.5 m (x, z, s), the window and the menu
+    const pts = new Float32Array(P.length * 3);
+    P.forEach((p, i) => { pts[i * 3] = p.x; pts[i * 3 + 1] = p.z; pts[i * 3 + 2] = p.s; });
+    return { k, who, tims: k === 'tims' || /Tim Horton/.test(who), pts, len, sW: W.s, sM: menu ? menu.s : null,
+      x: W.x, z: W.z, wall: [wx, wz], face, tw, b };
+  };
   const frontBld = (b, sh, F) => {
     const kind = sh.kind, who = (F && F[4]) || '';
     const st = stats.fronts || (stats.fronts = {});
     st[kind] = (st[kind] || 0) + 1;
     if (kind === 'f') {
       const k = B[who] ? who : null;
-      const look = FOOD_LOOK[k || (/Tim Horton/.test(who) ? 'tims' : '')] || chainLook(who);
-      const { fr, fi, gy, Bd } = pad(b, look);
-      // a side's windows, the other side's drive-through window under its canopy
+      const kk = k || (/Tim Horton/.test(who) ? 'tims' : '');
+      const look = FOOD_LOOK[kk] || chainLook(who);
+      const g = pad(b, look);
+      const { fr, fi, gy, Bd } = g;
+      padSilhouette(g, kk);
+      // a side's windows; the drive-through window where OSM's lane passes the pad (else the other side) under its canopy
       const [s1, s2] = fr.sides(fi);
+      const dt = F[6] ? driveLane(b, fr, fi, F[6], gy, look, kk, who) : null;
+      if (dt) dts.push(dt);
       const l1 = fr.F[s1].len / 2;
-      if (l1 > 2.5) fr.rect(Bd, s1, -l1 + 1.2, l1 - 1.2, gy + 0.8, gy + 2.9, 0.06, GLASS);
-      fr.rect(Bd, s2, -0.8, 0.8, gy + 0.9, gy + 2.2, 0.07, GLASS);
-      fr.box(Bd, s2, 0, 0.6, 3.2, 1.2, gy + 2.6, 0.25, lin(look.band));
+      if (l1 > 2.5 && !(dt && dt.face === s1)) fr.rect(Bd, s1, -l1 + 1.2, l1 - 1.2, gy + 0.8, gy + 2.9, 0.06, GLASS);
+      if (!dt) {
+        fr.rect(Bd, s2, -0.8, 0.8, gy + 0.9, gy + 2.2, 0.07, GLASS);
+        fr.box(Bd, s2, 0, 0.6, 3.2, 1.2, gy + 2.6, 0.25, lin(look.band));
+      }
       // a brand's pylon at the road (store() signs its fascia); a pad with no logo here its lettered one
       // (in the pad's own cluster: a pylon over the line would start a cluster, a draw, of its own)
       let sp = roadSpot(b.x, b.z, 70);
@@ -1843,8 +2154,9 @@ export function buildShops(ctx) {
   // (build.js mergeByMaterial leaves a mesh of over 60k vertices unmerged: a draw of its own)
   stats.maxVerts = Math.max(0, ...[...geo.values()].map((Bd) => Bd.pos.length / 3));
   S.built = out;
+  S.dts = dts;
   S.stats = stats;
-  if (typeof window !== "undefined") window.__kwShops = { stats, built: out, atlas: A };
+  if (typeof window !== "undefined") window.__kwShops = { stats, built: out, atlas: A, dts };
 }
 
 /** The four corners of a w x h rectangle centred at (x, y, z) facing (nx, nz), `off` out. */
@@ -1893,3 +2205,5 @@ export function shopPlaces() {
   return out;
 }
 export function shopStats() { return S ? S.stats : null; }
+/** The fast-food pads' drive-throughs from OSM's lanes (buildShops driveLane): drivethru.js. */
+export function driveThrus() { return (S && S.dts) || []; }
