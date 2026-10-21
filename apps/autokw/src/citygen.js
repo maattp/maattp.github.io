@@ -4717,7 +4717,18 @@ export function* cityGenerator(md, cache = {}) {
     setLandmarkSolids(list) {
       this.landmarkSolids = list.length ? list : null;
       this.landmarkGrid = new Map();
-      for (let i = 0; i < list.length; i++) {
+      this._indexSolids(list, 0);
+    },
+    /** More solids after boot's (kwnature.js's trail benches): only the new ones are filed. */
+    addLandmarkSolids(more) {
+      if (!more.length) return;
+      if (!this.landmarkSolids) this.landmarkSolids = [];
+      const i0 = this.landmarkSolids.length;
+      for (const s of more) this.landmarkSolids.push(s);
+      this._indexSolids(this.landmarkSolids, i0);
+    },
+    _indexSolids(list, i0) {
+      for (let i = i0; i < list.length; i++) {
         const s = list[i];
         const e = s.r !== undefined ? s.r : Math.hypot(s.hw, s.hd);
         for (let cx = Math.floor((s.x - e) / 40); cx <= Math.floor((s.x + e) / 40); cx++) {

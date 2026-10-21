@@ -159,7 +159,8 @@
           m.hits++;
           if (tot.hitLog.length < 16) tot.hitLog.push({ site: site.name, t: +t.toFixed(1), a: A.typeName, b: B.typeName, at: [Math.round(A.x), Math.round(A.z)],
             va: +A.vLong.toFixed(1), vb: +B.vLong.toFixed(1), hd: +(Math.acos(Math.max(-1, Math.min(1, A.forward.x * B.forward.x + A.forward.z * B.forward.z))) * 57.3).toFixed(0),
-            jc: [A.jcC, B.jcC], ctl: jc ? [A.jcC >= 0 && jc.list[A.jcC] ? jc.list[A.jcC].k : 0, B.jcC >= 0 && jc.list[B.jcC] ? jc.list[B.jcC].k : 0] : null });
+            jc: [A.jcC, B.jcC], ctl: jc ? [A.jcC >= 0 && jc.list[A.jcC] ? jc.list[A.jcC].k : 0, B.jcC >= 0 && jc.list[B.jcC] ? jc.list[B.jcC].k : 0] : null,
+            edge: [A.edge, B.edge], lane: [A.laneU != null ? +A.laneU.toFixed(2) : null, B.laneU != null ? +B.laneU.toFixed(2) : null], mv: [A.jcMv, B.jcMv] });
         }
       }
       for (const v of cars) {

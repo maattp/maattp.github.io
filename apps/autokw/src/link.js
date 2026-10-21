@@ -1157,6 +1157,7 @@ export class Link {
     buildXingMast(c, ch.flat, ch.sign, this._cellUV('xbuck'), {
       groundAt: (x, z) => (this.city.groundAt ? this.city.groundAt(x, z, null) : G.terrainHeight(x, z)),
       solids: this.solids,
+      onRoad: (x, z) => !!(this.city.onRoad && this.city.onRoad(x, z, 0.5, false, false)),
     });
   }
 

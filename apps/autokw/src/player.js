@@ -689,6 +689,13 @@ export class Player {
       if (this.crashCd > 0) return;
       this.crashCd = 0.4;
       this.game.onCrash(imp, false);
+      // THE CAR TAKES A SOLO CRASH TOO, by the rule a car-to-car hit uses
+      // (traffic.js carPair: 0.7 x the closing speed, through damage()'s
+      // debounce and your car's 60 %): a wall, a building, a parapet or a
+      // pole at 60 km/h square on is ~7 of its 100, so the low-health smoke
+      // and the misfire come from driving into things as well as into
+      // traffic. A scrape along a wall (closing speed <= 5 m/s) costs nothing.
+      if (imp > 5) v.damage(imp * 0.7);
       // an armoured body (spec.armor, the Wedge) takes the hit for you too
       if (imp > 8) this.game.damagePlayer(imp * 0.5 * (v.spec.armor || 1), 'crash');
     });

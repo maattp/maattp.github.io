@@ -1751,7 +1751,16 @@ export class TrafficSystem {
     for (let guard = 0; guard < 3; guard++) {
       if (v.rtN < 2 && !this.routeExtend(v)) break;
       const q = RT_F;
-      if (s0 < (rt[q + V_K] === 1 ? rt[q + V_A] : rt[R_LEN])) break;
+      // A CORNER SHARPER THAN 90 DEG never reaches its vertex along the old
+      // line: the arc's farthest point along it is (a - t) + R, and t = R
+      // tan(th / 2) > R. The car went round the arc, never moved on, chased a
+      // pursuit point it could not pass and circled in the junction for
+      // minutes (Gildner St onto Park St, stop sign 3701: a 100 deg left, a
+      // 5 m circle until a car on Park St hit it). There it moves on at the
+      // arc's middle, where the old line's projection is (a - t) + R sin(th / 2).
+      const thr = rt[q + V_K] !== 1 ? rt[R_LEN]
+        : rt[q + V_TH] > Math.PI / 2 ? rt[q + V_A] - rt[q + V_T] + rt[q + V_R] * Math.sin(rt[q + V_TH] / 2) : rt[q + V_A];
+      if (s0 < thr) break;
       this.routeAdvance(v);
       s0 = (v.x - rt[R_QX]) * rt[R_UX] + (v.z - rt[R_QZ]) * rt[R_UZ];
     }
@@ -1806,7 +1815,9 @@ export class TrafficSystem {
     if (v.backT > 0) {
       v.backT -= dt;
       if (v.backT <= 0) this.reroute(v);
-      inp.brake = 1; inp.steer = -clamp(alpha * 1.7, -1, 1);
+      // (at a walking pace: held in reverse for the whole 1.2 s a car backed
+      // out at up to 6 m/s into whatever queued behind it)
+      inp.brake = v.vLong > -2 ? 1 : 0; inp.steer = -clamp(alpha * 1.7, -1, 1);
       return inp;
     }
 
@@ -1962,6 +1973,31 @@ export class TrafficSystem {
       if (o.prio > v.prio && Math.abs(o.vLong) < 1 && this.waitsOn(o, v)) continue;
       const g = along - v.halfLen - (o.halfLen * Math.abs(co) + o.halfWid * so);
       if (g < gap) { gap = g; vLead = o.vLong * co; lead = o; }
+    }
+    // A CITY LANE THAT ENDS AT A NODE: two lanes of a one-way street going on
+    // into fewer (Erb St W at signal 384: two lanes into one, both cars'
+    // lines jumping to the one lane at the node). Freeway merges have
+    // fwyMergeGap; city cars drove on abreast and side-swiped where the lanes
+    // met. A car whose lane line jumps sideways at the end of this edge gives
+    // way to a car on the same edge bound for the same lane that is ahead of
+    // it (or abreast and older): behind it as a leader, or abreast, stopped
+    // short of the node until it has gone.
+    if (v.rtN >= 2 && this.flow[v.edge] !== 0 && !v.unit && !this.fwy[v.edge]) {   // (freeway lanes that end: fwyDecide's dropT)
+      const q = RT_F, toNode = rt[R_LEN] - s0;
+      const jump = Math.abs(rt[q + R_OFF] - rt[R_OFF]);
+      if (jump > 0.9 && toNode < 50 && toNode > -2 && rt[R_UX] * rt[q + R_UX] + rt[R_UZ] * rt[q + R_UZ] > 0.94) {
+        for (const o of this.cars) {
+          if (o === v || o.edge !== v.edge || o.dirSign !== v.dirSign || !o.rt || o.rtN < 2 || o.mode !== 'traffic') continue;
+          const ort = o.rt;
+          if (ort[q + R_EI] !== rt[q + R_EI] || ort[q + R_SG] !== rt[q + R_SG] || Math.abs(ort[q + R_OFF] - rt[q + R_OFF]) > 1.2) continue;
+          if (Math.abs(ort[R_OFF] - rt[R_OFF]) < 1.2) continue;   // in my lane: the path scan has it
+          const os0 = (o.x - ort[R_QX]) * ort[R_UX] + (o.z - ort[R_QZ]) * ort[R_UZ];
+          const ds = os0 - s0, len = v.halfLen + o.halfLen;
+          if (ds < -0.3 || (ds <= 0.3 && o.prio > v.prio)) continue;   // behind me (or abreast and younger): it gives way
+          const g = ds > len + 1.5 ? ds - len : Math.max(0, toNode - v.halfLen - 1.5);
+          if (g < gap) { gap = g; vLead = ds > len + 1.5 ? o.vLong : 0; lead = o; this.stats.cityMerges = (this.stats.cityMerges || 0) + dt; }
+        }
+      }
     }
     // ON A FREEWAY RAMP, the merge ahead: slot in behind whatever on the main
     // line will reach the merge first (fwyMergeGap), as a leader.

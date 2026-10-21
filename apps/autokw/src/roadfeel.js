@@ -2,8 +2,8 @@
 //
 // The heightfield is 40 m and the roads are smooth strips, so nothing in the
 // world's own surface is small enough to feel: a bridge's expansion joints,
-// ION's rails where a road crosses them or runs along them, the milled rumble
-// strips on a freeway shoulder. This finds them under YOUR car's wheels each
+// ION's and the heavy rail's tracks where a road crosses them or runs along
+// them, the milled rumble strips on a freeway shoulder. This finds them under YOUR car's wheels each
 // frame (spec.roadCar with detailedWheels -- the AI's cars never ask), kicks
 // the car's suspension through `Vehicle.bump` (heave, pitch by axle, roll by
 // side) and plays them through audio.js (`roadHit`, the `rumble` loop).
@@ -11,11 +11,14 @@
 //   joints   on a deck ('deck' from main.js surfaceAt), every ~32-36 m: front
 //            axle, then rear after wheelbase / speed. Getting on or off a
 //            deck is the approach slab's joint, a little harder.
-//   rails    each ION track (link.js) within 8 m: the signed distance of each
+//   rails    each ION track (link.js) and each heavy-rail track (kwrail.js
+//            feelTracks: the running lines, a passing place's second track,
+//            the spurs and yards) within 8 m: the signed distance of each
 //            axle's centre from the track's centreline, against the two rails
 //            at +-0.7175 m (standard gauge); crossing one is a hit. Where ION
 //            runs in the street (`tr.ST`) the rails are flush and grooved, so
-//            softer; at a crossing's panels harder. Only at the track's height.
+//            softer; at a crossing's panels harder, heavy rail's hardest. Only
+//            at the track's height.
 //   rumble   highways.js `rumbleAt` under each of the four wheels: the left
 //            and right sides separately (a strip is one-sided), a buzz in the
 //            body and the camera, and the groove-rate loop in audio.js.
@@ -38,14 +41,16 @@ export class RoadFeel {
     this.wasDeck = false;
     this.lat = new Map();     // track key -> [front lat, rear lat] last frame
     this.pending = [];        // [secs, amp, axle] rear-axle hits to come
-    this.stats = { joints: 0, rails: 0, rumbleT: 0, bottoms: 0, slabs: 0 };
+    this.stats = { joints: 0, rails: 0, hrails: 0, rumbleT: 0, bottoms: 0, slabs: 0 };
+    this._tracks = [];
+    this._live = new Set();
   }
 
   reset() {
     this.rumble = 0; this.active = false; this.lat.clear(); this.pending.length = 0; this.jointD = 20; this.wasDeck = false;
   }
 
-  update(dt, v, surface, link) {
+  update(dt, v, surface, link, rail = null) {
     if (v !== this.v) { this.reset(); this.v = v; }
     if (!v || !v.detailedWheels || !v.spec.roadCar || v.dead) { this.reset(); return; }
     const A = this.audio, P = this.player;
@@ -91,37 +96,60 @@ export class RoadFeel {
       for (const w of W) { zf = Math.max(zf, w[2]); zr = Math.min(zr, w[2]); xw = Math.max(xw, Math.abs(w[0])); }
     }
 
-    // --- ION's rails ---
-    if (link && link.tracks && sp > 0.5) {
-      for (const k in link.tracks) {
-        const tr = link.tracks[k];
-        if (!tr || !tr.X || !tr.cells) continue;
-        const q = tr.nearest(v.x, v.z, 8);
-        if (!q) { this.lat.delete(k); continue; }
-        if (tr.Y && Math.abs(tr.y(q.s) - v.y) > 1.5) { this.lat.delete(k); continue; }
-        if (tr.F && tr.flag(q.s) === 1) { this.lat.delete(k); continue; }
-        const i = tr.idx(q.s), h = tr.H[i], c = Math.cos(h), s = Math.sin(h);
-        const latAt = (oz) => (v.x + f.x * oz - tr.X[i]) * c - (v.z + f.z * oz - tr.Z[i]) * s;
-        const now = [latAt(zf), latAt(zr)];
-        const was = this.lat.get(k);
-        this.lat.set(k, now);
-        if (!was) continue;
-        const street = !!(tr.ST && tr.ST[i]);
-        for (let ax = 0; ax < 2; ax++) {
-          const a = was[ax], b = now[ax];
-          if (Math.abs(b - a) > 2.5) continue;
-          for (const r of [-RAIL, RAIL]) {
-            if ((a - r) * (b - r) < 0) {
-              const amp = (street ? 0.4 : 0.75) * clamp(sp / 12, 0.3, 1.2);
-              v.bump(amp, ax, 0);
-              if (A) A.roadHit('rail', (0.22 + 0.4 * amp) * (heavy ? 1.15 : 1));
-              if (P && ax === 0) P.shake = Math.max(P.shake || 0, 0.035 * amp);
-              this.stats.rails++;
-            }
+    // --- the rails: ION's and the heavy rail's (kwrail.js feelTracks) ---
+    const T = this._tracks;
+    T.length = 0;
+    if (sp > 0.5) {
+      if (link && link.tracks) {
+        for (const k in link.tracks) {
+          const tr = link.tracks[k];
+          if (!tr || !tr.X || !tr.cells) continue;
+          const q = tr.nearest(v.x, v.z, 8);
+          if (!q) continue;
+          if (tr.F && tr.flag(q.s) === 1) continue;
+          const i = tr.idx(q.s);
+          // in the street the rails are flush and grooved: softer
+          T.push({ k: 'ion:' + k, X: tr.X[i], Z: tr.Z[i], h: tr.H[i], y: tr.Y ? tr.y(q.s) : v.y, amp: tr.ST && tr.ST[i] ? 0.4 : 0.75 });
+        }
+      }
+      if (rail && rail.feelTracks) {
+        // heavy rail: a level crossing's rubber panels round 136 lb rail are
+        // rougher than ION's; a spur's rails set in the road a little less;
+        // off a crossing, over the ties and ballast, as hard as it gets
+        for (const t of rail.feelTracks(v.x, v.z, 8)) {
+          t.amp = t.flat ? 0.6 : t.cross ? 0.85 : 0.9;
+          t.k = 'hr:' + t.k;
+          T.push(t);
+        }
+      }
+    }
+    const live = this._live;
+    live.clear();
+    for (const t of T) {
+      if (Math.abs(t.y - v.y) > 1.5) continue;
+      const c = Math.cos(t.h), s = Math.sin(t.h);
+      const latAt = (oz) => (v.x + f.x * oz - t.X) * c - (v.z + f.z * oz - t.Z) * s;
+      const now = [latAt(zf), latAt(zr)];
+      const was = this.lat.get(t.k);
+      this.lat.set(t.k, now);
+      live.add(t.k);
+      if (!was) continue;
+      for (let ax = 0; ax < 2; ax++) {
+        const a = was[ax], b = now[ax];
+        if (Math.abs(b - a) > 2.5) continue;
+        for (const r of [-RAIL, RAIL]) {
+          if ((a - r) * (b - r) < 0) {
+            const amp = t.amp * clamp(sp / 12, 0.3, 1.2);
+            v.bump(amp, ax, 0);
+            if (A) A.roadHit('rail', (0.22 + 0.4 * amp) * (heavy ? 1.15 : 1));
+            if (P && ax === 0) P.shake = Math.max(P.shake || 0, 0.035 * amp);
+            this.stats.rails++;
+            if (t.k.charCodeAt(0) === 104) this.stats.hrails++;   // 'hr:'
           }
         }
       }
-    } else this.lat.clear();
+    }
+    for (const k of this.lat.keys()) if (!live.has(k)) this.lat.delete(k);
 
     // --- the shoulder rumble strips ---
     let L = 0, R = 0;

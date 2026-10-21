@@ -5,7 +5,7 @@
 // a phone finger holding the look zone, and a crash's crumple and steam.
 //
 //   node tools/kw/feelprobe.mjs [outdir] [phases]
-//     phases  comma list of rumble,rail,deck,gravel,engines,jake,camera,look,crash,dentshot
+//     phases  comma list of rumble,rail,hrail,deck,gravel,engines,jake,camera,look,crash,dentshot
 //             (default all); shots go to outdir (default /tmp/feelprobe)
 //     AUTO_HTTP_PORT / AUTO_CDP_PORT / AUTO_GPU as every harness
 //
@@ -18,7 +18,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 const PORT = +process.env.AUTO_CDP_PORT || 9413;
 const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
 const OUT = process.argv[2] || '/tmp/feelprobe';
-const PHASES = (process.argv[3] || 'rumble,rail,deck,gravel,engines,jake,camera,look,crash,dentshot').split(',');
+const PHASES = (process.argv[3] || 'rumble,rail,hrail,deck,gravel,engines,jake,camera,look,crash,dentshot').split(',');
 mkdirSync(OUT, { recursive: true });
 
 // --- page side: helpers installed once -------------------------------------
@@ -201,6 +201,39 @@ async function main() {
       })()`);
       await shot('rail');
       console.log('rail', JSON.stringify(out.rail));
+    }
+
+    if (PHASES.includes('hrail')) {
+      // the heavy rail's crossings (kwrail.js feelTracks): one per running
+      // line, a double-track one, and a spur's (static) -- 4 rail hits a track
+      out.hrail = await evaluate(`(async () => {
+        const H = __fp, K = __dbg.rail;
+        if (!K || !K.crossings || !K.crossings.length) return 'no heavy rail';
+        const pick = [];
+        for (const key of ['guelph', 'galt', 'wsub', 'spur']) {
+          const c = K.crossings.find((c) => !c.passive && c.line && c.line.key === key && c.spread < 1);
+          if (c) pick.push(c);
+        }
+        const two = K.crossings.find((c) => !c.passive && c.spread > 2);
+        if (two) pick.push(two);
+        const st = K.crossings.find((c) => c.passive);
+        if (st) pick.push(st);
+        const res = [];
+        for (const c of pick) {
+          const e = c.road, a = __dbg.city.nodes[e.a];
+          const t = ((c.x - a.x) * e.dx + (c.z - a.z) * e.dz);
+          const sx = a.x + e.dx * (t - 45) + e.dz * 1.8, sz = a.z + e.dz * (t - 45) - e.dx * 1.8;
+          const h = Math.atan2(e.dx, e.dz);
+          const v = H.drive('compsedan', sx, sz, h, 13);
+          H.resetStats();
+          const s = await H.cruise(50, 6, { x: sx, z: sz, px: e.dz, pz: -e.dx, off: 0, h });
+          const S = H.stats();
+          res.push({ line: c.line ? c.line.key : 'static', two: c.spread > 2, at: [c.x | 0, c.z | 0], hrails: S.hrails, rails: S.rails, heave: [+s.hMin.toFixed(3), +s.hMax.toFixed(3)], past: Math.round(((v.x - c.x) * e.dx + (v.z - c.z) * e.dz)) });
+        }
+        return res;
+      })()`);
+      await shot('hrail');
+      console.log('hrail', JSON.stringify(out.hrail));
     }
 
     if (PHASES.includes('deck')) {
