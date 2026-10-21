@@ -101,6 +101,9 @@ class Approach {
     this.kind = 'go'; this.grp = 0; this.left = false; this._b = -1;
   }
   get back() { if (this._b < 0) this._b = this.jc.setback(this.ni, this.ei); return this._b; }
+  /** The stop line's spot `o` m short of it, and the way the road runs
+   *  there (it can be up the approach's chain, past its last edge). */
+  at(o) { return this.jc.lineAt(this.ni, this.ei, this.back - o); }
 }
 /** A stop's box reaches its farthest stop line: worked out when first asked. */
 function lazyR(C) {
@@ -138,6 +141,7 @@ export class Junctions {
     this.matchSignals(data.sig || []); lap('sig');
     this.matchStops(data.stop || []); lap('stop');
     this.matchMini(data.mini || []); lap('mini');
+    this._chains = null;
   }
 
   ok(ni) {
@@ -172,7 +176,7 @@ export class Junctions {
   xingClash(X, cx, cz) {
     const city = this.city, e = city.edges[X.ei], R = e.hw + X.w;
     for (const oi of this.edgesAround(cx, cz, 14)) {
-      if (oi >= X.ei) continue;
+      if (oi >= X.ei || this.city.edges[oi].prof) continue;
       const l = this.crossOn.get(oi);
       if (!l) continue;
       const o = city.edges[oi], oa = city.nodes[o.a];
@@ -204,41 +208,140 @@ export class Junctions {
     return 0;
   }
 
-  /** The stop line's setback from node ni along approach edge ei. */
+  /**
+   * The road an approach (edge ei into node ni) comes in along, upstream
+   * from the node: [{ ei, ni (the node it runs into), d0 (m from the
+   * junction's node to ni), len, ux, uz, hw, two }]. OSM splits a way a few
+   * metres short of most junctions -- at a crosswalk node, where a lane or a
+   * name changes, where a roundabout's entry leaves its splitter island --
+   * and the graph keeps the split as a degree-2 node, so the approach's own
+   * edge is often 6-15 m long: shorter than the distance from the node to
+   * the crossing street's kerb. The stop line belongs on the APPROACH, not
+   * on its last edge: this carries on through such nodes (not into another
+   * control, a ring, a bridge or a hairpin) to 45 m.
+   */
+  chain(ni, ei) {
+    const key = ei * 2 + (this.city.edges[ei].b === ni ? 1 : 0);
+    if (!this._chains) this._chains = new Map();
+    let ch = this._chains.get(key);
+    if (ch) return ch;
+    const city = this.city;
+    ch = [];
+    let at = ni, k = ei, d0 = 0;
+    for (let g = 0; g < 12; g++) {
+      const e = city.edges[k], u = dirInto(e, at);
+      ch.push({ ei: k, ni: at, d0, len: e.len, ux: u[0], uz: u[1], hw: e.hw, two: flowOf(e) === 0 });
+      d0 += e.len;
+      if (d0 >= 45) break;
+      const up = e.a === at ? e.b : e.a, un = city.nodes[up];
+      if (un.e.length !== 2 || this.ctl[up] >= 0) break;
+      const nk = un.e[0] === k ? un.e[1] : un.e[0], ne = city.edges[nk];
+      if (nk === k || ne.elev || ne.tunnel || ne.prof || this.ring[nk] || !into(ne, up)) break;
+      const nu = dirInto(ne, up);
+      if (nu[0] * u[0] + nu[1] * u[1] < 0.5) break;
+      at = up; k = nk;
+    }
+    this._chains.set(key, ch);
+    return ch;
+  }
+
+  /** The node approach chain `ch` starts at (its far end). */
+  chainStart(ch) { const q = ch[ch.length - 1], e = this.city.edges[q.ei]; return e.a === q.ni ? e.b : e.a; }
+
+  /** How far up chain `ch` a stop line may stand: 3 m short of the junction
+   *  it starts at, or 0.5 m short of anything else (a dead end, a bridge's
+   *  end, a hairpin). */
+  chainRoom(ch) {
+    const q = ch[ch.length - 1];
+    return Math.max(2.5, q.d0 + q.len - (this.city.nodes[this.chainStart(ch)].e.length >= 3 ? 3 : 0.5));
+  }
+
+  /** An approach that is no way in: its chain starts at another node of the
+   *  same junction (the short link between a divided road's carriageways, a
+   *  kink through a degree-2 node), or it is a dead-end stub that lies
+   *  inside the crossing street's lanes wherever a stop line could go. */
+  noApproach(ni, ei, set) {
+    const ch = this.chain(ni, ei), st = this.chainStart(ch);
+    if (set && set.has(st)) return true;
+    return this.city.nodes[st].e.length === 1 && !this.barFits(ni, ei);
+  }
+
+  /** Is there a stop line for approach (ei into ni) that is not across
+   *  another street's lanes, anywhere up its chain? */
+  barFits(ni, ei) {
+    const L = this.chainRoom(this.chain(ni, ei));
+    for (let b = 2.5; b <= L; b += 0.5) if (!this.barAcross(ni, ei, b)) return true;
+    return false;
+  }
+
+  /** The point `s` m back up approach (ei into ni) from the node, with the
+   *  way it runs there: { x, z, ux, uz, hw, two, ei }. */
+  lineAt(ni, ei, s) {
+    const ch = this.chain(ni, ei);
+    let q = ch[ch.length - 1];
+    for (const c of ch) if (s < c.d0 + c.len) { q = c; break; }
+    const n = this.city.nodes[q.ni], r = s - q.d0;
+    return { x: n.x - q.ux * r, z: n.z - q.uz * r, ux: q.ux, uz: q.uz, hw: q.hw, two: q.two, ei: q.ei };
+  }
+
+  /** The stop line's setback from node ni along approach edge ei (m along
+   *  the approach's chain, the same measure as a car's route distance). */
   setback(ni, ei) {
-    const city = this.city, e = city.edges[ei], n = city.nodes[ni];
+    const city = this.city, n = city.nodes[ni];
     let m = 0;
     const J = city.junction ? city.junction(ni) : null;
     if (J && J.arms) for (const A of J.arms) if (A.ei === ei) m = A.m;
     if (!m) for (const oi of n.e) if (oi !== ei) m = Math.max(m, city.edges[oi].hw);
     let back = m + 0.9;
-    // a crosswalk on this arm near the junction: the bar stands behind it
-    const xs = this.crossOn.get(ei);
-    if (xs) {
-      for (const X of xs) {
-        const xs = this.xingS(X), d = e.b === ni ? e.len - xs : xs;
-        if (d > m - 2 && d < m + 14) back = Math.max(back, d + X.w / 2 + 1.0);
-      }
+    const ch = this.chain(ni, ei), L = this.chainRoom(ch);
+    // the crosswalks on this approach: (distance from the node, width)
+    const xw = [];
+    for (const c of ch) {
+      const xs = this.crossOn.get(c.ei);
+      if (!xs) continue;
+      const e = city.edges[c.ei];
+      for (const X of xs) { const s = this.xingS(X); xw.push([c.d0 + (e.b === c.ni ? e.len - s : s), X.w, c.d0 > 0]); }
     }
-    back = clamp(back, 2.5, Math.max(2.5, e.len - 3));
+    // the junction's own crosswalk: the bar stands behind it (unless the bar
+    // there is across another street wherever it goes -- the next junction
+    // is just past the crosswalk -- when it goes where it is clear). On the
+    // approach's last edge, as before, within 14 m of the mouth; up the
+    // chain only one at the mouth (a roundabout's splitter-island crossing
+    // a car length back is not the entry's: its yield line stays at the ring)
+    const plain = clamp(back, 2.5, L);
+    for (const [d, w, up] of xw) if (d > m - 2 && d < m + (up ? 6 : 14)) back = Math.max(back, d + w / 2 + 1.0);
+    back = clamp(back, 2.5, L);
+    const b = this.stepClear(ni, ei, back, L, xw);
+    if (back === plain || !this.barAcross(ni, ei, b)) return b;
+    const b0 = this.stepClear(ni, ei, plain, L, null);
+    return this.barAcross(ni, ei, b0) ? b : b0;
+  }
+
+  /** Step a stop line back from `back` (at most to L) until it is clear of
+   *  other streets' lanes, and behind any crosswalk in `xw` it lands on. */
+  stepClear(ni, ei, back, L, xw) {
     // NOT IN ANOTHER STREET'S LANES. Where the graph's node is not where the
     // carriageways meet -- the far carriageway of a divided road, a skewed
     // crossing, a slip lane beside the arm -- the mouth is short of the road
     // the arm crosses and the bar (and the line cars stop at) lay across that
     // road's lanes, in the middle of the intersection. Stepped back along
-    // the arm until the bar's middle and both ends are clear.
-    for (let k = 0; k < 24 && back + 0.5 <= e.len - 3 && this.barAcross(ni, ei, back); k++) back += 0.5;
-    return back;
+    // the approach until the bar's middle and both ends are clear (and
+    // behind a crosswalk it would land on).
+    for (let k = 0; k < 80 && back + 0.5 <= L && this.barAcross(ni, ei, back); k++) {
+      back += 0.5;
+      if (xw) for (const [d, w] of xw) if (Math.abs(back - d) < w / 2 + 1.0) back = d + w / 2 + 1.0;
+    }
+    return Math.min(back, L);
   }
 
   /** Does the bar of approach (ei into ni) at setback `back` lie across
    *  another street's lanes (its middle or either end of its span)? */
   barAcross(ni, ei, back) {
-    const city = this.city, e = city.edges[ei], n = city.nodes[ni];
-    const u = dirInto(e, ni), ux = u[0], uz = u[1];
+    const city = this.city, ch = this.chain(ni, ei);
+    const P = this.lineAt(ni, ei, back - 0.25), ux = P.ux, uz = P.uz;
     const across = (x, z) => {
-      for (const oi of city.edgesNear(x, z, 30)) {
-        if (oi === ei) continue;
+      for (const oi of this.edgesAround(x, z, 16)) {
+        if (ch.some((c) => c.ei === oi)) continue;
         const o = city.edges[oi];
         if (o.elev || o.tunnel || Math.abs(o.dx * ux + o.dz * uz) > 0.7) continue;
         const a = city.nodes[o.a], t = (x - a.x) * o.dx + (z - a.z) * o.dz;
@@ -247,10 +350,9 @@ export class Junctions {
       }
       return false;
     };
-    const cx = n.x - ux * (back - 0.25), cz = n.z - uz * (back - 0.25);
     // (a two-way arm's bar spans its own half: Painter.stopBar's o0..o1)
-    const lo = flowOf(e) === 0 ? 0.15 : -(e.hw - 0.3), hi = e.hw - 0.3;
-    for (const o of [lo, (lo + hi) / 2, hi]) if (across(cx - uz * o, cz + ux * o)) return true;
+    const lo = P.two ? 0.15 : -(P.hw - 0.3), hi = P.hw - 0.3;
+    for (const o of [lo, (lo + hi) / 2, hi]) if (across(P.x - uz * o, P.z + ux * o)) return true;
     return false;
   }
 
@@ -268,7 +370,7 @@ export class Junctions {
       const g = this._eg = new Map();
       for (let ei = 0; ei < city.edges.length; ei++) {
         const e = city.edges[ei];
-        if (e.elev || e.tunnel || e.prof) continue;
+        if (e.elev || e.tunnel) continue;   // (graded ones too: callers skip e.prof themselves)
         const a = city.nodes[e.a], b = city.nodes[e.b];
         const x0 = Math.floor(Math.min(a.x, b.x) / S), x1 = Math.floor(Math.max(a.x, b.x) / S);
         const z0 = Math.floor(Math.min(a.z, b.z) / S), z1 = Math.floor(Math.max(a.z, b.z) / S);
@@ -452,6 +554,27 @@ export class Junctions {
         if (this.ctl[ni] < 0) set.add(ni);
       }
       if (!set.size) { this.miss('sig'); continue; }
+      // AN APPROACH STARTS OUTSIDE THE INTERSECTION. Where OSM's signal nodes
+      // sit on one carriageway of a divided road (or one corner of a wide,
+      // skewed crossing), the next junction along an arm is inside the same
+      // intersection: no stop line fits on the edge between them, it lies
+      // across the crossing street's lanes wherever it goes. That junction
+      // belongs to this signal (its edges in between are the box's own), so
+      // the approaches start where the roads really come in.
+      for (let pass = 0; pass < 3; pass++) {
+        let grew = false;
+        for (const ni of [...set]) {
+          for (const ei of city.nodes[ni].e) {
+            const e = city.edges[ei], o = e.a === ni ? e.b : e.a;
+            if (set.has(o) || !into(e, ni) || e.elev || e.tunnel || e.len > 30) continue;
+            if (city.nodes[o].e.length < 3 || this.ctl[o] >= 0 || !this.ok(o)) continue;
+            if (this.barFits(ni, ei)) continue;
+            set.add(o); grew = true;
+            this.stats.sigAbsorbed = (this.stats.sigAbsorbed || 0) + 1;
+          }
+        }
+        if (!grew) break;
+      }
       const nodes = [...set];
       let cx = 0, cz = 0;
       for (const ni of nodes) { cx += city.nodes[ni].x; cz += city.nodes[ni].z; }
@@ -461,7 +584,7 @@ export class Junctions {
       for (const ni of nodes) {
         for (const ei of city.nodes[ni].e) {
           const e = city.edges[ei], o = e.a === ni ? e.b : e.a;
-          if (set.has(o) || !into(e, ni) || e.elev || e.tunnel) continue;
+          if (set.has(o) || !into(e, ni) || e.elev || e.tunnel || this.noApproach(ni, ei, set)) continue;
           const A = this.approach(C, ei, ni);
           C.appr.set(akey(ei, ni, e), A);
           list.push(A);
@@ -599,7 +722,7 @@ export class Junctions {
       if (ei < 0) continue;
       const e = city.edges[ei];
       const key = akey(ei, ni, e);
-      if (C.appr.has(key)) continue;
+      if (C.appr.has(key) || this.noApproach(ni, ei, null)) continue;
       const A = this.approach(C, ei, ni);
       A.kind = fl & 2 ? 'yield' : 'stop';
       C.appr.set(key, A);
@@ -608,7 +731,7 @@ export class Junctions {
     for (const C of this.list) {
       if (C.k !== K_STOP) continue;
       const ni = C.nodes[0], n = city.nodes[ni];
-      const ins = n.e.filter((k) => into(city.edges[k], ni));
+      const ins = n.e.filter((k) => into(city.edges[k], ni) && !this.noApproach(ni, k, null));
       if (C.all || ins.every((k) => C.appr.has(akey(k, ni, city.edges[k])))) {
         C.all = true;
         for (const k of ins) {
@@ -1055,21 +1178,19 @@ class Painter {
   }
   /** Across an approach's own lanes at its stop line (0.45 m: Ontario's 30-60 cm). */
   stopBar(A) {
-    // still across another street where the arm runs out (an approach that
-    // starts inside the intersection: the matcher took the far carriageway's
-    // node of a divided road): no bar rather than one in the middle of it
+    // still across another street wherever it goes up the approach (2 of
+    // ~8.3k: an arm that leaves a Y with a ramp a few metres back): no bar
+    // rather than one in the middle of it
     if (this.jc.barAcross(A.ni, A.ei, A.back)) return;
-    const n = this.city.nodes[A.ni], ux = A.ux, uz = A.uz, rx = -uz, rz = ux;
-    const cx = n.x - ux * (A.back - 0.25), cz = n.z - uz * (A.back - 0.25);
-    const o0 = A.two ? 0.15 : -A.hw + 0.3, o1 = A.hw - 0.3;
+    const P = A.at(0.25), cx = P.x, cz = P.z, rx = -P.uz, rz = P.ux;
+    const o0 = P.two ? 0.15 : -P.hw + 0.3, o1 = P.hw - 0.3;
     this.line(cx + rx * o0, cz + rz * o0, cx + rx * o1, cz + rz * o1, 0.225);
   }
   /** A yield line: "shark's teeth" pointing at the oncoming driver. */
   teeth(A) {
     if (this.jc.barAcross(A.ni, A.ei, A.back)) return;   // (as stopBar)
-    const n = this.city.nodes[A.ni], ux = A.ux, uz = A.uz, rx = -uz, rz = ux;
-    const cx = n.x - ux * (A.back - 0.3), cz = n.z - uz * (A.back - 0.3);
-    const o0 = A.two ? 0.9 : -A.hw + 0.4, o1 = A.hw - 0.4;
+    const P = A.at(0.3), cx = P.x, cz = P.z, ux = P.ux, uz = P.uz, rx = -uz, rz = ux;
+    const o0 = P.two ? 0.9 : -P.hw + 0.4, o1 = P.hw - 0.4;
     for (let o = o0 + 0.3; o <= o1 - 0.3; o += 0.9) {
       const bx = cx + rx * o, bz = cz + rz * o;
       const p0 = [bx - rx * 0.3, 0, bz - rz * 0.3], p1 = [bx + rx * 0.3, 0, bz + rz * 0.3], p2 = [bx - ux * 0.75, 0, bz - uz * 0.75];
@@ -1183,12 +1304,12 @@ class Face {
 const oct = (r) => { const o = []; for (let i = 0; i < 8; i++) { const a = Math.PI / 8 + (i * Math.PI) / 4; o.push([Math.cos(a) * r, Math.sin(a) * r]); } return o; };
 
 function meshStopSign(world, flat, A, all, C) {
-  const city = world.city, n = city.nodes[A.ni], ux = A.ux, uz = A.uz, rx = -uz, rz = ux;
+  const city = world.city, P = A.at(0.4), ux = P.ux, uz = P.uz, rx = -uz, rz = ux;
   // on the right, at the stop line, a pace past the kerb
   // (the nearest spot off every carriageway, out to the right or back from
   // the line: four steps out and then standing in the road anyway left ten
   // posts in the lanes for traffic to wedge against; none found, no sign)
-  const bx = n.x - ux * (A.back - 0.4) + rx * (A.hw + 0.9), bz = n.z - uz * (A.back - 0.4) + rz * (A.hw + 0.9);
+  const bx = P.x + rx * (P.hw + 0.9), bz = P.z + rz * (P.hw + 0.9);
   let x = 0, z = 0, found = false;
   for (const [i, j] of SIGN_SEARCH) {
     const qx = bx + rx * i - ux * j, qz = bz + rz * i - uz * j;

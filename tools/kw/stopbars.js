@@ -22,9 +22,9 @@
     }
     return ins;
   };
-  const onOther = (x, z, A) => {
+  const onOther = (x, z, A, own) => {
     for (const ei of c.edgesNear(x, z, 25)) {
-      if (ei === A.ei) continue;
+      if (own.includes(ei)) continue;
       const e = c.edges[ei];
       if (e.elev || e.tunnel) continue;
       if (Math.abs(e.dx * A.ux + e.dz * A.uz) > 0.7) continue;      // (a parallel lane of the same road)
@@ -43,7 +43,11 @@
       if (A.kind === 'go' && C.k !== 1) continue;
       out.approaches++;
       const n = c.nodes[A.ni], back = A.back;
-      const cx = n.x - A.ux * (back - 0.25), cz = n.z - A.uz * (back - 0.25);
+      // (where the bar is: up the approach's chain when it runs past its
+      // last edge -- A.at, junctions.js lineAt; straight back on master)
+      const P = A.at ? A.at(0.25) : { x: n.x - A.ux * (back - 0.25), z: n.z - A.uz * (back - 0.25), ux: A.ux, uz: A.uz, hw: A.hw, two: A.two };
+      const cx = P.x, cz = P.z;
+      const chainE = jc.chain ? jc.chain(A.ni, A.ei).map((q) => q.ei) : [A.ei];
       let why = null;
       for (const nj of C.nodes || []) {
         if (nj === A.ni) continue;
@@ -51,9 +55,9 @@
         if (J && J.poly && J.poly.length >= 6 && inPoly(J.poly, cx, cz)) { why = 'poly'; break; }
       }
       // (the bar spans the approach's own lanes: Painter.stopBar's o0..o1)
-      const lo = A.two ? 0.15 : -A.hw + 0.3, hi = A.hw - 0.3;
+      const lo = P.two ? 0.15 : -P.hw + 0.3, hi = P.hw - 0.3;
       let oe = -1;
-      if (!why) for (const o of [lo, (lo + hi) / 2, hi]) { oe = onOther(cx - A.uz * o, cz + A.ux * o, A); if (oe >= 0) break; }
+      if (!why) for (const o of [lo, (lo + hi) / 2, hi]) { oe = onOther(cx - P.uz * o, cz + P.ux * o, P, chainE); if (oe >= 0) break; }
       if (!why && oe >= 0) why = 'street';
       if (!why) continue;
       // (junctions.js barAcross: such a bar is not painted at all now)
@@ -63,7 +67,7 @@
       const k = ['', 'sig', 'stop', 'rb', 'mini'][C.k] || C.k;
       out.byKind[k] = (out.byKind[k] || 0) + 1;
       if (out.ex.filter((q) => q.k === k).length < 6) out.ex.push({ C: C.id, k, why, A: A.id, ei: A.ei, ni: A.ni, back: +back.toFixed(1), at: [+cx.toFixed(1), +cz.toFixed(1)], other: oe,
-        view: { name: `bar-${C.id}-${A.id}`, c: [+(cx - A.ux * 22 - A.uz * 2).toFixed(1), +(cz - A.uz * 22 + A.ux * 2).toFixed(1), 6], t: [+(cx + A.ux * 6).toFixed(1), +(cz + A.uz * 6).toFixed(1), 0], fov: 55 } });
+        view: { name: `bar-${C.id}-${A.id}`, c: [+(cx - P.ux * 22 - P.uz * 2).toFixed(1), +(cz - P.uz * 22 + P.ux * 2).toFixed(1), 6], t: [+(cx + P.ux * 6).toFixed(1), +(cz + P.uz * 6).toFixed(1), 0], fov: 55 } });
     }
   }
   return JSON.stringify(out);
