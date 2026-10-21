@@ -654,6 +654,117 @@ file and a guide disagree, this file wins.
   (AUTO_PHONE=1, GPU) at the opening frame: 198 -> 199 draws, 892k tris both
   (nothing new is drawn; the gravel tint is vertex colour and one shader
   branch).
+- **Driving feel, round two: every type its own** (docs/drive-crumple.jpg,
+  drive-cam-semi.jpg, drive-cam-civic.jpg). Still only YOUR road car
+  (`spec.roadCar` + `detailedWheels`); the AI and the other machines are
+  untouched.
+  - **Engines** (audio.js `HAND_ENGINE`, checked by `hand` before the flags,
+    which gave the dually and the semi the BUS's diesel and air brakes, the
+    U-Haul the bus's too, the OPP the muscle car's V8): `vtec` the Civic's
+    7,400 rpm four, `pdiesel` the dually's turbo-diesel six (injection
+    clatter, a turbo whistle, no air brakes), `bigdiesel` the semi's 15 L six
+    (600-2,100 rpm, ten gears, air brakes, the **jake brake**), `v8work` the
+    U-Haul's gas V8 (no crackle, no blip), `v6` the Wrangler, minivan, suv3
+    and the OPP's Interceptor; crossover / compsedan / wagon keep the i4,
+    the pickups the V8, the EVs the motor. The gearbox (vehicles.js) uses
+    the same tables, so each type shifts as it sounds; it **skip-shifts**
+    when far over the revs (taken over at speed) and a `jake` box holds its
+    gear off the throttle. **Jake brake**: `EngineModel.jake` (off the
+    throttle over ~29 km/h, in gear, revs over 45 %) voiced as a gated bark
+    at the firing rate (EngineVoice.apply), felt as `JAKE_A` 1 m/s^2 more.
+  - **Tyres**: they SING from 85 % of the cornering grip (`gripUse`, a
+    thinner note under the slide's squeal); gravel's crunch as before.
+  - **src/roadfeel.js** (`RoadFeel`, main.js before audio): bridge joints
+    on a deck every ~32-36 m and the approach slab at each end (front axle,
+    then rear wheelbase/speed later; audio.js's own joint ticker stands
+    down for your road car: `feelJoints`), **ION's rails** (each track within
+    8 m: the signed distance of each axle from the centreline against the
+    two rails at +-0.7175 m; flush street rails softer than a crossing's;
+    at the track's height only) -> `railbump`, and **the rumble strips**
+    (highways.js `rumbleAt`: every drawn stretch filed in 40 m cells, the
+    build's own offsets and heights) under each side's wheels -> the
+    `rumblestrip` loop at speed / 0.3 m / 80 Hz, a shiver in the body and
+    the view. All kick the car through `Vehicle.bump(amp, axle, side)`.
+  - **Suspension per type** (`SUSP`: natural frequency, damping, roll and
+    pitch gain, travel to the stops; roll/pitch springs 10 % stiffer than
+    heave): a sports car 1.95 Hz, family cars 1.3-1.5, the Wrangler 1.05 Hz
+    with the most roll (x1.3) and 16 / 12 cm travel, the U-Haul's high box
+    x1.3 roll, the semi's air-ride cab 0.95 Hz. **Heave** (`susHeave`, the
+    tilt group's y, the wheels held down): driven by the floor's vertical
+    ACCELERATION as the wheels follow it (smoothed over the wheelbase's
+    passing time, x0.6 for the tyres' give: the 40 m terrain's grade
+    breaks threw the body to its stops unsmoothed), a landing's speed, and
+    bumps. A stop reached hard is `bottomed` (the `bottom` clunk). Over
+    ~0.5 km of real hilly road at 80 km/h: sedan -3 / +7 cm, Civic -2 / +5,
+    Wrangler -6 / +13, U-Haul -4 / +9, semi -4 / +8, no bump stop hit.
+  - **The chase camera** (player.js): road cars' boom from size --
+    `6.9 + 0.5 len` back, `2.25 + 0.95 roof` up, the look point up with
+    the roof -- plus `CAM_TYPE` (the Civic and sports car low and close,
+    the U-Haul and dually back); **the semi with its trailer** 26-28 m back
+    and ~9 m up, over the trailer's roof to the road ahead. **Speed FOV**
+    +7 deg from ~70 to ~190 km/h (an offset on whatever fov an activity
+    set: `_fovSet`) and a fine tremor past ~100 km/h, more on gravel and
+    grass. **Touch:** a finger on the look zone holds the view (it swung back
+    as soon as a dragging finger stopped moving), recentring 0.9 s after
+    the last look, the pitch back to the chase height 2 s after.
+  - **Handling**: the rig (`laden`, a tractor with its trailer) pulls
+    with `RIG_DRIVE` 0.78 of the drive (back to 1 toward the top), stops
+    with `RIG_BRAKE` 0.72 and coasts on `RIG_COAST` 0.55 of the engine
+    braking; the trailer is kinematic (traffic.js `follow`), so it
+    articulates like a real one and cannot jackknife under braking. The
+    pedal's answer (`_thrD`): an EV's torque in 0.03 s, a petrol engine's
+    0.12, a turbo's 0.22, a diesel's 0.35-0.4 -- the EV's 0-50 is 0.7 s
+    against a sedan's 1.9.
+  - **Crashes**: `Vehicle.dent` puts a crumple where the hit landed
+    (`hitX/Z`, set by traffic.js `wallImpulse` and `carPair`): up to
+    `DENT_N` 4 dents as uniforms on the car's own paint material and on
+    clones of trim and matte made at its first dent (the SAME programs:
+    a first crash compiles nothing), ~1.2 cm per m/s over 7, to 32 cm, a
+    per-2.5 cm-cell hash so the panel crinkles; the creases catch the light
+    (normals knocked by another hash). A hard hit on the nose holes the
+    radiator (`steamT`: white steam a few seconds); under 25 % health the
+    smoke doubles, under 33 % the engine misfires. The crash sound is by
+    ENERGY: impact x sqrt(the pair's reduced mass / two cars'), so a semi
+    into a car is a tier up. Not on the Hellcat's wrap, the Wienermobile
+    or the airliner (their own paint shaders); the far LOD is undented.
+  Measured: `node tools/kw/drivetest.mjs <types>` (now also 0-50, 80-120
+  floored, and for a rig its articulation: lane change at 90 7 deg, full
+  lock at 30 / 60 / 90 77 (the 77 deg cap, R 8.6 m) / 39 / 18 deg, a hard
+  stop in a bend from 90 32 deg, reversing 1 deg) and **`node
+  tools/kw/feelprobe.mjs <dir> [phases]`** (the live game: rumble strip on
+  the 401 -- 1.9 s on the grooves, the loop on; three ION crossings -- 8
+  rail hits each; a Conestoga Parkway deck; ~0.5 km of gravel and of hilly
+  road per type; the engine per type; the semi's jake -- 0.82 mean, 2.3
+  m/s^2 coasting at 80; the camera per type and the FOV at 170 km/h,
+  66.7; a touch drag held and let go; a wall at 60 km/h -- a dent and
+  steam; `dentshot` a before/after close-up). Before -> after (the game's
+  numbers, flat ground, the player's model):
+
+  | type | engine | 0-100 s | 0-50 / 80-120 s | top km/h | 100-0 m | dive / squat deg | lat g @60 (R m) | roll @60 deg | step@80 t90 ms / over % |
+  |---|---|---|---|---|---|---|---|---|---|
+  | sedan | i4 | 4.02 -> 4.12 | 1.87 / 2.33 | 204.4 | 18.4 | 2.4 -> 2.43 / 1.02 -> 0.95 | 2.24 (12.6) | 2.55 | 200 -> 183 / 2 -> 1 |
+  | compsedan | i4 | 4.45 -> 4.57 | 2.03 / 2.42 | 199.4 | 18.4 | 2.17 -> 2.16 / 0.92 -> 0.85 | 2.13 (13.2) | 2.16 | 183 -> 167 / 3 |
+  | civic | vtec | 4.15 -> 4.42 | 1.9 / 2.28 | 199.5 -> 198.4 | 17.5 | 2.16 -> 2.08 / 0.92 -> 0.81 | 2.22 (12.7) | 2.16 -> 2.05 | 183 -> 167 / 3 |
+  | crossover | i4 | 4.52 -> 4.62 | 1.97 / 2.45 | 189.5 | 18.9 | 3.03 -> 3.14 / 1.29 -> 1.23 | 2 (14.1) | 3.49 | 183 -> 167 / 3 |
+  | suv3 | v6 | 4.28 -> 4.38 | 1.87 / 2.27 | 194.5 -> 194.2 | 19.3 | 3.09 -> 3.24 / 1.31 -> 1.27 | 1.98 (14.3) | 3.57 | 183 / 2 |
+  | minivan | v6 | 4.9 -> 5 | 2.1 / 2.73 | 184.5 -> 184.2 | 19.3 | 3.2 -> 3.33 / 1.36 -> 1.31 | 1.97 (14.3) | 3.75 | 183 / 3 |
+  | wagon | i4 | 4.57 -> 4.68 | 2 / 2.42 | 194.5 | 18.9 | 2.74 -> 2.79 / 1.17 -> 1.09 | 2.08 (13.6) | 3.04 | 183 -> 167 / 3 |
+  | jeep | v6 | 4.82 -> 4.93 | 1.97 / 3.07 | 159.7 -> 159.5 | 21.2 | 3.36 -> 4.45 / 1.42 -> 1.74 | 1.78 (15.9) | 4.06 -> 5.28 | 200 -> 183 / 3 |
+  | pickup | v8 | 3.95 -> 4.07 | 1.78 / 2.25 | 184.6 | 20.7 | 3.36 -> 3.7 / 1.42 -> 1.41 | 1.96 (14.5) | 4.71 | 233 -> 217 / 1 |
+  | pickupcap | v8 | 4.18 -> 4.28 | 1.8 / 2.35 | 179.6 | 20.7 | 3.36 -> 3.7 / 1.42 -> 1.41 | 1.93 (14.7) | 4.71 | 233 / 2 -> 1 |
+  | dually | pdiesel | 5.43 -> 4.83 | 2.15 / 3.02 | 158.5 -> 159.1 | 22.6 | 3.37 -> 3.75 / 1.43 -> 1.37 | 1.3 -> 1.82 (15.5) | 3.28 -> 4.87 | 233 -> 250 / 16 -> 2 |
+  | ev | ev | 1.5 -> 1.52 | 0.72 / 0.73 | 235 | 16.1 | 2.1 -> 2.01 / 0.91 -> 0.87 | 2.38 -> 2.39 (11.9) | 2.07 | 183 / 1 |
+  | evy | ev | 2.22 -> 2.25 | 1.03 / 1.12 | 217 | 17 | 2.74 -> 2.63 / 1.2 -> 1.14 | 2.24 -> 2.25 (12.6) | 3.06 | 200 / 1 |
+  | uhaul | v8work | 8.55 -> 7.55 | 2.65 / -- | 128.8 -> 129.2 | 23.1 | 3.37 -> 4.19 / 1.43 -> 1.64 | 1.25 -> 1.29 (22) | 5.18 -> 6.83 | 83 -> 117 / 6 -> 1 |
+  | semi | bigdiesel | (0-80) 18.32 -> 24.18 | 12.32 / -- | 103 -> 102.8 | 28.7 -> 36.6 | 3.38 -> 3.44 / 1.44 -> 1.32 | 1.1 (25.5) | 5.32 -> 5.85 | 100 / 3 -> 0 |
+  | opp | v6 | 3.05 -> 3.15 | 1.47 / 1.73 | 224.4 -> 224.1 | 17.5 | 3.08 -> 3.09 / 1.31 -> 1.21 | 2.1 -> 2.11 (13.4) | 3.55 -> 3.56 | 183 / 1 -> 2 |
+
+  Phone (AUTO_PHONE=1, GPU): the spawn 210 / 1048k -> 212 / 1052k, in the
+  car by the spawn 221 / 1059k -> 224 / 1055k (traffic and the new boom's
+  framing; nothing new is drawn). Approximate: the jake is a voicing of the
+  engine model, not a recording; ION's are the only rails felt (no
+  freight lines are drawn in KW); a dented car's far LOD is clean; the
+  dent ignores the wheels' own meshes (they keep turning true).
 - **Waterloo Region's traffic** (vehicles.js; docs/fleet-*.jpg). **Grand
   River Transit** (`grtLivery`, `spec.grt`; checked against Commons photos
   of 21206, 21714, 21759, 22020, 2018-23): white, a royal-blue band under

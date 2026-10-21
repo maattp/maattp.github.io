@@ -102,12 +102,23 @@ function bench(types, trace) {
         r.mark = mark;
         // standing start
         let v = fresh(0, surf), t = 0, pmin = 0;
-        r.acc = null;
+        r.acc = null; r.acc50 = null; r.pass = null;
+        let t80 = null;
         for (let i = 0; i < 60 * 120 && r.acc === null; i++) {
           v.update(DT, { throttle: 1, brake: 0, steer: 0 });
           t += DT;
           pmin = Math.max(pmin, -(v.susPitch || 0));
+          if (r.acc50 === null && v.vLong * KMH >= 50) r.acc50 = +t.toFixed(2);
           if (v.vLong * KMH >= mark) r.acc = +t.toFixed(2);
+        }
+        // the pull at speed: 80-120 (a pass), floored on from a steady 80
+        if (spec.topKph > 135 && !surf) {
+          const w = fresh(80);
+          for (let i = 0; i < 90; i++) { const p = cruise(w, 80); w.update(DT, { throttle: p.throttle * 0.6, brake: p.brake, steer: 0 }); }
+          let tt = 0;
+          for (let i = 0; i < 60 * 60 && w.vLong * KMH < 120; i++) { w.update(DT, { throttle: 1, brake: 0, steer: 0 }); tt += DT; }
+          r.pass = +tt.toFixed(2);
+          done(w);
         }
         r.squat = +deg(pmin).toFixed(2);
         for (let i = 0; i < 60 * 100; i++) v.update(DT, { throttle: 1, brake: 0, steer: 0 });
@@ -212,6 +223,37 @@ function bench(types, trace) {
         r.lift = { slip0: +deg(s0).toFixed(1), slipMax: +deg(smax).toFixed(1), yawGain: +((v.yawRate / (w0 || 1e-3) - 1) * 100).toFixed(0) };
         done(v);
       }
+      // A RIG (spec.towed: the semi and its trailer): the trailer is placed by
+      // its kinematics (traffic.js runs Vehicle.follow after the tractor's
+      // update; here likewise) -- the articulation (deg, tractor to trailer)
+      // in a lane change at 90, held full lock at 30 / 60 / 90, a hard stop
+      // in a bend at 90, and reversing with a little lock (where a trailer
+      // really does fold: it is unstable backwards)
+      if (spec.towed) {
+        const art = (v) => Math.abs(deg(Math.atan2(Math.sin(v.trailer.heading - v.heading), Math.cos(v.trailer.heading - v.heading))));
+        const rig = (kmh) => { const v = fresh(kmh); if (v.trailer) for (let i = 0; i < 30; i++) v.trailer.follow(v); return v; };
+        r.rig = {};
+        let v = rig(90), m = 0;
+        for (let i = 0; i < 60 * 6; i++) {
+          const p = cruise(v, 90), st = i < 60 ? 0.5 : i < 120 ? -0.5 : 0;
+          v.update(DT, { throttle: p.throttle, brake: p.brake, steer: st }); v.trailer.follow(v); m = Math.max(m, art(v));
+        }
+        r.rig.lane90 = +m.toFixed(1); done(v);
+        for (const kmh of [30, 60, 90]) {
+          v = rig(kmh); m = 0; let last = 0;
+          for (let i = 0; i < 60 * 8; i++) { const p = cruise(v, kmh); v.update(DT, { throttle: p.throttle, brake: p.brake, steer: 1 }); v.trailer.follow(v); m = Math.max(m, art(v)); last = art(v); }
+          r.rig['lock' + kmh] = { max: +m.toFixed(1), held: +last.toFixed(1), R: +(Math.abs(v.vLong) / Math.max(1e-3, Math.abs(v.yawRate))).toFixed(1) };
+          done(v);
+        }
+        v = rig(90); m = 0;
+        for (let i = 0; i < 60; i++) { const p = cruise(v, 90); v.update(DT, { throttle: p.throttle, brake: p.brake, steer: 0.6 }); v.trailer.follow(v); }
+        let dist = 0;
+        for (let i = 0; i < 60 * 20 && v.vLong > 0.05; i++) { const b = v.vLong; v.update(DT, { throttle: 0, brake: 1, steer: 0.6 }); v.trailer.follow(v); dist += (b + Math.max(0, v.vLong)) / 2 * DT; m = Math.max(m, art(v)); }
+        r.rig.stopBend90 = { max: +m.toFixed(1), m: +dist.toFixed(1) }; done(v);
+        v = rig(0); m = 0;
+        for (let i = 0; i < 60 * 8; i++) { const e = -5 / KMH - v.vLong; v.update(DT, { throttle: 0, brake: e < 0 ? Math.min(1, -e * 0.6 + 0.2) : 0, steer: 0.25 }); v.trailer.follow(v); m = Math.max(m, art(v)); }
+        r.rig.reverse = +m.toFixed(1); done(v);
+      }
       r.grass = run('grass');
       r.gravel = run('gravel');
       out[name] = r;
@@ -294,6 +336,8 @@ async function main() {
       console.log(`\n== ${name}`);
       console.log(`  0-${r.mark}      ${pair('acc', (x) => x.acc)} s      real ${R.acc ? R.acc.join('-') : '?'} (game x${2.4} punch)`);
       console.log(`  top        ${pair('top', (x) => x.top)} km/h  real ${R.top ? R.top.join('-') : '?'}`);
+      console.log(`  0-50       ${pair('', (x) => x.acc50)} s   80-120 floored ${pair('', (x) => x.pass)} s`);
+      if (r.rig) console.log(`  rig        articulation deg: lane change @90 ${r.rig.lane90}, full lock @30/60/90 ${[30, 60, 90].map((k) => r.rig['lock' + k].held + ' (R ' + r.rig['lock' + k].R + ')').join(' / ')}, hard stop in a bend @90 ${r.rig.stopBend90.max} (${r.rig.stopBend90.m} m), reversing ${r.rig.reverse}`);
       console.log(`  100-0      ${pair('brake', (x) => x.brake)} m  dev ${r.dev}  dive ${r.dive} deg  squat ${r.squat} deg  real ${R.brake ? R.brake.join('-') : '?'}`);
       for (const k of Object.keys(r.lat)) {
         console.log(`  lat@${k.padEnd(4)}  ${pair('', (x) => x.lat[k] && x.lat[k].g)} g  R ${pair('', (x) => x.lat[k] && x.lat[k].R)} m  roll ${r.lat[k].roll} deg  drift ${r.lat[k].slip} deg (max ${r.lat[k].smax})  held ${r.lat[k].kmh} km/h`);

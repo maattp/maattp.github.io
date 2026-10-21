@@ -208,6 +208,8 @@ const PLAYER_BITE = 1.7;
  *   25 m (23-25). It was one 4.5 m radius floor for every car.
  */
 const PLAYER_GRIP = 3.0, PLAYER_ASK = 1.0, PLAYER_GRIP_HEAVY = 2.0;
+// your rig (a tractor towing its trailer) and its engine brake (Vehicle.update)
+const RIG_DRIVE = 0.78, RIG_BRAKE = 0.72, RIG_COAST = 0.55, JAKE_A = 1.0;
 const MAX_STEER = 0.62, MAX_STEER_HEAVY = 0.58;
 /**
  * WHAT THE TYRES ARE ON (your road car: Vehicle.surf / mu). `mu` scales the
@@ -10983,6 +10985,61 @@ const GLASS_IBL_FROM = 'reflectVec = inverseTransformDirection( reflectVec, view
  *
  * Opaque trim has alpha 1 and so draws exactly as it did; only its pass moves.
  */
+/**
+ * CRUMPLE (Vehicle.dent: your car, after a hard hit). Up to DENT_N dents per
+ * body, in the body's own frame: uDentA = (centre x, centre z, depth m,
+ * radius m), uDentB = (push direction x, z, the height it fades out by, 0).
+ * Each vertex inside a dent's radius is pushed in along the hit's direction
+ * by the depth x its falloff x a per-2.5-cm-cell hash (so vertices that
+ * coincide on a seam move together and the panel crinkles instead of
+ * dishing smoothly), dropped a little, and its normal is knocked about by
+ * another hash so the creases catch the light. A uniform on the paint
+ * material (each car has its own) and on a clone of the trim material made
+ * for the dented car only -- the program is the shared one either way, so a
+ * first crash compiles nothing. All zero = no change, for every other car.
+ */
+export const DENT_N = 4;
+const DENTS = new WeakMap();
+function dentUniforms(mat) {
+  let d = DENTS.get(mat);
+  if (!d) {
+    d = { a: { value: [] }, b: { value: [] } };
+    for (let i = 0; i < DENT_N; i++) { d.a.value.push(new THREE.Vector4()); d.b.value.push(new THREE.Vector4()); }
+    DENTS.set(mat, d);
+  }
+  return d;
+}
+function dentShader(sh) {
+  const d = dentUniforms(this);
+  sh.uniforms.uDentA = d.a;
+  sh.uniforms.uDentB = d.b;
+  sh.vertexShader = `uniform vec4 uDentA[ ${DENT_N} ];
+uniform vec4 uDentB[ ${DENT_N} ];
+float dentH( vec3 p ) { return fract( sin( dot( p, vec3( 12.9898, 78.233, 37.719 ) ) ) * 43758.5453 ); }
+vec3 dentOff( vec3 p, out float ws ) {
+	vec3 o = vec3( 0.0 ); ws = 0.0;
+	for ( int i = 0; i < ${DENT_N}; i ++ ) {
+		vec4 a = uDentA[ i ]; vec4 b = uDentB[ i ];
+		if ( a.z <= 0.0 ) continue;
+		float w = 1.0 - smoothstep( 0.0, a.w, length( p.xz - a.xy ) );
+		w *= 1.0 - smoothstep( b.z * 0.55, b.z, p.y );
+		float n = dentH( floor( p * 40.0 ) );
+		o.xz += b.xy * a.z * w * ( 0.65 + 0.7 * n );
+		o.y -= a.z * w * 0.3 * n;
+		ws += w * a.z;
+	}
+	return o;
+}
+` + sh.vertexShader
+    .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
+	float dentW;
+	vec3 dentO = dentOff( position, dentW );
+	if ( dentW > 0.0 ) objectNormal = normalize( objectNormal + ( vec3( dentH( floor( position * 23.0 ) ), dentH( floor( position * 29.0 ) + 1.0 ), dentH( floor( position * 31.0 ) + 2.0 ) ) - 0.5 ) * min( dentW * dentW * 30.0, 0.7 ) );`)
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\n\ttransformed += dentO;');
+}
+// the trim's glass and plates, and the crumple (dentShader)
+function trimShader(sh) { glassShader(sh); dentShader.call(this, sh); }
+
 function glassShader(sh) {
   // glass 1 (clear) and 3 (tinted: GLASS_TINT) are glazing, 2 the contact
   // shadow, 4 a licence plate's face (plateBox; the serial is the mesh's own,
@@ -11204,7 +11261,7 @@ export function vehicleAssets() {
     blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
     blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
   });
-  trimMat.onBeforeCompile = glassShader;
+  trimMat.onBeforeCompile = trimShader;
   trimMat.customProgramCacheKey = () => 'vehicleGlass';
   CACHE = {
     types,
@@ -11213,6 +11270,9 @@ export function vehicleAssets() {
       vertexColors: true, metalness: 0.05, roughness: 0.86, envMapIntensity: 0.55,
     }),
   };
+  // the black plastics, bumpers and tyres crumple with the panels (dentShader)
+  CACHE.matteMat.onBeforeCompile = dentShader;
+  CACHE.matteMat.customProgramCacheKey = () => 'vehicleMatte';
   return CACHE;
 }
 
@@ -11292,15 +11352,18 @@ export function paintMaterial(color, finish = null) {
     }
     return new THREE.MeshStandardMaterial({ color, metalness: 0.9, roughness: 0.30, envMapIntensity: 1.4 });
   }
-  if (!PAINT_PHONE) {
-    return new THREE.MeshPhysicalMaterial({
+  const m = !PAINT_PHONE
+    ? new THREE.MeshPhysicalMaterial({
       color, metalness: 0.35, roughness: 0.42, envMapIntensity: 1.5,
       clearcoat: 1, clearcoatRoughness: 0.06,
+    })
+    : new THREE.MeshStandardMaterial({
+      color, metalness: 0.5, roughness: 0.26, envMapIntensity: 1.5,
     });
-  }
-  return new THREE.MeshStandardMaterial({
-    color, metalness: 0.5, roughness: 0.26, envMapIntensity: 1.5,
-  });
+  // the crumple (dentShader): one program for every painted body, as before
+  m.onBeforeCompile = dentShader;
+  m.customProgramCacheKey = () => 'vehiclePaint';
+  return m;
 }
 
 /**
@@ -11771,6 +11834,53 @@ export function farLod(typeName) {
 // the rate ABOVE that is fed forward, so a steep street is held at 0.08 m.
 const FF_FREE = 1.5;
 
+/**
+ * YOUR CAR'S SPRINGS, per type (Vehicle.update's suspension; the AI's cars
+ * have none). `hz` the body's natural frequency and `z` its damping ratio
+ * (heave; roll and pitch run 10 % stiffer, a little better damped), `roll`
+ * and `pitch` multiply the lean the grip in use asks for, `up` / `down` the
+ * travel (m) to the stops. Real figures for the class: a sports car ~1.8-2 Hz,
+ * a family car ~1.3-1.5, a body-on-frame truck or a Wrangler ~1.0-1.2 with
+ * long travel, a tractor's air-ride cab ~1 Hz, a U-Haul's box high over soft
+ * rear leaves (its roll is the high centre of gravity you feel).
+ */
+const SUSP = {
+  sports: { hz: 1.95, z: 0.46, roll: 0.85, up: 0.06, down: 0.05 },
+  hellcat: { hz: 1.75, z: 0.42, up: 0.07, down: 0.06 },
+  civic: { hz: 1.75, z: 0.42, roll: 0.95, up: 0.07, down: 0.06 },
+  compsedan: { hz: 1.5, z: 0.38 },
+  sedan: { hz: 1.4, z: 0.36 },
+  ev: { hz: 1.55, z: 0.45, up: 0.07, down: 0.06 },
+  evy: { hz: 1.5, z: 0.44, up: 0.08, down: 0.07 },
+  crossover: { hz: 1.3, z: 0.34, up: 0.10, down: 0.08 },
+  suv: { hz: 1.25, z: 0.33, up: 0.11, down: 0.09 },
+  suv3: { hz: 1.22, z: 0.33, up: 0.11, down: 0.09 },
+  minivan: { hz: 1.25, z: 0.34, up: 0.10, down: 0.08 },
+  wagon: { hz: 1.4, z: 0.36 },
+  // the Wrangler: solid axles on long coils -- slow, soft, the most roll of
+  // any car here and the most travel
+  jeep: { hz: 1.05, z: 0.28, roll: 1.3, pitch: 1.2, up: 0.16, down: 0.12 },
+  pickup: { hz: 1.35, z: 0.26, up: 0.12, down: 0.09 },
+  pickupcap: { hz: 1.35, z: 0.27, up: 0.12, down: 0.09 },
+  dually: { hz: 1.45, z: 0.24, up: 0.10, down: 0.08 },
+  van: { hz: 1.3, z: 0.3, up: 0.10, down: 0.08 },
+  uhaul: { hz: 1.1, z: 0.3, roll: 1.3, pitch: 1.15, up: 0.10, down: 0.09 },
+  semi: { hz: 0.95, z: 0.26, roll: 1.1, up: 0.09, down: 0.08 },
+};
+const SUSP_DEF = { hz: 1.4, z: 0.38 };
+// (everything else you drive -- a quad, a tractor, the buggy: the one spring all had)
+const SUSP_OFF = { kr: 95, cr: 9, roll: 1, pitch: 1 };
+function suspOf(spec) {
+  if (spec._susp) return spec._susp;
+  const b = SUSP[spec.hand] || (spec.bus ? { hz: 1.15, z: 0.3, up: 0.08, down: 0.07 } : spec.cargo || spec.boxy ? SUSP.van : SUSP_DEF);
+  const w = 2 * Math.PI * b.hz, wr = w * 1.1, zr = (b.z || 0.38) + 0.08;
+  spec._susp = {
+    kh: w * w, ch: 2 * (b.z || 0.38) * w, kr: wr * wr, cr: 2 * zr * wr,
+    roll: b.roll || 1, pitch: b.pitch || 1, up: b.up || 0.09, down: b.down || 0.07, hz: b.hz,
+  };
+  return spec._susp;
+}
+
 let PLATE_SEQ = 0;
 export class Vehicle {
   constructor(city, typeName, color, opts = {}) {
@@ -11871,6 +11981,13 @@ export class Vehicle {
     // `yawRate` is last frame's whole yaw rate, which the next hit reads to
     // know how fast each corner is moving.
     this.spin = 0; this.slide = 0; this.yawRate = 0;
+    // where the last hit landed (traffic.js wallImpulse / carPair), world x/z:
+    // your car's crumple (dent) goes there; `dents` its count, `steamT` the
+    // seconds of steam left from a holed radiator (main.js)
+    this.hitX = 0; this.hitZ = 0; this.dents = 0; this.steamT = 0; this.dentTrim = null; this.dentMatte = null;
+    this._thrD = 0;     // your car: the throttle the engine has answered so far (Vehicle.update)
+    this.bottomed = 0;  // your car: > 0 the frame its suspension hit the bump stop (roadfeel.js plays it)
+    this.gripUse = 0;   // your car: the share of its cornering grip in use (audio.js's tyre note)
     this.path = null; this.pathT = 0; this.repath = 0; this.rammed = 0; this.siren = 0;
     this.sirenOn = false;   // a police car you drive: SIREN switched on (main.js updateSiren)
     this.lightL = null; this.lightR = null; this.extra = null;
@@ -13180,8 +13297,15 @@ export class Vehicle {
     else if (this.vLong < 0.5 && throttle === 0) gb.gear = 0;
     else {
       const r = rAt(gb.gear);
-      if (r > 0.52 + 0.42 * throttle && gb.gear < last && brake === 0) {
+      // (an engine brake's box holds its gear off the throttle -- the jake
+      // needs the revs -- and changes up only short of the redline)
+      const upAt = p.jake && throttle === 0 ? 0.95 : 0.52 + 0.42 * throttle;
+      if (r > upAt && gb.gear < last && brake === 0) {
         gb.gear++;
+        // a SKIP SHIFT: far over the revs (taken over at speed, a long coast
+        // downhill) the box goes straight to the gear that fits, as a
+        // truck's does, instead of a shift's cut per gear on the way
+        if (r > 1.05) while (gb.gear < last && rAt(gb.gear) > 0.8) gb.gear++;
         gb.shiftT = p.redline < 3000 ? 0.32 : 0.16;
       } else if (gb.gear > 0 && gb.downT <= 0 && r < (throttle > 0.9 ? 0.55 : 0.3 + 0.16 * throttle) && rAt(gb.gear - 1) < 0.9) {
         gb.gear--;
@@ -13371,7 +13495,26 @@ export class Vehicle {
     // the gearbox: the torque each gear makes at its revs, nothing while a
     // shift is going through (_gearbox); 1 for everyone else
     const gearK = rc ? this._gearbox(dt, throttle, brake) : 1;
+    // YOUR RIG: a tractor with its trailer on (the semi) pulls and stops the
+    // trailer's 8 t through its own drive and its own brakes as the game
+    // models them -- `RIG_DRIVE` of the pull (back to all of it toward the
+    // top, so the governed 105 is still made), `RIG_BRAKE` of the stop:
+    // 0-80 ~24 s and 100-0 ~37 m (game scale; a loaded 18-wheeler's real
+    // 80-90 m under ARCADE_BRAKE), where the bare tractor's were 18 s, 29 m.
+    const laden = rc && this.trailer ? RIG_DRIVE + (1 - RIG_DRIVE) * clamp(this.vLong / (spec.topKph / 3.6), 0, 1) ** 2 : 0;
     let driveA = 0, brakeD = 0;
+    // THE PEDAL'S ANSWER (your road car): an engine takes a moment to come
+    // up on boost and revs -- ~0.12 s a petrol engine, ~0.22 s a turbo's,
+    // ~0.35-0.4 s a big diesel's -- where an electric motor's torque is
+    // there at once (0.03 s): what "instant torque" feels like off the line
+    // and out of a bend. Lifting is quick for all of them.
+    let thrD = throttle;
+    if (rc) {
+      const gp = this.gbox && this.gbox.p;
+      const lag = spec.ev ? 0.03 : !gp ? 0.12 : gp.redline < 2500 ? 0.4 : gp.turbo ? (gp.redline < 3500 ? 0.35 : 0.22) : 0.12;
+      const was = this._thrD || 0;
+      thrD = this._thrD = was + (throttle - was) * (1 - Math.exp(-dt / (throttle > was ? lag : 0.05)));
+    }
     if (throttle > 0) {
       // A combustion car has to wind up to make power, so its pull fades
       // linearly with speed. An electric motor is at full torque from zero and
@@ -13379,7 +13522,7 @@ export class Vehicle {
       // thing -- squaring the falloff is what makes it leap off the line and
       // still feel like it runs out of road rather than out of revs.
       const fade = 1 - clamp(this.vLong / top, 0, 1);
-      driveA = spec.acc * throttle * (spec.ev ? Math.sqrt(fade) : fade) * gearK;
+      driveA = spec.acc * thrD * (spec.ev ? Math.sqrt(fade) : fade) * gearK * (laden || 1);
       acc += driveA;
       if (this.vLong < -0.5) acc += spec.acc * 1.4 * throttle;
     }
@@ -13388,7 +13531,7 @@ export class Vehicle {
       // tyre -- and it was applied to the refuse truck and the sports car
       // alike, so every vehicle in the game stopped from 100 km/h in exactly
       // 21.6 m. `brakeA` comes from the declared 100-0 distance.
-      if (this.vLong > 0.4) { brakeD = spec.brakeA * brake; acc -= brakeD; }
+      if (this.vLong > 0.4) { brakeD = spec.brakeA * brake * (laden ? RIG_BRAKE : 1); acc -= brakeD; }
       else acc -= spec.acc * 0.55 * brake * (1 - clamp(-this.vLong / (top * 0.42), 0, 1));
     }
     // slope. Not for a distant AI car (lowDetail, a phone past 60 m): its
@@ -13488,8 +13631,14 @@ export class Vehicle {
       // engine braking, or regen -- which bites noticeably harder. In your
       // car, by the revs: hard in a low gear, a long coast in top.
       const gb = rc && this.gbox;
-      acc -= Math.sign(this.vLong) * (spec.ev ? 4.6 : gb ? 1.2 + 2.6 * Math.pow(gb.r, 1.5) : 2.4);
+      // (a laden rig's 36 t coast on the same drag: RIG_COAST of a car's)
+      acc -= Math.sign(this.vLong) * (spec.ev ? 4.6 : gb ? 1.2 + 2.6 * Math.pow(gb.r, 1.5) : 2.4) * (laden ? RIG_COAST : 1);
     }
+    // THE ENGINE BRAKE (audio.js ENGINES `jake`, the semi's): off the
+    // throttle at road speed in gear, the compression release holds a laden
+    // rig back by ~1 m/s^2 more, brake pedal or not -- the same condition
+    // the bark is voiced on (EngineModel.jake).
+    if (rc && throttle === 0 && this.vLong > 8 && this.gbox && this.gbox.p.jake && this.gbox.gear > 0 && this.gbox.r > 0.45) acc -= JAKE_A;
     // (your car's tyre model slides the locked rears instead: half the bite,
     // so a handbrake turn keeps its way on -- _tyres)
     if (hand > 0.5 && this.vLong > 0) acc -= this.dynW !== undefined ? 5 : 11;
@@ -13776,7 +13925,7 @@ export class Vehicle {
       this.vy -= 22 * dt;
       this.y += this.vy * dt;
       this.onGround = false;
-      if (this.y <= target) { this.y = target; this.vy = 0; this.onGround = true; }
+      if (this.y <= target) { this._landVy = this.vy; this.y = target; this.vy = 0; this.onGround = true; }
     } else {
       const rise = target - this.y;
       if (rise > 0.6 && sp > 6) { this.vy = Math.min(6, rise * 4); }
@@ -13847,15 +13996,59 @@ export class Vehicle {
       const pitchMax = clamp(1.6 + (roof - 1.2) * 3, 1.2, 3.5) * DEG;
       const latCap = spec.latA * (spec.roadCar ? (spec.len > 7 ? PLAYER_GRIP_HEAVY : PLAYER_GRIP) : ARCADE_GRIP * PLAYER_BITE);
       const rollT = this.onGround ? rollMax * Math.tanh(1.15 * (this.latAcc || 0) / latCap) : 0;
+      // how much of the cornering grip is in use (audio.js: the tyres start
+      // to sing a little before they let go)
+      this.gripUse = this.onGround ? Math.abs(this.latAcc || 0) / (latCap * (this.mu || 1)) : 0;
       const sa = this.susAx;
       const pitchT = this.onGround ? -pitchMax * Math.tanh(1.2 * sa / (sa < 0 ? spec.brakeA : spec.acc * 1.6)) * (sa < 0 ? 1 : 0.6) : 0;
-      const K = 95, C = 9;          // ~1.5 Hz, ~45 % damped
-      this.susRollV = (this.susRollV || 0) + (K * (rollT - (this.susRoll || 0)) - C * (this.susRollV || 0)) * dt;
-      this.susRoll = clamp((this.susRoll || 0) + this.susRollV * dt, -0.12, 0.12);
-      this.susPitchV = (this.susPitchV || 0) + (K * (pitchT - (this.susPitch || 0)) - C * (this.susPitchV || 0)) * dt;
+      // (each type's own spring: SUSP -- was K 95, C 9, ~1.5 Hz, ~45 % damped, for all)
+      const S = spec.roadCar ? suspOf(spec) : SUSP_OFF;
+      const K = S.kr, C = S.cr;
+      this.susRollV = (this.susRollV || 0) + (K * (rollT * S.roll - (this.susRoll || 0)) - C * (this.susRollV || 0)) * dt;
+      this.susRoll = clamp((this.susRoll || 0) + this.susRollV * dt, -0.14, 0.14);
+      this.susPitchV = (this.susPitchV || 0) + (K * (pitchT * S.pitch - (this.susPitch || 0)) - C * (this.susPitchV || 0)) * dt;
       this.susPitch = clamp((this.susPitch || 0) + this.susPitchV * dt, -0.08, 0.08);
-    } else if (this.susRoll || this.susPitch) {
+      // HEAVE: the body on its springs over the ground's shape. The follow
+      // above puts the WHEELS on the road; the body is a mass on a spring
+      // over them, so it lags what the floor does: over a crest (the floor's
+      // climb turning to a fall) it floats up on its springs, into a dip or
+      // a ramp's foot it sinks onto them, and a landing compresses it. Its
+      // drive is the floor's vertical ACCELERATION as the wheels ride it
+      // (the follow's own, ~50 ms smoothed; a step -- a deck taken, a
+      // teleport -- is not a motion and resets it). Bumps (roadfeel.js: a
+      // bridge joint, a rail, a rumble strip) kick it through `bump`. Each
+      // type's travel ends on a stop (`up` / `down`): it cannot bottom out
+      // through the ground or float off its wheels.
+      if (spec.roadCar) {
+      const yv = dt > 0 && this._yWas !== undefined && Math.abs(this.y - this._yWas) < 0.25 && this.onGround ? (this.y - this._yWas) / dt : null;
+      this._yWas = this.y;
+      let fa = 0;
+      if (yv !== null && this._yvWas !== null && this._yvWas !== undefined) fa = clamp((yv - this._yvWas) / dt, -30, 30);
+      this._yvWas = yv;
+      // (smoothed over the time the wheelbase takes to pass a point -- the
+      // body averages its two axles -- and 0.6 of it: the tyres' own give
+      // takes the rest. The terrain mesh's grade breaks every 20-40 m are
+      // kinks no real road has; unsmoothed they threw the body to its stops.)
+      const tau = clamp((spec.wheelbase || 2.8) / Math.max(Math.abs(this.vLong), 4) * 1.5, 0.1, 0.35);
+      this.susFa = lerp(this.susFa || 0, fa * 0.6, 1 - Math.exp(-dt / tau));
+      if (this._landVy < -1) { this.susHeaveV = (this.susHeaveV || 0) + clamp(this._landVy, -14, 0) * 0.45; }
+      this._landVy = 0;
+      const air = !this.onGround;
+      const hv = (this.susHeaveV || 0) + ((air ? S.up * 0.6 * S.kh : 0) - S.kh * (this.susHeave || 0) - S.ch * (this.susHeaveV || 0) - (air ? 0 : this.susFa)) * dt;
+      let h = (this.susHeave || 0) + hv * dt;
+      this.susHeaveV = hv;
+      if (h > S.up) { h = S.up; if (this.susHeaveV > 0) this.susHeaveV = 0; }
+      else if (h < -S.down) {
+        // the bump stop: what is left of a hard landing or a dip taken flat
+        // out goes into it with a thud (`bottomed`, roadfeel.js plays it)
+        if (this.susHeaveV < -0.45) this.bottomed = Math.max(this.bottomed || 0, clamp(-this.susHeaveV / 2.5, 0, 1));
+        h = -S.down; if (this.susHeaveV < 0) this.susHeaveV = 0;
+      }
+      this.susHeave = h;
+      }
+    } else if (this.susRoll || this.susPitch || this.susHeave) {
       this.susRoll = this.susPitch = this.susRollV = this.susPitchV = 0; this._vlWas = undefined;
+      this.susHeave = this.susHeaveV = 0; this._yWas = undefined; this._yvWas = undefined; this.susFa = 0;
     }
     if (light) {
       // Held on the gas with the stick back, the nose comes up to a balance
@@ -14179,13 +14372,15 @@ export class Vehicle {
     const gr = this.group.rotation, tr = this.tilt.rotation;
     // a shot rocks the hull away from the gun; a crushed car bumps it
     const sr = this.detailedWheels ? this.susRoll || 0 : 0, spch = this.detailedWheels ? this.susPitch || 0 : 0;
+    const hv = this.detailedWheels ? this.susHeave || 0 : 0;
+    if (this.tilt.position.y !== this.pivotY + hv) this.tilt.position.y = this.pivotY + hv;
     const tx = this.pitch - this.wheelie + spch + (T ? -T.rock * Math.cos(T.rockYaw) * 0.035 - T.bump * 0.03 : 0);
     const tz = this.roll + sr + (T ? T.rock * Math.sin(T.rockYaw) * 0.035 : 0);
     if (gr.y !== this.heading) gr.y = this.heading;
     if (tr.x !== tx) tr.x = tx;
     if (this.shadowTilt) {
       const st = this.shadowTilt;
-      st.position.y = this.tilt.position.y - wl;
+      st.position.y = this.pivotY - wl;
       if (st.rotation.x !== this.pitch) st.rotation.x = this.pitch;
       if (st.rotation.z !== this.roll) st.rotation.z = this.roll;
       st.visible = this.onGround && !this.stunt;
@@ -14220,7 +14415,8 @@ export class Vehicle {
         m.rotation.y = this.spec.rws ? (m.userData.front ? 0 : -this.steer) : m.userData.front ? this.steer : this.rearSteer;
         // the suspension's lean is the body's: each wheel is held down to
         // where it was, so a leaning car keeps all four on the road
-        m.position.y = m.userData.y0 + m.position.z * spch - m.position.x * sr;
+        // (and its heave: the wheels stay on the road as the body rises and sinks)
+        m.position.y = m.userData.y0 + m.position.z * spch - m.position.x * sr - hv;
       }
       if (this.glow) {
         // 0.4 s sweep out from the centre at a flash, settling to a glow
@@ -14248,6 +14444,75 @@ export class Vehicle {
    * count once. Gunfire and other scripted damage passes `force` and is never
    * debounced.
    */
+  /**
+   * YOUR CAR CRUMPLES (dentShader): a hit of `impact` m/s at world (wx, wz)
+   * pushes the body in there -- ~1.2 cm per m/s over 7 (a 60 km/h shunt
+   * ~12 cm), a dent near an old one deepening it (to 32 cm) and widening it,
+   * else a new one (DENT_N, the shallowest replaced). Only on the ordinary
+   * paint (the Hellcat's wrap, the Wienermobile and the airliner keep theirs);
+   * the trim (lamps, glass, grille) gets its own material clone the first
+   * time, the same program, so it dents with the panel. A hard hit on the
+   * nose holes the radiator: steam for a few seconds (main.js `steamT`).
+   * Returns the dent's depth.
+   */
+  dent(wx, wz, impact) {
+    if (!this.detailedWheels || !this.spec.roadCar || impact < 7 || this.bodyMat.onBeforeCompile !== dentShader) return 0;
+    const spec = this.spec, f = this.forward, rx = f.z, rz = -f.x;
+    const dx = wx - this.x, dz = wz - this.z;
+    const lx = dx * rx + dz * rz, lz = dx * f.x + dz * f.z;
+    const hw = this.halfWid, hl = this.halfLen;
+    let cx, cz, nx, nz;
+    if (Math.abs(lz) / hl > Math.abs(lx) / hw) { cz = Math.sign(lz) * hl * 0.97; cx = clamp(lx, -hw, hw); nx = 0; nz = -Math.sign(lz) || -1; }
+    else { cx = Math.sign(lx) * hw * 0.97; cz = clamp(lz, -hl, hl); nx = -Math.sign(lx) || -1; nz = 0; }
+    const add = clamp((impact - 7) * 0.012, 0.01, 0.16);
+    const top = (spec.belt || 1.0) + 0.2;
+    const mats = [this.bodyMat];
+    if (!this.dentTrim) {
+      const A = vehicleAssets();
+      const own = (src) => {
+        const m = src.clone();
+        m.onBeforeCompile = src.onBeforeCompile;
+        m.customProgramCacheKey = src.customProgramCacheKey;
+        return m;
+      };
+      this.dentTrim = own(A.trimMat);
+      this.dentMatte = own(A.matteMat);
+      this.trimMesh.material = this.dentTrim;
+      this.matteMesh.material = this.dentMatte;
+    }
+    mats.push(this.dentTrim, this.dentMatte);
+    const U = dentUniforms(this.bodyMat).a.value, B = dentUniforms(this.bodyMat).b.value;
+    let k = -1;
+    for (let i = 0; i < DENT_N; i++) if (U[i].z > 0 && Math.hypot(U[i].x - cx, U[i].y - cz) < 0.7 && B[i].x === nx && B[i].y === nz) { k = i; break; }
+    if (k < 0) {
+      let lo = Infinity;
+      for (let i = 0; i < DENT_N; i++) { if (U[i].z === 0) { k = i; break; } if (U[i].z < lo) { lo = U[i].z; k = i; } }
+    }
+    const was = U[k].z > 0 && B[k].x === nx && B[k].y === nz ? U[k] : null;
+    const depth = Math.min(0.32, (was ? was.z : 0) + add);
+    const rad = Math.min(1.3, Math.max(was ? was.w : 0, 0.5 + depth * 2.4));
+    const px = was ? (was.x + cx) / 2 : cx, pz = was ? (was.y + cz) / 2 : cz;
+    for (const m of mats) {
+      const d = dentUniforms(m);
+      d.a.value[k].set(px, pz, depth, rad);
+      d.b.value[k].set(nx, nz, top, 0);
+    }
+    if (!was) this.dents++;
+    if (nz < 0 && lz > 0 && impact > 13) this.steamT = Math.max(this.steamT, clamp((impact - 10) * 0.35, 2, 8));
+    return depth;
+  }
+
+  /** A bump under your car's wheels (roadfeel.js): `amp` 0..1 at the front
+   *  (axle 0) or rear axle (1), and `side` -1 / 0 / +1 for a one-sided one.
+   *  Kicks the heave, the pitch (the axle that is hit rises) and the roll. */
+  bump(amp, axle = 0, side = 0) {
+    if (!this.detailedWheels || !this.spec.roadCar) return;
+    const S = suspOf(this.spec), L = this.spec.wheelbase || 2.8;
+    this.susHeaveV = (this.susHeaveV || 0) + amp * 0.32 * (S.up / 0.09);
+    this.susPitchV = (this.susPitchV || 0) + (axle ? 1 : -1) * amp * 0.5 / L;
+    if (side) this.susRollV = (this.susRollV || 0) + side * amp * 0.35 / (this.spec.wid || 1.9);
+  }
+
   damage(n, force) {
     if (!force) {
       if (this.hitCd > 0) return false;

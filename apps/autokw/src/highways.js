@@ -692,12 +692,60 @@ function parkwayWalls(city, idx, onCw) {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// The rumble strips as a surface (roadfeel.js): every drawn stretch, filed in
+// 40 m cells, and `rumbleAt` -- is this wheel on the grooves? The same
+// stretches, offsets and heights the build lays them at.
+const RUMBLE_CELL = 40;
+let RUMBLE = new Map(), RUMBLE_CITY = null;
+function addRumbleRun(r) {
+  r.d0 -= 0.2; r.d1 += 0.2;
+  const a = RUMBLE_CITY.nodes[r.e.a], seen = new Set();
+  // (a few long stretches' starts, for tools/kw/feelprobe.mjs: x, z, the
+  // direction of travel, the strip's offset right of the edge's line)
+  if (r.d1 - r.d0 > 40 && (STATS.rumbleRuns || (STATS.rumbleRuns = [])).length < 24) {
+    const sg = r.sg, ix = a.x + r.e.dx * (r.d0 + 20), iz = a.z + r.e.dz * (r.d0 + 20);
+    STATS.rumbleRuns.push({ x: ix, z: iz, dx: r.e.dx * sg, dz: r.e.dz * sg, px: -r.e.dz * sg, pz: r.e.dx * sg, ei: RUMBLE_CITY.edges.indexOf(r.e), len: r.d1 - r.d0 });
+  }
+  for (let d = r.d0; d <= r.d1 + RUMBLE_CELL; d += RUMBLE_CELL / 2) {
+    const dd = Math.min(d, r.d1);
+    const k = Math.floor((a.x + r.e.dx * dd) / RUMBLE_CELL) * 100003 + Math.floor((a.z + r.e.dz * dd) / RUMBLE_CELL);
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+      const kk = k + i * 100003 + j;
+      if (seen.has(kk)) continue;
+      seen.add(kk);
+      let l = RUMBLE.get(kk);
+      if (!l) RUMBLE.set(kk, (l = []));
+      l.push(r);
+    }
+  }
+}
+/** Is (x, z), at height y, on a shoulder rumble strip? 0 or 1. */
+export function rumbleAt(x, z, y) {
+  if (!RUMBLE.size) return 0;
+  const l = RUMBLE.get(Math.floor(x / RUMBLE_CELL) * 100003 + Math.floor(z / RUMBLE_CELL));
+  if (!l) return 0;
+  for (let q = 0; q < l.length; q++) {
+    const r = l[q], e = r.e, a = RUMBLE_CITY.nodes[e.a];
+    const dx = x - a.x, dz = z - a.z, along = dx * e.dx + dz * e.dz;
+    if (along < r.d0 || along > r.d1) continue;
+    const lat = (dx * -e.dz + dz * e.dx) * r.sg;
+    const t = along / e.len, i = Math.min(e.pk, Math.max(0, Math.round(t * e.pk)));
+    const o = e.tw[i * 2 + r.s] - r.inset + 0.28;
+    if (Math.abs(lat - o) > 0.26) continue;
+    if (Math.abs(RUMBLE_CITY.profAt(e, t).h - y) > 1.2) continue;
+    return 1;
+  }
+  return 0;
+}
+
 export function buildHighways(ctx) {
   const city = ctx.city;
   if (!HW || !city || (typeof window !== 'undefined' && window.__noHwy)) return;
   const t0 = performance.now();
   const K = new Kit();
   const solids = (HWY_SOLIDS = []);
+  RUMBLE = new Map(); RUMBLE_CITY = city;
   const idx = edgeIndex(city);
   const atlas = new SignAtlas();
   // on a carriageway (not its embankment, which city.onRoad counts). The
@@ -1090,14 +1138,19 @@ export function buildHighways(ctx) {
     const inset = Math.min(0.7, e.hw * 0.06);
     {
       const s = fwdOf(e) > 0 ? 0 : 1, sg = s === 0 ? 1 : -1;   // the right of travel
+      let run = null;
+      const endRun = () => { if (run) { addRumbleRun(run); run = null; } };
       for (let d = 0.3; d < e.len - 0.3; d += 0.9) {
         const t = d / e.len;
         const i = Math.min(e.pk, Math.round(t * e.pk));
         const tw = e.tw[i * 2 + s];
-        if (tw < e.hw - 0.5) continue;
+        if (tw < e.hw - 0.5) { endRun(); continue; }
         const o = tw - inset + 0.28;      // just outside the edge line, on the shoulder
         const cx = a.x + e.dx * d + px * sg * o, cz = a.z + e.dz * d + pz * sg * o;
-        if (onCw(cx + px * sg * 0.6, cz + pz * sg * 0.6, -0.4)) continue;
+        if (onCw(cx + px * sg * 0.6, cz + pz * sg * 0.6, -0.4)) { endRun(); continue; }
+        // (the stretch is recorded for rumbleAt: what your tyres find there)
+        if (!run) run = { e, s, sg, inset, d0: d, d1: d };
+        run.d1 = d;
         const P = city.profAt(e, t);
         const y = P.h + P.s * sg * o + 0.045;
         const ux = e.dx * 0.09, uz = e.dz * 0.09, wx = px * sg * 0.2, wz = pz * sg * 0.2;
@@ -1105,6 +1158,7 @@ export function buildHighways(ctx) {
           [cx + ux + wx, y, cz + uz + wz], [cx - ux + wx, y, cz - uz + wz], [0, 1, 0], NOUV);
         STATS.rumble++;
       }
+      endRun();
     }
   }
 
@@ -1256,5 +1310,5 @@ export function buildHighways(ctx) {
   K.flush(atlas.mat);
   STATS.ms = Math.round(performance.now() - t0);
   STATS.wall = Math.round(STATS.wall); STATS.paved = Math.round(STATS.paved); STATS.rail = Math.round(STATS.rail);
-  if (typeof window !== 'undefined') window.__hwy = STATS;
+  if (typeof window !== 'undefined') { window.__hwy = STATS; STATS.rumbleAt = rumbleAt; }
 }
