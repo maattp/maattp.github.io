@@ -699,6 +699,71 @@ file and a guide disagree, this file wins.
   -> 213/716k; Northfield low 129/643k -> 132/685k (max +7.3 % tris, draws
   flat). Re-run order after an OSM update:
   `extract_looks.py` then `build_buildings.py`.
+- **The radio (src/audio.js `STATIONS`, `_makeLive`..`_watchLive`;
+  `node tools/kw/radiotest.mjs`).** Every station is LISTENED TO, not just
+  loaded: an earlier check only saw `currentTime` advance, and a stream that
+  loops "this stream is not available", or silence, or zeros through Web
+  Audio passes that. **Test from where the radio is played (Seattle):**
+  Canadian commercial streams -- Rogers' leanstream (CHYM, Country 106.7, 570
+  News, HLS and ICY alike), CJIQ's leanstream, Indie88 (streamb SB00348),
+  Stingray's Boom 97.3 -- answer 200 with audio and CORS, and the audio is
+  "The stream you are trying to access is not available at this time" /
+  "only available within Canada" on a loop. Corus `live.leanstream.co` is
+  not even audio. They were replaced by campus, community and public
+  stations that play here. CBC is its own HLS (`cbcradiolive.akamaized.net`,
+  the `adaptive_128/chunklist_ao.m3u8` MEDIA playlist: Chrome 155 plays HLS
+  media playlists but cannot parse CBC's master; K-W is `2040995/ES_R1EKW`,
+  the whole list is in https://www.cbc.ca/listen/live-radio's page source);
+  streamtheworld's MP3s close after 32 KB for any browser user agent.
+  **Two routes** (`_route`): every stream plays through a `crossOrigin`
+  element -> `createMediaElementSource` -> `radioGain` (= `stationNorm`, the
+  stream's measured `lufs` brought to `RADIO_REF` -14, +-12 dB) ->
+  `musicDuck`, so it is levelled, ducked and under the master volume on iOS
+  too (which ignores an element's `volume`). A station whose 'wa' load fails
+  (no CORS: `error 4`, a CORS header on a redirect missing, or sent twice --
+  AH.FM's fr. relay sends `*, *`), or whose media source gives exact zeros for
+  4 s while the element's clock runs (`_watchLive`; WebKit has done this for
+  HLS), moves to the plain `direct` element for the session (`_direct`), its
+  `volume` = `DIRECT_LEVEL` x norm where honoured. Then two reloads, then the
+  synth covers until a retune. **`stalled` is NOT a failure**: it fires every
+  few seconds on healthy HLS, and treating it as one threw BBC Radio 1 to the
+  synth while the stream played on under it; a clock stopped 15 s is.
+  `primeLive` unlocks BOTH elements in the gesture (WebKit unlocks media
+  elements one at a time). **The synth radio was 25 dB under the streams**
+  (musicBus 0.2: -42 to -44 dBFS RMS) -- the two synth stations and every
+  fallback were "just quiet"; `SYNTH_LEVEL` 3.2 puts it at -18 to -20.
+  radiotest: per station HTTP status and CORS as polkiewicz.com sees them;
+  ~50 s through ffmpeg (`tools/kw/radioprobe.py`: EBU R128 LUFS, % silent,
+  a loop score, and a faster-whisper transcript checked for "not
+  available" -- `RADIO_PY=<python with numpy + faster-whisper>`); then the
+  game in headless Chrome, in a car, `setStation(i)`, 8 s of RMS off an
+  analyser on `musicDuck` scaled by pre x master (= dBFS at the speakers).
+  Re-measure and update a station's `lufs` when the test notes a drift > 4 dB.
+  Last run (2026-10-20, from Seattle; `out` is game output RMS, dBFS):
+
+  | # | station | LUFS (set) | silent | transcript (start / end) | route | gain | out |
+  |---|---|---|---|---|---|---|---|
+  | 0 | Radio Waterloo 102.7 | -21.1 (-18.8) | 3.4% | "...the spiritual in the natural..." | wa | 1.74 | -18.9 |
+  | 1 | CKWR 98.5 Community | -12.2 (-12.8) | 0.8% | "Cup Champions. The time for you to be a champion..." | wa | 0.87 | -18.1 |
+  | 2 | CBC Radio One K-W 89.1 | -21.4 (-21) | 1.4% | "biodiversity loss in the UK..." | wa | 2.24 | -17.1 |
+  | 3 | The Grand 101 Fergus-Elora | -12.9 (-13) | 0% | "Back with more of Centre Wellington's best music" | wa | 0.89 | -17.0 |
+  | 4 | CFRU 93.3 Guelph | -14.8 (-16.8) | 0% | "I can't hide my feelings..." | wa | 1.38 | -15.8 |
+  | 5 | CKRZ 100.3 Voice of the Grand | -17.8 (-18.3) | 0% | "How important is the..." | wa | 1.64 | -15.8 |
+  | 6 | Vibe 105.5 York U | -13.9 (-14.7) | 0% | (lyrics) | wa | 1.08 | -15.1 |
+  | 7 | CIUT 89.5 U of T | -22.2 (-17, now -18.5) | 0.2% | "Everybody needs cash to spend..." | wa | 1.41 | -23.7 |
+  | 8 | JAZZ.FM91 | -22.9 (-24.5) | 0% | (instrumental) | wa | 3.35 | -16.4 |
+  | 9 | The New Classical 96.3 | -17.5 (-17.2) | 0% | (instrumental) | wa | 1.45 | -17.2 |
+  | 10 | CBC Music | -19.7 (-19.2) | 0% | "It's the world, yeah..." | wa | 1.82 | -16.0 |
+  | 11 | RdMix Classic Rock | -17.8 (-18.4) | 0% | (lyrics) | wa | 1.66 | -15.8 |
+  | 12 | NRJ Linkin Park | -15.9 (-15.6) | 0% | (lyrics) | wa | 1.20 | -16.4 |
+  | 13 | BBC Radio 1 | -17.3 (-17.5) | 0% | (lyrics) | wa | 1.50 | -15.7 |
+  | 14 | AH.FM Trance | -12.8 (-12.7) | 0% | (lyrics) | wa | 0.86 | -16.6 |
+  | 15 | Grand River FM | synth | - | - | synth | 3.2 | -19.8 |
+  | 16 | King St Radio | synth | - | - | synth | 3.2 | -18.2 |
+
+  All 200 with CORS ok, none looping or "not available", 0 exceptions.
+  Not covered headlessly: the iPhone. If a station is silent there, the
+  Debug readout's audio log says which route it took and why it moved.
 
 ## Build number
 
