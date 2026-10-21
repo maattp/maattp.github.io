@@ -551,6 +551,67 @@ file and a guide disagree, this file wins.
   each 1200 m cluster it sees -- the pieces, the decals, the atlas); Galt
   141 -> 146, 621k -> 659k; the Boardwalk 74 -> 77. 0 exceptions.
 
+- **Jobs only Waterloo Region has: GRT bus driver and KW Eats**
+  (src/grtbus.js, src/kweats.js; docs/jobs-*.jpg). Both are on the map, in the
+  pause menu's Jobs list (`jobRows()`, ahead of the races) and in the
+  Passport's extra line; `window.__noJobs = true` before boot leaves both out.
+  **GRT** (`data/grt.json` from tools/kw/build_grt.py, which reads OSM's GRT
+  PTv2 route relations straight out of kw.osm.pbf: the `platform*` members in
+  order are the stops, the role-'' ways chained are the line). `SECTIONS`
+  picks 9-12 stops from a terminal: 7 King (Conestoga Station -> Waterloo
+  Public Square), 202 iXpress (The Boardwalk -> UW), 201 iXpress (Conestoga
+  Station -> Fischer-Hallman / Columbia), 57 Blair (Ainslie Terminal -> Blair
+  / Bismark); the script asserts every stop lies within 45 m of its line. A
+  bus is parked ('apron') at each section's first stop (`spawnBuses`); being
+  stopped in a GRT bus within `START_R` of it starts the run. The front sign
+  is a canvas plane over the baked LED sign (`Sign`, on `v.tilt`, with dark
+  quads over the two kerb-side doors when they are open) -- the baked sign is
+  per TYPE, so a run never needs a new type. Riders are the crowd's own
+  pedestrians: `fare` 3 is a new value peds.js already honours by accident
+  (only 2 walks, only 1 hails), so a waiting rider stands facing the road; to
+  board they walk (`fare` 2) to the front door and are removed, alighting
+  ones are `spawnFareAt` the door walking away. A stop is SERVED when the bus
+  is stopped with the stop's kerb point (`_kerbPoint`: the route line
+  offset to the near lane) between 5 m behind and 11 m ahead of its centre,
+  on the kerb side; it is MISSED 28 m past it along the route. The timetable
+  (`sched`) is each leg's length at 8.5 m/s (10.5 iXpress) + 15 s a stop --
+  derived, not GTFS; up to 60 s late is on time, early is fine except at a
+  TIMEPOINT (a station / terminal, every third stop), where the doors stay
+  open until 30 s before the timetable ("holding for time") and pulling
+  away sooner costs that stop 40 points. SMOOTH: hard braking
+  (> `HARD_BRAKE` held `HOLD_T` at speed), hard turns (> `HARD_LAT`), kerb
+  strikes (a kerb-side corner over `roadLift` 0.3 while the centre is not),
+  crashes, a pedestrian hit, pulling away with riders still walking. Pay =
+  $10 a stop served + score / 10; bests in `autokw-grt`. The LED panel at
+  the top (`LedPanel`, a DOM element shared with KW Eats) shows the route,
+  the next stop, distance, schedule delta and smoothness; the route and the
+  next stop are drawn on both maps through `hud.fare` (the taxi's).
+  **KW Eats** (`data/eats.json` from tools/kw/build_eats.py): 122
+  restaurants (delivery chains from raw_shops by brand, local favourites by
+  OSM name -- Lazeez, Pita Pit, Ennio's, Morty's, Gino's, Campus Pizza,
+  Kismet, Mozy's... -- and Mr. Panino's at 170 University Ave W, which OSM
+  lacks), each with a food kind; 1,580 real addressed homes (OSM house /
+  detached / terrace / apartments ... with addr:*, one per 170 m cell, door
+  = the footprint's point nearest its own street from raw_roads.json).
+  Riding a road car under 7 m, a bike or a motorbike, the nearest kitchen
+  within 230 m gets an orange pillar; stop within 48 m (its point can be
+  deep in a plaza) and the order is
+  bagged (3 s), then it is for a door 0.6-3.2 km off with a quote from the
+  distance and the ride. Lateral g past 4.5, braking past 8 m/s^2, landings
+  and crashes spoil it x its kind's `sens` (ramen 1.6 ... shawarma 0.55);
+  tip = 30 % of the order's value x lateness x condition^1.5; cancelled at
+  2.5x the quote. Stop within 30 m of the door (45 an apartment block's: they sit
+  back from the street) or walk it within 4.5 m.
+  The next order pings from a kitchen within 1.6 km. Stats in
+  `autokw-eats`. **Verify: `node tools/kw/jobsprobe.mjs <dir> [grt,eats]`**
+  (AUTO_GPU=1; `GRT_ROUTE`, `EATS_REST`): the game running, everything
+  through `Input.dispatchKeyEvent` (F, W/A/S/D) from a small autopilot,
+  prints `__grtLast` / `__eatsLast` and shoots the board, a stop, the
+  drive, the kitchen and the door. It sets `Emulation.setFocusEmulationEnabled`:
+  without it the headless page went `document.hidden` on entering a
+  vehicle, which pauses the game (visibilitychange) and stops its frames.
+  Sounds: `bus_chime`, `bus_doors` in audio.js SOUNDS.
+
 ## Build number
 
 `<div id="build">vN</div>` in index.html and `CACHE = 'autokw-vN'` in sw.js

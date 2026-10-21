@@ -1303,6 +1303,32 @@ const SOUNDS = {
       METAL.slice(0, 5).forEach((r, i) => k.ping(out, t0, 1046 * r, 0.32 / (1 + i * 0.8), 0.55 / (1 + i * 0.5), 0.0015));
     }
   } },
+  // Auto KW, the GRT bus job (grtbus.js): the two-tone "next stop" chime
+  // the stop announcements open with -- a soft vibraphone-ish bing-bong
+  bus_chime: { dur: 1.5, build(k, out, t, R) {
+    for (const [t0, f] of [[t, 1318.5], [t + 0.42, 1046.5]]) {
+      k.ping(out, t0, f, 0.34, 0.42, 0.004);
+      k.ping(out, t0, f * 2, 0.07, 0.16, 0.004);
+      k.ping(out, t0, f * 3.01, 0.03, 0.08, 0.004);
+    }
+  } },
+  // ...and the doors: a pneumatic hiss, the leaves folding, a thunk at the stop
+  bus_doors: { dur: 1.3, build(k, out, t, R) {
+    const g = k.gain(0);
+    k.noise('white', t, 1.2, R).connect(k.filt('highpass', 1800)).connect(k.filt('bandpass', 3800, 0.6)).connect(g).connect(out);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.55, t + 0.04);
+    g.gain.setTargetAtTime(0, t + 0.12, 0.25);
+    const o = k.osc('sawtooth', 120, t + 0.1, 0.7);
+    o.frequency.linearRampToValueAtTime(150, t + 0.7);
+    const hg = k.gain(0);
+    o.connect(k.filt('bandpass', 600, 4)).connect(hg).connect(out);
+    hg.gain.setValueAtTime(0, t + 0.1);
+    hg.gain.linearRampToValueAtTime(0.06, t + 0.25);
+    hg.gain.linearRampToValueAtTime(0, t + 0.72);
+    k.thump(out, t + 0.74, 95, 55, 0.06, 0.8, 0.05);
+    k.burst(out, 'brown', t + 0.74, 'lowpass', 400, 0.7, 0.7, 0.04, R);
+  } },
   ui_check: { dur: 0.5, build(k, out, t, R) {
     k.ping(out, t, 1568, 0.5, 0.13, 0.003);
     k.ping(out, t, 2093, 0.35, 0.11, 0.003);

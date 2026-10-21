@@ -128,6 +128,8 @@ export class Career {
     const extra = [];
     if (missions && missions.best) extra.push(`Vigilante level ${missions.best}`);
     if (taxi && taxi.stats.fares) extra.push(`Taxi fares ${taxi.stats.fares}`);
+    if (s.grt && s.grt.stats.runs) extra.push(`GRT runs ${s.grt.stats.runs}`);
+    if (s.eats && s.eats.stats.orders) extra.push(`KW Eats orders ${s.eats.stats.orders}`);
     if (seafair && seafair.series && seafair.series.cups) extra.push(`Seafair cups ${seafair.series.cups}`);
     return {
       money: Math.floor(this.game.money), rows, frac, pct: Math.floor(frac * 100),

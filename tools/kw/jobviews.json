@@ -1,0 +1,6 @@
+[
+  { "name": "jobs-spawn", "player": true },
+  { "name": "jobs-conestoga", "eval": "(() => { const g = d.grt; if (!g) return { c: [-4400, -5150, 30], t: [-4370, -5110, 0] }; const v = g.buses[0], f = v.forward; return { c: [v.x + f.x * 30 - f.z * 22, v.z + f.z * 30 + f.x * 22, 14], t: [v.x, v.z, 1], fov: 55 }; })()" },
+  { "name": "jobs-sign", "eval": "(() => { const g = d.grt; if (!g) return { c: [-4400, -5150, 3], t: [-4370, -5110, 2] }; const rt = g.routes[0], v = g.buses[0]; if (!g.run) g.start(rt, v); const f = v.forward; return { c: [v.x + f.x * 13 - f.z * 4.5, v.z + f.z * 13 + f.x * 4.5, 2.6], t: [v.x + f.x * 5, v.z + f.z * 5, 2.2], fov: 50 }; })()" },
+  { "name": "jobs-eats-uw", "c": [-5060, -2140, 30], "t": [-5130, -2250, 0], "fov": 60 }
+]
