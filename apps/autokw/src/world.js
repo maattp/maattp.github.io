@@ -444,6 +444,12 @@ function hydroEdge(e, mx, mz) {
   const kind = e.cls === 'art' && hash2(k, 7) < 0.45 ? 2 : 1;
   return kind | (hash2(k, 9) < 0.5 ? 4 : 0);
 }
+// AUTO KW: A RESIDENTIAL STREET IS UNPAINTED. Kitchener, Waterloo and
+// Cambridge paint no centre line and no edge lines on a local street -- the
+// yellow dashes and white edges every OSM `residential` way had read as an
+// American suburb from the driver's seat. A wide one (hw > 6.5: OSM's lanes
+// or width made it a collector) and a country road keep theirs.
+const unpainted = (e) => e.cls === 'res' && !e.rural && e.hw <= 6.5;
 // Modern townhomes (houseExtras' neighbour, townhome): the palette infill has
 // in Seattle -- charcoal, white, mid grey, near-black, the odd deep green.
 // A building's frame turned so its +z is side k (see houseFront): local +x
@@ -4480,8 +4486,9 @@ varying vec3 vFarTint;`)
     const px = -e.dz, pz = e.dx;
     // Paint: alleys and lanes carry none; freeways and one-ways no centre line.
     let flags = rank;
-    if (hw >= 4 && !e.gravel) flags |= 4;
-    if (hw >= 4 && e.cls !== 'hwy' && !e.oneway && !e.gravel) flags |= 8;
+    const paint = hw >= 4 && !e.gravel && !unpainted(e);
+    if (paint) flags |= 4;
+    if (paint && e.cls !== 'hwy' && !e.oneway) flags |= 8;
     if (e.cls === 'hwy') flags |= 16;
     if (e.gravel) flags |= 128;   // unpaved (gravel.js): GRAVEL_TINT, no paint
     let j0 = 0;
@@ -5635,6 +5642,7 @@ float frLine(float o, float fw, float c, float w) {
     const hw = e.hw;
     const bias = hash2(ei | 0, 7) * 0.03;
     if (hw < 4.0) return;                       // alleys and lanes are unmarked
+    if (unpainted(e)) return;                   // and KW's residential streets
     const px = -e.dz, pz = e.dx;
     // A graded road paints on its profile. Decks draw 3 cm under the standing
     // height and carry no bias; ground graded strips draw at it plus bias.
@@ -7114,6 +7122,10 @@ float frLine(float o, float fw, float c, float w) {
     this.meshTrenchWalls(flat, e, a, b, ei);
     if (lod === 1 && walkWidthOf(e) > 0) {
       const sw = walkWidthOf(e);
+      const lawnAt = (x, z) => {
+        const g = this.groundTint(x, z, G.terrainHeight(x, z));
+        return [g[0] * GROUND_MEAN, g[1] * GROUND_MEAN, g[2] * GROUND_MEAN];
+      };
       const apron = ei != null && this.city.jc ? this.city.jc.apronSide(ei) : 0;
       for (const sg of [-1, 1]) {
         // Stop short of each intersection: a strip run end to end would march
@@ -7125,6 +7137,8 @@ float frLine(float o, float fw, float c, float w) {
         if (tb - ta < 0.06) continue;
         const span = tb - ta;
         const ox = px * sg, oz = pz * sg;
+        // this side's sidewalk (citygen `swk`; 3 = not known: the old pavement)
+        const swk = e.swk === undefined ? 3 : sg > 0 ? e.swk & 3 : (e.swk >> 2) & 3;
         // Pavement pieces are chords too. At a fixed 24 m on a hill the slab
         // was drawn up to 18 cm above the height roadLift gives (terrain +
         // WALK_LIFT), and everyone walking on it sank into it -- the road
@@ -7229,7 +7243,31 @@ float frLine(float o, float fw, float c, float w) {
           // mouth, which is what made the approach look like a building site.
           // It stops at the retaining wall instead.
           if (this.inCut((q[0][0] + q[2][0]) / 2, (q[0][2] + q[2][2]) / 2)) continue;
-          walk.quad(q[0], q[1], q[2], q[3], [0, 1, 0], [0, v0, wu, v0, wu, v1, 0, v1], wc);
+          if (swk === 3 || ap) walk.quad(q[0], q[1], q[2], q[3], [0, 1, 0], [0, v0, wu, v0, wu, v1, 0, v1], wc);
+          else {
+            // AUTO KW: the sidewalk as OSM maps it (build_sidewalks.py): none
+            // (lawn to the kerb), 1.5 m against the kerb with lawn behind, or
+            // a grass boulevard and the 1.5 m walk behind it. The lawn is the
+            // road material's grass mode, the ground's own tint.
+            const P = (x0_, z0_, f) => {
+              const x = x0_ + ox * (hw + sw * f), z = z0_ + oz * (hw + sw * f);
+              return [x, y(x, z), z];
+            };
+            const band = (f0, f1, grass) => {
+              const a0 = P(x0, z0, f0), b0 = P(x0, z0, f1), a1 = P(x1, z1, f0), b1 = P(x1, z1, f1);
+              const quad = sg > 0 ? [a0, b0, b1, a1] : [b0, a0, a1, b1];
+              const u0 = (f0 * sw) / WALK_TILE, u1 = (f1 * sw) / WALK_TILE;
+              const uv = sg > 0 ? [u0, v0, u1, v0, u1, v1, u0, v1] : [u1, v0, u0, v0, u0, v1, u1, v1];
+              if (!grass) { walk.quad(quad[0], quad[1], quad[2], quad[3], [0, 1, 0], uv, [wj, wj, wj]); return; }
+              const q0 = road.nv;
+              road.quad(quad[0], quad[1], quad[2], quad[3], [0, 1, 0], uv, quad.map((p) => lawnAt(p[0], p[2])));
+              surfMark(road, q0, () => SURF_GRASS);
+            };
+            const fw = Math.min(1, 1.5 / sw);   // the walk: 1.5 m
+            if (swk === 0) band(0, 1, true);
+            else if (swk === 1) { band(0, fw, false); band(fw, 1, true); }
+            else { band(0, 1 - fw, true); band(1 - fw, 1, false); }
+          }
           const cy0 = G.terrainHeight(i0x, i0z), cy1 = G.terrainHeight(i1x, i1z);
           const cc = [0.72, 0.72, 0.7];
           const ccLo = [0.4, 0.4, 0.39];

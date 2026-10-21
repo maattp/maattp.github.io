@@ -89,6 +89,23 @@ function decodeRoads(buf) {
   return { nodeCount, edgeCount, nx, nz, ny, nElev, ea, eb, ecls, eflags, ehw, ename, names };
 }
 
+/**
+ * Auto KW: sidewalks.bin (tools/kw/build_sidewalks.py), 4 bits an edge: the
+ * +p side's code in bits 0-1, the -p side's in 2-3 (0 none, 1 against the
+ * kerb, 2 behind a boulevard, 3 unknown). Null unless it was built from
+ * THIS roads.bin (edge count and the sum of every edge's a + b).
+ */
+function decodeSidewalks(buf, roads) {
+  const dv = new DataView(buf);
+  if (String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3)) !== 'AUTS') return null;
+  const n = dv.getUint32(8, true), check = dv.getUint32(12, true);
+  if (n !== roads.edgeCount) return null;
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum = (sum + roads.ea[i] + roads.eb[i]) % 4294967296;
+  if (sum !== check) return null;
+  return new Uint8Array(buf, 16, (n + 1) >> 1);
+}
+
 // Must match tools/build_roads.py.
 export const CLS_NAME = ['hwy', 'art', 'st', 'res', 'ramp'];
 export const F_ELEV = 1, F_TUNNEL = 2, F_ONEWAY = 4, F_ONEWAY_REV = 8;
@@ -221,6 +238,9 @@ export async function loadMapData(onStep) {
   const eats = await opt('eats.json');
   // municipal boundaries, Regional Road numbers, Wilmot's civic numbers (tools/kw/build_streetsigns.py; streetsigns.js)
   const streetsigns = await opt('streetsigns.json');
+  // which side of each street has a sidewalk, and a boulevard (tools/kw/build_sidewalks.py)
+  let sidewalks = null;
+  try { sidewalks = decodeSidewalks(await bytes('sidewalks.bin'), roads); } catch (e) { sidewalks = null; }
   // The Olympics, Rainier and the Cascades as seen from here (tools/build_mountains.py).
   // Scenery only: a failed fetch costs the view, never the boot.
   let mountains = null;
@@ -229,6 +249,6 @@ export async function loadMapData(onStep) {
   return {
     height, hfN: hp.w, wlevel,
     water, green, farm, maskN: sp.w, lot, lotN: lp.w,
-    roads, buildings, places, lakes, monorail, link, freight, rail, beaches, parkprops, bikepaths, piers, ferry, mountains, trails, kw, chicopee, golf, kart, gravel, sights, villages, shops, hwy, uw, home, junctions, grt, eats, streetsigns,
+    roads, buildings, places, lakes, monorail, link, freight, rail, beaches, parkprops, bikepaths, piers, ferry, mountains, trails, kw, chicopee, golf, kart, gravel, sights, villages, shops, hwy, uw, home, junctions, grt, eats, streetsigns, sidewalks,
   };
 }
