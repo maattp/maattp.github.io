@@ -62,7 +62,7 @@ TYPE_CLS = {
     "hospital": 4, "public": 4, "government": 4, "train_station": 4, "stadium": 4,
     "museum": 4, "chapel": 4, "sports_centre": 4, "fire_station": 4,
 }
-CLS_STOREY_H = {0: 3.1, 1: 3.1, 2: 3.9, 3: 5.2, 4: 4.4, 5: 3.1}
+CLS_STOREY_H = {0: 3.1, 1: 3.1, 2: 3.9, 3: 5.2, 4: 4.4, 5: 3.1, 6: 3.4, 7: 4.4}
 # farm buildings: barns, drive sheds and greenhouses are not houses
 FARM_BT = {"barn", "farm_auxiliary", "greenhouse", "cowshed", "stable", "silo", "sty", "farm"}
 # PARK BUILDINGS ARE LOW. OSM's beach bathhouses are bare building=yes with a
@@ -75,7 +75,7 @@ PARK_LOW_NAME = re.compile(r"bath ?house|comfort station|restroom|toilet|shelter
 PARK_LOW_H = 5.0
 PARK_SMALL_M2 = 1500
 PARK_KINDS = {"park", "garden", "recreation_ground", "nature_reserve", "beach", "golf_course"}
-CLS_DEFAULT_H = {0: 6.4, 1: 12.5, 2: 11.0, 3: 8.5, 4: 10.0, 5: 6.4}
+CLS_DEFAULT_H = {0: 6.4, 1: 12.5, 2: 11.0, 3: 8.5, 4: 10.0, 5: 6.4, 6: 9.0, 7: 10.0}
 
 
 def poly_area(p):
@@ -247,18 +247,267 @@ def park_mask():
     return img, n
 
 
+# --- Auto KW: farmsteads and churches ------------------------------------------
+# cls 6 is a FARM building, and for it bits 3-4 are not a roof but which one
+# (citygen.js styleFor -> farmstead.js): 0 a barn, 1 an outbuilding (drive
+# shed, implement shed, coverall, chicken house), 2 a silo, 3 the farmhouse.
+# cls 7 is a church (a Christian place of worship: the steeple; mosques and
+# temples stay civic). Before this every barn was cls 3, "industrial" --
+# tilt-up panels and rooftop units in the middle of a Woolwich cornfield --
+# and every untagged barn under 460 m2 a suburban house with a garage door.
+CLS_FARM, CLS_CHURCH = 6, 7
+F_BARN, F_SHED, F_SILO, F_HOUSE = 0, 1, 2, 3
+FARM_TAGGED = {"barn", "farm_auxiliary", "cowshed", "stable", "sty", "silo"}
+FARM_HOUSE_BT = {"farm", "house", "detached"}
+FARM_UNTAGGED = {"", "yes", "shed"}
+RURAL_R, RURAL_MAX = 150.0, 12   # a farmstead has a handful of buildings within 150 m; a village dozens
+FARMHOUSE_BARN_R = 170.0
+
+
+def farmyard_mask():
+    """10 m raster of OSM's landuse=farmyard (raw_farms.json)."""
+    from PIL import Image, ImageDraw
+    n = int(MAP_HALF * 2 / 10) + 1
+    img = Image.new("L", (n, n), 0)
+    d = ImageDraw.Draw(img)
+    p = os.path.join(DATA, "raw_farms.json")
+    if os.path.exists(p):
+        for f in json.load(open(p))["farms"]:
+            if f["k"] == "farmyard":
+                d.polygon([((x + MAP_HALF) / 10, (z + MAP_HALF) / 10) for x, z in f["o"]], fill=1)
+    return img, n
+
+
+def in_ring(p, x, z):
+    c = False
+    j = len(p) - 1
+    for i in range(len(p)):
+        if (p[i][1] > z) != (p[j][1] > z) and x < (p[j][0] - p[i][0]) * (z - p[i][1]) / (p[j][1] - p[i][1]) + p[i][0]:
+            c = not c
+        j = i
+    return c
+
+
+def farm_kinds(raw, zones, zn):
+    """{raw index: F_*} for every footprint that is part of a farmstead.
+
+    A farm building is one OSM tags as one (barn, farm_auxiliary, silo...),
+    or an untagged one standing in a farmyard, or in open country: outside
+    every landuse zone with at most RURAL_MAX buildings within 150 m. Its
+    kind is from its shape: round is a silo, long is a shed, big a barn; a
+    house-sized one is the FARMHOUSE only if a barn stands within 170 m."""
+    fy, fn = farmyard_mask()
+    info, grid = [None] * len(raw), defaultdict(list)
+    for i, b in enumerate(raw):
+        ring = b["o"][:-1] if len(b["o"]) > 1 and b["o"][0] == b["o"][-1] else b["o"]
+        if len(ring) < 3:
+            continue
+        cx = sum(q[0] for q in ring) / len(ring)
+        cz = sum(q[1] for q in ring) / len(ring)
+        A = poly_area(ring)
+        per = sum(math.hypot(ring[k][0] - ring[k - 1][0], ring[k][1] - ring[k - 1][1]) for k in range(len(ring)))
+        info[i] = (cx, cz, A, per, len(ring))
+        grid[(int(cx // RURAL_R), int(cz // RURAL_R))].append(i)
+
+    def near(cx, cz, r, pick=None):
+        n, gi, gj = 0, int(cx // RURAL_R), int(cz // RURAL_R)
+        k = int(math.ceil(r / RURAL_R))
+        for a in range(gi - k, gi + k + 1):
+            for c in range(gj - k, gj + k + 1):
+                for j in grid.get((a, c), ()):
+                    q = info[j]
+                    if math.hypot(q[0] - cx, q[1] - cz) < r and (pick is None or pick(j)):
+                        n += 1
+        return n
+
+    def px(m, mn, x, z):
+        i, j = int((x + MAP_HALF) / 10), int((z + MAP_HALF) / 10)
+        return m.getpixel((i, j)) if 0 <= i < mn and 0 <= j < mn else 0
+
+    kinds = {}
+    for i, b in enumerate(raw):
+        if info[i] is None or b.get("n"):
+            continue
+        bt = str(b.get("bt", "")).lower()
+        if bt not in FARM_TAGGED and bt not in FARM_HOUSE_BT and bt not in FARM_UNTAGGED:
+            continue
+        cx, cz, A, per, npts = info[i]
+        if A < MIN_AREA:
+            continue
+        yard = px(fy, fn, cx, cz)
+        if bt not in FARM_TAGGED and not yard:
+            if px(zones, zn, cx, cz) or near(cx, cz, RURAL_R) > RURAL_MAX:
+                continue
+        _, _, w, d, _ = min_area_rect([tuple(q) for q in b["o"]])
+        L, S = max(w, d), max(1.0, min(w, d))
+        rnd = 4 * math.pi * A / max(1.0, per * per)
+        if bt == "silo" or (rnd > 0.85 and npts >= 7 and A < 260):
+            kinds[i] = F_SILO
+        elif bt in FARM_TAGGED:
+            kinds[i] = F_BARN if A >= 200 and L / S < 3.2 else F_SHED
+        elif bt in FARM_HOUSE_BT:
+            kinds[i] = F_HOUSE
+        elif A >= 330 and L / S < 3.4:
+            kinds[i] = F_BARN
+        elif A < 75 or bt == "shed" or L / S >= 2.4:
+            kinds[i] = F_SHED
+        else:
+            kinds[i] = F_HOUSE
+    # One or two BARNS a farmstead: the biggest, and any other within 55 % of
+    # it; the rest of what OSM calls farm_auxiliary is drive sheds, implement
+    # sheds and coveralls (a Woolwich farm is one barn and three sheds).
+    for i in [i for i, k in kinds.items() if k == F_BARN]:
+        A = info[i][2]
+        top = [0.0]
+
+        def bigger(j, top=top):
+            if kinds.get(j) == F_BARN and info[j][2] > top[0]:
+                top[0] = info[j][2]
+            return False
+        near(info[i][0], info[i][1], 120.0, bigger)
+        if A < 350 or A < 0.55 * top[0]:
+            kinds[i] = F_SHED
+    # a house is a farmhouse only with a barn (or a silo) near it
+    big = lambda j: kinds.get(j) in (F_BARN, F_SILO)  # noqa: E731
+    for i in [i for i, k in kinds.items() if k == F_HOUSE]:
+        if not near(info[i][0], info[i][1], FARMHOUSE_BARN_R, big):
+            del kinds[i]
+    return kinds, info
+
+
+def silo_nodes(raw_info):
+    """man_made=silo nodes no footprint already covers: (x, z) each."""
+    p = os.path.join(DATA, "raw_rural.json")
+    if not os.path.exists(p):
+        return []
+    out = []
+    pts = json.load(open(p))["silos"]
+    cents = defaultdict(list)
+    for q in raw_info:
+        if q:
+            cents[(int(q[0] // 50), int(q[1] // 50))].append(q)
+    for x, z in pts:
+        hit = False
+        for a in range(int(x // 50) - 1, int(x // 50) + 2):
+            for c in range(int(z // 50) - 1, int(z // 50) + 2):
+                for q in cents.get((a, c), ()):
+                    if math.hypot(q[0] - x, q[1] - z) < max(5.0, math.sqrt(q[2] / math.pi) + 1.5):
+                        hit = True
+        if not hit and all(math.hypot(x - o[0], z - o[1]) > 5 for o in out):
+            out.append((x, z))
+    return out
+
+
+def barn_silos(raw, fkinds, rinfo):
+    """Silos at the end of the bank barns OSM maps none beside: (x, z, r) each.
+
+    Most of the region's silos are not mapped (163 points and 28 footprints
+    for ~1,000 barns), and a dairy barn without one does not read as a farm.
+    Two in five barns of 350-1500 m2 get one (a few two) off a gable end,
+    where no other footprint or road is -- a judgement, like the hydro."""
+    roads = json.load(open(os.path.join(DATA, "raw_roads.json")))["roads"]
+    rg = defaultdict(list)
+    for r in roads:
+        if r.get("cls") in ("footway", "path", "cycleway", "steps", "track", "bridleway"):
+            continue
+        p = r["p"]
+        for k in range(len(p) - 1):
+            a, c = p[k], p[k + 1]
+            for gx in range(int(min(a[0], c[0]) // 100), int(max(a[0], c[0]) // 100) + 1):
+                for gz in range(int(min(a[1], c[1]) // 100), int(max(a[1], c[1]) // 100) + 1):
+                    rg[(gx, gz)].append((a, c))
+
+    def road_d(x, z):
+        best = 1e9
+        for a, c in rg.get((int(x // 100), int(z // 100)), ()):
+            dx, dz = c[0] - a[0], c[1] - a[1]
+            L2 = dx * dx + dz * dz or 1.0
+            t = max(0.0, min(1.0, ((x - a[0]) * dx + (z - a[1]) * dz) / L2))
+            best = min(best, math.hypot(x - a[0] - dx * t, z - a[1] - dz * t))
+        return best
+    cents = defaultdict(list)
+    for q in rinfo:
+        if q:
+            cents[(int(q[0] // 60), int(q[1] // 60))].append(q)
+    silo_near = set()
+    for i, k in fkinds.items():
+        if k == F_SILO:
+            silo_near.add((int(rinfo[i][0] // 120), int(rinfo[i][1] // 120)))
+    out = []
+    for i, k in fkinds.items():
+        if k != F_BARN:
+            continue
+        cx0, cz0, A, _, _ = rinfo[i]
+        if not 350 <= A <= 1500:
+            continue
+        h = (math.sin(cx0 * 12.9898 + cz0 * 78.233) * 43758.5453) % 1.0
+        if h > 0.4:
+            continue
+        gi, gj = int(cx0 // 120), int(cz0 // 120)
+        if any((gi + a, gj + c) in silo_near for a in (-1, 0, 1) for c in (-1, 0, 1)):
+            continue
+        cx, cz, w, d, rot = min_area_rect([tuple(q) for q in raw[i]["o"]])
+        ux, uz = (math.sin(rot), math.cos(rot)) if w >= d else (math.cos(rot), -math.sin(rot))
+        L, S = max(w, d), min(w, d)
+        vx, vz = -uz, ux
+        n = 2 if h < 0.1 else 1
+        r = 2.6 + (h * 37.0 % 1.0) * 0.6
+        for e in ((1, -1) if h * 7 % 1.0 < 0.5 else (-1, 1)):
+            put = []
+            for k2 in range(n):
+                lat = (S / 2 - r - 0.4) * (1 if k2 == 0 else -1) * (1 if h * 11 % 1.0 < 0.5 else -1)
+                x = cx + ux * e * (L / 2 + r + 0.6) + vx * lat
+                z = cz + uz * e * (L / 2 + r + 0.6) + vz * lat
+                if road_d(x, z) < r + 9:
+                    break
+                ok = True
+                for a in (-1, 0, 1):
+                    for c in (-1, 0, 1):
+                        for q in cents.get((int(x // 60) + a, int(z // 60) + c), ()):
+                            if q[0] == cx0 and q[1] == cz0:
+                                continue
+                            if math.hypot(q[0] - x, q[1] - z) < math.sqrt(q[2]) * 0.62 + r + 1.0:
+                                ok = False
+                if not ok:
+                    break
+                put.append((x, z, r))
+            if put:
+                out += put
+                break
+    return out
+
+
+def worship_tags():
+    p = os.path.join(DATA, "raw_rural.json")
+    if not os.path.exists(p):
+        print("  (no raw_rural.json: run extract_rural.py -- no farms' silos or churches)")
+        return {}, []
+    R = json.load(open(p))
+    return R["worship"], R["pow_nodes"]
+
+
 def main():
     raw = json.load(open(os.path.join(DATA, "raw_buildings.json")))["buildings"]
     print(f"{len(raw)} raw footprints")
     parks, pn = park_mask()
     zones, zn, looks = zone_mask()
+    fkinds, rinfo = farm_kinds(raw, zones, zn)
+    worship, pow_nodes = worship_tags()
+    print("farm buildings:", {n: sum(1 for v in fkinds.values() if v == k)
+                              for n, k in (("barn", F_BARN), ("shed", F_SHED), ("silo", F_SILO), ("house", F_HOUSE))})
+    churches = 0
     zoned = {}
     low_named = low_park = 0
 
     chunks = defaultdict(list)
     kept = tagged = dropped_small = outside = 0
     tallest = (0.0, "")
-    for b in raw:
+    pow_in = set()
+    for q in pow_nodes:
+        for i, inf in enumerate(rinfo):
+            if inf and abs(inf[0] - q["x"]) < 60 and abs(inf[1] - q["z"]) < 60 and in_ring(raw[i]["o"], q["x"], q["z"]):
+                pow_in.add(i)
+    for bi, b in enumerate(raw):
         ring = [tuple(p) for p in b["o"]]
         if len(ring) >= 2 and ring[0] == ring[-1]:
             ring = ring[:-1]
@@ -292,12 +541,20 @@ def main():
             zoned[(zc, cls)] = zoned.get((zc, cls), 0) + 1
         elif bt in FARM_BT:
             cls = 3
+        key = f"{b['o'][0][0]},{b['o'][0][1]}"
+        church = (key in worship or bi in pow_in) and area >= 90
+        if church:
+            cls = CLS_CHURCH
+            churches += 1
         if b.get("ht") or b.get("lv"):
             tagged += 1
         h = height_of(b, cls, area)
         if flat_apt and not (b.get("ht") or b.get("lv")):
             h = 9.5   # three storeys: a walk-up, a seniors' home, a co-op
-        roof, mat = look_of(looks.get(f"{b['o'][0][0]},{b['o'][0][1]}"))
+        roof, mat = look_of(looks.get(key))
+        if bi in fkinds and not church:
+            # bits 3-4 are WHICH farm building (see CLS_FARM); the height is citygen's
+            cls, roof = CLS_FARM, fkinds[bi]
         cls |= roof << 3 | mat << 5
         if not (b.get("ht") or b.get("lv")):
             i, j = int((cx + MAP_HALF) / 10), int((cz + MAP_HALF) / 10)
@@ -314,6 +571,22 @@ def main():
         cj = int((cz + MAP_HALF) // CHUNK)
         chunks[(ci, cj)].append((cx, cz, w, d, rot, h, cls))
         kept += 1
+    # silos OSM maps as a point stand up as round 6 m footprints
+    sn = 0
+    for x, z in silo_nodes(rinfo):
+        if abs(x) >= MAP_HALF - 5 or abs(z) >= MAP_HALF - 5:
+            continue
+        chunks[(int((x + MAP_HALF) // CHUNK), int((z + MAP_HALF) // CHUNK))].append(
+            (x, z, 6.0, 6.0, 0.0, 20.0, CLS_FARM | F_SILO << 3))
+        sn += 1
+    bs = 0
+    for x, z, r in barn_silos(raw, fkinds, rinfo):
+        if abs(x) >= MAP_HALF - 5 or abs(z) >= MAP_HALF - 5:
+            continue
+        chunks[(int((x + MAP_HALF) // CHUNK), int((z + MAP_HALF) // CHUNK))].append(
+            (x, z, 2 * r, 2 * r, 0.0, 20.0, CLS_FARM | F_SILO << 3))
+        bs += 1
+    print(f"{churches} churches; {sn} silos from OSM points, {bs} beside barns")
 
     print(f"{kept} kept ({dropped_small} under {MIN_AREA:.0f} m2, {outside} off-map), "
           f"{tagged} with a tagged height ({tagged/max(1,kept)*100:.0f}%)")
