@@ -301,6 +301,54 @@ file and a guide disagree, this file wins.
   through `player.autoDrive`; a full race through the panel's buttons
   takes ~3 min of wall clock with AUTO_GPU=1.
 
+- **Waterloo Region's traffic** (vehicles.js; docs/fleet-*.jpg). **Grand
+  River Transit** (`grtLivery`, `spec.grt`; checked against Commons photos
+  of 21206, 21714, 21759, 22020, 2018-23): white, a royal-blue band under
+  dark tinted windows with a gold line, the GRT wordmark on its white panel
+  (blue italic, GRAND RIVER TRANSIT in gold), "Grand River Transit" on the
+  band, the Region's V and the fleet number over the front windows, on the
+  nose and the back. Types: `bus` (7 King, amber LEDs), `busx` (202 iXpress
+  University), `ionbus` (302 ION Bus: no band, ION's blue front corners,
+  windscreen frame and roof, the ion logo; a third of the `busx` draws in
+  traffic.js), `artic` (201 iXpress Fischer-Hallman -- **GRT runs no
+  articulated buses**; it wears the livery and keeps one CIVILIAN slot).
+  **Lettering is `dotText`**: a 5x7 dot-matrix font (`DOT5`, upper and
+  lower case, digits, `- / . ' &`) merged into runs per row, flat on a
+  panel by centre / right vector / up; `led` gaps the rows, `bold`,
+  `slant`. LED signs are over-bright vertex colours (`LED_AMBER` 2.4) in
+  matte, so a sign in the shade still reads -- in `trim` (metal) they were
+  dark. **Ontario plates** (`plateBox`, every `trim.box(..., PLATE)`
+  became one): white, a blue ABCD 123 serial with the crown between, and
+  hairlines for ONTARIO / YOURS TO DISCOVER; one serial per TYPE
+  (`plateSerial(name)`, set in `vehicleAssets`), ~280 triangles a car.
+  **New types:** `minivan` and `wagon` (SMALL_LOOKS tables through
+  `buildSmallCar`: the slider track, roof rails, clad arches), `crossover`
+  and `compsedan` (`scaledBuild` of the SUV and the sedan at RAV4 / Civic
+  size -- y is not scaled, so they keep their parents' heights), `pickupcap`
+  (`spec.cap`: a cab-high cap over the bed), `postvan` and `purovan`
+  (`vanLivery`: Canada Post's red block, blue stripe and CANADA POST /
+  POSTES CANADA panel; Purolator's slashes and red italic wordmark).
+  **Two-tone paint**: `finish: 'twotone'` (+ `paintVC` for the far LOD)
+  makes the paint read its vertex colours, which every other finish
+  ignores -- WRPS's cruiser (Commons WRPS_New_Car2, Wikipedia: navy hood,
+  wings, quarters, trunk and bumpers, white doors and roof, WATERLOO
+  REGIONAL / POLICE, the red line, the flag) recolours its paint vertices
+  outside the doors; the ION Bus's front face is `tinted(paint, ION_BLUE)`.
+  The taxi is white with WATERLOO TAXI and 519-888-7777 (the company's
+  number; its car colours are unverified). **The mix:** `CIVILIAN_TYPES`
+  is weighted like Canadian registrations and `CAR_COLORS` like a Canadian
+  car park (50 entries: 13 white, 10 black, 10 grey, 5 silver, 5 blue,
+  4 red, 3 others). traffic.js keeps every `spec.bus` off the kerb and off
+  residential streets (`NO_KERB`), and LOT_TYPES / HEAVY know the new
+  names. Verify on a plain stage in seconds: `node tools/kw/carshots.mjs
+  <dir> [shots.json] [names]` (tools/kw/carstage.html; prints triangles a
+  type); in the city: `VIEWS=tools/kw/carshow.json node tools/kw/kwshots.mjs
+  <dir>` parks the fleet at Conestoga Mall (`carshow`, bus close-ups
+  `bus-*`); `VIEW_PROBE_FILE=tools/kw/carprobe.js` reports draws, triangles
+  and the type mix after 12 s of play. Phone: 16 vehicles parked in view
+  cost +48 draws (3 each) and ~+8.5k triangles each (buses ~12-13k); the
+  spawn frame 196 -> 198 draws, 881k -> 884k tris.
+
 ## Build number
 
 `<div id="build">vN</div>` in index.html and `CACHE = 'autokw-vN'` in sw.js

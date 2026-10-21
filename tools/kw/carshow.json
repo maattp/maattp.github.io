@@ -1,0 +1,8 @@
+[
+ { "name": "carshow", "fov": 62, "eval": "(() => { const d = __dbg, T = d.traffic; const X = -4352, Z0 = -5075; const row = [['compsedan', 0xf2f3f1], ['crossover', 0x6e7276], ['suv', 0x111214], ['minivan', 0xbcc2c8], ['wagon', 0x243b6b], ['pickup', 0xf2f3f1], ['pickupcap', 0x3e4246], ['ev', 0xe9e8e2], ['hatch', 0x8f1218], ['police', 0], ['taxi', 0], ['postvan', 0], ['purovan', 0]]; window.__show = window.__show || []; for (const v of window.__show) T.remove(v); window.__show = []; row.forEach(([tn, c], i) => { const v = T.spawnAt(X, Z0 + i * 3.1, -Math.PI / 2, tn, c, 'parked'); window.__show.push(v); }); ['bus', 'busx', 'ionbus'].forEach((tn, i) => { const v = T.spawnAt(X + 15, Z0 + 14.4 + i * 4.2, -Math.PI / 2, tn, 0, 'parked'); window.__show.push(v); }); return { c: [X - 15, Z0 + 18.6, 3.2], t: [X, Z0 + 18.6, 0.9] }; })()" },
+ { "name": "carshow-close", "fov": 50, "eval": "(() => { const X = -4352, Z0 = -5075; return { c: [X - 8.5, Z0 + 45, 2.0], t: [X + 1, Z0 + 31, 1.0] }; })()" },
+ { "name": "carshow-buses", "fov": 50, "eval": "(() => { const X = -4352, Z0 = -5075; return { c: [X + 4.5, Z0 + 7, 2.2], t: [X + 12, Z0 + 18, 1.7] }; })()" },
+ { "name": "bus-bus", "fov": 45, "eval": "(() => { const X = -4352, Z0 = -5075; return { c: [X + 3.2, Z0 + 11.2, 2.3], t: [X + 9.5, Z0 + 15.0, 1.9] }; })()" },
+ { "name": "bus-busx", "fov": 45, "eval": "(() => { const X = -4352, Z0 = -5075; return { c: [X + 3.2, Z0 + 15.4, 2.3], t: [X + 9.5, Z0 + 19.2, 1.9] }; })()" },
+ { "name": "bus-ionbus", "fov": 45, "eval": "(() => { const X = -4352, Z0 = -5075; return { c: [X + 3.2, Z0 + 19.6, 2.3], t: [X + 9.5, Z0 + 23.4, 1.9] }; })()" }
+]

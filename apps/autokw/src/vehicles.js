@@ -61,7 +61,8 @@ const GRT_BLUE = [0.030, 0.075, 0.36];      // the band, linear (sRGB ~#2f4da0)
 const GRT_GOLD = [0.78, 0.42, 0.06];        // the pinstripe and the small wordmark
 const GRT_PANEL = [0.86, 0.87, 0.88];       // the wordmark's white panel (matte)
 const ION_BLUE = [0.018, 0.10, 0.42];       // ION's blue (front cap, roof, logo)
-const LED_AMBER = [1.0, 0.56, 0.08], LED_WHITE = [0.95, 0.93, 0.86];
+// LEDs are over-bright vertex colours in matte, so a sign in the shade still glows
+const LED_AMBER = [2.4, 1.15, 0.12], LED_WHITE = [2.0, 1.95, 1.8];
 const ARTIC_LIVERIES = [GRT_WHITE];
 /** A builder seen through one colour: every WHITE part handed to it comes out `col`. */
 function tinted(b, col) {
@@ -7532,7 +7533,7 @@ function buildBus(spec, paint, trim, matte, o = {}) {
     if (L) {
       // the destination sign: route number and name in LEDs, sized to fit
       const sw = fw * 2 - 0.14, h = Math.min(0.15, (sw / Math.max(1, dotCells(L.sign))) * 7);
-      dotText(trim, L.sign, { c: [0, sN.side - 0.015, nose + 0.036], u: [1, 0, 0], h, col: L.led === 'amber' ? LED_AMBER : LED_WHITE, led: true });
+      dotText(matte, L.sign, { c: [0, sN.side - 0.015, nose + 0.036], u: [1, 0, 0], h, col: L.led === 'amber' ? LED_AMBER : LED_WHITE, led: true });
       // the fleet number under the windscreen, and on the sign's corner
       dotText(matte, L.fleet, { c: [0.66, 0.86, nose + 0.012], u: [1, 0, 0], h: 0.075, col: L.ion ? ION_BLUE : GRT_BLUE, bold: 0.35 });
     } else trim.box(0, sN.side + 0.07, nose + 0.018, 1.30, 0.08, 0.012, 0, [1.0, 0.62, 0.12]);   // route display
@@ -8011,9 +8012,11 @@ function plateBox(trim, cx, by, cz, w, h, d) {
   }
   s += crown + gap;
   dotText(trim, nums, { c: at(s + wn / 2, yc - h * 0.03), u, h: th, col: PLATE_BLUE, bold: 0.25 });
-  dotText(trim, 'ONTARIO', { c: at(0, by + h * 0.84), u, h: h * 0.14, col: PLATE_BLUE });
-  const sw = w * 0.32, sy = by + h * 0.09;
-  trim.quad(at(-sw, sy), at(sw, sy), at(sw, sy + h * 0.035), at(-sw, sy + h * 0.035), n, UV, PLATE_BLUE);
+  // ONTARIO and YOURS TO DISCOVER are ~2 cm tall: lettered, ONTARIO alone
+  // cost 70 triangles a plate for a smudge, so both are hairlines
+  for (const [yy, sw] of [[by + h * 0.82, w * 0.17], [by + h * 0.09, w * 0.32]]) {
+    trim.quad(at(-sw, yy), at(sw, yy), at(sw, yy + h * 0.045), at(-sw, yy + h * 0.045), n, UV, PLATE_BLUE);
+  }
 }
 
 /** A roll-up aluminium compartment door on a flank, with its slats and lift bar. */
