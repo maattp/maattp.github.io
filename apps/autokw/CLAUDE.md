@@ -184,10 +184,12 @@ file and a guide disagree, this file wins.
   banners and baskets; the event trailer and the hedge by the station. The
   Shops at Waterloo Town Square: grey precast, glass, THE SHOPS / 75 KING
   over the glass-canopied entrance, SHOPPERS DRUG MART, BEERTOWN, PIPER ARMS.
-  Also drawn here now: the **Marsland Centre** (the BMO tower, 52 m, tan
-  fins, BMO signs; `MARSLAND*`) and the **Uptown Parkade** across King
-  (`PARKADE`, five open decks). The Seagram Lofts (buff, small windows,
-  SEAGRAM DISTILLERS painted on No. 3's face toward Uptown). **Waterloo Park:** footbridges (`BRIDGES`, OSM ways; decks
+  Also drawn here now: the **Marsland Centre** (the BMO tower, 52 m, maroon
+  and beige fins, the BMO box sign at the top; `MARSLAND*`) and the **Uptown
+  Parkade** across King (`PARKADE`: buff brick, cream arches, the blue glass
+  stair tower). The Seagram Lofts (buff, shuttered windows, the penthouse
+  floors, SEAGRAM / DISTILLERS on No. 3's east face). **Each King St block's
+  real look is in src/kwuptown.js** (next entry). **Waterloo Park:** footbridges (`BRIDGES`, OSM ways; decks
   are `ctx.platforms`, walkable), the grist mill and wheel, the 1820 log
   school, the Eby farmhouse/Potters' Workshop, barn and EMPTY paddocks (the
   animal farm closed in 2024 -- don't put animals back), gazebos, the
@@ -213,6 +215,58 @@ file and a guide disagree, this file wins.
   191 -> 196, 710k -> 755k; RIM 118 -> 119; Conestoga 338 -> 346. The
   square's rebuild, phone at the opening frame: 191 -> 196 draws, 852k ->
   881k tris (the old King St opening frame was 253 / 927k).
+- **Uptown, building by building: src/kwuptown.js** (docs/uptown-king-erb.jpg,
+  uptown-huether.jpg, uptown-king-s.jpg, uptown-buildings.jpg). `LOOKS` gives
+  each King St footprint (matched by centroid within 4 m, the OSM address in
+  `addr`) its look, read by kwplaces.js `meshKing` through `r.look`: wall /
+  trim / sill / band / quoin colours, storeys and parapet height, windows
+  across the main face (`win.n`, `head` seg / round / hood / flat, `pair`),
+  cornice (bracket / corbel / plain / none), a raised name panel (1890, 1930,
+  CENTRAL BLOCK 1881), `ground: 'bank'` (ashlar, tall windows, `sign`) or
+  `'none'`, the shops as they read (`shops` on the main face, `side`; colours,
+  awnings, blade signs, `f` shares, `flip`) and an `extra(info)` for the rest.
+  **Sources** (Oct 2026): the City's Heritage Register and its June 2026
+  Notices of Intention to Designate (15, 16-24, 23-25 King N, 36-40 King S),
+  historicwaterloo.ca / historicplaces.ca, Commons photos 2010-2026; colours are
+  hex estimates read off those photos. Drawn specially: the **Huether** (OSM's
+  one footprint split three ways along Princess: the 1880 corner hotel to 17 m
+  -- buff brick, paired round-headed windows, the slate mansard and gabled
+  dormers, rust awnings on King, the Lion Brewery disc and Café 1842's board at
+  the corner, the marquee post, the fire escape on Princess -- a stucco part
+  with HUETHER HOTEL down it, and the old brewery holding the **Original
+  Princess Cinema**: the white portal with PRINCESS, the lightbox, BREWERY);
+  the **Waterloo Hotel** (buff, 8 bays, the 1890 pavilion, navy awnings, PÜR &
+  SIMPLE at the corner); the **Old Post Office** (red brick over sandstone, its
+  tower at OSM's tower part, 23 m to the tip); **Princess Twin** (fieldstone
+  piers, the perforated screen with PRINCESS TWIN / CINEMAS, the marquee,
+  Princess Cafe); the 1936 **Waterloo Theatre** (16-24 King N, hexagonal
+  lights, the cast-stone centre bay); **28 King N** (the Chainsaw until 2020,
+  Revive Karaoke now); the **Conrad Block**, the **Roos Building**, the
+  **Commercial Block** (2-10 King S), the **Letter Block** (TRIO), the **Duke of
+  Wellington** (1930 datestone, quoins, paired windows, the green oval sign);
+  the **Molsons Bank / BMO** (Ionic columns, THE MOLSONS BANK frieze). Blocks
+  with no photograph found get `UNKNOWN` (buff, red, painted, stucco -- never
+  the old green / purple tones). `BUILDINGS` draws Uptown's others from their
+  OSM footprints with kwsights.js `block()` (now exported): **Waterloo City
+  Centre** (tan brick, green glass, the drum with WATERLOO CITY CENTRE), the
+  **library** (fieldstone, beige fascia, brown roof), **57 Erb St W** (the
+  Seagram barrel warehouse / museum: buff, shutters), **95 King S** (red brick,
+  the aluminium rotunda, STARBUCKS COFFEE, green umbrellas), **Fourteen
+  Princess** (blue glass, tan bands). `bikeLanes`: King St N, Erb to
+  Bridgeport, black bollards with white bands every 3.5 m and green paint
+  across each side street and the queue boxes at Erb. Not found / not done:
+  Morty's is at 272 King N (outside Uptown); there is no Starbucks at King &
+  Erb (it is at 95 King S); no big UPTOWN gateway sign exists, and the BIA
+  banner art was not found (the banners are white / teal / blue stand-ins);
+  the Barrel Yards towers (Onyx, Cooperage, Staves, Bevel), Circa 1877, 45 /
+  55 Caroline N stay generic -- their colours were not found. Everything is
+  built inside kwplaces.js's uptown run (`addUptown`), so it adds no draws.
+  `window.__kwUptown` has the counts (looks, defaults, bollards). Phone
+  (AUTO_PHONE=1, GPU), before -> after: the spawn 205 -> 205 draws, 981k ->
+  989k tris; King & Erb 232 -> 233, 961k -> 974k; King & William 276 -> 276;
+  King & Bridgeport 355 -> 357; 0 exceptions. Verify: kwshots with views at
+  the intersections (e.g. `{c: [-3828, -1438, 1.6], t: [-3858, -1585, 6]}`
+  up King N from Erb) and close-ups per building.
 - **The chain stores: src/kwshops.js** (`data/shops.json` from
   tools/kw/extract_shops.py -> `raw_shops.json`, then tools/kw/build_shops.py;
   docs/shops-*.jpg). Every store of ~50 brands (`BRANDS` / `GAS` in
@@ -670,11 +724,85 @@ file and a guide disagree, this file wins.
   turns the furniture off for a before/after). Phone (AUTO_PHONE=1, GPU),
   __noHwy before -> after: Conestoga at Fairway 200 -> 203 draws, 584k ->
   586k tris; Hwy 8 at King 405 -> 405; Hwy 85 at King N 235 -> 240; the 401
-  at Hespeler 116 -> 121. Build ~50-70 ms on the Mac. Not done: the Ontario
-  "tall wall" ends with no crash cushion, there are no high-mast lights at
-  the 401/8 interchange, no noise walls beyond OSM's two (the Parkway has
-  many more, unmapped), no overhead lane-use arrows, and the AI does not
-  change lanes or merge on its own (it holds the lane it spawned in).
+  at Hespeler 116 -> 121. Build ~50-70 ms on the Mac (~230 ms with round
+  two's rails and rumble strips). Not done: the Ontario "tall wall" ends with
+  no crash cushion, and there are no overhead lane-use arrows.
+- **The freeways, round two** (docs/hwy-pkwy-noisewall-traffic.jpg,
+  hwy-85-cutting-bridgeport.jpg, hwy-8-guiderail-rumble.jpg,
+  hwy-pkwy-parapets.jpg):
+  - **The right-of-way is mown.** `hwyKeepClear` (highways.js, in
+    `city.extraClear`) keeps every tree 15 m past a freeway's shoulder (9 m
+    past a freeway ramp's -- `freewayRamps`: ramps reachable from an `hwy`
+    edge, not a town's slip lanes). build_wood.py paints the same band into
+    surface.png as farm code 240 (`geo.farmAt` 8): no crop (crops.js, whose
+    far blocks are flat-topped beige walls -- "the beige slab beside Hwy 7/8
+    west") and no township parcel grows to the embankment; groundTint and
+    cropAt skip code 8, so it is plain verge grass.
+  - **Guide rail, masts, rumble strips** (buildHighways, furniture cells):
+    W-beam on posts every 1.9 m at the shoulder's edge where the batter drops
+    more than `RAIL_DROP` 2.6 m and within `BRIDGE_RUN` 60 m of a deck (along
+    freeway edges from every deck end), never on a left shoulder with the
+    tall wall beyond it; each piece a `mono` landmark solid. High masts (30
+    m, a ring of six luminaires) over the freeway-to-freeway interchanges,
+    found from hwy.json's exits whose destination is the other freeway
+    (401/8, 8/Conestoga): a dozen per interchange, 12-60 m off the
+    carriageways, ~160 m apart. Right-shoulder rumble strips (one groove
+    drawn per 0.9 m) on the 401, 8, 7/8, 7 and 85.
+  - **Parkway noise walls** read off Esri imagery (`PKWY_WALLS`: stretch +
+    side, laid 4.5 m off the outer carriageway's edge, broken at ramps):
+    Forest Heights, both sides east of Westmount, Ottawa St S to Homer
+    Watson, by Kingsdale. Views `noise0..` in hwyshots.
+  - **Deck parapets are F-shape concrete** (world.js meshGradedDeck): toe,
+    sloped lower face, near-vertical wall; one flat slab read as a blue-grey
+    board in shade.
+  - **Three old bugs, root causes:** (1) grass spikes along both walls of
+    Hwy 85's cutting at Bridgeport (-770, -2400): a freeway dip's carve
+    started its bank ON the wall line, so terrain patch quads (4 m) straddling
+    the wall drew grass faces in front of it -- citygen `FWY_DIP_OVER` keeps
+    full depth one quad past the wall (world.js's CUT_OVER, same law), the
+    wall's top is the ground past the ledge, a verge cap closes the ledge.
+    (2) the bright band down Hwy 8 by King St: the road texture's polished
+    wheel tracks (roughness map, 26 % / 74 % of a 9 m two-lane tile) laid
+    across a 4-lane carriageway reflected the low sun -- freeway asphalt is now
+    laid in one strip per lane and shoulder, each on the texture BETWEEN the
+    tracks (`laneStrips`, world.js), shoulders a shade darker. (3) the beige
+    slab: crops, above.
+  - **Freeway AI** (traffic.js "freeway driving", gated on `traffic.fwy`:
+    every `hwy` edge and the ramps reachable from one; city traffic runs
+    the same code as before): every ~0.5 s a freeway driver (`fwyDecide`)
+    may plan an exit (`fwyPlanExit`: the next diverge 260-1300 m ahead, 30 %
+    of drivers take it; otherwise `pickNextEdge` keeps a freeway car on the
+    freeway, `fwyOn`), move over for it, for a lane that ends (the route jogs
+    > 2.2 m sideways at a node into fewer lanes; with no gap the lane's end is
+    a standing leader, `dropT`) or for a semi in the left lanes (semis keep
+    to the right two, capped at 105 km/h), pass on the left when held up
+    (MOBIL gain `LC_GAIN`), and keep right when it costs nothing. Safety is
+    IDM braking: no change asks more than `LC_SAFE` 2.5 m/s^2 of the new
+    follower or of the car itself. Neighbours are put in the driver's own
+    edge frame, bent for the curve (`fwyNeighbours`). A change re-plans the
+    route in the new lane and carries `lcShift` (the old offset) that runs
+    out over `LC_TIME` 3.2 s, applied to the pursuit point and to the scan
+    path; a car changing INTO a lane is a leader there from the start. On a
+    ramp the merge yields (`fwyMergeGap`): the main-line car in the lane
+    joined that will reach the merge first (or within 1.5 s after) is a
+    leader with its gap measured to the merge. Freeway spawns land in a gap
+    at their own pace. Bicycles, school buses and refuse trucks never spawn
+    on a freeway or its ramps and route off them (`FWY_BANNED`).
+  - **Verify:** `sh tools/kw/hwyshots.sh <dir> rail,mast,noise,air` and the
+    fuzz probe: `VIEW_PROBE_FILE=tools/kw/hwytraffic.js node
+    tools/kw/kwshots.mjs /tmp/x` (fixed dt 1/60, the game paused, spawns held
+    to freeway edges, six sites x 150 s; `window.__hwyt = {all: true, sites:
+    [...]}` in VIEW_BOOT_JS for city traffic). Master vs this: AI-AI body
+    overlaps 36 -> 3-5 (all at ramp merge/diverge geometry: the 401 at
+    Hespeler's ramps, the Parkway at Fairway, Hwy 85's ramps), crashes 7 ->
+    0, stuck 0 -> 0, mean freeway speed 70 -> 92 km/h (free-flowing cars
+    0.86 of the edge's traffic speed), right lane ~55 % of car-time on a
+    3-lane carriageway (was 31 %), semis in the right two lanes 100 %. City
+    sites (uptown, downtown, Fairview): 5 -> 4 overlaps, unchanged. Phone
+    (AUTO_PHONE=1, GPU), master -> this: spawn 204 -> 205 draws; Parkway
+    noise wall 428 -> 428, 1157k -> 1153k; 401 at Hespeler 310 -> 309, 460k
+    -> 473k; the 401/8 masts 366 -> 366, 497k -> 535k; Hwy 8 at King 173 ->
+    173, 542k -> 560k; Fairway aerial 219 -> 219. 0 exceptions.
 - **The University of Waterloo** (src/uwcampus.js, `data/uw.json` from
   tools/kw/build_uw.py; docs/uw-*.jpg). build_uw.py takes every campus
   building from OSM (inside Ring Road, or a named university / college /
@@ -1075,6 +1203,73 @@ file and a guide disagree, this file wins.
   starts on demand, not at 9:30 on Thanksgiving Monday; seats/banners at
   the Aud are not traced from photos; the slides' layout is still
   kwsights' procedural fan, not Big Splash's real plan.
+- **Farmsteads and churches: src/farmstead.js** (docs/farm-lane.jpg,
+  farm-mennonite.jpg, village-steeple.jpg: master over this). **Two new
+  classes in buildings.bin** (tools/kw/build_buildings.py): **cls 6 a farm
+  building, whose roof bits (3-4) say WHICH** -- 0 barn, 1 outbuilding,
+  2 silo, 3 farmhouse (`farm_kinds`; citygen `farmStyle`) -- and **cls 7 a
+  church** (a Christian place of worship: tools/kw/extract_rural.py ->
+  raw_rural.json `worship` / `pow_nodes`; mosques and temples stay civic).
+  A farm building is one OSM tags so (barn, farm_auxiliary, silo...), or an
+  untagged one in a landuse=farmyard, or in open country (no landuse zone,
+  <= 12 buildings within 150 m); round = silo, long = shed, big = barn, and
+  only the biggest barn of a farmstead (and any within 55 % of it) stays a
+  barn -- the rest of farm_auxiliary is sheds; a house-sized one is the
+  farmhouse only with a barn or silo within 170 m. 163 `man_made=silo`
+  POINTS stand up as 6 m silos, and two in five 350-1500 m2 barns with no
+  mapped silo near get one (a few two) off a gable end (`barn_silos`, clear
+  of roads and footprints: a judgement -- most real silos are unmapped).
+  ~1,000 barns, ~880 sheds, ~400 silos, ~600 farmhouses, 242 churches.
+  **citygen** gives a cls-6 box its height from what will be drawn
+  (`farmHeight`) and STYLES grew five names (the building cache packs the
+  index). **world.meshBuilding** hands those styles to `meshFarmBuilding`
+  first: everything goes into the chunk's `flat` and facade builders, NO new
+  materials or draws. Bank barns: a stone stable storey, board walls on the
+  facade atlas's industrial cell (tinted per channel by `ind()`, or its
+  blue-grey cast turns red barns plum), gambrel (42 %) or steep gable in
+  galvanised / charcoal / red / green steel, the earth ramp up to the big
+  doors on the UPHILL long side (white X on a red barn), stable windows on
+  the low side, ridge ventilators; > 1500 m2 or long: the modern free-stall
+  / poultry barn (white steel, curtain sides, shallow roof, ridge vent).
+  Silos: concrete stave (hoops, dome, chute), blue Harvestore, bare
+  concrete, or (> 8.4 m across) a corrugated grain bin. Sheds: steel drive
+  sheds with open bays or a slider, small board sheds, the odd white
+  coverall. Farmhouses: two storeys of buff / red brick (brickhouse cell) or
+  white (house cell), steep gable, chimneys, a verandah toward the road,
+  and on long footprints the doddy house -- a lower narrower wing at one end.
+  In `mennoniteCountry`: a steel windmill (no hydro) and a washing line in
+  plain-dress colours out back (`window.__farmstead` counts them). Yard
+  maples round farmhouses (trees.js). Churches: nave under a steep roof,
+  lancet windows, the tower at the end nearest a street (`frontSide`) with
+  a louvred belfry, an eight-sided spire and a cross, a clock on some; red /
+  buff brick, limestone or white clapboard (OSM's material first). **The
+  steeples are in the skyline mesh** (`steepleMass`, inset inside the near
+  mesh) so every village's spire stands on the horizon. util.roofAt treats
+  the five styles as pitched (`PITCHED`).
+- **The villages: src/kwvillages.js** (data/villages.json from
+  tools/kw/build_villages.py; docs/village-stjacobs.jpg). Each village's
+  main street (`VILLAGES`: St. Jacobs' King St N -- every building with a
+  wall on it; Conestogo, Heidelberg, St. Clements, Maryhill, Breslau -- only
+  where OSM maps a shop): >= 330 m2 is a brick commercial block through
+  kwplaces.js `meshKing` (storefronts with the real names), smaller is a
+  converted house (`mainHouse`: gable, shop windows either side of the door,
+  a sign board, a FALSE FRONT on half the gable-fronted ones, verandahs).
+  St. Jacobs' mill at the King St bridge (OSM's untagged footprint: brick
+  wings, the board-over-brick four-storey mill house) and the five Village
+  Silos at King and Front (`SILOS`, placed off Esri imagery, copper cap on
+  the inner one). The Mennonite Story is in the market's log cabin now
+  (kwfun's market), not on King St. `window.__noVillages = true` before boot
+  for a before/after; `window.__kwVillages` has stats. **Off the map**
+  (it ends 15.6 km out): Elmira, Wellesley, New Hamburg, Baden (Castle
+  Kilbride is ~210 m past the west edge), Ayr, Linwood. Re-run order after
+  an OSM update: `extract_rural.py`, `build_buildings.py`, `build_villages.py`.
+  Verify: `VIEWS=tools/kw/villageviews.json node tools/kw/kwshots.mjs <dir>`
+  (farm lanes, St. Jacobs, five villages). Phone (AUTO_PHONE=1, GPU), master
+  v32 -> this, draws/tris: spawn 205/980k -> 205/989k; farm lane 52/271k ->
+  58/295k; Mennonite farm 33/218k -> 38/235k; bank-barn farm 58/282k ->
+  58/297k; St. Jacobs King St 77/419k -> 82/446k; Conestogo 77/343k ->
+  87/376k (the villages extra's Kit + atlas in two clusters: +8);
+  Heidelberg 51 -> 54; St. Clements 49 -> 52; Maryhill 57 -> 62. 0 exceptions.
 
 ## Build number
 

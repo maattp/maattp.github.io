@@ -7,8 +7,9 @@ import * as G from './geo.js';
 // Kept in step with main.js. Shadow-caster policy differs by platform, and the
 // difference is worth roughly 40 draw calls a frame.
 const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, MOUTH_RAMP, mouthRamp, cityStats, trimOldest, walkWidthOf } from './citygen.js';
+import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, MOUTH_RAMP, mouthRamp, cityStats, trimOldest, walkWidthOf, FWY_DIP_OVER } from './citygen.js';
 import * as RU from './rural.js';
+import { FARM_STYLES, meshFarmBuilding, farmMass, steepleMass } from './farmstead.js';
 import { Builder, ChunkBuilder, freezeStatic } from './build.js';
 import { memo } from './bootcache.js';
 import { buildMountains } from './mountains.js';
@@ -126,6 +127,36 @@ function roofSolids(bd, rec) {
 }
 
 const ROAD_TILE = 9;
+// NO POLISHED WHEEL PATH ACROSS A FREEWAY'S LANES. The road texture's
+// roughness map (textures.js roadSurface) carries two glossy tracks, at 26 %
+// and 74 % of its 9 m tile -- the middle of each lane of a 9 m two-lane street.
+// Laid across a freeway carriageway at the same 9 m they landed wherever the
+// tile put them, and against a low sun each is a band of sky reflected down
+// the road: "the bright band down the middle of Hwy 8 by King St" (the pale
+// rectangles beside it were repair patches catching the same light). On a
+// one-way freeway or ramp the asphalt is laid in STRIPS, one per lane of the
+// layout traffic.js laneLatU drives (0.8 m in from each edge, floor(w / 3.6)
+// lanes, the narrowest sample) and one per shoulder, each on its own stretch
+// of the texture BETWEEN the tracks (U 0.31-0.69 of a tile, the strip's index
+// added so neighbours differ), the shoulders a shade darker. The seams fall
+// on the lane lines. (The texture's centre polish -- meshGraded's `wear` --
+// is a two-way street's too, and goes with it.)
+function laneStrips(e) {
+  if (e._lst !== undefined) return e._lst;
+  let out = null;
+  if (e.oneway && (e.cls === 'hwy' || e.cls === 'ramp')) {
+    let w0 = e.hw, w1 = e.hw;
+    if (e.tw) for (let i = 0; i < e.tw.length; i += 2) { w0 = Math.min(w0, e.tw[i]); w1 = Math.min(w1, e.tw[i + 1]); }
+    const lo = -w1 + 0.8, hi = w0 - 0.8;
+    if (hi - lo > 2) {
+      const n = Math.max(1, Math.floor((hi - lo) / 3.6)), lw = (hi - lo) / n;
+      out = [[-Infinity, lo, n + 1]];
+      for (let k = 0; k < n; k++) out.push([lo + k * lw, k + 1 < n ? lo + (k + 1) * lw : hi, k]);
+      out.push([hi, Infinity, n + 2]);
+    }
+  }
+  return (e._lst = out);
+}
 // Metres per repeat of the paving texture, which carries four slabs -- so a
 // slab is a metre, everywhere.
 //
@@ -3721,8 +3752,10 @@ ${FALL ? `
       // a skinny 32 m tower never did -- from a plane, footprint is what you
       // see. 4032 buildings pass; the sub-30 additions take the plain-box path
       // (plant and crown are height-gated) at ~12 triangles each.
-      if (bd.h < 16 && bd.w * bd.d < 1400) continue;
       if (bd.kw && (bd.kw.poly || bd.kw.skip)) continue;   // Auto KW: drawn from its footprint (kw.js), or by kwfun.js
+      // Auto KW: a church's steeple is the village skyline from every concession road
+      if (bd.style === 'church' && !bd.kind) { steepleMass(b, bd, this.city, this.massColour(bd)); continue; }
+      if (bd.h < 16 && bd.w * bd.d < 1400) continue;
       const col = this.massColour(bd);
       const s = 0.985;
       // A tower is read almost entirely by its top. Extruded to full height
@@ -4922,7 +4955,7 @@ float frLine(float o, float fw, float c, float w) {
         if (bd.kw && (bd.kw.poly || bd.kw.skip)) continue;   // Auto KW: drawn from its footprint (kw.js), or by kwfun.js
         // A flat roof's plant, crown and terrace furniture are solid to what
         // lands on it (util roofAt): recorded as they are drawn.
-        const flatRoof = !bd.kind && bd.style !== 'house' && !(bd.style === 'industrial' && bd.h < 3.5);
+        const flatRoof = !bd.kind && bd.style !== 'house' && !FARM_STYLES.has(bd.style) && !(bd.style === 'industrial' && bd.h < 3.5);
         bd.roofSolids = null;
         if (flatRoof) { rec.length = 0; flat.solids = bl.facade.solids = bl.glass.solids = rec; }
         this.meshBuilding(bl, flat, glow, bd);
@@ -5272,7 +5305,7 @@ float frLine(float o, float fw, float c, float w) {
     // drawn against y + 0.09 stood on).
     const Y = (i) => e.ph[i] - 0.03;
     const col = e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1];
-    const seg = e.len / k, U = (2 * hw) / ROAD_TILE;
+    const seg = e.len / k, U = (2 * hw) / ROAD_TILE, LT = laneStrips(e);
     const wasOpen = { 1: null, '-1': null };
     const kinds = this.railKinds(e, ei);
     for (let i = 0; i < k; i++) {
@@ -5280,8 +5313,29 @@ float frLine(float o, float fw, float c, float w) {
       const [l0x, l0z] = at(run[1], t0), [l1x, l1z] = at(run[1], t1);
       const [r0x, r0z] = at(run[-1], t0), [r1x, r1z] = at(run[-1], t1);
       const v0 = (i * seg) / ROAD_TILE, v1 = ((i + 1) * seg) / ROAD_TILE;
-      road.quad([l0x, y0, l0z], [r0x, y0, r0z], [r1x, y1, r1z], [l1x, y1, l1z],
-        [0, 1, 0], [0, v0, U, v0, U, v1, 0, v1], col);
+      if (LT) {
+        // a freeway deck: one strip per lane and shoulder, as meshGraded lays them
+        const na = this.city.nodes[e.a];
+        const off = (x, z) => (x - na.x) * -e.dz + (z - na.z) * e.dx;   // + = the a -> b right
+        const oL0 = off(l0x, l0z), oR0 = off(r0x, r0z), oL1 = off(l1x, l1z), oR1 = off(r1x, r1z);
+        for (const [lo0, hi0, ub] of LT) {
+          const cut = (oR, oL, o) => Math.max(oR, Math.min(oL, o));
+          const a0 = cut(oR0, oL0, lo0 === -Infinity ? oR0 : lo0), a1 = cut(oR0, oL0, hi0 === Infinity ? oL0 : hi0);
+          const b0 = cut(oR1, oL1, lo0 === -Infinity ? oR1 : lo0), b1 = cut(oR1, oL1, hi0 === Infinity ? oL1 : hi0);
+          if (a1 - a0 < 0.02 && b1 - b0 < 0.02) continue;
+          const f = (o, oR, oL) => (oL > oR ? (o - oR) / (oL - oR) : 0);
+          const pt = (o, oR, oL, rx, rz, lx, lz) => { const q = f(o, oR, oL); return [rx + (lx - rx) * q, rz + (lz - rz) * q]; };
+          const [A0x, A0z] = pt(a0, oR0, oL0, r0x, r0z, l0x, l0z), [A1x, A1z] = pt(a1, oR0, oL0, r0x, r0z, l0x, l0z);
+          const [B0x, B0z] = pt(b0, oR1, oL1, r1x, r1z, l1x, l1z), [B1x, B1z] = pt(b1, oR1, oL1, r1x, r1z, l1x, l1z);
+          const shoulder = lo0 === -Infinity || hi0 === Infinity;
+          const tint = shoulder ? [col[0] * 0.86, col[1] * 0.86, col[2] * 0.86] : col;
+          road.quad([A0x, y0, A0z], [A1x, y0, A1z], [B1x, y1, B1z], [B0x, y1, B0z],
+            [0, 1, 0], [ub + 0.31, v0, ub + 0.69, v0, ub + 0.69, v1, ub + 0.31, v1], tint);
+        }
+      } else {
+        road.quad([l0x, y0, l0z], [r0x, y0, r0z], [r1x, y1, r1z], [l1x, y1, l1z],
+          [0, 1, 0], [0, v0, U, v0, U, v1, 0, v1], col);
+      }
       const [p0x, p0z] = at(deck[1], t0), [p1x, p1z] = at(deck[1], t1);
       const [q0x, q0z] = at(deck[-1], t0), [q1x, q1z] = at(deck[-1], t1);
       flat.quad([q0x, y0 - GIRDER, q0z], [p0x, y0 - GIRDER, p0z],
@@ -5306,9 +5360,22 @@ float frLine(float o, float fw, float c, float w) {
         if (!open) {
           // the rail's traffic face: the lower 40 % of the tile, so its base
           // carries the texture's grime band where spray collects
-          face.quad([R0[0], y0, R0[1]], [R1[0], y1, R1[1]],
-            [R1[0], y1 + RAIL, R1[1]], [R0[0], y0 + RAIL, R0[1]],
-            [-ox, 0, -oz], [CU(0), 0, CU(1), 0, CU(1), 0.4, CU(0), 0.4], faceCol);
+          // ...as the F-shape a parapet is cast in: a 75 mm toe, the sloped
+          // lower face to 330 mm, the near-vertical wall above it. One flat
+          // slab read as a blue-grey board in shade; the slope catches the
+          // sky the way a concrete barrier does. (Median and rail heights:
+          // the face stops at `top`, the cap above.)
+          const F = [[0, 0.22], [0.075, 0.22], [0.33, 0.06], [top, 0]];
+          const at2 = (P, h, w) => [P[0] - ox * w, h, P[1] - oz * w];
+          const slope = [0.66, 0.66, 0.64];
+          for (let q = 0; q + 1 < F.length; q++) {
+            const [h0, w0] = F[q], [h1, w1] = F[q + 1];
+            const nl = Math.hypot(h1 - h0, w0 - w1) || 1;
+            const n = [-ox * ((h1 - h0) / nl), (w0 - w1) / nl, -oz * ((h1 - h0) / nl)];
+            const A = at2(R0, y0 + h0, w0), Bq = at2(R1, y1 + h0, w0), C = at2(R1, y1 + h1, w1), Dq = at2(R0, y0 + h1, w1);
+            if (q === 2) face.quad(A, Bq, C, Dq, n, [CU(0), 0.1, CU(1), 0.1, CU(1), 0.4, CU(0), 0.4], faceCol);
+            else flat.quad(A, Bq, C, Dq, n, [0, 0, 1, 0, 1, 1, 0, 1], slope);
+          }
         }
         // A rail that stops needs an end, or you see into a hollow wall.
         if (wasOpen[sg] !== null && wasOpen[sg] !== open) {
@@ -6530,10 +6597,26 @@ float frLine(float o, float fw, float c, float w) {
       if (this.city.underpassDepth(lerp(a.x, b.x, t), lerp(a.z, b.z, t)) > 0.4) any = true;
     }
     if (!any) return;
+    // A freeway dip keeps its full depth FWY_DIP_OVER past this wall before
+    // its bank (citygen makeUnderpassDepth): the wall's top is the ground past
+    // that ledge and its 1.5 m bank, and a grass cap closes the ledge over.
+    const fwy = e.cls === 'hwy' || e.cls === 'ramp';
+    const back = fwy ? FWY_DIP_OVER + 1.5 + 0.2 : 1.7;
+    const verge = [0.43, 0.46, 0.34];
     for (const sg of [1, -1]) {
       let run = [];
       const flush = () => {
-        if (run.length > 1) this.meshWall(flat, run, -px * sg, -pz * sg, ei * 2 + (sg > 0 ? 0 : 1) + 29);
+        if (run.length > 1) {
+          this.meshWall(flat, run, -px * sg, -pz * sg, ei * 2 + (sg > 0 ? 0 : 1) + 29);
+          if (fwy) {
+            for (let q = 0; q + 1 < run.length; q++) {
+              const [x0, z0, t0] = run[q], [x1, z1, t1] = run[q + 1];
+              const bx = px * sg * back, bz = pz * sg * back;
+              flat.quad([x0, t0 + 0.08, z0], [x0 + bx, t0 + 0.02, z0 + bz], [x1 + bx, t1 + 0.02, z1 + bz], [x1, t1 + 0.08, z1],
+                [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], [verge, verge, verge, verge]);
+            }
+          }
+        }
         run = [];
       };
       for (let i = 0; i <= n; i++) {
@@ -6541,7 +6624,7 @@ float frLine(float o, float fw, float c, float w) {
         const x = cx + px * sg * w, z = cz + pz * sg * w;
         const dip = this.city.underpassDepth(x, z);
         if (dip <= 0.4) { flush(); continue; }
-        const top = G.terrainHeight(x + px * sg * 1.7, z + pz * sg * 1.7);
+        const top = G.terrainHeight(x + px * sg * back, z + pz * sg * back);
         run.push([x, z, top, G.terrainHeight(x, z) - 0.3]);
       }
       flush();
@@ -6579,12 +6662,36 @@ float frLine(float o, float fw, float c, float w) {
       return [col[0] * kk, col[1] * kk, col[2] * kk];
     };
     const seg = e.len / k;
+    const LT = laneStrips(e);
     for (let i = 0; i < k; i++) {
       const t0 = i / k, t1 = (i + 1) / k;
       const v0 = (i * seg) / ROAD_TILE, v1 = ((i + 1) * seg) / ROAD_TILE;
       const mx = lerp(a.x, b.x, (t0 + t1) / 2), mz = lerp(a.z, b.z, (t0 + t1) / 2);
       if (this.city.roadCoveredAt(mx, mz, ei)) continue;
       const wide = Math.max(Wl(i) + Wr(i), Wl(i + 1) + Wr(i + 1));
+      if (LT) {
+        // a freeway: one strip per lane and shoulder (laneStrips), each its own
+        // stretch of the texture between the polished tracks
+        for (const [lo0, hi0, ub] of LT) {
+          const pa = (j, o) => (o + Wr(j)) / Math.max(0.01, Wl(j) + Wr(j));
+          const oa0 = Math.max(-Wr(i), Math.min(Wl(i), lo0 === -Infinity ? -Wr(i) : lo0));
+          const oa1 = Math.max(-Wr(i), Math.min(Wl(i), hi0 === Infinity ? Wl(i) : hi0));
+          const ob0 = Math.max(-Wr(i + 1), Math.min(Wl(i + 1), lo0 === -Infinity ? -Wr(i + 1) : lo0));
+          const ob1 = Math.max(-Wr(i + 1), Math.min(Wl(i + 1), hi0 === Infinity ? Wl(i + 1) : hi0));
+          if (oa1 - oa0 < 0.02 && ob1 - ob0 < 0.02) continue;
+          const [ax, az] = P(i, pa(i, oa0)), [bx, bz] = P(i, pa(i, oa1));
+          const [cx, cz] = P(i + 1, pa(i + 1, ob1)), [dx, dz] = P(i + 1, pa(i + 1, ob0));
+          const U = (o, l0, l1) => ub + 0.31 + 0.38 * (l1 > l0 ? (o - l0) / (l1 - l0) : 0);
+          const shoulder = lo0 === -Infinity || hi0 === Infinity;
+          const tint = shoulder ? [col[0] * 0.86, col[1] * 0.86, col[2] * 0.86] : col;
+          road.quad(
+            [ax, Y(i, oa0), az], [bx, Y(i, oa1), bz], [cx, Y(i + 1, ob1), cz], [dx, Y(i + 1, ob0), dz],
+            [0, 1, 0], [U(oa0, oa0, oa1), v0, U(oa1, oa0, oa1), v0, U(ob1, ob0, ob1), v1, U(ob0, ob0, ob1), v1],
+            tint
+          );
+        }
+        continue;
+      }
       const across = Math.max(wide > 9 ? 3 : 1, Math.round(wide / 8));
       for (let c = 0; c < across; c++) {
         const f0 = c / across, f1 = (c + 1) / across;
@@ -8517,6 +8624,7 @@ float frLine(float o, float fw, float c, float w) {
   /** The colour a building's textured walls average to (see CELL_MEAN): what
    *  its massing box and far-skyline box are drawn in. */
   massColour(bd) {
+    if (FARM_STYLES.has(bd.style)) return farmMass(bd);
     const seed = bd.seed;
     const fam = (bd.style === 'tower' || bd.style === 'midrise' || bd.style === 'brick'
       || bd.style === 'lowrise' || bd.style === 'campus') ? this.buildingFamily(bd) : null;
@@ -8528,6 +8636,8 @@ float frLine(float o, float fw, float c, float w) {
   }
 
   meshBuilding(bl, flat, glow, bd) {
+    // Auto KW: barns, sheds, silos, farmhouses and churches (farmstead.js)
+    if (FARM_STYLES.has(bd.style) && !bd.kind) { meshFarmBuilding(this, bl, flat, bd); return; }
     const seed = bd.seed;
     const C = this.cells;
     let target, col, cell = null, uS = 14, vS = 13.6;

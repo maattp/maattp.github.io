@@ -1663,3 +1663,6 @@ export function sightsMap() {
     m('forbes', false, 'Forbes Textile Mill', 'The Forbes mill, Hespeler — once Canada\'s biggest woollen mill'),
   ];
 }
+
+// kwuptown.js builds Uptown's other buildings with the same kit
+export { block, frontEdge, text, onWall, clockFace, pyramid };

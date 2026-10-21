@@ -1319,6 +1319,7 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
     const bd = city.buildings[bi];
     let tries = 0, p = 0;
     if (bd.style === 'house') { tries = 4; p = 0.72; }
+    else if (bd.style === 'farmhouse') { tries = 5; p = 0.8; }   // the big maples round a farmhouse
     else if (bd.style === 'campus') { tries = 2; p = 0.5; }
     else if ((bd.style === 'lowrise' || bd.style === 'brick') && bd.w * bd.d < 900) { tries = 1; p = 0.32; }
     if (!tries) continue;

@@ -52,11 +52,13 @@ import { Chicopee } from './chicopee.js';
 import { prepFun, buildMarketTent, buildFlags, waveFlags, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, buildDome } from './kwfun.js';
 import { prepPlaces, buildPlaces, placesMap, placesStats, Geese } from './kwplaces.js';
 import { setUwData, prepCampus, buildCampus, campusKeepClear } from './uwcampus.js';
+import { prepUptown } from './kwuptown.js';
 import { prepSights, buildSights, sightsMap } from './kwsights.js';
+import { prepVillages, buildVillages, villagesMap } from './kwvillages.js';
 import { setShopData, prepShops, buildShops, shopPlaces, shopStats } from './kwshops.js';
 import { Crops } from './crops.js';
 import { Kartway, KartRace } from './kartway.js';
-import { prepHighways, buildHighways, addHighwaySolids, highwaysRoot, updateHighways } from './highways.js';
+import { prepHighways, buildHighways, addHighwaySolids, highwaysRoot, updateHighways, hwyKeepClear } from './highways.js';
 import { YKF } from './ykf.js';
 import { AirTraffic } from './airtraffic.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear, memo, memoStart, memoTake, memoStats } from './bootcache.js';
@@ -812,6 +814,8 @@ async function boot() {
   prepFord(city);
   // Uptown, Waterloo Park, RIM Park and Conestoga Mall (kwplaces.js)
   { const k = prepPlaces(city); blog(`kw places: ${k.skipped} boxes drawn as places`); }
+  // Uptown building by building: King St's real looks, City Centre, the library, the towers (kwuptown.js)
+  { const k = prepUptown(city); blog(`kw uptown: ${k.looks} King St looks, ${k.skipped} boxes drawn as Uptown`); }
   addLandmarkExtra(buildPlaces);
   // the University of Waterloo's campus, building by building (uwcampus.js)
   setUwData(md.uw);
@@ -820,6 +824,9 @@ async function boot() {
   // downtown Kitchener, Victoria Park, the Aud, the malls, Bingemans, Doon, Cambridge, Toyota (kwsights.js)
   { const k = prepSights(city, md.sights); blog(`kw sights: ${k.skipped} boxes drawn as sights`); }
   addLandmarkExtra(buildSights);
+  // the villages' main streets, St. Jacobs' mill and the Village Silos (kwvillages.js)
+  { const k = prepVillages(city, md.villages); blog(`kw villages: ${k.skipped} boxes drawn as main streets`); }
+  addLandmarkExtra(buildVillages);
   // the chain stores, gas stations and plazas where they really are (kwshops.js)
   setShopData(md.shops);
   { const k = prepShops(city); blog(`kw shops: drawn here: ${k.bigbox} big boxes, ${k.units} stand-alone stores, ${k.strips} plaza buildings, ${k.canopies} gas canopies`); }
@@ -1127,7 +1134,7 @@ function installShadowFade() {
   // The Queen Anne Counterbalance's streetcar line, laid on the road graph
   // (counterbalance.js) before anything is placed by the kerb
   counterbal = null;
-  city.extraClear = (x, z) => link.keepClear(x, z) || bikeNet.keepClear(x, z) || chicopee.keepClear(x, z) || !!(golf && golf.keepClear(x, z)) || kartway.keepClear(x, z);
+  city.extraClear = (x, z) => link.keepClear(x, z) || bikeNet.keepClear(x, z) || chicopee.keepClear(x, z) || !!(golf && golf.keepClear(x, z)) || kartway.keepClear(x, z) || hwyKeepClear(x, z);
   // open lawns round the campus buildings: trees only (uwcampus.js)
   city.treeClear = campusKeepClear;
 
@@ -1591,6 +1598,7 @@ function installShadowFade() {
     ...kwPlaces(),
     ...placesMap(),
     ...sightsMap(),
+    ...villagesMap(),
     ...shopPlaces(),
     { x: arcade.spot.x, z: arcade.spot.z, kind: 'arcade', name: 'Pin Up Arcade Bar', near: false,
       hello: 'Pin Up Arcade Bar — six classic cabinets, $1 a credit. Press ENTER at the door' },

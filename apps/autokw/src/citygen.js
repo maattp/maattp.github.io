@@ -16,6 +16,7 @@ import { distToSeg, segDist, clamp, hash2, roofAt } from './util.js';
 import { memo } from './bootcache.js';
 import { tagGravel } from './gravel.js';
 import { tagRural, chainRaise, ruralLift, chainPoint, RW, RAISE, CROWN } from './rural.js';
+import { farmStyle, farmHeight } from './farmstead.js';
 
 export const CHUNK = 400;
 
@@ -380,7 +381,7 @@ export const BERM = 1.5;
 // --- the building cache -----------------------------------------------------
 // The fitted building list as columns (Float64, so shrunk boxes keep every
 // bit) plus the per-chunk cover it was read with. See cityGenerator.
-const STYLES = ['house', 'brick', 'lowrise', 'midrise', 'tower', 'industrial', 'campus'];
+const STYLES = ['house', 'brick', 'lowrise', 'midrise', 'tower', 'industrial', 'campus', 'barn', 'shed', 'silo', 'farmhouse', 'church'];
 function packBuildings(buildings, built, stats) {
   const n = buildings.length;
   const X = new Float64Array(n), Z = new Float64Array(n), W = new Float64Array(n), D = new Float64Array(n);
@@ -449,6 +450,17 @@ function applyGrade(nodes, edges, snap) {
   return { underpasses: snap.underpasses, underpassDepth: makeUnderpassDepth(snap.underpasses) };
 }
 
+// A FREEWAY DIP'S LEDGE. The trench keeps its full depth this far past the
+// wall line (meshTrenchWalls stands the wall at `hw`) before its 1.5 m bank
+// climbs back to the ground: one terrain patch quad (world.js patchCell, 4 m),
+// world.js's CUT_OVER for the same reason. With the bank starting ON the wall
+// line, every patch quad straddling the wall had one corner on the floor and
+// one up the bank, and drew a sloped grass face in front of the concrete --
+// the triangular "grass spikes" along the foot of both walls of Hwy 85's
+// cutting at Bridgeport (-770, -2400). At one full quad, any quad crossing the
+// wall plane has both corners on the floor, and the rise is behind the wall.
+export const FWY_DIP_OVER = 4.0;
+
 /** The carve depth of a list of underpasses (gradeRoads' or a cached copy). */
 function makeUnderpassDepth(underpasses) {
   const depthAlong = (up, s) => {
@@ -487,7 +499,8 @@ function makeUnderpassDepth(underpasses) {
       for (let i = 0; i < up.pts.length - 1; i++) {
         const p = up.pts[i], q = up.pts[i + 1];
         const r = distToSeg(x, z, p.x, p.z, q.x, q.z);
-        if (r.d > up.hw + 1.5) continue;
+        const ov = up.over || 0;
+        if (r.d > up.hw + ov + 1.5) continue;
         if (r.d > up.hw - 0.3 && up.prot && up.prot.length) {
           if (prot < 0) {
             prot = 0;
@@ -498,7 +511,7 @@ function makeUnderpassDepth(underpasses) {
           if (prot) continue;
         }
         const dd = up.pd ? p.d + (q.d - p.d) * r.t : depthAlong(up, p.s + (q.s - p.s) * r.t);
-        const v = r.d <= up.hw ? dd : dd * (1 - (r.d - up.hw) / 1.5);
+        const v = r.d <= up.hw + ov ? dd : dd * (1 - (r.d - up.hw - ov) / 1.5);
         if (v > best) best = v;
       }
     }
@@ -517,7 +530,7 @@ function makeUnderpassDepth(underpasses) {
           for (let i = 0; i < up.pts.length - 1; i++) {
             const p = up.pts[i], q = up.pts[i + 1];
             if (Math.max(p.d, q.d) <= 0.05) continue;
-            if (segDist(cx, cz, p.x, p.z, q.x, q.z) < half + up.hw + 1.5) return true;
+            if (segDist(cx, cz, p.x, p.z, q.x, q.z) < half + up.hw + (up.over || 0) + 1.5) return true;
           }
         }
       }
@@ -1542,8 +1555,9 @@ function gradeRoads(nodes, edges) {
       }
       if (deepest <= 0.05) continue;
       const hw = e.hw + 0.3;
-      const x0 = Math.min(...pts.map((p) => p.x)) - hw - 2, x1 = Math.max(...pts.map((p) => p.x)) + hw + 2;
-      const z0 = Math.min(...pts.map((p) => p.z)) - hw - 2, z1 = Math.max(...pts.map((p) => p.z)) + hw + 2;
+      const pad = FWY_DIP_OVER + 2;
+      const x0 = Math.min(...pts.map((p) => p.x)) - hw - pad, x1 = Math.max(...pts.map((p) => p.x)) + hw + pad;
+      const z0 = Math.min(...pts.map((p) => p.z)) - hw - pad, z1 = Math.max(...pts.map((p) => p.z)) + hw + pad;
       const prot = [];
       for (const oi of dipProtect) {
         const o = edges[oi], oa = nodes[o.a], ob = nodes[o.b];
@@ -1552,7 +1566,7 @@ function gradeRoads(nodes, edges) {
         if (Math.max(oa.z, ob.z) + r < z0 || Math.min(oa.z, ob.z) - r > z1) continue;
         prot.push(oa.x, oa.z, ob.x, ob.z, r);
       }
-      underpasses.push({ pts, pd: true, hw, dip: deepest, bi: -1, fwy: true, prot, x0, x1, z0, z1 });
+      underpasses.push({ pts, pd: true, hw, over: FWY_DIP_OVER, dip: deepest, bi: -1, fwy: true, prot, x0, x1, z0, z1 });
     }
   }
   const underpassDepth = makeUnderpassDepth(underpasses);
@@ -2150,14 +2164,18 @@ export function* cityGenerator(md, cache = {}) {
           // Auto KW: class in the low 3 bits, the mapped roof and wall above
           // (tools/kw/build_buildings.py look_of) -> bd.look for world.js
           const cb = B.blob.getUint8(o + 11), cls = cb & 7;
-          const h = untaggedHeight(cls, B.blob.getUint16(o + 8, true) / 20, w * d);
+          let h = untaggedHeight(cls, B.blob.getUint16(o + 8, true) / 20, w * d);
           area += w * d;
+          const seed = (hash2(Math.round(x), Math.round(z)) * 65536) | 0;
+          // cls 6 a farm building (its sub-kind in the roof bits), cls 7 a church: farmstead.js
+          const style = cls === 6 ? farmStyle(cb >> 3) : cls === 7 ? 'church' : styleFor(cls, h, w, d);
+          if (cls === 6) h = farmHeight(style, { w, d, h, seed });
           buildings.push({
             x, z, w, d, rot, h,
             y: standY(x, z),
-            style: styleFor(cls, h, w, d),
+            style,
             look: (cb >> 3) | (cls === 1 ? 32 : 0),   // 32: OSM says apartments
-            seed: (hash2(Math.round(x), Math.round(z)) * 65536) | 0,
+            seed,
             kind: null,
           });
         }
