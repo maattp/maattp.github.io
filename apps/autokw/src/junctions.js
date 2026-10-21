@@ -865,7 +865,10 @@ class Painter {
   crossing(X) {
     const e = this.city.edges[X.ei], a = this.city.nodes[X.ei != null ? e.a : 0];
     const ux = e.dx, uz = e.dz, px = -uz, pz = ux;   // along the road, across it
-    const s = this.jc.xingS(X), cx = a.x + ux * s, cz = a.z + uz * s, hw = e.hw - 0.15, h = X.w / 2;
+    const s = this.jc.xingS(X);
+    // two OSM crossings on one arm moved out to the same mouth: draw one
+    for (const o of this.jc.crossOn.get(X.ei)) { if (o === X) break; if (Math.abs(this.jc.xingS(o) - s) < 3.5) return; }
+    const cx = a.x + ux * s, cz = a.z + uz * s, hw = e.hw - 0.15, h = X.w / 2;
     if (X.ladder) {
       // continental bars along the traffic, between two side lines (ladder)
       for (let o = -hw + 0.5; o <= hw - 0.3; o += 1.05) this.rect(cx + px * o, cz + pz * o, ux, uz, h - 0.15, 0.24);

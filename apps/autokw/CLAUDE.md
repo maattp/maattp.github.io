@@ -14,7 +14,7 @@ file and a guide disagree, this file wins.
   `cut_extract.py` (Ontario .pbf -> the box, once) then `osm_extract.py`,
   `build_raster.py`, `build_roads.py`, `build_buildings.py`, `build_places.py`,
   `build_lots.py`, `build_wood.py`, `build_beaches.py`, `build_parkprops.py`,
-  `build_bikepaths.py`, `build_piers.py`, `build_hwy.py` (all with `tools/.venv/bin/python`).
+  `build_bikepaths.py`, `build_piers.py`, `build_hwy.py`, `build_junctions.py` (all with `tools/.venv/bin/python`).
 - **Heights are ELEV_BASE (250 m) below sea level-referenced DEM heights**
   (`tools/kw/proj.py`), so the ground sits at ~5-175 m in the game as Seattle's did.
 - **There is no sea.** Water is ONE FIELD: `data/wlevel.png` (same encoding as
@@ -749,6 +749,86 @@ file and a guide disagree, this file wins.
     noise wall 428 -> 428, 1157k -> 1153k; 401 at Hespeler 310 -> 309, 460k
     -> 473k; the 401/8 masts 366 -> 366, 497k -> 535k; Hwy 8 at King 173 ->
     173, 542k -> 560k; Fairway aerial 219 -> 219. 0 exceptions.
+- **Junctions: signals, stop signs, roundabouts, crossings** (src/junctions.js,
+  `data/junctions.json` from tools/kw/build_junctions.py; docs/junction-*.jpg).
+  The graph has no node tags, so build_junctions.py extracts them: signal
+  nodes clustered per intersection (45 m single linkage) with the arriving
+  directions that have a left-turn lane (`turn:lanes*` with `left`); every
+  stop / give_way sign with the junction it controls (walked along its way,
+  honouring `direction`) and the arriving direction, `stop=all`; roundabout
+  rings (junction=roundabout ways joined), mini roundabouts; marked crossings
+  (ladder/zebra bars vs two lines, `dots` = elephant's feet). `prepJunctions`
+  (main.js, after prepHighways; ~60 ms desktop) matches them to graph nodes:
+  `jc.ctl[node]` -> a controller: **SIG** (its nodes -- a divided road's
+  crossing is 2-4 -- approaches from outside them, two phase groups by axis,
+  a cycle: advance left arrows (dual lead, `T_ADV` 7 s + 2 s clearance) where
+  OSM maps a left lane, green 14-26 s by class, amber 3-4.2 s by speed,
+  all-red 2 s; offset by position; a one-group signal gets a 12 s ped phase),
+  **STOP** (signed approaches; all-way if `stop=all` or every approach is
+  signed), **RB** (a ring entry; the ring is the graph's own one-way edges,
+  ordered by flow -- 57 graph gaps of a few metres in the rings are bridged),
+  **MINI** (all-way yield). Stop lines (`A.back`) and the signal hardware are
+  worked out lazily (they need `city.junction`'s shapes). ~484 signals, ~4.6k
+  two-way stops, ~255 all-way, 108 roundabouts / 364 entries, 6.3k crossings.
+  - **AI** (traffic.js `junctionStop`, gated on `traffic.jc`, not for police
+    units): the next controlled junction on the route answers `jc.decide`:
+    red -> stop at the line; amber -> stop if it takes < 3.2 m/s^2, else go;
+    a permissive left yields to oncoming cars whose ROUTE passes the
+    junction (`routeTo`); stop sign -> a full stop at the line (< 0.35 m/s
+    within 2.2 m), then all-way first-come-first-served (`C.q`, ties by prio,
+    a 9 s patience) with the box clear, or two-way: no car whose route
+    reaches the node within `GAP_T` 6 s; roundabout entry -> yield to a ring
+    car that reaches the entry within `RB_GAP` 3.2 s (or is at it) unless its
+    route leaves the ring first. Going on commits (`v.jcGo`) until that
+    approach is behind it. **A held car creeps to its line** (`jStop`): the
+    normal stopAt braking ends wherever the speed runs out, metres short of
+    a stop line, and never counted as stopped (cars sat there 100 s). Held
+    cars accrue `restT` at 1/5 rate; cross-traffic prediction ignores cars
+    braking for their own control (`ctlHold`). City spawns now skip a spot
+    within 15 m of a car and spawn no faster than the queue ahead allows.
+  - **Drawn** (all into the chunk's flat mesh, `meshChunk`, no draws):
+    stop bars (0.45 m, behind a crosswalk on the arm), crosswalks moved out
+    of the junction polygon to just past the arm's mouth (`xingS`; two on one
+    arm drawn once), elephant's feet, shark's teeth at yields and ring
+    entries, the mini roundabout's white dome, ring lane lines (OSM `lanes`),
+    galvanised poles on each approach's far-right corner with a mast arm over
+    its lanes and a footing, STOP (block letters) with the red-on-white
+    ALL-WAY tab, YIELD (Canada's blank triangle), the roundabout island
+    (kerb, domed lawn, a mulch bed of ornamental grasses, junipers and
+    boulders, young spruce on big ones), a black chevron board facing each
+    entry, splitter islands down two-way approaches. The ring edges' inner
+    pavement is the **truck apron** (world.js meshRoad tints that side's
+    pavers red: `jc.apronSide`). Rural chains' own stop sign defers to OSM's.
+    The old static signal props on arterials are off when `city.jc` exists.
+  - **Heads** (`SignalHeads`, main.js draw()): within 330 m (230 phone) of
+    the camera, rebuilt every 0.4 s: ONE InstancedMesh of housings (a unit
+    section scaled by the lens count: black, black backplate, yellow
+    retroreflective border) and ONE of lenses (unlit, a 4-cell canvas atlas:
+    ball, left arrow, hand, walker; `aCell` per instance; visor in the same
+    geometry). Kinds: 3-section, 4-section (the green arrow under the ball,
+    on approaches with an advance), pedestrian (walker for the first 55 % of
+    its group's green, flashing hand, hand). Red + green arrow in the
+    advance (Ontario dual lead lefts). Flashing green: not used.
+  - **Verify:** `VIEWS=tools/kw/junctionviews.json node tools/kw/kwshots.mjs
+    <dir>` (signals, heads close up, roundabouts, stops); the fuzz probe
+    `VIEW_PROBE_FILE=tools/kw/jcttraffic.js node tools/kw/kwshots.mjs /tmp/x`
+    (fixed dt 1/60, paused game, 8 sites x (20 + 180) s of city traffic;
+    `window.__jct` in VIEW_BOOT_JS for others). Base (v35) -> this: AI-AI
+    overlaps 27 -> 8, crashes 0 -> 0, stuck > 60 s 0 -> 0, recycled 10 -> 5,
+    island intrusions 0, mean speed near the sites 31 -> 22 km/h (they wait
+    now); commits: 391 on green, 20 on amber, 3 on red (over the line as it
+    turned), 15 permissive lefts, 296 stop-sign departures after a full stop
+    (4 without: spawned past the line), 73 roundabout entries, 0 into a busy
+    ring; ~6000 s held at reds, 204 s yielding at entries. Phone (AUTO_PHONE=1,
+    GPU), base -> this: spawn 205 -> 207 draws, 998k -> 1029k tris; Uptown
+    signal 310 -> 312; a signalled arterial 103 -> 105, 665k -> 674k; its
+    aerial 189 -> 191; roundabout entry 163 -> 165; roundabout aerial 248 ->
+    247; all-way 449 -> 449, 1228k -> 1249k; stop 457 -> 459. 0 exceptions.
+  - **Not done / approximate:** pedestrians ignore the signals (peds.js);
+    no right turn on red; signal timing is fixed-time (no detectors);
+    approaches the matcher misses (52 signal clusters, 171 stops) stay
+    uncontrolled; the junction-polygon artefacts in big intersections are
+    master's; a two-way stop's side street can wait long on a busy arterial.
 - **The University of Waterloo** (src/uwcampus.js, `data/uw.json` from
   tools/kw/build_uw.py; docs/uw-*.jpg). build_uw.py takes every campus
   building from OSM (inside Ring Road, or a named university / college /
