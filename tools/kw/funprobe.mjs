@@ -226,10 +226,23 @@ async function main() {
         const st = await ev('window.__dbg.splash.stairPlan()');
         await standAt(st.foot.x, st.foot.z, st.legs[0].h);
         console.log('  at the foot:', await cityCalls());
-        // walk up: each flight on its own heading, W held, the camera turned to it as a player would
-        for (const leg of st.legs) {
-          await ev(`(() => { const p = window.__dbg.player; p.camYaw = ${leg.h} + Math.PI; })()`);
-          await hold(['KeyW'], leg.ms);
+        // the tower and its stairs, from the slides' side (a posed camera)
+        await ev(`(() => { const d = window.__dbg, s = d.splash, T = s.tower, a = s.D.down + 0.9;
+          d.game.paused = true; d.camera.position.set(T.x + Math.cos(a) * 26, T.top + 1, T.z + Math.sin(a) * 26);
+          d.camera.lookAt(T.x, T.top - 5, T.z); d.camera.updateMatrixWorld(true); })()`);
+        await sleep(2500); await shot('splash-tower');
+        await ev('window.__dbg.game.paused = false');
+        await standAt(st.foot.x, st.foot.z, st.legs[0].h);
+        // walk up: toward each waypoint (landings, the deck) with W held, the camera turned to it as a
+        // player would; closed loop -- each leg re-aims from where you actually are
+        for (const [wx, wz] of st.pts) {
+          for (let k = 0; k < 3; k++) {
+            const r = await ev(`(() => { const p = window.__dbg.player, dx = ${wx} - p.x, dz = ${wz} - p.z, d = Math.hypot(dx, dz);
+              const h = Math.atan2(dx, dz); p.camYaw = h + Math.PI; return [d, +p.y.toFixed(2)]; })()`);
+            if (r[0] < 0.35) break;
+            await hold(['KeyW'], Math.max(40, r[0] / 5 * 1000 - 60));
+            await sleep(250);
+          }
         }
         const top = await ev('(() => { const p = window.__dbg.player, s = window.__dbg.splash; return { y: +p.position.y.toFixed(2), top: +s.topY.toFixed(2), on: s.onTop(p) }; })()');
         console.log('  climbed:', JSON.stringify(top));
@@ -239,13 +252,13 @@ async function main() {
         await tap('KeyE');
         check(await until('window.__dbg.splash.riding', 3000), 'ENTER at the top sets off down a slide');
         await sleep(1800); await shot('splash-ride');
-        const mid = await ev('(() => { const s = window.__dbg.splash; return { v: +s.ride.v.toFixed(1), s: +s.ride.s.toFixed(1), L: +s.ride.L.toFixed(1), bank: +s.ride.bank.toFixed(2) }; })()');
+        const mid = await ev('(() => { const s = window.__dbg.splash; return { v: +s.ride.v.toFixed(1), s: +s.ride.s.toFixed(1), L: +s.ride.pa.L.toFixed(1), slide: s.ride.pa.sl.name, bank: +s.ride.bank.toFixed(2) }; })()');
         console.log('  mid-ride:', JSON.stringify(mid));
         check(mid.v > 3, 'sliding at speed');
         check(await until('window.__dbg.splash.ride && window.__dbg.splash.ride.phase === "splash"', 30000, 100), 'splashes into the pool');
         await sleep(300); await shot('splash-splash');
         check(await until('!window.__dbg.splash.riding', 8000), 'out of the pool on foot');
-        const end = await ev('(() => { const s = window.__dbg.splash; return { best: s.best, last: s.last }; })()');
+        const end = await ev('(() => { const s = window.__dbg.splash; return { best: s.best, last: s.last, splash: s.lastSplash }; })()');
         console.log('  run:', JSON.stringify(end));
         check((await ev('window.__dbg.game.holds.size')) === 0, 'no hold left behind');
       }

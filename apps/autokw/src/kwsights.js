@@ -1153,6 +1153,41 @@ function boardwalk(kit, ctx) {
 
 // --- Bingemans ----------------------------------------------------------------------------
 
+/** Big Splash's slides and stairs, for bigsplash.js (set when the sights are built). */
+let SPLASH_RIDE = null;
+export function splashRide() { return SPLASH_RIDE; }
+
+/** An open flume along `pts` (radius r): the lower ~200 deg of a tube, its inside and its outside. */
+function trough(B, pts, r, col) {
+  const ring = (i) => {
+    const p = pts[i], a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+    let tx = b[0] - a[0], ty = b[1] - a[1], tz = b[2] - a[2];
+    const tl = Math.hypot(tx, ty, tz) || 1; tx /= tl; ty /= tl; tz /= tl;
+    // side = t x up (horizontal), up' = side x t
+    let sx = -tz, sz = tx; const sl = Math.hypot(sx, sz) || 1; sx /= sl; sz /= sl;
+    const ux = -sz * ty, uy = sz * tx - sx * tz, uz = sx * ty;
+    const out = [];
+    for (let k = 0; k <= 8; k++) {
+      const th = (-100 + k * 25) * Math.PI / 180, cs = Math.cos(th), sn = Math.sin(th);
+      const n = [sn * sx - cs * ux, -cs * uy, sn * sz - cs * uz];
+      out.push({ p: [p[0] + r * n[0], p[1] + r * n[1], p[2] + r * n[2]], n });
+    }
+    return out;
+  };
+  const U8 = [0, 0, 0, 0, 0, 0, 0, 0];
+  let A = ring(0);
+  for (let i = 1; i < pts.length; i++) {
+    const Bq = ring(i);
+    for (let k = 0; k < 8; k++) {
+      const a0 = A[k], a1 = A[k + 1], b0 = Bq[k], b1 = Bq[k + 1];
+      const nOut = [(a0.n[0] + a1.n[0]) / 2, (a0.n[1] + a1.n[1]) / 2, (a0.n[2] + a1.n[2]) / 2];
+      B.quad(a0.p, a1.p, b1.p, b0.p, nOut, U8, shade(col, 0.8));
+      B.quad(a0.p, a1.p, b1.p, b0.p, [-nOut[0], -nOut[1], -nOut[2]], U8, col);
+    }
+    A = Bq;
+  }
+}
+
 const SPLASH = [2005, -2345];   // Bingemans Big Splash (OSM leisure=water_park)
 function bingemans(kit, ctx) {
   const city = ctx.city, L = ctx.atlas;
@@ -1172,37 +1207,121 @@ function bingemans(kit, ctx) {
   const B = kit.B(x, z), y = T(x, z);
   const DECK = lin([0.86, 0.84, 0.78]), POOL = lin([0.18, 0.62, 0.78]);
   // the wave pool: a fan-shaped deck and water
-  const px = x - 26, pz = z + 4, py = T(px, pz);
-  B.box(px, py - 0.6, pz, 30, 0.9, 22, 0.35, DECK);
-  B.box(px, py - 0.55, pz, 26, 0.9, 18, 0.35, POOL);
+  let px = x - 26, pz = z + 4, py = T(px, pz);
   // the tower
   const tx = x + 6, tz = z - 6, ty = T(tx, tz), TH = 13;
   // downhill from the tower: the way the ground falls over 40 m
   let DOWN = 0, dmin = Infinity;
   for (let k = 0; k < 16; k++) { const a = k * Math.PI / 8, h = T(tx + Math.cos(a) * 40, tz + Math.sin(a) * 40); if (h < dmin && !city.onRoad(tx + Math.cos(a) * 40, tz + Math.sin(a) * 40, 4)) { dmin = h; DOWN = a; } }
-  for (const [a, b] of [[-2, -2], [2, -2], [2, 2], [-2, 2]]) B.box(tx + a, ty - 0.5, tz + b, 0.4, TH + 0.5, 0.4, 0, lin([0.85, 0.85, 0.85]));
-  B.box(tx, ty + TH, tz, 5.4, 0.4, 5.4, 0, lin([0.85, 0.85, 0.85]));
+  // the wave pool on the UPHILL side, clear of the slides' fan and their run-out pools (bigsplash.js
+  // rides them): the first spot round from straight uphill with no road or building under it
+  for (const da of [0, 0.35, -0.35, 0.7, -0.7, 1.0, -1.0]) {
+    const a = DOWN + Math.PI + da, qx = tx + Math.cos(a) * 30, qz = tz + Math.sin(a) * 30;
+    let clear = true;
+    for (const [dx, dz] of [[0, 0], [13, 9], [-13, 9], [13, -9], [-13, -9]]) {
+      const bb = boxAt(city, qx + dx, qz + dz, 1);
+      if (city.onRoad(qx + dx, qz + dz, 3) || (bb && bb.h > 0.5)) clear = false;
+    }
+    if (clear) { px = qx; pz = qz; py = T(px, pz); break; }
+  }
+  B.box(px, py - 0.6, pz, 30, 0.9, 22, 0.35, DECK);
+  B.box(px, py - 0.55, pz, 26, 0.9, 18, 0.35, POOL);
+  const STEEL = lin([0.85, 0.85, 0.85]), DECKC = lin([0.62, 0.64, 0.66]), RAIL = lin([0.95, 0.80, 0.10]);
+  for (const [a, b] of [[-2, -2], [2, -2], [2, 2], [-2, 2]]) {
+    B.box(tx + a, ty - 0.5, tz + b, 0.4, TH + 0.5, 0.4, 0, STEEL);
+    ctx.solids.push({ x: tx + a, z: tz + b, hw: 0.3, hd: 0.3, rot: 0, y0: ty - 1, y1: ty + TH + 3 });
+  }
+  B.box(tx, ty + TH, tz, 5.4, 0.4, 5.4, 0, STEEL);
   B.box(tx, ty + TH + 2.8, tz, 6, 0.3, 6, 0, lin([0.12, 0.45, 0.70]));
-  ctx.solids.push({ x: tx, z: tz, hw: 2.4, hd: 2.4, rot: 0, y0: ty - 1, y1: ty + TH + 3 });
-  // four slides: green, green, blue, yellow (Typhoon Twister, 2026), plus the old red and orange
+  const topY = ty + TH + 0.4;
+  ctx.platforms.push({ x: tx, z: tz, hw: 2.7, hd: 2.7, rot: 0, y0: topY, y1: topY });
+  // THE STAIRS (bigsplash.js rides the slides): three quarters of a square spiral round the tower,
+  // up from the middle of its uphill side -- flights between flat corner landings, each a sloped
+  // city platform, so you really walk up. They never overlap in plan (platformAt takes the highest).
+  const SQ = 4.0, SW = 1.4;
+  // corners of the stair's centre-line square, counter-clockwise; start on the side facing uphill
+  const CORN = [[SQ, SQ], [-SQ, SQ], [-SQ, -SQ], [SQ, -SQ]];
+  let k0 = 0, bd = Infinity;
+  for (let k = 0; k < 4; k++) {
+    const a = CORN[k], b = CORN[(k + 1) % 4], mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
+    const d = Math.cos(DOWN) * mx + Math.sin(DOWN) * mz;     // most negative: uphill
+    if (d < bd) { bd = d; k0 = k; }
+  }
+  const legs = [];          // [[ax, az], [bx, bz]] of each flight, relative to the tower
+  const mid = (k) => { const a = CORN[k % 4], b = CORN[(k + 1) % 4]; return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; };
+  const inset = (p, q, d) => { const L = Math.hypot(q[0] - p[0], q[1] - p[1]); return [p[0] + (q[0] - p[0]) * d / L, p[1] + (q[1] - p[1]) * d / L]; };
+  // flight 0: mid of side k0 -> corner k0+1 (stopping at its landing); 1, 2: whole sides; 3: corner -> mid of side k0+3
+  const c1 = CORN[(k0 + 1) % 4], c2 = CORN[(k0 + 2) % 4], c3 = CORN[(k0 + 3) % 4];
+  const m0 = mid(k0), m3 = mid(k0 + 3);
+  legs.push([m0, inset(c1, m0, SW / 2)], [inset(c1, c2, SW / 2), inset(c2, c1, SW / 2)], [inset(c2, c3, SW / 2), inset(c3, c2, SW / 2)], [inset(c3, m3, SW / 2), m3]);
+  const run = legs.reduce((a, [p, q]) => a + Math.hypot(q[0] - p[0], q[1] - p[1]), 0);
+  let dist = 0;
+  const STAIR = [];
+  legs.forEach(([p, q], i) => {
+    const L = Math.hypot(q[0] - p[0], q[1] - p[1]), y0 = ty + (TH + 0.4) * dist / run, y1 = ty + (TH + 0.4) * (dist + L) / run;
+    dist += L;
+    const ux = (q[0] - p[0]) / L, uz = (q[1] - p[1]) / L, nx = -uz, nz = ux;
+    const P0 = [tx + p[0], tz + p[1]], P1 = [tx + q[0], tz + q[1]];
+    // treads: steps of ~0.28 m going up, each a thin box; the stringers; the yellow handrails
+    const nSt = Math.max(2, Math.round(L / 0.28));
+    for (let k = 0; k < nSt; k++) {
+      const t = (k + 0.5) / nSt, sx = P0[0] + (P1[0] - P0[0]) * t, sz = P0[1] + (P1[1] - P0[1]) * t, sy = y0 + (y1 - y0) * (k + 1) / nSt;
+      B.box(sx, sy - 0.06, sz, L / nSt + 0.02, 0.06, SW, Math.atan2(uz, ux), DECKC);
+    }
+    for (const sd of [-1, 1]) {
+      const ox = nx * sd * SW / 2, oz = nz * sd * SW / 2;
+      B.tube([P0[0] + ox, y0 - 0.15, P0[1] + oz], [P1[0] + ox, y1 - 0.15, P1[1] + oz], 0.07, 4, STEEL);
+      B.tube([P0[0] + ox, y0 + 1.0, P0[1] + oz], [P1[0] + ox, y1 + 1.0, P1[1] + oz], 0.04, 5, RAIL);
+      for (const t of [0, 0.5, 1]) { const rx = P0[0] + (P1[0] - P0[0]) * t + ox, rz = P0[1] + (P1[1] - P0[1]) * t + oz, ry = y0 + (y1 - y0) * t; B.tube([rx, ry, rz], [rx, ry + 1.0, rz], 0.03, 4, RAIL); }
+    }
+    // a post down to the ground at the start of each raised flight
+    if (i > 0) B.prism(P0[0], T(P0[0], P0[1]) - 0.3, P0[1], 0.1, y0 - T(P0[0], P0[1]) + 0.2, 6, STEEL);
+    ctx.platforms.push({ x: (P0[0] + P1[0]) / 2, z: (P0[1] + P1[1]) / 2, hw: SW / 2, hd: L / 2, rot: Math.atan2(-ux, uz), y0, y1 });
+    STAIR.push({ ax: P0[0], az: P0[1], bx: P1[0], bz: P1[1], y0, y1 });
+    // the landing at the end of this flight (a corner), flat
+    if (i < 3) {
+      const cc = CORN[(k0 + 1 + i) % 4], lx = tx + cc[0], lz = tz + cc[1];
+      B.box(lx, y1 - 0.12, lz, SW, 0.12, SW, 0, DECKC);
+      ctx.platforms.push({ x: lx, z: lz, hw: SW / 2, hd: SW / 2, rot: 0, y0: y1, y1 });
+    }
+  });
+  // the bridge from the top flight onto the tower's deck
+  {
+    const mx = tx + m3[0], mz = tz + m3[1], ix = tx + m3[0] * 0.62, iz = tz + m3[1] * 0.62;
+    const L = Math.hypot(mx - ix, mz - iz) + 0.8, alongX = Math.abs(m3[0]) > 0.1;
+    B.box((mx + ix) / 2, topY - 0.12, (mz + iz) / 2, alongX ? L : SW, 0.12, alongX ? SW : L, 0, DECKC);
+    ctx.platforms.push({ x: (mx + ix) / 2, z: (mz + iz) / 2, hw: alongX ? L / 2 : SW / 2, hd: alongX ? SW / 2 : L / 2, rot: 0, y0: topY, y1: topY });
+  }
+  // four slides: green, green, blue, yellow (Typhoon Twister, 2026), plus the old red and orange --
+  // OPEN FLUMES now (a trough, inside and out), so a rider shows in one and can be seen riding it
   const COLS = [[0.20, 0.70, 0.25], [0.12, 0.55, 0.20], [0.10, 0.40, 0.85], [0.98, 0.80, 0.10], [0.85, 0.15, 0.12], [0.95, 0.50, 0.10]];
+  const NAMES = ['green', 'green twin', 'blue bowl', 'Typhoon Twister', 'red', 'orange'];
+  const SLIDES = [];
+  const FR = 0.62;
   COLS.forEach((c, i) => {
     // they fan out down the hill, each snaking its own way (a tight helix for the blue bowl slide)
     const a0 = DOWN + (i / (COLS.length - 1) - 0.5) * 2.4;
-    let prev = null;
     const N = 30, len = 34 + (i % 3) * 9, wig = i === 2 ? 0 : 0.35 + 0.15 * (i % 2);
+    const pts = [];
     for (let k = 0; k <= N; k++) {
-      const s = k / N, a = a0 + wig * Math.sin(s * Math.PI * (2 + i % 2) + i), rr = 3 + len * s;
+      const s2 = k / N, a = a0 + wig * Math.sin(s2 * Math.PI * (2 + i % 2) + i), rr = 3 + len * s2;
       const qx = tx + Math.cos(a) * rr, qz = tz + Math.sin(a) * rr;
-      const qy = Math.max(T(qx, qz) + 1.2, ty + TH - (TH - 0.8) * s);
-      const p = [qx, qy, qz];
-      if (prev) B.tube(prev, p, 0.62, 8, lin(c));
-      if (k % 4 === 2 && qy - T(qx, qz) > 1.6) B.prism(qx, T(qx, qz) - 0.4, qz, 0.14, qy - T(qx, qz) - 0.2, 5, lin([0.80, 0.80, 0.80]));
-      prev = p;
+      pts.push([qx, Math.max(T(qx, qz) + 1.2, ty + TH - (TH - 0.8) * s2), qz]);
     }
-    // the run-out pool at the bottom
-    B.box(prev[0], T(prev[0], prev[2]) - 0.5, prev[2], 4, 0.8, 7, a0, POOL);
+    trough(B, pts, FR, lin(c));
+    pts.forEach(([qx, qy, qz], k) => { if (k % 4 === 2 && qy - T(qx, qz) > 1.6) B.prism(qx, T(qx, qz) - 0.4, qz, 0.14, qy - FR - T(qx, qz) + 0.2, 5, lin([0.80, 0.80, 0.80])); });
+    // the run-out pool at the bottom, just past the flume's end
+    const e = pts[N], d0 = pts[N - 1], dl = Math.hypot(e[0] - d0[0], e[2] - d0[2]) || 1;
+    const ex = (e[0] - d0[0]) / dl, ez = (e[2] - d0[2]) / dl, prot = Math.atan2(ez, ex);
+    const px2 = e[0] + ex * 4.6, pz2 = e[2] + ez * 4.6;
+    // a raised basin: its rim over the highest ground under it, so no slope buries an end of it
+    let gmax = -Infinity;
+    for (const [du, dv] of [[0, 0], [5, 2.25], [5, -2.25], [-5, 2.25], [-5, -2.25]]) gmax = Math.max(gmax, T(px2 + ex * du - ez * dv, pz2 + ez * du + ex * dv));
+    const py2 = Math.min(gmax, e[1] - 0.9) - 0.5;
+    B.box(px2, py2, pz2, 10, 0.8, 4.5, prot, POOL);
+    SLIDES.push({ name: NAMES[i], col: c, pts, r: FR, a0, pool: { x: px2, z: pz2, y: py2 + 0.8, ex, ez } });
   });
+  SPLASH_RIDE = { tower: { x: tx, z: tz, y: ty, top: topY }, stair: STAIR, slides: SLIDES, down: DOWN };
   if (ctx.clearAt) { ctx.clearAt.push([x, z, 36]); ctx.clearAt.push([px, pz, 20]); ctx.clearAt.push([tx + Math.cos(DOWN) * 35, tz + Math.sin(DOWN) * 35, 30]); }
   const sx = x + 22, sz = z + 18;
   if (!city.onRoad(sx, sz, 2)) {
