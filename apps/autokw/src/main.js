@@ -632,7 +632,7 @@ class Game {
 
 // ---------------------------------------------------------------------------
 
-let chunkCull = null;   // chunkcull.js
+let chunkCull = null, lmCull = null;   // chunkcull.js: the city's chunks, the landmark clusters
 let police = null, missions = null;   // the wanted levels (police.js) and police missions (policemissions.js)
 let taxi = null;                      // taxi fares (taxi.js)
 const burning = new Set();             // cars on fire (VEHICLE_HOOKS.ignite)
@@ -1243,6 +1243,9 @@ function installShadowFade() {
   if (world.terrainGroup) freezeStatic(world.terrainGroup);
   // after the shadow cache: its wrapper on shadowMap.render goes inside ours
   chunkCull = installChunkCull(renderer, world.group);
+  // the landmark clusters the same way (~450 groups, ~1,200 meshes): a
+  // cluster wholly outside the view is skipped whole, not mesh by mesh
+  if (lmRoot) lmCull = installChunkCull(renderer, lmRoot);
   // outermost: the cache and the cull below it see only the sun
   if (nearShadow) nearShadow.install();
   // ON A PHONE THE STATIC CITY KEEPS ONE COPY, NOT TWO (CLAUDE.md "Memory"):
@@ -1255,7 +1258,8 @@ function installShadowFade() {
     // its arrays the same way when it is made)
     link.dropArrays = true;
     let b = 0;
-    for (const r of [world.terrainGroup, world.skyline, lmRoot, link.group, link.tunGroup]) if (r) b += dropStaticArrays(r);
+    // (the freeways' furniture and signs too: their own group, highways.js)
+    for (const r of [world.terrainGroup, world.skyline, lmRoot, highwaysRoot(), link.group, link.tunGroup]) if (r) b += dropStaticArrays(r);
     for (const t of link.trains) for (const m of t.meshes || []) b += dropStaticArrays(m);
     blog(`static geometry: ${(b / 1048576).toFixed(0)} MB of arrays go once uploaded`);
   }
@@ -1804,7 +1808,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { get air() { return air; }, get signalHeads() { return signalHeads; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { get air() { return air; }, get signalHeads() { return signalHeads; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;   // Auto KW: the harvest (crops.js)
   window.__dbg.kart = kartRace;
   window.__dbg.fest = fest;
@@ -3534,7 +3538,8 @@ function draw(now) {
     world.decor.update(camera, dt || 0);
   }
   if (chunkCull) chunkCull.cull(camera);
-  try { renderer.render(scene, camera); } finally { if (chunkCull) chunkCull.restore(); }
+  if (lmCull) lmCull.cull(camera);
+  try { renderer.render(scene, camera); } finally { if (chunkCull) chunkCull.restore(); if (lmCull) lmCull.restore(); }
   // capture before the post passes reset the counters
   sceneStats.calls = renderer.info.render.calls;
   sceneStats.tris = renderer.info.render.triangles;

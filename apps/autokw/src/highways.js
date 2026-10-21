@@ -35,7 +35,7 @@ import * as THREE from './three.js';
 import * as G from './geo.js';
 import { hash2 } from './util.js';
 import { Builder } from './build.js';
-import { ROAD_LIFT } from './citygen.js';
+import { ROAD_LIFT, CHUNK } from './citygen.js';
 import { polyMat, plainUV } from './kw.js';
 
 const ckey = (x, z) => `${Math.round(x / 1500)},${Math.round(z / 1500)}`;
@@ -700,9 +700,35 @@ export function buildHighways(ctx) {
   const solids = (HWY_SOLIDS = []);
   const idx = edgeIndex(city);
   const atlas = new SignAtlas();
-  // on a carriageway (not its embankment, which city.onRoad counts)
+  // on a carriageway (not its embankment, which city.onRoad counts). The
+  // answer is city.edgesNear(x, z, 0)'s -- the edges filed in the point's 400 m
+  // chunk -- but each chunk's list is split once into 25 m cells by the reach
+  // of each edge's capsule (hw + CW_PAD), so a query tests a handful of edges,
+  // not the chunk's hundreds: the same edges that can answer yes, the same
+  // test, so the same answer (it was ~1/4 of the freeways' build).
+  const CW_PAD = 1.5, FC = 25, NF = CHUNK / FC, cwCells = new Map();
+  const cwCell = (x, z) => {
+    const cx = Math.floor(x / CHUNK), cz = Math.floor(z / CHUNK), k = cx * 100003 + cz;
+    let grid = cwCells.get(k);
+    if (!grid) {
+      grid = Array.from({ length: NF * NF }, () => []);
+      const ox = cx * CHUNK, oz = cz * CHUNK;
+      for (const ei of city.edgesNear(ox + CHUNK / 2, oz + CHUNK / 2, 0)) {
+        const e = city.edges[ei];
+        if (e.tunnel) continue;
+        const a = city.nodes[e.a], b = city.nodes[e.b], r = e.hw + CW_PAD;
+        const i0 = Math.max(0, Math.floor((Math.min(a.x, b.x) - r - ox) / FC)), i1 = Math.min(NF - 1, Math.floor((Math.max(a.x, b.x) + r - ox) / FC));
+        const j0 = Math.max(0, Math.floor((Math.min(a.z, b.z) - r - oz) / FC)), j1 = Math.min(NF - 1, Math.floor((Math.max(a.z, b.z) + r - oz) / FC));
+        for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) grid[j * NF + i].push(ei);
+      }
+      cwCells.set(k, grid);
+    }
+    const i = Math.min(NF - 1, Math.max(0, Math.floor((x - cx * CHUNK) / FC)));
+    const j = Math.min(NF - 1, Math.max(0, Math.floor((z - cz * CHUNK) / FC)));
+    return grid[j * NF + i];
+  };
   const onCw = (x, z, pad) => {
-    for (const ei of city.edgesNear(x, z, 0)) {
+    for (const ei of (pad <= CW_PAD ? cwCell(x, z) : city.edgesNear(x, z, 0))) {
       const e = city.edges[ei];
       if (e.tunnel) continue;
       const a = city.nodes[e.a], b = city.nodes[e.b];

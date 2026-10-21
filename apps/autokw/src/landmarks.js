@@ -56,7 +56,7 @@
 
 import * as THREE from './three.js';
 import * as G from './geo.js';
-import { mergeByMaterial } from './build.js';
+import { mergeByMaterial, cropAtlas } from './build.js';
 import { spaceNeedle, NEEDLE_MATS, needleSolids, needleDecks } from './needle.js';
 import { memo } from './bootcache.js';
 import { makeDowntown } from './lmdowntown.js';
@@ -221,6 +221,8 @@ class SignAtlas {
     this.x += w + 2; this.row = Math.max(this.row, h);
     return at;
   }
+  /** Done drawing: cut the unused rows (build.js cropAtlas) and upload. */
+  finish() { this.cut = cropAtlas(this.tex, this.y + this.row); this.tex.needsUpdate = true; return this.cut; }
   /** A plane of w x h metres showing whatever `draw(g, W, H)` paints. */
   panel(w, h, px, draw) {
     const W = Math.min(1024, Math.max(32, Math.round(w * px))), H = Math.min(512, Math.max(16, Math.round(h * px)));
@@ -3314,15 +3316,23 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
     for (const [dx, dz, r] of g.userData.clearAt || []) clearAt.push([x + dx, z + dz, r]);
     addTo(l.kind === 'airport' ? 'airport' : `${Math.round(x / 1200)},${Math.round(z / 1200)}`, g);
   }
+  // what each extra cost to build (and its solids' road test), for the boot audit
+  // (tools/kw/perfaudit.mjs): root.userData.extraMs
+  const extraMs = {};
   for (const fn of EXTRAS) {
     const extraSolids = [];
+    const t0 = performance.now();
     fn({ addTo, solids: extraSolids, atlas, city, platforms, clearAt });
+    const t1 = performance.now();
     for (const s of extraSolids) {
       if (city && onRoad(city, s)) { dropped.push(`extra@${s.x.toFixed(0)},${s.z.toFixed(0)}`); continue; }
       solids.push(s);
     }
+    const k = fn.name || `extra${Object.keys(extraMs).length}`;
+    extraMs[k] = [Math.round(t1 - t0), Math.round(performance.now() - t1), extraSolids.length];
   }
-  atlas.tex.needsUpdate = true;
+  const tMerge = performance.now();
+  atlas.finish();
 
   const root = new THREE.Group();
   root.name = 'landmarks';
@@ -3357,6 +3367,8 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
     root.add(merged);
   }
   if (mono) for (const m of mono.meshes) { root.add(m); draws++; }
+  extraMs.merge = [Math.round(performance.now() - tMerge), 0, 0];
+  root.userData.extraMs = extraMs;
   root.userData.draws = draws;
   root.userData.solids = solids.length;
   root.userData.solidsDropped = dropped;

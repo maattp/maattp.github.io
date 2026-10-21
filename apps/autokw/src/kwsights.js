@@ -1626,8 +1626,8 @@ export function buildSights(ctx) {
   run('museum', () => museum(kit, ctx));
   run('toyota', () => toyota(kit, ctx));
   run('cambridge', () => cambridge(kit, ctx));
-  atlas.tex.needsUpdate = true;
   STATS.atlas = { y: atlas.y + atlas.row, full: atlas.full };
+  atlas.finish();
   STATS.ms = Math.round(performance.now() - t0);
   if (typeof window !== 'undefined') window.__kwSights = STATS;
 }

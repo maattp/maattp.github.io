@@ -36,6 +36,7 @@
 
 import * as G from './geo.js';
 import { hash2 } from './util.js';
+import { memo } from './bootcache.js';
 
 // the cross-section (m beyond the carriageway edge)
 export const SH = 1.3, FS = 1.7, DB = 0.9, BS = 1.3, FD = 2.4;
@@ -93,32 +94,6 @@ function fillLift(R, m) {
 export function tagRural(g, buildings, builtAt) {
   const { nodes, edges } = g;
   const N = edges.length;
-  const cand = new Uint8Array(N);
-  for (let i = 0; i < N; i++) {
-    const e = edges[i];
-    if (!e.elev && !e.tunnel && CAND[e.cls]) cand[i] = 1;
-  }
-  // buildings by their centres, 60 m cells
-  const BC = 60, bgrid = new Map();
-  for (let i = 0; i < buildings.length; i++) {
-    const b = buildings[i];
-    if (b.h <= 0) continue;
-    const k = Math.floor(b.x / BC) * 65536 + Math.floor(b.z / BC);
-    let l = bgrid.get(k);
-    if (!l) bgrid.set(k, (l = []));
-    l.push(i);
-  }
-  const countNear = (x, z, R) => {
-    let n = 0;
-    const c0 = Math.floor((x - R) / BC), c1 = Math.floor((x + R) / BC);
-    const d0 = Math.floor((z - R) / BC), d1 = Math.floor((z + R) / BC);
-    for (let cx = c0; cx <= c1; cx++) for (let cz = d0; cz <= d1; cz++) {
-      const l = bgrid.get(cx * 65536 + cz);
-      if (!l) continue;
-      for (const i of l) { const b = buildings[i]; if ((b.x - x) ** 2 + (b.z - z) ** 2 < R * R) n++; }
-    }
-    return n;
-  };
   // --- chains of candidate edges through degree-2 nodes (for the window) ---
   const other = (ni, ei) => { const n = nodes[ni]; return n.e.length === 2 ? (n.e[0] === ei ? n.e[1] : n.e[0]) : -1; };
   const walkChain = (start, okEdge, okNode) => {
@@ -145,77 +120,107 @@ export function tagRural(g, buildings, builtAt) {
     for (const r of right) list.push(r);
     return list;
   };
-  const seen = new Uint8Array(N);
-  const score = new Float32Array(N);
-  const rural = new Uint8Array(N);
-  const pre = [], cid = new Int32Array(N).fill(-1);
-  for (let i = 0; i < N; i++) {
-    if (!cand[i] || seen[i]) continue;
-    const ch = walkChain(i, (o) => cand[o] && !seen[o], () => true);
-    for (const [ei] of ch) { seen[ei] = 1; cid[ei] = pre.length; }
-    pre.push(ch);
-  }
-  // Street density: metres of OTHER streets (not this chain) with their
-  // middles within 110 m. A concession road has the odd crossing road; a
-  // subdivision, mapped or not mapped with its houses, is a net of streets.
-  const SC = 110, sgrid = new Map();
-  for (let i = 0; i < N; i++) {
-    if (!cand[i] && edges[i].cls !== 'hwy' && edges[i].cls !== 'ramp') continue;
-    const e = edges[i], a = nodes[e.a], b = nodes[e.b];
-    const k = Math.floor((a.x + b.x) / 2 / SC) * 65536 + Math.floor((a.z + b.z) / 2 / SC);
-    let l = sgrid.get(k); if (!l) sgrid.set(k, (l = [])); l.push(i);
-  }
-  const streetsNear = (x, z, own) => {
-    let L = 0;
-    const cx = Math.floor(x / SC), cz = Math.floor(z / SC);
-    for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
-      const l = sgrid.get((cx + dx) * 65536 + cz + dz);
-      if (!l) continue;
-      for (const i of l) {
-        if (cid[i] === own) continue;
-        const e = edges[i], a = nodes[e.a], b = nodes[e.b];
-        if (((a.x + b.x) / 2 - x) ** 2 + ((a.z + b.z) / 2 - z) ** 2 < SC * SC) L += e.len;
+  // Which edges are rural: the expensive half (every candidate chain's
+  // building, cover and street counts), a pure function of the data, so an
+  // earlier launch of this build answers it (bootcache.js memo).
+  const rural = memo('rural:tag', () => {
+    const cand = new Uint8Array(N);
+    for (let i = 0; i < N; i++) {
+      const e = edges[i];
+      if (!e.elev && !e.tunnel && CAND[e.cls]) cand[i] = 1;
+    }
+    // buildings by their centres, 60 m cells
+    const BC = 60, bgrid = new Map();
+    for (let i = 0; i < buildings.length; i++) {
+      const b = buildings[i];
+      if (b.h <= 0) continue;
+      const k = Math.floor(b.x / BC) * 65536 + Math.floor(b.z / BC);
+      let l = bgrid.get(k);
+      if (!l) bgrid.set(k, (l = []));
+      l.push(i);
+    }
+    const countNear = (x, z, R) => {
+      let n = 0;
+      const c0 = Math.floor((x - R) / BC), c1 = Math.floor((x + R) / BC);
+      const d0 = Math.floor((z - R) / BC), d1 = Math.floor((z + R) / BC);
+      for (let cx = c0; cx <= c1; cx++) for (let cz = d0; cz <= d1; cz++) {
+        const l = bgrid.get(cx * 65536 + cz);
+        if (!l) continue;
+        for (const i of l) { const b = buildings[i]; if ((b.x - x) ** 2 + (b.z - z) ** 2 < R * R) n++; }
+      }
+      return n;
+    };
+    const seen = new Uint8Array(N);
+    const rural = new Uint8Array(N);
+    const pre = [], cid = new Int32Array(N).fill(-1);
+    for (let i = 0; i < N; i++) {
+      if (!cand[i] || seen[i]) continue;
+      const ch = walkChain(i, (o) => cand[o] && !seen[o], () => true);
+      for (const [ei] of ch) { seen[ei] = 1; cid[ei] = pre.length; }
+      pre.push(ch);
+    }
+    // Street density: metres of OTHER streets (not this chain) with their
+    // middles within 110 m. A concession road has the odd crossing road; a
+    // subdivision, mapped or not mapped with its houses, is a net of streets.
+    const SC = 110, sgrid = new Map();
+    for (let i = 0; i < N; i++) {
+      if (!cand[i] && edges[i].cls !== 'hwy' && edges[i].cls !== 'ramp') continue;
+      const e = edges[i], a = nodes[e.a], b = nodes[e.b];
+      const k = Math.floor((a.x + b.x) / 2 / SC) * 65536 + Math.floor((a.z + b.z) / 2 / SC);
+      let l = sgrid.get(k); if (!l) sgrid.set(k, (l = [])); l.push(i);
+    }
+    const streetsNear = (x, z, own) => {
+      let L = 0;
+      const cx = Math.floor(x / SC), cz = Math.floor(z / SC);
+      for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+        const l = sgrid.get((cx + dx) * 65536 + cz + dz);
+        if (!l) continue;
+        for (const i of l) {
+          if (cid[i] === own) continue;
+          const e = edges[i], a = nodes[e.a], b = nodes[e.b];
+          if (((a.x + b.x) / 2 - x) ** 2 + ((a.z + b.z) / 2 - z) ** 2 < SC * SC) L += e.len;
+        }
+      }
+      return L;
+    };
+    for (let p = 0; p < pre.length; p++) {
+      const ch = pre[p];
+      // per edge: buildings near its middle, built cover, other streets; then
+      // a 300 m window
+      const n = ch.length, mid = new Float32Array(n), cnt = new Float32Array(n), bt = new Float32Array(n), st = new Float32Array(n);
+      let c = 0;
+      for (let k = 0; k < n; k++) {
+        const e = edges[ch[k][0]], a = nodes[e.a], b = nodes[e.b];
+        const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
+        mid[k] = c + e.len / 2; c += e.len;
+        cnt[k] = countNear(mx, mz, 60);
+        bt[k] = builtAt(mx, mz);
+        st[k] = streetsNear(mx, mz, p);
+      }
+      let lo = 0, hi = 0, sc = 0, sb = 0, ss = 0, sl = 0;
+      for (let k = 0; k < n; k++) {
+        while (hi < n && mid[hi] <= mid[k] + 150) { const L = edges[ch[hi][0]].len; sc += cnt[hi] * L; sb += bt[hi] * L; ss += st[hi] * L; sl += L; hi++; }
+        while (mid[lo] < mid[k] - 150) { const L = edges[ch[lo][0]].len; sc -= cnt[lo] * L; sb -= bt[lo] * L; ss -= st[lo] * L; sl -= L; lo++; }
+        const per50 = sl > 0 ? sc / sl : 0, built = sl > 0 ? sb / sl : 0, streets = sl > 0 ? ss / sl : 0;
+        const ei = ch[k][0];
+        rural[ei] = edges[ei].gravel || (per50 < 3.5 && built < 0.05 && streets < 260) ? 1 : 0;
+      }
+      // hysteresis: a run under 160 m takes what surrounds it (gravel stays)
+      for (let pass = 0; pass < 2; pass++) {
+        let k = 0;
+        while (k < n) {
+          let j = k, L = 0;
+          const v = rural[ch[k][0]];
+          while (j < n && rural[ch[j][0]] === v) { L += edges[ch[j][0]].len; j++; }
+          const before = k > 0 ? rural[ch[k - 1][0]] : -1, after = j < n ? rural[ch[j][0]] : -1;
+          const flip = L < 160 && (before === after ? before === 1 - v : (before < 0 || after < 0) && (before === 1 - v || after === 1 - v) && L < 80);
+          if (flip) for (let q = k; q < j; q++) if (!edges[ch[q][0]].gravel) rural[ch[q][0]] = 1 - v;
+          k = j;
+        }
       }
     }
-    return L;
-  };
-  for (let p = 0; p < pre.length; p++) {
-    const ch = pre[p];
-    // per edge: buildings near its middle, built cover, other streets; then
-    // a 300 m window
-    const n = ch.length, mid = new Float32Array(n), cnt = new Float32Array(n), bt = new Float32Array(n), st = new Float32Array(n);
-    let c = 0;
-    for (let k = 0; k < n; k++) {
-      const e = edges[ch[k][0]], a = nodes[e.a], b = nodes[e.b];
-      const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
-      mid[k] = c + e.len / 2; c += e.len;
-      cnt[k] = countNear(mx, mz, 60);
-      bt[k] = builtAt(mx, mz);
-      st[k] = streetsNear(mx, mz, p);
-    }
-    let lo = 0, hi = 0, sc = 0, sb = 0, ss = 0, sl = 0;
-    for (let k = 0; k < n; k++) {
-      while (hi < n && mid[hi] <= mid[k] + 150) { const L = edges[ch[hi][0]].len; sc += cnt[hi] * L; sb += bt[hi] * L; ss += st[hi] * L; sl += L; hi++; }
-      while (mid[lo] < mid[k] - 150) { const L = edges[ch[lo][0]].len; sc -= cnt[lo] * L; sb -= bt[lo] * L; ss -= st[lo] * L; sl -= L; lo++; }
-      const per50 = sl > 0 ? sc / sl : 0, built = sl > 0 ? sb / sl : 0, streets = sl > 0 ? ss / sl : 0;
-      const ei = ch[k][0];
-      score[ei] = per50;
-      rural[ei] = edges[ei].gravel || (per50 < 3.5 && built < 0.05 && streets < 260) ? 1 : 0;
-    }
-    // hysteresis: a run under 160 m takes what surrounds it (gravel stays)
-    for (let pass = 0; pass < 2; pass++) {
-      let k = 0;
-      while (k < n) {
-        let j = k, L = 0;
-        const v = rural[ch[k][0]];
-        while (j < n && rural[ch[j][0]] === v) { L += edges[ch[j][0]].len; j++; }
-        const before = k > 0 ? rural[ch[k - 1][0]] : -1, after = j < n ? rural[ch[j][0]] : -1;
-        const flip = L < 160 && (before === after ? before === 1 - v : (before < 0 || after < 0) && (before === 1 - v || after === 1 - v) && L < 80);
-        if (flip) for (let q = k; q < j; q++) if (!edges[ch[q][0]].gravel) rural[ch[q][0]] = 1 - v;
-        k = j;
-      }
-    }
-  }
+      return rural;
+  }, (v) => v instanceof Uint8Array && v.length === N);
   let km = 0, kmGravel = 0, nr = 0;
   for (let i = 0; i < N; i++) {
     const e = edges[i];
