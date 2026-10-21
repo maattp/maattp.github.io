@@ -29,6 +29,7 @@ export function xingStart(c) {
  * crossbuck boards into `sign` at UVs `xb` -- one board's [u0,v0,u1,v0,u1,v1,
  * u0,v1], or two for a bilingual pair), and the arms' pivots into `c.gates`.
  * `o.groundAt(x, z)`: the ground there; `o.solids`: where the masts go;
+ * `o.onRoad(x, z)`: is that on a carriageway (the mast steps out past it);
  * `o.under(ch, mx, gy, mz, fx, fz, ux, uz)`: anything more on the mast.
  */
 export function buildXingMast(c, flat, sign, xb, o) {
@@ -45,7 +46,14 @@ export function buildXingMast(c, flat, sign, xb, o) {
     // its signal stands at its right kerb and its arm reaches the centreline
     const hx = -a * rdx, hz = -a * rdz;
     const rx = -hz, rz = hx;
-    const mx = c.x + a * rdx * clear + rx * (hw + 0.9), mz = c.z + a * rdz * clear + rz * (hw + 0.9);
+    // ...OFF EVERY CARRIAGEWAY, not just its own road's: where another road
+    // runs alongside (a one-way pair, a slip lane, the next street at a
+    // skewed crossing) the mast at hw + 0.9 stood in its lanes, a solid post
+    // cars stopped on, backed off and came back to (Kitchener, (-2008,
+    // -159): a crash every 8 s). Stepped out to the right until clear.
+    let out = hw + 0.9;
+    if (o.onRoad) for (let k = 0; k < 10 && o.onRoad(c.x + a * rdx * clear + rx * out, c.z + a * rdz * clear + rz * out); k++) out += 0.75;
+    const mx = c.x + a * rdx * clear + rx * out, mz = c.z + a * rdz * clear + rz * out;
     const gy = o.groundAt(mx, mz);
     flat.box(mx, gy, mz, 0.16, 4.4, 0.16, 0, WHITE);
     flat.box(mx, gy, mz, 0.6, 0.3, 0.6, 0, CONC);
@@ -71,7 +79,7 @@ export function buildXingMast(c, flat, sign, xb, o) {
     if (c.gate) {
       flat.box(mx - rx * 0.32, gy, mz - rz * 0.32, 0.5, 1.2, 0.5, 0, GREY);
       if (o.solids) o.solids.push({ x: mx, z: mz, r: 0.35, y0: gy, y1: gy + 4.4 });
-      const len = Math.max(3, hw + 0.4);
+      const len = Math.max(3, hw + 0.4) + (out - hw - 0.9);
       c.gates.push({ px: mx - rx * 0.32, py: gy + 0.95, pz: mz - rz * 0.32, dx: -rx, dz: -rz, len, lx: mx + fx * 0.16, ly: gy + 2.43, lz: mz + fz * 0.16, face, ux, uz });
     } else {
       if (o.solids) o.solids.push({ x: mx, z: mz, r: 0.3, y0: gy, y1: gy + 4.4 });

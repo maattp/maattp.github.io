@@ -834,6 +834,7 @@ export class KwRail {
       buildXingMast(c, ch.flat, ch.dec, [uv('xbuckEn'), uv('xbuckFr')], {
         groundAt: (x, z) => (this.city.groundAt ? this.city.groundAt(x, z, null) : G.terrainHeight(x, z)),
         solids: this.solids,
+        onRoad: (x, z) => !!(this.city.onRoad && this.city.onRoad(x, z, 0.5, false, false)),
         under: tracks && ((mx, gy, mz, fx, fz, ux, uz) => {
           const cx = mx + fx * 0.11, cz = mz + fz * 0.11, cy = gy + 3.18;
           const Pq = (u, v) => [cx + ux * u, cy + v, cz + uz * u];
@@ -1201,12 +1202,29 @@ export class KwRail {
       // when this one is out (`_meetWait`), give or take MEET_SLACK; past
       // MEET_HOLD of waiting off the map it goes anyway.
       t.dueWait = (t.dueWait || 0) + 8;
-      if (t.dueWait < MEET_HOLD && this._meetWait(line, t, d, blk) > MEET_SLACK) { t.dueT = 8; this.stats.meetHolds = (this.stats.meetHolds || 0) + 1; continue; }
-      t.dueWait = 0;
+      // Nor while a train bound the other way, toward this end, is standing
+      // for a block: another one coming on only takes a passing track it
+      // needs (a GO waited 15 min at Kitchener for a landing at the siding
+      // east of it while westbounds sent on behind one another filled it).
+      // And no more out on a line than it has passing places: the Guelph
+      // Sub's three (Kitchener's double track, the sidings at 23 and 26 km)
+      // held four westbounds and a GO turned east at once, and the GO stood
+      // 13-15 min for a track to meet them on.
+      const oppWaits = line.trains.some((u) => u.state !== 'idle' && u.d === -d && u.wantBlk != null && !(u.cfg.route === 'go' && u.d < 0))
+        || line.trains.filter((u) => u.state !== 'idle').length >= Math.max(1, line.disp.length);
+      if (t.dueWait < MEET_HOLD && (oppWaits || this._meetWait(line, t, d, blk) > MEET_SLACK)) { t.dueT = 8; this.stats.meetHolds = (this.stats.meetHolds || 0) + 1; continue; }
+      // ...and the one that has waited longest off the map goes first (a GO
+      // set waited the whole two hours while others took each free slot)
+      if (this.fleet.some((u) => u !== t && u.line === line && u.state === 'idle' && u.dueT <= 8 && (u.dueWait || 0) > t.dueWait)) { t.dueT = 8; continue; }
       const kn = line.disp[d > 0 ? 0 : line.disp.length - 1];
       t.served = new Set(); t.d = d;
       const land = kn ? this._landing(kn, t) : -1;
       if (land === null || (kn && this._lastTrackOwed(line, kn, t, d, Infinity))) { t.dueT = 8; continue; }
+      // the last free track where a GO turns is the GO's when one is on its
+      // way in to turn there (a CN sent in from the west took it, the VIA
+      // stood on the other, and the GO waited 12 min a siding short)
+      if (kn && [0, 1].filter((tk) => !this._holder(kn, tk)).length === 1
+        && line.trains.some((u) => u !== t && u.state !== 'idle' && u.cfg.route === 'go' && u.d < 0 && line.stops.some((st) => st.pp === kn && !u.served.has(st)))) { t.dueT = 8; continue; }
       t.npp = kn || null; t.nTrack = land;
       t.d = d; t.ori = d; t.s = s; t.u = Math.min(t.cfg.vMax, line.vMax) * 0.85; t.state = 'run';
       t.pp = null; t.ppTrack = 0; t.commit = blk; t.reverseAfter = false; t.holdT = 0;
@@ -1217,6 +1235,7 @@ export class KwRail {
         continue;
       }
       if (kn) kn.hold[land] = t;
+      t.dueWait = 0;
       this.stats.spawns++;
     }
   }
@@ -1227,7 +1246,7 @@ export class KwRail {
    * the block when it has run its length and its own (at 0.8 of its speed,
    * for the station limits); one bound through it the other way reaches the
    * block's mouth at 0.75 of its speed plus the dwells on its way (a GO
-   * turns at Kitchener and never comes into a block past it).
+   * bound west turns at Kitchener and never comes into the block past it).
    */
   _meetWait(line, t, d, blk) {
     const pps = line.disp;
@@ -1240,7 +1259,7 @@ export class KwRail {
     const tOut = (Math.abs(far - s0) + t.len) / (0.8 * v);
     let worst = 0;
     for (const u of line.trains) {
-      if (u === t || u.state === 'idle' || u.d !== -d || u.cfg.route === 'go') continue;
+      if (u === t || u.state === 'idle' || u.d !== -d || (u.cfg.route === 'go' && u.d < 0)) continue;   // (a GO bound west turns at Kitchener)
       const toMouth = (far - u.lead) * u.d;   // its lead to the block's mouth (our far end)
       if (toMouth < 0) continue;              // in the block already: _free said no
       let tIn = toMouth / (0.75 * Math.min(u.cfg.vMax, line.vMax));
@@ -1262,7 +1281,7 @@ export class KwRail {
     const i = t.line.trains.indexOf(t);
     if (i >= 0) t.line.trains.splice(i, 1);
     t.nextD = -t.d;
-    const R = t.cfg.route === 'go' ? 420 : t.cfg.kind === 'via' ? 600 : 240;
+    const R = t.cfg.route === 'go' ? 600 : t.cfg.kind === 'via' ? 600 : 240;   // (GO 420 -> 600: three sets every 7 min crowded the Guelph Sub's three passing places)
     t.dueT = R * (0.8 + Math.random() * 0.4);
   }
 

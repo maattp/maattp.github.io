@@ -8064,7 +8064,15 @@ float frLine(float o, float fw, float c, float w) {
     }
     const GS = cityStats.garages || (cityStats.garages = { doors: 0, slid: 0, none: 0 });
     if (best === null) GS.none++;
-    else { GS.doors++; if (Math.abs(best - sd * edge) > 0.05) GS.slid++; }
+    else {
+      GS.doors++;
+      if (Math.abs(best - sd * edge) > 0.05) {
+        GS.slid++;
+        // (a few, for a camera: the door's middle and the way the front faces)
+        if (!GS.ex) GS.ex = [];
+        if (GS.ex.length < 16) { const [qx, qz] = offF(best, fb.d / 2); GS.ex.push([+qx.toFixed(1), +qz.toFixed(1), +(-Math.sin(fb.rot)).toFixed(3), +Math.cos(fb.rot).toFixed(3), +(best - sd * edge).toFixed(1)]); }
+      }
+    }
     return best;
   }
 
