@@ -148,7 +148,73 @@ export function prepHighways(city, hwy) {
     // How a 400-series actually flows: about 10 km/h over the posted limit.
     if (sp >= 60 && sp <= 120) { e.spd = (sp + 10) / 3.6; STATS.edgesTimed++; }
   });
+  CLEAR_CITY = city;   // the zone is built on first use: after the grading has set e.pbw
   return STATS;
+}
+
+// ---------------------------------------------------------------------------
+// THE RIGHT-OF-WAY. A 400-series highway (and the Conestoga, and the trunk
+// sections) runs through a mown clear zone: grass and ditch, no tree for
+// 10-15 m past the shoulder (MTO's Roadside Design Manual clear zone is 9-13 m
+// at 100-110 km/h), and the infield of every interchange loop mown too. The
+// forest and the street trees grew right to the 401's shoulder. keepClear is
+// in city.extraClear, which trees.js and world.js's scatter both ask.
+const CLEAR_MAIN = 15, CLEAR_RAMP = 9, CZ = 50;
+let CLEAR = null, CLEAR_CITY = null;   // 50 m cell -> Float32Array runs of [ax, az, bx, bz, r]
+/** The ramps that are a freeway's: every 'ramp' edge (OSM's *_link, which
+ *  includes a town's slip lanes) reachable from a freeway node through ramps. */
+function freewayRamps(city) {
+  const seen = new Uint8Array(city.edges.length), q = [];
+  city.edges.forEach((e) => { if (e.cls === 'hwy') q.push(e.a, e.b); });
+  const done = new Uint8Array(city.nodes.length);
+  while (q.length) {
+    const ni = q.pop();
+    if (done[ni]) continue;
+    done[ni] = 1;
+    for (const k of city.nodes[ni].e) {
+      const f = city.edges[k];
+      if (f.cls !== 'ramp' || seen[k]) continue;
+      seen[k] = 1;
+      q.push(f.a, f.b);
+    }
+  }
+  return seen;
+}
+function buildClearZone(city) {
+  const cells = new Map();
+  const fr = freewayRamps(city);
+  city.edges.forEach((e, ei) => {
+    if (e.cls !== 'hwy' && !(e.cls === 'ramp' && fr[ei])) return;
+    if (e.tunnel) return;
+    const a = city.nodes[e.a], b = city.nodes[e.b];
+    const r = e.hw + Math.max(e.pbw || 0, e.cls === 'hwy' ? CLEAR_MAIN : CLEAR_RAMP);
+    const x0 = Math.floor((Math.min(a.x, b.x) - r) / CZ), x1 = Math.floor((Math.max(a.x, b.x) + r) / CZ);
+    const z0 = Math.floor((Math.min(a.z, b.z) - r) / CZ), z1 = Math.floor((Math.max(a.z, b.z) + r) / CZ);
+    for (let i = x0; i <= x1; i++) for (let j = z0; j <= z1; j++) {
+      const k = i * 100003 + j;
+      let l = cells.get(k);
+      if (!l) cells.set(k, (l = []));
+      l.push(a.x, a.z, b.x, b.z, r);
+    }
+  });
+  CLEAR = new Map();
+  for (const [k, l] of cells) CLEAR.set(k, Float32Array.from(l));
+  STATS.clearCells = CLEAR.size;
+}
+/** Inside a freeway's or ramp's mown right-of-way (city.extraClear)? */
+export function hwyKeepClear(x, z) {
+  if (!CLEAR) { if (!CLEAR_CITY) return false; buildClearZone(CLEAR_CITY); }
+  const l = CLEAR.get(Math.floor(x / CZ) * 100003 + Math.floor(z / CZ));
+  if (!l) return false;
+  for (let q = 0; q < l.length; q += 5) {
+    const ax = l[q], az = l[q + 1], sx = l[q + 2] - ax, sz = l[q + 3] - az, r = l[q + 4];
+    const l2 = sx * sx + sz * sz;
+    let t = l2 > 0 ? ((x - ax) * sx + (z - az) * sz) / l2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const dx = ax + sx * t - x, dz = az + sz * t - z;
+    if (dx * dx + dz * dz < r * r) return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
