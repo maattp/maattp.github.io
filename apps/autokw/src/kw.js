@@ -77,7 +77,7 @@ export const LOOKS = {
   'Engineering 3': { h: 13, fam: BUFF },
   'Engineering 5': { h: 25, fam: { m: 'glass', c: [0.74, 0.76, 0.78], u: 14, v: 13.6 } },
   'Engineering 6': { h: 25, fam: GLASS },
-  'Engineering 7': { h: 32, fam: { m: 'glass', c: [0.78, 0.80, 0.82], u: 14, v: 13.6 } },
+  // E7, renamed the Pearl Sullivan Engineering Building in Nov 2025 (OSM has the new name)
   'Pearl Sullivan Engineering Building': { h: 32, fam: { m: 'glass', c: [0.78, 0.80, 0.82], u: 14, v: 13.6 } },
   'Physics': { h: 13, fam: BRUT },
   'Biology 1': { h: 13, fam: BRUT },
@@ -231,6 +231,165 @@ function polyArea(p) {
   let a = 0;
   for (let i = 0; i < p.length; i++) { const j = (i + 1) % p.length; a += p[i][0] * p[j][1] - p[j][0] * p[i][1]; }
   return a / 2;
+}
+
+// --- one drawer per footprint ---------------------------------------------------------
+//
+// OSM maps some buildings twice (a plaza and each of its units, an L-shaped
+// store whose min-area box swallows its neighbour, a kw.json polygon matched
+// to one unit's box while the next unit's box stays), and the city has four
+// drawers that never asked each other: world.js (a box: meshBuilding, or
+// _stripMall for markStrips' units), kw.js buildPolys (kw.poly), kwshops.js
+// (kw.shop) and the places/sights/campus modules (kw.skip, their own outline).
+// Two flat roofs at one height are the "striped plaza roof": the tan strip
+// roof and the white one under it z-fighting in bands. tools/kw/doubleprobe.js
+// counts the pairs.
+
+/** Who draws box b, or null (flat, or drawn by a module from its own outline). */
+export function drawerOf(b) {
+  if (b.kw && b.kw.shop) return 'shop';
+  if (b.kw && b.kw.skip) return null;
+  if (b.kw && b.kw.poly) return 'poly';
+  if (b.h <= 0.5) return null;
+  return b.kw && b.kw.strip ? 'strip' : 'world';
+}
+/** The footprint b is drawn on: kw.poly's outline, else its box. */
+export function footOf(b) {
+  if (b.kw && b.kw.poly && !b.kw.shop) return b.kw.poly.pts;
+  const c = Math.cos(b.rot), s = Math.sin(b.rot), hw = b.w / 2, hd = b.d / 2;
+  return [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]].map(([lx, lz]) => [b.x + lx * c - lz * s, b.z + lx * s + lz * c]);
+}
+/** The share of footprint A (sampled on a grid, ~200 points) that is inside B. */
+export function footOverlap(A, B) {
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (const q of A) { x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); z0 = Math.min(z0, q[1]); z1 = Math.max(z1, q[1]); }
+  const st = Math.max(0.8, Math.sqrt((x1 - x0) * (z1 - z0) / 200));
+  let inA = 0, both = 0;
+  for (let x = x0 + st / 2; x < x1; x += st) for (let z = z0 + st / 2; z < z1; z += st) {
+    if (!inPoly(A, x, z)) continue;
+    inA++;
+    if (inPoly(B, x, z)) both++;
+  }
+  return inA ? both / inA : 0;
+}
+/** Area of convex polygon A clipped to convex polygon B (both counter-clockwise or both clockwise). */
+function clipArea(A, B) {
+  let P = A;
+  const sg = Math.sign(polyArea(B));
+  for (let i = 0; i < B.length && P.length; i++) {
+    const a = B[i], c = B[(i + 1) % B.length];
+    const side = (q) => sg * ((c[0] - a[0]) * (q[1] - a[1]) - (c[1] - a[1]) * (q[0] - a[0]));
+    const out = [];
+    for (let j = 0; j < P.length; j++) {
+      const p = P[j], n = P[(j + 1) % P.length], sp = side(p), sn = side(n);
+      if (sp >= 0) out.push(p);
+      if ((sp >= 0) !== (sn >= 0)) { const t = sp / (sp - sn); out.push([p[0] + (n[0] - p[0]) * t, p[1] + (n[1] - p[1]) * t]); }
+    }
+    P = out;
+  }
+  return P.length > 2 ? Math.abs(polyArea(P)) : 0;
+}
+const footTop = (b, F) => {
+  if (b.kw && b.kw.poly && !b.kw.shop) {
+    let cx = 0, cz = 0;
+    for (const q of F) { cx += q[0]; cz += q[1]; }
+    return G.terrainHeight(cx / F.length, cz / F.length) + b.kw.poly.h;
+  }
+  return b.y + b.h;
+};
+const RANK = { shop: 3, poly: 2, strip: 1, world: 0 };
+
+/**
+ * After every module has claimed its boxes: wherever two drawn footprints
+ * overlap and their roofs are within a metre, one gives way. The plainer
+ * one (world < strip < poly < shop, then the smaller) goes flat (kw.skip,
+ * h 0 -- the other covers its collision) when 70 % of it is inside the
+ * other; a chain store's big box or stand-alone unit never does. Otherwise
+ * (a partial overlap, or the better-drawn one inside a generic box) the
+ * smaller roof stands 0.6 m proud: a parapet step instead of stripes. A
+ * taller part on a podium is left alone. Its own grid, not buildingsNear:
+ * ~120k footprints at boot, so a pair is only sampled when the boxes' bounds
+ * meet.
+ */
+export function dedupeFootprints(city) {
+  const r = { flat: 0, raised: 0, pairs: 0 };
+  const items = [];
+  for (const b of city.buildings) {
+    const dr = drawerOf(b);
+    if (!dr) continue;
+    const P = b.kw && b.kw.poly && !b.kw.shop ? b.kw.poly.pts : null;
+    let x0, x1, z0, z1;
+    if (P) {
+      x0 = Infinity; x1 = -Infinity; z0 = Infinity; z1 = -Infinity;
+      for (const q of P) { x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); z0 = Math.min(z0, q[1]); z1 = Math.max(z1, q[1]); }
+    } else {
+      const c = Math.abs(Math.cos(b.rot)), s = Math.abs(Math.sin(b.rot));
+      const ex = (b.w * c + b.d * s) / 2, ez = (b.w * s + b.d * c) / 2;
+      x0 = b.x - ex; x1 = b.x + ex; z0 = b.z - ez; z1 = b.z + ez;
+    }
+    items.push({ b, dr, A: P ? Math.abs(polyArea(P)) : b.w * b.d, x0, x1, z0, z1, F: null });
+  }
+  const CELL = 64, grid = new Map();
+  const key = (i, j) => i * 100003 + j;
+  items.forEach((it, n) => {
+    for (let i = Math.floor(it.x0 / CELL); i <= Math.floor(it.x1 / CELL); i++)
+      for (let j = Math.floor(it.z0 / CELL); j <= Math.floor(it.z1 / CELL); j++) {
+        const k = key(i, j);
+        let l = grid.get(k);
+        if (!l) grid.set(k, (l = []));
+        l.push(n);
+      }
+  });
+  const foot = (it) => it.F || (it.F = footOf(it.b));
+  const live = (it) => drawerOf(it.b) !== null;
+  // the share of it inside jt: exact for two boxes, sampled for an outline
+  const isBox = (it) => !(it.b.kw && it.b.kw.poly && !it.b.kw.shop);
+  const ov = (it, jt) => (isBox(it) && isBox(jt) ? clipArea(foot(it), foot(jt)) / Math.max(1e-6, it.A) : footOverlap(foot(it), foot(jt)));
+  for (const [k, l] of grid) {
+    if (l.length < 2) continue;
+    for (let p = 0; p < l.length; p++) for (let q = p + 1; q < l.length; q++) {
+      const a = items[l[p]], c = items[l[q]];
+      if (a.x1 < c.x0 || c.x1 < a.x0 || a.z1 < c.z0 || c.z1 < a.z0) continue;
+      // a pair sharing several cells is met once: in the cell of its overlap's corner
+      if (key(Math.floor(Math.max(a.x0, c.x0) / CELL), Math.floor(Math.max(a.z0, c.z0) / CELL)) !== k) continue;
+      if (!live(a) || !live(c)) continue;
+      const [big, sm] = a.A >= c.A ? [a, c] : [c, a];
+      // a house standing in a big store or factory (whose box over-covers an
+      // L-shaped plan, or an outline mapped twice): its roof pokes through
+      // the other's at any height
+      if (sm.dr === 'world' && sm.b.style === 'house' && big.b.style !== 'house' && big.A > sm.A * 8
+        && ov(sm, big) >= 0.85) {
+        const o = sm.b;
+        o.h = 0; if (!o.kw) o.kw = {}; o.kw.skip = true;
+        r.flat++; r.houses = (r.houses || 0) + 1;
+        continue;
+      }
+      const tA = footTop(a.b, foot(a)), tC = footTop(c.b, foot(c));
+      if (Math.abs(tA - tC) > 1) continue;     // a step or a tower: both read
+      const fs = ov(sm, big);
+      if (fs < 0.12) continue;
+      r.pairs++;
+      // the plainer drawer gives way; of equals, the smaller
+      const loser = RANK[sm.dr] <= RANK[big.dr] ? sm : big;
+      const fl = loser === sm ? fs : ov(big, sm);
+      const store = loser.b.kw && loser.b.kw.shop && loser.b.kw.shop.fmt !== 'strip';
+      if (fl >= 0.7 && !store) {
+        const o = loser.b;
+        o.h = 0;
+        if (!o.kw) o.kw = {};
+        o.kw.skip = true;
+        o.kw.strip = null;
+        o.kw.shop = null;
+        r.flat++;
+      } else {
+        const by = Math.max(0, footTop(big.b, foot(big)) - footTop(sm.b, foot(sm))) + 0.6;
+        const o = sm.b;
+        if (o.kw && o.kw.poly && !o.kw.shop) o.kw.poly.h += by; else o.h += by;
+        r.raised++;
+      }
+    }
+  }
+  return r;
 }
 
 /**

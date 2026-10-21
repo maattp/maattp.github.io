@@ -1179,6 +1179,9 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
     if (city.onRoad(x, z, pad)) return no('road');
     if (world.inAirfield(x, z)) return no('airfield');
     if (city.jumpClear(x, z)) return no('keepClear');
+    // a country road's ditch and berm, a farm lane (rural.js)
+    if (city.ruralClear && city.ruralClear(x, z)) return no('rural');
+    if (city.treeClear && city.treeClear(x, z)) return no('lawn');
     for (let q = 0; q < playgrounds.length; q++) {
       const p = playgrounds[q];
       if ((p[0] - x) ** 2 + (p[1] - z) ** 2 < p[2] * p[2]) return no('playground');
@@ -1213,6 +1216,27 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
     if (yieldNow()) { yield; world._yt = performance.now(); }
     const e = city.edges[ei];
     if (e.elev || e.prof || e.tunnel || e.cls === 'hwy' || e.cls === 'ramp' || e.hw < 3.5) continue;
+    if (e.rural) {
+      // A country road has no street trees: the odd fencerow of maples and
+      // ash past the ditch, in runs (a windbreak, a farm's front yard) with
+      // long open stretches between (rural.js RW: the ditch's reach).
+      const a = city.nodes[e.a], b = city.nodes[e.b];
+      if (!own((a.x + b.x) / 2, (a.z + b.z) / 2)) continue;
+      const px = -e.dz, pz = e.dx;
+      for (const sg of [1, -1]) {
+        for (let s = 4 + hash2(ei, sg + 9) * 8; s < e.len - 4; s += 9 + 6 * hash2(Math.round(s * 10), ei + sg)) {
+          const cx0 = a.x + e.dx * s, cz0 = a.z + e.dz * s;
+          if (field(cx0 + sg * 37, cz0 - sg * 53, 230, 11) < 0.76 || hash2(ei * 5 + Math.round(s), sg + 2) > 0.55) continue;
+          const off = e.hw + 7.6 + 1.6 + 2.2 * hash2(Math.round(s * 3), ei);
+          const x = cx0 + px * sg * off, z = cz0 + pz * sg * off;
+          if (!clear(x, z, 3, OPEN)) continue;
+          const r = hash2(Math.round(x * 5), Math.round(z * 5) + 3);
+          if (r < 0.18) plant(x, z, 11 + 8 * sub(r, 3), 2.4 + 1.2 * sub(r, 4), CONIFER, T_STREET, 'street');
+          else plant(x, z, 9 + 8 * sub(r, 3), 3.4 + 2.4 * sub(r, 4), BROAD, T_STREET, 'street');
+        }
+      }
+      continue;
+    }
     const a = city.nodes[e.a], b = city.nodes[e.b];
     if (!own((a.x + b.x) / 2, (a.z + b.z) / 2)) continue;
     const ux = (b.x - a.x) / e.len, uz = (b.z - a.z) / e.len, px = -uz, pz = ux;
@@ -1360,6 +1384,14 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
         if (r < 0.34) plant(x, z, 14 + 14 * sub(r, 3), 3 + 1.6 * sub(r, 4), CONIFER, T_PARK, 'park');
         else plant(x, z, 9 + 9 * sub(r, 3), 3.6 + 2.6 * sub(r, 4), BROAD, T_PARK, 'park');
       }
+    }
+  }
+  // AUTO KW: the car parks' kerbed islands (world.lotLights), one tree each:
+  // a young broadleaf, crown kept small so it overhangs no bay
+  if (lod === 1 && world._lotIslands && world._lotIslandsKey === ck) {
+    for (const [x, z] of world._lotIslands) {
+      const r = hash2(Math.round(x * 5) + 7, Math.round(z * 5) + 9);
+      plant(x, z, 6 + 3 * r, 2.0 + 0.8 * r, BROAD, T_STREET, 'street');
     }
   }
   world._treeRecs = recs.length ? Float32Array.from(recs) : null;

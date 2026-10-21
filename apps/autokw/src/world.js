@@ -7,7 +7,8 @@ import * as G from './geo.js';
 // Kept in step with main.js. Shadow-caster policy differs by platform, and the
 // difference is worth roughly 40 draw calls a frame.
 const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, MOUTH_RAMP, mouthRamp, cityStats, trimOldest, FWY_DIP_OVER } from './citygen.js';
+import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, MOUTH_RAMP, mouthRamp, cityStats, trimOldest, walkWidthOf, FWY_DIP_OVER } from './citygen.js';
+import * as RU from './rural.js';
 import { Builder, ChunkBuilder, freezeStatic } from './build.js';
 import { memo } from './bootcache.js';
 import { buildMountains } from './mountains.js';
@@ -220,7 +221,11 @@ const GRASS = [0.40, 0.57, 0.29];
 // grade's saturation payback it rendered as a dirt lot under every street-level
 // shot. Developed ground is worn lawn more than bare earth, so it keeps GRASS's
 // hue at a much lower chroma -- still clearly not a meadow.
-const SUBURB = [0.47, 0.53, 0.38];
+// Auto KW: a Waterloo Region subdivision in October is lawns, still green
+// (cool-season grass greens up again in the fall) -- at Seattle's
+// [0.47, 0.53, 0.38] Beechwood and Laurelwood read as dry khaki between the
+// houses. Greener, still well short of GRASS's chroma.
+const SUBURB = [0.45, 0.55, 0.35];
 const URBAN = [0.56, 0.56, 0.55];
 const BLEND_TAPS = [[0, 0], [-85, 55], [70, -75]];
 // The ground map's mean linear value (measured; textures.js groundSurface):
@@ -370,6 +375,46 @@ const INDUSTRIAL_WALL = [
   [0.14, [0.54, 0.62, 0.70]], [0.12, [0.74, 0.66, 0.52]], [0.08, [0.46, 0.48, 0.50]],
 ];
 const industrialWall = (bd) => tint(bd.seed, pickW(INDUSTRIAL_WALL, hash2(bd.seed, 133)), 0.16);
+
+// AUTO KW: the new towers. The student district round UW and Laurier
+// (Columbia, Lester, Sunview, Hickory, Regina, King N, Phillip -- ICON, Sage,
+// Luxe, One Columbia, the Houses on King) and downtown Kitchener's condos
+// (One Victoria, Charlie West, Young, DTK, City Centre) went up after 2008:
+// white and grey precast and window wall, panels in a second grey, and on
+// many a stack of coloured accent panels. [x0, x1, z0, z1] in world metres.
+const MODERN_ZONES = [[-5400, -3700, -3450, -2200], [-2100, -600, -500, 500]];
+/** An apartment tower of eight storeys or more in one of MODERN_ZONES, with no material from OSM. */
+function modernTower(bd) {
+  if (bd.style === 'campus' || bd.h < 24 || bd.kind || (bd.kw && (bd.kw.fam || bd.kw.poly || bd.kw.skip))) return false;
+  const lk = bd.look || 0;
+  if ((lk >> 2) & 7) return false;
+  if (!(lk & 32) && !(bd.kw && bd.kw.name && /Condos|Tower|House|Residence|Lofts/.test(bd.kw.name))) return false;
+  for (const [x0, x1, z0, z1] of MODERN_ZONES) if (bd.x > x0 && bd.x < x1 && bd.z > z0 && bd.z < z1) return true;
+  return false;
+}
+// white precast, light grey precast, window wall, charcoal panel
+const MODERN_FAMS = [
+  { m: 'masonry', c: [1.14, 1.14, 1.12], u: 13, v: 13 },
+  { m: 'masonry', c: [0.94, 0.94, 0.93], u: 14, v: 13.6 },
+  { m: 'glass', c: [0.66, 0.70, 0.73], u: 14, v: 13.6 },
+  { m: 'masonry', c: [0.42, 0.43, 0.45], u: 14, v: 13.6 },
+];
+// the second panel colour on each wall family, and the accents
+const MODERN_PANEL = [[0.46, 0.47, 0.49], [0.95, 0.95, 0.93], [0.93, 0.93, 0.91], [0.90, 0.90, 0.88]];
+const ACCENTS = [[0.88, 0.45, 0.16], [0.52, 0.74, 0.24], [0.78, 0.18, 0.16], [0.18, 0.48, 0.74], [0.95, 0.75, 0.15]];
+// a few by name: [family, accent index or -1]
+const TOWER_NAMED = { 'Sage II': [0, 0], 'Sage Condos I': [0, 0], 'Sage 5': [1, 0], 'Sage 6': [1, 0],
+  'Icon': [0, -1], 'Luxe Condos I': [3, -1], 'Luxe II': [3, -1], 'One Victoria': [2, -1], 'Charlie West': [0, -1],
+  'Duke Tower': [2, -1], 'Young Condos': [0, -1], 'City Centre Condos, Tower 1': [1, -1] };
+/** { fam, panel, accent|null } for a modernTower. */
+function towerLook(bd) {
+  if (bd._tl) return bd._tl;
+  const s = bd.seed, nm = bd.kw && bd.kw.name, N = nm && TOWER_NAMED[nm];
+  const p = hash2(s, 151);
+  const fam = N ? N[0] : p < 0.42 ? 0 : p < 0.66 ? 1 : p < 0.86 ? 2 : 3;
+  const ai = N ? N[1] : hash2(s, 152) < 0.5 ? Math.floor(hash2(s, 153) * ACCENTS.length) : -1;
+  return (bd._tl = { fam, panel: MODERN_PANEL[fam], accent: ai >= 0 ? ACCENTS[ai] : null });
+}
 
 // AUTO KW: where the hydro is overhead. Every arterial and regional road;
 // and the side streets of the places built before the lines went under
@@ -554,6 +599,20 @@ export const WET_FLOOR = 0.35;
 // An unpaved road's colour over the asphalt maps (meshRoad, the far roads):
 // the townships' crushed-limestone gravel, a light warm grey (gravel.js)
 const GRAVEL_TINT = [2.6, 2.28, 1.66];
+// A near chunk's road mesh carries a per-vertex `surf` the road material
+// switches on (roadWalkMat): 0 asphalt, 1 pavement, 2..3 GRAVEL (2.5 + 0.49 x
+// the place across the road, -1..1, for its wheel tracks and windrows), 4
+// roadside GRASS (the vertex colour is the albedo; the asphalt's grain only
+// breaks it up). Gravel and grass are the country roads' (rural.js).
+const SURF_GRASS = 4;
+const gravelSurf = (r) => 2.5 + 0.49 * (r < -1 ? -1 : r > 1 ? 1 : r);
+/** Set `surf` on builder b's vertices from `from` to its end: fn(vertex index). */
+function surfMark(b, from, fn) {
+  if (!b.F || !b.F.surf) return;   // a mid chunk: no flag, tinted flat
+  const F = b.F.surf;
+  for (let i = from; i < b.nv; i++) F[i] = fn(i);
+  b.Fn.surf += b.nv - from;
+}
 
 // The horizon haze takes the sun's side. Multipliers on the haze colour
 // (linear), looking toward the sun and away from it, blended by
@@ -595,17 +654,51 @@ function roadWalkMat(m, walk) {
     sh.uniforms.walkRough = { value: walk.roughnessMap };
     sh.vertexShader = 'attribute float surf;\nvarying float vSurf;\n' + sh.vertexShader
       .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvSurf = surf;');
-    const pick = (a, b) => `mix( ${a}, ${b}, step( 0.5, vSurf ) )`;
+    // vSurf (see SURF_GRASS): 0 asphalt, 1 pavement, 2..3 gravel, 4 grass
+    const WK = '( step( 0.5, vSurf ) - step( 1.5, vSurf ) )';
+    const LOOSE = 'step( 1.5, vSurf )';   // gravel or grass: no gloss
+    const pick = (a, b) => `mix( ${a}, ${b}, ${WK} )`;
+    // Gravel and grass are the asphalt's own aggregate, seen twice (the
+    // second look turned and coarser, to break the tile), relit: gravel is
+    // crushed limestone, loose and stony in the windrows (the crown, the
+    // edges) and packed smoother and darker in the two wheel tracks either
+    // side of each lane; grass takes its colour from the vertex and only its
+    // texture from the grain. One extra fetch; no new map.
+    const country = `
+	{
+		float gS = step( 1.5, vSurf ) - step( 3.5, vSurf ), gG = step( 3.5, vSurf );
+		// three looks at the grain, at 1x, 2.6x (turned) and 0.45x
+		vec4 t2 = texture2D( map, vec2( vMapUv.y, -vMapUv.x ) * 2.63 + vec2( 0.31, 0.17 ) );
+		vec4 t3 = texture2D( map, vMapUv.yx * 0.45 + vec2( 0.53, 0.71 ) );
+		float n1 = clamp( ( dot( sampledDiffuseColor.rgb, vec3( 0.333 ) ) - 0.09 ) / 0.08, 0.0, 1.0 );
+		float n2 = clamp( ( dot( t2.rgb, vec3( 0.333 ) ) - 0.09 ) / 0.08, 0.0, 1.0 );
+		float n3 = clamp( ( dot( t3.rgb, vec3( 0.333 ) ) - 0.09 ) / 0.08, 0.0, 1.0 );
+		float o = clamp( ( vSurf - 2.5 ) / 0.49, -1.0, 1.0 ), ao = abs( o );
+		float trk = max( 1.0 - smoothstep( 0.03, 0.11, abs( ao - 0.3 ) ), 0.6 * ( 1.0 - smoothstep( 0.03, 0.1, abs( ao - 0.64 ) ) ) );
+		float ridge = max( smoothstep( 0.8, 0.97, ao ), 1.0 - smoothstep( 0.02, 0.12, ao ) );
+		// loose stone: a dense pebble mottle, light and dark, coarser on the
+		// windrows; packed track: smoother, darker, a little browner
+		float peb = n2 * 0.6 + n1 * 0.4;
+		float loose = ( 0.7 + 0.9 * peb * peb ) * ( 0.85 + 0.3 * n3 ) * ( 1.0 + 0.22 * ridge );
+		float packed = ( 0.6 + 0.16 * n1 ) * ( 0.9 + 0.16 * n3 );
+		vec3 gravel = vec3( 0.13 ) * mix( vec3( loose ), vec3( packed ) * vec3( 0.98, 0.94, 0.86 ), trk * 0.9 );
+		vec3 grass = vec3( ( 0.55 + 0.7 * n2 ) * ( 0.75 + 0.5 * n3 ) );
+		sampledDiffuseColor.rgb = mix( sampledDiffuseColor.rgb, gravel, gS );
+		sampledDiffuseColor.rgb = mix( sampledDiffuseColor.rgb, grass, gG );
+	}
+`;
     sh.fragmentShader = 'uniform sampler2D walkMap;\nuniform sampler2D walkNormal;\nuniform sampler2D walkRough;\nvarying float vSurf;\n'
       + sh.fragmentShader
         .replace('#include <map_fragment>', THREE.ShaderChunk.map_fragment.replace('texture2D( map, vMapUv )',
-          pick('texture2D( map, vMapUv )', 'texture2D( walkMap, vMapUv )')))
+          pick('texture2D( map, vMapUv )', 'texture2D( walkMap, vMapUv )'))
+          .replace('diffuseColor *= sampledDiffuseColor;', country + '\tdiffuseColor *= sampledDiffuseColor;'))
         .replace('#include <roughnessmap_fragment>', THREE.ShaderChunk.roughnessmap_fragment.replace('texture2D( roughnessMap, vRoughnessMapUv )',
-          pick('texture2D( roughnessMap, vRoughnessMapUv )', 'texture2D( walkRough, vRoughnessMapUv )')))
+          pick('texture2D( roughnessMap, vRoughnessMapUv )', 'texture2D( walkRough, vRoughnessMapUv )'))
+          .replace('roughnessFactor *= texelRoughness.g;', `roughnessFactor *= mix( texelRoughness.g, 0.97, ${LOOSE} );`))
         .replace('#include <normal_fragment_maps>', THREE.ShaderChunk.normal_fragment_maps
           .replace('vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;',
             `vec3 mapN = ${pick('texture2D( normalMap, vNormalMapUv )', 'texture2D( walkNormal, vNormalMapUv )')}.xyz * 2.0 - 1.0;`)
-          .replace('mapN.xy *= normalScale;', 'mapN.xy *= normalScale * mix( 1.0, 0.8 / 0.9, step( 0.5, vSurf ) );'));
+          .replace('mapN.xy *= normalScale;', `mapN.xy *= normalScale * mix( 1.0, 0.8 / 0.9, ${WK} ) * mix( 1.0, 1.5, step( 1.5, vSurf ) - step( 3.5, vSurf ) ) * mix( 1.0, 0.5, step( 3.5, vSurf ) );`));
   };
   m.customProgramCacheKey = () => 'roadWalk';
   return m;
@@ -2036,7 +2129,7 @@ ${FALL ? `
         const a = city.nodes[r.a], b = city.nodes[r.b];
         // the street's footways too: stopping at the carriageway kerb left
         // the pavement over the dug mouth, and walkers fell in
-        const sw = r.cls === 'art' ? 3.2 : r.cls === 'st' || r.cls === 'res' ? 2.6 : 0;
+        const sw = walkWidthOf(r);
         if (distToSeg(x, z, a.x, a.z, b.x, b.z).d > r.hw + sw) continue;
         if (Math.abs(r.dx * be.dx + r.dz * be.dz) > Math.cos(Math.PI / 6)) continue;
         return { r, sw };
@@ -2237,7 +2330,7 @@ ${FALL ? `
                 const r2 = city.edges[ei];
                 if (r2.tunnel || r2.elev || r2.prof || r2.a === m.ni || r2.b === m.ni) continue;
                 if (Math.abs(r2.dx * e.dx + r2.dz * e.dz) > Math.cos(Math.PI / 6)) continue;
-                const sw2 = r2.cls === 'art' ? 3.2 : r2.cls === 'st' || r2.cls === 'res' ? 2.6 : 0;
+                const sw2 = walkWidthOf(r2);
                 const a2 = city.nodes[r2.a], b2 = city.nodes[r2.b];
                 prot.push([a2.x, a2.z, b2.x, b2.z, r2.hw + sw2 + 1]);
               }
@@ -4868,6 +4961,7 @@ float frLine(float o, float fw, float c, float w) {
       }
       yield; this._yt = performance.now();
       yield* this.meshProps(flat, glow, ch, cx, cz);
+      if (ch !== NO_CITY_CHUNK) this.lotLights(flat, glow, cx, cz);
       yield; this._yt = performance.now();
       yield* plantTrees(this, flat, ch, cx, cz, 1, ch === NO_CITY_CHUNK);
       this._occ = null;
@@ -5459,7 +5553,7 @@ float frLine(float o, float fw, float c, float w) {
           const l = this.city.lidAt(x, z);
           return l !== null ? l + LID_TOP + (MARK_Y - ROAD_LIFT) + bias : G.terrainHeight(x, z) + MARK_Y + bias;
         }
-        : (x, z, t) => G.terrainHeight(x, z) + MARK_Y + bias + rampY(t);
+        : (x, z, t) => G.terrainHeight(x, z) + MARK_Y + bias + rampY(t) + (e.rural ? RU.RAISE * this.city.ruralRaise(e, t * e.len) : 0);
     const W = 0.06;                             // half-width of a painted line
     const WHITE = [0.94, 0.93, 0.88];
     const YELLOW = [0.88, 0.72, 0.2];
@@ -5504,7 +5598,7 @@ float frLine(float o, float fw, float c, float w) {
     // stopping metres short of it.
     const trim = (ni) => {
       const n = this.city.nodes[ni];
-      if (n.prof && !n.anchor) return 0;
+      if ((n.prof && !n.anchor) || n.rpass) return 0;
       const A = ei != null ? this.junctionArm(ni, ei) : null;
       return A ? A.pm : this.nodeRadius(ni);
     };
@@ -5515,7 +5609,7 @@ float frLine(float o, float fw, float c, float w) {
     // Edge lines, set in from the kerb by about a shoulder's width -- the
     // TRIMMED kerb on a graded road stood off a lower neighbour, or the line
     // runs out over the wall.
-    const inset = Math.min(0.7, hw * 0.06);
+    const inset = e.rural ? 0.22 : Math.min(0.7, hw * 0.06);
     const sideW = (m, s) => {
       // a lid barrier inside the carriageway is its kerb (buildLids' e.barW)
       if (!e.tw) return e.barW ? Math.min(hw, e.barW[s]) : hw;
@@ -6489,7 +6583,7 @@ float frLine(float o, float fw, float c, float w) {
    */
   meshTrenchWalls(flat, e, a, b, ei) {
     if (!this.city.underpassDepth) return;
-    const sw = e.cls === 'art' ? 3.2 : e.cls === 'st' || e.cls === 'res' ? 2.6 : 0;
+    const sw = walkWidthOf(e);
     const w = e.hw + sw + 0.3;
     const px = -e.dz, pz = e.dx;
     const n = Math.max(2, Math.round(e.len / 4));
@@ -6695,6 +6789,9 @@ float frLine(float o, float fw, float c, float w) {
     const hw = e.hw;
     const U1 = (hw * 2) / ROAD_TILE;
     const px = -e.dz, pz = e.dx;
+    // A country road through a pass-through node (rural.js) has no junction
+    // there: its ends are mitred onto the bisector with the next strip.
+    const MA = e.rural ? this.ruralMitre(ei, e.a) : null, MB = e.rural ? this.ruralMitre(ei, e.b) : null;
     // Segment length follows the gradient. A flat street is fine in 16 m
     // pieces, but a road quad is a CHORD and its error grows with the square of
     // its length: McGraw Street on Queen Anne drops 5.4 m across one 18 m
@@ -6766,7 +6863,11 @@ float frLine(float o, float fw, float c, float w) {
     // stacked samples in tools/junctions.mjs against 15.
     const climb = NODE_Y - 0.016 - ROAD_Y - bias;
     const rampY = (t) => (mA > 0 || mB > 0 ? climb * mouthRamp(t * e.len, e.len, mA, mB) : 0);
-    const yAt = (x, z, t, ro) => G.terrainHeight(x, z) + ROAD_Y + bias + (ro ? 0 : rampY(t));
+    // a country road stands on its embankment (rural.js RAISE, 0 by each
+    // junction) and a gravel one is crowned
+    const raiseY = e.rural ? (t) => RU.RAISE * this.city.ruralRaise(e, t * e.len) : () => 0;
+    const crownY = e.gravel ? (o) => RU.CROWN * (1 - (o / hw) * (o / hw)) : () => 0;
+    const yAt = (x, z, t, ro, o = hw) => G.terrainHeight(x, z) + ROAD_Y + bias + (ro ? 0 : rampY(t)) + raiseY(t) + crownY(o);
     // Subdivide ACROSS the width as well as along the length.
     //
     // The quad used to span the full carriageway with terrain sampled only at
@@ -6781,7 +6882,7 @@ float frLine(float o, float fw, float c, float w) {
     // over about three lanes gets at least three cells. Three is the cheapest
     // count that can put a bright band down the middle and grime at both kerbs;
     // four looked no better and cost 40 % more road triangles.
-    const across = Math.max(hw > 4.5 ? 3 : 1, Math.round((hw * 2) / 8));
+    const across = Math.max(e.gravel ? 2 : hw > 4.5 ? 3 : 1, Math.round((hw * 2) / 8));
     /**
      * Traffic polishes the middle of a carriageway and grime collects at its
      * edges. Without it the asphalt is one flat value from kerb to kerb --
@@ -6794,7 +6895,7 @@ float frLine(float o, float fw, float c, float w) {
       const f = Math.min(1, Math.abs(o) / Math.max(hw, 0.01));
       const polish = 1 + 0.12 * (1 - f * f);        // worn smooth down the middle
       const edge = 1 - 0.30 * Math.max(0, f - 0.55) / 0.45;  // grime at the kerb
-      const k = polish * edge;
+      const k = e.gravel ? 1 : polish * edge;   // (gravel: the shader draws its own wear)
       return [col[0] * k, col[1] * k, col[2] * k];
     };
     // Acute corners clip this strip against a neighbour's kerb (citygen
@@ -6834,7 +6935,9 @@ float frLine(float o, float fw, float c, float w) {
         const o0 = hw - (hw * 2 * k) / across;
         const o1 = hw - (hw * 2 * (k + 1)) / across;
         const u0 = (hw - o0) / ROAD_TILE, u1 = (hw - o1) / ROAD_TILE;
-        const P = (t, o) => [lerp(a.x, b.x, t) + px * o, lerp(a.z, b.z, t) + pz * o];
+        const P = (t, o) => (MA && t <= 0 ? [a.x + MA[0] * o, a.z + MA[1] * o]
+          : MB && t >= 1 ? [b.x + MB[0] * o, b.z + MB[1] * o]
+            : [lerp(a.x, b.x, t) + px * o, lerp(a.z, b.z, t) + pz * o]);
         if (clips.length) {
           let cell = [[t0, o0], [t0, o1], [t1, o1], [t1, o0]], cut = false;
           for (const c of clips) {
@@ -6858,8 +6961,9 @@ float frLine(float o, float fw, float c, float w) {
             if (cell.length >= 3) {
               const vi = cell.map(([t, o]) => {
                 const [x, z] = P(t, o), w = wear(o);
-                return road.vert(x, yAt(x, z, t, ro), z, 0, 1, 0, (hw - o) / ROAD_TILE, v0 + ((t - t0) * e.len) / ROAD_TILE, w[0], w[1], w[2]);
+                return road.vert(x, yAt(x, z, t, ro, o), z, 0, 1, 0, (hw - o) / ROAD_TILE, v0 + ((t - t0) * e.len) / ROAD_TILE, w[0], w[1], w[2]);
               });
+              if (e.gravel) surfMark(road, vi[0], (i) => gravelSurf(((road.P[i * 3] - a.x) * px + (road.P[i * 3 + 2] - a.z) * pz) / hw));
               for (let i = 1; i + 1 < vi.length; i++) {
                 const P3 = road.P, q0 = vi[0], q1 = vi[i], q2 = vi[i + 1];
                 const ux = P3[q1 * 3] - P3[q0 * 3], uz = P3[q1 * 3 + 2] - P3[q0 * 3 + 2];
@@ -6874,20 +6978,27 @@ float frLine(float o, float fw, float c, float w) {
         }
         const [ax, az] = P(t0, o0), [bx, bz] = P(t0, o1);
         const [cx, cz] = P(t1, o1), [dx, dz] = P(t1, o0);
+        const q0 = road.nv;
         road.quad(
-          [ax, yAt(ax, az, t0, ro), az],
-          [bx, yAt(bx, bz, t0, ro), bz],
-          [cx, yAt(cx, cz, t1, ro), cz],
-          [dx, yAt(dx, dz, t1, ro), dz],
+          [ax, yAt(ax, az, t0, ro, o0), az],
+          [bx, yAt(bx, bz, t0, ro, o1), bz],
+          [cx, yAt(cx, cz, t1, ro, o1), cz],
+          [dx, yAt(dx, dz, t1, ro, o0), dz],
           [0, 1, 0], [u0, v0, u1, v0, u1, v1, u0, v1],
           [wear(o0), wear(o1), wear(o1), wear(o0)]
         );
+        // gravel draws in the road material's gravel mode, its place across
+        // the road coded in the flag (the wheel tracks and windrows)
+        if (e.gravel) {
+          surfMark(road, q0, (i) => gravelSurf(((road.P[i * 3] - a.x) * px + (road.P[i * 3 + 2] - a.z) * pz) / hw));
+        }
       }
     }
     if (!e.gravel) this.meshRoadMarks(flat, e, a, b, ei);
+    if (e.rural && lod === 1) this.meshDitch(road, flat, e, a, b, ei, MA, MB);
     this.meshTrenchWalls(flat, e, a, b, ei);
-    if (lod === 1 && (e.cls === 'st' || e.cls === 'art' || e.cls === 'res')) {
-      const sw = e.cls === 'art' ? 3.2 : 2.6;
+    if (lod === 1 && walkWidthOf(e) > 0) {
+      const sw = walkWidthOf(e);
       for (const sg of [-1, 1]) {
         // Stop short of each intersection: a strip run end to end would march
         // straight across the cross street. The corner is filled by meshNode,
@@ -7148,6 +7259,188 @@ float frLine(float o, float fw, float c, float w) {
    * carriageway (roadLift gives a carriageway no verge lift either), into
    * water, or into a cutting.
    */
+  /**
+   * A country road's sides (rural.js): gravel shoulder, ditch, berm and the
+   * fade to the field, both sides, as bands of quads along the edge whose
+   * heights are citygen's `ruralSide` -- the lift roadLift answers with, so
+   * the drawn ditch and the driven one are the same surface. Into the road
+   * mesh (one draw): the shoulder in its gravel mode, the grass in its grass
+   * mode. Where a lane, a field entrance or a path crosses, the fill is
+   * gravel across the ditch, with a culvert's two ends showing; a farm's lane
+   * runs on to the house, with a mailbox at the road.
+   */
+  meshDitch(road, flat, e, a, b, ei, MA, MB) {
+    const city = this.city, hw = e.hw, px = -e.dz, pz = e.dx;
+    const C = city.ruralChain(e);
+    const T = G.terrainHeight, M = RU.PROF_M;
+    const shoulder = e.gravel ? GRAVEL_TINT : [2.15, 1.95, 1.5];
+    const laneCol = [2.35, 2.05, 1.5];
+    const sAt = (c) => (c - e.rs0) * e.rsd;
+    const cuts = [0, e.len];
+    const n = Math.max(1, Math.round(e.len / 8));
+    for (let i = 1; i < n; i++) cuts.push((e.len * i) / n);
+    const xs = [];
+    for (const X of C.xing) {
+      const s = sAt(X.c);
+      if (s < -X.hw - 3 || s > e.len + X.hw + 3) continue;
+      xs.push([X, s]);
+      for (const d of [-X.hw - 1.2, -X.hw, X.hw, X.hw + 1.2]) if (s + d > 0.05 && s + d < e.len - 0.05) cuts.push(s + d);
+    }
+    cuts.sort((p, q) => p - q);
+    const S = [cuts[0]];
+    for (let i = 1; i < cuts.length; i++) if (cuts[i] - S[S.length - 1] > 0.08) S.push(cuts[i]);
+    if (e.len - S[S.length - 1] > 1e-6) S[S.length - 1] = e.len;
+    const pos = (s, sg, m) => {
+      const w = (hw + m) * sg;
+      if (s <= 0 && MA) return [a.x + MA[0] * w, a.z + MA[1] * w];
+      if (s >= e.len && MB) return [b.x + MB[0] * w, b.z + MB[1] * w];
+      return [a.x + e.dx * s + px * w, a.z + e.dz * s + pz * w];
+    };
+    // the grass: lush and dark in the bottom, straw and green on the slopes,
+    // the field's own colour (the terrain's drawn mean) at the outer edge
+    // (October: the mown slope gone to straw and green, the bottom rank and
+    // dark with wet, the berm's uncut grass pale)
+    const SLOPE = [0.17, 0.17, 0.08], BOTTOM = [0.06, 0.085, 0.035], BERMC = [0.2, 0.19, 0.1];
+    const jit = (c, x, z) => { const h = 0.82 + 0.36 * hash2(Math.round(x * 0.7), Math.round(z * 0.7)); return [c[0] * h, c[1] * h, c[2] * (0.9 + 0.2 * h)]; };
+    const toe = (x, z) => { const g = this.groundTint(x, z, T(x, z)); return [g[0] * GROUND_MEAN, g[1] * GROUND_MEAN, g[2] * GROUND_MEAN]; };
+    for (const sg of [1, -1]) {
+      const csg = sg * e.rsd;
+      const mine = xs.filter(([X]) => X.sg === csg);
+      const fillAt = (s) => { for (const [X, sx] of mine) if (Math.abs(s - sx) < X.hw) return [X, sx]; return null; };
+      // vertex grid: S x M
+      const V = S.map((s) => M.map((m) => {
+        const [x, z] = pos(s, sg, m);
+        return [x, T(x, z) + city.ruralSide(e, Math.min(e.len, Math.max(0, s)), sg, m), z];
+      }));
+      for (let i = 0; i + 1 < S.length; i++) {
+        const sm = (S[i] + S[i + 1]) / 2, fill = fillAt(sm);
+        for (let k = 0; k < 5; k++) {
+          const [mx, mz] = pos(sm, sg, (M[k] + M[k + 1]) / 2);
+          if (!G.isBuildable(mx, mz) || city.onRoad(mx, mz, 0, false)) continue;
+          const p0 = V[i][k], p1 = V[i][k + 1], p2 = V[i + 1][k + 1], p3 = V[i + 1][k];
+          // face normal (up)
+          const ux = p2[0] - p0[0], uy = p2[1] - p0[1], uz = p2[2] - p0[2];
+          const vx = p1[0] - p3[0], vy = p1[1] - p3[1], vz = p1[2] - p3[2];
+          let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+          if (ny < 0) { nx = -nx; ny = -ny; nz = -nz; }
+          const nl = Math.hypot(nx, ny, nz) || 1;
+          const nrm = [nx / nl, ny / nl, nz / nl];
+          const uv = [M[k] / ROAD_TILE, S[i] / ROAD_TILE, M[k + 1] / ROAD_TILE, S[i] / ROAD_TILE,
+            M[k + 1] / ROAD_TILE, S[i + 1] / ROAD_TILE, M[k] / ROAD_TILE, S[i + 1] / ROAD_TILE];
+          const q0 = road.nv;
+          if (fill && k < 4 && fill[0].kind === 'drive') {
+            // a farm lane's fill across the ditch: gravel, its tracks along the lane
+            const [X, sx] = fill;
+            road.quad(p0, p1, p2, p3, nrm, uv, laneCol);
+            surfMark(road, q0, (j) => gravelSurf((((road.P[j * 3] - a.x) * e.dx + (road.P[j * 3 + 2] - a.z) * e.dz) - sx) / X.hw));
+          } else if (fill && k < 4) {
+            // a field entrance or a path: grass worn to the dirt
+            road.quad(p0, p1, p2, p3, nrm, uv, jit(fill[0].kind === 'field' ? [0.15, 0.145, 0.075] : SLOPE, p0[0], p0[2]));
+            surfMark(road, q0, () => SURF_GRASS);
+          } else if (k === 0 && !fill) {
+            road.quad(p0, p1, p2, p3, nrm, uv, shoulder);
+            surfMark(road, q0, () => gravelSurf(sg));
+          } else {
+            const cm = (m, p) => (m > M[4] + 0.01 ? toe(p[0], p[2]) : jit(m <= M[1] + 0.01 ? SLOPE : m <= M[3] + 0.01 ? BOTTOM : BERMC, p[0], p[2]));
+            road.quad(p0, p1, p2, p3, nrm, uv, [cm(M[k], p0), cm(M[k + 1], p1), cm(M[k + 1], p2), cm(M[k], p3)]);
+            surfMark(road, q0, () => SURF_GRASS);
+          }
+        }
+      }
+      // what belongs to this edge alone: each crossing is drawn by the edge
+      // its centre lies on
+      for (const [X, sx] of mine) {
+        if (sx < 0 || sx >= e.len || X.kind === 'path') continue;
+        // the culvert's two ends, out of the fill's slopes
+        const mc = M[2] + RU.DB / 2;
+        for (const dd of [-1, 1]) {
+          const s = sx + dd * (X.hw + 0.55);
+          if (s < 0 || s > e.len) continue;
+          const [cx, cz] = pos(s, sg, mc);
+          if (!G.isBuildable(cx, cz)) continue;
+          this.meshCulvert(flat, cx, T(cx, cz) + RU.BOT + 0.24, cz, e.dx * dd, e.dz * dd);
+        }
+        // the lane beyond the ditch
+        if (X.lane && X.kind === 'drive') this.meshLane(road, X.lane, 1.7, laneCol);
+        // a farm's mailbox and its civic number at the road
+        if (X.kind === 'drive') {
+          const s = sx - (X.hw + 0.9) * e.rsd * csg * sg;
+          if (s > 0 && s < e.len) {
+            const [x, z] = pos(s, sg, M[1] + 0.25);
+            const y = T(x, z) + city.ruralSide(e, s, sg, M[1] + 0.25);
+            const rot = Math.atan2(e.dz, e.dx);
+            const h = hash2(Math.round(x), Math.round(z));
+            const post = [0.3, 0.24, 0.17];
+            const f0 = flat.ni;
+            flat.box(x, y - 0.1, z, 0.09, 1.12, 0.09, rot, post);
+            flat.box(x, y + 1.0, z, 0.26, 0.04, 0.5, rot, post);
+            const boxCol = h < 0.5 ? [0.04, 0.04, 0.045] : h < 0.75 ? [0.42, 0.43, 0.44] : [0.36, 0.05, 0.04];
+            flat.box(x, y + 1.04, z, 0.22, 0.2, 0.46, rot, boxCol);
+            flat.prism(x, y + 1.24, z, 0.11, 0.02, 6, boxCol);
+            flat.box(x + px * sg * 0.12, y + 1.1, z + pz * sg * 0.12, 0.02, 0.2, 0.06, rot, [0.75, 0.06, 0.04]);
+            // the rural civic number: a green blade (Wellington County's, which Woolwich
+            // follows), white figures, on its own post
+            const bx = x + e.dx * 0.55, bz = z + e.dz * 0.55;
+            flat.box(bx, y - 0.1, bz, 0.06, 1.25, 0.06, rot, [0.5, 0.52, 0.54]);
+            flat.box(bx, y + 1.15, bz, 0.03, 0.18, 0.5, rot, [0.02, 0.17, 0.06]);
+            for (const k of [-0.13, 0, 0.13]) {
+              flat.box(bx + e.dx * k + px * 0.02, y + 1.19, bz + e.dz * k + pz * 0.02, 0.035, 0.1, 0.07, rot, [0.85, 0.86, 0.86]);
+              flat.box(bx + e.dx * k - px * 0.02, y + 1.19, bz + e.dz * k - pz * 0.02, 0.035, 0.1, 0.07, rot, [0.85, 0.86, 0.86]);
+            }
+            this.city.addObstacle(this._ck, x, z, 0.2);
+            if (this._fell) this._fell.push(x, z, f0, flat.ni);
+          }
+        }
+      }
+    }
+  }
+
+  /** A corrugated culvert's end at (x, y, z), its axis along (ax, az) out of the fill. */
+  meshCulvert(flat, x, y, z, ax, az) {
+    const R = 0.24, L = 0.7, N = 10, px = -az, pz = ax;
+    const steel = [0.2, 0.21, 0.2], dark = [0.015, 0.015, 0.015];
+    const ring = (r, d) => {
+      const out = [];
+      for (let j = 0; j <= N; j++) {
+        const t = (j / N) * Math.PI * 2, c = Math.cos(t), s = Math.sin(t);
+        out.push([x + px * c * r - ax * d, y + s * r, z + pz * c * r - az * d, c, s]);
+      }
+      return out;
+    };
+    const o0 = ring(R, 0), o1 = ring(R, L), i0 = ring(R * 0.86, 0.02);
+    for (let j = 0; j < N; j++) {
+      const A = o0[j], B = o0[j + 1], Cc = o1[j + 1], D = o1[j];
+      const nm = [px * (A[3] + B[3]) / 2, (A[4] + B[4]) / 2, pz * (A[3] + B[3]) / 2];
+      flat.quad([A[0], A[1], A[2]], [B[0], B[1], B[2]], [Cc[0], Cc[1], Cc[2]], [D[0], D[1], D[2]], nm, ZERO_UV, steel);
+      // the lip, and the dark inside
+      const I = i0[j], J = i0[j + 1];
+      flat.quad([A[0], A[1], A[2]], [B[0], B[1], B[2]], [J[0], J[1], J[2]], [I[0], I[1], I[2]], [ax, 0, az], ZERO_UV, steel);
+      flat.tri([I[0], I[1], I[2]], [J[0], J[1], J[2]], [x - ax * 0.05, y, z - az * 0.05], [ax, 0, az], dark);
+    }
+  }
+
+  /** A farm lane or a field entrance beyond the ditch: gravel on the ground. */
+  meshLane(road, L, lhw, col) {
+    const [x0, z0, x1, z1] = L, T = G.terrainHeight;
+    const len = Math.hypot(x1 - x0, z1 - z0);
+    if (len < 1) return;
+    const dx = (x1 - x0) / len, dz = (z1 - z0) / len, px = -dz, pz = dx;
+    const n = Math.max(1, Math.round(len / 8));
+    let prev = null;
+    for (let i = 0; i <= n; i++) {
+      const t = i / n, x = x0 + (x1 - x0) * t, z = z0 + (z1 - z0) * t;
+      const l = [x + px * lhw, z + pz * lhw], r = [x - px * lhw, z - pz * lhw];
+      const cur = [[l[0], T(l[0], l[1]) + 0.06, l[1]], [r[0], T(r[0], r[1]) + 0.06, r[1]], t * len];
+      if (prev && !this.city.onRoad(x - dx * 4, z - dz * 4, 0, false) && G.isBuildable(x, z)) {
+        const q0 = road.nv;
+        road.quad(prev[0], prev[1], cur[1], cur[0], [0, 1, 0],
+          [0, prev[2] / ROAD_TILE, (lhw * 2) / ROAD_TILE, prev[2] / ROAD_TILE, (lhw * 2) / ROAD_TILE, cur[2] / ROAD_TILE, 0, cur[2] / ROAD_TILE], col);
+        surfMark(road, q0, (j) => gravelSurf(((road.P[j * 3] - x0) * px + (road.P[j * 3 + 2] - z0) * pz) / lhw));
+      }
+      prev = cur;
+    }
+  }
+
   meshVerge(flat, o0x, o0z, o1x, o1z, ox, oz) {
     const v0x = o0x + ox * VERGE, v0z = o0z + oz * VERGE;
     const v1x = o1x + ox * VERGE, v1z = o1z + oz * VERGE;
@@ -7216,6 +7509,29 @@ float frLine(float o, float fw, float c, float w) {
     if (this._jf.size >= 16000) trimOldest(this._jf, 8000);
     this._jf.set(ni, J);
     return J;
+  }
+
+  /**
+   * A country road's offset vector at pass-through node `ni` (rural.js), or
+   * null at any other node: the bisector of edge `ei` and the strip it runs
+   * on into, scaled so that its component along `ei`'s own perpendicular
+   * (-dz, dx) is 1 -- `node + M * o` is the point o metres across, on the
+   * mitre line both strips share.
+   */
+  ruralMitre(ei, ni) {
+    const n = this.city.nodes[ni];
+    if (!n.rpass) return null;
+    const e = this.city.edges[ei], o = this.city.edges[n.e[0] === ei ? n.e[1] : n.e[0]];
+    // the direction of travel through the node, a -> b along e
+    const odx = o.a === ni ? o.dx : -o.dx, odz = o.a === ni ? o.dz : -o.dz;   // out of the node along o
+    const atA = e.a === ni;
+    // at e's a end travel arrives along -o_out; at its b end it leaves along o_out
+    let tx = e.dx + (atA ? -odx : odx), tz = e.dz + (atA ? -odz : odz);
+    const L = Math.hypot(tx, tz) || 1;
+    tx /= L; tz /= L;
+    const mx = -tz, mz = tx, k = mx * -e.dz + mz * e.dx;
+    if (k < 0.5) return null;
+    return [mx / k, mz / k];
   }
 
   /** Edge `ei`'s arm of a mouth-and-fillet junction at `ni`, or null. */
@@ -7510,6 +7826,122 @@ float frLine(float o, float fw, float c, float w) {
     return best;
   }
 
+  /**
+   * AUTO KW: the back yard's wood privacy fence, 1.8 m of cedar boards --
+   * between back yards it is everywhere in Waterloo Region, and from the air
+   * the fence lines are what draw the lots. There are no parcels, so the
+   * chunk's 2 m occupancy raster finds them: the back line halfway to the
+   * house behind (drawn by the one of the two with the lower seed, so it is
+   * one fence), 3 m short of a street the yard backs onto (an arterial's
+   * reverse frontage), 13 m out over open ground; the right-hand side line
+   * halfway to the next house (each house draws its right side only, so a
+   * row gets one fence between each pair), and a gate run across each side
+   * yard a metre behind the front of the back wall. Four double-sided quads,
+   * 16 triangles, on three houses in four. Not solid.
+   */
+  _yardFence(flat, bd, fb, offF, seed) {
+    const occ = this._occ;
+    if (!occ || hash2(seed, 210) > 0.76) return;
+    const x0 = this._occX0, z0 = this._occZ0;
+    // 0 open, 1 building, 2 pavement/road, 3 off the raster
+    const at = (lx, lz) => {
+      const [x, z] = offF(lx, lz);
+      const i = Math.floor((x - x0) / OCC_C), j = Math.floor((z - z0) / OCC_C);
+      if (i < 0 || j < 0 || i >= OCC_N || j >= OCC_N) return 3;
+      const o = occ[j * OCC_N + i];
+      return o & OCC_PAVE ? 2 : o & 1 ? 1 : G.isWater(x, z) ? 2 : 0;
+    };
+    const hw = fb.w / 2, hd = fb.d / 2;
+    // the back line: probe straight back from the middle of the back wall
+    let back = 13, owner = true;
+    // (from 3.5 m out: the raster's 2 m cells round the house's own walls)
+    for (let s = 3.5; s <= 30; s += 1) {
+      const o = at(0, -hd - s);
+      if (o === 0) continue;
+      if (o === 3) { back = Math.min(13, s - 1); break; }
+      if (o === 2) { back = Math.max(2, s - 3); break; }
+      // a building: whose? the lower seed draws the shared fence
+      back = s / 2;
+      const [px, pz] = offF(0, -hd - s);
+      for (const b of this.city.buildingsNear(px, pz, 30)) {
+        if (b === bd || b.style !== 'house') continue;
+        const c = Math.cos(b.rot), sn = Math.sin(b.rot), dx = px - b.x, dz = pz - b.z;
+        if (Math.abs(dx * c + dz * sn) <= b.w / 2 + 1.2 && Math.abs(-dx * sn + dz * c) <= b.d / 2 + 1.2) { owner = bd.seed < b.seed; break; }
+      }
+      break;
+    }
+    const FS = cityStats.fences || (cityStats.fences = { yards: 0 });
+    if (back < 3) { FS.short = (FS.short || 0) + 1; return; }
+    // the side yards: how far to the next thing, each way
+    const side = (sg) => {
+      for (let s = 2.5; s <= 12; s += 1) {
+        const o = at(sg * (hw + s), -hd + 1);
+        if (o === 1) return s / 2;
+        if (o >= 2) return Math.max(0.6, s - 2);
+      }
+      return 4;
+    };
+    const gr = side(1), gl = side(-1);
+    const H = 1.8, k = hash2(seed, 211);
+    const col = k < 0.45 ? [0.42, 0.31, 0.22] : k < 0.8 ? [0.38, 0.35, 0.31] : [0.29, 0.21, 0.15];
+    const T = G.terrainHeight;
+    const run = (ax, az, bx, bz) => {
+      const A = offF(ax, az), B = offF(bx, bz);
+      const ya = T(A[0], A[1]) - 0.1, yb = T(B[0], B[1]) - 0.1;
+      const dx = B[0] - A[0], dz = B[1] - A[1], L = Math.hypot(dx, dz);
+      if (L < 0.5) return;
+      this._quad2(flat, [A[0], ya, A[1]], [B[0], yb, B[1]], [B[0], yb + H + 0.1, B[1]], [A[0], ya + H + 0.1, A[1]], [dz / L, 0, -dx / L], col);
+    };
+    const zg = -hd + 1, zb = -hd - back;
+    const xr = hw + gr, xl = -hw - gl;
+    run(hw, zg, xr, zg);                 // the right-hand gate run
+    run(-hw, zg, xl, zg);                // the left-hand gate run
+    run(xr, zg, xr, zb);                 // the right-hand side line
+    if (owner) run(xr, zb, xl, zb);      // the back line
+    FS.yards++;
+  }
+
+  /**
+   * AUTO KW: what stands on a Waterloo Region driveway. The Region's blue
+   * box and green bin (and a grey garbage cart) out at the end of it on one
+   * in four -- collection day somewhere every day -- and a portable
+   * basketball net beside the garage on one in nine, its backboard over the
+   * driveway. Vertex-coloured boxes in the chunk's flat mesh: ~40 / ~50
+   * triangles.
+   */
+  _drivewayKit(flat, fb, offF, seed, glx, gw, sd, L, yEnd, yGar) {
+    const r = hash2(seed, 220);
+    const out = sd;   // the side away from the house's middle
+    if (r < 0.25 && L >= 4) {
+      const lx = glx + out * (gw / 2 + 0.05), lz = fb.d / 2 + L - 0.7;
+      const [bx, bz] = offF(lx, lz);
+      // the green bin: a wheeled cart, its lid a shade darker
+      flat.box(bx, yEnd - 0.05, bz, 0.5, 0.9, 0.6, fb.rot, [0.12, 0.38, 0.16]);
+      flat.box(bx, yEnd + 0.85, bz, 0.54, 0.08, 0.66, fb.rot, [0.08, 0.26, 0.11]);
+      // the blue box beside it, open-topped, a few bottles in it
+      const [qx, qz] = offF(lx - out * 0.75, lz);
+      flat.box(qx, yEnd - 0.05, qz, 0.62, 0.36, 0.42, fb.rot, [0.10, 0.28, 0.66], NOTOP);
+      flat.box(qx, yEnd + 0.12, qz, 0.5, 0.16, 0.32, fb.rot, [0.72, 0.74, 0.70]);
+      if (hash2(seed, 221) < 0.55) {
+        const [gx, gz] = offF(lx + out * 0.7, lz);
+        flat.box(gx, yEnd - 0.05, gz, 0.58, 1.0, 0.68, fb.rot, [0.26, 0.27, 0.29]);
+      }
+    } else if (r > 0.89 && L >= 5) {
+      // the net at the driveway's street end, its hoop facing the garage
+      const lx = glx + out * (gw / 2 + 0.45), lz = fb.d / 2 + L - 1.2;
+      const [px, pz] = offF(lx, lz);
+      flat.box(px, yEnd - 0.05, pz, 0.7, 0.35, 1.1, fb.rot, [0.12, 0.12, 0.13]);       // the base
+      flat.box(px, yEnd + 0.3, pz, 0.12, 2.95, 0.12, fb.rot, [0.16, 0.16, 0.17], NOTOP);
+      const [ax, az] = offF(lx - out * 0.45, lz - 0.45);
+      flat.box(ax, yEnd + 3.0, az, 0.1, 0.1, 0.95, fb.rot, [0.16, 0.16, 0.17]);
+      const [kx, kz] = offF(lx - out * 0.9, lz - 0.9);
+      flat.box(kx, yEnd + 2.75, kz, 1.1, 0.75, 0.05, fb.rot, [0.9, 0.91, 0.92]);        // the backboard
+      flat.box(kx, yEnd + 2.95, kz, 0.45, 0.32, 0.06, fb.rot, [0.75, 0.2, 0.15]);
+      const [hx, hz] = offF(lx - out * 0.9, lz - 1.15);
+      flat.box(hx, yEnd + 2.9, hz, 0.46, 0.03, 0.46, fb.rot, [0.85, 0.32, 0.12]);       // the rim
+    }
+  }
+
   // --- fall: what the houses and shops put out -------------------------------
 
   /** A pumpkin record for fall.js, at house-local (lx, lz) facing the house's front. */
@@ -7709,6 +8141,9 @@ float frLine(float o, float fw, float c, float w) {
     // ground with a single street running into it -- the "road to nowhere".
     // citygen.nodeSurface() skips these too; the two have to agree.
     if (n.e.length < 2) return;
+    // nor is a country road's pass-through node (rural.js): its two strips
+    // are mitred into each other (meshRoad), and citygen builds no junction
+    if (n.rpass) return;
     // A JUNCTION IS NOT BUILT INSIDE A CUTTING, and testing only its centre is
     // not enough: a node standing just clear of the trench still paves a square
     // whose far corners reach into it, and drawn from the carved surface those
@@ -7758,8 +8193,8 @@ float frLine(float o, float fw, float c, float w) {
       // drawn surface and the lift query have to agree.
       if (e.tunnel) continue;
       if (e.hw > hw) { hw = e.hw; rot = Math.atan2(e.dx, -e.dz); }
-      if (e.cls === 'st' || e.cls === 'art' || e.cls === 'res') {
-        sw = Math.max(sw, e.cls === 'art' ? 3.2 : 2.6);
+      if (walkWidthOf(e) > 0) {
+        sw = Math.max(sw, walkWidthOf(e));
       }
     }
     if (hw <= 0) return;
@@ -8086,6 +8521,12 @@ float frLine(float o, float fw, float c, float w) {
     // grey stone/block, siding (painted), concrete/stucco, metal, glass.
     const lm = (bd.look || 0) >> 2 & 7;
     if (lm) return FAMS[[0, 2, 3, 0, 8, 4, 10, 1][lm]];
+    // The student towers round UW and Laurier and downtown Kitchener's new
+    // condos (modernTower): white and light-grey precast, a charcoal one, some
+    // window wall -- never the brown brick of the 1970s slabs, and not the
+    // deep blue curtain glass of an office tower. Their panels and accent
+    // colours are buildingDetail's (_towerPanels).
+    if (modernTower(bd)) return MODERN_FAMS[towerLook(bd).fam];
     // An apartment tower (OSM building=apartments, over ~10 storeys): the
     // student towers on Columbia, Lester, Sunview and King and the condos
     // downtown are white and grey precast with window wall (ICON, Sage, One
@@ -8134,8 +8575,12 @@ float frLine(float o, float fw, float c, float w) {
     const PAL = [[0.84, 0.78, 0.66], [0.78, 0.70, 0.60], [0.70, 0.52, 0.42], [0.80, 0.80, 0.78], [0.62, 0.58, 0.54], [0.88, 0.84, 0.74]];
     const col = tint(seed, PAL[Math.floor(hash2(seed, 801) * PAL.length)], 0.12);
     const wh = bd.h + 2 + drop;
-    // plain painted block / stucco: the facade cells all carry windows
-    flat.box(bd.x, base - drop, bd.z, bd.w, wh, bd.d, bd.rot, col, { ao: 0.25 });
+    // plain painted block / stucco: the facade cells all carry windows. No
+    // top: the far skyline (buildSkyline: every box over 1400 m2) caps this
+    // footprint at exactly bd.y + bd.h, and a roof there z-fought it in
+    // bands -- the striped tan-and-white plaza roofs. The roof is the lid
+    // below, inside the parapet and 0.3 m over the skyline's, as meshBuilding's is.
+    flat.box(bd.x, base - drop, bd.z, bd.w, wh, bd.d, bd.rot, col, { ao: 0.25, top: false });
     const c = Math.cos(bd.rot), sn = Math.sin(bd.rot);
     const off = (lx, lz) => [bd.x + lx * c - lz * sn, bd.z + lx * sn + lz * c];
     // the front: along u, out along n (both local), `len` long, at `dist` from the centre
@@ -8162,11 +8607,14 @@ float frLine(float o, float fw, float c, float w) {
     // a parapet all round, and the roof's plant
     const rt = bd.y + bd.h;
     flat.box(bd.x, rt, bd.z, bd.w + 0.25, 0.7, bd.d + 0.25, bd.rot, [col[0] * 0.9, col[1] * 0.9, col[2] * 0.9], NOTOP);
+    // the roof: white single-ply or pale gravel, as Waterloo Region's plazas are from the air
+    const rv = hash2(seed, 811) < 0.6 ? 0.86 + hash2(seed, 812) * 0.08 : 0.62 + hash2(seed, 813) * 0.1;
+    flat.box(bd.x, rt + 0.16, bd.z, bd.w + 0.1, 0.14, bd.d + 0.1, bd.rot, [rv, rv, rv * 0.98]);
     const nu = Math.min(12, Math.max(1, Math.round(bd.w * bd.d / 500)));
     for (let i = 0; i < nu; i++) {
       const [gx, gz] = off((hash2(seed, 820 + i) - 0.5) * (bd.w - 5), (hash2(seed, 840 + i) - 0.5) * (bd.d - 5));
       const k = 1.6 + hash2(seed, 860 + i) * 1.6;
-      flat.box(gx, rt, gz, k, 1.1 + hash2(seed, 880 + i), k * 0.7, bd.rot, [0.6, 0.61, 0.62]);
+      flat.box(gx, rt + 0.3, gz, k, 1.1 + hash2(seed, 880 + i), k * 0.7, bd.rot, [0.6, 0.61, 0.62]);
     }
   }
 
@@ -8388,7 +8836,7 @@ float frLine(float o, float fw, float c, float w) {
           let L = 0;
           for (let s = 1; s <= 8; s += 1) {
             const [qx, qz] = offF(glx, fb.d / 2 + s);
-            if (this.city.onRoad(qx, qz, 0.3, false) || G.isWater(qx, qz)) break;
+            if (this.city.onRoad(qx, qz, 0.3, false) || G.isWater(qx, qz) || this.city.ruralClear(qx, qz)) break;
             L = s;
           }
           if (L >= 3) {
@@ -8398,10 +8846,12 @@ float frLine(float o, float fw, float c, float w) {
             if (Math.abs(y0d - y1d) < 0.4) {
               flat.box(ax, Math.min(y0d, y1d) - 0.12, az, gw + 0.6, Math.abs(y0d - y1d) / 2 + 0.2, L, fb.rot,
                 [0.24, 0.24, 0.25], { ao: 0 });
+              this._drivewayKit(flat, fb, offF, seed, glx, gw, sd, L, y1d, y0d);
             }
           }
         }
       }
+      if (aspect < 2.6 && fb.w >= 6.5 && fb.w <= 26) this._yardFence(flat, bd, fb, offF, seed);
       if (FALL) this.fallHouse(flat, bd, seed, off, porch, form);
       if (form === 'flat') {
         this.townhome(flat, fb, seed, col, top, offF);
@@ -8863,6 +9313,9 @@ float frLine(float o, float fw, float c, float w) {
       if (h(12) < (apt ? 0.3 : 0.45)) this._balconies(flat, bd, c, h, t0, this._side(bd, (street + 2) % 4, t0.w, t0.d), floorsOf(t0, 24));
     }
 
+    // Auto KW: the new towers' panels, slab edges and accent stacks
+    if (modernTower(bd)) { this._towerPanels(flat, bd, c, h, t0, street, floorsOf(t0, 40)); note('towerPanels', street); }
+
     // --- shops: awnings over the bays, a false front ----------------------------
     if (c.plinthH > 2 && hash2(seed, 41) <= 0.55 && h(20) < 0.5 && this._awnings(flat, bd, c, h, S)) note('awnings', street);
     if (bd.style === 'lowrise' && bd.h < 9 && !glassy && c.tiers.length === 1 && h(21) < 0.28) {
@@ -8977,6 +9430,38 @@ float frLine(float o, float fw, float c, float w) {
       any = true;
     }
     return any;
+  }
+
+  /**
+   * AUTO KW: a new tower's skin (modernTower / towerLook). Precast or charcoal
+   * walls carry full-height stacks of the second panel colour at every corner;
+   * window wall carries a white slab edge at every floor. Many have one stack
+   * of coloured accent panels down the street face and its back. ~8 triangles
+   * a box, all in the chunk's flat mesh.
+   */
+  _towerPanels(flat, bd, c, h, t0, street, floors) {
+    const L = towerLook(bd), y0 = t0.y + 3.2, y1 = t0.y + t0.h - 0.4;
+    if (y1 - y0 < 8) return;
+    if (L.fam === 2) {
+      for (const y of floors) flat.box(bd.x, y - 0.3, bd.z, t0.w + 0.24, 0.32, t0.d + 0.24, bd.rot, L.panel, NOTOP);
+    } else {
+      for (let k = 0; k < 4; k++) {
+        const S = this._side(bd, k, t0.w, t0.d);
+        if (S.w < 8) continue;
+        const pw = clamp(S.w * 0.14, 1.6, 4.2);
+        // one corner of each face (the next face's other corner makes the L)
+        const [x, z] = S.off(S.w / 2 - pw / 2 + 0.1, S.d / 2 + 0.1);
+        flat.box(x, y0, z, pw, y1 - y0, 0.2, S.rot, L.panel, NOTOP);
+      }
+    }
+    if (!L.accent) return;
+    for (const k of [street, (street + 2) % 4]) {
+      const S = this._side(bd, k, t0.w, t0.d);
+      if (S.w < 10) continue;
+      const aw = clamp(S.w * 0.12, 1.4, 3.2), lx = (h(140) - 0.5) * (S.w - aw - 6);
+      const [x, z] = S.off(lx, S.d / 2 + 0.12);
+      flat.box(x, y0 + 3, z, aw, y1 - y0 - 3, 0.24, S.rot, L.accent, NOTOP);
+    }
   }
 
   /** Stacked balconies across one face: slab, underside, a glass or metal rail. */
@@ -9408,6 +9893,69 @@ float frLine(float o, float fw, float c, float w) {
    * a wire into nothing. All in the chunk's flat/glow builders: no draws.
    * Phone cost: ~170 triangles a pole with its span.
    */
+  /**
+   * AUTO KW: light standards in the big car parks. Square steel poles ~9 m
+   * on a concrete pier, a crossbar with two LED shoebox heads (the plazas,
+   * Conestoga, Fairview, the big boxes from the air and street level). On
+   * the seam between back-to-back rows of the lot's bay grid (the shader's
+   * and traffic.updateLotParked's: 2.6 m bays, 18 m modules, in the lot's
+   * frame), every 13 bays and every other module, and only where the lot
+   * carries on 20 m round the spot -- a strip mall's apron gets none. ~50
+   * triangles a pole into the chunk's flat mesh; the head glows at night.
+   */
+  lotLights(flat, glow, cx, cz) {
+    const city = this.city, seen = new Set(), x0 = cx * CHUNK, z0 = cz * CHUNK;
+    const S = cityStats.lotLights || (cityStats.lotLights = { poles: 0 });
+    const POLE = [0.36, 0.37, 0.38], PIER = [0.62, 0.61, 0.58], HEAD = [0.24, 0.25, 0.26];
+    const CURB = [0.66, 0.65, 0.62], ISLE = [0.20, 0.24, 0.12];
+    const isles = [];
+    this._lotIslands = isles; this._lotIslandsKey = this._ck;
+    for (let x = x0 + 4.5; x < x0 + CHUNK; x += 9) {
+      for (let z = z0 + 4.5; z < z0 + CHUNK; z += 9) {
+        const code = G.lotCodeAt(x, z);
+        if (!code || ((code - 1) / G.LOT_ANG | 0) !== 0) continue;   // striped parking only
+        const ang = ((code - 1) % G.LOT_ANG) / G.LOT_ANG * Math.PI;
+        const ux = Math.cos(ang), uz = Math.sin(ang);
+        const pu = x * ux + z * uz, pv = -x * uz + z * ux;
+        const iu = Math.round(pu / 33.8), iv = Math.round(pv / 36);
+        const key = code * 1e8 + iu * 1e4 + iv;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        // the island's centre: the middle of bay 13 iu, on the seam
+        const cu = iu * 33.8 + 1.3, cv = iv * 36;
+        const wx = cu * ux - cv * uz, wz = cu * uz + cv * ux;
+        if (Math.floor(wx / CHUNK) !== cx || Math.floor(wz / CHUNK) !== cz) continue;
+        let big = G.lotCodeAt(wx, wz) === code;
+        for (const [du, dv] of [[20, 0], [-20, 0], [0, 14], [0, -14]]) {
+          if (!big) break;
+          big = G.lotCodeAt(wx + du * ux - dv * uz, wz + du * uz + dv * ux) === code;
+        }
+        if (!big || city.onRoad(wx, wz, 1.5) || this.inBuilding(wx, wz, 1.5) || city.jumpClear(wx, wz)
+          || this.cutDepth(wx, wz) > 0.3 || this.inDrawnLake(wx, wz)) continue;
+        const gy = G.terrainHeight(wx, wz);
+        // the kerbed island it stands in: one bay wide, across both rows
+        // (traffic.updateLotParked leaves that bay pair empty), a tree on most
+        flat.box(wx, gy - 0.25, wz, 2.3, 0.42, 10.2, ang, CURB, NOTOP);
+        flat.box(wx, gy + 0.15, wz, 2.0, 0.03, 9.9, ang, ISLE);
+        if (hash2(Math.round(wx), Math.round(wz) + 3) < 0.6) {
+          const t = hash2(Math.round(wx) + 5, Math.round(wz)) < 0.5 ? 3 : -3;
+          isles.push([wx - uz * t, wz + ux * t]);
+        }
+        flat.box(wx, gy - 0.1, wz, 0.5, 0.9, 0.5, ang, PIER, NOTOP);
+        flat.box(wx, gy + 0.8, wz, 0.2, 8.4, 0.2, ang, POLE, NOTOP);
+        flat.box(wx, gy + 9.1, wz, 2.6, 0.12, 0.12, ang, POLE);
+        for (const sg of [-1, 1]) {
+          const hx = wx + ux * sg * 1.25, hz = wz + uz * sg * 1.25;
+          flat.box(hx, gy + 8.95, hz, 0.75, 0.16, 0.5, ang, HEAD);
+          glow.box(hx, gy + 8.93, hz, 0.6, 0.03, 0.38, ang, [1.0, 0.97, 0.9]);
+        }
+        city.addObstacle(this._ck, wx, wz, 0.35);
+        for (const t of [-3.6, 3.6]) city.addObstacle(this._ck, wx - uz * t, wz + ux * t, 1.1);
+        S.poles++;
+      }
+    }
+  }
+
   hydroLine(flat, glow, e, a, b, px, pz, hydro, onCorner, ei, inPit) {
     const city = this.city, SPAN = 40;
     // canonical direction, so both orientations of a street agree
@@ -9436,7 +9984,8 @@ float frLine(float o, float fw, float c, float w) {
       for (const ej of n.e || []) {
         if (ej === ei0) continue;
         const f = city.edges[ej];
-        if (!f || f.elev || f.prof) continue;
+        // (a country road strings its own line: rural.js, meshRuralProps)
+        if (!f || f.elev || f.prof || f.rural) continue;
         if (Math.abs(f.dx * ux + f.dz * uz) < 0.985) continue;
         const fa = city.nodes[f.a], fb = city.nodes[f.b];
         const h = hydroEdge(f, (fa.x + fb.x) / 2, (fa.z + fb.z) / 2);
@@ -9526,6 +10075,9 @@ float frLine(float o, float fw, float c, float w) {
       const a = city.nodes[e.a], b = city.nodes[e.b];
       const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
       if (!own(mx, mz)) continue;
+      // a country road has none of the city's kerbside furniture: its hydro
+      // line, fences and signs instead (rural.js)
+      if (e.rural) { this.meshRuralProps(flat, e, ei, inPit); continue; }
       const px = -e.dz, pz = e.dx;
       const spacing = e.cls === 'res' ? 34 : 30;
       const count = Math.floor(e.len / spacing);
@@ -9694,6 +10246,243 @@ float frLine(float o, float fw, float c, float w) {
     // Park trees, street trees and the rest are planted after this
     // (plantTrees, trees.js), from the same build step.
     this.meshParkFurniture(flat, cx, cz, inPit);
+  }
+
+  /**
+   * A country road's furniture (rural.js), for the stretch of its chain that
+   * edge `ei` covers -- everything is placed by CHAIN position, so it runs on
+   * evenly through the ~50 m pieces OSM cuts a concession road into:
+   *   - the hydro line: wooden poles every 46 m on one side, on the berm
+   *     behind the ditch, a crossarm, three insulators, a lower phone/cable
+   *     line, and the wires sagging between them;
+   *   - fences at the field edge past the ditch, in 150 m runs: page wire on
+   *     T-posts with a wooden post every fourth, or a cedar snake-rail fence;
+   *   - signs: yellow diamond "horse and buggy" signs in the Mennonite country,
+   *     curve warnings before a bend, a stop sign where the road meets a
+   *     bigger one.
+   * All into the chunk's flat mesh: no draw calls, a few hundred triangles a
+   * 50 m piece at most. Poles and posts are solid.
+   */
+  meshRuralProps(flat, e, ei, inPit) {
+    const city = this.city, C = city.ruralChain(e), T = G.terrainHeight, M = RU.PROF_M;
+    const cA = Math.min(e.rs0, e.rs0 + e.rsd * e.len), cB = Math.max(e.rs0, e.rs0 + e.rsd * e.len);
+    // the ground beside the chain: c along it, side sg (+1 its right), m
+    // out from the carriageway edge -> [x, y, z, P]
+    const at = (c, sg, m) => {
+      const P = RU.chainPoint(city, C, Math.max(0, Math.min(C.len, c)));
+      const E = city.edges[P.ei], w = E.hw + m;
+      const x = P.x + P.px * sg * w, z = P.z + P.pz * sg * w;
+      return [x, T(x, z) + city.ruralSide(E, P.s, sg * E.rsd, m), z, P];
+    };
+    const ok = (x, z, pad) => G.isBuildable(x, z) && !city.onRoad(x, z, pad, false) && !this.inBuilding(x, z, 0.4)
+      && !inPit(x, z) && !city.jumpClear(x, z) && !this.inDrawnLake(x, z);
+    const nearX = (c, sg, r) => C.xing.some((X) => X.sg === sg && Math.abs(X.c - c) < X.hw + r);
+    // --- the hydro line ---
+    if (C.len > 120 && C.seed > 0.06) {
+      const hs = C.seed < 0.53 ? 1 : -1, SPAN = 46, OFF = 10 + C.seed * 30, mP = M[4] + 0.7;
+      const pole = (k) => {
+        let c = k * SPAN + OFF;
+        if (nearX(c, hs, 2.5)) c += 6;
+        if (c < 8 || c > C.len - 8 || nearX(c, hs, 2.5)) return null;
+        const g = at(c, hs, mP);
+        return ok(g[0], g[2], 1.2) ? g : null;
+      };
+      for (let k = Math.max(0, Math.floor((cA - OFF) / SPAN)); k * SPAN + OFF < cB; k++) {
+        if (k * SPAN + OFF < cA) continue;
+        const g = pole(k);
+        if (!g) continue;
+        const nx = g[3].px, nz = g[3].pz;   // across the road: the crossarm
+        const pts = this.meshPole(flat, g[0], g[1], g[2], nx, nz, hash2(k, C.id) < 0.12 && nearX(k * SPAN + OFF, hs, 40));
+        const n = pole(k + 1);
+        if (!n) continue;
+        const q = this.poleAttach(n[0], n[1], n[2], n[3].px, n[3].pz);
+        for (let w = 0; w < pts.length; w++) this.meshWire(flat, pts[w], q[w], w < 3 ? 0.55 : 0.4);
+      }
+    }
+    // --- fences at the field edge ---
+    if (C.len > 90) {
+      const STEP = 3.5, mF = RU.RW + 0.5;
+      for (const sg of [1, -1]) {
+        let prev = null, prevC = -1;
+        for (let c = Math.ceil(cA / STEP) * STEP; c < cB + STEP; c += STEP) {
+          const blk = Math.floor(c / 150);
+          const has = hash2(C.id * 7 + sg + 5, blk) < 0.5 && c > 22 && c < C.len - 22 && !nearX(c, sg, 2.5);
+          if (!has) { prev = null; continue; }
+          const rail = hash2(C.id * 3 + sg, blk + 77) < 0.22;
+          const zig = rail ? (Math.round(c / STEP) % 2 ? 0.45 : -0.45) : 0;
+          const g = at(c, sg, mF + zig);
+          if (!ok(g[0], g[2], 0.6) || G.greenKind(g[0], g[2]) === G.GREEN_WOOD) { prev = null; continue; }
+          const k = Math.round(c / STEP);
+          if (c < cB) {
+            if (!rail) {
+              if (k % 4 === 0) flat.prism(g[0], g[1] - 0.1, g[2], 0.07, 1.42, 5, [0.3, 0.25, 0.19]);
+              else flat.box(g[0], g[1] - 0.1, g[2], 0.045, 1.32, 0.045, 0, [0.13, 0.2, 0.12]);
+              city.addObstacle(this._ck, g[0], g[2], 0.12);
+            }
+            if (prev && Math.abs(c - prevC - STEP) < 0.01) {
+              if (rail) {
+                // the snake rail: four split rails a panel, panels zigzagging
+                const dx = g[0] - prev[0], dz = g[2] - prev[2], L = Math.hypot(dx, dz) + 0.35;
+                const rot = Math.atan2(dz, dx), mx = (g[0] + prev[0]) / 2, mz = (g[2] + prev[2]) / 2, my = (g[1] + prev[1]) / 2;
+                for (let r = 0; r < 4; r++) flat.box(mx, my + 0.12 + r * 0.27 + (k % 2) * 0.1, mz, L, 0.11, 0.1, rot, r % 2 ? [0.4, 0.37, 0.32] : [0.34, 0.31, 0.27]);
+                city.addObstacle(this._ck, mx, mz, 0.2);
+              } else {
+                // page wire: strands between the posts
+                for (const h of [0.3, 0.72, 1.18]) this.meshWire(flat, [prev[0], prev[1] + h, prev[2]], [g[0], g[1] + h, g[2]], 0.01, h > 1 ? 0.02 : 0.05, [0.2, 0.2, 0.19]);
+              }
+            }
+          }
+          prev = g; prevC = c;
+        }
+      }
+    }
+    // --- signs ---
+    const sign = (c, sg, kind, turn) => {
+      if (c < cA || c >= cB || c < 4 || c > C.len - 4) return;
+      const g = at(c, sg, M[1] + 0.55);
+      if (!ok(g[0], g[2], 0.5) || nearX(c, sg, 1.5)) return;
+      const P = g[3];
+      // it faces the traffic coming along its side: on the right, toward the
+      // driver (+1 side faces travel toward +c, so it faces -dir)
+      this.meshRuralSign(flat, g[0], g[1], g[2], -P.dx * sg, -P.dz * sg, kind, turn);
+    };
+    const P0 = RU.chainPoint(city, C, C.len / 2);
+    if (RU.mennoniteCountry(P0.x, P0.z) && C.len > 500) {
+      for (let c = 260 + C.seed * 300; c < C.len - 120; c += 1300) { sign(c, 1, 'buggy'); sign(c + 35, -1, 'buggy'); }
+    }
+    if (!C.bends) {
+      C.bends = [];
+      const dir = (c) => { const P = RU.chainPoint(city, C, c); return Math.atan2(P.dz, P.dx); };
+      let run = null;
+      for (let c = 40; c < C.len - 40; c += 15) {
+        let d = dir(c + 35) - dir(c - 35);
+        while (d > Math.PI) d -= 2 * Math.PI;
+        while (d < -Math.PI) d += 2 * Math.PI;
+        if (Math.abs(d) > 0.42) { if (!run) run = { c0: c, c1: c, d }; else { run.c1 = c; if (Math.abs(d) > Math.abs(run.d)) run.d = d; } }
+        else if (run) { C.bends.push({ c: (run.c0 + run.c1) / 2, c0: run.c0, c1: run.c1, d: run.d }); run = null; }
+      }
+      if (run) C.bends.push({ c: (run.c0 + run.c1) / 2, c0: run.c0, c1: run.c1, d: run.d });
+    }
+    for (const B of C.bends) {
+      // turning toward +x of the travel direction's right? d > 0 turns from
+      // +x toward +z, i.e. to the RIGHT of a driver going +c
+      sign(B.c0 - 95, 1, 'curve', B.d > 0 ? 1 : -1);
+      sign(B.c1 + 95, -1, 'curve', B.d > 0 ? -1 : 1);
+    }
+    // a stop sign where this road meets a bigger one (or, on an even crossing,
+    // half the time: the townships' two-way stops)
+    const rank = (E) => (E.cls === 'hwy' || E.cls === 'ramp' ? 4 : E.cls === 'art' ? 3 : E.cls === 'st' ? 2 : 1) + (E.gravel ? -0.5 : 0);
+    for (const k of [0, 1]) {
+      const end = C.ends[k], n = city.nodes[end.ni];
+      if (n.e.length < 3) continue;
+      const mine = rank(city.edges[end.ei]);
+      let top = 0;
+      for (const o of n.e) if (city.edges[o].rc !== C.id) top = Math.max(top, rank(city.edges[o]));
+      if (mine > top || (mine === top && hash2(end.ni, 3) < 0.5)) continue;
+      const mm = (k === 0 ? C.m0 : C.m1) - 5.5;
+      if (k === 1) sign(C.len - Math.max(4.5, mm), 1, 'stop');
+      else sign(Math.max(4.5, mm), -1, 'stop');
+    }
+  }
+
+  /** The wire attachment points of a pole at (x, y, z), crossarm along (nx, nz). */
+  poleAttach(x, y, z, nx, nz) {
+    return [-1.05, 0, 1.05].map((o) => [x + nx * o, y + 10.62, z + nz * o]).concat([[x, y + 7.9, z]]);
+  }
+
+  /** A wooden hydro pole; returns its wires' attachment points. */
+  meshPole(flat, x, y, z, nx, nz, transformer) {
+    const wood = [0.24, 0.19, 0.14], arm = [0.3, 0.25, 0.19], ins = [0.5, 0.56, 0.5];
+    const f0 = flat.ni;
+    flat.prism(x, y - 0.3, z, 0.15, 11.5, 6, wood);
+    flat.box(x, y + 10.3, z, 2.5, 0.12, 0.11, Math.atan2(nz, nx), arm);
+    flat.box(x + nz * 0.0, y + 9.6, z, 0.06, 0.7, 0.06, Math.atan2(nz, nx) + 0.6, arm);   // a brace
+    for (const o of [-1.05, 0, 1.05]) flat.prism(x + nx * o, y + 10.42, z + nz * o, 0.05, 0.2, 5, ins);
+    flat.box(x, y + 7.85, z, 0.16, 0.1, 0.16, 0, [0.2, 0.2, 0.2]);
+    if (transformer) {
+      // a pole-top transformer for a farm: a grey can on the road side
+      flat.prism(x - nx * 0.38, y + 8.4, z - nz * 0.38, 0.28, 0.95, 8, [0.42, 0.44, 0.45]);
+      flat.prism(x - nx * 0.38, y + 9.35, z - nz * 0.38, 0.3, 0.06, 8, [0.32, 0.33, 0.34]);
+    }
+    this.city.addObstacle(this._ck, x, z, 0.24);
+    if (this._fell) this._fell.push(x, z, f0, flat.ni);
+    return this.poleAttach(x, y, z, nx, nz);
+  }
+
+  /**
+   * A wire from p to q sagging `sag` at its middle: a thin vertical ribbon,
+   * both faces (seen from below and from the road it reads as a line).
+   */
+  meshWire(flat, p, q, sag, th = 0.032, col = [0.05, 0.05, 0.05]) {
+    const dx = q[0] - p[0], dz = q[2] - p[2], L = Math.hypot(dx, dz);
+    if (L < 0.5 || L > 80) return;
+    const nx = -dz / L, nz = dx / L;
+    const N = sag > 0.05 ? 4 : 1;
+    const pt = (t) => [p[0] + dx * t, p[1] + (q[1] - p[1]) * t - sag * 4 * t * (1 - t), p[2] + dz * t];
+    let a = pt(0);
+    for (let i = 1; i <= N; i++) {
+      const b = pt(i / N);
+      const A0 = [a[0], a[1] - th / 2, a[2]], A1 = [a[0], a[1] + th / 2, a[2]];
+      const B0 = [b[0], b[1] - th / 2, b[2]], B1 = [b[0], b[1] + th / 2, b[2]];
+      flat.quad(A0, B0, B1, A1, [nx, 0.3, nz], ZERO_UV, col);
+      flat.quad(A0, A1, B1, B0, [-nx, 0.3, -nz], ZERO_UV, col);
+      a = b;
+    }
+  }
+
+  /**
+   * A rural road sign on a galvanised post at (x, y, z), its face toward
+   * (fx, fz): 'buggy' (Ontario's yellow horse-and-buggy diamond, WC-41),
+   * 'curve' (a diamond with a bent arrow, `turn` +1 right / -1 left as the
+   * driver sees it) or 'stop' (a red octagon with a white rim). Solid post.
+   */
+  meshRuralSign(flat, x, y, z, fx, fz, kind, turn = 1) {
+    const ux = fz, uz = -fx;   // the driver's right, across the face
+    const f0 = flat.ni;
+    const H = kind === 'stop' ? 2.05 : 2.25;
+    flat.box(x + fx * 0.05, y - 0.2, z + fz * 0.05, 0.07, H + 0.2, 0.07, Math.atan2(uz, ux), [0.55, 0.57, 0.58]);
+    const cy = y + H;
+    const P = (u, v, o) => [x + ux * u + fx * o, cy + v, z + uz * u + fz * o];
+    const fN = [fx, 0, fz], bN = [-fx, 0, -fz];
+    const poly = (pts, o, col, back) => {
+      // a convex polygon in (u, v), as a fan
+      for (let i = 1; i + 1 < pts.length; i++) {
+        flat.tri(P(pts[0][0], pts[0][1], o), P(pts[i][0], pts[i][1], o), P(pts[i + 1][0], pts[i + 1][1], o), back ? bN : fN, col);
+      }
+    };
+    const rect = (u0, v0, u1, v1, col) => poly([[u0, v0], [u1, v0], [u1, v1], [u0, v1]], 0.03, col);
+    if (kind === 'stop') {
+      const oct = (r) => { const o = []; for (let i = 0; i < 8; i++) { const a = Math.PI / 8 + (i * Math.PI) / 4; o.push([Math.cos(a) * r, Math.sin(a) * r]); } return o; };
+      poly(oct(0.4), 0.0, [0.55, 0.57, 0.58], true);
+      poly(oct(0.4), 0.01, [0.86, 0.86, 0.84]);
+      poly(oct(0.36), 0.02, [0.62, 0.03, 0.03]);
+      // the legend, as a white band (STOP / ARRET is not readable at this size)
+      rect(-0.24, -0.06, 0.24, 0.06, [0.86, 0.86, 0.84]);
+    } else {
+      const dia = (r) => [[0, -r], [r, 0], [0, r], [-r, 0]];
+      poly(dia(0.47), 0.0, [0.55, 0.57, 0.58], true);
+      poly(dia(0.47), 0.01, [0.03, 0.03, 0.03]);
+      poly(dia(0.43), 0.02, [0.86, 0.66, 0.06]);
+      const K = [0.03, 0.03, 0.03];
+      if (kind === 'buggy') {
+        // the horse (facing the driver's right) and the buggy behind it
+        rect(-0.04, 0.0, 0.17, 0.09, K);                // horse's body
+        poly([[0.14, 0.06], [0.2, 0.17], [0.26, 0.15], [0.2, 0.05]], 0.03, K);   // neck and head
+        rect(-0.03, -0.12, -0.01, 0.0, K); rect(0.13, -0.12, 0.15, 0.0, K);       // legs
+        rect(-0.1, 0.035, 0.0, 0.05, K);                 // the shafts
+        rect(-0.3, -0.02, -0.1, 0.16, K);                // the buggy's box
+        rect(-0.32, 0.16, -0.08, 0.19, K);               // its top
+        rect(-0.27, -0.14, -0.15, -0.02, K);             // the wheel
+      } else {
+        // a bent arrow: up, then over toward the turn
+        const s = turn;
+        rect(-0.035 * s - 0.08 * s, -0.24, 0.035 * s - 0.08 * s, 0.02, K);
+        poly(s > 0 ? [[-0.115, 0.02], [0.08, 0.13], [0.08, 0.06], [-0.045, -0.02]] : [[0.115, 0.02], [-0.08, 0.13], [-0.08, 0.06], [0.045, -0.02]], 0.03, K);
+        poly([[0.08 * s, 0.2], [0.2 * s, 0.09], [0.04 * s, 0.0]].map(([u, v]) => [u, v]), 0.03, K);
+      }
+    }
+    this.city.addObstacle(this._ck, x, z, 0.12);
+    if (this._fell) this._fell.push(x, z, f0, flat.ni);
   }
 
   /**

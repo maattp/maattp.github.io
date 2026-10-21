@@ -370,9 +370,9 @@ file and a guide disagree, this file wins.
     an **unpaved road**: `data/gravel.json` (tools/kw/build_gravel.py: OSM
     surface=unpaved/compacted/gravel/... on the roads build_roads keeps, 181
     polylines, 135 km of the townships' concession roads), `src/gravel.js`
-    tags each edge along one (`e.gravel`: world.js draws it `GRAVEL_TINT`
-    with no paint, near, far and at all-gravel junctions; sidewalks stay --
-    they are citygen's and roadLift's) and gives `city.gravelAt(x, z)`
+    tags each edge along one (`e.gravel`, now from citygen, before the
+    country roads: see "The country roads" below -- a gravel road is a rural
+    one, no kerbs, crowned, tracked) and gives `city.gravelAt(x, z)`
     (asked every 0.12 s). The lock asks sqrt(mu) of the surface's grip, so a
     full lock on gravel pushes and slides. **Stability control on loose
     surfaces only**: the pull is held under what the driven tyres need for
@@ -912,6 +912,172 @@ file and a guide disagree, this file wins.
   All 200 with CORS ok, none looping or "not available", 0 exceptions.
   Not covered headlessly: the iPhone. If a station is silent there, the
   Debug readout's audio log says which route it took and why it moved.
+
+- **The country roads: src/rural.js** (docs/rural-gravel*.jpg,
+  rural-regional*.jpg: master before, this after, from the driver's seat).
+  **Rural is decided from the data** in citygen (step 2e, after the
+  buildings, before anything reads a pavement width): every gravel road
+  (gravel.js, tagged there now, not in main.js), and any other ground-level
+  res/st/art street whose 300 m window has < 3.5 building centres within
+  60 m, < 5 % built cover (citygen's `built`, the measure groundTint paints
+  fields by) and < 260 m of OTHER streets within 110 m (a subdivision with
+  no houses mapped is still a net of streets); runs under 160 m flip to
+  their neighbours. ~865 km, 1640 chains (`cityStats.rural`). **A rural
+  edge has no pavement or kerb: `walkWidthOf(e)` (citygen) is 0** -- every
+  sidewalk-width site goes through it (citygen's grading, cuts, junction
+  corners, liftGrid; world's meshRoad, trench walls, legacy nodes, portal
+  cuts). **Chains** run through PASS-THROUGH nodes (`n.rpass`: two rural
+  edges < 35 deg apart, OSM's ~50 m splits): no junction polygon there
+  (buildJunction null, meshNode returns), the strips are MITRED
+  (`world.ruralMitre`), paint is not trimmed, and the raise and the hydro
+  line run on by chain position `c = e.rs0 + e.rsd * s`.
+  **Cross-section** (`ditchLift`): the carriageway RAISED `RAISE` 0.42 m
+  over ROAD_LIFT (the terrain mesh is 40 m, so a ditch cannot be dug into
+  it -- the road and the field edge stand up round it instead), 0 at each
+  end junction past its mouth + MOUTH_RAMP, full RAMP 22 m on; gravel
+  shoulder SH 1.3, foreslope FS 1.7 to the bottom at BOT, bottom DB 0.9,
+  backslope BS 1.3 to the BERM 0.45, fade FD 2.4 to the ground (RW 7.6).
+  Crossings (`C.xing`: one farm lane per cluster of buildings within 150 m,
+  field entrances by hash, and paths/golf/kartway from `city.extraClear`,
+  lazily) fill the ditch level with the shoulder (`ruralLift`). **ONE
+  function, two consumers:** citygen.roadLift's rural branch (`ruralSide`,
+  `ruralRaise`, the gravel CROWN 7 cm) and world.meshDitch (bands of quads
+  whose vertex heights ARE `ruralSide`) -- so what is driven/walked is what
+  is drawn: `tools/kw/ruralprobe.js` (VIEW_PROBE_FILE) raycasts across
+  rural roads at five sites: carriageway 98.6 %, shoulder 99.2 %, ditch
+  98.9 %, berm 97.4 % within 4 cm, and rides chains for kinks (< 5.5 cm per
+  0.5 m^2). Two traps it caught: a round cap past an end measured from the
+  node and read the next strip's ditch as a berm (caps skipped off the
+  carriageway), and a cap on the carriageway held the end's raise flat
+  (past a pass-through end it takes the chain's raise there).
+  **Drawn** in the near chunk's road mesh (no draws): `surf` per vertex
+  (`SURF_GRASS`, `gravelSurf`, `surfMark`) puts the road material
+  (roadWalkMat) into a GRAVEL mode (the asphalt grain seen three times,
+  windrows on the crown and edges, two packed wheel tracks a lane, no
+  gloss) or a GRASS mode (vertex colour = albedo; straw slopes, a dark wet
+  bottom, the field's own tint at the toe). Farm lanes run to the house
+  (`meshLane`), culvert ends show in the fill (`meshCulvert`), a mailbox
+  and a green civic-number blade (Wellington County's style, which Woolwich
+  follows) at each farm lane. **meshRuralProps** (instead of the city's
+  kerb furniture): a wooden hydro line every 46 m on one side per chain,
+  on the berm (crossarm, three primaries, the lower phone line, wires
+  sagging; a transformer near some farms) -- the city's `hydroLine` no
+  longer strings a span into a rural edge; page-wire fences on T-posts or
+  cedar snake-rail at the field edge in 150 m runs; yellow-diamond horse
+  & buggy signs every ~1.3 km in `mennoniteCountry` (shared with buggy.js),
+  curve warnings 95 m before a bend > 24 deg, stop signs where the chain
+  meets a bigger road (half the even crossings). Poles, posts, signs and
+  mailboxes are solid and knock down (`_fell`). **Who else had to learn
+  it:** peds never spawn, plan into or re-anchor on a rural edge (fares
+  and walking cops neither); no kerbside parking (traffic.kerbSlots);
+  buggies drive only rural edges, half on the shoulder (gravel: hw - 1.0);
+  street trees give way to sparse fencerow trees past the ditch; crops,
+  forest trees and house driveway stubs keep out of `city.ruralClear`
+  (ditch zone and lanes); AI lanes are unchanged (0.48 hw). Dust: anything
+  over 6 m/s on gravel (you, and up to 8 cars within 200 m) trails a
+  limestone plume (main.js). Phone (AUTO_PHONE=1, GPU), master v31 -> this:
+  spawn 205/980k = ; Kressler Rd 86/513k -> 86/514k; Lobsinger Line
+  228/749k -> 227/765k; a gravel concession road 63/372k -> 60/369k.
+  **Not done:** road-name blades at rural junctions (needs lettering: the
+  sign atlases are full); the outside wedge of a bend at a pass-through
+  node reads ground in roadLift (mesh mitred: < 10 cm on gentle bends).
+- **The generic look, round two** (docs/look2-*.jpg, before over after).
+  **Striped plaza roofs:** world.js `_stripMall`'s roof sat at exactly
+  `bd.y + bd.h`, coplanar with `buildSkyline`'s always-drawn far box (every
+  footprint over 1400 m2 or 16 m), and the two z-fought in tan/white bands.
+  The strip's box has no top now; its white/pale-grey lid sits inside the
+  parapet, 0.16 m over the skyline's, as meshBuilding's lid always did.
+  **Any near roof at exactly `bd.y + bd.h` on a skyline-sized box is this
+  bug again.** The same class across drawers: `kw.dedupeFootprints` (main.js,
+  after every module's prep) finds every pair of drawn footprints
+  (world.js box, strip, kw.js poly, kwshops shop) that overlap with roofs
+  within 1 m: the plainer drawer goes flat (kw.skip) when 70 % of it is
+  inside the other, else the smaller roof is lifted 0.6 m; a house box
+  inside a store 8x its size goes flat at any height (St. Jacobs Outlets).
+  `window.__kwDedupe` has the counts (~170 pairs, ~50 flat, ~90 ms
+  desktop); `VIEW_PROBE_FILE=tools/kw/doubleprobe.js node tools/kw/kwshots.mjs x`
+  lists every overlapping pair by drawer, SAME-ROOF (< 0.4 m apart: a
+  z-fight) or step -- 247 overlaps before, 0-1 SAME-ROOF after.
+  **The new towers** (world.js `modernTower` / `towerLook` / `_towerPanels`):
+  an apartment (OSM apartments, or a name with Condos/Tower/House/Residence)
+  of 24 m+ inside `MODERN_ZONES` (the UW/Laurier student district box and
+  downtown Kitchener) with no OSM material takes white or light-grey precast,
+  window wall (white slab edge every floor) or charcoal panel, full-height
+  stacks of a second panel colour at the corners, and on half a stack of
+  accent panels (orange, lime, red, blue, yellow) down the street face and
+  its back; `TOWER_NAMED` pins Sage, ICON, Luxe, One Victoria, Charlie West,
+  Duke Tower, Young. **Car parks:** build_lots.py bakes retail/commercial
+  landuse >= 3000 m2 as striped parking in the polygon's orientation, with a
+  4.5 m concrete storefront ring round each building in it (`LU_PARKING`;
+  12.5 -> 17.5 km2 striped); world.js `lotLights` puts, in lots that carry on
+  20 m round the spot, a kerbed island (one bay, across both rows of a seam)
+  with a 9 m light standard (two LED heads, glowing at night) every 13 bays
+  on every other seam of the shader's bay grid, and a young tree on 60 %
+  (trees.js reads `world._lotIslands`); traffic.updateLotParked leaves those
+  bays empty; poles and islands are obstacles. Cart corrals stay kwshops'.
+  **Yards:** `_yardFence` -- cedar privacy fences round 3 back yards in 4
+  from the occupancy raster (back line halfway to the house behind, drawn
+  by the lower seed; right side only, so a row has one fence per pair;
+  gate runs across both side yards), 16 tris a yard, not solid;
+  `cityStats.fences`. `_drivewayKit`: green bin + blue box (+ grey cart)
+  at the end of one driveway in four, a portable net on one in nine.
+  **Palette:** SUBURB a touch greener (KW lawns stay green in October); the
+  sky was left alone. Phone (AUTO_PHONE=1, GPU), v29 -> this, draws/tris:
+  spawn 206/979k -> 205/997k; Beechwood aerial 364/1284k -> 363/1308k;
+  street 326/1132k -> 326/1152k; student towers 181/761k -> 181/777k; plaza
+  lot aerial 348/1119k -> 348/1141k, low 449/935k -> 451/974k (+4.2 %, the
+  most); St. Jacobs 75/304k -> 75/308k.
+  **Round two** (docs/uw-davis-vault.jpg, uw-pinktie.jpg): DC's vault is
+  fitted to OSM's outline (`vault`: slices every ~3 m along the part's long
+  axis, each as wide as `spanAt` finds the outline there) with DC's own
+  section, a ~3.4 m rounded eave into a shallow crown (~5 m over the walls,
+  not a 9 m Quonset); the ducts follow it. The PAC in SCH's language (dark
+  brown brick, pilasters `pil`, a deep white precast `fascia`; its <= 2-storey
+  parts take `low`); the CIF cream brick with a `clere`story under a white
+  metal fascia and red steel walkways on its road faces; the SLC brown brick,
+  its curved east parts (OSM 1027588307 / 951370624) the Great Hall's blue
+  glass, 1027588308 the glass link to MC; B1/B2/ESC white precast with deep
+  window frames (`STY.bio`, Commons "BIO Connection"); STC buff brick and
+  teal glass. THE PINK TIE: ~12 m of pink tie down the MC stair tower face
+  with the most open ground in front of it (`SIGS.MC`, `__uwCampus.tie`).
+  The north gate sign stands on the corner where North Campus Road meets
+  Columbia St (`junction` + `cornerSpot`; `__uwCampus.gates[1]`). **Open
+  lawns:** `campusKeepClear` (city.treeClear, read by trees.js only -- not
+  jumpClear, which would also clear kerb props and parked cars): no tree
+  within 10 m of a campus facade (UW or Laurier), 60 % fewer to 24 m, 80 %
+  fewer on Ring Road's verges, none on Laurier's fields.
+  Still approximate: C2, AL, EV1, RCH and GSC colours are unconfirmed (no
+  usable photos on Commons); the PAC's look is inferred from SCH, not a photo.
+- **Wilfrid Laurier University** (uwcampus.js again; uw.json `wlu` from
+  build_uw.py `laurier()`; docs/wlu-stadium.jpg, wlu-sign.jpg). Every
+  building inside OSM's campus outline (way 226405688) or operated by Laurier
+  in the box round it, with its parts, goes through the same prepCampus /
+  drawBuilding (`r.campus === 'wlu'`, styled by name in `WLU`). From Commons
+  photos: Bricker Academic, the Science Building, the Science Research
+  Building and Alvin Woods red brick banded in cream (`'banded'`: a precast
+  band under every row of windows), Bricker's dark-glass stair tower and the
+  Science Building's octagonal tower with its grey cap at the west end
+  (SIGS); Lazaridis Hall a box of blue-grey glass on a dark frame; the
+  library, Arts wings, FNCC, Peters, John Aird, the residences; the solarium
+  a hipped glass roof (`glassRoof`; OSM's "Solarium" -- the Concourse itself
+  isn't a separate OSM building, so it is not drawn apart); Martin Luther's
+  limestone and its two-pier bell tower. Fields (`laurier`): Alumni Field and
+  Knight-Newbrough Field as Canadian football fields (`gridiron`: 150 x 65 yd
+  scaled to fit the pitch, turf tiled on the terrain, 5-yd lines, goal posts
+  on the goal lines; the stadium's end zones purple, the golden hawk at
+  centre field on the atlas), the track (`trackRing`, 2.5 m cells), the
+  grandstand from OSM's footprint (rows, purple seats, press box; OSM's
+  Stadium Building is the space under it and is not drawn), a LAURIER GOLDEN
+  HAWKS scoreboard, light masts at Alumni Field, and the LAURIER signs
+  (white, purple maple leaf, WILFRID LAURIER UNIVERSITY on dark stone) on the
+  campus corners of King/University and University/Hazel. Phone (AUTO_PHONE=1,
+  GPU), master -> this: spawn 202 -> 204 draws, 915k -> 924k tris; over UW
+  189 -> 191, 794k -> 829k; DC on Ring Road 305 -> 306, 1067k -> 1095k; at the
+  King/University sign 360 -> 363, 1260k -> 1296k; over Laurier 198 -> 203,
+  748k -> 790k; the stadium 176 -> 179, 717k -> 749k (those cameras, and the
+  gate / tie / vault / Science Building ones, are `VIEWS=tools/kw/campusviews.json`). `__uwCampus.wluSigns`
+  has the signs. Approximate: the hawk and scoreboard wording are generic,
+  not traced; the track's curved edge is stepped at 2.5 m.
 
 ## Build number
 

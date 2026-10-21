@@ -4,7 +4,6 @@ import * as THREE from './three.js';
 import * as G from './geo.js';
 import { cityGenerator, cityStats } from './citygen.js';
 import { loadMapData } from './mapdata.js';
-import { tagGravel } from './gravel.js';
 import { buildTextures, planTextures, encodeTextures, restoreTextures, canvasToBlob, blobToCanvas, within } from './textures.js';
 import { World, WET_FLOOR, HAZE_SUN } from './world.js';
 import { buildLandmarks, updateLandmarkRange, SEAPLANE_DOCK, airportSurface } from './landmarks.js';
@@ -44,12 +43,12 @@ import { CoffeeShop } from './barista.js';
 import { Seafair } from './hydrorace.js';
 import { FireService, placeStations } from './firecalls.js';
 import { BONES } from './peds.js';
-import { setKwData, applyNamed, buildSigns, buildPolys, buildBunting, buildSchools, mapPlaces as kwPlaces, kwData, boxAt } from './kw.js';
+import { setKwData, applyNamed, buildSigns, buildPolys, buildBunting, buildSchools, mapPlaces as kwPlaces, kwData, boxAt, dedupeFootprints } from './kw.js';
 import { addLandmarkExtra } from './landmarks.js';
 import { Chicopee } from './chicopee.js';
 import { prepFun, buildMarketTent, buildFlags, waveFlags, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, buildDome } from './kwfun.js';
 import { prepPlaces, buildPlaces, placesMap, placesStats, Geese } from './kwplaces.js';
-import { setUwData, prepCampus, buildCampus } from './uwcampus.js';
+import { setUwData, prepCampus, buildCampus, campusKeepClear } from './uwcampus.js';
 import { prepSights, buildSights, sightsMap } from './kwsights.js';
 import { setShopData, prepShops, buildShops, shopPlaces, shopStats } from './kwshops.js';
 import { Crops } from './crops.js';
@@ -780,7 +779,8 @@ async function boot() {
   const city = r.value;
   cityRef = city;
   // the unpaved roads: drawn as gravel, driven as gravel (gravel.js)
-  { const k = tagGravel(city, md.gravel); blog(`gravel: ${k.edges} edges, ${k.km} km`); }
+  // (tagged in citygen, with the country roads: rural.js)
+  blog(`rural roads: ${JSON.stringify(cityStats.rural)}`);
   // Auto KW: names and real looks onto the boxes, before anything is meshed
   setKwData(md.kw);
   { const k = applyNamed(city); blog(`kw: ${k.named} named buildings, ${k.looks} with their own look, ${k.polys} drawn from their footprints, ${k.strips} strip stores`); }
@@ -817,6 +817,8 @@ async function boot() {
   ykf = new YKF(md.kw && md.kw.aero);
   addLandmarkExtra((ctx) => ykf.build(ctx));
   ykf.prepTower(city, boxAt);   // YKF's control tower (FINAL APPROACH's door)
+  // every module has claimed its boxes: one drawer per footprint (kw.js)
+  { const t0 = performance.now(), k = dedupeFootprints(city); k.ms = Math.round(performance.now() - t0); window.__kwDedupe = k; blog(`kw: ${k.pairs} doubly drawn footprints, ${k.flat} flattened, ${k.raised} raised (${Math.round(performance.now() - t0)} ms)`); }
   addLandmarkExtra((ctx) => ykf.buildTower(ctx));
   // the freeways as Ontario signs and builds them (highways.js, data/hwy.json)
   { const k = prepHighways(city, md.hwy); blog(`highways: ${k.edgesTimed} freeway edges timed from OSM maxspeed`); }
@@ -1107,6 +1109,8 @@ function installShadowFade() {
   // (counterbalance.js) before anything is placed by the kerb
   counterbal = null;
   city.extraClear = (x, z) => link.keepClear(x, z) || bikeNet.keepClear(x, z) || chicopee.keepClear(x, z) || !!(golf && golf.keepClear(x, z)) || kartway.keepClear(x, z) || hwyKeepClear(x, z);
+  // open lawns round the campus buildings: trees only (uwcampus.js)
+  city.treeClear = campusKeepClear;
 
   await step(0.8, 'Building the skyline');
   world.buildSkyline();
@@ -3132,6 +3136,31 @@ function frame(now) {
   }
   fx.update(dt);
   skidMarks.update(dt);
+
+  // GRAVEL DUST: anything at speed on a gravel road (gravel.js, rural.js)
+  // trails a plume of limestone dust -- your car, and the traffic near you.
+  if (cityRef.gravelAt && !game.paused) {
+    const dust = (v) => {
+      const sp = Math.abs(v.vLong || 0);
+      if (sp < 6 || v.afloat || v.spec.boat || v.spec.air) { v._dust = 0; return; }
+      if (!(v === player.vehicle ? v.surf === 'gravel' : cityRef.gravelAt(v.x, v.z))) return;
+      v._dust = (v._dust || 0) + dt * Math.min(14, (sp - 5) * 0.9);
+      const n = Math.floor(v._dust);
+      if (!n) return;
+      v._dust -= n;
+      const f = v.forward, back = v.halfLen * 0.9;
+      fx.emit(v.x - f.x * back, v.y + 0.35, v.z - f.z * back, n,
+        { r: 0.8, g: 0.75, b: 0.64, size: 1.3, grow: 3.4, alpha: 0.32, life: 3.2, spread: 0.9, jitter: 0.4,
+          vy: 0.55, grav: 0.05, drag: 0.92, vx: -f.x * sp * 0.22, vz: -f.z * sp * 0.22 });
+    };
+    if (player.vehicle) dust(player.vehicle);
+    let k = 0;
+    for (const v of traffic.cars) {
+      if (v === player.vehicle || (v.x - player.position.x) ** 2 + (v.z - player.position.z) ** 2 > 200 * 200) continue;
+      dust(v);
+      if (++k >= 8) break;
+    }
+  }
 
   // engine smoke / skid marks
   if (player.vehicle) {

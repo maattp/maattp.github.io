@@ -841,7 +841,8 @@ export class TrafficSystem {
     if (out) return out;
     out = [];
     const city = this.city, e = city.edges[ei];
-    if (!(e.elev || e.cls === 'hwy' || e.cls === 'ramp' || e.noTraffic)) {
+    // (no kerbside parking on a country road: no kerb, a ditch -- rural.js)
+    if (!(e.elev || e.cls === 'hwy' || e.cls === 'ramp' || e.noTraffic || e.rural)) {
       const a = city.nodes[e.a], b = city.nodes[e.b];
       const slots = Math.floor(e.len / 13);
       for (let s = 1; s < slots; s++) {
@@ -904,6 +905,9 @@ export class TrafficSystem {
         const pu = x * ux + z * uz, pv = -x * uz + z * ux;
         const bu = Math.floor(pu / 2.6), m = Math.floor(pv / 18);
         const row = ((pv % 18) + 18) % 18 < 9 ? 0 : 1;
+        // Auto KW: every 13th bay either side of every other seam is a kerbed
+        // island with a light standard (world.lotLights)
+        if (((bu % 13) + 13) % 13 === 0 && (row ? ((m + 1) % 2 + 2) % 2 === 0 : ((m % 2) + 2) % 2 === 0)) continue;
         const key = `L${bu},${m},${row},${code}`;
         if (tried.has(key)) continue;
         tried.add(key);
