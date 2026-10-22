@@ -3216,6 +3216,68 @@ file and a guide disagree, this file wins.
   check now matches each skater to itself across its 2 s (it compared by
   list index, and one taken back by the crowd shifted the rest). AUTO_GPU=1
   funprobe x3 ALL OK.
+- **The country's stores, and GRT's stop flags and shelters**
+  (docs/rural-*.jpg, grt-stop-*.jpg: master over this).
+  - **Why ~190 stores were plain boxes:** prepShops draws a front (shops.json
+    `fronts`) only inside what a `kwp` cluster already draws (+60 m, or a
+    neighbour's within NEXT_M) -- a front out past every cluster would add a
+    draw that is never culled by range. Those (Breslau, Conestogo, the farm
+    markets, the auto rows past the plazas, Guelph's dealers) stayed
+    world.js's generic boxes, and stores in farm buildings (cls 6: barns,
+    farmhouses) were skipped by style. **Now** such a front is drawn as every
+    other one, into its OWN cluster, `kwr:<1200 m cell>` (prepShops `rk`;
+    buildShops' `key()` redirect plus `curKey` while it is drawn, so its road
+    pylon and lettering land in it too), which landmarks.js range-culls at
+    `KWR_RANGE` 1500 m (the near ring's reach: NEAR_R 2 chunks of 400 m).
+    Past that its box comes back as the world's mid-ring / far massing
+    (`kw.mass`: world.js draws those boxes `massInset`, 0.25 m inside the
+    store's walls and 0.4 m under its roof, so where both draw nothing
+    z-fights). A store the importer put in a farm building keeps farmstead.js's
+    building when it is a shop (`kind` s) or a market by name, and gets
+    `kw.sign`: a green board with its name beside the barn's doors and a
+    `woodBoard` on posts by the road; a garage / dealer / pad / kiosk in a
+    "barn" (a big untagged box out of town) is drawn as a store.
+  - **Farm markets** (`isMarket`: MARKET_RE on the OSM names, NOT_MARKET for
+    variety stores, pizza, auto, storage...; rural fronts only, < 2600 m2):
+    `farmMarket` -- board-and-batten walls (barn red, white, weathered), a
+    ribbed steel gable along the long axis (green / red / galvanised /
+    charcoal), a porch on posts with a shed roof along the storefront, the
+    glass and doors under it, crates of pumpkins, squash and apples, the name
+    on the wall over the porch (the independents' lettering, `sh.sy/so`) and
+    on a board by the road. Pads' roofs by kind (kiosk white, bank and
+    restaurant ballast grey, garages galvanised).
+  - **Counts** (`VIEW_PROBE_FILE=tools/kw/storeprobe.js`, runs on master):
+    PLAIN boxes 177 -> 12 (the rest are 2-storey main-street shops with flats,
+    left on purpose); farm-building stores unsigned 20 -> 1 (14 signed, the rest drawn as stores); lettered names
+    1400 -> 1585 of 1858, + 11 farm-building signs and their road boards; 172 fronts in 85
+    `kwr:` clusters (~40k tris), 7 farm markets.
+  - **GRT stops** (world.js `_grtStops`): the flag carries GRT (white italic
+    on the blue band) and the stop's number (OSM `ref`, grtstops.json's 4th
+    field) on the white strip, both faces, as **streetsigns.js lettering**
+    (`setExtra(cx, cz, sites)` per chunk; two shared slots in its atlas --
+    `G|grt` and `G|digits`, a number laid a digit at a time with a face's
+    `cu` px range -- so every stop costs no slot, no material, no draw;
+    within `GRT_R` 110 m). Shelters (shelter=yes), three designs: the
+    ION-era glass shelter (charcoal frame, flat roof cantilevered to the kerb,
+    blue fascia lettered GRT), its double-length iXpress version (iXpress
+    stops: green line under the fascia, a lit route map), and the older ad
+    shelter (bronze frame, barrel roof, a lit poster case at one end); 45/55
+    by hash. **v62's shelter stood turned 90 deg**: with rot = atan2(-nx, nz)
+    Builder.box's local x (w) runs ALONG the kerb and d out from it -- the
+    back glass and roof were laid across the walk.
+  - **Verify:** phone (AUTO_PHONE=1, GPU), master -> this, two runs: spawn
+    175/175 -> 177/176 draws, 1150k = ; air views +0..+3. A rural store in
+    view within ~1.5 km of its cell costs +1 draw a `kwr:` cluster.
+    trafficbench (rail off, phone) hashes identical at all six sites;
+    AUTO_GPU=1 funprobe ALL OK (63); poleprobe 0 in a lane, 0 trunks; 0
+    exceptions. Views: kwshots with `eval: "for (const n of
+    d.lmRoot.userData.near) n.o.visible = true"` (a paused harness does not
+    range-update the near meshes).
+  - **Not done:** the stop flag shows no route numbers; shelter design is a
+    hash, not the real stop's; farm markets are one kit (no Mennonite
+    Story-style variety); stores past the edge (Elmira, New Hamburg, Ayr,
+    Baden) are not on the map; from the air past 1.5 km a country store is
+    its massing box.
 
 ## Build number
 
