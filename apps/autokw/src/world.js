@@ -7,7 +7,7 @@ import * as G from './geo.js';
 // Kept in step with main.js. Shadow-caster policy differs by platform, and the
 // difference is worth roughly 40 draw calls a frame.
 const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, MOUTH_RAMP, mouthRamp, cityStats, trimOldest, walkWidthOf, FWY_DIP_OVER } from './citygen.js';
+import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, MOUTH_RAMP, mouthRamp, cityStats, trimOldest, walkWidthOf, FWY_DIP_OVER, shoulderMax } from './citygen.js';
 import * as RU from './rural.js';
 import { FARM_STYLES, meshFarmBuilding, farmMass, steepleMass } from './farmstead.js';
 import { Builder, ChunkBuilder, freezeStatic } from './build.js';
@@ -148,7 +148,8 @@ function laneStrips(e) {
   let out = null;
   if (e.oneway && (e.cls === 'hwy' || e.cls === 'ramp')) {
     let w0 = e.hw, w1 = e.hw;
-    if (e.tw) for (let i = 0; i < e.tw.length; i += 2) { w0 = Math.min(w0, e.tw[i]); w1 = Math.min(w1, e.tw[i + 1]); }
+    const tw = e.ltw || e.tw;   // (the lane basis: citygen's paved shoulders are the outer strips)
+    if (tw) for (let i = 0; i < tw.length; i += 2) { w0 = Math.min(w0, tw[i]); w1 = Math.min(w1, tw[i + 1]); }
     const lo = -w1 + 0.8, hi = w0 - 0.8;
     if (hi - lo > 2) {
       const n = Math.max(1, Math.floor((hi - lo) / 3.6)), lw = (hi - lo) / n;
@@ -5884,11 +5885,14 @@ float frLine(float o, float fw, float c, float w) {
     // TRIMMED kerb on a graded road stood off a lower neighbour, or the line
     // runs out over the wall.
     const inset = e.rural ? 0.22 : Math.min(0.7, hw * 0.06);
+    // (a freeway's lines are the LANES' edges: `ltw`, where citygen's paved
+    // shoulders widened `tw` -- the shoulder lies outside the edge line)
+    const LW = e.ltw || e.tw;
     const sideW = (m, s) => {
       // a lid barrier inside the carriageway is its kerb (buildLids' e.barW)
-      if (!e.tw) return e.barW ? Math.min(hw, e.barW[s]) : hw;
+      if (!LW) return e.barW ? Math.min(hw, e.barW[s]) : hw;
       const i = Math.min(e.pk, Math.max(0, Math.round((m / e.len) * e.pk)));
-      return e.tw[i * 2 + s];
+      return LW[i * 2 + s];
     };
     // subdivide so a line follows the terrain rather than spanning it (and a
     // slab's end, 0.5 m stations, rather than bridging off it)
@@ -7122,7 +7126,8 @@ float frLine(float o, float fw, float c, float w) {
   meshTrenchWalls(flat, e, a, b, ei) {
     if (!this.city.underpassDepth) return;
     const sw = walkWidthOf(e);
-    const w = e.hw + sw + 0.3;
+    // (a freeway's dip is carved past its paved shoulders: citygen's `ew`)
+    const w = e.hw + shoulderMax(e) + sw + 0.3;
     const px = -e.dz, pz = e.dx;
     const n = Math.max(2, Math.round(e.len / 4));
     // quick reject: no dip anywhere along the centre

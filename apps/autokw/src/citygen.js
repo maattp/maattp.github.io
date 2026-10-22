@@ -416,9 +416,9 @@ function unpackBuildings(c) {
 // launch of the same build applies that instead of solving again. Everything
 // it leaves behind is here: the edge and node fields it sets, the underpass
 // list the carve is built from, and its stats.
-const GRADE_EDGE_FIELDS = ['app', 'ovr', 'lock', 'pk', 'ps', 'ph', 'pg', 'tw', 'tlo', 'tnb', 'pe', 'pwall', 'pbw'];
+const GRADE_EDGE_FIELDS = ['app', 'ovr', 'lock', 'pk', 'ps', 'ph', 'pg', 'tw', 'ltw', 'shx', 'tlo', 'tnb', 'pe', 'pwall', 'pbw'];
 const GRADE_STATS = ['refusedCrossings', 'underpasses', 'underpassNoRoom', 'underpassGraded', 'splitLevelTrimmedM',
-  'gradedSamples', 'overpassesRaised', 'overpassesRefused', 'overpassApproaches', 'fillMean', 'fillWorst', 'fwyDips', 'fwyDipNoRoom', 'levelledSamples'];
+  'gradedSamples', 'overpassesRaised', 'overpassesRefused', 'overpassApproaches', 'fillMean', 'fillWorst', 'fwyDips', 'fwyDipNoRoom', 'levelledSamples', 'shoulderM2'];
 function gradeSnapshot(nodes, edges, grading) {
   const E = [], N = [];
   for (let ei = 0; ei < edges.length; ei++) {
@@ -461,6 +461,26 @@ function applyGrade(nodes, edges, snap) {
 // cutting at Bridgeport (-770, -2400). At one full quad, any quad crossing the
 // wall plane has both corners on the floor, and the rise is behind the wall.
 export const FWY_DIP_OVER = 4.0;
+
+// AUTO KW, PAVED SHOULDERS (CLAUDE.md "The freeways, round four"). A
+// carriageway's `hw` is its lanes (build_roads.py: lanes * 1.8 + 1.0) and
+// traffic lays them 0.8 m in from each edge (arterial.js SHOULDER), so every
+// freeway had a 0.8 m shoulder and then grass. MTO paves 3.0 m on the 401's
+// right, ~2.5 m on the Parkway and the other 400-series, and 1-2.5 m on the
+// left to the tall wall. gradeRoads widens what is DRAWN and DRIVEN (`e.tw`,
+// per sample and side) by these less the 0.8 m, after its split-level trim,
+// and keeps the old per-sample widths as `e.ltw`: the lane basis. Everything
+// that lays or paints LANES reads `ltw` (oneWaySpan, laneStrips, the lane and
+// edge lines, the rumble strips), so traffic's lanes do not move by a bit.
+export const SH_LANE = 0.8;
+/** The paved shoulders a one-way freeway carriageway wants, [right, left] of
+ *  travel in metres from the lane edge (null: not a freeway carriageway). */
+export function shoulderWant(e) {
+  if (e.cls !== 'hwy' || !e.oneway || e.tunnel) return null;
+  return [/\b401\b/.test(e.name || '') ? 3.0 : 2.5, 1.5];
+}
+/** The most a carriageway's sides can be widened (the dip carve's reach). */
+export const shoulderMax = (e) => { const w = shoulderWant(e); return w ? Math.max(w[0], w[1]) - SH_LANE : 0; };
 
 /** The carve depth of a list of underpasses (gradeRoads' or a cached copy). */
 function makeUnderpassDepth(underpasses) {
@@ -1623,13 +1643,15 @@ function gradeRoads(nodes, edges) {
       const px = -e.dz, pz = e.dx;
       const pts = [];
       let deepest = 0;
+      // (the paved shoulders, laid after this, are dug too: `ew`)
+      const ew = e.hw + shoulderMax(e);
       for (let i = 0; i <= k; i++) {
         const v = e.ps[i];
         const x = a.x + (e.dx * e.len * i) / k, z = a.z + (e.dz * e.len * i) / k;
         let d = 0;
         if (dipOf[v] > 0) {
           const s = clamp(gx[v] * px + gz[v] * pz, -CAMBER_MAX, CAMBER_MAX);
-          for (const o of [-e.hw, -e.hw / 2, 0, e.hw / 2, e.hw]) {
+          for (const o of [-ew, -e.hw, -e.hw / 2, 0, e.hw / 2, e.hw, ew]) {
             d = Math.max(d, T(x + px * o, z + pz * o) - (H[v] + s * o) + ROAD_LIFT + 0.05);
           }
         }
@@ -1637,7 +1659,7 @@ function gradeRoads(nodes, edges) {
         deepest = Math.max(deepest, d);
       }
       if (deepest <= 0.05) continue;
-      const hw = e.hw + 0.3;
+      const hw = ew + 0.3;
       const pad = FWY_DIP_OVER + 2;
       const x0 = Math.min(...pts.map((p) => p.x)) - hw - pad, x1 = Math.max(...pts.map((p) => p.x)) + hw + pad;
       const z0 = Math.min(...pts.map((p) => p.z)) - hw - pad, z1 = Math.max(...pts.map((p) => p.z)) + hw + pad;
@@ -1789,6 +1811,90 @@ function gradeRoads(nodes, edges) {
   }
   cityStats.splitLevelTrimmedM = Math.round(trimmedM);
 
+  // PAVED SHOULDERS (shoulderWant, above): each untrimmed side of a freeway
+  // carriageway widened by its shoulder less the 0.8 m the lanes already
+  // leave, but never into a neighbour -- a ramp running alongside, a parallel
+  // carriageway (half the gap each), anything within SH_LEVEL of this level --
+  // so at a diverge the shoulder opens as the ramp parts, and never on the
+  // left where an opposing carriageway is within SH_MED: there the paved
+  // median and the tall wall (highways.js) are the left shoulder. Tapered to
+  // nothing over SH_TAPER from a node where the freeway meets anything but
+  // freeway (an at-grade crossing, a portal, its end). The old widths stay as
+  // `e.ltw`, the lane basis; `e.shx` is the widest it got.
+  {
+    const SH_MED = 19, SH_TAPER = 30, SH_CLEAR = 0.3, SH_LEVEL = 6, SH_R = 45;
+    const foreign = (ni) => {
+      const n = nodes[ni];
+      if (n.e.length < 2) return true;
+      for (const k of n.e) { const o = edges[k]; if (o.tunnel || !o.prof || (o.cls !== 'hwy' && o.cls !== 'ramp')) return true; }
+      return false;
+    };
+    const yOf = (o, u, x, z) => (o.prof ? o.ph[Math.min(o.pk, Math.max(0, Math.round(u * o.pk)))] : T(x, z) + ROAD_LIFT);
+    let paved = 0, stamp = 0;
+    const seenO = new Int32Array(edges.length);
+    for (const e of edges) {
+      const want = e.prof ? shoulderWant(e) : null;
+      if (!want) continue;
+      const k = e.pk, a = nodes[e.a], px = -e.dz, pz = e.dx;
+      const ef = e.onewayRev ? -1 : 1, sR = ef > 0 ? 0 : 1;   // +p (side 0) is the right of travel a -> b
+      const fA = foreign(e.a), fB = foreign(e.b);
+      const ltw = Float32Array.from(e.tw);
+      let shx = 0;
+      for (let i = 0; i <= k; i++) {
+        const s0 = (e.len * i) / k;
+        const taper = Math.min(1, fA ? s0 / SH_TAPER : 1, fB ? (e.len - s0) / SH_TAPER : 1);
+        if (taper <= 0) continue;
+        const cx = a.x + e.dx * s0, cz = a.z + e.dz * s0;
+        const room = [Infinity, Infinity], med = [false, false];
+        const st = ++stamp;
+        for (let gx0 = Math.floor((cx - SH_R) / CELL); gx0 <= Math.floor((cx + SH_R) / CELL); gx0++) {
+          for (let gz0 = Math.floor((cz - SH_R) / CELL); gz0 <= Math.floor((cz + SH_R) / CELL); gz0++) {
+            const l = grid.get(skey(gx0, gz0));
+            if (!l) continue;
+            for (const oi of l) {
+              if (seenO[oi] === st) continue;
+              seenO[oi] = st;
+              const o = edges[oi];
+              if (o === e || o.tunnel) continue;
+              const par = e.dx * o.dx + e.dz * o.dz;
+              if (Math.abs(par) < 0.8) continue;
+              const oa = nodes[o.a];
+              let u = ((cx - oa.x) * o.dx + (cz - oa.z) * o.dz) / o.len;
+              if (u < -0.02 || u > 1.02) continue;
+              u = Math.min(1, Math.max(0, u));
+              const fx = oa.x + o.dx * o.len * u, fz = oa.z + o.dz * o.len * u;
+              const dd = Math.hypot(cx - fx, cz - fz);
+              const shares = o.a === e.a || o.a === e.b || o.b === e.a || o.b === e.b;
+              if (shares && dd < 1.0) continue;
+              if (Math.abs(yOf(o, u, fx, fz) - e.ph[i]) > SH_LEVEL) continue;
+              const s = (fx - cx) * px + (fz - cz) * pz >= 0 ? 0 : 1;
+              const gap = dd - o.hw - ltw[i * 2 + s];
+              const of = o.onewayRev ? -1 : 1;
+              const opp = o.cls === 'hwy' && o.oneway && par * ef * of < -0.8;
+              if (opp && gap < SH_MED) med[s] = true;
+              // a freeway carriageway beside it widens into the same gap
+              const r = shoulderWant(o) ? gap / 2 : gap;
+              if (r < room[s]) room[s] = r;
+            }
+          }
+        }
+        for (let s = 0; s < 2; s++) {
+          if (!Number.isNaN(e.tlo[i * 2 + s])) continue;   // trimmed: walled down to the road below
+          if (s !== sR && med[s]) continue;
+          const x = Math.min(((s === sR ? want[0] : want[1]) - SH_LANE) * taper, room[s] - SH_CLEAR);
+          if (x <= 0.05) continue;
+          e.tw[i * 2 + s] = ltw[i * 2 + s] + x;
+          // a neighbour inside the new edge's catch fringe (as the trim pass marks it)
+          if (room[s] - x < 1.5) e.tnb[i * 2 + s] = 1;
+          if (x > shx) shx = x;
+          paved += (e.len / k) * x;
+        }
+      }
+      if (shx > 0) { e.ltw = ltw; e.shx = shx; }
+    }
+    cityStats.shoulderM2 = Math.round(paved);
+  }
+
   let fillSum = 0, fillN = 0, worstFill = 0;
   // Each edge's padded bounds, so the two per-sample scans below reject roads
   // that cannot reach the point before touching them (they were 0.27 s of a
@@ -1901,8 +2007,11 @@ function gradeRoads(nodes, edges) {
         if (w > widest) widest = w;
       }
     }
-    e.pbw = widest;
+    // (a widened carriageway's berm starts at its paved shoulder: the reach
+    // every onRoad / roadLift / clear-zone query takes is hw + pbw)
+    e.pbw = widest + (e.shx || 0);
   }
+  for (const e of edges) if (e.elev && e.shx) e.pbw = e.shx;
   for (const [ni, v] of nodeVar) {
     const n = nodes[ni];
     n.ph = H[v];
@@ -2992,7 +3101,8 @@ export function* cityGenerator(md, cache = {}) {
           // 1656 -- while by SR-99's north portal the carved ramp falls away
           // under a locked deck and the later capture left verify's approach
           // walk 2.5 m under it, where master catches it.
-          hw: e.elev ? e.hw + 1.5 : e.hw + 0.4,
+          // (a paved shoulder reaches past hw: the piece is filed by its widest side)
+          hw: e.shx ? Math.max(e.elev ? e.hw + 1.5 : e.hw + 0.4, sideOf(i, 0), sideOf(i, 1)) : e.elev ? e.hw + 1.5 : e.hw + 0.4,
           sa: e.pg[i], sb: e.pg[i + 1], px, pz,
           // Continued ends: another piece -- of this edge, or the graded
           // edge carrying on through the node -- answers past them (see

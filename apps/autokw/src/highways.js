@@ -35,7 +35,7 @@ import * as THREE from './three.js';
 import * as G from './geo.js';
 import { hash2 } from './util.js';
 import { Builder } from './build.js';
-import { ROAD_LIFT, CHUNK } from './citygen.js';
+import { ROAD_LIFT, CHUNK, SH_LANE } from './citygen.js';
 import { polyMat, plainUV } from './kw.js';
 
 const ckey = (x, z) => `${Math.round(x / 1500)},${Math.round(z / 1500)}`;
@@ -59,6 +59,7 @@ export function updateHighways(cam) {
 }
 const XO_SIGN = 450;            // m: an exit-only lane at least this long gets the EXIT ONLY band
 const MEDIAN_MAX = 18;          // inner edge to inner edge: paved + tall wall up to this
+const LEFT_SH = 2.5;            // m: the left shoulder's asphalt from the lanes' edge (MTO 1-2.5 to the wall)
 const SAMPLE = 10;              // metres between median samples
 const KINGS = new Set(['401', '403', '407', '7', '8', '85', '24', '6', '97', '86', '2', '5', '410']);
 // Each route's signed direction: the axis its "first" direction points along
@@ -89,6 +90,16 @@ function sideW(e, t, s) {
   const i = Math.min(e.pk, Math.max(0, Math.round(t * e.pk)));
   return e.tw[i * 2 + s];
 }
+/** The LANES' edge on side s at t: where the edge line is painted. A freeway's
+ *  paved shoulder (citygen shoulderWant) lies between it and sideW's edge. */
+function laneW(e, t, s) {
+  const w = e.ltw || e.tw;
+  if (!w) return e.hw;
+  const i = Math.min(e.pk, Math.max(0, Math.round(t * e.pk)));
+  return w[i * 2 + s];
+}
+/** Paved half-width at its widest: the carriageway and its shoulders. */
+const pavedHw = (e) => e.hw + (e.shx || 0);
 /** The drawn surface of edge e at parameter t, `o` m to the right of a -> b. */
 function surfY(city, e, t, o, x, z) {
   if (e.prof) {
@@ -205,7 +216,8 @@ function buildClearZone(city) {
     if (e.cls !== 'hwy' && !(e.cls === 'ramp' && fr[ei])) return;
     if (e.tunnel) return;
     const a = city.nodes[e.a], b = city.nodes[e.b];
-    const r = e.hw + Math.max(e.pbw || 0, e.cls === 'hwy' ? CLEAR_MAIN : CLEAR_RAMP);
+    // (pbw counts the paved shoulder, shx: the clear zone is past it)
+    const r = e.hw + Math.max(e.pbw || 0, (e.shx || 0) + (e.cls === 'hwy' ? CLEAR_MAIN : CLEAR_RAMP));
     const x0 = Math.floor((Math.min(a.x, b.x) - r) / CZ), x1 = Math.floor((Math.max(a.x, b.x) + r) / CZ);
     const z0 = Math.floor((Math.min(a.z, b.z) - r) / CZ), z1 = Math.floor((Math.max(a.z, b.z) + r) / CZ);
     for (let i = x0; i <= x1; i++) for (let j = z0; j <= z1; j++) {
@@ -279,8 +291,10 @@ function frame(city, ei, t) {
   const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
   const ux = e.dx * ff, uz = e.dz * ff;
   const wr = sideW(e, t, ff > 0 ? 0 : 1), wl = sideW(e, t, ff > 0 ? 1 : 0);
+  // lr / ll: the lanes' edges (the edge lines), inside the paved shoulders wr / wl
+  const lr = laneW(e, t, ff > 0 ? 0 : 1), ll = laneW(e, t, ff > 0 ? 1 : 0);
   return {
-    ei, e, t, x, z, ux, uz, rx: -uz, rz: ux, wr, wl, ff,
+    ei, e, t, x, z, ux, uz, rx: -uz, rz: ux, wr, wl, lr, ll, ff,
     y: (o) => surfY(city, e, t, ff * o, x - uz * o, z + ux * o),   // o: metres right of travel
   };
 }
@@ -304,7 +318,7 @@ function edgeIndex(city) {
   city.edges.forEach((e, ei) => {
     if (!isMain(e)) return;
     const a = city.nodes[e.a], b = city.nodes[e.b];
-    const pad = e.hw + 4;
+    const pad = pavedHw(e) + 4;
     const x0 = Math.floor((Math.min(a.x, b.x) - pad) / S), x1 = Math.floor((Math.max(a.x, b.x) + pad) / S);
     const z0 = Math.floor((Math.min(a.z, b.z) - pad) / S), z1 = Math.floor((Math.max(a.z, b.z) + pad) / S);
     for (let i = x0; i <= x1; i++) for (let j = z0; j <= z1; j++) {
@@ -326,7 +340,8 @@ const lin = (c) => [Math.pow(c[0], 2.2), Math.pow(c[1], 2.2), Math.pow(c[2], 2.2
 const COL = {
   conc: lin([0.56, 0.555, 0.53]),      // the tall wall: cast concrete, weathered
   concDark: lin([0.46, 0.45, 0.43]),  // its foot, road grime
-  asph: lin([0.33, 0.33, 0.34]),      // the paved median
+  asph: lin([0.33, 0.33, 0.34]),      // the paved median: the left shoulder's asphalt
+  medConc: lin([0.55, 0.545, 0.52]),  // ...and the median's concrete apron beyond it
   steel: lin([0.58, 0.60, 0.62]),
   back: lin([0.52, 0.54, 0.56]),
   lamp: lin([0.20, 0.21, 0.22]),
@@ -762,7 +777,7 @@ export function rumbleAt(x, z, y) {
     if (along < r.d0 || along > r.d1) continue;
     const lat = (dx * -e.dz + dz * e.dx) * r.sg;
     const t = along / e.len, i = Math.min(e.pk, Math.max(0, Math.round(t * e.pk)));
-    const o = e.tw[i * 2 + r.s] - r.inset + 0.28;
+    const o = (e.ltw || e.tw)[i * 2 + r.s] - r.inset + 0.28;
     if (Math.abs(lat - o) > 0.26) continue;
     if (Math.abs(RUMBLE_CITY.profAt(e, t).h - y) > 1.2) continue;
     return 1;
@@ -795,7 +810,7 @@ export function buildHighways(ctx) {
       for (const ei of city.edgesNear(ox + CHUNK / 2, oz + CHUNK / 2, 0)) {
         const e = city.edges[ei];
         if (e.tunnel) continue;
-        const a = city.nodes[e.a], b = city.nodes[e.b], r = e.hw + CW_PAD;
+        const a = city.nodes[e.a], b = city.nodes[e.b], r = pavedHw(e) + CW_PAD;
         const i0 = Math.max(0, Math.floor((Math.min(a.x, b.x) - r - ox) / FC)), i1 = Math.min(NF - 1, Math.floor((Math.max(a.x, b.x) + r - ox) / FC));
         const j0 = Math.max(0, Math.floor((Math.min(a.z, b.z) - r - oz) / FC)), j1 = Math.min(NF - 1, Math.floor((Math.max(a.z, b.z) + r - oz) / FC));
         for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) grid[j * NF + i].push(ei);
@@ -806,7 +821,9 @@ export function buildHighways(ctx) {
     const j = Math.min(NF - 1, Math.max(0, Math.floor((z - cz * CHUNK) / FC)));
     return grid[j * NF + i];
   };
-  const onCw = (x, z, pad) => {
+  // (paved: a carriageway's paved shoulders count -- false for the rumble
+  // strips, which are milled INTO a shoulder and ask only about the lanes)
+  const onCw = (x, z, pad, paved = true) => {
     for (const ei of (pad <= CW_PAD ? cwCell(x, z) : city.edgesNear(x, z, 0))) {
       const e = city.edges[ei];
       if (e.tunnel) continue;
@@ -814,7 +831,7 @@ export function buildHighways(ctx) {
       const sx = b.x - a.x, sz = b.z - a.z, l2 = sx * sx + sz * sz;
       let t = l2 > 0 ? ((x - a.x) * sx + (z - a.z) * sz) / l2 : 0;
       t = t < 0 ? 0 : t > 1 ? 1 : t;
-      const r = e.hw + pad;
+      const r = (paved ? pavedHw(e) : e.hw) + pad;   // (its paved shoulders are carriageway too)
       if ((a.x + sx * t - x) ** 2 + (a.z + sz * t - z) ** 2 <= r * r) return true;
     }
     return false;
@@ -869,14 +886,26 @@ export function buildHighways(ctx) {
       // points across the median at p and q: A edge, wall foot A, wall foot B, B edge
       const pt = (s, off) => [s.f.x - s.f.rx * off, s.f.z - s.f.rz * off];
       const WB = 0.30, WT = 0.12, WH = 1.07;
-      const B = K.B(p.f.x, p.f.z, 'asph');
-      const pa = pt(p, p.f.wl - 0.05), qa = pt(q, q.f.wl - 0.05);
-      const pw = pt(p, p.mid - WB), qw = pt(q, q.mid - WB);
-      const pw2 = pt(p, p.mid + WB), qw2 = pt(q, q.mid + WB);
-      const pb = pt(p, p.lat - p.owl + 0.05), qb = pt(q, q.lat - q.owl + 0.05);
+      // THE LEFT SHOULDER (round four): asphalt LEFT_SH m out from the lanes'
+      // edge (the carriageway's own 0.8 m and LEFT_SH - 0.8 of this), then
+      // the median's concrete to the wall -- where the carriageways are far
+      // apart (the 401's 6-15 m) the wall stands on a broad concrete apron,
+      // not 5 m of shoulder. A narrow median is shoulder to the wall.
+      const B = K.B(p.f.x, p.f.z, 'asph'), Cm = K.B(p.f.x, p.f.z, 'medConc');
       const lift = 0.025;
-      B.quad([pa[0], p.yA + lift, pa[1]], [qa[0], q.yA + lift, qa[1]], [qw[0], q.yA + lift, qw[1]], [pw[0], p.yA + lift, pw[1]], [0, 1, 0], NOUV, W1);
-      B.quad([pw2[0], p.yB + lift, pw2[1]], [qw2[0], q.yB + lift, qw2[1]], [qb[0], q.yB + lift, qb[1]], [pb[0], p.yB + lift, pb[1]], [0, 1, 0], NOUV, W1);
+      const strip = (s, a0, a1, b0, b1) => {   // a0..a1 at p, b0..b1 at q (offsets left of p/q's travel)
+        const A0 = pt(p, a0), A1 = pt(p, a1), B0 = pt(q, b0), B1 = pt(q, b1);
+        const ya = s < 0 ? p.yA : p.yB, yb = s < 0 ? q.yA : q.yB;
+        return [[A0[0], ya + lift, A0[1]], [B0[0], yb + lift, B0[1]], [B1[0], yb + lift, B1[1]], [A1[0], ya + lift, A1[1]]];
+      };
+      const shA = (s) => Math.min(s.mid - WB, s.f.wl + LEFT_SH - SH_LANE);   // this side's shoulder's outer edge
+      const shB = (s) => Math.max(s.mid + WB, s.lat - s.owl - (LEFT_SH - SH_LANE));
+      const qd = (b, c) => b.quad(c[0], c[1], c[2], c[3], [0, 1, 0], NOUV, W1);
+      qd(B, strip(-1, p.f.wl - 0.05, shA(p), q.f.wl - 0.05, shA(q)));
+      if (p.mid - WB - shA(p) > 0.05 || q.mid - WB - shA(q) > 0.05) qd(Cm, strip(-1, shA(p), p.mid - WB, shA(q), q.mid - WB));
+      if (shB(p) - p.mid - WB > 0.05 || shB(q) - q.mid - WB > 0.05) qd(Cm, strip(1, p.mid + WB, shB(p), q.mid + WB, shB(q)));
+      qd(B, strip(1, shB(p), p.lat - p.owl + 0.05, shB(q), q.lat - q.owl + 0.05));
+      const pa = pt(p, p.f.wl - 0.05), qa = pt(q, q.f.wl - 0.05);
       STATS.paved += Math.hypot(qa[0] - pa[0], qa[1] - pa[1]);
       // the wall: F-shape both faces, a flat top
       const C = K.B(p.f.x, p.f.z, 'conc'), D = K.B(p.f.x, p.f.z, 'concDark');
@@ -1126,10 +1155,12 @@ export function buildHighways(ctx) {
         const ey = e.pe[i * 6 + s * 3], w = e.pe[i * 6 + s * 3 + 1], ty = e.pe[i * 6 + s * 3 + 2];
         const drop = w > 0 ? ey - ty : 0;
         const nearBridge = Math.min(dA + t * e.len, dB + (1 - t) * e.len) < BRIDGE_RUN;
+        // at the paved shoulder's outer edge; not along a side trimmed off a
+        // lower road (the lane basis, ltw, is the trim's)
         const tw = e.tw[i * 2 + s];
         const off = tw + R_OUT;
         const x = a.x + e.dx * e.len * t + px * sg * off, z = a.z + e.dz * e.len * t + pz * sg * off;
-        const want = (drop > RAIL_DROP || nearBridge) && tw > e.hw - 0.5
+        const want = (drop > RAIL_DROP || nearBridge) && (e.ltw || e.tw)[i * 2 + s] > e.hw - 0.5
           && !(leftSide && wallWithin(x, z, 12)) && !onCw(x, z, 0.2);
         if (!want) { flush(); continue; }
         run.push([x, z, ey, px * sg, pz * sg]);
@@ -1225,11 +1256,11 @@ export function buildHighways(ctx) {
       for (let d = 0.3; d < e.len - 0.3; d += 0.9) {
         const t = d / e.len;
         const i = Math.min(e.pk, Math.round(t * e.pk));
-        const tw = e.tw[i * 2 + s];
+        const tw = (e.ltw || e.tw)[i * 2 + s];   // the lanes' edge: the edge line's
         if (tw < e.hw - 0.5) { endRun(); continue; }
         const o = tw - inset + 0.28;      // just outside the edge line, on the shoulder
         const cx = a.x + e.dx * d + px * sg * o, cz = a.z + e.dz * d + pz * sg * o;
-        if (onCw(cx + px * sg * 0.6, cz + pz * sg * 0.6, -0.4)) { endRun(); continue; }
+        if (onCw(cx + px * sg * 0.6, cz + pz * sg * 0.6, -0.4, false)) { endRun(); continue; }
         // (the stretch is recorded for rumbleAt: what your tyres find there)
         if (!run) run = { e, s, sg, inset, d0: d, d1: d };
         run.d1 = d;
@@ -1282,7 +1313,7 @@ export function buildHighways(ctx) {
       const n = STATS.views.filter((v) => v.name.startsWith(view)).length;
       const v = walk(city, f.ei, f.t, -30);
       if (v && n < 4) {
-        const o = v.wr - 2.6;
+        const o = v.lr - 2.6;   // (the right lane: the lanes' edge, not the shoulder's)
         STATS.views.push({ name: `${view}${n}`, c: [+(v.x + v.rx * o).toFixed(1), +(v.z + v.rz * o).toFixed(1), 1.4],
           t: [+x.toFixed(1), +z.toFixed(1), lift + 1], fov: 50 });
       }
@@ -1301,7 +1332,7 @@ export function buildHighways(ctx) {
     if (!standOk(f, x, z, yr)) return false;
     let yb = Math.max(yr, f.y(0)) + 5.4;
     const yg = Math.min(yr, G.terrainHeight(x, z));
-    const cR = f.wr - 0.8 - Math.max(1.8, P.w / 2 - 0.4);   // the sign's centre, right of the centreline
+    const cR = f.lr - 0.8 - Math.max(1.8, P.w / 2 - 0.4);   // the sign's centre, right of the centreline (over the right lane)
     // the EXIT ONLY band hangs under the sign, which rises by its height
     if (U) { face(K, f, 0, cR, yb, U); yb += U.h + 0.04; }
     face(K, f, 0, cR, yb, P);
@@ -1345,7 +1376,7 @@ export function buildHighways(ctx) {
         if (f && cantilever(f, P, U)) {
           // where to stand to see it (kwshots views: window.__hwy.views): 160 m back, in the right lane
           const v = walk(city, f.ei, f.t, -38) || f;
-          const o = v.wr - 2.6;
+          const o = v.lr - 2.6;   // (the right lane: the lanes' edge, not the shoulder's)
           STATS.views.push({ name: `${x.main}-${x.ref || ''}-${(x.street[0] || x.dest[0] || x.dref[0] || '').replace(/\W+/g, '')}`,
             c: [+(v.x + v.rx * (o - 2)).toFixed(1), +(v.z + v.rz * (o - 2)).toFixed(1), 1.4],
             t: [+(f.x + f.rx * o).toFixed(1), +(f.z + f.rz * o).toFixed(1), 6], fov: 55 });

@@ -35,11 +35,14 @@ export function oneWaySpan(city, ei, flowAt) {
   const e = city.edges[ei];
   // A graded carriageway can be trimmed back where it runs over another
   // (e.tw, per sample and side): lanes stay inside the narrowest point.
+  // (`ltw`, the lane basis, where a freeway's paved shoulders widened `tw`:
+  // the lanes are where they always were -- citygen shoulderWant)
   let w0 = e.hw, w1 = e.hw;
-  if (e.tw) {
-    for (let i = 0; i < e.tw.length; i += 2) {
-      if (e.tw[i] < w0) w0 = e.tw[i];
-      if (e.tw[i + 1] < w1) w1 = e.tw[i + 1];
+  const tw = e.ltw || e.tw;
+  if (tw) {
+    for (let i = 0; i < tw.length; i += 2) {
+      if (tw[i] < w0) w0 = tw[i];
+      if (tw[i + 1] < w1) w1 = tw[i + 1];
     }
   }
   // ...and inside any lid barrier standing in the carriageway (world
@@ -118,7 +121,8 @@ export function twoWayLayout(e) {
   if (!e.oneway && (e.cls === 'art' || e.cls === 'st') && !e.rural && !e.tunnel && !e.gravel
     && nP >= 1 && nM >= 1 && (Math.max(nP, nM) >= 2 || yP || yM)) {
     let w0 = e.hw, w1 = e.hw;
-    if (e.tw) for (let i = 0; i < e.tw.length; i += 2) { w0 = Math.min(w0, e.tw[i]); w1 = Math.min(w1, e.tw[i + 1]); }
+    const tw = e.ltw || e.tw;
+    if (tw) for (let i = 0; i < tw.length; i += 2) { w0 = Math.min(w0, tw[i]); w1 = Math.min(w1, tw[i + 1]); }
     // (a bay takes the two-way left-turn lane's place: a double yellow
     // beside it)
     const twl = alTwltl(e) && !yP && !yM;
