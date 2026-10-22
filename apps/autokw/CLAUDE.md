@@ -332,8 +332,8 @@ file and a guide disagree, this file wins.
   towers' boxes (`TOWERS`), which world.js `modernTower` / `towerLook` /
   `buildingFamily` honour as the real cladding (c, panel, glass). Everything
   else is built inside buildSights through `addSights` (kwsights.js: same
-  Kit, same atlas, now 2048 x 2048 -- it overflowed at 1536 once Preston and
-  Hespeler's signs came). **Data** (tools/kw/build_sights.py): MAIN_STREETS
+  Kit, same atlas, now 2048 x 3072 -- it overflowed at 1536 once Preston and
+  Hespeler's signs came, and again at 2048 once kwnature / ballpark's did). **Data** (tools/kw/build_sights.py): MAIN_STREETS
   gained Preston's King St E and Hespeler's Queen St (houses skipped);
   `KING_FORCE` puts the Walper (5 storeys, over the size cut), the 1931 PUC
   building, THEMUSEUM and Galt's three long rows on the main street; SIGHTS
@@ -376,6 +376,85 @@ file and a guide disagree, this file wins.
   street, e.g. `{c: [-1138.7, 238.2, 1.6], t: [-1177, 256, 10]}` (the
   Walper), `{c: [12905, 10345, 1.6], t: [12820, 10276, 14]}` (Central Pres),
   `{c: [12760, 9135, 1.6], t: [12637, 9222, 10]}` (GCI from Water St).
+- **The landmarks pass: src/kwlandmarks2.js** (`data/lm2.json` from
+  tools/kw/build_lm2.py; docs/lm2-*.jpg, master over this). The places a
+  Kitchener kid names from the car that were still the importer's boxes,
+  each from its OSM footprint (`LANDMARKS`, nearest centroid within 12 m,
+  asserted): **the hospitals** (WRHN since April 2025) -- WRHN @ Midtown
+  (Grand River: the red-brown brick wings, the tall brick block, the white
+  front block on the drive with WRHN @ Midtown on it, MAIN ENTRANCE, the
+  cancer centre on Green St), WRHN @ Queen's Blvd (St. Mary's: buff wings
+  and the 1962 ten-storey slab, ~49 m), WRHN @ Chicopee (Freeport: brick
+  pavilions under brown hipped roofs, the round pavilion, the glass pyramid;
+  no emergency department, so none drawn), Cambridge Memorial (Stantec's 2020
+  A wing in two runs bending along the Grand, masonry and full-height glass,
+  the old brick tower); each emergency department has the vestibule, the red
+  EMERGENCY band and fascia and the ambulance bay's lines (`emergency()`), and
+  a blue H sign by the drive. **Perimeter Institute** (OSM's outline split at
+  z -1466: the building north of it -- the south front's slanted black blades
+  with stainless-lined mirror slots, the glass north wall with study boxes
+  over Silver Lake, the Hawking Centre's lantern -- and the reflecting pool
+  south of it with the entrance bridge). **The CIGI Campus** (brick to Erb and
+  Caroline, the courtyard CUT OUT of the roof -- kwplaces.js `roof()` and
+  kwsights.js `block()` now take `holes` -- glazed round with fir mullions,
+  the water feature, the auditorium's green roof, CIGI / BALSILLIE SCHOOL
+  lettering). **Sun Life** (the 1912 Mutual Life front: buff Roman brick,
+  quoins, balustrade, paired columns and pediment, MUTUAL LIFE on the
+  frieze, the Sun Life sign on the lawn; the later offices behind and the
+  dark tower). **Manulife** (500 King N: the long pale curve, green-grey
+  ribbons, the green sign on the parking face). **BlackBerry** A-D (grey
+  panels, blue curtain glass, white fins, the logo on A and B). **The
+  Waterloo Region Courthouse** (pale stone, zinc top floors, the glazed
+  atrium and entrance on Frederick St, bilingual name), **150 Frederick**
+  (brick slab, the round council chamber under its copper cone), **Kitchener
+  station** (red brick, arched windows, hipped slate roof on brackets,
+  KITCHENER boards, VIA / GO, the platform canopy) and the 1925 freight shed
+  (GODERICH-EXETER RAILWAY). **Sources** (file header): the Esri aerial for
+  every plan -- the towers are oriented boxes read off it, OSM maps no parts
+  here; OSM levels (St. Mary's 10, courthouse 7, 150 Frederick 8, BlackBerry
+  4-5); Canadian Architect / perimeterinstitute.ca / tboake.com, KPMB /
+  Doors Open (CIGI), NORR / Infrastructure Ontario (courthouse), Stantec 2020
+  (CMH), smgh.ca / CBC (St. Mary's tower), historicplaces.ca 11829 (Mutual
+  Life), historicplaces.ca 4571 (the station). **Estimated:** every colour;
+  every tower height but St. Mary's; which face each EMERGENCY is on (toward
+  the ambulance drive the aerial shows); Sun Life's and Manulife's heights;
+  the WRHN wordmarks (lettering, not the logo). **Draws: none of its own.**
+  kwsights' Kit would put pieces in plain clusters these cells did not have
+  (+3 draws each at GRH, Freeport, CMH, BlackBerry); instead `LmKit` puts
+  every shell into buildPolys' `kwp` cluster in kw.js's footprint material
+  (as uwcampus.js does; a builder retires at 50k vertices) and every letter
+  into kw.js buildSigns' `kw` cluster on the SHARED sign atlas -- it is a
+  landmarks.js extra of its own (`addLandmarkExtra(buildLandmarks2)`), so
+  `ctx.atlas` is that atlas (1344 -> 1664 rows of 2048 used). **Tims inside
+  them:** kw.js `addSignHost(pts)` -- a Tims point in (or within 12 m of) a
+  host footprint signs on its real wall (GRH, St. Mary's, Freeport, CMH, the
+  courthouse, Sun Life); before it, storeSign found only the flattened box
+  and built a little Tims store in the middle of the hospital. **The sights
+  atlas was overflowing on master** (`__kwSights.atlas` y 2206 of 2048, full
+  23: the last rows of kwnature / ballpark lettering blank); it is 2048 x 3072
+  now (cropAtlas trims it to the 2206 used). `window.__noLm2 = true` before
+  boot turns the pass off; `window.__kwLm2` has the built list, errors,
+  triangles (~38k), the atlas row it ended on and the EMERGENCY doors (`er`).
+  Phone (AUTO_PHONE=1, GPU, tools/kw/seedrandom.js), master -> this, draws:
+  spawn 178 -> 174; from the street GRH 175 -> 171, St. Mary's 240 -> 237,
+  Freeport 196 -> 193, CMH 119 -> 115, Perimeter 235 -> 232, CIGI 309 -> 307,
+  Sun Life 198 -> 194, Manulife 145 -> 141, BlackBerry 343 -> 336, courthouse
+  250 -> 246, 150 Frederick 354 -> 355, station 332 -> 334; from the air
+  130 -> 128 (GRH) ... 163 -> 158 (Perimeter), all within +3 (unseeded runs
+  wander +-3); tris within +-1.5 %. trafficbench (rail off, phone) hashes =
+  master at all six sites; poleprobe identical; funprobe ALL OK (63); 0
+  exceptions. **Not done:** St. Jerome's / St. Paul's (uwcampus.js draws
+  St. Jerome's; St. Paul's is not named in OSM), Sportsworld Crossing (its
+  stores are kwshops'), KCI, Cambridge City Hall (2008, behind Galt Town
+  Hall), the Queen's Square and Hespeler libraries, the Crowne Plaza and the
+  Delta (their looks not found), the Inn of Waterloo, Laurel Creek's dam (OSM
+  maps it; nothing drawn yet), the RIM buildings on Phillip St (now UW's);
+  GRH's emergency entrance face and every interior are guesses; Sun Life's
+  tower and the GRH blocks are boxes, not their real stepped massing.
+  Verify: kwshots views from the street and the air, e.g. the GRH emergency
+  doors `{c: [-3158, -482, 2], t: [-3122, -462, 6]}`, St. Mary's
+  `{c: [-2138, 1630, 1.8], t: [-2135, 1570, 18]}`, CIGI from the air
+  `{c: [-4205, -1345, 40], t: [-4118, -1272, 4]}`.
 - **The chain stores: src/kwshops.js** (`data/shops.json` from
   tools/kw/extract_shops.py -> `raw_shops.json`, then tools/kw/build_shops.py;
   docs/shops-*.jpg). Every store of ~50 brands (`BRANDS` / `GAS` in

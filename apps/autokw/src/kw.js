@@ -877,6 +877,26 @@ export function faceRoad(city, x, z, r = 90) {
   return best;
 }
 
+// Footprints another module draws whose walls carry the store signs of the
+// shops inside them (kwlandmarks2.js: the Tims in a hospital's lobby, at the
+// courthouse, at Sun Life). Their boxes are flat and skipped, so without this
+// storeSign found no building and the Tims got a little store of its own
+// built in the middle of the hospital.
+const SIGN_HOSTS = [];
+export function addSignHost(pts) { SIGN_HOSTS.push({ pts, w: 1e3, d: 1e3 }); }
+function signHost(x, z, near = 12) {
+  for (const H of SIGN_HOSTS) {
+    if (inPoly(H.pts, x, z)) return H;
+    const P = H.pts;
+    for (let i = 0; i < P.length; i++) {
+      const a = P[i], c = P[(i + 1) % P.length], dx = c[0] - a[0], dz = c[1] - a[1], L2 = dx * dx + dz * dz || 1;
+      const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / L2));
+      if (Math.hypot(x - a[0] - dx * t, z - a[1] - dz * t) < near) return H;
+    }
+  }
+  return null;
+}
+
 /**
  * landmarks.js extra: every sign. `ctx` is buildLandmarks's
  * { addTo, solids, atlas, city, onRoad }.
@@ -892,9 +912,10 @@ export function buildSigns(ctx) {
   const out = { tims: [], freshco: [] };
 
   const storeSign = (x, z, w, h, makePanel, opts = {}) => {
-    const b = boxAt(city, x, z, 3);
-    if (b && b.kw && b.kw.poly) {
-      const P = b.kw.poly, f = polyFace(P, x, z);
+    const host = signHost(x, z);
+    const b = host || boxAt(city, x, z, 3);
+    if (host || (b && b.kw && b.kw.poly)) {
+      const P = host || b.kw.poly, f = polyFace(P, x, z);
       if (!f) return null;
       const ww = Math.min(w, f.len - 0.6), half = (f.len - ww) / 2;
       const t = Math.max(ww / 2 + 0.3, Math.min(f.len - ww / 2 - 0.3, f.t));

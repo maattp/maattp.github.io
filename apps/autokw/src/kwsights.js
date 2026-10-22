@@ -173,7 +173,7 @@ function block(kit, ctx, pts, o) {
       if (W.bands && f > 0) B.quad(e.at(0, y0 - 0.55, 0.05), e.at(e.L, y0 - 0.55, 0.05), e.at(e.L, y0 - 0.35, 0.05), e.at(0, y0 - 0.35, 0.05), N, U0, W.bands);
     }
   }
-  roof(B, pts, yTop, o.roof || lin([0.38, 0.37, 0.36]));
+  roof(B, pts, yTop, o.roof || lin([0.38, 0.37, 0.36]), o.holes || []);
   return { E, pts, yTop, base, lo, B, cx, cz, g: kit.grp(cx, cz) };
 }
 
@@ -1596,7 +1596,7 @@ export function buildSights(ctx) {
   if (!S) return;
   const t0 = performance.now();
   const kit = new Kit();
-  const atlas = new PlaceAtlas(2048, 2048);
+  const atlas = new PlaceAtlas(2048, 3072);
   kit.atlas = atlas;
   ctx = { ...ctx, atlas };
   const run = (name, fn) => {

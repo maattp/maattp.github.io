@@ -238,6 +238,8 @@ export async function loadMapData(onStep) {
   const gravel = await opt('gravel.json');
   // downtown Kitchener, Cambridge, the malls... (tools/kw/build_sights.py; kwsights.js)
   const sights = await opt('sights.json');
+  // the landmarks pass: hospitals, Perimeter, CIGI, the courthouse... (tools/kw/build_lm2.py; kwlandmarks2.js)
+  const lm2 = await opt('lm2.json');
   // the villages' main streets, St. Jacobs' mill and silos (tools/kw/build_villages.py; kwvillages.js)
   const villages = await opt('villages.json');
   // north-east Waterloo's plazas and schools, Conestoga Doon, the Bridgeport Bridge (tools/kw/build_home.py; kwhome.js)
@@ -273,6 +275,6 @@ export async function loadMapData(onStep) {
   return {
     height, hfN: hp.w, wlevel,
     water, green, farm, maskN: sp.w, lot, lotN: lp.w,
-    roads, buildings, places, lakes, monorail, link, freight, rail, beaches, parkprops, bikepaths, piers, ferry, mountains, trails, kw, chicopee, golf, kart, gravel, sights, villages, shops, hwy, uw, home, junctions, grt, eats, streetsigns, sidewalks, artlanes, postboxes, grtstops,
+    roads, buildings, places, lakes, monorail, link, freight, rail, beaches, parkprops, bikepaths, piers, ferry, mountains, trails, kw, chicopee, golf, kart, gravel, sights, lm2, villages, shops, hwy, uw, home, junctions, grt, eats, streetsigns, sidewalks, artlanes, postboxes, grtstops,
   };
 }
