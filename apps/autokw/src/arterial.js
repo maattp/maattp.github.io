@@ -7,7 +7,10 @@
 // `e.al` (citygen, from data/artlanes.bin, tools/kw/build_artlanes.py): bits
 // 0-2 lanes driven a -> b, 3-5 lanes driven b -> a, 6 a two-way left-turn
 // lane, 7 matched to an OSM way; bits 8-9 a painted bike lane on the +p side
-// (+p = (-dz, dx), the right of a -> b), 10-11 on the -p side.
+// (+p = (-dz, dx), the right of a -> b), 10-11 on the -p side; bit 12 OSM's
+// turn:lanes put a left-turn bay on it driven a -> b, 13 one driven b -> a.
+// The bays the game draws and drives are those of them that run into a
+// signal's left-turn approach (markBays: `e.bayP` / `e.bayM`).
 
 // Lanes on a one-way street are 3.6 m, a real lane. A one-way street with
 // parking keeps 2.2 m clear at each kerb for the parked cars (they sit at
@@ -84,6 +87,8 @@ export const alBwd = (e) => (e.al ? (e.al >> 3) & 7 : 0);
 export const alTwltl = (e) => !!(e.al && e.al & 64);
 /** A painted bike lane on side sg (+1 = +p, the right of a -> b). */
 export const alBike = (e, sg) => !!(e.al && (sg > 0 ? (e.al >> 8) & 3 : (e.al >> 10) & 3));
+/** OSM maps a left-turn bay on e driven `sg` (+1 = a -> b, ending at b). */
+export const alBay = (e, sg) => !!(e.al && e.al & (sg > 0 ? 4096 : 8192));
 
 // the two-way layout's pieces (metres)
 const TW_C0 = 1.75;       // half a two-way left-turn lane
@@ -108,28 +113,134 @@ export function twoWayLayout(e) {
   if (e._tw2 !== undefined) return e._tw2;
   let out = null;
   const nP = alFwd(e), nM = alBwd(e);
+  // a left-turn bay each way (markBays): a lane of its own beside the centre
+  const yP = e.bayP ? 1 : 0, yM = e.bayM ? 1 : 0;
   if (!e.oneway && (e.cls === 'art' || e.cls === 'st') && !e.rural && !e.tunnel && !e.gravel
-    && nP >= 1 && nM >= 1 && Math.max(nP, nM) >= 2) {
+    && nP >= 1 && nM >= 1 && (Math.max(nP, nM) >= 2 || yP || yM)) {
     let w0 = e.hw, w1 = e.hw;
     if (e.tw) for (let i = 0; i < e.tw.length; i += 2) { w0 = Math.min(w0, e.tw[i]); w1 = Math.min(w1, e.tw[i + 1]); }
-    const twl = alTwltl(e);
+    // (a bay takes the two-way left-turn lane's place: a double yellow
+    // beside it)
+    const twl = alTwltl(e) && !yP && !yM;
     const c0 = twl ? TW_C0 : DY_C0;
     const bP = alBike(e, 1), bM = alBike(e, -1);
     const kP = bP ? BIKE_IN : KERB_IN, kM = bM ? BIKE_IN : KERB_IN;
     const A = -(w1 - kM), B = w0 - kP;
-    const w = Math.min(LANE_MAX, (B - A - 2 * c0) / (nP + nM));
+    const oP = nP + yP, oM = nM + yM;   // lanes laid out each side, bay included
+    const w = Math.min(LANE_MAX, (B - A - 2 * c0) / (oP + oM));
     if (w >= LANE_MIN) {
-      const m = (A + B) / 2 - ((nP - nM) * w) / 2;
-      out = { m, c0, w, nP, nM, kP, kM, bP, bM, twl };
+      const m = (A + B) / 2 - ((oP - oM) * w) / 2;
+      out = { m, c0, w, nP, nM, kP, kM, bP, bM, twl, yP, yM, oP, oM };
     }
   }
   return (e._tw2 = out);
 }
 
-/** On a two-way layout L, lane i (0 the inner) of the side driven `sign`:
- *  its centre's offset to the right of travel. */
+/** On a two-way layout L, lane i (0 the inner through lane, -1 the
+ *  left-turn bay where the side has one) of the side driven `sign`: its
+ *  centre's offset to the right of travel. */
 export function twoWayLaneOff(L, sign, i) {
-  return (sign > 0 ? L.m : -L.m) + L.c0 + (i + 0.5) * L.w;
+  return (sign > 0 ? L.m : -L.m) + L.c0 + ((sign > 0 ? L.yP : L.yM) + i + 0.5) * L.w;
+}
+
+/** The lane boundaries of two-way layout T across the road (+p), from the
+ *  -p side's outer lane edge, through the centre's two edges, to the +p
+ *  side's outer lane edge (a bay is a lane here). */
+export function twoWayCuts(T) {
+  const cuts = [];
+  for (let k = T.oM; k >= 0; k--) cuts.push(T.m - T.c0 - k * T.w);
+  for (let k = 0; k <= T.oP; k++) cuts.push(T.m + T.c0 + k * T.w);
+  return cuts;
+}
+
+/** The longest a bay may run back from its junction (m): OSM's turn:lanes
+ *  way is the bay, and one longer than this is a block, not a bay. */
+export const BAY_MAX = 150;
+/** ...and the shortest (m): a few metres of turn:lanes is OSM's way split
+ *  short of the junction, not room to turn into a bay. */
+const BAY_MIN = 18;
+
+/**
+ * THE LEFT-TURN BAYS (CLAUDE.md "Lane choice and left-turn bays"). On every
+ * signal approach OSM maps a left-turn lane on (junctions.js `A.left`), the
+ * two-way art / st edges running into it whose turn:lanes give a left bay
+ * that way (`alBay`), walked upstream through degree-2 nodes to BAY_MAX:
+ * each gets `e.bayP` (driven a -> b) or `e.bayM` = { A, d0 } (the approach,
+ * and the distance from the edge's downstream end to the junction's node).
+ * twoWayLayout lays it out as a lane; traffic.js turns left from it and only
+ * from it, and world.js paints it. Where the layout cannot fit the bay the
+ * run is cut. Called once (prepJunctions), before any layout is asked for.
+ */
+export function markBays(city, jc) {
+  const E = city.edges, N = city.nodes;
+  let appr = 0;
+  const ok = (e) => !e.oneway && (e.cls === 'art' || e.cls === 'st') && !e.rural && !e.tunnel && !e.gravel && !e.elev && !e.prof;
+  for (const C of jc.list) {
+    if (!C.approaches) continue;
+    for (const A of C.approaches) {
+      if (!A.left || !A.two) continue;
+      let at = A.ni, k = A.ei, d0 = 0;
+      const run = [];
+      for (let g = 0; g < 8; g++) {
+        const e = E[k], sg = e.b === at ? 1 : -1;
+        if (!ok(e) || !alBay(e, sg) || d0 + e.len > BAY_MAX || (sg > 0 ? e.bayP : e.bayM)) break;
+        run.push([e, sg, d0]);
+        d0 += e.len;
+        const up = sg > 0 ? e.a : e.b;
+        if (N[up].e.length !== 2 || jc.ctl[up] >= 0) break;
+        const nk = N[up].e[0] === k ? N[up].e[1] : N[up].e[0];
+        const ne = E[nk];
+        // straight on upstream (away from the junction), not round a corner
+        const ux = sg > 0 ? -e.dx : e.dx, uz = sg > 0 ? -e.dz : e.dz;
+        const vx = ne.a === up ? ne.dx : -ne.dx, vz = ne.a === up ? ne.dz : -ne.dz;
+        if (ux * vx + uz * vz < 0.9) break;
+        at = up; k = nk;
+      }
+      let last = null, run0 = 0;
+      for (const [e, sg, d] of run) {
+        const bay = { A, d0: d, start: false, len: 0 };
+        if (sg > 0) e.bayP = bay; else e.bayM = bay;
+        e._tw2 = undefined;
+        const T = twoWayLayout(e);
+        e._tw2 = undefined;
+        if (!T) {
+          // no room for it here: the bay starts downstream of this edge
+          if (sg > 0) e.bayP = null; else e.bayM = null;
+          break;
+        }
+        run0 = d + e.len;
+        last = bay;
+      }
+      if (last && run0 < BAY_MIN) {
+        // too short to turn into (OSM's way split a few metres out)
+        for (const [e, sg] of run) { if (sg > 0 && e.bayP && e.bayP.A === A) e.bayP = null; else if (sg < 0 && e.bayM && e.bayM.A === A) e.bayM = null; }
+        last = null;
+      }
+      if (last) {
+        // `start`: the edge the bay opens on (its taper); `len` the whole run
+        last.start = true;
+        for (const [e, sg] of run) { const b = sg > 0 ? e.bayP : e.bayM; if (b && b.A === A) b.len = run0; }
+        appr++;
+      }
+    }
+  }
+  let n = 0, len = 0;
+  for (const e of E) if (e.bayP || e.bayM) { n++; len += e.len; }
+  return { bayApproaches: appr, bayEdges: n, bayKm: +(len / 1000).toFixed(1) };
+}
+
+/**
+ * A median half's NOSES (world.js meshRoad / _medianNose, citygen roadLift):
+ * at an end that meets a junction (a node of three or more edges) the half
+ * ends in a quarter circle of radius R (its width: kerb to midline), where
+ * the strip -- `len` long, its pavement starting psA / psB in from its ends
+ * -- has the room. [radius at the a end, at the b end], 0 for a square end.
+ */
+export function medianNoses(len, psA, psB, degA, degB, R) {
+  const room = len - psA - psB;
+  const ra = degA >= 3 && room > 2 * R + 1.5 ? R : 0;
+  const rb = degB >= 3 && room - ra > 2 * R + 1.5 ? R : 0;
+  return [ra, rb];
 }
 
 /**

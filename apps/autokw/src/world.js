@@ -16,7 +16,7 @@ import { buildMountains } from './mountains.js';
 import { plantTrees, occupancy, OCC_C, OCC_N, OCC_PAVE } from './trees.js';
 import { pumpkinSeed } from './fall.js';
 import { hash2, clamp, lerp, distToSeg, segDist, FALL, buildingTiers, roofAt, tierScale } from './util.js';
-import { edgeFlow, oneWaySpan, twoWayLayout, medianGaps, alBike } from './arterial.js';
+import { edgeFlow, oneWaySpan, twoWayLayout, twoWayCuts, medianGaps, medianNoses, alBike } from './arterial.js';
 
 // The bore's cross-section, shared by the mesher and by the trench that has to
 // be cut out of the ground to make room for it.
@@ -176,10 +176,7 @@ function artStrips(city, e, ei) {
       if (hi - lo > 2) for (let k = 0; k <= n; k++) cuts.push(lo + (k * (hi - lo)) / n);
     } else {
       const T = twoWayLayout(e);
-      if (T) {
-        for (let k = T.nM; k >= 0; k--) cuts.push(T.m - T.c0 - k * T.w);
-        for (let k = 0; k <= T.nP; k++) cuts.push(T.m + T.c0 + k * T.w);
-      }
+      if (T) cuts.push(...twoWayCuts(T));
     }
     if (cuts.length) {
       const xs = [-e.hw];
@@ -577,6 +574,16 @@ const TWLTL_ARROW = [
   [0.3, -1.8, 0.3, 0.4], [0.3, 0.4, 0.05, 0.9], [0.05, 0.9, -0.6, 1.25],
   [-0.75, 1.3, -0.3, 1.65], [-0.75, 1.3, -0.45, 0.85],   // the head
 ].map((q) => q.map((v) => v * 1.35));   // (~4.7 m end to end)
+// (it is also a left-turn bay's arrow) and a through lane's beside a bay:
+// straight on, and straight on or right in the kerb lane
+const THRU_ARROW = [
+  [0, -1.8, 0, 1.1], [0, 1.75, -0.42, 0.95], [0, 1.75, 0.42, 0.95],
+].map((q) => q.map((v) => v * 1.35));
+const THRU_RIGHT_ARROW = [
+  [-0.2, -1.8, -0.2, 1.1], [-0.2, 1.75, -0.62, 0.95], [-0.2, 1.75, 0.22, 0.95],
+  [-0.2, -0.3, 0.02, 0.2], [0.02, 0.2, 0.62, 0.52],
+  [0.77, 0.58, 0.32, 0.92], [0.77, 0.58, 0.48, 0.14],   // the right branch's head
+].map((q) => q.map((v) => v * 1.35));
 // Modern townhomes (houseExtras' neighbour, townhome): the palette infill has
 // in Seattle -- charcoal, white, mid grey, near-black, the odd deep green.
 // A building's frame turned so its +z is side k (see houseFront): local +x
@@ -5895,8 +5902,8 @@ float frLine(float o, float fw, float c, float w) {
       if (alBike(e, 1)) bikeP = [S1[1], hw - inset, fwd];
       if (alBike(e, -1)) bikeM = [S1[0], -(hw - inset), fwd];
     } else if (T2) {
-      if (T2.bP) bikeP = [T2.m + T2.c0 + T2.nP * T2.w, hw - inset, 1];
-      if (T2.bM) bikeM = [T2.m - T2.c0 - T2.nM * T2.w, -(hw - inset), -1];
+      if (T2.bP) bikeP = [T2.m + T2.c0 + T2.oP * T2.w, hw - inset, 1];
+      if (T2.bM) bikeM = [T2.m - T2.c0 - T2.oM * T2.w, -(hw - inset), -1];
     } else if (artCls && !e.oneway) {
       // one lane a way: clear of the cars (traffic drives at 0.48 hw)
       const off = Math.max(hw * 0.48 + 1.0, hw - 2.0);
@@ -5958,12 +5965,12 @@ float frLine(float o, float fw, float c, float w) {
     // a painted mark at (along s, offset o) on the edge, in its own frame:
     // X to the right of `dir`'s travel, Y along it; segments are [x0, y0,
     // x1, y1] of half-width hwM
-    const markAt = (s, o, dir, segs, hwM, col) => {
+    const markAt = (s, o, dir, segs, hwM, col, key) => {
       const ux = e.dx * dir, uz = e.dz * dir, rx = -uz, rz = ux;
       const cx = a.x + e.dx * s + px * o, cz = a.z + e.dz * s + pz * o;
       if (ei != null && city.roadCoveredAt(cx, cz, ei)) return;
-      const MS = cityStats.roadMarks || (cityStats.roadMarks = { bike: 0, twltl: 0 });
-      MS[segs === BIKE_MARK ? 'bike' : 'twltl']++;
+      const MS = cityStats.roadMarks || (cityStats.roadMarks = { bike: 0, twltl: 0, bay: 0, thru: 0 });
+      MS[key || (segs === BIKE_MARK ? 'bike' : 'twltl')]++;
       const t = s / e.len;
       for (const [x0, y0, x1, y1] of segs) {
         const ax_ = cx + rx * x0 + ux * y0, az_ = cz + rz * x0 + uz * y0;
@@ -6030,8 +6037,10 @@ float frLine(float o, float fw, float c, float w) {
         solid(m + 0.12, YELLOW);
         solid(m - 0.12, YELLOW);
       }
-      for (let k = 1; k < nP; k++) broken(m + c0 + k * w, WHITE);
-      for (let k = 1; k < nM; k++) broken(m - c0 - k * w, WHITE);
+      for (let k = 1; k < nP; k++) broken(m + c0 + (T2.yP + k) * w, WHITE);
+      for (let k = 1; k < nM; k++) broken(m - c0 - (T2.yM + k) * w, WHITE);
+      if (T2.yP) this._bayMarks(e, T2, 1, from, till, cuts, stripe, markAt, flat, a, b, yAt);
+      if (T2.yM) this._bayMarks(e, T2, -1, from, till, cuts, stripe, markAt, flat, a, b, yAt);
       bikeLane(bikeP);
       bikeLane(bikeM);
       return;
@@ -6048,6 +6057,118 @@ float frLine(float o, float fw, float c, float w) {
     // rather than restarting at each junction.
     for (let s = from; s < till; s += DASH + GAP) {
       stripe(0, s, Math.min(till, s + DASH), YELLOW);
+    }
+  }
+
+  /**
+   * AUTO KW, A MEDIAN'S NOSE (meshRoad; arterial.js medianNoses): the quarter
+   * circle of radius R, kerb to midline, that ends a median half at strip end
+   * tE (`dir` -1 its a end, +1 its b end) -- the slab (concrete or lawn, as
+   * the strip), its kerb face round the curve -- and the corner of the old
+   * square end it leaves, in asphalt at the carriageway's height (roadLift
+   * reports carriageway there too: citygen noseLift).
+   */
+  _medianNose(road, walk, flat, e, a, b, tE, dir, R, hw, sw, ox, oz, median, yAt, lawnAt) {
+    const ux = e.dx * dir, uz = e.dz * dir;
+    const bx = lerp(a.x, b.x, tE), bz = lerp(a.z, b.z, tE);
+    const cx = bx + ox * (hw + sw), cz = bz + oz * (hw + sw);   // on the midline
+    cityStats.medianNoses = (cityStats.medianNoses || 0) + 1;
+    if (globalThis.__noseLog) globalThis.__noseLog.push(Math.round(cx), Math.round(cz), Math.round(R * 10) / 10);
+    const NS = 8, P = [];
+    for (let k = 0; k <= NS; k++) {
+      const th = ((k / NS) * Math.PI) / 2, sn = Math.sin(th), cs = Math.cos(th);
+      P.push([cx + ux * R * sn - ox * R * cs, cz + uz * R * sn - oz * R * cs]);
+    }
+    const along = (x, z) => (x - a.x) * e.dx + (z - a.z) * e.dz;
+    const wy = (x, z) => G.terrainHeight(x, z) + WALK_Y;
+    const uvW = (x, z) => [((x - bx) * ox + (z - bz) * oz - hw) / WALK_TILE, along(x, z) / WALK_TILE];
+    const C = [cx, wy(cx, cz), cz], cu = uvW(cx, cz);
+    const cc = [0.72, 0.72, 0.7], ccLo = [0.4, 0.4, 0.39];
+    for (let k = 0; k < NS; k++) {
+      const p = [P[k][0], wy(P[k][0], P[k][1]), P[k][1]], q = [P[k + 1][0], wy(P[k + 1][0], P[k + 1][1]), P[k + 1][1]];
+      const pu = uvW(p[0], p[2]), qu = uvW(q[0], q[2]);
+      const uv = [cu[0], cu[1], pu[0], pu[1], qu[0], qu[1], qu[0], qu[1]];
+      if (median === 1) walk.quad(C, p, q, q, [0, 1, 0], uv, MEDIAN_TINT);
+      else {
+        const q0 = road.nv;
+        road.quad(C, p, q, q, [0, 1, 0], uv, [lawnAt(C[0], C[2]), lawnAt(p[0], p[2]), lawnAt(q[0], q[2]), lawnAt(q[0], q[2])]);
+        surfMark(road, q0, () => SURF_GRASS);
+      }
+      // the kerb face round the curve
+      const nx = (P[k][0] + P[k + 1][0]) / 2 - cx, nz = (P[k][1] + P[k + 1][1]) / 2 - cz, nl = Math.hypot(nx, nz) || 1;
+      const gp = G.terrainHeight(p[0], p[2]), gq = G.terrainHeight(q[0], q[2]);
+      flat.quad([p[0], gp + ROAD_Y, p[2]], [q[0], gq + ROAD_Y, q[2]], [q[0], gq + WALK_Y, q[2]], [p[0], gp + WALK_Y, p[2]],
+        [nx / nl, 0, nz / nl], [0, 0, 1, 0, 1, 1, 0, 1], [ccLo, ccLo, cc, cc]);
+    }
+    // the corner the round leaves: carriageway, a fan from the kerb line's old end
+    const kx = bx + ux * R + ox * hw, kz = bz + uz * R + oz * hw;
+    const ry = (x, z) => yAt(x, z, clamp(along(x, z) / e.len, 0, 1), false);
+    const uvR = (x, z) => [((x - a.x) * -e.dz + (z - a.z) * e.dx + hw) / ROAD_TILE, along(x, z) / ROAD_TILE];
+    const K = [kx, ry(kx, kz), kz], ku = uvR(kx, kz);
+    for (let k = 0; k < NS; k++) {
+      const p = [P[k][0], ry(P[k][0], P[k][1]), P[k][1]], q = [P[k + 1][0], ry(P[k + 1][0], P[k + 1][1]), P[k + 1][1]];
+      const pu = uvR(p[0], p[2]), qu = uvR(q[0], q[2]);
+      road.quad(K, p, q, q, [0, 1, 0], [ku[0], ku[1], pu[0], pu[1], qu[0], qu[1], qu[0], qu[1]], [1, 1, 1]);
+    }
+  }
+
+  /**
+   * AUTO KW, A LEFT-TURN BAY (arterial.js markBays; CLAUDE.md "Lane choice and
+   * left-turn bays") on side `sd` of two-way edge e (+1 driven a -> b): the
+   * solid white line between it and the through lanes, from where it opens
+   * to the stop line; the taper where it opens (a diagonal out from the
+   * centre line); and, behind the stop line, Ontario's white left arrow in
+   * it with the through lanes' arrows beside it -- straight on, and straight
+   * on or right in the kerb lane: the moves traffic.js makes from each
+   * (cityLaneDecide, bayRule). meshRoadMarks' own helpers are passed in.
+   */
+  _bayMarks(e, T, sd, from, till, cuts, stripe, markAt, flat, a, b, yAt) {
+    const bay = sd > 0 ? e.bayP : e.bayM;
+    const { m, c0, w } = T, ny = sd > 0 ? T.nP : T.nM;
+    const WHITE = [0.94, 0.93, 0.88], W = 0.06;
+    const px = -e.dz, pz = e.dx;
+    const lineOff = m + sd * (c0 + w), ctrOff = m + sd * c0;
+    // s along a -> b of the point `dist` back up the approach from the junction
+    const sAt = (dist) => (sd > 0 ? e.len - (dist - bay.d0) : dist - bay.d0);
+    const back = bay.A.back;
+    let lo = from, hi = till;
+    const sStop = sAt(back - 0.5);
+    if (sd > 0) hi = Math.min(hi, sStop); else lo = Math.max(lo, sStop);
+    if (hi - lo < 0.5) return;
+    // the taper: a straight diagonal from the centre line out to the bay's line
+    if (bay.start) {
+      const L = Math.min(15, (hi - lo) * 0.4);
+      const s0 = sd > 0 ? lo : hi - L, s1 = sd > 0 ? lo + L : hi;
+      const o0 = sd > 0 ? ctrOff : lineOff, o1 = sd > 0 ? lineOff : ctrOff;
+      const n = Math.max(1, Math.ceil(L / 2.5));
+      for (let k = 0; k < n; k++) {
+        const sa = s0 + ((s1 - s0) * k) / n, sb = s0 + ((s1 - s0) * (k + 1)) / n;
+        const oa = o0 + ((o1 - o0) * k) / n, ob = o0 + ((o1 - o0) * (k + 1)) / n;
+        const ta = sa / e.len, tb = sb / e.len;
+        const ax = lerp(a.x, b.x, ta) + px * oa, az = lerp(a.z, b.z, ta) + pz * oa;
+        const bx = lerp(a.x, b.x, tb) + px * ob, bz = lerp(a.z, b.z, tb) + pz * ob;
+        const dl = Math.hypot(bx - ax, bz - az) || 1, nx = (-(bz - az) / dl) * W, nz = ((bx - ax) / dl) * W;
+        flat.quad(
+          [ax + nx, yAt(ax + nx, az + nz, ta, oa), az + nz], [ax - nx, yAt(ax - nx, az - nz, ta, oa), az - nz],
+          [bx - nx, yAt(bx - nx, bz - nz, tb, ob), bz - nz], [bx + nx, yAt(bx + nx, bz + nz, tb, ob), bz + nz],
+          [0, 1, 0], ZERO_UV, WHITE
+        );
+      }
+      if (sd > 0) lo += L; else hi -= L;
+    }
+    // the bay's line, along the cuts (so it follows the ground)
+    for (let i = 0; i < cuts.length; i++) {
+      const s0 = Math.max(lo, cuts[i]), s1 = Math.min(hi, i + 1 < cuts.length ? cuts[i + 1] : till);
+      if (s1 - s0 > 0.05) stripe(lineOff, s0, s1, WHITE);
+    }
+    // the arrows: 6 m behind the stop line, and 25 m further back on a long bay
+    for (const dist of bay.len > 50 ? [back + 6, back + 31] : [back + 6]) {
+      const s = sAt(dist);
+      if (s < from + 2.6 || s > till - 2.6) continue;
+      markAt(s, m + sd * (c0 + 0.5 * w), sd, TWLTL_ARROW, 0.075, WHITE, 'bay');
+      for (let i = 0; i < ny; i++) {
+        markAt(s, m + sd * (c0 + (1.5 + i) * w), sd, i === ny - 1 ? THRU_RIGHT_ARROW : THRU_ARROW, 0.075, WHITE, 'thru');
+      }
     }
   }
 
@@ -7405,10 +7526,9 @@ float frLine(float o, float fw, float c, float w) {
         // straight across the cross street. The corner is filled by meshNode,
         // whose kerb returns to this side's kerb line at paveStart -- per
         // side, because a skewed corner turns at a different distance on each.
-        const ta = this.paveStart(e.a, ei, sg) / e.len;
-        const tb = 1 - this.paveStart(e.b, ei, sg) / e.len;
+        let ta = this.paveStart(e.a, ei, sg) / e.len;
+        let tb = 1 - this.paveStart(e.b, ei, sg) / e.len;
         if (tb - ta < 0.06) continue;
-        const span = tb - ta;
         const ox = px * sg, oz = pz * sg;
         // this side's sidewalk (citygen `swk`; 3 = not known: the old pavement)
         const swk = e.swk === undefined ? 3 : sg > 0 ? e.swk & 3 : (e.swk >> 2) & 3;
@@ -7425,6 +7545,29 @@ float frLine(float o, float fw, float c, float w) {
           const g = medianGaps(this.city, e)[sg > 0 ? 0 : 1];
           if (g < 2 * sw0 && g >= 0.4) { sw = g / 2; median = g < MEDIAN_CONC ? 1 : 2; }
         }
+        // ...AND ITS NOSE (arterial.js medianNoses): at a junction the half
+        // ends in a quarter circle from the kerb to the midline, so the two
+        // halves make a rounded bullnose, not a square end. The strip stops
+        // the radius short of its old end; _medianNose draws the rest, and
+        // the corner the round leaves is carriageway (citygen roadLift).
+        let noseA = 0, noseB = 0;
+        if (median) {
+          const N = this.city.nodes;
+          [noseA, noseB] = medianNoses(e.len, ta * e.len, (1 - tb) * e.len, N[e.a].e.length, N[e.b].e.length, sw);
+          // (not where it would lie on another carriageway: the short pieces
+          // of a divided crossing inside the junction, whose strips go too)
+          const clear = (tE, dir, R) => {
+            const bx = lerp(a.x, b.x, tE), bz = lerp(a.z, b.z, tE), ux = e.dx * dir, uz = e.dz * dir;
+            for (const [f, g] of [[0.4, 0.6], [0, 1]]) {
+              if (this.city.onRoad(bx + ux * R * f + ox * (hw + sw * g), bz + uz * R * f + oz * (hw + sw * g), 0, false, false)) return false;
+            }
+            return true;
+          };
+          if (noseA && !clear(ta + noseA / e.len, -1, noseA)) noseA = 0;
+          if (noseB && !clear(tb - noseB / e.len, 1, noseB)) noseB = 0;
+          ta += noseA / e.len; tb -= noseB / e.len;
+        }
+        const span = tb - ta;
         // Pavement pieces are chords too. At a fixed 24 m on a hill the slab
         // was drawn up to 18 cm above the height roadLift gives (terrain +
         // WALK_LIFT), and everyone walking on it sank into it -- the road
@@ -7594,6 +7737,8 @@ float frLine(float o, float fw, float c, float w) {
           // (a median's half meets the other's at the midline: no verge)
           if (!median) this.meshVerge(flat, o0x, o0z, o1x, o1z, ox, oz);
         }
+        if (noseA) this._medianNose(road, walk, flat, e, a, b, ta, -1, noseA, hw, sw, ox, oz, median, yAt, lawnAt);
+        if (noseB) this._medianNose(road, walk, flat, e, a, b, tb, 1, noseB, hw, sw, ox, oz, median, yAt, lawnAt);
       }
     }
   }

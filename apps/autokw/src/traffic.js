@@ -43,6 +43,13 @@ const FWY_BANNED = new Set(['bicycle', 'schoolbus', 'garbage', 'recycling']);
 // the car it cuts in front of (or of itself behind the new leader).
 const EXIT_P = 0.3, EXIT_PLAN = [260, 1300], LC_TIME = 3.2, LC_GAIN = 0.25, LC_KEEP = 0.15, LC_SAFE = -2.5;
 const SEMI_V = 29.0;   // a semi's speed limiter: 105 km/h
+// Auto KW, LANE CHOICE IN TOWN (cityLaneDecide; CLAUDE.md "Lane choice and
+// left-turn bays"): how far ahead a driver looks for the next turn (m), how
+// long it signals before it moves over (s), how often it thinks about it
+// (s), how late a turn is given up -- LC_LATE0 + LC_LATE_T x speed m short
+// of the junction, still not in its lane -- the share of drivers who ease
+// off to let a signalling car in, and the gap a slip lane's merge needs (s).
+const LC_PLAN = 160, LC_SIG = 1.0, LC_TICK = 0.4, LC_LATE0 = 12, LC_LATE_T = 1.8, COURTESY_P = 0.7, SLIP_GAP = 3.0;
 // A phone is draw-call bound, and the fleet was over half of it: an iPhone 17
 // Pro driving downtown showed 58 vehicles (3 draws each, plus shadows) and 9.6
 // ms of render submission. Parked cars are only drawn this close on a phone,
@@ -776,6 +783,8 @@ export class TrafficSystem {
       const T = twoWayLayout(e);
       if (!T) return e.hw * 0.48;
       const n = sign > 0 ? T.nP : T.nM;
+      // (u < 0: the left-turn bay, where this side has one -- else the inner lane)
+      if (u < 0) return twoWayLaneOff(T, sign, (sign > 0 ? T.yP : T.yM) ? -1 : 0);
       return twoWayLaneOff(T, sign, Math.min(n - 1, Math.floor(u * n)));
     }
     const L = this.lanes, k = ei * 3;
@@ -788,7 +797,7 @@ export class TrafficSystem {
       L[k + 2] = S[2];
     }
     const n = L[k + 2];
-    const i = Math.min(n - 1, Math.floor(u * n));
+    const i = Math.min(n - 1, Math.max(0, Math.floor(u * n)));
     const c = L[k] + ((i + 0.5) * (L[k + 1] - L[k])) / n;
     // c is measured to the right of a -> b; travelling b -> a, right is -c.
     return c * sign;
@@ -1697,10 +1706,11 @@ export class TrafficSystem {
   nearestLaneU(ei, sign, off) {
     if (this.flow[ei] === 0) {
       // (a two-way arterial's lanes, counted from the centre: arterial.js)
+      // (never the left-turn bay: a car goes into that on purpose, bayRule)
       const T = twoWayLayout(this.city.edges[ei]);
       if (!T) return 0.5;
       const n = sign > 0 ? T.nP : T.nM;
-      const i = clamp(Math.floor((off - (sign > 0 ? T.m : -T.m) - T.c0) / T.w), 0, n - 1);
+      const i = clamp(Math.floor((off - (sign > 0 ? T.m : -T.m) - T.c0) / T.w) - (sign > 0 ? T.yP : T.yM), 0, n - 1);
       return (i + 0.5) / n;
     }
     this.laneLatU(ei, sign, 0.5);          // fills the lane cache
@@ -1711,20 +1721,355 @@ export class TrafficSystem {
     return (i + 0.5) / n;
   }
 
-  /** Plan one more entry onto the end of v's route. False at a dead end. */
-  routeExtend(v) {
+  // --- lane choice in town (Auto KW) ------------------------------------------
+  //
+  // See "Lane choice and left-turn bays" in apps/autokw/CLAUDE.md. A city car
+  // on a street of two or more lanes its way moves into the lane its next
+  // turn needs -- a left from the leftmost lane (a signal's left-turn bay
+  // where it has one: bayRule), a right from the kerb lane -- signalling
+  // first, one lane at a time, into a gap that asks nobody to brake hard
+  // (cityLaneDecide). A driver who cannot get over in time gives the turn up
+  // and goes another way (missTurn), so no turn is made across a lane.
+
+  /** The lane of fraction u on edge ei driven `sign`, counted from the LEFT
+   *  of travel: [i (-1 the left-turn bay), n (its through lanes), whether
+   *  it has a bay]. (One array, reused.) */
+  laneIdx(ei, sign, u) {
+    const out = this._li || (this._li = [0, 1, false]);
+    if (this.flow[ei] === 0) {
+      const T = twoWayLayout(this.city.edges[ei]);
+      if (!T) { out[0] = 0; out[1] = 1; out[2] = false; return out; }
+      const n = sign > 0 ? T.nP : T.nM, bay = !!(sign > 0 ? T.yP : T.yM);
+      out[0] = u < 0 ? (bay ? -1 : 0) : Math.min(n - 1, Math.floor(u * n)); out[1] = n; out[2] = bay;
+      return out;
+    }
+    this.laneLatU(ei, sign, 0.5);
+    const n = this.lanes[ei * 3 + 2], iab = Math.min(n - 1, Math.max(0, Math.floor(u * n)));
+    out[0] = sign > 0 ? iab : n - 1 - iab; out[1] = n; out[2] = false;
+    return out;
+  }
+
+  /** The lane fraction of lane i (from the left of travel, -1 the bay) on
+   *  edge ei driven `sign`. */
+  laneUOf(ei, sign, i) {
+    if (i < 0) return -0.5;
+    if (this.flow[ei] === 0) {
+      const T = twoWayLayout(this.city.edges[ei]);
+      if (!T) return 0.5;
+      const n = sign > 0 ? T.nP : T.nM;
+      return (Math.min(i, n - 1) + 0.5) / n;
+    }
+    this.laneLatU(ei, sign, 0.5);
+    const n = this.lanes[ei * 3 + 2], j = Math.min(i, n - 1);
+    return ((sign > 0 ? j : n - 1 - j) + 0.5) / n;
+  }
+
+  /** Re-lay planned entry j (not the one being driven) in lane fraction u;
+   *  the corners round it are the caller's to redo (routeVertex). */
+  relaneOnly(v, j, u) {
+    const rt = v.rt, o = j * RT_F, end = rt[o + R_END];
+    this.routeEntry(v, o, rt[o + R_EI], rt[o + R_SG], u);
+    rt[o + R_END] = end;
+  }
+
+  /** Is edge ei inside a junction controller's own box (a divided road's
+   *  crossing: both its nodes the same signal's)? */
+  inBox(ei) {
+    if (!this.jc) return false;
+    const e = this.city.edges[ei], ca = this.jc.ctl[e.a];
+    return ca >= 0 && ca === this.jc.ctl[e.b];
+  }
+
+  /**
+   * The turn made at the end of route entry j: 'L', 'S' or 'R', judged to
+   * the first entry that leaves the junction there (a signal's box can span
+   * a divided road's two carriageways); null if that is not planned yet. A
+   * bend in a street is straight on, and so is the straightest way on where
+   * the street itself bends at a junction.
+   */
+  turnAt(v, j) {
+    const rt = v.rt, city = this.city, o = j * RT_F, ei = rt[o + R_EI], e = city.edges[ei];
+    const ni = rt[o + R_SG] > 0 ? e.b : e.a;
+    const ci = this.jc ? this.jc.ctl[ni] : -1, C = ci >= 0 ? this.jc.list[ci] : null;
+    let k = j + 1;
+    if (C && C.set) {
+      while (k < v.rtN) {
+        const q = city.edges[rt[k * RT_F + R_EI]];
+        if (!(C.set.has(q.a) && C.set.has(q.b))) break;
+        k++;
+      }
+    }
+    if (k >= v.rtN) return null;
+    const q = k * RT_F, ux = rt[o + R_UX], uz = rt[o + R_UZ], nx = rt[q + R_UX], nz = rt[q + R_UZ];
+    const cos = ux * nx + uz * nz;
+    if (cos > 0.7 || city.nodes[ni].e.length < 3) return 'S';
+    if (cos > 0.25 && k === j + 1) {
+      let best = -2;
+      for (const k2 of city.nodes[ni].e) {
+        if (k2 === ei) continue;
+        const e2 = city.edges[k2], sg = e2.a === ni ? 1 : -1;
+        if (!this.allowed(k2, sg) || e2.noTraffic) continue;
+        best = Math.max(best, e2.dx * sg * ux + e2.dz * sg * uz);
+      }
+      if (cos >= best - 1e-6) return 'S';
+    }
+    return ux * nz - uz * nx > 0 ? 'R' : 'L';
+  }
+
+  /** The next turn on v's route within LC_PLAN: { j (the entry it is made
+   *  at the end of), mv, d (m to that node) }, or null. (One object, reused.) */
+  nextTurn(v, s0) {
+    const rt = v.rt;
+    let d = rt[R_LEN] - s0;
+    for (let j = 0; j < v.rtN - 1; j++) {
+      if (j > 0) d += rt[j * RT_F + R_LEN];
+      if (d > LC_PLAN + 40) return null;
+      if (j > 0 && this.inBox(rt[j * RT_F + R_EI])) continue;
+      const mv = this.turnAt(v, j);
+      if (mv === null) return null;
+      if (mv !== 'S') {
+        const nt = this._nt || (this._nt = { j: 0, mv: 'S', d: 0 });
+        nt.j = j; nt.mv = mv; nt.d = d;
+        return nt;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * A LEFT-TURN BAY (arterial.js markBays): when the newest route entry k is
+   * the first out of a signal that a bay runs into, and the move there is a
+   * left, the bay's entries are re-laid in the bay -- where the bay opens,
+   * from the inner lane (a car not in it moves over first: cityLaneDecide,
+   * and its re-planned route comes back through here). Only planned entries
+   * (>= 1): the one being driven changes lane by cityChangeLane.
+   */
+  bayRule(v, k) {
+    const rt = v.rt, city = this.city;
+    let j = k - 1;
+    for (; j >= 1; j--) {
+      const o = j * RT_F, e = city.edges[rt[o + R_EI]];
+      const bay = rt[o + R_SG] > 0 ? e.bayP : e.bayM;
+      if (bay) { if (bay.d0 > 0.5) return; break; }
+      if (!this.inBox(rt[o + R_EI])) return;
+    }
+    if (j < 1) return;
+    const o = j * RT_F;
+    if (rt[o + R_U] < 0 || this.turnAt(v, j) !== 'L') return;
+    const e = city.edges[rt[o + R_EI]], A = (rt[o + R_SG] > 0 ? e.bayP : e.bayM).A;
+    // the bay's run back up the street (OSM splits it at crosswalks)
+    let js = j;
+    while (js - 1 >= 1) {
+      const p = (js - 1) * RT_F, pe = city.edges[rt[p + R_EI]];
+      const pb = rt[p + R_SG] > 0 ? pe.bayP : pe.bayM;
+      if (!pb || pb.A !== A) break;
+      js--;
+    }
+    // into it from the inner lane (or from the bay itself, upstream)
+    const p = (js - 1) * RT_F;
+    if (rt[p + R_U] >= 0 && this.laneIdx(rt[p + R_EI], rt[p + R_SG], rt[p + R_U])[0] !== 0) return;
+    for (let jj = js; jj <= j; jj++) if (rt[jj * RT_F + R_U] >= 0) this.relaneOnly(v, jj, -0.5);
+    for (let kk = js; kk < v.rtN; kk++) this.routeVertex(v, kk);
+    this.stats.bayPlans = (this.stats.bayPlans || 0) + 1;
+  }
+
+  /** Change v's lane (the entry being driven) to fraction u, the rest of
+   *  its route re-planned over the same turns (so a bay ahead is taken). */
+  cityChangeLane(v, u) {
+    const rt = v.rt, oldOff = rt[R_OFF];
+    const keep = rt.slice(V_K, RT_F);   // the corner behind
+    const fw = [];
+    for (let k = 1; k < v.rtN; k++) fw.push({ ei: rt[k * RT_F + R_EI], sign: rt[k * RT_F + R_SG] });
+    const endLast = rt[(v.rtN - 1) * RT_F + R_END];
+    this.routeEntry(v, 0, rt[R_EI], rt[R_SG], u);
+    rt.set(keep, V_K);
+    v.laneU = u;
+    v.rtN = 1;
+    for (const f of fw) if (!this.routeExtend(v, f)) break;
+    if (v.rtN === fw.length + 1) rt[(v.rtN - 1) * RT_F + R_END] = endLast;
+    v.lcShift = (v.lcShift || 0) + oldOff - rt[R_OFF];
+    v.lcRate = Math.max(0.8, Math.abs(v.lcShift) / LC_TIME);
+    this.stats.cityLaneChanges = (this.stats.cityLaneChanges || 0) + 1;
+  }
+
+  /** Is lateral offset T (right of travel, from v's edge's centre line;
+   *  lanes w wide) clear for v to move into: nothing alongside there, the
+   *  car ahead in it far enough, the one behind not made to brake hard
+   *  (fwyLane's tests). A car moving or signalling over counts where it is going. */
+  cityLaneClear(v, T, w, sp, v0, aMax) {
+    const rt = v.rt, ux = rt[R_UX], uz = rt[R_UZ];
+    const e = this.city.edges[rt[R_EI]], na = this.city.nodes[rt[R_SG] > 0 ? e.a : e.b];
+    const myLat = (v.x - na.x) * -uz + (v.z - na.z) * ux;
+    const nb = [];
+    for (const o of this.cars) {
+      if (o === v || o.leader === v || o.mode === 'parked' || o.mode === 'apron' || o.mode === 'path' || o.mode === 'race') continue;
+      const dx = o.x - v.x, dz = o.z - v.z;
+      if (dx * dx + dz * dz > 90 * 90 || Math.abs(o.y - v.y) > 3) continue;
+      const fo = o.forward;
+      if (fo.x * ux + fo.z * uz < 0.5) continue;
+      const lat = myLat + dx * -uz + dz * ux;
+      const q = o.leader || o;
+      const tgt = q.lcShift ? lat - q.lcShift : q.lcSigOn ? lat + q.lcSigShift : lat;
+      nb.push({ o, along: dx * ux + dz * uz, lat, tgt, v: o.vLong, len: o.halfLen });
+    }
+    return this.fwyLane(v, nb, T, w, myLat, sp, v0, aMax);
+  }
+
+  /** A turn given up: the route is cut at the junction, and re-planned there
+   *  without the turn this lane cannot make (pickNextEdge). */
+  missTurn(v, nt) {
+    const rt = v.rt, o = nt.j * RT_F, e = this.city.edges[rt[o + R_EI]];
+    const ni = rt[o + R_SG] > 0 ? e.b : e.a;
+    const ci = this.jc ? this.jc.ctl[ni] : -1, C = ci >= 0 ? this.jc.list[ci] : null;
+    const li = this.laneIdx(rt[o + R_EI], rt[o + R_SG], rt[o + R_U]);
+    v.lcMiss = C && C.set ? C.set : new Set([ni]);
+    v.lcMissSeen = false;
+    v.lcMissUX = rt[o + R_UX]; v.lcMissUZ = rt[o + R_UZ];
+    // (a left from a bay approach is the bay's alone)
+    v.lcMissL = li[2] ? li[0] === -1 : li[0] <= 0; v.lcMissR = li[0] >= li[1] - 1;
+    this.cutRoute(v, nt.j);
+    v.lcSigOn = false; v.lcSigT = 0;
+    this.stats.turnsMissed = (this.stats.turnsMissed || 0) + 1;
+  }
+
+  /** A city driver's lane choice, every LC_TICK s (driveTraffic). */
+  cityLaneDecide(v, s0, sp, v0, aMax) {
+    const rt = v.rt, city = this.city;
+    const stopSig = () => { v.lcSigOn = false; v.lcSigT = 0; };
+    // a junction given up, once it is behind
+    if (v.lcMiss) {
+      const e = city.edges[rt[R_EI]], on = v.lcMiss.has(e.a) || v.lcMiss.has(e.b);
+      if (on) v.lcMissSeen = true;
+      else if (v.lcMissSeen) v.lcMiss = null;
+    }
+    if (v.lcShift) return stopSig();
+    // still in the corner behind, or in a junction
+    if ((rt[V_K] === 1 && s0 < rt[V_B] + rt[V_T]) || this.inBox(rt[R_EI])) return stopSig();
+    // plan as far ahead as a driver looks for the turn
+    let d = rt[R_LEN] - s0;
+    for (let j = 1; j < v.rtN; j++) d += rt[j * RT_F + R_LEN];
+    while (d < LC_PLAN && v.rtN < RT_MAX && this.routeExtend(v)) d += rt[(v.rtN - 1) * RT_F + R_LEN];
+    const nt = this.nextTurn(v, s0);
+    if (!nt) return stopSig();
+    const ei = rt[R_EI], sign = rt[R_SG];
+    const li = this.laneIdx(ei, sign, rt[R_U]);
+    const cur = li[0], n = li[1];
+    let want = nt.mv === 'R' ? n - 1 : 0;
+    if (nt.mv === 'L' && li[2]) {
+      // a bay under us that runs to the turn: into the bay
+      const e = city.edges[ei], A = (sign > 0 ? e.bayP : e.bayM).A;
+      let ok = true;
+      for (let j = 1; j <= nt.j && ok; j++) {
+        const qe = city.edges[rt[j * RT_F + R_EI]], qb = rt[j * RT_F + R_SG] > 0 ? qe.bayP : qe.bayM;
+        ok = !!qb && qb.A === A;
+      }
+      if (ok) want = -1;
+    }
+    if (cur === want) return stopSig();
+    // too late to get over: carry on, and turn somewhere else (once)
+    if (nt.d < LC_LATE0 + LC_LATE_T * sp) {
+      const o = nt.j * RT_F, ne = city.edges[rt[o + R_EI]], ni = rt[o + R_SG] > 0 ? ne.b : ne.a;
+      if (!(v.lcMiss && v.lcMiss.has(ni))) this.missTurn(v, nt);
+      return stopSig();
+    }
+    const dir = want > cur ? 1 : -1;   // +1 to the right
+    const u = this.laneUOf(ei, sign, cur + dir);
+    const T = this.laneLatU(ei, sign, u);
+    // SIGNAL FIRST: LC_SIG s of it (cars behind in that lane may ease off
+    // to let it in: driveTraffic's scan), then over when there is a gap
+    if (!v.lcSigOn || v.lcSigDir !== dir) { v.lcSigOn = true; v.lcSigDir = dir; v.lcSigT = 0; }
+    v.lcSigShift = T - rt[R_OFF];
+    if (v.lcSigT < LC_SIG || sp < 1.5) return;
+    const tw = this.flow[ei] === 0 ? twoWayLayout(city.edges[ei]) : null;
+    const w = tw ? tw.w : this.laneInfo(ei).w;
+    if (!this.cityLaneClear(v, T, w, sp, v0, aMax)) return;
+    this.cityChangeLane(v, u);
+    stopSig();
+  }
+
+  /**
+   * A SLIP LANE'S MERGE (Auto KW): on a ramp whose route runs into a city
+   * street at a merge (not across it) with no control at the join, the
+   * merging car gives way: to any car whose route comes through the join
+   * node by another way -- into the lane it is joining, or across it --
+   * within SLIP_GAP s of this car's getting there. Returns the distance to
+   * stop in short of the join, or Infinity. (A freeway merge is
+   * fwyMergeGap's; a yield or stop at the join is junctionStop's.)
+   */
+  slipMerge(v, sp, s0) {
+    const rt = v.rt, city = this.city;
+    let j = 1, d = rt[R_LEN] - s0;
+    for (; j < v.rtN && j < 4; j++) {
+      if (city.edges[rt[j * RT_F + R_EI]].cls !== 'ramp') break;
+      d += rt[j * RT_F + R_LEN];
+    }
+    if (j >= v.rtN || j >= 4 || d > 90) return Infinity;
+    const q = j * RT_F, tei = rt[q + R_EI];
+    if (city.edges[tei].cls === 'hwy') return Infinity;
+    const p = (j - 1) * RT_F, pe = city.edges[rt[p + R_EI]];
+    const M = rt[p + R_SG] > 0 ? pe.b : pe.a;
+    if (this.jc && this.jc.ctl[M] >= 0) return Infinity;
+    if (rt[p + R_UX] * rt[q + R_UX] + rt[p + R_UZ] * rt[q + R_UZ] < 0.3) return Infinity;
+    // at the join and rolling: committed
+    if (d < 1.5 && sp > 2) return Infinity;
+    const myKey = rt[p + R_EI] * 2 + (rt[p + R_SG] > 0 ? 1 : 0);
+    const tMe = d / Math.max(sp, 3), T = rt[q + R_OFF], tsg = rt[q + R_SG];
+    const n = city.nodes[M], fx = rt[q + R_UX], fz = rt[q + R_UZ];
+    for (const o of this.cars) {
+      if (o === v || o.mode === 'parked' || o.mode === 'apron' || o.mode === 'trailer') continue;
+      if (Math.abs(o.y - v.y) > 3) continue;
+      const dx = n.x - o.x, dz = n.z - o.z;
+      if (dx * dx + dz * dz > 150 * 150) continue;
+      let dO = null;
+      if (o.rt && o.rtN) {
+        // along its route to the join
+        const ort = o.rt;
+        let dd = ort[R_LEN] - ((o.x - ort[R_QX]) * ort[R_UX] + (o.z - ort[R_QZ]) * ort[R_UZ]);
+        for (let k = 0; k < o.rtN; k++) {
+          const oo = k * RT_F;
+          if (k > 0) dd += ort[oo + R_LEN];
+          if (dd > 150) break;
+          const oe = city.edges[ort[oo + R_EI]];
+          if ((ort[oo + R_SG] > 0 ? oe.b : oe.a) !== M) continue;
+          if (ort[oo + R_EI] * 2 + (ort[oo + R_SG] > 0 ? 1 : 0) === myKey) break;   // behind me on the slip
+          // on into the street I join, but in another lane of it: not in my way
+          if (k + 1 < o.rtN && ort[oo + RT_F + R_EI] === tei && ort[oo + RT_F + R_SG] === tsg && Math.abs(ort[oo + RT_F + R_OFF] - T) > 1.6) break;
+          // ...or the other way down a two-way street, staying on its side
+          if (ort[oo + R_UX] * fx + ort[oo + R_UZ] * fz < -0.3 && (k + 1 >= o.rtN || ort[oo + RT_F + R_UX] * fx + ort[oo + RT_F + R_UZ] * fz < -0.3)) break;
+          dO = dd;
+          break;
+        }
+      } else if (o.forward.x * fx + o.forward.z * fz > 0.7) {
+        // a driven car (yours) coming down the street I join, in my lane
+        const lat = (o.x - n.x) * -fz + (o.z - n.z) * fx;
+        if (Math.abs(lat - T) < 2.4) dO = dx * fx + dz * fz;
+      }
+      if (dO === null || dO < -(o.halfLen + 3)) continue;
+      const so = Math.abs(o.vLong);
+      // standing well back (a queue at a light): not coming yet
+      if (so < 1 && dO > 10) continue;
+      if (dO / Math.max(so, 1) < tMe + SLIP_GAP) return Math.max(0, d - v.halfLen - 1.0);
+    }
+    return Infinity;
+  }
+
+  /** Plan one more entry onto the end of v's route. False at a dead end.
+   *  `forced` ({ ei, sign }) re-plans a turn already chosen (cityChangeLane). */
+  routeExtend(v, forced = null) {
     const rt = v.rt, city = this.city, o = (v.rtN - 1) * RT_F;
     if (rt[o + R_END] || v.rtN >= RT_MAX) return false;
     const ei = rt[o + R_EI], sign = rt[o + R_SG], e = city.edges[ei];
     const node = sign > 0 ? e.b : e.a;
     // (a police unit in pursuit takes its A* path's turns)
-    const nx = v.unit && v.mode === 'police' ? this.pursuitEdge(v, ei, sign, node) : this.pickNextEdge(v, ei, sign, node);
+    const nx = forced || (v.unit && v.mode === 'police' ? this.pursuitEdge(v, ei, sign, node) : this.pickNextEdge(v, ei, sign, node));
     if (!nx) { rt[o + R_END] = 1; return false; }
     const ne = city.edges[nx.ei];
     const pux = rt[o + R_UX], puz = rt[o + R_UZ], nux = ne.dx * nx.sign, nuz = ne.dz * nx.sign;
     const cos = pux * nux + puz * nuz, crs = pux * nuz - puz * nux;
     // Straight on: the nearest lane. A turn: the same share of the width.
+    // (out of a left-turn bay: the leftmost lane)
     let u = rt[o + R_U];
+    if (u < 0) u = this.laneUOf(nx.ei, nx.sign, 0);
     const tw2 = this.flow[nx.ei] === 0 ? twoWayLayout(ne) : null;
     if (cos > 0.94 && (this.flow[nx.ei] !== 0 || tw2)) u = this.nearestLaneU(nx.ei, nx.sign, rt[o + R_OFF]);
     else if (tw2) {
@@ -1733,8 +2078,22 @@ export class TrafficSystem {
       const n = nx.sign > 0 ? tw2.nP : tw2.nM;
       u = crs > 0 ? (n - 0.5) / n : 0.5 / n;
     }
-    const q = o + RT_F;
-    this.routeEntry(v, q, nx.ei, nx.sign, u);
+    this.routeEntry(v, o + RT_F, nx.ei, nx.sign, u);
+    this.routeVertex(v, v.rtN);
+    v.rtN++;
+    // a left turn planned out of a signal's left-turn bay: into the bay
+    if (this.jc && !v.unit && v.mode === 'traffic') this.bayRule(v, v.rtN - 1);
+    return true;
+  }
+
+  /** Entry k's vertex (the corner from entry k - 1 onto it), from the two
+   *  lines as they are now. */
+  routeVertex(v, k) {
+    const rt = v.rt, city = this.city, o = (k - 1) * RT_F, q = k * RT_F;
+    const e = city.edges[rt[o + R_EI]];
+    const node = rt[o + R_SG] > 0 ? e.b : e.a;
+    const pux = rt[o + R_UX], puz = rt[o + R_UZ], nux = rt[q + R_UX], nuz = rt[q + R_UZ];
+    const cos = pux * nux + puz * nuz, crs = pux * nuz - puz * nux;
     // THE VERTEX: where the two lanes' centre lines cross (a on the old line,
     // b on the new), rounded by an arc of radius R that touches both lines t
     // either side of it. A junction's corner is at most JR_RIGHT / JR_LEFT
@@ -1742,7 +2101,7 @@ export class TrafficSystem {
     // whatever its segments leave room for.
     const plen = rt[o + R_LEN], nlen = rt[q + R_LEN];
     const th = Math.acos(clamp(cos, -1, 1));
-    rt[q + V_K] = 2; rt[q + V_A] = plen; rt[q + V_B] = 0;
+    rt[q + V_K] = 2; rt[q + V_A] = plen; rt[q + V_B] = 0; rt[q + V_T] = 0; rt[q + V_TH] = 0;
     // A jog (near-parallel lines, a lane shift, a hairpin): no arc. Its speed
     // is still the bend's, from the radius its segments allow.
     rt[q + V_R] = th < 0.035 ? Infinity : (0.5 * Math.min(plen, nlen)) / Math.tan(Math.min(th, 2.8) / 2);
@@ -1766,8 +2125,6 @@ export class TrafficSystem {
         }
       }
     }
-    v.rtN++;
-    return true;
   }
 
   /** Where entry j's straight ends (the next arc's first tangent point, or
@@ -2050,6 +2407,18 @@ export class TrafficSystem {
           if (ex * ex + ez * ez <= wid * wid) { best = ex * ex + ez * ez; break; }
         }
       }
+      // A CAR SIGNALLING INTO MY LANE (cityLaneDecide) ahead of me: most
+      // drivers ease off to let it in (as behind a leader, where it will be)
+      if (best > wid * wid && o.lcSigOn && o.mode === 'traffic' && hash2(v.prio, 29) < COURTESY_P) {
+        const tx = o.x - fo.z * o.lcSigShift, tz = o.z + fo.x * o.lcSigShift;
+        for (let k = 0; k < np - 1; k++) {
+          const ax = ps[2 * k], az = ps[2 * k + 1], sx = sg[3 * k], sz = sg[3 * k + 1], l = sg[3 * k + 2];
+          let t = ((tx - ax) * sx + (tz - az) * sz) / (l * l);
+          t = t < 0 ? 0 : t > 1 ? 1 : t;
+          const ex = tx - ax - sx * t, ez = tz - az - sz * t;
+          if (ex * ex + ez * ez <= wid * wid) { best = ex * ex + ez * ez; this.stats.courtesy = (this.stats.courtesy || 0) + 1 / 60; break; }
+        }
+      }
       if (best > wid * wid) {
         // CROSS TRAFFIC: a driven car crossing my path that will be where I
         // am going when I get there. Whoever gets there first goes; on a tie
@@ -2231,6 +2600,11 @@ export class TrafficSystem {
     let jStop = Infinity;
     if (this.jc && !v.unit && v.mode === 'traffic') {
       jStop = this.junctionStop(v, s0, sp, player);
+      // a slip lane's merge into a city street gives way (slipMerge)
+      if (this.city.edges[v.edge].cls === 'ramp') {
+        const m = this.slipMerge(v, sp, s0);
+        if (m < jStop) { jStop = m; this.stats.slipYields = (this.stats.slipYields || 0) + dt; }
+      }
       if (jStop < stopAt) v.ctlHold = true;
     }
     // IDM: free-road term plus the interaction with the leader.
@@ -2280,11 +2654,20 @@ export class TrafficSystem {
     if ((v.stuckT > 8 || v.restT > 20) && dist2(v.x, v.z, px, pz) > 120 * 120) { this.stats.stuckRecycled++; v.recycle = true; }
     // FREEWAY DRIVING: lane changes, exits (fwyDecide), on freeway edges only
     if (this.fwy[v.edge] && !v.unit) {
+      v.lcSigOn = false;
       if (v.lcCool > 0) v.lcCool -= dt;
       v.lcT = (v.lcT || 0) - dt;
       if (v.lcT <= 0) {
         v.lcT = 0.45 + 0.3 * hash2(v.prio, 17);
         this.fwyDecide(v, s0, sp, v0, aMax);
+      }
+    } else if (!v.unit && v.mode === 'traffic') {
+      // LANE CHOICE IN TOWN: into the lane the next turn needs (cityLaneDecide)
+      if (v.lcSigOn) v.lcSigT += dt;
+      v.clT = (v.clT || 0) - dt;
+      if (v.clT <= 0) {
+        v.clT = LC_TICK + 0.2 * hash2(v.prio, 23);
+        this.cityLaneDecide(v, s0, sp, v0, aMax);
       }
     }
     return inp;
@@ -2726,6 +3109,15 @@ export class TrafficSystem {
       if (st) return st;
     }
     const banned = FWY_BANNED.has(v.typeName);
+    // a turn given up here for want of its lane (cityLaneDecide's missTurn):
+    // not a turn this car's lane cannot make
+    const miss = v.lcMiss && v.lcMiss.has(nodeId);
+    // AT A SIGNAL, a quarter of drivers turn (Auto KW). Weighted as
+    // everywhere else -- dot x 2 against a 1.1 hash -- a car never turned
+    // where it could go straight on, so nobody ever turned left at a
+    // signal and its left-turn bay stood empty. Here the hash weighs more.
+    const ci = this.jc && fe.cls !== 'hwy' ? this.jc.ctl[nodeId] : -1;
+    const atSig = ci >= 0 && this.jc.list[ci].k === 1;
     let best = null, bestScore = -Infinity, sharp = null, sharpScore = -Infinity;
     for (const ei of node.e) {
       if (ei === fromEi) continue;
@@ -2738,8 +3130,12 @@ export class TrafficSystem {
       const dot = dx * fx + dz * fz;
       // (a short no-exit street: only if there is nothing else -- noExitTraps)
       const cul = this.flow[ei] === 0 ? this.cul[ei * 2 + (sign > 0 ? 1 : 0)] : 0;
-      const score = dot * 2 + hash2(ei, (v.x * 3) | 0) * 1.1 + (ne.cls === 'res' ? -0.6 : 0) + (banned && this.fwy[ei] ? -20 : 0)
+      let score = (atSig ? dot * 1.2 + hash2(ei, (v.x * 3) | 0) * 2.5 : dot * 2 + hash2(ei, (v.x * 3) | 0) * 1.1) + (ne.cls === 'res' ? -0.6 : 0) + (banned && this.fwy[ei] ? -20 : 0)
         + (cul > 0 && cul < CUL_MAX ? -6 : 0);
+      if (miss) {
+        const mx = v.lcMissUX, mz = v.lcMissUZ;
+        if (dx * mx + dz * mz < 0.7 && ((mx * dz - mz * dx > 0) ? !v.lcMissR : !v.lcMissL)) score -= 8;
+      }
       if (dot < -0.5) {
         if (score > sharpScore) { sharpScore = score; sharp = { ei, sign }; }
         continue;

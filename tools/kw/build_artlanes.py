@@ -23,7 +23,9 @@ Writes apps/autokw/data/artlanes.bin:
     byte 0: bits 0-2 lanes driven a -> b, bits 3-5 lanes driven b -> a
             (0 = not tagged), bit 6 a two-way left-turn lane, bit 7 matched
     byte 1: bits 0-1 the +p side's bike lane (+p = (-dz, dx) of a -> b, the
-            right of a -> b; 0 none, 1 a painted lane), bits 2-3 the -p side's
+            right of a -> b; 0 none, 1 a painted lane), bits 2-3 the -p side's,
+            bit 4 a left-turn bay driven a -> b (it ends at b), bit 5 one
+            driven b -> a (it ends at a)
 
 Re-run after build_roads.py (the edge indices are roads.bin's).
 """
@@ -52,8 +54,16 @@ def num(v):
         return None
 
 
+def is_bay(v):
+    """A turn:lanes value with a left-turn-only lane (a bay: `left`, not
+    `through;left`, not `slight_left` or a merge)."""
+    return bool(v) and any("left" in x and "through" not in x and "slight" not in x and "merge" not in x
+                           for x in v.split("|"))
+
+
 def way_attrs(t):
-    """(fwd lanes, bwd lanes, twltl, bike right, bike left) in the WAY's sense."""
+    """(fwd lanes, bwd lanes, twltl, bike right, bike left, left bay fwd, left
+    bay bwd) in the WAY's sense."""
     ow = (t.get("oneway") or "no").lower()
     one = ow in ("yes", "true", "1", "-1", "reverse") or (t.get("junction") or "") == "roundabout"
     ln = num(t.get("lanes"))
@@ -65,6 +75,21 @@ def way_attrs(t):
         if ow in ("-1", "reverse"):
             fwd, bwd = 0, fwd
     else:
+        # a side with turn:lanes but no lanes count has as many lanes as its
+        # turn:lanes has entries; the other side is what `lanes` leaves
+        # (the common `lanes=3` + `turn:lanes:forward=left|` approach)
+        # (only where `lanes` leaves the other side a lane: `lanes=2` with a
+        # two-entry turn:lanes:forward is a flare, and keeps the old reading)
+        tfw, tbw = t.get("turn:lanes:forward"), t.get("turn:lanes:backward")
+        gf = lf if lf is not None else (len(tfw.split("|")) if tfw else None)
+        gb = lb if lb is not None else (len(tbw.split("|")) if tbw else None)
+        if gf is not None and gb is not None and (lf is None or lb is None):
+            if ln is None or gf + gb + bw == ln:
+                lf, lb = gf, gb
+        elif ln is not None and (gf is None) != (gb is None):
+            rest = ln - bw - (gf if gf is not None else gb)
+            if rest >= 1:
+                lf, lb = (gf, rest) if gf is not None else (rest, gb)
         if lf is not None or lb is not None:
             fwd, bwd = lf or 0, lb or 0
         elif ln is not None and ln - bw >= 2 and (ln - bw) % 2 == 0:
@@ -91,7 +116,13 @@ def way_attrs(t):
     br = lane(cr) or lane(cb) or lane(c)
     # on a one-way street, cycleway=lane is the lane on the right of the traffic
     bl = lane(cl) or lane(cb) or (lane(c) and not one)
-    return fwd, bwd, twltl, br, bl
+    # A LEFT-TURN BAY on a two-way way (turn:lanes:forward / backward with a
+    # left-only lane): the game draws it, and its left-turners use it, where
+    # the way runs into a signal whose approach OSM maps a left lane on
+    # (arterial.js markBays). One-way carriageways' bays are in the median.
+    bayf = not one and is_bay(t.get("turn:lanes:forward"))
+    bayb = not one and is_bay(t.get("turn:lanes:backward"))
+    return fwd, bwd, twltl, br, bl, bayf, bayb
 
 
 def main():
@@ -173,11 +204,11 @@ def main():
         stats[cls + " edges"] += L
         if not best:
             continue
-        same, (fwd, bwd, twltl, br, bl) = best
+        same, (fwd, bwd, twltl, br, bl, bayf, bayb) = best
         if not same:
-            fwd, bwd, br, bl = bwd, fwd, bl, br
+            fwd, bwd, br, bl, bayf, bayb = bwd, fwd, bl, br, bayb, bayf
         out[ei, 0] = min(7, fwd) | (min(7, bwd) << 3) | (64 if twltl else 0) | 128
-        out[ei, 1] = (1 if br else 0) | ((1 if bl else 0) << 2)
+        out[ei, 1] = (1 if br else 0) | ((1 if bl else 0) << 2) | (16 if bayf else 0) | (32 if bayb else 0)
         stats[cls + " matched"] += L
         if fwd and bwd and fwd + bwd >= 4:
             stats[cls + " two-way multi-lane"] += L
@@ -185,6 +216,8 @@ def main():
             stats[cls + " twltl"] += L
         if br or bl:
             stats[cls + " bike lane (either side)"] += L
+        if bayf or bayb:
+            stats[cls + " left bay (either way)"] += L
     for k in sorted(stats):
         print(f"  {k:32s} {stats[k] / 1000:7.1f} km")
 

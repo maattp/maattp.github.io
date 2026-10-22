@@ -28,6 +28,7 @@ import * as THREE from './three.js';
 import * as G from './geo.js';
 import { CHUNK, ROAD_LIFT, WALK_LIFT } from './citygen.js';
 import { hash2, clamp } from './util.js';
+import { markBays, twoWayLayout, twoWayLaneOff } from './arterial.js';
 
 export const K_SIG = 1, K_STOP = 2, K_RB = 3, K_MINI = 4;
 const ON_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
@@ -142,6 +143,9 @@ export class Junctions {
     this.matchStops(data.stop || []); lap('stop');
     this.matchMini(data.mini || []); lap('mini');
     this._chains = null;
+    // the left-turn bays on signal approaches (arterial.js): before any
+    // layout is asked for
+    Object.assign(this.stats, markBays(city, this)); lap('bays');
   }
 
   ok(ni) {
@@ -822,7 +826,12 @@ export class Junctions {
         const offs = A.two
           ? (A.hw >= 6.5 ? [A.hw * 0.28, A.hw * 0.72] : [A.hw * 0.5])
           : (A.hw >= 5 ? [-A.hw * 0.45, A.hw * 0.45] : [0]);
-        const leftOff = A.left ? (A.two ? Math.max(0.6, A.hw * 0.1) : -A.hw * 0.72) : null;
+        let leftOff = A.left ? (A.two ? Math.max(0.6, A.hw * 0.1) : -A.hw * 0.72) : null;
+        // (over its left-turn bay, where it has one: arterial.js markBays)
+        if (A.left && A.two) {
+          const ae = city.edges[A.ei], sg = ae.b === A.ni ? 1 : -1, T = (sg > 0 ? ae.bayP : ae.bayM) ? twoWayLayout(ae) : null;
+          if (T) leftOff = twoWayLaneOff(T, sg, -1);
+        }
         const minOff = Math.min(...offs, leftOff === null ? Infinity : leftOff);
         const mast = clamp(lat - minOff + 0.7, 3, MAST_MAX);
         const rig = { A, C, x: px, z: pz, y: gy, ux, uz, rx, rz, mast, heads: [] };
@@ -1019,6 +1028,21 @@ export class Junctions {
   oncoming(T, v, C, A, player) {
     const city = this.city;
     for (const o of this.others(T, v, player)) {
+      // AN OPPOSING LEFT: one at a time -- the one committed, else the older
+      // of two waiting at their lines. (A quarter of drivers turn at a
+      // signal since traffic.js pickNextEdge's atSig, and two opposed lefts
+      // swept past each other within a metre and scraped.) Judged by its
+      // approach, not its heading: half way round it no longer faces me.
+      if (o.jcC === C.id && o.jcMv === 'L' && o.rt) {
+        let B = null;
+        if (o.jcGo >= 0) for (const q of C.approaches) if (q.id === o.jcGo) { B = q; break; }
+        if (!B && o.rtN) for (const ni of C.nodes) { const r = routeTo(city, o, ni); if (r && C.appr.get(r.key)) { B = C.appr.get(r.key); break; } }
+        if (B && B !== A && B.ux * A.ux + B.uz * A.uz < -0.6) {
+          const D = Math.hypot(C.x - o.x, C.z - o.z);
+          if (o.jcGo === B.id && D < C.r + 3) return true;
+          if (o.jcGo !== B.id && D < C.r + 8 && Math.abs(o.vLong) < 2 && o.prio < v.prio) return true;
+        }
+      }
       const f = o.forward;
       if (f.x * A.ux + f.z * A.uz > -0.5) continue;
       const sp = Math.abs(o.vLong);
@@ -1183,7 +1207,14 @@ class Painter {
     // rather than one in the middle of it
     if (this.jc.barAcross(A.ni, A.ei, A.back)) return;
     const P = A.at(0.25), cx = P.x, cz = P.z, rx = -P.uz, rz = P.ux;
-    const o0 = P.two ? 0.15 : -P.hw + 0.3, o1 = P.hw - 0.3;
+    let o0 = P.two ? 0.15 : -P.hw + 0.3;
+    const o1 = P.hw - 0.3;
+    // (a two-way arterial's half starts at its centre line, which a left-turn
+    // bay or a lane more one way moves off the edge's middle: arterial.js)
+    if (P.two) {
+      const e = this.city.edges[P.ei], T = twoWayLayout(e);
+      if (T) o0 = (e.dx * P.ux + e.dz * P.uz > 0 ? T.m : -T.m) + T.c0 + 0.05;
+    }
     this.line(cx + rx * o0, cz + rz * o0, cx + rx * o1, cz + rz * o1, 0.225);
   }
   /** A yield line: "shark's teeth" pointing at the oncoming driver. */
