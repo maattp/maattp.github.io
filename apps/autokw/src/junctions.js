@@ -44,6 +44,18 @@ const AMBER_B = 3.2;
 const GAP_T = 6;
 // a roundabout entry's gap to circulating traffic (s)
 const RB_GAP = 3.2;
+// two lefts' ways through a box meet when they pass closer than their half
+// widths and this (m) -- leftClash
+const CLASH_PAD = 0.9;
+/** Do two sampled ways (boxPath) come within `w` of each other? */
+function pathsMeet(a, b, w) {
+  const w2 = w * w;
+  for (let i = 0; i < a.n; i++) {
+    const ax = a[2 * i], az = a[2 * i + 1];
+    for (let j = 0; j < b.n; j++) if ((b[2 * j] - ax) ** 2 + (b[2 * j + 1] - az) ** 2 < w2) return true;
+  }
+  return false;
+}
 // a signal's mast arm: at most this long (m; the Region's run 9-17)
 const MAST_MAX = 17;
 // where a signal pole may stand, relative to its nominal kerb corner: i m
@@ -133,6 +145,7 @@ export class Junctions {
     this.byChunk = new Map();                 // chunk key -> things to draw
     this.stats = { sig: 0, sigNodes: 0, sigApproaches: 0, sigLeft: 0, stop: 0, allWay: 0, yieldNodes: 0, rb: 0, rbEntries: 0, mini: 0, xing: 0, unmatched: {} };
     this._appr = 0;
+    this._bpA = new Float64Array(120); this._bpB = new Float64Array(120); this._bpP = { x: 0, z: 0 };   // leftClash's paths
     this.crossOn = new Map();                 // edge -> [{s (m from a), k}]
     const ms = this.stats.phaseMs = {};
     let t = performance.now();
@@ -885,15 +898,26 @@ export class Junctions {
         }
         T.stats.sigHolds += 1 / 60; return 1;
       }
+      // A LEFT never goes while another left of the same green -- the
+      // opposing one, protected or not -- would meet it in the box
+      // (leftClash). Held where it is (3), even a little over its line: a
+      // left told to wait after it rolled over the line used to be "too late:
+      // through" and committed anyway, and two opposing lefts at signal 849,
+      // a skewed crossing, both went.
+      const clash = move === 'L' && this.leftClash(T, v, C, A);
       if (L.s === 'Y' || (L.prot && L.rem < 2.5)) {
         // amber (or the arrow about to end): stop if it can be done gently
         const tReach = gap / Math.max(sp, 1);
-        if (L.prot && tReach + 1.2 < L.rem) return 0;
+        if (L.prot && tReach + 1.2 < L.rem && !clash) return 0;
         if (gap > (sp * sp) / (2 * AMBER_B) + 0.5 || (L.prot && sp < 2)) return 1;
+        // (a left that has crept to its line goes on the amber -- once the
+        // way is clear: the oncoming car that cannot stop for it comes on)
+        if (move === 'L' && sp < 4 && (clash || (!L.prot && this.oncoming(T, v, C, A, player)))) { T.stats.leftYields += 1 / 60; return 3; }
         return 2;   // go, committed
       }
+      if (clash) { T.stats.leftYields += 1 / 60; T.stats.leftClash = (T.stats.leftClash || 0) + 1 / 60; return 3; }
       // a permissive left yields to oncoming traffic
-      if (move === 'L' && !L.prot && this.oncoming(T, v, C, A, player)) { T.stats.leftYields += 1 / 60; return 1; }
+      if (move === 'L' && !L.prot && this.oncoming(T, v, C, A, player)) { T.stats.leftYields += 1 / 60; return 3; }
       return 0;
     }
     if (C.k === K_RB) {
@@ -1028,21 +1052,6 @@ export class Junctions {
   oncoming(T, v, C, A, player) {
     const city = this.city;
     for (const o of this.others(T, v, player)) {
-      // AN OPPOSING LEFT: one at a time -- the one committed, else the older
-      // of two waiting at their lines. (A quarter of drivers turn at a
-      // signal since traffic.js pickNextEdge's atSig, and two opposed lefts
-      // swept past each other within a metre and scraped.) Judged by its
-      // approach, not its heading: half way round it no longer faces me.
-      if (o.jcC === C.id && o.jcMv === 'L' && o.rt) {
-        let B = null;
-        if (o.jcGo >= 0) for (const q of C.approaches) if (q.id === o.jcGo) { B = q; break; }
-        if (!B && o.rtN) for (const ni of C.nodes) { const r = routeTo(city, o, ni); if (r && C.appr.get(r.key)) { B = C.appr.get(r.key); break; } }
-        if (B && B !== A && B.ux * A.ux + B.uz * A.uz < -0.6) {
-          const D = Math.hypot(C.x - o.x, C.z - o.z);
-          if (o.jcGo === B.id && D < C.r + 3) return true;
-          if (o.jcGo !== B.id && D < C.r + 8 && Math.abs(o.vLong) < 2 && o.prio < v.prio) return true;
-        }
-      }
       const f = o.forward;
       if (f.x * A.ux + f.z * A.uz > -0.5) continue;
       const sp = Math.abs(o.vLong);
@@ -1062,6 +1071,70 @@ export class Junctions {
     return false;
   }
 
+
+  /**
+   * LEFTS THAT WOULD MEET: is there another left turner of the same green
+   * (any approach of A's phase group but A -- the opposing one, skewed or
+   * not) whose way through the box comes within a car's width of v's? It
+   * holds v if it has committed and is still in the box (its way out must
+   * stay clear), or if it is older and at its line on a light that lets it
+   * turn (one at a time, the older first: two that judged each other the
+   * same frame both went). Ways are traffic's own planned paths
+   * (TrafficSystem.pathAhead) sampled through the box, so a normal
+   * crossing's opposing lefts -- passing nearside to nearside, ~5 m apart --
+   * still turn together, and a skewed one's, whose ways cross, do not.
+   */
+  leftClash(T, v, C, A) {
+    const city = this.city;
+    let mine = null;
+    for (const o of T.cars) {
+      if (o === v || o.jcC !== C.id || o.jcMv !== 'L' || !o.rt || !o.rtN) continue;
+      if (o.mode !== 'traffic') continue;   // (a police unit asks no junction)
+      let B = null, toLine = 0, gone = false;
+      const from = o.jcGo >= 0 ? o.jcGo : o.jcFromC === C.id ? o.jcFrom : -1;
+      if (from >= 0) {
+        for (const q of C.approaches) if (q.id === from) { B = q; break; }
+        // past its approach (jcGo is cleared there): in the box still?
+        gone = o.jcGo < 0 && (o.x - C.x) ** 2 + (o.z - C.z) ** 2 > C.r * C.r;
+      } else {
+        for (const ni of C.nodes) {
+          const r = routeTo(city, o, ni);
+          if (r && C.appr.get(r.key)) { B = C.appr.get(r.key); toLine = r.d - B.back - o.halfLen; break; }
+        }
+      }
+      // (committed: whatever its distance from the centre -- a stop line
+      // can be further out than C.r + 4, and a car committed at its line was
+      // "through and gone" to the first version. Through and gone is a way
+      // with no point left in the box: boxPath's, below.)
+      if (!B || gone || B.grp !== A.grp) continue;
+      // my own approach: a car in my lane is followed (the scan's leader);
+      // one in the lane beside me turning left too is not -- two lefts
+      // abreast whose arcs close in the box (signal 447)
+      if (B === A && Math.abs((o.x - v.x) * A.uz - (o.z - v.z) * A.ux) < 1.6) continue;
+      if (from < 0 && (o.prio > v.prio || toLine > 8 || this.light(C, B, 'L').s === 'R')) continue;
+      if (!mine) mine = this.boxPath(T, v, C, this._bpA);
+      const theirs = this.boxPath(T, o, C, this._bpB);
+      if (pathsMeet(mine, theirs, v.halfWid + o.halfWid + CLASH_PAD)) return true;
+    }
+    return false;
+  }
+
+  /** Car v's planned way through C's box: points every 1.5 m from where it
+   *  is, kept while within the box (C.r + 3 of its centre). */
+  boxPath(T, v, C, out) {
+    const rt = v.rt, R2 = (C.r + 3) ** 2, P = this._bpP;
+    const s0 = (v.x - rt[R_QX]) * rt[R_UX] + (v.z - rt[R_QZ]) * rt[R_UZ];
+    const D0 = Math.hypot(v.x - C.x, v.z - C.z);
+    let n = 0, was = false;
+    for (let D = 0; D < D0 + C.r + 12 && n < 60; D += 1.5) {
+      T.pathAhead(v, s0, D, P);
+      const inb = (P.x - C.x) ** 2 + (P.z - C.z) ** 2 < R2;
+      if (inb) { out[2 * n] = P.x; out[2 * n + 1] = P.z; n++; was = true; }
+      else if (was) break;
+    }
+    out.n = n;
+    return out;
+  }
 
   /** A roundabout entry: circulating traffic that will pass the entry within the gap. */
   ringBusy(T, v, C, A, player) {

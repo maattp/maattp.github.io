@@ -85,6 +85,11 @@
     }
     return rm0(v);
   };
+  // (vehicles have no id: one per car here, or every pair keyed the same --
+  // "undefined:undefined" -- and a hit within 1 s of any other was not counted)
+  const ids = new WeakMap();
+  let nid = 0;
+  const idOf = (v) => { let k = ids.get(v); if (k === undefined) { k = ++nid; ids.set(v, k); } return k; };
   const box = (a, b) => {
     const fa = a.forward, fb = b.forward, dx = b.x - a.x, dz = b.z - a.z;
     const ax = [fa.x, fa.z, fa.z, -fa.x, fb.x, fb.z, fb.z, -fb.x];
@@ -153,7 +158,7 @@
         if (A.leader === B || B.leader === A || Math.abs(A.y - B.y) > 3) continue;
         const rr = A.radius + B.radius;
         if ((A.x - B.x) ** 2 + (A.z - B.z) ** 2 > rr * rr || !box(A, B)) continue;
-        const key = A.id + ':' + B.id, last = pairs.get(key);
+        const key = idOf(A) + ':' + idOf(B), last = pairs.get(key);
         pairs.set(key, t);
         if (last === undefined || t - last >= 1) {
           m.hits++;
@@ -166,9 +171,9 @@
       for (const v of cars) {
         if (v.mode !== 'traffic') continue;
         if (!seen.has(v)) { seen.add(v); m.cars++; }
-        const sl = Math.abs(v.vLong) < 0.5 ? (slow.get(v.id) || 0) + dt : 0;
-        slow.set(v.id, sl);
-        if (sl > 60 && !stuckSeen.has(v.id)) { stuckSeen.add(v.id); m.stuck++; }
+        const vid = idOf(v), sl = Math.abs(v.vLong) < 0.5 ? (slow.get(vid) || 0) + dt : 0;
+        slow.set(vid, sl);
+        if (sl > 60 && !stuckSeen.has(vid)) { stuckSeen.add(vid); m.stuck++; }
         if ((v.x - site.x) ** 2 + (v.z - site.z) ** 2 < 150 * 150) { m.kmh[0] += Math.abs(v.vLong) * 3.6 * dt; m.kmh[1] += dt; }
         for (const I of islands) {
           const dx = v.x - I.x, dz = v.z - I.z;

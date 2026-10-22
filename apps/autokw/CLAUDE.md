@@ -3080,10 +3080,8 @@ file and a guide disagree, this file wins.
     turn:lanes where `lanes:forward / backward` are missing (`lanes=3` +
     `turn:lanes:forward=left|`), only where `lanes` leaves the other side a
     lane.
-  - **Opposing lefts one at a time** (junctions.js `oncoming`): an opposing
-    left already committed into the box, or waiting at its line and older,
-    holds a permissive left (judged by its approach, not its heading). With
-    four times the lefts, two at signal 849 swept past within a metre.
+  - **Opposing lefts one at a time** (since replaced by `leftClash`: "Lefts
+    whose ways meet, and the gridlock rule" below).
   - **Slip-lane merges** (traffic.js `slipMerge`, from junctionStop): a car
     on a ramp whose route joins a CITY street at a merge (cos >= 0.3) with
     no control there stops short of the join while any car whose route
@@ -3138,6 +3136,86 @@ file and a guide disagree, this file wins.
     rejected for lying on another carriageway leaves its strip R short, and
     roadLift (which cannot see that test) still calls its corner road.
 
+- **Lefts whose ways meet, and the gridlock rule** (v63's open item: the
+  4 m/s scrape at signal 849). **Root cause, traced:** two opposing lefts
+  waited at their lines through the red; on the green the older went and the
+  younger was told to wait -- but it had crept 0.6 m over its line, so
+  junctionStop committed it anyway ("too late: through", meant for a red).
+  Both stopped nose to nose in the box, each the other's leader, and the
+  gridlock rule let the older one drive on THROUGH the younger. And v63's
+  `oncoming` rule dropped a committed left more than C.r + 3 from the
+  centre, which a car committed at a far stop line is (signal 528: a bus and
+  a minivan, the same frame).
+  - **`leftClash`** (junctions.js; replaces the opposing-left block in
+    `oncoming`): a left at a signal -- permissive OR protected (a skewed
+    dual-lead advance has crossing arrows too) -- waits while another left
+    of the same phase group would meet it in the box. "Meet" is GEOMETRY:
+    both cars' own planned paths (`TrafficSystem.pathAhead`, the arcs they
+    drive) sampled every 1.5 m inside C.r + 3 of the centre (`boxPath`),
+    closer than their half widths + `CLASH_PAD` 0.9 m (`pathsMeet`). The
+    other car counts if it has committed (wherever its line is; `jcFrom` /
+    `jcFromC` keep the approach after jcGo clears at the node, until its way
+    has no point left in the box), or if it is OLDER and within 8 m of its
+    line on a light that lets it turn. Its own approach counts too when it
+    is in the next lane (> 1.6 m across): two lefts abreast whose arcs close
+    in the box (signal 447). This engine's opposing lefts mostly DO meet
+    (their arcs pass near the centre even at a square crossing), so in
+    practice they still go one at a time, as v63's rule had them.
+  - **A left held for its way is held where it is** (`decide` returns 3):
+    never committed as too late, even over its line -- it waits in the
+    mouth of the box, as drivers do. On the amber a left that crept to its
+    line goes only once the way is clear (oncoming / leftClash), as before
+    only a red could hold it.
+  - **The gridlock rule never drives through a car** (traffic.js scan): the
+    older of two cars waiting on each other passes the younger only where
+    the younger's body leaves its way a body width (`v.halfWid + ext +
+    0.1`, not the scan's margin). Otherwise the younger is told to make way
+    (`mkWay`, `stats.gridBlocked`) and goes first if ITS way is clear of the
+    older (`gridMadeWay`); if neither can pass for 2.5 s it backs off 1.2 s
+    at a walking pace -- only with `roomBehind(v, 4)` -- and plans afresh
+    (`gridBackOut`).
+  - **Sweep:** `VIEW_PROBE_FILE=tools/kw/leftsweep.js node tools/kw/kwshots.mjs
+    <dir>` (~6 min; `window.__ls = { only: ['sig-558b'], pL, warm, measure,
+    offset, limit, every }`): every signal with a left-turn lane plus every
+    SKEWED one (353), each alone and seeded by its index, 8 + 40 s, with
+    pickNextEdge wrapped so 60 % of cars turn left at a signal; prints hits,
+    near misses (two cars committed into one box from different approaches
+    within 0.4 m), left commits, recycled cars and why (`recLog`), and the
+    stats above. Master -> this: hits 14 -> 3, near misses 9 -> 1, recycled
+    5 -> 5 (the same five queues), lefts 1949 -> 1793 committed in 14,120 s
+    (the opposing ones wait now), gridBlocked 0 -> 19.5 s, 6 back-outs.
+    Opposing / abreast lefts: 8 sites with hits or near misses -> 0. The
+    four left are other classes, identical on master: a semi's trailer
+    swinging into a stopped SUV (sig-422b, 200 m off), a rear nudge at a
+    right on red (566b), a rear-end at 8 m/s between moving cars (640b),
+    two straight-through cars converging from a skewed junction's two
+    approaches (681s, a near miss).
+  - **`tools/kw/jcttraffic.js` keyed every pair "undefined:undefined"**
+    (vehicles have no `id`), so a hit within 1 s of ANY other was not
+    counted and every car shared one stuck timer; ids come from a WeakMap
+    now. Numbers below use the fixed probe on both builds.
+  - **Verify** (sequential; master a detached scratchpad worktree with the
+    fixed probes copied in, same commands): jcttraffic default seeded 1 hit
+    (849) -> 0, unseeded 0 / 0 / 4 recycled both; arterial sites seeded and
+    unseeded 0 / 0 / 0 both; lefts at signals (arrow + permissive) default
+    seeded 52 -> 51, arterial seeded 20 -> 28. lanechoice arterial 17 L /
+    16 R -> 23 / 16 (15 from bays), default 19 / 17 both, 0 wrong.
+    hwytraffic seeded 3 / unseeded 9 hits both, = master. trafficbench (rail
+    off, phone): all six hashes = master (nothing at those sites meets the
+    new rules in 1,500 updates). ionprobe, railprobe PASS; phone boot 0
+    exceptions, spawn 173 -> 176 draws (traffic; nothing new is drawn).
+- **ENTER's debounce is real time** (player.js `ENTER_DEBOUNCE` 450 ms of
+  performance.now(); was 0.45 s of frame dt). main.js clamps dt to 0.06 s,
+  so below ~16 fps the debounce stretched to seconds and a second press was
+  TAKEN AND DROPPED: funprobe's rare "FAILED 1" with 0 exceptions on a
+  loaded machine (six runs on an idle one all passed; the failing run's
+  shot times show the 3 s `until` of "ENTER again at the window gets you
+  out" timing out). Reproduced on master by busy-waiting each frame
+  (~2.5 fps): ENTER at the Tims window after getting out of the A&W's did
+  nothing. A player on a struggling phone hit the same. funprobe's skater
+  check now matches each skater to itself across its 2 s (it compared by
+  list index, and one taken back by the crowd shifted the rest). AUTO_GPU=1
+  funprobe x3 ALL OK.
 
 ## Build number
 

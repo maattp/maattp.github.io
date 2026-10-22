@@ -311,12 +311,16 @@ async function main() {
         const [sx, sz] = at(-11, 0);
         await standAt(sx, sz, yawU);
         check(await until('window.__dbg.skating.skaters.length >= 3', 20000), 'skaters come out onto the ice');
-        const sk0 = await ev(`(() => { const s = window.__dbg.skating; return s.skaters.map((q) => [q.p.x, q.p.z, q.p.y, s.onIce(q.p.x, q.p.z)]); })()`);
+        // (each skater matched to itself 2 s later, not by its place in the
+        // list: one taken back by the crowd shifts every index after it, and
+        // one that came out meanwhile has no "before")
+        await ev(`(() => { window.__sk0 = new Map(window.__dbg.skating.skaters.map((q) => [q, [q.p.x, q.p.z]])); })()`);
         await sleep(2000);
-        const sk1 = await ev(`(() => { const s = window.__dbg.skating; return s.skaters.map((q) => [q.p.x, q.p.z, q.p.y, s.onIce(q.p.x, q.p.z)]); })()`);
-        const moved = sk1.filter((q, i) => sk0[i] && Math.hypot(q[0] - sk0[i][0], q[1] - sk0[i][1]) > 0.5).length;
-        console.log('  skaters:', sk1.length, 'on the ice:', sk1.filter((q) => q[3]).length, 'moving:', moved, 'peds:', await ev('window.__dbg.peds.peds.length'));
-        check(sk1.every((q) => q[3]) && moved >= Math.min(3, sk1.length), 'every skater is on the ice, skating');
+        const sk1 = await ev(`(() => { const s = window.__dbg.skating; return s.skaters.map((q) => { const b = window.__sk0.get(q);
+          return [q.p.x, q.p.z, q.p.y, s.onIce(q.p.x, q.p.z), b ? +Math.hypot(q.p.x - b[0], q.p.z - b[1]).toFixed(2) : null]; }); })()`);
+        const moved = sk1.filter((q) => q[4] > 0.5).length, seen = sk1.filter((q) => q[4] !== null).length;
+        console.log('  skaters:', sk1.length, 'on the ice:', sk1.filter((q) => q[3]).length, 'moving:', moved, 'of', seen, 'peds:', await ev('window.__dbg.peds.peds.length'));
+        check(sk1.every((q) => q[3]) && moved >= Math.min(3, seen), 'every skater is on the ice, skating');
         await ev(`(() => { const d = window.__dbg, c = d.camera; d.game.paused = true;
           const [x, z] = [${at(4, 21).join(',')}]; c.position.set(x, ${R.y} + 5.5, z); c.lookAt(${R.c[0]}, ${R.y}, ${R.c[1]}); c.updateMatrixWorld(true); })()`);
         await sleep(2500); await shot('skate-rink');

@@ -25,6 +25,8 @@ const CAM_TYPE = {
 
 // Swimming: water deeper than this (from surface to ground) takes you off
 // your feet; while swimming your feet ride this far under the surface.
+// ENTER acts at most once per this many ms of real time (update: the debounce)
+const ENTER_DEBOUNCE = 450;
 const SWIM_DEPTH = 1.3, SWIM_FEET = 0.18;
 // Treading water, upright: the feet this far down puts the surface across the
 // upper chest, the shoulders and sculling forearms at it.
@@ -60,7 +62,7 @@ export class Player {
     this.armed = false;
     this.ammo = 0;
     this.attackCd = 0;
-    this.enterCd = 0;
+    this.enterAt = -1e9;   // when ENTER last acted (performance.now(), ms): its debounce
     this.lift = 0;
     this.dead = false;
     this.crashCd = 0; // see updateDrive: one wall scrape is one crash
@@ -221,7 +223,6 @@ export class Player {
 
   update(dt, input, look, controls, traffic, peds) {
     this.attackCd -= dt;
-    this.enterCd -= dt;
     // the pistol is in the right hand while you have rounds for it, on foot
     const F = this.fighter;
     F.gun.visible = this.onFoot && this.armed && this.ammo > 0 && !this.swimming && !this.sky;
@@ -239,8 +240,14 @@ export class Player {
     else this.updateDrive(dt, input, traffic, peds);
 
     const tap = controls.takeTap();
-    if (tap === 'enter' && this.enterCd <= 0) {
-      this.enterCd = 0.45;
+    // ENTER's debounce is 0.45 s of REAL time. It was counted in frame dt,
+    // which main.js clamps to 0.06 s: below ~16 fps (a loaded phone, the
+    // harness's software GL) it stretched to seconds, and a second press --
+    // ENTER again at a drive-thru window to get out, ENTER at the next one --
+    // was taken and dropped (funprobe's rare "FAILED 1").
+    const now = performance.now();
+    if (tap === 'enter' && now - this.enterAt >= ENTER_DEBOUNCE) {
+      this.enterAt = now;
       if (this.onFoot && this.game.tryInteract && this.game.tryInteract(this)) {
         // something on foot took the press (a fishing rod on a pier); it
         // poses the arms itself, with empty hands
