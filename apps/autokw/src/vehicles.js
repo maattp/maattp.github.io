@@ -42,6 +42,11 @@ const AMBER = [0.95, 0.55, 0.08];
 // A reversing lamp's lens: white, but not WHITE (the tint placeholder), so
 // tagLamps can find it.
 const REVL = [0.97, 0.97, 0.95];
+// Auto KW, SCHOOL BUSES STOP (traffic.js / schoolbus.js; tagLamps 9-12): the
+// school bus's overhead red warning lamps, and its stop arm's red, white and
+// lamp lenses -- colours of their own, so tagLamps can find them.
+const SB_RED = [1.0, 0.10, 0.06];
+const ARM_RED = [0.80, 0.04, 0.031], ARM_WHT = [0.95, 0.95, 0.951], ARM_LAMP = [1.0, 0.10, 0.061];
 const PLATE = [0.86, 0.86, 0.82];
 const WHITE = [1, 1, 1];
 // KING COUNTY METRO'S LIVERY: the bottom half golden yellow, the top teal,
@@ -558,6 +563,11 @@ function deriveSpec(s) {
  * -- both moving and parked at the kerb. Sedans, SUVs and pickups are most of
  * what a Seattle street holds, and they should be most of what spawns.
  */
+// Auto KW: the school bus's stop arm (buildSchoolBus): its hinge (x, z, at
+// the arm's front edge, on the driver's side), the octagon's centre r0 m
+// behind it, at height cy. The trim shader swings it out about this hinge.
+export const SB_ARM = (() => { const s = TYPES.schoolbus; return { x: s.wid / 2 + 0.035, z: s.len / 2 - 2.05 - 0.25, r0: 0.30, cy: 1.82 }; })();
+
 export const CIVILIAN_TYPES = [
   // Auto KW: what drives past in Waterloo Region, weighted like Canadian
   // registrations -- crossovers and SUVs first, then pickups (a third of them
@@ -7469,7 +7479,7 @@ function buildSchoolBus(spec, paint, trim, matte) {
   matte.box(0, scrT + 0.07, zW + 0.012, 1.12, 0.26, 0.02, 0, [0.95, 0.66, 0.05]);
   dotText(matte, 'SCHOOL BUS', { c: [0, scrT + 0.20, zW + 0.024], u: [1, 0, 0], h: 0.15, col: BUS_BLACK, bold: 0.5 });
   for (const sx of [-1, 1]) {
-    trim.tube([sx * (W - 0.20), scrT + 0.20, zW], [sx * (W - 0.20), scrT + 0.20, zW + 0.06], 0.085, 12, [1.0, 0.10, 0.06], true);
+    trim.tube([sx * (W - 0.20), scrT + 0.20, zW], [sx * (W - 0.20), scrT + 0.20, zW + 0.06], 0.085, 12, SB_RED, true);
     trim.tube([sx * (W - 0.44), scrT + 0.20, zW], [sx * (W - 0.44), scrT + 0.20, zW + 0.06], 0.075, 12, AMBER, true);
   }
   // the bonnet's face: black grille, round lamps, the bumper
@@ -7516,15 +7526,24 @@ function buildSchoolBus(spec, paint, trim, matte) {
   trim.patch([[[-dw, floor + 0.08, DOOR[0]], [-dw, floor + 0.08, DOOR[1]]], [[-dw, winT, DOOR[0]], [-dw, winT, DOOR[1]]]], GLASS, [-1, 0, 0]);
   for (const zc of [DOOR[0], (DOOR[0] + DOOR[1]) / 2, DOOR[1]]) matte.box(-(dw + 0.004), floor + 0.06, zc, 0.012, winT - floor - 0.04, 0.05, 0, BUS_BLACK);
   // the stop arm on the driver's side, folded flat: a red octagon reading STOP
+  // on both faces, a red lamp over and under the word, on a hinge at its front
+  // edge. All of it is trim in the arm's own colours (ARM_*), which tagLamps
+  // tags 11 / 12 and the trim shader swings out about SB_ARM's hinge by the
+  // lamp state (sbArm): no draw of its own.
   {
-    const sx = 1, px = W + 0.035, cy = 1.82, cz = zW - 0.55, r = 0.23, oct = [];
+    const A = SB_ARM, px = A.x, cy = A.cy, cz = A.z - A.r0, r = 0.23, oct = [];
     for (let i = 0; i < 8; i++) { const a = Math.PI / 8 + (i * Math.PI) / 4; oct.push([Math.cos(a) * r, Math.sin(a) * r]); }
-    for (let i = 0; i < 8; i++) {
-      const [a0, b0] = oct[i], [a1, b1] = oct[(i + 1) % 8];
-      trim.tri([px, cy, cz], [px, cy + b0, cz + a0], [px, cy + b1, cz + a1], [sx, 0, 0], [0.80, 0.04, 0.03]);
+    for (const [fx, nx] of [[px, 1], [px - 0.010, -1]]) {
+      for (let i = 0; i < 8; i++) {
+        const [a0, b0] = oct[i], [a1, b1] = oct[(i + 1) % 8];
+        trim.tri([fx, cy, cz], [fx, cy + b0, cz + a0], [fx, cy + b1, cz + a1], [nx, 0, 0], ARM_RED);
+      }
+      dotText(trim, 'STOP', { c: [fx + nx * 0.004, cy, cz], u: [0, 0, -nx], h: 0.09, col: ARM_WHT, bold: 0.5 });
+      for (const dy of [0.165, -0.165]) trim.tube([fx, cy + dy, cz], [fx + nx * 0.018, cy + dy, cz], 0.032, 8, ARM_LAMP, true);
     }
-    dotText(matte, 'STOP', { c: [px + 0.004, cy, cz], u: [0, 0, -1], h: 0.09, col: [0.95, 0.95, 0.95], bold: 0.5 });
-    matte.box(px - 0.02, cy - 0.04, cz + 0.30, 0.03, 0.08, 0.14, 0, BUS_BLACK);    // its hinge box
+    // the arm's own bracket from the octagon to the hinge
+    trim.box(px - 0.005, cy - 0.02, (cz + r * 0.92 + A.z) / 2, 0.012, 0.04, A.z - cz - r * 0.92 + 0.02, 0, ARM_RED);
+    matte.box(px - 0.02, cy - 0.04, A.z, 0.03, 0.08, 0.14, 0, BUS_BLACK);    // its hinge box
   }
   // --- the back: the emergency door, SCHOOL BUS, lamps --------------------------
   const RW = [0, 1.98, 0.42, 0.34], TL = [W - 0.16, 1.05, 0.08, 0.10];
@@ -7540,7 +7559,7 @@ function buildSchoolBus(spec, paint, trim, matte) {
   for (const sx of [-1, 1]) {
     const tp = pocket(paint, matte, sx * TL[0], TL[1], tail, TL[2], TL[3], 0.04, -1, { rim: 0.016, rimCol: BUS_BLACK });
     trim.box(sx * TL[0], TL[1] - tp.hh * 0.95, tail + 0.014, tp.hw * 1.9, tp.hh * 1.9, 0.020, 0, TAILC);
-    trim.tube([sx * (W - 0.20), roofY - 0.27, tail], [sx * (W - 0.20), roofY - 0.27, tail - 0.06], 0.085, 12, [1.0, 0.10, 0.06], true);
+    trim.tube([sx * (W - 0.20), roofY - 0.27, tail], [sx * (W - 0.20), roofY - 0.27, tail - 0.06], 0.085, 12, SB_RED, true);
     trim.tube([sx * (W - 0.44), roofY - 0.27, tail], [sx * (W - 0.44), roofY - 0.27, tail - 0.06], 0.075, 12, AMBER, true);
   }
   matte.box(0, 0.48, tail - 0.06, W * 1.96, 0.24, 0.16, 0, BUS_BLACK);
@@ -10941,8 +10960,15 @@ export function tagGlass(geo) {
  *   6  turn signal: an AMBER lens off the centreline, under 78 % of the roof
  *      (not the cab clearance lamps), in the front or rear 35 % -- front,
  *      rear and side repeaters; the side is the sign of x (+x is the left)
- *   7  reversing lamp: a REVL face looking back
+ *   7  reversing lamp: a REVL face looking back (addReversing lays one on
+ *      the tail lamps of a type built without)
  *   8  stop / tail on a type with no rear amber lens, off the centreline
+ *   9  a school bus's overhead red warning lamp (SB_RED)
+ *  10  a school bus's overhead amber warning lamp (AMBER, high up)
+ *  11  its stop arm's face and lettering (ARM_RED / ARM_WHT): not a lens --
+ *      swung out about SB_ARM's hinge by the shader (sbArm)
+ *  12  the stop arm's two red lamps (ARM_LAMP): swung with it, flashing
+ *      top and bottom in turn
  *
  * Every red lamp off the centreline (5 or 8) is a turn signal too, as North
  * American cars' red rear signals are -- the signalling side flashes, the
@@ -10957,6 +10983,11 @@ export function tagGlass(geo) {
  */
 export const LAMP_BRAKE = 1, LAMP_L = 2, LAMP_R = 4, LAMP_REV = 8, LAMP_LON = 16, LAMP_RON = 32;
 export const LAMP_STEP = 65536;
+// A school bus stopping for children (schoolbus.js) is one state of its own,
+// LAMP_SB + code (64 .. 64 + SB_CODES - 1: under 0.25 % of scale, the plates'
+// order): code 0 / 1 the ambers flashing (the lit side = the parity), 2 + side
+// + 2 x arm the reds, the stop arm SB_ARM_STEPS - 1 = fully out.
+export const LAMP_SB = 64, SB_ARM_STEPS = 40, SB_CODES = 2 + 2 * SB_ARM_STEPS;
 // your car's signal with the wheel (Vehicle.driverLamps)
 const DRV_SIG_LOCK = 0.55, DRV_SIG_T = 0.25, DRV_SIG_V = 9, DRV_SIG_HOLD = 0.6;
 const near3 = (c, k, ref) => Math.abs(c[k] - ref[0]) < 1e-4 && Math.abs(c[k + 1] - ref[1]) < 1e-4 && Math.abs(c[k + 2] - ref[2]) < 1e-4;
@@ -10965,6 +10996,7 @@ function tagLamps(geo, spec) {
   const col = geo.attributes.color.array, pos = geo.attributes.position.array, nor = geo.attributes.normal.array;
   const flag = geo.attributes.glass.array, n = flag.length;
   const L = spec.len / 2, roof = spec.roof, xMin = Math.min(0.3, 0.15 * spec.wid);
+  const sb = spec.hand === 'schoolbus';
   let rearAmber = false;
   for (let i = 0; i < n; i++) {
     if (flag[i] !== 0) continue;
@@ -10977,11 +11009,64 @@ function tagLamps(geo, spec) {
         if (z < 0 && nz < -0.4) rearAmber = true;
       }
     } else if (near3(col, k, REVL) && nz < -0.3) flag[i] = 7;
+    else if (sb) {
+      if (near3(col, k, SB_RED)) flag[i] = 9;
+      else if (near3(col, k, ARM_RED) || near3(col, k, ARM_WHT)) flag[i] = 11;
+      else if (near3(col, k, ARM_LAMP)) flag[i] = 12;
+    }
+    if (sb && flag[i] === 0 && near3(col, k, AMBER) && y >= 0.78 * roof && Math.abs(x) > xMin) flag[i] = 10;
   }
   if (!rearAmber) for (let i = 0; i < n; i++) if (flag[i] === 5 && Math.abs(pos[i * 3]) > 0.25) flag[i] = 8;
   geo.attributes.glass.needsUpdate = true;
   return geo;
 }
+/**
+ * REVERSING LAMPS where a builder drew none (Auto KW; tagLamps 7). Every road
+ * vehicle with tail lamps has them, and only the sedan, compsedan, taxi,
+ * police car and sports car were built with a REVL lens. For the rest, a REVL
+ * lens is laid ON each rear tail lamp (TAILC faces looking back in the rear
+ * 40 %, each side of the centreline, under 85 % of the roof), 4 mm proud of its face so it can never float off
+ * the body: the inboard lower part of a wide lamp, the middle of a tall strip
+ * (a pickup's or a van's) -- where the clear section of a real cluster is.
+ * Not motorbikes, bicycles, the farm machines, the trailers.
+ */
+const NO_REVERSING = new Set(['sportbike', 'dirtbike', 'cruiser', 'atv', 'bicycle', 'buggy', 'kart', 'tank', 'semiTrailer',
+  'tractor', 'combine', 'duck', 'hydro', 'jetski', 'boat', 'kayak', 'balloon']);
+function addReversing(trim, spec) {
+  if (spec.plane || spec.boat || NO_REVERSING.has(spec.hand)) return;
+  const P = trim.pos, Nn = trim.nor, C = trim.col, n = P.length / 3, L = spec.len / 2;
+  const box = { 1: null, '-1': null };
+  for (let i = 0; i < n; i++) {
+    const k = i * 3;
+    if (near3(C, k, REVL)) return;   // it has its own
+    if (!near3(C, k, TAILC) || Nn[k + 2] > -0.4 || P[k + 2] > -0.4 * L || Math.abs(P[k]) < 0.16) continue;
+    if (P[k + 1] > 0.85 * spec.roof) continue;   // (a bus's or an ambulance's warning lamp)
+    const sd = P[k] > 0 ? 1 : -1, b = box[sd] || (box[sd] = { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity, z: Infinity });
+    b.x0 = Math.min(b.x0, P[k]); b.x1 = Math.max(b.x1, P[k]);
+    b.y0 = Math.min(b.y0, P[k + 1]); b.y1 = Math.max(b.y1, P[k + 1]);
+    b.z = Math.min(b.z, P[k + 2]);
+  }
+  for (const sd of [1, -1]) {
+    const b = box[sd];
+    if (!b) continue;
+    const w = b.x1 - b.x0, h = b.y1 - b.y0;
+    if (h < 0.02) continue;
+    const inner = sd > 0 ? b.x0 : b.x1;
+    if (w < 0.03) {
+      // a light bar across the tail (its ends are all of it this side): a lens set in it, inboard
+      trim.box(inner - sd * 0.22, b.y0 + h * 0.15, b.z - 0.004, 0.12, h * 0.7, 0.012, 0, REVL);
+    } else if (h > 1.5 * w) {
+      // a tall strip: a band across its middle
+      const bh = Math.min(0.10, h * 0.3);
+      trim.box((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2 - bh / 2, b.z - 0.004, w * 0.9, bh, 0.012, 0, REVL);
+    } else {
+      // a wide lamp: its inboard lower corner
+      const bw = Math.min(0.12, w * 0.4), bh = Math.min(0.07, h * 0.5);
+      trim.box(inner + sd * (bw / 2 + 0.006), b.y0 + 0.006, b.z - 0.004, bw, bh, 0.012, 0, REVL);
+    }
+  }
+}
+
 // What a lit lamp adds (linear emissive), and the GLSL that decodes the
 // state and picks it: vLampE, from the class `g` and the bits `b`.
 const LAMP_GLSL = `
@@ -10990,7 +11075,21 @@ const LAMP_GLSL = `
 #define LAMP_WHT vec3( 2.0, 2.0, 1.9 )
 vec3 lampGlow( float g, float b, float px ) {
 	// (anything else scaling the mesh -- tank.js's crush -- reads as nonsense: dark)
-	if ( b < -0.5 || b > 63.5 ) return vec3( 0.0 );
+	if ( b < -0.5 || b > ${(LAMP_SB + SB_CODES - 1 + 0.5).toFixed(1)} ) return vec3( 0.0 );
+	if ( b > ${(LAMP_SB - 0.5).toFixed(1)} ) {
+		// A SCHOOL BUS STOPPING (LAMP_SB + code; schoolbus.js): code 0 / 1 the
+		// amber warning lamps, 2+ the reds, the lit side alternating with the
+		// code's parity; the stop lamps on, the turn signals and reversing dark
+		float c = b - ${LAMP_SB.toFixed(1)}, red = c > 1.5 ? 1.0 : 0.0, side = mod( c, 2.0 );
+		float mine = px > 0.0 ? 1.0 - side : side;
+		if ( g < 5.5 || ( g > 7.5 && g < 8.5 ) ) return LAMP_RED;
+		if ( g < 8.5 ) return vec3( 0.0 );
+		if ( g < 9.5 ) return LAMP_RED * red * mine;
+		if ( g < 10.5 ) return LAMP_AMB * ( 1.0 - red ) * mine;
+		if ( g < 11.5 ) return vec3( 0.0 );
+		return LAMP_RED * red * mine;
+	}
+	if ( g > 8.5 ) return vec3( 0.0 );
 	float brk = mod( b, 2.0 ), lt = mod( floor( b / 2.0 ), 2.0 ), rt = mod( floor( b / 4.0 ), 2.0 );
 	float rv = mod( floor( b / 8.0 ), 2.0 ), la = mod( floor( b / 16.0 ), 2.0 ), ra = mod( floor( b / 32.0 ), 2.0 );
 	float lit = px > 0.0 ? lt : rt, act = px > 0.0 ? la : ra;
@@ -10998,6 +11097,18 @@ vec3 lampGlow( float g, float b, float px ) {
 	if ( g < 6.5 ) return LAMP_AMB * lit;
 	if ( g < 7.5 ) return LAMP_WHT * rv;
 	return LAMP_RED * ( act > 0.5 ? lit : brk );
+}
+// The stop arm (tagLamps 11 / 12) swung out about its hinge (SB_ARM) by the
+// angle in a red code: ( code - 2 ) / 2 of SB_ARM_STEPS - 1, a quarter turn
+// out to the bus's left, so STOP faces oncoming traffic and its back the
+// traffic behind. p is a position or a normal (w 0: no hinge offset).
+vec3 sbArm( vec3 p, float g, float b, float w ) {
+	if ( g < 10.5 || g > 12.5 || b < ${(LAMP_SB + 1.5).toFixed(1)} || b > ${(LAMP_SB + SB_CODES - 0.5).toFixed(1)} ) return p;
+	float k = floor( ( b - ${(LAMP_SB + 2).toFixed(1)} ) / 2.0 ) / ${(SB_ARM_STEPS - 1).toFixed(1)};
+	float a = -1.5707963 * k, ca = cos( a ), sa = sin( a );
+	vec3 h = vec3( ${SB_ARM.x.toFixed(4)}, 0.0, ${SB_ARM.z.toFixed(4)} ) * w;
+	vec3 q = p - h;
+	return h + vec3( q.x * ca + q.z * sa, q.y, -q.x * sa + q.z * ca );
 }
 `;
 
@@ -11120,15 +11231,23 @@ function glassShader(sh) {
   // read from its x scale: see PLATE_STEP)
   sh.uniforms.plateTex = { value: plateAtlas() };
   sh.vertexShader = 'attribute float glass;\nvarying float vGlass;\nvarying float vShade;\nvarying float vTint;\nvarying float vPlate;\nvarying float vPlateK;\nvarying vec3 vLampE;\nvarying float vLampOff;\n' + LAMP_GLSL + sh.vertexShader
+    // the lamp state (LAMP_STEP: the z scale), read once
+    .replace('void main() {', `void main() {
+	float lampB = floor( ( length( modelMatrix[ 2 ].xyz ) / length( modelMatrix[ 1 ].xyz ) - 1.0 ) * ${LAMP_STEP.toFixed(1)} + 0.5 );`)
+    // a school bus's stop arm swung out (sbArm)
+    .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
+	objectNormal = sbArm( objectNormal, glass, lampB, 0.0 );`)
     .replace('#include <begin_vertex>', `#include <begin_vertex>
+	transformed = sbArm( transformed, glass, lampB, 1.0 );
 	vGlass = ( glass > 0.5 && glass < 1.5 ) || ( glass > 2.5 && glass < 3.5 ) ? 1.0 : 0.0;
 	vShade = glass > 1.5 && glass < 2.5 ? 1.0 : 0.0;
 	vTint = glass > 2.5 && glass < 3.5 ? 1.0 : 0.0;
 	vPlate = glass > 3.5 && glass < 4.5 ? 1.0 : 0.0;
 	// a lamp (tagLamps), lit by the mesh's own state: its z scale (LAMP_STEP)
-	vLampE = glass > 4.5 ? lampGlow( glass, floor( ( length( modelMatrix[ 2 ].xyz ) / length( modelMatrix[ 1 ].xyz ) - 1.0 ) * ${LAMP_STEP.toFixed(1)} + 0.5 ), position.x ) : vec3( 0.0 );
+	vLampE = glass > 4.5 ? lampGlow( glass, lampB, glass > 11.5 ? position.y - ${SB_ARM.cy.toFixed(3)} : position.x ) : vec3( 0.0 );
 	// an unlit lens is a darker red / amber than the bare TAILC / AMBER trim was
-	vLampOff = glass > 4.5 && vLampE.r < 0.01 ? 1.0 : 0.0;
+	// (not the stop arm's face: it is a sign, not a lens)
+	vLampOff = glass > 4.5 && ( glass < 10.5 || glass > 11.5 ) && vLampE.r < 0.01 ? 1.0 : 0.0;
 	vPlateK = mod( floor( ( length( modelMatrix[ 0 ].xyz ) / length( modelMatrix[ 1 ].xyz ) - 1.0 ) * ${PLATE_STEP.toFixed(1)} + 0.5 ), ${PLATE_N.toFixed(1)} );`);
   let fs = 'varying float vGlass;\nvarying float vShade;\nvarying float vTint;\nvarying float vPlate;\nvarying float vPlateK;\nvarying vec3 vLampE;\nvarying float vLampOff;\nuniform sampler2D plateTex;\n' + sh.fragmentShader;
   if (THREE.ShaderChunk.envmap_physical_pars_fragment.includes(GLASS_IBL_FROM)) {
@@ -11195,6 +11314,7 @@ function buildType(spec) {
   const build = HAND_BUILT[spec.hand];
   if (!build) throw new Error(`vehicle type has no builder: hand '${spec.hand}'`);
   const wheels = build(spec, paint, trim, matte);
+  addReversing(trim, spec);
   const clone = (base) => {
     const b = new Builder(false);
     b.pos = base.pos.slice(); b.nor = base.nor.slice();
@@ -11832,7 +11952,7 @@ function clusterFar(parts) {
     for (let j = 0; j < 3; j++) nor[c * 3 + j] = N[c * 3 + j] / l;
     // a lamp stands FAR_LAMP_OUT proud: its lens sits in a recess the
     // clustered shell closes over, so it was not drawn at all past 60 m
-    if (Gl[c] > 4.5) for (let j = 0; j < 3; j++) pos[c * 3 + j] += nor[c * 3 + j] * FAR_LAMP_OUT;
+    if (Gl[c] > 4.5 && Gl[c] !== 11) for (let j = 0; j < 3; j++) pos[c * 3 + j] += nor[c * 3 + j] * FAR_LAMP_OUT;
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -11849,13 +11969,22 @@ function farShader(sh) {
   // lodG: 1 glass, 5-8 a lamp (tagLamps), lit by the instance's own state
   // (its matrix's z scale, as the near trim's: traffic.js _farCars)
   sh.vertexShader = 'attribute vec4 lodA;\nattribute float lodG;\nvarying vec4 vLodA;\nvarying float vLodG;\nvarying vec3 vLampE;\nvarying float vLampOff;\n' + LAMP_GLSL + sh.vertexShader
+    .replace('void main() {', `void main() {
+	float lampB = 0.0;
+	#ifdef USE_INSTANCING
+		lampB = floor( ( length( instanceMatrix[ 2 ].xyz ) / length( instanceMatrix[ 1 ].xyz ) - 1.0 ) * ${LAMP_STEP.toFixed(1)} + 0.5 );
+	#endif`)
+    .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
+	objectNormal = sbArm( objectNormal, lodG, lampB, 0.0 );`)
+    .replace('#include <begin_vertex>', `#include <begin_vertex>
+	transformed = sbArm( transformed, lodG, lampB, 1.0 );`)
     .replace('#include <color_vertex>', `#include <color_vertex>
 	vLodA = lodA; vLodG = lodG > 0.5 && lodG < 1.5 ? 1.0 : 0.0;
 	vLampE = vec3( 0.0 );
 	#ifdef USE_INSTANCING
-		if ( lodG > 4.5 ) vLampE = lampGlow( lodG, floor( ( length( instanceMatrix[ 2 ].xyz ) / length( instanceMatrix[ 1 ].xyz ) - 1.0 ) * ${LAMP_STEP.toFixed(1)} + 0.5 ), position.x );
+		if ( lodG > 4.5 ) vLampE = lampGlow( lodG, lampB, lodG > 11.5 ? position.y - ${SB_ARM.cy.toFixed(3)} : position.x );
 	#endif
-	vLampOff = lodG > 4.5 && vLampE.r < 0.01 ? 1.0 : 0.0;
+	vLampOff = lodG > 4.5 && ( lodG < 10.5 || lodG > 11.5 ) && vLampE.r < 0.01 ? 1.0 : 0.0;
 	#ifdef USE_INSTANCING_COLOR
 		// paint only: undo the instance tint on trim, matte and glass
 		vColor.xyz /= mix( max( instanceColor.xyz, vec3( 1e-3 ) ), vec3( 1.0 ), lodA.x );

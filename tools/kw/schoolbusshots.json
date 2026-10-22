@@ -1,0 +1,8 @@
+[
+  {"name": "sb-folded", "cars": [{"type": "schoolbus", "heading": 0}], "cam": {"eye": [9, 3.0, 11], "at": [0, 1.6, 1.0], "fov": 40}},
+  {"name": "sb-amber", "cars": [{"type": "schoolbus", "heading": 0, "lamps": 64}], "cam": {"eye": [7, 3.0, 13], "at": [0, 1.8, 2.0], "fov": 40}},
+  {"name": "sb-armhalf", "cars": [{"type": "schoolbus", "heading": 0, "lamps": 104}], "cam": {"eye": [7, 3.0, 13], "at": [0, 1.8, 2.0], "fov": 40}},
+  {"name": "sb-armout-front", "cars": [{"type": "schoolbus", "heading": 0, "lamps": 144}], "cam": {"eye": [5, 2.6, 15], "at": [0.5, 1.8, 2.0], "fov": 40}},
+  {"name": "sb-armout-rear", "cars": [{"type": "schoolbus", "heading": 0, "lamps": 145}], "cam": {"eye": [5, 2.6, -14], "at": [0.5, 1.8, 0], "fov": 40}},
+  {"name": "sb-armout-close", "cars": [{"type": "schoolbus", "heading": 0, "lamps": 145}], "cam": {"eye": [3.2, 2.2, 6.5], "at": [1.6, 1.8, 3.0], "fov": 40}}
+]

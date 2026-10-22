@@ -1756,6 +1756,15 @@ function installShadowFade() {
   // trains are solid to anyone on foot (each system's blockAt)
   player.trainBlock = peds.trainBlock = (x, z, y, r) => link.blockAt(x, z, y, r) || !!(kwrail && kwrail.blockAt(x, z, y, r));
   peds.camera = camera;   // animation LOD culls against it
+  // school buses (traffic.js / schoolbus.js): the children stepping off are the
+  // crowd's, and passing a bus whose reds flash is an offence -- heat if the
+  // police are near enough to see it (s. 175(11): $400-$2,000, 6 demerits)
+  traffic.peds = peds;
+  traffic.onSchoolBusPass = (seen) => {
+    hud.showToast(seen ? 'You passed a stopped school bus in front of the police'
+      : 'You passed a stopped school bus — $400–$2,000 and 6 demerit points in Ontario', 3200);
+    if (seen) game.addHeat(30);
+  };
   peds.waterAt = (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; };   // the boats' rule (Player.waterAt)
   fx = new Effects(scene, tx);
   skidMarks = new SkidMarks(scene, ON_PHONE);

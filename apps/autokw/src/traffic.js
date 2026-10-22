@@ -7,6 +7,7 @@ import { clamp, lerp, angleWrap, hash2, rng, dist2, tierScale } from './util.js'
 import * as G from './geo.js';
 import { memo } from './bootcache.js';
 import { edgeFlow, oneWaySpan, twoWayLayout, twoWayLaneOff, alBike, medianGaps, LANE_W } from './arterial.js';
+import { SchoolStops, schoolStopsOn } from './schoolbus.js';
 
 const TRAFFIC_TARGET = 26;
 // Parked cars only exist within this radius, and each is 3 draw calls, so this
@@ -592,6 +593,8 @@ function sortByKey(ord, tmp, K, n) {
 const R_EI = 0, R_SG = 1, R_OFF = 2, R_U = 3, R_QX = 4, R_QZ = 5, R_UX = 6, R_UZ = 7, R_LEN = 8, R_SPD = 9, R_END = 10;
 const V_K = 11, V_A = 12, V_B = 13, V_T = 14, V_R = 15, V_TH = 16, V_OX = 17, V_OZ = 18, V_NX = 19, V_NZ = 20, V_PX = 21, V_PZ = 22;
 const RT_F = 23, RT_MAX = 10;
+// (the route's fields schoolbus.js reads)
+const SB_R = { EI: R_EI, SG: R_SG, LEN: R_LEN, F: RT_F };
 // Comfortable lateral acceleration through a corner (m/s^2), the deceleration
 // speed is planned with, and a junction's corner radius turning right / left.
 // A bend in the road has no cap but the room its segments leave.
@@ -761,6 +764,11 @@ export class TrafficSystem {
     this._ps = new Float64Array(24);   // driveTraffic's path samples
     this._pseg = new Float64Array(36); // ...and its segments: dx, dz, length
     this._prio = 0;
+    // Auto KW: school buses stopping for children (schoolbus.js); `_sbOn` is
+    // read once an update (window.__noSchoolStops switches it all off)
+    this.sb = new SchoolStops(this);
+    this._sbOn = false;
+    this.peds = null;   // the crowd (main.js): the children stepping off
   }
 
   /** May a car drive edge ei in direction `sign` (+1 = a -> b)? */
@@ -840,6 +848,7 @@ export class TrafficSystem {
     if (v.bellows) { this.scene.remove(v.bellows); v.bellows.geometry.dispose(); v.bellows = null; }
     const i = this.cars.indexOf(v);
     if (i >= 0) this.cars.splice(i, 1);
+    if (v.sb) this.sb.drop(v);
     this.scene.remove(v.group);
     if (v.slot != null) this.parkedSlots.delete(v.slot);
     v.bodyMat.dispose();
@@ -1080,7 +1089,9 @@ export class TrafficSystem {
       const lo = { x: -e.dz * sign * off, z: e.dx * sign * off };
       const heading = Math.atan2(e.dx * sign, e.dz * sign);
       let tn = CIVILIAN_TYPES[Math.floor(this.R.n() * CIVILIAN_TYPES.length)];
-      if (e.cls === 'res' && (NO_KERB(tn) || tn === 'boxtruck' || tn === 'uhaul')) tn = 'sedan';
+      // (a school bus does drive residential streets, to stop for children:
+      // schoolbus.js -- unless that is switched off)
+      if (e.cls === 'res' && (NO_KERB(tn) || tn === 'boxtruck' || tn === 'uhaul') && !(tn === 'schoolbus' && this._sbOn)) tn = 'sedan';
       // Auto KW: nothing that cannot hold 100 km/h on a freeway or its ramps
       if (this.fwy[ei] && FWY_BANNED.has(tn)) tn = 'sedan';
       if (e.cls === 'hwy' && !TYPES[tn].bus) {
@@ -1532,18 +1543,26 @@ export class TrafficSystem {
         else if (L.b > 0) L.b -= dt;
         if (L.b > 0) bits |= LAMP_BRAKE;
         if (sp < -0.3) bits |= LAMP_REV;
-        // hazards: wedged (the back-out is coming), or stopped after a hit
-        if (md === 'traffic' && (v.stuckT > 1.5 || (v.panic > 0 && Math.abs(sp) < 0.5))) L.hz = HAZ_HOLD;
+        // hazards: wedged (the back-out is coming), or stopped after a hit;
+        // a police mission's suspect pulled over (getaway.js `stopT`)
+        if ((md === 'traffic' && (v.stuckT > 1.5 || (v.panic > 0 && Math.abs(sp) < 0.5)))
+          || (md === 'suspect' && v.suspect && v.suspect.stopT > 0)) L.hz = HAZ_HOLD;
         else if (L.hz > 0) L.hz -= dt;
-        // the turn signal, judged every LAMP_TICK frames (staggered), held SIG_HOLD s
+        // the turn signal, judged every LAMP_TICK frames (staggered), held SIG_HOLD s:
+        // traffic, and the police with their lights dark (a unit on its way
+        // somewhere, or heading off once the heat is gone) -- not a unit
+        // running with its lights on, nor a suspect fleeing (getaway.js)
         if ((this._lampTick + i) % LAMP_TICK === 0) {
-          const d = md === 'traffic' && !v.unit ? this.lampSignal(v) : 0;
+          const calm = md === 'traffic' || (md === 'police' && !(this.game && this.game.wanted > 0));
+          const d = calm && v.rt && v.rtN ? this.lampSignal(v) : 0;
           if (d) { L.dir = d; L.sigT = SIG_HOLD; }
         }
         if (L.sigT > 0) L.sigT -= dt;
         const on = (T + L.ph) % BLINK < BLINK * 0.5;
         if (L.hz > 0) bits |= LAMP_LON | LAMP_RON | (on ? LAMP_L | LAMP_R : 0);
         else if (L.sigT > 0) bits |= L.dir < 0 ? LAMP_LON | (on ? LAMP_L : 0) : LAMP_RON | (on ? LAMP_R : 0);
+        // a school bus stopping for children: its warning lamps and stop arm (schoolbus.js)
+        if (v.sb && v.sb.phase) bits = this.sb.lampBits(v, T);
       } else if (v._lamp) { v._lamp.sigT = 0; v._lamp.hz = 0; v._lamp.b = 0; }
       v.setLamps(bits);
       if (v.trailer) v.trailer.setLamps(bits);
@@ -1578,6 +1597,8 @@ export class TrafficSystem {
     const city = this.city;
     const game = this.game;
     if (this.jc) this.jc.update(dt);   // the signals' clock
+    this._sbOn = schoolStopsOn();
+    if (!this._sbOn && this.sb.list.length) for (const v of [...this.sb.list]) this.sb.end(v);
 
     this.updateParked(px, pz);
 
@@ -1730,6 +1751,7 @@ export class TrafficSystem {
     }
     // collision resolution edits transforms directly, so re-sync every body.
     for (const v of this.cars) if (v !== player.vehicle) v.sync();
+    if (this._sbOn) this.sb.update(dt, player);
     this.updateLamps(dt, px, pz, player);
     this.updateFarLod(px, pz, player);
 
@@ -2767,6 +2789,20 @@ export class TrafficSystem {
         if (g < sp * sp / 12 + 4) urgent = true;
       }
     }
+    // SCHOOL BUSES (schoolbus.js): a school bus's own stops, and every car's
+    // duty to stop 20 m short of one whose reds flash
+    if (this._sbOn) {
+      if (v.spec.hand === 'schoolbus') {
+        const s = this.sb.busDrive(v, s0, sp, dt, rt, SB_R);
+        v.sbHold = s === 0 && v.sb.phase >= 2;
+        if (s < stopAt) stopAt = s;
+      } else v.sbHold = false;
+      if (this.sb.list.length && !v.unit) {
+        const s = this.sb.obey(v, ps, sg, np);
+        if (s < Infinity) { v.sbHold = true; this.stats.sbHolds = (this.stats.sbHolds || 0) + dt; }
+        if (s < stopAt) stopAt = s;
+      }
+    }
     // JUNCTION CONTROLS (junctions.js): a red, a stop sign, a roundabout's
     // circulating traffic -- the next controlled junction on the route says
     // where to stop, if anywhere.
@@ -2832,7 +2868,7 @@ export class TrafficSystem {
     // there are no signals to wait at, so a car that long at rest is queued
     // behind a wedge or a gridlock of three or more, and the queue goes with it.
     // (waiting at a red or a stop sign is not that: the light changes)
-    if (Math.abs(v.vLong) < 0.5) v.restT += v.ctlHold ? dt * 0.2 : dt; else v.restT = 0;
+    if (Math.abs(v.vLong) < 0.5) v.restT += v.ctlHold || v.sbHold ? dt * 0.2 : dt; else v.restT = 0;
     if ((v.stuckT > 8 || v.restT > 20) && dist2(v.x, v.z, px, pz) > 120 * 120) { this.stats.stuckRecycled++; v.recycle = true; }
     // FREEWAY DRIVING: lane changes, exits (fwyDecide), on freeway edges only
     if (this.fwy[v.edge] && !v.unit) {
