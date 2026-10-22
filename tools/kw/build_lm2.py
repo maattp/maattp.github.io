@@ -43,6 +43,12 @@ LANDMARKS = {
     "regionhq": (-778.4, -82.9),     # Region of Waterloo Administration, 150 Frederick St
     "station": (-1470.5, -398.2),    # Kitchener station (VIA / GO), 126 Weber St W (1897)
     "freight": (-1429.1, -420.6),    # the 1925 freight shed beside it
+    # round three
+    "kci": (-2740.1, -395.4),        # Kitchener-Waterloo Collegiate (KCI), 787 King St W (OSM's footprint is unnamed, building=school, 4 levels)
+    "cch": (13176.3, 10169.0),       # Cambridge City Hall, 50 Dickson St (Diamond Schmitt 2008)
+    "inn": (-4460.0, -4251.2),       # The Inn of Waterloo (the Waterloo Inn), 475 King St N
+    "delta": (-4329.0, -1257.7),     # Delta Waterloo, 110 Erb St W (2014, 9 levels)
+    "hesp": (13374.5, 2346.8),       # Idea Exchange Hespeler, 5 Tannery St E (Kongats 2006: glass round the 1923 Carnegie library)
 }
 
 

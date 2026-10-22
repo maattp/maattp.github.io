@@ -443,7 +443,8 @@ file and a guide disagree, this file wins.
   130 -> 128 (GRH) ... 163 -> 158 (Perimeter), all within +3 (unseeded runs
   wander +-3); tris within +-1.5 %. trafficbench (rail off, phone) hashes =
   master at all six sites; poleprobe identical; funprobe ALL OK (63); 0
-  exceptions. **Not done:** St. Jerome's / St. Paul's (uwcampus.js draws
+  exceptions. **Not done** (KCI, Cambridge City Hall, the Hespeler library,
+  the Inn, the Delta and Laurel Dam since drawn: round three, below): St. Jerome's / St. Paul's (uwcampus.js draws
   St. Jerome's; St. Paul's is not named in OSM), Sportsworld Crossing (its
   stores are kwshops'), KCI, Cambridge City Hall (2008, behind Galt Town
   Hall), the Queen's Square and Hespeler libraries, the Crowne Plaza and the
@@ -455,6 +456,91 @@ file and a guide disagree, this file wins.
   doors `{c: [-3158, -482, 2], t: [-3122, -462, 6]}`, St. Mary's
   `{c: [-2138, 1630, 1.8], t: [-2135, 1570, 18]}`, CIGI from the air
   `{c: [-4205, -1345, 40], t: [-4118, -1272, 4]}`.
+- **The landmarks pass, round three** (same module, same LmKit, same
+  `data/lm2.json`: `build_lm2.py` gained `kci`, `cch`, `inn`, `delta`,
+  `hesp`; docs/lm3-*.jpg, master over this, phone shots). **KCI** (787 King
+  St W; OSM's footprint is unnamed, building=school): the 1924 front on the
+  west half of the King frontage -- buff stone, tall three-storey glass
+  between pilasters, the attic band with the school's name, the low copper
+  hipped roof gone green -- the red brick classroom blocks behind, the
+  four-storey east wing with its blank brick end on King, the 1903-04 wing's
+  hipped roof in the middle. The brief's "cupola/tower front" is not what the
+  King St photograph shows (Commons "Kci bldg.JPG"): no cupola is drawn.
+  **Cambridge City Hall** (Diamond Schmitt 2008, behind the 1858 Galt Town
+  Hall): four storeys, a rough-faced grey stone base with fritted glass,
+  silver aluminium and ribbon glazing above, the south front's horizontal
+  sunshades on posts a metre out, the main entrance under its overhang on
+  the square, the framed glass bay standing out of the north elevation, the
+  atrium skylight and the glazed strip the aerial shows, the green roof on
+  the southern wing. **Laurel Dam** (GRCA 1968; OSM way 1284678747,
+  waterway=dam, material=soil, height 5.6): see below. **The Inn of
+  Waterloo** (475 King St N, the old Waterloo Inn): two-storey brick wings
+  round a glass-roofed court, the four-storey block on the east side, the
+  lobby doors on the drive, the name on the block. **Delta Waterloo** (110
+  Erb St W, 2014, nine storeys): a pale precast frame round dark glass, a
+  dark glazed ground floor, the entrance canopy and a DELTA HOTELS wordmark
+  on Erb. **Idea Exchange Hespeler** (5 Tannery St E, Kongats 2006): the
+  two-storey glass box wrapped round the 1923 Carnegie library, its
+  ceramic frit drawn as white bands that thicken and thin round the walls,
+  mullions every 1.5 m, the old library's roof square. **Laurel Dam:** the
+  terrain is the 40 m DEM, which smooths the embankment away, and the
+  reservoir's field (wlevel.png, 90.44 here) floods the crest line and runs
+  ~15-25 m past it. So `laurelDam()` builds the embankment as a surface of
+  its own on a 2 m grid over OSM's outline: rip-rap up from the lake bed at
+  1:2, a ~4.5 m gravel crest 1.6 m over the water, the long grass slope
+  behind; and on the river side, within 36 m of the outline, every vertex
+  where the field is drawn at or over the ground is lifted 0.25 m over the
+  water (`__kwLm2.damCover`, ~730 vertices), so no reservoir shows below the
+  dam. The control structure from the aerial: the concrete intake tower out
+  in the water at OSM's jog in the outline (its trash rack, the gate house
+  on top), the walkway bridge to the crest, and the concrete outlet channel
+  down the back of the dam (cut out of the surface; walls stepping down;
+  the headwall with the two conduit mouths and its railing). The reservoir's
+  own water shows in the channel as far as the field runs. **Sources:**
+  OSM tags (tools/kw/probe_blocks.py; the dam's way by a scan of the .pbf),
+  the Esri aerial (tools/kw/aerial.py) for every plan; Wikimedia Commons
+  (KCI's King St front and its back), Wikipedia (KCI: built 1922-23, opened
+  April 4, 1924); tboake.com's photographs of Cambridge City Hall as it
+  opened (2008) and BD+C (four storeys, 85,000 sf, sky-lit atrium,
+  vegetated roof); Canadian Architect (Awards of Excellence 2004,
+  "Redressing Urbanity") and Doors Open (Hespeler); Delta's 2014 releases
+  (nine storeys). **Estimated:** every colour; every height but the
+  storey counts; KCI's front depth and its lettering's wording; where the
+  Cambridge sunshades stop; the Inn and the Delta entirely from the aerial
+  (no photograph of either was found: their materials, the Inn's colours,
+  the Delta's frame and the wordmark's place are guesses); the dam's
+  crest height over the water, its slopes, the tower's size and the
+  channel's length (read off the aerial; its height over the river below is
+  the DEM's, not 5.6 m). **Draws: none.** Every shell goes into a `kwp`
+  cluster and every letter into a `kw` sign cluster those cells already
+  had: the landmark root's meshes per cluster are identical to master's
+  (1038; a probe counting `landmarks:<key>` meshes). Hespeler's cell has no
+  sign cluster, so the library carries no lettering (it cost one draw). No
+  Tims, FreshCo, storefront or kwshops store point lies in or within 25 m
+  of a new footprint (their hosts are still registered with `addSignHost`).
+  Sign atlas: ended at row 1425 of 2048, not full. Pass triangles 38k ->
+  ~54k. Phone (AUTO_PHONE=1, GPU, tools/kw/seedrandom.js), master -> this,
+  draws / tris: spawn 177/1173k -> 179/1173k; KCI from King 181 -> 182,
+  front 178 -> 179, air 174 -> 175 (+2-4k); Cambridge from the square 252 ->
+  252, north 126 -> 126, air 214 -> 214; the dam tower 195 -> 194, crest
+  318 -> 316, outlet 98 -> 99, air 98 -> 99 (+0-4k); the Inn street 147 ->
+  147, air 144 -> 144 (+6k); the Delta street 253 -> 253, air 202 -> 202
+  (+7k); Hespeler 130 -> 130, 172 -> 172, 140 -> 140 (+3k). Seeded master
+  runs wander by up to 8 at the dam's crest view (310 / 318). trafficbench
+  (rail off, phone) hashes = master at all six sites; poleprobe identical
+  (0 in a lane); funprobe ALL OK (63); 0 exceptions. **Not done:** the
+  Crowne Plaza (105 King St E; built 1970, nine floors per one listing:
+  no photograph found, and the aerial does not show which part of OSM's
+  block is its tower); the Queen's Square library (Idea Exchange, 1 North
+  Square); St. Jerome's / St. Paul's (uwcampus.js already draws St. Jerome's;
+  St. Paul's is not named in OSM), Sportsworld Crossing (kwshops), GCI
+  (kwdowntown), the Kitchener Public Library (kwdowntown). The embankment is
+  drawn, not solid: you walk and drive through it at the DEM's height; the
+  Carnegie library inside Hespeler's glass is not seen (the glass is
+  opaque). Verify: kwshots views, e.g. KCI `{c: [-2733, -482, 1.7], t:
+  [-2752, -444, 9]}`, Cambridge from the square `{c: [13178, 10224, 1.7], t:
+  [13172, 10188, 10]}`, the dam's crest `{c: [-7803, -3600, 5.2], t: [-7775,
+  -3540, 3.5]}`, Hespeler `{c: [13362, 2318, 1.7], t: [13378, 2340, 4]}`.
 - **The chain stores: src/kwshops.js** (`data/shops.json` from
   tools/kw/extract_shops.py -> `raw_shops.json`, then tools/kw/build_shops.py;
   docs/shops-*.jpg). Every store of ~50 brands (`BRANDS` / `GAS` in

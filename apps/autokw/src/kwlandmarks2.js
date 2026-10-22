@@ -30,6 +30,9 @@
 //     its copper cone); Kitchener station (the 1897 Grand Trunk station: red
 //     brick, the hipped slate roof, the platform canopy) and the 1925 freight
 //     shed beside it.
+//   - ROUND THREE (below): KCI's 1924 front on King St W; Cambridge City
+//     Hall (2008); Laurel Dam's embankment, intake tower and outlet channel;
+//     the Inn of Waterloo; Delta Waterloo; the Hespeler library's glass box.
 //
 // Sources (Oct 2026): the Esri World Imagery aerial (tools/kw/aerial.py) for
 // every plan and every tower's place -- the towers are oriented boxes read off
@@ -57,6 +60,7 @@ import {
 import { boxAt, polyMat, plainUV, addSignHost } from './kw.js';
 import { Builder } from './build.js';
 import * as THREE from './three.js';
+import * as G from './geo.js';
 import {
   block, frontEdge, text, onWall, pyramid, hipRoof, B4, nearestEdge, entrance, sightsData,
 } from './kwsights.js';
@@ -723,6 +727,408 @@ function station(kit, ctx) {
   letters(kit, ctx, sf, sf.L / 2, fr.yTop - 0.9, Math.min(16, sf.L - 2), 0.6, 'GODERICH-EXETER RAILWAY', { fg: '#f2ece0', k: 0.66, off: 0.1 });
 }
 
+// =======================================================================================
+// ROUND THREE
+// =======================================================================================
+
+/** The edge of `E` whose outward normal is nearest (nx, nz), of at least minL. */
+function facing(E, nx, nz, minL = 6) {
+  let best = null, bd = -2;
+  for (const e of E) { if (e.L < minL) continue; const d = e.nx * nx + e.nz * nz; if (d > bd) { bd = d; best = e; } }
+  return best;
+}
+/** An oriented box with one long face on the edge a..b of a footprint, pushed `out` m past it, `dep` deep inward (`inx`, `inz` the inward normal). */
+function obOn(a, b, dep, inx, inz, out = 0.3, endOut = 0) {
+  const dx = b[0] - a[0], dz = b[1] - a[1], L = Math.hypot(dx, dz), ux = dx / L, uz = dz / L;
+  const c = (dep / 2 - out);
+  return { x: (a[0] + b[0]) / 2 + inx * c, z: (a[1] + b[1]) / 2 + inz * c, hu: L / 2 + endOut, hv: dep / 2, ux, uz };
+}
+
+// ---------------------------------------------------------------------------------------
+// KITCHENER-WATERLOO COLLEGIATE (KCI), 787 King St W
+// ---------------------------------------------------------------------------------------
+// From the King St photograph (Wikimedia Commons "Kci bldg.JPG") and the aerial:
+// the 1924 front (Wikipedia: built 1922-23, opened as KCI on April 4, 1924) on the
+// west half of the King frontage -- buff stone, tall windows between pilasters
+// two storeys high, an attic band, a low copper hipped roof gone green; the red
+// brick classroom blocks behind it; the four-storey red brick east wing whose
+// blank end faces King; the 1903-04 wing with its hipped roof in the middle
+// of the complex (the aerial's dark Y). The terrace wall and steps along King
+// are the street's. Heights: OSM's 4 levels for the east wing; the rest estimated.
+const KCI_FRONT = [[-2769.4, -455.9], [-2728.9, -436.6]];   // OSM footprint corners on King
+const KCI_EAST = [[-2694.35, -421.65], [-2711.0, -383.0]];  // the east wing's axis, King end first
+const KCI_OLD = [[-2743.8, -380.5], [-2736.5, -358.1]];     // the 1903-04 wing's axis
+function kci(kit, ctx) {
+  const BR = C('#94523d'), BR2 = C('#a3614a'), STONE = C('#cdbf9f'), ST2 = C('#e0d6bf'), CU = C('#6f9c8a'), GL = C('#2a3238');
+  const pts = ccw(D.b.kci.p);
+  const r = block(kit, ctx, pts, {
+    h: 12.5, wall: BR, trim: ST2, parapet: 0.7, roof: C('#7b7872'), glass: GL,
+    win: { style: 'punch', sp: 3.2, w: 2.0, h: 1.9, fl: 3.9, g0: 1.3, sill: ST2 },
+  });
+  // the 1903-04 wing's hipped roof
+  hipRoof(r.B, ob(KCI_OLD[0], KCI_OLD[1], 6.2), r.yTop + 0.7, 3.6, C('#6a4c3d'), 0.4);
+  // the four-storey east wing; its King end is blank brick
+  const ea = KCI_EAST[0], eb = KCI_EAST[1], eu = [eb[0] - ea[0], eb[1] - ea[1]], el = Math.hypot(eu[0], eu[1]);
+  const EW = ob([ea[0] - eu[0] / el * 0.3, ea[1] - eu[1] / el * 0.3], eb, 10.5);
+  const ew = tower(kit, ctx, EW, 16.5, { wall: BR2, trim: ST2, parapet: 0.8, roof: C('#77736d'), glass: GL,
+    win: { style: 'punch', sp: 3.4, w: 2.4, h: 1.9, fl: 3.9, g0: 1.2, sill: ST2, minL: 25 } }, 0);
+  plant(kit, EW, ew.yTop, 2, 4);
+  // the 1924 front: inward normal of the King edge
+  const [a, b] = KCI_FRONT, fu = [b[0] - a[0], b[1] - a[1]], fl = Math.hypot(fu[0], fu[1]);
+  const inx = -fu[1] / fl, inz = fu[0] / fl;   // (-0.43, 0.90): into the site, away from King
+  const FO = obOn(a, b, 13, inx, inz, 0.3, 0.3);
+  const f = tower(kit, ctx, FO, 15, { wall: STONE, trim: ST2, parapet: 0, roof: C('#8a8780'), plinth: [1.3, C('#b3a684')] }, 0);
+  hipRoof(f.B, FO, f.yTop, 2.4, CU, 0.5);
+  const B = f.B;
+  for (const e of f.E) {
+    if (e.L < 6 || e.nx * inx + e.nz * inz > 0.5) continue;    // not the inner face
+    const N = [e.nx, 0, e.nz], gy = T(e.mx + e.nx * 2, e.mz + e.nz * 2), top = f.yTop;
+    // the attic band and cornice
+    B4(B, e, -0.3, e.L + 0.3, top - 2.2, top, 0.32, N, ST2);
+    B4(B, e, -0.3, e.L + 0.3, top - 2.5, top - 2.2, 0.22, N, shade(ST2, 0.8));
+    // tall glass between pilasters, three storeys, with spandrels
+    const sp = 3.3, n = Math.floor((e.L - 1.6) / sp), pad = (e.L - n * sp) / 2;
+    for (let i = 0; i <= n; i++) B4(B, e, pad + i * sp - 0.42, pad + i * sp + 0.42, gy + 1.3, top - 2.5, 0.26, N, ST2);
+    for (let i = 0; i < n; i++) {
+      const t0 = pad + i * sp + 0.62, t1 = pad + (i + 1) * sp - 0.62;
+      B4(B, e, t0, t1, gy + 1.8, top - 3.0, 0.05, N, [GL, GL, shade(GL, 1.6), shade(GL, 1.6)]);
+      for (const y of [gy + 5.2, gy + 9.0]) B4(B, e, t0, t1, y - 0.5, y + 0.3, 0.08, N, shade(STONE, 0.92));
+      B4(B, e, t0 + (t1 - t0) / 2 - 0.05, t0 + (t1 - t0) / 2 + 0.05, gy + 1.8, top - 3.0, 0.09, N, ST2);
+    }
+  }
+  const kf = facing(f.E, -inx, -inz, 20);
+  if (kf) {
+    const gy = T(kf.mx + kf.nx * 3, kf.mz + kf.nz * 3);
+    // the central doorway: a stone surround, oak doors, and the school's name on the attic
+    B4(B, kf, kf.L / 2 - 3.2, kf.L / 2 + 3.2, gy - 0.3, gy + 5.4, 0.4, [kf.nx, 0, kf.nz], ST2);
+    B4(B, kf, kf.L / 2 - 2.0, kf.L / 2 + 2.0, gy, gy + 3.6, 0.45, [kf.nx, 0, kf.nz], C('#4c3423'));
+    letters(kit, ctx, kf, kf.L / 2, f.yTop - 1.1, Math.min(34, kf.L - 4), 0.95, 'KITCHENER-WATERLOO COLLEGIATE AND VOCATIONAL SCHOOL', { fg: '#5f5646', font: SERIF, wt: '700', k: 0.62, off: 0.36 });
+  }
+  // the east wing's door on its west side by King
+  const wd = edgeNear(ew.E, -2712, -420, 10);
+  if (wd) entrance(kit, ctx, wd.e, Math.min(wd.e.L - 6, 8), 5, 3.2, null, { d: 3 });
+}
+
+// ---------------------------------------------------------------------------------------
+// CAMBRIDGE CITY HALL, 50 Dickson St (Diamond Schmitt 2008)
+// ---------------------------------------------------------------------------------------
+// From tboake.com's photographs of the building as it opened (2008) and the
+// aerial: four storeys (BD+C: 85,000 sf, LEED Gold); a base of rough-faced grey
+// stone with fritted glass, silver aluminium and ribbon glazing above; on the
+// south front, toward the civic square and the 1858 Galt Town Hall, horizontal
+// sunshades stood out from the wall on posts and the main entrance under an
+// overhang; a framed bay standing out of the north elevation over the parking;
+// the skylit atrium (the aerial's glass grid) and the vegetated roof on the
+// southern wing. Height and colours estimated.
+const CCH_SKY = [13175, 10169, 21, 8];        // the atrium's skylight on the aerial (x, z, w, d)
+const CCH_CLER = [13211, 10169, 31, 3];       // the glazed strip down the east wing
+const CCH_GREEN = [[13148.3, 10180.6], [13196.0, 10181.6], [13196.1, 10192.6], [13148.1, 10191.4]];
+function cambridgeHall(kit, ctx) {
+  const ALU = C('#b3b7b9'), ALU2 = C('#d6d9da'), STONE = C('#c6c2b8'), GL = C('#3b4e59'), FRIT = C('#7d8e96');
+  const pts = ccw(D.b.cch.p);
+  const r = block(kit, ctx, pts, {
+    h: 17.5, wall: ALU, trim: ALU2, parapet: 0.6, roof: C('#8d8c88'), glass: GL, plinth: [4.4, STONE],
+    win: { style: 'ribbon', fl: 4.1, g0: 4.9, h: 2.6, top: 1.0 },
+  });
+  const B = r.B;
+  for (const e of r.E) {
+    if (e.L < 6) continue;
+    const N = [e.nx, 0, e.nz], gy = T(e.mx + e.nx * 2, e.mz + e.nz * 2);
+    // the ground floor: fritted glass in the stone, stone piers
+    B4(B, e, 0.8, e.L - 0.8, gy + 0.7, gy + 3.7, 0.08, N, [FRIT, FRIT, GL, GL]);
+    for (let t = 0.8; t <= e.L - 0.8; t += 6) B4(B, e, t - 0.4, t + 0.4, gy - 0.2, gy + 4.4, 0.14, N, STONE);
+    // the south: sunshades on posts, a metre out
+    if (e.nz > 0.7 && e.L > 12) {
+      for (let t = 1; t <= e.L - 1; t += 4.5) B4(B, e, t - 0.1, t + 0.1, gy + 4.4, r.yTop + 0.4, 0.95, N, ALU2);
+      for (let f = 0; f < 3; f++) for (let k = 0; k < 4; k++) {
+        const y = gy + 5.3 + f * 4.1 + k * 0.62;
+        B4(B, e, 0.6, e.L - 0.6, y, y + 0.16, 1.0, N, ALU2);
+        B.quad(e.at(0.6, y, 0.6), e.at(e.L - 0.6, y, 0.6), e.at(e.L - 0.6, y, 1.0), e.at(0.6, y, 1.0), [0, -1, 0], U0, shade(ALU2, 0.6));
+      }
+    }
+  }
+  // the north bay: a deep aluminium frame round a curtain of glass
+  const nf = facing(r.E, 0, -1, 30);
+  if (nf) {
+    const gy = T(nf.mx + nf.nx * 2, nf.mz + nf.nz * 2), N = [nf.nx, 0, nf.nz], t0 = nf.L / 2 - 9, t1 = nf.L / 2 + 9, y0 = gy + 4.4, y1 = r.yTop + 0.6, d = 1.6;
+    B4(B, nf, t0 + 0.6, t1 - 0.6, y0, y1 - 0.6, 1.2, N, [GL, GL, shade(GL, 1.5), shade(GL, 1.5)]);
+    for (let t = t0 + 0.6 + 1.6; t < t1 - 0.6; t += 1.6) B4(B, nf, t - 0.05, t + 0.05, y0, y1 - 0.6, 1.25, N, ALU2);
+    for (let y = y0 + 4.1; y < y1 - 1; y += 4.1) B4(B, nf, t0 + 0.6, t1 - 0.6, y - 0.12, y + 0.12, 1.25, N, ALU2);
+    for (const [a0, a1] of [[t0, t0 + 0.6], [t1 - 0.6, t1]]) B4(B, nf, a0, a1, y0 - 0.4, y1, d, N, ALU2);
+    B4(B, nf, t0, t1, y1 - 0.6, y1, d, N, ALU2);
+    B4(B, nf, t0, t1, y0 - 0.4, y0, d, N, ALU2);
+    for (const t of [t0, t1]) B.quad(nf.at(t, y0 - 0.4, 0), nf.at(t, y0 - 0.4, d), nf.at(t, y1, d), nf.at(t, y1, 0), [nf.ux * (t === t0 ? -1 : 1), 0, nf.uz * (t === t0 ? -1 : 1)], U0, ALU);
+    B.quad(nf.at(t0, y1, 0), nf.at(t1, y1, 0), nf.at(t1, y1, d), nf.at(t0, y1, d), [0, 1, 0], U0, ALU);
+  }
+  // the atrium's skylight and the east wing's glazed strip
+  const SKY = C('#8aa3b0');
+  for (const [x, z, w, dd] of [CCH_SKY, CCH_CLER]) {
+    B.box(x, r.yTop + 0.4, z, w, 1.3, dd, 0, SKY);
+    for (let k = -w / 2 + 2.5; k < w / 2; k += 2.5) B.box(x + k, r.yTop + 1.65, z, 0.12, 0.1, dd + 0.05, 0, ALU2);
+  }
+  // the green roof on the southern wing
+  const G0 = CCH_GREEN, gy = r.yTop + 0.08, GR = C('#5e7a3d');
+  B.tri([G0[0][0], gy, G0[0][1]], [G0[2][0], gy, G0[2][1]], [G0[1][0], gy, G0[1][1]], [0, 1, 0], GR);
+  B.tri([G0[0][0], gy, G0[0][1]], [G0[3][0], gy, G0[3][1]], [G0[2][0], gy, G0[2][1]], [0, 1, 0], GR);
+  // the main entrance under the overhang on the square, and the name in the stone
+  const sf = facing(r.E, 0, 1, 30);
+  if (sf) {
+    const gy2 = T(sf.mx + sf.nx * 3, sf.mz + sf.nz * 3);
+    entrance(kit, ctx, sf, sf.L * 0.62, 10, 4.0, null, { d: 4.5, can: C('#9ea3a6') });
+    letters(kit, ctx, sf, sf.L * 0.24, gy2 + 3.0, 13, 0.85, 'CAMBRIDGE CITY HALL', { fg: '#33393d', k: 0.66, off: 0.16 });
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// LAUREL DAM (the Grand River Conservation Authority, 1968): the reservoir's dam
+// ---------------------------------------------------------------------------------------
+// OSM way 1284678747 (waterway=dam, material=soil, height 5.6, start_date 1968)
+// maps the earth embankment's outline; the aerial shows the crest road a few
+// metres in from the reservoir's edge, rip-rap down to the water, the long
+// grass slope behind, and the control structure: a concrete intake tower out
+// in the water at OSM's jog in the outline (its gate hoists in the house on
+// top), the walkway bridge to the crest, and the concrete outlet channel down
+// the back of the dam. The game's terrain is the 40 m DEM, which smooths the
+// embankment away: the reservoir (wlevel.png, 90.44 here) floods the crest's
+// line and ~15 m past it. So the embankment is built here as a surface of its
+// own over OSM's outline, its crest 1.6 m over the water (its height over the
+// river below is the DEM's, not 5.6 m) -- it covers the water east of the
+// crest; the outlet channel is cut out of it, and the reservoir shows in the
+// channel up to where the field ends.
+const DAM = [
+  [-7689.6, -3397.2], [-7696.5, -3394.0], [-7717.1, -3421.4], [-7770.5, -3525.6], [-7777.1, -3536.1], [-7777.1, -3542.2],
+  [-7787.4, -3538.8], [-7789.1, -3542.5], [-7790.9, -3546.7], [-7783.0, -3551.8], [-7786.8, -3556.6], [-7789.5, -3560.0],
+  [-7793.2, -3566.9], [-7810.5, -3616.6], [-7779.6, -3590.9], [-7759.6, -3566.0], [-7750.9, -3551.0], [-7720.1, -3469.3],
+  [-7709.4, -3440.1],
+];
+const DAM_LAKE = DAM.slice(1, 14);                 // the reservoir's side, south-east to north
+const DAM_TOWER = [-7793.5, -3543.0];              // the intake tower, in the water off the jog
+const DAM_IN = [0.885, -0.463];                    // across the dam, lake to river (the aerial's bridge)
+const DAM_OUT = { a: [-7774.5, -3552.2], u: [0.92, -0.39], L: 24, hw: 4.4 };   // the outlet channel
+function segDist(P, x, z, closed) {
+  let d = Infinity;
+  const n = closed ? P.length : P.length - 1;
+  for (let i = 0; i < n; i++) {
+    const a = P[i], b = P[(i + 1) % P.length], dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx * dx + dz * dz || 1;
+    const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / L2));
+    d = Math.min(d, Math.hypot(x - a[0] - dx * t, z - a[1] - dz * t));
+  }
+  return d;
+}
+function laurelDam(kit, ctx) {
+  const P = ccw(DAM);
+  const wl = G.waterLevel(-7800, -3545) || 90.44, CREST = wl + 1.6;
+  const CON = C('#b9b6ae'), CON2 = C('#9a978f'), GRASS = C('#5f7a3c'), GRAV = C('#a39a87'), RIP = C('#7a7770'), STEEL = C('#3f5a50');
+  const O = DAM_OUT, ou = O.u, ov = [-ou[1], ou[0]];
+  const inChute = (x, z) => {
+    const s = (x - O.a[0]) * ou[0] + (z - O.a[1]) * ou[1], l = (x - O.a[0]) * ov[0] + (z - O.a[1]) * ov[1];
+    return s > -0.5 && s < O.L + 0.5 && Math.abs(l) < O.hw + 0.25;
+  };
+  // the embankment's surface on a 2 m grid over OSM's outline -- and, behind it,
+  // over the reservoir's field where it runs on below the dam (ground just over it)
+  const M = 36;
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (const q of P) { x0 = Math.min(x0, q[0] - M); x1 = Math.max(x1, q[0] + M); z0 = Math.min(z0, q[1] - M); z1 = Math.max(z1, q[1] + M); }
+  const S = 2, nx = Math.ceil((x1 - x0) / S) + 1, nz = Math.ceil((z1 - z0) / S) + 1;
+  const Y = new Float32Array(nx * nz), IN = new Uint8Array(nx * nz), K = new Uint8Array(nx * nz);
+  // which side of the reservoir's edge a point is on (> 0: the dam's and the river's)
+  const side = (x, z) => {
+    let bd = Infinity, sg = 0;
+    for (let i = 0; i < DAM_LAKE.length - 1; i++) {
+      const a = DAM_LAKE[i], b = DAM_LAKE[i + 1], dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx * dx + dz * dz || 1;
+      const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / L2));
+      const d = Math.hypot(x - a[0] - dx * t, z - a[1] - dz * t);
+      if (d < bd) { bd = d; sg = dx * (z - a[1]) - dz * (x - a[0]); }
+    }
+    return sg;
+  };
+  let covered = 0;
+  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
+    const x = x0 + i * S, z = z0 + j * S, k = j * nx + i;
+    const dEdge = segDist(P, x, z, true), inside = inPoly(P, x, z);
+    const t = T(x, z);
+    Y[k] = t;
+    if (!inside) {
+      if (dEdge > M) continue;
+      const w = G.waterLevel(x, z);
+      if (dEdge > 1.5 && (w > t - 0.3) && side(x, z) > 0) { Y[k] = Math.max(t + 0.04, w + 0.25); IN[k] = 2; covered++; }
+      if (dEdge > 1.5) continue;
+    } else IN[k] = 1;
+    const dW = segDist(DAM_LAKE, x, z, false), dIn = inside ? dEdge : 0;
+    // up the rip-rap from the lake bed, the crest ~4.5 m wide, the long slope down behind it
+    let y = Math.max(t + 0.04, Math.min(CREST, t + dW * 0.5, CREST - Math.max(0, dW - 12.5) * 0.17, t + dIn * 0.6 + 0.04));
+    if (side(x, z) > 0 && dW > 3) { const w = G.waterLevel(x, z); if (w > t - 0.3) y = Math.max(y, w + 0.25); }
+    Y[k] = y;
+    if (inside) K[k] = y >= CREST - 0.02 && dW < 13 ? 1 : (y < wl + 0.7 && dW < 9 ? 2 : 0);
+  }
+  const Bd = kit.B(-7770, -3520), col = [GRASS, GRAV, RIP];
+  for (let j = 0; j < nz - 1; j++) for (let i = 0; i < nx - 1; i++) {
+    const k = j * nx + i, ks = [k, k + 1, k + nx + 1, k + nx];
+    if (!ks.some((q) => IN[q])) continue;
+    const cx = x0 + (i + 0.5) * S, cz = z0 + (j + 0.5) * S;
+    if (inChute(cx, cz)) continue;
+    const v = ks.map((q) => [x0 + (q % nx) * S, Y[q], z0 + Math.floor(q / nx) * S]);
+    // the normal of the cell, from its diagonals
+    const ax = v[2][0] - v[0][0], ay = v[2][1] - v[0][1], az = v[2][2] - v[0][2], bx = v[3][0] - v[1][0], by = v[3][1] - v[1][1], bz = v[3][2] - v[1][2];
+    let n = [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx];
+    if (n[1] < 0) n = n.map((q) => -q);
+    const nl = Math.hypot(...n) || 1;
+    Bd.quad(v[0], v[1], v[2], v[3], [n[0] / nl, n[1] / nl, n[2] / nl], U0, ks.map((q) => col[K[q]]));
+  }
+  STATS.damCover = covered;
+  // the outlet channel: concrete floor and walls stepping down the slope, the headwall at the crest
+  const at = (s, l, y) => [O.a[0] + ou[0] * s + ov[0] * l, y, O.a[1] + ou[1] * s + ov[1] * l];
+  const ground = (s) => { const p = at(s, 0, 0); return T(p[0], p[2]); };
+  const floorY = (s) => Math.min(wl - 0.9, ground(s) - 0.9);
+  const wallTop = (s) => Math.max(ground(s) + 1.1, CREST + 0.3 - s * 0.075);
+  const Bc = kit.B(O.a[0], O.a[1]);
+  for (let s = 0; s < O.L; s += 2) {
+    const s1 = Math.min(O.L, s + 2), f0 = floorY(s), f1 = floorY(s1);
+    Bc.quad(at(s, -O.hw, f0), at(s, O.hw, f0), at(s1, O.hw, f1), at(s1, -O.hw, f1), [0, 1, 0], U0, CON2);
+    for (const side of [-1, 1]) {
+      const l = side * O.hw, lo = side * (O.hw + 0.45), t0 = wallTop(s), t1 = wallTop(s1);
+      const nIn = [-ov[0] * side, 0, -ov[1] * side], nOut = [ov[0] * side, 0, ov[1] * side];
+      Bc.quad(at(s, l, f0 - 0.3), at(s1, l, f1 - 0.3), at(s1, l, t1), at(s, l, t0), nIn, U0, CON);
+      Bc.quad(at(s1, lo, f1 - 2), at(s, lo, f0 - 2), at(s, lo, t0), at(s1, lo, t1), nOut, U0, CON);
+      Bc.quad(at(s, l, t0), at(s1, l, t1), at(s1, lo, t1), at(s, lo, t0), [0, 1, 0], U0, shade(CON, 1.1));
+      const m = at((s + s1) / 2, side * (O.hw + 0.22), 0);
+      ctx.solids.push({ x: m[0], z: m[2], hw: (s1 - s) / 2 + 0.1, hd: 0.3, rot: Math.atan2(ou[1], ou[0]), y0: f0 - 1, y1: Math.max(t0, t1) });
+    }
+    if (s1 >= O.L) for (const side of [-1, 1]) {
+      const l = side * O.hw, lo = side * (O.hw + 0.45), t1 = wallTop(s1);
+      Bc.quad(at(s1, l, f1 - 0.3), at(s1, lo, f1 - 0.3), at(s1, lo, t1), at(s1, l, t1), [ou[0], 0, ou[1]], U0, CON);
+    }
+  }
+  // the headwall: across the channel's head under the crest, the two conduits' mouths
+  {
+    const f0 = floorY(0), top = CREST + 0.2, w = O.hw + 0.45;
+    Bc.quad(at(0, w, f0 - 0.3), at(0, -w, f0 - 0.3), at(0, -w, top), at(0, w, top), [ou[0], 0, ou[1]], U0, CON);
+    Bc.quad(at(0, -w, top), at(0, w, top), at(-1.2, w, top), at(-1.2, -w, top), [0, 1, 0], U0, shade(CON, 1.1));
+    for (const l of [-2, 2]) Bc.quad(at(0.04, l + 1.3, f0 + 0.1), at(0.04, l - 1.3, f0 + 0.1), at(0.04, l - 1.3, f0 + 2.3), at(0.04, l + 1.3, f0 + 2.3), [ou[0], 0, ou[1]], U0, C('#1d2224'));
+    // a railing along its top
+    for (let l = -w; l <= w + 0.01; l += w / 3) { const p = at(-0.3, l, top); Bc.box(p[0], top, p[2], 0.08, 1.05, 0.08, 0, STEEL); }
+    const p0 = at(-0.3, 0, top + 1.0);
+    Bc.box(p0[0], p0[1], p0[2], 0.07, 0.07, w * 2, Math.atan2(ou[1], ou[0]), STEEL);
+  }
+  // the intake tower out in the water, the gate house on it, the bridge to the crest
+  const [tx, tz] = DAM_TOWER, rot = Math.atan2(DAM_IN[1], DAM_IN[0]), bed = T(tx, tz);
+  const Bt = kit.B(tx, tz);
+  Bt.box(tx, bed - 1, tz, 5.6, CREST + 0.6 - (bed - 1), 5.6, rot, CON);
+  Bt.box(tx, CREST + 0.6, tz, 6.2, 0.35, 6.2, rot, shade(CON, 1.08));
+  Bt.box(tx, CREST + 0.95, tz, 4.4, 2.5, 4.0, rot, C('#d4d0c3'));
+  pyramid(Bt, tx, CREST + 3.45, tz, 2.6, 1.1, rot, C('#4f5a55'));
+  // the trash rack on its lake face, the stains of the water line
+  const la = [-DAM_IN[0], -DAM_IN[1]], lv = [-la[1], la[0]];
+  for (let k = -2; k <= 2; k += 0.4) {
+    const x = tx + la[0] * 2.85 + lv[0] * k, z = tz + la[1] * 2.85 + lv[1] * k;
+    Bt.box(x, wl - 3, z, 0.06, 4.2, 0.12, rot, STEEL);
+  }
+  Bt.box(tx, wl - 0.25, tz, 5.7, 0.5, 5.7, rot, C('#6f6c62'));
+  const bA = [tx + DAM_IN[0] * 3.1, tz + DAM_IN[1] * 3.1], bB = [tx + DAM_IN[0] * 15.5, tz + DAM_IN[1] * 15.5];
+  const BL = Math.hypot(bB[0] - bA[0], bB[1] - bA[1]), bm = [(bA[0] + bB[0]) / 2, (bA[1] + bB[1]) / 2];
+  Bt.box(bm[0], CREST + 0.35, bm[1], BL, 0.3, 1.8, rot, CON2);
+  for (const s of [-1, 1]) {
+    const x = bm[0] + DAM_IN[1] * -0.85 * s, z = bm[1] + DAM_IN[0] * 0.85 * s;
+    Bt.box(x, CREST + 1.55, z, BL, 0.07, 0.07, rot, STEEL);
+    for (let k = -BL / 2; k <= BL / 2 + 0.01; k += BL / 6) Bt.box(x + DAM_IN[0] * k, CREST + 0.65, z + DAM_IN[1] * k, 0.07, 0.95, 0.07, rot, STEEL);
+  }
+  ctx.solids.push({ x: tx, z: tz, hw: 3.1, hd: 3.1, rot, y0: bed - 1, y1: CREST + 3.5 });
+  STATS.dam = { wl: +wl.toFixed(2), crest: +CREST.toFixed(2) };
+}
+// ---------------------------------------------------------------------------------------
+// THE INN OF WATERLOO (the Waterloo Inn), 475 King St N
+// ---------------------------------------------------------------------------------------
+// Read off the aerial alone (no photograph of it found): two-storey wings round
+// a glass-roofed court, the four-storey block on its east side, the lobby wing
+// toward the drive and the roundabout. Every colour and height estimated.
+const INN_EAST = [[-4452, -4247], [-4441.5, -4291]];
+const INN_COURT = [[-4497, -4271], [-4463, -4263]];
+function innOfWaterloo(kit, ctx) {
+  const BR = C('#87604a'), CREAM = C('#e3ddcf'), TR = C('#efe9dc');
+  const r = block(kit, ctx, ccw(D.b.inn.p), {
+    h: 7.6, wall: BR, trim: TR, parapet: 0.6, roof: C('#6c6862'), glass: C('#2c3236'),
+    win: { style: 'punch', sp: 3.6, w: 1.9, h: 1.5, fl: 3.5, g0: 1.0, sill: TR },
+  });
+  const EO = ob(INN_EAST[0], INN_EAST[1], 12.5);
+  const e = tower(kit, ctx, EO, 13.6, { wall: CREAM, trim: TR, parapet: 0.7, roof: C('#a9a59c'), glass: C('#2f3a40'),
+    win: { style: 'punch', sp: 3.4, w: 2.3, h: 1.6, fl: 3.3, g0: 1.1, sill: TR } }, 0);
+  plant(kit, EO, e.yTop, 3, 11);
+  // the court's glass roof
+  hipRoof(r.B, ob(INN_COURT[0], INN_COURT[1], 9.5), r.yTop + 0.7, 3.4, C('#7f9aa6'), 0);
+  // the lobby doors on the drive, and the name over them
+  const dr = edgeNear(r.E, -4421, -4224, 8);
+  if (dr) entrance(kit, ctx, dr.e, dr.t, 8, 3.4, null, { d: 5, can: C('#2f4a3a') });
+  const ef = facing(e.E, 1, 0, 20);
+  if (ef) letters(kit, ctx, ef, ef.L / 2, e.yTop - 1.6, Math.min(20, ef.L - 3), 1.6, 'THE INN OF WATERLOO', { fg: '#2f4a3a', font: SERIF, wt: '700', k: 0.66, off: 0.1 });
+}
+
+// ---------------------------------------------------------------------------------------
+// DELTA WATERLOO, 110 Erb St W (Delta Hotels, opened September 2014)
+// ---------------------------------------------------------------------------------------
+// Nine storeys (OSM; Delta's release), the slab along Erb read off the aerial
+// (its pale roof, its glass faces); no photograph found, so its colours, its
+// frame and the wordmark's place are estimated.
+function deltaWaterloo(kit, ctx) {
+  const r = block(kit, ctx, ccw(D.b.delta.p), {
+    h: 31, wall: C('#d9dad7'), trim: C('#f1f1ee'), parapet: 1.0, roof: C('#c9c9c4'), glass: C('#28343e'), frame: C('#e9e9e6'),
+    plinth: [4.6, C('#3a4046')], win: { style: 'grid', sp: 3.1, fl: 3.3, g0: 5.6, h: 2.3, top: 1.4 },
+  });
+  plant(kit, obb(r.pts), r.yTop, 4, 7);
+  const ef = frontEdge(ctx.city, r.E, /^Erb Street/, 12, 60) || facing(r.E, 0.5, 0.86, 12);
+  if (ef) {
+    const gy = T(ef.mx + ef.nx * 3, ef.mz + ef.nz * 3);
+    B4(r.B, ef, 0.6, ef.L - 0.6, gy + 0.4, gy + 4.2, 0.08, [ef.nx, 0, ef.nz], [C('#3f5462'), C('#3f5462'), C('#6f8794'), C('#6f8794')]);
+    entrance(kit, ctx, ef, ef.L / 2, 8, 3.8, null, { d: 4.5, can: C('#2a2d30') });
+    const m = ctx.atlas.panel(12, 1.9, 22, (q, W, H) => {
+      q.clearRect(0, 0, W, H);
+      q.fillStyle = '#1b1d1f';
+      q.beginPath(); q.moveTo(H * 0.12, H * 0.86); q.lineTo(H * 0.5, H * 0.14); q.lineTo(H * 0.88, H * 0.86); q.closePath(); q.fill();
+      q.fillStyle = '#d9dad7';
+      q.beginPath(); q.moveTo(H * 0.36, H * 0.72); q.lineTo(H * 0.5, H * 0.44); q.lineTo(H * 0.64, H * 0.72); q.closePath(); q.fill();
+      q.fillStyle = '#1b1d1f'; q.font = `700 ${H * 0.56}px ${SANS}`; q.textAlign = 'left'; q.textBaseline = 'middle';
+      q.fillText('DELTA HOTELS', H * 1.1, H * 0.54, W - H * 1.2);
+    });
+    onWall(kit, ef, ef.L / 2, r.yTop - 1.6, m, 0.12);
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// IDEA EXCHANGE HESPELER, 5 Tannery St E (Kongats Architects, 2006)
+// ---------------------------------------------------------------------------------------
+// Canadian Architect (Awards of Excellence 2004, "Redressing Urbanity") and
+// Doors Open: the 1980s addition came down, the 1923 Carnegie library was kept
+// as the "book vault" and the whole was wrapped in a two-storey box of glass
+// whose ceramic frit is woven round it in bands (the town's textile mills), a
+// "ship in a bottle". The box is OSM's footprint; the old library's roof is the
+// square the aerial shows in its south-east half. Opaque here, so the brick
+// inside is not seen: the frit pattern is drawn, its weave estimated.
+const HESP_OLD = [[13370.3, 2354.9], [13380.5, 2343.4], [13388.3, 2350.0], [13378.1, 2362.7]];
+function hespeler(kit, ctx) {
+  const GL = C('#8fa6a5'), GL2 = C('#c5d3d0'), FRIT = C('#eef0ec'), MUL = C('#5c6366');
+  const r = block(kit, ctx, ccw(D.b.hesp.p), { h: 8.6, wall: GL, trim: C('#d9dcda'), parapet: 0.5, roof: C('#d2d2cc') });
+  const B = r.B;
+  for (const e of r.E) {
+    if (e.L < 4) continue;
+    const N = [e.nx, 0, e.nz], gy = T(e.mx + e.nx * 2, e.mz + e.nz * 2);
+    B4(B, e, 0.1, e.L - 0.1, gy - 0.2, r.yTop + 0.3, 0.03, N, [GL, GL, GL2, GL2]);
+    for (let t = 0; t <= e.L + 1e-3; t += 1.5) B4(B, e, t - 0.04, t + 0.04, gy - 0.2, r.yTop + 0.3, 0.06, N, MUL);
+    // the frit: white bands that thicken and thin along the wall, woven
+    for (let y = gy + 2.6; y < r.yTop; y += 0.42) for (let t = 0; t < e.L - 0.01; t += 1.5) {
+      const ph = Math.sin((e.mx + e.mz + t) * 0.31 + y * 0.9);
+      const hh = 0.04 + 0.16 * (0.5 + 0.5 * ph);
+      B4(B, e, t + 0.05, Math.min(e.L, t + 1.5) - 0.05, y, y + hh, 0.05, N, FRIT);
+    }
+  }
+  // the old library's roof inside, a step up
+  const O = HESP_OLD, ry = r.yTop + 0.45, RC = C('#bdbdb6');
+  B.tri([O[0][0], ry, O[0][1]], [O[1][0], ry, O[1][1]], [O[2][0], ry, O[2][1]], [0, 1, 0], RC);
+  B.tri([O[0][0], ry, O[0][1]], [O[2][0], ry, O[2][1]], [O[3][0], ry, O[3][1]], [0, 1, 0], RC);
+  // the doors off the parking. No lettering: this cell has no sign cluster
+  // (kw.js buildSigns' 'kw' group), and a name would be a draw of its own.
+  const de = edgeNear(r.E, 13374, 2332, 8);
+  if (de) entrance(kit, ctx, de.e, de.t, 5, 3.2, null, { d: 2.5, can: C('#4a5054') });
+}
+
 // ---------------------------------------------------------------------------------------
 // the extra
 // ---------------------------------------------------------------------------------------
@@ -731,6 +1137,11 @@ export function buildLandmarks2(ctx) {
   const t0 = performance.now(), kit = new LmKit(ctx.atlas);
   // trees keep off what is drawn here
   for (const k of Object.keys(D.b)) { const o = obb(D.b[k].p); if (o && ctx.clearAt) ctx.clearAt.push([o.x, o.z, Math.min(o.hu, o.hv) + 3]); }
+  // and off Laurel Dam's embankment
+  if (ctx.clearAt) for (let i = 1; i < DAM_LAKE.length; i++) {
+    const a = DAM_LAKE[i - 1], b = DAM_LAKE[i], L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    for (let t = 0; t < L; t += 8) ctx.clearAt.push([a[0] + (b[0] - a[0]) * t / L + DAM_IN[0] * 9, a[1] + (b[1] - a[1]) * t / L + DAM_IN[1] * 9, 13]);
+  }
   const run = (name, fn) => {
     const s0 = ctx.solids.length;
     try { fn(kit, ctx); STATS.built.push(name); } catch (e) { console.warn('kwlandmarks2 ' + name + ': ' + (e.stack || e.message)); STATS.err.push(name + ': ' + e.message); }
@@ -748,6 +1159,13 @@ export function buildLandmarks2(ctx) {
   run('courthouse', courthouse);
   run('regionhq', regionHq);
   run('station', station);
+  // round three
+  run('kci', kci);
+  run('cambridgehall', cambridgeHall);
+  run('laureldam', laurelDam);
+  run('inn', innOfWaterloo);
+  run('delta', deltaWaterloo);
+  run('hespeler', hespeler);
   kit.flush(ctx);
   STATS.tris = kit.tris;
   STATS.ms = Math.round(performance.now() - t0);
@@ -772,6 +1190,12 @@ export function landmarks2Map() {
     m(at('court'), false, 'Waterloo Region Courthouse', 'The Waterloo Region Courthouse, 85 Frederick St (2013)'),
     m(at('regionhq'), false, 'Region of Waterloo', 'Region of Waterloo headquarters, 150 Frederick St — the council chamber is the drum'),
     m(at('station'), 'Station', 'Kitchener station', 'Kitchener station, 126 Weber St W (1897) — VIA to Toronto and Sarnia, GO to Union'),
+    m(at('kci'), false, 'KCI', 'Kitchener-Waterloo Collegiate and Vocational School, 787 King St W — the 1924 front, and the oldest high school in the region'),
+    m(at('cch'), false, 'Cambridge City Hall', 'Cambridge City Hall, 50 Dickson St (2008) — behind the 1858 Galt Town Hall, a green roof on top'),
+    m(DAM_TOWER, false, 'Laurel Dam', 'Laurel Dam (GRCA, 1968) — the earth dam that holds back Laurel Creek reservoir; the intake tower and its bridge'),
+    m(at('inn'), false, 'The Inn of Waterloo', 'The Inn of Waterloo, 475 King St N — the old Waterloo Inn'),
+    m(at('hesp'), false, 'Idea Exchange Hespeler', 'Idea Exchange Hespeler, 5 Tannery St E — the 1923 Carnegie library inside a box of fritted glass (Kongats, 2006)'),
+    m(at('delta'), false, 'Delta Waterloo', 'Delta Hotels Waterloo, 110 Erb St W (2014) — nine storeys on Erb'),
   ];
 }
 
