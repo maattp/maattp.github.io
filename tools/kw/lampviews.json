@@ -1,0 +1,8 @@
+[
+  {"name": "lamps-red-sig1644", "eval": "__lamp({ name: 'sig-1644', x: -1644, z: -157, pick: 'red', warm: 1500 })"},
+  {"name": "lamps-red-uptown", "eval": "__lamp({ name: 'uptown-king', x: -2928, z: -560, pick: 'red', warm: 1500 })"},
+  {"name": "lamps-left-sig1644", "eval": "__lamp({ name: 'sig-1644', x: -1644, z: -157, pick: 'left', warm: 1500 })"},
+  {"name": "lamps-left-uptown", "eval": "__lamp({ name: 'uptown-king', x: -2928, z: -560, pick: 'left', warm: 1500, types: ['sedan', 'compsedan', 'taxi', 'police', 'van', 'postvan', 'purovan', 'pickup', 'pickupcap', 'dually'] })"},
+  {"name": "lamps-lane-401", "eval": "__lamp({ name: '401-hespeler', x: 10950, z: 4250, pick: 'lane', warm: 1500, r: 240 })"},
+  {"name": "lamps-lane-pkwy", "eval": "__lamp({ name: 'pkwy-fairway', x: 2800, z: 2480, pick: 'lane', warm: 1500, r: 240 })"}
+]

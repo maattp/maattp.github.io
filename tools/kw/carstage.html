@@ -63,6 +63,7 @@ function place(list) {
     v.x = p.x || 0; v.y = 0; v.z = p.z || 0; v.heading = p.heading || 0;
     v.mode = p.mode || 'traffic';
     v.sync();
+    if (p.lamps) v.setLamps(p.lamps);   // LAMP_* bits (vehicles.js tagLamps)
     scene.add(v.group);
     cars.push(v);
     // the body's real size (paint + matte, not the trim's contact shadow), level, at the origin
@@ -79,6 +80,16 @@ function shoot({ eye, at, fov = 35 }) {
   camera.lookAt(...at);
   renderer.render(scene, camera);
 }
-window.stage = { place, shoot, scene, camera, renderer, THREE, TYPES, get cars() { return cars; }, ready: true };
+/** Each type's tagged lamp vertices by class (tagLamps: 5 tail, 6 amber, 7 reversing, 8 stop/turn). */
+function lampClasses(names) {
+  const out = {};
+  for (const n of names) {
+    const v = new Vehicle(null, n, 0x9fa4a9), g = v.trimMesh.geometry.attributes.glass.array, c = {};
+    for (const x of g) if (x > 4.5) c[x] = (c[x] || 0) + 1;
+    out[n] = c;
+  }
+  return out;
+}
+window.stage = { place, shoot, lampClasses, scene, camera, renderer, THREE, TYPES, get cars() { return cars; }, ready: true };
 </script>
 </body></html>

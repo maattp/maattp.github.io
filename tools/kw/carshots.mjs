@@ -68,6 +68,11 @@ async function main() {
       if (errs.length) break;
     }
     if (errs.length) console.log('  errors:', errs.slice(0, 5).join('\n  '));
+    // LAMP_CLASSES=1: every type's tagged lamp vertices (vehicles.js tagLamps)
+    if (process.env.LAMP_CLASSES) {
+      const lc = await evaluate('window.stage.lampClasses(Object.keys(window.stage.TYPES))');
+      for (const [k, c] of Object.entries(lc)) console.log(`  lamps ${k.padEnd(13)} ${JSON.stringify(c)}`);
+    }
     mkdirSync(OUT, { recursive: true });
     const seen = new Set();
     for (const V of shots) {
