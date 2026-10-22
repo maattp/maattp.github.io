@@ -1,0 +1,6 @@
+[
+  {"name": "schoolbus-arm", "eval": "__sbStage({ site: { x: -5766, z: -886 }, r: 1200, view: 'arm', kidsOff: 3, walk: 60 })"},
+  {"name": "schoolbus-kerb", "eval": "__sbStage({ site: { x: -5766, z: -886 }, r: 1200, view: 'kerb', kidsOff: 2, walk: 40 })"},
+  {"name": "schoolbus-high", "eval": "__sbStage({ site: { x: -5766, z: -886 }, r: 1200, view: 'high', kidsOff: 4, walk: 90 })"},
+  {"name": "schoolbus-behind", "eval": "__sbStage({ site: { x: -5766, z: -886 }, r: 1200, view: 'behind', kidsOff: 3, walk: 60 })"}
+]

@@ -3522,12 +3522,149 @@ file and a guide disagree, this file wins.
     signal-first step, and adding one would change traffic); a turn is
     signalled from 40 m + 2.5 s even when a junction it goes straight
     through comes first; the rear signal of a type with a separate amber lens
-    flashes its red lamp too; most types have no reversing lens (only
-    sedan / compsedan / taxi / police / sports), so their reversing shows
-    nothing; the school bus's red flashers and stop arm do nothing (it
-    never stops for children); police / suspect cars light stop and
-    reversing lamps but never signal; the lit red reads orange-red through
-    ACES at full strength.
+    flashes its red lamp too; the lit red reads orange-red through ACES at
+    full strength. (Done since: every road type has a reversing lens, and
+    the school bus's flashers and stop arm work -- "School buses stop"
+    below; the police signal with their lights dark, and a suspect pulled
+    over puts its hazards on.)
+
+- **School buses stop** (src/schoolbus.js; traffic.js `sb`, vehicles.js
+  `SB_ARM` / `sbArm` / tagLamps 9-12; docs/schoolbus-*.jpg). A school bus in
+  traffic stops for children on residential and collector streets, as
+  Ontario's law has it (Highway Traffic Act s. 175, MTO handbooks): **ambers
+  while it slows, then stopped: reds, stop arm out, children off, arm in,
+  reds off, away.** While the reds flash, traffic BOTH ways stops at least
+  20 m short of it (`HOLD_BACK`); on a road with a median only traffic
+  behind it does (the other carriageway is another one-way edge).
+  - **When and where** (`busDrive`, from driveTraffic for `hand ===
+    'schoolbus'`): by an odometer, every 110-200 m within 700 m of a school
+    (kw.json's 260 school footprints and 37 named schools, `nearSchool`),
+    else every 350-650 m (hashes of the bus's spawn number, never
+    traffic's rng), in school hours (07:00-17:30 by the device's clock,
+    read once a second). The stop is planned `need` m ahead along the
+    ROUTE (max(40, v^2 / 2.2 + 6)): every way out to 25 m past it a
+    residential or collector street of one lane its way (a two-way street
+    of one lane a side, or a one-way carriageway it is in the kerb lane
+    of), no junction (a node of three or more ways, or a controlled one)
+    before or within 25 m past it. **Edges are tens of metres** (the
+    importer splits a way at every bend: no res / st edge is over 100 m), so
+    the stop is along the route, and its distance is run down by the
+    odometer, not projected on a line. School buses now spawn on
+    residential streets too (they were turned into sedans: `NO_KERB`), and
+    never on freeways (FWY_BANNED, as before).
+  - **The sequence** (`phase` 1-3): 1 AMBER, stopAt the remaining distance
+    (it holds over 40 s or overshoots by 4 m: abandoned, `aborted`); 2 RED
+    once standing within 4 m of it: the arm swings out in `ARM_T` 0.7 s,
+    0.8 s later a child every 0.9 s (1-5 by hash; `__sbKids`), then 2.6 s;
+    3 the arm swings in, the reds still on; then off and away. The children
+    are the crowd's own pedestrians, `peds.spawnFareAt` at the door (kerb
+    side, behind the front wheel) walking 9 m off the road (`fare` 2, as
+    grtbus.js's alighting riders), scaled 0.58-0.72 (a child), handed back
+    to the crowd after 5 s.
+  - **Traffic obeys** (`obey`, from driveTraffic while `sb.list` has a bus
+    -- cost nothing otherwise): the bus is found on each car's own sampled
+    PATH (the leader scan's), so a car turning into the street sees it and
+    one turning away does not. Its way (any lane of it): during the reds,
+    stopAt 20 m short of its rear; during the ambers, 20 m short of where
+    it will stand (or 20 m off it now, if already closer). The other way,
+    reds only, two-way street only (no median): 20 m short of its front; one
+    already alongside drives on. `v.sbHold` counts as a signal's hold for
+    the 20 s stuck-recycle (`restT`). A unit in pursuit does not stop.
+  - **The lamps and the arm, no new draw** (vehicles.js): one lamp state
+    of its own, `LAMP_SB` 64 + code (codes 0 / 1 the ambers, 2 + side + 2 x
+    arm step the reds and the arm, `SB_ARM_STEPS` 40; at most 145, 0.22 % of
+    scale, the plates' order), from `lampBits` in updateLamps. The lit side
+    alternates every `FLASH` 0.4 s (~75 a minute), the stop lamps are on,
+    the turn signals dark. tagLamps (school bus only): 9 the overhead reds
+    (`SB_RED`), 10 the overhead ambers (AMBER above 78 % of the roof), 11
+    the arm's face and STOP (`ARM_RED` / `ARM_WHT`: now trim, both faces),
+    12 its two red lamps (`ARM_LAMP`, flashing top and bottom in turn). The
+    trim shader (and the far LOD's) swings 11 / 12 a quarter turn about
+    `SB_ARM`'s hinge at the arm's front edge (`sbArm`, position and
+    normal), so STOP faces oncoming traffic and its back the traffic
+    behind. The shadow pass does not swing it (its shadow stays folded).
+  - **You** (`update`): passing a bus whose reds flash -- from one end of
+    it past the other, within 12 m of its side, moving; not the other way
+    across a median -- is an offence once a stop: `traffic.onSchoolBusPass`
+    (main.js) toasts "You passed a stopped school bus -- $400-$2,000 and 6
+    demerit points in Ontario", and if a police car (within 150 m) or an
+    officer on foot (70 m) sees it, `game.addHeat(30)` -- one star, as
+    any offence the game punishes is heat.
+  - **Switches:** `window.__noSchoolStops = true` (any time) is master's
+    traffic to the bit; `__sbHour` stands in for the clock, `__sbGap` (m)
+    for the distance between stops, `__sbKids` the children.
+  - **Verify:** `VIEW_PROBE_FILE=tools/kw/schoolbusprobe.js node
+    tools/kw/kwshots.mjs <dir>` stages it (game paused, every random source
+    pinned, spawning off): the longest straight two-way one-lane street
+    near (-3020, -2350) (a chain of edges through two-way nodes), a school
+    bus, three cars following it, three coming the other way 4 s later;
+    PASS = amber > red > arm in > away, children off, cars stopped behind
+    and opposite, every one 20 m or more short of it, nobody passed, the bus
+    went on. `window.__sbp = { median: true }`: a divided road's
+    carriageway, and the other carriageway must drive on. `you: true`: a
+    stand-in for your car driven past it must be called an offence once.
+    Stills: `VIEW_BOOT_JS='window.__sbPre=1' VIEW_PRE_FILE=tools/kw/schoolbusprobe.js
+    VIEWS=tools/kw/schoolbusviews.json AUTO_GPU=1 node tools/kw/kwshots.mjs
+    <dir>` (near Keatsway PS). The arm on the stage:
+    `node tools/kw/carshots.mjs <dir> tools/kw/schoolbusshots.json`
+    (`lamps` 64 ambers, 104 half out, 144 / 145 out, reds either side).
+  - **Results** (master v71 -> this). schoolbusprobe PASS on a
+    residential street by (-2863, -2361) (a 521 m chain): reds 11.6 s in, for
+    7.5 s, 4 children, three cars stopped behind at 19.8 / 27.7 / 35 m
+    (the second and third queued behind the first), two coming the other
+    way at 20.1 / 27.4 m, nobody passed; `median` PASS on a collector's
+    carriageway (the other carriageway drove on); `you` PASS (one offence).
+    trafficbench (rail off, phone) with `__noSchoolStops`: all six hashes =
+    master (uptown-king -3643011.414557, sig-1644 -3432739.819895,
+    pkwy-fairway -2609463.266025, 401-hespeler -1398473.998642, allway-28
+    -3146373.229085, rb-3lane -3020364.061433). On, at 10:00: five = master,
+    uptown-king -3642423.112697 -- the bench's only school bus stop
+    (`sbStops` 1, 9 s of cars held); on at 03:00 (school buses on
+    residential streets, no stops) all six = master, so the change is the
+    stop. jcttraffic seeded off = master to the number; on: 0 hits / 0
+    crashes / 0 stuck both, recycled 1 -> 2 (the rb-3lane slip-lane queue
+    master recycles, the run having diverged at its first site); unseeded
+    0 / 0 / 0 both. hwytraffic seeded 1 hit both, unseeded 2 both, 0
+    crashes. poleprobe 0 in a lane; AUTO_GPU=1 funprobe ALL OK; 0
+    exceptions everywhere. Phone (AUTO_PHONE=1, GPU, seedrandom), master
+    -> this: spawn 179 / 1173k -> 175 / 1161k, air views -3..-5 draws
+    (traffic's noise); the stop (schoolbus views, phone): 131-150 draws,
+    244 behind the queue -- the arm, lamps and children add no draw (the
+    children are the crowd's).
+  - **Approximate / not done:** the bus stops IN its lane at the kerb side
+    (as Ontario's do, so traffic cannot pass), it does not pull in to the
+    kerb; stops are where the odometer says, not real stops, and every
+    day is a school day (no weekends, no summer); there are no children
+    waiting to board, and the children never cross in front of the bus;
+    the arm's swing is 40 steps; the "other way" rule needs the bus on a
+    two-way edge, so a two-way street with a raised median mapped as one
+    way would count as two-way; the follower that was already within 20 m
+    when the ambers came on stops where it is; police cruisers do not stop
+    for it in pursuit, nor does drivePolice's close-in driving look for it.
+
+- **Reversing lamps on every type, the police's signals**
+  (vehicles.js `addReversing`, traffic.js updateLamps). The "Vehicle
+  lamps" leftovers.
+  - **A reversing lens where a builder drew none:** after the builder, a
+    REVL box is laid ON each rear tail lamp (the TAILC faces looking back
+    in the rear 40 %, each side of the centreline, under 85 % of the roof),
+    4 mm proud of it so it never floats off the body: the inboard lower
+    corner of a wide lamp (40 % x 50 %, at most 12 x 7 cm), a band across
+    the middle of a tall strip (a pickup's, a van's, a bus's), a 12 cm lens
+    set in a light bar's end (the wedge). Not the motorbikes, bicycles,
+    quad, buggy, kart, tank, farm machines, boats, the semi's trailer.
+    `LAMP_CLASSES=1 node tools/kw/carshots.mjs <dir>`: class 7 on every
+    road type but those (hatch, suv, crossover, pickup, minivan, wagon,
+    jeep, van, bus, boxtruck, muscle, convertible, wedge, evy, semi,
+    uhaul, ambulance, swat, garbage, fireengine, articRear, tillerRear...).
+  - **The police signal with their lights dark** (a unit driving somewhere
+    with no heat, or heading off once it is gone: `md === 'police' &&
+    !game.wanted`), as traffic does; a unit running with its lights on does
+    not, nor a suspect fleeing. **A suspect pulled over** (policemissions'
+    getaway `stopT` > 0) puts its hazards on.
+  - **Not done:** the optional freeway signal-before-moving-over (it would
+    change traffic; not attempted).
+
 
 - **Lefts whose ways meet, and the gridlock rule** (v63's open item: the
   4 m/s scrape at signal 849). **Root cause, traced:** two opposing lefts
