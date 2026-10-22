@@ -859,8 +859,13 @@ function roadWalkMat(m, walk) {
           .replace('mapN.xy *= normalScale;', `mapN.xy *= normalScale * mix( 1.0, 0.8 / 0.9, ${WK} ) * mix( 1.0, 1.5, step( 1.5, vSurf ) - step( 3.5, vSurf ) ) * mix( 1.0, 0.5, step( 3.5, vSurf ) );`));
   };
   m.customProgramCacheKey = () => 'roadWalk';
+  m.userData.wx = 'roadwalk';   // weather.js: plowed, by vSurf
   return m;
 }
+
+// (weather.js: a road plowed in snow, not covered -- a tagged material needs
+// a program key of its own)
+function wxRoad(m) { m.userData.wx = 'road'; m.customProgramCacheKey = () => 'wxRoad'; return m; }
 
 function dropArray() { this.array = null; }
 function noRaycast() {}
@@ -1002,7 +1007,7 @@ export class World {
     };
 
     this.mats = {
-      road: surf(tx.road, { env: 0.62, ns: 0.9 }),
+      road: wxRoad(surf(tx.road, { env: 0.62, ns: 0.9 })),
       walk: surf(tx.sidewalk, { env: 0.52, ns: 0.8 }),
       roadWalk: roadWalkMat(surf(tx.road, { env: 0.6, ns: 0.9 }), tx.sidewalk),
       // Glass was the one material already sitting at clamp. env 1.9 on a
@@ -1126,7 +1131,18 @@ export class World {
       hazeToward: { value: new THREE.Vector3(...HAZE_SUN.toward) },
       hazeAway: { value: new THREE.Vector3(...HAZE_SUN.away) },
       time: { value: 0 },
+      // The weather (weather.js): 0 is the clear sky exactly (every use is
+      // behind `overcast > 0.0`); 1 a grey deck over Waterloo Region.
+      overcast: { value: 0 },
+      skyFog: { value: 0 },
+      ovHor: { value: lin(0xb0b4b8) },
+      ovZen: { value: lin(0x969ca3) },
+      ovCloudLit: { value: lin(0xbdc1c5) },
+      ovCloudDark: { value: lin(0x7c828a) },
+      ovHaze: { value: lin(0xa9aeb2) },
+      haze0: { value: lin(0xb9c3cf) },
     };
+    this.skyUniforms = uniforms;
     // ONE sky function for what you see and for what things reflect.
     //
     // The IBL used to be the painted equirect while the background became this
@@ -1135,8 +1151,8 @@ export class World {
     const SKY_FN = `
         uniform sampler2D tCloud;
         uniform vec3 sunDir, zenith, mid, horizon, haze, sunCol, cloudLit, cloudDark, groundHi, groundLo;
-        uniform float time, iblGain;
-        uniform vec3 hazeToward, hazeAway;
+        uniform float time, iblGain, overcast, skyFog;
+        uniform vec3 hazeToward, hazeAway, ovHor, ovZen, ovCloudLit, ovCloudDark;
         vec3 skyColor(vec3 d, float forIbl) {
           // Haze is brighter and warmer toward the sun (forward scattering)
           // and cooler away from it; main.js's fog takes the same blend.
@@ -1150,6 +1166,8 @@ export class World {
           // Forward-scattering glow around the sun, then the disc.
           col += sunCol * (pow(mu, 6.0) * 0.16 + pow(mu, 60.0) * 0.35);
           col = mix(col, vec3(1.0, 0.99, 0.95) * 1.4, smoothstep(0.9993, 0.9997, mu));
+          // overcast (weather.js): the blue, the glow and the disc go grey
+          if (overcast > 0.0) col = mix(col, mix(ovHor, ovZen, smoothstep(0.0, 0.9, e)), overcast);
 
           // Cloud layer: a flat plane overhead, so the tile foreshortens
           // toward the horizon. +0.08 keeps the projection finite at h = 0.
@@ -1165,6 +1183,8 @@ export class World {
             float ero = texture2D(tCloud, uv * 9.7 + 0.71).r;
             float dens = big * 0.78 + fine * 0.22 + (ero - 0.5) * 0.09;
             float cover = smoothstep(0.53, 0.69, dens);
+            // overcast: the field closes into a deck, its texture kept
+            if (overcast > 0.0) cover = mix(cover, 0.45 + 0.55 * smoothstep(0.25, 0.66, dens), overcast);
             // Denser toward the sun means more cloud in front of the light:
             // the far side of a bank is the lit one.
             float toward = texture2D(tCloud, uv + sunDir.xz * 0.012).r * 0.78 + fine * 0.22;
@@ -1174,6 +1194,7 @@ export class World {
             float lit = clamp(0.62 + (dens - toward) * 10.0 - (dens - 0.62) * 1.6, 0.0, 1.0);
             vec3 cc = mix(cloudDark, cloudLit, lit);
             cc += sunCol * pow(mu, 12.0) * 0.25 * (1.0 - cover);
+            if (overcast > 0.0) cc = mix(cc, mix(ovCloudDark, ovCloudLit, 0.25 + 0.6 * lit), overcast);
             // Thin toward the horizon, where the layer is seen through haze.
             cover *= smoothstep(0.015, 0.22, h);
             col = mix(col, cc, cover * 0.92);
@@ -1182,6 +1203,8 @@ export class World {
           // the sky instead of meeting it at a seam; below the horizon it is
           // the fog colour outright.
           col = mix(col, hz, (1.0 - smoothstep(0.0, 0.07, abs(h))) * 0.55);
+          // fog (weather.js): the haze climbs the sky
+          if (skyFog > 0.0) col = mix(col, hz, skyFog * (1.0 - smoothstep(0.0, 0.75, h)));
           if (h < 0.0) {
             col = mix(col, hz, smoothstep(0.0, 0.05, -h));
             vec3 ground = mix(groundHi, groundLo, smoothstep(0.0, 0.6, -h));
@@ -1234,7 +1257,7 @@ export class World {
     envTarget.texture.generateMipmaps = false;
     envTarget.texture.mapping = THREE.EquirectangularReflectionMapping;
     if (this.renderer) {
-      const eqMat = new THREE.ShaderMaterial({
+      const eqMat = new THREE.ShaderMaterial(this._eqSrc = {
         uniforms,
         vertexShader: `
           varying vec2 vUv;
@@ -1285,6 +1308,48 @@ export class World {
       // surfaces reflect too sharply, but the city stays lit.
       this.scene.environment = envTarget.texture;
       this.envPrefiltered = false;
+    }
+  }
+
+  /**
+   * Render the IBL again from the sky as its uniforms now stand (weather.js,
+   * at overcast 0.5 and 1 -- never in clear weather): the same pass buildSky
+   * made, into a fresh equirect (prefiltered again if it was) or over the raw
+   * one. The pass's material is kept once made.
+   */
+  relightSky() {
+    const r = this.renderer;
+    if (!r || !this._eqSrc) return;
+    if (!this._eq) {
+      const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial(this._eqSrc));
+      quad.frustumCulled = false;
+      const sc = new THREE.Scene();
+      sc.add(quad);
+      this._eq = { sc, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1) };
+    }
+    let tgt = this.envEquirect;
+    if (this.envPrefiltered || !tgt) {
+      tgt = new THREE.WebGLRenderTarget(2048, 1024, {
+        type: THREE.UnsignedByteType, depthBuffer: false, stencilBuffer: false,
+        minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+      });
+      tgt.texture.colorSpace = THREE.SRGBColorSpace;
+      tgt.texture.generateMipmaps = false;
+      tgt.texture.mapping = THREE.EquirectangularReflectionMapping;
+    }
+    const prev = r.getRenderTarget();
+    r.setRenderTarget(tgt);
+    r.render(this._eq.sc, this._eq.cam);
+    r.setRenderTarget(prev);
+    if (this.envPrefiltered) {
+      const pmrem = new THREE.PMREMGenerator(r);
+      const rt = pmrem.fromEquirectangular(tgt.texture);
+      pmrem.dispose();
+      tgt.dispose();
+      const old = this.envRT;
+      this.envRT = rt;
+      this.scene.environment = rt.texture;
+      if (old) old.dispose();
     }
   }
 
@@ -4778,6 +4843,7 @@ float frLine(float o, float fw, float c, float w) {
 #endif`);
     };
     mat.customProgramCacheKey = () => 'farRoads';
+    mat.userData.wx = 'road';   // weather.js: plowed
     return mat;
   }
 

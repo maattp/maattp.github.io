@@ -2765,6 +2765,7 @@ export class Audio {
       if (!b.squeal || !b.gravel || !b.scrape || !b.slosh || !b.burner || !b.rail_roll
         || !b.grass_roll || !b.amb_city || !b.amb_water) return;
       const lp = (f) => { const x = c.createBiquadFilter(); x.type = 'lowpass'; x.frequency.value = f; return x; };
+      const bp = (f, q) => { const x = c.createBiquadFilter(); x.type = 'bandpass'; x.frequency.value = f; x.Q.value = q; return x; };
       this.loops = {
         squeal: new Tap(c, b.squeal[0], this.worldBus),
         gravel: new Tap(c, b.gravel[0], this.worldBus),
@@ -2777,6 +2778,9 @@ export class Audio {
         water: new Tap(c, b.amb_water[0], this.ambBus),
         tracks: b.tracks ? new Tap(c, b.tracks[0], this.worldBus) : null,
         rumble: b.rumblestrip ? new Tap(c, b.rumblestrip[0], this.worldBus) : null,
+        // the weather (weather.js): rain's hiss, and the spray off your tyres
+        rain: new Tap(c, this.pinkNoise, this.ambBus, bp(3200, 0.45)),
+        spray: new Tap(c, this.noise, this.worldBus, bp(1300, 0.6)),
       };
     };
     const t0 = performance.now();
@@ -3771,6 +3775,13 @@ export class Audio {
       this.loops.gravel.set(grav, t, 0.08, 0.8 + clamp(sp / 30, 0, 0.5));
       const grs = surf === 'grass' && onGround ? clamp(sp / 16, 0, 1) * 0.16 + skid * 0.08 : 0;
       this.loops.grass.set(grs, t, 0.1, 0.75 + clamp(sp / 30, 0, 0.6));
+      // a wet road (weather.js): the hiss of spray off the tyres, with speed;
+      // slush is duller
+      if (this.loops.spray) {
+        const w = clamp(s.wet || 0, 0, 1);
+        const spr = inCar && onGround && !offroad && w > 0.01 ? w * Math.pow(clamp(sp / 26, 0, 1), 1.3) * 0.26 * ((s.snowing || 0) > 0.3 ? 0.6 : 1) : 0;
+        this.loops.spray.set(spr, t, 0.12, 0.8 + clamp(sp / 40, 0, 0.5) - ((s.snowing || 0) > 0.3 ? 0.25 : 0));
+      }
       // a balloon's burner, lit
       this.loops.burner.set(inCar && s.burner ? 0.55 : 0, t, s.burner ? 0.05 : 0.12);
       // a tank's tracks: louder and quicker with the belts' speed
@@ -4011,7 +4022,14 @@ export class Audio {
     const high = clamp(1 - (A.alt - 25) / 160, 0.12, 1);   // the street falls away below
     const low = clamp(1 - (A.alt - 6) / 40, 0, 1);         // birds keep to the trees
     if (this.loops) {
-      this.loops.city.set(Math.pow(A.urban, 1.2) * 0.11 * cabin * high * (enc ? 0.3 : 1), t, 0.6);
+      // (snow lying hushes the city: weather.js)
+      this.loops.city.set(Math.pow(A.urban, 1.2) * 0.11 * cabin * high * (enc ? 0.3 : 1) * (1 - 0.45 * clamp(s.snowing || 0, 0, 1)), t, 0.6);
+      // RAIN: a broad hiss outside; in a car the roof's drumming, lower
+      // (the noise played slower) and a little quieter; in a bore, nearly gone
+      if (this.loops.rain) {
+        const rn = clamp(s.rain || 0, 0, 1);
+        this.loops.rain.set(rn * (inCar ? 0.17 : 0.24) * (enc ? 0.12 : 1) * clamp(1 - (A.alt - 25) / 140, 0.15, 1), t, 0.8, inCar ? 0.62 : 1);
+      }
       this.loops.water.set(A.water * 0.26 * (inCar ? 0.5 : 1) * clamp(1 - (A.alt - 10) / 80, 0, 1) * (enc ? 0 : 1), t, 0.6);
     }
     // The weather's wind: gusting, stronger up high and over open water,

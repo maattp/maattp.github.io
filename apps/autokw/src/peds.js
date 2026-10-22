@@ -6,6 +6,7 @@ const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 import { Builder } from './build.js';
 import { clamp, lerp, angleWrap, hash2, rng, dist2 } from './util.js';
 import * as G from './geo.js';
+import { WXK } from './weather.js';
 
 // Linear albedo. The two lightest were 0.95 and 0.99 red -- whiter than a
 // white shirt -- and under the noon sun both faces and hands came out chalk,
@@ -4196,9 +4197,11 @@ export class PedSystem {
       // blur and a recycled figure a spawn's cost: slowly)
       const civ = this.peds.length - copCount;
       const pv = player && player.vehicle ? Math.abs(player.vehicle.vLong) : 0;
-      this._fill = civ < MAX_PEDS - 8;
+      // fewer out walking in the rain and the snow (weather.js; WXK.peds 1 when dry)
+      const cap = WXK.peds < 1 ? Math.round(MAX_PEDS * WXK.peds) : MAX_PEDS;
+      this._fill = civ < cap - 8;
       this.timer = pv > 12 ? 0.5 : this._fill ? 0.12 : 0.2;
-      if (civ < MAX_PEDS) this.spawn(px, pz, false, !this._fill);
+      if (civ < cap) this.spawn(px, pz, false, !this._fill);
       // (only to a target on foot or stopped: walked in toward a car going
       // by at 30 m/s they were left behind and replaced, 53 spawns a minute)
       if (lv && game.wanted > 0 && streetCops < lv.street && copCount < lv.foot + lv.swat && game.police.playerSlow && !game.police.searching) this.spawn(px, pz, true);

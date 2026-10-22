@@ -5,6 +5,7 @@ import { Vehicle, TYPES, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, 
   LAMP_BRAKE, LAMP_L, LAMP_R, LAMP_REV, LAMP_LON, LAMP_RON, LAMP_STEP } from './vehicles.js';
 import { clamp, lerp, angleWrap, hash2, rng, dist2, tierScale } from './util.js';
 import * as G from './geo.js';
+import { WXK } from './weather.js';
 import { memo } from './bootcache.js';
 import { edgeFlow, oneWaySpan, twoWayLayout, twoWayLaneOff, alBike, medianGaps, LANE_W } from './arterial.js';
 import { SchoolStops, schoolStopsOn } from './schoolbus.js';
@@ -2366,7 +2367,9 @@ export class TrafficSystem {
     const rt = v.rt;
     // a unit in pursuit corners harder, and holds its own pace whatever the
     // street's limit (its corners still bind)
-    const aLat = v.unit ? A_LAT_POLICE : A_LAT, unit = !!v.unit;
+    // (weather.js: slower round the corners in the wet, a lot in snow --
+    // WXK.aiLat and .ai are exactly 1 when dry, so a clear day is unchanged)
+    const aLat = (v.unit ? A_LAT_POLICE : A_LAT) * WXK.aiLat, unit = !!v.unit;
     const horizon = (vel * vel) / (2 * B_PLAN) + 30;
     let aMin = Infinity, d = 0;
     const cons = (vk, dist) => {
@@ -2396,7 +2399,7 @@ export class TrafficSystem {
       if (d > horizon) break;
       const q = o + RT_F;
       if (rt[q + V_R] < 1e5) cons(Math.sqrt(aLat * rt[q + V_R]), d);
-      if (!unit) cons(rt[q + R_SPD] * v.drvK, d);
+      if (!unit) cons(rt[q + R_SPD] * v.drvK * WXK.ai, d);
       if (rt[q + V_K] === 1) d += rt[q + V_R] * rt[q + V_TH];
     }
     return aMin;
@@ -2509,7 +2512,7 @@ export class TrafficSystem {
         if (v.dodgeT <= 0 && city.edges[v.edge].cls !== 'res') { v.dodge = 0.7; v.dodgeT = 0.3; }
       }
     }
-    let v0 = v.unit ? v.pursuitV : rt[R_SPD] * v.drvK * (v.panic > 0 ? 1.5 : 1) * yieldK;
+    let v0 = v.unit ? v.pursuitV : rt[R_SPD] * v.drvK * (v.panic > 0 ? 1.5 : 1) * yieldK * WXK.ai;
     if (v.spec.hand === 'semi') v0 = Math.min(v0, SEMI_V);
     let aWant = Math.min(aRoad, Math.abs(alpha) > 1.3 ? (9 - sp * sp) / 6 : Infinity);
     const heavy = v.spec.bus || v.spec.cargo;

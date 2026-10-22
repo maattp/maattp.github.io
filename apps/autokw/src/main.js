@@ -1,6 +1,8 @@
 // AUTO -- an open-world Seattle you can drive around.
 
 import * as THREE from './three.js';
+// first after three: it hooks every material made from here on (weather.js)
+import { Weather, testWeatherShaders } from './weather.js';
 import * as G from './geo.js';
 import { cityGenerator, cityStats } from './citygen.js';
 import { loadMapData } from './mapdata.js';
@@ -720,13 +722,24 @@ const SUN_OFFSET = new THREE.Vector3(SUN_DIR[0], SUN_DIR[1], SUN_DIR[2]).multipl
 // The haze. Its colour reaches the shader through syncFogColour, never
 // directly: see the note where scene.fog is made.
 const FOG_HEX = 0xb9c3cf;
-function syncFogColour() {
+// ...and under a grey sky (weather.js: `over` 0..1; at 0 exactly the above)
+const FOG_OVER = 0xa4a9ae;
+let fogOver = 0;
+function syncFogColour(over) {
+  if (over !== undefined) fogOver = over;
   if (!scene || !scene.fog) return;
   if (postfx && postfx.enabled) {
     scene.fog.color.setRGB(((FOG_HEX >> 16) & 255) / 255, ((FOG_HEX >> 8) & 255) / 255, (FOG_HEX & 255) / 255,
       THREE.LinearSRGBColorSpace);
-  } else scene.fog.color.set(FOG_HEX);
+    if (fogOver > 0) scene.fog.color.lerp(_fogOverC.setRGB(((FOG_OVER >> 16) & 255) / 255, ((FOG_OVER >> 8) & 255) / 255, (FOG_OVER & 255) / 255, THREE.LinearSRGBColorSpace), fogOver);
+  } else {
+    scene.fog.color.set(FOG_HEX);
+    if (fogOver > 0) scene.fog.color.lerp(_fogOverC.set(FOG_OVER), fogOver);
+  }
 }
+const _fogOverC = new THREE.Color();
+let weather = null;   // weather.js
+let fogAltK = 1;      // the haze's thickening with altitude (frame), times the weather's (draw)
 // The shadow camera's own axes. It looks along -SUN_OFFSET with world up, so
 // these are exactly the basis three's lookAt builds for it every frame.
 const SUN_R = new THREE.Vector3(), SUN_U = new THREE.Vector3(), SUN_F = new THREE.Vector3();
@@ -937,6 +950,9 @@ async function boot() {
   // Antialiasing comes from FXAA in the post chain, so the context never needs
   // MSAA -- which also means the scene can render into a target for free.
   renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+  // the weather's shader block, compiled once before anything real is: a
+  // driver that refuses it gets clear weather, never a black city
+  testWeatherShaders(renderer);
   // what the GPU holds, for the flight recorder (memory.js): Safari reports
   // no JS heap, and an iPhone ends the page for memory without a word
   try { gpuLedger = installGpuLedger(renderer.getContext()); } catch (e) { gpuLedger = null; }
@@ -1112,7 +1128,8 @@ function installShadowFade() {
   // zero. Raising the floor fixes the aerial value inversion, the near-black
   // street asphalt and the black tower bodies at once, and it lets the roof
   // albedo go back where it belongs.
-  scene.add(new THREE.AmbientLight(0xb4c2cc, 0.36));
+  const ambLight = new THREE.AmbientLight(0xb4c2cc, 0.36);
+  scene.add(ambLight);
   // Fall's afternoon sun is a warmer white than summer's.
   sun = new THREE.DirectionalLight(FALL ? 0xffe9cc : 0xfff2dc, 4.3);
   // Summer's ~38 deg elevation: high enough to light the streets, low enough
@@ -1194,6 +1211,8 @@ function installShadowFade() {
   world.bootCache = { portal: bootCache.grade ? bc.portal : null };
   world.mountainData = md.mountains;
   world.buildSky(SUN_OFFSET);
+  weather = new Weather({ scene, world, sun, hemi, amb: ambLight, phone: ON_PHONE,
+    ground: (x, z) => G.terrainHeight(x, z), syncFog: syncFogColour });
   const terrGen = world.buildTerrain();
   let tr = terrGen.next();
   while (!tr.done) {
@@ -2338,6 +2357,7 @@ function makePadMenu() {
         { el: document.getElementById('respawnBtn'), kind: 'click' },
         { el: document.getElementById('rowQuality'), kind: 'seg' },
         { el: document.getElementById('setShadows'), kind: 'click' },
+        { el: document.getElementById('rowWeather'), kind: 'seg' },
         { el: document.getElementById('setMusic'), kind: 'click' },
         { el: document.getElementById('setSound'), kind: 'click' },
         { el: document.getElementById('setSens'), kind: 'range' },
@@ -2369,7 +2389,7 @@ function makePadMenu() {
           parseFloat(el.min), parseFloat(el.max)));
         el.dispatchEvent(new Event('input', { bubbles: true }));
       } else if (r.kind === 'seg') {
-        const opts = Array.from(document.querySelectorAll('[data-quality]'));
+        const opts = Array.from(r.el.querySelectorAll('.segbtn'));
         const cur = opts.findIndex((o) => o.classList.contains('on'));
         const next = opts[clamp((cur < 0 ? 0 : cur) + d, 0, opts.length - 1)];
         if (next) next.click();
@@ -2640,6 +2660,13 @@ function wireUi() {
   for (const el of document.querySelectorAll('[data-quality]')) {
     el.addEventListener('click', () => applyQuality(el.dataset.quality, true));
   }
+  // the weather (weather.js): saved as autokw-weather
+  const wxBtns = Array.from(document.querySelectorAll('[data-weather]'));
+  const paintWx = () => { for (const b of wxBtns) b.classList.toggle('on', !!weather && b.dataset.weather === weather.setting); };
+  for (const el of wxBtns) {
+    el.addEventListener('click', () => { if (weather) weather.choose(el.dataset.weather); paintWx(); idleRedraw = true; });
+  }
+  paintWx();
   bind('setMusic', 'music', (v) => { audio.musicOn = v; });
   // The station picker. The radio button in the HUD cycles the same list.
   const stEl = document.getElementById('stations');
@@ -3492,7 +3519,8 @@ function frame(now) {
   // light aircraft. On the ground this is exactly the old constant.
   if (scene.fog) {
     const alt = Math.max(0, p.y - G.terrainHeight(p.x, p.z));
-    scene.fog.density = baseFogDensity * (1 + Math.min(2.2, alt / 220));
+    fogAltK = 1 + Math.min(2.2, alt / 220);
+    scene.fog.density = baseFogDensity * fogAltK;
   }
 
   if (!(needleTop && needleTop.busy) && !(wheelRide && wheelRide.busy)) { player.applyCamera(camera); if (ferry) ferry.clampCamera(player, camera); }
@@ -3509,6 +3537,7 @@ function frame(now) {
   hud.update(dt, game, player, traffic);
   if (prof) lap('hud');
   world.animate(dt, now / 1000);
+  if (weather) weather.tick(dt);
   if (prof) lap('animate');
   draw(now);
   // Render submission: three's scene walk, culling, sorting and the GL calls
@@ -3612,6 +3641,10 @@ function audioState(dt, input, p, camDir, buried) {
   const hp = (police ? police.nearestHeli(camera.position.x, camera.position.z) : null)
     || (air ? air.nearestHeli(camera.position.x, camera.position.z) : null);
   return {
+    // the weather (weather.js): the rain's hiss, tyre spray, snow's hush
+    rain: weather ? weather.cur.rain : 0,
+    snowing: weather ? weather.cur.snow : 0,
+    wet: weather ? weather.wet : 0,
     inCar: !player.onFoot,
     onFoot: player.onFoot,
     vehicle: v,
@@ -3682,6 +3715,10 @@ function draw(now) {
   if (streetSigns) {
     streetSigns.update(camera, draw.lastSt ? Math.min(0.1, (now - draw.lastSt) / 1000) : 0);
     draw.lastSt = now;
+  }
+  if (weather) {
+    weather.draw(camera, now / 1000);
+    if (scene.fog) scene.fog.density = baseFogDensity * fogAltK * weather.fogK;
   }
   renderer.setRenderTarget(postfx.target);
   if (world) { world.updateTerrainLod(camera.position); world.cullTerrain(camera); }

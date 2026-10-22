@@ -584,6 +584,13 @@
         <button class="segbtn" data-quality="low">Low</button>
       </div></div>
       <div class="row"><span>Shadows</span><div class="toggle" id="setShadows"></div></div>
+      <!-- weather.js: Auto follows the month on the device's clock -->
+      <div class="row" id="rowWeather"><span>Weather</span><div class="seg">
+        <button class="segbtn" data-weather="auto">Auto</button>
+        <button class="segbtn" data-weather="clear">Clear</button>
+        <button class="segbtn" data-weather="rain">Rain</button>
+        <button class="segbtn" data-weather="snow">Snow</button>
+      </div></div>
       <div class="row"><span>Radio</span><div class="toggle" id="setMusic"></div></div>
       <div class="stgrid" id="stations"></div>
       <div class="row"><span>Sound effects</span><div class="toggle" id="setSound"></div></div>
@@ -652,7 +659,7 @@
     <pre id="bootLog"></pre>
     <div id="loadRotate">Turn sideways to play once it has loaded</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v73</div>
+    <div id="build">v74</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation NRCan CDEM / SRTM</div>
   </div>
   <script>
