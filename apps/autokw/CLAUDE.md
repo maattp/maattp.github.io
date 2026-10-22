@@ -3016,13 +3016,128 @@ file and a guide disagree, this file wins.
     a lane, 0 trunks on a light (`lamp4` 249 at the default sites, 264 at
     nine arterial ones); stopbars 8288 / 0 across = master; AUTO_GPU=1
     funprobe ALL OK.
-  - **Approximate / not done:** turn bays are not drawn (the bay is kerb
-    width; no lane arrows -- cars do not choose lanes by their next turn,
-    so arrows would mislead them); one-way carriageways keep traffic's own
-    lane count (from the width), not OSM's; the double yellow on a 2-lane
-    arterial stays a broken yellow; the GRT marker has no stop number or
-    logo lettering; shelters are one design; median noses at junctions are
-    square; light standards on medians (Homer Watson's) are not drawn.
+  - **Approximate / not done:** (turn bays, lane arrows, lane choice and
+    median noses: done since, "Lane choice and left-turn bays" below)
+    one-way carriageways keep traffic's own lane count (from the width),
+    not OSM's; the double yellow on a 2-lane arterial stays a broken
+    yellow; the GRT marker has no stop number or logo lettering; shelters
+    are one design; light standards on medians (Homer Watson's) are not
+    drawn.
+
+- **Lane choice and left-turn bays** (v62's open items; docs/lanes-*.jpg:
+  master left, this right). Every rule is one both traffic and paint read,
+  so the paint never shows a rule traffic ignores.
+  - **Lane choice in town** (traffic.js `cityLaneDecide`, every `LC_TICK`
+    0.4 s for a city traffic car; freeway edges keep fwyDecide). The route
+    is planned `LC_PLAN` 160 m ahead; `nextTurn` finds the first turn on it
+    (`turnAt`: to the first entry out of a signal's box; a bend, or the
+    straightest way on where the street itself bends, is straight on). A
+    left wants the leftmost lane of travel (`laneIdx`: lanes counted from
+    the left; -1 the bay), a right the kerb lane. Not in it: the car
+    SIGNALS (`lcSigOn`, `LC_SIG` 1 s, `lcSigShift` where it is going) --
+    `COURTESY_P` 70 % of drivers behind in that lane treat it as a leader
+    where it is going and ease off (driveTraffic's scan) -- then moves one
+    lane once rolling (> 1.5 m/s) into a gap that passes fwyLane's tests
+    (`cityLaneClear`: nothing alongside, the leader there far enough, the
+    follower not asked to brake past LC_SAFE), by `cityChangeLane`: entry 0
+    re-laid with an lcShift (the freeway's smooth change), the rest of the
+    route RE-PLANNED OVER THE SAME TURNS (`routeExtend(v, forced)`; a
+    re-pick would re-hash v.x and could choose another turn). Still not in
+    it `LC_LATE0 + LC_LATE_T x speed` m short of the junction: `missTurn`
+    cuts the route there and pickNextEdge scores -8 every exit there this
+    lane cannot make (`lcMiss`, once per junction) -- no turn is made across
+    a lane. No blinker lamps are drawn (the vehicles have no lamp to light).
+  - **A quarter of drivers turn at a signal** (pickNextEdge `atSig`: dot x
+    1.2 + hash x 2.5 there, not dot x 2 + hash x 1.1). Before, a car never
+    turned where it could go straight on: the jcttraffic sites saw 19 lefts
+    at signals in 1440 s, the eight arterial sites none.
+  - **Left-turn bays** (arterial.js `markBays`, called by prepJunctions;
+    `alBay` from tools/kw/build_artlanes.py, byte 1 bits 4-5: a way's
+    `turn:lanes:forward / backward` with a left-only lane): on each signal
+    approach OSM maps a left lane on (`A.left`), the two-way art / st edges
+    running into it that carry the bay that way, upstream through degree-2
+    nodes, `BAY_MIN` 18 m to `BAY_MAX` 150 m; `e.bayP` / `e.bayM` = { A, d0,
+    start, len }. 334 approaches, 713 edges, 25 km. twoWayLayout gives the
+    bay a lane of its own beside the centre (`yP` / `yM`, `oP` / `oM` lanes
+    laid out a side; the lanes stay centred in the kerbs, so through lanes
+    flare outward where it opens; a bay replaces a TWLTL; the layout now
+    also exists for 1 + 1 roads with a bay; no room = no bay there).
+    `twoWayLaneOff(L, sign, -1)` is the bay, a lane fraction u < 0 means it.
+    **Traffic:** `bayRule` (routeExtend): when a planned left out of the
+    bay's signal is appended and the entry before the bay's run is in the
+    inner lane, the run's planned entries are re-laid in the bay -- the jog
+    at the node where it opens is the car moving into it; a car already on
+    a bay edge moves in by cityLaneDecide. nearestLaneU never maps into the
+    bay, so through cars stay out. **Paint** (world.js `_bayMarks`): the
+    solid white line between bay and through lanes, a 15 m diagonal taper
+    out from the centre line where it opens, Ontario's left arrow
+    (`TWLTL_ARROW`) 6 m behind the stop line (and 25 m further back on a
+    bay over 50 m), and the through lanes' arrows beside it -- straight
+    (`THRU_ARROW`), straight-or-right in the kerb lane (`THRU_RIGHT_ARROW`):
+    exactly the moves traffic makes from them. The stop bar starts at the
+    layout's centre line; the signal's left head hangs over the bay.
+    **Import:** build_artlanes.py also reads a side's lane count off its
+    turn:lanes where `lanes:forward / backward` are missing (`lanes=3` +
+    `turn:lanes:forward=left|`), only where `lanes` leaves the other side a
+    lane.
+  - **Opposing lefts one at a time** (junctions.js `oncoming`): an opposing
+    left already committed into the box, or waiting at its line and older,
+    holds a permissive left (judged by its approach, not its heading). With
+    four times the lefts, two at signal 849 swept past within a metre.
+  - **Slip-lane merges** (traffic.js `slipMerge`, from junctionStop): a car
+    on a ramp whose route joins a CITY street at a merge (cos >= 0.3) with
+    no control there stops short of the join while any car whose route
+    comes through that node by another way -- into its lane, or across it;
+    not the other way down a two-way street -- would get there within
+    `SLIP_GAP` 3 s of it (creeping as at a line; ctlHold). The v62 crash at
+    (1278, 1647): a sedan off the slip into King St E hit a bus at 11.6 m/s.
+  - **Median noses** (world.js `_medianNose`, arterial.js `medianNoses`,
+    citygen `noseLift`): a median half meeting a junction (node of 3+
+    edges) ends in a quarter circle kerb to midline -- the two halves a
+    bullnose -- where the strip has 2R + 1.5 m of room and the nose is not
+    on another carriageway; slab and kerb face round the curve, the corner
+    it leaves asphalt, and roadLift reports carriageway there (the same
+    numbers: paveStart is the junction arm's kerb return).
+  - **Verify** (sequential; master in a scratchpad copy, same commands).
+    `VIEW_PROBE_FILE=tools/kw/lanechoice.js` (wraps routeAdvance, runs
+    jcttraffic with its options, counts turns off multi-lane approaches by
+    the lane they are made from) seeded, arterial sites: master 0 L / 1 R
+    turns, 1 R from the wrong lane (the v62 slip crash's neighbour); this
+    17 L (12 from the bay) / 16 R, 0 wrong; 20 lane changes, 4 turns given
+    up, courtesy 18 s, slip yields 28 s. Default sites: master 0 / 0, this
+    19 L (8 from bays) / 17 R, 0 wrong. jcttraffic master -> this:
+    default seeded 0 hits / 0 crashes / 1 recycled -> 1 / 0 / 0 (two
+    opposing lefts at signal 849, (-1872, -91), a skewed crossing where the
+    two approaches' lane lines nearly meet head-on: both committed, the
+    younger waited in the box and the older's gridlock-rule pass scraped it
+    at 4 m/s -- the class exists on master; it shows now because lefts at
+    signals went 19 -> 52); unseeded 0 / 0 / 9 -> 0 / 0 / 4 (the recycled
+    are the queue at the rail crossing by (-1573, -382), on master too);
+    the eight arterial sites seeded 1 / 1 / 0 -> 0 / 0 / 0 (the slip-lane
+    crash gone), unseeded 0 / 0 / 0 both. hwytraffic seeded 5 -> 3 hits,
+    unseeded 6 -> 9 (rerun alone: 9 again; every one a freeway side-swipe
+    of the kinds and at the spots master has -- 401-hespeler's three
+    identical -- after the city traffic round the sites diverged; none
+    involves a turn, a bay or a slip merge). trafficbench (rail off, phone):
+    401-hespeler and allway-28 = master; uptown-king, sig-1644, rb-3lane,
+    pkwy-fairway change (meant: signals and multi-lane streets near them).
+    stopbars 8288 / 0 across / 2 dropped = master; poleprobe identical
+    (default and nine arterial sites); ionprobe, railprobe PASS; AUTO_GPU=1
+    funprobe ALL OK. Phone boot 0 exceptions; spawndraws master 177 / 175,
+    this 178 / 176 (1136k / 1127k -> 1140k / 1133k tris); the 13 arterial
+    cameras -1..+1 draws, -5..+7k tris. Paint and noses add no draws (the
+    chunk's flat / road / walk meshes).
+  - **Approximate / not done:** no blinker lamps; lane changes happen on
+    the edge being driven only (a short edge before the junction leaves
+    little room, and a turn is then given up); right-turn bays are kerb
+    width, not lanes; bays only on two-way roads into a signal (a divided
+    road's left bay is in its median: not drawn; its left turns are from
+    the leftmost lane); the through lanes flare at the node where a bay
+    opens (a jog, not a taper, in traffic's lane lines -- the paint's taper
+    is a diagonal); dual left lanes (`left|left|`) are one bay; a nose
+    rejected for lying on another carriageway leaves its strip R short, and
+    roadLift (which cannot see that test) still calls its corner road.
+
 
 ## Build number
 
