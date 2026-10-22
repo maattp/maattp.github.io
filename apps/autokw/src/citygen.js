@@ -17,6 +17,7 @@ import { memo } from './bootcache.js';
 import { tagGravel } from './gravel.js';
 import { tagRural, chainRaise, ruralLift, chainPoint, RW, RAISE, CROWN } from './rural.js';
 import { farmStyle, farmHeight } from './farmstead.js';
+import { medianGaps, medianNoses } from './arterial.js';
 
 export const CHUNK = 400;
 
@@ -3633,6 +3634,36 @@ export function* cityGenerator(md, cache = {}) {
   // the graph, so one asked for again is rebuilt identically. CLAUDE.md
   // "Memory".
   const JUNC_CAP = 16000;
+  // AUTO KW: a median half's rounded nose (world.js meshRoad, _medianNose).
+  // Where a point on the pavement band of a one-way arterial's median side
+  // lies in the corner the quarter circle leaves at a junction end, the
+  // carriageway's lift there (with its climb to the mouth), else -1. The
+  // strip's ends are world.paveStart's: the junction arm's kerb return on
+  // that side, or the node's widest half-width.
+  const paveStartAt = (ni, ei, sg) => {
+    const J = junction(ni);
+    if (J && !J.legacy && J.arms) for (const A of J.arms) if (A.ei === ei) return (A.atA ? sg > 0 : sg < 0) ? A.sP : A.sN;
+    let r = 0;
+    for (const k of g.nodes[ni].e) { const o = g.edges[k]; if (!o.tunnel && o.hw > r) r = o.hw; }
+    return r;
+  };
+  const noseLift = (city, ei, e, x, z, rt, rd, ww) => {
+    if (e.rural || e.tunnel || e.elev) return -1;
+    const a = g.nodes[e.a];
+    const side = ((x - a.x) * -e.dz + (z - a.z) * e.dx) >= 0 ? 1 : -1;
+    const gp = medianGaps(city, e)[side > 0 ? 0 : 1];
+    if (!(gp < 2 * ww && gp >= 0.4)) return -1;
+    const sw = gp / 2, s = rt * e.len, y = rd - e.hw;
+    const psA = paveStartAt(e.a, ei, side), psB = paveStartAt(e.b, ei, side);
+    if ((e.len - psA - psB) / e.len < 0.06) return -1;
+    const [rA, rB] = medianNoses(e.len, psA, psB, g.nodes[e.a].e.length, g.nodes[e.b].e.length, sw);
+    let ds = -1, R = 0;
+    if (rA && s >= psA && s < psA + rA) { ds = psA + rA - s; R = rA; }
+    else if (rB && s <= e.len - psB && s > e.len - psB - rB) { ds = s - (e.len - psB - rB); R = rB; }
+    if (ds < 0 || ds * ds + (sw - y) * (sw - y) <= R * R) return -1;
+    const mc = stripMouths(ei), ei2 = ei * 2;
+    return ROAD_LIFT + (NODE_LIFT - ROAD_LIFT) * mouthRamp(s, e.len, mc[ei2], mc[ei2 + 1]);
+  };
   const junction = (ni) => {
     if (!juncCache) juncCache = new Map();
     let J = juncCache.get(ni);
@@ -4003,7 +4034,12 @@ export function* cityGenerator(md, cache = {}) {
                 const mc = stripMouths(cand[q]), ei2 = cand[q] * 2;
                 const rl = ROAD_LIFT + (NODE_LIFT - ROAD_LIFT) * mouthRamp(rt * e.len, e.len, mc[ei2], mc[ei2 + 1]);
                 if (rl > lift) lift = rl;
-              } else if (WALK_LIFT > wlift) wlift = WALK_LIFT;
+              } else {
+                // AUTO KW: the corner a median's rounded nose leaves is
+                // carriageway (world.js _medianNose; arterial.js medianNoses)
+                const nl = e.oneway && (e.cls === 'art' || e.cls === 'st') ? noseLift(this, cand[q], e, x, z, rt, rd, ww) : -1;
+                if (nl >= 0) { onCw = true; if (nl > lift) lift = nl; } else if (WALK_LIFT > wlift) wlift = WALK_LIFT;
+              }
               continue;
             }
             if (rd > outer) continue;
