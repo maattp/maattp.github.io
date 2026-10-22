@@ -3414,17 +3414,39 @@ function flightText() {
  */
 function perfLine() {
   const n = perfSys.frames;
-  if (!n) return '';
+  if (!n) return null;
   const top = Object.entries(perfSys.ms).sort((a, b) => b[1] - a[1]).slice(0, 5)
-    .map(([k, v]) => `${k} ${(v / n).toFixed(1)}`).join('  ');
+    .map(([k, v]) => `${k.padEnd(9).slice(0, 9)}${(v / n).toFixed(1).padStart(5)}`).join('\n');
   perfSys.ms = {};
   perfSys.frames = 0;
   const r = perfRender, rn = r.frames || 1;
   // sceneMs includes the shadow pass, which runs inside renderer.render.
-  const rl = `\nrender ms: shadow ${(r.shadowMs / rn).toFixed(1)} (${Math.round(r.shadowCalls / rn)} draws)`
-    + `  scene ${((r.sceneMs - r.shadowMs) / rn).toFixed(1)}  post ${(r.postMs / rn).toFixed(1)}`;
+  const render = `shadow ${(r.shadowMs / rn).toFixed(1).padStart(5)}\n`
+    + `  ${Math.round(r.shadowCalls / rn)} draws\n`
+    + `scene  ${((r.sceneMs - r.shadowMs) / rn).toFixed(1).padStart(5)}\n`
+    + `post   ${(r.postMs / rn).toFixed(1).padStart(5)}`;
   r.shadowMs = r.shadowCalls = r.sceneMs = r.postMs = r.frames = 0;
-  return `\ncpu ms: ${top}${rl}`;
+  return { cpu: top, render };
+}
+
+// The panel: the pill (fps) is always there, the body only when opened; which
+// one is remembered. Tapping the pill must not reach the stick or look zones.
+const dbgUi = {};
+for (const k of ['Dot', 'Fps', 'Min', 'Draws', 'Tris', 'Cars', 'Peds', 'Screen', 'Cpu', 'Render', 'Audio']) dbgUi[k] = document.getElementById('dbg' + k);
+const DBG_OPEN_KEY = 'auto-debugopen';
+let dbgOpen = false;
+try { dbgOpen = localStorage.getItem(DBG_OPEN_KEY) === '1'; } catch (e) { /* private mode */ }
+debugEl.classList.toggle('open', dbgOpen);
+{
+  const head = document.getElementById('dbgHead');
+  for (const ev of ['pointerdown', 'pointerup', 'touchstart']) head.addEventListener(ev, (e) => e.stopPropagation(), { passive: true });
+  head.addEventListener('click', (e) => {
+    e.stopPropagation();
+    dbgOpen = !dbgOpen;
+    debugEl.classList.toggle('open', dbgOpen);
+    try { localStorage.setItem(DBG_OPEN_KEY, dbgOpen ? '1' : '0'); } catch (e2) { /* private mode */ }
+    debugAcc = 1;
+  });
 }
 
 function updateDebug(dt) {
@@ -3434,20 +3456,24 @@ function updateDebug(dt) {
   debugAcc += dt;
   if (debugAcc < 0.25) return;
   debugAcc = 0;
-  const q = game.settings.quality;
-  const dpr = renderer.getPixelRatio().toFixed(2);
-  const w = Math.round(renderer.domElement.clientWidth * renderer.getPixelRatio());
-  const h = Math.round(renderer.domElement.clientHeight * renderer.getPixelRatio());
-  const cars = traffic.cars.length;
-  const people = peds.peds.length;
-  debugEl.textContent =
-    `${fps.toFixed(0)} fps  (min ${fpsMin.toFixed(0)})\n`
-    + `${sceneStats.calls} draws  ${(sceneStats.tris / 1000).toFixed(0)}k tris\n`
-    + `${w}x${h} @ ${dpr}x  ${q}\n`
-    + `${cars} vehicles  ${people} peds`
-    + perfLine()
+  dbgUi.Fps.textContent = fps.toFixed(0);
+  dbgUi.Min.textContent = `min ${fpsMin.toFixed(0)}`;
+  dbgUi.Dot.className = fpsMin >= 50 ? '' : fpsMin >= 30 ? 'mid' : 'low';
+  const perf = perfLine();
+  if (dbgOpen) {
+    const q = game.settings.quality;
+    const dpr = renderer.getPixelRatio().toFixed(2);
+    const w = Math.round(renderer.domElement.clientWidth * renderer.getPixelRatio());
+    const h = Math.round(renderer.domElement.clientHeight * renderer.getPixelRatio());
+    dbgUi.Draws.textContent = sceneStats.calls;
+    dbgUi.Tris.textContent = `${(sceneStats.tris / 1000).toFixed(0)}k`;
+    dbgUi.Cars.textContent = traffic.cars.length;
+    dbgUi.Peds.textContent = peds.peds.length;
+    dbgUi.Screen.textContent = `${w}x${h} @ ${dpr}x  ${q}`;
+    if (perf) { dbgUi.Cpu.textContent = perf.cpu; dbgUi.Render.textContent = perf.render; }
     // the audio's story so far (audio.js _log): state, gestures, the radio
-    + `\naudio: ${audio.ctx ? audio.ctx.state : 'none'}${audio.log.length ? '\n  ' + audio.log.slice(-6).join('\n  ') : ''}`;
+    dbgUi.Audio.textContent = `${audio.ctx ? audio.ctx.state : 'none'}${audio.log.length ? '\n' + audio.log.slice(-5).join('\n') : ''}`;
+  }
   fpsMin = fps;
 }
 

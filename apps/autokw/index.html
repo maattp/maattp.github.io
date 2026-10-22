@@ -405,16 +405,52 @@
   @media (orientation: portrait) and (max-width: 900px) { #loadRotate { display: block; } }
 </style>
 <style>
+  /* Debug stats: a small fps pill under the minimap; tap it for the rest.
+     Only the pill takes touches -- the open panel lets them through to the
+     game, so it can stay open while you drive. */
   #debugStats {
-    position: absolute; top: calc(env(safe-area-inset-top) + 8px);
-    left: calc(env(safe-area-inset-left) + 96px);
+    position: absolute; top: calc(env(safe-area-inset-top) + 196px);
+    left: calc(env(safe-area-inset-left) + 12px);
     display: none; pointer-events: none; z-index: 40;
-    font: 600 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
-    color: #d8e2ea; text-shadow: 0 1px 2px rgba(0,0,0,0.75);
-    background: rgba(10,12,16,0.55); border-radius: 8px; padding: 6px 9px;
-    white-space: pre;
+    font: 600 11px/1.35 ui-sans-serif, system-ui, -apple-system, sans-serif;
+    color: #dfe7ee; -webkit-user-select: none; user-select: none;
   }
   #debugStats.on { display: block; }
+  #dbgHead {
+    pointer-events: auto; cursor: pointer; -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation; display: inline-flex; align-items: center; gap: 6px;
+    height: 30px; padding: 0 10px 0 9px; border-radius: 15px; border: 0;
+    background: rgba(12,15,20,0.62); color: inherit; font: inherit;
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    box-shadow: 0 2px 10px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.08);
+  }
+  #dbgDot { width: 8px; height: 8px; border-radius: 50%; background: #5bd68a; box-shadow: 0 0 6px currentColor; color: #5bd68a; }
+  #dbgDot.mid { background: #f2c84b; color: #f2c84b; }
+  #dbgDot.low { background: #ff6b5e; color: #ff6b5e; }
+  #dbgFps { font: 800 15px/1 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; min-width: 2ch; text-align: right; }
+  #dbgHead .u { font-size: 10px; opacity: .6; letter-spacing: .04em; }
+  #dbgMin { font: 600 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; opacity: .55; }
+  #dbgChev { font-size: 9px; opacity: .6; transition: transform .15s; }
+  #debugStats.open #dbgChev { transform: rotate(180deg); }
+  #dbgBody {
+    /* opens beside the minimap column, under the menu button, where a
+       landscape phone has the height for it */
+    display: none; position: absolute; left: 148px; top: -136px;
+    width: 300px; padding: 9px 10px 8px; border-radius: 12px;
+    background: rgba(12,15,20,0.62); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.08);
+    max-height: calc(100vh - 72px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); overflow: hidden;
+  }
+  #debugStats.open #dbgBody { display: block; }
+  .dbgTiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+  .dbgCols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .dbgTile { background: rgba(255,255,255,0.06); border-radius: 7px; padding: 5px 7px 4px; }
+  .dbgTile b { display: block; font: 800 13px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; color: #fff; }
+  .dbgTile span { font-size: 9px; opacity: .55; text-transform: uppercase; letter-spacing: .06em; }
+  .dbgSec { margin-top: 8px; }
+  .dbgSec > span { display: block; font-size: 9px; opacity: .5; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 2px; }
+  .dbgRows { font: 600 10.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+  .dbgLog { font: 500 9.5px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; opacity: .7; white-space: pre-wrap; word-break: break-all; max-height: 7.2em; overflow: hidden; }
   .dbgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 2px 0 10px; }
   .dbg {
     font: 600 11px/1 ui-sans-serif, system-ui; padding: 8px 4px; border-radius: 8px;
@@ -590,7 +626,23 @@
        a convention written against "it ships to a phone", never a measurement
        on one, and the scene has quietly been over it for some time with
        nothing going wrong. This is how it gets settled with a real number. -->
-  <div id="debugStats"></div>
+  <div id="debugStats">
+    <button id="dbgHead" type="button" aria-label="Debug stats"><i id="dbgDot"></i><b id="dbgFps">--</b><span class="u">FPS</span><span id="dbgMin"></span><span id="dbgChev">&#9660;</span></button>
+    <div id="dbgBody">
+      <div class="dbgTiles">
+        <div class="dbgTile"><b id="dbgDraws">-</b><span>draws</span></div>
+        <div class="dbgTile"><b id="dbgTris">-</b><span>triangles</span></div>
+        <div class="dbgTile"><b id="dbgCars">-</b><span>vehicles</span></div>
+        <div class="dbgTile"><b id="dbgPeds">-</b><span>people</span></div>
+      </div>
+      <div class="dbgSec"><span>Screen</span><div class="dbgRows" id="dbgScreen"></div></div>
+      <div class="dbgCols">
+        <div class="dbgSec"><span>CPU ms / frame</span><div class="dbgRows" id="dbgCpu"></div></div>
+        <div class="dbgSec"><span>Render ms / frame</span><div class="dbgRows" id="dbgRender"></div></div>
+      </div>
+      <div class="dbgSec"><span>Audio</span><div class="dbgLog" id="dbgAudio"></div></div>
+    </div>
+  </div>
 
   <div id="loading">
     <div class="tag">Waterloo Region</div>
@@ -600,7 +652,7 @@
     <pre id="bootLog"></pre>
     <div id="loadRotate">Turn sideways to play once it has loaded</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v69</div>
+    <div id="build">v70</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation NRCan CDEM / SRTM</div>
   </div>
   <script>
