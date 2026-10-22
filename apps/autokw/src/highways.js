@@ -35,7 +35,7 @@ import * as THREE from './three.js';
 import * as G from './geo.js';
 import { hash2 } from './util.js';
 import { Builder } from './build.js';
-import { ROAD_LIFT, CHUNK, SH_LANE } from './citygen.js';
+import { ROAD_LIFT, CHUNK, SH_LANE, MEET_SLOT } from './citygen.js';
 import { polyMat, plainUV } from './kw.js';
 
 const ckey = (x, z) => `${Math.round(x / 1500)},${Math.round(z / 1500)}`;
@@ -981,6 +981,24 @@ export function buildHighways(ctx) {
   // carriageways part) has its blunt end shielded: a yellow energy
   // attenuator, a stack of steel-sided bays ~4.5 m long, its nose striped
   // black and yellow toward the traffic coming at it.
+  // one attenuator: its tail at (x, z), its nose LEN m out along (dx, dz),
+  // toward the traffic coming at it; false where its nose would be in a lane
+  const cushion = (x, z, dx, dz, gy) => {
+    const rot = Math.atan2(dz, dx), LEN = 4.4;
+    const cx = x + dx * LEN / 2, cz = z + dz * LEN / 2;
+    if (onCw(x + dx * LEN, z + dz * LEN, -0.2)) return false;   // no room: it would stand in a lane
+    const Y = K.B(cx, cz, 'cushion'), Kd = K.B(cx, cz, 'cushionDark');
+    Kd.box(cx, gy, cz, LEN, 0.12, 0.62, rot);                         // the base track
+    for (let q = 0; q < 5; q++) {                                    // the bays, stepping down to the nose
+      const f = (q + 0.5) / 5, bx = x + dx * LEN * f * 0.92, bz = z + dz * LEN * f * 0.92;
+      Y.box(bx, gy + 0.12, bz, LEN / 5 - 0.06, 0.78 - q * 0.02, 0.6 + 0.04 * (q % 2), rot);
+    }
+    const nx = x + dx * (LEN - 0.08), nz = z + dz * (LEN - 0.08);
+    Kd.box(nx, gy + 0.14, nz, 0.14, 0.7, 0.62, rot);                 // the nose panel
+    for (let q = 0; q < 3; q++) Y.box(nx + dx * 0.02, gy + 0.2 + q * 0.22, nz + dz * 0.02, 0.14, 0.1, 0.64, rot);
+    solids.push({ x: cx, z: cz, hw: LEN / 2, hd: 0.32, rot, y0: gy, y1: gy + 0.9 });
+    return true;
+  };
   {
     // every piece's ends filed in 10 m cells; an end is the wall's end when
     // no other piece reaches on past it within 14 m (pieces from the two
@@ -1007,19 +1025,7 @@ export function buildHighways(ctx) {
       if (more) continue;
       if (done.some(([a, b]) => (a - x) ** 2 + (b - z) ** 2 < 25)) continue;
       done.push([x, z]);
-      const rot = Math.atan2(dz, dx), LEN = 4.4;
-      const cx = x + dx * LEN / 2, cz = z + dz * LEN / 2, gy = y0;
-      if (onCw(x + dx * LEN, z + dz * LEN, -0.2)) continue;   // no room: it would stand in a lane
-      const Y = K.B(cx, cz, 'cushion'), Kd = K.B(cx, cz, 'cushionDark');
-      Kd.box(cx, gy, cz, LEN, 0.12, 0.62, rot);                         // the base track
-      for (let q = 0; q < 5; q++) {                                    // the bays, stepping down to the nose
-        const f = (q + 0.5) / 5, bx = x + dx * LEN * f * 0.92, bz = z + dz * LEN * f * 0.92;
-        Y.box(bx, gy + 0.12, bz, LEN / 5 - 0.06, 0.78 - q * 0.02, 0.6 + 0.04 * (q % 2), rot);
-      }
-      const nx = x + dx * (LEN - 0.08), nz = z + dz * (LEN - 0.08);
-      Kd.box(nx, gy + 0.14, nz, 0.14, 0.7, 0.62, rot);                 // the nose panel
-      for (let q = 0; q < 3; q++) Y.box(nx + dx * 0.02, gy + 0.2 + q * 0.22, nz + dz * 0.02, 0.14, 0.1, 0.64, rot);
-      solids.push({ x: cx, z: cz, hw: LEN / 2, hd: 0.32, rot, y0: gy, y1: gy + 0.9 });
+      if (!cushion(x, z, dx, dz, y0)) continue;
       STATS.cushions = (STATS.cushions || 0) + 1;
       if ((STATS.cushions || 0) <= 4) STATS.views.push({ name: `cushion${STATS.cushions - 1}`, c: [+(x + dx * 40 - dz * 4).toFixed(1), +(z + dz * 40 + dx * 4).toFixed(1), 1.4], t: [+x.toFixed(1), +z.toFixed(1), 0.6], fov: 50 });
     }
@@ -1086,9 +1092,12 @@ export function buildHighways(ctx) {
   // shoulder with the tall wall beyond it. Each 2-post piece is a landmark
   // solid (`mono`: lane-following traffic never reaches it).
   const fr = freewayRamps(city);
-  const railEdge = (ei) => { const e = city.edges[ei]; return (isMain(e) || (e.cls === 'ramp' && fr[ei] && !e.gore)) && e.prof && !e.elev && !e.tunnel; };
+  // (a gore edge too, since round five: its side toward the main line is paved
+  // to the main line's edge -- citygen `e.meet` -- and carries none; its outer
+  // side, on the fill, does)
+  const railEdge = (ei) => { const e = city.edges[ei]; return (isMain(e) || (e.cls === 'ramp' && fr[ei])) && e.prof && !e.elev && !e.tunnel; };
   // how far each node is (along freeway carriageways and ramps) from a deck's end
-  const BRIDGE_RUN = 60, RAIL_DROP = 2.6;
+  const BRIDGE_RUN = 60, RAIL_DROP = 2.6, RAIL_KEEP = 1.9;
   const bd = new Map(), bq = [];
   city.edges.forEach((e, ei) => {
     if (!e.elev || !(e.cls === 'hwy' || e.cls === 'ramp')) return;
@@ -1118,10 +1127,12 @@ export function buildHighways(ctx) {
     return false;
   };
   const R_LO = 0.43, R_HI = 0.76, R_OUT = 0.5;
+  const railEnds = [];   // each run's two ends [x, z, y]: the gore noses' attenuators look for them
   /** A guide rail along `pts` ([x, z, yRoad, nx, nz]: the road-side face's foot,
    *  the outward normal), posts every ~1.9 m on the slope behind it. */
   const railRun = (pts) => {
     if (pts.length < 2) return;
+    railEnds.push([pts[0][0], pts[0][1], pts[0][2]], [pts[pts.length - 1][0], pts[pts.length - 1][1], pts[pts.length - 1][2]]);
     // a viewpoint down the first few long runs (hwyshots: 'rail' views)
     if (pts.length > 10 && STATS.views.filter((v) => v.name.startsWith('rail')).length < 6 && hash2(Math.round(pts[0][0]), Math.round(pts[0][1])) < 0.08) {
       const m = pts[pts.length >> 1], p0 = pts[0];
@@ -1179,9 +1190,17 @@ export function buildHighways(ctx) {
         // at the paved shoulder's outer edge; not along a side trimmed off a
         // lower road (the lane basis, ltw, is the trim's)
         const tw = e.tw[i * 2 + s];
+        // a ramp's side paved onto the main line's edge (citygen `meet`, a
+        // grass-bridged slot too) or a ramp with no band of its own here:
+        // the gore is pavement, not a fill's edge
+        if (e.meet && !Number.isNaN(e.meet[i * 2 + s])) { flush(); continue; }
+        if (e.cls === 'ramp' && e.tw[i * 2] + e.tw[i * 2 + 1] < 1) { flush(); continue; }
         const off = tw + R_OUT;
         const x = a.x + e.dx * e.len * t + px * sg * off, z = a.z + e.dz * e.len * t + pz * sg * off;
-        const want = (drop > RAIL_DROP || nearBridge) && (e.ltw || e.tw)[i * 2 + s] > e.hw - 0.5
+        // (a run under way carries on while the fill stays over RAIL_KEEP: a
+        // rail is laid in runs, not cut wherever a batter dips under the
+        // warrant for a few metres)
+        const want = (drop > (run.length ? RAIL_KEEP : RAIL_DROP) || nearBridge) && (e.ltw || e.tw)[i * 2 + s] > e.hw - 0.5
           && !(leftSide && wallWithin(x, z, 12)) && !onCw(x, z, 0.2);
         if (!want) { flush(); continue; }
         run.push([x, z, ey, px * sg, pz * sg]);
@@ -1189,6 +1208,76 @@ export function buildHighways(ctx) {
       flush();
     }
   });
+
+  // ---- the gore noses -------------------------------------------------------
+  const noseAt = [];   // the attenuators: no ground sign stands on one (signs, below)
+  // Where an exit's paved gore ends (citygen's ramp meet: past MEET_SLOT the
+  // ground between ramp and main line is grass) and guide rail runs on into
+  // the wedge (a fill), the rails' blunt ends are shielded as MTO does: an
+  // energy attenuator in the nose, pointing back up the gore at the traffic
+  // that could hit it. A merge's nose points the way traffic goes (nothing
+  // comes at it) and a gore on flat ground has no rail: neither gets one.
+  {
+    const endGrid = new Map();
+    railEnds.forEach((r, n) => {
+      const k = `${Math.floor(r[0] / 10)},${Math.floor(r[1] / 10)}`;
+      let l = endGrid.get(k);
+      if (!l) endGrid.set(k, (l = []));
+      l.push(n);
+    });
+    // the most upstream rail end within r of (x, z), as metres up the gore
+    // (along (dx, dz)) from it; null if none
+    const railUp = (x, z, dx, dz, r) => {
+      let best = null;
+      for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) {
+        for (const n of endGrid.get(`${Math.floor(x / 10) + a},${Math.floor(z / 10) + b}`) || []) {
+          const q = railEnds[n];
+          if ((q[0] - x) ** 2 + (q[1] - z) ** 2 >= r * r) continue;
+          const al = (q[0] - x) * dx + (q[1] - z) * dz;
+          if (best === null || al > best) best = al;
+        }
+      }
+      return best;
+    };
+    STATS.noses = 0; STATS.noseCushions = 0;
+    city.edges.forEach((e, ei) => {
+      if (!e.meetGap || !fr[ei]) return;
+      const k = e.pk, a = city.nodes[e.a], px = -e.dz, pz = e.dx, tf = fwdOf(e);
+      const M = e.meet, Gp = e.meetGap;
+      for (let s = 0; s < 2; s++) {
+        const sg = s === 0 ? 1 : -1;
+        for (let q = 0; q < k; q++) {
+          // along travel: sample j0 paved to the main line, j1 the wedge open
+          const j0 = tf > 0 ? q : k - q, j1 = tf > 0 ? q + 1 : k - q - 1;
+          if (Number.isNaN(M[j0 * 2 + s]) || !Number.isNaN(M[j1 * 2 + s])) continue;
+          const g = Gp[j1 * 2 + s];
+          if (!(g > MEET_SLOT && g < 8)) continue;
+          STATS.noses++;
+          // the wedge's middle at j1, and up the ramp toward where it closes
+          const t1 = j1 / k, w1 = e.tw[j1 * 2 + s];
+          const ex = a.x + e.dx * e.len * t1 + px * sg * (w1 + g / 2), ez = a.z + e.dz * e.len * t1 + pz * sg * (w1 + g / 2);
+          const dx = -e.dx * tf, dz = -e.dz * tf;   // up the gore, toward the traffic
+          // its nose just ahead of the rails' blunt ends (both sides of the
+          // wedge, a few metres on), its tail down the wedge
+          const up = railUp(ex, ez, dx, dz, 16);
+          if (up === null || up < -12) continue;
+          const LEN = 4.4, nose = Math.max(0, up) + 0.6;
+          const tx = ex + dx * (nose - LEN), tz = ez + dz * (nose - LEN);
+          if (onCw(tx, tz, 0.05) || onCw(tx + dx * LEN / 2, tz + dz * LEN / 2, 0.05)) continue;
+          // at the road's level, on a concrete pad down to the wedge's ground
+          const gy = e.ph[j1] - 0.05;
+          const mx = tx + dx * LEN / 2, mz = tz + dz * LEN / 2;
+          if (cushion(tx, tz, dx, dz, gy)) {
+            const g0 = Math.min(G.terrainHeight(tx, tz), G.terrainHeight(ex, ez), G.terrainHeight(mx, mz)) - 0.3;
+            if (g0 < gy - 0.05) K.B(mx, mz, 'medConc').box(mx, g0, mz, LEN + 0.6, gy - g0, 1.2, Math.atan2(dz, dx));
+            STATS.noseCushions++;
+            noseAt.push([mx, mz]);
+            if (STATS.noseCushions <= 4) STATS.views.push({ name: `nose${STATS.noseCushions - 1}`, c: [+(ex + dx * 45 + px * sg * -4).toFixed(1), +(ez + dz * 45 + pz * sg * -4).toFixed(1), 1.4], t: [+ex.toFixed(1), +ez.toFixed(1), 0.6], fov: 45 });
+          }
+        }
+      }
+    });
+  }
 
   // ---- high-mast lighting ---------------------------------------------------
   // The freeway-to-freeway interchanges are lit from 30 m galvanized masts
@@ -1309,7 +1398,7 @@ export function buildHighways(ctx) {
     if (yr - G.terrainHeight(x, z) > STAND_DROP) { STATS.why.drop = (STATS.why.drop || 0) + 1; return false; }
     return true;
   };
-  const placed = [];   // [x, z] of every sign standing, to keep them apart
+  const placed = [...noseAt];   // [x, z] of every sign standing, to keep them apart (and off the gore noses)
   const clear = (x, z, r) => !placed.some(([a, b]) => (a - x) * (a - x) + (b - z) * (b - z) < r * r);
 
   /** A ground-mounted sign on the right shoulder (two posts). */
@@ -1431,10 +1520,14 @@ export function buildHighways(ctx) {
     const GP = goreExit(atlas, x.ref, left);
     // (a left exit's gore is on the driver's left; the first spot down the
     // ramp where the gore has opened wide enough to stand a sign in)
-    gore: for (let d = 60; d <= 240; d += 15) {
-      const f = walk(city, m.ei, m.t, d);
-      if (!f) break;
-      for (const o of [2.4, 3.4]) if (ground(f, GP, left ? -(f.wl + o) : f.wr + o, 1.6, null, 'gore')) break gore;
+    // (round five: a gore whose ramp is paved to the main line for its first
+    // stretch -- citygen's ramp meet -- opens further down; then further out)
+    gore: for (const O of [[2.4, 3.4], [4.6]]) {
+      for (let d = 60; d <= (O[0] > 3 ? 240 : 330); d += 15) {
+        const f = walk(city, m.ei, m.t, d);
+        if (!f) break;
+        for (const o of O) if (ground(f, GP, left ? -(f.wl + o) : f.wr + o, 1.6, null, 'gore')) break gore;
+      }
     }
   }
 
@@ -1444,21 +1537,23 @@ export function buildHighways(ctx) {
     if (!m) { STATS.why.nomain++; continue; }
     const info = INFO.get(m.ei);
     const sp = info ? parseInt(info.sp, 10) : 0;
+    // (each sign at its usual spot first, then further on, then further out:
+    // round four's wider pavement left five with no room)
     if (sp >= 60) {
-      for (const d of [180, 230, 290]) {
+      spd: for (const o of [2.2, 3.6]) for (const d of [180, 230, 290, 350, 140]) {
         const f = walk(city, m.ei, m.t, d);
-        if (f && ground(f, speedPanel(atlas, sp), f.wr + 2.2, 1.7, null, 'spd')) { STATS.speed++; break; }
+        if (f && ground(f, speedPanel(atlas, sp), f.wr + o, 1.7, null, 'spd')) { STATS.speed++; break spd; }
       }
     }
     const ref = (info && info.ref) || mg.main;
     const ax = AXIS[ref];
     if (ax) {
       const nums = ref.split(';');
-      for (const d of [420, 480, 360]) {
+      route: for (const o of [2.2, 3.6]) for (const d of [420, 480, 360, 540, 300]) {
         const f0 = walk(city, m.ei, m.t, d);
         if (!f0) continue;
         const dir = f0.ux * ax[0] + f0.uz * ax[1] >= 0 ? ax[2] : ax[3];
-        if (ground(f0, routePanel(atlas, nums, dir), f0.wr + 2.2, 1.8, null, 'route')) { STATS.shields++; break; }
+        if (ground(f0, routePanel(atlas, nums, dir), f0.wr + o, 1.8, null, 'route')) { STATS.shields++; break route; }
       }
     }
   }
@@ -1511,8 +1606,12 @@ export function buildHighways(ctx) {
           const tt = (K2 - k0) / (k1 - k0);
           if (!(tt >= 0 && tt < 1)) continue;
           const f = frame(city, ei, ff > 0 ? tt : 1 - tt);
-          const off = f.wr + 1.0;
-          const x = f.x + f.rx * off, z = f.z + f.rz * off;
+          // (beside a ramp paved onto the shoulder, out past it)
+          let off = f.wr + 1.0, x = f.x + f.rx * off, z = f.z + f.rz * off;
+          for (const o of [2.4, 3.8]) {
+            if (!onCw(x, z, 0.3)) break;
+            off = f.wr + o; x = f.x + f.rx * off; z = f.z + f.rz * off;
+          }
           if (onCw(x, z, 0.3) || !clear(x, z, 8)) continue;
           const yr = f.y(f.wr);
           if (!standOk(f, x, z, yr)) continue;
@@ -1536,5 +1635,5 @@ export function buildHighways(ctx) {
   K.flush(atlas.mat);
   STATS.ms = Math.round(performance.now() - t0);
   STATS.wall = Math.round(STATS.wall); STATS.paved = Math.round(STATS.paved); STATS.rail = Math.round(STATS.rail);
-  if (typeof window !== 'undefined') { window.__hwy = STATS; STATS.rumbleAt = rumbleAt; }
+  if (typeof window !== 'undefined') { window.__hwy = STATS; STATS.rumbleAt = rumbleAt; STATS.infoOf = (ei) => INFO.get(ei); }
 }

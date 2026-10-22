@@ -1658,6 +1658,79 @@ file and a guide disagree, this file wins.
     is 12.8 -> 11.7 km (none on gore edges); km posts are a judgement of
     MTO's plate (no source found for its exact face); the 401's concrete,
     slope paving and through-lane arrows still not done.
+- **The freeways, round five** (round four's leftovers; docs/hwy5-*.jpg,
+  master over this):
+  - **A ramp meets the main line at its paved edge** (citygen gradeRoads,
+    after the shoulders: "A RAMP MEETS THE MAIN LINE"). For every graded
+    one-way ramp sample beside a freeway carriageway at its level (within
+    1.5 m, parallel to 0.8, not a split-level side), the ramp's side toward
+    it is moved onto that carriageway's PAVED edge (`tw`, shoulders
+    included): clipped back where the band lay over the main line (the gore
+    edge slid onto the outer lanes, ramps joining at an angle), collapsed to
+    zero width where the whole ramp is on the main line's pavement (an
+    exit's taper now opens out of the shoulder), paved across where ground
+    showed under `MEET_SLOT` 1.5 m (spreadGores' SH_GAP 0.3, the shoulders'
+    SH_CLEAR, OSM's spacing). Past 1.5 m the gore is grass: its nose. A slot
+    whose step is over `MEET_PAVE` 0.5 m is bridged by a grass batter instead
+    (`meetG`, its width in dm). `e.meet` (per sample and side, NaN for none)
+    is the height world.js meshGraded hangs a SEAM STRIP to: 0.35 m on under
+    the main line's pavement, 6 cm below it, from the ramp's own edge
+    vertices -- so whichever is higher, the step between the two meshes shows
+    asphalt, never ground or a hairline. `e.meetGap` keeps the gap for every
+    side with a main line beside it (the noses, below). Lanes (`ltw`) never
+    move; `meet`, `meetG`, `meetGap` are in GRADE_EDGE_FIELDS.
+    `cityStats.rampMeet`: 630 samples clipped, 2227 closed, 115 bridged, 98
+    collapsed. `VIEW_PROBE_FILE=tools/kw/goreprobe.js` (master too): ramp
+    band over the main line's pavement 9562 -> 136 m2 (what is left is round
+    each node's mitre), ground showing between the two 10.2 km -> 0.9 km
+    (most of it the 1.5-2 m noses; 0.46 km bridged by grass).
+    `tools/kw/goreviews.js` prints `-air` / `-low` / `-top` / `-seat` views
+    of all 97 gores (85, 401, 7/8, 8, 7, 6/7) for kwshots `VIEWS=`.
+  - **Guide rail**: gore edges carry rail again on their outer side (a side
+    paved to the main line -- `meet` -- or with no band of its own carries
+    none: that is pavement, not a fill's edge), and a run under way carries
+    on while the fill stays over `RAIL_KEEP` 1.9 m (it starts at RAIL_DROP
+    2.6): round four's 1.1 km "lost" was 0.83 km now lying on the paved gore
+    (correctly gone) and 0.42 km of borderline 2.2-2.6 m fills flipping off.
+    11.7 -> 12.9 km (pre-round-four 12.8). **Gore noses** (`noses`: 58
+    where a paved gore ends 1.5-8 m wide): where rail runs on into the wedge
+    (both sides of it, on a fill) the rails' blunt ends get the yellow
+    attenuator (the tall wall ends' `cushion()`, now shared), its nose just
+    ahead of the most upstream rail end, on a concrete pad down to the
+    wedge's ground; diverges only (nothing comes at a merge's nose). 3 noses
+    qualify -- most gores are on flat ground, with no rail and so no
+    attenuator, as MTO's are.
+  - **Signs**: each ground sign tries its usual spot, then further on, then
+    further out (gore 2.4 / 3.4 m out to 330 m, then 4.6; MAXIMUM and route
+    markers 2.2 then 3.6 m off over five distances; km posts step out past a
+    ramp paved onto the shoulder). Ground signs 208 -> 217 (adv 47, gore 48
+    -> 50, MAXIMUM 59 -> 62, route 54 -> 58; round three had 213), km posts
+    22 = 22 (21 before the step-out). No sign within 25 m of a nose
+    attenuator.
+  - **The 401's concrete: checked, not drawn.** Esri's aerial at Hespeler Rd
+    (aerial.py 11000 4250) shows asphalt lanes with pale shoulders and the
+    concrete median; no concrete pavement through Cambridge was found in
+    the widening's press (MTO, Infrastructure Canada, 2017-2025).
+  - **Verify** (master in a detached scratchpad worktree, one at a time on
+    one port): trafficbench (rail off, phone) 5 of 6 hashes = master,
+    401-hespeler changes (-1398473.998642 -> -1398474.386286, same count:
+    the gores' surfaces there, meant); jcttraffic seeded byte-identical (0 /
+    0 / 0 / 2 recycled); hwytraffic seeded 1 hit / 0 crashes = master,
+    unseeded 2 / 0 = master (pkwy-fairway, pkwy-westmount lane changes).
+    `VIEW_PROBE_FILE=tools/kw/hwysolidprobe.js` (every freeway solid's
+    corners against the lanes): 49 = master (tall-wall pieces over a ramp by
+    (1800-1970, 1890-1960), none of them new); poleprobe 0 in a lane.
+    `sh tools/kw/hwyshots.sh <dir> nose,gore,spd,route`. Phone (AUTO_PHONE=1,
+    GPU, seedrandom), master -> this: spawn 178 -> 175 draws (traffic), 401
+    from the air 180 -> 179 (697k -> 693k), Fairway 217 -> 216, Hwy 85 from the air
+    257 -> 256. Freeway build 204 -> 209 ms, 477k -> 485k
+    tris. 0 exceptions.
+  - **Approximate / not done:** where the paved gore stops is a fixed 1.5 m
+    slot, not the painted gore's real nose; within each node's mitre a sliver
+    of ramp still overlaps (136 m2 map-wide); a grass-bridged slot is a steep
+    strip, not a graded batter; ramp-to-ramp gores are untouched (only main
+    lines are met); nose attenuators only where rail is warranted; through-
+    lane arrows and slope paving under the abutments still not done.
 - **Junctions: signals, stop signs, roundabouts, crossings** (src/junctions.js,
   `data/junctions.json` from tools/kw/build_junctions.py; docs/junction-*.jpg).
   The graph has no node tags, so build_junctions.py extracts them: signal

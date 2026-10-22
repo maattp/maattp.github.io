@@ -7274,6 +7274,36 @@ float frLine(float o, float fw, float c, float w) {
         );
       }
     }
+    // AUTO KW: a ramp side that meets a freeway carriageway's paved edge
+    // (citygen `e.meet`): a seam strip from its edge on under the main line's
+    // pavement to just below it, so the step or hairline between the two
+    // meshes shows asphalt, never the ground; a slot too tall a step to pave
+    // (`meetG`: its width in dm) is bridged by a grass batter instead.
+    if (e.meet) {
+      const M = e.meet, MG = e.meetG, TUCK = 0.35;
+      const grass = [0.43, 0.46, 0.34], dirt = [0.4, 0.39, 0.32], sh = [col[0] * 0.86, col[1] * 0.86, col[2] * 0.86];
+      for (let s = 0; s < 2; s++) {
+        const sg = s === 0 ? 1 : -1, ox = px * sg, oz = pz * sg;
+        const edgeAt = s === 0 ? edgeL : edgeR, W = s === 0 ? Wl : Wr;
+        for (let i = 0; i < k; i++) {
+          const y0 = M[i * 2 + s], y1 = M[(i + 1) * 2 + s];
+          if (Number.isNaN(y0) || Number.isNaN(y1)) continue;
+          const g0 = MG[i * 2 + s], g1 = MG[(i + 1) * 2 + s];
+          const [ax, az] = edgeAt(i), [bx, bz] = edgeAt(i + 1);
+          const ya = Y(i, sg * W(i)), yb = Y(i + 1, sg * W(i + 1));
+          if (g0 && g1) {
+            const w0 = g0 / 10, w1 = g1 / 10;
+            flat.quad([ax, ya - 0.02, az], [bx, yb - 0.02, bz], [bx + ox * w1, y1, bz + oz * w1], [ax + ox * w0, y0, az + oz * w0],
+              [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], [dirt, dirt, grass, grass]);
+            continue;
+          }
+          if (g0 || g1) continue;
+          const v0 = (i * seg) / ROAD_TILE, v1 = ((i + 1) * seg) / ROAD_TILE;
+          road.quad([ax, ya, az], [bx, yb, bz], [bx + ox * TUCK, y1, bz + oz * TUCK], [ax + ox * TUCK, y0, az + oz * TUCK],
+            [0, 1, 0], [0.31, v0, 0.31, v1, 0.35, v1, 0.35, v0], sh);
+        }
+      }
+    }
     // A trimmed side stands over a lower road: finish it with a wall down to it.
     for (let s = 0; s < 2; s++) {
       const sg = s === 0 ? 1 : -1;
