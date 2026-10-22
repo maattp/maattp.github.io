@@ -623,6 +623,25 @@ function kmPanel(atlas) {
   });
 }
 
+// AN MTO KILOMETRE POST: a small green plate, "km" over the chainage. The
+// plate and the ten digits are panels of their own (one each, however many
+// posts), the digits laid on the plate.
+function kmPlate(atlas) {
+  return atlas.get('kmplate', 40, 50, 85, (g, W, H) => {
+    rrect(g, 0, 0, W, H, 4); g.fillStyle = GREEN; g.fill();
+    g.strokeStyle = '#fff'; g.lineWidth = 1.5; rrect(g, 2, 2, W - 4, H - 4, 3); g.stroke();
+    g.fillStyle = '#fff'; g.font = `bold 13px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('km', W / 2, 13);
+  });
+}
+function kmDigit(atlas, d) {
+  return atlas.get(`kmd|${d}`, 11, 19, 85, (g, W, H) => {
+    g.fillStyle = GREEN; g.fillRect(0, 0, W, H);
+    g.fillStyle = '#fff'; g.font = `bold 18px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(String(d), W / 2, H / 2 + 1);
+  });
+}
+
 function goreExit(atlas, ref, left) {
   const key = `gore|${ref || ''}|${left ? 'L' : 'R'}`;
   return atlas.get(key, 96, ref ? 104 : 80, 48, (g, W, H) => {
@@ -665,7 +684,7 @@ function routePanel(atlas, nums, dir) {
 // ---------------------------------------------------------------------------
 
 /** A sign face (both sides textured is wrong: the back gets a plain plate). */
-function face(K, f, a, r, yb, P) {
+function face(K, f, a, r, yb, P, back = true) {
   const B = K.B(f.x, f.z, 'sign');
   const hw = P.w / 2;
   // faces back up the road: its normal is -u
@@ -675,6 +694,7 @@ function face(K, f, a, r, yb, P) {
   // seen from upstream, the driver's right is +r: the image's right edge goes there
   B.quad([R[0], yb, R[1]], [L[0], yb, L[1]], [L[0], yb + P.h, L[1]], [R[0], yb + P.h, R[1]],
     [-f.ux, 0, -f.uz], [u0, v0, u1, v0, u1, v1, u0, v1], W1);
+  if (!back) return;
   // the aluminium back, a hand's breadth behind
   const Bk = K.B(f.x, f.z, 'back');
   Bk.box(cx + f.ux * 0.06, yb + 0.02, cz + f.uz * 0.06, P.w, P.h - 0.04 - (P.tab || 0), 0.08, Math.atan2(f.rz, f.rx));
@@ -831,7 +851,8 @@ export function buildHighways(ctx) {
       const sx = b.x - a.x, sz = b.z - a.z, l2 = sx * sx + sz * sz;
       let t = l2 > 0 ? ((x - a.x) * sx + (z - a.z) * sz) / l2 : 0;
       t = t < 0 ? 0 : t > 1 ? 1 : t;
-      const r = (paved ? pavedHw(e) : e.hw) + pad;   // (its paved shoulders are carriageway too)
+      // (its paved shoulders are carriageway too: the side's own paved edge)
+      const r = (paved && e.shx ? Math.max(e.hw, sideW(e, t, (x - a.x) * -e.dz + (z - a.z) * e.dx >= 0 ? 0 : 1)) : e.hw) + pad;
       if ((a.x + sx * t - x) ** 2 + (a.z + sz * t - z) ** 2 <= r * r) return true;
     }
     return false;
@@ -1309,6 +1330,7 @@ export function buildHighways(ctx) {
       post(K, solids, px, pz, yg - 0.3, yb + P.h - (P.tab || 0) - yg + 0.1, 0.12);
     }
     placed.push([x, z]);
+    if (view) (STATS.ground || (STATS.ground = {}))[view] = (STATS.ground[view] || 0) + 1;
     if (view) {
       const n = STATS.views.filter((v) => v.name.startsWith(view)).length;
       const v = walk(city, f.ei, f.t, -30);
@@ -1322,7 +1344,7 @@ export function buildHighways(ctx) {
   };
 
   /** An overhead cantilever from the right shoulder, the sign over the right lane(s). */
-  const cantilever = (f, P, U = null) => {
+  const cantilever = (f, P, U = null, xo = 0) => {
     if (!P) return false;
     const offPost = f.wr + 1.6;
     const x = f.x + f.rx * offPost, z = f.z + f.rz * offPost;
@@ -1333,14 +1355,29 @@ export function buildHighways(ctx) {
     let yb = Math.max(yr, f.y(0)) + 5.4;
     const yg = Math.min(yr, G.terrainHeight(x, z));
     const cR = f.lr - 0.8 - Math.max(1.8, P.w / 2 - 0.4);   // the sign's centre, right of the centreline (over the right lane)
-    // the EXIT ONLY band hangs under the sign, which rises by its height
-    if (U) { face(K, f, 0, cR, yb, U); yb += U.h + 0.04; }
+    // THE EXIT ONLY BAND hangs under the sign, which rises by its height:
+    // one band per lane that leaves, each over its lane with its down arrow
+    // (the lane-use arrow), at the lanes the paint lays (0.8 m in from the
+    // lanes' edges, floor(width / 3.6) of them)
+    let leftmost = cR - P.w / 2;
+    if (U) {
+      const span = f.lr + f.ll - 1.6, n = Math.max(1, Math.floor(span / 3.6)), w = span / n;
+      const k = Math.max(1, Math.min(xo || 1, n - 1));
+      const sc = Math.min(1, (w - 0.25) / U.w), Ub = { uv: U.uv, w: U.w * sc, h: U.h * sc };
+      for (let j = 0; j < k; j++) {
+        const c = f.lr - 0.8 - (j + 0.5) * w;
+        face(K, f, 0, c, yb + (U.h - Ub.h), Ub);
+        leftmost = Math.min(leftmost, c - Ub.w / 2);
+      }
+      STATS.laneArrows = (STATS.laneArrows || 0) + k;
+      yb += U.h + 0.04;
+    }
     face(K, f, 0, cR, yb, P);
     const ang = Math.atan2(f.rz, f.rx);
     const topY = yb + P.h;
     post(K, solids, x, z, yg - 0.3, topY + 0.3 - yg, 0.45);
     // the truss arm: two chords and the sign's own hangers, from the post to past the panel
-    const armL = offPost - (cR - P.w / 2) + 0.2;
+    const armL = offPost - leftmost + 0.2;
     const amx = f.x + f.rx * (offPost - armL / 2) + f.ux * 0.35, amz = f.z + f.rz * (offPost - armL / 2) + f.uz * 0.35;
     const S = K.B(x, z, 'steel');
     S.box(amx, topY - 0.15, amz, armL, 0.14, 0.14, ang, W1);
@@ -1373,7 +1410,7 @@ export function buildHighways(ctx) {
     if (P && !left) {
       for (const d of [300, 380, 220, 450]) {
         const f = walk(city, m.ei, m.t, -d);
-        if (f && cantilever(f, P, U)) {
+        if (f && cantilever(f, P, U, only ? up.e.xo : 0)) {
           // where to stand to see it (kwshots views: window.__hwy.views): 160 m back, in the right lane
           const v = walk(city, f.ei, f.t, -38) || f;
           const o = v.lr - 2.6;   // (the right lane: the lanes' edge, not the shoulder's)
@@ -1423,6 +1460,74 @@ export function buildHighways(ctx) {
         const dir = f0.ux * ax[0] + f0.uz * ax[1] >= 0 ? ax[2] : ax[3];
         if (ground(f0, routePanel(atlas, nums, dir), f0.wr + 2.2, 1.8, null, 'route')) { STATS.shields++; break; }
       }
+    }
+  }
+
+  // ---- MTO kilometre posts on the 401 ----------------------------------------
+  // Every kilometre of the chainage, on the right shoulder of each
+  // carriageway. The chainage is the exit numbers' (an Ontario exit is
+  // numbered by its km): each numbered 401 exit in hwy.json is a control
+  // point at its interchange (the two directions' diverges averaged), the km
+  // between them interpolated along the line through them, run on past the
+  // end ones at 1 km a km.
+  {
+    const ctl = new Map();
+    for (const x of HW.exits || []) {
+      if (x.main !== '401' || !/^\d+$/.test(x.ref || '')) continue;
+      const k = +x.ref, c = ctl.get(k) || { x: 0, z: 0, n: 0 };
+      c.x += x.x; c.z += x.z; c.n++; ctl.set(k, c);
+    }
+    const C = [...ctl].sort((p, q) => p[0] - q[0]).map(([k, c]) => [c.x / c.n, c.z / c.n, k]);
+    const plate = C.length >= 2 ? kmPlate(atlas) : null;
+    const digits = plate ? [...Array(10).keys()].map((d) => kmDigit(atlas, d)) : [];
+    // the chainage at (x, z): the nearest piece of the control line
+    const kmAt = (x, z) => {
+      let best = null;
+      for (let i = 0; i + 1 < C.length; i++) {
+        const [ax, az, ka] = C[i], [bx, bz, kb] = C[i + 1];
+        const sx = bx - ax, sz = bz - az, L = Math.hypot(sx, sz);
+        let t = ((x - ax) * sx + (z - az) * sz) / (L * L);
+        // past the end exits: on at 1 km a km
+        const lo = i === 0 ? -3000 / L : 0, hi = i + 2 === C.length ? 1 + 3000 / L : 1;
+        if (t < lo || t > hi) t = Math.max(lo, Math.min(hi, t));
+        const d = Math.hypot(ax + sx * t - x, az + sz * t - z);
+        if (best && d >= best.d) continue;
+        const km = t < 0 ? ka + (t * L) / 1000 : t > 1 ? kb + ((t - 1) * L) / 1000 : ka + (kb - ka) * t;
+        best = { d, km };
+      }
+      return best && best.d < 400 ? best.km : null;
+    };
+    if (plate && digits.every(Boolean)) {
+      STATS.kmPosts = 0;
+      city.edges.forEach((e, ei) => {
+        if (!isMain(e) || e.elev) return;
+        const info = INFO.get(ei);
+        if (!info || info.ref !== '401') return;
+        const ff = fwdOf(e), A = city.nodes[ff > 0 ? e.a : e.b], B = city.nodes[ff > 0 ? e.b : e.a];
+        const k0 = kmAt(A.x, A.z), k1 = kmAt(B.x, B.z);
+        if (k0 == null || k1 == null || Math.abs(k1 - k0) > 0.5) return;
+        for (let K2 = Math.ceil(Math.min(k0, k1)); K2 <= Math.max(k0, k1); K2++) {
+          if (K2 === k0) continue;
+          const tt = (K2 - k0) / (k1 - k0);
+          if (!(tt >= 0 && tt < 1)) continue;
+          const f = frame(city, ei, ff > 0 ? tt : 1 - tt);
+          const off = f.wr + 1.0;
+          const x = f.x + f.rx * off, z = f.z + f.rz * off;
+          if (onCw(x, z, 0.3) || !clear(x, z, 8)) continue;
+          const yr = f.y(f.wr);
+          if (!standOk(f, x, z, yr)) continue;
+          const yg = Math.min(yr, G.terrainHeight(x, z)), yb = yr + 1.0;
+          face(K, f, 0, off, yb, plate);
+          const ds = String(K2).split('').map(Number), dw = digits[0].w;
+          ds.forEach((dg, q) => face(K, f, -0.012, off + (q - (ds.length - 1) / 2) * dw, yb + 0.06, digits[dg], false));
+          post(K, solids, x + f.ux * 0.06, z + f.uz * 0.06, yg - 0.3, yb + 0.2 - (yg - 0.3), 0.07);
+          STATS.kmPosts++;
+          if (STATS.kmPosts <= 2) {
+            const v = walk(city, ei, f.t, -16);
+            if (v) STATS.views.push({ name: `km${STATS.kmPosts - 1}`, c: [+(v.x + v.rx * (v.lr - 1.0)).toFixed(1), +(v.z + v.rz * (v.lr - 1.0)).toFixed(1), 1.3], t: [+x.toFixed(1), +z.toFixed(1), 1.3], fov: 32 });
+          }
+        }
+      });
     }
   }
 

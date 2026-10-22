@@ -2285,7 +2285,7 @@ function stackBores(g) {
 // that leave; a merge: the lanes it joins) to the moved node. gradeRoads
 // slides its drawn and driven band by it (`tw`, keeping `ltw`), traffic.js
 // goreOf lays its lane line by it, and world.js paints no lines on it.
-const GORE_RUN = 260, SH_GAP = 0.6;
+const GORE_RUN = 260, SH_GAP = 0.3;   // (SH_GAP: the ramp's edge off the main line's paved shoulder)
 function spreadGores(g) {
   const { nodes, edges } = g;
   const one = (e) => e.oneway;
