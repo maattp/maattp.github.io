@@ -2473,7 +2473,23 @@ export class TrafficSystem {
       // test never saw -- measured, 1st Ave S, a queue of eight for good.
       // Walked along the leads: if it comes back to this car through cars
       // all younger and all stopped, this one is the oldest and goes.
-      if (o.prio > v.prio && Math.abs(o.vLong) < 1 && this.waitsOn(o, v)) continue;
+      // ...BUT NEVER THROUGH IT: only where its body leaves my way room to
+      // pass (a body width, not the scan's margin). Where it does not (two
+      // opposing lefts stopped across each other's ways in a skewed box),
+      // the younger one is told to make way (`mkWay`) and goes first if ITS
+      // way is clear of me; neither clear, both wait (and back out, below).
+      // The older one used to drive on regardless: a 4 m/s scrape at signal
+      // 849.
+      if (o.prio > v.prio && Math.abs(o.vLong) < 1 && this.waitsOn(o, v)) {
+        const room = v.halfWid + ext + 0.1;
+        if (best > room * room) continue;
+        o.mkWay = v; o.mkWayT = this._tick;
+        this.stats.gridBlocked = (this.stats.gridBlocked || 0) + dt;
+      }
+      if (v.mkWay === o && this._tick - v.mkWayT <= 3 && o.prio < v.prio && Math.abs(o.vLong) < 1) {
+        const room = v.halfWid + ext + 0.1;
+        if (best > room * room) { this.stats.gridMadeWay = (this.stats.gridMadeWay || 0) + dt; continue; }
+      }
       const g = along - v.halfLen - (o.halfLen * Math.abs(co) + o.halfWid * so);
       if (g < gap) { gap = g; vLead = o.vLong * co; lead = o; }
     }
@@ -2646,6 +2662,14 @@ export class TrafficSystem {
     // three seconds of that: back out (above), once per wedge -- not with
     // a section or a trailer behind, which only jackknifes
     if (v.stuckT > 3 && v.stuckT - dt <= 3 && !v.trailer) v.backT = 1.2;
+    // TOLD TO MAKE WAY (the gridlock rule, above) by an older car my body
+    // blocks, while it blocks my own way too: neither can pass, so after
+    // 2.5 s I back off a little -- only with room behind me -- and plan
+    // afresh from there (backT). Before, the older one drove through me.
+    if (v.mkWay && this._tick - v.mkWayT <= 3 && v.lead === v.mkWay && Math.abs(v.vLong) < 0.5 && !v.trailer) {
+      v.mkWaitT = (v.mkWaitT || 0) + dt;
+      if (v.mkWaitT > 2.5 && this.roomBehind(v, 4)) { v.backT = 1.2; v.mkWaitT = 0; this.stats.gridBackOut = (this.stats.gridBackOut || 0) + 1; }
+    } else v.mkWaitT = 0;
     // ...and anything standing for 20 s out of sight, whatever it waits on:
     // there are no signals to wait at, so a car that long at rest is queued
     // behind a wedge or a gridlock of three or more, and the queue goes with it.
@@ -2701,12 +2725,14 @@ export class TrafficSystem {
       const gap = d - A.back - v.halfLen - 0.3;
       if (gap < -2.5) continue;   // already over the line: in the box
       const r = jc.decide(this, v, C, A, this.moveAt(v, j, C), gap, sp, player);
-      if (r === 1) {
-        if (gap < -0.6) { v.jcGo = A.id; seenGo = true; continue; }   // too late: through
+      // (3: a left waiting for its way through -- held where it is, even
+      // over its line: it is not too late to wait, as it is for a red)
+      if (r === 1 || r === 3) {
+        if (r === 1 && gap < -0.6) { v.jcGo = A.id; v.jcFrom = A.id; v.jcFromC = C.id; seenGo = true; continue; }   // too late: through
         res = Math.max(0, gap);
         break;
       }
-      if (r === 2 || gap < 0.6) { v.jcGo = A.id; seenGo = true; }
+      if (r === 2 || gap < 0.6) { v.jcGo = A.id; v.jcFrom = A.id; v.jcFromC = C.id; seenGo = true; }
       // nothing beyond this junction is decided before it is reached
       break;
     }
@@ -3070,6 +3096,18 @@ export class TrafficSystem {
       v.laneU = this.flow[v.edge] !== 0 ? this.nearestLaneU(v.edge, v.dirSign, 0) : 0.5;
       this.routeInit(v);
     }
+  }
+
+  /** Nothing within `m` metres behind car v (a body width either side)? */
+  roomBehind(v, m) {
+    const f = v.forward;
+    for (const o of this.cars) {
+      if (o === v || o.mode === 'apron' || Math.abs(o.y - v.y) > 3) continue;
+      const rx = o.x - v.x, rz = o.z - v.z, back = -(rx * f.x + rz * f.z);
+      if (back <= 0 || back > v.halfLen + o.halfLen + m) continue;
+      if (Math.abs(rx * f.z - rz * f.x) < v.halfWid + o.halfWid + 0.5) return false;
+    }
+    return true;
   }
 
   /** Does o wait on v, through at most four cars each younger than v and
