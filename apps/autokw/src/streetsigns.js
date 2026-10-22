@@ -134,6 +134,33 @@ function shieldSpec(num) {
   return { style: 'S', num, ppm, w: 0.37, h: H, key: `S|${num}` };
 }
 
+// GRT's stop flags (world.js _grtStops): two shared slots for every stop in town -- the GRT
+// wordmark, white on the flag's blue, and the digits 0-9, black on white, one DIG_W px cell
+// each, from which a stop's number is laid a digit at a time (a face's `cu0` / `cu1`)
+const DIG_W = 46;
+export function grtSpec(kind) {
+  if (kind === 'digits') { const h = 0.16, ppm = ART_H / h; return { style: 'GD', ppm, w: (DIG_W * 10) / ppm, h, key: 'G|digits' }; }
+  const h = 0.2, ppm = ART_H / h;
+  return { style: 'G', ppm, w: 150 / ppm, h, key: 'G|grt' };
+}
+/** The face of one digit of a stop number: [cu0, cu1] px of the digits slot. */
+export function digitCell(ch) { const i = ch.charCodeAt(0) - 48; return [i * DIG_W + 3, (i + 1) * DIG_W - 3]; }
+function drawGrt(g, s, W, H) {
+  if (s.style === 'GD') {
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H);
+    g.fillStyle = '#111316'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = `700 ${(H * 0.92).toFixed(0)}px ${FONT}`;
+    for (let i = 0; i < 10; i++) g.fillText(String(i), i * DIG_W + DIG_W / 2, H * 0.54, DIG_W - 6);
+    return;
+  }
+  g.fillStyle = '#16337f'; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#ffffff'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.save(); g.translate(W / 2, H * 0.53); g.transform(1, 0, -0.18, 1, 0, 0);
+  g.font = `italic 800 ${(H * 0.8).toFixed(0)}px ${FONT}`;
+  g.fillText('GRT', 0, 0, W - 10);
+  g.restore();
+}
+
 function rrect(g, x, y, w, h, r) {
   g.beginPath();
   g.moveTo(x + r, y); g.lineTo(x + w - r, y); g.quadraticCurveTo(x + w, y, x + w, y + r);
@@ -147,6 +174,7 @@ function rrect(g, x, y, w, h, r) {
 function drawArt(g, s, W, H) {
   g.clearRect(0, 0, W, H);
   if (s.style === 'S') return drawShield(g, s, W, H);
+  if (s.style === 'G' || s.style === 'GD') return drawGrt(g, s, W, H);
   const D = DESIGN[s.style];
   const ppm = s.ppm;
   let midY = H / 2;
@@ -278,6 +306,7 @@ export class StreetSigns {
     this.addr = data.addr || {};
     this.dtk = data.dtk || [];
     this.byChunk = new Map();    // chunk key -> sites
+    this.extra = new Map();      // chunk key -> other lettered sites (world.js: GRT's stop flags)
     this.mesh = null;
   }
 
@@ -332,6 +361,12 @@ export class StreetSigns {
   // --- the corners ---------------------------------------------------------
 
   /** Sites (posts with their blades, mast-arm signs) of chunk (cx, cz), worked out once. */
+  /** Lettered sites another drawer put in chunk (cx, cz) ({ x, z, faces }), replacing its last ones. */
+  setExtra(cx, cz, sites) {
+    const k = this.city.chunkKey(cx, cz);
+    if (sites && sites.length) this.extra.set(k, sites); else this.extra.delete(k);
+  }
+
   sitesIn(cx, cz) {
     const city = this.city, ck = city.chunkKey(cx, cz);
     let S = this.byChunk.get(ck);
@@ -728,7 +763,7 @@ export class StreetSigns {
     for (let cx = c0; cx <= c1; cx++) for (let cz = d0; cz <= d1; cz++) {
       const wc = world && world.chunks && world.chunks.get(city.chunkKey(cx, cz));
       if (!wc || wc.lod !== 1 || !wc.group) continue;
-      for (const site of this.sitesIn(cx, cz)) {
+      for (const L of [this.sitesIn(cx, cz), this.extra.get(city.chunkKey(cx, cz))]) if (L) for (const site of L) {
         const d2 = (site.x - px) ** 2 + (site.z - pz) ** 2;
         if (d2 > R * R) continue;
         for (const f of site.faces) if (d2 < f.R * f.R) faces.push([d2, f]);
@@ -746,14 +781,15 @@ export class StreetSigns {
       if (!s) continue;
       const sp = f.spec;
       const rx = f.fz, rz = -f.fx;   // the face's right, as its reader sees it
-      const hw = sp.w / 2, hh = sp.h / 2;
+      // (a face may take its own size and a part of its slot's art: a stop number's digit)
+      const hw = (f.w || sp.w) / 2, hh = (f.h || sp.h) / 2;
       const o = q * 12;
       // bottom-left, bottom-right, top-right, top-left
       P[o] = f.x - rx * hw; P[o + 1] = f.y - hh; P[o + 2] = f.z - rz * hw;
       P[o + 3] = f.x + rx * hw; P[o + 4] = f.y - hh; P[o + 5] = f.z + rz * hw;
       P[o + 6] = f.x + rx * hw; P[o + 7] = f.y + hh; P[o + 8] = f.z + rz * hw;
       P[o + 9] = f.x - rx * hw; P[o + 10] = f.y + hh; P[o + 11] = f.z - rz * hw;
-      const u0 = (s.x + 2.5) / AW, u1 = (s.x + 2 + s.wpx - 0.5) / AW;
+      const u0 = f.cu ? (s.x + 2 + f.cu[0]) / AW : (s.x + 2.5) / AW, u1 = f.cu ? (s.x + 2 + f.cu[1]) / AW : (s.x + 2 + s.wpx - 0.5) / AW;
       const vb = (AH - s.y - 2 - ART_H + 0.5) / AH, vt = (AH - s.y - 2 - 0.5) / AH;
       const t = q * 8;
       U[t] = u0; U[t + 1] = vb; U[t + 2] = u1; U[t + 3] = vb;

@@ -16,6 +16,7 @@ import { buildMountains } from './mountains.js';
 import { plantTrees, occupancy, OCC_C, OCC_N, OCC_PAVE } from './trees.js';
 import { pumpkinSeed } from './fall.js';
 import { hash2, clamp, lerp, distToSeg, segDist, FALL, buildingTiers, roofAt, tierScale } from './util.js';
+import { grtSpec, digitCell } from './streetsigns.js';
 import { edgeFlow, oneWaySpan, twoWayLayout, twoWayCuts, medianGaps, medianNoses, alBike } from './arterial.js';
 
 // The bore's cross-section, shared by the mesher and by the trench that has to
@@ -227,6 +228,13 @@ const NODE_Y = NODE_LIFT;
 const WALK_Y = WALK_LIFT;
 
 const NEAR_R = 2; // chunks of full detail around the player
+/** Auto KW: a kwshops.js country store's box for the mid / far massing (`kw.mass`), a little
+ *  inside the store kwshops draws over it in its range-culled cluster, so the two never z-fight. */
+function massInset(bd) {
+  const o = Object.create(bd);
+  o.w = bd.w - 0.5; o.d = bd.d - 0.5; o.h = bd.h - 0.4;
+  return o;
+}
 const MID_R = 4; // chunks that keep roads only
 // Far massing supertiles are built and drawn inside this radius of the player.
 // Past ~5 km the haze has taken them (83 % fog at 4 km, 94 % at 5 km from
@@ -590,6 +598,8 @@ const THRU_RIGHT_ARROW = [
 // is turned by -90 deg, -z by 180, -x by +90.
 const FRONT_TURN = [0, -Math.PI / 2, Math.PI, Math.PI / 2];
 const NOTOP = { top: false };
+// GRT stop flags' lettering: drawn within this of the camera (streetsigns.js's mesh)
+const GRT_R = 110;
 const QUAD_UV = [0, 0, 1, 0, 1, 1, 0, 1];
 // wrought and painted iron: fire escapes, railings
 const IRON = [0.06, 0.06, 0.065];
@@ -4071,7 +4081,7 @@ ${FALL ? `
       const B = city.buildings;
       for (let i = 0; i < B.length; i++) {
         const bd = B[i];
-        if (bd.h < 16 && bd.w * bd.d < 1400) {   // the skyline draws the rest
+        if ((bd.h < 16 && bd.w * bd.d < 1400) || (bd.kw && bd.kw.mass)) {   // the skyline draws the rest
           const tx = Math.floor(bd.x / TILE), tz = Math.floor(bd.z / TILE);
           const k = tx * 1000 + tz;
           let t = bins.get(k);
@@ -4109,8 +4119,10 @@ ${FALL ? `
     const ox = t.tx * TILE, oz = t.tz * TILE;
     const boxes = [];   // [x, y, z, w, h, d, rot, r, g, b, chunk]
     const cells = new Map();
-    for (const bd of t.list) {
-      if (bd.kw && (bd.kw.poly || bd.kw.skip)) continue;   // Auto KW: drawn from its footprint (kw.js), or by kwfun.js
+    for (const bd0 of t.list) {
+      const km = !!(bd0.kw && bd0.kw.mass);
+      if (!km && bd0.kw && (bd0.kw.poly || bd0.kw.skip)) continue;   // Auto KW: drawn from its footprint (kw.js), or by kwfun.js
+      const bd = km ? massInset(bd0) : bd0;   // (a kwshops country store: inside its own walls)
       if (bd.style === 'house' || (bd.h < 10 && bd.w * bd.d < 400)) {
         const k = Math.floor(bd.x / CELL) * 100000 + Math.floor(bd.z / CELL);
         let l = cells.get(k);
@@ -5238,9 +5250,13 @@ float frLine(float o, float fw, float c, float w) {
       // mesher's 2 m embed: a massing box lives 800 m away where a slope gap
       // under a corner is invisible, and the shallower skirt is cheaper.
       for (const bi of ch.buildings) {
-        const bd = city.buildings[bi];
-        if (bd.h >= 16 || bd.w * bd.d >= 1400) continue;   // skyline draws these
-        if (bd.kw && (bd.kw.poly || bd.kw.skip)) continue;   // Auto KW: drawn from its footprint (kw.js), or by kwfun.js
+        const bd0 = city.buildings[bi];
+        const km = !!(bd0.kw && bd0.kw.mass);
+        if (!km && (bd0.h >= 16 || bd0.w * bd0.d >= 1400)) continue;   // skyline draws these
+        if (!km && bd0.kw && (bd0.kw.poly || bd0.kw.skip)) continue;   // Auto KW: drawn from its footprint (kw.js), or by kwfun.js
+        // Auto KW: a store kwshops.js draws in a range-culled cluster: its box here, just
+        // inside the store's own walls and roof where both are drawn
+        const bd = km ? massInset(bd0) : bd0;
         const wall = this.massColour(bd);
         flat.box(bd.x, bd.y - 0.5, bd.z, bd.w, bd.h + 0.5, bd.d, bd.rot, wall, { ao: 0.35, top: false });
         // the roof: membrane grey for a flat top, shingle for a house's
@@ -11096,9 +11112,11 @@ float frLine(float o, float fw, float c, float w) {
    * walk, its back to the property line, a bench in it. Into the chunk's flat
    * builder: no draws. The post and the shelter are solid (addObstacle).
    */
-  _grtStops(flat, cx, cz) {
+  _grtStops(flat, glow, cx, cz) {
     const S = this.city.grtStops;
     if (!S || !S.s) return;
+    const SS = this.city.streetSigns || null, sites = [];
+    const specG = SS ? grtSpec('grt') : null, specD = SS ? grtSpec('digits') : null;
     if (!S.byChunk) {
       S.byChunk = new Map();
       for (const r of S.s) {
@@ -11108,10 +11126,10 @@ float frLine(float o, float fw, float c, float w) {
       }
     }
     const list = S.byChunk.get(cx * 100003 + cz);
-    if (!list) return;
+    if (!list) { if (SS) SS.setExtra(cx, cz, null); return; }
     const city = this.city, E = city.edges, N = city.nodes;
-    const GS = cityStats.grtStops || (cityStats.grtStops = { stops: 0, shelters: 0, skipped: 0 });
-    for (const [x0, z0, fl] of list) {
+    const GS = cityStats.grtStops || (cityStats.grtStops = { stops: 0, shelters: 0, skipped: 0, numbered: 0 });
+    for (const [x0, z0, fl, ref] of list) {
       let best = null, bd = 25;
       for (const ei of city.roadsNear(x0, z0, 25, false)) {
         const e = E[ei];
@@ -11135,47 +11153,117 @@ float frLine(float o, float fw, float c, float w) {
       const rot = Math.atan2(-nx, nz);
       const GALV = [0.62, 0.63, 0.62];
       flat.prism(px, gy - 0.1, pz, 0.045, 3.0, 6, GALV);
-      // the flag, off the post toward the street's traffic, square to the kerb
+      // the flag, off the post toward the street, square to the kerb (Builder.box's local x is
+      // along the kerb here: w along u, d along n), facing the traffic each way: GRT's blue
+      // over the route colour over the white strip with the stop's number
       const fx = px - nx * 0.28, fz = pz - nz * 0.28;
       const band = (y0, h, col) => flat.box(fx, gy + y0, fz, 0.025, h, 0.46, rot, col);
-      band(2.62, 0.22, [0.08, 0.2, 0.5]);                                     // the GRT band
-      band(2.12, 0.5, fl & 4 ? [0.18, 0.56, 0.24] : [0.95, 0.47, 0.08]);      // local / iXpress
-      band(1.94, 0.18, [0.93, 0.93, 0.9]);                                   // the stop number's strip
-      flat.box(fx, gy + 2.46, fz, 0.03, 0.12, 0.26, rot, [0.95, 0.95, 0.93]); // (the logo, white)
+      band(2.6, 0.26, [0.08, 0.2, 0.5]);                                      // the GRT band
+      band(2.14, 0.46, fl & 4 ? [0.18, 0.56, 0.24] : [0.95, 0.47, 0.08]);     // local / iXpress
+      band(1.9, 0.24, [0.93, 0.93, 0.9]);                                    // the stop number's strip
+      // the lettering (streetsigns.js's atlas, its one lettering mesh near the camera): GRT on
+      // the blue, the number a digit at a time on the white, both faces
+      if (SS) {
+        const faces = [];
+        const num = ref > 0 ? String(ref) : '';
+        for (const sg of [1, -1]) {
+          const ox = fx + ux * sg * 0.016, oz = fz + uz * sg * 0.016, fnx = ux * sg, fnz = uz * sg;
+          faces.push({ spec: specG, x: ox, y: gy + 2.73, z: oz, fx: fnx, fz: fnz, R: GRT_R, w: 0.36, h: 0.144 });
+          if (num) {
+            const rx = fnz, rz = -fnx, dh = 0.15, dw = dh * 40 / 60, x0 = -(num.length * dw) / 2;
+            for (let i = 0; i < num.length; i++) {
+              const t = x0 + (i + 0.5) * dw;
+              faces.push({ spec: specD, x: ox + rx * t, y: gy + 2.02, z: oz + rz * t, fx: fnx, fz: fnz, R: GRT_R, w: dw, h: dh, cu: digitCell(num[i]) });
+            }
+          }
+        }
+        sites.push({ x: fx, z: fz, faces });
+        GS.numbered += num ? 1 : 0;
+      }
       city.addObstacle(this._ck, px, pz, 0.12);
       GS.stops++;
       if (!(fl & 1)) continue;
-      // THE SHELTER, behind the walk: 3.4 m along the kerb, 1.5 m deep
+      // THE SHELTER, behind the walk. GRT's two generations: the ION-era glass shelter (slim
+      // charcoal frame, clear glass, a flat roof cantilevered toward the kerb under a blue GRT
+      // fascia) -- double length with iXpress's green and a route map at an iXpress stop -- and
+      // the older advertising shelter (bronze frame, a barrel roof, a lit ad panel at one end)
+      const kind = fl & 4 ? 'ix' : hash2(Math.round(x0), Math.round(z0)) < 0.45 ? 'glass' : 'ad';
+      const SL = kind === 'ix' ? 6.4 : 3.6, hl = SL / 2;
       const so = e.hw + sw + 0.95;
-      const sx = qx + nx * so + ux * 1.6, sz = qz + nz * so + uz * 1.6;
+      const sx = qx + nx * so + ux * (hl - 0.2), sz = qz + nz * so + uz * (hl - 0.2);
       let clear = G.isBuildable(sx, sz);
-      for (const [a1, b1] of [[-1.8, -0.8], [1.8, -0.8], [-1.8, 0.8], [1.8, 0.8], [0, 0]]) {
+      for (const [a1, b1] of [[-hl, -0.8], [hl, -0.8], [-hl, 0.8], [hl, 0.8], [0, 0]]) {
         const x = sx + ux * a1 + nx * b1, z = sz + uz * a1 + nz * b1;
         if (!clear || city.onRoad(x, z, 0.3, false) || this._onApron(x, z, 0.3) || this.inBuilding(x, z, 0.6)) { clear = false; break; }
       }
       if (!clear) continue;
       const sy = G.terrainHeight(sx, sz) + WALK_Y;
-      const FRAME = [0.16, 0.17, 0.18], GLASS = [0.5, 0.58, 0.62], ROOF = [0.22, 0.24, 0.26];
       const at = (a1, b1) => [sx + ux * a1 + nx * b1, sz + uz * a1 + nz * b1];
-      flat.box(sx, sy - 0.05, sz, 3.6, 0.1, 1.7, rot + Math.PI / 2, [0.6, 0.6, 0.57]);   // pad
-      for (const [a1, b1] of [[-1.7, -0.7], [1.7, -0.7], [-1.7, 0.7], [1.7, 0.7]]) {
+      const P3 = (a1, b1, y) => { const [x, z] = at(a1, b1); return [x, y, z]; };
+      const ad = kind === 'ad';
+      const FRAME = ad ? [0.3, 0.22, 0.14] : [0.12, 0.13, 0.14], GLASS = ad ? [0.46, 0.5, 0.48] : [0.55, 0.64, 0.68];
+      flat.box(sx, sy - 0.05, sz, SL, 0.1, 1.7, rot, [0.6, 0.6, 0.57]);   // pad
+      const posts = kind === 'ix' ? [-hl + 0.1, 0, hl - 0.1] : [-hl + 0.1, hl - 0.1];
+      for (const a1 of posts) for (const b1 of [-0.7, 0.7]) {
         const [x, z] = at(a1, b1);
-        flat.box(x, sy, z, 0.07, 2.35, 0.07, rot, FRAME);
+        flat.box(x, sy, z, ad ? 0.09 : 0.06, 2.4, ad ? 0.09 : 0.06, rot, FRAME);
       }
-      // glass: the back (toward the property), the two ends; open to the street
-      { const [x, z] = at(0, 0.7); flat.box(x, sy + 0.15, z, 0.03, 2.0, 3.36, rot, GLASS); }
-      for (const a1 of [-1.7, 1.7]) { const [x, z] = at(a1, 0.05); flat.box(x, sy + 0.15, z, 1.2, 2.0, 0.03, rot, GLASS); }
-      // the roof, and its GRT fascia toward the street
-      flat.box(sx, sy + 2.35, sz, 1.8, 0.12, 3.7, rot, ROOF);
-      { const [x, z] = at(0, -0.92); flat.box(x, sy + 2.2, z, 0.03, 0.2, 3.6, rot, [0.08, 0.2, 0.5]); }
-      // the bench along the back
-      { const [x, z] = at(0, 0.42); flat.box(x, sy + 0.42, z, 0.36, 0.06, 2.2, rot, [0.3, 0.3, 0.31]); }
-      for (const [a1, b1] of [[-1.7, 0], [0, 0.7], [1.7, 0]]) {
+      // glass: the back (toward the property), the two ends (open at the kerb side); a rail
+      // along the glass at the top and the bottom
+      { const [x, z] = at(0, 0.7); flat.box(x, sy + 0.12, z, SL - 0.2, 2.1, 0.025, rot, GLASS);
+        for (const y of [0.1, 2.24]) flat.box(x, sy + y, z, SL - 0.1, 0.05, 0.05, rot, FRAME); }
+      for (const a1 of [-hl + 0.1, hl - 0.1]) {
+        // (the ad shelter's far end is its lit panel instead)
+        if (ad && a1 > 0) continue;
+        const [x, z] = at(a1, 0.15);
+        flat.box(x, sy + 0.12, z, 0.025, 2.1, 1.1, rot, GLASS);
+      }
+      if (ad) {
+        // the barrel roof across the depth, in bronze-tinted acrylic, and its frame
+        const ROOF = [0.42, 0.33, 0.22], n = 6;
+        for (let i = 0; i < n; i++) {
+          const a0 = Math.PI * (0.15 + 0.7 * i / n), a1 = Math.PI * (0.15 + 0.7 * (i + 1) / n);
+          const b0 = -Math.cos(a0) * 1.0, b1 = -Math.cos(a1) * 1.0, y0 = sy + 2.35 + Math.sin(a0) * 0.45 - 0.4, y1 = sy + 2.35 + Math.sin(a1) * 0.45 - 0.4;
+          const mb = (b0 + b1) / 2, my = (y0 + y1) / 2 - sy - 2.0;
+          const nn = [nx * mb + 0, my, nz * mb]; const ln = Math.hypot(...nn) || 1;
+          flat.quad(P3(-hl - 0.1, b0, y0), P3(hl + 0.1, b0, y0), P3(hl + 0.1, b1, y1), P3(-hl - 0.1, b1, y1), [nn[0] / ln, nn[1] / ln, nn[2] / ln], ZERO_UV, ROOF);
+          // (its underside: what someone waiting in it sees)
+          flat.quad(P3(-hl - 0.1, b0, y0 - 0.01), P3(hl + 0.1, b0, y0 - 0.01), P3(hl + 0.1, b1, y1 - 0.01), P3(-hl - 0.1, b1, y1 - 0.01), [-nn[0] / ln, -nn[1] / ln, -nn[2] / ln], ZERO_UV, [0.3, 0.24, 0.17]);
+        }
+        for (const a1 of [-hl - 0.1, hl + 0.1]) { const [x, z] = at(a1, 0); flat.box(x, sy + 2.3, z, 0.08, 0.18, 1.95, rot, FRAME); }
+        // the ad panel: a bronze case at the far end, its two faces lit (poster colours by stop)
+        { const [x, z] = at(hl - 0.1, 0.05);
+          flat.box(x, sy + 0.15, z, 0.22, 1.95, 1.25, rot, FRAME);
+          const PO = [[0.95, 0.85, 0.7], [0.75, 0.88, 0.98], [0.98, 0.78, 0.62], [0.82, 0.95, 0.8]];
+          const pc = PO[Math.floor(hash2(Math.round(z0), Math.round(x0)) * PO.length) % PO.length];
+          for (const sg of [-1, 1]) { const [gx, gz] = at(hl - 0.1 + sg * 0.115, 0.05); glow.box(gx, sy + 0.32, gz, 0.02, 1.62, 1.08, rot, pc); } }
+      } else {
+        // the flat roof, cantilevered over the kerb side; the blue fascia with GRT on it
+        { const [x, z] = at(0, -0.15); flat.box(x, sy + 2.4, z, SL + 0.2, 0.1, 2.1, rot, [0.2, 0.22, 0.24]); }
+        { const [x, z] = at(0, -1.21); flat.box(x, sy + 2.28, z, SL + 0.2, 0.26, 0.04, rot, [0.08, 0.2, 0.5]);
+          if (SS) sites.push({ x, z, faces: [{ spec: specG, x: x - nx * 0.025, y: sy + 2.41, z: z - nz * 0.025, fx: -nx, fz: -nz, R: GRT_R, w: 0.5, h: 0.2 }] }); }
+        if (kind === 'ix') {
+          // iXpress's green under the fascia, the route map in its frame at the far end
+          { const [x, z] = at(0, -1.235); flat.box(x, sy + 2.2, z, SL + 0.2, 0.08, 0.03, rot, [0.18, 0.56, 0.24]); }
+          { const [x, z] = at(hl - 0.5, 0.66); flat.box(x, sy + 0.6, z, 0.8, 1.3, 0.06, rot, FRAME);
+            const [mx, mz] = at(hl - 0.5, 0.62); glow.box(mx, sy + 0.68, mz, 0.66, 1.12, 0.02, rot, [0.92, 0.94, 0.9]); }
+        }
+      }
+      // the bench along the back, the ION-era shelter's on its own legs
+      { const [x, z] = at(kind === 'ix' ? -1.2 : -0.3, 0.42); flat.box(x, sy + 0.42, z, 2.0, 0.06, 0.4, rot, ad ? [0.36, 0.27, 0.18] : [0.3, 0.3, 0.31]);
+        for (const t of [-0.85, 0.85]) { const [lx, lz] = at((kind === 'ix' ? -1.2 : -0.3) + t, 0.42); flat.box(lx, sy, lz, 0.05, 0.42, 0.3, rot, FRAME); } }
+      for (const [a1, b1] of [[-hl, 0], [0, 0.7], [hl, 0]]) {
         const [x, z] = at(a1 * 0.9, b1);
         city.addObstacle(this._ck, x, z, 0.5);
       }
       GS.shelters++;
+      GS[kind] = (GS[kind] || 0) + 1;
+      // (a few of each, for the harness's cameras)
+      const smp = GS.at || (GS.at = {});
+      const L = smp[kind] || (smp[kind] = []);
+      if (L.length < 6) L.push([Math.round(sx), Math.round(sz), +nx.toFixed(2), +nz.toFixed(2), ref]);
     }
+    if (SS) SS.setExtra(cx, cz, sites);
   }
 
   /**
@@ -11225,7 +11313,7 @@ float frLine(float o, float fw, float c, float w) {
     const city = this.city;
     const own = (x, z) => Math.floor(x / CHUNK) === cx && Math.floor(z / CHUNK) === cz;
     this._postBoxes(flat, cx, cz);
-    this._grtStops(flat, cx, cz);
+    this._grtStops(flat, glow, cx, cz);
     const poleCol = [0.28, 0.3, 0.32];
     // NOTHING IS PLANTED IN A PORTAL PIT. The carve digs hw + 7.6 m either
     // side of a cutting, and a road carried over it on a lid keeps its grade

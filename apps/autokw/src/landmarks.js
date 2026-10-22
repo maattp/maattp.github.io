@@ -65,6 +65,8 @@ import { makeDowntown } from './lmdowntown.js';
 // within this of its bounding sphere: past ~1 km the 1.8 m cloth is under a
 // pixel at the phone's 582-row frame, the 0.14 m pole a fraction of one.
 const FLAG_RANGE = 1000;
+// kwshops.js's country stores: the near ring's reach (world.js NEAR_R 2 chunks of 400 m: <= 1414 m to its far corner)
+const KWR_RANGE = 1500;
 
 // --- materials -----------------------------------------------------------------
 //
@@ -3367,6 +3369,9 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
       else if (key.startsWith('near:')) near.push({ o, s: o.geometry.boundingSphere, r: 520 });
       // a cell's small flags (kwfun.js buildFlags): under a pixel past FLAG_RANGE
       else if (key.startsWith('flags:')) near.push({ o, s: o.geometry.boundingSphere, r: FLAG_RANGE });
+      // Auto KW: the stores past every footprint cluster (kwshops.js prepShops `rk`): drawn
+      // while the streamer's near ring can hold them; past it the world's massing draws their boxes
+      else if (key.startsWith('kwr:')) near.push({ o, s: o.geometry.boundingSphere, r: KWR_RANGE });
       const ok = !(o.material.userData && o.material.userData.noShadow) && !o.material.transparent && !o.material.isMeshBasicMaterial;
       o.castShadow = ok;
       o.receiveShadow = ok || o.material.isMeshStandardMaterial;

@@ -689,10 +689,13 @@ export function prepShops(city) {
   (S.fronts || []).forEach((F, fi) => {
     const [bx, bz, kind] = F;
     const b = boxAt(city, bx, bz, 1);
-    if (!free(b) || b.h < 2.5 || b.h > 12.5 || b.w < 5 || b.d < 5) return;
+    // a store in a farm building (farmstead.js draws it: a market in a bank barn, a meat shop
+    // in a farmhouse) keeps its building and gets its sign (b.kw.sign)
+    const farm = !!b && FARM_SIGN.has(b.style) && !b.kind;
+    if (!free(b) || b.h < 2.5 || b.h > (farm ? 20 : 12.5) || b.w < 5 || b.d < 5) return;
     // (a dealer, a big lot on an auto row, a little further)
     const M = kind === 'c' ? 120 : 60;
-    let ck = null;
+    let ck = null, rk = null;
     if (outBy(ext.get(ckey(b.x, b.z)), b.x, b.z) > M) {
       // past its own cell's cluster: merged into the nearest cell's (its own or a NEIGHBOUR's) when that one's
       // drawn extent is within NEXT_M of it (a store just over a 1200 m line, on a row the
@@ -704,13 +707,17 @@ export function prepShops(city) {
         const d = outBy(ext.get((kx + i) * 1000 + (kz + j)), b.x, b.z);
         if (d < bd) { bd = d; near = true; ck = i || j ? [(kx + i) * 1200, (kz + j) * 1200] : null; }
       }
-      if (!near) { r.frontsOut++; return; }
-      r.frontsNear = (r.frontsNear || 0) + 1;
+      // no cluster near: its own range-culled one ('kwr:', landmarks.js KWR_RANGE), where the
+      // country's stores (Breslau, Conestogo, the farm markets, the auto rows past the
+      // plazas) are drawn as the rest; past the range the world's mid / far massing draws its
+      // box (`kw.mass`), as it draws every other building there
+      if (!near) { r.frontsOut++; rk = 'kwr:' + Math.round(b.x / KWR_CELL) + ',' + Math.round(b.z / KWR_CELL); }
+      else r.frontsNear = (r.frontsNear || 0) + 1;
     }
     const A = b.w * b.d;
     if (A < 40 || A > 16000) return;
     // a store in a house (a salon in a bungalow) stays a house; a pad or a kiosk the data says is one does not
-    if (!(PLAIN_STYLES.has(b.style) || (b.style === 'house' && kind !== 's'))) return;
+    if (!farm && !(PLAIN_STYLES.has(b.style) || (b.style === 'house' && kind !== 's'))) return;
     const fr = frameOf(b);
     // its storefront: the face toward the street it is addressed on (F[5]), with the most car park, not backing on a road
     let face = 0, best = -Infinity;
@@ -720,6 +727,14 @@ export function prepShops(city) {
         + (city.onRoad(q[0], q[2], 4, false) ? -0.5 : 0) + fr.F[f].len * 0.002;
       if (s > best) { best = s; face = f; }
     }
+    // (a garage, a dealer, a restaurant or a gas kiosk the importer called a barn -- a big
+    // untagged box out of town -- is drawn as one, below)
+    if (farm && (kind === 's' || isMarket(F))) {
+      if (!b.kw) b.kw = {};
+      b.kw.sign = { face, front: fi, rk };
+      r.farmSigns = (r.farmSigns || 0) + 1;
+      return;
+    }
     // two storeys with no lot in front is a main street's shop with flats over it: left as it is
     if (b.h > 7.5 && kind === 's' && lotShare(city, fr, face) < 0.2) return;
     if (!b.kw) b.kw = {};
@@ -727,9 +742,14 @@ export function prepShops(city) {
     b.kw.skip = true;
     b.kw.shop = { fmt: 'strip', plaza: -1, front: fi, kind };
     if (ck) { b.kw.shop.ck = ck; r.frontsNext++; }
+    if (rk) { b.kw.shop.rk = rk; b.kw.mass = true; r.frontsRural = (r.frontsRural || 0) + 1; }
+    // a farm market, a nursery, a meat or cheese shop in the country: a board-and-batten
+    // store under a steel gable (farmMarket in buildShops)
+    if (rk && (kind === 's' || kind === 'f') && A < 2600 && Math.min(b.w, b.d) < 30 && isMarket(F)) { b.kw.shop.market = true; r.markets = (r.markets || 0) + 1; }
     // one storey and its parapet: a pad 5-6 m, a kiosk under its canopy's height, a showroom's double height
     const H = { s: 7.2, f: 5.8, b: 6.4, a: 6.2, k: 4.9, c: 7.6 }[kind] || 7.2;
-    if (kind === 's') { if (b.h > 7.5 && A < 6000) b.h = 7.2; b.h = Math.max(b.h, 5.0); } else b.h = H;
+    if (b.kw.shop.market) b.h = 4.6;   // the eaves: the gable stands over them
+    else if (kind === 's') { if (b.h > 7.5 && A < 6000) b.h = 7.2; b.h = Math.max(b.h, 5.0); } else b.h = H;
     r.fronts++;
   });
   return r;
@@ -737,6 +757,18 @@ export function prepShops(city) {
 /** The share of the ground in front of face fi (7 x 8 m deep, 7 across) that is car park. */
 // how far past a cell's drawn extent (its own, or the next one's) a front past M may be, to be merged into it
 const NEXT_M = 150;
+// the stores past every cluster: their own clusters, KWR_CELL m cells (landmarks.js range-culls 'kwr:')
+const KWR_CELL = 1200;
+const FARM_SIGN = new Set(['barn', 'shed', 'farmhouse']);
+// a country store sold off the farm: by its OSM name
+const MARKET_RE = /farm|market|nursery|garden|greenhouse|bloom|orchard|produce|meats?\b|dairy|cheese|peanut|bake|bakery|maple|pantry|barn|harvest|feed|seed|country|bulk|antique|quilt|smokehouse|sugar|honey|berr/i;
+const NOT_MARKET = /hasty|food market|super ?market|mini[- ]?mart|country style|marketplace|variety|convenience|pizza|auto|tire|storage|cannabis|vape/i;
+function isMarket(F) {
+  if (F[4] && B[F[4]]) return false;   // a chain
+  const names = [F[4], ...(F[3] || []).map((q) => q[0])].filter(Boolean);
+  if (names.some((n) => NOT_MARKET.test(n))) return false;
+  return names.some((n) => MARKET_RE.test(n));
+}
 function lotShare(city, fr, fi) {
   const L = fr.F[fi].len;
   let park = 0, n = 0;
@@ -1092,10 +1124,12 @@ export function buildShops(ctx) {
   // a front merged into the next cell's cluster (prepShops `ck`): everything drawn on or by its
   // building goes to that cluster's builders (a 40 m grid of them, the building's reach)
   const redir = new Map();
+  // (and a store past every cluster, prepShops `rk`, to its own range-culled 'kwr:' one)
   for (const b of city.buildings) {
-    const ck = b.kw && b.kw.shop && b.kw.shop.ck;
-    if (!ck) continue;
-    const r = Math.max(b.w, b.d) / 2 + 3, k = 'kwp' + Math.round(ck[0] / 1200) + ',' + Math.round(ck[1] / 1200);
+    if (!b.kw) continue;
+    const ck = b.kw.shop && b.kw.shop.ck, rk = (b.kw.shop && b.kw.shop.rk) || (b.kw.sign && b.kw.sign.rk);
+    if (!ck && !rk) continue;
+    const r = Math.max(b.w, b.d) / 2 + 3, k = rk || 'kwp' + Math.round(ck[0] / 1200) + ',' + Math.round(ck[1] / 1200);
     for (let gx = Math.floor((b.x - r) / 40); gx <= Math.floor((b.x + r) / 40); gx++) for (let gz = Math.floor((b.z - r) / 40); gz <= Math.floor((b.z + r) / 40); gz++) {
       const g = gx * 100000 + gz;
       let l = redir.get(g);
@@ -1103,7 +1137,10 @@ export function buildShops(ctx) {
       l.push({ b, r, k });
     }
   }
+  // while a store past every cluster is drawn, everything it puts down (its road pylon too) is its cluster's
+  let curKey = null;
   const key = (x, z) => {
+    if (curKey) return curKey;
     if (redir.size) {
       const l = redir.get(Math.floor(x / 40) * 100000 + Math.floor(z / 40));
       if (l) for (const q of l) if (Math.abs(x - q.b.x) < q.r && Math.abs(z - q.b.z) < q.r) return q.k;
@@ -1464,7 +1501,9 @@ export function buildShops(ctx) {
   };
   const pad = (b, look, opts = {}) => {
     const fi = b.kw.strip.face, fr = frameOf(b), L = fr.F[fi].len, Bd = Gb(b.x, b.z), h = L / 2;
-    const Ar = { wall: look.wall, base: look.base || '#6f6a62', cap: look.cap || look.band, roof: '#c9cac9', pier: look.pier };
+    // the roof by what it is: a kiosk's white membrane, a bank's and a restaurant's grey ballast
+    const kd = b.kw.shop && b.kw.shop.kind;
+    const Ar = { wall: look.wall, base: look.base || '#6f6a62', cap: look.cap || look.band, roof: look.roof || (kd === 'k' ? '#e4e4e0' : kd === 'b' ? '#b3b0a8' : kd === 'f' ? '#a8a49b' : '#c9cac9'), pier: look.pier };
     const { gy, top, pt } = shell(Bd, b, fr, fi, Ar, { par: 0.8, maxUnits: 3, noPiers: !look.pier, pierEvery: 5, skipPier: (fj, t) => fj === fi && Math.abs(t) < h - 1.2 });
     // the front's glass, its mullions, the door
     const g0 = -h + 0.7, g1 = h - 0.7, gt = gy + (opts.glassTop || 3.05);
@@ -1680,7 +1719,7 @@ export function buildShops(ctx) {
     if (kind === 'a') {
       const col = chainCol(who);
       const fi = b.kw.strip.face, fr = frameOf(b), L = fr.F[fi].len, Bd = Gb(b.x, b.z), h = L / 2;
-      const { gy, top } = shell(Bd, b, fr, fi, { wall: '#d2cfc8', base: '#7a766f', cap: '#4a4e53', roof: '#c4c5c4' }, { par: 0.7, maxUnits: 2, noPiers: true });
+      const { gy, top } = shell(Bd, b, fr, fi, { wall: '#d2cfc8', base: '#7a766f', cap: '#4a4e53', roof: '#8d9297' }, { par: 0.7, maxUnits: 2, noPiers: true });
       // the office's glass at one end, the bays across the rest
       const off = Math.min(5, L * 0.3);
       fr.rect(Bd, fi, -h + 0.5, -h + off, gy + 0.5, gy + 2.9, 0.06, GLASS);
@@ -1752,11 +1791,150 @@ export function buildShops(ctx) {
     }
   };
 
+  // --- the country's own stores
+  // A farm market, a nursery's shop, a meat or cheese shop, a bakery out on the concession
+  // roads: board-and-batten walls (barn red, white or weathered), a steel gable over the
+  // long axis (green, red, galvanised or charcoal), a porch on posts along the storefront
+  // under a shed roof, the glass and the doors under it, crates of produce out front, the
+  // name on the wall over the porch (the independents' lettering, sh.sy / sh.so) and on a
+  // board on two posts by the road.
+  const MK_WALL = ['#8e2b22', '#ece8de', '#7d6c55', '#9b3a2a', '#e4dccb'];
+  const MK_ROOF = ['#3d5e3a', '#7d2420', '#9aa0a3', '#3a3c3e', '#9aa0a3'];
+  const farmMarket = (b, F) => {
+    const sh = b.kw.shop, fi = b.kw.strip.face, fr = frameOf(b), L = fr.F[fi].len, h = L / 2, Bd = Gb(b.x, b.z);
+    const hv = (k) => hashI(b.x * 0.37 + k, b.z * 0.21 - k);
+    const wc = lin(MK_WALL[Math.floor(hv(1) * MK_WALL.length)]), rc = lin(MK_ROOF[Math.floor(hv(2) * MK_ROOF.length)]);
+    const trim = wc[0] + wc[1] + wc[2] > 1.5 ? lin('#2f4a33') : lin('#efeae0');
+    const gy = b.y, yb = gy - 2.2, eave = b.y + b.h;
+    // the walls, the battens on them, a stone or block base
+    for (let fj = 0; fj < 4; fj++) {
+      const hs = fr.F[fj].len / 2;
+      fr.rect(Bd, fj, -hs, hs, yb, eave, 0, [shade(wc, 0.8), shade(wc, 0.8), wc, wc]);
+      fr.rect(Bd, fj, -hs, hs, yb, gy + 0.5, 0.04, lin('#8c877e'));
+      for (let t = -hs + 0.35; t < hs; t += 0.6) fr.rect(Bd, fj, t - 0.035, t + 0.035, gy + 0.5, eave - 0.05, 0.03, shade(wc, 0.78));
+      for (const sg of [-1, 1]) fr.rect(Bd, fj, sg * hs - 0.12, sg * hs + 0.12, gy + 0.5, eave, 0.05, trim);
+    }
+    // the gable: the ridge along the long axis
+    const alongW = b.w >= b.d, span = alongW ? b.d : b.w, run = alongW ? b.w : b.d;
+    const rise = Math.min(4.2, span * 0.42), ov = 0.5;
+    const ridge = eave + rise;
+    const W = (a, c) => (alongW ? fr.W(a, c) : fr.W(c, a));   // a along the ridge, c across it
+    const P3 = (a, c, y) => { const [x, z] = W(a, c); return [x, y, z]; };
+    const R = run / 2 + ov, S2 = span / 2 + ov, yE = eave - ov * (rise / (span / 2));
+    for (const sg of [-1, 1]) {
+      const [nx, nz] = (() => { const [x1, z1] = W(0, sg), [x0, z0] = W(0, 0); return [x1 - x0, z1 - z0]; })();
+      const n = nrm(nx * rise, span / 2, nz * rise);
+      Bd.quad(P3(-R, sg * S2, yE), P3(R, sg * S2, yE), P3(R, 0, ridge + 0.02), P3(-R, 0, ridge + 0.02), n, U0, rc);
+      // the steel's ribs, every ~0.9 m down the slope
+      for (let a = -R + 0.45; a < R; a += 0.9) Bd.quad(P3(a - 0.04, sg * S2, yE + 0.03), P3(a + 0.04, sg * S2, yE + 0.03), P3(a + 0.04, 0, ridge + 0.05), P3(a - 0.04, 0, ridge + 0.05), n, U0, shade(rc, 0.8));
+      // the soffit under the overhang
+      Bd.quad(P3(-R, sg * S2, yE - 0.01), P3(R, sg * S2, yE - 0.01), P3(R, sg * span / 2, eave - 0.01), P3(-R, sg * span / 2, eave - 0.01), [0, -1, 0], U0, shade(wc, 0.6));
+      // the gable end's triangle, and its trim
+      const [ax, az] = W(sg, 0), [ox, oz] = W(0, 0), en = [ax - ox, 0, az - oz];
+      Bd.tri(P3(sg * run / 2, -span / 2, eave), P3(sg * run / 2, span / 2, eave), P3(sg * run / 2, 0, ridge), en, wc);
+      Bd.tri(P3(sg * run / 2, -span / 2, eave), P3(sg * run / 2, span / 2, eave), P3(sg * run / 2, 0, ridge), [-en[0], 0, -en[2]], shade(wc, 0.7));
+      // a loft window up the gable
+      const [lx, lz] = W(sg * (run / 2 + 0.04), 0);
+      Bd.box(lx, eave + rise * 0.25, lz, 0.9, Math.min(1.3, rise * 0.5), 0.9, b.rot, GLASS);
+    }
+    // the ridge cap
+    { const [x0, z0] = W(-R, 0), [x1, z1] = W(R, 0); Bd.box((x0 + x1) / 2, ridge - 0.02, (z0 + z1) / 2, alongW ? 2 * R : 0.32, 0.12, alongW ? 0.32 : 2 * R, b.rot, shade(rc, 0.85)); }
+    // the porch along the storefront: posts every ~3 m, a shed roof falling 2.4 m out
+    const pD = 2.4, y0 = gy + 3.25, y1 = gy + 2.75;
+    const N = fr.N(fi);
+    Bd.quad(fr.P(fi, -h, y0, 0.05), fr.P(fi, h, y0, 0.05), fr.P(fi, h, y1, pD), fr.P(fi, -h, y1, pD), nrm(N[0] * 0.5, pD, N[2] * 0.5), U0, rc);
+    Bd.quad(fr.P(fi, -h, y0 - 0.12, 0.05), fr.P(fi, h, y0 - 0.12, 0.05), fr.P(fi, h, y1 - 0.12, pD), fr.P(fi, -h, y1 - 0.12, pD), [0, -1, 0], U0, SOFFIT);
+    fr.rect(Bd, fi, -h, h, y1 - 0.3, y1, pD, trim);
+    const np = Math.max(2, Math.round(L / 3.2));
+    for (let i = 0; i <= np; i++) {
+      const t = -h + 0.3 + ((L - 0.6) * i) / np;
+      fr.box(Bd, fi, t, pD - 0.15, 0.18, 0.18, gy - 0.3, y1 - gy + 0.3, trim, { top: false });
+      const [x, , z] = fr.P(fi, t, 0, pD - 0.15);
+      solid({ x, z, r: 0.15, y0: gy - 2, y1: y1 });
+    }
+    // the porch deck, the glass and the doors under it
+    fr.box(Bd, fi, 0, pD / 2, L, pD, gy - 0.4, 0.55, lin('#8a7258'));
+    const nw = Math.max(1, Math.floor((L - 4) / 3.2));
+    for (let i = 0; i < nw; i++) {
+      const t = -h + 2 + (i + 0.5) * ((L - 4) / nw);
+      if (Math.abs(t) < 1.4) continue;
+      fr.rect(Bd, fi, t - 0.75, t + 0.75, gy + 0.95, gy + 2.45, 0.06, GLASS);
+      fr.rect(Bd, fi, t - 0.85, t + 0.85, gy + 0.85, gy + 2.55, 0.05, trim);
+    }
+    fr.rect(Bd, fi, -0.95, 0.95, gy + 0.15, gy + 2.45, 0.07, shade(GLASS, 0.7));
+    fr.rect(Bd, fi, -1.05, 1.05, gy + 0.15, gy + 2.55, 0.06, trim);
+    // crates and bins of what is in season out front (October: pumpkins, squash, apples)
+    const CROP = [lin('#d9651a'), lin('#e8a33a'), lin('#9c1f1a'), lin('#6c8a2e')];
+    for (const [t, k] of [[-h + 1.6, 0], [h - 1.6, 1], [-h + 3.4, 2], [h - 3.4, 3]]) {
+      if (L < 9 && k > 1) continue;
+      const [x, , z] = fr.P(fi, t, 0, pD + 0.9);
+      if (city.onRoad(x, z, 0.8, true)) continue;
+      const g2 = T(x, z);
+      fr.box(Bd, fi, t, pD + 0.9, 1.1, 0.8, g2 - 0.1, 0.65, lin('#9a7a52'));
+      fr.box(Bd, fi, t, pD + 0.9, 0.95, 0.65, g2 + 0.55, 0.16, CROP[k]);
+    }
+    sh.sy = 3.92; sh.so = 0.12;   // its name: on the wall over the porch roof (the independents' loop)
+    // the board by the road
+    const nm = (F && F[3][0] && F[3][0][0]) || (F && F[4]) || '';
+    const sp = roadSpot(b.x, b.z, 60);
+    if (sp && nm) woodBoard(nm, sp.x, sp.z, sp.yaw);
+    stats.markets = (stats.markets || 0) + 1;
+  };
+  /** A name on a painted board on two wooden posts: a farm's sign at its lane. */
+  const woodBoard = (name, x, z, yaw) => {
+    const c = TX.cell(name, 22);
+    if (!c) return;
+    const y0 = T(x, z), nx = Math.sin(yaw), nz = Math.cos(yaw), rot = rotOf(nx, nz), ux = nz, uz = -nx;
+    const lh = 0.6, lw = Math.min(3.0, lh * c.a), ph = 1.3, bgc = '#2f4a33';
+    const Bd = Gb(x, z), post = lin('#6e5a40');
+    for (const s2 of [-1, 1]) Bd.box(x + ux * s2 * (lw / 2 + 0.1), y0 - 0.4, z + uz * s2 * (lw / 2 + 0.1), 0.14, ph + lh + 0.7, 0.14, rot, post);
+    Bd.box(x, y0 + ph, z, lw + 0.4, lh + 0.3, 0.08, rot, lin(bgc));
+    for (const s2 of [1, -1]) TX.quad(A, Lb(x, z), c, '#f3ead2', bgc, x + nx * s2 * 0.045, y0 + ph + 0.15 + lh / 2, z + nz * s2 * 0.045, nx * s2, nz * s2, lw, lh);
+    solid({ x, z, hw: lw / 2 + 0.2, hd: 0.1, rot, y0: y0 - 2, y1: y0 + ph + lh });
+    stats.boards = (stats.boards || 0) + 1;
+  };
+  /** A store in a farm building farmstead.js draws: its name on a board on the street face, and by the road. */
+  const farmSign = (b, sg, F) => {
+    const nm = (F && F[3][0] && F[3][0][0]) || (F && F[4] && !B[F[4]] ? F[4] : '') || '';
+    if (!nm) return;
+    const fr = frameOf(b), fi = sg.face, L = fr.F[fi].len, N = fr.N(fi);
+    const c = TX.cell(nm, 22);
+    if (c) {
+      const lh = Math.min(1.0, (L - 2) / c.a), lw = lh * c.a;
+      if (lh >= 0.45) {
+        // beside the barn's big doors (the middle of its face), not over them
+        const y = b.y + Math.min(3.6, b.h * 0.5);
+        const room = L / 2 - lw / 2 - 0.8, ts = Math.max(0, Math.min(room, Math.max(lw / 2 + 3, L / 4))) * (hashI(b.x, b.z) < 0.5 ? -1 : 1);
+        const [x, , z] = fr.P(fi, ts, 0, 0.3);
+        const Bd = Gb(b.x, b.z), bgc = '#2f4a33';
+        fr.box(Bd, fi, ts, 0.27, lw + 0.5, 0.1, y - lh / 2 - 0.2, lh + 0.4, lin('#efeae0'));
+        fr.box(Bd, fi, ts, 0.29, lw + 0.3, 0.1, y - lh / 2 - 0.1, lh + 0.2, lin(bgc));
+        TX.quad(A, Lb(x, z), c, '#f3ead2', bgc, x + N[0] * 0.05, y, z + N[2] * 0.05, N[0], N[2], lw, lh);
+        stats.farmSigns = (stats.farmSigns || 0) + 1;
+      }
+    }
+    const sp = roadSpot(b.x, b.z, 70);
+    if (sp) woodBoard(nm, sp.x, sp.z, sp.yaw);
+  };
+
   for (const b of city.buildings) {
     const sh = b.kw && b.kw.shop;
     if (!sh || sh.fmt !== 'strip') continue;
+    curKey = sh.rk || null;
     if (sh.front === undefined) stripBld(b);
+    else if (sh.market) farmMarket(b, S.fronts[sh.front]);
     else frontBld(b, sh, S.fronts[sh.front]);
+    curKey = null;
+    if (sh.rk) stats.rural = (stats.rural || 0) + 1;
+  }
+  // a store in a farm building farmstead.js draws (prepShops b.kw.sign): a sign board on its
+  // street face, and its name on a board on two posts by the road
+  for (const b of city.buildings) {
+    const sg = b.kw && b.kw.sign;
+    if (!sg) continue;
+    curKey = sg.rk || null;
+    farmSign(b, sg, S.fronts[sg.front]);
+    curKey = null;
   }
 
   // --- a store on its building
