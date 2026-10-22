@@ -33,6 +33,11 @@
 //   - ROUND THREE (below): KCI's 1924 front on King St W; Cambridge City
 //     Hall (2008); Laurel Dam's embankment, intake tower and outlet channel;
 //     the Inn of Waterloo; Delta Waterloo; the Hespeler library's glass box.
+//   - ROUND FOUR (below): Market Square's rotunda, clock tower and skywalk;
+//     the Crowne Plaza; St. Mary's and St. Peter's churches; the Waterloo
+//     County Gaol and the Governor's House; the Canadian Clay and Glass
+//     Gallery; the Waterloo Memorial Recreation Complex; Galt Arena Gardens.
+//     `window.__noLm4 = true` before boot turns round four alone off.
 //
 // Sources (Oct 2026): the Esri World Imagery aerial (tools/kw/aerial.py) for
 // every plan and every tower's place -- the towers are oriented boxes read off
@@ -62,10 +67,11 @@ import { Builder } from './build.js';
 import * as THREE from './three.js';
 import * as G from './geo.js';
 import {
-  block, frontEdge, text, onWall, pyramid, hipRoof, B4, nearestEdge, entrance, sightsData,
+  block, frontEdge, text, onWall, pyramid, hipRoof, barrel, B4, nearestEdge, entrance, sightsData, clockFace,
 } from './kwsights.js';
 
 const STATS = { skipped: 0, built: [], err: [] };
+const ROUND4 = ['mktsq', 'skywalk', 'crowne', 'stmaryrc', 'stpeter', 'gaol', 'govhouse', 'claygl', 'wmrc', 'galtarena'];
 const C = (h) => lin(hex(h));
 const ccw = (p) => (polyArea(p) < 0 ? p.slice().reverse() : p);
 let D = null;      // lm2.json
@@ -96,7 +102,18 @@ export function prepLandmarks2(city, data) {
   D = data;
   if (typeof window !== 'undefined' && window.__noLm2) D = null;
   if (!D || !sightsData()) return STATS;
+  // window.__noLm4: round four off (its footprints stay the importer's boxes), for a before/after
+  if (typeof window !== 'undefined' && window.__noLm4) { D = { b: { ...D.b } }; for (const k of ROUND4) delete D.b[k]; }
   for (const k of Object.keys(D.b)) STATS.skipped += flatten(city, D.b[k].p);
+  // the King St skywalk is one of kwsights' `king` blocks (building=bridge):
+  // meshKing would draw it on the road; it is drawn up in the air here instead
+  const S = sightsData();
+  if (D.b.skywalk && S.king) {
+    const [sx, sz] = centroid(D.b.skywalk.p);
+    const keep = S.king.filter((r) => { const [cx, cz] = centroid(r.p); return Math.hypot(cx - sx, cz - sz) > 4; });
+    STATS.kingTaken = S.king.length - keep.length;
+    S.king.length = 0; S.king.push(...keep);
+  }
   // the stores inside them (a Tims in each hospital lobby) sign on their real walls
   for (const k of Object.keys(D.b)) addSignHost(D.b[k].p);
   if (typeof window !== 'undefined') window.__kwLm2 = STATS;
@@ -1129,6 +1146,585 @@ function hespeler(kit, ctx) {
   if (de) entrance(kit, ctx, de.e, de.t, 5, 3.2, null, { d: 2.5, can: C('#4a5054') });
 }
 
+// =======================================================================================
+// ROUND FOUR
+// =======================================================================================
+
+/** A gable roof along o's long axis: eaves at y, the ridge `rise` over them; the gable ends in `end` (null: none). */
+function gable(B, o, y, rise, col, ov = 0.4, end = null) {
+  const { ux, uz } = o, vx = -uz, vz = ux;
+  const P = (u, v, yy) => [o.x + ux * u + vx * v, yy, o.z + uz * u + vz * v];
+  const hu = o.hu + ov, hv = o.hv + ov, s = Math.hypot(rise, hv), ny = hv / s, nh = rise / s;
+  B.quad(P(-hu, -hv, y), P(hu, -hv, y), P(hu, 0, y + rise), P(-hu, 0, y + rise), [-vx * nh, ny, -vz * nh], U0, col);
+  B.quad(P(hu, hv, y), P(-hu, hv, y), P(-hu, 0, y + rise), P(hu, 0, y + rise), [vx * nh, ny, vz * nh], U0, col);
+  B.quad(P(-hu, -hv, y - 0.02), P(-hu, hv, y - 0.02), P(hu, hv, y - 0.02), P(hu, -hv, y - 0.02), [0, -1, 0], U0, shade(col, 0.5));
+  if (end) for (const sg of [-1, 1]) B.tri(P(sg * o.hu, -o.hv, y - 0.05), P(sg * o.hu, o.hv, y - 0.05), P(sg * o.hu, 0, y + rise * o.hv / hv), [ux * sg, 0, uz * sg], end);
+}
+/** A horizontal disc (a drum's lid). */
+function disc(B, x, y, z, r, n, col) {
+  for (let i = 0; i < n; i++) {
+    const a0 = (i / n) * Math.PI * 2, a1 = ((i + 1) / n) * Math.PI * 2;
+    B.tri([x, y, z], [x + Math.cos(a0) * r, y, z + Math.sin(a0) * r], [x + Math.cos(a1) * r, y, z + Math.sin(a1) * r], [0, 1, 0], col);
+  }
+}
+/** A lidded cylinder. */
+function cyl(B, x, y, z, r, h, n, col, top = col) { B.prism(x, y, z, r, h, n, col); disc(B, x, y + h, z, r, n, top); }
+/** An awning on an edge from t0 to t1: its top on the wall at y, `d` out, dropping 0.8. */
+function awning(B, e, t0, t1, y, d, col) {
+  B.quad(e.at(t0, y, 0.05), e.at(t1, y, 0.05), e.at(t1, y - 0.8, d), e.at(t0, y - 0.8, d), [e.nx * 0.6, 0.8, e.nz * 0.6], U0, col);
+  B.quad(e.at(t0, y - 0.8, d), e.at(t1, y - 0.8, d), e.at(t1, y - 1.05, d), e.at(t0, y - 1.05, d), [e.nx, 0, e.nz], U0, shade(col, 0.8));
+  for (const [t, s] of [[t0, -1], [t1, 1]]) B.tri(e.at(t, y, 0.05), e.at(t, y - 0.8, d), e.at(t, y - 0.8, 0.05), [e.ux * s, 0, e.uz * s], shade(col, 0.85));
+}
+/** An oriented box in a frame: u along `U`, v along its left normal (obPts' sense). */
+function obUV(U, u0, u1, v0, v1) {
+  const um = (u0 + u1) / 2, vm = (v0 + v1) / 2;
+  return { x: U[0] * um - U[1] * vm, z: U[1] * um + U[0] * vm, hu: Math.abs(u1 - u0) / 2, hv: Math.abs(v1 - v0) / 2, ux: U[0], uz: U[1] };
+}
+/** A world point from frame coordinates. */
+const atUV = (U, u, v) => [U[0] * u - U[1] * v, U[1] * u + U[0] * v];
+/** The faces of an oriented box as edges (block's E), wound like edges(). */
+const obEdges = (o) => edges(ccw(obPts(o)));
+/** A pointed (lancet) window on an edge: glass with a triangular head, a stone hood. */
+function lancet(B, e, t, y0, w, h, glass, stone) {
+  const N = [e.nx, 0, e.nz], hh = w * 0.75;
+  B4(B, e, t - w / 2 - 0.18, t + w / 2 + 0.18, y0 - 0.25, y0 - 0.05, 0.1, N, stone);
+  B4(B, e, t - w / 2, t + w / 2, y0, y0 + h, 0.05, N, glass);
+  B.tri(e.at(t - w / 2, y0 + h, 0.05), e.at(t + w / 2, y0 + h, 0.05), e.at(t, y0 + h + hh, 0.05), N, glass);
+  B.quad(e.at(t - w / 2 - 0.2, y0 + h, 0.08), e.at(t - w / 2, y0 + h, 0.08), e.at(t, y0 + h + hh, 0.08), e.at(t, y0 + h + hh + 0.25, 0.08), N, U0, stone);
+  B.quad(e.at(t + w / 2, y0 + h, 0.08), e.at(t + w / 2 + 0.2, y0 + h, 0.08), e.at(t, y0 + h + hh + 0.25, 0.08), e.at(t, y0 + h + hh, 0.08), N, U0, stone);
+}
+/** A round window on an edge (a rose), centred at t, y: a stone ring round stained glass. */
+function rose(B, e, t, y, r, glass, stone, off = 0.12) {
+  const N = [e.nx, 0, e.nz], n = 16;
+  for (let i = 0; i < n; i++) {
+    const a0 = (i / n) * Math.PI * 2, a1 = ((i + 1) / n) * Math.PI * 2;
+    const p = (a, rr, o) => e.at(t + Math.cos(a) * rr, y + Math.sin(a) * rr, o);
+    B.tri(p(0, 0, off), p(a0, r, off), p(a1, r, off), N, i % 2 ? glass : shade(glass, 1.5));
+    B.quad(p(a0, r, off + 0.02), p(a1, r, off + 0.02), p(a1, r + 0.45, off + 0.02), p(a0, r + 0.45, off + 0.02), N, U0, stone);
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// MARKET SQUARE (King St E at Frederick) and its skywalk
+// ---------------------------------------------------------------------------------------
+// From the Commons photographs (2011-2016, "Market Square Shopping Centre -
+// Kitchener, ON", "MarketSquare-Frederick&KingStE-Kitchener") and the aerial:
+// the mall's corner at King and Frederick is a drum of green-framed glass,
+// taller than the two-storey mall, with GoodLife Fitness in red round its top
+// and MARKET SQUARE over the doors; beside it the square clock tower of green
+// glass in a steel frame, a clock on each face under a glass pyramid; the King
+// St front is green-framed glass over the storefronts and green awnings; the
+// glass skywalk crosses King to the hotel. Heights estimated (OSM: 2 levels).
+const MS_DRUM = [-995.0, 307.5, 10.5];        // the rotunda: centre and radius (the outline's arc at the corner)
+const MS_CLOCK = [-985.5, 317.5];             // the clock tower, beside the drum on King
+function marketSquare(kit, ctx) {
+  const BR = C('#7d4535'), GRN = C('#2e6656'), GL = C('#3b6a66'), GL2 = C('#9cc4bb'), WH = C('#e4e2da'), AW = C('#1d5a3a');
+  const pts = ccw(D.b.mktsq.p);
+  const r = block(kit, ctx, pts, {
+    h: 11, wall: BR, trim: C('#d6d0c2'), parapet: 0.8, roof: C('#8c8a85'), glass: GL, plinth: [0.6, C('#55534f')],
+    win: { style: 'ribbon', fl: 5.2, g0: 5.6, h: 3.4, top: 1.2 },
+  });
+  const B = r.B;
+  // the King St front: green-framed glass over the shops, green awnings
+  const kf = frontEdge(ctx.city, r.E, /^King Street/, 20, 60) || facing(r.E, -0.49, 0.87, 20);
+  if (kf) {
+    const gy = T(kf.mx + kf.nx * 2, kf.mz + kf.nz * 2), N = [kf.nx, 0, kf.nz];
+    B4(B, kf, 1, kf.L - 1, gy + 5.2, r.yTop - 0.5, 0.12, N, [GL, GL, GL2, GL2]);
+    for (let t = 1; t <= kf.L - 1 + 1e-3; t += 2.4) B4(B, kf, t - 0.09, t + 0.09, gy + 5.2, r.yTop - 0.5, 0.18, N, GRN);
+    B4(B, kf, 1, kf.L - 1, gy + 4.9, gy + 5.2, 0.2, N, GRN);
+    B4(B, kf, 1, kf.L - 1, gy + 0.6, gy + 3.2, 0.06, N, [GL, GL, GL2, GL2]);
+    for (let t = 3; t + 5 < kf.L - 2; t += 7.5) awning(B, kf, t, t + 5.5, gy + 3.6, 1.5, AW);
+  }
+  // the rotunda
+  const [dx, dz, dr] = MS_DRUM, gy = T(dx, dz), top = gy + 17.5;
+  B.prism(dx, gy - 0.5, dz, dr, top - gy + 0.5, 24, GL);
+  for (let i = 0; i < 24; i++) {
+    const a = (i / 24) * Math.PI * 2;
+    B.box(dx + Math.cos(a) * (dr + 0.06), gy - 0.4, dz + Math.sin(a) * (dr + 0.06), 0.22, top - gy + 0.4, 0.22, a, GRN);
+  }
+  for (const y of [gy + 4.2, gy + 9.4, gy + 13.6]) B.prism(dx, y, dz, dr + 0.12, 0.35, 24, GRN);
+  B.prism(dx, top, dz, dr + 0.5, 1.8, 24, WH);
+  disc(B, dx, top + 1.8, dz, dr + 0.5, 24, C('#a9aaa6'));
+  B.cone(dx, top + 1.8, dz, dr * 0.55, 2.2, 16, C('#7fa9a0'));
+  ctx.solids.push({ x: dx, z: dz, r: dr, y0: gy - 1, y1: top + 2 });
+  // GoodLife Fitness round its top and MARKET SQUARE over the doors, toward the corner
+  const ang = Math.atan2(310 - dz, -1003 - dx);
+  const gl = ctx.atlas.panel(12, 1.5, 22, (q, W, H) => {
+    q.clearRect(0, 0, W, H); q.textAlign = 'center'; q.textBaseline = 'middle';
+    q.fillStyle = '#d6232a'; q.font = `italic 800 ${H * 0.62}px ${SANS}`; q.fillText('GoodLife', W * 0.3, H * 0.52, W * 0.55);
+    q.font = `800 ${H * 0.52}px ${SANS}`; q.fillText('FITNESS', W * 0.75, H * 0.55, W * 0.42);
+  });
+  for (const da of [0, 0.75]) {
+    const a = ang + da, nx = Math.cos(a), nz = Math.sin(a);
+    const m = da ? gl.clone() : gl;
+    hang(kit.grp(dx, dz), m, dx + nx * dr, top + 0.9, dz + nz * dr, nx, nz, 0.55);
+  }
+  {
+    const nx = Math.cos(ang), nz = Math.sin(ang);
+    const ms = text(ctx.atlas, 7, 0.8, 'MARKET SQUARE', { fg: '#eef2ef', bg: '#2b4d45', k: 0.66 });
+    // the entrance: a glass porch and a canopy at the corner
+    const px = dx + nx * dr, pz = dz + nz * dr, rot = Math.atan2(nz, nx) + Math.PI / 2;
+    B.box(px + nx * 1.0, gy - 0.2, pz + nz * 1.0, 6, 3.3, 2.4, rot, GL2);
+    B.box(px + nx * 1.6, gy + 3.3, pz + nz * 1.6, 7.5, 0.4, 3.6, rot, GRN);
+    hang(kit.grp(dx, dz), ms, px + nx * 3.4, gy + 4.25, pz + nz * 3.4, nx, nz, 0.02);
+  }
+  // the clock tower: green glass in a steel frame, a clock on each face, a glass pyramid
+  {
+    const [cx, cz] = MS_CLOCK, cg = T(cx, cz), H = 29, hs = 2.1;
+    const rot = Math.atan2(kf ? kf.uz : 0.49, kf ? kf.ux : 0.87);
+    B.box(cx, cg - 0.5, cz, hs * 2 - 0.3, H + 0.5, hs * 2 - 0.3, rot, GL);
+    const c = Math.cos(rot), s = Math.sin(rot);
+    for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) B.box(cx + (a * c - b * s) * hs, cg - 0.5, cz + (a * s + b * c) * hs, 0.45, H + 0.6, 0.45, rot, GRN);
+    for (let y = cg + 3; y < cg + H; y += 3) B.box(cx, y, cz, hs * 2 + 0.2, 0.22, hs * 2 + 0.2, rot, GRN);
+    B.box(cx, cg + H, cz, hs * 2 + 0.6, 0.5, hs * 2 + 0.6, rot, GRN);
+    pyramid(B, cx, cg + H + 0.5, cz, hs + 0.3, 4.2, rot, C('#5f8f86'));
+    const cf = clockFace(ctx.atlas, 2.8, false);
+    let first = true;
+    for (const [nx, nz] of [[c, s], [-s, c], [-c, -s], [s, -c]]) {
+      hang(kit.grp(cx, cz), first ? cf : cf.clone(), cx + nx * hs, cg + H - 2.4, cz + nz * hs, nx, nz, 0.3);
+      first = false;
+    }
+    ctx.solids.push({ x: cx, z: cz, r: hs, y0: cg - 1, y1: cg + H });
+  }
+  // the skywalk over King St: green-framed glass from the second floor to the hotel
+  if (D.b.skywalk) {
+    const sp = D.b.skywalk.p, o = obb(sp);
+    const sx = o.x, sz = o.z, y0 = T(sx, sz) + 5.4, rot = Math.atan2(o.uz, o.ux), L = o.hu * 2 + 1.2, w = o.hv * 2 + 0.6;
+    const Bs = kit.B(sx, sz);
+    Bs.box(sx, y0, sz, L, 0.5, w, rot, GRN);
+    Bs.box(sx, y0 + 0.5, sz, L - 0.1, 2.6, w - 0.1, rot, GL2);
+    Bs.box(sx, y0 + 3.1, sz, L, 0.45, w + 0.3, rot, GRN);
+    const c = Math.cos(rot), s = Math.sin(rot);
+    for (let k = -L / 2 + 1; k <= L / 2 - 1 + 1e-3; k += 2.2) for (const sd of [-1, 1]) {
+      Bs.box(sx + c * k - s * sd * (w / 2), y0 + 0.5, sz + s * k + c * sd * (w / 2), 0.14, 2.6, 0.14, rot, GRN);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// CROWNE PLAZA KITCHENER-WATERLOO, 105 King St E (1970; the Delta until 2014)
+// ---------------------------------------------------------------------------------------
+// From the 2011 Commons photograph up King St from Frederick (then the Delta)
+// and the aerial: the hotel's slab along King, beige stucco piers and bands
+// framing recessed bays of brown brick with the windows in pairs, five storeys
+// over a red-brick ground floor with navy awnings; a square corner tower at
+// the Frederick end, a storey higher, under a grey-green standing-seam
+// pyramid, the sign on it; a smaller capped tower at the far end; the low
+// block behind it (the parking and the ballroom). Nine floors per one listing
+// is not what the photograph shows on King: the heights are the photograph's.
+const CP_KING = [[-1018.6, 327.7], [-966.5, 357.5]];   // the King face, Frederick end first
+function crownePlaza(kit, ctx) {
+  const ST = C('#cdb99a'), ST2 = C('#e2d4bb'), BRK = C('#7c3c2c'), BR2 = C('#83503d'), NAVY = C('#1f2c4c'), GL = C('#272d33'), CAP = C('#788781');
+  const pts = ccw(D.b.crowne.p);
+  block(kit, ctx, pts, {
+    h: 9.5, wall: ST, trim: ST2, parapet: 0.8, roof: C('#86837d'), plinth: [4.4, BRK], glass: GL,
+    win: { style: 'punch', sp: 3.6, w: 1.5, h: 1.4, fl: 3.2, g0: 5.6, sill: ST2 },
+  });
+  const [a, b] = CP_KING, L = Math.hypot(b[0] - a[0], b[1] - a[1]), U = [(b[0] - a[0]) / L, (b[1] - a[1]) / L];
+  const inx = -U[1], inz = U[0];       // into the block, away from King (south-west)
+  const S = obOn(a, b, 16, inx, inz, 0.3, 0);
+  const s = tower(kit, ctx, S, 22, { wall: ST, trim: ST2, parapet: 0.9, cornice: 0.6, roof: C('#8a8780'), plinth: [4.6, BRK] }, 0);
+  const B = s.B;
+  // the bays: brown brick between stucco piers, windows in pairs
+  for (const e of s.E) {
+    if (e.L < 12) continue;
+    const N = [e.nx, 0, e.nz], gy = T(e.mx + e.nx * 2, e.mz + e.nz * 2), sp = 6.2, n = Math.floor((e.L - 2) / sp), pad = (e.L - n * sp) / 2;
+    for (let i = 0; i < n; i++) {
+      const t0 = pad + i * sp + 0.8, t1 = pad + (i + 1) * sp - 0.8;
+      B4(B, e, t0, t1, gy + 5.4, s.yTop - 1.6, 0.04, N, BR2);
+      for (let y = gy + 6.0; y + 1.6 < s.yTop - 1.6; y += 3.15) for (const f of [0.27, 0.73]) {
+        const t = t0 + (t1 - t0) * f;
+        B4(B, e, t - 0.75, t + 0.75, y, y + 1.65, 0.07, N, [GL, GL, shade(GL, 1.7), shade(GL, 1.7)]);
+        B4(B, e, t - 0.85, t + 0.85, y - 0.12, y, 0.1, N, ST2);
+      }
+    }
+    // the ground floor's glass and the band over it
+    B4(B, e, 1, e.L - 1, gy + 0.5, gy + 3.3, 0.07, N, [GL, GL, shade(GL, 1.6), shade(GL, 1.6)]);
+    B4(B, e, 0, e.L, gy + 4.6, gy + 5.4, 0.12, N, ST2);
+  }
+  // navy awnings along King
+  const kf = facing(s.E, -inx, -inz, 30);
+  if (kf) for (let t = 9; t + 4 < kf.L - 8; t += 5.2) awning(B, kf, t, t + 4.2, T(kf.mx, kf.mz) + 3.9, 1.4, NAVY);
+  // the corner tower at Frederick (the sign) and the small one at the far end
+  const T1 = obOn(a, [a[0] + U[0] * 10, a[1] + U[1] * 10], 11, inx, inz, 1.0, 0.6);
+  const t1 = tower(kit, ctx, T1, 26, { wall: ST, trim: ST2, parapet: 0, roof: C('#8a8780'), plinth: [4.6, BRK], glass: GL,
+    win: { style: 'punch', sp: 2.8, w: 1.4, h: 1.65, fl: 3.15, g0: 6.0, sill: ST2 } }, 0);
+  hipRoof(B, T1, t1.yTop, 3.6, CAP, 0.6);
+  const bE = [b[0] - U[0] * 7.5, b[1] - U[1] * 7.5];
+  const T2 = obOn(bE, b, 8, inx, inz, 0.8, 0.4);
+  const t2 = tower(kit, ctx, T2, 24.5, { wall: ST, trim: ST2, parapet: 0, roof: C('#8a8780'), plinth: [4.6, BRK] }, 0);
+  pyramid(B, T2.x, t2.yTop, T2.z, Math.max(T2.hu, T2.hv) + 0.5, 3.0, Math.atan2(T2.uz, T2.ux), CAP);
+  const sign = (e, w) => {
+    const m = ctx.atlas.panel(w, w * 0.3, 22, (q, W, H) => {
+      q.clearRect(0, 0, W, H);
+      q.fillStyle = '#2b2b5e';
+      // the crown
+      const cx = W / 2, cw = H * 0.5, cy = H * 0.06;
+      q.beginPath(); q.moveTo(cx - cw / 2, cy + H * 0.3); q.lineTo(cx - cw / 2, cy + H * 0.06); q.lineTo(cx - cw / 4, cy + H * 0.18);
+      q.lineTo(cx, cy); q.lineTo(cx + cw / 4, cy + H * 0.18); q.lineTo(cx + cw / 2, cy + H * 0.06); q.lineTo(cx + cw / 2, cy + H * 0.3); q.closePath(); q.fill();
+      q.font = `600 ${H * 0.36}px ${SERIF}`; q.textAlign = 'center'; q.textBaseline = 'middle';
+      q.fillText('CROWNE PLAZA', W / 2, H * 0.68, W * 0.96);
+    });
+    onWall(kit, e, e.L / 2, t1.yTop - 2.4, m, 0.1);
+  };
+  const tk = facing(t1.E, -inx, -inz, 6), tf = facing(t1.E, -U[0], -U[1], 6);
+  if (tk) sign(tk, Math.min(9, tk.L - 1));
+  if (tf) sign(tf, Math.min(9, tf.L - 1));
+  // the hotel's doors on King under a canopy
+  if (kf) entrance(kit, ctx, kf, kf.L * 0.4, 7, 3.4, null, { d: 2.5, can: NAVY });
+}
+
+// ---------------------------------------------------------------------------------------
+// ST. MARY OUR LADY OF SEVEN SORROWS, 56 Duke St W (1900-03)
+// ---------------------------------------------------------------------------------------
+// The Commons photograph of the front (2012) and the City's 1983 designation
+// (the exterior walls, the towers, the slate roof, the rose window): red brick
+// Neo-Gothic, a Latin cross; the front on Young St with the tall north tower
+// (its belfry's paired lancets, four pinnacles) and the shorter south tower,
+// the gable between them with the rose window over three pointed doors; the
+// slate nave behind, the north porch, the rectory on the south side. The
+// plan is OSM's outline in the nave's own frame (u along it, ESE to the front;
+// v its left normal): the nave u -1116 to -1069, v 586 to 602.5; the aerial
+// shows the towers' octagonal caps at the front corners. Heights estimated.
+const SM_U = [Math.cos(Math.PI / 6), Math.sin(Math.PI / 6)];
+function stMaryChurch(kit, ctx) {
+  const BR = C('#a24a33'), ST = C('#d6cdb9'), SL = C('#3e4246'), GL = C('#2c3550'), DOOR = C('#4a2c1e');
+  const U = SM_U;
+  const nave = obUV(U, -1116.2, -1069.4, 586.0, 602.4);
+  const n = tower(kit, ctx, nave, 12.5, { wall: BR, trim: ST, parapet: 0, roof: SL, plinth: [1.0, ST] }, 0);
+  gable(n.B, nave, n.yTop, 8.5, SL, 0.5, BR);
+  const B = n.B;
+  // the nave's lancets
+  for (const e of n.E) {
+    if (e.L < 30) continue;
+    const gy = T(e.mx + e.nx * 2, e.mz + e.nz * 2);
+    for (let t = 5; t < e.L - 4; t += 5.2) lancet(B, e, t, gy + 3.2, 1.5, 5.0, GL, ST);
+    for (let t = 2.6; t < e.L; t += 5.2) B4(B, e, t - 0.35, t + 0.35, gy - 0.4, n.yTop - 0.4, 0.35, [e.nx, 0, e.nz], BR);   // buttresses
+  }
+  // the north porch's cross gable and the sacristy on the south
+  const porch = obUV([-U[1], U[0]], 579.4, 593, 1080.6, 1090);    // u = v, v = -u: its ridge across the nave
+  const po = tower(kit, ctx, porch, 9, { wall: BR, trim: ST, parapet: 0, roof: SL, plinth: [1.0, ST] }, 0);
+  gable(B, porch, po.yTop, 5, SL, 0.4, BR);
+  const sac = obUV(U, -1082, -1073, 602.4, 610.5);
+  tower(kit, ctx, sac, 6.5, { wall: BR, trim: ST, parapet: 0.6, roof: SL, plinth: [0.8, ST] }, 0);
+  // the towers
+  const tw = (v0, v1, h, pin) => {
+    const o = obUV(U, -1074.8, -1068.2, v0, v1);
+    const t = tower(kit, ctx, o, h, { wall: BR, trim: ST, parapet: 0.8, roof: SL, plinth: [1.0, ST], cornice: 0.5 }, 0);
+    for (const e of t.E) {
+      const gy = T(e.mx + e.nx * 2, e.mz + e.nz * 2), N = [e.nx, 0, e.nz];
+      // corner buttresses, stone bands, the belfry's paired lancets
+      for (const tt of [0.35, e.L - 0.35]) B4(B, e, tt - 0.35, tt + 0.35, gy - 0.4, t.yTop, 0.3, N, BR);
+      for (const y of [gy + 12.6, t.yTop - 8.5]) B4(B, e, -0.05, e.L + 0.05, y, y + 0.35, 0.34, N, ST);
+      for (const f of [0.33, 0.67]) lancet(B, e, e.L * f, t.yTop - 7.6, 0.8, 4.4, C('#1e2024'), ST);
+      if (h > 30) lancet(B, e, e.L / 2, gy + 14.5, 1.0, 4.0, GL, ST);
+    }
+    for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      const p = atUV(U, (-1074.8 - 1068.2) / 2 + a * (o.hu - 0.4), (v0 + v1) / 2 + b * (o.hv - 0.4));
+      B.prism(p[0], t.yTop + 0.8, p[1], 0.45, 1.2, 6, ST);
+      B.cone(p[0], t.yTop + 2.0, p[1], 0.45, pin, 6, ST);
+    }
+    pyramid(B, o.x, t.yTop + 0.8, o.z, Math.min(o.hu, o.hv) - 0.9, pin * 0.55, Math.atan2(o.uz, o.ux), SL);
+    return t;
+  };
+  tw(584.6, 591.0, 36, 6.5);       // north: the tall one
+  tw(598.0, 603.8, 22, 3.6);       // south
+  // the front between them: the rose window, three pointed doors
+  const fo = obUV(U, -1070.0, -1068.6, 591.0, 598.0);
+  const fe = obEdges(fo).filter((e) => e.nx * U[0] + e.nz * U[1] > 0.9)[0];
+  const f = tower(kit, ctx, fo, 12.5, { wall: BR, trim: ST, parapet: 0, roof: SL, plinth: [1.0, ST] }, 0);
+  if (fe) {
+    const gy = T(fe.mx + fe.nx * 3, fe.mz + fe.nz * 3), N = [fe.nx, 0, fe.nz];
+    // the front gable over it
+    B.tri(fe.at(-0.2, f.yTop, 0.02), fe.at(fe.L + 0.2, f.yTop, 0.02), fe.at(fe.L / 2, f.yTop + 6.2, 0.02), N, BR);
+    B.quad(fe.at(-0.4, f.yTop - 0.1, 0.1), fe.at(fe.L / 2, f.yTop + 6.2, 0.1), fe.at(fe.L / 2, f.yTop + 6.6, 0.1), fe.at(-0.4, f.yTop + 0.3, 0.1), N, U0, ST);
+    B.quad(fe.at(fe.L / 2, f.yTop + 6.2, 0.1), fe.at(fe.L + 0.4, f.yTop - 0.1, 0.1), fe.at(fe.L + 0.4, f.yTop + 0.3, 0.1), fe.at(fe.L / 2, f.yTop + 6.6, 0.1), N, U0, ST);
+    rose(B, fe, fe.L / 2, gy + 9.2, 2.1, C('#3a4a82'), ST);
+    for (const [t, w, h] of [[fe.L / 2, 2.0, 3.2], [fe.L / 2 - 2.4, 1.1, 2.6], [fe.L / 2 + 2.4, 1.1, 2.6]]) {
+      lancet(B, fe, t, gy + 0.05, w, h, DOOR, ST);
+    }
+  }
+  // the rectory on the south side: two and a half storeys of brick, a hipped slate roof
+  const rec = obUV(U, -1082.6, -1066.0, 610.5, 633.6);
+  const rc = tower(kit, ctx, rec, 8.6, { wall: C('#9a5641'), trim: ST, parapet: 0, roof: SL, glass: C('#2a2f33'),
+    win: { style: 'punch', sp: 3.0, w: 1.1, h: 1.9, fl: 3.6, g0: 1.2, sill: ST } }, 0);
+  hipRoof(B, rec, rc.yTop, 3.4, SL, 0.5);
+}
+
+// ---------------------------------------------------------------------------------------
+// ST. PETER'S LUTHERAN CHURCH, 49 Queen St N (Kruschen & Dailey, 1966-68)
+// ---------------------------------------------------------------------------------------
+// The 1960s church that replaced the 1868 one (Doors Open; the Laurier archive),
+// from the Commons photograph (2026) on Queen St: a tall nave of brown brick
+// with narrow full-height windows, the low brick wings round it, a concrete-
+// framed glazed front on Queen, and the open bell tower -- two concrete piers
+// joined by bands, louvres at the top, the cross over it. The nave's pitched
+// roof is read off the aerial. Heights estimated.
+const SP_NAVE = { x: -1008.5, z: 85.5, hu: 22.5, hv: 9.3, ux: Math.cos(0.49), uz: Math.sin(0.49) };
+const SP_TOWER = [-1025.5, 74.5];
+function stPeters(kit, ctx) {
+  const BR = C('#6e4632'), BR2 = C('#7d5139'), CON = C('#cfc9bd'), GL = C('#2a3036'), RF = C('#4c3d34');
+  const pts = ccw(D.b.stpeter.p);
+  const r = block(kit, ctx, pts, {
+    h: 6.5, wall: BR2, trim: CON, parapet: 0.7, roof: C('#7c7872'), glass: GL,
+    win: { style: 'punch', sp: 3.4, w: 1.6, h: 1.7, fl: 3.6, g0: 1.2, sill: CON },
+  });
+  const n = tower(kit, ctx, SP_NAVE, 14.5, { wall: BR, trim: CON, parapet: 0, roof: RF }, 0);
+  gable(n.B, SP_NAVE, n.yTop, 3.6, RF, 0.6, BR);
+  const B = n.B;
+  for (const e of n.E) {
+    if (e.L < 30) continue;
+    const gy = T(e.mx + e.nx * 2, e.mz + e.nz * 2);
+    for (let t = 3; t < e.L - 2; t += 3.6) B4(B, e, t - 0.35, t + 0.35, gy + 6.6, n.yTop - 0.8, 0.05, [e.nx, 0, e.nz], [GL, GL, shade(GL, 1.6), shade(GL, 1.6)]);
+  }
+  // the glazed front on Queen St between concrete fins
+  const qf = frontEdge(ctx.city, r.E, /^Queen Street/, 10, 60);
+  if (qf) {
+    const gy = T(qf.mx + qf.nx * 2, qf.mz + qf.nz * 2), N = [qf.nx, 0, qf.nz];
+    const t0 = Math.max(0.5, qf.L / 2 - 8), t1 = Math.min(qf.L - 0.5, qf.L / 2 + 8);
+    B4(B, qf, t0, t1, gy + 0.2, r.yTop - 0.4, 0.08, N, [GL, GL, shade(GL, 1.7), shade(GL, 1.7)]);
+    for (let t = t0; t <= t1 + 1e-3; t += 2) B4(B, qf, t - 0.2, t + 0.2, gy - 0.3, r.yTop + 0.3, 0.6, N, CON);
+    B4(B, qf, t0 - 0.3, t1 + 0.3, r.yTop - 0.5, r.yTop + 0.5, 0.7, N, CON);
+  }
+  // the bell tower
+  const [tx, tz] = SP_TOWER, ty = T(tx, tz) - 0.4, H = 28, rot = Math.atan2(SP_NAVE.uz, SP_NAVE.ux) + Math.PI / 2;
+  const c = Math.cos(rot), s = Math.sin(rot);
+  for (const sd of [-1, 1]) B.box(tx + c * sd * 1.6, ty, tz + s * sd * 1.6, 0.7, H, 3.0, rot, CON);
+  for (let y = ty + 6; y < ty + H - 0.5; y += 5.5) B.box(tx, y, tz, 2.6, 0.5, 3.0, rot, CON);
+  B.box(tx, ty + H - 6, tz, 2.5, 5.2, 0.5, rot, C('#3a3a38'));
+  B.box(tx, ty + H, tz, 4.0, 0.6, 3.2, rot, CON);
+  B.box(tx, ty + H + 0.6, tz, 0.3, 4.6, 0.3, rot, C('#2e2e2e'));
+  B.box(tx, ty + H + 3.4, tz, 2.0, 0.3, 0.3, rot, C('#2e2e2e'));
+  ctx.solids.push({ x: tx, z: tz, r: 2.0, y0: ty - 1, y1: ty + H });
+}
+
+// ---------------------------------------------------------------------------------------
+// THE WATERLOO COUNTY GAOL (1853) AND THE GOVERNOR'S HOUSE (1878), 73-77 Queen St N
+// ---------------------------------------------------------------------------------------
+// The Commons photographs (2009-2026, "Kitchener old gaol and house", "Waterloo
+// County Jail and Governor's House") and OSM (the gaol's two-storey stone part,
+// its one-level yard; the house's architect and date): the gaol is rubble
+// stone, two storeys, small barred windows, a hipped roof; its yard walled in
+// stone; the Governor's House beside it on Queen St is buff brick Italianate
+// with cream trim, a hipped roof, the square tower on the front under a
+// bell-cast mansard, the verandah with its balcony.
+const GAOL_STONE = [[-931.0, -10.4], [-918.5, -3.4], [-914.6, -10.4], [-909.8, -7.7], [-907.7, -11.3], [-912.8, -14.2], [-908.6, -21.8], [-920.7, -28.6], [-925.6, -19.9]];
+function gaol(kit, ctx) {
+  const STN = C('#a1978a'), ST2 = C('#cfc6b4'), SL = C('#4a4c50'), BUFF = C('#c8b48f'), CR = C('#efe7d4'), GL = C('#2a2f33');
+  const g = block(kit, ctx, ccw(GAOL_STONE), {
+    h: 8.0, wall: STN, trim: ST2, parapet: 0, roof: SL, plinth: [0.8, shade(STN, 0.85)], glass: C('#1f2226'),
+    win: { style: 'punch', sp: 3.0, w: 0.9, h: 1.3, fl: 3.8, g0: 1.6, sill: ST2 },
+  });
+  hipRoof(g.B, obb(GAOL_STONE), g.yTop, 3.2, SL, 0.4);
+  // the bars
+  for (const e of g.E) {
+    if (e.L < 5) continue;
+    const gy = T(e.mx + e.nx * 2, e.mz + e.nz * 2), n = Math.floor((e.L - 0.8) / 3.0), pad = (e.L - n * 3.0) / 2;
+    for (let i = 0; i < n; i++) for (let f = 0; f < 2; f++) for (const k of [-0.25, 0, 0.25]) {
+      const t = pad + 3.0 * (i + 0.5) + k, y0 = gy + 1.6 + f * 3.8;
+      B4(g.B, e, t - 0.03, t + 0.03, y0, y0 + 1.3, 0.07, [e.nx, 0, e.nz], C('#202020'));
+    }
+  }
+  // the yard's stone walls: every edge of the outline not on the stone house
+  const yard = ccw(D.b.gaol.p), B = g.B, gy0 = lowest(yard);
+  for (const e of edges(yard)) {
+    const ix = e.mx - e.nx * 0.6, iz = e.mz - e.nz * 0.6;
+    if (inPoly(GAOL_STONE, ix, iz) && inPoly(GAOL_STONE, e.mx - e.nx * 0.6 + e.ux * 0.4, e.mz - e.nz * 0.6 + e.uz * 0.4)) continue;
+    const y1 = T(e.mx, e.mz) + 5.2;
+    B.quad(e.at(0, gy0 - 1, 0), e.at(e.L, gy0 - 1, 0), e.at(e.L, y1, 0), e.at(0, y1, 0), [e.nx, 0, e.nz], U0, [shade(STN, 0.8), shade(STN, 0.8), STN, STN]);
+    B.quad(e.at(0, gy0 - 1, -0.7), e.at(e.L, gy0 - 1, -0.7), e.at(e.L, y1, -0.7), e.at(0, y1, -0.7), [-e.nx, 0, -e.nz], U0, shade(STN, 0.75));
+    B.quad(e.at(0, y1, 0.05), e.at(e.L, y1, 0.05), e.at(e.L, y1, -0.75), e.at(0, y1, -0.75), [0, 1, 0], U0, ST2);
+    ctx.solids.push({ x: e.mx - e.nx * 0.35, z: e.mz - e.nz * 0.35, hw: e.L / 2, hd: 0.35, rot: Math.atan2(e.uz, e.ux), y0: gy0 - 1, y1 });
+  }
+  // the Governor's House
+  const hp = ccw(D.b.govhouse.p);
+  const h = block(kit, ctx, hp, {
+    h: 8.6, wall: BUFF, trim: CR, parapet: 0, cornice: 0.5, roof: SL, plinth: [0.9, C('#9a8f7f')], glass: GL, frame: CR,
+    win: { style: 'punch', sp: 2.7, w: 1.0, h: 2.1, fl: 3.7, g0: 1.3, sill: CR, arch: CR },
+  });
+  hipRoof(h.B, obb(hp), h.yTop, 2.6, SL, 0.7);
+  const qf = frontEdge(ctx.city, h.E, /^Queen Street/, 6, 60) || facing(h.E, -0.87, -0.49, 6);
+  STATS.govFront = qf && [Math.round(qf.mx), Math.round(qf.mz), +qf.nx.toFixed(2), +qf.nz.toFixed(2)];
+  if (qf) {
+    const gy = T(qf.mx + qf.nx * 2, qf.mz + qf.nz * 2), N = [qf.nx, 0, qf.nz], tt = qf.L * 0.55;
+    // the tower: a storey over the eaves, a bell-cast mansard with iron cresting
+    const p = qf.at(tt, 0, 0.6), rot = Math.atan2(qf.uz, qf.ux), top = h.yTop + 3.4;
+    h.B.box(p[0], gy - 0.5, p[2], 3.8, top - gy + 0.5, 3.8, rot, BUFF);
+    h.B.box(p[0], top - 0.4, p[2], 4.3, 0.5, 4.3, rot, CR);
+    pyramid(h.B, p[0], top + 0.1, p[2], 2.3, 2.3, rot, SL);
+    h.B.box(p[0], top + 2.3, p[2], 1.8, 0.35, 1.8, rot, C('#262626'));
+    const te = obEdges({ x: p[0], z: p[2], hu: 1.9, hv: 1.9, ux: qf.ux, uz: qf.uz }).filter((e) => e.nx * qf.nx + e.nz * qf.nz > 0.9)[0];
+    if (te) for (const y of [gy + 1.2, gy + 4.9, h.yTop + 0.8]) for (const k of [-0.6, 0.6]) {
+      B4(h.B, te, te.L / 2 + k - 0.32, te.L / 2 + k + 0.32, y, y + 1.9, 0.04, N, GL);
+      B4(h.B, te, te.L / 2 + k - 0.42, te.L / 2 + k + 0.42, y - 0.15, y, 0.07, N, CR);
+    }
+    // the verandah and the balcony over it
+    const v0 = Math.max(0.3, tt + 2.4), v1 = Math.min(qf.L - 0.3, v0 + 6.5), vy = gy + 3.4, vd = 2.4;
+    h.B.quad(qf.at(v0, vy + 0.3, 0), qf.at(v1, vy + 0.3, 0), qf.at(v1, vy + 0.3, vd), qf.at(v0, vy + 0.3, vd), [0, 1, 0], U0, CR);
+    h.B.quad(qf.at(v0, vy, vd), qf.at(v1, vy, vd), qf.at(v1, vy + 0.3, vd), qf.at(v0, vy + 0.3, vd), N, U0, CR);
+    h.B.quad(qf.at(v0, vy, 0), qf.at(v1, vy, 0), qf.at(v1, vy, vd), qf.at(v0, vy, vd), [0, -1, 0], U0, shade(CR, 0.7));
+    for (let t = v0 + 0.2; t <= v1 - 0.2 + 1e-3; t += (v1 - v0 - 0.4) / 3) {
+      const q = qf.at(t, gy - 0.2, vd - 0.2);
+      h.B.prism(q[0], q[1], q[2], 0.16, vy - gy + 0.2, 8, CR);
+    }
+    B4(h.B, qf, v0, v1, vy + 0.3, vy + 1.2, vd - 0.05, N, C('#3c4a3e'));
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// THE CANADIAN CLAY AND GLASS GALLERY, 25 Caroline St N (Patkau Architects, 1993)
+// ---------------------------------------------------------------------------------------
+// The Commons photographs ("Canadian Clay and Glass Gallery - Waterloo, ON",
+// "Clay and Glass Museum (External Turrent)"), Patkau's project page (brick,
+// concrete and wood; daylight from above) and the aerial: a long low block of
+// dark red brick, small clerestory windows high on the walls, the white roof;
+// down the east side toward Caroline St a long dark timber canopy on squat
+// concrete piers (the aerial's brown strip) -- the walk to the doors; CANADIAN
+// CLAY & GLASS GALLERY on the brick at its north end; the concrete half-round
+// turret by the west wall. Heights estimated.
+const CG_CANOPY = -4142.0;     // the canopy's inner edge (x): the outline runs out to it
+function clayGlass(kit, ctx) {
+  const BR = C('#6f3426'), CON = C('#bdb8ad'), TIM = C('#4a3326'), GL = C('#2b3238');
+  const raw = ccw(D.b.claygl.p);
+  // the outline to the canopy's inner edge: the canopy is drawn, not a wall
+  const pts = raw.map((q) => (q[0] > CG_CANOPY && q[1] > -1458 && q[1] < -1402 ? [CG_CANOPY, q[1]] : q));
+  const r = block(kit, ctx, pts, {
+    h: 8.2, wall: BR, trim: CON, parapet: 0.5, roof: C('#d4d3cf'), glass: GL,
+    win: { style: 'ribbon', fl: 10, g0: 6.3, h: 0.9, top: 0.6 },
+  });
+  const B = r.B;
+  // the canopy: dark timber slats on concrete piers, from the wall out to the old outline
+  const z0 = -1455.5, z1 = -1403.5, x0 = CG_CANOPY, x1 = -4135.6, gy = T(-4138.5, -1430), cy = gy + 4.2;
+  B.box((x0 + x1) / 2, cy, (z0 + z1) / 2, x1 - x0 + 0.6, 0.45, z1 - z0, 0, TIM);
+  for (let z = z0 + 0.6; z < z1; z += 1.2) B.box((x0 + x1) / 2 + 0.3, cy - 0.22, z, x1 - x0, 0.22, 0.14, 0, shade(TIM, 0.8));
+  for (let z = z0 + 3; z < z1 - 1; z += 8) {
+    cyl(B, x1 - 0.9, gy - 0.4, z, 0.75, cy - gy + 0.4, 10, CON);
+    ctx.solids.push({ x: x1 - 0.9, z, r: 0.75, y0: gy - 1, y1: cy });
+  }
+  // the doors at the north end of the walk
+  const de = edgeNear(r.E, -4142, -1446, 6);
+  if (de) entrance(kit, ctx, de.e, de.t, 5, 3.0, null, { d: 0.6, can: TIM });
+  // the lettering on the north end
+  const ne = r.E.filter((e) => e.nz < -0.6 && e.L > 5).sort((p, q) => q.L - p.L)[0];
+  if (ne) {
+    const g2 = T(ne.mx + ne.nx * 2, ne.mz + ne.nz * 2);
+    const pw = Math.min(9, ne.L - 0.6), m = ctx.atlas.panel(pw, pw / 3, 22, (q, W, H) => {
+      q.clearRect(0, 0, W, H); q.fillStyle = '#f1ece4'; q.textAlign = 'left'; q.textBaseline = 'middle';
+      q.font = `600 ${H * 0.16}px ${SANS}`; q.fillText('CANADIAN', W * 0.04, H * 0.15);
+      q.font = `500 ${H * 0.38}px ${SERIF}`; q.fillText('CLAY & GLASS', W * 0.04, H * 0.5, W * 0.92);
+      q.font = `600 ${H * 0.16}px ${SANS}`; q.fillText('GALLERY', W * 0.6, H * 0.86);
+    });
+    onWall(kit, ne, ne.L / 2, g2 + 5.0, m, 0.08);
+  }
+  // the concrete half-round turret by the west wall
+  {
+    const tx = -4167.2, tz = -1436, ty = T(tx, tz) - 0.4;
+    B.prism(tx, ty, tz, 1.4, 6.8, 12, CON);
+    disc(B, tx, ty + 6.8, tz, 1.4, 12, shade(CON, 0.9));
+    ctx.solids.push({ x: tx, z: tz, r: 1.4, y0: ty - 1, y1: ty + 6.8 });
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// THE WATERLOO MEMORIAL RECREATION COMPLEX, 101 Father David Bauer Dr
+// ---------------------------------------------------------------------------------------
+// The Commons photographs (2025: the aerial over it, the arena inside) and the
+// Esri aerial: the arena -- the Waterloo Siskins' -- under a long white barrel
+// roof, its ends curved to the arch, a band of glass below it; the pool's wing
+// on the east with solar panels on its roof and its glass to the north; the
+// older recreation centre on the west with its round end; the curved glass
+// entrance between them off the parking. OSM maps the outline (unnamed,
+// building=public); the arena is the outline's south rectangle. Heights
+// estimated.
+const WM_ARENA = [[-4694.3, -1339.5], [-4646.4, -1259.6], [-4592.4, -1292.0]];   // three corners: the west side, then the south end
+const WM_SOLAR = { x: -4609, z: -1352, hu: 9, hv: 6.5 };
+const WM_DOOR = [-4627, -1381];
+function waterlooRec(kit, ctx) {
+  const WH = C('#dcddd9'), WH2 = C('#c4c7c4'), GL = C('#3b5560'), GL2 = C('#88a8b0'), RF = C('#e4e5e1');
+  const pts = ccw(D.b.wmrc.p);
+  const r = block(kit, ctx, pts, {
+    h: 9.0, wall: WH2, trim: WH, parapet: 0.8, roof: C('#b9bab6'), glass: GL, plinth: [1.0, C('#8e8b85')],
+    win: { style: 'ribbon', fl: 4.5, g0: 1.2, h: 2.2, top: 1.2 },
+  });
+  // the arena: walls a little proud of the outline, the barrel roof along it
+  const [a, b, c] = WM_ARENA, La = Math.hypot(b[0] - a[0], b[1] - a[1]), Lb = Math.hypot(c[0] - b[0], c[1] - b[1]);
+  const u = [(b[0] - a[0]) / La, (b[1] - a[1]) / La];
+  const o = { x: (a[0] + c[0]) / 2, z: (a[1] + c[1]) / 2, hu: La / 2 + 0.25, hv: Lb / 2 + 0.25, ux: u[0], uz: u[1] };
+  const ar = tower(kit, ctx, o, 11.5, { wall: WH, trim: WH, parapet: 0, roof: RF, glass: GL,
+    win: { style: 'ribbon', fl: 20, g0: 6.8, h: 2.6, top: 0.8 } }, 0);
+  barrel(ar.B, { ...o, hu: o.hu + 0.6, hv: o.hv + 0.4 }, ar.yTop, 7.5, RF, WH, 14);
+  for (let k = -o.hu + 6; k < o.hu - 3; k += 8) {
+    // the roof's ribs
+    barrel(ar.B, { x: o.x + o.ux * k, z: o.z + o.uz * k, hu: 0.12, hv: o.hv + 0.45, ux: o.ux, uz: o.uz }, ar.yTop + 0.05, 7.55, WH2, WH2, 14);
+  }
+  // the pool wing's solar panels
+  const B = r.B, rot = Math.atan2(u[1], u[0]);
+  for (let k = -WM_SOLAR.hv; k <= WM_SOLAR.hv; k += 2.6) {
+    const x = WM_SOLAR.x - u[1] * k, z = WM_SOLAR.z + u[0] * k;
+    B.box(x, r.yTop + 0.9, z, WM_SOLAR.hu * 2, 0.12, 1.7, rot, C('#1f2f4a'));
+    B.box(x, r.yTop, z, WM_SOLAR.hu * 2, 0.9, 0.12, rot, C('#77797a'));
+  }
+  // the curved glass entrance: a glazed drum segment and a canopy
+  const [ex, ez] = WM_DOOR, ey = T(ex, ez);
+  B.prism(ex, ey - 0.3, ez, 7.5, 8.6, 18, GL2);
+  for (let i = 0; i < 18; i++) {
+    const aa = (i / 18) * Math.PI * 2;
+    B.box(ex + Math.cos(aa) * 7.55, ey - 0.3, ez + Math.sin(aa) * 7.55, 0.16, 8.6, 0.16, aa, WH);
+  }
+  disc(B, ex, ey + 8.3, ez, 7.9, 18, RF);
+  ctx.solids.push({ x: ex, z: ez, r: 7.5, y0: ey - 1, y1: ey + 8.3 });
+  const de = edgeNear(r.E, ex, ez - 9, 6);
+  if (de) {
+    const m = text(ctx.atlas, 16, 1.1, 'WATERLOO MEMORIAL RECREATION COMPLEX', { fg: '#1d3c6e', k: 0.6 });
+    onWall(kit, de.e, de.t, r.yTop - 1.4, m, 0.1);
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// GALT ARENA GARDENS, 98 Shade St, Cambridge (1922)
+// ---------------------------------------------------------------------------------------
+// The Commons photographs ("Galt Arena Gardens exterior", 2026-06) and the
+// aerial: brick walls on a high base of rough limestone, stone piers, tall
+// windows; the front on Shade St is the gable end of the arched roof -- a
+// curved parapet over it, stepped parapets and stone-capped piers at the
+// corners -- with the canopy over the doors; the maroon arched roof along
+// the length. One of the oldest arenas still in use in Canada. Heights
+// estimated.
+function galtArena(kit, ctx) {
+  const BR = C('#a35c3d'), LS = C('#bfb39a'), LS2 = C('#d8cfbb'), RF = C('#6a3b3c'), GL = C('#2a3034');
+  const pts = ccw(D.b.galtarena.p);
+  const o = obb(pts);
+  const r = block(kit, ctx, pts, {
+    h: 10.0, wall: BR, trim: LS2, parapet: 0, roof: RF, plinth: [2.2, LS], glass: GL,
+    win: { style: 'punch', sp: 6.0, w: 2.4, h: 3.2, fl: 10, g0: 4.4, sill: LS2 },
+  });
+  barrel(r.B, { ...o, hu: o.hu - 0.3, hv: o.hv + 0.4 }, r.yTop, 5.8, RF, BR, 12);
+  const B = r.B;
+  for (const e of r.E) {
+    const N = [e.nx, 0, e.nz], gy = T(e.mx + e.nx * 2, e.mz + e.nz * 2);
+    // stone piers, a stone band under the eaves
+    const n = Math.max(2, Math.round(e.L / 6));
+    for (let i = 0; i <= n; i++) B4(B, e, e.L * i / n - 0.5, e.L * i / n + 0.5, gy - 0.4, r.yTop + (i === 0 || i === n ? 1.6 : 0.3), 0.25, N, LS2);
+    B4(B, e, 0, e.L, r.yTop - 0.6, r.yTop, 0.2, N, LS2);
+  }
+  // the front: the curved parapet over the gable end, the canopy, the name
+  const sf = frontEdge(ctx.city, r.E, /^Shade Street/, 30, 60) || facing(r.E, 0.87, -0.5, 30);
+  if (sf) {
+    const N = [sf.nx, 0, sf.nz], gy = T(sf.mx + sf.nx * 2, sf.mz + sf.nz * 2), half = sf.L / 2, nA = 10;
+    for (let k = 0; k < nA; k++) {
+      const t0 = (k / nA) * sf.L, t1 = ((k + 1) / nA) * sf.L;
+      const y = (t) => r.yTop + 5.8 * Math.sqrt(Math.max(0, 1 - ((t - half) / (half + 0.4)) ** 2)) + 0.6;
+      B.quad(sf.at(t0, r.yTop - 0.1, 0.02), sf.at(t1, r.yTop - 0.1, 0.02), sf.at(t1, y(t1), 0.02), sf.at(t0, y(t0), 0.02), N, U0, BR);
+      B.quad(sf.at(t0, y(t0), 0.02), sf.at(t1, y(t1), 0.02), sf.at(t1, y(t1) + 0.45, 0.25), sf.at(t0, y(t0) + 0.45, 0.25), N, U0, LS2);
+    }
+    // tall arched windows in the end, between the piers
+    for (const f of [0.3, 0.42, 0.58, 0.7]) B4(B, sf, sf.L * f - 1.2, sf.L * f + 1.2, gy + 4.6, gy + 9.6, 0.06, N, [GL, GL, shade(GL, 1.6), shade(GL, 1.6)]);
+    entrance(kit, ctx, sf, half, 12, 3.4, null, { d: 0.4, can: C('#2a2c30') });
+    const m = text(ctx.atlas, 13, 1.0, 'GALT ARENA GARDENS', { fg: '#f3efe6', bg: '#2a2c30', k: 0.66 });
+    onWall(kit, sf, half, gy + 4.05, m, 3.45);
+  }
+}
+
 // ---------------------------------------------------------------------------------------
 // the extra
 // ---------------------------------------------------------------------------------------
@@ -1166,6 +1762,17 @@ export function buildLandmarks2(ctx) {
   run('inn', innOfWaterloo);
   run('delta', deltaWaterloo);
   run('hespeler', hespeler);
+  // round four
+  if (D.b.mktsq) {
+    run('marketsquare', marketSquare);
+    run('crowne', crownePlaza);
+    run('stmaryrc', stMaryChurch);
+    run('stpeter', stPeters);
+    run('gaol', gaol);
+    run('claygl', clayGlass);
+    run('wmrc', waterlooRec);
+    run('galtarena', galtArena);
+  }
   kit.flush(ctx);
   STATS.tris = kit.tris;
   STATS.ms = Math.round(performance.now() - t0);
@@ -1175,8 +1782,8 @@ export function buildLandmarks2(ctx) {
 /** The map's marks and hellos (as kwsights.js sightsMap's). */
 export function landmarks2Map() {
   if (!D) return [];
-  const m = ([x, z], label, name, hello) => ({ x, z, kind: 'lm', label, name, near: false, hello });
-  const at = (k) => centroid(D.b[k].p);
+  const m = (p, label, name, hello) => (p ? { x: p[0], z: p[1], kind: 'lm', label, name, near: false, hello } : null);
+  const at = (k) => (D.b[k] ? centroid(D.b[k].p) : null);
   return [
     m(at('grh'), 'Hospital', 'WRHN @ Midtown', 'WRHN @ Midtown, 835 King St W — Grand River Hospital until 2025; emergency, and the cancer centre on Green St'),
     m(at('stmary'), false, "WRHN @ Queen's Blvd", "WRHN @ Queen's Blvd, 911 Queen's Blvd — St. Mary's General (1924) and its 1962 tower"),
@@ -1196,7 +1803,15 @@ export function landmarks2Map() {
     m(at('inn'), false, 'The Inn of Waterloo', 'The Inn of Waterloo, 475 King St N — the old Waterloo Inn'),
     m(at('hesp'), false, 'Idea Exchange Hespeler', 'Idea Exchange Hespeler, 5 Tannery St E — the 1923 Carnegie library inside a box of fritted glass (Kongats, 2006)'),
     m(at('delta'), false, 'Delta Waterloo', 'Delta Hotels Waterloo, 110 Erb St W (2014) — nine storeys on Erb'),
-  ];
+    m(at('mktsq'), false, 'Market Square', 'Market Square, King St E at Frederick — the glass rotunda, the clock tower and the skywalk over King'),
+    m(at('crowne'), false, 'Crowne Plaza', 'Crowne Plaza Kitchener-Waterloo, 105 King St E (1970) — the Delta until 2014'),
+    m(at('stmaryrc'), false, "St. Mary's Church", "St. Mary Our Lady of Seven Sorrows, 56 Duke St W (1903) — the region's oldest and largest Catholic church"),
+    m(at('stpeter'), false, "St. Peter's Lutheran", "St. Peter's Lutheran Church, 49 Queen St N — the congregation since 1863, this church since the 1960s"),
+    m(at('gaol'), false, 'Waterloo County Gaol', "The Waterloo County Gaol (1853) and the Governor's House (1878), 73-77 Queen St N"),
+    m(at('claygl'), false, 'Canadian Clay & Glass Gallery', 'The Canadian Clay and Glass Gallery, 25 Caroline St N (Patkau Architects, 1993)'),
+    m(at('wmrc'), false, 'Waterloo Memorial Rec Complex', 'The Waterloo Memorial Recreation Complex, 101 Father David Bauer Dr — the Siskins\' rink and the pool'),
+    m(at('galtarena'), false, 'Galt Arena Gardens', 'Galt Arena Gardens, 98 Shade St (1922) — one of the oldest arenas still in use in Canada'),
+  ].filter(Boolean);
 }
 
 export function landmarks2Stats() { return STATS; }

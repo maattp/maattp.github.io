@@ -49,6 +49,17 @@ LANDMARKS = {
     "inn": (-4460.0, -4251.2),       # The Inn of Waterloo (the Waterloo Inn), 475 King St N
     "delta": (-4329.0, -1257.7),     # Delta Waterloo, 110 Erb St W (2014, 9 levels)
     "hesp": (13374.5, 2346.8),       # Idea Exchange Hespeler, 5 Tannery St E (Kongats 2006: glass round the 1923 Carnegie library)
+    # round four
+    "mktsq": (-981.1, 294.7),        # Market Square, King St E & Frederick (the glass rotunda and the clock tower)
+    "skywalk": (-996.9, 331.2),      # the skywalk over King St from Market Square to the hotel (building=bridge, min_level 1)
+    "crowne": (-1002.7, 385.6),      # Crowne Plaza Kitchener-Waterloo, 105 King St E (built 1970, the Delta until 2014)
+    "stmaryrc": (-1240.3, -22.1),    # St. Mary Our Lady of Seven Sorrows, 56 Duke St W (1900-03, Neo-Gothic), and its rectory
+    "stpeter": (-1018.9, 89.9),      # St. Peter's Lutheran Church, 49 Queen St N (Kruschen & Dailey, 1966-68)
+    "gaol": (-916.6, -15.9),         # the Waterloo County Gaol, 77 Queen St N (Mellish and Russell, 1853), and its yard
+    "govhouse": (-939.5, -25.5),     # the Governor's House, 73 Queen St N (David W. Gingerich, 1878)
+    "claygl": (-4150.5, -1442.1),    # the Canadian Clay and Glass Gallery, 25 Caroline St N (Patkau 1993)
+    "wmrc": (-4654.4, -1366.9),      # the Waterloo Memorial Recreation Complex, 101 Father David Bauer Dr (OSM's outline is unnamed)
+    "galtarena": (13621.9, 9884.9),  # Galt Arena Gardens, 98 Shade St, Cambridge (1922)
 }
 
 

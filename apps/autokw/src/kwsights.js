@@ -1673,4 +1673,4 @@ export function sightsMap() {
 }
 
 // kwuptown.js builds Uptown's other buildings with the same kit
-export { block, frontEdge, text, onWall, clockFace, pyramid, hipRoof, B4, nearestEdge, entrance, atriumEntrance, storeFront, pylon, brandPanel, BRANDS };
+export { block, frontEdge, text, onWall, clockFace, pyramid, hipRoof, barrel, B4, nearestEdge, entrance, atriumEntrance, storeFront, pylon, brandPanel, BRANDS };
