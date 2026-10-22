@@ -41,6 +41,7 @@ const FWY_BANNED = new Set(['bicycle', 'schoolbus', 'garbage', 'recycling']);
 // change's lateral speed, and MOBIL's thresholds -- the gain a pass must buy,
 // the loss keeping right may cost, and the hardest braking a change may ask of
 // the car it cuts in front of (or of itself behind the new leader).
+const XO_LATE = 90;   // m before an exit-only lane leaves: too late to move out of it
 const EXIT_P = 0.3, EXIT_PLAN = [260, 1300], LC_TIME = 3.2, LC_GAIN = 0.25, LC_KEEP = 0.15, LC_SAFE = -2.5;
 const SEMI_V = 29.0;   // a semi's speed limiter: 105 km/h
 // Auto KW, LANE CHOICE IN TOWN (cityLaneDecide; CLAUDE.md "Lane choice and
@@ -2837,11 +2838,36 @@ export class TrafficSystem {
   /** Look down the freeway for the next diverge (a ramp leaving, the
    *  carriageway going on) EXIT_PLAN m ahead, and decide once whether to take
    *  it: EXIT_P of drivers do. */
-  fwyPlanExit(v, s0) {
+  fwyPlanExit(v, s0, force = 0) {
     const city = this.city, rt = v.rt;
     let ei = rt[R_EI], sign = rt[R_SG];
     let node = sign > 0 ? city.edges[ei].b : city.edges[ei].a;
     let dist = rt[R_LEN] - s0;
+    // force: the car is in an exit-only lane with no way out of it -- it
+    // takes the next exit on the right if that is within `force` m
+    if (force) {
+      for (let hop = 0; hop < 20 && dist < force; hop++) {
+        const e = city.edges[ei], fx = e.dx * sign, fz = e.dz * sign, comp = this.comp[node];
+        for (const k of city.nodes[node].e) {
+          if (k === ei) continue;
+          const r = city.edges[k];
+          if (r.cls !== 'ramp' || !this.fwy[k] || r.noTraffic) continue;
+          const sg = r.a === node ? 1 : -1;
+          if (!this.allowed(k, sg) || this.comp[sg > 0 ? r.b : r.a] !== comp) continue;
+          if (r.dx * sg * fx + r.dz * sg * fz < 0.5 || fx * r.dz * sg - fz * r.dx * sg <= 0) continue;
+          v.exitNode = node; v.exitEi = k; v.exitSign = sg; v.exitSide = 1; v.exitSeen = node;
+          this.stats.exitsPlanned++;
+          for (let j = 0; j < v.rtN; j++) if (this.entryEnd(v, j) === node) { this.cutRoute(v, j); break; }
+          return true;
+        }
+        const on = this.fwyOn(v, ei, sign, node);
+        if (!on) return false;
+        ei = on.ei; sign = on.sign;
+        node = sign > 0 ? city.edges[ei].b : city.edges[ei].a;
+        dist += city.edges[ei].len;
+      }
+      return false;
+    }
     for (let hop = 0; hop < 40 && dist < EXIT_PLAN[1]; hop++) {
       const e = city.edges[ei], fx = e.dx * sign, fz = e.dz * sign, comp = this.comp[node];
       let ramp = null;
@@ -3005,6 +3031,20 @@ export class TrafficSystem {
         } else must = v.exitSide;
       }
     }
+    // AN EXIT-ONLY LANE (highways.js `e.xo`, painted with the continuity line
+    // by world.js meshRoadMarks): a driver not taking the exit moves out of
+    // it; one still in it with no gap as the exit nears takes the exit, as
+    // people do, rather than stopping at the gore.
+    const xo = e.xo || 0, inXo = xo > 0 && LI.n > xo && fromR < xo;
+    if (!must && inXo && v.exitNode < 0) {
+      // how far the exit-only stretch runs on along the route (to the
+      // diverge): inside XO_LATE of it no driver cuts across the lanes any
+      // more -- moving over at the gore met the cars exiting behind it
+      let dX = rt[R_LEN] - s0;
+      for (let j = 1; j < v.rtN; j++) { const q = city.edges[rt[j * RT_F + R_EI]]; if (!(q.xo > 0)) break; dX += rt[j * RT_F + R_LEN]; }
+      if (dX < XO_LATE) { if (this.fwyPlanExit(v, s0, XO_LATE + 40)) this.stats.exitOnlyTaken = (this.stats.exitOnlyTaken || 0) + 1; return; }
+      must = -1;
+    }
     if (!must) {
       // a lane that ends within 250 m: the route jogs sideways at a node
       let d = rt[R_LEN] - s0;
@@ -3025,6 +3065,7 @@ export class TrafficSystem {
       if (i + must * sign < 0 || i + must * sign >= LI.n) return;
       const ok = (v.lcCool <= 2 || v.exitNode >= 0) && this.fwyLane(v, nb, offOf(i + must * sign), LI.w, myLat, sp, v0, aMax);
       if (ok && this.changeLane(v, must, LI, i)) { this.stats.laneMandatory++; v.dropT = 0; }
+      else if (inXo && v.exitNode < 0) { if (this.fwyPlanExit(v, s0, XO_LATE + 40)) this.stats.exitOnlyTaken = (this.stats.exitOnlyTaken || 0) + 1; }
       // a lane that ends with no gap beside it: the car slows for its end
       // (driveTraffic) rather than swerving across at the node
       else if (v.dropX != null && v.exitNode < 0) v.dropT = 1.2;
@@ -3043,7 +3084,8 @@ export class TrafficSystem {
       }
     }
     // KEEP RIGHT except to pass: back over once it costs nothing
-    if (fromR > 0) {
+    // (never back over into an exit-only lane)
+    if (fromR > 0 && !(xo > 0 && LI.n > xo && fromR - 1 < xo)) {
       const r = this.fwyLane(v, nb, offOf(i + sign), LI.w, myLat, sp, v0, aMax);
       if (r && r.aNew > -0.2 && r.aNew >= aCur - LC_KEEP && r.gA > sp * 2.5) this.changeLane(v, 1, LI, i);
     }

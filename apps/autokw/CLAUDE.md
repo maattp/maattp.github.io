@@ -1275,8 +1275,8 @@ file and a guide disagree, this file wins.
   __noHwy before -> after: Conestoga at Fairway 200 -> 203 draws, 584k ->
   586k tris; Hwy 8 at King 405 -> 405; Hwy 85 at King N 235 -> 240; the 401
   at Hespeler 116 -> 121. Build ~50-70 ms on the Mac (~230 ms with round
-  two's rails and rumble strips). Not done: the Ontario "tall wall" ends with
-  no crash cushion, and there are no overhead lane-use arrows.
+  two's rails and rumble strips). Not done: overhead lane-use arrows (the
+  wall ends' crash cushions came in round three).
 - **The freeways, round two** (docs/hwy-pkwy-noisewall-traffic.jpg,
   hwy-85-cutting-bridgeport.jpg, hwy-8-guiderail-rumble.jpg,
   hwy-pkwy-parapets.jpg):
@@ -1353,6 +1353,69 @@ file and a guide disagree, this file wins.
     noise wall 428 -> 428, 1157k -> 1153k; 401 at Hespeler 310 -> 309, 460k
     -> 473k; the 401/8 masts 366 -> 366, 497k -> 535k; Hwy 8 at King 173 ->
     173, 542k -> 560k; Fairway aerial 219 -> 219. 0 exceptions.
+- **The freeways, round three** (docs/hwy3-*.jpg, master over this):
+  - **Overpasses stand up.** The survey's worst finding: nearly every
+    street over a freeway lay ON it (0-0.4 m: Hespeler, Franklin, Townline,
+    Fountain, Speedsville over the 401; Fischer-Hallman, Notre Dame over
+    7/8; Northfield, King, University, Lexington, Wellington over 85; the
+    gradeRoads clearance pass refused 86 crossings). OSM maps only the span
+    as bridge=yes, so the deck's ends were anchors and 6 m in 20 m was
+    over MAX_CLIMB. citygen `markApproaches` grades the draped street running
+    on from each end of a street deck that crosses a freeway/ramp (`e.app`;
+    the deck chain `e.ovr`), through plain nodes and through ramp terminals
+    (every other road there a graded ramp, which then climbs with it), to
+    the first real junction or `APP_MAX` 240 m; cone `APP_GRADE` 6 %. Refused
+    86 -> 8, every named street overpass now clears 5.9-7.7 m (a few 11 m:
+    Wellington's stacked decks). Approaches draw as meshGraded road on a
+    mown-grass batter; junctions.js `ok()` and arterial.js's two-way layout
+    accept `app` edges (anything else keyed on `e.prof` -- trees, poles,
+    parked cars, gravel -- treats them like the decks: nothing stands on
+    them). `app`/`ovr` are in GRADE_EDGE_FIELDS (the grade boot cache).
+    **Approximate:** approaches have no sidewalks; the anchor junction stays
+    at grade, so where it is under ~45 m from the span the climb is steep
+    (MAX_CLIMB 15 %); ramp terminals on an approach are graded nodes (no
+    junction square, as on master they had no control either).
+  - **Exit-only lanes.** build_hwy.py exports `xo` per carriageway: the
+    trailing turn:lanes entries that only turn off (slight_right/right),
+    where a link leaves from the way's last node -- 53 ways, nearly every
+    exit's deceleration lane plus the 401's auxiliary lanes. prepHighways
+    puts it on the edges (`e.xo`, direction-checked). ONE rule, two readers:
+    world.js meshRoadMarks draws that lane's line as a continuity line (0.2
+    m, 1 m dash / 3 m period); traffic.js fwyDecide moves a driver who is not
+    exiting out of it (mandatory), never keeps right into it, and inside
+    `XO_LATE` 90 m of the diverge takes the exit instead of cutting across
+    (`fwyPlanExit(v, s0, force)`; stats.exitOnlyTaken). Changing lanes at the
+    gore instead jammed Hwy 8 at King (bus and semi locked overlapping,
+    unseeded hwytraffic 87 -> 51 km/h there) -- keep the late cut-off.
+    **EXIT ONLY:** where the dropped lane runs `XO_SIGN` 450 m+ (or two lanes
+    drop) the overhead sign hangs a black-on-yellow EXIT ONLY band with a
+    down arrow (one shared atlas panel, `onlyPanel`; the sign atlas is 984 of
+    1024 rows -- per-sign variants overflowed it, `atlas.full` 0 -> 191).
+    11 exits.
+  - **Crash cushions** at every tall-wall run end (a piece end no other piece
+    continues within 14 m, with room in the median): yellow stepped bays,
+    black nose with yellow bars, a solid; in the furniture cells' one
+    vertex-coloured draw. 262 -- many are the ends of the short wall runs
+    where OSM's carriageways come within MEDIAN_MAX of each other.
+  - **Not done:** paved 3 m right shoulders (the carriageway is lanes + 0.8
+    m; widening hw ripples through grading, traffic lanes and medians), the
+    401's concrete stretches (OSM says asphalt everywhere), km posts,
+    overhead lane-use arrows, MTO slope paving under the abutments.
+  - **Verify** (master -> this, one at a time on one port): trafficbench
+    (rail off, phone) uptown-king, sig-1644, allway-28 = master;
+    pkwy-fairway, 401-hespeler (exit-only AI, Hespeler Rd now over the 401)
+    and rb-3lane (beside the Parkway at Homer Watson: the exit-only lane and
+    the raised Homer Watson approach) change, meant. hwytraffic seeded 3
+    hits / 0 crashes -> 5 / 1, unseeded 9 / 0 -> 9 / 0, all at master's
+    spots (the 401 EB Hespeler gore with its two-lane ramp, 85's Bridgeport
+    ramp); mean freeway speed 92 -> 91 / 91 -> 90 km/h; exits taken 28 ->
+    56 (39 of them drivers left in an exit-only lane). jcttraffic seeded 0 /
+    0 / 0 = master. funprobe ALL OK. Phone (AUTO_PHONE=1, GPU, fresh
+    profile): boot to running 9.6 -> 10.0 s; spawn 178 -> 173 draws (1137k
+    -> 1122k; the difference is traffic); freeway views +2..+3 draws
+    (Hespeler overpass 111 -> 114, Fischer-Hallman 261 -> 263, the 401 EXIT
+    ONLY gantry 133 -> 136, Homer Watson 176 -> 179, Hwy 8 at King 166 ->
+    169), the Fischer-Hallman aerial 308 -> 314. 0 exceptions.
 - **Junctions: signals, stop signs, roundabouts, crossings** (src/junctions.js,
   `data/junctions.json` from tools/kw/build_junctions.py; docs/junction-*.jpg).
   The graph has no node tags, so build_junctions.py extracts them: signal

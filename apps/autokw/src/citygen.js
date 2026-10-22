@@ -416,9 +416,9 @@ function unpackBuildings(c) {
 // launch of the same build applies that instead of solving again. Everything
 // it leaves behind is here: the edge and node fields it sets, the underpass
 // list the carve is built from, and its stats.
-const GRADE_EDGE_FIELDS = ['lock', 'pk', 'ps', 'ph', 'pg', 'tw', 'tlo', 'tnb', 'pe', 'pwall', 'pbw'];
+const GRADE_EDGE_FIELDS = ['app', 'ovr', 'lock', 'pk', 'ps', 'ph', 'pg', 'tw', 'tlo', 'tnb', 'pe', 'pwall', 'pbw'];
 const GRADE_STATS = ['refusedCrossings', 'underpasses', 'underpassNoRoom', 'underpassGraded', 'splitLevelTrimmedM',
-  'gradedSamples', 'overpassesRaised', 'overpassesRefused', 'fillMean', 'fillWorst', 'fwyDips', 'fwyDipNoRoom', 'levelledSamples'];
+  'gradedSamples', 'overpassesRaised', 'overpassesRefused', 'overpassApproaches', 'fillMean', 'fillWorst', 'fwyDips', 'fwyDipNoRoom', 'levelledSamples'];
 function gradeSnapshot(nodes, edges, grading) {
   const E = [], N = [];
   for (let ei = 0; ei < edges.length; ei++) {
@@ -553,6 +553,87 @@ function makeUnderpassDepth(underpasses) {
 // trestles), set by cityGenerator from md.ferryFix.
 let LOCK_NODES = null;
 
+// AUTO KW: OVERPASS APPROACHES. In OSM a street overpass is only its span
+// (bridge=yes, ~30-50 m) and the street either side is ordinary road -- so
+// in the sample graph the deck's own two ends were anchors pinned to the
+// ground, and 6 m of clearance inside 20 m was refused (MAX_CLIMB). Every
+// street over Waterloo Region's freeways lay ON them: Hespeler Rd, Franklin,
+// Townline and Fountain over the 401, Fischer-Hallman over the Parkway,
+// Northfield, King, University and Lexington over 85 -- 0.0-0.4 m over the
+// lanes, a slab a freeway car was picked up onto and dropped off. Ontario
+// builds these on earth fill: the cross road climbs at ~5 % on embankments
+// either side of the span, the freeway stays near grade. So the draped
+// street running on from each end of a deck that crosses a freeway or ramp
+// is graded too (`e.app`), out to its first junction or APP_MAX, and the
+// junction (the ramp terminal, usually) stays at grade as the anchor. The
+// approach is drawn as graded road on a batter (world.meshGraded), the
+// deck and approach cone at APP_GRADE.
+const APP_MAX = 240, APP_GRADE = 0.06;
+function markApproaches(nodes, edges) {
+  const fwy = (e) => (e.cls === 'hwy' || e.cls === 'ramp') && !e.elev && !e.tunnel;
+  const street = (e) => e.cls !== 'hwy' && e.cls !== 'ramp' && !e.tunnel && !e.gravel;
+  const C = 100, g = new Map();
+  for (let ei = 0; ei < edges.length; ei++) {
+    const e = edges[ei];
+    if (!fwy(e)) continue;
+    const a = nodes[e.a], b = nodes[e.b];
+    for (let cx = Math.floor(Math.min(a.x, b.x) / C); cx <= Math.floor(Math.max(a.x, b.x) / C); cx++)
+      for (let cz = Math.floor(Math.min(a.z, b.z) / C); cz <= Math.floor(Math.max(a.z, b.z) / C); cz++) {
+        const k = skey(cx, cz);
+        let l = g.get(k);
+        if (!l) g.set(k, (l = []));
+        l.push(ei);
+      }
+  }
+  let decks = 0, apps = 0, appM = 0;
+  const walkOut = (ni, from) => {
+    let d = 0;
+    for (let s = 0; s < 80 && d < APP_MAX; s++) {
+      const n = nodes[ni];
+      // on through a plain node, and through a ramp terminal (every other
+      // road there a graded freeway ramp): the terminal rides up with the
+      // street, as a parclo's does, and its ramps climb to it
+      let ei = -1;
+      for (const k of n.e) {
+        if (k === from) continue;
+        const o = edges[k];
+        if (street(o)) { if (ei >= 0) return; ei = k; }
+        else if (!(o.cls === 'ramp' && o.prof && !o.elev)) return;
+      }
+      if (ei < 0) return;
+      const e = edges[ei];
+      if (e.app) return;
+      if (e.elev) { if (!e.prof || e.lock) return; e.ovr = true; }
+      else { e.app = true; e.prof = true; e.lock = false; apps++; appM += e.len; d += e.len; }
+      from = ei; ni = e.a === ni ? e.b : e.a;
+    }
+  };
+  for (let ai = 0; ai < edges.length; ai++) {
+    const A = edges[ai];
+    if (!A.elev || !A.prof || A.lock || !street(A)) continue;
+    const p0 = nodes[A.a], p1 = nodes[A.b];
+    let over = false;
+    for (let cx = Math.floor(Math.min(p0.x, p1.x) / C); cx <= Math.floor(Math.max(p0.x, p1.x) / C) && !over; cx++)
+      for (let cz = Math.floor(Math.min(p0.z, p1.z) / C); cz <= Math.floor(Math.max(p0.z, p1.z) / C) && !over; cz++) {
+        for (const bi of g.get(skey(cx, cz)) || []) {
+          const B = edges[bi];
+          if (A.a === B.a || A.a === B.b || A.b === B.a || A.b === B.b) continue;
+          if (Math.abs(A.dx * B.dz - A.dz * B.dx) < 0.26) continue;
+          const r0 = nodes[B.a], r1 = nodes[B.b];
+          const dd = (p1.x - p0.x) * (r1.z - r0.z) - (p1.z - p0.z) * (r1.x - r0.x);
+          const t = ((r0.x - p0.x) * (r1.z - r0.z) - (r0.z - p0.z) * (r1.x - r0.x)) / dd;
+          const u = ((r0.x - p0.x) * (p1.z - p0.z) - (r0.z - p0.z) * (p1.x - p0.x)) / dd;
+          if (t > 0 && t < 1 && u > 0 && u < 1) { over = true; break; }
+        }
+      }
+    if (!over || A.ovr) continue;
+    A.ovr = true; decks++;
+    walkOut(A.a, ai);
+    walkOut(A.b, ai);
+  }
+  cityStats.overpassApproaches = { decks, edges: apps, m: Math.round(appM) };
+}
+
 function gradeRoads(nodes, edges) {
   const T = G.terrainHeight;
   const portals = [];
@@ -581,6 +662,7 @@ function gradeRoads(nodes, edges) {
     // the car deck before the city (ferry.js fixTerminals)
     e.lock = near || !!(LOCK_NODES && LOCK_NODES.has(e.a) && LOCK_NODES.has(e.b));
   }
+  markApproaches(nodes, edges);
 
   // --- the sample graph ---
   const SX = [], SZ = [], ED = [], ST = [], NV = [];
@@ -611,7 +693,7 @@ function gradeRoads(nodes, edges) {
       ED.push(ei); ST.push(i / k); NV.push(-1);
     }
     ps[k] = varOf(e.b);
-    const gr = CLASS_GRADE[e.cls] || 0.12;
+    const gr = e.app || e.ovr ? APP_GRADE : CLASS_GRADE[e.cls] || 0.12;
     for (let i = 0; i < k; i++) link(ps[i], ps[i + 1], e.len / k, gr);
     e.pk = k;
     e.ps = ps;
