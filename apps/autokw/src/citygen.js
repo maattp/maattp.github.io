@@ -416,9 +416,9 @@ function unpackBuildings(c) {
 // launch of the same build applies that instead of solving again. Everything
 // it leaves behind is here: the edge and node fields it sets, the underpass
 // list the carve is built from, and its stats.
-const GRADE_EDGE_FIELDS = ['app', 'ovr', 'lock', 'pk', 'ps', 'ph', 'pg', 'tw', 'tlo', 'tnb', 'pe', 'pwall', 'pbw'];
+const GRADE_EDGE_FIELDS = ['app', 'ovr', 'lock', 'pk', 'ps', 'ph', 'pg', 'tw', 'ltw', 'shx', 'tlo', 'tnb', 'pe', 'pwall', 'pbw'];
 const GRADE_STATS = ['refusedCrossings', 'underpasses', 'underpassNoRoom', 'underpassGraded', 'splitLevelTrimmedM',
-  'gradedSamples', 'overpassesRaised', 'overpassesRefused', 'overpassApproaches', 'fillMean', 'fillWorst', 'fwyDips', 'fwyDipNoRoom', 'levelledSamples'];
+  'gradedSamples', 'overpassesRaised', 'overpassesRefused', 'overpassApproaches', 'fillMean', 'fillWorst', 'fwyDips', 'fwyDipNoRoom', 'levelledSamples', 'shoulderM2'];
 function gradeSnapshot(nodes, edges, grading) {
   const E = [], N = [];
   for (let ei = 0; ei < edges.length; ei++) {
@@ -461,6 +461,26 @@ function applyGrade(nodes, edges, snap) {
 // cutting at Bridgeport (-770, -2400). At one full quad, any quad crossing the
 // wall plane has both corners on the floor, and the rise is behind the wall.
 export const FWY_DIP_OVER = 4.0;
+
+// AUTO KW, PAVED SHOULDERS (CLAUDE.md "The freeways, round four"). A
+// carriageway's `hw` is its lanes (build_roads.py: lanes * 1.8 + 1.0) and
+// traffic lays them 0.8 m in from each edge (arterial.js SHOULDER), so every
+// freeway had a 0.8 m shoulder and then grass. MTO paves 3.0 m on the 401's
+// right, ~2.5 m on the Parkway and the other 400-series, and 1-2.5 m on the
+// left to the tall wall. gradeRoads widens what is DRAWN and DRIVEN (`e.tw`,
+// per sample and side) by these less the 0.8 m, after its split-level trim,
+// and keeps the old per-sample widths as `e.ltw`: the lane basis. Everything
+// that lays or paints LANES reads `ltw` (oneWaySpan, laneStrips, the lane and
+// edge lines, the rumble strips), so traffic's lanes do not move by a bit.
+export const SH_LANE = 0.8;
+/** The paved shoulders a one-way freeway carriageway wants, [right, left] of
+ *  travel in metres from the lane edge (null: not a freeway carriageway). */
+export function shoulderWant(e) {
+  if (e.cls !== 'hwy' || !e.oneway || e.tunnel) return null;
+  return [/\b401\b/.test(e.name || '') ? 3.0 : 2.5, 1.5];
+}
+/** The most a carriageway's sides can be widened (the dip carve's reach). */
+export const shoulderMax = (e) => { const w = shoulderWant(e); return w ? Math.max(w[0], w[1]) - SH_LANE : 0; };
 
 /** The carve depth of a list of underpasses (gradeRoads' or a cached copy). */
 function makeUnderpassDepth(underpasses) {
@@ -1623,13 +1643,15 @@ function gradeRoads(nodes, edges) {
       const px = -e.dz, pz = e.dx;
       const pts = [];
       let deepest = 0;
+      // (the paved shoulders, laid after this, are dug too: `ew`)
+      const ew = e.hw + shoulderMax(e);
       for (let i = 0; i <= k; i++) {
         const v = e.ps[i];
         const x = a.x + (e.dx * e.len * i) / k, z = a.z + (e.dz * e.len * i) / k;
         let d = 0;
         if (dipOf[v] > 0) {
           const s = clamp(gx[v] * px + gz[v] * pz, -CAMBER_MAX, CAMBER_MAX);
-          for (const o of [-e.hw, -e.hw / 2, 0, e.hw / 2, e.hw]) {
+          for (const o of [-ew, -e.hw, -e.hw / 2, 0, e.hw / 2, e.hw, ew]) {
             d = Math.max(d, T(x + px * o, z + pz * o) - (H[v] + s * o) + ROAD_LIFT + 0.05);
           }
         }
@@ -1637,7 +1659,7 @@ function gradeRoads(nodes, edges) {
         deepest = Math.max(deepest, d);
       }
       if (deepest <= 0.05) continue;
-      const hw = e.hw + 0.3;
+      const hw = ew + 0.3;
       const pad = FWY_DIP_OVER + 2;
       const x0 = Math.min(...pts.map((p) => p.x)) - hw - pad, x1 = Math.max(...pts.map((p) => p.x)) + hw + pad;
       const z0 = Math.min(...pts.map((p) => p.z)) - hw - pad, z1 = Math.max(...pts.map((p) => p.z)) + hw + pad;
@@ -1671,6 +1693,17 @@ function gradeRoads(nodes, edges) {
       e.ph[i] = H[v];
       if (!e.elev) e.pg[i] = clamp(gx[v] * px + gz[v] * pz, -CAMBER_MAX, CAMBER_MAX);
     }
+  }
+
+  // THE GORE EDGES (spreadGores): a straight grade from the main line's node
+  // to the moved ramp node, no camber. Draped to the ground under its own
+  // centre line it fell off the main line's 2 m fill within a few metres,
+  // while its lanes -- slid toward the main line -- were still beside it.
+  for (const e of edges) {
+    if (!e.gore || !e.prof || e.elev) continue;
+    const k = e.pk;
+    for (let i = 1; i < k; i++) e.ph[i] = e.ph[0] + ((e.ph[k] - e.ph[0]) * i) / k;
+    for (let i = 0; i <= k; i++) e.pg[i] = 0;
   }
 
   // --- split levels ---
@@ -1789,6 +1822,113 @@ function gradeRoads(nodes, edges) {
   }
   cityStats.splitLevelTrimmedM = Math.round(trimmedM);
 
+  // PAVED SHOULDERS (shoulderWant, above): each untrimmed side of a freeway
+  // carriageway widened by its shoulder less the 0.8 m the lanes already
+  // leave, but never into a neighbour -- a ramp running alongside, a parallel
+  // carriageway (half the gap each), anything within SH_LEVEL of this level --
+  // so at a diverge the shoulder opens as the ramp parts, and never on the
+  // left where an opposing carriageway is within SH_MED: there the paved
+  // median and the tall wall (highways.js) are the left shoulder. Tapered to
+  // nothing over SH_TAPER from a node where the freeway meets anything but
+  // freeway (an at-grade crossing, a portal, its end). The old widths stay as
+  // `e.ltw`, the lane basis; `e.shx` is the widest it got.
+  {
+    const SH_MED = 19, SH_TAPER = 30, SH_CLEAR = 0.3, SH_LEVEL = 6, SH_R = 45;
+    const foreign = (ni) => {
+      const n = nodes[ni];
+      if (n.e.length < 2) return true;
+      for (const k of n.e) { const o = edges[k]; if (o.tunnel || !o.prof || (o.cls !== 'hwy' && o.cls !== 'ramp')) return true; }
+      return false;
+    };
+    const yOf = (o, u, x, z) => (o.prof ? o.ph[Math.min(o.pk, Math.max(0, Math.round(u * o.pk)))] : T(x, z) + ROAD_LIFT);
+    // THE GORE EDGES (spreadGores' `gore`): the band drawn and driven slid
+    // sideways along the edge by the shift, from the main line's outer lanes
+    // at its node to the ramp's moved node -- the same line its lanes run
+    for (const e of edges) {
+      if (!e.gore || !e.prof) continue;
+      const k = e.pk, ef = e.onewayRev ? -1 : 1;
+      const ltw = Float32Array.from(e.tw);
+      let shx = 0;
+      for (let i = 0; i <= k; i++) {
+        const tt = ef > 0 ? i / k : 1 - i / k;                    // along travel
+        const sh = (e.gore[0] + (e.gore[1] - e.gore[0]) * tt) * ef;   // + toward the +p side
+        e.tw[i * 2] = ltw[i * 2] + sh;
+        e.tw[i * 2 + 1] = ltw[i * 2 + 1] - sh;
+        e.tlo[i * 2] = NaN; e.tlo[i * 2 + 1] = NaN;
+        shx = Math.max(shx, Math.abs(sh));
+      }
+      e.ltw = ltw; e.shx = shx;
+    }
+    let paved = 0, stamp = 0;
+    const seenO = new Int32Array(edges.length);
+    for (const e of edges) {
+      const want = e.prof ? shoulderWant(e) : null;
+      if (!want) continue;
+      const k = e.pk, a = nodes[e.a], px = -e.dz, pz = e.dx;
+      const ef = e.onewayRev ? -1 : 1, sR = ef > 0 ? 0 : 1;   // +p (side 0) is the right of travel a -> b
+      const fA = foreign(e.a), fB = foreign(e.b);
+      const ltw = Float32Array.from(e.tw);
+      let shx = 0;
+      for (let i = 0; i <= k; i++) {
+        const s0 = (e.len * i) / k;
+        const taper = Math.min(1, fA ? s0 / SH_TAPER : 1, fB ? (e.len - s0) / SH_TAPER : 1);
+        if (taper <= 0) continue;
+        const cx = a.x + e.dx * s0, cz = a.z + e.dz * s0;
+        const room = [Infinity, Infinity], med = [false, false];
+        const st = ++stamp;
+        for (let gx0 = Math.floor((cx - SH_R) / CELL); gx0 <= Math.floor((cx + SH_R) / CELL); gx0++) {
+          for (let gz0 = Math.floor((cz - SH_R) / CELL); gz0 <= Math.floor((cz + SH_R) / CELL); gz0++) {
+            const l = grid.get(skey(gx0, gz0));
+            if (!l) continue;
+            for (const oi of l) {
+              if (seenO[oi] === st) continue;
+              seenO[oi] = st;
+              const o = edges[oi];
+              if (o === e || o.tunnel) continue;
+              const par = e.dx * o.dx + e.dz * o.dz;
+              if (Math.abs(par) < 0.8) continue;
+              const oa = nodes[o.a];
+              let u = ((cx - oa.x) * o.dx + (cz - oa.z) * o.dz) / o.len;
+              if (u < -0.02 || u > 1.02) continue;
+              u = Math.min(1, Math.max(0, u));
+              let fx = oa.x + o.dx * o.len * u, fz = oa.z + o.dz * o.len * u;
+              const shares = o.a === e.a || o.a === e.b || o.b === e.a || o.b === e.b;
+              if (o.gore) {
+                // a gore edge's band is slid sideways: measure to where it is
+                const ofw = o.onewayRev ? -1 : 1, tt = ofw > 0 ? u : 1 - u;
+                const sh = (o.gore[0] + (o.gore[1] - o.gore[0]) * tt) * ofw;
+                fx += -o.dz * sh; fz += o.dx * sh;
+              } else if (shares && Math.hypot(cx - fx, cz - fz) < 1.0) continue;
+              const dd = Math.hypot(cx - fx, cz - fz);
+              if (Math.abs(yOf(o, u, fx, fz) - e.ph[i]) > SH_LEVEL) continue;
+              const s = (fx - cx) * px + (fz - cz) * pz >= 0 ? 0 : 1;
+              const gap = dd - o.hw - ltw[i * 2 + s];
+              const of = o.onewayRev ? -1 : 1;
+              const opp = o.cls === 'hwy' && o.oneway && par * ef * of < -0.8;
+              if (opp && gap < SH_MED) med[s] = true;
+              // a freeway carriageway beside it widens into the same gap
+              const r = shoulderWant(o) ? gap / 2 : gap;
+              if (r < room[s]) room[s] = r;
+            }
+          }
+        }
+        for (let s = 0; s < 2; s++) {
+          if (!Number.isNaN(e.tlo[i * 2 + s])) continue;   // trimmed: walled down to the road below
+          if (s !== sR && med[s]) continue;
+          const x = Math.min(((s === sR ? want[0] : want[1]) - SH_LANE) * taper, room[s] - SH_CLEAR);
+          if (x <= 0.05) continue;
+          e.tw[i * 2 + s] = ltw[i * 2 + s] + x;
+          // a neighbour inside the new edge's catch fringe (as the trim pass marks it)
+          if (room[s] - x < 1.5) e.tnb[i * 2 + s] = 1;
+          if (x > shx) shx = x;
+          paved += (e.len / k) * x;
+        }
+      }
+      if (shx > 0) { e.ltw = ltw; e.shx = shx; }
+    }
+    cityStats.shoulderM2 = Math.round(paved);
+  }
+
   let fillSum = 0, fillN = 0, worstFill = 0;
   // Each edge's padded bounds, so the two per-sample scans below reject roads
   // that cannot reach the point before touching them (they were 0.27 s of a
@@ -1901,8 +2041,11 @@ function gradeRoads(nodes, edges) {
         if (w > widest) widest = w;
       }
     }
-    e.pbw = widest;
+    // (a widened carriageway's berm starts at its paved shoulder: the reach
+    // every onRoad / roadLift / clear-zone query takes is hw + pbw)
+    e.pbw = widest + (e.shx || 0);
   }
+  for (const e of edges) if (e.elev && e.shx) e.pbw = e.shx;
   for (const [ni, v] of nodeVar) {
     const n = nodes[ni];
     n.ph = H[v];
@@ -2127,6 +2270,130 @@ function stackBores(g) {
   return { up, lo, ramps, hwU, hwL };
 }
 
+// AUTO KW, FREEWAY GORES (CLAUDE.md "The freeways, round four"). OSM joins a
+// freeway's link to the main line's CENTRE line: the 401 EB's two-lane exit
+// at Hespeler Rd leaves the middle of six lanes at 7 deg, and its lanes, laid
+// round that centre line, lay across the main line's for ~100 m -- drawn,
+// driven, and the side-swipes hwytraffic logged at that gore (and a merge at
+// Hwy 85 / Bridgeport the same way). So each ramp's interior nodes near a
+// diverge or merge are moved out until its surface lies beside the main
+// line's paved shoulder (the main's half-width, its shoulder, SH_GAP, the
+// ramp's half-width), along the chain until the link is out there by itself
+// (GORE_RUN at most). The edge still touching the main line's node is the
+// GORE EDGE, `gore` = [shift at the start of travel, at its end], right of
+// travel: from the main line's outer lanes at the node (a diverge: the lanes
+// that leave; a merge: the lanes it joins) to the moved node. gradeRoads
+// slides its drawn and driven band by it (`tw`, keeping `ltw`), traffic.js
+// goreOf lays its lane line by it, and world.js paints no lines on it.
+const GORE_RUN = 260, SH_GAP = 0.3;   // (SH_GAP: the ramp's edge off the main line's paved shoulder)
+function spreadGores(g) {
+  const { nodes, edges } = g;
+  const one = (e) => e.oneway;
+  const from = (e) => (e.onewayRev ? e.b : e.a), to = (e) => (e.onewayRev ? e.a : e.b);
+  const dir = (e) => (e.onewayRev ? [-e.dx, -e.dz] : [e.dx, e.dz]);
+  const isMain = (e) => e.cls === 'hwy' && one(e) && !e.tunnel;
+  const isRamp = (e) => e.cls === 'ramp' && one(e) && !e.tunnel;
+  // the main line from node ni, `fwd` along travel (else back up it), as a
+  // polyline of [x, z, hw] up to `len` m
+  const mainLine = (ni, k0, fwd, len) => {
+    const pts = [[nodes[ni].x, nodes[ni].z, edges[k0].hw]];
+    let k = k0, cur = ni, d = 0;
+    for (let hop = 0; hop < 30 && k >= 0 && d < len; hop++) {
+      const e = edges[k], nx = fwd ? to(e) : from(e);
+      d += e.len; cur = nx;
+      pts.push([nodes[nx].x, nodes[nx].z, e.hw]);
+      const [ux, uz] = dir(e);
+      let best = -1, bd = 0.85;
+      for (const q of nodes[cur].e) {
+        if (q === k || !isMain(edges[q]) || (fwd ? from(edges[q]) : to(edges[q])) !== cur) continue;
+        const [qx, qz] = dir(edges[q]), dd = ux * qx + uz * qz;
+        if (dd > bd) { bd = dd; best = q; }
+      }
+      k = best;
+    }
+    return pts;
+  };
+  // signed lateral of (x, z) off the polyline (right of its travel `fwd`), and that piece's hw
+  const latOf = (pts, fwd, x, z) => {
+    let best = null;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
+      const sx = bx - ax, sz = bz - az, l2 = sx * sx + sz * sz || 1;
+      const t = clamp(((x - ax) * sx + (z - az) * sz) / l2, 0, 1);
+      const qx = ax + sx * t, qz = az + sz * t, d = Math.hypot(x - qx, z - qz);
+      if (best && d >= best.d) continue;
+      const L = Math.sqrt(l2), rx = -sz / L, rz = sx / L;   // right of a -> b of the polyline
+      const sgn = fwd ? 1 : -1;                           // the polyline runs against travel when !fwd
+      best = { d, lat: ((x - qx) * rx + (z - qz) * rz) * sgn, rx: rx * sgn, rz: rz * sgn, hw: pts[i + 1][2] };
+    }
+    return best;
+  };
+  let moved = 0, worst = 0;
+  const touched = new Set();
+  for (let ni = 0; ni < nodes.length; ni++) {
+    const n = nodes[ni];
+    if (n.e.length < 3) continue;
+    let U = -1, D = -1;
+    for (const k of n.e) {
+      const e = edges[k];
+      if (!isMain(e)) continue;
+      if (to(e) === ni) U = k; else if (from(e) === ni) D = k;
+    }
+    if (U < 0 || D < 0) continue;
+    const [ux, uz] = dir(edges[U]);
+    for (const r0 of n.e) {
+      const R = edges[r0];
+      if (!isRamp(R)) continue;
+      const [qx, qz] = dir(R);
+      if (ux * qx + uz * qz < 0.9) continue;
+      const out = from(R) === ni;
+      // the main line beside the ramp: on downstream of a diverge, up from a merge
+      const M = out ? mainLine(ni, D, true, GORE_RUN + 60) : mainLine(ni, U, false, GORE_RUN + 60);
+      const far = out ? to(R) : from(R);
+      const l0 = latOf(M, out, nodes[far].x, nodes[far].z);
+      if (!l0) continue;
+      const sd = l0.lat >= 0 ? 1 : -1;
+      // walk the ramp's chain away from the node, moving each plain node out
+      let k = r0, run = 0;
+      for (let hop = 0; hop < 12; hop++) {
+        const e = edges[k], nx = out ? to(e) : from(e);
+        run += e.len;
+        const N2 = nodes[nx];
+        if (run > GORE_RUN || N2.e.length !== 2 || N2.elev || N2.e.some((q) => edges[q].tunnel || edges[q].elev)) break;
+        const L = latOf(M, out, N2.x, N2.z);
+        if (!L || L.d > 40) break;
+        // the ramp's surface beside the main line's paved shoulder
+        const mw = shoulderWant(edges[out ? D : U]);
+        const hold = L.hw + (mw ? (sd > 0 ? mw[0] : mw[1]) - SH_LANE : 0) + SH_GAP + e.hw;
+        const need = hold - sd * L.lat;
+        if (need <= 0.05) break;
+        N2.x += L.rx * sd * need; N2.z += L.rz * sd * need;
+        moved++; worst = Math.max(worst, need);
+        if (hop === 0) {
+          // THE GORE EDGE: its drawn band and its lanes run from the main
+          // line's outer lanes at the node (a diverge: the lanes that leave;
+          // a merge: the lanes it joins) to the moved node -- the shift right
+          // of travel at its start and its end (gradeRoads widens `tw` by it,
+          // keeping `ltw`; traffic.js goreOf lays the lane line by it)
+          const Mn = edges[out ? U : D];
+          const atNode = sd * ((Mn.hw - SH_LANE) - (R.hw - SH_LANE));
+          R.gore = out ? [atNode, 0] : [0, atNode];
+        }
+        for (const q of N2.e) touched.add(q);
+        k = N2.e[0] === k ? N2.e[1] : N2.e[0];
+        if (!isRamp(edges[k])) break;
+      }
+    }
+  }
+  for (const k of touched) {
+    const e = edges[k], a = nodes[e.a], b = nodes[e.b];
+    const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz) || 1;
+    e.len = len; e.dx = dx / len; e.dz = dz / len;
+  }
+  cityStats.goreNodesMoved = moved;
+  cityStats.goreWorstMove = +worst.toFixed(1);
+}
+
 export function* cityGenerator(md, cache = {}) {
   LOCK_NODES = md.ferryFix && md.ferryFix.lock ? md.ferryFix.lock : null;
   yield { p: 0.02, msg: 'Unpacking the street graph' };
@@ -2201,6 +2468,7 @@ export function* cityGenerator(md, cache = {}) {
   const g = { nodes, edges };
   // One bore, two decks: SR-99's twin OSM ways onto a shared alignment.
   const stack = stackBores(g);
+  spreadGores(g);
   yield { p: 0.3, msg: 'Opening the streets' };
 
   // --- 2. Buildings -------------------------------------------------------
@@ -2992,7 +3260,8 @@ export function* cityGenerator(md, cache = {}) {
           // 1656 -- while by SR-99's north portal the carved ramp falls away
           // under a locked deck and the later capture left verify's approach
           // walk 2.5 m under it, where master catches it.
-          hw: e.elev ? e.hw + 1.5 : e.hw + 0.4,
+          // (a paved shoulder reaches past hw: the piece is filed by its widest side)
+          hw: e.shx ? Math.max(e.elev ? e.hw + 1.5 : e.hw + 0.4, sideOf(i, 0), sideOf(i, 1)) : e.elev ? e.hw + 1.5 : e.hw + 0.4,
           sa: e.pg[i], sb: e.pg[i + 1], px, pz,
           // Continued ends: another piece -- of this edge, or the graded
           // edge carrying on through the node -- answers past them (see

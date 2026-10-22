@@ -7,7 +7,7 @@ import * as G from './geo.js';
 // Kept in step with main.js. Shadow-caster policy differs by platform, and the
 // difference is worth roughly 40 draw calls a frame.
 const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, MOUTH_RAMP, mouthRamp, cityStats, trimOldest, walkWidthOf, FWY_DIP_OVER } from './citygen.js';
+import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, MOUTH_RAMP, mouthRamp, cityStats, trimOldest, walkWidthOf, FWY_DIP_OVER, shoulderMax } from './citygen.js';
 import * as RU from './rural.js';
 import { FARM_STYLES, meshFarmBuilding, farmMass, steepleMass } from './farmstead.js';
 import { Builder, ChunkBuilder, freezeStatic } from './build.js';
@@ -148,7 +148,8 @@ function laneStrips(e) {
   let out = null;
   if (e.oneway && (e.cls === 'hwy' || e.cls === 'ramp')) {
     let w0 = e.hw, w1 = e.hw;
-    if (e.tw) for (let i = 0; i < e.tw.length; i += 2) { w0 = Math.min(w0, e.tw[i]); w1 = Math.min(w1, e.tw[i + 1]); }
+    const tw = e.ltw || e.tw;   // (the lane basis: citygen's paved shoulders are the outer strips)
+    if (tw) for (let i = 0; i < tw.length; i += 2) { w0 = Math.min(w0, tw[i]); w1 = Math.min(w1, tw[i + 1]); }
     const lo = -w1 + 0.8, hi = w0 - 0.8;
     if (hi - lo > 2) {
       const n = Math.max(1, Math.floor((hi - lo) / 3.6)), lw = (hi - lo) / n;
@@ -5419,7 +5420,19 @@ float frLine(float o, float fw, float c, float w) {
     return (c, t) => {
       const i = Math.min(k, Math.max(0, Math.round(t * k)));
       const cut = hw - e.tw[i * 2 + (c.sg > 0 ? 0 : 1)];
-      return [c.sx + (c.ex - c.sx) * t + e.dz * c.sg * cut, c.sz + (c.ez - c.sz) * t - e.dx * c.sg * cut];
+      let x = c.sx + (c.ex - c.sx) * t + e.dz * c.sg * cut, z = c.sz + (c.ez - c.sz) * t - e.dx * c.sg * cut;
+      // A WIDENED SIDE (citygen's paved shoulders, a gore edge's slid band)
+      // is mitred at its own width at each node: cut off the line mitred at
+      // hw, the two edges' corners missed each other and every point across
+      // the deck, laid between its edges, opened a crack at the joint
+      if (e.shx && c.w !== undefined) {
+        const s = c.sg > 0 ? 0 : 1, wA = c.w - hw + e.tw[s], wB = c.w - hw + e.tw[k * 2 + s];
+        const [ax, az] = this.deckEdgePoint(e.a, e, c.sg, wA), [bx, bz] = this.deckEdgePoint(e.b, e, c.sg, wB);
+        const ca = c.w - wA, cb = c.w - wB;   // the cuts at the ends, as above
+        x += (ax - (c.sx + e.dz * c.sg * ca)) * (1 - t) + (bx - (c.ex + e.dz * c.sg * cb)) * t;
+        z += (az - (c.sz - e.dx * c.sg * ca)) * (1 - t) + (bz - (c.ez - e.dx * c.sg * cb)) * t;
+      }
+      return [x, z];
     };
   }
 
@@ -5441,7 +5454,7 @@ float frLine(float o, float fw, float c, float w) {
     for (const sg of [1, -1]) {
       const [rsx, rsz] = this.deckEdgePoint(e.a, e, sg, hw), [rex, rez] = this.deckEdgePoint(e.b, e, sg, hw);
       const [dsx, dsz] = this.deckEdgePoint(e.a, e, sg, hw + PARAPET), [dex, dez] = this.deckEdgePoint(e.b, e, sg, hw + PARAPET);
-      const run = { sx: rsx, sz: rsz, ex: rex, ez: rez, sg }, deck = { sx: dsx, sz: dsz, ex: dex, ez: dez, sg };
+      const run = { sx: rsx, sz: rsz, ex: rex, ez: rez, sg, w: hw }, deck = { sx: dsx, sz: dsz, ex: dex, ez: dez, sg, w: hw + PARAPET };
       const ox = -e.dz * sg, oz = e.dx * sg;
       for (let i = 0; i < k; i++) {
         const t0 = i / k, t1 = (i + 1) / k;
@@ -5501,7 +5514,7 @@ float frLine(float o, float fw, float c, float w) {
         const [rsx, rsz] = this.deckEdgePoint(e.a, e, sg, hw), [rex, rez] = this.deckEdgePoint(e.b, e, sg, hw);
         if (e.prof) {
           const k = e.pk, K = this.railKinds(e, ei), at = this.deckAt(e);
-          const run = { sx: rsx, sz: rsz, ex: rex, ez: rez, sg };
+          const run = { sx: rsx, sz: rsz, ex: rex, ez: rez, sg, w: hw };
           for (let i = 0; i < k; i++) {
             if (K[i * 2 + (sg > 0 ? 0 : 1)] === 0) continue;
             const R0 = at(run, i / k), R1 = at(run, (i + 1) / k);
@@ -5561,10 +5574,10 @@ float frLine(float o, float fw, float c, float w) {
     for (const sg of [-1, 1]) {
       const [rsx, rsz] = this.deckEdgePoint(e.a, e, sg, hw);
       const [rex, rez] = this.deckEdgePoint(e.b, e, sg, hw);
-      run[sg] = { sx: rsx, sz: rsz, ex: rex, ez: rez, sg };
+      run[sg] = { sx: rsx, sz: rsz, ex: rex, ez: rez, sg, w: hw };
       const [dsx, dsz] = this.deckEdgePoint(e.a, e, sg, hw + PARAPET);
       const [dex, dez] = this.deckEdgePoint(e.b, e, sg, hw + PARAPET);
-      deck[sg] = { sx: dsx, sz: dsz, ex: dex, ez: dez, sg };
+      deck[sg] = { sx: dsx, sz: dsz, ex: dex, ez: dez, sg, w: hw + PARAPET };
     }
     // A point on an edge line at t, pulled in where that side was trimmed off
     // a lower neighbour (citygen's split levels), so deck, soffit, fascia and
@@ -5879,16 +5892,23 @@ float frLine(float o, float fw, float c, float w) {
     const from = trim(e.a);
     const till = e.len - trim(e.b);
     if (till <= from) return;
+    // (a ramp's first edge off a freeway's centre line at its gore crosses the
+    // main line's lanes to where citygen spreadGores moved the ramp: unpainted,
+    // under the main line's paved shoulder)
+    if (e.gore) return;
 
     // Edge lines, set in from the kerb by about a shoulder's width -- the
     // TRIMMED kerb on a graded road stood off a lower neighbour, or the line
     // runs out over the wall.
     const inset = e.rural ? 0.22 : Math.min(0.7, hw * 0.06);
+    // (a freeway's lines are the LANES' edges: `ltw`, where citygen's paved
+    // shoulders widened `tw` -- the shoulder lies outside the edge line)
+    const LW = e.ltw || e.tw;
     const sideW = (m, s) => {
       // a lid barrier inside the carriageway is its kerb (buildLids' e.barW)
-      if (!e.tw) return e.barW ? Math.min(hw, e.barW[s]) : hw;
+      if (!LW) return e.barW ? Math.min(hw, e.barW[s]) : hw;
       const i = Math.min(e.pk, Math.max(0, Math.round((m / e.len) * e.pk)));
-      return e.tw[i * 2 + s];
+      return LW[i * 2 + s];
     };
     // subdivide so a line follows the terrain rather than spanning it (and a
     // slab's end, 0.5 m stations, rather than bridging off it)
@@ -7122,7 +7142,8 @@ float frLine(float o, float fw, float c, float w) {
   meshTrenchWalls(flat, e, a, b, ei) {
     if (!this.city.underpassDepth) return;
     const sw = walkWidthOf(e);
-    const w = e.hw + sw + 0.3;
+    // (a freeway's dip is carved past its paved shoulders: citygen's `ew`)
+    const w = e.hw + shoulderMax(e) + sw + 0.3;
     const px = -e.dz, pz = e.dx;
     const n = Math.max(2, Math.round(e.len / 4));
     // quick reject: no dip anywhere along the centre
@@ -7176,12 +7197,24 @@ float frLine(float o, float fw, float c, float w) {
     // The edge lines at sample i: the mitred full-width lines, pulled in where
     // citygen trimmed that side off a lower neighbour (`e.tw`).
     const Wl = (i) => e.tw[i * 2], Wr = (i) => e.tw[i * 2 + 1];
+    // (a widened side -- citygen's paved shoulders, a gore edge's band -- is
+    // mitred at its own width at each node, the correction spread along the
+    // edge: deckAt, the same)
+    let cL = null, cR = null;
+    if (e.shx) {
+      const [lax, laz] = this.deckEdgePoint(e.a, e, 1, Wl(0)), [lbx, lbz] = this.deckEdgePoint(e.b, e, 1, Wl(k));
+      const [rax, raz] = this.deckEdgePoint(e.a, e, -1, Wr(0)), [rbx, rbz] = this.deckEdgePoint(e.b, e, -1, Wr(k));
+      cL = [lax - (Ls[0] - px * (hw - Wl(0))), laz - (Ls[1] - pz * (hw - Wl(0))), lbx - (Le[0] - px * (hw - Wl(k))), lbz - (Le[1] - pz * (hw - Wl(k)))];
+      cR = [rax - (Rs[0] + px * (hw - Wr(0))), raz - (Rs[1] + pz * (hw - Wr(0))), rbx - (Re[0] + px * (hw - Wr(k))), rbz - (Re[1] + pz * (hw - Wr(k)))];
+    }
     const edgeL = (i) => {
       const t = i / k, x = Ls[0] + (Le[0] - Ls[0]) * t, z = Ls[1] + (Le[1] - Ls[1]) * t;
+      if (cL) return [x - px * (hw - Wl(i)) + cL[0] * (1 - t) + cL[2] * t, z - pz * (hw - Wl(i)) + cL[1] * (1 - t) + cL[3] * t];
       return [x - px * (hw - Wl(i)), z - pz * (hw - Wl(i))];
     };
     const edgeR = (i) => {
       const t = i / k, x = Rs[0] + (Re[0] - Rs[0]) * t, z = Rs[1] + (Re[1] - Rs[1]) * t;
+      if (cR) return [x + px * (hw - Wr(i)) + cR[0] * (1 - t) + cR[2] * t, z + pz * (hw - Wr(i)) + cR[1] * (1 - t) + cR[3] * t];
       return [x + px * (hw - Wr(i)), z + pz * (hw - Wr(i))];
     };
     // fr = 0 is the right-hand edge line, 1 the left, at sample i.

@@ -1495,6 +1495,83 @@ file and a guide disagree, this file wins.
     (Hespeler overpass 111 -> 114, Fischer-Hallman 261 -> 263, the 401 EXIT
     ONLY gantry 133 -> 136, Homer Watson 176 -> 179, Hwy 8 at King 166 ->
     169), the Fischer-Hallman aerial 308 -> 314. 0 exceptions.
+- **The freeways, round four** (docs/hwy4-*.jpg, master over this):
+  - **Paved shoulders** (citygen `shoulderWant` / gradeRoads, after the
+    split-level trim). Surveyed on Esri (aerial.py): the 401 at Hespeler
+    Rd has ~3 m of paved right shoulder (and a pale edge strip), ~3 m of
+    left shoulder and a broad concrete median round the tall wall; the
+    Parkway ~2.5 m. The carriageway was lanes + 0.8 m. Now each untrimmed
+    side of a one-way `hwy` edge is widened to 3.0 m right on the 401,
+    2.5 m elsewhere, 1.5 m left where no opposing carriageway is within
+    19 m (with one, the median IS the left shoulder: highways.js paves it
+    asphalt to `LEFT_SH` 2.5 m from the lanes and concrete beyond to the
+    wall) -- never into a neighbour (a ramp alongside, half the gap to a
+    parallel carriageway), tapered to nothing 30 m from a node where the
+    freeway meets anything else. **`e.tw` is the paved edge, `e.ltw` the
+    lane basis** (the old widths, byte for byte): oneWaySpan, laneStrips,
+    the lane and edge lines and the rumble strips read `ltw`, so traffic's
+    lanes did not move (trafficbench identical to master at all six sites
+    with this alone). `e.shx` is the widest it got; `pbw` includes it (every
+    onRoad / roadLift / clear-zone reach), groundAt pieces are filed by
+    their widest side, the freeway dip's carve and trench walls reach
+    `shoulderMax`, guide rail stands at the paved edge, signs and lights
+    stand off it, highways.js `onCw` counts a side's own paved edge
+    (`paved = false` for the rumble strips). A widened side is mitred at its
+    own width at each node (world.js meshGraded / deckAt): cut off the line
+    mitred at hw, every joint opened a crack across the carriageway. 265k
+    m2 of shoulder on 2947 edges.
+  - **The gores** (citygen `spreadGores`, traffic.js `goreOf` /
+    `goreThrough`). Root cause of hwytraffic's side-swipes at the 401 EB
+    Hespeler gore: OSM joins a link to the motorway's CENTRE line, so the
+    two-lane exit left the middle of six lanes at 7 deg and its lanes lay
+    across the main line's for ~100 m; a car taking it came off the right
+    lane and jumped 7 m LEFT at the node (the route vertex finds no
+    crossing within reach: a jog) across the lane beside it. Hwy 85 at
+    Bridgeport is the merge twin (a ramp's lane over the right lane for 40
+    m, and its car then merged into the MIDDLE lane, nearest the link's end).
+    And the through lanes: 6 lanes into 5 at the node by nearestLaneU put
+    two lanes into the one under the centre line. Fixed in the geometry:
+    each ramp's plain nodes near a diverge or merge are moved out until its
+    surface lies beside the main line's paved shoulder (251 nodes, at most
+    13.4 m); the edge still touching the main line's node is the GORE EDGE,
+    `e.gore` = [shift at start, at end] right of travel, from the main
+    line's outer lanes at the node to the moved node -- gradeRoads slides
+    its band by it on a straight grade (draped, it fell off the 401's 2 m
+    fill within metres), traffic.js lays its lane line by it (routeEntry,
+    fwySpawn, fwyNeighbours' targets), world.js paints nothing on it, no
+    guide rail. At a diverge where the carriageway loses lanes the lanes
+    that carry on keep their order from the side away from the ramp
+    (goreThrough). 97 gore edges.
+  - **MTO km posts on the 401** (22): a green "km" plate every km on each
+    carriageway's right shoulder, the chainage interpolated between the
+    numbered exits (Ontario numbers an exit by its km; each exit's two
+    diverges averaged), run on at 1 km a km past the end ones. The plate and
+    ten digit panels are shared atlas panels (81 panels, rows 984 = master,
+    full 0). **Lane-use arrows:** an EXIT ONLY gantry hangs one yellow band
+    with its down arrow over EACH lane that leaves (`xo`), at the lanes the
+    paint lays (12 bands on 11 gantries).
+  - **Verify** (master -> this, one at a time on one port, rail off for
+    trafficbench): trafficbench uptown-king, sig-1644, allway-28 = master;
+    pkwy-fairway, 401-hespeler, rb-3lane change (the gores; the shoulders
+    alone left all six identical). hwytraffic seeded 5 hits / 1 crash ->
+    1 / 0, unseeded 9 / 0 -> 2 / 0, none at Hespeler or Bridgeport (the two
+    left are ramp-to-ramp and a merge at Fairway); mean freeway speed 91 ->
+    91 km/h, Bridgeport 60 -> 67-70. jcttraffic seeded: rb-3lane (beside the
+    Parkway's Homer Watson ramps) recycles one car, the rest = master.
+    poleprobe 0 in a lane, = master. funprobe ALL OK. `sh tools/kw/hwyshots.sh
+    <dir> km,401-282` for the posts and a gantry. Phone (AUTO_PHONE=1, GPU),
+    master -> this: spawn 178 -> 178 draws; 401 at Hespeler gantry 177 ->
+    176, 587k -> 586k; Fairway 220 -> 220; Homer Watson 259 -> 259; Hwy 85
+    at Bridgeport 281 -> 281; the 401 from the air 181 -> 181. Freeway build
+    192 -> 199 ms, its triangles 461k -> 477k. 0 exceptions.
+  - **Approximate / not done:** the gore edge's drawn band crosses the main
+    line's lanes near the node (it is the ramp; unpainted, under the
+    main's lanes' paint); a 0.3 m slot shows between the main line's
+    shoulder and a moved ramp; 5 of 213 ground signs (2 gore, 1 MAXIMUM, 2
+    route markers) found no room beside the wider pavement, and guide rail
+    is 12.8 -> 11.7 km (none on gore edges); km posts are a judgement of
+    MTO's plate (no source found for its exact face); the 401's concrete,
+    slope paving and through-lane arrows still not done.
 - **Junctions: signals, stop signs, roundabouts, crossings** (src/junctions.js,
   `data/junctions.json` from tools/kw/build_junctions.py; docs/junction-*.jpg).
   The graph has no node tags, so build_junctions.py extracts them: signal
