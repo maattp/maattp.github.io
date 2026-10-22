@@ -254,11 +254,12 @@ class Kit {
   }
 }
 
-/** A flat-roofed footprint's roof at y. */
-function roof(B, pts, y, col) {
+/** A flat-roofed footprint's roof at y (`holes`: open courtyards cut out of it). */
+function roof(B, pts, y, col, holes = []) {
   let tris = [];
-  try { tris = THREE.ShapeUtils.triangulateShape(pts.map((q) => new THREE.Vector2(q[0], q[1])), []); } catch (e) { tris = []; }
-  for (const [i, j, k] of tris) B.tri([pts[i][0], y, pts[i][1]], [pts[j][0], y, pts[j][1]], [pts[k][0], y, pts[k][1]], [0, 1, 0], col);
+  const all = holes.length ? pts.concat(...holes) : pts;
+  try { tris = THREE.ShapeUtils.triangulateShape(pts.map((q) => new THREE.Vector2(q[0], q[1])), holes.map((h) => h.map((q) => new THREE.Vector2(q[0], q[1])))); } catch (e) { tris = []; }
+  for (const [i, j, k] of tris) B.tri([all[i][0], y, all[i][1]], [all[j][0], y, all[j][1]], [all[k][0], y, all[k][1]], [0, 1, 0], col);
 }
 /** The walls of a footprint as solids (thin boxes), as kw.js meshPoly's. */
 function wallSolids(solids, pts, y0, y1) {

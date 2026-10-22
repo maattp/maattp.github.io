@@ -58,6 +58,7 @@ import { setUwData, prepCampus, buildCampus, campusKeepClear } from './uwcampus.
 import { prepUptown } from './kwuptown.js';
 import { prepSights, buildSights, sightsMap } from './kwsights.js';
 import { prepDowntown } from './kwdowntown.js';
+import { prepLandmarks2, buildLandmarks2, landmarks2Map } from './kwlandmarks2.js';
 import { prepNature, groundDetail } from './kwnature.js';
 import { prepVillages, buildVillages, villagesMap } from './kwvillages.js';
 import { setShopData, prepShops, buildShops, shopPlaces, shopStats, driveThrus } from './kwshops.js';
@@ -882,6 +883,9 @@ async function boot() {
   addLandmarkExtra(buildSights);
   // downtown Kitchener and Cambridge building by building (kwdowntown.js: built inside buildSights)
   { const k = prepDowntown(city); blog(`kw downtown: ${k.looks} looks, ${k.defaults} defaults, ${k.towers} tower boxes, ${k.custom} drawn specially`); }
+  // the hospitals, Perimeter, CIGI, Sun Life, Manulife, BlackBerry, the courthouse, 150 Frederick, Kitchener station (kwlandmarks2.js)
+  { const k = prepLandmarks2(city, md.lm2); blog(`kw landmarks2: ${k.skipped} boxes drawn as landmarks`); }
+  addLandmarkExtra(buildLandmarks2);
   // the Grand's limestone banks and Galt's walls, the trails' bridges, signs and benches, Doon Pioneer Tower, the Kissing Bridge (kwnature.js: built inside buildSights)
   { const k = prepNature(city, bikeNet); blog(`kw nature: ${k.skipped} boxes drawn as nature`); }
   { const k = prepBallpark(city); blog(`kw ballpark: ${k.skipped} boxes drawn as Jack Couch Park`); }
@@ -1708,6 +1712,7 @@ function installShadowFade() {
     ...kwPlaces(),
     ...placesMap(),
     ...sightsMap(),
+    ...landmarks2Map(),
     ...villagesMap(),
     ...homeMap(),
     ...shopPlaces(),
