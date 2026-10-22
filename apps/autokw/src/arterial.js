@@ -174,7 +174,7 @@ const BAY_MIN = 18;
 export function markBays(city, jc) {
   const E = city.edges, N = city.nodes;
   let appr = 0;
-  const ok = (e) => !e.oneway && (e.cls === 'art' || e.cls === 'st') && !e.rural && !e.tunnel && !e.gravel && !e.elev && !e.prof;
+  const ok = (e) => !e.oneway && (e.cls === 'art' || e.cls === 'st') && !e.rural && !e.tunnel && !e.gravel && !e.elev && (!e.prof || e.app);
   for (const C of jc.list) {
     if (!C.approaches) continue;
     for (const A of C.approaches) {

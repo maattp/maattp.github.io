@@ -164,7 +164,7 @@ export class Junctions {
   ok(ni) {
     const n = this.city.nodes[ni];
     if (!n || n.e.length < 2) return false;
-    for (const ei of n.e) { const e = this.city.edges[ei]; if (e.elev || e.tunnel || e.prof) return false; }
+    for (const ei of n.e) { const e = this.city.edges[ei]; if (e.elev || e.tunnel || (e.prof && !e.app)) return false; }
     return true;
   }
   miss(k) { this.stats.unmatched[k] = (this.stats.unmatched[k] || 0) + 1; }
@@ -253,7 +253,7 @@ export class Junctions {
       const up = e.a === at ? e.b : e.a, un = city.nodes[up];
       if (un.e.length !== 2 || this.ctl[up] >= 0) break;
       const nk = un.e[0] === k ? un.e[1] : un.e[0], ne = city.edges[nk];
-      if (nk === k || ne.elev || ne.tunnel || ne.prof || this.ring[nk] || !into(ne, up)) break;
+      if (nk === k || ne.elev || ne.tunnel || (ne.prof && !ne.app) || this.ring[nk] || !into(ne, up)) break;
       const nu = dirInto(ne, up);
       if (nu[0] * u[0] + nu[1] * u[1] < 0.5) break;
       at = up; k = nk;
@@ -426,7 +426,7 @@ export class Junctions {
       let best = -1, bd = Infinity, bt = 0;
       for (const ei of this.edgesAround(x, z, 14)) {
         const e = city.edges[ei];
-        if (e.elev || e.tunnel || e.prof || e.cls === 'hwy') continue;
+        if (e.elev || e.tunnel || (e.prof && !e.app) || e.cls === 'hwy') continue;
         // the road it crosses runs the way OSM's way does there (near a
         // junction the cross street's edge can be nearer)
         if ((dx || dz) && Math.abs(e.dx * dx + e.dz * dz) < 0.8) continue;
@@ -469,7 +469,7 @@ export class Junctions {
       const edges = [];
       for (const ei of this.edgesAround(R.x, R.z, R.r + 6)) {
         const e = city.edges[ei];
-        if (this.ring[ei] || e.elev || e.tunnel || e.prof || !e.oneway) continue;
+        if (this.ring[ei] || e.elev || e.tunnel || (e.prof && !e.app) || !e.oneway) continue;
         const a = city.nodes[e.a], b = city.nodes[e.b];
         // (the graph's edges are chords of the circle: the middle of a long
         // one is metres inside it, never across the island)
