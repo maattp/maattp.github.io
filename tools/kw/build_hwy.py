@@ -181,11 +181,26 @@ def main():
         if t["highway"] not in MAIN:
             continue
         sp = simplify([(round(x, 1), round(z, 1)) for x, z in pts], 1.0)
+        # EXIT-ONLY LANES: turn:lanes lists the lanes left to right; the
+        # trailing ones that only turn off (slight_right / right, no through)
+        # drop at the exit this carriageway ends at -- the auxiliary lane from
+        # one interchange to the next. Only when a link really leaves from the
+        # way's last node.
+        tl = (t.get("turn:lanes") or "").split("|") if t.get("turn:lanes") else []
+        xo = 0
+        for v in reversed(tl):
+            if set(s.strip() for s in v.split(";")) <= {"slight_right", "right"} and v.strip():
+                xo += 1
+            else:
+                break
+        if xo and (xo >= len(tl) or not any(lk[1]["highway"] in LINK for lk in starts.get(ids[-1], []))):
+            xo = 0
         out_ways.append({
             "id": wid, "ref": t.get("ref"), "name": t.get("name"), "cls": t["highway"],
             "sp": t.get("maxspeed"), "lit": t.get("lit"), "ln": t.get("lanes"),
             "ow": t.get("oneway", "yes" if t["highway"] == "motorway" else "no"),
             "br": t.get("bridge"), "p": [list(p) for p in sp],
+            **({"xo": xo} if xo else {}),
         })
     data = {"ways": out_ways, "exits": exits, "merges": merges, "noise": noise}
     with open(OUT, "w") as f:

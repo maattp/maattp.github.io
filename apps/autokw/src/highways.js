@@ -57,6 +57,7 @@ export function updateHighways(cam) {
     n.o.visible = dx * dx + dz * dz < d * d;
   }
 }
+const XO_SIGN = 450;            // m: an exit-only lane at least this long gets the EXIT ONLY band
 const MEDIAN_MAX = 18;          // inner edge to inner edge: paved + tall wall up to this
 const SAMPLE = 10;              // metres between median samples
 const KINGS = new Set(['401', '403', '407', '7', '8', '85', '24', '6', '97', '86', '2', '5', '410']);
@@ -149,6 +150,18 @@ export function prepHighways(city, hwy) {
     const m = nearestWay(grid, hwy.ways, (a.x + b.x) / 2, (a.z + b.z) / 2, e.dx, e.dz);
     if (!m) return;
     INFO.set(ei, m.w);
+    // EXIT-ONLY LANES (hwy.json `xo`, from OSM's turn:lanes): the right-hand
+    // lanes of this carriageway that leave at the exit it ends at. Read by
+    // world.js meshRoadMarks (the continuity line) and traffic.js fwyDecide
+    // (a driver not exiting moves out of them, one exiting stays): one rule.
+    if (m.w.xo && e.oneway && m.dot * fwdOf(e) > 0) {
+      e.xo = m.w.xo; STATS.xoEdges = (STATS.xoEdges || 0) + 1;
+      // a lane dropped at the exit after running a whole interchange or more
+      // (an auxiliary lane, or a through lane ending) -- not a deceleration
+      // lane's 100-300 m taper -- is what Ontario signs EXIT ONLY
+      if (m.w.L === undefined) { let L = 0; for (let i = 1; i < m.w.p.length; i++) L += Math.hypot(m.w.p[i][0] - m.w.p[i - 1][0], m.w.p[i][1] - m.w.p[i - 1][1]); m.w.L = L; }
+      e.xoSign = m.w.L >= XO_SIGN || m.w.xo >= 2;
+    }
     const sp = parseFloat(m.w.sp);
     // How a 400-series actually flows: about 10 km/h over the posted limit.
     if (sp >= 60 && sp <= 120) { e.spd = (sp + 10) / 3.6; STATS.edgesTimed++; }
@@ -324,6 +337,8 @@ const COL = {
   railPost: lin([0.52, 0.53, 0.54]),
   mast: lin([0.62, 0.63, 0.64]),      // a high mast's galvanized shaft
   rumble: lin([0.22, 0.22, 0.23]),    // a milled groove's shadowed floor
+  cushion: lin([0.93, 0.74, 0.08]),   // a crash cushion's yellow bays
+  cushionDark: lin([0.12, 0.12, 0.12]),
 };
 
 /** A builder that paints everything it is handed in one colour. */
@@ -568,6 +583,22 @@ function guidePanel(atlas, x, dist) {
   return P;
 }
 
+/** EXIT ONLY: the black-on-yellow band hung under an exit's overhead sign
+ *  where a lane drops at the exit (prepHighways' `e.xoSign`), its arrow down
+ *  over the lane that leaves. One shared panel: the sign atlas is ~96 % full. */
+function onlyPanel(atlas) {
+  return atlas.get('only', 150, 30, 40, (g, W, H) => {
+    rrect(g, 0, 0, W, H, 4); g.fillStyle = '#f2c10f'; g.fill();
+    g.strokeStyle = '#111'; g.lineWidth = 2; rrect(g, 2.5, 2.5, W - 5, H - 5, 3); g.stroke();
+    g.fillStyle = '#111'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = `bold 17px ${FONT}`;
+    g.fillText('EXIT ONLY', W / 2 + 12, H / 2 + 1);
+    const ax = 24, cy = H / 2;
+    g.fillRect(ax - 2.5, cy - 10, 5, 10);
+    g.beginPath(); g.moveTo(ax - 8, cy - 1); g.lineTo(ax + 8, cy - 1); g.lineTo(ax, cy + 9); g.closePath(); g.fill();
+  });
+}
+
 function kmPanel(atlas) {
   return atlas.get('km', 72, 30, 44, (g, W, H) => {
     rrect(g, 0, 0, W, H, 4); g.fillStyle = GREEN; g.fill();
@@ -791,6 +822,7 @@ export function buildHighways(ctx) {
 
   // ---- the median: tall wall, paving, median lighting --------------------
   const wallAt = [];   // [x, z] samples of the wall, for the lighting test
+  const wallEnds = [];   // each drawn piece's two ends: [x, z, otherX, otherZ, base, top]
   const LUM = 50;
   let sinceLight = new Map();
   city.edges.forEach((e, ei) => {
@@ -889,9 +921,59 @@ export function buildHighways(ctx) {
         }
       }
       wallAt.push(mp);
+      wallEnds.push([mp[0], mp[1], mq[0], mq[1], base(p), top(p)], [mq[0], mq[1], mp[0], mp[1], base(q), top(q)]);
     }
     sinceLight.set(ei, acc);
   });
+
+  // ---- crash cushions where the tall wall ends ------------------------------
+  // A run of tall wall that stops (a median opening, a bridge pier, where the
+  // carriageways part) has its blunt end shielded: a yellow energy
+  // attenuator, a stack of steel-sided bays ~4.5 m long, its nose striped
+  // black and yellow toward the traffic coming at it.
+  {
+    // every piece's ends filed in 10 m cells; an end is the wall's end when
+    // no other piece reaches on past it within 14 m (pieces from the two
+    // carriageways' samples meet with seams of a few metres, not end to end)
+    const ends = new Map();
+    wallEnds.forEach((w, n) => {
+      const k = `${Math.floor(w[0] / 10)},${Math.floor(w[1] / 10)}`;
+      let l = ends.get(k);
+      if (!l) ends.set(k, (l = []));
+      l.push(n);
+    });
+    const done = [];
+    for (let n = 0; n < wallEnds.length; n++) {
+      const [x, z, ox, oz, y0] = wallEnds[n];
+      const L0 = Math.hypot(x - ox, z - oz) || 1, dx = (x - ox) / L0, dz = (z - oz) / L0;
+      let more = false;
+      for (let a = -2; a <= 2 && !more; a++) for (let b = -2; b <= 2 && !more; b++) {
+        for (const m of ends.get(`${Math.floor(x / 10) + a},${Math.floor(z / 10) + b}`) || []) {
+          if ((m >> 1) === (n >> 1)) continue;   // its own piece
+          const w = wallEnds[m], rx = w[0] - x, rz = w[1] - z, al = rx * dx + rz * dz;
+          if (al > -1 && al < 14 && Math.abs(rx * -dz + rz * dx) < 3) { more = true; break; }
+        }
+      }
+      if (more) continue;
+      if (done.some(([a, b]) => (a - x) ** 2 + (b - z) ** 2 < 25)) continue;
+      done.push([x, z]);
+      const rot = Math.atan2(dz, dx), LEN = 4.4;
+      const cx = x + dx * LEN / 2, cz = z + dz * LEN / 2, gy = y0;
+      if (onCw(x + dx * LEN, z + dz * LEN, -0.2)) continue;   // no room: it would stand in a lane
+      const Y = K.B(cx, cz, 'cushion'), Kd = K.B(cx, cz, 'cushionDark');
+      Kd.box(cx, gy, cz, LEN, 0.12, 0.62, rot);                         // the base track
+      for (let q = 0; q < 5; q++) {                                    // the bays, stepping down to the nose
+        const f = (q + 0.5) / 5, bx = x + dx * LEN * f * 0.92, bz = z + dz * LEN * f * 0.92;
+        Y.box(bx, gy + 0.12, bz, LEN / 5 - 0.06, 0.78 - q * 0.02, 0.6 + 0.04 * (q % 2), rot);
+      }
+      const nx = x + dx * (LEN - 0.08), nz = z + dz * (LEN - 0.08);
+      Kd.box(nx, gy + 0.14, nz, 0.14, 0.7, 0.62, rot);                 // the nose panel
+      for (let q = 0; q < 3; q++) Y.box(nx + dx * 0.02, gy + 0.2 + q * 0.22, nz + dz * 0.02, 0.14, 0.1, 0.64, rot);
+      solids.push({ x: cx, z: cz, hw: LEN / 2, hd: 0.32, rot, y0: gy, y1: gy + 0.9 });
+      STATS.cushions = (STATS.cushions || 0) + 1;
+      if ((STATS.cushions || 0) <= 4) STATS.views.push({ name: `cushion${STATS.cushions - 1}`, c: [+(x + dx * 40 - dz * 4).toFixed(1), +(z + dz * 40 + dx * 4).toFixed(1), 1.4], t: [+x.toFixed(1), +z.toFixed(1), 0.6], fov: 50 });
+    }
+  }
 
   // ---- lighting off the right shoulder where lit and no median wall ------
   const wallGrid = new Set(wallAt.map(([x, z]) => `${Math.floor(x / 40)},${Math.floor(z / 40)}`));
@@ -1209,7 +1291,7 @@ export function buildHighways(ctx) {
   };
 
   /** An overhead cantilever from the right shoulder, the sign over the right lane(s). */
-  const cantilever = (f, P) => {
+  const cantilever = (f, P, U = null) => {
     if (!P) return false;
     const offPost = f.wr + 1.6;
     const x = f.x + f.rx * offPost, z = f.z + f.rz * offPost;
@@ -1217,9 +1299,11 @@ export function buildHighways(ctx) {
     if (onCw(x, z, 0.6)) { STATS.why.road++; return false; }
     const yr = f.y(f.wr);
     if (!standOk(f, x, z, yr)) return false;
-    const yb = Math.max(yr, f.y(0)) + 5.4;
+    let yb = Math.max(yr, f.y(0)) + 5.4;
     const yg = Math.min(yr, G.terrainHeight(x, z));
     const cR = f.wr - 0.8 - Math.max(1.8, P.w / 2 - 0.4);   // the sign's centre, right of the centreline
+    // the EXIT ONLY band hangs under the sign, which rises by its height
+    if (U) { face(K, f, 0, cR, yb, U); yb += U.h + 0.04; }
     face(K, f, 0, cR, yb, P);
     const ang = Math.atan2(f.rz, f.rx);
     const topY = yb + P.h;
@@ -1241,6 +1325,7 @@ export function buildHighways(ctx) {
   };
 
   // the small panels first, so a full atlas can only ever cost a guide sign
+  onlyPanel(atlas);
   for (const w of HW.ways) { const v = parseInt(w.sp, 10); if (v >= 60) speedPanel(atlas, v); }
   for (const x of HW.exits || []) {
     const m = nearestMain(city, idx, x.x, x.z, x.u[0], x.u[1], 20);
@@ -1248,11 +1333,16 @@ export function buildHighways(ctx) {
     STATS.exits++;
     const left = x.side === 'L';
     // the overhead sign 300 m out (further if another's is there)
+    // an exit-only lane up to the diverge (OSM turn:lanes, prepHighways `xo`)
+    const up = walk(city, m.ei, m.t, -25);
+    const only = !!(up && up.e.xo && up.e.xoSign);
+    if (only) STATS.exitOnly = (STATS.exitOnly || 0) + 1;
     const P = guidePanel(atlas, x, null);
+    const U = only ? onlyPanel(atlas) : null;
     if (P && !left) {
       for (const d of [300, 380, 220, 450]) {
         const f = walk(city, m.ei, m.t, -d);
-        if (f && cantilever(f, P)) {
+        if (f && cantilever(f, P, U)) {
           // where to stand to see it (kwshots views: window.__hwy.views): 160 m back, in the right lane
           const v = walk(city, f.ei, f.t, -38) || f;
           const o = v.wr - 2.6;

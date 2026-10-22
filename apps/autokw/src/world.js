@@ -5832,7 +5832,7 @@ float frLine(float o, float fw, float c, float w) {
     const WHITE = [0.94, 0.93, 0.88];
     const YELLOW = [0.88, 0.72, 0.2];
 
-    const stripe = (off, from, to, col) => {
+    const stripe = (off, from, to, col, W = 0.06) => {
       if (to <= from) return;
       const t0 = from / e.len, t1 = to / e.len;
       const cx0 = lerp(a.x, b.x, t0) + px * off, cz0 = lerp(a.z, b.z, t0) + pz * off;
@@ -5947,14 +5947,30 @@ float frLine(float o, float fw, float c, float w) {
     // the boundaries of the very lanes traffic.js laneLatU lays: SHOULDER
     // 0.8 m in from each side, floor(width / 3.6) lanes spread evenly.
     if (e.cls === 'hwy' && e.oneway) {
+      // AUTO KW, EXIT-ONLY LANES (highways.js prepHighways' `e.xo`, OSM's
+      // turn:lanes): the line between the through lanes and the lane(s)
+      // that leave at the exit ahead is a CONTINUITY line -- wider and
+      // closer-set than a lane line (Ontario's: "your lane is ending or
+      // exiting"), 1 m dashes every 3 m. Its boundary counted from the
+      // left of a -> b: the exit lanes are on the right of TRAVEL.
+      const xo = e.xo || 0;
+      const kxOf = (n) => (xo > 0 && n > xo ? (fwd > 0 ? n - xo : xo) : -1);
       const ph = hash2(ei | 0, 11) * 9;
       for (let s = from + ph - 9; s < till; s += 9) {
         const s0 = Math.max(from, s), s1 = Math.min(till, s + 3);
         if (s1 - s0 < 0.5) continue;
         const m = (s0 + s1) / 2;
         const lo = -sideW(m, 1) + 0.8, hi = sideW(m, 0) - 0.8;
-        const n = Math.floor((hi - lo) / 3.6);
-        for (let k = 1; k < n; k++) stripe(lo + (k * (hi - lo)) / n, s0, s1, WHITE);
+        const n = Math.floor((hi - lo) / 3.6), kx = kxOf(n);
+        for (let k = 1; k < n; k++) if (k !== kx) stripe(lo + (k * (hi - lo)) / n, s0, s1, WHITE);
+      }
+      if (xo > 0) {
+        for (let s = from + 1; s + 1 < till; s += 3) {
+          const m = s + 0.5;
+          const lo = -sideW(m, 1) + 0.8, hi = sideW(m, 0) - 0.8;
+          const n = Math.floor((hi - lo) / 3.6), kx = kxOf(n);
+          if (kx > 0) stripe(lo + (kx * (hi - lo)) / n, s, s + 1, WHITE, 0.1);
+        }
       }
     }
 
@@ -7251,7 +7267,10 @@ float frLine(float o, float fw, float c, float w) {
     // second as a painted lime stripe down every median: developed ground here
     // is the terrain's SUBURB/URBAN tint, not park lawn. Toned toward that,
     // with only a lean to green.
-    const grass = [0.43, 0.46, 0.34], dirt = [0.4, 0.39, 0.32];
+    // (AUTO KW: an overpass approach's fill -- citygen markApproaches -- is
+    // 6 m of seeded, mown embankment either side of the span; in the
+    // freeway's dirt-to-grass it read as a long beige slab from the street)
+    const grass = e.app ? [0.36, 0.43, 0.26] : [0.43, 0.46, 0.34], dirt = e.app ? [0.38, 0.41, 0.28] : [0.4, 0.39, 0.32];
     for (let s = 0; s < 2; s++) {
       const sg = s === 0 ? 1 : -1;
       const edgeAt = s === 0 ? edgeL : edgeR;
