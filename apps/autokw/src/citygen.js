@@ -416,9 +416,9 @@ function unpackBuildings(c) {
 // launch of the same build applies that instead of solving again. Everything
 // it leaves behind is here: the edge and node fields it sets, the underpass
 // list the carve is built from, and its stats.
-const GRADE_EDGE_FIELDS = ['app', 'ovr', 'lock', 'pk', 'ps', 'ph', 'pg', 'tw', 'ltw', 'shx', 'tlo', 'tnb', 'pe', 'pwall', 'pbw'];
+const GRADE_EDGE_FIELDS = ['app', 'ovr', 'lock', 'pk', 'ps', 'ph', 'pg', 'tw', 'ltw', 'shx', 'tlo', 'tnb', 'pe', 'pwall', 'pbw', 'meet', 'meetG', 'meetGap'];
 const GRADE_STATS = ['refusedCrossings', 'underpasses', 'underpassNoRoom', 'underpassGraded', 'splitLevelTrimmedM',
-  'gradedSamples', 'overpassesRaised', 'overpassesRefused', 'overpassApproaches', 'fillMean', 'fillWorst', 'fwyDips', 'fwyDipNoRoom', 'levelledSamples', 'shoulderM2'];
+  'gradedSamples', 'overpassesRaised', 'overpassesRefused', 'overpassApproaches', 'fillMean', 'fillWorst', 'fwyDips', 'fwyDipNoRoom', 'levelledSamples', 'shoulderM2', 'rampMeet'];
 function gradeSnapshot(nodes, edges, grading) {
   const E = [], N = [];
   for (let ei = 0; ei < edges.length; ei++) {
@@ -473,6 +473,9 @@ export const FWY_DIP_OVER = 4.0;
 // that lays or paints LANES reads `ltw` (oneWaySpan, laneStrips, the lane and
 // edge lines, the rumble strips), so traffic's lanes do not move by a bit.
 export const SH_LANE = 0.8;
+/** The widest slot between a ramp and the main line's paved edge that is
+ *  paved over (gradeRoads' ramp meet): past it the gore is grass, its nose. */
+export const MEET_SLOT = 1.5;
 /** The paved shoulders a one-way freeway carriageway wants, [right, left] of
  *  travel in metres from the lane edge (null: not a freeway carriageway). */
 export function shoulderWant(e) {
@@ -1927,6 +1930,113 @@ function gradeRoads(nodes, edges) {
       if (shx > 0) { e.ltw = ltw; e.shx = shx; }
     }
     cityStats.shoulderM2 = Math.round(paved);
+  }
+
+  // AUTO KW, A RAMP MEETS THE MAIN LINE AT ITS PAVED EDGE (CLAUDE.md "The
+  // freeways, round five"). Beside a freeway carriageway at its level, a
+  // ramp's side toward it ends exactly on the carriageway's paved edge (`tw`,
+  // shoulders included): where its band lay over the main line (a gore edge
+  // slid onto the outer lanes, a ramp joining at an angle) it is clipped back
+  // to that edge, collapsing to nothing where the whole ramp is on the main
+  // line's pavement -- the ramp's pavement starts where it leaves the main
+  // line, as an exit's taper does; where ground showed between them
+  // (spreadGores' SH_GAP, the shoulders' SH_CLEAR, OSM's own spacing) under
+  // MEET_SLOT it is paved to that edge. `e.meet` [(k + 1) * 2] is what
+  // world.js meshGraded hangs on that side: the height a seam strip tucks
+  // under the main line's edge at (NaN: none), so no crack or step shows
+  // between the two meshes; `e.meetG` marks a side whose step is too tall
+  // to pave (MEET_PAVE) -- a grass batter bridges that slot instead. The
+  // lanes (`ltw`) never move.
+  {
+    const MEET_PAVE = 0.5, MEET_LEVEL = 1.5, MEET_TUCK = 0.35, MEET_UNDER = 0.06, MEET_REACH = 40;
+    const mainOk = (o) => o.cls === 'hwy' && o.oneway && o.prof && !o.elev && !o.tunnel;
+    const rampOk = (e) => e.cls === 'ramp' && e.oneway && e.prof && !e.elev && !e.tunnel;
+    let clipped = 0, closed = 0, bridged = 0, collapsed = 0;
+    for (let ei = 0; ei < edges.length; ei++) {
+      const e = edges[ei];
+      if (!rampOk(e)) continue;
+      const k = e.pk, a = nodes[e.a], px = -e.dz, pz = e.dx;
+      const tw0 = Float32Array.from(e.tw);
+      let meet = null, meetG = null, gapA = null, touched = false;
+      const cands = new Set();
+      const b = nodes[e.b];
+      for (let cx = Math.floor((Math.min(a.x, b.x) - MEET_REACH) / CELL); cx <= Math.floor((Math.max(a.x, b.x) + MEET_REACH) / CELL); cx++)
+        for (let cz = Math.floor((Math.min(a.z, b.z) - MEET_REACH) / CELL); cz <= Math.floor((Math.max(a.z, b.z) + MEET_REACH) / CELL); cz++) {
+          const l = grid.get(skey(cx, cz));
+          if (l) for (const oi of l) if (mainOk(edges[oi]) && Math.abs(edges[oi].dx * e.dx + edges[oi].dz * e.dz) >= 0.8) cands.add(oi);
+        }
+      if (!cands.size) continue;
+      for (let i = 0; i <= k; i++) {
+        const t = i / k, cx = a.x + e.dx * e.len * t, cz = a.z + e.dz * e.len * t;
+        // the main carriageway beside this sample: nearest centre line it projects onto
+        let best = null;
+        for (const oi of cands) {
+          const o = edges[oi], oa = nodes[o.a];
+          let u = ((cx - oa.x) * o.dx + (cz - oa.z) * o.dz) / o.len;
+          if (u < -0.02 || u > 1.02) continue;
+          u = Math.min(1, Math.max(0, u));
+          const fx = oa.x + o.dx * o.len * u, fz = oa.z + o.dz * o.len * u;
+          const lc = (cx - fx) * -o.dz + (cz - fz) * o.dx;     // the ramp's centre, +p of o
+          if (Math.abs(lc) > MEET_REACH) continue;
+          if (!best || Math.abs(lc) < Math.abs(best.lc)) best = { o, u, lc };
+        }
+        if (!best) continue;
+        const { o, u, lc } = best;
+        const so = lc >= 0 ? 0 : 1, sgo = so === 0 ? 1 : -1;
+        const x = u * o.pk, j = Math.min(o.pk - 1, Math.floor(x)), fr = x - j;
+        if (!Number.isNaN(o.tlo[j * 2 + so]) || !Number.isNaN(o.tlo[(j + 1) * 2 + so])) continue;   // walled down: a split level
+        const mE = o.tw[j * 2 + so] * (1 - fr) + o.tw[(j + 1) * 2 + so] * fr;
+        // the ramp's side toward o, and how its normal lies against o's
+        const cosN = (px * -o.dz + pz * o.dx) * sgo;            // + : the ramp's +p side faces away from o
+        const sIn = cosN >= 0 ? 1 : 0, sOut = 1 - sIn;          // side index (0 = +p)
+        const c = Math.abs(cosN);
+        if (c < 0.8) continue;
+        if (!Number.isNaN(e.tlo[i * 2 + sIn])) continue;
+        const L = Math.abs(lc);
+        // where each edge of the ramp lies, out from o's centre line
+        const lIn = L - e.tw[i * 2 + sIn] * c, lOut = L + e.tw[i * 2 + sOut] * c;
+        const P = profAt(o, u), ym = P.h + P.s * sgo * mE;
+        const ri = sIn === 0 ? 1 : -1;
+        const yr = e.ph[i] + e.pg[i] * ri * e.tw[i * 2 + sIn];
+        const dy = yr - ym;
+        if (Math.abs(dy) > MEET_LEVEL) continue;
+        const gap = lIn - mE;
+        // (every side with a main line beside it at its level keeps the gap,
+        // ramp-normal metres: highways.js finds the gore noses by it)
+        if (!gapA) gapA = new Float32Array((k + 1) * 2).fill(NaN);
+        gapA[i * 2 + sIn] = gap / c;
+        if (gap > MEET_SLOT || gap < -60) continue;
+        if (lOut <= mE + 0.05) {
+          // the whole ramp is on the main line's pavement here: nothing of its own
+          if (gap < -0.05) { e.tw[i * 2 + sIn] = -e.tw[i * 2 + sOut]; collapsed++; touched = true; }
+          continue;
+        }
+        if (gap > 0.02 && Math.abs(dy) > MEET_PAVE) {
+          // too tall a step to pave: a grass batter across the slot (world.js)
+          if (!meet) { meet = new Float32Array((k + 1) * 2).fill(NaN); meetG = new Uint8Array((k + 1) * 2); }
+          meet[i * 2 + sIn] = Math.min(P.h + P.s * sgo * (mE - MEET_TUCK), ym) - MEET_UNDER;
+          meetG[i * 2 + sIn] = Math.max(1, Math.min(255, Math.round((gap / c + MEET_TUCK) * 10)));   // its width, dm
+          bridged++;
+          continue;
+        }
+        if (gap > 0.02) closed++; else if (gap < -0.02) clipped++;
+        // move this side's edge onto o's paved edge
+        e.tw[i * 2 + sIn] = (L - mE) / c;
+        touched = true;
+        if (!meet) { meet = new Float32Array((k + 1) * 2).fill(NaN); meetG = new Uint8Array((k + 1) * 2); }
+        // the seam strip's tucked edge: MEET_TUCK under o's pavement, just below it
+        const yT = P.h + P.s * sgo * (mE - MEET_TUCK);
+        meet[i * 2 + sIn] = Math.min(yT, ym) - MEET_UNDER;
+      }
+      if (meet) { e.meet = meet; e.meetG = meetG; e.meetGap = gapA; }
+      if (touched) {
+        if (!e.ltw) e.ltw = tw0;
+        let shx = e.shx || 0;
+        for (let i = 0; i < tw0.length; i++) shx = Math.max(shx, Math.abs(e.tw[i] - tw0[i]));
+        e.shx = Math.max(shx, 0.01);
+      }
+    }
+    cityStats.rampMeet = { clipped, closed, bridged, collapsed };
   }
 
   let fillSum = 0, fillN = 0, worstFill = 0;
