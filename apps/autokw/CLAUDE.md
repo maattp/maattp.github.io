@@ -541,6 +541,126 @@ file and a guide disagree, this file wins.
   [-2752, -444, 9]}`, Cambridge from the square `{c: [13178, 10224, 1.7], t:
   [13172, 10188, 10]}`, the dam's crest `{c: [-7803, -3600, 5.2], t: [-7775,
   -3540, 3.5]}`, Hespeler `{c: [13362, 2318, 1.7], t: [13378, 2340, 4]}`.
+- **The landmarks pass, round four** (same module, LmKit and lm2.json:
+  `build_lm2.py` gained `mktsq`, `skywalk`, `crowne`, `stmaryrc`, `stpeter`,
+  `gaol`, `govhouse`, `claygl`, `wmrc`, `galtarena`; docs/lm4-*.jpg, master
+  over this, phone shots). **Survey** (in game, kwshots from the air, every
+  candidate the brief named): already drawn by kwsights / kwdowntown /
+  kwuptown / kwplaces / round one-three -- the Kitchener Public Library,
+  THEMUSEUM, the Market, Centre in the Square, the Tannery, the Breithaupt
+  Block, 150 Frederick, the courthouse, Sun Life, Manulife, the Seagram
+  lofts and museum, RIM Park, the Boardwalk, Bingemans, GCI, the Cambridge
+  Mill, the Old Post Office. Still the importer's plain boxes (or kw.js's
+  generic steeple church): Market Square, the Crowne Plaza, St. Mary's, St.
+  Peter's Lutheran, the Waterloo County Gaol and Governor's House, the Clay
+  and Glass Gallery, the Waterloo Memorial Rec Complex, Galt Arena Gardens,
+  Idea Exchange Queen's Square, Waterloo Collegiate, Catalyst137, the WRPS
+  headquarters, Langdon Hall, the Grand River Rec Complex, the Breithaupt
+  Centre, Zion United, St. John the Evangelist, St. Paul's Lutheran, the
+  Charles St terminal (closed 2019). The first eight are built. **Drawn:**
+  **Market Square** (King & Frederick): the green-framed glass rotunda
+  swallowing the outline's rounded corner (`MS_DRUM`) with GoodLife FITNESS
+  round its top, the glass porch and MARKET SQUARE over the doors, the
+  square clock tower of green glass in a steel frame with four clocks under
+  a glass pyramid (`MS_CLOCK`), the King St front's green-mullioned glass
+  and green awnings, and **the skywalk** over King to the hotel at the
+  second floor (OSM's building=bridge was one of kwsights' `king` blocks,
+  drawn ON the road by meshKing: prepLandmarks2 takes it out of
+  `sights.king`). **The Crowne Plaza** (105 King E, the Delta until 2014):
+  the King St slab -- stucco piers and bands framing recessed brown-brick
+  bays, windows in pairs, five storeys over a red-brick ground floor with
+  navy awnings and the doors under a canopy -- the square corner tower at
+  Frederick under a grey-green hip with CROWNE PLAZA and the crown on two
+  faces, the small capped tower at the far end, the low block behind.
+  **St. Mary's** (56 Duke W, 1903): red brick Neo-Gothic laid out in the
+  nave's own frame (`SM_U`, the outline's 30 deg): slate nave with
+  buttresses and lancets, the front on Young St with the tall north tower
+  (36 m, paired belfry lancets, four pinnacles), the 22 m south tower, the
+  gable between with the rose window over three pointed doors, the north
+  porch's cross gable, the sacristy and the rectory (OSM draws it in the
+  church's outline). **St. Peter's Lutheran** (49 Queen N, 1966-68): the
+  brown-brick nave (pitched roof off the aerial) with full-height slit
+  windows over the low brick wings, the glazed Queen St front between
+  concrete fins, the open bell tower (two concrete piers, bands, louvres,
+  the cross). **The Waterloo County Gaol** (1853): OSM's two-storey stone
+  part, rubble stone, small barred windows, a hipped slate roof; its yard
+  (the outline's one-level part) walled in stone, solid; **the Governor's
+  House** (1878): buff brick Italianate, cream trim, hipped roof, the front
+  tower under a bell-cast cap with cresting, the verandah and balcony on
+  Queen St. **The Canadian Clay and Glass Gallery** (Patkau 1993): dark red
+  brick, high clerestory windows, the long dark timber canopy on squat
+  concrete piers down the Caroline St side (`CG_CANOPY`: the outline is cut
+  back to its inner edge; the aerial's brown strip), the doors at its north
+  end, CANADIAN / CLAY & GLASS / GALLERY on the north end, the concrete
+  turret by the west wall. **The Waterloo Memorial Recreation Complex**
+  (101 Father David Bauer Dr; OSM's outline is unnamed): the arena under a
+  long white barrel roof with ribs and a glass band (`WM_ARENA`, the
+  outline's south rectangle, its walls 0.25 m proud of the outline's), the
+  pool wing's solar panels (`WM_SOLAR`), the curved glass entrance drum
+  between the wings (`WM_DOOR`), WATERLOO MEMORIAL RECREATION COMPLEX over
+  it. **Galt Arena Gardens** (1922): brick on a high limestone base, stone
+  piers, the maroon arched roof along its length, the Shade St front as the
+  arch's gable end with the curved parapet and the stone-capped corner
+  piers, tall windows, the canopy with GALT ARENA GARDENS on its fascia.
+  Map marks and hellos for all eight. **Sources:** OSM tags
+  (tools/kw/probe_blocks.py: St. Mary's and St. Peter's denominations, the
+  gaol's parts and architect, the Governor's House's date and architect,
+  Galt Arena's 1922); the Esri aerial (tools/kw/aerial.py, footprints
+  overlaid) for every plan; Wikimedia Commons: "Kitchener Ontario St Marys
+  Church 2012 1", "Kitchener old gaol and house (full view)", "Canadian Clay
+  and Glass Gallery - Waterloo, ON", "Clay and Glass Museum (External
+  Turrent)", "Waterloo Memorial Recreation Complex (2025)" and its aerial,
+  "St. Peter's Lutheran Church - Kitchener, ON", "Galt Arena Gardens
+  exterior" and "(2026-06)", "Market Square Shopping Centre - Kitchener,
+  ON", "MarketSquare-Frederick&KingStE-Kitchener", "2011-07-06 ... Kitchener
+  (6067186668)" (the Delta, now the Crowne Plaza, up King from Frederick);
+  the St. Mary's parish and the City's 1983 designation (towers, slate roof,
+  rose window; 1900-03); Doors Open / the Laurier archive (St. Peter's,
+  1966-68, Kruschen & Dailey); Patkau's project page (Clay and Glass); IHG's
+  2014 release (the Crowne Plaza, 201 rooms). **Estimated:** every colour
+  and every height (no storey counts but OSM's 2 for Market Square and the
+  gaol); the Crowne Plaza's slab depth and which block behind it is the
+  ballroom (nine floors per one listing is not what the photograph shows on
+  King); St. Peter's nave plan and its tower's place (aerial and one
+  photograph); the WMRC's wings and entrance; Clay and Glass's canopy piers
+  and lettering's place; Market Square's rotunda size, the clock tower's
+  place relative to the skywalk (OSM puts the bridge where the photographs
+  show the tower), its lettering; St. Mary's transept is the porch OSM
+  shows, the rectory's brick. **Draws: none.** Every shell into a `kwp`
+  cluster, every letter into a `kw` sign cluster those cells already had:
+  the landmark root's meshes per cluster with round four off / on are
+  identical (1038 / 1038; `window.__noLm4 = true` before boot turns round
+  four alone off -- its footprints stay the importer's boxes). Sign atlas
+  ended at row 1563 of 2048 (was 1425), not full; pass triangles ~54k ->
+  ~64k. No Tims, FreshCo, storefront or kwshops store in or near a new
+  footprint. **Phone** (AUTO_PHONE=1, GPU, tools/kw/seedrandom.js), master
+  -> this, three runs of this (draws / tris): spawn 173/1153k -> 176, 176,
+  167 (1123-1164k); Market Square corner 267 -> 269, 268, 266 (+1-12k);
+  from King E 350 -> 351, 353, 345; air 252 -> 254, 253, 251; St. Mary's
+  332 -> 333, 335, 328, air 323 -> 324, 326, 319 (+5-24k); St. Peter's 256
+  -> 258, 257, 255; the gaol air 193 -> 197, 193, 191; Clay and Glass 176
+  -> 178, 178, 175, air 156 -> 158, 158, 155; WMRC 229 -> 232, 231, 229,
+  air 134 -> 136, 135, 134; Galt Arena 201 -> 203, 202, 200, air 203 ->
+  205, 204, 202 (tris -3..+24k): the draw count's own run-to-run wander
+  (-6..+4 by run, every view together); round four off -> on in one build
+  -1..+2. trafficbench (rail off, clear, phone) hashes = master at all six
+  sites; jcttraffic and hwytraffic seeded output = master's; poleprobe 0
+  in a lane, 0 trunks on it (one `lamp4` fewer at its sites: a light whose
+  spot now meets a new solid); AUTO_GPU=1 funprobe ALL OK (63); 0
+  exceptions. **Not done / approximate:** the Queen's
+  Square library (no photograph of the 1 North Square building found: the
+  Commons "Idea Exchange" photograph is not clearly it), Waterloo
+  Collegiate (the generic school polygon is close to the buff 1950s
+  building; its breeze-block entrance not drawn), Catalyst137, the WRPS
+  headquarters, Langdon Hall (down its drive, unseen from the road), the
+  churches past St. Mary's and St. Peter's (kw.js's steeples); the
+  skywalk is not solid and not walkable; interiors; the Crowne Plaza's
+  back and the WMRC's wings are the outline as boxes. Verify: kwshots
+  views, e.g. Market Square's corner `{c: [-1014, 318, 1.7], t: [-990,
+  307, 11]}`, the Crowne Plaza up King `{c: [-948, 357, 1.7], t: [-1005,
+  335, 11]}`, St. Mary's front `{c: [-1185, 1, 1.7], t: [-1222, -19.5,
+  15]}`, Galt Arena `{c: [13684, 9914, 1.7], t: [13660, 9900, 9]}`, the
+  WMRC `{c: [-4628, -1420, 1.8], t: [-4632, -1375, 7]}`.
 - **The chain stores: src/kwshops.js** (`data/shops.json` from
   tools/kw/extract_shops.py -> `raw_shops.json`, then tools/kw/build_shops.py;
   docs/shops-*.jpg). Every store of ~50 brands (`BRANDS` / `GAS` in
