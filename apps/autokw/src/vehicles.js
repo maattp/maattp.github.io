@@ -10,6 +10,7 @@
 
 import * as THREE from './three.js';
 import { Builder, dropGeometryArrays } from './build.js';
+import { WXK, WXU } from './weather.js';
 import { makeHumanoid, buildCharacter, BONES, gripHands } from './peds.js';
 import { clamp, lerp, hash2, damp } from './util.js';
 import * as G from './geo.js';
@@ -11230,7 +11231,9 @@ function glassShader(sh) {
   // shadow, 4 a licence plate's face (plateBox; the serial is the mesh's own,
   // read from its x scale: see PLATE_STEP)
   sh.uniforms.plateTex = { value: plateAtlas() };
-  sh.vertexShader = 'attribute float glass;\nvarying float vGlass;\nvarying float vShade;\nvarying float vTint;\nvarying float vPlate;\nvarying float vPlateK;\nvarying vec3 vLampE;\nvarying float vLampOff;\n' + LAMP_GLSL + sh.vertexShader
+  // headlamps on in rain, snow and fog (weather.js; 0 in clear weather)
+  sh.uniforms.wxHead = WXU.wxHead;
+  sh.vertexShader = 'attribute float glass;\nvarying float vHeadL;\nvarying float vGlass;\nvarying float vShade;\nvarying float vTint;\nvarying float vPlate;\nvarying float vPlateK;\nvarying vec3 vLampE;\nvarying float vLampOff;\n' + LAMP_GLSL + sh.vertexShader
     // the lamp state (LAMP_STEP: the z scale), read once
     .replace('void main() {', `void main() {
 	float lampB = floor( ( length( modelMatrix[ 2 ].xyz ) / length( modelMatrix[ 1 ].xyz ) - 1.0 ) * ${LAMP_STEP.toFixed(1)} + 0.5 );`)
@@ -11240,6 +11243,11 @@ function glassShader(sh) {
     .replace('#include <begin_vertex>', `#include <begin_vertex>
 	transformed = sbArm( transformed, glass, lampB, 1.0 );
 	vGlass = ( glass > 0.5 && glass < 1.5 ) || ( glass > 2.5 && glass < 3.5 ) ? 1.0 : 0.0;
+	// a headlamp: an untagged face in LAMP's own colour
+	vHeadL = 0.0;
+	#ifdef USE_COLOR
+		if ( glass < 0.5 && all( lessThan( abs( color.rgb - vec3( ${LAMP.join(', ')} ) ), vec3( 0.002 ) ) ) ) vHeadL = 1.0;
+	#endif
 	vShade = glass > 1.5 && glass < 2.5 ? 1.0 : 0.0;
 	vTint = glass > 2.5 && glass < 3.5 ? 1.0 : 0.0;
 	vPlate = glass > 3.5 && glass < 4.5 ? 1.0 : 0.0;
@@ -11249,7 +11257,7 @@ function glassShader(sh) {
 	// (not the stop arm's face: it is a sign, not a lens)
 	vLampOff = glass > 4.5 && ( glass < 10.5 || glass > 11.5 ) && vLampE.r < 0.01 ? 1.0 : 0.0;
 	vPlateK = mod( floor( ( length( modelMatrix[ 0 ].xyz ) / length( modelMatrix[ 1 ].xyz ) - 1.0 ) * ${PLATE_STEP.toFixed(1)} + 0.5 ), ${PLATE_N.toFixed(1)} );`);
-  let fs = 'varying float vGlass;\nvarying float vShade;\nvarying float vTint;\nvarying float vPlate;\nvarying float vPlateK;\nvarying vec3 vLampE;\nvarying float vLampOff;\nuniform sampler2D plateTex;\n' + sh.fragmentShader;
+  let fs = 'varying float vHeadL;\nuniform float wxHead;\nvarying float vGlass;\nvarying float vShade;\nvarying float vTint;\nvarying float vPlate;\nvarying float vPlateK;\nvarying vec3 vLampE;\nvarying float vLampOff;\nuniform sampler2D plateTex;\n' + sh.fragmentShader;
   if (THREE.ShaderChunk.envmap_physical_pars_fragment.includes(GLASS_IBL_FROM)) {
     fs = fs.replace('#include <envmap_physical_pars_fragment>',
       THREE.ShaderChunk.envmap_physical_pars_fragment.replace(GLASS_IBL_FROM, `${GLASS_IBL_FROM}
@@ -11272,7 +11280,8 @@ function glassShader(sh) {
 	// a lit lamp is its light: no sky in the lens to wash the colour out
 	if ( vLampE.r > 0.01 ) { metalnessFactor = 0.0; roughnessFactor = 0.7; diffuseColor.rgb *= 0.25; }`)
     .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-	totalEmissiveRadiance += vLampE;`)
+	totalEmissiveRadiance += vLampE;
+	if ( wxHead > 0.0 ) totalEmissiveRadiance += vec3( 2.0, 2.0, 1.9 ) * 0.7 * vHeadL * wxHead;`)
     .replace('#include <opaque_fragment>', `if ( vGlass > 0.5 ) {
 		float gNV = saturate( dot( normal, normalize( vViewPosition ) ) );
 		float gA = mix( mix( ${GLASS_ALPHA.toFixed(3)}, 0.9, vTint ), 1.0, pow( 1.0 - gNV, 5.0 ) );
@@ -11466,6 +11475,7 @@ export function vehicleAssets() {
   });
   trimMat.onBeforeCompile = trimShader;
   trimMat.customProgramCacheKey = () => 'vehicleGlass';
+  trimMat.userData.wx = 'nosnow';   // weather.js: glass and lamps take no snow
   CACHE = {
     types,
     trimMat,
@@ -13873,7 +13883,9 @@ export class Vehicle {
         rough = clamp(sp / 8, 0, 1) * S.rough;
         acc -= this.vLong * Math.abs(this.vLong) * S.drag + this.vLong * S.roll;
       }
-      if (rc) { this.surf = surf; this.mu = surf ? SURFACES[surf].mu : 1; }
+      // (and the weather's: a wet road ~0.82 of a dry one, snow ~0.55;
+      // weather.js WXK.mu, exactly 1 when dry)
+      if (rc) { this.surf = surf; this.mu = (surf ? SURFACES[surf].mu : 1) * WXK.mu; }
     }
     if (!rc) { this.surf = null; this.mu = 1; }
     // TRACTION and ABS (your road car). The driven wheels can put down only

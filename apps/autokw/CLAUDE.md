@@ -3881,6 +3881,83 @@ file and a guide disagree, this file wins.
     Story-style variety); stores past the edge (Elmira, New Hamburg, Ayr,
     Baden) are not on the map; from the air past 1.5 km a country store is
     its massing box.
+- **Weather: src/weather.js** (docs/weather-rain-king.jpg, weather-snow-street.jpg,
+  weather-overcast-air.jpg). States clear / overcast / rain / drizzle / snow /
+  fog, each a mix of four numbers (`over`, `rain`, `snow`, `fog`) plus two
+  that lag them on the ground (`wet`: ~30 s to soak, ~2 min to dry; `cover`:
+  snow lying in ~45 s, gone over ~3 min, faster in rain). **Auto** (default)
+  holds a state 4-9 min and fades 50 s to the next, drawn from `MONTHS` --
+  Waterloo Region by month (snow Nov-Mar, most Dec-Feb; rain spring and
+  Aug-Nov; clearest Jul-Sep; fog in the shoulder seasons) on the device's
+  clock; **the first auto state is clear for 3-5 min**, so a fresh session and
+  every harness start on the city as built. The pause menu's Weather row
+  (Auto / Clear / Rain / Snow) is localStorage `autokw-weather` and fades in
+  ~7 s. Harness: `window.__weather = 'rain'` (any state, or 'auto') SNAPS at
+  the next drawn frame, ground included; `window.__wx` is the live state
+  (`cur`, `k`, `draws`, `done`, `set(mode, instant)`, `choose(setting)`).
+  **THE LAW: clear weather changes nothing.** Every shader term is behind a
+  uniform branch (`wxOn`), every light / fog / gameplay factor is x exactly 1,
+  the precipitation mesh is not even built and the IBL is never re-rendered
+  -- trafficbench hashes with `__weather="clear"` equal master's.
+  **How it reaches every material:** weather.js sets
+  `THREE.Material.prototype.onBuild` (nothing else uses it; three calls it
+  for each new program just BEFORE the material's own onBeforeCompile), so
+  one block goes in before `<emissivemap_fragment>` of every standard /
+  lambert / phong program, and each material's hook then edits round it.
+  **Never wrap onBeforeCompile / customProgramCacheKey on the prototype
+  instead:** landmarks.js `plainPalette` and vehicles.js's dent test compare
+  onBeforeCompile by identity, and a getter there split the landmark
+  clusters' merges (+10-20 draws in the air). In the block (`normal` is
+  view-space, `vViewPosition` gives the world position): WET darkens by
+  porosity (rough surfaces most), lowers roughness on what faces up, and
+  noise puddles (roughness 0.05) on flats; SNOW whitens by how much a face
+  looks up (roofs, lawns, crowns, kerbs), drifted by noise. Kinds by
+  `userData.wx` (a tagged material needs its OWN program key -- three shares
+  a program, defines and all, between materials with one key): 'road'
+  (`mats.road`, key 'wxRoad'; the far roads) and 'roadwalk' (roadWalk, by its
+  `vSurf`) are PLOWED -- wet with melt, grey slush in patches and a ridge of
+  it along the kerb (the vertex colour's kerb grime, meshRoad `wear`, says
+  where the kerb is), pavements shovelled, gravel snow-packed, verges white;
+  'nosnow' (the vehicles' trim); a program key with `water` takes no snow or
+  puddles; skinned meshes skip snow. `testWeatherShaders(renderer)` compiles
+  it on throwaway materials before anything real compiles, and a driver that
+  refuses it gets `WX.ok = false`: no block anywhere, never a black city.
+  **Sky and light:** world.js buildSky's `overcast` (sky to `ovHor`/`ovZen`,
+  clouds closed into a textured grey deck, the disc gone), `skyFog` (the
+  haze climbs the sky), `haze` lerped to `ovHaze`; the sun x(1 - 0.92 over),
+  hemi x(1 + 0.45 over), ambient x(1 + 0.7 over) -- shadows go soft; fog
+  colour toward `FOG_OVER` (main.js syncFogColour), density x `fogK` (main.js
+  draw: base x altitude x weather; rain ~10x, snow ~17x, fog ~81x -- the haze
+  thins with height, so these are large); `world.relightSky()` re-renders the
+  IBL at overcast 0.5 and 1 only. **Precipitation** (`Precip`): ONE draw, a
+  ShaderMaterial over 6400 quads (3600 phone) whose vertex shader wraps them in
+  a 34 x 20 x 34 m box round the camera (26 x 16 x 26 for snow): rain streaks
+  along the fall + wind, snowflakes as soft billboards swaying; fades out
+  30-110 m above the ground, hidden in a bore. **Gameplay:** `WXK.mu` (your
+  road car's grip and brakes, vehicles.js `this.mu`: rain 0.82, snow 0.55;
+  the loose-surface ESC path comes in with it), `WXK.ai` / `aiLat` (traffic's
+  pace and corner speeds), `WXK.peds` (the walkers' cap: rain x0.45),
+  `WXU.wxHead` (headlamps: the trim shader lights untagged faces in LAMP's
+  colour). **Sound** (audio.js): `rain` (pink noise band-passed, the roof's
+  drumming played slower in a car, hushed in a bore), `spray` (your tyres on
+  a wet road, by speed; duller in slush), the city ambience x0.55 in snow.
+  **Verify:** `VIEW_PROBE_FILE=tools/kw/weatherprobe.js` (states, the clear
+  law, draws, transitions with the game running, a sedan's 100-0 per
+  weather, the AI / walker / headlamp factors, the setting); views:
+  `cat tools/kw/artseat.js tools/kw/weatherseat.js > pre.js;
+  VIEW_PRE_FILE=pre.js VIEWS=tools/kw/weatherviews.json`.
+  Measured (AUTO_PHONE=1, GPU): clear is master's -- the same draws at
+  fixed poses (a per-object draw census at air-uptown matches but for
+  traffic's own randomness), trafficbench hashes identical at all six sites
+  with `__weather="clear"`, seeded jcttraffic / hwytraffic output identical;
+  rain or snow +1 draw and +7k tris (3600 quads); perfaudit (8x CPU) King
+  St frame CPU 12.98 ms clear, 12.1-13.0 rain: inside the noise.
+  **Approximate / not done:** the city stays dressed for fall under snow
+  (leaves on the trees, pumpkins); snow lies on parking lots and the mid
+  ring's merged roads (no flag tells them from ground); no wipers, no
+  splashes or ripples, no lightning; rain falls through bridges and roofs
+  (it is a box round the camera); headlamps are the lenses glowing, no
+  beams on the road; far LOD cars' lamps stay dark; Auto starts clear.
 
 ## Build number
 

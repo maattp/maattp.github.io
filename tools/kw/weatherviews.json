@@ -1,0 +1,10 @@
+[
+  { "name": "wx-king-rain", "eval": "window.__weather = 'rain'; __seat('King Street', -3822, -1405, 0.75, 70)" },
+  { "name": "wx-king-clear", "eval": "window.__weather = 'clear'; __seat('King Street', -3822, -1405, 0.75, 70)" },
+  { "name": "wx-res-snow", "eval": "window.__weather = 'snow'; __seat('Allen Street East', -3286, -1275, 0.6, 60)" },
+  { "name": "wx-res-clear", "eval": "window.__weather = 'clear'; __seat('Allen Street East', -3286, -1275, 0.6, 60)" },
+  { "name": "wx-air-overcast", "eval": "window.__weather = 'overcast'", "at": [-3200, -1000, 0], "alt": 450, "bearing": 300, "pitch": -18, "fov": 60 },
+  { "name": "wx-air-clear", "eval": "window.__weather = 'clear'", "at": [-3200, -1000, 0], "alt": 450, "bearing": 300, "pitch": -18, "fov": 60 },
+  { "name": "wx-king-snow", "eval": "window.__weather = 'snow'; __seat('King Street', -3822, -1405, 0.75, 70)" },
+  { "name": "wx-fog", "eval": "window.__weather = 'fog'; __seat('King Street', -3822, -1405, 0.75, 70)" }
+]
