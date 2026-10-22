@@ -130,6 +130,8 @@ export class Career {
     if (taxi && taxi.stats.fares) extra.push(`Taxi fares ${taxi.stats.fares}`);
     if (s.grt && s.grt.stats.runs) extra.push(`GRT runs ${s.grt.stats.runs}`);
     if (s.eats && s.eats.stats.orders) extra.push(`KW Eats orders ${s.eats.stats.orders}`);
+    // the road tests at DriveTest Kitchener (g2test.js): the licence held
+    if (s.g2 && s.g2.licence()) extra.push(s.g2.licence());
     if (seafair && seafair.series && seafair.series.cups) extra.push(`Seafair cups ${seafair.series.cups}`);
     return {
       money: Math.floor(this.game.money), rows, frac, pct: Math.floor(frac * 100),

@@ -814,6 +814,8 @@ const CHAIN_COL = [
   [/^Massage Addict/i, '#00a3ad', '#ffffff'], [/^Access Storage/i, '#ffd200', '#c8102e'], [/^The Beat Goes On/i, '#111111', '#ffffff'],
   [/^Microplay/i, '#0b3e8a', '#ffffff'], [/^EB Games/i, '#c8102e', '#ffffff'], [/^Value Buds|^Tokyo Smoke|cannabis/i, '#111111', '#ffffff'],
   [/^Shoppers|^Dollarama/i, '#d71920', '#ffffff'],
+  // DriveTest (g2test.js addDriveTestSign): its navy wordmark on white
+  [/^DriveTest/, '#ffffff', '#003a70'],
 ];
 const SIGN_PAL = [['#1f2a36', '#ffffff'], ['#7a1f24', '#ffffff'], ['#f4efe4', '#2a2a2a'], ['#21543d', '#ffffff'],
   ['#2c3e66', '#f0d36a'], ['#111111', '#e8c46a'], ['#c84b1e', '#ffffff'], ['#e9e1cf', '#7a1f24'], ['#ffffff', '#b5121b'], ['#4a2a5a', '#ffffff']];

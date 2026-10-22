@@ -81,6 +81,7 @@ import { PoliceMissions } from './policemissions.js';
 import { TaxiFares } from './taxi.js';
 import { GrtBus, LedPanel } from './grtbus.js';
 import { KwEats } from './kweats.js';
+import { RoadTest, addDriveTestSign } from './g2test.js';
 import { Vehicle, TYPES as VEHICLE_TYPES, VEHICLE_HOOKS, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial, dropVehicleArrays } from './vehicles.js';
 
 // Aircraft come in their own colours, parked at Boeing Field or delivered.
@@ -278,6 +279,7 @@ class Game {
     if (taxi) taxi.onCrash(impact);
     if (grt) grt.onCrash(impact);
     if (eats) eats.onCrash(impact);
+    if (g2) g2.onCrash(impact);
     const p = player.position;
     fx.sparks(p.x, p.y + 0.8, p.z, Math.min(14, Math.round(impact)));
     // A police mission's suspect is yours to ram.
@@ -300,6 +302,7 @@ class Game {
     audio.pedHit();
     if (taxi) taxi.onPedHit(byPlayer);
     if (grt) grt.onPedHit(byPlayer);
+    if (g2) g2.onPedHit(byPlayer);
     fx.blood(ped.x, ped.y + 1, ped.z);
     peds.scare(ped.x, ped.z, 30);
     if (byPlayer) this.addHeat(22);
@@ -423,6 +426,8 @@ class Game {
 
   /** ENTER on foot, before the cars: a fishing rod within reach? */
   tryInteract(pl) {
+    // Auto KW: DriveTest Kitchener's door -- the G2 / G road test (g2test.js)
+    if (g2 && g2.near(pl)) { g2.open(pl); return true; }
     // Auto KW: lacing up on (or taking the skates off at) Waterloo Public Square's rink
     if (skating && skating.tryInteract(pl)) return true;
     // Auto KW: the gate at Jack Couch Park: the Panthers' home run derby
@@ -553,6 +558,8 @@ class Game {
 
   /** ENTER in a car stopped by a Tims: the drive-thru (player.js, before getting out). */
   tryDriveThru(pl) {
+    // stopped by DriveTest's pillar in your own car: the road test in it (g2test.js)
+    if (g2 && g2.driveUp(pl)) return true;
     // at a window (drivethru.js): served there, or a Tims' (Roll Up the Rim, below)
     const at = dthru && dthru.order(pl);
     if (at === true) return true;
@@ -682,7 +689,7 @@ class Game {
 let chunkCull = null, lmCull = null;   // chunkcull.js: the city's chunks, the landmark clusters
 let police = null, missions = null;   // the wanted levels (police.js) and police missions (policemissions.js)
 let taxi = null;                      // taxi fares (taxi.js)
-let grt = null, eats = null;          // the GRT bus job (grtbus.js) and KW Eats deliveries (kweats.js)
+let grt = null, eats = null, g2 = null;          // the GRT bus job (grtbus.js) and KW Eats deliveries (kweats.js)
 const burning = new Set();             // cars on fire (VEHICLE_HOOKS.ignite)
 let moorings = null, mooringT = 0;    // private boats at the lakes' docks (privateMoorings)
 let nearShadow = null;  // nearshadow.js
@@ -909,6 +916,8 @@ async function boot() {
   // drawn through kwshops.js's and buildSchools' builders, so before prepShops)
   { const k = prepHome(city, md.home); blog(`kw home: ${k.skipped} boxes drawn as home places`); }
   // the chain stores, gas stations and plazas where they really are (kwshops.js)
+  // (DriveTest is an amenity, not a shop: its lettering on the Ottawa Lackner Centre's strip, g2test.js)
+  if (!window.__noG2) addDriveTestSign(md.shops);
   setShopData(md.shops);
   { const k = prepShops(city); blog(`kw shops: drawn here: ${k.bigbox} big boxes, ${k.units} stand-alone stores, ${k.strips} plaza buildings, ${k.canopies} gas canopies, ${k.fronts} storefronts (${k.frontsNear || 0} within 150 m of a cluster's edge, ${k.frontsNext} of them merged into the next cell's, ${k.frontsOut} outside the clusters)`); }
   addLandmarkExtra(buildShops);
@@ -1365,7 +1374,7 @@ function installShadowFade() {
   game = new Game();
   // the wallet comes back from the last launch (career.js); the passport reads the rest
   career = new Career(game, () => ({
-    acts, stunts, islands, missions, seafair, arcade, taxi, grt, eats,
+    acts, stunts, islands, missions, seafair, arcade, taxi, grt, eats, g2,
     // a best on the board = played (golf's is a stroke count, so lower is better; any is a round)
     games: [['fishing', fishing], ['fishtoss', fishToss], ['hoops', hoops], ['pinball', pinball], ['tower', tower], ['coffee', coffee], ['pickle', pickle], ['golf', golf]]
       .map(([id, g]) => ({ id, best: g ? +(g.best || g.hi || 0) : 0 })),
@@ -1375,7 +1384,7 @@ function installShadowFade() {
   audio.onTrack = (label) => { if (hud) hud.showToast(`♪ ${label}`); };
   controls = new Controls(document.getElementById('app'));
   // an open minigame takes the pad as keys (controls.js PAD_KEYS)
-  controls.bridge = () => [fishing, arcade, pinball, hockey, rollup, tower, coffee, hoops, pickle, golf, fishToss]
+  controls.bridge = () => [fishing, arcade, pinball, hockey, rollup, tower, coffee, hoops, pickle, golf, fishToss, g2]
     .some((a) => a && a.active) || !!(wheelRide && wheelRide.busy);
   player = new Player(scene, city, game, world);
   player.link = link;
@@ -1783,6 +1792,7 @@ function installShadowFade() {
     hud.showToast(seen ? 'You passed a stopped school bus in front of the police'
       : 'You passed a stopped school bus — $400–$2,000 and 6 demerit points in Ontario', 3200);
     if (seen) game.addHeat(30);
+    if (g2) g2.onSchoolBusPass();
   };
   peds.waterAt = (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; };   // the boats' rule (Player.waterAt)
   fx = new Effects(scene, tx);
@@ -1873,6 +1883,11 @@ function installShadowFade() {
     eats = new KwEats({ scene, city, game, hud, audio, data: md.eats, panel });
     hud.places.push(...grt.places(), ...eats.places());
   }
+  // the G2 and G road tests at DriveTest Kitchener (g2test.js; window.__noG2 before boot leaves it out)
+  if (!window.__noG2) {
+    g2 = new RoadTest({ scene, city, game, traffic, hud, audio, root: document.getElementById('app') });
+    hud.places.push(...g2.places());
+  }
 
   // delivery marker
   const mg = new THREE.CylinderGeometry(6, 6, 26, 18, 1, true);
@@ -1951,7 +1966,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { grt, eats, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;
   window.__dbg.rail = kwrail;   // Auto KW: the heavy rail (kwrail.js)   // Auto KW: the harvest (crops.js)
   Object.defineProperty(window.__dbg, 'roadFeel', { get() { return roadFeel; } });
@@ -2420,7 +2435,7 @@ function refreshJobs() {
   for (const b of document.querySelectorAll('.buy')) b.disabled = game.money < +b.dataset.cost;
   if (!list) return;
   const COL = { gold: '#f4c542', silver: '#c8d0d8', bronze: '#c0763c' };
-  const rows = [...(grt ? grt.jobRows() : []), ...(eats ? eats.jobRows() : []), ...s.rows];
+  const rows = [...(g2 ? g2.jobRows() : []), ...(grt ? grt.jobRows() : []), ...(eats ? eats.jobRows() : []), ...s.rows];
   list.innerHTML = rows.map((r) => `<div class="jobRow"><span class="nm">${r.name}</span>`
     + `<span class="bt">${r.best || '--'}`
     + (r.medal && r.medal !== 'none' ? `<i class="md" style="background:${COL[r.medal]}"></i>` : '')
@@ -2828,7 +2843,7 @@ function interiorUp() {
 }
 
 function reapHolds() {
-  const live = { fishing, arcade, pinball, hockey, rollup, fest, splash, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace, derby };
+  const live = { fishing, arcade, pinball, hockey, rollup, fest, splash, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace, derby, g2 };
   for (const who of game.holds) {
     if (who === 'seafair') { if (seafair && (seafair.state === 'menu' || seafair.state === 'done')) continue; }
     else if (live[who] && live[who].active) continue;
@@ -3317,6 +3332,7 @@ function frame(now) {
   if (taxi) taxi.update(dt, player);
   if (grt) grt.update(dt, player);
   if (eats) eats.update(dt, player);
+  if (g2) g2.update(dt, player);
   if (crops) crops.update(dt, player);   // the harvest (crops.js)
   // Say hello once per approach to anything the map marks (the dock, the
   // quads): the map is how you find them, this is how you know you have.
