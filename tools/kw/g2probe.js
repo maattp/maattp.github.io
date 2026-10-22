@@ -297,7 +297,8 @@
       // the stalk: on 70 m before a turn, off 12 m after
       if (!opts.noSig) {
         let sg = 0;
-        for (const t of turns) if (s > t.s - (t.merge ? 140 : 70) && s < t.s + 12) sg = t.dir;
+        // (the first one coming: the next turn's signal waits for this one)
+        for (const t of turns) if (s < t.s + 12) { if (s > t.s - (t.merge ? 140 : 70)) sg = t.dir; break; }
         const K = g2.run && g2.run.task;
         if (opts.laneTask && K && K.k === 'lc') sg = K.want === 'L' ? -1 : 1;
         if (opts.sig !== undefined) sg = opts.sig;
@@ -461,14 +462,14 @@
     };
   }
   /** Pull over: the right signal, in to the kerb, stop; then the left signal and out. */
-  function doPull(run, K) {
+  function doPull(run, K, kgap = 0.45) {
     const cur = run.cur;
     if (!cur) { drive(D.line, 0); frame(); return true; }
     const e = E[cur.ei];
     if (K.ph === 'ask') {
       setSig(1);
-      const kerb = e.hw - car.halfWid - 0.45;
-      const ln = laneLine(chainAhead(cur.ei, cur.sign, 160), (ei, sg) => (ei === cur.ei || T.flow[ei] === 0 ? Math.min(E[ei].hw - car.halfWid - 0.45, E[ei].hw) : kerbLane(ei, sg)));
+      const kerb = e.hw - car.halfWid - kgap;
+      const ln = laneLine(chainAhead(cur.ei, cur.sign, 160), (ei, sg) => (ei === cur.ei || T.flow[ei] === 0 ? Math.min(E[ei].hw - car.halfWid - kgap, E[ei].hw) : kerbLane(ei, sg)));
       D.i = 0;
       const gap = g2.junctionGap(cur);
       const atKerb = Math.abs(cur.lat - kerb) < 0.35;
@@ -492,14 +493,20 @@
     const mx = (Math.sin(car.heading) + f.x) / 2, mz = (Math.cos(car.heading) + f.z) / 2;
     const x0 = car.x + mx * ds, z0 = car.z + mz * ds;
     const w = car.halfWid + 0.15, l = car.halfLen + 0.15;
-    for (const [a, b] of [[l, w], [l, -w], [-l, w], [-l, -w]]) if (c.roadLift(x0 + f.x * a - f.z * b, z0 + f.z * a + f.x * b) >= 0.45) return true;
+    const f0 = { x: Math.sin(car.heading), z: Math.cos(car.heading) };
+    // (a corner that would go up onto the pavement; one already over it is not news)
+    for (const [a, b] of [[l, w], [l, -w], [-l, w], [-l, -w]]) {
+      if (c.roadLift(car.x + f0.x * a - f0.z * b, car.z + f0.z * a + f0.x * b) >= 0.45) continue;
+      if (c.roadLift(x0 + f.x * a - f.z * b, z0 + f.z * a + f.x * b) >= 0.45) return true;
+    }
     return false;
   }
   /** Pull over, then turn round as a driver watching the kerbs does: forward on
    *  full left lock until the nose is near it, back on full right until the
    *  tail is, forward away (and again if it is not round yet). */
   function doTurn(run, K) {
-    if (K.ph === 'ask') return doPull(run, { ph: 'ask' }) || true;
+    // (pulled over with room for the tail to swing: a left lock throws it right)
+    if (K.ph === 'ask') return doPull(run, { ph: 'ask' }, 1.1) || true;
     setSig(0);
     if (!K._s) K._s = { m: 0, h0: car.heading, t: 0, n: 1 };
     const S = K._s;

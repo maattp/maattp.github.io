@@ -357,7 +357,7 @@ export class RoadTest {
         const n = N[i], dx = n.x - CENTRE.x, dz = n.z - CENTRE.z, d = Math.hypot(dx, dz);
         const b = Math.atan2(dx, -dz);
         if (used.some((u) => Math.hypot(N[u].x - n.x, N[u].z - n.z) < 400)) continue;
-        const s = Math.abs(d - r) / r + Math.abs(wrap(b - bear)) * 0.9 + R() * 0.15;
+        const s = Math.abs(d - r) / r + Math.abs(wrap(b - bear)) * 0.9 + R() * 0.35;
         if (s < bs) { bs = s; best = i; }
       }
       if (best >= 0) used.push(best);
@@ -404,7 +404,7 @@ export class RoadTest {
       }
       return m;
     };
-    const want = kind === 'G' ? [5500, 8000] : [3000, 4500];
+    const want = kind === 'G' ? [5500, 9000] : [3500, 5500];
     let best = null, bm = Infinity;
     for (let a = 0; a < 8; a++) {
       const out = build(), m = legs(out);
