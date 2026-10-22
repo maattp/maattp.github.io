@@ -3109,7 +3109,7 @@ file and a guide disagree, this file wins.
     it `LC_LATE0 + LC_LATE_T x speed` m short of the junction: `missTurn`
     cuts the route there and pickNextEdge scores -8 every exit there this
     lane cannot make (`lcMiss`, once per junction) -- no turn is made across
-    a lane. No blinker lamps are drawn (the vehicles have no lamp to light).
+    a lane. (The signal is drawn since: "Vehicle lamps" below.)
   - **A quarter of drivers turn at a signal** (pickNextEdge `atSig`: dot x
     1.2 + hash x 2.5 there, not dot x 2 + hash x 1.1). Before, a car never
     turned where it could go straight on: the jcttraffic sites saw 19 lefts
@@ -3188,7 +3188,7 @@ file and a guide disagree, this file wins.
     this 178 / 176 (1136k / 1127k -> 1140k / 1133k tris); the 13 arterial
     cameras -1..+1 draws, -5..+7k tris. Paint and noses add no draws (the
     chunk's flat / road / walk meshes).
-  - **Approximate / not done:** no blinker lamps; lane changes happen on
+  - **Approximate / not done:** (blinker lamps: done since, "Vehicle lamps"); lane changes happen on
     the edge being driven only (a short edge before the junction leaves
     little room, and a turn is then given up); right-turn bays are kerb
     width, not lanes; bays only on two-way roads into a signal (a divided
@@ -3198,6 +3198,94 @@ file and a guide disagree, this file wins.
     is a diagonal); dual left lanes (`left|left|`) are one bay; a nose
     rejected for lying on another carriageway leaves its strip R short, and
     roadLift (which cannot see that test) still calls its corner road.
+
+- **Vehicle lamps** (docs/lamps-red-queue.jpg, lamps-left-signal.jpg,
+  lamps-freeway-lane.jpg: master on top, this below). Stop lamps, turn
+  signals, reversing lamps and hazards on traffic, on your car and on the
+  phone's far LOD, for **no draw, no attribute and no uniform**.
+  - **Which faces are lamps** (vehicles.js `tagLamps`, after tagGlass, road
+    types only -- not planes or boats, whose TAILC is nav lights): the trim's
+    `glass` attribute gets 5 = stop / tail (a TAILC face looking back,
+    normal z < -0.4, in the rear 30 % of the length, low or the centred
+    high-mount lamp: a red lamp high and off-centre is a bus's or an
+    ambulance's warning lamp), 6 = turn signal (an AMBER lens off the
+    centreline, under 78 % of the roof -- not the cab clearance lamps -- in
+    the front or rear 35 %; side = sign of x, **+x is the car's left**),
+    7 = reversing (`REVL`, a new near-white lens colour: WHITE is the tint
+    placeholder; sedan, compsedan, taxi, police and sports have one), 8 =
+    stop / tail on a type with no rear amber. **Every red lamp off the
+    centreline is a turn signal too** (North American red rear signals: the
+    signalling side flashes, the other holds the brake) -- a thin amber strip
+    in a tail cluster did not read from a car length back. The stage counts
+    them: `LAMP_CLASSES=1 node tools/kw/carshots.mjs <dir>` (carstage's
+    `lampClasses`; a car's `lamps` field there sets its bits).
+  - **The state is per mesh, the plate trick again** (see PLATE_STEP):
+    `Vehicle.setLamps(bits)` puts `LAMP_BRAKE 1 | LAMP_L 2 | LAMP_R 4 |
+    LAMP_REV 8 | LAMP_LON 16 | LAMP_RON 32` (L/R = lit this instant, LON/RON
+    = signalling at all, for the combined red lamps) in `trimMesh.scale.z` as
+    1 + bits / `LAMP_STEP` (65536: under 0.1 %) and glassShader reads it back
+    as z column over y column of modelMatrix (`LAMP_GLSL` lampGlow; anything
+    over 63 -- tank.js's crush -- is dark). A lit lens adds emissive
+    (`LAMP_RED` 2.2, `LAMP_AMB` 3.4 / 1.2, `LAMP_WHT` 2.0, linear) and drops
+    its metal so the sky does not wash it out; an unlit one is 0.38 x its old
+    colour (the bare TAILC read as lit in daylight). A frozen (parked) car's
+    trim matrix is refreshed by setLamps itself. **Far LOD:** traffic.js
+    `_farCars` scales the instance matrix's z column the same way and
+    farShader reads `instanceMatrix`; clusterFar keeps a lamp's class in
+    `lodG` (1 is still glass), clusters lamps on a 4 cm grid, and stands them
+    `FAR_LAMP_OUT` 7 cm proud -- at FAR_CELL in their recess the clustered
+    shell closed over them, so master's far cars had NO tail lamps (the
+    taxi in lamps-red-queue.jpg). Scenery cars and trains keep bits 0.
+  - **What lights them** (traffic.js `updateLamps`, after the sync loop,
+    before updateFarLod; driven modes only, within `LAMP_RANGE` 260 m):
+    stop lamps on the brake (`v._lin`, the input the driver returned, or
+    aiIn), held (`v.held`), or standing without throttle, with a 0.3 s hold
+    (`BRAKE_HOLD`) against aiPedals' flicker; reversing below -0.3 m/s (a
+    wedge's or the gridlock rule's back-out); the signal (`lampSignal`,
+    judged every `LAMP_TICK` 4 frames, staggered, held `SIG_HOLD` 1.2 s so
+    it runs through the corner): a lane change under way (`lcShift`: > 0 is
+    moving left) or signalled (`lcSigOn` / `lcSigDir`), a planned freeway
+    exit within `EXIT_SIG` 220 m (`exitSide`), else `nextTurn` within
+    `SIG_D0` 40 + `SIG_DT` 2.5 x speed m; hazards (`HAZ_HOLD` 5 s) on a car
+    wedged (`stuckT` > 1.5) or stopped after a hit (`panic`). Blink period
+    `BLINK` 0.7 s (~86 a minute), half lit, each car's phase from
+    hash2(prio). A towed trailer / rear section shows its leader's bits.
+    **Visual only:** it reads the drivers' state and writes `lampBits` and
+    `v._lamp`, nothing the driving reads, no RNG (`nextTurn` writes only its
+    own scratch object).
+  - **Your car** (vehicles.js `driverLamps`, from player.js after update):
+    stop lamps on the brake, on the throttle rolling back, and standing;
+    reversing rolling back; **the signal follows the wheel at town speeds**
+    -- over `DRV_SIG_LOCK` 0.55 of lock for `DRV_SIG_T` 0.25 s between 0.5
+    and `DRV_SIG_V` 9 m/s blinks that way and stops `DRV_SIG_HOLD` 0.6 s
+    after the wheel comes back (a self-cancelling stalk, roughly). No
+    hazards, no stalk of its own.
+  - **Verify:** `VIEWS=tools/kw/lampviews.json VIEW_PRE_FILE=tools/kw/lampsite.js
+    VIEW_INFO='window.__lampInfo' AUTO_GPU=1 node tools/kw/kwshots.mjs <dir>`
+    (`__lamp(site)`: trafficbench's pinning at a site, steps until a car fits
+    `pick` -- `red` the back of a 3+ queue at a signal, `left` 6-50 m short
+    of a planned left, `lane` a freeway lane change -- judged from driving
+    state only, so master frames the same car; puts the blink in its lit
+    half; prints type and `lampBits`). kwshots gained `VIEW_INFO`.
+    trafficbench (rail off, phone): **hashes identical to master at all six
+    sites** (ms 0.210 -> 0.219 mean, inside the bench's noise); jcttraffic
+    seeded byte-identical (0 hits / 0 crashes / 0 stuck / 0 recycled);
+    AUTO_GPU=1 funprobe ALL OK; 0 exceptions everywhere. Phone (AUTO_PHONE=1,
+    GPU), master -> this: spawn 178 / 1157k -> 174 / 1146k (traffic's own
+    noise: the lamps add no draw), sig-1644 queue 280 / 1415k -> 274 / 1401k,
+    uptown queue 291 / 1152k -> 285 / 1137k, uptown left 185 / 1133k -> 183 /
+    1122k.
+  - **Approximate / not done:** no headlamps or night (there is no night);
+    a freeway lane change signals only while moving over (fwyDecide has no
+    signal-first step, and adding one would change traffic); a turn is
+    signalled from 40 m + 2.5 s even when a junction it goes straight
+    through comes first; the rear signal of a type with a separate amber lens
+    flashes its red lamp too; most types have no reversing lens (only
+    sedan / compsedan / taxi / police / sports), so their reversing shows
+    nothing; the school bus's red flashers and stop arm do nothing (it
+    never stops for children); police / suspect cars light stop and
+    reversing lamps but never signal; the lit red reads orange-red through
+    ACES at full strength.
 
 - **Lefts whose ways meet, and the gridlock rule** (v63's open item: the
   4 m/s scrape at signal 849). **Root cause, traced:** two opposing lefts

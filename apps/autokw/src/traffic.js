@@ -1,7 +1,8 @@
 // Traffic, parked cars and the police response.
 
 import * as THREE from './three.js';
-import { Vehicle, TYPES, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, nearLod, makeBellows, HITCH } from './vehicles.js';
+import { Vehicle, TYPES, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, nearLod, makeBellows, HITCH,
+  LAMP_BRAKE, LAMP_L, LAMP_R, LAMP_REV, LAMP_LON, LAMP_RON, LAMP_STEP } from './vehicles.js';
 import { clamp, lerp, angleWrap, hash2, rng, dist2, tierScale } from './util.js';
 import * as G from './geo.js';
 import { memo } from './bootcache.js';
@@ -70,6 +71,14 @@ const FAR_LOD = ON_PHONE ? 60 : Infinity;
 // does); the rest through the far LOD as before. Inside SHADOW_NEAR.
 const DECOR_NEAR = ON_PHONE ? 40 : 55;
 const DECOR_CAP = ON_PHONE ? 10 : 18;
+// VEHICLE LAMPS (updateLamps): lit out to LAMP_RANGE m; a blinker's period (s,
+// half of it lit: ~86 flashes a minute); the stop lamps held BRAKE_HOLD s
+// after the pedal; a signal judged every LAMP_TICK frames and held SIG_HOLD s
+// after its reason ends (through the rest of the corner); a turn signalled
+// SIG_D0 + SIG_DT x speed m before it, a freeway exit EXIT_SIG m before the
+// diverge; hazards HAZ_HOLD s after the car is wedged or stopped by a hit.
+const LAMP_RANGE = 260, BLINK = 0.7, BRAKE_HOLD = 0.3, LAMP_TICK = 4, SIG_HOLD = 1.2;
+const SIG_D0 = 40, SIG_DT = 2.5, EXIT_SIG = 220, HAZ_HOLD = 5;
 
 /**
  * Free everything under a node.
@@ -1430,6 +1439,8 @@ export class TrafficSystem {
       v.group.updateMatrix();
       v.tilt.updateMatrix();
       this._farM.multiplyMatrices(v.group.matrix, v.tilt.matrix);
+      // its lamps (updateLamps), as the near trim's: the z column's scale
+      if (v.lampBits) { const me = this._farM.elements, k = 1 + v.lampBits / LAMP_STEP; me[8] *= k; me[9] *= k; me[10] *= k; }
       e.mesh.setMatrixAt(e.n, this._farM);
       if (!v._farCol) v._farCol = new THREE.Color(v.color);
       e.mesh.setColorAt(e.n, v._farCol);
@@ -1489,6 +1500,76 @@ export class TrafficSystem {
     this.scene.add(m);
     e.mesh = m;
     e.cap = cap;
+  }
+
+  /**
+   * VEHICLE LAMPS (vehicles.js tagLamps / setLamps): what each driven car's
+   * lamps show, from what its driver is already doing -- stop lamps braking
+   * or standing, reversing lamps rolling back (a wedge's or the gridlock
+   * rule's back-out), the turn signal for a lane change (signalled or under
+   * way), a planned turn within SIG_D0 + SIG_DT x speed m (nextTurn) or a
+   * planned freeway exit within EXIT_SIG m, hazards on a wedged car or one
+   * stopped after a hit. VISUAL ONLY: it reads the drivers' state and writes
+   * v.lampBits (setLamps) and v._lamp, which no driving code reads; no RNG.
+   * Cars past LAMP_RANGE are dark.
+   */
+  updateLamps(dt, px, pz, player) {
+    const T = (this._lampT = (this._lampT || 0) + dt);
+    this._lampTick = ((this._lampTick || 0) + 1) | 0;
+    const cars = this.cars;
+    for (let i = 0; i < cars.length; i++) {
+      const v = cars[i], md = v.mode;
+      if (v === player.vehicle || md === 'trailer') continue;
+      let bits = 0;
+      if ((md === 'traffic' || md === 'police' || md === 'suspect') && !v.wreck && v.group.visible
+        && dist2(v.x, v.z, px, pz) < LAMP_RANGE * LAMP_RANGE) {
+        const L = v._lamp || (v._lamp = { b: 0, dir: 0, sigT: 0, hz: 0, ph: hash2(v.prio || 0, 41) * BLINK });
+        const inp = v._lin || v.aiIn, sp = v.vLong;
+        // stop lamps: on the brake, held (the parking brake at a standstill),
+        // or standing with no throttle -- with a short hold, so a driver
+        // feathering the pedals does not flicker
+        if (inp && ((inp.brake > 0.05 && sp > 0.3) || inp.park || v.held || (Math.abs(sp) < 0.3 && !(inp.throttle > 0.05)))) L.b = BRAKE_HOLD;
+        else if (L.b > 0) L.b -= dt;
+        if (L.b > 0) bits |= LAMP_BRAKE;
+        if (sp < -0.3) bits |= LAMP_REV;
+        // hazards: wedged (the back-out is coming), or stopped after a hit
+        if (md === 'traffic' && (v.stuckT > 1.5 || (v.panic > 0 && Math.abs(sp) < 0.5))) L.hz = HAZ_HOLD;
+        else if (L.hz > 0) L.hz -= dt;
+        // the turn signal, judged every LAMP_TICK frames (staggered), held SIG_HOLD s
+        if ((this._lampTick + i) % LAMP_TICK === 0) {
+          const d = md === 'traffic' && !v.unit ? this.lampSignal(v) : 0;
+          if (d) { L.dir = d; L.sigT = SIG_HOLD; }
+        }
+        if (L.sigT > 0) L.sigT -= dt;
+        const on = (T + L.ph) % BLINK < BLINK * 0.5;
+        if (L.hz > 0) bits |= LAMP_LON | LAMP_RON | (on ? LAMP_L | LAMP_R : 0);
+        else if (L.sigT > 0) bits |= L.dir < 0 ? LAMP_LON | (on ? LAMP_L : 0) : LAMP_RON | (on ? LAMP_R : 0);
+      } else if (v._lamp) { v._lamp.sigT = 0; v._lamp.hz = 0; v._lamp.b = 0; }
+      v.setLamps(bits);
+      if (v.trailer) v.trailer.setLamps(bits);
+    }
+  }
+
+  /** The way v's driver is signalling now: -1 left, +1 right, 0 none (updateLamps). */
+  lampSignal(v) {
+    const rt = v.rt;
+    if (!rt || !v.rtN) return 0;
+    // moving over (lcShift: how far right of its new lane it still is), or about to
+    if (v.lcShift) return v.lcShift > 0 ? -1 : 1;
+    if (v.lcSigOn) return v.lcSigDir;
+    const s0 = (v.x - rt[R_QX]) * rt[R_UX] + (v.z - rt[R_QZ]) * rt[R_UZ];
+    // a planned freeway exit, its diverge within EXIT_SIG m
+    if (v.exitNode != null && v.exitNode >= 0) {
+      let d = rt[R_LEN] - s0;
+      for (let j = 0; j < v.rtN && d < EXIT_SIG; j++) {
+        if (j) d += rt[j * RT_F + R_LEN];
+        if (this.entryEnd(v, j) === v.exitNode) return d < EXIT_SIG ? (v.exitSide > 0 ? 1 : -1) : 0;
+      }
+      return 0;
+    }
+    const nt = this.nextTurn(v, s0);
+    if (nt && nt.d < SIG_D0 + SIG_DT * Math.max(0, v.vLong)) return nt.mv === 'L' ? -1 : 1;
+    return 0;
   }
 
   // --- per-frame -----------------------------------------------------------
@@ -1632,6 +1713,7 @@ export class TrafficSystem {
       else input = v.spec.plane || v.spec.boat ? COAST_IN : PARK_IN;
 
       v.update(vdt, input);
+      v._lin = input;   // (the lamps read it: updateLamps)
       collideWithBuildings(v, city, null, true);
     }
 
@@ -1648,6 +1730,7 @@ export class TrafficSystem {
     }
     // collision resolution edits transforms directly, so re-sync every body.
     for (const v of this.cars) if (v !== player.vehicle) v.sync();
+    this.updateLamps(dt, px, pz, player);
     this.updateFarLod(px, pz, player);
 
   }

@@ -658,6 +658,9 @@ export class Player {
       sink: input.sinkAmt != null ? input.sinkAmt : brake,
       pilot: true,
     });
+    // its lamps: stop, reversing, the signal with the wheel (vehicles.js driverLamps)
+    this._lampT = (this._lampT || 0) + dt;
+    v.driverLamps(dt, this._lampT, throttle, brake, steer);
     if (v.wheelieDone) { if (this.game.onWheelie) this.game.onWheelie(v.wheelieDone); v.wheelieDone = 0; }
     // A tank aims, fires, and flattens what it has driven into, before the
     // buildings push back (tank.js).
