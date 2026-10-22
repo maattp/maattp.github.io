@@ -39,6 +39,9 @@ const PLASTIC = [0.11, 0.12, 0.13];
 const LAMP = [1.0, 0.98, 0.9];
 const TAILC = [0.92, 0.12, 0.1];
 const AMBER = [0.95, 0.55, 0.08];
+// A reversing lamp's lens: white, but not WHITE (the tint placeholder), so
+// tagLamps can find it.
+const REVL = [0.97, 0.97, 0.95];
 const PLATE = [0.86, 0.86, 0.82];
 const WHITE = [1, 1, 1];
 // KING COUNTY METRO'S LIVERY: the bottom half golden yellow, the top teal,
@@ -1331,7 +1334,7 @@ function buildSports(spec, paint, trim, matte) {
   // one body-colour bridge across the middle, so the bar reads as two lamps
   paint.box(0, 0.665, rz + 0.014, 0.10, 0.11, 0.035, 0, WHITE);
   for (const sx of [-1, 1]) {
-    trim.box(sx * 0.40, 0.605, rz - 0.03, 0.11, 0.05, 0.022, 0, WHITE);   // reversing lamp
+    trim.box(sx * 0.40, 0.605, rz - 0.03, 0.11, 0.05, 0.022, 0, REVL);   // reversing lamp
     hole(trim, matte, sx * PIPE[0], PIPE[1], rz, 0.055, 0.12, -1);
   }
   plateBox(trim, 0, 0.492, rz - 0.028, 0.42, 0.135, 0.02);
@@ -1778,7 +1781,7 @@ function buildSedan(spec, paint, trim, matte) {
   for (const sx of [-1, 1]) {
     trim.box(sx * 0.365, 0.760, tail + 0.020, 0.46, 0.130, 0.026, 0, TAILC);
     trim.box(sx * 0.575, 0.760, tail + 0.020, 0.11, 0.130, 0.026, 0, AMBER);
-    trim.box(sx * 0.155, 0.775, tail + 0.020, 0.11, 0.075, 0.026, 0, WHITE);   // reversing lamp
+    trim.box(sx * 0.155, 0.775, tail + 0.020, 0.11, 0.075, 0.026, 0, REVL);   // reversing lamp
     hole(trim, matte, sx * 0.470, 0.395, tail + 0.02, 0.048, 0.11, -1);
   }
   // Bright bar down the middle of the panel, tying the two lamps together.
@@ -10927,6 +10930,77 @@ export function tagGlass(geo) {
   return geo;
 }
 
+/**
+ * VEHICLE LAMPS (Auto KW). A road vehicle's lamp lenses, found by colour,
+ * where they face and where they sit, tagged in the trim's `glass` attribute
+ * after tagGlass (which already ordered the triangles; lamps are opaque):
+ *
+ *   5  stop / tail: a TAILC face looking back (normal z < -0.4) in the rear
+ *      30 % of the length -- low, or the centred high-mount stop lamp (a red
+ *      lamp high up and off-centre is a bus's or an ambulance's warning lamp)
+ *   6  turn signal: an AMBER lens off the centreline, under 78 % of the roof
+ *      (not the cab clearance lamps), in the front or rear 35 % -- front,
+ *      rear and side repeaters; the side is the sign of x (+x is the left)
+ *   7  reversing lamp: a REVL face looking back
+ *   8  stop / tail on a type with no rear amber lens, off the centreline
+ *
+ * Every red lamp off the centreline (5 or 8) is a turn signal too, as North
+ * American cars' red rear signals are -- the signalling side flashes, the
+ * other side holds the brake: a small amber strip in a tail cluster did not
+ * read from a car length back. (8 is kept apart for a later amber-only rule.)
+ *
+ * The lamp STATE is the trim mesh's own, as the plate's serial is (see
+ * PLATE_STEP): Vehicle.setLamps puts bits LAMP_* in `trimMesh.scale.z` as
+ * 1 + bits / LAMP_STEP and the vertex shader reads it back from modelMatrix
+ * (z column over y column); the far LOD reads its instance matrix the same
+ * way (traffic.js _farCars). No uniform, no draw, no new attribute.
+ */
+export const LAMP_BRAKE = 1, LAMP_L = 2, LAMP_R = 4, LAMP_REV = 8, LAMP_LON = 16, LAMP_RON = 32;
+export const LAMP_STEP = 65536;
+// your car's signal with the wheel (Vehicle.driverLamps)
+const DRV_SIG_LOCK = 0.55, DRV_SIG_T = 0.25, DRV_SIG_V = 9, DRV_SIG_HOLD = 0.6;
+const near3 = (c, k, ref) => Math.abs(c[k] - ref[0]) < 1e-4 && Math.abs(c[k + 1] - ref[1]) < 1e-4 && Math.abs(c[k + 2] - ref[2]) < 1e-4;
+function tagLamps(geo, spec) {
+  if (!geo || spec.plane || spec.boat) return geo;
+  const col = geo.attributes.color.array, pos = geo.attributes.position.array, nor = geo.attributes.normal.array;
+  const flag = geo.attributes.glass.array, n = flag.length;
+  const L = spec.len / 2, roof = spec.roof, xMin = Math.min(0.3, 0.15 * spec.wid);
+  let rearAmber = false;
+  for (let i = 0; i < n; i++) {
+    if (flag[i] !== 0) continue;
+    const k = i * 3, x = pos[k], y = pos[k + 1], z = pos[k + 2], nz = nor[k + 2];
+    if (near3(col, k, TAILC)) {
+      if (nz < -0.4 && z < -0.4 * L && (y < 0.85 * roof || Math.abs(x) < 0.3)) flag[i] = 5;
+    } else if (near3(col, k, AMBER)) {
+      if (Math.abs(x) > xMin && y < 0.78 * roof && Math.abs(z) > 0.3 * L) {
+        flag[i] = 6;
+        if (z < 0 && nz < -0.4) rearAmber = true;
+      }
+    } else if (near3(col, k, REVL) && nz < -0.3) flag[i] = 7;
+  }
+  if (!rearAmber) for (let i = 0; i < n; i++) if (flag[i] === 5 && Math.abs(pos[i * 3]) > 0.25) flag[i] = 8;
+  geo.attributes.glass.needsUpdate = true;
+  return geo;
+}
+// What a lit lamp adds (linear emissive), and the GLSL that decodes the
+// state and picks it: vLampE, from the class `g` and the bits `b`.
+const LAMP_GLSL = `
+#define LAMP_RED vec3( 2.2, 0.012, 0.006 )
+#define LAMP_AMB vec3( 3.4, 1.2, 0.03 )
+#define LAMP_WHT vec3( 2.0, 2.0, 1.9 )
+vec3 lampGlow( float g, float b, float px ) {
+	// (anything else scaling the mesh -- tank.js's crush -- reads as nonsense: dark)
+	if ( b < -0.5 || b > 63.5 ) return vec3( 0.0 );
+	float brk = mod( b, 2.0 ), lt = mod( floor( b / 2.0 ), 2.0 ), rt = mod( floor( b / 4.0 ), 2.0 );
+	float rv = mod( floor( b / 8.0 ), 2.0 ), la = mod( floor( b / 16.0 ), 2.0 ), ra = mod( floor( b / 32.0 ), 2.0 );
+	float lit = px > 0.0 ? lt : rt, act = px > 0.0 ? la : ra;
+	if ( g < 5.5 ) return LAMP_RED * ( abs( px ) > 0.3 && act > 0.5 ? lit : brk );
+	if ( g < 6.5 ) return LAMP_AMB * lit;
+	if ( g < 7.5 ) return LAMP_WHT * rv;
+	return LAMP_RED * ( act > 0.5 ? lit : brk );
+}
+`;
+
 // CONTACT SHADOW. Measured, tyres sit on the drawn road (median 2 cm under
 // it while driving), and still a truck read as hovering a few inches up: the
 // road between its wheels was lit exactly like open road, and the sun shadow
@@ -11045,14 +11119,18 @@ function glassShader(sh) {
   // shadow, 4 a licence plate's face (plateBox; the serial is the mesh's own,
   // read from its x scale: see PLATE_STEP)
   sh.uniforms.plateTex = { value: plateAtlas() };
-  sh.vertexShader = 'attribute float glass;\nvarying float vGlass;\nvarying float vShade;\nvarying float vTint;\nvarying float vPlate;\nvarying float vPlateK;\n' + sh.vertexShader
+  sh.vertexShader = 'attribute float glass;\nvarying float vGlass;\nvarying float vShade;\nvarying float vTint;\nvarying float vPlate;\nvarying float vPlateK;\nvarying vec3 vLampE;\nvarying float vLampOff;\n' + LAMP_GLSL + sh.vertexShader
     .replace('#include <begin_vertex>', `#include <begin_vertex>
 	vGlass = ( glass > 0.5 && glass < 1.5 ) || ( glass > 2.5 && glass < 3.5 ) ? 1.0 : 0.0;
 	vShade = glass > 1.5 && glass < 2.5 ? 1.0 : 0.0;
 	vTint = glass > 2.5 && glass < 3.5 ? 1.0 : 0.0;
-	vPlate = glass > 3.5 ? 1.0 : 0.0;
+	vPlate = glass > 3.5 && glass < 4.5 ? 1.0 : 0.0;
+	// a lamp (tagLamps), lit by the mesh's own state: its z scale (LAMP_STEP)
+	vLampE = glass > 4.5 ? lampGlow( glass, floor( ( length( modelMatrix[ 2 ].xyz ) / length( modelMatrix[ 1 ].xyz ) - 1.0 ) * ${LAMP_STEP.toFixed(1)} + 0.5 ), position.x ) : vec3( 0.0 );
+	// an unlit lens is a darker red / amber than the bare TAILC / AMBER trim was
+	vLampOff = glass > 4.5 && vLampE.r < 0.01 ? 1.0 : 0.0;
 	vPlateK = mod( floor( ( length( modelMatrix[ 0 ].xyz ) / length( modelMatrix[ 1 ].xyz ) - 1.0 ) * ${PLATE_STEP.toFixed(1)} + 0.5 ), ${PLATE_N.toFixed(1)} );`);
-  let fs = 'varying float vGlass;\nvarying float vShade;\nvarying float vTint;\nvarying float vPlate;\nvarying float vPlateK;\nuniform sampler2D plateTex;\n' + sh.fragmentShader;
+  let fs = 'varying float vGlass;\nvarying float vShade;\nvarying float vTint;\nvarying float vPlate;\nvarying float vPlateK;\nvarying vec3 vLampE;\nvarying float vLampOff;\nuniform sampler2D plateTex;\n' + sh.fragmentShader;
   if (THREE.ShaderChunk.envmap_physical_pars_fragment.includes(GLASS_IBL_FROM)) {
     fs = fs.replace('#include <envmap_physical_pars_fragment>',
       THREE.ShaderChunk.envmap_physical_pars_fragment.replace(GLASS_IBL_FROM, `${GLASS_IBL_FROM}
@@ -11063,6 +11141,7 @@ function glassShader(sh) {
   fs = fs
     .replace('#include <color_fragment>', `#include <color_fragment>
 	diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.018, 0.022, 0.026 ), vGlass );
+	diffuseColor.rgb *= 1.0 - 0.62 * vLampOff;
 	if ( vPlate > 0.5 ) {
 		vec2 pc = vec2( mod( vPlateK, ${PLATE_COLS.toFixed(1)} ), floor( vPlateK / ${PLATE_COLS.toFixed(1)} ) );
 		vec2 puv = clamp( vColor.rg, 0.01, 0.99 );
@@ -11070,7 +11149,11 @@ function glassShader(sh) {
 	}`)
     .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
 	metalnessFactor = mix( metalnessFactor, 0.0, vGlass );
-	roughnessFactor = mix( roughnessFactor, 0.05, vGlass );`)
+	roughnessFactor = mix( roughnessFactor, 0.05, vGlass );
+	// a lit lamp is its light: no sky in the lens to wash the colour out
+	if ( vLampE.r > 0.01 ) { metalnessFactor = 0.0; roughnessFactor = 0.7; diffuseColor.rgb *= 0.25; }`)
+    .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+	totalEmissiveRadiance += vLampE;`)
     .replace('#include <opaque_fragment>', `if ( vGlass > 0.5 ) {
 		float gNV = saturate( dot( normal, normalize( vViewPosition ) ) );
 		float gA = mix( mix( ${GLASS_ALPHA.toFixed(3)}, 0.9, vTint ), 1.0, pow( 1.0 - gNV, 5.0 ) );
@@ -11190,9 +11273,9 @@ function buildType(spec) {
   const matteGeoWE = matteW.build();
   return {
     paintGeo: paint.build(),
-    trimGeo: tagGlass(trim.build()),
+    trimGeo: tagLamps(tagGlass(trim.build()), spec),
     matteGeo: crewed(matte).build(),
-    trimGeoW: tagGlass(trimW.build()),
+    trimGeoW: tagLamps(tagGlass(trimW.build()), spec),
     shadowGeo: shadow.idx.length ? tagGlass(shadow.build()) : null,
     matteGeoW: matte.crew.empty ? matteGeoWE : crewed(matteW).build(),
     matteGeoWE,
@@ -11688,7 +11771,7 @@ float wmLamp( vec2 p, float len, float h0, float h1 ) {
 // metalness, roughness, env intensity); the paint colour is the instance
 // colour, applied to the paint mask only. Glass is opaque here, sky-folded
 // like the near glass, since nobody sees into a cabin at 60 m.
-const FAR_CELL = 0.2;
+const FAR_CELL = 0.2, FAR_LAMP_OUT = 0.07;
 const FAR_PARTS = {
   paint: [1, 0.5, 0.26, 1.5],
   trim: [0, 0.88, 0.16, 1.7],
@@ -11709,17 +11792,21 @@ function clusterFar(parts) {
     for (let v = 0; v < map.length; v++) {
       const k3 = v * 3;
       if (gls && gls[v] > 1.5 && gls[v] < 2.5) { map[v] = -1; continue; }   // contact shadow: not in the far LOD
-      const glass = gls && gls[v] > 0.5 && gls[v] < 3.5, plate = gls && gls[v] > 3.5;
-      const pt = glass ? 'glass' : part;
+      const glass = gls && gls[v] > 0.5 && gls[v] < 3.5, plate = gls && gls[v] > 3.5 && gls[v] < 4.5;
+      // a lamp (tagLamps) keeps its class in lodG, and clusters only with its own class
+      const lamp = gls && gls[v] > 4.5 ? gls[v] : 0;
+      const pt = glass ? 'glass' : lamp ? 'lamp' + lamp : part;
       const nx = nor[k3], ny = nor[k3 + 1], nz = nor[k3 + 2];
-      const key = `${pt}|${Math.round(pos[k3] / FAR_CELL)}|${Math.round(pos[k3 + 1] / FAR_CELL)}|${Math.round(pos[k3 + 2] / FAR_CELL)}`
+      // (a lamp's lens on a finer grid: at FAR_CELL a 10 cm lens collapsed to a point)
+      const cell = lamp ? FAR_CELL / 5 : FAR_CELL;
+      const key = `${pt}|${Math.round(pos[k3] / cell)}|${Math.round(pos[k3 + 1] / cell)}|${Math.round(pos[k3 + 2] / cell)}`
         + `|${Math.round(nx * 1.2)}|${Math.round(ny * 1.2)}|${Math.round(nz * 1.2)}`;
       let c = clusters.get(key);
       if (c === undefined) {
         c = cnt.length;
         clusters.set(key, c);
         P.push(0, 0, 0); N.push(0, 0, 0); C.push(0, 0, 0); cnt.push(0);
-        A.push(...FAR_PARTS[pt]); Gl.push(glass ? 1 : 0);
+        A.push(...FAR_PARTS[glass ? 'glass' : part]); Gl.push(glass ? 1 : lamp);
       }
       P[c * 3] += pos[k3]; P[c * 3 + 1] += pos[k3 + 1]; P[c * 3 + 2] += pos[k3 + 2];
       N[c * 3] += nx; N[c * 3 + 1] += ny; N[c * 3 + 2] += nz;
@@ -11743,6 +11830,9 @@ function clusterFar(parts) {
     for (let j = 0; j < 3; j++) { pos[c * 3 + j] = P[c * 3 + j] / k; col[c * 3 + j] = C[c * 3 + j] / k; }
     const l = Math.hypot(N[c * 3], N[c * 3 + 1], N[c * 3 + 2]) || 1;
     for (let j = 0; j < 3; j++) nor[c * 3 + j] = N[c * 3 + j] / l;
+    // a lamp stands FAR_LAMP_OUT proud: its lens sits in a recess the
+    // clustered shell closes over, so it was not drawn at all past 60 m
+    if (Gl[c] > 4.5) for (let j = 0; j < 3; j++) pos[c * 3 + j] += nor[c * 3 + j] * FAR_LAMP_OUT;
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -11756,23 +11846,35 @@ function clusterFar(parts) {
 }
 
 function farShader(sh) {
-  sh.vertexShader = 'attribute vec4 lodA;\nattribute float lodG;\nvarying vec4 vLodA;\nvarying float vLodG;\n' + sh.vertexShader
+  // lodG: 1 glass, 5-8 a lamp (tagLamps), lit by the instance's own state
+  // (its matrix's z scale, as the near trim's: traffic.js _farCars)
+  sh.vertexShader = 'attribute vec4 lodA;\nattribute float lodG;\nvarying vec4 vLodA;\nvarying float vLodG;\nvarying vec3 vLampE;\nvarying float vLampOff;\n' + LAMP_GLSL + sh.vertexShader
     .replace('#include <color_vertex>', `#include <color_vertex>
-	vLodA = lodA; vLodG = lodG;
+	vLodA = lodA; vLodG = lodG > 0.5 && lodG < 1.5 ? 1.0 : 0.0;
+	vLampE = vec3( 0.0 );
+	#ifdef USE_INSTANCING
+		if ( lodG > 4.5 ) vLampE = lampGlow( lodG, floor( ( length( instanceMatrix[ 2 ].xyz ) / length( instanceMatrix[ 1 ].xyz ) - 1.0 ) * ${LAMP_STEP.toFixed(1)} + 0.5 ), position.x );
+	#endif
+	vLampOff = lodG > 4.5 && vLampE.r < 0.01 ? 1.0 : 0.0;
 	#ifdef USE_INSTANCING_COLOR
 		// paint only: undo the instance tint on trim, matte and glass
 		vColor.xyz /= mix( max( instanceColor.xyz, vec3( 1e-3 ) ), vec3( 1.0 ), lodA.x );
 	#endif`);
-  let fs = 'varying vec4 vLodA;\nvarying float vLodG;\n' + sh.fragmentShader;
+  let fs = 'varying vec4 vLodA;\nvarying float vLodG;\nvarying vec3 vLampE;\nvarying float vLampOff;\n' + sh.fragmentShader;
   let env = THREE.ShaderChunk.envmap_physical_pars_fragment.split('envMapColor.rgb * envMapIntensity;').join('envMapColor.rgb * envMapIntensity * vLodA.w;');
   if (env.includes(GLASS_IBL_FROM)) {
     env = env.replace(GLASS_IBL_FROM, `${GLASS_IBL_FROM}
 			reflectVec = normalize( mix( reflectVec, vec3( reflectVec.x, abs( reflectVec.y ) * 0.85 + 0.12, reflectVec.z ), vLodG ) );`);
   }
   fs = fs.replace('#include <envmap_physical_pars_fragment>', env)
+    .replace('#include <color_fragment>', `#include <color_fragment>
+	diffuseColor.rgb *= 1.0 - 0.62 * vLampOff;`)
     .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
 	metalnessFactor = vLodA.y;
-	roughnessFactor = vLodA.z;`);
+	roughnessFactor = vLodA.z;
+	if ( vLampE.r > 0.01 ) { metalnessFactor = 0.0; roughnessFactor = 0.7; diffuseColor.rgb *= 0.25; }`)
+    .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+	totalEmissiveRadiance += vLampE;`);
   sh.fragmentShader = fs;
 }
 
@@ -11864,11 +11966,11 @@ export function nearLod(typeName) {
       pos.set(P, base * 3); nor.set(N, base * 3);
       for (let v = 0; v < n; v++) {
         const o = (base + v) * 3, gl = Gs ? Gs[v] : 0;
-        const glass = gl > 0.5 && gl < 3.5 && !(gl > 1.5 && gl < 2.5), plate = gl > 3.5;
+        const glass = gl > 0.5 && gl < 3.5 && !(gl > 1.5 && gl < 2.5), plate = gl > 3.5 && gl < 4.5;
         const c = glass ? [0.05, 0.06, 0.075] : plate ? PLATE : C && (part !== 'paint' || vc) ? [C[v * 3], C[v * 3 + 1], C[v * 3 + 2]] : WHITE;
         col[o] = c[0]; col[o + 1] = c[1]; col[o + 2] = c[2];
         lodA.set(FAR_PARTS[glass ? 'glass' : part], (base + v) * 4);
-        lodG[base + v] = glass ? 1 : 0;
+        lodG[base + v] = glass ? 1 : gl > 4.5 ? gl : 0;
       }
       const I = g.index.array;
       for (let i = 0; i < I.length; i += 3) {
@@ -11972,6 +12074,7 @@ export class Vehicle {
     // its own Ontario plate (see PLATE_STEP): which of the atlas's serials
     this.plateK = (PLATE_SEQ = (PLATE_SEQ + 37) % PLATE_N);
     this.trimMesh.scale.x = 1 + this.plateK / PLATE_STEP;
+    this.lampBits = 0;   // lit lamps (setLamps)
     this.matteMesh = new THREE.Mesh(t.matteGeoW, A.matteMat);
     paintMesh.castShadow = this.trimMesh.castShadow = this.matteMesh.castShadow = true;
     this.paintMesh = paintMesh;
@@ -14420,6 +14523,46 @@ export class Vehicle {
       t.localToWorld(V.set(sx * 0.27, 0.995, 0.43));
       solveArm(b[sh], b[el], b[hand], V, t, sx);
     }
+  }
+
+  /** The lamps lit (LAMP_* bits; tagLamps): the trim mesh's z scale, read
+   *  back by its shader. A frozen car's matrices are refreshed here. */
+  setLamps(bits) {
+    if (bits === this.lampBits) return;
+    this.lampBits = bits;
+    this.trimMesh.scale.z = 1 + bits / LAMP_STEP;
+    if (!this.group.matrixWorldAutoUpdate) this.trimMesh.updateMatrixWorld(true);
+  }
+
+  /**
+   * The lamps of the vehicle YOU drive (player.js, after update): stop lamps
+   * on the brake (or on the throttle while rolling back) and standing still,
+   * reversing lamps rolling back, and the turn signal WITH THE WHEEL at town
+   * speeds -- more than DRV_SIG_LOCK of lock for DRV_SIG_T s between 0.5 and
+   * DRV_SIG_V m/s blinks that way, and stops DRV_SIG_HOLD s after the wheel
+   * comes back (a self-cancelling stalk, roughly; no stalk of its own).
+   * `t` is a running clock (s) for the blink. A towed trailer shows the same.
+   */
+  driverLamps(dt, t, throttle, brake, steer) {
+    const L = this._dl || (this._dl = { b: 0, dir: 0, on: 0, hold: 0 });
+    const sp = this.vLong;
+    let bits = 0;
+    if ((brake > 0.1 && sp > 0.3) || (throttle > 0.1 && sp < -0.3) || (Math.abs(sp) <= 0.3 && !(throttle > 0.1) && !(brake > 0.1))) L.b = 0.3;
+    else if (L.b > 0) L.b -= dt;
+    if (L.b > 0) bits |= LAMP_BRAKE;
+    if (sp < -0.3) bits |= LAMP_REV;
+    // +steer is a LEFT turn (heading sense); -1 is left here, as in traffic.js
+    const d = Math.abs(steer) > DRV_SIG_LOCK && sp > 0.5 && sp < DRV_SIG_V ? (steer > 0 ? -1 : 1) : 0;
+    if (d && d === L.dir) L.on += dt;
+    else if (d) { L.dir = d; L.on = dt; L.hold = 0; }
+    if (d && L.on >= DRV_SIG_T) L.hold = DRV_SIG_HOLD;
+    else if (!d && L.hold > 0) L.hold -= dt;
+    if (L.hold > 0) {
+      const lit = t % 0.7 < 0.35;
+      bits |= L.dir < 0 ? LAMP_LON | (lit ? LAMP_L : 0) : LAMP_RON | (lit ? LAMP_R : 0);
+    }
+    this.setLamps(bits);
+    if (this.trailer) this.trailer.setLamps(bits);
   }
 
   sync() {
