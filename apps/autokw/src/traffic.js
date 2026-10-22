@@ -1772,6 +1772,17 @@ export class TrafficSystem {
     rt[o + R_QX] = na.x - uz * off; rt[o + R_QZ] = na.z + ux * off;
     rt[o + R_UX] = ux; rt[o + R_UZ] = uz;
     rt[o + R_LEN] = e.len; rt[o + R_SPD] = e.spd; rt[o + R_END] = 0;
+    // A FREEWAY RAMP AT ITS GORE (citygen spreadGores, `e.gore`): its lane line runs from `g[0]`
+    // right of its lanes at the start node to `g[1]` at the end, so the
+    // ramp's lanes lie beside the main line's instead of across them
+    const g = this.goreOf(ei, sign);
+    if (g) {
+      const nb = this.city.nodes[sign > 0 ? e.b : e.a];
+      const sx = na.x - uz * (off + g[0]), sz = na.z + ux * (off + g[0]);
+      const ex = nb.x - uz * (off + g[1]), ez = nb.z + ux * (off + g[1]);
+      const L = Math.hypot(ex - sx, ez - sz) || 1e-3;
+      rt[o + R_QX] = sx; rt[o + R_QZ] = sz; rt[o + R_UX] = (ex - sx) / L; rt[o + R_UZ] = (ez - sz) / L; rt[o + R_LEN] = L;
+    }
     rt[o + V_K] = 0; rt[o + V_A] = 0; rt[o + V_B] = 0; rt[o + V_T] = 0; rt[o + V_R] = Infinity; rt[o + V_TH] = 0;
   }
 
@@ -1803,6 +1814,64 @@ export class TrafficSystem {
     if (!(w > 0)) return 0.5;
     const i = clamp(Math.floor((off * sign - L[k]) / w), 0, n - 1);
     return (i + 0.5) / n;
+  }
+
+  // --- freeway gores (Auto KW) ------------------------------------------------
+  //
+  // OSM joins a freeway's ramp (a *_link) to the main line's CENTRE line: the
+  // 401 EB's two-lane exit at Hespeler Rd leaves the middle of six lanes at 7
+  // deg. Laid round that line, a car taking the exit came off the right lane
+  // and jumped 7 m LEFT onto the ramp's lane line at the node (the lines never
+  // cross within a vertex's reach), across the lane beside it -- the side-
+  // swipes hwytraffic logged there; a merging car (Hwy 85 at Bridgeport) ran
+  // across the right lane into the MIDDLE one, the lane nearest the link's
+  // end. citygen spreadGores moves each such ramp out beside the main line
+  // and gives the edge still touching the main line's node a lateral shift
+  // (`e.gore`, right of travel at its start and end): its lanes run from the
+  // main line's outer lanes at the node out to the moved ramp.
+
+  /** [shift at the start of travel, at its end] right of travel, or null. */
+  goreOf(ei, sign) {
+    const g = this.city.edges[ei].gore;
+    return g && sign === this.flow[ei] ? g : null;
+  }
+
+  /** v's gore shift where it is now on its entry (0 off a gore). */
+  goreAt(v) {
+    const rt = v.rt;
+    if (!rt || !v.rtN) return 0;
+    const g = this.goreOf(rt[R_EI], rt[R_SG]);
+    if (!g) return 0;
+    const t = clamp(((v.x - rt[R_QX]) * rt[R_UX] + (v.z - rt[R_QZ]) * rt[R_UZ]) / rt[R_LEN], 0, 1);
+    return g[0] + (g[1] - g[0]) * t;
+  }
+
+  /** The lane on edge nei (driven nsg) a car carries on in from lane u of
+   *  edge pei (driven psg) across node ni, at a freeway diverge where the
+   *  carriageway loses lanes: counted from the side AWAY from the ramp, so
+   *  the lanes that carry on stay side by side (the lane under the main
+   *  line's centre was the nearest of two lanes, and both went into it).
+   *  -1 elsewhere. */
+  goreThrough(pei, psg, u, nei, nsg, ni) {
+    const E = this.city.edges;
+    if (E[pei].cls !== 'hwy' || E[nei].cls !== 'hwy' || !this.fwy[pei]) return -1;
+    const [np, nn] = [this.laneIdx(pei, psg, u)[1], this.laneIdx(nei, nsg, 0.5)[1]];
+    if (nn >= np) return -1;
+    let side = 0;
+    const ux = E[pei].dx * psg, uz = E[pei].dz * psg;
+    for (const k of this.city.nodes[ni].e) {
+      if (k === pei || k === nei || E[k].cls !== 'ramp' || !this.fwy[k] || this.flow[k] === 0) continue;
+      const q = this.flow[k], f = q > 0 ? E[k].a : E[k].b;
+      if (f !== ni) continue;
+      const qx = E[k].dx * q, qz = E[k].dz * q;
+      if (ux * qx + uz * qz < 0.9) continue;
+      const fn = this.city.nodes[q > 0 ? E[k].b : E[k].a], nn0 = this.city.nodes[ni];
+      side = (fn.x - nn0.x) * -uz + (fn.z - nn0.z) * ux >= 0 ? 1 : -1;
+    }
+    if (!side) return -1;
+    const iL = this.laneIdx(pei, psg, u)[0];            // from the left of travel
+    const keep = side > 0 ? iL : nn - 1 - (np - 1 - iL);   // a right exit: by the left
+    return this.laneUOf(nei, nsg, clamp(keep, 0, nn - 1));
   }
 
   // --- lane choice in town (Auto KW) ------------------------------------------
@@ -2155,7 +2224,12 @@ export class TrafficSystem {
     let u = rt[o + R_U];
     if (u < 0) u = this.laneUOf(nx.ei, nx.sign, 0);
     const tw2 = this.flow[nx.ei] === 0 ? twoWayLayout(ne) : null;
-    if (cos > 0.94 && (this.flow[nx.ei] !== 0 || tw2)) u = this.nearestLaneU(nx.ei, nx.sign, rt[o + R_OFF]);
+    if (cos > 0.94 && (this.flow[nx.ei] !== 0 || tw2)) {
+      // (across a freeway gore: the lane lines where they meet, shifts and all)
+      const gp = this.fwy[ei] ? this.goreOf(ei, sign) : null, gn = this.fwy[nx.ei] ? this.goreOf(nx.ei, nx.sign) : null;
+      const gt = this.fwy[ei] && rt[o + R_U] >= 0 ? this.goreThrough(ei, sign, rt[o + R_U], nx.ei, nx.sign, node) : -1;
+      u = gt >= 0 ? gt : this.nearestLaneU(nx.ei, nx.sign, rt[o + R_OFF] + (gp ? gp[1] : 0) - (gn ? gn[0] : 0));
+    }
     else if (tw2) {
       // ONTO A MULTI-LANE TWO-WAY ARTERIAL, by the rule of the road: a right
       // turn into the kerb lane, a left turn into the lane nearest the centre
@@ -2873,8 +2947,15 @@ export class TrafficSystem {
       const fromR = sign > 0 ? LI.n - 1 - i : i;
       if (fromR > 1) { const r = this._prio & 1; i = sign > 0 ? LI.n - 1 - r : r; }
     }
-    const off = (LI.lo + (i + 0.5) * LI.w) * sign;
+    let off = (LI.lo + (i + 0.5) * LI.w) * sign;
     const fx = e.dx * sign, fz = e.dz * sign, rx = -fz, rz = fx;
+    // (on a ramp at a gore: its lane where the gore shift lays it)
+    const g = this.goreOf(ei, sign);
+    if (g) {
+      const na = this.city.nodes[sign > 0 ? e.a : e.b];
+      const tt = clamp(((x - na.x) * fx + (z - na.z) * fz) / e.len, 0, 1);
+      off += g[0] + (g[1] - g[0]) * tt;
+    }
     const qx = x + rx * off, qz = z + rz * off;
     const back = tn === 'semi' ? 62 : 45;
     for (const o of this.cars) {
@@ -3012,7 +3093,7 @@ export class TrafficSystem {
       if (qe && this.fwy[q.edge] && qe.oneway) {
         const qa = city.nodes[q.dirSign > 0 ? qe.a : qe.b];
         const qLat = (q.x - qa.x) * -rdz + (q.z - qa.z) * rdx;
-        tgt = lat + (q.rt[R_OFF] - qLat);
+        tgt = lat + (q.rt[R_OFF] + this.goreAt(q) - qLat);
       }
       out.push({ o, along, lat, tgt, v: o.vLong, len: o.halfLen });
     }

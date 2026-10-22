@@ -1695,6 +1695,17 @@ function gradeRoads(nodes, edges) {
     }
   }
 
+  // THE GORE EDGES (spreadGores): a straight grade from the main line's node
+  // to the moved ramp node, no camber. Draped to the ground under its own
+  // centre line it fell off the main line's 2 m fill within a few metres,
+  // while its lanes -- slid toward the main line -- were still beside it.
+  for (const e of edges) {
+    if (!e.gore || !e.prof || e.elev) continue;
+    const k = e.pk;
+    for (let i = 1; i < k; i++) e.ph[i] = e.ph[0] + ((e.ph[k] - e.ph[0]) * i) / k;
+    for (let i = 0; i <= k; i++) e.pg[i] = 0;
+  }
+
   // --- split levels ---
   // Carriageways run shoulder to shoulder and widths from lane counts make
   // them overlap by metres. Where two are the same level they are one surface
@@ -1830,6 +1841,24 @@ function gradeRoads(nodes, edges) {
       return false;
     };
     const yOf = (o, u, x, z) => (o.prof ? o.ph[Math.min(o.pk, Math.max(0, Math.round(u * o.pk)))] : T(x, z) + ROAD_LIFT);
+    // THE GORE EDGES (spreadGores' `gore`): the band drawn and driven slid
+    // sideways along the edge by the shift, from the main line's outer lanes
+    // at its node to the ramp's moved node -- the same line its lanes run
+    for (const e of edges) {
+      if (!e.gore || !e.prof) continue;
+      const k = e.pk, ef = e.onewayRev ? -1 : 1;
+      const ltw = Float32Array.from(e.tw);
+      let shx = 0;
+      for (let i = 0; i <= k; i++) {
+        const tt = ef > 0 ? i / k : 1 - i / k;                    // along travel
+        const sh = (e.gore[0] + (e.gore[1] - e.gore[0]) * tt) * ef;   // + toward the +p side
+        e.tw[i * 2] = ltw[i * 2] + sh;
+        e.tw[i * 2 + 1] = ltw[i * 2 + 1] - sh;
+        e.tlo[i * 2] = NaN; e.tlo[i * 2 + 1] = NaN;
+        shx = Math.max(shx, Math.abs(sh));
+      }
+      e.ltw = ltw; e.shx = shx;
+    }
     let paved = 0, stamp = 0;
     const seenO = new Int32Array(edges.length);
     for (const e of edges) {
@@ -1862,10 +1891,15 @@ function gradeRoads(nodes, edges) {
               let u = ((cx - oa.x) * o.dx + (cz - oa.z) * o.dz) / o.len;
               if (u < -0.02 || u > 1.02) continue;
               u = Math.min(1, Math.max(0, u));
-              const fx = oa.x + o.dx * o.len * u, fz = oa.z + o.dz * o.len * u;
-              const dd = Math.hypot(cx - fx, cz - fz);
+              let fx = oa.x + o.dx * o.len * u, fz = oa.z + o.dz * o.len * u;
               const shares = o.a === e.a || o.a === e.b || o.b === e.a || o.b === e.b;
-              if (shares && dd < 1.0) continue;
+              if (o.gore) {
+                // a gore edge's band is slid sideways: measure to where it is
+                const ofw = o.onewayRev ? -1 : 1, tt = ofw > 0 ? u : 1 - u;
+                const sh = (o.gore[0] + (o.gore[1] - o.gore[0]) * tt) * ofw;
+                fx += -o.dz * sh; fz += o.dx * sh;
+              } else if (shares && Math.hypot(cx - fx, cz - fz) < 1.0) continue;
+              const dd = Math.hypot(cx - fx, cz - fz);
               if (Math.abs(yOf(o, u, fx, fz) - e.ph[i]) > SH_LEVEL) continue;
               const s = (fx - cx) * px + (fz - cz) * pz >= 0 ? 0 : 1;
               const gap = dd - o.hw - ltw[i * 2 + s];
@@ -2236,6 +2270,130 @@ function stackBores(g) {
   return { up, lo, ramps, hwU, hwL };
 }
 
+// AUTO KW, FREEWAY GORES (CLAUDE.md "The freeways, round four"). OSM joins a
+// freeway's link to the main line's CENTRE line: the 401 EB's two-lane exit
+// at Hespeler Rd leaves the middle of six lanes at 7 deg, and its lanes, laid
+// round that centre line, lay across the main line's for ~100 m -- drawn,
+// driven, and the side-swipes hwytraffic logged at that gore (and a merge at
+// Hwy 85 / Bridgeport the same way). So each ramp's interior nodes near a
+// diverge or merge are moved out until its surface lies beside the main
+// line's paved shoulder (the main's half-width, its shoulder, SH_GAP, the
+// ramp's half-width), along the chain until the link is out there by itself
+// (GORE_RUN at most). The edge still touching the main line's node is the
+// GORE EDGE, `gore` = [shift at the start of travel, at its end], right of
+// travel: from the main line's outer lanes at the node (a diverge: the lanes
+// that leave; a merge: the lanes it joins) to the moved node. gradeRoads
+// slides its drawn and driven band by it (`tw`, keeping `ltw`), traffic.js
+// goreOf lays its lane line by it, and world.js paints no lines on it.
+const GORE_RUN = 260, SH_GAP = 0.6;
+function spreadGores(g) {
+  const { nodes, edges } = g;
+  const one = (e) => e.oneway;
+  const from = (e) => (e.onewayRev ? e.b : e.a), to = (e) => (e.onewayRev ? e.a : e.b);
+  const dir = (e) => (e.onewayRev ? [-e.dx, -e.dz] : [e.dx, e.dz]);
+  const isMain = (e) => e.cls === 'hwy' && one(e) && !e.tunnel;
+  const isRamp = (e) => e.cls === 'ramp' && one(e) && !e.tunnel;
+  // the main line from node ni, `fwd` along travel (else back up it), as a
+  // polyline of [x, z, hw] up to `len` m
+  const mainLine = (ni, k0, fwd, len) => {
+    const pts = [[nodes[ni].x, nodes[ni].z, edges[k0].hw]];
+    let k = k0, cur = ni, d = 0;
+    for (let hop = 0; hop < 30 && k >= 0 && d < len; hop++) {
+      const e = edges[k], nx = fwd ? to(e) : from(e);
+      d += e.len; cur = nx;
+      pts.push([nodes[nx].x, nodes[nx].z, e.hw]);
+      const [ux, uz] = dir(e);
+      let best = -1, bd = 0.85;
+      for (const q of nodes[cur].e) {
+        if (q === k || !isMain(edges[q]) || (fwd ? from(edges[q]) : to(edges[q])) !== cur) continue;
+        const [qx, qz] = dir(edges[q]), dd = ux * qx + uz * qz;
+        if (dd > bd) { bd = dd; best = q; }
+      }
+      k = best;
+    }
+    return pts;
+  };
+  // signed lateral of (x, z) off the polyline (right of its travel `fwd`), and that piece's hw
+  const latOf = (pts, fwd, x, z) => {
+    let best = null;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
+      const sx = bx - ax, sz = bz - az, l2 = sx * sx + sz * sz || 1;
+      const t = clamp(((x - ax) * sx + (z - az) * sz) / l2, 0, 1);
+      const qx = ax + sx * t, qz = az + sz * t, d = Math.hypot(x - qx, z - qz);
+      if (best && d >= best.d) continue;
+      const L = Math.sqrt(l2), rx = -sz / L, rz = sx / L;   // right of a -> b of the polyline
+      const sgn = fwd ? 1 : -1;                           // the polyline runs against travel when !fwd
+      best = { d, lat: ((x - qx) * rx + (z - qz) * rz) * sgn, rx: rx * sgn, rz: rz * sgn, hw: pts[i + 1][2] };
+    }
+    return best;
+  };
+  let moved = 0, worst = 0;
+  const touched = new Set();
+  for (let ni = 0; ni < nodes.length; ni++) {
+    const n = nodes[ni];
+    if (n.e.length < 3) continue;
+    let U = -1, D = -1;
+    for (const k of n.e) {
+      const e = edges[k];
+      if (!isMain(e)) continue;
+      if (to(e) === ni) U = k; else if (from(e) === ni) D = k;
+    }
+    if (U < 0 || D < 0) continue;
+    const [ux, uz] = dir(edges[U]);
+    for (const r0 of n.e) {
+      const R = edges[r0];
+      if (!isRamp(R)) continue;
+      const [qx, qz] = dir(R);
+      if (ux * qx + uz * qz < 0.9) continue;
+      const out = from(R) === ni;
+      // the main line beside the ramp: on downstream of a diverge, up from a merge
+      const M = out ? mainLine(ni, D, true, GORE_RUN + 60) : mainLine(ni, U, false, GORE_RUN + 60);
+      const far = out ? to(R) : from(R);
+      const l0 = latOf(M, out, nodes[far].x, nodes[far].z);
+      if (!l0) continue;
+      const sd = l0.lat >= 0 ? 1 : -1;
+      // walk the ramp's chain away from the node, moving each plain node out
+      let k = r0, run = 0;
+      for (let hop = 0; hop < 12; hop++) {
+        const e = edges[k], nx = out ? to(e) : from(e);
+        run += e.len;
+        const N2 = nodes[nx];
+        if (run > GORE_RUN || N2.e.length !== 2 || N2.elev || N2.e.some((q) => edges[q].tunnel || edges[q].elev)) break;
+        const L = latOf(M, out, N2.x, N2.z);
+        if (!L || L.d > 40) break;
+        // the ramp's surface beside the main line's paved shoulder
+        const mw = shoulderWant(edges[out ? D : U]);
+        const hold = L.hw + (mw ? (sd > 0 ? mw[0] : mw[1]) - SH_LANE : 0) + SH_GAP + e.hw;
+        const need = hold - sd * L.lat;
+        if (need <= 0.05) break;
+        N2.x += L.rx * sd * need; N2.z += L.rz * sd * need;
+        moved++; worst = Math.max(worst, need);
+        if (hop === 0) {
+          // THE GORE EDGE: its drawn band and its lanes run from the main
+          // line's outer lanes at the node (a diverge: the lanes that leave;
+          // a merge: the lanes it joins) to the moved node -- the shift right
+          // of travel at its start and its end (gradeRoads widens `tw` by it,
+          // keeping `ltw`; traffic.js goreOf lays the lane line by it)
+          const Mn = edges[out ? U : D];
+          const atNode = sd * ((Mn.hw - SH_LANE) - (R.hw - SH_LANE));
+          R.gore = out ? [atNode, 0] : [0, atNode];
+        }
+        for (const q of N2.e) touched.add(q);
+        k = N2.e[0] === k ? N2.e[1] : N2.e[0];
+        if (!isRamp(edges[k])) break;
+      }
+    }
+  }
+  for (const k of touched) {
+    const e = edges[k], a = nodes[e.a], b = nodes[e.b];
+    const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz) || 1;
+    e.len = len; e.dx = dx / len; e.dz = dz / len;
+  }
+  cityStats.goreNodesMoved = moved;
+  cityStats.goreWorstMove = +worst.toFixed(1);
+}
+
 export function* cityGenerator(md, cache = {}) {
   LOCK_NODES = md.ferryFix && md.ferryFix.lock ? md.ferryFix.lock : null;
   yield { p: 0.02, msg: 'Unpacking the street graph' };
@@ -2310,6 +2468,7 @@ export function* cityGenerator(md, cache = {}) {
   const g = { nodes, edges };
   // One bore, two decks: SR-99's twin OSM ways onto a shared alignment.
   const stack = stackBores(g);
+  spreadGores(g);
   yield { p: 0.3, msg: 'Opening the streets' };
 
   // --- 2. Buildings -------------------------------------------------------

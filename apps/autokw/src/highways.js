@@ -1065,7 +1065,7 @@ export function buildHighways(ctx) {
   // shoulder with the tall wall beyond it. Each 2-post piece is a landmark
   // solid (`mono`: lane-following traffic never reaches it).
   const fr = freewayRamps(city);
-  const railEdge = (ei) => { const e = city.edges[ei]; return (isMain(e) || (e.cls === 'ramp' && fr[ei])) && e.prof && !e.elev && !e.tunnel; };
+  const railEdge = (ei) => { const e = city.edges[ei]; return (isMain(e) || (e.cls === 'ramp' && fr[ei] && !e.gore)) && e.prof && !e.elev && !e.tunnel; };
   // how far each node is (along freeway carriageways and ramps) from a deck's end
   const BRIDGE_RUN = 60, RAIL_DROP = 2.6;
   const bd = new Map(), bq = [];

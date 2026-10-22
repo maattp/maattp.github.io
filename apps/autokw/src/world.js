@@ -5880,6 +5880,10 @@ float frLine(float o, float fw, float c, float w) {
     const from = trim(e.a);
     const till = e.len - trim(e.b);
     if (till <= from) return;
+    // (a ramp's first edge off a freeway's centre line at its gore crosses the
+    // main line's lanes to where citygen spreadGores moved the ramp: unpainted,
+    // under the main line's paved shoulder)
+    if (e.gore) return;
 
     // Edge lines, set in from the kerb by about a shoulder's width -- the
     // TRIMMED kerb on a graded road stood off a lower neighbour, or the line
