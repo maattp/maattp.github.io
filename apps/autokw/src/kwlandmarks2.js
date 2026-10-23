@@ -38,6 +38,10 @@
 //     County Gaol and the Governor's House; the Canadian Clay and Glass
 //     Gallery; the Waterloo Memorial Recreation Complex; Galt Arena Gardens.
 //     `window.__noLm4 = true` before boot turns round four alone off.
+//   - ROUND FIVE (below): Zion on Weber St, St. John the Evangelist, St.
+//     Paul's Lutheran, Trinity Anglican in Galt, Woodside, the Breithaupt
+//     Centre, the Grand River Recreation Complex, Idea Exchange Queen's
+//     Square, Waterloo Collegiate's front, Catalyst137. `window.__noLm5`.
 //
 // Sources (Oct 2026): the Esri World Imagery aerial (tools/kw/aerial.py) for
 // every plan and every tower's place -- the towers are oriented boxes read off
@@ -72,6 +76,7 @@ import {
 
 const STATS = { skipped: 0, built: [], err: [] };
 const ROUND4 = ['mktsq', 'skywalk', 'crowne', 'stmaryrc', 'stpeter', 'gaol', 'govhouse', 'claygl', 'wmrc', 'galtarena'];
+const ROUND5 = ['qslib', 'wci', 'zion', 'stjohn', 'stpaul', 'trinity', 'woodside', 'breit', 'grrc', 'catalyst'];
 const C = (h) => lin(hex(h));
 const ccw = (p) => (polyArea(p) < 0 ? p.slice().reverse() : p);
 let D = null;      // lm2.json
@@ -79,7 +84,7 @@ let D = null;      // lm2.json
 // ---------------------------------------------------------------------------------------
 // before meshing: every box under a footprint drawn here goes flat (kwsights.js flatten)
 // ---------------------------------------------------------------------------------------
-function flatten(city, pts) {
+function flatten(city, pts, ext = false) {
   const [cx, cz] = centroid(pts);
   let r = 0;
   for (const q of pts) r = Math.max(r, Math.hypot(q[0] - cx, q[1] - cz));
@@ -92,6 +97,8 @@ function flatten(city, pts) {
     o.h = 0;
     if (!o.kw) o.kw = {};
     o.kw.skip = true;
+    // (`ext`: still part of its cell's drawn extent for kwshops.js prepShops -- it is drawn here, in that cell's cluster)
+    if (ext && o.kw.poly) o.kw.ext = true;
     delete o.kw.poly;
   }
   return hit.size;
@@ -104,7 +111,9 @@ export function prepLandmarks2(city, data) {
   if (!D || !sightsData()) return STATS;
   // window.__noLm4: round four off (its footprints stay the importer's boxes), for a before/after
   if (typeof window !== 'undefined' && window.__noLm4) { D = { b: { ...D.b } }; for (const k of ROUND4) delete D.b[k]; }
-  for (const k of Object.keys(D.b)) STATS.skipped += flatten(city, D.b[k].p);
+  // window.__noLm5: round five off, the same way
+  if (typeof window !== 'undefined' && window.__noLm5) { D = { b: { ...D.b } }; for (const k of ROUND5) delete D.b[k]; }
+  for (const k of Object.keys(D.b)) STATS.skipped += flatten(city, D.b[k].p, ROUND5.includes(k));
   // the King St skywalk is one of kwsights' `king` blocks (building=bridge):
   // meshKing would draw it on the road; it is drawn up in the air here instead
   const S = sightsData();
@@ -1725,6 +1734,668 @@ function galtArena(kit, ctx) {
   }
 }
 
+// =======================================================================================
+// ROUND FIVE
+// =======================================================================================
+
+/**
+ * A plan frame read off the aerial: s along U from A, d along N (both unit).
+ * `box(s0, s1, d0, d1, alongD)` is an oriented box in it whose long (u) axis is
+ * U, or N when `alongD` (so gable() / barrel() run their ridge along N).
+ */
+function fr(A, U, N) {
+  const P = (s, d) => [A[0] + U[0] * s + N[0] * d, A[1] + U[1] * s + N[1] * d];
+  const box = (s0, s1, d0, d1, alongD = false) => {
+    const c = P((s0 + s1) / 2, (d0 + d1) / 2), hs = Math.abs(s1 - s0) / 2, hd = Math.abs(d1 - d0) / 2;
+    return alongD ? { x: c[0], z: c[1], hu: hd, hv: hs, ux: N[0], uz: N[1] } : { x: c[0], z: c[1], hu: hs, hv: hd, ux: U[0], uz: U[1] };
+  };
+  return { P, box };
+}
+/** The face of an oriented box whose outward normal is nearest (nx, nz). */
+const faceOf = (o, nx, nz) => facing(obEdges(o), nx, nz, 0.5);
+/** A pinnacle: a square shaft and a pointed cap. */
+function pinnacle(B, x, y, z, r, h, cap, col, capCol = col) {
+  B.prism(x, y, z, r, h, 4, col, Math.PI / 4);
+  B.cone(x, y + h, z, r * 1.25, cap, 4, capCol);
+}
+/** A gable end's triangle on the face `e` of a box: eaves at y, apex `rise` over, with a coping strip. */
+function gableEnd(B, e, y, rise, col, cope) {
+  const N = [e.nx, 0, e.nz];
+  B.tri(e.at(0, y, 0.02), e.at(e.L, y, 0.02), e.at(e.L / 2, y + rise, 0.02), N, col);
+  if (cope) {
+    B.quad(e.at(-0.25, y - 0.1, 0.1), e.at(e.L / 2, y + rise, 0.1), e.at(e.L / 2, y + rise + 0.35, 0.1), e.at(-0.25, y + 0.25, 0.1), N, U0, cope);
+    B.quad(e.at(e.L / 2, y + rise, 0.1), e.at(e.L + 0.25, y - 0.1, 0.1), e.at(e.L + 0.25, y + 0.25, 0.1), e.at(e.L / 2, y + rise + 0.35, 0.1), N, U0, cope);
+  }
+}
+/**
+ * gable() with both gable ends wound to face out (gable()'s own end triangles
+ * share one winding, so the +u end is a back face and culls).
+ */
+function gable2(B, o, y, rise, col, ov, end) {
+  gable(B, o, y, rise, col, ov, null);
+  for (const s of [-1, 1]) {
+    const e = faceOf(o, o.ux * s, o.uz * s);
+    if (e) gableEnd(B, e, y - 0.05, rise * o.hv / (o.hv + ov), end);
+  }
+}
+/** tower() on a given base (a block whose top is `h` over `base`, not over its lowest corner). */
+function towerB(kit, ctx, o, h, look, base) { return block(kit, ctx, obPts(o), { base, h, ...look }); }
+/** An edge (as edges() gives) from a to c, its outward normal the side (nx, nz) points to. */
+function edgeOf(a, c, nx, nz) {
+  const dx = c[0] - a[0], dz = c[1] - a[1], L = Math.hypot(dx, dz), ux = dx / L, uz = dz / L;
+  let px = uz, pz = -ux;
+  if (px * nx + pz * nz < 0) { px = -px; pz = -pz; }
+  return { a, c, ux, uz, nx: px, nz: pz, L, mx: a[0] + dx / 2, mz: a[1] + dz / 2,
+    at: (t, y, off = 0) => [a[0] + ux * t + px * off, y, a[1] + uz * t + pz * off] };
+}
+/** A round-headed window on an edge: glass, a semicircular head, a trim ring. */
+function roundWin(B, e, t, y0, w, h, glass, trim) {
+  const N = [e.nx, 0, e.nz], r = w / 2, n = 6;
+  B4(B, e, t - w / 2 - 0.15, t + w / 2 + 0.15, y0 - 0.2, y0 - 0.05, 0.08, N, trim);
+  B4(B, e, t - w / 2, t + w / 2, y0, y0 + h, 0.05, N, glass);
+  for (let k = 0; k < n; k++) {
+    const a0 = Math.PI * k / n, a1 = Math.PI * (k + 1) / n;
+    B.tri(e.at(t, y0 + h, 0.05), e.at(t + Math.cos(a0) * r, y0 + h + Math.sin(a0) * r, 0.05), e.at(t + Math.cos(a1) * r, y0 + h + Math.sin(a1) * r, 0.05), N, glass);
+    B.quad(e.at(t + Math.cos(a0) * r, y0 + h + Math.sin(a0) * r, 0.07), e.at(t + Math.cos(a1) * r, y0 + h + Math.sin(a1) * r, 0.07),
+      e.at(t + Math.cos(a1) * (r + 0.22), y0 + h + Math.sin(a1) * (r + 0.22), 0.07), e.at(t + Math.cos(a0) * (r + 0.22), y0 + h + Math.sin(a0) * (r + 0.22), 0.07), N, U0, trim);
+  }
+}
+/** The ground in front of an edge's middle. */
+const gyOf = (e, out = 2) => T(e.mx + e.nx * out, e.mz + e.nz * out);
+
+// ---------------------------------------------------------------------------------------
+// ZION, 32 Weber St W, Kitchener (1893; Zion Evangelical, Zion United 1968-2015)
+// ---------------------------------------------------------------------------------------
+// The Commons photograph from Weber St ("32 Weber Street West - Kitchener, ON
+// (2025)") and the oblique aerial: buff brick on a red sandstone base; on the
+// Weber St front, from the west, a short square tower under a slate pyramid,
+// the porch gable with its great pointed window over the doors, the nave's gable
+// behind it with three lancets, and the tall tower at the front's east end --
+// the belfry's three tall pointed openings a side, a corbelled parapet, four
+// corner turrets under green copper caps. Behind the nave the round
+// Sunday-school hall (OSM's curved outline) and the flat-roofed east wing.
+// The plan frame: A the front's west corner, U along the front (east), N inward
+// (north). Heights estimated off the photograph.
+const ZN = fr([-1137.3, -93.2], [0.869, 0.494], [0.494, -0.869]);
+function zion(kit, ctx) {
+  const BU = C('#d5c69c'), BU2 = C('#c4b183'), RS = C('#94483a'), SL = C('#3a3d43'), CU = C('#6aa58d'), GL = C('#283041'), ST = C('#e4dbbf'), DK = C('#1d2026');
+  const pts = ccw(D.b.zion.p);
+  const r = block(kit, ctx, pts, {
+    h: 9.0, wall: BU, trim: ST, parapet: 0.7, roof: C('#45433f'), plinth: [1.1, RS], glass: GL,
+    win: { style: 'punch', sp: 3.6, w: 1.1, h: 2.3, fl: 4.0, g0: 1.6, sill: ST, arch: BU2 },
+  });
+  const B = r.B;
+  // the nave: a steep slate gable from the front back to the round hall
+  const nave = ZN.box(4.6, 16.2, 1.2, 30, true);
+  const nv = tower(kit, ctx, nave, 11.5, { wall: BU, trim: ST, parapet: 0, roof: SL, plinth: [1.1, RS] }, 0);
+  gable2(B, nave, nv.yTop, 7.2, SL, 0.4, BU);
+  const nf = faceOf(nave, -0.494, 0.869);
+  if (nf) for (const f of [0.32, 0.5, 0.68]) lancet(B, nf, nf.L * f, nv.yTop - 1.6, 0.85, f === 0.5 ? 4.2 : 3.4, GL, ST);
+  for (const e of nv.E) {
+    if (e.L < 20) continue;
+    for (let t = 4; t < e.L - 2; t += 4.2) lancet(B, e, t, gyOf(e) + 4.2, 1.0, 3.6, GL, ST);
+  }
+  // the porch: its gable to the street, the great pointed window over the doors
+  const porch = ZN.box(5.6, 14.6, -1.4, 3.6, true);
+  const po = tower(kit, ctx, porch, 6.8, { wall: BU, trim: ST, parapet: 0, roof: SL, plinth: [1.1, RS] }, 0);
+  gable2(B, porch, po.yTop, 4.6, SL, 0.3, BU);
+  const pf = faceOf(porch, -0.494, 0.869);
+  if (pf) {
+    const gy = gyOf(pf);
+    lancet(B, pf, pf.L / 2, gy + 0.2, 4.6, 5.0, C('#3d3a36'), ST);
+    for (const k of [-1.2, 0, 1.2]) B4(B, pf, pf.L / 2 + k - 0.05, pf.L / 2 + k + 0.05, gy + 2.6, gy + 7.6, 0.08, [pf.nx, 0, pf.nz], ST);
+    B4(B, pf, pf.L / 2 - 2.0, pf.L / 2 + 2.0, gy + 0.2, gy + 2.6, 0.07, [pf.nx, 0, pf.nz], C('#2a2a2c'));
+    for (const s of [0.25, pf.L - 0.25]) B4(B, pf, s - 0.45, s + 0.45, gy - 0.4, po.yTop + 0.8, 0.3, [pf.nx, 0, pf.nz], BU2);
+  }
+  // the short tower at the west corner, under a slate pyramid
+  const t1 = ZN.box(-0.4, 4.9, -0.2, 5.1);
+  const tw1 = tower(kit, ctx, t1, 13.2, { wall: BU, trim: ST, parapet: 0, roof: SL, plinth: [1.1, RS], cornice: 0.6 }, 0);
+  pyramid(B, t1.x, tw1.yTop, t1.z, t1.hu + 0.35, 4.6, Math.atan2(t1.uz, t1.ux), SL);
+  B.prism(t1.x, tw1.yTop + 4.4, t1.z, 0.08, 1.4, 4, DK);
+  for (const e of tw1.E) roundWin(B, e, e.L / 2, tw1.yTop - 3.6, 0.9, 1.6, GL, ST);
+  // the tall tower at the front's east end
+  const t2 = ZN.box(15.6, 22.0, 0.2, 6.6);
+  const H = 29.5, tw2 = tower(kit, ctx, t2, H, { wall: BU, trim: ST, parapet: 0, roof: C('#5b5852'), plinth: [1.1, RS] }, 0);
+  for (const e of tw2.E) {
+    const N = [e.nx, 0, e.nz], gy = gyOf(e, 1);
+    for (const tt of [0.3, e.L - 0.3]) B4(B, e, tt - 0.45, tt + 0.45, gy - 0.4, tw2.yTop + 1.2, 0.25, N, BU2);   // corner buttresses
+    for (const f of [0.28, 0.5, 0.72]) lancet(B, e, e.L * f, tw2.yTop - 8.4, 0.95, 4.4, DK, ST);                // the belfry
+    for (const f of [0.4, 0.6]) lancet(B, e, e.L * f, tw2.yTop - 14.8, 0.55, 2.4, GL, ST);
+    for (const f of [0.4, 0.6]) B4(B, e, e.L * f - 0.4, e.L * f + 0.4, gy + 9.5, gy + 11.4, 0.05, N, GL);
+    B4(B, e, -0.1, e.L + 0.1, tw2.yTop - 2.6, tw2.yTop - 2.2, 0.32, N, ST);
+    for (let t = 0.6; t < e.L - 0.4; t += 0.55) B4(B, e, t - 0.12, t + 0.12, tw2.yTop - 2.2, tw2.yTop - 1.6, 0.3, N, BU2);   // corbels
+    B4(B, e, -0.1, e.L + 0.1, tw2.yTop - 1.6, tw2.yTop + 0.9, 0.3, N, BU);
+    B4(B, e, -0.15, e.L + 0.15, tw2.yTop + 0.9, tw2.yTop + 1.15, 0.36, N, ST);
+  }
+  {
+    const c = Math.cos(Math.atan2(t2.uz, t2.ux)), s = Math.sin(Math.atan2(t2.uz, t2.ux));
+    for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      const x = t2.x + (a * c - b * s) * (t2.hu - 0.25), z = t2.z + (a * s + b * c) * (t2.hv - 0.25);
+      pinnacle(B, x, tw2.yTop + 0.9, z, 0.62, 2.6, 2.4, BU, CU);
+    }
+    pinnacle(B, t2.x, tw2.yTop + 0.9, t2.z, 0.4, 1.0, 1.4, BU, CU);
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// ST. JOHN THE EVANGELIST (Anglican), 23 Water St N, Kitchener
+// ---------------------------------------------------------------------------------------
+// The Commons photographs ("Church of St John the Evangelist, Kitchener, ON
+// (2023)", "St. John the Evangelist Anglican Church 2026") and the aerial: red
+// brick Gothic, a grey slate roof; the nave runs north-south along Water St,
+// crossed by the transept, the tower at its north-west corner under a slate
+// broach spire with gabled louvres; lancets in threes in the gables, stone
+// trim; the parish hall behind it to the east is a flat-roofed brick block
+// with a green-grey coping. The plan frame: A the nave's north-west corner,
+// U south along the west wall, N east. Heights estimated.
+const SJ = fr([-1516.7, -57.3], [-0.358, 0.934], [0.934, 0.358]);
+function stJohn(kit, ctx) {
+  const BR = C('#904a36'), BR2 = C('#7a3c2b'), SL = C('#64737a'), ST = C('#d6d0c3'), GL = C('#2b3346'), CP = C('#86a79d');
+  const pts = ccw(D.b.stjohn.p);
+  block(kit, ctx, pts, {
+    h: 8.0, wall: BR, trim: CP, parapet: 0.8, roof: C('#9c9e9a'), plinth: [0.8, C('#8b8579')], glass: C('#2a3036'),
+    win: { style: 'punch', sp: 3.4, w: 1.2, h: 1.8, fl: 3.7, g0: 1.2, sill: ST },
+  });
+  const nave = SJ.box(-0.25, 32.5, -0.25, 13.0);
+  const nv = tower(kit, ctx, nave, 9.6, { wall: BR, trim: ST, parapet: 0, roof: SL, plinth: [0.8, ST] }, 0);
+  const B = nv.B;
+  gable2(B, nave, nv.yTop, 7.6, SL, 0.45, BR);
+  for (const e of nv.E) {
+    const N = [e.nx, 0, e.nz], gy = gyOf(e);
+    if (e.L > 20) {
+      for (let t = 3.2; t < e.L - 2; t += 4.0) {
+        lancet(B, e, t, gy + 2.6, 1.0, 4.0, GL, ST);
+        B4(B, e, t + 1.8, t + 2.4, gy - 0.4, nv.yTop - 1.6, 0.4, N, BR2);   // buttresses
+      }
+    } else for (const f of [0.36, 0.5, 0.64]) lancet(B, e, e.L * f, gy + 4.2, 1.0, f === 0.5 ? 5.4 : 4.4, GL, ST);
+  }
+  // the transept across the nave, out to the east
+  const tr = SJ.box(10.5, 19.0, 6.5, 21.5, true);
+  const tt = tower(kit, ctx, tr, 9.0, { wall: BR, trim: ST, parapet: 0, roof: SL, plinth: [0.8, ST] }, 0);
+  gable2(B, tr, tt.yTop, 6.6, SL, 0.4, BR);
+  const te = faceOf(tr, 0.934, 0.358);
+  if (te) for (const f of [0.35, 0.5, 0.65]) lancet(B, te, te.L * f, tt.yTop - 3.2, 0.9, f === 0.5 ? 4.6 : 3.8, GL, ST);
+  // the tower at the north-west corner and its broach spire
+  const to = SJ.box(-1.6, 4.6, -1.6, 4.6);
+  const H = 19.5, tw = tower(kit, ctx, to, H, { wall: BR, trim: ST, parapet: 0, roof: SL, plinth: [0.8, ST] }, 0);
+  for (const e of tw.E) {
+    const N = [e.nx, 0, e.nz], gy = gyOf(e, 1);
+    for (const s of [0.3, e.L - 0.3]) B4(B, e, s - 0.4, s + 0.4, gy - 0.4, H + gy - 3, 0.3, N, BR2);
+    for (const y of [gy + 6.2, gy + 12.6]) B4(B, e, -0.1, e.L + 0.1, y, y + 0.3, 0.32, N, ST);
+    for (const f of [0.36, 0.64]) lancet(B, e, e.L * f, tw.yTop - 5.6, 0.75, 3.2, C('#1f2125'), ST);
+    lancet(B, e, e.L / 2, gy + 7.4, 0.8, 2.6, GL, ST);
+  }
+  // the broach: an octagonal slate spire on the square, small gabled louvres
+  {
+    const rot = Math.atan2(to.uz, to.ux), y0 = tw.yTop;
+    B.cone(to.x, y0, to.z, to.hu * 1.12, 14.5, 8, SL);
+    pyramid(B, to.x, y0, to.z, to.hu + 0.25, 3.0, rot, SL);
+    for (const e of tw.E) {
+      const p = e.at(e.L / 2, y0 + 1.6, -0.6);
+      B.box(p[0], y0 + 0.6, p[2], 1.3, 1.6, 0.9, rot, C('#5a3428'));
+      pyramid(B, p[0], y0 + 2.2, p[2], 0.75, 1.0, rot, SL);
+    }
+    B.prism(to.x, y0 + 14.3, to.z, 0.07, 1.8, 4, C('#2b2b2b'));
+    B.box(to.x, y0 + 15.5, to.z, 0.9, 0.12, 0.12, rot, C('#2b2b2b'));
+  }
+  // the west door: a pointed stone arch in the tower
+  const wd = faceOf(to, -0.934, -0.358);
+  if (wd) lancet(B, wd, wd.L / 2, gyOf(wd) + 0.05, 1.8, 2.6, C('#4a2f22'), ST);
+}
+
+// ---------------------------------------------------------------------------------------
+// ST. PAUL'S EVANGELICAL LUTHERAN, 137 Queen St S, Kitchener (Jonas Knechtel, 1889)
+// ---------------------------------------------------------------------------------------
+// The City's 1983 notice of intention to designate (the spire, the pointed
+// arches of every bay, the long narrow lancets, the ornate brickwork over the
+// windows and under the eaves) and Community Edition's 2015 photographs:
+// dark brown-grey brick, the steep slate roof, the gable to Queen St with
+// pinnacles at its corners; the tower at the street corner, its paired
+// round-headed belfry windows, small pinnacles round the base of the tall
+// black slate spire with its gabled lucarnes; the lower hall beside it. The
+// nave is the outline's main rectangle; the tower is its jog by Queen St.
+const SPL = fr([-1249.0, 404.2], [0.785, 0.619], [-0.619, 0.785]);
+const SPL_TOWER = [-1260.3, 425.6];
+function stPaul(kit, ctx) {
+  const BR = C('#5b4a3f'), BR2 = C('#4c3d34'), SL = C('#34373c'), SP = C('#202226'), ST = C('#d9d3c4'), GL = C('#2a3140');
+  const pts = ccw(D.b.stpaul.p);
+  block(kit, ctx, pts, {
+    h: 6.5, wall: BR, trim: ST, parapet: 0, roof: SL, plinth: [0.9, C('#8d877b')], glass: GL,
+    win: { style: 'punch', sp: 3.2, w: 0.9, h: 1.7, fl: 3.4, g0: 1.3, sill: ST },
+  });
+  const nave = SPL.box(-0.25, 44.3, -0.25, 21.2);
+  const nv = tower(kit, ctx, nave, 9.2, { wall: BR, trim: ST, parapet: 0, roof: SL, plinth: [0.9, C('#8d877b')] }, 0);
+  const B = nv.B;
+  gable2(B, nave, nv.yTop, 8.4, SL, 0.5, BR);
+  for (const e of nv.E) {
+    const N = [e.nx, 0, e.nz], gy = gyOf(e);
+    // the brick corbel table under the eaves
+    for (let t = 0.4; t < e.L - 0.3; t += 0.7) B4(B, e, t - 0.15, t + 0.15, nv.yTop - 0.75, nv.yTop - 0.35, 0.15, N, BR2);
+    if (e.L > 30) {
+      for (let t = 4.5; t < e.L - 3; t += 5.4) {
+        lancet(B, e, t, gy + 2.2, 1.25, 4.6, GL, ST);
+        B4(B, e, t + 2.5, t + 3.0, gy - 0.4, nv.yTop - 0.8, 0.35, N, BR2);
+      }
+    } else {
+      // the gable ends: four tall lancets in a row, a round window over them
+      for (const f of [0.2, 0.4, 0.6, 0.8]) lancet(B, e, e.L * f, gy + 2.2, 1.15, 4.6, GL, ST);
+      rose(B, e, e.L / 2, nv.yTop + 2.6, 1.1, GL, ST, 0.1);
+      for (const s of [0.3, e.L - 0.3]) pinnacle(B, ...e.at(s, nv.yTop - 0.4, 0.2), 0.42, 2.2, 1.6, BR, SL);
+    }
+  }
+  // the tower and spire
+  const rot = Math.atan2(0.619, 0.785), to = { x: SPL_TOWER[0], z: SPL_TOWER[1], hu: 3.0, hv: 3.0, ux: 0.785, uz: 0.619 };
+  const H = 18.5, tw = tower(kit, ctx, to, H, { wall: BR, trim: ST, parapet: 0, roof: SL, plinth: [0.9, C('#8d877b')] }, 0);
+  for (const e of tw.E) {
+    const N = [e.nx, 0, e.nz], gy = gyOf(e, 1);
+    for (const s of [0.25, e.L - 0.25]) B4(B, e, s - 0.4, s + 0.4, gy - 0.4, tw.yTop - 0.4, 0.28, N, BR2);
+    for (const k of [-0.55, 0.55]) roundWin(B, e, e.L / 2 + k, tw.yTop - 4.4, 0.75, 2.2, C('#1c1e22'), ST);
+    roundWin(B, e, e.L / 2, gy + 8.6, 0.9, 2.2, GL, ST);
+    B4(B, e, -0.1, e.L + 0.1, tw.yTop - 0.4, tw.yTop + 0.1, 0.35, N, ST);
+  }
+  const df = facing(tw.E, -0.785, -0.619, 1);
+  if (df) roundWin(B, df, df.L / 2, gyOf(df) + 0.1, 1.5, 2.3, C('#7a4a26'), ST);
+  B.cone(to.x, tw.yTop, to.z, 2.75, 20.5, 8, SP);
+  for (const e of tw.E) {
+    const p = e.at(e.L / 2, 0, -0.9);
+    B.box(p[0], tw.yTop, p[2], 1.2, 2.1, 1.0, rot, SP);
+    pyramid(B, p[0], tw.yTop + 2.1, p[2], 0.7, 1.4, rot, SP);
+  }
+  for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+    const c = Math.cos(rot), s = Math.sin(rot);
+    pinnacle(B, to.x + (a * c - b * s) * 2.9, tw.yTop, to.z + (a * s + b * c) * 2.9, 0.3, 1.3, 1.5, BR, SL);
+  }
+  B.prism(to.x, tw.yTop + 20.3, to.z, 0.07, 2.2, 4, C('#3a3a3a'));
+  B.box(to.x, tw.yTop + 21.7, to.z, 1.0, 0.12, 0.12, rot, C('#3a3a3a'));
+}
+
+// ---------------------------------------------------------------------------------------
+// TRINITY ANGLICAN, 12 Blair Rd, Galt (OSM: "Trinity United Church", denomination anglican)
+// ---------------------------------------------------------------------------------------
+// The Commons photographs ("Trinity Anglican Church - Cambridge, ON", 2018;
+// "Trinity Anglican Cambridge Ontario", 2014) and the aerial: grey Galt
+// limestone, rubble with dressed quoins; the gable front to the south with the
+// great traceried window, two lancets and the porch's own gable round its red
+// door; the square tower at the front's west corner with paired louvred
+// lancets and a crenellated top; the parish hall alongside to the east, its
+// own gable to the south; the low wing behind; dark shingle roofs with green
+// flashing. Frame: A the nave's north-west corner, U east, N south.
+const TR = fr([12785.0, 10088.0], [0.9986, -0.0523], [0.0523, 0.9986]);
+function trinity(kit, ctx) {
+  const LS = C('#c0b398'), LS2 = C('#d8cdb4'), RF = C('#47423e'), CU = C('#6f9a85'), GL = C('#2b3443'), RD = C('#8e1f22');
+  const pts = ccw(D.b.trinity.p);
+  const TB = T(...TR.P(7.5, 31.5));   // the street front's ground: the lot falls away to the river
+  block(kit, ctx, pts, {
+    h: 5.8, wall: LS, trim: LS2, parapet: 0, roof: RF, plinth: [0.6, LS2], glass: GL,
+    win: { style: 'punch', sp: 3.2, w: 1.0, h: 1.8, fl: 3.4, g0: 1.2, sill: LS2 },
+  });
+  const nave = TR.box(-0.35, 15.2, 0.2, 30.0, true);
+  const nv = towerB(kit, ctx, nave, 8.2, { wall: LS, trim: LS2, parapet: 0, roof: RF, plinth: [0.6, LS2] }, TB);
+  const B = nv.B;
+  gable2(B, nave, nv.yTop, 7.4, RF, 0.4, LS);
+  for (const e of nv.E) {
+    const N = [e.nx, 0, e.nz], gy = gyOf(e);
+    if (e.L > 20) for (let t = 4; t < e.L - 3; t += 4.6) lancet(B, e, t, gy + 2.4, 0.95, 3.4, GL, LS2);
+    else if (e.nz > 0.5) {
+      // the south front: the great window, two lancets, the porch
+      lancet(B, e, e.L / 2, gy + 5.4, 3.2, 3.4, C('#5d6e86'), LS2);
+      rose(B, e, e.L / 2, gy + 10.6, 1.3, C('#5d6e86'), LS2, 0.12);
+      for (const f of [0.22, 0.78]) lancet(B, e, e.L * f, gy + 2.6, 1.1, 3.8, GL, LS2);
+      B.quad(e.at(-0.2, nv.yTop - 0.1, 0.12), e.at(e.L / 2, nv.yTop + 7.4, 0.12), e.at(e.L / 2, nv.yTop + 7.75, 0.12), e.at(-0.2, nv.yTop + 0.25, 0.12), N, U0, CU);
+      B.quad(e.at(e.L / 2, nv.yTop + 7.4, 0.12), e.at(e.L + 0.2, nv.yTop - 0.1, 0.12), e.at(e.L + 0.2, nv.yTop + 0.25, 0.12), e.at(e.L / 2, nv.yTop + 7.75, 0.12), N, U0, CU);
+    }
+    for (const s of [0.2, e.L - 0.2]) B4(B, e, s - 0.35, s + 0.35, gy - 0.3, nv.yTop, 0.06, N, LS2);   // quoins
+  }
+  // the porch round the red door
+  const porch = TR.box(3.6, 10.6, 29.6, 34.0, true);
+  const po = towerB(kit, ctx, porch, 3.8, { wall: LS, trim: LS2, parapet: 0, roof: RF, plinth: [0.6, LS2] }, TB);
+  gable2(B, porch, po.yTop, 3.6, RF, 0.25, LS);
+  const pf = faceOf(porch, 0.0523, 0.9986);
+  if (pf) { lancet(B, pf, pf.L / 2, gyOf(pf) + 0.05, 1.6, 2.2, RD, LS2); rose(B, pf, pf.L / 2, po.yTop + 1.5, 0.55, GL, LS2, 0.1); }
+  // the tower at the west corner: paired louvred lancets, battlements
+  const to = TR.box(-5.6, 0.4, 22.4, 30.4);
+  const tw = towerB(kit, ctx, to, 18.5, { wall: LS, trim: LS2, parapet: 0, roof: RF, plinth: [0.6, LS2] }, TB);
+  for (const e of tw.E) {
+    const N = [e.nx, 0, e.nz], gy = gyOf(e, 1);
+    for (const s of [0.25, e.L - 0.25]) B4(B, e, s - 0.45, s + 0.45, gy - 0.3, tw.yTop + 1.3, 0.25, N, LS2);
+    for (const f of [0.36, 0.64]) lancet(B, e, e.L * f, tw.yTop - 5.0, 0.85, 3.2, C('#9aa3a8'), LS2);
+    lancet(B, e, e.L / 2, gy + 8.0, 0.7, 2.0, GL, LS2);
+    B4(B, e, -0.1, e.L + 0.1, tw.yTop - 0.3, tw.yTop + 0.1, 0.3, N, LS2);
+    // the battlements: merlons along the parapet
+    B4(B, e, -0.1, e.L + 0.1, tw.yTop + 0.1, tw.yTop + 0.7, 0.2, N, LS);
+    for (let t = 0.35; t < e.L; t += 1.15) B4(B, e, t - 0.35, t + 0.35, tw.yTop + 0.7, tw.yTop + 1.4, 0.2, N, LS);
+    if (e.nz > 0.5) lancet(B, e, e.L / 2, gy + 0.05, 1.4, 2.2, C('#6f86a3'), LS2);
+  }
+  // the parish hall alongside, its gable to the south
+  const hall = TR.box(18.2, 31.6, 4.4, 43.6, true);
+  const hl = towerB(kit, ctx, hall, 6.2, { wall: LS, trim: LS2, parapet: 0, roof: RF, plinth: [0.6, LS2] }, TB);
+  gable2(B, hall, hl.yTop, 6.4, RF, 0.4, LS);
+  const hf = faceOf(hall, 0.0523, 0.9986);
+  if (hf) {
+    const gy = gyOf(hf);
+    lancet(B, hf, hf.L / 2, gy + 4.4, 1.6, 2.6, GL, LS2);
+    for (const f of [0.3, 0.7]) lancet(B, hf, hf.L * f, gy + 1.0, 1.1, 2.4, GL, LS2);
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// WOODSIDE NATIONAL HISTORIC SITE, 528 Wellington St N (Mackenzie King's boyhood home)
+// ---------------------------------------------------------------------------------------
+// The Commons photograph ("Woodside Kitchener 2006") and the aerial (the house
+// in its woods; the drive arriving from the north): a storey and a half of
+// buff-grey brick, the steep cedar-shingled roof with its cross gables, every
+// gable's bargeboard and the trim dark green, the open verandah between two
+// gables on dark green posts, tall chimneys, ivy up one gable. Restored to
+// the 1890s by Parks Canada. Heights estimated.
+function woodside(kit, ctx) {
+  const BK = C('#b8a586'), RF = C('#5f5248'), GR = C('#27463a'), GL = C('#2a2e2f'), IVY = C('#2d4a2a');
+  const pts = ccw(D.b.woodside.p);
+  const o = obb(pts);
+  const r = block(kit, ctx, pts, {
+    h: 4.4, wall: BK, trim: GR, parapet: 0, roof: RF, plinth: [0.5, C('#9c8f7c')], glass: GL, frame: GR,
+    win: { style: 'punch', sp: 3.0, w: 1.0, h: 1.8, fl: 4, g0: 0.9, sill: C('#d9d0bd') },
+  });
+  const B = r.B;
+  gable2(B, { ...o, hu: o.hu + 0.2 }, r.yTop, 5.2, RF, 0.5, BK);
+  // the front: the long side toward the drive (north)
+  // (the obb's face: OSM's north-west side is a run of short jogs round the bays)
+  const e = faceOf(o, -0.64, -0.77);
+  const N = [e.nx, 0, e.nz], gy = gyOf(e), y = r.yTop;
+  // two cross gables on the front, a dormer between
+  for (const f of [0.2, 0.78]) {
+    const t = e.L * f, w = 5.2;
+    const g = { x: e.at(t, 0, 1.2)[0], z: e.at(t, 0, 1.2)[2], hu: 2.4, hv: w / 2, ux: e.nx, uz: e.nz };
+    B.box(g.x, gy - 0.4, g.z, w, y - gy + 0.4, 2.4 * 2, Math.atan2(e.uz, e.ux), BK);
+    gable2(B, g, y, 3.8, RF, 0.35, BK);
+    const ge = faceOf(g, e.nx, e.nz);
+    if (ge) {
+      // the bargeboards and the upper window
+      gableEnd(B, ge, y, 3.8, BK, GR);
+      B4(B, ge, ge.L / 2 - 0.5, ge.L / 2 + 0.5, y + 0.4, y + 1.8, 0.05, N, GL);
+      B4(B, ge, ge.L / 2 - 0.65, ge.L / 2 + 0.65, y + 0.25, y + 2.0, 0.03, N, GR);
+    }
+  }
+  // the ivy up the house's south-west end
+  {
+    const ee = faceOf(o, -o.ux, -o.uz), gy2 = gyOf(ee), M = [ee.nx, 0, ee.nz];
+    B4(B, ee, ee.L * 0.3, ee.L * 0.95, gy2 - 0.2, y - 0.1, 0.12, M, IVY);
+    B.tri(ee.at(ee.L * 0.3, y - 0.1, 0.12), ee.at(ee.L * 0.95, y - 0.1, 0.12), ee.at(ee.L * 0.55, y + 2.6, 0.12), M, IVY);
+  }
+  // the verandah between them
+  const v0 = e.L * 0.2 + 3.0, v1 = e.L * 0.78 - 3.0, vd = 2.2, vy = gy + 2.9;
+  B.quad(e.at(v0, vy, 0), e.at(v1, vy, 0), e.at(v1, vy - 0.5, vd), e.at(v0, vy - 0.5, vd), [N[0] * 0.4, 0.9, N[2] * 0.4], U0, RF);
+  B4(B, e, v0, v1, vy - 0.75, vy - 0.5, vd, N, GR);
+  for (let t = v0 + 0.2; t <= v1 - 0.2 + 1e-3; t += (v1 - v0 - 0.4) / 3) {
+    const p = e.at(t, gy, vd - 0.15);
+    B.prism(p[0], gy - 0.2, p[2], 0.1, vy - gy - 0.3, 4, GR);
+  }
+  B4(B, e, (v0 + v1) / 2 - 0.6, (v0 + v1) / 2 + 0.6, gy, gy + 2.2, 0.04, N, GR);   // the door
+  // the chimneys
+  for (const k of [-0.42, 0.05, 0.4]) {
+    const x = o.x + o.ux * o.hu * 2 * k, z = o.z + o.uz * o.hu * 2 * k;
+    B.box(x, y + 2.4, z, 0.8, 4.4, 0.6, Math.atan2(o.uz, o.ux), C('#b5a283'));
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// THE BREITHAUPT CENTRE, 350 Margaret Ave, Kitchener
+// ---------------------------------------------------------------------------------------
+// The Commons photographs ("BreithauptCommunityCentre-Kitchener", 2013) and the
+// aerial: red brick, two storeys, a flat roof; the rows of solar panels tilted
+// up on steel frames over the west wing's roof; the sloped glass SOLARIUM over
+// the pool's entrance; BREITHAUPT CENTRE in raised letters on the brick by the
+// doors, toward the parking lot on the south-west.
+function breithaupt(kit, ctx) {
+  const BR = C('#9a5039'), BR2 = C('#87412e'), WH = C('#e2e1dc'), GL = C('#2d3a43'), GL2 = C('#9fbfc6'), PV = C('#24344f');
+  const pts = ccw(D.b.breit.p);
+  const o = obb(pts);
+  const r = block(kit, ctx, pts, {
+    h: 7.6, wall: BR, trim: WH, parapet: 0.6, roof: C('#a5a6a3'), plinth: [0.5, BR2], glass: GL,
+    win: { style: 'ribbon', fl: 3.8, g0: 1.0, h: 1.6, top: 1.2 },
+  });
+  const B = r.B, rot = Math.atan2(o.uz, o.ux);
+  // the solar rows: west half of the roof, tilted to the south
+  const vx = -o.uz, vz = o.ux;
+  for (let k = -o.hu * 0.85; k < -o.hu * 0.1; k += 3.6) for (const j of [-0.5, 0.25]) {
+    const x = o.x + o.ux * k + vx * o.hv * j, z = o.z + o.uz * k + vz * o.hv * j;
+    const h0 = r.yTop + 0.9, L = o.hv * 0.62;
+    B.box(x, r.yTop + 0.6, z, 0.12, 0.9, L, rot, C('#77797a'));
+    const a = [x - o.ux * 1.2 - vx * L / 2, h0, z - o.uz * 1.2 - vz * L / 2], b = [x - o.ux * 1.2 + vx * L / 2, h0, z - o.uz * 1.2 + vz * L / 2];
+    const c = [x + o.ux * 1.2 + vx * L / 2, h0 + 1.3, z + o.uz * 1.2 + vz * L / 2], d = [x + o.ux * 1.2 - vx * L / 2, h0 + 1.3, z + o.uz * 1.2 - vz * L / 2];
+    B.quad(a, b, c, d, [-o.ux * 0.45, 0.89, -o.uz * 0.45], U0, PV);
+    B.quad(d, c, b, a, [o.ux * 0.45, -0.89, o.uz * 0.45], U0, C('#4e5154'));
+  }
+  // the front toward the parking lot: the solarium and the lettering
+  // the doors' face: OSM's two collinear 7 m runs on the south-west side
+  const fe = edgeOf([-1717.0, -1587.5], [-1707.8, -1576.9], -0.75, 0.66);
+  {
+    const N = [fe.nx, 0, fe.nz], gy = gyOf(fe), t = fe.L - 4.0, w = 7;
+    // the solarium: a glass lean-to from the wall's top down over the doors
+    B.quad(fe.at(t - w / 2, r.yTop + 0.4, 0), fe.at(t + w / 2, r.yTop + 0.4, 0), fe.at(t + w / 2, gy + 4.0, 3.6), fe.at(t - w / 2, gy + 4.0, 3.6), [N[0] * 0.6, 0.8, N[2] * 0.6], U0, GL2);
+    for (let k = 0; k <= 6; k++) {
+      const tt = t - w / 2 + w * k / 6;
+      B.quad(fe.at(tt - 0.06, r.yTop + 0.42, 0), fe.at(tt + 0.06, r.yTop + 0.42, 0), fe.at(tt + 0.06, gy + 4.02, 3.62), fe.at(tt - 0.06, gy + 4.02, 3.62), [N[0] * 0.6, 0.8, N[2] * 0.6], U0, WH);
+    }
+    B4(B, fe, t - w / 2, t + w / 2, gy - 0.2, gy + 4.0, 3.6, N, [GL, GL, GL2, GL2]);
+    for (const s of [-1, 1]) B.quad(fe.at(t + s * w / 2, gy - 0.2, 0), fe.at(t + s * w / 2, gy - 0.2, 3.6), fe.at(t + s * w / 2, gy + 4.0, 3.6), fe.at(t + s * w / 2, r.yTop + 0.4, 0), [fe.ux * s, 0, fe.uz * s], U0, GL2);
+    ctx.solids.push({ x: fe.at(t, 0, 1.8)[0], z: fe.at(t, 0, 1.8)[2], hw: w / 2, hd: 1.8, rot: Math.atan2(fe.uz, fe.ux), y0: gy - 1, y1: gy + 4 });
+    // no lettering (SOLARIUM, BREITHAUPT CENTRE): this cell has no sign cluster, and
+    // a neighbouring cell's swelled over half of Kitchener's views (+1 draw in each)
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// THE GRAND RIVER RECREATION COMPLEX and the Lyle S. Hallman Pool, Kitchener
+// ---------------------------------------------------------------------------------------
+// MacLennan Jaunkalns Miller with John D. MacLennan (Canadian Architect award
+// 1988, OAA Award of Excellence 1991): the pool hall under a long white
+// barrel vault -- the architects' drawing of the pool under its ribbed arch --
+// the aerial's white roof along the outline's north-east wing; the entrance
+// block and changing rooms to the south-west, pale panels and glass. Heights
+// estimated.
+const GR_POOL = [[3375.25, -401.7], [3427.45, -443.0], 7.45];   // the vault's axis ends and half width
+function grandRiverRec(kit, ctx) {
+  const WH = C('#e2e2de'), WH2 = C('#c7c9c7'), GL = C('#2f4a57'), GL2 = C('#8fb0bb'), RF = C('#ecedea'), BL = C('#2b5f8f');
+  const pts = ccw(D.b.grrc.p);
+  const r = block(kit, ctx, pts, {
+    h: 6.4, wall: WH2, trim: WH, parapet: 0.6, roof: C('#9fa09c'), plinth: [0.9, C('#8c8a85')], glass: GL,
+    win: { style: 'ribbon', fl: 3.6, g0: 1.0, h: 2.0, top: 0.8 },
+  });
+  const [a, b, hv] = GR_POOL, o = ob(a, b, hv + 0.25);
+  const pw = tower(kit, ctx, o, 6.8, { wall: WH, trim: WH, parapet: 0, roof: RF, glass: GL,
+    win: { style: 'ribbon', fl: 20, g0: 2.2, h: 3.6, top: 0.6, minL: 20 } }, 0);
+  barrel(pw.B, { ...o, hu: o.hu + 0.5, hv: o.hv + 0.35 }, pw.yTop, 5.6, RF, GL2, 12);
+  for (let k = -o.hu + 4; k < o.hu - 1; k += 6) {
+    barrel(pw.B, { x: o.x + o.ux * k, z: o.z + o.uz * k, hu: 0.1, hv: o.hv + 0.4, ux: o.ux, uz: o.uz }, pw.yTop + 0.04, 5.66, WH2, WH2, 12);
+  }
+  // the glass ends of the vault: mullions on the half-discs
+  for (const s of [-1, 1]) {
+    const e = faceOf(o, o.ux * s, o.uz * s);
+    if (!e) continue;
+    const N = [e.nx, 0, e.nz];
+    for (let t = 1.2; t < e.L; t += 1.6) {
+      const v = t - e.L / 2, top = pw.yTop + 5.6 * Math.sqrt(Math.max(0, 1 - (v / (o.hv + 0.35)) ** 2));
+      B4(pw.B, e, t - 0.05, t + 0.05, pw.yTop, top, 0.04, N, WH);
+    }
+  }
+  // the entrance on Ottawa St's side: a blue canopy
+  const fe = facing(r.E, -0.62, 0.78, 8);
+  if (fe) entrance(kit, ctx, fe, fe.L / 2, 7, 3.0, null, { d: 1.2, can: BL });
+}
+
+// ---------------------------------------------------------------------------------------
+// IDEA EXCHANGE QUEEN'S SQUARE, 1 North Square, Galt (the Cambridge library)
+// ---------------------------------------------------------------------------------------
+// The Commons photograph ("Idea Exchange Library System - Cambridge, ON", 2025,
+// from the street on the south) and the aerial: two flat-roofed blocks of dark
+// purple-brown brick under deep buff precast fascias -- the taller east block
+// and the lower west one -- joined by a recessed glass link with the entrance
+// and its canopy; a buff band at the first floor, dark glass set deep in the
+// brick, the full-height glass corner wrapping the east block's south-east;
+// the eye mosaic on the brick of the south front; IDEA EXCHANGE by the doors.
+const QS_WEST = [[12662.7, 10298.9], [12682.4, 10298.9], [12682.6, 10268.0], [12662.8, 10267.9]];
+const QS_LINK = [[12682.4, 10294.6], [12692.0, 10294.6], [12691.3, 10274.7], [12682.6, 10274.7]];
+const QS_EAST = [[12692.0, 10298.6], [12723.1, 10298.7], [12723.2, 10267.7], [12714.8, 10267.7], [12714.8, 10259.6], [12692.7, 10259.5], [12692.7, 10267.8], [12691.3, 10267.8]];
+function queensSquare(kit, ctx) {
+  const BR = C('#5a3b3a'), FC = C('#cbbfa4'), GL = C('#20262c'), GL2 = C('#5f7480'), FR = C('#3a3f44');
+  const look = (h) => ({ h, wall: BR, trim: FC, parapet: 0.4, roof: C('#b7b4ad'), glass: GL, frame: FR, plinth: [0.4, C('#6c6560')],
+    win: { style: 'ribbon', fl: 4.0, g0: 1.0, h: 2.1, top: 2.4 } });
+  const base = lowest(QS_EAST.concat(QS_WEST));
+  const w = block(kit, ctx, QS_WEST, { ...look(8.2), base });
+  const e = block(kit, ctx, QS_EAST, { ...look(10.4), base });
+  const l = block(kit, ctx, QS_LINK, { base, h: 6.8, wall: GL2, trim: FC, parapet: 0.3, roof: C('#9aa3a6'), glass: GL2,
+    win: { style: 'curtain', fl: 3.4, g0: 0.2, sp: 1.5, top: 0.4, minL: 3 } });
+  const B = e.B;
+  // the fascias: a deep buff band round the top of each block, and the first-floor band
+  for (const r of [w, e]) for (const ed of r.E) {
+    const N = [ed.nx, 0, ed.nz];
+    B4(B, ed, -0.15, ed.L + 0.15, r.yTop - 1.9, r.yTop + 0.4, 0.18, N, FC);
+    if (ed.L > 8) B4(B, ed, 0.3, ed.L - 0.3, gyOf(ed) + 3.6, gyOf(ed) + 4.3, 0.12, N, FC);
+  }
+  // the full-height glass corner at the east block's south-east
+  const se = [12723.1, 10298.7];
+  for (const ed of e.E) {
+    const da = Math.hypot(ed.a[0] - se[0], ed.a[1] - se[1]), dc = Math.hypot(ed.c[0] - se[0], ed.c[1] - se[1]);
+    if (Math.min(da, dc) > 0.5) continue;
+    const N = [ed.nx, 0, ed.nz], gy = gyOf(ed), t0 = da < dc ? 0 : ed.L - 7.5, t1 = da < dc ? 7.5 : ed.L;
+    B4(B, ed, t0, t1, gy - 0.2, e.yTop - 1.9, 0.2, N, [GL, GL, GL2, GL2]);
+    for (let t = t0; t <= t1 + 1e-3; t += 1.25) B4(B, ed, t - 0.06, t + 0.06, gy - 0.2, e.yTop - 1.9, 0.24, N, FR);
+    for (let y = gy + 3.4; y < e.yTop - 2; y += 3.4) B4(B, ed, t0, t1, y - 0.06, y + 0.06, 0.24, N, FR);
+  }
+  // the eye mosaic on the south front, and the entrance canopy at the link
+  const sf = facing(e.E, 0, 1, 20);
+  if (sf) {
+    const m = ctx.atlas.panel(3.4, 2.0, 30, (q, W, H) => {
+      q.clearRect(0, 0, W, H);
+      q.save(); q.translate(W / 2, H / 2); q.scale(1, 0.62);
+      q.fillStyle = '#2d73b3'; q.beginPath(); q.ellipse(0, 0, W * 0.48, W * 0.48 * 0.95, 0, 0, Math.PI * 2); q.fill();
+      q.fillStyle = '#e8b04a'; q.beginPath(); q.arc(0, 0, W * 0.27, 0, Math.PI * 2); q.fill();
+      q.fillStyle = '#c2462e'; q.beginPath(); q.arc(0, 0, W * 0.19, 0, Math.PI * 2); q.fill();
+      q.fillStyle = '#141414'; q.beginPath(); q.arc(0, 0, W * 0.11, 0, Math.PI * 2); q.fill();
+      q.restore();
+    });
+    // the photograph has it on the brick west of the glazed bays
+    const t = Math.min(sf.L - 2, (12698.5 - sf.a[0]) * sf.ux + (10298.7 - sf.a[1]) * sf.uz);
+    onWall(kit, sf, t, gyOf(sf) + 6.6, m, 0.1);
+  }
+  const lf = facing(l.E, 0, 1, 5);
+  if (lf) {
+    const gy = gyOf(lf), N = [lf.nx, 0, lf.nz];
+    const lb = l.B;
+    lb.quad(lf.at(-3, gy + 3.3, 0), lf.at(lf.L + 1, gy + 3.3, 0), lf.at(lf.L + 1, gy + 3.1, 4.4), lf.at(-3, gy + 3.1, 4.4), [0, 1, 0], U0, C('#c9cdd0'));
+    lb.quad(lf.at(-3, gy + 2.95, 4.4), lf.at(lf.L + 1, gy + 2.95, 4.4), lf.at(lf.L + 1, gy + 3.3, 0), lf.at(-3, gy + 3.3, 0), [0, -1, 0], U0, C('#8d9295'));
+    for (const t of [-2.6, lf.L + 0.6]) { const p = lf.at(t, 0, 4.1); lb.prism(p[0], gy - 0.2, p[2], 0.1, 3.3, 6, FR); }
+    const sg = text(ctx.atlas, 3.6, 0.55, 'IDEA EXCHANGE', { fg: '#f2f2f2', bg: '#2a2d30', k: 0.6 });
+    const p = lf.at(-3.0 - 1.6, 0, 6.0), py = T(p[0], p[2]);
+    lb.box(p[0], py - 0.2, p[2], 4.0, 1.1, 0.35, Math.atan2(lf.uz, lf.ux), C('#3a3d40'));
+    hang(kit.grp(p[0], p[2]), sg, p[0], py + 0.6, p[2], lf.nx, lf.nz, 0.19);
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// WATERLOO COLLEGIATE INSTITUTE, 300 Hazel St, Waterloo
+// ---------------------------------------------------------------------------------------
+// The Commons photographs ("Waterloo Collegiate Institute", 2009 -- the front
+// on Hazel St; 2004) and the aerial: buff brick, flat roofs; the classroom
+// wings' long ribbons of glass over red-brown spandrels; the entrance block
+// standing taller in the middle of the Hazel St front, its upper wall the white
+// breeze-block screen, "Waterloo Collegiate Institute 300" in white letters
+// beside it, the shallow peaked concrete canopy over the glass doors on two
+// posts, the steps up to them. Heights estimated.
+function wci(kit, ctx) {
+  const BU = C('#c49a62'), BU2 = C('#b48a55'), TR = C('#e4dfd2'), GL = C('#283036'), SP = C('#6e2c27'), CON = C('#c8c4ba');
+  const pts = ccw(D.b.wci.p);
+  const r = block(kit, ctx, pts, {
+    h: 8.4, wall: BU, trim: TR, parapet: 0.6, roof: C('#8f8d88'), plinth: [0.5, BU2], glass: GL,
+    win: { style: 'ribbon', fl: 3.9, g0: 1.0, h: 1.9, top: 1.0 },
+  });
+  const B = r.B;
+  // the spandrels under each ribbon (red-brown panels)
+  for (const e of r.E) {
+    if (e.L < 8) continue;
+    const gy = gyOf(e), N = [e.nx, 0, e.nz];
+    for (let f = 1; gy + 1.0 + f * 3.9 + 1.9 < r.yTop - 1.0; f++) B4(B, e, 0.6, e.L - 0.6, gy + 1.0 + f * 3.9 - 1.6, gy + 1.0 + f * 3.9 - 0.05, 0.03, N, SP);
+  }
+  // the entrance block on Hazel St
+  const he = frontEdge(ctx.city, r.E, /^Hazel Street/, 12, 90) || facing(r.E, -0.87, 0.49, 12);
+  STATS.wciFront = he && [Math.round(he.mx), Math.round(he.mz), +he.nx.toFixed(2), +he.nz.toFixed(2), Math.round(he.L)];
+  if (!he) return;
+  const t = he.L / 2, w = Math.min(15, he.L - 1), gy = gyOf(he), N = [he.nx, 0, he.nz], top = gy + 11.2;
+  const eo = { x: he.at(t, 0, -3.0)[0], z: he.at(t, 0, -3.0)[2], hu: w / 2, hv: 4.0, ux: he.ux, uz: he.uz };
+  const en = tower(kit, ctx, eo, top - lowest(obPts(eo)), { wall: BU, trim: TR, parapet: 0.5, roof: C('#8f8d88') }, 0);
+  const ef = faceOf(eo, he.nx, he.nz);
+  if (!ef) return;
+  const sx0 = ef.L * 0.3, sx1 = ef.L * 0.95, sy0 = gy + 4.6, sy1 = en.yTop - 0.7;
+  // the breeze-block screen: white squares in a frame
+  B4(B, ef, sx0 - 0.15, sx1 + 0.15, sy0 - 0.15, sy1 + 0.15, 0.04, N, TR);
+  B4(B, ef, sx0, sx1, sy0, sy1, 0.06, N, C('#3a3f44'));
+  const nx = Math.round((sx1 - sx0) / 0.95), ny = Math.round((sy1 - sy0) / 0.95), dx = (sx1 - sx0) / nx, dy = (sy1 - sy0) / ny;
+  for (let i = 0; i <= nx; i++) B4(B, ef, sx0 + i * dx - 0.07, sx0 + i * dx + 0.07, sy0, sy1, 0.1, N, TR);
+  for (let j = 0; j <= ny; j++) B4(B, ef, sx0, sx1, sy0 + j * dy - 0.07, sy0 + j * dy + 0.07, 0.1, N, TR);
+  for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++) {
+    const cx = sx0 + (i + 0.5) * dx, cy = sy0 + (j + 0.5) * dy;
+    B4(B, ef, cx - dx * 0.2, cx + dx * 0.2, cy - dy * 0.2, cy + dy * 0.2, 0.12, N, TR);
+  }
+  // the glass doors and the peaked canopy on two posts
+  const dc = (sx0 + sx1) / 2;
+  B4(B, ef, dc - 4.2, dc + 4.2, gy - 0.2, gy + 3.1, 0.05, N, [GL, GL, shade(GL, 1.6), shade(GL, 1.6)]);
+  for (let k = 0; k <= 6; k++) B4(B, ef, dc - 4.2 + k * 1.4 - 0.05, dc - 4.2 + k * 1.4 + 0.05, gy - 0.2, gy + 3.1, 0.08, N, C('#c8ccd0'));
+  const cy = gy + 3.5, cd = 3.4, cw = 5.6;
+  B.quad(ef.at(dc - cw, cy + 0.55, 0), ef.at(dc, cy, 0), ef.at(dc, cy, cd), ef.at(dc - cw, cy + 0.55, cd), [0, 1, 0], U0, CON);
+  B.quad(ef.at(dc, cy, 0), ef.at(dc + cw, cy + 0.55, 0), ef.at(dc + cw, cy + 0.55, cd), ef.at(dc, cy, cd), [0, 1, 0], U0, CON);
+  B.quad(ef.at(dc - cw, cy + 0.25, cd), ef.at(dc, cy - 0.3, cd), ef.at(dc, cy, cd), ef.at(dc - cw, cy + 0.55, cd), N, U0, shade(CON, 0.85));
+  B.quad(ef.at(dc, cy - 0.3, cd), ef.at(dc + cw, cy + 0.25, cd), ef.at(dc + cw, cy + 0.55, cd), ef.at(dc, cy, cd), N, U0, shade(CON, 0.85));
+  for (const s of [-1, 1]) {
+    const p = ef.at(dc + s * (cw - 0.6), 0, cd - 0.4);
+    B.box(p[0], gy - 0.3, p[2], 0.35, cy - gy + 0.5, 0.35, Math.atan2(ef.uz, ef.ux), CON);
+    ctx.solids.push({ x: p[0], z: p[2], r: 0.25, y0: gy - 1, y1: cy });
+  }
+  // the school's name, three lines and the number, on the brick left of the screen
+  const m = ctx.atlas.panel(3.4, 3.0, 24, (q, W, H) => {
+    q.clearRect(0, 0, W, H); q.fillStyle = '#f6f4ee'; q.textAlign = 'left'; q.textBaseline = 'middle';
+    q.font = `600 ${H * 0.17}px ${SANS}`;
+    q.fillText('Waterloo', W * 0.05, H * 0.14, W * 0.9); q.fillText('Collegiate', W * 0.05, H * 0.37, W * 0.9); q.fillText('Institute', W * 0.05, H * 0.6, W * 0.9);
+    q.font = `700 ${H * 0.2}px ${SANS}`; q.fillText('300', W * 0.32, H * 0.85);
+  });
+  onWall(kit, ef, sx0 / 2 + 0.1, sy1 - 1.6, m, 0.08);
+}
+
+// ---------------------------------------------------------------------------------------
+// CATALYST137, 137 Glasgow St, Kitchener (the 1957 Uniroyal tire warehouse, reclad 2017)
+// ---------------------------------------------------------------------------------------
+// RENX (July 2017: 475,000 sq ft, the tire warehouse given a new envelope and
+// roof) with its rendering, and the aerial: one enormous low block under a
+// white roof; dark brown metal cladding with a band of clerestory glass under
+// the eaves, a lighter base; the entrance pavilion of glass in the west front's
+// notch toward the parking, under a canted canopy. Heights and the cladding's
+// colour estimated from the rendering.
+function catalyst(kit, ctx) {
+  const BRN = C('#5b3b2e'), BRN2 = C('#6b4737'), LT = C('#b9b4aa'), GL = C('#2a3238'), GL2 = C('#7d98a4'), WH = C('#e9e8e4');
+  const pts = ccw(D.b.catalyst.p);
+  const r = block(kit, ctx, pts, {
+    h: 10.5, wall: BRN, trim: LT, parapet: 0.6, roof: WH, plinth: [2.2, LT], glass: GL,
+    win: { style: 'ribbon', fl: 20, g0: 7.0, h: 1.8, top: 1.2, minL: 6 },
+  });
+  const B = r.B;
+  // the cladding's vertical ribs, sparse
+  for (const e of r.E) {
+    if (e.L < 6) continue;
+    const gy = gyOf(e), N = [e.nx, 0, e.nz];
+    for (let t = 3; t < e.L - 1; t += 6) B4(B, e, t - 0.08, t + 0.08, gy + 2.2, gy + 6.9, 0.05, N, BRN2);
+  }
+  // the entrance in the west front's notch (the aerial's glazed annex)
+  const de = edgeNear(r.E, -3172, 77, 8);
+  if (de) {
+    const e = de.e, gy = gyOf(e), N = [e.nx, 0, e.nz], t = de.t, w = Math.min(14, e.L - 2);
+    B4(B, e, t - w / 2, t + w / 2, gy - 0.2, gy + 7.4, 0.25, N, [GL, GL, GL2, GL2]);
+    for (let k = 0; k <= 7; k++) B4(B, e, t - w / 2 + k * w / 7 - 0.06, t - w / 2 + k * w / 7 + 0.06, gy - 0.2, gy + 7.4, 0.3, N, C('#2c2f33'));
+    B.quad(e.at(t - w / 2 - 1, gy + 7.4, 0), e.at(t + w / 2 + 1, gy + 7.4, 0), e.at(t + w / 2 + 1, gy + 5.4, 5.0), e.at(t - w / 2 - 1, gy + 5.4, 5.0), [N[0] * 0.4, 0.9, N[2] * 0.4], U0, C('#3a3d42'));
+    for (const s of [-1, 1]) { const p = e.at(t + s * (w / 2 + 0.4), 0, 4.6); B.prism(p[0], gy - 0.2, p[2], 0.15, 5.6, 6, C('#2c2f33')); ctx.solids.push({ x: p[0], z: p[2], r: 0.2, y0: gy - 1, y1: gy + 5.4 }); }
+    // no lettering: the cell has no sign cluster, and the nearest one is 1.5 km off (its
+    // bounds would swell over half of Belmont); the sign's place is not confirmed either
+  }
+}
+
 // ---------------------------------------------------------------------------------------
 // the extra
 // ---------------------------------------------------------------------------------------
@@ -1773,6 +2444,19 @@ export function buildLandmarks2(ctx) {
     run('wmrc', waterlooRec);
     run('galtarena', galtArena);
   }
+  // round five
+  if (D.b.zion) {
+    run('zion', zion);
+    run('stjohn', stJohn);
+    run('stpaul', stPaul);
+    run('trinity', trinity);
+    run('woodside', woodside);
+    run('breit', breithaupt);
+    run('grrc', grandRiverRec);
+    run('qslib', queensSquare);
+    run('wci', wci);
+    run('catalyst', catalyst);
+  }
   kit.flush(ctx);
   STATS.tris = kit.tris;
   STATS.ms = Math.round(performance.now() - t0);
@@ -1811,6 +2495,16 @@ export function landmarks2Map() {
     m(at('claygl'), false, 'Canadian Clay & Glass Gallery', 'The Canadian Clay and Glass Gallery, 25 Caroline St N (Patkau Architects, 1993)'),
     m(at('wmrc'), false, 'Waterloo Memorial Rec Complex', 'The Waterloo Memorial Recreation Complex, 101 Father David Bauer Dr — the Siskins\' rink and the pool'),
     m(at('galtarena'), false, 'Galt Arena Gardens', 'Galt Arena Gardens, 98 Shade St (1922) — one of the oldest arenas still in use in Canada'),
+    m(at('zion'), false, 'Zion (32 Weber St W)', 'Zion Evangelical, 32 Weber St W (1893) — Zion United until 2015; the tall tower with the four green-capped turrets'),
+    m(at('stjohn'), false, 'St. John the Evangelist', 'St. John the Evangelist Anglican Church, 23 Water St N — red brick and a slate broach spire'),
+    m(at('stpaul'), false, "St. Paul's Lutheran", "St. Paul's Evangelical Lutheran Church, 137 Queen St S (Jonas Knechtel, 1889) — one of Kitchener's oldest churches"),
+    m(at('trinity'), false, 'Trinity Anglican', 'Trinity Anglican Church, 12 Blair Rd, Galt — grey Galt limestone and a crenellated tower'),
+    m(at('woodside'), false, 'Woodside', 'Woodside National Historic Site — William Lyon Mackenzie King\'s boyhood home, restored to the 1890s'),
+    m(at('breit'), false, 'Breithaupt Centre', 'The Breithaupt Centre, 350 Margaret Ave — the pool under the solarium, solar panels on the roof'),
+    m(at('grrc'), false, 'Grand River Rec Complex', 'The Grand River Recreation Complex and Lyle S. Hallman Pool — the pool under the white vault'),
+    m(at('qslib'), false, "Idea Exchange Queen's Square", "Idea Exchange Queen's Square, 1 North Square, Galt — Cambridge's main library, the eye on the brick"),
+    m(at('wci'), false, 'Waterloo Collegiate', 'Waterloo Collegiate Institute, 300 Hazel St — the breeze-block screen over the front doors'),
+    m(at('catalyst'), false, 'Catalyst137', 'Catalyst137, 137 Glasgow St — the 1957 Uniroyal tire warehouse, now a hardware tech hub (475,000 sq ft)'),
   ].filter(Boolean);
 }
 

@@ -8,6 +8,7 @@
 //                       (VIEW_THROTTLE=8 CPU-throttles it, VIEW_PROFILE=f.cpuprofile profiles it)
 //   VIEW_PRE='<js>'     evaluate once before the shots (e.g. hide a layer to see what draws what)
 //   VIEW_INFO='<js>'    evaluate after each fixed view's shot and print it (e.g. window.__lampInfo)
+//   VIEW_INFO_FILE=f.js the same from a file
 //   VIEW_BOOT_JS='<js>' run before the page's own scripts (e.g. window.__noPlaces = true for a before/after)
 //   VIEW_BOOT_FILE=f.js the same from a file (tools/kw/seedrandom.js pins Math.random)
 //   `calls` in the output is the scene pass's draw count, `tris` its triangles
@@ -110,6 +111,7 @@ async function main() {
     })()`);
 
     if (process.env.VIEW_PRE_FILE) process.env.VIEW_PRE = readFileSync(process.env.VIEW_PRE_FILE, 'utf8');
+    if (process.env.VIEW_INFO_FILE) process.env.VIEW_INFO = readFileSync(process.env.VIEW_INFO_FILE, 'utf8');
     if (process.env.VIEW_PRE) await evaluate(process.env.VIEW_PRE);
     if (process.env.VIEW_PROBE_FILE) process.env.VIEW_PROBE = readFileSync(process.env.VIEW_PROBE_FILE, 'utf8');
     if (process.env.VIEW_PROBE) {

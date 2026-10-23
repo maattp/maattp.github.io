@@ -60,6 +60,17 @@ LANDMARKS = {
     "claygl": (-4150.5, -1442.1),    # the Canadian Clay and Glass Gallery, 25 Caroline St N (Patkau 1993)
     "wmrc": (-4654.4, -1366.9),      # the Waterloo Memorial Recreation Complex, 101 Father David Bauer Dr (OSM's outline is unnamed)
     "galtarena": (13621.9, 9884.9),  # Galt Arena Gardens, 98 Shade St, Cambridge (1922)
+    # round five
+    "qslib": (12690.9, 10279.9),     # Idea Exchange Queen's Square (the Cambridge library), 1 North Square
+    "wci": (-4439.9, -3044.8),       # Waterloo Collegiate Institute, 300 Hazel St
+    "zion": (-1112.6, -107.5),       # Zion Evangelical (Zion United 1968-2015), 32 Weber St W (1893)
+    "stjohn": (-1509.8, -32.2),      # St. John the Evangelist (Anglican), 23 Water St N
+    "stpaul": (-1251.9, 428.0),      # St. Paul's Evangelical Lutheran, 137 Queen St S (Jonas Knechtel, 1889)
+    "trinity": (12791.5, 10102.3),   # Trinity Anglican, 12 Blair Rd, Galt (OSM names it "Trinity United", denomination anglican)
+    "woodside": (-463.2, -1294.5),   # Woodside National Historic Site, 528 Wellington St N (Mackenzie King's boyhood home)
+    "breit": (-1708.4, -1582.6),     # the Breithaupt Centre, 350 Margaret Ave
+    "grrc": (3386.5, -429.5),        # the Grand River Recreation Complex and Lyle S. Hallman Pool (MJMA, 1988-91)
+    "catalyst": (-3139.0, 87.3),     # Catalyst137, 137 Glasgow St (the 1957 Uniroyal tire warehouse, reclad 2017)
 }
 
 

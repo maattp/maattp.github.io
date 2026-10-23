@@ -57,6 +57,23 @@ def main():
         Z = (g - z + hs) * k
         d.line([(0, Z), (10, Z)], fill=(255, 255, 0))
         d.text((12, Z - 5), str(g), fill=(255, 255, 0))
+    # AERIAL_FP=1: the importer's footprints (raw_buildings.json) in cyan and a 10 m grid,
+    # so a part of a building read off the photograph is a world coordinate to the metre
+    if os.environ.get("AERIAL_FP"):
+        import json
+        for g in range(int((x - hs) // 10 + 1) * 10, int(x + hs), 10):
+            X = (g - x + hs) * k
+            d.line([(X, 0), (X, SIZE)], fill=(255, 255, 0) if g % 50 == 0 else (110, 110, 60), width=1)
+        for g in range(int((z - hs) // 10 + 1) * 10, int(z + hs), 10):
+            Z = (g - z + hs) * k
+            d.line([(0, Z), (SIZE, Z)], fill=(255, 255, 0) if g % 50 == 0 else (110, 110, 60), width=1)
+        here = os.path.dirname(os.path.abspath(__file__))
+        for b in json.load(open(os.path.join(here, "data", "raw_buildings.json")))["buildings"]:
+            o = b["o"]
+            if all(abs(q[0] - x) > hs or abs(q[1] - z) > hs for q in o):
+                continue
+            pts = [((q[0] - x + hs) * k, (q[1] - z + hs) * k) for q in o]
+            d.line(pts + [pts[0]], fill=(0, 255, 255), width=2)
     im.save(out, quality=85)
     print(out)
 

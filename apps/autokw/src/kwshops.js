@@ -682,7 +682,7 @@ export function prepShops(city) {
   };
   // (kw.js's outlines, the boxes marked here, the gas canopies, and the chain stores'
   // buildings -- their signs; a store with no building of its own can fail to draw)
-  for (const b of city.buildings) if (b.kw && ((b.kw.poly && !b.kw.skip) || b.kw.shop || b.kw.canopy)) grow(b.x, b.z, Math.max(b.w, b.d) / 2);
+  for (const b of city.buildings) if (b.kw && ((b.kw.poly && !b.kw.skip) || b.kw.ext || b.kw.shop || b.kw.canopy)) grow(b.x, b.z, Math.max(b.w, b.d) / 2);
   for (const s of S.stores) if (s[3] !== null) grow(s[3], s[4], 10);
   r.fronts = 0; r.frontsOut = 0; r.frontsNext = 0;
   const outBy = (e, x, z) => (e ? Math.max(e[0] - x, x - e[1], e[2] - z, z - e[3]) : Infinity);
