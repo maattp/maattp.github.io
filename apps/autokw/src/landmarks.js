@@ -3329,7 +3329,8 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
   for (const fn of EXTRAS) {
     const extraSolids = [];
     const t0 = performance.now();
-    fn({ addTo, solids: extraSolids, atlas, city, platforms, clearAt });
+    // `has`: whether a cluster exists yet (kwlandmarks2.js puts lettering in a neighbouring cell's sign cluster rather than open a new one)
+    fn({ addTo, has: (k) => clusters.has(k), solids: extraSolids, atlas, city, platforms, clearAt });
     const t1 = performance.now();
     for (const s of extraSolids) {
       if (city && onRoad(city, s)) { dropped.push(`extra@${s.x.toFixed(0)},${s.z.toFixed(0)}`); continue; }
