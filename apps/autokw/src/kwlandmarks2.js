@@ -145,7 +145,7 @@ export function prepLandmarks2(city, data) {
 // atlas (2048 x 1344 used of 2048 x 2048 before this pass).
 const ck = (x, z) => `${Math.round(x / 1200)},${Math.round(z / 1200)}`;
 class LmKit {
-  constructor(atlas, has = null) { this.atlas = atlas; this.has = has; this.b = new Map(); this.all = []; this.g = new Map(); this.tris = 0; this.borrowed = []; }
+  constructor(atlas) { this.atlas = atlas; this.b = new Map(); this.all = []; this.g = new Map(); this.tris = 0; }
   B(x, z) {
     const k = ck(x, z);
     let b = this.b.get(k);
@@ -157,19 +157,7 @@ class LmKit {
     return b;
   }
   grp(x, z) {
-    let k = 'kw' + ck(x, z);
-    if (this.has && !this.has(k) && !this.g.has(k)) {
-      // no sign cluster in this cell (the Breithaupt Centre's): the nearest
-      // neighbouring cell's -- clusters are frustum-culled on their merged
-      // bounds, so the lettering still draws where it hangs, and no new draw
-      const cx = Math.round(x / 1200), cz = Math.round(z / 1200);
-      let bd = Infinity, kk = null;
-      for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
-        const key = `kw${cx + i},${cz + j}`;
-        if ((i || j) && this.has(key)) { const d = Math.hypot((cx + i) * 1200 - x, (cz + j) * 1200 - z); if (d < bd) { bd = d; kk = key; } }
-      }
-      if (kk) { if (!this.borrowed.includes(k + '>' + kk)) this.borrowed.push(k + '>' + kk); k = kk; }
-    }
+    const k = 'kw' + ck(x, z);
     let g = this.g.get(k);
     if (!g) this.g.set(k, (g = new THREE.Group()));
     return g;
@@ -2191,13 +2179,8 @@ function breithaupt(kit, ctx) {
     B4(B, fe, t - w / 2, t + w / 2, gy - 0.2, gy + 4.0, 3.6, N, [GL, GL, GL2, GL2]);
     for (const s of [-1, 1]) B.quad(fe.at(t + s * w / 2, gy - 0.2, 0), fe.at(t + s * w / 2, gy - 0.2, 3.6), fe.at(t + s * w / 2, gy + 4.0, 3.6), fe.at(t + s * w / 2, r.yTop + 0.4, 0), [fe.ux * s, 0, fe.uz * s], U0, GL2);
     ctx.solids.push({ x: fe.at(t, 0, 1.8)[0], z: fe.at(t, 0, 1.8)[2], hw: w / 2, hd: 1.8, rot: Math.atan2(fe.uz, fe.ux), y0: gy - 1, y1: gy + 4 });
-    letters(kit, ctx, fe, t, gy + 6.2, 6.2, 0.75, 'SOLARIUM', { fg: '#f4f2ec', k: 0.62, off: 0.1 });
-    const m = ctx.atlas.panel(5.4, 1.6, 22, (q, W, H) => {
-      q.clearRect(0, 0, W, H); q.fillStyle = '#efe9dc'; q.textAlign = 'left'; q.textBaseline = 'middle';
-      q.font = `700 ${H * 0.36}px ${SANS}`; q.fillText('BREITHAUPT', W * 0.02, H * 0.28, W * 0.96);
-      q.fillText('CENTRE', W * 0.3, H * 0.74, W * 0.7);
-    });
-    onWall(kit, fe, 2.9, gy + 5.0, m, 0.08);
+    // no lettering (SOLARIUM, BREITHAUPT CENTRE): this cell has no sign cluster, and
+    // a neighbouring cell's swelled over half of Kitchener's views (+1 draw in each)
   }
 }
 
@@ -2384,9 +2367,8 @@ function wci(kit, ctx) {
 // roof) with its rendering, and the aerial: one enormous low block under a
 // white roof; dark brown metal cladding with a band of clerestory glass under
 // the eaves, a lighter base; the entrance pavilion of glass in the west front's
-// notch toward the parking, under a canted canopy, CATALYST137 over it.
-// Heights, the cladding's colour and the sign's place estimated from the
-// rendering.
+// notch toward the parking, under a canted canopy. Heights and the cladding's
+// colour estimated from the rendering.
 function catalyst(kit, ctx) {
   const BRN = C('#5b3b2e'), BRN2 = C('#6b4737'), LT = C('#b9b4aa'), GL = C('#2a3238'), GL2 = C('#7d98a4'), WH = C('#e9e8e4');
   const pts = ccw(D.b.catalyst.p);
@@ -2409,7 +2391,8 @@ function catalyst(kit, ctx) {
     for (let k = 0; k <= 7; k++) B4(B, e, t - w / 2 + k * w / 7 - 0.06, t - w / 2 + k * w / 7 + 0.06, gy - 0.2, gy + 7.4, 0.3, N, C('#2c2f33'));
     B.quad(e.at(t - w / 2 - 1, gy + 7.4, 0), e.at(t + w / 2 + 1, gy + 7.4, 0), e.at(t + w / 2 + 1, gy + 5.4, 5.0), e.at(t - w / 2 - 1, gy + 5.4, 5.0), [N[0] * 0.4, 0.9, N[2] * 0.4], U0, C('#3a3d42'));
     for (const s of [-1, 1]) { const p = e.at(t + s * (w / 2 + 0.4), 0, 4.6); B.prism(p[0], gy - 0.2, p[2], 0.15, 5.6, 6, C('#2c2f33')); ctx.solids.push({ x: p[0], z: p[2], r: 0.2, y0: gy - 1, y1: gy + 5.4 }); }
-    letters(kit, ctx, e, t, gy + 9.0, 11, 1.4, 'CATALYST137', { fg: '#f4f1ea', k: 0.7, off: 0.1 });
+    // no lettering: the cell has no sign cluster, and the nearest one is 1.5 km off (its
+    // bounds would swell over half of Belmont); the sign's place is not confirmed either
   }
 }
 
@@ -2418,7 +2401,7 @@ function catalyst(kit, ctx) {
 // ---------------------------------------------------------------------------------------
 export function buildLandmarks2(ctx) {
   if (!D) return;
-  const t0 = performance.now(), kit = new LmKit(ctx.atlas, ctx.has);
+  const t0 = performance.now(), kit = new LmKit(ctx.atlas);
   // trees keep off what is drawn here
   for (const k of Object.keys(D.b)) { const o = obb(D.b[k].p); if (o && ctx.clearAt) ctx.clearAt.push([o.x, o.z, Math.min(o.hu, o.hv) + 3]); }
   // and off Laurel Dam's embankment
@@ -2476,7 +2459,6 @@ export function buildLandmarks2(ctx) {
   }
   kit.flush(ctx);
   STATS.tris = kit.tris;
-  STATS.borrowed = kit.borrowed;
   STATS.ms = Math.round(performance.now() - t0);
   STATS.atlas = { y: ctx.atlas.y + ctx.atlas.row, full: ctx.atlas.full || 0 };
 }

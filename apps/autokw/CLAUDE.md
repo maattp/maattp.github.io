@@ -661,6 +661,124 @@ file and a guide disagree, this file wins.
   335, 11]}`, St. Mary's front `{c: [-1185, 1, 1.7], t: [-1222, -19.5,
   15]}`, Galt Arena `{c: [13684, 9914, 1.7], t: [13660, 9900, 9]}`, the
   WMRC `{c: [-4628, -1420, 1.8], t: [-4632, -1375, 7]}`.
+- **The landmarks pass, round five** (same module, LmKit and lm2.json:
+  `build_lm2.py` gained `zion`, `stjohn`, `stpaul`, `trinity`, `woodside`,
+  `breit`, `grrc`, `qslib`, `wci`, `catalyst`; docs/lm5-*.jpg, master over
+  this). **Survey** of the brief's list: already drawn -- Kitchener City
+  Hall (kwsights: KPMB's rotunda and Berlin Tower; its clock tower is the
+  1924 hall's in Victoria Park, drawn there), the Walper and Galt's Central
+  Presbyterian (kwdowntown), the Kaufman Lofts, the Lang Tannery, Schneider
+  Haus and the Waterloo Region Museum (kwsights), the Huether (kwuptown), the
+  Hespeler mill (kwsights' Forbes mill). Not built: Langdon Hall (down its
+  drive, unseen from the road; the Commons "Langdon Hall" photographs are
+  Auburn's), the WRPS headquarters (no photograph found), the Cambridge
+  Sports Park (fields, no building), the Grand River Rec Complex's arena (OSM
+  maps the pool hall only). **Drawn, each on its OSM footprint:** **Zion**
+  (32 Weber St W, 1893; Zion United 1968-2015, OSM still says "Zion United /
+  Rockway Mennonite"): buff brick on a red sandstone base, the porch gable
+  with its great pointed window, the nave's gable and three lancets behind,
+  the short tower under a slate pyramid at the west corner and the tall tower
+  at the front's east end -- the belfry's three pointed openings a side, the
+  corbelled parapet, four turrets under green copper caps; OSM's round
+  Sunday-school hall behind is the outline, flat-roofed. **St. John the
+  Evangelist** (23 Water St N, Anglican): red brick, slate, the nave along
+  Water St with buttresses and lancets, the transept, the north-west tower's
+  broach spire with its gabled louvres, the parish hall's flat brick block
+  with a green-grey coping. **St. Paul's Lutheran** (137 Queen St S, Jonas
+  Knechtel 1889): dark brown brick, the gable to Queen St with four lancets,
+  a round window and corner pinnacles, the corbel table under the eaves, the
+  tower at the street corner with paired round-headed belfry windows and the
+  tall black slate spire with lucarnes and pinnacles (OSM's jog by Queen
+  St). **Trinity Anglican** (12 Blair Rd, Galt; OSM: "Trinity United",
+  denomination anglican): grey limestone, the south front's traceried window,
+  rose and porch with the red door, the crenellated tower at the west corner
+  with its blue door, the parish hall's gable alongside; built on the street
+  front's ground (`towerB`), the lot falls ~5 m to the river. **Woodside** (the
+  National Historic Site, Mackenzie King's boyhood home): a storey and a half
+  of buff brick, the steep shingled roof, two cross gables with dark green
+  bargeboards on the north-west front (the obb's face: OSM's side is short
+  jogs), the verandah on green posts, chimneys, ivy on the south-west end.
+  **The Breithaupt Centre**: red brick, ribbon windows, the solar rows on
+  frames over the roof, the sloped glass solarium over the pool doors toward
+  the lot (`edgeOf`: OSM's two collinear 7 m runs); no lettering, below. **The Grand River Recreation Complex** (MJMA with John
+  D. MacLennan, 1988-91): the Lyle S. Hallman pool under a white ribbed
+  barrel vault with glazed ends (`GR_POOL`, the outline's north-east wing),
+  the pale entrance block with a blue canopy. **Idea Exchange Queen's
+  Square** (1 North Square, Galt): the outline split into its three parts
+  (`QS_WEST`, `QS_LINK`, `QS_EAST`) -- two blocks of dark purple-brown brick
+  under deep buff fascias, the taller east one with the full-height glass
+  corner at the south-east, the glass link with the entrance canopy and an
+  IDEA EXCHANGE sign, the buff first-floor band, the eye mosaic on the south
+  front. **Waterloo Collegiate** (300 Hazel St): buff brick, the wings'
+  ribbons over red-brown spandrels, the taller entrance block on Hazel St
+  (`frontEdge`; `__kwLm2.wciFront`) with the white breeze-block screen, the
+  shallow peaked concrete canopy on two posts over the glass doors, and
+  Waterloo / Collegiate / Institute / 300 beside the screen. **Catalyst137**
+  (137 Glasgow St, the 1957 Uniroyal tire warehouse reclad 2017): the whole
+  212 x 373 m outline, dark brown cladding with ribs over a light base, the
+  clerestory band, the white roof, the glazed entrance under a canted canopy
+  in the west front's notch. **Sources:** OSM (tools/kw/probe_blocks.py: names,
+  addresses, denominations); the Esri aerial with the importer's footprints
+  and a 10 m grid over it (`AERIAL_FP=1 tools/kw/aerial.py`, new) for every
+  plan; Wikimedia Commons: "32 Weber Street West - Kitchener, ON (2025)",
+  "Church of St John the Evangelist, Kitchener, ON (2023)", "St. John the
+  Evangelist Anglican Church 2026 (1)", "Trinity Anglican Church - Cambridge,
+  ON" (2018), "Trinity Anglican Cambridge Ontario" (2014), "Woodside
+  Kitchener 2006", "BreithauptCommunityCentre-Kitchener" (2013), "Idea
+  Exchange Library System - Cambridge, ON" (2025; it is the Queen's Square
+  building: the aerial's two blocks and link match it), "Waterloo Collegiate
+  Institute" (2009) and "... (879605)"; Community Edition's 2015 photographs
+  of St. Paul's and the City's 1983 notice of intention to designate it (the
+  spire, pointed arches, lancets, brickwork; 1889); Ian Hadden / the United
+  Church archives (Zion: on Weber St from 1893, Zion United 1968-2015);
+  architecture-excellence.org (the GRRC: MJMA, the pool drawing under its
+  arch); RENX July 2017 and its rendering (Catalyst137). **Estimated:**
+  every colour and height; Zion's tower positions and the porch from an
+  oblique aerial; St. John's nave and transept extents; St. Paul's nave
+  width (21.4 m of the 27 m outline) and the tower's place in OSM's jog;
+  Trinity's hall; Woodside's gable places; the solarium's place on the
+  face; the GRRC's vault rise and the entrance; the Queen's Square eye's
+  place; WCI's entrance block size; Catalyst137's whole look (a 2017
+  rendering). **Draws: none of its own.** The shells go into the cells'
+  `kwp` clusters, the letters into their `kw` sign clusters:
+  `tools/kw/lmcount.js` (seeded, phone) master vs this: 1038 / 1038 meshes,
+  every cell and material identical. What it took: (1) no lettering where
+  the cell has no sign cluster -- the Breithaupt Centre (SOLARIUM,
+  BREITHAUPT CENTRE are in the photograph) and Catalyst137 -- as Hespeler
+  in round three; hanging it in a neighbouring cell's cluster was tried and
+  swelled that cluster's bounds into half of Kitchener's views, +1 each; (2)
+  flattening WCI's school polygon took it out of kwshops.js prepShops' drawn
+  extent and a storefront 600 m off fell out into its own `kwr:` cluster
+  (+1): round five's flattened outlines set `b.kw.ext`, which prepShops
+  still counts. (3) Trinity stands on its street front's ground (`towerB`):
+  `tower()` puts a block on its lowest corner, ~5 m down the river bank.
+  Sign atlas: rows 1563 -> 1569 of 2048. Pass triangles ~64k -> ~73k.
+  **Phone** (AUTO_PHONE=1, GPU, seedrandom, the same 16-view list, master
+  -> this): seeded runs of MASTER alone differ by 3 draws run to run (spawn
+  178 / 175: the skinned pedestrians), and this run's skinned count was
+  +3 in every view, so: spawn 175 -> 178, every view +3, St. John and
+  Catalyst137 +6, Queen's Square and the WCI air view +5 (tris +12-19k).
+  Counting what is visible per view (a frustum probe over the scene, both
+  builds, six views) the landmark clusters differ only by: Queen's Square
+  +2 (its own cell's sign cluster, and Trinity's cell's `kwp` cluster whose
+  bounds Trinity widened), and +1 looking west from Weber & Frederick (WCI's
+  lettering widened its cell's sign cluster); Zion, St. John, WCI and
+  Catalyst137 0 landmark-cluster change (their remaining +1-3 are unnamed
+  dynamic meshes -- cars). trafficbench (rail off, clear, phone): the six
+  hashes = master's; jcttraffic and hwytraffic (seeded) = master's;
+  poleprobe: every class identical (0 in a lane), 40 fewer boulevard trees
+  (the landmarks' tree clearings); AUTO_GPU=1 funprobe ALL OK; 0 exceptions
+  everywhere. Not done / approximate: interiors; Zion's round hall is the
+  outline's flat-roofed drum, not its real roof; St. John's narthex arches
+  (the 2026 photograph) not drawn; the GRRC's arena; WRPS, Langdon Hall.
+  `window.__noLm5 = true` before boot turns round five off. Verify:
+  kwshots views, e.g. Zion `{c: [-1142, -60, 1.7], t: [-1120, -95, 14]}`,
+  St. John `{c: [-1552, -54, 1.7], t: [-1515, -42, 12]}`, St. Paul's
+  `{c: [-1290, 400, 1.7], t: [-1248, 428, 15]}`, Trinity `{c: [12830,
+  10150, 20], t: [12795, 10105, 6]}`, Queen's Square `{c: [12742, 10320,
+  1.7], t: [12700, 10285, 6]}`, WCI `{c: [-4492, -2962, 1.7], t: [-4457,
+  -2981, 6]}`; `VIEW_INFO_FILE=` (kwshots, new) takes the per-view probe
+  from a file.
 - **The chain stores: src/kwshops.js** (`data/shops.json` from
   tools/kw/extract_shops.py -> `raw_shops.json`, then tools/kw/build_shops.py;
   docs/shops-*.jpg). Every store of ~50 brands (`BRANDS` / `GAS` in
