@@ -310,6 +310,8 @@
         if (done.has(q) || s > q.s + 3.6 || (q.kind !== 'stop' && q.kind !== 'sig')) continue;
         if (q.kind === 'stop') {
           if (opts.noStop) break;
+          // (the sloppy run rolls its first stop sign at a walking pace)
+          if (SLOPPY.on && !SLOPPY.rolled) { if (s > q.s + 2) { SLOPPY.rolled = true; done.add(q); } stopS = null; SLOPPY.cap = q.s - s < 25 ? 2.2 : 0; break; }
           stopS = q.s;
           if (s > q.s - 0.6 && D.v < 0.05) { waitT += dt; if (waitT > 1.2) { done.add(q); waitT = 0; stopS = null; if (cfg.trace) TRACE.push(['stopped', Math.round(simT), +s.toFixed(1), +q.s.toFixed(1), +q.ps.toFixed(1), q.node, Math.round(car.x), Math.round(car.z), +q.A.back.toFixed(1)]); } }
           break;
@@ -333,6 +335,8 @@
       const e = E[line.list[Math.min(line.list.length - 1, line[D.i].k)].ei];
       const lim = (g2.limitOf(line.list[Math.min(line.list.length - 1, line[D.i].k)].ei) || 60) / 3.6;
       let vm = opts.vmax ? opts.vmax(s, e, lim) : lim - 2.2;
+      if (SLOPPY.on && simT - SLOPPY.t0 > 55 && simT - SLOPPY.t0 < 70) vm = lim + 2.6;   // (and speeds, once)
+      if (SLOPPY.on && SLOPPY.cap) { vm = Math.min(vm, SLOPPY.cap); SLOPPY.cap = 0; }
       drive(line, vWant(line, s, vm, stopS));
       frame();
       if (opts.each) opts.each(s);
@@ -529,6 +533,15 @@
     return true;
   }
 
+  const SLOPPY = { on: false };
+  // the score sheet's still (docs/g2-sheet.jpg): a G2 driven a little sloppily -- a
+  // stop sign rolled, a stretch over the limit -- whose sheet is left up
+  if (cfg.sheet) {
+    SLOPPY.on = true; SLOPPY.t0 = simT; g2.noSheet = false;
+    results.push(['sheet', cleanRun('G2', cfg.seed)]);
+    SLOPPY.on = false; g2.noSheet = true;
+    return 'sheet: ' + JSON.stringify(results[0][1]).slice(0, 600);
+  }
   if (want('clean')) results.push(['clean', cleanRun('G2', cfg.seed)]);
   if (want('cleanG')) results.push(['cleanG', cleanRun('G', cfg.seed + 1)]);
 

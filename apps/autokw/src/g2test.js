@@ -345,7 +345,6 @@ export class RoadTest {
     };
     const KIND = {
       sig: (i) => ctlK(i) === K_SIG && cityEdges(i),
-      stop: (i) => ctlK(i) === K_STOP && cityEdges(i),
       pull: (i) => mid(i, ['st', 'res']),
       turn: (i) => mid(i, ['res']),
     };
@@ -379,14 +378,11 @@ export class RoadTest {
       const fw = kind === 'G' ? this.freewayLeg(R) : null;
       const b0 = fw ? Math.atan2(N[fw[0]].x - CENTRE.x, -(N[fw[0]].z - CENTRE.z)) + (R() - 0.5) * 0.8 : R() * Math.PI * 2, out = [];
       const add = (n, task, hwy) => { if (n >= 0) out.push({ n, task, hwy: !!hwy }); };
-      add(pick('sig', b0, 550), null);
-      if (kind !== 'G') add(pick('pull', b0 + q, 650), 'pull');
+      add(pick('sig', b0, 500), null);
+      if (kind !== 'G') add(pick('pull', b0 + q * 1.3, 550), 'pull');
       if (kind === 'G') {
         if (fw) { add(fw[0], 'lc', true); add(fw[1], null, true); }
-      } else {
-        add(pick('turn', b0 + 2 * q, 600), 'turn');
-        add(pick('stop', b0 + 3 * q, 450), null);
-      }
+      } else add(pick('turn', b0 + q * 2.6, 500), 'turn');
       out.push({ n: home, task: 'home', hwy: kind === 'G' });
       return out;
     };
@@ -404,7 +400,7 @@ export class RoadTest {
       }
       return m;
     };
-    const want = kind === 'G' ? [5500, 9000] : [3500, 5500];
+    const want = kind === 'G' ? [5500, 9000] : [2600, 4200];
     let best = null, bm = Infinity;
     for (let a = 0; a < 8; a++) {
       const out = build(), m = legs(out);
@@ -951,6 +947,14 @@ export class RoadTest {
       this.arrive(wp, v, c);
       return;
     }
+    // the way ahead on both maps (hud.fare, the taxi's): the next 1.2 km of it
+    if (run.mapIdx !== run.idx || run.mapPv !== run.pv || run.mapN !== P.pe.length) {
+      run.mapIdx = run.idx; run.mapPv = run.pv; run.mapN = P.pe.length;
+      const pts = [v.x, v.z];
+      let m = 0;
+      for (let j = run.idx; j < P.pe.length && m < 1200; j++) { const n = N[P.pn[j]]; pts.push(n.x, n.z); m += E[P.pe[j]].len; }
+      this.hud.fare = { hail: null, dest: null, route: Float32Array.from(pts) };
+    }
     // the next thing to say
     const M = this.nextMove(c);
     if (!M) { run.instr = 'Continue straight'; run.instrD = 0; return; }
@@ -1141,6 +1145,7 @@ export class RoadTest {
     if (!run) return;
     this.run = null;
     this.showPanel(false);
+    this.hud.fare = null;
     const pts = run.marks.reduce((a, m) => a + m.pts, 0);
     const fail = run.fail || (pts > PASS_MAX ? { k: 'marks', what: FAIL.marks[0], where: '' } : null);
     const pass = !fail;
@@ -1175,6 +1180,7 @@ export class RoadTest {
     if (!this.run) return;
     this.run = null;
     this.showPanel(false);
+    this.hud.fare = null;
   }
 
   // --- the clipboard panel -------------------------------------------------------------------
@@ -1187,7 +1193,7 @@ export class RoadTest {
         + 'padding:6px 12px 7px;border-radius:7px;background:rgba(250,250,246,0.92);border-left:6px solid #1f8f4a;color:#13202b;'
         + 'font:600 12px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:center;pointer-events:none;display:none;z-index:6;box-shadow:0 2px 10px rgba(0,0,0,.35)';
       const top = document.createElement('div'); top.style.cssText = 'font-size:10px;letter-spacing:.08em;color:#4c5a64';
-      const mid = document.createElement('div'); mid.style.cssText = 'font-size:16px;font-weight:800;margin:2px 0';
+      const mid = document.createElement('div'); mid.style.cssText = 'font-size:15px;font-weight:800;margin:2px 0';
       const bot = document.createElement('div'); bot.style.cssText = 'font-size:12px;color:#33414b';
       el.append(top, mid, bot);
       (this.root && this.root.querySelector('#hud') || this.root || document.body).appendChild(el);
@@ -1206,6 +1212,10 @@ export class RoadTest {
     const d = run.instrD > 20 && run.instr !== 'Continue straight' ? ` · ${Math.round(run.instrD / 10) * 10} m` : '';
     set(1, P.mid, (run.instr || '') + d);
     const sig = (this._pl && this._pl.sig) || 0;
+    // the touch stalk's buttons blink with the lamps (index.html #sigBtns)
+    if (!this._sb) this._sb = [document.querySelector('[data-btn="sigL"]'), document.querySelector('[data-btn="sigR"]')];
+    const lit = performance.now() % 700 < 350;
+    this._sb.forEach((b, i) => { if (b) b.classList.toggle('on', lit && sig === (i ? 1 : -1)); });
     set(2, P.bot, `${run.limit ? `Limit ${run.limit} · ` : ''}${kmh(Math.abs(run.v.vLong))} km/h · ${pts} mark${pts === 1 ? '' : 's'}${sig ? (sig < 0 ? ' · ◀ signalling' : ' · signalling ▶') : ''}`);
   }
 }
