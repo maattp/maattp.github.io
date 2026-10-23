@@ -1,0 +1,7 @@
+[
+  { "name": "night-king-seat", "eval": "window.__tod = 'night'; __carSeat('King Street', -3822, -1405, 70, 7, 2.4)" },
+  { "name": "night-res-lamps", "eval": "window.__tod = 'night'; __carSeat('Allen Street East', -3286, -1275, 60, 7, 2.4, 0.6)" },
+  { "name": "night-sky-kitchener", "eval": "window.__tod = 'night'", "c": [600, 1500, 260], "t": [-1100, 250, 40], "fov": 60 },
+  { "name": "dusk-401", "eval": "window.__tod = 'dusk'; __carSeat('401', 11000, 4250, 90, 9, 3.2)" },
+  { "name": "day-king-seat", "eval": "window.__tod = 'day'; __carSeat('King Street', -3822, -1405, 70, 7, 2.4)" }
+]

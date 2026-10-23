@@ -32,6 +32,8 @@
 // localStorage `autokw-weather` (auto / clear / rain / snow).
 
 import * as THREE from './three.js';
+// the time of day's block rides the same hook (tod.js; it imports nothing back)
+import { TODU, TODK, TOD, TOD_PARS, TOD_BLOCK, todDefines } from './tod.js';
 
 /** Shared shader uniforms: one object each, every material holds the same. */
 export const WXU = {
@@ -167,15 +169,36 @@ function wxDefines(m) {
   return d;
 }
 
+const BASIC_AT = 'vec3 outgoingLight = reflectedLight.indirectDiffuse;';
 function wxInject(sh, m) {
-  if (!WX.ok) return;
+  if (!WX.ok && !TOD.ok) return;
   const fs = sh.fragmentShader;
-  if (typeof fs !== 'string' || fs.indexOf('WX_INJ') >= 0 || fs.indexOf(INC) < 0 || fs.indexOf('vViewPosition') < 0) return;
-  const defs = wxDefines(m).map((k) => `#define ${k}\n`).join('');
-  sh.uniforms.wxOn = WXU.wxOn;
-  sh.uniforms.wxWet = WXU.wxWet;
-  sh.uniforms.wxSnow = WXU.wxSnow;
-  sh.fragmentShader = defs + WX_PARS + fs.replace(INC, WX_BLOCK + INC);
+  // an unlit picture (MeshBasic with a map: signs, banners, lettering) is
+  // dimmed after dark (tod.js todBasic); a lamp's own (userData.todKeep, its
+  // own program key) and the glows (no map) stay
+  if (TOD.ok && m.isMeshBasicMaterial && m.map && !(m.userData && m.userData.todKeep)
+    && typeof fs === 'string' && fs.indexOf(BASIC_AT) >= 0 && fs.indexOf('TOD_BASIC') < 0) {
+    sh.uniforms.todOn = TODU.todOn;
+    sh.uniforms.todBasic = TODU.todBasic;
+    sh.fragmentShader = 'uniform float todOn, todBasic;\n' + fs.replace(BASIC_AT, BASIC_AT + '\n\t// TOD_BASIC (tod.js)\n\tif ( todOn > 0.5 ) outgoingLight *= todBasic;');
+    return;
+  }
+  if (typeof fs !== 'string' || fs.indexOf('WX_INJ') >= 0 || fs.indexOf('TOD_INJ') >= 0 || fs.indexOf(INC) < 0 || fs.indexOf('vViewPosition') < 0) return;
+  let pre = '', at = INC;
+  if (WX.ok) {
+    pre += wxDefines(m).map((k) => `#define ${k}\n`).join('') + WX_PARS;
+    sh.uniforms.wxOn = WXU.wxOn;
+    sh.uniforms.wxWet = WXU.wxWet;
+    sh.uniforms.wxSnow = WXU.wxSnow;
+    at = WX_BLOCK + at;
+  }
+  // the time of day (tod.js): AFTER the emissive chunk, adding to it
+  if (TOD.ok) {
+    pre += todDefines(m).map((k) => `#define ${k}\n`).join('') + TOD_PARS;
+    for (const k of ['todOn', 'todWin', 'todWinB', 'todRoad', 'todLamp', 'todLampCol', 'todHeadP', 'todHeadD', 'todHeadCol']) sh.uniforms[k] = TODU[k];
+    at = at + TOD_BLOCK;
+  }
+  sh.fragmentShader = pre + fs.replace(INC, at);
 }
 
 // The hook: three calls material.onBuild(object, parameters, renderer) for
@@ -199,6 +222,18 @@ if (!MP.__wxHook) {
  * same way when it is first built.
  */
 export function testWeatherShaders(renderer) {
+  // both blocks together first; if that fails, the time of day's alone is
+  // dropped (Day, always) and the weather's is tried on its own
+  if (compileTest(renderer)) return true;
+  if (TOD.ok) {
+    TOD.ok = false; TOD.failed = WX.failed || 'compile';
+    console.warn('tod: shader block failed to compile -- Day only');
+    WX.ok = true; WX.failed = '';
+    return compileTest(renderer);
+  }
+  return false;
+}
+function compileTest(renderer) {
   try {
     const sc = new THREE.Scene();
     sc.fog = new THREE.FogExp2(0x888888, 0.001);
@@ -209,6 +244,15 @@ export function testWeatherShaders(renderer) {
     ];
     mats[0].userData.wx = 'road';
     mats[0].customProgramCacheKey = () => 'wxTestRoad';
+    // a windowed one (tod.js 'win')
+    const wm = new THREE.MeshStandardMaterial({ color: 0x808080, roughness: 0.6 });
+    wm.userData.tod = 'win';
+    wm.customProgramCacheKey = () => 'wxTestWin';
+    mats.push(wm);
+    // ...and an unlit picture (tod.js todBasic)
+    const bt = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    bt.needsUpdate = true;
+    mats.push(new THREE.MeshBasicMaterial({ map: bt }));
     // ...and roadWalk's shape (world.js: a `vSurf` varying -> WX_ROADWALK)
     const rw = new THREE.MeshStandardMaterial({ color: 0x808080, roughness: 0.8, vertexColors: true });
     rw.onBeforeCompile = (sh) => {
@@ -227,10 +271,13 @@ export function testWeatherShaders(renderer) {
     const rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.UnsignedByteType });
     const prev = renderer.getRenderTarget();
     WXU.wxOn.value = 1;
+    const todWas = TODU.todOn.value, winWas = TODU.todWinB.value;
+    TODU.todOn.value = 1; TODU.todWinB.value = 1;
     renderer.setRenderTarget(rt);
     renderer.render(sc, cam);
     renderer.setRenderTarget(prev);
     WXU.wxOn.value = 0;
+    TODU.todOn.value = todWas; TODU.todWinB.value = winWas;
     const gl = renderer.getContext();
     let bad = '';
     for (const m of mats) {
@@ -238,7 +285,7 @@ export function testWeatherShaders(renderer) {
       if (!p || !gl.getProgramParameter(p.program, gl.LINK_STATUS)) bad += m.type + ' ';
     }
     for (const m of mats) m.dispose();
-    geo.dispose(); rt.dispose();
+    geo.dispose(); rt.dispose(); bt.dispose();
     if (bad) { WX.ok = false; WX.failed = bad.trim(); console.warn('weather: shader block failed to compile on', bad, '-- weather visuals off'); }
   } catch (e) {
     WX.ok = false; WX.failed = String(e && e.message || e);
@@ -519,7 +566,8 @@ export class Weather {
     WXU.wxOn.value = any && WX.ok ? 1 : 0;
     WXU.wxWet.value = wet;
     WXU.wxSnow.value = cover;
-    WXU.wxHead.value = clamp01(Math.max(c.rain, c.snow, c.fog * 0.8) * 1.6);
+    // headlamps: the weather's or the evening's, whichever is more (tod.js)
+    WXU.wxHead.value = clamp01(Math.max(Math.max(c.rain, c.snow, c.fog * 0.8) * 1.6, TODK.head));
     // gameplay: exactly 1 when dry and bare
     WXK.mu = 1 - 0.18 * wet - 0.42 * cover;
     WXK.ai = 1 - 0.1 * wet - 0.26 * cover;

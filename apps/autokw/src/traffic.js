@@ -6,6 +6,7 @@ import { Vehicle, TYPES, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, 
 import { clamp, lerp, angleWrap, hash2, rng, dist2, tierScale } from './util.js';
 import * as G from './geo.js';
 import { WXK } from './weather.js';
+import { TODK } from './tod.js';
 import { memo } from './bootcache.js';
 import { edgeFlow, oneWaySpan, twoWayLayout, twoWayLaneOff, alBike, medianGaps, LANE_W } from './arterial.js';
 import { SchoolStops, schoolStopsOn } from './schoolbus.js';
@@ -1613,7 +1614,9 @@ export class TrafficSystem {
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0) {
       this.spawnTimer = 0.25;
-      if (trafficCount < TRAFFIC_TARGET) this.spawnTraffic(px, pz, camDir);
+      // thinner after midnight (tod.js; TODK.traffic exactly 1 by day)
+      const target = TODK.traffic < 1 ? Math.round(TRAFFIC_TARGET * TODK.traffic) : TRAFFIC_TARGET;
+      if (trafficCount < target) this.spawnTraffic(px, pz, camDir);
     }
     // Units by the wanted level's table (police.js LEVELS): cruisers first,
     // then the SWAT vans. police.n counts what is out (a unit whose crew is

@@ -34,6 +34,7 @@
 // vertex-coloured material for the solid pieces, one with a polygon offset
 // for what lies on the ground, and the sign atlas.
 
+import { STATIC_LAMPS } from './tod.js';
 import * as THREE from './three.js';
 import * as G from './geo.js';
 import { hash2 } from './util.js';
@@ -813,6 +814,7 @@ function kingLamps(kit, ctx) {
   });
   const POST = lin([0.08, 0.09, 0.09]), GLOBE = lin([0.95, 0.93, 0.84]);
   let n = 0;
+  const lampPts = [];   // tod.js: the night's light pools
   for (let i = 0; i < UPTOWN_KING.length - 1; i++) {
     const a = UPTOWN_KING[i], b = UPTOWN_KING[i + 1];
     const dx = b[0] - a[0], dz = b[1] - a[1], len = Math.hypot(dx, dz);
@@ -847,10 +849,12 @@ function kingLamps(kit, ctx) {
         const g = kit.grp(x, z);
         for (const s2 of [1, -1]) hang(g, banner.clone(), x - nx * 0.4, y + 4.2, z - nz * 0.4, k.ex * s2, k.ez * s2, 0.02);
         ctx.solids.push({ x, z, r: 0.25, y0: y - 1, y1: y + 6.5 });
+        lampPts.push(x, y + 6.0, z);
         n++;
       }
     }
   }
+  if (lampPts.length) STATIC_LAMPS.push(new Float32Array(lampPts));
   // street trees in grates half way between the lamps (the 2019 streetscape),
   // where the pavement has room: not on a road, in a building or on the square
   let nt = 0;
