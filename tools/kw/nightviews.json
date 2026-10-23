@@ -1,7 +1,13 @@
 [
   { "name": "night-king-seat", "eval": "window.__tod = 'night'; __carSeat('King Street', -3822, -1405, 70, 7, 2.4)" },
-  { "name": "night-res-lamps", "eval": "window.__tod = 'night'; __carSeat('Allen Street East', -3286, -1275, 60, 7, 2.4, 0.6)" },
+  { "name": "night-res-allen", "eval": "window.__tod = 'night'; __carSeat('Allen Street East', -3286, -1275, 60, 7, 2.4, 0.6)" },
+  { "name": "night-res-activa", "eval": "window.__tod = 'night'; __carSeat('Activa', -2790, 4480, 70, 10, 4.0, 0.6)" },
+  { "name": "night-res-dunbar", "eval": "window.__tod = 'night'; __carSeat('Dunbar', -3640, 190, 70, 10, 4.0, 0.6)" },
+  { "name": "night-res-ahrens", "eval": "window.__tod = 'night'; __carSeat('Ahrens', -1530, -775, 70, 10, 4.0, 0.6)" },
   { "name": "night-sky-kitchener", "eval": "window.__tod = 'night'", "c": [600, 1500, 260], "t": [-1100, 250, 40], "fov": 60 },
+  { "name": "night-spawn-air", "eval": "window.__tod = 'night'", "at": [-3200, -1000, 0], "alt": 450, "bearing": 300, "pitch": -18, "fov": 60 },
   { "name": "dusk-401", "eval": "window.__tod = 'dusk'; __carSeat('401', 11000, 4250, 90, 9, 3.2)" },
-  { "name": "day-king-seat", "eval": "window.__tod = 'day'; __carSeat('King Street', -3822, -1405, 70, 7, 2.4)" }
+  { "name": "dusk-king", "eval": "window.__tod = 'dusk'; __carSeat('King Street', -3822, -1405, 70, 7, 2.4)" },
+  { "name": "night-rain-king", "eval": "window.__tod = 'night'; window.__weather = 'rain'; __carSeat('King Street', -3822, -1405, 70, 7, 2.4)" },
+  { "name": "day-king-seat", "eval": "window.__tod = 'day'; window.__weather = 'clear'; __carSeat('King Street', -3822, -1405, 70, 7, 2.4)" }
 ]

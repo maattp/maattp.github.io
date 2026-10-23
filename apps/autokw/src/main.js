@@ -3680,6 +3680,8 @@ function audioState(dt, input, p, camDir, buried) {
     rain: weather ? weather.cur.rain : 0,
     snowing: weather ? weather.cur.snow : 0,
     wet: weather ? weather.wet : 0,
+    // the city's hum quieter after dark (tod.js; 0 by day)
+    night: tod ? tod.ni : 0,
     inCar: !player.onFoot,
     onFoot: player.onFoot,
     vehicle: v,

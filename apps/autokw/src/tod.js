@@ -82,13 +82,17 @@ export const TOD_BLOCK = `
 		vec3 tdP = ( vec4( - vViewPosition, 0.0 ) * viewMatrix ).xyz + cameraPosition;
 		vec3 tdN = ( vec4( normal, 0.0 ) * viewMatrix ).xyz;
 		vec3 tdE = vec3( 0.0 );
+		float tdL = 0.0, tdB = 0.0;   // the lamps', the beams'
 		for ( int i = 0; i < TOD_N; i ++ ) {
 			vec4 L = todLamp[ i ];
 			vec3 dv = L.xyz - tdP;
 			float d2 = dot( dv, dv );
 			if ( L.w > 0.0 && d2 < 576.0 ) {
-				float w = 1.0 - d2 / 576.0;
-				tdE += todLampCol * ( L.w * max( dot( tdN, dv ) * inversesqrt( d2 + 0.01 ), 0.0 ) * w * w / ( 1.0 + max( d2, 25.0 ) * 0.03 ) );
+				float w = 1.0 - d2 / 576.0, id = inversesqrt( d2 + 0.01 );
+				// a street light's head throws its light down: nothing above
+				// it, so the crown it hangs in stays dark and the road is lit
+				float down = smoothstep( -0.1, 0.45, dv.y * id );
+				tdL += ( L.w * down * max( dot( tdN, dv ) * id, 0.0 ) * w * w / ( 1.0 + max( d2, 25.0 ) * 0.02 ) );
 			}
 		}
 		for ( int i = 0; i < TOD_H; i ++ ) {
@@ -100,12 +104,19 @@ export const TOD_BLOCK = `
 				if ( d2 < D.w * D.w ) {
 					vec3 u = dv * inversesqrt( d2 + 0.01 );
 					float cone = smoothstep( 0.9, 0.975, dot( u, D.xyz ) );
-					// (a road is lit at a grazing angle: Lambert alone left the beam a smear)
-					float nl = dot( tdN, - u );
-					tdE += todHeadCol * ( H.w * cone * ( nl > 0.0 ? 0.3 + 0.7 * nl : 0.0 ) * ( 1.0 - d2 / ( D.w * D.w ) ) / ( 1.0 + d2 * 0.005 ) );
+					// (a road is lit at a grazing angle: Lambert alone left the
+					// beam a smear by the bumper; a dipped beam is brightest
+					// 10-20 m out, so the near metres are faded in)
+					float d = sqrt( d2 );
+					tdB += ( H.w * cone * step( 0.0, dot( tdN, - u ) ) * smoothstep( 1.5, 9.0, d ) * ( 1.0 - d2 / ( D.w * D.w ) ) / ( 1.0 + d2 * 0.0012 ) );
 				}
 			}
 		}
+		#ifdef TOD_ROAD
+		// asphalt is dark: its pools and beams are what a driver looks at
+		tdL *= 4.0; tdB *= 1.6;
+		#endif
+		tdE += todLampCol * tdL + todHeadCol * tdB;
 		#ifdef TOD_ROAD
 		// from further off than the nearest lamps reach, a street reads as
 		// lit: the average of its lamps, faded in past them (the air view)
@@ -286,7 +297,7 @@ export class TimeOfDay {
       get el() { return self.el; }, get az() { return self.az; }, get hour() { return self.hour; },
       get dusk() { return self.du; }, get night() { return self.ni; }, get on() { return self.on; },
       get ok() { return TOD.ok; }, get shadowsOff() { return self.shadowsOff; },
-      get lamps() { return self.lampCount; }, get relights() { return self.relights || 0; }, get heads() { return self.headCount; },
+      get lamps() { return self.lampCount; }, get lampList() { return TODU.todLamp.value.filter((v) => v.w > 0).map((v) => [Math.round(v.x), Math.round(v.y * 10) / 10, Math.round(v.z), Math.round(v.w * 100) / 100]); }, get relights() { return self.relights || 0; }, get heads() { return self.headCount; },
       get k() { return { ...TODK, win: TODU.todWin.value, winB: TODU.todWinB.value, tail: TODU.todTail.value, basic: TODU.todBasic.value, road: TODU.todRoad.value }; },
       choose: (m) => self.choose(m),
     };
@@ -512,7 +523,7 @@ export class TimeOfDay {
     // the last one in is the edge of the set: pools fade out toward it, so a
     // lamp leaving the set goes from dim to nothing, not from full
     const edge = best.length > TOD_N ? best[TOD_N].s : R;
-    const U = TODU.todLamp.value, I = 1.7 * this.lampK;
+    const U = TODU.todLamp.value, I = 2.6 * this.lampK;
     let n = 0;
     for (let i = 0; i < TOD_N; i++) {
       const e = best[i];
@@ -528,7 +539,7 @@ export class TimeOfDay {
 
   /** Your headlamps' beam, and the nearest cars' ahead of the view. */
   _heads(camera, player, cars) {
-    const P = TODU.todHeadP.value, Dd = TODU.todHeadD.value, I = 5.0 * TODK.head;
+    const P = TODU.todHeadP.value, Dd = TODU.todHeadD.value, I = 1.5 * TODK.head;
     let n = 0;
     const put = (v, k) => {
       const f = v.forward;

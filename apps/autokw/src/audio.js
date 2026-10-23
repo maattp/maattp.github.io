@@ -4023,7 +4023,7 @@ export class Audio {
     const low = clamp(1 - (A.alt - 6) / 40, 0, 1);         // birds keep to the trees
     if (this.loops) {
       // (snow lying hushes the city: weather.js)
-      this.loops.city.set(Math.pow(A.urban, 1.2) * 0.11 * cabin * high * (enc ? 0.3 : 1) * (1 - 0.45 * clamp(s.snowing || 0, 0, 1)), t, 0.6);
+      this.loops.city.set(Math.pow(A.urban, 1.2) * 0.11 * cabin * high * (enc ? 0.3 : 1) * (1 - 0.45 * clamp(s.snowing || 0, 0, 1)) * (1 - 0.5 * clamp(s.night || 0, 0, 1)), t, 0.6);
       // RAIN: a broad hiss outside; in a car the roof's drumming, lower
       // (the noise played slower) and a little quieter; in a bore, nearly gone
       if (this.loops.rain) {
