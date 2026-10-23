@@ -118,6 +118,15 @@
     z-index: 6; display: none; gap: 10px; align-items: end;
   }
   #app[data-fire="1"][data-mode="drive"] #fireBtns { display: flex; }
+  /* the turn signals (a road test's: g2test.js sets data-g2), where a rig's two would be */
+  #sigBtns {
+    position: absolute; right: calc(270px + var(--safe-r)); bottom: calc(14px + var(--safe-b));
+    z-index: 6; display: none; gap: 10px; align-items: end;
+  }
+  #app[data-g2="1"][data-mode="drive"] #sigBtns { display: flex; }
+  #app[data-pad="1"] #sigBtns { display: none !important; }
+  .b-sig { font-size: 20px; background: rgba(150,110,20,0.45); border-color: rgba(255,210,120,0.55); }
+  .b-sig.on { background: rgba(255,170,20,0.85); border-color: #ffe08a; color: #2a1a00; }
   .b-water { background: rgba(40,110,170,0.48); border-color: rgba(150,210,255,0.55); }
   .b-fire { background: rgba(170,30,30,0.48); border-color: rgba(255,160,150,0.55); }
 
@@ -525,6 +534,12 @@
     <div class="btn b-lg b-atk foot-only" data-btn="attack" data-hint="B">ATTACK</div>
   </div>
 
+  <!-- the turn signals, during a road test (g2test.js sets data-g2; , and . or LB / RB any time in a road car) -->
+  <div id="sigBtns">
+    <div class="btn b-sm b-sig" data-btn="sigL">◀</div>
+    <div class="btn b-sm b-sig" data-btn="sigR">▶</div>
+  </div>
+
   <div id="fireBtns">
     <div class="btn b-sm b-fire" data-btn="mission" data-hint="▼">MISSION</div>
     <div class="btn b-md b-water" data-btn="water" data-hint="RB">WATER</div>
@@ -659,7 +674,7 @@
     <pre id="bootLog"></pre>
     <div id="loadRotate">Turn sideways to play once it has loaded</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v75</div>
+    <div id="build">v76</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation NRCan CDEM / SRTM</div>
   </div>
   <script>

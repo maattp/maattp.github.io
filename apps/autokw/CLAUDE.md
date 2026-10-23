@@ -4079,6 +4079,124 @@ file and a guide disagree, this file wins.
   (it is a box round the camera); headlamps are the lenses glowing, no
   beams on the road; far LOD cars' lamps stay dark; Auto starts clear.
 
+- **The G2 road test** (src/g2test.js, `data/g2.json` from tools/kw/build_g2.py;
+  docs/g2-centre.jpg, g2-instruction.jpg, g2-sheet.jpg). Ontario's G2 (city)
+  and G (adds the freeway) road tests at **DriveTest Kitchener, 1405 Ottawa
+  St N** -- OSM's own `amenity=driving_school` node in the Ottawa Lackner
+  Centre (Ottawa St N at Lackner Blvd). `window.__noG2 = true` before boot
+  leaves it all out.
+  - **Where:** a green pillar (`LOT`, one MeshBasic draw within 320 m, none
+    in a test) on the lot's aisle in front of the unit; "DriveTest" lettered
+    on the strip's fascia (`addDriveTestSign` adds it to the plaza's `sh` /
+    `ten` before kwshops builds: DriveTest is an amenity, not a shop; navy on
+    white in CHAIN_COL -- the colours are a guess); a steering-wheel icon on
+    the maps (hud.js kind `g2`). ENTER on foot by the door / pillar (main.js
+    `tryInteract`: the examiner's white compsedan is brought round and you
+    are put in it) or stopped in your own car within 34 m (`tryDriveThru`;
+    any road car under 6.5 m that is not a bus) opens a DOM chooser (G2 / G,
+    keys 1 / 2, arrows + Space, a pad through `controls.bridge`), the world
+    held (`game.hold('g2')`, reaped like the minigames).
+  - **The route** (`pickWaypoints`): G2 = a signalled junction ~500 m out,
+    a two-way street to pull over on (`pull`), a residential street to turn
+    round on (`turn`), home (the street node by the plaza); G = a signal on
+    the way to the freeway, then `freewayLeg`: a MERGE (a ramp joining a
+    carriageway 1-3.6 km out) to the next EXIT 1.3 km+ on, the one ending
+    nearest the centre (in practice the Conestoga Pkwy west of Kitchener).
+    Eight tries, the loop whose planned legs (from the plaza round and back)
+    come nearest 2.6-4.2 km (G2) / 5.5-9 km (G) kept. Legs are Dijkstra on
+    the road graph (`plan`: one-way obeyed, `traffic.inComponent`, res 1.7x,
+    art 0.9x, roundabout edges 2.5x, freeways only on the G's legs or when
+    you are on one), planned from the car's current edge: a wrong turn is
+    re-planned 22 m off the path ("That's alright -- I'll take you a
+    different way"), never marked. Through a task-less waypoint the next leg
+    is planned 300 m before and joined on (`P.ext`), so the turn at it is
+    announced like any other. Directions (`nextMove`): a ramp, an exit, a
+    turn (> 38 deg at a 3+-way node) or a fork; worded by the junction's
+    control ("At the lights / the second set of lights", "At the stop sign",
+    "At the roundabout", else "Take the next / second right" counting the
+    side streets on that side) + " onto <name>"; said (toast) when it is the
+    next or second of its kind and within max(70, 8 s) m (650 m for ramps),
+    again as "Turn left here" at 45 m. The clipboard panel (#g2Panel, under
+    #hud) shows it, the distance, the posted limit, the speed, the marks and
+    the stalk; the next 1.2 km is drawn on both maps (`hud.fare`).
+  - **Tasks:** `pull` (stop within 1 m of the kerb, 15 m+ from a junction:
+    `pullSig` / `pullFar`, then signal left and go: `pullOut`; 75 s or
+    `pullNo`); `turn` (stop, then turn the car round 150 deg+: more than 5
+    moves `turnMoves`, 100 s `turnNo`; no centre-line or turn marks while
+    doing it); `lc` (G, asked at the merge while the route goes on: left lane,
+    then back right, each a lane change in that direction; 60 s `lcNo`).
+    Home: stopped within 70 m of the pillar off the road (or 22 m on it).
+  - **Marks** (`MARK`, weights this file's own; > 15 fails, `PASS_MAX`),
+    judged at 15 Hz on the edge the car is matched to (`match`: roadsNear,
+    alignment, hysteresis; lat = metres right of the edge's centreline):
+    rolling a stop sign (`checkJunction`: not under 1 km/h with the nose in
+    the last 10 m; judged with the nose 1 m over the bar, the bar is where
+    `A.back` says); a late amber (you could have stopped at its onset:
+    front > 0.8 v + v^2/6 + 1); right on red without stopping; speeding (>
+    limit + 5, freeway + 10, for 2.5 s; limits are OSM's `maxspeed` per edge
+    from g2.json within 6.5 km -- 20k edges, checked against roads.bin like
+    artlanes -- else res 40 / st 50 / art 60 / freeway maxspeed); no signal
+    (`sigRecent`: the stalk that way, on 0.4 s+, within 6 s) for a turn
+    (`onEdgeChange`, > 40 deg at a 3+-way node), a lane change (a sideways
+    move of max(2.8 m, 0.85 lane) within 5 s, on 2+ lanes, 12 m+ from a
+    junction, 35 m+ after a turn; the history runs on through collinear
+    joints), a merge or an exit; a wide turn (14 m into the street: in the
+    oncoming half, or a right turn not in the kerb lane); the kerb (a corner
+    at WALK_LIFT and off every carriageway while the centre is on the road;
+    once a strike; never on freeways or ramps, never by the plaza);
+    following under 1.2 s for 2.5 s (once a spell); over the centre line 1.5
+    s. **Fails:** a red light (judged after the line by the move the car
+    made: the light for L / S / R at the crossing; the advance arrow's `clr`
+    counts as its amber), a stop sign never under 15 km/h, the wrong way 12 m
+    down a one-way, 5 s on the wrong side, 30 (city) / 40 (freeway) over,
+    passing a stopped school bus (`traffic.onSchoolBusPass`), any crash over
+    impact 2, a pedestrian, a star of heat, leaving or losing the car.
+  - **The end:** the score sheet (#g2Sheet: PASS / FAIL, each mark with its
+    street, the examiner's line -- dry for a fail), `autokw-g2` keeps the
+    best per test; a pass pays $750 / $1,500 the first time ($250 / $400
+    after), puts "G2 licence" / "Full G licence" in the passport's extra
+    line (career.js) and medals the pause menu's job rows (gold clean).
+  - **The stalk** (player.js `stalk`, vehicles.js `driverLamps(..., stalk)`):
+    `,` / `.` (or `[` / `]`), LB / RB in a road car with a pad (not an
+    aircraft with gear, a fire rig, a plane), the ◀ ▶ buttons (#sigBtns,
+    shown only during a test -- `data-g2` -- where a rig's two would be;
+    they blink with the lamps). A press signals that way, again cancels;
+    it cancels itself once the car has turned 0.9 rad its way with the wheel
+    back. While on it IS the signal (the wheel's automatic one otherwise, as
+    before): no new draw, the lamp bits as before.
+  - **Verify:** `VIEW_PROBE_FILE=tools/kw/g2probe.js node tools/kw/kwshots.mjs
+    <dir>` (`window.__g2p = { only: 'clean,cleanG,marks', seed }`): the game
+    paused, traffic cleared, a real Vehicle moved by a kinematic driver (pure
+    pursuit on the lane line it means to be in, corners filleted, under the
+    limit, stops at stop lines and reds -- the signals' clock stepped --, the
+    stalk on before every turn, merge and lane shift, the tasks done, a
+    three-point turn that watches its corners). PASS = the whole G2 and G
+    from the lot and back with 0 marks, and 23 scenarios each giving exactly
+    its mark or fail (speed, excess, kerb, centre, wrongside, close, roll,
+    stopfail, red, amber, signal, wide, wide into a multi-lane road, lane,
+    wrongway; crash / bus / ped through the game's own hooks) plus the same
+    streets driven well with none. The score sheet still: `__g2p = { sheet:
+    1 }` as VIEW_PRE_FILE (a G2 with a stop rolled and a stretch over the
+    limit, its sheet left up).
+  - **Results:** g2probe PASS (seeds 11, 21, 33): G2 12.9 min / 5.3 km of
+    simulated driving, G 22 min / 15 km, 0 marks. trafficbench (phone, rail
+    off, clear) hashes identical to master at all six sites; seeded jcttraffic
+    and hwytraffic output identical; poleprobe identical (the boulevard tree
+    count moves run to run on both); AUTO_GPU=1 funprobe ALL OK (63 ok both);
+    0 exceptions. Phone spawn (seedrandom, GPU): master 175 draws / 1142k,
+    this 174-177 / 1138-1149k -- traffic's noise, every static group equal.
+    Route picking 7-18 ms on the desktop (once a test), a leg's Dijkstra ~2 ms.
+  - **Approximate / not done:** the marks' weights and PASS_MAX are made up
+    (MTO publishes no sheet); no school-zone limits, no parking task, no
+    hill park; a stop sign's line is the game's bar, and the stop is judged
+    with the nose up to a metre over it; yield signs and roundabout
+    right-of-way are not marked, nor is a left turn that finishes in the
+    kerb lane, a missed shoulder check or a too-slow freeway speed; lane
+    changes are told from the sideways drift on the matched edge, so a
+    sloppy weave over 2.8 m reads as one; the G's freeway is usually the
+    same stretch of the Conestoga and the G test runs ~20 min; DriveTest's
+    sign colours are a guess; the examiner speaks in toasts only.
+
 ## Build number
 
 `<div id="build">vN</div>` in index.html and `CACHE = 'autokw-vN'` in sw.js
@@ -4591,7 +4709,7 @@ __dbg.controls.stick.x; // must be 0, and _stickId must be 2
 
 GTA's: on foot A runs (held), X jumps, B punches, RT attacks, Y gets in; in a
 car RT / LT gas and brake, A the handbrake, X the tank's gun, L3 the horn, R3
-the siren, RB a rig's water, D-pad down a taxi's fares or a police car's
+the siren, RB a rig's water (LB / RB the turn signals in a road car, g2test.js), D-pad down a taxi's fares or a police car's
 missions (a rig's call), D-pad left / right the radio. The table is `PAD` in
 `controls.js`. **With a pad connected the on-screen buttons stay and wear the
 pad button as a badge** (`data-hint` in index.html), so the screen is the

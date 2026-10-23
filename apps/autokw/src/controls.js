@@ -24,6 +24,8 @@ const PAD = {
   warp: 2,        // X -- on the map, arms the spawn picker
   enter: 3,       // Y -- enter/exit vehicle
   gear: 4,        // LB -- in an aircraft with retractable gear, up and down
+  sigL: 4,        // LB -- in a road car, the left turn signal (player.js stalk)
+  sigR: 5,        // RB -- ...and the right
   sprintAlt: 5,   // RB -- run on foot too; the tank's machine gun, a rig's water
   brake: 6,       // LT -- analogue
   gas: 7,         // RT -- analogue; on foot, attack (GTA's fire)
@@ -67,6 +69,7 @@ export class Controls {
     this.sensitivity = 1;
     this.sirenTaps = 0;   // SIREN presses (button, G, R3) since takeSiren()
     this.gearTaps = 0;    // GEAR presses (button, L, LB) since takeGear()
+    this.sigTap = 0;      // the turn-signal stalk's last press since takeSignal(): -1 left, +1 right
 
     // --- gamepad ---
     this.hasPad = false;
@@ -130,6 +133,8 @@ export class Controls {
         if (b.dataset.tap) this.tapped = b.dataset.btn;
         if (b.dataset.btn === 'siren') this.sirenTaps++;
         if (b.dataset.btn === 'gear') this.gearTaps++;
+        if (b.dataset.btn === 'sigL') this.sigTap = -1;
+        if (b.dataset.btn === 'sigR') this.sigTap = 1;
       }, opts);
       const up = (e) => {
         if (!this._pointers.has(e.pointerId)) return;
@@ -163,6 +168,9 @@ export class Controls {
       if (e.code === 'KeyR' && this._ui) this._ui.radio = 1;   // the next station
       if (e.code === 'KeyG') this.sirenTaps++;
       if (e.code === 'KeyL') this.gearTaps++;
+      // the turn signals: , and . (the < and > keys), or [ and ]
+      if (e.code === 'Comma' || e.code === 'BracketLeft') this.sigTap = -1;
+      if (e.code === 'Period' || e.code === 'BracketRight') this.sigTap = 1;
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
@@ -244,6 +252,12 @@ export class Controls {
     if (edge(PAD.map)) this._ui.map = true;
     if (edge(PAD.siren)) this.sirenTaps++;
     if (edge(PAD.gear) && this.mode === 'drive') this.gearTaps++;
+    // in a road car (no gear to raise, no rig's water) LB / RB are the turn signals
+    const rd = this.root.dataset;
+    if (this.mode === 'drive' && rd.gear !== '1' && rd.fire !== '1' && rd.air !== '1') {
+      if (edge(PAD.sigL)) this.sigTap = -1;
+      if (edge(PAD.sigR)) this.sigTap = 1;
+    }
     if (edge(PAD.radioNext)) this._ui.radio = 1;
     if (edge(PAD.radioPrev)) this._ui.radio = -1;
     if (edge(PAD.confirm)) this._ui.confirm = true;
@@ -403,6 +417,13 @@ export class Controls {
     this.camDX = 0;
     this.camDY = 0;
     return d;
+  }
+
+  /** Consume the turn-signal stalk's press: -1 left, +1 right, 0 none. */
+  takeSignal() {
+    const n = this.sigTap;
+    this.sigTap = 0;
+    return n;
   }
 
   /** Consume the GEAR presses (as takeSiren). */

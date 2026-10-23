@@ -14681,10 +14681,11 @@ export class Vehicle {
    * reversing lamps rolling back, and the turn signal WITH THE WHEEL at town
    * speeds -- more than DRV_SIG_LOCK of lock for DRV_SIG_T s between 0.5 and
    * DRV_SIG_V m/s blinks that way, and stops DRV_SIG_HOLD s after the wheel
-   * comes back (a self-cancelling stalk, roughly; no stalk of its own).
+   * comes back (a self-cancelling stalk, roughly) -- or the STALK's way
+   * (`stalk` -1 left / +1 right, player.js) while it is on.
    * `t` is a running clock (s) for the blink. A towed trailer shows the same.
    */
-  driverLamps(dt, t, throttle, brake, steer) {
+  driverLamps(dt, t, throttle, brake, steer, stalk = 0) {
     const L = this._dl || (this._dl = { b: 0, dir: 0, on: 0, hold: 0 });
     const sp = this.vLong;
     let bits = 0;
@@ -14698,6 +14699,8 @@ export class Vehicle {
     else if (d) { L.dir = d; L.on = dt; L.hold = 0; }
     if (d && L.on >= DRV_SIG_T) L.hold = DRV_SIG_HOLD;
     else if (!d && L.hold > 0) L.hold -= dt;
+    // the stalk (player.js), when it is on, is the signal
+    if (stalk) { L.dir = stalk; L.hold = DRV_SIG_HOLD; L.on = 0; }
     if (L.hold > 0) {
       const lit = t % 0.7 < 0.35;
       bits |= L.dir < 0 ? LAMP_LON | (lit ? LAMP_L : 0) : LAMP_RON | (lit ? LAMP_R : 0);

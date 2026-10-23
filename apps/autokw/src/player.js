@@ -27,6 +27,8 @@ const CAM_TYPE = {
 // your feet; while swimming your feet ride this far under the surface.
 // ENTER acts at most once per this many ms of real time (update: the debounce)
 const ENTER_DEBOUNCE = 450;
+// the turn-signal stalk cancels itself once the car has turned this far its way (rad) and the wheel is back
+const SIG_CANCEL = 0.9;
 const SWIM_DEPTH = 1.3, SWIM_FEET = 0.18;
 // Treading water, upright: the feet this far down puts the surface across the
 // upper chest, the shoulders and sculling forearms at it.
@@ -116,6 +118,7 @@ export class Player {
     v.mode = 'free';
     v.setDetailed(true);
     this.onFoot = false;
+    this.sig = 0; this.sigOn = 0; this._sigH = undefined;
     this.h.group.visible = false;
     this.game.onEnterVehicle(v, wasMode);
     return true;
@@ -223,6 +226,9 @@ export class Player {
 
   update(dt, input, look, controls, traffic, peds) {
     this.attackCd -= dt;
+    // the turn-signal stalk's presses (controls.takeSignal: -1 left, +1 right),
+    // read by updateDrive
+    this._sigTap = controls && controls.takeSignal ? controls.takeSignal() : 0;
     // the pistol is in the right hand while you have rounds for it, on foot
     const F = this.fighter;
     F.gun.visible = this.onFoot && this.armed && this.ammo > 0 && !this.swimming && !this.sky;
@@ -611,6 +617,25 @@ export class Player {
     return false;
   }
 
+  /** The turn-signal stalk: the press, the self-cancel (see updateDrive). */
+  stalk(dt, v, steer) {
+    const tap = this._sigTap || 0;
+    this._sigTap = 0;
+    if (!v.spec.roadCar) { this.sig = 0; return; }
+    if (tap) {
+      this.sig = this.sig === tap ? 0 : tap;
+      this.sigOn = 0; this.sigTurn = 0;
+    }
+    let dh = v.heading - (this._sigH === undefined ? v.heading : this._sigH);
+    dh -= Math.round(dh / (2 * Math.PI)) * 2 * Math.PI;
+    this._sigH = v.heading;
+    if (!this.sig) return;
+    this.sigOn += dt;
+    // +heading is a LEFT turn (heading sense), and sig -1 is left
+    this.sigTurn += dh * -this.sig;
+    if (this.sigTurn > SIG_CANCEL && Math.abs(steer) < 0.25) { this.sig = 0; this.sigOn = 0; }
+  }
+
   updateDrive(dt, input, traffic, peds) {
     const v = this.vehicle;
     if (!v) { this.onFoot = true; this.h.group.visible = true; return; }
@@ -658,9 +683,15 @@ export class Player {
       sink: input.sinkAmt != null ? input.sinkAmt : brake,
       pilot: true,
     });
-    // its lamps: stop, reversing, the signal with the wheel (vehicles.js driverLamps)
+    // THE STALK (g2test.js marks a turn or a lane change without it): a press
+    // signals that way, the same press again or the other way cancels or
+    // switches, and it cancels itself as a real one does -- once the car has
+    // turned SIG_CANCEL that way and the wheel has come back. `sig` -1 is
+    // left, +1 right (traffic.js's sense); `sigOn` how long it has been on.
+    this.stalk(dt, v, steer);
+    // its lamps: stop, reversing, the signal with the wheel or the stalk (vehicles.js driverLamps)
     this._lampT = (this._lampT || 0) + dt;
-    v.driverLamps(dt, this._lampT, throttle, brake, steer);
+    v.driverLamps(dt, this._lampT, throttle, brake, steer, this.sig);
     if (v.wheelieDone) { if (this.game.onWheelie) this.game.onWheelie(v.wheelieDone); v.wheelieDone = 0; }
     // A tank aims, fires, and flattens what it has driven into, before the
     // buildings push back (tank.js).
