@@ -1671,6 +1671,9 @@ export class SignalHeads {
     const hm = new THREE.MeshLambertMaterial({ vertexColors: true });
     this.housing = new THREE.InstancedMesh(housingGeometry(), hm, this.capH);
     const lm = new THREE.MeshBasicMaterial({ map: lensAtlas(), toneMapped: false, side: THREE.DoubleSide });
+    // a lamp: never dimmed after dark (tod.js), and so a program of its own
+    lm.userData.todKeep = true;
+    lm.customProgramCacheKey = () => 'signalLens';
     lm.onBeforeCompile = (sh) => {
       sh.vertexShader = 'attribute float aCell;\n' + sh.vertexShader.replace('#include <uv_vertex>',
         '#include <uv_vertex>\n#ifdef USE_MAP\n  vMapUv = vec2((uv.x + aCell) * 0.25, uv.y);\n#endif');

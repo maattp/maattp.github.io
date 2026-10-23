@@ -7,6 +7,7 @@ import { Builder } from './build.js';
 import { clamp, lerp, angleWrap, hash2, rng, dist2 } from './util.js';
 import * as G from './geo.js';
 import { WXK } from './weather.js';
+import { TODK } from './tod.js';
 
 // Linear albedo. The two lightest were 0.95 and 0.99 red -- whiter than a
 // white shirt -- and under the noon sun both faces and hands came out chalk,
@@ -4198,7 +4199,9 @@ export class PedSystem {
       const civ = this.peds.length - copCount;
       const pv = player && player.vehicle ? Math.abs(player.vehicle.vLong) : 0;
       // fewer out walking in the rain and the snow (weather.js; WXK.peds 1 when dry)
-      const cap = WXK.peds < 1 ? Math.round(MAX_PEDS * WXK.peds) : MAX_PEDS;
+      // ...and late at night (tod.js; TODK.peds 1 by day)
+      const pk = WXK.peds * TODK.peds;
+      const cap = pk < 1 ? Math.round(MAX_PEDS * pk) : MAX_PEDS;
       this._fill = civ < cap - 8;
       this.timer = pv > 12 ? 0.5 : this._fill ? 0.12 : 0.2;
       if (civ < cap) this.spawn(px, pz, false, !this._fill);

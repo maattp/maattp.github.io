@@ -720,6 +720,27 @@ function facadeMat(f) {
             diffuseColor.rgb = mix(diffuseColor.rgb, pane * winMul, facGlass);
           }
         }`)
+      // The time of day (tod.js, TOD_ON from its block): at night each window
+      // the glazing mask finds is lit or dark by its own hash -- todWin of
+      // them -- warm or cool, a little brighter or dimmer. The window cell is
+      // the variety pass's (a quarter cell across, a quarter tile up), so a
+      // lit room is one window, not a pixel.
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        #ifdef TOD_ON
+        if (todWinB > 0.0) {
+          float facNG = 1.0 - smoothstep(0.16, 0.36, texture2D(roughnessMap, vRoughnessMapUv).g);
+          float facNU = vMapUv.x - facU0;
+          float facNC = floor(facNU / (facDu * 1.03125) + 0.02);
+          // the signs cell (index 4) keeps its own glow
+          if (facNG > 0.01 && abs(facNC - 4.0) > 0.5) {
+            vec2 facNW = vec2(floor(facNU / (facDu * 0.25)), floor(vMapUv.y * 4.0));
+            float facN1 = fract(sin(dot(facNW, vec2(12.9898, 78.233)) + vFacSeed * 3.17 + 5.31) * 43758.5453);
+            float facN2 = fract(facN1 * 37.13);
+            vec3 facNc = facN2 < 0.3 ? vec3(0.55, 0.68, 1.0) : vec3(1.0, 0.68, 0.36);
+            totalEmissiveRadiance += facNc * (facNG * step(facN1, todWin) * todWinB * (0.5 + 0.5 * facN2) * 1.1);
+          }
+        }
+        #endif`)
       // ...and a FLAT one. The cell's height noise is fine for masonry grain,
       // but reflected through a mirror it scattered the sky into glitter.
       // roughnessFactor is the packed G channel by now, so no extra tap.
@@ -1037,6 +1058,11 @@ export class World {
       // not like distance.
       far: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0.02, envMapIntensity: 0.85 }),
     };
+    // tod.js: lit windows at night on the far skyline and the curtain walls
+    // (a tagged material needs its own program key; the glass's hook is its own)
+    this.mats.far.userData.tod = 'win';
+    this.mats.far.customProgramCacheKey = () => 'farWin';
+    this.mats.glass.userData.tod = 'win';
     // Curtain wall is not one mirror. Each pane sits a fraction of a degree off
     // its neighbours, which is why a real glass tower reflects the sky as a
     // patchwork rather than as one smooth gradient. A per-pane hash tilts the
@@ -1141,6 +1167,13 @@ export class World {
       ovCloudDark: { value: lin(0x7c828a) },
       ovHaze: { value: lin(0xa9aeb2) },
       haze0: { value: lin(0xb9c3cf) },
+      // The time of day (tod.js): 0 is the day exactly (every use is behind
+      // `todOn > 0.0`); the glow on the sun's side of the horizon, the stars
+      // and the moon.
+      todOn: { value: 0 },
+      todGlow: { value: new THREE.Vector3() },
+      todStars: { value: 0 },
+      moonDir: { value: new THREE.Vector3(0, 1, 0) },
     };
     this.skyUniforms = uniforms;
     // ONE sky function for what you see and for what things reflect.
@@ -1151,8 +1184,13 @@ export class World {
     const SKY_FN = `
         uniform sampler2D tCloud;
         uniform vec3 sunDir, zenith, mid, horizon, haze, sunCol, cloudLit, cloudDark, groundHi, groundLo;
-        uniform float time, iblGain, overcast, skyFog;
-        uniform vec3 hazeToward, hazeAway, ovHor, ovZen, ovCloudLit, ovCloudDark;
+        uniform float time, iblGain, overcast, skyFog, todOn, todStars;
+        uniform vec3 hazeToward, hazeAway, ovHor, ovZen, ovCloudLit, ovCloudDark, todGlow, moonDir;
+        float todStarHash(vec3 p) {
+          p = fract(p * 0.3183099 + 0.1);
+          p *= 17.0;
+          return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+        }
         vec3 skyColor(vec3 d, float forIbl) {
           // Haze is brighter and warmer toward the sun (forward scattering)
           // and cooler away from it; main.js's fog takes the same blend.
@@ -1165,7 +1203,29 @@ export class World {
           float mu = max(dot(d, sunDir), 0.0);
           // Forward-scattering glow around the sun, then the disc.
           col += sunCol * (pow(mu, 6.0) * 0.16 + pow(mu, 60.0) * 0.35);
-          col = mix(col, vec3(1.0, 0.99, 0.95) * 1.4, smoothstep(0.9993, 0.9997, mu));
+          if (todOn > 0.0) {
+            // tod.js: a low sun's disc goes orange, the horizon glows on its side
+            vec3 discC = mix(vec3(1.0, 0.99, 0.95) * 1.4, vec3(1.45, 0.72, 0.32), 1.0 - smoothstep(0.02, 0.3, sunDir.y));
+            col = mix(col, discC, smoothstep(0.9993, 0.9997, mu) * smoothstep(-0.012, 0.004, h));
+            float tgA = max(dot(normalize(vec2(d.x, d.z) + 1e-5), normalize(vec2(sunDir.x, sunDir.z) + 1e-5)), 0.0);
+            col += todGlow * (pow(tgA, 3.0) * 0.9 + 0.18) * (1.0 - smoothstep(0.0, 0.42, abs(h)));
+            // stars, a moon (behind the clouds: they come next)
+            if (todStars > 0.0 && h > 0.0) {
+              vec3 q = d * 260.0;
+              vec3 cid = floor(q);
+              float sh = todStarHash(cid);
+              if (sh > 0.9965) {
+                float sd = length(fract(q) - 0.5);
+                float sb = (sh - 0.9965) / 0.0035;
+                col += vec3(0.85 + 0.15 * sb, 0.88, 0.95 + 0.05 * (1.0 - sb)) * (1.0 - smoothstep(0.12, 0.38, sd)) * (0.35 + 0.9 * sb) * todStars * smoothstep(0.03, 0.25, h);
+              }
+              float mm = dot(d, moonDir);
+              col += vec3(0.16, 0.18, 0.24) * pow(max(mm, 0.0), 60.0) * todStars;
+              col = mix(col, vec3(0.92, 0.92, 0.86) * 1.15, smoothstep(0.99962, 0.99972, mm) * todStars);
+            }
+          } else {
+            col = mix(col, vec3(1.0, 0.99, 0.95) * 1.4, smoothstep(0.9993, 0.9997, mu));
+          }
           // overcast (weather.js): the blue, the glow and the disc go grey
           if (overcast > 0.0) col = mix(col, mix(ovHor, ovZen, smoothstep(0.0, 0.9, e)), overcast);
 
@@ -5204,6 +5264,8 @@ float frLine(float o, float fw, float c, float w) {
     // caller of the unguarded pushes) runs inside this step, and chunk builds
     // run one at a time, as this._ck already assumes.
     this._fell = [];
+    // the lamp heads drawn here (tod.js: the night's light pools), x y z each
+    this._lampRec = lod === 1 ? [] : null;
     this._treeRecs = null;
     this._decor = FALL && lod === 1 ? [] : null;
     this._dcar = lod === 1 ? [] : null;
@@ -5402,6 +5464,8 @@ float frLine(float o, float fw, float c, float w) {
     // the cars in the driveways, for kwdriveway.js
     grp.userData.dcars = this._dcar && this._dcar.length ? new Float32Array(this._dcar) : null;
     this._dcar = null;
+    grp.userData.lamps = this._lampRec && this._lampRec.length ? new Float32Array(this._lampRec) : null;
+    this._lampRec = null;
     this._aprons = null;
     yield;
     add(bl.glass, this.mats.glass, true, true); yield;
@@ -10956,6 +11020,7 @@ float frLine(float o, float fw, float c, float w) {
           flat.box(hx, gy + 8.95, hz, 0.75, 0.16, 0.5, ang, HEAD);
           glow.box(hx, gy + 8.93, hz, 0.6, 0.03, 0.38, ang, [1.0, 0.97, 0.9]);
         }
+        if (this._lampRec) this._lampRec.push(wx, gy + 8.93, wz);
         city.addObstacle(this._ck, wx, wz, 0.35);
         for (const t of [-3.6, 3.6]) city.addObstacle(this._ck, wx - uz * t, wz + ux * t, 1.1);
         S.poles++;
@@ -11046,6 +11111,7 @@ float frLine(float o, float fw, float c, float w) {
       flat.box(ox - qx * 1.1, gy + 8.7, oz - qz * 1.1, 0.1, 0.1, 2.2, ar, [0.55, 0.56, 0.57]);
       flat.box(ox - qx * 2.35, gy + 8.55, oz - qz * 2.35, 0.36, 0.2, 0.75, ar, [0.6, 0.61, 0.62]);
       glow.box(ox - qx * 2.35, gy + 8.47, oz - qz * 2.35, 0.28, 0.08, 0.55, ar, [1.0, 0.86, 0.6]);
+      if (this._lampRec) this._lampRec.push(ox - qx * 2.35, gy + 8.47, oz - qz * 2.35);
       // the span back to the previous pole
       const sp = k * SPAN - SPAN;
       if (sp < s0 + 6 && !back) continue;
@@ -11092,6 +11158,7 @@ float frLine(float o, float fw, float c, float w) {
       flat.box(x + ax * 2.55, gy + 10.15, z + az * 2.55, 0.08, 0.08, 0.9, rot, GALV);
       flat.box(x + ax * 3.15, gy + 10.0, z + az * 3.15, 0.36, 0.13, 0.8, rot, [0.5, 0.51, 0.52]);
       glow.box(x + ax * 3.15, gy + 9.93, z + az * 3.15, 0.28, 0.03, 0.62, rot, [1.0, 0.97, 0.9]);
+      if (this._lampRec) this._lampRec.push(x + ax * 3.15, gy + 9.93, z + az * 3.15);
       this.city.addObstacle(this._ck, x, z, 0.3);
       return;
     }
@@ -11105,6 +11172,7 @@ float frLine(float o, float fw, float c, float w) {
         flat.box(x + (az * u - ax * v) * 0.17, gy + 4.1, z + (-ax * u - az * v) * 0.17, 0.035, 0.5, 0.035, rot, BLACK);
       }
       glow.box(x, gy + 4.12, z, 0.3, 0.44, 0.3, rot, LIT);
+      if (this._lampRec) this._lampRec.push(x, gy + 4.3, z);
       flat.prism(x, gy + 4.6, z, 0.3, 0.07, 4, BLACK, Math.PI / 4 + rot);
       flat.prism(x, gy + 4.67, z, 0.18, 0.1, 4, BLACK, Math.PI / 4 + rot);
       flat.prism(x, gy + 4.77, z, 0.035, 0.18, 6, BLACK);
@@ -11120,6 +11188,7 @@ float frLine(float o, float fw, float c, float w) {
       flat.box(x + ax * 1.25, gy + 6.66, z + az * 1.25, 0.09, 0.09, 0.42, rot, BLACK);
       flat.box(x + ax * 1.55, gy + 6.5, z + az * 1.55, 0.3, 0.12, 0.6, rot, [0.12, 0.12, 0.13]);
       glow.box(x + ax * 1.55, gy + 6.44, z + az * 1.55, 0.22, 0.03, 0.48, rot, LIT);
+      if (this._lampRec) this._lampRec.push(x + ax * 1.55, gy + 6.44, z + az * 1.55);
       this.city.addObstacle(this._ck, x, z, 0.3);
       return;
     }
@@ -11131,6 +11200,7 @@ float frLine(float o, float fw, float c, float w) {
     flat.box(x + ax * 0.45, gy + 7.45, z + az * 0.45, 0.05, 0.6, 0.05, rot, [0.56, 0.57, 0.58]);
     flat.box(x + ax * 2.35, gy + 7.68, z + az * 2.35, 0.36, 0.2, 0.78, rot, [0.6, 0.61, 0.62]);
     glow.box(x + ax * 2.35, gy + 7.6, z + az * 2.35, 0.28, 0.06, 0.58, rot, LIT);
+    if (this._lampRec) this._lampRec.push(x + ax * 2.35, gy + 7.6, z + az * 2.35);
     this.city.addObstacle(this._ck, x, z, 0.3);
   }
 

@@ -3,6 +3,7 @@
 import * as THREE from './three.js';
 // first after three: it hooks every material made from here on (weather.js)
 import { Weather, testWeatherShaders } from './weather.js';
+import { TimeOfDay } from './tod.js';
 import * as G from './geo.js';
 import { cityGenerator, cityStats } from './citygen.js';
 import { loadMapData } from './mapdata.js';
@@ -732,20 +733,27 @@ const FOG_HEX = 0xb9c3cf;
 // ...and under a grey sky (weather.js: `over` 0..1; at 0 exactly the above)
 const FOG_OVER = 0xa4a9ae;
 let fogOver = 0;
+// ...as encoded components, which the time of day moves (tod.js; by day they
+// are exactly these two hexes)
+const hexRGB = (h) => [((h >> 16) & 255) / 255, ((h >> 8) & 255) / 255, (h & 255) / 255];
+const fogTone = { base: hexRGB(FOG_HEX), over: hexRGB(FOG_OVER) };
 function syncFogColour(over) {
   if (over !== undefined) fogOver = over;
   if (!scene || !scene.fog) return;
+  const B = fogTone.base, O = fogTone.over;
   if (postfx && postfx.enabled) {
-    scene.fog.color.setRGB(((FOG_HEX >> 16) & 255) / 255, ((FOG_HEX >> 8) & 255) / 255, (FOG_HEX & 255) / 255,
-      THREE.LinearSRGBColorSpace);
-    if (fogOver > 0) scene.fog.color.lerp(_fogOverC.setRGB(((FOG_OVER >> 16) & 255) / 255, ((FOG_OVER >> 8) & 255) / 255, (FOG_OVER & 255) / 255, THREE.LinearSRGBColorSpace), fogOver);
+    scene.fog.color.setRGB(B[0], B[1], B[2], THREE.LinearSRGBColorSpace);
+    if (fogOver > 0) scene.fog.color.lerp(_fogOverC.setRGB(O[0], O[1], O[2], THREE.LinearSRGBColorSpace), fogOver);
   } else {
-    scene.fog.color.set(FOG_HEX);
-    if (fogOver > 0) scene.fog.color.lerp(_fogOverC.set(FOG_OVER), fogOver);
+    // (Color.set(hex) is setRGB in sRGB: the same conversion)
+    scene.fog.color.setRGB(B[0], B[1], B[2], THREE.SRGBColorSpace);
+    if (fogOver > 0) scene.fog.color.lerp(_fogOverC.setRGB(O[0], O[1], O[2], THREE.SRGBColorSpace), fogOver);
   }
 }
 const _fogOverC = new THREE.Color();
 let weather = null;   // weather.js
+let tod = null;       // tod.js
+let sunParked = false;   // tod.js night: the sun's shadow pass is skipped
 let fogAltK = 1;      // the haze's thickening with altitude (frame), times the weather's (draw)
 // The shadow camera's own axes. It looks along -SUN_OFFSET with world up, so
 // these are exactly the basis three's lookAt builds for it every frame.
@@ -1222,6 +1230,9 @@ function installShadowFade() {
   world.buildSky(SUN_OFFSET);
   weather = new Weather({ scene, world, sun, hemi, amb: ambLight, phone: ON_PHONE,
     ground: (x, z) => G.terrainHeight(x, z), syncFog: syncFogColour });
+  // the time of day: Day (the default) is all of the above, untouched
+  tod = new TimeOfDay({ world, sun, hemi, amb: ambLight, weather, fog: fogTone, syncFog: () => syncFogColour(),
+    sunDir: SUN_OFFSET, renderer });
   const terrGen = world.buildTerrain();
   let tr = terrGen.next();
   while (!tr.done) {
@@ -2373,6 +2384,7 @@ function makePadMenu() {
         { el: document.getElementById('rowQuality'), kind: 'seg' },
         { el: document.getElementById('setShadows'), kind: 'click' },
         { el: document.getElementById('rowWeather'), kind: 'seg' },
+        { el: document.getElementById('rowTod'), kind: 'seg' },
         { el: document.getElementById('setMusic'), kind: 'click' },
         { el: document.getElementById('setSound'), kind: 'click' },
         { el: document.getElementById('setSens'), kind: 'range' },
@@ -2682,6 +2694,13 @@ function wireUi() {
     el.addEventListener('click', () => { if (weather) weather.choose(el.dataset.weather); paintWx(); idleRedraw = true; });
   }
   paintWx();
+  // the time of day (tod.js): saved as autokw-tod
+  const todBtns = Array.from(document.querySelectorAll('[data-tod]'));
+  const paintTod = () => { for (const b of todBtns) b.classList.toggle('on', !!tod && b.dataset.tod === tod.setting); };
+  for (const el of todBtns) {
+    el.addEventListener('click', () => { if (tod) tod.choose(el.dataset.tod); paintTod(); idleRedraw = true; });
+  }
+  paintTod();
   bind('setMusic', 'music', (v) => { audio.musicOn = v; });
   // The station picker. The radio button in the HUD cycles the same list.
   const stEl = document.getElementById('stations');
@@ -3661,6 +3680,8 @@ function audioState(dt, input, p, camDir, buried) {
     rain: weather ? weather.cur.rain : 0,
     snowing: weather ? weather.cur.snow : 0,
     wet: weather ? weather.wet : 0,
+    // the city's hum quieter after dark (tod.js; 0 by day)
+    night: tod ? tod.ni : 0,
     inCar: !player.onFoot,
     onFoot: player.onFoot,
     vehicle: v,
@@ -3732,6 +3753,12 @@ function draw(now) {
     streetSigns.update(camera, draw.lastSt ? Math.min(0.1, (now - draw.lastSt) / 1000) : 0);
     draw.lastSt = now;
   }
+  // the time of day first: its lights are the weather's base, its headlamp
+  // factor goes into weather's (tod.js)
+  if (tod) {
+    tod.draw(camera, player, traffic ? traffic.cars : null, now / 1000);
+    nightShadows(tod.shadowsOff);
+  }
   if (weather) {
     weather.draw(camera, now / 1000);
     if (scene.fog) scene.fog.density = baseFogDensity * fogAltK * weather.fogK;
@@ -3766,6 +3793,34 @@ function draw(now) {
     perfRender.sceneMs += t1 - t0;
     perfRender.postMs += performance.now() - t1;
     perfRender.frames++;
+  }
+}
+/**
+ * Moonlight casts no shadow worth a pass (tod.js `shadowsOff`). The box is
+ * parked far under the world -- every receiver then falls outside it and
+ * getShadow skips its taps -- one empty map is drawn there, and the shadow
+ * map stops updating: no shadow pass at all, and no recompile (the programs
+ * still bind the map). Day puts it all back.
+ */
+let parkFrames = 0;
+function nightShadows(off) {
+  const sm = renderer.shadowMap;
+  if (off) {
+    if (!sunParked) { sunParked = true; parkFrames = 0; }
+    if (nearShadow) nearShadow.on = false;
+    sun.target.position.set(0, -1e5, 0);
+    sun.position.set(SUN_OFFSET.x, -1e5 + SUN_OFFSET.y, SUN_OFFSET.z);
+    sun.target.updateMatrixWorld();
+    sun.updateMatrixWorld();
+    // two frames drawn parked (the cache and the player's map empty), then none
+    if (parkFrames++ >= 2) sm.autoUpdate = false;
+  } else if (sunParked) {
+    sunParked = false;
+    sm.autoUpdate = true;
+    sm.needsUpdate = true;
+    if (nearShadow) nearShadow.on = true;
+    if (shadowCache) shadowCache.invalidate();
+    if (player) placeSun(player.x, player.y, player.z);
   }
 }
 const sceneStats = { calls: 0, tris: 0 };

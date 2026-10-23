@@ -3828,7 +3828,7 @@ file and a guide disagree, this file wins.
     noise: the lamps add no draw), sig-1644 queue 280 / 1415k -> 274 / 1401k,
     uptown queue 291 / 1152k -> 285 / 1137k, uptown left 185 / 1133k -> 183 /
     1122k.
-  - **Approximate / not done:** no headlamps or night (there is no night);
+  - **Approximate / not done:** (headlamps and night: "Night" below, src/tod.js);
     a freeway lane change signals only while moving over (fwyDecide has no
     signal-first step, and adding one would change traffic); a turn is
     signalled from 40 m + 2.5 s even when a junction it goes straight
@@ -4194,8 +4194,9 @@ file and a guide disagree, this file wins.
   (leaves on the trees, pumpkins); snow lies on parking lots and the mid
   ring's merged roads (no flag tells them from ground); no wipers, no
   splashes or ripples, no lightning; rain falls through bridges and roofs
-  (it is a box round the camera); headlamps are the lenses glowing, no
-  beams on the road; far LOD cars' lamps stay dark; Auto starts clear.
+  (it is a box round the camera); far LOD cars' lamps stay dark; Auto
+  starts clear. (Beams on the road and the time of day's light base:
+  "Night" below -- tod.js writes the lights as this file's `base`.)
 
 - **The G2 road test** (src/g2test.js, `data/g2.json` from tools/kw/build_g2.py;
   docs/g2-centre.jpg, g2-instruction.jpg, g2-sheet.jpg). Ontario's G2 (city)
@@ -4314,6 +4315,116 @@ file and a guide disagree, this file wins.
     sloppy weave over 2.8 m reads as one; the G's freeway is usually the
     same stretch of the Conestoga and the G test runs ~20 min; DriveTest's
     sign colours are a guess; the examiner speaks in toasts only.
+
+- **Night: src/tod.js** (docs/night-king.jpg, night-dusk-401.jpg,
+  night-kitchener-air.jpg, night-res-lamps.jpg). The pause menu's Time of
+  day row: **Day** (the default: the game exactly as before), **Real clock**
+  (the device's wall clock read as Waterloo's local time, the sun where it
+  really is at 43.47 N on today's date -- `solarAt`, NOAA's approximation,
+  Ontario's DST; re-solved every 10 s of frames), **Dusk** (the sun 1.5 deg
+  up at today's real sunset azimuth) and **Night** (22:30 today), saved as
+  localStorage `autokw-tod`. Harness: `window.__tod = 'night' | 'dusk' |
+  'day' | 'real' | <hour>` snaps at the next frame; `window.__todInfo` is the
+  live state (el, az, hour, dusk / night 0..1, lamps, heads, relights,
+  `lampList`, `k`). The look is two numbers from the sun's elevation:
+  `du` (dusk, 16 deg -> 3 deg up, gone by -8) and `ni` (night, 1 -> -10 deg);
+  Real clock with the sun over 16 deg is Day, exactly.
+  **THE LAW (weather.js's): Day changes nothing.** Every shader term is
+  behind `todOn` (0), the sky's uniforms and the lights keep main.js /
+  world.js's values (copied at construction and written back), the IBL is
+  never re-rendered, TODK's factors are exactly 1.
+  `tools/kw/nightprobe.js` checks it against `tools/kw/nightmaster.json`
+  (master's lights, fog and 31 sky uniforms, captured by running the same
+  probe on master: it prints `SNAP <json>` when tod.js is absent).
+  - **One hook.** TOD_BLOCK goes in through weather.js's
+    `Material.prototype.onBuild`, AFTER `<emissivemap_fragment>` (weather's
+    block stays before it), into every standard / lambert / phong program;
+    tags by `userData.tod` ('win') and weather's `wx` road tags (TOD_ROAD),
+    each with its own program key (`farWin` for the far skyline; the glass's
+    and the roads' hooks are their own). A MeshBasic with a map (signs,
+    banners, lettering) is dimmed to `todBasic` 0.42 at night
+    (`TOD_BASIC`); one that is a lamp sets `userData.todKeep` and a program
+    key of its own (junctions.js's signal lenses). `testWeatherShaders`
+    compiles both blocks on throwaway materials first; if that fails the
+    time of day alone is dropped (`TOD.ok` false: Day, always) and the
+    weather's block tried on its own.
+  - **Sky** (world.js buildSky, no new draw): `todOn` / `todGlow` /
+    `todStars` / `moonDir` in the dome's own shader -- the disc goes orange
+    and sinks to the real sun (`sunDir` slerps from the game's sun below 16
+    deg), a warm glow on the sun's side of the horizon, hashed stars (cells
+    of 1/260 rad) and a moon (SE, 33 deg up) behind the clouds; the colour
+    stops (`zenith`, `mid`, `horizon`, `haze0`, `sunCol`, `cloudLit/Dark`,
+    `groundHi/Lo`, the overcast greys, `hazeToward/Away`) lerped day ->
+    `DUSK` -> `NIGHT`. **The IBL is the ambient**, so it is re-rendered
+    (`world.relightSky`) at quantised looks (du in quarters, ni in sixths:
+    a few renders through an evening on the real clock, never by day), with
+    the weather's own overcast step. Fog colour follows (main.js `fogTone`,
+    which syncFogColour now reads; by day the same two hexes).
+  - **Lights** (no new THREE light): the sun keeps its direction (the
+    shadow cache, trees and the fog's sun side are built round it) and
+    becomes a dim cool moonlight; hemisphere and ambient go blue and stay
+    readable on a phone. tod writes them as weather.js's `base`, so the
+    weather's multipliers stack on top. **The shadow pass is skipped at
+    night** (`shadowsOff`, ni > 0.6; main.js `nightShadows`): the sun's box
+    is parked under the world (every receiver falls outside it, getShadow
+    skips its taps), the near-shadow map parks itself, two frames are
+    drawn so both maps are empty, then `shadowMap.autoUpdate = false` --
+    no recompile. Day puts it back and invalidates the cache.
+  - **Lights without lights.** Windows: world.js facadeMat's own windows
+    (the glazing mask, the variety pass's window cell, a hash per window,
+    `todWin` of them lit -- 0.55 in the early evening, 0.4 at 22:30, ~0.1
+    at 4 am -- warm or cool; not the signs cell, which keeps its glow) and a
+    procedural 3 x 3.5 m grid on the `win` materials' vertical faces (glass
+    towers, the far skyline; faded to its average past 250-900 m). Street
+    lamps: every lamp head the near chunks draw is recorded
+    (`grp.userData.lamps`: hydro cobra heads, `_eraLamp` 1-4, lot standards)
+    plus Uptown's King St posts (kwplaces.js -> `STATIC_LAMPS`); every 0.2 s
+    or 6 m the `TOD_N` (8 phone / 12) nearest a point 28 m ahead of the
+    camera go into `todLamp` (fading out toward the set's edge), lighting
+    everything below the head (`down`: a luminaire throws its light down,
+    so the crown it hangs in stays dark) with Lambert and a 24 m reach;
+    on the roads x4 (asphalt is dark and the pools are what you see).
+    Past 70-260 m the roads take an even warm glow (`todRoad`): the air
+    view's lit street grid. Beams: your road car's and the 3 nearest moving
+    cars' ahead of the view (`TOD_H` 4 cones in the same block, 55 m, dipped
+    4 deg, brightest 10-20 m out); headlamp lenses through weather's
+    `wxHead` (now the max of the weather's and `TODK.head`); tail lamps
+    glow at a third of a stop lamp (`todTail`, vehicles.js trim shader).
+  - **Life:** `TODK.peds` (peds.js cap x WXK.peds: ~0.6 at 22:30, 0.15
+    small hours), `TODK.traffic` (traffic.js TRAFFIC_TARGET: 0.96 at
+    22:30, 0.35 after 2 am); the city's hum half as loud at night (audio.js
+    `night`). All exactly 1 by day.
+  - **Verify:** `VIEW_PROBE_FILE=tools/kw/nightprobe.js node
+    tools/kw/kwshots.mjs <dir>` (ALL OK: Day = master's snapshot before and
+    after a night, every setting, the real clock on a mocked Date -- 03:00
+    night, 12:00 day, 18:15 dusk, then sinking on its own -- lit windows,
+    lamps, shadow pass off, the menu). Views: `cat tools/kw/artseat.js
+    tools/kw/nightseat.js > pre.js; VIEW_PRE_FILE=pre.js
+    VIEWS=tools/kw/nightviews.json` (`__carSeat`: your car in the lane,
+    camera behind it). Measured (AUTO_PHONE=1, GPU): Day vs master, seeded,
+    the kwshots air views: no colour shift (mean signed difference of the
+    lower halves < 0.01 levels, what is left is grain), draws within
+    master's run-to-run wander (177/284/215/147/225 -> 176/282/212/145/220);
+    trafficbench (rail off, clear, `__tod="day"`) all six hashes = master;
+    weatherprobe ALL PASS; AUTO_GPU=1 funprobe ALL OK; 0 exceptions. Night
+    vs day at the same pose: scene draws equal (247 / 247 on King St, 229 /
+    229 in the probe); the shadow pass 16-29 draws -> 0-1; perfaudit 8x CPU
+    (frame mean, day -> night): spawn 12.2 -> 10.4 ms, King St 13.0 ->
+    11.6, the Parkway 13.8 -> 12.7.
+  - **Approximate / not done:** the light's direction does not move with
+    the sun (only the disc does), so dusk shadows fall from the afternoon
+    sun; the moon has no phase and is in a fixed place; no fill or pools
+    from lamps the chunk builders do not draw (landmarks' own light
+    standards, the square's, parking lots inside kw.js / kwshops clusters);
+    the landmarks' and King St heritage blocks' windows (modelled geometry,
+    vertex colour) stay dark; storefronts are not lit from inside; far-LOD
+    and scenery cars have no lamps at night; traffic's beams are only the
+    3 nearest; signs are dimmed evenly (no lit vs unlit signs); the lamp
+    light ignores occlusion (it reaches through a wall to the other side);
+    the phone GPU's fill cost of the block (up to 8 lamps + 4 beams per lit
+    pixel, at night only) is not measured on the iPhone -- the Mac harness
+    shows the CPU side only. Rural roads carry no street lights, so the
+    countryside is lit only by your beams.
 
 ## Build number
 

@@ -11,6 +11,7 @@
 import * as THREE from './three.js';
 import { Builder, dropGeometryArrays } from './build.js';
 import { WXK, WXU } from './weather.js';
+import { TODU } from './tod.js';
 import { makeHumanoid, buildCharacter, BONES, gripHands } from './peds.js';
 import { clamp, lerp, hash2, damp } from './util.js';
 import * as G from './geo.js';
@@ -11233,7 +11234,9 @@ function glassShader(sh) {
   sh.uniforms.plateTex = { value: plateAtlas() };
   // headlamps on in rain, snow and fog (weather.js; 0 in clear weather)
   sh.uniforms.wxHead = WXU.wxHead;
-  sh.vertexShader = 'attribute float glass;\nvarying float vHeadL;\nvarying float vGlass;\nvarying float vShade;\nvarying float vTint;\nvarying float vPlate;\nvarying float vPlateK;\nvarying vec3 vLampE;\nvarying float vLampOff;\n' + LAMP_GLSL + sh.vertexShader
+  // tail lamps' running glow after dark (tod.js; 0 by day)
+  sh.uniforms.todTail = TODU.todTail;
+  sh.vertexShader = 'attribute float glass;\nuniform float todTail;\nvarying float vHeadL;\nvarying float vGlass;\nvarying float vShade;\nvarying float vTint;\nvarying float vPlate;\nvarying float vPlateK;\nvarying vec3 vLampE;\nvarying float vLampOff;\n' + LAMP_GLSL + sh.vertexShader
     // the lamp state (LAMP_STEP: the z scale), read once
     .replace('void main() {', `void main() {
 	float lampB = floor( ( length( modelMatrix[ 2 ].xyz ) / length( modelMatrix[ 1 ].xyz ) - 1.0 ) * ${LAMP_STEP.toFixed(1)} + 0.5 );`)
@@ -11256,6 +11259,8 @@ function glassShader(sh) {
 	// an unlit lens is a darker red / amber than the bare TAILC / AMBER trim was
 	// (not the stop arm's face: it is a sign, not a lens)
 	vLampOff = glass > 4.5 && ( glass < 10.5 || glass > 11.5 ) && vLampE.r < 0.01 ? 1.0 : 0.0;
+	// after dark the tail lamps (stop / tail lenses, not lit for a stop) glow
+	if ( todTail > 0.0 && ( ( glass > 4.5 && glass < 5.5 ) || ( glass > 7.5 && glass < 8.5 ) ) && vLampE.r < 0.01 ) vLampE = LAMP_RED * 0.32 * todTail;
 	vPlateK = mod( floor( ( length( modelMatrix[ 0 ].xyz ) / length( modelMatrix[ 1 ].xyz ) - 1.0 ) * ${PLATE_STEP.toFixed(1)} + 0.5 ), ${PLATE_N.toFixed(1)} );`);
   let fs = 'varying float vHeadL;\nuniform float wxHead;\nvarying float vGlass;\nvarying float vShade;\nvarying float vTint;\nvarying float vPlate;\nvarying float vPlateK;\nvarying vec3 vLampE;\nvarying float vLampOff;\nuniform sampler2D plateTex;\n' + sh.fragmentShader;
   if (THREE.ShaderChunk.envmap_physical_pars_fragment.includes(GLASS_IBL_FROM)) {

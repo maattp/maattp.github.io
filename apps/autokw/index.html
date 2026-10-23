@@ -606,6 +606,12 @@
         <button class="segbtn" data-weather="rain">Rain</button>
         <button class="segbtn" data-weather="snow">Snow</button>
       </div></div>
+      <div class="row" id="rowTod"><span>Time of day</span><div class="seg">
+        <button class="segbtn" data-tod="day">Day</button>
+        <button class="segbtn" data-tod="real">Real clock</button>
+        <button class="segbtn" data-tod="dusk">Dusk</button>
+        <button class="segbtn" data-tod="night">Night</button>
+      </div></div>
       <div class="row"><span>Radio</span><div class="toggle" id="setMusic"></div></div>
       <div class="stgrid" id="stations"></div>
       <div class="row"><span>Sound effects</span><div class="toggle" id="setSound"></div></div>
@@ -674,7 +680,7 @@
     <pre id="bootLog"></pre>
     <div id="loadRotate">Turn sideways to play once it has loaded</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v77</div>
+    <div id="build">v78</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation NRCan CDEM / SRTM</div>
   </div>
   <script>
