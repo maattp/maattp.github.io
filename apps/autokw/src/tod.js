@@ -50,6 +50,11 @@ export const TODU = {
   todHeadCol: { value: new THREE.Color(1.0, 0.95, 0.85) },
   todTail: { value: 0 },
 };
+/** The uniforms only read behind `todOn` (uploaded only while it is on).
+ *  Not todWinB: world.js facadeMat's lit windows test it, not todOn, so it
+ *  must always reach every program (as todOn does). */
+const TOD_GATED = ['todWin', 'todRoad', 'todBasic', 'todLamp', 'todLampCol', 'todHeadP', 'todHeadD', 'todHeadCol'];
+for (const k of TOD_GATED) TODU[k].needsUpdate = false;
 /** Gameplay factors: EXACTLY 1 (head 0) by day. */
 export const TODK = { peds: 1, traffic: 1, head: 0 };
 /** Shader install state: `ok` false after a failed compile (Day, always). */
@@ -403,6 +408,13 @@ export class TimeOfDay {
     // what fraction of windows are lit: early evening most, the small hours few
     const late = h >= 17 ? sstep(19.5, 24, h) * 0.55 : h < 6 ? 0.55 + 0.3 * sstep(0, 3.5, h) - 0.6 * sstep(5, 6.5, h) : 0.85;
     TODU.todOn.value = on && (dark > 0 || ni > 0) ? 1 : 0;
+    // Every TOD uniform but todOn itself is read only behind todOn: by day
+    // three skips them (`needsUpdate` false) -- it flattened and compared the
+    // lamp and beam arrays (24 vec4s) and checked the rest on every material
+    // switch, ~0.3 ms a frame at 8x CPU. todOn is always uploaded, so a
+    // program that last saw it on is told it is off.
+    const live = TODU.todOn.value > 0;
+    for (const k of TOD_GATED) TODU[k].needsUpdate = live;
     TODU.todWin.value = on ? Math.max(0.08, 0.6 - 0.5 * late) : 0;
     TODU.todWinB.value = on ? dark : 0;
     TODU.todTail.value = on ? sstep(4, -3, el) : 0;

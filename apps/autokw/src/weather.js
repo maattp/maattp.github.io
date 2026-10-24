@@ -566,6 +566,10 @@ export class Weather {
     WXU.wxOn.value = any && WX.ok ? 1 : 0;
     WXU.wxWet.value = wet;
     WXU.wxSnow.value = cover;
+    // (read only behind wxOn, so uploaded only while it is on: three checks
+    // every uniform of every lit program at each material switch otherwise;
+    // wxOn itself always goes, so a program that saw it on hears it is off)
+    WXU.wxWet.needsUpdate = WXU.wxSnow.needsUpdate = WXU.wxOn.value > 0;
     // headlamps: the weather's or the evening's, whichever is more (tod.js)
     WXU.wxHead.value = clamp01(Math.max(Math.max(c.rain, c.snow, c.fog * 0.8) * 1.6, TODK.head));
     // gameplay: exactly 1 when dry and bare

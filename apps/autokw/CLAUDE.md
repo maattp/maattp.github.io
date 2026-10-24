@@ -2881,6 +2881,39 @@ file and a guide disagree, this file wins.
   (`kw` clusters, 2.7-5 km away at the spawn, ~12 draws: the small stores
   built in the same clusters are buildings, which must not pop).
 
+- **The phone audit, round four: v52 -> v79's regressions** (v80; numbers
+  are perfaudit at 8x, mean of two runs). **The heap: +95 MB in one build,
+  v73** (boot heap v65-v72 727-733 MB, v73 827). highways.js put a debug
+  closure on `window.__hwy` from INSIDE buildHighways (`infoOf: (ei) =>
+  INFO.get(ei)`): V8 keeps a function's whole closure context alive for any
+  inner function that outlives it, and that context held every builder and
+  array buildHighways' inner functions share. Now a module-level function:
+  boot heap 830 -> 737 MB, after driving 657 -> 565 MB. **A closure made
+  inside a big build function and hung on window (or any long-lived object)
+  retains that build's scratch: define harness hooks at module level.**
+  **Uniform uploads:** weather.js / tod.js put ~12 uniforms in every lit
+  program (24 vec4s of lamp and beam arrays among them), all read only
+  behind `wxOn` / `todOn`, and three flattened and compared them at every
+  material switch (setProgram's `setValueV4fArray` + `flatten` 0.21 ms a
+  frame at 8x at King St). They are `needsUpdate` false while their flag is
+  off (`TOD_GATED`; wxWet / wxSnow); the flags themselves (and `todWinB`,
+  which world.js facadeMat tests on its own) always upload, so a program
+  that saw night or rain last is told it is over. nightprobe ALL OK,
+  weatherprobe ALL PASS, night -> rain -> day shots clean. **What did not
+  regress:** GPU time (`tools/kw/gpuframe.js`, new: frozen poses drawn in a
+  tight loop, a 1-pixel readPixels per frame to wait for the GPU --
+  gl.finish returns at once in Chrome, and the game's rAF is vsync-paced
+  in kwshots' Chrome) is the same in clear weather as v73 (the weather /
+  night blocks' uniform branches cost nothing seen), rain +0.1-0.2 ms on
+  the M2 Pro. Frame CPU v52 -> v73 +0-10 %, v73 -> v79 +6-12 %, v79 ->
+  v80 within the run-to-run noise (+-5 %): render (setProgram, uniform
+  uploads) and traffic are most of the growth; draws and triangles are
+  flat. Left: a heap snapshot sweep for other retained build scopes (565
+  MB is still ~60 MB over v52's); crops.js `stream` (up to 1.2 ms a frame
+  on a phone while tiles build) and `getProgram` for three materials shared
+  between instanced and plain meshes (link:gates, kwrail near, the shadow
+  pass's depth material for skinned meshes: ~4 calls a frame).
+
 - **QA sweep after v22-v39** (docs/qa-*.jpg, before over after).
   `tools/kw/sweeppick.js` picks ~60 road points (fixed spots: Uptown,
   downtown, Galt, St. Jacobs, UW, WLU, Conestoga, plazas; the rest a seeded

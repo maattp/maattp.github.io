@@ -805,6 +805,11 @@ export function rumbleAt(x, z, y) {
   return 0;
 }
 
+// (the harness's lookup, at module level: a closure made inside buildHighways
+// kept that whole call's scope -- every builder and array its inner functions
+// share -- alive for good, ~95 MB of heap)
+function infoOf(ei) { return INFO.get(ei); }
+
 export function buildHighways(ctx) {
   const city = ctx.city;
   if (!HW || !city || (typeof window !== 'undefined' && window.__noHwy)) return;
@@ -1635,5 +1640,5 @@ export function buildHighways(ctx) {
   K.flush(atlas.mat);
   STATS.ms = Math.round(performance.now() - t0);
   STATS.wall = Math.round(STATS.wall); STATS.paved = Math.round(STATS.paved); STATS.rail = Math.round(STATS.rail);
-  if (typeof window !== 'undefined') { window.__hwy = STATS; STATS.rumbleAt = rumbleAt; STATS.infoOf = (ei) => INFO.get(ei); }
+  if (typeof window !== 'undefined') { window.__hwy = STATS; STATS.rumbleAt = rumbleAt; STATS.infoOf = infoOf; }
 }
