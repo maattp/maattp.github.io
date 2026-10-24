@@ -62,6 +62,28 @@ function bench(types, trace) {
   const out = {};
   const X0 = 0, Z0 = 0;
   try {
+    if (trace && trace.startsWith('launch:')) {
+      // DRIVE_TRACE=launch:type[,surface]: from rest, full throttle for 4 s
+      // with the stick held at each deflection (a touch GAS and a thumb on
+      // the stick): how far the car turned, its worst drift, and the speed
+      // (launch:type,surface,steer: that one, every 10th frame)
+      const [name, surf, one] = trace.slice(7).split(',');
+      const rows = ['steer  turned_deg  drift_max_deg  yaw_max  kmh  spin_max'];
+      for (const st of one !== undefined ? [+one] : [0, 0.1, 0.2, 0.35, 0.5, 0.75, 1]) {
+        const v = d.traffic.spawnAt(X0, Z0, 0, name, 0x808080, 'free');
+        v.setDetailed(true); v.y = 0; v.vLong = 0; v.surfForce = surf && surf !== 'asphalt' ? surf : undefined;
+        const h0 = v.heading; let dm = 0, ym = 0, sm = 0;
+        for (let i = 0; i < 240; i++) {
+          v.update(DT, { throttle: 1, brake: 0, steer: st });
+          if (one !== undefined && i % 10 === 0) rows.push(['  ', i, (v.vLong * KMH).toFixed(1), 'drift', deg(v.slipAngle || 0).toFixed(1), 'yaw', (v.yawRate || 0).toFixed(2),
+            'lat', ((v.latAcc || 0) / 9.81).toFixed(2), 'drv', (v._drvDemand || 0).toFixed(2), 'steer', deg(v.steer).toFixed(1), 'gear', v.gbox ? v.gbox.gear : '-'].join(' '));
+          dm = Math.max(dm, Math.abs(deg(v.slipAngle || 0))); ym = Math.max(ym, Math.abs(v.yawRate || 0)); sm = Math.max(sm, v.wheelspin || 0);
+        }
+        rows.push([st, deg(v.heading - h0).toFixed(0), dm.toFixed(1), ym.toFixed(2), (v.vLong * KMH).toFixed(0), sm.toFixed(2)].join('  '));
+        d.traffic.remove(v);
+      }
+      return JSON.stringify({ trace: rows });
+    }
     if (trace) {
       // DRIVE_TRACE=type,surface,kmh[,steer]: one full-lock hold, every 10th frame
       const [name, surf, kmh, st] = trace.split(',');

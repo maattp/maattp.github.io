@@ -1271,11 +1271,20 @@ file and a guide disagree, this file wins.
     country roads: see "The country roads" below -- a gravel road is a rural
     one, no kerbs, crowned, tracked) and gives `city.gravelAt(x, z)`
     (asked every 0.12 s). The lock asks sqrt(mu) of the surface's grip, so a
-    full lock on gravel pushes and slides. **Stability control on loose
-    surfaces only**: the pull is held under what the driven tyres need for
-    the bend (`latAcc` or the wheel's ask), so a floored touch GAS slides, it
-    does not spin; on asphalt a rear-drive car's tail still comes out under
-    power, as before. main.js's `surfaceAt` says 'gravel' on those roads
+    full lock on gravel pushes and slides. **Stability control**: the pull
+    is held under what the driven tyres need for the bend (`latAcc` or the
+    wheel's ask; `ESC_LOOSE` of it on gravel / grass), so a floored touch
+    GAS slides, it does not spin. **On asphalt too (v79)**: `ESC_ROAD` of
+    the bend, only once the car is turning (`ESC_BEND`: a straight launch
+    keeps all its pull, 0-100 unchanged), and the pull is cut as the drift
+    passes `ESC_SLIP0` 4 deg (to its floor by 11 deg) -- before v79 the
+    spawn's red sports car, floored with a third of the lock, spun round
+    (its spinning rears kept 30 % of their sideways grip). Now the tail
+    steps out ~5 deg at a third of the lock, 11-17 deg at full lock, and is
+    caught: `DRIVE_TRACE=launch:sports[,surface,steer] node
+    tools/kw/drivetest.mjs` (4 s from rest, full throttle, per stick
+    deflection: degrees turned, worst drift; before 83-87 deg from 0.35 of
+    the lock, after <= 17). main.js's `surfaceAt` says 'gravel' on those roads
     (the crunch loop) and the skid emits dust there and on grass.
   - **Traction**: the driven axle's load share (RWD 0.5 + squat, FWD 0.6 -
     squat, EV all four) x grip caps the drive; past it `v.wheelspin` (the

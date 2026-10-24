@@ -159,6 +159,13 @@ const STEER_BITE = 1.25;
  */
 const TYRE_FROM = 2.5, TYRE_K = 1.2, SLIP_B = 14, SLIP_C = 1.4, FRONT_SHARE = 0.97;
 const DRIVE_EAT = 1.25, HAND_GRIP = 0.4;
+// Your road car's stability control (Vehicle.update, TRACTION): the share of
+// the bend's sideways need the driven tyres are kept for, on gravel / grass
+// and on asphalt, how much bend (x the driven axle's grip) it takes on
+// asphalt before it trims the pull at all, and the drift (rad) over which it
+// cuts the pull as the tail steps out on asphalt.
+const ESC_LOOSE = 0.6, ESC_ROAD = 0.7, ESC_BEND = 0.15;
+const ESC_SLIP0 = 0.07, ESC_SLIP1 = 0.2;
 const tyreF = (a, D) => D * Math.sin(SLIP_C * Math.atan(SLIP_B * a));
 /**
  * Your road car's tyres (spec.roadCar): the same curve to its peak and a
@@ -13916,21 +13923,35 @@ export class Vehicle {
         acc -= (driveA - cap) * 0.85;
         put = cap;
       }
-      // On a loose surface the stability control keeps back what the driven
-      // tyres need for the bend (the friction circle), so a floored GAS on a
-      // gravel road -- the only throttle a touch button has -- slides the car
-      // a little and does not spin it. On asphalt the pull is the driver's:
-      // a rear-drive car's tail still comes out under power (_tyres).
-      if (this.mu < 1) {
+      // The stability control keeps back what the driven tyres need for the
+      // bend (the friction circle), so a floored GAS -- the only throttle a
+      // touch button has -- slides the car a little and does not spin it.
+      // On asphalt it lets the tail step out (ESC_ROAD of the bend kept, not
+      // ESC_LOOSE) and only steps in once the car is turning: a straight
+      // launch keeps all its pull. Without it on asphalt, full throttle with
+      // a third of the lock spun a sports car round (its rears, spinning,
+      // kept 30 % of their sideways grip: _tyres `left`).
+      {
         // (the tyre model spends DRIVE_EAT of the pull on the circle; the
         // bend is what the car does or what the wheel asks, the larger --
         // a front-drive car pushing wide on the throttle is held back too)
+        const loose = this.mu < 1 && this.surf;
         const ask = this.vLong * this.vLong * Math.abs(Math.tan(this.steer || 0)) / L;
-        const need = 0.6 * Math.max(Math.abs(this.latAcc || 0), Math.min(ask, grip));
-        const esc = Math.max(0.2 * Dd, Math.sqrt(Math.max(0, Dd * Dd - need * need)) / DRIVE_EAT);
+        const bend = Math.max(Math.abs(this.latAcc || 0), Math.min(ask, grip));
+        const need = (loose ? ESC_LOOSE : ESC_ROAD) * bend;
+        let esc = Math.max(0.2 * Dd, Math.sqrt(Math.max(0, Dd * Dd - need * need)) / DRIVE_EAT);
+        if (!loose) {
+          // (dry or wet asphalt: nothing held back on the straight; and, as a
+          // real ESC does, the pull is cut as the tail steps out -- past
+          // ESC_SLIP0 of drift, to its floor by ESC_SLIP1 -- before the rears
+          // are past their peak, where nothing catches it)
+          esc = lerp(Math.max(cap, esc), esc, clamp(bend / (ESC_BEND * Dd), 0, 1));
+          const sl = clamp((Math.abs(this.slipAngle || 0) - ESC_SLIP0) / (ESC_SLIP1 - ESC_SLIP0), 0, 1);
+          esc = Math.max(0.2 * Dd, esc * (1 - 0.8 * sl));
+        }
         if (put > esc) { acc -= put - esc; put = esc; }
         this._drvDemand = put;
-      } else this._drvDemand = driveA;
+      }
       if (brakeD > 0) {
         const used = clamp(Math.abs(this.latAcc || 0) / Math.max(grip, 1), 0, 1);
         const room = spec.brakeA * this.mu * Math.sqrt(Math.max(0.3, 1 - used * used));
