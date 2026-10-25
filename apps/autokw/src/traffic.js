@@ -10,6 +10,7 @@ import { TODK } from './tod.js';
 import { memo } from './bootcache.js';
 import { edgeFlow, oneWaySpan, twoWayLayout, twoWayLaneOff, alBike, medianGaps, LANE_W } from './arterial.js';
 import { SchoolStops, schoolStopsOn } from './schoolbus.js';
+import { sceneryType } from './kwdriveway.js';
 
 const TRAFFIC_TARGET = 26;
 // Parked cars only exist within this radius, and each is 3 draw calls, so this
@@ -61,7 +62,24 @@ const LC_PLAN = 160, LC_SIG = 1.0, LC_TICK = 0.4, LC_LATE0 = 12, LC_LATE_T = 1.8
 // and traffic only casts a shadow this close -- past it a car's shadow is a
 // few pixels and three more draws in the shadow pass.
 const ON_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-const PARKED_SHOW = ON_PHONE ? 80 : 140;
+// AUTO KW (v82): a parked car is shown as long as it exists (it is spawned
+// at PARKED_RADIUS and kept to PARKED_RADIUS + 60). A phone hid them past
+// 80 m -- but past FAR_LOD a phone draws them instanced anyway, so hiding
+// saved nothing there, and every kerb's cars appeared at 80 m as you drove up
+// and vanished at 80 m behind you.
+const PARKED_SHOW = PARKED_RADIUS + 60;
+// ...and PAST the parked cars, the same kerb slots and car-park bays are
+// scenery out to PARK_DECOR_R (traffic.decor through kwdriveway.js: the far
+// LOD's instances, solid to the player, no draws of their own) -- each the
+// car that will be spawned there, same type, colour and heading, so the
+// swap at PARKED_RADIUS changes nothing on screen. Before, kerbside cars came
+// into being at 105 m in plain view and a car park held only its six nearest.
+const PARK_DECOR_R = ON_PHONE ? 200 : 280;
+// AUTO KW (v82): traffic spawned in the camera's view closer than this is
+// thrown away (it appeared from nothing at 190 m, the old forward-cone rule's
+// edge, in plain sight on a phone's wide view)
+const SPAWN_SEEN = 300, SPAWN_FAR = 420;
+const LOT_TILE = 100;   // m: lotBays' cache square
 const SHADOW_NEAR = ON_PHONE ? 45 : Infinity;
 // Past this, a phone draws a vehicle through its type's InstancedMesh over the
 // far LOD (vehicles.js farLod): one draw per type on screen instead of three
@@ -709,6 +727,7 @@ export class TrafficSystem {
     this._farS = new THREE.Sphere();
     this._tick = 0;
     this.parkedSlots = new Set();
+    this.parkDecorR = PARK_DECOR_R;   // kwdriveway.js reads it (parkedScenery)
     // kerb slots given to something else for good (main.js: the car by the spawn)
     this.reservedSlots = new Set();
     // ground kept free of lot parking for good: [x, z, r] (tank.js: the tank's apron)
@@ -852,7 +871,7 @@ export class TrafficSystem {
     if (i >= 0) this.cars.splice(i, 1);
     if (v.sb) this.sb.drop(v);
     this.scene.remove(v.group);
-    if (v.slot != null) this.parkedSlots.delete(v.slot);
+    if (v.slot != null) { this.parkedSlots.delete(v.slot); this._parkVer = (this._parkVer | 0) + 1; }
     v.bodyMat.dispose();
     if (v.dentTrim) { v.dentTrim.dispose(); v.dentMatte.dispose(); v.dentTrim = v.dentMatte = null; }
     if (v.extra) { if (!v.extra.userData.shared) disposeTree(v.extra); v.extra = null; }
@@ -914,6 +933,7 @@ export class TrafficSystem {
         v.group.traverse((o) => { if (o.isMesh) o.castShadow = false; });
         v.slot = k.key;
         this.parkedSlots.add(k.key);
+        this._parkVer = (this._parkVer | 0) + 1;
       }
     }
     this.updateLotParked(px, pz);
@@ -986,18 +1006,58 @@ export class TrafficSystem {
    * and the scan only reruns when the player has moved a cell.
    */
   updateLotParked(px, pz) {
-    const LOT_R = 90, LOT_CAP = 6, OCC = 0.16;
+    const LOT_R = 90, LOT_CAP = 6;
     const kx = Math.round(px / 10), kz = Math.round(pz / 10);
     if (this._lotKey === kx * 100000 + kz) return;
     this._lotKey = kx * 100000 + kz;
     let alive = 0;
     for (const v of this.cars) if (v.mode === 'parked' && typeof v.slot === 'string') alive++;
     if (alive >= LOT_CAP) return;
-    const city = this.city;
+    // the bays round the player, nearest first (lotBays: one per 10 m cell of
+    // a world-aligned grid, so which bays hold a car no longer depends on where
+    // the scan started -- the bays past the cap are parkedScenery's)
     const cand = [];
+    const t0x = Math.floor((px - LOT_R) / LOT_TILE), t1x = Math.floor((px + LOT_R) / LOT_TILE);
+    const t0z = Math.floor((pz - LOT_R) / LOT_TILE), t1z = Math.floor((pz + LOT_R) / LOT_TILE);
+    for (let tz = t0z; tz <= t1z; tz++) for (let tx = t0x; tx <= t1x; tx++) {
+      for (const c of this.lotBays(tx, tz)) {
+        const d = dist2(c.x, c.z, px, pz);
+        if (d > LOT_R * LOT_R || this.parkedSlots.has(c.key)) continue;
+        cand.push([d, c]);
+      }
+    }
+    cand.sort((a, b) => a[0] - b[0]);
+    for (const [, c] of cand) {
+      if (alive >= LOT_CAP) break;
+      const v = this.spawnAt(c.x, c.z, c.heading, c.tn, randomCarColor(c.col), 'parked');
+      v.group.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+      v.slot = c.key;
+      this.parkedSlots.add(c.key);
+      this._parkVer = (this._parkVer | 0) + 1;
+      alive++;
+    }
+  }
+
+  /**
+   * The occupied car-park bays of one LOT_TILE square (cached): the bays the
+   * terrain shader paints (world.js, the lot layer: 2.6 m wide along the lot's
+   * long side, rows 5.4 m deep either side of a 7.2 m aisle, an 18 m module in
+   * the lot's own frame), one tried per 10 m cell, OCC of them with a car.
+   * Each is { key, x, z, heading, tn, col }: the type a household car
+   * (kwdriveway.js sceneryType: a type the scenery draws in its detailed
+   * model up close), so a bay is the same car as a parked Vehicle or as
+   * scenery.
+   */
+  lotBays(tx, tz) {
+    const cache = this._lotBays || (this._lotBays = new Map());
+    const tk = tx * 4096 + tz;
+    let out = cache.get(tk);
+    if (out) return out;
+    out = [];
+    const OCC = 0.16, city = this.city;
     const tried = new Set();
-    for (let x = px - LOT_R; x <= px + LOT_R; x += 10) {
-      for (let z = pz - LOT_R; z <= pz + LOT_R; z += 10) {
+    for (let x = tx * LOT_TILE + 5; x < (tx + 1) * LOT_TILE; x += 10) {
+      for (let z = tz * LOT_TILE + 5; z < (tz + 1) * LOT_TILE; z += 10) {
         const code = G.lotCodeAt(x, z);
         if (!code || ((code - 1) / G.LOT_ANG | 0) !== 0) continue;   // parking only
         const ang = ((code - 1) % G.LOT_ANG) / G.LOT_ANG * Math.PI;
@@ -1014,32 +1074,53 @@ export class TrafficSystem {
         if (hash2(bu * 7 + row, m * 13 + code) > OCC) continue;
         const cu = (bu + 0.5) * 2.6, cv = m * 18 + (row ? 15.3 : 2.7);
         const wx = cu * ux - cv * uz, wz = cu * uz + cv * ux;
-        if (dist2(wx, wz, px, pz) > LOT_R * LOT_R || G.lotCodeAt(wx, wz) !== code) continue;
-        if (this.parkedSlots.has(key) || city.onRoad(wx, wz, 2.5) || city.jumpClear(wx, wz)) continue;
+        // (the bay's own tile files it: a bay found from a neighbour's cell is that tile's)
+        if (Math.floor(wx / LOT_TILE) !== tx || Math.floor(wz / LOT_TILE) !== tz) continue;
+        if (G.lotCodeAt(wx, wz) !== code) continue;
+        if (city.onRoad(wx, wz, 2.5) || city.jumpClear(wx, wz)) continue;
         if (this.inFootprint(wx, wz, 1.5) || this.wet(wx, wz)) continue;
         // The seaplane dock's car park runs to the shore, and its landing deck
         // is inside the lot's coverage: a bay there parked a car on the pier.
         if (city.platformAt && city.platformAt(wx, wz) !== null) continue;
         if (this.keepClear.some(([kx, kz, kr]) => dist2(wx, wz, kx, kz) < kr * kr)) continue;
-        cand.push({ key, wx, wz, d: dist2(wx, wz, px, pz),
-          // Nose into the bay: the car's length runs across the row, along
-          // the lot's short axis (-uz, ux); the two rows face each other.
-          heading: Math.atan2(-uz, ux) + (row ? 0 : Math.PI) });
+        const tn = sceneryType(hash2(wx | 0, wz | 0));
+        if (!TYPES[tn]) continue;
+        // Nose into the bay: the car's length runs across the row, along
+        // the lot's short axis (-uz, ux); the two rows face each other.
+        out.push({ key, x: wx, z: wz, heading: Math.atan2(-uz, ux) + (row ? 0 : Math.PI), tn, col: (wx * 7 + wz) | 0 });
       }
     }
-    cand.sort((a, b) => a.d - b.d);
-    for (const c of cand) {
-      if (alive >= LOT_CAP) break;
-      const h = hash2(c.wx | 0, c.wz | 0);
-      const tn = CIVILIAN_TYPES[Math.floor(h * CIVILIAN_TYPES.length)];
-      // A bay holds a car; a taxi or a cop-looking cruiser waiting in a
-      // retail lot reads as staged.
-      if (!LOT_TYPES.has(tn)) continue;
-      const v = this.spawnAt(c.wx, c.wz, c.heading, tn, randomCarColor((c.wx * 7 + c.wz) | 0), 'parked');
-      v.group.traverse((o) => { if (o.isMesh) o.castShadow = false; });
-      v.slot = c.key;
-      this.parkedSlots.add(c.key);
-      alive++;
+    // (wet() needs main.js's waterAt: nothing is kept before it is set)
+    if (this.waterAt) { if (cache.size > 600) cache.clear(); cache.set(tk, out); }
+    return out;
+  }
+
+  /**
+   * AUTO KW (v82): the parked cars that are not Vehicles, as scenery records
+   * for kwdriveway.js (its `_choose` calls this): every kerb slot and lot bay
+   * within R that no parked Vehicle holds -- each exactly the car updateParked
+   * / updateLotParked would spawn there. `emit(x, y, z, heading, type, colour
+   * seed)` takes each one.
+   */
+  parkedScenery(px, pz, R, emit) {
+    const city = this.city, R2 = R * R;
+    for (const ei of city.edgesNear(px, pz, R)) {
+      const sl = this.kerbSlots(ei);
+      for (const k of sl) {
+        if (this.parkedSlots.has(k.key) || this.reservedSlots.has(k.key)) continue;
+        if (dist2(k.x, k.z, px, pz) > R2) continue;
+        if (k.y === undefined) k.y = city.groundAt(k.x, k.z, null, city.roadLift(k.x, k.z));
+        emit(k.x, k.y, k.z, k.heading, k.tn, k.col);
+      }
+    }
+    const t0x = Math.floor((px - R) / LOT_TILE), t1x = Math.floor((px + R) / LOT_TILE);
+    const t0z = Math.floor((pz - R) / LOT_TILE), t1z = Math.floor((pz + R) / LOT_TILE);
+    for (let tz = t0z; tz <= t1z; tz++) for (let tx = t0x; tx <= t1x; tx++) {
+      for (const c of this.lotBays(tx, tz)) {
+        if (this.parkedSlots.has(c.key) || dist2(c.x, c.z, px, pz) > R2) continue;
+        if (c.y === undefined) c.y = city.groundAt(c.x, c.z, null, city.roadLift(c.x, c.z));
+        emit(c.x, c.y, c.z, c.heading, c.tn, c.col);
+      }
     }
   }
 
@@ -1059,7 +1140,7 @@ export class TrafficSystem {
     const city = this.city;
     // Sample only from edges near the player -- picking uniformly from the whole
     // 10 km map would almost never land in range.
-    const pool = city.edgesNear(px, pz, 360);
+    const pool = city.edgesNear(px, pz, SPAWN_FAR + 30);
     if (!pool.length) return null;
     for (let attempt = 0; attempt < 14; attempt++) {
       const ei = pool[Math.floor(this.R.n() * pool.length)];
@@ -1070,11 +1151,25 @@ export class TrafficSystem {
       const t = 0.2 + this.R.n() * 0.6;
       const x = lerp(a.x, b.x, t), z = lerp(a.z, b.z, t);
       const d = Math.hypot(x - px, z - pz);
-      if (d < 90 || d > 330) continue;
-      // prefer off-screen spawns
-      if (camDir) {
-        const dot = ((x - px) * camDir.x + (z - pz) * camDir.z) / d;
-        if (dot > 0.4 && d < 190) continue;
+      if (d < 90 || d > SPAWN_FAR) continue;
+      // never in view closer than SPAWN_SEEN: the camera's own frustum (last
+      // frame's, set in update; a sphere a car's size), else the old forward
+      // cone. (Seen past SPAWN_SEEN a car is a few pixels; before, the cone's
+      // 190 m let cars appear from nothing in plain view on a phone's wide
+      // frame, and anything out of the cone -- the sides of the view -- at 90 m.)
+      // Out of view it may be anywhere 90-330 m off; in view only from
+      // SPAWN_SEEN out to SPAWN_FAR, so the road ahead still fills.
+      if (this.camera && this._farFrOk) {
+        this._farS.center.set(x, G.terrainHeight(x, z) + 1.5, z);
+        this._farS.radius = 6;
+        const seen = this._farFr.intersectsSphere(this._farS);
+        if (seen ? d < SPAWN_SEEN : d > 330) continue;
+      } else {
+        if (d > 330) continue;
+        if (camDir) {
+          const dot = ((x - px) * camDir.x + (z - pz) * camDir.z) / d;
+          if (dot > 0.4 && d < 190) continue;
+        }
       }
       // Only where a car can keep driving legally forever (see
       // directedComponents), and only the way the street runs.
@@ -1650,6 +1745,7 @@ export class TrafficSystem {
       cam.updateMatrixWorld();
       this._farM.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
       fr.setFromProjectionMatrix(this._farM);
+      this._farFrOk = true;
     }
     this._tick = (this._tick + 1) | 0;
 

@@ -128,6 +128,9 @@ const FALL_PAL = [
   [[0.10, 0.12, 0.13, 0.08, 0.06], [0.26, 0.27, 0.045]],   // half-turned, yellow-green (willow, Manitoba maple)
   [[0.07, 0.09, 0.09, 0.04, 0.02], [0.13, 0.22, 0.075]],   // still green
 ];
+// AUTO KW (v82): the colours a step quieter, FALL_DESAT of each crown's
+// colour toward its own grey (the scarlets and golds sweeping past were loud)
+const FALL_DESAT = 0.2;
 function fallAlbedo(kind, seed, tone, out) {
   const col = kind === SHRUB ? 3 : isMaple(kind, seed, tone) ? 4 : tone === T_STREET ? 0 : tone === T_PARK ? 1 : 2;
   const a = sub(seed, 1), u = sub(seed, 2);
@@ -137,6 +140,8 @@ function fallAlbedo(kind, seed, tone, out) {
   const v = (0.8 + a * 0.4) * (tone === T_FOREST ? 0.86 : 1) * (kind === SHRUB ? 0.9 : 1);
   const h = (sub(seed, 3) - 0.5) * 0.18;
   out[0] = c[0] * v * (1 + h); out[1] = c[1] * v * (1 - h * 0.6); out[2] = c[2] * v;
+  const g = (out[0] * 0.2126 + out[1] * 0.7152 + out[2] * 0.0722) * FALL_DESAT;
+  for (let i = 0; i < 3; i++) out[i] = out[i] * (1 - FALL_DESAT) + g;
   return out;
 }
 
@@ -1109,6 +1114,18 @@ export function occupancy(city, cx, cz) {
   return OCC;
 }
 const STREET_SPACING = { res: 10, st: 11, art: 12 };
+// AUTO KW (v82): THINNER ALONG THE ROADS. A street's share of its slots that
+// get a tree, by class (x the neighbourhood's `leafy`), and a house's yard
+// trees: the player found the streets "too distracting while driving" -- a
+// tree every 10-12 m both sides and up to four round every house made the
+// suburbs a wall of saturated crowns sweeping past. Parks and woods are as
+// they were (they are not beside the road).
+const STREET_FILL = { res: 0.42, st: 0.36, art: 0.32 };  // was 0.8 / 0.66 / 0.6
+// ...and a roadside crown no longer hangs over the lane at the windscreen:
+// a boulevard tree's crown to BLVD_CR, a lawn / grate tree's to its distance
+// from the kerb + KERB_OVER (they reached 3-5 m over the carriageway)
+const BLVD_CR = 3.0, KERB_OVER = 1.2;
+const YARD_TRIES = 3, YARD_P = 0.55, YARD_CONIFER = 0.2;  // was 4, 0.72, 0.32
 
 /**
  * Plant a chunk: every tree it owns, as records, with its far crown written
@@ -1196,6 +1213,20 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
     if (mode === VERGE_T && city.roadLift(x, z) > 0.02) return no('pavement');
     return mode !== OPEN && world.inBuilding(x, z, walk ? 0.6 : 1.0) ? no('building') : true;
   };
+  // a crown off the road keeps its reach over the carriageway to KERB_OVER:
+  // shrunk (to 2 m at least) until a ring of 8 points at cr - KERB_OVER is off
+  // every carriageway (onRoad's 2.5 m pad: the grid's reach)
+  const kerbCap = (x, z, cr) => {
+    for (let k = 0; k < 4 && cr > 2; k++) {
+      const d = cr - KERB_OVER - 2.5;
+      let hit = false;
+      if (d <= 0) hit = city.onRoad(x, z, Math.max(0, cr - KERB_OVER), false, false);
+      else for (let q = 0; q < 8 && !hit; q++) hit = city.onRoad(x + Math.cos(q * 0.785) * d, z + Math.sin(q * 0.785) * d, 2.5, false, false);
+      if (!hit) break;
+      cr = Math.max(2, cr * 0.75);
+    }
+    return cr;
+  };
   const plant = (x, z, th, cr, kind, tone, from, rMax = 0.6) => {
     if (recs.length >= cap * REC) { st.treesCapped = (st.treesCapped || 0) + 1; return; }
     const gy = G.terrainHeight(x, z);
@@ -1249,7 +1280,7 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
     const sp = STREET_SPACING[e.cls], ww = WALK_W[e.cls];
     // How leafy this neighbourhood is: blocks vary, as Seattle's do.
     const leafy = 0.45 + 0.75 * field((a.x + b.x) / 2, (a.z + b.z) / 2, 520, 3);
-    const fill = (e.cls === 'res' ? 0.8 : e.cls === 'st' ? 0.66 : 0.6) * leafy;
+    const fill = (STREET_FILL[e.cls] || 0.4) * leafy;
     // The kerb furniture's slots (meshProps' structural cascade and its
     // clutter), so a pavement tree never shares one: every slot, whatever
     // ended up in it.
@@ -1312,7 +1343,7 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
           const r = hash2(Math.round(bx * 5), Math.round(bz * 5) + 3);
           const big = e.cls === 'res' ? leafy : 0.8;
           if (r < 0.2) plant(bx, bz, 8 + 5 * sub(r, 3), 1.5 + 0.7 * sub(r, 4), COLUMNAR, T_STREET, 'street', 0.28);
-          else plant(bx, bz, (7 + 8 * sub(r, 3)) * (0.8 + 0.3 * big), (3 + 2.6 * sub(r, 4)) * (0.85 + 0.25 * big), BROAD, T_STREET, 'street', 0.28);
+          else plant(bx, bz, (7 + 8 * sub(r, 3)) * (0.8 + 0.3 * big), Math.min(BLVD_CR, (3 + 2.6 * sub(r, 4)) * (0.85 + 0.25 * big)), BROAD, T_STREET, 'street', 0.28);
           st.boulevardTrees = (st.boulevardTrees || 0) + 1;
           continue;
         }
@@ -1343,7 +1374,7 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
         const big = e.cls === 'res' ? leafy : 0.8;
         if (r < 0.06 && e.cls === 'res') plant(x, z, 14 + 10 * sub(r, 3), 2.6 + 1.2 * sub(r, 4), CONIFER, T_STREET, 'street');
         else if (r < 0.22) plant(x, z, 8 + 5 * sub(r, 3), 1.5 + 0.7 * sub(r, 4), COLUMNAR, T_STREET, 'street');
-        else plant(x, z, (7 + 8 * sub(r, 3)) * (0.8 + 0.3 * big), (3 + 2.6 * sub(r, 4)) * (0.85 + 0.25 * big), BROAD, T_STREET, 'street');
+        else plant(x, z, (7 + 8 * sub(r, 3)) * (0.8 + 0.3 * big), Math.min((walk ? Math.min(1.6, ww * 0.55) : ww + 1.5) + KERB_OVER, (3 + 2.6 * sub(r, 4)) * (0.85 + 0.25 * big)), BROAD, T_STREET, 'street');
       }
     }
   }
@@ -1353,7 +1384,7 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
     if (yieldNow()) { yield; world._yt = performance.now(); }
     const bd = city.buildings[bi];
     let tries = 0, p = 0;
-    if (bd.style === 'house') { tries = 4; p = 0.72; }
+    if (bd.style === 'house') { tries = YARD_TRIES; p = YARD_P; }
     else if (bd.style === 'farmhouse') { tries = 5; p = 0.8; }   // the big maples round a farmhouse
     else if (bd.style === 'campus') { tries = 2; p = 0.5; }
     else if ((bd.style === 'lowrise' || bd.style === 'brick') && bd.w * bd.d < 900) { tries = 1; p = 0.32; }
@@ -1372,9 +1403,9 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
       const x = bd.x + lx * c - lz * s, z = bd.z + lx * s + lz * c;
       if (!clear(x, z, 2.5, OPEN)) continue;
       const r = hash2(Math.round(x * 5) + 9, Math.round(z * 5));
-      if (r < 0.32) plant(x, z, 13 + 14 * sub(r, 3) * leafy, 2.8 + 1.6 * sub(r, 4), CONIFER, T_STREET, 'yard');
-      else if (r < 0.4) plant(x, z, 7 + 5 * sub(r, 3), 1.6 + 0.8 * sub(r, 4), COLUMNAR, T_STREET, 'yard');
-      else plant(x, z, 8 + 9 * sub(r, 3) * leafy, 3.2 + 3.2 * sub(r, 4), BROAD, T_STREET, 'yard');
+      if (r < YARD_CONIFER) plant(x, z, 13 + 14 * sub(r, 3) * leafy, kerbCap(x, z, 2.8 + 1.6 * sub(r, 4)), CONIFER, T_STREET, 'yard');
+      else if (r < YARD_CONIFER + 0.08) plant(x, z, 7 + 5 * sub(r, 3), 1.6 + 0.8 * sub(r, 4), COLUMNAR, T_STREET, 'yard');
+      else plant(x, z, 8 + 9 * sub(r, 3) * leafy, kerbCap(x, z, 3.2 + 3.2 * sub(r, 4)), BROAD, T_STREET, 'yard');
     }
   }
 
@@ -1424,8 +1455,8 @@ export function* plantTrees(world, flat, ch, cx, cz, lod, pooled = false) {
         if (h > p) continue;
         if (!clear(x, z, 2.5, OPEN)) continue;
         const r = hash2(Math.round(x * 5) + 1, Math.round(z * 5) + 2);
-        if (r < 0.2) plant(x, z, 14 + 14 * sub(r, 3), 3 + 1.6 * sub(r, 4), CONIFER, T_PARK, 'park');
-        else plant(x, z, 9 + 9 * sub(r, 3), 3.6 + 2.6 * sub(r, 4), BROAD, T_PARK, 'park');
+        if (r < 0.2) plant(x, z, 14 + 14 * sub(r, 3), kerbCap(x, z, 3 + 1.6 * sub(r, 4)), CONIFER, T_PARK, 'park');
+        else plant(x, z, 9 + 9 * sub(r, 3), kerbCap(x, z, 3.6 + 2.6 * sub(r, 4)), BROAD, T_PARK, 'park');
       }
     }
   }

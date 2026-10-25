@@ -47,7 +47,10 @@ export const DCAR_REC = 6;
 export class DrivewayCars {
   constructor() {
     this.traffic = null;
-    this.R = ON_PHONE ? 90 : 140;
+    // (v82: 90 / 140 m before -- each driveway's car appeared there, in plain
+    // view down the street; past DECOR_NEAR they are the far LOD's instances,
+    // one draw per type, so the range costs instances, not draws)
+    this.R = ON_PHONE ? 170 : 240;
     this.STEP = 8;
     this.chunks = new Map();
     this.last = { x: 1e9, z: 1e9 };
@@ -65,6 +68,12 @@ export class DrivewayCars {
     this.types = BY_BYTE.map((t) => (types[t] ? t : null));
     this.pivot = this.types.map((t) => (t ? types[t].spec.pivotY || 0 : 0));
     this.half = this.types.map((t) => (t ? [types[t].spec.len / 2, types[t].spec.wid / 2] : [2.3, 0.9]));
+    this.byType = new Map();   // any type's [pivotY, half] (the parked scenery's)
+  }
+  _typeInfo(t) {
+    let i = this.byType.get(t);
+    if (!i) { const sp = vehicleAssets().types[t].spec; this.byType.set(t, (i = [sp.pivotY || 0, [sp.len / 2, sp.wid / 2]])); }
+    return i;
   }
 
   setChunk(key, recs) {
@@ -95,9 +104,24 @@ export class DrivewayCars {
         n++;
       }
     }
+    // AUTO KW (v82): the kerbs' and car parks' parked cars past the parked
+    // Vehicles (traffic.js parkedScenery): the same records, the same draw
+    const T = this.traffic, nOwn = n;
+    if (T && T.parkedScenery) {
+      T.parkedScenery(px, pz, T.parkDecorR + this.STEP, (x, y, z, h, tn, seed) => {
+        let c = this.pool[n];
+        if (!c) c = this.pool[n] = { type: '', x: 0, y: 0, z: 0, h: 0, pivotY: 0, col: new THREE.Color(), k: -1, half: null };
+        const ti = this._typeInfo(tn);
+        c.type = tn; c.x = x; c.y = y; c.z = z; c.h = h; c.pivotY = ti[0]; c.half = ti[1];
+        if (c.k !== seed) { c.k = seed; c.col.set(randomCarColor(seed | 0)); }
+        n++;
+      });
+      this._pv = T._parkVer | 0;
+    }
     this.sel.length = n;
     for (let i = 0; i < n; i++) this.sel[i] = this.pool[i];
-    this.shown = n;
+    this.shown = nOwn;
+    this.parked = n - nOwn;
   }
 
   /** Each frame, after the drive-throughs and before traffic draws. `own`: nobody else fills traffic.decor. */
@@ -107,7 +131,7 @@ export class DrivewayCars {
     if (own) decor.length = 0;
     this.base = decor.length;
     const L = this.last;
-    if (this.dirty || (px - L.x) ** 2 + (pz - L.z) ** 2 > this.STEP * this.STEP) {
+    if (this.dirty || (traffic._parkVer | 0) !== this._pv || (px - L.x) ** 2 + (pz - L.z) ** 2 > this.STEP * this.STEP) {
       L.x = px; L.z = pz; this.dirty = false;
       this._choose(px, pz);
     }
@@ -125,7 +149,7 @@ export class DrivewayCars {
     const decor = this.traffic.decor;
     decor.length = Math.min(decor.length, this.base);
     const x = camera.position.x, z = camera.position.z;
-    if (this.dirty || (x - this.last.x) ** 2 + (z - this.last.z) ** 2 > this.STEP * this.STEP) {
+    if (this.dirty || (traffic._parkVer | 0) !== this._pv || (x - this.last.x) ** 2 + (z - this.last.z) ** 2 > this.STEP * this.STEP) {
       this.last.x = x; this.last.z = z; this.dirty = false;
       this._choose(x, z);
     }

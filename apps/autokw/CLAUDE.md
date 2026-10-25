@@ -2914,6 +2914,33 @@ file and a guide disagree, this file wins.
   between instanced and plain meshes (link:gates, kwrail near, the shadow
   pass's depth material for skinned meshes: ~4 calls a frame).
 
+- **Fewer trees by the road, and less pop-in (v82).** The player found the
+  streets' trees "too distracting while driving" and cars popping in as they
+  drove. **Trees** (trees.js): `STREET_FILL` res 0.42 / st 0.36 / art 0.32 of a
+  street's slots (was 0.8 / 0.66 / 0.6), a house's yard trees `YARD_TRIES` 3 at
+  `YARD_P` 0.55 (was 4 at 0.72) with `YARD_CONIFER` 0.2 of them spruce (0.32);
+  no roadside crown hangs over the lane by more than `KERB_OVER` 1.2 m (a
+  boulevard tree's crown to `BLVD_CR` 3 m; yard and park trees through
+  `kerbCap`, which shrinks a crown until a ring at cr - 1.2 m is off every
+  carriageway); the fall colours `FALL_DESAT` 0.2 toward grey. Parks and woods
+  are as they were. **Pop-in** (traffic.js, kwdriveway.js): a parked car is
+  shown as long as it exists (`PARKED_SHOW` = PARKED_RADIUS + 60; a phone hid
+  them past 80 m, though past FAR_LOD it draws them instanced anyway); every
+  kerb slot and car-park bay no parked Vehicle holds is SCENERY out to
+  `PARK_DECOR_R` (200 m phone / 280) -- `parkedScenery`, read by
+  DrivewayCars._choose into traffic.decor, the exact car updateParked /
+  updateLotParked would spawn there (type, colour, heading), so the swap is
+  invisible and they are solid (keepOut); car parks' bays are `lotBays` per
+  100 m tile on a world-aligned grid (the old scan's cells moved with the
+  player, and only the 6 nearest bays ever held a car), each bay's type a
+  household one (kwdriveway sceneryType: it has a detailed near LOD); the
+  driveways' cars to 170 m phone / 240 (were 90 / 140); new traffic is never
+  spawned inside the camera's frustum closer than `SPAWN_SEEN` 300 m (in view
+  300-420 m, out of view 90-330 m; the old forward cone let cars appear at
+  190 m ahead and 90 m at the view's sides). Phone, spawn views: 20-70
+  scenery cars in range, draws -5..-20 (traffic's own noise and the thinner
+  trees), tris -40..-100k.
+
 - **QA sweep after v22-v39** (docs/qa-*.jpg, before over after).
   `tools/kw/sweeppick.js` picks ~60 road points (fixed spots: Uptown,
   downtown, Galt, St. Jacobs, UW, WLU, Conestoga, plazas; the rest a seeded
