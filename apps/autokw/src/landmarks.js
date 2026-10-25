@@ -2204,8 +2204,10 @@ export const MARINAS = [
     hello: 'The Grand through Galt — jet skis and a boat. Walk out on the float and take one' },
   { name: 'Columbia Lake · UW', x: -6572, z: -2355, fleet: ['kayak', 'kayak', 'jetski'], lake: true, float: 12,
     hello: "Columbia Lake, on UW's north campus — mind the geese. Kayaks and a jet ski on the float" },
-  { name: 'Victoria Park Boathouse', x: -2015, z: 567, fleet: ['kayak', 'kayak', 'boat'], lake: true, float: 12,
-    hello: 'The Victoria Park boathouse — kayaks and a boat on the lake' },
+  // Victoria Park's lake (72.5 m, 1.5-2 m deep off the float): kayaks first,
+  // then the jet skis, the runabout last (each pair's step is its second's)
+  { name: 'Victoria Park Boathouse', x: -2015, z: 567, fleet: ['kayak', 'kayak', 'jetski', 'jetski', 'boat', 'jetski'], lake: true, float: 16,
+    hello: 'The Victoria Park boathouse — jet skis, kayaks and a boat on the lake. Walk out on the float and take one' },
   { name: 'Laurel Creek Conservation Area', x: -8499, z: -3111, fleet: ['boat', 'jetski', 'kayak'], lake: true, float: 14,
     hello: 'Laurel Creek reservoir — a boat, a jet ski and a kayak. Walk out on the float and take one' },
 ];

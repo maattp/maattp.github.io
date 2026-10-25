@@ -2532,6 +2532,31 @@ file and a guide disagree, this file wins.
   starts on demand, not at 9:30 on Thanksgiving Monday; seats/banners at
   the Aud are not traced from photos; the slides' layout is still
   kwsights' procedural fan, not Big Splash's real plan.
+- **Jet skis on Victoria Park's lake** (landmarks.js `MARINAS`;
+  docs/jetski-parked.jpg, jetski-ride.jpg). The boathouse marina was already
+  there (kayaks and a runabout); its fleet is now kayak, kayak, jet ski, jet
+  ski, boat, jet ski (`float` 16): three jet skis moored bow-out along the
+  float, each spawned 'apron' by main.js's marina loop like every marina
+  craft (never despawned; a ridden one stays where you leave it -- no
+  respawn at the float, as in Seattle). Nothing else needed changing: the lake
+  is in the wlevel field at 72.50 m, wet and drawn, 1.5-2.2 m deep off the
+  float and >= 0.3 m along the crescent's 80 m-wide channel to the
+  south-west pond, and the boat physics, the shore stop (`minDepth`) and the
+  exit search are all on the LOCAL level. Kept in order: a pair's step along
+  the walk is its second craft's (4.5 m a jet ski, 7.5 otherwise), so the
+  kayaks go first and the runabout last. Verify:
+  `AUTO_GPU=1 VIEW_PROBE_FILE=tools/kw/jetskiprobe.js node tools/kw/kwshots.mjs /tmp/x`
+  (puts you on the float, ENTER by a real key event, an autopilot on W/A/D
+  rides the lake to the far pond and back, 16 waypoints, ~810 m, top ~52
+  km/h, then runs onto the north bank and ENTERs off): 0 frames with the hull
+  over dry ground, |y - water| <= 0.047 m, it stops at the bank under
+  throttle and you step off onto the grass (wl null there), 0 exceptions.
+  Phone (AUTO_PHONE=1, GPU, seedrandom), before -> after, draws: on the bank
+  238-246 -> 254-258, from the water by the float 268 -> 279-281, the lake
+  from the air 190 -> 202-204 (the three more craft, ~4 draws each, within
+  their apron show range). Approximate: the lake is the 40 m water field's
+  (OSM's outline at that grid), so a jet ski runs where the drawn water is,
+  not the real shoreline to the metre.
 - **More to do: skating, the Panthers** (docs/fun-skate.jpg, fun-jackcouch.jpg,
   fun-derby.jpg; `node tools/kw/funprobe.mjs <dir> skate,derby` plays both
   through real keys, with the four above still passing).
