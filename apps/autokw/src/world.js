@@ -474,6 +474,12 @@ function towerLook(bd) {
 // (Kitchener and Waterloo from the 1970s on buried them): downtown
 // Kitchener and its first ring, Uptown, Bridgeport, Galt, Preston,
 // Hespeler and St. Jacobs. [x, z, radius] in world metres (tools/kw/proj.py).
+// AUTO KW: the share of houses with a front porch. In the old cores' pre-war
+// streets (Mt Hope, Cherry Park, Victoria Park, Galt, Preston...) the
+// verandah is the house: nearly every brick two-storey and storey-and-a-half
+// has one across the front; the post-war bungalows and the subdivisions have
+// a stoop, a porch on some.
+const porchShare = (bd) => (inOldCore(bd.x, bd.z) ? 0.8 : 0.42);
 const OLD_CORES = [[-1376, 111, 2300], [-3845, -1444, 1250], [-648, -3111, 600], [13031, 10221, 1500],
   [9794, 5888, 900], [13274, 2111, 800], [-6394, -9666, 450]];
 // AUTO KW: the subdivisions built since ~1985, where Canada Post delivers to
@@ -8398,7 +8404,7 @@ float frLine(float o, float fw, float c, float w) {
    * side, which is what a house does -- run it the short way and a long terrace
    * ends up with an absurdly tall roof and gable ends the width of the street.
    */
-  meshGable(flat, bd, y0, col, seed, pitch = 0.62, chimney = true) {
+  meshGable(flat, bd, y0, col, seed, pitch = 0.62, chimney = true, wall = null) {
     const cs = Math.cos(bd.rot), sn = Math.sin(bd.rot);
     const OVER = 0.45;                       // eaves overhang, all four sides
     const alongX = bd.w >= bd.d;             // which way the ridge runs
@@ -8425,7 +8431,47 @@ float frLine(float o, float fw, float c, float w) {
     const c00 = P(-hw, -hd, y0), c10 = P(hw, -hd, y0);
     const c11 = P(hw, hd, y0), c01 = P(-hw, hd, y0);
     const dark = [col[0] * 0.62, col[1] * 0.62, col[2] * 0.66];
-    if (alongX) {
+    if (wall) {
+      // AUTO KW: A HOUSE'S GABLE END IS ITS WALL. The triangles used to be
+      // the roof's own grey shingle, out at the eaves' overhang line: every
+      // gabled house in the region had a grey cardboard triangle on each end
+      // (an Ontario house carries its brick or siding up to the ridge, under
+      // a rake that overhangs it). Now the gable is the wall's colour on the
+      // wall's own plane (`wall`: [colour, the wall's half-length along the
+      // ridge, its half-span across it]), the slopes run on 0.45 m past it,
+      // a barge board in the trim colour drops 0.18 m along each rake, and the
+      // overhangs have a soffit underneath. Same builder, +6 quads a house.
+      const [wc, wl, ws, trim] = wall;
+      const yE = y0 + (rise * (span - ws)) / span;   // the slope's height over the wall's face
+      const bar = trim || dark, soff = [col[0] * 0.45, col[1] * 0.45, col[2] * 0.47];
+      for (const s of [-1, 1]) {
+        // the gable: wall plane at s * (wl + 0.02) along the ridge
+        const g = s * (wl + 0.02);
+        const Q = (u, y) => (alongX ? P(g, u, y) : P(u, g, y));
+        const nn = alongX ? N(s, 0, 0) : N(0, 0, s);
+        flat.quad(Q(-ws, y0 - 0.05), Q(ws, y0 - 0.05), Q(ws, yE), Q(-ws, yE), nn, ZERO_UV, wc);
+        flat.tri(Q(-ws, yE), Q(ws, yE), Q(0, y1 - 0.02), nn, wc);
+        // the barge boards along both rakes, at the roof's end
+        const r = s * rl;
+        const R = (u, y) => (alongX ? P(r, u, y) : P(u, r, y));
+        for (const t of [-1, 1]) {
+          const half = t * (alongX ? hd : hw);
+          flat.quad(R(half, y0), R(0, y1), R(0, y1 - 0.2), R(half, y0 - 0.2), nn, ZERO_UV, bar);
+        }
+      }
+      // the soffits under the slopes (the overhangs, seen from the street)
+      if (alongX) {
+        flat.quad(c00, c10, Bp, A, N(0, -1, 0), ZERO_UV, soff);
+        flat.quad(c11, c01, A, Bp, N(0, -1, 0), ZERO_UV, soff);
+        flat.quad(c00, c10, Bp, A, N(0, 0.72, -0.7), ZERO_UV, col);
+        flat.quad(c11, c01, A, Bp, N(0, 0.72, 0.7), ZERO_UV, dark);
+      } else {
+        flat.quad(c00, A, Bp, c01, N(0, -1, 0), ZERO_UV, soff);
+        flat.quad(c10, c11, Bp, A, N(0, -1, 0), ZERO_UV, soff);
+        flat.quad(c00, A, Bp, c01, N(-0.7, 0.72, 0), ZERO_UV, col);
+        flat.quad(c10, c11, Bp, A, N(0.7, 0.72, 0), ZERO_UV, dark);
+      }
+    } else if (alongX) {
       flat.quad(c00, c10, Bp, A, N(0, 0.72, -0.7), ZERO_UV, col);      // slope -z
       flat.quad(c11, c01, A, Bp, N(0, 0.72, 0.7), ZERO_UV, dark);      // slope +z
       flat.tri(c00, A, c01, N(-1, 0.25, 0), col);                      // gable -x
@@ -8553,7 +8599,7 @@ float frLine(float o, float fw, float c, float w) {
         const [gx, gz] = off(...L(a, bF + 0.03, 1));
         flat.box(gx, baseY + 0.38, gz, 0.94, 0.64, 0.04, bd.rot, GL);
         // its own little gable, the ridge running up into the main roof
-        this.meshGable(flat, { x: cx, z: cz, w: dw - 0.9, d: bF - bB, rot: bd.rot }, baseY + hgt, rc, seed + k, 0.8, false);
+        this.meshGable(flat, { x: cx, z: cz, w: dw - 0.9, d: bF - bB, rot: bd.rot }, baseY + hgt, rc, seed + k, 0.8, false, [col, (bF - bB) / 2, dw / 2 - 0.02, trim]);
       }
     }
     // --- a chimney on a hip roof too (meshGable gives the gables theirs)
@@ -8601,7 +8647,7 @@ float frLine(float o, float fw, float c, float w) {
       }
     }
     // --- a bay window on the front
-    const porch = bd.w >= 6.5 && bd.d >= 6 && hash2(seed, 135) < 0.42;
+    const porch = bd.w >= 6.5 && bd.d >= 6 && hash2(seed, 135) < porchShare(bd);
     if (bd.w >= 7 && !porch && hash2(seed, 178) < 0.16) {
       const sd = hash2(seed, 179) < 0.5 ? -1 : 1, bw = 2.4, bz = 0.55;
       const [cx, cz] = off(sd * bd.w * 0.24, bd.d / 2 + bz / 2);
@@ -9814,7 +9860,11 @@ float frLine(float o, float fw, float c, float w) {
           { uScale: 5, vScale: 5, cell: C.roof });
         flat.box(bd.x, top - 0.02, bd.z, bd.w + 0.26, 0.42, bd.d + 0.26, bd.rot, trim, { top: false });
       } else {
-        bl.facade.box(bd.x, top, bd.z, bd.w + 0.7, 0.26, bd.d + 0.7, bd.rot, rc,
+        // (a gable's slab stops at the gable walls: the gable end is wall up
+        // to the ridge now, meshGable's `wall`, and a 0.35 m shelf of roof
+        // ran across it at the eaves' height)
+        const gx = form === 'gable' && bd.w >= bd.d ? 0.04 : 0.7, gz = form === 'gable' && bd.w < bd.d ? 0.04 : 0.7;
+        bl.facade.box(bd.x, top, bd.z, bd.w + gx, 0.26, bd.d + gz, bd.rot, rc,
           { uScale: 5, vScale: 5, cell: C.industrial });
         // the fascia/frieze board under the eaves, in the trim colour
         flat.box(bd.x, top - 0.34, bd.z, bd.w + 0.12, 0.34, bd.d + 0.12, bd.rot, trim, { top: false });
@@ -9832,7 +9882,7 @@ float frLine(float o, float fw, float c, float w) {
       const fcs = Math.cos(fb.rot), fsn = Math.sin(fb.rot);
       const offF = fk === 0 ? off : (lx, lz) => [bd.x + lx * fcs - lz * fsn, bd.z + lx * fsn + lz * fcs];
       let porch = null;
-      if (form !== 'flat' && fb.w >= 6.5 && fb.d >= 6 && hash2(seed, 135) < 0.42) {
+      if (form !== 'flat' && fb.w >= 6.5 && fb.d >= 6 && hash2(seed, 135) < porchShare(bd)) {
         const pw = Math.min(fb.w * (0.4 + hash2(seed, 136) * 0.35), 7), pd = 2.2;
         const px = (hash2(seed, 137) < 0.5 ? -1 : 1) * (fb.w - pw) / 2 * hash2(seed, 138);
         const [cx0, cz0] = offF(px, fb.d / 2 + pd / 2);
@@ -9955,7 +10005,14 @@ float frLine(float o, float fw, float c, float w) {
       // Measured, the drawn roof reached 0.4 m past the narrow wall; the metres
       // that looked like overhang were the NEIGHBOURING terrace's roof, which
       // touches this one. The guard was suppressing three correct roofs.
-      this.meshGable(flat, bd, base + wallH + 2.26, rc, seed, pitch);
+      {
+        const m = cell === C.brickhouse ? CELL_MEAN.brickhouse : CELL_MEAN.house;
+        // (0.85: the wall's mean, which counts its windows, read lighter than
+        // the brick or siding round them)
+        const wc = [col[0] * m[0] * 0.85, col[1] * m[1] * 0.85, col[2] * m[2] * 0.85];
+        const ax = bd.w >= bd.d;
+        this.meshGable(flat, bd, base + wallH + 2.26, rc, seed, pitch, true, [wc, (ax ? bd.w : bd.d) / 2, (ax ? bd.d : bd.w) / 2, trim]);
+      }
       this.houseExtras(flat, bd, seed, 'gable', top + 0.26, pitch, rc, col, trim, off);
       const [sx, sz] = offF(0, fb.d / 2 + 0.5);
       // The front step, on the ground rather than 40 cm under it.
