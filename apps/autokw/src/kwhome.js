@@ -763,71 +763,301 @@ function schoolHome(S, k) {
   if (typeof window !== 'undefined') window.__kwHome = STATS;
 }
 
-// St. Matthew (1995, "brick and steel"): one storey round a courtyard, the gym
-// standing up in the middle, the roofs covered in solar panels (Esri imagery),
-// the entrance toward Pastern Trail and the board's sign.
-const STM_BRICK = lin([0.58, 0.34, 0.26]), STM_BAND = lin([0.84, 0.76, 0.60]), STM_COPING = lin([0.20, 0.33, 0.45]);
-const STM_GYM = [-1560, -4823];
+// St. Matthew (1995): from the board's photograph of the north-east front on
+// Pastern Trail (stdavid.wcdsb.ca, "StMatthew.jpg") and Esri imagery. One
+// storey of orange-red brick laid with pale courses every half metre, a buff
+// precast band at the window heads, tall narrow windows in threes with dark
+// frames, flat roofs behind a green metal cap -- and the gables of green
+// standing-seam roofs standing in that front: the ENTRANCE (OSM's 8.9 m jog
+// toward the street, the widest roof in the aerial: brick piers carrying the
+// gable over an open porch, the glazed doors set back, the school's name in
+// sage letters, the round window with its cross), a classroom wing 23 m to the
+// south-east (the round window over a diamond-patterned arch, buff panels, three
+// windows), a third at the north-west end; the gym's ridge roof in the middle,
+// small roof monitors, the flagpole by the entrance. The solar arrays (aerial).
+const STM = {
+  brick: lin([0.78, 0.49, 0.38]), stripe: lin([0.82, 0.58, 0.47]), buff: lin([0.88, 0.80, 0.62]),
+  roof: lin([0.55, 0.67, 0.60]), seam: lin([0.45, 0.57, 0.50]), trim: lin([0.38, 0.54, 0.47]),
+  frame: lin([0.16, 0.17, 0.18]), glass: lin([0.13, 0.17, 0.21]), white: lin([0.93, 0.92, 0.88]),
+  flat: lin([0.72, 0.72, 0.70]), conc: lin([0.70, 0.69, 0.66]),
+};
+const STM_TOP = 5.0, STM_PARA = 0.5;
+// the gables in the north-east front: a point on the front edge, the gable's width along it
+// ('edge': all of it), how deep it runs in, eave and apex over the floor (photo: 29 px/m at the entrance)
+const STM_FRONTS = [
+  { k: 'ent', at: [-1527.7, -4830.6], w: 'edge', d: 15.6, ye: 5.7, yr: 9.5 },
+  { k: 'east', at: [-1512.5, -4815.0], w: 9.0, d: 6.6, ye: 5.0, yr: 8.4 },
+  { k: 'north', at: [-1539.6, -4849.6], w: 7.4, d: 9.0, ye: 5.6, yr: 8.6 },
+];
+const STM_GYM = { x: -1559, z: -4824, ux: 0.61, uz: 0.79, hl: 8.2, hw: 6.0, ye: 8.0, yr: 10.6 };
+const STM_MON = [[-1525.9, -4797.4], [-1531.0, -4793.5], [-1538.0, -4787.2]];
+const STM_FLAG = [-1526.5, -4838.6];
+
+const nrm3 = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+
+/**
+ * A gabled roof on a frame F ({ P(u, v, y), U, V }: u along the ridge, v across): walls from y0 to
+ * the eave on both sides, the gable ends (unless `front` / `back` false), two green standing-seam
+ * slopes with an overhang, rake and eave fascias, a ridge cap.
+ */
+function stmGable(B, F, u0, u1, hw, y0, ye, yr, o = {}) {
+  const ov = o.ov ?? 0.45, wall = o.wall || STM.brick;
+  const { P, U, V } = F;
+  const N = (a, s) => [a[0] * s, 0, a[2] * s];
+  const k = (yr - ye) / hw;
+  for (const s of [-1, 1]) B.quad(P(u0, s * hw, y0), P(u1, s * hw, y0), P(u1, s * hw, ye), P(u0, s * hw, ye), N(V, s), U0, wall);
+  for (const [u, s, on] of [[u0, -1, o.front !== false], [u1, 1, o.back !== false]]) {
+    if (!on) continue;
+    B.quad(P(u, -hw, y0), P(u, hw, y0), P(u, hw, ye), P(u, -hw, ye), N(U, s), U0, wall);
+    B.tri(P(u, -hw, ye), P(u, hw, ye), P(u, 0, yr), N(U, s), wall);
+  }
+  const ua = u0 - ov, ub = u1 + ov, ve = hw + ov, y2 = ye - ov * k, yt = yr + 0.03;
+  for (const s of [-1, 1]) {
+    const n = nrm3([V[0] * s * k, 1, V[2] * s * k]);
+    B.quad(P(ua, s * ve, y2), P(ub, s * ve, y2), P(ub, 0, yt), P(ua, 0, yt), n, U0, [STM.seam, STM.seam, STM.roof, STM.roof]);
+    B.quad(P(ua, s * ve, y2 - 0.02), P(ub, s * ve, y2 - 0.02), P(ub, 0, yt - 0.02), P(ua, 0, yt - 0.02), [-n[0], -n[1], -n[2]], U0, shade(STM.trim, 0.55));
+    // the standing seams
+    const lift = 0.025;
+    for (let u = ua + 0.3; u < ub - 0.1; u += 0.55) {
+      B.quad(P(u - 0.025, s * ve, y2 + lift), P(u + 0.025, s * ve, y2 + lift), P(u + 0.025, 0, yt + lift), P(u - 0.025, 0, yt + lift), n, U0, STM.seam);
+    }
+    // eave fascia
+    B.quad(P(ua, s * ve, y2 - 0.24), P(ub, s * ve, y2 - 0.24), P(ub, s * ve, y2 + 0.02), P(ua, s * ve, y2 + 0.02), N(V, s), U0, STM.trim);
+    // the rakes
+    for (const [u, su] of [[ua, -1], [ub, 1]]) {
+      B.quad(P(u, s * ve, y2 - 0.24), P(u, 0, yt - 0.24), P(u, 0, yt + 0.03), P(u, s * ve, y2 + 0.03), N(U, su), U0, STM.trim);
+    }
+  }
+  B.quad(P(ua, -0.16, yt + 0.06), P(ub, -0.16, yt + 0.06), P(ub, 0.16, yt + 0.06), P(ua, 0.16, yt + 0.06), [0, 1, 0], U0, STM.trim);
+}
+
+/** Pale brick courses every half metre on a wall piece (pt(t, y, off) on its face, normal N). */
+function stmStripes(B, pt, N, t0, t1, y0, y1, gy, off = 0.012) {
+  if (t1 - t0 < 0.2) return;
+  for (let y = gy + 0.45; y < y1 - 0.15; y += 0.5) {
+    if (y < y0 || (y > gy + 2.85 && y < gy + 3.35)) continue;
+    B.quad(pt(t0, y, off), pt(t1, y, off), pt(t1, y + 0.045, off), pt(t0, y + 0.045, off), N, U0, STM.stripe);
+  }
+}
+
+/** A tall narrow window: dark frame, glass, a buff sill. */
+function stmWindow(B, pt, N, t, y, w = 0.8, h = 1.95) {
+  B.quad(pt(t - w / 2 - 0.07, y - 0.05, 0.03), pt(t + w / 2 + 0.07, y - 0.05, 0.03), pt(t + w / 2 + 0.07, y + h + 0.06, 0.03), pt(t - w / 2 - 0.07, y + h + 0.06, 0.03), N, U0, STM.frame);
+  B.quad(pt(t - w / 2, y, 0.045), pt(t + w / 2, y, 0.045), pt(t + w / 2, y + h, 0.045), pt(t - w / 2, y + h, 0.045), N, U0, [STM.glass, STM.glass, shade(STM.glass, 1.8), shade(STM.glass, 1.8)]);
+  B.quad(pt(t - 0.03, y, 0.05), pt(t + 0.03, y, 0.05), pt(t + 0.03, y + h, 0.05), pt(t - 0.03, y + h, 0.05), N, U0, STM.frame);
+  B.quad(pt(t - w / 2 - 0.1, y - 0.14, 0.07), pt(t + w / 2 + 0.1, y - 0.14, 0.07), pt(t + w / 2 + 0.1, y - 0.03, 0.07), pt(t - w / 2 - 0.1, y - 0.03, 0.07), N, U0, STM.buff);
+}
+const stmThree = (B, pt, N, t, y) => { for (const d of [-1.2, 0, 1.2]) stmWindow(B, pt, N, t + d, y, 0.74); };
+
+/** A round window centred at (t, y): glass, a white ring, a cross (`cross`) or none. */
+function stmOculus(B, pt, N, t, y, r, cross = false) {
+  const n = 20, ring = r * 0.17;
+  for (let i = 0; i < n; i++) {
+    const a0 = (i / n) * Math.PI * 2, a1 = ((i + 1) / n) * Math.PI * 2;
+    const p = (a, rr, off) => pt(t + Math.cos(a) * rr, y + Math.sin(a) * rr, off);
+    B.tri(pt(t, y, 0.03), p(a0, r, 0.03), p(a1, r, 0.03), N, i < n / 2 ? shade(STM.glass, 1.7) : STM.glass);
+    B.quad(p(a0, r, 0.06), p(a1, r, 0.06), p(a1, r + ring, 0.06), p(a0, r + ring, 0.06), N, U0, STM.white);
+  }
+  if (cross) {
+    B.quad(pt(t - r, y - 0.035, 0.05), pt(t + r, y - 0.035, 0.05), pt(t + r, y + 0.035, 0.05), pt(t - r, y + 0.035, 0.05), N, U0, STM.white);
+    B.quad(pt(t - 0.035, y - r, 0.05), pt(t + 0.035, y - r, 0.05), pt(t + 0.035, y + r, 0.05), pt(t - 0.035, y + r, 0.05), N, U0, STM.white);
+  }
+}
+
+/** The south-east wing's arch of diamond-patterned brick: pale mortar lines between brick diamonds. */
+function stmDiaper(B, pt, N, t, y0, hw, yc) {
+  // the panel: a rectangle from y0 to yc and a half circle of radius hw over it
+  const inside = (s, y) => (y >= y0 && y <= yc && Math.abs(s) <= hw) || (y > yc && Math.hypot(s, y - yc) <= hw);
+  B.quad(pt(t - hw, y0, 0.012), pt(t + hw, y0, 0.012), pt(t + hw, yc, 0.012), pt(t - hw, yc, 0.012), N, U0, STM.stripe);
+  const n = 14;
+  for (let i = 0; i < n; i++) {
+    const a0 = (i / n) * Math.PI, a1 = ((i + 1) / n) * Math.PI;
+    B.tri(pt(t, yc, 0.012), pt(t + Math.cos(a0) * hw, yc + Math.sin(a0) * hw, 0.012), pt(t + Math.cos(a1) * hw, yc + Math.sin(a1) * hw, 0.012), N, STM.stripe);
+  }
+  const a = 0.46, h = a / 2 - 0.035;
+  for (let j = 0; (j * a) / 2 <= yc + hw - y0; j++) {
+    for (let i = -Math.ceil(hw / a) - 1; i <= Math.ceil(hw / a) + 1; i++) {
+      const s = i * a + ((j % 2) * a) / 2, y = y0 + (j * a) / 2;
+      if (!inside(s - h, y) || !inside(s + h, y) || !inside(s, y - h) || !inside(s, y + h)) continue;
+      B.quad(pt(t + s, y - h, 0.022), pt(t + s + h, y, 0.022), pt(t + s, y + h, 0.022), pt(t + s - h, y, 0.022), N, U0, STM.brick);
+    }
+  }
+}
 
 function stMatthew(S, { B, ctx, g }) {
   const solid = (s) => ctx.solids.push(s);
   const pts = ccw(H.stm.p);
   const [cx, cz] = centroid(pts);
-  const base = T(cx, cz), top = base + 4.8;
-  const { E } = walls(B, solid, pts, top + 0.5, STM_BRICK);
-  roof(B, pts, top, lin([0.72, 0.72, 0.70]));
-  const sx = H.stm.sign[0], sz = H.stm.sign[1];
-  // the entrance: the long face nearest the sign
-  let ent = null, bd = Infinity;
-  for (const e of E) {
-    if (e.L < 8) continue;
-    const dx = sx - e.mx, dz = sz - e.mz, d = Math.hypot(dx, dz);
-    if ((dx * e.nx + dz * e.nz) / d > 0.3 && d < bd) { bd = d; ent = e; }
+  const base = T(cx, cz), top = base + STM_TOP;
+  const E = edges(pts);
+  let lo = Infinity;
+  for (const q of pts) lo = Math.min(lo, T(q[0], q[1]));
+  lo -= 1.2;
+  // the fronts: each on the edge nearest its point
+  const fronts = [];
+  for (const f of STM_FRONTS) {
+    const r = nearestEdge(E, f.at[0], f.at[1]);
+    if (!r) continue;
+    const e = r.e, w = f.w === 'edge' ? e.L : Math.min(f.w, e.L);
+    const tc = f.w === 'edge' ? e.L / 2 : Math.max(w / 2, Math.min(e.L - w / 2, r.t));
+    const right = e.ux * e.nz - e.uz * e.nx > 0;     // t runs to the viewer's right, looking at the front
+    fronts.push({ ...f, e, tc, w, t0: tc - w / 2, t1: tc + w / 2, X: (s) => (right ? tc - w / 2 + s : tc + w / 2 - s) });
   }
+  // the walls: every edge but the fronts' spans, brick to the parapet under a green cap
   for (const e of E) {
-    const gy = T(e.mx + e.nx * 2, e.mz + e.nz * 2), N = [e.nx, 0, e.nz];
-    B.quad(at(e, 0, top + 0.5, 0.1), at(e, e.L, top + 0.5, 0.1), at(e, e.L, top + 0.62, -0.2), at(e, 0, top + 0.62, -0.2), [0, 1, 0], U0, STM_COPING);
-    B.quad(at(e, 0, top - 0.1, 0.06), at(e, e.L, top - 0.1, 0.06), at(e, e.L, top + 0.5, 0.06), at(e, 0, top + 0.5, 0.06), N, U0, STM_COPING);
-    B.quad(at(e, 0, gy + 0.6, 0.04), at(e, e.L, gy + 0.6, 0.04), at(e, e.L, gy + 0.85, 0.04), at(e, 0, gy + 0.85, 0.04), N, U0, STM_BAND);
-    if (e === ent) continue;
-    // classrooms: tall windows in pairs
-    windows(B, e, gy + 1.0, 2.0, 3.6, 2.4, lin([0.16, 0.2, 0.24]), lin([0.86, 0.86, 0.84]));
-    B.quad(at(e, 0, gy + 3.25, 0.04), at(e, e.L, gy + 3.25, 0.04), at(e, e.L, gy + 3.45, 0.04), at(e, 0, gy + 3.45, 0.04), N, U0, STM_BAND);
-  }
-  if (ent) {
-    const e = ent, t = e.L / 2, gy = T(e.mx + e.nx * 3, e.mz + e.nz * 3), N = [e.nx, 0, e.nz];
-    storefront(B, e, t - 4, t + 4, gy, { bay: 2, h: 3.0, frame: lin([0.2, 0.33, 0.45]) });
-    // the canopy: a flat roof on four steel posts
-    const D = 4.5, y = gy + 3.4;
-    B.quad(at(e, t - 6, y, D), at(e, t + 6, y, D), at(e, t + 6, y, 0), at(e, t - 6, y, 0), [0, -1, 0], U0, lin([0.85, 0.85, 0.83]));
-    B.quad(at(e, t - 6, y + 0.5, 0), at(e, t + 6, y + 0.5, 0), at(e, t + 6, y + 0.5, D), at(e, t - 6, y + 0.5, D), [0, 1, 0], U0, lin([0.6, 0.6, 0.6]));
-    B.quad(at(e, t - 6, y, D), at(e, t + 6, y, D), at(e, t + 6, y + 0.5, D), at(e, t - 6, y + 0.5, D), N, U0, STM_COPING);
-    for (const sd of [-1, 1]) for (const dd of [D - 0.3]) {
-      const p = at(e, t + sd * 5.6, gy, dd);
-      B.box(p[0], gy - 0.3, p[2], 0.25, 3.8, 0.25, 0, STM_COPING);
-      solid({ x: p[0], z: p[2], r: 0.2, y0: gy - 1, y1: gy + 3.5 });
+    const N = [e.nx, 0, e.nz], pt = (t, y, off = 0) => e.at(t, y, off);
+    const cut = fronts.filter((f) => f.e === e).map((f) => [f.t0, f.t1]).sort((a, b) => a[0] - b[0]);
+    const spans = [];
+    let t = 0;
+    for (const [a, b] of cut) { if (a > t + 0.05) spans.push([t, a]); t = Math.max(t, b); }
+    if (e.L > t + 0.05) spans.push([t, e.L]);
+    const gy = T(e.mx + e.nx * 2, e.mz + e.nz * 2), yt = top + STM_PARA;
+    for (const [a, b] of spans) {
+      B.quad(pt(a, lo), pt(b, lo), pt(b, yt), pt(a, yt), N, U0, [shade(STM.brick, 0.8), shade(STM.brick, 0.8), STM.brick, STM.brick]);
+      B.quad(pt(a, top - 0.1, -0.25), pt(b, top - 0.1, -0.25), pt(b, yt, -0.25), pt(a, yt, -0.25), [-e.nx, 0, -e.nz], U0, shade(STM.brick, 0.7));
+      const m = (a + b) / 2;
+      solid({ x: e.a[0] + e.ux * m, z: e.a[1] + e.uz * m, hw: (b - a) / 2 + 0.2, hd: 0.35, rot: Math.atan2(e.uz, e.ux), y0: lo, y1: yt });
+      // the cap, its fascia, the head band, the courses
+      B.quad(pt(a, yt, 0.08), pt(b, yt, 0.08), pt(b, yt + 0.06, -0.3), pt(a, yt + 0.06, -0.3), [0, 1, 0], U0, STM.trim);
+      B.quad(pt(a, yt - 0.16, 0.08), pt(b, yt - 0.16, 0.08), pt(b, yt, 0.08), pt(a, yt, 0.08), N, U0, STM.trim);
+      B.quad(pt(a, gy + 2.95, 0.035), pt(b, gy + 2.95, 0.035), pt(b, gy + 3.3, 0.035), pt(a, gy + 3.3, 0.035), N, U0, STM.buff);
+      stmStripes(B, pt, N, a, b, lo, yt - 0.2, gy);
+      // windows in threes (singles on short runs)
+      const L = b - a;
+      if (L >= 4.6) {
+        const n = Math.max(1, Math.floor((L - 1.2) / 7.0)), sp = (L - 1.2) / n;
+        for (let i = 0; i < n; i++) stmThree(B, pt, N, a + 0.6 + sp * (i + 0.5), gy + 0.9);
+      } else if (L >= 2.2) stmWindow(B, pt, N, m, gy + 0.9);
     }
-    const pnl = ctx.atlas.panel(9, 0.9, 30, (q, W, Hh) => {
-      q.clearRect(0, 0, W, Hh);
-      q.fillStyle = '#f2efe6'; q.textAlign = 'center'; q.textBaseline = 'middle';
-      q.font = `700 ${Hh * 0.5}px Helvetica, Arial, sans-serif`; q.fillText('ST. MATTHEW CATHOLIC ELEMENTARY SCHOOL', W / 2, Hh * 0.55, W * 0.98);
-    });
-    const p = at(e, t, gy + 4.5, 0.08);
-    hangIn(g, pnl, p[0], gy + 4.5, p[2], e.nx, e.nz);
-    STATS.stmEntrance = [Math.round(e.mx), Math.round(e.mz)];
   }
-  // the gym: up through the roof by the courtyard
+  roof(B, pts, top, STM.flat);
+  const keep = [];                                  // footprints the solar rows keep off
+  for (const f of fronts) {
+    const e = f.e, N = [e.nx, 0, e.nz], pt = (t, y, off = 0) => e.at(t, y, off);
+    const gy = T(e.at(f.tc, 0, 2)[0], e.at(f.tc, 0, 2)[2]), ye = base + f.ye, yr = base + f.yr;
+    const F = { P: (u, v, y) => e.at(f.tc + v, y, -u), U: [-e.nx, 0, -e.nz], V: [e.ux, 0, e.uz] };
+    stmGable(B, F, 0, f.d, f.w / 2, top - 0.3, ye, yr, { front: false, ov: f.k === 'ent' ? 0.5 : 0.4 });
+    keep.push({ x: e.at(f.tc, 0, 0)[0], z: e.at(f.tc, 0, 0)[2], ux: -e.nx, uz: -e.nz, u0: -1, u1: f.d + 1.2, hw: f.w / 2 + 1.2 });
+    const face = (a, b, y0, y1, off = 0) => {
+      B.quad(pt(a, y0, off), pt(b, y0, off), pt(b, y1, off), pt(a, y1, off), N, U0, STM.brick);
+      stmStripes(B, pt, N, Math.min(a, b), Math.max(a, b), y0, y1, gy, off + 0.012);
+    };
+    const tri = () => {
+      B.tri(pt(f.t0, ye), pt(f.t1, ye), pt(f.tc, yr), N, STM.brick);
+      const k = (yr - ye) / (f.w / 2);
+      for (let y = gy + 0.45; y < yr - 0.4; y += 0.5) {
+        if (y < ye) continue;
+        const hwy = (yr - y - 0.08) / k;
+        if (hwy > 0.2) B.quad(pt(f.tc - hwy, y, 0.012), pt(f.tc + hwy, y, 0.012), pt(f.tc + hwy, y + 0.055, 0.012), pt(f.tc - hwy, y + 0.055, 0.012), N, U0, STM.stripe);
+      }
+    };
+    const cx0 = e.at(f.tc, 0, 0);
+    solid({ x: cx0[0], z: cx0[2], hw: f.w / 2 + 0.2, hd: 0.35, rot: Math.atan2(e.uz, e.ux), y0: lo, y1: ye, ...(f.k === 'ent' ? { y0: gy + 3.4 } : {}) });
+    if (f.k === 'ent') {
+      // the porch: piers carry the gable; the openings between them (photo, left to right as seen)
+      const W = f.w, k = W / 9.6, PH = gy + 3.45, D = 3.0;
+      const piers = [[1.4, 2.7], [6.2, 7.6], [8.5, 9.6]].map(([a, b]) => [a * k, b * k]);
+      const opens = [[0, 1.4], [2.7, 6.2], [7.6, 8.5]].map(([a, b]) => [a * k, b * k]);
+      face(f.X(0), f.X(W), PH, ye);
+      tri();
+      for (const [a, b] of piers) {
+        face(f.X(a), f.X(b), lo, PH);
+        const pc = e.at((f.X(a) + f.X(b)) / 2, 0, -D / 2);
+        solid({ x: pc[0], z: pc[2], hw: Math.abs(f.X(b) - f.X(a)) / 2, hd: D / 2, rot: Math.atan2(e.uz, e.ux), y0: lo, y1: PH });
+        // the piers run back to the doors
+        for (const s of [a, b]) {
+          if (s < 0.05 || s > W - 0.05) continue;
+          const tt = f.X(s), sgn = (f.X(s + 0.01) - tt) > 0 ? 1 : -1, side = s === a ? -sgn : sgn;
+          B.quad(pt(tt, lo, 0), pt(tt, lo, -D), pt(tt, PH, -D), pt(tt, PH, 0), [e.ux * side, 0, e.uz * side], U0, shade(STM.brick, 0.9));
+        }
+      }
+      for (const [a, b] of opens) {
+        const ta = f.X(a), tb = f.X(b);
+        // the cream lintel, the soffit, the floor, the wall at the back
+        B.quad(pt(ta, PH - 0.34, 0.02), pt(tb, PH - 0.34, 0.02), pt(tb, PH, 0.02), pt(ta, PH, 0.02), N, U0, STM.buff);
+        B.quad(pt(ta, PH - 0.34, 0.02), pt(tb, PH - 0.34, 0.02), pt(tb, PH - 0.34, -D), pt(ta, PH - 0.34, -D), [0, -1, 0], U0, shade(STM.buff, 0.75));
+        B.quad(pt(ta, gy + 0.03, 0), pt(tb, gy + 0.03, 0), pt(tb, gy + 0.03, -D), pt(ta, gy + 0.03, -D), [0, 1, 0], U0, STM.conc);
+        B.quad(pt(ta, lo, -D), pt(tb, lo, -D), pt(tb, PH, -D), pt(ta, PH, -D), N, U0, shade(STM.brick, 0.85));
+      }
+      // the doors: a glazed screen at the back of the middle opening
+      const [ma, mb] = opens[1];
+      const eb = { at: (t, y, off = 0) => e.at(t, y, off - D), nx: e.nx, nz: e.nz };
+      storefront(B, eb, Math.min(f.X(ma), f.X(mb)) + 0.25, Math.max(f.X(ma), f.X(mb)) - 0.25, gy, { bay: 1.1, h: 2.75, frame: lin([0.30, 0.31, 0.32]), glass: lin([0.24, 0.30, 0.35]) });
+      for (const j of [0, 2]) {
+        const [a, b] = opens[j];
+        stmWindow(B, (t, y, off = 0) => e.at(t, y, off - D), N, (f.X(a) + f.X(b)) / 2, gy + 0.9, Math.min(0.8, (b - a) * 0.6), 1.95);
+      }
+      stmOculus(B, pt, N, f.tc, gy + 7.3, 0.76, true);
+      // the name, two lines of sage letters on the brick
+      const pnl = ctx.atlas.panel(7.2 * k, 1.1, 44, (q, Wd, Hh) => {
+        q.clearRect(0, 0, Wd, Hh);
+        q.textAlign = 'center'; q.textBaseline = 'middle';
+        for (const [s, y, sz] of [['ST. MATTHEW', 0.26, 0.44], ['CATHOLIC ELEMENTARY SCHOOL', 0.75, 0.44]]) {
+          q.font = `700 ${Hh * sz}px Helvetica, Arial, sans-serif`;
+          q.fillStyle = '#3a463e'; q.fillText(s, Wd / 2 + 1.5, Hh * y + 1.5, Wd * 0.98);
+          q.fillStyle = '#b9cbbd'; q.fillText(s, Wd / 2, Hh * y, Wd * 0.98);
+        }
+      });
+      const p = e.at(f.tc, 0, 0.05);
+      hangIn(g, pnl, p[0], gy + 4.6, p[2], e.nx, e.nz);
+      STATS.stmEntrance = [Math.round(p[0]), Math.round(p[2])];
+    } else {
+      face(f.t0, f.t1, lo, ye);
+      tri();
+      B.quad(pt(f.t0, gy + 2.95, 0.035), pt(f.t1, gy + 2.95, 0.035), pt(f.t1, gy + 3.3, 0.035), pt(f.t0, gy + 3.3, 0.035), N, U0, STM.buff);
+      stmThree(B, pt, N, f.tc, gy + 0.9);
+      if (f.k === 'east') {
+        // the arch of diamonds over the round window, the buff panels either side of it (photo)
+        stmDiaper(B, pt, N, f.tc, gy + 4.2, 1.45, gy + 5.35);
+        for (const s of [-1.05, 1.05]) B.quad(pt(f.tc + s - 0.27, gy + 3.35, 0.03), pt(f.tc + s + 0.27, gy + 3.35, 0.03), pt(f.tc + s + 0.27, gy + 4.3, 0.03), pt(f.tc + s - 0.27, gy + 4.3, 0.03), N, U0, STM.buff);
+        B.quad(pt(f.tc - 0.3, gy + 3.35, 0.03), pt(f.tc + 0.3, gy + 3.35, 0.03), pt(f.tc + 0.3, gy + 3.8, 0.03), pt(f.tc - 0.3, gy + 3.8, 0.03), N, U0, STM.buff);
+        stmOculus(B, pt, N, f.tc, gy + 4.45, 0.6);
+      } else stmOculus(B, pt, N, f.tc, gy + (f.ye + f.yr) / 2 - 0.2, 0.55);
+    }
+  }
+  // the gym: a ridge roof up through the middle; the roof monitors
   {
-    const o = obb(pts), rot = Math.atan2(o.uz, o.ux);
-    B.box(STM_GYM[0], base, STM_GYM[1], 22, 7.6, 18, rot, STM_BRICK);
-    B.box(STM_GYM[0], base + 7.6, STM_GYM[1], 22.4, 0.4, 18.4, rot, STM_COPING);
-    solid({ x: STM_GYM[0], z: STM_GYM[1], hw: 11, hd: 9, rot, y0: base, y1: base + 8 });
-    // the solar arrays: rows of tilted panels over the classroom roofs
+    const o = STM_GYM, l = Math.hypot(o.ux, o.uz), ux = o.ux / l, uz = o.uz / l;
+    const F = { P: (u, v, y) => [o.x + ux * u - uz * v, y, o.z + uz * u + ux * v], U: [ux, 0, uz], V: [-uz, 0, ux] };
+    stmGable(B, F, -o.hl, o.hl, o.hw, top - 0.3, base + o.ye, base + o.yr, { ov: 0.4 });
+    for (const s of [-1, 1]) {
+      const pt = (t, y, off = 0) => F.P(t, s * (o.hw + off), y), N = [-uz * s, 0, ux * s];
+      stmStripes(B, pt, N, -o.hl, o.hl, top, base + o.ye - 0.1, base);
+      B.quad(pt(-o.hl, base + o.ye - 0.7, 0.03), pt(o.hl, base + o.ye - 0.7, 0.03), pt(o.hl, base + o.ye - 0.4, 0.03), pt(-o.hl, base + o.ye - 0.4, 0.03), N, U0, STM.buff);
+    }
+    solid({ x: o.x, z: o.z, hw: o.hl, hd: o.hw, rot: Math.atan2(uz, ux), y0: top - 0.3, y1: base + o.yr });
+    keep.push({ x: o.x, z: o.z, ux, uz, u0: -o.hl - 1.2, u1: o.hl + 1.2, hw: o.hw + 1.2 });
+    const ux2 = 0.786, uz2 = -0.619;
+    let mons = 0;
+    for (const [mx, mz] of STM_MON) {
+      if (!inPoly(pts, mx, mz)) continue;
+      const Fm = { P: (u, v, y) => [mx + ux2 * u - uz2 * v, y, mz + uz2 * u + ux2 * v], U: [ux2, 0, uz2], V: [-uz2, 0, ux2] };
+      stmGable(B, Fm, -2.2, 2.2, 1.6, top - 0.1, top + 1.0, top + 2.0, { ov: 0.25, wall: STM.buff });
+      keep.push({ x: mx, z: mz, ux: ux2, uz: uz2, u0: -3.4, u1: 3.4, hw: 2.8 });
+      mons++;
+    }
+    STATS.stmMonitors = mons;
+  }
+  // the flagpole by the entrance
+  if (!inPoly(pts, STM_FLAG[0], STM_FLAG[1])) {
+    const fy = T(STM_FLAG[0], STM_FLAG[1]);
+    B.box(STM_FLAG[0], fy - 0.2, STM_FLAG[1], 0.5, 0.35, 0.5, 0, STM.conc);
+    B.tube([STM_FLAG[0], fy, STM_FLAG[1]], [STM_FLAG[0], fy + 11.5, STM_FLAG[1]], 0.07, 6, STM.white);
+    B.box(STM_FLAG[0], fy + 11.5, STM_FLAG[1], 0.18, 0.18, 0.18, 0, lin([0.85, 0.72, 0.35]));
+    solid({ x: STM_FLAG[0], z: STM_FLAG[1], r: 0.15, y0: fy - 1, y1: fy + 11.6 });
+  }
+  // the solar arrays: rows of tilted panels over the flat roofs
+  {
+    const o = obb(pts);
+    const inKeep = (x, z) => keep.some((q) => {
+      const dx = x - q.x, dz = z - q.z, u = dx * q.ux + dz * q.uz, v = -dx * q.uz + dz * q.ux;
+      return u > q.u0 && u < q.u1 && Math.abs(v) < q.hw;
+    });
     const PV = lin([0.10, 0.14, 0.24]), PVF = lin([0.55, 0.56, 0.58]);
     let n = 0;
     for (let u = -o.hu + 4; u < o.hu - 3; u += 5.2) for (let v = -o.hv + 3; v < o.hv - 2; v += 2.6) {
       const x = o.x + o.ux * u - o.uz * v, z = o.z + o.uz * u + o.ux * v;
-      if (!inPoly(pts, x, z) || Math.abs((x - STM_GYM[0]) * o.ux + (z - STM_GYM[1]) * o.uz) < 13 && Math.abs(-(x - STM_GYM[0]) * o.uz + (z - STM_GYM[1]) * o.ux) < 11) continue;
+      if (!inPoly(pts, x, z) || inKeep(x, z) || inKeep(x + o.ux * 2.4, z + o.uz * 2.4) || inKeep(x - o.ux * 2.4, z - o.uz * 2.4)) continue;
       if (!inPoly(pts, x + o.ux * 2.3, z + o.uz * 2.3) || !inPoly(pts, x - o.ux * 2.3, z - o.uz * 2.3)) continue;
       const P = (du, dv, dyy) => [x + o.ux * du - o.uz * dv, top + 0.25 + dyy, z + o.uz * du + o.ux * dv];
       B.quad(P(-2.4, -0.9, 0), P(2.4, -0.9, 0), P(2.4, 0.9, 0.7), P(-2.4, 0.9, 0.7), [0, 0.92, 0.38], U0, [PV, PV, shade(PV, 1.5), shade(PV, 1.5)]);

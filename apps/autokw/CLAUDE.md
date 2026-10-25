@@ -2736,11 +2736,31 @@ file and a guide disagree, this file wins.
   Region's 1934 five-span concrete bowstring arch, rehabilitated): five ribs a
   side with hangers, parapet posts, four river piers, on OSM way 38742677.
   **The schools** go into kw.js buildSchools' own per-school mesh through
-  `SCHOOL_HOOKS`: St. Matthew (1995, one storey, "brick and steel") in
-  red-brown brick with a buff band and blue coping, punched classroom windows,
-  the entrance canopy and lettering on the face toward the board's sign node,
-  the gym up through the roof, the roofs' solar arrays (aerial), the two
-  portables (OSM's small buildings) with ramps; St. David (unnamed in OSM: its
+  `SCHOOL_HOOKS`: **St. Matthew** (docs/stmatthew-front.jpg, stmatthew-air.jpg,
+  master over this) from the board's photograph of its north-east front
+  (stdavid.wcdsb.ca/.../2017/06/StMatthew.jpg) and the Esri aerial: one
+  storey (5.0 m roof, 0.5 m parapet under a green metal cap) of orange-red
+  brick with pale courses every 0.5 m, a buff precast band at the window heads,
+  tall narrow dark-framed windows in threes with buff sills; and the green
+  standing-seam GABLES standing in that front (`STM_FRONTS`, each found as the
+  outline edge nearest its point, its span cut out of the plain wall): the
+  ENTRANCE on OSM's 8.9 m jog toward Pastern Trail (eave 5.7, apex 9.5: the
+  photo is 29 px/m there) -- piers carrying the gable over an open porch, the
+  cream lintel and soffit, the glazed doors 3 m back, ST. MATTHEW / CATHOLIC
+  ELEMENTARY SCHOOL in sage letters (one atlas panel, as before), the round
+  window with its cross; the classroom wing 23 m south-east (the photo's left
+  gable: a round window in an arch of brick diamonds, `stmDiaper`, buff panels
+  either side, three windows); a third gable at the north-west end (estimated:
+  not in the photo); the gym's ridge roof (`STM_GYM`, 16.4 x 12 m, ridge NW-SE,
+  off the aerial), three small roof monitors (`STM_MON`), the flagpole by the
+  entrance (aerial), the solar arrays kept off all of them, the two portables
+  (OSM's small buildings) with ramps. The old entrance (a canopy on the NW
+  face) and blue coping were guesses; the photo's entrance is the jog, which the
+  aerial's widest gable roof confirms. St. Matthew's own mesh 2.4k -> 4.9k
+  tris; phone draws identical (drawprobe: 260 / 267 at the photo and air views,
+  landmarks 121 / 122 both builds); views in kwshots: `{c: [-1502, -4843.2,
+  1.7], t: [-1523.4, -4825.1, 4.8], fov: 40}` (the photo), `{c: [-1515, -4865,
+  38], t: [-1557, -4822, 5]}` (the roofs). St. David (unnamed in OSM: its
   LOOKS by position, warm red brick from the 2009 Commons photo) gets its
   two-tone round drum over the glazed entrance between concrete piers on the
   east front (`STD_DRUM`, the circle in the aerial), the canopy, precast bands
@@ -2767,7 +2787,10 @@ file and a guide disagree, this file wins.
   `window.__kwHome` has the counts; `window.__noHome = true` before boot
   turns it off. Re-run `build_home.py` after an OSM update (and `build_kw.py`
   for the schools' pitch sports and sign node). **Approximate:** St.
-  Matthew's brick colour and gym size (no photo found; aerial only); the UW
+  Matthew's back and courtyard faces (the photo is the NE front only; the
+  courtyard is roofed over, OSM maps no hole), the north-west gable's face,
+  the gym's height and pitch, the porch's depth, every colour (read off one
+  sunny photo); the UW
   plaza's wall brick and the UB plaza's tan brick (aerial shows roofs only);
   which face UW plaza tenants open on where OSM's node is mid-building (the
   lot side); the residence's storeys; Conestoga's dark metal upper storeys
