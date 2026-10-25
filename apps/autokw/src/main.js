@@ -52,6 +52,7 @@ import { CoffeeShop } from './barista.js';
 import { Seafair } from './hydrorace.js';
 import { FireService, placeStations } from './firecalls.js';
 import { BONES } from './peds.js';
+import { timsKeepClear } from './kw.js';
 import { setKwData, applyNamed, buildSigns, buildPolys, buildBunting, buildSchools, mapPlaces as kwPlaces, kwData, boxAt, dedupeFootprints } from './kw.js';
 import { addLandmarkExtra } from './landmarks.js';
 import { Chicopee } from './chicopee.js';
@@ -1254,7 +1255,8 @@ function installShadowFade() {
   counterbal = null;
   city.extraClear = (x, z) => link.keepClear(x, z) || !!(kwrail && kwrail.keepClear(x, z)) || bikeNet.keepClear(x, z) || chicopee.keepClear(x, z) || !!(golf && golf.keepClear(x, z)) || kartway.keepClear(x, z) || hwyKeepClear(x, z);
   // open lawns round the campus buildings: trees only (uwcampus.js)
-  city.treeClear = campusKeepClear;
+  // ... and round Tim Hortons' pylons (kw.js), whose cabinets stood in the boulevard trees' crowns
+  city.treeClear = (x, z) => campusKeepClear(x, z) || timsKeepClear(x, z);
 
   await step(0.8, 'Building the skyline');
   world.buildSkyline();

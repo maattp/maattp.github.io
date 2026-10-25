@@ -30,7 +30,7 @@
 import * as THREE from './three.js';
 import * as G from './geo.js';
 import { Builder } from './build.js';
-import { boxAt, faceFor, faceRoad, polyFace, polyMat, kwData } from './kw.js';
+import { boxAt, faceFor, faceRoad, polyFace, polyMat, kwData, TIMS_TOWER, TIMS_FASCIA_W, TIMS_UNIT, timsTower, timsWhiteWord, kwSignKey } from './kw.js';
 
 let S = null;
 /** fn({ A, Gb, Lb, ctx, solid, txt, bg, brandOf, logoOf }) run inside buildShops, before the atlas is finished. */
@@ -750,6 +750,7 @@ export function prepShops(city) {
     b.kw.strip = { face };
     b.kw.skip = true;
     b.kw.shop = { fmt: 'strip', plaza: -1, front: fi, kind };
+    if (kind === 'f' && /Tim Horton/.test((F && F[4]) || '')) b.kw.shop.tims = true;   // kw.js hangs its script on the pad's sign block
     if (ck) { b.kw.shop.ck = ck; r.frontsNext++; }
     if (rk) { b.kw.shop.rk = rk; b.kw.mass = true; r.frontsRural = (r.frontsRural || 0) + 1; }
     // a farm market, a nursery, a meat or cheese shop in the country: a board-and-batten
@@ -955,7 +956,7 @@ const hashI = (a, b) => { const s = Math.sin(a * 127.1 + b * 311.7) * 43758.5453
 // where theirs are); KFC's red and white bucket stripes; DQ's and Popeyes'
 // mansards. All of it into the pad's own cluster builder (no draw of its own).
 const PAD_SIL = {
-  tims: { stone: '#b5a891', tower: { w: 5.4, up: 1.8, slope: 0, col: '#6b4329', cap: '#c8102e', stone: true } },
+  tims: { stone: '#b5a891', tims: true },
   mcd: { eyebrow: '#ffbc0d', wood: '#8a5b3a' },
   wendys: { tower: { w: 4.2, up: 2.4, slope: 1.3, col: '#e2203d', cap: '#2b2b2b' } },
   harveys: { tower: { w: 4.8, up: 1.9, slope: 0.9, col: '#e21836', cap: '#ffd400' } },
@@ -1044,6 +1045,7 @@ function padSilhouette(g, k) {
     }
   }
   if (sil.mansard) mansard(Bd, fr, top - 0.55, pt + 0.55, 0.95, 0.35, lin(sil.mansard));
+  if (sil.tims) timsBlock(g);
   if (sil.tower) {
     const T0 = sil.tower, w = Math.min(T0.w, L - 2), c = lin(T0.col), cap = lin(T0.cap);
     const ya = pt + T0.up, yb = ya + T0.slope;
@@ -1062,6 +1064,46 @@ function padSilhouette(g, k) {
     const W = Math.min(10, L * 0.55), tc = h - W / 2 - Math.min(2.5, L * 0.1);
     eyebrow(Bd, fr, fi, tc, W, 2.2, pt - 0.1, 0.7, -0.4, 0.35, lin(sil.eyebrow));
   }
+}
+
+/**
+ * Tim Hortons' raised sign block over the front (the "Welcome Image" pads,
+ * Commons: Kingsville 2025, Essex 2025, Guelph): a wide block standing on the
+ * fascia and up past the parapet, its face in one of two claddings -- the
+ * stacked stone (Essex) with a dark coping, or a pale panel in a charcoal
+ * frame (Kingsville) -- and kw.js hangs the red script across it
+ * (timsTower: the same numbers). Into the pad's own cluster builder.
+ */
+const TIMS_STONE = ['#c8b79c', '#b9a78b', '#d3c4aa', '#a99880'];
+function timsBlock(g) {
+  const { fr, fi, L, gy, pt, Bd } = g;
+  const T = timsTower(L, gy, pt), w = T.w, h = w / 2, o = TIMS_TOWER.out;
+  const yt = pt + TIMS_TOWER.up;
+  const [px, , pz] = fr.P(fi, 0, 0, 0);
+  const stone = hashI(Math.round(px), Math.round(pz)) < 0.55;
+  const face = lin(stone ? '#c2b195' : '#e4e3de'), frame = lin('#2f2d2c');
+  slopeBlock(Bd, fr, fi, -h, h, -0.8, o, gy + 3.1, yt, yt, face);
+  const N = fr.N(fi);
+  if (stone) {
+    // stacked stone: courses of long thin stones in four tones
+    for (let y = gy + 4.45, r = 0; y < yt - 0.35; y += 0.16, r++) {
+      let t = -h + 0.02 + (r % 2) * 0.35;
+      for (let k = 0; t < h - 0.02; k++) {
+        const len = 0.5 + hashI(r * 13 + k, Math.round(px)) * 0.9, t1 = Math.min(h - 0.02, t + len);
+        const c = lin(TIMS_STONE[Math.floor(hashI(k * 7 + r, Math.round(pz)) * 4)]);
+        Bd.quad(fr.P(fi, t, y + 0.012, o + 0.012), fr.P(fi, t1 - 0.03, y + 0.012, o + 0.012), fr.P(fi, t1 - 0.03, y + 0.148, o + 0.012), fr.P(fi, t, y + 0.148, o + 0.012), N, U0, c);
+        t = t1;
+      }
+    }
+  } else {
+    // the pale panel's joints, every 1.2 m
+    for (let t = -h + 1.2; t < h - 0.3; t += 1.2) fr.rect(Bd, fi, t - 0.015, t + 0.015, gy + 4.45, yt - 0.3, o + 0.01, shade(face, 0.86));
+    for (const s of [-1, 1]) fr.rect(Bd, fi, s > 0 ? h - 0.16 : -h, s > 0 ? h : -h + 0.16, gy + 4.45, yt, o + 0.02, frame);
+  }
+  // the coping
+  fr.box(Bd, fi, 0, o / 2 - 0.4, w + 0.16, o + 0.96, yt - 0.3, 0.34, frame);
+  // a thin espresso line where it meets the fascia
+  fr.rect(Bd, fi, -h, h, gy + 4.45, gy + 4.6, o + 0.02, lin('#3d2a1f'));
 }
 
 /**
@@ -1631,7 +1673,19 @@ export function buildShops(ctx) {
       const B2 = Gb(b.x, b.z), Wd = 2.3, Hh = 1.6, yb = y0 + 0.85;
       for (const s2 of [-1, 1]) B2.box(mx + ux * s2 * (Wd / 2 - 0.15), y0 - 0.3, mz + uz * s2 * (Wd / 2 - 0.15), 0.16, 1.2, 0.16, rot, FRAME);
       B2.box(mx, yb, mz, Wd + 0.16, Hh + 0.16, 0.3, rot, BLACK);
-      B2.box(mx, yb + Hh + 0.08, mz, Wd + 0.3, 0.32, 0.4, rot, band);
+      const tims = k === 'tims', hh = tims ? 0.62 : 0.32;
+      B2.box(mx, yb + Hh + 0.08, mz, Wd + 0.3, hh, 0.4, rot, band);
+      if (tims && kwSignKey(mx, mz) === kwSignKey(b.x, b.z)) {
+        // Tims' board: the white script on its espresso header (kw.js's lit sign cell, in the
+        // cell's own kw sign cluster: no draw of its own)
+        const wm = timsWhiteWord(1.95);
+        if (wm) {
+          wm.position.set(mx + nx * 0.205, yb + Hh + 0.08 + hh / 2, mz + nz * 0.205);
+          wm.rotation.y = Math.atan2(nx, nz);
+          const gw = new THREE.Group(); gw.add(wm); addTo(kwSignKey(mx, mz), gw);
+          stats.timsBoards = (stats.timsBoards || 0) + 1;
+        }
+      }
       // the lit menu: four columns of photos and prices, brighter than the board
       const panel = (t0, t1, y1, y2, col) => B2.quad([mx + nx * 0.16 + ux * t0, y1, mz + nz * 0.16 + uz * t0], [mx + nx * 0.16 + ux * t1, y1, mz + nz * 0.16 + uz * t1],
         [mx + nx * 0.16 + ux * t1, y2, mz + nz * 0.16 + uz * t1], [mx + nx * 0.16 + ux * t0, y2, mz + nz * 0.16 + uz * t0], [nx, 0, nz], U0, col);
@@ -2103,7 +2157,21 @@ export function buildShops(ctx) {
   {
     // kw.js's Tim Hortons and FreshCo signs (drawn later, from the same spots)
     const K = kwData();
-    for (const [list, w] of [[K && K.tims, 5.2], [K && K.freshco, 9]]) for (const [x, z] of list || []) { const b = boxAt(city, x, z, 3); if (b) fasciaUse(b, x, z, w); }
+    for (const [list, w] of [[K && K.tims, TIMS_UNIT.w], [K && K.freshco, 9]]) for (const [x, z] of list || []) { const b = boxAt(city, x, z, 3); if (b) fasciaUse(b, x, z, w); }
+    // a Tims in a plaza unit: its raised espresso sign panel over the fascia (kw.js hangs the script on
+    // it, at the same faceFor spot); a pad's sign block is padSilhouette's
+    for (const [x, z] of (K && K.tims) || []) {
+      const b = boxAt(city, x, z, 3);
+      if (!b || !b.kw || !b.kw.strip || !b.kw.shop || b.kw.shop.kind === 'f' || b.kw.poly || !(b.h > 3 && b.w * b.d < 60000)) continue;
+      const f = faceFor(city, b, x, z, TIMS_UNIT.w);
+      if (!f || !f.strip) continue;
+      const fr = frameOf(b), fi = b.kw.strip.face, t = fr.tOf(fi, f.x, f.z), w = Math.min(TIMS_UNIT.w, f.len - 0.6), Bd = Gb(b.x, b.z);
+      const y0 = b.y + TIMS_UNIT.y0, y1 = y0 + TIMS_UNIT.h, esp = lin('#53392a');
+      slopeBlock(Bd, fr, fi, t - w / 2, t + w / 2, 0.2, 1.86, y0 - 0.05, y1, y1, esp);
+      fr.box(Bd, fi, t, 1.03, w + 0.12, 1.9, y1, 0.16, lin('#2a201a'));
+      fr.rect(Bd, fi, t - w / 2, t + w / 2, y0 - 0.05, y0 + 0.07, 1.87, lin('#c8102e'));
+      stats.timsUnits = (stats.timsUnits || 0) + 1;
+    }
   }
   const tenants = [];
   for (const [k, x, z, bx, bz, pi, addr, name] of S.stores) {

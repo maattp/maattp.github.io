@@ -180,6 +180,13 @@ function wxInject(sh, m) {
     && typeof fs === 'string' && fs.indexOf(BASIC_AT) >= 0 && fs.indexOf('TOD_BASIC') < 0) {
     sh.uniforms.todOn = TODU.todOn;
     sh.uniforms.todBasic = TODU.todBasic;
+    const lit = m.userData && m.userData.todLitR;
+    if (lit) {
+      // landmarks.js SignAtlas.litPanels: the cells in this uv rect stay lit
+      sh.uniforms.todLitR = lit;
+      sh.fragmentShader = 'uniform float todOn, todBasic;\nuniform vec4 todLitR;\n' + fs.replace(BASIC_AT, BASIC_AT + '\n\t// TOD_BASIC (tod.js), lit cells kept\n\tif ( todOn > 0.5 ) outgoingLight *= ( vMapUv.x > todLitR.x && vMapUv.x < todLitR.y && vMapUv.y > todLitR.z && vMapUv.y < todLitR.w ) ? 1.0 : todBasic;');
+      return;
+    }
     sh.fragmentShader = 'uniform float todOn, todBasic;\n' + fs.replace(BASIC_AT, BASIC_AT + '\n\t// TOD_BASIC (tod.js)\n\tif ( todOn > 0.5 ) outgoingLight *= todBasic;');
     return;
   }

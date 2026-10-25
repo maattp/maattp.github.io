@@ -1042,6 +1042,64 @@ file and a guide disagree, this file wins.
     the lane paint crosses the lot's painted stalls (the lot is the terrain
     shader's); the McDonald's eyebrow is an arch on the parapet, not the
     curved fascia of the newest pads.
+- **Tim Hortons' signs** (src/timsign.js, kw.js `timsCells` / `timsSign` /
+  `timsPylon`, kwshops.js `timsBlock` and the plaza-unit panel; docs/tims-pad.jpg,
+  tims-plaza.jpg: before over after; tims-night.jpg). Sources: Commons photos
+  of Ontario stores 2018-2026 (Kingsville 2025, Essex 2025, Windsor 2025,
+  London 2026 at night, Petrolia 2026, Guelph, Fergus' old oval pylon): the
+  red script in channel letters straight on the wall, ~1 m caps, ~8 m wide on
+  a pad's raised sign block (stacked stone or a pale panel in a charcoal
+  frame), on a raised brown panel over a plaza unit, glowing red at night.
+  - **The wordmark is drawn as paths** (timsign.js `drawTimsWord`): each
+    letter a centreline swept with a broad nib, so it is the same script on
+    the iPhone and in headless Chrome (no font is: 'Brush Script MT' is the
+    Mac's, iOS has 'Snell Roundhand'). Hand-drawn: close to, not traced from,
+    the real logotype. `TIMS_ASPECT` 3.65.
+  - **Four cells for every store**, in the SHARED sign atlas (`L`) through
+    `SignAtlas.litPanels` (landmarks.js): the red letters with dark returns on
+    a clear ground, the pylon's red cabinet with the white script, DRIVE THRU
+    on espresso, and the white script (the menu board). Every sign is a scaled
+    clone of one (`cell()`), so 81 stores cost one 140-px row, not a cell per
+    size. **They stay lit after dark:** litPanels puts its cells in a row of
+    their own and records the rect; finish() turns it into the material's
+    `todLitR` uv rect (after cropAtlas), and weather.js's TOD_BASIC block keeps
+    texels inside it at full brightness while everything else on the atlas
+    dims to todBasic. The atlas material has its own program key
+    ('signAtlasLit'). A new lit sign elsewhere: add its cell to that ONE
+    litPanels call (a second call would replace the rect).
+  - **Where:** a Tims pad (kwshops 'f' front, `b.kw.shop.tims` from
+    prepShops): PAD_SIL.tims's old 5.4 m brown tower is now `timsBlock`, up
+    to `TIMS_TOWER.w` 9.6 m across the front, from the fascia to 2.7 m over the
+    parapet, face 1.0 m out; kw.js `timsTower` gives both modules the same
+    numbers and hangs the script across it (34). A plaza unit kwshops draws:
+    a raised espresso panel `TIMS_UNIT` (7.4 x 1.95 m) on the fascia's top,
+    flush with its face, with a red line under it, at the same `faceFor` spot
+    kw.js signs (22); the fascia's independents keep clear of that span
+    (fasciaUse). Footprint (poly) retail: channel letters on the fascia band;
+    hospitals and other hosts (`addSignHost`): on the wall at 3.6 m; plain
+    boxes: up to 8 x 1.8 m. **Pylons** (a store under 700 m2, 53): grey column,
+    3.7 m red cabinet at 5.3 m with the white script both sides, a DRIVE THRU
+    panel on a pad's; `KW.timsPylons`, and `timsKeepClear` (main.js
+    `city.treeClear`) keeps trees 6.5 m off them -- the boulevard trees'
+    crowns hid the cabinets. The **menu board** of a Tims lane gets a taller
+    espresso header with the white script (added to the cell's `kw` sign
+    cluster: `kwSignKey`, only when the board is in the same cell).
+  - **Draws: none.** The pylons use kw.js's existing pole / trim materials
+    (a `roof` column was +1 draw a cluster), the blocks and panels the pads'
+    and plazas' own builders, the letters the clusters' existing sign-atlas
+    material. Phone (AUTO_PHONE=1, GPU, seedrandom), master -> this, draws /
+    tris: spawn 177/1170k -> 173/1158k; U & Bridge 297 -> 294; 730 King W
+    173 -> 170; 109 King N 192 -> 190; 65 University E 190 -> 187; Courtland
+    151 -> 148; a pylon 279 -> 276; the drive-thru 205 -> 202; St. Mary's
+    204 -> 201 (tris -6..-12k); 0 exceptions. Sign atlas (`lmRoot.userData.signAtlas`):
+    `__kwLm2.atlas.y` 1569 -> 1691; the atlas ends at 1938 of 2048, full 0.
+  - **Approximate / not done:** the script is hand-drawn; the pylon is one
+    generic design (no "Always Fresh" / oval era signs); the block's two
+    claddings are by hash, not the store's real one; one wordmark per store
+    (real pads often sign two faces); the plaza pylons' tenant rows still
+    letter "Tim Hortons" in the text atlas; the GRH sign is behind another
+    box (as before); the drive-thru's order point, window and DRIVE THRU
+    lane sign are kwshops' generic ones.
 - **ION, as it is** (src/link.js on `data/link.json`; docs/ion-*.jpg).
   Sources (Oct 2026): Wikipedia "Ion rapid transit" (stations, 10-minute
   weekday headway, 70 km/h corridor / 50 street / 20-25 in pedestrian

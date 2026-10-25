@@ -20,6 +20,7 @@ import * as G from './geo.js';
 import { hash2 } from './util.js';
 import { Builder } from './build.js';
 import { memoPeek, memoPut } from './bootcache.js';
+import { drawTimsWord, TIMS_ASPECT } from './timsign.js';
 
 let KW = null;
 export function setKwData(d) { KW = d; }
@@ -725,24 +726,85 @@ export function faceFor(city, b, px, pz, signW, roadOnly = false) {
 }
 
 const TIMS_RED = '#c8102e';
-const SCRIPT = '"Brush Script MT", "Snell Roundhand", "Segoe Script", cursive';
 
-/** A Tim Hortons sign: red, the name in white script. */
+// --- Tim Hortons -------------------------------------------------------------
+// The wordmark is drawn once (timsign.js: a brush script swept as paths, the
+// same on the iPhone as in Chrome) into three cells of the shared sign atlas
+// that stay lit after dark (SignAtlas.litPanels): the red channel letters with
+// their darker returns on a clear ground (every wall sign: on a pad's tower,
+// a plaza unit's fascia, a hospital's wall), the pylon's red cabinet face with
+// the white script, and DRIVE THRU on espresso. Every sign is a clone of one
+// of them, scaled: 81 stores cost three atlas cells, not one each.
+// Sources: Commons photos of Ontario stores 2018-2026 (Kingsville 2025,
+// Essex 2025, Windsor 2025, London 2026, Petrolia 2026, Guelph, Fergus).
+let TIMS = null;
+function timsCells(L) {
+  if (TIMS && TIMS.L === L) return TIMS;
+  const ASP = TIMS_ASPECT;
+  const WH = 140, WW = Math.round(WH * ASP);
+  const [word, cab, dt, wordW] = L.litPanels([
+    { W: WW, H: WH, draw: (g, W, H) => drawTimsWord(g, 0, 0, W, H, '#c8102e', '#5e0816') },
+    { W: 360, H: 140, draw: (g, W, H) => {
+      g.fillStyle = TIMS_RED; g.fillRect(0, 0, W, H);
+      g.strokeStyle = '#8e0b20'; g.lineWidth = 6; g.strokeRect(3, 3, W - 6, H - 6);
+      drawTimsWord(g, 14, 18, W - 28, H - 36, '#ffffff');
+    } },
+    { W: 300, H: 68, draw: (g, W, H) => {
+      g.fillStyle = '#3b2a20'; g.fillRect(0, 0, W, H);
+      g.fillStyle = '#ffffff'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.font = `700 ${H * 0.56}px Helvetica, Arial, sans-serif`;
+      g.fillText('DRIVE THRU', W * 0.44, H * 0.54, W * 0.74);
+      // the arrow
+      g.fillStyle = TIMS_RED;
+      g.beginPath(); g.moveTo(W * 0.86, H * 0.24); g.lineTo(W * 0.97, H * 0.5); g.lineTo(W * 0.86, H * 0.76); g.closePath(); g.fill();
+      g.fillRect(W * 0.81, H * 0.4, W * 0.06, H * 0.2);
+    } },
+    { W: Math.round(80 * ASP), H: 80, draw: (g, W, H) => drawTimsWord(g, 0, 0, W, H, '#ffffff') },
+  ]);
+  TIMS = { L, word, cab, dt, wordW, asp: ASP, cabAsp: 360 / 140, dtAsp: 300 / 68 };
+  return TIMS;
+}
+/** No tree within 6.5 m of a Tims pylon (main.js city.treeClear): its cabinet is up in their crowns. */
+export function timsKeepClear(x, z) {
+  const P = KW && KW.timsPylons;
+  if (!P) return false;
+  for (let i = 0; i < P.length; i++) if ((P[i][0] - x) ** 2 + (P[i][1] - z) ** 2 < 42) return true;
+  return false;
+}
+/** A clone of a lit cell, w x h metres. */
+function cell(m, w, h) { const c = m.clone(); c.scale.set(w, h, 1); return c; }
+/** The red script on a clear ground, as big as fits w x h (its own proportions). */
+function timsWord(L, w, h) {
+  const T = timsCells(L), ww = Math.min(w, h * T.asp);
+  return cell(T.word, ww, ww / T.asp);
+}
+/** The wall sign's size for a w x h space: [w, h]. */
+function timsFit(w, h) { const ww = Math.min(w, h * TIMS_ASPECT); return [ww, ww / TIMS_ASPECT]; }
+/** For kwshops.js: the white script (the menu board's header), w wide; and its cluster. */
+export function timsWhiteWord(w) { return TIMS ? cell(TIMS.wordW, w, w / TIMS.asp) : null; }
+export function timsWordAt(w) { return TIMS ? cell(TIMS.word, w, w / TIMS.asp) : null; }
+export const kwSignKey = (x, z) => `kw${Math.round(x / 1200)},${Math.round(z / 1200)}`;
+// A Tims pad's raised sign block (kwshops.js PAD_SIL.tims draws it, kw.js hangs
+// the wordmark on it): w across the front at most, `up` over the parapet.
+/** A plaza unit's wall sign at most this wide (kwshops.js keeps the fascia free for it). */
+export const TIMS_FASCIA_W = 5.3;
+// A Tims in a plaza kwshops.js draws: a raised espresso sign panel over its
+// unit's fascia (kwshops timsUnit), w across at most, h tall, standing on the
+// fascia's top (4.45 m) flush with its face; kw.js hangs the script on it.
+export const TIMS_UNIT = { w: 7.4, h: 1.95, y0: 4.45 };
+export const TIMS_TOWER = { w: 9.6, up: 2.7, out: 1.0 };
+/** Where the pad's tower face is: [t-half-width, y0 (over the fascia), y1 (under its cap)]. */
+export function timsTower(L, gy, pt) {
+  const w = Math.min(TIMS_TOWER.w, L - 2);
+  return { w, y0: gy + 4.45, y1: pt + TIMS_TOWER.up - 0.32 };
+}
+
 const SHARED = new Map();
 /** One atlas cell for every sign that looks the same: a mesh sharing its geometry. */
 function shared(key, make) {
   let m = SHARED.get(key);
   if (!m) SHARED.set(key, (m = make()));
   return m.clone();
-}
-function timsPanel(L, w, h) {
-  return shared(`tims${w.toFixed(1)}x${h.toFixed(1)}`, () => L.panel(w, h, 44, (g, W, H) => {
-    g.fillStyle = TIMS_RED; g.fillRect(0, 0, W, H);
-    g.fillStyle = '#ffffff';
-    g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.font = `italic 700 ${H * 0.66}px ${SCRIPT}`;
-    g.fillText('Tim Hortons', W / 2, H * 0.54, W * 0.94);
-  }));
 }
 /** FreshCo: green, the name in heavy white with an orange leaf. */
 function freshPanel(L, w, h) {
@@ -819,25 +881,34 @@ function hang(g, mesh, x, y, z, nx, nz, off = 0.14) {
   g.add(mesh);
 }
 
-/** A pylon at the road: two posts and a lit box with the panel on both faces. */
-function pylon(ctx, g, x, z, yaw, h, makePanel) {
-  const m = mats();
+/**
+ * Tim Hortons' pylon at the road: a dark column, the red cabinet with the
+ * white script on both faces at the top, and (a drive-thru pad's) DRIVE THRU
+ * on a panel across the column under it. ~7 m to the top.
+ */
+function timsPylon(ctx, g, L, x, z, yaw, drive) {
+  const m = mats(), T = timsCells(L);
   const y0 = G.terrainHeight(x, z);
-  const W = 2.6, H = 1.4;
-  for (const s of [-1, 1]) {
-    const p = new THREE.Mesh(new THREE.BoxGeometry(0.22, h, 0.22), m.pole);
-    p.position.set(x + Math.cos(yaw) * s * (W / 2 - 0.25), y0 + h / 2, z - Math.sin(yaw) * s * (W / 2 - 0.25));
-    g.add(p);
-  }
-  const box = new THREE.Mesh(new THREE.BoxGeometry(W, H, 0.4), m.trim);
-  box.position.set(x, y0 + h + H / 2, z); box.rotation.y = yaw;
-  g.add(box);
+  const CW = 3.7, CH = CW / T.cabAsp, cy = 5.3;
+  const box = (w, h, d, y, mat) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); b.position.set(x, y, z); b.rotation.y = yaw; g.add(b); };
+  box(0.95, cy + 0.6, 0.55, y0 + (cy - 0.6) / 2, m.pole);          // the column (into the ground)
+  box(CW + 0.1, CH + 0.1, 0.5, y0 + cy + CH / 2, m.trim);          // the cabinet
+  box(CW + 0.24, 0.14, 0.62, y0 + cy + CH + 0.12, m.pole);         // its cap
+  box(CW + 0.24, 0.14, 0.62, y0 + cy - 0.07, m.pole);
   for (const s of [1, -1]) {
-    const pn = makePanel(W - 0.12, H - 0.12);
     const nx = Math.sin(yaw) * s, nz = Math.cos(yaw) * s;
-    hang(g, pn, x, y0 + h + H / 2, z, nx, nz, 0.21);
+    hang(g, cell(T.cab, CW - 0.04, CH - 0.04), x, y0 + cy + CH / 2, z, nx, nz, 0.26);
   }
-  ctx.solids.push({ x, z, r: 0.5, y0: y0 - 2, y1: y0 + h + H });
+  if (drive) {
+    const DW = 2.5, DH = DW / T.dtAsp, dy = 3.4;
+    box(DW + 0.12, DH + 0.12, 0.7, y0 + dy, m.pole);
+    for (const s of [1, -1]) {
+      const nx = Math.sin(yaw) * s, nz = Math.cos(yaw) * s;
+      hang(g, cell(T.dt, DW, DH), x, y0 + dy, z, nx, nz, 0.36);
+    }
+  }
+  ctx.solids.push({ x, z, r: 0.55, y0: y0 - 2, y1: y0 + cy + CH });
+  if (KW) (KW.timsPylons || (KW.timsPylons = [])).push([+x.toFixed(1), +z.toFixed(1), +yaw.toFixed(3)]);
 }
 
 /**
@@ -857,7 +928,7 @@ function smallStore(ctx, g, x, z, yaw, makePanel) {
   const fx = Math.sin(yaw), fz = Math.cos(yaw);
   const glass = new THREE.Mesh(new THREE.BoxGeometry(W * 0.8, 2.6, 0.1), m.glass);
   glass.position.set(x + fx * (D / 2 + 0.02), y0 + 1.6, z + fz * (D / 2 + 0.02)); glass.rotation.y = yaw; g.add(glass);
-  hang(g, makePanel(6.5, 1.05), x + fx * (D / 2 + 0.16), y0 + H - 0.2, z + fz * (D / 2 + 0.16), fx, fz, 0.02);
+  hang(g, makePanel(8.5, 1.6), x + fx * (D / 2 + 0.16), y0 + H - 0.3, z + fz * (D / 2 + 0.16), fx, fz, 0.02);
   ctx.solids.push({ x, z, hw: W / 2, hd: D / 2, rot: -yaw, y0: y0 - 2, y1: y0 + H + 0.6 });
   return { x, z, y: y0 + H + 0.6 };
 }
@@ -925,7 +996,7 @@ export function buildSigns(ctx) {
       if (P.retail) hang(g, makePanel(ww, Math.min(h, 1.05)), sx, gy + 3.82, sz, f.nx, f.nz, 1.88);
       else hang(g, makePanel(ww, h), sx, gy + (opts.y || 3.4), sz, f.nx, f.nz);
       void half;
-      return { b, f: { ...f, x: sx, z: sz } };
+      return { b, f: { ...f, x: sx, z: sz }, kind: host ? 'host' : 'poly' };
     }
     if (b && b.h > 3 && b.w * b.d < 60000) {
       const f = faceFor(city, b, x, z, w);
@@ -936,20 +1007,66 @@ export function buildSigns(ctx) {
         if (f.strip) {
           // on the fascia's face (world._stripMall: 1.8 m deep, 3.2-4.45 m up)
           hang(g, makePanel(Math.min(w, f.len - 0.6), Math.min(h, 1.05)), f.x, b.y + 3.82, f.z, f.nx, f.nz, 1.88);
-          return { b, f };
+          return { b, f, kind: b.kw.shop && b.kw.shop.kind === 'f' ? 'pad' : 'strip' };
         }
         const y = Math.min(top - h / 2 - 0.25, Math.max(ty + (opts.y || 3.6), b.y + 2.4));
         hang(g, makePanel(Math.min(w, f.len - 0.6), h), f.x, y, f.z, f.nx, f.nz);
-        return { b, f };
+        return { b, f, kind: 'box' };
       }
     }
     return null;
   };
 
-  // Tim Hortons, every one
+  // Tim Hortons, every one: its script as big as the wall it is on
+  const timsSign = (x, z) => {
+    const host = signHost(x, z);
+    const b = host || boxAt(city, x, z, 3);
+    if (host || (b && b.kw && b.kw.poly)) {
+      const P = host || b.kw.poly, f = polyFace(P, x, z);
+      if (!f) return null;
+      const [ww, hh] = P.retail ? timsFit(Math.min(TIMS_FASCIA_W, f.len - 0.6), 1.45) : timsFit(Math.min(8, f.len - 1), 1.7);
+      const t = Math.max(ww / 2 + 0.3, Math.min(f.len - ww / 2 - 0.3, f.t));
+      const sx = f.ax + f.ux * t, sz = f.az + f.uz * t;
+      const gy = G.terrainHeight(sx + f.nx * 2, sz + f.nz * 2);
+      if (P.retail) hang(grp(sx, sz), timsWord(L, ww, hh), sx, gy + 3.9, sz, f.nx, f.nz, 1.9);
+      else hang(grp(sx, sz), timsWord(L, ww, hh), sx, gy + 3.6, sz, f.nx, f.nz, 0.16);
+      return { b, f: { ...f, x: sx, z: sz }, kind: host ? 'host' : 'poly' };
+    }
+    if (!(b && b.h > 3 && b.w * b.d < 60000)) return null;
+    const f = faceFor(city, b, x, z, TIMS_UNIT.w);
+    if (!f) return null;
+    const g = grp(f.x, f.z);
+    if (f.strip && b.kw.shop && b.kw.shop.kind === 'f' && b.kw.shop.tims) {
+      // a pad: on its raised sign block (kwshops.js PAD_SIL.tims), over the fascia
+      const T = timsTower(f.len, b.y, b.y + b.h + 0.8);
+      const [ww, hh] = timsFit(T.w - 1.7, T.y1 - T.y0 - 0.35);
+      hang(g, timsWord(L, ww, hh), f.x, (T.y0 + T.y1) / 2 + 0.05, f.z, f.nx, f.nz, TIMS_TOWER.out + 0.05);
+      stats.timsTower = (stats.timsTower || 0) + 1;
+      return { b, f, kind: 'pad' };
+    }
+    if (f.strip && b.kw.shop && b.kw.shop.kind !== 'f') {
+      // a plaza unit kwshops draws: on the raised panel over its fascia
+      const w = Math.min(TIMS_UNIT.w, f.len - 0.6);
+      const [ww, hh] = timsFit(w - 0.8, TIMS_UNIT.h - 0.3);
+      hang(g, timsWord(L, ww, hh), f.x, b.y + TIMS_UNIT.y0 + TIMS_UNIT.h / 2, f.z, f.nx, f.nz, 1.92);
+      stats.timsUnit = (stats.timsUnit || 0) + 1;
+      return { b, f, kind: 'unit' };
+    }
+    if (f.strip) {
+      // a plaza unit: channel letters on the fascia's face (world._stripMall / kwshops: 1.8 m out, 3.2-4.45 m up)
+      const [ww, hh] = timsFit(Math.min(TIMS_FASCIA_W, f.len - 0.6), 1.45);
+      hang(g, timsWord(L, ww, hh), f.x, b.y + 3.9, f.z, f.nx, f.nz, 1.9);
+      return { b, f, kind: 'strip' };
+    }
+    const [ww, hh] = timsFit(Math.min(8, f.len - 1), 1.8);
+    const ty = G.terrainHeight(f.x + f.nx * 1.5, f.z + f.nz * 1.5);
+    const y = Math.min(b.y + b.h - hh / 2 - 0.25, Math.max(ty + 3.8, b.y + 2.4));
+    hang(g, timsWord(L, ww, hh), f.x, y, f.z, f.nx, f.nz, 0.16);
+    return { b, f, kind: 'box' };
+  };
+  const mkTims = (w, h) => timsWord(L, w, h);
   for (const [x, z, addr] of KW.tims) {
-    const mk = (w, h) => timsPanel(L, w, h);
-    const r = storeSign(x, z, 5.2, 1.15, mk);
+    const r = timsSign(x, z);
     let at = { x, z }, door = null;
     if (r) {
       stats.tims++;
@@ -960,9 +1077,9 @@ export function buildSigns(ctx) {
       if (r.b.w * r.b.d < 700) {
         const rd = faceRoad(city, r.f.x, r.f.z, 70);
         if (rd && rd.d > rd.hw + 4) {
-          const px = rd.qx - Math.sin(rd.yaw) * (rd.hw + 3.2), pz = rd.qz - Math.cos(rd.yaw) * (rd.hw + 3.2);
-          if (!boxAt(city, px, pz, 1.5) && !city.onRoad(px, pz, 1.2, true)) {
-            pylon(ctx, grp(px, pz), px, pz, rd.yaw + Math.PI / 2, 5.5, mk);
+          const px = rd.qx - Math.sin(rd.yaw) * (rd.hw + 3.4), pz = rd.qz - Math.cos(rd.yaw) * (rd.hw + 3.4);
+          if (!boxAt(city, px, pz, 2) && !city.onRoad(px, pz, 2, true)) {
+            timsPylon(ctx, grp(px, pz), L, px, pz, rd.yaw + Math.PI / 2, r.kind === 'pad');
             stats.timsStore++;
           }
         }
@@ -971,16 +1088,16 @@ export function buildSigns(ctx) {
       // no building: a small Tims of our own, if there is room
       const rd = faceRoad(city, x, z, 90);
       if (rd && !city.onRoad(x, z, 9, true) && !boxAt(city, x, z, 9)) {
-        const s = smallStore(ctx, grp(x, z), x, z, rd.yaw, mk);
-        at = s; stats.timsBuilt++;
+        const s2 = smallStore(ctx, grp(x, z), x, z, rd.yaw, mkTims);
+        at = s2; stats.timsBuilt++;
         door = { x: x + Math.sin(rd.yaw) * 7.1, z: z + Math.cos(rd.yaw) * 7.1 };
       } else if (rd) {
         // in a lot or a forecourt: a pylon by the road says it is here
-        const px = rd.qx - Math.sin(rd.yaw) * (rd.hw + 3.2), pz = rd.qz - Math.cos(rd.yaw) * (rd.hw + 3.2);
-        if (!boxAt(city, px, pz, 1.5) && !city.onRoad(px, pz, 1.2, true)) pylon(ctx, grp(px, pz), px, pz, rd.yaw + Math.PI / 2, 5.5, mk);
+        const px = rd.qx - Math.sin(rd.yaw) * (rd.hw + 3.4), pz = rd.qz - Math.cos(rd.yaw) * (rd.hw + 3.4);
+        if (!boxAt(city, px, pz, 2) && !city.onRoad(px, pz, 2, true)) timsPylon(ctx, grp(px, pz), L, px, pz, rd.yaw + Math.PI / 2, false);
       }
     }
-    out.tims.push({ x: at.x, z: at.z, addr, door });
+    out.tims.push({ x: at.x, z: at.z, addr, door, sign: r ? { x: r.f.x, z: r.f.z, nx: r.f.nx, nz: r.f.nz, kind: r.kind } : null });
   }
   // FreshCo
   for (const [x, z, addr] of KW.freshco) {

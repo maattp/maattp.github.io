@@ -219,6 +219,40 @@ class SignAtlas {
     this.tex.anisotropy = 8;
     this.mat = new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, alphaTest: 0.04, side: THREE.DoubleSide, forceSinglePass: true, toneMapped: false });
     this.mat.userData.noShadow = true;
+    // the cells that stay lit after dark (litPanels: Tim Hortons' channel
+    // letters and pylon): weather.js's TOD_BASIC dims every other texel of
+    // this atlas at night, and keeps those inside this uv rect (u0, u1, v0, v1)
+    this.mat.userData.todLitR = { value: new THREE.Vector4(2, 2, 2, 2) };
+    this.mat.customProgramCacheKey = () => 'signAtlasLit';
+  }
+  /**
+   * Cells that keep their light at night, in a row of their own (so the rect
+   * holds nothing else): specs [{ W, H, draw(g, W, H) }] in pixels; returns a
+   * 1 x 1 m plane per spec (scale it to size).
+   */
+  litPanels(specs) {
+    if (this.x > 0) { this.x = 0; this.y += this.row + 2; this.row = 0; }
+    const y0 = this.y, out = [];
+    let x1 = 0, y1 = y0;
+    for (const sp of specs) {
+      const [x, y] = this.alloc(sp.W, sp.H);
+      x1 = Math.max(x1, x + sp.W); y1 = Math.max(y1, y + sp.H);
+      const g = this.g;
+      g.save(); g.translate(x, y);
+      g.beginPath(); g.rect(0, 0, sp.W, sp.H); g.clip();
+      g.clearRect(0, 0, sp.W, sp.H);
+      sp.draw(g, sp.W, sp.H);
+      g.restore();
+      const geo = new THREE.PlaneGeometry(1, 1);
+      const uv = geo.attributes.uv;
+      const u0 = (x + 0.5) / this.c.width, u1 = (x + sp.W - 0.5) / this.c.width;
+      const v0 = 1 - (y + sp.H - 0.5) / this.c.height, v1 = 1 - (y + 0.5) / this.c.height;
+      for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) ? u1 : u0, uv.getY(i) ? v1 : v0);
+      out.push(new THREE.Mesh(geo, this.mat));
+    }
+    this.lit = [0, y0, x1, y1];
+    this.x = 0; this.y += this.row + 2; this.row = 0;
+    return out;
   }
   /** Reserve a w x h pixel cell; returns [x, y] in canvas pixels. */
   alloc(w, h) {
@@ -229,7 +263,15 @@ class SignAtlas {
     return at;
   }
   /** Done drawing: cut the unused rows (build.js cropAtlas) and upload. */
-  finish() { this.cut = cropAtlas(this.tex, this.y + this.row); this.tex.needsUpdate = true; return this.cut; }
+  finish() {
+    this.cut = cropAtlas(this.tex, this.y + this.row); this.tex.needsUpdate = true;
+    if (this.lit) {
+      // the lit rect in the cropped texture's uv (cropAtlas: v' = 1 - y / H2)
+      const W = this.tex.image.width, H2 = this.tex.image.height, [x0, y0, x1, y1] = this.lit;
+      this.mat.userData.todLitR.value.set(x0 / W, x1 / W, 1 - y1 / H2, 1 - y0 / H2);
+    }
+    return this.cut;
+  }
   /** A plane of w x h metres showing whatever `draw(g, W, H)` paints. */
   panel(w, h, px, draw) {
     const W = Math.min(1024, Math.max(32, Math.round(w * px))), H = Math.min(512, Math.max(16, Math.round(h * px)));
@@ -3341,10 +3383,12 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
     extraMs[k] = [Math.round(t1 - t0), Math.round(performance.now() - t1), extraSolids.length];
   }
   const tMerge = performance.now();
+  const atlasUsed = { y: atlas.y + atlas.row, of: atlas.c.height, full: atlas.full || 0, lit: atlas.lit || null };
   atlas.finish();
 
   const root = new THREE.Group();
   root.name = 'landmarks';
+  root.userData.signAtlas = atlasUsed;
   const needleMats = new Set(Object.values(NEEDLE_MATS));
   let draws = 0;
   const near = [];
