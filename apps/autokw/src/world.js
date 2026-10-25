@@ -5082,7 +5082,12 @@ float frLine(float o, float fw, float c, float w) {
         // became the crudest thing on screen. Three detailed chunks per row
         // crossed is a build rate the streamer holds at 400 km/h -- it was
         // the full 5x5 it could not.
-        const lod = (r <= NEAR_R && (!this.flyLod || r <= 1)) ? 1 : 0;
+        // AUTO KW (v85): the near ring is ROUND -- its four corner chunks
+        // (2, 2) are mid-ring ones. They start 1.13 km from the player at the
+        // nearest (the ring is centred on the player's chunk), where a house's
+        // porch, garage and fence are a pixel; at a residential street they
+        // were ~15 % of the near ring's triangles.
+        const lod = (r <= NEAR_R && dx * dx + dz * dz <= NEAR_R * NEAR_R + 1 && (!this.flyLod || r <= 1)) ? 1 : 0;
         if (have && have.lod === lod) continue;
         if (!have) this.chunks.set(key, { key, cx, cz, lod: -1, group: null, dist: dx * dx + dz * dz });
         const c = this.chunks.get(key);

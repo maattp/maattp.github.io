@@ -1363,7 +1363,8 @@ function installShadowFade() {
   chunkCull = installChunkCull(renderer, world.group);
   // the landmark clusters the same way (~450 groups, ~1,200 meshes): a
   // cluster wholly outside the view is skipped whole, not mesh by mesh
-  if (lmRoot) lmCull = installChunkCull(renderer, lmRoot);
+  // (the size test: a landmark cluster under ~4 px tall is not drawn -- chunkcull.js)
+  if (lmRoot) lmCull = installChunkCull(renderer, lmRoot, window.__noLmRange ? {} : { range: { R0: 900, K: 150, ground: (x, z) => Math.max(0, G.terrainHeight(x, z)) } });
   // outermost: the cache and the cull below it see only the sun
   if (nearShadow) nearShadow.install();
   // ON A PHONE THE STATIC CITY KEEPS ONE COPY, NOT TWO (CLAUDE.md "Memory"):

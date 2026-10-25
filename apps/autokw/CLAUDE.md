@@ -3171,6 +3171,32 @@ file and a guide disagree, this file wins.
   scenery cars in range, draws -5..-20 (traffic's own noise and the thinner
   trees), tris -40..-100k.
 
+- **The phone audit, round five: what a residential street draws (v85).**
+  The player measured ~40 fps at `high` driving through neighbourhoods "that
+  don't even have much going on" (60 at `medium`). `tools/kw/passcost.js`
+  (new: each part of a frame drawn K times then a pixel read, per pose) on the
+  Mac at the phone's resolution: the scene pass is ~85 % of the GPU frame
+  (1.5-2.2 ms) and post 0.36 (SSAO 0.12, bloom 0.13); the scene barely changes
+  with resolution (2.21 ms at pr 1.45, 1.85 at 0.5) but a flat material halves
+  it -- it is geometry, 1.1-1.8M triangles. By owner and distance (a
+  renderBufferDirect hook, streetdraws.js's): at a Westmount street 1.76M tris,
+  of which landmark clusters wholly past 600 m 118 draws / 428k and near-ring
+  chunks 600-1200 m off 315k; Doon South drew clusters 8-14 km away (73k each,
+  ~1.5 px tall) behind the houses. Two cuts: **(1) a size test on the
+  landmark clusters** (chunkcull.js `opts.range`, main.js): a cluster is drawn
+  only within max(900 m, 150 x the height of its top over the ground) x (1 +
+  the camera's height / 50) -- ~4 phone pixels for its tallest piece;
+  `window.__noLmRange` before boot, `__dbg.lmCull.sizeTest` live. rangeab
+  (seeded, phone), size test off -> on: spawn 177 -> 143 draws, 0 pixels;
+  Westmount street 298 -> 173, 0 px; Doon South 238 -> 109, 0 px; air views
+  209 / 327 unchanged, 1 px; 60 m up a hill 363 -> 296, 167 px of 737k.
+  **(2) the near ring is round**: world.js's (2, 2) corner chunks are mid
+  ring (they start 1.13 km out). Both: Westmount 329 -> 239 draws, 1761k ->
+  1486k tris; Doon South 232 -> 158, 1427k -> 999k; Activa 152 -> 142,
+  1108k -> 988k. Not done: SSAO and the second bloom pass at `high` (0.1 ms
+  each on the Mac), the far scenery cars (~88k tris at Westmount), the
+  near-ring houses' detail inside 600 m.
+
 - **QA sweep after v22-v39** (docs/qa-*.jpg, before over after).
   `tools/kw/sweeppick.js` picks ~60 road points (fixed spots: Uptown,
   downtown, Galt, St. Jacobs, UW, WLU, Conestoga, plazas; the rest a seeded
