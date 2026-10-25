@@ -278,6 +278,15 @@ brand('scotia', { n: 'Scotiabank', fmt: 'bank', a: 3.4, band: '#ec111a',
 brand('esso', { n: 'Esso', fmt: 'gas', a: 1.7, canopy: ['#ffffff', '#d6001c', '#0b3e8a'], price: '#0b3e8a',
   draw: (g, W, H) => { bg(g, W, H, '#ffffff'); g.strokeStyle = '#0b3e8a'; g.lineWidth = H * 0.08; g.beginPath(); g.ellipse(W / 2, H / 2, W * 0.44, H * 0.38, 0, 0, 7); g.stroke();
     txt(g, 'Esso', W / 2, H * 0.53, H * 0.48, '#d6001c', { w: 900, italic: true }); } });
+// 7-Eleven's own forecourt (the Esso stores it bought in 2016): white canopy
+// with the green / orange / red bands, the 7 in orange with ELEVEn across it
+brand('7eleven', { n: '7-Eleven', fmt: 'gas', a: 1, canopy: ['#ffffff', '#008163', '#f47920'], price: '#008163',
+  draw: (g, W, H) => { bg(g, W, H, '#ffffff');
+    g.fillStyle = '#008163'; g.fillRect(W * 0.06, H * 0.06, W * 0.88, H * 0.88); g.fillStyle = '#ffffff'; g.fillRect(W * 0.1, H * 0.1, W * 0.8, H * 0.8);
+    txt(g, '7', W * 0.5, H * 0.5, H * 0.86, '#f47920', { w: 900 });
+    g.fillStyle = '#ffffff'; g.fillRect(W * 0.12, H * 0.43, W * 0.76, H * 0.2);
+    txt(g, 'ELEVEn', W * 0.5, H * 0.54, H * 0.19, '#ee2526', { w: 900, max: W * 0.74 });
+    g.fillStyle = '#ee2526'; g.fillRect(W * 0.14, H * 0.82, W * 0.72, H * 0.05); } });
 brand('petro', { n: 'Petro-Canada', fmt: 'gas', a: 3.2, canopy: ['#e01f2d', '#ffffff', '#e01f2d'], price: '#e01f2d',
   draw: (g, W, H) => { bg(g, W, H, '#e01f2d'); leaf(g, H * 0.5, H * 0.5, H * 0.36, '#ffffff');
     txt(g, 'PETRO-CANADA', H + (W - H) / 2, H * 0.54, H * 0.34, '#ffffff', { w: 900, max: W - H * 1.1 }); } });

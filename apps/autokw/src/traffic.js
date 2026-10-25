@@ -1263,8 +1263,8 @@ export class TrafficSystem {
       bar.add(m);
       return m;
     };
-    v.lightL = mkL(0x3355ff, 0x1a2338, -0.31);
-    v.lightR = mkL(0xff2a2a, 0x3a1a1c, 0.31);
+    v.lightL = mkL(0x3355ff, 0x2a3a74, -0.31);
+    v.lightR = mkL(0xff2a2a, 0x742a2e, 0.31);
     v.tilt.add(bar);
     // Remember the light bar so `remove` can free it. A vehicle SHARES its
     // trim and matte geometry and materials with every other instance, so
@@ -1274,20 +1274,24 @@ export class TrafficSystem {
     v.extra = bar;
   }
 
-  /** Strobe a light bar's lenses (`on`), or show them dark. */
+  /** Strobe a light bar's lenses (`on`), or show them dark. A lens between
+   *  flashes is its dark lens colour, never hidden: hiding it left the bar a
+   *  bare housing half the time, as if the lights had fallen off. The flash
+   *  is a wig-wag of double flashes (blue twice, red twice, ~1.4 a second). */
   policeLights(v, dt, on) {
     if (!v.lightL) return;
     const L = v.lightL, R = v.lightR;
+    if (!L.visible || !R.visible) { L.visible = R.visible = true; }
+    let l = false, r = false;
     if (on) {
       v.siren = (v.siren || 0) + dt;
-      const blink = Math.sin(v.siren * 11) > 0;
-      if (L.visible !== blink) { L.visible = blink; R.visible = !blink; }
-    } else if (!L.visible || !R.visible) { L.visible = R.visible = true; }
-    const want = on ? 'hot' : 'cold';
-    if (L.material.color.getHex() !== L.userData[want]) {
-      L.material.color.setHex(L.userData[want]);
-      R.material.color.setHex(R.userData[want]);
+      const ph = (v.siren * 1.4) % 1, q = ph % 0.5;
+      const lit = q < 0.11 || (q > 0.17 && q < 0.28);
+      if (ph < 0.5) l = lit; else r = lit;
     }
+    const cl = l ? L.userData.hot : L.userData.cold, cr = r ? R.userData.hot : R.userData.cold;
+    if (L.material.color.getHex() !== cl) L.material.color.setHex(cl);
+    if (R.material.color.getHex() !== cr) R.material.color.setHex(cr);
   }
 
   // --- pathfinding ---------------------------------------------------------

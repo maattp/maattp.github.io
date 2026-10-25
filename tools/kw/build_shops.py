@@ -107,8 +107,13 @@ BRANDS = {
 GAS = {
     "esso": ["Esso"], "petro": ["Petro-Canada", "Petro Canada"], "shell": ["Shell"], "pioneer": ["Pioneer"],
     "ultramar": ["Ultramar"], "ctgas": ["Canadian Tire", "Canadian Tire Gas+", "Gas+"], "costcogas": ["Costco", "Costco Gasoline"],
-    "mobil": ["Mobil"], "husky": ["Husky"], "circlek": ["Circle K"],
+    "mobil": ["Mobil"], "husky": ["Husky"], "circlek": ["Circle K"], "7eleven": ["7-Eleven", "7-Eleven Fuel"],
 }
+# 7-Eleven bought Imperial's Esso stores in 2016 and its forecourts here are
+# 7-Eleven's now (University & Bridge's, 425 University Ave E); OSM still tags
+# the pumps Esso. A fuel node within SEVEN_R m of a 7-Eleven store is 7-Eleven's.
+SEVEN_R = 45
+SEVENS = []
 # a store inside another's (Costco's food court, Walmart's pharmacy): not a store of its own
 INSIDE = re.compile(r"Pharmacy|Food Court|Tire Centre|Garden Centre|Optical|Photo|Bakery|Auto Centre|Express$|Mobile$", re.I)
 # the brands a plaza's pylon lists first
@@ -145,6 +150,8 @@ def classify(s):
     t = s["t"]
     b, n = norm(t.get("brand")), norm(s["n"])
     if t.get("amenity") == "fuel":
+        if any(math.hypot(s["x"] - sx, s["z"] - sz) < SEVEN_R for sx, sz in SEVENS):
+            return "7eleven"
         return GT.get(b) or GT.get(n)
     if INSIDE.search(s["n"]) and (b in BT or any(n.startswith(k) for k in BT)):
         return None
@@ -457,6 +464,7 @@ def toward(x, z, street, r_named=250.0, r_any=120.0):
 
 def main():
     raw = json.load(open(os.path.join(DATA, "raw_shops.json")))
+    SEVENS[:] = [(s["x"], s["z"]) for s in raw["stores"] if norm(s["t"].get("brand") or s["n"]) == "7-eleven" and s["t"].get("amenity") != "fuel"]
     blds = [b for b in json.load(open(os.path.join(DATA, "raw_buildings.json")))["buildings"] if len(b["o"]) >= 3]
     for b in blds:
         b["A"] = area(b["o"])
@@ -538,6 +546,8 @@ def main():
         poly = s.get("o") if (s.get("o") and t.get("building")) else None
         bl = building_for(x, z, poly, gas)
         dup = next((o for o in stores if o["k"] == k and math.hypot(o["x"] - x, o["z"] - z) < (90 if k in ANCHOR else 50)), None)
+        if k == "7eleven":
+            nm = "7-Eleven"
         rec = {"k": k, "x": x, "z": z, "b": bl, "p": pi, "addr": addr, "n": nm, "poly": poly is not None}
         if dup:
             # keep the one that is the building, then the addressed one
@@ -564,7 +574,8 @@ def main():
                 x, z = to_world(la, lo)
                 if not inmap(x, z):
                     continue
-                o = next((o for o in stores if o["k"] == k and math.hypot(o["x"] - x, o["z"] - z) < 160), None)
+                kk = "7eleven" if k in GAS and any(math.hypot(x - sx, z - sz) < SEVEN_R for sx, sz in SEVENS) else k
+                o = next((o for o in stores if o["k"] in (k, kk) and math.hypot(o["x"] - x, o["z"] - z) < 160), None)
                 if o:
                     if not o["addr"] or len(o["addr"]) < 6:
                         o["addr"] = addr.split(",")[0]

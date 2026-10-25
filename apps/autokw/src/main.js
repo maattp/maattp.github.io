@@ -2480,8 +2480,8 @@ const pauseMenuEl = document.getElementById('pauseMenu');
 function setMapOpen(v) {
   game.mapOpen = v;
   document.getElementById('mapOverlay').classList.toggle('show', v);
-  if (v) hud.drawBigMap(player, game);
-  else setWarpArmed(false);
+  // (disarmed either way; opening also words the hint for a pad: X to set spawn)
+  setWarpArmed(false);
 }
 
 function setWarpArmed(v) {

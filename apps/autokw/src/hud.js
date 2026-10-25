@@ -1076,22 +1076,38 @@ export class Hud {
       ctx.arc(tx, tz, size * 0.01, 0, Math.PI * 2);
       ctx.fill();
     }
+    // YOU: a red disc with a white rim and the heading arrow in it, and the
+    // word under it -- the old white arrow (~4 px on a phone) was lost among
+    // the white landmark dots
     const [px, pz] = toC(p.x, p.z);
+    const mr = Math.max(9 * dpr, size * 0.017);
     ctx.save();
     ctx.translate(px, pz);
+    ctx.fillStyle = 'rgba(229,57,53,0.28)';
+    ctx.beginPath(); ctx.arc(0, 0, mr * 2.1, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#e53935';
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = Math.max(2, mr * 0.2);
+    ctx.beginPath(); ctx.arc(0, 0, mr, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.save();
     // North-up map: heading 0 faces +Z, which is south, i.e. down the page.
     ctx.rotate(Math.PI - (player.onFoot ? player.heading : player.vehicle ? player.vehicle.heading : 0));
     ctx.fillStyle = '#ffffff';
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(0, -size * 0.012);
-    ctx.lineTo(size * 0.008, size * 0.009);
-    ctx.lineTo(0, size * 0.004);
-    ctx.lineTo(-size * 0.008, size * 0.009);
+    ctx.moveTo(0, -mr * 0.72);
+    ctx.lineTo(mr * 0.5, mr * 0.5);
+    ctx.lineTo(0, mr * 0.22);
+    ctx.lineTo(-mr * 0.5, mr * 0.5);
     ctx.closePath();
     ctx.fill();
-    ctx.stroke();
+    ctx.restore();
+    ctx.font = `800 ${Math.round(mr * 1.15)}px -apple-system, Helvetica, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.lineWidth = Math.max(2, mr * 0.28);
+    ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+    ctx.strokeText('YOU', 0, mr * 2.55);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText('YOU', 0, mr * 2.55);
     ctx.restore();
 
     // Warp crosshair: where the tap landed, and the road it snapped to.

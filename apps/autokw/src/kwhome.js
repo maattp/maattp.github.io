@@ -9,7 +9,7 @@
 //     the middle (its vestibule is the bump on the lot side in the aerial), the
 //     units down the south-east wing under a walkway canopy (Uncle's Shwarma,
 //     Subway, New Orleans Pizza, Global Pet Foods, Mediterraneo); loading
-//     docks behind; a pylon at the corner. The Tims, the 7-Eleven and the Esso
+//     docks behind; a pylon at the corner. The Tims and the 7-Eleven (its pumps too)
 //     on their pads are kw.js's and kwshops.js's.
 //   - THE STUDENT PLAZA at University Ave W and Phillip St: every unit OSM
 //     maps, grouped as the buildings they are (University Shops Plaza's big
@@ -920,7 +920,7 @@ export function homeMap() {
   const [ux, uz] = centroid(H.ub.p);
   return [
     { x: ux, z: uz, kind: 'plaza', name: 'University & Bridge', near: false, label: false,
-      hello: 'The plaza at University & Bridge, 425 University Ave E — FreshCo, Rexall, Subway, New Orleans Pizza, Global Pet Foods, Uncle\'s Shwarma, Mediterraneo; the Tims and the Esso on the corner' },
+      hello: 'The plaza at University & Bridge, 425 University Ave E — FreshCo, Rexall, Subway, New Orleans Pizza, Global Pet Foods, Uncle\'s Shwarma, Mediterraneo; the Tims and the 7-Eleven on the corner' },
     { x: -5040, z: -2265, kind: 'plaza', name: 'UW Plaza', near: false, label: 'UW Plaza',
       hello: 'The plaza at University & Phillip — Campus Pizza, Kismet, Subway, Molly Bloom\'s, Rooster\'s and two dozen more; Campus Court across Phillip' },
     { x: (H.bridge.p[0][0] + H.bridge.p[H.bridge.p.length - 1][0]) / 2, z: (H.bridge.p[0][1] + H.bridge.p[H.bridge.p.length - 1][1]) / 2,
