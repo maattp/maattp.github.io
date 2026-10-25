@@ -1477,8 +1477,43 @@ file and a guide disagree, this file wins.
   red/amber lamps front and back, the stop arm on the driver's side, the door
   behind the front wheel, STUDENT TRANSPORTATION on the sides; one CIVILIAN
   slot, never parked), `postvan` and `purovan`
-  (`vanLivery`: Canada Post's red block, blue stripe and CANADA POST /
-  POSTES CANADA panel; Purolator's slashes and red italic wordmark).
+  (`vanLivery`: Purolator's slashes and red italic wordmark on the generic
+  van; **Canada Post's is its own van, see below**).
+  **Canada Post** (docs/canadapost-stage.jpg: before over after;
+  canadapost-city.jpg). What CP actually drives in Ontario: Ford Transit
+  cargo vans (the 148" medium roof most), Transit Connects (bought from
+  2010) and Utilimaster / Grumman step vans; the electric E-Transits
+  (Nanaimo's 14 first) are the same body. Sources: Commons
+  Category:Canada Post vans -- "Canada post ford transit.jpg" (Toronto
+  2017), "CanadaPostVan7.jpg" (2014, the side the swoosh is read off),
+  "CanadaPostVan.jpg" / "CanadaPostVan4.jpg" (Connects), "Canada Post
+  Transit Connect St Mary St.jpg" (the back), the 2025 Gatineau step van
+  (the logo, big). `postvan` is that Transit: `spec.van: 'transit'` makes
+  buildVan read **`vanGeo`** (every station the generic van hard-coded,
+  now a table; the generic `van` / `purovan` geometry is unchanged, 7568
+  / 8024 tris before and after) -- 5.98 x 2.06 x 2.56 m, 3.76 m wheelbase
+  (Ford's figures), the tall short bonnet, the windscreen straight from a
+  1.47 m cowl, the door glass from the B-pillar to the A-pillar's foot,
+  the black bumper and three-bar grille, headlamps wrapping into the
+  wings, blank rear doors, black steel wheels (`addWheel` kind `'steel'`,
+  new). **`postLivery`**, all matte quads on the flank (no texture, no
+  draw): the red swoosh rising from a point over the front arch, under
+  the door glass and up the B-pillar to nearly the roof at the back, on
+  its blue stripe (`P_TOP` / `P_MID` / `P_LOW`: heights over metres from
+  the nose, read off the 2014 photo scaled to 5.98 m); the round logo
+  (`cpLogo`: red disc, the white wedge and three bars, always pointing to
+  the viewer's right) on the cab door; the navy wordmark panel high at the
+  back, POSTES / CANADA - logo - CANADA / POST on the driver's side,
+  English first on the kerb side; postescanada.ca / canadapost.ca / the
+  1-800 number; a fleet number on the wings; the dark grey lower
+  cladding; at the back the logo top right, the number top left, FREQUENT
+  STOPS on yellow and red/white chevrons along the bottom. Stage
+  (carshots): 8756 -> 10473 tris, L x W x H (mirrors) 5.48 x 2.58 x 2.29
+  -> 6.21 x 2.63 x 2.57 m; still 3 draws. **Estimated:** every colour;
+  the swoosh's edges (one photo, perspective); the panel and text sizes;
+  the bilingual sticker is English only (DOT5 has no accents); rear-door
+  glass left out (not seen in a photo); the 5x7 dot font stands in for
+  CP's sans; the fleet number is one made-up number for every van.
   **Two-tone paint**: `finish: 'twotone'` (+ `paintVC` for the far LOD)
   makes the paint read its vertex colours, which every other finish
   ignores -- WRPS's cruiser (Commons WRPS_New_Car2, Wikipedia: navy hood,
