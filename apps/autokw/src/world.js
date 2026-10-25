@@ -7680,11 +7680,17 @@ float frLine(float o, float fw, float c, float w) {
       const mx = lerp(a.x, b.x, (t0 + t1) / 2), mz = lerp(a.z, b.z, (t0 + t1) / 2);
       if (ei != null && this.city.roadCoveredAt(mx, mz, ei)) continue;
       for (let k = 0; k < (AS ? AS.length : across); k++) {
-        // (an arterial: one cell per lane strip, artStrips, U between the tracks)
+        // (an arterial: one cell per lane strip, artStrips, U between the tracks.
+        // AUTO KW: any other street has the tile CENTRED on its centreline, so
+        // the two polished tracks (textures.js, u 0.26 / 0.74: +-2.2 m) lie
+        // in the two lanes' wheel paths. Laid from the kerb, they fell where
+        // the width put them: a 14 m collector -- every unpainted residential
+        // and collector street wider than 9 m -- had one bright band down its
+        // centreline, glinting in the low sun like a fresh seam.)
         const As = AS ? AS[AS.length - 1 - k] : null;
         const o0 = As ? As[1] : hw - (hw * 2 * k) / across;
         const o1 = As ? As[0] : hw - (hw * 2 * (k + 1)) / across;
-        const uOf = As ? (o) => As[2] + 0.31 + (0.38 * (o0 - o)) / Math.max(0.01, o0 - o1) : (o) => (hw - o) / ROAD_TILE;
+        const uOf = As ? (o) => As[2] + 0.31 + (0.38 * (o0 - o)) / Math.max(0.01, o0 - o1) : (o) => 0.5 - o / ROAD_TILE;
         const u0 = uOf(o0), u1 = uOf(o1);
         const P = (t, o) => (MA && t <= 0 ? [a.x + MA[0] * o, a.z + MA[1] * o]
           : MB && t >= 1 ? [b.x + MB[0] * o, b.z + MB[1] * o]
