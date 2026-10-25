@@ -42,6 +42,10 @@
 //     Paul's Lutheran, Trinity Anglican in Galt, Woodside, the Breithaupt
 //     Centre, the Grand River Recreation Complex, Idea Exchange Queen's
 //     Square, Waterloo Collegiate's front, Catalyst137. `window.__noLm5`.
+//   - ROUND SIX (kwbiz.js): the big employers' signs -- BlackBerry (its
+//     buildings white with ribbon windows), Sun Life (the tower to its real
+//     78 m), Manulife, OpenText, Equitable, Christie, Dare, Waterloo
+//     Brewing, Gore Mutual. `window.__noBiz`.
 //
 // Sources (Oct 2026): the Esri World Imagery aerial (tools/kw/aerial.py) for
 // every plan and every tower's place -- the towers are oriented boxes read off
@@ -73,6 +77,7 @@ import * as G from './geo.js';
 import {
   block, frontEdge, text, onWall, pyramid, hipRoof, barrel, B4, nearestEdge, entrance, sightsData, clockFace,
 } from './kwsights.js';
+import { bizBegin, bizRun, bizMap, bbSign, sunSign, manuSign, BIZ_KEYS } from './kwbiz.js';
 
 const STATS = { skipped: 0, built: [], err: [] };
 const ROUND4 = ['mktsq', 'skywalk', 'crowne', 'stmaryrc', 'stpeter', 'gaol', 'govhouse', 'claygl', 'wmrc', 'galtarena'];
@@ -80,6 +85,7 @@ const ROUND5 = ['qslib', 'wci', 'zion', 'stjohn', 'stpaul', 'trinity', 'woodside
 const C = (h) => lin(hex(h));
 const ccw = (p) => (polyArea(p) < 0 ? p.slice().reverse() : p);
 let D = null;      // lm2.json
+let BIZ_ON = true; // round six (kwbiz.js): the employers' signs; window.__noBiz turns it off
 
 // ---------------------------------------------------------------------------------------
 // before meshing: every box under a footprint drawn here goes flat (kwsights.js flatten)
@@ -113,7 +119,9 @@ export function prepLandmarks2(city, data) {
   if (typeof window !== 'undefined' && window.__noLm4) { D = { b: { ...D.b } }; for (const k of ROUND4) delete D.b[k]; }
   // window.__noLm5: round five off, the same way
   if (typeof window !== 'undefined' && window.__noLm5) { D = { b: { ...D.b } }; for (const k of ROUND5) delete D.b[k]; }
-  for (const k of Object.keys(D.b)) STATS.skipped += flatten(city, D.b[k].p, ROUND5.includes(k));
+  // window.__noBiz: round six off (kwbiz.js: the new footprints stay boxes, the old signs come back)
+  if (typeof window !== 'undefined' && window.__noBiz) { BIZ_ON = false; D = { b: { ...D.b } }; for (const k of BIZ_KEYS) delete D.b[k]; }
+  for (const k of Object.keys(D.b)) STATS.skipped += flatten(city, D.b[k].p, ROUND5.includes(k) || BIZ_KEYS.includes(k));
   // the King St skywalk is one of kwsights' `king` blocks (building=bridge):
   // meshKing would draw it on the road; it is drawn up in the air here instead
   const S = sightsData();
@@ -542,9 +550,14 @@ function sunLife(kit, ctx) {
     h: 15.5, wall: C('#bfae90'), trim: C('#e7e1d4'), parapet: 0.8, roof: C('#86847f'), glass: C('#3b3127'),
     win: { style: 'punch', sp: 2.6, w: 1.5, h: 1.9, fl: 3.8, g0: 1.4, sill: C('#e7e1d4') },
   });
-  const t = tower(kit, ctx, SUN_TOWER, 33, { wall: C('#4a3e33'), trim: C('#8a7a66'), parapet: 1.0, roof: C('#6e6a64'), glass: C('#2b241e'),
-    win: { style: 'ribbon', fl: 3.7, h: 2.3 } }, 15.5);
+  // (round six: the tower is 18 storeys, 78 m -- CTBUH -- of dark blue glass between pale fins, the sign on its crown)
+  const t = BIZ_ON
+    ? tower(kit, ctx, SUN_TOWER, 78, { wall: C('#9a9c9c'), trim: C('#b4b6b5'), parapet: 1.6, roof: C('#6e6a64'), glass: C('#2c3d52'), frame: C('#a9adaf'),
+      win: { style: 'curtain', sp: 3.1, fl: 4.0, top: 6.5, slab: C('#5d6874') } }, 15.5)
+    : tower(kit, ctx, SUN_TOWER, 33, { wall: C('#4a3e33'), trim: C('#8a7a66'), parapet: 1.0, roof: C('#6e6a64'), glass: C('#2b241e'),
+      win: { style: 'ribbon', fl: 3.7, h: 2.3 } }, 15.5);
   plant(kit, SUN_TOWER, t.yTop, 3, 9);
+  if (BIZ_ON) sunSign(kit, ctx, t);
   // the 1912 front
   const f = tower(kit, ctx, SUN_FRONT, 11.5, { wall: BUFF, trim: STONE, parapet: 1.3, roof: C('#8a8a86'), cornice: 0.9, plinth: [1.4, STONE],
     glass: C('#2d3438'), frame: C('#efe9dc'), win: { style: 'punch', sp: 3.4, w: 1.5, h: 2.6, fl: 4.6, g0: 1.6, sill: STONE } }, 0);
@@ -596,7 +609,8 @@ function manulife(kit, ctx) {
   const ee = edgeNear(r.E, -4068, -4345, 4);
   // the sign on the parking face (north)
   const nf = r.E.filter((e) => e.nz < -0.4).sort((a, b) => b.L - a.L)[0];
-  if (nf) {
+  if (BIZ_ON) manuSign(kit, ctx, r);
+  else if (nf) {
     const m = ctx.atlas.panel(14, 2.4, 22, (q, W, H) => {
       q.clearRect(0, 0, W, H);
       q.fillStyle = '#00a758'; q.font = `800 ${H * 0.72}px ${SANS}`; q.textAlign = 'center'; q.textBaseline = 'middle';
@@ -617,7 +631,11 @@ function blackberry(kit, ctx) {
   for (const k of ['bbA', 'bbB', 'bbC', 'bbD']) {
     const b = D.b[k];
     const lv = b.lv || 4, pts = ccw(b.p);
-    const r = block(kit, ctx, pts, {
+    // (round six: white panels and dark glass ribbons, as the 2018 photographs show -- the sign is blue on the white band)
+    const r = block(kit, ctx, pts, BIZ_ON ? {
+      h: lv * 4.1 + 0.8, wall: C('#e6e8ea'), trim: C('#f3f4f5'), parapet: 1.1, roof: C('#9d9fa2'), glass: C('#2c3a46'), frame: C('#d9dcdf'),
+      win: { style: 'ribbon', fl: 4.1, g0: 1.0, h: 2.0, top: 3.6 },
+    } : {
       h: lv * 4.1 + 0.8, wall: PAN, trim: C('#e9ebee'), parapet: 1.1, roof: C('#9d9fa2'), glass: GL, frame: C('#d9dcdf'),
       win: { style: 'curtain', sp: 1.5, fl: 4.1, g0: 0.4, top: 1.2, slab: C('#aeb4ba') },
     });
@@ -627,7 +645,8 @@ function blackberry(kit, ctx) {
       const N = [e.nx, 0, e.nz], gy = T(e.mx + e.nx * 2, e.mz + e.nz * 2);
       for (let t = 4.5; t < e.L - 4; t += 9) B4(r.B, e, t - 0.35, t + 0.35, gy, r.yTop + 1.1, 0.25, N, C('#eef0f2'));
     }
-    if (k === 'bbA' || k === 'bbB') {
+    if (BIZ_ON && k !== 'bbD') bbSign(kit, ctx, r, k);
+    else if (k === 'bbA' || k === 'bbB') {
       const f = frontEdge(ctx.city, r.E, /^University Avenue/, 15, 120) || r.E.sort((a, b) => b.L - a.L)[0];
       const m = ctx.atlas.panel(13, 2.2, 22, (q, W, H) => {
         q.clearRect(0, 0, W, H);
@@ -2402,6 +2421,8 @@ function catalyst(kit, ctx) {
 export function buildLandmarks2(ctx) {
   if (!D) return;
   const t0 = performance.now(), kit = new LmKit(ctx.atlas);
+  // round six's panels first: the lit ones take rows of their own on the shared atlas
+  if (BIZ_ON) { const a0 = ctx.atlas.y + ctx.atlas.row; bizBegin(kit); STATS.bizAtlas = [a0, ctx.atlas.y + ctx.atlas.row, ctx.atlas.lit0, ctx.atlas.lit1]; }
   // trees keep off what is drawn here
   for (const k of Object.keys(D.b)) { const o = obb(D.b[k].p); if (o && ctx.clearAt) ctx.clearAt.push([o.x, o.z, Math.min(o.hu, o.hv) + 3]); }
   // and off Laurel Dam's embankment
@@ -2457,6 +2478,8 @@ export function buildLandmarks2(ctx) {
     run('wci', wci);
     run('catalyst', catalyst);
   }
+  // round six
+  if (BIZ_ON) bizRun(kit, ctx, D, run);
   kit.flush(ctx);
   STATS.tris = kit.tris;
   STATS.ms = Math.round(performance.now() - t0);
@@ -2505,6 +2528,7 @@ export function landmarks2Map() {
     m(at('qslib'), false, "Idea Exchange Queen's Square", "Idea Exchange Queen's Square, 1 North Square, Galt — Cambridge's main library, the eye on the brick"),
     m(at('wci'), false, 'Waterloo Collegiate', 'Waterloo Collegiate Institute, 300 Hazel St — the breeze-block screen over the front doors'),
     m(at('catalyst'), false, 'Catalyst137', 'Catalyst137, 137 Glasgow St — the 1957 Uniroyal tire warehouse, now a hardware tech hub (475,000 sq ft)'),
+    ...(BIZ_ON ? bizMap(D, centroid) : []),
   ].filter(Boolean);
 }
 

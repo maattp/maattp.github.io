@@ -71,6 +71,15 @@ LANDMARKS = {
     "breit": (-1708.4, -1582.6),     # the Breithaupt Centre, 350 Margaret Ave
     "grrc": (3386.5, -429.5),        # the Grand River Recreation Complex and Lyle S. Hallman Pool (MJMA, 1988-91)
     "catalyst": (-3139.0, 87.3),     # Catalyst137, 137 Glasgow St (the 1957 Uniroyal tire warehouse, reclad 2017)
+    # round six: the big employers' signs (src/kwbiz.js)
+    "ot1": (-6313.5, -2762.3),       # OpenText Building 1, 275 Frank Tompa Dr (OSM: office, 4 levels)
+    "ot2": (-6239.9, -2739.9),       # OpenText Building 2 (OSM: office, 5 levels; the curved glass front)
+    "equit": (-5108.7, -825.9),      # Equitable Life of Canada, 1 Westmount Rd N (OSM: office, 3 levels)
+    "christie": (-70.2, -1219.4),    # Christie Digital Systems Canada, 809 Wellington St N (OSM: industrial, 2 levels)
+    "dare": (2193.9, 2238.2),        # Dare Foods, 2481 Kingsway Dr (OSM: manufacture)
+    "wbrew": (1852.7, -2036.9),      # Waterloo Brewing, 400 Bingemans Centre Dr (OSM's unnamed industrial footprint by the taphouse node)
+    "gore": (13875.2, 9861.5),       # Gore Mutual Insurance, 252 Dundas St N, Cambridge (the head office)
+    "gore2": (13915.2, 9830.6),      # Gore Mutual's 1935 stone building beside it (the copper roof)
 }
 
 

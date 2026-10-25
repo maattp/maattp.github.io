@@ -223,6 +223,7 @@ class SignAtlas {
     // letters and pylon): weather.js's TOD_BASIC dims every other texel of
     // this atlas at night, and keeps those inside this uv rect (u0, u1, v0, v1)
     this.mat.userData.todLitR = { value: new THREE.Vector4(2, 2, 2, 2) };
+    this.mat.userData.todLitV = { value: new THREE.Vector2(2, 2) };   // (litBegin / litEnd's band: kwbiz.js)
     this.mat.customProgramCacheKey = () => 'signAtlasLit';
   }
   /**
@@ -262,6 +263,15 @@ class SignAtlas {
     this.x += w + 2; this.row = Math.max(this.row, h);
     return at;
   }
+  /**
+   * Auto KW: the panels drawn between litBegin() and litEnd() are signs lit at
+   * night (kwbiz.js's corporate signs): they get whole rows of their own, and
+   * finish() hands their band to weather.js's TOD_BASIC as `todLitV` (map v,
+   * after the crop), so after dark those rows keep their colour while every
+   * other sign on the atlas dims -- in the same material, so no draw.
+   */
+  litBegin() { if (this.x > 0) { this.y += this.row + 2; this.x = 0; this.row = 0; } this.lit0 = this.y; }
+  litEnd() { if (this.x > 0) { this.y += this.row + 2; this.x = 0; this.row = 0; } this.lit1 = this.y; }
   /** Done drawing: cut the unused rows (build.js cropAtlas) and upload. */
   finish() {
     this.cut = cropAtlas(this.tex, this.y + this.row); this.tex.needsUpdate = true;
@@ -269,6 +279,10 @@ class SignAtlas {
       // the lit rect in the cropped texture's uv (cropAtlas: v' = 1 - y / H2)
       const W = this.tex.image.width, H2 = this.tex.image.height, [x0, y0, x1, y1] = this.lit;
       this.mat.userData.todLitR.value.set(x0 / W, x1 / W, 1 - y1 / H2, 1 - y0 / H2);
+    }
+    if (this.lit1 > this.lit0) {
+      const H2 = this.tex.image.height;
+      this.mat.userData.todLitV.value.set(1 - this.lit1 / H2, 1 - this.lit0 / H2);
     }
     return this.cut;
   }

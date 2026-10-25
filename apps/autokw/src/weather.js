@@ -170,6 +170,7 @@ function wxDefines(m) {
 }
 
 const BASIC_AT = 'vec3 outgoingLight = reflectedLight.indirectDiffuse;';
+const LIT_NONE = { value: new THREE.Vector2(2, 2) }, LIT_NONE_R = { value: new THREE.Vector4(2, 2, 2, 2) };
 function wxInject(sh, m) {
   if (!WX.ok && !TOD.ok) return;
   const fs = sh.fragmentShader;
@@ -180,14 +181,13 @@ function wxInject(sh, m) {
     && typeof fs === 'string' && fs.indexOf(BASIC_AT) >= 0 && fs.indexOf('TOD_BASIC') < 0) {
     sh.uniforms.todOn = TODU.todOn;
     sh.uniforms.todBasic = TODU.todBasic;
-    const lit = m.userData && m.userData.todLitR;
-    if (lit) {
-      // landmarks.js SignAtlas.litPanels: the cells in this uv rect stay lit
-      sh.uniforms.todLitR = lit;
-      sh.fragmentShader = 'uniform float todOn, todBasic;\nuniform vec4 todLitR;\n' + fs.replace(BASIC_AT, BASIC_AT + '\n\t// TOD_BASIC (tod.js), lit cells kept\n\tif ( todOn > 0.5 ) outgoingLight *= ( vMapUv.x > todLitR.x && vMapUv.x < todLitR.y && vMapUv.y > todLitR.z && vMapUv.y < todLitR.w ) ? 1.0 : todBasic;');
-      return;
-    }
-    sh.fragmentShader = 'uniform float todOn, todBasic;\n' + fs.replace(BASIC_AT, BASIC_AT + '\n\t// TOD_BASIC (tod.js)\n\tif ( todOn > 0.5 ) outgoingLight *= todBasic;');
+    // landmarks.js SignAtlas: the cells in the uv rect `todLitR` (litPanels:
+    // Tim Hortons) and the rows in the band `todLitV` (litBegin / litEnd:
+    // kwbiz.js) stay lit; every other material's rect and band are out of range
+    const ud = m.userData || {};
+    sh.uniforms.todLitR = ud.todLitR || LIT_NONE_R;
+    sh.uniforms.todLitV = ud.todLitV || LIT_NONE;
+    sh.fragmentShader = 'uniform float todOn, todBasic;\nuniform vec4 todLitR;\nuniform vec2 todLitV;\n' + fs.replace(BASIC_AT, BASIC_AT + '\n\t// TOD_BASIC (tod.js), lit cells kept\n\tif ( todOn > 0.5 && !( vMapUv.x > todLitR.x && vMapUv.x < todLitR.y && vMapUv.y > todLitR.z && vMapUv.y < todLitR.w ) && ( vMapUv.y < todLitV.x || vMapUv.y > todLitV.y ) ) outgoingLight *= todBasic;');
     return;
   }
   if (typeof fs !== 'string' || fs.indexOf('WX_INJ') >= 0 || fs.indexOf('TOD_INJ') >= 0 || fs.indexOf(INC) < 0 || fs.indexOf('vViewPosition') < 0) return;

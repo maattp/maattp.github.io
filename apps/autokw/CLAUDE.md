@@ -779,6 +779,95 @@ file and a guide disagree, this file wins.
   1.7], t: [12700, 10285, 6]}`, WCI `{c: [-4492, -2962, 1.7], t: [-4457,
   -2981, 6]}`; `VIEW_INFO_FILE=` (kwshots, new) takes the per-view probe
   from a file.
+- **The big employers' signs: src/kwbiz.js** (the landmarks pass, round six;
+  run by kwlandmarks2.js with its LmKit; `build_lm2.py` gained `ot1`, `ot2`,
+  `equit`, `christie`, `dare`, `wbrew`, `gore`, `gore2`; docs/biz-day-1.jpg,
+  biz-day-2.jpg, biz-night.jpg). Google's wordmark on the Breithaupt Block
+  (kwsights) and Toyota's at TMMC (kwsights) were already there. **Signed:**
+  **BlackBerry** (A, B, C: the seven-key logo and italic wordmark in
+  BlackBerry blue on the white top band of each long face, toward one end --
+  the buildings are now white panels with dark ribbon windows, as the 2018
+  Commons photographs show, not blue curtain glass; a face looking into a
+  parking structure within 50 m is skipped, `clearAhead`); **Sun Life** (the
+  tower is 78 m / 18 storeys -- CTBUH -- of dark glass between pale fins, it
+  was a 33 m box; the gold sun and "Sun Life" on the crown toward Uptown,
+  King St and the south; the 2008/2012 photographs read "Sun Life
+  Financial", the brand has been "Sun Life" since 2015); **Manulife** (the
+  green three-bar mark and serif wordmark on the top band toward King St,
+  the car park and the south); **OpenText** (Buildings 1 and 2 redrawn: white
+  bands, blue-grey glass; "opentext" in dark lowercase on top of both, the
+  grey monument on Frank Tompa Dr -- photographs on Bing images);
+  **Equitable** (the beige three-storey block at Westmount and Erb, the teal
+  knot and "Equitable" at the north end of the Westmount face, the two teal
+  "e" banners -- Commons 2025); **Christie** (the grey plant, CHRISTIE in
+  white on a dark band high on the Wellington St face, the fieldstone wall
+  with brushed-steel CHRISTIE letters at the entrance -- press photographs);
+  **Dare** (the red oval with the gold rim on a raised white panel over the
+  north end toward Kingsway Dr and near the north end of the west face, the
+  precast monument "Dare Foods Limited / 2481 Kingsway Drive"); **Waterloo
+  Brewing** (OSM's unnamed industrial footprint by the taphouse node at 400
+  Bingemans Centre Dr: the buff front toward the car park, the red pointed
+  WATERLOO BREWING banner with wheat ears, the red COLD BEER STORE canopy --
+  Commons 2017); **Gore Mutual** (the dark stone head office with GORE MUTUAL
+  and the red mark on its long south-east face, the granite ground sign by
+  Dundas St, the 1935 limestone building under a copper hip roof). Map marks
+  and hellos for the six new ones. **Not done:** Home Hardware's HQ in St.
+  Jacobs, ATS (730 Fountain St N) and Definity (111 Westmount Rd S): no sign
+  or footprint cluster within ~300-650 m of any of them, so any sign there
+  is a new draw or a swollen cluster; D2L / Communitech (the Tannery's
+  COMMUNITECH board is kwsights'), Sandvine, Clearpath, Maplesoft, Shopify
+  (no Waterloo office in OSM), The Record (moved). Toyota's signs left as
+  kwsights draws them.
+  **Draws: none.** Where the letters go is the whole design: on the shared
+  sign atlas, in the `kw` cluster of the building's own cell, only where that
+  cluster's sphere already reaches the sign (Sun Life, OpenText, Dare) or the
+  cluster is the building's own (BlackBerry's campus; Manulife's -- all its
+  signs are keyed to the building's cell, its King St face is across the cell
+  line). Equitable's, Christie's and Waterloo Brewing's nearest sign clusters
+  are 280-370 m off: a first version hung them there and swelled kw-4,-1
+  248 -> 587 m, kw0,-1 176 -> 351, kw2,-2 15 -> 491, and those clusters came
+  into views they were not in (+1 at the Sun Life and Equitable views). So
+  those, and Gore Mutual (cell 12,8 has no sign cluster; its footprint
+  cluster key 11,8 is 58 m off), are **geometry letters** (`pixSign`: the
+  sign painted on a small canvas, read back, each colour's runs merged into
+  rectangles, vertex-coloured quads in kw.js's footprint material of a
+  cluster whose sphere already holds them; ~2.2k quads in all; blocky at a
+  few metres by design). `tools/kw/lmcount.js` (phone) `__noBiz` -> this:
+  1038 / 1038 meshes, every cell and material identical. Cluster spheres that
+  moved (`landmarks:<key>` geometry.boundingSphere): kw-3,-6 60 -> 132 m
+  (BlackBerry's own), kw-3,-4 7 -> 59 (Manulife's own), kwp2,2 439 -> 502
+  (the Dare building itself: its world box became this cluster's), kwp11,8
+  627 -> 651, kwp2,-2 203 -> 214; nothing else. A frustum probe
+  (tools/kw/drawprobe.js, `__probeFull`, seeded, phone) over 22 views, a
+  street and an air view of every site: the landmark meshes in view are
+  identical with and without round six in every one; the scene's draws
+  -3..+1 (traffic and walkers). trafficbench (rail off, phone): all six
+  hashes = `__noBiz`'s; nightprobe ALL OK; weatherprobe ALL PASS; 0
+  exceptions. Pass triangles ~73k -> 80k.
+  **Lit at night:** the atlas wall signs (BlackBerry, Sun Life, Manulife,
+  OpenText, Dare) are drawn between the shared atlas's new `litBegin()` /
+  `litEnd()` (landmarks.js SignAtlas: whole rows of their own), and finish()
+  hands that band of rows to weather.js's TOD_BASIC as `todLitV` (map v,
+  after cropAtlas): after dark those rows keep their colour while every other
+  sign on the atlas dims to `todBasic` -- in the same material and program
+  (the uniform is in every TOD_BASIC program, out of range for every other
+  material), so no draw and no new program. The monuments and the geometry
+  letters are not lit. Shared sign atlas: rows 1569 -> 1688 of 2048 (the
+  pass's panels start at 1156; the lit band 1158-1259), full 0.
+  **Estimated:** every colour; every sign's size (scaled off photographs
+  against the storeys); which end of a face a sign is at where no
+  photograph shows it (Equitable's north end, Christie's wall sign, Dare's
+  west-face oval, Gore's wall sign); Sun Life's crown wording; OpenText's
+  monument place; every monument's lettering; the Gore Mutual and Christie
+  buildings' looks; Waterloo Brewing's footprint (OSM leaves it unnamed).
+  `window.__noBiz = true` before boot turns round six off (the old
+  BlackBerry, Sun Life and Manulife signs and boxes come back); `window.__kwBiz`
+  lists every sign `[key, x, z, nx, nz, height]`. Verify with kwshots views
+  built off it, e.g. `eval` returning `{ c, t }` from `__kwBiz.signs` (a
+  sign's normal times 20-200 m), or fixed: Sun Life from its south lot `{c:
+  [-3258, -529, 1.6], t: [-3400, -652, 74]}`, the Christie monument `{c: [-26,
+  -1348, 1.6], t: [-29, -1327, 1.2]}`, Waterloo Brewing `{c: [1754, -1985,
+  1.6], t: [1821, -2008, 11]}`.
 - **The chain stores: src/kwshops.js** (`data/shops.json` from
   tools/kw/extract_shops.py -> `raw_shops.json`, then tools/kw/build_shops.py;
   docs/shops-*.jpg). Every store of ~50 brands (`BRANDS` / `GAS` in
