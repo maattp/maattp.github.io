@@ -161,6 +161,95 @@ function drawGrt(g, s, W, H) {
   g.restore();
 }
 
+// ---------------------------------------------------------------------------
+// AUTO KW: ONTARIO'S REGULATORY SIGNS on the residential streets (world.js
+// meshProps): the 40 km/h neighbourhood gateways -- Kitchener (all its
+// neighbourhoods by the end of 2023) and Waterloo (2023-25) post the limit
+// only where a residential street leaves a collector or arterial, as
+// O. Reg. 615 s. 5.1.1 has it: the Rb-1 MAXIMUM 40 km/h, an AREA tab under
+// it, and BEGINS (going in) or ENDS (coming out) under that -- and the
+// no-parking signs (the red ring and slash over a black P, the arrow) down
+// the block. Three shared slots, each sign laid from cells of them as GRT's
+// stop numbers are (a face's `cu`), so every sign in the region costs no slot
+// of its own, no material and no draw. Cells: [px0, px1, metres high] (the
+// sign is 0.6 m wide, a no-parking 0.3 m: width px = 60 x w / h).
+const REG = {
+  max: { key: 'R|max', c: { MAX: [0, 180, 0.2], N40: [180, 280, 0.36], KMH: [280, 469, 0.19] } },
+  tab: { key: 'R|tab', c: { AREA: [0, 138, 0.26], BEGINS: [138, 318, 0.2], ENDS: [318, 498, 0.2] } },
+  np: { key: 'R|np', c: { NP: [0, 60, 0.3], ARL: [60, 198, 0.13], ARR: [198, 336, 0.13], ARB: [336, 474, 0.13] } },
+};
+const REG_SPEC = {};
+for (const [k, r] of Object.entries(REG)) {
+  const w = Math.max(...Object.values(r.c).map((c) => c[1]));
+  REG_SPEC[k] = { style: 'R', reg: k, ppm: 1, w, h: 1, key: r.key };
+}
+function drawReg(g, s, W, H) {
+  const R = REG[s.reg].c, B = '#111214', RED = '#c8102e';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  for (const [name, [x0, x1, hm]] of Object.entries(R)) {
+    const w = x1 - x0, ppm = H / hm, b = Math.max(1, 0.012 * ppm), cx = x0 + w / 2;
+    g.fillStyle = '#f4f4f0'; g.fillRect(x0, 0, w, H);
+    g.fillStyle = B;
+    // the black border, round the whole stack: each cell draws its share
+    const top = name === 'MAX' || name === 'AREA' || name === 'NP', bot = name === 'KMH' || name === 'BEGINS' || name === 'ENDS' || name[0] === 'A' && name !== 'AREA';
+    g.fillRect(x0 + 1, 0, b, H); g.fillRect(x1 - 1 - b, 0, b, H);
+    if (top) g.fillRect(x0 + 1, 1, w - 2, b);
+    if (bot) g.fillRect(x0 + 1, H - 1 - b, w - 2, b);
+    if (name === 'MAX') { g.font = `700 ${(0.085 * ppm).toFixed(0)}px ${FONT}`; g.fillText('MAXIMUM', cx, H * 0.58, w - 4 * b); }
+    else if (name === 'N40') { g.font = `700 ${(0.3 * ppm).toFixed(0)}px ${FONT}`; g.fillText('40', cx, H * 0.53, w - 4 * b); }
+    else if (name === 'KMH') { g.font = `700 ${(0.085 * ppm).toFixed(0)}px ${FONT}`; g.fillText('km/h', cx, H * 0.42, w - 4 * b); }
+    else if (name === 'AREA') {
+      g.fillRect(x0 + 1, H - 1 - b * 0.6, w - 2, b * 0.6);   // the tab's own edge
+      g.font = `700 ${(0.13 * ppm).toFixed(0)}px ${FONT}`; g.fillText('AREA', cx, H * 0.54, w - 4 * b);
+    } else if (name === 'BEGINS' || name === 'ENDS') { g.font = `700 ${(0.1 * ppm).toFixed(0)}px ${FONT}`; g.fillText(name, cx, H * 0.53, w - 4 * b); }
+    else if (name === 'NP') {
+      // the black P inside the red ring, the red slash across it
+      g.font = `700 ${(0.19 * ppm).toFixed(0)}px ${FONT}`; g.fillText('P', cx, H * 0.55);
+      g.strokeStyle = RED; g.lineWidth = 0.03 * ppm;
+      g.beginPath(); g.arc(cx, H * 0.52, 0.115 * ppm, 0, Math.PI * 2); g.stroke();
+      g.beginPath(); g.moveTo(cx - 0.081 * ppm, H * 0.52 - 0.081 * ppm); g.lineTo(cx + 0.081 * ppm, H * 0.52 + 0.081 * ppm); g.stroke();
+    } else {
+      // an arrow along the kerb: <-, ->, <->
+      const y = H * 0.48, L = 0.1 * ppm, hd = 0.035 * ppm, sw = 0.016 * ppm;
+      const l = name !== 'ARR', r = name !== 'ARL';
+      g.fillRect(cx - L, y - sw / 2, 2 * L, sw);
+      const head = (x, d) => { g.beginPath(); g.moveTo(x + d * hd * 1.4, y); g.lineTo(x, y - hd); g.lineTo(x, y + hd); g.closePath(); g.fill(); };
+      if (l) head(cx - L, -1);
+      if (r) head(cx + L, 1);
+    }
+  }
+}
+
+/**
+ * One regulatory sign into the chunk's flat builder (post, the plates' backs)
+ * and its lettered faces into `faces` (StreetSigns.setExtra): `kind` 'begins'
+ * / 'ends' (the 40 km/h AREA stack) or 'np' (no parking, `arrow` -1 / 1 / 0
+ * as seen by its reader: left, right, both), at ground (x, gy, z), facing
+ * (fx, fz). Returns the face list's new entries' count.
+ */
+export function regSign(flat, faces, kind, x, gy, z, fx, fz, R, arrow = 0) {
+  const rx = fz, rz = -fx, rot = Math.atan2(rz, rx);
+  const plates = [];   // [cell key, slot, centre y, w, h]
+  if (kind === 'np') {
+    plates.push(['np', 'NP', gy + 2.17, 0.3, 0.3], ['np', arrow < 0 ? 'ARL' : arrow > 0 ? 'ARR' : 'ARB', gy + 1.955, 0.3, 0.13]);
+  } else {
+    let y = gy + 1.55;
+    for (const [sl, c] of [['tab', kind === 'ends' ? 'ENDS' : 'BEGINS'], ['tab', 'AREA'], ['max', 'KMH'], ['max', 'N40'], ['max', 'MAX']]) {
+      const h = REG[sl].c[c][2];
+      plates.push([sl, c, y + h / 2, 0.6, h]);
+      y += h + (c === 'AREA' || c === 'BEGINS' || c === 'ENDS' ? 0.02 : 0);
+    }
+  }
+  const topY = Math.max(...plates.map((p) => p[2] + p[4] / 2));
+  // the post: a galvanised channel, behind the plates
+  flat.box(x - fx * 0.03, gy - 0.2, z - fz * 0.03, 0.06, topY - gy + 0.15, 0.05, rot, [0.58, 0.6, 0.6]);
+  for (const [sl, c, cy, w, h] of plates) {
+    flat.box(x, cy - h / 2, z, w, h, 0.012, rot, [0.6, 0.61, 0.62]);
+    const cu = REG[sl].c[c];
+    faces.push({ spec: REG_SPEC[sl], x: x + fx * 0.008, y: cy, z: z + fz * 0.008, fx, fz, R, w, h, cu: [cu[0] + 1, cu[1] - 1] });
+  }
+}
+
 function rrect(g, x, y, w, h, r) {
   g.beginPath();
   g.moveTo(x + r, y); g.lineTo(x + w - r, y); g.quadraticCurveTo(x + w, y, x + w, y + r);
@@ -175,6 +264,7 @@ function drawArt(g, s, W, H) {
   g.clearRect(0, 0, W, H);
   if (s.style === 'S') return drawShield(g, s, W, H);
   if (s.style === 'G' || s.style === 'GD') return drawGrt(g, s, W, H);
+  if (s.style === 'R') return drawReg(g, s, W, H);
   const D = DESIGN[s.style];
   const ppm = s.ppm;
   let midY = H / 2;
@@ -362,9 +452,12 @@ export class StreetSigns {
 
   /** Sites (posts with their blades, mast-arm signs) of chunk (cx, cz), worked out once. */
   /** Lettered sites another drawer put in chunk (cx, cz) ({ x, z, faces }), replacing its last ones. */
-  setExtra(cx, cz, sites) {
+  // (`tag`: each drawer keeps its own list a chunk -- GRT's stops, the regulatory signs)
+  setExtra(cx, cz, sites, tag = 'grt') {
     const k = this.city.chunkKey(cx, cz);
-    if (sites && sites.length) this.extra.set(k, sites); else this.extra.delete(k);
+    let m = this.extra.get(k);
+    if (sites && sites.length) { if (!m) this.extra.set(k, (m = new Map())); m.set(tag, sites); }
+    else if (m) { m.delete(tag); if (!m.size) this.extra.delete(k); }
   }
 
   sitesIn(cx, cz) {
@@ -763,7 +856,8 @@ export class StreetSigns {
     for (let cx = c0; cx <= c1; cx++) for (let cz = d0; cz <= d1; cz++) {
       const wc = world && world.chunks && world.chunks.get(city.chunkKey(cx, cz));
       if (!wc || wc.lod !== 1 || !wc.group) continue;
-      for (const L of [this.sitesIn(cx, cz), this.extra.get(city.chunkKey(cx, cz))]) if (L) for (const site of L) {
+      const X = this.extra.get(city.chunkKey(cx, cz));
+      for (const L of [this.sitesIn(cx, cz), ...(X ? X.values() : [])]) if (L) for (const site of L) {
         const d2 = (site.x - px) ** 2 + (site.z - pz) ** 2;
         if (d2 > R * R) continue;
         for (const f of site.faces) if (d2 < f.R * f.R) faces.push([d2, f]);

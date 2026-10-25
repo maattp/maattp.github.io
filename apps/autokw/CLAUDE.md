@@ -3792,6 +3792,75 @@ file and a guide disagree, this file wins.
     are one design; light standards on medians (Homer Watson's) are not
     drawn.
 
+- **The authenticity pass** (docs/authentic-*.jpg: master on top, this
+  below). Surveyed from the driver's seat at 21 cameras (Mt Hope, Breithaupt,
+  Westmount, Laurelwood, Activa, Doon South, Fischer-Hallman, Weber N,
+  downtown King St, Uptown, a plaza, Hespeler Rd, Galt, a concession road,
+  the 401, the Conestoga). Ranked by how much each broke "this is KW":
+  (1) every gabled house had a grey cardboard triangle on each end; (2) a
+  residential street had no sign an Ontario driver knows -- the kerb's "sign
+  on a post" was a blank grey plate, and nothing said 40; (3) a bright
+  polished stripe down the centreline of collectors; (4) the old cores'
+  brick houses mostly porchless boxes. Done, all into the chunk's flat
+  builder (no draws):
+  - **Gable ends are wall** (world.js meshGable's `wall`): the triangles
+    were the roof's shingle colour, out on the eaves' overhang line. Now the
+    gable is the wall's colour (its tint x the cell's mean x 0.85) on the
+    wall's own plane, the slopes run 0.45 m past it, a 0.2 m barge board in
+    the trim colour down each rake, soffits under the overhangs; the roof
+    slab stops at the gable walls (it was a 0.35 m shelf across them).
+    Dormers too. Flat colour, not the brick/siding texture: it reads as the
+    siding an Ontario gable often has over brick.
+  - **Porches in the old cores** (`porchShare`): 80 % of houses inside
+    OLD_CORES (pre-war Kitchener, Uptown, Galt, Preston...), 42 % elsewhere
+    as before. The garage and bay-window rules read the same share.
+  - **The 40 km/h neighbourhood gateways** (streetsigns.js `regSign`,
+    world.js meshProps `regAt`). Kitchener (council 2021, every
+    neighbourhood by the end of 2023, 1,000+ signs) and Waterloo (2023-25,
+    40 on neighbourhood streets) post the limit only at the way in, as O.
+    Reg. 615 s. 5.1.1 (2018) prescribes: the Rb-1 MAXIMUM 40 km/h, an AREA
+    tab, and BEGINS under it; the same with ENDS for the way out (St.
+    Catharines' wording; Kingston, Ottawa alike). Where a residential edge
+    meets a collector or arterial in Kitchener or Waterloo (streetsigns'
+    `muniAt`), 11 m in: BEGINS on the right going in, ENDS on the other
+    kerb facing the traffic coming out (one-way streets: their way only).
+    **No-parking signs**: a residential kerb's blank plate is Ontario's
+    no-parking sign (red ring and slash over a black P, an arrow left /
+    right / both), facing its side's traffic, in every municipality. Posts
+    and plate backs in the chunk's flat mesh, solid (addObstacle, knock
+    down); the faces are streetsigns.js lettering from THREE shared atlas
+    slots (`R|max`, `R|tab`, `R|np`), each sign laid from cells of them as a
+    GRT stop number is (a face's `cu`), within 110 m. `setExtra` now takes a
+    tag (GRT's 'grt', these 'reg') so both drawers keep their lists a chunk.
+    `cityStats.regSigns` counts them.
+  - **Wheel tracks in the lanes** (meshRoad `uOf`): a street with no
+    artStrips laid the 9 m road tile from its kerb, so its two polished
+    tracks fell wherever the width put them -- one down the centreline of
+    a 12-14 m collector. The tile is centred on the centreline now (tracks
+    at +-2.2 m); a 9 m street is unchanged.
+  - **Cost** (AUTO_PHONE=1, GPU, seedrandom, a frustum census of the
+    world's chunk meshes, master -> this): chunk draws identical at all 10
+    cameras (country 15, gateway 70, Mt Hope kerb 71, Waterloo gateway 52,
+    Activa 55, Doon South 64, Uptown 62, downtown 58, Westmount 66); chunk
+    triangles +2-7 % (37k = ; Mt Hope 791k -> 832k; Uptown 546k -> 573k;
+    Westmount 712k -> 742k: the gables' +10 triangles a house); the scene
+    pass's draws differ only by the seeded crowd's +-3. trafficbench (rail
+    off, phone): all six hashes = master. 0 exceptions.
+  - **Sources:** kitchener.ca "Kitchener implements 40km/h speed limit in
+    residential neighbourhoods"; CTV Kitchener (Waterloo council, 2022);
+    engagewr.ca speed management (Waterloo's phases, 2023-25); O. Reg.
+    301/18 (amending Reg. 615: s. 5.1.1); stcatharines.ca ("Maximum 40 Area
+    Begins / Ends"); getinvolved.cityofkingston.ca.
+  - **Approximate / not done:** the AREA / BEGINS tabs are drawn black on
+    white (the regulation's figures were not readable; one alt text says the
+    AREA tab is yellow on blue -- check a photo); Waterloo's Uptown ward is
+    30, drawn 40; Cambridge's neighbourhoods get no gateways (no source
+    found); no school-zone 30 signs or flashing beacons; arterial and
+    collector kerbs keep the old blank plate (their posted limits are OSM's
+    and only g2.json carries them); the gable is a flat colour; found but
+    not done: hydrant colours (no source for KW's), the old cores' houses
+    are still two-storey boxes where many are a storey and a half with a
+    steep front gable.
 - **Lane choice and left-turn bays** (v62's open items; docs/lanes-*.jpg:
   master left, this right). Every rule is one both traffic and paint read,
   so the paint never shows a rule traffic ignores.

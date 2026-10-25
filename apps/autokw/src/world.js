@@ -16,7 +16,7 @@ import { buildMountains } from './mountains.js';
 import { plantTrees, occupancy, OCC_C, OCC_N, OCC_PAVE } from './trees.js';
 import { pumpkinSeed } from './fall.js';
 import { hash2, clamp, lerp, distToSeg, segDist, FALL, buildingTiers, roofAt, tierScale } from './util.js';
-import { grtSpec, digitCell } from './streetsigns.js';
+import { grtSpec, digitCell, regSign } from './streetsigns.js';
 import { edgeFlow, oneWaySpan, twoWayLayout, twoWayCuts, medianGaps, medianNoses, alBike } from './arterial.js';
 
 // The bore's cross-section, shared by the mesher and by the trench that has to
@@ -11619,6 +11619,20 @@ float frLine(float o, float fw, float c, float w) {
       return t * e.len < this.paveStart(e.a, ei, sg) + 0.6 || (1 - t) * e.len < this.paveStart(e.b, ei, sg) + 0.6;
     };
     const lamps = [];
+    // Ontario's regulatory signs on the residential streets (streetsigns.js regSign)
+    const SSg = city.streetSigns || null, regs = [], REG_R = 110;
+    const regAt = (kind, x, z, fx, fz, arrow) => {
+      if (!G.isBuildable(x, z) || this.inDrawnLake(x, z) || city.onRoad(x, z, 0.35) || inPit(x, z) || city.jumpClear(x, z) || this._onApron(x, z, 0.5)) return false;
+      const faces = [];
+      const f0 = flat.ni;
+      regSign(flat, faces, kind, x, G.terrainHeight(x, z) + WALK_Y, z, fx, fz, REG_R, arrow);
+      city.addObstacle(this._ck, x, z, 0.08);
+      if (this._fell) this._fell.push(x, z, f0, flat.ni);
+      if (SSg) regs.push({ x, z, faces });
+      const RS = cityStats.regSigns || (cityStats.regSigns = { begins: 0, ends: 0, np: 0 });
+      RS[kind]++;
+      return true;
+    };
     for (const ei of ch.edges) {
       if (performance.now() - this._yt > this._yb) { yield; this._yt = performance.now(); }
       const e = city.edges[ei];
@@ -11636,6 +11650,33 @@ float frLine(float o, float fw, float c, float w) {
       const spacing = e.cls === 'res' ? 34 : 30;
       const count = Math.floor(e.len / spacing);
       const along = Math.atan2(e.dx, e.dz);
+      // AUTO KW: THE 40 km/h NEIGHBOURHOOD GATEWAYS. Kitchener and Waterloo
+      // dropped their residential streets to 40 km/h (2022-25) and post it
+      // only at the way in: where a residential street meets a collector or
+      // arterial, MAXIMUM 40 km/h / AREA / BEGINS on the right going in, and
+      // the same with ENDS facing the traffic coming out (O. Reg. 615
+      // s. 5.1.1). The posts stand 11 m in, at the kerb furniture's line.
+      if (e.cls === 'res' && SSg && e.len > 30 && !e.tunnel) {
+        const flow = e.oneway ? (e.onewayRev ? -1 : 1) : 0;
+        for (const [ni, s0] of [[e.a, 0], [e.b, 1]]) {
+          const n = city.nodes[ni];
+          if (n.e.length < 3 || !own(n.x, n.z) && !own(mx, mz)) continue;
+          let big = false;
+          for (const oj of n.e) { const o = city.edges[oj]; if ((o.cls === 'st' || o.cls === 'art') && !o.rural) { big = true; break; } }
+          if (!big) continue;
+          const muni = SSg.muniAt(n.x, n.z);
+          if (muni !== 'Kitchener' && muni !== 'Waterloo') continue;
+          // in: away from the node; dir +1 is a -> b
+          const dIn = s0 === 0 ? 1 : -1, t = s0 === 0 ? 11 / e.len : 1 - 11 / e.len;
+          const x = lerp(a.x, b.x, t), z = lerp(a.z, b.z, t);
+          for (const [kind, dir] of [['begins', dIn], ['ends', -dIn]]) {
+            if (flow && flow !== dir) continue;
+            // the right of travel (a -> b's is +p), facing that traffic
+            const sg = dir, off = e.hw + 0.85;
+            regAt(kind, x + px * sg * off, z + pz * sg * off, -e.dx * dir, -e.dz * dir);
+          }
+        }
+      }
       // AUTO KW: overhead hydro. Ontario's arterials and its pre-1970 streets
       // carry their distribution lines on poles down one side, the street
       // light hung from the pole on a davit arm -- the most Ontario thing on a
@@ -11781,6 +11822,12 @@ float frLine(float o, float fw, float c, float w) {
             const mc = k < 0.65 ? [0.16, 0.28, 0.44] : [0.5, 0.14, 0.14];
             flat.box(ox, gy, oz, 0.48, 0.5, 0.4, rot, [0.24, 0.25, 0.26]);
             flat.box(ox, gy + 0.5, oz, 0.56, 0.66, 0.46, rot, mc);
+          } else if (k < 0.86 && e.cls === 'res') {
+            // AUTO KW: a residential street's sign is Ontario's no-parking
+            // sign (the red ring and slash over the P, the arrow along the
+            // kerb), facing the traffic on its side -- it was a blank plate
+            const fd = sg > 0 ? -1 : 1, ar = hash2(Math.round(x * 3), 77);
+            regAt('np', ox, oz, e.dx * fd, e.dz * fd, ar < 0.4 ? -1 : ar < 0.8 ? 1 : 0);
           } else if (k < 0.86) {
             // sign on a post -- the tallest of the clutter, so it breaks the
             // kerb line against the facades behind it
@@ -11824,6 +11871,8 @@ float frLine(float o, float fw, float c, float w) {
         }
       }
     }
+
+    if (SSg) SSg.setExtra(cx, cz, regs, 'reg');
 
     // Park furniture, where OSM maps it (tools/build_parkprops.py): benches,
     // picnic tables, playgrounds, fountains. A park that was lawn and trees
