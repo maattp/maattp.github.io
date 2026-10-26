@@ -1,7 +1,7 @@
 // Traffic, parked cars and the police response.
 
 import * as THREE from './three.js';
-import { Vehicle, TYPES, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, nearLod, makeBellows, HITCH,
+import { Vehicle, TYPES, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, farLod2, nearLod, makeBellows, HITCH,
   LAMP_BRAKE, LAMP_L, LAMP_R, LAMP_REV, LAMP_LON, LAMP_RON, LAMP_STEP } from './vehicles.js';
 import { clamp, lerp, angleWrap, hash2, rng, dist2, tierScale } from './util.js';
 import * as G from './geo.js';
@@ -91,6 +91,10 @@ const FAR_LOD = ON_PHONE ? 60 : Infinity;
 // per type in view, casting the sun's shadow as a traffic car this close
 // does); the rest through the far LOD as before. Inside SHADOW_NEAR.
 const DECOR_NEAR = ON_PHONE ? 40 : 55;
+// Auto KW (v86): past FAR2 of the camera a far-LOD car (traffic or scenery)
+// is drawn in its type's far-far LOD (vehicles.js farLod2: ~a third of the
+// triangles), from a pool keyed `type|2` in farMeshes
+const FAR2 = ON_PHONE ? 110 : 150;
 const DECOR_CAP = ON_PHONE ? 10 : 18;
 // VEHICLE LAMPS (updateLamps): lit out to LAMP_RANGE m; a blinker's period (s,
 // half of it lit: ~86 flashes a minute); the stop lamps held BRAKE_HOLD s
@@ -721,7 +725,7 @@ export class TrafficSystem {
     // Every type's far LOD up front, on the loading screen: built on first use
     // it was a one-off 2-4 ms stall (40+ ms on a phone) the first time each
     // type drove past 60 m.
-    if (FAR_LOD !== Infinity) for (const k of Object.keys(vehicleAssets().types)) farLod(k);
+    if (FAR_LOD !== Infinity) for (const k of Object.keys(vehicleAssets().types)) { farLod(k); farLod2(k); }
     this._farM = new THREE.Matrix4();
     this._farFr = new THREE.Frustum();
     this._farS = new THREE.Sphere();
@@ -1466,7 +1470,7 @@ export class TrafficSystem {
     for (const e of this.nearMeshes.values()) e.n = 0;
     const near = this._near;
     near.length = 0;
-    const cx = cam ? cam.position.x : px, cz = cam ? cam.position.z : pz, nq = DECOR_NEAR * DECOR_NEAR;
+    const cx = cam ? cam.position.x : px, cz = cam ? cam.position.z : pz, nq = DECOR_NEAR * DECOR_NEAR, f2q = FAR2 * FAR2;
     for (const d of this.decor) {
       d._fr = !cam || (sph.center.set(d.x, d.y + 1, d.z), sph.radius = 9, fr.intersectsSphere(sph));
       d._d2 = (d.x - cx) ** 2 + (d.z - cz) ** 2;
@@ -1482,9 +1486,10 @@ export class TrafficSystem {
       if (!d._fr) continue;
       const nr = d._d2 >= 0;
       const pool = nr ? this.nearMeshes : this.farMeshes;
-      let e = pool.get(d.type);
-      if (!e) pool.set(d.type, (e = { mesh: null, cap: 0, n: 0 }));
-      if (e.n === e.cap) (nr ? this.growNear : this.growFar).call(this, e, d.type);
+      const pk = !nr && (d.x - cx) ** 2 + (d.z - cz) ** 2 > f2q ? d.type + '|2' : d.type;
+      let e = pool.get(pk);
+      if (!e) pool.set(pk, (e = { mesh: null, cap: 0, n: 0 }));
+      if (e.n === e.cap) (nr ? this.growNear : this.growFar).call(this, e, pk);
       const c = Math.cos(d.h), s = Math.sin(d.h);
       // the group's (x, y, z, yaw) times the tilt's lift (pivotY): as a parked car's
       M.set(c, 0, s, d.x, 0, 1, 0, d.y + (d.pivotY || 0), -s, 0, c, d.z, 0, 0, 0, 1);
@@ -1545,9 +1550,11 @@ export class TrafficSystem {
         sph.radius = v.halfLen + 6;
         if (!fr.intersectsSphere(sph)) continue;
       }
-      let e = this.farMeshes.get(v.typeName);
-      if (!e) this.farMeshes.set(v.typeName, (e = { mesh: null, cap: 0, n: 0 }));
-      if (e.n === e.cap) this.growFar(e, v.typeName);
+      const cc = cam ? cam.position : null;
+      const pk = cc && (v.x - cc.x) ** 2 + (v.z - cc.z) ** 2 > FAR2 * FAR2 ? v.typeName + '|2' : v.typeName;
+      let e = this.farMeshes.get(pk);
+      if (!e) this.farMeshes.set(pk, (e = { mesh: null, cap: 0, n: 0 }));
+      if (e.n === e.cap) this.growFar(e, pk);
       v.group.updateMatrix();
       v.tilt.updateMatrix();
       this._farM.multiplyMatrices(v.group.matrix, v.tilt.matrix);
@@ -1569,7 +1576,7 @@ export class TrafficSystem {
     const types = vehicleAssets().types;
     for (const t of list) {
       if (!types[t] || this.nearMeshes.has(t)) continue;
-      farLod(t); nearLod(t);
+      farLod(t); farLod2(t); nearLod(t);
       this.nearMeshes.set(t, { mesh: null, cap: 0, n: 0 });
     }
   }
@@ -1595,8 +1602,9 @@ export class TrafficSystem {
     e.cap = cap;
   }
 
-  growFar(e, typeName) {
-    const { geo, mat } = farLod(typeName);
+  growFar(e, key) {
+    // (`type|2`: the far-far LOD's pool, FAR2)
+    const two = key.endsWith('|2'), { geo, mat } = two ? farLod2(key.slice(0, -2)) : farLod(key);
     const cap = Math.max(8, e.cap * 2);
     const m = new THREE.InstancedMesh(geo, mat, cap);
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);

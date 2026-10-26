@@ -12261,6 +12261,7 @@ export function dropVehicleArrays() {
     for (const g of geos) if (g && (farReady || !far.has(g))) bytes += dropGeometryArrays(g);
   }
   if (FAR) for (const g of FAR.geos.values()) bytes += dropGeometryArrays(g);
+  for (const g of FAR2.values()) bytes += dropGeometryArrays(g);
   for (const g of NEAR.values()) bytes += dropGeometryArrays(g);
   // a cached launch's geometry is views of the boot cache's snapshot: let it
   // go too (every far LOD it could still give is built by now, or is built
@@ -12290,6 +12291,68 @@ export function farLod(typeName) {
     FAR.geos.set(typeName, geo);
   }
   return { geo, mat: FAR.mat };
+}
+
+/**
+ * Auto KW (v86): the FAR-FAR LOD, { geo, mat }: the far LOD clustered again on
+ * a FAR2_CELL grid, for a car past traffic.js FAR2 (110 m on a phone): there
+ * a pixel is ~0.2 m, and the far LOD's 0.2 m cells were 2-3k triangles a car
+ * the screen could not resolve. Same material, attributes and lamp classes
+ * (a lamp clusters with its own class only, on a fifth of the grid), so it
+ * is the far LOD's look with the panel creases merged. Built from the far
+ * LOD's own arrays: on a phone call it before those are uploaded (traffic.js
+ * does, at boot); past that it answers the far LOD.
+ */
+const FAR2_CELL = 0.45;
+const FAR2 = new Map();
+export function farLod2(typeName) {
+  const far = farLod(typeName);
+  let geo = FAR2.get(typeName);
+  if (geo) return { geo, mat: far.mat };
+  const g = far.geo, P = g.attributes.position;
+  if (!P.array || P.array.length < P.count * 3) return far;
+  const pos = P.array, nor = g.attributes.normal.array, col = g.attributes.color.array;
+  const A = g.attributes.lodA.array, Gl = g.attributes.lodG.array, idx = g.index.array;
+  const clusters = new Map(), map = new Int32Array(P.count);
+  const SP = [], SN = [], SC = [], SA = [], SG = [], cnt = [];
+  for (let v = 0; v < P.count; v++) {
+    const k3 = v * 3, gl = Gl[v], cell = gl > 4.5 ? FAR2_CELL / 5 : FAR2_CELL;
+    const key = `${Math.round(gl)}|${A[v * 4] > 0.5 ? 1 : 0}|${A[v * 4 + 2].toFixed(2)}|${Math.round(pos[k3] / cell)}|${Math.round(pos[k3 + 1] / cell)}|${Math.round(pos[k3 + 2] / cell)}`
+      + `|${Math.round(nor[k3] * 1.2)}|${Math.round(nor[k3 + 1] * 1.2)}|${Math.round(nor[k3 + 2] * 1.2)}`;
+    let c = clusters.get(key);
+    if (c === undefined) {
+      c = cnt.length; clusters.set(key, c);
+      SP.push(0, 0, 0); SN.push(0, 0, 0); SC.push(0, 0, 0); cnt.push(0);
+      SA.push(A[v * 4], A[v * 4 + 1], A[v * 4 + 2], A[v * 4 + 3]); SG.push(gl);
+    }
+    for (let j = 0; j < 3; j++) { SP[c * 3 + j] += pos[k3 + j]; SN[c * 3 + j] += nor[k3 + j]; SC[c * 3 + j] += col[k3 + j]; }
+    cnt[c]++;
+    map[v] = c;
+  }
+  const out = [];
+  for (let i = 0; i < idx.length; i += 3) {
+    const a = map[idx[i]], b = map[idx[i + 1]], c = map[idx[i + 2]];
+    if (a === b || b === c || a === c) continue;
+    out.push(a, b, c);
+  }
+  const n = cnt.length;
+  const p2 = new Float32Array(n * 3), n2 = new Float32Array(n * 3), c2 = new Float32Array(n * 3);
+  for (let c = 0; c < n; c++) {
+    const k = cnt[c];
+    for (let j = 0; j < 3; j++) { p2[c * 3 + j] = SP[c * 3 + j] / k; c2[c * 3 + j] = SC[c * 3 + j] / k; }
+    const l = Math.hypot(SN[c * 3], SN[c * 3 + 1], SN[c * 3 + 2]) || 1;
+    for (let j = 0; j < 3; j++) n2[c * 3 + j] = SN[c * 3 + j] / l;
+  }
+  geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(p2, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(n2, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(c2, 3));
+  geo.setAttribute('lodA', new THREE.BufferAttribute(new Float32Array(SA), 4));
+  geo.setAttribute('lodG', new THREE.BufferAttribute(new Float32Array(SG), 1));
+  geo.setIndex(out);
+  geo.computeBoundingSphere();
+  FAR2.set(typeName, geo);
+  return { geo, mat: far.mat };
 }
 
 /**

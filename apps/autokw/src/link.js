@@ -107,8 +107,12 @@ const ION_BLUE = [0.018, 0.10, 0.42];
 const _lfw = new THREE.Vector3();
 const ON_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 // how far each part is drawn: the structure, the ballast bed, the near
-// detail (rails, wires, poles), the boards, a train (a phone draws less)
-const RANGE = ON_PHONE ? { flat: 1900, bed: 900, near: 380, sign: 500, train: 1000 }
+// detail (rails, wires, poles), the boards, a train (a phone draws less).
+// Auto KW (v86): a phone's structure to 1300 m (was 1900): ION is at grade
+// almost everywhere, so its 200 m chunks past ~1.3 km are platforms and
+// kerbs a pixel or two tall -- and a draw each: 23 of them (33k triangles)
+// from a Westmount street.
+const RANGE = ON_PHONE ? { flat: 1300, bed: 900, near: 380, sign: 500, train: 1000 }
   : { flat: 2800, bed: 1500, near: 600, sign: 700, train: 1600 };
 const TUN = 1, BOX = 2, DECK = 3, FILL = 4, CROSS = 5;
 /** What each metre of a track is (LinkTrack.KD): freight.js shares them. */

@@ -10,7 +10,7 @@ const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, MOUTH_RAMP, mouthRamp, cityStats, trimOldest, walkWidthOf, FWY_DIP_OVER, shoulderMax } from './citygen.js';
 import * as RU from './rural.js';
 import { FARM_STYLES, meshFarmBuilding, farmMass, steepleMass } from './farmstead.js';
-import { Builder, ChunkBuilder, freezeStatic } from './build.js';
+import { Builder, ChunkBuilder, SinkBuilder, freezeStatic } from './build.js';
 import { memo } from './bootcache.js';
 import { buildMountains } from './mountains.js';
 import { plantTrees, occupancy, OCC_C, OCC_N, OCC_PAVE } from './trees.js';
@@ -229,6 +229,16 @@ const NODE_Y = NODE_LIFT;
 const WALK_Y = WALK_LIFT;
 
 const NEAR_R = 2; // chunks of full detail around the player
+// AUTO KW (v86): the near ring's outer chunks (dx^2 + dz^2 >= LEAN_D2: the
+// (2, 0) and (2, 1) ones, 400 m+ from the player wherever they stand in their
+// own chunk) are built LEAN -- the houses, roads and trees as ever, but no
+// kerbside props, hydro lines, street-name posts, yard fences, bins, fall
+// decorations, garage-door joints or porch rails: at 400 m a pixel is ~0.75 m
+// and those are all under one. They are recorded as usual (solids, lamps),
+// drawn into a sink, so the trees planted round them are the full build's
+// and nothing moves when the chunk comes within a ring and is built in full.
+// A full chunk never goes back to lean (no rebuild on the way out).
+const LEAN_D2 = 4;
 /** Auto KW: a kwshops.js country store's box for the mid / far massing (`kw.mass`), a little
  *  inside the store kwshops draws over it in its range-culled cluster, so the two never z-fight. */
 function massInset(bd) {
@@ -5088,11 +5098,15 @@ float frLine(float o, float fw, float c, float w) {
         // porch, garage and fence are a pixel; at a residential street they
         // were ~15 % of the near ring's triangles.
         const lod = (r <= NEAR_R && dx * dx + dz * dz <= NEAR_R * NEAR_R + 1 && (!this.flyLod || r <= 1)) ? 1 : 0;
-        if (have && have.lod === lod) continue;
+        // lean only as a first near build (from nothing or the mid ring): a
+        // full chunk stays full
+        const lean = lod === 1 && dx * dx + dz * dz >= LEAN_D2 && !(have && have.lod === 1 && !have.lean);
+        if (have && have.lod === lod && !!have.lean === lean) continue;
         if (!have) this.chunks.set(key, { key, cx, cz, lod: -1, group: null, dist: dx * dx + dz * dz });
         const c = this.chunks.get(key);
         c.dist = dx * dx + dz * dz;
         c.wantLod = lod;
+        c.wantLean = lean;
       }
     }
     for (const [key, c] of this.chunks) {
@@ -5102,7 +5116,8 @@ float frLine(float o, float fw, float c, float w) {
       }
     }
     const todo = [];
-    for (const c of this.chunks.values()) if (c.lod !== c.wantLod) todo.push(c);
+    const pend = (k) => k.lod !== k.wantLod || (k.lod === 1 && !!k.lean !== !!k.wantLean);
+    for (const c of this.chunks.values()) if (pend(c)) todo.push(c);
     // Build AHEAD of the nose first. Sorted by distance alone, the chunk you
     // are about to overfly ranks equal with the one you just left; at speed
     // that is exactly backwards.
@@ -5144,7 +5159,7 @@ float frLine(float o, float fw, float c, float w) {
     const t0 = performance.now();
     while (performance.now() - t0 < sliceMs) {
       if (!this._build) {
-        let c = todo.find((k) => k.lod !== k.wantLod && k !== this._buildFor), trees = true;
+        let c = todo.find((k) => pend(k) && k !== this._buildFor), trees = true;
         if (c) {
           // A MID-RING CHUNK'S TREES WAIT while anything else waits to be
           // built: planting cost a mid build ~1.75x its massing and roads,
@@ -5156,7 +5171,7 @@ float frLine(float o, float fw, float c, float w) {
           // trees at all (its far crowns are planted with the rest) until the
           // streamer went idle: whole blocks of trees popped in while you
           // drove. `deferTrees` is set by main.js from the camera's height.
-          if (this.deferTrees && c.wantLod === 0 && todo.some((k) => k !== c && k.lod !== k.wantLod)) trees = false;
+          if (this.deferTrees && c.wantLod === 0 && todo.some((k) => k !== c && pend(k))) trees = false;
         } else {
           // nothing to build: plant the nearest mid chunk left bare (a
           // rebuild, swapped in whole like any other)
@@ -5165,13 +5180,14 @@ float frLine(float o, float fw, float c, float w) {
         }
         this._buildFor = c;
         this._buildLod = c.wantLod;
+        this._buildLean = c.wantLod === 1 && !!c.wantLean;
         this._buildTrees = trees;
-        this._build = this.buildChunkStep(c.cx, c.cz, c.wantLod, trees);
+        this._build = this.buildChunkStep(c.cx, c.cz, c.wantLod, trees, this._buildLean);
       }
       const c = this._buildFor;
       // The chunk stopped being wanted, or wants a different detail level than
       // the one being built. Start again rather than finish work nobody needs.
-      if (c.wantLod !== this._buildLod) { this._build = null; this._buildFor = null; continue; }
+      if (c.wantLod !== this._buildLod || (c.wantLod === 1 && !!c.wantLean !== this._buildLean)) { this._build = null; this._buildFor = null; continue; }
       // A step yields when ITS budget runs out, so the budget is what is left
       // of this frame's slice: with a flat 1 ms a step started late in the
       // slice ran on past it, and the overrun (plus the item in hand) was what
@@ -5191,6 +5207,7 @@ float frLine(float o, float fw, float c, float w) {
       const old = c.group;
       c.group = step.value || null;
       c.lod = this._buildLod;
+      c.lean = this._buildLean;
       c.treesLater = c.lod === 0 && !this._buildTrees;
       if (c.group) { this.group.add(c.group); freezeStatic(c.group); }
       if (this.trees) {
@@ -5260,7 +5277,7 @@ float frLine(float o, float fw, float c, float w) {
     return n;
   }
 
-  *buildChunkStep(cx, cz, lod, trees = true) {
+  *buildChunkStep(cx, cz, lod, trees = true, lean = false) {
     const city = this.city;
     const ck = city.chunkKey(cx, cz);
     // A chunk with no road or building has no entry in the city -- but it may
@@ -5275,11 +5292,15 @@ float frLine(float o, float fw, float c, float w) {
     // caller of the unguarded pushes) runs inside this step, and chunk builds
     // run one at a time, as this._ck already assumes.
     this._fell = [];
+    // a lean near chunk (LEAN_D2): its small things recorded, drawn into this
+    const isLean = lod === 1 && lean;
+    this._lean = isLean;
+    const sink = isLean ? (this._sink || (this._sink = new SinkBuilder())) : null;
     // the lamp heads drawn here (tod.js: the night's light pools), x y z each
     this._lampRec = lod === 1 ? [] : null;
     this._treeRecs = null;
-    this._decor = FALL && lod === 1 ? [] : null;
-    this._dcar = lod === 1 ? [] : null;
+    this._decor = FALL && lod === 1 && !isLean ? [] : null;
+    this._dcar = lod === 1 && !isLean ? [] : null;
     this._aprons = [];
     this._occ = null;
     const road = new ChunkBuilder(true);
@@ -5340,7 +5361,7 @@ float frLine(float o, float fw, float c, float w) {
     // out a chunk's corners is a few ms on a phone: a step of its own)
     if (city.streetSigns && !window.__noStreetSigns && lod === 1) {
       yield; this._yt = performance.now();
-      city.streetSigns.meshChunk(this, flat, cx, cz, lod);
+      city.streetSigns.meshChunk(this, sink || flat, cx, cz, lod);
     }
 
     if (lod === 1) {
@@ -5364,7 +5385,12 @@ float frLine(float o, float fw, float c, float w) {
         bd.roofSolids = flatRoof ? roofSolids(bd, rec) : null;
       }
       yield; this._yt = performance.now();
-      yield* this.meshProps(flat, glow, ch, cx, cz);
+      if (sink) {
+        // (recorded, not drawn: what tank.js could knock down is nothing here)
+        const fell = this._fell; this._fell = [];
+        yield* this.meshProps(sink, sink, ch, cx, cz);
+        this._fell = fell;
+      } else yield* this.meshProps(flat, glow, ch, cx, cz);
       if (ch !== NO_CITY_CHUNK) this.lotLights(flat, glow, cx, cz);
       yield; this._yt = performance.now();
       yield* plantTrees(this, flat, ch, cx, cz, 1, ch === NO_CITY_CHUNK);
@@ -8942,18 +8968,27 @@ float frLine(float o, float fw, float c, float w) {
     DS.side++;
     this._driveStrip(flat, fb, offF, glx, gw + 0.6, hd - back, hd + L);
     this._driveApron(flat, fb, offF, glx, gw, L);
-    this._drivewayKit(flat, fb, offF, seed, glx, gw, sd, L, y1d, y0d);
+    this._drivewayKit(this._lean ? this._sink : flat, fb, offF, seed, glx, gw, sd, L, y1d, y0d);
     this._driveCars(fb, offF, seed, glx, 0, hd - back + 0.5 + 2.4);
   }
 
-  /** A driveway's asphalt from fb-local z0 to z1, `w` wide, in <= 3 m boxes that follow the ground. */
+  /**
+   * A driveway's asphalt from fb-local z0 to z1, `w` wide, in <= 3 m pieces
+   * that follow the ground. AUTO KW (v86): each piece is its top only, a quad
+   * 8 cm over the terrain at its four corners -- they were boxes, 10
+   * triangles for the 2 anyone sees (their sides stood 8 cm proud), 134k
+   * triangles in a residential near ring. Corner heights shared piece to
+   * piece, so the strip is one unbroken surface.
+   */
   _driveStrip(flat, fb, offF, glx, w, z0, z1) {
-    const n = Math.max(1, Math.ceil((z1 - z0) / 3)), T = G.terrainHeight;
+    const n = Math.max(1, Math.ceil((z1 - z0) / 3)), T = G.terrainHeight, hw = w / 2, col = [0.24, 0.24, 0.25];
+    const P = (lx, lz) => { const [x, z] = offF(lx, lz); return [x, T(x, z) + 0.08, z]; };
+    let l0 = P(glx - hw, z0 - 0.01), r0 = P(glx + hw, z0 - 0.01);
     for (let k = 0; k < n; k++) {
-      const a = z0 + ((z1 - z0) * k) / n, b = z0 + ((z1 - z0) * (k + 1)) / n;
-      const [ax, az] = offF(glx, a), [bx, bz] = offF(glx, b), [mx, mz] = offF(glx, (a + b) / 2);
-      const ya = T(ax, az), yb = T(bx, bz), lo = Math.min(ya, yb);
-      flat.box(mx, lo - 0.12, mz, w, Math.abs(ya - yb) / 2 + 0.2, b - a + 0.02, fb.rot, [0.24, 0.24, 0.25], { ao: 0 });
+      const b = k === n - 1 ? z1 + 0.01 : z0 + ((z1 - z0) * (k + 1)) / n;
+      const l1 = P(glx - hw, b), r1 = P(glx + hw, b);
+      flat.quad(l0, r0, r1, l1, [0, 1, 0], ZERO_UV, col);
+      l0 = l1; r0 = r1;
     }
   }
 
@@ -9909,7 +9944,8 @@ float frLine(float o, float fw, float c, float w) {
             flat.box(qx, py + 0.34, qz, 0.2, ph - 0.34, 0.2, fb.rot, trim);
           }
           // a railing along the front, open in the middle for the steps
-          if (pw > 3) for (const sd of [-1, 1]) {
+          // (not in a lean chunk: LEAN_D2)
+          if (pw > 3 && !this._lean) for (const sd of [-1, 1]) {
             const rw = pw / 2 - 0.9, [rx, rz] = offF(px + sd * (pw / 2 - 0.2 - rw / 2), fb.d / 2 + pd - 0.2);
             flat.box(rx, py + 0.34 + 0.82, rz, rw, 0.08, 0.1, fb.rot, trim);
           }
@@ -9953,8 +9989,8 @@ float frLine(float o, float fw, float c, float w) {
           flat.box(dx, bd.y - 0.15, dz, gw + 0.3, gh + 0.3, 0.06, fb.rot, trim, NOTOP);
           const [ex, ez] = offF(glx, fb.d / 2 + 0.07);
           flat.box(ex, bd.y - 0.15, ez, gw, gh + 0.15, 0.05, fb.rot, gc, NOTOP);
-          // the panel joints, three across
-          for (const k of [0.55, 1.1, 1.65]) {
+          // the panel joints, three across (not in a lean chunk)
+          if (!this._lean) for (const k of [0.55, 1.1, 1.65]) {
             const [jx, jz] = offF(glx, fb.d / 2 + 0.1);
             flat.box(jx, bd.y + k, jz, gw - 0.1, 0.04, 0.02, fb.rot, [gc[0] * 0.72, gc[1] * 0.72, gc[2] * 0.72], NOTOP);
           }
@@ -9973,7 +10009,7 @@ float frLine(float o, float fw, float c, float w) {
             if (Math.abs(y0d - y1d) < (L > 8 ? 1.2 : 0.4)) {
               this._driveStrip(flat, fb, offF, glx, gw + 0.6, fb.d / 2, fb.d / 2 + L);
               const own = this._driveApron(flat, fb, offF, glx, gw, L);
-              this._drivewayKit(flat, fb, offF, seed, glx, gw, sd, L, y1d, y0d);
+              this._drivewayKit(this._lean ? this._sink : flat, fb, offF, seed, glx, gw, sd, L, y1d, y0d);
               if (own >= 5.6) this._driveCars(fb, offF, seed, glx, gw, fb.d / 2 + 3.0);
               drove = true;
               const DS = cityStats.drives || (cityStats.drives = { side: 0, sideTried: 0, noSide: 0, short: 0, steep: 0 });
@@ -9983,8 +10019,9 @@ float frLine(float o, float fw, float c, float w) {
         }
       }
       if (!drove && form !== 'flat' && fb.w >= 6 && fb.w <= 17 && fb.d >= 6 && aspect < 2.6) this._sideDrive(flat, fb, offF, seed, bd);
-      if (aspect < 2.6 && fb.w >= 6.5 && fb.w <= 26) this._yardFence(flat, bd, fb, offF, seed);
-      if (FALL) this.fallHouse(flat, bd, seed, off, porch, form);
+      // (a lean chunk's fences and fall dressing are not drawn: LEAN_D2)
+      if (aspect < 2.6 && fb.w >= 6.5 && fb.w <= 26 && !this._lean) this._yardFence(flat, bd, fb, offF, seed);
+      if (FALL && !this._lean) this.fallHouse(flat, bd, seed, off, porch, form);
       if (form === 'flat') {
         this.townhome(flat, fb, seed, col, top, offF);
         return;

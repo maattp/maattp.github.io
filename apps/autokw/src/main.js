@@ -232,7 +232,8 @@ class Game {
       music: true,
       sound: true,
       sensitivity: 1,
-      debug: false,
+      // the Debug stats readout stays on across sessions once switched on
+      debug: (() => { try { return localStorage.getItem('autokw-debug') === '1'; } catch (e) { return false; } })(),
       post: true,
       // the pad's badges on the on-screen buttons (off: no buttons with a pad)
       padHints: (() => { try { return localStorage.getItem('autokw-padhints') !== '0'; } catch (e) { return true; } })(),
@@ -2730,7 +2731,12 @@ function wireUi() {
     b.style.display = audio.playable(i) ? '' : 'none';
   });
   bind('setSound', 'sound', (v) => { audio.enabled = v; });
-  bind('setDebug', 'debug', (v) => { debugEl.classList.toggle('on', v); });
+  const debugOn = (v) => {
+    debugEl.classList.toggle('on', v);
+    try { localStorage.setItem('autokw-debug', v ? '1' : '0'); } catch (e) { /* private mode */ }
+  };
+  bind('setDebug', 'debug', debugOn);
+  debugOn(game.settings.debug);
   const padHints = (v) => {
     controls.root.dataset.nohints = v ? '' : '1';
     try { localStorage.setItem('autokw-padhints', v ? '1' : '0'); } catch (e) { /* private mode */ }

@@ -3197,6 +3197,35 @@ file and a guide disagree, this file wins.
   each on the Mac), the far scenery cars (~88k tris at Westmount), the
   near-ring houses' detail inside 600 m.
 
+- **The phone audit, round six: trim what a pixel cannot show (v86).** The
+  player's phone: ~40 fps at `high` round Uptown, 60 at `medium` (the same
+  geometry; `high` adds SSAO, a second bloom pass and 1.45 vs 1.3 pixel
+  ratio). By source (a face3/face6 counter over a near-ring build at
+  Westmount, 21 chunks): buildings 636k triangles, of them driveways 134k
+  (`_driveStrip`: boxes, 10 triangles for the 2 seen), fall dressing 93k (potted
+  mums ~100 each), kits / fences 44k; kerb props 92k. Cuts: **(1)** driveway
+  pieces are ground quads (corner heights + 8 cm, shared piece to piece);
+  **(2) lean near chunks** (world.js `LEAN_D2`): a near chunk 400 m+ out
+  (dx^2 + dz^2 >= 4 in the ring) is built without kerb props, hydro, street-name
+  posts, yard fences, driveway kits, fall dressing, garage joints or porch
+  rails -- meshProps and the posts run into a `SinkBuilder`, so solids, lamps
+  and the trees planted round them are the full build's; a full chunk never
+  goes back to lean; `c.lean` / `c.wantLean` beside lod; **(3) far-far cars**
+  (vehicles.js `farLod2`, traffic.js `FAR2` 110 m phone / 150): the far LOD
+  clustered again at 0.45 m, from its own arrays at boot, a `type|2` pool in
+  farMeshes; **(4)** ION's structure drawn to 1300 m on a phone (was 1900).
+  Phone (AUTO_PHONE=1, GPU, seedrandom), v85 -> v86, scene draws / tris at the
+  driver's seat: Uptown King 199/1079k -> 199/1009k; Westmount 242/1492k ->
+  246/1341k; Mt Hope 215/1335k -> 218/1191k; Breithaupt 278/1597k ->
+  279/1517k; Doon South 157/1000k -> 162/902k; Activa 142/988k -> 144/862k;
+  Galt 167/1181k -> 169/1062k (farTraffic 90k -> 53k at Westmount, 49k ->
+  20k at Activa; +1..+6 draws for the far-far pools). Screenshots against v85
+  at street level and 60 m up: no visible change. Debug stats now persist
+  (localStorage `autokw-debug`). Not done: the landmark clusters past 600 m
+  (150-320k at these views: campus and downtown clusters with a tall piece,
+  kept by the size test to 4-6 km), the far crowns inside the instanced
+  trees' range, `high`'s post chain on the phone (not measured on the device).
+
 - **QA sweep after v22-v39** (docs/qa-*.jpg, before over after).
   `tools/kw/sweeppick.js` picks ~60 road points (fixed spots: Uptown,
   downtown, Galt, St. Jacobs, UW, WLU, Conestoga, plazas; the rest a seeded
