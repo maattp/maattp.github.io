@@ -12620,6 +12620,28 @@ export class Vehicle {
     this._cast = null; this._farCol = null;
     this._fwd = { x: 0, z: 1 }; this._fwdH = NaN;
     this._acc = 0; this._still = 0;   // traffic.js: half-rate AI time, parked-settle frames
+    // AUTO KW (v88): the rest of what traffic.js, junctions.js and
+    // schoolbus.js hang on a driven car, declared too (as `undefined`, so
+    // every read tests exactly as before): they were added as each car met
+    // its first junction, lane change or exit, in its own order, and the
+    // fleet ran through dozens of hidden classes again
+    this._aiDt = 0; this._aiIn = null;   // traffic.js: the driver's time since it last thought, and what it decided
+    this._lin = undefined; this._lamp = undefined; this.leader = undefined; this.trailer = undefined; this.bellows = undefined;
+    this.ctlHold = undefined; this.sbHold = undefined; this.sb = undefined; this.clT = undefined;
+    this.leadGap = undefined; this.leadV = undefined; this.mkWay = undefined; this.mkWayT = undefined; this.mkWaitT = undefined;
+    this.dropT = undefined; this.dropX = undefined; this.dropZ = undefined;
+    this.exitEi = undefined; this.exitNode = undefined; this.exitSeen = undefined; this.exitSide = undefined; this.exitSign = undefined;
+    this.jcArr = undefined; this.jcC = undefined; this.jcFrom = undefined; this.jcFromC = undefined; this.jcGo = undefined;
+    this.jcMv = undefined; this.jcRtor = undefined; this.jcStop = undefined;
+    this.lcCool = undefined; this.lcMiss = undefined; this.lcMissL = undefined; this.lcMissR = undefined; this.lcMissSeen = undefined;
+    this.lcMissUX = undefined; this.lcMissUZ = undefined; this.lcRate = undefined; this.lcShift = undefined;
+    this.lcSigDir = undefined; this.lcSigOn = undefined; this.lcSigShift = undefined; this.lcSigT = undefined; this.lcT = undefined;
+    // (and update()'s own, the first time a road car runs it -- dynW's
+    // `undefined` is meaningful: no slip model yet -- and main.js's, bikes.js's, grtbus.js's)
+    this.surf = undefined; this.mu = undefined; this.wheelspin = undefined; this._drvDemand = undefined;
+    this.burnout = undefined; this.burnoutT = undefined; this.boYaw = undefined; this.dynW = undefined;
+    this.markR = undefined; this.markF = undefined; this._dust = undefined; this._boSmoke = undefined;
+    this.grtRoute = undefined; this._ikFar = undefined; this.planeHit = undefined;
     this._t = 0; this.shoreHit = 0; this._surf = NaN;   // boats: wave clock, last grounding impact, eased surface
     this.afloat = false; this.splashed = false; this._waterSpec = null;   // the Duck Tour's DUKW (updateDuck)
     this._bob = (typeName.length * 1.37 + (color & 0xff) * 0.021) % 6.28;

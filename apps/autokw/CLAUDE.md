@@ -3255,6 +3255,41 @@ file and a guide disagree, this file wins.
   driving model of ~30 moving cars), landmark clusters' many materials (33
   draws at Caroline), the near chunks' 4 draws each.
 
+- **The phone audit, round eight: traffic (v88).** The player: 60 fps on an
+  empty road, ~40 as soon as there was traffic, at `medium` too. CPU, not GPU:
+  perfaudit with traffic off vs on, 8x, arterial 11.3 vs 15.2 ms, King St 9.9 vs
+  13.1; with ~5 cars about, traffic.update alone ~4 ms. Four things, measured
+  by trafficbench at 8x (AUTO_PHONE=1, `VIEW_THROTTLE=8`):
+  **(1) one hidden class for the fleet** (vehicles.js constructor): traffic.js,
+  junctions.js, schoolbus.js, main.js, bikes.js, grtbus.js and Vehicle.update
+  itself added ~60 fields to a vehicle as it first met a junction, a lane
+  change, an exit, a gravel road... -- traffic cars ran through 7 shapes, the
+  fleet through 15, and every loop over `traffic.cars` (the scan, the sweep,
+  sync, lamps, peds) went megamorphic. Declared as `undefined` (every read
+  tests as before; `dynW`'s undefined means something): 1 shape for all 221.
+  Desktop trafficbench hashes = v87 at all six sites. Check it with
+  `AUTO_JS_FLAGS=--allow-natives-syntax` (tools/chrome.mjs, new) and
+  `%HaveSameMap` over the list. **Any new per-vehicle field: declare it in
+  the constructor.** **(2) the driver thinks every other frame past `AI_FULL`
+  25 m** (traffic.js update; the car still moves every frame on what it
+  decided), and the whole-update rate goes by distance: off screen every
+  other frame from `AI_OFF` 50 m (was 80), every third from `AI_OFF3` 200,
+  on screen every other frame from `AI_SEEN` 150 (a step there is under a
+  pixel). **(3) the population ring** (phone): DESPAWN 520 -> 420, SPAWN_FAR
+  420 -> 370, out of view 90-300 m (`SPAWN_HID`, was 330), TRAFFIC_TARGET 26
+  -> 19 (the area's share, rounded up). **(4) FAR_LOD 60 -> 40 m** (the
+  scenery cars' own swap, DECOR_NEAR), SHADOW_NEAR 45 -> 40, one ground
+  sample past FAR_LOD. trafficbench ms, v87 -> v88: uptown-king 2.20 -> 0.82,
+  sig-1644 1.67 -> 0.76, pkwy-fairway 1.62 -> 0.65, 401-hespeler 1.61 ->
+  0.68, allway-28 1.29 -> 0.65, rb-3lane 1.40 -> 0.65 (the 190 apron
+  vehicles were ~0.8 of it before the shapes; noApron 0.5-0.6 then).
+  perfaudit 8x frame CPU (two runs each): spawn 11.6 -> 9.8, King St 14.1 ->
+  11.7, Caroline 13.1 -> 11.9 ms; with 8 cars kept round you (a pre that
+  spawns them 20-65 m off) arterial 17.3 -> 14.0, King 15.2 -> 12.5, p90 25
+  -> 21. Phone fuzz (AUTO_PHONE=1, seeded): jcttraffic v87 1 hit / 2
+  recycled -> 0 / 0; hwytraffic 0 hits both, freeway speeds within 3 %.
+  Phone trafficbench hashes change (meant: the rates and the ring).
+
 - **QA sweep after v22-v39** (docs/qa-*.jpg, before over after).
   `tools/kw/sweeppick.js` picks ~60 road points (fixed spots: Uptown,
   downtown, Galt, St. Jacobs, UW, WLU, Conestoga, plazas; the rest a seeded

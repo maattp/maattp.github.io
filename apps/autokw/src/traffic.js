@@ -12,13 +12,20 @@ import { edgeFlow, oneWaySpan, twoWayLayout, twoWayLaneOff, alBike, medianGaps, 
 import { SchoolStops, schoolStopsOn } from './schoolbus.js';
 import { sceneryType } from './kwdriveway.js';
 
-const TRAFFIC_TARGET = 26;
+// AUTO KW (v88): a phone keeps its traffic within 420 m, not 520, and the
+// count to match the area (26 x (420 / 520)^2 ~ 17, rounded up to 19 so the
+// streets round you are as busy as before): a car 420-520 m off is a few
+// pixels, mostly off screen, and still ran the whole driving model -- the
+// moving cars were most of what traffic cost, and the player saw 60 fps on an
+// empty road drop to ~40 as soon as there was traffic.
+const PHONE_T = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+const TRAFFIC_TARGET = PHONE_T ? 19 : 26;
 // Parked cars only exist within this radius, and each is 3 draw calls, so this
 // is a draw-call dial as much as a distance one.
 const PARKED_RADIUS = 105;
 const LOT_TYPES = new Set(['sedan', 'suv', 'pickup', 'compact', 'hatch', 'ev', 'muscle', 'sports', 'convertible',
   'crossover', 'compsedan', 'minivan', 'wagon', 'pickupcap', 'suv3', 'jeep', 'evy', 'civic', 'dually']);
-const DESPAWN = 520;
+const DESPAWN = PHONE_T ? 420 : 520;
 // The Belltown Hellcat (vehicles.js `hellcat`): the chance a Belltown spawn is
 // one, and how many may be about at once.
 const HELLCAT_P = 0.12, HELLCAT_MAX = 3;
@@ -78,13 +85,22 @@ const PARK_DECOR_R = ON_PHONE ? 200 : 280;
 // AUTO KW (v82): traffic spawned in the camera's view closer than this is
 // thrown away (it appeared from nothing at 190 m, the old forward-cone rule's
 // edge, in plain sight on a phone's wide view)
-const SPAWN_SEEN = 300, SPAWN_FAR = 420;
+const SPAWN_SEEN = 300, SPAWN_FAR = PHONE_T ? 370 : 420;
+// out of view a car spawns 90 m to this far off
+const SPAWN_HID = PHONE_T ? 300 : 330;
+// the AI's rate by distance on a phone (update): off screen, on screen
+const AI_OFF = 50, AI_OFF3 = 200, AI_SEEN = 150;
+// ...and inside that, the driver's decisions every other frame past AI_FULL m
+const AI_FULL = 25;
 const LOT_TILE = 100;   // m: lotBays' cache square
-const SHADOW_NEAR = ON_PHONE ? 45 : Infinity;
+const SHADOW_NEAR = ON_PHONE ? 40 : Infinity;
 // Past this, a phone draws a vehicle through its type's InstancedMesh over the
 // far LOD (vehicles.js farLod): one draw per type on screen instead of three
 // per car. Beyond SHADOW_NEAR, so nothing that casts is ever instanced.
-const FAR_LOD = ON_PHONE ? 60 : Infinity;
+// (v88: 60 -> 40 m, the scenery cars' own swap, DECOR_NEAR: a detailed car
+// is 3 draws and 3 more in the shadow pass, and the far LOD at 40 m was
+// already what every driveway car looked like there; SHADOW_NEAR 45 -> 40)
+const FAR_LOD = ON_PHONE ? 40 : Infinity;
 // Auto KW: the scenery cars (traffic.decor: the driveways', the drive-through
 // lines') this close to the camera, the nearest DECOR_CAP of them, are drawn
 // with their type's detailed model (vehicles.js nearLod: one instanced draw
@@ -1174,15 +1190,15 @@ export class TrafficSystem {
       // cone. (Seen past SPAWN_SEEN a car is a few pixels; before, the cone's
       // 190 m let cars appear from nothing in plain view on a phone's wide
       // frame, and anything out of the cone -- the sides of the view -- at 90 m.)
-      // Out of view it may be anywhere 90-330 m off; in view only from
+      // Out of view it may be anywhere 90-SPAWN_HID m off; in view only from
       // SPAWN_SEEN out to SPAWN_FAR, so the road ahead still fills.
       if (this.camera && this._farFrOk) {
         this._farS.center.set(x, G.terrainHeight(x, z) + 1.5, z);
         this._farS.radius = 6;
         const seen = this._farFr.intersectsSphere(this._farS);
-        if (seen ? d < SPAWN_SEEN : d > 330) continue;
+        if (seen ? d < SPAWN_SEEN : d > SPAWN_HID) continue;
       } else {
-        if (d > 330) continue;
+        if (d > SPAWN_HID) continue;
         if (camDir) {
           const dot = ((x - px) * camDir.x + (z - pz) * camDir.z) / d;
           if (dot > 0.4 && d < 190) continue;
@@ -1830,31 +1846,47 @@ export class TrafficSystem {
       // from downtown all eight used to run the driving model every frame.
       if (md === 'apron' && d2 > 300 * 300) continue;
       // Distant AI cars take one ground sample instead of four (Vehicle.update).
-      v.lowDetail = ON_PHONE && d2 > 60 * 60;
+      v.lowDetail = ON_PHONE && d2 > FAR_LOD * FAR_LOD;
       if (SHADOW_NEAR !== Infinity) {
         const cast = d2 < SHADOW_NEAR * SHADOW_NEAR;
         if (v._cast !== cast) { v._cast = cast; v.group.traverse((o) => { if (o.isMesh) o.castShadow = cast; }); }
       }
 
-      // HALF-RATE AI where nobody can see it: on a phone, a car 80 m+ away and
-      // off screen drives and collides with the world every other frame, on
-      // the time it has accumulated. Car-car collisions and the far LOD still
-      // run every frame; the moment it is on screen it is back to every frame.
-      let vdt = dt;
+      // THE AI BY DISTANCE (a phone): a car drives and collides with the
+      // world every frame near you, less often further off, on the time it
+      // has accumulated -- off screen every other frame from AI_OFF m and
+      // every third from AI_OFF3, on screen every other frame from AI_SEEN m
+      // (a step there is under a pixel: 0.25 m at 150 m is 1.7 mrad, a
+      // phone pixel 1.86). Car-car collisions and the far LOD still run
+      // every frame. The driving model of ~25 moving cars was the frame's
+      // cost the player saw (60 fps on an empty road, ~40 with traffic):
+      // most of them are 100-500 m off. (v88; it was every other frame off
+      // screen past 80 m only)
+      let vdt = dt, everyFrame = true;
       v._acc += dt;
       // (a police unit too, 120 m+ off: it drives the same driver now)
-      if (ON_PHONE && cam && (md === 'traffic' || (v.unit && md === 'police' && d2 > 120 * 120)) && d2 > 80 * 80) {
+      if (ON_PHONE && cam && (md === 'traffic' || (v.unit && md === 'police' && d2 > 120 * 120)) && d2 > AI_OFF * AI_OFF) {
         sph.center.set(v.x, v.y + 1, v.z);
         sph.radius = v.halfLen + 8;
-        if (!fr.intersectsSphere(sph) && ((this._tick + i) & 1)) continue;
+        const k = fr.intersectsSphere(sph) ? (d2 > AI_SEEN * AI_SEEN ? 2 : 1) : d2 > AI_OFF3 * AI_OFF3 ? 3 : 2;
+        if (k > 1) { if ((this._tick + i) % k) continue; everyFrame = false; }
       }
       vdt = Math.min(v._acc, 0.1);
       v._acc = 0;
 
       let input;
       if (md === 'traffic') {
-        input = this.driveTraffic(v, vdt, px, pz, player);
-        if (v.recycle) { this.remove(v); continue; }
+        // THE DRIVER THINKS EVERY OTHER FRAME past AI_FULL m on a phone (its
+        // car still moves every frame on what it decided, so nothing judders):
+        // the path scan, the leader search and the junction rules were
+        // 0.1-0.25 ms a car at 8x, the frame's cost once cars were about
+        v._aiDt = (v._aiDt || 0) + vdt;
+        if (ON_PHONE && everyFrame && d2 > AI_FULL * AI_FULL && v._aiIn && (this._tick + i) & 1) input = v._aiIn;
+        else {
+          input = v._aiIn = this.driveTraffic(v, v._aiDt, px, pz, player);
+          v._aiDt = 0;
+          if (v.recycle) { this.remove(v); continue; }
+        }
       }
       else if (md === 'police') input = this.drivePolice(v, vdt, px, pz, player);
       // a police mission's fleeing suspect (policemissions.js)

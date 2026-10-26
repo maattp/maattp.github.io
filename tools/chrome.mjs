@@ -52,6 +52,9 @@ export function chromeArgs({ port, profile, width = 1280, height = 720, vsyncOff
   } else {
     a.push('--disable-gpu-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader');
   }
+  // AUTO_JS_FLAGS='--allow-natives-syntax': V8 flags for a probe (e.g.
+  // %HaveSameMap, to count the hidden classes a list of objects runs through)
+  if (process.env.AUTO_JS_FLAGS) a.push(`--js-flags=${process.env.AUTO_JS_FLAGS}`);
   a.push(`--window-size=${width},${height}`, '--no-first-run', '--no-default-browser-check',
     ...extra, `--user-data-dir=${profile}`, 'about:blank');
   return a;
