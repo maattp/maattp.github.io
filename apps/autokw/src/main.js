@@ -56,7 +56,7 @@ import { timsKeepClear } from './kw.js';
 import { setKwData, applyNamed, buildSigns, buildPolys, buildBunting, buildSchools, mapPlaces as kwPlaces, kwData, boxAt, dedupeFootprints } from './kw.js';
 import { addLandmarkExtra } from './landmarks.js';
 import { Chicopee } from './chicopee.js';
-import { prepFun, buildMarketTent, buildFlags, waveFlags, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, buildDome } from './kwfun.js';
+import { prepFun, buildMarketTent, buildFlags, waveFlags, flagsGroup, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, buildDome } from './kwfun.js';
 import { prepPlaces, buildPlaces, placesMap, placesStats, Geese } from './kwplaces.js';
 import { setUwData, prepCampus, buildCampus, campusKeepClear } from './uwcampus.js';
 import { prepUptown } from './kwuptown.js';
@@ -972,6 +972,7 @@ async function boot() {
   // the weather's shader block, compiled once before anything real is: a
   // driver that refuses it gets clear weather, never a black city
   testWeatherShaders(renderer);
+  stableShadowDepth(renderer);
   // what the GPU holds, for the flight recorder (memory.js): Safari reports
   // no JS heap, and an iPhone ends the page for memory without a word
   try { gpuLedger = installGpuLedger(renderer.getContext()); } catch (e) { gpuLedger = null; }
@@ -1268,6 +1269,8 @@ function installShadowFade() {
   city.bedQueries = [railBedSurface(Object.values(link.tracks).filter((t) => t.Y), 1.5, 2.4, -0.45)];
   if (kwrail) city.bedQueries.push(railBedSurface(kwrail.lines.map((l) => l.tr), 1.7, 3.6, -0.62));
   lmRoot = buildLandmarks(scene, city, (x, z) => world.waterLevelAt(x, z), null);
+  // the flags, instanced (kwfun.js FLAGS: two draws a size, not two a cell)
+  if (flagsGroup()) scene.add(flagsGroup());
   // the median walls and sign posts stand on freeway embankments, which the
   // landmark solids' on-road test counts as road: they join after it
   addHighwaySolids(city);
@@ -3213,7 +3216,7 @@ function frame(now) {
   last = now;
   if (dt > 0.06) dt = 0.06;
   if (dt <= 0) return;
-  waveFlags(now / 1000);
+  waveFlags(now / 1000, camera);
 
   frames++;
   accumFps += dt;
@@ -3979,6 +3982,39 @@ let qualityLocked = false;
 // had made on purpose. The picker in the pause menu is now the only
 // authority, and the choice persists in localStorage.
 function autoQuality() {}
+
+/**
+ * THE SHADOW PASS'S DEPTH MATERIAL, ONE COPY PER KIND OF CASTER (v87).
+ * three draws every caster without a customDepthMaterial with ONE shared
+ * MeshDepthMaterial, setting its `side` from the caster's material each
+ * time (shadowSide: front -> back, double stays double), and keeps one
+ * program per material -- so every switch between a single- and a
+ * double-sided caster, or a plain mesh and a skinned (the crowd, the trains)
+ * or instanced one, re-picked its program (getProgram: the cache key built
+ * again), many times a frame: 0.2 ms a frame of the phone's CPU (8x stand-in)
+ * on Caroline St. Each (material, side, skinned, instanced, morphed) gets a
+ * clone of its own, its per-draw fields copied in as three set them, so the
+ * shader and what it draws are the same and the program never changes.
+ * (A shadow draw is the one renderBufferDirect makes with no scene.)
+ */
+function stableShadowDepth(r) {
+  const variants = new Map();
+  const inner = r.renderBufferDirect;
+  r.renderBufferDirect = function (camera, scene, geometry, material, object, group) {
+    if (scene === null && material && material.isMeshDepthMaterial && object && object.customDepthMaterial === undefined) {
+      const key = material.id * 64 + material.side * 8 + (object.isSkinnedMesh ? 4 : 0) + (object.isInstancedMesh ? 2 : 0)
+        + (geometry.morphAttributes && geometry.morphAttributes.position ? 1 : 0);
+      let v = variants.get(key);
+      if (!v) { v = material.clone(); variants.set(key, v); }
+      v.visible = material.visible; v.wireframe = material.wireframe; v.side = material.side;
+      v.alphaMap = material.alphaMap; v.alphaTest = material.alphaTest; v.map = material.map;
+      v.clipShadows = material.clipShadows; v.clippingPlanes = material.clippingPlanes; v.clipIntersection = material.clipIntersection;
+      v.displacementMap = material.displacementMap; v.displacementScale = material.displacementScale; v.displacementBias = material.displacementBias;
+      material = v;
+    }
+    return inner.call(this, camera, scene, geometry, material, object, group);
+  };
+}
 
 function applyQuality(q, manual) {
   if (manual) {

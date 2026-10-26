@@ -88,6 +88,26 @@ export function buildXingMast(c, flat, sign, xb, o) {
   }
 }
 
+/**
+ * Auto KW (v87): an instanced mesh's own copy of a material the plain meshes
+ * share (world.js mats.flat): three keeps ONE program per material, so a
+ * material drawn instanced between plain draws was re-picked (getProgram,
+ * its cache key rebuilt) at every switch, each frame. Same shader hooks, the
+ * same userData (weather / time-of-day tags), one copy per material.
+ */
+const _inst = new WeakMap();
+function instMat(m) {
+  let c = _inst.get(m);
+  if (!c) {
+    c = m.clone();
+    c.onBeforeCompile = m.onBeforeCompile;
+    c.customProgramCacheKey = m.customProgramCacheKey;
+    c.userData = m.userData;
+    _inst.set(m, c);
+  }
+  return c;
+}
+
 /** Every gate arm and every lit lamp of a system's crossings: one instanced draw each. */
 export class XingSignals {
   constructor(scene, mats, crossings, name) {
@@ -99,14 +119,14 @@ export class XingSignals {
     const N = 8;
     for (let i = 0; i < N; i++) b.box((i + 0.5) / N, -0.05, 0, 1 / N, 0.1, 0.1, 0, i % 2 ? [0.75, 0.04, 0.04] : [0.86, 0.86, 0.86]);
     b.box(-0.08, -0.14, 0, 0.18, 0.26, 0.24, 0, [0.25, 0.26, 0.28]);
-    this.armMesh = new THREE.InstancedMesh(b.build(), mats.flat, n);
+    this.armMesh = new THREE.InstancedMesh(b.build(), instMat(mats.flat), n);
     this.armMesh.name = `${name}:gates`;
     this.armMesh.frustumCulled = false;
     this.armMesh.count = 0;
     scene.add(this.armMesh);
     const lb = new Builder(false);
     lb.box(0, -0.13, 0, 0.26, 0.26, 0.04, 0, [1.0, 0.08, 0.04]);
-    this.lampMesh = new THREE.InstancedMesh(lb.build(), mats.glow, n * 2);
+    this.lampMesh = new THREE.InstancedMesh(lb.build(), instMat(mats.glow), n * 2);
     this.lampMesh.name = `${name}:xlamps`;
     this.lampMesh.frustumCulled = false;
     this.lampMesh.count = 0;

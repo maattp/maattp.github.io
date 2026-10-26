@@ -256,6 +256,9 @@ function pageInstall() {
   S.runs = {
     spawn: { spawn: true },
     king: { speed: 13, route: () => buildRoute(S.spawn0.x, S.spawn0.z, (e) => street(e) && /^King Street/.test(e.name || ''), 2400) },
+    // (not in the default list) Caroline St behind Waterloo Public Square: ION,
+    // the Clay and Glass Gallery, CIGI -- the player's slow street (v86)
+    caroline: { speed: 10, route: () => buildRoute(-3960, -1210, (e) => street(e) && /^Caroline Street/.test(e.name || ''), 1400) },
     pkwy: { speed: 27, route: () => buildRoute(-1907, 3058, (e) => e.cls === 'hwy' && /Conestoga Parkway/.test(e.name || ''), 6000) },
     // Fairway Plaza (kwshops' plazas): the lot in front of the stores, looking at them
     plaza: { foot: [2250, 3604], lot: true },

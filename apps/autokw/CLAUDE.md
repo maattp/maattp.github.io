@@ -3226,6 +3226,35 @@ file and a guide disagree, this file wins.
   kept by the size test to 4-6 km), the far crowns inside the instanced
   trees' range, `high`'s post chain on the phone (not measured on the device).
 
+- **The phone audit, round seven: Caroline St behind the square (v87).**
+  The player's slow street (30-40 fps): Caroline St N/S behind Waterloo Public
+  Square by ION and the Clay and Glass Gallery. Not GPU (passcost: the scene
+  1.7 ms there as at King St or the spawn) but CPU: perfaudit at 8x (its new
+  `caroline` view) 15.0 ms a frame mean, p90 21 -- render 7 (210 draws), traffic
+  3.4. Cuts, all exact (trafficbench hashes, ionprobe PASS, nightprobe ALL OK):
+  **(1) the flags are instanced** (kwfun.js `FLAGS`): every flag was a pole and
+  a cloth mesh in its cell's cluster, ~32 triangles for two draws, ~24 draws on
+  Caroline; now one pole + one cloth InstancedMesh for the small flags (refilled
+  within FLAG_R 1000 m when the camera moves 20 m) and one of each for the
+  dealers' big ones, the wave's phase from the instance's position
+  (`window.__kwFlags`); **(2) far-far cars pool by body** (traffic.js `FAR2_AS`:
+  sedans as the compact sedan, SUVs and minivans as the crossover, pickups as
+  the pickup; liveried types their own) -- one pool a type was 16 far draws
+  there; pools upload only the slots in use (`addUpdateRange`);
+  **(3) ION's `blocks()`** rejects a point in no train's circle (made once a
+  frame) before any `nearest()`: 0.43 -> ~0 ms; **(4) the shadow pass's depth
+  material** gets a clone per (material, side, skinned, instanced, morphed)
+  (main.js `stableShadowDepth`): three's one shared MeshDepthMaterial changed
+  program at every switch between them (getProgram, 0.2 ms a frame); the
+  crossing gates and lamps get their own material (xing.js `instMat`);
+  **(5)** crops.js scans for tiles only when the camera has moved 3 m;
+  memory.js tracks the two common buffer bindings in variables. 8x, v86 -> v87,
+  two runs each: Caroline 14.93 / 15.05 -> 13.44 / 13.07 ms (p90 21 -> 19),
+  draws 207 -> 190; King St 13.8 / 14.3 -> 12.4 / 12.3, draws 181 -> 158; spawn
+  12.5 / 13.1 -> 11.8 / 11.8, draws 146 -> 139. Left: traffic's 3 ms (the
+  driving model of ~30 moving cars), landmark clusters' many materials (33
+  draws at Caroline), the near chunks' 4 draws each.
+
 - **QA sweep after v22-v39** (docs/qa-*.jpg, before over after).
   `tools/kw/sweeppick.js` picks ~60 road points (fixed spots: Uptown,
   downtown, Galt, St. Jacobs, UW, WLU, Conestoga, plazas; the rest a seeded

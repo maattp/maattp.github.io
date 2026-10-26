@@ -104,18 +104,23 @@ export function installGpuLedger(gl) {
   // binds a buffer immediately before every bufferData, so the last bind is it.
   const wrap = (name, f) => { const o = gl[name]; if (typeof o !== 'function') return; gl[name] = function () { try { f.apply(null, arguments); } catch (e) { /* the ledger never breaks a call */ } return o.apply(gl, arguments); }; };
   const bindRaw = (name, f) => { const o = gl[name]; if (typeof o !== 'function') return; gl[name] = function (a, b) { f(a, b); return o.call(gl, a, b); }; };
-  const boundBuf = new Map();   // target -> buffer
+  // target -> buffer: ARRAY_BUFFER and ELEMENT_ARRAY_BUFFER in two slots
+  // (bindBuffer is called for nearly every draw: a Map write each was
+  // measurable on the phone's CPU, v87), any other target in the Map
+  let bufA = null, bufE = null;
+  const boundBuf = new Map();
   let boundRb = null, unit = 0;
   const texUnits = [];          // unit -> [2D, cube, 3D, 2D array]
   const TI = { 0x0DE1: 0, 0x8513: 1, 0x806F: 2, 0x8C1A: 3 };
-  bindRaw('bindBuffer', (t, b) => { boundBuf.set(t, b); });
+  bindRaw('bindBuffer', (t, b) => { if (t === 0x8892) bufA = b; else if (t === 0x8893) bufE = b; else boundBuf.set(t, b); });
   // a vertex array carries its own element-array binding: forget ours
-  bindRaw('bindVertexArray', () => { boundBuf.delete(0x8893); });
+  bindRaw('bindVertexArray', () => { bufE = null; });
+  const bound = (t) => (t === 0x8892 ? bufA : t === 0x8893 ? bufE : boundBuf.get(t));
   bindRaw('activeTexture', (u) => { unit = u - 0x84C0; });
   bindRaw('bindTexture', (t, x) => { const i = TI[t]; if (i === undefined) return; const u = texUnits[unit] || (texUnits[unit] = [null, null, null, null]); u[i] = x; });
   bindRaw('bindRenderbuffer', (t, r) => { boundRb = r; });
   wrap('bufferData', (t, d, u, off, len) => {
-    const b = boundBuf.get(t); if (!b) return;
+    const b = bound(t); if (!b) return;
     const n = typeof d === 'number' ? d : d ? (len ? len * (d.BYTES_PER_ELEMENT || 1) : d.byteLength - (off || 0) * (d.BYTES_PER_ELEMENT || 1)) : 0;
     L.buf += n - (bufs.get(b) || 0); bufs.set(b, n); total();
   });

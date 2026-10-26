@@ -95,6 +95,19 @@ const DECOR_NEAR = ON_PHONE ? 40 : 55;
 // is drawn in its type's far-far LOD (vehicles.js farLod2: ~a third of the
 // triangles), from a pool keyed `type|2` in farMeshes
 const FAR2 = ON_PHONE ? 110 : 150;
+// ...and BY BODY, not by model: every pool is a draw, and a phone in a busy
+// street is short of CPU, not of triangles -- one pool per type there was
+// 16 far draws on Caroline St. Past 110 m a car is ~25 px long and its paint
+// is the instance colour, so the sedans draw as the compact sedan, the SUVs
+// and minivans as the crossover, the pickups as the pickup; liveried types
+// (taxi, couriers, police, buses...) keep their own.
+const FAR2_AS = {
+  sedan: 'compsedan', civic: 'compsedan', hatch: 'compsedan', compact: 'compsedan', ev: 'compsedan',
+  wagon: 'compsedan', muscle: 'compsedan', sports: 'compsedan', convertible: 'compsedan',
+  suv: 'crossover', suv3: 'crossover', evy: 'crossover', jeep: 'crossover', minivan: 'crossover',
+  pickupcap: 'pickup', dually: 'pickup',
+};
+const far2Key = (t) => (FAR2_AS[t] || t) + '|2';
 const DECOR_CAP = ON_PHONE ? 10 : 18;
 // VEHICLE LAMPS (updateLamps): lit out to LAMP_RANGE m; a blinker's period (s,
 // half of it lit: ~86 flashes a minute); the stop lamps held BRAKE_HOLD s
@@ -1486,7 +1499,7 @@ export class TrafficSystem {
       if (!d._fr) continue;
       const nr = d._d2 >= 0;
       const pool = nr ? this.nearMeshes : this.farMeshes;
-      const pk = !nr && (d.x - cx) ** 2 + (d.z - cz) ** 2 > f2q ? d.type + '|2' : d.type;
+      const pk = !nr && (d.x - cx) ** 2 + (d.z - cz) ** 2 > f2q ? far2Key(d.type) : d.type;
       let e = pool.get(pk);
       if (!e) pool.set(pk, (e = { mesh: null, cap: 0, n: 0 }));
       if (e.n === e.cap) (nr ? this.growNear : this.growFar).call(this, e, pk);
@@ -1502,6 +1515,9 @@ export class TrafficSystem {
       e.mesh.count = e.n;
       e.mesh.visible = e.n > 0;
       if (!e.n) continue;
+      // (only the slots in use go up: a pool's capacity doubles as it grows)
+      e.mesh.instanceMatrix.addUpdateRange(0, e.n * 16);
+      e.mesh.instanceColor.addUpdateRange(0, e.n * 3);
       e.mesh.instanceMatrix.needsUpdate = true;
       e.mesh.instanceColor.needsUpdate = true;
       e.mesh.computeBoundingSphere();
@@ -1511,6 +1527,9 @@ export class TrafficSystem {
       e.mesh.count = e.n;
       e.mesh.visible = e.n > 0;
       if (!e.n) continue;
+      // (only the slots in use go up: a pool's capacity doubles as it grows)
+      e.mesh.instanceMatrix.addUpdateRange(0, e.n * 16);
+      e.mesh.instanceColor.addUpdateRange(0, e.n * 3);
       e.mesh.instanceMatrix.needsUpdate = true;
       e.mesh.instanceColor.needsUpdate = true;
       e.mesh.computeBoundingSphere();
@@ -1551,7 +1570,7 @@ export class TrafficSystem {
         if (!fr.intersectsSphere(sph)) continue;
       }
       const cc = cam ? cam.position : null;
-      const pk = cc && (v.x - cc.x) ** 2 + (v.z - cc.z) ** 2 > FAR2 * FAR2 ? v.typeName + '|2' : v.typeName;
+      const pk = cc && (v.x - cc.x) ** 2 + (v.z - cc.z) ** 2 > FAR2 * FAR2 ? far2Key(v.typeName) : v.typeName;
       let e = this.farMeshes.get(pk);
       if (!e) this.farMeshes.set(pk, (e = { mesh: null, cap: 0, n: 0 }));
       if (e.n === e.cap) this.growFar(e, pk);

@@ -402,7 +402,13 @@ export class Crops {
     const tj0 = fdiv(cw - R / SEG, TS), tj1 = fdiv(cw + R / SEG, TS);
     const t0 = performance.now(), budget = this.o.phone ? 1.2 : 2.5;
     let want = null;
-    for (let ti = ti0; ti <= ti1; ti++) {
+    // Auto KW (v87): the scan only when the camera has moved 3 m since the
+    // last one or that one left tiles to build -- it walked ~200 tiles a
+    // frame standing still (0.3 ms at 8x in town, where none has a crop)
+    const sc = this._scan || (this._scan = { x: 1e9, z: 0, left: true });
+    const rescan = sc.left || (px - sc.x) ** 2 + (pz - sc.z) ** 2 > 9;
+    if (rescan) { sc.x = px; sc.z = pz; sc.left = false; }
+    if (rescan) for (let ti = ti0; ti <= ti1; ti++) {
       for (let tj = tj0; tj <= tj1; tj++) {
         if (this.tiles.has(ti * 100000 + tj)) continue;
         const [x, z] = Crops.cellCentre(ti * TR + TR / 2, tj * TS + TS / 2);
@@ -413,10 +419,10 @@ export class Crops {
     }
     if (want) {
       want.sort((a, b) => a[0] - b[0]);
-      for (const [, ti, tj] of want) {
-        const t = this._tile(ti, tj);
+      for (let k = 0; k < want.length; k++) {
+        const t = this._tile(want[k][1], want[k][2]);
         if (t.n) this.dirty = true;
-        if (performance.now() - t0 > budget) break;
+        if (performance.now() - t0 > budget) { sc.left = k < want.length - 1; break; }
       }
     }
     // drop tiles far behind

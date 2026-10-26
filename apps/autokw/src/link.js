@@ -2025,6 +2025,7 @@ export class Link {
   }
 
   update(dt, camera) {
+    this._fr = (this._fr | 0) + 1;
     if (!this.trains.length) return;
     this._service(dt);
     const p = this.player, pv = p && p.vehicle;
@@ -2131,6 +2132,28 @@ export class Link {
     if (!this.onGradeCorridor(x, z)) return false;
     // a crossing's gates coming down: stop at the arm
     if (this.crossingClosed(x, z)) return true;
+    // Auto KW (v87): each train's stretch of track that blocks (tail - 3 to
+    // lead + reach, the test below) as a circle round its middle, made once a
+    // frame (update bumps _fr): a point in no circle is blocked by nothing,
+    // and needs no nearest() over its tracks -- traffic asks every 3 m ahead
+    // of every car near the corridor, 0.43 ms a frame at 8x on Caroline St.
+    // (The arc is no shorter than the chord, so a point the full test would
+    // block is always inside: the answer is the same.)
+    if (this._bcFr !== this._fr) {
+      this._bcFr = this._fr;
+      const bc = this._bc || (this._bc = []);
+      bc.length = 0;
+      for (const t of this.trains) {
+        if (t.state === 'off') continue;
+        const reach = Math.max(8, Math.abs(t.u) * 5);
+        const a = t.tail - t.dir * 3, b = t.lead + t.dir * reach, m = (a + b) / 2, r = Math.abs(b - a) / 2 + LINK.wid / 2 + 8;
+        bc.push(t.track, t.track.x(m), t.track.z(m), r * r);
+      }
+    }
+    const bc = this._bc;
+    let any = false;
+    for (let i = 0; i < bc.length; i += 4) if ((x - bc[i + 1]) ** 2 + (z - bc[i + 2]) ** 2 <= bc[i + 3]) { any = true; break; }
+    if (!any) return false;
     for (const k of this.keys) {
       const tr = this.tracks[k];
       const q = tr.nearest(x, z, 6);

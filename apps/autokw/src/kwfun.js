@@ -229,7 +229,12 @@ function flagMaterial() {
     sh.vertexShader = 'uniform float uFlagT;\n' + sh.vertexShader.replace('#include <begin_vertex>',
       `#include <begin_vertex>
       float fu = uv.x;
-      float ph = uFlagT * 5.5 - fu * 7.0 + (position.x + position.z) * 0.11;
+      // (instanced since v87: the phase from where the flag stands)
+      #ifdef USE_INSTANCING
+        float ph = uFlagT * 5.5 - fu * 7.0 + (instanceMatrix[3].x + instanceMatrix[3].z + position.x) * 0.11;
+      #else
+        float ph = uFlagT * 5.5 - fu * 7.0 + (position.x + position.z) * 0.11;
+      #endif
       transformed += normal * (sin(ph) * 0.11 + sin(ph * 1.7 + 1.3) * 0.05) * fu * FLAG_SPAN;
       transformed.y -= fu * fu * 0.06 * FLAG_SPAN;`).replace('void main() {', '#define FLAG_SPAN 1.0\nvoid main() {');
   };
@@ -237,8 +242,46 @@ function flagMaterial() {
   return flagMat;
 }
 
-/** The flags wave (main.js calls this each frame with the game clock). */
-export function waveFlags(t) { flagTime.value = t % 1000; }
+/**
+ * The flags wave (main.js calls this each frame with the game clock), and the
+ * small ones near the camera are put in their instanced meshes (FLAGS).
+ */
+export function waveFlags(t, camera) {
+  flagTime.value = t % 1000;
+  if (camera && FLAGS.meshes) FLAGS.update(camera.position.x, camera.position.z);
+}
+
+/**
+ * Every flag in the map, as instances (v87). Each was a pole mesh and a cloth
+ * mesh in its 1200 m cell's landmark cluster: two draws for ~32 triangles a
+ * flag, ~24 draws on Caroline St behind the square (on a phone the frame there
+ * is short of CPU, and a draw is what costs it). Now ONE pole and ONE cloth
+ * InstancedMesh for the small flags and one of each for the dealers' big
+ * ones: the small flags within FLAG_R of the camera (under a pixel past it),
+ * the big ones all; refilled when the camera has moved 20 m.
+ */
+const FLAG_R = 1000;
+const FLAGS = {
+  recs: [], meshes: null, group: null, lx: 1e9, lz: 1e9,
+  update(x, z) {
+    if ((x - this.lx) ** 2 + (z - this.lz) ** 2 < 400) return;
+    this.lx = x; this.lz = z;
+    const [sp, sc, bp, bc] = this.meshes;
+    let ns = 0, nb = 0;
+    const R2 = FLAG_R * FLAG_R;
+    for (const f of this.recs) {
+      if (f.big) { bp.setMatrixAt(nb, f.m); bc.setMatrixAt(nb, f.m); nb++; continue; }
+      if ((f.x - x) ** 2 + (f.z - z) ** 2 > R2) continue;
+      sp.setMatrixAt(ns, f.m); sc.setMatrixAt(ns, f.m); ns++;
+    }
+    for (const [m, n] of [[sp, ns], [sc, ns], [bp, nb], [bc, nb]]) {
+      m.count = n; m.visible = n > 0;
+      if (n) { m.instanceMatrix.needsUpdate = true; m.computeBoundingSphere(); }
+    }
+  },
+};
+/** The flags' group (main.js adds it to the scene after the landmarks). */
+export function flagsGroup() { return FLAGS.group; }
 
 function flagSite(city, x, z, big) {
   // the front lawn: toward the nearest street, between the building and it
@@ -267,58 +310,62 @@ function flagSite(city, x, z, big) {
   return null;
 }
 
-/** landmarks.js extra: every flag in kw.json, on its pole. */
+/** landmarks.js extra: every flag in kw.json, on its pole (drawn instanced: FLAGS). */
 export function buildFlags(ctx, kw) {
   // the Ford dealer's flag too: OSM files it as a garage, not a car dealer
   const list = [...((kw && kw.flags) || []), [FORD[0], FORD[1], 'car']];
   const mat = flagMaterial();
-  const poles = new Map(), cloth = new Map();
   const POLE = lin([0.82, 0.83, 0.85]), BALL = lin([0.85, 0.70, 0.30]);
   const placed = [];
   let n = 0;
+  FLAGS.recs.length = 0;
   for (const [x, z, kind] of list) {
     const big = kind === 'car';
     const s = flagSite(ctx.city, x, z, big);
     if (!s || G.waterLevel(s.x, s.z) > 0) continue;
     if (placed.some(([px, pz]) => Math.hypot(px - s.x, pz - s.z) < (big ? 60 : 25))) continue;
     placed.push([s.x, s.z]);
-    // a small flag is under a pixel past ~1 km (the cloth 1.8 m, the pole
-    // 0.14 m) yet was a draw or two in every 1200 m cell from end to end of
-    // the map: 'flags:' clusters are range-culled (landmarks.js FLAG_RANGE).
-    // A dealer's 9 m flag stays in its cell's cluster, seen from afar.
-    const k = big ? ckey(s.x, s.z) : 'flags:' + ckey(s.x, s.z);
-    let P = poles.get(k); if (!P) poles.set(k, (P = new Builder(false)));
-    let C = cloth.get(k); if (!C) cloth.set(k, (C = new Builder(true)));
     const y0 = G.terrainHeight(s.x, s.z);
-    const H = big ? 22 : 9, FW = big ? 9 : 1.8, FH = FW / 2;
-    const r = big ? 0.2 : 0.07;
-    P.box(s.x, y0 - 0.3, s.z, r * 2, H + 0.6, r * 2, 0, POLE);
-    P.box(s.x, y0 + H + 0.3, s.z, r * 3, r * 3, r * 3, 0, BALL);
+    const H = big ? 22 : 9, r = big ? 0.2 : 0.07;
     ctx.solids.push({ x: s.x, z: s.z, r: r + 0.1, y0: y0 - 1, y1: y0 + H });
-    // the cloth: hoisted at the top, flying along the street, in strips so the
-    // wave has vertices to bend
-    const top = y0 + H, SEG = 6;
-    for (let i = 0; i < SEG; i++) {
-      const u0 = i / SEG, u1 = (i + 1) / SEG;
-      const ax = s.x + s.ux * (r + FW * u0), az = s.z + s.uz * (r + FW * u0);
-      const bx = s.x + s.ux * (r + FW * u1), bz = s.z + s.uz * (r + FW * u1);
-      C.quad([ax, top, az], [bx, top, bz], [bx, top - FH, bz], [ax, top - FH, az], [-s.uz, 0, s.ux], [u0, 1, u1, 1, u1, 0, u0, 0], [1, 1, 1]);
-    }
+    // the flag's frame: local +x along the street (s.ux, s.uz), as it flies
+    const m = new THREE.Matrix4().makeRotationY(Math.atan2(-s.uz, s.ux)).setPosition(s.x, y0, s.z);
+    FLAGS.recs.push({ x: s.x, z: s.z, big, m });
     n++;
   }
-  const pm = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.6 });
-  for (const [k, P] of poles) {
-    if (P.empty) continue;
-    const g = new THREE.Group();
-    g.add(new THREE.Mesh(P.build(), pm));
-    const C = cloth.get(k);
-    if (C && !C.empty) {
-      const cm = new THREE.Mesh(C.build(), mat);
-      cm.userData.keepUv = true;
-      g.add(cm);
+  // one pole and one cloth per size, in the flag's own frame
+  const unit = (big) => {
+    const H = big ? 22 : 9, FW = big ? 9 : 1.8, FH = FW / 2, r = big ? 0.2 : 0.07;
+    const P = new Builder(false), C = new Builder(true);
+    P.box(0, -0.3, 0, r * 2, H + 0.6, r * 2, 0, POLE);
+    P.box(0, H + 0.3, 0, r * 3, r * 3, r * 3, 0, BALL);
+    // the cloth: hoisted at the top, in strips so the wave has vertices to bend
+    const SEG = 6;
+    for (let i = 0; i < SEG; i++) {
+      const u0 = i / SEG, u1 = (i + 1) / SEG, a = r + FW * u0, b = r + FW * u1;
+      C.quad([a, H, 0], [b, H, 0], [b, H - FH, 0], [a, H - FH, 0], [0, 0, 1], [u0, 1, u1, 1, u1, 0, u0, 0], [1, 1, 1]);
     }
-    ctx.addTo(k, g);
+    return [P.build(), C.build()];
+  };
+  const pm = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.6 });
+  const nSmall = FLAGS.recs.filter((f) => !f.big).length, nBig = FLAGS.recs.length - nSmall;
+  const grp = new THREE.Group();
+  grp.name = 'flags';
+  FLAGS.meshes = [];
+  for (const [big, cap] of [[false, nSmall], [true, nBig]]) {
+    const [pg, cg] = unit(big);
+    for (const [g, mt] of [[pg, pm], [cg, mat]]) {
+      const im = new THREE.InstancedMesh(g, mt, Math.max(1, cap));
+      im.count = 0; im.visible = false;
+      im.castShadow = false; im.receiveShadow = true;
+      im.name = big ? 'flags:big' : 'flags:small';
+      grp.add(im);
+      FLAGS.meshes.push(im);
+    }
   }
+  FLAGS.group = grp;
+  window.__kwFlags = FLAGS;   // (harnesses)
+  FLAGS.lx = FLAGS.lz = 1e9;
   if (kw) kw.flagStats = { flags: n, of: list.length };
 }
 
