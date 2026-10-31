@@ -92,6 +92,8 @@ podcastsApp.use("/mac/*", async (c, next) => {
 
 podcastsApp.get("/mac/state", (c) => toDo(c.env, c.req.raw, "/state"));
 podcastsApp.post("/mac/status", (c) => toDo(c.env, c.req.raw, "/status"));
+// Same as the app's add, for `podcastd.py add <feed url>` on the Mac.
+podcastsApp.post("/mac/subs", (c) => toDo(c.env, c.req.raw, "/subs"));
 podcastsApp.post("/mac/subs/:id/meta", (c) => toDo(c.env, c.req.raw, `/subs/${encodeURIComponent(c.req.param("id"))}/meta`));
 podcastsApp.post("/mac/uploads/create", (c) => toDo(c.env, c.req.raw, "/uploads/create"));
 podcastsApp.post("/mac/uploads/complete", (c) => toDo(c.env, c.req.raw, "/uploads/complete"));

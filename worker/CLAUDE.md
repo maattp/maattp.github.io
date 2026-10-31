@@ -199,6 +199,7 @@ folder's `service/README.md`); the Worker stores the results and serves the feed
   - `/podcasts/api/*` — the app. Google session (`sessionEmail`) **and** email
     == `PODCAST_OWNER` (wrangler.toml var). Tingting's account gets 403.
   - `/podcasts/mac/*` and `GET /podcasts/mac/ws` — Bearer `PODCAST_MAC_TOKEN`
+    (the Mac can also add shows: `POST /podcasts/mac/subs`, used by `podcastd.py add`)
     (secret; the Mac keeps it in `service/secrets.env`). The WS route is
     registered in index.ts BEFORE cors, like `/ring/ws`.
   - `/podcasts/feed/:token/{feed.xml,ep/<id>.mp3,cover.png}` — Downcast. The
