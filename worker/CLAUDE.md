@@ -212,6 +212,10 @@ folder's `service/README.md`); the Worker stores the results and serves the feed
   polls `GET /podcasts/mac/state` itself, so a dropped socket only delays.
 - **Episodes** are served with HTTP Range support (`parseRange`, 206/416);
   podcast apps need it to seek and resume. HEAD is supported.
+- **Deploying PodRoom/podfeed changes:** the DO keeps running its old code while
+  the Mac's hibernatable socket stays open (observed 2026-10-31: two deploys
+  went by unnoticed). After deploying, bounce the Mac's connection:
+  `launchctl kickstart -k gui/$(id -u)/com.matt.podcastd` on the Mac mini.
 - Removing a show deletes its episodes from R2 and the feed. An upload that
   completes after its show was removed is aborted (410).
 
