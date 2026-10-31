@@ -66,6 +66,8 @@
   .tag { display: inline-block; font-size: 12px; padding: 1px 7px; border-radius: 9px; background: var(--raised); color: var(--dim); margin-right: 4px; }
   .tag.cut { color: var(--ok); }
   .tag.mark { color: var(--warn); }
+  .qn { width: 22px; text-align: right; color: var(--faint); font-size: 13px; flex: none; }
+  .ok { color: var(--ok); } .bad { color: var(--danger); }
   #signin { text-align: center; padding-top: 25vh; }
   #signerr { color: var(--danger); margin-top: 16px; min-height: 1.5em; }
   #gbtn { display: inline-block; }
@@ -94,6 +96,11 @@
       <div id="usageline" class="muted small" style="margin-top:6px"></div>
     </div>
 
+    <div id="queuewrap" hidden>
+      <h2 id="queuehead">Up next</h2>
+      <div id="queue" class="list"></div>
+    </div>
+
     <h2>Your private feed</h2>
     <div class="card">
       <div class="muted small">Add this in Downcast → Add → Add Podcast by URL. Leave username and password empty. Keep it secret: anyone with the link can listen.</div>
@@ -109,6 +116,11 @@
 
     <h2 id="subshead">Shows</h2>
     <div id="subs" class="list"></div>
+
+    <div id="recentwrap" hidden>
+      <h2>Mac activity</h2>
+      <div id="recent" class="list"></div>
+    </div>
 
     <h2>Recent episodes</h2>
     <div id="eps" class="list"></div>
@@ -194,7 +206,10 @@ function render() {
   $('#macdot').classList.toggle('on', !!mac.online);
   $('#macline').textContent = mac.online ? 'Mac mini connected' : 'Mac mini offline';
   let sub = '';
-  if (st.state === 'working' && st.job) sub = `Working: ${st.job.show} — ${st.job.title} (${st.job.stage})`;
+  if (st.state === 'working' && st.job) {
+    const pct = typeof st.job.progress === 'number' ? ` ${Math.round(st.job.progress * 100)}%` : '';
+    sub = `Working: ${st.job.show} — ${st.job.title} (${st.job.stage}${pct})`;
+  }
   else if (st.state) sub = `Idle · last check ${ago(st.lastPoll)}${st.queue ? ` · ${st.queue} queued` : ''}`;
   if (!mac.online) sub = `Last heard from ${ago(mac.at)}. Changes are saved and will be picked up when it reconnects.`;
   $('#macsub').textContent = sub;
@@ -202,6 +217,25 @@ function render() {
   $('#usagebar').style.width = Math.min(100, used / cap * 100).toFixed(1) + '%';
   $('#usageline').textContent = `${gb(used)} of ${gb(cap)} used · oldest episodes are deleted to stay under the cap`;
   $('#feedurl').textContent = feedUrl();
+
+  const qi = (mac.online && Array.isArray(st.queueItems)) ? st.queueItems : [];
+  $('#queuewrap').hidden = !qi.length;
+  $('#queuehead').textContent = `Up next (${st.queue && st.queue > qi.length ? st.queue : qi.length})`;
+  $('#queue').replaceChildren(...qi.map((q, i) => h('div', { class: 'item' },
+    h('span', { class: 'qn', text: String(i + 1) }),
+    h('div', { class: 'grow' }, h('div', { class: 'title', text: q.title }),
+      h('div', { class: 'muted small', text: `${q.show}${q.pubDate ? ' · ' + new Date(q.pubDate).toLocaleDateString() : ''}` })))));
+
+  const rec = Array.isArray(st.recent) ? st.recent : [];
+  $('#recentwrap').hidden = !rec.length;
+  $('#recent').replaceChildren(...rec.map((r) => h('div', { class: 'item' },
+    h('div', { class: 'grow' },
+      h('div', { class: 'title', text: r.title }),
+      h('div', { class: 'muted small' },
+        h('span', { class: r.ok ? 'ok' : 'bad', text: r.ok ? '✓ ' : '✗ ' }),
+        `${r.show} · ${ago(r.at)}`,
+        r.ok ? ` · ${r.cut} cut (${clock(r.cutSeconds || 0)})${r.marked ? `, ${r.marked} Ad?` : ''}${r.seconds ? ` · took ${clock(r.seconds)}` : ''}` : ''),
+      r.ok ? null : h('div', { class: 'err', text: r.error || 'failed' })))));
 
   const counts = {}; for (const e of s.episodes) counts[e.subId] = (counts[e.subId] || 0) + 1;
   $('#subshead').textContent = `Shows (${s.subs.length})`;
