@@ -68,7 +68,11 @@ podcastsApp.get("/api/search", async (c) => {
   u.searchParams.set("entity", "podcast");
   u.searchParams.set("limit", "20");
   u.searchParams.set("term", term);
-  const r = await fetch(u.toString());
+  // Apple has refused bare requests from Cloudflare; look like a browser. (The app
+  // calls Apple directly first; this proxy is its fallback.)
+  const r = await fetch(u.toString(), {
+    headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15", Accept: "application/json" },
+  });
   if (!r.ok) return c.json({ error: "search failed" }, 502);
   const j: any = await r.json();
   const results = (j.results ?? [])

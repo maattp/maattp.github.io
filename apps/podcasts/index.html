@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#f7f7f5" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://accounts.google.com; style-src 'unsafe-inline' https://accounts.google.com; img-src 'self' data: https:; connect-src https://cloudflare-backend.maattp.workers.dev http://localhost:8787 https://accounts.google.com; frame-src https://accounts.google.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://accounts.google.com; style-src 'unsafe-inline' https://accounts.google.com; img-src 'self' data: https:; connect-src https://cloudflare-backend.maattp.workers.dev https://itunes.apple.com http://localhost:8787 https://accounts.google.com; frame-src https://accounts.google.com; base-uri 'none'; form-action 'none'">
 <link rel="apple-touch-icon" href="../icon.png">
 <title>Podcasts</title>
 <script src="https://accounts.google.com/gsi/client" async></script>
@@ -253,6 +253,23 @@ async function removeEp(e) {
   try { await api('DELETE', '/episodes/' + e.id); await refresh(); } catch (err) { toast(err.message); }
 }
 
+// Apple's podcast directory allows browser requests (CORS *), so ask it directly;
+// the Worker's /search proxy is only a fallback.
+async function searchDirectory(q) {
+  try {
+    const u = 'https://itunes.apple.com/search?media=podcast&entity=podcast&limit=20&term=' + encodeURIComponent(q);
+    const r = await fetch(u);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    return (j.results || []).filter((x) => typeof x.feedUrl === 'string').map((x) => ({
+      title: x.collectionName || x.trackName || '', author: x.artistName || '', feedUrl: x.feedUrl,
+      artwork: x.artworkUrl600 || x.artworkUrl100 || '',
+    }));
+  } catch {
+    return (await api('GET', '/search?term=' + encodeURIComponent(q))).results;
+  }
+}
+
 let searchT = 0, searchSeq = 0;
 $('#search').addEventListener('input', () => {
   clearTimeout(searchT);
@@ -267,7 +284,7 @@ $('#search').addEventListener('input', () => {
   searchT = setTimeout(async () => {
     const seq = ++searchSeq;
     try {
-      const { results } = await api('GET', '/search?term=' + encodeURIComponent(q));
+      const results = await searchDirectory(q);
       if (seq !== searchSeq) return;
       const subbed = new Set((state?.subs || []).map((s) => s.feedUrl));
       box.hidden = false; box.replaceChildren();
