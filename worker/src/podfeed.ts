@@ -166,6 +166,38 @@ export function episodeSummary(e: Episode): string {
   return parts.join(" ");
 }
 
+// Where things are in the TRIMMED file. Cuts are stored in original-file time;
+// a cut's position in the new file is its start minus everything cut before it.
+export function toNewTime(t: number, removed: Cut[]): number {
+  let shift = 0;
+  for (const c of [...removed].sort((a, b) => a.start - b.start)) {
+    if (t >= c.end) shift += c.end - c.start;
+    else if (t > c.start) return c.start - shift;
+  }
+  return t - shift;
+}
+
+export type Spot = { at: number; seconds: number; label: string };
+
+export function breakSpots(e: Pick<Episode, "removed" | "marked">): { removed: Spot[]; marked: Spot[] } {
+  const label = (c: Cut) => c.advertiser || (c.kind === "promo" ? "promo" : c.kind === "inserted" ? "inserted ad" : "sponsor");
+  const spot = (c: Cut): Spot => ({ at: toNewTime(c.start, e.removed), seconds: c.end - c.start, label: label(c) });
+  return {
+    removed: [...e.removed].sort((a, b) => a.start - b.start).map(spot),
+    marked: [...e.marked].sort((a, b) => a.start - b.start).map(spot),
+  };
+}
+
+export function breakListHtml(e: Pick<Episode, "removed" | "marked">): string {
+  const { removed, marked } = breakSpots(e);
+  const li = (s: Spot, what: string) =>
+    `<li>${fmtClock(s.at)} · ${escapeXml(s.label)} · ${what} ${fmtClock(s.seconds)}</li>`;
+  let html = "";
+  if (removed.length) html += `<p>Ads removed (times are in this edited file):</p><ul>${removed.map((s) => li(s, "cut")).join("")}</ul>`;
+  if (marked.length) html += `<p>Possible ads left in, marked “Ad?”:</p><ul>${marked.map((s) => li(s, "length")).join("")}</ul>`;
+  return html;
+}
+
 export function buildFeed(p: { base: string; episodes: Episode[]; subs: Sub[]; hasCover: boolean }): string {
   const shows = p.subs.map((s) => s.title || s.feedUrl).join(", ");
   const items = [...p.episodes]
@@ -173,7 +205,7 @@ export function buildFeed(p: { base: string; episodes: Episode[]; subs: Sub[]; h
     .map((e) => {
       const html =
         `<p><b>${escapeXml(e.show)}</b> · ${escapeXml(episodeSummary(e))} ` +
-        `<a href="${escapeXml(e.originalUrl)}">Original audio</a></p>` + e.description;
+        `<a href="${escapeXml(e.originalUrl)}">Original audio</a></p>` + breakListHtml(e) + "<hr>" + e.description;
       return [
         "<item>",
         `<title>${escapeXml(`${e.show}: ${e.title}`)}</title>`,

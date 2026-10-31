@@ -3,6 +3,7 @@
  * Run: node --experimental-strip-types worker/test/podcasts.test.mjs          */
 import {
   CAP_BYTES, planEviction, parseRange, buildFeed, parseEpisode, normalizeFeedUrl, tokenEquals, escapeXml,
+  toNewTime, breakSpots,
 } from '../src/podfeed.ts';
 
 let pass = 0, fail = 0; const failures = [];
@@ -89,6 +90,27 @@ const good = {
   const nasty = buildFeed({ base: 'b', episodes: [{ ...e, description: 'a]]>b' }], subs: [], hasCover: false });
   ok(!nasty.includes('a]]>b') && nasty.includes('a]]]]><![CDATA[>b'), 'CDATA terminator in notes is split');
   ok(!nasty.includes('cover.png'), 'no cover tag without a cover');
+}
+
+// --- break positions in the trimmed file ---
+{
+  const removed = [
+    { start: 0, end: 30, kind: 'inserted', source: 'bitstream' },
+    { start: 996.6, end: 1054.6, kind: 'promo', advertiser: 'NYT', source: 'bitstream' },
+    { start: 1964, end: 2024, kind: 'sponsor', advertiser: 'Acme', source: 'llm' },
+  ];
+  const marked = [{ start: 2100, end: 2130, kind: 'sponsor', advertiser: 'Maybe', source: 'llm' }];
+  ok(toNewTime(0, removed) === 0, 'pre-roll sits at 0:00');
+  ok(Math.abs(toNewTime(996.6, removed) - 966.6) < 1e-9, 'second break shifted by the pre-roll');
+  ok(Math.abs(toNewTime(1964, removed) - (1964 - 30 - 58)) < 1e-9, 'third break shifted by both earlier cuts');
+  ok(Math.abs(toNewTime(1000, removed) - 966.6) < 1e-9, 'a time inside a cut maps to where the cut was');
+  const s = breakSpots({ removed: [removed[2], removed[0], removed[1]], marked });
+  ok(s.removed.map((x) => Math.round(x.at)).join() === '0,967,1876', 'spots sorted, in new-file time');
+  ok(s.removed[0].label === 'inserted ad' && s.removed[2].label === 'Acme', 'labels');
+  ok(Math.round(s.marked[0].at) === 2100 - 148, 'Ad? marks shifted by all cuts before them');
+  const xml = buildFeed({ base: 'b', episodes: [{ ...parseEpisode(good), removed, marked, key: 'k', bytes: 1, addedAt: 1 }], subs: [], hasCover: false });
+  ok(xml.includes('<li>16:07 · NYT · cut 0:58</li>'), 'feed lists each break at its new-file time');
+  ok(xml.includes('<li>32:32 · Maybe · length 0:30</li>'), 'feed lists Ad? spots');
 }
 
 // --- misc ---
