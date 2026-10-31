@@ -176,6 +176,44 @@ Code in `src/llm.ts`; tests `node --experimental-strip-types worker/test/llm.tes
   /llm/convs/:id`, `GET /llm/convs`. The email comes from the session, never
   the request. KV list is eventually consistent; the app merges its own writes.
 
+## Ad-free podcasts (`/podcasts/*` — see `apps/podcasts/`)
+
+A private RSS feed of Matt's podcasts with the ads cut out. The Mac mini does
+the work (`~/dev/podcast_experiment/service/podcastd.py`, documented in that
+folder's `service/README.md`); the Worker stores the results and serves the feed.
+
+- **Files:** `src/podcasts.ts` (routes), `src/podroom.ts` (`PodRoom` DO, single
+  instance `idFromName("pod")`), `src/podfeed.ts` (pure: cap planning, Range
+  parsing, RSS, validation), `test/podcasts.test.mjs` (CI).
+- **Storage:** R2 bucket `podcasts` (binding `PODCASTS`): `ep/<16 hex>.mp3`
+  and `cover.png`. Subscriptions, the episode index, the feed token and the
+  Mac's last status live in the DO's storage (`sub:`, `ep:`, `up:`, `meta:`).
+- **The 5 GB cap — must not bend.** `CAP_BYTES` in `podfeed.ts`. Every upload
+  starts with `POST /podcasts/mac/uploads/create {key,size}`; the DO lists the
+  bucket, counts bytes promised to in-flight uploads, deletes orphans and then
+  the oldest episodes until the new file fits, or answers 507. `complete`
+  refuses an object bigger than the size declared at `create`. Part uploads
+  (`PUT /podcasts/mac/uploads/part`, 32 MiB parts — Workers cap bodies at
+  100 MB) are only accepted for uploads the DO admitted.
+- **Three credentials:**
+  - `/podcasts/api/*` — the app. Google session (`sessionEmail`) **and** email
+    == `PODCAST_OWNER` (wrangler.toml var). Tingting's account gets 403.
+  - `/podcasts/mac/*` and `GET /podcasts/mac/ws` — Bearer `PODCAST_MAC_TOKEN`
+    (secret; the Mac keeps it in `service/secrets.env`). The WS route is
+    registered in index.ts BEFORE cors, like `/ring/ws`.
+  - `/podcasts/feed/:token/{feed.xml,ep/<id>.mp3,cover.png}` — Downcast. The
+    40-hex token lives in the DO (`meta:token`), compared in constant time,
+    rotatable from the app (`POST /podcasts/api/token/rotate`). Wrong token → 404.
+- **Push to the Mac:** the DO keeps the Mac's socket (hibernation; `ping` →
+  `pong` via auto-response, so keepalives don't wake it). Any subscription
+  change pushes `{"type":"subs",subs}`; "Check now" pushes `{"type":"poll"}`.
+  The Mac reports `{"type":"status",status}` up the same socket. The Mac also
+  polls `GET /podcasts/mac/state` itself, so a dropped socket only delays.
+- **Episodes** are served with HTTP Range support (`parseRange`, 206/416);
+  podcast apps need it to seek and resume. HEAD is supported.
+- Removing a show deletes its episodes from R2 and the feed. An upload that
+  completes after its show was removed is aborted (410).
+
 ## Environment Variables
 
 Set in `wrangler.toml`:
@@ -191,6 +229,9 @@ Secrets (NOT in wrangler.toml):
   OPENROUTER_API_KEY`). Unset → `/llm/chat` and `/llm/usage` return 503.
 - `GEMINI_API_KEY` — the LLM app's Gemini API key (`wrangler secret put
   GEMINI_API_KEY`). Unset → no Gemini models are offered.
+- `PODCAST_MAC_TOKEN` — the Mac mini's credential for `/podcasts/mac/*`
+  (`wrangler secret put PODCAST_MAC_TOKEN`; same value in
+  `~/dev/podcast_experiment/service/secrets.env`). Unset → those routes 401.
 
 ## Development
 

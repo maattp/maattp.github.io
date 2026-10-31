@@ -10,12 +10,14 @@ import { ChatRoom } from "./chatroom";
 import { chatApp, CHAT_WS_TICKET_PREFIX, memberOf } from "./chat";
 import { ringApp } from "./ring";
 import { llmApp } from "./llm";
+import { PodRoom } from "./podroom";
+import { podcastsApp, podStub } from "./podcasts";
 import { authorized } from "./session";
 import { hardApp, WS_TICKET_PREFIX } from "./hard";
 import { scheduled } from "./hardcron";
 import type { HardEnv } from "./hardlogic";
 
-export { Kart3Room, Fable51Room, SpaceRoom, MahjongRoom, HardRoom, RingRoom, ChatRoom };
+export { Kart3Room, Fable51Room, SpaceRoom, MahjongRoom, HardRoom, RingRoom, ChatRoom, PodRoom };
 
 const SESSION_TTL = 365 * 24 * 60 * 60; // 1 year in seconds
 const SESSION_PREFIX = "__session:";
@@ -37,6 +39,10 @@ type Bindings = HardEnv & {
   CHAT_CLAUDE_TOKEN: string;
   OPENROUTER_API_KEY: string;
   GEMINI_API_KEY?: string;
+  POD_ROOM: DurableObjectNamespace;
+  PODCASTS: R2Bucket;
+  PODCAST_OWNER: string;
+  PODCAST_MAC_TOKEN: string;
 };
 
 type Variables = {
@@ -224,6 +230,18 @@ app.get("/ring/ws", async (c) => {
   }
   const stub = c.env.RING_ROOM.get(c.env.RING_ROOM.idFromName("ring"));
   return stub.fetch("https://do/ws", c.req.raw);
+});
+
+// --- Ad-free podcasts: the Mac mini's outbound WebSocket (registered before
+// cors — immutable 101 headers). Same bearer-token model as /ring/ws, with its
+// own secret. The PodRoom DO pushes subscription changes down it. See
+// src/podcasts.ts for the REST side.
+app.get("/podcasts/mac/ws", async (c) => {
+  if (c.req.header("Upgrade") !== "websocket") return c.json({ error: "expected websocket" }, 426);
+  if (!authorized(c.req.header("Authorization"), c.env.PODCAST_MAC_TOKEN)) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  return podStub(c.env).fetch("https://do/ws", c.req.raw);
 });
 
 // --- Chat: WebSocket upgrade (registered before cors — immutable 101 headers,
@@ -881,6 +899,7 @@ app.route("/hard", hardApp);
 app.route("/ring", ringApp);
 app.route("/chat", chatApp);
 app.route("/llm", llmApp);
+app.route("/podcasts", podcastsApp);
 
 export default {
   fetch: app.fetch,

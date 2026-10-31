@@ -1,952 +1,306 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="theme-color" content="#1a1a2e">
-    <title>Podcasts</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        html, body {
-            min-height: 100%;
-            min-height: 100vh;
-            min-height: -webkit-fill-available;
-        }
-
-        html {
-            background-color: #1a1a2e;
-            background-image: linear-gradient(135deg, #1a1a2e, #16213e, #0f3460);
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            color: #fff;
-            background: transparent;
-            overflow-y: auto;
-        }
-
-        .container {
-            max-width: 600px;
-            margin: 0 auto;
-            padding: 20px;
-            padding-top: calc(env(safe-area-inset-top) + 20px);
-            padding-bottom: calc(env(safe-area-inset-bottom) + 20px);
-            padding-left: calc(env(safe-area-inset-left) + 20px);
-            padding-right: calc(env(safe-area-inset-right) + 20px);
-        }
-
-        .header {
-            text-align: center;
-            margin-bottom: 25px;
-        }
-
-        .header h1 {
-            font-size: 24px;
-            font-weight: 600;
-        }
-
-        .search-box {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-        }
-
-        .search-input {
-            flex: 1;
-            padding: 14px 18px;
-            border: none;
-            border-radius: 12px;
-            background: rgba(255, 255, 255, 0.1);
-            color: #fff;
-            font-size: 16px;
-            outline: none;
-        }
-
-        .search-input::placeholder {
-            color: rgba(255, 255, 255, 0.5);
-        }
-
-        .search-input:focus {
-            background: rgba(255, 255, 255, 0.15);
-        }
-
-        .search-button {
-            padding: 14px 24px;
-            border: none;
-            border-radius: 12px;
-            background: #5856d6;
-            color: #fff;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-
-        .search-button:hover {
-            background: #6d6be0;
-        }
-
-        .search-button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .card {
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            border-radius: 16px;
-            padding: 20px;
-            margin-bottom: 15px;
-        }
-
-        .card-title {
-            font-size: 13px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            opacity: 0.7;
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .podcasts-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-            gap: 15px;
-        }
-
-        .podcast-item {
-            cursor: pointer;
-            text-align: center;
-            padding: 10px;
-            border-radius: 12px;
-            transition: background 0.2s;
-        }
-
-        .podcast-item:hover {
-            background: rgba(255, 255, 255, 0.1);
-        }
-
-        .podcast-artwork {
-            width: 100%;
-            aspect-ratio: 1;
-            border-radius: 12px;
-            object-fit: cover;
-            margin-bottom: 8px;
-            background: rgba(255, 255, 255, 0.1);
-        }
-
-        .podcast-title {
-            font-size: 12px;
-            font-weight: 500;
-            line-height: 1.3;
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
-            overflow: hidden;
-        }
-
-        .podcast-publisher {
-            font-size: 11px;
-            opacity: 0.6;
-            margin-top: 4px;
-            display: -webkit-box;
-            -webkit-line-clamp: 1;
-            -webkit-box-orient: vertical;
-            overflow: hidden;
-        }
-
-        .episode-list {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-
-        .episode-item {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 10px;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-
-        .episode-item:hover {
-            background: rgba(255, 255, 255, 0.12);
-        }
-
-        .episode-item.now-playing {
-            background: rgba(88, 86, 214, 0.3);
-        }
-
-        .episode-play-icon {
-            font-size: 18px;
-            width: 30px;
-            text-align: center;
-            flex-shrink: 0;
-            color: #5856d6;
-        }
-
-        .episode-info {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .episode-title {
-            font-size: 14px;
-            font-weight: 500;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .episode-date {
-            font-size: 11px;
-            opacity: 0.6;
-            margin-top: 2px;
-        }
-
-        .episode-duration {
-            font-size: 11px;
-            opacity: 0.5;
-            flex-shrink: 0;
-        }
-
-        /* Now Playing Screen */
-        .now-playing-screen {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding-top: 10px;
-        }
-
-        .now-playing-artwork {
-            width: 280px;
-            height: 280px;
-            border-radius: 16px;
-            object-fit: cover;
-            background: rgba(255, 255, 255, 0.1);
-            box-shadow: 0 8px 40px rgba(0, 0, 0, 0.4);
-            margin-bottom: 30px;
-        }
-
-        .now-playing-title {
-            font-size: 20px;
-            font-weight: 600;
-            text-align: center;
-            margin-bottom: 6px;
-            max-width: 100%;
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
-            overflow: hidden;
-        }
-
-        .now-playing-podcast {
-            font-size: 15px;
-            opacity: 0.7;
-            text-align: center;
-            margin-bottom: 30px;
-        }
-
-        .seek-container {
-            width: 100%;
-            margin-bottom: 20px;
-        }
-
-        .seek-bar {
-            width: 100%;
-            height: 6px;
-            -webkit-appearance: none;
-            appearance: none;
-            background: rgba(255, 255, 255, 0.2);
-            border-radius: 3px;
-            outline: none;
-            cursor: pointer;
-        }
-
-        .seek-bar::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            width: 16px;
-            height: 16px;
-            border-radius: 50%;
-            background: #fff;
-            cursor: pointer;
-            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
-        }
-
-        .seek-bar::-moz-range-thumb {
-            width: 16px;
-            height: 16px;
-            border-radius: 50%;
-            background: #fff;
-            cursor: pointer;
-            border: none;
-            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
-        }
-
-        .seek-bar::-webkit-slider-runnable-track {
-            height: 6px;
-            border-radius: 3px;
-        }
-
-        .seek-bar::-moz-range-track {
-            height: 6px;
-            border-radius: 3px;
-            background: rgba(255, 255, 255, 0.2);
-        }
-
-        .time-display {
-            display: flex;
-            justify-content: space-between;
-            font-size: 12px;
-            opacity: 0.6;
-            margin-top: 6px;
-            font-variant-numeric: tabular-nums;
-        }
-
-        .controls {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 30px;
-            margin-bottom: 20px;
-        }
-
-        .control-button {
-            background: none;
-            border: none;
-            color: #fff;
-            cursor: pointer;
-            padding: 8px;
-            border-radius: 50%;
-            transition: opacity 0.2s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .control-button:hover {
-            opacity: 0.8;
-        }
-
-        .control-button:active {
-            opacity: 0.6;
-        }
-
-        .control-button svg {
-            fill: #fff;
-        }
-
-        .play-pause-button {
-            width: 64px;
-            height: 64px;
-            background: #fff;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .play-pause-button svg {
-            fill: #1a1a2e;
-        }
-
-        .skip-button {
-            position: relative;
-        }
-
-        .skip-label {
-            font-size: 10px;
-            font-weight: 700;
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            pointer-events: none;
-        }
-
-        .loading {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 100px;
-            text-align: center;
-        }
-
-        .loading-spinner {
-            width: 30px;
-            height: 30px;
-            border: 3px solid rgba(255, 255, 255, 0.2);
-            border-top-color: #5ac8fa;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-bottom: 12px;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        .empty-state {
-            text-align: center;
-            padding: 40px 20px;
-            opacity: 0.6;
-        }
-
-        .empty-state-icon {
-            font-size: 48px;
-            margin-bottom: 15px;
-        }
-
-        .error-message {
-            background: rgba(255, 69, 58, 0.2);
-            color: #ff453a;
-            padding: 12px 16px;
-            border-radius: 10px;
-            font-size: 14px;
-            margin-bottom: 15px;
-        }
-
-        .back-button {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 8px 16px;
-            background: rgba(255, 255, 255, 0.1);
-            border: none;
-            border-radius: 8px;
-            color: #fff;
-            font-size: 14px;
-            cursor: pointer;
-            margin-bottom: 15px;
-            transition: background 0.2s;
-        }
-
-        .back-button:hover {
-            background: rgba(255, 255, 255, 0.2);
-        }
-
-        .speed-button {
-            background: rgba(255, 255, 255, 0.15);
-            border: none;
-            color: #fff;
-            font-size: 13px;
-            font-weight: 600;
-            padding: 6px 12px;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-
-        .speed-button:hover {
-            background: rgba(255, 255, 255, 0.25);
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#f7f7f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://accounts.google.com; style-src 'unsafe-inline' https://accounts.google.com; img-src 'self' data: https:; connect-src https://cloudflare-backend.maattp.workers.dev http://localhost:8787 https://accounts.google.com; frame-src https://accounts.google.com; base-uri 'none'; form-action 'none'">
+<link rel="apple-touch-icon" href="../icon.png">
+<title>Podcasts</title>
+<script src="https://accounts.google.com/gsi/client" async></script>
+<!--
+  Podcasts — manager for the ad-free podcast feed.
+  Subscribe / unsubscribe here; the Mac mini (podcast_experiment/service/podcastd.py)
+  gets the change pushed over its WebSocket, downloads new episodes, cuts the ads
+  out and uploads them. Backend: /podcasts/* (worker/src/podcasts.ts, podroom.ts).
+  Only PODCAST_OWNER may use it. All text from feeds is untrusted: it is only ever
+  set with textContent, never innerHTML.
+-->
+<style>
+  :root {
+    --ground:#f7f7f5; --surface:#fff; --raised:#efeeea; --line:#e3e1dc;
+    --ink:#1c1b19; --dim:#6f6c66; --faint:#a09c95;
+    --accent:#6d4fd6; --ok:#0f7a6b; --warn:#b07a12; --danger:#b4410e; --danger-bg:#fbeee6;
+    --sat:env(safe-area-inset-top); --sab:env(safe-area-inset-bottom);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --ground:#141413; --surface:#1e1d1b; --raised:#292825; --line:#33312d;
+      --ink:#ecebe7; --dim:#a19e97; --faint:#6f6c66; --accent:#a48ff0; --ok:#4fc1ad; --warn:#e0b24f; --danger:#f08a5d; --danger-bg:#3a2419; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--ground); color: var(--ink);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 680px; margin: 0 auto; padding: calc(var(--sat) + 14px) 16px calc(var(--sab) + 40px); }
+  header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  header a { color: var(--accent); text-decoration: none; font-size: 15px; }
+  header h1 { font-size: 26px; margin: 0; flex: 1; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); margin: 26px 4px 8px; font-weight: 600; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .muted { color: var(--dim); font-size: 14px; }
+  .small { font-size: 13px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); flex: none; }
+  .dot.on { background: var(--ok); }
+  .bar { height: 8px; border-radius: 4px; background: var(--raised); overflow: hidden; margin-top: 8px; }
+  .bar > div { height: 100%; background: var(--accent); }
+  button { font: inherit; border: none; border-radius: 10px; padding: 9px 14px; background: var(--raised); color: var(--ink); cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; }
+  button.danger { background: var(--danger-bg); color: var(--danger); }
+  button.link { background: none; color: var(--accent); padding: 4px 0; }
+  button:disabled { opacity: .5; }
+  input { font: inherit; width: 100%; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--surface); color: var(--ink); -webkit-appearance: none; }
+  .feedurl { font: 12px ui-monospace, Menlo, monospace; word-break: break-all; background: var(--raised);
+    padding: 8px 10px; border-radius: 8px; margin: 8px 0; user-select: all; -webkit-user-select: all; }
+  .list { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .item { display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--line); }
+  .item:first-child { border-top: none; }
+  .art { width: 48px; height: 48px; border-radius: 8px; background: var(--raised); flex: none; object-fit: cover; }
+  .grow { flex: 1; min-width: 0; }
+  .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .err { color: var(--danger); font-size: 13px; }
+  .empty { padding: 16px; color: var(--dim); text-align: center; }
+  .tag { display: inline-block; font-size: 12px; padding: 1px 7px; border-radius: 9px; background: var(--raised); color: var(--dim); margin-right: 4px; }
+  .tag.cut { color: var(--ok); }
+  .tag.mark { color: var(--warn); }
+  #signin { text-align: center; padding-top: 25vh; }
+  #signerr { color: var(--danger); margin-top: 16px; min-height: 1.5em; }
+  #gbtn { display: inline-block; }
+  #toast { position: fixed; left: 50%; bottom: calc(var(--sab) + 20px); transform: translateX(-50%); background: var(--ink); color: var(--ground);
+    padding: 9px 16px; border-radius: 20px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; }
+  #toast.show { opacity: 1; }
+  details summary { cursor: pointer; color: var(--dim); font-size: 14px; }
+  details p { font-size: 14px; color: var(--dim); }
+</style>
 </head>
 <body>
-    <div class="container" id="app">
-        <div class="header">
-            <h1>Podcasts</h1>
-        </div>
+<main>
+  <header><a href="../">‹ Apps</a><h1>Podcasts</h1></header>
 
-        <div class="search-box">
-            <input type="text" class="search-input" id="search-input" placeholder="Search podcasts..." />
-            <button class="search-button" id="search-button">Search</button>
-        </div>
+  <div id="signin" hidden>
+    <p class="muted">Sign in to manage your ad-free feed.</p>
+    <div id="gbtn"></div>
+    <div id="signerr"></div>
+  </div>
 
-        <div id="content">
-            <div class="empty-state">
-                <div class="empty-state-icon">🎙️</div>
-                <p>Search for a podcast to start listening</p>
-            </div>
-        </div>
+  <div id="app" hidden>
+    <div class="card">
+      <div class="row"><span id="macdot" class="dot"></span><div class="grow"><b id="macline">Mac mini</b><div id="macsub" class="muted small"></div></div>
+        <button id="pollbtn">Check now</button></div>
+      <div class="bar"><div id="usagebar" style="width:0"></div></div>
+      <div id="usageline" class="muted small" style="margin-top:6px"></div>
     </div>
 
-    <audio id="audio-player" preload="auto"></audio>
+    <h2>Your private feed</h2>
+    <div class="card">
+      <div class="muted small">Add this in Downcast → Add → Add Podcast by URL. Leave username and password empty. Keep it secret: anyone with the link can listen.</div>
+      <div id="feedurl" class="feedurl">…</div>
+      <div class="row"><button id="copybtn" class="primary">Copy link</button><span class="grow"></span><button id="rotatebtn" class="link">New link…</button></div>
+    </div>
 
-    <script>
-        // State
-        let selectedPodcast = null;
-        let currentEpisode = null;
-        let episodes = [];
-        let lastSearchResults = [];
-        let playbackSpeed = 1;
-        const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+    <h2>Add a show</h2>
+    <div class="card">
+      <input id="search" type="search" placeholder="Search, or paste a feed URL" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div id="results" class="list" style="margin-top:10px" hidden></div>
+    </div>
 
-        // DOM elements
-        const searchInput = document.getElementById('search-input');
-        const searchButton = document.getElementById('search-button');
-        const contentEl = document.getElementById('content');
-        const audioPlayer = document.getElementById('audio-player');
+    <h2 id="subshead">Shows</h2>
+    <div id="subs" class="list"></div>
 
-        // Event listeners
-        searchButton.addEventListener('click', searchPodcasts);
-        searchInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') searchPodcasts();
-        });
+    <h2>Recent episodes</h2>
+    <div id="eps" class="list"></div>
 
-        // Search podcasts using iTunes API
-        async function searchPodcasts() {
-            const query = searchInput.value.trim();
-            if (!query) return;
+    <h2>How it works</h2>
+    <div class="card"><details><summary>What happens when you add a show</summary>
+      <p>The change is pushed to the Mac mini within a second or two. For each show it processes the newest episode, and after that every new one (it checks feeds every 30 minutes, or when you tap “Check now”).</p>
+      <p>For each episode it downloads the audio, finds the ads (MP3 frame headers for inserted ads on NYT shows, “Sponsor” chapters, and a fast transcript read by Claude Haiku), cuts sponsor reads and promos out, and uploads the result here. Hosts’ own plugs stay in. Spots it isn’t sure about stay in too, marked with an “Ad?” chapter.</p>
+      <p>Storage is capped at 5 GB; the oldest episodes are deleted first to make room. Removing a show deletes its episodes from the feed.</p>
+    </details></div>
+  </div>
+</main>
+<div id="toast"></div>
 
-            searchButton.disabled = true;
-            contentEl.innerHTML = `
-                <div class="loading">
-                    <div class="loading-spinner"></div>
-                    <p>Searching podcasts...</p>
-                </div>
-            `;
+<script>
+const API = (() => {
+  const o = new URLSearchParams(location.search).get('api');
+  return o && location.hostname === 'localhost' ? o : 'https://cloudflare-backend.maattp.workers.dev';
+})();
+const CLIENT_ID = '611505411727-94u34em16j7sd0rdigejmvfdgnjj67ma.apps.googleusercontent.com';
+const SKEY = 'podcasts_session';
+const $ = (s) => document.querySelector(s);
+let session = localStorage.getItem(SKEY);
+let state = null;
 
-            try {
-                const response = await fetch(
-                    `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=podcast&limit=20`
-                );
-                const data = await response.json();
+function h(tag, props = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (v == null || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k === 'text') el.textContent = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid);
+  return el;
+}
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 2200); }
+const clock = (s) => { s = Math.round(s); const hh = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), r = s % 60;
+  return hh ? `${hh}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}` : `${m}:${String(r).padStart(2, '0')}`; };
+const ago = (t) => { if (!t) return 'never'; const s = (Date.now() - t) / 1000;
+  return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`; };
+const gb = (b) => (b / 1e9).toFixed(2) + ' GB';
+const safeImg = (u) => (typeof u === 'string' && u.startsWith('https://')) ? u : null;
 
-                if (data.results.length === 0) {
-                    contentEl.innerHTML = `
-                        <div class="empty-state">
-                            <div class="empty-state-icon">🔍</div>
-                            <p>No podcasts found for "${escapeHtml(query)}"</p>
-                        </div>
-                    `;
-                    return;
-                }
+async function api(method, path, body) {
+  const res = await fetch(API + '/podcasts/api' + path, {
+    method, headers: { Authorization: 'Bearer ' + session, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) { signOut(); throw new Error('unauthorized'); }
+  if (res.status === 403) { showSignin('This account can’t manage the podcast feed.'); throw new Error('forbidden'); }
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(j.error || 'HTTP ' + res.status);
+  return j;
+}
+function signOut() { localStorage.removeItem(SKEY); session = null; showSignin(); }
+function showSignin(err = '') { $('#app').hidden = true; $('#signin').hidden = false; $('#signerr').textContent = err; renderButton(); }
 
-                lastSearchResults = data.results;
-                renderPodcastResults(data.results);
-            } catch (error) {
-                contentEl.innerHTML = `
-                    <div class="error-message">
-                        Failed to search podcasts: ${escapeHtml(error.message)}
-                    </div>
-                `;
-            } finally {
-                searchButton.disabled = false;
-            }
-        }
+/* ---------- auth (same flow as the other apps: Google ID token → POST /auth → session) ---------- */
+function renderButton() {
+  if (!window.google?.accounts) return;
+  google.accounts.id.initialize({ client_id: CLIENT_ID, callback: onCredential });
+  google.accounts.id.renderButton($('#gbtn'), { theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'filled_black' : 'outline', size: 'large', shape: 'pill' });
+}
+window.onGoogleLibraryLoad = () => { if (!session) renderButton(); };
+async function onCredential(response) {
+  $('#signerr').textContent = '';
+  try {
+    const res = await fetch(API + '/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: response.credential }) });
+    if (!res.ok) { $('#signerr').textContent = 'That account isn’t allowed here.'; return; }
+    session = (await res.json()).sessionId; localStorage.setItem(SKEY, session);
+    start();
+  } catch { $('#signerr').textContent = 'Could not reach the server.'; }
+}
 
-        // Render podcast search results
-        function renderPodcastResults(podcasts) {
-            contentEl.innerHTML = `
-                <div class="card">
-                    <div class="card-title">
-                        <span>🎧</span>
-                        Search Results (${podcasts.length})
-                    </div>
-                    <div class="podcasts-grid">
-                        ${podcasts.map((p, i) => `
-                            <div class="podcast-item" data-index="${i}">
-                                <img class="podcast-artwork"
-                                     src="${p.artworkUrl100?.replace('100x100', '200x200') || ''}"
-                                     alt="${escapeHtml(p.collectionName)}"
-                                     onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2240%22>🎙️</text></svg>'" />
-                                <div class="podcast-title">${escapeHtml(p.collectionName)}</div>
-                                <div class="podcast-publisher">${escapeHtml(p.artistName)}</div>
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-            `;
+/* ---------- render ---------- */
+function feedUrl() { return state ? `${API}/podcasts/feed/${state.token}/feed.xml` : ''; }
 
-            contentEl.querySelectorAll('.podcast-item').forEach((el, i) => {
-                el.addEventListener('click', () => selectPodcast(podcasts[i]));
-            });
-        }
+function render() {
+  const s = state; if (!s) return;
+  const mac = s.mac || {}, st = mac.status || {};
+  $('#macdot').classList.toggle('on', !!mac.online);
+  $('#macline').textContent = mac.online ? 'Mac mini connected' : 'Mac mini offline';
+  let sub = '';
+  if (st.state === 'working' && st.job) sub = `Working: ${st.job.show} — ${st.job.title} (${st.job.stage})`;
+  else if (st.state) sub = `Idle · last check ${ago(st.lastPoll)}${st.queue ? ` · ${st.queue} queued` : ''}`;
+  if (!mac.online) sub = `Last heard from ${ago(mac.at)}. Changes are saved and will be picked up when it reconnects.`;
+  $('#macsub').textContent = sub;
+  const used = s.usage?.bytes || 0, cap = s.usage?.cap || 5e9;
+  $('#usagebar').style.width = Math.min(100, used / cap * 100).toFixed(1) + '%';
+  $('#usageline').textContent = `${gb(used)} of ${gb(cap)} used · oldest episodes are deleted to stay under the cap`;
+  $('#feedurl').textContent = feedUrl();
 
-        // Select a podcast and fetch its feed
-        async function selectPodcast(podcast) {
-            selectedPodcast = podcast;
+  const counts = {}; for (const e of s.episodes) counts[e.subId] = (counts[e.subId] || 0) + 1;
+  $('#subshead').textContent = `Shows (${s.subs.length})`;
+  const subs = $('#subs'); subs.replaceChildren();
+  if (!s.subs.length) subs.append(h('div', { class: 'empty', text: 'No shows yet. Search above to add one.' }));
+  for (const x of s.subs) {
+    subs.append(h('div', { class: 'item' },
+      safeImg(x.artwork) ? h('img', { class: 'art', src: safeImg(x.artwork), alt: '', loading: 'lazy' }) : h('div', { class: 'art' }),
+      h('div', { class: 'grow' },
+        h('div', { class: 'title', text: x.title || x.feedUrl }),
+        h('div', { class: 'muted small', text: `${counts[x.id] || 0} in feed${x.checkedAt ? ' · checked ' + ago(x.checkedAt) : ' · waiting for the Mac'}` }),
+        x.error ? h('div', { class: 'err', text: x.error }) : null),
+      h('button', { class: 'danger', onclick: () => removeSub(x) , text: 'Remove' })));
+  }
 
-            contentEl.innerHTML = `
-                <button class="back-button" id="back-btn">\u2190 Back to results</button>
-                <div class="card">
-                    <div style="display: flex; gap: 15px; align-items: center; margin-bottom: 15px;">
-                        <img class="podcast-artwork"
-                             src="${podcast.artworkUrl100?.replace('100x100', '200x200') || ''}"
-                             alt="${escapeHtml(podcast.collectionName)}"
-                             style="width: 80px; height: 80px; flex-shrink: 0;" />
-                        <div>
-                            <div style="font-size: 18px; font-weight: 600;">${escapeHtml(podcast.collectionName)}</div>
-                            <div style="font-size: 13px; opacity: 0.7; margin-top: 4px;">${escapeHtml(podcast.artistName)}</div>
-                        </div>
-                    </div>
-                    <div class="loading">
-                        <div class="loading-spinner"></div>
-                        <p>Loading episodes...</p>
-                    </div>
-                </div>
-            `;
+  const eps = $('#eps'); eps.replaceChildren();
+  if (!s.episodes.length) eps.append(h('div', { class: 'empty', text: 'Nothing processed yet.' }));
+  for (const e of s.episodes.slice(0, 40)) {
+    const cut = e.removed.reduce((a, c) => a + c.end - c.start, 0);
+    eps.append(h('div', { class: 'item' },
+      safeImg(e.image) ? h('img', { class: 'art', src: safeImg(e.image), alt: '', loading: 'lazy' }) : h('div', { class: 'art' }),
+      h('div', { class: 'grow' },
+        h('div', { class: 'title', text: e.title }),
+        h('div', { class: 'muted small', text: `${e.show} · ${new Date(e.pubDate).toLocaleDateString()} · ${clock(e.duration)} · ${(e.bytes / 1e6).toFixed(0)} MB` }),
+        h('div', {},
+          h('span', { class: 'tag cut', text: e.removed.length ? `${e.removed.length} cut · ${clock(cut)}` : 'no ads found' }),
+          e.marked.length ? h('span', { class: 'tag mark', text: `${e.marked.length} Ad? marked` }) : null)),
+      h('button', { class: 'link', onclick: () => removeEp(e), text: 'Delete' })));
+  }
+}
 
-            document.getElementById('back-btn').addEventListener('click', () => {
-                renderPodcastResults(lastSearchResults);
-            });
+/* ---------- actions ---------- */
+async function refresh() { try { state = await api('GET', '/state'); render(); } catch (e) { if (e.message !== 'unauthorized' && e.message !== 'forbidden') toast(e.message); } }
 
-            try {
-                episodes = await fetchRSSFeed(podcast.feedUrl);
-                if (episodes.length === 0) {
-                    throw new Error('No episodes found in feed');
-                }
-                renderEpisodeList(podcast, episodes);
-            } catch (error) {
-                contentEl.innerHTML = `
-                    <button class="back-button" id="back-btn">\u2190 Back to results</button>
-                    <div class="error-message">
-                        Failed to load podcast feed: ${escapeHtml(error.message)}
-                    </div>
-                `;
-                document.getElementById('back-btn').addEventListener('click', () => {
-                    renderPodcastResults(lastSearchResults);
-                });
-            }
-        }
+async function addSub(feedUrl, meta = {}) {
+  try {
+    const r = await api('POST', '/subs', { feedUrl, ...meta });
+    toast(r.existed ? 'Already subscribed.' : `Added ${meta.title || 'show'}. The Mac will process the newest episode.`);
+    $('#search').value = ''; $('#results').hidden = true;
+    await refresh();
+  } catch (e) { toast(e.message); }
+}
+async function removeSub(x) {
+  if (!confirm(`Remove ${x.title || x.feedUrl}? Its episodes are deleted from the feed.`)) return;
+  try { const r = await api('DELETE', '/subs/' + x.id); toast(`Removed (${r.episodes} episode${r.episodes === 1 ? '' : 's'} deleted).`); await refresh(); } catch (e) { toast(e.message); }
+}
+async function removeEp(e) {
+  if (!confirm(`Delete “${e.title}” from the feed? It won’t be processed again.`)) return;
+  try { await api('DELETE', '/episodes/' + e.id); await refresh(); } catch (err) { toast(err.message); }
+}
 
-        // CORS proxies to try as fallback
-        const CORS_PROXIES = [
-            (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-            (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-            (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`
-        ];
+let searchT = 0, searchSeq = 0;
+$('#search').addEventListener('input', () => {
+  clearTimeout(searchT);
+  const q = $('#search').value.trim(), box = $('#results');
+  if (!q) { box.hidden = true; return; }
+  if (/^https?:\/\//i.test(q)) {
+    box.hidden = false;
+    box.replaceChildren(h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 'title', text: 'Subscribe to this feed URL' }), h('div', { class: 'muted small', text: q })),
+      h('button', { class: 'primary', onclick: () => addSub(q), text: 'Add' })));
+    return;
+  }
+  searchT = setTimeout(async () => {
+    const seq = ++searchSeq;
+    try {
+      const { results } = await api('GET', '/search?term=' + encodeURIComponent(q));
+      if (seq !== searchSeq) return;
+      const subbed = new Set((state?.subs || []).map((s) => s.feedUrl));
+      box.hidden = false; box.replaceChildren();
+      if (!results.length) box.append(h('div', { class: 'empty', text: 'No shows found.' }));
+      for (const r of results) {
+        const have = subbed.has(r.feedUrl);
+        box.append(h('div', { class: 'item' },
+          safeImg(r.artwork) ? h('img', { class: 'art', src: safeImg(r.artwork), alt: '', loading: 'lazy' }) : h('div', { class: 'art' }),
+          h('div', { class: 'grow' }, h('div', { class: 'title', text: r.title }), h('div', { class: 'muted small', text: r.author })),
+          h('button', { class: have ? '' : 'primary', disabled: have ? 'disabled' : null, text: have ? 'Added' : 'Add',
+            onclick: () => addSub(r.feedUrl, { title: r.title, author: r.author, artwork: r.artwork }) })));
+      }
+    } catch (e) { toast(e.message); }
+  }, 350);
+});
 
-        // Fetch and parse RSS feed (direct first, then proxy fallback)
-        async function fetchRSSFeed(feedUrl) {
-            let lastError = null;
+$('#copybtn').onclick = async () => { try { await navigator.clipboard.writeText(feedUrl()); toast('Feed link copied.'); } catch { toast('Copy failed — select the link and copy it.'); } };
+$('#rotatebtn').onclick = async () => {
+  if (!confirm('Make a new feed link? The old one stops working, so you will need to re-add the feed in Downcast.')) return;
+  try { await api('POST', '/token/rotate'); await refresh(); toast('New link made. Re-add it in Downcast.'); } catch (e) { toast(e.message); }
+};
+$('#pollbtn').onclick = async () => {
+  try { const r = await api('POST', '/poll'); toast(r.delivered ? 'Asked the Mac to check feeds now.' : 'The Mac is offline; it will check when it reconnects.'); setTimeout(refresh, 1500); } catch (e) { toast(e.message); }
+};
 
-            // Try direct fetch first
-            try {
-                const text = await fetchFeedText(feedUrl);
-                return parseFeed(text);
-            } catch (error) {
-                lastError = error;
-                console.log('Direct fetch failed:', error.message);
-            }
-
-            // Try each proxy as fallback
-            for (let i = 0; i < CORS_PROXIES.length; i++) {
-                const proxyUrl = CORS_PROXIES[i](feedUrl);
-                try {
-                    const text = await fetchFeedText(proxyUrl);
-                    return parseFeed(text);
-                } catch (error) {
-                    lastError = error;
-                    console.log(`Proxy ${i + 1} failed:`, error.message);
-                }
-            }
-
-            throw new Error(lastError?.message || 'Failed to fetch podcast feed');
-        }
-
-        async function fetchFeedText(url) {
-            const response = await fetch(url, {
-                signal: AbortSignal.timeout(10000)
-            });
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            const text = await response.text();
-            if (text.trim().startsWith('<!') || text.trim().startsWith('<html')) {
-                throw new Error('Got HTML instead of RSS');
-            }
-            return text;
-        }
-
-        function parseFeed(text) {
-            const parser = new DOMParser();
-            const xml = parser.parseFromString(text, 'text/xml');
-
-            const parseError = xml.querySelector('parsererror');
-            if (parseError) {
-                throw new Error('Invalid RSS feed');
-            }
-
-            const items = xml.querySelectorAll('item');
-            const result = [];
-
-            for (let j = 0; j < items.length; j++) {
-                const item = items[j];
-                const enclosure = item.querySelector('enclosure');
-                const title = item.querySelector('title')?.textContent || 'Untitled Episode';
-                const pubDate = item.querySelector('pubDate')?.textContent || '';
-                const duration = item.getElementsByTagNameNS('http://www.itunes.com/dtds/podcast-1.0.dtd', 'duration')[0]?.textContent || '';
-
-                if (enclosure) {
-                    const url = enclosure.getAttribute('url');
-                    if (url && (url.includes('.mp3') || url.includes('.m4a') || enclosure.getAttribute('type')?.includes('audio'))) {
-                        result.push({
-                            title,
-                            url,
-                            pubDate: pubDate ? formatDate(pubDate) : '',
-                            duration: duration ? formatDuration(duration) : ''
-                        });
-                    }
-                }
-            }
-
-            return result;
-        }
-
-        function formatDate(dateStr) {
-            try {
-                const d = new Date(dateStr);
-                return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-            } catch {
-                return dateStr;
-            }
-        }
-
-        function formatDuration(dur) {
-            // Could be seconds ("1234") or HH:MM:SS / MM:SS
-            if (dur.includes(':')) return dur;
-            const secs = parseInt(dur, 10);
-            if (isNaN(secs)) return dur;
-            const h = Math.floor(secs / 3600);
-            const m = Math.floor((secs % 3600) / 60);
-            const s = secs % 60;
-            if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-            return `${m}:${String(s).padStart(2, '0')}`;
-        }
-
-        // Render episode list
-        function renderEpisodeList(podcast, eps) {
-            contentEl.innerHTML = `
-                <button class="back-button" id="back-btn">\u2190 Back to results</button>
-                <div class="card">
-                    <div style="display: flex; gap: 15px; align-items: center;">
-                        <img class="podcast-artwork"
-                             src="${podcast.artworkUrl600 || podcast.artworkUrl100?.replace('100x100', '600x600') || ''}"
-                             alt="${escapeHtml(podcast.collectionName)}"
-                             style="width: 80px; height: 80px; flex-shrink: 0;" />
-                        <div>
-                            <div style="font-size: 18px; font-weight: 600;">${escapeHtml(podcast.collectionName)}</div>
-                            <div style="font-size: 13px; opacity: 0.7; margin-top: 4px;">${escapeHtml(podcast.artistName)}</div>
-                            <div style="font-size: 12px; opacity: 0.5; margin-top: 4px;">${eps.length} episode${eps.length !== 1 ? 's' : ''}</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="card">
-                    <div class="card-title">
-                        <span>📋</span>
-                        Episodes
-                    </div>
-                    <div class="episode-list">
-                        ${eps.map((ep, i) => `
-                            <div class="episode-item${currentEpisode && currentEpisode.url === ep.url ? ' now-playing' : ''}" data-index="${i}">
-                                <div class="episode-play-icon">
-                                    ${currentEpisode && currentEpisode.url === ep.url ? '🔊' : '▶'}
-                                </div>
-                                <div class="episode-info">
-                                    <div class="episode-title">${escapeHtml(ep.title)}</div>
-                                    <div class="episode-date">${escapeHtml(ep.pubDate)}</div>
-                                </div>
-                                ${ep.duration ? `<div class="episode-duration">${escapeHtml(ep.duration)}</div>` : ''}
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-            `;
-
-            document.getElementById('back-btn').addEventListener('click', () => {
-                renderPodcastResults(lastSearchResults);
-            });
-
-            contentEl.querySelectorAll('.episode-item').forEach((el) => {
-                const idx = parseInt(el.dataset.index, 10);
-                el.addEventListener('click', () => playEpisode(eps[idx]));
-            });
-        }
-
-        // Play an episode - show Now Playing screen
-        function playEpisode(episode) {
-            currentEpisode = episode;
-
-            // Set audio source and play
-            if (audioPlayer.src !== episode.url) {
-                audioPlayer.src = episode.url;
-            }
-            audioPlayer.playbackRate = playbackSpeed;
-            audioPlayer.play();
-
-            renderNowPlaying();
-        }
-
-        function renderNowPlaying() {
-            const episode = currentEpisode;
-            const podcast = selectedPodcast;
-            const artworkUrl = podcast.artworkUrl600 || podcast.artworkUrl100?.replace('100x100', '600x600') || '';
-
-            contentEl.innerHTML = `
-                <button class="back-button" id="back-to-episodes">\u2190 Episodes</button>
-                <div class="now-playing-screen">
-                    <img class="now-playing-artwork"
-                         src="${artworkUrl}"
-                         alt="${escapeHtml(podcast.collectionName)}"
-                         onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2240%22>🎙️</text></svg>'" />
-
-                    <div class="now-playing-title">${escapeHtml(episode.title)}</div>
-                    <div class="now-playing-podcast">${escapeHtml(podcast.collectionName)}</div>
-
-                    <div class="seek-container">
-                        <input type="range" class="seek-bar" id="seek-bar" min="0" max="100" value="0" step="0.1" />
-                        <div class="time-display">
-                            <span id="current-time">0:00</span>
-                            <span id="total-time">--:--</span>
-                        </div>
-                    </div>
-
-                    <div class="controls">
-                        <button class="control-button skip-button" id="skip-back" title="Back 15s">
-                            <svg width="32" height="32" viewBox="0 0 24 24">
-                                <path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/>
-                            </svg>
-                            <span class="skip-label">15</span>
-                        </button>
-
-                        <button class="control-button play-pause-button" id="play-pause-btn">
-                            ${audioPlayer.paused ? playSVG() : pauseSVG()}
-                        </button>
-
-                        <button class="control-button skip-button" id="skip-forward" title="Forward 30s">
-                            <svg width="32" height="32" viewBox="0 0 24 24">
-                                <path d="M12 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z"/>
-                            </svg>
-                            <span class="skip-label">30</span>
-                        </button>
-                    </div>
-
-                    <button class="speed-button" id="speed-btn">${playbackSpeed}x</button>
-                </div>
-            `;
-
-            // Wire up controls
-            document.getElementById('back-to-episodes').addEventListener('click', () => {
-                renderEpisodeList(selectedPodcast, episodes);
-            });
-
-            const seekBar = document.getElementById('seek-bar');
-            const currentTimeEl = document.getElementById('current-time');
-            const totalTimeEl = document.getElementById('total-time');
-            const playPauseBtn = document.getElementById('play-pause-btn');
-
-            let seeking = false;
-
-            seekBar.addEventListener('input', () => {
-                seeking = true;
-                if (audioPlayer.duration) {
-                    const time = (seekBar.value / 100) * audioPlayer.duration;
-                    currentTimeEl.textContent = formatTime(time);
-                }
-            });
-
-            seekBar.addEventListener('change', () => {
-                if (audioPlayer.duration) {
-                    audioPlayer.currentTime = (seekBar.value / 100) * audioPlayer.duration;
-                }
-                seeking = false;
-            });
-
-            playPauseBtn.addEventListener('click', () => {
-                if (audioPlayer.paused) {
-                    audioPlayer.play();
-                } else {
-                    audioPlayer.pause();
-                }
-            });
-
-            document.getElementById('skip-back').addEventListener('click', () => {
-                audioPlayer.currentTime = Math.max(0, audioPlayer.currentTime - 15);
-            });
-
-            document.getElementById('skip-forward').addEventListener('click', () => {
-                audioPlayer.currentTime = Math.min(audioPlayer.duration || 0, audioPlayer.currentTime + 30);
-            });
-
-            document.getElementById('speed-btn').addEventListener('click', () => {
-                const idx = SPEEDS.indexOf(playbackSpeed);
-                playbackSpeed = SPEEDS[(idx + 1) % SPEEDS.length];
-                audioPlayer.playbackRate = playbackSpeed;
-                document.getElementById('speed-btn').textContent = playbackSpeed + 'x';
-            });
-
-            // Update UI on audio events
-            function updateProgress() {
-                if (!seeking && audioPlayer.duration) {
-                    seekBar.value = (audioPlayer.currentTime / audioPlayer.duration) * 100;
-                    currentTimeEl.textContent = formatTime(audioPlayer.currentTime);
-                }
-            }
-
-            function updateDuration() {
-                if (audioPlayer.duration && isFinite(audioPlayer.duration)) {
-                    totalTimeEl.textContent = formatTime(audioPlayer.duration);
-                }
-            }
-
-            function updatePlayPause() {
-                playPauseBtn.innerHTML = audioPlayer.paused ? playSVG() : pauseSVG();
-            }
-
-            audioPlayer.addEventListener('timeupdate', updateProgress);
-            audioPlayer.addEventListener('loadedmetadata', updateDuration);
-            audioPlayer.addEventListener('durationchange', updateDuration);
-            audioPlayer.addEventListener('play', updatePlayPause);
-            audioPlayer.addEventListener('pause', updatePlayPause);
-
-            // Set initial values if already loaded
-            updateDuration();
-            updateProgress();
-
-            // Clean up listeners when navigating away
-            const observer = new MutationObserver(() => {
-                if (!document.getElementById('seek-bar')) {
-                    audioPlayer.removeEventListener('timeupdate', updateProgress);
-                    audioPlayer.removeEventListener('loadedmetadata', updateDuration);
-                    audioPlayer.removeEventListener('durationchange', updateDuration);
-                    audioPlayer.removeEventListener('play', updatePlayPause);
-                    audioPlayer.removeEventListener('pause', updatePlayPause);
-                    observer.disconnect();
-                }
-            });
-            observer.observe(contentEl, { childList: true });
-        }
-
-        function formatTime(secs) {
-            if (!isFinite(secs)) return '--:--';
-            const h = Math.floor(secs / 3600);
-            const m = Math.floor((secs % 3600) / 60);
-            const s = Math.floor(secs % 60);
-            if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-            return `${m}:${String(s).padStart(2, '0')}`;
-        }
-
-        function playSVG() {
-            return '<svg width="32" height="32" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
-        }
-
-        function pauseSVG() {
-            return '<svg width="32" height="32" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
-        }
-
-        // Escape HTML to prevent XSS
-        function escapeHtml(text) {
-            if (!text) return '';
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-    </script>
+let timer = 0;
+function start() {
+  $('#signin').hidden = true; $('#app').hidden = false;
+  refresh();
+  clearInterval(timer); timer = setInterval(() => { if (!document.hidden) refresh(); }, 10000);
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && session) refresh(); });
+if (session) start(); else showSignin();
+</script>
 </body>
 </html>

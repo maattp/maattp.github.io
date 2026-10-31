@@ -10,6 +10,12 @@ id = "695a2234a1704cf693385666f5ce902d"
 binding = "PHOTOS"
 bucket_name = "photos"
 
+# Ad-free podcasts (src/podcasts.ts): trimmed episodes + cover. Capped at 5 GB
+# by the PodRoom DO (src/podfeed.ts CAP_BYTES).
+[[r2_buckets]]
+binding = "PODCASTS"
+bucket_name = "podcasts"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "photos-db"
@@ -28,6 +34,10 @@ VAPID_SUBJECT = "mailto:m.polkiewicz@gmail.com"
 # OPENROUTER_API_KEY (LLM app, free models only) is a secret: `wrangler secret put OPENROUTER_API_KEY`.
 # GEMINI_API_KEY (LLM app, free-tier Gemini models, optional) is a secret: `wrangler secret put GEMINI_API_KEY`.
 # CF_TURN_KEY_ID / CF_TURN_API_TOKEN (Space Flight TURN, optional): `wrangler secret put …`.
+# Podcast manager (/podcasts/api/*) is for this account only, even though
+# ALLOWED_EMAILS has two. PODCAST_MAC_TOKEN (the Mac mini's credential for
+# /podcasts/mac/*) is a secret: `wrangler secret put PODCAST_MAC_TOKEN`.
+PODCAST_OWNER = "m.polkiewicz@gmail.com"
 CHAT_SENDERS = "m.polkiewicz@gmail.com:matt,ting520143@gmail.com:tingting"
 
 [durable_objects]
@@ -39,6 +49,7 @@ bindings = [
   { name = "HARD_ROOM", class_name = "HardRoom" },
   { name = "RING_ROOM", class_name = "RingRoom" },
   { name = "CHAT_ROOM", class_name = "ChatRoom" },
+  { name = "POD_ROOM", class_name = "PodRoom" },
 ]
 
 [[migrations]]
@@ -68,6 +79,10 @@ new_sqlite_classes = ["Fable51Room"]
 [[migrations]]
 tag = "sf-room-v1"
 new_sqlite_classes = ["SpaceRoom"]
+
+[[migrations]]
+tag = "pod-room-v1"
+new_sqlite_classes = ["PodRoom"]
 
 [triggers]
 crons = ["*/15 * * * *"]

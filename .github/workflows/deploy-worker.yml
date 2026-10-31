@@ -46,6 +46,9 @@ jobs:
       - name: LLM free-model gate tests
         run: node --experimental-strip-types test/llm.test.mjs
 
+      - name: Podcast feed / 5 GB cap tests
+        run: node --experimental-strip-types test/podcasts.test.mjs
+
       - run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
