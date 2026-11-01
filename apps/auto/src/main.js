@@ -1539,6 +1539,8 @@ function installShadowFade() {
     // One tap, never behind a menu: a lost run on a phone ends the session.
     const rb = document.getElementById('raceRestart');
     if (rb) rb.addEventListener('click', (ev) => { ev.stopPropagation(); if (acts) acts.restart(player); });
+    const rq = document.getElementById('raceQuit');
+    if (rq) rq.addEventListener('click', (ev) => { ev.stopPropagation(); if (acts) acts.quit(); });
     // The delivery service: the money sink. Spend winnings and the vehicle
     // arrives beside you -- including aircraft, which is how you get a plane
     // without driving to Boeing Field first.

@@ -372,11 +372,12 @@
   #raceFoot { display: flex; gap: 10px; justify-content: center; font-size: 11px; }
   #raceDelta.ahead { color: #7ee0a4; } #raceDelta.behind { color: #ff8f7a; }
   #raceBest { opacity: .5; }
-  #raceRestart {
+  #raceRestart, #raceQuit {
     pointer-events: auto; margin-top: 4px; font-size: 10px; letter-spacing: .12em;
     opacity: .62; border: 1px solid rgba(255,255,255,0.22); border-radius: 6px;
     padding: 2px 8px; display: inline-block;
   }
+  #raceQuit { margin-left: 8px; }
   /* the Seattle Passport: rank, progress, the counts the game already saves */
   #passport { margin: 10px 0 2px; text-align: left; }
   #ppTrack { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.12); overflow: hidden; margin: 2px 0 4px; }
@@ -680,7 +681,7 @@
     <pre id="bootLog"></pre>
     <div id="loadRotate">Turn sideways to play once it has loaded</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v88</div>
+    <div id="build">v89</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation NRCan CDEM / SRTM</div>
   </div>
   <script>
@@ -780,7 +781,7 @@
     <div id="raceName"></div>
     <div id="raceRow"><span id="raceTime"></span><span id="raceLeft"></span></div>
     <div id="raceFoot"><span id="raceDelta"></span><span id="raceBest"></span></div>
-    <div id="raceRestart">RESTART</div>
+    <div id="raceRestart">RESTART</div><div id="raceQuit">QUIT</div>
   </div>
   <div id="rotate">
     <div style="font-size:34px">📱↻</div>

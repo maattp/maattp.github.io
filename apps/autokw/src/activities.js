@@ -36,6 +36,7 @@ const CP_BAND = 12;           // vertical band -- a checkpoint belongs to ONE la
 const RING_R = 34;            // air ring: you arrive at 300 kph
 const START_R = 13;
 const COUNTDOWN = 3;
+const FAR_OFF = 1500, FAR_T = 10;   // a race calls itself off this much past its leg's length from the next checkpoint, this long
 
 const PRIZE = { gold: 1600, silver: 900, bronze: 450, none: 150 };
 
@@ -470,6 +471,26 @@ export class Activities {
     this.start(a);
   }
 
+  /** QUIT on the race panel: the run is called off, nothing is saved. A
+   *  getaway's stars stay -- the police do not stop because you did. */
+  quit() {
+    const run = this.active;
+    if (!run) return;
+    const a = run.a;
+    this.finishSilently();
+    this.hud.showToast(a.kind === 'getaway' && this.game.wanted > 0 ? `${a.name} — called off. The police haven't.` : `${a.name} — called off`);
+    if (this.audio) this.audio.ui('fail');
+  }
+
+  /** Driven off and never coming back (the next checkpoint FAR_OFF m further
+   *  than the leg to it, for FAR_T s): the run is off, so its clock doesn't
+   *  tick for ever. */
+  farOff(dt, run, d, leg) {
+    run.farT = d > leg + FAR_OFF ? (run.farT || 0) + dt : 0;
+    if (run.farT > FAR_T) { this.finish(false, 'too far off the course'); return true; }
+    return false;
+  }
+
   finishSilently() {
     this.active = null;
     for (const m of this.cpMeshes) m.visible = false;
@@ -739,6 +760,8 @@ export class Activities {
     const cp = a.pts[run.idx];
     if (cp) {
       run.targetPos = { x: cp.x, z: cp.z };
+      const pv = a.pts[run.idx - 1] || a;
+      if (this.farOff(dt, run, Math.sqrt(dist2(cp.x, cp.z, p.x, p.z)), Math.sqrt(dist2(cp.x, cp.z, pv.x, pv.z)))) return;
       // The vertical band is the tunnel guard: passing OVER a bore must not
       // complete a checkpoint sitting inside it.
       if (dist2(cp.x, cp.z, p.x, p.z) < CP_R * CP_R && Math.abs(p.y - cp.y) < CP_BAND) {
@@ -764,6 +787,8 @@ export class Activities {
     const r = a.rings[run.idx];
     if (r) {
       run.targetPos = { x: r[0], z: r[2], y: r[1] };
+      const pv = a.rings[run.idx - 1], lx = pv ? pv[0] : a.x, lz = pv ? pv[2] : a.z;
+      if (this.farOff(dt, run, Math.hypot(r[0] - p.x, r[2] - p.z) / 2, Math.hypot(r[0] - lx, r[2] - lz) / 2)) return;   // aircraft: twice the reach
       if (Math.hypot(r[0] - p.x, r[2] - p.z) < RING_R && Math.abs(r[1] - p.y) < RING_R) {
         run.idx++;
         if (this.audio) this.audio.ui('ring');
