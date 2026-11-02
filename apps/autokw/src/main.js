@@ -66,6 +66,7 @@ import { addLandmarkExtra } from './landmarks.js';
 import { Chicopee } from './chicopee.js';
 import { prepFun, buildMarketTent, buildFlags, waveFlags, flagsGroup, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, buildDome } from './kwfun.js';
 import { Eggs } from './kweggs.js';
+import { Secrets } from './kwsecrets.js';   // Auto KW: six secrets after dark (kwsecrets.js)
 import { prepPlaces, buildPlaces, placesMap, placesStats, Geese } from './kwplaces.js';
 import { setUwData, prepCampus, buildCampus, campusKeepClear } from './uwcampus.js';
 import { prepUptown } from './kwuptown.js';
@@ -452,6 +453,8 @@ class Game {
 
   /** ENTER on foot, before the cars: a fishing rod within reach? */
   tryInteract(pl) {
+    // Auto KW: the payphone on Hespeler Road (kwsecrets.js)
+    if (secrets && secrets.tryInteract(pl)) return true;
     // Auto KW: DriveTest Kitchener's door -- the G2 / G road test (g2test.js)
     if (g2 && g2.near(pl)) { g2.open(pl); return true; }
     // Auto KW: lacing up on (or taking the skates off at) Waterloo Public Square's rink
@@ -745,6 +748,7 @@ let pickups = [];
 let roadFeel = null;  // your road car over joints, rails and rumble strips (roadfeel.js)
 let buggies = null;   // the horse and buggies (buggy.js)
 let eggs = null;      // Auto KW: the Golden Goose Eggs and the small secrets (kweggs.js)
+let secrets = null;   // Auto KW: the gaol ghost, the UFO, the payphone... (kwsecrets.js)
 let geese = null;     // Canada geese in Waterloo Park and on campus (kwplaces.js)
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
 const LOOK_AHEAD = new THREE.Vector3();
@@ -1919,6 +1923,7 @@ function installShadowFade() {
     for (const [k, c] of world.chunks) if (c.group && c.group.userData.homes) kcal.setChunk(k, c.group.userData.homes);
   } catch (e) { blog('calendar: ' + e.message); kcal = null; }
   try { eggs = new Eggs({ scene, city, world, audio, hud, game, traffic, fx }); window.__eggs = eggs; } catch (e) { blog('eggs failed: ' + e.message); eggs = null; }
+  try { secrets = new Secrets({ scene, city, world, audio, hud, game, fx, tod, weather, traffic, eggs: () => eggs }); } catch (e) { blog('secrets failed: ' + e.message); secrets = null; }
   blog('kw places built: ' + JSON.stringify(placesStats()));
   link.bind({ game, hud, audio, player });
   if (kwrail) kwrail.bind({ game, hud, audio, player });
@@ -2099,6 +2104,7 @@ function installShadowFade() {
   window.__dbg = { get calendar() { return kcal; }, get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get garages() { return garages; }, get cheats() { return cheats; }, get photo() { return photo; }, get paramedic() { return paramedic; }, get winter() { return winter; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;
   Object.defineProperty(window.__dbg, 'eggs', { get() { return eggs; } });
+  Object.defineProperty(window.__dbg, 'secrets', { get() { return secrets; } });
   window.__dbg.geese = geese;
   window.__dbg.wildlife = wildlife;
   Object.defineProperty(window.__dbg, 'weather', { get() { return weather; } });   // (varietyprobe: the snowplough runs in snow only)
@@ -2598,6 +2604,11 @@ function refreshPassport() {
     p.rows = p.rows.concat([{ label: 'Golden eggs', done: eggs.count, total: eggs.total }]);
     const ht = eggs.hint(player.x, player.z);
     if (ht && nx) nx.textContent += ' · ' + ht;
+  }
+  if (secrets) {
+    p.rows = p.rows.concat([secrets.passportRow()]);
+    const rm = secrets.rumour();
+    if (rm && nx) nx.textContent += ' · ' + rm;
   }
   if (garages) p.rows = p.rows.concat(garages.passportRows());
   if (cheats) p.rows = p.rows.concat(cheats.passportRows());
@@ -3479,6 +3490,7 @@ function frame(now) {
   if (geese) geese.update(dt, player, camera);
   if (wildlife) wildlife.update(dt, player, camera);
   if (eggs) eggs.update(dt, player, camera);
+  if (secrets) { try { secrets.update(dt, player, camera); } catch (e) { if (!secrets.err) { secrets.err = 1; console.warn('secrets: ' + e.message); } } }
   bikeNet.update(camera);
   piers.update(camera);
   if (wheelRide) wheelRide.update(dt, wheelRide.busy ? input : null, wheelRide.busy ? look : null, camera.position.x, camera.position.z);

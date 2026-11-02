@@ -101,7 +101,7 @@ file and a guide disagree, this file wins.
   teleports onto each (and 25 m away, which must NOT collect), checks the
   rewards, garage, hint, the gander's hiss > chase > bite, the road families,
   and ends PASS. Not done: rooftop eggs (no walkable-roof data to verify
-  against), the old gaol ghost, a map marker for the garage.
+  against), a map marker for the garage. (The gaol ghost is kwsecrets.js, below.)
 - **ION is Seattle's link.js engine** on `data/link.json` from
   tools/kw/build_ion.py, made ION's: the car, stations, track, catenary,
   crossings and timetable are in "ION, as it is" below.
@@ -237,6 +237,50 @@ file and a guide disagree, this file wins.
   north from the air and nothing facing away (clipped). SwiftShader A/B at AUTO_PHONE=1 + 8x throttle, 3 rounds each:
   15.4-17.8 fps on, 15.4-17.2 off (inside the noise). The phone has not seen it. Not done: no moon position from the
   date; the aurora is not in the IBL (reflections do not show it); no sound.
+- **Six secrets, mostly after dark** (src/kwsecrets.js; docs/secrets/*.jpg; probe `AUTO_HTTP_PORT=..
+  AUTO_CDP_PORT=.. AUTO_GPU=1 node tools/kw/secretprobe.mjs <dir> [ghost,ufo,crop,phone,lantern,bigfoot,cheat]`).
+  Not kweggs.js's three (pink tie, THE GEESE KNOW roof, Kissing Bridge) and not the cheats. **The gaol ghost**: the
+  Waterloo County Gaol's yard (kwlandmarks2.js round four), after dark (`tod.on && ni > 0.55`), ON FOOT within 85 m of
+  the yard: a pale figure x1.3 drifts round `GHOST_LOOP` (2.5 m+ inside the 5.2 m walls; the probe checks it against the
+  solids) at 5 m up so it shows over the wall, turns to watch you within 45 m, and within 14 m rises and fades with a
+  breath / moan; back after 45 s. ShaderMaterial (fresnel rim alpha, the hem fluttering in the vertex shader, eyes and
+  mouth cut in object space) + an additive aura billboard. **The UFO**: OSM farmland east of Conestogo (`FIELD`
+  420, -10080; 85 m clear of roads, buildings and woods; Katherine Street South 210 m west): a clear night only
+  (`weather.state === 'clear'`), a saucer of coloured lights 55 m up drifting over the stubble, its beam coming and
+  going; stand (or stop: under 1.5 m/s) within 900 m and keep it within ~15 deg of the view centre for 2 s and it tips
+  and darts off up and away (out in 3.2 s, gone 4 min). Hull `fog: false` so it reads from far off. **The crop circle**:
+  the same field, any time, drawn only with the camera 60 m+ over it (the roof-message rule): a 100 m terrain-draped grid
+  (32 x 32) with a 512 canvas -- rings, three satellites on paths, a goose's footprint left standing in the middle; found
+  after 1 s looking at it from within 900 m. **The payphone**: OSM's one `amenity=telephone` (Bell) in the box, in front
+  of the plaza at 580 Hespeler Rd (Mr. Sub), Cambridge; built within 260 m (post, hood, phone, a lit TELEPHONE /
+  TÉLÉPHONE sign; one round landmark solid and a `traffic.keepClear` at boot). Dark AND 21:30-03:00 (the Night setting
+  is 22:30): within 70 m it rings (a synthesised two-second bell every 6 s, louder as you come), a toast within 35 m,
+  "ENTER -- answer" within 2.6 m. ENTER on foot is the FIRST thing main.js `game.tryInteract` asks: a riddle for a secret
+  you have not found (`LIST[].riddle`), 7 s later the way to the nearest uncollected golden egg (kweggs `spots`); quiet
+  for 120 s after. By day ENTER is a dial tone. The passport says "Rumour: a payphone on Hespeler Road rings late at
+  night" until it is answered -- the phone is the way into the rest. **The Doon lantern**: Doon Heritage Village, after
+  dark: a lit lantern (Basic-material frame and glass + one additive mesh: crossed glow quads and a pool on the ground)
+  hangs at the start of `LANTERN` (8 points between the houses, clear of every house solid); on foot within 30 m it sets
+  off at 1.45 m/s, swinging and bobbing, and WAITS while you are over 22 m behind; lost (110 m, or in a car) for 15 s it
+  goes back. At the end it is set down by the barn and goes out; back in 120 s. **Bigfoot**: the strip of woods between
+  Hidden Valley's houses and the Grand (`BIGFOOT`), in fog or drizzle or at twilight (`du > 0.35`, not full night: the
+  Dusk or Real setting; fog works by day too): a 2.6 m dark furred walker (ONE mesh: an `aPiv` vec4 per vertex -- pivot + swing -- rotates
+  the legs and arms in the vertex shader, program key `kwsecret-bigfoot`), pacing the strip; within 40 m he stops,
+  turns to you for 1.3 s, whoops, lopes off and fades; back in 180 s. **Payoff**: each $250 and "secret n of 6" on the
+  first find (all six: +$2,500), sparkles and `pickup` / `cash`; a repeat is the toast alone. Saved in localStorage
+  `autokw-secrets` `{f: [ids]}`; the passport row "Secrets found n/6". **The cheat rule** is kweggs.js's: with
+  `CHEAT.on` the secrets still appear, the toast says "(cheats are on: not counted)", nothing is paid or saved.
+  **Cost**: idle, five squared-distance tests a frame; each secret is built the first time the CAMERA comes in range
+  (ghost 300 m, field 2.6 km, phone 260 m, Doon 450 m, Hidden Valley 420 m) and kept, `visible` only inside its hours:
+  ghost 2 draws / 572 tris, UFO 2 / ~950 (the beam half the time), crop circle 1 / 2048, payphone 2 / ~120, lantern
+  2 / 118, Bigfoot 1 / 914 (it goes transparent only while fading). Nothing allocated per frame; sounds are a few
+  WebAudio nodes per event on `audio.sfxBus`. `__dbg.secrets` (`found`, `gs` `us` `cs` `ps` `ls` `bs` state,
+  `credit(id)`, `tryInteract`, `eggHint(x, z)`). **Probe**: pauses the game (posed-shot mode still draws), places the
+  player and camera by hand and calls `update` at a fixed dt; checks each one's spots against the city, not by day /
+  too far / wrong weather / in a car (ghost) / driving past (UFO) / 45 m (Bigfoot), the trigger, paid once, saved, the
+  cheat rule, a fresh instance loading the save, 0 exceptions; removing the night gate fails it. Not done: the ghost is
+  not in a barred window (the yard only); the UFO's beam does not light the stubble (additive cone and disc only); the
+  lantern lights nothing but its own glow pool; Bigfoot crosses the woods' tree trunks; no gamepad prompt text.
 - **Your garages** (src/kwgarage.js; docs/garage/*.jpg; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1
   node tools/kw/garageprobe.mjs <dir>`). GTA's save garages: three 3-stall garages (`GARAGES`: HOME on a
   residential street by University Ave & Bridge St, Waterloo -- `res: true` prefers `cls 'res'` edges, the
