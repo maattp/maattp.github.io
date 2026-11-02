@@ -203,6 +203,7 @@ export class Airtime {
 
   _show(sc, st, pay, cheated, record) {
     this._dom();
+    this._below();
     const e = this.el;
     const bits = [`${st.air.toFixed(1)} s`, `${Math.round(st.dist)} m`];
     if (st.height >= 1) bits.push(`${Math.round(st.height)} m high`);
@@ -223,6 +224,7 @@ export class Airtime {
 
   _fail(why) {
     this._dom();
+    this._below();
     const e = this.el;
     e.title.textContent = 'STUNT FAILED';
     e.stats.textContent = why;
@@ -235,7 +237,18 @@ export class Airtime {
   _live(on) {
     if (on) this._dom();
     if (!this.el) return;
+    if (on && !this.el.live.classList.contains('show')) this._below();
     this.el.live.classList.toggle('show', on);
+  }
+
+  /** A job's LED panel (grtbus.js LedPanel: KW Eats, GRT, paramedic, plow, ice cream) sits
+   *  top-centre where these do: drop both under it while it is up. */
+  _below() {
+    const led = typeof document !== 'undefined' ? document.getElementById('jobLed') : null;
+    const y = led && led.style.display === 'block' ? led.offsetHeight + 8 : 0;
+    if (y === this._y) return;
+    this._y = y;
+    this.el.live.style.marginTop = this.el.big.style.marginTop = y ? `${y}px` : '';
   }
 
   _dom() {
