@@ -40,6 +40,7 @@ import * as G from './geo.js';
 import { Builder } from './build.js';
 import { clamp, formatMoney } from './util.js';
 import { typeName } from './kwgarage.js';
+import { CHEAT } from './cheats.js';
 
 const KEY = 'autokw-export';
 const ON_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '');
@@ -475,6 +476,9 @@ export class ExportYard {
     if (v.garage) return 'That car is still parked in your garage';
     if (this.busy()) return 'Finish the job you are on first';
     if (this.game.wanted > 0) return 'Lose the cops first — we do not take hot cars';
+    // the GTA rule (cheats.js): KWHEELS hands out four of the five rare types -- a cheated
+    // session ticks nothing off the list (as kwcruise.js judges nothing)
+    if (CHEAT.on) return 'Cheats are on — the yard is not buying this session';
     const it = this.st.list.find((r) => r.t === t);
     if (!it) return `Not on the list — we are not after a ${typeName(t)}`;
     if (this.st.got.includes(t)) return `We already have a ${typeName(t)} this week`;

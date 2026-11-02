@@ -143,6 +143,13 @@ async function main() {
         const out = { ride, med: !!(d.paramedic.call || d.paramedic.nextT > 0), t: window.__q.toast() }; window.__q.quiet(); return out`);
       ok(washMed.ride && !washMed.med, `on the car wash's conveyor, MISSION in an ambulance starts no call (ride ${washMed.ride}, "${washMed.t}")`);
       await ev(`window.__q.quiet(); if (window.__dbg.player.vehicle) window.__dbg.player.exitVehicle(true)`);
+      // 7. the cheat rule at the export yard: KWHEELS hands out four of its five rare types
+      const ex = JSON.parse((await send('Runtime.evaluate', { awaitPromise: true, returnByValue: true, expression: `(async () => {
+        const m = await import('/apps/autokw/src/cheats.js'); const d = window.__dbg, Y = d.exportYard, sp = d.player.position;
+        const it = Y.st.list.find((r) => !Y.st.got.includes(r.t)); const v = window.__q.inVeh(it.t, sp.x, sp.z);
+        const was = m.CHEAT.on; m.CHEAT.on = false; const clean = Y.refusal(v, d.player); m.CHEAT.on = true; const cheated = Y.refusal(v, d.player); m.CHEAT.on = was;
+        d.player.exitVehicle(true); return JSON.stringify({ t: it.t, clean, cheated }); })()` })).result.result.value);
+      ok(ex.clean === '' && /[Cc]heat/.test(ex.cheated), `export yard: a listed ${ex.t} is bought clean ("${ex.clean}"), refused cheated ("${ex.cheated}")`);
     }
 
     // ------------------------------------------------------------------ layout

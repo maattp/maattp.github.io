@@ -419,7 +419,7 @@ file and a guide disagree, this file wins.
   `refusal(v)` in order: not a road car (or bike / bus / > 8.6 m), the yard's gift car (flag or a GOLD
   DeLorean, so one fetched back out of a garage is caught too), `v.garage` still set, `jobsBusy()` (main.js, the
   SAME function the random events use: g2, acts, taxi, eats, grt, missions, paramedic, winter), wanted > 0
-  ("lose the cops"), not on the list ("Not on the list -- ..."), already in this week, a wreck (dead, burning, or
+  ("lose the cops"), cheats on (`CHEAT.on`: KWHEELS hands out four of the five rare types; as kwcruise.js), not on the list ("Not on the list -- ..."), already in this week, a wreck (dead, burning, or
   health < 20 %). Bought: pay = price x (0.4 + 0.6 x health), list ticked and SAVED at once (the animation is
   cosmetic), player put on foot on the apron right of the bay's mouth facing the crusher, car set
   `mode = 'path'` (traffic skips it: no AI, no despawn, no car-car collisions) and `dead = true`
