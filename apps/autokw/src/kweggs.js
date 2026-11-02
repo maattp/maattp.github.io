@@ -28,6 +28,7 @@
 import * as THREE from './three.js';
 import * as G from './geo.js';
 import { Builder } from './build.js';
+import { CHEAT } from './cheats.js';
 
 const KEY = 'autokw-eggs';
 const RANGE = 170;           // an egg is drawn (and its glow) within this of the camera
@@ -185,6 +186,7 @@ export class Eggs {
 
   collect(s, quiet = false) {
     if (s.got) return false;
+    if (CHEAT.on && !quiet) return false;   // a cheated session earns nothing (cheats.js)
     s.got = true;
     this.save();
     const n = this.count;

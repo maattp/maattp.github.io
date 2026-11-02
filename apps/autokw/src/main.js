@@ -53,6 +53,7 @@ import { CoffeeShop } from './barista.js';
 import { Seafair } from './hydrorace.js';
 import { FireService, placeStations } from './firecalls.js';
 import { Respray, placeBays } from './respray.js';
+import { Cheats } from './cheats.js';   // Auto KW: GTA-style cheat codes (cheats.js)
 import { Garages, placeGarages } from './kwgarage.js';   // Auto KW: your save garages (kwgarage.js)
 import { Paramedics, MED_STATIONS } from './paramedic.js';   // Auto KW: paramedic calls (paramedic.js)
 import { BONES } from './peds.js';
@@ -196,7 +197,7 @@ let chicopee = null;   // Chicopee's bike park: trails, lifts, bikes (chicopee.j
 let crops = null;      // Auto KW: standing corn and soy, the tractors and combines (crops.js)
 let air = null;        // Auto KW: YKF's air traffic, the Cessnas and the news helicopter (airtraffic.js)
 let kartway = null, kartRace = null;   // Auto KW: Erbsville Kartway, its circuit and its races (kartway.js)
-let garages = null, garageBays = [], respray = null, resprayBays = [], paramedic = null, medStations = [];   // Auto KW: body shops and paramedic calls
+let cheats = null, garages = null, garageBays = [], respray = null, resprayBays = [], paramedic = null, medStations = [];   // Auto KW: body shops and paramedic calls
 let fire = null, fireStations = [];   // Seattle Fire: the stations' rigs, the water cannon, fire calls (firecalls.js)
 
 /** The WASTED / BUSTED card. */
@@ -1990,6 +1991,9 @@ function installShadowFade() {
     hud.places.push(...garages.places());
   } catch (e) { blog('garages: ' + e.message); garages = null; }
   try {
+    cheats = new Cheats({ scene, city, game, hud, audio, fx, traffic, player, phone: ON_PHONE, sys: () => ({ weather, tod, link, wildlife, rollup, police }) });
+  } catch (e) { blog('cheats: ' + e.message); cheats = null; }
+  try {
     const app = document.getElementById('app');
     const panel = eats && eats.panel ? eats.panel : new LedPanel(app);
     paramedic = new Paramedics({ scene, city, game, hud, audio, traffic, controls, panel, stations: medStations,
@@ -2075,7 +2079,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { get calendar() { return kcal; }, get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get garages() { return garages; }, get paramedic() { return paramedic; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { get calendar() { return kcal; }, get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get garages() { return garages; }, get cheats() { return cheats; }, get paramedic() { return paramedic; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;
   Object.defineProperty(window.__dbg, 'eggs', { get() { return eggs; } });
   window.__dbg.geese = geese;
@@ -2579,8 +2583,9 @@ function refreshPassport() {
     if (ht && nx) nx.textContent += ' · ' + ht;
   }
   if (garages) p.rows = p.rows.concat(garages.passportRows());
+  if (cheats) p.rows = p.rows.concat(cheats.passportRows());
   if (grid) grid.innerHTML = p.rows.map((r) => `<div class="ppRow${r.done >= r.total ? ' full' : ''}"><span>${r.label}</span>`
-    + `<b>${r.done}/${r.total}</b></div>`).join('');
+    + `<b>${r.done}/${r.total}</b></div>`).join('') + (cheats ? cheats.listHtml() : '');
 }
 let warpArmed = false;
 let showStation = () => {};   // wireUi: mark the tuned station in the menu
@@ -3474,6 +3479,7 @@ function frame(now) {
   if (events) events.update(dt, player, camera);
   if (kcal) kcal.update(dt, player, camera);
   if (respray) respray.tick(dt, player);
+  if (cheats) { try { cheats.tick(dt); } catch (e) { if (!cheats.err) { cheats.err = 1; console.warn('cheats: ' + e.message); } } }
   if (garages) { try { garages.tick(dt, player); } catch (e) { if (!garages.err) { garages.err = 1; console.warn('garages: ' + e.message); } } }
   if (paramedic) paramedic.update(dt, player);
   if (stunts) stunts.update(dt, player);

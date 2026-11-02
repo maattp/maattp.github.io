@@ -164,6 +164,29 @@ file and a guide disagree, this file wins.
   Health: waiting, lateral/braking g (grtbus Feel), landings and crashes (`onCrash`) hurt; 0 = lost. Pay
   ($90 + $35/level) x (0.4..1.0 by health) + time bonus; best level in `autokw-paramedic`. Phone: patient =
   1 pooled humanoid + 1 beam, ER 1 beam, only during a call.
+- **Cheat codes** (src/cheats.js; docs/cheats/*.jpg; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1
+  node tools/kw/cheatprobe.mjs <dir>`). GTA-style Easter egg, Waterloo flavoured. **Desktop:** type a code word
+  while playing; a 16-letter rolling buffer is matched by its ENDING (only whole words fire), ignored while paused /
+  dead / modifier held / focus in an input. **Phone:** tap the pause card's footer ("AUTO KW vN") 5 times in 4 s ->
+  an Enter-code box; a good code resumes the game and fires. **13 codes** (`CODES`): DOUBLEDOUBLE (full health),
+  UPTHERIM (a Roll Up prize car at the kerb, via rollup.js `_parkPrize` with a stand-in store), HONKHONK (two geese
+  Vs low overhead, kwwildlife `spawnV`), BOXOFTIMBITS (10 s timbit rain: ONE InstancedMesh of 90 phone / 160, built
+  on first use, off the scene after), WINTERISCOMING (snow 90 s via `weather.set`, then back to auto/the setting),
+  AMBERHOUR (dusk 120 s via tod, restores `tod.setting`, nothing saved), BUMPYROAD (30 s: AI cars' `yVis` bounces,
+  zeroed on end), IONSPEED (`link.boostK` 3 for 60 s: link.js `_service` scales the train clock), UNWANTED (clear
+  wanted + `police.clear`), WANTEDLEVEL5, KWHEELS (random delorean / zamboni / icecream / hearse / limo), BUGGYTIME,
+  WATERLOOPINK (your car -> pink 0xf0589c via `Vehicle.respray`; refused on foot or on a livery car). Codes were
+  renamed so none STARTS with a one-shot action key (E F P T N G L R) and the capture-phase handler SWALLOWS those keys
+  once they continue a live code prefix (2+ letters), so spelling a code never exits the car, opens photo mode (P),
+  starts a taxi shift, etc.; W A S D and the held keys (H J K Q Z) are never touched, and a lone P / E acts as normal.
+  **Cleanup:** `timed()` keeps one record per id (a repeat extends it), `end` restores what `begin` took; spawned cars
+  are ordinary 'apron' traffic vehicles capped at 4 (oldest removed); nothing uses `game.hold`. **GTA rule:** the
+  first cheat sets sessionStorage `autokw-cheated`; `CHEAT.on` then refuses golden eggs (kweggs.collect), stunt-jump
+  discovery, stunt pay and unique-jump credit (stunts.js) for the rest of the session (a reload keeps it, closing the
+  tab clears it); earlier progress is untouched. Found codes: localStorage `autokw-cheats`; the passport has "Codes
+  found n/13" and, from the first, the list (unfound as ?????). Idle cost: one keydown listener; `tick` returns at
+  once. Timbits cost 1 draw / ~7-13k tris for 10 s only. `__dbg.cheats` (`enter(code)`, `fx`, `own`, `found`, `tick(dt)`).
+  Not done: no gamepad entry; a swallowed key is also swallowed if you really meant it mid-spelling.
 - **Your garages** (src/kwgarage.js; docs/garage/*.jpg; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1
   node tools/kw/garageprobe.mjs <dir>`). GTA's save garages: three 3-stall garages (`GARAGES`: HOME on a
   residential street by University Ave & Bridge St, Waterloo -- `res: true` prefers `cls 'res'` edges, the
