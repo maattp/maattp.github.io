@@ -53,8 +53,14 @@ export const GARAGES = [
 // what a type is called in the passport row (anything else: its key, title-cased)
 const NAMES = { sedan: 'Sedan', hellcat: 'Hellcat', delorean: 'DeLorean-alike', zamboni: 'Zamboni', taxi: 'Taxi', police: 'Police car', opp: 'OPP cruiser',
   ambulance: 'Ambulance', wedge: 'Wedge', hearse: 'Hearse', limo: 'Limo', wiener: 'Weenie Wagon', swat: 'SWAT truck', pickup: 'Pickup', lifted: 'Lifted truck',
-  postvan: 'Post van', purovan: 'Puro van', amzvan: 'Amazon van', uhaul: 'U-Haul', icecream: 'Ice cream truck', suv: 'SUV', van: 'Van', coupe: 'Coupe' };
+  postvan: 'Post van', purovan: 'Puro van', amzvan: 'Amazon van', uhaul: 'U-Haul', icecream: 'Ice cream truck', suv: 'SUV', van: 'Van', coupe: 'Coupe',
+  // (the export list's types too: exportyard.js shows these on its board and in the passport)
+  crossover: 'Crossover', suv3: 'Three-row SUV', pickupcap: 'Pickup with a cap', compsedan: 'Compact sedan', minivan: 'Minivan', hatch: 'Hatchback',
+  civic: 'Civic hatch', wagon: 'Wagon', ev: 'EV sedan', evy: 'EV crossover', jeep: 'Wrangler', dually: 'Dually', compact: 'Compact',
+  muscle: 'Muscle car', sports: 'Sports car', convertible: 'Convertible', smart: 'Smart car', volvo: 'Volvo wagon', farmtruck: 'Farm truck' };
 const nameOf = (t) => NAMES[t] || (t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Car');
+/** What a vehicle type is called to the player (the garage rows, the export list). */
+export const typeName = nameOf;
 
 function readAll() {
   try {
