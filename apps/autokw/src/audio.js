@@ -1336,7 +1336,7 @@ const SOUNDS = {
   } },
   // Auto KW, the ice-cream truck's loop: a music-box tune (a folk melody in the
   // public domain), plinked on a bright tine, played through a small horn.
-  ic_jingle: { dur: 7.0, build(k, out, t, R) {
+  ic_jingle: { dur: 7.0, half: true, build(k, out, t, R) {
     const bus = k.gain(0.9);
     bus.connect(k.filt('bandpass', 2200, 0.7)).connect(out);
     const N = [[784, 1], [784, 1], [784, 1], [659, 1], [784, 1], [880, 1], [784, 2], [659, 1], [587, 1], [587, 1], [587, 1], [523, 1], [587, 1], [659, 1], [587, 2],
