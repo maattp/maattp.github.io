@@ -57,6 +57,7 @@ import { Respray, placeBays } from './respray.js';
 import { Cheats } from './cheats.js';   // Auto KW: GTA-style cheat codes (cheats.js)
 import { PhotoMode } from './kwphoto.js';   // Auto KW: photo mode (kwphoto.js)
 import { Garages, placeGarages } from './kwgarage.js';   // Auto KW: your save garages (kwgarage.js)
+import { ExportYard, placeYard } from './exportyard.js';   // Auto KW: import/export, the wanted list (exportyard.js)
 import { Paramedics, MED_STATIONS } from './paramedic.js';
 import { WinterJobs, PLOW_YARDS } from './winterjobs.js';   // Auto KW: the snowplow route and the Aud's Zamboni (winterjobs.js)   // Auto KW: paramedic calls (paramedic.js)
 import { BONES } from './peds.js';
@@ -200,6 +201,7 @@ let chicopee = null;   // Chicopee's bike park: trails, lifts, bikes (chicopee.j
 let crops = null;      // Auto KW: standing corn and soy, the tractors and combines (crops.js)
 let air = null;        // Auto KW: YKF's air traffic, the Cessnas and the news helicopter (airtraffic.js)
 let kartway = null, kartRace = null;   // Auto KW: Erbsville Kartway, its circuit and its races (kartway.js)
+let exportYard = null, exportSite = null;   // Auto KW: import/export at Parkway Auto Recyclers
 let cheats = null, photo = null, garages = null, garageBays = [], respray = null, resprayBays = [], paramedic = null, medStations = [], winter = null, plowStations = [];   // Auto KW: body shops and paramedic calls
 let fire = null, fireStations = [];   // Seattle Fire: the stations' rigs, the water cannon, fire calls (firecalls.js)
 
@@ -1375,6 +1377,7 @@ function installShadowFade() {
   try { plowStations = placeStations(city, world, (x, z) => world.waterLevelAt(x, z), PLOW_YARDS); } catch (e) { blog(`plow yard: ${e.message}`); plowStations = []; }
   try { resprayBays = placeBays(city, world, (x, z) => world.waterLevelAt(x, z)); } catch (e) { blog(`body shops: ${e.message}`); resprayBays = []; }
   try { garageBays = placeGarages(city, (x, z) => world.waterLevelAt(x, z)); } catch (e) { blog(`garages: ${e.message}`); garageBays = []; }
+  try { exportSite = placeYard(city, (x, z) => world.waterLevelAt(x, z)); } catch (e) { blog(`export yard: ${e.message}`); exportSite = null; }
   // The scene root never moves, and its own matrixAutoUpdate re-flagged EVERY
   // object in the world for a world-matrix multiply each frame. Static
   // subtrees are frozen; see freezeStatic.
@@ -1910,7 +1913,7 @@ function installShadowFade() {
   geese = new Geese({ scene, city, world, audio, hud, game });
   window.__geese = geese;
   try { wildlife = new Wildlife({ scene, city, world, traffic, audio, hud, game, fx, tod, player, camera }); } catch (e) { blog('wildlife: ' + e.message); wildlife = null; }
-  try { events = new RandomEvents({ scene, city, traffic, peds, game, fx, audio, hud, tod, player, camera, busy: () => !!((g2 && (g2.run || g2.active)) || (acts && acts.active) || (taxi && taxi.run) || (eats && eats.run) || (grt && grt.run) || (missions && missions.run) || (paramedic && paramedic.call) || (winter && winter.busy())) }); events.enabled = game.settings.events; } catch (e) { blog('events: ' + e.message); events = null; }
+  try { events = new RandomEvents({ scene, city, traffic, peds, game, fx, audio, hud, tod, player, camera, busy: jobsBusy }); events.enabled = game.settings.events; } catch (e) { blog('events: ' + e.message); events = null; }
   // The real calendar: Halloween, Remembrance, Christmas, Canada Day (kwcalendar.js)
   try {
     kcal = new KwCalendar({ scene, world, city, peds, tod, hud: { get hud() { return hud; } }, audio, events, player, camera, game, weather });
@@ -1996,6 +1999,10 @@ function installShadowFade() {
     garages = new Garages({ scene, city, game, hud, audio, traffic, bays: garageBays });
     hud.places.push(...garages.places());
   } catch (e) { blog('garages: ' + e.message); garages = null; }
+  try {
+    exportYard = new ExportYard({ scene, city, game, hud, audio, fx, traffic, types: VEHICLE_TYPES, busy: jobsBusy, site: exportSite });
+    hud.places.push(...exportYard.places());
+  } catch (e) { blog('export yard: ' + e.message); exportYard = null; }
   try {
     cheats = new Cheats({ scene, city, game, hud, audio, fx, traffic, player, phone: ON_PHONE, sys: () => ({ weather, tod, link, wildlife, rollup, police }) });
   } catch (e) { blog('cheats: ' + e.message); cheats = null; }
@@ -2096,7 +2103,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { get calendar() { return kcal; }, get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get garages() { return garages; }, get cheats() { return cheats; }, get photo() { return photo; }, get paramedic() { return paramedic; }, get winter() { return winter; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { get calendar() { return kcal; }, get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get garages() { return garages; }, get exportYard() { return exportYard; }, get cheats() { return cheats; }, get photo() { return photo; }, get paramedic() { return paramedic; }, get winter() { return winter; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;
   Object.defineProperty(window.__dbg, 'eggs', { get() { return eggs; } });
   window.__dbg.geese = geese;
@@ -2600,9 +2607,10 @@ function refreshPassport() {
     if (ht && nx) nx.textContent += ' · ' + ht;
   }
   if (garages) p.rows = p.rows.concat(garages.passportRows());
+  if (exportYard) p.rows = p.rows.concat(exportYard.passportRows());
   if (cheats) p.rows = p.rows.concat(cheats.passportRows());
   if (grid) grid.innerHTML = p.rows.map((r) => `<div class="ppRow${r.done >= r.total ? ' full' : ''}"><span>${r.label}</span>`
-    + `<b>${r.done}/${r.total}</b></div>`).join('') + (cheats ? cheats.listHtml() : '');
+    + `<b>${r.done}/${r.total}</b></div>`).join('') + (exportYard ? exportYard.listHtml() : '') + (cheats ? cheats.listHtml() : '');
 }
 let warpArmed = false;
 let showStation = () => {};   // wireUi: mark the tuned station in the menu
@@ -3006,6 +3014,11 @@ const POLICE_HQ = [43.4532, -80.4893];   // Waterloo Regional Police, Central Di
 /** An interior scene owns the canvas (audrink.js, oktoberfest.js): main draws no city under it. */
 function interiorUp() {
   return !!(hockey && hockey.active && hockey.view) || !!(fest && fest.inside);
+}
+
+/** A job is running (the random events and the export yard both stand aside for one). */
+function jobsBusy() {
+  return !!((g2 && (g2.run || g2.active)) || (acts && acts.active) || (taxi && taxi.run) || (eats && eats.run) || (grt && grt.run) || (missions && missions.run) || (paramedic && paramedic.call) || (winter && winter.busy()));
 }
 
 function reapHolds() {
@@ -3506,6 +3519,7 @@ function frame(now) {
   if (respray) respray.tick(dt, player);
   if (cheats) { try { cheats.tick(dt); } catch (e) { if (!cheats.err) { cheats.err = 1; console.warn('cheats: ' + e.message); } } }
   if (garages) { try { garages.tick(dt, player); } catch (e) { if (!garages.err) { garages.err = 1; console.warn('garages: ' + e.message); } } }
+  if (exportYard) { try { exportYard.tick(dt, player); } catch (e) { if (!exportYard.err) { exportYard.err = 1; console.warn('export yard: ' + e.message); } } }
   if (paramedic) paramedic.update(dt, player);
   if (winter) { try { winter.update(dt, player); } catch (e) { if (!winter.err) { winter.err = 1; console.warn('winter: ' + e.message); } } }
   if (stunts) stunts.update(dt, player);

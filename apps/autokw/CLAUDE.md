@@ -260,6 +260,44 @@ file and a guide disagree, this file wins.
   320 m; per frame three distance checks. Not done: dents are not stored; the garage is a stand-alone
   building beside a house, not a real house's door; a stored car's health is restored, nothing else.
   `__dbg.garages` (`sites`, `data`, `store(i, rec)`, `fits`, `count`).
+- **Import/Export: the wanted list** (src/exportyard.js; docs/export/*.jpg; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=..
+  AUTO_GPU=1 node tools/kw/exportprobe.mjs <dir>`). GTA's export cranes, at a REAL auto recycler: Parkway Auto
+  Recyclers on Manitou Dr (OSM way 68282593, `YARD.poly`; the yard's centre is 1 m outside the lot, between the
+  lot and the street). `placeYard` is placeGarages' search with a 23 x 18 m footprint, restricted to edges NAMED
+  `YARD.street`, slope tolerated to 2.8 m (the ground there falls ~2 m): surfaces are DRAPED on `terrainHeight`
+  (gravel, the concrete bay with chevrons and a stop bar), every structure stands on its own ground
+  (`groundUnder` -> `s.crane / crush / office / bales / board`, each `{hi, lo}`, footings down to `lo`), fences
+  panel by panel; solids via `city.addLandmarkSolids`; clear circles pushed before scatter. **The list:** 12
+  types per real calendar week (`weekOf`: Monday, local), 6 common / 4 uncommon / 2 rare from `POOL` (what
+  CIVILIAN_TYPES and traffic.js `varietyOf` really spawn; the rare ones are limo, hearse, delorean, icecream,
+  wiener; hellcat is NOT in it -- it only spawns in "Belltown", which KW has none of), seeded by (week, roll),
+  each with a price; re-rolled (roll + 1) the moment it is finished. Names: kwgarage.js `typeName` (its NAMES
+  grew the export types). localStorage `autokw-export` `{wk, roll, list:[{t,tier,p}], got, done, earned,
+  unlocked}`. **Delivery:** stop (< 1 m/s, 0.8 s) with the car's centre in the bay (|lx| < 2.6, lz 2.4-9.8).
+  `refusal(v)` in order: not a road car (or bike / bus / > 8.6 m), the yard's gift car (flag or a GOLD
+  DeLorean, so one fetched back out of a garage is caught too), `v.garage` still set, `jobsBusy()` (main.js, the
+  SAME function the random events use: g2, acts, taxi, eats, grt, missions, paramedic, winter), wanted > 0
+  ("lose the cops"), not on the list ("Not on the list -- ..."), already in this week, a wreck (dead, burning, or
+  health < 20 %). Bought: pay = price x (0.4 + 0.6 x health), list ticked and SAVED at once (the animation is
+  cosmetic), player put on foot on the apron right of the bay's mouth facing the crusher, car set
+  `mode = 'path'` (traffic skips it: no AI, no despawn, no car-car collisions) and `dead = true`
+  (nearestEnterable skips it). Then a per-site `seq` (~9.6 s; **no `game.hold`**, the world runs): the magnet
+  comes down, lifts the car (carried under the hook), the jib slews 90 deg to the crusher, lowers it in, the ram
+  comes down and squashes `v.group.scale` (thunk, airbrake hiss, crunch / glass / debris / slam, a dust burst
+  and sparks), `traffic.remove` at 7.3 s; `end()` always removes the car and stands the rig down. Last one:
+  $3,000 bonus, `unlocked`, and from then on a **gold DeLorean** (`GOLD`, the steel finish's colour set on
+  its bodyMat) stands by the gate as an 'apron' car within 320 m (removed past 480 m; drive it off and it is
+  yours, another stands there next visit). Map icon `export` (hud.js: a crane hook) with a hello listing what
+  is still wanted; the passport has "Export list (this week) n/12" and the list itself (`listHtml`, ticks,
+  prices, a star on the rare ones). **The rig:** jib + cable + magnet + ram are ONE dynamic mesh (`Rig`, 520
+  verts: each part built in its own frame, rewritten -- positions and normals -- only when yaw / cable /
+  ram change). **Phone cost:** nothing until 650 m (one distance check a frame, a week check every 20 s);
+  then 3 draws, 1.8k tris (yard 1 merged vertex-coloured mesh, the rig, the 512 x 624 board canvas,
+  redrawn only when the list changes), shown within 450 m; + the gift car's 3 draws inside 320 m once
+  unlocked. Boot: the site search is ~17 ms on the Mac. `__dbg.exportYard` (`sites`, `st`, `list()`,
+  `refusal(v)`, `seq`, `prize`, `newList(wk, roll)`). Not done: no gamepad/touch prompt beyond the toasts (none
+  needed: drive in and stop); the crane does not line up with a car parked off-centre, it carries it over;
+  the wrecks along the back fence are boxes; no night lighting on the board.
 - **Photo mode** (src/kwphoto.js; docs/photo/*.jpg; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1
   node tools/kw/photoprobe.mjs <dir>`). Pause menu > "Photo mode (P)", or P. `game.hold('photo')` (in reapHolds'
   `live`; `doRespawn` clearing it makes `update` exit quietly) freezes the world but the frame still draws every

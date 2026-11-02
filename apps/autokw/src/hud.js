@@ -46,7 +46,7 @@ function placeIcon(ctx, kind, x, y, r) {
   if (kind === 'okt' || kind === 'splash' || kind === 'skate' || kind === 'ball') { kwFunIcon(ctx, kind, x, y, r); return; }
   ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f'
     : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : kind === 'coffee' ? '#6a4a32' : kind === 'hydro' ? '#d8242c' : kind === 'link' ? '#d0202e' : kind === 'link2' ? '#0082ca' : kind === 'freight' ? '#b8501c' : kind === 'streetcar' ? '#8c1f2b' : kind === 'ferry' ? '#0b6e4f' : kind === 'bike' ? '#57b83a' : kind === 'pickle' ? '#c8a21a'
-    : kind === 'gun' ? '#2f6fb8' : kind === 'health' ? '#2e9a56' : kind === 'clinic' ? '#d8343a' : kind === 'wedge' ? '#7f8b96' : kind === 'tank' ? '#5f6b3a' : kind === 'fire' ? '#c4141c' : kind === 'paint' ? '#7b3fe4' : kind === 'garage' ? '#b9651b' : kind === 'medic' ? '#0d9f6a' : kind === 'winter' ? '#4a90d8'
+    : kind === 'gun' ? '#2f6fb8' : kind === 'health' ? '#2e9a56' : kind === 'clinic' ? '#d8343a' : kind === 'wedge' ? '#7f8b96' : kind === 'tank' ? '#5f6b3a' : kind === 'fire' ? '#c4141c' : kind === 'paint' ? '#7b3fe4' : kind === 'garage' ? '#b9651b' : kind === 'export' ? '#c9302c' : kind === 'medic' ? '#0d9f6a' : kind === 'winter' ? '#4a90d8'
     : kind === 'tims' ? '#c8102e' : kind === 'freshco' ? '#4c9a2a' : kind === 'school' ? '#123a6b' : kind === 'campus' ? '#330072' : kind === 'lm' ? '#6a4c9c'
     : kind === 'lcbo' ? '#007a3d' : kind === 'beer' ? '#00438c' : kind === 'shop' ? '#1f5fa8' : kind === 'plaza' ? '#5a6470'
     : kind === 'grt' ? '#0b4ea2' : kind === 'eats' ? '#e8442a' : kind === 'g2' ? '#1f8f4a' : '#e0782e';
@@ -164,6 +164,12 @@ function placeIcon(ctx, kind, x, y, r) {
     ctx.beginPath(); ctx.moveTo(x - r * 0.55, y - r * 0.05); ctx.lineTo(x, y - r * 0.55); ctx.lineTo(x + r * 0.55, y - r * 0.05); ctx.lineTo(x + r * 0.55, y + r * 0.5); ctx.lineTo(x - r * 0.55, y + r * 0.5); ctx.closePath(); ctx.fill();
     ctx.fillStyle = '#b9651b'; ctx.fillRect(x - r * 0.33, y + r * 0.08, r * 0.66, r * 0.42);
     ctx.fillStyle = '#ffffff'; for (const dy of [0.2, 0.34]) ctx.fillRect(x - r * 0.33, y + r * dy, r * 0.66, r * 0.04);
+  } else if (kind === 'export') {
+    // a crane's hook on its cable (the import/export yard, exportyard.js)
+    ctx.strokeStyle = '#ffffff'; ctx.fillStyle = '#ffffff'; ctx.lineWidth = r * 0.18; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x - r * 0.5, y - r * 0.55); ctx.lineTo(x + r * 0.5, y - r * 0.55); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x, y - r * 0.55); ctx.lineTo(x, y + r * 0.05); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x - r * 0.08, y + r * 0.2, r * 0.26, -Math.PI * 0.45, Math.PI * 1.05); ctx.stroke();
   } else if (kind === 'paint') {
     // a spray can: body, cap, and a puff from the nozzle (the body shops, respray.js)
     ctx.fillStyle = '#ffffff';
