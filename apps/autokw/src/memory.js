@@ -113,8 +113,12 @@ export function installGpuLedger(gl) {
   const texUnits = [];          // unit -> [2D, cube, 3D, 2D array]
   const TI = { 0x0DE1: 0, 0x8513: 1, 0x806F: 2, 0x8C1A: 3 };
   bindRaw('bindBuffer', (t, b) => { if (t === 0x8892) bufA = b; else if (t === 0x8893) bufE = b; else boundBuf.set(t, b); });
-  // a vertex array carries its own element-array binding: forget ours
-  bindRaw('bindVertexArray', () => { bufE = null; });
+  // (bindVertexArray is NOT wrapped. A vertex array carries its own
+  // element-array binding, so `bufE` is stale after one -- but every
+  // bufferData three r160 makes (WebGLAttributes.createBuffer, the UBOs) is
+  // straight after a bindBuffer of the same target, which sets it again, so
+  // the stale value is never read. Wrapping it cost ~160 extra JS calls a
+  // frame, one per draw: ~0.15 ms at 8x, v112's frame pass.)
   const bound = (t) => (t === 0x8892 ? bufA : t === 0x8893 ? bufE : boundBuf.get(t));
   bindRaw('activeTexture', (u) => { unit = u - 0x84C0; });
   bindRaw('bindTexture', (t, x) => { const i = TI[t]; if (i === undefined) return; const u = texUnits[unit] || (texUnits[unit] = [null, null, null, null]); u[i] = x; });
