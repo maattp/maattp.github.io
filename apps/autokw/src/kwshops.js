@@ -33,6 +33,7 @@ import { Builder } from './build.js';
 import { boxAt, faceFor, faceRoad, polyFace, polyMat, kwData, TIMS_TOWER, TIMS_FASCIA_W, TIMS_UNIT, timsTower, timsWhiteWord, kwSignKey } from './kw.js';
 
 let S = null;
+let BIZ_PLAN = [];
 /** fn({ A, Gb, Lb, ctx, solid, txt, bg, brandOf, logoOf }) run inside buildShops, before the atlas is finished. */
 export const SHOP_HOOKS = [];
 export function setShopData(d) {
@@ -471,8 +472,10 @@ class TextAtlas {
     const key = h + '|' + s;
     let c = this.cells.get(key);
     if (c !== undefined) return c;
-    this.m.font = `700 ${Math.round(h * 0.6)}px ${SANS}`;
-    const w = Math.min(maxW, Math.max(h * 1.6, Math.ceil(this.m.measureText(s).width + h * 0.7)));
+    const L = bizLook(s), t = L && L.up ? s.toUpperCase() : s;
+    const font = (px) => `${L && L.it ? 'italic ' : ''}${L ? L.w : 700} ${px}px ${L ? FONTS[L.f] : SANS}`;
+    this.m.font = font(Math.round(h * 0.6));
+    const w = Math.min(maxW, Math.max(h * 1.6, Math.ceil(this.m.measureText(t).width + h * 0.7)));
     let sh = this.shelves.find((q) => q.h === h && q.x + w <= this.W);
     if (!sh) {
       if (this.y + h > this.Hmax) { this.full++; this.cells.set(key, null); return null; }
@@ -480,7 +483,7 @@ class TextAtlas {
       this.shelves.push(sh);
       this.y += h + 2;
     }
-    c = { x: sh.x, y: sh.y, w, h, a: w / h, s };
+    c = { x: sh.x, y: sh.y, w, h, a: w / h, s: t, font };
     sh.x += w + 2;
     this.cells.set(key, c);
     return c;
@@ -518,7 +521,7 @@ class TextAtlas {
     g.fillStyle = '#ffffff'; g.textAlign = 'center'; g.textBaseline = 'middle';
     for (const c of this.cells.values()) {
       if (!c) continue;
-      g.font = `700 ${Math.round(c.h * 0.6)}px ${SANS}`;
+      g.font = c.font(Math.round(c.h * 0.6));
       g.fillText(c.s, c.x + c.w / 2, c.y + c.h * 0.54, c.w - c.h * 0.4);
     }
     const px = g.getImageData(0, 0, this.W, H).data;
@@ -762,6 +765,19 @@ export function prepShops(city) {
     else if (kind === 's') { if (b.h > 7.5 && A < 6000) b.h = 7.2; b.h = Math.max(b.h, 5.0); } else b.h = H;
     r.fronts++;
   });
+  // the main streets' shops-with-flats (S.biz): the plain boxes world.js keeps, signed in buildShops.
+  // Only where a cluster is already drawn (the same law as the fronts), the box left as it is.
+  BIZ_PLAN = [];
+  if (typeof window !== "undefined" && window.__noMainBiz) return r;
+  for (const q of S.biz || []) {
+    const b = boxAt(city, q[4], q[5], 2);
+    const why = !b ? "nobox" : (b.kw && (b.kw.skip || b.kw.poly || b.kw.fam || b.kw.shop || b.kw.sign)) ? "kw" + Object.keys(b.kw).filter((k) => ["skip", "poly", "fam", "shop", "sign"].includes(k)).join("+") : (b.h < 4.2 || b.w < 5 || b.d < 5) ? "small" : null;
+    if (why) { (r.bizWhy || (r.bizWhy = {}))[why] = ((r.bizWhy || {})[why] || 0) + 1; (r.bizNo || (r.bizNo = [])).push(q[0] + ":" + why); continue; }
+    if (outBy(ext.get(ckey(b.x, b.z)), b.x, b.z) > 45) continue;
+    BIZ_PLAN.push({ b, q });
+  }
+  r.biz = BIZ_PLAN.length;
+  if (typeof window !== "undefined") window.__kwBizPrep = { n: BIZ_PLAN.length, why: r.bizWhy, no: r.bizNo };
   return r;
 }
 /** The share of the ground in front of face fi (7 x 8 m deep, 7 across) that is car park. */
@@ -790,6 +806,71 @@ function lotShare(city, fr, fi) {
   return park / n;
 }
 const PLAIN_STYLES = new Set(['brick', 'lowrise', 'industrial']);
+
+// --- the businesses' own lettering ---------------------------------------------------------
+// A name set the way its sign is: [match, face, flags, panel, letters]. The face is
+// one of FONTS (all on the iPhone and the Mac), flags i italic, u capitals, b heavier.
+// The lettering atlas draws each name once in its face (TextAtlas.cell), so a look
+// costs nothing but its cell: no draw, no texture, no material.
+const FONTS = {
+  sans: SANS, serif: SERIF, script: SCRIPT,
+  slab: '"American Typewriter", Rockwell, "Courier New", Georgia, serif',
+  round: '"Arial Rounded MT Bold", "Avenir Next Rounded", Verdana, sans-serif',
+  cond: '"Avenir Next Condensed", "Arial Narrow", Futura, Helvetica, sans-serif',
+  heavy: 'Impact, "Arial Black", "Haettenschweiler", sans-serif',
+  copper: 'Copperplate, "Copperplate Gothic Light", Optima, Georgia, serif',
+  hand: '"Marker Felt", "Chalkboard SE", "Comic Sans MS", cursive',
+  geo: 'Futura, "Avenir Next", Verdana, sans-serif',
+};
+const BIZ_LOOK = [
+  // pizza and fast food
+  [/^Pizza Nova/i, 'heavy', 'i', '#ffffff', '#c8102e'], [/^Gino'?s/i, 'heavy', 'iu', '#c8102e', '#ffd200'],
+  [/^Mr\.? Sub/i, 'heavy', 'i', '#ffffff', '#d2232a'], [/^New York Fries/i, 'heavy', 'u', '#ffd200', '#c8102e'],
+  [/^Orange Julius/i, 'round', '', '#f26522', '#ffffff'], [/^Cinnabon/i, 'serif', 'i', '#ffffff', '#0b3e8a'],
+  [/^Manchu Wok/i, 'heavy', 'u', '#c8102e', '#ffd200'], [/^Famous Wok/i, 'heavy', 'u', '#c8102e', '#ffd200'],
+  [/^Bourbon St/i, 'copper', 'u', '#111111', '#e8c46a'], [/^Mary Brown/i, 'round', 'i', '#c8102e', '#ffffff'],
+  [/^Coffee (Time|Culture)/i, 'round', '', '#0b3e8a', '#ffd200'], [/^Wild Wing/i, 'heavy', 'u', '#111111', '#ffd200'],
+  [/^Domino/i, 'heavy', 'i', '#006491', '#ffffff'], [/^Little Caesars/i, 'heavy', 'iu', '#ff6600', '#ffffff'],
+  [/^Taco Bell/i, 'heavy', 'u', '#702082', '#ffffff'], [/^Pizza Hut/i, 'round', 'i', '#ee3124', '#ffffff'],
+  [/^Papa John/i, 'round', 'i', '#ffffff', '#c8102e'], [/^Chuck'?s Roadhouse/i, 'slab', 'u', '#3d2b1f', '#f4d58d'],
+  [/^Kelsey/i, 'serif', 'i', '#c8102e', '#ffffff'], [/^Jack Astor/i, 'serif', 'i', '#21543d', '#e8c46a'],
+  [/^Stacked Pancake/i, 'round', '', '#f4efe4', '#c8102e'], [/^Sunset Grill/i, 'round', 'i', '#0b3e8a', '#ffd200'],
+  [/^Denny/i, 'round', '', '#ffd200', '#c8102e'], [/^Arby/i, 'heavy', 'i', '#c8102e', '#ffffff'],
+  [/^Beertown/i, 'copper', 'u', '#3d2b1f', '#f4d58d'], [/^Boston Pizza/i, 'heavy', 'u', '#111111', '#e4002b'],
+  [/^Jimmy the Greek/i, 'serif', 'i', '#0b3e8a', '#ffffff'], [/^Mr\.? Pretzel/i, 'round', '', '#ffd200', '#c8102e'],
+  [/^Booster Juice/i, 'round', 'i', '#ffffff', '#e31837'], [/^Jugo Juice/i, 'round', '', '#7ac143', '#ffffff'],
+  [/^Gong Cha/i, 'round', '', '#c8102e', '#ffffff'], [/^Balzac/i, 'serif', 'i', '#21543d', '#f4efe4'],
+  [/^Planet Bean/i, 'slab', '', '#21543d', '#f4efe4'], [/^Starbucks/i, 'round', '', '#21543d', '#ffffff'],
+  [/^Abe Erb/i, 'copper', 'u', '#3d2b1f', '#f4d58d'], [/^Edelweiss/i, 'serif', 'i', '#21543d', '#f4efe4'],
+  [/^Brubakers/i, 'serif', 'i', '#7a1f24', '#f4efe4'], [/^Brothers Brewing|^Fixed Gear|^Wooly Pub|^Pennywhistle|^McCabe/i, 'copper', 'u', '#111111', '#e8c46a'],
+  [/Pub$|Tavern$|Public House$|Taphouse|Brew/i, 'copper', 'u', '#3d2b1f', '#f4d58d'],
+  // shows
+  [/^Galaxy Cinema/i, 'cond', 'iu', '#0b1e3f', '#ffb347'], [/Princess .*Cinema/i, 'serif', 'iu', '#7a1f24', '#f4efe4'],
+  [/Theatre$|Theater$|Cinemas?$/i, 'serif', 'iu', '#2c3e66', '#f0d36a'],
+  // the locals
+  [/^Vincenzo/i, 'serif', 'i', '#f4efe4', '#a4161a'], [/^Seven Shores/i, 'geo', 'u', '#0f6d6e', '#ffffff'],
+  [/^Golf'?s/i, 'serif', 'iu', '#111111', '#e8c46a'], [/^Kinkaku/i, 'serif', 'u', '#7a1f24', '#e8c46a'],
+  [/^Ethel/i, 'script', '', '#4a2a5a', '#ffffff'], [/^Morty/i, 'slab', '', '#21543d', '#f4efe4'],
+  [/^Kitchener Market|Farmers'? Market/i, 'slab', 'u', '#21543d', '#ffffff'], [/Bakery$|Boulangerie|Pastry/i, 'serif', 'i', '#f4efe4', '#7a1f24'],
+  [/Pharmacy$|Drugs?$/i, 'sans', 'b', '#ffffff', '#0b3e8a'], [/Barber/i, 'slab', 'u', '#ffffff', '#c8102e'],
+  [/Pho |Noodle|Ramen|Sushi|Thai|Wok|Teriyaki|Dumpling/i, 'heavy', '', '#c8102e', '#ffd200'],
+  [/Shawarma|Kebab|Falafel|Mediterran|Greek|Lebanese|Turkish/i, 'serif', 'i', '#f4efe4', '#0b3e8a'],
+  [/Indian|Tandoori|Biryani|Curry|Masala|Kitchen$/i, 'serif', 'i', '#7a1f24', '#ffd200'],
+  [/Cafe$|Café$|Coffee|Espresso|Roast|Tea\b/i, 'serif', 'i', '#3d2b1f', '#f4d58d'],
+  [/Bar & Grill|Grill$|Steak|Smokehouse|BBQ/i, 'slab', 'u', '#2b2b2b', '#e8c46a'],
+  [/Pizza|Pizzeria/i, 'heavy', 'i', '#ffffff', '#c8102e'],
+  [/Hotel$|Inn$|Suites$|Lodge$/i, 'serif', 'u', '#1f2a36', '#e8c46a'],
+];
+const bizCache = new Map();
+/** { f: face, it, up, w, panel, fg } for a name set in its own lettering, else null (the plain bold sans). */
+function bizLook(name) {
+  let r = bizCache.get(name);
+  if (r !== undefined) return r;
+  r = null;
+  for (const [re, f, fl, panel, fg] of BIZ_LOOK) if (re.test(name)) { r = { f, it: fl.includes('i'), up: fl.includes('u'), w: fl.includes('b') ? 800 : 700, panel, fg }; break; }
+  bizCache.set(name, r);
+  return r;
+}
 
 // --- the storefronts' colours -------------------------------------------------------------
 // The chains with no logo here lettered in their own colours, [panel, letters]
@@ -833,6 +914,8 @@ function nameHash(s) { let h = 7; for (let i = 0; i < s.length; i++) h = (h * 31
 /** [panel, letters] for a name: its chain's colours, else one of SIGN_PAL by name. */
 function chainCol(name) {
   const n = name || '';
+  const bl = bizLook(n);
+  if (bl) return [bl.panel, bl.fg];
   for (const [re, p, l] of CHAIN_COL) if (re.test(n)) return [p, l];
   return SIGN_PAL[nameHash(n) % SIGN_PAL.length];
 }
@@ -2389,6 +2472,60 @@ export function buildShops(ctx) {
   }
 
 
+
+  // the main streets' businesses (S.biz, prepShops BIZ_PLAN): each name on a board over its
+  // box's street-side ground floor, in the look BIZ_LOOK gives it; the locals first, until the lettering is full
+  {
+    const homeHas = (nm) => { for (const k of A.cells.keys()) if (k.startsWith('home:' + nm + '|')) return true; return false; };
+    const by = new Map();
+    for (const e of BIZ_PLAN) { let l = by.get(e.b); if (!l) by.set(e.b, (l = [])); l.push(e.q); }
+    let nb = 0, nfull = 0; const bizList = [];
+    const order = [...by.entries()].sort((a, c) => Math.min(...a[1].map((q) => q[3])) - Math.min(...c[1].map((q) => q[3])));
+    for (const [b, qs] of order) {
+      const fr = frameOf(b);
+      // the street face: the one with road in front of it, nearest the shops' points
+      let fi = -1, best = -Infinity;
+      for (let f = 0; f < 4; f++) {
+        if (fr.F[f].len < 4.5) continue;
+        const q5 = fr.P(f, 0, 0, 5), q11 = fr.P(f, 0, 0, 11), N = fr.N(f);
+        let sc = (city.onRoad(q5[0], q5[2], 5, false) ? 1 : 0) + (city.onRoad(q11[0], q11[2], 6, false) ? 0.5 : 0) + fr.F[f].len * 0.003;
+        for (const q of qs) sc -= Math.max(0, Math.abs((q[1] - b.x) * N[0] + (q[2] - b.z) * N[2]) - 1) * 0.02 / qs.length;
+        if (sc > best) { best = sc; fi = f; }
+      }
+      if (fi < 0) continue;
+      const L = fr.F[fi].len, N = fr.N(fi), y0 = T(b.x, b.z);
+      const used = [];
+      const list = qs.slice().sort((a, c) => a[3] - c[3]);
+      for (const q of list) {
+        if (homeHas(q[0])) continue;
+        const c = TX.cell(q[0], 22);
+        if (!c) { nfull++; continue; }
+        let lh = 1.1, lw = lh * c.a;
+        const room = L - 1.4;
+        if (lw > Math.min(8, room)) { lw = Math.min(8, room); lh = lw / c.a; }
+        if (lh < 0.5) continue;
+        const want = fr.tOf(fi, q[1], q[2]);
+        let t = null;
+        for (let d = 0; d < L && t === null; d += 0.5) for (const sg of d ? [1, -1] : [1]) {
+          const c0 = want + sg * d, hf = lw / 2 + 0.3;
+          if (c0 - hf < -L / 2 + 0.3 || c0 + hf > L / 2 - 0.3 || used.some(([a, e]) => c0 + hf > a && c0 - hf < e)) continue;
+          t = c0; break;
+        }
+        if (t === null) continue;
+        used.push([t - lw / 2 - 0.3, t + lw / 2 + 0.3]);
+        const [bgc, fg] = chainCol(q[0]);
+        const Bd = Gb(b.x, b.z), ys = y0 + Math.min(4.55, b.h - 0.8);
+        // a board a hand deep over the shop window, an awning lip under it, the name on it
+        fr.box(Bd, fi, t, 0.1, lw + 0.4, 0.16, ys - lh / 2 - 0.2, lh + 0.4, lin(bgc));
+
+        const [px, , pz] = fr.P(fi, t, 0, 0.2);
+        TX.quad(A, Lb(px, pz), c, fg, bgc, px, ys, pz, N[0], N[2], lw, lh);
+        nb++; bizList.push([q[0], +px.toFixed(1), +ys.toFixed(1), +pz.toFixed(1), +N[0].toFixed(2), +N[2].toFixed(2), q[6]]);
+      }
+    }
+    stats.biz = { signed: nb, boxes: by.size, full: nfull, of: BIZ_PLAN.length, list: bizList };
+  }
+
   const mat = A.finish(TX);
   const pm = polyMat();
   for (const [k, Bd] of geo) {
@@ -2413,7 +2550,7 @@ export function buildShops(ctx) {
   S.built = out;
   S.dts = dts;
   S.stats = stats;
-  if (typeof window !== "undefined") window.__kwShops = { stats, built: out, atlas: A, dts };
+  if (typeof window !== "undefined") window.__kwShops = { stats, built: out, atlas: A, tx: TX, dts };
 }
 
 /** The four corners of a w x h rectangle centred at (x, y, z) facing (nx, nz), `off` out. */

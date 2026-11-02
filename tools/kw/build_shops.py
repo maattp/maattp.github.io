@@ -462,8 +462,78 @@ def toward(x, z, street, r_named=250.0, r_any=120.0):
     return ((hit[1] - x) / hit[0], (hit[2] - z) / hit[0])
 
 
+# --- the businesses on the main streets -------------------------------------------
+# Every named business that nothing else signs: not in kw.js's detail zones (it
+# signs those), not in a plaza (the fascias) or a storefront (fronts), not a
+# brand drawn here. The shop-with-flats on a main street (Weber, King N, Guelph's
+# Wyndham, Elmira, Baden) that world.js draws as a plain box. kwshops.js hangs
+# each name on its building's street face. [name, x, z, rank, bx, bz, kind]
+# rank 0: a local the player names (LOCALS), 1 food / drink / shows, 2 shops, 3 the rest.
+LOCALS = re.compile(r"Ethel|Morty|Kinkaku|Vincenzo|Princess|Seven Shores|Golf's|Boathouse|Kitchener Market|Edelweiss|Beertown|Brubakers|Balzac|Planet Bean|"
+                    r"Albion|Galaxy Cin|Registry Theatre|Capitol|River Run|Guelph Concert|Jane Bond|Jack Astor|Kelsey|Stacked Pancake|Pizza Nova|Gino's|Mr\. Sub|"
+                    r"Brothers Brewing|Fixed Gear|Wooly Pub|Pennywhistle|McCabe|Frank & Stein|Bauer Bakery|Elmira Tandoori|Symposium|Pho Kinh|Milan|Silvertip|Harvest", re.I)
+BIZ_AMEN = {"restaurant", "cafe", "pub", "bar", "fast_food", "cinema", "theatre", "nightclub", "arts_centre", "ice_cream", "biergarten", "marketplace"}
+BIZ_TOUR = {"museum", "gallery", "hotel"}
+BIZ_SKIP = re.compile(r"Costco|Walmart|Pharmacy$|Garden Centre|ATM|Parking|Washroom|Vending|Locker|Kiosk|Tim Horton|FreshCo|Library|J ?& ?J Cards", re.I)  # (J&J Cards is a landmark: kwlandmarks2.js 'jj')
+
+
+def main_street_biz(raw, pois, blds, BG, fronts, plazas, inmap):
+    have = {}
+    for f in fronts:
+        for q in f[3]:
+            have.setdefault(norm(q[0]), []).append((q[1], q[2]))
+    for p in plazas:
+        for q in p.get("sh", []):
+            have.setdefault(norm(q[0]), []).append((q[1], q[2]))
+    cands = []
+    for s in raw["stores"]:
+        t = s["t"]
+        if t.get("amenity") in ("atm", "fuel") or t.get("shop") in ("vacant", "mall"):
+            continue
+        cands.append((s["n"], s["x"], s["z"], t.get("shop") or t.get("amenity") or "", s))
+    for q in pois:
+        t = q["t"]
+        if (t.get("amenity") in BIZ_AMEN or t.get("tourism") in BIZ_TOUR or t.get("shop")) and q["n"]:
+            cands.append((q["n"], q["x"], q["z"], t.get("shop") or t.get("amenity") or t.get("tourism"), q))
+    out, seen = [], []
+    for nm, x, z, kind, s in cands:
+        if not nm or len(nm) > 30 or BIZ_SKIP.search(nm) or INSIDE.search(nm) or not inmap(x, z):
+            continue
+        if any(math.hypot(x - zx, z - zz) < zr for zx, zz, zr in ZONES_W):
+            continue
+        k = norm(nm)
+        if any(math.hypot(x - a, z - b) < 60 for a, b in have.get(k, ())):
+            continue
+        if any(n2 == k and math.hypot(x - a, z - b) < 40 for n2, a, b in seen):
+            continue
+        if classify({"n": nm, "x": x, "z": z, "t": s["t"]}):
+            continue
+        # not inside a plaza (its fascias; the malls' tenants have no street face)
+        if any(in_poly(p["o"], x, z) for p in plazas):
+            continue
+        best, bd = None, 1e9
+        for i in BG.near(x, z, 20):
+            b = blds[i]
+            if b["A"] < 40 or b["A"] > 16000 or b.get("bt", "yes") in ("roof", "garage", "garages", "shed", "carport", "church", "cathedral", "chapel"):
+                continue
+            d = -1.0 / b["A"] if in_poly(b["o"], x, z) else edge_dist(b["o"], x, z)
+            if d > 14:
+                continue
+            if d < bd:
+                best, bd = b, d
+        if best is None:
+            continue
+        seen.append((k, x, z))
+        rank = 0 if LOCALS.search(nm) else (1 if kind in BIZ_AMEN or kind in BIZ_TOUR else (2 if kind else 3))
+        cx, cz = cen(best["o"])
+        out.append([nm, round(x, 1), round(z, 1), rank, round(cx, 1), round(cz, 1), kind])
+    out.sort(key=lambda q: (q[3], q[0]))
+    return out
+
+
 def main():
     raw = json.load(open(os.path.join(DATA, "raw_shops.json")))
+    pois = json.load(open(os.path.join(DATA, "raw_pois.json")))["pois"]
     SEVENS[:] = [(s["x"], s["z"]) for s in raw["stores"] if norm(s["t"].get("brand") or s["n"]) == "7-eleven" and s["t"].get("amenity") != "fuel"]
     blds = [b for b in json.load(open(os.path.join(DATA, "raw_buildings.json")))["buildings"] if len(b["o"]) >= 3]
     for b in blds:
@@ -604,12 +674,13 @@ def main():
     remap = {o: i for i, o in enumerate(used)}
     out_plazas = [plazas[i] for i in used]
     fronts = storefronts(raw, blds, BG, plazas, set(used), inmap)
+    biz = main_street_biz(raw, pois, blds, BG, fronts, out_plazas, inmap)
     out = []
     for s in stores:
         b = s["b"]
         out.append([s["k"], round(s["x"], 1), round(s["z"], 1), round(b[0][0], 1) if b else None, round(b[0][1], 1) if b else None,
                     remap.get(s["p"], -1), s["addr"], s["n"]])
-    doc = {"stores": out, "plazas": out_plazas, "names": sorted(names), "fronts": fronts}
+    doc = {"stores": out, "plazas": out_plazas, "names": sorted(names), "fronts": fronts, "biz": biz}
     with open(OUT, "w") as f:
         json.dump(doc, f, separators=(",", ":"), ensure_ascii=False)
     by = {}
@@ -622,6 +693,7 @@ def main():
     for f in fronts:
         fk[f[2]] = fk.get(f[2], 0) + 1
     print(f"  storefronts outside the plazas: {len(fronts)} buildings ({fk}), {sum(len(f[3]) for f in fronts)} names to letter")
+    print(f"  main-street businesses to sign: {len(biz)} ({sum(1 for q in biz if q[3] == 0)} locals of note)")
     if added:
         print("  from the official lists: " + ", ".join(f"{k} +{v}" for k, v in added.items()))
     for k in ("lcbo", "beer", "walmart"):

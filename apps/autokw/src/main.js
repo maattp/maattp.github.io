@@ -84,6 +84,7 @@ import { PoliceMissions } from './policemissions.js';
 import { TaxiFares } from './taxi.js';
 import { GrtBus, LedPanel } from './grtbus.js';
 import { KwEats } from './kweats.js';
+import { Counter } from './kwcounter.js';
 import { RoadTest, addDriveTestSign } from './g2test.js';
 import { Vehicle, TYPES as VEHICLE_TYPES, VEHICLE_HOOKS, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial, dropVehicleArrays } from './vehicles.js';
 
@@ -139,6 +140,7 @@ let pinball = null;  // the pinball at AOK on King St W in Kitchener (pinball.js
 let hockey = null;   // hockey night at Climate Pledge Arena (hockey.js)
 let rollup = null;
 let events = null;   // Auto KW: random events (kwevents.js)
+let counter = null;   // Auto KW: the counter at the main streets' food places and the locals (kwcounter.js)
 let dthru = null;    // Auto KW: the fast-food drive-throughs' lines and windows (drivethru.js)
 let fest = null;
 let derby = null;   // Auto KW: the Panthers' home run derby at Jack Couch Park (ballpark.js)
@@ -559,6 +561,9 @@ class Game {
           handL: b[BONES.handL], handR: b[BONES.handR] } });
       return true;
     }
+    // a food or drink place's counter on a main street (kwcounter.js): last, and it
+    // yields to a car or train you could get into (player.js takes ENTER next)
+    if (counter && counter.order(pl)) return true;
     return false;
   }
 
@@ -932,7 +937,7 @@ async function boot() {
   // (DriveTest is an amenity, not a shop: its lettering on the Ottawa Lackner Centre's strip, g2test.js)
   if (!window.__noG2) addDriveTestSign(md.shops);
   setShopData(md.shops);
-  { const k = prepShops(city); blog(`kw shops: drawn here: ${k.bigbox} big boxes, ${k.units} stand-alone stores, ${k.strips} plaza buildings, ${k.canopies} gas canopies, ${k.fronts} storefronts (${k.frontsNear || 0} within 150 m of a cluster's edge, ${k.frontsNext} of them merged into the next cell's, ${k.frontsOut} outside the clusters)`); }
+  { const k = prepShops(city); blog(`kw shops: drawn here: ${k.bigbox} big boxes, ${k.units} stand-alone stores, ${k.strips} plaza buildings, ${k.canopies} gas canopies, ${k.fronts} storefronts (${k.frontsNear || 0} within 150 m of a cluster's edge, ${k.frontsNext} of them merged into the next cell's, ${k.frontsOut} outside the clusters), ${k.biz || 0} main-street business boxes`); }
   addLandmarkExtra(buildShops);
   addLandmarkExtra(buildMarketTent);
   addLandmarkExtra(buildDome);
@@ -1658,6 +1663,13 @@ function installShadowFade() {
     });
     blog(`drive-throughs: ${dthru.list.length} lanes`);
   } catch (e) { blog('drivethru: ' + e.message); dthru = null; }
+  try {
+    const st = shopStats();
+    counter = new Counter({ busy: (pl) => !!(traffic.nearestEnterable(pl.x, pl.z, 5.0) || (pl.monorail && pl.monorail.boardable(pl.x, pl.y, pl.z)) || (pl.link && pl.link.boardable(pl.x, pl.y, pl.z)) || (pl.freight && pl.freight.boardable(pl.x, pl.y, pl.z)) || (pl.counterbal && pl.counterbal.boardable(pl.x, pl.y, pl.z))), hud: { showToast: (t, ms) => hud.showToast(t, ms) }, audio,
+      charge: (n) => { if (game.money < n) return false; game.money -= n; return true; },
+      heal: (n) => { player.health = Math.min(100, player.health + n); }, signs: (st && st.biz && st.biz.list) || [] });
+    blog(`counter: ${counter.doors.length} doors`);
+  } catch (e) { blog('counter: ' + e.message); counter = null; }
   // Oktoberfest: the festhallen (Concordia Club, Bingemans' Marshall Hall, the Schwaben Club) and the parade up Weber St
   try {
     fest = new Oktoberfest({ scene, city, traffic, audio, renderer, phone: ON_PHONE, camera, hud: { get hud() { return hud; } },
@@ -1990,7 +2002,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { get counter() { return counter; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;
   window.__dbg.rail = kwrail;   // Auto KW: the heavy rail (kwrail.js)   // Auto KW: the harvest (crops.js)
   Object.defineProperty(window.__dbg, 'roadFeel', { get() { return roadFeel; } });
@@ -3358,6 +3370,7 @@ function frame(now) {
 
   if (prof) lap('misc');
   if (dthru) dthru.update(dt, p.x, p.z, player);
+  if (counter) counter.update(dt, player);
   if (world.dcars) world.dcars.update(traffic, p.x, p.z, player, !dthru);
   traffic.update(dt, p.x, p.z, camDir, player);
   if (prof) lap('traffic');
