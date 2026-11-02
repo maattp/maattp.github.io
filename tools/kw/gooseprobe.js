@@ -1,0 +1,93 @@
+// The Goose 101.9 probe (goosefm.js). Run:
+//   AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1 VIEW_PROBE_FILE=tools/kw/gooseprobe.js node tools/kw/kwshots.mjs /tmp/x
+// Tunes the station through the real RADIO control, stubs speechSynthesis to
+// capture what is said, steps goose.update with fake time, and checks that
+// segments rotate, reactive lines appear when state changes, and the DJ goes
+// quiet (speechSynthesis.cancel) on pause / exit / hidden tab / a hold.
+(async () => {
+  const d = window.__dbg, G = window.__goose, A = d.audio, out = [];
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const ck = (n, ok, x) => out.push((ok ? 'PASS ' : 'FAIL ') + n + (x !== undefined ? ' ' + JSON.stringify(x) : ''));
+  if (!G) return ['FAIL no window.__goose'];
+  const said = []; let cancels = 0;
+  const fake = { speak(u) { said.push(u.text); setTimeout(() => u.onend && u.onend(), 5); }, cancel() { cancels++; }, getVoices() { return [{ lang: 'en-CA', name: 'stub' }]; } };
+  Object.defineProperty(window, 'speechSynthesis', { configurable: true, get: () => fake });
+  window.SpeechSynthesisUtterance = function (t) { this.text = t; };
+  window.__noSpeech = false;
+  const step = async (secs) => { for (let i = 0; i < secs; i++) { G.update(1); if (i % 4 === 0) await sleep(8); } await sleep(30); };
+  d.game.paused = false;
+  const p = d.player; if (!p.onFoot && p.exitVehicle) p.exitVehicle();
+  const v = d.traffic.spawnAt(-3858, -1585, 0, 'compsedan', 0x3060a0, 'free');
+  p.enterVehicle(v); await sleep(300);
+  A.musicOn = true;
+  ck('in a car', !p.onFoot);
+  A.setStation(0);
+  A._inCar = true;
+  await step(300);
+  ck('untuned: nothing said, no log', said.length === 0 && G.log.length === 0 && !G.on);
+  const btn = document.querySelector('[data-btn="radio"]');
+  let n = 0;
+  while (!A.stationIsGoose() && n++ < 40) { btn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); await sleep(5); }
+  ck('RADIO reaches The Goose 101.9', A.stationIsGoose() && A.stationName() === 'The Goose 101.9', A.stationName());
+  A._inCar = true;
+  await step(6);
+  ck('tuning in: the ident is first', G.log.length >= 1 && G.log[0].kind === 'ident' && said.length >= 1, G.log[0]);
+  const before = G.log.length;
+  await step(900);
+  const kinds = new Set(G.log.slice(before).map((s) => s.kind));
+  ck('900 s: 6-16 segments', G.log.length - before >= 6 && G.log.length - before <= 16, G.log.length - before);
+  ck('900 s: 4+ different kinds', kinds.size >= 4, [...kinds]);
+  ck('spoken matches logged lines', said.length >= G.log.reduce((a, s) => a + s.lines.length, 0) - 1, { said: said.length });
+  const gaps = G.log.slice(1).map((s, i) => s.at - G.log[i].at);
+  ck('gaps 55-160 s (after the ident)', gaps.slice(1).every((g) => g >= 55 && g <= 160), gaps.map((g) => Math.round(g)));
+  ck('every line a sane length', G.log.every((s) => s.lines.every((l) => l.length > 20 && l.length < 260)));
+  await step(200);
+  let m = G.log.length;
+  d.game.wanted = 2;
+  await step(30);
+  const w = G.log.slice(m).find((s) => s.kind === 'wanted');
+  ck('wanted 2 -> a W R P S bulletin within 30 s', !!w && /W R P S|pursuit|star/.test(w.lines[0]), w && w.lines[0]);
+  d.game.wanted = 0;
+  await step(200);
+  m = G.log.length;
+  const eg = d.eggs || window.__eggs; if (eg) eg.spots[0].got = true;
+  await step(30);
+  const e = G.log.slice(m).find((s) => s.kind === 'eggs');
+  ck('an egg found -> the egg line within 30 s', !!e && /one|1/.test(e.lines[0]), e && e.lines[0]);
+  if (eg) eg.spots[0].got = false;
+  const c = G.getCtx();
+  d.world && 0;
+  const wx = window.__weatherObj || null;
+  ck('ctx has a weather state', typeof c.wxState === 'string', c.wxState);
+  const snowy = Array.from({ length: 14 }, () => G.compose('weather', Object.create(c, { wxState: { value: 'snow' } }))[0]).join(' ');
+  ck('snow -> snow lines', /snow/i.test(snowy));
+  ck('streets named from the road graph', c.streets.length > 0 && c.streets.every((s) => typeof s === 'string'), c.streets.slice(0, 4));
+  const tr = G.compose('traffic', c)[0];
+  ck('traffic report names a street near you', c.streets.some((s) => tr.includes(s)), tr);
+  ck('Oktoberfest line', G.compose('cal', Object.create(c, { date: { value: new Date(2026, 9, 10) } }))[0].includes('Oktoberfest'));
+  ck('Remembrance Day line', /Remembrance/.test(G.compose('cal', Object.create(c, { date: { value: new Date(2026, 10, 11) } }))[0]));
+  await step(2);
+  let c0 = cancels;
+  d.game.paused = true; G.update(0.1);
+  ck('pause: cancel() and off', cancels > c0 && !G.on && !G.speaking);
+  d.game.paused = false; await step(5);
+  ck('unpause: back with an ident', G.on && G.log[G.log.length - 1].kind === 'ident');
+  c0 = cancels; d.game.hold('probe'); G.update(0.1);
+  ck('an activity hold: silent', cancels > c0 && !G.on);
+  d.game.release('probe'); await step(5);
+  c0 = cancels; Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); G.update(0.1);
+  ck('hidden tab: silent', cancels > c0 && !G.on);
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+  await step(5);
+  c0 = cancels; p.exitVehicle(); A._inCar = false; G.update(0.1);
+  ck('on foot: silent', cancels > c0 && !G.on);
+  p.enterVehicle(v); A._inCar = true; await step(5); c0 = cancels;
+  A.setStation(0); G.update(0.1);
+  ck('tuned away: silent', cancels > c0 && !G.on);
+  n = 0; while (!A.stationIsGoose() && n++ < 40) btn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+  A._inCar = true; window.__noSpeech = true; const s0 = said.length, l0 = G.log.length;
+  await step(200);
+  ck('__noSpeech: segments run, nothing spoken', G.log.length > l0 && said.length === s0, { segs: G.log.length - l0, said: said.length - s0 });
+  window.__noSpeech = false;
+  return out;
+})();

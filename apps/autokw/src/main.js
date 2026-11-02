@@ -65,6 +65,7 @@ import { addLandmarkExtra } from './landmarks.js';
 import { Chicopee } from './chicopee.js';
 import { prepFun, buildMarketTent, buildFlags, waveFlags, flagsGroup, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, buildDome } from './kwfun.js';
 import { Eggs } from './kweggs.js';
+import { GooseFM } from './goosefm.js';
 import { prepPlaces, buildPlaces, placesMap, placesStats, Geese } from './kwplaces.js';
 import { setUwData, prepCampus, buildCampus, campusKeepClear } from './uwcampus.js';
 import { prepUptown } from './kwuptown.js';
@@ -743,6 +744,7 @@ let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, control
 let pickups = [];
 let roadFeel = null;  // your road car over joints, rails and rumble strips (roadfeel.js)
 let buggies = null;   // the horse and buggies (buggy.js)
+let goose = null;     // Auto KW: The Goose 101.9, the fictional radio station's DJ (goosefm.js)
 let eggs = null;      // Auto KW: the Golden Goose Eggs and the small secrets (kweggs.js)
 let geese = null;     // Canada geese in Waterloo Park and on campus (kwplaces.js)
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
@@ -1917,6 +1919,35 @@ function installShadowFade() {
     for (const [k, c] of world.chunks) if (c.group && c.group.userData.homes) kcal.setChunk(k, c.group.userData.homes);
   } catch (e) { blog('calendar: ' + e.message); kcal = null; }
   try { eggs = new Eggs({ scene, city, world, audio, hud, game, traffic, fx }); window.__eggs = eggs; } catch (e) { blog('eggs failed: ' + e.message); eggs = null; }
+  try {
+    // The Goose's view of the game. Getters, so a frame costs nothing until a
+    // segment is composed; `paused` is also true under any hold (story, activity).
+    const gctx = {
+      get paused() { return !!(game.paused || game.mapOpen || game.held || bgPaused || player.dead); },
+      get wanted() { return game.wanted | 0; },
+      get place() { const p = player.position; return G.placeNameAt(p.x, p.z); },
+      get wxState() { return weather ? weather.state : 'clear'; },
+      get hour() { return tod && typeof tod.hour === 'number' ? tod.hour : new Date().getHours(); },
+      get eggs() { return eggs ? eggs.count : 0; },
+      get eggTotal() { return eggs ? eggs.total : 40; },
+      get jj() { return jj ? jj.setHave : 0; },
+      get jjTotal() { return 59; },
+      get date() { return kcal ? kcal.date : null; },
+      get streets() {
+        const p = player.position, out = [];
+        try {
+          for (const ei of city.edgesNear(p.x, p.z, 350)) {
+            const n = city.edges[ei].name;
+            if (n && !out.includes(n)) out.push(n);
+            if (out.length >= 8) break;
+          }
+        } catch (e) { /* no streets */ }
+        return out;
+      },
+    };
+    goose = new GooseFM(audio, () => gctx);
+    window.__goose = goose;
+  } catch (e) { blog('goose failed: ' + e.message); goose = null; }
   blog('kw places built: ' + JSON.stringify(placesStats()));
   link.bind({ game, hud, audio, player });
   if (kwrail) kwrail.bind({ game, hud, audio, player });
@@ -3390,6 +3421,7 @@ function frame(now) {
   if (game.paused || game.mapOpen) {
     controls.takeLook();
     audio.tickRadio();            // the radio plays on (and retunes) behind the menu
+    if (goose) goose.update(dt);  // (the DJ falls silent: its ctx reads paused)
     // NOTHING MOVES BEHIND THE MENU OR THE MAP, so stop drawing it. The whole
     // city, shadows and post chain were redrawn 60 times a second behind an
     // 86 %-opaque overlay: a paused phone ran as hot as a playing one. Two
@@ -3721,6 +3753,7 @@ function frame(now) {
   roadFeel.update(dt, player.onFoot ? null : player.vehicle, surfNow, link, kwrail);
   // audio state
   if (audio.ready) audio.update(dt, audioState(dt, input, p, camDir, buried));
+  if (goose) goose.update(dt);
 
   if (prof) lap('misc');
   hud.update(dt, game, player, traffic);
