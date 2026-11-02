@@ -1853,6 +1853,39 @@ file and a guide disagree, this file wins.
   0.5 s distance scan. `tools/kw/kwrepl.mjs` boots once and takes JS from a
   file (probe loop).
 
+- **The free-form stunt bonus** (src/airtime.js; docs/airtime/*.jpg; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=..
+  AUTO_GPU=1 [AUTO_PHONE=1] node tools/kw/airtimeprobe.mjs <dir> [noshots]`). GTA's airtime bonus: any time the
+  player's road vehicle (car, bike, quad, kart, bicycle; not aircraft, boats, the balloon, a DUKW afloat or on foot:
+  `eligible`) leaves the ground off anything. **The ground test is the vehicle's own**: `v.stunt` (stuntAir) or
+  `v.onGround === false` (the vertical follow's 0.25 m rule); no second query. Grounded cost: that one flag test a
+  frame (the jump record is reused). Measured in game seconds (the cinematic's slow motion does not inflate it):
+  airtime, horizontal distance take-off -> final touchdown, height (max over the take-off point, so a drop off a
+  deck scores 0 m high), flips (accumulated pitch or roll / 360) and spins (net accumulated yaw / 360). Counts from
+  `MIN_AIR` 0.8 s. **Tier** = 1 + how many of distance >= 30 m, height >= 4 m, flips >= 1, spins >= 1: STUNT BONUS,
+  DOUBLE STUNT, TRIPLE STUNT, QUADRUPLE STUNT, WATERLOO WARRIOR; pay $10/m + 50 / 150 / 400 / 800 / 2000. A touchdown
+  opens a `SETTLE` 0.6 s window (lifting off again inside it continues the same jump); **clean** = upright at
+  touchdown (cos pitch x cos roll > 0.5), not dead/wrecked, not in water or afloat, the player still in it. Clean:
+  the big centred DOM readout (`#airBig`, tier / stats / cash, "NEW BEST") + a `ui_check` arpeggio (one note a
+  tier) + `cash`; not clean: "STUNT FAILED" + why. From 0.8 s of air a small "AIRTIME n.n s" (`#airLive`). Both sit
+  at top 92-96 px, centred, under the toast row: clear of the stick and the pad in phone landscape; built on the
+  first jump. **No double print:** a flight stunts.js is scoring (`stunts.run.v` is this car) is silent here (no
+  readout, no pay; its stats still count toward the bests); a ramp launch under `STUNT_MIN_SPEED` is scored here.
+  **Cheats:** `CHEAT.on` shows the jump, pays and saves nothing. Bests in localStorage `autokw-airtime` {air, dist,
+  height, flips, spins, tier, n}; passport rows "Best stunt 2.9 s, 85 m, 1 flip" and "Best stunt bonus" (a row with
+  `text` / `wide`: main.js refreshPassport renders it instead of done/total). `doRespawn` calls `cancel()`; a
+  >25 m jump in one frame (a warp) or 30 s aloft drops the jump. `__dbg.airtime` (`last`, `save`, `j`, `cancel`).
+  **Probe:** fixed-dt launches through player.update on the YKF jump's clear corridor (`onGround = false` +
+  vy for the follow path, `stunt = true` for stuntAir's real steering spin, a roll rate written over the body for
+  a flip), every tier, pay, a bicycle and a quad, a 0.48 s hop = nothing, roof and Laurel Creek splashdown fail,
+  cheats, the Fairview ramp driven by __sj (stunts.js pays once, airtime silent), a jump judged by main.js's live
+  loop, the save, a fresh instance, the pause menu's rows, 0 exceptions; reading only `v.stunt` fails 15 checks.
+  Phone cost: 0 draws, 0 meshes, 2 DOM nodes + a style sheet after the first jump. **Not done / known:** the car
+  physics never tumbles a car in the air (stuntAir and the follow damp pitch and roll back), so a flip happens only
+  if something rotates the body (the probe does), and a roof landing likewise (no rollover physics). Spins: only
+  stuntAir spins the body (STUNT_SPIN, ~2.4 s for 360), and its flights are stunts.js's; off a crest the follow's
+  steering turns the PATH, not the body (measured: full steer, 1.45 s of air, 0 spins, 29 m instead of ~40). So
+  free-form play tops out at TRIPLE STUNT until the follow path gets an in-air body spin / tumble (vehicles.js).
+
 - **Wildlife: src/kwwildlife.js** (docs/wild/*.jpg; `__dbg.wildlife`; probe
   `tools/kw/wildprobe.js`, shots `tools/kw/wildviews.json` + `wildviews2.json`). Four
   cheap range-gated systems, no pause toggle, `window.__noWildlife = true` before boot

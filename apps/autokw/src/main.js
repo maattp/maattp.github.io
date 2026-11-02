@@ -60,6 +60,7 @@ import { Garages, placeGarages } from './kwgarage.js';   // Auto KW: your save g
 import { ExportYard, placeYard } from './exportyard.js';   // Auto KW: import/export, the wanted list (exportyard.js)
 import { CruiseNight } from './kwcruise.js';   // Auto KW: Friday and Saturday cruise nights (kwcruise.js)
 import { CarWash, prepWash, placeWashes } from './carwash.js';   // Auto KW: the drive-through tunnel car washes (carwash.js)
+import { Airtime } from './airtime.js';   // Auto KW: the free-form stunt bonus (airtime.js)
 import { Paramedics, MED_STATIONS } from './paramedic.js';
 import { WinterJobs, PLOW_YARDS } from './winterjobs.js';   // Auto KW: the snowplow route and the Aud's Zamboni (winterjobs.js)   // Auto KW: paramedic calls (paramedic.js)
 import { BONES } from './peds.js';
@@ -210,6 +211,7 @@ let story = null;   // Auto KW: KW Stories (story.js)
 let exportYard = null, exportSite = null;   // Auto KW: import/export at Parkway Auto Recyclers
 let cruise = null;   // Auto KW: cruise night (kwcruise.js)
 let carWash = null, washSites = [];   // Auto KW: the tunnel car washes (carwash.js)
+let airtime = null;   // Auto KW: the free-form stunt bonus (airtime.js)
 let cheats = null, photo = null, garages = null, garageBays = [], respray = null, resprayBays = [], paramedic = null, medStations = [], winter = null, plowStations = [];   // Auto KW: body shops and paramedic calls
 let fire = null, fireStations = [];   // Seattle Fire: the stations' rigs, the water cannon, fire calls (firecalls.js)
 
@@ -2014,6 +2016,7 @@ function installShadowFade() {
   tanks = new TankSystem({ scene, city, world, traffic, peds, fx, audio, hud, game, player, camera, root: document.getElementById('app') });
   tanks.spawnHome();
   acts.stunts = stunts;
+  try { airtime = new Airtime({ game, hud, audio, stunts }); } catch (e) { blog('airtime: ' + e.message); airtime = null; }
   // the law (police.js) and the police missions (policemissions.js)
   police = new Police({ scene, city, game, traffic, peds, fx, audio, hud });
   traffic.police = police;
@@ -2167,7 +2170,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { get story() { return story; }, get calendar() { return kcal; }, get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get garages() { return garages; }, get exportYard() { return exportYard; }, get cruise() { return cruise; }, get carWash() { return carWash; }, get cheats() { return cheats; }, get photo() { return photo; }, get paramedic() { return paramedic; }, get winter() { return winter; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { get story() { return story; }, get calendar() { return kcal; }, get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get garages() { return garages; }, get exportYard() { return exportYard; }, get cruise() { return cruise; }, get carWash() { return carWash; }, get airtime() { return airtime; }, get cheats() { return cheats; }, get photo() { return photo; }, get paramedic() { return paramedic; }, get winter() { return winter; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;
   Object.defineProperty(window.__dbg, 'eggs', { get() { return eggs; } });
   Object.defineProperty(window.__dbg, 'secrets', { get() { return secrets; } });
@@ -2719,7 +2722,10 @@ function refreshPassport() {
   if (garages) p.rows = p.rows.concat(garages.passportRows());
   if (exportYard) p.rows = p.rows.concat(exportYard.passportRows());
   if (cheats) p.rows = p.rows.concat(cheats.passportRows());
-  if (grid) grid.innerHTML = p.rows.map((r) => `<div class="ppRow${r.done >= r.total ? ' full' : ''}"><span>${r.label}</span>`
+  if (airtime) p.rows = p.rows.concat(airtime.passportRows());
+  // (a row with `text` shows it in place of done/total: airtime.js's best stunt)
+  if (grid) grid.innerHTML = p.rows.map((r) => r.text != null ? `<div class="ppRow"${r.wide ? ' style="grid-column:1/-1"' : ''}><span>${r.label}</span><b>${r.text}</b></div>`
+    : `<div class="ppRow${r.done >= r.total ? ' full' : ''}"><span>${r.label}</span>`
     + `<b>${r.done}/${r.total}</b></div>`).join('') + (exportYard ? exportYard.listHtml() : '') + (cheats ? cheats.listHtml() : '');
 }
 let warpArmed = false;
@@ -3172,6 +3178,7 @@ function doRespawn() {
   for (const who of game.holds) game.leaks.push(who);   // (nothing is playing if you are respawning)
   game.holds.clear();
   if (stunts) stunts.cancel();
+  if (airtime) airtime.cancel();
   game.dead = false;
   game.busted = false;
   game.wanted = 0;
@@ -3665,6 +3672,7 @@ function frame(now) {
   if (paramedic) paramedic.update(dt, player);
   if (winter) { try { winter.update(dt, player); } catch (e) { if (!winter.err) { winter.err = 1; console.warn('winter: ' + e.message); } } }
   if (stunts) stunts.update(dt, player);
+  if (airtime) { try { airtime.update(dt, player); } catch (e) { if (!airtime.err) { airtime.err = 1; console.warn('airtime: ' + e.message); } } }
   if (tanks) tanks.update(dt);
   if (acts) acts.update(dt, player);
   if (missions) missions.update(dt, player);
