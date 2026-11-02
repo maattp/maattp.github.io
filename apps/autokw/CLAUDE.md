@@ -275,7 +275,7 @@ file and a guide disagree, this file wins.
   runs an hour of storm at dt 0.05 (186 strikes, gaps 8.4-30.3 s, 23 % cc, 4 near), checks every thunder's delay
   against d / 343 (within one tick), snapshots all touched values before / during / after 240 flash renders (all
   restored) and around 6 live strikes, clear = no modulation and no strikes, spray: none dry / standing / with
-  `__noSpray`, more with speed, a bus > a car, 19 cars in range -> 12 spraying, the pool at but never over its cap,
+  `__noSpray`, more with speed, a bus > a car, 20 cars in range -> 12 spraying, the pool at but never over its cap,
   stops and empties when dried, grey slush in snow; breaking postRender or the dry gate makes it FAIL.
   **Phone cost** (AUTO_PHONE=1, posed views, clear -> rain -> storm with a bolt held): Conestoga Pkwy 141 -> 143 ->
   145 draws, 834k -> 842k -> 843k tris; downtown at night 179 -> 179 -> 181 (traffic noise +-3). The feature's
