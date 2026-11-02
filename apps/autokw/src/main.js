@@ -6,6 +6,8 @@ import { Weather, testWeatherShaders } from './weather.js';
 import { TimeOfDay, TODK } from './tod.js';
 import { LampGlow } from './lampglow.js';
 import { NightSky } from './nightsky.js';
+import { Storm } from './storm.js';      // thunderstorms: lightning, flash, thunder
+import { RoadSpray } from './spray.js';  // road spray / slush off the wheels
 import * as G from './geo.js';
 import { cityGenerator, cityStats } from './citygen.js';
 import { loadMapData } from './mapdata.js';
@@ -804,6 +806,8 @@ const _fogOverC = new THREE.Color();
 let weather = null;   // weather.js
 let tod = null;       // tod.js
 let nightSky = null;  // nightsky.js (aurora, shooting stars; the moon's phase is the dome's)
+let storm = null;     // storm.js (lightning and thunder in weather's `storm`)
+let spray = null;     // spray.js (road spray and slush off the wheels)
 let lampGlow = null;  // lampglow.js (the graphics pass: the lights themselves)
 let sunParked = false;   // tod.js night: the sun's shadow pass is skipped
 let fogAltK = 1;      // the haze's thickening with altitude (frame), times the weather's (draw)
@@ -1904,6 +1908,12 @@ function installShadowFade() {
   };
   peds.waterAt = (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; };   // the boats' rule (Player.waterAt)
   fx = new Effects(scene, tx);
+  // thunderstorms and road spray: a failure here never stops the game starting
+  try {
+    storm = new Storm({ scene, weather, hemi, amb: ambLight, world, audio, fx, phone: ON_PHONE,
+      ground: (x, z) => G.terrainHeight(x, z), toast: (m) => { if (hud) hud.showToast(m, 4200); } });
+  } catch (e) { blog('storm: ' + e.message); storm = null; }
+  try { spray = new RoadSpray({ scene, fx, city, weather, phone: ON_PHONE }); } catch (e) { blog('spray: ' + e.message); spray = null; }
   skidMarks = new SkidMarks(scene, ON_PHONE);
   orcas = null;
   saucer = new Saucer({ scene, city, traffic, fx, get hud() { return hud; }, get game() { return game; }, get audio() { return audio; }, get player() { return player; } });
@@ -2184,7 +2194,7 @@ function installShadowFade() {
   window.__dbg.fest = fest;
   window.__dbg.splash = splash;
   window.__dbg.skating = skating;
-  window.__dbg.events = events; window.__dbg.tod = tod; window.__dbg.sky = nightSky;
+  window.__dbg.events = events; window.__dbg.tod = tod; window.__dbg.sky = nightSky; window.__dbg.storm = storm; window.__dbg.spray = spray;
   window.__dbg.dthru = dthru;   // Auto KW: the drive-throughs (drivethru.js)
   window.__dbg.dcars = world.dcars || null;   // Auto KW: the cars in the driveways (kwdriveway.js)
   window.__dbg.derby = derby;   // Auto KW: the Panthers' home run derby (ballpark.js)   // Auto KW: the rink at Waterloo Public Square (skating.js)   // Auto KW: Big Splash (bigsplash.js)   // Auto KW: Oktoberfest (oktoberfest.js)   // Auto KW: Erbsville Kartway (kartway.js)
@@ -3903,6 +3913,8 @@ function frame(now) {
   if (prof) lap('hud');
   world.animate(dt, now / 1000);
   if (weather) weather.tick(dt);
+  if (storm) { try { storm.tick(dt, camera); } catch (e) { console.warn('storm', e); storm = null; } }
+  if (spray) { try { spray.light = tod ? 1 - 0.65 * tod.ni - 0.25 * tod.du * (1 - tod.ni) : 1; spray.update(dt, player, traffic ? traffic.cars : null, camera); } catch (e) { console.warn('spray', e); spray.points.visible = false; spray = null; } }
   if (prof) lap('animate');
   draw(now);
   // Render submission: three's scene walk, culling, sorting and the GL calls
@@ -4010,6 +4022,7 @@ function audioState(dt, input, p, camDir, buried) {
     rain: weather ? weather.cur.rain : 0,
     snowing: weather ? weather.cur.snow : 0,
     wet: weather ? weather.wet : 0,
+    storm: weather ? weather.cur.storm : 0,
     // the city's hum quieter after dark (tod.js; 0 by day)
     night: tod ? tod.ni : 0,
     inCar: !player.onFoot,
@@ -4133,7 +4146,10 @@ function draw(now) {
   if (world && world.dcars && game.paused && traffic) world.dcars.posed(traffic, camera, player);
   if (chunkCull) chunkCull.cull(camera);
   if (lmCull) lmCull.cull(camera);
-  try { renderer.render(scene, camera); } finally { if (chunkCull) chunkCull.restore(); if (lmCull) lmCull.restore(); }
+  // the storm's darker deck and the lightning's flash: values modulated for
+  // this render call only, every one put back in the finally (storm.js)
+  if (storm) { try { storm.preRender(camera); } catch (e) { storm.postRender(); console.warn('storm', e); storm = null; } }
+  try { renderer.render(scene, camera); } finally { if (chunkCull) chunkCull.restore(); if (lmCull) lmCull.restore(); if (storm) storm.postRender(); }
   // capture before the post passes reset the counters
   sceneStats.calls = renderer.info.render.calls;
   sceneStats.tris = renderer.info.render.triangles;

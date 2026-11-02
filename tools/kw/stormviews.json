@@ -1,0 +1,50 @@
+[
+ {
+  "name": "storm-bolt-downtown-night",
+  "eval": "(() => { const d = __dbg; __ss.clear(); d.storm.hold = false; d.storm.s.on = false; d.spray.light = 1;window.__tod = 'night'; window.__weather = 'storm'; d.weather.set('storm', true);const r = __ss.look([-1560, 760, 18], [-1000, 250, 70]); d.storm.hold = true; d.storm.strike({ kind: 'bolt', d: 2400, az: 0.12 }, d.camera); return r; })()"
+ },
+ {
+  "name": "storm-bolt-downtown-night2",
+  "eval": "(() => { const d = __dbg; __ss.clear(); d.storm.hold = false; d.storm.s.on = false; d.spray.light = 1;window.__tod = 'night'; window.__weather = 'storm'; d.weather.set('storm', true);const r = __ss.look([-1560, 760, 18], [-1000, 250, 70]); d.storm.hold = true; d.storm.strike({ kind: 'bolt', d: 4200, az: -0.25 }, d.camera); return r; })()"
+ },
+ {
+  "name": "storm-day-parkway-spray",
+  "eval": "(() => { const d = __dbg; __ss.clear(); d.storm.hold = false; d.storm.s.on = false; d.spray.light = 1;window.__tod = 'day'; window.__weather = 'storm'; d.weather.set('storm', true); const H = __ss.hwy(1214, 1555, 600, 'hwy'); const e = H.e, a = H.a, h = H.h; const rx = e.dz, rz = -e.dx, hw = e.hw; const P = (s, lat) => [a.x + e.dx * s + rx * lat, a.z + e.dz * s + rz * lat]; const L = []; for (const [s, lat, type, col, sp] of [[0.30, 0.45, 'semi', 0xc0392b, 25], [0.45, -0.45, 'bus', 0xffffff, 23], [0.22, -0.45, 'civic', 0x2255aa, 27], [0.55, 0.45, 'boxtruck', 0xeeeeee, 24], [0.12, 0.45, 'compact', 0x777777, 26]]) { const p = P(e.len * s, lat * hw); L.push({ v: __ss.spawn(p[0], p[1], h, type, col), sp }); } const lead = L[0].v; __ss.drive(L, 1.6, () => { d.camera.position.set(lead.x - lead.forward.x * 20 + rx * (hw + 4), lead.y + 3, lead.z - lead.forward.z * 20 + rz * (hw + 4)); }); const f = lead.forward; const r = __ss.look([lead.x - f.x * 24 + -rx * (hw + 3.5), lead.z - f.z * 24 + -rz * (hw + 3.5), 2.4], [lead.x + f.x * 10, lead.z + f.z * 10, 1.5]); d.storm.hold = true; d.storm.strike({ kind: 'bolt', d: 3200, az: 0.2 }, d.camera); return r; })()"
+ },
+ {
+  "name": "storm-day-401-spray",
+  "eval": "(() => { const d = __dbg; __ss.clear(); d.storm.hold = false; d.storm.s.on = false; d.spray.light = 1;window.__tod = 'day'; window.__weather = 'storm'; d.weather.set('storm', true); const H = __ss.hwy(9632, 3777, 600, 'hwy'); const e = H.e, a = H.a, h = H.h; const rx = e.dz, rz = -e.dx, hw = e.hw; const P = (s, lat) => [a.x + e.dx * s + rx * lat, a.z + e.dz * s + rz * lat]; const L = []; for (const [s, lat, type, col, sp] of [[0.30, 0.45, 'semi', 0xc0392b, 25], [0.45, -0.45, 'bus', 0xffffff, 23], [0.22, -0.45, 'civic', 0x2255aa, 27], [0.55, 0.45, 'boxtruck', 0xeeeeee, 24], [0.12, 0.45, 'compact', 0x777777, 26]]) { const p = P(e.len * s, lat * hw); L.push({ v: __ss.spawn(p[0], p[1], h, type, col), sp }); } const lead = L[0].v; __ss.drive(L, 1.6, () => { d.camera.position.set(lead.x - lead.forward.x * 20 + rx * (hw + 4), lead.y + 3, lead.z - lead.forward.z * 20 + rz * (hw + 4)); }); const f = lead.forward; const r = __ss.look([lead.x - f.x * 30 + -rx * (hw + 4), lead.z - f.z * 30 + -rz * (hw + 4), 3], [lead.x + f.x * 8, lead.z + f.z * 8, 1.5]); return r; })()"
+ },
+ {
+  "name": "storm-rooster-tail",
+  "eval": "(() => { const d = __dbg; __ss.clear(); d.storm.hold = false; d.storm.s.on = false; d.spray.light = 1;window.__tod = 'day'; window.__weather = 'storm'; d.weather.set('storm', true); const H = __ss.hwy(1214, 1555, 600, 'hwy'); const e = H.e, a = H.a, h = H.h; const rx = e.dz, rz = -e.dx, hw = e.hw; const P = (s, lat) => [a.x + e.dx * s + rx * lat, a.z + e.dz * s + rz * lat]; const L = []; for (const [s, lat, type, col, sp] of [[0.4, 0.3, 'civic', 0xd0202a, 31]]) { const p = P(e.len * s, lat * hw); L.push({ v: __ss.spawn(p[0], p[1], h, type, col), sp }); } const lead = L[0].v; __ss.drive(L, 1.2, () => { d.camera.position.set(lead.x - lead.forward.x * 20 + rx * (hw + 4), lead.y + 3, lead.z - lead.forward.z * 20 + rz * (hw + 4)); }); const f = lead.forward; const r = __ss.look([lead.x - f.x * 7.5, lead.z - f.z * 7.5, 2.3], [lead.x + f.x * 12, lead.z + f.z * 12, 0.6]); return r; })()"
+ },
+ {
+  "name": "storm-rooster-dusk",
+  "eval": "(() => { const d = __dbg; __ss.clear(); d.storm.hold = false; d.storm.s.on = false; d.spray.light = 1;window.__tod = 'dusk'; window.__weather = 'rain'; d.weather.set('rain', true);d.spray.light = 0.75; const H = __ss.hwy(-1138, 238, 600, 'art'); const e = H.e, a = H.a, h = H.h; const rx = e.dz, rz = -e.dx, hw = e.hw; const P = (s, lat) => [a.x + e.dx * s + rx * lat, a.z + e.dz * s + rz * lat]; const L = []; for (const [s, lat, type, col, sp] of [[0.5, 0.3, 'civic', 0xd0202a, 22]]) { const p = P(e.len * s, lat * hw); L.push({ v: __ss.spawn(p[0], p[1], h, type, col), sp }); } const lead = L[0].v; __ss.drive(L, 1.2, () => { d.camera.position.set(lead.x - lead.forward.x * 20 + rx * (hw + 4), lead.y + 3, lead.z - lead.forward.z * 20 + rz * (hw + 4)); }); const f = lead.forward; const r = __ss.look([lead.x - f.x * 7.5, lead.z - f.z * 7.5, 2.3], [lead.x + f.x * 12, lead.z + f.z * 12, 0.6]); return r; })()"
+ },
+ {
+  "name": "storm-slush",
+  "eval": "(() => { const d = __dbg; __ss.clear(); d.storm.hold = false; d.storm.s.on = false; d.spray.light = 1;window.__tod = 'day'; window.__weather = 'snow'; d.weather.set('snow', true); const H = __ss.hwy(1214, 1555, 600, 'hwy'); const e = H.e, a = H.a, h = H.h; const rx = e.dz, rz = -e.dx, hw = e.hw; const P = (s, lat) => [a.x + e.dx * s + rx * lat, a.z + e.dz * s + rz * lat]; const L = []; for (const [s, lat, type, col, sp] of [[0.45, 0.3, 'civic', 0x2255aa, 24], [0.3, -0.3, 'bus', 0xffffff, 22]]) { const p = P(e.len * s, lat * hw); L.push({ v: __ss.spawn(p[0], p[1], h, type, col), sp }); } const lead = L[0].v; __ss.drive(L, 1.4, () => { d.camera.position.set(lead.x - lead.forward.x * 20 + rx * (hw + 4), lead.y + 3, lead.z - lead.forward.z * 20 + rz * (hw + 4)); }); const f = lead.forward; const r = __ss.look([lead.x - f.x * 9 - rx * 1.5, lead.z - f.z * 9 - rz * 1.5, 1.9], [lead.x + f.x * 10, lead.z + f.z * 10, 0.6]); return r; })()"
+ },
+ {
+  "name": "storm-slush-side",
+  "eval": "(() => { const d = __dbg; __ss.clear(); d.storm.hold = false; d.storm.s.on = false; d.spray.light = 1;window.__tod = 'day'; window.__weather = 'snow'; d.weather.set('snow', true); const H = __ss.hwy(9632, 3777, 600, 'hwy'); const e = H.e, a = H.a, h = H.h; const rx = e.dz, rz = -e.dx, hw = e.hw; const P = (s, lat) => [a.x + e.dx * s + rx * lat, a.z + e.dz * s + rz * lat]; const L = []; for (const [s, lat, type, col, sp] of [[0.45, 0.4, 'semi', 0x2a5caa, 24], [0.3, -0.4, 'civic', 0x888888, 26]]) { const p = P(e.len * s, lat * hw); L.push({ v: __ss.spawn(p[0], p[1], h, type, col), sp }); } const lead = L[0].v; __ss.drive(L, 1.6, () => { d.camera.position.set(lead.x - lead.forward.x * 20 + rx * (hw + 4), lead.y + 3, lead.z - lead.forward.z * 20 + rz * (hw + 4)); }); const f = lead.forward; const r = __ss.look([lead.x - f.x * 30 - rx * (hw + 4), lead.z - f.z * 30 - rz * (hw + 4), 3], [lead.x + f.x * 8, lead.z + f.z * 8, 1.5]); return r; })()"
+ },
+ {
+  "name": "storm-near-strike",
+  "eval": "(() => { const d = __dbg; __ss.clear(); d.storm.hold = false; d.storm.s.on = false; d.spray.light = 1;window.__tod = 'day'; window.__weather = 'storm'; d.weather.set('storm', true);const r = __ss.look([1000, 1300, 2], [1400, 1200, 30]); d.storm.hold = true; d.storm.strike({ kind: 'near', d: 260, az: 0.05 }, d.camera); return r; })()"
+ },
+ {
+  "name": "storm-day-noflash",
+  "eval": "(() => { const d = __dbg; __ss.clear(); d.storm.hold = false; d.storm.s.on = false; d.spray.light = 1;window.__tod = 'day'; window.__weather = 'storm'; d.weather.set('storm', true);const r = __ss.look([1000, 1300, 2], [1400, 1200, 30]); return r; })()"
+ },
+ {
+  "name": "storm-cc-night",
+  "eval": "(() => { const d = __dbg; __ss.clear(); d.storm.hold = false; d.storm.s.on = false; d.spray.light = 1;window.__tod = 'night'; window.__weather = 'storm'; d.weather.set('storm', true);const r = __ss.look([-1560, 760, 18], [-1000, 250, 70]); d.storm.hold = true; d.storm.strike({ kind: 'cc', d: 3000 }, d.camera); return r; })()"
+ },
+ {
+  "name": "storm-night-noflash",
+  "eval": "(() => { const d = __dbg; __ss.clear(); d.storm.hold = false; d.storm.s.on = false; d.spray.light = 1;window.__tod = 'night'; window.__weather = 'storm'; d.weather.set('storm', true);const r = __ss.look([-1560, 760, 18], [-1000, 250, 70]); return r; })()"
+ }
+]

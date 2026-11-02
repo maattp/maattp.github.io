@@ -4134,7 +4134,8 @@ export class Audio {
       // RAIN: a broad hiss outside; in a car the roof's drumming, lower
       // (the noise played slower) and a little quieter; in a bore, nearly gone
       if (this.loops.rain) {
-        const rn = clamp(s.rain || 0, 0, 1);
+        // a storm's rain is heavier (storm.js): up to +45 %
+        const rn = clamp(s.rain || 0, 0, 1) * (1 + 0.45 * clamp(s.storm || 0, 0, 1));
         this.loops.rain.set(rn * (inCar ? 0.17 : 0.24) * (enc ? 0.12 : 1) * clamp(1 - (A.alt - 25) / 140, 0.15, 1), t, 0.8, inCar ? 0.62 : 1);
       }
       this.loops.water.set(A.water * 0.26 * (inCar ? 0.5 : 1) * clamp(1 - (A.alt - 10) / 80, 0, 1) * (enc ? 0 : 1), t, 0.6);
