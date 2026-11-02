@@ -33,6 +33,10 @@ const BANK = {
       () => 'Rain on the way down. The Grand River is thinking about its options.',
       () => 'Wet out there. Slow down on the bridges, and give the geese the right of way. They already assume it.',
     ],
+    storm: [
+      () => 'Thunderstorm warning for Waterloo Region, folks. If you can count to three between the flash and the boom, it is a kilometre off. If you cannot count, stay inside.',
+      () => 'Lightning over the Grand tonight. The geese are unbothered. The geese fear nothing.',
+    ],
     drizzle: [() => 'A little drizzle out there. Not enough to cancel anything, just enough to ruin your hair.'],
     fog: [() => 'Fog across the region this hour. If you hear a honk and cannot see its source, that is probably us.'],
     overcast: [() => 'Grey skies over the Tri-Cities. So, a normal day. Whatever day it is.'],

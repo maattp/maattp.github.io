@@ -29,7 +29,9 @@
 // Harness: `window.__weather = 'rain'` (clear / overcast / rain / snow / fog /
 // auto) snaps to that weather at the next frame; `window.__wx` is the live
 // state (and `__wx.set(mode, instant)`). The pause menu's setting is
-// localStorage `autokw-weather` (auto / clear / rain / snow).
+// localStorage `autokw-weather` (auto / clear / rain / storm / snow).
+// `storm` is rain at full strength plus storm.js's lightning, thunder,
+// gusts and the darker deck (cur.storm 0..1; 0 in every other state).
 
 import * as THREE from './three.js';
 // the time of day's block rides the same hook (tod.js; it imports nothing back)
@@ -307,12 +309,14 @@ function compileTest(renderer) {
 
 /** Each state's targets: overcast, rain, snow, fog (0..1). */
 const STATES = {
-  clear: { over: 0, rain: 0, snow: 0, fog: 0 },
-  overcast: { over: 1, rain: 0, snow: 0, fog: 0.12 },
-  rain: { over: 1, rain: 1, snow: 0, fog: 0.25 },
-  drizzle: { over: 0.9, rain: 0.35, snow: 0, fog: 0.45 },
-  snow: { over: 1, rain: 0, snow: 1, fog: 0.35 },
-  fog: { over: 0.8, rain: 0, snow: 0, fog: 1 },
+  clear: { over: 0, rain: 0, snow: 0, fog: 0, storm: 0 },
+  overcast: { over: 1, rain: 0, snow: 0, fog: 0.12, storm: 0 },
+  rain: { over: 1, rain: 1, snow: 0, fog: 0.25, storm: 0 },
+  drizzle: { over: 0.9, rain: 0.35, snow: 0, fog: 0.45, storm: 0 },
+  snow: { over: 1, rain: 0, snow: 1, fog: 0.35, storm: 0 },
+  fog: { over: 0.8, rain: 0, snow: 0, fog: 1, storm: 0 },
+  // a thunderstorm (storm.js): heavy rain, gusts, a darker deck, lightning
+  storm: { over: 1, rain: 1, snow: 0, fog: 0.3, storm: 1 },
 };
 export const WEATHER_STATES = Object.keys(STATES);
 /**
@@ -321,22 +325,24 @@ export const WEATHER_STATES = Object.keys(STATES);
  * the most rain April-May and Aug-Nov, the clearest weeks July-September,
  * fog mostly spring and fall mornings.
  */
+// (storm: thunderstorms -- Kitchener-Waterloo has ~25-30 thunder days a
+// year, nearly all May to September, the most in June-August)
 const MONTHS = [
   { clear: 0.24, overcast: 0.3, snow: 0.4, rain: 0.03, fog: 0.03 },                 // Jan
   { clear: 0.28, overcast: 0.28, snow: 0.38, rain: 0.03, fog: 0.03 },               // Feb
   { clear: 0.3, overcast: 0.28, snow: 0.22, rain: 0.12, fog: 0.08 },                // Mar
-  { clear: 0.32, overcast: 0.24, rain: 0.3, drizzle: 0.06, snow: 0.03, fog: 0.05 }, // Apr
-  { clear: 0.38, overcast: 0.22, rain: 0.3, drizzle: 0.05, fog: 0.05 },             // May
-  { clear: 0.5, overcast: 0.2, rain: 0.26, fog: 0.04 },                             // Jun
-  { clear: 0.58, overcast: 0.16, rain: 0.24, fog: 0.02 },                           // Jul
-  { clear: 0.52, overcast: 0.18, rain: 0.27, fog: 0.03 },                           // Aug
-  { clear: 0.46, overcast: 0.22, rain: 0.25, drizzle: 0.03, fog: 0.04 },            // Sep
-  { clear: 0.36, overcast: 0.28, rain: 0.24, drizzle: 0.06, fog: 0.06 },            // Oct
+  { clear: 0.32, overcast: 0.24, rain: 0.29, drizzle: 0.06, snow: 0.03, fog: 0.05, storm: 0.01 }, // Apr
+  { clear: 0.38, overcast: 0.22, rain: 0.27, drizzle: 0.05, fog: 0.05, storm: 0.03 },             // May
+  { clear: 0.5, overcast: 0.2, rain: 0.21, fog: 0.04, storm: 0.05 },                // Jun
+  { clear: 0.58, overcast: 0.16, rain: 0.18, fog: 0.02, storm: 0.06 },              // Jul
+  { clear: 0.52, overcast: 0.18, rain: 0.21, fog: 0.03, storm: 0.06 },              // Aug
+  { clear: 0.46, overcast: 0.22, rain: 0.23, drizzle: 0.03, fog: 0.04, storm: 0.02 },             // Sep
+  { clear: 0.36, overcast: 0.28, rain: 0.23, drizzle: 0.06, fog: 0.06, storm: 0.01 },             // Oct
   { clear: 0.24, overcast: 0.34, rain: 0.2, drizzle: 0.04, snow: 0.14, fog: 0.04 }, // Nov
   { clear: 0.22, overcast: 0.32, snow: 0.38, rain: 0.05, fog: 0.03 },               // Dec
 ];
 const SETTING_KEY = 'autokw-weather';
-const SETTINGS = ['auto', 'clear', 'rain', 'snow'];
+const SETTINGS = ['auto', 'clear', 'rain', 'storm', 'snow'];
 /** How long (s) an auto state lasts, and how long the auto change between two takes. */
 const HOLD_MIN = 240, HOLD_MAX = 540, AUTO_FADE = 50, SET_FADE = 7;
 /** The first auto state is clear for this long: a fresh session (and every
@@ -469,7 +475,7 @@ export class Weather {
     };
     this.setting = loadWeatherSetting();
     // the live mix and where it is heading
-    this.cur = { over: 0, rain: 0, snow: 0, fog: 0 };
+    this.cur = { over: 0, rain: 0, snow: 0, fog: 0, storm: 0 };
     this.target = { ...STATES.clear };
     this.state = 'clear';
     this.wet = 0;     // the ground's wetness: lags the rain, dries slowly
@@ -477,6 +483,7 @@ export class Weather {
     this.fade = SET_FADE;
     this.hold = FIRST_CLEAR[0] + Math.random() * (FIRST_CLEAR[1] - FIRST_CLEAR[0]);
     this.t = 0;
+    this.gust = 0;    // the storm's gust 0..~1.5 (draw; storm.js reads it)
     this.precip = null;
     this.envLevel = 0;
     this.fogK = 1;
@@ -524,7 +531,7 @@ export class Weather {
 
   settled() {
     const c = this.cur, t = this.target;
-    return c.over === t.over && c.rain === t.rain && c.snow === t.snow && c.fog === t.fog
+    return c.over === t.over && c.rain === t.rain && c.snow === t.snow && c.fog === t.fog && c.storm === t.storm
       && this.wet === this._wetGoal() && this.cover === this._coverGoal();
   }
   _wetGoal() { return this.cur.rain > 0.15 ? 1 : this.cur.snow > 0.15 ? 0.3 : 0; }
@@ -558,6 +565,7 @@ export class Weather {
     c.rain = toward(c.rain, T.rain, st);
     c.snow = toward(c.snow, T.snow, st);
     c.fog = toward(c.fog, T.fog, st);
+    c.storm = toward(c.storm, T.storm, st);
     // the ground: wet in ~30 s of rain, dry over ~2 min; snow lies in ~45 s
     // and goes over ~3 min (the menu's choice: ~6x quicker)
     const q = this.fade === SET_FADE ? 6 : 1;
@@ -643,8 +651,13 @@ export class Weather {
     u.uFade.value = fade;
     u.uCam.value.copy(camera.position);
     u.uT.value = tSec % 600;
-    u.uWind.value.set(snow ? 0.5 : 1.3, snow ? 0.25 : 0.6);
-    if (snow) P.box.set(26, 16, 26); else P.box.set(34, 20, 34);
+    // a storm (storm.js): the rain slants in gusts and falls thicker (the
+    // same drops in a smaller box round the camera); at storm 0 exactly the rain's
+    const sk = snow ? 0 : c.storm;
+    const gust = sk > 0 ? sk * (0.75 + 0.55 * Math.sin(tSec * 0.37) * Math.sin(tSec * 0.113 + 1.3) + 0.2 * Math.sin(tSec * 1.7)) : 0;
+    this.gust = gust;
+    u.uWind.value.set(snow ? 0.5 : 1.3 + 4.6 * gust, snow ? 0.25 : 0.6 + 2.1 * gust);
+    if (snow) P.box.set(26, 16, 26); else P.box.set(34 - 8 * sk, 20 - 2 * sk, 34 - 8 * sk);
   }
 }
 const GREY_SUN = new THREE.Color(0xe4e7ea);
