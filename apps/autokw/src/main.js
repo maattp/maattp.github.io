@@ -67,6 +67,7 @@ import { prepNature, groundDetail } from './kwnature.js';
 import { prepVillages, buildVillages, villagesMap } from './kwvillages.js';
 import { setShopData, prepShops, buildShops, shopPlaces, shopStats, driveThrus } from './kwshops.js';
 import { DriveThrus } from './drivethru.js';
+import { RandomEvents } from './kwevents.js';
 import { DrivewayCars, SCENERY_TYPES } from './kwdriveway.js';
 import { prepHome, homeMap } from './kwhome.js';
 import { Crops } from './crops.js';
@@ -137,6 +138,7 @@ let arcade = null;   // Pin Up Arcade Bar on King St N in Waterloo (arcade.js)
 let pinball = null;  // the pinball at AOK on King St W in Kitchener (pinball.js)
 let hockey = null;   // hockey night at Climate Pledge Arena (hockey.js)
 let rollup = null;
+let events = null;   // Auto KW: random events (kwevents.js)
 let dthru = null;    // Auto KW: the fast-food drive-throughs' lines and windows (drivethru.js)
 let fest = null;
 let derby = null;   // Auto KW: the Panthers' home run derby at Jack Couch Park (ballpark.js)
@@ -236,6 +238,7 @@ class Game {
       debug: (() => { try { return localStorage.getItem('autokw-debug') === '1'; } catch (e) { return false; } })(),
       post: true,
       // the pad's badges on the on-screen buttons (off: no buttons with a pad)
+      events: (() => { try { return localStorage.getItem('autokw-events') !== '0'; } catch (e) { return true; } })(),
       padHints: (() => { try { return localStorage.getItem('autokw-padhints') !== '0'; } catch (e) { return true; } })(),
     };
   }
@@ -1842,6 +1845,7 @@ function installShadowFade() {
   buggies.audio = audio;
   geese = new Geese({ scene, city, world, audio, hud });
   window.__geese = geese;
+  try { events = new RandomEvents({ scene, city, traffic, peds, game, fx, audio, hud, tod, player, camera }); events.enabled = game.settings.events; } catch (e) { blog('events: ' + e.message); events = null; }
   blog('kw places built: ' + JSON.stringify(placesStats()));
   link.bind({ game, hud, audio, player });
   if (kwrail) kwrail.bind({ game, hud, audio, player });
@@ -1995,6 +1999,7 @@ function installShadowFade() {
   window.__dbg.fest = fest;
   window.__dbg.splash = splash;
   window.__dbg.skating = skating;
+  window.__dbg.events = events; window.__dbg.tod = tod;
   window.__dbg.dthru = dthru;   // Auto KW: the drive-throughs (drivethru.js)
   window.__dbg.dcars = world.dcars || null;   // Auto KW: the cars in the driveways (kwdriveway.js)
   window.__dbg.derby = derby;   // Auto KW: the Panthers' home run derby (ballpark.js)   // Auto KW: the rink at Waterloo Public Square (skating.js)   // Auto KW: Big Splash (bigsplash.js)   // Auto KW: Oktoberfest (oktoberfest.js)   // Auto KW: Erbsville Kartway (kartway.js)
@@ -2747,6 +2752,7 @@ function wireUi() {
     try { localStorage.setItem('autokw-padhints', v ? '1' : '0'); } catch (e) { /* private mode */ }
   };
   bind('setPadHints', 'padHints', padHints);
+  bind('setEvents', 'events', (v) => { if (events) events.setEnabled(v); });
   padHints(game.settings.padHints);
   bind('setPost', 'post', (v) => { postfx.setPostEnabled(v); syncFogColour(); });
   // the flight recorder's last session: read it, copy it into a message
@@ -3358,6 +3364,7 @@ function frame(now) {
   peds.update(dt, p.x, p.z, player, traffic);
   if (prof) lap('peds');
   if (fire) fire.update(dt);
+  if (events) events.update(dt, player, camera);
   if (stunts) stunts.update(dt, player);
   if (tanks) tanks.update(dt);
   if (acts) acts.update(dt, player);
