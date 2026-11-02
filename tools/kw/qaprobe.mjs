@@ -94,6 +94,8 @@ async function main() {
       quiet() { const d = window.__dbg; for (const s of [d.eats]) if (s.on) s.end(''); if (d.taxi.on) d.taxi.end(false, ''); if (d.icecream.run) d.icecream.end('', false);
         if (d.missions.run || d.missions.nextT > 0) d.missions.end(false, ''); if (d.paramedic.call || d.paramedic.nextT > 0) d.paramedic.end('', false, d.player); if (d.carWash.ride) d.carWash.abort(); },
       toast() { return document.getElementById('toast').textContent; },
+      // Uptown, by the first ice cream depot: busy enough for a paramedic call (a respawn puts you at a hospital)
+      home() { const p = window.__dbg.icecream.depots.find((q) => q.spots.length).spots[0]; return { x: p.x + 8, z: p.z + 8 }; },
     }`);
 
     // ------------------------------------------------------------------ jobs
@@ -174,17 +176,18 @@ async function main() {
           lit, auto: !!d.player.autoDrive, foot: d.player.onFoot, veh: !!d.player.vehicle, wash: !!d.carWash.ride, ic: !!d.icecream.run,
           plow: !!d.winter.plow.run, med: !!(d.paramedic.call || d.paramedic.nextT > 0), taxi: d.taxi.on, eats: d.eats.on, rig: window.__qv ? !!window.__qv.camRig : null }`;
       const cases = {
-        icecream: `const sp = d.player.position; window.__qv = window.__q.inVeh('icecream', sp.x, sp.z); d.icecream.begin(d.player, 'ice'); return !!d.icecream.run`,
-        plow: `d.weather.set('snow', true); d.weather.cover = 1; const sp = d.player.position; window.__qv = window.__q.inVeh('snowplow', sp.x, sp.z); d.winter.plow.toggle(d.player); return !!d.winter.plow.run`,
-        paramedic: `const sp = d.player.position; window.__qv = window.__q.inVeh('ambulance', sp.x, sp.z); d.paramedic.toggle(d.player); return !!d.paramedic.call`,
-        taxi: `const sp = d.player.position; window.__qv = window.__q.inVeh('taxi', sp.x, sp.z); d.taxi.toggle(d.player); return d.taxi.on`,
+        icecream: `const sp = window.__q.home(); window.__qv = window.__q.inVeh('icecream', sp.x, sp.z); d.icecream.begin(d.player, 'ice'); return !!d.icecream.run`,
+        plow: `d.weather.set('snow', true); d.weather.cover = 1; const sp = window.__q.home(); window.__qv = window.__q.inVeh('snowplow', sp.x, sp.z); d.winter.plow.toggle(d.player); return !!d.winter.plow.run`,
+        paramedic: `const sp = window.__q.home(); window.__qv = window.__q.inVeh('ambulance', sp.x, sp.z); d.paramedic.toggle(d.player); return !!d.paramedic.call`,
+        taxi: `const sp = window.__q.home(); window.__qv = window.__q.inVeh('taxi', sp.x, sp.z); d.taxi.toggle(d.player); return d.taxi.on`,
         carwash: `const q = d.carWash.sites[0]; window.__qv = window.__q.inVeh('sedan', q.mx, q.mz); d.carWash.start(q, window.__qv, d.player); return !!d.carWash.ride`,
-        capsized: `const sp = d.player.position; const v = window.__qv = window.__q.inVeh('sedan', sp.x, sp.z); v.capsized = { t: 2, rock: 0, vx: 0, vz: 0, rollEnd: Math.PI }; v.roll = Math.PI; return true`,
-        photo: `const sp = d.player.position; window.__qv = window.__q.inVeh('sedan', sp.x, sp.z); d.photo.enter(); return d.photo.active`,
+        capsized: `const sp = window.__q.home(); const v = window.__qv = window.__q.inVeh('sedan', sp.x, sp.z); v.capsized = { t: 2, rock: 0, vx: 0, vz: 0, rollEnd: Math.PI }; v.roll = Math.PI; return true`,
+        photo: `const sp = window.__q.home(); window.__qv = window.__q.inVeh('sedan', sp.x, sp.z); d.photo.enter(); return d.photo.active`,
       };
       for (const [name, js] of Object.entries(cases)) {
         await J(`window.__q.quiet(); d.game.money = 500; d.game.setWanted(0); return 1`);
         const on = await J(js);
+        if (!on) console.log(`  (${name} did not start: "${await J('return window.__q.toast()')}")`);
         await sleep(900);   // a few real frames of it
         await J(`d.doRespawn(); return 1`);
         await sleep(900);   // and of what comes after
@@ -192,7 +195,7 @@ async function main() {
         const bad = [];
         if (L.holds.length) bad.push('holds ' + L.holds.join(','));
         if (L.led === 'block') bad.push('LED panel up');
-        if (L.obj) bad.push(`objective "${L.obj}"`);
+        if (L.obj && !/^Deliver to /.test(L.obj)) bad.push(`objective "${L.obj}"`);   // (the base game's delivery target is always up)
         if (L.fare) bad.push('minimap route');
         if (L.lit.length) bad.push('lit ' + L.lit.join(','));
         if (L.auto) bad.push('autoDrive');
