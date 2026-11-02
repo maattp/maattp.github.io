@@ -458,7 +458,8 @@ export class IceCreamJob {
   }
 
   customers(dt, R, v, speed, stopped) {
-    let droveOff = 0, kidLost = null;
+    // one kid chases a truck at a time (a slow pull-away loses the queue over several frames)
+    let droveOff = 0, kidLost = null, chasing = R.cust.some((c) => c.st === 'chase');
     // the line, nearest the hatch first (twice a second, so two at the same distance don't swap
     // places every frame); whoever is being served stays at the front
     if ((R.sortT = (R.sortT || 0) - dt) <= 0 && R.line.length > 1) {
@@ -479,7 +480,7 @@ export class IceCreamJob {
         if (dH < BUY_R && stopped) { C.st = 'queue'; R.line.push(C); }
         else if (dT > NEAR + 10 || C.t > 40) { R.lost++; this.drop(R, C, true); }
       } else if (C.st === 'queue' || C.st === 'buy') {
-        if (speed > 3 && dT > 9) { droveOff++; R.lost++; if (C.kid && !kidLost) kidLost = C; else this.drop(R, C, true); continue; }
+        if (speed > 3 && dT > 9) { droveOff++; R.lost++; if (C.kid && !kidLost && !chasing) kidLost = C; else this.drop(R, C, true); continue; }
         const qi = R.line.indexOf(C), H = this.hatch(v, qi);
         const dH = Math.hypot(p.x - H.x, p.z - H.z);
         if (dH < 0.4) {
@@ -629,7 +630,20 @@ export class IceCreamJob {
   }
 
   /** A pedestrian was hit (main.js game.onPedHit): by the player, the shift is over. */
-  onPedHit(byPlayer) {
+  onPedHit(byPlayer, ped, veh) {
+    if (this.run && byPlayer) this._lastHit = { cust: !!(ped && this.run.cust.some((C) => C.p === ped)), st: (ped && this.run.cust.find((C) => C.p === ped) || {}).st || null, v: veh ? +Math.abs(veh.vLong || 0).toFixed(2) : null, crowd: !!(ped && ped.icecream) };
+    // pulling away from the hatch brushes the queue (they stand within the
+    // knock-down's 0.8 m of the body): one of THIS shift's own customers
+    // touched at a walking pace knocks them over, but it is not "hitting a
+    // pedestrian" -- driving off already costs the queue
+    // (and one who walks into the truck's side or back -- the queue drifting
+    // after a truck pulling away -- is theirs: only one in front of the nose
+    // with the truck over 4 m/s is run down)
+    if (this.run && byPlayer && ped && veh && this.run.cust.some((C) => C.p === ped)) {
+      const f = veh.forward, ahead = (ped.x - veh.x) * f.x + (ped.z - veh.z) * f.z;
+      const front = ahead * Math.sign(veh.vLong || 1) > (veh.halfLen || 2.5) - 0.6;
+      if (!(front && Math.abs(veh.vLong || 0) >= 4)) return;
+    }
     if (this.run && byPlayer) this.end('You hit a pedestrian! The shift is over', true);
   }
 

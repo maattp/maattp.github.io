@@ -218,7 +218,7 @@ file and a guide disagree, this file wins.
   {month, snow, night, chase, kid}, `voices`). Phone cost: idle zero (two 'apron' trucks, a depot check every 6 s); a
   shift adds no pedestrians beyond the crowd cap, <= CAP cone draws, one audio voice; update 0.05-0.07 ms a frame (M2,
   probe). Not done: customers do not come out of a house's door (a point on the walk); the queue can stand in a driveway's
-  hedge; the Wagon's customers are any adult crowd look (no bar-goer styling).
+  hedge; the Wagon's customers are any adult crowd look (no bar-goer styling). **Merge notes (v118):** pulling away from the hatch brushes the queue (they stand inside peds.js's 0.8 m knock-down): `onPedHit(byPlayer, ped, veh)` -- main.js now passes the ped and your vehicle -- lets one of THIS shift's own customers off unless they were in front of the nose with the truck over 4 m/s; only one kid chases a truck at a time (a slow pull-away loses the queue over several frames). The probe drives off as a player does (from 2 m/s, +0.7 a step); its drive-off section stays timing-sensitive headless (the hatch can serve the whole queue first: `line 0`, 0 lost) -- re-run it; every other section is steady.
 - **Cheat codes** (src/cheats.js; docs/cheats/*.jpg; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1
   node tools/kw/cheatprobe.mjs <dir>`). GTA-style Easter egg, Waterloo flavoured. **Desktop:** type a code word
   while playing; a 16-letter rolling buffer is matched by its ENDING (only whole words fire), ignored while paused /

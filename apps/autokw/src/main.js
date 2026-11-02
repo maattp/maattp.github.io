@@ -345,7 +345,7 @@ class Game {
     if (taxi) taxi.onPedHit(byPlayer);
     if (grt) grt.onPedHit(byPlayer);
     if (g2) g2.onPedHit(byPlayer);
-    if (icecream) icecream.onPedHit(byPlayer);
+    if (icecream) icecream.onPedHit(byPlayer, ped, player && player.vehicle);
     fx.blood(ped.x, ped.y + 1, ped.z);
     peds.scare(ped.x, ped.z, 30);
     if (byPlayer) this.addHeat(22);

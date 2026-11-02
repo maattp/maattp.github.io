@@ -257,7 +257,8 @@ async function main() {
       await ev(`window.__dbg.player.vehicle.vLong = 0`);
       await sleep(200);
       q = await J(`return R.line.filter((c) => c.st === 'queue' && c.kid).length >= 1 && R.line.length >= 2`);
-      if (q) await J(`R.mod = 0.0001`);
+      // roll at once (2 m/s: over the hatch's 1, under the queue's brush limit) or the hatch serves the whole queue first
+      if (q) await J(`R.mod = 0.0001; d.player.vehicle.vLong = 2;`);
     }
     ok(q, 'a queue formed at the hatch');
     const lost0 = +(await J(`return R.lost`));
@@ -266,12 +267,14 @@ async function main() {
       const v = d.player.vehicle, f = v.forward;
       for (const p of [...d.peds.peds]) { if (p.icecream) continue; const dx = p.x - v.x, dz = p.z - v.z, a = dx * f.x + dz * f.z, l = Math.abs(dx * f.z - dz * f.x); if (a > -2 && a < 45 && l < 4.5) d.peds.remove(p); }`);
     const [ox, oz] = JSON.parse(await J(`return JSON.stringify([d.player.vehicle.x, d.player.vehicle.z])`));
-    for (let i = 0; i < 20; i++) {
-      await J(`const v = d.player.vehicle; v.vLong = 8;`);
+    for (let i = 0; i < 40; i++) {
+      // pulling away as a player does (from 2 m/s: under 1 the hatch still serves): it brushes the queue at a walking pace
+      // (teleporting to 8 m/s hit the customer mid-purchase at 7.9 m/s -- not something a truck can do)
+      await J(`const v = d.player.vehicle; v.vLong = ${Math.min(8, 2 + i * 0.7).toFixed(2)};`);
       await sleep(200);
       if (await J(`return !R || R.lost > ${lost0}`)) break;
     }
-    if (await J(`return !R`)) console.log('  the shift ended:', await J(`return J.last && J.last.msg`));
+    if (await J(`return !R`)) console.log('  the shift ended:', await J(`return J.last && J.last.msg`), await J(`return JSON.stringify(J._lastHit)`));
     const off = JSON.parse(await J(`return JSON.stringify({ lost: R.lost - ${lost0}, streak: R.streak, line: R.line.length, chase: R.cust.filter((c) => c.st === 'chase').length, toast: document.getElementById('toast').textContent, moved: Math.hypot(d.player.vehicle.x - ${ox}, d.player.vehicle.z - ${oz}) })`));
     console.log('  off', JSON.stringify(off));
     ok(off.lost >= 1 && /drove off/.test(off.toast), `driving off loses the queue (${off.lost} lost: "${off.toast.slice(0, 70)}")`);
@@ -320,11 +323,17 @@ async function main() {
     ok(await until(`!!window.__dbg.icecream.run`, 6), 'a new shift');
     await J(`R.mod = 8`);
     await until(`window.__dbg.icecream.run && window.__dbg.icecream.run.cust.length >= 1`, 30);
-    const hit = JSON.parse(await J(`const p = R.cust[0].p; d.game.onPedHit(true, p); return JSON.stringify({ run: !!J.run, toast: document.getElementById('toast').textContent })`));
-    ok(!hit.run && /hit a pedestrian.*nothing sold|hit a pedestrian/.test(hit.toast), `hitting a pedestrian ends the shift ("${hit.toast.slice(0, 60)}")`);
+    // pulling away brushes the queue: your own customer touched at a walking pace is not a hit
+    const brush = JSON.parse(await J(`const p = R.cust[0].p, v = d.player.vehicle, v0 = v.vLong; v.vLong = 1.5; d.game.onPedHit(true, p); v.vLong = v0; return JSON.stringify({ run: !!J.run })`));
+    ok(brush.run, 'brushing your own customer at a walking pace does not end the shift');
+    await until(`window.__dbg.icecream.run && window.__dbg.icecream.run.cust.length >= 1`, 30);
+    const hit = JSON.parse(await J(`const p = R.cust[0].p, v = d.player.vehicle; v.vLong = 9; p.x = v.x + v.forward.x * (v.halfLen + 0.3); p.z = v.z + v.forward.z * (v.halfLen + 0.3); d.game.onPedHit(true, p); v.vLong = 0; return JSON.stringify({ run: !!J.run, toast: document.getElementById('toast').textContent })`));
+    const hitMsg = await J(`return (J.last && J.last.msg) || ''`);
+    ok(!hit.run && /hit a pedestrian/.test(hitMsg), `hitting a pedestrian ends the shift ("${hitMsg.slice(0, 60)}")`);
     await sleep(600);
     ok(await J(`return window.__h.ours() === 0 && J.voices === 0`), 'and cleans up');
-    await J(`d.game.setWanted(0)`);
+    // (setWanted only ever raises it: clear it as the UNWANTED cheat does -- two hits above are ~2 stars)
+    await J(`d.game.wanted = 0; d.game.points = 0; d.game.cool = 0; if (d.police && d.police.clear) d.police.clear();`);
 
     // ---------------------------------------------------------------- the Weenie Wagon
     console.log('--- hot dogs');
