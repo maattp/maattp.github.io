@@ -474,6 +474,7 @@ export class ExportYard {
     if (!(s.roadCar) || s.moto || s.bus || s.plane || s.boat || s.rail || s.tank || v.trailer || v.leader || s.len > 8.6) return 'We only buy road cars';
     if (v.exportPrize || (t === 'delorean' && v.bodyMat && v.bodyMat.color.getHex() === GOLD)) return "That one's our gift to you — keep it";
     if (v.garage) return 'That car is still parked in your garage';
+    if (v.testDrive) return "That's a dealer's demo — take it back to the lot";
     if (this.busy()) return 'Finish the job you are on first';
     if (this.game.wanted > 0) return 'Lose the cops first — we do not take hot cars';
     // the GTA rule (cheats.js): KWHEELS hands out four of the five rare types -- a cheated

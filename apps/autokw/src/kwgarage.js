@@ -62,6 +62,8 @@ const NAMES = { sedan: 'Sedan', hellcat: 'Hellcat', delorean: 'DeLorean-alike', 
 export const nameOf = (t) => NAMES[t] || (t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Car');
 /** What a vehicle type is called to the player (the garage rows, the export list). */
 export const typeName = nameOf;
+/** The types a dealer sells (kwdealer.js fills it): a garage takes them whatever their size class. */
+export const DEALER_FIT = new Set();
 
 function readAll() {
   try {
@@ -249,14 +251,18 @@ export class Garages {
 
   /** Is this a vehicle the garage takes? A road car or a bike that fits. */
   fits(v) {
-    if (!v || v.dead) return false;
+    if (!v || v.dead || v.testDrive) return false;   // (a dealer's demo goes back to the dealer)
     const s = v.spec;
+    // what a dealer sells (kwdealer.js) always goes back in: the Wrangler and the lifted truck are
+    // `offroad`, the dually and the limo longer than MAX_LEN, and both fit a 7.9 m stall
+    const sold = DEALER_FIT.has(v.typeName) && s.len <= 7.2;
     return !!((s.roadCar || s.moto) && !s.rail && !s.bus && !s.towed && !s.trailer && !v.trailer && !v.leader && !s.plane && !s.boat && !s.tank
-      && !s.offroad && !s.fire && !v.story && !v.isFloat && s.len <= MAX_LEN && s.wid <= 2.5);
+      && (!s.offroad || sold) && !s.fire && !v.story && !v.isFloat && (s.len <= MAX_LEN || sold) && s.wid <= 2.5);
   }
 
   why(v) {
     const s = v.spec;
+    if (v.testDrive) return "it is the dealer's demo";
     if (s.plane || s.heli || s.balloon) return 'it flies';
     if (s.boat || s.jetski || s.kayak || s.hydro) return 'it floats';
     if (s.rail) return 'it runs on rails';

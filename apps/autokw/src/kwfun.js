@@ -537,4 +537,6 @@ export function fordLot(city) {
   return out;
 }
 
+/** The showroom door (kwdealer.js): a step out from the middle of the glass, and the way out. */
+export const fordDoor = () => (ford ? { x: ford.face.x + ford.face.nx * 0.9, z: ford.face.z + ford.face.nz * 0.9, nx: ford.face.nx, nz: ford.face.nz } : null);
 export const fordSpot = () => (ford ? { x: ford.face.x + ford.face.nx * 6, z: ford.face.z + ford.face.nz * 6 } : null);

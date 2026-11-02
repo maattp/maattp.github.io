@@ -402,6 +402,39 @@ file and a guide disagree, this file wins.
   320 m; per frame three distance checks. Not done: dents are not stored; the garage is a stand-alone
   building beside a house, not a real house's door; a stored car's health is restored, nothing else.
   `__dbg.garages` (`sites`, `data`, `store(i, rec)`, `fits`, `count`).
+- **Buy cars at real dealerships** (src/kwdealer.js; docs/dealer/*.jpg; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=..
+  AUTO_GPU=1 [AUTO_PHONE=1] node tools/kw/dealerprobe.mjs <dir>`). Four REAL dealers already drawn: Parkway Ford Lincoln
+  (kwfun.js `fordDoor()`, the middle of its glass), and three of kwshops' dealer fronts found BY NAME in `dealerDoors()`
+  (kwshops.js `dealer()` records every drawn `c` front's door: the portal's dark glass, 2.9 m out; 81 of 88 are drawn):
+  Bustard Chrysler Dodge Jeep (trucks, Weber St N), BMW Grand River (luxury, Fairway Rd), Heffner Used Vehicles (the used
+  lot, King St E). `DEALERS` holds each one's stock (`[type, price, line]`, 8-10 types that fit the dealer: Ford's pickups /
+  dually / Wrangler / Mustang-ish muscle / sports / Lincoln limo; the used lot's $2.4k smart car up to the $24k woodie),
+  its 8 paints and its brand look. **ENTER on foot within `REACH` 3.6 m of a door** (tryInteract, after J&J; yields to a
+  car whose body is within 2.5 m -- not J&J's 5 m: Parkway's lot cars stand 3 m off its glass) holds the world
+  (`'dealer'`, in reapHolds' `live`, `controls.bridge`, main's idle list) and opens a DOM overlay in the brand's colours:
+  the list, a TURNTABLE, swatches (a livery type such as the Volvo offers its own liveries; a `finish` type such as the
+  Hellcat says "factory finish"), TEST DRIVE and BUY. Wanted: the door refuses ("come back when the police aren't
+  looking"); `blocked()` (KW Stories chapter, storyBusy, jobsBusy) greys BUY and TEST DRIVE with the reason. **BUY asks
+  first and signs on the second press** (within 4 s, same car and paint: no $50k car on one stray tap); too poor = "NEED
+  $X MORE", greyed. Bought = charged, and the record `{t, c, li}` goes into a free stall of the NEAREST garage that has one
+  (`deliverTo`; kwgarage.js spawns it when you come within 320 m like any stored car); all full = "Make room in a garage
+  first", refused before charging; a first-purchase toast names the garage. **What a dealer sells always fits back in a
+  garage** (kwgarage.js `DEALER_FIT`, filled here: the Wrangler and lifted truck are `offroad`, the dually 6.76 m and limo
+  6.96 m over `MAX_LEN`; all fit a 7.9 m stall). **Test drive:** 60 s in the car (`'free'` mode, `v.testDrive`), handed
+  over on the clear lot in front (`_kerb`: footprint sampled against every car's box, buildings, solids; at Parkway, whose
+  lot is full to the glass, the strip by the showroom); the objective shows the countdown (the one it covers comes back
+  after). Drive off (40 m) and stop within 11 m of the hand-over spot = the showroom again on the same car; time up or
+  wrecked = it goes back (removed); respawn ends it. The demo is refused by the garages (`fits`) and the export yard
+  (`refusal`), and storyBusy names 'test drive' so no job starts over one. Saved: `autokw-dealer` `{v, bought: [{t, c, d,
+  p, g, at}], spent, tests}`; passport row "Cars bought n"; map icon `dealer` (hud.js; Ford's old `lm` entry is replaced).
+  **The turntable uses the GAME's renderer**: at most 30 times a second while open, the car (a `new Vehicle(null, ..)` on
+  the empty cabin `matteGeoWE`, its own scene, lights and disc, the city's environment map) is rendered into a scissored
+  corner of the default framebuffer and `drawImage`d onto the overlay's 2D canvas in the same task (no render target, no
+  preserveDrawingBuffer; viewport, scissor, autoClear and target restored). Made on open, disposed on close (only the car's
+  own `bodyMat`: the geometry is the type's, shared). **Phone cost: nothing while closed** (no mesh, no draw, one DOM node
+  and a style); open: 5 draws / ~7k tris a preview frame at <= 30 fps instead of the city. `__dbg.dealer` (`sites`,
+  `open(i)`, `pick`, `paint`, `buy()`, `testDrive()`, `td`, `deliverTo`, `stats`). Not done: no dealer in Cambridge;
+  bought cars arrive with a fresh plate and full health only; the lot cars at Parkway are still free to steal.
 - **Import/Export: the wanted list** (src/exportyard.js; docs/export/*.jpg; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=..
   AUTO_GPU=1 node tools/kw/exportprobe.mjs <dir>`). GTA's export cranes, at a REAL auto recycler: Parkway Auto
   Recyclers on Manitou Dr (OSM way 68282593, `YARD.poly`; the yard's centre is 1 m outside the lot, between the
