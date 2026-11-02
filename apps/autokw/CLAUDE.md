@@ -1571,6 +1571,50 @@ file and a guide disagree, this file wins.
   triangles for all 21; nothing per frame but the player's ramp query and a
   0.5 s distance scan. `tools/kw/kwrepl.mjs` boots once and takes JS from a
   file (probe loop).
+
+- **Wildlife: src/kwwildlife.js** (docs/wild/*.jpg; `__dbg.wildlife`; probe
+  `tools/kw/wildprobe.js`, shots `tools/kw/wildviews.json` + `wildviews2.json`). Four
+  cheap range-gated systems, no pause toggle, `window.__noWildlife = true` before boot
+  turns it off. **V formations:** every 70-140 s (first 30-55 s in) a V of 9-25 Canada
+  geese (gooseGeometry 'fly' x1.6) crosses at 60-150 m, 24 m/s, south-ish (+z), from
+  ~560 m out; ONE InstancedMesh for all sky birds, the flap is vertex-shader (x beyond
+  the body lifts by a sine phased from instanceMatrix translation), faint positional
+  `goose` honks (gain 0.26, ref 45 m). One in three comes down on water within
+  150-780 m (`pickWater`: 600 random samples, +-6 m all wet): per-bird ease-out glide,
+  flare, splash particles + additive ring InstancedMesh, then they swim as the standing
+  goose mesh for 40-75 s and lift off (sooner if you come within 18 m fast). **Deer:**
+  1-4 white-tails by woodlots (`deerSpot`: open non-lawn ground, builtAt < 0.09, GREEN_WOOD
+  within 28-52 m), 110-260 m from you, out of view, up to round(3 x hour weight) herds
+  (`hourWeight`: dawn 5-9.5 and dusk 15.5-20.5 = 1, midday 0.4, night 0.2; the "day" setting
+  is a fixed 14:00). Four pose meshes (stand / graze / bound / buck, 4 draws at most): head up
+  at 42 m on foot / 75 m in a car, bound off at 15 / 34 m (or fast approach), the whole herd
+  together, tail flagged white, toward cover, removed in the trees. **Road crossing:** a rural
+  road ahead of a car doing 9+ m/s (builtAt < 0.09), ~every 5-12 s rolled, 45 %, 50 s cooldown:
+  1-2 deer wait at the verge, step out as you come, FREEZE in your lane for 1.5 s, then bolt.
+  `feedTraffic(traffic)` (main.js, after peds.update) puts them in `traffic.crossXZ` so AI cars
+  stop. Hit one (vehicle footprint, 3+ m/s): `veh.damage(min(30, 4 + 0.8 v))`, `game.onCrash`,
+  `punch`, a toast; the deer is thrown clear, rolls, bounces, gets up and bolts (no gore).
+  **Squirrels:** only within 9-38 m of you on foot (or in a stopped car), from TreeSystem
+  chunk records (`world.trees.chunks`, street / park trees > 5 m), cap 5 (4 phone), one
+  InstancedMesh (22 % black via instanceColor): sit up, hop, dash for the trunk when you come
+  within ~7 m, spiral up it, gone. **Murmuration:** a dusk (15.8-20.2 h) starling cloud of 220
+  (160 phone) over open ground 220-560 m out, computed ENTIRELY in the vertex shader (aSeed
+  per bird, a breathing/twisting/rippling ellipsoid, heading from a finite difference): zero
+  CPU, one draw, 660 tris; by day a loose wheel of 12 crows (same mesh). **Phone cost:** the
+  worst case (a 25-goose V, 12 deer, 5 squirrels, the murmuration) is 5 draws / 15k tris;
+  per-frame update 0.03 ms desktop, 0.15 ms at the 8x throttle; nothing exists otherwise
+  (meshes hidden at count 0, ring and deer meshes built on first use). Spawns are out of
+  the camera's view cone. Harness: `W.spawnV({n, land, alt, x, z})`, `W.spawnDeer(x, z, n)`,
+  `W.spawnFlock(x, z, 'starling'|'crow')`, `W.tp(x, z)` (move the on-foot player), `W.sim(sec)`
+  (fixed-dt steps), `W.hold = true` (freeze a staged scene so a shot stays put; `sim` still
+  steps), `W.info()` (what is alive, draws, tris). `wildprobe.js` (kwshots VIEW_PROBE_FILE;
+  VIEW_THROTTLE=8 for the phone): lands a V on Silver Lake and lifts it off, crosses a deer on
+  a rural road with a fake car (traffic sees it, hit damages, it bolts; retried up to 8 times
+  since the deer must reach your lane), squirrels dash and climb, and the cost; every `ok` true.
+  **Not done:** deer do not browse crops, AI cars do not hit deer, no hunting-season rules, V
+  geese don't land on the Grand's narrow reaches reliably (needs +-6 m of water), crows are
+  the same flap as starlings.
+
 - **Erbsville Kartway** (src/kartway.js, src/kart.js, `data/kart.json` from
   tools/kw/build_kart.py; docs/kart-*.jpg). OSM's `highway=raceway` centreline
   (CanVec's, ~970 m) is a FIGURE EIGHT: the `bridge=yes` way closes the loop
