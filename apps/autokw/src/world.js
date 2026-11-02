@@ -12,6 +12,7 @@ import * as RU from './rural.js';
 import { FARM_STYLES, meshFarmBuilding, farmMass, steepleMass } from './farmstead.js';
 import { Builder, ChunkBuilder, SinkBuilder, freezeStatic } from './build.js';
 import { memo } from './bootcache.js';
+import { GFXU } from './gfx.js';
 import { buildMountains } from './mountains.js';
 import { plantTrees, occupancy, OCC_C, OCC_N, OCC_PAVE } from './trees.js';
 import { pumpkinSeed } from './fall.js';
@@ -3968,6 +3969,29 @@ ${FALL ? `
         + '\tvec3 mapN2 = texture2D( normalMap, vNormalMapUv * -0.29 + vec2( 0.37, 0.11 ) ).xyz * 2.0 - 1.0;\n'
         + '\tmapN = normalize( vec3( mapN.xy * 0.62 + mapN2.xy * 0.9, mapN.z ) );');
     };
+    // THE GRAPHICS PASS's water (gfx.js `__noWaterFx`, gfxWater): the SUN'S
+    // GLITTER -- a tight lobe (pow 700) off the view ray reflected by the
+    // waves' own normal toward the sun (gfxSunW / gfxSunC, main.js: the
+    // dome's disc and the light's colour x intensity), so the chop throws
+    // back a path of sparks under the sun instead of one soft sheen; and the
+    // chop calmed with distance (the mapN line below), so far water is a
+    // mirror of the sky's gradient instead of crinkled foil. Added to the
+    // direct specular after three's IBL; no shadow test (open water).
+    // (Mirrored banks were tried: eight compass rays per vertex to the bank's
+    // top, the reflected ray swapped for the treeline below it. Without the
+    // trees' own image the chop scattered it into a camouflage that read as
+    // mud -- docs/gfx-water-banks-rejected.jpg.)
+    const waterGfx = (sh) => {
+      sh.uniforms.gfxWater = GFXU.gfxWater;
+      sh.uniforms.gfxSunW = GFXU.gfxSunW;
+      sh.uniforms.gfxSunC = GFXU.gfxSunC;
+      sh.fragmentShader = 'uniform float gfxWater;\nuniform vec3 gfxSunW, gfxSunC;\n' + sh.fragmentShader
+        .replace('#include <lights_fragment_maps>', `#include <lights_fragment_maps>
+	if ( gfxWater > 0.5 ) {
+		vec3 gwR = inverseTransformDirection( reflect( - geometryViewDir, geometryNormal ), viewMatrix );
+		reflectedLight.directSpecular += gfxSunC * pow( max( dot( gwR, gfxSunW ), 0.0 ), 700.0 ) * 6.0;
+	}`);
+    };
     // Auto KW: THE GRAND IS NOT THE SEA. A river's water is a green-brown
     // tea you can see the limestone through at the edges, not Elliott Bay's
     // black: the body colour goes to it where the field slopes (aRiv.x), and
@@ -3997,7 +4021,9 @@ ${FALL ? `
 	diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.46, 0.48, 0.46 ), foam * 0.7 );`)
         .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n\troughnessFactor = mix( roughnessFactor, 0.5, foam );')
         .replace('mapN = normalize( vec3( mapN.xy * 0.62 + mapN2.xy * 0.9, mapN.z ) );',
-          'mapN = normalize( vec3( ( mapN.xy * 0.62 + mapN2.xy * 0.9 ) * ( 1.0 + vRiv.z * 1.6 ), mapN.z ) );');
+          // (gfx.js: calmer with distance, so far water is a mirror, not foil)
+          'mapN = normalize( vec3( ( mapN.xy * 0.62 + mapN2.xy * 0.9 ) * ( 1.0 + vRiv.z * 1.6 ) * mix( 1.0, 0.5, gfxWater * smoothstep( 80.0, 650.0, length( vViewPosition ) ) ), mapN.z ) );');
+      waterGfx(sh);
     };
     mat.onBeforeCompile = riverWater;
     mat.customProgramCacheKey = () => 'water2scale-river';

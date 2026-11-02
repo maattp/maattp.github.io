@@ -3,7 +3,8 @@
 import * as THREE from './three.js';
 // first after three: it hooks every material made from here on (weather.js)
 import { Weather, testWeatherShaders } from './weather.js';
-import { TimeOfDay } from './tod.js';
+import { TimeOfDay, TODK } from './tod.js';
+import { LampGlow } from './lampglow.js';
 import * as G from './geo.js';
 import { cityGenerator, cityStats } from './citygen.js';
 import { loadMapData } from './mapdata.js';
@@ -72,6 +73,7 @@ import { RandomEvents } from './kwevents.js';
 import { DrivewayCars, SCENERY_TYPES } from './kwdriveway.js';
 import { prepHome, homeMap } from './kwhome.js';
 import { Crops } from './crops.js';
+import { GFX, gfxFrame, gfxFog, gfxSun, installGfxHooks } from './gfx.js';
 import { Kartway, KartRace } from './kartway.js';
 import { prepHighways, buildHighways, addHighwaySolids, highwaysRoot, updateHighways, hwyKeepClear } from './highways.js';
 import { prepJunctions, SignalHeads } from './junctions.js';
@@ -765,6 +767,7 @@ function syncFogColour(over) {
 const _fogOverC = new THREE.Color();
 let weather = null;   // weather.js
 let tod = null;       // tod.js
+let lampGlow = null;  // lampglow.js (the graphics pass: the lights themselves)
 let sunParked = false;   // tod.js night: the sun's shadow pass is skipped
 let fogAltK = 1;      // the haze's thickening with altitude (frame), times the weather's (draw)
 // The shadow camera's own axes. It looks along -SUN_OFFSET with world up, so
@@ -1131,6 +1134,8 @@ function installShadowFade() {
   syncFogColour();
   baseFogDensity = scene.fog.density;
   installHeightFog();
+  // the graphics pass's fog terms (gfx.js: the golden hour's haze)
+  try { installGfxHooks(); } catch (e) { console.warn('gfx hooks', e); }
   camera = new THREE.PerspectiveCamera(62, viewW() / viewH(), 0.5, 9000);
 
   // The sky IBL supplies most of the ambient, so the analytic lights are just a
@@ -1246,6 +1251,9 @@ function installShadowFade() {
   // the time of day: Day (the default) is all of the above, untouched
   tod = new TimeOfDay({ world, sun, hemi, amb: ambLight, weather, fog: fogTone, syncFog: () => syncFogColour(),
     sunDir: SUN_OFFSET, renderer });
+  // the street lamps' and cars' glow at dusk and night (lampglow.js): one draw, never by day
+  try { lampGlow = new LampGlow(scene); } catch (e) { console.warn('lamp glow', e); lampGlow = null; }
+  window.__lampGlow = lampGlow;
   const terrGen = world.buildTerrain();
   let tr = terrGen.next();
   while (!tr.done) {
@@ -3805,9 +3813,20 @@ function draw(now) {
     tod.draw(camera, player, traffic ? traffic.cars : null, now / 1000);
     nightShadows(tod.shadowsOff);
   }
+  // the graphics pass's switches into its uniforms (gfx.js)
+  gfxFrame();
+  if (world) gfxSun(world.skyUniforms, sun);
   if (weather) {
     weather.draw(camera, now / 1000);
-    if (scene.fog) scene.fog.density = baseFogDensity * fogAltK * weather.fogK;
+    // (gfx.js: the golden hour's haze, its colours from the dome; 1 by day)
+    const duskK = tod && world ? gfxFog(world.skyUniforms, tod.du, tod.ni, world.skyUniforms && world.skyUniforms.overcast ? world.skyUniforms.overcast.value : 0) : 1;
+    if (scene.fog) scene.fog.density = baseFogDensity * fogAltK * weather.fogK * duskK;
+  }
+  if (lampGlow && tod) {
+    try {
+      lampGlow.update(camera, world, traffic ? traffic.cars : null, tod.lampK || 0, TODK.head, scene.fog ? scene.fog.density : 0,
+        now / 1000, player && !player.onFoot ? player.vehicle : null);
+    } catch (e) { lampGlow.mesh.visible = false; lampGlow = null; console.warn('lamp glow', e); }
   }
   renderer.setRenderTarget(postfx.target);
   if (world) { world.updateTerrainLod(camera.position); world.cullTerrain(camera); }
@@ -4060,6 +4079,7 @@ function applyQuality(q, manual) {
   // automatic step down re-apply medium and waste a rung.
   tierIdx = Math.max(0, TIERS.indexOf(q));
   game.settings.quality = q;
+  GFX.quality = q;
   idleRedraw = true;
   postfx.setQuality(q, ON_PHONE);
   syncFogColour();
