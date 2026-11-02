@@ -35,6 +35,7 @@
 // setting is localStorage `autokw-tod` (day / real / dusk / night).
 
 import * as THREE from './three.js';
+import { moonPhase } from './nightsky.js';
 
 const ON_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '');
 /** Lamps whose pools are drawn (nearest the view), and headlamp beams. */
@@ -371,6 +372,7 @@ export class TimeOfDay {
           const k = 1 - sstep(4, 16, el);
           S.sunDir.value.copy(this.daySun).lerp(real, k).normalize();
           S.moonDir.value.copy(this.moonDir);
+          if (S.moonPhase) S.moonPhase.value = window.__skyMoon !== undefined ? window.__skyMoon : moonPhase(new Date());
         }
       }
       // weather's grey sky blends from haze0

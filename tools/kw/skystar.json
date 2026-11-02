@@ -1,0 +1,3 @@
+[
+ { "name": "star", "eval": "(()=>{window.__tod='night'; window.__weather='clear'; window.__noSky=false; d.sky.aurora(false); d.camera.position.set(-3828, 80, -1438); d.camera.lookAt(-3828, 200, -1900); d.camera.updateMatrixWorld(true); d.sky.hold = true; d.sky.shoot(d.camera); d.sky.flying = 0.45; return { c: [-3828, -1438, 1.6], t: [-3828, -1900, 200], fov: 70 };})()" }
+]

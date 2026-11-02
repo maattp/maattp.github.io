@@ -5,6 +5,7 @@ import * as THREE from './three.js';
 import { Weather, testWeatherShaders } from './weather.js';
 import { TimeOfDay, TODK } from './tod.js';
 import { LampGlow } from './lampglow.js';
+import { NightSky } from './nightsky.js';
 import * as G from './geo.js';
 import { cityGenerator, cityStats } from './citygen.js';
 import { loadMapData } from './mapdata.js';
@@ -782,6 +783,7 @@ function syncFogColour(over) {
 const _fogOverC = new THREE.Color();
 let weather = null;   // weather.js
 let tod = null;       // tod.js
+let nightSky = null;  // nightsky.js (aurora, shooting stars; the moon's phase is the dome's)
 let lampGlow = null;  // lampglow.js (the graphics pass: the lights themselves)
 let sunParked = false;   // tod.js night: the sun's shadow pass is skipped
 let fogAltK = 1;      // the haze's thickening with altitude (frame), times the weather's (draw)
@@ -1269,6 +1271,7 @@ function installShadowFade() {
   // the street lamps' and cars' glow at dusk and night (lampglow.js): one draw, never by day
   try { lampGlow = new LampGlow(scene); } catch (e) { console.warn('lamp glow', e); lampGlow = null; }
   window.__lampGlow = lampGlow;
+  try { nightSky = new NightSky(scene); nightSky.skyU = world.skyUniforms; } catch (e) { console.warn('night sky', e); nightSky = null; }
   const terrGen = world.buildTerrain();
   let tr = terrGen.next();
   while (!tr.done) {
@@ -2097,7 +2100,7 @@ function installShadowFade() {
   window.__dbg.fest = fest;
   window.__dbg.splash = splash;
   window.__dbg.skating = skating;
-  window.__dbg.events = events; window.__dbg.tod = tod;
+  window.__dbg.events = events; window.__dbg.tod = tod; window.__dbg.sky = nightSky;
   window.__dbg.dthru = dthru;   // Auto KW: the drive-throughs (drivethru.js)
   window.__dbg.dcars = world.dcars || null;   // Auto KW: the cars in the driveways (kwdriveway.js)
   window.__dbg.derby = derby;   // Auto KW: the Panthers' home run derby (ballpark.js)   // Auto KW: the rink at Waterloo Public Square (skating.js)   // Auto KW: Big Splash (bigsplash.js)   // Auto KW: Oktoberfest (oktoberfest.js)   // Auto KW: Erbsville Kartway (kartway.js)
@@ -3924,6 +3927,16 @@ function draw(now) {
       lampGlow.update(camera, world, traffic ? traffic.cars : null, tod.lampK || 0, TODK.head, scene.fog ? scene.fog.density : 0,
         now / 1000, player && !player.onFoot ? player.vehicle : null);
     } catch (e) { lampGlow.mesh.visible = false; lampGlow = null; console.warn('lamp glow', e); }
+  }
+  if (nightSky && tod) {
+    try {
+      const pv = player && player.vehicle;
+      nightSky.update(camera, now / 1000, {
+        ni: tod.ni,
+        clear: !!weather && weather.state === 'clear' && !(world.skyUniforms.overcast && world.skyUniforms.overcast.value > 0.15),
+        calm: !pv || Math.abs(pv.vLong || 0) < 1,
+      }, (m) => hud.showToast(m, 4200));
+    } catch (e) { nightSky.aur.visible = false; nightSky.star.visible = false; nightSky = null; console.warn('night sky', e); }
   }
   renderer.setRenderTarget(postfx.target);
   if (world) { world.updateTerrainLod(camera.position); world.cullTerrain(camera); }

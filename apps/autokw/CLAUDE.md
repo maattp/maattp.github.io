@@ -187,6 +187,31 @@ file and a guide disagree, this file wins.
   found n/13" and, from the first, the list (unfound as ?????). Idle cost: one keydown listener; `tick` returns at
   once. Timbits cost 1 draw / ~7-13k tris for 10 s only. `__dbg.cheats` (`enter(code)`, `fx`, `own`, `found`, `tick(dt)`).
   Not done: no gamepad entry; a swallowed key is also swallowed if you really meant it mid-spelling.
+- **The night sky's surprises** (src/nightsky.js; world.js SKY_FN's moon; docs/sky/*.jpg; probe `AUTO_HTTP_PORT=..
+  AUTO_CDP_PORT=.. AUTO_GPU=1 VIEW_PROBE_FILE=tools/kw/skyprobe.js node tools/kw/kwshots.mjs <dir>`, pixel proof
+  `VIEWS=tools/kw/skypix.json` then `python3 tools/kw/skypix.py <dir>`, cost `tools/kw/skycost.js`, views
+  `skyviews.json` / `skystar.json`). **GPU change: shipped as its own build.** `window.__noSky = true` turns the aurora
+  and shooting stars off at once (no draws); the moon's phase is the dome's own shader and stays.
+  **Aurora**: on ~1 clear night in 6 (`auroraNight`: a hash of the real local NIGHT, the date 12 h ago, so midnight
+  does not change it; 58 of 365 in 2026), only while tod's `ni` > 0.85 and weather is `clear` (and sky overcast
+  < 0.15); `__dbg.sky.aurora(true|false|null)` or `?aurora=1` forces it (still needs night + clear). ONE mesh: a
+  24 x 2 sphere-segment grid 150 deg wide, 3-42 deg up, centred on MAP NORTH (-z; the frame is x east, z south),
+  moved to the camera each frame, vertex shader pins depth to the far plane (z = w) so buildings and hills occlude it,
+  additive, depthWrite off, no textures / targets, 8-bit. The fragment makes the curtains (wandering foot edge, slow
+  bands, two sine ray sets, green to violet to pink): ~40 ALU, no loops, no taps. Fades in at 0.5/s, out at 1.2/s;
+  first one of a night toasts "The northern lights are out over Waterloo Region." (`autokw-aurora` = last night
+  toasted). **Shooting stars**: on any clear night, every 20-60 s, ONE quad (12 floats rewritten, ~0.8 s, 0.5 rad
+  of sky) ahead of the camera; stopped (or on foot) and looking up (pitch > 13 deg), 45 % of them toast "A shooting
+  star. Make a wish." (150 s apart). `__dbg.sky.shoot(camera)`; `hold = true` freezes one for a shot. **Moon phase**:
+  the dome already had a moon (fixed at az 140 / el 33 -- kept, so a night always has one); `moonPhase(date)` is the
+  synodic calculation (mean, +-~0.7 day: probe checks new 2026-11-09, full 2026-11-24) written to the dome's
+  `moonPhase` uniform; the disc is lit by a sphere-normal terminator (waxing = right side lit), faint earthshine on
+  the dark part, a few maria, the glow scaled by the lit fraction. `__dbg.sky.moon(0..1)` overrides (0 new, .5 full).
+  **Cost**: by day, under cloud or with the roll off the meshes are `visible = false` (no draw, no uniform upload).
+  Aurora night: +1 draw / 96 tris, +1 draw / 2 tris while a star flies; it covers ~14 % of the frame when you face
+  north from the air and nothing facing away (clipped). SwiftShader A/B at AUTO_PHONE=1 + 8x throttle, 3 rounds each:
+  15.4-17.8 fps on, 15.4-17.2 off (inside the noise). The phone has not seen it. Not done: no moon position from the
+  date; the aurora is not in the IBL (reflections do not show it); no sound.
 - **Your garages** (src/kwgarage.js; docs/garage/*.jpg; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1
   node tools/kw/garageprobe.mjs <dir>`). GTA's save garages: three 3-stall garages (`GARAGES`: HOME on a
   residential street by University Ave & Bridge St, Waterloo -- `res: true` prefers `cls 'res'` edges, the

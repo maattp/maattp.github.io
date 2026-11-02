@@ -1,0 +1,30 @@
+[
+ {
+  "name": "aurora-street",
+  "eval": "(()=>{window.__tod='night'; window.__weather='clear'; d.sky.aurora(true); d.sky.moon(0.62); return { c: [-3828, -1438, 1.6], t: [-3828, -1700, 95], fov: 70 };})()"
+ },
+ {
+  "name": "aurora-air",
+  "eval": "(()=>{window.__tod='night'; window.__weather='clear'; d.sky.aurora(true); return { c: [-3200, -900, 300], t: [-3200, -1700, 330], fov: 75 };})()"
+ },
+ {
+  "name": "aurora-off-south",
+  "eval": "(()=>{window.__tod='night'; window.__weather='clear'; d.sky.aurora(true); return { c: [-3828, -1438, 1.6], t: [-3828, -1000, 95], fov: 70 };})()"
+ },
+ {
+  "name": "star",
+  "eval": "(()=>{window.__tod='night'; window.__weather='clear'; d.sky.aurora(false); d.sky.shoot(d.camera); d.sky.flying = 0.42; return { c: [-3828, -1438, 1.6], t: [-3828, -1000, 160], fov: 70 };})()"
+ },
+ {
+  "name": "moon-crescent",
+  "eval": "(()=>{window.__tod='night'; window.__weather='clear'; d.sky.aurora(false); d.sky.moon(0.15); return { c: [-3828, -1438, 1.6], t: [-3744, -1338, 85], fov: 18 };})()"
+ },
+ {
+  "name": "moon-gibbous",
+  "eval": "(()=>{window.__tod='night'; window.__weather='clear'; d.sky.aurora(false); d.sky.moon(0.38); return { c: [-3828, -1438, 1.6], t: [-3744, -1338, 85], fov: 18 };})()"
+ },
+ {
+  "name": "day-none",
+  "eval": "(()=>{window.__tod='day'; d.sky.aurora(true); return { c: [-3828, -1438, 1.6], t: [-3828, -1700, 95], fov: 70 };})()"
+ }
+]
