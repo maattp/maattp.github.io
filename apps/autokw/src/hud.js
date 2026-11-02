@@ -40,6 +40,7 @@ function kwFunIcon(ctx, kind, x, y, r) {
 // placeIcon's disc colour by kind (was a ~50-deep chain of string compares per
 // icon, ~500 icons a second on the minimap; v112), else '#e0782e'
 const ICON_COL = {
+  icecream: '#f06aa0',
   dock: '#2f86d6',
   jet: '#c8352a',
   monorail: '#0b8a8f',
@@ -259,6 +260,11 @@ function placeIcon(ctx, kind, x, y, r) {
       const a = (i * Math.PI) / 3 + Math.PI / 6;
       ctx.beginPath(); ctx.moveTo(x - Math.cos(a) * r * 0.62, y - Math.sin(a) * r * 0.62); ctx.lineTo(x + Math.cos(a) * r * 0.62, y + Math.sin(a) * r * 0.62); ctx.stroke();
     }
+  } else if (kind === 'icecream') {
+    // a cone and its scoop (the ice cream trucks, icecream.js)
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.moveTo(x - r * 0.3, y - r * 0.02); ctx.lineTo(x + r * 0.3, y - r * 0.02); ctx.lineTo(x, y + r * 0.66); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y - r * 0.22, r * 0.32, 0, Math.PI * 2); ctx.fill();
   } else if (kind === 'medic') {
     // the star of life: three bars (the paramedic stations and the emergency doors, paramedic.js)
     ctx.strokeStyle = '#ffffff'; ctx.lineWidth = r * 0.2; ctx.lineCap = 'butt';

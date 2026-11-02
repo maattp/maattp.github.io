@@ -189,6 +189,36 @@ file and a guide disagree, this file wins.
   draw, +1 beam, 2 beacon lamps; Zamboni +2 draws and one 128 KB canvas upload per moving frame. Not done: the rink is a
   rectangle on a lawn (trees may overhang it), not the Aud's interior; the cleared strip is cosmetic (the road shader has
   no per-edge mask); route clears in any order, the minimap line still shows cleared middle segments.
+- **The ice cream truck job, and the Weenie Wagon's hot dogs** (src/icecream.js; docs/icecream/*.jpg; probe
+  `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1 node tools/kw/icecreamprobe.mjs <dir>`). An `icecream` truck parks at the kerb
+  outside two REAL shops (OSM amenity=ice_cream: Scoop Du Jour, Erb St E, Uptown; Four All Ice Cream, King St W, downtown;
+  `IC_DEPOTS` through firecalls.js `placeStations`, RIG `icecream`), map icon a cone (`kind 'icecream'`) with a hello; a
+  depot whose truck is gone gets another when you are 250 m off. traffic.js's one-AI-truck cap now counts `mode 'traffic'`
+  only (the parked ones would have stopped AI trucks spawning). In any `icecream` (or the `wiener`), MISSION (`#icBtns`,
+  `data-icecream`; M / pad D-pad down) starts a 5-minute shift. **The jingle** is our own looped BufferSource of audio.js
+  `ic_jingle` on the world bus (mutes on pause): positional pan/gain, ducked to 0.38 while serving, `playbackRate` by
+  speed (0.74-0.83 wobbling at a crawl, ~1.02 at 40 km/h). **Customers** come out only under 25 km/h with the truck on a
+  `cls 'res'` street, from `res` edges 10-40 m off (pavement or up to 6 m up a front walk), as crowd pedestrians
+  (`peds.spawnTrail`, inside the crowd's cap; steered through `p.trail`; kids scaled 0.58-0.72 as schoolbus.js does), CAP 6
+  phone / 8. Anyone not on the kerb side goes round the TAIL (`goTo`: the crowd's own avoid-a-car stalled at a corner when
+  the slot was across the truck). Stopped (< 1 m/s), whoever is within 6 m of the hatch queues (slots back along the right
+  side, re-sorted by distance twice a second), served one at a time, 1.2 s: coin (`cash`), $3-4 kid / $4-6 adult, a DOM
+  "+$4" float over the hatch, toast tally, and they walk off with a cone (an 88-tri merged mesh on the hand bone) before
+  being handed back to the crowd. **Drive off** (> 3 m/s, > 9 m) with a queue: lost, streak reset; a kid may chase you
+  (`rig.chase`), stop and he buys with a $2 tip. **Streak**: first sale on each new street name +1 (+$2 a step); a street
+  dries after `DRY` 4 sales ("all ice-creamed out"); 90 s without a new street resets it. **Season** (kwcalendar
+  `calendarDate`, so `?date=` works): Jun-Aug x1.6, Nov x0.5, Dec-Feb x0.55, snow x0.45 ("Ice cream in a snowstorm.
+  Bold."). **Hot dogs** in the `wiener`: adults only, the Wagon's horn tune (rate by speed) instead of the jingle, any
+  non-freeway street inside `BAR_ZONES` (Uptown / downtown, centroids of the OSM bars) or `res` elsewhere; x2 at night in a
+  zone, x0.7 by day, snow no penalty. Ends on MISSION, 5 minutes, leaving the truck, death, or hitting a pedestrian
+  (main.js `onPedHit`); summary toast; `autokw-icecream` {best, bestStreak, cones, earned, shifts, dogBest, dogs}; job rows
+  in the pause menu. **Laws:** no `game.hold`; joins `jobsBusy()` and `storyBusy()` and will not start over another job or
+  a chapter (`blocked`); no ENTER handling at all (nothing contests `traffic.nearestEnterable`); **cheats do not void the
+  pay** (a job, like taxi / KW Eats / paramedic; only stunts and eggs refuse). Harness `__dbg.icecream` (`run`, `rig`
+  {month, snow, night, chase, kid}, `voices`). Phone cost: idle zero (two 'apron' trucks, a depot check every 6 s); a
+  shift adds no pedestrians beyond the crowd cap, <= CAP cone draws, one audio voice; update 0.05-0.07 ms a frame (M2,
+  probe). Not done: customers do not come out of a house's door (a point on the walk); the queue can stand in a driveway's
+  hedge; the Wagon's customers are any adult crowd look (no bar-goer styling).
 - **Cheat codes** (src/cheats.js; docs/cheats/*.jpg; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1
   node tools/kw/cheatprobe.mjs <dir>`). GTA-style Easter egg, Waterloo flavoured. **Desktop:** type a code word
   while playing; a 16-letter rolling buffer is matched by its ENDING (only whole words fire), ignored while paused /

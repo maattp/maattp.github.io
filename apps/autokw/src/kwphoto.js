@@ -92,7 +92,7 @@ export function applyLookPixels(d, l) {
 
 const CSS = `
 body.photo #hud, body.photo #topBtns, body.photo #pad, body.photo #stickZone, body.photo #lookZone,
-body.photo #sigBtns, body.photo #medBtns, body.photo #fireBtns, body.photo #hurt, body.photo #minimapWrap { display: none !important; }
+body.photo #sigBtns, body.photo #medBtns, body.photo #icBtns, body.photo #fireBtns, body.photo #hurt, body.photo #minimapWrap { display: none !important; }
 #photoLayer { position: fixed; inset: 0; z-index: 30; display: none; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
 #photoLayer.show { display: block; }
 #photoFlash { position: fixed; inset: 0; z-index: 33; background: #fff; opacity: 0; pointer-events: none; }

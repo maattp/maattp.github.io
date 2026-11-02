@@ -65,6 +65,7 @@ import { CarWash, prepWash, placeWashes } from './carwash.js';   // Auto KW: the
 import { Airtime } from './airtime.js';   // Auto KW: the free-form stunt bonus (airtime.js)
 import { Paramedics, MED_STATIONS } from './paramedic.js';
 import { WinterJobs, PLOW_YARDS } from './winterjobs.js';   // Auto KW: the snowplow route and the Aud's Zamboni (winterjobs.js)   // Auto KW: paramedic calls (paramedic.js)
+import { IceCreamJob, IC_DEPOTS } from './icecream.js';   // Auto KW: the ice cream truck (and the Weenie Wagon's hot dogs)
 import { BONES } from './peds.js';
 import { timsKeepClear } from './kw.js';
 import { setKwData, applyNamed, buildSigns, buildPolys, buildBunting, buildSchools, mapPlaces as kwPlaces, kwData, boxAt, dedupeFootprints } from './kw.js';
@@ -214,7 +215,7 @@ let exportYard = null, exportSite = null;   // Auto KW: import/export at Parkway
 let cruise = null;   // Auto KW: cruise night (kwcruise.js)
 let carWash = null, washSites = [];   // Auto KW: the tunnel car washes (carwash.js)
 let airtime = null;   // Auto KW: the free-form stunt bonus (airtime.js)
-let cheats = null, photo = null, garages = null, garageBays = [], respray = null, resprayBays = [], paramedic = null, medStations = [], winter = null, plowStations = [];   // Auto KW: body shops and paramedic calls
+let cheats = null, photo = null, garages = null, garageBays = [], respray = null, resprayBays = [], paramedic = null, medStations = [], winter = null, plowStations = [], icecream = null, icDepots = [];   // Auto KW: body shops and paramedic calls
 let fire = null, fireStations = [];   // Seattle Fire: the stations' rigs, the water cannon, fire calls (firecalls.js)
 
 /** The WASTED / BUSTED card. */
@@ -344,6 +345,7 @@ class Game {
     if (taxi) taxi.onPedHit(byPlayer);
     if (grt) grt.onPedHit(byPlayer);
     if (g2) g2.onPedHit(byPlayer);
+    if (icecream) icecream.onPedHit(byPlayer);
     fx.blood(ped.x, ped.y + 1, ped.z);
     peds.scare(ped.x, ped.z, 30);
     if (byPlayer) this.addHeat(22);
@@ -1398,6 +1400,7 @@ function installShadowFade() {
   // Auto KW: the paramedics' ambulance aprons and the body shops' spray bays, kept clear the same way
   try { medStations = placeStations(city, world, (x, z) => world.waterLevelAt(x, z), MED_STATIONS); } catch (e) { blog(`paramedic stations: ${e.message}`); medStations = []; }
   try { plowStations = placeStations(city, world, (x, z) => world.waterLevelAt(x, z), PLOW_YARDS); } catch (e) { blog(`plow yard: ${e.message}`); plowStations = []; }
+  try { icDepots = placeStations(city, world, (x, z) => world.waterLevelAt(x, z), IC_DEPOTS); blog(`ice cream trucks: ${icDepots.map((d) => d.spots.length).join(',')}`); } catch (e) { blog(`ice cream trucks: ${e.message}`); icDepots = []; }
   try { resprayBays = placeBays(city, world, (x, z) => world.waterLevelAt(x, z)); } catch (e) { blog(`body shops: ${e.message}`); resprayBays = []; }
   try { garageBays = placeGarages(city, (x, z) => world.waterLevelAt(x, z)); } catch (e) { blog(`garages: ${e.message}`); garageBays = []; }
   try { exportSite = placeYard(city, (x, z) => world.waterLevelAt(x, z)); } catch (e) { blog(`export yard: ${e.message}`); exportSite = null; }
@@ -2095,6 +2098,16 @@ function installShadowFade() {
     for (const st of plowStations) for (const sp of st.spots) { const v = traffic.spawnAt(sp.x, sp.z, sp.heading, 'snowplow', 0xe8660c, 'apron'); v.vLong = 0; }
     hud.places.push(...winter.plow.places(plowStations), ...winter.zam.places());
   } catch (e) { blog('winter: ' + e.message); winter = null; }
+  // Auto KW: the ice cream truck job (icecream.js); a failure here never stops the game starting
+  try {
+    const app = document.getElementById('app');
+    const panel = eats && eats.panel ? eats.panel : new LedPanel(app);
+    icecream = new IceCreamJob({ scene, city, game, hud, audio, traffic, peds, controls, panel, camera, depots: icDepots,
+      weather: () => weather, tod: () => tod,
+      blocked: () => (story && story.run ? 'KW Stories chapter' : storyBusy() || (jobsBusy() ? 'job in hand' : null)) });
+    icecream.spawnTrucks();
+    hud.places.push(...icecream.places());
+  } catch (e) { blog('icecream: ' + e.message); icecream = null; }
   // Auto KW: KW Stories (story.js): Gord's garage at University & Bridge; a failure here never stops the game starting
   try {
     const app = document.getElementById('app');
@@ -2180,7 +2193,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { get story() { return story; }, get calendar() { return kcal; }, get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get garages() { return garages; }, get exportYard() { return exportYard; }, get cruise() { return cruise; }, get carWash() { return carWash; }, get airtime() { return airtime; }, get cheats() { return cheats; }, get photo() { return photo; }, get paramedic() { return paramedic; }, get winter() { return winter; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { get story() { return story; }, get calendar() { return kcal; }, get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get garages() { return garages; }, get exportYard() { return exportYard; }, get cruise() { return cruise; }, get carWash() { return carWash; }, get airtime() { return airtime; }, get cheats() { return cheats; }, get photo() { return photo; }, get paramedic() { return paramedic; }, get winter() { return winter; }, get icecream() { return icecream; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;
   Object.defineProperty(window.__dbg, 'eggs', { get() { return eggs; } });
   Object.defineProperty(window.__dbg, 'secrets', { get() { return secrets; } });
@@ -2660,7 +2673,7 @@ function refreshJobs() {
   for (const b of document.querySelectorAll('.buy')) b.disabled = game.money < +b.dataset.cost;
   if (!list) return;
   const COL = { gold: '#f4c542', silver: '#c8d0d8', bronze: '#c0763c' };
-  const rows = [...(g2 ? g2.jobRows() : []), ...(grt ? grt.jobRows() : []), ...(eats ? eats.jobRows() : []), ...(paramedic ? paramedic.jobRows() : []), ...(winter ? winter.jobRows() : []), ...s.rows];
+  const rows = [...(g2 ? g2.jobRows() : []), ...(grt ? grt.jobRows() : []), ...(eats ? eats.jobRows() : []), ...(paramedic ? paramedic.jobRows() : []), ...(winter ? winter.jobRows() : []), ...(icecream ? icecream.jobRows() : []), ...s.rows];
   list.innerHTML = rows.map((r) => `<div class="jobRow"><span class="nm">${r.name}</span>`
     + `<span class="bt">${r.best || '--'}`
     + (r.medal && r.medal !== 'none' ? `<i class="md" style="background:${COL[r.medal]}"></i>` : '')
@@ -3165,12 +3178,13 @@ function storyBusy() {
   if (acts && acts.active) return 'race';
   if (kartRace && kartRace.state && kartRace.state !== 'idle') return 'kart race';
   if (winter && winter.busy()) return winter.plow.run ? 'plow route' : 'Zamboni run';
+  if (icecream && icecream.busy()) return icecream.run.kind === 'dog' ? 'hot dog shift' : 'ice cream shift';
   return null;
 }
 
 /** A job is running (the random events and the export yard both stand aside for one). */
 function jobsBusy() {
-  return !!((g2 && (g2.run || g2.active)) || (acts && acts.active) || (taxi && taxi.run) || (eats && eats.run) || (grt && grt.run) || (missions && missions.run) || (paramedic && paramedic.call) || (winter && winter.busy()) || (story && story.run));
+  return !!((g2 && (g2.run || g2.active)) || (acts && acts.active) || (taxi && taxi.run) || (eats && eats.run) || (grt && grt.run) || (missions && missions.run) || (paramedic && paramedic.call) || (winter && winter.busy()) || (icecream && icecream.busy()) || (story && story.run));
 }
 
 function reapHolds() {
@@ -3681,6 +3695,7 @@ function frame(now) {
   if (carWash) { try { carWash.tick(dt, player); } catch (e) { if (!carWash.err) { carWash.err = 1; console.warn('car wash: ' + e.message); } } }
   if (paramedic) paramedic.update(dt, player);
   if (winter) { try { winter.update(dt, player); } catch (e) { if (!winter.err) { winter.err = 1; console.warn('winter: ' + e.message); } } }
+  if (icecream) { try { icecream.update(dt, player); } catch (e) { if (!icecream.err) { icecream.err = 1; console.warn('icecream: ' + e.message); } } }
   if (stunts) stunts.update(dt, player);
   if (airtime) { try { airtime.update(dt, player); } catch (e) { if (!airtime.err) { airtime.err = 1; console.warn('airtime: ' + e.message); } } }
   if (tanks) tanks.update(dt);

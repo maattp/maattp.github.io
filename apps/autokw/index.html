@@ -124,6 +124,9 @@
   /* a snowplow's or the Zamboni's MISSION (winterjobs.js sets data-winter) */
   #winBtns { position: absolute; right: calc(270px + var(--safe-r)); bottom: calc(14px + var(--safe-b)); z-index: 6; display: none; gap: 10px; align-items: end; }
   #app[data-winter="1"][data-mode="drive"] #winBtns { display: flex; }
+  /* an ice cream truck's or the Weenie Wagon's MISSION (icecream.js sets data-icecream) */
+  #icBtns { position: absolute; right: calc(270px + var(--safe-r)); bottom: calc(14px + var(--safe-b)); z-index: 6; display: none; gap: 10px; align-items: end; }
+  #app[data-icecream="1"][data-mode="drive"] #icBtns { display: flex; }
   /* the turn signals (a road test's: g2test.js sets data-g2), where a rig's two would be */
   #sigBtns {
     position: absolute; right: calc(270px + var(--safe-r)); bottom: calc(14px + var(--safe-b));
@@ -561,6 +564,10 @@
 
   <div id="winBtns">
     <div class="btn b-sm b-fire" data-btn="winmission" data-hint="▼">MISSION</div>
+  </div>
+
+  <div id="icBtns">
+    <div class="btn b-sm b-fire" data-btn="icmission" data-hint="▼">MISSION</div>
   </div>
 
   <div id="fireBtns">
