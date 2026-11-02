@@ -1307,6 +1307,7 @@ const STEPS = {
       if (!R || !st.shop) return true;   // (no body shops in this build: the step is a pass)
       if (R.stats.n > st.n0 && !R.active && S.game.wanted === 0) {
         const pr = R.last ? R.last.price : 0;
+        S.game.storyPays = false;
         if (pr > 0) { S.game.money += pr; S.hud.showToast(`Gord covered the paint (${formatMoney(pr)})`, 2400); }   // (none while storyPays: the bay charges nothing)
         return true;
       }
