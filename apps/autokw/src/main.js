@@ -72,6 +72,7 @@ import { prepVillages, buildVillages, villagesMap } from './kwvillages.js';
 import { setShopData, prepShops, buildShops, shopPlaces, shopStats, driveThrus } from './kwshops.js';
 import { DriveThrus } from './drivethru.js';
 import { RandomEvents } from './kwevents.js';
+import { Wildlife } from './kwwildlife.js';
 import { DrivewayCars, SCENERY_TYPES } from './kwdriveway.js';
 import { prepHome, homeMap } from './kwhome.js';
 import { Crops } from './crops.js';
@@ -143,6 +144,7 @@ let arcade = null;   // Pin Up Arcade Bar on King St N in Waterloo (arcade.js)
 let pinball = null;  // the pinball at AOK on King St W in Kitchener (pinball.js)
 let hockey = null;   // hockey night at Climate Pledge Arena (hockey.js)
 let rollup = null;
+let wildlife = null;   // Auto KW: geese V's, deer, squirrels, starlings (kwwildlife.js)
 let events = null;   // Auto KW: random events (kwevents.js)
 let jj = null;   // Auto KW: rip packs at J&J Cards & Collectibles (jjcards.js)
 let counter = null;   // Auto KW: the counter at the main streets' food places and the locals (kwcounter.js)
@@ -1887,6 +1889,7 @@ function installShadowFade() {
   buggies.audio = audio;
   geese = new Geese({ scene, city, world, audio, hud, game });
   window.__geese = geese;
+  try { wildlife = new Wildlife({ scene, city, world, traffic, audio, hud, game, fx, tod, player, camera }); } catch (e) { blog('wildlife: ' + e.message); wildlife = null; }
   try { events = new RandomEvents({ scene, city, traffic, peds, game, fx, audio, hud, tod, player, camera, busy: () => !!((g2 && (g2.run || g2.active)) || (acts && acts.active) || (taxi && taxi.run) || (eats && eats.run) || (grt && grt.run) || (missions && missions.run) || (paramedic && paramedic.call)) }); events.enabled = game.settings.events; } catch (e) { blog('events: ' + e.message); events = null; }
   try { eggs = new Eggs({ scene, city, world, audio, hud, game, traffic, fx }); window.__eggs = eggs; } catch (e) { blog('eggs failed: ' + e.message); eggs = null; }
   blog('kw places built: ' + JSON.stringify(placesStats()));
@@ -2052,6 +2055,7 @@ function installShadowFade() {
   window.__dbg.crops = crops;
   Object.defineProperty(window.__dbg, 'eggs', { get() { return eggs; } });
   window.__dbg.geese = geese;
+  window.__dbg.wildlife = wildlife;
   Object.defineProperty(window.__dbg, 'weather', { get() { return weather; } });   // (varietyprobe: the snowplough runs in snow only)
   window.__dbg.rail = kwrail;   // Auto KW: the heavy rail (kwrail.js)   // Auto KW: the harvest (crops.js)
   Object.defineProperty(window.__dbg, 'roadFeel', { get() { return roadFeel; } });
@@ -3416,6 +3420,7 @@ function frame(now) {
   if (buggies) buggies.update(dt, player, camera);
   if (air) air.update(dt, player, camera);   // YKF's air traffic (airtraffic.js)
   if (geese) geese.update(dt, player, camera);
+  if (wildlife) wildlife.update(dt, player, camera);
   if (eggs) eggs.update(dt, player, camera);
   bikeNet.update(camera);
   piers.update(camera);
@@ -3435,6 +3440,7 @@ function frame(now) {
   traffic.update(dt, p.x, p.z, camDir, player);
   if (prof) lap('traffic');
   peds.update(dt, p.x, p.z, player, traffic);
+  if (wildlife) wildlife.feedTraffic(traffic);
   if (geese) geese.feedTraffic(traffic, dt);   // geese standing in UW's ring road stop the cars like a person crossing
   if (prof) lap('peds');
   if (fire) fire.update(dt);
