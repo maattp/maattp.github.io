@@ -1,0 +1,7 @@
+[
+ { "name": "pix-on", "eval": "(()=>{window.__tod='night'; window.__weather='clear'; d.sky.aurora(true); window.__noSky=false; return { c: [-3200, -900, 300], t: [-3200, -1700, 330], fov: 75 };})()" },
+ { "name": "pix-off", "eval": "(()=>{window.__tod='night'; window.__weather='clear'; d.sky.aurora(true); window.__noSky=true; return { c: [-3200, -900, 300], t: [-3200, -1700, 330], fov: 75 };})()" },
+ { "name": "moon-crescent", "eval": "(()=>{window.__noSky=false; window.__tod='night'; window.__weather='clear'; d.sky.aurora(false); d.sky.moon(0.15); return { c: [-3828, -1438, 1.6], t: [-3744, -1338, 85], fov: 18 };})()" },
+ { "name": "moon-gibbous", "eval": "(()=>{d.sky.moon(0.38); return { c: [-3828, -1438, 1.6], t: [-3744, -1338, 85], fov: 18 };})()" },
+ { "name": "moon-new", "eval": "(()=>{d.sky.moon(0.02); return { c: [-3828, -1438, 1.6], t: [-3744, -1338, 85], fov: 18 };})()" }
+]

@@ -1191,6 +1191,7 @@ export class World {
       todGlow: { value: new THREE.Vector3() },
       todStars: { value: 0 },
       moonDir: { value: new THREE.Vector3(0, 1, 0) },
+      moonPhase: { value: 0.5 },
     };
     this.skyUniforms = uniforms;
     // ONE sky function for what you see and for what things reflect.
@@ -1201,7 +1202,7 @@ export class World {
     const SKY_FN = `
         uniform sampler2D tCloud;
         uniform vec3 sunDir, zenith, mid, horizon, haze, sunCol, cloudLit, cloudDark, groundHi, groundLo;
-        uniform float time, iblGain, overcast, skyFog, todOn, todStars;
+        uniform float time, iblGain, overcast, skyFog, todOn, todStars, moonPhase;
         uniform vec3 hazeToward, hazeAway, ovHor, ovZen, ovCloudLit, ovCloudDark, todGlow, moonDir;
         float todStarHash(vec3 p) {
           p = fract(p * 0.3183099 + 0.1);
@@ -1237,8 +1238,22 @@ export class World {
                 col += vec3(0.85 + 0.15 * sb, 0.88, 0.95 + 0.05 * (1.0 - sb)) * (1.0 - smoothstep(0.12, 0.38, sd)) * (0.35 + 0.9 * sb) * todStars * smoothstep(0.03, 0.25, h);
               }
               float mm = dot(d, moonDir);
-              col += vec3(0.16, 0.18, 0.24) * pow(max(mm, 0.0), 60.0) * todStars;
-              col = mix(col, vec3(0.92, 0.92, 0.86) * 1.15, smoothstep(0.99962, 0.99972, mm) * todStars);
+              // the moon at its real phase (nightsky.js moonPhase)
+              float mill = 0.5 - 0.5 * cos(6.2831853 * moonPhase);
+              col += vec3(0.16, 0.18, 0.24) * pow(max(mm, 0.0), 60.0) * todStars * (0.2 + 0.8 * mill);
+              float mdisc = smoothstep(0.99962, 0.99972, mm);
+              if (mdisc > 0.0) {
+                vec3 mr = normalize(cross(moonDir, vec3(0.0, 1.0, 0.0)));
+                vec3 mu = cross(mr, moonDir);
+                vec3 mo = d - moonDir * mm;
+                vec2 mp = vec2(dot(mo, mr), dot(mo, mu)) / 0.0257;
+                float mz = sqrt(max(1.0 - dot(mp, mp), 0.0));
+                float ph = 6.2831853 * moonPhase;
+                float mlit = smoothstep(-0.04, 0.04, dot(vec3(mp, mz), vec3(sin(ph), 0.0, -cos(ph))));
+                float maria = 0.86 + 0.14 * sin(mp.x * 4.1 + 1.0) * sin(mp.y * 3.3 - mp.x * 1.7);
+                col = mix(col, vec3(0.92, 0.92, 0.86) * 1.15 * maria, mdisc * mlit * todStars);
+                col += vec3(0.025, 0.03, 0.04) * mdisc * (1.0 - mlit) * todStars;
+              }
             }
           } else {
             col = mix(col, vec3(1.0, 0.99, 0.95) * 1.4, smoothstep(0.9993, 0.9997, mu));
