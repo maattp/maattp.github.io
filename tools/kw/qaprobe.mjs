@@ -177,6 +177,38 @@ async function main() {
         if (A[0] < B[2] - 2 && B[0] < A[2] - 2 && A[1] < B[3] - 2 && B[1] < A[3] - 2) hit.push(`${a}/${b}`);
       }
       ok(!hit.length, `no two pad buttons overlap (${hit.join(', ') || 'none'})`);
+      // every job vehicle's pad: its own buttons (SIREN, WATER, MISSION, FARE...) clear of each other and the stick zone
+      await ev(`window.__q.quiet()`);
+      for (const ty of ['ambulance', 'police', 'fireengine', 'snowplow', 'zamboni', 'taxi', 'wiener', 'icecream', 'artic']) {
+        await J(`const sp = d.player.position; window.__q.inVeh('${ty}', sp.x, sp.z); return 1`);
+        await sleep(700);
+        const bb = await J(`const out = {}; for (const b of document.querySelectorAll('[data-btn]')) { const r = b.getBoundingClientRect(); if (r.width > 0 && r.height > 0 && getComputedStyle(b).display !== 'none' && getComputedStyle(b).visibility !== 'hidden') out[b.dataset.btn] = [r.left | 0, r.top | 0, r.right | 0, r.bottom | 0]; } return out`);
+        const e = Object.entries(bb), over = [], off = [];
+        for (let i = 0; i < e.length; i++) {
+          const [a, A] = e[i];
+          if (A[0] < 0 || A[1] < 0 || A[2] > W || A[3] > H) off.push(a);
+          for (let j = i + 1; j < e.length; j++) { const [b, B] = e[j]; if (A[0] < B[2] - 2 && B[0] < A[2] - 2 && A[1] < B[3] - 2 && B[1] < A[3] - 2) over.push(`${a}/${b}`); }
+        }
+        ok(!over.length && !off.length, `${ty}: ${e.map(([k]) => k).join(' ')} -- ${over.length ? 'OVERLAP ' + over.join(', ') : 'no overlap'}${off.length ? ', OFF-SCREEN ' + off.join(' ') : ''}`);
+        if (over.length || off.length) await shot(`pad-${ty}${PHONE ? '-phone' : ''}`);
+      }
+      // a KW Stories subtitle (bottom centre) in a car with the pad up
+      for (const ty of ['sedan', 'fireengine', 'icecream']) {
+      await J(`const sp = d.player.position; window.__q.inVeh('${ty}', sp.x, sp.z); return 1`);
+      await sleep(700);   // (the job buttons follow the vehicle on the next frames)
+      const sub = await J(`const S = d.story;
+        if (!S.el) S.ui();
+        S.line = null; S.say([['gord', 'Right, listen. The Goose is on the air in ten minutes and the van is still parked behind the Aud with the keys in it.']]); S.subtitles(0.016);
+        const el = document.getElementById('storySub'); if (!el) return null; const r = el.getBoundingClientRect();
+        const hit = []; for (const b of document.querySelectorAll('[data-btn]')) { const q = b.getBoundingClientRect(); if (q.width > 0 && getComputedStyle(b).display !== 'none' && r.left < q.right && q.left < r.right && r.top < q.bottom && q.top < r.bottom) hit.push(b.dataset.btn); }
+        return { box: [r.left | 0, r.top | 0, r.right | 0, r.bottom | 0], disp: getComputedStyle(el).display, hit }`);
+      console.log(`  story subtitle (${ty})`, JSON.stringify(sub));
+      await sleep(400);
+      await shot(`story-sub-${ty}${PHONE ? '-phone' : ''}`);
+      ok(sub && sub.disp !== 'none' && !sub.hit.length, `${ty}: a story subtitle clear of the pad buttons (${sub ? sub.hit.join(' ') || 'none' : 'no element'})`);
+      }
+      await J(`const S = d.story; S.lines.length = 0; S.line = null; S.subtitles(0.016); return 1`);
+      await ev(`if (window.__dbg.player.vehicle) window.__dbg.player.exitVehicle(true)`);
       await ev(`window.__q.quiet()`);
       // the pause menu with every passport row
       await ev(`document.getElementById('pauseBtn').click()`);
