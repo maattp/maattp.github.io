@@ -90,6 +90,7 @@ import { PoliceMissions } from './policemissions.js';
 import { TaxiFares } from './taxi.js';
 import { GrtBus, LedPanel } from './grtbus.js';
 import { KwEats } from './kweats.js';
+import { Story } from './story.js';   // Auto KW: KW Stories, the story campaign (story.js)
 import { Counter } from './kwcounter.js';
 import { RoadTest, addDriveTestSign } from './g2test.js';
 import { Vehicle, TYPES as VEHICLE_TYPES, VEHICLE_HOOKS, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial, dropVehicleArrays } from './vehicles.js';
@@ -191,6 +192,7 @@ let chicopee = null;   // Chicopee's bike park: trails, lifts, bikes (chicopee.j
 let crops = null;      // Auto KW: standing corn and soy, the tractors and combines (crops.js)
 let air = null;        // Auto KW: YKF's air traffic, the Cessnas and the news helicopter (airtraffic.js)
 let kartway = null, kartRace = null;   // Auto KW: Erbsville Kartway, its circuit and its races (kartway.js)
+let story = null;   // Auto KW: KW Stories (story.js)
 let respray = null, resprayBays = [], paramedic = null, medStations = [];   // Auto KW: body shops and paramedic calls
 let fire = null, fireStations = [];   // Seattle Fire: the stations' rigs, the water cannon, fire calls (firecalls.js)
 
@@ -297,6 +299,7 @@ class Game {
     if (eats) eats.onCrash(impact);
     if (paramedic) paramedic.onCrash(impact);
     if (g2) g2.onCrash(impact);
+    if (story) story.onCrash(impact, other);
     const p = player.position;
     fx.sparks(p.x, p.y + 0.8, p.z, Math.min(14, Math.round(impact)));
     // A police mission's suspect is yours to ram.
@@ -1896,7 +1899,7 @@ function installShadowFade() {
   buggies.audio = audio;
   geese = new Geese({ scene, city, world, audio, hud, game });
   window.__geese = geese;
-  try { events = new RandomEvents({ scene, city, traffic, peds, game, fx, audio, hud, tod, player, camera, busy: () => !!((g2 && (g2.run || g2.active)) || (acts && acts.active) || (taxi && taxi.run) || (eats && eats.run) || (grt && grt.run) || (missions && missions.run) || (paramedic && paramedic.call)) }); events.enabled = game.settings.events; } catch (e) { blog('events: ' + e.message); events = null; }
+  try { events = new RandomEvents({ scene, city, traffic, peds, game, fx, audio, hud, tod, player, camera, busy: () => !!((g2 && (g2.run || g2.active)) || (acts && acts.active) || (taxi && taxi.run) || (eats && eats.run) || (grt && grt.run) || (missions && missions.run) || (paramedic && paramedic.call) || (story && story.run)) }); events.enabled = game.settings.events; } catch (e) { blog('events: ' + e.message); events = null; }
   try { eggs = new Eggs({ scene, city, world, audio, hud, game, traffic, fx }); window.__eggs = eggs; } catch (e) { blog('eggs failed: ' + e.message); eggs = null; }
   blog('kw places built: ' + JSON.stringify(placesStats()));
   link.bind({ game, hud, audio, player });
@@ -1979,6 +1982,13 @@ function installShadowFade() {
     paramedic.spawnRigs();
     hud.places.push(...paramedic.places());
   } catch (e) { blog('paramedic: ' + e.message); paramedic = null; }
+  // Auto KW: KW Stories (story.js): Gord's garage at University & Bridge; a failure here never stops the game starting
+  try {
+    const app = document.getElementById('app');
+    story = new Story({ scene, city, game, hud, audio, traffic, police, respray, router: taxi, fx, camera, controls,
+      panel: eats && eats.panel ? eats.panel : new LedPanel(app), events: () => events, busy: storyBusy });
+    hud.places.push(...story.places());
+  } catch (e) { blog('story: ' + e.message); story = null; }
 
   // delivery marker
   const mg = new THREE.CylinderGeometry(6, 6, 26, 18, 1, true);
@@ -2057,7 +2067,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get paramedic() { return paramedic; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { get story() { return story; }, get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get paramedic() { return paramedic; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;
   Object.defineProperty(window.__dbg, 'eggs', { get() { return eggs; } });
   window.__dbg.geese = geese;
@@ -2145,6 +2155,7 @@ function installShadowFade() {
       for (const m of taxi.warmMeshes()) warm.add(m);
       if (eats) for (const m of eats.warmMeshes()) warm.add(m);
       if (paramedic) for (const m of paramedic.warmMeshes()) warm.add(m);
+      if (story) for (const m of story.warmMeshes()) warm.add(m);
       if (respray) for (const m of respray.warmMeshes()) warm.add(m);
       if (fx.lines) { fx.lines.visible = true; lazy.linesWere = true; }
       if (fx.wakeMesh) fx.wakeMesh.visible = true;
@@ -2530,6 +2541,7 @@ function refreshJobs() {
   if (cnt) cnt.textContent = `${s.done}/${s.total} · ${s.golds} gold · finds ${s.found}/${s.findTotal} · tech tour ${s.tech}/${s.techTotal}`;
   if (mon) mon.textContent = formatMoney(game.money);
   refreshPassport();
+  refreshStory();
   for (const b of document.querySelectorAll('.buy')) b.disabled = game.money < +b.dataset.cost;
   if (!list) return;
   const COL = { gold: '#f4c542', silver: '#c8d0d8', bronze: '#c0763c' };
@@ -2538,6 +2550,43 @@ function refreshJobs() {
     + `<span class="bt">${r.best || '--'}`
     + (r.medal && r.medal !== 'none' ? `<i class="md" style="background:${COL[r.medal]}"></i>` : '')
     + '</span></div>').join('');
+}
+
+/** KW Stories in the menu: a row a chapter (done / next / locked), REPLAY, and QUIT for the one running. */
+function refreshStory() {
+  const box = document.getElementById('storyBox');
+  if (!box) return;
+  box.style.display = story ? '' : 'none';
+  if (!story) return;
+  const rows = story.rows(), done = rows.filter((r) => r.state === 'done').length;
+  document.getElementById('storyCount').textContent = `${done}/${rows.length}`;
+  const list = document.getElementById('storyList');
+  list.textContent = '';
+  for (const r of rows) {
+    const row = document.createElement('div');
+    row.className = 'jobRow storyRow ' + r.state;
+    const nm = document.createElement('span'); nm.className = 'nm';
+    nm.textContent = `${r.i + 1} · ${r.state === 'locked' ? '· · ·' : r.title}`;
+    const bt = document.createElement('span'); bt.className = 'bt';
+    if (r.state === 'done') {
+      bt.textContent = `${formatMoney(r.pay)} ✓ `;
+      const b = document.createElement('button'); b.className = 'mini storyBtn'; b.textContent = 'REPLAY';
+      b.dataset.replay = String(r.i);
+      bt.append(b);
+    } else if (r.state === 'run') {
+      bt.textContent = 'playing ';
+      const b = document.createElement('button'); b.className = 'mini storyBtn'; b.textContent = 'QUIT'; b.dataset.quit = '1';
+      bt.append(b);
+    } else if (r.state === 'next') {
+      bt.textContent = story.failed && story.failed.i === r.i ? '' : "at Brubacher's Garage";
+      if (story.failed && story.failed.i === r.i) {
+        const b = document.createElement('button'); b.className = 'mini storyBtn'; b.textContent = 'RETRY'; b.dataset.retry = '1';
+        bt.append(b);
+      }
+    } else bt.textContent = 'locked';
+    row.append(nm, bt);
+    list.append(row);
+  }
 }
 
 /** The Seattle Passport panel: the wallet, the rank and what the game has saved. Read only when paused. */
@@ -2554,6 +2603,7 @@ function refreshPassport() {
     + (p.extra.length ? ` · ${p.extra.join(' · ')}` : '');
   const grid = document.getElementById('ppGrid');
   if (stunts && stunts.list.length) p.rows = p.rows.concat([{ label: 'Stunt jumps found', done: stunts.found, total: stunts.list.length }]);
+  if (story) p.rows = p.rows.concat([{ label: 'KW Stories', done: story.save.done.length, total: story.chapters.length }]);
   if (eggs) {
     p.rows = p.rows.concat([{ label: 'Golden eggs', done: eggs.count, total: eggs.total }]);
     const ht = eggs.hint(player.x, player.z);
@@ -2716,6 +2766,17 @@ function wireUi() {
     if (!v) audio.resume();
   };
   setPausedRef = setPaused;
+  // KW Stories rows (refreshStory): REPLAY / RETRY start a chapter and close the menu, QUIT ends the one running
+  const storyList = document.getElementById('storyList');
+  if (storyList) storyList.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('button');
+    if (!b || !story) return;
+    e.stopPropagation();
+    if (b.dataset.quit) { story.quit(); refreshStory(); return; }
+    setPaused(false);
+    if (b.dataset.replay) story.replay(+b.dataset.replay);
+    else if (b.dataset.retry) story.retry();
+  });
   document.getElementById('pauseBtn').addEventListener('click', () => setPaused(!game.paused));
   document.getElementById('resumeBtn').addEventListener('click', () => setPaused(false));
   // A setting changed in the menu (graphics, shadows, a post pass) shows
@@ -2959,8 +3020,22 @@ function interiorUp() {
   return !!(hockey && hockey.active && hockey.view) || !!(fest && fest.inside);
 }
 
+/** What job / exam / run / activity is on (KW Stories will not start over one): its name, or null. */
+function storyBusy() {
+  if (taxi && taxi.on) return 'taxi shift';
+  if (eats && eats.on) return 'KW Eats shift';
+  if (grt && grt.run) return 'bus route';
+  if (g2 && (g2.run || g2.active)) return 'road test';
+  if (missions && (missions.run || missions.nextT > 0)) return 'police call';
+  if (paramedic && (paramedic.call || paramedic.nextT > 0)) return 'paramedic call';
+  if (fire && (fire.call || fire._nextT > 0)) return 'fire call';
+  if (acts && acts.active) return 'race';
+  if (kartRace && kartRace.state && kartRace.state !== 'idle') return 'kart race';
+  return null;
+}
+
 function reapHolds() {
-  const live = { respray, fishing, arcade, pinball, hockey, rollup, jj, fest, splash, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace, derby, g2 };
+  const live = { story, respray, fishing, arcade, pinball, hockey, rollup, jj, fest, splash, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace, derby, g2 };
   for (const who of game.holds) {
     if (who === 'seafair') { if (seafair && (seafair.state === 'menu' || seafair.state === 'done')) continue; }
     else if (live[who] && live[who].active) continue;
@@ -3322,6 +3397,7 @@ function frame(now) {
 
   if (game.holds.size) reapHolds();
   if (respray && respray.active) respray.update(dt);
+  if (story && story.active) story.cutUpdate(dt);   // a KW Stories cutscene (the world held)
   if (fishing && fishing.active) fishing.update(dt);
   if (hoops && hoops.active) hoops.update(dt);
   if (golf && golf.active) golf.update(dt);
@@ -3460,6 +3536,7 @@ function frame(now) {
   if (grt) grt.update(dt, player);
   if (eats) eats.update(dt, player);
   if (g2) g2.update(dt, player);
+  if (story) story.update(dt, player);   // KW Stories (story.js)
   if (crops) crops.update(dt, player);   // the harvest (crops.js)
   // Say hello once per approach to anything the map marks (the dock, the
   // quads): the map is how you find them, this is how you know you have.

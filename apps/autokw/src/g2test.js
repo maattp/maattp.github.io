@@ -199,6 +199,7 @@ export class RoadTest {
     const v = pl.vehicle;
     if (Math.hypot(v.x - LOT.x, v.z - LOT.z) > CAR_R || Math.abs(v.vLong) > STOP_V) return false;
     if (!this.carOk(v)) { this.hud.showToast('DriveTest tests you in a car — not that', 2600); return true; }
+    if (this.game.story) { this.hud.showToast('Finish the KW Stories mission first', 2600); return true; }   // (story.js)
     this.open(pl);
     return true;
   }

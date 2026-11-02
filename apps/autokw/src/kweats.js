@@ -214,6 +214,7 @@ export class KwEats {
     const p = player.position, ride = this.canRide(player);
     const v = ride ? player.vehicle : null;
     if (this.mark.visible) { this.mark.rotation.y += dt * 0.7; this.mark.material.opacity = 0.22 + Math.sin(performance.now() * 0.004) * 0.08; }
+    if (!this.on && this.game.story) { this.mark.visible = false; return; }   // a KW Stories mission is on (story.js)
     if (!this.on) {
       // the marker: the nearest kitchen, while you ride something that delivers
       const near = ride ? this.nearestRest(p.x, p.z, 230) : null;

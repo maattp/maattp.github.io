@@ -391,6 +391,14 @@
   .ppRow span { opacity: .85; } .ppRow b { font-weight: 600; font-variant-numeric: tabular-nums; opacity: .7; }
   .ppRow.full b { color: #f4c542; opacity: 1; }
   #jobsBox { margin: 10px 0 4px; text-align: left; }
+  /* KW Stories (story.js): chapter rows, REPLAY / RETRY / QUIT */
+  #storyBox { margin: 10px 0 2px; text-align: left; }
+  #storyList { font-size: 12px; }
+  .storyRow.locked { opacity: .45; }
+  .storyRow.next .nm, .storyRow.run .nm { color: #ffc21a; }
+  .storyRow .bt { white-space: nowrap; display: flex; align-items: center; }
+  .storyRow { align-items: center; }
+  #storyList .storyBtn { font-size: 10px; padding: 3px 9px; margin: 0 0 0 6px; min-height: 0; height: auto; line-height: 1.2; color: #fff; background: rgba(255,194,26,0.18); width: auto; flex: none; }
   .rowHead { font-size: 10px; letter-spacing: .14em; opacity: .55; margin: 8px 0 4px; display: flex; justify-content: space-between; }
   #jobsList { max-height: 34vh; overflow-y: auto; -webkit-overflow-scrolling: touch; font-size: 12px; }
   .jobRow { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
@@ -578,6 +586,10 @@
         <div id="ppTrack"><div id="ppBar"></div></div>
         <div id="ppNext"></div>
         <div id="ppGrid"></div>
+      </div>
+      <div id="storyBox">
+        <div class="rowHead">KW STORIES <span id="storyCount"></span></div>
+        <div id="storyList"></div>
       </div>
       <div id="jobsBox">
         <div class="rowHead">JOBS <span id="jobsCount"></span></div>

@@ -5281,6 +5281,89 @@ file and a guide disagree, this file wins.
   **Not done:** the dusk light's direction (shadows still fall from the
   afternoon sun); the square's own lamps (not recorded); storefront glazing
   reflections (survey item 7); car lamps on parked cars.
+- **KW Stories, the story campaign: src/story.js** (docs/story/*.jpg; probe
+  `tools/kw/storyprobe.mjs` + `storyprobe-page.js`). Seven chapters, GTA-style,
+  all invented people: Gord Brubacher (31 years driving the Oktoberfest
+  parade's lead float) runs a garage in the plaza at **University Ave E &
+  Bridge St W** (`GARAGE`: the strip's north face; a canvas sign, Gord as one
+  `unique` humanoid at his door, both built within 160 m / shown within 600);
+  Priya (his co-op tenant) gives intel; Chad Vandermeer, a condo developer,
+  wants the lot. **The contact is a gold beam in the lot and a star on the map**
+  (`places()`, kind `story`); stop in it (any vehicle, or on foot) and the next
+  chapter starts. `CHAPTERS` -- each step a different mechanic on real places:
+  (1) *The Double-Double Run* -- the Tims across the plaza, then to the Aud on a
+  clock from the A* route (m / 12.5 + 35 s) with the coffee spilling (grtbus
+  `Feel`: lateral g, braking, landings, crashes); (2) *Goose Chase* -- Waterloo
+  Park, a van (getaway.js driver) to ram to a stop or a wreck, then Gerald the
+  goose to Columbia Lake; (3) *Tail Lights* -- Chad's SUV from Uptown to the
+  Tannery along its own A* route: inside 22 m suspicion rises (a bump is
+  instant), past 150 m for 10 s he is lost; (4) *Float Like a Pretzel* -- get
+  in the parade float (a pickup dressed by `dressFloat`: one merged
+  vertex-coloured mesh -- skirt, giant pretzel, stein, hops, pennants -- shared,
+  `v.extra`) and take it down King St, Uptown to Kitchener City Hall,
+  checkpoints every 380 m, a float condition hurt by crashes and by speed over
+  50 km/h; (5) *The Golden Goose* -- lift J&J's Golden Goose card (two stars,
+  `game.setWanted`), lose them, then any body shop's respray (`respray.stats.n`
+  rises; Gord refunds the price); (6) *Civic Duty* -- race Kayla's Civic from
+  Kingsway Dr by Fairview Park to Preston (9 km, Hwy 8, King St E): checkpoints
+  every 520 m, a rubber band on her pace; (7) *Prost!* -- Chad's limo runs its
+  A* route from the Aud to YKF: wreck it or hold it stopped (2.2 s within 22
+  m) before it gets there, then the deed home; a held party with fireworks;
+  **the float is then yours, parked at the garage** (`prize`, an apron car,
+  respawned within 320 m like the eggs' garage). Pay $500-$2,500, finale
+  $10,000; a replay pays a quarter.
+  **Laws:** (a) a chapter never starts during a job/exam/run (`storyBusy()` in
+  main.js: taxi, KW Eats, GRT, G2, police / paramedic / fire MISSION, an
+  activity race, the kart race; a live random event is stopped, and
+  `events`' busy includes the story); while one runs `game.story` is its id
+  and those jobs refuse to start (one-line guards in taxi.js, kweats.js,
+  grtbus.js, g2test.js, policemissions.js, paramedic.js, firecalls.js,
+  activities.js `canStart`). (b) **The world is held only for cutscenes** --
+  the intro and the finale (`game.hold('story')`, in reapHolds' `live`;
+  `story.cutUpdate` runs before main's pause check, orbits the camera from the
+  lot, a tap / ENTER / Space / the pad's Y advances, a line also moves on by
+  itself); everything else is subtitles (a portrait card, portraits drawn on a
+  canvas) over the running world. (c) Our cars are traffic's `'suspect'` mode
+  with `v.story` (the constructor wraps `traffic.suspectDriver`); the route
+  drivers (`pathDrive`: pure pursuit of an offset A* line, corner speeds, a
+  polite ease-off behind moving traffic with 6 s of patience, a lane change to
+  pass a car left standing, backing out when wedged) and `v.suspect` set so
+  ramming them is no crime. (d) `cleanup()` is the one exit (pass, fail, quit,
+  death): every story car removed (the one you sit in is left to you, as
+  'free'), beam, arrow, `hud.fare`, `hud.suspects`, the LED panel, queued A*
+  jobs, the hold. A* is taxi.js's PathJob (`router`), 500 expansions a frame,
+  one job at a time (shared scratch). Fail = toast + MISSION FAILED + a RETRY
+  chip (12 s; Y on a keyboard; the menu) that restarts the chapter without its
+  intro. The pause menu's **KW STORIES** box (`refreshStory`): a row a chapter
+  (done ✓ + REPLAY / next / locked / playing + QUIT / failed + RETRY); the
+  passport gains "KW Stories n/7". Saved in `autokw-story` ({done, best, n}).
+  Debug: `__dbg.story` (`start(i, {skipIntro})`, `run`, `skipCut()`,
+  `routeNow`, `log`). **Verify:** `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=..
+  AUTO_GPU=1 node tools/kw/storyprobe.mjs <dir> [pass,fail,cost]` -- the world
+  stepped at a fixed 1/60 by the page side with an autopilot driving real
+  input (A* lines, ramming, tailing at a gap, passing standing cars; AI
+  'traffic' stopped in its lane ahead is removed -- it cannot overtake).
+  Teleports, each logged: transit legs (the arrival still driven from ~150 m),
+  into the float, and chapter 5's getaway -- 2.6 km out of sight every 9 s
+  until police.js reports SEARCHING (a crime is dispatched for 15 s), then 9
+  m outside the nearest bay's mouth facing in, as medprobe.mjs does, and
+  driven in. `pass` = the busy refusal, the trigger, the held intro and a
+  tap, all seven chapters (a lost attempt -- the autopilot losing the limo,
+  say -- is reported and replayed, up to 3), the prize, the menu and REPLAY;
+  `fail` = coffee cold, van gets away, Chad lost, Chad spots you, the float
+  shaken apart at 100 km/h, BUSTED, Kayla first, the limo makes YKF, each
+  with RETRY and a leak check (every car the story spawned is gone, no hold,
+  no marker / route / panel); `cost`. `STORY_CH=5,7` plays only those.
+  Non-vacuous: with cleanup's `traffic.remove` commented out the leak check
+  FAILs. **Phone cost:** nothing drawn and ~0.7 us a frame (story.update)
+  with no chapter running away from the garage; at the garage the sign (1
+  draw), Gord (1, his own geometry; + a shadow on a phone) and the beam (1,
+  while a chapter is open) or, once the story is done, the float (3 + its
+  decoration 1): garage view A/B 170 -> 173 draws, +6k tris. During a
+  chapter: the beam, the arrow (1 each), its one car (3) and the float's
+  decoration (1 draw, 1.9k tris). Not done: no voice; the tail's SUV and the race's
+  Civic ignore traffic lights; chapter 5 has no 'BUSTED with the card'
+  cutscene; a quit mid-chapter keeps no checkpoint.
 
 ## Build number
 
@@ -5354,6 +5437,7 @@ src/traffic.js              traffic AI, parked cars, police units' driving, A*
 src/police.js               the wanted levels: what each sends, guns, the helicopters, search, busted
 src/policemissions.js       police missions (MISSION in a police vehicle): the suspects and their getaway
 src/taxi.js                 taxi fares (FARE in a taxi): the hail, the ride, the meter and tip, the drop-off
+src/story.js                KW Stories: the seven-chapter story campaign from Brubacher's Garage (University & Bridge)
 src/peds.js                 humanoid builder + pedestrian/cop/SWAT crowd
 src/player.js               on-foot/driving state machine + chase camera
 src/controls.js             touch stick/buttons + keyboard fallback
