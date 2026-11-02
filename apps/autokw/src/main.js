@@ -3367,7 +3367,7 @@ function frame(now) {
   traffic.update(dt, p.x, p.z, camDir, player);
   if (prof) lap('traffic');
   peds.update(dt, p.x, p.z, player, traffic);
-  if (geese) geese.feedTraffic(traffic);   // geese standing in UW's ring road stop the cars like a person crossing
+  if (geese) geese.feedTraffic(traffic, dt);   // geese standing in UW's ring road stop the cars like a person crossing
   if (prof) lap('peds');
   if (fire) fire.update(dt);
   if (stunts) stunts.update(dt, player);

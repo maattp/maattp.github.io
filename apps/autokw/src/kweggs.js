@@ -9,7 +9,7 @@
 //     the count (main.js refreshPassport reads `count` / `total` / `hint`).
 //   * Rewards at 10 / 20 / 30 / 40: cash, then the GOLDEN GOOSE GARAGE opens
 //     (a lot north of Uptown Waterloo's square) with a gold Hellcat, the
-//     Wienermobile, and at 40 a flying saucer. Cars are `apron` traffic cars
+//     Weenie Wagon (the hot-dog van), and at 40 a flying saucer. Cars are `apron` traffic cars
 //     spawned when you come near, and never re-spawned while the one that is
 //     out there lives.
 //   * Three small easter eggs (`SECRETS`): the Engineering pink tie on its
@@ -68,7 +68,7 @@ export const EGGS = [
   { id: 'stjmill', n: "the St. Jacobs mill", x: -6393, z: -9852 },
   { id: 'summit', n: "Chicopee's summit", x: 4592, z: 1888 },
   { id: 'tube', n: "Chicopee's tube park", x: 4300, z: 2400 },
-  { id: 'tank', n: 'the Spitfire and the tank', x: 7400, z: -700 },
+  { id: 'tank', n: 'the Spitfire and the tank', x: 149, z: -1073 },
   { id: 'ykf', n: 'the airport', x: 7227, z: -480 },
   { id: 'hespeler', n: 'Hespeler', x: 13462, z: 2202 },
   { id: 'preston', n: 'Preston', x: 10141, z: 7152 },
@@ -86,7 +86,7 @@ const SLOT = [[-9, 0], [0, 0], [11, 0]];
 const REWARDS = [
   { at: 10, cash: 5000, msg: 'TEN EGGS — the Goose pays $5,000' },
   { at: 20, cash: 15000, car: { t: 'hellcat', c: 0xe6b422 }, msg: 'TWENTY EGGS — the Golden Goose Garage is open, north of Uptown Waterloo, and there is a gold Hellcat in it. Faint glints now show in the pause menu' },
-  { at: 30, cash: 25000, car: { t: 'wiener', c: 0xffffff }, msg: 'THIRTY EGGS — the garage has a new resident: the Wienermobile' },
+  { at: 30, cash: 25000, car: { t: 'wiener', c: 0xffffff }, msg: 'THIRTY EGGS — the garage has a new resident: the Weenie Wagon' },
   { at: 40, cash: 100000, car: { t: 'saucer', c: 0xffd24a }, msg: 'ALL FORTY EGGS — the Goose has landed. A flying saucer is parked at the garage, and $100,000' },
 ];
 
@@ -215,7 +215,12 @@ export class Eggs {
       // slots run along the lot (north-south), nose west
       let v = null;
       try { v = this.traffic.spawnAt(HIDEOUT.x + sx * 0.0, HIDEOUT.z + sx, HIDEOUT.heading, r.car.t, r.car.c, 'apron'); } catch (e) { v = null; }
-      if (v) { v.vLong = 0; this.slots[i] = v; }
+      if (v) {
+        v.vLong = 0; this.slots[i] = v;
+        // the Hellcat's `livery` overrides the colour passed to spawnAt (a tiger wrap, beige): paint it gold
+        // on its own material, the wrap's black strokes stay
+        if (r.car.t === 'hellcat' && v.bodyMat && v.bodyMat.color) v.bodyMat.color.setHex(r.car.c);
+      }
     });
   }
 
@@ -332,6 +337,12 @@ export class Eggs {
   buildGarage() {
     if (this.garage) return;
     const H = HIDEOUT, c = this.city;
+    // the lot's parked cars keep off the slab (a blue SUV overlapped its corner)
+    if (this.traffic && this.traffic.keepClear && !this.traffic.keepClear.some((k) => k[0] === H.x && k[1] === H.z)) this.traffic.keepClear.push([H.x, H.z, 24]);
+    // ...and any already parked there (built at egg 20, with the lot already stocked) are towed
+    if (this.traffic && this.traffic.cars && this.traffic.remove) {
+      for (const v of this.traffic.cars.slice()) if (v.mode === 'parked' && Math.abs(v.x - H.x) < 9 && Math.abs(v.z - H.z) < 18) this.traffic.remove(v);
+    }
     const y = c.groundAt(H.x, H.z, null) + 0.04;
     const B = new Builder(false);
     const ASPH = lin([0.16, 0.16, 0.18]), LINE = lin(GOLD), POST = lin([0.12, 0.12, 0.13]);

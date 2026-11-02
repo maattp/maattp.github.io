@@ -80,7 +80,7 @@ file and a guide disagree, this file wins.
   eggs, a faint hint line (direction and distance of the nearest one).
   **Rewards** (`REWARDS`): 10 eggs $5,000; 20 $15,000 + the **Golden Goose
   Garage** (`HIDEOUT`, a lot north of Uptown Waterloo's square; slab + sign built
-  only from 20) with a gold Hellcat; 30 $25,000 + the Wienermobile; 40 $100,000 +
+  only from 20) with a gold Hellcat; 30 $25,000 + the hot-dog van (named "the Weenie Wagon" in this feature's text); 40 $100,000 +
   a flying saucer. The cars are 'apron' traffic spawned in the garage's three
   slots when you come within 320 m, again only if the one out there is dead.
   **Secrets:** a pink-tie flagpole on the lawn by E5 (walk up: +$250, once);

@@ -2733,6 +2733,7 @@ const FLOCKS = [[-4372, -1640, 9, false], [-4250, -1585, 6, true], [-4560, -1580
   // The ganders of the aggro ones (5th) hiss, spread their wings and CHASE you on foot.
   [-5690, -2060, 6, false, true], [-5990, -2200, 5, false, true], [-6560, -2330, 7, false, true], [-6740, -2300, 6, true, true]];
 // Geese standing in the ring road, for traffic to stop short of: [x, z] on UW's ring road (data/uw.json)
+const HOLD_MAX = 7;   // s a car may stand held by a road family before they leave the road
 const ROAD_FAMILIES = [[-5584, -1943], [-5911, -2263]];
 
 function gooseGeometry(pose) {
@@ -2944,10 +2945,29 @@ export class Geese {
     g.y = T(g.x, g.z);
   }
   /** Called after peds.update: geese standing in the road join the people crossing it, so cars stop short. */
-  feedTraffic(traffic) {
+  feedTraffic(traffic, dt = 1 / 60) {
     if (!traffic || !traffic.crossXZ) return;
     for (const fl of this.flocks) {
       if (!fl.road) continue;
+      // A family in the road must not become a gridlock: once a car has stood held by them for
+      // HOLD_MAX seconds (even with the player nowhere near), they waddle off the road, same as if chased.
+      if (fl.geese[0].st === 'block' && traffic.cars) {
+        let held = false;
+        for (const v of traffic.cars) {
+          if (v.mode === 'parked' || v.mode === 'apron' || v === (this.playerRef && this.playerRef.vehicle)) continue;
+          if (Math.abs(v.x - fl.x) < 22 && Math.abs(v.z - fl.z) < 22 && Math.abs(v.vLong) < 0.4) { held = true; break; }
+        }
+        fl.held = held ? (fl.held || 0) + dt : 0;
+        if (fl.held > HOLD_MAX) {
+          fl.held = 0; fl.away = 25;
+          for (const g of fl.geese) {
+            if (g.st !== 'block') continue;
+            g.st = 'fly'; g.t = 4 + Math.random() * 2; g.vy = 2; g.alt = 0.1;
+            g.h = Math.random() * Math.PI * 2;
+          }
+          if (fl.geese[0]) this.honk(fl.geese[0], 1);
+        }
+      }
       for (const g of fl.geese) {
         if (g.st !== 'block' || traffic.crossN >= 16) continue;
         const o = traffic.crossN * 3;
