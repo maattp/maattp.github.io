@@ -210,6 +210,24 @@ file and a guide disagree, this file wins.
   320 m; per frame three distance checks. Not done: dents are not stored; the garage is a stand-alone
   building beside a house, not a real house's door; a stored car's health is restored, nothing else.
   `__dbg.garages` (`sites`, `data`, `store(i, rec)`, `fits`, `count`).
+- **Photo mode** (src/kwphoto.js; docs/photo/*.jpg; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1
+  node tools/kw/photoprobe.mjs <dir>`). Pause menu > "Photo mode (P)", or P. `game.hold('photo')` (in reapHolds'
+  `live`; `doRespawn` clearing it makes `update` exit quietly) freezes the world but the frame still draws every
+  frame (a hold is not an "idle" screen), so FOV / look / time-of-day changes show at once. `body.photo` hides
+  #hud, the pad and the sticks. Free camera = an orbit (`yaw, pitch, dist`) round a target (the player, or the
+  vehicle, plus a `pan` capped at 22 m): one finger / left mouse orbits, two fingers pinch (radius) and drag
+  (pan), wheel zooms, right/shift mouse pans, WASD slides the target, Q/E lowers/raises, Esc exits. **Clamps
+  every frame (`update`):** camera within 60 m of the player, ray from the target marched in 14 steps and cut
+  short of `city.insideBuilding`, then `groundAt(x, z, target y) + 1 m` and the water level. Bar: FOV, six looks
+  (`LOOKS`: CSS filter on the canvas for the preview), TIME (day/dusk/night; restored on exit), HIDE ME, SNAP,
+  EXIT. **SNAP** (a tap, so share has its user activation): `drawNow()` renders in the SAME task (the GL canvas
+  is not preserved), the canvas is drawn into a 2D canvas with `ctx.filter` -- **Safari has no ctx.filter**, so
+  `applyLookPixels` is the same look as a pixel pass (chosen by `'filter' in CanvasRenderingContext2D.prototype`;
+  the probe forces both) -- the caption "Auto KW . <HUD district> . <date>", a JPEG built SYNCHRONOUSLY from
+  `toDataURL` (an await before `navigator.share` can lose the activation on iOS), then `share({files})` else a
+  download link. Shutter = a white flash + a WebAudio noise tick. EXIT restores camera pose, fov, HUD, filter,
+  player model and time of day. **Phone cost: none when off** (DOM and style are built on the first enter; one
+  `active` check a frame). Not done: a gamepad binding, share-sheet preview, pinch-to-FOV.
 - **Golf** (src/golf.js, `data/golf.json` from tools/kw/build_golf.py):
   Rockway, Westmount, Grey Silo (18), Conestoga (27: The Village, The Moors,
   Goose Run -- OSM's hole `name` is the nine; holes are keyed nine + ref,
