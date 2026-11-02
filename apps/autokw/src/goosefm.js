@@ -29,6 +29,11 @@ const BANK = {
       () => 'It is snowing. In Waterloo Region. Experts are stunned, and by experts I mean nobody.',
       () => 'Snow on the roads. Remember, the Conestoga Parkway is not a luge track, no matter what your cousin says.',
     ],
+    storm: [
+      () => 'Thunderstorm over the Tri-Cities. If you count the seconds between the flash and the boom, divide by three, that is how many kilometres away it is. Divide by zero and you are on the Conestoga Parkway.',
+      () => 'Lightning out there, folks. The geese are fine. The geese are always fine. Be more like the geese and get indoors.',
+      () => 'Big storm rolling over the Grand. Headlights on, wipers on, and maybe skip the car wash today.',
+    ],
     rain: [
       () => 'Rain on the way down. The Grand River is thinking about its options.',
       () => 'Wet out there. Slow down on the bridges, and give the geese the right of way. They already assume it.',
