@@ -1,0 +1,23 @@
+[
+  {"name": "g-spawn", "player": true},
+  {"name": "g-king", "eval": "window.__tod = 'day'; window.__weather = 'clear'; __carSeat('King Street', -3822, -1405, 70, 7, 2.4)"},
+  {"name": "g-carclose", "eval": "window.__tod = 'day'; window.__weather = 'clear'; __carClose('King Street', -3822, -1405)"},
+  {"name": "g-res", "eval": "window.__tod = 'day'; window.__weather = 'clear'; __carSeat('Dunbar', -3640, 190, 70, 10, 4.0, 0.6)"},
+  {"name": "g-lake", "eval": "window.__tod = 'day'; window.__weather = 'clear'", "c": [-2010, 560, 6], "t": [-1700, 680, 0], "fov": 62},
+  {"name": "g-river", "eval": "window.__tod = 'day'; window.__weather = 'clear'", "c": [12850, 10250, 18], "t": [12870, 10900, 0], "fov": 62},
+  {"name": "g-401", "eval": "window.__tod = 'day'; window.__weather = 'clear'; __carSeat('401', 11000, 4250, 90, 9, 3.2)"},
+  {"name": "g-air", "eval": "window.__tod = 'day'; window.__weather = 'clear'", "at": [-3200, -1000, 0], "alt": 450, "bearing": 300, "pitch": -18, "fov": 60},
+  {"name": "g-airgold", "eval": "window.__tod = 'dusk'; window.__weather = 'clear'", "at": [-3200, -1000, 0], "alt": 450, "bearing": 240, "pitch": -14, "fov": 60},
+  {"name": "g-airdusk-away", "eval": "window.__tod = 'dusk'; window.__weather = 'clear'", "at": [-3200, -1000, 0], "alt": 300, "bearing": 60, "pitch": -12, "fov": 60},
+  {"name": "g-dusk401", "eval": "window.__tod = 'dusk'; window.__weather = 'clear'; __carSeat('401', 11000, 4250, 90, 9, 3.2)"},
+  {"name": "g-duskking", "eval": "window.__tod = 'dusk'; __carSeat('King Street', -3822, -1405, 70, 7, 2.4)"},
+  {"name": "g-nightking", "eval": "window.__tod = 'night'; __carSeat('King Street', -3822, -1405, 70, 7, 2.4)"},
+  {"name": "g-night401", "eval": "window.__tod = 'night'; window.__weather = 'clear'; __carSeat('401', 11000, 4250, 90, 9, 3.2)"},
+  {"name": "g-nightair", "eval": "window.__tod = 'night'; window.__weather = 'clear'", "at": [-3200, -1000, 0], "alt": 300, "bearing": 300, "pitch": -16, "fov": 60},
+  {"name": "g-nightres", "eval": "window.__tod = 'night'; window.__weather = 'clear'; __carSeat('Dunbar', -3640, 190, 70, 10, 4.0, 0.6)"},
+  {"name": "g-riverlow", "eval": "window.__tod = 'day'; window.__weather = 'clear'", "c": [12860, 10350, 4], "t": [12800, 10700, 0], "fov": 62},
+  {"name": "g-riverdusk", "eval": "window.__tod = 'dusk'; window.__weather = 'clear'", "c": [12850, 10250, 18], "t": [12870, 10900, 0], "fov": 62},
+  {"name": "g-bridgeport", "eval": "window.__tod = 'day'; window.__weather = 'clear'", "c": [-262, -2764, 3], "t": [-262, -2300, 0], "fov": 62},
+  {"name": "g-nightspawn", "player": true, "eval": "window.__tod = 'night'; window.__weather = 'clear'"},
+  {"name": "g-nightking2", "eval": "window.__tod = 'night'; window.__weather = 'clear'", "c": [-3822, -1405, 12], "t": [-3600, -1100, 2], "fov": 55}
+]
