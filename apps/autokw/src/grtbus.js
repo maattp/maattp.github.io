@@ -462,7 +462,7 @@ export class GrtBus {
         if (d < START_R) near = rt;
         else if (this.armed === rt.id && d > 80) this.armed = null;
       }
-      if (near && this.armed !== near.id && Math.abs(v.vLong) < 2 && !this.game.dead && this.game.wanted < 3) this.start(near, v);
+      if (near && this.armed !== near.id && Math.abs(v.vLong) < 2 && !this.game.dead && this.game.wanted < 3 && !this.game.story) this.start(near, v);
       return;
     }
     const run = this.run, rt = run.rt;

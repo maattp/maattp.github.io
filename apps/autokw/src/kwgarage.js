@@ -245,7 +245,7 @@ export class Garages {
     if (!v || v.dead) return false;
     const s = v.spec;
     return !!((s.roadCar || s.moto) && !s.rail && !s.bus && !s.towed && !s.trailer && !v.trailer && !v.leader && !s.plane && !s.boat && !s.tank
-      && !s.offroad && !s.fire && s.len <= MAX_LEN && s.wid <= 2.5);
+      && !s.offroad && !s.fire && !v.story && !v.isFloat && s.len <= MAX_LEN && s.wid <= 2.5);
   }
 
   why(v) {

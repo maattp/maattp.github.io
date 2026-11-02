@@ -429,6 +429,7 @@ export class Activities {
   }
   canStart(a, k) {
     if (k === 'monorail') return false;
+    if (this.game && this.game.story) return false;   // a KW Stories mission is on (story.js)
     if (a.need === 'any') return k !== 'foot';
     if (a.need === 'car') return k === 'car' || k === 'trail';
     if (a.need === 'trail') return k === 'trail';

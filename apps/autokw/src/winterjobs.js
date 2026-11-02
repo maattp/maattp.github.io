@@ -698,7 +698,10 @@ export class WinterJobs {
     if (app && (app.dataset.winter === '1') !== want) app.dataset.winter = want ? '1' : '';
     const down = !!(c && want && (c.btn.winmission || c.key('KeyM') || (c._padHeld && c._padHeld.job)));
     if (down && !this._was) {
-      if (inP && !this.zam.run) this.plow.toggle(player);
+      // another job or a story chapter running: it starts nothing (stopping one of ours is always allowed)
+      const why = !this.busy() && this.o.blocked ? this.o.blocked() : null;
+      if (why) this.o.hud.showToast(`Finish the ${why} first`, 2600);
+      else if (inP && !this.zam.run) this.plow.toggle(player);
       else if (inZ && !this.plow.run) this.zam.toggle(player);
     }
     this._was = down;
