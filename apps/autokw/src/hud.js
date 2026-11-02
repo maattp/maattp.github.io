@@ -847,7 +847,7 @@ export class Hud {
     const reach = (half + 9 / zoom) * (half + 9 / zoom);
     for (const pl of (this.places || [])) {
       if (pl.off) continue;   // a pickup that has been taken
-      const [bx, bz] = toMap(pl.x, pl.z);
+      const bx = (pl.x - p.x) * SCALE, bz = (pl.z - p.z) * SCALE;   // toMap without its array: ~500 places, 30 times a second
       if (bx * bx + bz * bz > reach) continue;
       ctx.save();
       ctx.translate(bx, bz);

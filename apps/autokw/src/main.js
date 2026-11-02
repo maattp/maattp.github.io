@@ -1614,6 +1614,7 @@ function installShadowFade() {
     onEnd: () => { game.release('golf'); },
   }) : null;
   if (golf && !golf.C) golf = null;
+  if (golf) golf.dropArrays = ON_PHONE && !window.__keepArrays;   // a course built later (golf.js range) drops its JS copy once uploaded
   // Hockey night at the Aud: the Kitchener Rangers against the London Knights.
   // The marquee stands at the street nearest the Kitchener Memorial
   // Auditorium, facing it; ENTER anywhere round the building drops the puck.

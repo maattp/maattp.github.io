@@ -75,6 +75,7 @@ async function main() {
     await evaluate(`(() => { for (const id of ['hud','pad','stickZone','lookZone','objective','toast','rotate','topBtns'])
       { const e = document.getElementById(id); if (e) e.style.display = 'none'; } window.__dbg.game.paused = true; })()`);
     const info = await evaluate(`(() => { const g = window.__dbg.golf; if (!g) return null;
+      if (g.buildAll) g.buildAll();   // courses are built as the camera nears them (golf.js range)
       return { courses: g.courses.map((C) => ({ id: C.id, name: C.name, holes: C.holes.length, polys: C.polys.length, tris: g.stats[C.id] })), tris: g.stats.tris,
         clear: g.courses.map((C) => { const h = C.holes[0]; return [h.pin.x, h.pin.z, g.keepClear(h.pin.x, h.pin.z), window.__dbg.city.jumpClear(h.pin.x, h.pin.z)]; }) }; })()`);
     console.log('golf:', JSON.stringify(info));
