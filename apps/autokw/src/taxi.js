@@ -213,6 +213,7 @@ export class TaxiFares {
   toggle(player) {
     if (this.on) { this.end(false, this.run && this.run.stage === 'ride' ? 'Fare cancelled — the passenger gets out' : 'Off shift'); return; }
     if (!this.available(player)) { this.hud.showToast('Fares need a taxi'); return; }
+    if (this.game.story) { this.hud.showToast('Finish the KW Stories mission first'); return; }   // (story.js: one thing at a time)
     if (this.game.wanted >= 3) { this.hud.showToast('Lose the police first'); return; }
     this.on = true;
     this.streak = 0;

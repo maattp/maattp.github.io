@@ -242,7 +242,7 @@ export class Respray {
   }
 
   price(v) {
-    if (!this.stats.n) return 0;
+    if (!this.stats.n || this.game.storyPays) return 0;   // (KW Stories chapter 5: Gord pays, story.js)
     const hp = v.spec.hp || 100;
     const dmg = 1 - clamp(v.health / hp, 0, 1);
     const p = 80 + Math.round(dmg * 100) + (v.dents || 0) * 8 + (this.game.wanted > 0 ? 40 : 0);
@@ -478,7 +478,7 @@ export class Respray {
         law = 'A cop saw you turn in — the stars stay';
       }
     }
-    S.result = `${took ? 'New colour. ' : S.takes ? '' : 'Livery kept. '}${dents || hp0 < (v.spec.hp || 100) ? 'Dents out. ' : ''}${S.price ? `${formatMoney(S.price)} charged.` : 'First one is on the house.'}`;
+    S.result = `${took ? 'New colour. ' : S.takes ? '' : 'Livery kept. '}${dents || hp0 < (v.spec.hp || 100) ? 'Dents out. ' : ''}${S.price ? `${formatMoney(S.price)} charged.` : game.storyPays ? 'Gord is paying.' : 'First one is on the house.'}`;
     S.law = law;
     this.setText('DONE', `${S.result}${law ? ' ' + law : ''}`);
     this.last = { colour: S.hex, took, price: S.price, law, wantedAfter: game.wanted, seen: S.seen, hp0, dents };
