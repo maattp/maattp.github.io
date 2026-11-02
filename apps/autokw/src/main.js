@@ -59,6 +59,7 @@ import { PhotoMode } from './kwphoto.js';   // Auto KW: photo mode (kwphoto.js)
 import { Garages, placeGarages } from './kwgarage.js';   // Auto KW: your save garages (kwgarage.js)
 import { ExportYard, placeYard } from './exportyard.js';   // Auto KW: import/export, the wanted list (exportyard.js)
 import { CruiseNight } from './kwcruise.js';   // Auto KW: Friday and Saturday cruise nights (kwcruise.js)
+import { CarWash, prepWash, placeWashes } from './carwash.js';   // Auto KW: the drive-through tunnel car washes (carwash.js)
 import { Paramedics, MED_STATIONS } from './paramedic.js';
 import { WinterJobs, PLOW_YARDS } from './winterjobs.js';   // Auto KW: the snowplow route and the Aud's Zamboni (winterjobs.js)   // Auto KW: paramedic calls (paramedic.js)
 import { BONES } from './peds.js';
@@ -208,6 +209,7 @@ let kartway = null, kartRace = null;   // Auto KW: Erbsville Kartway, its circui
 let story = null;   // Auto KW: KW Stories (story.js)
 let exportYard = null, exportSite = null;   // Auto KW: import/export at Parkway Auto Recyclers
 let cruise = null;   // Auto KW: cruise night (kwcruise.js)
+let carWash = null, washSites = [];   // Auto KW: the tunnel car washes (carwash.js)
 let cheats = null, photo = null, garages = null, garageBays = [], respray = null, resprayBays = [], paramedic = null, medStations = [], winter = null, plowStations = [];   // Auto KW: body shops and paramedic calls
 let fire = null, fireStations = [];   // Seattle Fire: the stations' rigs, the water cannon, fire calls (firecalls.js)
 
@@ -600,6 +602,8 @@ class Game {
 
   /** ENTER in a car stopped by a Tims: the drive-thru (player.js, before getting out). */
   tryDriveThru(pl) {
+    // stopped on a car wash's conveyor: ENTER pays; on it, ENTER is swallowed (carwash.js)
+    if (carWash && carWash.tryEnter(pl)) return true;
     // stopped by DriveTest's pillar in your own car: the road test in it (g2test.js)
     if (g2 && g2.driveUp(pl)) return true;
     // at a window (drivethru.js): served there, or a Tims' (Roll Up the Rim, below)
@@ -943,6 +947,8 @@ async function boot() {
   // the St. Jacobs market's tent, Canadian flags everywhere (kwfun.js)
   prepFun(city);
   prepFord(city);
+  // the tunnel car washes: their real buildings drawn as tunnels (carwash.js)
+  try { const k = prepWash(city); blog(`car washes: ${k.sites} tunnels`); } catch (e) { blog(`car washes: ${e.message}`); }
   // Uptown, Waterloo Park, RIM Park and Conestoga Mall (kwplaces.js)
   { const k = prepPlaces(city); blog(`kw places: ${k.skipped} boxes drawn as places`); }
   // Uptown building by building: King St's real looks, City Centre, the library, the towers (kwuptown.js)
@@ -1389,6 +1395,7 @@ function installShadowFade() {
   try { resprayBays = placeBays(city, world, (x, z) => world.waterLevelAt(x, z)); } catch (e) { blog(`body shops: ${e.message}`); resprayBays = []; }
   try { garageBays = placeGarages(city, (x, z) => world.waterLevelAt(x, z)); } catch (e) { blog(`garages: ${e.message}`); garageBays = []; }
   try { exportSite = placeYard(city, (x, z) => world.waterLevelAt(x, z)); } catch (e) { blog(`export yard: ${e.message}`); exportSite = null; }
+  try { washSites = placeWashes(city, (x, z) => world.waterLevelAt(x, z)); } catch (e) { blog(`car washes: ${e.message}`); washSites = []; }
   // The scene root never moves, and its own matrixAutoUpdate re-flagged EVERY
   // object in the world for a world-matrix multiply each frame. Static
   // subtrees are frozen; see freezeStatic.
@@ -2049,6 +2056,10 @@ function installShadowFade() {
     hud.places.push(...cruise.places());
   } catch (e) { blog('cruise: ' + e.message); cruise = null; }
   try {
+    carWash = new CarWash({ scene, city, game, hud, audio, fx, busy: jobsBusy, sites: washSites });
+    hud.places.push(...carWash.places());
+  } catch (e) { blog('car wash: ' + e.message); carWash = null; }
+  try {
     cheats = new Cheats({ scene, city, game, hud, audio, fx, traffic, player, phone: ON_PHONE, sys: () => ({ weather, tod, link, wildlife, rollup, police }) });
   } catch (e) { blog('cheats: ' + e.message); cheats = null; }
   try {
@@ -2156,7 +2167,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { get story() { return story; }, get calendar() { return kcal; }, get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get garages() { return garages; }, get exportYard() { return exportYard; }, get cruise() { return cruise; }, get cheats() { return cheats; }, get photo() { return photo; }, get paramedic() { return paramedic; }, get winter() { return winter; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { get story() { return story; }, get calendar() { return kcal; }, get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get garages() { return garages; }, get exportYard() { return exportYard; }, get cruise() { return cruise; }, get carWash() { return carWash; }, get cheats() { return cheats; }, get photo() { return photo; }, get paramedic() { return paramedic; }, get winter() { return winter; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;
   Object.defineProperty(window.__dbg, 'eggs', { get() { return eggs; } });
   Object.defineProperty(window.__dbg, 'secrets', { get() { return secrets; } });
@@ -3172,6 +3183,7 @@ function doRespawn() {
   // elevator: the ride's mode, camera and hidden body must not outlive it
   if (wheelRide) wheelRide.abort();
   if (needleTop) needleTop.abort();
+  if (carWash) carWash.abort();
   if (player.vehicle) player.exitVehicle(true);
   if (busted) {
     // a fine by the stars you had, and your gun confiscated
@@ -3649,6 +3661,7 @@ function frame(now) {
   if (garages) { try { garages.tick(dt, player); } catch (e) { if (!garages.err) { garages.err = 1; console.warn('garages: ' + e.message); } } }
   if (exportYard) { try { exportYard.tick(dt, player); } catch (e) { if (!exportYard.err) { exportYard.err = 1; console.warn('export yard: ' + e.message); } } }
   if (cruise) { try { cruise.update(dt, player); } catch (e) { if (!cruise.err) { cruise.err = 1; console.warn('cruise: ' + e.message); } } }
+  if (carWash) { try { carWash.tick(dt, player); } catch (e) { if (!carWash.err) { carWash.err = 1; console.warn('car wash: ' + e.message); } } }
   if (paramedic) paramedic.update(dt, player);
   if (winter) { try { winter.update(dt, player); } catch (e) { if (!winter.err) { winter.err = 1; console.warn('winter: ' + e.message); } } }
   if (stunts) stunts.update(dt, player);
