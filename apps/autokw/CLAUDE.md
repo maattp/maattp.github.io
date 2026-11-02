@@ -164,6 +164,29 @@ file and a guide disagree, this file wins.
   Health: waiting, lateral/braking g (grtbus Feel), landings and crashes (`onCrash`) hurt; 0 = lost. Pay
   ($90 + $35/level) x (0.4..1.0 by health) + time bonus; best level in `autokw-paramedic`. Phone: patient =
   1 pooled humanoid + 1 beam, ER 1 beam, only during a call.
+- **Your garages** (src/kwgarage.js; docs/garage/*.jpg; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1
+  node tools/kw/garageprobe.mjs <dir>`). GTA's save garages: three 3-stall garages (`GARAGES`: HOME on a
+  residential street by University Ave & Bridge St, Waterloo -- `res: true` prefers `cls 'res'` edges, the
+  nearest vacant frontage, beside a house; downtown Kitchener by King & Ontario; Galt by Main & Water),
+  placed at boot by `placeGarages` (placeBays' search with a 9.9 x 7.9 m footprint, off the carriageway, clear
+  of buildings/water, level; clear circle pushed before scatter; wall solids + a door solid whose `y1` is
+  dropped to turn it off). **Drive a road vehicle in and stop (0.7 s, under 1 m/s)**: the door comes down, then
+  the car is saved, you are put out on the street, the original vehicle is removed and a fresh one stands in the
+  stall. Saved in localStorage `autokw-garages` `{v, g: {home|kitchener|galt: [rec|null x3]}}`, rec = `{t type,
+  c bodyMat hex NOW (so a Respray colour persists), li taxi livery index, h health, pk plate}`; dents are not kept.
+  The stored cars are `'apron'` traffic (never culled), nose out, enterable (F / ENTER), spawned within 320 m
+  and removed past 480 m: the RECORD is the truth, so a wreck or a lost car is just spawned again after a
+  reload. **Drive one out past the mouth and its slot is freed** (record deleted); drive another in and it
+  takes a free stall. `fits(v)`: `roadCar || moto`, not bus / towed / plane / boat / tank / offroad / fire,
+  len <= 6.45, so the Zamboni, police, taxi, ambulance, DeLorean, Hellcat all fit; anything else finds the door
+  shut (solid) with a toast saying why; a full garage toasts "take a car out first" and does not save.
+  The door opens within 17 m (foot or car), shuts on leaving. Map icon `garage` (hud.js, "Your garage (Home)"
+  with a hello listing the contents) and three passport rows in the pause menu ("Home garage: Taxi 1/3").
+  **No `game.hold`**: the 1 s door-close is a per-site `seq`; reapHolds would leak it. Phone cost: nothing
+  until 650 m; then 2 draws (3 while the door is down), 172 tris, + 3 apron cars (3 draws each) only inside
+  320 m; per frame three distance checks. Not done: dents are not stored; the garage is a stand-alone
+  building beside a house, not a real house's door; a stored car's health is restored, nothing else.
+  `__dbg.garages` (`sites`, `data`, `store(i, rec)`, `fits`, `count`).
 - **Golf** (src/golf.js, `data/golf.json` from tools/kw/build_golf.py):
   Rockway, Westmount, Grey Silo (18), Conestoga (27: The Village, The Moors,
   Goose Run -- OSM's hole `name` is the nine; holes are keyed nine + ref,
