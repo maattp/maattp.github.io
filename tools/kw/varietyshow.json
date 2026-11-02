@@ -1,0 +1,5 @@
+[
+ { "name": "variety-zamboni-aud", "fov": 55, "eval": "(() => { const d = __dbg; for (const v of d.traffic.cars) if (v.typeName === \"zamboni\") { v.group.visible = true; } return { c: [519, 588, 2.6], t: [532, 575, 1.2] }; })()" },
+ { "name": "variety-row", "fov": 62, "eval": "(() => { const d = __dbg, T = d.traffic; const X = -4352, Z0 = -5075; const row = [['smart', 0xc4161c], ['volvo', 0], ['lifted', 0x111214], ['farmtruck', 0], ['limo', 0], ['hearse', 0], ['delorean', 0], ['amzvan', 0], ['icecream', 0], ['snowplow', 0]]; window.__show = window.__show || []; for (const v of window.__show) T.remove(v); window.__show = []; let z = Z0; row.forEach(([tn, c]) => { const L = T.cars.length; const v = T.spawnAt(X, z, -Math.PI / 2, tn, c, 'parked'); z += v.spec.len + 1.2; window.__show.push(v); }); return { c: [X - 17, Z0 + 20, 3.4], t: [X, Z0 + 20, 1.0] }; })()" },
+ { "name": "variety-row-close", "fov": 50, "eval": "(() => { const X = -4352, Z0 = -5075; return { c: [X - 9, Z0 + 4, 1.7], t: [X, Z0 + 12, 1.0] }; })()" }
+]

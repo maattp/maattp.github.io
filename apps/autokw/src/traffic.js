@@ -5,7 +5,7 @@ import { Vehicle, TYPES, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, 
   LAMP_BRAKE, LAMP_L, LAMP_R, LAMP_REV, LAMP_LON, LAMP_RON, LAMP_STEP } from './vehicles.js';
 import { clamp, lerp, angleWrap, hash2, rng, dist2, tierScale } from './util.js';
 import * as G from './geo.js';
-import { WXK } from './weather.js';
+import { WXK, WXU } from './weather.js';
 import { TODK } from './tod.js';
 import { memo } from './bootcache.js';
 import { edgeFlow, oneWaySpan, twoWayLayout, twoWayLaneOff, alBike, medianGaps, LANE_W } from './arterial.js';
@@ -24,7 +24,23 @@ const TRAFFIC_TARGET = PHONE_T ? 19 : 26;
 // is a draw-call dial as much as a distance one.
 const PARKED_RADIUS = 105;
 const LOT_TYPES = new Set(['sedan', 'suv', 'pickup', 'compact', 'hatch', 'ev', 'muscle', 'sports', 'convertible',
-  'crossover', 'compsedan', 'minivan', 'wagon', 'pickupcap', 'suv3', 'jeep', 'evy', 'civic', 'dually']);
+  'crossover', 'compsedan', 'minivan', 'wagon', 'pickupcap', 'suv3', 'jeep', 'evy', 'civic', 'dually', 'smart', 'volvo', 'lifted', 'farmtruck']);
+// Auto KW, more car variety: what the Region's roads hold besides the mix in
+// CIVILIAN_TYPES (a hash of the spawn, never this.R, so the stream after it is
+// unchanged; and not a CIVILIAN_TYPES slot: that array is hashed for kerbside
+// parking and appending would move every parked car). `kerb` is a parked draw.
+const DELOREAN_P = 1 / 150, ICE_P = 0.007, ICE_RES_P = 0.03, PLOW_P = 0.16, PLOW_MAX = 3;
+function varietyOf(tn, h, kerb) {
+  if ((tn === 'compact' || tn === 'hatch' || tn === 'civic') && h < 0.14) return 'smart';
+  if (tn === 'wagon' && h < 0.45) return 'volvo';
+  if (tn === 'pickup' && h < 0.20) return 'lifted';
+  if ((tn === 'pickup' || tn === 'dually') && h > 0.80) return 'farmtruck';
+  if (kerb) return tn;
+  if (tn === 'sedan' && h < 0.14) return 'limo';
+  if (tn === 'sedan' && h > 0.86) return 'hearse';
+  if (tn === 'van' && h < 0.5) return 'amzvan';
+  return tn;
+}
 const DESPAWN = PHONE_T ? 420 : 520;
 // The Belltown Hellcat (vehicles.js `hellcat`): the chance a Belltown spawn is
 // one, and how many may be about at once.
@@ -35,7 +51,7 @@ const HELLCAT_P = 0.12, HELLCAT_MAX = 3;
 // when it is left behind, as every car does.
 const WIENER_P = 0.01;
 const HEAVY = new Set(['bus', 'busx', 'ionbus', 'artic', 'schoolbus', 'boxtruck', 'garbage', 'recycling', 'pickup', 'pickupcap', 'van', 'postvan', 'purovan', 'cruiser', 'sportbike', 'bicycle',
-  'dually', 'jeep', 'uhaul', 'semi', 'opp']);
+  'dually', 'jeep', 'uhaul', 'semi', 'opp', 'lifted', 'farmtruck', 'limo', 'hearse', 'icecream', 'snowplow', 'amzvan', 'zamboni']);
 // Auto KW: types that never park at a kerb and keep off residential streets
 // (every bus -- `spec.bus` -- the refuse and recycling trucks, the semi)
 const NO_KERB = (tn) => !!(TYPES[tn] && TYPES[tn].bus) || tn === 'garbage' || tn === 'recycling' || tn === 'semi';
@@ -121,7 +137,8 @@ const FAR2_AS = {
   sedan: 'compsedan', civic: 'compsedan', hatch: 'compsedan', compact: 'compsedan', ev: 'compsedan',
   wagon: 'compsedan', muscle: 'compsedan', sports: 'compsedan', convertible: 'compsedan',
   suv: 'crossover', suv3: 'crossover', evy: 'crossover', jeep: 'crossover', minivan: 'crossover',
-  pickupcap: 'pickup', dually: 'pickup',
+  pickupcap: 'pickup', dually: 'pickup', lifted: 'pickup', farmtruck: 'pickup',
+  smart: 'compsedan', volvo: 'compsedan', delorean: 'compsedan', limo: 'compsedan', hearse: 'compsedan',
 };
 const far2Key = (t) => (FAR2_AS[t] || t) + '|2';
 const DECOR_CAP = ON_PHONE ? 10 : 18;
@@ -1016,8 +1033,9 @@ export class TrafficSystem {
         const x = lerp(a.x, b.x, t) - e.dz * off * side;
         const z = lerp(a.z, b.z, t) + e.dx * off * side;
         if (!G.isBuildable(x, z) || city.jumpClear(x, z) || this.wet(x, z)) continue;
-        const tn = CIVILIAN_TYPES[Math.floor(hash2(ei + s * 7, 11) * CIVILIAN_TYPES.length)];
+        let tn = CIVILIAN_TYPES[Math.floor(hash2(ei + s * 7, 11) * CIVILIAN_TYPES.length)];
         if (NO_KERB(tn)) continue;
+        tn = varietyOf(tn, hash2(ei + s * 13, 977), true);
         out.push({ key: ei * 64 + s, x, z, heading: Math.atan2(e.dx, e.dz) + (side > 0 ? 0 : Math.PI), tn, col: ei * 13 + s });
       }
     }
@@ -1242,6 +1260,18 @@ export class TrafficSystem {
       if (!HEAVY.has(tn) && hash2(ei + 7919, this._prio) < HELLCAT_P && G.placeNameAt(x, z) === 'Belltown'
         && this.cars.filter((c) => c.spec.hellcat).length < HELLCAT_MAX) tn = 'hellcat';
       else if (!HEAVY.has(tn) && hash2(ei + 104729, this._prio) < WIENER_P && !this.cars.some((c) => c.spec.wiener)) tn = 'wiener';
+      // Auto KW, more car variety: the Region's odd ones out
+      {
+        const hv = hash2(ei + 52711, this._prio);
+        tn = varietyOf(tn, hv, false);
+        const hs = hash2(ei + 8191, this._prio + 3);
+        if (!HEAVY.has(tn) && !TYPES[tn].bus) {
+          if (hs < DELOREAN_P && !this.cars.some((c) => c.spec.delorean)) tn = 'delorean';
+          else if (hs > 1 - (e.cls === 'res' ? ICE_RES_P : ICE_P) && !this.fwy[ei] && !this.cars.some((c) => c.spec.icecream)) tn = 'icecream';
+          else if (hs > 0.5 && hs < 0.5 + PLOW_P && WXU.wxSnow.value > 0.3 && e.cls !== 'res'
+            && this.cars.filter((c) => c.spec.plow).length < PLOW_MAX) tn = 'snowplow';
+        }
+      }
       // AUTO KW, A FREEWAY SPAWN: in a gap in its lane (none within 45 m
       // ahead or behind), a semi in the right two lanes.
       let fs = null;
