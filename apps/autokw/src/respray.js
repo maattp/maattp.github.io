@@ -236,7 +236,7 @@ export class Respray {
 
   /** Is this a vehicle the bay takes? A road car or a bike that fits. */
   fits(v) {
-    if (!v || v.dead) return false;
+    if (!v || v.dead || v.capsized) return false;   // (on its roof: the door stays down)
     const s = v.spec;
     return !!((s.roadCar || s.moto) && !s.rail && !s.bus && !s.towed && !v.trailer && !v.leader && s.len <= 6.45 && s.wid <= 2.4 && !s.plane && !s.boat);
   }

@@ -2019,7 +2019,7 @@ file and a guide disagree, this file wins.
   sports, pickup, compact, bus) text and JSON byte-identical; `kwstunts.mjs` (21 jumps x caps 24/32/99) output
   byte-identical, 63/63 CLEAN, PASS 21; trafficbench (AUTO_PHONE=1) hashes identical at all six sites;
   `airtimeprobe.mjs` PASS. **Phone cost:** 0 draws, 0 meshes; only your vehicle, only in the air: ~9 groundAt + 2
-  roadLift a frame (the follow's 4 + 4 for the lead target). **The spin's authority ramps in over the first `AIR_YAW_RAMP` 0.2 s of freeAir** (added at merge, v117): a 0.4 s hop over a crest at full lock turns the body 39 deg (was 70, past AIR_SLIP's 45: a country-bend crest became a slide); a 360 now needs ~1.25 s of air (316 deg at 1.2 s), still inside the ~1.3 s natural flights.
+  roadLift a frame (the follow's 4 + 4 for the lead target). **The spin's authority ramps in over the first `AIR_YAW_RAMP` 0.2 s of freeAir** (added at merge, v117): a 0.4 s hop over a crest at full lock turns the body 39 deg (was 70, past AIR_SLIP's 45: a country-bend crest became a slide); a 360 now needs ~1.25 s of air (316 deg at 1.2 s), still inside the ~1.3 s natural flights. **A capsized car is nobody's customer** (QA, after v118): ENTER in one is always getting out (rollup.js `driveThru` and drivethru.js `order` skip `v.capsized`, so a roof-down car by a Tims no longer opens Roll Up), and the car wash, export bay and respray bay refuse it (`tools/kw/qaprobe.mjs` jobs section).
 - **Wildlife: src/kwwildlife.js** (docs/wild/*.jpg; `__dbg.wildlife`; probe
   `tools/kw/wildprobe.js`, shots `tools/kw/wildviews.json` + `wildviews2.json`). Four
   cheap range-gated systems, no pause toggle, `window.__noWildlife = true` before boot

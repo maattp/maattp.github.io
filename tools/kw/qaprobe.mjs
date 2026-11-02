@@ -21,7 +21,7 @@ const PORT = +process.env.AUTO_CDP_PORT || 9412;
 const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
 const PHONE = process.env.AUTO_PHONE === '1';
 const OUT = process.argv[2] || 'tools/data/kw/qashots';
-const ONLY = (process.argv[3] || 'jobs,layout').split(',');
+const ONLY = (process.argv[3] || 'jobs,respawn,layout').split(',');
 let closing = false, fails = 0;
 const ok = (c, m) => { console.log(`  ${c ? 'ok  ' : 'FAIL'} ${m}`); if (!c) fails++; };
 
@@ -150,6 +150,58 @@ async function main() {
         const was = m.CHEAT.on; m.CHEAT.on = false; const clean = Y.refusal(v, d.player); m.CHEAT.on = true; const cheated = Y.refusal(v, d.player); m.CHEAT.on = was;
         d.player.exitVehicle(true); return JSON.stringify({ t: it.t, clean, cheated }); })()` })).result.result.value);
       ok(ex.clean === '' && /[Cc]heat/.test(ex.cheated), `export yard: a listed ${ex.t} is bought clean ("${ex.clean}"), refused cheated ("${ex.cheated}")`);
+      // 8. a capsized car (vehicles.js freeAir) beside a Tims: ENTER gets you out, it does not order a double-double;
+      //    the wash, the export bay and the respray bay do not take it
+      const cap = await J(`window.__q.quiet(); const s = d.rollup.stores().find((q) => q.door) || d.rollup.stores()[0];
+        const v = window.__q.inVeh('sedan', s.x + 6, s.z + 6); v.capsized = { t: 2, rock: 0, vx: 0, vz: 0, rollEnd: Math.PI }; v.roll = Math.PI;
+        const upright = d.rollup.driveThru(d.player) ? 1 : 0;
+        const took = d.game.tryDriveThru(d.player); const active = d.rollup.active; if (active) { d.rollup.close(); d.game.release('rollup'); }
+        const wash = d.carWash.refusal(v), exp = d.exportYard.refusal(v, d.player), spray = d.respray.fits(v);
+        v.capsized = null; v.roll = 0; const back = !!d.rollup.driveThru(d.player); d.rollup.dtLock = null;
+        d.player.exitVehicle(true); return { took, active, wash, exp, spray, back }`);
+      ok(!cap.took && !cap.active && cap.back, `capsized by a Tims: ENTER is not the drive-thru (took ${cap.took}; upright it would be: ${cap.back})`);
+      ok(/[Ww]heels/.test(cap.wash) && /wheels/.test(cap.exp) && !cap.spray, `capsized: wash "${cap.wash}", export "${cap.exp}", respray bay ${cap.spray ? 'TAKES it' : 'shut'}`);
+    }
+
+    // ------------------------------------------------------------------ respawn
+    if (ONLY.includes('respawn')) {
+      console.log('--- respawn mid-activity: nothing left behind');
+      // the leftovers a job could leave: holds, the LED panel, the objective, the minimap route,
+      // a job button lit, autoDrive (car wash), a camera rig on the old car
+      const LEFT = `const app = document.getElementById('app'), led = document.getElementById('jobLed');
+        const lit = [...document.querySelectorAll('[data-btn].on')].map((b) => b.dataset.btn).filter((b) => b !== 'gas' && b !== 'brake');
+        return { holds: [...d.game.holds], led: led ? led.style.display : '', obj: d.hud.objective ? d.hud.objective.textContent : '', fare: !!d.hud.fare,
+          lit, auto: !!d.player.autoDrive, foot: d.player.onFoot, veh: !!d.player.vehicle, wash: !!d.carWash.ride, ic: !!d.icecream.run,
+          plow: !!d.winter.plow.run, med: !!(d.paramedic.call || d.paramedic.nextT > 0), taxi: d.taxi.on, eats: d.eats.on, rig: window.__qv ? !!window.__qv.camRig : null }`;
+      const cases = {
+        icecream: `const sp = d.player.position; window.__qv = window.__q.inVeh('icecream', sp.x, sp.z); d.icecream.begin(d.player, 'ice'); return !!d.icecream.run`,
+        plow: `d.weather.set('snow', true); d.weather.cover = 1; const sp = d.player.position; window.__qv = window.__q.inVeh('snowplow', sp.x, sp.z); d.winter.plow.toggle(d.player); return !!d.winter.plow.run`,
+        paramedic: `const sp = d.player.position; window.__qv = window.__q.inVeh('ambulance', sp.x, sp.z); d.paramedic.toggle(d.player); return !!d.paramedic.call`,
+        taxi: `const sp = d.player.position; window.__qv = window.__q.inVeh('taxi', sp.x, sp.z); d.taxi.toggle(d.player); return d.taxi.on`,
+        carwash: `const q = d.carWash.sites[0]; window.__qv = window.__q.inVeh('sedan', q.mx, q.mz); d.carWash.start(q, window.__qv, d.player); return !!d.carWash.ride`,
+        capsized: `const sp = d.player.position; const v = window.__qv = window.__q.inVeh('sedan', sp.x, sp.z); v.capsized = { t: 2, rock: 0, vx: 0, vz: 0, rollEnd: Math.PI }; v.roll = Math.PI; return true`,
+        photo: `const sp = d.player.position; window.__qv = window.__q.inVeh('sedan', sp.x, sp.z); d.photo.enter(); return d.photo.active`,
+      };
+      for (const [name, js] of Object.entries(cases)) {
+        await J(`window.__q.quiet(); d.game.money = 500; d.game.setWanted(0); return 1`);
+        const on = await J(js);
+        await sleep(900);   // a few real frames of it
+        await J(`d.doRespawn(); return 1`);
+        await sleep(900);   // and of what comes after
+        const L = await J(LEFT);
+        const bad = [];
+        if (L.holds.length) bad.push('holds ' + L.holds.join(','));
+        if (L.led === 'block') bad.push('LED panel up');
+        if (L.obj) bad.push(`objective "${L.obj}"`);
+        if (L.fare) bad.push('minimap route');
+        if (L.lit.length) bad.push('lit ' + L.lit.join(','));
+        if (L.auto) bad.push('autoDrive');
+        if (!L.foot || L.veh) bad.push('not on foot');
+        if (L.wash || L.ic || L.plow || L.med || L.taxi) bad.push('job still on');
+        if (L.rig) bad.push('camera rig on the old car');
+        ok(on && !bad.length, `${name}${on ? '' : ' (did not start)'}: after a respawn ${bad.join('; ') || 'nothing left behind'}`);
+      }
+      await J(`window.__q.quiet(); d.weather.set('clear', true); return 1`);
     }
 
     // ------------------------------------------------------------------ layout

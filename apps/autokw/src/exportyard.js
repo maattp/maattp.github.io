@@ -484,6 +484,7 @@ export class ExportYard {
     if (this.st.got.includes(t)) return `We already have a ${typeName(t)} this week`;
     const hf = clamp(v.health / (s.hp || 100), 0, 1);
     if (v.dead || v.burnT > 0 || hf < 0.2) return 'That is a wreck — we buy cars, not scrap';
+    if (v.capsized) return 'Get it back on its wheels — the magnet will not take it upside down';
     return '';
   }
 

@@ -625,6 +625,7 @@ export class CarWash {
     if (s.len > MAX_LEN || s.wid > 2.5) return 'Too big for the tunnel';
     const hf = clamp(v.health / (s.hp || 100), 0, 1);
     if (v.dead || v.burnT > 0 || hf < 0.15) return 'We wash cars, not wrecks';
+    if (v.capsized) return 'Wheels down first';
     if (this.game.money < PRICE) return `The wash is $${PRICE} — you're short`;
     return '';
   }

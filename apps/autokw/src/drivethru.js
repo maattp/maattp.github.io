@@ -229,7 +229,7 @@ export class DriveThrus {
     const v = pl.vehicle;
     if (pl.onFoot || !v || v.dead || Math.abs(v.vLong || 0) > 2.5) return null;
     const sp = v.spec || {};
-    if (sp.plane || sp.boat || sp.floats || sp.rail || sp.balloon || v.afloat || v.airborne) return null;
+    if (sp.plane || sp.boat || sp.floats || sp.rail || sp.balloon || v.afloat || v.airborne || v.capsized) return null;   // (capsized: ENTER gets you out)
     const d = this.windowAt(v);
     if (!d) return null;
     if (d.tims) return 'tims';

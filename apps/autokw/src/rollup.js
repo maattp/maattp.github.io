@@ -177,7 +177,8 @@ export class RollUp {
     const v = pl.vehicle;
     if (pl.onFoot || !v || v.dead) return null;
     const sp = v.spec || {};
-    if (sp.plane || sp.boat || sp.floats || sp.rail || sp.balloon || v.afloat || v.airborne) return null;
+    // (on its roof or side -- vehicles.js capsized -- ENTER is getting out, not a double-double)
+    if (sp.plane || sp.boat || sp.floats || sp.rail || sp.balloon || v.afloat || v.airborne || v.capsized) return null;
     if (Math.abs(v.vLong || 0) > 2.5) return null;
     let best = null, bd = 45;
     for (const s of this.stores()) {
