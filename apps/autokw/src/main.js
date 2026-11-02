@@ -1845,7 +1845,7 @@ function installShadowFade() {
   buggies.audio = audio;
   geese = new Geese({ scene, city, world, audio, hud });
   window.__geese = geese;
-  try { events = new RandomEvents({ scene, city, traffic, peds, game, fx, audio, hud, tod, player, camera }); events.enabled = game.settings.events; } catch (e) { blog('events: ' + e.message); events = null; }
+  try { events = new RandomEvents({ scene, city, traffic, peds, game, fx, audio, hud, tod, player, camera, busy: () => !!((g2 && (g2.run || g2.active)) || (acts && acts.active) || (taxi && taxi.run) || (eats && eats.run) || (grt && grt.run) || (missions && missions.run)) }); events.enabled = game.settings.events; } catch (e) { blog('events: ' + e.message); events = null; }
   blog('kw places built: ' + JSON.stringify(placesStats()));
   link.bind({ game, hud, audio, player });
   if (kwrail) kwrail.bind({ game, hud, audio, player });

@@ -214,6 +214,8 @@ export class RandomEvents {
   canStart(player) {
     const g = this.o.game;
     if (!this.enabled || g.dead || g.paused || g.holds.size || g.wanted > 0) return false;
+    // jobs and exams that do not hold the world (the G2 road test, a race, a fare, a delivery, a bus route, a police mission)
+    if (this.o.busy && this.o.busy()) return false;
     if (player.vehicle && player.vehicle.spec && player.vehicle.spec.air) return false;
     return true;
   }
@@ -264,6 +266,8 @@ export class RandomEvents {
   update(dt, player, camera) {
     if (dt > 0.1) dt = 0.1;
     if (this.cur) {
+      // a job or exam began (or you were wasted) mid-event: clear it away
+      if (this.o.game.dead || (this.o.busy && this.o.busy())) { this.stop(); return; }
       let fin = false;
       try { fin = this.cur.update(dt, player, camera); } catch (err) { console.error('event update failed:', err); fin = true; }
       if (fin) this.stop();
