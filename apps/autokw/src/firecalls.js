@@ -407,6 +407,7 @@ export class FireService {
     if (missionDown && !this._wasMission && inRig) {
       if (this.call || this._nextT > 0) this.standDown('Stood down');
       else if (this.o.game && this.o.game.story) { if (this.o.hud) this.o.hud.showToast('Finish the KW Stories mission first'); }   // (story.js)
+      else if (this.busy && this.busy()) { if (this.o.hud) this.o.hud.showToast(`Finish the ${this.busy()} first`); }   // another job (main.js storyBusy)
       else this.dispatch();
     }
     this._wasMission = missionDown;

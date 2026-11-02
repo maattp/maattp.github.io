@@ -677,7 +677,9 @@ export class Activities {
       if (d < nd) { nd = d; near = a; }
     }
     if (near) {
-      if (this.canStart(near, kind)) this.start(near);
+      const why = this.busy && this.busy();   // another job on (main.js storyBusy): the race waits
+      if (why) { if (this.armed !== near.id) { this.armed = near.id; this.hud.showToast(`${near.name} — finish the ${why} first`); } }
+      else if (this.canStart(near, kind)) this.start(near);
       else if (this.armed !== near.id) {
         this.armed = near.id;
         this.hud.showToast(`${near.name} — ${this.needText(near)}`);

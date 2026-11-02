@@ -831,10 +831,13 @@ export class Story {
     if (typeof document === 'undefined') return;
     const app = document.getElementById('app') || document.body;
     const css = document.createElement('style');
+    // #storySub: centred, but never under the pad (its leftmost button, MISSION, is ~330 px in
+    // from the right; a fire rig's WATER + MISSION ~414): on a phone the centre moves left
     css.textContent = `
-#storySub{position:absolute;left:50%;bottom:calc(14px + env(safe-area-inset-bottom));transform:translateX(-50%);display:none;align-items:center;gap:10px;
+#storySub{position:absolute;left:min(50%,calc(100% - 340px - env(safe-area-inset-right) - min(23vw,210px)));bottom:calc(14px + env(safe-area-inset-bottom));transform:translateX(-50%);display:none;align-items:center;gap:10px;
   max-width:min(46vw,420px);padding:7px 12px 7px 7px;border-radius:12px;background:rgba(10,14,20,0.78);border:1px solid rgba(255,194,26,0.35);
   color:#fff;font:600 13px/1.3 system-ui,sans-serif;pointer-events:none;z-index:7;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+#app[data-fire="1"] #storySub{left:min(50%,calc(100% - 424px - env(safe-area-inset-right) - min(23vw,210px)))}
 #storySub img{width:46px;height:46px;border-radius:50%;flex:none;border:2px solid rgba(255,255,255,0.7)}
 #storySub b{display:block;font-size:11px;letter-spacing:.06em;color:#ffc21a;margin-bottom:1px}
 #storyCut{position:absolute;inset:0;z-index:44;display:none;pointer-events:auto}

@@ -101,6 +101,7 @@ export class KwEats {
     if (player.onFoot || !v || v.dead) return false;
     const s = v.spec;
     if (s.paramedic) return false;   // an ambulance has its own calls (paramedic.js); both at once fight over the HUD and the LED panel
+    if (s.icecream || s.wiener) return false;   // so has an ice cream truck / the Weenie Wagon (icecream.js)
     return !!((s.roadCar && s.len < 7 && !s.bus) || s.bicycle || (s.moto && !s.jetski));
   }
 
@@ -215,6 +216,8 @@ export class KwEats {
     const v = ride ? player.vehicle : null;
     if (this.mark.visible) { this.mark.rotation.y += dt * 0.7; this.mark.material.opacity = 0.22 + Math.sin(performance.now() * 0.004) * 0.08; }
     if (!this.on && this.game.story) { this.mark.visible = false; return; }   // a KW Stories mission is on (story.js)
+    // another job on (a taxi shift, a police call, a car wash ride: main.js storyBusy): no kitchen, no log-on
+    if (!this.on && this.busy && this.busy()) { this.mark.visible = false; return; }
     if (!this.on) {
       // the marker: the nearest kitchen, while you ride something that delivers
       const near = ride ? this.nearestRest(p.x, p.z, 230) : null;

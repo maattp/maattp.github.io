@@ -304,6 +304,8 @@ export class Paramedics {
     if (this.call || this.nextT > 0) { this.end('Crew stood down', false, player); return; }
     if (!this.inAmb(player)) return;
     if (this.game.story) { this.hud.showToast('Finish the KW Stories mission first', 2400); return; }   // (story.js)
+    const why = this.busy && this.busy();   // another job (main.js storyBusy)
+    if (why) { this.hud.showToast(`Finish the ${why} first`, 2400); return; }
     if (this.game.wanted > 0) { this.hud.showToast('Lose your wanted level first', 2400); return; }
     this.level = 1;
     this.begin(player);
