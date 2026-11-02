@@ -56,7 +56,8 @@ export class Player {
     this.heading = G.SPAWN_HEADING;
     this.vy = 0;
     this.grounded = true;
-    this.stuntCam = 0;   // 0..1, stunts.js: the chase camera pulls wide on a big jump
+    this.stuntCam = 0;   // 0..1, stunts.js: the chase camera pulls wide and round to the side on a big jump
+    this.stuntSide = 0;  // radians the boom swings at stuntCam 1 (signed: which side)
     this.speed = 0;
     this.onFoot = true;
     this.vehicle = null;
@@ -1078,10 +1079,12 @@ export class Player {
     // change in boom length anyway.
     const airPlane = !!this.sky || (plane && this.vehicle.airborne && !(this.vehicle.spec.heli && this.vehicle.speed < 25) && !this.vehicle.spec.balloon);
     if (!airPlane) dist = this.clearCamDist(target, dist * cp, height) / Math.max(cp, 0.15);
+    // the stunt cinematic swings the boom round to the side (stunts.js)
+    const cyaw = this.camYaw + this.stuntSide * this.stuntCam;
     const wanted = new THREE.Vector3(
-      target.x + Math.sin(this.camYaw) * dist * cp,
+      target.x + Math.sin(cyaw) * dist * cp,
       target.y + height + Math.sin(this.camPitch) * dist,
-      target.z + Math.cos(this.camYaw) * dist * cp
+      target.z + Math.cos(cyaw) * dist * cp
     );
     const rate = this.onFoot ? 14 : 9;
     // Vertical follows far slower than horizontal. The ground under a walking
