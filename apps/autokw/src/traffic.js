@@ -1287,7 +1287,7 @@ export class TrafficSystem {
         const hs = hash2(ei + 8191, this._prio + 3);
         if (!HEAVY.has(tn) && !TYPES[tn].bus) {
           if (hs < DELOREAN_P && !this.cars.some((c) => c.spec.delorean)) tn = 'delorean';
-          else if (hs > 1 - (e.cls === 'res' ? ICE_RES_P : ICE_P) && !this.fwy[ei] && !this.cars.some((c) => c.spec.icecream)) tn = 'icecream';
+          else if (hs > 1 - (e.cls === 'res' ? ICE_RES_P : ICE_P) && !this.fwy[ei] && !this.cars.some((c) => c.spec.icecream && c.mode === 'traffic')) tn = 'icecream';   // (the shops' parked trucks, icecream.js, do not count)
           else if (hs > 0.5 && hs < 0.5 + PLOW_P && WXU.wxSnow.value > 0.3 && e.cls !== 'res'
             && this.cars.filter((c) => c.spec.plow).length < PLOW_MAX) tn = 'snowplow';
         }

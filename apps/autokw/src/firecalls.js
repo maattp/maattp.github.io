@@ -44,6 +44,8 @@ const RIG = {
   // (Auto KW paramedic.js parks its ambulances with the same placer)
   ambulance: { front: 3.4, back: 3.4, hw: 1.25 },
   snowplow: { front: 4.6, back: 3.8, hw: 1.6 },
+  // (Auto KW icecream.js parks its trucks at the kerb outside the shops)
+  icecream: { front: 3.1, back: 3.1, hw: 1.1 },
 };
 
 /**
