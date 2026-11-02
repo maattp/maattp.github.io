@@ -949,7 +949,7 @@ class Wedding extends Ev {
 const PALETTE = [[1, 0.2, 0.15], [1, 0.8, 0.2], [0.25, 0.6, 1], [0.35, 1, 0.45], [1, 0.4, 0.9], [1, 1, 1]];
 class Fireworks extends Ev {
   begin(player, camera) {
-    const [vx, vz] = G.toWorld(43.4470, -80.4990);
+    const [vx, vz] = this.opts.site || G.toWorld(43.4470, -80.4990);   // (kwcalendar.js: Canada Day also lights Columbia Lake)
     const p = player.position;
     let site = { x: vx, z: vz };
     if (Math.hypot(p.x - vx, p.z - vz) > 2600 || this.opts.anywhere) {
@@ -958,7 +958,7 @@ class Fireworks extends Ev {
       site = gs;
     }
     this.site = site; this.cx = site.x; this.cz = site.z; this.hintR = 900;
-    this.hint = site.x === vx ? 'Fireworks over Victoria Park!' : 'Fireworks somewhere ahead!';
+    this.hint = site.x === vx ? (this.opts.name ? 'Fireworks over ' + this.opts.name + '!' : 'Fireworks over Victoria Park!') : 'Fireworks somewhere ahead!';
     this.groundY = G.terrainHeight(site.x, site.z);
     this.shots = []; this.nextT = 0.5; this.count = 0; this.maxAge = 60; this.total = this.opts.shots || 34;
     return true;

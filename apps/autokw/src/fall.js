@@ -225,6 +225,7 @@ export class FallDecor {
     this.t = 0;
     this.trees = null;   // the TreeSystem, for the near broadleaf crowns
     this.warm = false;
+    this.carveAll = false;   // kwcalendar.js: Halloween carves every pumpkin
   }
 
   setChunk(key, recs) {
@@ -268,7 +269,7 @@ export class FallDecor {
         m[q + 12] = x; m[q + 13] = recs[o + 1]; m[q + 14] = z; m[q + 15] = 1;
         pumpkinColour(recs[o + 5], c3);
         ca[n * 3] = c3[0]; ca[n * 3 + 1] = c3[1]; ca[n * 3 + 2] = c3[2];
-        cv[n] = recs[o + 6];
+        cv[n] = this.carveAll ? 1 : recs[o + 6];
         n++;
       }
     }
