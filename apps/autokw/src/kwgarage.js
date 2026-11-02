@@ -30,6 +30,7 @@ import * as THREE from './three.js';
 import * as G from './geo.js';
 import { Builder } from './build.js';
 import { clamp } from './util.js';
+import { PLATE_STEP } from './vehicles.js';
 
 const KEY = 'autokw-garages';
 const NSLOT = 3;
@@ -342,7 +343,7 @@ export class Garages {
     } catch (e) { v = null; }
     if (!v) { console.warn('garage: cannot spawn ' + rec.t); this.data[q.g.id][j] = null; this.save(); return null; }
     if (v.bodyMat.color.getHex() !== rec.c) { v.bodyMat.color.setHex(rec.c); v.color = rec.c; v._farCol = null; }
-    if (rec.pk != null && v.trimMesh && rec.pk !== v.plateK) { v.plateK = rec.pk; v.trimMesh.scale.x = 1 + rec.pk / 16; }
+    if (rec.pk != null && v.trimMesh && rec.pk !== v.plateK) { v.plateK = rec.pk; v.trimMesh.scale.x = 1 + rec.pk / PLATE_STEP; }
     v.health = Math.max(15, rec.h || v.health);
     v.vLong = 0; v.garage = [q.g.id, j];
     q.cars[j] = v;

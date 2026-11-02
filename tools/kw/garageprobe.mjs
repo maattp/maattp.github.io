@@ -138,6 +138,7 @@ async function main() {
       const c0 = st.cars.find(Boolean);
       ok(c0 && c0.m === 'apron' && c0.col === COLS[i] && c0.t === 'sedan', 'the saved car stands inside as an apron vehicle in its colour');
       ok(st.old, 'the original vehicle is gone from traffic');
+      ok(await D(`return Gs.sites[${i}].cars.filter(Boolean).every((c) => c.trimMesh.scale.x < 1.01 && Math.abs(c.trimMesh.scale.y - 1) < 1e-6)`), 'the stored car\'s trim mesh is not stretched (plate trick scale < 1 %)');
       if (i === 0) { await sleep(2500); await D(`window.__h.foot(0, -9, 0)`); await sleep(1800); await shot('home-door-open-car-inside'); await D(`window.__h.foot(0, -4.5, 3.4)`); await sleep(1500); await shot('home-close'); console.log('  cost', await D(`const q = Gs.sites[0]; let tris = 0, draws = 0; q.grp.traverse((o) => { if (o.isMesh && o.visible) { draws++; const g = o.geometry; tris += (g.index ? g.index.count : g.attributes.position.count) / 3; } }); return JSON.stringify({ draws, tris: Math.round(tris), sceneDraws: d.renderer.info.render.calls })`)); }
     }
     await D(`window.__h.foot(0, -22, 0)`); await sleep(3500); await shot('home-door-closed');
