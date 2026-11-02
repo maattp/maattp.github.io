@@ -175,7 +175,7 @@
   };
 
   // --- the plan for each step (the autopilot's mode, and its teleports) -------------
-  const TRANSIT = { 'goose.0': 1, 'goose.2': 1, 'tail.0': 1, 'float.0': 1, 'card.0': 1, 'race.0': 1, 'prost.0': 1, 'prost.2': 1 };
+  const TRANSIT = { 'goose.0': 1, 'goose.2': 1, 'tail.0': 1, 'float.0': 1, 'card.0': 1, 'card.3': 1, 'race.0': 1, 'prost.0': 1, 'prost.2': 1 };
   SP.plan = () => {
     const run = S.run, st = run.st, key = `${run.ch.id}.${run.k}`, P = st.p;
     SP.stepT = 0;

@@ -5307,7 +5307,7 @@ file and a guide disagree, this file wins.
   two stars, `game.setWanted`), lose them, any body shop's respray
   (`respray.stats.n` rises; Gord refunds the price), then return the card to
   J&J (a thank-you toast). J&J is the victim, never the target: the player
-  never robs it; (6) *Civic Duty* -- race Kayla's Civic from
+  never robs it. (6) *Civic Duty* -- race Kayla's Civic from
   Kingsway Dr by Fairview Park to Preston (9 km, Hwy 8, King St E): checkpoints
   every 520 m, a rubber band on her pace; (7) *Prost!* -- Chad's limo runs its
   A* route from the Aud to YKF: wreck it or hold it stopped (2.2 s within 22
