@@ -57,6 +57,7 @@ import { setKwData, applyNamed, buildSigns, buildPolys, buildBunting, buildSchoo
 import { addLandmarkExtra } from './landmarks.js';
 import { Chicopee } from './chicopee.js';
 import { prepFun, buildMarketTent, buildFlags, waveFlags, flagsGroup, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, buildDome } from './kwfun.js';
+import { Eggs } from './kweggs.js';
 import { prepPlaces, buildPlaces, placesMap, placesStats, Geese } from './kwplaces.js';
 import { setUwData, prepCampus, buildCampus, campusKeepClear } from './uwcampus.js';
 import { prepUptown } from './kwuptown.js';
@@ -724,6 +725,7 @@ let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, control
 let pickups = [];
 let roadFeel = null;  // your road car over joints, rails and rumble strips (roadfeel.js)
 let buggies = null;   // the horse and buggies (buggy.js)
+let eggs = null;      // Auto KW: the Golden Goose Eggs and the small secrets (kweggs.js)
 let geese = null;     // Canada geese in Waterloo Park and on campus (kwplaces.js)
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
 const LOOK_AHEAD = new THREE.Vector3();
@@ -1855,9 +1857,10 @@ function installShadowFade() {
   cyclists.audio = audio;
   cyclists.peds = peds;   // Auto KW: people out for a walk on the trails
   buggies.audio = audio;
-  geese = new Geese({ scene, city, world, audio, hud });
+  geese = new Geese({ scene, city, world, audio, hud, game });
   window.__geese = geese;
   try { events = new RandomEvents({ scene, city, traffic, peds, game, fx, audio, hud, tod, player, camera, busy: () => !!((g2 && (g2.run || g2.active)) || (acts && acts.active) || (taxi && taxi.run) || (eats && eats.run) || (grt && grt.run) || (missions && missions.run)) }); events.enabled = game.settings.events; } catch (e) { blog('events: ' + e.message); events = null; }
+  try { eggs = new Eggs({ scene, city, world, audio, hud, game, traffic, fx }); window.__eggs = eggs; } catch (e) { blog('eggs failed: ' + e.message); eggs = null; }
   blog('kw places built: ' + JSON.stringify(placesStats()));
   link.bind({ game, hud, audio, player });
   if (kwrail) kwrail.bind({ game, hud, audio, player });
@@ -2004,6 +2007,8 @@ function installShadowFade() {
   window.__refreshJobs = refreshJobs;
   window.__dbg = { get counter() { return counter; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;
+  Object.defineProperty(window.__dbg, 'eggs', { get() { return eggs; } });
+  window.__dbg.geese = geese;
   window.__dbg.rail = kwrail;   // Auto KW: the heavy rail (kwrail.js)   // Auto KW: the harvest (crops.js)
   Object.defineProperty(window.__dbg, 'roadFeel', { get() { return roadFeel; } });
   window.__dbg.selectEngine = selectEngine;
@@ -2493,6 +2498,11 @@ function refreshPassport() {
   if (nx) nx.textContent = (p.next ? `${p.next.name} at ${p.next.pct}%` : 'top rank') + ` · wallet ${formatMoney(p.money)}`
     + (p.extra.length ? ` · ${p.extra.join(' · ')}` : '');
   const grid = document.getElementById('ppGrid');
+  if (eggs) {
+    p.rows = p.rows.concat([{ label: 'Golden eggs', done: eggs.count, total: eggs.total }]);
+    const ht = eggs.hint(player.x, player.z);
+    if (ht && nx) nx.textContent += ' · ' + ht;
+  }
   if (grid) grid.innerHTML = p.rows.map((r) => `<div class="ppRow${r.done >= r.total ? ' full' : ''}"><span>${r.label}</span>`
     + `<b>${r.done}/${r.total}</b></div>`).join('');
 }
@@ -3358,6 +3368,7 @@ function frame(now) {
   if (buggies) buggies.update(dt, player, camera);
   if (air) air.update(dt, player, camera);   // YKF's air traffic (airtraffic.js)
   if (geese) geese.update(dt, player, camera);
+  if (eggs) eggs.update(dt, player, camera);
   bikeNet.update(camera);
   piers.update(camera);
   if (wheelRide) wheelRide.update(dt, wheelRide.busy ? input : null, wheelRide.busy ? look : null, camera.position.x, camera.position.z);
@@ -3375,6 +3386,7 @@ function frame(now) {
   traffic.update(dt, p.x, p.z, camDir, player);
   if (prof) lap('traffic');
   peds.update(dt, p.x, p.z, player, traffic);
+  if (geese) geese.feedTraffic(traffic, dt);   // geese standing in UW's ring road stop the cars like a person crossing
   if (prof) lap('peds');
   if (fire) fire.update(dt);
   if (events) events.update(dt, player, camera);

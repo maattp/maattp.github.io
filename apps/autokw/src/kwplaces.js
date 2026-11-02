@@ -2728,7 +2728,13 @@ export function placesMap() {
 // Flocks: Waterloo Park's lawns and Silver Lake, and the University of
 // Waterloo's (the campus geese are famous): [x, z, count, on water]
 const FLOCKS = [[-4372, -1640, 9, false], [-4250, -1585, 6, true], [-4560, -1580, 8, false], [-4700, -1700, 7, false],
-  [-4986, -1600, 6, false], [-5600, -2350, 8, false], [-6000, -2500, 7, false]];
+  [-4986, -1600, 6, false], [-5600, -2350, 8, false, true], [-6000, -2500, 7, false, true],
+  // Auto KW's UW geese (kweggs.js era): the lawns inside the ring road, Columbia Lake's shore and the lake itself.
+  // The ganders of the aggro ones (5th) hiss, spread their wings and CHASE you on foot.
+  [-5690, -2060, 6, false, true], [-5990, -2200, 5, false, true], [-6560, -2330, 7, false, true], [-6740, -2300, 6, true, true]];
+// Geese standing in the ring road, for traffic to stop short of: [x, z] on UW's ring road (data/uw.json)
+const HOLD_MAX = 7;   // s a car may stand held by a road family before they leave the road
+const ROAD_FAMILIES = [[-5584, -1943], [-5911, -2263]];
 
 export function gooseGeometry(pose) {
   const B = new Builder(false);
@@ -2746,7 +2752,7 @@ export function gooseGeometry(pose) {
       B.quad(a.p, b.p, c.p, d.p, [nn(a), nn(b), nn(c), nn(d)], U0, colFn((a.p[1] - cy) / ry, (a.p[2] - cz) / rz));
     }
   };
-  const fly = pose === 'fly';
+  const fly = pose === 'fly', hiss = pose === 'hiss';
   const by = fly ? 0 : 0.42;
   // body: brown-grey back, pale breast, white under the tail
   ell(0, by, 0, 0.17, 0.15, 0.32, (v, w) => (v < -0.3 ? (w < -0.4 ? WHITE : BREAST) : w > 0.55 && v < 0.2 ? BREAST : BODY));
@@ -2754,16 +2760,18 @@ export function gooseGeometry(pose) {
   // neck and head: black, the white chinstrap
   let n0, n1, hd;
   if (pose === 'graze') { n0 = [0, by + 0.05, 0.26]; n1 = [0, 0.12, 0.5]; hd = [0, 0.09, 0.56]; }
+  else if (hiss) { n0 = [0, by + 0.06, 0.26]; n1 = [0, by + 0.1, 0.58]; hd = [0, by + 0.13, 0.66]; }
   else if (fly) { n0 = [0, by + 0.03, 0.28]; n1 = [0, by + 0.06, 0.58]; hd = [0, by + 0.07, 0.66]; }
   else { n0 = [0, by + 0.08, 0.24]; n1 = [0, by + 0.42, 0.33]; hd = [0, by + 0.46, 0.38]; }
   B.tube(n0, n1, 0.045, 6, BLACK);
   ell(hd[0], hd[1], hd[2], 0.045, 0.045, 0.07, (v) => (v < 0.1 ? WHITE : BLACK), 6, 4);
   const dir = [hd[0] - n1[0], hd[1] - n1[1], hd[2] - n1[2]], dl = Math.hypot(...dir) || 1;
   B.tube([hd[0] + dir[0] / dl * 0.05, hd[1] + dir[1] / dl * 0.05, hd[2] + dir[2] / dl * 0.05], [hd[0] + dir[0] / dl * 0.12, hd[1] + dir[1] / dl * 0.12 - 0.01, hd[2] + dir[2] / dl * 0.12], 0.018, 4, BLACK, true);
-  if (fly) {
+  if (fly || hiss) {
+    const ws = fly ? 0.85 : 0.66;
     for (const s of [-1, 1]) {
       const root = [s * 0.12, by + 0.06, 0.05];
-      const tip = [s * 0.85, by + 0.2, -0.12];
+      const tip = [s * ws, by + (fly ? 0.2 : 0.16), -0.12];
       B.quad(root, [s * 0.12, by + 0.06, -0.18], [tip[0], tip[1], tip[2] - 0.12], tip, [0, 1, 0], U0, BODY);
       B.quad(root, tip, [tip[0], tip[1], tip[2] - 0.12], [s * 0.12, by + 0.06, -0.18], [0, -1, 0], U0, shade(BODY, 0.8));
     }
@@ -2781,14 +2789,15 @@ export function gooseGeometry(pose) {
  * meshes (standing, grazing, flying), drawn only within 260 m of the camera.
  */
 export class Geese {
-  constructor({ scene, city, world, audio = null, hud = null }) {
-    this.city = city; this.world = world; this.audio = audio; this.hud = hud;
+  constructor({ scene, city, world, audio = null, hud = null, game = null }) {
+    this.city = city; this.world = world; this.audio = audio; this.hud = hud; this.game = game;
+    this.shove = null; this.roadN = 0;
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 });
     this.meshes = {};
     this.geese = [];
     this.flocks = [];
-    const MAXN = FLOCKS.reduce((a, f) => a + f[2], 0);
-    for (const pose of ['stand', 'graze', 'fly']) {
+    const MAXN = FLOCKS.reduce((a, f) => a + f[2], 0) + ROAD_FAMILIES.length * 3;
+    for (const pose of ['stand', 'graze', 'fly', 'hiss']) {
       const m = new THREE.InstancedMesh(gooseGeometry(pose), mat, MAXN);
       m.count = 0; m.frustumCulled = false; m.castShadow = false; m.receiveShadow = true;
       m.name = 'geese:' + pose;
@@ -2797,16 +2806,18 @@ export class Geese {
     }
     let seed = 7;
     const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-    for (const [fx, fz, n, water] of (P ? FLOCKS : [])) {
-      const fl = { x: fx, z: fz, water, honkT: 0, geese: [] };
+    for (const [fx, fz, n, water, aggro, road] of (P ? FLOCKS : []).concat(P ? ROAD_FAMILIES.map(([x, z]) => [x, z, 3, false, false, true]) : [])) {
+      const fl = { x: fx, z: fz, water, honkT: 0, geese: [], aggro: !!aggro, cool: 0, calm: 0, road: !!road, away: 0 };
       for (let i = 0; i < n; i++) {
         let x = fx, z = fz;
-        for (let k = 0; k < 20; k++) {
+        if (road) { x = fx + (i - 1) * 1.5; z = fz + (i - 1) * 0.6; }
+        else for (let k = 0; k < 20; k++) {
           const a = rnd() * Math.PI * 2, r = 2 + rnd() * 12;
           x = fx + Math.cos(a) * r; z = fz + Math.sin(a) * r;
           if (this.ok(x, z, water)) break;
         }
-        const g = { x, z, y: 0, h: rnd() * Math.PI * 2, st: rnd() < 0.6 ? 'graze' : 'stand', t: rnd() * 4, sp: 0, fl, vy: 0, alt: 0, phase: rnd() * 10, gander: i === 0 };
+        const g = { x, z, y: 0, h: rnd() * Math.PI * 2, st: rnd() < 0.6 ? 'graze' : 'stand', t: rnd() * 4, sp: 0, fl, vy: 0, alt: 0, phase: rnd() * 10, gander: i === 0, hx: x, hz: z, ch: 0 };
+        if (road) { g.st = 'block'; g.t = 99; }
         fl.geese.push(g);
         this.geese.push(g);
       }
@@ -2841,16 +2852,25 @@ export class Geese {
     this.last = [px, pz];
     if (pv > 80) pv = 0;   // a teleport
     const onFoot = player.onFoot !== false;
-    const cnt = { stand: 0, graze: 0, fly: 0 };
+    this.playerRef = player;
+    const cnt = { stand: 0, graze: 0, fly: 0, hiss: 0 };
+    // a gander's bite shoves you off (a few frames of push, never into a wall)
+    if (this.shove && player.blocked) {
+      const sh = this.shove;
+      const nx = player.x + sh.vx * dt, nz = player.z + sh.vz * dt;
+      if (!player.blocked(nx, player.z)) player.x = nx;
+      if (!player.blocked(player.x, nz)) player.z = nz;
+      if ((sh.t -= dt) <= 0) this.shove = null;
+    }
     for (const fl of this.flocks) {
       if (Math.hypot(fl.x - cx, fl.z - cz) > 260) continue;
-      fl.honkT -= dt;
+      fl.honkT -= dt; fl.cool -= dt; fl.calm -= dt; fl.away -= dt;
       for (const g of fl.geese) {
         this.step(g, dt, px, pz, pv, onFoot);
-        const pose = g.st === 'fly' ? 'fly' : g.st === 'graze' ? 'graze' : 'stand';
+        const pose = g.st === 'fly' ? 'fly' : g.st === 'graze' ? 'graze' : g.st === 'hiss' || g.st === 'chase' ? 'hiss' : 'stand';
         const m = this.meshes[pose];
-        const bob = g.st === 'walk' || g.st === 'flee' ? Math.abs(Math.sin(g.phase * 9)) * 0.03 : 0;
-        const roll = g.st === 'walk' || g.st === 'flee' ? Math.sin(g.phase * 9) * 0.12 : g.st === 'fly' ? Math.sin(g.phase * 2) * 0.15 : 0;
+        const bob = g.st === 'walk' || g.st === 'flee' || g.st === 'chase' ? Math.abs(Math.sin(g.phase * 9)) * 0.03 : 0;
+        const roll = g.st === 'walk' || g.st === 'flee' || g.st === 'chase' ? Math.sin(g.phase * (g.st === 'chase' ? 14 : 9)) * 0.12 : g.st === 'fly' ? Math.sin(g.phase * 2) * 0.15 : 0;
         this._e.set(g.st === 'fly' ? -Math.max(-0.3, Math.min(0.4, g.vy * 0.08)) : 0, g.h, roll);
         this._q.setFromEuler(this._e);
         this._p.set(g.x, g.y + bob, g.z);
@@ -2859,7 +2879,7 @@ export class Geese {
         m.setMatrixAt(cnt[pose]++, this._m);
       }
     }
-    for (const pose of ['stand', 'graze', 'fly']) {
+    for (const pose of ['stand', 'graze', 'fly', 'hiss']) {
       const m = this.meshes[pose];
       m.count = cnt[pose];
       m.visible = cnt[pose] > 0;
@@ -2870,6 +2890,91 @@ export class Geese {
     if (!this.audio || g.fl.honkT > 0) return;
     g.fl.honkT = 0.7 + Math.random() * 0.8;
     this.audio.play('goose', { x: g.x, y: g.y + 0.5, z: g.z, gain, ref: 10, maxD: 160 });
+  }
+  /** UW's ganders: close on foot he hisses (wings out), then CHASES you, a bit slower than a sprint. True = handled. */
+  aggro(g, dt, px, pz, pv, onFoot, d, dx, dz) {
+    const fl = g.fl, pl = this.playerRef;
+    if (g.st === 'hiss') {
+      g.h = Math.atan2(-dx, -dz);
+      if (!onFoot || d > 12) { g.st = 'stand'; g.t = 2; return true; }
+      if (g.t <= 0) { g.st = 'chase'; g.ch = 7; }
+      if (Math.random() < dt * 3) this.honk(g, 1);
+      g.y = T(g.x, g.z);
+      return true;
+    }
+    if (g.st === 'chase') {
+      g.ch -= dt;
+      if (!onFoot || d > 28 || g.ch <= 0 || (pl && pl.swimming)) { g.st = 'stand'; g.t = 2; fl.calm = 7; return true; }
+      g.h = Math.atan2(-dx, -dz);
+      const sp = 5.4 * dt, ux = -dx / (d || 1), uz = -dz / (d || 1);
+      if (d > 1.1) {
+        if (this.ok(g.x + ux * sp, g.z + uz * sp, false)) { g.x += ux * sp; g.z += uz * sp; }
+        else if (this.ok(g.x + ux * sp, g.z, false)) g.x += ux * sp;
+        else if (this.ok(g.x, g.z + uz * sp, false)) g.z += uz * sp;
+      }
+      if (d < 1.7 && fl.cool <= 0) {
+        fl.cool = 1.8;
+        this.shove = { vx: -ux * -9, vz: -uz * -9, t: 0.3 };
+        if (this.audio && this.audio.ready) this.audio.play('punch', { gain: 0.8, jitter: true });
+        this.honk(g, 1);
+        if (this.game && pl && pl.health > 30) this.game.damagePlayer(5, 'goose');
+        this.bites = (this.bites || 0) + 1;
+        if (this.hud && this.hud.showToast && !this.bitten) { this.bitten = true; this.hud.showToast('Ouch. The UW geese are not a myth. Sprint, or give them room', 3600); }
+      }
+      g.y = T(g.x, g.z);
+      return true;
+    }
+    if (onFoot && fl.calm <= 0 && d < 7 && !(pl && pl.swimming)) { g.st = 'hiss'; g.t = 0.9; this.honk(g, 1); return true; }
+    return false;
+  }
+  /** A family standing in UW's ring road: traffic stops short (feedTraffic); anything near scatters them for a while. */
+  stepRoad(g, dt, px, pz, pv, d, onFoot) {
+    const fl = g.fl;
+    if (g.st === 'block') {
+      g.y = walkY(this.city, g.x, g.z); g.h = Math.atan2(px - g.x, pz - g.z) + 0.4;
+      if (Math.random() < dt * 0.25 && d < 40) this.honk(g, 0.6);
+      if ((onFoot && d < 4) || (!onFoot && d < 7) || (pv > 4 && d < 11)) {
+        fl.away = 25; g.st = 'fly'; g.t = 4 + Math.random() * 2; g.vy = 2; g.alt = 0.1;
+        g.h = Math.atan2(g.x - px, g.z - pz) + (Math.random() - 0.5) * 1.2;
+        this.honk(g, 1);
+      }
+      return;
+    }
+    // landed off the road: back into it when it has been a while and nobody is close
+    if (fl.away <= 0 && d > 45) { g.x = g.hx; g.z = g.hz; g.st = 'block'; return; }
+    g.y = T(g.x, g.z);
+  }
+  /** Called after peds.update: geese standing in the road join the people crossing it, so cars stop short. */
+  feedTraffic(traffic, dt = 1 / 60) {
+    if (!traffic || !traffic.crossXZ) return;
+    for (const fl of this.flocks) {
+      if (!fl.road) continue;
+      // A family in the road must not become a gridlock: once a car has stood held by them for
+      // HOLD_MAX seconds (even with the player nowhere near), they waddle off the road, same as if chased.
+      if (fl.geese[0].st === 'block' && traffic.cars) {
+        let held = false;
+        for (const v of traffic.cars) {
+          if (v.mode === 'parked' || v.mode === 'apron' || v === (this.playerRef && this.playerRef.vehicle)) continue;
+          if (Math.abs(v.x - fl.x) < 22 && Math.abs(v.z - fl.z) < 22 && Math.abs(v.vLong) < 0.4) { held = true; break; }
+        }
+        fl.held = held ? (fl.held || 0) + dt : 0;
+        if (fl.held > HOLD_MAX) {
+          fl.held = 0; fl.away = 25;
+          for (const g of fl.geese) {
+            if (g.st !== 'block') continue;
+            g.st = 'fly'; g.t = 4 + Math.random() * 2; g.vy = 2; g.alt = 0.1;
+            g.h = Math.random() * Math.PI * 2;
+          }
+          if (fl.geese[0]) this.honk(fl.geese[0], 1);
+        }
+      }
+      for (const g of fl.geese) {
+        if (g.st !== 'block' || traffic.crossN >= 16) continue;
+        const o = traffic.crossN * 3;
+        traffic.crossXZ[o] = g.x; traffic.crossXZ[o + 1] = g.z; traffic.crossXZ[o + 2] = g.y;
+        traffic.crossN++;
+      }
+    }
   }
   step(g, dt, px, pz, pv, onFoot) {
     g.phase += dt;
@@ -2901,6 +3006,8 @@ export class Geese {
       }
       return;
     }
+    if (fl.road) { this.stepRoad(g, dt, px, pz, pv, d, onFoot); return; }
+    if (fl.aggro && g.gander && !swim && this.aggro(g, dt, px, pz, pv, onFoot, d, dx, dz)) return;
     // startled into the air: anything fast and close, or a player right on top
     if ((pv > 7 && d < 16) || (d < 2.2 && !g.gander) || (d < 1.4)) {
       g.st = 'fly'; g.t = 4 + Math.random() * 2.5; g.vy = 2; g.alt = 0.1;

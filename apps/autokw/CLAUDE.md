@@ -62,6 +62,46 @@ file and a guide disagree, this file wins.
 - **src/chicopee.js** (data/chicopee.json): runs, lifts, chairs, bikes, downhills.
 - **src/ykf.js** (kw.json `aero`): YKF's pavement, `city.slabQuery`,
   `world.inAirfield`; the field is graded in build_raster.py `grade_ykf`.
+- **Golden Goose Eggs, the UW geese and three secrets: src/kweggs.js**
+  (docs/eggs/*.jpg; probe `tools/kw/eggprobe.js`, shots `tools/kw/eggviews.json`).
+  **40 hidden eggs** (`EGGS`: id, name, baked x/z) at real places -- under the E5
+  bridge, behind the DC / the Aud / WCI, the island in Columbia Lake (swim or
+  kayak), Laurel Trail's far end and a spur, Chicopee's summit, the tank and
+  Spitfire, the Kissing Bridge, St. Jacobs, Galt, the Doon tower... Each was
+  snapped by a probe to ground that is clear of buildings, roads, water and
+  steep slopes (`eggprobe.js` re-checks all 40: height over ground 0.75 m).
+  **Not on the map** (hidden), but drawn as a spinning gold egg with an
+  additive glow within `RANGE` 170 m: ONE InstancedMesh for the eggs and ONE for
+  the glows (2 draws, ~1k tris at most, only the near ones written each frame).
+  Pickup 1.9 m on foot, 3.6 m in a road vehicle, 6.5 m aloft; chime (`pickup`
+  + `cash`), sparkles, toast "Golden egg 7 of 40 -- <place>". Saved in
+  localStorage `autokw-eggs` ({g: ids, s: secrets seen}); the pause menu
+  passport (main.js refreshPassport) has a "Golden eggs n/40" row and, from 20
+  eggs, a faint hint line (direction and distance of the nearest one).
+  **Rewards** (`REWARDS`): 10 eggs $5,000; 20 $15,000 + the **Golden Goose
+  Garage** (`HIDEOUT`, a lot north of Uptown Waterloo's square; slab + sign built
+  only from 20) with a gold Hellcat; 30 $25,000 + the hot-dog van (named "the Weenie Wagon" in this feature's text); 40 $100,000 +
+  a flying saucer. The cars are 'apron' traffic spawned in the garage's three
+  slots when you come within 320 m, again only if the one out there is dead.
+  **Secrets:** a pink-tie flagpole on the lawn by E5 (walk up: +$250, once);
+  "THE GEESE KNOW" painted on the big flat roof of a Research Park building
+  north of campus, drawn only when the camera is 70 m+ above the roof (balloon,
+  heli); the Kissing Bridge (stand on it: hearts rise, a toast). **UW geese**
+  (kwplaces.js `Geese`): the UW flocks are `aggro` (5th FLOCKS field) -- on
+  foot within 7 m the gander hisses (a new 'hiss' pose, wings out), then CHASES
+  at 5.4 m/s (sprint 7.2 outruns it), bites every 1.8 s (shoves you 3 m, 5
+  damage, never below 30 health, `punch` sound) and gives up after 7 s or 28
+  m; park geese keep the old behaviour. `ROAD_FAMILIES`: two families of 3 stand
+  in UW's ring road; `geese.feedTraffic(traffic)` (main.js, right after
+  peds.update) adds them to `traffic.crossXZ` like pedestrians crossing, so AI
+  cars stop short; you walking up (4 m), driving up (7 m) or rolling past fast
+  scatter them for 25 s. Debug: `__dbg.eggs` (`spots`, `collect(spot)`, `count`,
+  `hint(x, z)`, `slots`), `__dbg.geese`. Verify: `AUTO_GPU=1 VIEW_PROBE_FILE=tools/kw/eggprobe.js
+  node tools/kw/kwshots.mjs /tmp/x` prints every egg's height / reachability,
+  teleports onto each (and 25 m away, which must NOT collect), checks the
+  rewards, garage, hint, the gander's hiss > chase > bite, the road families,
+  and ends PASS. Not done: rooftop eggs (no walkable-roof data to verify
+  against), the old gaol ghost, a map marker for the garage.
 - **ION is Seattle's link.js engine** on `data/link.json` from
   tools/kw/build_ion.py, made ION's: the car, stations, track, catenary,
   crossings and timetable are in "ION, as it is" below.

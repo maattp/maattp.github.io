@@ -359,7 +359,7 @@ export const TYPES = {
   // engine in the city (`engine: 'hellcat'`, audio.js), and quick. Only a
   // few, and only in Belltown traffic (traffic.js HELLCAT_*).
   hellcat: deriveSpec({ rwd: true, wheelbase: 3.05,len: 5.10, wid: 2.03, wheelR: 0.36, sill: 0.26, belt: 0.96, roof: 1.47, cab: [-0.30, 0.10], hand: 'charger', engine: 'hellcat', finish: 'tiger', livery: 0xc9ad94, hellcat: true, mass: 1.2, acc: 8.6, topKph: 315, brakeM: 35, latG: 0.95 }),
-  // THE WIENERMOBILE (an Easter egg): Oscar Mayer's hot dog on wheels, 27 ft
+  // THE WIENERMOBILE (an Easter egg): a generic hot dog on wheels, 27 ft
   // long and 11 tall, on a V8 van chassis. One at most, rarely, anywhere in
   // the city's traffic (traffic.js WIENER_*). `finish: 'wiener'` is its own
   // paint (wienerShader): the body's vertex colours are its colours, and the
@@ -2330,7 +2330,7 @@ const bunNoseZ = (x, y) => solveZ((z) => bunX(z, y) - x, WM.bun.zf, WM.bun.zf + 
 const bunTailZ = (x, y) => -solveZ((z) => bunX(-z, y) - x, -WM.bun.zr, -WM.bun.zr + WM.bun.lr);
 
 /**
- * The Oscar Mayer Wienermobile (an Easter egg): a hot dog on wheels, 8.2 m
+ * The Weenie Wagon (an Easter egg; a hot dog on wheels): a hot dog on wheels, 8.2 m
  * long, 3.3 m tall, roaming the city's streets one at a time and rarely
  * (traffic.js WIENER_*). After the 2024 car: a red-orange dog lying in a
  * golden bun, the dog's nose a glass bubble over the dash, a door window and
@@ -11925,7 +11925,7 @@ function tigerShader(sh) {
 }
 
 // The Wienermobile's artwork, drawn once into a canvas: the badge, the
-// "WIENERMOBILE" script for the bun's nose, and the plate. wienerShader
+// "WEENIE WAGON" script for the bun's nose, and the plate. wienerShader
 // projects each onto the body; the rects are where each sits in it.
 const WM_ATLAS = { badge: [8, 8, 240, 296], plate: [264, 8, 240, 120], word: [8, 336, 496, 72] };
 let wmTex = null;
@@ -11938,7 +11938,7 @@ function wienerAtlas() {
   const serif = 'Georgia, "Times New Roman", serif';
   {
     // the badge: a dark keyline, a white field, a red inner frame, and
-    // "Oscar Mayer" in two lines of heavy red serif, set rising
+    // "Weenie Wagon" in two lines of heavy red serif, set rising
     const [x, y, w, h] = WM_ATLAS.badge;
     rr(x, y, w, h, 34); g.fillStyle = '#1d1a24'; g.fill();
     rr(x + 9, y + 9, w - 18, h - 18, 27); g.fillStyle = '#fbf8f2'; g.fill();
@@ -11947,8 +11947,8 @@ function wienerAtlas() {
     g.translate(x + w / 2, y + h / 2); g.rotate(-0.13);
     g.fillStyle = '#c8102e'; g.textAlign = 'center'; g.textBaseline = 'alphabetic';
     g.font = `bold 78px ${serif}`;
-    g.fillText('Oscar', 0, -12, w - 60);
-    g.fillText('Mayer', 0, 70, w - 56);
+    g.fillText('Weenie', 0, -12, w - 60);
+    g.fillText('Wagon', 0, 70, w - 56);
     g.restore();
   }
   {
@@ -11967,8 +11967,8 @@ function wienerAtlas() {
     g.fillStyle = '#c4161c'; g.textAlign = 'center'; g.textBaseline = 'middle';
     g.font = `italic bold 46px ${serif}`;
     const cx = x + w / 2, cy = y + h / 2;
-    g.fillText('WIENERMOBILE', cx, cy + 2, w * 0.66);
-    const tw = Math.min(g.measureText('WIENERMOBILE').width, w * 0.66);
+    g.fillText('WEENIE WAGON', cx, cy + 2, w * 0.66);
+    const tw = Math.min(g.measureText('WEENIE WAGON').width, w * 0.66);
     for (const sd of [-1, 1]) {
       for (let k = 0; k < 3; k++) {
         const ly = cy - 9 + k * 9, l = 46 - k * 10, x0 = cx + sd * (tw / 2 + 10);
