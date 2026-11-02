@@ -1370,6 +1370,47 @@ const SOUNDS = {
       at += d * 0.24;
     }
   } },
+  // Auto KW, cruise night (kwcruise.js): eight bars of shuffle rock'n'roll
+  // out of one parked car's radio -- a boogie bass line, piano-ish stabs on
+  // the off-beats, a brushed back-beat and a honking sax riff, all through a
+  // small speaker's band. Original, not a recording; looped by kwcruise.
+  cruise_tune: { dur: 12.9, half: true, build(k, out, t, R) {
+    const spk = k.gain(0.85);
+    spk.connect(k.filt('highpass', 160, 0.7)).connect(k.filt('lowpass', 3600, 0.8)).connect(out);
+    const beat = 60 / 150, sw = beat * 0.66;                       // swung eighths
+    const at = (bar, b, off = 0) => t + (bar * 4 + b) * beat + (off ? sw : 0);
+    const C = 130.81, F = 174.61, G = 196.0;
+    const roots = [C, C, F, C, G, F, C, G];
+    const boog = [1, 1.26, 1.5, 1.68, 1.78, 1.68, 1.5, 1.26];      // R 3 5 6 b7 6 5 3
+    roots.forEach((r, bar) => {
+      for (let b = 0; b < 4; b++) {
+        for (const off of [0, 1]) {
+          const f = (r / 2) * boog[b * 2 + off], t0 = at(bar, b, off);
+          const o = k.osc('sawtooth', f, t0, 0.3), g = k.gain(0);
+          o.connect(k.filt('lowpass', 520, 1.2)).connect(g).connect(spk);
+          k.hit(g.gain, t0, 0.32, 0.12, 0.004);
+        }
+        // stabs on the off-beat: root, third, fifth, seventh
+        for (const m of [2, 2.52, 3, 3.56]) k.ping(spk, at(bar, b, 1), r * m, 0.06, 0.09, 0.003);
+        // the brushes: a soft hat every off-beat, the snare on two and four
+        k.burst(spk, 'white', at(bar, b, 1), 'highpass', 6500, 0.7, 0.05, 0.03, R);
+        if (b % 2) k.burst(spk, 'pink', at(bar, b), 'bandpass', 1900, 0.8, 0.22, 0.07, R);
+        else k.thump(spk, at(bar, b), 110, 50, 0.08, 0.35, 0.09);
+      }
+    });
+    // the sax: a riff on the root and its b7, answered on the IV
+    const riff = [[0, 0, 0, 2, 0.5], [0, 1, 1, 2.38, 0.4], [0, 2, 0, 2, 0.4], [0, 3, 0, 1.5, 0.7], [2, 0, 0, 2.67, 0.5], [2, 1, 1, 3.17, 0.4],
+      [2, 2, 0, 2.67, 0.9], [4, 0, 0, 3, 0.5], [4, 1, 0, 3.56, 0.6], [5, 0, 0, 3.36, 0.5], [5, 2, 0, 3, 0.7], [6, 0, 0, 2, 0.5], [6, 1, 1, 2.52, 0.4], [6, 2, 0, 3, 1.0]];
+    for (const [bar, b, off, m, d] of riff) {
+      const t0 = at(bar, b, off), f = roots[bar] * m;
+      const o1 = k.osc('square', f, t0, d + 0.1), o2 = k.osc('sawtooth', f * 1.004, t0, d + 0.1), g = k.gain(0);
+      o1.frequency.setValueAtTime(f * 0.97, t0); o1.frequency.linearRampToValueAtTime(f, t0 + 0.05);
+      const bp = k.filt('bandpass', 900, 1.1);
+      o1.connect(bp); o2.connect(bp); bp.connect(g).connect(spk);
+      g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(0.09, t0 + 0.03); g.gain.setTargetAtTime(0.06, t0 + 0.05, 0.1);
+      g.gain.setTargetAtTime(0, t0 + d, 0.04);
+    }
+  } },
   tram_bell: { dur: 1.6, build(k, out, t, R) {
     for (const t0 of [t, t + 0.34]) {
       METAL.slice(0, 5).forEach((r, i) => k.ping(out, t0, 1046 * r, 0.32 / (1 + i * 0.8), 0.55 / (1 + i * 0.5), 0.0015));

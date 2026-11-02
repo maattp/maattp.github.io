@@ -57,6 +57,7 @@ import { Respray, placeBays } from './respray.js';
 import { Cheats } from './cheats.js';   // Auto KW: GTA-style cheat codes (cheats.js)
 import { PhotoMode } from './kwphoto.js';   // Auto KW: photo mode (kwphoto.js)
 import { Garages, placeGarages } from './kwgarage.js';   // Auto KW: your save garages (kwgarage.js)
+import { CruiseNight } from './kwcruise.js';   // Auto KW: Friday and Saturday cruise nights (kwcruise.js)
 import { Paramedics, MED_STATIONS } from './paramedic.js';
 import { WinterJobs, PLOW_YARDS } from './winterjobs.js';   // Auto KW: the snowplow route and the Aud's Zamboni (winterjobs.js)   // Auto KW: paramedic calls (paramedic.js)
 import { BONES } from './peds.js';
@@ -204,6 +205,7 @@ let crops = null;      // Auto KW: standing corn and soy, the tractors and combi
 let air = null;        // Auto KW: YKF's air traffic, the Cessnas and the news helicopter (airtraffic.js)
 let kartway = null, kartRace = null;   // Auto KW: Erbsville Kartway, its circuit and its races (kartway.js)
 let story = null;   // Auto KW: KW Stories (story.js)
+let cruise = null;   // Auto KW: cruise night (kwcruise.js)
 let cheats = null, photo = null, garages = null, garageBays = [], respray = null, resprayBays = [], paramedic = null, medStations = [], winter = null, plowStations = [];   // Auto KW: body shops and paramedic calls
 let fire = null, fireStations = [];   // Seattle Fire: the stations' rigs, the water cannon, fire calls (firecalls.js)
 
@@ -2036,6 +2038,10 @@ function installShadowFade() {
     hud.places.push(...garages.places());
   } catch (e) { blog('garages: ' + e.message); garages = null; }
   try {
+    cruise = new CruiseNight({ scene, city, game, hud, audio, traffic, fx });
+    hud.places.push(...cruise.places());
+  } catch (e) { blog('cruise: ' + e.message); cruise = null; }
+  try {
     cheats = new Cheats({ scene, city, game, hud, audio, fx, traffic, player, phone: ON_PHONE, sys: () => ({ weather, tod, link, wildlife, rollup, police }) });
   } catch (e) { blog('cheats: ' + e.message); cheats = null; }
   try {
@@ -2143,7 +2149,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { get story() { return story; }, get calendar() { return kcal; }, get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get garages() { return garages; }, get cheats() { return cheats; }, get photo() { return photo; }, get paramedic() { return paramedic; }, get winter() { return winter; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { get story() { return story; }, get calendar() { return kcal; }, get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get garages() { return garages; }, get cruise() { return cruise; }, get cheats() { return cheats; }, get photo() { return photo; }, get paramedic() { return paramedic; }, get winter() { return winter; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;
   Object.defineProperty(window.__dbg, 'eggs', { get() { return eggs; } });
   Object.defineProperty(window.__dbg, 'secrets', { get() { return secrets; } });
@@ -3628,6 +3634,7 @@ function frame(now) {
   if (respray) respray.tick(dt, player);
   if (cheats) { try { cheats.tick(dt); } catch (e) { if (!cheats.err) { cheats.err = 1; console.warn('cheats: ' + e.message); } } }
   if (garages) { try { garages.tick(dt, player); } catch (e) { if (!garages.err) { garages.err = 1; console.warn('garages: ' + e.message); } } }
+  if (cruise) { try { cruise.update(dt, player); } catch (e) { if (!cruise.err) { cruise.err = 1; console.warn('cruise: ' + e.message); } } }
   if (paramedic) paramedic.update(dt, player);
   if (winter) { try { winter.update(dt, player); } catch (e) { if (!winter.err) { winter.err = 1; console.warn('winter: ' + e.message); } } }
   if (stunts) stunts.update(dt, player);
