@@ -50,10 +50,10 @@ export const CODES = [
   { code: 'BUMPYROAD', name: 'Pothole season (traffic bounces)' },
   { code: 'IONSPEED', name: 'ION at triple speed' },
   { code: 'UNWANTED', name: 'Wanted level cleared' },
-  { code: 'WANTEDLEVEL5', name: 'Wanted level 5' },
+  { code: 'BADBEHAVIOUR', name: 'Wanted level 5' },
   { code: 'KWHEELS', name: 'A very KW set of wheels' },
   { code: 'BUGGYTIME', name: 'Horse and buggy' },
-  { code: 'WATERLOOPINK', name: 'Engineering pink' },
+  { code: 'UWPINK', name: 'Engineering pink' },
 ];
 
 const WHEELS = ['delorean', 'zamboni', 'icecream', 'hearse', 'limo'];
@@ -157,6 +157,9 @@ export class Cheats {
       const t = this.buf + U;
       for (let n = Math.min(t.length, BUF); n >= 2; n--) {
         const tail = t.slice(-n);
+        // (a tail of driving keys alone -- W, A, S, D pressed while driving -- is never a code being
+        // spelled: tapping W, A then T would otherwise lose the T)
+        if (!/[^WASD]/.test(tail.slice(0, -1))) continue;
         if (CODES.some((c) => c.code.startsWith(tail))) { e.stopImmediatePropagation(); break; }
       }
     }
@@ -331,7 +334,7 @@ export class Cheats {
         if (S.police && S.police.clear) S.police.clear();
         return 'no fun: wanted level cleared';
       }
-      case 'WANTEDLEVEL5': {
+      case 'BADBEHAVIOUR': {
         game.setWanted(5);
         return 'wanted level 5';
       }
@@ -346,7 +349,7 @@ export class Cheats {
         if (!v) return false;
         return 'buggy time';
       }
-      case 'WATERLOOPINK': {
+      case 'UWPINK': {
         const v = player.onFoot ? null : player.vehicle;
         if (!v || !v.respray || !v.respray(PINK)) { hud.showToast(v ? 'This one refuses pink' : 'PINKTIE: get in a car first'); return false; }
         return 'engineering pink';

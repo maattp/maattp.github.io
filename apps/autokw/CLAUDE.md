@@ -174,10 +174,10 @@ file and a guide disagree, this file wins.
   on first use, off the scene after), WINTERISCOMING (snow 90 s via `weather.set`, then back to auto/the setting),
   AMBERHOUR (dusk 120 s via tod, restores `tod.setting`, nothing saved), BUMPYROAD (30 s: AI cars' `yVis` bounces,
   zeroed on end), IONSPEED (`link.boostK` 3 for 60 s: link.js `_service` scales the train clock), UNWANTED (clear
-  wanted + `police.clear`), WANTEDLEVEL5, KWHEELS (random delorean / zamboni / icecream / hearse / limo), BUGGYTIME,
-  WATERLOOPINK (your car -> pink 0xf0589c via `Vehicle.respray`; refused on foot or on a livery car). Codes were
+  wanted + `police.clear`), BADBEHAVIOUR, KWHEELS (random delorean / zamboni / icecream / hearse / limo), BUGGYTIME,
+  UWPINK (your car -> pink 0xf0589c via `Vehicle.respray`; refused on foot or on a livery car). Codes were
   renamed so none STARTS with a one-shot action key (E F P T N G L R) and the capture-phase handler SWALLOWS those keys
-  once they continue a live code prefix (2+ letters), so spelling a code never exits the car, opens photo mode (P),
+  once they continue a live code prefix (2+ letters, at least one of them not W/A/S/D -- a driver tapping W, A then T is not spelling a code; so no code starts with two WASD letters: UWPINK, BADBEHAVIOUR), so spelling a code never exits the car, opens photo mode (P),
   starts a taxi shift, etc.; W A S D and the held keys (H J K Q Z) are never touched, and a lone P / E acts as normal.
   **Cleanup:** `timed()` keeps one record per id (a repeat extends it), `end` restores what `begin` took; spawned cars
   are ordinary 'apron' traffic vehicles capped at 4 (oldest removed); nothing uses `game.hold`. **GTA rule:** the

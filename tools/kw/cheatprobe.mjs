@@ -156,6 +156,10 @@ async function main() {
     await ev(`window.__seen = {}; 0`);
     await type('p'); await sleep(400); await type('p'); await sleep(400); await type('e');
     ok(await ev(`window.__seen.KeyP === 2 && window.__seen.KeyE === 1`), 'a lone P and E (no live prefix) pass through untouched');
+    // a driver tapping W, A then T / N (driving keys, then an action) is not spelling a code: nothing is swallowed
+    await ev(`window.__seen = {}; window.__dbg.cheats.buf = ''; 0`);
+    await type('wat'); await type('wan');
+    ok(await ev(`window.__seen.KeyT === 1 && window.__seen.KeyN === 1`), 'W, A then T / N (driving, then an action) reach the game: ' + await ev(`JSON.stringify(window.__seen)`));
     await STAGE(true);
     await type('doubledouble');
     ok(await D(`return !d.player.onFoot && C.last === 'DOUBLEDOUBLE'`), 'DOUBLEDOUBLE did not get you out of the car (its E keys were swallowed)');
@@ -171,17 +175,17 @@ async function main() {
     ok(await D(`return C.last === 'IONSPEED' && d.link.boostK === 3`), 'ION clock x3');
     await D(`C.tick(100); return 1`);
     ok(await D(`return d.link.boostK === 1 && C.fx.length === 0`), 'after 60 s ION is back to 1x');
-    console.log('--- NOFUN / WANTEDLEVEL5 / PINKTIE');
+    console.log('--- NOFUN / BADBEHAVIOUR / PINKTIE');
     await STAGE(true);
-    await type('wantedlevel5');
+    await type('badbehaviour');
     ok(await D(`return g.wanted === 5`), 'wanted level 5');
     await type('unwanted');
     ok(await D(`return g.wanted === 0 && g.points === 0`), 'NOFUN clears it');
-    await type('waterloopink');
-    ok(await D(`return C.last === 'WATERLOOPINK' && d.player.vehicle.bodyMat.color.getHex() === 0xf0589c`), 'the car is engineering pink');
+    await type('uwpink');
+    ok(await D(`return C.last === 'UWPINK' && d.player.vehicle.bodyMat.color.getHex() === 0xf0589c`), 'the car is engineering pink');
     await sleep(900); await shot('pinktie');
     const n1 = await D(`return C.log.length`);
-    await STAGE(false); await type('waterloopink');
+    await STAGE(false); await type('uwpink');
     ok(await D(`return C.log.length === ${n1}`), 'PINKTIE on foot is refused and not counted');
 
     console.log('--- GTA rule, storage, menu');
