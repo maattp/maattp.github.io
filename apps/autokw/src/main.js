@@ -929,7 +929,7 @@ async function boot() {
   // (DriveTest is an amenity, not a shop: its lettering on the Ottawa Lackner Centre's strip, g2test.js)
   if (!window.__noG2) addDriveTestSign(md.shops);
   setShopData(md.shops);
-  { const k = prepShops(city); blog(`kw shops: drawn here: ${k.bigbox} big boxes, ${k.units} stand-alone stores, ${k.strips} plaza buildings, ${k.canopies} gas canopies, ${k.fronts} storefronts (${k.frontsNear || 0} within 150 m of a cluster's edge, ${k.frontsNext} of them merged into the next cell's, ${k.frontsOut} outside the clusters)`); }
+  { const k = prepShops(city); blog(`kw shops: drawn here: ${k.bigbox} big boxes, ${k.units} stand-alone stores, ${k.strips} plaza buildings, ${k.canopies} gas canopies, ${k.fronts} storefronts (${k.frontsNear || 0} within 150 m of a cluster's edge, ${k.frontsNext} of them merged into the next cell's, ${k.frontsOut} outside the clusters), ${k.biz || 0} main-street business boxes`); }
   addLandmarkExtra(buildShops);
   addLandmarkExtra(buildMarketTent);
   addLandmarkExtra(buildDome);
