@@ -57,8 +57,9 @@ const NAMES = { sedan: 'Sedan', hellcat: 'Hellcat', delorean: 'DeLorean-alike', 
   // (the export list's types too: exportyard.js shows these on its board and in the passport)
   crossover: 'Crossover', suv3: 'Three-row SUV', pickupcap: 'Pickup with a cap', compsedan: 'Compact sedan', minivan: 'Minivan', hatch: 'Hatchback',
   civic: 'Civic hatch', wagon: 'Wagon', ev: 'EV sedan', evy: 'EV crossover', jeep: 'Wrangler', dually: 'Dually', compact: 'Compact',
-  muscle: 'Muscle car', sports: 'Sports car', convertible: 'Convertible', smart: 'Smart car', volvo: 'Volvo wagon', farmtruck: 'Farm truck' };
-const nameOf = (t) => NAMES[t] || (t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Car');
+  muscle: 'Muscle car', sports: 'Sports car', convertible: 'Convertible', smart: 'Smart car', volvo: 'Volvo wagon', farmtruck: 'Farm truck',
+  bug: 'Bug', pickup50: "Fifties pickup", woodie: 'Woodie wagon', finned: 'Fin convertible' };
+export const nameOf = (t) => NAMES[t] || (t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Car');
 /** What a vehicle type is called to the player (the garage rows, the export list). */
 export const typeName = nameOf;
 

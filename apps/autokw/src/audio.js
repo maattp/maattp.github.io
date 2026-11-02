@@ -1370,6 +1370,47 @@ const SOUNDS = {
       at += d * 0.24;
     }
   } },
+  // Auto KW, cruise night (kwcruise.js): eight bars of shuffle rock'n'roll
+  // out of one parked car's radio -- a boogie bass line, piano-ish stabs on
+  // the off-beats, a brushed back-beat and a honking sax riff, all through a
+  // small speaker's band. Original, not a recording; looped by kwcruise.
+  cruise_tune: { dur: 12.9, half: true, build(k, out, t, R) {
+    const spk = k.gain(0.85);
+    spk.connect(k.filt('highpass', 160, 0.7)).connect(k.filt('lowpass', 3600, 0.8)).connect(out);
+    const beat = 60 / 150, sw = beat * 0.66;                       // swung eighths
+    const at = (bar, b, off = 0) => t + (bar * 4 + b) * beat + (off ? sw : 0);
+    const C = 130.81, F = 174.61, G = 196.0;
+    const roots = [C, C, F, C, G, F, C, G];
+    const boog = [1, 1.26, 1.5, 1.68, 1.78, 1.68, 1.5, 1.26];      // R 3 5 6 b7 6 5 3
+    roots.forEach((r, bar) => {
+      for (let b = 0; b < 4; b++) {
+        for (const off of [0, 1]) {
+          const f = (r / 2) * boog[b * 2 + off], t0 = at(bar, b, off);
+          const o = k.osc('sawtooth', f, t0, 0.3), g = k.gain(0);
+          o.connect(k.filt('lowpass', 520, 1.2)).connect(g).connect(spk);
+          k.hit(g.gain, t0, 0.32, 0.12, 0.004);
+        }
+        // stabs on the off-beat: root, third, fifth, seventh
+        for (const m of [2, 2.52, 3, 3.56]) k.ping(spk, at(bar, b, 1), r * m, 0.06, 0.09, 0.003);
+        // the brushes: a soft hat every off-beat, the snare on two and four
+        k.burst(spk, 'white', at(bar, b, 1), 'highpass', 6500, 0.7, 0.05, 0.03, R);
+        if (b % 2) k.burst(spk, 'pink', at(bar, b), 'bandpass', 1900, 0.8, 0.22, 0.07, R);
+        else k.thump(spk, at(bar, b), 110, 50, 0.08, 0.35, 0.09);
+      }
+    });
+    // the sax: a riff on the root and its b7, answered on the IV
+    const riff = [[0, 0, 0, 2, 0.5], [0, 1, 1, 2.38, 0.4], [0, 2, 0, 2, 0.4], [0, 3, 0, 1.5, 0.7], [2, 0, 0, 2.67, 0.5], [2, 1, 1, 3.17, 0.4],
+      [2, 2, 0, 2.67, 0.9], [4, 0, 0, 3, 0.5], [4, 1, 0, 3.56, 0.6], [5, 0, 0, 3.36, 0.5], [5, 2, 0, 3, 0.7], [6, 0, 0, 2, 0.5], [6, 1, 1, 2.52, 0.4], [6, 2, 0, 3, 1.0]];
+    for (const [bar, b, off, m, d] of riff) {
+      const t0 = at(bar, b, off), f = roots[bar] * m;
+      const o1 = k.osc('square', f, t0, d + 0.1), o2 = k.osc('sawtooth', f * 1.004, t0, d + 0.1), g = k.gain(0);
+      o1.frequency.setValueAtTime(f * 0.97, t0); o1.frequency.linearRampToValueAtTime(f, t0 + 0.05);
+      const bp = k.filt('bandpass', 900, 1.1);
+      o1.connect(bp); o2.connect(bp); bp.connect(g).connect(spk);
+      g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(0.09, t0 + 0.03); g.gain.setTargetAtTime(0.06, t0 + 0.05, 0.1);
+      g.gain.setTargetAtTime(0, t0 + d, 0.04);
+    }
+  } },
   tram_bell: { dur: 1.6, build(k, out, t, R) {
     for (const t0 of [t, t + 0.34]) {
       METAL.slice(0, 5).forEach((r, i) => k.ping(out, t0, 1046 * r, 0.32 / (1 + i * 0.8), 0.55 / (1 + i * 0.5), 0.0015));
@@ -1663,6 +1704,34 @@ export const ENGINES = {
     idle: 650, redline: 5400, gears: [0.17, 0.3, 0.45, 0.62, 0.8, 1.04],
     lp: [230, 1250, 1500], ex: [92, 2.4, 7], noise: { ratio: 22, q: 0.9, gain: 0.2, pulse: 0.45, order: 8 },
     whine: null, drive: 2.1, level: 0.54, jitter: 0.07, rough: 0.35, clunk: 0.06 },
+  // Auto KW, the classics (vehicles.js `engine`):
+  // `flat4`: the bug's air-cooled 1.3 l flat four -- a boxer fires evenly, but
+  // the two banks' exhausts meet in one muffler late, so it rasps (a wide
+  // pulse, lots of noise on the pulse, rough); the cooling fan's whine rides
+  // the crank; it gives up at 4,600 and has four speeds.
+  flat4: { kind: 'car', stroke: 4, fire: [0, 0.25, 0.5, 0.75], amps: [1, 0.82, 1.1, 0.86], pw: 0.05,
+    idle: 900, redline: 4600, gears: [0.24, 0.43, 0.68, 1.0],
+    lp: [280, 1500, 1300], ex: [170, 2.6, 7], noise: { ratio: 26, q: 0.9, gain: 0.3, pulse: 0.6, order: 2 },
+    whine: { hz0: 600, hz1: 2600, gain: 0.03, load: 0.1 }, drive: 2.3, level: 0.72, jitter: 0.09, rough: 0.55, clunk: 0.12 },
+  // `i6old`: a 1950s truck's long-stroke straight six -- smooth, low and
+  // slow (3,800 rpm), a soft exhaust, three on the tree.
+  i6old: { kind: 'car', stroke: 4, fire: [0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6], amps: [1, 0.95, 1.03, 0.97, 1.02, 0.94], pw: 0.045,
+    idle: 520, redline: 3800, gears: [0.3, 0.58, 1.0],
+    lp: [230, 1100, 1300], ex: [95, 2.2, 7], noise: { ratio: 20, q: 0.9, gain: 0.18, pulse: 0.45, order: 6 },
+    whine: { hz0: 500, hz1: 1600, gain: 0.02, load: 0.4 }, drive: 1.8, level: 0.66, jitter: 0.07, rough: 0.3, clunk: 0.2 },
+  // `v8old`: a 1959 big-block on a two-speed automatic -- the cross-plane
+  // burble through twin mufflers, a lazy lope at idle, deep and rounded,
+  // revving out at 4,800.
+  v8old: { kind: 'car', stroke: 4, fire: V8_PATTERN.fire, amps: V8_PATTERN.amps, pw: 0.05,
+    idle: 600, redline: 4800, gears: [0.42, 1.0],
+    lp: [210, 1300, 1600], ex: [78, 2.4, 9], noise: { ratio: 18, q: 0.85, gain: 0.24, pulse: 0.6, order: 8 },
+    whine: null, drive: 2.5, level: 0.52, jitter: 0.1, rough: 0.6, crackle: true, clunk: 0.15 },
+  // `v8soft`: a late-70s smog-era V8 under a wagon -- choked and quiet, a
+  // three-speed automatic, no crackle: the family hauler's hum.
+  v8soft: { kind: 'car', stroke: 4, fire: V8_PATTERN.fire, amps: V8_PATTERN.amps, pw: 0.046,
+    idle: 620, redline: 4600, gears: [0.36, 0.62, 1.0],
+    lp: [200, 1050, 1300], ex: [88, 2.2, 7], noise: { ratio: 18, q: 0.85, gain: 0.16, pulse: 0.4, order: 8 },
+    whine: null, drive: 1.9, level: 0.5, jitter: 0.06, rough: 0.3, clunk: 0.1 },
   vtwin: { kind: 'car', stroke: 4, fire: [0, 0.4375], amps: [1, 0.88], pw: 0.045,
     idle: 950, redline: 5600, gears: [0.24, 0.4, 0.57, 0.76, 1.0],
     lp: [260, 1500, 1800], ex: [85, 2.4, 8], noise: { ratio: 30, q: 0.9, gain: 0.22, pulse: 0.6, order: 2 },

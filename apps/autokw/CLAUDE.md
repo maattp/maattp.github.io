@@ -5656,6 +5656,58 @@ file and a guide disagree, this file wins.
   decoration (1 draw, 1.9k tris). Not done: no voice; the tail's SUV and the race's
   Civic ignore traffic lights; chapter 5 has no 'BUSTED with the card'
   cutscene; a quit mid-chapter keeps no checkpoint.
+- **The classics and cruise night** (vehicles.js `classic` types, src/kwcruise.js; docs/cruise/*.jpg;
+  probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1 [AUTO_PHONE=1] node tools/kw/cruiseprobe.mjs <dir>
+  [noshots]`, stage shots `node tools/kw/carshots.mjs <dir> tools/kw/classicshots.json`, in-game views
+  `VIEWS=tools/kw/cruiseviews.json node tools/kw/kwshots.mjs <dir>`). **Four period cars, no makes or
+  badges:** `bug` (an air-cooled rear-engined two-door, 4.08 m, `flat4`), `pickup50` (a 1950s stepside,
+  `i6old`, three on the tree), `woodie` (a late-70s full-size wagon in simulated wood, `v8soft`) and
+  `finned` (a 1959-60 two-tone convertible, top down, fins with bullet lamps, rear skirts, `v8old` on a
+  two-speed). The wagon and the convertible are bodyCore bodies with period fascias (quad square lamps in
+  a chrome grille; hooded twin round lamps, dagmars). The bug and the pickup have separate fenders, which
+  one loft cannot be: **`classicShell`** is a superellipse loft (`sec(z)` -> w, wT, y0, yb, y1, pB, pT)
+  whose WINDOWS are skipped quads glazed on the same grid (a side window mirrors to pi - t), with a
+  `liner` -- the shell again, inset, normals in, closed at both ends -- so the glass shows a cabin, never
+  the far side's culled back-faces (a thin-box cabin poked through the dome: don't); **`fenderArc`** is
+  an open pontoon shell over a wheel with a CAVITY liner under it. New wheel kinds in addWheel: `ww`
+  (whitewall + full chrome cover), `cap` (ivory steel + dog-dish), `wwcap`. The second tone, the wood
+  and the interiors are matte vertex colours, so **no `finish` and no `liveries`: a classic takes a
+  Respray and a garage keeps its colour**; its paints come from `CLASSIC_COLORS` via `classicColor(type,
+  seed)` (traffic.js and kwcruise pass them in). SUSP: soft and underdamped, each its own. Triangles
+  (occupied): bug 11.5k, pickup50 7.4k, woodie 8.8k, finned 10.2k; far LOD 2.4-3.8k, far-far 0.9-1.6k;
+  3 draws each like any car. Your car's feel (cruiseprobe, flat, from rest): bug 0-60 4.7 s, 95 km/h at
+  15 s; pickup50 3.8 s / 102; woodie 3.1 s / 122; finned 2.4 s / 137. **Traffic:** a hash
+  (`classicOdds`): 0.6 % of car draws in town on a weekday, x2.5 on the phone's real Saturday/Sunday,
+  x2.5 on a rural road or within 2.2 km of St. Jacobs (3.75 % there on a weekend), never on a
+  freeway, at most 3 about; `classicPick` doubles the stepside in the country, the finned is the rarest.
+  FAR2_AS folds them into compsedan / pickup. **Cruise night** (`CruiseNight`, main.js wrapped):
+  Conestoga Mall's north lot (`SITE`, OSM parking, the rows turned to the lot's painted angle via
+  `G.lotCodeAt`), the phone's real **Friday and Saturday 18:00-23:00** (`cruiseOn`); `?cruise=1` / `0`
+  and `__dbg.cruise.force(true | false | null)` override, `cruise.clock` is the Date source. Built
+  within `BUILD_R` 500 m, taken down past 650 m or when the evening ends: two rows across an aisle (16
+  + 2 entrants in the show row; phone 10 + 2), a deterministic per-night mix of the four plus the
+  fleet's `muscle` and DeLorean, all **'apron' traffic** (real, enterable; one you drive 6 m out of
+  its stall is released to traffic and survives the teardown); hoods up on some (`HOODS`: a panel in the
+  car's own bodyMat on a pivot, the bay + engine one shared geometry a type; the bug's engine lid), the
+  pooled walkers standing round them and a judge at the table, `cruise_tune` (audio.js: eight bars of
+  original shuffle rock'n'roll, synthesised, through a small speaker) looped on one car within 170 m,
+  the show row (stall lines, red carpet, a BEST IN SHOW canvas banner, judges' table and trophy, a
+  string of bulbs: 3 draws), the lot's own parked cars kept out (`traffic.keepClear` + `_lotBays`
+  cleared), an arrival toast, the map icon `cruise` (hud.js) only while it is on. **Best in Show:**
+  stop your own classic (spec.classic, or muscle / DeLorean by `RARITY`) in one of the four middle
+  show stalls for `JUDGE_T` 30 s: a ribbon (blue >= 2, red >= 1.25, else white, by rarity x
+  condition = health - 6 % a dent) and $150 x rarity x condition (+$250 for blue), **once a night**,
+  `autokw-cruise` {night, wins, total, best}; the cheat rule as the eggs'. No `game.hold`.
+  **Phone cost** (AUTO_PHONE=1, the lot view at dusk, same camera): meet on 171 draws / 671k tris,
+  off 122 / 560k (12 cars x 3 near, show row 3, 3 hoods x 2, 5 walkers); desktop 228 / 832k vs 145 /
+  641k. Idle: one clock check a second and a distance test a frame; nothing built. The probe covers
+  each type (geometry, LODs, drive, fits, Respray), the odds and a spawn sample, off / far / on, the
+  real calendar, Best in Show paid once, a sedan never judged, teardown by time and by distance, a
+  taken car kept, no leaked car / mesh / walker / keepClear, 0 exceptions. **Not done:** the 1970s
+  boxy muscle coupe and a 1940s coupe were left out (the fleet's `muscle` already is the 70s coupe);
+  the DeLorean guest never opens its hood; the walkers stand (no gestures); the meet's cars keep their
+  lamps on at dusk; the open hood leaves the closed panel under the engine (it reads as a bay from
+  outside, not from above); only the Conestoga lot hosts it.
 
 ## Build number
 

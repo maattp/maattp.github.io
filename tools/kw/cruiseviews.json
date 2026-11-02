@@ -1,0 +1,7 @@
+[
+ { "name": "cruise-lot-dusk", "fov": 58, "eval": "(() => { const d = __dbg, C = d.cruise; C.force(true); d.player.x = -4160; d.player.z = -4790; for (let i = 0; i < 4; i++) C.update(0.1, d.player); const t = d.tod; if (t) { t.mode = 'dusk'; t._realT = -1e9; t.solve(new Date()); t.apply(true); } const a = C.w(-30, -24), b = C.w(0, 4); return { c: [a.x, a.z, 7], t: [b.x, b.z, 1.0] }; })()" },
+ { "name": "cruise-aisle", "fov": 55, "eval": "(() => { const d = __dbg, C = d.cruise; C.force(true); for (let i = 0; i < 2; i++) C.update(0.1, d.player); const a = C.w(-22, -1), b = C.w(8, 1); return { c: [a.x, a.z, 1.7], t: [b.x, b.z, 1.2] }; })()" },
+ { "name": "cruise-show", "fov": 55, "eval": "(() => { const d = __dbg, C = d.cruise; C.force(true); for (let i = 0; i < 2; i++) C.update(0.1, d.player); const a = C.w(-2, 6), b = C.w(0, 22); return { c: [a.x, a.z, 2.4], t: [b.x, b.z, 1.6] }; })()" },
+ { "name": "cruise-hood", "fov": 50, "eval": "(() => { const d = __dbg, C = d.cruise; C.force(true); for (let i = 0; i < 2; i++) C.update(0.1, d.player); const h = C.hoods[0]; const v = h.v, f = { x: Math.sin(v.heading), z: Math.cos(v.heading) }; return { c: [v.x + f.x * 6 + f.z * 2.5, v.z + f.z * 6 - f.x * 2.5, 2.0], t: [v.x + f.x * 1.2, v.z + f.z * 1.2, 1.0] }; })()" },
+ { "name": "cruise-air", "fov": 55, "eval": "(() => { const d = __dbg, C = d.cruise; C.force(true); for (let i = 0; i < 2; i++) C.update(0.1, d.player); const a = C.w(30, -45), b = C.w(0, 6); return { c: [a.x, a.z, 40], t: [b.x, b.z, 0] }; })()" }
+]
