@@ -111,6 +111,38 @@ function flatten(city, pts, ext = false) {
   return hit.size;
 }
 
+/**
+ * Trim the boxes beside a footprint drawn here back to its walls: a box whose
+ * centre is outside an edge but that reaches more than 0.3 m past it, with an
+ * axis along the edge's normal, is shortened on that axis to stop at the wall.
+ */
+function trimAt(city, pts) {
+  const [cx, cz] = centroid(pts), out = [];
+  for (const o of city.buildingsNear(cx, cz, 60)) {
+    if (o.h <= 0 || inPoly(pts, o.x, o.z)) continue;
+    for (const e of edges(pts)) {
+      if (e.L < 6) continue;
+      const nx = -e.nx, nz = -e.nz;                                   // into the footprint
+      const dc = (o.x - e.mx) * nx + (o.z - e.mz) * nz;
+      if (dc >= 0) continue;
+      // only a box beside this wall, not one off past its ends
+      const along = (o.x - e.mx) * e.ux + (o.z - e.mz) * e.uz;
+      if (Math.abs(along) > e.L / 2 + Math.max(o.w, o.d) / 2) continue;
+      const c = Math.cos(o.rot), sn = Math.sin(o.rot);
+      const aw = c * nx + sn * nz, ad = -sn * nx + c * nz;
+      const useW = Math.abs(aw) > 0.97, useD = Math.abs(ad) > 0.97;
+      if (!useW && !useD) continue;
+      const half = useW ? o.w / 2 : o.d / 2, over = dc + half;
+      if (over <= 0.3 || over > half) continue;
+      const cut = over + 0.05;
+      if (useW) o.w -= cut; else o.d -= cut;
+      o.x -= nx * cut / 2; o.z -= nz * cut / 2;
+      out.push([o.kw && o.kw.name || '?', +cut.toFixed(2)]);
+    }
+  }
+  return out;
+}
+
 /** After prepSights: flatten the boxes; buildLandmarks2 is a landmarks.js extra of its own. */
 export function prepLandmarks2(city, data) {
   D = data;
@@ -123,6 +155,9 @@ export function prepLandmarks2(city, data) {
   // window.__noBiz: round six off (kwbiz.js: the new footprints stay boxes, the old signs come back)
   if (typeof window !== 'undefined' && window.__noBiz) { BIZ_ON = false; D = { b: { ...D.b } }; for (const k of BIZ_KEYS) delete D.b[k]; }
   for (const k of Object.keys(D.b)) STATS.skipped += flatten(city, D.b[k].p, ROUND5.includes(k) || ROUND7.includes(k) || BIZ_KEYS.includes(k));
+  // J&J: Canada Computers' importer box (its L-shaped outline's rectangle) runs 3.4 m
+  // through J&J's party wall, and its strip canopy over J&J's front; stop it at the wall
+  if (D.b.jj) STATS.jjTrim = trimAt(city, ccw(D.b.jj.p));
   // the King St skywalk is one of kwsights' `king` blocks (building=bridge):
   // meshKing would draw it on the road; it is drawn up in the air here instead
   const S = sightsData();
@@ -2420,137 +2455,130 @@ function catalyst(kit, ctx) {
 // the extra
 // ---------------------------------------------------------------------------------------
 // ---------------------------------------------------------------------------------------
-// J&J CARDS & COLLECTIBLES, 230 Weber St N, Waterloo -- the little castle
+// J&J CARDS & COLLECTIBLES, 230 Weber St N, Waterloo -- the little blue castle
 // ---------------------------------------------------------------------------------------
-// The Schill brothers' card, comic and game shop (35 years and counting), in the
-// one-storey building on Weber St N that looks like a little castle: grey
-// stone walls under battlements, round turrets at the corners, a gatehouse
-// over the arched door with a pennant over it, shop windows under pointed
-// heads either side, arrow slits down the sides. The OSM footprint (30 x 16
-// m); the look is from the owner's memory of it, not a survey -- proportions
-// and colours estimated.
+// The Schill brothers' card, comic and game shop (35 years and counting), from
+// the Explore Waterloo photograph (2023) of its front: a one-storey block
+// painted royal blue, a crenellated false front on the short NW end on Weber
+// St (OSM: Canada Computers shares the long SW wall, its front flush to the
+// photo's left), a short tower at the SW corner with a small red-framed
+// pointed window, a taller square tower with an overhanging crenellated cap at
+// the NE corner; the red-framed entrance "TOYS and GAMES SUPERSTORE" by the
+// short tower, the big white sign "J&J Cards & Collectibles | HOBBIES COMICS
+// GAMES CARDS" mid-front, a red-framed window by the tall tower, a string of
+// lights under the battlements. Positions are fractions of the front measured
+// off the photo, laid on OSM's 16 m end; heights from a 2.4 m door.
 function jjCastle(kit, ctx) {
-  const ST = C('#aaa59a'), ST2 = C('#8c877d'), ST3 = C('#c9c4b8'), DK = C('#1f2125'), WD = C('#5a3a22'), GL = C('#2a3138'),
-    RD = C('#9e1b22'), GD = C('#d8b04a'), IRON = C('#2b2b2b');
+  const BL = C('#1d5ec6'), BL2 = shade(C('#1d5ec6'), 0.82), BL3 = shade(C('#1d5ec6'), 1.12), RED = C('#a3191c'),
+    DK = C('#1c1f24'), GL = C('#283038'), ROOF = C('#4b4a47'), BULB = C('#fff1c4'), WIRE = C('#202020');
   const pts = ccw(D.b.jj.p);
-  const r = block(kit, ctx, pts, {
-    h: 5.4, wall: ST, trim: ST3, parapet: 0, roof: C('#4b4a47'), plinth: [0.7, ST2], glass: GL,
-  });
-  const B = r.B, yT = r.yTop, o = obb(pts);
-  const front = frontEdge(ctx.city, r.E, /^Weber Street/, 10, 70) || r.E.reduce((a, e) => (e.L > a.L ? e : a));
-  STATS.jjFront = [Math.round(front.mx), Math.round(front.mz), +front.nx.toFixed(2), +front.nz.toFixed(2)];
-  // stone courses: darker lines every 0.6 m, so the wall reads as blocks, not render
-  for (const e of r.E) {
-    if (e.L < 3) continue;
-    const N = [e.nx, 0, e.nz], gy = gyOf(e);
-    for (let y = gy + 1.3; y < yT - 0.2; y += 0.62) B4(B, e, 0, e.L, y, y + 0.06, 0.03, N, ST2);
-  }
-  // the battlements: a parapet and merlons along every wall (crenels between)
-  const merlons = (e, y, h, w = 0.85, sp = 1.7, dep = 0.55) => {
-    const rot = Math.atan2(e.uz, e.ux), n = Math.max(1, Math.floor(e.L / sp)), pad = (e.L - (n - 1) * sp) / 2;
-    for (let i = 0; i < n; i++) {
-      const p = e.at(pad + i * sp, 0, -dep / 2 + 0.05);
-      B.box(p[0], y, p[2], w, h, dep, rot, i % 2 ? ST : shade(ST, 0.95));
-    }
-  };
-  for (const e of r.E) {
-    if (e.L < 1) continue;
-    const rot = Math.atan2(e.uz, e.ux), m = e.at(e.L / 2, 0, -0.25);
-    B.box(m[0], yT, m[2], e.L, 0.75, 0.55, rot, ST);                 // the parapet wall
-    B4(B, e, 0, e.L, yT - 0.18, yT, 0.12, [e.nx, 0, e.nz], ST3);    // a string course under it
-    merlons(e, yT + 0.75, 0.75);
-  }
-  // round turrets at the box's four corners, crenellated
-  const ux = o.ux, uz = o.uz, vx = -o.uz, vz = o.ux;
-  for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
-    const x = o.x + ux * a * (o.hu - 0.4) + vx * b * (o.hv - 0.4), z = o.z + uz * a * (o.hu - 0.4) + vz * b * (o.hv - 0.4);
-    const gy = T(x, z) - 0.6, R = 1.75, top = yT + 2.2;
-    B.prism(x, gy, z, R, top - gy, 12, ST);
-    B.prism(x, top - 0.25, z, R + 0.2, 0.3, 12, ST3);                 // the corbel ring
-    disc(B, x, top + 0.04, z, R + 0.2, 12, C('#4b4a47'));
-    for (let i = 0; i < 8; i++) {
-      const ang = (i / 8) * Math.PI * 2, px = x + Math.cos(ang) * (R - 0.05), pz = z + Math.sin(ang) * (R - 0.05);
-      B.box(px, top + 0.05, pz, 0.8, 0.8, 0.45, ang + Math.PI / 2, ST);
-    }
-    // an arrow slit up each turret, facing out from the corner
-    const sx = Math.sign(a) * ux + Math.sign(b) * vx, sz = Math.sign(a) * uz + Math.sign(b) * vz, sl = Math.hypot(sx, sz);
-    const nx = sx / sl, nz = sz / sl;
-    for (const yy of [gy + 2.4, gy + 5.0]) {
-      const c = [x + nx * (R + 0.02), z + nz * (R + 0.02)];
-      const e = edgeOf([c[0] + nz * 0.5, c[1] - nx * 0.5], [c[0] - nz * 0.5, c[1] + nx * 0.5], nx, nz);
-      B4(B, e, 0.38, 0.62, yy, yy + 1.3, 0.02, [nx, 0, nz], DK);
-    }
-    ctx.solids.push({ x, z, r: R, y0: gy - 1, y1: top + 0.85 });
-  }
-  // the front: a gatehouse over an arched door, shop windows either side
-  const e = front, N = [e.nx, 0, e.nz], gy = gyOf(e), tm = e.L / 2, rot = Math.atan2(e.uz, e.ux);
-  const gw = 6.2, gd = 1.6, gh = yT + 2.6;
-  {
-    const c = e.at(tm, 0, gd / 2 - 0.3);
-    B.box(c[0], gy - 0.6, c[2], gw, gh - gy + 0.6, gd, rot, shade(ST, 1.04));
-    const ge = edgeOf(e.at(tm - gw / 2, 0, gd - 0.3).filter((_, i) => i !== 1), e.at(tm + gw / 2, 0, gd - 0.3).filter((_, i) => i !== 1), e.nx, e.nz);
-    for (let y = gy + 1.3; y < gh - 0.3; y += 0.62) B4(B, ge, 0, ge.L, y, y + 0.06, 0.03, N, ST2);
-    const top = e.at(tm, 0, gd / 2 - 0.3);
-    B.box(top[0], gh - 0.2, top[2], gw + 0.4, 0.3, gd + 0.4, rot, ST3);
-    for (let i = 0; i < 4; i++) {           // its merlons, front and the two sides
-      const p = ge.at(0.55 + i * (gw - 1.1) / 3, 0, -0.2);
-      B.box(p[0], gh + 0.1, p[2], 0.9, 0.9, 0.5, rot, ST);
-    }
-    for (const s of [-1, 1]) {
-      const p = e.at(tm + s * (gw / 2 - 0.25), 0, gd / 2 - 0.3);
-      B.box(p[0], gh + 0.1, p[2], 0.5, 0.9, 0.9, rot, ST);
-    }
-    ctx.solids.push({ x: c[0], z: c[2], hw: gw / 2, hd: gd / 2, rot, y0: gy - 1, y1: gh + 1 });
-    // the arched door: dark oak in two leaves, iron straps, a stone arch round it
-    const dw = 2.4, dh = 2.5, rr = dw / 2;
-    B4(B, ge, ge.L / 2 - dw / 2, ge.L / 2 + dw / 2, gy, gy + dh, 0.03, N, WD);
-    for (let k = 0; k < 8; k++) {
-      const a0 = Math.PI * k / 8, a1 = Math.PI * (k + 1) / 8, t = ge.L / 2;
-      B.tri(ge.at(t, gy + dh, 0.03), ge.at(t + Math.cos(a0) * rr, gy + dh + Math.sin(a0) * rr, 0.03), ge.at(t + Math.cos(a1) * rr, gy + dh + Math.sin(a1) * rr, 0.03), N, WD);
-      B.quad(ge.at(t + Math.cos(a0) * rr, gy + dh + Math.sin(a0) * rr, 0.06), ge.at(t + Math.cos(a1) * rr, gy + dh + Math.sin(a1) * rr, 0.06),
-        ge.at(t + Math.cos(a1) * (rr + 0.4), gy + dh + Math.sin(a1) * (rr + 0.4), 0.06), ge.at(t + Math.cos(a0) * (rr + 0.4), gy + dh + Math.sin(a0) * (rr + 0.4), 0.06), N, U0, k % 2 ? ST3 : ST2);
-    }
-    for (const s of [-1, 1]) B4(B, ge, ge.L / 2 + s * (rr + 0.2) - 0.2, ge.L / 2 + s * (rr + 0.2) + 0.2, gy - 0.1, gy + dh, 0.06, N, ST3);
-    B4(B, ge, ge.L / 2 - 0.03, ge.L / 2 + 0.03, gy, gy + dh + rr - 0.05, 0.05, N, DK);
-    for (const y of [gy + 0.6, gy + 1.9]) B4(B, ge, ge.L / 2 - dw / 2 + 0.1, ge.L / 2 + dw / 2 - 0.1, y, y + 0.1, 0.05, N, IRON);
-    // the shop's name over the arch, gold on a red board
-    letters(kit, ctx, ge, ge.L / 2, gy + dh + rr + 1.15, 5.6, 1.05, 'J&J CARDS', { bg: '#8e1a20', fg: '#f2cf63', font: SERIF, wt: '700', k: 0.66, px: 30, off: 0.08 });
-    letters(kit, ctx, ge, ge.L / 2, gy + dh + rr + 0.35, 5.6, 0.5, '& COLLECTIBLES', { bg: '#8e1a20', fg: '#f2cf63', font: SERIF, wt: '700', k: 0.7, px: 30, off: 0.08 });
-    // the pennant over the gatehouse: a pole and a swallow-tailed red and gold flag
-    const fp = e.at(tm, 0, gd / 2 - 0.3);
-    B.prism(fp[0], gh + 0.1, fp[2], 0.06, 4.2, 6, IRON);
-    B.cone(fp[0], gh + 4.3, fp[2], 0.14, 0.3, 6, GD);
-    const fy = gh + 3.2, fl = 1.9, fx = e.ux, fz = e.uz;
-    const q = (t, y) => [fp[0] + fx * t, y, fp[2] + fz * t];
-    for (const sgn of [1, -1]) {
-      const nn = [e.nx * sgn, 0, e.nz * sgn];
-      B.quad(q(0.06, fy), q(fl, fy + 0.05), q(fl, fy + 0.95), q(0.06, fy + 1.0), nn, U0, RD);
-      B.tri(q(fl, fy + 0.05), q(fl + 0.7, fy + 0.15), q(fl, fy + 0.5), nn, RD);
-      B.tri(q(fl, fy + 0.5), q(fl + 0.7, fy + 0.9), q(fl, fy + 0.95), nn, RD);
-      B.quad(q(0.06, fy + 0.42), q(fl, fy + 0.45), q(fl, fy + 0.58), q(0.06, fy + 0.6), nn, U0, GD);
-    }
-    // lanterns either side of the door
-    for (const s of [-1, 1]) {
-      const p = ge.at(ge.L / 2 + s * (rr + 0.85), gy + 2.2, 0.25);
-      B.box(p[0], p[1], p[2], 0.3, 0.45, 0.3, rot, IRON);
-      B.box(p[0], p[1] + 0.08, p[2], 0.22, 0.3, 0.32, rot, C('#f0c060'));
-    }
-  }
-  // shop windows under pointed heads either side of the gatehouse
-  for (const s of [-1, 1]) for (let k = 0; k < 2; k++) {
-    const t = tm + s * (gw / 2 + 1.9 + k * 3.2);
-    if (t < 2.8 || t > e.L - 2.8) continue;
-    lancet(B, e, t, gy + 0.9, 2.0, 2.0, GL, ST3);
-    B4(B, e, t - 1.15, t + 1.15, gy + 0.7, gy + 0.9, 0.1, N, ST3);
-  }
-  // arrow slits down the other walls
+  const r = block(kit, ctx, pts, { h: 5.0, wall: BL, trim: BL3, parapet: 0, roof: ROOF, glass: GL });
+  const B = r.B, yT = r.yTop;
+  // the front is the short NW end on Weber St: Canada Computers shares the long SW wall and its
+  // front runs on flush to the photo's left (the SW)
+  const e = frontEdge(ctx.city, r.E, /^Weber Street/, 10, 70) || facing(r.E, -0.86, 0.52, 10);
+  STATS.jjFront = [Math.round(e.mx), Math.round(e.mz), +e.nx.toFixed(2), +e.nz.toFixed(2), +e.L.toFixed(1)];
+  const N = [e.nx, 0, e.nz], gy = gyOf(e, 3), rot = Math.atan2(e.uz, e.ux), L = e.L;
+  // m = metres along the photo's ~20.3 m front from its left (SW) end -> t along this edge;
+  // horizontal sizes scale with it (S), heights do not (the banner photo's aspect is squashed)
+  const leftAt0 = e.at(0, 0, 0)[2] < e.at(L, 0, 0)[2];
+  const S = L / 20.3, tc = (m) => (leftAt0 ? m * S : L - m * S), ta = tc;
+  const span = (t0, t1) => [Math.min(t0, t1), Math.max(t0, t1)];
+  // the other walls: a plain blue parapet, dark coping
   for (const w of r.E) {
-    if (w === e || w.L < 6) continue;
-    const n = Math.floor((w.L - 4) / 3.4);
-    for (let i = 0; i < n; i++) {
-      const t = 2 + (w.L - 4) * (i + 0.5) / n;
-      B4(B, w, t - 0.13, t + 0.13, gyOf(w) + 2.0, gyOf(w) + 3.4, 0.03, [w.nx, 0, w.nz], DK);
-      B4(B, w, t - 0.45, t + 0.45, gyOf(w) + 2.65, gyOf(w) + 2.77, 0.035, [w.nx, 0, w.nz], DK);
+    if (w === e || w.L < 0.5) continue;
+    const m = w.at(w.L / 2, 0, -0.2);
+    B.box(m[0], yT, m[2], w.L, 0.5, 0.4, Math.atan2(w.uz, w.ux), BL);
+    B4(B, w, 0, w.L, yT + 0.5, yT + 0.58, 0.02, [w.nx, 0, w.nz], BL2);
+  }
+  // the front's battlements: a band and merlons every 1.1 m
+  { const m = e.at(L / 2, 0, -0.2); B.box(m[0], yT, m[2], L, 0.35, 0.4, rot, BL); }
+  B4(B, e, 0, L, yT - 0.25, yT, 0.06, N, BL2);
+  const [m0, m1] = leftAt0 ? [2.5, L - 3.1] : [3.1, L - 2.5];
+  for (let i = 0; i < 14; i++) {
+    const p = e.at(m0 + (m1 - m0) * i / 13, 0, -0.18);
+    B.box(p[0], yT + 0.35, p[2], 0.55, 0.65, 0.42, rot, BL);
+  }
+  // the short tower at the NW end, its little pointed window framed in red
+  {
+    const [t0, t1] = span(ta(0), ta(2.5)), c = e.at((t0 + t1) / 2, 0, 0.0), h = yT + 0.45;
+    B.box(c[0], gy - 0.5, c[2], 2.5 * S, h - gy + 0.5, 0.7, rot, BL);
+    for (const k of [-0.75 * S, 0.75 * S]) { const q = e.at((t0 + t1) / 2 + k, 0, 0.0); B.box(q[0], h, q[2], 0.6, 0.6, 0.7, rot, BL); }
+    const tw = (t0 + t1) / 2 + (leftAt0 ? -0.25 : 0.25);
+    const fe = edgeOf(e.at(t0, 0, 0.36).filter((_, i) => i !== 1), e.at(t1, 0, 0.36).filter((_, i) => i !== 1), e.nx, e.nz);
+    const tl = tw - t0;
+    lancet(B, fe, tl, gy + 2.75, 0.62, 0.7, C('#3a2a1a'), RED);
+    for (const k of [-0.15, 0.15]) B4(B, fe, tl + k - 0.02, tl + k + 0.02, gy + 2.75, gy + 3.85, 0.07, N, C('#c9a04a'));
+    for (const y of [3.05, 3.35, 3.65]) B4(B, fe, tl - 0.31, tl + 0.31, gy + y, gy + y + 0.04, 0.07, N, C('#c9a04a'));
+    B4(B, fe, tl - 0.5, tl - 0.31, gy + 2.5, gy + 3.5, 0.06, N, RED);
+    B4(B, fe, tl + 0.31, tl + 0.5, gy + 2.5, gy + 3.5, 0.06, N, RED);
+  }
+  // the entrance: TOYS and GAMES SUPERSTORE over a red frame round the door and a display window
+  {
+    const [t0, t1] = span(ta(2.85), ta(6.1)), tm = (t0 + t1) / 2;
+    B4(B, e, t0, t1, gy - 0.1, gy + 4.5, 0.04, N, RED);
+    const dt = leftAt0 ? t0 + 0.7 * S : t1 - 0.7 * S, wt = leftAt0 ? t0 + 2.2 * S : t1 - 2.2 * S, ww = 0.8 * S;
+    B4(B, e, dt - 0.5, dt + 0.5, gy, gy + 2.45, 0.07, N, DK);
+    for (const y of [0.5, 1.0, 1.5, 2.0]) B4(B, e, dt - 0.4, dt + 0.4, gy + y, gy + y + 0.05, 0.09, N, C('#d8d8d8'));
+    B4(B, e, wt - ww, wt + ww, gy + 0.3, gy + 2.45, 0.07, N, GL);
+    B4(B, e, wt - ww + 0.1, wt + ww - 0.1, gy + 0.4, gy + 1.3, 0.08, N, C('#4a7fb8'));   // the poster in the window
+    B4(B, e, wt - ww + 0.1, wt + ww - 0.1, gy + 0.4, gy + 0.75, 0.085, N, C('#e2b23d'));
+    const m = ctx.atlas.panel(t1 - t0 - 0.2, 1.15, 36, (q, W, H) => {
+      q.fillStyle = '#8f1215'; q.fillRect(0, 0, W, H);
+      q.fillStyle = '#ffffff'; q.textAlign = 'center'; q.textBaseline = 'middle';
+      q.font = `600 ${H * 0.26}px ${SERIF}`; q.fillText('TOYS and GAMES', W / 2, H * 0.27, W * 0.92);
+      q.font = `italic 800 ${H * 0.42}px ${SERIF}`; q.fillText('SUPERSTORE', W / 2, H * 0.68, W * 0.94);
+    });
+    onWall(kit, e, tm, gy + 3.55, m, 0.1);
+  }
+  // the big sign: white, black-edged, J&J in red, the four words in black
+  {
+    const t = tc(10.85), sw = 6.6 * S, sg = ctx.atlas.panel(sw, 2.1, 40, (q, W, H) => {
+      q.fillStyle = '#1a1a1a'; q.fillRect(0, 0, W, H);
+      q.fillStyle = '#fbfbf7'; q.fillRect(H * 0.05, H * 0.05, W - H * 0.1, H * 0.9);
+      q.textBaseline = 'middle'; q.textAlign = 'center';
+      q.fillStyle = '#c4161c'; q.font = `italic 800 ${H * 0.36}px ${SERIF}`; q.fillText('J&J', W * 0.13, H * 0.3);
+      q.fillStyle = '#111111'; q.font = `italic 600 ${H * 0.2}px ${SERIF}`;
+      q.fillText('Cards', W * 0.2, H * 0.55); q.font = `italic 600 ${H * 0.12}px ${SERIF}`; q.fillText('&', W * 0.2, H * 0.69);
+      q.font = `italic 600 ${H * 0.19}px ${SERIF}`; q.fillText('Collectibles', W * 0.2, H * 0.84, W * 0.34);
+      q.font = `900 ${H * 0.2}px ${SERIF}`;
+      ['HOBBIES', 'COMICS', 'GAMES', 'CARDS'].forEach((w, i) => q.fillText(w, W * 0.66, H * (0.16 + i * 0.225), W * 0.58));
+    });
+    onWall(kit, e, t, gy + 3.45, sg, 0.12);
+    B4(B, e, t - sw / 2 - 0.05, t + sw / 2 + 0.05, gy + 2.37, gy + 4.53, 0.1, N, C('#1a1a1a'));
+  }
+  // the red-framed window by the SE tower
+  {
+    const t = tc(18.25);
+    B4(B, e, t - 1.1 * S, t + 1.1 * S, gy + 1.65, gy + 3.05, 0.04, N, RED);
+    B4(B, e, t - 1.1 * S + 0.12, t + 1.1 * S - 0.12, gy + 1.75, gy + 2.95, 0.07, N, GL);
+    B4(B, e, t - 0.03, t + 0.03, gy + 1.75, gy + 2.95, 0.08, N, RED);
+  }
+  // the SE tower: a square shaft at the corner, a wider crenellated cap
+  {
+    const tt = leftAt0 ? L - 1.4 : 1.4, c = e.at(tt, 0, -1.2), top = yT + 1.75;
+    B.box(c[0], gy - 0.5, c[2], 2.8, top - gy + 0.5, 2.8, rot, BL);
+    B.box(c[0], top - 0.05, c[2], 3.5, 0.7, 3.4, rot, BL);
+    B4(B, edgeOf(e.at(tt - 1.75, 0, 0.5).filter((_, i) => i !== 1), e.at(tt + 1.75, 0, 0.5).filter((_, i) => i !== 1), e.nx, e.nz), 0, 3.5, top - 0.05, top + 0.05, 0.01, N, BL2);
+    const ux = e.ux, uz = e.uz, vx = -e.nx, vz = -e.nz;   // along, inward
+    for (const [a, b2] of [[-1.45, -1.4], [-0.48, -1.4], [0.48, -1.4], [1.45, -1.4], [-1.45, 1.4], [1.45, 1.4], [-1.45, 0], [1.45, 0], [0, 1.4]]) {
+      const x = c[0] + ux * a + vx * (b2 + 0), z = c[2] + uz * a + vz * (b2 + 0);
+      B.box(x, top + 0.65, z, 0.6, 0.7, 0.6, rot, BL);
+    }
+    ctx.solids.push({ x: c[0], z: c[2], hw: 1.4, hd: 1.4, rot, y0: gy - 1, y1: top + 1.35 });
+  }
+  // the string of lights under the battlements, sagging between hooks
+  {
+    const [a0, a1] = span(ta(2.6), ta(16.9));
+    const hooks = Math.max(2, Math.round((a1 - a0) / 2.4));
+    for (let i = 0; i < hooks; i++) {
+      const s0 = a0 + (a1 - a0) * i / hooks, s1 = a0 + (a1 - a0) * (i + 1) / hooks;
+      for (let k = 0; k < 6; k++) {
+        const f0 = k / 6, f1 = (k + 1) / 6, y0 = yT - 0.18 - 0.28 * Math.sin(Math.PI * f0), y1 = yT - 0.18 - 0.28 * Math.sin(Math.PI * f1);
+        const p0 = e.at(s0 + (s1 - s0) * f0, y0, 0.14), p1 = e.at(s0 + (s1 - s0) * f1, y1, 0.14);
+        B.quad(p0, p1, [p1[0], p1[1] + 0.03, p1[2]], [p0[0], p0[1] + 0.03, p0[2]], N, U0, WIRE);
+        if (k % 2 === 0) B.box(p0[0], p0[1] - 0.09, p0[2], 0.08, 0.1, 0.08, rot, BULB);
+      }
     }
   }
 }
@@ -2657,7 +2685,7 @@ export function landmarks2Map() {
     m(at('claygl'), false, 'Canadian Clay & Glass Gallery', 'The Canadian Clay and Glass Gallery, 25 Caroline St N (Patkau Architects, 1993)'),
     m(at('wmrc'), false, 'Waterloo Memorial Rec Complex', 'The Waterloo Memorial Recreation Complex, 101 Father David Bauer Dr — the Siskins\' rink and the pool'),
     m(at('galtarena'), false, 'Galt Arena Gardens', 'Galt Arena Gardens, 98 Shade St (1922) — one of the oldest arenas still in use in Canada'),
-    m(at('jj'), false, 'J&J Cards & Collectibles', 'J&J Cards & Collectibles, 230 Weber St N — the little castle: cards, comics and games'),
+    m(at('jj'), false, 'J&J Cards & Collectibles', 'J&J Cards & Collectibles, 230 Weber St N — the little blue castle: hobbies, comics, games and cards'),
     m(at('zion'), false, 'Zion (32 Weber St W)', 'Zion Evangelical, 32 Weber St W (1893) — Zion United until 2015; the tall tower with the four green-capped turrets'),
     m(at('stjohn'), false, 'St. John the Evangelist', 'St. John the Evangelist Anglican Church, 23 Water St N — red brick and a slate broach spire'),
     m(at('stpaul'), false, "St. Paul's Lutheran", "St. Paul's Evangelical Lutheran Church, 137 Queen St S (Jonas Knechtel, 1889) — one of Kitchener's oldest churches"),

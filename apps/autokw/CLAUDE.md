@@ -779,18 +779,23 @@ file and a guide disagree, this file wins.
   1.7], t: [12700, 10285, 6]}`, WCI `{c: [-4492, -2962, 1.7], t: [-4457,
   -2981, 6]}`; `VIEW_INFO_FILE=` (kwshots, new) takes the per-view probe
   from a file.
-- **J&J Cards & Collectibles, the little castle (v90)** (kwlandmarks2.js
-  `jjCastle`, lm2.json `jj` from tools/kw/build_lm2.py, round seven:
-  `ROUND7`, flattened with `ext` like round five). 230 Weber St N, Waterloo,
-  the owner's favourite shop as a kid. Its OSM footprint (30 x 16 m) as grey
-  coursed stone under a parapet and merlons, four round crenellated turrets
-  on the footprint's box corners (solids), a gatehouse on the Weber St end
-  (`frontEdge /^Weber Street/` -- the SHORT west end, STATS.jjFront) over an
-  arched oak door with iron straps, lanterns, J&J CARDS / & COLLECTIBLES
-  gold-on-red in the shared sign atlas, a swallow-tailed pennant, pointed shop
-  windows, arrow slits down the other walls. The look is from the owner's
-  description ("kind of looks like a little castle"), not a photo or survey.
-  No new draws (LmKit's clusters). Shot: docs/landmark-jj.jpg.
+- **J&J Cards & Collectibles, the little blue castle (v90, v91 from the photo)**
+  (kwlandmarks2.js `jjCastle`, lm2.json `jj` from tools/kw/build_lm2.py,
+  round seven: `ROUND7`, flattened with `ext` like round five). 230 Weber St
+  N, Waterloo -- the owner's favourite shop as a kid. From the Explore
+  Waterloo photo (2023): royal blue paint, a crenellated false front on the
+  short NW end on Weber St, a short tower at its SW corner with a little
+  red-framed pointed window, the tall NE tower under an overhanging
+  crenellated cap, the red TOYS and GAMES SUPERSTORE entrance, the white
+  "J&J Cards & Collectibles | HOBBIES COMICS GAMES CARDS" board, a red-framed
+  window, string lights. **The front is the Weber end, not the long SW side:
+  Canada Computers shares that wall** and its front runs on flush to the
+  photo's left. Positions are fractions of the photo's front laid on OSM's
+  16 m end (the banner photo's aspect is squashed; heights from a 2.4 m door).
+  `trimAt` shortens a neighbour's importer box that reaches past a wall
+  drawn here (Canada Computers' L-shaped outline's rectangle ran 3.47 m
+  through J&J, its strip canopy over J&J's door; STATS.jjTrim). No new draws.
+  Shots: docs/landmark-jj.jpg, landmark-jj-weber.jpg.
 - **The big employers' signs: src/kwbiz.js** (the landmarks pass, round six;
   run by kwlandmarks2.js with its LmKit; `build_lm2.py` gained `ot1`, `ot2`,
   `equit`, `christie`, `dare`, `wbrew`, `gore`, `gore2`; docs/biz-day-1.jpg,
