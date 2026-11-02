@@ -91,6 +91,7 @@ export class Counter {
     if (!pl.onFoot) return false;
     const d = this.near(pl);
     if (!d) return false;
+    if (this.o.busy && this.o.busy(pl)) return false;   // a car at the kerb is the ENTER, not the till
     if (d.cool > 0) { this.o.hud.showToast(`${d.name}: "One minute — still on your last order."`, 2000); return true; }
     const film = d.kind === 'cinema' ? this.nowPlaying()[hash(d.name + today()) % 3] : '';
     const [what, price, hp, line] = this.today(d);

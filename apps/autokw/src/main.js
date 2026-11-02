@@ -511,8 +511,6 @@ class Game {
     if (duckTour && !duckTour.tour && duckTour.near(pl)) return duckTour.start();
     // the race office at Stan Sayres Pits?
     if (seafair && seafair.state === 'idle' && seafair.near(pl)) { seafair.start(); return true; }
-    // a food or drink place's counter on a main street (kwcounter.js)
-    if (counter && counter.order(pl)) return true;
     // the counter at Erbsville Kartway's clubhouse?
     if (kartRace && kartRace.near(pl)) { kartRace.open(); return true; }
     // pickleball on Bainbridge, where it was invented?
@@ -560,6 +558,9 @@ class Game {
           handL: b[BONES.handL], handR: b[BONES.handR] } });
       return true;
     }
+    // a food or drink place's counter on a main street (kwcounter.js): last, and it
+    // yields to a car or train you could get into (player.js takes ENTER next)
+    if (counter && counter.order(pl)) return true;
     return false;
   }
 
@@ -1661,7 +1662,7 @@ function installShadowFade() {
   } catch (e) { blog('drivethru: ' + e.message); dthru = null; }
   try {
     const st = shopStats();
-    counter = new Counter({ hud: { showToast: (t, ms) => hud.showToast(t, ms) }, audio,
+    counter = new Counter({ busy: (pl) => !!(traffic.nearestEnterable(pl.x, pl.z, 5.0) || (pl.monorail && pl.monorail.boardable(pl.x, pl.y, pl.z)) || (pl.link && pl.link.boardable(pl.x, pl.y, pl.z)) || (pl.freight && pl.freight.boardable(pl.x, pl.y, pl.z)) || (pl.counterbal && pl.counterbal.boardable(pl.x, pl.y, pl.z))), hud: { showToast: (t, ms) => hud.showToast(t, ms) }, audio,
       charge: (n) => { if (game.money < n) return false; game.money -= n; return true; },
       heal: (n) => { player.health = Math.min(100, player.health + n); }, signs: (st && st.biz && st.biz.list) || [] });
     blog(`counter: ${counter.doors.length} doors`);
