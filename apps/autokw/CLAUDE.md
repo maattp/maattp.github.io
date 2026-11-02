@@ -860,6 +860,49 @@ file and a guide disagree, this file wins.
   drawn here (Canada Computers' L-shaped outline's rectangle ran 3.47 m
   through J&J, its strip canopy over J&J's door; STATS.jjTrim). No new draws.
   Shots: docs/landmark-jj.jpg, landmark-jj-weber.jpg.
+- **Rip packs at J&J: src/jjcards.js + src/jjart.js** (docs/jj/*.jpg; probe
+  `tools/kw/jjprobe.mjs`). ENTER on foot within 4 m of J&J's red door
+  (kwlandmarks2.js `jjCastle` exports `STATS.jjDoor` / `jjWin`, read lazily
+  through `landmarks2Stats()`) holds the world (`'jj'`, in reapHolds' `live`,
+  `controls.bridge`, main's idle-redraw list: no city is drawn under it) and
+  opens a DOM overlay in the castle's blue / red / gold, rollup.js's shape.
+  `tryInteract` asks it just before the Counter and **it yields to a car at the
+  kerb** (`busy` = `traffic.nearestEnterable` 5 m: the ENTER is the car's).
+  A pack is $5, six cards of WATERLOO REGION LEGENDS SERIES 1: 60 invented
+  locals (jjart.js `D`: the crossing guard, Captain Honk, Turbo the buggy
+  horse, the Kissing Bridge, Der Grosse Float... no real person, team or
+  game), common 30 / uncommon 14 / rare 9 / holo 6 / the Golden Goose. Each
+  card is drawn from the table on a canvas (vector portrait, name, stat,
+  flavour, rarity border; no image files), cached per card (10 big, 60 thumbs).
+  Odds are `SLOTS` (four common-ish slots, a rare-leaning fifth, a hit slot) and
+  the Goose replaces the hit slot at 1 pack in 500 (`GOOSE_ODDS`); 100k seeded
+  packs: 187 geese, c 62.8 % u 28.0 % r 7.0 % h 2.2 %. The flow: shop (tap the
+  pack or BUY) -> wrapper (drag across its top, tap, or ENTER; the strip curls
+  off) -> reveal (cards come best-last; commons flip themselves, rare+ stay
+  face-down and glow until you tap; flip, sparkle, burst; holo foil / Goose
+  shimmer through `sheen()`, which follows the pointer or drifts) -> summary ->
+  binder (10 a page, silhouettes for missing cards, swipe or arrows, tap to zoom
+  and tilt). **A paid pack is banked the moment it is bought:** leaving mid-tear
+  or mid-reveal still adds the cards. Spares sell $1 / 2 / 6 / 20 / 250 by rarity;
+  15 / 30 / 45 different cards pay $25 / $75 / $200 once; **the set is the 59
+  regular cards** (the Golden Goose is the chase card on top: `setHave`), and a rare
+  or holo slot gives a card you lack `FRESH_P` 0.6 of the time (rollPack's `owned`):
+  a set takes ~54 packs (p10 39, p90 85) where pure chance and the 1-in-500 Goose took
+  ~500; the set pays $1,000 and
+  hangs a framed Golden Goose in J&J's window (`jj-trophy`, 2 meshes, built
+  only on completion and again at boot if done). Saved in `autokw-jjcards`.
+  Sounds are synthesised on the game's AudioContext (foil tear, flip, sparkle,
+  till, fanfare). Map hello for J&J says to ENTER at the door; a toast says it
+  on walking up. Harness: `__dbg.jj` (`rig = [6 ids]` forces the next pack,
+  `rnd`, `odds(n, rnd)`, `stats`, `door`, `_tear`, `_skipAll`).
+  Verify: `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1 [PHONE=1] node tools/kw/jjprobe.mjs <dir>`
+  (SHEET=1 writes a contact sheet): door exported, ENTER beside a parked car
+  enters the car, ENTER without one opens the shop and holds, buy / swipe-tear /
+  tap through / summary / binder / zoom through real DOM and pointer events,
+  save, spare selling, a fresh instance loading the save, the hold released,
+  100k-pack odds, too poor, the full-set reward and trophy. **Phone cost:
+  nothing while closed (no draw, no mesh, one DOM node and a style);** the
+  trophy is 2 meshes after completion.
 - **The big employers' signs: src/kwbiz.js** (the landmarks pass, round six;
   run by kwlandmarks2.js with its LmKit; `build_lm2.py` gained `ot1`, `ot2`,
   `equit`, `christie`, `dare`, `wbrew`, `gore`, `gore2`; docs/biz-day-1.jpg,

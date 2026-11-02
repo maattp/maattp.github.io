@@ -2518,6 +2518,10 @@ function jjCastle(kit, ctx) {
     const [t0, t1] = span(ta(2.85), ta(6.1)), tm = (t0 + t1) / 2;
     B4(B, e, t0, t1, gy - 0.1, gy + 4.5, 0.04, N, RED);
     const dt = leftAt0 ? t0 + 0.7 * S : t1 - 0.7 * S, wt = leftAt0 ? t0 + 2.2 * S : t1 - 2.2 * S, ww = 0.8 * S;
+    // where jjcards.js stands you (the door, 1.6 m out on the pavement) and hangs the set-complete trophy (in the display window)
+    { const dp = e.at(dt, gy, 1.6), wp = e.at(wt, gy + 1.95, 0.16);
+      STATS.jjDoor = [+dp[0].toFixed(2), +dp[2].toFixed(2)];
+      STATS.jjWin = [+wp[0].toFixed(2), +wp[1].toFixed(2), +wp[2].toFixed(2), +e.nx.toFixed(3), +e.nz.toFixed(3)]; }
     B4(B, e, dt - 0.5, dt + 0.5, gy, gy + 2.45, 0.07, N, DK);
     for (const y of [0.5, 1.0, 1.5, 2.0]) B4(B, e, dt - 0.4, dt + 0.4, gy + y, gy + y + 0.05, 0.09, N, C('#d8d8d8'));
     B4(B, e, wt - ww, wt + ww, gy + 0.3, gy + 2.45, 0.07, N, GL);
@@ -2685,7 +2689,7 @@ export function landmarks2Map() {
     m(at('claygl'), false, 'Canadian Clay & Glass Gallery', 'The Canadian Clay and Glass Gallery, 25 Caroline St N (Patkau Architects, 1993)'),
     m(at('wmrc'), false, 'Waterloo Memorial Rec Complex', 'The Waterloo Memorial Recreation Complex, 101 Father David Bauer Dr — the Siskins\' rink and the pool'),
     m(at('galtarena'), false, 'Galt Arena Gardens', 'Galt Arena Gardens, 98 Shade St (1922) — one of the oldest arenas still in use in Canada'),
-    m(at('jj'), false, 'J&J Cards & Collectibles', 'J&J Cards & Collectibles, 230 Weber St N — the little blue castle: hobbies, comics, games and cards'),
+    m(at('jj'), false, 'J&J Cards & Collectibles', 'J&J Cards & Collectibles, 230 Weber St N — the little blue castle: hobbies, comics, games and cards. ENTER at the red door to rip a pack'),
     m(at('zion'), false, 'Zion (32 Weber St W)', 'Zion Evangelical, 32 Weber St W (1893) — Zion United until 2015; the tall tower with the four green-capped turrets'),
     m(at('stjohn'), false, 'St. John the Evangelist', 'St. John the Evangelist Anglican Church, 23 Water St N — red brick and a slate broach spire'),
     m(at('stpaul'), false, "St. Paul's Lutheran", "St. Paul's Evangelical Lutheran Church, 137 Queen St S (Jonas Knechtel, 1889) — one of Kitchener's oldest churches"),

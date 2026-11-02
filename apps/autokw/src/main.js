@@ -65,7 +65,8 @@ import { setUwData, prepCampus, buildCampus, campusKeepClear } from './uwcampus.
 import { prepUptown } from './kwuptown.js';
 import { prepSights, buildSights, sightsMap } from './kwsights.js';
 import { prepDowntown } from './kwdowntown.js';
-import { prepLandmarks2, buildLandmarks2, landmarks2Map } from './kwlandmarks2.js';
+import { prepLandmarks2, buildLandmarks2, landmarks2Map, landmarks2Stats } from './kwlandmarks2.js';
+import { JJCards } from './jjcards.js';
 import { prepNature, groundDetail } from './kwnature.js';
 import { prepVillages, buildVillages, villagesMap } from './kwvillages.js';
 import { setShopData, prepShops, buildShops, shopPlaces, shopStats, driveThrus } from './kwshops.js';
@@ -143,6 +144,7 @@ let pinball = null;  // the pinball at AOK on King St W in Kitchener (pinball.js
 let hockey = null;   // hockey night at Climate Pledge Arena (hockey.js)
 let rollup = null;
 let events = null;   // Auto KW: random events (kwevents.js)
+let jj = null;   // Auto KW: rip packs at J&J Cards & Collectibles (jjcards.js)
 let counter = null;   // Auto KW: the counter at the main streets' food places and the locals (kwcounter.js)
 let dthru = null;    // Auto KW: the fast-food drive-throughs' lines and windows (drivethru.js)
 let fest = null;
@@ -566,6 +568,8 @@ class Game {
           handL: b[BONES.handL], handR: b[BONES.handR] } });
       return true;
     }
+    // J&J Cards & Collectibles' red door: rip a pack (jjcards.js; yields to a car at the kerb)
+    if (jj && jj.near(pl)) { this.hold('jj'); jj.start(); return true; }
     // a food or drink place's counter on a main street (kwcounter.js): last, and it
     // yields to a car or train you could get into (player.js takes ENTER next)
     if (counter && counter.order(pl)) return true;
@@ -1419,7 +1423,7 @@ function installShadowFade() {
   audio.onTrack = (label) => { if (hud) hud.showToast(`♪ ${label}`); };
   controls = new Controls(document.getElementById('app'));
   // an open minigame takes the pad as keys (controls.js PAD_KEYS)
-  controls.bridge = () => [fishing, arcade, pinball, hockey, rollup, tower, coffee, hoops, pickle, golf, fishToss, g2]
+  controls.bridge = () => [fishing, arcade, pinball, hockey, rollup, jj, tower, coffee, hoops, pickle, golf, fishToss, g2]
     .some((a) => a && a.active) || !!(wheelRide && wheelRide.busy);
   player = new Player(scene, city, game, world);
   player.link = link;
@@ -1666,6 +1670,20 @@ function installShadowFade() {
     onToast: (t) => setTimeout(() => hud.showToast(t, 4200), 300),
     onEnd: () => { game.release('rollup'); },
   });
+  // J&J Cards & Collectibles' door (kwlandmarks2.js jjCastle): rip a pack
+  try {
+    jj = new JJCards({
+      audio, scene, THREE,
+      door: () => landmarks2Stats().jjDoor || null,
+      win: () => landmarks2Stats().jjWin || null,
+      money: () => game.money,
+      charge: (n) => { if (game.money < n) return false; game.money -= n; return true; },
+      onReward: (m, why) => { game.money += m; if (why && m >= 25) setTimeout(() => hud.showToast(`J&J: ${why} — $${m}`), 300); },
+      onToast: (t) => hud.showToast(t, 4200),
+      onEnd: () => { game.release('jj'); },
+      busy: (pl) => !!(traffic.nearestEnterable(pl.x, pl.z, 5.0)),
+    });
+  } catch (e) { blog('jj: ' + e.message); jj = null; }
   // the drive-throughs (kwshops.js drew OSM's lanes): the lines in them, and ordering at the window
   try {
     dthru = new DriveThrus(driveThrus(), {
@@ -2030,7 +2048,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { get counter() { return counter; }, get respray() { return respray; }, get paramedic() { return paramedic; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get paramedic() { return paramedic; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;
   Object.defineProperty(window.__dbg, 'eggs', { get() { return eggs; } });
   window.__dbg.geese = geese;
@@ -2932,7 +2950,7 @@ function interiorUp() {
 }
 
 function reapHolds() {
-  const live = { respray, fishing, arcade, pinball, hockey, rollup, fest, splash, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace, derby, g2 };
+  const live = { respray, fishing, arcade, pinball, hockey, rollup, jj, fest, splash, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace, derby, g2 };
   for (const who of game.holds) {
     if (who === 'seafair') { if (seafair && (seafair.state === 'menu' || seafair.state === 'done')) continue; }
     else if (live[who] && live[who].active) continue;
@@ -3301,6 +3319,7 @@ function frame(now) {
   if (pinball && pinball.active) pinball.update(dt);
   if (hockey && hockey.active) hockey.update(dt);
   if (rollup && rollup.active) rollup.update(dt);
+  if (jj && jj.active) jj.update(dt);
   if (fest) fest.update(dt, game.paused && !fest.inside);
   if (splash) splash.update(dt);
   if (tower && tower.active) tower.update(dt);
@@ -3329,7 +3348,7 @@ function frame(now) {
     // and those still draw every frame.
     // (the fishing game's screen covers the city too, once it is up)
     const idle = game.mapOpen || pauseMenuEl.classList.contains('show') || (fishing && fishing.el.classList.contains('show'))
-      || (arcade && arcade.active) || (pinball && pinball.active) || (hockey && hockey.active) || (rollup && rollup.active) || (tower && tower.active) || (coffee && coffee.active) || (pickle && pickle.active);
+      || (arcade && arcade.active) || (pinball && pinball.active) || (hockey && hockey.active) || (rollup && rollup.active) || (jj && jj.active) || (tower && tower.active) || (coffee && coffee.active) || (pickle && pickle.active);
     // an interior (the Aud's bowl, a festhalle) draws its own scene on the canvas: the city draws nothing
     if (interiorUp()) { idleDrawn = 2; return; }
     if (!idle || idleDrawn < 2 || idleRedraw) { draw(now); idleDrawn++; idleRedraw = false; }
@@ -3411,6 +3430,7 @@ function frame(now) {
   if (prof) lap('misc');
   if (dthru) dthru.update(dt, p.x, p.z, player);
   if (counter) counter.update(dt, player);
+  if (jj) jj.hint(dt, player);
   if (world.dcars) world.dcars.update(traffic, p.x, p.z, player, !dthru);
   traffic.update(dt, p.x, p.z, camDir, player);
   if (prof) lap('traffic');
