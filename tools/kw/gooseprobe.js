@@ -81,7 +81,8 @@
   await step(5);
   c0 = cancels; p.exitVehicle(); A._inCar = false; G.update(0.1);
   ck('on foot: silent', cancels > c0 && !G.on);
-  p.enterVehicle(v); A._inCar = true; await step(5); c0 = cancels;
+  p.enterVehicle(v); A._inCar = true; A.setStation(A.station); n = 0; while (!A.stationIsGoose() && n++ < 40) btn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+  await step(5); ck('back in the car, talking again', G.on); c0 = cancels;
   A.setStation(0); G.update(0.1);
   ck('tuned away: silent', cancels > c0 && !G.on);
   n = 0; while (!A.stationIsGoose() && n++ < 40) btn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
