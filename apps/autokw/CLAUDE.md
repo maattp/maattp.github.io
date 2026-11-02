@@ -237,6 +237,25 @@ file and a guide disagree, this file wins.
   north from the air and nothing facing away (clipped). SwiftShader A/B at AUTO_PHONE=1 + 8x throttle, 3 rounds each:
   15.4-17.8 fps on, 15.4-17.2 off (inside the noise). The phone has not seen it. Not done: no moon position from the
   date; the aurora is not in the IBL (reflections do not show it); no sound.
+- **The Goose 101.9, a fictional radio station** (src/goosefm.js; audio.js `STATIONS` entry `goose: true`,
+  `stationIsGoose()`; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1 VIEW_PROBE_FILE=tools/kw/gooseprobe.js
+  node tools/kw/kwshots.mjs <dir>`). Invented (no real KW station is on 101.9). On the dial through the normal RADIO
+  control and in the random-car-station pool, also offline. Music = radiosynth.js's indie voice (synth only, no stream);
+  the DJ = `speechSynthesis` (en-CA voice if present, else any English; `window.__noSpeech` silences the voice but the
+  segments still run on a reading-pace timer). Segments: an ident (synth four-note hook + a sawtooth "honk" into the
+  music bus) 3.5 s after tuning in, then one every 60-150 s of tuned-in driving, each 1-2 lines, music ducked to 0.28
+  (musicDuck) under it. Kinds: weather (by `weather.state`), hour, traffic (names of streets within 350 m from
+  `city.edgesNear`), WRPS wanted bulletin naming the HUD district (reactive: within 4 s of wanted going 0 -> n), golden
+  egg count (reactive within 5 s of a new egg), J&J set progress, calendar (Oktoberfest Oct 3-15 by date, Remembrance,
+  Christmas market, Halloween, Canada Day via kwcalendar `themesFor`), invented ads (Gord's Garage at University & Bridge,
+  Kitchener Mattress Warehouse, Captain Honk's Goose Repellent...), banter; a kind is down-weighted 0.15x for 3
+  segments after it plays. **Laws:** it talks only while tuned AND in a car AND not `game.paused/mapOpen/held`
+  (a story cutscene or any activity hold) AND `document.hidden` is false AND not dead; the first frame any fails it calls
+  `speechSynthesis.cancel()` and un-ducks; the frame loop calls `goose.update(dt)` in both the live and the paused
+  branches. Untuned cost: one `stationIsGoose()` compare a frame; tuned: a counter and, per segment, ~6 oscillators and
+  an utterance. No draws, no meshes, no render targets. Content is invented businesses and no real people. Harness:
+  `window.__goose` (`log`, `compose(kind, ctx)`, `getCtx()`, `update(dt)`). Not done: no subtitles, one DJ voice (ads
+  just pitch down), iOS needs a prior tap for speech (any play session has one), no gamepad-specific work.
 - **Your garages** (src/kwgarage.js; docs/garage/*.jpg; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1
   node tools/kw/garageprobe.mjs <dir>`). GTA's save garages: three 3-stall garages (`GARAGES`: HOME on a
   residential street by University Ave & Bridge St, Waterloo -- `res: true` prefers `cls 'res'` edges, the

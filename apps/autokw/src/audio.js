@@ -2238,6 +2238,8 @@ const STATIONS = [
   { name: 'AH.FM Trance', root: 57, style: 'synthwave', lufs: -12.7,
     stream: 'https://us.ah.fm/mobile' },
   // synth only: they play with no network at all
+  // The Goose: music synthesised here, a DJ voiced by speechSynthesis (goosefm.js)
+  { name: 'The Goose 101.9', root: 55, style: 'indie', goose: true },
   { name: 'Grand River FM', root: 49, style: 'lofi' },
   { name: 'King St Radio', root: 62, style: 'house' },
 ];
@@ -4441,7 +4443,7 @@ export class Audio {
     const online = typeof navigator === 'undefined' || navigator.onLine !== false;
     const pool = [];
     for (let i = 0; i < STATIONS.length; i++) {
-      if (i !== this.station && this.playable(i) && (!online || STATIONS[i].stream)) pool.push(i);
+      if (i !== this.station && this.playable(i) && (!online || STATIONS[i].stream || STATIONS[i].goose)) pool.push(i);
     }
     return pool.length ? this.setStation(pool[Math.floor(Math.random() * pool.length)]) : this.stationName();
   }
@@ -4462,5 +4464,10 @@ export class Audio {
 
   stationName() {
     return STATIONS[this.station].name;
+  }
+
+  /** Is The Goose (goosefm.js) the tuned station? */
+  stationIsGoose() {
+    return !!STATIONS[this.station].goose;
   }
 }
