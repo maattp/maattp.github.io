@@ -74,6 +74,7 @@ const ICON_COL = {
   fire: '#c4141c',
   paint: '#7b3fe4',
   garage: '#b9651b',
+  dealer: '#1f7a4d',
   export: '#c9302c',
   medic: '#0d9f6a',
   winter: '#4a90d8',
@@ -226,6 +227,17 @@ function placeIcon(ctx, kind, x, y, r) {
     ctx.beginPath(); ctx.moveTo(x - r * 0.55, y - r * 0.05); ctx.lineTo(x, y - r * 0.55); ctx.lineTo(x + r * 0.55, y - r * 0.05); ctx.lineTo(x + r * 0.55, y + r * 0.5); ctx.lineTo(x - r * 0.55, y + r * 0.5); ctx.closePath(); ctx.fill();
     ctx.fillStyle = '#b9651b'; ctx.fillRect(x - r * 0.33, y + r * 0.08, r * 0.66, r * 0.42);
     ctx.fillStyle = '#ffffff'; for (const dy of [0.2, 0.34]) ctx.fillRect(x - r * 0.33, y + r * dy, r * 0.66, r * 0.04);
+  } else if (kind === 'dealer') {
+    // a car dealer (kwdealer.js): a little car in profile under a price tag
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.moveTo(x - r * 0.62, y + r * 0.36); ctx.lineTo(x - r * 0.6, y + r * 0.12); ctx.lineTo(x - r * 0.3, y + r * 0.06); ctx.lineTo(x - r * 0.14, y - r * 0.12);
+    ctx.lineTo(x + r * 0.28, y - r * 0.12); ctx.lineTo(x + r * 0.46, y + r * 0.08); ctx.lineTo(x + r * 0.62, y + r * 0.14); ctx.lineTo(x + r * 0.62, y + r * 0.36); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#1f7a4d';
+    for (const wx of [-0.32, 0.36]) { ctx.beginPath(); ctx.arc(x + r * wx, y + r * 0.38, r * 0.12, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = '#ffd23a';
+    ctx.beginPath(); ctx.moveTo(x - r * 0.05, y - r * 0.62); ctx.lineTo(x + r * 0.42, y - r * 0.62); ctx.lineTo(x + r * 0.42, y - r * 0.28); ctx.lineTo(x - r * 0.05, y - r * 0.28); ctx.lineTo(x - r * 0.2, y - r * 0.45); ctx.closePath(); ctx.fill();
+    ctx.save(); ctx.fillStyle = '#1f7a4d'; ctx.font = `900 ${(r * 0.34).toFixed(2)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('$', x + r * 0.2, y - r * 0.44); ctx.restore();
   } else if (kind === 'export') {
     // a crane's hook on its cable (the import/export yard, exportyard.js)
     ctx.strokeStyle = '#ffffff'; ctx.fillStyle = '#ffffff'; ctx.lineWidth = r * 0.18; ctx.lineCap = 'round';

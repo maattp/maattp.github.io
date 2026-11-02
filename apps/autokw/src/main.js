@@ -59,6 +59,7 @@ import { Respray, placeBays } from './respray.js';
 import { Cheats } from './cheats.js';   // Auto KW: GTA-style cheat codes (cheats.js)
 import { PhotoMode } from './kwphoto.js';   // Auto KW: photo mode (kwphoto.js)
 import { Garages, placeGarages } from './kwgarage.js';   // Auto KW: your save garages (kwgarage.js)
+import { Dealers, findDealerSites } from './kwdealer.js';   // Auto KW: buy cars at real dealerships (kwdealer.js)
 import { ExportYard, placeYard } from './exportyard.js';   // Auto KW: import/export, the wanted list (exportyard.js)
 import { CruiseNight } from './kwcruise.js';   // Auto KW: Friday and Saturday cruise nights (kwcruise.js)
 import { CarWash, prepWash, placeWashes } from './carwash.js';   // Auto KW: the drive-through tunnel car washes (carwash.js)
@@ -71,7 +72,7 @@ import { timsKeepClear } from './kw.js';
 import { setKwData, applyNamed, buildSigns, buildPolys, buildBunting, buildSchools, mapPlaces as kwPlaces, kwData, boxAt, dedupeFootprints } from './kw.js';
 import { addLandmarkExtra } from './landmarks.js';
 import { Chicopee } from './chicopee.js';
-import { prepFun, buildMarketTent, buildFlags, waveFlags, flagsGroup, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, buildDome } from './kwfun.js';
+import { prepFun, buildMarketTent, buildFlags, waveFlags, flagsGroup, surplusSite, openGround, prepFord, buildFord, fordLot, fordSpot, fordDoor, buildDome } from './kwfun.js';
 import { Eggs } from './kweggs.js';
 import { GooseFM } from './goosefm.js';
 import { Secrets } from './kwsecrets.js';   // Auto KW: six secrets after dark (kwsecrets.js)
@@ -84,7 +85,7 @@ import { prepLandmarks2, buildLandmarks2, landmarks2Map, landmarks2Stats } from 
 import { JJCards } from './jjcards.js';
 import { prepNature, groundDetail } from './kwnature.js';
 import { prepVillages, buildVillages, villagesMap } from './kwvillages.js';
-import { setShopData, prepShops, buildShops, shopPlaces, shopStats, driveThrus } from './kwshops.js';
+import { setShopData, prepShops, buildShops, shopPlaces, shopStats, driveThrus, dealerDoors } from './kwshops.js';
 import { DriveThrus } from './drivethru.js';
 import { RandomEvents } from './kwevents.js';
 import { Wildlife } from './kwwildlife.js';
@@ -215,6 +216,7 @@ let exportYard = null, exportSite = null;   // Auto KW: import/export at Parkway
 let cruise = null;   // Auto KW: cruise night (kwcruise.js)
 let carWash = null, washSites = [];   // Auto KW: the tunnel car washes (carwash.js)
 let airtime = null;   // Auto KW: the free-form stunt bonus (airtime.js)
+let dealer = null;   // Auto KW: the car dealers' showrooms (kwdealer.js)
 let cheats = null, photo = null, garages = null, garageBays = [], respray = null, resprayBays = [], paramedic = null, medStations = [], winter = null, plowStations = [], icecream = null, icDepots = [];   // Auto KW: body shops and paramedic calls
 let fire = null, fireStations = [];   // Seattle Fire: the stations' rigs, the water cannon, fire calls (firecalls.js)
 
@@ -600,6 +602,9 @@ class Game {
     }
     // J&J Cards & Collectibles' red door: rip a pack (jjcards.js; yields to a car at the kerb)
     if (jj && jj.near(pl)) { this.hold('jj'); jj.start(); return true; }
+    // a car dealer's showroom door: buy a car (kwdealer.js; yields to a car at the kerb, refuses while wanted)
+    const dsite = dealer && dealer.near(pl);
+    if (dsite) { dealer.enter(dsite); return true; }
     // a food or drink place's counter on a main street (kwcounter.js): last, and it
     // yields to a car or train you could get into (player.js takes ENTER next)
     if (counter && counter.order(pl)) return true;
@@ -1474,7 +1479,7 @@ function installShadowFade() {
   audio.onTrack = (label) => { if (hud) hud.showToast(`♪ ${label}`); };
   controls = new Controls(document.getElementById('app'));
   // an open minigame takes the pad as keys (controls.js PAD_KEYS)
-  controls.bridge = () => [fishing, arcade, pinball, hockey, rollup, jj, tower, coffee, hoops, pickle, golf, fishToss, g2]
+  controls.bridge = () => [fishing, arcade, pinball, hockey, rollup, jj, dealer, tower, coffee, hoops, pickle, golf, fishToss, g2]
     .some((a) => a && a.active) || !!(wheelRide && wheelRide.busy);
   player = new Player(scene, city, game, world);
   player.link = link;
@@ -2063,6 +2068,21 @@ function installShadowFade() {
     garages = new Garages({ scene, city, game, hud, audio, traffic, bays: garageBays });
     hud.places.push(...garages.places());
   } catch (e) { blog('garages: ' + e.message); garages = null; }
+  // the car dealers (kwdealer.js): Parkway Ford's door from kwfun.js, the rest from kwshops' drawn fronts
+  try {
+    const sites = findDealerSites(dealerDoors(), fordDoor());
+    dealer = new Dealers({ renderer, scene, city, traffic, hud, audio, game, sites,
+      player: () => player, garages: () => garages,
+      money: () => game.money,
+      charge: (n) => { if (game.money < n) return false; game.money -= n; return true; },
+      blocked: () => (story && story.run ? 'KW Stories chapter' : storyBusy() || (jobsBusy() ? 'job in hand' : null)),
+      busy: (pl) => !!(traffic.nearestEnterable(pl.x, pl.z, 2.5)),
+      hold: () => game.hold('dealer'), onEnd: () => { game.release('dealer'); } });
+    // (Parkway Ford's own map entry gives way to the dealer's)
+    if (sites.some((q) => q.d.ford)) { const k = hud.places.findIndex((q) => q.name === 'Parkway Ford Lincoln' && q.kind === 'lm'); if (k >= 0) hud.places.splice(k, 1); }
+    hud.places.push(...dealer.places());
+    blog(`dealers: ${sites.map((q) => q.d.id).join(', ')}`);
+  } catch (e) { blog('dealers: ' + e.message); dealer = null; }
   try {
     exportYard = new ExportYard({ scene, city, game, hud, audio, fx, traffic, types: VEHICLE_TYPES, busy: jobsBusy, site: exportSite });
     hud.places.push(...exportYard.places());
@@ -2196,7 +2216,7 @@ function installShadowFade() {
   // One job at a time: a vehicle job, KW Eats' log-on and a race marker refuse to start over
   // another job, a chapter or a car wash ride (storyBusy names it); stopping your own is always allowed.
   for (const sys of [acts, missions, taxi, eats, paramedic, fire]) if (sys) sys.busy = storyBusy;
-  window.__dbg = { get story() { return story; }, get calendar() { return kcal; }, get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get garages() { return garages; }, get exportYard() { return exportYard; }, get cruise() { return cruise; }, get carWash() { return carWash; }, get airtime() { return airtime; }, get cheats() { return cheats; }, get photo() { return photo; }, get paramedic() { return paramedic; }, get winter() { return winter; }, get icecream() { return icecream; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { get story() { return story; }, get calendar() { return kcal; }, get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get garages() { return garages; }, get dealer() { return dealer; }, get exportYard() { return exportYard; }, get cruise() { return cruise; }, get carWash() { return carWash; }, get airtime() { return airtime; }, get cheats() { return cheats; }, get photo() { return photo; }, get paramedic() { return paramedic; }, get winter() { return winter; }, get icecream() { return icecream; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;
   Object.defineProperty(window.__dbg, 'eggs', { get() { return eggs; } });
   Object.defineProperty(window.__dbg, 'secrets', { get() { return secrets; } });
@@ -2746,6 +2766,7 @@ function refreshPassport() {
     if (rm && nx) nx.textContent += ' · ' + rm;
   }
   if (garages) p.rows = p.rows.concat(garages.passportRows());
+  if (dealer) p.rows = p.rows.concat([dealer.passportRow()]);
   if (exportYard) p.rows = p.rows.concat(exportYard.passportRows());
   if (cheats) p.rows = p.rows.concat(cheats.passportRows());
   if (airtime) p.rows = p.rows.concat(airtime.passportRows());
@@ -3183,6 +3204,7 @@ function storyBusy() {
   if (winter && winter.busy()) return winter.plow.run ? 'plow route' : 'Zamboni run';
   if (icecream && icecream.busy()) return icecream.run.kind === 'dog' ? 'hot dog shift' : 'ice cream shift';
   if (carWash && carWash.ride) return 'car wash';
+  if (dealer && dealer.td) return 'test drive';
   return null;
 }
 
@@ -3192,7 +3214,7 @@ function jobsBusy() {
 }
 
 function reapHolds() {
-  const live = { story, respray, fishing, arcade, pinball, hockey, rollup, jj, fest, splash, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace, derby, g2, photo };
+  const live = { story, respray, fishing, arcade, pinball, hockey, rollup, jj, dealer, fest, splash, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace, derby, g2, photo };
   for (const who of game.holds) {
     if (who === 'seafair') { if (seafair && (seafair.state === 'menu' || seafair.state === 'done')) continue; }
     else if (live[who] && live[who].active) continue;
@@ -3219,6 +3241,7 @@ function doRespawn() {
   if (wheelRide) wheelRide.abort();
   if (needleTop) needleTop.abort();
   if (carWash) carWash.abort();
+  if (dealer) dealer.abort();   // (the showroom shuts, a test car goes back)
   if (player.vehicle) player.exitVehicle(true);
   if (busted) {
     // a fine by the stars you had, and your gun confiscated
@@ -3567,6 +3590,7 @@ function frame(now) {
   if (hockey && hockey.active) hockey.update(dt);
   if (rollup && rollup.active) rollup.update(dt);
   if (jj && jj.active) jj.update(dt);
+  if (dealer && dealer.active) { try { dealer.update(dt); } catch (e) { if (!dealer.err) { dealer.err = 1; console.warn('dealer: ' + e.message); } } }
   if (fest) fest.update(dt, game.paused && !fest.inside);
   if (splash) splash.update(dt);
   if (tower && tower.active) tower.update(dt);
@@ -3596,7 +3620,7 @@ function frame(now) {
     // and those still draw every frame.
     // (the fishing game's screen covers the city too, once it is up)
     const idle = game.mapOpen || pauseMenuEl.classList.contains('show') || (fishing && fishing.el.classList.contains('show'))
-      || (arcade && arcade.active) || (pinball && pinball.active) || (hockey && hockey.active) || (rollup && rollup.active) || (jj && jj.active) || (tower && tower.active) || (coffee && coffee.active) || (pickle && pickle.active);
+      || (arcade && arcade.active) || (pinball && pinball.active) || (hockey && hockey.active) || (rollup && rollup.active) || (jj && jj.active) || (dealer && dealer.active) || (tower && tower.active) || (coffee && coffee.active) || (pickle && pickle.active);
     // an interior (the Aud's bowl, a festhalle) draws its own scene on the canvas: the city draws nothing
     if (interiorUp()) { idleDrawn = 2; return; }
     if (!idle || idleDrawn < 2 || idleRedraw) { draw(now); idleDrawn++; idleRedraw = false; }
@@ -3693,6 +3717,7 @@ function frame(now) {
   if (kcal) kcal.update(dt, player, camera);
   if (respray) respray.tick(dt, player);
   if (cheats) { try { cheats.tick(dt); } catch (e) { if (!cheats.err) { cheats.err = 1; console.warn('cheats: ' + e.message); } } }
+  if (dealer) { try { dealer.tick(dt, player); } catch (e) { if (!dealer.err) { dealer.err = 1; console.warn('dealer: ' + e.message); } } }
   if (garages) { try { garages.tick(dt, player); } catch (e) { if (!garages.err) { garages.err = 1; console.warn('garages: ' + e.message); } } }
   if (exportYard) { try { exportYard.tick(dt, player); } catch (e) { if (!exportYard.err) { exportYard.err = 1; console.warn('export yard: ' + e.message); } } }
   if (cruise) { try { cruise.update(dt, player); } catch (e) { if (!cruise.err) { cruise.err = 1; console.warn('cruise: ' + e.message); } } }

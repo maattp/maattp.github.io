@@ -1922,6 +1922,10 @@ export function buildShops(ctx) {
     solid(fr.solid(fi, tp, 1.0, PW, 2.0, gy - 2, gy + ph));
     // the make, lettered high on the portal; the dealer's own name along the parapet over the glass
     const [mx, , mz] = fr.P(fi, tp, 0, 2.04);
+    // the showroom's door (the dark glass in the portal) for kwdealer.js: where you stand to go in
+    { const [dx, , dz] = fr.P(fi, tp, 0, 2.9);
+      DEALER_DOORS.push({ name, who: (F && F[4]) || '', make: make.t, c: make.c, fg: make.fg,
+        x: +dx.toFixed(2), z: +dz.toFixed(2), nx: +N[0].toFixed(4), nz: +N[2].toFixed(4), y: +gy.toFixed(2), len: +L.toFixed(1) }); }
     letter(Lb(mx, mz), TX.cell(make.t, 40), make.fg, make.c, mx, gy + ph - 1.3, mz, N[0], N[2], PW - 0.8, 1.5);
     if (name && name.toUpperCase() !== make.t && g1 - g0 > 6) {
       const tm = (g0 + g1) / 2, [nx2, , nz2] = fr.P(fi, tm, 0, 0.16);
@@ -2599,5 +2603,8 @@ export function shopPlaces() {
   return out;
 }
 export function shopStats() { return S ? S.stats : null; }
+/** Every drawn dealer front's showroom door (`dealer()` above): kwdealer.js finds its dealers here. */
+export function dealerDoors() { return DEALER_DOORS; }
+const DEALER_DOORS = [];
 /** The fast-food pads' drive-throughs from OSM's lanes (buildShops driveLane): drivethru.js. */
 export function driveThrus() { return (S && S.dts) || []; }
