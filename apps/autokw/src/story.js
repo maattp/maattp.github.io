@@ -14,8 +14,9 @@
 //                               not too close (a distance band and a suspicion meter)
 //   4 Float Like a Pretzel   -- drive the parade float down King St from Uptown
 //                               to Kitchener City Hall without wrecking it
-//   5 The Golden Goose       -- lift a Golden Goose card at J&J (two stars), lose
-//                               the WRPS, then a respray
+//   5 The Golden Goose       -- snatch the Golden Goose card Chad swiped from J&J
+//                               back from him (the police see a scuffle: two stars),
+//                               lose the WRPS, a respray, then return the card to J&J
 //   6 Civic Duty             -- race Kayla's Civic from Fairview Park to Preston
 //   7 Prost!                 -- Chad's limo from the Aud to his jet at YKF: stop it,
 //                               then the deed home; the float is yours
@@ -217,17 +218,18 @@ export const CHAPTERS = [
   {
     id: 'card', title: 'The Golden Goose', pay: 2000,
     intro: [
-      ['priya', "Chad's bribing the parade committee chair with a Golden Goose card. One in five hundred packs at J&J."],
-      ['gord', "Margaret has wanted that card since 1998. She'd sell my lot for it."],
-      ['priya', "His runner's parked at J&J on Weber with the card on the dash. Window down."],
-      ['gord', "I didn't hear any of that. Bring the card here. And lose anybody who follows you."],
+      ['priya', "Chad swiped a Golden Goose card from J&J Cards on Weber. One in five hundred packs, and he just walked out with it."],
+      ['gord', "Margaret on the parade committee has wanted that card since 1998. He's going to bribe her with it. A card that belongs in that shop."],
+      ['priya', "He's still on the sidewalk outside J&J, showing it off. Grab it and go — it's his word against yours, and he knows people."],
+      ['gord', 'Get it back to J&J where it belongs. And lose anybody who follows you.'],
     ],
     steps: [
-      { k: 'go', at: JJ, r: 30, stop: true, car: true, obj: 'Get to J&J Cards on Weber St', snatch: true,
-        done: [['runner', "HEY! That's a GOOSE! That's a one-in-five-hundred GOOSE!"]] },
-      { k: 'heat', stars: 2, obj: 'Lose the cops' },
-      { k: 'respray', obj: 'The cops know the car — get it resprayed (Gord is paying)',
-        done: [['gord', 'Margaret gets the card from ME now. As a gift. Fully legal. Mostly.']] },
+      { k: 'go', at: JJ, r: 30, stop: true, car: true, obj: 'Get to J&J Cards on Weber St — Chad is outside', snatch: true,
+        done: [['chad', 'HEY! That is MY one-in-five-hundred GOOSE! Officer! OFFICER! Somebody is mugging me!']] },
+      { k: 'heat', stars: 2, obj: 'Lose the cops — they saw a scuffle' },
+      { k: 'respray', obj: 'The cops know the car — get it resprayed (Gord is paying)' },
+      { k: 'go', at: JJ, r: 30, stop: true, obj: 'Return the Golden Goose card to J&J Cards', thanks: true,
+        done: [['gord', 'Back where it belongs. Margaret can buy her own pack like everybody else.']] },
     ],
   },
   {
@@ -1094,6 +1096,7 @@ const STEPS = {
       const there = d < p.r && (!p.stop || !v || Math.abs(v.vLong) < 2.5) && (!p.car || roadCar(pl) || !v);
       if (there && (!p.car || roadCar(pl))) {
         if (p.snatch) snatch(S, pl);
+        if (p.thanks) thanks(S);
         if (p.goose) goodbyeGoose(S, pl);
         return true;
       }
@@ -1285,7 +1288,7 @@ const STEPS = {
     tick(S, st, dt) {
       if (S.game.wanted === 0) return true;
       S.setObj(st.p.obj);
-      S.led(st.p.obj, `${'★'.repeat(S.game.wanted)} · Golden Goose card on the dash`);
+      S.led(st.p.obj, `${'★'.repeat(S.game.wanted)} · Golden Goose card in your pocket`);
       return null;
     },
   },
@@ -1433,9 +1436,15 @@ function damageFloat(S, st, n) {
   }
 }
 
-/** Chapter 5: the card off the runner's dash, and the law on you. */
+/** Chapter 5: the card back out of Chad's hand, and the law on you. */
 function snatch(S) {
-  S.hud.showToast('You lifted the Golden Goose card off the runner\'s dash', 3000);
+  S.hud.showToast('You snatched the Golden Goose card back from Chad', 3000);
+  if (S.audio && S.audio.ready) S.audio.ui('check');
+}
+
+/** Chapter 5: the card goes home to J&J. */
+function thanks(S) {
+  S.hud.showToast('J&J Cards: "You found it! Thank you -- it goes in the case today."', 3600);
   if (S.audio && S.audio.ready) S.audio.ui('check');
 }
 

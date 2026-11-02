@@ -5302,9 +5302,12 @@ file and a guide disagree, this file wins.
   vertex-coloured mesh -- skirt, giant pretzel, stein, hops, pennants -- shared,
   `v.extra`) and take it down King St, Uptown to Kitchener City Hall,
   checkpoints every 380 m, a float condition hurt by crashes and by speed over
-  50 km/h; (5) *The Golden Goose* -- lift J&J's Golden Goose card (two stars,
-  `game.setWanted`), lose them, then any body shop's respray (`respray.stats.n`
-  rises; Gord refunds the price); (6) *Civic Duty* -- race Kayla's Civic from
+  50 km/h; (5) *The Golden Goose* -- Chad has swiped a Golden Goose card from J&J
+  Cards; snatch it back from him outside the shop (the police see a scuffle:
+  two stars, `game.setWanted`), lose them, any body shop's respray
+  (`respray.stats.n` rises; Gord refunds the price), then return the card to
+  J&J (a thank-you toast). J&J is the victim, never the target: the player
+  never robs it; (6) *Civic Duty* -- race Kayla's Civic from
   Kingsway Dr by Fairview Park to Preston (9 km, Hwy 8, King St E): checkpoints
   every 520 m, a rubber band on her pace; (7) *Prost!* -- Chad's limo runs its
   A* route from the Aud to YKF: wreck it or hold it stopped (2.2 s within 22
