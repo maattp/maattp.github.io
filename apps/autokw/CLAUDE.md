@@ -5164,6 +5164,64 @@ file and a guide disagree, this file wins.
     shows the CPU side only. Rural roads carry no street lights, so the
     countryside is lit only by your beams.
 
+- **The graphics pass: src/gfx.js, src/lampglow.js** (tools/kw/gfx_survey.md
+  ranks what looked cheap on the phone; docs/gfx-*.jpg, before | after, same
+  boot and pose, AUTO_PHONE=1). Four looks, each a switch read every frame
+  (`gfxFrame`), all off at Graphics `low`; no render target, no pass, no new
+  program but the glow's:
+  - **Lacquer** (`window.__noCarCoat`; vehicles.js `lacquerShader`, inside
+    dentShader when `userData.lacq`): the phone's one-layer paint gets a
+    clearcoat's IBL half -- one sharp (0.05) tap of `scene.environment` x the
+    coat's Fresnel, laid over the paint; a reflected ray under ~12 deg comes
+    back dark (the street hides the low sky), which draws the horizon line
+    down the flank. Phone only (desktop has the real clearcoat); the far LOD
+    (60 m+) stays one-layer. docs/gfx-lacquer-*.jpg.
+  - **Dusk haze** (`__noDuskHaze`; `installGfxHooks` patches the fog chunk
+    and wraps weather.js's `Material.prototype.onBuild` -- after it, chained --
+    so every fogged program holds 4 shared uniforms; `gfxFog` per frame): at
+    the golden hour the fog is the DOME'S horizon colour per bearing (its
+    h = 0 colour at three bearings off the dome's sun, computed on the CPU
+    from the sky's own uniforms) and x(1 + 1.3 du) denser, so distance
+    dissolves into the sunset instead of meeting it at a brown line. Off by
+    day and at night (`w` = du x (1 - ni) x (1 - overcast)): nightprobe's
+    "Day = master" still passes. docs/gfx-dusk-*.jpg.
+  - **Lamp glow** (`__noLampGlow`; lampglow.js, `window.__lampGlow`): ONE
+    instanced additive sprite draw (depth-tested, no depth write, renderOrder
+    6) on every lamp head the chunks record (`userData.lamps`, STATIC_LAMPS)
+    within 420 m ahead (560 desktop), nearest first by a distance histogram
+    every 0.25 s / 8 m, plus the head (white, seen from in front) and tail
+    (red, from behind) lamps of the 22 nearest moving cars (36 desktop) --
+    far-LOD cars included. Fogged by hand. Invisible (no draw) while tod.js's
+    `lampK` is 0, i.e. all day. docs/gfx-glow-*.jpg.
+  - **Water** (`__noWaterFx`; world.js `waterGfx`): sun glitter (pow 700 off
+    the reflected view ray toward the dome's sun, x the sun light; `gfxSun`)
+    and the chop calmed past 80-650 m. Mirrored banks were tried and dropped
+    (docs/gfx-water-banks-rejected.jpg: without the trees' image the chop
+    turns a treeline into mud). docs/gfx-water-*.jpg.
+  **Verify:** `AUTO_PHONE=1 AUTO_GPU=1 VIEW_THROTTLE=8
+  VIEW_PROBE_FILE=tools/kw/gfxprobe.js node tools/kw/kwshots.mjs x` (every
+  switch reaches its uniform, the terms are in the compiled programs, day /
+  dusk / night states, glow counts, CPU per frame, the glow's compile);
+  shots: `node tools/kw/gfxab.mjs views <flag> <views> > ab.json`, then
+  kwshots with `VIEWS=ab.json` and the three seat files, then `gfxab.mjs join`.
+  **Cost** (AUTO_PHONE=1, Mac GPU; CPU = perfaudit 8x, 15 s, means):
+
+  | change | switch | draws | tris | programs | CPU / frame (8x) | GPU work |
+  |---|---|---|---|---|---|---|
+  | lacquer | `__noCarCoat` | 0 | 0 | 0 (same paint program) | 0 | 1 env tap + Fresnel per paint pixel |
+  | dusk haze | `__noDuskHaze` | 0 | 0 | 0 | 0.0015 ms at dusk, 0 by day | a dot + mix per fogged pixel, dusk only |
+  | lamp glow | `__noLampGlow` | +1 at dusk/night, 0 by day | <= 320 (160 quads) | +1 (7 ms compile at 8x, on the first lit frame) | 0.03 ms + 0.1 ms per re-choice | additive fill of small sprites |
+  | water | `__noWaterFx` | 0 | 0 | 0 | 0 | a pow per water pixel |
+
+  perfaudit spawn / king frame CPU, all on vs `__noGfx`: day 9.01 / 9.53 vs
+  9.19 / 9.12 ms; night 9.63 / 10.58 vs 9.39 / 12.47 ms -- inside the run
+  noise (a third run moved king by 5 ms with nothing changed). The GPU side
+  could not be resolved on the Mac (gpuframe.js medians swing 4-9 ms between
+  identical A/B runs) and is NOT measured on the iPhone: bisect by switch.
+  **Not done:** the dusk light's direction (shadows still fall from the
+  afternoon sun); the square's own lamps (not recorded); storefront glazing
+  reflections (survey item 7); car lamps on parked cars.
+
 ## Build number
 
 `<div id="build">vN</div>` in index.html and `CACHE = 'autokw-vN'` in sw.js

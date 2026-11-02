@@ -12,6 +12,7 @@ import * as THREE from './three.js';
 import { Builder, dropGeometryArrays } from './build.js';
 import { WXK, WXU } from './weather.js';
 import { TODU } from './tod.js';
+import { GFXU } from './gfx.js';
 import { makeHumanoid, buildCharacter, BONES, gripHands } from './peds.js';
 import { clamp, lerp, hash2, damp } from './util.js';
 import * as G from './geo.js';
@@ -11760,6 +11761,36 @@ vec3 dentOff( vec3 p, out float ws ) {
 	vec3 dentO = dentOff( position, dentW );
 	if ( dentW > 0.0 ) objectNormal = normalize( objectNormal + ( vec3( dentH( floor( position * 23.0 ) ), dentH( floor( position * 29.0 ) + 1.0 ), dentH( floor( position * 31.0 ) + 2.0 ) ) - 0.5 ) * min( dentW * dentW * 30.0, 0.7 ) );`)
     .replace('#include <begin_vertex>', '#include <begin_vertex>\n\ttransformed += dentO;');
+  if (this.userData && this.userData.lacq) lacquerShader(sh);
+}
+/**
+ * THE PHONE'S LACQUER (gfx.js; `window.__noCarCoat`). The phone keeps the
+ * one-layer paint (no clearcoat lobe), and a 0.26-rough semi-metal takes its
+ * F0 from the paint: the sky came back from it tinted navy and blurred, so a
+ * car read as painted plastic. This is a clearcoat's IBL half only: one more
+ * sharp (roughness 0.05) tap of the scene's own environment -- the sky dome's
+ * PMREM, already bound -- weighted by the coat's Fresnel and laid over the
+ * paint as a coat does (base x (1 - F) + env x F). The hood and roof carry
+ * the clouds; the flanks the horizon at a grazing angle. No direct-light term:
+ * the base's own sun lobe stays. Same program as before (the warm-up's sedan
+ * compiles it), one uniform branch.
+ */
+function lacquerShader(sh) {
+  sh.uniforms.gfxLacq = GFXU.gfxLacq;
+  sh.fragmentShader = 'uniform float gfxLacq;\n' + sh.fragmentShader.replace('#include <opaque_fragment>', `
+	#if defined( USE_ENVMAP ) && defined( ENVMAP_TYPE_CUBE_UV )
+	if ( gfxLacq > 0.5 ) {
+		vec3 lqV = normalize( vViewPosition );
+		float lqF = min( 0.04 + 0.96 * pow( 1.0 - saturate( dot( normal, lqV ) ), 5.0 ), 0.7 );
+		// the street hides the sky's lower band: a reflected ray under ~12 deg
+		// meets buildings, trees and cars, not the bright horizon haze, so it
+		// comes back dark -- the sharp horizon line down a car's flank
+		float lqUp = inverseTransformDirection( reflect( - lqV, normal ), viewMatrix ).y;
+		vec3 lqE = getIBLRadiance( lqV, normal, 0.05 ) * mix( 0.16, 0.85, smoothstep( 0.10, 0.24, lqUp ) );
+		outgoingLight = outgoingLight * ( 1.0 - lqF ) + lqE * lqF;
+	}
+	#endif
+	#include <opaque_fragment>`);
 }
 // the trim's glass and plates, and the crumple (dentShader)
 function trimShader(sh) { glassShader(sh); dentShader.call(this, sh); }
@@ -12115,6 +12146,8 @@ export function paintMaterial(color, finish = null) {
     : new THREE.MeshStandardMaterial({
       color, metalness: 0.5, roughness: 0.26, envMapIntensity: 1.5,
     });
+  // the phone's lacquer (lacquerShader): its IBL half of a clearcoat
+  if (PAINT_PHONE) m.userData.lacq = true;
   // the crumple (dentShader): one program for every painted body, as before
   m.onBeforeCompile = dentShader;
   m.customProgramCacheKey = () => 'vehiclePaint';
