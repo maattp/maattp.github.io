@@ -11465,12 +11465,12 @@ function buildZamboni(spec, paint, trim, matte) {
 
 
 // ---------------------------------------------------------------------------
-// Auto KW: THE CLASSICS (cruise night, src/kwcruise.js). Five period bodies
+// Auto KW: THE CLASSICS (cruise night, src/kwcruise.js). Four period bodies
 // with no maker's name or badge on them: a late-70s wood-panelled full-size
 // wagon, a 1950s round-fendered stepside pickup, a small air-cooled rear-engined
-// "bug", a 1959-60 finned convertible and a 1940s fastback coupe. The wagon and
-// the convertible are bodyCore bodies like the rest of the fleet; the bug, the
-// pickup and the coupe are separate-fender cars, which one loft cannot be, so
+// "bug" and a 1959-60 finned convertible. The wagon and the convertible are
+// bodyCore bodies like the rest of the fleet; the bug and the pickup are
+// separate-fender cars, which one loft cannot be, so
 // they are built from `classicShell` (a superellipse loft whose windows are
 // real openings, glazed and lined) and `fenderArc` (a pontoon fender as an open
 // shell over the wheel, with a dark liner under it). All chrome, lamps and
