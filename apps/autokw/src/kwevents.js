@@ -186,6 +186,16 @@ export class RandomEvents {
     const cls = opts.classes || ['st', 'res', 'art'];
     const pool = city.edgesNear(p.x, p.z, dmax + 20);
     const minLen = opts.minLen || 40;
+    // not where the camera can see it start: a spot inside the view frustum pops in (there is
+    // almost no fog). First ahead and out of view (a cross street off the frame's edge), then
+    // anywhere out of view, then anything.
+    let fr = null;
+    if (camera && opts.inView !== true) {
+      camera.updateMatrixWorld();
+      this._m4 = this._m4 || new THREE.Matrix4(); this._fr = this._fr || new THREE.Frustum();
+      this._m4.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      fr = this._fr.setFromProjectionMatrix(this._m4);
+    }
     for (let k = 0; k < 400 && pool.length; k++) {
       const ei = pool[Math.floor(Math.random() * pool.length)], e = city.edges[ei];
       if (!okEdge(e) || e.len < minLen || !cls.includes(e.cls)) continue;
@@ -193,7 +203,8 @@ export class RandomEvents {
       const s = e.len * rnd(0.4, 0.6), x = a.x + e.dx * s, z = a.z + e.dz * s;
       const dd = Math.hypot(x - p.x, z - p.z);
       if (dd < dmin || dd > dmax || G.isWater(x, z)) continue;
-      if (opts.ahead !== false && k < 300 && ((x - p.x) * fx + (z - p.z) * fz) / dd < 0.3) continue;
+      if (opts.ahead !== false && k < 200 && ((x - p.x) * fx + (z - p.z) * fz) / dd < 0.3) continue;
+      if (fr && k < 300) { this._v.set(x, a.y + 1.5, z); if (fr.containsPoint(this._v)) continue; }
       if (opts.near && !opts.near(e)) continue;
       return { ei, e, s, x, z, y: a.y, d: dd };
     }
@@ -359,7 +370,8 @@ class Ev {
     // a scripted car the traffic system took away (too far): forget it
     this.cars = this.cars.filter((v) => this.O.traffic.cars.includes(v));
     if (this.done) { this.doneT += dt; if (this.doneT > 90 || (this.doneT > 3 && dd > 130)) return true; }
-    return this.age > this.maxAge || (this.hinted && dd > 480);
+    // (dd > 800: you respawned or were carried off -- nothing of it is near you any more)
+    return this.age > this.maxAge || (this.hinted && dd > 480) || dd > 800;
   }
 
   end() {
