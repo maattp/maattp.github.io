@@ -1044,6 +1044,15 @@ export class Player {
         // at the hover (a turn reads as a turn), tighter with speed.
         const d = angleWrap(v.heading + Math.PI - this.camYaw);
         this.camYaw += d * clamp(dt * (1.1 + 1.4 * clamp(sp / 20, 0, 1)), 0, 0.25);
+      } else if (v.airFly) {
+        // in the air (vehicles.js freeAir) the body spins and flips about a
+        // held flight path: follow the PATH, not the nose, or a 360 drags the
+        // camera round with it
+        const F = v.airFly;
+        if (Math.hypot(F.wx, F.wz) > 3) {
+          const d = angleWrap(Math.atan2(F.wx, F.wz) + Math.PI - this.camYaw);
+          this.camYaw += d * clamp(dt * 1.5, 0, 0.25);
+        }
       } else if (v.vLong > 3 && !(v.spec.tank && this.lookT < 3)
         // a road car's view held by a finger (or let go under a second ago)
         // stays put: the swing back used to start the moment a dragging
