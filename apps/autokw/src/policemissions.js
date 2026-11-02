@@ -71,6 +71,8 @@ export class PoliceMissions {
     if (this.run || this.nextT > 0) { this.end(false, 'Police mission cancelled'); return; }
     if (!this.available(player)) { this.hud.showToast('Police missions need a police vehicle'); return; }
     if (this.game.story) { this.hud.showToast('Finish the KW Stories mission first'); return; }   // (story.js)
+    const why = this.busy && this.busy();   // another job (main.js storyBusy)
+    if (why) { this.hud.showToast(`Finish the ${why} first`); return; }
     if (this.game.wanted > 0) { this.hud.showToast('Lose your wanted level first'); return; }
     this.level = 1;
     this.start(player);

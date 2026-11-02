@@ -2193,6 +2193,9 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
+  // One job at a time: a vehicle job, KW Eats' log-on and a race marker refuse to start over
+  // another job, a chapter or a car wash ride (storyBusy names it); stopping your own is always allowed.
+  for (const sys of [acts, missions, taxi, eats, paramedic, fire]) if (sys) sys.busy = storyBusy;
   window.__dbg = { get story() { return story; }, get calendar() { return kcal; }, get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get garages() { return garages; }, get exportYard() { return exportYard; }, get cruise() { return cruise; }, get carWash() { return carWash; }, get airtime() { return airtime; }, get cheats() { return cheats; }, get photo() { return photo; }, get paramedic() { return paramedic; }, get winter() { return winter; }, get icecream() { return icecream; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;
   Object.defineProperty(window.__dbg, 'eggs', { get() { return eggs; } });
@@ -3179,6 +3182,7 @@ function storyBusy() {
   if (kartRace && kartRace.state && kartRace.state !== 'idle') return 'kart race';
   if (winter && winter.busy()) return winter.plow.run ? 'plow route' : 'Zamboni run';
   if (icecream && icecream.busy()) return icecream.run.kind === 'dog' ? 'hot dog shift' : 'ice cream shift';
+  if (carWash && carWash.ride) return 'car wash';
   return null;
 }
 
