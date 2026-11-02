@@ -1503,7 +1503,7 @@ file and a guide disagree, this file wins.
   docs/jumps/*.jpg; verify `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1 node
   tools/kw/kwstunts.mjs [ids] [--caps 24,32,99] [--shots dir]`). The engine is
   Seattle's (see guide/on-foot.md "Stunt jumps": ramp = geometry + height query,
-  kept-clear corridor, scoring); KW's list: Chicopee Ski Hill, YKF runway,
+  kept-clear corridor, scoring); KW's list: Chicopee Ski Hill, YKF fence line (NOT the runway: 14/32 carries the circuit Cessna),
   Freeport and Doon (Grand River), Laurel Creek Reservoir hop and Laurel Dam
   splash, three over the ION tracks (Waterloo Park, Northfield, Block Line),
   Toboggan Hill, the Boardwalk berm, RIM Park, Victoria Park's neck, Erbsville
@@ -1514,8 +1514,7 @@ file and a guide disagree, this file wins.
   run-up, ramp and landing and a run at each speed cap must land CLEAN (or in
   the water for `water: true`). **Grass tops a car out at ~19-21 m/s**, so a
   grass jump is ~25-35 m; the far-bank river/pond ones are authored with
-  18-24 m gaps and steeper kickers (H 3-3.4, 26-30 deg), the paved ones (ykf,
-  ionnorth, fairview, conest, rim) fly 45-70 m. **Cinematic** (every launch whose
+  18-24 m gaps and steeper kickers (H 3-3.4, 26-30 deg), the paved ones (ionnorth, fairview, conest, rim) fly 45-70 m. **Cinematic** (every launch whose
   predicted air is over 0.85 s): the clock eases to x0.35 through the middle of the
   flight and the chase boom swings 1.25 rad to the side (`player.stuntSide`,
   alternating) and pulls back, both off before touchdown. It cannot stick:

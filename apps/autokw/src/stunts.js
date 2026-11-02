@@ -46,8 +46,8 @@ const UV0 = [0, 0, 0, 0, 0, 0, 0, 0];   // Builder(false) ignores them, quad() s
 export const JUMPS = [
   { id: 'chicopee', name: 'Chicopee Ski Hill', over: 'down the groomed slope from the top of Chicopee, toward the ponds',
     sx: 4318, sz: 2048, x: 4480, z: 1930, H: 3, deg: 24, land: 130 },
-  { id: 'ykf', name: 'YKF Runway', over: 'a kicker on the Region of Waterloo International Airport\'s main runway',
-    sx: 7281, sz: -745, x: 7521, z: -564, H: 2.4, deg: 20, land: 160 },
+  { id: 'ykf', name: 'YKF Fence Line', over: 'the open fields along the airport\'s runway fence, with the jets going over',
+    sx: 7628, sz: -1209, x: 7728, z: -1255, H: 3, deg: 26, land: 90 },
   { id: 'freeport', name: 'Freeport Leap', over: 'the Grand River at Freeport, bank to bank, below WRHN @ Chicopee',
     sx: 5100, sz: 3220, x: 5164, z: 3284, H: 3, deg: 26, land: 90 },
   { id: 'doon', name: 'Doon Gorge', over: 'the Grand River channel at Doon, beside the golf course',
