@@ -465,6 +465,8 @@ export const TYPES = {
   // Canada Post's: a Ford Transit 148" medium roof (vanGeo 'transit'; 5.98 x 2.06 x 2.56 m)
   postvan: deriveSpec({ wheelbase: 3.76,len: 5.98, wid: 2.06, wheelR: 0.36, sill: 0.42, belt: 1.30, roof: 2.56, cab: [-0.44, 0.30], hand: 'van', van: 'transit', fleet: 'post', livery: 0xf3f4f5, boxy: 2, mass: 1.5, acc: 2.9, topKph: 155, brakeM: 47, latG: 0.73 }),
   purovan: deriveSpec({ wheelbase: 3.5,len: 5.26, wid: 2.00, wheelR: 0.35, sill: 0.36, belt: 1.10, roof: 2.28, cab: [-0.44, 0.30], hand: 'van', fleet: 'puro', livery: 0xf3f4f5, boxy: 2, mass: 1.5, acc: 2.9, topKph: 155, brakeM: 47, latG: 0.73 }),
+  // Auto KW: an Amazon delivery service partner's van (vanLivery 'amazon')
+  amzvan: deriveSpec({ wheelbase: 3.5,len: 5.26, wid: 2.00, wheelR: 0.35, sill: 0.36, belt: 1.10, roof: 2.28, cab: [-0.44, 0.30], hand: 'van', fleet: 'amazon', livery: 0xf3f4f5, boxy: 2, mass: 1.5, acc: 3.2, topKph: 150, brakeM: 47, latG: 0.73 }),
   taxi: deriveSpec({ rwd: true, wheelbase: 2.98,len: 4.76, wid: 1.85, wheelR: 0.33, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', taxi: true, livery: 0xf1f2f2, mass: 1.0, acc: 3.8, topKph: 195, brakeM: 41, latG: 0.85 }),
   police: deriveSpec({ rwd: true, wheelbase: 2.95,len: 4.98, wid: 1.92, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', police: true, livery: 0xf2f4f6, finish: 'twotone', paintVC: true, mass: 1.1, acc: 5.6, topKph: 230, brakeM: 37, latG: 0.93 }),
   // the articulated bus: the front section and the trailing rear (buildArticFront)
@@ -517,6 +519,28 @@ export const TYPES = {
   // crop (crops.js) but collides with nothing.
   tractor: deriveSpec({ wheelbase: 2.8, len: 4.9, wid: 2.50, wheelR: 0.92, sill: 0.62, belt: 1.92, roof: 3.0, cab: [-0.3, 0.3], hand: 'tractor', ag: true, offroad: true, diesel: true, mass: 7.5, acc: 2.6, topKph: 40, brakeM: 34, latG: 0.55, minTurnR: 5.2, showR: 500 }),
   combine: deriveSpec({ wheelbase: 3.9, len: 8.6, wid: 3.50, wheelR: 0.95, sill: 0.9, belt: 2.6, roof: 3.95, cab: [0.25, 0.35], hand: 'combine', ag: true, combine: true, rws: true, offroad: true, diesel: true, mass: 16, acc: 1.5, topKph: 25, brakeM: 40, latG: 0.42, minTurnR: 6.0, showR: 700 }),
+
+  // Auto KW, more car variety. Real figures where it matters (L x W x H, kerb mass).
+  // Smart ForTwo: 2.69 x 1.66 x 1.55, 900 kg, 0-100 ~13 s, a 6.95 m turning circle
+  smart: deriveSpec({ rwd: true, wheelbase: 1.91, len: 2.95, wid: 1.66, wheelR: 0.27, sill: 0.28, belt: 0.94, roof: 1.55, cab: [-0.20, 0.15], hand: 'smart', mass: 0.55, acc: 3.1, topKph: 150, brakeM: 44, latG: 0.72, minTurnR: 3.3 }),
+  // Volvo 740 / 940 estate: 4.85 x 1.76 x 1.42, 1,400 kg, a 2.3 l four, 0-100 ~11 s, rear drive, soft
+  volvo: deriveSpec({ rwd: true, wheelbase: 2.75, len: 4.85, wid: 1.76, wheelR: 0.33, sill: 0.34, belt: 1.00, roof: 1.50, cab: [-0.30, 0.15], hand: 'volvo', liveries: [0x9a9fa3, 0x1b2e57, 0x6e1d22, 0xcfcab8, 0x2f4a3a, 0x9a9fa3, 0x1a1b1d], mass: 1.2, acc: 2.7, topKph: 175, brakeM: 46, latG: 0.72 }),
+  // a lifted Ram / F-150 on 35s: 6.0 x 2.12 x 2.2 m, 2,600 kg, a Hemi, a 6" lift
+  lifted: deriveSpec({ rwd: true, wheelbase: 3.68, len: 5.98, wid: 2.12, wheelR: 0.54, sill: 0.68, belt: 1.46, roof: 2.20, cab: [-0.15, 0.22], hand: 'lifted', engine: 'v8', offroad: true, liveries: [0x111214, 0x16171a, 0x8f1218, 0x5b5f63, 0xf2f3f1, 0x2c3b2e, 0xb85f0c], mass: 1.85, acc: 5.2, topKph: 180, brakeM: 52, latG: 0.62 }),
+  // a farm truck with a load of small square bales: old, tired springs, 3-litre of V8 asked for more
+  farmtruck: deriveSpec({ rwd: true, wheelbase: 3.68, len: 5.92, wid: 2.05, wheelR: 0.42, sill: 0.48, belt: 1.26, roof: 1.98, cab: [-0.15, 0.22], hand: 'pickup', hay: true, susp: 'farm', liveries: [0x6d0f14, 0x2c3b2e, 0xe9e8e2, 0x243b6b, 0x7a6a55, 0x5a0d10], mass: 1.9, acc: 3.0, topKph: 135, brakeM: 56, latG: 0.62 }),
+  // a stretch limousine (Town Car, 7.0 m, 2,700 kg): floaty, long, slow to turn
+  limo: deriveSpec({ rwd: true, wheelbase: 4.88, len: 6.96, wid: 1.90, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.26, 0.10], hand: 'limo', livery: 0x0b0b0d, mass: 1.8, acc: 2.6, topKph: 165, brakeM: 52, latG: 0.58, minTurnR: 7.4 }),
+  // a hearse (Cadillac coach, 5.96 m): black mostly, dignified
+  hearse: deriveSpec({ rwd: true, wheelbase: 3.88, len: 5.96, wid: 1.90, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.62, cab: [-0.26, 0.10], hand: 'hearse', liveries: [0x0b0b0d, 0x0b0b0d, 0x0b0b0d, 0x1b1d20, 0xbcc2c8], mass: 1.65, acc: 3.2, topKph: 175, brakeM: 46, latG: 0.62, minTurnR: 6.2 }),
+  // a stainless gull-wing coupe from 1981: 4.27 x 1.85 x 1.14, 1,230 kg, a 130 hp V6 -- a lot of looks, 0-100 ~10 s
+  delorean: deriveSpec({ rwd: true, wheelbase: 2.63, len: 4.27, wid: 1.85, wheelR: 0.33, sill: 0.22, belt: 0.90, roof: 1.19, cab: [-0.24, 0.06], hand: 'delorean', engine: 'v6', finish: 'steel', livery: 0xb9bdc1, delorean: true, mass: 0.95, acc: 3.5, topKph: 190, brakeM: 40, latG: 0.85 }),
+  // a Zamboni ice resurfacer (4.9 m): governed at 20 km/h, a heavy snow tank, a tight turning circle
+  zamboni: deriveSpec({ wheelbase: 2.6, len: 4.9, wid: 2.12, wheelR: 0.38, sill: 0.3, belt: 1.0, roof: 2.06, cab: [-0.1, 0.3], hand: 'zamboni', livery: 0xf2f4f6, zamboni: true, engine: 'v8work', mass: 3.2, acc: 1.3, topKph: 20, brakeM: 6, latG: 0.45, minTurnR: 4.2 }),
+  // an ice-cream truck: a step-van, 6.2 m, music on a loop
+  icecream: deriveSpec({ wheelbase: 3.5, len: 6.2, wid: 2.20, wheelR: 0.40, sill: 0.5, belt: 1.4, roof: 2.55, cab: [0.14, 0.46], cargo: 2.2, hand: 'icecream', livery: 0xf6efd9, icecream: true, boxy: 2, mass: 2.2, acc: 3.0, topKph: 110, brakeM: 50, latG: 0.66 }),
+  // the Region's plough truck: a tandem-ish dump truck, orange, blade down; winter weather only
+  snowplow: deriveSpec({ wheelbase: 4.3, len: 7.6, wid: 2.50, wheelR: 0.50, sill: 0.62, belt: 1.55, roof: 2.75, cab: [0.14, 0.46], cargo: 2.3, hand: 'plow', livery: 0xe8660c, diesel: true, plow: true, boxy: 2, mass: 5.0, acc: 2.1, topKph: 100, brakeM: 58, latG: 0.58, minTurnR: 7.0 }),
 };
 
 /**
@@ -3004,6 +3028,24 @@ function buildPickup(spec, paint, trim, matte) {
     trim.quad([-cx + 0.07, gy0, zb], [cx - 0.07, gy0, zb], [cx - 0.09, gy1 + 0.04, zb], [-cx + 0.09, gy1 + 0.04, zb], [0, 0, -1], UV, GLASS_TINT);
     trim.box(0, y1 - 0.045, zb - 0.006, 0.26, 0.035, 0.012, 0, TAILC);
     matte.box(0, y0 - 0.004, mid, cx * 2 + 0.01, 0.012, len + 0.01, 0, PLASTIC);    // the seal on the rails
+  }
+  // Auto KW: a LOAD OF HAY (`spec.hay`, the farm truck): small square bales
+  // stacked three high behind the cab, roped down, leaning a little.
+  if (spec.hay) {
+    // bales 0.46 wide x 0.90 long x 0.36 high, three across the bed, two rows
+    // of them, three layers (every other layer turned), a gap round each
+    const bw = 0.46, bl = 0.90, bh = 0.36, zf = bedF - 0.10, zr = bedR + 0.10, rows = Math.max(1, Math.floor((zf - zr) / bl));
+    const HAY = [[0.86, 0.68, 0.22], [0.55, 0.40, 0.10], [0.95, 0.80, 0.36], [0.68, 0.55, 0.16]];
+    const zc0 = (zf + zr) / 2 - ((rows - 1) * bl) / 2;
+    for (let layer = 0; layer < 3; layer++) {
+      for (let r = 0; r < rows; r++) for (let c = -1; c <= 1; c++) {
+        if (layer === 2 && c === 1) continue;
+        const h = (r * 5 + c * 3 + layer * 7 + 20) % 4, lean = ((h % 3) - 1) * 0.015;
+        matte.box(c * (bw + 0.02) + lean, bedY + railH * 0.3 + layer * (bh + 0.012), zc0 + r * bl, bw - 0.04, bh - 0.03, bl - 0.05, lean * 0.8, HAY[h]);
+      }
+    }
+    const top = bedY + railH * 0.3 + 3 * (bh + 0.012);
+    for (const z of [zc0 - bl * 0.25, zc0 + (rows - 1) * bl + bl * 0.25]) matte.box(0, top - 0.02, z, 1.45, 0.018, 0.03, 0, [0.30, 0.22, 0.10]);   // the rope
   }
   return wheels;
 }
@@ -7247,6 +7289,19 @@ function vanLivery(spec, trim, matte, geo) {
   const text = (sx, z, y, h, t, col, o = {}) => dotText(matte, t, { c: [sx * (fx(z, y) + (o.d || 0.012)), y, z], u: [0, 0, -sx], h, col, ...o });
   const z0 = tail + 0.12, z1 = WIN0 - 0.10, zm = (z0 + z1) / 2;
   for (const sx of [-1, 1]) {
+    if (spec.fleet === 'amazon') {
+      // a DSP van: the blue band under the glass, the wordmark and the arrow
+      const AMZ = [0.0, 0.33, 0.55], AMZO = [1.0, 0.6, 0.05];
+      panel(sx, z0, z1, 0.62, 0.78, AMZ);
+      text(sx, zm + (sx > 0 ? -0.1 : 0.1), 1.30, 0.36, 'amazon', [0.04, 0.05, 0.07], { d: 0.012, bold: 0.6 });
+      const zt = zm + (sx > 0 ? -0.1 : 0.1), sw = dotCells('amazon') * (0.36 / 7), dr = sx > 0 ? -1 : 1, st = zt - dr * sw / 2;
+      for (let k = 0; k < 6; k++) {   // the smile: a shallow arc under the word, rising to a tip
+        const t0 = k / 6, t1 = (k + 1) / 6, y0 = 1.09 - 0.07 * Math.sin(Math.PI * t0 * 0.9), y1 = 1.09 - 0.07 * Math.sin(Math.PI * t1 * 0.9);
+        const z0_ = st + dr * sw * 0.85 * t0, z1_ = st + dr * sw * 0.85 * t1;
+        matte.quad([sx * (fx(z0_, y0) + 0.012), y0, z0_], [sx * (fx(z1_, y1) + 0.012), y1, z1_],
+          [sx * (fx(z1_, y1 + 0.03) + 0.012), y1 + 0.03, z1_], [sx * (fx(z0_, y0 + 0.03) + 0.012), y0 + 0.03, z0_], [sx, 0, 0], UV, AMZO);
+      }
+    }
     if (spec.fleet === 'puro') {
       // the slashes, then the wordmark, read from the front of the van back
       const y = 1.42, h = 0.34, w = dotCells('Purolator') * (h / 7);
@@ -11100,6 +11155,245 @@ function buildOpp(spec, paint, trim, matte) {
   return wheels.map((w) => [...w.slice(0, 5), w[5], w[6], 'black']);
 }
 
+// ---------------------------------------------------------------------------
+// Auto KW, "more car variety": the Region's odd ones out. Every one of them is
+// an existing authored body, re-proportioned or dressed (stretchBuild,
+// liftBuild, scaledBuild, SMALL_LOOKS, TRUCK_LOOKS), so each costs what its
+// parent costs: three draws, ~7-11k triangles, and the far LOD / pooled
+// bodies come with it for nothing (farLod is derived from the geometry).
+// ---------------------------------------------------------------------------
+
+/**
+ * Cut a body at z = cutZ and pull everything behind it back by `add`: the
+ * cabin gets longer between the front doors and the rear axle's arch. The
+ * result is re-centred, and the wheels behind the cut move with the tail.
+ * (A stretch limousine, a hearse.) The builder is given the SHORT spec.
+ */
+function stretchBuild(build, cutZ, add, refLen, refWid) {
+  return (spec, paint, trim, matte) => {
+    const bs = [paint, trim, matte, matte.crew].filter(Boolean), from = bs.map((b) => b.pos.length);
+    const wheels = build({ ...spec, len: refLen, wid: refWid }, paint, trim, matte);
+    bs.forEach((b, j) => {
+      for (let i = from[j]; i < b.pos.length; i += 3) b.pos[i + 2] += (b.pos[i + 2] < cutZ ? -add : 0) + add / 2;
+    });
+    return wheels.map((wl) => [wl[0], wl[1], wl[2] + (wl[2] < cutZ ? -add : 0) + add / 2, ...wl.slice(3)]);
+  };
+}
+
+/**
+ * Raise a body `dy` on bigger tyres (a lifted full-size pickup). The parent is
+ * built at its own wheel radius `r0`, everything goes up by dy, the frame and
+ * axles fill the daylight, and the wheels are the spec's.
+ */
+function liftBuild(build, dy, r0) {
+  return (spec, paint, trim, matte) => {
+    const bs = [paint, trim, matte, matte.crew].filter(Boolean), from = bs.map((b) => b.pos.length);
+    const wheels = build({ ...spec, wheelR: r0, roof: spec.roof - dy }, paint, trim, matte);
+    bs.forEach((b, j) => { for (let i = from[j]; i < b.pos.length; i += 3) b.pos[i + 1] += dy; });
+    const wr = spec.wheelR, zs = wheels.map((w) => w[2]), zf = Math.max(...zs), zr = Math.min(...zs);
+    // frame rails, the diffs and the axles, black, under the lifted body
+    for (const sx of [-1, 1]) matte.box(sx * 0.46, 0.34, (zf + zr) / 2, 0.12, 0.26, zf - zr + 0.9, 0, DEEP);
+    for (const z of [zf, zr]) {
+      matte.box(0, wr - 0.07, z, 1.55, 0.14, 0.14, 0, DEEP);
+      matte.box(0, wr - 0.16, z, 0.34, 0.30, 0.34, 0, [0.09, 0.09, 0.10]);
+    }
+    matte.box(0, 0.42, (zf + zr) / 2, 0.22, 0.14, zf - zr, 0, DEEP);          // driveshaft
+    return wheels.map((wl) => [wl[0] + Math.sign(wl[0]) * 0.03, wr, wl[2], wr, wl[4] * 1.18, ...wl.slice(5)]);
+  };
+}
+
+// The Volvo 740 / 940 estate: a box. Square shoulders, a flat bonnet, an
+// upright windscreen and a near-vertical tailgate under a flat roof on rails.
+SMALL_LOOKS.volvo = {
+  zF: 1.33, zR: -1.42,                         // 2.75 m wheelbase on 4.85 m
+  halfW: [[-2.425, 0.93], [-2.30, 0.985], [-1.42, 1.00], [-0.50, 0.985], [0.50, 0.985], [1.33, 1.00], [2.20, 0.985], [2.425, 0.93]],
+  sillY: [[-2.425, 0.44], [-2.20, 0.37], [-0.60, 0.34], [0.60, 0.34], [2.10, 0.37], [2.425, 0.42]],
+  beltY: [[-2.425, 1.00], [-2.20, 1.00], [-1.40, 1.00], [-0.50, 1.00], [0.50, 1.00], [1.10, 0.98], [1.80, 0.93], [2.20, 0.90], [2.425, 0.88]],
+  tuckAt: [[-2.425, 0.95], [-1.42, 0.97], [-0.60, 0.94], [0.60, 0.94], [1.33, 0.97], [2.425, 0.95]],
+  topAt: [[-2.425, 0.96], [-2.30, 0.97], [-1.20, 0.97], [1.00, 0.97], [1.80, 0.95], [2.425, 0.90]],
+  core: { archR: 0.50, archGap: 0.05, archPow: 2.4, creaseAt: 0.62, tumble: 0.97, deckDrop: 0.016, lipOut: 0.030, endRound: 0.07, endMin: 0.94 },
+  tw: 0.205,
+  gh: {
+    cowlZ: 1.12, scrZ: 0.24, backZ: -2.18, rearZ: -2.36, rearY: 1.02,
+    wScrB: 0.80, wScrT: 0.74, wRoof: 0.755, wRearT: 0.74, wRear: 0.76, wGlassT: 0.745, wGlassB: 0.79,
+    sgFB: [1.00, 1.00], sgFT: [0.26, 1.455], sgRT: [-2.12, 1.452], sgRB: [-2.30, 1.03],
+    bPillars: [0.28, 0.72], rearWrap: 0.012, rows: [-0.20, -1.05],
+  },
+  doors: [1.02, -0.02, -1.12],
+  rails: true,
+};
+
+// A Smart ForTwo: the city car, cut down to 2.95 m. Its body above the sills
+// keeps the compact's height, so it stands tall and short.
+const buildSmart = scaledBuild((s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.compact), 3.74, 1.68, [0.80, 1.08, 1.48]);
+
+// The stretch limousine: a Town Car with 1.9 m put in behind the front doors.
+const buildLimo = (spec, paint, trim, matte) => {
+  const wheels = stretchBuild(buildSedan, -0.10, 1.9, 5.06, 1.90)(spec, paint, trim, matte);
+  const zc = -0.10 - 1.9 / 2 + 0.95;           // the middle of the new length
+  for (const sx of [-1, 1]) {
+    // the extra door's shut lines and handle, and a chrome waist strip the length of it
+    for (const z of [-0.55, -1.25]) matte.box(sx * 0.955, 0.80, z, 0.010, 0.42, 0.014, 0, [0.07, 0.07, 0.08]);
+    trim.tube([sx * 0.96, 0.98, -0.88], [sx * 0.96, 0.98, -0.72], 0.013, 6, CHROME, true);
+    trim.box(sx * 0.958, 0.66, zc - 0.3, 0.010, 0.024, 3.6, 0, CHROME);
+  }
+  return wheels;
+};
+
+// The hearse: a Cadillac-style coach, 0.9 m longer and with the roof carried
+// back flat to a vertical tail over a glass-sided casket bay with landau irons.
+const buildHearse = (spec, paint, trim, matte) => {
+  const wheels = stretchBuild(buildSedan, -0.10, 0.9, 5.06, 1.90)(spec, paint, trim, matte);
+  const tail = -spec.len / 2, z0 = -0.95, z1 = tail + 0.10, mid = (z0 + z1) / 2, hw = 0.80;
+  const yb = 0.98, yt = spec.roof + 0.02;
+  paint.box(0, yb - 0.08, mid, hw * 2 + 0.06, yt - yb + 0.08, z0 - z1, 0, WHITE);          // the coach roof's box
+  paint.box(0, yt, mid, hw * 2 - 0.10, 0.03, z0 - z1 - 0.06, 0, WHITE);
+  const gy0 = yb + 0.10, gy1 = yt - 0.14;
+  for (const sx of [-1, 1]) {
+    trim.quad([sx * (hw + 0.032), gy0, z0 - 0.40], [sx * (hw + 0.032), gy0, z1 + 0.30], [sx * (hw + 0.032), gy1, z1 + 0.40], [sx * (hw + 0.032), gy1, z0 - 0.30], [sx, 0, 0], UV4, GLASS_TINT);
+    for (const z of [z0 - 0.35, (z0 + z1) / 2, z1 + 0.35]) trim.tube([sx * (hw + 0.045), yb + 0.10, z], [sx * (hw + 0.045), yt - 0.10, z - 0.12], 0.016, 6, CHROME, true);   // landau irons
+    trim.box(sx * (hw + 0.036), yb + 0.02, mid, 0.010, 0.030, z0 - z1, 0, CHROME);
+  }
+  const zb = z1 - 0.004;
+  trim.quad([-hw + 0.08, gy0, zb], [hw - 0.08, gy0, zb], [hw - 0.10, gy1 + 0.02, zb], [-hw + 0.10, gy1 + 0.02, zb], [0, 0, -1], UV4, GLASS_TINT);
+  for (const sx of [-1, 1]) {
+    trim.box(sx * (hw - 0.06), yb + 0.02, zb - 0.004, 0.10, 0.26, 0.014, 0, TAILC);        // tall tail lamps
+    trim.box(sx * (hw - 0.06), yb + 0.30, zb - 0.004, 0.10, 0.05, 0.014, 0, AMBER);
+  }
+  plateBox(trim, 0, yb - 0.14, zb - 0.01, 0.40, 0.11, 0.02);
+  return wheels;
+};
+
+// The DeLorean-alike: the sports coupe at 4.27 m with a brushed-steel skin
+// (finish 'steel'), the engine louvres over the tail and a black flank panel.
+const buildDelorean = (spec, paint, trim, matte) => {
+  const wheels = scaledBuild(buildSports, 4.42, 1.92, [0.30, 0.87, 1.32])(spec, paint, trim, matte);
+  const tail = -spec.len / 2;
+  for (let i = 0; i < 7; i++) matte.box(0, 0.98 + i * 0.012, tail + 0.62 + i * 0.075, 1.30 - i * 0.02, 0.012, 0.04, 0, DEEP);   // louvres
+  for (const sx of [-1, 1]) matte.box(sx * 0.93, 0.42, -0.2, 0.012, 0.12, 2.2, 0, [0.05, 0.05, 0.06]);
+  return wheels;
+};
+
+// The ice-cream truck and the snowplow: the box truck's cab and chassis with
+// their own bodies; the Amazon van's livery goes on the generic van (vanLivery).
+TRUCK_LOOKS.icecream = { ovF: 1.10, cabLen: 1.90, gap: 0.10, boxTop: 2.85, boxY: 0.98, packer: false };
+TRUCK_LOOKS.plow = { ovF: 1.20, cabLen: 2.00, gap: 0.13, boxTop: 2.30, boxY: 1.12, packer: false };
+const IC_PINK = [0.95, 0.42, 0.62], IC_BLUE = [0.20, 0.45, 0.82], IC_CREAM = [0.96, 0.88, 0.62], IC_BROWN = [0.62, 0.38, 0.16];
+function buildIceCream(spec, paint, trim, matte) {
+  const S = TRUCK_LOOKS.icecream;
+  const wheels = buildTruck(spec, paint, trim, matte, S);
+  const W = spec.wid / 2, nose = spec.len / 2, tail = -nose, top = S.boxTop, y0 = S.boxY;
+  const bz1 = nose - S.cabLen - S.gap, zm = (tail + bz1) / 2;
+  for (const sx of [-1, 1]) {
+    const X = W + 0.012, u = [0, 0, -sx];
+    flankPaneT(matte, sx, X, [[tail + 0.1, y0 + 0.06], [bz1 - 0.1, y0 + 0.06], [bz1 - 0.1, y0 + 0.30], [tail + 0.1, y0 + 0.30]], IC_PINK);
+    flankPaneT(matte, sx, X, [[tail + 0.1, top - 0.34], [bz1 - 0.1, top - 0.34], [bz1 - 0.1, top - 0.08], [tail + 0.1, top - 0.08]], IC_BLUE);
+    if (sx < 0) {
+      // the serving hatch on the kerb side: a window, its counter and a striped awning over it
+      const za = zm - 0.55, zb = zm + 0.55, ya = 1.45, yb = 2.18;
+      flankPaneT(trim, sx, X + 0.002, [[za, ya], [zb, ya], [zb, yb], [za, yb]], GLASS_TINT);
+      matte.box(sx * (W + 0.10), ya - 0.04, zm, 0.22, 0.05, 1.30, 0, [0.80, 0.80, 0.82]);
+      for (let k = 0; k < 6; k++) {
+        const z0 = za - 0.1 + k * 0.2;
+        matte.quad([sx * (W + 0.004), yb + 0.02, z0], [sx * (W + 0.004), yb + 0.02, z0 + 0.2], [sx * (W + 0.30), yb - 0.20, z0 + 0.2], [sx * (W + 0.30), yb - 0.20, z0], [sx * 0.4, 0.9, 0], UV4, k % 2 ? [0.97, 0.97, 0.95] : IC_PINK);
+      }
+      // the menu board beside it
+      flankPaneT(matte, sx, X + 0.002, [[bz1 - 0.35, 1.35], [bz1 - 0.35 - 0.55, 1.35], [bz1 - 0.35 - 0.55, 2.10], [bz1 - 0.35, 2.10]], [0.10, 0.12, 0.18]);
+      for (let k = 0; k < 5; k++) flankPaneT(matte, sx, X + 0.004, [[bz1 - 0.42, 1.45 + k * 0.13], [bz1 - 0.82, 1.45 + k * 0.13], [bz1 - 0.82, 1.50 + k * 0.13], [bz1 - 0.42, 1.50 + k * 0.13]], k % 2 ? IC_PINK : [0.95, 0.95, 0.9]);
+    } else {
+      // the driver's side: a cone painted on the box, scoops and a swirl
+      const cz = zm + 0.2;
+      flankPaneT(matte, sx, X, [[cz - 0.30, 1.78], [cz + 0.30, 1.78], [cz, 0.98], [cz, 0.98]], IC_BROWN);
+      const sc = (cy, r, col) => {
+        const pts = [];
+        for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; pts.push([cz + Math.cos(a) * r, cy + Math.sin(a) * r]); }
+        for (let k = 0; k < 8; k += 2) flankPaneT(matte, sx, X + 0.002, [pts[k], pts[(k + 1) % 8], pts[(k + 2) % 8], [cz, cy]], col);
+      };
+      sc(1.98, 0.32, IC_PINK); sc(2.28, 0.26, IC_CREAM);
+    }
+    dotText(matte, 'ICE CREAM', { c: [sx * (X + 0.004), top - 0.20, zm], u, h: 0.17, col: [0.98, 0.98, 0.98], bold: 0.6 });
+    dotText(matte, 'SOFT SERVE', { c: [sx * (X + 0.004), y0 + 0.18, zm], u, h: 0.14, col: [0.98, 0.98, 0.98], bold: 0.5 });
+  }
+  // the roof: a fibreglass cone with two scoops, a loudspeaker horn
+  const ry = top + 0.005, cz = zm + 0.1;
+  matte.tube([0, ry + 0.62, cz], [0, ry, cz], 0.20, 12, IC_BROWN, true);
+  matte.tube([0, ry + 0.62, cz], [0, ry + 0.90, cz], 0.255, 12, IC_PINK, true);
+  matte.tube([0, ry + 0.88, cz], [0, ry + 1.10, cz], 0.20, 12, IC_CREAM, true);
+  matte.tube([0, ry + 1.08, cz], [0, ry + 1.26, cz], 0.07, 8, IC_PINK, true);
+  matte.box(0, ry, tail + 0.55, 0.50, 0.24, 0.30, 0, [0.55, 0.57, 0.60]);
+  for (const sx of [-1, 1]) trim.box(sx * 0.82, top + 0.02, bz1 + 0.10, 0.16, 0.08, 0.10, 0, AMBER);
+  return wheels;
+}
+
+const PLOW_ORANGE = [0.95, 0.52, 0.03];
+function buildPlow(spec, paint, trim, matte) {
+  const S = TRUCK_LOOKS.plow;
+  const wheels = buildTruck(spec, paint, trim, matte, S);
+  const nose = spec.len / 2, tail = -nose, W = spec.wid / 2;
+  // --- the plough: a curved moldboard on its push frame, cutting edge on the road
+  const zb = nose + 1.18, wb = 1.55;
+  for (let i = 0; i < 8; i++) {
+    const x0 = -wb + (i * wb * 2) / 8, x1 = x0 + (wb * 2) / 8;
+    const back = (x) => 0.10 * (x / wb) * (x / wb);                                // the blade bows back at its tips
+    hexa(matte, [[x0, 0.16, zb - 0.06 - back(x0)], [x1, 0.16, zb - 0.06 - back(x1)], [x1, 0.16, zb - back(x1)], [x0, 0.16, zb - back(x0)],
+      [x0, 1.22, zb - 0.42 - back(x0)], [x1, 1.22, zb - 0.42 - back(x1)], [x1, 1.22, zb - 0.36 - back(x1)], [x0, 1.22, zb - 0.36 - back(x0)]], PLOW_ORANGE);
+  }
+  matte.box(0, 0.10, zb - 0.02, wb * 2 + 0.02, 0.12, 0.12, 0, [0.05, 0.05, 0.06]);         // the cutting edge
+  for (const sx of [-1, 1]) {
+    matte.tube([sx * 0.55, 0.60, zb - 0.50], [sx * 0.62, 0.62, nose - 0.2], 0.05, 6, DEEP, true);    // push arms
+    matte.tube([sx * 0.30, 1.12, zb - 0.60], [sx * 0.30, 0.95, nose - 0.1], 0.04, 6, CHROME, true);  // hydraulic rams
+    trim.box(sx * (wb - 0.12), 0.95, zb - 0.45, 0.08, 0.20, 0.04, 0, LAMP);             // blade marker lights
+    matte.box(sx * (wb - 0.05), 1.22, zb - 0.43, 0.10, 0.10, 0.10, 0, [0.95, 0.95, 0.9]);
+  }
+  // --- the beacon bar on the cab, the spreader on the tail
+  for (let i = -2; i <= 2; i++) trim.box(i * 0.2, spec.roof, nose - 0.9, 0.16, 0.12, 0.14, 0, AMBER);
+  matte.box(0, spec.roof - 0.02, nose - 0.9, 1.1, 0.04, 0.22, 0, DEEP);
+  matte.box(0, S.boxTop - 0.08, tail + 0.35, W * 2 - 0.2, 0.10, 0.7, 0, [0.45, 0.46, 0.48]);   // salt spreader hopper rim
+  matte.tube([0, 0.98, tail - 0.18], [0, 1.0, tail - 0.20], 0.30, 14, [0.10, 0.10, 0.11], true);
+  for (const sx of [-1, 1]) trim.box(sx * (W - 0.2), 1.45, tail - 0.025, 0.14, 0.10, 0.02, 0, AMBER);
+  const bz1 = nose - S.cabLen - S.gap;
+  for (const sx of [-1, 1]) {
+    dotText(matte, 'REGION OF WATERLOO', { c: [sx * (W + 0.012), 1.82, (tail + bz1) / 2], u: [0, 0, -sx], h: 0.13, col: [0.06, 0.06, 0.08], bold: 0.5 });
+    flankPaneT(matte, sx, W + 0.01, [[tail + 0.1, 1.22], [bz1 - 0.1, 1.22], [bz1 - 0.1, 1.34], [tail + 0.1, 1.34]], [0.08, 0.08, 0.1]);
+  }
+  return wheels;
+}
+
+
+// The Zamboni: an ice resurfacer (the Aud's, the rinks'): a low hull, the
+// snow tank behind the open cab, the conditioner across the tail.
+const ZB_BLUE = [0.05, 0.22, 0.62];
+function buildZamboni(spec, paint, trim, matte) {
+  const wr = spec.wheelR, nose = spec.len / 2, tail = -nose;
+  const zF = 1.35, zR = zF - spec.wheelbase;
+  paint.box(0, 0.36, 0.30, 1.64, 0.62, 3.8, 0, WHITE);                       // the hull
+  paint.box(0, 0.36, nose - 0.45, 1.50, 0.52, 0.9, 0, WHITE);                // the nose
+  paint.box(0, 0.98, tail + 1.3, 1.72, 0.80, 2.4, 0, WHITE);                 // the snow tank
+  paint.box(0, 1.78, tail + 1.3, 1.52, 0.06, 2.2, 0, WHITE);                 // its lid
+  matte.box(0, 1.84, tail + 1.5, 0.5, 0.18, 0.5, 0, [0.35, 0.37, 0.40]);     // the hatch
+  // the cab: a roof on four posts, a screen, a seat on the driver's side
+  const cz0 = 0.15, cz1 = 1.30;
+  paint.box(0, 2.0, (cz0 + cz1) / 2, 1.62, 0.06, cz1 - cz0 + 0.2, 0, WHITE);
+  for (const sx of [-1, 1]) for (const z of [cz0, cz1]) matte.tube([sx * 0.76, 0.98, z], [sx * 0.76, 2.02, z], 0.03, 6, DEEP, true);
+  trim.quad([-0.74, 1.12, cz1 + 0.03], [0.74, 1.12, cz1 + 0.03], [0.70, 1.97, cz1 + 0.03], [-0.70, 1.97, cz1 + 0.03], [0, 0, 1], UV4, GLASS);
+  matte.box(0.38, 0.98, 0.45, 0.55, 0.16, 0.5, 0, [0.12, 0.12, 0.14]);        // seat
+  matte.box(0.38, 1.08, 0.2, 0.55, 0.55, 0.12, 0, [0.12, 0.12, 0.14]);
+  matte.box(0.3, 0.98, 1.08, 0.5, 0.22, 0.3, 0, [0.18, 0.19, 0.2]);           // the dash
+  for (let i = -1; i <= 1; i++) trim.box(i * 0.2, 2.06, 0.7, 0.13, 0.1, 0.12, 0, AMBER);   // beacon
+  // the conditioner and the blade across the tail
+  matte.box(0, 0.16, tail - 0.02, 1.95, 0.34, 0.60, 0, [0.30, 0.32, 0.35]);
+  matte.box(0, 0.06, tail - 0.30, 1.98, 0.10, 0.12, 0, [0.62, 0.64, 0.66]);
+  for (const sx of [-1, 1]) {
+    trim.box(sx * 0.62, 0.62, nose + 0.01, 0.30, 0.14, 0.04, 0, LAMP);                // lamps
+    trim.box(sx * 0.80, 0.42, tail + 0.04, 0.12, 0.2, 0.04, 0, TAILC);
+    flankPaneT(matte, sx, 0.826, [[-1.55, 0.50], [1.6, 0.50], [1.6, 0.66], [-1.55, 0.66]], ZB_BLUE);
+    dotText(matte, 'Zamboni', { c: [sx * 0.866, 1.40, tail + 1.3], u: [0, 0, -sx], h: 0.26, col: ZB_BLUE, bold: 0.7, slant: 0.2 });
+  }
+  trim.box(0, 0.40, nose - 0.02, 1.2, 0.08, 0.05, 0, [0.60, 0.62, 0.65]);
+  plateBox(trim, 0, 0.20, nose + 0.02, 0.40, 0.11, 0.02);
+  return [[-0.99, wr, zF, wr, 0.30], [0.99, wr, zF, wr, 0.30], [-0.99, wr, zR, wr, 0.30], [0.99, wr, zR, wr, 0.30]];
+}
+
 const HAND_BUILT = {
   plane: buildPlane, twin: buildTwin, jet: buildJet, biplane: buildBiplane, heli: buildHeli, fighter: buildFighter, jumbo: buildJumbo, saucer: buildSaucer,
   airliner: buildAirliner,
@@ -11135,6 +11429,10 @@ const HAND_BUILT = {
   civic: (s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.civic),
   jeep: buildJeep, dually: buildDually, uhaul: buildUhaul, semi: buildSemi, semiTrailer: buildSemiTrailer, opp: buildOpp,
   recycling: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.garbage),
+  // more car variety
+  smart: buildSmart, volvo: (s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.volvo),
+  lifted: liftBuild(buildPickup, 0.20, 0.42), limo: buildLimo, hearse: buildHearse, delorean: buildDelorean,
+  icecream: buildIceCream, plow: buildPlow, zamboni: buildZamboni,
 };
 
 /**
@@ -12459,13 +12757,24 @@ const SUSP = {
   van: { hz: 1.3, z: 0.3, up: 0.10, down: 0.08 },
   uhaul: { hz: 1.1, z: 0.3, roll: 1.3, pitch: 1.15, up: 0.10, down: 0.09 },
   semi: { hz: 0.95, z: 0.26, roll: 1.1, up: 0.09, down: 0.08 },
+  // more car variety: each its own ride
+  smart: { hz: 1.9, z: 0.40, roll: 1.3, pitch: 1.4, up: 0.07, down: 0.06 },           // short and twitchy
+  volvo: { hz: 1.15, z: 0.30, roll: 1.2, pitch: 1.15, up: 0.10, down: 0.08 },          // a soft old estate
+  lifted: { hz: 1.0, z: 0.26, roll: 1.45, pitch: 1.2, up: 0.16, down: 0.12 },          // the most roll on the road
+  farm: { hz: 1.1, z: 0.20, roll: 1.2, pitch: 1.1, up: 0.14, down: 0.10 },             // tired springs under bales
+  limo: { hz: 0.9, z: 0.50, roll: 0.9, pitch: 1.15, up: 0.08, down: 0.07 },            // a boat
+  hearse: { hz: 1.0, z: 0.45, roll: 0.95, pitch: 1.1, up: 0.08, down: 0.07 },
+  delorean: { hz: 1.6, z: 0.38, roll: 1.0, up: 0.07, down: 0.06 },
+  zamboni: { hz: 1.0, z: 0.3, roll: 1.2, up: 0.08, down: 0.07 },
+  icecream: { hz: 1.2, z: 0.28, roll: 1.4, pitch: 1.2, up: 0.10, down: 0.09 },
+  plow: { hz: 0.95, z: 0.26, roll: 1.1, pitch: 1.2, up: 0.09, down: 0.08 },
 };
 const SUSP_DEF = { hz: 1.4, z: 0.38 };
 // (everything else you drive -- a quad, a tractor, the buggy: the one spring all had)
 const SUSP_OFF = { kr: 95, cr: 9, roll: 1, pitch: 1 };
 function suspOf(spec) {
   if (spec._susp) return spec._susp;
-  const b = SUSP[spec.hand] || (spec.bus ? { hz: 1.15, z: 0.3, up: 0.08, down: 0.07 } : spec.cargo || spec.boxy ? SUSP.van : SUSP_DEF);
+  const b = SUSP[spec.susp || spec.hand] || (spec.bus ? { hz: 1.15, z: 0.3, up: 0.08, down: 0.07 } : spec.cargo || spec.boxy ? SUSP.van : SUSP_DEF);
   const w = 2 * Math.PI * b.hz, wr = w * 1.1, zr = (b.z || 0.38) + 0.08;
   spec._susp = {
     kh: w * w, ch: 2 * (b.z || 0.38) * w, kr: wr * wr, cr: 2 * zr * wr,

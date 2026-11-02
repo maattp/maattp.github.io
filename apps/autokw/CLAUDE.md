@@ -1754,6 +1754,61 @@ file and a guide disagree, this file wins.
     carprobe at the spawn): 208 draws / 934k tris before, 207 / 935k after
     (traffic's own noise); each vehicle is still 3 draws (an OPP on patrol
     +3, its light bar, as a unit's).
+- **More car variety: eleven odd ones out** (vehicles.js `stretchBuild` /
+  `liftBuild` / the block before HAND_BUILT, traffic.js `varietyOf`;
+  docs/variety-*.jpg). Every one is an existing authored body re-proportioned
+  or dressed, so each costs what its parent does (3 draws, 5-8k tris) and the
+  far LOD / far-far LOD / pooled bodies come for nothing (`farLod` derives
+  from the geometry; `FAR2_AS` folds the cars into the `compsedan` / `pickup`
+  pools). **Types:** `smart` (compact scaled to 2.95 m; 0.55 mass, 3.3 m
+  turning radius, twitchy ride), `volvo` (SMALL_LOOKS.volvo: a boxy 740/940
+  estate on rails, rear drive, soft and slow, tired-car colours),
+  `lifted` (`liftBuild(buildPickup, 0.20, 0.42)`: 0.54 m tyres, frame and axles
+  under a raised body, a Hemi, `offroad`, the most roll on the road),
+  `farmtruck` (the pickup with `spec.hay`: 3 x 2 x 3 small square bales roped
+  down; faded paints, loaded springs `susp: 'farm'`), `limo` (a Town Car
+  stretched 1.9 m behind the front doors: `stretchBuild` cuts at z and pulls
+  the tail back, wheels too), `hearse` (the same cut, 0.9 m, a flat roofed coach
+  with landau irons and a glass-sided bay), `delorean` (the sports car at
+  4.27 m in `finish: 'steel'` with tail louvres; a 130 hp V6: slow for its
+  looks), `amzvan` (the generic van + `vanLivery` 'amazon': blue band, wordmark
+  and smile), `icecream` (the box truck's cab under a cream box with a serving
+  hatch and awning, a menu board, a roof cone; **its jingle**, audio.js
+  `ic_jingle`, plays within 120 m of an AI one), `snowplow` (the box truck
+  with a dump body, a yellow moldboard on a push frame, beacon bar, spreader,
+  REGION OF WATERLOO; 100 km/h, heavy), `zamboni` (its own small builder, 1.6 k
+  tris: 20 km/h, 4.2 m turn). **The mix** (a hash of the spawn, never `this.R`, and
+  NOT a CIVILIAN_TYPES slot: kerbside parking hashes into that array and any
+  change moves every parked car): `varietyOf(tn, h, kerb)` turns a basic draw
+  into one of them (compact/hatch/civic -> smart 14 %, wagon -> volvo 45 %,
+  pickup -> lifted 20 % / farm 20 %, sedan -> limo or hearse 14 % each,
+  van -> amzvan 50 %; the kerb gets the first four, so they park too);
+  the DeLorean is a 1-in-150 draw (one about at most), the ice-cream truck
+  0.7 % (3 % on residential streets; one at most, never on a freeway), the
+  snowplough 16 % of non-residential draws **only while snow lies**
+  (`WXU.wxSnow` > 0.3: the ground cover, which builds ~45 s after the snow
+  starts), three at most. The Aud's Zamboni is a permanent `'apron'` vehicle
+  on the forecourt off East Ave (main.js, wrapped); drive it. `HEAVY` and
+  `LOT_TYPES` know the new names; audio `HAND_ENGINE` gives the icecream the V8,
+  the plough the big diesel, the smart the three-pot. `SUSP` has a ride for
+  each, and `spec.susp` picks one by name. **Verify:**
+  `node tools/kw/carshots.mjs <dir> tools/kw/varietyshots.json` (and
+  `varietyshots2.json`: stage close-ups, tris and sizes);
+  `VIEWS=tools/kw/varietyshow.json node tools/kw/kwshots.mjs <dir>` (the
+  fleet in a row at Conestoga, the Zamboni at the Aud);
+  `VIEW_PROBE_FILE=tools/kw/varietyprobe.js node tools/kw/kwshots.mjs <dir>`
+  (no NaN, wheels at y = r, both far LODs built, 4000 spawns clear vs 4000 in
+  snow -- the plough is 0 clear and ~300 in snow --, each type driven 120
+  frames, 0 errors). Spawn mix, clear (per 4000): smart 33, volvo 42, lifted 64,
+  farmtruck 61, limo 30, hearse 26, delorean 14, icecream 28, amzvan 59.
+  Phone cost: nothing per frame beyond three draws a car in view (the type
+  costs what its parent does); boot builds eleven more types (~2k-8k tris
+  each, ~45 ms on the Mac; the boot cache holds them after the first launch).
+  **Not done / approximate:** `farmtruck` bales are boxes with similar tones;
+  the limo and hearse are stretched sedans (no new door lines on the hearse);
+  the DeLorean has no gull wings; the Zamboni has no ice-resurfacing
+  behaviour; the plough's blade is not collidable (the body is); a Waterloo
+  Fire Rescue livery was not made (the fire engine is the generic red).
 - **The sights: src/kwsights.js** (`data/sights.json` from
   `tools/kw/build_sights.py`; docs/sights-*.jpg). Everything kwplaces.js
   does not: each landmark from its OSM footprint, found by centroid

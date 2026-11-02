@@ -1334,6 +1334,20 @@ const SOUNDS = {
       at += d + 0.03;
     }
   } },
+  // Auto KW, the ice-cream truck's loop: a music-box tune (a folk melody in the
+  // public domain), plinked on a bright tine, played through a small horn.
+  ic_jingle: { dur: 7.0, build(k, out, t, R) {
+    const bus = k.gain(0.9);
+    bus.connect(k.filt('bandpass', 2200, 0.7)).connect(out);
+    const N = [[784, 1], [784, 1], [784, 1], [659, 1], [784, 1], [880, 1], [784, 2], [659, 1], [587, 1], [587, 1], [587, 1], [523, 1], [587, 1], [659, 1], [587, 2],
+      [784, 1], [784, 1], [880, 1], [880, 1], [784, 1], [659, 1], [523, 2], [587, 1], [659, 1], [587, 1], [523, 3]];
+    let at = t;
+    for (const [f, d] of N) {
+      k.ping(bus, at, f, 0.28, 0.35);
+      k.ping(bus, at, f * 2.01, 0.07, 0.15);
+      at += d * 0.24;
+    }
+  } },
   tram_bell: { dur: 1.6, build(k, out, t, R) {
     for (const t0 of [t, t + 0.34]) {
       METAL.slice(0, 5).forEach((r, i) => k.ping(out, t0, 1046 * r, 0.32 / (1 + i * 0.8), 0.55 / (1 + i * 0.5), 0.0015));
@@ -1725,7 +1739,7 @@ export const ENGINES = {
 // minivans, the three-row SUVs and the OPP's Interceptor Utility. The
 // crossover, compact sedan and wagon stay on the i4, the pickups on the V8,
 // the EVs on the motor.
-const HAND_ENGINE = { civic: 'vtec', dually: 'pdiesel', semi: 'bigdiesel', uhaul: 'v8work', jeep: 'v6', minivan: 'v6', suv3: 'v6', opp: 'v6' };
+const HAND_ENGINE = { civic: 'vtec', dually: 'pdiesel', semi: 'bigdiesel', uhaul: 'v8work', icecream: 'v8work', plow: 'bigdiesel', smart: 'i3', jeep: 'v6', minivan: 'v6', suv3: 'v6', opp: 'v6' };
 
 export function selectEngine(spec) {
   if (!spec) return 'i4';
@@ -3966,7 +3980,7 @@ export class Audio {
     // --- the Belltown Hellcat ---------------------------------------------------------
     if (cars) this._hellcat(dt, t, s, L);
     // --- the Wienermobile toots its tune at you when it passes ---------------------
-    if (cars) this._wiener(dt, s, L);
+    if (cars) { this._wiener(dt, s, L); this._icecream(dt, s, L); }
 
     // --- the police helicopter -----------------------------------------------------
     const h = s.heli;
@@ -4213,6 +4227,20 @@ export class Audio {
    * and one flat-out upshift in five bangs too, placed on the car.
    */
   /** An AI Wienermobile within WIENER_TOOT m plays its horn, then not again for a while. */
+  /** An AI ice-cream truck within IC_HEAR m plays its jingle, then rests a few seconds. */
+  _icecream(dt, s, L) {
+    this._icT = (this._icT || 0) - dt;
+    if (this._icT > 0) return;
+    for (const v of s.cars) {
+      if (!v.spec.icecream || v.mode !== 'traffic' || v.dead) continue;
+      const dx = v.x - L.x, dz = v.z - L.z;
+      if (dx * dx + dz * dz > 120 * 120) continue;
+      this.play('ic_jingle', { gain: 0.9, x: v.x, y: v.y + 2.8, z: v.z, ref: 10, maxD: 220, jitter: false });
+      this._icT = 7.5 + Math.random() * 4;
+      return;
+    }
+  }
+
   _wiener(dt, s, L) {
     this._wmT = (this._wmT || 0) - dt;
     if (this._wmT > 0) return;

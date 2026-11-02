@@ -1,0 +1,7 @@
+[
+ {"name":"farmtruck","cars":[{"type":"farmtruck"}],"cam":{"eye":[7,2.5,-8],"at":[0,1.0,0]}},
+ {"name":"zamboni","cars":[{"type":"zamboni"}],"cam":{"eye":[6,2.6,6.5],"at":[0,1.0,0]}},
+ {"name":"zamboni2","cars":[{"type":"zamboni"}],"cam":{"eye":[-6,2.6,-6.5],"at":[0,1.0,0]}},
+ {"name":"amzvan","cars":[{"type":"amzvan"}],"cam":{"eye":[7,2.0,3],"at":[0,1.2,0]}},
+ {"name":"amzvan2","cars":[{"type":"amzvan"}],"cam":{"eye":[-7,2.0,3],"at":[0,1.2,0]}}
+]

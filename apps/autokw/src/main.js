@@ -1532,6 +1532,9 @@ function installShadowFade() {
   crops = new Crops({ scene, city, world, game, phone: ON_PHONE,
     get hud() { return hud; }, get audio() { return audio; }, get fx() { return fx; } });
   crops.spawnFarms(traffic);
+  // The Aud's Zamboni, on the forecourt off East Ave ('apron': never despawned,
+  // drivable at 20 km/h). Boot extra: wrapped so it can never stop the loop.
+  try { traffic.spawnAt(532, 575, -Math.PI / 2, 'zamboni', 0xf2f4f6, 'apron').vLong = 0; } catch (e) { console.warn('zamboni', e); }
   // Erbsville Kartway's rental karts and its race office (kartway.js)
   kartRace = new KartRace({ track: kartway, scene, city, traffic, player, get game() { return game; }, get hud() { return hud; }, get audio() { return audio; }, camera,
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Erbsville Kartway paid $${m}`), 600); } });
@@ -1988,6 +1991,7 @@ function installShadowFade() {
   window.__refreshJobs = refreshJobs;
   window.__dbg = { grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;
+  Object.defineProperty(window.__dbg, 'weather', { get() { return weather; } });   // (varietyprobe: the snowplough runs in snow only)
   window.__dbg.rail = kwrail;   // Auto KW: the heavy rail (kwrail.js)   // Auto KW: the harvest (crops.js)
   Object.defineProperty(window.__dbg, 'roadFeel', { get() { return roadFeel; } });
   window.__dbg.selectEngine = selectEngine;
