@@ -57,7 +57,7 @@ import { clamp, angleWrap, formatMoney } from './util.js';
 import { getaway, getawayState } from './getaway.js';
 import { Feel } from './grtbus.js';
 import { makeHumanoid, hailPose } from './peds.js';
-
+import { CHEAT } from './cheats.js';
 const KEY = 'autokw-story';
 const TRIGGER_R = 7.5;        // stopped this close to the beam: the chapter starts
 const BEAM_R = 700;           // the beam is drawn within this
@@ -636,7 +636,7 @@ export class Story {
   payOut(run) {
     const ch = run.ch;
     const first = !this.save.done.includes(ch.id);
-    const pay = first ? ch.pay : Math.round(ch.pay / 4);
+    const pay = CHEAT.on ? 0 : first ? ch.pay : Math.round(ch.pay / 4);   // (a cheated session earns no bonus money: cheats.js)
     this.game.money += pay;
     if (first) this.save.done.push(ch.id);
     const t = Math.round(run.t);
