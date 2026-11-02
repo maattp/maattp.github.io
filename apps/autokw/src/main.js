@@ -1994,6 +1994,7 @@ function installShadowFade() {
   try {
     cheats = new Cheats({ scene, city, game, hud, audio, fx, traffic, player, phone: ON_PHONE, sys: () => ({ weather, tod, link, wildlife, rollup, police }) });
   } catch (e) { blog('cheats: ' + e.message); cheats = null; }
+  try {
     photo = new PhotoMode({ game, camera, player, city, renderer, hud, audio,
       getTod: () => (tod ? tod.setting : null), setTod: (m) => { if (tod) tod.choose(m); }, drawNow: () => draw(performance.now()) });
   } catch (e) { blog('photo: ' + e.message); photo = null; }

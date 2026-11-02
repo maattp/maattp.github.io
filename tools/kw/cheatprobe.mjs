@@ -154,8 +154,8 @@ async function main() {
     await type('bumpyroad');
     ok(await ev(`!window.__seen.KeyP && !window.__seen.KeyR && window.__seen.KeyB && window.__seen.KeyU`), 'P and R inside BUMPYROAD never reached the game; B, U did: ' + await ev(`JSON.stringify(window.__seen)`));
     await ev(`window.__seen = {}; 0`);
-    await type('p'); await type('e');
-    ok(await ev(`window.__seen.KeyP === 1 && window.__seen.KeyE === 1`), 'a lone P and E (no live prefix) pass through untouched');
+    await type('p'); await sleep(400); await type('p'); await sleep(400); await type('e');
+    ok(await ev(`window.__seen.KeyP === 2 && window.__seen.KeyE === 1`), 'a lone P and E (no live prefix) pass through untouched');
     await STAGE(true);
     await type('doubledouble');
     ok(await D(`return !d.player.onFoot && C.last === 'DOUBLEDOUBLE'`), 'DOUBLEDOUBLE did not get you out of the car (its E keys were swallowed)');
