@@ -870,6 +870,7 @@ export class Hud {
     // Stunt jumps: a ramp-shaped wedge pointing the way you jump, orange until
     // it has been landed clean, then green.
     for (const j of (this.jumps || [])) {
+      if (!j.found) continue;   // a jump shows on the map only once you have found it
       const [bx, bz] = toMap(j.x, j.z);
       if (Math.abs(bx) > S || Math.abs(bz) > S) continue;
       drawJumpIcon(ctx, bx, bz, j, 5 / zoom);
@@ -1026,6 +1027,7 @@ export class Hud {
       }
     }
     for (const j of (this.jumps || [])) {
+      if (!j.found) continue;   // a jump shows on the map only once you have found it
       const [jx, jz] = toC(j.x, j.z);
       drawJumpIcon(ctx, jx, jz, j, size * 0.009);
     }

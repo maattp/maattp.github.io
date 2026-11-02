@@ -95,7 +95,7 @@
     const R = S.R, v = S.car;
     return { phase: R.phase, t: +R.t.toFixed(2), x: +v.x.toFixed(1), z: +v.z.toFixed(1), y: +v.y.toFixed(2),
       spd: +v.vLong.toFixed(1), lip: R.lipSpeed, tAir: +R.tAir.toFixed(2), maxUp: +R.maxUp.toFixed(1),
-      ts: +d.stunts.timeScale.toFixed(2), res: R.res };
+      ts: +d.stunts.timeScale.toFixed(2), minTs: +(R.minTs == null ? 1 : R.minTs).toFixed(2), res: R.res };
   };
   S.step = (n) => {
     const R = S.R, v = S.car, r = R.r;
@@ -114,12 +114,14 @@
       const pos = p.position;
       const cd = { x: pos.x - p.camPos.x, z: pos.z - p.camPos.z };
       const cl = Math.hypot(cd.x, cd.z) || 1; cd.x /= cl; cd.z /= cl;
+      if (d.link && !d.link._fr) d.link._fr = 1;   // link.update never runs here; blocks() wants a frame count
       d.traffic.update(dt, pos.x, pos.z, cd, p);
       d.world.update(pos.x, pos.z, 2);
       d.stunts.update(dt, p);
       d.acts.update(dt, p);
       R.t += dt;
       if (d.stunts.timeScale < 0.99) R.slow += dt;
+      R.minTs = Math.min(R.minTs == null ? 1 : R.minTs, d.stunts.timeScale);
       if (R.phase === 'run') {
         if (v.stunt) { R.phase = 'air'; R.lipSpeed = +v.rampAlong.toFixed(1); R.launchT = R.t; R.launchY = v.y; }
         else if (R.t > 40) { R.phase = 'fail'; R.res = 'never launched'; }

@@ -2526,6 +2526,7 @@ function refreshPassport() {
   if (nx) nx.textContent = (p.next ? `${p.next.name} at ${p.next.pct}%` : 'top rank') + ` · wallet ${formatMoney(p.money)}`
     + (p.extra.length ? ` · ${p.extra.join(' · ')}` : '');
   const grid = document.getElementById('ppGrid');
+  if (stunts && stunts.list.length) p.rows = p.rows.concat([{ label: 'Stunt jumps found', done: stunts.found, total: stunts.list.length }]);
   if (eggs) {
     p.rows = p.rows.concat([{ label: 'Golden eggs', done: eggs.count, total: eggs.total }]);
     const ht = eggs.hint(player.x, player.z);
@@ -2945,6 +2946,7 @@ function doRespawn() {
   const busted = game.busted, stars = game.wanted;
   for (const who of game.holds) game.leaks.push(who);   // (nothing is playing if you are respawning)
   game.holds.clear();
+  if (stunts) stunts.cancel();
   game.dead = false;
   game.busted = false;
   game.wanted = 0;
@@ -3341,7 +3343,7 @@ function frame(now) {
   const look = controls.takeLook();
   // Slow motion through the middle of a big stunt jump (stunts.js eases it in
   // and out, and it is off before touchdown). The whole sim slows together.
-  if (stunts && stunts.timeScale < 1) dt *= stunts.timeScale;
+  if (stunts && stunts.timeScale < 1) { if (game.dead || (game.paused && !stunts.ignorePause)) stunts.cancel(); else dt *= stunts.timeScale; }
 
   // the ferries sail, carrying whatever stands on one, before you move
   if (ferry) ferry.update(dt, player, traffic, camera);

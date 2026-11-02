@@ -1499,6 +1499,36 @@ file and a guide disagree, this file wins.
   and the director's off switch and no-repeat rule). Also exported for it:
   kwplaces.js `gooseGeometry`, peds.js `hailPose`; `__dbg.tod`.
 
+- **Unique stunt jumps** (src/stunts.js `JUMPS`: 21 kicker ramps at real places;
+  docs/jumps/*.jpg; verify `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1 node
+  tools/kw/kwstunts.mjs [ids] [--caps 24,32,99] [--shots dir]`). The engine is
+  Seattle's (see guide/on-foot.md "Stunt jumps": ramp = geometry + height query,
+  kept-clear corridor, scoring); KW's list: Chicopee Ski Hill, YKF runway,
+  Freeport and Doon (Grand River), Laurel Creek Reservoir hop and Laurel Dam
+  splash, three over the ION tracks (Waterloo Park, Northfield, Block Line),
+  Toboggan Hill, the Boardwalk berm, RIM Park, Victoria Park's neck, Erbsville
+  pit, UW Ring Road, Fairview Park lot, the Grand River Rec Complex, the Region
+  Museum meadow, Breslau, Conestoga Mall's west lot and Hespeler's mill lots.
+  **Siting law:** every ramp stands off the traffic graph (open ground, lots,
+  banks); the tool's corridor check lists buildings / water / roads / trunks on
+  run-up, ramp and landing and a run at each speed cap must land CLEAN (or in
+  the water for `water: true`). **Grass tops a car out at ~19-21 m/s**, so a
+  grass jump is ~25-35 m; the far-bank river/pond ones are authored with
+  18-24 m gaps and steeper kickers (H 3-3.4, 26-30 deg), the paved ones (ykf,
+  ionnorth, fairview, conest, rim) fly 45-70 m. **Cinematic** (every launch whose
+  predicted air is over 0.85 s): the clock eases to x0.35 through the middle of the
+  flight and the chase boom swings 1.25 rad to the side (`player.stuntSide`,
+  alternating) and pulls back, both off before touchdown. It cannot stick:
+  `StuntJumps.update` zeroes it on death / pause / exit / vehicle swap, there
+  is a 4.5 s wall-clock timeout, `doRespawn` and main.js's dt scaling call
+  `stunts.cancel()`. First clean landing = "UNIQUE STUNT BONUS!" + $500 +
+  the pay; `autokw-stunts` {done, best, found}. **Found** = within 110 m of a
+  ramp (toast) or launching it; the map wedge shows only found ones (orange,
+  green when done); the passport has "Stunt jumps found n/21" next to the
+  existing "Stunt jumps" row. Phone cost: 1 draw (+1 shadow pass), 3.9k
+  triangles for all 21; nothing per frame but the player's ramp query and a
+  0.5 s distance scan. `tools/kw/kwrepl.mjs` boots once and takes JS from a
+  file (probe loop).
 - **Erbsville Kartway** (src/kartway.js, src/kart.js, `data/kart.json` from
   tools/kw/build_kart.py; docs/kart-*.jpg). OSM's `highway=raceway` centreline
   (CanVec's, ~970 m) is a FIGURE EIGHT: the `bridge=yes` way closes the loop
