@@ -140,6 +140,30 @@ file and a guide disagree, this file wins.
   ENTER at the same store gets you out (`dtLock`). Harness hooks:
   `__dbg.rollup.rig = 'car' | 'c100' | 'lose' | ...` forces the next cup,
   `__dbg.rollup._roll(dp)` rolls. Shots: `docs/rollup-*.png`.
+- **The body shops and paramedic calls** (src/respray.js, src/paramedic.js; docs/med/*.jpg;
+  probe `node tools/kw/medprobe.mjs <dir> [respray,medic]`, views `tools/kw/medviews.json`).
+  **Respray** (GTA's Pay 'n' Spray): a drive-in spray bay on the frontage of four REAL shops
+  (OSM: Kitchener Autobody, Fix Auto, Northdale Auto Body in Waterloo, A1 Car Cleaning in Preston;
+  `SHOPS`), found at boot by `placeBays` (beside the fire stations' placeStations: off the carriageway,
+  clear of buildings/water/landmarks, level to 0.35 m, clear circles pushed before scatter). Three wall
+  solids (`city.addLandmarkSolids`) plus a roller-door solid whose `y1` is dropped below `y0` to turn it off.
+  Built lazily within 650 m (one vertex-coloured mesh + sign + door, ~3 draws, ~5k tris, shown within 450 m;
+  a beam only while wanted). Drive in (centre 4.9-8.5 m inside): `game.hold('respray')` (in reapHolds'
+  `live`), door down, black screen, can-shake + three pulls (`spray`, `shutter` in audio.js), at 3.0 s
+  `Vehicle.respray(hex)` (only THIS car's bodyMat; a `spec.finish`/`liveries` car keeps its look) +
+  `Vehicle.repair()` (health, fire out via `VEHICLE_HOOKS.extinguish`, dents zeroed), car turned round at the
+  mouth. Price $80 + damage + $8/dent + $40 if wanted; FIRST FREE (`autokw-respray`); too poor = no
+  trigger. **Law (GTA's rule):** `police.seen` captured when you drive in: unseen = wanted cleared and
+  units removed, seen = stars stay and they are told where you went. Too big (bus, rig, len>6.45) = door shut.
+  **Paramedics:** `ambulance` (vehicles.js) now `paramedic: true`: Region of Waterloo Battenburg band and
+  PARAMEDIC lettering (STENCIL gained R, M, D), light bar on the module (`traffic.lightBar`), SIREN button
+  (main.js updateSiren). One parks on the apron (placeStations generalised with a `list`) at Grand River,
+  St. Mary's, Cambridge Memorial (ER bays = kwlandmarks2's EMERGENCY doors) and Paramedic Services North HQ.
+  MISSION (M / pad down / `#medBtns`): level n = n patients (to 4) lying at real addresses from eats.json
+  (0.45-1.7 km), capacity 2, stop within 16 m for 1.8 s to load, nearest ER within 22 m stopped to hand over.
+  Health: waiting, lateral/braking g (grtbus Feel), landings and crashes (`onCrash`) hurt; 0 = lost. Pay
+  ($90 + $35/level) x (0.4..1.0 by health) + time bonus; best level in `autokw-paramedic`. Phone: patient =
+  1 pooled humanoid + 1 beam, ER 1 beam, only during a call.
 - **Golf** (src/golf.js, `data/golf.json` from tools/kw/build_golf.py):
   Rockway, Westmount, Grey Silo (18), Conestoga (27: The Village, The Moors,
   Goose Run -- OSM's hole `name` is the nine; holes are keyed nine + ref,

@@ -681,6 +681,28 @@ const SOUNDS = {
     g.gain.linearRampToValueAtTime(1, t + 0.03);
     g.gain.setTargetAtTime(0, t + 0.08, 0.22);
   } },
+  // Auto KW's body shop (respray.js): the roller door over its drum, and the can
+  shutter: { dur: 1.3, build(k, out, t, R) {
+    const g = k.gain(0);
+    k.noise('white', t, 1.2, R).connect(k.filt('bandpass', 1100, 1.4)).connect(g).connect(out);
+    k.grains(g.gain, t, 1.0, 130, R, 0.9, 0.002, 0.006, 1);
+    k.thump(out, t + 1.02, 90, 55, 0.04, 0.55, 0.05);
+    k.burst(out, 'white', t + 1.02, 'bandpass', 700, 1, 0.5, 0.03, R);
+  } },
+  spray: { dur: 2.2, build(k, out, t, R) {
+    // the can shaken (a ball rattling), then three pulls of the nozzle
+    const g = k.gain(0);
+    k.noise('white', t, 0.55, R).connect(k.filt('bandpass', 3200, 3)).connect(g).connect(out);
+    k.grains(g.gain, t, 0.5, 28, R, 0.5, 0.002, 0.008, 1);
+    const h = k.gain(0);
+    k.noise('white', t + 0.6, 1.5, R).connect(k.filt('highpass', 5200)).connect(k.filt('bandpass', 7500, 0.6)).connect(h).connect(out);
+    h.gain.setValueAtTime(0, t + 0.6);
+    for (let i = 0; i < 3; i++) {
+      const a = t + 0.62 + i * 0.5;
+      h.gain.linearRampToValueAtTime(0.5, a + 0.03);
+      h.gain.setTargetAtTime(0, a + 0.3, 0.05);
+    }
+  } },
   backfire: { dur: 0.3, variants: 2, build(k, out, t, R) {
     const bus = k.gain(1);
     bus.connect(k.shaper(2.5)).connect(out);

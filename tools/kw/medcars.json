@@ -1,0 +1,4 @@
+[
+ { "name": "ambulance-q34", "cars": [{ "type": "ambulance" }], "cam": { "eye": [7, 2.6, 9], "at": [0, 1.4, -0.5], "fov": 40 } },
+ { "name": "ambulance-rear", "cars": [{ "type": "ambulance" }], "cam": { "eye": [-5, 2.6, -9], "at": [0, 1.5, -1], "fov": 40 } }
+]

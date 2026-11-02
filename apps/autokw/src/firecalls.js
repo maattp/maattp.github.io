@@ -41,6 +41,8 @@ const RIG = {
   fireengine: { front: 5.0, back: 5.0, hw: 1.25 },
   // the tiller straight: tractor nose to the ladder's tip over the tail
   tiller: { front: 3.45, back: 1.75 + 5.55 + 6.5 + 0.75, hw: 1.25 },
+  // (Auto KW paramedic.js parks its ambulances with the same placer)
+  ambulance: { front: 3.4, back: 3.4, hw: 1.25 },
 };
 
 /**
@@ -51,7 +53,7 @@ const RIG = {
  * otherwise parallel along the front, on the pavement. Each spot is pushed as
  * a clear circle, so no tree, post or kerbside car is ever set in it.
  */
-export function placeStations(city, world, waterAt) {
+export function placeStations(city, world, waterAt, list = FIRE_STATIONS) {
   const out = [];
   const wet = (x, z) => {
     if (G.isWater(x, z)) return true;
@@ -59,7 +61,7 @@ export function placeStations(city, world, waterAt) {
     const w = waterAt(x, z);
     return w !== null && w > G.terrainHeight(x, z) + 0.05;
   };
-  for (const st of FIRE_STATIONS) {
+  for (const st of list) {
     const bl = city.buildingsNear(st.x, st.z, 140);
     const inB = (x, z, pad) => {
       for (const b of bl) {
