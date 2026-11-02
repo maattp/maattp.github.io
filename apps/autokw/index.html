@@ -121,6 +121,9 @@
   /* an ambulance's MISSION (paramedic.js sets data-medic): the same spot as a rig's */
   #medBtns { position: absolute; right: calc(270px + var(--safe-r)); bottom: calc(14px + var(--safe-b)); z-index: 6; display: none; gap: 10px; align-items: end; }
   #app[data-medic="1"][data-mode="drive"] #medBtns { display: flex; }
+  /* a snowplow's or the Zamboni's MISSION (winterjobs.js sets data-winter) */
+  #winBtns { position: absolute; right: calc(270px + var(--safe-r)); bottom: calc(14px + var(--safe-b)); z-index: 6; display: none; gap: 10px; align-items: end; }
+  #app[data-winter="1"][data-mode="drive"] #winBtns { display: flex; }
   /* the turn signals (a road test's: g2test.js sets data-g2), where a rig's two would be */
   #sigBtns {
     position: absolute; right: calc(270px + var(--safe-r)); bottom: calc(14px + var(--safe-b));
@@ -548,6 +551,10 @@
     <div class="btn b-sm b-fire" data-btn="medmission" data-hint="▼">MISSION</div>
   </div>
 
+  <div id="winBtns">
+    <div class="btn b-sm b-fire" data-btn="winmission" data-hint="▼">MISSION</div>
+  </div>
+
   <div id="fireBtns">
     <div class="btn b-sm b-fire" data-btn="mission" data-hint="▼">MISSION</div>
     <div class="btn b-md b-water" data-btn="water" data-hint="RB">WATER</div>
@@ -690,7 +697,7 @@
     <pre id="bootLog"></pre>
     <div id="loadRotate">Turn sideways to play once it has loaded</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v106</div>
+    <div id="build">v107</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation NRCan CDEM / SRTM</div>
   </div>
   <script>

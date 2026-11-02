@@ -43,6 +43,7 @@ const RIG = {
   tiller: { front: 3.45, back: 1.75 + 5.55 + 6.5 + 0.75, hw: 1.25 },
   // (Auto KW paramedic.js parks its ambulances with the same placer)
   ambulance: { front: 3.4, back: 3.4, hw: 1.25 },
+  snowplow: { front: 4.6, back: 3.8, hw: 1.6 },
 };
 
 /**
