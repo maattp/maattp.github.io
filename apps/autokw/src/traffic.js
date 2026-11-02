@@ -1,7 +1,7 @@
 // Traffic, parked cars and the police response.
 
 import * as THREE from './three.js';
-import { Vehicle, TYPES, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, farLod2, nearLod, makeBellows, HITCH,
+import { Vehicle, TYPES, CIVILIAN_TYPES, randomCarColor, classicColor, vehicleAssets, farLod, farLod2, nearLod, makeBellows, HITCH,
   LAMP_BRAKE, LAMP_L, LAMP_R, LAMP_REV, LAMP_LON, LAMP_RON, LAMP_STEP } from './vehicles.js';
 import { clamp, lerp, angleWrap, hash2, rng, dist2, tierScale } from './util.js';
 import * as G from './geo.js';
@@ -41,6 +41,25 @@ function varietyOf(tn, h, kerb) {
   if (tn === 'van' && h < 0.5) return 'amzvan';
   return tn;
 }
+// Auto KW, THE CLASSICS (vehicles.js `classic`; cruise night is kwcruise.js):
+// now and then a car-sized draw is an old car instead -- CLASSIC_P of them in
+// town on a weekday, x CLASSIC_WKND on the phone's real Saturday or Sunday,
+// x CLASSIC_COUNTRY on a rural road or round St. Jacobs, never on a freeway,
+// at most CLASSIC_MAX about. Which one is a hash too: the stepside likes the
+// country, the finned convertible is the rarest. A hash, not this.R.
+const CLASSIC_P = 0.006, CLASSIC_WKND = 2.5, CLASSIC_COUNTRY = 2.5, CLASSIC_MAX = 3;
+const ST_JACOBS = { x: -6395, z: -9660, r: 2200 };
+export function classicOdds(rural, x, z, day = new Date().getDay()) {
+  const sj = Math.hypot(x - ST_JACOBS.x, z - ST_JACOBS.z) < ST_JACOBS.r;
+  return CLASSIC_P * (day === 0 || day === 6 ? CLASSIC_WKND : 1) * (rural || sj ? CLASSIC_COUNTRY : 1);
+}
+export function classicPick(h, rural) {
+  // weights: bug, pickup50, woodie, finned (the country doubles the pickup)
+  const w = [3, rural ? 6 : 3, 3, 1.5], sum = w.reduce((a, b) => a + b, 0);
+  let u = h * sum;
+  for (let i = 0; i < w.length; i++) { if (u < w[i]) return ['bug', 'pickup50', 'woodie', 'finned'][i]; u -= w[i]; }
+  return 'finned';
+}
 const DESPAWN = PHONE_T ? 420 : 520;
 // The Belltown Hellcat (vehicles.js `hellcat`): the chance a Belltown spawn is
 // one, and how many may be about at once.
@@ -51,7 +70,7 @@ const HELLCAT_P = 0.12, HELLCAT_MAX = 3;
 // when it is left behind, as every car does.
 const WIENER_P = 0.01;
 const HEAVY = new Set(['bus', 'busx', 'ionbus', 'artic', 'schoolbus', 'boxtruck', 'garbage', 'recycling', 'pickup', 'pickupcap', 'van', 'postvan', 'purovan', 'cruiser', 'sportbike', 'bicycle',
-  'dually', 'jeep', 'uhaul', 'semi', 'opp', 'lifted', 'farmtruck', 'limo', 'hearse', 'icecream', 'snowplow', 'amzvan', 'zamboni']);
+  'dually', 'jeep', 'uhaul', 'semi', 'opp', 'lifted', 'farmtruck', 'limo', 'hearse', 'icecream', 'snowplow', 'amzvan', 'zamboni', 'pickup50']);
 // Auto KW: types that never park at a kerb and keep off residential streets
 // (every bus -- `spec.bus` -- the refuse and recycling trucks, the semi)
 const NO_KERB = (tn) => !!(TYPES[tn] && TYPES[tn].bus) || tn === 'garbage' || tn === 'recycling' || tn === 'semi';
@@ -139,6 +158,7 @@ const FAR2_AS = {
   suv: 'crossover', suv3: 'crossover', evy: 'crossover', jeep: 'crossover', minivan: 'crossover',
   pickupcap: 'pickup', dually: 'pickup', lifted: 'pickup', farmtruck: 'pickup',
   smart: 'compsedan', volvo: 'compsedan', delorean: 'compsedan', limo: 'compsedan', hearse: 'compsedan',
+  bug: 'compsedan', woodie: 'compsedan', finned: 'compsedan', pickup50: 'pickup',
 };
 const far2Key = (t) => (FAR2_AS[t] || t) + '|2';
 const DECOR_CAP = ON_PHONE ? 10 : 18;
@@ -1271,6 +1291,13 @@ export class TrafficSystem {
           else if (hs > 0.5 && hs < 0.5 + PLOW_P && WXU.wxSnow.value > 0.3 && e.cls !== 'res'
             && this.cars.filter((c) => c.spec.plow).length < PLOW_MAX) tn = 'snowplow';
         }
+        // the classics (CLASSIC_P): any basic car-sized draw, off the freeways
+        const hc = hash2(ei + 30011, this._prio + 7);
+        if (!TYPES[tn].bus && !this.fwy[ei] && e.cls !== 'hwy' && TYPES[tn].roadCar && !TYPES[tn].police
+          && !(TYPES[tn].icecream || TYPES[tn].delorean || TYPES[tn].wiener || TYPES[tn].hellcat || TYPES[tn].plow || TYPES[tn].taxi || TYPES[tn].cargo)
+          && hc < classicOdds(!!e.rural, x, z) && this.cars.filter((c) => c.spec.classic).length < CLASSIC_MAX) {
+          tn = classicPick(hash2(ei + 30013, this._prio + 9), !!e.rural);
+        }
       }
       // AUTO KW, A FREEWAY SPAWN: in a gap in its lane (none within 45 m
       // ahead or behind), a semi in the right two lanes.
@@ -1296,7 +1323,8 @@ export class TrafficSystem {
         }
         if (clash) continue;
       }
-      const v = this.spawnAt(x + lo.x, z + lo.z, heading, tn, randomCarColor((this.R.n() * 1e6) | 0), 'traffic');
+      const cseed = (this.R.n() * 1e6) | 0;
+      const v = this.spawnAt(x + lo.x, z + lo.z, heading, tn, TYPES[tn].classic ? classicColor(tn, cseed) : randomCarColor(cseed), 'traffic');
       if (v.spec.hand === 'opp') {
         // the OPP on patrol: its light bar, dark (policeLights only runs for units)
         this.lightBar(v);

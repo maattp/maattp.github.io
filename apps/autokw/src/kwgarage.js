@@ -53,8 +53,9 @@ export const GARAGES = [
 // what a type is called in the passport row (anything else: its key, title-cased)
 const NAMES = { sedan: 'Sedan', hellcat: 'Hellcat', delorean: 'DeLorean-alike', zamboni: 'Zamboni', taxi: 'Taxi', police: 'Police car', opp: 'OPP cruiser',
   ambulance: 'Ambulance', wedge: 'Wedge', hearse: 'Hearse', limo: 'Limo', wiener: 'Weenie Wagon', swat: 'SWAT truck', pickup: 'Pickup', lifted: 'Lifted truck',
-  postvan: 'Post van', purovan: 'Puro van', amzvan: 'Amazon van', uhaul: 'U-Haul', icecream: 'Ice cream truck', suv: 'SUV', van: 'Van', coupe: 'Coupe' };
-const nameOf = (t) => NAMES[t] || (t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Car');
+  postvan: 'Post van', purovan: 'Puro van', amzvan: 'Amazon van', uhaul: 'U-Haul', icecream: 'Ice cream truck', suv: 'SUV', van: 'Van', coupe: 'Coupe',
+  bug: 'Bug', pickup50: "Fifties pickup", woodie: 'Woodie wagon', finned: 'Fin convertible', coupe40: "Forties coupe" };
+export const nameOf = (t) => NAMES[t] || (t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Car');
 
 function readAll() {
   try {

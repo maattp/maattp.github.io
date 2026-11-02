@@ -541,6 +541,17 @@ export const TYPES = {
   // an ice-cream truck: a step-van, 6.2 m, music on a loop
   icecream: deriveSpec({ wheelbase: 3.5, len: 6.2, wid: 2.20, wheelR: 0.40, sill: 0.5, belt: 1.4, roof: 2.55, cab: [0.14, 0.46], cargo: 2.2, hand: 'icecream', livery: 0xf6efd9, icecream: true, boxy: 2, mass: 2.2, acc: 3.0, topKph: 110, brakeM: 50, latG: 0.66 }),
   // the Region's plough truck: a tandem-ish dump truck, orange, blade down; winter weather only
+  // Auto KW, THE CLASSICS (cruise night, kwcruise.js; `classic` is the rarity a
+  // Best in Show judge pays for). Generic period bodies, no makes or badges.
+  // A small air-cooled rear-engined two-door: 4.08 x 1.55 x 1.50, 820 kg, a
+  // 1.3 l flat four of 40-odd hp, 0-100 in the twenties, rear weight bias (rwd)
+  bug: deriveSpec({ rwd: true, wheelbase: 2.40, len: 4.08, wid: 1.55, wheelR: 0.31, sill: 0.40, belt: 0.85, roof: 1.50, cab: [-0.25, 0.10], hand: 'bug', engine: 'flat4', classic: 1.5, mass: 0.52, acc: 2.2, topKph: 118, brakeM: 54, latG: 0.70, minTurnR: 4.2 }),
+  // a 1950s half-ton stepside: 4.90 x 2.0 x 1.92, 1,500 kg, a 3.8 l straight six, three on the tree
+  pickup50: deriveSpec({ rwd: true, wheelbase: 2.92, len: 4.90, wid: 2.00, wheelR: 0.38, sill: 0.50, belt: 1.15, roof: 1.92, cab: [-0.15, 0.22], hand: 'pickup50', engine: 'i6old', classic: 1.5, mass: 1.1, acc: 2.6, topKph: 125, brakeM: 60, latG: 0.64 }),
+  // a late-70s full-size wagon in simulated wood: 5.70 x 2.02 x 1.45, 2,100 kg, a lazy smog-era V8
+  woodie: deriveSpec({ rwd: true, wheelbase: 3.20, len: 5.70, wid: 2.02, wheelR: 0.36, sill: 0.32, belt: 1.00, roof: 1.45, cab: [-0.30, 0.15], hand: 'woodie', engine: 'v8soft', classic: 1, mass: 1.35, acc: 3.0, topKph: 165, brakeM: 52, latG: 0.68, minTurnR: 6.4 }),
+  // a 1959-60 finned convertible, top down: 5.65 x 2.03 x 1.36, 2,000 kg, a big-block V8 on a two-speed automatic
+  finned: deriveSpec({ rwd: true, wheelbase: 3.20, len: 5.65, wid: 2.03, wheelR: 0.36, sill: 0.29, belt: 0.95, roof: 1.36, cab: [-0.24, 0.10], hand: 'finned', engine: 'v8old', classic: 2.5, mass: 1.3, acc: 3.7, topKph: 185, brakeM: 56, latG: 0.66, minTurnR: 6.6 }),
   snowplow: deriveSpec({ wheelbase: 4.3, len: 7.6, wid: 2.50, wheelR: 0.50, sill: 0.62, belt: 1.55, roof: 2.75, cab: [0.14, 0.46], cargo: 2.3, hand: 'plow', livery: 0xe8660c, diesel: true, plow: true, boxy: 2, mass: 5.0, acc: 2.1, topKph: 100, brakeM: 58, latG: 0.58, minTurnR: 7.0 }),
 };
 
@@ -736,10 +747,20 @@ function addWheel(trim, matte, cx, cy, cz, r, w, out = 1, knobby = false, kind =
   band(matte, -hw * 0.52, r, hw * 0.52, r, TYRE, [0, 1]);
   band(matte, hw * 0.52, r, hw, r * 0.955, TYRE, [0, 1]);
   // `kind` 'black' (the Belltown Hellcat): gloss-black rims, ten spokes
-  const rimC = kind === 'black' ? RIM_BLACK : kind === 'steel' ? STEEL_RIM : kind === 'polish' ? CHROME : RIM, hubC = kind === 'black' || kind === 'steel' ? HUB_BLACK : HUB;
+  // Auto KW, the classics: 'ww' a whitewall under a full chrome cover, 'cap' a
+  // painted ivory steel wheel with a chrome dog-dish cap, 'wwcap' both
+  const ww = kind === 'ww' || kind === 'wwcap', capped = kind === 'cap' || kind === 'wwcap';
+  const rimC = kind === 'black' ? RIM_BLACK : kind === 'steel' ? STEEL_RIM : kind === 'polish' || kind === 'ww' ? CHROME : capped ? CL_IVORY : RIM, hubC = kind === 'black' || kind === 'steel' ? HUB_BLACK : HUB;
   for (const sx of [-1, 1]) {
     band(matte, sx * hw, r * 0.955, sx * hw * 1.10, r * 0.87, TYRE, [sx, 0.5]);
-    band(matte, sx * hw * 1.10, r * 0.87, sx * hw * 0.96, bead, TYRE, [sx, 0.3]);
+    if (ww && sx === (out || 1)) {
+      // the white band on the outboard wall, wider on the full-cover kind
+      const wIn = kind === 'ww' ? 0.72 : 0.80;
+      const rA = lerp(r * 0.87, bead, 1 - wIn), rB = lerp(r * 0.87, bead, 0.88);
+      band(matte, sx * hw * 1.10, r * 0.87, sx * hw * 1.07, rA, TYRE, [sx, 0.3]);
+      band(matte, sx * hw * 1.07, rA, sx * hw * 1.0, rB, CL_WHITEWALL, [sx, 0.3]);
+      band(matte, sx * hw * 1.0, rB, sx * hw * 0.96, bead, TYRE, [sx, 0.3]);
+    } else band(matte, sx * hw * 1.10, r * 0.87, sx * hw * 0.96, bead, TYRE, [sx, 0.3]);
     band(trim, sx * hw * 0.96, bead, sx * hw * 0.55, bead * 0.99, rimC, [0, 1]);
   }
   // inboard face is a plain dish -- nothing behind a car's wheel is ever in
@@ -854,7 +875,34 @@ function addWheel(trim, matte, cx, cy, cz, r, w, out = 1, knobby = false, kind =
     band(trim, plate, r * 0.25, plate + o * 0.035, r * 0.17, HUB_BLACK, [o, 0.5]);
     disc(trim, plate + o * 0.035, r * 0.17, 0.001, o, HUB);
   };
-  const finish = kind === 'aero' ? aero : kind === 'black' ? split : kind === 'steel' ? steel : dress;
+  // the classics' wheels: a full chrome cover in two domed steps (ww), or the
+  // painted rim with a small chrome dome in the middle (cap, wwcap)
+  const classic = (o) => {
+    const face = o * hw * 0.55;
+    disc(trim, face, bead * 0.99, bead * 0.90, o, rimC);
+    if (kind === 'ww') {
+      band(trim, face, bead * 0.90, face + o * 0.014, bead * 0.80, CHROME, [o, 0.6]);
+      disc(trim, face + o * 0.014, bead * 0.80, bead * 0.64, o, HUB);
+      for (let s = 0; s < 10; s++) {
+        const a = (s / 10) * Math.PI * 2, x = face + o * 0.016;
+        const p = (rr, d) => [cx + x, cy + Math.cos(a + d) * rr, cz + Math.sin(a + d) * rr];
+        trim.quad(p(bead * 0.79, -0.05), p(bead * 0.79, 0.05), p(bead * 0.64, 0.05), p(bead * 0.64, -0.05), [o, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], CHROME);
+      }
+      band(trim, face + o * 0.014, bead * 0.64, face + o * 0.036, bead * 0.42, CHROME, [o, 0.5]);
+      disc(trim, face + o * 0.036, bead * 0.42, 0.001, o, CHROME);
+    } else {
+      disc(trim, face, bead * 0.90, bead * 0.56, o, rimC);
+      for (let s = 0; s < 6; s++) {
+        const a = (s / 6) * Math.PI * 2 + 0.3, x = face + o * 0.002;
+        const p = (rr, d) => [cx + x, cy + Math.cos(a + d) * rr, cz + Math.sin(a + d) * rr];
+        trim.quad(p(bead * 0.62, -0.12), p(bead * 0.62, 0.12), p(bead * 0.78, 0.09), p(bead * 0.78, -0.09), [o, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAVITY);
+      }
+      band(trim, face, bead * 0.56, face + o * 0.03, bead * 0.52, CHROME, [o, 0.3]);
+      band(trim, face + o * 0.03, bead * 0.52, face + o * 0.055, bead * 0.30, CHROME, [o, 0.7]);
+      disc(trim, face + o * 0.055, bead * 0.30, 0.001, o, CHROME);
+    }
+  };
+  const finish = kind === 'aero' ? aero : kind === 'black' ? split : kind === 'steel' ? steel : kind === 'ww' || capped ? classic : dress;
   if (out === 0) { finish(1); finish(-1); } else finish(out);
 }
 
@@ -11415,6 +11463,581 @@ function buildZamboni(spec, paint, trim, matte) {
   return [[-0.99, wr, zF, wr, 0.30], [0.99, wr, zF, wr, 0.30], [-0.99, wr, zR, wr, 0.30], [0.99, wr, zR, wr, 0.30]];
 }
 
+
+// ---------------------------------------------------------------------------
+// Auto KW: THE CLASSICS (cruise night, src/kwcruise.js). Five period bodies
+// with no maker's name or badge on them: a late-70s wood-panelled full-size
+// wagon, a 1950s round-fendered stepside pickup, a small air-cooled rear-engined
+// "bug", a 1959-60 finned convertible and a 1940s fastback coupe. The wagon and
+// the convertible are bodyCore bodies like the rest of the fleet; the bug, the
+// pickup and the coupe are separate-fender cars, which one loft cannot be, so
+// they are built from `classicShell` (a superellipse loft whose windows are
+// real openings, glazed and lined) and `fenderArc` (a pontoon fender as an open
+// shell over the wheel, with a dark liner under it). All chrome, lamps and
+// glass go in `trim`, the wood, the cream second tone, the rubber and the
+// interiors in `matte`, the body colour in `paint`: three draws, as every car.
+// ---------------------------------------------------------------------------
+const CL_WOOD = linRgb(0x7a4a2a), CL_GRAIN = linRgb(0x4e2c17), CL_BLOND = linRgb(0xcfae78);
+const CL_CREAM = linRgb(0xf0e6cc), CL_IVORY = linRgb(0xe2dccb), CL_WHITEWALL = linRgb(0xeeeeea);
+const CL_RED_VINYL = linRgb(0xa3261f), CL_RED_DARK = linRgb(0x5a1410), CL_CAB = [0.05, 0.05, 0.056];
+const CL_RUBBER = [0.035, 0.035, 0.038], CL_BACKGLASS = [0.035, 0.045, 0.055];
+const TAU = Math.PI * 2;
+
+/** Superellipse section point at angle t (0 = the +x side at yb, pi/2 = the top). */
+function seSec(s, t) {
+  const c = Math.cos(t), sn = Math.sin(t), up = sn >= 0;
+  const p = up ? s.pT : s.pB;
+  const ac = Math.abs(c) ** (2 / p), as = Math.abs(sn) ** (2 / p);
+  const w = up ? s.w + ((s.wT === undefined ? s.w : s.wT) - s.w) * as : s.w;
+  return [(s.cx || 0) + Math.sign(c) * w * ac, up ? s.yb + (s.y1 - s.yb) * as : s.yb - (s.yb - s.y0) * as];
+}
+function seOut(s, t, d) {
+  const [x, y] = seSec(s, t);
+  if (!d) return [x, y];
+  const a = seSec(s, t - 0.01), b = seSec(s, t + 0.01);
+  let nx = b[1] - a[1], ny = -(b[0] - a[0]);
+  const l = Math.hypot(nx, ny) || 1;
+  nx /= l; ny /= l;
+  if (nx * (x - (s.cx || 0)) + ny * (y - s.yb) < 0) { nx = -nx; ny = -ny; }
+  return [x + nx * d, y + ny * d];
+}
+const span = (a, b, n) => Array.from({ length: n + 1 }, (_, i) => a + ((b - a) * i) / n);
+
+/**
+ * A closed body lofted through superellipse sections, `sec(z)` -> { w, wT, y0,
+ * yb, y1, pB, pT }, with WINDOWS that are openings: each [z0, z1, t0, t1] (a
+ * side window is mirrored to t' = pi - t unless its fifth entry is 'c') is left
+ * out of the loft and glazed on the same grid, so the glass is exactly the hole
+ * and nothing painted lies under it. Returns `at(z, t, d)`, a point of the
+ * shell `d` out along its section's normal.
+ */
+function classicShell(paint, trim, matte, o) {
+  const wins = [];
+  for (const w of o.windows || []) {
+    wins.push(w);
+    if (w[4] !== 'c') wins.push([w[0], w[1], Math.PI - w[3], Math.PI - w[2], 'm', w[5]]);
+  }
+  const key = (v) => +v.toFixed(5);
+  const norm = (t) => key(((t % TAU) + TAU) % TAU);
+  const zs = [...new Set([...o.zs.map(key), ...wins.flatMap((w) => [key(w[0]), key(w[1])])])].sort((a, b) => a - b);
+  const ts = [...new Set([...o.ts.map(norm), ...wins.flatMap((w) => [norm(w[2]), norm(w[3])])])].sort((a, b) => a - b);
+  const S = zs.map((z) => o.sec(z));
+  const rings = zs.map((z, i) => ({ z, pts: ts.map((t) => seSec(S[i], t)) }));
+  const box = wins.map((w) => [zs.indexOf(key(w[0])), zs.indexOf(key(w[1])), ts.indexOf(norm(w[2])), ts.indexOf(norm(w[3])), w[5]]);
+  paint.loft(rings, o.col || WHITE, { capStart: true, capEnd: true,
+    skip: (i, k) => box.some(([a, c, e, f]) => i >= a && i < c && k >= e && k < f) });
+  for (const [a, c, e, f, gc] of box) {
+    const rows = [];
+    for (let i = a; i <= c; i++) {
+      const row = [];
+      for (let k = e; k <= f; k++) { const [x, y] = seOut(S[i], ts[k], 0.002); row.push([x, y, zs[i]]); }
+      rows.push(row);
+    }
+    const m = rows[rows.length >> 1][row0(rows)], s0 = S[(a + c) >> 1];
+    trim.patch(rows, gc || GLASS, [m[0] - (s0.cx || 0), m[1] - s0.yb, 0.001]);
+    if (o.frame) {
+      const edge = (pts) => { for (let q = 0; q < pts.length - 1; q++) trim.tube(pts[q], pts[q + 1], 0.011, 5, o.frame, false); };
+      const ring = (i, k) => { const [x, y] = seOut(S[i], ts[k], 0.008); return [x, y, zs[i]]; };
+      const ks = span(e, f, f - e).map(Math.round), is = span(a, c, c - a).map(Math.round);
+      edge(ks.map((k) => ring(a, k))); edge(ks.map((k) => ring(c, k)));
+      edge(is.map((i) => ring(i, e))); edge(is.map((i) => ring(i, f)));
+    }
+  }
+  // The cabin's lining: the shell again, `inset` inside it with its normals
+  // turned in, over the sides and the roof between z0 and z1, and closed at
+  // both ends -- through the glass you see a cabin, never the far side's
+  // back-faces (culled: the outside world through the car).
+  if (o.liner) {
+    const { z0, z1, inset = 0.03, col = CL_CAB, floor } = o.liner;
+    const lz = zs.filter((z) => z >= z0 - 1e-6 && z <= z1 + 1e-6);
+    const lt = ts.filter((t) => t <= Math.PI + 0.25 || t >= TAU - 0.25).map((t) => (t > Math.PI + 0.25 ? t - TAU : t)).sort((a, b) => a - b);
+    const PT = (z, t) => { const s = o.sec(z), [x, y] = seOut(s, t, -inset); return [x, y, z]; };
+    const NI = (z, t) => { const s = o.sec(z), [x, y] = seSec(s, t), l = Math.hypot(x - (s.cx || 0), y - s.yb) || 1; return [((s.cx || 0) - x) / l, (s.yb - y) / l, 0]; };
+    for (let i = 0; i < lz.length - 1; i++) {
+      for (let k = 0; k < lt.length - 1; k++) {
+        const a = lz[i], b = lz[i + 1], c = lt[k], d = lt[k + 1];
+        matte.quad(PT(a, c), PT(a, d), PT(b, d), PT(b, c), [NI(a, c), NI(a, d), NI(b, d), NI(b, c)], UV4, col);
+      }
+    }
+    for (const [z, dir] of [[lz[0], 1], [lz[lz.length - 1], -1]]) {
+      const s = o.sec(z), cen = [s.cx || 0, (s.yb + s.y1) / 2 - 0.1, z];
+      for (let k = 0; k < lt.length - 1; k++) matte.tri(cen, PT(z, lt[k]), PT(z, lt[k + 1]), [0, 0, dir], col);
+    }
+    if (floor !== undefined) {
+      // (kept well inside: at the cabin's ends the shell is narrower than mid-ships)
+      const wMin = Math.min(...lz.map((z) => o.sec(z).w));
+      matte.box(o.sec(z0).cx || 0, floor, (z0 + z1) / 2, wMin * 1.5, 0.02, z1 - z0 - 0.1, 0, CAB_FLOOR);
+    }
+  }
+  return { at: (z, t, d = 0) => { const s = o.sec(z), [x, y] = seOut(s, t, d); return [x, y, z]; }, sec: o.sec };
+}
+const row0 = (rows) => rows[0].length >> 1;
+
+/**
+ * A pontoon fender: an open shell arched over a wheel (`st` = [[z, top, ry, rx]]
+ * ascending z, an arc from the outer skirt over the crown and down inside the
+ * body), a dark liner under it so the arch is a cavity, not a hole to the sky.
+ */
+function fenderArc(paint, matte, sx, cx, st, o = {}) {
+  const { th0 = 0.10, th1 = Math.PI + 0.45, n = 10, p = 2.5 } = o;
+  const rows = [], liner = [];
+  for (const [z, yt, ry, rx] of st) {
+    const yc = yt - ry, row = [], lr = [];
+    for (let j = 0; j <= n; j++) {
+      const th = th0 + ((th1 - th0) * j) / n, c = Math.cos(th), s = Math.sin(th);
+      const ex = Math.sign(c) * Math.abs(c) ** (2 / p), ey = Math.sign(s) * Math.abs(s) ** (2 / p);
+      row.push([cx + sx * rx * ex, yc + ry * ey, z]);
+      lr.push([cx + sx * Math.max(0.005, rx - 0.018) * ex, yc + Math.max(0.005, ry - 0.018) * ey, z]);
+    }
+    rows.push(row); liner.push(lr);
+  }
+  paint.patch(rows, WHITE, [sx * 0.4, 1, 0]);
+  matte.patch(liner, CAVITY, [-sx * 0.4, -1, 0]);
+  return (z, j) => {
+    // a point on the fender's crown line (j 0..n) at z, for lamps and trim
+    let i = 0;
+    while (i < st.length - 2 && st[i + 1][0] < z) i++;
+    const t = clamp((z - st[i][0]) / (st[i + 1][0] - st[i][0]), 0, 1);
+    const A = rows[i][j], B = rows[i + 1][j];
+    return [A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t, z];
+  };
+}
+
+/** A round lamp facing +z (dir 1) or -z: a chrome bezel barrel and a lens. */
+function roundLamp(trim, x, y, z, r, dir, lens = LAMP, depth = 0.10) {
+  trim.tube([x, y, z - dir * depth], [x, y, z], r + 0.016, 14, CHROME, true);
+  trim.tube([x, y, z - dir * 0.01], [x, y, z + dir * 0.012], r, 14, lens, true);
+}
+
+/** A chrome blade bumper across x at (y, z), its ends swept back by `back`. */
+function bladeBumper(trim, matte, y, z, hw, dir, { r = 0.045, back = 0.14, guards = 0.30, bracket = 0.45 } = {}) {
+  trim.tube([-hw, y, z], [hw, y, z], r, 10, CHROME, false);
+  for (const sx of [-1, 1]) {
+    trim.tube([sx * hw, y, z], [sx * (hw + 0.07), y, z - dir * back], r, 10, CHROME, true);
+    if (guards) trim.tube([sx * guards, y - 0.09, z + dir * 0.015], [sx * guards, y + 0.15, z + dir * 0.015], 0.03, 8, CHROME, true);
+    matte.box(sx * bracket, y - 0.03, z - dir * 0.14, 0.06, 0.05, 0.26, 0, DEEP);
+  }
+}
+
+/** A thin-rimmed period steering wheel, raked, and the driver at it. */
+function classicWheel(trim, matte, wc, R, col) {
+  for (let i = 0; i < 14; i++) {
+    const a0 = (i / 14) * TAU, a1 = ((i + 1) / 14) * TAU;
+    const p = (a) => [wc[0] + Math.cos(a) * R, wc[1] + Math.sin(a) * R * 0.85, wc[2] - Math.sin(a) * R * 0.5];
+    trim.tube(p(a0), p(a1), 0.013, 5, col);
+  }
+  trim.tube([wc[0], wc[1], wc[2]], [wc[0], wc[1] - 0.12, wc[2] + 0.22], 0.022, 6, col, true);
+}
+
+/** A strip of a bodyCore shell between fractional section indices f0..f1 (functions of z or numbers). */
+function shellBand(core, b, sx, z0, z1, f0, f1, col, d = 0.006, nz = 8, nf = 3) {
+  const F = (f, z) => (typeof f === 'function' ? f(z) : f);
+  const rows = [];
+  for (let r = 0; r <= nz; r++) {
+    const z = z0 + ((z1 - z0) * r) / nz, row = [];
+    for (let k = 0; k <= nf; k++) {
+      const f = F(f0, z) + ((F(f1, z) - F(f0, z)) * k) / nf, i = Math.min(10, Math.floor(f)), t = f - i;
+      const a = core.surf(z, sx, i, d), c = core.surf(z, sx, i + 1, d);
+      row.push([a[0] + (c[0] - a[0]) * t, a[1] + (c[1] - a[1]) * t, z]);
+    }
+    rows.push(row);
+  }
+  b.patch(rows, col, [sx, 0.3, 0]);
+}
+
+// --- the bug: a small air-cooled rear-engined two-door -------------------------
+function buildBug(spec, paint, trim, matte) {
+  const wr = spec.wheelR, nose = spec.len / 2, tail = -nose;
+  const zF = 1.24, zR = -1.16;
+  const wC = curve([[tail, 0.40], [-1.85, 0.56], [-1.30, 0.64], [-0.2, 0.68], [0.9, 0.66], [1.55, 0.58], [1.90, 0.46], [nose, 0.32]]);
+  const y0C = curve([[tail, 0.56], [-1.80, 0.40], [1.75, 0.40], [nose, 0.58]]);
+  const y1C = curve([[tail, 0.62], [-1.85, 0.80], [-1.45, 0.96], [-1.05, 1.20], [-0.60, 1.42], [-0.15, 1.50], [0.28, 1.47], [0.74, 1.08], [0.95, 0.98], [1.40, 0.90], [1.80, 0.78], [nose, 0.62]]);
+  const pTC = curve([[tail, 2.2], [-1.35, 2.5], [-1.0, 3.4], [0.55, 3.4], [0.85, 2.5], [nose, 2.3]]);
+  const wTC = curve([[tail, 0.92], [-1.3, 0.92], [-1.0, 0.84], [0.55, 0.84], [0.85, 0.92], [nose, 0.95]]);
+  const sec = (z) => {
+    const y0 = y0C(z), y1 = y1C(z), w = wC(z);
+    return { w, wT: w * wTC(z), y0, y1, yb: clamp(0.80, y0 + 0.08, y1 - 0.14), pB: 5, pT: pTC(z) };
+  };
+  const shell = classicShell(paint, trim, matte, {
+    zs: span(tail, nose, 30), ts: span(0, TAU, 28).slice(0, 28), sec,
+    windows: [[0.36, 0.72, 0.95, Math.PI - 0.95, 'c'], [-0.40, 0.30, 0.24, 0.98], [-1.00, -0.52, 0.26, 0.90], [-1.32, -1.06, 1.15, Math.PI - 1.15, 'c']],
+    frame: CHROME, liner: { z0: -1.36, z1: 0.76, inset: 0.03, floor: 0.95 },
+  });
+  const at = shell.at;
+  for (const sx of [-1, 1]) seat(matte, sx * 0.30, 1.0, -0.25, 0.42, 0.42);
+  seat(matte, 0, 1.0, -0.95, 0.80, 0.36, true);
+  const wc = [0.30, 0.98, 0.32];
+  classicWheel(trim, matte, wc, 0.19, CL_IVORY);
+  if (matte.crew) occupant(matte.crew, 0.30, 1.0, -0.25, 0.42, wc);
+
+  // the four fenders, the running boards between them
+  const tw = 0.165, xF = 0.655, xR = 0.675;
+  const front = [[zF + 0.70, 0.58, 0.07, 0.07], [zF + 0.62, 0.75, 0.25, 0.17], [zF + 0.42, 0.87, 0.38, 0.21], [zF + 0.15, 0.90, 0.44, 0.215],
+    [zF - 0.15, 0.88, 0.46, 0.215], [zF - 0.40, 0.78, 0.42, 0.20], [zF - 0.62, 0.56, 0.24, 0.17], [zF - 0.80, 0.40, 0.07, 0.15]];
+  const rear = [[zR - 0.86, 0.52, 0.07, 0.07], [zR - 0.76, 0.66, 0.26, 0.17], [zR - 0.55, 0.82, 0.40, 0.21], [zR - 0.25, 0.91, 0.46, 0.22],
+    [zR + 0.05, 0.92, 0.48, 0.22], [zR + 0.35, 0.82, 0.42, 0.21], [zR + 0.60, 0.60, 0.27, 0.18], [zR + 0.80, 0.40, 0.07, 0.15]];
+  for (const sx of [-1, 1]) {
+    const fF = fenderArc(paint, matte, sx, sx * (xF + 0.005), front);
+    const fR = fenderArc(paint, matte, sx, sx * (xR + 0.005), rear);
+    matte.box(sx * 0.70, 0.30, (zF - 0.80 + zR + 0.80) / 2, 0.22, 0.06, (zF - 0.80) - (zR + 0.80) + 0.1, 0, CL_RUBBER);
+    // headlamps standing in the front of the fenders, a horn grille under each,
+    // an amber bullet on the crown; tail lamps on the rear fenders' backs
+    roundLamp(trim, sx * (xF + 0.005), 0.72, zF + 0.70, 0.078, 1, LAMP, 0.24);
+    void fF;
+    trim.tube([sx * (xF + 0.005), 0.86, zF + 0.10], [sx * (xF + 0.005), 0.86, zF + 0.18], 0.022, 6, AMBER, true);
+    roundLamp(trim, sx * (xR + 0.005), 0.66, zR - 0.70, 0.055, -1, TAILC, 0.10);
+    trim.box(sx * (xR + 0.005), 0.58, zR - 0.74, 0.07, 0.04, 0.02, 0, AMBER);
+    // the door: shut lines, a handle, a mirror on a stalk
+    for (const zc of ([0.31, -0.43])) {
+      const rows = [-0.008, 0.008].map((dz) => span(-0.55, 0.28, 6).map((t) => at(zc + dz, sx > 0 ? t : Math.PI - t, 0.004)));
+      matte.patch(rows, [0.10, 0.10, 0.11], [sx, 0, 0]);
+    }
+    const hd = at(-0.32, sx > 0 ? 0.05 : Math.PI - 0.05, 0.012);
+    trim.tube([hd[0], hd[1], hd[2] - 0.06], [hd[0], hd[1], hd[2] + 0.06], 0.012, 6, CHROME, true);
+    const mb = at(0.26, sx > 0 ? 0.25 : Math.PI - 0.25, 0.0);
+    trim.tube(mb, [mb[0] + sx * 0.12, mb[1] + 0.06, mb[2] - 0.02], 0.010, 5, CHROME, true);
+    trim.tube([mb[0] + sx * 0.12, mb[1] + 0.06, mb[2] - 0.01], [mb[0] + sx * 0.12, mb[1] + 0.06, mb[2] - 0.035], 0.045, 10, CHROME, true);
+    trim.tube([mb[0] + sx * 0.12, mb[1] + 0.06, mb[2] - 0.034], [mb[0] + sx * 0.12, mb[1] + 0.06, mb[2] - 0.037], 0.038, 10, MIRROR, true);
+    // engine-lid louvres, in two banks
+    for (let i = 0; i < 5; i++) {
+      const z = -1.50 - i * 0.055, y = y1C(z);
+      matte.box(sx * 0.17, y - 0.01, z, 0.20, 0.025, 0.022, 0, CL_RUBBER);
+    }
+  }
+  // the front lid's handle and centre strip; the bumpers, overriders and brackets
+  for (let i = 0; i < 6; i++) {
+    const za = 1.0 + i * 0.15, zb = za + 0.15;
+    trim.tube([0, y1C(za) + 0.006, za], [0, y1C(zb) + 0.006, zb], 0.010, 5, CHROME, true);
+  }
+  trim.tube([0, y1C(1.85) + 0.01, 1.83], [0, y1C(1.85) - 0.03, 1.93], 0.016, 6, CHROME, true);
+  bladeBumper(trim, matte, 0.46, nose + 0.07, 0.70, 1, { back: 0.16, guards: 0.32, bracket: 0.42 });
+  bladeBumper(trim, matte, 0.46, tail - 0.07, 0.70, -1, { back: 0.16, guards: 0.32, bracket: 0.42 });
+  plateBox(trim, 0, 0.31, nose + 0.06, 0.36, 0.11, 0.02);
+  plateBox(trim, 0, 0.60, tail - 0.012, 0.36, 0.11, 0.02);
+  trim.box(0, 0.715, tail + 0.005, 0.16, 0.03, 0.05, 0, CHROME);           // the plate lamp's hood
+  for (const sx of [-1, 1]) trim.tube([sx * 0.30, 0.36, tail + 0.10], [sx * 0.30, 0.36, tail - 0.10], 0.028, 8, CHROME, true);
+  // wipers parked at the screen's foot
+  for (const sx of [-1, 1]) matte.tube([sx * 0.05, 1.075, 0.73], [sx * 0.36, 1.07, 0.70], 0.008, 4, PLASTIC, true);
+  return [[-xF, wr, zF, wr, tw, undefined, false, 'wwcap'], [xF, wr, zF, wr, tw, undefined, false, 'wwcap'],
+    [-xR, wr, zR, wr, tw, undefined, false, 'wwcap'], [xR, wr, zR, wr, tw, undefined, false, 'wwcap']];
+}
+
+// --- the 1950s stepside pickup ----------------------------------------------
+function buildPickup50(spec, paint, trim, matte) {
+  const wr = spec.wheelR, nose = spec.len / 2, tail = -nose;
+  const zF = 1.62, zR = -1.30;
+  // the cab: square-shouldered, a rounded roof, the split screen raked back
+  const y1C = curve([[-0.82, 1.84], [-0.70, 1.90], [0.08, 1.92], [0.20, 1.90], [0.43, 1.25], [0.46, 1.20]]);
+  const cab = classicShell(paint, trim, matte, {
+    zs: span(-0.82, 0.46, 12), ts: span(0, TAU, 24).slice(0, 24),
+    sec: (z) => ({ w: 0.84, wT: 0.74, y0: 0.50, yb: 1.12, y1: y1C(z), pB: 8, pT: 4 }),
+    windows: [[0.25, 0.40, 0.66, 1.50], [-0.40, 0.17, 0.09, 0.62]],
+    frame: null, liner: { z0: -0.82, z1: 0.42, inset: 0.03, floor: 1.15 },
+  });
+  // the hood: narrow, round-topped, between the fenders
+  const hy1 = curve([[0.40, 1.20], [1.50, 1.19], [2.05, 1.14], [2.36, 1.04]]);
+  const hw = curve([[0.40, 0.52], [1.6, 0.50], [2.36, 0.44]]);
+  classicShell(paint, trim, matte, {
+    zs: span(0.40, 2.36, 12), ts: span(0, TAU, 22).slice(0, 22),
+    sec: (z) => ({ w: hw(z), wT: hw(z) * 0.9, y0: 0.62, yb: 0.98, y1: hy1(z), pB: 6, pT: 2.6 }),
+  });
+  seat(matte, 0, 1.25, -0.48, 1.30, 0.58, true);
+  const wc = [0.36, 1.30, 0.06];
+  classicWheel(trim, matte, wc, 0.21, [0.06, 0.06, 0.065]);
+  if (matte.crew) occupant(matte.crew, 0.36, 1.25, -0.48, 0.56, wc);
+  matte.box(0, 1.18, 0.33, 1.40, 0.18, 0.14, 0, [0.10, 0.10, 0.11]);       // the dash
+  // the back window (the cab's back is a solid cap): dark glass on it
+  trim.quad([-0.42, 1.42, -0.826], [0.42, 1.42, -0.826], [0.40, 1.70, -0.826], [-0.40, 1.70, -0.826], [0, 0, -1], UV4, CL_BACKGLASS);
+
+  const xF = 0.76, xR = 0.78, tw = 0.20;
+  const front = [[2.42, 0.66, 0.06, 0.08], [2.32, 0.90, 0.30, 0.20], [2.10, 1.02, 0.42, 0.24], [1.80, 1.06, 0.48, 0.25],
+    [1.45, 1.04, 0.48, 0.25], [1.10, 0.94, 0.44, 0.24], [0.80, 0.74, 0.30, 0.22], [0.52, 0.56, 0.10, 0.20], [0.36, 0.50, 0.04, 0.18]];
+  const rear = [[-1.86, 0.54, 0.06, 0.10], [-1.70, 0.74, 0.28, 0.22], [-1.50, 0.92, 0.41, 0.24], [-1.30, 0.98, 0.45, 0.25],
+    [-1.05, 0.92, 0.40, 0.24], [-0.82, 0.70, 0.26, 0.21], [-0.62, 0.50, 0.04, 0.18]];
+  for (const sx of [-1, 1]) {
+    fenderArc(paint, matte, sx, sx * (xF + 0.01), front, { th1: Math.PI + 0.25 });
+    fenderArc(paint, matte, sx, sx * (xR + 0.01), rear, { th1: Math.PI + 0.25 });
+    matte.box(sx * 0.80, 0.44, -0.13, 0.30, 0.05, 1.02, 0, CL_RUBBER);       // running board
+    roundLamp(trim, sx * (xF + 0.01), 0.86, 2.41, 0.085, 1, LAMP, 0.14);
+    trim.tube([sx * 0.50, 0.74, 2.30], [sx * 0.50, 0.74, 2.40], 0.035, 8, AMBER, true);
+    roundLamp(trim, sx * (xR + 0.01), 0.74, -1.86, 0.045, -1, TAILC, 0.10);
+    // doors: shut lines, handle, mirror on its arm
+    for (const zc of [0.20, -0.66]) {
+      const rows = [-0.008, 0.008].map((dz) => span(-0.6, 0.62, 6).map((t) => cab.at(zc + dz, sx > 0 ? t : Math.PI - t, 0.004)));
+      matte.patch(rows, [0.10, 0.10, 0.11], [sx, 0, 0]);
+    }
+    trim.tube([sx * 0.856, 1.12, -0.58], [sx * 0.856, 1.12, -0.48], 0.012, 6, CHROME, true);
+    trim.tube([sx * 0.84, 1.40, 0.22], [sx * 1.02, 1.55, 0.24], 0.011, 5, CHROME, true);
+    trim.tube([sx * 1.02, 1.55, 0.26], [sx * 1.02, 1.55, 0.22], 0.065, 12, CHROME, true);
+    trim.tube([sx * 1.02, 1.55, 0.221], [sx * 1.02, 1.55, 0.217], 0.058, 12, MIRROR, true);
+    // hood side vents
+    for (let i = 0; i < 3; i++) trim.box(sx * (hw(1.2) - 0.005), 0.98 + i * 0.05, 1.20, 0.02, 0.018, 0.34, 0, CHROME);
+  }
+  // the grille: chrome bars across the nose, the dark mouth behind them
+  matte.quad([-0.60, 0.62, 2.37], [0.60, 0.62, 2.37], [0.60, 1.02, 2.37], [-0.60, 1.02, 2.37], [0, 0, 1], UV4, CAVITY);
+  for (let i = 0; i < 5; i++) trim.tube([-0.62, 0.66 + i * 0.085, 2.385], [0.62, 0.66 + i * 0.085, 2.385], 0.018, 6, CHROME, true);
+  trim.tube([0, 1.08, 2.33], [0, hy1(1.0) + 0.008, 1.0], 0.012, 5, CHROME, true);   // the hood's centre strip
+  // the stepside bed: wood floor with steel strips, sides, front and gate
+  const bz0 = -0.88, bz1 = -2.40, bm = (bz0 + bz1) / 2, bl = bz0 - bz1;
+  matte.box(0, 0.80, bm, 1.30, 0.06, bl, 0, CL_WOOD);
+  for (let i = -2; i <= 2; i++) matte.box(i * 0.26, 0.86, bm, 0.04, 0.008, bl, 0, [0.22, 0.22, 0.23]);
+  for (const sx of [-1, 1]) {
+    paint.box(sx * 0.68, 0.80, bm, 0.06, 0.52, bl, 0, WHITE);
+    for (const z of [bz0 - 0.10, bm, bz1 + 0.10]) matte.box(sx * 0.68, 1.30, z, 0.07, 0.03, 0.08, 0, DEEP);   // stake pockets
+    trim.tube([sx * 0.62, 1.28, bz1 + 0.02], [sx * 0.66, 1.30, bz1 + 0.30], 0.008, 4, CHROME, false);       // gate chain
+  }
+  paint.box(0, 0.80, bz0 + 0.02, 1.42, 0.52, 0.05, 0, WHITE);
+  paint.box(0, 0.80, bz1 - 0.02, 1.42, 0.52, 0.05, 0, WHITE);
+  for (const sx of [-1, 1]) matte.box(sx * 0.46, 0.40, 0, 0.10, 0.16, 4.5, 0, DEEP);   // frame rails
+  matte.box(0, 0.50, 0.0, 0.8, 0.12, 1.2, 0, DEEP);                                      // under the cab
+  // bumpers: a plain chrome bar at each end on brackets
+  trim.box(0, 0.33, nose + 0.03, 1.92, 0.15, 0.09, 0, CHROME);
+  trim.box(0, 0.36, tail - 0.07, 1.76, 0.12, 0.08, 0, CHROME);
+  for (const sx of [-1, 1]) { matte.box(sx * 0.46, 0.36, nose - 0.08, 0.06, 0.08, 0.18, 0, DEEP); matte.box(sx * 0.46, 0.38, tail + 0.05, 0.06, 0.08, 0.20, 0, DEEP); }
+  plateBox(trim, 0, 0.35, nose + 0.085, 0.36, 0.11, 0.02);
+  plateBox(trim, 0, 0.94, bz1 - 0.05, 0.36, 0.11, 0.02);
+  return [[-xF, wr, zF, wr, tw, undefined, false, 'cap'], [xF, wr, zF, wr, tw, undefined, false, 'cap'],
+    [-xR, wr, zR, wr, tw, undefined, false, 'cap'], [xR, wr, zR, wr, tw, undefined, false, 'cap']];
+}
+
+// --- the woodie: a late-70s full-size wagon in simulated wood --------------------
+function buildWoodie(spec, paint, trim, matte) {
+  const wr = spec.wheelR, nose = spec.len / 2, tail = -nose;
+  const zF = 1.90, zR = -1.30;
+  const halfW = curve([[tail, 0.94], [-2.65, 0.985], [zR, 1.0], [0, 0.99], [zF, 1.0], [2.62, 0.985], [nose, 0.95]]);
+  const sillY = curve([[tail, 0.40], [-2.55, 0.32], [2.55, 0.32], [nose, 0.40]]);
+  const beltY = curve([[tail, 0.97], [-2.65, 1.0], [zR, 1.0], [0.4, 0.99], [1.0, 0.975], [2.3, 0.95], [nose, 0.93]]);
+  const tuckAt = curve([[tail, 0.94], [zR, 0.96], [-0.5, 0.93], [0.5, 0.93], [zF, 0.96], [nose, 0.94]]);
+  const topAt = curve([[tail, 0.95], [-2.6, 0.975], [1.2, 0.975], [2.5, 0.95], [nose, 0.91]]);
+  const core = bodyCore(spec, paint, matte, {
+    halfW, sillY, beltY, tuckAt, topAt, zF, zR,
+    archR: 0.56, archGap: 0.05, archPow: 2.2, creaseAt: 0.64, tumble: 0.965, deckDrop: 0.018, lipOut: 0.026, endRound: 0.07, endMin: 0.95,
+  });
+  const { geom, endProf } = core;
+  const tw = 0.235, wx = geom(zF).wb - tw / 2 + 0.02, wxR = geom(zR).wb - tw / 2 + 0.02;
+  const G = {
+    cowlZ: 1.02, scrZ: 0.28, backZ: -2.60, rearZ: -2.74, rearY: 1.04,
+    wScrB: 0.80, wScrT: 0.72, wRoof: 0.75, wRearT: 0.74, wRear: 0.78, wGlassT: 0.735, wGlassB: 0.80,
+    sgFB: [0.95, 1.0], sgFT: [0.30, 1.425], sgRT: [-2.56, 1.425], sgRB: [-2.68, 1.03],
+    bPillars: [0.27, 0.60], rearWrap: 0.02, rearBow: 0.006, scrWrap: 0.05, rows: [-0.10, -1.05, -1.95],
+  };
+  greenhouse(paint, trim, matte, { ...G, cowlY: beltY(G.cowlZ) - 0.005, roofY: spec.roof,
+    deck: [geom(G.rearZ).tw * 0.985, beltY(G.rearZ) - 0.006] });
+  // --- the face: quad square lamps at the ends of a wide chrome grille ---------
+  const GR = [0, 0.71, 0.80, 0.13];
+  endFace(paint, nose, 1, endProf(nose), [GR], WHITE);
+  const gp = pocket(paint, matte, 0, GR[1], nose, GR[2], GR[3], 0.10, 1, { rim: 0.024, rimCol: CHROME });
+  for (const sx of [-1, 1]) {
+    for (const dy of [0.062, -0.062]) {
+      trim.box(sx * 0.62, GR[1] + dy - 0.05, nose - 0.04, 0.25, 0.10, 0.03, 0, CHROME);
+      trim.box(sx * 0.62, GR[1] + dy - 0.04, nose - 0.02, 0.21, 0.08, 0.02, 0, LAMP);
+    }
+  }
+  for (let i = -7; i <= 7; i++) trim.box(i * 0.06, GR[1] - 0.12, gp.z + 0.02, 0.012, 0.24, 0.05, 0, CHROME);
+  for (const y of [GR[1] - 0.05, GR[1] + 0.05]) trim.box(0, y, gp.z + 0.04, 0.88, 0.012, 0.02, 0, CHROME);
+  // the big chrome bumper, a rubber strip, rubber guards, parking lamps in it
+  trim.box(0, 0.29, nose + 0.03, 2.00, 0.19, 0.16, 0, CHROME);
+  matte.box(0, 0.43, nose + 0.115, 1.94, 0.035, 0.01, 0, CL_RUBBER);
+  for (const sx of [-1, 1]) {
+    matte.box(sx * 0.40, 0.27, nose + 0.12, 0.07, 0.23, 0.05, 0, CL_RUBBER);
+    trim.box(sx * 0.70, 0.32, nose + 0.112, 0.20, 0.05, 0.008, 0, AMBER);
+  }
+  plateBox(trim, 0, 0.30, nose + 0.12, 0.36, 0.11, 0.02);
+  trim.tube([0, beltY(2.75) + 0.005, 2.74], [0, beltY(2.6) + 0.05, 2.62], 0.016, 6, CHROME, true);   // a plain stand-up ornament
+  // --- the tail: wood across the tailgate, tall lamps in the corners ------------
+  const TA = [0.86, 0.72, 0.075, 0.17];
+  endFace(paint, tail, -1, endProf(tail), [TA], WHITE);
+  for (const sx of [-1, 1]) {
+    const tp = pocket(paint, matte, sx * TA[0], TA[1], tail, TA[2], TA[3], 0.06, -1, { rim: 0.02, rimCol: CHROME });
+    trim.box(sx * TA[0], TA[1] - tp.hh, tail + 0.02, tp.hw * 1.9, tp.hh * 2, 0.02, 0, TAILC);
+    trim.box(sx * TA[0], TA[1] - tp.hh * 0.2, tail + 0.012, tp.hw * 1.9, 0.05, 0.01, 0, REVL);
+  }
+  const gz = tail - 0.008, gx = 0.72, gy0 = 0.52, gy1 = 0.92;
+  matte.quad([-gx, gy0, gz], [gx, gy0, gz], [gx, gy1, gz], [-gx, gy1, gz], [0, 0, -1], UV4, CL_WOOD);
+  for (const y of [0.62, 0.74, 0.84]) matte.quad([-gx, y, gz - 0.002], [gx, y, gz - 0.002], [gx, y + 0.012, gz - 0.002], [-gx, y + 0.012, gz - 0.002], [0, 0, -1], UV4, CL_GRAIN);
+  for (const [x0, y0, x1, y1] of [[-gx - 0.03, gy1, gx + 0.03, gy1 + 0.035], [-gx - 0.03, gy0 - 0.035, gx + 0.03, gy0], [-gx - 0.03, gy0, -gx, gy1], [gx, gy0, gx + 0.03, gy1]]) {
+    matte.quad([x0, y0, gz - 0.004], [x1, y0, gz - 0.004], [x1, y1, gz - 0.004], [x0, y1, gz - 0.004], [0, 0, -1], UV4, CL_BLOND);
+  }
+  plateBox(trim, 0, 0.60, gz - 0.008, 0.36, 0.11, 0.02);
+  trim.box(0, 0.29, tail - 0.03, 2.00, 0.19, 0.16, 0, CHROME);
+  matte.box(0, 0.47, tail - 0.07, 0.9, 0.012, 0.10, 0, CL_RUBBER);                 // the step on the bumper
+  // --- the flanks: wood from the front doors back, framed in blond -------------
+  const zW0 = tail + 0.10, zW1 = zF - 0.60, nz = 40;
+  for (const sx of [-1, 1]) {
+    shellBand(core, matte, sx, zW0, zW1, 2.35, 6.75, CL_WOOD, 0.006, nz, 4);
+    for (const f of [3.1, 3.9, 4.75, 5.6]) shellBand(core, matte, sx, zW0 + 0.05, zW1 - 0.05, f, f + 0.06, CL_GRAIN, 0.008, nz, 1);
+    shellBand(core, matte, sx, zW0, zW1, 6.55, 6.85, CL_BLOND, 0.010, nz, 1);
+    shellBand(core, matte, sx, zW0, zW1, 2.2, 2.5, CL_BLOND, 0.010, nz, 1);
+    for (const zc of [zW0 + 0.03, -0.05, -1.25, zW1 - 0.03]) shellBand(core, matte, sx, zc - 0.035, zc + 0.035, 2.3, 6.8, CL_BLOND, 0.011, 1, 4);
+    for (const zc of [0.95, -0.02, -1.22]) shellBand(core, matte, sx, zc - 0.006, zc + 0.006, 2.0, 8.0, [0.06, 0.05, 0.04], 0.013, 1, 6);
+    for (const zc of [0.05, -1.15]) {
+      const hg = geom(zc);
+      trim.tube([sx * (hg.w * 0.99 + 0.012), hg.yc + 0.10, zc - 0.08], [sx * (hg.w * 0.99 + 0.012), hg.yc + 0.10, zc + 0.06], 0.013, 6, CHROME, true);
+    }
+    trim.box(sx * (geom(0).wb + 0.01), 0.30, 0, 0.03, 0.05, 2.9, 0, CHROME);         // rocker trim
+    trim.box(sx * (geom(2.55).w + 0.004), geom(2.55).yc - 0.02, 2.55, 0.01, 0.04, 0.12, 0, AMBER);
+    trim.box(sx * (geom(-2.6).w + 0.004), geom(-2.6).yc - 0.02, -2.6, 0.01, 0.04, 0.12, 0, TAILC);
+    // a round chrome mirror on the door
+    trim.tube([sx * 0.80, 1.02, 0.86], [sx * 0.93, 1.07, 0.84], 0.011, 5, CHROME, true);
+    trim.tube([sx * 0.93, 1.08, 0.86], [sx * 0.93, 1.08, 0.82], 0.06, 12, CHROME, true);
+    trim.tube([sx * 0.93, 1.08, 0.821], [sx * 0.93, 1.08, 0.817], 0.052, 12, MIRROR, true);
+    // the roof rack's rails on their feet
+    const ry = spec.roof + 0.05;
+    trim.tube([sx * 0.60, ry, 0.0], [sx * 0.60, ry, -2.42], 0.016, 6, CHROME, true);
+    for (const z of [-0.02, -1.2, -2.40]) matte.box(sx * 0.60, spec.roof - 0.02, z, 0.05, 0.07, 0.10, 0, CL_RUBBER);
+  }
+  for (const z of [-0.35, -1.25, -2.15]) trim.tube([-0.60, spec.roof + 0.05, z], [0.60, spec.roof + 0.05, z], 0.014, 6, CHROME, false);
+  return [[-wx, wr, zF, wr, tw, undefined, false, 'ww'], [wx, wr, zF, wr, tw, undefined, false, 'ww'],
+    [-wxR, wr, zR, wr, tw, undefined, false, 'ww'], [wxR, wr, zR, wr, tw, undefined, false, 'ww']];
+}
+
+// --- the finned convertible: 1959-60, two-tone, top down --------------------------
+function buildFinned(spec, paint, trim, matte) {
+  const wr = spec.wheelR, nose = spec.len / 2, tail = -nose;
+  const zF = 1.83, zR = -1.37;
+  const halfW = curve([[tail, 0.93], [-2.55, 0.985], [zR, 1.0], [-0.5, 0.99], [0.5, 0.99], [zF, 1.0], [2.55, 0.985], [nose, 0.94]]);
+  const sillY = curve([[tail, 0.36], [-2.5, 0.29], [2.5, 0.29], [nose, 0.36]]);
+  const beltY = curve([[tail, 0.93], [-2.4, 0.95], [zR, 0.955], [-0.4, 0.935], [0.5, 0.925], [1.4, 0.92], [2.4, 0.905], [nose, 0.88]]);
+  const tuckAt = curve([[tail, 0.92], [zR, 0.96], [-0.5, 0.92], [0.5, 0.92], [zF, 0.96], [nose, 0.92]]);
+  const topAt = curve([[tail, 0.96], [-2.4, 0.98], [2.4, 0.98], [nose, 0.95]]);
+  const cockF = 0.70, cockR = -1.25, floorY = 0.48;
+  const deckDip = curve([[cockR - 0.22, 1.0], [cockR, floorY], [cockF, floorY], [cockF + 0.12, 1.0]]);
+  const core = bodyCore(spec, paint, matte, {
+    halfW, sillY, beltY, tuckAt, topAt, zF, zR,
+    archR: 0.58, archGap: 0.06, creaseAt: 0.70, tumble: 0.97, deckDrop: 0.02, lipOut: 0.03, endRound: 0.08, endMin: 0.94, deckDip,
+  });
+  const { geom, half, endProf } = core;
+  const tw = 0.235, wx = geom(zF).wb - tw / 2 + 0.02, wxR = geom(zR).wb - tw / 2 + 0.02;
+  // --- the cockpit: a red and cream vinyl tub, two benches, the dash ------------
+  const NZ = 18, tubRows = [], topEdge = [];
+  for (let i = 0; i <= NZ; i++) {
+    const z = cockR - 0.16 + ((cockF - cockR + 0.30) * i) / NZ;
+    const L = half(z, -1), R = half(z, 1), row = [];
+    for (const k of [9, 10, 11]) row.push([L[k][0] * 0.985, L[k][1] + 0.005, z]);
+    for (const k of [11, 10, 9]) row.push([R[k][0] * 0.985, R[k][1] + 0.005, z]);
+    tubRows.push(row); topEdge.push([L[8], R[8], z]);
+  }
+  matte.patch(tubRows, CL_RED_DARK, [0, 1, 0]);
+  for (const sx of [-1, 1]) {
+    paint.patch([
+      topEdge.map(([L, R, z]) => (sx < 0 ? [L[0], L[1], z] : [R[0], R[1], z])),
+      tubRows.map((r) => (sx < 0 ? [r[0][0], r[0][1] + 0.004, r[0][2]] : [r[5][0], r[5][1] + 0.004, r[5][2]])),
+    ], WHITE, [sx, 0.5, 0]);
+  }
+  const bench = (cz) => {
+    matte.loftY([
+      { y: floorY + 0.03, pts: ring2(0.66, cz, 0.24, 14) }, { y: floorY + 0.16, pts: ring2(0.68, cz, 0.25, 14) },
+      { y: floorY + 0.21, pts: ring2(0.64, cz + 0.02, 0.22, 14) },
+    ], CL_RED_VINYL, { capStart: true, capEnd: true });
+    matte.loftY([
+      { y: floorY + 0.18, pts: ring2(0.66, cz - 0.20, 0.08, 14) }, { y: floorY + 0.40, pts: ring2(0.66, cz - 0.25, 0.08, 14) },
+      { y: floorY + 0.52, pts: ring2(0.62, cz - 0.29, 0.06, 14) },
+    ], CL_CREAM, { capStart: true, capEnd: true });
+  };
+  bench(-0.30); bench(-0.98);
+  const cowlY = beltY(cockF);
+  matte.patch([
+    [[-0.62, cowlY - 0.02, cockF - 0.03], [0, cowlY - 0.01, cockF - 0.045], [0.62, cowlY - 0.02, cockF - 0.03]],
+    [[-0.60, cowlY - 0.15, cockF - 0.20], [0, cowlY - 0.14, cockF - 0.215], [0.60, cowlY - 0.15, cockF - 0.20]],
+    [[-0.58, floorY + 0.13, cockF - 0.24], [0, floorY + 0.14, cockF - 0.25], [0.58, floorY + 0.13, cockF - 0.24]],
+  ], CL_CREAM, [0, 0.6, -1]);
+  trim.tube([-0.60, cowlY - 0.014, cockF - 0.034], [0.60, cowlY - 0.014, cockF - 0.034], 0.014, 6, CHROME, true);
+  const wc = [0.34, 0.88, 0.24];
+  classicWheel(trim, matte, wc, 0.21, CL_IVORY);
+  if (matte.crew) occupant(matte.crew, 0.34, wc[1] + 0.07, -0.55, 0.57, wc);
+  // the wraparound screen in a chrome frame
+  const hdrZ = 0.30, hdrY = spec.roof, baseY = cowlY + 0.01, scr = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3, row = [];
+    const cz = cockF - 0.02 + (hdrZ - cockF + 0.02) * t, cy = baseY + (hdrY - baseY) * t;
+    for (let j = 0; j <= 8; j++) {
+      const u = -1 + j / 4;
+      row.push([u * (0.74 - 0.05 * t), cy - 0.02 * u * u, cz - 0.30 * u ** 4 * (1 - 0.5 * t)]);
+    }
+    scr.push(row);
+  }
+  trim.patch(scr, GLASS, [0, 0.5, 1]);
+  for (const sx of [-1, 1]) for (let i = 0; i < 3; i++) {
+    const a = scr[i][scr[i].length - 1], b = scr[i + 1][scr[i + 1].length - 1];
+    trim.tube([sx * a[0], a[1], a[2]], [sx * b[0], b[1], b[2]], 0.022, 6, CHROME, true);
+  }
+  for (let j = 0; j < 8; j++) trim.tube(scr[3][j], scr[3][j + 1], 0.024, 6, CHROME, true);
+  // the boot over the folded top, in cream
+  matte.loft([
+    { z: -1.78, pts: ring2(0.60, beltY(-1.78) - 0.02, 0.08, 12) },
+    { z: -1.55, pts: ring2(0.66, beltY(-1.55) - 0.01, 0.10, 12) },
+    { z: -1.40, pts: ring2(0.62, beltY(-1.40) - 0.05, 0.07, 12) },
+  ], CL_CREAM, { capStart: true, capEnd: true });
+  // --- the fins, chromed along their crowns, twin bullet lamps in their tails ----
+  for (const sx of [-1, 1]) {
+    const fz = [tail + 0.01, -2.55, -2.20, -1.80, -1.35, -0.85];
+    const ft = [1.24, 1.22, 1.15, 1.06, 0.99, 0.95];
+    const rings = fz.map((z, i) => {
+      const t0 = geom(z).tw, y1 = beltY(z);
+      const pts = [[sx * (t0 + 0.006), y1 - 0.04], [sx * (t0 - 0.025), ft[i]], [sx * (t0 - 0.17), y1 - 0.04]];
+      return { z, pts: sx > 0 ? pts : pts.reverse() };
+    });
+    paint.loft(rings, WHITE, { capStart: true, capEnd: true });
+    for (let i = 0; i < fz.length - 1; i++) {
+      const a = rings[i].pts[1], b = rings[i + 1].pts[1];
+      trim.tube([a[0], a[1] + 0.006, fz[i]], [b[0], b[1] + 0.006, fz[i + 1]], 0.012, 5, CHROME, true);
+    }
+    const bx = sx * (geom(tail + 0.05).tw - 0.07);
+    for (const by of [1.10, 0.99]) {
+      trim.tube([bx, by, tail + 0.10], [bx, by, tail - 0.02], 0.058, 12, CHROME, true);
+      trim.tube([bx, by, tail - 0.015], [bx, by, tail - 0.10], 0.045, 12, TAILC, true);
+      trim.spheroid(bx, by, tail - 0.10, 0.045, 10, 5, TAILC, 1);
+    }
+    // the two-tone: a cream cove down the flank between chrome spears
+    const f0 = (z) => 3.3 + Math.max(0, (z - 0.2) / 1.6) * 0.55, f1 = (z) => 4.7 - Math.max(0, (z - 0.2) / 1.6) * 0.55;
+    shellBand(core, matte, sx, -2.62, 1.80, f0, f1, CL_CREAM, 0.006, 44, 3);
+    for (const f of [f0, f1]) shellBand(core, trim, sx, -2.66, 1.84, (z) => f(z) - 0.06, (z) => f(z) + 0.06, CHROME, 0.010, 44, 1);
+    // rear wheel skirt, chrome-edged
+    const sk = [];
+    for (let i = 0; i <= 10; i++) {
+      const z = zR - 0.60 + (1.20 * i) / 10, p = core.surf(z, sx, 1, 0.004), x = sx * geom(z).w * 0.995;
+      sk.push([[x, 0.33, z], [x, Math.max(0.34, p[1] - 0.006), z]]);
+    }
+    paint.patch(sk[0].map((_, j) => sk.map((r) => r[j])), WHITE, [sx, 0, 0]);
+    trim.tube([sk[0][0][0] + sx * 0.006, 0.34, zR - 0.6], [sk[10][0][0] + sx * 0.006, 0.34, zR + 0.6], 0.012, 5, CHROME, true);
+    // flanks: rocker chrome, the door's shut line and handle, a mirror
+    trim.box(sx * (geom(0).wb + 0.01), 0.26, 0, 0.03, 0.05, 3.0, 0, CHROME);
+    for (const zc of [0.72, -0.62]) shutLine(core, matte, sx, zc, 2, 8);
+    const hg = geom(-0.45);
+    trim.tube([sx * hg.w * 0.99, hg.yc + 0.12, -0.55], [sx * hg.w * 0.99, hg.yc + 0.12, -0.38], 0.015, 6, CHROME, true);
+    trim.tube([sx * 0.86, 0.95, 0.70], [sx * 0.95, 1.00, 0.68], 0.011, 5, CHROME, true);
+    trim.tube([sx * 0.95, 1.01, 0.70], [sx * 0.95, 1.01, 0.66], 0.058, 12, CHROME, true);
+    trim.tube([sx * 0.95, 1.01, 0.661], [sx * 0.95, 1.01, 0.657], 0.05, 12, MIRROR, true);
+  }
+  // --- the face: hooded twin lamps each side, a chrome egg-crate grille --------
+  const LH = [0.70, 0.67, 0.25, 0.085], GR = [0, 0.53, 0.44, 0.09];
+  endFace(paint, nose, 1, endProf(nose), [LH, GR], WHITE);
+  const gp = pocket(paint, matte, 0, GR[1], nose, GR[2], GR[3], 0.10, 1, { rim: 0.025, rimCol: CHROME });
+  for (let i = -6; i <= 6; i++) trim.box(i * 0.066, GR[1] - 0.09, gp.z + 0.02, 0.014, 0.18, 0.05, 0, CHROME);
+  for (const y of [GR[1] - 0.04, GR[1] + 0.03]) trim.box(0, y, gp.z + 0.04, 0.88, 0.014, 0.03, 0, CHROME);
+  for (const sx of [-1, 1]) {
+    pocket(paint, matte, sx * LH[0], LH[1], nose, LH[2], LH[3], 0.08, 1, { rim: 0.02, rimCol: CHROME });
+    for (const lx of [0.58, 0.82]) roundLamp(trim, sx * lx, LH[1], nose + 0.01, 0.068, 1, LAMP, 0.10);
+    paint.box(sx * 0.70, LH[1] + LH[3] + 0.005, nose + 0.035, 0.56, 0.05, 0.11, 0, WHITE);     // the brow
+  }
+  trim.box(0, 0.27, nose + 0.04, 2.0, 0.17, 0.16, 0, CHROME);
+  for (const sx of [-1, 1]) {
+    trim.tube([sx * 0.40, 0.45, nose + 0.10], [sx * 0.40, 0.45, nose + 0.24], 0.07, 12, CHROME, true);
+    trim.spheroid(sx * 0.40, 0.45, nose + 0.24, 0.07, 12, 6, CHROME, 1);
+  }
+  plateBox(trim, 0, 0.28, nose + 0.125, 0.36, 0.11, 0.02);
+  trim.tube([0, beltY(2.70) + 0.01, 2.72], [0, beltY(2.5) + 0.05, 2.45], 0.02, 6, CHROME, true);
+  // --- the tail: a chrome panel, the bumper with its exhaust ports ------------
+  endFace(paint, tail, -1, endProf(tail), [], WHITE);
+  trim.box(0, 0.60, tail - 0.012, 1.60, 0.07, 0.02, 0, CHROME);
+  for (const sx of [-1, 1]) trim.box(sx * 0.42, 0.66, tail - 0.012, 0.16, 0.05, 0.02, 0, REVL);
+  trim.box(0, 0.27, tail - 0.04, 2.0, 0.19, 0.16, 0, CHROME);
+  for (const sx of [-1, 1]) hole(trim, matte, sx * 0.55, 0.36, tail - 0.12, 0.045, 0.10, -1);
+  plateBox(trim, 0, 0.71, tail - 0.012, 0.36, 0.11, 0.02);
+  return [[-wx, wr, zF, wr, tw, undefined, false, 'ww'], [wx, wr, zF, wr, tw, undefined, false, 'ww'],
+    [-wxR, wr, zR, wr, tw, undefined, false, 'ww'], [wxR, wr, zR, wr, tw, undefined, false, 'ww']];
+}
+
 const HAND_BUILT = {
   plane: buildPlane, twin: buildTwin, jet: buildJet, biplane: buildBiplane, heli: buildHeli, fighter: buildFighter, jumbo: buildJumbo, saucer: buildSaucer,
   airliner: buildAirliner,
@@ -11454,6 +12077,8 @@ const HAND_BUILT = {
   smart: buildSmart, volvo: (s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.volvo),
   lifted: liftBuild(buildPickup, 0.20, 0.42), limo: buildLimo, hearse: buildHearse, delorean: buildDelorean,
   icecream: buildIceCream, plow: buildPlow, zamboni: buildZamboni,
+  // the classics (cruise night)
+  bug: buildBug, pickup50: buildPickup50, woodie: buildWoodie, finned: buildFinned,
 };
 
 /**
@@ -12821,6 +13446,11 @@ const SUSP = {
   zamboni: { hz: 1.0, z: 0.3, roll: 1.2, up: 0.08, down: 0.07 },
   icecream: { hz: 1.2, z: 0.28, roll: 1.4, pitch: 1.2, up: 0.10, down: 0.09 },
   plow: { hz: 0.95, z: 0.26, roll: 1.1, pitch: 1.2, up: 0.09, down: 0.08 },
+  // the classics: soft, underdamped, they lean and wallow
+  bug: { hz: 1.5, z: 0.28, roll: 1.25, pitch: 1.35, up: 0.10, down: 0.08 },             // torsion bars, a bounce
+  pickup50: { hz: 1.2, z: 0.22, roll: 1.2, pitch: 1.2, up: 0.12, down: 0.10 },          // leaf springs all round
+  woodie: { hz: 0.95, z: 0.40, roll: 1.3, pitch: 1.25, up: 0.10, down: 0.09 },          // floaty
+  finned: { hz: 0.85, z: 0.42, roll: 1.35, pitch: 1.3, up: 0.10, down: 0.09 },          // a boat
 };
 const SUSP_DEF = { hz: 1.4, z: 0.38 };
 // (everything else you drive -- a quad, a tractor, the buggy: the one spring all had)
@@ -15624,6 +16254,20 @@ export class Vehicle {
     let lr = clamp(dx * rx + dz * rz, -this.halfWid, this.halfWid);
     return { x: this.x + f.x * lf + rx * lr, z: this.z + f.z * lf + rz * lr };
   }
+}
+
+// Auto KW, the classics' paints (kwcruise.js, traffic.js): period colours, not
+// liveries -- a classic takes a Respray and keeps its colour in a garage.
+export const CLASSIC_COLORS = {
+  bug: [0xd8cba0, 0x8fb3c9, 0xb5241d, 0xe9c64a, 0x5f8a6e, 0xe8e4d8, 0xd36b2a, 0x1b1d20, 0x9bc4b0],
+  pickup50: [0x8a1d18, 0x2f4d34, 0x6f9bb8, 0xd9cfae, 0x2e8c84, 0x1a1a1c, 0xb2672a, 0x55606b],
+  woodie: [0x6b3a22, 0xd9cfb3, 0x2f4a3a, 0x8a7a5a, 0x1f3352, 0x7b1c18, 0xbfc3c6],
+  finned: [0x3fb0b0, 0xe58fa8, 0xb3171d, 0x101114, 0x7fb5dd, 0x9bd1b8, 0xe86e57, 0xd8c24a],
+};
+export const CLASSIC_TYPES = Object.keys(CLASSIC_COLORS);
+export function classicColor(type, seed) {
+  const a = CLASSIC_COLORS[type];
+  return a ? a[Math.floor(hash2(seed, 11) * a.length) % a.length] : randomCarColor(seed);
 }
 
 export function randomCarColor(seed) {
