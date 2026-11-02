@@ -15266,7 +15266,7 @@ export class Vehicle {
    * stripes) is the vehicle: those keep theirs. Returns whether it took.
    */
   respray(hex) {
-    if (this.spec.finish || this.spec.liveries) return false;
+    if (this.spec.finish || this.spec.liveries || this.spec.paramedic) return false;   // (the ambulance stays white)
     this.color = hex;
     this.bodyMat.color.setHex(hex);
     this._farCol = null;

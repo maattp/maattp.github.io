@@ -388,7 +388,7 @@ export class Respray {
     this.game.hold('respray');
     const old = v.color;
     let hex = old;
-    const takes = !(v.spec.finish || v.spec.liveries);
+    const takes = !(v.spec.finish || v.spec.liveries || v.spec.paramedic);
     if (takes) for (let i = 0; i < 8 && hex === old; i++) hex = randomCarColor((Math.random() * 1e6) | 0);
     this.seq = {
       q, v, t: 0, price, hex, old, takes, applied: false, seen: !!(this.police && this.police.seen), wanted0: game.wanted,

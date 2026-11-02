@@ -100,6 +100,7 @@ export class KwEats {
     const v = player.vehicle;
     if (player.onFoot || !v || v.dead) return false;
     const s = v.spec;
+    if (s.paramedic) return false;   // an ambulance has its own calls (paramedic.js); both at once fight over the HUD and the LED panel
     return !!((s.roadCar && s.len < 7 && !s.bus) || s.bicycle || (s.moto && !s.jetski));
   }
 

@@ -140,11 +140,21 @@ export class Paramedics {
         if (d < (k ? 200 : DIST_MIN) || d > (k ? 1100 : DIST_MAX)) continue;
         const sp = this.city.respawnPointNear(h.x, h.z, 70);
         if (!sp || sp.elev) continue;
-        // lying on the lawn between the door and the kerb, on the kerb side of the house
-        let x = h.x + (sp.x - h.x) * 0.7, z = h.z + (sp.z - h.z) * 0.7;
-        const y = this.city.groundAt(x, z, null);
-        if (this.city.insideBuilding(x, z, y, 0.8)) { x = sp.x; z = sp.z; }
-        if (G.isWater(x, z) || out.some((q) => Math.hypot(q.x - x, q.z - z) < 60)) continue;
+        // lying on the lawn between the door and the kerb: the spot on that line nearest the road
+        // that is clear of every building, the water, and 2.5 m of any carriageway (the respawn
+        // point is a lane's centre, so the old 70% mark put most of them in the street)
+        let x = 0, z = 0, ok = false;
+        for (let f = 0.95; f >= 0.2 && !ok; f -= 0.05) {
+          x = h.x + (sp.x - h.x) * f; z = h.z + (sp.z - h.z) * f;
+          const gap = this.roadGap(x, z);
+          if (gap > 14) break;   // too far in from the road to drive up to (LOAD_R is 16)
+          if (gap < 2.5 || G.isWater(x, z)) continue;
+          const y = this.city.groundAt(x, z, null);
+          if (this.city.insideBuilding(x, z, y, 1.0)) continue;
+          ok = true;
+        }
+        if (!ok || this.bigRoadNear(x, z, 40)) continue;
+        if (out.some((q) => Math.hypot(q.x - x, q.z - z) < 60)) continue;
         got = { x, z, addr: h.addr || 'a nearby address', kx: sp.x, kz: sp.z };
       }
       if (!got) break;
@@ -152,6 +162,28 @@ export class Paramedics {
       ax = got.x; az = got.z;
     }
     return out;
+  }
+
+  /** Metres from (x, z) to the nearest carriageway edge (negative: on it). */
+  roadGap(x, z) {
+    const c = this.city;
+    let gap = Infinity;
+    for (const ei of c.edgesNear(x, z, 40)) {
+      const e = c.edges[ei];
+      if (e.tunnel) continue;
+      const a = c.nodes[e.a];
+      const tt = Math.max(0, Math.min(e.len, (x - a.x) * e.dx + (z - a.z) * e.dz));
+      const d = Math.hypot(x - (a.x + e.dx * tt), z - (a.z + e.dz * tt)) - e.hw;
+      if (d < gap) gap = d;
+    }
+    return gap;
+  }
+
+  /** A freeway, a ramp or an elevated road within r of (x, z): no stretcher is laid beside one. */
+  bigRoadNear(x, z, r) {
+    const c = this.city;
+    for (const ei of c.edgesNear(x, z, r)) { const e = c.edges[ei]; if (e.cls === 'hwy' || e.cls === 'ramp' || e.elev) return true; }
+    return false;
   }
 
   makePatient(q, seed) {
