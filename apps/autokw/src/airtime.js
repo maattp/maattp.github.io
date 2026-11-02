@@ -13,7 +13,10 @@
 // motion does not inflate it), horizontal distance from take-off to the final
 // touchdown, height (the most metres over the take-off point), flips (the
 // body's accumulated pitch or roll, in whole 360s) and spins (accumulated yaw,
-// in whole 360s; net, so steering left-right-left is not a spin).
+// in whole 360s; net, so steering left-right-left is not a spin) -- the body's
+// own rotation, which vehicles.js freeAir turns from the controls in the air;
+// each counted from 36 deg short of whole (TURN_SLACK). A landing freeAir flew
+// is judged by freeAir (`v.airLand`: 35 deg of the ground's upright).
 //
 // COUNTED from MIN_AIR (0.8 s) only: a crest or kerb hop is nothing. The tier
 // is 1 + how many of (distance >= 30 m, height >= 4 m, flips >= 1, spins >= 1)
@@ -52,6 +55,11 @@ export const TIERS = [
 const KEY = 'autokw-airtime';
 const TWO_PI = Math.PI * 2;
 const TELEPORT = 25;               // m in one frame: a warp, not a flight
+// A turn counts from 36 deg short of a whole one: the landing it has to be
+// clean on is judged within 35 deg of the ground's upright (vehicles.js
+// freeAir), and a flip off flat ground onto a bank that rises to meet you is
+// a whole flip short by the bank's angle.
+const TURN_SLACK = 0.1;
 
 /** A vehicle the bonus counts: road vehicles, bikes, quads, bicycles. */
 export function eligible(v) {
@@ -103,7 +111,7 @@ export class Airtime {
       const n = this._rec || (this._rec = {});
       n.v = v; n.t = 0; n.x0 = n.px = v.x; n.z0 = n.pz = v.z; n.y0 = v.y; n.maxUp = 0;
       n.h = v.heading; n.p = v.pitch || 0; n.r = v.roll || 0; n.yaw = 0; n.pitchAcc = 0; n.rollAcc = 0;
-      n.ramp = false; n.land = -1; n.upright = true; n.dist = null; n.wetLand = false;
+      n.ramp = false; n.land = -1; n.upright = true; n.dist = null; n.wetLand = false; n.ln = v.airLandN || 0; n.whyLand = '';
       this.j = n;
       this._track(n, v, player);
       return;
@@ -122,7 +130,13 @@ export class Airtime {
         if (j.t < MIN_AIR) { this.cancel(); return; }
         j.land = 0;
         j.dist = Math.hypot(v.x - j.x0, v.z - j.z0);
-        j.upright = Math.cos(v.pitch || 0) * Math.cos(v.roll || 0) > 0.5;
+        // in-air control's own verdict when it flew this landing (vehicles.js
+        // freeAir: 35 deg of the ground's upright, capsized, a crash landing);
+        // otherwise (stuntAir, a synthetic launch) the attitude itself
+        const lv = (v.airLandN || 0) !== j.ln ? v.airLand : null;
+        j.ln = v.airLandN || 0;
+        j.upright = lv ? lv.upright : Math.cos(v.pitch || 0) * Math.cos(v.roll || 0) > 0.5;
+        j.whyLand = lv && !lv.upright ? lv.why : '';
         j.wetLand = G.isWater(v.x, v.z) || !!v.afloat;
         if (!j.upright || v.dead) { this._end(j, v, player); return; }
       } else if (!j.ramp && j.t >= MIN_AIR) {
@@ -158,13 +172,13 @@ export class Airtime {
     const dist = j.dist != null ? j.dist : Math.hypot(v.x - j.x0, v.z - j.z0);
     const stats = {
       air: +j.t.toFixed(2), dist: +dist.toFixed(1), height: +Math.max(0, j.maxUp).toFixed(1),
-      flips: Math.floor(Math.max(Math.abs(j.pitchAcc), Math.abs(j.rollAcc)) / TWO_PI + 0.02),
-      spins: Math.floor(Math.abs(j.yaw) / TWO_PI + 0.02),
+      flips: Math.floor(Math.max(Math.abs(j.pitchAcc), Math.abs(j.rollAcc)) / TWO_PI + TURN_SLACK),
+      spins: Math.floor(Math.abs(j.yaw) / TWO_PI + TURN_SLACK),
     };
     const sc = score(stats);
     let why = '';
     if (j.land < 0) why = player.vehicle !== v ? 'bailed out' : 'never landed';
-    else if (!j.upright) why = 'landed on the roof';
+    else if (!j.upright) why = j.whyLand || 'landed on the roof';
     else if (v.dead || v.wreck) why = 'wrecked';
     else if (j.wetLand || G.isWater(v.x, v.z) || v.afloat) why = 'splashdown';
     else if (player.vehicle !== v || player.onFoot) why = 'bailed out';

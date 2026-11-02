@@ -1928,13 +1928,68 @@ file and a guide disagree, this file wins.
   a flip), every tier, pay, a bicycle and a quad, a 0.48 s hop = nothing, roof and Laurel Creek splashdown fail,
   cheats, the Fairview ramp driven by __sj (stunts.js pays once, airtime silent), a jump judged by main.js's live
   loop, the save, a fresh instance, the pause menu's rows, 0 exceptions; reading only `v.stunt` fails 15 checks.
-  Phone cost: 0 draws, 0 meshes, 2 DOM nodes + a style sheet after the first jump. **Not done / known:** the car
-  physics never tumbles a car in the air (stuntAir and the follow damp pitch and roll back), so a flip happens only
-  if something rotates the body (the probe does), and a roof landing likewise (no rollover physics). Spins: only
-  stuntAir spins the body (STUNT_SPIN, ~2.4 s for 360), and its flights are stunts.js's; off a crest the follow's
-  steering turns the PATH, not the body (measured: full steer, 1.45 s of air, 0 spins, 29 m instead of ~40). So
-  free-form play tops out at TRIPLE STUNT until the follow path gets an in-air body spin / tumble (vehicles.js).
+  Phone cost: 0 draws, 0 meshes, 2 DOM nodes + a style sheet after the first jump. **Flips and spins are the
+  body's own** since in-air control (next entry): flips = max(|accumulated pitch|, |accumulated roll|) / 360 and
+  spins = |net heading| / 360, each counted from 36 deg short of whole (`TURN_SLACK` 0.1: the landing is judged
+  within 35 deg of the ground's upright, and a flip off flat ground onto a bank that rises to meet it is short by
+  the bank's angle). **A landing freeAir flew is judged by freeAir** (`v.airLand`, new since take-off: `airLandN`):
+  upright = within 35 deg of the ground under it, and its `why` ("landed on the roof", "crash landing") is the
+  STUNT FAILED line; any other landing (stuntAir, a synthetic launch) still uses cos pitch x cos roll > 0.5.
+  The old probe's "follow, full steer (info)" line now reads 1 spin (it read 0 spins, 29 m).
 
+- **In-air control: your vehicle's body in the air** (vehicles.js `freeAir`, `_airLand`, `updateCapsized`,
+  `airCapable`; player.js chase camera; docs/aircontrol/*.jpg; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1
+  node tools/kw/aircontrolprobe.mjs [dir] [noshots]`, page side tools/kw/aircontrol-page.js). GTA's mid-air tilt.
+  **Who:** only `pilot` input (player.js updateDrive) ever enters it -- AI cars and the benches that step
+  Vehicle.update directly never set it -- and only a road car, bike, quad, kart or bicycle (`airCapable`: not a
+  tank, a rig towing a trailer, a train, anything afloat). **When:** after `AIR_T0` (0.1 s) of the vertical
+  follow's own air (`onGround === false`), so a kerb or crest hop shorter than that is the follow's, bit for bit.
+  **Never a stunts.js ramp flight:** those are stuntAir's (its own STUNT_SPIN steering spin, the bike's pull,
+  the cinematic), untouched -- the ramps' numbers are byte-identical. **The flight:** the path is held in world
+  space (air drag, the follow's 22 m/s^2, no engine, no grip); the controls turn the BODY, which keeps its own
+  angular velocity (`airFly.wy/wp/wr`): the stick's steer spins it (`AIR_YAW` 6.2 rad/s at full lock, answering
+  at 9/s, |s|^1.5 round the centre; a 360 in ~1.2 s of air; a let-go spin carries on, decaying 0.5/s; a bike
+  x1.1); gas or stick forward drops the nose, brake or stick back lifts it (`AIR_PITCH` 4.4 rad/s: a car flips in
+  ~1.7 s of air, a bike or bicycle x1.5 in ~1.2 s, a quad x1.2; anything over 7 m x0.55, spin too); roll is only
+  the take-off's (the first rates are the frame before's, clamped to 1 rad/s). **A pedal held at take-off is
+  not a command until it has come up once** (`AIR_ARM`, armed from the first airborne frame): touch players hold
+  GAS over every crest, and the keyboard's W is the gas and stick-forward at once -- without it every crest
+  flipped you. The stick's y has a 0.4 dead zone (a touch stick steering hard wanders in y). **Self-righting:**
+  with no pitch input a spring (`AIR_SELF_K` 30, `AIR_SELF_C` 9) eases pitch and roll toward the ground
+  `AIR_LEAD` 0.25 s ahead along the path (where it is about to land: aimed at the ground underneath, a drop into
+  a ravine met the far bank 20-40 deg off), at full strength within ~45 deg of it and none past ~90, so a let-go
+  flip carries on round and is caught as it comes up, and a no-input jump lands as flat as the follow's did.
+  **Hits in the air count:** a wall or traffic.js kick that changes vLong / vLat or adds `spin` changes the
+  flight (the first cut held the path and flew through trunks). **Touchdown** is the follow's four wheel samples
+  (from the higher of last frame's and this frame's height, so a fast fall cannot pass a deck), plus the body's
+  `restOff` when tipped; the verdict (`airLand`: upright, why, tilt, slip, ...) by the up-component relative to
+  the ground: >= cos 35 deg on the wheels, settled by the follow as ever (pitch / roll wrapped first, or the
+  follow's lerp unwound a flip), a heading > 45 deg off the path or a spin still > 1.2 rad/s lands as a slide
+  (`slide` = 1, 60 % of the spin into `spin`: the crash spin-out's model); 0.3..cos 35: a crash landing back
+  onto the wheels (damage only from the impact: 1.2 x (|landVy| - 6), max 30); under 0.3: **CAPSIZED**
+  (`updateCapsized`) -- the attitude re-expressed with |pitch| < 90 deg (heading + PI, PI - pitch, roll + PI),
+  it scrapes to a stop at 8 m/s^2 on its roof (or falls back onto its wheels from a nose stand), 15-45 damage;
+  nothing drives it; **hold the stick either way for 0.7 s once stopped and it rocks back onto its wheels**
+  (GTA's rule; ~2 s), or get out. Before this the only car ever on its roof was a tank.js hulk. **Camera:** while
+  `airFly` the chase camera follows the flight path, not the nose (a 360 no longer drags it round).
+  **KW's terrain is flat:** a scan of the whole map (20 m grid x 16 headings, then the real vehicles driven off
+  the best ~100) found the long natural flights (1.5-2.3 s) all end in the Grand River; the longest dry ones are
+  ~1.3 s, off the river banks of north-east Kitchener. The probe's is the bank behind Zeller Dr (Lackner Woods,
+  (5239.6, -420.2), heading 1.963, off the grass at 28 m/s): a dirt bike 1.32 s / 43 m, a Jeep 1.27 s / 41 m. So
+  in free play QUADRUPLE (distance + flip + spin) is a dirt-bike trick there; a car gets a spin (TRIPLE) or a
+  roof; a sedan cannot reach take-off speed on grass. WATERLOO WARRIOR still needs 4 m of height, i.e. a ramp,
+  and the ramps are stunts.js's. **Probe** (real held keys in controls.keys at a fixed 1/60 s, game order, nothing
+  written over the body): bike no input clean (tilt 3), gas held from the run-up = no flip, full-lock spin = 1
+  spin clean, re-pressed gas = 1 flip clean, both = QUADRUPLE STUNT clean and paid ($1240), W held all the way =
+  422 deg, crash landing, $0; Jeep no input clean, full-lock 361 deg = 1 spin, W = roof, CAPSIZED, rocked back in
+  1.95 s and driven 10 m; bike 153 vs Jeep 107 deg 0.6 s in; non-vacuous (airCapable -> false: the same keys give
+  56 deg yaw / -2 deg pitch, no spin, no flip); in-page invariance (no-`pilot` updates never enter it; a real-keys
+  street drive hashes identically on and off; Chicopee / YKF / Fairview at cap 32 identical on and off, 0 freeAir
+  frames); 0 exceptions. **Invariance, full runs (before = master v115, after = this):** `drivetest.mjs` (sedan,
+  sports, pickup, compact, bus) text and JSON byte-identical; `kwstunts.mjs` (21 jumps x caps 24/32/99) output
+  byte-identical, 63/63 CLEAN, PASS 21; trafficbench (AUTO_PHONE=1) hashes identical at all six sites;
+  `airtimeprobe.mjs` PASS. **Phone cost:** 0 draws, 0 meshes; only your vehicle, only in the air: ~9 groundAt + 2
+  roadLift a frame (the follow's 4 + 4 for the lead target). **The spin's authority ramps in over the first `AIR_YAW_RAMP` 0.2 s of freeAir** (added at merge, v117): a 0.4 s hop over a crest at full lock turns the body 39 deg (was 70, past AIR_SLIP's 45: a country-bend crest became a slide); a 360 now needs ~1.25 s of air (316 deg at 1.2 s), still inside the ~1.3 s natural flights.
 - **Wildlife: src/kwwildlife.js** (docs/wild/*.jpg; `__dbg.wildlife`; probe
   `tools/kw/wildprobe.js`, shots `tools/kw/wildviews.json` + `wildviews2.json`). Four
   cheap range-gated systems, no pause toggle, `window.__noWildlife = true` before boot

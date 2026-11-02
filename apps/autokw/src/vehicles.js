@@ -14,7 +14,7 @@ import { WXK, WXU } from './weather.js';
 import { TODU } from './tod.js';
 import { GFXU } from './gfx.js';
 import { makeHumanoid, buildCharacter, BONES, gripHands } from './peds.js';
-import { clamp, lerp, hash2, damp } from './util.js';
+import { clamp, lerp, hash2, damp, angleWrap } from './util.js';
 import * as G from './geo.js';
 import { buildBuggy, attachBuggy, syncBuggy } from './buggy.js';
 import { buildKart, KART_RIDER } from './kart.js';
@@ -106,7 +106,39 @@ const ROLL = 0.020;
 // gravity for hang time, the flight path held while steering spins the body.
 const STUNT_G = 15;
 const STUNT_SPIN = 2.6;   // rad/s of yaw at full steer, in the air
+// IN-AIR CONTROL (Vehicle.freeAir): YOUR road vehicle off a crest, a drop, a
+// ditch -- anything but a stunts.js ramp, whose flights are stuntAir's above.
+// After AIR_T0 of the follow's own air the flight path is held in world space
+// and the controls turn the BODY: the stick spins it (AIR_YAW rad/s at full
+// lock, answering at AIR_YAW_K: a 360 in ~1.1 s of control, ~1.2 s of air),
+// gas / stick forward drop the nose and brake / stick back lift it (AIR_PITCH
+// rad/s: a car flips in ~1.7 s of air, a bike or a bicycle in ~1.2 s). The
+// body keeps its angular velocity; with nothing held a spring (AIR_SELF_K,
+// AIR_SELF_C) eases pitch and roll toward the ground AIR_LEAD s ahead, so a
+// no-input jump lands flat (apps/autokw/CLAUDE.md, "In-air control").
+const AIR_T0 = 0.1;
+const AIR_G = 22;            // the follow's gravity (Vehicle.update's fall)
+const AIR_YAW = 6.2, AIR_YAW_K = 9, AIR_YAW_DAMP = 0.5;
+const AIR_YAW_RAMP = 0.2;   // s of flight (after AIR_T0) before the stick's spin has its full rate
+const AIR_PITCH = 4.4, AIR_PITCH_K = 6;
+const AIR_SELF_K = 30, AIR_SELF_C = 9, AIR_LEAD = 0.25;
+const selfK = (e) => clamp((1.6 - Math.abs(e)) / 0.8, 0, 1);
+const AIR_ARM = 0.3;         // a pedal held at take-off counts once it has dropped under this
+const AIR_UP = Math.cos(35 * Math.PI / 180);   // landing: within 35 deg of the ground's upright is on the wheels
+const AIR_SLIP = 45 * Math.PI / 180;           // ...and a heading this far off the path lands as a slide
+const AIR_CRASH = 0.3;       // up-component under this capsizes; between it and AIR_UP a crash landing
 const STILL = { dx: 0, dz: 0 };
+// freeAir's pitch channels: nose DOWN is the gas or the stick forward (-y),
+// nose UP the brake or the stick back (past a 0.4 dead zone: a touch stick
+// steering hard wanders in y)
+const airDown = (input) => Math.max(input.throttle || 0, clamp((-(input.pitch || 0) - 0.4) / 0.5, 0, 1));
+const airUp = (input) => Math.max(input.brake || 0, clamp(((input.pitch || 0) - 0.4) / 0.5, 0, 1));
+// How far a body's base must stand off the ground at a roll (or any tilt):
+// 0 upright, the half-width on its side, the roof's height upside down.
+function restOff(rr, hw, roof) {
+  const sn = Math.abs(Math.sin(rr)), cs = Math.cos(rr);
+  return sn * hw + (1 - cs) * 0.5 * roof * (1 - sn * 0.5);
+}
 // A crash's spin-out (see Vehicle.spin / slide; traffic.js pairImpulse):
 // how fast the spin is scrubbed off (a share a second + a constant rad/s^2,
 // that constant up to 1 + SPIN_SLOW times over as the car comes to rest),
@@ -13606,6 +13638,8 @@ export class Vehicle {
     // vertical speed it would launch at, and the flight state while airborne.
     this.rampRef = null; this.rampT = 0; this.rampVy = 0; this.rampAlong = 0;
     this.stunt = false; this.spinRate = 0; this.stuntLaunch = null; this.stuntLanded = false; this.landVy = 0;
+    // your vehicle's in-air control (freeAir) and a capsize after it (updateCapsized)
+    this.airFly = null; this.airT = 0; this.capsized = null;
     // Wheelies (bikes and quads): the nose-up angle about the rear axle, how
     // long the current one has lasted, and a finished one for the HUD to read.
     this.wheelie = 0; this.wheelieT = 0; this.wheelieDone = 0; this.pullIn = 0;
@@ -14985,6 +15019,7 @@ export class Vehicle {
     if (this.hitCd > 0) this.hitCd -= dt;
     if (this.wreck) { this.updateWreck(dt); return STILL; }
     if (this.crushed) { this.vLong = 0; this.vLat = 0; return STILL; }
+    if (this.capsized) { this.updateCapsized(dt, input); return STILL; }
     if (spec.balloon) { this.updateBalloon(dt, input); return; }
     if (spec.heli) { this.updateHeli(dt, input); return; }
     if (spec.fighter) { this.updateFighter(dt, input); return; }
@@ -15004,6 +15039,22 @@ export class Vehicle {
     const pull = light ? clamp(input.pitch || 0, -1, 1) : 0;
     this.pullIn = pull;
     const steerIn = clamp(input.steer || 0, -1, 1) * (1 - 0.6 * clamp(this.wheelie / 0.3, 0, 1));
+    // YOUR vehicle in the air off anything but a stunt ramp (freeAir). Only
+    // `pilot` input (player.js) ever gets here: AI cars and the benches that
+    // step Vehicle.update directly never set it.
+    if (this.airFly && (!input.pilot || this.onGround !== false || this.stunt)) this.airFly = null;
+    if (input.pilot) {
+      const aloft = this.onGround === false && !this.stunt;
+      if (aloft) {
+        // the pedals' arming (freeAir) runs from the first airborne frame
+        const dn = airDown(input), un = airUp(input);
+        if (!this.airT) { this._armD = dn < AIR_ARM; this._armU = un < AIR_ARM; }
+        else { if (dn < AIR_ARM) this._armD = true; if (un < AIR_ARM) this._armU = true; }
+      }
+      this.airT = aloft ? (this.airT || 0) + dt : 0;
+      if (this.airFly || (this.airT > AIR_T0 && this.airCapable())) return this.freeAir(dt, input);
+      this._airP = this.pitch; this._airR = this.roll;   // last frame's attitude: the take-off rates
+    }
     if (this.stunt) { this.spin = 0; this.stuntAir(dt, steerIn, pull); return STILL; }
 
     // One paved-surface query per body per frame, reused by all seven ground
@@ -15849,9 +15900,7 @@ export class Vehicle {
     this.lift = this.city.roadLift(this.x, this.z);
     const g = this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift);
     const hw = this.halfWid, roof = this.spec.roof || 1.5;
-    // how far the base must stand off the ground at a roll: 0 upright, the
-    // half-width on its side, the roof's height upside down
-    const off = (rr) => { const sn = Math.abs(Math.sin(rr)), cs = Math.cos(rr); return sn * hw + (1 - cs) * 0.5 * roof * (1 - sn * 0.5); };
+    const off = (rr) => restOff(rr, hw, roof);
     if (!W.rest) {
       W.vy -= 15 * dt;
       this.y += W.vy * dt;
@@ -15874,6 +15923,228 @@ export class Vehicle {
       this.roll = damp(this.roll, W.rollEnd, 6, dt);
       this.pitch = damp(this.pitch, 0, 6, dt);
       this.y = damp(this.y, g + off(this.roll), 10, dt);
+    }
+    this.sync();
+  }
+
+  /** Does in-air control (freeAir) fly this vehicle? Road vehicles, bikes,
+   *  quads, karts, bicycles; not a tank, a rig towing a trailer, a train. */
+  airCapable() {
+    const s = this.spec;
+    return !(s.tank || s.rail || s.plane || s.heli || s.fighter || s.balloon || s.boat || s.kayak || s.hydro || s.saucer)
+      && !this.trailer && !this.leader && !this.afloat && !this.dead && !this.wreck;
+  }
+
+  /**
+   * IN-AIR CONTROL for YOUR vehicle (GTA's mid-air tilt), once the follow
+   * below has had it in the air for AIR_T0 -- a crest, a drop off a deck, a
+   * ditch. A stunts.js ramp flight is stuntAir's, never this.
+   *
+   * The flight path is held in world space (air drag and the follow's own
+   * AIR_G, no engine, no grip) and the body turns about it with its own
+   * angular velocity (`airFly.wy/wp/wr`, rad/s of heading / pitch / roll):
+   * - the stick's steer spins it, up to AIR_YAW at full lock (x1.1 on a bike
+   *   or a bicycle); let go and the spin carries on, slowing a little;
+   * - gas or stick forward drops the nose (+pitch), brake or stick back lifts
+   *   it, up to AIR_PITCH (x1.5 on a bike or a bicycle, x1.2 a quad; x0.55,
+   *   spin too, for anything over 7 m); A PEDAL HELD AT TAKE-OFF DOES NOT COUNT until it
+   *   has come up once (AIR_ARM): touch players hold GAS over every crest,
+   *   and the keyboard's W is the gas and stick-forward at once;
+   * - roll is only what the take-off gave it (one wheel off first, a ramp's
+   *   edge), as are the first pitch and yaw rates (the frame before);
+   * - with no pitch input, a spring eases pitch and roll toward the ground
+   *   AIR_LEAD s ahead (where it is coming down), so a no-input jump lands
+   *   as flat as the follow's did; it lets go of a body far from upright,
+   *   so a flip carries on and is caught as it comes round.
+   * Touchdown is the follow's (the four wheel samples under the body) and
+   * judged by the ground's upright (`airLand`, airtime.js reads it):
+   * - within 35 deg (AIR_UP): on the wheels, settled by the follow as ever;
+   *   a heading more than AIR_SLIP off the path, or a spin still going,
+   *   lands as a slide (`slide`, `spin`: the crash spin-out's model);
+   * - up-component AIR_CRASH..AIR_UP: a crash landing, thrown back onto the
+   *   wheels with damage and a slide;
+   * - under AIR_CRASH: CAPSIZED, on its side or roof (updateCapsized).
+   */
+  freeAir(dt, input) {
+    const spec = this.spec, two = !!spec.moto;
+    let A = this.airFly;
+    const down = airDown(input), up = airUp(input);
+    if (!A) {
+      const f = this.forward;
+      const rate = (a, b) => clamp(dt > 0 && b !== undefined ? angleWrap(a - b) / dt : 0, -1, 1);
+      A = this.airFly = {
+        wx: f.x * this.vLong + f.z * this.vLat, wz: f.z * this.vLong - f.x * this.vLat,
+        wy: clamp(this.yawRate || 0, -3, 3), wp: rate(this.pitch, this._airP), wr: rate(this.roll, this._airR),
+        ws: this.vLong / (this.assets.wheelR || 0.34),
+        armD: !!this._armD || down < AIR_ARM, armU: !!this._armU || up < AIR_ARM, t: 0,
+      };
+      this.spin = 0; this.dynW = undefined; this.burnout = false; this.burnoutT = 0;
+    }
+    else {
+      // what hit it since the last frame (player.js's walls, traffic.js's
+      // kick) moved vLong / vLat and gave it `spin`: the flight takes both
+      const f = this.forward;
+      A.wx = f.x * this.vLong + f.z * this.vLat; A.wz = f.z * this.vLong - f.x * this.vLat;
+      if (this.spin) { A.wy += this.spin; this.spin = 0; }
+    }
+    A.t += dt;
+    if (down < AIR_ARM) A.armD = true;
+    if (up < AIR_ARM) A.armU = true;
+    const cmdP = (A.armD ? down : 0) - (A.armU ? up : 0);
+    const steer = clamp(input.steer || 0, -1, 1);
+    const heavy = spec.len > 7 ? 0.55 : 1;
+    const bike = !!(spec.moto || spec.bicycle);
+    const kp = (bike ? 1.5 : spec.atv ? 1.2 : 1) * heavy, ky = (bike ? 1.1 : 1) * heavy;
+    // the spin: the stick asks for a rate (softened round the centre)
+    if (Math.abs(steer) > 0.05) {
+      // the spin's authority comes in over the first AIR_YAW_RAMP s of the
+      // flight: a hop over a crest taken with the wheel turned (a touch
+      // player's full lock round a country bend) lands on its path as it did
+      // before freeAir, and a real jump still has the time for a 360
+      const auth = Math.min(1, A.t / AIR_YAW_RAMP);
+      const want = Math.sign(steer) * Math.pow(Math.abs(steer), 1.5) * AIR_YAW * ky * auth;
+      A.wy += (want - A.wy) * (1 - Math.exp(-AIR_YAW_K * dt));
+    } else A.wy *= Math.exp(-AIR_YAW_DAMP * dt);
+    this.heading += A.wy * dt;
+    // the flight path: held, a little air drag, the follow's gravity
+    const sp = Math.hypot(A.wx, A.wz);
+    const drag = 1 - Math.min(0.5, sp * DRAG * dt);
+    A.wx *= drag; A.wz *= drag;
+    const y0 = this.y;
+    this.vy -= AIR_G * dt;
+    this.y += this.vy * dt;
+    const dx = A.wx * dt, dz = A.wz * dt;
+    this.x = G.clampToMap(this.x + dx);
+    this.z = G.clampToMap(this.z + dz);
+    const g = this.forward, rx = g.z, rz = -g.x;
+    this.vLong = A.wx * g.x + A.wz * g.z;
+    this.vLat = A.wx * g.z - A.wz * g.x;
+    this.yawRate = A.wy;
+    // the ground under the body, as the follow samples it (from the height
+    // the body had before this step, so a fast fall cannot pass a deck)
+    this.lift = this.city.roadLift(this.x, this.z);
+    const from = Math.max(y0, this.y) + 0.45;
+    const at = (ox, oz) => this.city.groundAt(this.x + ox, this.z + oz, from, this.lift);
+    const fh = at(g.x * this.halfLen, g.z * this.halfLen);
+    const bh = at(-g.x * this.halfLen, -g.z * this.halfLen);
+    const lh = two ? 0 : at(rx * this.halfWid, rz * this.halfWid);
+    const rh = two ? 0 : at(-rx * this.halfWid, -rz * this.halfWid);
+    let target = two ? (fh + bh) / 2 : (fh + bh + lh + rh) / 4;
+    // (the follow's tunnel rule: a floor 3 m+ over a body underground is the world above)
+    if (target - this.y > 3 && G.terrainRaw(this.x, this.z) - this.y > 2.5) target = -Infinity;
+    const gp = clamp(Math.atan2(bh - fh, this.halfLen * 2), -0.6, 0.6);
+    const gr = two ? 0 : clamp(Math.atan2(lh - rh, this.halfWid * 2), -0.5, 0.5);
+    // the nose: the pedals ask for a rate; nothing held, the spring
+    // (the spring catches a body NEAR the ground's upright -- full inside
+    // ~45 deg, none past ~90 -- so a let-go flip carries on round and is
+    // caught as it comes up, and a no-input jump is held flat)
+    // Its target is the ground AIR_LEAD s ahead along the path -- where it is
+    // about to come down -- so a drop into a dip meets the far bank level
+    // with it, not with the slope it left (into a ravine that was 20-40 deg).
+    const lx = this.x + A.wx * AIR_LEAD, lz = this.z + A.wz * AIR_LEAD, ll = this.city.roadLift(lx, lz);
+    const atL = (ox, oz) => this.city.groundAt(lx + ox, lz + oz, from, ll);
+    const tp = clamp(Math.atan2(atL(-g.x * this.halfLen, -g.z * this.halfLen) - atL(g.x * this.halfLen, g.z * this.halfLen), this.halfLen * 2), -0.6, 0.6);
+    const tr = two ? 0 : clamp(Math.atan2(atL(rx * this.halfWid, rz * this.halfWid) - atL(-rx * this.halfWid, -rz * this.halfWid), this.halfWid * 2), -0.5, 0.5);
+    const eP = angleWrap(tp - this.pitch), eR = angleWrap(tr - this.roll);
+    if (Math.abs(cmdP) > 0.05) A.wp += (cmdP * AIR_PITCH * kp - A.wp) * (1 - Math.exp(-AIR_PITCH_K * dt));
+    else A.wp += (AIR_SELF_K * eP - AIR_SELF_C * A.wp) * selfK(eP) * dt;
+    A.wr += (AIR_SELF_K * eR - AIR_SELF_C * A.wr) * selfK(eR) * dt;
+    this.pitch += A.wp * dt;
+    this.roll += A.wr * dt;
+    // the rest of the car in the air: no grip, no marks, wheels freewheeling
+    this.wheelie = lerp(this.wheelie, 0, 1 - Math.exp(-4 * dt));
+    this.steer = lerp(this.steer, steer * 0.5, 1 - Math.exp(-10 * dt));
+    this.latAcc = 0; this.skid = 0; this.markR = 0; this.markF = 0; this.wheelspin = 0; this.gripUse = 0; this.abs = false;
+    A.ws *= Math.exp(-0.3 * dt);
+    this.wheelSpin += A.ws * dt;
+    // touchdown: the body's lowest point, by how far over it is
+    const upAt = Math.cos(this.pitch - gp) * Math.cos(this.roll - gr);
+    const tipped = Math.acos(clamp(upAt, -1, 1));
+    const floor = target + (upAt < AIR_UP ? restOff(tipped, this.halfWid, spec.roof || 1.5) : 0);
+    if (this.y <= floor) this._airLand(A, target, floor, gp, gr, fh - bh, two ? 0 : lh - rh);
+    this.sync();
+    return { dx, dz };
+  }
+
+  /** freeAir's touchdown: the verdict (`airLand`), and what the car does next. */
+  _airLand(A, target, floor, gp, gr, dF, dL) {
+    const spec = this.spec;
+    // pitch and roll back into one turn, so the follow's lerp does not unwind a flip
+    let p = angleWrap(this.pitch), r = angleWrap(this.roll);
+    const up = Math.cos(p - gp) * Math.cos(r - gr);
+    const hs = Math.hypot(A.wx, A.wz);
+    const slip = hs > 3 ? Math.abs(angleWrap(Math.atan2(A.wx, A.wz) - this.heading)) : 0;
+    // the impact, along the ground's normal (as stuntAir judges it)
+    const sf = dF / (2 * this.halfLen), sr = dL / (2 * this.halfWid);
+    const landVy = (this.vy - sf * this.vLong - sr * this.vLat) / Math.sqrt(1 + sf * sf + sr * sr);
+    this.landVy = landVy;
+    this._landVy = this.vy;   // the suspension's thud (Vehicle.update's heave)
+    this.vy = 0;
+    this.onGround = true;
+    this.airFly = null; this.airT = 0;
+    this._vlWas = this.vLong;
+    let why = '';
+    if (up >= AIR_CRASH) {
+      // on its wheels: the follow takes it from here
+      this.y = target;
+      this.pitch = p; this.roll = r;
+      if (up < AIR_UP) {
+        // (the damage is the impact's: a slow one off a kerb-high tilt is a fail, not a dent)
+        why = 'crash landing';
+        const hurt = clamp((Math.abs(landVy) - 6) * 1.2, 0, 30);
+        if (hurt > 0) this.damage(hurt, true);
+      }
+      const spin = Math.abs(A.wy) > 1.2 ? A.wy * 0.6 : 0;
+      this.spin = spin;
+      if (why || spin || slip > AIR_SLIP) this.slide = 1;
+    } else {
+      // over: on its side or its roof. The same attitude written the other
+      // way round (heading + PI, pitch PI - p, roll + PI) keeps |pitch| under
+      // 90 deg, so the roll alone says which face it comes to rest on.
+      if (Math.abs(p) > Math.PI / 2) { this.heading += Math.PI; p = angleWrap(Math.PI - p); r = angleWrap(r + Math.PI); }
+      this.pitch = p; this.roll = r;
+      this.y = floor;
+      const roof = Math.abs(r) > Math.PI / 2;
+      why = roof ? 'landed on the roof' : 'crash landing';
+      this.capsized = { t: 0, rock: 0, vx: A.wx * 0.55, vz: A.wz * 0.55, rollEnd: roof ? Math.sign(r) * Math.PI : 0 };
+      this.spin = 0; this.slide = 0;
+      this.damage(clamp(15 + Math.abs(landVy) * 1.5, 15, 45), true);
+    }
+    this.airLandN = (this.airLandN || 0) + 1;
+    this.airLand = { upright: !why, why, tilt: Math.round(Math.acos(clamp(up, -1, 1)) / DEG), slip: Math.round(slip / DEG),
+      pitch: Math.round(p / DEG), roll: Math.round(r / DEG), ground: Math.round(gp / DEG), vy: Math.round(landVy) };
+  }
+
+  /**
+   * On its side or its roof after an over-rotated landing (freeAir): it
+   * scrapes to a stop, tips onto whichever face it is nearest, and stays
+   * there until YOU rock it back -- hold the stick either way for 0.7 s once
+   * it has stopped (GTA's rule) -- or get out. Nothing else drives it.
+   */
+  updateCapsized(dt, input) {
+    const C = this.capsized;
+    C.t += dt;
+    const sp = Math.hypot(C.vx, C.vz);
+    if (sp > 0) { const k = Math.max(0, sp - 8 * dt) / sp; C.vx *= k; C.vz *= k; }
+    this.x = G.clampToMap(this.x + C.vx * dt);
+    this.z = G.clampToMap(this.z + C.vz * dt);
+    const f = this.forward;
+    this.vLong = C.vx * f.x + C.vz * f.z; this.vLat = C.vx * f.z - C.vz * f.x;
+    this.yawRate = 0; this.latAcc = 0; this.skid = sp > 2 ? 0.6 : 0; this.markR = 0; this.markF = 0; this.gripUse = 0;
+    this.wheelie = 0;
+    if (C.rollEnd !== 0 && input && input.pilot && sp < 1.5 && C.t > 0.8) {
+      if (Math.abs(input.steer || 0) > 0.5) C.rock += dt; else C.rock = Math.max(0, C.rock - dt);
+      if (C.rock > 0.7) C.rollEnd = 0;
+    }
+    this.roll = damp(this.roll, C.rollEnd, C.rollEnd === 0 ? 4 : 6, dt);
+    this.pitch = damp(this.pitch, 0, 6, dt);
+    this.lift = this.city.roadLift(this.x, this.z);
+    const g = this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift);
+    this.y = damp(this.y, g + restOff(this.roll, this.halfWid, this.spec.roof || 1.5), 10, dt);
+    this.onGround = true; this.vy = 0;
+    // back on its wheels (rocked, or it never went over): drive on, sliding
+    if (C.rollEnd === 0 && Math.abs(this.roll) < 0.02 && Math.abs(this.pitch) < 0.02) {
+      this.capsized = null; this.roll = 0; this.pitch = 0; this.y = g; this.slide = 1;
     }
     this.sync();
   }
