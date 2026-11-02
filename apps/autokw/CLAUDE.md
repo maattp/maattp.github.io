@@ -1363,6 +1363,40 @@ file and a guide disagree, this file wins.
   true bearings (jets land 26, props 32, floatplanes on the Grand). Pays $3
   an aircraft (+$50 a new best).
 
+- **Random events: src/kwevents.js** (docs/event-*.jpg; `__dbg.events`). A
+  director starts one small scripted happening every 150-270 s (the first after
+  75-120 s) 150-400 m out on a street ahead of you (`edgeSpot`: the vehicle's
+  heading, else the camera's), never the same twice running, never while
+  wanted / dead / paused / in an activity, by hour (hockey and the wedding by
+  day, the raccoon and fireworks by night). Eight events, each a class with
+  `begin` / `tick`; the base class `Ev` owns its cars, people and meshes and
+  `end()` removes them all (no `game.hold`, so nothing can leak a hold). Scripted
+  cars are mode `'path'` while moving (traffic neither drives nor despawns
+  them; `Ev.moveCar` follows a mitred-offset polyline of the straightest
+  streets, slowing for corners) and `'free'` standing (AI traffic queues behind
+  them). Hazards / sirens are set AFTER `traffic.update` (updateLamps resets
+  them), so `events.update` runs right after `fire.update` in main.js.
+  **Geese** cross a street with two cars stopped each way, honking (wait within
+  45 m at under 3.5 m/s: $60; hit one: feathers). **Snatcher** runs the pavement
+  at 5.4-6 m/s; tackle on foot or bump with a car: ~$120-200. **Breakdown**:
+  hazards on, a driver waving (`hailPose`); stop within 11 m (car) / 4.5 m (foot)
+  for 3.6 s: a tip and he drives off. **Chase**: a suspect and two sirening
+  cruisers pass at 24 m/s; two rams stop him: $400. **Hockey**: kids, a ball and
+  two nets in a residential street; "CAR!" and they clear to the kerb; pass
+  slowly: $15. **Raccoon** at tipped bins; bolts when you walk up. **Wedding**
+  convoy of five, hazards and horns (`horn_far`); tag on within 16 m for 7 s:
+  cake, $75. **Fireworks** over Victoria Park (or ahead), night only, fx
+  particles + the `explosion` sample. Hints are toasts at `hintR`. Pause menu
+  "Random events" (localStorage `autokw-events`). Edges are short (~20-50 m: a
+  street is many edges), so spots use `minLen` ~20-30 and long events build their
+  path with `straightPts`; `Director.start` retries 8 spots. Phone cost: nothing
+  between events; during one 1-15 draws (geese 1, hockey ~11, a car 3-4).
+  Verify: `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1 node tools/kw/eventsprobe.mjs <dir> [names]`
+  (forces each, steps at dt 0.05 through the interaction, asserts rewards and
+  full teardown: no car left in traffic, no `kwev:` mesh in the scene, no leaks,
+  and the director's off switch and no-repeat rule). Also exported for it:
+  kwplaces.js `gooseGeometry`, peds.js `hailPose`; `__dbg.tod`.
+
 - **Erbsville Kartway** (src/kartway.js, src/kart.js, `data/kart.json` from
   tools/kw/build_kart.py; docs/kart-*.jpg). OSM's `highway=raceway` centreline
   (CanVec's, ~970 m) is a FIGURE EIGHT: the `bridge=yes` way closes the loop

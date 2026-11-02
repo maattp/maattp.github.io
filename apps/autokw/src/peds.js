@@ -3512,7 +3512,7 @@ export function skydivePose(h, state, t, k) {
 
 // A fare hailing: the right arm up and waving at the wrist (eased in by the
 // walk pose's own reset every posed frame, so this is set, not added).
-function hailPose(h, t) {
+export function hailPose(h, t) {
   const b = h.bones, w = Math.sin(t * 7);
   b[B.shoulderR].rotation.x = -2.55;
   b[B.shoulderR].rotation.z = 0.25 + 0.12 * w;

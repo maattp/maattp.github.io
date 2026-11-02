@@ -2730,7 +2730,7 @@ export function placesMap() {
 const FLOCKS = [[-4372, -1640, 9, false], [-4250, -1585, 6, true], [-4560, -1580, 8, false], [-4700, -1700, 7, false],
   [-4986, -1600, 6, false], [-5600, -2350, 8, false], [-6000, -2500, 7, false]];
 
-function gooseGeometry(pose) {
+export function gooseGeometry(pose) {
   const B = new Builder(false);
   const BODY = lin([0.56, 0.49, 0.40]), BREAST = lin([0.86, 0.82, 0.74]), BLACK = lin([0.06, 0.06, 0.06]), WHITE = lin([0.95, 0.95, 0.93]);
   // an ellipsoid, its own little lathe
