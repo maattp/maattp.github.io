@@ -118,7 +118,7 @@ export class Career {
       add('jobs', 'Jobs completed', meds.filter((a) => a.best.medal !== 'none').length, acts.list.length);
       add('golds', 'Gold medals', meds.filter((a) => a.best.medal === 'gold').length, acts.list.length);
     }
-    if (stunts) add('stunts', 'Stunt jumps', stunts.list.filter((j) => j.done).length, stunts.list.length);
+    if (stunts) add('stunts', 'Stunt jumps landed', stunts.list.filter((j) => j.done).length, stunts.list.length);
     if (islands) add('islands', 'Island finds', EGGS.filter((k) => islands.found.has(k)).length, EGGS.length);
     if (s.games) add('games', 'Mini-games played', s.games.filter((g) => g.best > 0).length, s.games.length);
     if (arcade) add('arcade', 'Arcade cabinets', GAMES.filter((g) => arcade.hi[g.id] > 0).length, GAMES.length);
