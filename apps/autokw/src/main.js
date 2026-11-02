@@ -53,6 +53,7 @@ import { CoffeeShop } from './barista.js';
 import { Seafair } from './hydrorace.js';
 import { FireService, placeStations } from './firecalls.js';
 import { Respray, placeBays } from './respray.js';
+import { PhotoMode } from './kwphoto.js';   // Auto KW: photo mode (kwphoto.js)
 import { Garages, placeGarages } from './kwgarage.js';   // Auto KW: your save garages (kwgarage.js)
 import { Paramedics, MED_STATIONS } from './paramedic.js';   // Auto KW: paramedic calls (paramedic.js)
 import { BONES } from './peds.js';
@@ -196,7 +197,7 @@ let chicopee = null;   // Chicopee's bike park: trails, lifts, bikes (chicopee.j
 let crops = null;      // Auto KW: standing corn and soy, the tractors and combines (crops.js)
 let air = null;        // Auto KW: YKF's air traffic, the Cessnas and the news helicopter (airtraffic.js)
 let kartway = null, kartRace = null;   // Auto KW: Erbsville Kartway, its circuit and its races (kartway.js)
-let garages = null, garageBays = [], respray = null, resprayBays = [], paramedic = null, medStations = [];   // Auto KW: body shops and paramedic calls
+let photo = null, garages = null, garageBays = [], respray = null, resprayBays = [], paramedic = null, medStations = [];   // Auto KW: body shops and paramedic calls
 let fire = null, fireStations = [];   // Seattle Fire: the stations' rigs, the water cannon, fire calls (firecalls.js)
 
 /** The WASTED / BUSTED card. */
@@ -1990,6 +1991,10 @@ function installShadowFade() {
     hud.places.push(...garages.places());
   } catch (e) { blog('garages: ' + e.message); garages = null; }
   try {
+    photo = new PhotoMode({ game, camera, player, city, renderer, hud, audio,
+      getTod: () => (tod ? tod.setting : null), setTod: (m) => { if (tod) tod.choose(m); }, drawNow: () => draw(performance.now()) });
+  } catch (e) { blog('photo: ' + e.message); photo = null; }
+  try {
     const app = document.getElementById('app');
     const panel = eats && eats.panel ? eats.panel : new LedPanel(app);
     paramedic = new Paramedics({ scene, city, game, hud, audio, traffic, controls, panel, stations: medStations,
@@ -2075,7 +2080,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { get calendar() { return kcal; }, get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get garages() { return garages; }, get paramedic() { return paramedic; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { get calendar() { return kcal; }, get jj() { return jj; }, get counter() { return counter; }, get respray() { return respray; }, get garages() { return garages; }, get photo() { return photo; }, get paramedic() { return paramedic; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;
   Object.defineProperty(window.__dbg, 'eggs', { get() { return eggs; } });
   window.__dbg.geese = geese;
@@ -2738,6 +2743,13 @@ function wireUi() {
   setPausedRef = setPaused;
   document.getElementById('pauseBtn').addEventListener('click', () => setPaused(!game.paused));
   document.getElementById('resumeBtn').addEventListener('click', () => setPaused(false));
+  const photoBtn = document.getElementById('photoBtn');
+  if (photoBtn) photoBtn.addEventListener('click', () => { if (!photo) return; setPaused(false); photo.enter(); });
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'KeyP' || e.repeat || !photo || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target && e.target.tagName)) return;
+    if (photo.active) photo.exit();
+    else if (!game.paused && !game.held && !game.dead) photo.enter();
+  });
   // A setting changed in the menu (graphics, shadows, a post pass) shows
   // behind it: one redraw per tap.
   pause.addEventListener('click', () => { idleRedraw = true; });
@@ -2980,7 +2992,7 @@ function interiorUp() {
 }
 
 function reapHolds() {
-  const live = { respray, fishing, arcade, pinball, hockey, rollup, jj, fest, splash, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace, derby, g2 };
+  const live = { respray, fishing, arcade, pinball, hockey, rollup, jj, fest, splash, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace, derby, g2, photo };
   for (const who of game.holds) {
     if (who === 'seafair') { if (seafair && (seafair.state === 'menu' || seafair.state === 'done')) continue; }
     else if (live[who] && live[who].active) continue;
@@ -3341,6 +3353,7 @@ function frame(now) {
   handlePadUi(dt);
 
   if (game.holds.size) reapHolds();
+  if (photo && photo.active) photo.update(dt);
   if (respray && respray.active) respray.update(dt);
   if (fishing && fishing.active) fishing.update(dt);
   if (hoops && hoops.active) hoops.update(dt);
