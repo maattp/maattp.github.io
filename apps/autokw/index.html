@@ -118,6 +118,9 @@
     z-index: 6; display: none; gap: 10px; align-items: end;
   }
   #app[data-fire="1"][data-mode="drive"] #fireBtns { display: flex; }
+  /* an ambulance's MISSION (paramedic.js sets data-medic): the same spot as a rig's */
+  #medBtns { position: absolute; right: calc(270px + var(--safe-r)); bottom: calc(14px + var(--safe-b)); z-index: 6; display: none; gap: 10px; align-items: end; }
+  #app[data-medic="1"][data-mode="drive"] #medBtns { display: flex; }
   /* the turn signals (a road test's: g2test.js sets data-g2), where a rig's two would be */
   #sigBtns {
     position: absolute; right: calc(270px + var(--safe-r)); bottom: calc(14px + var(--safe-b));
@@ -539,6 +542,10 @@
   <div id="sigBtns">
     <div class="btn b-sm b-sig" data-btn="sigL">◀</div>
     <div class="btn b-sm b-sig" data-btn="sigR">▶</div>
+  </div>
+
+  <div id="medBtns">
+    <div class="btn b-sm b-fire" data-btn="medmission" data-hint="▼">MISSION</div>
   </div>
 
   <div id="fireBtns">

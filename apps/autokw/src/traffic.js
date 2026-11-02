@@ -1373,6 +1373,8 @@ export class TrafficSystem {
     const y = v.spec.roof + 0.09;
     // the SWAT van's sits on the front of its box, and is wider
     if (v.spec.swat) { bar.position.set(0, 2.92 + 0.09 - y, 0.40); bar.scale.set(1.37, 1, 1); }
+    // the ambulance's module is taller than its cab: the bar sits on the module's front edge (Auto KW paramedics)
+    else if (v.spec.paramedic) { bar.position.set(0, 2.80 + 0.09 - y, 0.36); bar.scale.set(1.5, 1, 1); }
     const housing = new THREE.Mesh(
       new THREE.BoxGeometry(1.24, 0.1, 0.34),
       new THREE.MeshStandardMaterial({ color: 0x15181c, roughness: 0.6, metalness: 0.1 })

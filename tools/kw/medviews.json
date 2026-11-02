@@ -1,0 +1,42 @@
+[
+ {
+  "name": "ambulance-side",
+  "fov": 48,
+  "eval": "(() => {const v=d.paramedic.stations[2].rigVs[0]; const f=v.forward; return {c:[v.x+f.z*9+f.x*5, v.z-f.x*9+f.z*5, 2.6], t:[v.x,v.z,1.4], fov:45};})()"
+ },
+ {
+  "name": "ambulance-rear",
+  "fov": 48,
+  "eval": "(() => {const v=d.paramedic.stations[2].rigVs[0]; const f=v.forward; return {c:[v.x-f.x*10-f.z*5, v.z-f.z*10+f.x*5, 2.4], t:[v.x,v.z,1.5], fov:45};})()"
+ },
+ {
+  "name": "shop-street",
+  "fov": 58,
+  "eval": "(() => {const Q=d.respray.sites[0]; d.respray.build(Q); Q.grp.visible=true; const q=Q.s; return {c:[q.ox-q.nx*10+q.nz*3, q.oz-q.nz*10-q.nx*3, 2.2], t:[q.ox+q.nx*1,q.oz+q.nz*1,3.4], fov:58};})()"
+ },
+ {
+  "name": "shop-open-inside",
+  "fov": 60,
+  "eval": "(() => {const R=d.respray, q=R.sites[1], s=q.s; R.build(q); q.grp.visible=true; const v=d.traffic.spawnAt(s.ox+s.nx*5.2, s.oz+s.nz*5.2, Math.atan2(s.nx,s.nz), 'sedan', 0xb3121b, 'parked'); return {c:[s.ox-s.nx*4+s.nz*1.2, s.oz-s.nz*4-s.nx*1.2, 1.6], t:[s.ox+s.nx*6,s.oz+s.nz*6,1.2], fov:60};})()"
+ },
+ {
+  "name": "shop-door-down",
+  "fov": 58,
+  "eval": "(() => {const R=d.respray, q=R.sites[2], s=q.s; R.build(q); q.grp.visible=true; R.setDoor(q,1); return {c:[s.ox-s.nx*9-s.nz*3, s.oz-s.nz*9+s.nx*3, 2.2], t:[s.ox+s.nx*1,s.oz+s.nz*1,3.0], fov:58};})()"
+ },
+ {
+  "name": "shop-cambridge",
+  "fov": 58,
+  "eval": "(() => {const Q=d.respray.sites[3]; d.respray.build(Q); Q.grp.visible=true; const q=Q.s; return {c:[q.ox-q.nx*12+q.nz*5, q.oz-q.nz*12-q.nx*5, 3], t:[q.ox+q.nx*2,q.oz+q.nz*2,3.2], fov:58};})()"
+ },
+ {
+  "name": "patient",
+  "fov": 55,
+  "eval": "(() => {const v=d.paramedic.stations[0].rigVs[0]; d.player.enterVehicle(v); d.paramedic.begin(d.player); const q=d.paramedic.call.pts[0]; v.place(q.x-9, q.z+3, Math.atan2(1,-0.3)); d.game.paused=true; return {c:[q.x-5, q.z+4, 1.9], t:[q.x,q.z,0.3], fov:55};})()"
+ },
+ {
+  "name": "shop-street-base",
+  "fov": 58,
+  "eval": "(() => {const q=d.respray.sites[0].s; return {c:[q.ox-q.nx*10+q.nz*3, q.oz-q.nz*10-q.nx*3, 2.2], t:[q.ox+q.nx*1,q.oz+q.nz*1,3.4], fov:58};})()"
+ }
+]

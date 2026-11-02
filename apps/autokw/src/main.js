@@ -51,6 +51,8 @@ import { DuckTour } from './ducktour.js';
 import { CoffeeShop } from './barista.js';
 import { Seafair } from './hydrorace.js';
 import { FireService, placeStations } from './firecalls.js';
+import { Respray, placeBays } from './respray.js';       // Auto KW: the body shops (respray.js)
+import { Paramedics, MED_STATIONS } from './paramedic.js';   // Auto KW: paramedic calls (paramedic.js)
 import { BONES } from './peds.js';
 import { timsKeepClear } from './kw.js';
 import { setKwData, applyNamed, buildSigns, buildPolys, buildBunting, buildSchools, mapPlaces as kwPlaces, kwData, boxAt, dedupeFootprints } from './kw.js';
@@ -180,6 +182,7 @@ let chicopee = null;   // Chicopee's bike park: trails, lifts, bikes (chicopee.j
 let crops = null;      // Auto KW: standing corn and soy, the tractors and combines (crops.js)
 let air = null;        // Auto KW: YKF's air traffic, the Cessnas and the news helicopter (airtraffic.js)
 let kartway = null, kartRace = null;   // Auto KW: Erbsville Kartway, its circuit and its races (kartway.js)
+let respray = null, resprayBays = [], paramedic = null, medStations = [];   // Auto KW: body shops and paramedic calls
 let fire = null, fireStations = [];   // Seattle Fire: the stations' rigs, the water cannon, fire calls (firecalls.js)
 
 /** The WASTED / BUSTED card. */
@@ -282,6 +285,7 @@ class Game {
     if (taxi) taxi.onCrash(impact);
     if (grt) grt.onCrash(impact);
     if (eats) eats.onCrash(impact);
+    if (paramedic) paramedic.onCrash(impact);
     if (g2) g2.onCrash(impact);
     const p = player.position;
     fx.sparks(p.x, p.y + 0.8, p.z, Math.min(14, Math.round(impact)));
@@ -1333,6 +1337,9 @@ function installShadowFade() {
   if (city.clearCircles && BALLOON_SITE) city.clearCircles.push([BALLOON_SITE.x, BALLOON_SITE.z, 26]);
   // the fire stations' aprons: where each rig stands, kept clear before any chunk is scattered
   try { fireStations = placeStations(city, world, (x, z) => world.waterLevelAt(x, z)); } catch (e) { blog(`fire stations: ${e.message}`); fireStations = []; }
+  // Auto KW: the paramedics' ambulance aprons and the body shops' spray bays, kept clear the same way
+  try { medStations = placeStations(city, world, (x, z) => world.waterLevelAt(x, z), MED_STATIONS); } catch (e) { blog(`paramedic stations: ${e.message}`); medStations = []; }
+  try { resprayBays = placeBays(city, world, (x, z) => world.waterLevelAt(x, z)); } catch (e) { blog(`body shops: ${e.message}`); resprayBays = []; }
   // The scene root never moves, and its own matrixAutoUpdate re-flagged EVERY
   // object in the world for a world-matrix multiply each frame. Static
   // subtrees are frozen; see freezeStatic.
@@ -1909,6 +1916,21 @@ function installShadowFade() {
     hud.places.push(...g2.places());
   }
 
+  // Auto KW: the body shops (respray.js) and the paramedics (paramedic.js); a failure here never stops the game starting
+  try {
+    VEHICLE_HOOKS.extinguish = (v) => { burning.delete(v); };
+    respray = new Respray({ scene, city, game, hud, audio, police, bays: resprayBays });
+    hud.places.push(...respray.places());
+  } catch (e) { blog('respray: ' + e.message); respray = null; }
+  try {
+    const app = document.getElementById('app');
+    const panel = eats && eats.panel ? eats.panel : new LedPanel(app);
+    paramedic = new Paramedics({ scene, city, game, hud, audio, traffic, controls, panel, stations: medStations,
+      homes: () => (eats ? eats.homes : []) });
+    paramedic.spawnRigs();
+    hud.places.push(...paramedic.places());
+  } catch (e) { blog('paramedic: ' + e.message); paramedic = null; }
+
   // delivery marker
   const mg = new THREE.CylinderGeometry(6, 6, 26, 18, 1, true);
   marker = new THREE.Mesh(mg, new THREE.MeshBasicMaterial({
@@ -1986,7 +2008,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Waterloo Region');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
+  window.__dbg = { get respray() { return respray; }, get paramedic() { return paramedic; }, grt, eats, g2, get air() { return air; }, get signalHeads() { return signalHeads; }, get streetSigns() { return streetSigns; }, ykf, get chicopee() { return chicopee; }, get moorings() { return moorings; }, saucer, orcas, career, police, missions, taxi, jobs: taxi, doRespawn, game, city, player, world, traffic, peds, acts, stunts, monorail, link, freight, counterbal, ferry, bikeNet, cyclists, lmRoot, shadowCache, chunkCull, get lmCull() { return lmCull; }, nearShadow, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, rollup, tower, duckTour, coffee, seafair, islands, pickle, piers, fire, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, memoStats, gpuLedger, WET_FLOOR, skidMarks, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES, get respawns() { return respawns; }, nearestRespawn, roadComponents, doRespawn, tanks };
   window.__dbg.crops = crops;
   window.__dbg.rail = kwrail;   // Auto KW: the heavy rail (kwrail.js)   // Auto KW: the harvest (crops.js)
   Object.defineProperty(window.__dbg, 'roadFeel', { get() { return roadFeel; } });
@@ -2069,6 +2091,8 @@ function installShadowFade() {
       for (const m of missions.warmMeshes()) warm.add(m);
       for (const m of taxi.warmMeshes()) warm.add(m);
       if (eats) for (const m of eats.warmMeshes()) warm.add(m);
+      if (paramedic) for (const m of paramedic.warmMeshes()) warm.add(m);
+      if (respray) for (const m of respray.warmMeshes()) warm.add(m);
       if (fx.lines) { fx.lines.visible = true; lazy.linesWere = true; }
       if (fx.wakeMesh) fx.wakeMesh.visible = true;
       // the trees' instanced crowns: at least one instance each, so their
@@ -2456,7 +2480,7 @@ function refreshJobs() {
   for (const b of document.querySelectorAll('.buy')) b.disabled = game.money < +b.dataset.cost;
   if (!list) return;
   const COL = { gold: '#f4c542', silver: '#c8d0d8', bronze: '#c0763c' };
-  const rows = [...(g2 ? g2.jobRows() : []), ...(grt ? grt.jobRows() : []), ...(eats ? eats.jobRows() : []), ...s.rows];
+  const rows = [...(g2 ? g2.jobRows() : []), ...(grt ? grt.jobRows() : []), ...(eats ? eats.jobRows() : []), ...(paramedic ? paramedic.jobRows() : []), ...s.rows];
   list.innerHTML = rows.map((r) => `<div class="jobRow"><span class="nm">${r.name}</span>`
     + `<span class="bt">${r.best || '--'}`
     + (r.medal && r.medal !== 'none' ? `<i class="md" style="background:${COL[r.medal]}"></i>` : '')
@@ -2876,7 +2900,7 @@ function interiorUp() {
 }
 
 function reapHolds() {
-  const live = { fishing, arcade, pinball, hockey, rollup, fest, splash, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace, derby, g2 };
+  const live = { respray, fishing, arcade, pinball, hockey, rollup, fest, splash, pickleball: pickle, coffee, atc: tower, golf, fishtoss: fishToss, hoops, kart: kartRace, derby, g2 };
   for (const who of game.holds) {
     if (who === 'seafair') { if (seafair && (seafair.state === 'menu' || seafair.state === 'done')) continue; }
     else if (live[who] && live[who].active) continue;
@@ -2946,11 +2970,11 @@ function updateSiren(dt) {
   const pv = player.vehicle;
   // a police car, or a fire rig (its own flashing heads: firecalls.js shows
   // them while `sirenOn`; `data-police` shows SIREN for both)
-  const v = pv && (pv.spec.police || pv.spec.fire) && !pv.dead ? pv : null;
+  const v = pv && (pv.spec.police || pv.spec.fire || pv.spec.paramedic) && !pv.dead ? pv : null;
   if (v !== copCar) {
     if (copCar) setSiren(copCar, false);
     copCar = v;
-    if (v && v.spec.police) traffic.lightBar(v);
+    if (v && (v.spec.police || v.spec.paramedic)) traffic.lightBar(v);
     if (v) setSiren(v, false);
     controls.root.dataset.police = v ? '1' : '';
     // the police MISSION (policemissions.js) is a police vehicle's only; a
@@ -3236,6 +3260,7 @@ function frame(now) {
   handlePadUi(dt);
 
   if (game.holds.size) reapHolds();
+  if (respray && respray.active) respray.update(dt);
   if (fishing && fishing.active) fishing.update(dt);
   if (hoops && hoops.active) hoops.update(dt);
   if (golf && golf.active) golf.update(dt);
@@ -3358,6 +3383,8 @@ function frame(now) {
   peds.update(dt, p.x, p.z, player, traffic);
   if (prof) lap('peds');
   if (fire) fire.update(dt);
+  if (respray) respray.tick(dt, player);
+  if (paramedic) paramedic.update(dt, player);
   if (stunts) stunts.update(dt, player);
   if (tanks) tanks.update(dt);
   if (acts) acts.update(dt, player);

@@ -198,7 +198,7 @@ const JET_GLOW_MAT = new THREE.MeshBasicMaterial({ color: 0xff8a3a, transparent:
 const JET_FLAME_GEO = (() => { const g = new THREE.ConeGeometry(0.28, 1, 14, 1, true); g.rotateX(-Math.PI / 2); g.translate(0, 0, -0.5); return g; })();
 const JET_FLAME_MAT = new THREE.MeshBasicMaterial({ color: 0xff9248, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, side: THREE.DoubleSide });
 /** main.js's: `ignite(v)` when your car catches fire; `belly(v)` when a plane lands gear up. */
-export const VEHICLE_HOOKS = { ignite: null, belly: null };
+export const VEHICLE_HOOKS = { ignite: null, belly: null, extinguish: null };
 // (the kart's: your car's handling below replaced it for road cars)
 const PLAYER_BITE = 1.7;
 /**
@@ -490,7 +490,7 @@ export const TYPES = {
   schoolbus: deriveSpec({ wheelbase: 6.1, len: 10.9, wid: 2.44, wheelR: 0.50, sill: 0.62, belt: 1.55, roof: 3.05, cab: [-0.48, 0.48], hand: 'schoolbus', livery: 0xf2a900, bus: true, diesel: true, boxy: 3, mass: 4.2, acc: 1.5, topKph: 100, brakeM: 52, latG: 0.62 }),
   ionbus: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', livery: GRT_WHITE, grt: { sign: '302 ION Bus', fleet: '21759', ion: true }, finish: 'twotone', paintVC: true, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
   boxtruck: deriveSpec({ wheelbase: 4.3,len: 7.5, wid: 2.38, wheelR: 0.46, sill: 0.62, belt: 1.55, roof: 2.55, cab: [0.14, 0.46], cargo: 2.55, hand: 'boxtruck', boxy: 2, mass: 3.0, acc: 2.5, topKph: 125, brakeM: 51, latG: 0.66 }),
-  ambulance: deriveSpec({ wheelbase: 3.9,len: 6.3, wid: 2.28, wheelR: 0.42, sill: 0.56, belt: 1.42, roof: 2.35, cab: [0.16, 0.46], cargo: 2.25, hand: 'ambulance', livery: 0xf4f4f0, boxy: 2, emergency: true, mass: 2.4, acc: 3.2, topKph: 155, brakeM: 48, latG: 0.72 }),
+  ambulance: deriveSpec({ wheelbase: 3.9,len: 6.3, wid: 2.28, wheelR: 0.42, sill: 0.56, belt: 1.42, roof: 2.35, cab: [0.16, 0.46], cargo: 2.25, hand: 'ambulance', livery: 0xf4f4f0, boxy: 2, emergency: true, paramedic: true, mass: 2.4, acc: 3.2, topKph: 155, brakeM: 48, latG: 0.72 }),
   // The police tactical van (wanted 4+, traffic.js spawnPolice 'swat'): heavy,
   // so its rams shove you, and quick enough to keep up on surface streets.
   // `police` gives it the cruiser's V8 and the MISSION button (police missions).
@@ -7858,6 +7858,22 @@ function buildAmbulance(spec, paint, trim, matte) {
   }
   matte.quad([-(W - 0.08), 1.42, tail - 0.005], [W - 0.08, 1.42, tail - 0.005], [W - 0.08, 1.64, tail - 0.005],
     [-(W - 0.08), 1.64, tail - 0.005], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], RED);
+  // Region of Waterloo Paramedic Services: a fluorescent yellow-green and navy Battenburg band
+  // under the red one, PARAMEDIC over it (Auto KW)
+  {
+    const YG = [0.55, 0.74, 0.01], NV = [0.01, 0.03, 0.30], NAVY = [0.02, 0.05, 0.28];
+    const z0 = tail + 0.05, z1 = modZ1 - 0.05, nb = Math.round((z1 - z0) / 0.34), bw = (z1 - z0) / nb;
+    for (const sx of [-1, 1]) {
+      const x = sx * (W + 0.005);
+      for (let i = 0; i < nb; i++) {
+        const a = z0 + i * bw, b = a + bw;
+        matte.quad([x, 1.00, a], [x, 1.00, b], [x, 1.20, b], [x, 1.20, a], [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], i % 2 ? NV : YG);
+        matte.quad([x, 1.20, a], [x, 1.20, b], [x, 1.40, b], [x, 1.40, a], [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], i % 2 ? YG : NV);
+      }
+      stencil(matte, 'PARAMEDIC', sx * (W + 0.007), 2.12, (tail + modZ1) / 2 - 0.05, 0, -sx, 0.34, [sx, 0, 0], NAVY);
+    }
+    stencil(matte, 'PARAMEDIC', 0, 2.52, tail - 0.007, -1, 0, 0.26, [0, 0, -1], NAVY);
+  }
   matte.box(0, 0.62, tail - 0.004, 0.014, modTop - 0.75, 0.012, 0, [0.12, 0.13, 0.14]);          // door split
   matte.box(0, 0.44, tail + 0.05, W * 1.80, 0.16, 0.20, 0, PLASTIC);                                // step bumper
   plateBox(trim, 0, 0.70, tail - 0.024, 0.40, 0.12, 0.02);
@@ -7885,6 +7901,10 @@ const STENCIL = {
   I: [[2, 0, 3, 7], [1, 6, 4, 7], [1, 0, 4, 1]],
   C: [[0, 0, 1, 7], [0, 6, 5, 7], [0, 0, 5, 1]],
   E: [[0, 0, 1, 7], [0, 6, 5, 7], [0, 3, 4, 4], [0, 0, 5, 1]],
+  // (Auto KW: the paramedics' PARAMEDIC)
+  R: [[0, 0, 1, 7], [0, 6, 5, 7], [4, 3, 5, 7], [0, 3, 5, 4], [3, 0, 4, 3]],
+  M: [[0, 0, 1, 7], [4, 0, 5, 7], [0, 6, 5, 7], [2, 3, 3, 6]],
+  D: [[0, 0, 1, 7], [0, 6, 4, 7], [0, 0, 4, 1], [4, 1, 5, 6]],
 };
 
 /**
@@ -15218,6 +15238,39 @@ export class Vehicle {
       return true;
     }
     return false;
+  }
+
+  /**
+   * THE BODY SHOP (respray.js): the car as it left the factory. Health back
+   * to full, the fire out, the radiator mended and every dent knocked out
+   * (the crumple uniforms zeroed on the body and on its trim clones).
+   */
+  repair() {
+    this.health = this.spec.hp || 100;
+    this.burnT = 0; this.steamT = 0; this.hitCd = 0;
+    if (VEHICLE_HOOKS.extinguish) VEHICLE_HOOKS.extinguish(this);
+    if (this.dents) {
+      for (const m of [this.bodyMat, this.dentTrim, this.dentMatte]) {
+        if (!m) continue;
+        const d = dentUniforms(m);
+        for (let i = 0; i < DENT_N; i++) { d.a.value[i].set(0, 0, 0, 0); d.b.value[i].set(0, 0, 0, 0); }
+      }
+      this.dents = 0;
+    }
+  }
+
+  /**
+   * A new coat. Only THIS car's paint material changes (every Vehicle makes
+   * its own bodyMat; the trim and matte are shared and are never touched).
+   * A livery finish (the police two-tone, the Hellcat's wrap, the airliner's
+   * stripes) is the vehicle: those keep theirs. Returns whether it took.
+   */
+  respray(hex) {
+    if (this.spec.finish || this.spec.liveries) return false;
+    this.color = hex;
+    this.bodyMat.color.setHex(hex);
+    this._farCol = null;
+    return true;
   }
 
   /** Point on the vehicle's oriented box nearest to (px,pz), in world space. */

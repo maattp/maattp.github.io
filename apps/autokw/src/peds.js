@@ -3454,7 +3454,7 @@ function recoil(h, left) {
 // Floored backwards: arms flung up past the head, the knees giving (a body
 // that goes over straight-legged reads as a plank tipping), chin tucked.
 // Eased toward over the fall (k a frame).
-function sprawl(h, k) {
+export function sprawl(h, k) {
   const b = h.bones;
   const to = (bone, ax, v) => { bone.rotation[ax] += (v - bone.rotation[ax]) * k; };
   to(b[B.shoulderL], 'x', -2.3); to(b[B.shoulderR], 'x', -2.1);
