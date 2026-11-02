@@ -5242,6 +5242,7 @@ float frLine(float o, float fw, float c, float w) {
         if (c.group) c.group.userData.trees = null;
       }
       if (this.decor) this.decor.setChunk(c.key, c.group && c.group.userData.decor);
+      if (this.cal) this.cal.setChunk(c.key, c.group && c.group.userData.homes);
       if (this.dcars) this.dcars.setChunk(c.key, c.group && c.group.userData.dcars);
       // the phone's shadow cache holds this chunk's shadows (shadowcache.js)
       if (this.onChunkChange) this.onChunkChange((c.cx + 0.5) * CHUNK, (c.cz + 0.5) * CHUNK, CHUNK);
@@ -5267,6 +5268,7 @@ float frLine(float o, float fw, float c, float w) {
     if (cr) for (const bi of cr.buildings) this.city.buildings[bi].roofSolids = null;
     if (this.trees) this.trees.dropChunk(c.key);
     if (this.decor) this.decor.dropChunk(c.key);
+    if (this.cal) this.cal.dropChunk(c.key);
     if (this.dcars) this.dcars.dropChunk(c.key);
     if (!c.group) return;
     c.group.traverse((o) => {
@@ -5326,6 +5328,8 @@ float frLine(float o, float fw, float c, float w) {
     this._lampRec = lod === 1 ? [] : null;
     this._treeRecs = null;
     this._decor = FALL && lod === 1 && !isLean ? [] : null;
+    // each house: x z rot w d eaveY groundY seed (kwcalendar.js: Christmas lights, lawn inflatables)
+    this._homes = lod === 1 && !isLean ? [] : null;
     this._dcar = lod === 1 && !isLean ? [] : null;
     this._aprons = [];
     this._occ = null;
@@ -5523,6 +5527,8 @@ float frLine(float o, float fw, float c, float w) {
     this._treeRecs = null;
     // the season's pumpkins, for fall.js
     grp.userData.decor = this._decor && this._decor.length ? new Float32Array(this._decor) : null;
+    grp.userData.homes = this._homes && this._homes.length ? new Float32Array(this._homes) : null;
+    this._homes = null;
     this._decor = null;
     // the cars in the driveways, for kwdriveway.js
     grp.userData.dcars = this._dcar && this._dcar.length ? new Float32Array(this._dcar) : null;
@@ -10047,6 +10053,7 @@ float frLine(float o, float fw, float c, float w) {
       if (!drove && form !== 'flat' && fb.w >= 6 && fb.w <= 17 && fb.d >= 6 && aspect < 2.6) this._sideDrive(flat, fb, offF, seed, bd);
       // (a lean chunk's fences and fall dressing are not drawn: LEAN_D2)
       if (aspect < 2.6 && fb.w >= 6.5 && fb.w <= 26 && !this._lean) this._yardFence(flat, bd, fb, offF, seed);
+      if (this._homes) this._homes.push(bd.x, bd.z, fb.rot, fb.w, fb.d, top - 0.45, bd.y, seed);
       if (FALL && !this._lean) this.fallHouse(flat, bd, seed, off, porch, form);
       if (form === 'flat') {
         this.townhome(flat, fb, seed, col, top, offF);

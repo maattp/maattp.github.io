@@ -1,0 +1,54 @@
+[
+ {
+  "name": "xmas-night-street",
+  "eval": "(() => { d.tod.choose('night');const c=[-3622,-1613],t=[-3614.8,-1581.7];d.camera.position.set(c[0],6,c[1]);d.world.update(c[0],c[1],60);for(let i=0;i<3000;i++){d.world.update(c[0],c[1],60);if(![...d.world.chunks.values()].some((k)=>k.lod!==k.wantLod))break;}d.calendar.dirty=true;d.calendar.update(0.02,d.player,d.camera);return {c:[c[0],c[1],1.7],t:[t[0],t[1],3]} })()"
+ },
+ {
+  "name": "xmas-day-street",
+  "eval": "(() => { d.tod.choose('day');const c=[-3622,-1613],t=[-3614.8,-1581.7];d.camera.position.set(c[0],6,c[1]);d.world.update(c[0],c[1],60);for(let i=0;i<3000;i++){d.world.update(c[0],c[1],60);if(![...d.world.chunks.values()].some((k)=>k.lod!==k.wantLod))break;}d.calendar.dirty=true;d.calendar.update(0.02,d.player,d.camera);return {c:[c[0],c[1],1.7],t:[t[0],t[1],3]} })()"
+ },
+ {
+  "name": "xmas-cityhall-tree",
+  "eval": "(() => { d.tod.choose('night');const c=[-1440,108],t=[-1431,44];d.camera.position.set(c[0],6,c[1]);d.world.update(c[0],c[1],60);for(let i=0;i<3000;i++){d.world.update(c[0],c[1],60);if(![...d.world.chunks.values()].some((k)=>k.lod!==k.wantLod))break;}d.calendar.dirty=true;d.calendar.update(0.02,d.player,d.camera);return {c:[c[0],c[1],22],t:[t[0],t[1],8]} })()"
+ },
+ {
+  "name": "xmas-cityhall-tree-day",
+  "eval": "(() => { d.tod.choose('day');const c=[-1440,108],t=[-1431,44];d.camera.position.set(c[0],6,c[1]);d.world.update(c[0],c[1],60);for(let i=0;i<3000;i++){d.world.update(c[0],c[1],60);if(![...d.world.chunks.values()].some((k)=>k.lod!==k.wantLod))break;}d.calendar.dirty=true;d.calendar.update(0.02,d.player,d.camera);return {c:[c[0],c[1],22],t:[t[0],t[1],8]} })()"
+ },
+ {
+  "name": "xmas-market",
+  "eval": "(() => { d.tod.choose('night');const c=[-1470,70],t=[-1425,60];d.camera.position.set(c[0],6,c[1]);d.world.update(c[0],c[1],60);for(let i=0;i<3000;i++){d.world.update(c[0],c[1],60);if(![...d.world.chunks.values()].some((k)=>k.lod!==k.wantLod))break;}d.calendar.dirty=true;d.calendar.update(0.02,d.player,d.camera);return {c:[c[0],c[1],14],t:[t[0],t[1],2]} })()"
+ },
+ {
+  "name": "xmas-lamps",
+  "eval": "(() => { d.tod.choose('night');const c=[-3828,-1438],t=[-3858,-1585];d.camera.position.set(c[0],6,c[1]);d.world.update(c[0],c[1],60);for(let i=0;i<3000;i++){d.world.update(c[0],c[1],60);if(![...d.world.chunks.values()].some((k)=>k.lod!==k.wantLod))break;}d.calendar.dirty=true;d.calendar.update(0.02,d.player,d.camera);return {c:[c[0],c[1],3],t:[t[0],t[1],5]} })()"
+ },
+ {
+  "name": "halloween-night-street",
+  "eval": "(() => { d.tod.choose('night');const c=[-3622,-1613],t=[-3614.8,-1581.7];d.camera.position.set(c[0],6,c[1]);d.world.update(c[0],c[1],60);for(let i=0;i<3000;i++){d.world.update(c[0],c[1],60);if(![...d.world.chunks.values()].some((k)=>k.lod!==k.wantLod))break;}d.calendar.dirty=true;d.calendar.update(0.02,d.player,d.camera);return {c:[c[0],c[1],1.7],t:[t[0],t[1],3]} })()"
+ },
+ {
+  "name": "halloween-night-close",
+  "eval": "(() => { d.tod.choose('night');const c=[-3618,-1595],t=[-3614.8,-1581.7];d.camera.position.set(c[0],6,c[1]);d.world.update(c[0],c[1],60);for(let i=0;i<3000;i++){d.world.update(c[0],c[1],60);if(![...d.world.chunks.values()].some((k)=>k.lod!==k.wantLod))break;}d.calendar.dirty=true;d.calendar.update(0.02,d.player,d.camera);return {c:[c[0],c[1],1.7],t:[t[0],t[1],3]} })()"
+ },
+ {
+  "name": "halloween-day-street",
+  "eval": "(() => { d.tod.choose('day');const c=[-3622,-1613],t=[-3614.8,-1581.7];d.camera.position.set(c[0],6,c[1]);d.world.update(c[0],c[1],60);for(let i=0;i<3000;i++){d.world.update(c[0],c[1],60);if(![...d.world.chunks.values()].some((k)=>k.lod!==k.wantLod))break;}d.calendar.dirty=true;d.calendar.update(0.02,d.player,d.camera);return {c:[c[0],c[1],1.7],t:[t[0],t[1],3]} })()"
+ },
+ {
+  "name": "remembrance-wreath",
+  "eval": "(() => { d.tod.choose('day');const c=[-998,190],t=[-998,199];d.camera.position.set(c[0],6,c[1]);d.world.update(c[0],c[1],60);for(let i=0;i<3000;i++){d.world.update(c[0],c[1],60);if(![...d.world.chunks.values()].some((k)=>k.lod!==k.wantLod))break;}d.calendar.dirty=true;d.calendar.update(0.02,d.player,d.camera);return {c:[c[0],c[1],1.7],t:[t[0],t[1],3]} })()"
+ },
+ {
+  "name": "remembrance-wreath-close",
+  "eval": "(() => { d.tod.choose('day');const c=[-1001,194],t=[-998,199];d.camera.position.set(c[0],6,c[1]);d.world.update(c[0],c[1],60);for(let i=0;i<3000;i++){d.world.update(c[0],c[1],60);if(![...d.world.chunks.values()].some((k)=>k.lod!==k.wantLod))break;}d.calendar.dirty=true;d.calendar.update(0.02,d.player,d.camera);return {c:[c[0],c[1],1.7],t:[t[0],t[1],3]} })()"
+ },
+ {
+  "name": "halloween-inflatable",
+  "eval": "(() => { d.tod.choose('night'); const w = d.world; for (let i = 0; i < 3000; i++) { w.update(-3614.8, -1581.7, 60); if (![...w.chunks.values()].some((k) => k.lod !== k.wantLod)) break; }\n  const cal = d.calendar; const L = [...cal.infl.values()][0]; d.camera.position.set(L[0], 6, L[2]); cal.dirty = true; cal.update(0.02, d.player, d.camera);\n  let best = [L[0] + 7, L[2] + 7]; for (let a = 0; a < 8; a++) { const x = L[0] + Math.cos(a * 0.785) * 7, z = L[2] + Math.sin(a * 0.785) * 7; if (!w.inBuilding(x, z, 1.5)) { best = [x, z]; break; } } return { c: [best[0], best[1], 1.7], t: [L[0], L[2], 1.3] }; })()"
+ },
+ {
+  "name": "halloween-costume",
+  "eval": "(() => { d.tod.choose('night'); const ps = d.peds.peds.filter((p) => { let f = false; p.h.bones.forEach((b) => b.children.forEach((c) => { if (c.userData && c.userData.costume) f = true; })); return f; });\n  const p = ps[0]; if (!p) return null; return { c: [p.x + 1.6, p.z + 1.6, 1.7], t: [p.x, p.z, 1.55] }; })()"
+ }
+]

@@ -3646,6 +3646,7 @@ export class PedSystem {
     };
     this.scene.add(h.group);
     this.peds.push(p);
+    if (this.costume && !cop) this.costume(h, seed);   // kwcalendar.js: Halloween costumes
     if (cop && this.game.police) this.game.police.stats.spawned.cop++;
     return p;
   }

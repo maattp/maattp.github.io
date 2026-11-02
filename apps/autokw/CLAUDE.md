@@ -843,6 +843,36 @@ file and a guide disagree, this file wins.
   1.7], t: [12700, 10285, 6]}`, WCI `{c: [-4492, -2962, 1.7], t: [-4457,
   -2981, 6]}`; `VIEW_INFO_FILE=` (kwshots, new) takes the per-view probe
   from a file.
+- **The real calendar: src/kwcalendar.js** (docs/cal/*.jpg; probe `tools/kw/calprobe.js`,
+  views `tools/kw/calviews.mjs` -> `calviews.json`, cost `sh tools/kw/calcost.sh`). A date -> theme table
+  (`themesFor`) keyed to the phone's date; **a date with no season builds nothing** (no mesh, no draw, `update`
+  returns at once; the greeting toast is the only thing left). **Override**: `?date=YYYY-MM-DD`, or
+  `window.__calDate` before boot (kwshots `VIEW_BOOT_JS`), or `__dbg.calendar.setDate('2026-12-24')` live (tears
+  down and rebuilds; `weather.month` follows). Houses reach it as world.js `userData.homes` records (x z rot w d
+  eaveY groundY seed, 8 floats, written beside the pumpkin records for every non-lean near house; `world.cal`
+  gets `setChunk` / `dropChunk`). **Halloween Oct 20-Nov 2**: `FallDecor.carveAll` (every porch pumpkin is a
+  glowing jack-o'-lantern), lawn inflatables (ghost / pumpkin / monster blob, ~40 % of houses minus those on a
+  road or in a building, ONE InstancedMesh, basic material that brightens after dark), and **Oct 31** costumed
+  trick-or-treaters: `peds.costume(h, seed)` (hooked in `PedSystem._add`) hangs a witch hat or pumpkin head on
+  the head bone or a sheet on the root bone, plus an orange candy bucket in the right hand, 50 % of new walkers
+  at 16:00-21:30 (12 % otherwise); shared geometry, 2-3 extra draws a costumed ped in view. **Remembrance Nov
+  1-11**: stone + four wreaths on easels + loose poppies at the Kitchener Cenotaph, the Canadian Veterans'
+  Memorial (Waterloo), Galt Cenotaph and the Hespeler Cenotaph (OSM `historic=memorial` points; one merged mesh,
+  shown within 700 m); **Nov 11 at 11:00 real clock** (or `calendar.silence()`) two minutes' silence: toast, the
+  traffic bus to 12 % and `audio.hush` (the city loop). **Christmas Nov 15-Jan 6**: coloured bulbs along the
+  front and side eaves of ~2/3 of the houses within 70 m (phone) / 110 m of the camera, ONE InstancedMesh
+  (1300 / 2800 cap), **only after dark** (`__todInfo` dusk/night; nothing at all by day, so the default Day
+  time-of-day setting never shows them -- pick Night/Dusk/Real); a 16 m tree at Carl Zehr Square and one beside
+  Waterloo Public Square's rink (merged mesh + a basic bulb mesh, 2 draws, shown within 900 m); the Christkindl
+  market (Nov 27-Dec 23: ~11 stalls on the square, lit eaves); garland wreaths on Uptown's double-globe posts
+  (`STATIC_LAMPS`) and the 4.3 m lantern posts (cobra-head downtown lamps have no known pole position, so none).
+  **Canada Day / Victoria Day**: fireworks at night (22:00-01:00) by calling `events.start('fireworks', {site,
+  name})` -- kwevents.js's Fireworks now takes `opts.site` -- over Victoria Park or Columbia Lake (whichever is
+  within 2.6 km), every 150 s; the flags are kwfun's. **Greeting**: one toast per calendar day on first launch
+  (`autokw-caltoast`). Phone cost (AUTO_PHONE=1, seeded, residential street, night / day): off-season 181 / 181
+  draws, Christmas 180 / 179, Halloween 181 / 181 (noise); the lights are 1 draw and ~3k tris at ~800 bulbs, the
+  inflatables 1 draw and ~120 tris each. Not done: bunting, lit house windows' wreaths, snow on roofs, the cobra
+  lamps' wreaths, an on-screen proof of the Nov 11 silence on a real clock.
 - **J&J Cards & Collectibles, the little blue castle (v90, v91 from the photo)**
   (kwlandmarks2.js `jjCastle`, lm2.json `jj` from tools/kw/build_lm2.py,
   round seven: `ROUND7`, flattened with `ext` like round five). 230 Weber St
