@@ -237,6 +237,55 @@ file and a guide disagree, this file wins.
   north from the air and nothing facing away (clipped). SwiftShader A/B at AUTO_PHONE=1 + 8x throttle, 3 rounds each:
   15.4-17.8 fps on, 15.4-17.2 off (inside the noise). The phone has not seen it. Not done: no moon position from the
   date; the aurora is not in the IBL (reflections do not show it); no sound.
+- **Thunderstorms and road spray** (src/storm.js, src/spray.js, weather.js `storm`; docs/storm/*.jpg; probe
+  `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1 VIEW_PROBE_FILE=tools/kw/stormprobe.js node tools/kw/kwshots.mjs <dir>`
+  (ends ALL PASS), shots `VIEW_PRE_FILE=tools/kw/stormpre.js VIEWS=tools/kw/stormviews.json`, cost
+  `AUTO_PHONE=1 VIEW_THROTTLE=8 VIEW_PROBE_FILE=tools/kw/stormcost.js`). **GPU change: ship as its own build.**
+  **The state:** `storm` in weather.js STATES (over 1, rain 1, fog 0.3, `storm` 1; every other state storm 0), the
+  pause menu's Storm, `weather.set('storm')` / `window.__weather = 'storm'`, and the auto cycle's MONTHS (Apr 1 %,
+  May 3, Jun 5, Jul-Aug 6, Sep 2, Oct 1 of the weights: ~1 auto state in 11 in July, none Nov-Mar). weather.js draws
+  it as rain in a smaller box (34 -> 26 m: ~1.7x the drops on screen, same buffer) with `uWind` gusting
+  (`weather.gust`). Audio: the rain loop +45 % (`storm` in audioState). **Lightning** (`Storm.tick`, game time):
+  only with `cur.storm > 0.5`, every 8-30 s (scaled by the storm's strength); 30 % cloud-to-cloud (flash, no bolt),
+  1 in 40 NEAR (150-400 m: amp 1.6, the crack at once, sparks if < 260 m, toast "Lightning! That one hit N m
+  away."), else a bolt 1-6 km off within +-55 deg of the camera's heading. **The bolt** is ONE MeshBasicMaterial
+  (vertex colours, additive, `fog: false`, `toneMapped: false`: an ordinary built-in program) at its true place
+  (camera.far is 9000, so buildings occlude it by depth): a midpoint-displaced trunk (33 nodes) + 3-5 branches
+  (9 each) in a fixed 112-node buffer, 5 vertices across each node facing the camera (~3 px half-width), rewritten
+  once per strike, `visible` only while its 2-3 pulses flicker (~0.2-0.35 s). **The flash and the darker deck --
+  the law:** `preRender()` (main.js draw, just before `renderer.render`) SAVES hemi / ambient intensities and
+  colours, the dome's `ovHor ovZen ovCloudLit ovCloudDark haze` and `scene.fog.color`, darkens them by the storm
+  (deck x0.45-0.66, fill x0.7) and lifts / lerps them toward a cold white by the flash; `postRender()` in the
+  render call's `finally` copies every one back. No new shader program, no render target, nothing outlives the
+  render call (tod.js and weather.js keep writing the same values unaware), and with no storm and no flash
+  preRender returns before saving anything. The IBL is not re-rendered (reflections keep the plain overcast).
+  **Thunder** is queued at `d / 343` s of game time (a pause holds it) and synthesised on `audio.worldBus` (+ reverb
+  send): looped pink noise through two low-passes (650 Hz near -> 85 Hz far), 3-5 rolling swells over 2.6-9 s,
+  level ~(700 / (d + 350))^0.85; a near one adds a white-noise crack and a 62 -> 26 Hz boom and ducks the engine.
+  **Road spray** (spray.js): wet roads (`weather.wet > 0.2`) or snow lying (`cover > 0.3`: grey slush, lumps +
+  less mist); the player's car and the nearest moving (> 3 m/s) road cars within 60 m of the camera, **cap 6 cars
+  phone / 12 desktop**, each on the carriageway (`city.onRoad(x, z, 1.5)`); a towed trailer sprays at its leader's
+  speed; mass >= 2.5 or a bus throws ~2x. Mist (big soft growing sprites hanging behind) and the rooster tail
+  (small droplets thrown up off the rear tread, falling), rates by speed x wetness, spread over the ground covered
+  that frame. ONE `THREE.Points` sharing effects.js's particle material (same program; the shared fx ring is not
+  used, so sparks / smoke are never crowded out), a typed-array pool **240 phone / 480 desktop** (oldest
+  overwritten), `visible` false and no upload when empty. The sprites are unlit: main.js sets `spray.light` by
+  tod (1 day, ~0.35 night). `window.__noSpray`. Harness: `__dbg.storm` (`strike({kind, d, az})`, `hold`, `log`,
+  `stats`, `saved()`), `__dbg.spray` (`alive`, `cars`, `emitted`, `cap`, `stats`). **The probe** forces the state,
+  runs an hour of storm at dt 0.05 (186 strikes, gaps 8.4-30.3 s, 23 % cc, 4 near), checks every thunder's delay
+  against d / 343 (within one tick), snapshots all touched values before / during / after 240 flash renders (all
+  restored) and around 6 live strikes, clear = no modulation and no strikes, spray: none dry / standing / with
+  `__noSpray`, more with speed, a bus > a car, 19 cars in range -> 12 spraying, the pool at but never over its cap,
+  stops and empties when dried, grey slush in snow; breaking postRender or the dry gate makes it FAIL.
+  **Phone cost** (AUTO_PHONE=1, posed views, clear -> rain -> storm with a bolt held): Conestoga Pkwy 141 -> 143 ->
+  145 draws, 834k -> 842k -> 843k tris; downtown at night 179 -> 179 -> 181 (traffic noise +-3). The feature's
+  own draws: spray +1 while particles live, bolt +1 / <= 888 tris for ~0.3 s a strike (the rain's precip draw was
+  already there). 8x-throttled SwiftShader on the parkway, 3 rounds: own CPU (spray.update + storm tick / pre /
+  post) 0.014 ms a frame clear, 0.11 storm, 0.35 with six cars spraying (219 particles); fps clear 15.7, storm 16.8,
+  storm + six spraying 15.1 vs the same six in rain with spray off 14.5 (all inside the run-to-run noise of
+  14-29). The phone has not seen it. Not done: the flash is uniform (no direction toward the strike) and does not
+  light the IBL; the bolt has no glow in the cloud deck; AI cars do not slow for a storm beyond the wet grip;
+  spray ignores puddle depth and does not wet the windscreen; posed (paused) frames freeze the spray.
 - **The Goose 101.9, a fictional radio station** (src/goosefm.js; audio.js `STATIONS` entry `goose: true`,
   `stationIsGoose()`; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1 VIEW_PROBE_FILE=tools/kw/gooseprobe.js
   node tools/kw/kwshots.mjs <dir>`). Invented (no real KW station is on 101.9). On the dial through the normal RADIO
