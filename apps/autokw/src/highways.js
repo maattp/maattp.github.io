@@ -46,6 +46,10 @@ const ckey = (x, z) => `${Math.round(x / 1500)},${Math.round(z / 1500)}`;
 const FURN_R = 1200, SIGN_R = 900;
 const ROOT = new THREE.Group();
 ROOT.name = 'highways';
+// It never moves (identity, at the origin), and its cells are static with
+// their own matrixAutoUpdate off: composing ROOT's matrix every frame forced
+// three to re-multiply all ~100 cells' world matrices with it (v112).
+ROOT.matrixAutoUpdate = false;
 const RANGE = [];
 /** The group to add to the scene (after the landmarks are built). */
 export const highwaysRoot = () => ROOT;

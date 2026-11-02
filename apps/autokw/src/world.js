@@ -8147,9 +8147,17 @@ float frLine(float o, float fw, float c, float w) {
     if (G.inPark(x, z)) return 0;
     const jx = (vnoise(x, z) - 0.5) * 190;
     const jz = (vnoise(x + 3137, z - 2711) - 0.5) * 190;
+    // (out as soon as the taps so far reach the threshold: builtAt is never
+    // negative, so the sum can only grow -- the answer is the full sum's.
+    // crops.js asks this of every cell of every tile it streams, ~0.2 ms a
+    // frame at 8x driving through town, where nearly every cell is built-up)
     let dense = 0;
-    for (const [ox, oz] of BLEND_TAPS) dense += this.city.builtAt(x + jx + ox, z + jz + oz);
-    if (dense / BLEND_TAPS.length >= 0.065) return 0;
+    const city = this.city, NT = BLEND_TAPS.length;
+    for (let i = 0; i < NT; i++) {
+      const t = BLEND_TAPS[i];
+      dense += city.builtAt(x + jx + t[0], z + jz + t[1]);
+      if (dense / NT >= 0.065) return 0;
+    }
     const u = x * 0.8 - z * 0.6, w = x * 0.6 + z * 0.8;
     const k = hash2(Math.floor(u / 260) * 7 + 3, Math.floor(w / 410) * 13 + 1);
     return k < 0.22 ? 1 : k < 0.42 ? 2 : 0;

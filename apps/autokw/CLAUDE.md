@@ -3926,6 +3926,54 @@ file and a guide disagree, this file wins.
   12 % of the Parkway's frame spread thinly (`meshRoad` 3.8 %, `quad` 1.5 %,
   `terrainHeight` 1.5 %), three's `setProgram` ~2 ms of every frame.
 
+- **Frame budget (CPU), round ten: after the v100-v111 night (v112).** Where
+  a phone frame's CPU goes, so the next pass starts from numbers. perfaudit at
+  8x (AUTO_PHONE profile; its new `kitchener` view drives King St from
+  Victoria St, `mall` King St N past Conestoga Mall), v111, three runs,
+  ms per frame (perfaudit's system split + `tools/kw/framesplit.mjs`, which
+  charges a `--view-prof` profile to frame()'s direct callees):
+
+  | view | frame mean (p90) | render+shadow | traffic | peds | streamer | HUD | player | trains | crops | tonight's modules |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | spawn | 19.7 (26-29) | 9.9 | 2.7 | 1.6 | 0.1 | 0.8 | 0.75 | 0.8 | 0 | 0.15 |
+  | kitchener | 22.9 (31-34) | 11.1 | 3.0 | 1.2 | 1.3 | 1.1 | 0.6 | 0.8 | 0.4 | 0.2 |
+  | country | 13.2 (19-21) | 5.9 | 1.9 | 0.15 | 0.4 | 0.4 | 0.4 | 0.5 | 0.4 | 0.2 |
+  | mall | 20.6 (27-31) | 10.1 | 2.7 | 0.8 | 1.5 | 0.7 | 0.6 | 0.8 | 0.4 | 0.2 |
+
+  "Tonight's modules" (wildlife, calendar, night sky, cheats, garages, respray,
+  paramedic, winter jobs, story, secrets, Goose FM, export yard, events,
+  photo) are ~1 % of the frame: wildlife 0.05-0.14, story 0.03-0.05, eggs and
+  the calendar ~0.02, every other one under 0.015 (events ~0.08 while one
+  runs). **Not where the time is.** Render submission is ~55 % (three's
+  projectObject, setProgram/uniforms, the shadow cache), traffic ~13 %,
+  then the streamer (driving), peds, the minimap, Link + the GO/freight rail.
+  Cut, each exact: (1) `world.cropAt` leaves its three built-up taps once the
+  threshold is reached (builtAt >= 0, so the sum only grows): crops.js
+  `stream` driving through town 0.41 -> 0.22 ms, 192 cells 0.41 -> 0.24 ms
+  (`tools/kw/cropprobe.js`: cropAt over 170k points and 13k standing cells of
+  tiles hash the same on v111 and this); (2) the GPU ledger no longer wraps
+  `bindVertexArray` (~160 calls a frame; every three bufferData follows a
+  bindBuffer of its own target, so its reset was never read; ledger reads
+  equal v111's); (3) the `highways` root no longer composes its matrix every
+  frame, which forced ~100 static cells' world matrices; (4) the HUD writes
+  the race panel, rows, ammo, stars, money and health only when they change
+  (formatMoney's regex and the classList toggles were every frame), and
+  placeIcon's colour comes from a table, not a 49-deep string chain; (5)
+  drive-thrus make their Date only with a lane in range. Together ~0.3 ms a
+  frame where they apply -- below the +-15 % run-to-run spread of a whole
+  frame (v111 vs this, alternated: spawn 19.7 vs 19.0, kitchener 22.9 vs
+  23.3, country 13.2 vs 12.9, mall 20.6 vs 22.7, each spread +-2 ms; traffic
+  and the streamer moved as much at the mall, and neither was touched).
+  trafficbench hashes = v111 at all six sites; screenshots (frameviews.json,
+  seeded) within run-to-run noise. **To find more:** the next ms is in
+  three's render loop (fewer objects or materials -- pixels, so its own
+  build), traffic (exact by trafficbench), or the streamer's time slice.
+  Tools: `perfaudit --views=spawn,kitchener,country,mall --view-prof
+  --prof-out=DIR`, then `framesplit.mjs DIR/view.cpuprofile --frames=N`;
+  `matrixcensus.js` (what updateMatrixWorld composes, per scene child);
+  `framebench.js` (per-path loops for an A/B; `AUTO_APP='../m/apps/autokw'`
+  serves another build from the same port).
+
 - **QA sweep after v22-v39** (docs/qa-*.jpg, before over after).
   `tools/kw/sweeppick.js` picks ~60 road points (fixed spots: Uptown,
   downtown, Galt, St. Jacobs, UW, WLU, Conestoga, plazas; the rest a seeded

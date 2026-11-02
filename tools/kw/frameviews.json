@@ -1,0 +1,8 @@
+[
+  { "name": "spawn", "player": true },
+  { "name": "kitchener", "at": [-1380, 180, 3], "bearing": 300, "pitch": -4, "fov": 60 },
+  { "name": "mall", "at": [-4150, -5000, 4], "bearing": 250, "pitch": -6, "fov": 60 },
+  { "name": "country", "at": [-8768, -11050, 3], "bearing": 40, "pitch": -4, "fov": 60 },
+  { "name": "air-uptown", "at": [-3200, -1000, 0], "alt": 450, "bearing": 300, "pitch": -18, "fov": 60 },
+  { "name": "air-region", "at": [0, 9000, 0], "alt": 2500, "bearing": 0, "pitch": -22, "fov": 70 }
+]

@@ -122,7 +122,7 @@ export class DriveThrus {
     this.decor.length = 0;
     const v = player && !player.onFoot ? player.vehicle : null;
     const road = v && !v.dead && !(v.spec && (v.spec.plane || v.spec.boat || v.spec.rail || v.spec.balloon)) ? v : null;
-    const hour = this.clockHour;
+    let hour = -1;   // (read at the first lane in range: clockHour makes a Date)
     for (const d of this.list) {
       const far = Math.hypot(d.cx - px, d.cz - pz) > NEAR + d.r;
       if (far) { d.you = null; d.hinted = false; d.lock = false; continue; }
@@ -136,6 +136,7 @@ export class DriveThrus {
         }
       }
       // the line: `want` cars, the one at the window served every `per` s (quicker with you in it)
+      if (hour < 0) hour = this.clockHour;
       const want = Math.min(lineFor(d.tims, hour), Math.max(0, Math.floor((d.sW + 4) / GAP)));
       if (!want && d.you === null) continue;
       const per = d.you !== null ? 5 : d.tims ? 26 : 34;
