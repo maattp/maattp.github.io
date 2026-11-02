@@ -164,6 +164,31 @@ file and a guide disagree, this file wins.
   Health: waiting, lateral/braking g (grtbus Feel), landings and crashes (`onCrash`) hurt; 0 = lost. Pay
   ($90 + $35/level) x (0.4..1.0 by health) + time bonus; best level in `autokw-paramedic`. Phone: patient =
   1 pooled humanoid + 1 beam, ER 1 beam, only during a call.
+- **Winter jobs: the snowplow route and the Aud's Zamboni** (src/winterjobs.js; docs/winter/*.jpg; probe
+  `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1 node tools/kw/winterprobe.mjs <dir> [plow,zam]`). One MISSION
+  button for both (`#winBtns`, `data-winter`; M / pad D-pad down), nothing held (`game.hold` unused), `events.busy`
+  includes `winter.busy()`. **Plow:** two `snowplow` rigs park at the Region's roads yard (OSM "Regional Municipality of
+  Waterloo", `PLOW_YARDS`, via `placeStations` with a `snowplow` RIG entry), and any plow roaming in a storm works. MISSION
+  needs `weather.cover >= 0.5` (else "No snow to clear -- come back in a storm"; WINTERISCOMING or the weather
+  menu's Snow provide it). `buildRoute` walks a random, forward-biased chain of 5-16 connected art/st/res edges (no
+  elev/tunnel/hwy, 18-420 m) within ~400 m; minimap `hud.fare` (route polyline + pin), an amber beam, and the LED
+  panel with an arrow glyph and distance. A segment is cleared when 85 % of its 6 m bins have been ploughed by the blade
+  point (3.4 m ahead of the plow, within hw + 1.8, over 1.5 m/s): $25 + $0.35/m each, $150 + 2/s finish bonus, clock =
+  length/6 + 75 s; on a route street the plow is governed to 40 km/h. Visuals: ONE pooled strip mesh (MAXS 900 samples,
+  <= 18k verts, drawRange grown as you go: glossy dark bare asphalt + a white windrow each side, material `wx 'nosnow'`
+  with its own program key), a second mesh of white quads down the unplowed route streets (zeroed as each clears),
+  snow spray from both blade corners (`fx.emit`), wig-wag amber beacon lamps on `v.tilt`. Everything is built at start and
+  disposed at end. Stats `autokw-snowplow`. AI cars queue behind it as behind any slow vehicle. **Zamboni:** MISSION in the
+  Aud's Zamboni (main.js still spawns it) finds the nearest `openGround` to the Aud (cached; ~70 m away, a lawn), pops a
+  42 x 20 m rink there (ice = terrain-following plane + a 256 x 128 canvas texture, boards = 1 InstancedMesh, removed after),
+  teleports the machine onto it and back after. The conditioner lays fresh ice 3 m wide under the tail
+  (`stamp`: canvas stroke + a 0.5 m coverage grid); the clock (90 s) starts on first movement; 95 % ends early; cells
+  re-covered > 3 s later are overlap; score = 1000 x coverage x (0.5 + 0.5 x neatness) (+8/s left on a win), pay $40 +
+  160 x coverage (+$100 win), crowd cheer = band-passed `audio.burst` swells; best in `autokw-zamboni`. Boards clamp the
+  machine. Phone cost: zero idle (two parked rigs, one `data-winter` check a frame). Plow job +1 strip draw, +1 route-snow
+  draw, +1 beam, 2 beacon lamps; Zamboni +2 draws and one 128 KB canvas upload per moving frame. Not done: the rink is a
+  rectangle on a lawn (trees may overhang it), not the Aud's interior; the cleared strip is cosmetic (the road shader has
+  no per-edge mask); route clears in any order, the minimap line still shows cleared middle segments.
 - **Cheat codes** (src/cheats.js; docs/cheats/*.jpg; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1
   node tools/kw/cheatprobe.mjs <dir>`). GTA-style Easter egg, Waterloo flavoured. **Desktop:** type a code word
   while playing; a 16-letter rolling buffer is matched by its ENDING (only whole words fire), ignored while paused /
