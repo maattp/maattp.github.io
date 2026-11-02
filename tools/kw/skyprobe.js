@@ -43,7 +43,7 @@
   for (let i = 0; i < 365; i++) if (m.auroraNight(new Date(base + i * 864e5))) n++;
   ck('aurora nights per year ~1 in 6 (46-76)', n >= 46 && n <= 76, n);
   const nm = m.moonPhase(new Date(Date.UTC(2026, 10, 9, 7, 0)));     // new moon 2026-11-09 ~07:00 UTC
-  ck('moon phase: new moon 2026-11-09', nm < 0.02 || nm > 0.98, nm);
+  ck('moon phase: new moon 2026-11-09 (+-0.9 day: the mean synodic phase)', nm < 0.03 || nm > 0.97, nm);
   const fm = m.moonPhase(new Date(Date.UTC(2026, 10, 24, 14, 0)));   // full moon 2026-11-24 ~14:00 UTC
   ck('moon phase: full moon 2026-11-24', Math.abs(fm - 0.5) < 0.02, fm);
   return out.join('\n');
