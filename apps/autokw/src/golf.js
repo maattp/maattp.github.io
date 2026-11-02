@@ -34,7 +34,7 @@
 
 import * as THREE from './three.js';
 import * as G from './geo.js';
-import { Builder } from './build.js';
+import { Builder, dropAfterUpload } from './build.js';
 import { clamp, damp } from './util.js';
 import { BONES, animateWalk } from './peds.js';
 import { solveArm } from './vehicles.js';
@@ -77,6 +77,7 @@ const CELL = 16;          // the surface index's cell
 // sphere (`range`, from main.js draw): mown grass on grass, a few pixels past
 // it, and fourteen courses round the region were a draw each in any wide view.
 const GOLF_RANGE = 2500;
+const LAZY_PAD = 600;   // m past GOLF_RANGE at which a course's mesh is built, unseen, ahead of showing it
 // the steepest slope a ball feels on a green or fringe (_rollStep)
 const GREEN_TILT = 0.03;
 const ease = (u) => { u = clamp(u, 0, 1); return u * u * (3 - 2 * u); };
@@ -219,6 +220,14 @@ export class Golf {
   range(cam) {
     if (!this.courseMesh) return;
     const R = this.rangeR !== undefined ? this.rangeR : GOLF_RANGE;
+    // a course's drape is built (at most one a frame) once the camera is within LAZY_PAD of showing it:
+    // 14 courses at boot were ~1 s of a phone's launch, and most are never near
+    let built = false;
+    for (const C of this.courses) {
+      if (built || this._meshes.has(C.id)) continue;
+      const cx = (C.x0 + C.x1) / 2, cz = (C.z0 + C.z1) / 2, r = Math.hypot(C.x1 - C.x0, C.z1 - C.z0) / 2;
+      if (Math.hypot(cam.x - cx, cam.z - cz) - r < R + LAZY_PAD) { this._ensureCourse(C); built = true; }
+    }
     for (const m of this.courseMesh.children) {
       const s = m.geometry.boundingSphere || (m.geometry.computeBoundingSphere(), m.geometry.boundingSphere);
       const d = Math.hypot(cam.x - s.center.x, cam.y - s.center.y, cam.z - s.center.z) - s.radius;
@@ -260,7 +269,16 @@ export class Golf {
     this.courseMesh = new THREE.Group();
     this.courseMesh.name = 'golf';
     this.stats = { tris: 0 };
-    for (const C of this.courses) {
+    this._mat = mat;
+    this._meshes = new Map();   // course id -> its mesh, once built (a course's drape is built when the camera nears it)
+    this._buildCourseProps(scene);
+  }
+
+  /** Build `C`'s draped mesh now, if it is not built yet (idempotent). */
+  _ensureCourse(C) {
+    if (this._meshes.has(C.id)) return this._meshes.get(C.id);
+    const mat = this._mat;
+    {
       const b = new Builder(false);
       // A polygon drawn ON the terrain: earcut into triangles, each cut along
       // the terrain mesh's own 40 m cells and their diagonals (world.js
@@ -352,8 +370,18 @@ export class Golf {
       m.name = `golf:${C.id}`;
       const tris = m.geometry.index ? m.geometry.index.count / 3 : m.geometry.attributes.position.count / 3;
       this.stats.tris += tris; this.stats[C.id] = tris;
+      m.geometry.computeBoundingSphere();
+      this._meshes.set(C.id, m);
       this.courseMesh.add(m);
+      if (this.dropArrays) dropAfterUpload(m);
+      return m;
     }
+  }
+
+  /** Every course's mesh now (tools that read `stats` for all of them). */
+  buildAll() { for (const C of this.courses) this._ensureCourse(C); }
+
+  _buildCourseProps(scene) {
     scene.add(this.courseMesh);
     // the ball, its trail, the aim marker, and the club
     this.ball = new THREE.Mesh(new THREE.SphereGeometry(BALL_DRAW, 12, 8), new THREE.MeshStandardMaterial({ color: 0xf8f8f4, roughness: 0.35 }));
@@ -474,6 +502,7 @@ export class Golf {
     this.env = env;              // { camera, player }
     this.fov0 = env.camera.fov;
     if (this._pick) { this.C = this._pick.C; this.k0 = this._pick.k; } else this.k0 = this.k0 || 0;
+    if (this.C) this._ensureCourse(this.C);
     document.body.classList.add('golfOn');
     this.el.classList.add('show');
     this.club.visible = true;

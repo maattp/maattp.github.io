@@ -67,7 +67,9 @@ export class Counter {
   near(pl) {
     let best = null, bd = Infinity;
     for (const d of this.doors) {
-      const e = Math.hypot(pl.x - d.x, pl.z - d.z);
+      const dx = pl.x - d.x, dz = pl.z - d.z;
+      if (dx > d.r || dx < -d.r || dz > d.r || dz < -d.r) continue;   // the box first: hypot only for the few doors close by
+      const e = Math.hypot(dx, dz);
       if (e < d.r && e < bd) { bd = e; best = d; }
     }
     return best;

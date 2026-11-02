@@ -3570,6 +3570,37 @@ file and a guide disagree, this file wins.
   recycled -> 0 / 0; hwytraffic 0 hits both, freeway speeds within 3 %.
   Phone trafficbench hashes change (meant: the rates and the ring).
 
+- **The phone audit, round nine: tonight's additions (v89 -> v96) and golf.**
+  Measured at 8x (AUTO_PHONE profile), v89 vs v96: warm first frame 28.9 vs
+  28.4 s, cold 54 vs 60 s, heap 736 vs 752 MB, draws/tris identical at all six
+  views (spawn 140/141, King 159/159), frame CPU within run-to-run noise
+  (+-20 %; a loaded Mac read the same build 10-18 ms). The scene graph grew
+  by 56 nodes (5,619 -> 5,675). **Per-frame cost of tonight's modules at 8x**
+  (600-call loops, `events`/`eggs`/`geese`/`feedTraffic`/`counter`/`respray.tick`/
+  `paramedic.update`): each 0.0002-0.04 ms, together under 0.1 ms of ~10; the
+  new traffic type swaps run per SPAWN, not per frame. Nothing there needed
+  gating. The +16 MB heap is the eleven new vehicle types' CPU geometry arrays
+  (11.3 MB, held until a type's first draw uploads it; all 84 types are built
+  at boot as ever) -- lazy type build was judged not worth it: ~0.45 s on a
+  COLD launch only, a warm launch restores them from the boot cache, and
+  `vehicleAssets().types` has ~30 consumers. The cold far/far2 LODs of the
+  new types are ~0.3 s at 8x, too. **What was fixed:** (1) **golf's fourteen
+  course drapes are built when the camera nears them** (golf.js `range` ->
+  `_ensureCourse`, one a frame, `LAZY_PAD` 600 m before `GOLF_RANGE` shows
+  them): warm first frame 30.0 -> 24.9 s, heap 752 -> 728 MB (interleaved,
+  two runs each); at spawn only Rockway and Westmount are built; a course is
+  then 46-136 ms (mean 84) at 8x, once, hidden. Vertex hashes of all 14
+  meshes are identical to the eager build. `start()` builds the course
+  played; tools reading `golf.stats[id]` call `golf.buildAll()` (golfcheck
+  does). On a phone a late-built course drops its arrays after upload
+  (`golf.dropArrays`, main.js). (2) hud.js minimap places loop no longer
+  allocates a `toMap` pair per place per 30 Hz tick; kwcounter `near()`
+  box-tests before `hypot`; Geese reuses its `last` pair. Left: `farLod2`'s
+  string cluster keys (~0.4 s of a warm 8x boot; an integer key must prove
+  the same clusters) and the boot cache holding no far2; the chunk build is
+  12 % of the Parkway's frame spread thinly (`meshRoad` 3.8 %, `quad` 1.5 %,
+  `terrainHeight` 1.5 %), three's `setProgram` ~2 ms of every frame.
+
 - **QA sweep after v22-v39** (docs/qa-*.jpg, before over after).
   `tools/kw/sweeppick.js` picks ~60 road points (fixed spots: Uptown,
   downtown, Galt, St. Jacobs, UW, WLU, Conestoga, plazas; the rest a seeded

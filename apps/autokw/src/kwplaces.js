@@ -2849,7 +2849,7 @@ export class Geese {
     // how fast the player is going, from the position itself (on foot or in anything)
     let pv = 0;
     if (this.last && dt > 0) pv = Math.hypot(px - this.last[0], pz - this.last[1]) / dt;
-    this.last = [px, pz];
+    if (this.last) { this.last[0] = px; this.last[1] = pz; } else this.last = [px, pz];
     if (pv > 80) pv = 0;   // a teleport
     const onFoot = player.onFoot !== false;
     this.playerRef = player;
