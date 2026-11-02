@@ -1980,7 +1980,7 @@ export class Link {
       const far = pos && Math.hypot(t.x - pos.x, t.z - pos.z);
       // More than 2 km off, a train is run every fourth frame on the time it
       // has saved up (round robin, by id).
-      t._acc = (t._acc || 0) + dt;
+      t._acc = (t._acc || 0) + (boot ? dt : dt * (this.boostK || 1));   // (boostK: cheats.js IONSPEED)
       if (!boot && far > 2000 && (this._tick + t.id) % 4 !== 0) continue;
       let left = t._acc;
       t._acc = 0;

@@ -28,6 +28,7 @@ import * as G from './geo.js';
 import { Builder } from './build.js';
 import { RAMP_A } from './citygen.js';
 import { clamp, angleWrap } from './util.js';
+import { CHEAT } from './cheats.js';
 
 export const STUNT_MIN_SPEED = 13;   // m/s along the ramp at the lip (~47 km/h)
 const STUNT_G = 15;                   // matches vehicles.js
@@ -319,7 +320,7 @@ export class StuntJumps {
           // the cinematic's side: the player's own side of the flight path,
           // alternating so a jump's replays do not all frame from one side
           this.side = ((this.flips = (this.flips || 0) + 1) % 2 ? 1 : -1) * 1.25;
-          if (!r.jump.found) { r.jump.found = true; this.save.found = this.list.filter((q) => q.found).map((q) => q.id); }
+          if (!r.jump.found && !CHEAT.on) { r.jump.found = true; this.save.found = this.list.filter((q) => q.found).map((q) => q.id); }
         }
       }
     } else {
@@ -371,6 +372,7 @@ export class StuntJumps {
     this.scanT = (this.scanT || 0) - dt;
     if (this.scanT > 0) return;
     this.scanT = 0.5;
+    if (CHEAT.on) return;   // a cheated session discovers nothing (cheats.js)
     const px = player.position.x, pz = player.position.z;
     for (const j of this.list) {
       if (j.found) continue;
@@ -398,7 +400,8 @@ export class StuntJumps {
     let pay = 40 + dist * 6 + air * 60 + (turns >= 180 ? turns / 180 * 150 : 0);
     if (clean) pay *= 1.5;
     pay = Math.round(pay / 10) * 10;
-    const first = clean && !this.done.has(j.id);
+    if (CHEAT.on) pay = 0;   // (cheats.js: no bonus money, no unique-jump credit)
+    const first = clean && !CHEAT.on && !this.done.has(j.id);
     if (first) { this.done.add(j.id); j.done = true; pay += 500; }
     const prev = this.save.best[j.id] || 0;
     const record = clean && dist > prev + 0.5;
