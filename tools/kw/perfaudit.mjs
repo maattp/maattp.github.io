@@ -267,6 +267,10 @@ function pageInstall() {
     // signal at (-1644, -157) west of Uptown, through its lights at ~15 m/s
     arterial: { speed: 15, route: () => buildRoute(-1644, -157, (e) => street(e) && e.cls === 'art', 2400) },
     country: { speed: 20, route: () => buildRoute(-8768, -11050, (e) => street(e) && e.len > 15, 4000) },
+    // (not in the default list) King St through downtown Kitchener from Victoria
+    // St at ~12 m/s, and King St N past Conestoga Mall at ~13 m/s (v112's frame pass)
+    kitchener: { speed: 12, route: () => buildRoute(-1380, 180, (e) => street(e) && /^King Street/.test(e.name || ''), 2000) },
+    mall: { speed: 13, route: () => buildRoute(-4100, -5150, (e) => street(e) && /^King Street/.test(e.name || ''), 2000) },
   };
 
   let R = null;
