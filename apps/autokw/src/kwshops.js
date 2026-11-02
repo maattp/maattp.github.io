@@ -2520,7 +2520,7 @@ export function buildShops(ctx) {
 
         const [px, , pz] = fr.P(fi, t, 0, 0.2);
         TX.quad(A, Lb(px, pz), c, fg, bgc, px, ys, pz, N[0], N[2], lw, lh);
-        nb++; bizList.push([q[0], +px.toFixed(1), +ys.toFixed(1), +pz.toFixed(1), +N[0].toFixed(2), +N[2].toFixed(2)]);
+        nb++; bizList.push([q[0], +px.toFixed(1), +ys.toFixed(1), +pz.toFixed(1), +N[0].toFixed(2), +N[2].toFixed(2), q[6]]);
       }
     }
     stats.biz = { signed: nb, boxes: by.size, full: nfull, of: BIZ_PLAN.length, list: bizList };

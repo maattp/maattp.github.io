@@ -868,6 +868,44 @@ file and a guide disagree, this file wins.
   [-3258, -529, 1.6], t: [-3400, -652, 74]}`, the Christie monument `{c: [-26,
   -1348, 1.6], t: [-29, -1327, 1.2]}`, Waterloo Brewing `{c: [1754, -1985,
   1.6], t: [1821, -2008, 11]}`.
+- **More local businesses: main-street signs, brand lettering, the Counter**
+  (kwshops.js `BIZ_LOOK` / `BIZ_PLAN`, build_shops.py `main_street_biz`,
+  src/kwcounter.js; docs/biz-egg-day.jpg, biz-egg-night.jpg, biz-uwstrip.jpg;
+  the audit is `tools/kw/biz_audit.md`).
+  - **Data**: shops.json `biz` `[name, x, z, rank, bx, bz, kind]` (247): every
+    named OSM business (raw_shops stores + business POIs) that nothing else
+    signs -- outside kw.js's ZONES, plaza outlines, `fronts`, and every brand --
+    with the building holding it. (Guelph is past MAP_HALF: not in the game.)
+    Rank 0 are the locals in `LOCALS`, then food/drink/shows, then shops.
+  - **Signs**: prepShops marks a plain box (no kw.skip/poly/fam/shop; 4.2 m+;
+    inside a `kwp` cluster's extent +45 m: the fronts' law) in `BIZ_PLAN`; buildShops
+    puts each name on a board over the street face's ground floor (the face with a
+    road in front of it nearest the points, `y0 + 4.55`, ABOVE the world.js
+    ledge: at 3.35 the ledge cut the names in half), lettering atlas, no draw
+    (118 boards, 74 boxes). The ~120 whose box another module draws (Bauer
+    Lofts' shops with Vincenzo's, the Kitchener Market, campus halls) are skipped
+    -- `window.__kwBizPrep.no` lists them. `window.__noMainBiz = true` before boot
+    turns the boards off; `__kwShops.stats.biz` has `list`.
+  - **Looks**: `BIZ_LOOK` (regex -> face, italic/caps, panel, letters; ~70
+    entries: Gino's, Pizza Nova, Mr. Sub, Jack Astor's, Kelsey's, Beertown, Galaxy,
+    Balzac's, pubs, shawarma, Indian, ramen...) sets a name in its own
+    face (`FONTS`: Impact, Georgia, Copperplate, American Typewriter...) in
+    TextAtlas.cell (cells keyed by name, so every sign of that name looks the same)
+    and its colours in `chainCol`. Letter colours are still the atlas's 16.
+  - **The Counter** (kwcounter.js, main.js `counter`, ENTER on foot): 56 doors --
+    the food/drink biz signs (3.6 m of the sign's foot) and 11 named locals by
+    their OSM points (Princess Cinema and Twin, the Jane Bond, Ethel's, Morty's,
+    Kinkaku, Seven Shores, Golf's, Beertown, the Boathouse, Waterloo Brewing).
+    The day's special changes by date; the Princess shows three silly "now
+    playing" titles a day. A toast, a price, health; 20 s cooldown a door; no
+    overlay, no hold. `__dbg.counter`.
+  - **Cost** (AUTO_PHONE=1, GPU, A/B with `__noMainBiz`): draws 142/144/230/168/
+    158/202/258 -> 140/142/224/166/156/197/255 (none added; the run-to-run drift
+    is the traffic), tris within noise (~+3k a busy view). Text atlas 2784 rows
+    of 4096. Boot log: `kw shops: ... N main-street business boxes`.
+  - **Not done**: businesses on landmark-drawn buildings (Vincenzo's, the Market,
+    Balzac's); `kw.poly` retail outlines (8); indoor mall tenants; the zones' own
+    storefronts keep kw.js's looks; gas stations already have canopies and pumps.
 - **The chain stores: src/kwshops.js** (`data/shops.json` from
   tools/kw/extract_shops.py -> `raw_shops.json`, then tools/kw/build_shops.py;
   docs/shops-*.jpg). Every store of ~50 brands (`BRANDS` / `GAS` in
