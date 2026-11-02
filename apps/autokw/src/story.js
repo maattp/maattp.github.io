@@ -577,7 +577,7 @@ export class Story {
       try {
         const r = this.roadPt(GARAGE.x, GARAGE.z - 12, 60);
         this.traffic.spawnAt(r.x, r.z, this.roadHeading(r.x, r.z), 'volvo', 0x6b2a1f, 'free');
-        this.say([['gord', 'Take my old Volvo, it is at the kerb. Keys are in it. Do not touch the radio.']]);
+        this.say([['gord', 'Take my old Volvo, it is at the curb. Keys are in it. Do not touch the radio.']]);
       } catch (e) { /* no car: walk to one */ }
     }
     // the routes a chapter's AI drives are known now: find them while you get there
