@@ -361,6 +361,42 @@ file and a guide disagree, this file wins.
   `refusal(v)`, `seq`, `prize`, `newList(wk, roll)`). Not done: no gamepad/touch prompt beyond the toasts (none
   needed: drive in and stop); the crane does not line up with a car parked off-centre, it carries it over;
   the wrecks along the back fence are boxes; no night lighting on the board.
+- **The tunnel car washes** (src/carwash.js; docs/wash/*.jpg; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1
+  node tools/kw/washprobe.mjs <dir>`). Three REAL `amenity=car_wash` buildings whose OSM footprint is a tunnel
+  (`SITES`: Valet Car Wash, Victoria St N, 39 x 9 m; GTO Auto Spa, King St N, 44 x 11 m; the Petro-Canada wash on
+  Weber St E, 29 x 10 m). `prepWash` (beside prepFun, before meshing) finds each box (`boxAt` at the POI; must be
+  22-60 m long, 6.5-14 m wide, 2.2:1) and flattens it (`kw.skip`, h 0: nothing draws or collides with it);
+  `placeWashes` (beside placeYard) picks the ENTRANCE (the mouth nearer a street; swapped if only the other apron is
+  clear), checks both 8 m aprons against buildings / water / landmark and barrier solids (`s.blocked`), pushes clear
+  circles along the axis (no parked cars or trees in it). The tunnel is drawn in the box's place along its long axis
+  (inner half-width `IW` 2.45, ceiling `CLEAR` 3.9, roof `TOP` 5.2): side blocks (solids) with windows and a brand band,
+  roof + ceiling + light bars, fascias with the real name on ONE canvas (entrance top half, EXIT bottom half), the
+  arches (soak blue, foam pink/blue/yellow, rinse green), brush gantries, the blower, a conveyor channel, apron
+  chevrons, a kiosk; floor and posts follow the terrain. **Drive in:** a road car stopped (< 1 m/s, `DWELL` 0.35 s)
+  with its centre within lz -2.6..3 of the mouth, |lx| < 1.5, heading within 0.6 rad of the axis: amber light,
+  toast; ENTER pays at once (main.js `tryDriveThru` -> `carWash.tryEnter`, before getting out) or waiting 1.5 s does
+  ($8). `refusal(v)`: `jobsBusy()` (story chapters included), aircraft, boats, bicycles, moto / ATV / buggy, not a
+  road car, bus / towed / trailer / float, `spec.roof > MAX_ROOF` 2.8 (a U-Haul's box), len > 6.45 or wid > 2.5, a
+  wreck (dead, burning, < 15 %), < $8. Wanted is fine and the stars STAY. **The ride** (no `game.hold`):
+  `player.autoDrive` returns a frozen neutral input and every frame `run` sets the car on the axis at the conveyor's
+  trapezoid position (`SPEED` 2 m/s, 1 s ramps; Valet 22 s), the first 1.2 s easing any offset / heading in; ENTER is
+  swallowed; `v.camRig` puts the camera low behind the car under the ceiling. Stations are fractions of the length
+  (`ST`). Foam: ~52 icosahedron blobs per curtain land where the curtain is over the car (roof over the cab, belt
+  elsewhere: `spec.cab` / `boxy`) and creep off the roof and down the sides; the rinse shrinks those it passes, the
+  blower the rest. Brushes: two vertical drums swing in to the car's side (`halfWid + 0.78 R`) while it passes, the top
+  one rides `topAt`; 20 crisp cloth strips each, wobbling. Spray / mist / droplets are `fx.emit` (shared pool). Sound:
+  one WebAudio graph a ride on `worldBus` (filtered noise for spray, foam, the brushes' pulsed swish, the blower's roar
+  + whine, a conveyor hum), a two-note chime at the EXIT light. **Out of the exit:** green light, health +5 (capped),
+  `steamT` 0, the paint's `roughness` x 0.35 and `envMapIntensity` x 1.6 easing back over 30 s (uniform values on
+  THIS car's bodyMat, no new program; restored exactly), "Showroom shine". 1 in 20 (`rig = 'gag'`): "You left the
+  window down". **On foot** inside the tunnel: soaked, "You are now very clean. +$0" (once per visit). `abort()` on
+  respawn. Map icon `wash` (bubbles). **Phone cost:** nothing until 520 m; then 3 draws, ~1.7k tris (the tunnel as one
+  vertex-coloured mesh, the signs, the two lights), shown within 500 m; during a ride only, +1 draw (brushes + foam as
+  ONE dynamic mesh: 4.3k tris, 2.6k vertices rewritten a frame) and ~60 live particles. Boot: three box lookups and
+  ~200 point tests. `__dbg.carWash` (`sites`, `ride`, `refusal(v)`, `start(q, v, player)`, `rig`, `local`, `last`,
+  `rideMesh`). Not done: AI cars never use it; police can still shoot you in the tunnel (that is where the probe's
+  health trace drops); the brushes do not wrap round the nose and tail; foam ignores the car's pitch; no night glow
+  (the light bars are vertex colour); no dirt to wash off (cosmetic = steam + gloss).
 - **Photo mode** (src/kwphoto.js; docs/photo/*.jpg; probe `AUTO_HTTP_PORT=.. AUTO_CDP_PORT=.. AUTO_GPU=1
   node tools/kw/photoprobe.mjs <dir>`). Pause menu > "Photo mode (P)", or P. `game.hold('photo')` (in reapHolds'
   `live`; `doRespawn` clearing it makes `update` exit quietly) freezes the world but the frame still draws every

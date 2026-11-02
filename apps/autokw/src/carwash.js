@@ -620,8 +620,9 @@ export class CarWash {
     if (s.bicycle) return 'Bikes and spinning brushes do not mix — walk it through';
     if (s.moto || s.atv || s.buggy) return 'No bikes or ATVs — the brushes would spin you like a top';
     if (s.rail || s.tank || !s.roadCar) return 'Road cars only';
-    if (s.bus || s.towed || s.trailer || v.trailer || v.leader || v.isFloat || s.len > MAX_LEN || s.wid > 2.5) return 'Too big for the tunnel';
+    if (s.bus || s.towed || s.trailer || v.trailer || v.leader || v.isFloat) return 'Too big for the tunnel';
     if ((s.roof || 1.5) > MAX_ROOF) return `Too tall — the tunnel clears ${MAX_ROOF.toFixed(1)} m`;
+    if (s.len > MAX_LEN || s.wid > 2.5) return 'Too big for the tunnel';
     const hf = clamp(v.health / (s.hp || 100), 0, 1);
     if (v.dead || v.burnT > 0 || hf < 0.15) return 'We wash cars, not wrecks';
     if (this.game.money < PRICE) return `The wash is $${PRICE} — you're short`;
@@ -851,7 +852,9 @@ export class CarWash {
     this.setLights(q, 'done');
     chime(this.audio);
     const hp = v.spec.hp || 100;
+    S.h0 = v.health;
     v.health = Math.min(hp, v.health + 5);
+    S.h1 = v.health;
     v.steamT = 0;
     this.glossOn(v);
     this.washes++;
@@ -914,7 +917,7 @@ export class CarWash {
     if (this.rideMesh) this.scene.remove(this.rideMesh.mesh);
     if (S.snd) { try { S.snd.stop(); } catch (e) { /* audio */ } }
     if (done) { S.v.vLong = 0; S.q.doneT = 4; } else this.setLights(S.q, 'idle');
-    this.last = { done, t: S.t, T: S.T, gag: S.gag, lz0: S.lz0, lz: S.lz };
+    this.last = { done, t: S.t, T: S.T, gag: S.gag, lz0: S.lz0, lz: S.lz, h0: S.h0, h1: S.h1 };
   }
 
   /** Respawn / reset: let go at once. */
