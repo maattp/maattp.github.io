@@ -779,6 +779,18 @@ file and a guide disagree, this file wins.
   1.7], t: [12700, 10285, 6]}`, WCI `{c: [-4492, -2962, 1.7], t: [-4457,
   -2981, 6]}`; `VIEW_INFO_FILE=` (kwshots, new) takes the per-view probe
   from a file.
+- **J&J Cards & Collectibles, the little castle (v90)** (kwlandmarks2.js
+  `jjCastle`, lm2.json `jj` from tools/kw/build_lm2.py, round seven:
+  `ROUND7`, flattened with `ext` like round five). 230 Weber St N, Waterloo,
+  the owner's favourite shop as a kid. Its OSM footprint (30 x 16 m) as grey
+  coursed stone under a parapet and merlons, four round crenellated turrets
+  on the footprint's box corners (solids), a gatehouse on the Weber St end
+  (`frontEdge /^Weber Street/` -- the SHORT west end, STATS.jjFront) over an
+  arched oak door with iron straps, lanterns, J&J CARDS / & COLLECTIBLES
+  gold-on-red in the shared sign atlas, a swallow-tailed pennant, pointed shop
+  windows, arrow slits down the other walls. The look is from the owner's
+  description ("kind of looks like a little castle"), not a photo or survey.
+  No new draws (LmKit's clusters). Shot: docs/landmark-jj.jpg.
 - **The big employers' signs: src/kwbiz.js** (the landmarks pass, round six;
   run by kwlandmarks2.js with its LmKit; `build_lm2.py` gained `ot1`, `ot2`,
   `equit`, `christie`, `dare`, `wbrew`, `gore`, `gore2`; docs/biz-day-1.jpg,

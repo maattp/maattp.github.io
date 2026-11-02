@@ -71,6 +71,8 @@ LANDMARKS = {
     "breit": (-1708.4, -1582.6),     # the Breithaupt Centre, 350 Margaret Ave
     "grrc": (3386.5, -429.5),        # the Grand River Recreation Complex and Lyle S. Hallman Pool (MJMA, 1988-91)
     "catalyst": (-3139.0, 87.3),     # Catalyst137, 137 Glasgow St (the 1957 Uniroyal tire warehouse, reclad 2017)
+    # round seven
+    "jj": (-3535.5, -2835.4),        # J&J Cards & Collectibles, 230 Weber St N, Waterloo (the little castle)
     # round six: the big employers' signs (src/kwbiz.js)
     "ot1": (-6313.5, -2762.3),       # OpenText Building 1, 275 Frank Tompa Dr (OSM: office, 4 levels)
     "ot2": (-6239.9, -2739.9),       # OpenText Building 2 (OSM: office, 5 levels; the curved glass front)

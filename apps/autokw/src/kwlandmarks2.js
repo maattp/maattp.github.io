@@ -82,6 +82,7 @@ import { bizBegin, bizRun, bizMap, bbSign, sunSign, manuSign, BIZ_KEYS } from '.
 const STATS = { skipped: 0, built: [], err: [] };
 const ROUND4 = ['mktsq', 'skywalk', 'crowne', 'stmaryrc', 'stpeter', 'gaol', 'govhouse', 'claygl', 'wmrc', 'galtarena'];
 const ROUND5 = ['qslib', 'wci', 'zion', 'stjohn', 'stpaul', 'trinity', 'woodside', 'breit', 'grrc', 'catalyst'];
+const ROUND7 = ['jj'];
 const C = (h) => lin(hex(h));
 const ccw = (p) => (polyArea(p) < 0 ? p.slice().reverse() : p);
 let D = null;      // lm2.json
@@ -121,7 +122,7 @@ export function prepLandmarks2(city, data) {
   if (typeof window !== 'undefined' && window.__noLm5) { D = { b: { ...D.b } }; for (const k of ROUND5) delete D.b[k]; }
   // window.__noBiz: round six off (kwbiz.js: the new footprints stay boxes, the old signs come back)
   if (typeof window !== 'undefined' && window.__noBiz) { BIZ_ON = false; D = { b: { ...D.b } }; for (const k of BIZ_KEYS) delete D.b[k]; }
-  for (const k of Object.keys(D.b)) STATS.skipped += flatten(city, D.b[k].p, ROUND5.includes(k) || BIZ_KEYS.includes(k));
+  for (const k of Object.keys(D.b)) STATS.skipped += flatten(city, D.b[k].p, ROUND5.includes(k) || ROUND7.includes(k) || BIZ_KEYS.includes(k));
   // the King St skywalk is one of kwsights' `king` blocks (building=bridge):
   // meshKing would draw it on the road; it is drawn up in the air here instead
   const S = sightsData();
@@ -2418,6 +2419,142 @@ function catalyst(kit, ctx) {
 // ---------------------------------------------------------------------------------------
 // the extra
 // ---------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
+// J&J CARDS & COLLECTIBLES, 230 Weber St N, Waterloo -- the little castle
+// ---------------------------------------------------------------------------------------
+// The Schill brothers' card, comic and game shop (35 years and counting), in the
+// one-storey building on Weber St N that looks like a little castle: grey
+// stone walls under battlements, round turrets at the corners, a gatehouse
+// over the arched door with a pennant over it, shop windows under pointed
+// heads either side, arrow slits down the sides. The OSM footprint (30 x 16
+// m); the look is from the owner's memory of it, not a survey -- proportions
+// and colours estimated.
+function jjCastle(kit, ctx) {
+  const ST = C('#aaa59a'), ST2 = C('#8c877d'), ST3 = C('#c9c4b8'), DK = C('#1f2125'), WD = C('#5a3a22'), GL = C('#2a3138'),
+    RD = C('#9e1b22'), GD = C('#d8b04a'), IRON = C('#2b2b2b');
+  const pts = ccw(D.b.jj.p);
+  const r = block(kit, ctx, pts, {
+    h: 5.4, wall: ST, trim: ST3, parapet: 0, roof: C('#4b4a47'), plinth: [0.7, ST2], glass: GL,
+  });
+  const B = r.B, yT = r.yTop, o = obb(pts);
+  const front = frontEdge(ctx.city, r.E, /^Weber Street/, 10, 70) || r.E.reduce((a, e) => (e.L > a.L ? e : a));
+  STATS.jjFront = [Math.round(front.mx), Math.round(front.mz), +front.nx.toFixed(2), +front.nz.toFixed(2)];
+  // stone courses: darker lines every 0.6 m, so the wall reads as blocks, not render
+  for (const e of r.E) {
+    if (e.L < 3) continue;
+    const N = [e.nx, 0, e.nz], gy = gyOf(e);
+    for (let y = gy + 1.3; y < yT - 0.2; y += 0.62) B4(B, e, 0, e.L, y, y + 0.06, 0.03, N, ST2);
+  }
+  // the battlements: a parapet and merlons along every wall (crenels between)
+  const merlons = (e, y, h, w = 0.85, sp = 1.7, dep = 0.55) => {
+    const rot = Math.atan2(e.uz, e.ux), n = Math.max(1, Math.floor(e.L / sp)), pad = (e.L - (n - 1) * sp) / 2;
+    for (let i = 0; i < n; i++) {
+      const p = e.at(pad + i * sp, 0, -dep / 2 + 0.05);
+      B.box(p[0], y, p[2], w, h, dep, rot, i % 2 ? ST : shade(ST, 0.95));
+    }
+  };
+  for (const e of r.E) {
+    if (e.L < 1) continue;
+    const rot = Math.atan2(e.uz, e.ux), m = e.at(e.L / 2, 0, -0.25);
+    B.box(m[0], yT, m[2], e.L, 0.75, 0.55, rot, ST);                 // the parapet wall
+    B4(B, e, 0, e.L, yT - 0.18, yT, 0.12, [e.nx, 0, e.nz], ST3);    // a string course under it
+    merlons(e, yT + 0.75, 0.75);
+  }
+  // round turrets at the box's four corners, crenellated
+  const ux = o.ux, uz = o.uz, vx = -o.uz, vz = o.ux;
+  for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+    const x = o.x + ux * a * (o.hu - 0.4) + vx * b * (o.hv - 0.4), z = o.z + uz * a * (o.hu - 0.4) + vz * b * (o.hv - 0.4);
+    const gy = T(x, z) - 0.6, R = 1.75, top = yT + 2.2;
+    B.prism(x, gy, z, R, top - gy, 12, ST);
+    B.prism(x, top - 0.25, z, R + 0.2, 0.3, 12, ST3);                 // the corbel ring
+    disc(B, x, top + 0.04, z, R + 0.2, 12, C('#4b4a47'));
+    for (let i = 0; i < 8; i++) {
+      const ang = (i / 8) * Math.PI * 2, px = x + Math.cos(ang) * (R - 0.05), pz = z + Math.sin(ang) * (R - 0.05);
+      B.box(px, top + 0.05, pz, 0.8, 0.8, 0.45, ang + Math.PI / 2, ST);
+    }
+    // an arrow slit up each turret, facing out from the corner
+    const sx = Math.sign(a) * ux + Math.sign(b) * vx, sz = Math.sign(a) * uz + Math.sign(b) * vz, sl = Math.hypot(sx, sz);
+    const nx = sx / sl, nz = sz / sl;
+    for (const yy of [gy + 2.4, gy + 5.0]) {
+      const c = [x + nx * (R + 0.02), z + nz * (R + 0.02)];
+      const e = edgeOf([c[0] + nz * 0.5, c[1] - nx * 0.5], [c[0] - nz * 0.5, c[1] + nx * 0.5], nx, nz);
+      B4(B, e, 0.38, 0.62, yy, yy + 1.3, 0.02, [nx, 0, nz], DK);
+    }
+    ctx.solids.push({ x, z, r: R, y0: gy - 1, y1: top + 0.85 });
+  }
+  // the front: a gatehouse over an arched door, shop windows either side
+  const e = front, N = [e.nx, 0, e.nz], gy = gyOf(e), tm = e.L / 2, rot = Math.atan2(e.uz, e.ux);
+  const gw = 6.2, gd = 1.6, gh = yT + 2.6;
+  {
+    const c = e.at(tm, 0, gd / 2 - 0.3);
+    B.box(c[0], gy - 0.6, c[2], gw, gh - gy + 0.6, gd, rot, shade(ST, 1.04));
+    const ge = edgeOf(e.at(tm - gw / 2, 0, gd - 0.3).filter((_, i) => i !== 1), e.at(tm + gw / 2, 0, gd - 0.3).filter((_, i) => i !== 1), e.nx, e.nz);
+    for (let y = gy + 1.3; y < gh - 0.3; y += 0.62) B4(B, ge, 0, ge.L, y, y + 0.06, 0.03, N, ST2);
+    const top = e.at(tm, 0, gd / 2 - 0.3);
+    B.box(top[0], gh - 0.2, top[2], gw + 0.4, 0.3, gd + 0.4, rot, ST3);
+    for (let i = 0; i < 4; i++) {           // its merlons, front and the two sides
+      const p = ge.at(0.55 + i * (gw - 1.1) / 3, 0, -0.2);
+      B.box(p[0], gh + 0.1, p[2], 0.9, 0.9, 0.5, rot, ST);
+    }
+    for (const s of [-1, 1]) {
+      const p = e.at(tm + s * (gw / 2 - 0.25), 0, gd / 2 - 0.3);
+      B.box(p[0], gh + 0.1, p[2], 0.5, 0.9, 0.9, rot, ST);
+    }
+    ctx.solids.push({ x: c[0], z: c[2], hw: gw / 2, hd: gd / 2, rot, y0: gy - 1, y1: gh + 1 });
+    // the arched door: dark oak in two leaves, iron straps, a stone arch round it
+    const dw = 2.4, dh = 2.5, rr = dw / 2;
+    B4(B, ge, ge.L / 2 - dw / 2, ge.L / 2 + dw / 2, gy, gy + dh, 0.03, N, WD);
+    for (let k = 0; k < 8; k++) {
+      const a0 = Math.PI * k / 8, a1 = Math.PI * (k + 1) / 8, t = ge.L / 2;
+      B.tri(ge.at(t, gy + dh, 0.03), ge.at(t + Math.cos(a0) * rr, gy + dh + Math.sin(a0) * rr, 0.03), ge.at(t + Math.cos(a1) * rr, gy + dh + Math.sin(a1) * rr, 0.03), N, WD);
+      B.quad(ge.at(t + Math.cos(a0) * rr, gy + dh + Math.sin(a0) * rr, 0.06), ge.at(t + Math.cos(a1) * rr, gy + dh + Math.sin(a1) * rr, 0.06),
+        ge.at(t + Math.cos(a1) * (rr + 0.4), gy + dh + Math.sin(a1) * (rr + 0.4), 0.06), ge.at(t + Math.cos(a0) * (rr + 0.4), gy + dh + Math.sin(a0) * (rr + 0.4), 0.06), N, U0, k % 2 ? ST3 : ST2);
+    }
+    for (const s of [-1, 1]) B4(B, ge, ge.L / 2 + s * (rr + 0.2) - 0.2, ge.L / 2 + s * (rr + 0.2) + 0.2, gy - 0.1, gy + dh, 0.06, N, ST3);
+    B4(B, ge, ge.L / 2 - 0.03, ge.L / 2 + 0.03, gy, gy + dh + rr - 0.05, 0.05, N, DK);
+    for (const y of [gy + 0.6, gy + 1.9]) B4(B, ge, ge.L / 2 - dw / 2 + 0.1, ge.L / 2 + dw / 2 - 0.1, y, y + 0.1, 0.05, N, IRON);
+    // the shop's name over the arch, gold on a red board
+    letters(kit, ctx, ge, ge.L / 2, gy + dh + rr + 1.15, 5.6, 1.05, 'J&J CARDS', { bg: '#8e1a20', fg: '#f2cf63', font: SERIF, wt: '700', k: 0.66, px: 30, off: 0.08 });
+    letters(kit, ctx, ge, ge.L / 2, gy + dh + rr + 0.35, 5.6, 0.5, '& COLLECTIBLES', { bg: '#8e1a20', fg: '#f2cf63', font: SERIF, wt: '700', k: 0.7, px: 30, off: 0.08 });
+    // the pennant over the gatehouse: a pole and a swallow-tailed red and gold flag
+    const fp = e.at(tm, 0, gd / 2 - 0.3);
+    B.prism(fp[0], gh + 0.1, fp[2], 0.06, 4.2, 6, IRON);
+    B.cone(fp[0], gh + 4.3, fp[2], 0.14, 0.3, 6, GD);
+    const fy = gh + 3.2, fl = 1.9, fx = e.ux, fz = e.uz;
+    const q = (t, y) => [fp[0] + fx * t, y, fp[2] + fz * t];
+    for (const sgn of [1, -1]) {
+      const nn = [e.nx * sgn, 0, e.nz * sgn];
+      B.quad(q(0.06, fy), q(fl, fy + 0.05), q(fl, fy + 0.95), q(0.06, fy + 1.0), nn, U0, RD);
+      B.tri(q(fl, fy + 0.05), q(fl + 0.7, fy + 0.15), q(fl, fy + 0.5), nn, RD);
+      B.tri(q(fl, fy + 0.5), q(fl + 0.7, fy + 0.9), q(fl, fy + 0.95), nn, RD);
+      B.quad(q(0.06, fy + 0.42), q(fl, fy + 0.45), q(fl, fy + 0.58), q(0.06, fy + 0.6), nn, U0, GD);
+    }
+    // lanterns either side of the door
+    for (const s of [-1, 1]) {
+      const p = ge.at(ge.L / 2 + s * (rr + 0.85), gy + 2.2, 0.25);
+      B.box(p[0], p[1], p[2], 0.3, 0.45, 0.3, rot, IRON);
+      B.box(p[0], p[1] + 0.08, p[2], 0.22, 0.3, 0.32, rot, C('#f0c060'));
+    }
+  }
+  // shop windows under pointed heads either side of the gatehouse
+  for (const s of [-1, 1]) for (let k = 0; k < 2; k++) {
+    const t = tm + s * (gw / 2 + 1.9 + k * 3.2);
+    if (t < 2.8 || t > e.L - 2.8) continue;
+    lancet(B, e, t, gy + 0.9, 2.0, 2.0, GL, ST3);
+    B4(B, e, t - 1.15, t + 1.15, gy + 0.7, gy + 0.9, 0.1, N, ST3);
+  }
+  // arrow slits down the other walls
+  for (const w of r.E) {
+    if (w === e || w.L < 6) continue;
+    const n = Math.floor((w.L - 4) / 3.4);
+    for (let i = 0; i < n; i++) {
+      const t = 2 + (w.L - 4) * (i + 0.5) / n;
+      B4(B, w, t - 0.13, t + 0.13, gyOf(w) + 2.0, gyOf(w) + 3.4, 0.03, [w.nx, 0, w.nz], DK);
+      B4(B, w, t - 0.45, t + 0.45, gyOf(w) + 2.65, gyOf(w) + 2.77, 0.035, [w.nx, 0, w.nz], DK);
+    }
+  }
+}
+
 export function buildLandmarks2(ctx) {
   if (!D) return;
   const t0 = performance.now(), kit = new LmKit(ctx.atlas);
@@ -2478,6 +2615,8 @@ export function buildLandmarks2(ctx) {
     run('wci', wci);
     run('catalyst', catalyst);
   }
+  // round seven
+  if (D.b.jj) run('jj', jjCastle);
   // round six
   if (BIZ_ON) bizRun(kit, ctx, D, run);
   kit.flush(ctx);
@@ -2518,6 +2657,7 @@ export function landmarks2Map() {
     m(at('claygl'), false, 'Canadian Clay & Glass Gallery', 'The Canadian Clay and Glass Gallery, 25 Caroline St N (Patkau Architects, 1993)'),
     m(at('wmrc'), false, 'Waterloo Memorial Rec Complex', 'The Waterloo Memorial Recreation Complex, 101 Father David Bauer Dr — the Siskins\' rink and the pool'),
     m(at('galtarena'), false, 'Galt Arena Gardens', 'Galt Arena Gardens, 98 Shade St (1922) — one of the oldest arenas still in use in Canada'),
+    m(at('jj'), false, 'J&J Cards & Collectibles', 'J&J Cards & Collectibles, 230 Weber St N — the little castle: cards, comics and games'),
     m(at('zion'), false, 'Zion (32 Weber St W)', 'Zion Evangelical, 32 Weber St W (1893) — Zion United until 2015; the tall tower with the four green-capped turrets'),
     m(at('stjohn'), false, 'St. John the Evangelist', 'St. John the Evangelist Anglican Church, 23 Water St N — red brick and a slate broach spire'),
     m(at('stpaul'), false, "St. Paul's Lutheran", "St. Paul's Evangelical Lutheran Church, 137 Queen St S (Jonas Knechtel, 1889) — one of Kitchener's oldest churches"),
