@@ -860,7 +860,11 @@ file and a guide disagree, this file wins.
   binder (10 a page, silhouettes for missing cards, swipe or arrows, tap to zoom
   and tilt). **A paid pack is banked the moment it is bought:** leaving mid-tear
   or mid-reveal still adds the cards. Spares sell $1 / 2 / 6 / 20 / 250 by rarity;
-  15 / 30 / 45 different cards pay $25 / $75 / $200 once; the full set pays $1,000 and
+  15 / 30 / 45 different cards pay $25 / $75 / $200 once; **the set is the 59
+  regular cards** (the Golden Goose is the chase card on top: `setHave`), and a rare
+  or holo slot gives a card you lack `FRESH_P` 0.6 of the time (rollPack's `owned`):
+  a set takes ~54 packs (p10 39, p90 85) where pure chance and the 1-in-500 Goose took
+  ~500; the set pays $1,000 and
   hangs a framed Golden Goose in J&J's window (`jj-trophy`, 2 meshes, built
   only on completion and again at boot if done). Saved in `autokw-jjcards`.
   Sounds are synthesised on the game's AudioContext (foil tear, flip, sparkle,

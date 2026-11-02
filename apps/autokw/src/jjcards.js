@@ -40,8 +40,11 @@ const SERIF = 'Georgia, "Times New Roman", serif';
 const BLOCK = '"Arial Black", "Helvetica Neue", Impact, Arial, sans-serif';
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-/** One pack: 6 card ids, best last. `rnd` () -> [0,1). */
-export function rollPack(rnd = Math.random) {
+// A rare or holo slot gives a card you do not have yet this often (when there is one):
+// with 6 holos at 13 % a pack, completing on pure chance took ~110 packs for the holos alone.
+const FRESH_P = 0.6;
+/** One pack: 6 card ids, best last. `rnd` () -> [0,1); `owned` (id -> count) steers rares to missing cards. */
+export function rollPack(rnd = Math.random, owned = null) {
   const ids = [];
   for (let s = 0; s < 6; s++) {
     let r = 'c';
@@ -51,7 +54,11 @@ export function rollPack(rnd = Math.random) {
       let x = rnd() * (w[0] + w[1] + w[2] + w[3]);
       for (let i = 0; i < 4; i++) { if (x < w[i]) { r = RANK[i]; break; } x -= w[i]; }
     }
-    const pool = BY_RARITY[r];
+    let pool = BY_RARITY[r];
+    if (owned && (r === 'r' || r === 'h')) {
+      const miss = pool.filter((id) => !(owned[id] > 0) && !ids.includes(id));
+      if (miss.length && rnd() < FRESH_P) pool = miss;
+    }
     ids.push(pool[Math.floor(rnd() * pool.length) % pool.length]);
   }
   return ids.sort((a, b) => RARITY[SET[a - 1].r].rank - RARITY[SET[b - 1].r].rank);
@@ -134,6 +141,8 @@ export class JJCards {
   get door() { return this.o.door ? this.o.door() : null; }
   get owned() { return this.stats.owned; }
   get distinct() { return Object.keys(this.stats.owned).filter((k) => this.stats.owned[k] > 0).length; }
+  /** The set is the 59 regular cards; the Golden Goose (the last) is the chase card on top of it. */
+  get setHave() { let n = 0; for (let i = 1; i < SET_SIZE; i++) if (this.stats.owned[i] > 0) n++; return n; }
 
   // --- where ----------------------------------------------------------------------------
 
@@ -152,7 +161,7 @@ export class JJCards {
     if (e > 14) { this.said = false; return; }
     if (this.said || e > REACH + 1 || !pl.onFoot) return;
     this.said = true;
-    if (this.o.onToast) this.o.onToast(`J&J Cards & Collectibles — ENTER to rip a pack ($${PRICE}, ${this.distinct}/${SET_SIZE} cards)`);
+    if (this.o.onToast) this.o.onToast(`J&J Cards & Collectibles — ENTER to rip a pack ($${PRICE}, ${this.setHave}/${SET_SIZE - 1}${this.stats.owned[SET_SIZE] > 0 ? ' + the Goose' : ''} cards)`);
   }
 
   // --- stats ----------------------------------------------------------------------------
@@ -218,7 +227,7 @@ export class JJCards {
     }
     this.sfx.till();
     this.stats.spent += PRICE; this.stats.packs++;
-    const ids = (this.rig && this.rig.length === 6) ? this.rig.slice() : rollPack(this.rnd);
+    const ids = (this.rig && this.rig.length === 6) ? this.rig.slice() : rollPack(this.rnd, this.stats.owned);
     this.rig = null;
     this.pk = { ids, tear: 0, t: 0, drag: 0, state: 'wrap', rip: 0 };
     this.mode = 'tear';
@@ -293,7 +302,7 @@ export class JJCards {
       this.stats.ms.push(n); this.stats.earned += cash;
       this.o.onReward(cash, `${n} different cards`); notes.push(`${n} different cards: +$${cash}`);
     }
-    if (d >= SET_SIZE && !this.stats.done) {
+    if (this.setHave >= SET_SIZE - 1 && !this.stats.done) {
       this.stats.done = true; this.stats.earned += COMPLETE_BONUS;
       this.o.onReward(COMPLETE_BONUS, 'THE FULL SET'); notes.push(`THE FULL SET! +$${COMPLETE_BONUS} and a framed Golden Goose in J&J's window`);
       this._trophy(); this.sfx.fanfare();
@@ -521,7 +530,7 @@ export class JJCards {
   }
   _foot() {
     this.ui.money.textContent = '$' + Math.round(this.o.money()).toLocaleString();
-    this.ui.foot.innerHTML = `<span>Collected <b>${this.distinct}/${SET_SIZE}</b></span><span>Packs opened <b>${this.stats.packs}</b></span><span>Spares <b>${this.spareCount()}</b></span><span>Pack <b>$${PRICE}</b> · 1 Golden Goose in 500</span>`;
+    this.ui.foot.innerHTML = `<span>Collected <b>${this.setHave}/${SET_SIZE - 1}${this.stats.owned[SET_SIZE] > 0 ? ' + the Goose' : ''}</b></span><span>Packs opened <b>${this.stats.packs}</b></span><span>Spares <b>${this.spareCount()}</b></span><span>Pack <b>$${PRICE}</b> · 1 Golden Goose in 500</span>`;
   }
   _side() {
     const m = this.mode, S = this.ui.side, h = [];
@@ -531,7 +540,7 @@ export class JJCards {
     if (m === 'shop') {
       h.push(`<div class="jjSay">${this.say}</div>`,
         `<button class="jjBtn" data-act="buy">BUY A PACK · $${PRICE}</button>`,
-        `<div class="jjRow"><button class="jjBtn gold" data-act="binder">BINDER ${this.distinct}/${SET_SIZE}</button></div>`, sellBtn,
+        `<div class="jjRow"><button class="jjBtn gold" data-act="binder">BINDER ${this.setHave}/${SET_SIZE - 1}${this.stats.owned[SET_SIZE] > 0 ? ' + the Goose' : ''}</button></div>`, sellBtn,
         `<button class="jjBtn alt" data-act="leave">LEAVE</button>`);
       this.ui.hint.textContent = 'Tap the pack to buy it';
     } else if (m === 'tear') {
@@ -553,7 +562,7 @@ export class JJCards {
       h.push(`<button class="jjBtn" data-act="buy">ANOTHER PACK · $${PRICE}</button>`, `<div class="jjRow"><button class="jjBtn gold" data-act="binder">BINDER</button>${''}</div>`, sellBtn, `<button class="jjBtn alt" data-act="leave">LEAVE</button>`);
     } else if (m === 'binder') {
       const pages = Math.ceil(SET_SIZE / this.perPage);
-      h.push(`<div class="jjBig">Binder</div>`, `<div class="jjSm">Page ${this.page + 1} of ${pages} · ${this.distinct}/${SET_SIZE} collected${this.stats.done ? ' · SET COMPLETE' : ''}. Tap a card to look at it; swipe or use the arrows to turn the page.</div>`,
+      h.push(`<div class="jjBig">Binder</div>`, `<div class="jjSm">Page ${this.page + 1} of ${pages} · ${this.setHave}/${SET_SIZE - 1}${this.stats.owned[SET_SIZE] > 0 ? ' + the Goose' : ''} collected${this.stats.done ? ' · SET COMPLETE' : ''}. Tap a card to look at it; swipe or use the arrows to turn the page.</div>`,
         `<div class="jjRow"><button class="jjBtn alt" data-act="prev">◀ PREV</button><button class="jjBtn alt" data-act="next">NEXT ▶</button></div>`, sellBtn,
         `<button class="jjBtn gold" data-act="back">BACK TO THE COUNTER</button>`);
     } else if (m === 'zoom') {
