@@ -37,6 +37,60 @@ function kwFunIcon(ctx, kind, x, y, r) {
   }
 }
 
+// placeIcon's disc colour by kind (was a ~50-deep chain of string compares per
+// icon, ~500 icons a second on the minimap; v112), else '#e0782e'
+const ICON_COL = {
+  dock: '#2f86d6',
+  jet: '#c8352a',
+  monorail: '#0b8a8f',
+  balloon: '#d2432f',
+  fish: '#1f9aa8',
+  hoop: '#d9661f',
+  needle: '#5a6fd6',
+  fishtoss: '#d05a1e',
+  kayak: '#e0a818',
+  wheel: '#2f6fb0',
+  golf: '#2c8a4a',
+  arcade: '#c83ad8',
+  pinball: '#e8503a',
+  hockey: '#2c6ad8',
+  tower: '#6a7a8a',
+  duck: '#e8b020',
+  coffee: '#6a4a32',
+  hydro: '#d8242c',
+  link: '#d0202e',
+  link2: '#0082ca',
+  freight: '#b8501c',
+  streetcar: '#8c1f2b',
+  ferry: '#0b6e4f',
+  bike: '#57b83a',
+  pickle: '#c8a21a',
+  gun: '#2f6fb8',
+  health: '#2e9a56',
+  clinic: '#d8343a',
+  wedge: '#7f8b96',
+  tank: '#5f6b3a',
+  fire: '#c4141c',
+  paint: '#7b3fe4',
+  garage: '#b9651b',
+  export: '#c9302c',
+  medic: '#0d9f6a',
+  winter: '#4a90d8',
+  tims: '#c8102e',
+  freshco: '#4c9a2a',
+  school: '#123a6b',
+  campus: '#330072',
+  lm: '#6a4c9c',
+  lcbo: '#007a3d',
+  beer: '#00438c',
+  shop: '#1f5fa8',
+  plaza: '#5a6470',
+  grt: '#0b4ea2',
+  eats: '#e8442a',
+  g2: '#1f8f4a',
+  story: '#c8920a',
+};
+
 /**
  * A marked place's icon, centred on (x, y), `r` its radius in the canvas's
  * current units: the seaplane dock is an anchor on blue, a quad bike four
@@ -44,12 +98,7 @@ function kwFunIcon(ctx, kind, x, y, r) {
  */
 function placeIcon(ctx, kind, x, y, r) {
   if (kind === 'okt' || kind === 'splash' || kind === 'skate' || kind === 'ball') { kwFunIcon(ctx, kind, x, y, r); return; }
-  ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f'
-    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : kind === 'coffee' ? '#6a4a32' : kind === 'hydro' ? '#d8242c' : kind === 'link' ? '#d0202e' : kind === 'link2' ? '#0082ca' : kind === 'freight' ? '#b8501c' : kind === 'streetcar' ? '#8c1f2b' : kind === 'ferry' ? '#0b6e4f' : kind === 'bike' ? '#57b83a' : kind === 'pickle' ? '#c8a21a'
-    : kind === 'gun' ? '#2f6fb8' : kind === 'health' ? '#2e9a56' : kind === 'clinic' ? '#d8343a' : kind === 'wedge' ? '#7f8b96' : kind === 'tank' ? '#5f6b3a' : kind === 'fire' ? '#c4141c' : kind === 'paint' ? '#7b3fe4' : kind === 'garage' ? '#b9651b' : kind === 'export' ? '#c9302c' : kind === 'medic' ? '#0d9f6a' : kind === 'winter' ? '#4a90d8'
-    : kind === 'tims' ? '#c8102e' : kind === 'freshco' ? '#4c9a2a' : kind === 'school' ? '#123a6b' : kind === 'campus' ? '#330072' : kind === 'lm' ? '#6a4c9c'
-    : kind === 'lcbo' ? '#007a3d' : kind === 'beer' ? '#00438c' : kind === 'shop' ? '#1f5fa8' : kind === 'plaza' ? '#5a6470'
-    : kind === 'grt' ? '#0b4ea2' : kind === 'eats' ? '#e8442a' : kind === 'g2' ? '#1f8f4a' : kind === 'story' ? '#c8920a' : '#e0782e';
+  ctx.fillStyle = ICON_COL.hasOwnProperty(kind) ? ICON_COL[kind] : '#e0782e';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = r * 0.22;
   ctx.beginPath();
@@ -564,14 +613,27 @@ export class Hud {
       this._rb = document.getElementById('raceBest');
     }
     if (!this._rp) return;
-    this._rp.classList.toggle('on', !!r);
+    // every frame, so only what CHANGED is written (a classList.toggle and six
+    // text writes a frame with no race on were ~0.15 ms at 8x; v112)
+    this._cls(this._rp, 'on', !!r);
     if (!r) return;
-    this._rn.textContent = r.name;
-    this._rt.textContent = r.time;
-    this._rl.textContent = r.left || '';
-    this._rd.textContent = r.delta || '';
-    this._rd.className = r.delta ? (r.ahead ? 'ahead' : 'behind') : '';
-    this._rb.textContent = r.best ? `best ${r.best}` : '';
+    this._put(this._rn, 'rn', r.name);
+    this._put(this._rt, 'rt', r.time);
+    this._put(this._rl, 'rl', r.left || '');
+    this._put(this._rd, 'rd', r.delta || '');
+    const dc = r.delta ? (r.ahead ? 'ahead' : 'behind') : '';
+    if (this._rdc !== dc) { this._rdc = dc; this._rd.className = dc; }
+    this._put(this._rb, 'rb', r.best ? `best ${r.best}` : '');
+  }
+
+  /** el.classList.toggle(cls, on), skipped when unchanged. Only for a class
+   *  nothing else toggles on that element (the cache is the element's own). */
+  _cls(el, cls, on) {
+    on = !!on;
+    const c = el.__hudCls || (el.__hudCls = {});
+    if (c[cls] === on) return;
+    c[cls] = on;
+    el.classList.toggle(cls, on);
   }
 
   /** Link: the 1 Line green (its tracks as one line), the 2 Line's branch
@@ -959,9 +1021,14 @@ export class Hud {
     // the text node even with the same string, and every one dirtied style and
     // layout for the frame -- six of them, 60 times a second, for numbers that
     // mostly stand still.
-    this._put(this.money, 'money', formatMoney(game.money));
-    this._css(this.healthFill, 'width', `${clamp(player.health, 0, 100)}%`);
-    this._css(this.healthFill, 'background', player.health > 45 ? '#4fd07a' : player.health > 20 ? '#f0b429' : '#e5484d');
+    // (and the strings are made only when the number moved: formatMoney is a
+    // regex replace, the health a template, each a garbage string a frame)
+    if (this._moneyN !== game.money) { this._moneyN = game.money; this._put(this.money, 'money', formatMoney(game.money)); }
+    if (this._healthN !== player.health) {
+      this._healthN = player.health;
+      this._css(this.healthFill, 'width', `${clamp(player.health, 0, 100)}%`);
+      this._css(this.healthFill, 'background', player.health > 45 ? '#4fd07a' : player.health > 20 ? '#f0b429' : '#e5484d');
+    }
     const kph = player.onFoot ? player.speed * 3.6 : Math.abs(player.vehicle ? player.vehicle.vLong : 0) * 3.6;
     // A balloon's instrument is its altimeter, not a speedometer.
     const alt = !player.onFoot && player.vehicle && player.vehicle.spec.balloon;
@@ -971,18 +1038,19 @@ export class Hud {
     // balloon's is already the main readout)
     const fl = !player.onFoot && player.vehicle && player.vehicle.spec.plane && !player.vehicle.spec.balloon;
     if (this.altRow) {
-      this.altRow.classList.toggle('hidden', !fl);
+      this._cls(this.altRow, 'hidden', !fl);
       if (fl) this._put(this.altVal, 'alt', String(Math.max(0, Math.round(player.vehicle.y))));
     }
-    this.armourRow.classList.toggle('hidden', player.onFoot);
-    this.ammoEl.classList.toggle('hidden', !(player.onFoot && player.armed));
-    if (player.armed) this._put(this.ammoEl, 'ammo', `⌖ ${player.ammo}`);
+    this._cls(this.armourRow, 'hidden', player.onFoot);
+    this._cls(this.ammoEl, 'hidden', !(player.onFoot && player.armed));
+    if (player.armed && this._ammoN !== player.ammo) { this._ammoN = player.ammo; this._put(this.ammoEl, 'ammo', `⌖ ${player.ammo}`); }
 
     const stars = game.wanted;
     // police.js: out of their sight, the stars flash while they search
     const search = !!this.searching && stars > 0;
     if (this._search !== search) { this._search = search; this.stars.classList.toggle('search', search); }
-    if (this.stars.dataset.n !== String(stars)) {
+    // (the count is kept here too: reading dataset back is a DOM call a frame)
+    if (this._starsN !== stars && (this._starsN = stars, this.stars.dataset.n !== String(stars))) {
       this.stars.dataset.n = String(stars);
       this.stars.innerHTML = '';
       for (let i = 0; i < 5; i++) {
